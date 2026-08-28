@@ -215,3 +215,80 @@ def test_a_screen_with_imports_cooks_through_the_pipeline(tmp_path: Path) -> Non
         for path in relative
         if path.endswith(".png")
     )
+
+
+def test_a_contract_carrying_a_different_priority_is_refused(tmp_path: Path) -> None:
+    """What the converter can and cannot lock, stated precisely.
+
+    It CANNOT catch a coordinated source edit to `OPEN_LABEL_PRIORITY`: the
+    producer and the verifier would both honour the new order and agree. Only
+    the tuple pin in `test_retail_screen_apt_convert.py` catches that, and it
+    is a code review question, not a runtime one.
+
+    What it DOES catch is a contract that disagrees with the policy in force -
+    a stale contract cooked under an older priority, or a hand-edited one. That
+    is the reachable failure, and it is refused rather than shipped.
+    """
+
+    from openbfme_importer import retail_screen_apt_convert as convert
+
+    pipeline = ImportPipeline.__new__(ImportPipeline)
+    real = convert.build_screen_scene
+
+    def stale(root, movie, *, frame=None):
+        contract = real(root, movie, frame=frame)
+        selection = dict(contract["frameSelection"])
+        selection["priority"] = ["_show", "_open", "_init", "_fadeIn"]
+        contract["frameSelection"] = selection
+        return contract
+
+    convert.build_screen_scene = stale
+    try:
+        with pytest.raises(RuntimeError, match="frame priority is not the declared"):
+            _convert(pipeline, "SpellStore", tmp_path / "stale")
+    finally:
+        convert.build_screen_scene = real
+
+
+def test_a_contract_whose_label_contradicts_its_labels_is_refused(
+    tmp_path: Path,
+) -> None:
+    """A frame chosen by anything other than the declared priority is refused."""
+
+    from openbfme_importer import retail_screen_apt_convert as convert
+
+    pipeline = ImportPipeline.__new__(ImportPipeline)
+    real = convert.build_screen_scene
+
+    def lying(root, movie, *, frame=None):
+        contract = real(root, movie, frame=frame)
+        selection = dict(contract["frameSelection"])
+        # Claim the authored-open rule while binding a different label.
+        selection["label"] = "_close"
+        selection["frame"] = 99
+        contract["frameSelection"] = selection
+        return contract
+
+    convert.build_screen_scene = lying
+    try:
+        with pytest.raises(RuntimeError, match="where the declared priority selects"):
+            _convert(pipeline, "SpellStore", tmp_path / "lying")
+    finally:
+        convert.build_screen_scene = real
+
+
+def test_an_absolute_source_path_cannot_escape_the_staging_tree(
+    tmp_path: Path,
+) -> None:
+    """A drive-qualified virtual path is the escape a prefix check misses."""
+
+    from openbfme_importer.retail_screen_apt_convert import (
+        ScreenAptConvertError,
+        convert_screen_apt_bundle,
+    )
+
+    for hostile in ("C:/Windows/evil.apt", "../escape.apt", "/etc/passwd", "~/x.apt"):
+        with pytest.raises(ScreenAptConvertError, match="unsafe"):
+            convert_screen_apt_bundle(
+                {hostile: b"stub"}, "SpellStore", tmp_path / hostile[:3].strip(":/")
+            )

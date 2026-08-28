@@ -6194,18 +6194,43 @@ class ImportPipeline:
             # runtime refuses any rule it has not been told about.  Refusing an
             # unexpected rule HERE too means a policy change can never reach a
             # pack silently, only loudly.
-            if str(selection.get("rule", "")) not in {
-                "authored-open-label",
-                "no-authored-label-frame-zero",
-            }:
+            rule = str(selection.get("rule", ""))
+            if rule not in {"authored-open-label", "no-authored-label-frame-zero"}:
                 raise RuntimeError(
                     "screen APT frame was not selected by the declared policy: "
-                    + str(selection.get("rule", ""))
+                    + rule
                 )
-            label = selection.get("label")
-            if label is not None and label not in OPEN_LABEL_PRIORITY:
+            # Checking the rule NAME is not enough: reordering
+            # `OPEN_LABEL_PRIORITY` changes which frame 40 screens bind while
+            # the rule string stays "authored-open-label".  So re-derive the
+            # choice here from the priority and the labels the contract itself
+            # recorded, and refuse if it disagrees.  This is the lock; the rule
+            # name is only the label on it.
+            priority = selection.get("priority")
+            labels = selection.get("availableLabels")
+            if list(priority or []) != list(OPEN_LABEL_PRIORITY):
                 raise RuntimeError(
-                    f"screen APT bound an unexpected authored label: {label}"
+                    "screen APT frame priority is not the declared policy: "
+                    + repr(priority)
+                )
+            if not isinstance(labels, dict):
+                raise RuntimeError("screen APT frame selection lists no labels")
+            expected_label = next(
+                (name for name in OPEN_LABEL_PRIORITY if name in labels), None
+            )
+            if selection.get("label") != expected_label:
+                raise RuntimeError(
+                    "screen APT bound "
+                    f"{selection.get('label')!r} where the declared priority "
+                    f"selects {expected_label!r}"
+                )
+            expected_frame = (
+                0 if expected_label is None else int(labels[expected_label])
+            )
+            if int(selection.get("frame", -1)) != expected_frame:
+                raise RuntimeError(
+                    "screen APT frame does not match its authored label: "
+                    f"{selection.get('frame')} vs {expected_frame}"
                 )
             if expected_aggregate is not None and (
                 contract.get("sourceAggregateSha256") != expected_aggregate

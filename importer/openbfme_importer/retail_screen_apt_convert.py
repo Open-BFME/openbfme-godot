@@ -18,8 +18,14 @@ every label the movie carries, so the choice is auditable rather than implicit.
 A movie with no label at all is cooked at frame 0 and says so.
 
 Nothing here fills a gap.  Every unreconstructable thing the flatten found is
-carried into `blockers` verbatim, grouped by code and counted, and the emit
-refuses outright rather than writing a partial scene.
+carried into `blockers` verbatim, grouped by code and counted.
+
+BE PRECISE ABOUT WHAT IS REFUSED.  The emit refuses a screen that reconstructs
+NOTHING - zero draws and zero text - because that would look like success on
+every count except the one that matters.  It does NOT refuse a screen that has
+blockers: every cooked screen has some, and shipping them named is the whole
+point.  That is why the Godot runtime requires an explicit static-subset opt-in
+before it will present one, and why `parityReady` is false for all 62.
 """
 
 from __future__ import annotations
@@ -32,6 +38,7 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping
 
 from . import retail_hud_apt_convert as hud
+from .paths import safe_relative_parts
 from .retail_screen_apt_plan import (
     ScreenAptPlanError,
     build_screen_closure_plans,
@@ -313,12 +320,18 @@ def convert_screen_apt_bundle(
     with tempfile.TemporaryDirectory(prefix="openbfme-screen-apt-") as staged:
         root = Path(staged)
         for virtual_path, value in sources.items():
-            relative = str(virtual_path).replace("\\", "/").strip("/")
-            if not relative or relative.startswith("../") or "/../" in relative:
+            # `safe_relative_parts` is the project's existing owner for this:
+            # it refuses drive letters, parent traversal and reserved names. A
+            # hand-rolled prefix check here missed ABSOLUTE Windows paths,
+            # because joinpath on the parts of a drive-qualified path simply
+            # yields that absolute path and escapes the staging directory.
+            try:
+                parts = safe_relative_parts(str(virtual_path))
+            except ValueError as error:
                 raise ScreenAptConvertError(
                     f"screen source path is unsafe: {virtual_path}"
-                )
-            target = root.joinpath(*relative.split("/"))
+                ) from error
+            target = root.joinpath(*parts)
             target.parent.mkdir(parents=True, exist_ok=True)
             if isinstance(value, (bytes, bytearray)):
                 target.write_bytes(bytes(value))

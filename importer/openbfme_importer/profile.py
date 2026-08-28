@@ -75,10 +75,12 @@ MAX_PATTERNS_PER_RESOURCE = 256
 MAX_TERRAIN_MATERIAL_PATTERNS = 4_097
 #: A retail SCREEN cannot be split across resources either: it is one movie
 #: plus its transitive import CLOSURE, and cooking it from partial sources is
-#: not a smaller cook, it is a wrong one. MEASURED across the 84-movie tree -
-#: the widest bundle is SaveLoad at 491 virtual paths (its closure pulls in
-#: MenuExport's 155 geometry files), and 18 of the 84 exceed 256. Bounded at 1024
-#: so the shape has room without the ceiling ceasing to mean anything.
+#: not a smaller cook, it is a wrong one - the same reason the terrain-material
+#: table above has a ceiling of its own. MEASURED on ROTWK, the shipping
+#: edition: the widest bundle is OnlineStrategic at 760 virtual paths and 32 of
+#: its 62 cookable screens exceed 256. Measuring on BFME2 would have understated
+#: this badly (widest there is SaveLoad at 491), which is exactly why the
+#: edition is named here rather than left implicit.
 MAX_SCREEN_APT_PATTERNS = 1_024
 MAX_PATH_LENGTH = 512
 W3D_DEPENDENCY_CONVERTERS = {

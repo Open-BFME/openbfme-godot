@@ -7,6 +7,7 @@ module owns; the decoding underneath is `sage_apt`'s and is tested there.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -126,31 +127,65 @@ def test_flatten_screen_refuses_a_frame_the_movie_does_not_have() -> None:
     not (REPO / "workspace/retail-work/cache/effective-assets").is_dir(),
     reason="private effective-assets oracle is not present",
 )
-def test_flagged_null_clip_actions_match_the_hand_measured_identities() -> None:
-    """The enumerator agrees with two independently hand-measured closures.
+def test_the_flagged_null_guard_is_frozen_not_self_admitting() -> None:
+    """The walk is a VERIFIER, not a rubber stamp on whatever the file holds.
 
-    `retail_hud_apt_convert` fails closed on a PlaceObject whose clip-action
-    flag is set while its pointer is null, admitting only exact
-    (path, offset, flags) identities.  The Men-HUD closure hand-measured ONE -
-    `InGameHeroSelect.apt` at offset 166756, flags 0xB6 - and the RotWK
-    strategic closure hand-measured EIGHT in `TimeLine.apt`.  Walking the frame
-    tables generically reproduces both numbers exactly, which is what makes the
-    enumeration evidence rather than a rubber stamp on whatever the file holds.
+    An earlier revision enumerated these identities from the same file the
+    parser was about to read and registered whatever it found, which made the
+    fail-closed guard vacuous - the records it exists to refuse were
+    pre-admitted by construction.  Counting them agreeing with a hand
+    measurement proved the WALK was right, not that the records were authored.
+
+    So it now diffs against a frozen table, and this pins that BOTH failure
+    directions bite: an identity that is not frozen, and a frozen identity
+    whose 64 bytes no longer hash the same.
     """
 
+    from openbfme_importer import retail_screen_apt_plan as plan_module
     from openbfme_importer.retail_hud_apt_convert import (
         _EXPECTED_FLAGGED_NULL_CLIP_ACTIONS,
     )
+    from openbfme_importer.retail_strategic_apt_convert import (
+        EXPECTED_FLAGGED_NULL_CLIP_ACTIONS,
+    )
 
     root = REPO / "workspace/retail-work/cache/effective-assets"
-    hero = build_screen_apt_plan(root, "InGameHeroSelect")["flaggedNullClipActions"]
-    assert [
-        (row["virtualPath"], row["recordOffset"], row["flags"]) for row in hero
-    ] == [("ingameheroselect.apt", 166756, 0xB6)]
+    frozen = plan_module.FROZEN_FLAGGED_NULL_CLIP_ACTIONS
+    assert len(frozen) == 54
+    assert len({(row[0], row[1], row[2]) for row in frozen}) == 54
+    assert all(len(row[3]) == 64 for row in frozen)
+
+    # Two INDEPENDENT hand measurements land inside the freeze, which is what
+    # makes the walk trustworthy in the first place.
+    assert ("ingameheroselect.apt", 166756, 0xB6) in {
+        (row[0], row[1], row[2]) for row in frozen
+    }
     assert ("ingameheroselect.apt", 166756, 0xB6) in _EXPECTED_FLAGGED_NULL_CLIP_ACTIONS
-    timeline = build_screen_apt_plan(root, "TimeLine")["flaggedNullClipActions"]
-    assert len(timeline) == 8
-    assert {row["virtualPath"] for row in timeline} == {"timeline.apt"}
+    # The strategic lane hand-froze RotWK's eight TimeLine records; every one of
+    # them is in this freeze at the same offset and flags.
+    strategic = {(path, offset, flags) for path, offset, flags in
+                 EXPECTED_FLAGGED_NULL_CLIP_ACTIONS}
+    assert len(strategic) == 8
+    assert strategic <= {(row[0], row[1], row[2]) for row in frozen}
+
+    # Direction 1: an identity that is not frozen is refused, by name.
+    key = ("ingameheroselect.apt", 166756, 0xB6)
+    saved = plan_module._FROZEN_FLAGGED_NULL_INDEX.pop(key)
+    try:
+        with pytest.raises(ScreenAptPlanError, match="unfrozen flagged-null"):
+            build_screen_apt_plan(root, "InGameHeroSelect")
+        # Direction 2: a frozen identity whose bytes changed is refused too.
+        plan_module._FROZEN_FLAGGED_NULL_INDEX[key] = "0" * 64
+        with pytest.raises(ScreenAptPlanError, match="record changed"):
+            build_screen_apt_plan(root, "InGameHeroSelect")
+    finally:
+        plan_module._FROZEN_FLAGGED_NULL_INDEX[key] = saved
+
+    # And it still verifies cleanly once restored.
+    rows = build_screen_apt_plan(root, "InGameHeroSelect")["flaggedNullClipActions"]
+    assert [(row["virtualPath"], row["recordOffset"], row["flags"]) for row in rows] == [
+        ("ingameheroselect.apt", 166756, 0xB6)
+    ]
 
     # A screen that authors none reports none rather than an absent key.
     assert build_screen_apt_plan(root, "SpellStore")["flaggedNullClipActions"] == []
@@ -174,10 +209,49 @@ def test_the_swf_base_block_opcodes_let_the_options_screen_reconstruct() -> None
 
     from openbfme_importer import retail_hud_apt_convert as convert
 
-    for opcode in (0x13, 0x18, 0x37, 0x60, 0x64):
-        assert opcode in convert._ACTION_NAMES
+    # Membership alone would pass if every name were wrong, so pin the NAMES
+    # against the SAGE enum this repo already keeps in tree and already ports
+    # into `game/src/apt/apt_vm.gd`.  That file is the oracle for this table.
+    expected = {
+        0x13: "string-equals",
+        0x18: "to-integer",
+        0x24: "clone-sprite",
+        0x25: "remove-sprite",
+        0x37: "mb-ascii-to-char",
+        0x60: "bitwise-and",
+        0x64: "bitwise-right-shift",
+    }
+    enum_source = (
+        REPO
+        / "workspace/scratch/opensage-source/src/OpenSage.Game/Gui/Apt"
+        / "ActionScript/Opcodes/Instruction.cs"
+    )
+    if enum_source.is_file():
+        text = enum_source.read_text(encoding="utf-8", errors="replace")
+        enum_names = {
+            int(value, 16): name
+            for name, value in re.findall(
+                r"(\w+)\s*=\s*(0x[0-9A-Fa-f]{2})\s*,", text
+            )
+        }
+        for opcode in expected:
+            assert opcode in enum_names, f"0x{opcode:02x} is not SAGE-attested"
+        # The names we chose are the enum's names, in this project's spelling.
+        assert enum_names[0x13] == "StringEquals"
+        assert enum_names[0x18] == "ToInteger"
+        assert enum_names[0x24] == "CloneSprite"
+        assert enum_names[0x25] == "RemoveSprite"
+        assert enum_names[0x37] == "MbChr"
+        assert enum_names[0x60] == "BitwiseAnd"
+        assert enum_names[0x64] == "ShiftRight"
+        # And 0x1A - the one GuiTest still refuses on - is genuinely absent,
+        # which is why that refusal is correct rather than a missing entry.
+        assert 0x1A not in enum_names
+
+    for opcode, name in expected.items():
+        assert convert._ACTION_NAMES[opcode] == name
         # Decodable is not executable: none of them joins the timeline subset.
-        assert convert._ACTION_NAMES[opcode] not in convert._ACTION_TIMELINE_OPS
+        assert name not in convert._ACTION_TIMELINE_OPS
 
     root = REPO / "workspace/retail-work/cache/effective-assets"
     movie = convert._movie_from_plan(

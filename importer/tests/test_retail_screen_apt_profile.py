@@ -29,10 +29,46 @@ from openbfme_importer.retail_screen_apt_profile import (
 )
 
 REPO = Path(__file__).resolve().parents[2]
-ASSETS = REPO / "workspace/retail-work/cache/effective-assets"
+
+#: TWO EDITIONS SHIP DIFFERENT SCREENS, and conflating them is the exact
+#: "which tree did this load" trap this project has been burned by before.
+#: RotWK is the owner-ratified content baseline, so it is the SHIPPING pin;
+#: BFME2 is kept beside it because the lane must stay edition-agnostic and
+#: because a silent swap between them would otherwise look like success.
+#: 26 of the 59 screens both editions share differ in draw count - MenuExport
+#: is 634 primitives in BFME2 and 20 in RotWK - so these numbers are not
+#: interchangeable.
+BFME2_ASSETS = REPO / "workspace/retail-work/cache/effective-assets"
+ROTWK_ASSETS = (
+    REPO / "workspace/retail-work/editions/rotwk/cache/effective-assets"
+)
+EDITIONS = {
+    "rotwk": (
+        ROTWK_ASSETS,
+        {
+            "movieCount": 86,
+            "screenCount": 62,
+            "refusedCount": 24,
+            "drawCount": 11769,
+            "sourceCount": 16922,
+        },
+    ),
+    "bfme2": (
+        BFME2_ASSETS,
+        {
+            "movieCount": 84,
+            "screenCount": 62,
+            "refusedCount": 22,
+            "drawCount": 13233,
+            "sourceCount": 11664,
+        },
+    ),
+}
+#: The edition the game actually ships.
+ASSETS = ROTWK_ASSETS
 
 pytestmark = pytest.mark.skipif(
-    not ASSETS.is_dir(), reason="private effective-assets oracle is not present"
+    not ASSETS.is_dir(), reason="private RotWK effective-assets oracle is not present"
 )
 
 
@@ -41,14 +77,18 @@ def plan() -> dict:
     return build_retail_screen_apt_plan(ASSETS)
 
 
+@pytest.mark.parametrize("edition", sorted(EDITIONS))
+def test_each_edition_cooks_its_own_screens(edition: str) -> None:
+    """A screen cook is edition-specific; the two must never be conflated."""
+
+    root, expected = EDITIONS[edition]
+    if not root.is_dir():
+        pytest.skip(f"{edition} effective-assets oracle is not present")
+    assert build_retail_screen_apt_plan(root)["summary"] == expected
+
+
 def test_the_plan_admits_what_reconstructs_and_names_what_does_not(plan) -> None:
-    assert plan["summary"] == {
-        "movieCount": 84,
-        "screenCount": 62,
-        "refusedCount": 22,
-        "drawCount": 13233,
-        "sourceCount": 11664,
-    }
+    assert plan["summary"] == EDITIONS["rotwk"][1]
     refused = {row["movie"] for row in plan["refused"]}
     # Libraries exist to be imported, not shown; they must be named, not hidden.
     assert {"libInGameUI", "MenuFrameAndBg", "GameWindowGadgets"} <= refused
@@ -86,7 +126,7 @@ def test_the_frame_state_is_recorded_per_screen(plan) -> None:
             assert row["frameLabel"] in ("_open", "_show", "_init", "_fadeIn")
     spellstore = next(row for row in plan["screens"] if row["movie"] == "SpellStore")
     assert (spellstore["frameLabel"], spellstore["frame"]) == ("_open", 0)
-    assert spellstore["drawCount"] == 150
+    assert spellstore["drawCount"] == 148
 
 
 def test_the_generated_profile_is_catalog_loadable(plan, tmp_path: Path) -> None:
@@ -122,9 +162,12 @@ def test_a_screen_bundle_may_exceed_the_ordinary_pattern_ceiling(plan) -> None:
     """A screen cannot be split, so it gets a stated ceiling of its own.
 
     Cooking a screen from partial sources is not a smaller cook, it is a wrong
-    one - the same reason the terrain-material table has its own ceiling. The
-    widest bundle in the tree is SaveLoad at 491 paths, well past the ordinary
-    256; 14 of the 62 ADMITTED screens exceed it (18 across all 84 movies).
+    one - the same reason the terrain-material table has its own ceiling.  In
+    RotWK - the shipping edition - the widest bundle is OnlineStrategic at 760
+    paths and 32 of the 62 admitted screens exceed the ordinary 256.  Measuring
+    this on BFME2 instead would have understated it badly: there the widest is
+    SaveLoad at 491, so a ceiling sized to that edition would have been only
+    2x the true worst case rather than comfortably above it.
     """
 
     assert MAX_PATTERNS_PER_RESOURCE == 256
@@ -132,14 +175,14 @@ def test_a_screen_bundle_may_exceed_the_ordinary_pattern_ceiling(plan) -> None:
     widest = max(
         len(row["patterns"]) for row in plan["profileFragment"]["resources"]
     )
-    assert widest == 491
+    assert widest == 760
     over = [
         row["options"]["movie"]
         for row in plan["profileFragment"]["resources"]
         if len(row["patterns"]) > MAX_PATTERNS_PER_RESOURCE
     ]
-    assert len(over) == 14
-    assert "SaveLoad" in over
+    assert len(over) == 32
+    assert "OnlineStrategic" in over and "SaveLoad" in over
     # The ceiling still means something.
     assert widest < MAX_SCREEN_APT_PATTERNS
 

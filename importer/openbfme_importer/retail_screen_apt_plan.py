@@ -54,6 +54,90 @@ MAX_SCREEN_ATLASES = 64
 MAX_SCREEN_CLOSURE = 32
 
 
+#: FROZEN flagged-null clip-action identities, one row per authored record.
+#:
+#: `retail_hud_apt_convert` fails closed on a PlaceObject whose clip-action
+#: FLAG is set while its pointer is null, admitting only exact identities.  An
+#: EARLIER revision of this module enumerated those identities from the same
+#: file the parser was about to read and registered whatever it found, which
+#: made the guard vacuous: the very records it exists to refuse were
+#: pre-admitted by construction.  Counting them agreeing with a hand
+#: measurement proved the WALK was right, not that the records were authored.
+#:
+#: So the walk is now a VERIFIER against this frozen table, the same shape
+#: `retail_strategic_apt_convert.EXPECTED_FLAGGED_NULL_CLIP_ACTIONS` already
+#: uses.  A record that is not here - or whose 64 bytes no longer hash to the
+#: frozen digest - is a REFUSAL naming it, so a patched .apt cannot slip a new
+#: null pointer past the guard.  The digest is what makes an offset collision
+#: between editions harmless.
+#:
+#: Both editions are covered because the lane must stay edition-agnostic, and
+#: their offsets genuinely differ.  The cross-check worth naming: RotWK's eight
+#: `timeline.apt` records at 72,228..72,676 are EXACTLY the eight the strategic
+#: lane hand-measured independently, and BFME2's are the 120,344..120,792 that
+#: same lane records as the ones it must NOT be.
+FROZEN_FLAGGED_NULL_CLIP_ACTIONS: tuple[tuple[str, int, int, str], ...] = (
+    ("cahappearance.apt", 13892, 0xAE, "e3def56fe06a34ef09230a474c18cb4443b084bceaf1e7aa81d0256f37b79dcc"),  # rotwk
+    ("cahappearance.apt", 22052, 0xAE, "6883d458d127008e3464f948896d79f959f8810b9d9cfa92962e70994beb82dd"),  # bfme2
+    ("cahmanager.apt", 41320, 0xA6, "f8364ba1b8e1b22482f9990f08ce3afcacd116445a0417a08aedeff41f0a1949"),  # rotwk
+    ("cahmanager.apt", 41384, 0xA6, "17136fcf829e6d9360ffcf5f79d4d821fbd134492d9ac1ce3e8f46ba81450210"),  # rotwk
+    ("cahmanager.apt", 53440, 0xA6, "4c518cfdbc44076a914dabae3e507000004f0adad42d25a755ff0250c2017558"),  # bfme2
+    ("cahmanager.apt", 53504, 0xA6, "d40760a8430161a9aae0aa8a68cb9d801590f9bfbd6b4ca1cc198fe76010da75"),  # bfme2
+    ("cahmanager.apt", 110624, 0xA6, "6bd453a6510c05416a22aee0e39f0639d50fcbc13a85b9224be4d82c5c44c940"),  # rotwk
+    ("cahmanager.apt", 110688, 0xA6, "5eda9885dbc04b364441fad00a3d9045207861e9beeebdc0f31b32c2146e8218"),  # rotwk
+    ("cahmanager.apt", 122216, 0xA6, "e6183c26abbd1c092bc7af0a425d89ece74a370fee8701a5cd65315fe6882045"),  # bfme2
+    ("cahmanager.apt", 122280, 0xA6, "9cac0cdec759aede8201521d7ddb4986881ccf5eef9b67a98a65ca51e9863683"),  # bfme2
+    ("ingamechat.apt", 25316, 0x86, "7b2dbb32547df7aa95dea7428566eb5085fefbbebbb4fdf550c3226db3950124"),  # bfme2
+    ("ingameheroselect.apt", 166756, 0xB6, "7cf6432cbd91629acd5252c69aa957a08cadffd61214ae49ed0e078dec99a135"),  # bfme2
+    ("ingameheroselect.apt", 167600, 0xB6, "daee0adf4ffee4c89c035a0d49a641793029abdf03fa8187c049f7cd9deab7fa"),  # rotwk
+    ("lanopenplay.apt", 58800, 0xA6, "92a2ae6b4484b1e48ae7004639785aff69ba8d2442d9a30c2587a9ae945c9628"),  # rotwk
+    ("lanopenplay.apt", 58864, 0xA6, "a36516f65c2dfe76820309bf60c4733d2337562e611f55e94b12f2e29c3c6c57"),  # rotwk
+    ("lanopenplay.apt", 76916, 0xA6, "28b9cd187db731825980fd13ee2621bf971b6b05b3c772d3d62818b75fe4480d"),  # bfme2
+    ("lanopenplay.apt", 76980, 0xA6, "e202e0d46295c8339c46c60ec5093b2c4e1ec3e092db653d4df0cd4ea35ad6fa"),  # bfme2
+    ("lanstrategic.apt", 64568, 0xA6, "f3094e42896541669a7ed7b5d9ec6de93e51abe2c95051c8b69508458902a99a"),  # rotwk
+    ("lanstrategic.apt", 64696, 0xA6, "038d65848e0154ea6f984fa79ee42fa4a36af06a66c6539086c31f6c5d1b01a0"),  # rotwk
+    ("lanstrategic.apt", 72592, 0xA6, "1f01e77d0660c4ac24c91c2eb1852e49a3cf686068f8ab4ea9333925a50eabca"),  # bfme2
+    ("lanstrategic.apt", 72720, 0xA6, "a3f6e44795bdf143d470c14022acb9bdcbb64e3a693333e257456e974e7ebbd8"),  # bfme2
+    ("objectives.apt", 22184, 0x9E, "12142ce6fdf18ec3f1dbdcbd5fc3c07dcf7971638d25922d8bce99f13359e814"),  # rotwk
+    ("objectives.apt", 22648, 0x96, "0a1f341f777c8b3a33e834f9e58703cacfa3eef2ae68e4f3e135e69cb8e83cac"),  # rotwk
+    ("objectives.apt", 23712, 0x9E, "4fbe3cfd2a7d84a44c4a73703f0a2f8c6da435514c73e0ec4ab3d82f9da1c7ee"),  # rotwk
+    ("objectives.apt", 35124, 0x9E, "b066a71b2a51e99b56d7900bc081b62b917d4316581e793fea74faa535f3e0cf"),  # bfme2
+    ("objectives.apt", 35588, 0x96, "2599cf5b6c3ec313ceeeb17ae87965c5c11f7bf13329a8164fd8797a5939ac76"),  # bfme2
+    ("objectives.apt", 36652, 0x9E, "51240e025599ba53ae7e274194aa38d39a7e0153cdbe54266d95e58125aa8a49"),  # bfme2
+    ("onlinelogin.apt", 56820, 0xA6, "d1fe899a3e745376aad82048b6546f21c3ecb8f1c99fc250195e1de76dd18329"),  # bfme2
+    ("onlineopenplay.apt", 81616, 0x86, "ed3ccef856e3d67b2895f03b3842eb07f1e2866df39e5a38cff13fe2193fdf0a"),  # bfme2
+    ("onlineopenplay.apt", 116540, 0xA6, "25425792548d8062b516f5fab2d46f72afa23101fbe1fd06fdef4c0c5c5d85b1"),  # rotwk
+    ("onlineopenplay.apt", 116668, 0xA6, "5278b7a74a5d9b6abc31b1680406ba551b7f1b6b338209f5ad290a40550d4999"),  # rotwk
+    ("onlineopenplay.apt", 116732, 0xA6, "79005ddab2f22c734e7e76ed09bdb2b052c1564189edd417e7f15bc766b9f7ce"),  # rotwk
+    ("onlineopenplay.apt", 116796, 0xA6, "cfc96d4d33179838692cb5c68a6d9b86d22b9c8987506fde7a9b51d3ba185615"),  # rotwk
+    ("onlineshell.apt", 32612, 0xB6, "c009826f0494408c518bdd5ad409bd38fb1c6b6eec97a0e036860f8548478acf"),  # bfme2
+    ("onlinestrategic.apt", 11908, 0xA6, "82637731ee7668833846a003d0f510c88fddad4dd4aa79f9a26f723d1a1913d1"),  # rotwk
+    ("onlinestrategic.apt", 12036, 0xA6, "901b64a0970f49486a75411bfde1a8030c66f9d0e270dd050888e10689261b6c"),  # rotwk
+    ("onlinestrategic.apt", 12100, 0xA6, "bd9d6bb493138c232f59b49224b63b2c554fc3432c89ad70a3ed175772ff15a7"),  # rotwk
+    ("onlinestrategic.apt", 12164, 0xA6, "002a9939a8f1702b9f14a2c04a074c45ba0711d5ae31bd7aca8c0fb3b852700e"),  # rotwk
+    ("timeline.apt", 72228, 0xA6, "195c8ba0c9811f72fb71325dec7666cd0b77727287a5f001776272959d3a7bb3"),  # rotwk
+    ("timeline.apt", 72292, 0xA6, "56ac7e1d773be7517e0637925bcf3363d87a41827c00ffc7d5a8186346bd2706"),  # rotwk
+    ("timeline.apt", 72356, 0xA6, "cdb6b3c6b8126e5988df8ed8fe683b00baaa1173e183f5fcedd73d39ddf87250"),  # rotwk
+    ("timeline.apt", 72420, 0xA6, "43807f4cccbeb291cc4f869e21a7380bc2d4b0f4ab7c5214bcc321ce4fde1366"),  # rotwk
+    ("timeline.apt", 72484, 0xA6, "024ae3912da96a1d8d35f59d19735401012cd0715b5d5d73033aec5c39fd3704"),  # rotwk
+    ("timeline.apt", 72548, 0xA6, "f9301e801dd31bf0f8c2dfcd5cc331572a04f436ae382a3527b76e08421464c1"),  # rotwk
+    ("timeline.apt", 72612, 0xA6, "81abc46dcf6cfb54cda8aef8412520be501c9d0616bc3a00d44c4a38f534027e"),  # rotwk
+    ("timeline.apt", 72676, 0xA6, "4bb3cf96921c65a2b584a8e1681710b641ccb68425b32df95bb3aaa4107c35f6"),  # rotwk
+    ("timeline.apt", 120344, 0xA6, "9e7c4c55a69ddb89d1774018b8e9f1b641d4bb38cc2d2cc4a3a91b190238a5c5"),  # bfme2
+    ("timeline.apt", 120408, 0xA6, "6fb9a938bcc053ebb41c836d655b9437e33b3426d61544e799d34ef144bddd34"),  # bfme2
+    ("timeline.apt", 120472, 0xA6, "d6fefaf4055adccd9f45bac9b0fa3114f82c310756c81745af7b7fb156a27669"),  # bfme2
+    ("timeline.apt", 120536, 0xA6, "13f5faf0ea2026d6a09baeb02ce12e4242a2fe49cc08320e2d71552a2dbaa4d1"),  # bfme2
+    ("timeline.apt", 120600, 0xA6, "9a90e24ec83e597f8edcb40c2180d72448960324dc2152b3e468844e012b16cb"),  # bfme2
+    ("timeline.apt", 120664, 0xA6, "7530a99f11effd485a9a56f10a382dd4448fda0fde3ab626f308a59287c98cdb"),  # bfme2
+    ("timeline.apt", 120728, 0xA6, "4063a6259224ebf267de971bd6ccb7eea216eb9cf03bfff40e6345f693090a7c"),  # bfme2
+    ("timeline.apt", 120792, 0xA6, "9f61904c8a2d9c03e493a797a6347ae6d29842ac417bb3cfc28cbfa3e65be854"),  # bfme2
+)
+_FROZEN_FLAGGED_NULL_INDEX = {
+    (path, offset, flags): digest
+    for path, offset, flags, digest in FROZEN_FLAGGED_NULL_CLIP_ACTIONS
+}
+
+
 class ScreenAptPlanError(ValueError):
     """A screen movie is absent, malformed, or violates a stated bound."""
 
@@ -197,12 +281,27 @@ def _flagged_null_clip_actions(
                 flags = u32(pointer + 4)
                 if not flags & 0x80 or u32(pointer + 60) != 0:
                     continue
+                digest = _digest(data[pointer : pointer + 64])
+                identity = (virtual_path.casefold(), pointer, flags)
+                frozen = _FROZEN_FLAGGED_NULL_INDEX.get(identity)
+                if frozen is None:
+                    raise ScreenAptPlanError(
+                        "unfrozen flagged-null clip-action record: "
+                        f"{virtual_path.casefold()} @{pointer} "
+                        f"flags 0x{flags:02X} sha256 {digest}"
+                    )
+                if frozen != digest:
+                    raise ScreenAptPlanError(
+                        "flagged-null clip-action record changed: "
+                        f"{virtual_path.casefold()} @{pointer} "
+                        f"expected {frozen} found {digest}"
+                    )
                 rows.append(
                     {
                         "virtualPath": virtual_path.casefold(),
                         "recordOffset": pointer,
                         "flags": flags,
-                        "sha256": _digest(data[pointer : pointer + 64]),
+                        "sha256": digest,
                     }
                 )
         return rows

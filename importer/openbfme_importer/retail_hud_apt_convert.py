@@ -335,15 +335,31 @@ _EXTERNAL_ATTACHMENT_GATES = (
     },
 )
 
-# The opcode assignment below is the published SWF AVM1 one; SAGE extends it in
-# the 0xAE-0xB9 range but never reassigns the base block, which the table itself
-# demonstrates (0x30 random, 0x17 pop, 0x62 bitwise-xor all sit where the SWF
-# spec puts them).  The five entries added for the retail SCREEN lane (queue
-# Q117) - 0x13, 0x18, 0x37, 0x60, 0x64 - are all ZERO-OPERAND stack ops, so
-# admitting them cannot shift a stream's decode alignment: a mis-assignment
-# would derail into the existing bounded-end refusal rather than decode
-# silently.  Naming an opcode makes it DECODABLE, not executable; anything
-# outside `_ACTION_TIMELINE_OPS` still surfaces as an
+# PROVENANCE. Every value below is the SAGE ActionScript assignment recorded in
+# OpenSAGE's `InstructionType` enum, which this repo already keeps in tree at
+# `workspace/scratch/opensage-source/src/OpenSage.Game/Gui/Apt/ActionScript/
+# Opcodes/Instruction.cs` and already ports into `game/src/apt/apt_vm.gd`.  That
+# is the project's own oracle for this table and it is the one to cite - an
+# earlier revision of this comment argued from the published SWF spec instead,
+# which happened to agree but was the wrong source to reason from.
+#
+# The opcodes added for the retail SCREEN lane (queue Q117) are all attested
+# there by name: 0x13 StringEquals, 0x18 ToInteger, 0x24 CloneSprite,
+# 0x25 RemoveSprite, 0x37 MbChr, 0x60 BitwiseAnd, 0x64 ShiftRight.  0x24 and
+# 0x25 additionally appear in the corpus burn-down `AptVm.IMPLEMENTED_OPCODES`
+# (the 87 values actually OBSERVED across BFME2+RotWK); 0x37 does not, so it is
+# enum-attested but corpus-unobserved, and that distinction is stated rather
+# than smoothed over.
+#
+# None of them takes a stream operand - `apt_vm.gd` implements each purely
+# against the value stack - so admitting them cannot shift a stream's decode
+# ALIGNMENT.  Note precisely what that does and does not buy: a wrong operand
+# WIDTH would derail into the existing bounded-end refusal, but a wrong NAME on
+# a correctly-sized opcode would decode silently.  The name is load-bearing, so
+# it comes from the enum rather than from inference.
+#
+# Naming an opcode makes it DECODABLE, not executable; anything outside
+# `_ACTION_TIMELINE_OPS` still surfaces as an
 # `action-script-unsupported-opcodes` blocker.
 _ACTION_NAMES = {
     0x00: "end",
@@ -368,6 +384,8 @@ _ACTION_NAMES = {
     0x21: "string-concat",
     0x22: "get-property",
     0x23: "set-property",
+    0x24: "clone-sprite",
+    0x25: "remove-sprite",
     0x26: "trace",
     0x30: "random",
     0x37: "mb-ascii-to-char",
@@ -4917,11 +4935,23 @@ class _Flattener:
         script-driven state machines - `ScoreScreen` places nothing on frame 0
         and reaches its authored open state at its own `_open` label.  So this
         sibling replays the root timeline from frame 0 up to and including the
-        target frame, which is exactly what feeding `_frame` the concatenated
-        rows does: place-with-character sets a depth, remove-object clears it,
-        and a bare move over a depth placed in an EARLIER frame still raises
-        `move-without-local-placement` rather than being silently merged.  That
-        blocker is the honest edge of this reconstruction, not a papered gap.
+        target frame by feeding `_frame` the concatenated rows:
+        place-with-character sets a depth and remove-object clears it.
+
+        WHAT THIS IS NOT.  It is not an exact cumulative display list.  A bare
+        MOVE over a depth placed in an earlier frame carries a new transform,
+        and `_frame` cannot merge that into the raw row it is holding - it
+        raises `move-without-local-placement` and the object stays drawn at its
+        ORIGINAL transform.  So those screens are a named-but-wrong snapshot,
+        not a faithful one.  Measured: 19 such records, confined to TimeLine
+        `_open`@49 (18) and CreateAHero `_open`@1 (1).
+
+        `retail_strategic_apt_convert._synthetic_place_rows` is the real fix -
+        it re-encodes a reconstructed cumulative display list into rows `_frame`
+        can consume - and it is deliberately not wired in here because those
+        synthetic rows drop the clip-action flag, which would trade 19 wrong
+        transforms for a clip-action fidelity regression across all 62 screens.
+        That trade is recorded in the queue rather than made silently.
         """
 
         for layer_index, (name, target_frame) in enumerate(roots):

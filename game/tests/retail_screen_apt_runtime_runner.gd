@@ -160,6 +160,47 @@ func _run() -> void:
 		"a_blocker_row_without_a_code_fails_closed",
 		not _configures(_mutated({"blockers": [{"movie": "SpellStore"}]}))
 	)
+	# A malformed colour used to fall back to TRANSPARENT: still counted as a
+	# draw, rendered nothing. A silent gap wearing a success is the exact
+	# failure this lane must not have.
+	var bad_colour := (_document()["draws"] as Array).duplicate(true)
+	(bad_colour[1] as Dictionary)["color"] = [0.8, 0.0, 0.0]
+	_check(
+		"an_invalid_draw_colour_fails_closed_instead_of_drawing_nothing",
+		not _configures(_mutated({"draws": bad_colour}))
+	)
+	# A button row that cannot become a hit region must be NAMED. Dropping it
+	# leaves a screen that binds cleanly and cannot be clicked.
+	var lost_button := (_document()["buttonInstances"] as Array).duplicate(true)
+	(lost_button[0] as Dictionary)["hitVertices"] = []
+	var dropped = runtime_script.new()
+	dropped.size = Vector2(1024.0, 768.0)
+	root.add_child(dropped)
+	var dropped_root := ProjectSettings.globalize_path("user://openbfme-screen-apt-dropped")
+	_remove_tree(dropped_root)
+	DirAccess.make_dir_recursive_absolute(dropped_root)
+	_write_atlas(dropped_root.path_join(ATLAS_RELATIVE))
+	_write_json(dropped_root.path_join("pack.json"), {"id": "dropped", "files": {}})
+	_write_json(
+		dropped_root.path_join(CONTRACT_RELATIVE),
+		_mutated({"buttonInstances": lost_button})
+	)
+	var dropped_ok := bool(dropped.configure_from_pack(dropped_root, "SpellStore", true))
+	_check(
+		"a_button_that_cannot_be_hit_is_named_not_silently_lost",
+		dropped_ok
+		and int(dropped.dropped_button_count) == 1
+		and int(dropped.button_instance_count) == 0,
+		"ok=%s dropped=%s regions=%s" % [
+			dropped_ok, dropped.dropped_button_count, dropped.button_instance_count
+		]
+	)
+	_check(
+		"the_dropped_button_carries_a_diagnostic_code",
+		dropped.diagnostics.any(
+			func(row): return String(row.get("code", "")) == "screen-button-instance-dropped"
+		)
+	)
 
 	_finish()
 

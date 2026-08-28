@@ -58,6 +58,9 @@ var blocker_count := 0
 var draw_count := 0
 var atlas_count := 0
 var button_instance_count := 0
+## Button rows the contract carried that could not become a hit region. Never
+## silently zero: a dropped button is a screen you cannot click.
+var dropped_button_count := 0
 var source_aggregate_sha256 := ""
 var diagnostics: Array = []
 
@@ -90,6 +93,7 @@ func _reset() -> void:
 	draw_count = 0
 	atlas_count = 0
 	button_instance_count = 0
+	dropped_button_count = 0
 	source_aggregate_sha256 = ""
 	diagnostics = []
 	_authored_resolution = Vector2(1024.0, 768.0)
@@ -270,6 +274,10 @@ func _build_display_items(document: Dictionary) -> bool:
 		var points := _vector2_array(row.get("points", []))
 		if points.size() != 3:
 			return _fail("screen draw row is not a triangle")
+		if not _is_color(row.get("color", [])):
+			# A bad colour used to fall back to TRANSPARENT, which still counted
+			# as a draw and rendered nothing - a silent gap wearing a success.
+			return _fail("screen draw row has an invalid colour")
 		var color := _color(row.get("color", []))
 		var item := {
 			"kind": kind,
@@ -300,10 +308,17 @@ func _build_button_regions(document: Dictionary) -> void:
 	var regions: Array = []
 	for instance_value in instances_value as Array:
 		if typeof(instance_value) != TYPE_DICTIONARY:
+			_note_dropped_button("button instance row is not a dictionary", "")
 			continue
 		var instance := instance_value as Dictionary
 		var vertices := _vector2_array(instance.get("hitVertices", []))
 		if vertices.is_empty():
+			# Silently skipping this made a button disappear with no trace; the
+			# screen still bound and simply could not be clicked there.
+			_note_dropped_button(
+				"button instance has no usable hit vertices",
+				String(instance.get("buttonId", ""))
+			)
 			continue
 		var translation := Vector2.ZERO
 		var matrix := PackedFloat32Array([1.0, 0.0, 0.0, 1.0])
@@ -375,6 +390,7 @@ func runtime_metadata() -> Dictionary:
 		"drawCount": draw_count,
 		"blockerCount": blocker_count,
 		"buttonInstanceCount": button_instance_count,
+		"droppedButtonCount": dropped_button_count,
 	}
 
 
@@ -426,6 +442,24 @@ func _vector2_array(value: Variant) -> PackedVector2Array:
 			return PackedVector2Array()
 		result.append(Vector2(x, y))
 	return result
+
+
+func _note_dropped_button(reason: String, button_id: String) -> void:
+	dropped_button_count += 1
+	diagnostics.append({
+		"code": "screen-button-instance-dropped",
+		"reason": reason,
+		"buttonId": button_id,
+	})
+
+
+func _is_color(value: Variant) -> bool:
+	if typeof(value) != TYPE_ARRAY or (value as Array).size() != 4:
+		return false
+	for component in value as Array:
+		if not is_finite(float(component)):
+			return false
+	return true
 
 
 func _color(value: Variant) -> Color:
