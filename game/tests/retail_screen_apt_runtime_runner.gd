@@ -143,9 +143,35 @@ func _run() -> void:
 		"a_negative_frame_index_fails_closed",
 		not _configures(_mutated({"frameSelection": negative_frame}))
 	)
-	var escaped_atlas := (_document()["atlases"] as Array).duplicate(true)
-	(escaped_atlas[0] as Dictionary)["cookedPng"] = "../../etc/passwd.png"
-	_check("unsafe_atlas_path_fails_closed", not _configures(_mutated({"atlases": escaped_atlas})))
+	# Path containment, proven against a REAL planted file - a test pointing at
+	# a path that simply does not exist passes on "file not found" and proves
+	# nothing.  WHICH LAYER REFUSES: `ModLoader.resolve_pack_path` is the owner
+	# and is strictly stronger than anything here (it rejects "..", a leading
+	# "/" or "~", drive specifiers, and symlink/junction boundaries). Removing
+	# BOTH of this runtime's own checks still leaves every case below refused,
+	# so they are defence in depth, not the guard. This pins the CHAIN.
+	var outside_root := ProjectSettings.globalize_path("user://openbfme-screen-apt-outside")
+	_remove_tree(outside_root)
+	DirAccess.make_dir_recursive_absolute(outside_root)
+	var planted := outside_root.path_join("secret.png")
+	_check("planted_atlas_exists_outside_the_pack", _write_atlas(planted))
+	for unsafe_atlas_path in [
+		"../../etc/passwd.png",
+		"assets/ui/screens/../../../openbfme-screen-apt-outside/secret.png",
+		"assets/ui/screens/spellstore/.." + String.chr(92) + "..secret.png",
+	]:
+		var escaped_atlas := (_document()["atlases"] as Array).duplicate(true)
+		(escaped_atlas[0] as Dictionary)["cookedPng"] = unsafe_atlas_path
+		_check(
+			"unsafe_atlas_path_fails_closed:" + unsafe_atlas_path,
+			not _configures(_mutated({"atlases": escaped_atlas}))
+		)
+	# And a sibling directory sharing the pack root's prefix is not "inside" it.
+	var sibling_root := ProjectSettings.globalize_path("user://openbfme-screen-apt-mutated-evil")
+	_remove_tree(sibling_root)
+	DirAccess.make_dir_recursive_absolute(sibling_root)
+	_check("sibling_pack_root_planted", _write_atlas(sibling_root.path_join(ATLAS_RELATIVE)))
+
 	var missing_atlas_draws := (_document()["draws"] as Array).duplicate(true)
 	(missing_atlas_draws[0] as Dictionary)["atlas"] = "assets/ui/screens/spellstore/absent.png"
 	_check(

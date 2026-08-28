@@ -243,7 +243,16 @@ func _load_atlases(document: Dictionary, pack_root: String) -> bool:
 		if typeof(atlas_value) != TYPE_DICTIONARY:
 			return _fail("screen atlas row is invalid")
 		var relative := String((atlas_value as Dictionary).get("cookedPng", ""))
-		if not relative.begins_with(ATLAS_PREFIX) or not relative.ends_with(".png"):
+		if (
+			not relative.begins_with(ATLAS_PREFIX)
+			or not relative.ends_with(".png")
+			or relative.contains("..")
+			or relative.contains("\\")
+		):
+			# Defence in depth only. `ModLoader.resolve_pack_path` already
+			# refuses "..", leading "/" or "~", drive specifiers and symlink
+			# boundaries, and is the real owner of containment; these checks
+			# hold even if this node is ever driven without it.
 			return _fail("screen atlas inventory contains an unsafe path")
 		var path: String = mod_loader.resolve_pack_path(pack_root, relative)
 		if not _safe_pack_file(pack_root, path, "png"):
@@ -493,6 +502,11 @@ func _safe_pack_file(pack_root: String, path: String, extension: String) -> bool
 	var resolved := ProjectSettings.globalize_path(path).simplify_path()
 	if root == "" or resolved == "":
 		return false
+	# A bare `begins_with` would let a SIBLING through: "C:/pack-evil/x" begins
+	# with "C:/pack". Compare on a separator boundary. (Inherited from the shell
+	# binder, which still has the unbounded form.)
+	if not root.ends_with("/"):
+		root += "/"
 	return resolved.begins_with(root)
 
 
