@@ -272,26 +272,44 @@ def test_the_import_closure_is_what_makes_a_screen_a_scene() -> None:
     not (REPO / "workspace/retail-work/cache/effective-assets").is_dir(),
     reason="private effective-assets oracle is not present",
 )
-def test_an_unplannable_import_is_named_never_dropped_silently() -> None:
-    """SaveLoad imports MpGameSetup, which the parser refuses.
+def test_an_unplannable_import_is_named_never_dropped_silently(tmp_path) -> None:
+    """A movie the closure cannot plan is carried with its reason.
 
-    The refusal is real (`MpGameSetup.apt has duplicate imports`, the same
-    over-strictness species as Q27), so SaveLoad genuinely cannot have all of
-    its imports.  What must never happen is the movie vanishing quietly - the
-    closure carries the name and the reason, and the flatten still raises the
-    converter's own `unresolved-import-movie` blocker for it.
+    Every import in the retail tree now plans, so this stages the failure: a
+    tree holding MainMenu but not the two movies it imports.  What must never
+    happen is those movies vanishing quietly, leaving a scene that looks whole
+    and is missing its frame - the closure names both, and the converter's own
+    `unresolved-import-movie` blocker still fires for them downstream.
     """
 
     from openbfme_importer.retail_screen_apt_plan import build_screen_closure_plans
 
     root = REPO / "workspace/retail-work/cache/effective-assets"
-    closure = build_screen_closure_plans(root, "SaveLoad")
-    assert [row["movie"] for row in closure["unplannable"]] == ["MpGameSetup"]
-    assert "duplicate imports" in closure["unplannable"][0]["reason"]
+    for suffix in (".apt", ".const", ".dat"):
+        (tmp_path / f"MainMenu{suffix}").write_bytes(
+            (root / f"MainMenu{suffix}").read_bytes()
+        )
+    textures = tmp_path / "art" / "Textures"
+    textures.mkdir(parents=True)
+    (textures / "apt_MainMenu_1.tga").write_bytes(
+        (root / "art" / "Textures" / "apt_MainMenu_1.tga").read_bytes()
+    )
+    geometry = tmp_path / "MainMenu_geometry"
+    geometry.mkdir()
+    for entry in (root / "MainMenu_geometry").iterdir():
+        (geometry / entry.name).write_bytes(entry.read_bytes())
 
-    # A screen whose own plan fails raises rather than reporting itself absent.
-    with pytest.raises(ScreenAptPlanError, match="duplicate imports"):
-        build_screen_closure_plans(root, "MpGameSetup")
+    closure = build_screen_closure_plans(tmp_path, "MainMenu")
+    assert sorted(closure["plans"]) == ["MainMenu"]
+    assert [row["movie"] for row in closure["unplannable"]] == [
+        "GameWindowGadgets",
+        "MenuExport",
+    ]
+    assert all("is missing" in row["reason"] for row in closure["unplannable"])
+
+    # A screen whose OWN plan fails raises rather than reporting itself absent.
+    with pytest.raises(ScreenAptPlanError, match="screen source is missing"):
+        build_screen_closure_plans(tmp_path, "MenuExport")
 
 
 @pytest.mark.skipif(
@@ -331,8 +349,42 @@ def test_an_authored_null_clip_action_pointer_is_named_not_fatal() -> None:
         if str(row["code"]) == "clip-action-pointer-authored-null"
     ]
     assert named, "the authored-null records must stay visible, not vanish"
-    # Every one carries the evidence needed to find it again in the bytes.
     for row in named:
         assert int(row["sourceOffset"]) > 0
         assert len(str(row["recordSha256"])) == 64
+    assert flattener.draws
+
+
+@pytest.mark.skipif(
+    not (REPO / "workspace/retail-work/cache/effective-assets").is_dir(),
+    reason="private effective-assets oracle is not present",
+)
+def test_importing_one_symbol_into_two_slots_is_authored_not_corrupt() -> None:
+    """MpGameSetup binds `GameWindowGadgets::ComboBox` to slots 21 and 210.
+
+    The parser rejected duplicate (movie, symbol) pairs, which took the
+    multiplayer game-setup screen - one of the seven parity-gate reds - out of
+    the lane over a legal authoring pattern.  The invariant that actually
+    matters is that every import binds a DISTINCT local character slot, since
+    that id is what resolution looks up.  Measured across all 84 movies in the
+    tree: exactly one duplicates a symbol, and ZERO duplicate a character id.
+    """
+
+    from openbfme_importer import retail_hud_apt_convert as convert
+
+    root = REPO / "workspace/retail-work/cache/effective-assets"
+    plan = build_screen_apt_plan(root, "MpGameSetup")
+    imports = plan["apt"]["imports"]
+    slots = [int(row["characterId"]) for row in imports]
+    assert len(slots) == len(set(slots)) == 24
+    combo = [
+        int(row["characterId"])
+        for row in imports
+        if str(row["symbol"]) == "ComboBox"
+    ]
+    assert sorted(combo) == [21, 210]
+
+    movie = convert._movie_from_plan(plan, asset_root=root)
+    flattener = convert._Flattener({movie.name.casefold(): movie}, {}, ())
+    flattener.flatten_screen([("MpGameSetup", 0)])
     assert flattener.draws

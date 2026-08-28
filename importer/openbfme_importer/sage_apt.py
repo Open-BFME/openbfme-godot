@@ -431,8 +431,15 @@ def parse_apt_movie(
                 "pointer": reader.u32(offset + 12, "import pointer"),
             }
         )
-    if len({(row["movie"].casefold(), row["symbol"].casefold()) for row in imports}) != len(imports):
-        raise AptParseError(f"{virtual_path} has duplicate imports")
+    # The invariant that matters is that every import binds a DISTINCT local
+    # character slot, because that id is what `_resolve` looks up.  Importing
+    # the same symbol twice is authored and legal: MpGameSetup binds
+    # `GameWindowGadgets::ComboBox` to slots 21 and 210, and it is the only
+    # movie in the 84-movie tree that does so - while ZERO movies duplicate a
+    # character id.  Rejecting the symbol pair took the multiplayer game-setup
+    # screen out of the lane over a legal authoring pattern.
+    if len({int(row["characterId"]) for row in imports}) != len(imports):
+        raise AptParseError(f"{virtual_path} has duplicate import character ids")
     imports.sort(key=lambda row: (row["movie"].casefold(), row["symbol"].casefold()))
 
     export_rows: list[dict[str, Any]] = []
