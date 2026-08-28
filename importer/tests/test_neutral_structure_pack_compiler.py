@@ -247,11 +247,25 @@ def test_exact_rotwk_static_construction_w3d_contracts() -> None:
         object_ids,
         catalog=catalog,
     )
+    # The digest moved with aaaef695 ("narrow the no-bake exception to models
+    # with W3D HIDDEN proxy meshes"), which added a hidden-mesh scan pass to
+    # the closure: extra scanned models join the candidate set, and every
+    # scanned item now carries `hiddenMeshCount`/`hiddenMeshNames`. Both feed
+    # the aggregate, so the change is a deliberate committed fix rather than
+    # drift - and the closure stayed clean across it, which is what the two
+    # assertions below have always been for.
     assert closure["aggregateSha256"] == (
-        "a5c0a846f4a43c88943fe600164ebe42c479447375ed2f8b974b167ba165197f"
+        "b1da6b5a4e6ea781a49aadac5886c89a463f197af8819c2fda1dd3b1650b5a20"
     )
     assert closure["summary"]["unresolvedReferenceCount"] == 0
     assert closure["summary"]["graphDiagnosticCount"] == 0
+    # Pin the reason, not just the number: every scanned item carries the
+    # hidden-mesh evidence, and these two structures author none - so the
+    # digest moved because the FIELD arrived, not because a mesh was hidden.
+    scanned = closure["scannedW3d"]
+    assert len(scanned) == 21
+    assert all("hiddenMeshCount" in item for item in scanned)
+    assert all(int(item["hiddenMeshCount"]) == 0 for item in scanned)
 
     expected = {
         "AmonSulKeep": ("art/w3d/cb/cbamonsulkeep.w3d", 45.0),
