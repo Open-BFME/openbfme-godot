@@ -84,6 +84,7 @@ static func apply_additive(material: BaseMaterial3D, shader: Dictionary, extras:
 	material.disable_receive_shadows = true
 	if int(shader.get("pri_gradient", 1)) == PRI_GRADIENT_DISABLE or ambient_is_black(extras):
 		material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		fold_emission_into_albedo(material)
 	if int(shader.get("depth_mask", 1)) == DEPTH_MASK_DISABLE:
 		material.depth_draw_mode = BaseMaterial3D.DEPTH_DRAW_DISABLED
 
@@ -102,3 +103,19 @@ static func ambient_is_black(extras: Dictionary) -> bool:
 		if not is_zero_approx(float(channels[index])):
 			return false
 	return true
+
+
+static func fold_emission_into_albedo(material: BaseMaterial3D) -> void:
+	## GODOT'S UNSHADED MODE DRAWS ALBEDO AND IGNORES EMISSION, so a self-lit
+	## W3D surface would throw its colour away at the last step.
+	##
+	## The W3D material this applies to says ambient 0, diffuse 0, emissive C:
+	## the fragment IS C times the texture, with no scene light in it. Folding
+	## the emission into the albedo tint is that same product, expressed the way
+	## an unshaded Godot material computes. GBFortress's `LightGrow` authors
+	## emissive 161/15/0, and without this the fortress halo drew WHITE even
+	## though the importer had just restored the colour into the GLB.
+	if not material.emission_enabled:
+		return
+	material.albedo_color = material.albedo_color * material.emission
+	material.emission_enabled = false

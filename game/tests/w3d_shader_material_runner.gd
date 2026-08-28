@@ -72,6 +72,20 @@ func _init() -> void:
 	_check("white_ambient_additive_material_stays_lit",
 		torch.shading_mode != BaseMaterial3D.SHADING_MODE_UNSHADED)
 	_check("absent_ambient_is_not_read_as_black", not ShaderScript.ambient_is_black({}))
+	## Godot's unshaded mode draws albedo and IGNORES emission, so the authored
+	## colour the importer restores into the GLB has to be folded into the tint
+	## or it is thrown away at the last step - which is exactly why the fortress
+	## halo still drew white after the emissive recook.
+	var lit := StandardMaterial3D.new()
+	lit.emission_enabled = true
+	lit.emission = Color(161.0 / 255.0, 15.0 / 255.0, 0.0)
+	ShaderScript.apply_additive(lit, RETAIL_FLAMES_SHADER, {"ambient": [0.0, 0.0, 0.0, 0.0]})
+	_check("authored_emissive_becomes_the_unshaded_tint",
+		not lit.emission_enabled
+			and is_equal_approx(lit.albedo_color.r, 161.0 / 255.0)
+			and is_equal_approx(lit.albedo_color.g, 15.0 / 255.0)
+			and is_zero_approx(lit.albedo_color.b),
+		str(lit.albedo_color))
 	_check("depth_mask_disable_stops_depth_writes",
 		material.depth_draw_mode == BaseMaterial3D.DEPTH_DRAW_DISABLED)
 	var depth_writer := StandardMaterial3D.new()
@@ -97,6 +111,14 @@ func _init() -> void:
 					found[String(mi.name)] = mi.get_active_material(0)
 				for c in node.get_children():
 					stack.append(c)
+		for probe_name in ["FIREGLOW", "FLAMES", "GBFORTRESS"]:
+			var probe: Material = found.get(probe_name)
+			if probe is BaseMaterial3D:
+				var pm := probe as BaseMaterial3D
+				print("W3D_SHADER_MATERIAL PROBE %s emission_enabled=%s emission=%s albedo=%s shading=%d blend=%d" % [
+					probe_name, str(pm.emission_enabled), str(pm.emission),
+					str(pm.albedo_color), int(pm.shading_mode), int(pm.blend_mode)
+				])
 		var glow: Material = found.get("FIREGLOW")
 		_check("citadel_halo_is_unshaded", glow is BaseMaterial3D
 			and (glow as BaseMaterial3D).shading_mode == BaseMaterial3D.SHADING_MODE_UNSHADED)
