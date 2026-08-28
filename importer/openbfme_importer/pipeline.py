@@ -157,6 +157,7 @@ RESOURCE_BUNDLE_CONVERTERS = {
     "sage-terrain-materials",
     "sage-apt-runtime",
     "sage-apt-shell-runtime",
+    "sage-apt-screen-runtime",
     "retail-unit-rules",
     "living-world",
     "sage-script-composite",
@@ -4530,6 +4531,26 @@ class ImportPipeline:
                     if resource.rule.required and not allow_incomplete:
                         raise
                     bundle_outputs = []
+            elif (
+                resource.rule.converter == "sage-apt-screen-runtime"
+                and resource.entries
+            ):
+                try:
+                    bundle_outputs = self._convert_screen_apt_runtime_bundle(
+                        resource,
+                        extracted,
+                        resource.rule.output,
+                        resource.rule.options,
+                        staging,
+                    )
+                except (FileNotFoundError, RuntimeError, ValueError) as exc:
+                    bundle_error = str(exc)
+                    incomplete.append(
+                        {"resource": resource.rule.id, "reason": bundle_error}
+                    )
+                    if resource.rule.required and not allow_incomplete:
+                        raise
+                    bundle_outputs = []
             elif resource.rule.converter == "retail-unit-rules" and resource.entries:
                 try:
                     bundle_outputs = self._convert_retail_unit_rules_bundle(
@@ -6073,6 +6094,159 @@ class ImportPipeline:
                 path.relative_to(pack_root).as_posix() for path in outputs
             }:
                 raise RuntimeError("shell APT runtime contract output is missing")
+        finally:
+            shutil.rmtree(temporary, ignore_errors=True)
+        return outputs
+
+    def _convert_screen_apt_runtime_bundle(
+        self,
+        resource: ResolvedResource,
+        extracted: Mapping[tuple[str, str], Mapping[str, Any]],
+        output: str | None,
+        options: dict[str, Any],
+        pack_root: Path,
+    ) -> list[Path]:
+        """Cook ONE retail screen movie into the pack (queue Q117).
+
+        The shell and palantir converters each serve a single pinned scene, so
+        their output path is a constant.  There are 62 screens, so the movie is
+        an OPTION and the declared output must be the path that movie derives -
+        stating it twice is what stops a profile from cooking ScoreScreen into
+        SpellStore's slot.
+
+        Everything else keeps the shell converter's posture: exact output
+        identity, no duplicate virtual paths, no collision with existing pack
+        output, and a contract that never claims parity.
+        """
+
+        import re
+
+        from .retail_screen_apt_convert import (
+            OPEN_LABEL_PRIORITY,
+            convert_screen_apt_bundle,
+        )
+
+        allowed_options = {"movie", "expectedSourceAggregateSha256"}
+        unsupported = sorted(set(options) - allowed_options)
+        if unsupported:
+            raise ValueError(
+                "sage-apt-screen-runtime has unsupported option(s): "
+                + ", ".join(unsupported)
+            )
+        movie = options.get("movie")
+        if not isinstance(movie, str) or not re.fullmatch(
+            r"[A-Za-z0-9_]{1,64}", movie
+        ):
+            raise ValueError(
+                "sage-apt-screen-runtime requires a bare movie identifier"
+            )
+        expected_output = f"data/ui/screens/{movie.casefold()}/scene-contract.json"
+        if output != expected_output:
+            raise ValueError(
+                f"sage-apt-screen-runtime output must be {expected_output!r}"
+            )
+        expected_aggregate = options.get("expectedSourceAggregateSha256")
+        if expected_aggregate is not None and not (
+            isinstance(expected_aggregate, str)
+            and len(expected_aggregate) == 64
+            and all(value in "0123456789abcdef" for value in expected_aggregate)
+        ):
+            raise ValueError(
+                "sage-apt-screen-runtime expectedSourceAggregateSha256 must be "
+                "lowercase hex"
+            )
+        if resource.count_error is not None or not resource.entries:
+            raise ValueError("sage-apt-screen-runtime requires resolved sources")
+
+        sources: dict[str, Path] = {}
+        seen_paths: set[str] = set()
+        for entry in resource.entries:
+            cached = extracted.get((entry.archive.casefold(), entry.name.casefold()))
+            if cached is None:
+                raise RuntimeError(
+                    f"screen APT bundle input was not extracted: {entry.name}"
+                )
+            folded = entry.name.casefold()
+            if folded in seen_paths:
+                raise ValueError(
+                    f"screen APT bundle has duplicate virtual path: {entry.name}"
+                )
+            seen_paths.add(folded)
+            sources[entry.name] = Path(cached["source_path"])
+
+        temporary = pack_root / f".screen-apt-runtime-{resource.rule.id}"
+        if temporary.exists():
+            raise RuntimeError("screen APT temporary output already exists")
+        try:
+            contract = convert_screen_apt_bundle(sources, movie, temporary)
+            selection = contract.get("frameSelection")
+            totals = contract.get("totals")
+            if (
+                contract.get("schema") != "openbfme.retail-screen-scene"
+                or contract.get("schemaVersion") != 0
+                or str(contract.get("movie", "")).casefold() != movie.casefold()
+                or not isinstance(selection, dict)
+                or not isinstance(totals, dict)
+                or int(totals.get("draws", 0)) <= 0
+            ):
+                raise RuntimeError("screen APT runtime contract changed")
+            # The frame a screen is shown at is a declared policy, and the
+            # runtime refuses any rule it has not been told about.  Refusing an
+            # unexpected rule HERE too means a policy change can never reach a
+            # pack silently, only loudly.
+            if str(selection.get("rule", "")) not in {
+                "authored-open-label",
+                "no-authored-label-frame-zero",
+            }:
+                raise RuntimeError(
+                    "screen APT frame was not selected by the declared policy: "
+                    + str(selection.get("rule", ""))
+                )
+            label = selection.get("label")
+            if label is not None and label not in OPEN_LABEL_PRIORITY:
+                raise RuntimeError(
+                    f"screen APT bound an unexpected authored label: {label}"
+                )
+            if expected_aggregate is not None and (
+                contract.get("sourceAggregateSha256") != expected_aggregate
+            ):
+                raise RuntimeError("screen APT source aggregate changed")
+
+            temporary_files = sorted(
+                (path for path in temporary.rglob("*") if path.is_file()),
+                key=lambda path: path.relative_to(temporary).as_posix().casefold(),
+            )
+            if len(temporary_files) != len(contract.get("atlases", [])) + 1:
+                raise RuntimeError("screen APT runtime output count changed")
+            output_pairs = [
+                (
+                    source_path,
+                    _safe_output(
+                        pack_root,
+                        source_path.relative_to(temporary).as_posix(),
+                    ),
+                )
+                for source_path in temporary_files
+            ]
+            collisions = [
+                target.relative_to(pack_root).as_posix()
+                for _, target in output_pairs
+                if target.exists()
+            ]
+            if collisions:
+                raise RuntimeError(
+                    "screen APT runtime output collides with pack output: "
+                    + ", ".join(collisions)
+                )
+            outputs: list[Path] = []
+            for source_path, target in output_pairs:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.move(str(source_path), str(target))
+                outputs.append(target)
+            if expected_output not in {
+                path.relative_to(pack_root).as_posix() for path in outputs
+            }:
+                raise RuntimeError("screen APT runtime contract output is missing")
         finally:
             shutil.rmtree(temporary, ignore_errors=True)
         return outputs

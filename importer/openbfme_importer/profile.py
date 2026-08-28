@@ -42,6 +42,7 @@ ALLOWED_CONVERTERS = {
     "sage-map",
     "sage-apt-runtime",
     "sage-apt-shell-runtime",
+    "sage-apt-screen-runtime",
     "retail-unit-rules",
     "living-world",
     "sage-particle-definition",
@@ -72,6 +73,13 @@ MAX_RESOURCES = 32_768
 MAX_PATTERNS_PER_RESOURCE = 256
 #: The one terrain.ini source plus one texture per terrain symbol.
 MAX_TERRAIN_MATERIAL_PATTERNS = 4_097
+#: A retail SCREEN cannot be split across resources either: it is one movie
+#: plus its transitive import CLOSURE, and cooking it from partial sources is
+#: not a smaller cook, it is a wrong one. MEASURED across the 84-movie tree -
+#: the widest bundle is SaveLoad at 491 virtual paths (its closure pulls in
+#: MenuExport's 155 geometry files), and 18 of the 84 exceed 256. Bounded at 1024
+#: so the shape has room without the ceiling ceasing to mean anything.
+MAX_SCREEN_APT_PATTERNS = 1_024
 MAX_PATH_LENGTH = 512
 W3D_DEPENDENCY_CONVERTERS = {
     "w3d-bundle",
@@ -1021,11 +1029,12 @@ class ImportProfile:
             # are one resource by construction, and a whole-corpus map profile
             # reaches 990 terrain sources (RotWK 2.01, all categories). That one
             # converter is bounded by its own symbol ceiling instead.
-            pattern_ceiling = (
-                MAX_TERRAIN_MATERIAL_PATTERNS
-                if converter == "sage-terrain-materials"
-                else MAX_PATTERNS_PER_RESOURCE
-            )
+            if converter == "sage-terrain-materials":
+                pattern_ceiling = MAX_TERRAIN_MATERIAL_PATTERNS
+            elif converter == "sage-apt-screen-runtime":
+                pattern_ceiling = MAX_SCREEN_APT_PATTERNS
+            else:
+                pattern_ceiling = MAX_PATTERNS_PER_RESOURCE
             if (
                 not isinstance(raw_patterns, list)
                 or len(raw_patterns) > pattern_ceiling
