@@ -2885,6 +2885,68 @@ def _convert_proven_additive_material(
     }
 
 
+def restore_authored_emissive_strength(materials: Iterable[Any]) -> dict[str, Any]:
+    """Let a W3D vertex material's authored EMISSIVE colour reach the glTF.
+
+    The pinned plugin reads `vm_info.emissive` into the Principled BSDF's
+    emission colour (io_mesh_w3d/common/utils/material_import.py:110), but
+    Blender 4.x defaults **Emission Strength to 0**, and the glTF exporter
+    multiplies colour by strength before deciding whether to write
+    `emissiveFactor`.  The result: every self-lit retail surface exported BLACK
+    emission and silently lost its colour.  GBFortress's `LightGrow` material -
+    the fortress brazier halo - authors ambient 0/0/0, diffuse 0/0/0 and
+    emissive 161/15/0, so with the emissive dropped there was nothing left to
+    make it fire-coloured, and it rendered as a white blob.
+
+    This raises the strength to 1.0 ONLY where the plugin already wrote a
+    non-black emission colour.  A black emission stays black; nothing is
+    invented, and a material the plugin never touched is not modified.
+    """
+
+    report: dict[str, Any] = {"restored_materials": 0, "materials": []}
+    unique: dict[tuple[str, int], Any] = {}
+    for material in materials:
+        if material is not None:
+            unique[_runtime_identity(material)] = material
+    ordered = sorted(
+        unique.values(), key=lambda item: clean_name(str(getattr(item, "name", "")))
+    )
+    for material in ordered:
+        if not bool(getattr(material, "use_nodes", False)):
+            continue
+        node_tree = getattr(material, "node_tree", None)
+        if node_tree is None:
+            continue
+        principled = [
+            node
+            for node in list(getattr(node_tree, "nodes", []) or [])
+            if str(getattr(node, "type", "")) == "BSDF_PRINCIPLED"
+        ]
+        if len(principled) != 1:
+            continue
+        inputs = getattr(principled[0], "inputs", None)
+        colour_socket = _socket_by_name(inputs, "Emission Color")
+        if colour_socket is None:
+            colour_socket = _socket_by_name(inputs, "Emission")
+        strength_socket = _socket_by_name(inputs, "Emission Strength")
+        if colour_socket is None or strength_socket is None:
+            continue
+        colour = list(getattr(colour_socket, "default_value", []) or [])[:3]
+        if not colour or all(float(channel) <= 0.0 for channel in colour):
+            continue
+        if float(getattr(strength_socket, "default_value", 0.0)) > 0.0:
+            continue
+        strength_socket.default_value = 1.0
+        report["restored_materials"] += 1
+        report["materials"].append(
+            {
+                "name": str(getattr(material, "name", "")),
+                "emissive": [round(float(channel), 6) for channel in colour],
+            }
+        )
+    return report
+
+
 def convert_proven_additive_materials(
     materials: Iterable[Any],
     *,
@@ -4845,6 +4907,9 @@ def _convert_w3d_job_impl(
     convert_proven_additive_materials(
         list(bpy.data.materials), phase_checkpoint=phase_checkpoint
     )
+    # The authored emissive colour, which Blender 4.x's zero default strength
+    # was throwing away on export. See restore_authored_emissive_strength.
+    authored_emissive = restore_authored_emissive_strength(list(bpy.data.materials))
     opaque_material_normalization = normalize_proven_opaque_materials(
         list(bpy.data.materials)
     )
@@ -5216,6 +5281,7 @@ def _convert_w3d_job_impl(
         "generated_images": len(generated_images),
         "shader_material_compatibility": shader_material_compatibility,
         "opaque_material_normalization": opaque_material_normalization,
+        "authored_emissive_restoration": authored_emissive,
         "root_rigid_bake": root_rigid_bake,
         "filtered_non_render_geometry": filtered_geometry,
         "animation_sidecar_meshes_removed": animation_sidecar_meshes,

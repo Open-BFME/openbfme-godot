@@ -10,7 +10,9 @@ Baseline scores so far, measured not claimed:
   **3.8/10**. Sol's own note: scored on the skirmish slice ALONE it is ~5.5/10,
   "because there is a real playable game here" - the whole-product score is
   dragged down by entire missing MODES, not by the depth of what exists.
-- grok whole-port score: pending.
+- WHOLE PORT, grok 2026-08-28: **3.5/10**; skirmish-only **5/10**. The two
+  auditors landed within a rounding error of each other without seeing each
+  other's work (sol 3.8 / 5.5, grok 3.5 / 5).
 
 ## A. Whole game modes that do not exist
 
@@ -93,4 +95,36 @@ MISSES.
 5. Close the tail together: WotR parity, Minas/wall pathing, naval, replays,
    online/LAN lifecycle, missing runtime leaves, localisation, modding.
 
-(grok's map merges in next round.)
+## H. grok's ranked list (independent, and it agrees with sol's shape)
+
+1. **The shell and HUD are not EA's screens.** "You lose in the first five
+   seconds, then every second of every match." Eight shell movies uncooked, no
+   shellmap, palantir 5/10.
+2. **The world does not look like BFME.** Empty sky, no directional shadows,
+   buildings do not burn, every self-lit surface lost its colour. The
+   screenshot test.
+3. **Campaigns, tutorials and movies are greyed out.** Half of single-player is
+   a tooltip.
+4. **The AI does not play RotWK.** Authored armies sit on a round-robin;
+   `BrutalDifficultyCheats` compiled and never read. The "three skirmishes" test.
+5. **Match systems people press are holes.** Locked spellbook tier, no horse on
+   mount, Minas is a prison, splash hits one man, no navy, WotR never drops you
+   onto a map, no replays, no observer, MP has five maps.
+
+grok's estimate: doing all five honestly lands ~7.5/10, still not 10. Ten also
+owes localisation, replays, observer, reconnect, World Builder, .big mods, the
+remaining behaviour modules and a recensus of unimplemented animation states.
+
+## I. What the QUEUE misses entirely (grok's real contribution)
+
+Not one of these is a queue row today: campaigns, tutorials, movies, shellmap,
+skybox, shadows, fire particles, the emissive recook, wall trebuchet recook,
+siege ladders, naval sim, WotR tactical handoff, WotR save, WotR MP, replays,
+observer, reconnect, desync recovery, the MP 5-map whitelist, EmotionTracker,
+ring heroes as a match rule, Fuel the Fires / production_mult, the porcupine
+body module, handicap, stats/profile, languages, World Builder, the Angmar
+campaign extract, and ControlBar.wnd / controlbarscheme as started lanes.
+
+grok's closing line, which I am keeping verbatim because it is the right test:
+"If the owner's bar is really 'a stranger cannot name anything missing', the
+next rows are not Q11's frozen armor fixture."

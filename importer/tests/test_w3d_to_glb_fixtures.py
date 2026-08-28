@@ -1796,3 +1796,33 @@ class FakeImageCollection(list):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_restore_authored_emissive_strength_only_lifts_a_lit_colour() -> None:
+    """Blender 4.x defaults Emission Strength to 0, so the exporter dropped the
+    authored W3D emissive and every self-lit retail surface lost its colour.
+    The fortress halo material ``LightGrow`` authors emissive 161/15/0."""
+
+    def _material(name, colour, strength):
+        socket_colour = types.SimpleNamespace(name="Emission Color", default_value=list(colour))
+        socket_strength = types.SimpleNamespace(name="Emission Strength", default_value=strength)
+        node = types.SimpleNamespace(
+            type="BSDF_PRINCIPLED", inputs=[socket_colour, socket_strength]
+        )
+        return types.SimpleNamespace(
+            name=name, use_nodes=True, node_tree=types.SimpleNamespace(nodes=[node]),
+            _colour=socket_colour, _strength=socket_strength,
+        )
+
+    halo = _material("FIREGLOW.LightGrow", (161 / 255, 15 / 255, 0.0, 1.0), 0.0)
+    unlit = _material("GBFORTRESS.NormalMapped.fx", (0.0, 0.0, 0.0, 1.0), 0.0)
+    already = _material("Already.Lit", (1.0, 1.0, 1.0, 1.0), 1.0)
+    report = ADAPTER.restore_authored_emissive_strength([halo, unlit, already, None])
+
+    assert report["restored_materials"] == 1
+    assert report["materials"][0]["name"] == "FIREGLOW.LightGrow"
+    assert halo._strength.default_value == 1.0
+    # A black emission stays black, and a material already carrying strength is
+    # left exactly as the plugin wrote it.
+    assert unlit._strength.default_value == 0.0
+    assert already._strength.default_value == 1.0
