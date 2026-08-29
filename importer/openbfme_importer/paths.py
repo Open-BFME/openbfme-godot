@@ -130,6 +130,9 @@ def repo_root_from_module() -> Path:
 #: Locations a stock BFME2 / RotWK install is normally found at on Windows.
 #: Relative to each of the drives/roots probed by :func:`retail_install_candidates`.
 _RETAIL_RELATIVE_DIRS: tuple[str, ...] = (
+    "BFME2",
+    "RotWK",
+    "ROTWK",
     "Electronic Arts/The Battle for Middle-earth II",
     "EA Games/The Battle for Middle-earth II",
     "Electronic Arts/The Lord of the Rings, The Rise of the Witch-king",

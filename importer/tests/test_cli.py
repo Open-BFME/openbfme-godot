@@ -21,8 +21,9 @@ class CliTests(unittest.TestCase):
         )
         state = Path("C:/state").resolve()
         layered = state / "editions" / "rotwk" / "layered-install"
-        layer_rotwk = layered / "layer-0-rotwk"
-        layer_bfme2 = layered / "layer-1-bfme2"
+        layer_patch = layered / "layer-0-patch202"
+        layer_rotwk = layered / "layer-1-rotwk"
+        layer_bfme2 = layered / "layer-2-bfme2"
         original_resolve = Path.resolve
 
         def fake_resolve(path: Path, *args: object, **kwargs: object) -> Path:
@@ -32,6 +33,7 @@ class CliTests(unittest.TestCase):
 
         def fake_is_file(path: Path) -> bool:
             return path in {
+                layer_patch / "__patch202.big",
                 layer_rotwk / "game.dat",
                 layer_bfme2 / "game.dat",
             }

@@ -24,7 +24,7 @@ def _checker_module():
 
 def _documents():
     product = json.loads(
-        (ROOT / "contracts" / "rotwk-201-product-scope.json").read_text(
+        (ROOT / "contracts" / "rotwk-202-v9.7.7-product-scope.json").read_text(
             encoding="utf-8"
         )
     )

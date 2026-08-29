@@ -321,16 +321,15 @@ def check_dependencies(
         patch_fix = "apply official 1.06 patch (or confirmed patch archives)"
         patch_detail = "importer targets BFME2 1.06 retail"
     else:
-        patch_ok = any(
-            patch.startswith(marker) or patch == marker
-            for marker in game_definition.patch_markers
+        patch_ok = patch == "2.02 v9.7.7" and bool(
+            doctor.get("baseline_layout_ready")
         )
         game_label = "RotWK"
-        expected_executable = "lotrbfme2ep1.exe + core .big archives"
-        expected_patch = "2.02 or 2.01"
-        install_fix = "set Install path to a complete RotWK 2.01/2.02 folder"
-        patch_fix = "apply a supported RotWK patch archive"
-        patch_detail = "importer analysis supports RotWK 2.01/2.02 retail"
+        expected_executable = "pinned three-layer BFME2 1.06 + RotWK 2.01 + Patch 2.02 v9.7.7 root"
+        expected_patch = "2.02 v9.7.7"
+        install_fix = "run tools\\prepare-rotwk-202-baseline.ps1 and pass its layered-install root"
+        patch_fix = "supply the exact official-2 v9.7.7 overlay pinned by the baseline contract"
+        patch_detail = "the product baseline is exactly RotWK Patch 2.02 v9.7.7"
     # Prefer 1.06; warn (not hard fail) on older patches so doctor still runs.
     items.append(
         _item(

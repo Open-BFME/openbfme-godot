@@ -1,0 +1,652 @@
+{
+  "schema": "openbfme.retail-archive-policy",
+  "schemaVersion": 1,
+  "game": "rotwk",
+  "patch": "2.01",
+  "package": {
+    "guid": "original-RotWK",
+    "name": "Vanilla (2.01)",
+    "version": "1.0.0",
+    "receiptSha256": "52ad22595b9568c6d6f623484f4c7defca97891db0788797ea79042e1a93fc7c"
+  },
+  "language": "EN",
+  "policySha256": "0decfa2311078a14d7f9a6eff0165abadaa35feea1dcf3b9618f73520a9c3e56",
+  "archives": [
+    {
+      "path": "_patch201.big",
+      "md5": "aee118420cc92c7c0558a7164240849a",
+      "size": 19777872,
+      "language": "ALL"
+    },
+    {
+      "path": "_patch201ini.big",
+      "md5": "8dc9a1f1ce5a062ef0da013e39df5a4f",
+      "size": 7524533,
+      "language": "ALL"
+    },
+    {
+      "path": "_patch201maps.big",
+      "md5": "7a24d555bab3b631b8eee4e431c86df8",
+      "size": 3784392,
+      "language": "ALL"
+    },
+    {
+      "path": "AmbientStreams.big",
+      "md5": "600bdb99223b53f12e5ce3424f57c55d",
+      "size": 24,
+      "language": "ALL"
+    },
+    {
+      "path": "apt/AptLevel0.big",
+      "md5": "221228dc7437babca185ccb3609a6ba6",
+      "size": 2662,
+      "language": "ALL"
+    },
+    {
+      "path": "apt/Background.big",
+      "md5": "aecde4d713070f5bf923fc33c0241c85",
+      "size": 6727,
+      "language": "ALL"
+    },
+    {
+      "path": "apt/BannerUI.big",
+      "md5": "2c8e66f5b6c3791a18c3a82cc936a479",
+      "size": 16341,
+      "language": "ALL"
+    },
+    {
+      "path": "apt/CahAppearance.big",
+      "md5": "44f7ad6ae07e2913627f693ff850b804",
+      "size": 1126472,
+      "language": "ALL"
+    },
+    {
+      "path": "apt/CahClass.big",
+      "md5": "1cd644c542fbafa875d59486d82f7250",
+      "size": 1111444,
+      "language": "ALL"
+    },
+    {
+      "path": "apt/CahManager.big",
+      "md5": "cf7e4c0005ae89cd1b6e377f6cdd8828",
+      "size": 1434272,
+      "language": "ALL"
+    },
+    {
+      "path": "apt/CahNewFeatures.big",
+      "md5": "7637ce6c0b2b534d3ad0139a6416da16",
+      "size": 546980,
+      "language": "ALL"
+    },
+    {
+      "path": "apt/CahPowers.big",
+      "md5": "89338b4ead9f8516fb8449bc7a0f7f11",
+      "size": 2319888,
+      "language": "ALL"
+    },
+    {
+      "path": "apt/CampaignMenu.big",
+      "md5": "f02ce4fe0b54d4141dd5e2ceba037bf6",
+      "size": 280624,
+      "language": "ALL"
+    },
+    {
+      "path": "apt/Connections.big",
+      "md5": "7fbaff15778ced214933e2bb71f0c062",
+      "size": 97408,
+      "language": "ALL"
+    },
+    {
+      "path": "apt/CreateAHero.big",
+      "md5": "b1fd0b13e35667cb05851276d2894682",
+      "size": 19257,
+      "language": "ALL"
+    },
+    {
+      "path": "apt/DisconnectScreen.big",
+      "md5": "ac48aca1a55ad506b16181a5829fd129",
+      "size": 187340,
+      "language": "ALL"
+    },
+    {
+      "path": "apt/GadgetColorPicker.big",
+      "md5": "6cf04cc3972fea3094258d9c88e87160",
+      "size": 8295,
+      "language": "ALL"
+    },
+    {
+      "path": "apt/GadgetTimer.big",
+      "md5": "cf9c08fcf4c4dab347b0bcb61b5d2fe6",
+      "size": 78286,
+      "language": "ALL"
+    },
+    {
+      "path": "apt/GameWindowGadgets.big",
+      "md5": "5b7ea9a603b0e28dbd3ee10da6515668",
+      "size": 125360,
+      "language": "ALL"
+    },
+    {
+      "path": "apt/GuiFX.big",
+      "md5": "7538a08aab1f22cd6c961951405075db",
+      "size": 4345012,
+      "language": "ALL"
+    },
+    {
+      "path": "apt/InGameChat.big",
+      "md5": "9d14b9da42b96e2f00872487d7056d30",
+      "size": 1082300,
+      "language": "ALL"
+    },
+    {
+      "path": "apt/InGameHelpBox.big",
+      "md5": "90259daed95154d12fd57665569d3b31",
+      "size": 9847,
+      "language": "ALL"
+    },
+    {
+      "path": "apt/InGameHeroSelect.big",
+      "md5": "61d363079771e71497207ae6c9284b99",
+      "size": 2285040,
+      "language": "ALL"
+    },
+    {
+      "path": "apt/InGameNotificationBox.big",
+      "md5": "0d9064dc623a7203d88b583a36a31875",
+      "size": 297634,
+      "language": "ALL"
+    },
+    {
+      "path": "apt/InGamePlanningMode.big",
+      "md5": "2cabbce4bd194e0ece0ddf2986c8f928",
+      "size": 1084356,
+      "language": "ALL"
+    },
+    {
+      "path": "apt/InGameRadialMenuStage.big",
+      "md5": "b4ef1c033abded3a2830718e968be084",
+      "size": 70732,
+      "language": "ALL"
+    },
+    {
+      "path": "apt/InGameSideCommandBar.big",
+      "md5": "55128abcc9f4ef33e41ba506822ba761",
+      "size": 17618,
+      "language": "ALL"
+    },
+    {
+      "path": "apt/InGameSpellBook.big",
+      "md5": "40d1514d2e5d989862aefb3fdf74f253",
+      "size": 30599,
+      "language": "ALL"
+    },
+    {
+      "path": "apt/LanLobby.big",
+      "md5": "4b2e743639e6c18ed3f86d0d66a395d4",
+      "size": 589736,
+      "language": "ALL"
+    },
+    {
+      "path": "apt/LanOpenPlay.big",
+      "md5": "d7bfbb6e12e2579086044907a287f533",
+      "size": 340272,
+      "language": "ALL"
+    },
+    {
+      "path": "apt/LanStrategic.big",
+      "md5": "77e965a922aafd71c7e41c18669144e8",
+      "size": 351376,
+      "language": "ALL"
+    },
+    {
+      "path": "apt/libInGameImagesMain.big",
+      "md5": "361f2796ec392121a957fb7c86c49d17",
+      "size": 2113784,
+      "language": "ALL"
+    },
+    {
+      "path": "apt/libInGameUI.big",
+      "md5": "5cdd0cb04e077e0dff483f55f2a1916a",
+      "size": 100827,
+      "language": "ALL"
+    },
+    {
+      "path": "apt/libProgressBar.big",
+      "md5": "59c62a6231764a0e2b55a1497379f279",
+      "size": 21748,
+      "language": "ALL"
+    },
+    {
+      "path": "apt/libSnow.big",
+      "md5": "7998a35580ddc184c781a03c34d863d7",
+      "size": 7100,
+      "language": "ALL"
+    },
+    {
+      "path": "apt/LivingWorldUI.big",
+      "md5": "62a443bb7911c97a87ac50d829d8e9cf",
+      "size": 2947280,
+      "language": "ALL"
+    },
+    {
+      "path": "apt/LoadScreen.big",
+      "md5": "4fb583ad279b97f4b742beaa37f2a958",
+      "size": 24038,
+      "language": "ALL"
+    },
+    {
+      "path": "apt/MainMenu.big",
+      "md5": "3f0a4aa4c8196e0855dde26a50196696",
+      "size": 2187080,
+      "language": "ALL"
+    },
+    {
+      "path": "apt/MenuExport.big",
+      "md5": "1405a8d7783eb563b683d9c978bb2dcf",
+      "size": 10878688,
+      "language": "ALL"
+    },
+    {
+      "path": "apt/MenuFrameAndBg.big",
+      "md5": "dca3cb7ebf773a32ebb974930d4d8990",
+      "size": 4642,
+      "language": "ALL"
+    },
+    {
+      "path": "apt/Messenger.big",
+      "md5": "701bd4e9eef9dfee2a2218bbddebba82",
+      "size": 4735732,
+      "language": "ALL"
+    },
+    {
+      "path": "apt/MpGameSetup.big",
+      "md5": "6454882484bdb82eb09a0061a69eaf4c",
+      "size": 1030948,
+      "language": "ALL"
+    },
+    {
+      "path": "apt/Objectives.big",
+      "md5": "c64b39b4a6f8535c9cd6104f8d75e5cc",
+      "size": 41323,
+      "language": "ALL"
+    },
+    {
+      "path": "apt/OnlineHome.big",
+      "md5": "a56b924b92fdcbbf08e8cedd530ba157",
+      "size": 179800,
+      "language": "ALL"
+    },
+    {
+      "path": "apt/OnlineLogin.big",
+      "md5": "286bc761352715a3b9fc48535ce884ef",
+      "size": 826836,
+      "language": "ALL"
+    },
+    {
+      "path": "apt/OnlineOpenPlay.big",
+      "md5": "5b6d2460f7353bcb75e39ed2c85f464b",
+      "size": 1223284,
+      "language": "ALL"
+    },
+    {
+      "path": "apt/OnlineQuickMatch.big",
+      "md5": "2ba10fa0b042133ae9ad7efca4edd1ad",
+      "size": 46874,
+      "language": "ALL"
+    },
+    {
+      "path": "apt/OnlineShell.big",
+      "md5": "5838b43ffd24d1e022ef11ed551e625a",
+      "size": 1148592,
+      "language": "ALL"
+    },
+    {
+      "path": "apt/OnlineStrategic.big",
+      "md5": "e46458c70b6f4db23fab935acf602b58",
+      "size": 103152,
+      "language": "ALL"
+    },
+    {
+      "path": "apt/Options.big",
+      "md5": "115eae7e0eb5ecb59b64db0fdc627228",
+      "size": 2488194,
+      "language": "ALL"
+    },
+    {
+      "path": "apt/Palantir.big",
+      "md5": "5b2afa79f3537536c61835f1f547bf72",
+      "size": 2705054,
+      "language": "ALL"
+    },
+    {
+      "path": "apt/PalantirExport.big",
+      "md5": "feccd60f989ef7c7cc5cb8d88000b4d3",
+      "size": 2076318,
+      "language": "ALL"
+    },
+    {
+      "path": "apt/PlayerTribute.big",
+      "md5": "e499563c83d113f8cfc74183328c95fc",
+      "size": 2138064,
+      "language": "ALL"
+    },
+    {
+      "path": "apt/QuitMenu.big",
+      "md5": "26255b39682d383becdac627cee09bc5",
+      "size": 40115,
+      "language": "ALL"
+    },
+    {
+      "path": "apt/SaveLoad.big",
+      "md5": "f49a0c5a86a5c7b91690d767ffbf58f2",
+      "size": 1109984,
+      "language": "ALL"
+    },
+    {
+      "path": "apt/SideCommandBar.big",
+      "md5": "b55ef9763bfe2bdfba16bd9a4ff1643c",
+      "size": 2826,
+      "language": "ALL"
+    },
+    {
+      "path": "apt/Skirmish.big",
+      "md5": "3d0b75d73fbaa2c9423d427fc3a96c93",
+      "size": 43888,
+      "language": "ALL"
+    },
+    {
+      "path": "apt/SkirmishOpenPlay.big",
+      "md5": "2293c9f71208a04fad593cecf1a223be",
+      "size": 7650,
+      "language": "ALL"
+    },
+    {
+      "path": "apt/SkirmishStrategic.big",
+      "md5": "9d8f425ceadc7fa3aadbd8be512e16ad",
+      "size": 289312,
+      "language": "ALL"
+    },
+    {
+      "path": "apt/SpellStore.big",
+      "md5": "9891e961b39936bcdf339f16cba41fce",
+      "size": 2218012,
+      "language": "ALL"
+    },
+    {
+      "path": "apt/Stats.big",
+      "md5": "f00cf5a41667acab64f27fceda1b91ad",
+      "size": 572944,
+      "language": "ALL"
+    },
+    {
+      "path": "apt/StrategicArmyUnitSwapper.big",
+      "md5": "1c107a9464acb83fc9e271dc18940081",
+      "size": 1120802,
+      "language": "ALL"
+    },
+    {
+      "path": "apt/StrategicBattlePrompt.big",
+      "md5": "08ac3ae2947cf50b919e54179af760fb",
+      "size": 2169790,
+      "language": "ALL"
+    },
+    {
+      "path": "apt/StrategicBattlePromptArmyPanel.big",
+      "md5": "8620c7ee6bfe76b32b819bf2d7b80715",
+      "size": 1065220,
+      "language": "ALL"
+    },
+    {
+      "path": "apt/StrategicBattlePromptPlayerPage.big",
+      "md5": "1af44f6698d8d589ff8b382f6356743b",
+      "size": 558554,
+      "language": "ALL"
+    },
+    {
+      "path": "apt/StrategicChecklist.big",
+      "md5": "96086646dc393e7416088319df9069d4",
+      "size": 1121322,
+      "language": "ALL"
+    },
+    {
+      "path": "apt/StrategicConflictResults.big",
+      "md5": "ff08541d6ff87f226718c3316421fb41",
+      "size": 2174354,
+      "language": "ALL"
+    },
+    {
+      "path": "apt/StrategicDetailsArmies.big",
+      "md5": "6fa7a25551adcc7ccaf386f677e3ebb7",
+      "size": 279270,
+      "language": "ALL"
+    },
+    {
+      "path": "apt/StrategicDetailsArmyRetinue.big",
+      "md5": "2328b6f38fbff65a6580e2a9fd607e91",
+      "size": 1119202,
+      "language": "ALL"
+    },
+    {
+      "path": "apt/StrategicDetailsBuildQueue.big",
+      "md5": "bc611195716e3f3469d9209c75ec0f93",
+      "size": 1096986,
+      "language": "ALL"
+    },
+    {
+      "path": "apt/StrategicDetailsRegion.big",
+      "md5": "2a4c500cb9a7a713ee9a46c74820c785",
+      "size": 143632,
+      "language": "ALL"
+    },
+    {
+      "path": "apt/StrategicDetailsStructures.big",
+      "md5": "c9a570652df75656b6a4546e5732c379",
+      "size": 544842,
+      "language": "ALL"
+    },
+    {
+      "path": "apt/StrategicDetailsTerritory.big",
+      "md5": "e483cb24311cab8e50074601d872f418",
+      "size": 143098,
+      "language": "ALL"
+    },
+    {
+      "path": "apt/StrategicDetailsTray.big",
+      "md5": "af0330f0ea56a1fa5f8e7cea211e97cb",
+      "size": 286292,
+      "language": "ALL"
+    },
+    {
+      "path": "apt/StrategicDynamicAutoResolve.big",
+      "md5": "cd16e82b7a8ed0120c33435324d63b7d",
+      "size": 4404238,
+      "language": "ALL"
+    },
+    {
+      "path": "apt/StrategicEndTurnButton.big",
+      "md5": "e842e17283ac181412b6f66e3c75d583",
+      "size": 1073532,
+      "language": "ALL"
+    },
+    {
+      "path": "apt/StrategicHUD.big",
+      "md5": "64f202b539fc186e62c2aada36e0bb17",
+      "size": 21963,
+      "language": "ALL"
+    },
+    {
+      "path": "apt/StrategicNextTurnInd.big",
+      "md5": "44d63f591bdff4016801802cc11ea395",
+      "size": 2114440,
+      "language": "ALL"
+    },
+    {
+      "path": "apt/StrategicPalantir.big",
+      "md5": "54f3d420215f08b2ef6fcae447ece53e",
+      "size": 424572,
+      "language": "ALL"
+    },
+    {
+      "path": "apt/StrategicPlayerStatus.big",
+      "md5": "66a78112f1fd2a003e18d92ccde7c704",
+      "size": 2165238,
+      "language": "ALL"
+    },
+    {
+      "path": "apt/StrategicRegionAward.big",
+      "md5": "d35011f30749dfddccf3a454d03bdcad",
+      "size": 2175934,
+      "language": "ALL"
+    },
+    {
+      "path": "apt/StrategicStats.big",
+      "md5": "f9f6a8a7133d904820c51ea71e552785",
+      "size": 304376,
+      "language": "ALL"
+    },
+    {
+      "path": "apt/StrategicVeterancy.big",
+      "md5": "f9d3bc00fe05f63e0dfb32beb8279c08",
+      "size": 2188806,
+      "language": "ALL"
+    },
+    {
+      "path": "apt/TimeLine.big",
+      "md5": "f556d5434d095d878b54a038b256d24f",
+      "size": 1170352,
+      "language": "ALL"
+    },
+    {
+      "path": "apt/VerticalScrollBar.big",
+      "md5": "15009d8e053fd98945d0fb201cb8edb2",
+      "size": 16723,
+      "language": "ALL"
+    },
+    {
+      "path": "Audio.big",
+      "md5": "dc4beeff6a9a9587a8e5b2fc2f529d5b",
+      "size": 2214478,
+      "language": "ALL"
+    },
+    {
+      "path": "Bases.big",
+      "md5": "abf8f80bac2b46842c73fd75b73d6c7f",
+      "size": 854842,
+      "language": "ALL"
+    },
+    {
+      "path": "Data1.big",
+      "md5": "ee5c0791c75a55a5123d0c21b5fd680f",
+      "size": 625668,
+      "language": "ALL"
+    },
+    {
+      "path": "data2.big",
+      "md5": "c6ee671f7e6546f117e1a1795a17018f",
+      "size": 2736520,
+      "language": "ALL"
+    },
+    {
+      "path": "INI.big",
+      "md5": "2f24887ba2b0c1d210bc7bc2d6c62c31",
+      "size": 29034678,
+      "language": "ALL"
+    },
+    {
+      "path": "lang/English.big",
+      "md5": "3b49cdaf47b25729ff1e162885772662",
+      "size": 1252933,
+      "language": "EN"
+    },
+    {
+      "path": "lang/EnglishAudio.big",
+      "md5": "b0b988f245fa7023652d206968132563",
+      "size": 473605060,
+      "language": "EN NL NO PL SV TR"
+    },
+    {
+      "path": "lang/englishpatch201.big",
+      "md5": "d279329f6a34f1b7a43dbad94430461c",
+      "size": 1207497,
+      "language": "EN"
+    },
+    {
+      "path": "Libraries.big",
+      "md5": "3c481dd56708585718000349acd1ce7a",
+      "size": 44715,
+      "language": "ALL"
+    },
+    {
+      "path": "lotrsec.big",
+      "md5": "ca2cbcc80f8b9dbef309adb8057aca03",
+      "size": 787458,
+      "language": "ALL"
+    },
+    {
+      "path": "Maps.big",
+      "md5": "5877fb6e9e02723c26c208218a58ec66",
+      "size": 84237960,
+      "language": "ALL"
+    },
+    {
+      "path": "Music.big",
+      "md5": "210b1498f4e7f8bbda750b91d8ab93f5",
+      "size": 1193851,
+      "language": "ALL"
+    },
+    {
+      "path": "Shaders.big",
+      "md5": "4c62668348d77a5f3bd66bdf5e5ef44d",
+      "size": 1193229,
+      "language": "ALL"
+    },
+    {
+      "path": "Terrain.big",
+      "md5": "b6520faebd7ce102ffa3031d1fbecfcc",
+      "size": 11471885,
+      "language": "ALL"
+    },
+    {
+      "path": "Textures0.big",
+      "md5": "2825a6b57c4746b92a43ca97d20c97ba",
+      "size": 1183466,
+      "language": "ALL"
+    },
+    {
+      "path": "Textures1.big",
+      "md5": "ef0a2740d3e115d199784ef78dcdc28a",
+      "size": 88039866,
+      "language": "ALL"
+    },
+    {
+      "path": "Textures2.big",
+      "md5": "832ee7cef75921f66e6939a638a9cd9a",
+      "size": 228832235,
+      "language": "ALL"
+    },
+    {
+      "path": "Textures3.big",
+      "md5": "b11b1b822d7f6d970267f6a050caadc7",
+      "size": 139382119,
+      "language": "ALL"
+    },
+    {
+      "path": "Textures4.big",
+      "md5": "8356bbca440e7da32639f30b8bfd1065",
+      "size": 503160,
+      "language": "ALL"
+    },
+    {
+      "path": "W3D.big",
+      "md5": "bb581b6f711c4e831d45c695d110accc",
+      "size": 237730343,
+      "language": "ALL"
+    },
+    {
+      "path": "Window.big",
+      "md5": "cc5c234c94edfac57fba8f7f000921b4",
+      "size": 79595,
+      "language": "ALL"
+    }
+  ]
+}

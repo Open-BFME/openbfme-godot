@@ -31,7 +31,7 @@ function Assert-File([string]$Path) {
 }
 
 try {
-    Assert-File (Join-Path $repoRoot "contracts\rotwk-201-product-scope.json")
+    Assert-File (Join-Path $repoRoot "contracts\rotwk-202-v9.7.7-product-scope.json")
     Assert-File (Join-Path $repoRoot "DIRECTION.md")
     Assert-File (Join-Path $repoRoot "docs\MILESTONE_CURRENT.md")
     Assert-File (Join-Path $repoRoot "tools\rotwk-systems.ps1")

@@ -1,0 +1,175 @@
+{
+  "schema": "openbfme.retail-baseline",
+  "schemaVersion": 1,
+  "baselineId": "rotwk-202-v9.7.7-en",
+  "product": {
+    "name": "The Lord of the Rings: The Battle for Middle-earth II - The Rise of the Witch-king",
+    "patch": "2.02",
+    "communityBuild": "9.7.7",
+    "language": "EN",
+    "releasedUtc": "2026-06-30T20:53:29.7250000Z"
+  },
+  "authority": {
+    "packageGuid": "official-2",
+    "packageName": "Patch 2.02",
+    "packageVersion": "9.7.7",
+    "workshopEndpoint": "https://bfmeladder.com/api/workshop/download?guid=official-2",
+    "receiptCanonicalization": "identity row guid|name|version|creationTime|fileCount|mapCount|factionCount, then every package file sorted by case-folded path as path|md5|size|language|url, UTF-8 LF with final LF",
+    "receiptSha256": "2f52ff76871f654aafd2c87dea790f737e67864078b84a2cb07dd40a69644064",
+    "packageFileCount": 19,
+    "packageBytes": 1256496774,
+    "declaredMapCount": 299,
+    "declaredFactionCount": 7,
+    "policySha256": "aaf30a92eacc76a8b11c0534235e569653f06fecb47400e28260981b5a04cf31",
+    "catalogSha256": "e1485aa8af794e0d154d2f5ccb65fa24af937c4ac9731f27d62e0eef9753c748",
+    "archiveCount": 217,
+    "recordCount": 53433,
+    "manifestExceptions": [
+      {
+        "packageGuid": "original-RotWK",
+        "path": "lang/EnglishAudio.big",
+        "upstreamSize": 0,
+        "resolvedBytes": 473605060,
+        "md5": "b0b988f245fa7023652d206968132563",
+        "sha256": "1e83fc713309782e52b72cd6c44906c2a676538557530c5cf1818c36db76f39d",
+        "resolution": "accept only a local file whose MD5 matches the official Workshop row; use its measured size in the archive policy"
+      }
+    ]
+  },
+  "layers": [
+    {
+      "order": 0,
+      "directory": "layer-0-patch202",
+      "role": "Patch 2.02 v9.7.7 override",
+      "policy": "rotwk-202-v9.7.7-english-overlay.json",
+      "policySha256": "69a52211fe502892f8484ccbb686948e3aad15fc0f547de1603857e308a4231f",
+      "archiveCount": 4
+    },
+    {
+      "order": 1,
+      "directory": "layer-1-rotwk",
+      "role": "RotWK 2.01 expansion base",
+      "policy": "rotwk-201-english-archives.json",
+      "policySha256": "0decfa2311078a14d7f9a6eff0165abadaa35feea1dcf3b9618f73520a9c3e56",
+      "archiveCount": 106
+    },
+    {
+      "order": 2,
+      "directory": "layer-2-bfme2",
+      "role": "BFME2 1.06 base",
+      "policy": "bfme2-106-english-archives.json",
+      "policySha256": "98707c52862f378ec22a02ad0572cb131faa56fbfd34ff5f1f0845fd33931d47",
+      "archiveCount": 107
+    }
+  ],
+  "requiredPackageFiles": [
+    {
+      "path": "__patch202.big",
+      "role": "gameplay-maps-art-audio-override",
+      "bytes": 660280489,
+      "md5": "a69d57c5fba49c51a813a492455348db",
+      "sha256": "70fa4e90a031c01460047e05cf882c6d95568e29f3695f00aaa4a3ed492f7d7a"
+    },
+    {
+      "path": "_202music.big",
+      "role": "music-override",
+      "bytes": 501367290,
+      "md5": "ec33fd05dda11ab6fac3fd7b45bea6f3",
+      "sha256": "5733be34b77fd232c76865eb7bdff3b3c63fa446d493e2bb58f12df1bac0ec85"
+    },
+    {
+      "path": "___hdrotwk.v.0.9.big",
+      "role": "official-package-presentation-layer",
+      "bytes": 41536808,
+      "md5": "ea601ff7b2efdf1462203720655aee9b",
+      "sha256": "eeef4fe149568397413e352a0b10afa6ee6f192d2c82cd93433f6b3c6f39285a"
+    },
+    {
+      "path": "lang/englishpatch202.big",
+      "role": "english-localization-override",
+      "bytes": 1817588,
+      "md5": "eed6c5e1dc39cada628555aee699a313",
+      "sha256": "8d4cdceeb9a14afc8ade2b5d64a1bc0a9cf444c8c7bb647e7b3935cf7a6f53cf"
+    },
+    {
+      "path": "lotrbfme2ep1.exe",
+      "role": "behavior-oracle-executable",
+      "bytes": 11345920,
+      "md5": "7a4068f87ea5c3b98e03ae4e83e2b806",
+      "sha256": "98a2d6bc1e965eeb764df65194d433e8aedebfa6139eecb12f3d6923ece25456"
+    },
+    {
+      "path": "asset.dat",
+      "role": "asset-index-oracle",
+      "bytes": 965138,
+      "md5": "d135f0cf951f6abd39d9a96a0c90e1ef",
+      "sha256": "b35a1188f62f29340d2d90ab3bd3bd04c22ba2fd1c9975df1ccc61e146b1330d"
+    },
+    {
+      "path": "2.02 Patch Notes.txt",
+      "role": "change-history-reference",
+      "bytes": 696992,
+      "md5": "a60ab336d7378a4758968637e451bbdc",
+      "sha256": "f48ba776520b83937f93bb80b85795607173b4fddb8177bb23a7def93b534e1d"
+    }
+  ],
+  "overlayCensus": {
+    "archiveMembers": 4342,
+    "effectiveCaseFoldedPaths": 4337,
+    "newAgainst201": 2437,
+    "replaces201": 1900,
+    "iniOrInc": 1126,
+    "w3d": 545,
+    "textures": 1903,
+    "audio": 390,
+    "mapPayloads": 317,
+    "countingRule": "effective winners across the four selected English/ALL overlay BIG archives; categories are path classifications and do not imply conversion or parity"
+  },
+  "semanticCensus": {
+    "rotwk201": {
+      "iniDocuments": 792,
+      "uniqueObjects": 4683,
+      "definitions": 30720,
+      "assignments": 517567
+    },
+    "rotwk202v977": {
+      "iniDocuments": 850,
+      "uniqueObjects": 5494,
+      "definitions": 36940,
+      "assignments": 597886
+    },
+    "claimLimit": "source-discovery only"
+  },
+  "currentCheckoutSnapshot": {
+    "commit": "a75fc0b8ac8ca4926910123b776e9232b6ff0882",
+    "activePack": "rotwk-men-vslice/5079efbdb8364dd2e5a1070820388d1fcee853e2f32a766965e1b25a7bcb0298",
+    "mountedPackCount": 100,
+    "compiledFactions": 7,
+    "compiledUnits": 137,
+    "compiledStructures": 155,
+    "retailSliceResult": {
+      "passed": 369,
+      "failed": 61
+    },
+    "activeManifestClaims": {
+      "assetConversionComplete": false,
+      "fullFactionComplete": false,
+      "oracleParityComplete": false,
+      "verticalSliceComplete": false,
+      "sourceClosureComplete": false,
+      "coverageDenominatorComplete": false
+    }
+  },
+  "claimBoundary": {
+    "sourcePinned": true,
+    "payloadHashesLocallyVerified": true,
+    "layeredCatalogVerified": true,
+    "effectiveTreeSealed": false,
+    "selectedPacksRetargeted": false,
+    "featureGraphGenerated": false,
+    "behaviorParityComplete": false,
+    "visualParityComplete": false,
+    "audioParityComplete": false,
+    "productParityComplete": false
+  }
+}

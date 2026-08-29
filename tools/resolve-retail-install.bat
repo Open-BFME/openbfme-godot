@@ -16,12 +16,12 @@ REM derived from the environment of the machine it runs on.
 if defined BFME2_INSTALL (
   if exist "%BFME2_INSTALL%\game.dat" exit /b 0
   echo RETAIL_INSTALL WARN BFME2_INSTALL is set to "%BFME2_INSTALL%" but no game.dat was found there.
-  exit /b 0
+  exit /b 1
 )
 
-set "_OBFME_RELDIRS=Electronic Arts\The Battle for Middle-earth II;EA Games\The Battle for Middle-earth II;Electronic Arts\The Lord of the Rings, The Rise of the Witch-king;EA Games\The Lord of the Rings, The Rise of the Witch-king;Steam\steamapps\common\The Battle for Middle-earth II;GOG Galaxy\Games\The Battle for Middle-earth II"
+set "_OBFME_RELDIRS=BFME2;Electronic Arts\The Battle for Middle-earth II;EA Games\The Battle for Middle-earth II;Electronic Arts\The Lord of the Rings, The Rise of the Witch-king;EA Games\The Lord of the Rings, The Rise of the Witch-king;Steam\steamapps\common\The Battle for Middle-earth II;GOG Galaxy\Games\The Battle for Middle-earth II"
 
-for %%R in ("%ProgramFiles(x86)%" "%ProgramFiles%" "%ProgramW6432%" "C:" "D:" "E:" "F:" "G:" "C:\Games" "D:\Games" "E:\Games" "F:\Games") do (
+for %%R in ("%ProgramFiles(x86)%" "%ProgramFiles%" "%ProgramW6432%" "C:" "D:" "E:" "F:" "G:" "H:" "C:\Games" "D:\Games" "E:\Games" "F:\Games" "G:\Games" "H:\Games") do (
   if not "%%~R"=="" (
     for %%D in ("%_OBFME_RELDIRS:;=" "%") do (
       if not defined BFME2_INSTALL (

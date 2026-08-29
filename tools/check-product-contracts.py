@@ -6,12 +6,14 @@ import argparse
 import hashlib
 import json
 from pathlib import Path
+import re
 from typing import Any
 
 
 ROOT = Path(__file__).resolve().parents[1]
-PRODUCT_PATH = ROOT / "contracts" / "rotwk-201-product-scope.json"
+PRODUCT_PATH = ROOT / "contracts" / "rotwk-202-v9.7.7-product-scope.json"
 MODDING_PATH = ROOT / "contracts" / "openbfme-modding-contract.json"
+BASELINE_PATH = ROOT / "contracts" / "rotwk-202-v9.7.7-baseline.json"
 # Historical BFME2-only policy (superseded): contracts/bfme2-106-product-scope.json
 
 
@@ -53,6 +55,121 @@ def _ids(rows: Any, label: str) -> set[str]:
     return set(values)
 
 
+def _validate_archive_policy(path: Path, expected_sha256: str) -> None:
+    policy = _load(path)
+    archives = policy.get("archives")
+    if not isinstance(archives, list) or not archives:
+        raise ValueError(f"{path.name}: archives must be a non-empty array")
+    rows: list[str] = []
+    seen: set[str] = set()
+    for member in sorted(archives, key=lambda row: str(row.get("path", "")).casefold()):
+        if not isinstance(member, dict) or set(member) != {
+            "path", "md5", "size", "language"
+        }:
+            raise ValueError(f"{path.name}: archive member is invalid")
+        key = member["path"].casefold()
+        if key in seen:
+            raise ValueError(f"{path.name}: duplicate archive path {member['path']}")
+        seen.add(key)
+        rows.append(
+            f"{member['path']}|{member['md5']}|{member['size']}|{member['language']}"
+        )
+    actual = hashlib.sha256(("\n".join(rows) + "\n").encode("utf-8")).hexdigest()
+    if policy.get("policySha256") != actual or actual != expected_sha256:
+        raise ValueError(f"{path.name}: archive policy digest mismatch")
+
+
+def validate_baseline(baseline: dict[str, Any]) -> str:
+    _assert_keys(
+        baseline,
+        {
+            "schema", "schemaVersion", "baselineId", "product", "authority",
+            "layers", "requiredPackageFiles", "overlayCensus", "semanticCensus",
+            "currentCheckoutSnapshot", "claimBoundary",
+        },
+        "baseline contract",
+    )
+    if (
+        baseline.get("schema") != "openbfme.retail-baseline"
+        or baseline.get("schemaVersion") != 1
+        or baseline.get("baselineId") != "rotwk-202-v9.7.7-en"
+        or baseline.get("product", {}).get("patch") != "2.02"
+        or baseline.get("product", {}).get("communityBuild") != "9.7.7"
+    ):
+        raise ValueError("baseline contract: target identity changed")
+    authority = baseline.get("authority", {})
+    receipt = authority.get("receiptSha256")
+    if (
+        authority.get("packageGuid") != "official-2"
+        or authority.get("packageVersion") != "9.7.7"
+        or not isinstance(receipt, str)
+        or not re.fullmatch(r"[0-9a-f]{64}", receipt)
+    ):
+        raise ValueError("baseline contract: workshop authority is invalid")
+    layers = baseline.get("layers")
+    if not isinstance(layers, list) or [row.get("order") for row in layers] != [0, 1, 2]:
+        raise ValueError("baseline contract: layered precedence is invalid")
+    for row in layers:
+        policy_name = row.get("policy")
+        digest = row.get("policySha256")
+        if not isinstance(policy_name, str) or not isinstance(digest, str):
+            raise ValueError("baseline contract: layer policy binding is invalid")
+        _validate_archive_policy(ROOT / "contracts" / policy_name, digest)
+    files = baseline.get("requiredPackageFiles")
+    if not isinstance(files, list) or len(files) != 7:
+        raise ValueError("baseline contract: required package file set changed")
+    if len({row.get("path", "").casefold() for row in files}) != len(files):
+        raise ValueError("baseline contract: duplicate required package path")
+    for row in files:
+        if (
+            not re.fullmatch(r"[0-9a-f]{32}", str(row.get("md5", "")))
+            or not re.fullmatch(r"[0-9a-f]{64}", str(row.get("sha256", "")))
+            or not isinstance(row.get("bytes"), int)
+            or row["bytes"] <= 0
+        ):
+            raise ValueError(f"baseline contract: invalid package hash row {row.get('path')}")
+    census = baseline.get("overlayCensus", {})
+    if census.get("newAgainst201", 0) + census.get("replaces201", 0) != census.get(
+        "effectiveCaseFoldedPaths"
+    ):
+        raise ValueError("baseline contract: overlay census does not close")
+    boundary = baseline.get("claimBoundary", {})
+    if boundary.get("sourcePinned") is not True:
+        raise ValueError("baseline contract: source is not pinned")
+    if boundary.get("layeredCatalogVerified") is True:
+        for field in ("policySha256", "catalogSha256"):
+            if not re.fullmatch(r"[0-9a-f]{64}", str(authority.get(field, ""))):
+                raise ValueError(f"baseline contract: invalid {field}")
+        if authority.get("archiveCount") != sum(
+            int(row.get("archiveCount", -1)) for row in layers
+        ):
+            raise ValueError("baseline contract: composed archive count mismatch")
+        if authority.get("recordCount") != 53433:
+            raise ValueError("baseline contract: catalog record count changed")
+        exceptions = authority.get("manifestExceptions")
+        expected_exception = {
+            "packageGuid": "original-RotWK",
+            "path": "lang/EnglishAudio.big",
+            "upstreamSize": 0,
+            "resolvedBytes": 473605060,
+            "md5": "b0b988f245fa7023652d206968132563",
+            "sha256": "1e83fc713309782e52b72cd6c44906c2a676538557530c5cf1818c36db76f39d",
+            "resolution": (
+                "accept only a local file whose MD5 matches the official Workshop "
+                "row; use its measured size in the archive policy"
+            ),
+        }
+        if exceptions != [expected_exception]:
+            raise ValueError("baseline contract: manifest exception changed")
+    promoted = [
+        key for key, value in boundary.items()
+        if key.endswith("Complete") and value is not False
+    ]
+    if promoted:
+        raise ValueError(f"baseline contract: unsupported completion claims {promoted}")
+    return receipt
+
+
 def validate_documents(
     product: dict[str, Any], modding: dict[str, Any]
 ) -> tuple[str, str]:
@@ -89,7 +206,7 @@ def validate_documents(
     roots = _ids(product["root_discovery_queries"], "root discovery queries")
     lanes = _ids(product["evidence_lanes"], "evidence lanes")
     claims = _ids(product["claim_profiles"], "claim profiles")
-    if "rotwk-201-complete" not in claims:
+    if "rotwk-202-v9.7.7-complete" not in claims:
         raise ValueError("product contract: missing complete claim profile")
 
     for domain in product["product_domains"]:
@@ -124,7 +241,7 @@ def validate_documents(
     }
     complete = next(
         row for row in product["claim_profiles"]
-        if row["id"] == "rotwk-201-complete"
+        if row["id"] == "rotwk-202-v9.7.7-complete"
     )
     if set(complete.get("required_domains", [])) != retail_domains:
         raise ValueError("complete claim must require every retail domain")
@@ -228,7 +345,9 @@ def validate_documents(
 
 
 def validate() -> tuple[str, str]:
-    return validate_documents(_load(PRODUCT_PATH), _load(MODDING_PATH))
+    result = validate_documents(_load(PRODUCT_PATH), _load(MODDING_PATH))
+    validate_baseline(_load(BASELINE_PATH))
+    return result
 
 
 def main() -> int:
@@ -236,9 +355,11 @@ def main() -> int:
     parser.add_argument("--check", action="store_true", help="validate without writing")
     parser.parse_args()
     product_digest, modding_digest = validate()
+    baseline_receipt = validate_baseline(_load(BASELINE_PATH))
     print(
         "PRODUCT_CONTRACTS PASS "
-        f"product_policy_sha256={product_digest} modding_policy_sha256={modding_digest}"
+        f"product_policy_sha256={product_digest} modding_policy_sha256={modding_digest} "
+        f"baseline_receipt_sha256={baseline_receipt}"
     )
     return 0
 

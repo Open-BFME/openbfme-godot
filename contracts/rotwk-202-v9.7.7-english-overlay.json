@@ -1,0 +1,40 @@
+{
+  "schema": "openbfme.retail-archive-policy",
+  "schemaVersion": 1,
+  "game": "rotwk",
+  "patch": "2.02 v9.7.7",
+  "package": {
+    "guid": "official-2",
+    "name": "Patch 2.02",
+    "version": "9.7.7",
+    "receiptSha256": "2f52ff76871f654aafd2c87dea790f737e67864078b84a2cb07dd40a69644064"
+  },
+  "language": "EN",
+  "policySha256": "69a52211fe502892f8484ccbb686948e3aad15fc0f547de1603857e308a4231f",
+  "archives": [
+    {
+      "path": "_202music.big",
+      "md5": "ec33fd05dda11ab6fac3fd7b45bea6f3",
+      "size": 501367290,
+      "language": "ALL"
+    },
+    {
+      "path": "___hdrotwk.v.0.9.big",
+      "md5": "ea601ff7b2efdf1462203720655aee9b",
+      "size": 41536808,
+      "language": "ALL"
+    },
+    {
+      "path": "__patch202.big",
+      "md5": "a69d57c5fba49c51a813a492455348db",
+      "size": 660280489,
+      "language": "ALL"
+    },
+    {
+      "path": "lang/englishpatch202.big",
+      "md5": "eed6c5e1dc39cada628555aee699a313",
+      "size": 1817588,
+      "language": "ALL"
+    }
+  ]
+}

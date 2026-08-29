@@ -11,7 +11,10 @@ import unittest
 from openbfme_importer.catalog import (
     ArchivePolicy,
     DEFAULT_BFME2_ARCHIVE_POLICY,
+    DEFAULT_ROTWK_201_ARCHIVE_POLICY,
+    DEFAULT_ROTWK_202_OVERLAY_POLICY,
     InstallCatalog,
+    default_rotwk_202_archive_policy,
 )
 from openbfme_importer.pipeline import _render_output_template
 from openbfme_importer.profile import ImportProfile, resolve_profile
@@ -43,6 +46,23 @@ class CatalogProfileTests(unittest.TestCase):
         self.assertEqual(
             policy.policy_sha256,
             "98707c52862f378ec22a02ad0572cb131faa56fbfd34ff5f1f0845fd33931d47",
+        )
+
+    def test_tracked_rotwk_202_policy_composes_exact_versioned_layers(self) -> None:
+        base = ArchivePolicy.load(DEFAULT_ROTWK_201_ARCHIVE_POLICY)
+        overlay = ArchivePolicy.load(DEFAULT_ROTWK_202_OVERLAY_POLICY)
+        policy = default_rotwk_202_archive_policy()
+        self.assertEqual(base.patch, "2.01")
+        self.assertEqual(len(base.archives), 106)
+        self.assertEqual(overlay.patch, "2.02 v9.7.7")
+        self.assertEqual(overlay.package_guid, "official-2")
+        self.assertEqual(len(overlay.archives), 4)
+        self.assertEqual(policy.patch, "2.02 v9.7.7")
+        self.assertEqual(len(policy.archives), 217)
+        prefixes = {row.path.split("/", 1)[0] for row in policy.archives}
+        self.assertEqual(
+            prefixes,
+            {"layer-0-patch202", "layer-1-rotwk", "layer-2-bfme2"},
         )
 
     def test_policy_catalog_ignores_extras_and_rejects_member_payload_drift(self) -> None:

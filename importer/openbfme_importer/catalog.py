@@ -10,7 +10,7 @@ import json
 import os
 import re
 import subprocess
-from typing import Any, Iterable, Mapping
+from typing import Any, Iterable, Mapping, Sequence
 
 from .big import BigArchive, BigEntry
 from .big import sha256_file
@@ -126,6 +126,17 @@ DEFAULT_BFME2_ARCHIVE_POLICY = (
     Path(__file__).resolve().parents[2]
     / "contracts"
     / "bfme2-106-english-archives.json"
+)
+PRESENTATION_OVERRIDE_ARCHIVES = ("___hdrotwk.v.0.9.big",)
+DEFAULT_ROTWK_201_ARCHIVE_POLICY = (
+    Path(__file__).resolve().parents[2]
+    / "contracts"
+    / "rotwk-201-english-archives.json"
+)
+DEFAULT_ROTWK_202_OVERLAY_POLICY = (
+    Path(__file__).resolve().parents[2]
+    / "contracts"
+    / "rotwk-202-v9.7.7-english-overlay.json"
 )
 
 
@@ -295,6 +306,95 @@ class ArchivePolicy:
         return cls._from_value(value, label="serialized archive policy")
 
 
+def compose_archive_policies(
+    layers: Sequence[tuple[str, ArchivePolicy]],
+    *,
+    game: str,
+    patch: str,
+    package_guid: str,
+    package_name: str,
+    package_version: str,
+    language: str,
+) -> ArchivePolicy:
+    """Compose exact package policies under canonical layered-install prefixes."""
+
+    if not layers:
+        raise ValueError("layered archive policy requires at least one layer")
+    members: list[ArchivePolicyMember] = []
+    receipt_rows: list[str] = []
+    seen: set[str] = set()
+    for prefix, policy in layers:
+        canonical_prefix = "/".join(safe_relative_parts(prefix))
+        if _LAYER_DIRECTORY.fullmatch(canonical_prefix) is None:
+            raise ValueError(f"archive policy layer is not canonical: {prefix!r}")
+        receipt_rows.append(
+            "|".join(
+                (
+                    canonical_prefix,
+                    policy.game,
+                    policy.patch,
+                    policy.package_guid,
+                    policy.package_version,
+                    policy.receipt_sha256,
+                    policy.policy_sha256,
+                )
+            )
+        )
+        for member in policy.archives:
+            path = f"{canonical_prefix}/{member.path}"
+            key = path.casefold()
+            if key in seen:
+                raise ValueError(f"duplicate layered archive policy member: {path}")
+            seen.add(key)
+            members.append(
+                ArchivePolicyMember(path, member.md5, member.size, member.language)
+            )
+    members.sort(key=lambda item: item.path.casefold())
+    canonical_rows = "".join(
+        f"{item.path}|{item.md5}|{item.size}|{item.language}\n" for item in members
+    )
+    receipt_rows.sort(key=str.casefold)
+    receipt_payload = "\n".join(receipt_rows) + "\n"
+    return ArchivePolicy(
+        game=game,
+        patch=patch,
+        package_guid=package_guid,
+        package_name=package_name,
+        package_version=package_version,
+        receipt_sha256=hashlib.sha256(receipt_payload.encode("utf-8")).hexdigest(),
+        language=language,
+        policy_sha256=hashlib.sha256(canonical_rows.encode("utf-8")).hexdigest(),
+        archives=tuple(members),
+    )
+
+
+def default_rotwk_202_archive_policy() -> ArchivePolicy:
+    """Return the pinned three-layer English Patch 2.02 v9.7.7 policy."""
+
+    return compose_archive_policies(
+        (
+            (
+                "layer-0-patch202",
+                ArchivePolicy.load(DEFAULT_ROTWK_202_OVERLAY_POLICY),
+            ),
+            (
+                "layer-1-rotwk",
+                ArchivePolicy.load(DEFAULT_ROTWK_201_ARCHIVE_POLICY),
+            ),
+            (
+                "layer-2-bfme2",
+                ArchivePolicy.load(DEFAULT_BFME2_ARCHIVE_POLICY),
+            ),
+        ),
+        game="rotwk",
+        patch="2.02 v9.7.7",
+        package_guid="openbfme-layered-rotwk-202-v9.7.7",
+        package_name="OpenBFME pinned RotWK Patch 2.02 v9.7.7 layers",
+        package_version="1",
+        language="EN",
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class ArchiveInfo:
     relative_path: str
@@ -340,6 +440,9 @@ def archive_precedence(relative_path: str) -> tuple[int, int, str]:
     if matched is not None:
         layer = int(matched.group(1))
     name = Path(relative_path).name.casefold()
+    presentation_names = [value.casefold() for value in PRESENTATION_OVERRIDE_ARCHIVES]
+    if name in presentation_names:
+        return layer, -100 + presentation_names.index(name), relative_path.casefold()
     patch_names = [value.casefold() for value in PATCH_ARCHIVES]
     if name in patch_names:
         return layer, patch_names.index(name), relative_path.casefold()
@@ -856,24 +959,61 @@ def doctor_install(
 ) -> dict[str, Any]:
     definition = retail_game(game)
     root = Path(install_root).expanduser().resolve()
+    content_root = root
+    patch_root = root
+    baseline_layout_ready = True
+    if definition.id == "rotwk":
+        patch_root = root / "layer-0-patch202"
+        content_root = root / "layer-1-rotwk"
+        bfme2_root = root / "layer-2-bfme2"
+        baseline_layout_ready = bool(
+            (patch_root / "__patch202.big").is_file()
+            and (patch_root / "lang" / "englishpatch202.big").is_file()
+            and (content_root / "game.dat").is_file()
+            and (bfme2_root / "game.dat").is_file()
+        )
     archive_status = []
     for name in CORE_ARCHIVES:
-        path = root / name
+        path = content_root / name
         archive_status.append(
             {"name": name, "present": path.is_file(), "size": path.stat().st_size if path.is_file() else 0}
         )
-    patches = [name for name in definition.patch_archives if (root / name).is_file()]
-    languages = sorted(path.name for path in (root / "lang").glob("*Audio.big")) if (root / "lang").is_dir() else []
+    patches = [
+        name
+        for name in definition.patch_archives
+        if (patch_root / name).is_file() or (content_root / name).is_file()
+    ]
+    language_roots = (patch_root / "lang", content_root / "lang")
+    languages = sorted(
+        {
+            path.name
+            for lang_root in language_roots
+            if lang_root.is_dir()
+            for path in lang_root.glob("*Audio.big")
+        }
+    )
     missing_required = [item["name"] for item in archive_status[:3] if not item["present"]]
-    patch_document = root / "patch.doc"
+    patch_document = patch_root / "patch.doc"
     patch_text = patch_document.read_bytes().decode("latin-1", errors="ignore") if patch_document.is_file() else ""
-    game_binary = root / "game.dat"
+    game_binary = next(
+        (
+            candidate
+            for candidate in (patch_root / "game.dat", content_root / "game.dat")
+            if candidate.is_file()
+        ),
+        content_root / "game.dat",
+    )
     version_info = _windows_version_info(game_binary)
     company_name = str(version_info.get("CompanyName", ""))
     modified_marker = "DEV!ANCE" in company_name.upper()
     executable = next(
-        (root / name for name in definition.executable_names if (root / name).is_file()),
-        root / definition.executable_names[0],
+        (
+            candidate
+            for name in definition.executable_names
+            for candidate in (patch_root / name, content_root / name)
+            if candidate.is_file()
+        ),
+        content_root / definition.executable_names[0],
     )
     declared_patch = next(
         (marker for marker in definition.patch_markers if marker in patch_text),
@@ -890,6 +1030,8 @@ def doctor_install(
             ),
             "unknown",
         )
+    if definition.id == "rotwk" and baseline_layout_ready:
+        declared_patch = "2.02 v9.7.7"
     result = {
         "game": definition.id,
         "game_name": definition.display_name,
@@ -909,8 +1051,19 @@ def doctor_install(
             "note": "archive hashes, not executable metadata, attest importer inputs",
         },
         "archives": archive_status,
-        "ready": root.is_dir() and executable.is_file() and not missing_required,
+        "ready": (
+            root.is_dir()
+            and executable.is_file()
+            and not missing_required
+            and baseline_layout_ready
+        ),
         "missing_required": missing_required,
+        "baseline_id": (
+            "rotwk-202-v9.7.7-en"
+            if definition.id == "rotwk"
+            else "bfme2-106-en"
+        ),
+        "baseline_layout_ready": baseline_layout_ready,
     }
     if deep and definition.id == "bfme2":
         attestations: list[dict[str, Any]] = []
@@ -934,11 +1087,22 @@ def doctor_install(
         result["modified_or_missing_slice_archives"] = modified
         result["ready"] = bool(result["ready"] and not modified)
     elif deep:
-        # ROTWK reference archive hashes are not pinned yet. Catalog and pack
-        # manifests still bind every selected archive directory and payload.
-        result["archive_attestation"] = []
-        result["modified_or_missing_slice_archives"] = []
-        result["deep_attestation_note"] = (
-            "no fixed ROTWK archive reference hashes are configured"
-        )
+        policy = default_rotwk_202_archive_policy()
+        result["archive_policy_sha256"] = policy.policy_sha256
+        try:
+            catalog = InstallCatalog.build(root, source_policy=policy)
+        except (OSError, ValueError) as exc:
+            result["archive_attestation"] = []
+            result["modified_or_missing_slice_archives"] = [str(exc)]
+            result["ready"] = False
+        else:
+            result["archive_attestation"] = [
+                {
+                    "policy": policy.package_guid,
+                    "archive_count": len(catalog.archives),
+                    "catalog_sha256": catalog.identity_sha256(),
+                    "matches_reference": True,
+                }
+            ]
+            result["modified_or_missing_slice_archives"] = []
     return result

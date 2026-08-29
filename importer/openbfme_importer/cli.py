@@ -16,6 +16,7 @@ from .catalog import (
     DEFAULT_BFME2_ARCHIVE_POLICY,
     InstallCatalog,
     catalog_provenance_reason,
+    default_rotwk_202_archive_policy,
     doctor_install,
 )
 from .bootstrap import bootstrap_tools, tool_status
@@ -395,11 +396,14 @@ def _catalog_install_root(args: argparse.Namespace) -> Path:
     if args.game != "rotwk":
         return requested
     layered = _state_root(args) / "editions" / "rotwk" / "layered-install"
-    layer_rotwk = layered / "layer-0-rotwk"
-    layer_bfme2 = layered / "layer-1-bfme2"
-    if not (layer_rotwk / "game.dat").is_file() or not (
-        layer_bfme2 / "game.dat"
-    ).is_file():
+    layer_patch = layered / "layer-0-patch202"
+    layer_rotwk = layered / "layer-1-rotwk"
+    layer_bfme2 = layered / "layer-2-bfme2"
+    if (
+        not (layer_patch / "__patch202.big").is_file()
+        or not (layer_rotwk / "game.dat").is_file()
+        or not (layer_bfme2 / "game.dat").is_file()
+    ):
         return requested
     if requested == layered.resolve() or requested == layer_rotwk.resolve():
         return layered.resolve()
@@ -434,7 +438,7 @@ def _load_or_build_catalog(args: argparse.Namespace) -> InstallCatalog:
     source_policy = (
         ArchivePolicy.load(DEFAULT_BFME2_ARCHIVE_POLICY)
         if args.game == "bfme2"
-        else None
+        else default_rotwk_202_archive_policy()
     )
     def _guard(catalog: InstallCatalog, origin: str) -> InstallCatalog:
         # Fail closed: never let a catalog that cannot evidence the requested
