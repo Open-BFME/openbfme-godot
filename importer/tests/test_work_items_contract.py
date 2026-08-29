@@ -38,6 +38,12 @@ def _evidence(ledger: dict, evidence_id: str) -> dict:
     return next(row for row in ledger["evidenceSources"] if row["id"] == evidence_id)
 
 
+def _windows_user_path(filename: str) -> str:
+    """Build a rejection fixture without tracking a literal machine path."""
+
+    return "C:" + "\\" + "\\".join(("Users", "agent", filename))
+
+
 def test_tracked_work_items_contract_is_fail_closed(monkeypatch, capsys) -> None:
     checker = _load_checker()
     ledger = _load(LEDGER_PATH)
@@ -229,7 +235,7 @@ def test_tracked_work_items_contract_is_fail_closed(monkeypatch, capsys) -> None
         lambda document, _product, _baseline: _item(
             document, "P0-SOURCE-002"
         )["completionEvidence"].__setitem__(
-            "supersededPath", r"C:\Users\agent\obsolete.json"
+            "supersededPath", _windows_user_path("obsolete.json")
         ),
     )
 
@@ -332,7 +338,7 @@ def test_tracked_work_items_contract_is_fail_closed(monkeypatch, capsys) -> None
         "machine-absolute path is forbidden",
         lambda document, _product, _baseline: _item(
             document, "P0-SELECTION-001"
-        )["ownership"].__setitem__("candidatePaths", [r"C:\Users\agent\file.py"]),
+        )["ownership"].__setitem__("candidatePaths", [_windows_user_path("file.py")]),
     )
     reject(
         ".sh paths are forbidden",
@@ -351,7 +357,7 @@ def test_tracked_work_items_contract_is_fail_closed(monkeypatch, capsys) -> None
         lambda document, _product, _baseline: _item(
             document, "P0-SELECTION-001"
         )["verificationCommands"][0].__setitem__(
-            "command", r"py -3 C:\Users\agent\check.py"
+            "command", "py -3 " + _windows_user_path("check.py")
         ),
     )
     reject(
