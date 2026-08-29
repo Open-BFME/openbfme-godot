@@ -275,12 +275,12 @@
       "domainIds": [],
       "rootQueryIds": ["effective-retail-winners"],
       "dependsOn": ["P0-SOURCE-002"],
-      "ownership": {"state": "unassigned", "assignee": null, "ownedPaths": [], "candidatePaths": ["importer/openbfme_importer/effective_assets_catalog.py", "tools/build-rotwk-202-effective-tree.py", "importer/tests/test_rotwk_202_effective_tree.py"]},
-      "scope": {"deliverable": "Content-addressed private manifest for all 48,566 case-folded winners with archive/offset/size/digest and override chain.", "notIncluded": "Retail payload export or feature semantics."},
+      "ownership": {"state": "unassigned", "assignee": null, "ownedPaths": [], "candidatePaths": ["importer/openbfme_importer/effective_tree.py", "tools/build-rotwk-202-effective-tree.py", "importer/tests/test_rotwk_202_effective_tree.py"]},
+      "scope": {"deliverable": "Content-addressed private manifest for all 53,433 raw archive records, classifying exactly 48,566 case-folded winners and 4,867 shadows with byte-range digests and complete override chains.", "notIncluded": "Retail payload export, loose-file discovery, definition inheritance, conversion, or feature semantics; the existing extracted EffectiveAssetsCatalog is not this authority."},
       "sourceEvidence": ["E-BL-202", "E-AUDIT-CORPUS-20260829"],
       "artifacts": ["workspace/retail-work/reports/compatibility/rotwk-202-v9.7.7-effective-tree.json"],
-      "acceptance": {"requiredLevels": ["L1"], "criteria": ["winner count is 48566", "every raw record has winner/shadow disposition", "manifest binds exact catalog and parser identity", "repeat generation is byte-identical"]},
-      "verificationCommands": [{"shell": "powershell.exe", "command": "py -3 tools\\build-rotwk-202-effective-tree.py --check", "availability": "planned", "timeoutSeconds": 1800, "expectedMarkers": ["ROTWK_202_EFFECTIVE_TREE PASS winners=48566"], "diagnosticPolicy": "strict-default"}],
+      "acceptance": {"requiredLevels": ["L1"], "criteria": ["all 53433 raw records are represented exactly once as one of 48566 winners or 4867 shadows", "every record binds policy-relative archive, original member spelling, case-folded key, offset, size, precedence, and streamed payload SHA-256", "every override chain is winner-first, retains additive INI and string-table shadows, and closes over every record index", "manifest binds baseline rotwk-202-v9.7.7-en, policy aaf30a92..., catalog e1485aa8..., and a digest of the exact parser/winner-rule sources", "repeat generation is byte-identical and contains no timestamp, host path, extracted payload, or member name in PASS output", "unsafe member names, file-directory prefix collisions, stale private roots, count-only receipts, and parser drift fail closed"]},
+      "verificationCommands": [{"shell": "powershell.exe", "command": "& .\\workspace\\retail-work\\tools\\python-3.12-env\\Scripts\\python.exe .\\tools\\build-rotwk-202-effective-tree.py --check", "availability": "planned", "timeoutSeconds": 1800, "expectedMarkers": ["ROTWK_202_EFFECTIVE_TREE PASS winners=48566 records=53433 shadows=4867 policy_sha256=aaf30a92eacc76a8b11c0534235e569653f06fecb47400e28260981b5a04cf31 catalog_sha256=e1485aa8af794e0d154d2f5ccb65fa24af937c4ac9731f27d62e0eef9753c748"], "diagnosticPolicy": "strict-default"}],
       "blockers": []
     },
     {
