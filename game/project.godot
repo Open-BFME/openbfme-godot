@@ -10,8 +10,8 @@ config_version=5
 
 [application]
 
-config/name="Open BFME"
-config/description="Desktop BFME2-inspired skirmish RTS (moddable)"
+config/name="OpenBFME"
+config/description="Exact clean-room Godot port of The Lord of the Rings: The Battle for Middle-earth II - The Rise of the Witch-king, Patch 2.02 v9.7.7"
 config/version="0.2.13"
 config/build_id="dev"
 run/main_scene="res://scenes/startup_boot.tscn"

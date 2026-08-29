@@ -1,0 +1,339 @@
+{
+  "schema": "openbfme.repository-boundaries",
+  "schemaVersion": 2,
+  "authority": {
+    "derivedFrom": [
+      "AGENTS.md",
+      "contracts/rotwk-202-v9.7.7-product-scope.json",
+      "contracts/rotwk-202-v9.7.7-baseline.json",
+      "DIRECTION.md",
+      "PLAN.md",
+      "orchestration/work-items.json"
+    ],
+    "rule": "This is an enforced ownership map derived from canonical state, not a competing product or completion authority."
+  },
+  "target": {
+    "productScopeContract": "openbfme.rotwk-202-v9.7.7.product-scope",
+    "retailBaselineId": "rotwk-202-v9.7.7-en",
+    "engine": "Godot 4.7",
+    "claim": "exact clean-room port; classification is not parity evidence"
+  },
+  "classDefinitions": [
+    {"id": "automation-config", "tracked": true, "currentEvidenceEligible": false},
+    {"id": "canonical-product-contract", "tracked": true, "currentEvidenceEligible": true},
+    {"id": "developer-entrypoint", "tracked": true, "currentEvidenceEligible": false},
+    {"id": "documentation", "tracked": true, "currentEvidenceEligible": false},
+    {"id": "effective-layer-contract", "tracked": true, "currentEvidenceEligible": true},
+    {"id": "generated-build-metadata", "tracked": true, "currentEvidenceEligible": false},
+    {"id": "historical-contract", "tracked": true, "currentEvidenceEligible": false},
+    {"id": "historical-derived-evidence", "tracked": true, "currentEvidenceEligible": false},
+    {"id": "historical-narrative", "tracked": true, "currentEvidenceEligible": false},
+    {"id": "importer-config", "tracked": true, "currentEvidenceEligible": false},
+    {"id": "importer-source", "tracked": true, "currentEvidenceEligible": false},
+    {"id": "launcher-source", "tracked": true, "currentEvidenceEligible": false},
+    {"id": "legal-metadata", "tracked": true, "currentEvidenceEligible": false},
+    {"id": "live-work-ledger", "tracked": true, "currentEvidenceEligible": false},
+    {"id": "nonshipping-experiment", "tracked": true, "currentEvidenceEligible": false},
+    {"id": "openbfme-product-contract", "tracked": true, "currentEvidenceEligible": false},
+    {"id": "public-asset-debt", "tracked": true, "currentEvidenceEligible": false},
+    {"id": "public-clean-room-fixture", "tracked": true, "currentEvidenceEligible": false},
+    {"id": "release-config", "tracked": true, "currentEvidenceEligible": false},
+    {"id": "repository-policy", "tracked": true, "currentEvidenceEligible": false},
+    {"id": "retired-generator-debt", "tracked": true, "currentEvidenceEligible": false},
+    {"id": "shipping-code", "tracked": true, "currentEvidenceEligible": false},
+    {"id": "test-code", "tracked": true, "currentEvidenceEligible": false},
+    {"id": "tool-source", "tracked": true, "currentEvidenceEligible": false},
+    {"id": "workflow-template", "tracked": true, "currentEvidenceEligible": false}
+  ],
+  "pathRules": [
+    {
+      "id": "root-policy",
+      "class": "repository-policy",
+      "roots": [".gitattributes", ".gitignore", "AGENTS.md", "CLAUDE.md", "CONTRIBUTING.md", "SECURITY.md"]
+    },
+    {
+      "id": "automation",
+      "class": "automation-config",
+      "roots": [".github/", "config/"]
+    },
+    {
+      "id": "canonical-direction",
+      "class": "canonical-product-contract",
+      "roots": ["DIRECTION.md", "PLAN.md", "contracts/rotwk-202-v9.7.7-baseline.json", "contracts/rotwk-202-v9.7.7-english-overlay.json", "contracts/rotwk-202-v9.7.7-product-scope.json"]
+    },
+    {
+      "id": "effective-source-layers",
+      "class": "effective-layer-contract",
+      "roots": ["contracts/bfme2-106-english-archives.json", "contracts/rotwk-201-english-archives.json"]
+    },
+    {
+      "id": "superseded-product-contract",
+      "class": "historical-contract",
+      "roots": ["contracts/bfme2-106-product-scope.json"]
+    },
+    {
+      "id": "openbfme-extension-contract",
+      "class": "openbfme-product-contract",
+      "roots": ["contracts/openbfme-modding-contract.json"]
+    },
+    {
+      "id": "live-ledger",
+      "class": "live-work-ledger",
+      "roots": ["orchestration/work-items.json"]
+    },
+    {
+      "id": "workflow",
+      "class": "workflow-template",
+      "roots": ["orchestration/README.md", "orchestration/TEMPLATE-brief.md", "orchestration/TEMPLATE-report.md"]
+    },
+    {
+      "id": "old-orchestration-records",
+      "class": "historical-narrative",
+      "roots": ["orchestration/briefs/", "orchestration/reports/"]
+    },
+    {
+      "id": "documentation",
+      "class": "documentation",
+      "roots": ["README.md", "docs/"]
+    },
+    {
+      "id": "public-fixture",
+      "class": "public-clean-room-fixture",
+      "roots": ["content/"]
+    },
+    {
+      "id": "nonshipping-csharp",
+      "class": "nonshipping-experiment",
+      "roots": ["engine/", "global.json"]
+    },
+    {
+      "id": "godot-shipping-code",
+      "class": "shipping-code",
+      "roots": ["game/project.godot", "game/scenes/", "game/src/"]
+    },
+    {
+      "id": "godot-tests",
+      "class": "test-code",
+      "roots": ["game/tests/"]
+    },
+    {
+      "id": "unattested-public-assets",
+      "class": "public-asset-debt",
+      "roots": ["game/assets/", "game/data/base/", "game/icon.svg", "game/icon.svg.import", "game/icon_ring.png", "game/icon_ring.png.import", "game/openbfme.ico"]
+    },
+    {
+      "id": "public-mod-fixtures",
+      "class": "public-clean-room-fixture",
+      "roots": ["game/mods/"]
+    },
+    {
+      "id": "godot-release-config",
+      "class": "release-config",
+      "roots": ["game/export_presets.cfg"]
+    },
+    {
+      "id": "generated-build-info",
+      "class": "generated-build-metadata",
+      "roots": ["game/data/build_info.json"]
+    },
+    {
+      "id": "historical-game-data",
+      "class": "historical-derived-evidence",
+      "roots": ["game/data/retail_ai_call_census.json", "game/data/retail_faction_sides.json", "game/data/retail_module_census.json", "game/data/retail_w3d_chunk_backlog.json", "game/data/script_world_surface.json"]
+    },
+    {
+      "id": "importer-implementation",
+      "class": "importer-source",
+      "roots": ["importer/blender/", "importer/openbfme_importer/"]
+    },
+    {
+      "id": "importer-tests",
+      "class": "test-code",
+      "roots": ["importer/tests/"]
+    },
+    {
+      "id": "importer-configuration",
+      "class": "importer-config",
+      "roots": ["importer/docs/", "importer/profiles/", "importer/requirements-release-win.txt", "importer/requirements-win.txt"]
+    },
+    {
+      "id": "launcher",
+      "class": "launcher-source",
+      "roots": ["launcher/"]
+    },
+    {
+      "id": "retired-guessed-data-generator",
+      "class": "retired-generator-debt",
+      "roots": ["tools/port_mert_config.py", "tools/mert_export/"]
+    },
+    {
+      "id": "tools",
+      "class": "tool-source",
+      "roots": ["tools/"],
+      "exclude": ["tools/port_mert_config.py", "tools/mert_export/"]
+    },
+    {
+      "id": "windows-entrypoints",
+      "class": "developer-entrypoint",
+      "roots": ["import_faction.bat", "import_gui.bat", "import_unit.bat", "run_doctor.bat", "run_game.bat", "run_importer.bat", "run_importer_tests.bat", "run_launcher.bat", "run_m2_acceptance.bat", "run_retail_pack_tests.bat", "run_retail_pipeline_tests.bat", "run_retail_slice.bat", "run_rotwk_full_content.bat", "run_rotwk_one_button.bat", "run_rotwk_systems.bat"]
+    },
+    {
+      "id": "legal-version",
+      "class": "legal-metadata",
+      "roots": ["LICENSE", "VERSION"]
+    }
+  ],
+  "runtimeAuthority": {
+    "project": "game/project.godot",
+    "name": "OpenBFME",
+    "description": "Exact clean-room Godot port of The Lord of the Rings: The Battle for Middle-earth II - The Rise of the Witch-king, Patch 2.02 v9.7.7",
+    "mainScene": "res://scenes/startup_boot.tscn",
+    "shippingChain": [
+      {"path": "run_game.bat", "role": "Windows-native developer launch"},
+      {"path": "game/project.godot", "role": "shipping Godot project"},
+      {"path": "game/scenes/startup_boot.tscn", "role": "configured main scene"},
+      {"path": "game/src/ui/startup_boot.gd", "role": "minimal first-frame boot"},
+      {"path": "game/scenes/boot.tscn", "role": "shell boot scene"},
+      {"path": "game/src/ui/main_menu.gd", "role": "shell and domain routing"},
+      {"path": "game/scenes/retail_loading_boot.tscn", "role": "selected-pack loading transition"},
+      {"path": "game/src/ui/retail_loading_boot.gd", "role": "strict content admission"},
+      {"path": "game/scenes/retail_vertical_slice.tscn", "role": "current match scene"},
+      {"path": "game/src/retail_slice/retail_vertical_slice.gd", "role": "presentation and runtime integration"},
+      {"path": "game/src/retail_slice/retail_slice_sim.gd", "role": "current authoritative gameplay simulation"}
+    ],
+    "links": [
+      {"from": "run_game.bat", "to": "game/project.godot", "token": "--path \"%ROOT%game\""},
+      {"from": "game/project.godot", "to": "game/scenes/startup_boot.tscn", "token": "res://scenes/startup_boot.tscn"},
+      {"from": "game/scenes/startup_boot.tscn", "to": "game/src/ui/startup_boot.gd", "token": "res://src/ui/startup_boot.gd"},
+      {"from": "game/src/ui/startup_boot.gd", "to": "game/scenes/boot.tscn", "token": "res://scenes/boot.tscn"},
+      {"from": "game/scenes/boot.tscn", "to": "game/src/ui/main_menu.gd", "token": "res://src/ui/main_menu.gd"},
+      {"from": "game/src/ui/main_menu.gd", "to": "game/scenes/retail_loading_boot.tscn", "token": "res://scenes/retail_loading_boot.tscn"},
+      {"from": "game/scenes/retail_loading_boot.tscn", "to": "game/src/ui/retail_loading_boot.gd", "token": "res://src/ui/retail_loading_boot.gd"},
+      {"from": "game/src/ui/retail_loading_boot.gd", "to": "game/scenes/retail_vertical_slice.tscn", "token": "res://scenes/retail_vertical_slice.tscn"},
+      {"from": "game/scenes/retail_vertical_slice.tscn", "to": "game/src/retail_slice/retail_vertical_slice.gd", "token": "res://src/retail_slice/retail_vertical_slice.gd"},
+      {"from": "game/src/retail_slice/retail_vertical_slice.gd", "to": "game/src/retail_slice/retail_slice_sim.gd", "token": "res://src/retail_slice/retail_slice_sim.gd"}
+    ],
+    "autoloads": [
+      {"name": "DiagLog", "path": "game/src/core/diag_log.gd"},
+      {"name": "Events", "path": "game/src/core/events.gd"},
+      {"name": "SimClock", "path": "game/src/core/sim_clock.gd"},
+      {"name": "ModLoader", "path": "game/src/content/mod_loader.gd"},
+      {"name": "ContentDB", "path": "game/src/content/content_db.gd"},
+      {"name": "GameState", "path": "game/src/core/game_state.gd"},
+      {"name": "GameAudio", "path": "game/src/core/game_audio.gd"}
+    ],
+    "startupAssetDebt": [
+      {"projectKey": "boot_splash/image", "resource": "res://data/base/assets/ui/menu/splash_ring.png", "ownerWorkItem": "P0-ASSET-HYGIENE-001", "reason": "tracked public asset has not completed provenance and deduplication admission"},
+      {"projectKey": "config/icon", "resource": "res://icon_ring.png", "ownerWorkItem": "P0-ASSET-HYGIENE-001", "reason": "tracked public asset has not completed provenance and deduplication admission"}
+    ],
+    "nonShipping": [
+      {"path": "engine/OpenBfme.Sim", "role": "comparison experiment", "admission": "accepted architecture decision plus exact command/state/event trace equivalence"}
+    ]
+  },
+  "generatedBoundaries": [
+    {"path": "workspace/", "tracked": false, "kind": "private retail inputs, packs, logs, captures, and receipts"},
+    {"path": "game/.godot/", "tracked": false, "kind": "Godot editor/import cache"},
+    {"path": "dist/", "tracked": false, "kind": "release staging and packaged private content"}
+  ],
+  "generatedArtifacts": [
+    {
+      "path": "game/data/build_info.json",
+      "ownerWorkItem": "P2-RELEASE-001",
+      "replacement": "generate at packaging time from the release revision; never use as parity evidence",
+      "referenceTokens": ["game/data/build_info.json", "res://data/build_info.json"],
+      "operationalConsumers": [
+        {"path": "game/src/core/build_info.gd", "role": "shipping-runtime"},
+        {"path": "tools/Test-DistPipeline.ps1", "role": "test"},
+        {"path": "tools/Write-BuildInfo.ps1", "role": "generator"},
+        {"path": "tools/dist-pipeline-common.ps1", "role": "generator"}
+      ]
+    },
+    {
+      "path": "game/data/retail_ai_call_census.json",
+      "ownerWorkItem": "P1-AI-001",
+      "replacement": "regenerate from the sealed v9.7.7 effective corpus and retarget runtime coverage guards",
+      "referenceTokens": ["game/data/retail_ai_call_census.json", "res://data/retail_ai_call_census.json"],
+      "operationalConsumers": [
+        {"path": "game/tests/ai_dispatch_coverage_runner.gd", "role": "test"},
+        {"path": "game/tests/script_world_surface_runner.gd", "role": "test"}
+      ]
+    },
+    {
+      "path": "game/data/retail_faction_sides.json",
+      "ownerWorkItem": "P1-DATA-001",
+      "replacement": "selected-pack side vocabulary derived from the sealed v9.7.7 effective corpus",
+      "referenceTokens": ["game/data/retail_faction_sides.json", "res://data/retail_faction_sides.json"],
+      "operationalConsumers": [
+        {"path": "game/src/core/music_director.gd", "role": "shipping-runtime"},
+        {"path": "game/src/retail_slice/retail_faction_manifest.gd", "role": "shipping-runtime"}
+      ]
+    },
+    {
+      "path": "game/data/retail_module_census.json",
+      "ownerWorkItem": "P1-MODULE-001",
+      "replacement": "regenerate from the sealed v9.7.7 effective corpus",
+      "referenceTokens": ["game/data/retail_module_census.json", "res://data/retail_module_census.json"],
+      "operationalConsumers": [
+        {"path": "importer/openbfme_importer/module_census.py", "role": "generator"},
+        {"path": "importer/tests/test_module_census.py", "role": "test"},
+        {"path": "tools/module-coverage-report.py", "role": "generator"},
+        {"path": "tools/retail-ini-coverage.py", "role": "generator"}
+      ]
+    },
+    {
+      "path": "game/data/retail_w3d_chunk_backlog.json",
+      "ownerWorkItem": "P1-ASSET-001",
+      "replacement": "regenerate from the sealed v9.7.7 effective W3D corpus",
+      "referenceTokens": ["game/data/retail_w3d_chunk_backlog.json", "res://data/retail_w3d_chunk_backlog.json"],
+      "operationalConsumers": [
+        {"path": "importer/tests/test_w3d_chunk_backlog.py", "role": "test"}
+      ]
+    },
+    {
+      "path": "game/data/script_world_surface.json",
+      "ownerWorkItem": "P1-SCRIPT-001",
+      "replacement": "regenerate against the accepted runtime and sealed v9.7.7 script corpus",
+      "referenceTokens": ["game/data/script_world_surface.json", "res://data/script_world_surface.json"],
+      "operationalConsumers": [
+        {"path": "game/tests/script_world_surface_runner.gd", "role": "test"}
+      ]
+    }
+  ],
+  "evidencePolicy": {
+    "currentTypes": ["tracked-contract", "sanitized-read-only-audit-receipt"],
+    "historicalDiagnosticTypes": ["sanitized-red-baseline", "sanitized-repository-hygiene-audit"],
+    "privatePrefix": "workspace/",
+    "rule": "Resolve every evidence ID and pointer. Historical diagnostics may describe gaps but cannot close non-L0 acceptance."
+  },
+  "runtimeDebt": [
+    {"id": "direct-wotr-source-cache", "path": "run_game.bat", "tokens": ["OPENBFME_WOTR_AI_TEMPLATE_DEFAULT", "OPENBFME_WOTR_WORK"], "ownerWorkItem": "P0-DEFAULTS-001", "disposition": "replace direct workspace/cache injection with selected immutable bundles"},
+    {"id": "pinned-ranger-overlay", "path": "run_game.bat", "tokens": ["OPENBFME_REVIEWED_RANGER_OVERLAY_SHA256"], "ownerWorkItem": "P0-DEFAULTS-001", "disposition": "remove legacy selected-overlay pin when v9.7.7 topology is canonical"}
+  ],
+  "highConflict": {
+    "thresholdLines": 5000,
+    "extensions": [".py", ".gd", ".cs", ".ps1"],
+    "files": [
+      {"path": "importer/openbfme_importer/playable_unit_compiler.py", "ownerWorkItem": "P1-OBJECT-001", "seams": ["definition parsing", "normalized unit IR", "pack emission"], "focusedTests": ["importer/tests/test_playable_unit_compiler.py"]},
+      {"path": "importer/openbfme_importer/module_contracts.py", "ownerWorkItem": "P1-MODULE-001", "seams": ["module vocabulary", "partition classification", "batch receipt"], "focusedTests": ["importer/tests/test_module_contracts_batch.py"]},
+      {"path": "game/src/ui/wotr_screen.gd", "ownerWorkItem": "P2-WOTR-003", "seams": ["strategic state adapter", "map presentation", "turn command surface"], "focusedTests": ["game/tests/wotr_map3d_runner.gd"]},
+      {"path": "game/src/retail_slice/retail_vertical_slice.gd", "ownerWorkItem": "P1-SIM-001", "seams": ["input command translation", "simulation ownership", "presentation projection"], "focusedTests": ["game/tests/retail_slice_runner.gd"]},
+      {"path": "importer/openbfme_importer/pipeline.py", "ownerWorkItem": "P0-SELECTION-002", "seams": ["source admission", "conversion stages", "immutable publish transaction"], "focusedTests": ["importer/tests/test_bundle.py", "importer/tests/test_dev_pack_and_shared_cache.py"]},
+      {"path": "game/src/retail_slice/retail_slice_script_world.gd", "ownerWorkItem": "P1-SCRIPT-001", "seams": ["script vocabulary adapter", "simulation mutation", "presentation sinks"], "focusedTests": ["game/tests/retail_slice_script_world_runner.gd"]},
+      {"path": "importer/tests/test_playable_unit_compiler.py", "ownerWorkItem": "P1-OBJECT-001", "seams": ["fixture builders", "schema assertions", "failure contracts"], "focusedTests": ["importer/tests/test_playable_unit_compiler.py"]},
+      {"path": "game/src/retail_slice/retail_slice_sim.gd", "ownerWorkItem": "P1-SIM-001", "seams": ["command intake", "deterministic tick", "state and event projection"], "focusedTests": ["game/tests/retail_slice_runner.gd"]},
+      {"path": "game/src/retail_slice/retail_hud.gd", "ownerWorkItem": "P1-UI-001", "seams": ["simulation view model", "retail HUD contract", "input dispatch"], "focusedTests": ["game/tests/retail_slice_runner.gd"]},
+      {"path": "game/src/wotr/wotr_map_view.gd", "ownerWorkItem": "P2-WOTR-002", "seams": ["strategic geometry", "territory interaction", "camera and presentation"], "focusedTests": ["game/tests/wotr_map3d_runner.gd", "game/tests/wotr_region_geometry_runner.gd"]},
+      {"path": "importer/openbfme_importer/retail_hud_apt_convert.py", "ownerWorkItem": "P1-UI-001", "seams": ["APT parse", "neutral timeline IR", "Godot resource emission"], "focusedTests": ["importer/tests/test_retail_hud_apt_convert.py"]},
+      {"path": "importer/tests/test_module_contracts_batch.py", "ownerWorkItem": "P1-MODULE-001", "seams": ["partition fixtures", "coverage assertions", "receipt assertions"], "focusedTests": ["importer/tests/test_module_contracts_batch.py"]},
+      {"path": "importer/blender/w3d_to_glb.py", "ownerWorkItem": "P1-ASSET-001", "seams": ["decoded W3D model", "Blender scene construction", "GLB emission"], "focusedTests": ["importer/tests/test_w3d_to_glb_fixtures.py", "importer/tests/test_w3d_glb_validation.py"]}
+    ]
+  },
+  "assetNaming": {
+    "retailSourceKeys": "preserve verbatim with winning archive, layer, and digest provenance; never aesthetic-rename",
+    "convertedPrivatePayloads": "content-addressed immutable pack paths; display names are metadata",
+    "publicAuthoredAssets": "purpose-rooted canonical paths with source, license, hash, and generator attestation",
+    "aliases": "manifest aliases only; one physical payload per exact byte digest",
+    "currentDebtRoots": ["game/assets/", "game/data/base/", "game/icon.svg", "game/icon.svg.import", "game/icon_ring.png", "game/icon_ring.png.import", "game/openbfme.ico"],
+    "ownerWorkItem": "P0-ASSET-HYGIENE-001"
+  }
+}
