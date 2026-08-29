@@ -1,224 +1,89 @@
 # Repository topology
 
-> **READ THIS FIRST — fail closed.** Production truth is not “whatever is large, nearby, or recently edited.” Use the classifications below before searching, editing, generating, or cleaning. This map mirrors `workspace/INDEX.json`.
+This document answers one operational question: **what may an agent trust,
+change, or clean?** It does not define product scope or parity. Those decisions
+come from [AGENTS.md](../AGENTS.md), the
+[v9.7.7 product contract](../contracts/rotwk-202-v9.7.7-product-scope.json),
+the [retail baseline](../contracts/rotwk-202-v9.7.7-baseline.json), and the
+[work ledger](../orchestration/work-items.json).
 
-`workspace/INDEX.json` is itself local and gitignored by `.gitignore:19` (`/workspace/`), so Git status will not show changes to it.
+## Tracked repository
 
-**Measurement provenance.** Unless a row or warning gives an R1a command, every inventory quantity below (sizes, file/identity/worktree/commit counts, and approximate or `+` figures) is topology-council-measured and was not independently re-verified in R1a. Hashes, schema versions, and source line locators are identifiers rather than inventory measurements.
+| Path | Role | Agent rule |
+|---|---|---|
+| `game/` | Shipping Godot runtime and focused runtime tests | Change only through an assigned work item. GDScript reached from `game/project.godot` is shipping authority. |
+| `importer/` | Retail-to-private-pack conversion, catalog, profiles, and tests | Preserve source provenance and deterministic identities. A successful conversion is not runtime parity. |
+| `launcher/` | Launcher source | Treat as production code, but not proof that the Godot gameplay path works. |
+| `engine/` | C# simulation and design experiments | Reference/oracle work only unless the Godot runtime explicitly consumes it. It is not the shipping gameplay authority today. |
+| `contracts/` | Product, source, and publication contracts | Integration-owner only. Exact 2.02 v9.7.7 contracts supersede the removed 2.01 product contract. |
+| `docs/` | Current instructions plus clearly bannered history | Current authority must link to the roadmap/ledger. Old measurements are history unless regenerated against the exact baseline. |
+| `orchestration/` | Agent templates, historical reports, and the one live ledger | `work-items.json` is the only live task/status ledger. Briefs and reports are evidence history, not a queue. |
+| `tools/` and root `*.bat` | Windows-native operators and gates | A tool may be stale even when tracked; use only the command named by the claimed work item. |
 
-## Critical hazards
+The 24 tracked `game/data/base/assets/models/**/*.obj.import` files are
+deliberate Godot resource-identity records and are explicitly unignored. Other
+generated `.obj.import` files remain ignored.
 
-### W1 — HARDLINK HAZARD (critical; repaired)
+## Private source baseline
 
-**REPAIRED:** the tracked/live-to-evidence file-identity intersection was reduced from 1,128 to 0 with zero byte changes. Evidence paths and bytes are unchanged. The repair addressed 25,880 evidence aliases: Strategy A detached the live side, so those evidence aliases kept their existing file identities; Strategy B detached 46 evidence aliases, so those 46 received new identities. `workspace/orchestration/wotr/**` remains load-bearing evidence: **NEVER delete it or edit it in place.** `tools/gate-hardlink-isolation.py` now fail-closed enforces that no Git-tracked file shares an NTFS file identity with disposable evidence.
+The accepted local source root is below
+`workspace/retail-work/editions/rotwk/layered-install/` and has exactly this
+precedence:
 
-### W2 — IMMUTABLE PACKS (critical)
-
-`workspace/content-packs/**` identities are content-addressed and immutable. Only `workspace/content-packs/selection.json` decides what is live. **Never hand-edit a pack. Never assume “unselected” means “deletable.”**
-
-### Tooling hazard — WSL Git LFS status (high)
-
-`git-lfs` is not installed in WSL, so plain `git status` can report a **clean** tree when 234+ paths are modified (topology-council figure; not R1a-reverified). Use Windows PowerShell Git as the trusted dirty-state check:
-
-```powershell
-powershell.exe -NoProfile -Command "cd <repo-root>; git status --porcelain"
+```text
+layer-0-patch202/  official Patch 2.02 v9.7.7 English overlay
+layer-1-rotwk/     RotWK 2.01 English installation
+layer-2-bfme2/     BFME2 1.06 English installation
 ```
 
-Or use this fail-open-filter WSL fallback:
+These are user-owned/non-redistributable inputs. Never copy them into Git,
+another worktree, a prompt, or a tracked report. Verify them with
+`tools/verify-rotwk-202-baseline.py`; do not infer identity from a directory
+name or nearby executable.
 
-```bash
-git -c filter.lfs.process= -c filter.lfs.required=false status --porcelain
-```
+## Private generated state
 
-### Search hazard — ignore traversal omits tracked truth
+Everything below `workspace/` is ignored but **not automatically disposable**.
 
-Ordinary source search must be **index-based**: use `git grep` and `git ls-files`, not ignore-driven filesystem traversal. There are 24 legitimately tracked `game/data/base/assets/models/**/*.obj.import` files that match `.gitignore` rules, so default ignore-aware searches silently omit them; hidden tracked files such as `.gitattributes`, `.gitignore`, and `.github/**` are also skipped by default.
+| Path | Meaning | Retention rule |
+|---|---|---|
+| `workspace/content-packs/` | Content-addressed cooked bundles and active `selection.json` | Immutable. Preserve selected identities and all unclassified identities. Selection is runtime routing, not parity proof. |
+| `workspace/retail-work/reports/` | Private catalogs, censuses, compatibility evidence, and receipts | Preserve until the producing identity and replacement are recorded. Old 2.01 reports remain historical. |
+| `workspace/retail-work/oracle/` and `workspace/retail-oracle/` | Original-game observations and recipes | Irreplaceable or expensive evidence; never clean automatically. |
+| `workspace/captures/` and `reference/` | Visual/audio evidence and user references | Preserve unless a retention work item proves an exact replacement and recovery path. |
+| `workspace/logs/` | Per-item raw output | Keep private; sanitize only the identity/result receipt that belongs in Git. |
+| `workspace/orchestration/` | Historical lane output and private evidence | Not current authority. Preserve unclassified data even when its tracked wrapper was removed. |
+| `workspace/retail-work/tools/` | Pinned local tool environments | Private reproducibility dependency; do not publish or silently replace. |
 
-## Bucket legend
+The current selected pack stack is a legacy, accumulated 2.01-derived stack.
+It contains no accepted 2.02 marker and cannot satisfy a v9.7.7 completion
+claim. `P0-SELECTION-001` and `P0-SELECTION-002` govern quarantine and
+replacement.
 
-Every listed root has exactly one bucket. A broader parent row can contain a more-specific carved-out row; the more-specific row controls. `Reproducible` means generated bytes can be recreated from retained inputs/tooling, not that authoritative source files are disposable. `Normal-run load-bearing` is fail-closed and is narrowed to the exact private list later in this document.
+## Worktrees and cleanup boundary
 
-| Bucket | Meaning |
-|---|---|
-| `PUBLIC_PRODUCTION_SOURCE` | Tracked first-party source and public runtime configuration that can define shipped behaviour. |
-| `PUBLIC_TEST_TOOL_CONTRACT_DOC` | Tracked tests, contracts, census evidence, and documentation; authoritative for their stated scope but not live runtime code. |
-| `PRIVATE_CANONICAL_INPUT` | User-local or retail-derived inputs that cannot be committed and may be irreplaceable. |
-| `PRIVATE_CANONICAL_OUTPUT` | Private produced state treated as canonical rather than disposable; preserve and mutate only through supported producers. |
-| `LIVE_EVIDENCE_CHAIN` | Active ledgers, receipts, evidence, baselines, and linked history whose integrity must be preserved. |
-| `SESSION_WORKSPACE` | Per-agent or per-task working state; not source truth and not automatically safe to delete. |
-| `THIRD_PARTY_REFERENCE` | Pinned external reference clones; useful comparison material, never OpenBFME production authority. |
-| `GENERATED_CACHE` | Reproducible generated state, subject to load-bearing and authorization checks before cleanup. |
-| `UNKNOWN_REQUIRES_REVIEW` | State with unresolved provenance, pins, hardlinks, commits, or retention requirements; fail closed and preserve. |
+The 2026-08-29 audit found 83 registered worktrees. Forty-five were
+branch-merged and tracked-clean but still held ignored payloads; 38 were dirty,
+including two with unmerged commits. Therefore:
 
-## `PUBLIC_PRODUCTION_SOURCE`
+- never bulk-remove worktrees;
+- never treat `git status` cleanliness as proof that a tree is disposable;
+- inventory tracked, untracked, ignored, hardlink, branch, and unique-commit
+  state before assigning a disposition; and
+- execute deletion only through `P0-REPO-001` and `P0-RETENTION-001` after an
+  integration-owner decision.
 
-Tracked first-party source and public runtime configuration that can define shipped behaviour.
+The same rule applies to the large private pack store and capture/report
+trees. Size is not provenance.
 
-| Root | Purpose | Producer / generator | Reproducible | Normal-run load-bearing | Legal class | Retention | Notes |
-|---|---|---|:---:|:---:|---|---|---|
-| `game/` | Live Godot game/runtime source (2318 files). | `source` | no | yes | `clean` | Retain; tracked production authority. | game/tests/ and game/data/retail_module_census.json are separately classified documentation/test evidence. |
-| `importer/` | Retail-to-private-pack importer source (1355 files). | `source` | no | no | `clean` | Retain; tracked production authority. | importer/tests/ is separately classified; the importer is build tooling, not required after selected packs exist. |
-| `engine/` | C# engine source (277 files), including the OpenBfme.Sim design oracle and simulation experiments. | `source` | no | no | `clean` | Retain; tracked design source. | Design ORACLE only: explicitly not live authority and not referenced by any Godot project. |
-| `launcher/` | Desktop launcher source (577 files). | `source` | no | yes | `clean` | Retain; tracked production authority. | Test projects beneath launcher are separately classified. |
-| `tools/` | Tracked operator, gate, conversion, and maintenance tooling (3601 files). | `source` | no | no | `clean` | Retain; tracked tooling authority. | Tools can produce private outputs but are not themselves private state. |
-| `content/openbfme-test/` | Deliberately retail-free public test content. | `source` | no | no | `clean` | Retain; safe public fixture source. | Must remain retail-free. |
-| `*.bat (repository root)` | Tracked Windows entry points, including normal launch workflows. | `source` | no | yes | `clean` | Retain; tracked production authority. | Only root-level .bat files are covered by this row. |
-| `config/` | Tracked runtime and tooling configuration. | `source` | no | yes | `clean` | Retain; tracked production authority. | — |
+## What has been retired
 
-## `PUBLIC_TEST_TOOL_CONTRACT_DOC`
+The obsolete `orchestration/queue.md`, the tracked `docs/state/` snapshots, the
+stale 74-row gap map, six tracked-but-ignored orchestration reports, the frozen
+orphan-runner CSV, and the superseded 2.01 product contract were removed from
+the live authority surface. They remain recoverable from Git history. No
+private retail payload, content pack, capture tree, or worktree was deleted.
 
-Tracked tests, contracts, census evidence, and documentation; authoritative for their stated scope but not live runtime code.
-
-| Root | Purpose | Producer / generator | Reproducible | Normal-run load-bearing | Legal class | Retention | Notes |
-|---|---|---|:---:|:---:|---|---|---|
-| `game/tests/` | Godot runtime tests and test runners. | `source` | no | no | `clean` | Retain; tracked verification source. | — |
-| `importer/tests/` | Importer test suite. | `source` | no | no | `clean` | Retain; tracked verification source. | — |
-| `engine/*.Tests/` | C# test projects for the design oracle. | `source` | no | no | `clean` | Retain; tracked verification source. | — |
-| `launcher/*.Tests/` | Launcher test projects. | `source` | no | no | `clean` | Retain; tracked verification source. | — |
-| `contracts/` | Four tracked JSON product/tool contracts. | `source` | no | no | `clean` | Retain; tracked contract authority. | — |
-| `docs/` | Public human-readable project documentation (18 files before this topology document; R1a `find docs -maxdepth 1 -type f | wc -l` = 19 including it). | `source` | no | no | `clean` | Retain; tracked documentation authority. | — |
-| `game/data/retail_module_census.json` | Importer module-recognition census; evidence, not runtime coverage. | `source` | no | no | `clean` | Retain; tracked evidence. | status: consumed means the importer recognizes a module type, not that its behaviour runs. Class C (NEEDS-RUNTIME-SYSTEM) describes module nature, not absence of implementation. This file has no runtime-coverage field. |
-
-## `PRIVATE_CANONICAL_INPUT`
-
-User-local or retail-derived inputs that cannot be committed and may be irreplaceable.
-
-| Root | Purpose | Producer / generator | Reproducible | Normal-run load-bearing | Legal class | Retention | Notes |
-|---|---|---|:---:|:---:|---|---|---|
-| `workspace/retail-work/editions/rotwk/layered-install/layer-0-rotwk` | Symlink to the user-owned RotWK retail installation (external drive); zero local payload bytes. | `user-owned` | no | no | `retail-derived` | Retain symlink and external retail install; never publish. | — |
-| `workspace/retail-work/editions/rotwk/layered-install/layer-1-bfme2` | Symlink to the user-owned BFME2 retail installation (external drive); zero local payload bytes. | `user-owned` | no | no | `retail-derived` | Retain symlink and external retail install; never publish. | — |
-| `workspace/retail-extract/` | 25M local BFME2 retail extraction used as canonical input. | `UNKNOWN` | no | no | `retail-derived` | Retain pending provenance review; never publish. | No in-repository generator was found; producer provenance remains UNKNOWN. |
-| `reference/` | 55M of retail reference screenshots. | `user-owned` | no | no | `retail-derived` | Retain as canonical visual input; never publish. | — |
-| `workspace/onboard.config.json` | User-specific onboarding and retail-location configuration. | `user-owned` | no | no | `user-owned` | Retain locally; back up as appropriate; never publish secrets or local paths. | — |
-| `workspace/retail-oracle/` | Canonical local retail oracle material. | `user-owned` | no | no | `retail-derived` | Retain; never publish; review before any maintenance. | — |
-| `workspace/retail-work/oracle/` | 871M of user-owned retail behaviour recordings. | `user-owned` | no | no | `user-owned` | Irreplaceable: preserve and back up; never clean automatically. | Canonical behaviour evidence, not reproducible from repository state alone. |
-
-## `PRIVATE_CANONICAL_OUTPUT`
-
-Private produced state treated as canonical rather than disposable; preserve and mutate only through supported producers.
-
-| Root | Purpose | Producer / generator | Reproducible | Normal-run load-bearing | Legal class | Retention | Notes |
-|---|---|---|:---:|:---:|---|---|---|
-| `workspace/content-packs/` | 62G content-addressed pack store with 70 identities; 11 selected identities total 8.3G (topology-council figures; not R1a-reverified). | `importer pack publishing pipeline` | yes | no | `retail-derived` | Preserve identities immutably; never hand-edit; selection.json alone controls live selection. | The directory as a whole is not load-bearing: only selection.json and its 11 named identities are. The 59 unselected identities are separately UNKNOWN_REQUIRES_REVIEW and are not deletable. |
-| `workspace/content-packs/selection.json` | Sole authority selecting the live active and supplemental packs. | `importer pack publishing pipeline` | yes | yes | `retail-derived` | Retain and change only through the supported publisher; never hand-edit identities. | — |
-| `workspace/content-packs/rotwk-men-vslice/315a3f8a4d18511f33ce8dd0c7db180615bcad2dd17bcb48d27de9bc3d65accf` | Immutable content-addressed pack identity named by selection.json. | `importer pack publishing pipeline` | yes | yes | `retail-derived` | Retain while selected; immutable and never hand-edit. | One of exactly 11 live identities. |
-| `workspace/content-packs/bfme2-men-vslice/ce02105e952ce91faa2b2cab429e2be01200c939e6553ef8be5b2deb8e591383` | Immutable content-addressed pack identity named by selection.json. | `importer pack publishing pipeline` | yes | yes | `retail-derived` | Retain while selected; immutable and never hand-edit. | One of exactly 11 live identities. |
-| `workspace/content-packs/bfme2-skirmish-maps-private/f9c14cfa4c25e68509373390741fc82e5892f050a2305a19fa3efaca0f39a5b0` | Immutable content-addressed pack identity named by selection.json. | `importer pack publishing pipeline` | yes | yes | `retail-derived` | Retain while selected; immutable and never hand-edit. | One of exactly 11 live identities. |
-| `workspace/content-packs/rotwk-skirmish-maps-private/goal-official-72` | ~~Immutable content-addressed pack identity named by selection.json.~~ DELETED 2026-08-25 by the Q88 prune (name-addressed bundle; the digest-regex pin scan could not protect it). | `importer pack publishing pipeline` | yes | no | `retail-derived` | Gone; reproducible via close_goal_prop_bindings.py if ever needed. | STALE TABLE NOTE: this "11 live identities" table predates the current selection (active maps pack is now rotwk-playable-maps-private/459a4dec…). |
-| `workspace/content-packs/rotwk-elves-vslice/954f784cf4601f78c975d86033db77c17b96e82e7e61d77d9b35c8b43dcf32ea` | Immutable content-addressed pack identity named by selection.json. | `importer pack publishing pipeline` | yes | yes | `retail-derived` | Retain while selected; immutable and never hand-edit. | One of exactly 11 live identities. |
-| `workspace/content-packs/rotwk-dwarves-vslice/3f5e0425fd417727a65ca2184cf65e6fa86a6d4146ffc68a5c15763cbb6e9b4f` | Immutable content-addressed pack identity named by selection.json. | `importer pack publishing pipeline` | yes | yes | `retail-derived` | Retain while selected; immutable and never hand-edit. | One of exactly 11 live identities. |
-| `workspace/content-packs/rotwk-isengard-vslice/e7f788e77ae7cfbbd8e316a8e1b04d8258d6157c3fc392a0a82693c98fc695a8` | Immutable content-addressed pack identity named by selection.json. | `importer pack publishing pipeline` | yes | yes | `retail-derived` | Retain while selected; immutable and never hand-edit. | One of exactly 11 live identities. |
-| `workspace/content-packs/rotwk-mordor-vslice/2f3d3560414ad0a5a9c83543941d79abfaac0919c83de13f23d6f076bd253df1` | Immutable content-addressed pack identity named by selection.json. | `importer pack publishing pipeline` | yes | yes | `retail-derived` | Retain while selected; immutable and never hand-edit. | One of exactly 11 live identities. |
-| `workspace/content-packs/rotwk-wild-vslice/550de11892765cf87a25e4d458b090d9c35100dbc76549b3dd6f1bc037ef9314` | Immutable content-addressed pack identity named by selection.json. | `importer pack publishing pipeline` | yes | yes | `retail-derived` | Retain while selected; immutable and never hand-edit. | One of exactly 11 live identities. |
-| `workspace/content-packs/rotwk-angmar-vslice/ff280f464d167f434710926b965865258e05f0b2a6244f4f5adc5aed892c500f` | Immutable content-addressed pack identity named by selection.json. | `importer pack publishing pipeline` | yes | yes | `retail-derived` | Retain while selected; immutable and never hand-edit. | One of exactly 11 live identities. |
-| `workspace/content-packs/rotwk-music-vslice/f10d95389a1ab51a7a20b3f549fc6b90291db51f7e68693e4d157f1a67eada8d` | Immutable content-addressed pack identity named by selection.json. | `importer pack publishing pipeline` | yes | yes | `retail-derived` | Retain while selected; immutable and never hand-edit. | One of exactly 11 live identities. |
-| `workspace/retail-work/packs/` | Canonical private pack composition outputs. | `importer pipeline` | yes | no | `retail-derived` | Retain as canonical output; regenerate only through supported tooling. | — |
-| `workspace/retail-work/catalog/` | Canonical retail catalog outputs. | `importer pipeline` | yes | no | `retail-derived` | Retain as canonical output; never publish. | — |
-| `workspace/retail-work/profiles/` | Canonical importer/build profiles. | `user-owned` | no | no | `user-owned` | Retain; inputs to repeatable private production. | — |
-| `workspace/retail-work/reports/` | Canonical private reports; only the named living-world report is optionally load-bearing. | `importer and report tools` | yes | no | `retail-derived` | Retain; do not bulk-clean. | — |
-| `workspace/retail-work/reports/rotwk-living-world.json` | Optional WotR living-world runtime/presentation report. | `living-world report generator` | yes | yes | `retail-derived` | Retain while used by run_game.bat:35-42. | — |
-| `workspace/retail-work/strategic-ui/` | Optional WotR strategic UI presentation output. | `strategic UI importer` | yes | yes | `retail-derived` | Retain while used by run_game.bat:35-42. | — |
-| `workspace/retail-work/livingmap*` | Optional WotR living-map presentation outputs. | `living-map tooling` | yes | yes | `retail-derived` | Retain while used by run_game.bat:35-42. | — |
-| `workspace/retail-work/livingworld*` | Optional WotR living-world presentation outputs. | `living-world tooling` | yes | yes | `retail-derived` | Retain while used by run_game.bat:35-42. | The fail-closed load-bearing list below narrows this to livingworld-* paths. |
-
-## `LIVE_EVIDENCE_CHAIN`
-
-Active ledgers, receipts, evidence, baselines, and linked history whose integrity must be preserved.
-
-| Root | Purpose | Producer / generator | Reproducible | Normal-run load-bearing | Legal class | Retention | Notes |
-|---|---|---|:---:|:---:|---|---|---|
-| `workspace/orchestration/wotr/` | Live WotR ledger.json, 15 receipt files, 21 top-level evidence entries (96 files recursively), baselines, logs, and disposable/ history. | `WotR orchestration and gate commands` | no | no | `user-owned` | Preserve intact; never edit in place, delete, or use as a sandbox. | REPAIRED: the tracked/live-to-evidence identity intersection is 0, down from 1,128, with zero byte changes. Evidence paths and bytes are unchanged; Strategy A preserved evidence-alias identities by detaching the live side, while Strategy B gave new identities to 46 detached evidence aliases. `tools/gate-hardlink-isolation.py` enforces the invariant. R1a counts remain 15 receipts, 21 top-level evidence entries, and 96 evidence files recursively. |
-
-## `SESSION_WORKSPACE`
-
-Per-agent or per-task working state; not source truth and not automatically safe to delete.
-
-| Root | Purpose | Producer / generator | Reproducible | Normal-run load-bearing | Legal class | Retention | Notes |
-|---|---|---|:---:|:---:|---|---|---|
-| `workspace/scratch/jobs/` | Loop-v1 task storage consumed by tools/t0_gate.py; the topology council reported 143252 files recursively, not R1a-reverified. | `loop-v1 task runner` | yes | no | `user-owned` | Review via registry before removal; two entries are registered Git worktrees and may only be removed with git worktree remove, never rm. | — |
-| `workspace/scratch/sol-task-03-*` | Solver task workspaces. | `solver task runner` | yes | no | `user-owned` | Session history; review before cleanup. | The angmar-active-hardlinks workspace is separately UNKNOWN_REQUIRES_REVIEW. |
-| `workspace/review/` | Private review workspaces and artifacts. | `review workflows` | yes | no | `user-owned` | Session history; retain until its review is closed. | — |
-| `.claude/worktrees/` | Agent-created Git worktrees. | `Claude worktree workflow` | yes | no | `clean` | Manage only with Git worktree commands; never delete as ordinary directories. | The named branch with commits not on main is separately UNKNOWN_REQUIRES_REVIEW. |
-
-## `THIRD_PARTY_REFERENCE`
-
-Pinned external reference clones; useful comparison material, never OpenBFME production authority.
-
-| Root | Purpose | Producer / generator | Reproducible | Normal-run load-bearing | Legal class | Retention | Notes |
-|---|---|---|:---:|:---:|---|---|---|
-| `workspace/scratch/Open-BFME-research/` | Reference clone of dginovker/Open-BFME at 9d353722. | `source` | yes | no | `clean` | Keep pristine or reclone; never confuse with project source. | — |
-| `workspace/scratch/opensage-source/` | Reference clone/worktree of OpenSAGE/OpenSAGE at 588ac477. | `source` | yes | no | `clean` | Keep pristine or reclone; never confuse with project source. | Verified pristine with zero local commits. |
-| `workspace/scratch/OpenSAGE-research/` | Reference clone/worktree of OpenSAGE/OpenSAGE at 588ac477. | `source` | yes | no | `clean` | Keep pristine or reclone; never confuse with project source. | Verified pristine with zero local commits. |
-| `workspace/scratch/opensage-hud-semantics/` | Reference clone/worktree of OpenSAGE/OpenSAGE at 588ac477. | `source` | yes | no | `clean` | Keep pristine or reclone; never confuse with project source. | Verified pristine with zero local commits. |
-| `workspace/scratch/opensage-camera-oracle/` | Reference clone/worktree of OpenSAGE/OpenSAGE at 588ac477. | `source` | yes | no | `clean` | Keep pristine or reclone; never confuse with project source. | Verified pristine with zero local commits. |
-| `workspace/scratch/opensage-road-reference/` | Reference clone/worktree of OpenSAGE/OpenSAGE at 588ac477. | `source` | yes | no | `clean` | Keep pristine or reclone; never confuse with project source. | Verified pristine with zero local commits. |
-| `workspace/scratch/fords-skybox-oracle/OpenSAGE/` | Reference clone/worktree of OpenSAGE/OpenSAGE at 588ac477. | `source` | yes | no | `clean` | Keep pristine or reclone; never confuse with project source. | Verified pristine with zero local commits. |
-
-## `GENERATED_CACHE`
-
-Reproducible generated state, subject to load-bearing and authorization checks before cleanup.
-
-| Root | Purpose | Producer / generator | Reproducible | Normal-run load-bearing | Legal class | Retention | Notes |
-|---|---|---|:---:|:---:|---|---|---|
-| `workspace/retail-work/editions/rotwk/jobs/` | 48G staging area (topology-council figure; not R1a-reverified); largest single reclaimable object. | `importer/openbfme_importer/pipeline.py (rmtree and re-stage per run)` | yes | no | `retail-derived` | Regenerable, but remove only under an authorized cleanup packet. | — |
-| `workspace/retail-work/jobs/` | 19G importer job staging (topology-council figure; not R1a-reverified). | `importer pipeline` | yes | no | `retail-derived` | Regenerable; remove only under an authorized cleanup packet. | — |
-| `workspace/retail-work/cache/` | 13G generated retail-work cache (topology-council figure; not R1a-reverified). | `importer pipeline` | yes | no | `retail-derived` | Regenerable; remove only under an authorized cleanup packet. | — |
-| `workspace/retail-work/editions/rotwk/cache/` | 25G edition cache (topology-council figure; not R1a-reverified). | `importer pipeline` | yes | no | `retail-derived` | Regenerable except behavior-bearing use must be checked; remove only under an authorized cleanup packet. | The livingworldaitemplate.ini path is optionally load-bearing and separately listed. |
-| `workspace/retail-work/editions/rotwk/cache/layered-effective-assets/data/ini/livingworldaitemplate.ini` | Optional behaviour-bearing WotR INI consumed by the normal launcher path. | `importer pipeline` | yes | yes | `retail-derived` | Retain while used by run_game.bat:9-15. | — |
-| `workspace/retail-work/tools/` | 1.8G bootstrapped private toolchain. | `bootstrap-tools + tool-manifest.json` | yes | no | `clean` | Regenerable, but load-bearing subpath must be retained for importer/gates. | — |
-| `workspace/retail-work/tools/python-3.12-env` | Python environment required by importer/gates, not by game runtime. | `bootstrap-tools + tool-manifest.json` | yes | yes | `clean` | Retain for importer/gate operation; regenerate only with pinned bootstrap tooling. | — |
-| `dist/` | 35G distribution output, including a 3.63G retail-derived release-shaped ZIP (topology-council figures; not R1a-reverified). | `release/build commands` | yes | no | `retail-derived` | Gitignored; never upload without legal review; remove only under authorized cleanup. | Manual-upload hazard only, not a commit-leak vector. |
-| `build/` | Generated build output. | `build commands` | yes | no | `clean` | Regenerable; remove only under an authorized cleanup packet. | — |
-| `captures/` | Generated capture output. | `capture commands` | yes | no | `retail-derived` | Regenerable evidence; review before authorized cleanup. | — |
-| `.captures/` | Generated hidden capture output. | `capture commands` | yes | no | `retail-derived` | Regenerable evidence; review before authorized cleanup. | — |
-| `workspace/capture-*` | Generated private capture runs. | `capture commands` | yes | no | `retail-derived` | Regenerable evidence; review before authorized cleanup. | — |
-| `.pytest_cache/` | Pytest cache. | `pytest` | yes | no | `clean` | Regenerable; safe only under a separately authorized cleanup. | — |
-| `.ruff_cache/` | Ruff cache. | `ruff` | yes | no | `clean` | Regenerable; safe only under a separately authorized cleanup. | — |
-| `game/.godot/` | Godot import/editor cache. | `Godot editor/import` | yes | no | `clean` | Regenerable; safe only under a separately authorized cleanup. | — |
-
-## `UNKNOWN_REQUIRES_REVIEW`
-
-State with unresolved provenance, pins, hardlinks, commits, or retention requirements; fail closed and preserve.
-
-| Root | Purpose | Producer / generator | Reproducible | Normal-run load-bearing | Legal class | Retention | Notes |
-|---|---|---|:---:|:---:|---|---|---|
-| `workspace/content-packs/<59 unselected identities>/` | Pack identities not named by current selection.json. | `importer pack publishing pipeline` | yes | no | `retail-derived` | Do not delete or edit; reconcile all pins and provenance first. | Unselected does not mean deletable: tools/gate-retail.ps1:50-62 pins a different selection, and tools/close_goal_prop_bindings.py:1073-1076 pins rotwk-skirmish-maps-private/bc6ab089.... [Q88 2026-08-25: bc6ab089… and goal-official-72 were nonetheless deleted — the prune's pin scan missed Python sources exactly as this note warned. Contained: both fed one-shot repair scripts already applied. tools/prune-content-packs.ps1 now scans tools/**/*.py (digest, path-literal, pathlib, bare-digest forms) and refuses name-addressed bundles without -AllowNamedBundles.] |
-| `workspace/scratch/sol-task-03-angmar-active-hardlinks/` | Hardlink farm into content-packs; creator script unknown. | `UNKNOWN` | no | no | `retail-derived` | Do not edit or delete until hardlinks and provenance are reviewed. | Topology-council estimate, not R1a-reverified: unique contribution is about 316KB and deletion would free approximately zero bytes. |
-| `.claude/worktrees/bfme2-godot-port-optimize-018cf3` | Registered worktree for branch `claude/bfme2-godot-port-optimize-018cf3` at 05888eb, with 3 commits not on main. | `Claude worktree workflow` | no | no | `clean` | Preserve; inspect and reconcile commits before any Git worktree removal. | — |
-
-## Exact load-bearing private paths
-
-This is the complete verified private set for a normal supported run, including optional WotR presentation and importer/gate support. **Every other path under `workspace/` is explicitly not load-bearing for a normal run.** “Optional” means the base game may start without it; when that supported behavior/presentation or importer/gate path is requested, it is load-bearing.
-
-- `workspace/content-packs/selection.json`
-- `workspace/content-packs/rotwk-men-vslice/315a3f8a4d18511f33ce8dd0c7db180615bcad2dd17bcb48d27de9bc3d65accf`
-- `workspace/content-packs/bfme2-men-vslice/ce02105e952ce91faa2b2cab429e2be01200c939e6553ef8be5b2deb8e591383`
-- `workspace/content-packs/bfme2-skirmish-maps-private/f9c14cfa4c25e68509373390741fc82e5892f050a2305a19fa3efaca0f39a5b0`
-- `workspace/content-packs/rotwk-skirmish-maps-private/goal-official-72` (deleted 2026-08-25, Q88 prune — see notes above)
-- `workspace/content-packs/rotwk-elves-vslice/954f784cf4601f78c975d86033db77c17b96e82e7e61d77d9b35c8b43dcf32ea`
-- `workspace/content-packs/rotwk-dwarves-vslice/3f5e0425fd417727a65ca2184cf65e6fa86a6d4146ffc68a5c15763cbb6e9b4f`
-- `workspace/content-packs/rotwk-isengard-vslice/e7f788e77ae7cfbbd8e316a8e1b04d8258d6157c3fc392a0a82693c98fc695a8`
-- `workspace/content-packs/rotwk-mordor-vslice/2f3d3560414ad0a5a9c83543941d79abfaac0919c83de13f23d6f076bd253df1`
-- `workspace/content-packs/rotwk-wild-vslice/550de11892765cf87a25e4d458b090d9c35100dbc76549b3dd6f1bc037ef9314`
-- `workspace/content-packs/rotwk-angmar-vslice/ff280f464d167f434710926b965865258e05f0b2a6244f4f5adc5aed892c500f`
-- `workspace/content-packs/rotwk-music-vslice/f10d95389a1ab51a7a20b3f549fc6b90291db51f7e68693e4d157f1a67eada8d`
-- `workspace/retail-work/editions/rotwk/cache/layered-effective-assets/data/ini/livingworldaitemplate.ini`
-- `workspace/retail-work/reports/rotwk-living-world.json`
-- `workspace/retail-work/livingmap*`
-- `workspace/retail-work/livingworld-*`
-- `workspace/retail-work/strategic-ui`
-- `workspace/retail-work/tools/python-3.12-env`
-
-Notes:
-
-- The `livingworldaitemplate.ini` path is optional and behaviour-bearing (`run_game.bat:9-15`).
-- `rotwk-living-world.json`, `livingmap*`, `livingworld-*`, and `strategic-ui` are optional WotR presentation inputs (`run_game.bat:35-42`).
-- `python-3.12-env` is load-bearing for importer/gates only, **not** game runtime.
-
-## How to tell shipped from not shipped
-
-**Source truth** is the tracked files at main `HEAD` plus exactly the immutable content-pack identities named by `workspace/content-packs/selection.json`. Anything under `workspace/scratch/`, `workspace/orchestration/`, `dist/`, `build/`, `.claude/`, or a research clone is evidence, generated state, third-party reference, or history—never production source. A feature counts as shipped only when the tracked tree contains it **and a live call path reaches it**. A design oracle, unselected pack, test, receipt, branch-only commit, generated archive, or apparently implemented but unreachable function is not proof that it ships.
-
-## Maintenance rule
-
-Keep this document and `workspace/INDEX.json` synchronized. Unknown, hardlinked, registered-worktree, canonical, selected, or evidence-chain state must be preserved until a separately authorized workflow proves a safe operation. This topology grants no cleanup authority.
+Any future topology measurement belongs in a dated private report and a
+bounded ledger evidence row. Do not paste changing multi-gigabyte counts back
+into this document as timeless truth.

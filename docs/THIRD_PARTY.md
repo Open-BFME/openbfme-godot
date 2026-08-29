@@ -3,13 +3,20 @@
 > **Owner:** Release and provenance integration owner
 > **Owns:** Third-party source, purpose, license, integration form, pin authority, notices, and donor-use record.
 > **Does not own:** Legal advice, retail-content redistribution permission, tool bootstrap implementation, or current selected-pack identity.
-> **Last verified commit:** `efe6a6c1f7ab76ae84436faed4e9a02298a4a194`
 > **Update trigger:** A third-party source, version, license, integration form, shipped file, or provenance authority changes.
 > **Validation:** Private tool manifest/attestation, release provenance manifest, license-notice audit, and code-only export scan.
 
 This ledger records engineering provenance; it is not a legal opinion. Exact executable,
 tree and selected-package digests belong in generated tool/provenance manifests or
-`docs/state/` or generated reports, not copied into this document.
+private generated reports, not copied into this document.
+
+The exact product is RotWK Patch 2.02 v9.7.7. Target identity and acceptance are
+owned by the [product scope](../contracts/rotwk-202-v9.7.7-product-scope.json),
+[retail baseline](../contracts/rotwk-202-v9.7.7-baseline.json),
+[architecture](ARCHITECTURE.md), and [verification](VERIFICATION.md). Current
+provenance work is sequenced in [ROADMAP.md](ROADMAP.md) and owned by
+[work-items.json](../orchestration/work-items.json); this ledger does not
+duplicate live status.
 
 ## Content and donor sources
 
@@ -19,7 +26,7 @@ tree and selected-package digests belong in generated tool/provenance manifests 
 | Generated OBJ meshes | Tools-authored stand-in geometry | Repository-authored output; generator/input provenance required | Legal-safe development lane only unless separately approved for release |
 | Generated WAV music beds | Adaptive explore/battle/victory stand-ins | Procedural output; generator not yet committed - see *Open provenance items* | Legal-safe development lane only; not retail audiovisual parity evidence |
 | Procedural SFX (`tools/gen_sfx.py`) | 51 placeholder combat/UI/ambient sound effects | Repository-authored; synthesised from committed source, reproducible byte-for-byte | Shippable repository-authored lane; stands in for retail audio the player supplies locally |
-| User-owned BFME2 1.06 / RotWK 2.01 installation | Private compatibility extraction, conversion and oracle observation | Proprietary retail content; non-redistributable project lane | Inputs and all derived payloads remain below `workspace`; never shipped, committed or transferred by a server |
+| User-owned Patch 2.02 v9.7.7 effective source | Private compatibility extraction, conversion, and oracle observation: layer 0 Patch 2.02 official-2 v9.7.7 English overlay, layer 1 RotWK 2.01 installation, layer 2 BFME2 1.06 installation | Proprietary retail/community-patch content; non-redistributable project lane | Inputs and all derived payloads remain below `workspace`; never shipped, committed, or transferred by a server |
 
 Donor material is accepted only through a bounded provenance review. No donor runtime
 types or source are copied merely because a format tool is used for observation.

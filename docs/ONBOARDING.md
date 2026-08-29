@@ -1,59 +1,50 @@
-# Onboarding
+# Windows onboarding
 
-Get the source, set a few paths, convert content from a game you own, then
-launch. Windows first. This is an experimental alpha - first convert can take
-a long time.
+Set up the repository, establish the exact private source baseline, and run the
+smallest trustworthy checks. OpenBFME is a developer alpha; incomplete content
+and failing parity gates are expected and must remain visible.
 
-If something is missing, the tools usually **stop with an error** instead of
-guessing. That is intentional (see [Glossary](#glossary)).
+## Read first
+
+- [AGENTS.md](../AGENTS.md) - required contribution and private-data rules
+- [DIRECTION.md](../DIRECTION.md) - exact Patch 2.02 v9.7.7 product target
+- [Product scope](../contracts/rotwk-202-v9.7.7-product-scope.json) and
+  [retail baseline](../contracts/rotwk-202-v9.7.7-baseline.json) - exact
+  machine-readable target and source identity
+- [ARCHITECTURE.md](ARCHITECTURE.md) - current executable/import paths
+- [VERIFICATION.md](VERIFICATION.md) - what each gate can prove
+- [ROADMAP.md](ROADMAP.md) and
+  [work-items.json](../orchestration/work-items.json) - current work
 
 ## Requirements
 
-- Windows 10 or 11, Git, PowerShell
-- **Rise of the Witch-king 2.01** (needs BFME2 base underneath - the tools
-  layer them). Optional: BFME2 alone for comparison only
-- Godot **4.7** for Windows (console build preferred so you can see log text)
-- Python 3.12 on PATH once so tools can bootstrap a **private** env under
-  `workspace/` (after that, the private env is used; first gate may download
-  pinned packages over the network)
-- Lots of free disk for `workspace/` (full multi-faction work is tens of GB)
+- Windows 10 or 11, Git, and Windows PowerShell 5.1 or later
+- Godot 4.7 for Windows; the console executable is preferred
+- Python 3.12 available once so the repository can bootstrap its pinned private
+  environment
+- a legal BFME2 1.06 installation
+- a legal RotWK 2.01 installation used as the underlying layer
+- the exact Patch 2.02 official-2 v9.7.7 English overlay
+- enough space below `workspace/` for private catalogs, converted assets,
+  bundles, logs, and oracle evidence
 
-Retail-derived files live under `workspace/`; use them freely. Git ignores
-`workspace/` and the publication-boundary CI scans tracked files for retail
-bytes and machine-absolute paths — that is the whole policy.
+Retail-derived bytes, converted retail payloads, captures, and raw logs stay
+below the Git-ignored `workspace/` tree. Never commit them or put a
+machine-absolute path in tracked documentation.
 
-## Glossary (words we use a lot)
+## Glossary
 
-| Term | Plain meaning |
+| Term | Meaning |
 |---|---|
-| **RotWK** | *Rise of the Witch-king* (the expansion). Our main target. |
-| **BFME2** | *Battle for Middle-earth II* base game. Required under RotWK. |
-| **Pack** | Converted game content the Godot client loads (factions, maps, assets). Lives under `workspace/content-packs` after you convert. |
-| **Fail closed** | If required data is missing or invalid, **stop and report an error**. Do not invent fake art or silent placeholders for "parity" paths. |
-| **Gate** | Automated check script (headless). Green = that check passed. |
-| **Doctor** | Install / tool health check (`run_doctor.bat` or importer `doctor`). |
-| **Selection** | Which pack is "active" for launch (file `selection.json`). Only rewritten when you explicitly publish/select. |
-| **Layered install** | RotWK folder + BFME2 folder joined so the importer sees one catalog. |
-| **Systems factory** | Scripts under `tools/rotwk_*.py` that census, cook maps, convert factions, and prove packs. |
-
-## Environment variables
-
-Set these in Command Prompt before running tools (or put them in a `.bat` you keep outside the repo).
-
-| Variable | Purpose |
-|---|---|
-| `OPENBFME_GODOT` | Full path to Godot 4.7 `.exe` (preferred). Also accepted: `GODOT_CONSOLE`, `GODOT_EXE`, `GODOT`. |
-| `ROTWK_INSTALL` | Folder that contains RotWK `game.dat`. |
-| `BFME2_INSTALL` | BFME2 install when layering / Men wizard needs it. |
-| `OPENBFME_CONTENT` | Where packs live (default: `workspace\content-packs`). |
-| `OPENBFME_IMPORT_ROOT` | Importer workspace (default: `workspace\retail-work`). |
-
-How Godot is found (`tools/resolve-godot.bat`):
-
-1. Those env vars  
-2. Else a local drop under `.tools\godot\` (gitignored)  
-3. Else `godot` on your PATH  
-4. Else error (fail closed)
+| **Target** | Exact effective English RotWK Patch 2.02 v9.7.7 game |
+| **Layer** | One precedence input: Patch overlay, underlying RotWK installation, or BFME2 base |
+| **Baseline** | Pinned source identities and rules accepted by the contracts |
+| **Catalog** | Indexed archives and effective winning paths after precedence |
+| **Bundle/pack** | Converted private content consumed by Godot |
+| **Selection** | Ordered immutable bundles mounted for one run |
+| **Fail closed** | Stop with a named error instead of guessing or falling back |
+| **Gate** | A check with terminal `PASS`, `FAIL`, or `SKIP`; skip is never success |
+| **Oracle** | Reproducible original-game evidence used to judge behavior, visuals, or audio |
 
 ## 1. Clone
 
@@ -62,113 +53,125 @@ git clone https://github.com/Open-BFME/openbfme-godot.git
 cd openbfme-godot
 ```
 
-## 2. Path A - RotWK (recommended)
-
-Matches the product baseline and `tools/rotwk_*.py`.
+## 2. Configure Godot and bootstrap tools
 
 ```bat
 set OPENBFME_GODOT=C:\Path\To\Godot_v4.7-stable_win64_console.exe
-set ROTWK_INSTALL=C:\Path\To\RotWK
-
-:: Check tools without a game install (may download pinned Python packages once)
-powershell -File tools\gate-rotwk-systems.ps1 -SkipLiveRetail
-
-:: Full systems path (census, map cook plans, etc.)
-run_rotwk_systems.bat
-
-:: Convert only - does NOT pick which pack the game launches
-run_rotwk_one_button.bat "%ROTWK_INSTALL%"
-
-:: First-time: convert multi-map pack, SELECT it, then launch
-:: (--publish writes workspace\content-packs\selection.json)
-run_rotwk_one_button.bat "%ROTWK_INSTALL%" --multi-map --build --publish --launch
-```
-
-More operator flags: [ROTWK_SYSTEMS_PATH.md](ROTWK_SYSTEMS_PATH.md).
-
-## 3. Path B - Men pack wizard (legacy tests)
-
-Builds the older "Men" pack used by classic headless tests
-(`retail_slice_runner`, `menu_skirmish_runner`).
-
-```bat
-python tools\onboard.py --install "C:\Path\To\BFME2" --rotwk "C:\Path\To\RotWK" --godot "%OPENBFME_GODOT%" --yes
-```
-
-Or interactive: `python tools\onboard.py`.
-
-Exit codes: `0` = setup + tests green, `1` = setup ok but a test failed,
-`2` = setup stopped early.
-
-## 4. Launch
-
-```bat
-run_game.bat
-run_retail_slice.bat
-run_retail_slice.bat --test
-```
-
-## Manual Men convert (same idea as the wizard)
-
-```bat
 run_doctor.bat
-set "PY=workspace\retail-work\tools\python-3.12-env\Scripts\python.exe"
-%PY% tools\openbfme_import.py doctor --install "C:\Path\To\BFME2"
-%PY% tools\openbfme_import.py import-faction --install "C:\Path\To\BFME2" --faction men --convert
-%PY% tools\openbfme_import.py publish-faction-to-slice --install "C:\Path\To\BFME2" --faction men --select
+run_importer_tests.bat
 ```
 
-Other factions: `--faction elves`, `dwarves`, `isengard`, `mordor`, `wild`,
-or `--game rotwk --faction angmar`.
+`run_doctor.bat` proves tool availability only. Importer tests prove their
+declared public fixtures and may skip private retail cases. Neither proves game
+parity.
 
-### Exit codes you will actually see
+Godot resolution order is the explicit `OPENBFME_GODOT`/`GODOT_CONSOLE`/
+`GODOT_EXE`/`GODOT` environment, a Git-ignored `.tools\godot\` drop, then
+`godot` on `PATH`. Failure to resolve Godot is an error.
 
-The importer separates "this broke" from "I refuse to ship this", because they
-need different reactions.
+## 3. Prepare the pinned three-layer source
 
-| Exit | Meaning | What to do |
-|---|---|---|
-| `0` | Success | Nothing |
-| `3` | The pack was built but failed its own audit | Real failure — read the audit output |
-| `6` | A **convert** step is reporting its own gaps | Some objects did not convert. The publish step will refuse this coverage (see 7) |
-| `7` | A **publish gate refused** — nothing was published | Not a crash. Fix and re-run; see below |
-
-**Exit 7 is a deliberate refusal.** `publish-faction-to-slice`, `build`, and
-`import-unit` all run the same gates, and any of three things triggers one:
-
-- **incomplete coverage** — the conversion report records converter gaps, so
-  the cook would ship a known-short faction;
-- **stale coverage** — the report is clean but does not describe the tree being
-  cooked (its catalog identity or its compiler identity token disagrees with
-  what is on disk), so it cannot vouch for this cook;
-- **roster regression** — the cook drops playable-unit ids that the already
-  published bundle of the same pack id ships. Checked by *name*, so swapping
-  one unit for another refuses too.
-
-The reason list is always printed to stderr. The normal fix is to re-run the
-conversion and publish again:
+Keep the three source folders outside the repository. The baseline preparation
+script creates junctions under `workspace\retail-work`; it does not copy or
+alter the retail installations.
 
 ```bat
-%PY% tools\openbfme_import.py import-faction --install "C:\Path\To\BFME2" --faction men --convert
+set BFME2_INSTALL=C:\Games\BFME2
+set ROTWK201_INSTALL=C:\Games\RotWK
+set PATCH202_OVERLAY=C:\Games\RotWK-Patch-202-v9.7.7
+
+powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass ^
+  -File tools\prepare-rotwk-202-baseline.ps1 ^
+  -Bfme2Install "%BFME2_INSTALL%" ^
+  -Rotwk201Install "%ROTWK201_INSTALL%" ^
+  -Patch202Overlay "%PATCH202_OVERLAY%"
 ```
 
-Each gate has an override, and each one means "I know this ships something
-worse": `--allow-incomplete-coverage`, `--allow-stale-coverage`,
-`--allow-fewer-playable-units`. They print what they let through.
+The resulting source identity must agree with:
 
-## If something breaks
+- `contracts/rotwk-202-v9.7.7-baseline.json`
+- `contracts/rotwk-202-v9.7.7-english-overlay.json`
 
-| Symptom | What to do |
+The preparation script calls the read-only verifier. Re-run that verifier
+without changing the junction layout whenever source identity must be checked:
+
+```bat
+workspace\retail-work\tools\python-3.12-env\Scripts\python.exe tools\verify-rotwk-202-baseline.py
+```
+
+Its `PASS` proves the seven required package files, all 217 archive identities,
+and the 53,433-record catalog only. It does not prove conversion or parity.
+
+Do not use `-ReplaceExisting` casually. It archives a nonmatching layered root
+and changes private workspace state; inspect the refusal first.
+
+## 4. Check public policy and hygiene
+
+```bat
+py -3 tools\check-product-contracts.py --check
+powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File tools\gate-hygiene.ps1
+```
+
+These checks validate policy and repository containment. They do not cook or
+select retail bundles.
+
+## 5. Cook and select only through current work
+
+The repository is being retargeted from historical source routes to the pinned
+v9.7.7 catalog. Use only the cook/publish command named by the current row in
+`orchestration/work-items.json`. The work item's acceptance contract must bind
+the source policy, toolchain, recipe, output addresses, and complete selection.
+
+Older `run_rotwk_one_button.bat`, `run_rotwk_systems.bat`, Men/Fords wizard,
+and M2 commands may remain useful regression tools. Unless a current work item
+explicitly proves them against the v9.7.7 baseline, they are historical
+2.01-era/BFME2 routes and must not publish the target selection or support a
+2.02 claim.
+
+Only the integration owner publishes or changes `selection.json`.
+
+## 6. Verify and launch an existing exact selection
+
+```bat
+set OPENBFME_CONTENT=%CD%\workspace\content-packs
+py -3 tools\check_pack_addresses.py --json
+run_retail_slice.bat --test
+run_game.bat
+```
+
+Before accepting a result, confirm the resolved selection path, selection
+digest, ordered bundle list, and every verified content address. A launch is
+L3 loading evidence at most. See `VERIFICATION.md` for the higher behavior,
+visual, audio, and end-to-end requirements.
+
+## Exit and status behavior
+
+- `PASS`: every required assertion and acceptance marker passed with fixed
+  identity and no unexpected diagnostics.
+- `FAIL`: the command, assertion, identity, diagnostics, timeout, or
+  containment contract failed.
+- `SKIP`: the check did not evaluate because an input was unavailable; it does
+  not satisfy a prerequisite.
+
+Importer commands may use additional nonzero exit codes to distinguish audit
+failure, conversion gaps, or publish refusal. Read the named error and preserve
+it as evidence. Never add an override merely to make a parity path green.
+
+## Troubleshooting
+
+| Symptom | Response |
 |---|---|
-| Doctor rejects install | Point at the **install root** (folder with `game.dat` or `lotrbfme2.exe`), not a random subfolder |
-| Godot not found | Set `OPENBFME_GODOT` or copy the exe under `.tools\godot\` |
-| Gate / test fails | Read the error; check [orchestration/queue.md](../orchestration/queue.md) and [docs/state/](state/). Fail closed is normal when data is incomplete |
-| Convert stopped mid-way | Run the **same** command again (resumes). Avoid deleting `workspace` as a first step |
-| Before you publish code | `powershell -File tools\export-scan.ps1` |
+| Baseline rejects a folder | Verify you passed each install/overlay root and exact v9.7.7 files; do not substitute another patch |
+| Godot is missing | Set `OPENBFME_GODOT` to the 4.7 console executable |
+| Catalog identity differs | Stop; compare source layers and contracts before cooking |
+| Address check fails | Treat the bundle as mutated; publish a new immutable digest through integration ownership |
+| Runtime uses unexpected content | Set `OPENBFME_CONTENT`, isolate user data, and inspect the resolved selection identity |
+| Gate emits errors but exits zero | The gate is `FAIL`; preserve stdout/stderr and fix the harness or product error |
+| Private input is unavailable | Report `SKIP`; do not convert it to PASS |
+| Conversion was interrupted | Re-run the same approved resumable command; do not delete `workspace/` first |
 
-## Related
+## Contributing
 
-- [CONTENT_PIPELINE.md](CONTENT_PIPELINE.md) - import / packs / workspace  
-- [MODDING.md](MODDING.md) - simple pack example from the repo  
-- [FAQ.md](FAQ.md)  
-- [DIRECTION.md](../DIRECTION.md) - product goals  
+Select no work informally. The integration owner assigns one bounded row from
+`orchestration/work-items.json`, including owned files and a focused Windows
+check. Follow [AGENTS.md](../AGENTS.md) and [CONTRIBUTING.md](../CONTRIBUTING.md).

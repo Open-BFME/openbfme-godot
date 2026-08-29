@@ -8,6 +8,30 @@ game/export/
 game/exports/
 game/.import/
 **/*.obj.import
+!game/data/base/assets/models/buildings/e_fortress.obj.import
+!game/data/base/assets/models/buildings/g_fortress.obj.import
+!game/data/base/assets/models/buildings/gate.obj.import
+!game/data/base/assets/models/buildings/gob_fortress.obj.import
+!game/data/base/assets/models/buildings/m_fortress.obj.import
+!game/data/base/assets/models/buildings/sacredgrove.obj.import
+!game/data/base/assets/models/buildings/spiderpit.obj.import
+!game/data/base/assets/models/buildings/statue.obj.import
+!game/data/base/assets/models/buildings/tower.obj.import
+!game/data/base/assets/models/buildings/trollcage.obj.import
+!game/data/base/assets/models/buildings/wall.obj.import
+!game/data/base/assets/models/buildings/well.obj.import
+!game/data/base/assets/models/units/boromir.obj.import
+!game/data/base/assets/models/units/eagle.obj.import
+!game/data/base/assets/models/units/elrond.obj.import
+!game/data/base/assets/models/units/goblinking.obj.import
+!game/data/base/assets/models/units/knight.obj.import
+!game/data/base/assets/models/units/legolas.obj.import
+!game/data/base/assets/models/units/mouthsauron.obj.import
+!game/data/base/assets/models/units/nazgul.obj.import
+!game/data/base/assets/models/units/shelob.obj.import
+!game/data/base/assets/models/units/spiderrider.obj.import
+!game/data/base/assets/models/units/trebuchet.obj.import
+!game/data/base/assets/models/units/warg.obj.import
 **/*.tmp
 
 # Lane A — never commit

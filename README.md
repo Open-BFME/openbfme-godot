@@ -5,58 +5,78 @@
 <h1 align="center">OpenBFME</h1>
 
 <p align="center">
-  Experimental open-source RTS engine in Godot for <strong>Rise of the Witch-king 2.01</strong>.
+  Experimental Godot port of <strong>Rise of the Witch-king Patch 2.02 v9.7.7</strong>.
 </p>
 
 <p align="center">
-  <img alt="Status: experimental alpha" src="https://img.shields.io/badge/status-experimental%20alpha-c58b31">
+  <img alt="Status: developer alpha" src="https://img.shields.io/badge/status-developer%20alpha-c58b31">
   <img alt="Godot 4.7" src="https://img.shields.io/badge/Godot-4.7-478cbf?logo=godotengine&logoColor=white">
-  <img alt="RotWK 2.01" src="https://img.shields.io/badge/target-RotWK%202.01-40513b">
+  <img alt="RotWK Patch 2.02 v9.7.7" src="https://img.shields.io/badge/target-RotWK%202.02%20v9.7.7-40513b">
   <img alt="License: Unlicense" src="https://img.shields.io/badge/license-Unlicense-blue">
 </p>
 
-OpenBFME is a Godot 4.7 remake of *BFME2: Rise of the Witch-king* (2.01),
-focused on single-player skirmish across all 7 factions. Layout, lanes, and
-the agent contract: [AGENTS.md](AGENTS.md). Product strategy: [DIRECTION.md](DIRECTION.md).
+OpenBFME is an independent Godot 4.7 reimplementation of *The Lord of the
+Rings: The Battle for Middle-earth II - The Rise of the Witch-king*, targeting
+the exact effective English game produced by Patch 2.02 v9.7.7. The target
+includes the BFME2 1.06 base, the underlying RotWK 2.01 layer, and the pinned
+Patch 2.02 v9.7.7 overlay. A nearby patch or plausible substitute is not parity.
 
-Retail-derived files live under `workspace/`; use them freely. Git ignores
-`workspace/` and the publication-boundary CI scans tracked files for retail
-bytes and machine-absolute paths — that is the whole policy.
+This is a developer alpha, not a completed 1:1 port. Current runtime and
+conversion work is substantial, but completion is accepted only through the
+evidence contract in [docs/VERIFICATION.md](docs/VERIFICATION.md).
 
-## How to run (Windows)
+## Sources of truth
+
+- [AGENTS.md](AGENTS.md) - contribution and evidence rules
+- [DIRECTION.md](DIRECTION.md) - exact product outcome
+- [PLAN.md](PLAN.md) - system map
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) - executable truth and boundaries
+- [docs/VERIFICATION.md](docs/VERIFICATION.md) - gates and completion semantics
+- [docs/ROADMAP.md](docs/ROADMAP.md) - ordered program work
+- [orchestration/work-items.json](orchestration/work-items.json) - only live task ledger
+- [product scope](contracts/rotwk-202-v9.7.7-product-scope.json) and
+  [retail baseline](contracts/rotwk-202-v9.7.7-baseline.json) - machine-readable target
+
+Old queue files, receipts, counts, screenshots, and passing logs are historical
+evidence. They are not current authority.
+
+## Windows setup
+
+You need a legal BFME2/RotWK installation plus the exact Patch 2.02 v9.7.7
+overlay. Retail-derived and converted bytes remain under the ignored
+`workspace/` tree and are never distributed by this repository.
 
 ```bat
 set OPENBFME_GODOT=C:\Path\To\Godot_v4.7-stable_win64_console.exe
-set ROTWK_INSTALL=C:\Path\To\RotWK
-run_rotwk_one_button.bat "%ROTWK_INSTALL%" --multi-map --build --publish --launch
+run_doctor.bat
+py -3 tools\check-product-contracts.py --check
 ```
 
-Already converted: `run_game.bat`. Offline tools check:
-`powershell -File tools\gate-rotwk-systems.ps1 -SkipLiveRetail`.
-Setup detail: [docs/ONBOARDING.md](docs/ONBOARDING.md).
+Prepare the pinned three-layer source and follow the current cook/select work
+in [docs/ONBOARDING.md](docs/ONBOARDING.md). If an exact verified pack selection
+already exists locally:
+
+```bat
+set OPENBFME_CONTENT=%CD%\workspace\content-packs
+run_game.bat
+```
+
+A successful launch proves reachability only. It does not prove 2.02 behavior,
+visual, audio, mode, or whole-product parity.
 
 ## Credits and inspiration
 
-OpenBFME is an independent Godot reimplementation. SAGE format understanding
-and conversion tooling lean on work pioneered by the community, especially:
-
-- **[OpenSAGE](https://github.com/OpenSAGE/OpenSAGE)** - open SAGE engine research
-  and reference implementation. We use it as research / comparison (map cook
-  gaps, format notes), not as a vendored runtime. See
-  [docs/OPENSAGE_GAP_MATRIX.md](docs/OPENSAGE_GAP_MATRIX.md).
-- **[OpenSAGE BlenderPlugin](https://github.com/OpenSAGE/OpenSAGE.BlenderPlugin)** -
-  pinned **external** W3D reader for our private Blender convert lane (LGPL;
-  not copied into this repo's runtime). Toolchain ledger:
-  [docs/THIRD_PARTY.md](docs/THIRD_PARTY.md).
-
-Those projects keep their own licenses. This repo's source is Unlicense; we do
-not relicense OpenSAGE code by referencing it.
+OpenBFME uses community format research and external tools, especially
+[OpenSAGE](https://github.com/OpenSAGE/OpenSAGE) and the
+[OpenSAGE BlenderPlugin](https://github.com/OpenSAGE/OpenSAGE.BlenderPlugin).
+They are research/tool inputs, not a vendored runtime. See
+[docs/OPENSAGE_GAP_MATRIX.md](docs/OPENSAGE_GAP_MATRIX.md) and
+[docs/THIRD_PARTY.md](docs/THIRD_PARTY.md).
 
 ## License
 
-Project source is **[Unlicense](LICENSE)** - public domain; do whatever you want
-with this code. That does **not** cover EA / Tolkien / Middle-earth game assets
-or trademarks. You still need a legal game install for conversion, and you must
-not redistribute retail or converted retail content with this project.
-Unofficial fan project - not affiliated with EA, Middle-earth Enterprises, or
-the Tolkien Estate.
+Repository source is released under the [Unlicense](LICENSE). That license does
+not cover EA, Tolkien, Middle-earth, retail-game, or third-party assets and
+trademarks. Users must supply a lawful installation; retail and converted retail
+content must not be redistributed. OpenBFME is an unofficial fan project and is
+not affiliated with EA, Middle-earth Enterprises, or the Tolkien Estate.

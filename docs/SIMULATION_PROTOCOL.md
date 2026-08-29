@@ -3,36 +3,50 @@
 > **Owner:** Simulation and networking integration owner
 > **Owns:** Authoritative state, numeric rules, ticks, commands, ordering, RNG, digests, checkpoints, replay, reconnect, and lockstep contracts.
 > **Does not own:** Godot presentation, local input bindings, content conversion, visual parity, matchmaking, or mod authoring UX.
-> **Last verified commit:** `efe6a6c1f7ab76ae84436faed4e9a02298a4a194`
 > **Update trigger:** An authoritative data type, command, cadence, serialization, hashing, recovery, or compatibility rule changes.
 > **Validation:** Language-independent command/state traces, cross-process replay digests, and deterministic network recovery scenarios defined in `VERIFICATION.md`.
 
+The exact product target is RotWK Patch 2.02 v9.7.7. Authority is the
+[product scope](../contracts/rotwk-202-v9.7.7-product-scope.json),
+[retail baseline](../contracts/rotwk-202-v9.7.7-baseline.json),
+[architecture](ARCHITECTURE.md), and [verification](VERIFICATION.md). Protocol
+work is sequenced in [ROADMAP.md](ROADMAP.md) and owned only by
+[work-items.json](../orchestration/work-items.json).
+
 ## Implementation status
 
-The following production decisions are approved but **not yet implemented as the sole
-runtime authority**:
+The current executable gameplay authority is the GDScript
+`game/src/retail_slice/retail_slice_sim.gd` (`RetailSliceSim`) constructed by
+the live Godot path documented in `ARCHITECTURE.md`. The standalone
+`engine/OpenBfme.Sim` C# project is a non-shipping experiment. Its unit tests do
+not establish Godot integration, authority, or Patch 2.02 parity.
 
-- pure C# `OpenBFME.Sim` authoritative simulation;
-- a fixed 30 Hz production simulation cadence;
-- server-refereed deterministic lockstep for up to eight players; and
-- canonical network digests, checkpoints, replay and reconnect.
+Earlier Men/Fords measurements, 10 Hz slice observations, Stage proof hashes,
+and dual-run plans are historical 2.01-era regression evidence. They have not
+been retargeted to v9.7.7 and must not support current cadence, behavior,
+networking, or completion claims. Current `state_signature()`-style sentinels
+also are not a canonical versioned network digest unless a work item proves the
+serialization boundary and excludes all client-local concepts.
 
-The current Men/Fords slice still uses a 10 Hz GDScript simulation. The existing C#
-Stage 1 code is a proof candidate, not the production `OpenBFME.Sim` library. Current
-`state_signature()` and Stage proof hashes are useful local regression sentinels, but
-they are not canonical, versioned or cross-platform network serialization. In
-particular, current signatures may include client-local concepts such as selection or
-control groups and must not be reused as multiplayer digests.
+The command, serialization, lockstep, digest, checkpoint, replay, reconnect,
+and cadence sections below describe a target protocol design. A type, interval,
+or algorithm written here is not implemented or accepted merely because it is
+documented. Each requires an owned work item and the evidence in
+`VERIFICATION.md`.
 
-Port behavior mechanically at the existing cadence first. Prove trace equivalence,
-cut authority over to C#, delete the GDScript rules, and only then migrate cadence and
-network protocol in separately reviewed changes.
+Preserve the current authoritative behavior and cadence while extracting a
+language-independent command/state/event trace. A future C# cutover is allowed
+only by an explicit architecture decision and exact trace equivalence; cadence
+and network changes remain separate reviewed changes.
 
 ## Authority boundary
 
-`OpenBFME.Sim` is a pure .NET library with no Godot, renderer, audio, OpenSAGE, BIG,
-W3D, Blender, operating-system input, wall-clock, filesystem enumeration, or transport
-types. The same `MatchHost` owns local, listen-server and headless dedicated execution.
+There is exactly one gameplay authority per accepted build: currently
+`RetailSliceSim`. Any future `OpenBFME.Sim` authority must remain a pure .NET
+library with no Godot, renderer, audio, OpenSAGE, BIG, W3D, Blender,
+operating-system input, wall-clock, filesystem enumeration, or transport types.
+A future `MatchHost` would own local, listen-server, and headless dedicated
+execution through the same simulation contract.
 
 Godot may collect input, maintain selection/control groups/camera/UI, predict immediate
 order feedback, interpolate snapshots and consume `SimEvent`s. It must not mutate game
@@ -99,7 +113,7 @@ resource cost, cooldown, target shape, payload bounds and allowed execution wind
 assigns `CommandSequence` and publishes an `AcceptedCommandBatch`. Every peer applies
 the same accepted batches in the same order.
 
-## Scheduling and responsiveness
+## Target scheduling proposal (unimplemented)
 
 - Simulation cadence: 30 Hz.
 - Local single-player command target: next tick.
@@ -111,9 +125,9 @@ the same accepted batches in the same order.
 - AI and fog may run on deterministic sub-schedules; their exact divisors are protocol
   configuration, not wall-clock timers.
 
-## Public interfaces
+## Target public interfaces (unimplemented)
 
-The production boundary exposes these versioned concepts:
+The proposed production boundary exposes these versioned concepts:
 
 - `MatchConfig`: protocol, simulation pack digest, map, seed, slots, teams, options,
   cadence and deterministic subsystem schedules.
@@ -133,7 +147,7 @@ Serialization is canonical and independently specified. Field order, integer enc
 collection ordering, version negotiation and rejection behavior must not depend on a
 runtime's default JSON, reflection or dictionary behavior.
 
-## Digest, checkpoint and replay cadence
+## Target digest, checkpoint and replay cadence (unimplemented)
 
 - Emit a `StateDigest` every 30 ticks.
 - Emit a `Checkpoint` every 300 ticks.
@@ -177,7 +191,9 @@ confidentiality.
 
 ## Completion evidence
 
-This protocol is implemented only when local, listen and dedicated hosts replay the
-same scenarios to identical digests across supported platforms and render rates, and
-when latency, jitter, loss, reordering, reconnect, observer join and injected desync
-tests pass. Types or stubs compiling without those behaviors are not completion.
+This protocol is implemented only when the exact Patch 2.02 v9.7.7 identity is
+bound and local, listen, and dedicated hosts replay the same scenarios to
+identical digests across supported platforms and render rates, while latency,
+jitter, loss, reordering, reconnect, observer join, and injected-desync tests
+pass. Historical Men/Fords traces, types, or compiling stubs do not satisfy
+that result.

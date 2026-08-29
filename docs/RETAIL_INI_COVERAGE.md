@@ -1,5 +1,17 @@
 # Retail INI coverage ledger
 
+> **HISTORICAL 2.01-ERA INSTRUMENT - NOT RETARGETED.** The tool, selection,
+> denominators, and measured counts documented below predate the exact RotWK
+> Patch 2.02 v9.7.7 target. Preserve the figures as a frozen historical receipt;
+> do not describe them as current 2.02 coverage, copy them into the new
+> denominator, or use them for a parity percentage. Current authority is the
+> [product scope](../contracts/rotwk-202-v9.7.7-product-scope.json),
+> [retail baseline](../contracts/rotwk-202-v9.7.7-baseline.json),
+> [architecture](ARCHITECTURE.md), and [verification](VERIFICATION.md). Retarget
+> work must be a row in
+> [work-items.json](../orchestration/work-items.json), sequenced by the current
+> [roadmap](ROADMAP.md), and produce fresh identity-bound evidence.
+
 `tools/retail-ini-coverage.py` is the reproducible BFME2 1.06 / RotWK 2.01
 data-surface audit. It reads the effective INI and INC winners from the normal
 retail catalogs, indexes the currently selected content packs, and compares

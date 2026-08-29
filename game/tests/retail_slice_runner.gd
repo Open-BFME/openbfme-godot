@@ -4070,6 +4070,7 @@ func _finish() -> void:
 	print("RETAIL_SLICE_RESULT passed=%d failed=%d" % [passed, failed])
 	var acceptance_ok := (
 		passed >= ACCEPTANCE_MIN_PASSED
+		and failed == 0
 		and unexpected.is_empty()
 		and newly_passing.is_empty()
 	)

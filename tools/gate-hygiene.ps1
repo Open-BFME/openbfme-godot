@@ -17,8 +17,7 @@
 
     (c) No tracked text file may contain a machine-absolute user profile
         path or the retired workspace directory name, except historical
-        notes under docs/patch-notes/, the orchestration audit trail, and
-        the frozen orphan-runner evidence CSV.
+        notes under docs/patch-notes/ and the orchestration audit trail.
 
 .EXAMPLE
     powershell -ExecutionPolicy Bypass -File tools\gate-hygiene.ps1
@@ -43,9 +42,11 @@ $RootAllowlist = @(
     '.gitattributes'
     '.gitignore'
     'AGENTS.md'
+    'CLAUDE.md'
     'CONTRIBUTING.md'
     'DIRECTION.md'
     'LICENSE'
+    'PLAN.md'
     'README.md'
     'SECURITY.md'
     'VERSION'
@@ -72,7 +73,6 @@ function Test-HygieneExcludedPath {
     $norm = $RelativePath.Replace('\', '/')
     if ($norm.StartsWith('docs/patch-notes/', [StringComparison]::OrdinalIgnoreCase)) { return $true }
     if ($norm.StartsWith('orchestration/', [StringComparison]::OrdinalIgnoreCase)) { return $true }
-    if ($norm.Equals('tools/orphan-runners-manifest.csv', [StringComparison]::OrdinalIgnoreCase)) { return $true }
     return $false
 }
 

@@ -861,7 +861,7 @@ def print_summary(ctx: WizardContext, outcomes: Sequence[GateOutcome]) -> bool:
     else:
         print("RESULT: FAIL — one or more verification gates did not pass.")
         print("  Re-run with --skip-gates to finish setup only, or check")
-        print("  orchestration/queue.md and docs/state/ for currently known failures before filing an issue.")
+        print("  orchestration/work-items.json for currently known failures before filing an issue.")
     return ok
 
 

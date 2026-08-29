@@ -7,16 +7,29 @@
 # Log:    workspace\logs\ui-parity-gate.log
 # Exit:   0 = all checks green, 1 = at least one red (or watchdog kill)
 
+[CmdletBinding()]
+param(
+    [string]$GodotPath = ''
+)
+
 $ErrorActionPreference = "Stop"
 $repo = Split-Path -Parent $PSScriptRoot
-$godot = "C:\Users\Jonathan\Downloads\godot47\Godot_v4.7-stable_win64_console.exe"
 $log = Join-Path $repo "workspace\logs\ui-parity-gate.log"
 $deadlineSeconds = 240
 
-if (-not (Test-Path $godot)) {
-    Write-Host "UI_PARITY_GATE DRIVER REFUSED: Godot exe not found at $godot"
+$candidates = @(
+    $GodotPath,
+    $env:OPENBFME_GODOT,
+    (Join-Path $repo '.tools\godot\Godot_v4.7-stable_win64_console.exe'),
+    (Join-Path $repo '.tools\godot\Godot_v4.7-stable_win64.exe')
+) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+$godot = $candidates | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
+if ([string]::IsNullOrWhiteSpace($godot)) {
+    Write-Host 'UI_PARITY_GATE DRIVER REFUSED: Godot was not found.'
+    Write-Host '  Pass -GodotPath, set OPENBFME_GODOT, or install the pinned binary under .tools\godot\.'
     exit 2
 }
+$godot = [IO.Path]::GetFullPath($godot)
 New-Item -ItemType Directory -Force (Join-Path $repo "workspace\logs") | Out-Null
 New-Item -ItemType Directory -Force (Join-Path $repo "workspace\review\ui-parity") | Out-Null
 

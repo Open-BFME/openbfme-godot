@@ -1,53 +1,49 @@
-# orchestration/ — how work moves through this repo
+# Orchestration
 
-This directory is the whole coordination surface for humans and agents. If a
-piece of work is not visible here, it does not exist.
+This directory coordinates bounded contributions to the exact RotWK Patch
+2.02 v9.7.7 Godot port. [AGENTS.md](../AGENTS.md) is the governing contract.
 
-| Path | What it is |
+## Authority
+
+| Path | Role |
 |---|---|
-| `queue.md` | THE live work queue. One row per item, claim-before-start, close-by-evidence. |
-| `briefs/` | One file per lane: the contract an implementor executes (goal, oracle facts with anchors, steps, tests-first list, Definition of Done). |
-| `reports/` | One file per lane: what the implementor did, verbatim DoD outputs, honest reds. Verifier reports live here too (`<lane>-verify.md`). |
-| `TEMPLATE-brief.md`, `TEMPLATE-report.md` | Copy these. A brief without a measurable DoD is not a brief. |
+| [work-items.json](work-items.json) | Only live work ledger; integration-owner write access only. |
+| `briefs/` | Optional sanitized implementation context linked by a work item. |
+| `reports/` | Optional sanitized handoff and independent-verification summaries. |
+| Git history for `queue.md` | Historical ledger; never claim work or infer current status from it. |
 
-## The lane lifecycle (every lane, no exceptions)
+Scope comes from the
+[product contract](../contracts/rotwk-202-v9.7.7-product-scope.json) and
+[baseline contract](../contracts/rotwk-202-v9.7.7-baseline.json). Product
+direction is [DIRECTION.md](../DIRECTION.md), the system map is
+[PLAN.md](../PLAN.md), and evidence acceptance is defined by
+[docs/VERIFICATION.md](../docs/VERIFICATION.md).
 
-1. **Claim** — write your lane name into the `owner` column of a `queue.md` row
-   (or add a row) and commit that first. Unclaimed rows are fair game; claimed
-   rows are not. One tree-mutating lane at a time on this machine.
-2. **Brief** — `briefs/<lane>.md` from the template. Anchors are `file:line`
-   as of a named commit; oracle facts cite retail INI paths; the DoD lists
-   commands whose output can be pasted verbatim.
-3. **Execute** — read `AGENTS.md` first (ten rules; rule 7: no find-replace
-   sweeps). Logs go ONLY under `workspace/logs/`. Stage by explicit path.
-   Long jobs run detached and are polled by log mtime; a tool timeout is not
-   evidence of anything.
-4. **Report** — `reports/<lane>.md` from the template: per DoD item PASS/FAIL
-   with the measured output, judged failure-by-NAME against the named
-   baseline, plus everything left undone. Honest reds stay red.
-5. **Verify** — a fresh-context verifier (opus-medium) re-runs the DoD and
-   adversarially reviews the diff; verdict ACCEPT / FIX-FIRST / REJECT in
-   `reports/<lane>-verify.md`. Implementor self-reports are unproven until then.
-   FIX-FIRST → a fix brief (`briefs/<lane>-fixes.md`), then re-verify.
-6. **Close** — the queue row goes CLOSED with the evidence (commit shas, runner
-   numbers, digests, dist version if content changed).
+## Lane lifecycle
 
-## Which implementor for which lane (measured on this repo, 2026-08-17)
+1. **Assign.** The integration owner chooses one bounded work item and records
+   its owner, owned paths, source requirement, evidence levels, focused check,
+   and dependencies in `work-items.json`.
+2. **Isolate.** The owner creates one short-lived branch and sibling worktree
+   such as `..\open-bfme-lanes\<work-id>`. One item, lane, worker, and focused
+   commit travel together.
+3. **Reproduce.** The worker proves the named gap against exact Patch 2.02
+   v9.7.7 evidence before changing implementation.
+4. **Implement.** The worker changes only owned paths, runs only the focused
+   Windows-native checks needed for the item, and keeps retail bytes and logs
+   below ignored `workspace\` paths.
+5. **Handoff.** The worker supplies one focused commit and a sanitized packet
+   naming SOURCE, CONVERT, LOAD, and whichever of BEHAVIOR, VISUAL, and AUDIO
+   the acceptance contract requires. Missing or lower-level evidence stays
+   explicitly unproven.
+6. **Verify.** A different agent, in a clean context, reviews the original
+   evidence and diff and reruns the declared check against the same identities.
+   Implementor self-verification cannot accept an item.
+7. **Integrate.** The integration owner alone merges, runs affected/final
+   gates, updates canonical state/contracts/selection, records the verdict in
+   `work-items.json`, and removes the branch and worktree.
 
-- **sol-medium (Codex gpt-5.6-sol)** — bulk implementation from a precise
-  brief with a failing-first test list. Never let it sweep/rename mechanically;
-  it corrupted identifiers twice.
-- **grok 4.6 CLI** — surgical, fully-specified fix lanes and document/ops-heavy
-  lanes (pack activation, docs overhaul, releases). Flawless on exact specs.
-- **kimi k3 CLI** — long-context triage/ledger work (promoting ledgers,
-  purge dockets, evidence verification). `-p` mode only, no approval flags.
-- **opus-medium** — verifier/reviewer, diagnosis/bisect lanes. Every lane's
-  acceptance gate.
-
-## Pins are oracles, not knobs
-Hash pins (`retail_state_pin_runner`, contract `policy_digest`, generated
-profile identities, selection pins in `tools/gate-retail.ps1`) are never edited
-to make a check pass. Selection pins move only in the same change that moves
-the selection, re-measured, with a dated comment. The state pin is re-minted by
-the owner alone, explicitly, following the procedure in
-`reports/q5-state-pin-drift.md`.
+Tracked briefs and reports contain portable facts and digests only. Raw output,
+captures, retail-derived material, and machine-absolute paths remain private
+under `workspace\logs\<work-id>\` or the work item's private oracle directory.
+A red check, stale identity, fallback, or disputed oracle keeps the item open.

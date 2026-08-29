@@ -1,5 +1,17 @@
 # Castle / siege map implementation design
 
+> **HISTORICAL DESIGN - NOT PATCH 2.02 TARGET EVIDENCE.** This document is a
+> frozen 2026-08-11 investigation of a pure 2.01-era oracle and the repository
+> state at that time. Preserve its measurements, feasibility grades, paths,
+> counts, and proposed lanes as historical engineering evidence; do not copy
+> them into the Patch 2.02 v9.7.7 denominator or treat any proposal as current
+> implementation status. Revalidate every source fact and consumer through a
+> current [work item](../orchestration/work-items.json), sequenced by the
+> [roadmap](ROADMAP.md). Current authority is the
+> [product scope](../contracts/rotwk-202-v9.7.7-product-scope.json),
+> [retail baseline](../contracts/rotwk-202-v9.7.7-baseline.json),
+> [architecture](ARCHITECTURE.md), and [verification](VERIFICATION.md).
+
 > **Status:** design blueprint. No code was written and no runner was executed for this
 > document. Every feasibility grade is an engineering estimate.
 > **Author lane:** `opus-castle-design` (branch `opus-castle-design`, base `6051250`)

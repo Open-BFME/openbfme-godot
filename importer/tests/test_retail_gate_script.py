@@ -7,6 +7,7 @@ import re
 ROOT = Path(__file__).resolve().parents[2]
 GATE = ROOT / "tools" / "gate-retail.ps1"
 WRAPPER = ROOT / "run_retail_pipeline_tests.bat"
+SLICE_RUNNER = ROOT / "game" / "tests" / "retail_slice_runner.gd"
 
 
 def _gate_text() -> str:
@@ -201,6 +202,12 @@ def test_playable_retail_slice_step_honours_the_runners_acceptance_contract() ->
     # never against a literal duplicated into this script.
     assert "playable_retail_slice passed fewer checks than its own declared" in text
     assert "playable_retail_slice reported unpinned failures." in text
+
+
+def test_retail_slice_runner_cannot_accept_named_failures() -> None:
+    text = SLICE_RUNNER.read_text(encoding="utf-8")
+    acceptance = text.split("var acceptance_ok := (", 1)[1].split(")", 1)[0]
+    assert "and failed == 0" in acceptance
 
 
 def test_state_pin_runner_is_wired_into_the_gate() -> None:

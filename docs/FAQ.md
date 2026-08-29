@@ -2,61 +2,96 @@
 
 ## What is OpenBFME?
 
-A Godot engine project plus a Python importer. It converts *Rise of the
-Witch-king* / BFME2 content **on your PC** from a game install you own.
-Retail-derived files live under `workspace/`; use them freely. Git ignores
-`workspace/` and the publication-boundary CI scans tracked files for retail
-bytes and machine-absolute paths — that is the whole policy.
+An independent Godot 4.7 reimplementation plus a Python conversion pipeline for
+*The Lord of the Rings: The Battle for Middle-earth II - The Rise of the
+Witch-king*. The exact target is **Patch 2.02 v9.7.7**.
 
-## Do I need the game?
+## What source installation does it require?
 
-Yes for real play. Target is **RotWK 2.01** (with BFME2 base). We do not ship
-pre-converted packs.
+The pinned English target is built from three precedence layers: the Patch 2.02
+official-2 v9.7.7 overlay, the underlying RotWK 2.01 installation, and BFME2
+1.06. Users supply lawful copies locally. OpenBFME does not distribute retail or
+converted retail content.
 
-## What does "fail closed" mean?
+The [product scope](../contracts/rotwk-202-v9.7.7-product-scope.json) defines
+the denominator and the [retail baseline](../contracts/rotwk-202-v9.7.7-baseline.json)
+defines the accepted source identity.
 
-If something required is missing or wrong, tools **error out** instead of
-quietly inventing content. That keeps bugs visible.
+## Is this already a 1:1 port?
 
-## Is it playable?
+No. It is a substantial developer alpha with an executable skirmish foundation,
+but modes, behavior, assets, presentation, and oracle coverage remain open. A
+launch, parser count, converted asset, or passing isolated runner is not a
+whole-product claim. See [VERIFICATION.md](VERIFICATION.md) and the live
+[work-item ledger](../orchestration/work-items.json).
 
-Developer alpha. Skirmish shell and convert tools exist; coverage is uneven.
-See [orchestration/queue.md](../orchestration/queue.md) and [docs/state/](state/).
+## What does parity mean here?
 
-## RotWK or BFME2?
+The exact effective source must be identified, deterministically converted,
+mounted by verified content address, consumed by the live runtime without a
+forbidden fallback, behaviorally compared with the original, and protected by a
+gate. Visual and audio fidelity require their own matched-condition oracle
+evidence.
 
-**RotWK** is the main target. BFME2 alone is optional comparison
-(`--game bfme2`). Campaigns and War of the Ring are planned later
-([DIRECTION.md](../DIRECTION.md)), not finished features.
+## What does fail closed mean?
 
-## Can I use Codex to learn the code?
+Missing, ambiguous, unsupported, stale, or unsafe input produces a named
+failure. Strict retail mode does not quietly invent rules, use generic art, or
+mount another pack.
 
-Yes. Clone the repo and point [Codex](https://openai.com/codex/) (or a similar
-agent) at it. Ask for entry points, how convert -> pack -> launch works, and
-fix ideas with a small check command. Confirm with real gates.
+## Does SKIP mean a gate passed?
+
+No. `SKIP` means the gate did not evaluate because a prerequisite was missing.
+It never satisfies a required evidence lane.
+
+## Which simulator is authoritative?
+
+The current executable gameplay authority is the GDScript `RetailSliceSim`
+path. The standalone C# simulator is an experiment/comparison lane and cannot
+support product-completion claims. See [ARCHITECTURE.md](ARCHITECTURE.md).
+
+## What is the current target or milestone?
+
+[DIRECTION.md](../DIRECTION.md) owns the outcome,
+[ROADMAP.md](ROADMAP.md) owns sequencing, and
+`orchestration/work-items.json` is the only live task/status ledger. Historical
+queues, reports, scores, and selected-pack receipts are not current authority.
 
 ## Where does OpenSAGE fit?
 
-We take inspiration and research cues from
-[OpenSAGE](https://github.com/OpenSAGE/OpenSAGE) and use the
-[OpenSAGE BlenderPlugin](https://github.com/OpenSAGE/OpenSAGE.BlenderPlugin) as
-an **external** convert helper. We do not ship OpenSAGE as our engine. See
-[OPENSAGE_GAP_MATRIX.md](OPENSAGE_GAP_MATRIX.md) and [THIRD_PARTY.md](THIRD_PARTY.md).
+[OpenSAGE](https://github.com/OpenSAGE/OpenSAGE) is a research and comparison
+source, and its Blender plugin is an external conversion tool. OpenBFME does not
+vendor OpenSAGE as its runtime or treat an OpenSAGE demo as proof of Godot
+parity. See [OPENSAGE_GAP_MATRIX.md](OPENSAGE_GAP_MATRIX.md) and
+[THIRD_PARTY.md](THIRD_PARTY.md).
 
-## How do I mod?
+## Can I play without the retail game?
 
-Start with the real example pack `game/mods/example_hard_orcs/` and
-[MODDING.md](MODDING.md).
+Public fixtures can exercise importer and engine code, but real target content
+requires the lawful retail layers. The legal-safe fixture is not a parity
+fallback.
 
-## Multiplayer?
+## Can I mod it?
 
-Lockstep + lobby foundations exist. Not a polished online service yet.
+Mod contracts and examples exist; see [MODDING.md](MODDING.md). Mods are
+separately identified from the strict retail profile and cannot silently change
+its parity result.
 
-## How do I help?
+## Is multiplayer complete?
 
-[CONTRIBUTING.md](../CONTRIBUTING.md). Small, tested changes.
+No. Lockstep and lobby foundations exist, but full protocol, scale, recovery,
+observer, and product qualification remain governed by the roadmap and work
+items.
 
-## License
+## How do I contribute?
 
-Project source is [Unlicense](../LICENSE) (public domain). Game assets and
-trademarks stay with their owners.
+Read [AGENTS.md](../AGENTS.md) and [CONTRIBUTING.md](../CONTRIBUTING.md). Work is
+assigned as one bounded work-item row with owned files, source evidence, a
+focused Windows command, and independent verification.
+
+## What is licensed?
+
+Repository source is [Unlicense](../LICENSE). Retail content, Tolkien and
+Middle-earth material, trademarks, and third-party tools/assets retain their
+own rights and licenses. This project is not affiliated with EA or the Tolkien
+rights holders.

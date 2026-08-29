@@ -1,38 +1,44 @@
-# <Lane name> — report
+# <work-item ID> - implementation handoff
 
-Date: <yyyy-mm-dd> · Owner: <name> · Brief: orchestration/briefs/<lane>.md
-Baseline HEAD: <sha> · Final HEAD: <sha> · Selected pack(s) used for every
-Godot measurement: <pack-id/digest> (from workspace/content-packs/selection.json)
+- Implementor: `<name>`
+- Base commit: `<sha>`
+- Commit: `<sha>`
+- Target baseline: `rotwk-202-v9.7.7-en`
+- Work-item revision/digest: `<identity>`
 
-## Result (one paragraph)
-<Accepted-by-you? No — say "implemented; awaiting verify". What landed, what
-did not, and the single most important caveat.>
+## Result
 
-## Commits
-- `<sha>` — <message>
+State `implemented; awaiting independent verification`, or state the blocker.
+Do not self-accept the item.
 
-## Design choices
-<Every semantic decision, with the retail/OpenSAGE anchor and the
-interpretation you chose. Anything you invented is named as invented.>
+## Changed paths
 
-## Definition of Done — verbatim
-| # | Criterion | Result | Evidence (log path + the actual line) |
+List every changed path and why it belongs to the assigned scope.
+
+## Evidence
+
+| Level | Result | Source/command | Sanitized artifact digest |
 |---|---|---|---|
+| SOURCE | `PASS/FAIL/SKIP` |  |  |
+| CONVERT | `PASS/FAIL/SKIP` |  |  |
+| LOAD | `PASS/FAIL/SKIP` |  |  |
+| BEHAVIOR | `PASS/FAIL/SKIP` |  |  |
+| VISUAL | `PASS/FAIL/SKIP` |  |  |
+| AUDIO | `PASS/FAIL/SKIP` |  |  |
 
-## Runner table (before → after)
-| Runner | Baseline | After | Pin (file:line) |
-|---|---|---|---|
+Record only evidence required by the item. `SKIP` is not success. Raw output,
+captures, retail bytes, and machine paths stay below
+`workspace\logs\<work-item-id>\`.
 
-## Failure-by-name delta
-<For any suite that was red before: the exact set difference of failure names
-(new / gone), not counts.>
+## Focused check
 
-## Pins moved
-| Pin | Old | New | Why | Re-minted by |
-|---|---|---|---|---|
+- Command: `<exact command>`
+- Exit/status: `<PASS/FAIL/SKIP>`
+- Acceptance marker: `<exact observed marker>`
+- Unexpected diagnostics: `<none or exact names>`
 
-## Named unsupported semantics / follow-ups
-<Bullets; each becomes or references a queue row.>
+## Decisions and unresolved work
 
-## Not verified / left undone
-<Say it plainly. A verifier will find it anyway.>
+List source-backed interpretation decisions, unsupported semantics, and scope
+that remains open. The integration owner decides whether any follow-up becomes
+a separate work item.

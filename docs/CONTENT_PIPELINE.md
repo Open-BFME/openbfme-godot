@@ -3,21 +3,32 @@
 > **Owner:** Importer and content-pack integration owner
 > **Owns:** Retail extraction, conversion, caching, provenance, pack assembly, publication, and runtime-loading contracts.
 > **Does not own:** Gameplay semantics, simulation protocol, visual parity approval, mod load-order policy, or public-release approval.
-> **Last verified commit:** `efe6a6c1f7ab76ae84436faed4e9a02298a4a194`
 > **Update trigger:** A source format, converter, pack schema, tool pin, publication rule, or runtime mount contract changes.
 > **Validation:** `run_importer_tests.bat`, `run_retail_pack_tests.bat`, and the generated pack provenance/audit reports.
 
+The exact target is RotWK Patch 2.02 v9.7.7. Authority is the
+[product scope](../contracts/rotwk-202-v9.7.7-product-scope.json),
+[retail baseline](../contracts/rotwk-202-v9.7.7-baseline.json),
+[architecture](ARCHITECTURE.md), and [verification](VERIFICATION.md). Current
+sequencing and ownership live only in [ROADMAP.md](ROADMAP.md) and
+[work-items.json](../orchestration/work-items.json).
+
 ## Contract
 
-The importer is the only component allowed to understand BFME2 retail containers and
-source formats. It coordinates Python, Blender and pinned external format tools, then
-emits a versioned runtime-native pack. Runtime code must not read the retail install,
-BIG archives, W3D files, source maps, importer caches, Blender, OpenSAGE types, or
-absolute source paths.
+The importer is the only component allowed to understand retail containers and
+source formats. For the target it resolves the Patch 2.02 v9.7.7 overlay over
+the underlying RotWK layer and BFME2 base according to the pinned source
+contracts. It coordinates Python, Blender, and pinned external format tools,
+then emits versioned runtime-native bundles. Runtime code must not read the
+retail install, BIG archives, W3D files, source maps, importer caches, Blender,
+OpenSAGE types, or absolute source paths.
 
-The proven importer is production infrastructure. Preserve its observable behavior,
-tests, cache identities, resumability, and performance characteristics. Refactor it
-only for a bounded defect or measured bottleneck with equivalent output evidence.
+The importer pipeline is retained production infrastructure. Existing proofs
+remain bound to the exact source, recipe, and selected-pack identities they
+measured; they do not automatically certify v9.7.7. Preserve observable
+behavior, tests, cache identities, resumability, and performance characteristics.
+Refactor only for a bounded defect or measured bottleneck with equivalent
+output evidence, then reverify the target identity.
 
 ## Containment
 
@@ -44,22 +55,33 @@ workspace/content-packs/
 
 ## Deterministic, resumable flow
 
-The supported **RotWK systems-first** operator entry point is:
+Target work starts by preparing the exact private three-layer source:
 
 ```bat
-run_rotwk_systems.bat <RotWK>
+powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass ^
+  -File tools\prepare-rotwk-202-baseline.ps1 ^
+  -Bfme2Install "C:\Path\To\BFME2" ^
+  -Rotwk201Install "C:\Path\To\RotWK" ^
+  -Patch202Overlay "C:\Path\To\Patch-202-v9.7.7"
 ```
 
-That path runs doctor, map/faction census, map-cook corpus, and faction
-plan-only gap accounting against RotWK (see `tools/rotwk-systems.ps1` and
-`tools/gate-rotwk-systems.ps1`). It does not rewrite `selection.json` unless
-you explicitly pass publish flags to a later build stage.
+This establishes source/catalog identity only. The approved cook, audit,
+publish, and selection command is the one named by the current work item; only
+the integration owner may change canonical selected-pack state.
 
-The legacy BFME2 Men/Fords wrapper remains:
+`run_rotwk_systems.bat`, `run_rotwk_one_button.bat`, and
+`tools/rotwk_full_content.py` are historical 2.01-era diagnostics unless a
+current work item explicitly retargets and verifies the exact command. Their
+old cook, pack-proof, publication, or launch results are not 2.02 evidence.
+
+The BFME2 Men/Fords wrapper is regression-only historical tooling:
 
 ```bat
 run_importer.bat <BFME2>
 ```
+
+It must not publish/select the Patch 2.02 target or support a current parity
+claim.
 
 The underlying flow is:
 
@@ -81,11 +103,11 @@ selection usable. Unchanged inputs, recipes and tool identities must produce ide
 bundle bytes; a changed recipe or tool identity mints a new provenance identity even
 when its semantic output is equivalent.
 
-The current cold-build benchmark and its measurement environment are volatile status,
-so they live only in `docs/state/` or generated benchmark reports. The established
-baseline must be protected: compare like-for-like cold, warm and resumed runs, and do
-not accept a material regression without a recorded cause and integration-owner
-approval.
+Cold-build measurements and their environments are volatile evidence. Store
+them in private generated reports under `workspace/`, bind them to the complete
+identity, and reference them from the relevant work item. Compare like-for-like
+cold, warm, and resumed runs; do not accept a material regression without a
+recorded cause and integration-owner approval.
 
 ## Source selection and precedence
 
@@ -130,7 +152,7 @@ limits, source/profile identity, recipe/tool provenance, and conversion capabili
 The published pack must not require the retail installation or importer toolchain at
 runtime.
 
-Private parity mode is strict:
+The private Patch 2.02 parity profile is strict:
 
 - mount exactly the integration-owner-selected retail pack;
 - require the expected pack/profile identity;
@@ -141,7 +163,7 @@ Private parity mode is strict:
   content.
 
 Loose repository and user packs remain a separate development/modding lane described in
-`MODDING.md`. Passing in that lane is not BFME2 parity evidence.
+`MODDING.md`. Passing in that lane is not Patch 2.02 parity evidence.
 
 ### Runtime selection-source precedence
 
@@ -187,5 +209,5 @@ never remove the selected bundle or evidence needed to reproduce it.
 5. Run pack/runtime containment checks.
 6. Let only the integration owner publish or change the selected pack.
 
-The final M2 decision remains owned by `VERIFICATION.md`; importer checks alone cannot
-declare the slice complete.
+All feature, mode, milestone, and complete-product decisions remain owned by
+`VERIFICATION.md`; importer checks alone cannot declare parity.

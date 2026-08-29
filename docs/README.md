@@ -1,49 +1,69 @@
 # Documentation
 
-Authoritative map for this repo. If it is not linked here or from the root
-`README.md` / `DIRECTION.md` / `AGENTS.md`, treat it as non-authoritative.
+This index separates durable authority, live work, engineering references, and
+historical evidence. A historical report or passing log never overrides a
+current contract.
 
-## Start
+## Start here
 
-1. [README](../README.md) - what the project is and how to run
-2. [AGENTS.md](../AGENTS.md) - layout, lanes, publishing, work protocol
-3. [Onboarding](ONBOARDING.md) - install, convert, launch (+ glossary)
-4. [Modding](MODDING.md) - example pack from the repo
-5. [FAQ](FAQ.md) - common questions
-6. [Contributing](../CONTRIBUTING.md) - how to pick work and the DoD
+1. [Project overview](../README.md)
+2. [Agent contract](../AGENTS.md)
+3. [Windows onboarding](ONBOARDING.md)
+4. [Product direction](../DIRECTION.md)
+5. [Architecture](ARCHITECTURE.md)
+6. [Verification](VERIFICATION.md)
+7. [Contributing](../CONTRIBUTING.md)
 
-## Product truth
+## Product authority
 
-| Doc | Owns |
+| Document | Authority |
 |---|---|
-| [DIRECTION.md](../DIRECTION.md) | RotWK 2.01 target, systems-first model, ladder |
-| [MILESTONE_CURRENT.md](MILESTONE_CURRENT.md) | Active systems-iteration objective |
-| [orchestration/queue.md](../orchestration/queue.md) | Live work queue |
-| [orchestration/README.md](../orchestration/README.md) | Lane lifecycle, brief/report templates, implementor routing |
-| [docs/state/](state/) | Live ledgers (parity, playtest, recook, cook reports) |
-| [contracts/rotwk-201-product-scope.json](../contracts/rotwk-201-product-scope.json) | Machine-readable product policy |
+| [Product scope](../contracts/rotwk-202-v9.7.7-product-scope.json) | Exact Patch 2.02 v9.7.7 product denominator and claim profiles |
+| [Retail baseline](../contracts/rotwk-202-v9.7.7-baseline.json) | Accepted three-layer source identity |
+| [English overlay](../contracts/rotwk-202-v9.7.7-english-overlay.json) | Exact Patch 2.02 v9.7.7 overlay archives |
+| [DIRECTION.md](../DIRECTION.md) | Product outcome and permanent principles |
+| [PLAN.md](../PLAN.md) | Durable system map |
+| [ARCHITECTURE.md](ARCHITECTURE.md) | Current executable authority and target boundaries |
+| [VERIFICATION.md](VERIFICATION.md) | Evidence levels, gate semantics, and definition of done |
 
-## Engineering
+## Live program state
 
-| Doc | Topic |
+| Document | Purpose |
 |---|---|
-| [ARCHITECTURE.md](ARCHITECTURE.md) | Boundaries (`game` / `importer` / `engine`) |
-| [TOPOLOGY.md](TOPOLOGY.md) | Production source, workspace state, and caches |
-| [CONTENT_PIPELINE.md](CONTENT_PIPELINE.md) | Import, packs, workspace |
-| [ROTWK_SYSTEMS_PATH.md](ROTWK_SYSTEMS_PATH.md) | `run_rotwk_*` operator path |
-| [BFME2_PARITY.md](BFME2_PARITY.md) | Parity evidence model (RotWK-primary) |
-| [state/parity-ledger.md](state/parity-ledger.md) | Live feature-parity ledger |
-| [RETAIL_INI_COVERAGE.md](RETAIL_INI_COVERAGE.md) | Generated INI coverage numbers |
-| [VERIFICATION.md](VERIFICATION.md) | Automated checks (errors stop, no silent fakes) |
-| [OPENSAGE_GAP_MATRIX.md](OPENSAGE_GAP_MATRIX.md) | OpenSAGE comparison checklist |
-| [SIMULATION_PROTOCOL.md](SIMULATION_PROTOCOL.md) | Sim / network target notes |
-| [MODDING.md](MODDING.md) | Mod pack direction |
-| [THIRD_PARTY.md](THIRD_PARTY.md) | Toolchain and asset provenance |
-| [BUILD_AND_RELEASE.md](BUILD_AND_RELEASE.md) | Windows release workflow |
-| [RELEASE_POLICY.md](RELEASE_POLICY.md) | Code-only distribution rules |
-| [RELEASE_CYCLE.md](RELEASE_CYCLE.md) | Release cadence |
-| [LAUNCHER_UX_AND_RELEASE_READINESS.md](LAUNCHER_UX_AND_RELEASE_READINESS.md) | Launcher UX |
-| [LAUNCHER_LINUX_WINE.md](LAUNCHER_LINUX_WINE.md) | Launcher on Wine |
-| [HARDLINK_ISOLATION.md](HARDLINK_ISOLATION.md) | Evidence / source isolation |
-| [castle-siege-design.md](castle-siege-design.md) | Castle siege design |
-| [patch-notes/](patch-notes/) | Published version notes |
+| [ROADMAP.md](ROADMAP.md) | Ordered program and milestone sequence |
+| [work-items.json](../orchestration/work-items.json) | Only live task, ownership, status, and acceptance ledger |
+| [MILESTONE_CURRENT.md](MILESTONE_CURRENT.md) | Human-readable current integration objective |
+| [orchestration guide](../orchestration/README.md) | Lane lifecycle and handoff rules |
+
+Generated reports under `workspace/` are private evidence bound to an exact
+identity. The deleted `docs/state/` snapshots and old queue remain available in
+Git history; retained reports and receipts are historical unless a current
+authority explicitly references them.
+
+## Engineering references
+
+| Document | Topic |
+|---|---|
+| [TOPOLOGY.md](TOPOLOGY.md) | Source checkout, private workspace, and caches |
+| [CONTENT_PIPELINE.md](CONTENT_PIPELINE.md) | Import and bundle concepts |
+| [ROTWK_SYSTEMS_PATH.md](ROTWK_SYSTEMS_PATH.md) | Existing operator scripts; verify target identity before use |
+| [SIMULATION_PROTOCOL.md](SIMULATION_PROTOCOL.md) | Simulation/network protocol work |
+| [MODDING.md](MODDING.md) | Mod schema and example workflow |
+| [OPENSAGE_GAP_MATRIX.md](OPENSAGE_GAP_MATRIX.md) | OpenSAGE research/tool comparison |
+| [THIRD_PARTY.md](THIRD_PARTY.md) | Tool, donor, and asset provenance |
+| [BUILD_AND_RELEASE.md](BUILD_AND_RELEASE.md) | Windows build workflow |
+| [RELEASE_POLICY.md](RELEASE_POLICY.md) | Public/private containment |
+| [RELEASE_CYCLE.md](RELEASE_CYCLE.md) | Release process |
+| [LAUNCHER_UX_AND_RELEASE_READINESS.md](LAUNCHER_UX_AND_RELEASE_READINESS.md) | Launcher readiness |
+| [LAUNCHER_LINUX_WINE.md](LAUNCHER_LINUX_WINE.md) | Launcher under Wine |
+| [HARDLINK_ISOLATION.md](HARDLINK_ISOLATION.md) | Source/evidence isolation |
+| [patch-notes/](patch-notes/) | OpenBFME release notes |
+
+## Compatibility and historical instruments
+
+- [BFME2_PARITY.md](BFME2_PARITY.md) is a compatibility redirect; parity rules
+  live in `VERIFICATION.md`.
+- [RETAIL_INI_COVERAGE.md](RETAIL_INI_COVERAGE.md) documents a historical
+  2.01-era instrument that has not been retargeted to v9.7.7.
+
+Do not copy historical denominators or percentages into current 2.02 claims.

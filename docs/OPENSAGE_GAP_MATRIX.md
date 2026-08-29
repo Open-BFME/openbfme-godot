@@ -1,102 +1,85 @@
-# OpenSAGE -> OpenBFME gap matrix
+# OpenSAGE comparison matrix
 
-**Owner:** integration owner  
-**Owns:** cross-project parity checklist (oracle only)  
-**Does not own:** product scope (`DIRECTION.md`) or volatile gate numbers (`docs/state/`, `orchestration/queue.md`)  
-**Update trigger:** new OpenSAGE demo surfaces, or OpenBFME systems-ladder moves  
-**Validation:** map each row to `docs/MILESTONE_CURRENT.md` systems and a focused proof
+- Owner: integration owner
+- Owns: bounded OpenSAGE research/tool comparisons
+- Does not own: product scope, live status, or parity acceptance
+- Target: OpenBFME RotWK Patch 2.02 v9.7.7
+- Update trigger: an OpenSAGE capability materially changes a current research
+  or conversion decision
 
-## Why this exists
+Product authority remains the
+[product scope](../contracts/rotwk-202-v9.7.7-product-scope.json),
+[retail baseline](../contracts/rotwk-202-v9.7.7-baseline.json), and
+[architecture](ARCHITECTURE.md). This comparison cannot change them.
 
-[OpenSAGE](https://github.com/OpenSAGE/OpenSAGE) is a **C# reimplementation of the SAGE
-runtime** (Generals first; BFME-family formats expanding). Demos often **load and
-present retail installs** earlier than a Godot product pack path can.
+## Purpose
 
-OpenBFME is a different finish line:
+[OpenSAGE](https://github.com/OpenSAGE/OpenSAGE) is an independent C#
+reimplementation of SAGE-family technology. It can provide format research,
+behavior hypotheses, test ideas, and external conversion tools. OpenBFME has a
+different executable and product boundary: a Godot client consuming
+deterministically converted, immutable content bundles for one pinned game.
+
+OpenSAGE is therefore a research comparator, not an implementation-status
+scoreboard and not an original-game oracle.
 
 | Axis | OpenSAGE | OpenBFME |
-|------|----------|----------|
-| Goal | Engine that runs SAGE content from install trees | **RotWK 2.01 product** in Godot via fail-closed convert -> packs |
-| "Working" | Parse/render/simulate from INI/W3D/MAP/APT | Compiled contracts + runtime consumers + pack audit |
-| Legal/process | Legal install; no EA binaries redistributed | No invent greening; no silent retail payloads in public tree |
+|---|---|---|
+| Product aim | General SAGE-family runtime/research | Exact RotWK Patch 2.02 v9.7.7 Godot product |
+| Content access | May read supported install formats directly | Importer converts private source into versioned bundles; shipping runtime does not read retail archives |
+| Runtime | OpenSAGE C# engine | Current authoritative GDScript simulation plus Godot presentation |
+| Evidence | Project-specific tests and demos | Source, conversion, strict load, deterministic behavior, original-game visual/audio oracles, and end-to-end qualification |
+| License boundary | OpenSAGE project licenses and terms | OpenBFME source license plus external-tool and private retail boundaries |
 
-Use OpenSAGE demos as a **wiring backlog oracle**, not a license to skip convert
-discipline or load `.big` as the product runtime.
+## Research matrix
 
-Public channel/video references used as orientation (not exhaustive):
+Rows identify useful comparison areas. Their presence does not say either
+project is complete.
 
-- [OpenSAGE YouTube](https://www.youtube.com/@opensage1853)
-- Examples: [lQsYAMiQ0s8](https://www.youtube.com/watch?v=lQsYAMiQ0s8),
-  [nDXarrjqxrg](https://www.youtube.com/watch?v=nDXarrjqxrg),
-  [JyhOUE8jSz4](https://www.youtube.com/watch?v=JyhOUE8jSz4)
+| Surface | Potential OpenSAGE input | Required OpenBFME proof |
+|---|---|---|
+| Install discovery and BIG archives | Header, member, compression, and precedence research | Pinned three-layer catalog; exact archive/effective-path identity; malicious-input tests |
+| INI parsing and inheritance | Grammar and field-behavior hypotheses | Exhaustive effective winners, reference closure, neutral IR, and source provenance |
+| Map format and terrain | Chunk and coordinate-system research | Deterministic map IR, pathing/buildability, runtime consumption, matched map oracle |
+| W3D hierarchy/materials/animation | External reader and format behavior | Deterministic conversion, preserved authored semantics, Godot runtime draw, visual oracle |
+| APT/WND interface | Timeline/opcode/layout research | Cooked authored contracts, runtime consumers, interaction tests, matched shell/HUD captures |
+| Object modules | Module vocabulary and behavioral hypotheses | Source-backed typed contracts plus authoritative runtime and behavior oracle |
+| Weapons/projectiles/combat | Ordering and numeric hypotheses | Deterministic command/state/event traces against original-game scenarios |
+| Scripts and AI | Opcode/action/query ideas | Exact target vocabulary denominator, fail-closed dispatch, live match-loop behavior |
+| Particles and audio | Format and routing hypotheses | Converted target source, runtime timing/routing, visual/audio oracle |
+| Networking | Protocol design comparison only | OpenBFME canonical serialization, digests, recovery, scale, and cross-platform qualification |
 
-## Matrix (surface -> ladder -> our state -> next proof)
+## Admission rule
 
-Statuses: **ahead** / **partial** / **behind** / **different** (not comparable).
+An OpenSAGE observation enters OpenBFME work only through a row in
+`orchestration/work-items.json` that names:
 
-| OpenSAGE-visible surface | Ladder system | OpenBFME state (2026-07) | Gap / next proof |
-|--------------------------|---------------|--------------------------|------------------|
-| Install discovery + BIG archives | Pipeline | **partial** - catalog + doctor + layered RotWK/BFME2 | Keep fail-closed provenance; no silent archive mix |
-| Map load / multiplayer corpus | Maps | **partial** - 72 MP maps cook corpus; 69 connected / 3 disconnected starts | Connectivity + nav mesh; terrain materials via layered assets |
-| Terrain textures / cliff blend | Maps / assets | **partial** - RotWK `terrain.big` thin; layered install supplies BFME2 base | Full-profile multi-map cook with layered install |
-| Map props / object placement bind | Object binding | **partial** - binding factory ~**79.7%** bound over 72 maps | Burn unbound types (CaptureFlag, Outpost, Inn, lairs, trees...) |
-| W3D mesh + hierarchy draw | Assets | **partial** - GLB convert path; not full SAGE draw pipeline | W3D action/skin depth; presentation parity checks |
-| Unit animations / clips | Assets / sim | **partial** - clip streams exist; not all retail actions wired | Animation consumer coverage per battalion |
-| INI object modules as engine | Assets / sim | **different** - module census + **contracts** + compilers | Keep contract bar; grow runtime consumers |
-| Weapons / projectiles | Sim | **partial** - compilers + slice consumers | Multi-faction weapon runtime proof |
-| Construction / build plots | Sim | **partial** - structure runtime + build plots runners | Multi-map buildability generation |
-| Selection / command UI | Shell | **partial** - HUD APT convert + retail HUD oracles | RotWK shell chrome completeness |
-| APT menus / strategic chrome | Shell / WOTR | **partial** - strategic APT convert; WOTR shell in flight | APT action coverage vs OpenSAGE demos |
-| Particles / FX lists | Assets | **partial** - particle profile path; not full engine FX | FX list runtime parity checklist |
-| Scripts / AI | AI / scripts | **partial** - script pack + WP handlers growing | Script world surface + AI library composition |
-| Skirmish multi-map shell | Shell | **partial** - registry catalog 72 maps; pack cook optional | Multimap pack + entry map launch without invent terrain |
-| Faction convert completeness | Pipeline | **ahead (discipline)** - 7 factions converter-gap **0**; batch now writes durable coverage + object artifacts | Keep convert bar; do not invent-green residual census leaves |
-| Pack / runtime receipt | Pipeline | **partial -> improving** - convert filters visual inventory to catalog winners + asserts recipe patterns archive-resolve; **angmar** pack cook/audit **PUBLICATION_READY** (`rotwk_faction_pack_proof.py`) | Re-prove remaining 6 factions; standalone `compile_unit_recipe` still lacks catalog filter |
-| Pack publish / selection | Pipeline | **partial** - publish-faction-to-slice; selection owner-gated | No silent `selection.json` rewrite |
-| Campaigns | Campaigns | **behind** | After skirmish shell systems |
-| War of the Ring living map | WOTR | **partial** - regions, handoff, autoresolve, UI in progress | Strategic gap register burn-down |
-| Multiplayer netcode | MP | **behind / different** | After single-player systems floor |
-| Create-a-Hero | Assets / shell | **partial** - CaH special powers census merge | Full CaH runtime + UI |
+1. the exact target gap and effective 2.02 source;
+2. the OpenSAGE file, version, commit, or demo used as a hypothesis;
+3. the clean-room implementation boundary and license disposition;
+4. the shipping OpenBFME consumer; and
+5. the focused check plus original-game evidence required for acceptance.
 
-## What we intentionally do *not* copy
+Do not copy a donor runtime type merely because the data shape is convenient.
+Do not convert a demo screenshot into parity evidence. The pinned retail source
+and reproducible original-game observation remain authoritative.
 
-1. **Black-box SAGE VM in C# as the product** - OpenBFME ships Godot + packs.
-2. **Pretty wrong content** - missing ModifierLists / UI textures stay gaps or
-   policy exclusions, not invent-greened units.
-3. **One-map vertical-slice freeze as strategy** - systems-first RotWK ladder.
+## Tool boundary
 
-## Operator hooks (OpenBFME proofs)
+The OpenSAGE BlenderPlugin is a pinned external importer tool. Its code is not
+vendored into the Godot runtime or serialized into content bundles. Exact tool
+identity and license obligations belong in generated provenance and
+[THIRD_PARTY.md](THIRD_PARTY.md).
 
-```text
-# Map cook corpus (72)
-python tools/rotwk_map_cook_corpus.py --install <ROTWK>
+## Current work
 
-# Object binding burn-down
-python tools/rotwk_binding_factory.py --install <ROTWK>
+Current OpenSAGE-related work, if any, is sequenced in
+[ROADMAP.md](ROADMAP.md) and owned only by
+[work-items.json](../orchestration/work-items.json). Do not maintain volatile
+percentages, map totals, or "ahead/behind" scores in this document.
 
-# Multi-map catalog proof (no selection rewrite)
-python tools/rotwk_multimap_skirmish.py --install <ROTWK>
+## Verification
 
-# 7-faction convert + durable coverage/artifacts
-python tools/rotwk_faction_convert_batch.py --install <ROTWK>
-
-# Pack/runtime receipt (publication stage)
-python tools/rotwk_faction_pack_proof.py --install <ROTWK> --faction angmar
-
-# Offline gate
-powershell -ExecutionPolicy Bypass -File tools/gate-rotwk-systems.ps1 -SkipLiveRetail
-```
-
-## Suggested priority from demo oracles
-
-1. **Map presentability** - terrain materials + connected starts + prop bind %  
-2. **W3D / anim depth** on already-converted playable units  
-3. **Shell APT** surfaces OpenSAGE shows working  
-4. **Particles / FX** after unit/structure visual closure  
-5. Keep **convert + pack receipt** floor while wiring presentation
-
-## Bottom line
-
-OpenSAGE can look **ahead on engine load/render of retail SAGE**. OpenBFME can be
-**ahead or stricter on fail-closed import, multi-faction convert, and product pack
-gates**. The matrix above is the translation layer between those two scoreboards.
+All claims follow [VERIFICATION.md](VERIFICATION.md). OpenSAGE can help discover
+or explain a requirement, but cannot replace exact source identity, live Godot
+consumption, deterministic behavior, or original-game visual/audio approval.

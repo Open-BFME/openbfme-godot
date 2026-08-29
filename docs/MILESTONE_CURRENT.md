@@ -1,33 +1,65 @@
-# Current objective
+# Current integration objective
 
-Systems-first RotWK iteration. Full ladder: `DIRECTION.md`. Evidence: `docs/state/` and `orchestration/queue.md`.
+The current objective is to establish a trustworthy **RotWK Patch 2.02 v9.7.7
+baseline and verification spine** before inheriting completion claims from the
+earlier codebase.
 
-## Context
+This page is a human-readable objective, not a live checklist. Current sequence
+and ownership live in [ROADMAP.md](ROADMAP.md) and
+[orchestration/work-items.json](../orchestration/work-items.json).
 
-- Parity baseline: **RotWK 2.01** (not BFME2-only freeze)
-- Not the strategy: permanent Men/Fords vertical-slice freeze
-- Policy: `contracts/rotwk-201-product-scope.json`
+## Governing identity
 
-## Active work (systems factory)
+- [Product scope](../contracts/rotwk-202-v9.7.7-product-scope.json)
+- [Retail baseline](../contracts/rotwk-202-v9.7.7-baseline.json)
+- [English overlay](../contracts/rotwk-202-v9.7.7-english-overlay.json)
+- [Architecture](ARCHITECTURE.md)
+- [Verification](VERIFICATION.md)
 
-Pull from the top; prefer >=2 maps or >=2 factions before calling a system general.
+The accepted source is the effective English game formed by the Patch 2.02
+v9.7.7 overlay, the underlying RotWK 2.01 layer, and BFME2 1.06. An older
+selected pack, a partial archive set, or an unversioned "2.02" install is not
+the milestone identity.
 
-1. RotWK content pipeline - entry exists (`run_rotwk_systems.bat`)
-2. Map cook IR + official map corpus - entry exists (`rotwk_map_cook_corpus.py`)
-3. Asset closure + batch convert - entry exists (`rotwk_faction_convert_batch.py`)
-4. Object binding - entry exists (`rotwk_binding_factory.py`)
-5. Navigation / buildability - partial
-6. Simulation from pack descriptors - next
-7. Script / AI packaging - open
-8. Skirmish shell over RotWK factions/maps - partial (`rotwk_multimap_skirmish.py`)
-9. One-button convert+play - entry (`run_rotwk_one_button.bat`; publish only with `--publish`)
+## Objective boundaries
 
-Done enough: reusable on RotWK data, fail-closed on gaps, focused automated check.
+The integration program must:
 
-Not the objective: one-button UX before systems 1-8 are real; inventing retail
-behavior; silent placeholder art in parity mode.
+1. Verify the complete source-layer composition and archive identities.
+2. Build a fresh effective catalog and discovery denominator for v9.7.7.
+3. Classify all differences from the historical source route rather than
+   silently inheriting old winners, counts, or pins.
+4. Retarget deterministic cook and bundle publication to that identity.
+5. Select and byte-verify a comprehensible private bundle composition.
+6. Make gate harnesses enforce `PASS`, `FAIL`, and `SKIP` correctly and reject
+   unexpected stdout/stderr diagnostics.
+7. Re-run the current Godot runtime path against the exact selected identity and
+   publish fresh red/green measurements without weakening assertions.
+8. Seed source-to-consumer-to-oracle work items for every product domain.
 
-## Legacy tooling
+## Exit conditions
 
-`run_m2_acceptance.bat` and Men/Fords oracle IDs may remain for regression. They
-do not define product completion.
+This objective exits only when:
+
+- source, overlay, policy, catalog, selection, bundle, toolchain, and Git
+  identities are recorded together;
+- a clean repeat cook is deterministic and every selected address matches its
+  bytes;
+- the runtime proves it mounted that exact selection with no source-cache or
+  forbidden fallback dependency;
+- public gates clearly stop at evidence they can evaluate without retail bytes;
+- a protected private gate runs the exact-source cook and live Godot acceptance
+  path; and
+- every remaining failure is represented by a current work item with an owner,
+  focused check, and required evidence level.
+
+This milestone does not claim skirmish, campaign, War of the Ring, visual,
+audio, or whole-product parity. Those claims require the wider denominator and
+oracle evidence defined by the product and verification contracts.
+
+## Historical boundary
+
+Men/Fords gates, earlier RotWK packs, old state pins, former queue rows, and
+2.01-era coverage reports remain useful regression and migration evidence.
+They do not define the current milestone and cannot be promoted into a v9.7.7
+pass without revalidation.

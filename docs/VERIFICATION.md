@@ -1,179 +1,251 @@
 # OpenBFME verification contract
 
-> **Owner:** Integration owner
-> **Owns:** Gate ordering, focused versus final checks, oracle approval, deterministic evidence, performance qualification, and completion declarations.
-> **Does not own:** Product scope, implementation design, source conversion rules, release licensing decisions, or worker task assignment.
-> **Last verified commit:** `efe6a6c1f7ab76ae84436faed4e9a02298a4a194`
-> **Update trigger:** A milestone definition, gate, oracle recipe, evidence schema, benchmark, or release-blocking invariant changes.
-> **Validation:** The current milestone's final integration-owner command and its identity-bound generated evidence.
+- Owner: integration owner
+- Owns: evidence levels, gate ordering, status semantics, identity binding, oracle acceptance, and completion declarations
+- Does not own: product scope, implementation design, retail payloads, or task assignment
+- Target: Rise of the Witch-king Patch 2.02 v9.7.7
+- Update trigger: a gate, identity field, oracle recipe, evidence schema, or release-blocking invariant changes
 
-## Evidence doctrine
+## Governing records
 
-Compilation, asset presence, parsed INI values and passing helper assertions are not
-parity by themselves. A claim is supported by the smallest relevant combination of:
+- [2.02 v9.7.7 product scope](../contracts/rotwk-202-v9.7.7-product-scope.json)
+- [2.02 v9.7.7 source baseline](../contracts/rotwk-202-v9.7.7-baseline.json)
+- [2.02 v9.7.7 English overlay](../contracts/rotwk-202-v9.7.7-english-overlay.json)
+- [canonical work-item ledger](../orchestration/work-items.json)
+- [runtime and component architecture](ARCHITECTURE.md)
 
-- original-game observation;
-- retail source/effective-view evidence;
-- language-independent command/state trace;
-- focused reproduced-defect test;
-- deterministic pack/replay identity;
-- runtime behavior or capture;
-- containment/provenance audit; and
-- measured performance or reliability evidence.
+The product-scope contract defines the denominator. The source contracts bind
+the private inputs. The work-item ledger binds work to evidence. No README,
+receipt, assertion count, historical log, or old selected-pack name overrides
+those authorities.
 
-Every result belongs to one identity tuple:
+## Evidence identity
 
-```text
-Git revision + dirty-state digest + profile digest + bundle digest
-```
-
-Evidence from another tuple is stale unless the validating schema explicitly proves
-that none of its inputs changed. Current counts, hashes and benchmark values live in
-`docs/state/` or generated reports, not in this document.
-
-## Gate hierarchy
+Every result is bound to this identity tuple:
 
 ```text
-focused implementation check
-        -> affected-lane integration checks
-        -> selected-pack and containment checks
-        -> oracle and reliability evidence
-        -> milestone final gate
+Git revision
++ tracked and untracked dirty-state digest
++ product-contract policy digest
++ source-baseline and overlay identity
++ importer/toolchain/recipe identity
++ selection.json byte digest
++ ordered mounted bundle names and verified content addresses
++ runner and oracle recipe version
++ relevant platform and renderer identity
 ```
 
-Focused checks diagnose one bounded outcome and are the only checks workers should
-run. They do not declare a milestone complete. The integration owner runs the union of
-affected checks, controls pack publication, freezes the evidence identity and runs the
-final gate.
+A result from another tuple is stale unless the gate proves that none of its
+inputs changed. A pack directory name is not sufficient: its bytes must hash to
+that address. Tests that can discover durable `user://` content must isolate
+Godot user data or assert the resolved selection path and digest.
 
-Assertions are never weakened merely to pass. A passing assertion accompanied by an
-error, warning, leak, orphan, remaining resource or RID-allocation diagnostic is a
-failure when the gate declares those diagnostics forbidden.
+## Status semantics
 
-## M2 Men/Fords final gate
+Every gate reports exactly one terminal status.
 
-The only final M2 declaration command is:
+| Status | Meaning | May satisfy a prerequisite? |
+|---|---|---:|
+| `PASS` | The command completed, all required assertions and acceptance markers were observed, identity stayed fixed, and no unexpected diagnostics occurred. | yes |
+| `FAIL` | The command, assertion, acceptance marker, identity, timeout, crash, containment rule, or diagnostic contract failed. | no |
+| `SKIP` | The gate did not evaluate because a declared prerequisite or private input was unavailable. | no |
+
+`SKIP` is never success, never partial credit, and never evidence for a complete
+claim. A wrapper that passes offline checks while skipping live retail stages
+has a `SKIP` result for those stages. Aggregate gates pass only when every
+required child gate passes; optional children must be explicitly outside that
+claim's denominator.
+
+## Unexpected diagnostics are failures
+
+Exit code zero alone is insufficient. Unless a runner declares an exact
+negative-test diagnostic contract, any of the following makes the result fail:
+
+- `ERROR:`, `SCRIPT ERROR`, `Parse Error`, assertion failure, or stack trace;
+- engine crash, native crash, timeout, retry exhaustion, or leaked process;
+- missing acceptance marker or contradictory PASS/FAIL markers;
+- missing resource, unsafe path, RID/allocation leak, orphan, or containment
+  diagnostic declared forbidden by that gate;
+- fallback, placeholder, synthetic, unsupported, or unconverted behavior on a
+  strict retail path; or
+- selected-pack, source, recipe, or state-pin drift.
+
+A negative test may expect a diagnostic only when it isolates that case and
+pins the exact message class and expected count. Do not globally suppress error
+output or whitelist an unrestricted substring. Gate harnesses must inspect both
+stdout and stderr before reporting `PASS`.
+
+## Evidence levels
+
+| Level | Evidence | What it proves | What it does not prove |
+|---:|---|---|---|
+| L0 | policy/contract validation | the declared target and schemas are internally consistent | source presence or implementation |
+| L1 | source inventory and provenance | exact 2.02 inputs, precedence, winners, and denominator are known | conversion or runtime use |
+| L2 | deterministic conversion and bundle validation | source was converted reproducibly into valid addressed bundles | live consumption or behavior |
+| L3 | strict runtime loading/consumption | the selected bundle is mounted and the live consumer uses it without fallback | correct gameplay or presentation |
+| L4 | deterministic behavioral tests | commands produce the specified state/events and reproduce defects | fidelity to the original by itself |
+| L5 | original-game oracle comparison | declared gameplay, visual, or audio scenarios agree within an approved tolerance | whole-product completion outside those scenarios |
+| L6 | end-to-end product qualification | complete matches/modes, persistence, replay/network where applicable, containment, reliability, and release packaging pass | future untested changes |
+
+Asset presence, parser coverage, recognized script vocabulary, dispatchability,
+module counts, and successful compilation stop no later than L2 or L3. A 1:1
+claim requires L5 evidence across the product-scope denominator and L6 for the
+release paths affected.
+
+## Canonical Windows commands
+
+Run commands from the repository root in `cmd.exe` or PowerShell. Prefer the
+checked-in wrappers because they resolve the pinned importer environment and
+Godot 4.7 contract.
 
 ```bat
-run_m2_acceptance.bat -IntegrationOwnerPublish
+rem Tool availability only; not a product gate.
+run_doctor.bat
+
+rem Public repository hygiene and policy.
+powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File tools\gate-hygiene.ps1
+py -3 tools\check-product-contracts.py --check
+
+rem Read-only private L1 source verification (no cook or selection write).
+workspace\retail-work\tools\python-3.12-env\Scripts\python.exe tools\verify-rotwk-202-baseline.py
+
+rem Pinned Python 3.12 importer suite.
+run_importer_tests.bat
+
+rem Selected immutable-bundle address check.
+py -3 tools\check_pack_addresses.py --json
+
+rem Current live Godot retail integration gate.
+run_retail_slice.bat --test
+
+rem Developer launch from the exact selected content root.
+set OPENBFME_CONTENT=%CD%\workspace\content-packs
+run_game.bat
 ```
 
-It is integration-owner-only. All importer, pack, focused Godot, retail-slice, legacy,
-security, containment, oracle and soak commands are subordinate evidence. None is an
-alternate final gate, and results cannot be combined from different identities.
+For a direct focused Godot runner:
 
-The M2 wrapper must verify at least:
+```bat
+set OPENBFME_GODOT=C:\Path\To\Godot_v4.7-stable_win64_console.exe
+set OPENBFME_CONTENT=%CD%\workspace\content-packs
+"%OPENBFME_GODOT%" --headless --path game --script res://tests/<runner>.gd
+```
 
-- exact selected profile and immutable bundle identity;
-- repeat-build and provenance validity;
-- strict selected-pack runtime origin with no required fallback;
-- the full focused runtime contract set;
-- approved retail-versus-Godot capture pairs for the same identity;
-- the required live soak, restarts and completed matches;
-- frozen performance thresholds and recorded renderer/environment evidence;
-- export/private containment; and
-- an unchanged identity throughout the final run.
+The direct run is accepted only if the runner has a registered evidence
+contract and the harness checks exit code, acceptance marker, stdout, stderr,
+timeout, process cleanup, and selected content identity.
 
-`docs/MILESTONE_CURRENT.md` owns the exact M2 behavior and capture denominator. This
-document owns how that evidence is ordered and accepted.
+`tools\gate-rotwk-systems.ps1 -SkipLiveRetail` is a useful offline diagnostic,
+but its live-retail rows are `SKIP`; it is not a 2.02 acceptance command.
+Publication/cook commands may change the selected pack and are integration-owner
+operations, not focused verification commands.
 
-## Focused checks
+## Public gates
 
-Use the smallest check that can falsify the change. Existing focused surfaces include:
+Public CI has no retail installation or private content packs. It can require:
 
-- importer unit and malicious-fixture suites;
-- pack load, schema, provenance and containment runners;
-- targeted Godot runtime runners;
-- retail-slice integration in test mode;
-- oracle workspace/capture/review tools; and
-- bounded reliability/performance runners.
+1. publication-boundary and hygiene checks;
+2. product/modding contract validation;
+3. importer unit, malicious-fixture, archive, schema, and deterministic-fixture
+   tests that do not require retail bytes;
+4. standalone engine experiment tests, clearly labelled non-shipping;
+5. launcher and release-tool tests;
+6. code-only Godot import/export checks; and
+7. explicitly pack-free Godot diagnostics and deterministic fixtures.
 
-Workers must not run broad/final gates for bounded work. A focused pass means only that
-the packet's acceptance condition is ready for review. The integration owner decides
-which affected-lane checks are required before integration.
+Public green proves the source tree is buildable, contained, and internally
+consistent. It cannot prove 2.02 content closure, runtime parity, visual/audio
+fidelity, a complete match, or a release-ready private build. A public test that
+skips for lack of retail input remains `SKIP` for that evidence lane.
 
-## Oracle process
+## Private gates
 
-Retail compatibility requires a declared scenario, reproducible camera/input state and
-evidence from the original game plus OpenBFME. For M2:
+A protected private Windows runner with the pinned retail installation and
+conversion tools must perform, in order:
 
-1. Freeze the identity and create a private oracle workspace.
-2. Freeze performance thresholds before the final soak.
-3. Capture the exact named retail or Godot window and verify dimensions/digests.
-4. Review each pair and record differences by severity.
-5. Reject any required row with unresolved severity-0 or severity-1 differences.
-6. Finalize only after every required row and reliability condition passes for the same
-   identity.
+1. verify the baseline and English-overlay source contracts with
+   `tools\verify-rotwk-202-baseline.py`;
+2. build the effective archive catalog and reference-closure denominator;
+3. cook from a clean state and verify deterministic repeat output;
+4. publish new immutable addresses and atomically install the full selection;
+5. verify every selected bundle's bytes and provenance;
+6. launch with isolated user data and assert the resolved selection identity;
+7. run focused runtime, deterministic state, save/load, replay, script/AI, and
+   complete-match gates with zero unexpected diagnostics;
+8. run original-game gameplay, visual, and audio oracle scenarios;
+9. qualify required modes, reliability, performance, networking, and packaging;
+   and
+10. verify code-only/public artifact containment.
 
-Oracle artifacts remain below `workspace/retail-work/oracle`. Tools may capture and
-validate evidence, but they do not operate the original game, invent a camera state or
-auto-approve a visual judgment.
+Stop on the first failed prerequisite. Never publish a new selection merely to
+diagnose an unreviewed change. Preserve logs and artifacts under ignored
+`workspace/` paths, bound to the complete evidence identity.
 
-## Importer and content checks
+## Oracle acceptance
 
-Pipeline verification covers:
+Every oracle row names the 2.02 source scenario, deterministic setup, map,
+players/factions, seed, commands or input sequence, camera/render state when
+applicable, expected state/events, tolerance, and reviewer disposition.
 
-- malicious archive, containment, precedence and cache cases;
-- tool/profile/source/recipe attestation;
-- cold, warm and resumed deterministic builds;
-- transactional publication and selection rollback;
-- runtime loading without source/tool access;
-- missing-capability and unsafe-path failures;
-- no silent strict-retail fallback; and
-- code-only export boundary scanning.
+Tools may capture, align, hash, and compare evidence. They do not operate the
+original game autonomously, invent missing camera state, or approve subjective
+visual/audio parity. Required rows with unresolved severity-0 or severity-1
+differences fail. Count-only asset or capture checks do not approve fidelity.
 
-Importer or pack success alone does not prove runtime behavior or audiovisual parity.
+## Current known red baseline
 
-## Simulation and networking checks
+These are audit facts from 2026-08-29 at base commit
+`a75fc0b8ac8ca4926910123b776e9232b6ff0882`, before the current cleanup. They
+are not acceptance thresholds and must not be normalized into success:
 
-The production simulator requires:
+| Check | Observed result | Interpretation |
+|---|---|---|
+| `tools/gate-hygiene.ps1` | `FAIL count=25` | tracked workspace reports, root allowlist drift, and absolute paths made repository hygiene red |
+| `run_retail_slice.bat --test` | `passed=369 failed=61` | current selected runtime failed retail acceptance |
+| `tools/gate-rotwk-systems.ps1 -SkipLiveRetail` | two offline checks passed; live stages skipped | live product evidence is `SKIP`, not PASS |
+| script wiring probe | process exited 0 and printed 111/0 while stderr contained real armor/damage errors | exit-code-only runner admission can false-green |
 
-- GDScript-versus-C# traces during the bounded mechanical port;
-- exact state/event equivalence before authority cutover;
-- the separately reviewed 10 Hz to 30 Hz migration;
-- cross-render-rate replay agreement;
-- supported-platform digest agreement;
-- canonical serialization golden cases and malformed-input rejection;
-- two-through-eight-player scenarios;
-- maximum legal eight-player load plus headroom;
-- latency, jitter, loss and packet reordering;
-- late-command rejection without global stalls;
-- checkpoint restore, reconnect and observer join; and
-- injected desync recovery and repeated-resync disconnect policy.
+The current cleanup tree now reports `HYGIENE_GATE PASS`; that repairs only
+the first repository-hygiene row above. The 369/61 runtime result and all
+product-parity blockers remain red until replaced by current, identity-bound
+evidence through their ledger items.
 
-The current GDScript `state_signature()` is not accepted as a network digest.
+The audited selection mounted 100 packs, led by
+`rotwk-men-vslice/5079efbdb8364dd2e5a1070820388d1fcee853e2f32a766965e1b25a7bcb0298`.
+Its active manifest declared asset conversion, full-faction completion, oracle
+parity, vertical-slice completion, source closure, and denominator closure
+false. These facts block complete claims even if an unrelated suite is green.
 
-## Performance and reliability
+The old 2.01 product-contract check and historical importer receipts do not
+certify the new 2.02 target. Establish a fresh v9.7.7 evidence identity before
+using updated numbers.
 
-Performance work begins with a fixed scenario, environment and metric. Retain an
-optimization only when the same benchmark improves without parity or determinism
-regression. Track frame-time tails, simulation tick debt, allocations, memory growth,
-conversion cold/warm/resume time and network recovery-not only averages.
+## Test and work-item admission
 
-M2 uses its identity-bound live-soak and restart requirements from the current
-milestone contract. Later scale gates qualify the maximum legal eight-player BFME2
-command-point/member/projectile load plus the plan's headroom. Numeric results and
-thresholds live in generated reports or `docs/state/`.
+Each persistent runner and each row in `orchestration/work-items.json` must
+identify:
 
-## Test admission
+- target contract and subsystem;
+- owned source files and runtime consumer;
+- required public/private inputs;
+- focused command, timeout, and acceptance marker;
+- forbidden and explicitly expected diagnostics;
+- evidence level and artifact location; and
+- exact completion and regression conditions.
 
-Add persistent tests only for:
+Retain tests for oracle-backed compatibility, determinism/serialization,
+schema/protocol/mod contracts, private containment, networking/recovery, a
+reproduced defect, or a measured performance budget. Test volume and historical
+runner totals are not progress metrics.
 
-- oracle-backed compatibility;
-- determinism or serialization;
-- public schema/protocol/mod contracts;
-- private containment;
-- network validation or recovery;
-- a reproduced defect; or
-- a measured performance budget.
+## Definition of done
 
-Avoid tests that pin prose, incidental implementation structure, trivial getters,
-runner totals or assertion counts. Completion is observable behavior plus evidence,
-not test volume.
+A 2.02 feature is complete only when its effective source is identified, its
+references and provenance close, it is deterministically converted, the exact
+addressed bundle is selected, the live runtime consumes it without forbidden
+fallbacks, behavior agrees with the original-game oracle, required presentation
+evidence is approved, and a protected gate prevents regression.
 
-## Failure and handoff
-
-A gate failure records command, identity, first actionable failure and artifact path.
-Do not continue to slower gates when a focused prerequisite fails. Do not publish a
-new selected pack to diagnose an unreviewed change. If evidence is missing or
-contradictory, create a read-only discovery packet rather than inventing the oracle.
+A complete-product claim additionally requires every included domain and every
+completeness requirement in the product-scope contract to meet that standard
+under one frozen evidence identity.
