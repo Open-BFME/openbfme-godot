@@ -459,16 +459,24 @@
       "title": "Enforce the authored, generated, historical, and high-conflict code map",
       "kind": "repository-hygiene",
       "priority": "P0",
-      "status": "in-progress",
+      "status": "complete",
       "domainIds": [],
       "rootQueryIds": [],
       "dependsOn": [],
-      "ownership": {"state": "assigned", "assignee": "codex-code-map", "ownedPaths": ["config/repository-boundaries.json", "docs/CODE_OWNERSHIP.md", "tools/check-repository-boundaries.py", "importer/tests/test_repository_boundaries.py", "game/project.godot"], "candidatePaths": ["config/repository-boundaries.json", "docs/CODE_OWNERSHIP.md", "tools/check-repository-boundaries.py", "importer/tests/test_repository_boundaries.py", "game/project.godot"]},
+      "ownership": {"state": "accepted", "assignee": null, "ownedPaths": [], "candidatePaths": ["config/repository-boundaries.json", "docs/CODE_OWNERSHIP.md", "tools/check-repository-boundaries.py", "importer/tests/test_repository_boundaries.py", "game/project.godot"]},
       "scope": {"deliverable": "Machine-checked classification of shipping code, public fixtures, private generated outputs, historical evidence, entrypoints, tests, generated consumers, and high-conflict ownership seams, with an exact RotWK target description in Godot metadata.", "notIncluded": "Large behavior refactors, retail conversion, moving private packs, or claiming that classification proves parity."},
-      "sourceEvidence": ["E-SCOPE-202", "E-AUDIT-CURRENT-20260829"],
+      "sourceEvidence": ["E-SCOPE-202"],
       "artifacts": ["config/repository-boundaries.json", "workspace/logs/P0-CODE-MAP-001/repository-boundaries.json"],
       "acceptance": {"requiredLevels": ["L0"], "criteria": ["every tracked top-level and game data root has one non-overlapping class", "shipping Godot entrypoint and GDScript authority are explicit", "generated and historical files cannot satisfy current source evidence", "files over the conflict threshold have owner seams and focused test routes", "project metadata names exact RotWK Patch 2.02 v9.7.7 rather than an inspired approximation"]},
-      "verificationCommands": [{"shell": "powershell.exe", "command": "py -3 tools\\check-repository-boundaries.py --check", "availability": "planned", "timeoutSeconds": 300, "expectedMarkers": ["REPOSITORY_BOUNDARIES PASS"], "diagnosticPolicy": "strict-default"}],
+      "verificationCommands": [{"shell": "powershell.exe", "command": "py -3 tools\\check-repository-boundaries.py --check", "availability": "current-accepted", "timeoutSeconds": 300, "expectedMarkers": ["REPOSITORY_BOUNDARIES PASS"], "diagnosticPolicy": "strict-default"}],
+      "dispositionEvidence": [
+        {"path": "config/repository-boundaries.json", "action": "retained", "reason": "Exhaustive non-overlapping tracked-path and operational-ownership contract.", "retention": "Current derived enforcement map; canonical product and completion authority remains in the named source contracts and ledger."},
+        {"path": "docs/CODE_OWNERSHIP.md", "action": "retained", "reason": "Human-readable interpretation of the machine-checked repository boundary contract.", "retention": "Current worker guidance; must remain synchronized with the checker."},
+        {"path": "game/project.godot", "action": "retained", "reason": "Shipping Godot project metadata now names the exact RotWK Patch 2.02 v9.7.7 target.", "retention": "Shipping project authority; metadata identity is classification only, not parity evidence."},
+        {"path": "tools/check-repository-boundaries.py", "action": "retained", "reason": "Fail-closed checker for path classes, source evidence, shipping links, generated consumers, debt owners, and conflict seams.", "retention": "Current Windows-native L0 acceptance gate."},
+        {"path": "importer/tests/test_repository_boundaries.py", "action": "retained", "reason": "Focused positive and hostile-mutation coverage for the boundary checker.", "retention": "Current focused regression test; run with the pinned importer interpreter."}
+      ],
+      "completionEvidence": {"acceptedAtAuditDate": "2026-08-29", "verifier": "Grok CLI independent reviewer", "result": "ACCEPT", "marker": "REPOSITORY_BOUNDARIES PASS tracked=2678 classified=2678 rules=27 consumers=14 autoloads=7 high_conflict=13", "claimBoundary": "L0 repository classification and ownership only; does not establish conversion, loading, behavior, visual, audio, or complete product parity.", "note": "Grok scored the bounded contract 10/10 with no blockers or nits, then independently verified commit b6673c8d, the declared checker, pinned 3-test suite, clean status, exact five-path scope, and diff check."},
       "blockers": []
     },
     {
@@ -476,7 +484,7 @@
       "title": "Make public assets provenance-complete, deduplicated, and purpose-named",
       "kind": "repository-hygiene",
       "priority": "P0",
-      "status": "blocked",
+      "status": "pending",
       "domainIds": [],
       "rootQueryIds": [],
       "dependsOn": ["P0-CODE-MAP-001"],
@@ -486,7 +494,7 @@
       "artifacts": ["config/public-assets.json", "workspace/logs/P0-ASSET-HYGIENE-001/public-assets-audit.json"],
       "acceptance": {"requiredLevels": ["L0"], "criteria": ["no runnable tool writes guessed third-party definitions into the canonical base tree", "every tracked binary asset has canonical path, SHA-256, purpose, source/generator, and license/attestation state", "unresolved attribution cannot enter a shipping export", "exact duplicate bytes have one physical canonical payload and explicit aliases where needed", "runtime and fixture references resolve after the split", "retail source identifiers remain verbatim provenance keys rather than human-renamed approximations"]},
       "verificationCommands": [{"shell": "powershell.exe", "command": "py -3 tools\\check-public-assets.py --check", "availability": "planned", "timeoutSeconds": 600, "expectedMarkers": ["PUBLIC_ASSETS PASS"], "diagnosticPolicy": "strict-default"}],
-      "blockers": ["P0-CODE-MAP-001 is incomplete"]
+      "blockers": []
     },
     {
       "id": "P0-GODOT-IDENTITY-001",
