@@ -141,9 +141,12 @@ P0 does not add a parity percentage. It prevents agents from optimizing stale
 | `P0-DEFAULTS-001` | Retarget stale defaults and pins | No `men-fords-v0`, five-map, 72/74, or old hash can pass a 2.02 gate. |
 | `P0-GATES-001` | Independently accept fail-closed runtime admission | Implemented: the runner now requires `failed == 0` and has a focused static regression; final independent proof and canonical wrapper admission remain open. |
 | `P0-ORACLE-001` | Build isolated 2.02 oracle harness | Exact executable/source identity and matched scenario recipes are reproducible without contaminating live installs. |
-| `P0-AGENTS-001` | Repair onboarding/brief contracts | A worker receives one ID, exact owned paths, inputs, evidence levels, command, marker, and handoff format. |
+| `P0-AGENTS-001` | Implement autonomous worker lanes | One owner command deterministically allocates an exact-path sibling lane; workers can preflight, run the focused check, and produce a one-commit fail-closed handoff without interpreting prose. |
 | `P0-HISTORY-001` | Retire stale narrative/evidence authority | Removed routes have dispositions; retained 2.01-era references are unmistakably historical and point to current authority. |
 | `P0-HYGIENE-001` | Restore publication-boundary hygiene | The focused gate stays green after integration and a durable sanitized receipt closes the item. |
+| `P0-CODE-MAP-001` | Enforce repository/code ownership boundaries | Shipping, test, generated, historical, private, and high-conflict seams are machine-classified; Godot metadata names the exact target. |
+| `P0-ASSET-HYGIENE-001` | Normalize public asset purpose/provenance | Guessed writers are retired; shipping UI and test fixtures are separated; each binary has one canonical path and complete admission metadata. |
+| `P0-GODOT-IDENTITY-001` | Normalize Godot identities | GDScript UIDs and the narrow tracked import allowlist are complete, nonduplicated, and clean-clone deterministic. |
 | `P0-REPO-001` | Inventory worktrees before retirement | Every registered tree has merged/dirty/untracked/ignored/preservation disposition; no bulk deletion. |
 | `P0-RETENTION-001` | Define private pack/workspace retention | Provenance roots and last-known-good packs are retained; deletion candidates have recoverable receipts. |
 
@@ -157,6 +160,7 @@ P0-SOURCE-001 (complete)
 
 P0-DEFAULTS-001 + P0-GATES-001 + P0-ORACLE-001 must be green before any parity acceptance.
 P0-REPO-001 -> P0-RETENTION-001 protects evidence; neither raises product parity.
+P0-CODE-MAP-001 -> P0-ASSET-HYGIENE-001 -> P0-GODOT-IDENTITY-001 makes clean-clone ownership and public assets deterministic; none proves retail asset parity.
 ```
 
 ### P1 - complete 2.02 skirmish and its required shell
@@ -202,6 +206,8 @@ not that no code exists.
 | Subsystem | Exact target and evidence | Structural state | Runtime/behavior state | Visual/audio state | Work items |
 |---|---|---|---|---|---|
 | Source/catalog | 217 archives, 53,433 records, 48,566 winners (`E-BL-202`, `E-AUDIT-CORPUS-20260829`) | Policy/catalog pinned; winner receipt absent | not applicable | not applicable | `P0-SOURCE-001/002`, `P0-CORPUS-001` |
+| Repository/code boundaries | tracked shipping, test, generated, historical, private, and high-conflict roots | current prose identifies entrypoints but no machine boundary rejects ambiguous authority or ownership collisions | not applicable | not applicable | `P0-AGENTS-001`, `P0-CODE-MAP-001`, `P0-HYGIENE-001` |
+| Public non-retail assets | tracked first-party UI, test fixtures, and legacy donor files | purpose/provenance admission is incomplete; exact duplicate payloads and mixed roots remain | only a small menu/UI subset is a shipping consumer | no public asset establishes retail visual/audio parity | `P0-ASSET-HYGIENE-001`, `P0-GODOT-IDENTITY-001` |
 | Feature/reference graph | 850 docs, 36,940 definitions, 597,886 assignments, 188,543 asset refs (`E-AUDIT-CORPUS-20260829`) | generator/output absent | target consumption matrix absent | target oracle matrix absent | `P0-CORPUS-002`, `P0-EVIDENCE-001`, `P1-DATA-001` |
 | Factions/objects | 5,494 unique objects and all roots reachable from seven declared factions (`E-BL-202`, `E-SCOPE-202`) | current packs compile only 137 units/155 structures; denominator closure false | broad 2.02 faction behavior unproved | broad authored presentation/audio unproved | `P1-OBJECT-001`, `P1-SIM-001` |
 | Object modules | 236 kinds / 24,230 sites (`E-AUDIT-CORPUS-20260829`) | old census is 2.01 and recognition-oriented | 2.02 execution/oracles absent | module-driven draw/animation/effects unproved | `P1-MODULE-*` |
@@ -297,18 +303,26 @@ As of this roadmap's audit identity:
 ## Operating sequence
 
 The integration owner should pull work in dependency order from the canonical
-ledger. The next useful sequence is:
+ledger. Repository-readiness lanes run before product lanes:
 
-1. `P0-CORPUS-001` - seal the private effective-winner manifest.
-2. `P0-GATES-001` - independently verify the implemented `failed == 0`
+1. `P0-AGENTS-001` - make allocation, sibling worktrees, focused checks, and
+   handoff executable and fail closed.
+2. `P0-REPO-001`, `P0-HISTORY-001`, and `P0-HYGIENE-001` - inventory all
+   legacy trees, retire competing instructions, and close publication hygiene
+   without deleting private evidence.
+3. `P0-CODE-MAP-001` -> `P0-ASSET-HYGIENE-001` ->
+   `P0-GODOT-IDENTITY-001` - make code ownership, asset purpose/provenance,
+   aliases, and clean-clone Godot identities deterministic.
+4. `P0-CORPUS-001` - seal the private effective-winner manifest.
+5. `P0-GATES-001` - independently verify the implemented `failed == 0`
    admission repair; complete `P0-DEFAULTS-001` for all stale command and
    denominator routes.
-3. `P0-CORPUS-002` - generate the exhaustive feature/reference graph.
-4. `P0-EVIDENCE-001` - generate and validate the evidence catalog/matrix.
-5. `P0-SELECTION-002` - clean-recook and atomically select exact 2.02 bundles.
-6. Run P1 graph partitions in parallel, with `P0-ORACLE-001` supplying matched
+6. `P0-CORPUS-002` - generate the exhaustive feature/reference graph.
+7. `P0-EVIDENCE-001` - generate and validate the evidence catalog/matrix.
+8. `P0-SELECTION-002` - clean-recook and atomically select exact 2.02 bundles.
+9. Run P1 graph partitions in parallel, with `P0-ORACLE-001` supplying matched
    acceptance scenarios.
-7. Accept `P1-QUAL-001` only when every required skirmish/shell row is current;
+10. Accept `P1-QUAL-001` only when every required skirmish/shell row is current;
    then close P2 domains and the complete-product gate.
 
 No worker should infer a task from this prose. Claim exactly one unblocked row

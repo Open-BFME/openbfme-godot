@@ -331,7 +331,7 @@
       "sourceEvidence": ["E-BL-202", "E-AUDIT-CURRENT-20260829"],
       "artifacts": ["workspace/logs/P0-SELECTION-001/legacy-selection-audit.json"],
       "acceptance": {"requiredLevels": ["L1"], "criteria": ["all mounted bundles are audited", "a missing/mismatched target identity is a named failure", "zero target markers cannot pass any 2.02 gate", "audit is read-only"]},
-      "verificationCommands": [{"shell": "powershell.exe", "command": "py -3 tools\\check_pack_addresses.py --json --require-baseline rotwk-202-v9.7.7-en", "availability": "planned-extension", "timeoutSeconds": 300, "expectedMarkers": ["PACK_ADDRESS_CHECK FAIL baseline=rotwk-202-v9.7.7-en"], "diagnosticPolicy": "strict-default"}],
+      "verificationCommands": [{"shell": "powershell.exe", "command": "py -3 tools\\check_pack_addresses.py --json --require-baseline rotwk-202-v9.7.7-en", "availability": "planned-extension", "timeoutSeconds": 300, "expectedMarkers": ["PACK_ADDRESS_NEGATIVE PASS baseline=rotwk-202-v9.7.7-en"], "diagnosticPolicy": "strict-default"}],
       "blockers": []
     },
     {
@@ -383,7 +383,7 @@
       "artifacts": ["workspace/logs/P0-GATES-001/runtime-gate-negative-tests.json"],
       "acceptance": {"requiredLevels": ["L0", "L3"], "criteria": ["retail_slice failed>0 cannot exit/pass", "exact RETAIL_SLICE_RESULT failed=0 is required", "stdout and stderr are both inspected", "negative tests pin exact diagnostics", "generic wrapper reads the ledger and rejects blocked/unassigned/unknown items"]},
       "verificationCommands": [{"shell": "powershell.exe", "command": "& .\\workspace\\retail-work\\tools\\python-3.12-env\\Scripts\\python.exe -m pytest importer\\tests\\test_retail_gate_script.py -q", "availability": "current-focused-regression-awaiting-independent-run", "timeoutSeconds": 300, "expectedMarkers": ["13 passed"], "diagnosticPolicy": "strict-default"}],
-      "blockers": ["Independent verifier has not yet accepted the failed==0 repair", "Canonical 2.02 work-item wrapper and stale-default retarget remain incomplete"]
+      "blockers": []
     },
     {
       "id": "P0-ORACLE-001",
@@ -453,6 +453,57 @@
       "acceptance": {"requiredLevels": ["L0"], "criteria": ["hygiene gate reports zero findings", "tracked docs contain no machine-absolute path", "retail/private artifacts remain ignored", "allowlist changes are narrow and justified"]},
       "verificationCommands": [{"shell": "powershell.exe", "command": "powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File tools\\gate-hygiene.ps1", "availability": "current", "timeoutSeconds": 300, "expectedMarkers": ["HYGIENE_GATE PASS"], "diagnosticPolicy": "strict-default"}],
       "blockers": []
+    },
+    {
+      "id": "P0-CODE-MAP-001",
+      "title": "Enforce the authored, generated, historical, and high-conflict code map",
+      "kind": "repository-hygiene",
+      "priority": "P0",
+      "status": "pending",
+      "domainIds": [],
+      "rootQueryIds": [],
+      "dependsOn": [],
+      "ownership": {"state": "unassigned", "assignee": null, "ownedPaths": [], "candidatePaths": ["config/repository-boundaries.json", "docs/CODE_OWNERSHIP.md", "tools/check-repository-boundaries.py", "importer/tests/test_repository_boundaries.py", "game/project.godot"]},
+      "scope": {"deliverable": "Machine-checked classification of shipping code, public fixtures, private generated outputs, historical evidence, entrypoints, tests, generated consumers, and high-conflict ownership seams, with an exact RotWK target description in Godot metadata.", "notIncluded": "Large behavior refactors, retail conversion, moving private packs, or claiming that classification proves parity."},
+      "sourceEvidence": ["E-SCOPE-202", "E-AUDIT-CURRENT-20260829"],
+      "artifacts": ["config/repository-boundaries.json", "workspace/logs/P0-CODE-MAP-001/repository-boundaries.json"],
+      "acceptance": {"requiredLevels": ["L0"], "criteria": ["every tracked top-level and game data root has one non-overlapping class", "shipping Godot entrypoint and GDScript authority are explicit", "generated and historical files cannot satisfy current source evidence", "files over the conflict threshold have owner seams and focused test routes", "project metadata names exact RotWK Patch 2.02 v9.7.7 rather than an inspired approximation"]},
+      "verificationCommands": [{"shell": "powershell.exe", "command": "py -3 tools\\check-repository-boundaries.py --check", "availability": "planned", "timeoutSeconds": 300, "expectedMarkers": ["REPOSITORY_BOUNDARIES PASS"], "diagnosticPolicy": "strict-default"}],
+      "blockers": []
+    },
+    {
+      "id": "P0-ASSET-HYGIENE-001",
+      "title": "Make public assets provenance-complete, deduplicated, and purpose-named",
+      "kind": "repository-hygiene",
+      "priority": "P0",
+      "status": "blocked",
+      "domainIds": [],
+      "rootQueryIds": [],
+      "dependsOn": ["P0-CODE-MAP-001"],
+      "ownership": {"state": "unassigned", "assignee": null, "ownedPaths": [], "candidatePaths": ["tools/port_mert_config.py", "tools/mert_export/full_config.json", "docs/MODDING.md", "config/public-assets.json", "tools/check-public-assets.py", "importer/tests/test_public_assets_contract.py", "game/data/base/assets/", "game/assets/openbfme_ui/", "content/openbfme-test/assets/", "game/src/ui/", "game/project.godot", "tools/release/Build-CodeOnlyExport.ps1", "docs/THIRD_PARTY.md"]},
+      "scope": {"deliverable": "Retire the guessed middle-earth-rts writer, separate shipping first-party UI from explicit public test fixtures, record path/hash/purpose/source/license for every tracked binary asset, and replace duplicate physical payloads with canonical manifest aliases.", "notIncluded": "Retail-derived assets, private content packs, visual-parity approval, or mass renaming of retail source keys."},
+      "sourceEvidence": ["E-SCOPE-202", "E-AUDIT-CURRENT-20260829"],
+      "artifacts": ["config/public-assets.json", "workspace/logs/P0-ASSET-HYGIENE-001/public-assets-audit.json"],
+      "acceptance": {"requiredLevels": ["L0"], "criteria": ["no runnable tool writes guessed third-party definitions into the canonical base tree", "every tracked binary asset has canonical path, SHA-256, purpose, source/generator, and license/attestation state", "unresolved attribution cannot enter a shipping export", "exact duplicate bytes have one physical canonical payload and explicit aliases where needed", "runtime and fixture references resolve after the split", "retail source identifiers remain verbatim provenance keys rather than human-renamed approximations"]},
+      "verificationCommands": [{"shell": "powershell.exe", "command": "py -3 tools\\check-public-assets.py --check", "availability": "planned", "timeoutSeconds": 600, "expectedMarkers": ["PUBLIC_ASSETS PASS"], "diagnosticPolicy": "strict-default"}],
+      "blockers": ["P0-CODE-MAP-001 is incomplete"]
+    },
+    {
+      "id": "P0-GODOT-IDENTITY-001",
+      "title": "Make Godot resource identities deterministic on a clean clone",
+      "kind": "repository-hygiene",
+      "priority": "P0",
+      "status": "blocked",
+      "domainIds": [],
+      "rootQueryIds": [],
+      "dependsOn": ["P0-ASSET-HYGIENE-001"],
+      "ownership": {"state": "unassigned", "assignee": null, "ownedPaths": [], "candidatePaths": ["tools/check-godot-identities.py", "importer/tests/test_godot_identities.py", ".gitignore", "game/src/**/*.gd.uid", "game/tests/**/*.gd.uid", "game/data/base/assets/models/**/*.obj.import"]},
+      "scope": {"deliverable": "One documented and machine-enforced policy for GDScript UID sidecars and the narrow tracked OBJ import-identity allowlist, with no missing, orphaned, duplicate, or source-mismatched identities on a clean clone.", "notIncluded": "Committing general Godot cache output, changing retail content addresses, or using an editor-generated diff as parity evidence."},
+      "sourceEvidence": ["E-AUDIT-CURRENT-20260829"],
+      "artifacts": ["workspace/logs/P0-GODOT-IDENTITY-001/godot-identities.json"],
+      "acceptance": {"requiredLevels": ["L0"], "criteria": ["the UID policy covers every shipping and test GDScript", "missing, orphaned, and duplicate UID sidecars fail with exact paths", "tracked obj.import identities exactly match the approved source allowlist", "all other generated .import output remains ignored", "a clean clone check is deterministic"]},
+      "verificationCommands": [{"shell": "powershell.exe", "command": "py -3 tools\\check-godot-identities.py --check", "availability": "planned", "timeoutSeconds": 300, "expectedMarkers": ["GODOT_IDENTITIES PASS"], "diagnosticPolicy": "strict-default"}],
+      "blockers": ["P0-ASSET-HYGIENE-001 is incomplete"]
     },
     {
       "id": "P0-REPO-001",
