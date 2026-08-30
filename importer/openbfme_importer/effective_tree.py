@@ -18,12 +18,10 @@ CHUNK_BYTES = 1024 * 1024
 ADDITIVE_SUFFIXES = (".ini", ".inc", ".str", ".csf")
 
 
-def _sha256_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(CHUNK_BYTES), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
+def _portable_source_sha256(path: Path) -> str:
+    text = path.read_text(encoding="utf-8")
+    canonical = text.replace("\r\n", "\n").replace("\r", "\n").encode("utf-8")
+    return hashlib.sha256(canonical).hexdigest()
 
 
 def source_identity(root: Path, paths: Iterable[str]) -> dict[str, Any]:
@@ -34,9 +32,10 @@ def source_identity(root: Path, paths: Iterable[str]) -> dict[str, Any]:
         path = root.joinpath(*parts)
         if not path.is_file():
             raise ValueError(f"winner-rule source is missing: {canonical}")
-        rows.append({"path": canonical, "sha256": _sha256_file(path)})
+        rows.append({"path": canonical, "sha256": _portable_source_sha256(path)})
     encoded = "".join(f"{row['path']}|{row['sha256']}\n" for row in rows)
     return {
+        "canonicalization": "utf8-lf",
         "sha256": hashlib.sha256(encoded.encode("utf-8")).hexdigest(),
         "sources": rows,
     }

@@ -12,6 +12,7 @@ from openbfme_importer.effective_tree import (
     build_effective_tree,
     render_effective_tree,
     require_exact_bytes,
+    source_identity,
 )
 
 
@@ -88,3 +89,9 @@ def test_effective_tree_is_deterministic_complete_and_fail_closed() -> None:
         )()
         with pytest.raises(ValueError, match="prefix collision"):
             build_effective_tree(bad, **{**kwargs, "catalog_sha256": bad.identity_sha256(), "expected_records": 2})
+
+        (root / "lf.py").write_bytes(b"x = 1\n")
+        (root / "crlf.py").write_bytes(b"x = 1\r\n")
+        lf = source_identity(root, ["lf.py"])["sources"][0]["sha256"]
+        crlf = source_identity(root, ["crlf.py"])["sources"][0]["sha256"]
+        assert lf == crlf
