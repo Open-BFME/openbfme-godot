@@ -303,10 +303,11 @@ Cleanup is evidence-preserving work, not a delete sweep.
 - **Never ad hoc delete:** retail payloads, captures, cooked packs, source
   caches, worktrees, or unknown ignored files. They may be the only reproducible
   evidence or last-known-good bundle.
-- **Worktrees:** the audit found 83 registered trees: 45 branch-merged and
-  tracked-clean trees still containing ignored payloads, 38 dirty trees, and 2
-  dirty trees with unmerged commits. Each needs an inventory and disposition;
-  the largest observed ignored tree had 710,229 rows (`E-AUDIT-REPO-20260829`).
+- **Worktrees:** the accepted 2026-08-30 inventory found 86 registered trees:
+  main=1, preserve-dirty=36, preserve-ignored=45, preserve-unmerged=4, and
+  removable=0. The 7,345,702 ignored-path observations include large generated
+  trees and a junction into main's private retail workspace, so retention must
+  process exact `wt-*` identities in bounded batches (`E-AUDIT-REPO-20260829`).
 - **Private packs/workspace:** retention and provenance pruning is a separate
   integration-owner operation after `P0-REPO-001`, never worker discretion.
 
