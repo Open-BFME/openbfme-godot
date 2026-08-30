@@ -512,7 +512,7 @@
       "kind": "source-foundation",
       "priority": "P0",
       "allocationClass": "worker-lane",
-      "status": "verification",
+      "status": "complete",
       "domainIds": [],
       "rootQueryIds": [
         "effective-retail-winners"
@@ -521,7 +521,7 @@
         "P0-SOURCE-002"
       ],
       "ownership": {
-        "state": "independent-verification",
+        "state": "accepted",
         "assignee": null,
         "ownedPaths": [],
         "candidatePaths": []
@@ -578,9 +578,7 @@
           "diagnosticPolicy": "strict-default"
         }
       ],
-      "blockers": [
-        "P0-SOURCE-002 must first receive fresh typed verifier, source, dimension, completion, and independent-review receipts after P0-AGENTS-001 integration"
-      ]
+      "blockers": []
     },
     {
       "id": "P0-SOURCE-002",
@@ -588,14 +586,14 @@
       "kind": "source-foundation",
       "priority": "P0",
       "allocationClass": "worker-lane",
-      "status": "verification",
+      "status": "complete",
       "domainIds": [],
       "rootQueryIds": [
         "effective-retail-winners"
       ],
       "dependsOn": [],
       "ownership": {
-        "state": "independent-verification",
+        "state": "accepted",
         "assignee": null,
         "ownedPaths": [],
         "candidatePaths": [
@@ -652,9 +650,7 @@
           "diagnosticPolicy": "strict-default"
         }
       ],
-      "blockers": [
-        "fresh typed verifier, source, dimension, completion, and independent-review receipts required after P0-AGENTS-001 integration"
-      ]
+      "blockers": []
     },
     {
       "id": "P0-CORPUS-001",
