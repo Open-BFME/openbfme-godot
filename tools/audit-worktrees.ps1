@@ -11,10 +11,20 @@ Set-StrictMode -Version Latest
 $Git = (Get-Command git.exe -CommandType Application -ErrorAction Stop).Source
 
 function Invoke-Git([string] $Root, [string[]] $Arguments, [switch] $AllowFailure) {
-    $lines = @(& $Git -c core.hooksPath=NUL -c core.quotepath=false -C $Root @Arguments 2>&1 | ForEach-Object { [string]$_ })
-    $code = $LASTEXITCODE
+    $stderrPath = [IO.Path]::GetTempFileName()
+    try {
+        $oldPreference = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        $lines = @(& $Git -c core.hooksPath=NUL -c core.quotepath=false -c core.longpaths=true -C $Root @Arguments 2> $stderrPath | ForEach-Object { [string]$_ })
+        $code = $LASTEXITCODE
+        $errors = @([IO.File]::ReadAllLines($stderrPath))
+    }
+    finally {
+        $ErrorActionPreference = $oldPreference
+        [IO.File]::Delete($stderrPath)
+    }
     if ($code -ne 0 -and -not $AllowFailure) {
-        throw "Git failed ($code): $($lines -join [Environment]::NewLine)"
+        throw "Git failed ($code): $((@($errors) + @($lines)) -join [Environment]::NewLine)"
     }
     return ,([pscustomobject]@{ Code = $code; Lines = $lines })
 }
