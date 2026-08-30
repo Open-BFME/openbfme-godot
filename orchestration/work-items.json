@@ -738,7 +738,7 @@
       "kind": "source-foundation",
       "priority": "P0",
       "allocationClass": "worker-lane",
-      "status": "pending",
+      "status": "in-progress",
       "domainIds": [
         "retail-skirmish",
         "retail-campaigns",
@@ -760,9 +760,14 @@
         "P0-CORPUS-001"
       ],
       "ownership": {
-        "state": "unassigned",
-        "assignee": null,
-        "ownedPaths": [],
+        "state": "assigned",
+        "assignee": "codex-feature-graph",
+        "ownedPaths": [
+          "importer/openbfme_importer/retail_ini_coverage.py",
+          "importer/openbfme_importer/requirement_graph.py",
+          "tools/build-rotwk-202-compatibility.py",
+          "importer/tests/test_rotwk_202_feature_graph.py"
+        ],
         "candidatePaths": [
           "importer/openbfme_importer/retail_ini_coverage.py",
           "importer/openbfme_importer/requirement_graph.py",
