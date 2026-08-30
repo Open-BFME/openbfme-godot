@@ -25,6 +25,26 @@ Exit condition: every product-scope root is classified; every archive and
 effective path is identity-bound; unknowns remain explicit; source closure is a
 machine-evaluated result.
 
+The source program is a strict four-layer pipeline. Agents must never collapse
+one layer into the next:
+
+1. **Effective tree** - archive precedence and byte provenance for all 53,433
+   raw records and 48,566 winners.
+2. **Lexical census** - exhaustive syntax accounting for definitions,
+   assignments, modules, scripts, and asset-reference sites. Opaque and
+   unresolved rows remain census results, not semantic closure.
+3. **Semantic requirement graph** - execute every product root query, resolve
+   typed reference/provenance edges, classify domain and map/mode membership,
+   and retain every residual as a blocker.
+4. **Evidence and routing** - project each semantic obligation into stable
+   requirements/objectives and apply the integration-owner routing contract to
+   one terminal envelope, exact mutable-file set, prerequisites, command, and
+   required evidence dimensions.
+
+Only the fourth layer can feed autonomous worker-lane generation. Counts from
+the first two layers never authorize a worker to infer a semantic target or a
+code owner.
+
 ## 2. Define the neutral content model
 
 Separate source parsing from runtime interpretation. Version schemas for object

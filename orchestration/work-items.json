@@ -272,6 +272,54 @@
       "claimLimit": "L1 structural coverage only; no conversion, load, behavior, visual, or audio parity"
     },
     {
+      "id": "E-EFFECTIVE-TREE-20260830",
+      "type": "accepted-private-artifact-receipt",
+      "asOfDate": "2026-08-30",
+      "inputEvidence": [
+        "E-BL-202"
+      ],
+      "artifact": {
+        "path": "workspace/retail-work/reports/compatibility/rotwk-202-v9.7.7-effective-tree.json",
+        "bytes": 35748553,
+        "sha256": "52fe8f2eb81371804e0b95f205561c0e3e98b58be86d3ee04f74505a93c1b6e6",
+        "implementationRevision": "55802bba"
+      },
+      "measurements": {
+        "records": 53433,
+        "winners": 48566,
+        "shadows": 4867
+      },
+      "claimLimit": "L1 effective archive precedence and winner provenance only; no feature semantics, conversion, load, behavior, visual, or audio parity"
+    },
+    {
+      "id": "E-LEXICAL-CENSUS-20260830",
+      "type": "accepted-private-artifact-receipt",
+      "asOfDate": "2026-08-30",
+      "inputEvidence": [
+        "E-EFFECTIVE-TREE-20260830",
+        "E-SCOPE-202"
+      ],
+      "artifact": {
+        "path": "workspace/retail-work/reports/compatibility/rotwk-202-v9.7.7-feature-graph.json",
+        "bytes": 322749028,
+        "sha256": "d116ea3cc09a7454f3bc52ffe6db0dbc9b03010cfe3cab86d7a50888f7c3793b",
+        "implementationRevision": "68cbdde1"
+      },
+      "measurements": {
+        "iniDocuments": 850,
+        "definitions": 36940,
+        "assignmentSites": 597886,
+        "opaqueAssignments": 290942,
+        "assetReferenceSites": 188543,
+        "unresolvedAssetReferences": 76656,
+        "ambiguousAssetReferences": 2203,
+        "objectModuleDeclarationSites": 24230,
+        "scriptCallSites": 4384,
+        "unknownSyntaxLines": 0
+      },
+      "claimLimit": "L1 lexical census only; copied root-query declarations are not executed roots, semantic reference closure, domain membership, routing, conversion, load, behavior, visual, or audio parity"
+    },
+    {
       "id": "E-AUDIT-CURRENT-20260829",
       "type": "sanitized-red-baseline",
       "asOfDate": "2026-08-29",
@@ -734,7 +782,7 @@
     },
     {
       "id": "P0-CORPUS-002",
-      "title": "Generate the exhaustive 2.02 feature and reference graph",
+      "title": "Generate the exhaustive 2.02 lexical feature census",
       "kind": "source-foundation",
       "priority": "P0",
       "allocationClass": "worker-lane",
@@ -747,14 +795,7 @@
         "retail-shell"
       ],
       "rootQueryIds": [
-        "effective-retail-winners",
-        "retail-reference-closure",
-        "skirmish-roots",
-        "all-map-payloads",
-        "campaign-roots",
-        "war-of-the-ring-roots",
-        "create-a-hero-roots",
-        "shell-roots"
+        "effective-retail-winners"
       ],
       "dependsOn": [
         "P0-CORPUS-001"
@@ -771,12 +812,12 @@
         ]
       },
       "scope": {
-        "deliverable": "Graph every effective definition, assignment, reference, product root, asset, map, script call, object module, unknown, and provenance edge without a field allowlist.",
-        "notIncluded": "Treating classification or parser recognition as runtime support."
+        "deliverable": "Account for every effective INI document, definition, assignment, asset-reference site, script call, object module, nested block, directive, and syntax line without a field allowlist.",
+        "notIncluded": "Executed product roots, semantic reference-target edges, domain membership, map/mode classification, requirement routing, conversion, or runtime support."
       },
       "sourceEvidence": [
         "E-SCOPE-202",
-        "E-AUDIT-CORPUS-20260829"
+        "E-EFFECTIVE-TREE-20260830"
       ],
       "artifacts": [
         "workspace/retail-work/reports/compatibility/rotwk-202-v9.7.7-feature-graph.json"
@@ -796,9 +837,9 @@
         "criteria": [
           "850 INI documents, 36940 definitions, 597886 assignments, 5494 unique objects, 188543 asset-reference sites, 24230 object-module sites, and 4384 script-call sites account exactly",
           "every assignment is scalar, reference, collection-reference, or opaque-unresolved",
-          "every unresolved field/target/root is explicit and blocks closure",
-          "graph binds source schema and exact catalog",
-          "accepted completionReceipt contains an exact artifactDigests entry with implementationRevision, portable feature-graph path, and lowercase SHA-256 for P0-LANES input pinning",
+          "290942 opaque assignments, 76656 unresolved asset references, and 2203 ambiguous asset references remain explicit lexical residuals and do not imply semantic closure",
+          "census binds source schema, accepted effective tree, and exact catalog",
+          "the accepted artifact receipt binds implementation revision, portable feature-census path, byte length, and lowercase SHA-256",
           "accepted private feature graph is 322749028 bytes with SHA-256 d116ea3cc09a7454f3bc52ffe6db0dbc9b03010cfe3cab86d7a50888f7c3793b at implementation revision 68cbdde1"
         ]
       },
@@ -828,8 +869,8 @@
       "blockers": []
     },
     {
-      "id": "P0-EVIDENCE-001",
-      "title": "Generate and validate the canonical evidence catalog and coverage matrix",
+      "id": "P0-CORPUS-003",
+      "title": "Close the executable 2.02 semantic requirement graph",
       "kind": "source-foundation",
       "priority": "P0",
       "allocationClass": "worker-lane",
@@ -842,7 +883,14 @@
         "retail-shell"
       ],
       "rootQueryIds": [
-        "retail-reference-closure"
+        "effective-retail-winners",
+        "retail-reference-closure",
+        "skirmish-roots",
+        "all-map-payloads",
+        "campaign-roots",
+        "war-of-the-ring-roots",
+        "create-a-hero-roots",
+        "shell-roots"
       ],
       "dependsOn": [
         "P0-CORPUS-002"
@@ -852,18 +900,235 @@
         "assignee": null,
         "ownedPaths": [],
         "candidatePaths": [
+          "importer/openbfme_importer/semantic_requirement_graph.py",
+          "tools/build-rotwk-202-compatibility.py",
+          "importer/tests/test_rotwk_202_semantic_graph.py"
+        ]
+      },
+      "scope": {
+        "deliverable": "Execute all eight product root queries and emit stable typed nodes, semantic reference/provenance edges, domain membership, map/mode rows, resolution states, and explicit residuals for the exact accepted lexical census.",
+        "notIncluded": "Inferring implementation ownership, mutable files, terminal envelopes, conversion support, runtime support, or parity from lexical categories."
+      },
+      "sourceEvidence": [
+        "E-SCOPE-202",
+        "E-EFFECTIVE-TREE-20260830",
+        "E-LEXICAL-CENSUS-20260830"
+      ],
+      "artifacts": [
+        "workspace/retail-work/reports/compatibility/rotwk-202-v9.7.7-semantic-graph.json"
+      ],
+      "acceptance": {
+        "requiredLevels": [
+          "L1"
+        ],
+        "requiredOutputDimensions": {
+          "SOURCE": "REQUIRED",
+          "CONVERT": "NOT_REQUIRED",
+          "LOAD": "NOT_REQUIRED",
+          "BEHAVIOR": "NOT_REQUIRED",
+          "VISUAL": "NOT_REQUIRED",
+          "AUDIO": "NOT_REQUIRED"
+        },
+        "criteria": [
+          "all eight root queries execute against the accepted effective-tree and lexical-census identities rather than copying policy descriptions",
+          "stable hash-derived node and edge IDs cover definitions, assignments, references, assets, scripts, modules, maps, roots, domains, provenance, and residuals",
+          "every lexical assignment projects exactly once as scalar, reference, collection-reference, or opaque-unresolved",
+          "every semantic reference edge projects exactly once as resolved, unresolved, or ambiguous, and every root, domain, and map payload has exactly one typed membership/mode disposition",
+          "all five required retail domains have explicit membership and every effective map payload has a mode/domain disposition",
+          "unknown, opaque, unresolved, ambiguous, orphaned, and unclassified rows remain explicit blocking residuals",
+          "repeat generation is byte-identical and binds the exact baseline, effective-tree, lexical-census, product-policy, and source-schema digests"
+        ]
+      },
+      "verificationCommands": [
+        {
+          "steps": [
+            {
+              "toolRole": "retail-python",
+              "invocation": "script",
+              "target": "tools/build-rotwk-202-compatibility.py",
+              "args": [
+                "--stage",
+                "semantic-graph",
+                "--check"
+              ],
+              "toolchainProfile": "retail-python-hermetic-v1"
+            }
+          ],
+          "availability": "planned",
+          "timeoutSeconds": 7200,
+          "expectedMarkers": [
+            "ROTWK_202_SEMANTIC_GRAPH PASS"
+          ],
+          "diagnosticPolicy": "strict-default"
+        }
+      ],
+      "blockers": []
+    },
+    {
+      "id": "P0-ROUTING-001",
+      "title": "Author the closed owner routing policy for parity obligations",
+      "kind": "owner-policy",
+      "priority": "P0",
+      "allocationClass": "rollup",
+      "status": "blocked",
+      "domainIds": [
+        "retail-skirmish",
+        "retail-campaigns",
+        "retail-war-of-the-ring",
+        "retail-create-a-hero",
+        "retail-shell",
+        "openbfme-networking",
+        "openbfme-modern-modding"
+      ],
+      "rootQueryIds": [
+        "effective-retail-winners",
+        "retail-reference-closure",
+        "skirmish-roots",
+        "all-map-payloads",
+        "campaign-roots",
+        "war-of-the-ring-roots",
+        "create-a-hero-roots",
+        "shell-roots"
+      ],
+      "dependsOn": [
+        "P0-CORPUS-003",
+        "P0-CODE-MAP-001",
+        "P0-ASSET-CLOSE-001"
+      ],
+      "ownership": {
+        "state": "unassigned",
+        "assignee": null,
+        "ownedPaths": [],
+        "candidatePaths": [
+          "contracts/rotwk-202-v9.7.7-routing.json",
+          "config/repository-boundaries.json",
+          "docs/CODE_OWNERSHIP.md",
+          "docs/ROADMAP.md",
+          "tools/check-rotwk-202-routing.py",
+          "importer/tests/test_rotwk_202_routing.py"
+        ]
+      },
+      "scope": {
+        "deliverable": "Integration-owner policy that partitions closed semantic selector classes and evidence lanes into exactly one terminal closure envelope, objective class, prerequisite set, structured ledger command, and finite exact modify/delete/create target set; the same owner transition classifies the new routing contract in the repository boundary map.",
+        "notIncluded": "Retail identifiers or values, worker-selected ownership, directory or glob ownership, private paths, inferred fallback routes, deferred mappings, or generated ledger mutations."
+      },
+      "sourceEvidence": [
+        "E-SCOPE-202",
+        "E-LEXICAL-CENSUS-20260830",
+        "E-AUDIT-ASSETS-20260829"
+      ],
+      "artifacts": [
+        "contracts/rotwk-202-v9.7.7-routing.json",
+        "config/repository-boundaries.json"
+      ],
+      "acceptance": {
+        "requiredLevels": [
+          "L0",
+          "L1"
+        ],
+        "requiredOutputDimensions": {
+          "SOURCE": "REQUIRED",
+          "CONVERT": "NOT_REQUIRED",
+          "LOAD": "NOT_REQUIRED",
+          "BEHAVIOR": "NOT_REQUIRED",
+          "VISUAL": "NOT_REQUIRED",
+          "AUDIO": "NOT_REQUIRED"
+        },
+        "criteria": [
+          "the routing checker independently recomputes the complete objective universe as the deterministic projection of accepted semantic obligations plus the openbfme-networking and openbfme-modern-modding product-policy obligations across every required evidence lane; routing selectors partition that independently derived universe exactly once, zero or multiple matches fail, and neither the later evidence catalog nor its coverage matrix is an input",
+          "every route names one existing terminal closure envelope, evidence lane, objective class, exact prerequisites, all six dimension dispositions, required levels, and one structured ledger command reference",
+          "modify/delete targets are finite exact current tracked paths singly classified by the accepted repository boundary; create targets are finite exact absent files with mutation=create, a classified parent, expected-absence and path-universe pins, and collision/reserved-owner rejection",
+          "the owner transition adds the routing contract to canonical-product-contract classification and the boundary checker accepts the contract, routing checker, focused test, and documentation paths without overlap",
+          "residual classes receive explicit remediation envelopes and never become no-route or deferred rows",
+          "the contract binds semantic-graph, code-map, public-asset-closure, ledger-slice, and path-universe digests and rejects any drift"
+        ]
+      },
+      "verificationCommands": [
+        {
+          "steps": [
+            {
+              "toolRole": "python",
+              "invocation": "script",
+              "target": "tools/check-rotwk-202-routing.py",
+              "args": [
+                "--check"
+              ],
+              "toolchainProfile": "python-hermetic-v1"
+            },
+            {
+              "toolRole": "python",
+              "invocation": "script",
+              "target": "tools/check-repository-boundaries.py",
+              "args": [
+                "--check"
+              ],
+              "toolchainProfile": "python-hermetic-v1"
+            }
+          ],
+          "availability": "planned",
+          "timeoutSeconds": 900,
+          "expectedMarkers": [
+            "ROTWK_202_ROUTING PASS",
+            "REPOSITORY_BOUNDARIES PASS"
+          ],
+          "diagnosticPolicy": "strict-default"
+        }
+      ],
+      "blockers": [
+        "semantic graph, closed repository path universe, and public-asset closure are not yet accepted"
+      ]
+    },
+    {
+      "id": "P0-EVIDENCE-001",
+      "title": "Generate and validate the canonical evidence catalog and coverage matrix",
+      "kind": "source-foundation",
+      "priority": "P0",
+      "allocationClass": "worker-lane",
+      "status": "blocked",
+      "domainIds": [
+        "retail-skirmish",
+        "retail-campaigns",
+        "retail-war-of-the-ring",
+        "retail-create-a-hero",
+        "retail-shell",
+        "openbfme-networking",
+        "openbfme-modern-modding"
+      ],
+      "rootQueryIds": [
+        "effective-retail-winners",
+        "retail-reference-closure",
+        "skirmish-roots",
+        "all-map-payloads",
+        "campaign-roots",
+        "war-of-the-ring-roots",
+        "create-a-hero-roots",
+        "shell-roots"
+      ],
+      "dependsOn": [
+        "P0-CORPUS-003",
+        "P0-ROUTING-001",
+        "P0-CODE-MAP-001",
+        "P0-ASSET-CLOSE-001"
+      ],
+      "ownership": {
+        "state": "unassigned",
+        "assignee": null,
+        "ownedPaths": [],
+        "candidatePaths": [
+          "importer/openbfme_importer/evidence_catalog.py",
           "tools/build-rotwk-202-compatibility.py",
           "tools/check-rotwk-202-compatibility.py",
           "importer/tests/test_rotwk_202_coverage_matrix.py"
         ]
       },
       "scope": {
-        "deliverable": "Generate the product-contract evidence catalog, coverage matrix, deterministic work-routing rows, and derived views with stale-identity rejection.",
+        "deliverable": "Generate the product-contract evidence catalog, coverage matrix, deterministic work-routing rows, and derived views with stale-identity rejection; retail objectives derive from the semantic graph while networking and modding objectives derive directly from their product-policy obligations.",
         "notIncluded": "Promoting missing evidence or old 2.01 receipts, or leaving P0-LANES discretion to choose an objective, terminal envelope, mutable file, dependency, evidence level, or check."
       },
       "sourceEvidence": [
         "E-SCOPE-202",
-        "E-AUDIT-CURRENT-20260829"
+        "E-EFFECTIVE-TREE-20260830",
+        "E-LEXICAL-CENSUS-20260830"
       ],
       "artifacts": [
         "workspace/retail-work/reports/compatibility/rotwk-202-v9.7.7-evidence-catalog.json",
@@ -886,9 +1151,10 @@
           "every graph obligation has all product-contract evidence-lane columns and exactly one routingAuthority row with the policy-declared closed keys",
           "each routing row recomputes one R- requirement and O- objective from bounded hash-only typed identities, carries one terminal envelope/routing rule, finite exact mutable files, exact prerequisites/evidence/levels/dimension map/structured command, and contains no raw retail text or free-form routing prose",
           "the sanitized coverage projection is exhaustive and disjoint; malformed IDs/locators, raw names/values/excerpts, oversized fields, unknown or multiple envelopes, missing consumers, directory/glob/private paths, and unowned or deferred mappings block",
+          "networking and modern-modding policy obligations project independently of the retail semantic graph and close exactly against their P2 terminal envelopes",
           "unknown, missing, deferred, stale, skipped, and every required unproved evidence dimension remain blocking states",
-          "old 2.01 catalog/selection/oracle identities are rejected and generated totals close exactly to the accepted feature graph",
-          "typed completionReceipt artifact digests bind one implementation revision and exact portable raw-byte identities for the evidence catalog and sanitized coverage matrix"
+          "old 2.01 catalog/selection/oracle identities are rejected and generated totals close exactly to the accepted semantic graph and owner routing policy",
+          "the private handoff and independent-review receipts bind one implementation revision and exact portable paths, byte lengths, and SHA-256 identities for the evidence catalog and sanitized coverage matrix"
         ]
       },
       "verificationCommands": [
@@ -912,7 +1178,9 @@
           "diagnosticPolicy": "strict-default"
         }
       ],
-      "blockers": []
+      "blockers": [
+        "semantic graph, owner routing policy, closed repository path universe, and public-asset closure are not yet accepted"
+      ]
     },
     {
       "id": "P0-LANES-001",
@@ -941,7 +1209,8 @@
         "shell-roots"
       ],
       "dependsOn": [
-        "P0-CORPUS-002",
+        "P0-CORPUS-003",
+        "P0-ROUTING-001",
         "P0-EVIDENCE-001",
         "P0-AGENTS-001",
         "P0-ASSET-CLOSE-001"
@@ -1058,7 +1327,7 @@
           "availability": "planned",
           "timeoutSeconds": 1800,
           "expectedMarkers": [
-            "FEATURE_LANES PASS envelopes=33 rollups=3",
+            "FEATURE_LANES PASS envelopes=33 productRollups=3",
             "REPOSITORY_BOUNDARIES PASS",
             "WORK_ITEMS PASS"
           ],
@@ -1066,7 +1335,7 @@
         }
       ],
       "blockers": [
-        "P0-CORPUS-002, P0-EVIDENCE-001, P0-AGENTS-001, and P0-ASSET-CLOSE-001 are incomplete"
+        "P0-CORPUS-003, P0-ROUTING-001, P0-EVIDENCE-001, P0-AGENTS-001, and P0-ASSET-CLOSE-001 are incomplete"
       ]
     },
     {
@@ -2526,7 +2795,7 @@
           "availability": "current-accepted",
           "timeoutSeconds": 300,
           "expectedMarkers": [
-            "REPOSITORY_BOUNDARIES PASS tracked=2678 classified=2678 rules=27 consumers=14 autoloads=7 high_conflict=13"
+            "REPOSITORY_BOUNDARIES PASS tracked=2690 classified=2690 rules=27 consumers=14 autoloads=7 high_conflict=13"
           ],
           "diagnosticPolicy": "strict-default"
         }

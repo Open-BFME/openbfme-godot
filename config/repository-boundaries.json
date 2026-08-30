@@ -300,7 +300,7 @@
     }
   ],
   "evidencePolicy": {
-    "currentTypes": ["tracked-contract", "sanitized-read-only-audit-receipt"],
+    "currentTypes": ["tracked-contract", "sanitized-read-only-audit-receipt", "accepted-private-artifact-receipt"],
     "historicalDiagnosticTypes": ["sanitized-red-baseline", "sanitized-repository-hygiene-audit"],
     "privatePrefix": "workspace/",
     "rule": "Resolve every evidence ID and pointer. Historical diagnostics may describe gaps but cannot close non-L0 acceptance."
