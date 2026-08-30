@@ -314,7 +314,7 @@
     "extensions": [".py", ".gd", ".cs", ".ps1"],
     "files": [
       {"path": "importer/openbfme_importer/playable_unit_compiler.py", "ownerWorkItem": "P1-OBJECT-001", "seams": ["definition parsing", "normalized unit IR", "pack emission"], "focusedTests": ["importer/tests/test_playable_unit_compiler.py"]},
-      {"path": "importer/openbfme_importer/module_contracts.py", "ownerWorkItem": "P1-MODULE-001", "seams": ["module vocabulary", "partition classification", "batch receipt"], "focusedTests": ["importer/tests/test_module_contracts_batch.py"]},
+      {"path": "importer/openbfme_importer/module_contracts.py", "ownerWorkItem": "P1-MODULE-001", "seams": ["module vocabulary", "neutral contract normalization", "batch receipt"], "focusedTests": ["importer/tests/test_module_contracts_batch.py"]},
       {"path": "game/src/ui/wotr_screen.gd", "ownerWorkItem": "P2-WOTR-003", "seams": ["strategic state adapter", "map presentation", "turn command surface"], "focusedTests": ["game/tests/wotr_map3d_runner.gd"]},
       {"path": "game/src/retail_slice/retail_vertical_slice.gd", "ownerWorkItem": "P1-SIM-001", "seams": ["input command translation", "simulation ownership", "presentation projection"], "focusedTests": ["game/tests/retail_slice_runner.gd"]},
       {"path": "importer/openbfme_importer/pipeline.py", "ownerWorkItem": "P0-SELECTION-002", "seams": ["source admission", "conversion stages", "immutable publish transaction"], "focusedTests": ["importer/tests/test_bundle.py", "importer/tests/test_dev_pack_and_shared_cache.py"]},
@@ -324,7 +324,7 @@
       {"path": "game/src/retail_slice/retail_hud.gd", "ownerWorkItem": "P1-UI-001", "seams": ["simulation view model", "retail HUD contract", "input dispatch"], "focusedTests": ["game/tests/retail_slice_runner.gd"]},
       {"path": "game/src/wotr/wotr_map_view.gd", "ownerWorkItem": "P2-WOTR-002", "seams": ["strategic geometry", "territory interaction", "camera and presentation"], "focusedTests": ["game/tests/wotr_map3d_runner.gd", "game/tests/wotr_region_geometry_runner.gd"]},
       {"path": "importer/openbfme_importer/retail_hud_apt_convert.py", "ownerWorkItem": "P1-UI-001", "seams": ["APT parse", "neutral timeline IR", "Godot resource emission"], "focusedTests": ["importer/tests/test_retail_hud_apt_convert.py"]},
-      {"path": "importer/tests/test_module_contracts_batch.py", "ownerWorkItem": "P1-MODULE-001", "seams": ["partition fixtures", "coverage assertions", "receipt assertions"], "focusedTests": ["importer/tests/test_module_contracts_batch.py"]},
+      {"path": "importer/tests/test_module_contracts_batch.py", "ownerWorkItem": "P1-MODULE-001", "seams": ["neutral contract fixtures", "coverage assertions", "receipt assertions"], "focusedTests": ["importer/tests/test_module_contracts_batch.py"]},
       {"path": "importer/blender/w3d_to_glb.py", "ownerWorkItem": "P1-ASSET-001", "seams": ["decoded W3D model", "Blender scene construction", "GLB emission"], "focusedTests": ["importer/tests/test_w3d_to_glb_fixtures.py", "importer/tests/test_w3d_glb_validation.py"]}
     ]
   },

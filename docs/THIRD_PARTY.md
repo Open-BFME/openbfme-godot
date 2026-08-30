@@ -18,25 +18,32 @@ provenance work is sequenced in [ROADMAP.md](ROADMAP.md) and owned by
 [work-items.json](../orchestration/work-items.json); this ledger does not
 duplicate live status.
 
+> **Public-asset transition:** The tracked stand-ins and donor-looking media
+> below are quarantined debt, not approved shipping assets. The immutable
+> 611-record program in `P0-ASSET-HYGIENE-001` assigns them to exact purge,
+> fixture, input, audio, icon, model, shell, and launcher dispositions. In
+> particular, provenance evidence does not make an approximation acceptable in
+> a 1:1 port. Exact selected private retail conversion is the only asset-parity
+> route; the one retained public banner is non-parity project branding.
+
 ## Content and donor sources
 
 | Source | Use | License/status | Integration and release boundary |
 |---|---|---|---|
-| `middle-earth-rts` project assets | Repository-authored/legal-safe 3D, UI and audio donor material | Original or AI-generated for that project; provenance must be reviewed per asset | May support legal-safe development/fallback content; cannot prove retail parity or silently fill strict-retail gaps |
-| Generated OBJ meshes | Tools-authored stand-in geometry | Repository-authored output; generator/input provenance required | Legal-safe development lane only unless separately approved for release |
-| Generated WAV music beds | Adaptive explore/battle/victory stand-ins | Procedural output; generator not yet committed - see *Open provenance items* | Legal-safe development lane only; not retail audiovisual parity evidence |
-| Procedural SFX (`tools/gen_sfx.py`) | 51 placeholder combat/UI/ambient sound effects | Repository-authored; synthesised from committed source, reproducible byte-for-byte | Shippable repository-authored lane; stands in for retail audio the player supplies locally |
+| `middle-earth-rts` project assets | Legacy donor-looking 3D, UI, and audio material | Origin/provenance varies and cannot establish product fitness | Quarantined; exact disposition lanes remove or replace fixtures, never fill strict-retail gaps |
+| Generated OBJ meshes | Tools-authored stand-in geometry | Repository-authored output; not exact retail content | Quarantined for deletion by `P0-ASSET-MODELS-001` |
+| Generated WAV music beds | Explore/battle/victory stand-ins | Procedural by inspection; generator not committed | Quarantined for deletion by `P0-ASSET-AUDIO-001` |
+| Procedural SFX (`tools/gen_sfx.py`) | 51 placeholder combat/UI/ambient effects | Reproducible repository-authored approximation | Quarantined with its generator for deletion by `P0-ASSET-AUDIO-001`; never retail audio parity |
 | User-owned Patch 2.02 v9.7.7 effective source | Private compatibility extraction, conversion, and oracle observation: layer 0 Patch 2.02 official-2 v9.7.7 English overlay, layer 1 RotWK 2.01 installation, layer 2 BFME2 1.06 installation | Proprietary retail/community-patch content; non-redistributable project lane | Inputs and all derived payloads remain below `workspace`; never shipped, committed, or transferred by a server |
 
 Donor material is accepted only through a bounded provenance review. No donor runtime
 types or source are copied merely because a format tool is used for observation.
 
-## Shipped asset provenance (`game/data/base/assets`)
+## Quarantined tracked asset provenance (`game/data/base/assets`)
 
-`RELEASE_POLICY.md` requires a provenance record for every shipped file. This section
-records the tracked binary asset groups under `game/data/base/assets`, the evidence
-established for each, and what remains outstanding. Findings below are engineering
-forensics on the artifacts themselves; they are not a legal opinion.
+This section preserves the forensics that explain why the tracked binary groups are
+debt while the immutable disposition index is built. None is release-approved or
+retail parity. Findings below are engineering forensics, not a legal opinion.
 
 | Group | Files | Size | Status |
 |---|---|---|---|

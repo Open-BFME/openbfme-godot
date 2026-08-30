@@ -9,11 +9,10 @@ The machine-checked map is
 [`config/repository-boundaries.json`](../config/repository-boundaries.json).
 It is derived from `AGENTS.md`, the product/baseline contracts, `DIRECTION.md`,
 `PLAN.md`, and the work-item ledger; it is not a competing canonical authority.
-Run its focused check from the repository root:
-
-```powershell
-py -3 tools\check-repository-boundaries.py --check
-```
+An assigned `P0-CODE-MAP-001` lane runs its focused check through the pinned
+clean-main control-plane launcher and the explicit lane path in its generated
+private brief. The worker never invokes the lane's copied launcher or lifecycle
+tool.
 
 A pass means that every tracked file matches exactly one non-overlapping path
 rule, all declared runtime paths and Godot autoloads resolve, every file at or
@@ -54,7 +53,7 @@ command/state/event trace equivalence.
 | Boundary | Class | Contribution rule |
 |---|---|---|
 | v9.7.7 contracts, `DIRECTION.md`, `PLAN.md` | canonical product contract | Integration owner only. BFME2 1.06 and RotWK 2.01 archive contracts are effective input layers, not alternate product targets. |
-| `orchestration/work-items.json` | live work ledger | The only backlog. Briefs/reports are historical narrative; templates are workflow. |
+| `orchestration/work-items.json` | live work ledger | The only backlog. The stale tracked briefs/reports corpus is quarantined under `P0-HISTORY-INDEX-001` -> `P0-HISTORY-001`; templates remain workflow. |
 | `game/src/`, `game/scenes/`, `game/project.godot` | shipping code | The Godot runtime. Tests and data are deliberately separate classes. |
 | `game/tests/`, `importer/tests/` | test code | Verification routes; never retail or parity evidence by themselves. |
 | `importer/openbfme_importer/`, `importer/blender/` | importer source | Deterministic private retail conversion, separate from its tests/config. |
@@ -74,8 +73,13 @@ not an invisible default.
 `game/data/base/assets` currently contains 563 tracked files and mixes
 shipping-looking UI, test material, legacy donor assets, and duplicated bytes.
 It is classified as `public-asset-debt`, not as an approved asset source.
-`P0-ASSET-HYGIENE-001` owns its manifest-led split, attestation,
-deduplication, and reference retargeting.
+The exact public universe is broader: 611 Git/LFS-aware records under
+`game/assets/`, `game/data/base/`, and eight literal extra paths. Its immutable
+index is `P0-ASSET-HYGIENE-001`; that lane is read-only with respect to all 611
+records. Mutation is split across `P0-ASSET-PURGE-001` and the seven exact
+fixture, input, audio, icon, model, shell, and launcher disposition lanes.
+Godot identity repair, export admission, and final closure remain separate
+dependent items. No index or lower evidence level authorizes a parity claim.
 
 The tracked files `build_info.json`, `retail_ai_call_census.json`,
 `retail_faction_sides.json`, `retail_module_census.json`,
@@ -107,7 +111,7 @@ test routes before an agent can touch it.
 | Area | Current files | Owner route | Required seam |
 |---|---|---|---|
 | Unit conversion | `playable_unit_compiler.py` and its large test module | `P1-OBJECT-001` | parse -> normalized IR -> emit; fixtures/assertions remain separable |
-| Module conversion | `module_contracts.py` and its large batch test | `P1-MODULE-001` | vocabulary -> partition -> receipt |
+| Module conversion | `module_contracts.py` and its large batch test | `P1-MODULE-001` | vocabulary -> neutral typed contract -> receipt |
 | General conversion | `pipeline.py` | `P0-SELECTION-002` | admission -> stages -> immutable publish |
 | W3D conversion | `blender/w3d_to_glb.py` | `P1-ASSET-001` | decoded model -> Blender scene -> GLB |
 | Match runtime | `retail_vertical_slice.gd`, `retail_slice_sim.gd` | `P1-SIM-001` | commands -> deterministic ticks -> state/events -> presentation |
@@ -124,6 +128,78 @@ lane's exact `ownedPaths`. Allocation still narrows the selected item to exact
 paths. When a file crosses the threshold or a route disappears, the integration
 owner must add a precise route or schedule a bounded split.
 
+## Machine allocation and deletion authority
+
+Rows that can mutate cleanup state carry an `ownershipPlanning` object in the
+live ledger. It enumerates exact record, support, read-only, universe-root, and
+universe-extra paths. For an active row, `ownedPaths` must equal
+`candidatePaths - readOnlyPaths`; a directory, ancestor, glob, wildcard,
+case-insensitive duplicate, or undeclared path fails allocation.
+
+A tracked deletion additionally requires a non-null `authorizedDeletion`
+object. Every deleted path must be an exact candidate and owned path, its record
+and deletion digests use the ledger's ordinal terminal-LF convention, and its
+source must be a direct completed dependency in accepted ownership state whose
+immutable record set contains the lane's set. Prospective blocked rows may map
+future authorization, but cannot be allocated until that source is accepted.
+This makes the ledger an executable safety boundary rather than a delete list
+written in prose.
+
+Large product-denominator rows such as all INI data, W3D conversion, map
+corpus, UI, or a complete authored mode are closure envelopes, not acceptable
+single commits. Every ledger row therefore has a machine `allocationClass`.
+The current pre-plan ledger contains 31 ordinary worker lanes, exactly 33
+closure envelopes, and three qualification/release rollups. Envelopes carry
+`envelopeCompletion: null`, remain unassigned, and treat broad or patterned
+candidate paths as discovery hints only. Rollups are also never implementation
+lanes.
+
+After the v9.7.7 graph, evidence matrix, public-asset closure, agent gate, and
+repository cleanup close, `P0-LANES-001` is the sole batch planner. The ledger
+is the only allocation-policy authority. The eventual tracked
+`orchestration/feature-lane-plan.json` is a raw-byte accepted projection, not a
+second policy or worker-editable ledger. Before allocation, five producer
+artifacts and both tracked planner inputs must carry exact typed accepted
+implementation revisions and raw-byte SHA-256 pins.
+
+The accepted coverage matrix—not the planner—assigns every disjoint `R-`
+requirement to one `O-` semantic objective, one terminal envelope/routing rule,
+finite exact mutable files, prerequisites, evidence IDs and levels, the full
+six-dimension disposition map, and a structured focused check. Its tracked
+projection uses bounded hash-only source locators; raw retail names, values,
+paths, and prose never enter the accepted plan. The planner has no routing
+discretion.
+
+Within one identical envelope/objective/level/dimension/check group, sorted
+requirements use one recomputed ordinal first-fit packing algorithm. A child
+contains at most 64 requirements, 12 mutable files, one current high-conflict
+file, and 1,800 seconds of focused verification. Each planned child is a full
+schema-v2 work-item object derived only from versioned fixed templates and the
+accepted batch fields; callers cannot supply prose or optional fields. It
+directly depends on the planner, every retained parent prerequisite, exact
+owners of prerequisite requirements, and immediate predecessors for shared
+paths; the combined graph must remain acyclic.
+
+The worker writes only a private content-bound proposal. The integration owner
+alone runs the locked materializer from clean, fresh `main`; it rehashes every
+actual input and compare-and-swap commits exactly the accepted plan, ledger,
+and boundary map while leaving the planner in verification. A distinct reviewer
+audits that three-path commit and typed receipt; only a later owner ledger-only
+transition records completion. The tracked plan permanently retains null nested
+plan-SHA fields, so its raw digest is non-self-referential; the owner injects
+that digest only into the corresponding materialized ledger rows. The plan also
+freezes four distinct revisions (input, owner pin, assignment, and
+implementation) and complete base prerequisite rows.
+
+At materialization each envelope depends on every frozen child and replaces
+null completion with the exact plan, requirement-set, and child-set proof.
+Twelve high-conflict rows currently owned by P1/P2 envelopes become ordered
+`ownerWorkItemIds` chains containing every generated child that may change the
+path; the thirteenth remains the singleton `P0-SELECTION-002` worker. Shared
+paths serialize by ordinal child ID, each later child depending on the
+immediate predecessor. Active ownership can therefore never overlap even when
+one high-conflict seam spans more than one capped child.
+
 ## Asset identity and naming
 
 - Preserve every retail virtual key verbatim, together with winning archive,
@@ -138,9 +214,10 @@ owner must add a precise route or schedule a bounded split.
   says otherwise. A resource resolving in Godot is not provenance.
 
 The current boot splash and project icon both resolve into this unattested
-asset class. The checker permits them only because each project key is named as
-blocking debt owned by `P0-ASSET-HYGIENE-001`; an undeclared startup asset or a
-path outside that quarantine fails.
+asset class. `P0-ASSET-HYGIENE-001` indexes them as read-only debt;
+`P0-ASSET-SHELL-001` alone may remove the exact records and rooted project/UI
+consumers after the index is accepted. An undeclared startup asset or a path
+outside that quarantine fails.
 
 ## Named runtime debt
 
@@ -153,10 +230,26 @@ moving the bypass does not make it disappear.
 
 ## Agent use
 
-Before implementation, an agent reads its single row in
-`orchestration/work-items.json`, confirms the declared owner paths, and uses
-this map to identify the shipping consumer and focused test route. If the
-needed path is outside that ownership, the item returns to the integration
-owner; the agent does not widen its lane. Any new top-level root, new tracked
-`game/data` root, new shipping authority, or newly oversized conflict file is
-supposed to stop autonomous work until the boundary is explicit.
+Before implementation, the integration owner uses the lane allocator to select
+one ready row, bind its exact ownership, and create one sibling worktree. The
+agent verifies the content-bound assignment authority slice—not merely the row—
+including target/policy, transitive evidence sources and tracked authority
+blobs, selected diagnostics, and any generated plan slice. Private tool/runtime,
+canary, Git LFS, protected-state, wrapper-attestation, and repository identities
+are bound in the assignment. Normal commands execute the clean main-worktree
+launcher and lifecycle tool against one explicit lane path; worker copies never
+become control-plane authority. The repository binding closes the Git pointer,
+configuration/info, absence, hook, environment, directory, and transition state
+and is revalidated after complete process-tree drain. If a needed path is
+outside ownership, the item returns to the integration owner; the agent does
+not widen its lane. Any new top-level root, new tracked `game/data` root, new
+shipping authority, or newly oversized conflict file stops autonomous work
+until the boundary is explicit.
+
+`P0-AGENTS-001` is the only self-hosting exception because the allocator does
+not exist on its authorization revision. The owner may synthesize exactly its
+twelve frozen candidate paths as one direct-child foundation commit, run the new
+admission gate through an owner-derived bootstrap binding, and obtain a typed
+independent review of the exact candidate revision, binding, and receipt. That
+exception grants no authority to any other row and still requires a separate
+ledger-only completion review.
