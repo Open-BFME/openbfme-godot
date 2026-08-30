@@ -658,7 +658,7 @@
       "kind": "source-foundation",
       "priority": "P0",
       "allocationClass": "worker-lane",
-      "status": "pending",
+      "status": "in-progress",
       "domainIds": [],
       "rootQueryIds": [
         "effective-retail-winners"
@@ -667,9 +667,13 @@
         "P0-SOURCE-002"
       ],
       "ownership": {
-        "state": "unassigned",
-        "assignee": null,
-        "ownedPaths": [],
+        "state": "assigned",
+        "assignee": "grok-corpus-builder",
+        "ownedPaths": [
+          "importer/openbfme_importer/effective_tree.py",
+          "tools/build-rotwk-202-effective-tree.py",
+          "importer/tests/test_rotwk_202_effective_tree.py"
+        ],
         "candidatePaths": [
           "importer/openbfme_importer/effective_tree.py",
           "tools/build-rotwk-202-effective-tree.py",
