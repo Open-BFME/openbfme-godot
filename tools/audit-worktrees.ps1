@@ -96,7 +96,7 @@ function Assert-NoReparsePath([string] $Root, [string] $Path) {
     }
 }
 
-function Get-Inventory([string] $MainRoot) {
+function Get-Inventory([string] $MainRoot, [string] $OnlyId) {
     $mainHead = ((Invoke-Git $MainRoot @('rev-parse', '--verify', 'main^{commit}')).Lines -join '').Trim()
     $raw = [Collections.Generic.List[object]]::new()
     $current = $null
@@ -114,6 +114,8 @@ function Get-Inventory([string] $MainRoot) {
     $rows = [Collections.Generic.List[object]]::new()
     foreach ($entry in $raw) {
         $path = [IO.Path]::GetFullPath([string]$entry.path)
+        $entryId = 'wt-' + (Get-Hash $path.ToLowerInvariant()).Substring(0, 16)
+        if (-not [string]::IsNullOrWhiteSpace($OnlyId) -and $entryId -cne $OnlyId) { continue }
         $isMain = [StringComparer]::OrdinalIgnoreCase.Equals($path, $MainRoot)
         $exists = [IO.Directory]::Exists($path)
         $status = @(); $untracked = @(); $ignored = @()
@@ -139,7 +141,7 @@ function Get-Inventory([string] $MainRoot) {
             else { 'removable' }
         $stateText = @('H:' + $entry.head, 'B:' + $branch, 'S:' + ($status -join "`n"), 'U:' + ($untracked -join "`n"), 'I:' + ($ignored -join "`n")) -join "`n"
         $rows.Add([pscustomobject][ordered]@{
-            id = 'wt-' + (Get-Hash $path.ToLowerInvariant()).Substring(0, 16)
+            id = $entryId
             path = $path
             head = [string]$entry.head
             branch = $branch
@@ -190,7 +192,7 @@ function Copy-Payload([string] $Root, [string] $Destination) {
 
 $invocationRoot = ((Invoke-Git (Get-Location).Path @('rev-parse', '--show-toplevel')).Lines -join '').Trim()
 $mainRoot = Get-MainRoot $invocationRoot
-$inventory = Get-Inventory $mainRoot
+$inventory = Get-Inventory $mainRoot $(if ($Action -ceq 'inventory') { $null } else { $Id })
 if ([string]::IsNullOrWhiteSpace($Out)) { $Out = Join-Path $mainRoot 'workspace\logs\P0-REPO-001\worktrees.json' }
 $outFull = [IO.Path]::GetFullPath($Out)
 $allowedRoot = [IO.Path]::GetFullPath((Join-Path $mainRoot 'workspace')) + '\'
@@ -240,7 +242,7 @@ if ($Action -ceq 'archive') {
     }
     $metadata = [ordered]@{ inventoryRow = $row; payloadPaths = $payload; archivedAtUtc = [DateTime]::UtcNow.ToString('o') }
     Write-Json (Join-Path $archiveRoot 'metadata.json') $metadata
-    $freshRow = Find-Row (Get-Inventory $mainRoot) $row.id
+    $freshRow = Find-Row (Get-Inventory $mainRoot $row.id) $row.id
     if ($freshRow.stateSha256 -cne $row.stateSha256 -or $freshRow.classification -cne $row.classification) { throw 'Worktree changed during archive.' }
     Write-Json (Join-Path $archiveRoot 'complete.json') ([ordered]@{
         id = $row.id; stateSha256 = $row.stateSha256; result = 'PASS'; artifacts = @(Get-ArchiveManifest $archiveRoot)
@@ -264,7 +266,7 @@ if ($row.classification -notin @('removable', 'removable-missing')) {
     $actualManifest = ConvertTo-Json -InputObject @(Get-ArchiveManifest $archiveRoot) -Depth 5 -Compress
     if ($recordedManifest -cne $actualManifest) { throw 'Archive artifact bytes failed validation.' }
 }
-$freshRow = Find-Row (Get-Inventory $mainRoot) $row.id
+$freshRow = Find-Row (Get-Inventory $mainRoot $row.id) $row.id
 if ($freshRow.stateSha256 -cne $row.stateSha256 -or $freshRow.classification -cne $row.classification) { throw 'Worktree changed before removal.' }
 if ($freshRow.exists) { Assert-NoReparsePath $freshRow.path $freshRow.path }
 $removeArgs = @('worktree', 'remove', '--force')
@@ -275,7 +277,6 @@ if ($null -ne $row.branch -and $row.branch.StartsWith('refs/heads/')) {
     $deleteFlag = if ($row.mergedToMain) { '-d' } else { '-D' }
     Invoke-Git $mainRoot @('branch', $deleteFlag, '--', $branchName) | Out-Null
 }
-$remaining = Get-Inventory $mainRoot
+$remaining = Get-Inventory $mainRoot $row.id
 if (@($remaining.worktrees | Where-Object { $_.id -ceq $row.id }).Count -ne 0) { throw 'Worktree remained registered after removal.' }
-Write-Json $outFull $remaining
 Write-Output "WORKTREE_REMOVE PASS id=$($row.id)"
