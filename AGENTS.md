@@ -21,7 +21,7 @@ document conflicts with it, stop and ask the integration owner.
 Old reports, captures, branches, worktrees, and passing logs are historical
 context. They are never current authority.
 
-## Six rules
+## Seven rules
 
 1. **One item, one sibling worktree, one implementation commit.** Work only on
    the assigned item and paths. Never work directly on `main`, create a nested
@@ -43,6 +43,15 @@ context. They are never current authority.
 6. **Worker success is provisional.** A different reviewer must inspect the
    source evidence and diff and rerun the same check. Only the integration
    owner merges and changes canonical status.
+7. **Ponytail reviews every normal commit and push.** Install and verify the
+   repository hooks before work. The official Grok
+   `/ponytail:ponytail-review` must approve the exact staged tree before a
+   commit and the exact outgoing commit set before a push. Findings, missing
+   tools, malformed output, or Git-state drift fail closed. Never use
+   `--no-verify`, override `core.hooksPath`, delete/replace the hooks, or use
+   plumbing to evade them. Ponytail reviews complexity only; it never replaces
+   the ledger check, correctness/security review, retail evidence, or
+   independent acceptance.
 
 These rules are enforced by a small Windows-native work-item tool and Git.
 They are a review boundary, not an operating-system sandbox.
@@ -95,8 +104,27 @@ requirements. If any of those are wrong, stop and return the item to the owner.
 
 Do not use `git reset --hard`, `git checkout --`, `git restore`, `git clean`,
 `git stash`, or `git commit --amend`. Do not create or execute Bash/WSL helper
-scripts for this workflow. Put command output under
+scripts for this workflow. The private two-line Git-for-Windows hook launchers
+installed by `tools\Install-PonytailHooks.ps1` are the sole shell exception;
+all review logic runs in the tracked Python gate with the pinned interpreter.
+Do not let `cherry-pick`, `revert`, or `rebase` sequencers create commits;
+apply a single change with the porcelain's no-commit mode, then use ordinary
+`git commit` so the staged tree is reviewed. Worker lanes never rebase.
+Put command output under
 `workspace/logs/<work-item-id>/`.
+
+Install after the pinned private Python exists, and verify at the start of
+every owner or worker session:
+
+```powershell
+powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File tools\Install-PonytailHooks.ps1 -Install
+powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File tools\Install-PonytailHooks.ps1 -Verify
+```
+
+The client hooks are the strongest normal Git-path enforcement available;
+Git's explicit `--no-verify` escape cannot be removed by a client hook, which
+is why bypass is also a contribution-policy violation. Shared-branch policy
+must still reject unreviewed changes independently.
 
 ## Handoff and integration
 

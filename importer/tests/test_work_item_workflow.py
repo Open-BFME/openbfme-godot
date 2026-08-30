@@ -24,6 +24,7 @@ def _module(name: str, relative: str):
 
 CHECKER = _module("openbfme_check_work_items", "tools/check-work-items.py")
 WORKFLOW = _module("openbfme_work_item", "tools/work-item.py")
+PONYTAIL_GATE = _module("openbfme_ponytail_gate", "tools/ponytail-git-gate.py")
 
 
 def _read(relative: str) -> dict:
@@ -33,7 +34,7 @@ def _read(relative: str) -> dict:
 class AgentWorkflowContract(unittest.TestCase):
     def test_live_ledger_and_exact_target_validate(self) -> None:
         counts = CHECKER.validate()
-        self.assertEqual(counts["items"], 67)
+        self.assertEqual(counts["items"], 69)
         self.assertGreater(counts["evidence"], 0)
 
     def test_policy_cannot_self_describe_weaker_validation(self) -> None:
@@ -85,8 +86,13 @@ class AgentWorkflowContract(unittest.TestCase):
         self.assertIn("_worktree_state_digest", python_source)
         self.assertIn("artifactDigests", python_source)
         self.assertIn("reviewer == assignment", python_source)
+        self.assertIn("_git_with_hooks", python_source)
+        self.assertIn("--verify-installation", python_source)
         for forbidden in ("Invoke-Expression", "Start-Process", "cmd /c", "py -3"):
             self.assertNotIn(forbidden.casefold(), launcher_source.casefold())
+
+    def test_ponytail_approval_is_exact(self) -> None:
+        PONYTAIL_GATE._self_test()
 
     def test_governance_has_no_discarded_hypervisor_contract(self) -> None:
         paths = (

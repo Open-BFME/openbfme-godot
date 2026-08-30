@@ -19,6 +19,7 @@ and failing parity gates are expected and must remain visible.
 ## Requirements
 
 - Windows 10 or 11, Git, and Windows PowerShell 5.1 or later
+- Grok Build CLI with the official Ponytail plugin enabled
 - Godot 4.7 for Windows; the console executable is preferred
 - Python 3.12 available once so the repository can bootstrap its pinned private
   environment
@@ -68,6 +69,32 @@ parity.
 Godot resolution order is the explicit `OPENBFME_GODOT`/`GODOT_CONSOLE`/
 `GODOT_EXE`/`GODOT` environment, a Git-ignored `.tools\godot\` drop, then
 `godot` on `PATH`. Failure to resolve Godot is an error.
+
+Install Ponytail into Grok once, then install the repository's fail-closed Git
+hooks after the pinned private Python has been bootstrapped:
+
+```bat
+grok plugin install DietrichGebert/ponytail --trust
+grok plugin enable ponytail
+powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass ^
+  -File tools\Install-PonytailHooks.ps1 -Install
+```
+
+Verify the hooks at the start of later sessions:
+
+```bat
+powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass ^
+  -File tools\Install-PonytailHooks.ps1 -Verify
+```
+
+The hook invokes the qualified official skill
+`/ponytail:ponytail-review`, binds it to the exact staged/outgoing Git
+identity, and preserves `git lfs pre-push`. Do not use `--no-verify`, change
+`core.hooksPath`, or replace the generated private hooks. Ponytail checks
+over-engineering only; all work-item and parity checks remain mandatory.
+Commit-producing `cherry-pick`, `revert`, and `rebase` sequencers are outside
+the reviewed path and forbidden; apply without committing and finish through
+ordinary `git commit`.
 
 ## 3. Prepare the pinned three-layer source
 

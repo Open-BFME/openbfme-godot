@@ -2795,7 +2795,7 @@
           "availability": "current-accepted",
           "timeoutSeconds": 300,
           "expectedMarkers": [
-            "REPOSITORY_BOUNDARIES PASS tracked=2690 classified=2690 rules=27 consumers=14 autoloads=7 high_conflict=13"
+            "REPOSITORY_BOUNDARIES PASS tracked=2692 classified=2692 rules=27 consumers=14 autoloads=7 high_conflict=13"
           ],
           "diagnosticPolicy": "strict-default"
         }

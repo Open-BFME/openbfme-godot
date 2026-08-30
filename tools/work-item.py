@@ -54,6 +54,12 @@ def _git(root: Path, *args: str, check: bool = True) -> subprocess.CompletedProc
     return _run(["git", "-c", "core.hooksPath=NUL", *args], cwd=root, check=check)
 
 
+def _git_with_hooks(
+    root: Path, *args: str, check: bool = True,
+) -> subprocess.CompletedProcess[str]:
+    return _run(["git", *args], cwd=root, timeout=900, check=check)
+
+
 def _git_bytes(root: Path, *args: str) -> bytes:
     result = subprocess.run(
         ["git", "-c", "core.hooksPath=NUL", *args], cwd=root,
@@ -331,6 +337,7 @@ def ready(main_root: Path, *, json_output: bool) -> None:
 
 def create(main_root: Path, *, item_id: str, assignee: str) -> None:
     _assert_main(main_root)
+    _verify_ponytail(main_root, main_root, "--verify-installation")
     if not assignee.strip() or any(c in assignee for c in "\r\n\0"):
         raise WorkflowError("assignee must be one non-empty line")
     ledger = _ledger(main_root)
@@ -392,8 +399,11 @@ def create(main_root: Path, *, item_id: str, assignee: str) -> None:
             if result.returncode != 0:
                 raise WorkflowError((result.stderr or result.stdout).strip())
             _git(main_root, "add", "--", LEDGER_RELATIVE.as_posix())
-            _git(main_root, "commit", "-m", f"orchestration: assign {item_id} to {assignee}")
+            _git_with_hooks(
+                main_root, "commit", "-m", f"orchestration: assign {item_id} to {assignee}"
+            )
             committed = True
+            _verify_ponytail(main_root, main_root, "--verify-head-receipt")
         except Exception as exc:
             if not committed:
                 temporary = ledger_path.with_name(ledger_path.name + f".rollback-{os.getpid()}")
@@ -474,6 +484,16 @@ def _python_executable(main_root: Path) -> Path:
         if path.is_file():
             return path.resolve()
     raise WorkflowError("pinned private Python runtime is missing")
+
+
+def _verify_ponytail(main_root: Path, worktree_root: Path, mode: str) -> None:
+    gate = main_root / "tools/ponytail-git-gate.py"
+    result = _run(
+        [str(_python_executable(main_root)), "-I", "-S", "-B", str(gate), mode],
+        cwd=worktree_root, check=False,
+    )
+    if result.returncode != 0:
+        raise WorkflowError((result.stderr or result.stdout).strip())
 
 
 def _validate_ledger_documents(main_root: Path, ledger: dict[str, Any]) -> None:
@@ -684,6 +704,7 @@ def check(lane_root: Path) -> None:
 
 def handoff(lane_root: Path) -> None:
     assignment = _load_assignment(lane_root)
+    _verify_ponytail(Path(assignment["mainPath"]).resolve(strict=True), lane_root, "--verify-head-receipt")
     base = assignment["assignmentCommit"]
     count = int(_git(lane_root, "rev-list", "--count", f"{base}..HEAD").stdout.strip())
     merges = _git(lane_root, "rev-list", "--merges", f"{base}..HEAD").stdout.strip()
@@ -701,6 +722,7 @@ def handoff(lane_root: Path) -> None:
 
 def review(lane_root: Path, *, reviewer: str) -> None:
     assignment = _load_assignment(lane_root)
+    _verify_ponytail(Path(assignment["mainPath"]).resolve(strict=True), lane_root, "--verify-head-receipt")
     if not reviewer.strip() or reviewer == assignment["assignee"]:
         raise WorkflowError("independent reviewer must differ from the assignee")
     handoff_receipt = _json(_receipt_path(lane_root, assignment["itemId"], "handoff.json"))
