@@ -738,7 +738,7 @@
       "kind": "source-foundation",
       "priority": "P0",
       "allocationClass": "worker-lane",
-      "status": "in-progress",
+      "status": "complete",
       "domainIds": [
         "retail-skirmish",
         "retail-campaigns",
@@ -760,14 +760,9 @@
         "P0-CORPUS-001"
       ],
       "ownership": {
-        "state": "assigned",
-        "assignee": "codex-feature-graph",
-        "ownedPaths": [
-          "importer/openbfme_importer/retail_ini_coverage.py",
-          "importer/openbfme_importer/requirement_graph.py",
-          "tools/build-rotwk-202-compatibility.py",
-          "importer/tests/test_rotwk_202_feature_graph.py"
-        ],
+        "state": "accepted",
+        "assignee": null,
+        "ownedPaths": [],
         "candidatePaths": [
           "importer/openbfme_importer/retail_ini_coverage.py",
           "importer/openbfme_importer/requirement_graph.py",
@@ -803,7 +798,8 @@
           "every assignment is scalar, reference, collection-reference, or opaque-unresolved",
           "every unresolved field/target/root is explicit and blocks closure",
           "graph binds source schema and exact catalog",
-          "accepted completionReceipt contains an exact artifactDigests entry with implementationRevision, portable feature-graph path, and lowercase SHA-256 for P0-LANES input pinning"
+          "accepted completionReceipt contains an exact artifactDigests entry with implementationRevision, portable feature-graph path, and lowercase SHA-256 for P0-LANES input pinning",
+          "accepted private feature graph is 322749028 bytes with SHA-256 d116ea3cc09a7454f3bc52ffe6db0dbc9b03010cfe3cab86d7a50888f7c3793b at implementation revision 68cbdde1"
         ]
       },
       "verificationCommands": [
@@ -821,7 +817,7 @@
               "toolchainProfile": "python-hermetic-v1"
             }
           ],
-          "availability": "planned",
+          "availability": "current-accepted",
           "timeoutSeconds": 3600,
           "expectedMarkers": [
             "ROTWK_202_FEATURE_GRAPH PASS"
@@ -837,7 +833,7 @@
       "kind": "source-foundation",
       "priority": "P0",
       "allocationClass": "worker-lane",
-      "status": "blocked",
+      "status": "pending",
       "domainIds": [
         "retail-skirmish",
         "retail-campaigns",
@@ -916,9 +912,7 @@
           "diagnosticPolicy": "strict-default"
         }
       ],
-      "blockers": [
-        "P0-CORPUS-002 is incomplete"
-      ]
+      "blockers": []
     },
     {
       "id": "P0-LANES-001",
