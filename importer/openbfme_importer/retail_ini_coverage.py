@@ -22,6 +22,11 @@ from .sage_particles import _lines as lex_ini_lines
 _HEADER_TOKEN = re.compile(r"^[A-Za-z_][A-Za-z0-9_.-]*$")
 _FIELD_TOKEN = re.compile(r"^(?:[A-Za-z_][A-Za-z0-9_.%-]*|[0-9]+)$")
 _DIRECTIVE = re.compile(r"^#\s*([A-Za-z_][A-Za-z0-9_]*)")
+_SCALAR_VALUE = re.compile(
+    r"(?:[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?%?|"
+    r"yes|no|true|false|none|null|\"(?:\\.|[^\"])*\"|'(?:\\.|[^'])*')",
+    re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,6 +65,20 @@ def _split_assignment(text: str) -> tuple[str, str] | None:
     if not key or not _FIELD_TOKEN.fullmatch(key):
         return None
     return key, value.strip()
+
+
+def classify_assignment_value(
+    value: str, *, module_kind: str | None, asset_reference_count: int
+) -> str:
+    """Classify one value by syntax/evidence without a field-name allowlist."""
+
+    if module_kind or asset_reference_count == 1:
+        return "reference"
+    if asset_reference_count > 1:
+        return "collection-reference"
+    if _SCALAR_VALUE.fullmatch(value.strip()):
+        return "scalar"
+    return "opaque-unresolved"
 
 
 def collect_document_surface(virtual_path: str, source: bytes) -> DocumentSurface:
