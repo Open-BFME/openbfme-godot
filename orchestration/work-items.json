@@ -8278,8 +8278,8 @@
         ]
       },
       "scope": {
-        "deliverable": "Integration-owner-approved, recoverable removal of only receipt-proven redundant packs/worktrees while retaining source, oracle, provenance, and last-known-good identities.",
-        "notIncluded": "Agent ad hoc deletion, deletion by age/size alone, or removal of dirty/unmerged/uninventoried state."
+        "deliverable": "Integration-owner archive-then-remove of independently reviewed, current-inventory, state-hash-bound redundant worktrees and receipt-proven redundant packs while retaining source, oracle, provenance, and last-known-good identities.",
+        "notIncluded": "Agent ad hoc deletion, deletion by age/size alone, or removal of unarchived, active, locked, missing, or uninventoried worktrees."
       },
       "sourceEvidence": [
         "E-AUDIT-REPO-20260829",
