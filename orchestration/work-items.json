@@ -8258,7 +8258,7 @@
       "kind": "repository-hygiene",
       "priority": "P0",
       "allocationClass": "worker-lane",
-      "status": "pending",
+      "status": "in-progress",
       "domainIds": [],
       "rootQueryIds": [],
       "dependsOn": [
@@ -8266,9 +8266,12 @@
         "P0-CORPUS-001"
       ],
       "ownership": {
-        "state": "unassigned",
-        "assignee": null,
-        "ownedPaths": [],
+        "state": "assigned",
+        "assignee": "codex-retention-owner",
+        "ownedPaths": [
+          "tools/prune-content-packs.ps1",
+          "tools/retire-audited-worktrees.ps1"
+        ],
         "candidatePaths": [
           "tools/prune-content-packs.ps1",
           "tools/retire-audited-worktrees.ps1"
