@@ -128,77 +128,28 @@ lane's exact `ownedPaths`. Allocation still narrows the selected item to exact
 paths. When a file crosses the threshold or a route disappears, the integration
 owner must add a precise route or schedule a bounded split.
 
-## Machine allocation and deletion authority
+## Allocation and deletion authority
 
-Rows that can mutate cleanup state carry an `ownershipPlanning` object in the
-live ledger. It enumerates exact record, support, read-only, universe-root, and
-universe-extra paths. For an active row, `ownedPaths` must equal
-`candidatePaths - readOnlyPaths`; a directory, ancestor, glob, wildcard,
-case-insensitive duplicate, or undeclared path fails allocation.
+Only `worker-lane` rows can be assigned to a worker. `closure-envelope` rows
+describe broad outcomes that must first be split into finite literal path sets;
+`rollup` rows are owner qualification state. Neither is a worker lane.
 
-A tracked deletion additionally requires a non-null `authorizedDeletion`
-object. Every deleted path must be an exact candidate and owned path, its record
-and deletion digests use the ledger's ordinal terminal-LF convention, and its
-source must be a direct completed dependency in accepted ownership state whose
-immutable record set contains the lane's set. Prospective blocked rows may map
-future authorization, but cannot be allocated until that source is accepted.
-This makes the ledger an executable safety boundary rather than a delete list
-written in prose.
+`candidatePaths` records the planned universe and grants no write access.
+During assignment the owner copies the exact bounded subset into `ownedPaths`.
+The workflow refuses every changed path outside that set and every worker edit
+to canonical owner-only state. Active lanes may not overlap literal paths.
 
-Large product-denominator rows such as all INI data, W3D conversion, map
-corpus, UI, or a complete authored mode are closure envelopes, not acceptable
-single commits. Every ledger row therefore has a machine `allocationClass`.
-The current pre-plan ledger contains 31 ordinary worker lanes, exactly 33
-closure envelopes, and three qualification/release rollups. Envelopes carry
-`envelopeCompletion: null`, remain unassigned, and treat broad or patterned
-candidate paths as discovery hints only. Rollups are also never implementation
-lanes.
+`ownershipPlanning` and `authorizedDeletion` remain audit data for cleanup
+rows. They do not bypass the ordinary lane boundary. A deletion must be an
+exact owned path, be supported by the named accepted inventory, appear in the
+one implementation commit, and pass independent review. Directories, globs,
+inferred descendants, and prose lists are never delete authority.
 
-After the v9.7.7 graph, evidence matrix, public-asset closure, agent gate, and
-repository cleanup close, `P0-LANES-001` is the sole batch planner. The ledger
-is the only allocation-policy authority. The eventual tracked
-`orchestration/feature-lane-plan.json` is a raw-byte accepted projection, not a
-second policy or worker-editable ledger. Before allocation, five producer
-artifacts and both tracked planner inputs must carry exact typed accepted
-implementation revisions and raw-byte SHA-256 pins.
-
-The accepted coverage matrix—not the planner—assigns every disjoint `R-`
-requirement to one `O-` semantic objective, one terminal envelope/routing rule,
-finite exact mutable files, prerequisites, evidence IDs and levels, the full
-six-dimension disposition map, and a structured focused check. Its tracked
-projection uses bounded hash-only source locators; raw retail names, values,
-paths, and prose never enter the accepted plan. The planner has no routing
-discretion.
-
-Within one identical envelope/objective/level/dimension/check group, sorted
-requirements use one recomputed ordinal first-fit packing algorithm. A child
-contains at most 64 requirements, 12 mutable files, one current high-conflict
-file, and 1,800 seconds of focused verification. Each planned child is a full
-schema-v2 work-item object derived only from versioned fixed templates and the
-accepted batch fields; callers cannot supply prose or optional fields. It
-directly depends on the planner, every retained parent prerequisite, exact
-owners of prerequisite requirements, and immediate predecessors for shared
-paths; the combined graph must remain acyclic.
-
-The worker writes only a private content-bound proposal. The integration owner
-alone runs the locked materializer from clean, fresh `main`; it rehashes every
-actual input and compare-and-swap commits exactly the accepted plan, ledger,
-and boundary map while leaving the planner in verification. A distinct reviewer
-audits that three-path commit and typed receipt; only a later owner ledger-only
-transition records completion. The tracked plan permanently retains null nested
-plan-SHA fields, so its raw digest is non-self-referential; the owner injects
-that digest only into the corresponding materialized ledger rows. The plan also
-freezes four distinct revisions (input, owner pin, assignment, and
-implementation) and complete base prerequisite rows.
-
-At materialization each envelope depends on every frozen child and replaces
-null completion with the exact plan, requirement-set, and child-set proof.
-Twelve high-conflict rows currently owned by P1/P2 envelopes become ordered
-`ownerWorkItemIds` chains containing every generated child that may change the
-path; the thirteenth remains the singleton `P0-SELECTION-002` worker. Shared
-paths serialize by ordinal child ID, each later child depending on the
-immediate predecessor. Active ownership can therefore never overlap even when
-one high-conflict seam spans more than one capped child.
+`P0-LANES-001` may split broad P1/P2 envelopes only after the v9.7.7 feature
+graph and coverage matrix exist. Generated children remain small, carry literal
+paths and the same six-dimension acceptance map, and enter the normal workflow.
+The live ledger remains the sole allocator; a plan or report is input for owner
+review, not a second queue.
 
 ## Asset identity and naming
 
@@ -230,26 +181,15 @@ moving the bypass does not make it disappear.
 
 ## Agent use
 
-Before implementation, the integration owner uses the lane allocator to select
-one ready row, bind its exact ownership, and create one sibling worktree. The
-agent verifies the content-bound assignment authority slice—not merely the row—
-including target/policy, transitive evidence sources and tracked authority
-blobs, selected diagnostics, and any generated plan slice. Private tool/runtime,
-canary, Git LFS, protected-state, wrapper-attestation, and repository identities
-are bound in the assignment. Normal commands execute the clean main-worktree
-launcher and lifecycle tool against one explicit lane path; worker copies never
-become control-plane authority. The repository binding closes the Git pointer,
-configuration/info, absence, hook, environment, directory, and transition state
-and is revalidated after complete process-tree drain. If a needed path is
-outside ownership, the item returns to the integration owner; the agent does
-not widen its lane. Any new top-level root, new tracked `game/data` root, new
-shipping authority, or newly oversized conflict file stops autonomous work
-until the boundary is explicit.
+The integration owner runs `tools\work-item.ps1 ready` and `create`. The latter
+commits one assignment and creates `..\open-bfme-lanes\<id>`. The worker reads
+the private brief, runs `check`, changes only literal owned paths, makes one
+implementation commit, and runs `handoff`. A different reviewer runs `review`
+against that lane and commit. Only the owner integrates or updates the ledger.
 
-`P0-AGENTS-001` is the only self-hosting exception because the allocator does
-not exist on its authorization revision. The owner may synthesize exactly its
-twelve frozen candidate paths as one direct-child foundation commit, run the new
-admission gate through an owner-derived bootstrap binding, and obtain a typed
-independent review of the exact candidate revision, binding, and receipt. That
-exception grants no authority to any other row and still requires a separate
-ledger-only completion review.
+The workflow validates Git ancestry, the owner assignment copy, the current
+canonical row, changed paths and bytes, exact structured commands, markers,
+diagnostics, and receipt identities. It is intentionally not a filesystem
+sandbox. If scope or evidence is wrong, return the row to the owner; do not
+widen it. A new top-level root, shipping authority, selected-pack route, or
+high-conflict owner must first be made explicit here and in the ledger.

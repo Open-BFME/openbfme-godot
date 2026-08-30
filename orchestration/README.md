@@ -21,6 +21,21 @@ direction is [DIRECTION.md](../DIRECTION.md), the system map is
 
 ## Lane lifecycle
 
+The only workflow entry point is `tools\work-item.ps1` through native Windows
+PowerShell with `-NoProfile -NonInteractive -ExecutionPolicy Bypass -File`.
+The useful commands are deliberately few:
+
+| Command | Who/where | Effect |
+|---|---|---|
+| `ready` | owner, clean `main` | Lists dependency-ready worker-lane rows; no mutation. |
+| `create -Id ... -Assignee ...` | owner, clean `main` | Commits one assignment and creates one sibling worktree. |
+| `check` | worker lane | Runs the exact structured command and writes private `check.json`. |
+| `handoff` | worker lane | Requires one clean non-merge commit, reruns the check, and writes private `handoff.json`. |
+| `review -LanePath ... -Reviewer ...` | different reviewer | Reruns the same command against the same commit and writes `independent-review.json`. |
+
+There is no second queue, hidden score, automatic merge, or automatic
+completion transition.
+
 1. **Assign.** The integration owner chooses one bounded work item and records
    its owner, owned paths, source requirement, evidence levels, focused check,
    and dependencies in `work-items.json`.

@@ -108,7 +108,7 @@ and changes private workspace state; inspect the refusal first.
 ## 4. Check public policy and hygiene
 
 ```bat
-py -3 tools\check-product-contracts.py --check
+workspace\retail-work\tools\python-3.12-env\Scripts\python.exe -B tools\check-product-contracts.py --check
 powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File tools\gate-hygiene.ps1
 ```
 
@@ -134,7 +134,7 @@ Only the integration owner publishes or changes `selection.json`.
 
 ```bat
 set OPENBFME_CONTENT=%CD%\workspace\content-packs
-py -3 tools\check_pack_addresses.py --json
+workspace\retail-work\tools\python-3.12-env\Scripts\python.exe -B tools\check_pack_addresses.py --json
 run_retail_slice.bat --test
 run_game.bat
 ```
@@ -172,6 +172,21 @@ it as evidence. Never add an override merely to make a parity path green.
 
 ## Contributing
 
-Select no work informally. The integration owner assigns one bounded row from
-`orchestration/work-items.json`, including owned files and a focused Windows
-check. Follow [AGENTS.md](../AGENTS.md) and [CONTRIBUTING.md](../CONTRIBUTING.md).
+Select no work informally. From a clean `main`, the integration owner uses the
+small workflow entry point:
+
+```powershell
+powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass `
+  -File tools\work-item.ps1 ready
+powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass `
+  -File tools\work-item.ps1 create -Id P1-EXAMPLE-001 -Assignee agent-name
+```
+
+`create` records literal `ownedPaths`, commits that assignment, and creates the
+one sibling lane at `..\open-bfme-lanes\<work-item-id>`. The worker runs
+`tools\work-item.ps1 check`, makes one implementation commit, then runs
+`tools\work-item.ps1 handoff`. A different reviewer runs `review -LanePath ...
+-Reviewer ...`. Every receipt remains private below
+`workspace\logs\<work-item-id>\`; only the integration owner merges or changes
+canonical status. Follow [AGENTS.md](../AGENTS.md) and
+[CONTRIBUTING.md](../CONTRIBUTING.md).

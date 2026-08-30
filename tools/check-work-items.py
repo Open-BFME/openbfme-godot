@@ -1,908 +1,432 @@
-"""Fail-closed validation for the tracked OpenBFME work-item ledger."""
+"""Validate the human-readable OpenBFME work-item ledger.
+
+The checker deliberately enforces a small contract. Git, literal owned paths,
+one closed command vector, and independent review are the security boundary;
+the ledger is not a generated policy language.
+"""
 
 from __future__ import annotations
 
 import argparse
-from datetime import date
-import hashlib
 import json
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import re
 import sys
 from typing import Any
 
 
 ROOT = Path(__file__).resolve().parents[1]
-LEDGER_PATH = ROOT / "orchestration" / "work-items.json"
-PRODUCT_PATH = ROOT / "contracts" / "rotwk-202-v9.7.7-product-scope.json"
-BASELINE_PATH = ROOT / "contracts" / "rotwk-202-v9.7.7-baseline.json"
+LEDGER = ROOT / "orchestration" / "work-items.json"
+PRODUCT = ROOT / "contracts" / "rotwk-202-v9.7.7-product-scope.json"
+BASELINE = ROOT / "contracts" / "rotwk-202-v9.7.7-baseline.json"
 
-TOP_LEVEL_KEYS = {
-    "schema",
-    "schemaVersion",
-    "asOfDate",
-    "authority",
-    "target",
-    "assignmentPolicy",
-    "verificationPolicies",
-    "evidenceSources",
-    "workItems",
+TOP_KEYS = {
+    "schema", "schemaVersion", "asOfDate", "authority", "target",
+    "assignmentPolicy", "verificationPolicies", "evidenceSources", "workItems",
 }
-AUTHORITY_KEYS = {
-    "writeOwner",
-    "workerRule",
-    "statusValues",
-    "ownershipStates",
-    "completionRule",
-    "selectionRule",
+ITEM_REQUIRED = {
+    "id", "title", "kind", "priority", "allocationClass", "status",
+    "domainIds", "rootQueryIds", "dependsOn", "ownership", "scope",
+    "sourceEvidence", "artifacts", "acceptance", "verificationCommands", "blockers",
 }
-TARGET_KEYS = {
-    "contractId",
-    "productPolicySha256",
-    "baselineId",
-    "baselineReceiptSha256",
-    "archivePolicySha256",
-    "catalogSha256",
-    "archiveCount",
-    "recordCount",
-    "claimProfiles",
-}
-ASSIGNMENT_POLICY_KEYS = {
-    "candidatePathsAreNotOwnership",
-    "requirementsBeforeInProgress",
-    "handoffRequirements",
-}
-POLICY_KEYS = {
-    "terminalStatuses",
-    "passRule",
-    "forbiddenDiagnostics",
-    "skipIsSuccess",
-    "artifactRootRule",
-}
-ITEM_KEYS = {
-    "id",
-    "title",
-    "kind",
-    "priority",
-    "status",
-    "domainIds",
-    "rootQueryIds",
-    "dependsOn",
-    "ownership",
-    "scope",
-    "sourceEvidence",
-    "artifacts",
-    "acceptance",
-    "verificationCommands",
-    "blockers",
+ITEM_OPTIONAL = {
+    "ownershipPlanning", "dispositionEvidence", "envelopeCompletion",
 }
 OWNERSHIP_KEYS = {"state", "assignee", "ownedPaths", "candidatePaths"}
-SCOPE_KEYS = {"deliverable", "notIncluded"}
-ACCEPTANCE_KEYS = {"requiredLevels", "criteria"}
 COMMAND_KEYS = {
-    "shell",
-    "command",
-    "availability",
-    "timeoutSeconds",
-    "expectedMarkers",
-    "diagnosticPolicy",
+    "steps", "availability", "timeoutSeconds", "expectedMarkers", "diagnosticPolicy",
 }
-DISPOSITION_EVIDENCE_KEYS = {"path", "action", "reason", "retention"}
-DISPOSITION_ACTIONS = {"archived", "removed", "retained"}
-COMPLETION_EVIDENCE_REQUIRED_KEYS = {
-    "acceptedAtAuditDate",
-    "verifier",
-    "result",
-    "marker",
-    "claimBoundary",
+STEP_KEYS = {"toolRole", "invocation", "target", "args", "toolchainProfile"}
+DIMENSIONS = ["SOURCE", "CONVERT", "LOAD", "BEHAVIOR", "VISUAL", "AUDIO"]
+STATUS_TO_OWNERSHIP = {
+    "pending": "unassigned",
+    "blocked": "unassigned",
+    "in-progress": "assigned",
+    "verification": "independent-verification",
+    "complete": "accepted",
 }
-COMPLETION_EVIDENCE_OPTIONAL_KEYS = {
-    "note",
-    "supersededPath",
-    "replacementPath",
-    "retention",
+ID_RE = re.compile(r"^P[0-2]-[A-Z][A-Z0-9]*(?:-[A-Z0-9]+)*-[0-9]{3}(?:-C-[0-9A-F]{16})?$")
+MARKER_RE = re.compile(r"^[A-Z][A-Za-z0-9_.:-]*(?: [A-Za-z0-9_.:=/-]+)*$")
+FORBIDDEN_ARGUMENT_RE = re.compile(
+    r"(?i)(?:^[a-z]:|^[\\/]|^~|\.\.(?:[\\/]|$)|%[^%]+%|"
+    r"\$(?:env:|\{?[A-Za-z_])|^[a-z][a-z0-9+.-]*://|^@|"
+    r"^(?:--?eval|--?execute|/c)$)"
+)
+
+EXPECTED_POLICY = {
+    "schema": "openbfme.agent-workflow",
+    "schemaVersion": 1,
+    "candidatePathsAreNotOwnership": True,
+    "lane": {
+        "allocationClasses": ["worker-lane", "closure-envelope", "rollup"],
+        "workerAllocationClass": "worker-lane",
+        "baseBranch": "main",
+        "siblingRoot": "../open-bfme-lanes",
+        "branchPattern": "work/{item-id-lower}",
+        "oneItemPerLane": True,
+        "maxImplementationCommits": 1,
+        "nestedWorktrees": False,
+    },
+    "ownerOnly": {
+        "roots": ["contracts", "orchestration"],
+        "files": ["DIRECTION.md", "PLAN.md", "config/repository-boundaries.json"],
+        "selectionFiles": True,
+    },
+    "paths": {
+        "portableRelative": True,
+        "insideRepository": True,
+        "literalOwnedPaths": True,
+        "explicitStage": True,
+        "workspaceTracked": False,
+    },
+    "command": {
+        "format": "structured-argv-v1",
+        "requiredCommandKeys": [
+            "steps", "availability", "timeoutSeconds", "expectedMarkers",
+            "diagnosticPolicy",
+        ],
+        "requiredStepKeys": [
+            "toolRole", "invocation", "target", "args", "toolchainProfile",
+        ],
+        "roles": {
+            "python": ["script", "module"],
+            "retail-python": ["script", "module"],
+            "powershell": ["script"],
+        },
+        "profileRoles": {
+            "python-hermetic-v1": "python",
+            "retail-python-hermetic-v1": "retail-python",
+            "planner-materialization-v1": "python",
+            "powershell-git-readonly-v1": "powershell",
+            "powershell-content-retention-v1": "powershell",
+            "onboarding-contract-v1": "powershell",
+            "rotwk-gate-v1": "powershell",
+        },
+        "maxCommands": 4,
+        "maxStepsPerCommand": 8,
+        "shell": False,
+        "workingDirectory": "lane-root",
+        "exactExpectedMarkers": True,
+        "skipIsFailure": True,
+    },
+    "evidence": {
+        "privateRoot": "workspace",
+        "logRoot": "workspace/logs/{item-id}",
+        "retailTracked": False,
+        "workerStatus": "provisional",
+        "requiredReceiptFiles": [
+            "check.json", "handoff.json", "independent-review.json",
+        ],
+    },
+    "dimensions": DIMENSIONS,
+    "merge": {
+        "workerMayAccept": False,
+        "independentReviewRequired": True,
+        "ownerMergeRequired": True,
+        "requiredReviewIdentity": "different-from-assignee",
+    },
 }
 
-STATUS_VALUES = ["pending", "blocked", "in-progress", "verification", "complete"]
-OWNERSHIP_STATES = [
-    "unassigned",
-    "assigned",
-    "handoff",
-    "independent-verification",
-    "accepted",
-]
-STATUS_OWNERSHIP = {
-    "pending": {"unassigned"},
-    "blocked": {"unassigned"},
-    "in-progress": {"assigned"},
-    "verification": {"handoff", "independent-verification"},
-    "complete": {"accepted"},
-}
-PRIORITY_RANK = {"P0": 0, "P1": 1, "P2": 2}
-EVIDENCE_LEVEL_RANK = {f"L{level}": level for level in range(7)}
-ITEM_ID_RE = re.compile(r"^(P[0-2])-[A-Z][A-Z0-9]*(?:-[A-Z0-9]+)*-\d{3}$")
-EVIDENCE_ID_RE = re.compile(r"^E-[A-Z0-9]+(?:-[A-Z0-9]+)+$")
-POLICY_ID_RE = re.compile(r"^[a-z][a-z0-9-]*$")
-HEX64_RE = re.compile(r"^[0-9a-f]{64}$")
-DRIVE_ABSOLUTE_RE = re.compile(r"(?i)^[a-z]:[\\/]")
-COMMAND_DRIVE_RE = re.compile(r"(?i)(?:^|[\s\"'=])[a-z]:[\\/]")
-COMMAND_UNC_RE = re.compile(r"(?:^|[\s\"'=])\\\\[^\\\s]+")
-COMMAND_POSIX_ABSOLUTE_RE = re.compile(
-    r"(?:^|[\s\"'=])/(?:bin|etc|home|mnt|opt|tmp|usr|var)(?:/|\b)", re.I
-)
-COMMAND_POSIX_SHELL_RE = re.compile(
-    r"(?:^|[\s;&|])(?:bash|zsh|sh|wsl)(?:\.exe)?(?=$|[\s;&|])", re.I
-)
-COMMAND_SH_FILE_RE = re.compile(r"(?:^|[\\/\s\"'])[^\s\"']+\.sh(?=$|[\s\"'])", re.I)
+
+def strict_json_loads(payload: str, *, label: str) -> Any:
+    def pairs(rows: list[tuple[str, Any]]) -> dict[str, Any]:
+        value: dict[str, Any] = {}
+        for key, item in rows:
+            if key in value:
+                raise ValueError(f"{label}: duplicate JSON key {key!r}")
+            value[key] = item
+        return value
+
+    try:
+        return json.loads(payload, object_pairs_hook=pairs)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"{label}: invalid JSON: {exc}") from exc
 
 
 def _load(path: Path) -> dict[str, Any]:
-    value = json.loads(path.read_text(encoding="utf-8"))
+    value = strict_json_loads(path.read_text(encoding="utf-8"), label=path.name)
     if not isinstance(value, dict):
-        raise ValueError(f"{path.name}: root must be an object")
+        raise ValueError(f"{path.name}: expected object")
     return value
 
 
-def _policy_digest(document: dict[str, Any]) -> str:
-    envelope = dict(document)
-    digest = dict(envelope.get("policy_digest", {}))
-    digest.pop("value", None)
-    envelope["policy_digest"] = digest
-    canonical = json.dumps(
-        envelope, sort_keys=True, separators=(",", ":"), ensure_ascii=False
-    ).encode("utf-8")
-    return hashlib.sha256(canonical).hexdigest()
-
-
-def _exact_keys(value: Any, expected: set[str], label: str) -> dict[str, Any]:
+def _exact(value: Any, keys: set[str], label: str) -> dict[str, Any]:
     if not isinstance(value, dict):
-        raise ValueError(f"{label}: expected an object")
+        raise ValueError(f"{label}: expected object")
     actual = set(value)
-    if actual != expected:
+    if actual != keys:
         raise ValueError(
-            f"{label}: keys differ; missing={sorted(expected - actual)} "
-            f"unknown={sorted(actual - expected)}"
+            f"{label}: keys differ; missing={sorted(keys - actual)} unknown={sorted(actual - keys)}"
         )
     return value
 
 
-def _nonempty_string(value: Any, label: str) -> str:
+def _text(value: Any, label: str) -> str:
     if not isinstance(value, str) or not value.strip():
-        raise ValueError(f"{label}: expected a non-empty string")
+        raise ValueError(f"{label}: expected non-empty string")
     return value
 
 
-def _string_list(
-    value: Any, label: str, *, allow_empty: bool = False
-) -> list[str]:
-    if not isinstance(value, list) or (not value and not allow_empty):
-        qualifier = "an array" if allow_empty else "a non-empty array"
-        raise ValueError(f"{label}: expected {qualifier} of strings")
-    if any(not isinstance(row, str) or not row.strip() for row in value):
-        raise ValueError(f"{label}: every value must be a non-empty string")
-    if len(set(value)) != len(value):
+def _strings(value: Any, label: str, *, unique: bool = True) -> list[str]:
+    if not isinstance(value, list) or any(not isinstance(row, str) for row in value):
+        raise ValueError(f"{label}: expected string array")
+    if unique and len(value) != len(set(value)):
         raise ValueError(f"{label}: duplicate value")
     return value
 
 
-def _iso_date(value: Any, label: str) -> date:
-    text = _nonempty_string(value, label)
-    try:
-        parsed = date.fromisoformat(text)
-    except ValueError as exc:
-        raise ValueError(f"{label}: expected YYYY-MM-DD") from exc
-    if parsed.isoformat() != text:
-        raise ValueError(f"{label}: expected canonical YYYY-MM-DD")
-    return parsed
-
-
 def _portable_path(value: Any, label: str) -> str:
-    path = _nonempty_string(value, label)
-    filesystem_part = path.split("#", 1)[0]
+    path = _text(value, label)
+    pure = PurePosixPath(path)
     if (
-        DRIVE_ABSOLUTE_RE.match(filesystem_part)
-        or filesystem_part.startswith(("/", "\\", "~"))
-        or "file://" in filesystem_part.casefold()
+        "\\" in path or path.startswith("/") or re.match(r"^[A-Za-z]:", path)
+        or any(part in {"", ".", ".."} for part in pure.parts)
     ):
-        raise ValueError(f"{label}: machine-absolute path is forbidden: {path}")
-    parts = [part for part in re.split(r"[\\/]", filesystem_part) if part]
-    if ".." in parts:
-        raise ValueError(f"{label}: parent traversal is forbidden: {path}")
-    if filesystem_part.casefold().endswith(".sh"):
-        raise ValueError(f"{label}: .sh paths are forbidden: {path}")
-    return path
+        raise ValueError(f"{label}: expected portable repository-relative path")
+    return path.rstrip("/")
 
 
-def _portable_command(shell: Any, command: Any, label: str) -> tuple[str, str]:
-    shell_text = _nonempty_string(shell, f"{label}.shell")
-    command_text = _nonempty_string(command, f"{label}.command")
-    if shell_text.casefold() not in {"powershell.exe", "cmd.exe"}:
-        raise ValueError(f"{label}: POSIX or unknown shell is forbidden: {shell_text}")
-    if (
-        COMMAND_DRIVE_RE.search(command_text)
-        or COMMAND_UNC_RE.search(command_text)
-        or COMMAND_POSIX_ABSOLUTE_RE.search(command_text)
-        or "$HOME" in command_text
-        or "${HOME}" in command_text
-        or "file://" in command_text.casefold()
-    ):
-        raise ValueError(f"{label}: machine-absolute command path is forbidden")
-    if COMMAND_POSIX_SHELL_RE.search(command_text):
-        raise ValueError(f"{label}: POSIX shell invocation is forbidden")
-    if COMMAND_SH_FILE_RE.search(command_text):
-        raise ValueError(f"{label}: .sh command is forbidden")
-    return shell_text, command_text
-
-
-def _stable_ids(rows: Any, pattern: re.Pattern[str], label: str) -> list[str]:
-    if not isinstance(rows, list) or not rows:
-        raise ValueError(f"{label}: expected a non-empty array")
-    ids: list[str] = []
-    for index, row in enumerate(rows):
-        if not isinstance(row, dict):
-            raise ValueError(f"{label}[{index}]: expected an object")
-        item_id = row.get("id")
-        if not isinstance(item_id, str) or pattern.fullmatch(item_id) is None:
-            raise ValueError(f"{label}[{index}]: unstable id {item_id!r}")
-        ids.append(item_id)
-    if len({item_id.casefold() for item_id in ids}) != len(ids):
-        raise ValueError(f"{label}: duplicate id")
-    return ids
-
-
-def _validate_target(
-    ledger: dict[str, Any], product: dict[str, Any], baseline: dict[str, Any]
-) -> tuple[set[str], set[str]]:
-    if ledger.get("schema") != "openbfme.work-items" or ledger.get("schemaVersion") != 1:
-        raise ValueError("ledger: schema identity changed")
-
-    stored_product_digest = product.get("policy_digest", {}).get("value")
-    actual_product_digest = _policy_digest(product)
-    if stored_product_digest != actual_product_digest:
-        raise ValueError("product contract: policy digest mismatch")
-    if (
-        product.get("contract_id") != "openbfme.rotwk-202-v9.7.7.product-scope"
-        or product.get("patch") != "2.02 v9.7.7"
-    ):
-        raise ValueError("product contract: target identity changed")
-
-    if (
-        baseline.get("schema") != "openbfme.retail-baseline"
-        or baseline.get("schemaVersion") != 1
-        or baseline.get("baselineId") != "rotwk-202-v9.7.7-en"
-        or baseline.get("product", {}).get("patch") != "2.02"
-        or baseline.get("product", {}).get("communityBuild") != "9.7.7"
-    ):
-        raise ValueError("baseline contract: target identity changed")
-
-    authority = baseline.get("authority")
-    if not isinstance(authority, dict):
-        raise ValueError("baseline contract: authority must be an object")
-    target = _exact_keys(ledger.get("target"), TARGET_KEYS, "target")
-    expected_claims = [
-        row["id"]
-        for row in product.get("claim_profiles", [])
-        if isinstance(row, dict)
-        and isinstance(row.get("id"), str)
-        and row["id"].startswith("rotwk-202-v9.7.7-")
-    ]
+def _validate_target(target: Any, product: dict[str, Any], baseline: dict[str, Any]) -> None:
+    row = _exact(target, {
+        "contractId", "productPolicySha256", "baselineId", "baselineReceiptSha256",
+        "archivePolicySha256", "catalogSha256", "archiveCount", "recordCount",
+        "claimProfiles",
+    }, "target")
+    authority = baseline["authority"]
     expected = {
         "contractId": product["contract_id"],
-        "productPolicySha256": actual_product_digest,
+        "productPolicySha256": product["policy_digest"]["value"],
         "baselineId": baseline["baselineId"],
-        "baselineReceiptSha256": authority.get("receiptSha256"),
-        "archivePolicySha256": authority.get("policySha256"),
-        "catalogSha256": authority.get("catalogSha256"),
-        "archiveCount": authority.get("archiveCount"),
-        "recordCount": authority.get("recordCount"),
-        "claimProfiles": expected_claims,
+        "baselineReceiptSha256": authority["receiptSha256"],
+        "archivePolicySha256": authority["policySha256"],
+        "catalogSha256": authority["catalogSha256"],
+        "archiveCount": authority["archiveCount"],
+        "recordCount": authority["recordCount"],
+        "claimProfiles": [
+            "rotwk-202-v9.7.7-skirmish-complete", "rotwk-202-v9.7.7-complete",
+        ],
     }
-    for field, expected_value in expected.items():
-        if target.get(field) != expected_value:
-            raise ValueError(
-                f"target: {field} differs from current contract; "
-                f"expected={expected_value!r} actual={target.get(field)!r}"
-            )
-    for field in (
-        "productPolicySha256",
-        "baselineReceiptSha256",
-        "archivePolicySha256",
-        "catalogSha256",
+    if row != expected:
+        raise ValueError("target: product or retail baseline identity drifted")
+
+
+def _validate_command(command: Any, label: str, policies: set[str]) -> None:
+    row = _exact(command, COMMAND_KEYS, label)
+    steps = row["steps"]
+    if not isinstance(steps, list) or not 1 <= len(steps) <= 8:
+        raise ValueError(f"{label}.steps: expected 1..8 steps")
+    profiles = EXPECTED_POLICY["command"]["profileRoles"]
+    roles = EXPECTED_POLICY["command"]["roles"]
+    for index, raw in enumerate(steps):
+        step_label = f"{label}.steps[{index}]"
+        step = _exact(raw, STEP_KEYS, step_label)
+        role = _text(step["toolRole"], f"{step_label}.toolRole")
+        invocation = _text(step["invocation"], f"{step_label}.invocation")
+        profile = _text(step["toolchainProfile"], f"{step_label}.toolchainProfile")
+        if role not in roles or invocation not in roles[role]:
+            raise ValueError(f"{step_label}: unsupported role/invocation")
+        if profiles.get(profile) != role:
+            raise ValueError(f"{step_label}: profile does not match role")
+        target = _text(step["target"], f"{step_label}.target")
+        if invocation == "script":
+            _portable_path(target, f"{step_label}.target")
+            extension = {"python": ".py", "retail-python": ".py", "powershell": ".ps1"}[role]
+            if not target.casefold().endswith(extension):
+                raise ValueError(f"{step_label}: script extension differs from role")
+        elif target not in {"pytest", "unittest"}:
+            raise ValueError(f"{step_label}: module is not allowlisted")
+        args = _strings(step["args"], f"{step_label}.args", unique=False)
+        if len(args) > 128:
+            raise ValueError(f"{step_label}.args: too many arguments")
+        for argument in args:
+            if not argument or len(argument) > 4096 or any(c in argument for c in "\0\r\n"):
+                raise ValueError(f"{step_label}.args: invalid argument")
+            if FORBIDDEN_ARGUMENT_RE.search(argument):
+                raise ValueError(f"{step_label}.args: forbidden argument {argument!r}")
+    timeout = row["timeoutSeconds"]
+    if isinstance(timeout, bool) or not isinstance(timeout, int) or not 1 <= timeout <= 43200:
+        raise ValueError(f"{label}.timeoutSeconds: expected 1..43200")
+    markers = _strings(row["expectedMarkers"], f"{label}.expectedMarkers")
+    if not markers or any(
+        MARKER_RE.fullmatch(marker) is None
+        or (" PASS" not in marker and marker != "DRY RUN")
+        or "FAIL" in marker
+        or "SKIP" in marker
+        for marker in markers
     ):
-        if not isinstance(target[field], str) or HEX64_RE.fullmatch(target[field]) is None:
-            raise ValueError(f"target: {field} is not a lowercase SHA-256")
-
-    domain_rows = product.get("product_domains")
-    root_rows = product.get("root_discovery_queries")
-    if not isinstance(domain_rows, list) or not isinstance(root_rows, list):
-        raise ValueError("product contract: domain/root arrays are invalid")
-    domain_ids = {
-        row.get("id") for row in domain_rows if isinstance(row, dict)
-    }
-    root_ids = {row.get("id") for row in root_rows if isinstance(row, dict)}
-    if None in domain_ids or None in root_ids:
-        raise ValueError("product contract: domain/root id is missing")
-    return domain_ids, root_ids
+        raise ValueError(f"{label}.expectedMarkers: invalid terminal marker")
+    if row["diagnosticPolicy"] not in policies:
+        raise ValueError(f"{label}.diagnosticPolicy: unknown policy")
+    _text(row["availability"], f"{label}.availability")
 
 
-def _validate_authority(ledger: dict[str, Any]) -> None:
-    authority = _exact_keys(ledger.get("authority"), AUTHORITY_KEYS, "authority")
-    if authority.get("writeOwner") != "integration-owner":
-        raise ValueError("authority: writeOwner must be integration-owner")
-    if authority.get("statusValues") != STATUS_VALUES:
-        raise ValueError("authority: statusValues changed")
-    if authority.get("ownershipStates") != OWNERSHIP_STATES:
-        raise ValueError("authority: ownershipStates changed")
-    for field in ("workerRule", "completionRule", "selectionRule"):
-        _nonempty_string(authority.get(field), f"authority.{field}")
-
-    assignment = _exact_keys(
-        ledger.get("assignmentPolicy"),
-        ASSIGNMENT_POLICY_KEYS,
-        "assignmentPolicy",
-    )
-    if assignment.get("candidatePathsAreNotOwnership") is not True:
-        raise ValueError("assignmentPolicy: candidatePaths must not grant ownership")
-    _string_list(
-        assignment.get("requirementsBeforeInProgress"),
-        "assignmentPolicy.requirementsBeforeInProgress",
-    )
-    _string_list(
-        assignment.get("handoffRequirements"),
-        "assignmentPolicy.handoffRequirements",
-    )
-
-
-def _validate_policies(ledger: dict[str, Any]) -> set[str]:
-    policies = ledger.get("verificationPolicies")
-    if not isinstance(policies, dict) or not policies:
-        raise ValueError("verificationPolicies: expected a non-empty object")
-    if "strict-default" not in policies:
-        raise ValueError("verificationPolicies: strict-default is required")
-    required_diagnostics = {
-        "ERROR:",
-        "SCRIPT ERROR",
-        "Parse Error",
-        "timeout",
-        "crash",
-        "fallback",
-        "placeholder",
-        "source/recipe/selection/state-pin drift",
-    }
-    for policy_id, raw_policy in policies.items():
-        if not isinstance(policy_id, str) or POLICY_ID_RE.fullmatch(policy_id) is None:
-            raise ValueError(f"verificationPolicies: unstable id {policy_id!r}")
-        policy = _exact_keys(
-            raw_policy, POLICY_KEYS, f"verification policy {policy_id}"
-        )
-        if policy.get("terminalStatuses") != ["PASS", "FAIL", "SKIP"]:
-            raise ValueError(
-                f"verification policy {policy_id}: terminal statuses changed"
-            )
-        if policy.get("skipIsSuccess") is not False:
-            raise ValueError(f"verification policy {policy_id}: SKIP cannot succeed")
-        _nonempty_string(policy.get("passRule"), f"verification policy {policy_id}.passRule")
-        diagnostics = set(
-            _string_list(
-                policy.get("forbiddenDiagnostics"),
-                f"verification policy {policy_id}.forbiddenDiagnostics",
-            )
-        )
-        if policy_id == "strict-default" and not required_diagnostics <= diagnostics:
-            raise ValueError(
-                "verification policy strict-default: required diagnostics are missing"
-            )
-        artifact_rule = _nonempty_string(
-            policy.get("artifactRootRule"),
-            f"verification policy {policy_id}.artifactRootRule",
-        )
-        if not artifact_rule.startswith("workspace/logs/"):
-            raise ValueError(
-                f"verification policy {policy_id}: artifact root must stay in workspace/logs"
-            )
-    return set(policies)
-
-
-def _detect_cycles(graph: dict[str, list[str]], label: str) -> None:
-    state: dict[str, int] = {}
-    stack: list[str] = []
-
-    def visit(node: str) -> None:
-        marker = state.get(node, 0)
-        if marker == 2:
-            return
-        if marker == 1:
-            start = stack.index(node)
-            cycle = stack[start:] + [node]
-            raise ValueError(f"{label}: dependency cycle {' -> '.join(cycle)}")
-        state[node] = 1
-        stack.append(node)
-        for dependency in graph.get(node, []):
-            visit(dependency)
-        stack.pop()
-        state[node] = 2
-
-    for node in graph:
-        visit(node)
-
-
-def _validate_evidence(
-    ledger: dict[str, Any],
-    product: dict[str, Any],
-    baseline: dict[str, Any],
-    domain_ids: set[str],
-    root: Path,
-) -> tuple[set[str], dict[str, dict[str, Any]]]:
-    rows = ledger.get("evidenceSources")
-    evidence_ids = _stable_ids(rows, EVIDENCE_ID_RE, "evidenceSources")
-    evidence_by_id = dict(zip(evidence_ids, rows, strict=True))
-    graph: dict[str, list[str]] = {}
-
-    for evidence_id, row in evidence_by_id.items():
-        _nonempty_string(row.get("type"), f"evidence {evidence_id}.type")
-        _nonempty_string(row.get("claimLimit"), f"evidence {evidence_id}.claimLimit")
-        if "asOfDate" in row:
-            _iso_date(row["asOfDate"], f"evidence {evidence_id}.asOfDate")
-        if "path" in row:
-            relative = _portable_path(row["path"], f"evidence {evidence_id}.path")
-            if row.get("type") == "tracked-contract" and not (root / relative).is_file():
-                raise ValueError(
-                    f"evidence {evidence_id}: tracked contract does not exist: {relative}"
-                )
-        if "sourcePointers" in row:
-            for index, pointer in enumerate(
-                _string_list(row["sourcePointers"], f"evidence {evidence_id}.sourcePointers")
-            ):
-                _portable_path(pointer, f"evidence {evidence_id}.sourcePointers[{index}]")
-        if "staleArtifacts" in row:
-            artifacts = row["staleArtifacts"]
-            if not isinstance(artifacts, list) or not artifacts:
-                raise ValueError(f"evidence {evidence_id}.staleArtifacts: expected rows")
-            for index, artifact in enumerate(artifacts):
-                if not isinstance(artifact, dict):
-                    raise ValueError(
-                        f"evidence {evidence_id}.staleArtifacts[{index}]: expected object"
-                    )
-                _portable_path(
-                    artifact.get("path"),
-                    f"evidence {evidence_id}.staleArtifacts[{index}].path",
-                )
-                if HEX64_RE.fullmatch(str(artifact.get("sha256", ""))) is None:
-                    raise ValueError(
-                        f"evidence {evidence_id}.staleArtifacts[{index}]: invalid sha256"
-                    )
-                _nonempty_string(
-                    artifact.get("reason"),
-                    f"evidence {evidence_id}.staleArtifacts[{index}].reason",
-                )
-        inputs = _string_list(
-            row.get("inputEvidence", []),
-            f"evidence {evidence_id}.inputEvidence",
-            allow_empty=True,
-        )
-        graph[evidence_id] = inputs
-
-    evidence_id_set = set(evidence_ids)
-    for evidence_id, dependencies in graph.items():
-        unknown = set(dependencies) - evidence_id_set
-        if unknown:
-            raise ValueError(
-                f"evidence {evidence_id}: unknown evidence refs {sorted(unknown)}"
-            )
-        if evidence_id in dependencies:
-            raise ValueError(f"evidence {evidence_id}: self dependency")
-    _detect_cycles(graph, "evidenceSources")
-
-    baseline_path = "contracts/rotwk-202-v9.7.7-baseline.json"
-    product_path = "contracts/rotwk-202-v9.7.7-product-scope.json"
-    baseline_rows = [row for row in rows if row.get("path") == baseline_path]
-    product_rows = [row for row in rows if row.get("path") == product_path]
-    if len(baseline_rows) != 1 or len(product_rows) != 1:
-        raise ValueError("evidenceSources: exact baseline and product contract refs required")
-
-    baseline_row = baseline_rows[0]
-    baseline_identity = baseline_row.get("identity")
-    if not isinstance(baseline_identity, dict):
-        raise ValueError("baseline evidence: identity must be an object")
-    baseline_authority = baseline["authority"]
-    expected_identity = {
-        "baselineId": baseline["baselineId"],
-        "receiptSha256": baseline_authority["receiptSha256"],
-        "policySha256": baseline_authority["policySha256"],
-        "catalogSha256": baseline_authority["catalogSha256"],
-    }
-    if baseline_identity != expected_identity:
-        raise ValueError("baseline evidence: identity differs from baseline contract")
-    measurements = baseline_row.get("measurements")
-    if not isinstance(measurements, dict):
-        raise ValueError("baseline evidence: measurements must be an object")
-    expected_layers = [row.get("archiveCount") for row in baseline["layers"]]
-    for field, expected_value in {
-        "layerArchiveCounts": expected_layers,
-        "archiveCount": baseline_authority["archiveCount"],
-        "recordCount": baseline_authority["recordCount"],
-    }.items():
-        if measurements.get(field) != expected_value:
-            raise ValueError(f"baseline evidence: {field} differs from baseline contract")
-
-    product_row = product_rows[0]
-    if product_row.get("productPolicySha256") != product["policy_digest"]["value"]:
-        raise ValueError("product evidence: policy digest differs from product contract")
-    retail_domains = {
-        row["id"] for row in product["product_domains"] if row.get("authority") == "retail"
-    }
-    openbfme_domains = domain_ids - retail_domains
-    if set(product_row.get("retailDomains", [])) != retail_domains:
-        raise ValueError("product evidence: retail domain refs differ from product contract")
-    if set(product_row.get("openbfmeDomains", [])) != openbfme_domains:
-        raise ValueError("product evidence: OpenBFME domain refs differ from product contract")
-
-    return evidence_id_set, evidence_by_id
-
-
-def _validate_item_shape(
-    item: dict[str, Any],
-    index: int,
-    domain_ids: set[str],
-    root_ids: set[str],
-    evidence_ids: set[str],
-    policy_ids: set[str],
-    ledger_date: date,
-    evidence_by_id: dict[str, dict[str, Any]],
-) -> None:
-    item_id = item["id"]
-    label = f"work item {item_id}"
-    allowed = ITEM_KEYS | {"completionEvidence", "dispositionEvidence"}
-    actual = set(item)
-    if not ITEM_KEYS <= actual or not actual <= allowed:
-        raise ValueError(
-            f"{label}: keys differ; missing={sorted(ITEM_KEYS - actual)} "
-            f"unknown={sorted(actual - allowed)}"
-        )
-
-    _nonempty_string(item.get("title"), f"{label}.title")
-    _nonempty_string(item.get("kind"), f"{label}.kind")
-    priority = item.get("priority")
-    match = ITEM_ID_RE.fullmatch(item_id)
-    if priority not in PRIORITY_RANK or match is None or match.group(1) != priority:
-        raise ValueError(f"{label}: priority/id prefix mismatch")
-
-    status = item.get("status")
-    if status not in STATUS_VALUES:
-        raise ValueError(f"{label}: unknown status {status!r}")
-
-    domains = _string_list(item.get("domainIds"), f"{label}.domainIds", allow_empty=True)
-    roots = _string_list(
-        item.get("rootQueryIds"), f"{label}.rootQueryIds", allow_empty=True
-    )
-    source_evidence = _string_list(
-        item.get("sourceEvidence"), f"{label}.sourceEvidence"
-    )
-    unknown_domains = set(domains) - domain_ids
-    unknown_roots = set(roots) - root_ids
-    unknown_evidence = set(source_evidence) - evidence_ids
-    if unknown_domains:
-        raise ValueError(f"{label}: unknown domain refs {sorted(unknown_domains)}")
-    if unknown_roots:
-        raise ValueError(f"{label}: unknown root refs {sorted(unknown_roots)}")
-    if unknown_evidence:
-        raise ValueError(f"{label}: unknown evidence refs {sorted(unknown_evidence)}")
-
-    _string_list(item.get("dependsOn"), f"{label}.dependsOn", allow_empty=True)
-    blockers = _string_list(item.get("blockers"), f"{label}.blockers", allow_empty=True)
-    if status == "blocked" and not blockers:
-        raise ValueError(f"{label}: blocked status requires a named blocker")
-    if status in {"in-progress", "complete"} and blockers:
-        raise ValueError(f"{label}: {status} status cannot carry blockers")
-
-    ownership = _exact_keys(item.get("ownership"), OWNERSHIP_KEYS, f"{label}.ownership")
-    ownership_state = ownership.get("state")
-    if ownership_state not in STATUS_OWNERSHIP[status]:
-        raise ValueError(
-            f"{label}: status {status} is incoherent with ownership {ownership_state}"
-        )
-    candidate_paths = _string_list(
-        ownership.get("candidatePaths"),
-        f"{label}.ownership.candidatePaths",
-        allow_empty=True,
-    )
-    owned_paths = _string_list(
-        ownership.get("ownedPaths"),
-        f"{label}.ownership.ownedPaths",
-        allow_empty=True,
-    )
-    for path_index, path in enumerate(candidate_paths):
-        _portable_path(path, f"{label}.ownership.candidatePaths[{path_index}]")
-    for path_index, path in enumerate(owned_paths):
-        _portable_path(path, f"{label}.ownership.ownedPaths[{path_index}]")
-
-    assignee = ownership.get("assignee")
-    if ownership_state in {"assigned", "handoff"}:
-        _nonempty_string(assignee, f"{label}.ownership.assignee")
-        if not owned_paths:
-            raise ValueError(
-                f"{label}: candidatePaths are not ownership; active work needs ownedPaths"
-            )
-    else:
-        if assignee is not None and (not isinstance(assignee, str) or not assignee.strip()):
-            raise ValueError(f"{label}.ownership.assignee: invalid assignee")
-        if owned_paths:
-            raise ValueError(
-                f"{label}: ownership state {ownership_state} cannot retain ownedPaths"
-            )
-        if ownership_state in {"unassigned", "accepted"} and assignee is not None:
-            raise ValueError(
-                f"{label}: ownership state {ownership_state} must not name an assignee"
-            )
-
-    scope = _exact_keys(item.get("scope"), SCOPE_KEYS, f"{label}.scope")
-    for field in SCOPE_KEYS:
-        _nonempty_string(scope.get(field), f"{label}.scope.{field}")
-
-    artifacts = _string_list(item.get("artifacts"), f"{label}.artifacts")
-    for artifact_index, artifact in enumerate(artifacts):
-        _portable_path(artifact, f"{label}.artifacts[{artifact_index}]")
-
-    if "dispositionEvidence" in item:
-        dispositions = item["dispositionEvidence"]
-        if not isinstance(dispositions, list) or not dispositions:
-            raise ValueError(
-                f"{label}.dispositionEvidence: expected a non-empty array"
-            )
-        disposition_paths: set[str] = set()
-        for disposition_index, raw_disposition in enumerate(dispositions):
-            disposition_label = (
-                f"{label}.dispositionEvidence[{disposition_index}]"
-            )
-            disposition = _exact_keys(
-                raw_disposition, DISPOSITION_EVIDENCE_KEYS, disposition_label
-            )
-            disposition_path = _portable_path(
-                disposition.get("path"), f"{disposition_label}.path"
-            )
-            normalized_path = _normalized_owned_path(disposition_path)
-            if normalized_path in disposition_paths:
-                raise ValueError(
-                    f"{label}.dispositionEvidence: duplicate disposition path"
-                )
-            disposition_paths.add(normalized_path)
-            action = _nonempty_string(
-                disposition.get("action"), f"{disposition_label}.action"
-            )
-            if action not in DISPOSITION_ACTIONS:
-                raise ValueError(
-                    f"{disposition_label}.action: unknown disposition action {action!r}"
-                )
-            for field in ("reason", "retention"):
-                _nonempty_string(
-                    disposition.get(field), f"{disposition_label}.{field}"
-                )
-    elif status == "complete" and item.get("kind") == "repository-hygiene":
-        raise ValueError(
-            f"{label}: complete repository-hygiene status requires dispositionEvidence"
-        )
-
-    acceptance = _exact_keys(
-        item.get("acceptance"), ACCEPTANCE_KEYS, f"{label}.acceptance"
-    )
-    levels = _string_list(
-        acceptance.get("requiredLevels"), f"{label}.acceptance.requiredLevels"
-    )
-    if any(level not in EVIDENCE_LEVEL_RANK for level in levels):
-        raise ValueError(f"{label}: unknown required evidence level")
-    if levels != sorted(levels, key=EVIDENCE_LEVEL_RANK.get):
-        raise ValueError(f"{label}: required evidence levels are out of order")
-    _string_list(acceptance.get("criteria"), f"{label}.acceptance.criteria")
-
-    commands = item.get("verificationCommands")
-    if not isinstance(commands, list) or not commands:
-        raise ValueError(f"{label}.verificationCommands: expected a non-empty array")
-    for command_index, raw_command in enumerate(commands):
-        command_label = f"{label}.verificationCommands[{command_index}]"
-        command = _exact_keys(raw_command, COMMAND_KEYS, command_label)
-        _portable_command(command.get("shell"), command.get("command"), command_label)
-        _nonempty_string(command.get("availability"), f"{command_label}.availability")
-        timeout = command.get("timeoutSeconds")
-        if not isinstance(timeout, int) or isinstance(timeout, bool) or timeout <= 0:
-            raise ValueError(f"{command_label}.timeoutSeconds: expected a positive integer")
-        _string_list(command.get("expectedMarkers"), f"{command_label}.expectedMarkers")
-        diagnostic_policy = command.get("diagnosticPolicy")
-        if diagnostic_policy not in policy_ids:
-            raise ValueError(
-                f"{command_label}: unknown diagnostic policy {diagnostic_policy!r}"
-            )
-
-    completion = item.get("completionEvidence")
-    if status == "complete":
-        if not isinstance(completion, dict) or not completion:
-            raise ValueError(f"{label}: complete status requires completionEvidence")
-        completion_keys = set(completion)
-        completion_allowed = (
-            COMPLETION_EVIDENCE_REQUIRED_KEYS | COMPLETION_EVIDENCE_OPTIONAL_KEYS
-        )
-        if (
-            not COMPLETION_EVIDENCE_REQUIRED_KEYS <= completion_keys
-            or not completion_keys <= completion_allowed
-        ):
-            raise ValueError(
-                f"{label}.completionEvidence: keys differ; "
-                f"missing={sorted(COMPLETION_EVIDENCE_REQUIRED_KEYS - completion_keys)} "
-                f"unknown={sorted(completion_keys - completion_allowed)}"
-            )
-        accepted_date = _iso_date(
-            completion.get("acceptedAtAuditDate"),
-            f"{label}.completionEvidence.acceptedAtAuditDate",
-        )
-        if accepted_date > ledger_date:
-            raise ValueError(f"{label}: completion evidence postdates the ledger")
-        for field in ("verifier", "marker", "claimBoundary"):
-            _nonempty_string(
-                completion.get(field), f"{label}.completionEvidence.{field}"
-            )
-        result = _nonempty_string(
-            completion.get("result"), f"{label}.completionEvidence.result"
-        )
-        if result not in {"ACCEPT", "PASS"}:
-            raise ValueError(
-                f"{label}.completionEvidence.result: expected ACCEPT or PASS"
-            )
-        for field in ("note", "retention"):
-            if field in completion:
-                _nonempty_string(
-                    completion.get(field), f"{label}.completionEvidence.{field}"
-                )
-        for field in ("supersededPath", "replacementPath"):
-            if field in completion:
-                _portable_path(
-                    completion.get(field), f"{label}.completionEvidence.{field}"
-                )
-        for evidence_id in source_evidence:
-            claim_limit = str(evidence_by_id[evidence_id].get("claimLimit", ""))
-            if "no row may satisfy" in claim_limit.casefold() or (
-                "historical diagnostic only" in claim_limit.casefold()
-            ):
-                raise ValueError(
-                    f"{label}: complete status relies on non-acceptance evidence {evidence_id}"
-                )
-    elif completion is not None:
-        raise ValueError(f"{label}: only complete items may carry completionEvidence")
-
-
-def _normalized_owned_path(path: str) -> str:
-    return path.replace("\\", "/").rstrip("/").casefold()
-
-
-def _validate_items(
-    ledger: dict[str, Any],
-    domain_ids: set[str],
-    root_ids: set[str],
-    evidence_ids: set[str],
-    evidence_by_id: dict[str, dict[str, Any]],
-    policy_ids: set[str],
-    ledger_date: date,
-) -> dict[str, int]:
-    rows = ledger.get("workItems")
-    item_ids = _stable_ids(rows, ITEM_ID_RE, "workItems")
-    items = dict(zip(item_ids, rows, strict=True))
-
-    last_priority = -1
-    for index, item in enumerate(rows):
-        _validate_item_shape(
-            item,
-            index,
-            domain_ids,
-            root_ids,
-            evidence_ids,
-            policy_ids,
-            ledger_date,
-            evidence_by_id,
-        )
-        priority = PRIORITY_RANK[item["priority"]]
-        if priority < last_priority:
-            raise ValueError(
-                f"workItems: priority order regressed at {item['id']}"
-            )
-        last_priority = priority
-
-    graph: dict[str, list[str]] = {}
-    for item_id, item in items.items():
-        dependencies = item["dependsOn"]
-        unknown = set(dependencies) - set(items)
-        if unknown:
-            raise ValueError(f"work item {item_id}: unknown dependencies {sorted(unknown)}")
-        if item_id in dependencies:
-            raise ValueError(f"work item {item_id}: self dependency")
-        for dependency in dependencies:
-            if PRIORITY_RANK[items[dependency]["priority"]] > PRIORITY_RANK[item["priority"]]:
-                raise ValueError(
-                    f"work item {item_id}: dependency {dependency} has later priority"
-                )
-        graph[item_id] = dependencies
-    _detect_cycles(graph, "workItems")
-
-    for item_id, item in items.items():
-        incomplete = [
-            dependency
-            for dependency in item["dependsOn"]
-            if items[dependency]["status"] != "complete"
-        ]
-        if item["status"] == "blocked" and not incomplete:
-            raise ValueError(
-                f"work item {item_id}: blocked status requires an incomplete dependency"
-            )
-        if item["status"] != "blocked" and incomplete:
-            raise ValueError(
-                f"work item {item_id}: status {item['status']} has incomplete "
-                f"dependencies {incomplete}"
-            )
-
-    active_paths: list[tuple[str, str]] = []
-    for item_id, item in items.items():
-        if item["ownership"]["state"] not in {"assigned", "handoff"}:
-            continue
-        for raw_path in item["ownership"]["ownedPaths"]:
-            normalized = _normalized_owned_path(raw_path)
-            for other_item, other_path in active_paths:
-                wildcard = any(character in normalized + other_path for character in "*?[")
-                overlap = normalized == other_path
-                if not wildcard:
-                    overlap = overlap or normalized.startswith(other_path + "/") or other_path.startswith(normalized + "/")
-                if overlap:
-                    raise ValueError(
-                        f"work item {item_id}: owned path overlaps {other_item}: {raw_path}"
-                    )
-            active_paths.append((item_id, normalized))
-
-    counts = {status: 0 for status in STATUS_VALUES}
-    for item in rows:
-        counts[item["status"]] += 1
-    return counts
+def _validate_item(item: Any, evidence: set[str], policies: set[str]) -> None:
+    if not isinstance(item, dict):
+        raise ValueError("workItems: expected object rows")
+    keys = set(item)
+    if not ITEM_REQUIRED <= keys or not keys <= ITEM_REQUIRED | ITEM_OPTIONAL:
+        raise ValueError(f"work item: keys differ for {item.get('id', '?')}")
+    item_id = _text(item["id"], "work item id")
+    if ID_RE.fullmatch(item_id) is None:
+        raise ValueError(f"work item {item_id}: invalid id")
+    for field in ("title", "kind"):
+        _text(item[field], f"work item {item_id}.{field}")
+    if item["priority"] not in {"P0", "P1", "P2"}:
+        raise ValueError(f"work item {item_id}: invalid priority")
+    if item["allocationClass"] not in EXPECTED_POLICY["lane"]["allocationClasses"]:
+        raise ValueError(f"work item {item_id}: invalid allocationClass")
+    status = item["status"]
+    if status not in STATUS_TO_OWNERSHIP:
+        raise ValueError(f"work item {item_id}: invalid status")
+    ownership = _exact(item["ownership"], OWNERSHIP_KEYS, f"work item {item_id}.ownership")
+    if ownership["state"] != STATUS_TO_OWNERSHIP[status]:
+        raise ValueError(f"work item {item_id}: status/ownership state differ")
+    assignee = ownership["assignee"]
+    if status == "in-progress":
+        _text(assignee, f"work item {item_id}.assignee")
+    elif assignee is not None:
+        raise ValueError(f"work item {item_id}: assignee is legal only in-progress")
+    owned = [_portable_path(path, f"work item {item_id}.ownedPath") for path in _strings(ownership["ownedPaths"], f"work item {item_id}.ownedPaths")]
+    candidates = [_portable_path(path, f"work item {item_id}.candidatePath") for path in _strings(ownership["candidatePaths"], f"work item {item_id}.candidatePaths")]
+    if status == "in-progress" and item["allocationClass"] == "worker-lane" and not owned:
+        raise ValueError(f"work item {item_id}: assigned lane has no ownedPaths")
+    if status != "in-progress" and owned:
+        raise ValueError(f"work item {item_id}: unassigned row owns paths")
+    if any(path.startswith("workspace/") for path in owned + candidates):
+        raise ValueError(f"work item {item_id}: workspace is never a tracked ownership path")
+    _strings(item["domainIds"], f"work item {item_id}.domainIds")
+    _strings(item["rootQueryIds"], f"work item {item_id}.rootQueryIds")
+    _strings(item["dependsOn"], f"work item {item_id}.dependsOn")
+    for source in _strings(item["sourceEvidence"], f"work item {item_id}.sourceEvidence"):
+        if source not in evidence:
+            raise ValueError(f"work item {item_id}: unknown evidence {source}")
+    for artifact in _strings(item["artifacts"], f"work item {item_id}.artifacts"):
+        _portable_path(artifact, f"work item {item_id}.artifact")
+    acceptance = _exact(item["acceptance"], {"requiredLevels", "requiredOutputDimensions", "criteria"}, f"work item {item_id}.acceptance")
+    levels = _strings(acceptance["requiredLevels"], f"work item {item_id}.requiredLevels")
+    if any(level not in {f"L{index}" for index in range(7)} for level in levels):
+        raise ValueError(f"work item {item_id}: invalid evidence level")
+    dimensions = _exact(acceptance["requiredOutputDimensions"], set(DIMENSIONS), f"work item {item_id}.dimensions")
+    if any(dimensions[name] not in {"REQUIRED", "NOT_REQUIRED"} for name in DIMENSIONS):
+        raise ValueError(f"work item {item_id}: invalid dimension disposition")
+    if not _strings(acceptance["criteria"], f"work item {item_id}.criteria"):
+        raise ValueError(f"work item {item_id}: acceptance criteria are empty")
+    commands = item["verificationCommands"]
+    if not isinstance(commands, list) or not 1 <= len(commands) <= 4:
+        raise ValueError(f"work item {item_id}: expected 1..4 verification commands")
+    for index, command in enumerate(commands):
+        _validate_command(command, f"work item {item_id}.verificationCommands[{index}]", policies)
+    _strings(item["blockers"], f"work item {item_id}.blockers", unique=False)
 
 
 def validate_documents(
-    ledger: dict[str, Any],
-    product: dict[str, Any],
-    baseline: dict[str, Any],
-    *,
-    root: Path = ROOT,
+    ledger: dict[str, Any], product: dict[str, Any], baseline: dict[str, Any],
+    *, root: Path = ROOT,
 ) -> dict[str, int]:
-    _exact_keys(ledger, TOP_LEVEL_KEYS, "ledger")
-    ledger_date = _iso_date(ledger.get("asOfDate"), "ledger.asOfDate")
-    domain_ids, root_ids = _validate_target(ledger, product, baseline)
-    _validate_authority(ledger)
-    policy_ids = _validate_policies(ledger)
-    evidence_ids, evidence_by_id = _validate_evidence(
-        ledger, product, baseline, domain_ids, root
-    )
-    counts = _validate_items(
-        ledger,
-        domain_ids,
-        root_ids,
-        evidence_ids,
-        evidence_by_id,
-        policy_ids,
-        ledger_date,
-    )
-    counts["items"] = len(ledger["workItems"])
-    counts["evidence"] = len(ledger["evidenceSources"])
+    del root
+    _exact(ledger, TOP_KEYS, "ledger")
+    if ledger["schema"] != "openbfme.work-items" or ledger["schemaVersion"] != 2:
+        raise ValueError("ledger: expected openbfme.work-items schemaVersion 2")
+    _text(ledger["asOfDate"], "ledger.asOfDate")
+    if ledger["assignmentPolicy"] != EXPECTED_POLICY:
+        raise ValueError("assignmentPolicy: compact workflow policy drifted")
+    authority = _exact(ledger["authority"], {
+        "writeOwner", "workerRule", "statusValues", "ownershipStates",
+        "completionRule", "selectionRule",
+    }, "authority")
+    if (
+        authority["writeOwner"] != "integration-owner"
+        or authority["statusValues"] != list(STATUS_TO_OWNERSHIP)
+        or authority["ownershipStates"] != [
+            "unassigned", "assigned", "independent-verification", "accepted",
+        ]
+    ):
+        raise ValueError("authority: owner or status values drifted")
+    _validate_target(ledger["target"], product, baseline)
+    verification = ledger["verificationPolicies"]
+    if not isinstance(verification, dict) or not verification:
+        raise ValueError("verificationPolicies: expected non-empty object")
+    for name, raw in verification.items():
+        row = _exact(raw, {"terminalStatuses", "passRule", "forbiddenDiagnostics", "skipIsSuccess", "artifactRootRule"}, f"verificationPolicies.{name}")
+        if row["skipIsSuccess"] is not False:
+            raise ValueError(f"verificationPolicies.{name}: SKIP cannot pass")
+        _strings(row["forbiddenDiagnostics"], f"verificationPolicies.{name}.forbiddenDiagnostics")
+    evidence_rows = ledger["evidenceSources"]
+    if not isinstance(evidence_rows, list) or not evidence_rows:
+        raise ValueError("evidenceSources: expected non-empty array")
+    evidence: set[str] = set()
+    for index, row in enumerate(evidence_rows):
+        if not isinstance(row, dict):
+            raise ValueError(f"evidenceSources[{index}]: expected object")
+        evidence_id = _text(row.get("id"), f"evidenceSources[{index}].id")
+        if evidence_id in evidence:
+            raise ValueError(f"evidenceSources: duplicate {evidence_id}")
+        evidence.add(evidence_id)
+        _text(row.get("type"), f"evidenceSources[{index}].type")
+        _text(row.get("claimLimit"), f"evidenceSources[{index}].claimLimit")
+        if "path" in row:
+            _portable_path(row["path"], f"evidenceSources[{index}].path")
+    items = ledger["workItems"]
+    if not isinstance(items, list) or not items:
+        raise ValueError("workItems: expected non-empty array")
+    by_id: dict[str, dict[str, Any]] = {}
+    for item in items:
+        _validate_item(item, evidence, set(verification))
+        if item["id"] in by_id:
+            raise ValueError(f"workItems: duplicate {item['id']}")
+        by_id[item["id"]] = item
+    for item_id, item in by_id.items():
+        for dependency in item["dependsOn"]:
+            if dependency not in by_id or dependency == item_id:
+                raise ValueError(f"work item {item_id}: invalid dependency {dependency}")
+    active = [
+        item for item in items
+        if item["status"] == "in-progress" and item["allocationClass"] == "worker-lane"
+    ]
+    for index, left in enumerate(active):
+        for right in active[index + 1:]:
+            for left_path in left["ownership"]["ownedPaths"]:
+                for right_path in right["ownership"]["ownedPaths"]:
+                    if (
+                        left_path == right_path
+                        or left_path.startswith(right_path.rstrip("/") + "/")
+                        or right_path.startswith(left_path.rstrip("/") + "/")
+                    ):
+                        raise ValueError(
+                            f"active ownership overlaps: {left['id']} and {right['id']}"
+                        )
+    visiting: set[str] = set()
+    visited: set[str] = set()
+    def visit(item_id: str) -> None:
+        if item_id in visiting:
+            raise ValueError(f"work item dependency cycle at {item_id}")
+        if item_id in visited:
+            return
+        visiting.add(item_id)
+        for dependency in by_id[item_id]["dependsOn"]:
+            visit(dependency)
+        visiting.remove(item_id)
+        visited.add(item_id)
+    for item_id in by_id:
+        visit(item_id)
+    counts = {status: 0 for status in STATUS_TO_OWNERSHIP}
+    for item in items:
+        counts[item["status"]] += 1
+    counts.update(items=len(items), evidence=len(evidence))
     return counts
 
 
 def validate() -> dict[str, int]:
-    return validate_documents(
-        _load(LEDGER_PATH), _load(PRODUCT_PATH), _load(BASELINE_PATH), root=ROOT
-    )
+    return validate_documents(_load(LEDGER), _load(PRODUCT), _load(BASELINE))
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(
-        description="Fail-closed validation for orchestration/work-items.json"
-    )
+    parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--check", action="store_true", help="validate without writing")
     parser.parse_args(argv)
     try:
         counts = validate()
-    except (OSError, json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
+    except (OSError, KeyError, TypeError, ValueError) as exc:
         print(f"WORK_ITEMS FAIL {exc}", file=sys.stderr)
         return 1
     print(

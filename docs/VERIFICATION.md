@@ -104,7 +104,7 @@ run_doctor.bat
 
 rem Public repository hygiene and policy.
 powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File tools\gate-hygiene.ps1
-py -3 tools\check-product-contracts.py --check
+workspace\retail-work\tools\python-3.12-env\Scripts\python.exe -B tools\check-product-contracts.py --check
 
 rem Read-only private L1 source verification (no cook or selection write).
 workspace\retail-work\tools\python-3.12-env\Scripts\python.exe tools\verify-rotwk-202-baseline.py
@@ -113,7 +113,7 @@ rem Pinned Python 3.12 importer suite.
 run_importer_tests.bat
 
 rem Selected immutable-bundle address check.
-py -3 tools\check_pack_addresses.py --json
+workspace\retail-work\tools\python-3.12-env\Scripts\python.exe -B tools\check_pack_addresses.py --json
 
 rem Current live Godot retail integration gate.
 run_retail_slice.bat --test
@@ -222,6 +222,11 @@ using updated numbers.
 
 ## Test and work-item admission
 
+The ledger checker validates the exact v9.7.7 target, strict row shape,
+dependency graph, evidence references, literal path lists, all six dimensions,
+and closed structured commands. It is intentionally not a generated policy
+language or operating-system sandbox.
+
 Each persistent runner and each row in `orchestration/work-items.json` must
 identify:
 
@@ -237,6 +242,19 @@ Retain tests for oracle-backed compatibility, determinism/serialization,
 schema/protocol/mod contracts, private containment, networking/recovery, a
 reproduced defect, or a measured performance budget. Test volume and historical
 runner totals are not progress metrics.
+
+Worker checks run only the row's structured steps through the pinned private
+Python environment or native Windows PowerShell. A valid PASS requires zero
+exit status, every expected marker in order on stdout, no forbidden diagnostic,
+unchanged worktree bytes during the run, and a fresh private receipt. The tool
+rechecks the literal changed-path boundary before and after execution.
+
+Handoff additionally requires one non-merge implementation commit and a clean
+index/worktree. `handoff.json` is provisional. A reviewer different from the
+assignee reruns the same command against the same commit and writes
+`independent-review.json`; this still does not merge or accept the item. The
+integration owner reviews evidence, resolves integration, runs any affected
+gate, and alone updates canonical status.
 
 ## Definition of done
 
