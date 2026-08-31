@@ -164,9 +164,9 @@ var sfx_player: AudioStreamPlayer
 ## position through `spatial_position_probe` (the slice answers from its own
 ## read-only view of the sim rows) and `_play_sfx` applies the retail shroud
 ## cull + inverse-distance listener falloff (`_spatial_sfx_semantics`).
-## A world-typed effect that reaches `_play_sfx` with NO resolvable position
-## still plays flat and is still recorded as `unsupported-type:world:<event>`
-## in `sfx_semantics_gaps`.
+## A world-typed effect that reaches `_play_sfx` with NO resolvable position is
+## refused and recorded as `missing-world-position:<event>` in
+## `sfx_semantics_gaps`; flat playback would leak a hidden fight.
 const SFX_POOL_SIZE := 8
 var sfx_players: Array[AudioStreamPlayer] = []
 var _sfx_cursor := 0
@@ -196,6 +196,10 @@ var spatial_listener_probe := Callable()
 var spatial_transform_scale := 1.0
 ## event_id -> how many world/shrouded effects were culled under the shroud.
 var shrouded_sfx_drops: Dictionary = {}
+## event_id -> how many known/authored world effects were refused because the
+## production caller could not resolve their source position. This is distinct
+## from a shroud cull: visibility cannot be queried without the position.
+var unpositioned_world_sfx_blocks: Dictionary = {}
 ## event_id -> how many world effects were culled beyond MaxRange
 ## (MilesAudioManager.cpp:2723-2726: volume hits zero at m_maxDistance).
 var distance_sfx_drops: Dictionary = {}
@@ -397,6 +401,7 @@ func configure(selected_pack_root: String, enable_playback: bool = true, active_
 	sfx_limit_drops.clear()
 	sfx_semantics_gaps.clear()
 	shrouded_sfx_drops.clear()
+	unpositioned_world_sfx_blocks.clear()
 	distance_sfx_drops.clear()
 	unranged_world_sfx.clear()
 	last_spatial_sfx_receipt.clear()
@@ -1520,10 +1525,11 @@ func _consume_event(event: Dictionary) -> void:
 	elif kind == "battalion.defeated":
 		var defeated_object_id := _object_id_for_event(event, target_id)
 		var death_anim := resolve_death_animation(event)
-		_play_routed(route_roster_voice(defeated_object_id, "death", sequence), voice_player)
 		# Position: the fallen battalion first; when its row is already gone by
 		# presentation time, the attacker standing over it is the honest stand-in.
-		_play_sfx(_route_bodyfall(defeated_object_id, sequence, String(death_anim.get("clip", "")), int(death_anim.get("frame", -1))), _spatial_event_position([target_id, entity_id]))
+		var death_at: Variant = _spatial_event_position([target_id, entity_id])
+		_play_world_routed(route_roster_voice(defeated_object_id, "death", sequence), voice_player, death_at)
+		_play_sfx(_route_bodyfall(defeated_object_id, sequence, String(death_anim.get("clip", "")), int(death_anim.get("frame", -1))), death_at, true)
 		_entity_object_ids.erase(target_id)
 		# Pure RotWK 2.01 has no generic UnitLost/BattalionLost EVA block.
 		# The unit's own authored death voice above is therefore the complete,
@@ -2590,6 +2596,10 @@ func consume_battalion_animation_sound_clocks() -> Array:
 		if node == null or not node.has_method("member_clip_frame"):
 			continue
 		var object_id := String(node.get("object_id"))
+		# AnimationSoundClientBehavior rows are world emitters owned by this
+		# battalion. Resolve the same authoritative sim position used by combat
+		# events once per node; a missing row remains null and is refused below.
+		var world_position: Variant = _spatial_event_position([int(node.get("entity_id"))])
 		# The model-condition sound state the presentation is actually in. The
 		# battalion owns the mount flag; this lane reads it and never writes it.
 		_sync_sound_state_from_battalion(node, object_id)
@@ -2629,7 +2639,7 @@ func consume_battalion_animation_sound_clocks() -> Array:
 						suppressed.append(row)
 						continue
 				_animation_sound_sequence += 1
-				_play_sfx(route_audio_event(row_event, _animation_sound_sequence))
+				_play_sfx(route_audio_event(row_event, _animation_sound_sequence), world_position, true)
 				fired.append(row)
 	last_animation_sound_clock_receipt = {
 		"source": "typed-animation-sound-clock",
@@ -3097,10 +3107,28 @@ func _play_routed(result: Dictionary, player: AudioStreamPlayer) -> void:
 	if not bool(result.get("ok", false)) or not playback_enabled or player == null:
 		return
 	player.stream = result.get("stream") as AudioStream
+	player.volume_db = UserSettingsScript.volume_to_db(voice_sfx_volume, muted)
+	player.pitch_scale = 1.0
 	player.play()
 
 
-func _play_sfx(result: Dictionary, world_position: Variant = null) -> void:
+func _play_world_routed(result: Dictionary, player: AudioStreamPlayer, world_position: Variant) -> void:
+	## Preserve the dedicated voice lane while applying the same retail world
+	## visibility/range decision as SFX. Combat voice callers explicitly require
+	## a position because an unresolved speaker must not become a global voice.
+	if not bool(result.get("ok", false)) or not playback_enabled or player == null:
+		return
+	var spatial := _spatial_sfx_semantics(result, world_position, true)
+	if bool(spatial.get("culled", false)):
+		return
+	player.set_meta("retail_event_id", String(result.get("event_id", "")))
+	player.stream = result.get("stream") as AudioStream
+	player.volume_db = UserSettingsScript.volume_to_db(voice_sfx_volume, muted) + float(result.get("volume_db", 0.0)) + float(spatial.get("attenuation_db", 0.0))
+	player.pitch_scale = float(result.get("pitch_scale", 1.0))
+	player.play()
+
+
+func _play_sfx(result: Dictionary, world_position: Variant = null, world_position_required: bool = false) -> void:
 	## THE SFX ENTRY POINT. Everything routed to the effects lane goes through
 	## here so it lands on a FREE pool player instead of stamping over whatever
 	## was already sounding, and so the retail AudioEvent parameters the pack
@@ -3114,11 +3142,11 @@ func _play_sfx(result: Dictionary, world_position: Variant = null) -> void:
 	##                user slider.
 	##   PitchShift - authored low/high percent range, resolved DETERMINISTICALLY
 	##                from the event sequence (never randf) so replays match.
-	##   Type = world / shrouded - honored when the consuming event resolved a
+	##   Type = world / shrouded - honored when the consuming event resolves a
 	##                sim-plane position (`world_position`): the retail shroud
 	##                cull and inverse-distance listener falloff from
-	##                `_spatial_sfx_semantics` apply. Without a position the
-	##                effect plays flat and the gap is recorded, as before.
+	##                `_spatial_sfx_semantics` apply. Authored or explicitly
+	##                world routes without one are blocked and enumerated.
 	## NOT honored, and reported rather than invented (`sfx_semantics_gaps`):
 	##   VolumeShift  - retail's units for this field are ambiguous between a
 	##                  dB trim and a percent trim; guessing would be a made-up
@@ -3129,7 +3157,7 @@ func _play_sfx(result: Dictionary, world_position: Variant = null) -> void:
 	if sfx_players.is_empty():
 		return
 	var event_id := String(result.get("event_id", ""))
-	var spatial := _spatial_sfx_semantics(result, world_position)
+	var spatial := _spatial_sfx_semantics(result, world_position, world_position_required)
 	if bool(spatial.get("culled", false)):
 		return
 	var limit := int(result.get("limit", 0))
@@ -3151,7 +3179,7 @@ func _play_sfx(result: Dictionary, world_position: Variant = null) -> void:
 	player.play()
 
 
-func _spatial_sfx_semantics(result: Dictionary, world_position: Variant) -> Dictionary:
+func _spatial_sfx_semantics(result: Dictionary, world_position: Variant, world_position_required: bool = false) -> Dictionary:
 	## Retail world-sound spatial semantics, PRESENTATION-SIDE ONLY.
 	##
 	## SHROUD CULL — GameSounds.cpp:232-269 (`SoundManager::canPlayNow`): a
@@ -3171,17 +3199,23 @@ func _spatial_sfx_semantics(result: Dictionary, world_position: Variant) -> Dict
 	var type_tokens: Array = result.get("type_tokens", [])
 	var has_definition := bool(result.get("has_definition", false))
 	var world_typed := type_tokens.has("world")
-	if has_definition and not world_typed:
+	var world_route := world_typed or world_position_required
+	if has_definition and not world_route:
 		# Authored non-world effect (ui/global): flat by authoring.
 		return {"attenuation_db": 0.0}
 	var have_context: bool = typeof(world_position) == TYPE_VECTOR2 \
 		and spatial_visibility_probe.is_valid() and spatial_listener_probe.is_valid() \
 		and spatial_transform_scale > 0.0
 	if not have_context:
-		# A world-typed effect playing FLAT because no position reached this
-		# call: the pre-existing named gap, kept as the honest record.
-		if world_typed:
-			sfx_semantics_gaps["unsupported-type:world:%s" % event_id] = true
+		# A known/authored world event with no source position cannot consult the
+		# local shroud and therefore cannot safely play. Refuse it and enumerate
+		# the exact event instead of leaking it globally through fog.
+		if world_route:
+			var gap := "missing-world-position:%s" % event_id
+			sfx_semantics_gaps[gap] = true
+			unpositioned_world_sfx_blocks[event_id] = int(unpositioned_world_sfx_blocks.get(event_id, 0)) + 1
+			last_spatial_sfx_receipt = {"event_id": event_id, "culled": "missing-world-position", "position": world_position}
+			return {"culled": true}
 		return {"attenuation_db": 0.0}
 	if not has_definition:
 		# Runtime asset bindings (the per-unit weapon/bodyfall routes resolved
