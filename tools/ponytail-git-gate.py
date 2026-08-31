@@ -31,8 +31,11 @@ class GateError(RuntimeError):
 def _run(
     argv: Sequence[str], *, cwd: Path, input_bytes: bytes | None = None,
     timeout: int | None = 120, check: bool = True,
+    clear_env: Sequence[str] = (),
 ) -> subprocess.CompletedProcess[bytes]:
     env = os.environ.copy()
+    for name in clear_env:
+        env.pop(name, None)
     env.update({"GIT_PAGER": "cat", "PAGER": "cat", "NO_COLOR": "1"})
     try:
         result = subprocess.run(
@@ -52,6 +55,13 @@ def _git(root: Path, *args: str, input_bytes: bytes | None = None) -> bytes:
     return _run(
         ["git", "-c", "color.ui=false", "-c", "core.pager=cat", *args],
         cwd=root, input_bytes=input_bytes,
+    ).stdout
+
+
+def _foreign_git(plugin: Path, root: Path, *args: str) -> bytes:
+    local_names = _text(_git(root, "rev-parse", "--local-env-vars")).splitlines()
+    return _run(
+        ["git", "-C", str(plugin), *args], cwd=root, clear_env=local_names,
     ).stdout
 
 
@@ -132,10 +142,10 @@ def verify_installation(root: Path, common: Path) -> dict[str, Any]:
     if command_sha != manifest.get("ponytailCommandSha256"):
         raise GateError("installed Ponytail review command differs from the private manifest")
     plugin = skill.parents[2]
-    if _run(["git", "-C", str(plugin), "status", "--porcelain=v1", "--untracked-files=all"], cwd=root).stdout:
+    if _foreign_git(plugin, root, "status", "--porcelain=v1", "--untracked-files=all"):
         raise GateError("installed Ponytail plugin checkout is dirty")
-    plugin_commit = _text(_run(["git", "-C", str(plugin), "rev-parse", "HEAD"], cwd=root).stdout)
-    plugin_origin = _text(_run(["git", "-C", str(plugin), "remote", "get-url", "origin"], cwd=root).stdout)
+    plugin_commit = _text(_foreign_git(plugin, root, "rev-parse", "HEAD"))
+    plugin_origin = _text(_foreign_git(plugin, root, "remote", "get-url", "origin"))
     package = json.loads((plugin / "package.json").read_text(encoding="utf-8"))
     if (
         plugin_commit != manifest.get("ponytailCommit")

@@ -94,6 +94,12 @@ class AgentWorkflowContract(unittest.TestCase):
     def test_ponytail_approval_is_exact(self) -> None:
         PONYTAIL_GATE._self_test()
 
+    def test_foreign_plugin_git_clears_repository_local_environment(self) -> None:
+        source = (ROOT / "tools/ponytail-git-gate.py").read_text(encoding="utf-8")
+        self.assertIn('"rev-parse", "--local-env-vars"', source)
+        self.assertIn("clear_env=local_names", source)
+        self.assertIn("_foreign_git(plugin, root, \"status\"", source)
+
     def test_governance_has_no_discarded_hypervisor_contract(self) -> None:
         paths = (
             "AGENTS.md",
