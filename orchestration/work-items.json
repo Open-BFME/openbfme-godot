@@ -964,7 +964,7 @@
       ],
       "blockers": [
         "independent review rejected commit a6a73bedda66c0541218da6eecf5385d25820973: root queries were placeholder rows rather than executed results, and required definition/asset/script/module/provenance node families were absent",
-        "the accepted lexical census retains hashes rather than reference tokens, so the next design must reparse exact effective source or add a separately accepted token-bearing source artifact before reference resolution can satisfy SOURCE"
+        "the accepted lexical census already retains asset reference tokens, resolution candidates, and moduleKind sites; the next design must project those rows, execute all roots, and reparse only opaque or absent semantic data against exact effective source before SOURCE can close"
       ]
     },
     {
@@ -1347,20 +1347,16 @@
       "kind": "selection-foundation",
       "priority": "P0",
       "allocationClass": "worker-lane",
-      "status": "in-progress",
+      "status": "verification",
       "domainIds": [],
       "rootQueryIds": [],
       "dependsOn": [
         "P0-SOURCE-001"
       ],
       "ownership": {
-        "state": "assigned",
-        "assignee": "codex-selection-audit",
-        "ownedPaths": [
-          "importer/openbfme_importer/pack_recipe_catalog_identity.py",
-          "tools/check_pack_addresses.py",
-          "importer/tests/test_pack_recipe_catalog_identity.py"
-        ],
+        "state": "independent-verification",
+        "assignee": null,
+        "ownedPaths": [],
         "candidatePaths": [
           "importer/openbfme_importer/pack_recipe_catalog_identity.py",
           "tools/check_pack_addresses.py",
@@ -1412,7 +1408,7 @@
               "toolchainProfile": "python-hermetic-v1"
             }
           ],
-          "availability": "planned-extension",
+          "availability": "current",
           "timeoutSeconds": 300,
           "expectedMarkers": [
             "PACK_ADDRESS_NEGATIVE PASS baseline=rotwk-202-v9.7.7-en"
@@ -1420,7 +1416,10 @@
           "diagnosticPolicy": "strict-default"
         }
       ],
-      "blockers": []
+      "blockers": [
+        "implementation ec0092471a34eb4e02bb42f7b4909b0f9c0eed2f was independently reviewed and integrated as 93d3d526873bae537b08179302e93fc05fbcb953; typed owner SOURCE/L1 acceptance remains pending",
+        "future positive P0-SELECTION-002 admission must content-bind the producer's provenance/manifest.json importer_recipe.tree_sha256 rather than treating the legacy pack.json negative marker as positive recipe proof"
+      ]
     },
     {
       "id": "P0-SELECTION-002",
@@ -1752,12 +1751,12 @@
       "kind": "repository-hygiene",
       "priority": "P0",
       "allocationClass": "rollup",
-      "status": "pending",
+      "status": "verification",
       "domainIds": [],
       "rootQueryIds": [],
       "dependsOn": [],
       "ownership": {
-        "state": "unassigned",
+        "state": "independent-verification",
         "assignee": null,
         "ownedPaths": [],
         "candidatePaths": [
@@ -1833,7 +1832,9 @@
           "diagnosticPolicy": "strict-default"
         }
       ],
-      "blockers": []
+      "blockers": [
+        "the compact workflow has completed an assignment, one-commit handoff, exact main rerun, and independent review; final owner completion receipt, hostile post-transition review, and remote publication remain pending"
+      ]
     },
     {
       "id": "P0-HISTORY-INDEX-001",
