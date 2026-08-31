@@ -874,7 +874,7 @@
       "kind": "source-foundation",
       "priority": "P0",
       "allocationClass": "worker-lane",
-      "status": "in-progress",
+      "status": "blocked",
       "domainIds": [
         "retail-skirmish",
         "retail-campaigns",
@@ -896,13 +896,9 @@
         "P0-CORPUS-002"
       ],
       "ownership": {
-        "state": "assigned",
-        "assignee": "codex-semantic-graph",
-        "ownedPaths": [
-          "importer/openbfme_importer/semantic_requirement_graph.py",
-          "tools/build-rotwk-202-compatibility.py",
-          "importer/tests/test_rotwk_202_semantic_graph.py"
-        ],
+        "state": "unassigned",
+        "assignee": null,
+        "ownedPaths": [],
         "candidatePaths": [
           "importer/openbfme_importer/semantic_requirement_graph.py",
           "tools/build-rotwk-202-compatibility.py",
@@ -966,7 +962,10 @@
           "diagnosticPolicy": "strict-default"
         }
       ],
-      "blockers": []
+      "blockers": [
+        "independent review rejected commit a6a73bedda66c0541218da6eecf5385d25820973: root queries were placeholder rows rather than executed results, and required definition/asset/script/module/provenance node families were absent",
+        "the accepted lexical census retains hashes rather than reference tokens, so the next design must reparse exact effective source or add a separately accepted token-bearing source artifact before reference resolution can satisfy SOURCE"
+      ]
     },
     {
       "id": "P0-ROUTING-001",
