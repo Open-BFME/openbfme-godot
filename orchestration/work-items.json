@@ -13299,7 +13299,7 @@
       "kind": "conversion-behavior",
       "priority": "P1",
       "allocationClass": "worker-lane",
-      "status": "pending",
+      "status": "in-progress",
       "domainIds": [
         "content-pipeline"
       ],
@@ -13311,9 +13311,21 @@
         "P0-CORPUS-001"
       ],
       "ownership": {
-        "state": "unassigned",
-        "assignee": null,
-        "ownedPaths": [],
+        "state": "assigned",
+        "assignee": "codex-incremental-rotwk-202",
+        "ownedPaths": [
+          "importer/openbfme_importer/incremental_rebuild.py",
+          "importer/openbfme_importer/faction_object_cache.py",
+          "importer/openbfme_importer/faction_import.py",
+          "importer/openbfme_importer/playable_unit_compiler.py",
+          "importer/openbfme_importer/playable_structure_compiler.py",
+          "importer/openbfme_importer/spellbook_compiler.py",
+          "importer/tests/test_incremental_rebuild.py",
+          "importer/tests/test_faction_object_cache.py",
+          "importer/tests/test_faction_import.py",
+          "tools/gate-incremental-rotwk-202.ps1",
+          "tools/incremental-rebuild.md"
+        ],
         "candidatePaths": [
           "importer/openbfme_importer/incremental_rebuild.py",
           "importer/openbfme_importer/faction_object_cache.py",
