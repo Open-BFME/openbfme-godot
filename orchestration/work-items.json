@@ -12574,6 +12574,93 @@
       ]
     },
     {
+      "id": "P1-FORTRESS-SUBOBJECTS-002",
+      "title": "Bind exact fortress citadel subobject visibility in the shipping presenter",
+      "kind": "load-presentation",
+      "priority": "P1",
+      "allocationClass": "worker-lane",
+      "status": "pending",
+      "domainIds": [
+        "retail-skirmish"
+      ],
+      "rootQueryIds": [
+        "skirmish-roots",
+        "retail-reference-closure"
+      ],
+      "dependsOn": [
+        "P0-SOURCE-001",
+        "P0-CORPUS-001",
+        "P0-CODE-MAP-001"
+      ],
+      "ownership": {
+        "state": "unassigned",
+        "assignee": null,
+        "ownedPaths": [],
+        "candidatePaths": [
+          "game/src/retail_slice/retail_vertical_slice.gd",
+          "game/src/retail_slice/retail_structure.gd",
+          "game/tests/retail_render_capture_runner.gd",
+          "game/tests/fortress_subobjects_v202_runner.gd",
+          "tools/gate-fortress-subobjects-v202.ps1"
+        ]
+      },
+      "scope": {
+        "deliverable": "The shipping fortress presenter binds the exact manifest-provided MenFortressCitadel runtime document, applies its StructureLevel1 hidden GBFFLAG and GBFFLAMING state, and reveals GBFFLAMING only after the authored Flaming Munitions upgrade.",
+        "notIncluded": "Importer rewrites, hardcoded subobject lists, global lighting or material changes, selection publication, or final RotWK VISUAL approval from the BFME2 host model."
+      },
+      "sourceEvidence": [
+        "E-BL-202",
+        "E-EFFECTIVE-TREE-20260830"
+      ],
+      "artifacts": [
+        "workspace/logs/P1-FORTRESS-SUBOBJECTS-002/fortress-subobjects-check.json"
+      ],
+      "acceptance": {
+        "requiredLevels": [
+          "L1",
+          "L2",
+          "L3",
+          "L4"
+        ],
+        "requiredOutputDimensions": {
+          "SOURCE": "REQUIRED",
+          "CONVERT": "REQUIRED",
+          "LOAD": "REQUIRED",
+          "BEHAVIOR": "REQUIRED",
+          "VISUAL": "NOT_REQUIRED",
+          "AUDIO": "NOT_REQUIRED"
+        },
+        "criteria": [
+          "the exact v9.7.7 MenFortressCitadel source winner and production descriptor identity 7e207854cdad30697e6437089aac1f8af1d30f89162870bb36d3d22bf6f15453 prove StructureLevel1 hides GBFFLAG and GBFFLAMING and Flaming Munitions reveals GBFFLAMING",
+          "the shipping active RotWK pack loads menfortresscitadel.json SHA-256 4277b177c40fa653bc999dbe1850371abea4721b876d5ccfc131dd431961a90b through its selected identity without fallback or a fixture document",
+          "retail_vertical_slice passes the exact presentation manifest fortress-composite-citadel runtime identity to RetailStructure rather than deriving or hardcoding a nearby object id",
+          "RetailStructure retains and executes only typed executable SubObjectsUpgrade rows from that bound supplemental document after initial phase binding, upgrade ingestion, and later phase swaps",
+          "the level-one fortress hides GBFFLAG and GBFFLAMING, Flaming Munitions reveals GBFFLAMING, unrelated named nodes and upgrades are unchanged, and phase swaps cannot resurrect an authored-hidden node",
+          "a same-camera current-playable diagnostic hiding only GBFFLAMING removes the four white-blue tower ribbons before implementation acceptance; that BFME2-host capture is symptom attribution only and never a final RotWK VISUAL claim"
+        ]
+      },
+      "verificationCommands": [
+        {
+          "steps": [
+            {
+              "toolRole": "powershell",
+              "invocation": "script",
+              "target": "tools/gate-fortress-subobjects-v202.ps1",
+              "args": [],
+              "toolchainProfile": "rotwk-gate-v1"
+            }
+          ],
+          "availability": "current-private-source-selected-pack-and-pinned-godot",
+          "timeoutSeconds": 1200,
+          "expectedMarkers": [
+            "FORTRESS_SUBOBJECTS_202 PASS"
+          ],
+          "diagnosticPolicy": "strict-default"
+        }
+      ],
+      "blockers": []
+    },
+    {
       "id": "P1-ANGMAR-THRALL-001",
       "title": "Restore exact v9.7.7 Angmar Thrall Master summon-replacement loop",
       "kind": "conversion-behavior",
