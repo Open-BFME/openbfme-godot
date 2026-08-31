@@ -345,8 +345,8 @@ As of this roadmap's audit identity:
 The integration owner should pull work in dependency order from the canonical
 ledger. Repository-readiness lanes run before product lanes:
 
-1. `P0-AGENTS-001` - use the one-time owner-bound and independently reviewed
-   twelve-path foundation to land the pinned main-only control plane, then make
+1. `P0-AGENTS-001` - use the owner-bound and independently reviewed compact
+   foundation to land the pinned main-only control plane, then make
    allocation, sibling worktrees, focused checks, typed evidence, and handoff
    executable and fail closed.
 2. `P0-REPO-001`, `P0-HISTORY-INDEX-001` -> `P0-HISTORY-001`, and

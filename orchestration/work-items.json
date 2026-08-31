@@ -1532,7 +1532,8 @@
           "tools/gate-rotwk-systems.ps1",
           "game/tests/goal_map_matrix_runner.gd",
           "importer/tests/test_cli.py",
-          "importer/tests/test_rotwk_official_map_corpus.py"
+          "importer/tests/test_rotwk_official_map_corpus.py",
+          "importer/tests/test_rotwk_202_defaults.py"
         ]
       },
       "scope": {
@@ -1572,13 +1573,8 @@
             {
               "toolRole": "python",
               "invocation": "script",
-              "target": "tools/run-focused-tests.py",
-              "args": [
-                "unittest",
-                "importer.tests.test_rotwk_202_defaults",
-                "--marker",
-                "ROTWK_DEFAULTS_TESTS PASS"
-              ],
+              "target": "importer/tests/test_rotwk_202_defaults.py",
+              "args": [],
               "toolchainProfile": "python-hermetic-v1"
             }
           ],
@@ -1653,16 +1649,8 @@
             {
               "toolRole": "retail-python",
               "invocation": "script",
-              "target": "tools/run-focused-tests.py",
-              "args": [
-                "pytest",
-                "importer/tests/test_retail_gate_script.py",
-                "-p",
-                "no:cacheprovider",
-                "-q",
-                "--marker",
-                "RETAIL_GATE_TESTS PASS"
-              ],
+              "target": "importer/tests/test_retail_gate_script.py",
+              "args": [],
               "toolchainProfile": "retail-python-hermetic-v1"
             }
           ],
@@ -1739,13 +1727,8 @@
             {
               "toolRole": "python",
               "invocation": "script",
-              "target": "tools/run-focused-tests.py",
-              "args": [
-                "unittest",
-                "importer.tests.test_rotwk_202_oracle_contract",
-                "--marker",
-                "ROTWK_ORACLE_TESTS PASS"
-              ],
+              "target": "importer/tests/test_rotwk_202_oracle_contract.py",
+              "args": [],
               "toolchainProfile": "python-hermetic-v1"
             }
           ],
@@ -1782,7 +1765,9 @@
           "importer/tests/test_work_item_workflow.py",
           "orchestration/README.md",
           "orchestration/work-items.json",
+          "tools/Install-PonytailHooks.ps1",
           "tools/check-work-items.py",
+          "tools/ponytail-git-gate.py",
           "tools/work-item.py",
           "tools/work-item.ps1"
         ]
@@ -1812,14 +1797,17 @@
           "AUDIO": "NOT_REQUIRED"
         },
         "criteria": [
-          "the strict checker preserves the exact v9.7.7 target, all 67 mapped rows, dependency graph, evidence references, six dimensions, literal paths, and closed structured commands",
+          "the strict checker preserves the exact v9.7.7 target, the complete mapped row set, dependency graph, evidence references, six dimensions, literal paths, and closed structured commands",
           "the complete worker lifecycle is at most 1200 readable lines and its focused workflow test is at most 200 lines",
           "ready is deterministic and read-only; create is owner-only, resumable after an interrupted worktree creation, and creates one sibling lane for one worker-lane row",
           "the lane assignment must match the owner copy and current canonical row; every changed byte remains under literal ownedPaths and outside owner-only/workspace paths",
           "checks invoke only the row structured argv through pinned private Python or native Windows PowerShell, require ordered markers, reject forbidden diagnostics, and fail if worktree bytes change",
           "handoff requires one non-merge implementation commit and a clean tree; a different named reviewer reruns the same command against the same commit",
           "worker and review receipts bind base/commit, assignment, changed paths, command and executable digests, declared artifacts, available artifact digests, six dimensions, and provisional status",
-          "AGENTS, onboarding, verification, ownership, roadmap, and orchestration documents describe the same compact workflow and never claim worker self-verification is acceptance"
+          "AGENTS, onboarding, verification, ownership, roadmap, and orchestration documents describe the same compact workflow and never claim worker self-verification is acceptance",
+          "Ponytail origin, commit, version, skill, and command hashes are tracked and any mismatch fails before hook writes or commit/push review",
+          "readiness rejects a missing structured script target unless that exact path is owned or candidate-owned by the row",
+          "the private worker brief contains full scope, dependencies, literal paths, source evidence, artifacts, all six dimensions, acceptance criteria, exact commands, and assignment digests"
         ]
       },
       "verificationCommands": [

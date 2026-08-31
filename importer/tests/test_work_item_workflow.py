@@ -94,6 +94,43 @@ class AgentWorkflowContract(unittest.TestCase):
     def test_ponytail_approval_is_exact(self) -> None:
         PONYTAIL_GATE._self_test()
 
+    def test_ponytail_release_pin_rejects_every_identity_drift(self) -> None:
+        approved = PONYTAIL_GATE.APPROVED_PONYTAIL
+        PONYTAIL_GATE._require_approved_plugin(dict(approved))
+        for key in approved:
+            mutated = dict(approved)
+            mutated[key] += "-drift"
+            with self.assertRaises(PONYTAIL_GATE.GateError, msg=key):
+                PONYTAIL_GATE._require_approved_plugin(mutated)
+
+    def test_missing_command_target_requires_literal_row_candidate(self) -> None:
+        ledger = _read("orchestration/work-items.json")
+        mutated = copy.deepcopy(ledger)
+        row = next(item for item in mutated["workItems"] if item["id"] == "P0-DEFAULTS-001")
+        row["verificationCommands"][0]["steps"][0]["target"] = "tools/not-row-owned.py"
+        with self.assertRaisesRegex(ValueError, "neither tracked/current nor row-owned"):
+            CHECKER.validate_documents(
+                mutated, _read("contracts/rotwk-202-v9.7.7-product-scope.json"),
+                _read("contracts/rotwk-202-v9.7.7-baseline.json"), root=ROOT,
+            )
+
+    def test_generated_brief_contains_complete_assignment_contract(self) -> None:
+        row = next(
+            item for item in _read("orchestration/work-items.json")["workItems"]
+            if item["id"] == "P0-SELECTION-001"
+        )
+        assignment = {
+            "assignee": "review-fixture", "assignmentCommit": "a" * 40,
+            "branch": "work/review-fixture", "workItemSha256": "b" * 64,
+            "commandsSha256": WORKFLOW._canonical_digest(row["verificationCommands"]),
+            "ownedPaths": row["ownership"]["candidatePaths"],
+        }
+        brief = WORKFLOW._render_brief(row, assignment)
+        for value in ("## Scope", "## Source evidence", "## Declared artifacts",
+                      "## Evidence contract", "## Exact verification commands",
+                      *WORKFLOW.DIMENSIONS, assignment["commandsSha256"]):
+            self.assertIn(value, brief)
+
     def test_foreign_plugin_git_clears_repository_local_environment(self) -> None:
         source = (ROOT / "tools/ponytail-git-gate.py").read_text(encoding="utf-8")
         self.assertIn('"rev-parse", "--local-env-vars"', source)

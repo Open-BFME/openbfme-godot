@@ -71,6 +71,9 @@ $gateBlob = ($gateIndex[0] -split '\s+')[1]
 $worktreeBlob = @(& git -C $mainRoot hash-object -- tools/ponytail-git-gate.py 2>$null | ForEach-Object { [string]$_ }) -join ''
 if ($LASTEXITCODE -ne 0 -or $gateBlob -ne $worktreeBlob) { throw 'Ponytail gate worktree bytes differ from the staged/tracked blob' }
 
+& $pythonPath -I -S -B $gatePath --verify-approved-plugin --grok-path $grokPath
+if ($LASTEXITCODE -ne 0) { throw 'installed Ponytail plugin is not the tracked approved release' }
+
 $details = @(& $grokPath plugin details ponytail 2>&1 | ForEach-Object { [string]$_ })
 if ($LASTEXITCODE -ne 0) { throw "Grok Ponytail plugin is unavailable: $($details -join [Environment]::NewLine)" }
 $pluginPathLine = $details | Where-Object { $_ -match '^\s*path:\s*(.+?)\s*$' } | Select-Object -First 1

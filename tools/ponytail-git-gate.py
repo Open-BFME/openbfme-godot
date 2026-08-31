@@ -22,6 +22,13 @@ from typing import Any, Sequence
 MANIFEST_NAME = "openbfme-ponytail.json"
 PASS_LINE = "Lean already. Ship."
 ZERO_RE = re.compile(r"^0+$")
+APPROVED_PONYTAIL = {
+    "ponytailOrigin": "https://github.com/DietrichGebert/ponytail",
+    "ponytailCommit": "2ed6c52c9d7e5e56942508591085fd45dea277d3",
+    "ponytailVersion": "4.9.0",
+    "ponytailSkillSha256": "6c8b7e5c897a406b66da6aabda7fa6509e8d1d447e73e602265d7986497445d1",
+    "ponytailCommandSha256": "f858d6d19ce21768b2076f098c4002901c5d797e79488c19f43876f301dec7af",
+}
 
 
 class GateError(RuntimeError):
@@ -90,7 +97,11 @@ def _load_manifest(common: Path) -> dict[str, Any]:
         value = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise GateError(f"Ponytail hook manifest is missing or invalid: {path}: {exc}") from exc
-    if not isinstance(value, dict) or value.get("schema") != "openbfme.ponytail-hooks":
+    if (
+        not isinstance(value, dict)
+        or value.get("schema") != "openbfme.ponytail-hooks"
+        or value.get("schemaVersion") != 1
+    ):
         raise GateError("Ponytail hook manifest schema is invalid")
     return value
 
@@ -108,6 +119,28 @@ def _plugin_details(grok: Path, root: Path) -> tuple[Path, str, str]:
     if not skill.is_file() or not command.is_file():
         raise GateError("official Ponytail review skill or command is missing")
     return skill, _file_sha(skill), _file_sha(command)
+
+
+def _require_approved_plugin(observed: dict[str, str]) -> None:
+    if observed != APPROVED_PONYTAIL:
+        raise GateError("installed Ponytail identity is not the tracked approved release")
+
+
+def verify_approved_plugin(grok: Path, root: Path) -> dict[str, str]:
+    skill, skill_sha, command_sha = _plugin_details(grok, root)
+    plugin = skill.parents[2]
+    if _foreign_git(plugin, root, "status", "--porcelain=v1", "--untracked-files=all"):
+        raise GateError("installed Ponytail plugin checkout is dirty")
+    package = json.loads((plugin / "package.json").read_text(encoding="utf-8"))
+    observed = {
+        "ponytailOrigin": _text(_foreign_git(plugin, root, "remote", "get-url", "origin")),
+        "ponytailCommit": _text(_foreign_git(plugin, root, "rev-parse", "HEAD")),
+        "ponytailVersion": str(package.get("version", "")),
+        "ponytailSkillSha256": skill_sha,
+        "ponytailCommandSha256": command_sha,
+    }
+    _require_approved_plugin(observed)
+    return observed
 
 
 def verify_installation(root: Path, common: Path) -> dict[str, Any]:
@@ -136,23 +169,9 @@ def verify_installation(root: Path, common: Path) -> dict[str, Any]:
     if Path(sys.executable).resolve() != Path(str(manifest["pythonPath"])).resolve():
         raise GateError("gate is not running under the manifest-bound Python interpreter")
     grok = Path(str(manifest["grokPath"])).resolve()
-    skill, skill_sha, command_sha = _plugin_details(grok, root)
-    if skill_sha != manifest.get("ponytailSkillSha256"):
-        raise GateError("installed Ponytail review skill differs from the private manifest")
-    if command_sha != manifest.get("ponytailCommandSha256"):
-        raise GateError("installed Ponytail review command differs from the private manifest")
-    plugin = skill.parents[2]
-    if _foreign_git(plugin, root, "status", "--porcelain=v1", "--untracked-files=all"):
-        raise GateError("installed Ponytail plugin checkout is dirty")
-    plugin_commit = _text(_foreign_git(plugin, root, "rev-parse", "HEAD"))
-    plugin_origin = _text(_foreign_git(plugin, root, "remote", "get-url", "origin"))
-    package = json.loads((plugin / "package.json").read_text(encoding="utf-8"))
-    if (
-        plugin_commit != manifest.get("ponytailCommit")
-        or plugin_origin != manifest.get("ponytailOrigin")
-        or package.get("version") != manifest.get("ponytailVersion")
-    ):
-        raise GateError("installed Ponytail origin, revision, or version differs from the private manifest")
+    observed = verify_approved_plugin(grok, root)
+    if any(manifest.get(key) != value for key, value in observed.items()):
+        raise GateError("private manifest differs from the tracked approved Ponytail identity")
     inspection = _run([str(grok), "inspect"], cwd=root).stdout.decode("utf-8", "replace")
     if "ponytail (user, enabled)" not in inspection or "/ponytail:ponytail-review" not in inspection:
         raise GateError("official Ponytail plugin or qualified review skill is not enabled in Grok")
@@ -468,6 +487,8 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--event", choices=("pre-commit", "pre-merge-commit", "pre-applypatch", "pre-push"))
     parser.add_argument("--verify-installation", action="store_true")
+    parser.add_argument("--verify-approved-plugin", action="store_true")
+    parser.add_argument("--grok-path", type=Path)
     parser.add_argument("--verify-head-receipt", action="store_true")
     parser.add_argument("--self-test", action="store_true")
     parser.add_argument("hook_args", nargs="*")
@@ -475,6 +496,12 @@ def main() -> int:
     try:
         if args.self_test:
             _self_test()
+            return 0
+        if args.verify_approved_plugin:
+            if args.grok_path is None:
+                raise GateError("--verify-approved-plugin requires --grok-path")
+            verify_approved_plugin(args.grok_path.resolve(strict=True), Path.cwd().resolve())
+            print("PONYTAIL_APPROVED_PLUGIN PASS")
             return 0
         root, common, git_dir = _repo()
         manifest = verify_installation(root, common)

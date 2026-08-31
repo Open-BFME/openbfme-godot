@@ -210,7 +210,10 @@ def _validate_target(target: Any, product: dict[str, Any], baseline: dict[str, A
         raise ValueError("target: product or retail baseline identity drifted")
 
 
-def _validate_command(command: Any, label: str, policies: set[str]) -> None:
+def _validate_command(
+    command: Any, label: str, policies: set[str], *, root: Path,
+    allowed_targets: set[str], require_target: bool,
+) -> None:
     row = _exact(command, COMMAND_KEYS, label)
     steps = row["steps"]
     if not isinstance(steps, list) or not 1 <= len(steps) <= 8:
@@ -229,10 +232,18 @@ def _validate_command(command: Any, label: str, policies: set[str]) -> None:
             raise ValueError(f"{step_label}: profile does not match role")
         target = _text(step["target"], f"{step_label}.target")
         if invocation == "script":
-            _portable_path(target, f"{step_label}.target")
+            target = _portable_path(target, f"{step_label}.target")
             extension = {"python": ".py", "retail-python": ".py", "powershell": ".ps1"}[role]
             if not target.casefold().endswith(extension):
                 raise ValueError(f"{step_label}: script extension differs from role")
+            if (
+                require_target
+                and not root.joinpath(*PurePosixPath(target).parts).is_file()
+                and target not in allowed_targets
+            ):
+                raise ValueError(
+                    f"{step_label}: script target is neither tracked/current nor row-owned candidate"
+                )
         elif target not in {"pytest", "unittest"}:
             raise ValueError(f"{step_label}: module is not allowlisted")
         args = _strings(step["args"], f"{step_label}.args", unique=False)
@@ -260,7 +271,9 @@ def _validate_command(command: Any, label: str, policies: set[str]) -> None:
     _text(row["availability"], f"{label}.availability")
 
 
-def _validate_item(item: Any, evidence: set[str], policies: set[str]) -> None:
+def _validate_item(
+    item: Any, evidence: set[str], policies: set[str], *, root: Path,
+) -> None:
     if not isinstance(item, dict):
         raise ValueError("workItems: expected object rows")
     keys = set(item)
@@ -315,7 +328,14 @@ def _validate_item(item: Any, evidence: set[str], policies: set[str]) -> None:
     if not isinstance(commands, list) or not 1 <= len(commands) <= 4:
         raise ValueError(f"work item {item_id}: expected 1..4 verification commands")
     for index, command in enumerate(commands):
-        _validate_command(command, f"work item {item_id}.verificationCommands[{index}]", policies)
+        _validate_command(
+            command, f"work item {item_id}.verificationCommands[{index}]", policies,
+            root=root, allowed_targets=set(owned + candidates),
+            require_target=(
+                item["allocationClass"] == "worker-lane"
+                and status in {"pending", "in-progress", "verification"}
+            ),
+        )
     _strings(item["blockers"], f"work item {item_id}.blockers", unique=False)
 
 
@@ -323,7 +343,6 @@ def validate_documents(
     ledger: dict[str, Any], product: dict[str, Any], baseline: dict[str, Any],
     *, root: Path = ROOT,
 ) -> dict[str, int]:
-    del root
     _exact(ledger, TOP_KEYS, "ledger")
     if ledger["schema"] != "openbfme.work-items" or ledger["schemaVersion"] != 2:
         raise ValueError("ledger: expected openbfme.work-items schemaVersion 2")
@@ -371,7 +390,7 @@ def validate_documents(
         raise ValueError("workItems: expected non-empty array")
     by_id: dict[str, dict[str, Any]] = {}
     for item in items:
-        _validate_item(item, evidence, set(verification))
+        _validate_item(item, evidence, set(verification), root=root)
         if item["id"] in by_id:
             raise ValueError(f"workItems: duplicate {item['id']}")
         by_id[item["id"]] = item

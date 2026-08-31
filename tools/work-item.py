@@ -335,6 +335,36 @@ def ready(main_root: Path, *, json_output: bool) -> None:
         print(f"WORK_ITEM_READY PASS next={payload['next'] or 'none'} count={payload['count']}")
 
 
+def _render_brief(row: dict[str, Any], assignment: dict[str, Any]) -> str:
+    acceptance = row["acceptance"]
+    lines = [
+        f"# {row['id']} - {row['title']}", "",
+        f"Kind: `{row['kind']}`  Priority: `{row['priority']}`",
+        f"Assignee: `{assignment['assignee']}`",
+        f"Assignment commit: `{assignment['assignmentCommit']}`",
+        f"Branch: `{assignment['branch']}`",
+        f"Work-item SHA-256: `{assignment['workItemSha256']}`",
+        f"Commands SHA-256: `{assignment['commandsSha256']}`", "",
+        "## Scope", "", row["scope"]["deliverable"], "",
+        f"Not included: {row['scope']['notIncluded']}", "", "## Dependencies", "",
+        *([f"- `{value}`" for value in row["dependsOn"]] or ["- None"]),
+        "", "## Owned paths", "", *[f"- `{value}`" for value in assignment["ownedPaths"]],
+        "", "## Source evidence", "",
+        *([f"- `{value}`" for value in row["sourceEvidence"]] or ["- None"]),
+        "", "## Declared artifacts", "",
+        *([f"- `{value}`" for value in row["artifacts"]] or ["- None"]),
+        "", "## Evidence contract", "",
+        "Required levels: " + ", ".join(f"`{value}`" for value in acceptance["requiredLevels"]),
+        *[f"- {name}: `{value}`" for name, value in acceptance["requiredOutputDimensions"].items()],
+        "", "Acceptance criteria:", "", *[f"- {value}" for value in acceptance["criteria"]],
+        "", "## Exact verification commands", "", "```json",
+        json.dumps(row["verificationCommands"], ensure_ascii=False, sort_keys=True, indent=2),
+        "```", "", "Run `tools\\work-item.ps1 check`, make one explicit-path commit, then run "
+        "`tools\\work-item.ps1 handoff`.", "",
+    ]
+    return "\n".join(lines)
+
+
 def create(main_root: Path, *, item_id: str, assignee: str) -> None:
     _assert_main(main_root)
     _verify_ponytail(main_root, main_root, "--verify-installation")
@@ -464,11 +494,7 @@ def create(main_root: Path, *, item_id: str, assignee: str) -> None:
     }
     _write_json(_assignment_path(main_root, item_id), assignment)
     _write_json(_assignment_path(lane_root, item_id), assignment)
-    brief = (
-        f"# {item_id}\n\nAssignee: `{assignee}`\n\n"
-        "Owned paths:\n" + "\n".join(f"- `{path}`" for path in owned) + "\n\n"
-        f"Acceptance: {json.dumps(row['acceptance'], ensure_ascii=False, indent=2)}\n"
-    )
+    brief = _render_brief(row, assignment)
     brief_path = lane_root / "workspace" / "logs" / item_id / "brief.md"
     brief_path.parent.mkdir(parents=True, exist_ok=True)
     brief_path.write_text(brief, encoding="utf-8", newline="\n")
