@@ -13092,7 +13092,7 @@
       "kind": "repository-hygiene",
       "priority": "P0",
       "allocationClass": "worker-lane",
-      "status": "in-progress",
+      "status": "blocked",
       "domainIds": [
         "release-hygiene"
       ],
@@ -13101,12 +13101,9 @@
       ],
       "dependsOn": [],
       "ownership": {
-        "state": "assigned",
-        "assignee": "codex-playtest-version-v2",
-        "ownedPaths": [
-          "VERSION",
-          "docs/patch-notes/v0.2.13.md"
-        ],
+        "state": "unassigned",
+        "assignee": null,
+        "ownedPaths": [],
         "candidatePaths": [
           "VERSION",
           "docs/patch-notes/v0.2.13.md"
@@ -13137,6 +13134,79 @@
           "docs/patch-notes/v0.2.13.md exists, is substantive, names how to launch, summarizes only accepted commits after ed02c11bf8ed7c4c23023eb93ebc21ddd0d29577, and contains an explicit Known gaps section",
           "the notes do not claim rejected, blocked, worker-lane-only, or unmerged Angmar, Minas Gate, or fortress plume work",
           "the existing publisher preflight accepts the version chain without weakening any refusal"
+        ]
+      },
+      "verificationCommands": [
+        {
+          "steps": [
+            {
+              "toolRole": "powershell",
+              "invocation": "script",
+              "target": "tools/Test-DistPipeline.ps1",
+              "args": [],
+              "toolchainProfile": "rotwk-gate-v1"
+            }
+          ],
+          "availability": "current-windows-toolchain",
+          "timeoutSeconds": 900,
+          "expectedMarkers": [
+            "DIST PIPELINE GATE PASSED"
+          ],
+          "diagnosticPolicy": "strict-default"
+        }
+      ],
+      "blockers": [
+        "Independent review rejected 38b2ffa892fdde2f7a9ffed3079e3bb018b12b9b: the declared proof artifact was missing, BEHAVIOR was incorrectly required and unproved for metadata-only work, and two notes bullets described internal implementation/build mechanics rather than player-visible changes; superseded by P0-PLAYTEST-VERSION-003"
+      ]
+    },
+    {
+      "id": "P0-PLAYTEST-VERSION-003",
+      "title": "Publish honest player-facing v0.2.13 metadata from an evidence-complete lane",
+      "kind": "repository-hygiene",
+      "priority": "P0",
+      "allocationClass": "worker-lane",
+      "status": "pending",
+      "domainIds": [
+        "release-hygiene"
+      ],
+      "rootQueryIds": [
+        "repository-hygiene"
+      ],
+      "dependsOn": [],
+      "ownership": {
+        "state": "unassigned",
+        "assignee": null,
+        "ownedPaths": [],
+        "candidatePaths": [
+          "VERSION",
+          "docs/patch-notes/v0.2.13.md"
+        ]
+      },
+      "scope": {
+        "deliverable": "Make the already-authored in-game v0.2.13 identity consistent by advancing VERSION to 0.2.13 and adding concise player-facing patch notes for accepted main history since v0.2.12 build commit ed02c11bf8ed7c4c23023eb93ebc21ddd0d29577.",
+        "notIncluded": "Gameplay or build-system changes, developer-internal refactor/test claims, unmerged Angmar or Minas work, rejected fortress plume work, publishing/building v0.2.13, or editing the canonical-current pointer implementation."
+      },
+      "sourceEvidence": [],
+      "artifacts": [
+        "workspace/logs/P0-PLAYTEST-VERSION-003/command-01.stdout.txt"
+      ],
+      "acceptance": {
+        "requiredLevels": [
+          "L4"
+        ],
+        "requiredOutputDimensions": {
+          "SOURCE": "NOT_REQUIRED",
+          "CONVERT": "NOT_REQUIRED",
+          "LOAD": "NOT_REQUIRED",
+          "BEHAVIOR": "NOT_REQUIRED",
+          "VISUAL": "NOT_REQUIRED",
+          "AUDIO": "NOT_REQUIRED"
+        },
+        "criteria": [
+          "VERSION, game/project.godot, game/scenes/boot.tscn, and game/data/build_info.json agree exactly on 0.2.13",
+          "docs/patch-notes/v0.2.13.md is substantive, tells the player to launch with run-with-log.bat, summarizes only accepted player-visible changes after ed02c11bf8ed7c4c23023eb93ebc21ddd0d29577, and contains an explicit Known gaps section",
+          "the notes contain no refactor, test-count, gate, orchestration, rejected, blocked, worker-lane, unmerged Angmar/Minas, or fortress-plume claims",
+          "the unchanged publisher preflight accepts the version chain and the exact command output is preserved as the declared private artifact"
         ]
       },
       "verificationCommands": [
