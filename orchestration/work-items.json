@@ -12398,7 +12398,7 @@
       "kind": "conversion-presentation",
       "priority": "P1",
       "allocationClass": "worker-lane",
-      "status": "pending",
+      "status": "in-progress",
       "domainIds": [
         "retail-skirmish"
       ],
@@ -12412,9 +12412,16 @@
         "P0-CODE-MAP-001"
       ],
       "ownership": {
-        "state": "unassigned",
-        "assignee": null,
-        "ownedPaths": [],
+        "state": "assigned",
+        "assignee": "codex-fortress-plume",
+        "ownedPaths": [
+          "game/src/view/w3d_texture_mappers.gd",
+          "game/src/view/w3d_shader_materials.gd",
+          "game/src/view/asset_factory.gd",
+          "game/tests/w3d_texture_mapper_runner.gd",
+          "game/tests/fortress_plume_v202_runner.gd",
+          "tools/gate-fortress-plume-v202.ps1"
+        ],
         "candidatePaths": [
           "game/src/view/w3d_texture_mappers.gd",
           "game/src/view/w3d_shader_materials.gd",
