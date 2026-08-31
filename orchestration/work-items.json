@@ -2825,14 +2825,17 @@
       "kind": "repository-hygiene",
       "priority": "P0",
       "allocationClass": "worker-lane",
-      "status": "blocked",
+      "status": "in-progress",
       "domainIds": [],
       "rootQueryIds": [],
       "dependsOn": [],
       "ownership": {
-        "state": "unassigned",
-        "assignee": null,
-        "ownedPaths": [],
+        "state": "assigned",
+        "assignee": "codex-code-map-corrective",
+        "ownedPaths": [
+          "tools/check-repository-boundaries.py",
+          "importer/tests/test_repository_boundaries.py"
+        ],
         "candidatePaths": [
           "tools/check-repository-boundaries.py",
           "importer/tests/test_repository_boundaries.py"
