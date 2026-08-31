@@ -8973,7 +8973,7 @@
       "kind": "repository-hygiene",
       "priority": "P0",
       "allocationClass": "worker-lane",
-      "status": "complete",
+      "status": "in-progress",
       "domainIds": [],
       "rootQueryIds": [],
       "dependsOn": [
@@ -13228,7 +13228,7 @@
       "kind": "repository-hygiene",
       "priority": "P0",
       "allocationClass": "worker-lane",
-      "status": "in-progress",
+      "status": "complete",
       "domainIds": [
         "release-hygiene"
       ],
