@@ -13623,7 +13623,7 @@
       "kind": "performance",
       "priority": "P1",
       "allocationClass": "worker-lane",
-      "status": "in-progress",
+      "status": "blocked",
       "domainIds": [
         "runtime-performance"
       ],
@@ -13632,14 +13632,9 @@
       ],
       "dependsOn": [],
       "ownership": {
-        "state": "assigned",
-        "assignee": "codex-perf-present-v2",
-        "ownedPaths": [
-          "game/src/retail_slice/retail_vertical_slice.gd",
-          "game/src/view/member_render_batcher.gd",
-          "game/tests/retail_frame_budget_runner.gd",
-          "tools/gate-perf-frame.ps1"
-        ],
+        "state": "unassigned",
+        "assignee": null,
+        "ownedPaths": [],
         "candidatePaths": [
           "game/src/retail_slice/retail_vertical_slice.gd",
           "game/src/view/member_render_batcher.gd",
@@ -13695,7 +13690,9 @@
           "diagnosticPolicy": "strict-default"
         }
       ],
-      "blockers": []
+      "blockers": [
+        "The uncommitted lane proved the intended flat architecture at 250, 1000, and 5000 members with zero battalion presenter nodes, exact instance counts, and 5000-member GPU p99 0.891 ms, but the required 9 NEAR plus 9 MID raw visual oracle still differed by 9 pixels at 0.4 seconds and 8 pixels at 1.2 seconds after deterministic seek and render flushing. No commit or handoff exists; the dirty lane and private captures are retained for a future oracle-determinism successor rather than weakening VISUAL acceptance."
+      ]
     },
     {
       "id": "P1-PERF-BOOT-002",
@@ -13703,7 +13700,7 @@
       "kind": "performance",
       "priority": "P1",
       "allocationClass": "worker-lane",
-      "status": "in-progress",
+      "status": "blocked",
       "domainIds": [
         "runtime-performance"
       ],
@@ -13712,16 +13709,9 @@
       ],
       "dependsOn": [],
       "ownership": {
-        "state": "assigned",
-        "assignee": "codex-perf-boot-v2",
-        "ownedPaths": [
-          "game/src/content/content_db.gd",
-          "game/src/content/mod_loader.gd",
-          "game/src/core/boot_profile.gd",
-          "game/tests/boot_startup_runner.gd",
-          "game/tests/content_db_snapshot_runner.gd",
-          "tools/gate-perf-boot.ps1"
-        ],
+        "state": "unassigned",
+        "assignee": null,
+        "ownedPaths": [],
         "candidatePaths": [
           "game/src/content/content_db.gd",
           "game/src/content/mod_loader.gd",
@@ -13779,7 +13769,9 @@
           "diagnosticPolicy": "strict-default"
         }
       ],
-      "blockers": []
+      "blockers": [
+        "The exact five-cold and ten-warm matrix kept every timing threshold green but failed its identity and telemetry contract: all launches reported 548 physical inputs instead of the required 627 declarations, and the gate measured the small console wrapper rather than the real Godot engine process. No commit or handoff exists; the dirty lane and private receipts are retained for a bounded declaration-count plus real-engine-process successor."
+      ]
     },
     {
       "id": "P1-INCREMENTAL-IMPORT-202-002",
@@ -13787,7 +13779,7 @@
       "kind": "conversion-behavior",
       "priority": "P1",
       "allocationClass": "worker-lane",
-      "status": "in-progress",
+      "status": "blocked",
       "domainIds": [
         "content-pipeline"
       ],
@@ -13799,23 +13791,9 @@
         "P0-CORPUS-001"
       ],
       "ownership": {
-        "state": "assigned",
-        "assignee": "codex-incremental-rotwk-202-v2",
-        "ownedPaths": [
-          "importer/openbfme_importer/incremental_rebuild.py",
-          "importer/openbfme_importer/faction_object_cache.py",
-          "importer/openbfme_importer/faction_import.py",
-          "importer/openbfme_importer/playable_unit_compiler.py",
-          "importer/openbfme_importer/playable_structure_compiler.py",
-          "importer/openbfme_importer/spellbook_compiler.py",
-          "importer/tests/test_incremental_rebuild.py",
-          "importer/tests/test_faction_object_cache.py",
-          "importer/tests/test_faction_import.py",
-          "tools/prove-incremental-rotwk-202-private.py",
-          "tools/gate-incremental-rotwk-202-private.ps1",
-          "tools/gate-incremental-rotwk-202.ps1",
-          "tools/incremental-rebuild.md"
-        ],
+        "state": "unassigned",
+        "assignee": null,
+        "ownedPaths": [],
         "candidatePaths": [
           "importer/openbfme_importer/incremental_rebuild.py",
           "importer/openbfme_importer/faction_object_cache.py",
@@ -13881,6 +13859,82 @@
           "timeoutSeconds": 14400,
           "expectedMarkers": [
             "INCREMENTAL_ROTWK_202_PRIVATE PASS baseline=rotwk-202-v9.7.7-en faction=angmar mutations=5"
+          ],
+          "diagnosticPolicy": "strict-default"
+        }
+      ],
+      "blockers": [
+        "The focused synthetic gate passed 70 tests, but the authoritative private v9.7.7 mutation proof rejected the Dire Wolf source edit because it invalidated 12 Angmar rows instead of exactly AngmarDireWolf and AngmarDireWolfHorde. Source and selection restoration held; no commit or handoff exists. The dirty lane and receipt DE25FC9F752559A49B1E73397E8B952A07C72FD81275D1DABDD6DE976CFDFA93 are retained for an exact consumed-define provenance successor."
+      ]
+    },
+    {
+      "id": "P1-PERF-SIM-ROSTER-001",
+      "title": "Reuse one exact roster across the non-spawning behavior phase",
+      "kind": "performance",
+      "priority": "P1",
+      "allocationClass": "worker-lane",
+      "status": "pending",
+      "domainIds": [
+        "runtime-performance"
+      ],
+      "rootQueryIds": [
+        "skirmish-roots"
+      ],
+      "dependsOn": [],
+      "ownership": {
+        "state": "unassigned",
+        "assignee": null,
+        "ownedPaths": [],
+        "candidatePaths": [
+          "game/src/retail_slice/retail_slice_sim.gd",
+          "game/src/retail_slice/retail_sim_contracts_behaviors.gd",
+          "game/tests/retail_sim_roster_runner.gd",
+          "tools/gate-perf-sim-roster.ps1"
+        ]
+      },
+      "scope": {
+        "deliverable": "After attribute-modifier aura attachment, reuse one ephemeral ascending entity roster across the large-group, hit-reaction, animal-AI, threat-finder, radiate-fear, and poisoned-behavior passes and their target scans while every pass still reads live rows and rechecks policy, health, timing, hostility, distance, and RNG state.",
+        "notIncluded": "Precomputed eligibility lists, a persistent component or roster index, lifecycle hooks, damage-field roster reuse, presentation synchronization, threading, tick-rate changes, gameplay-rule changes, or any FPS claim."
+      },
+      "sourceEvidence": [],
+      "artifacts": [
+        "workspace/logs/P1-PERF-SIM-ROSTER-001/perf-sim-roster.json"
+      ],
+      "acceptance": {
+        "requiredLevels": [
+          "L4"
+        ],
+        "requiredOutputDimensions": {
+          "SOURCE": "NOT_REQUIRED",
+          "CONVERT": "NOT_REQUIRED",
+          "LOAD": "REQUIRED",
+          "BEHAVIOR": "REQUIRED",
+          "VISUAL": "NOT_REQUIRED",
+          "AUDIO": "NOT_REQUIRED"
+        },
+        "criteria": [
+          "the optimized path takes one ascending entity_ids snapshot immediately before large-group bonus and reuses it only through poisoned behavior; damage fields and every later subsystem obtain a fresh roster",
+          "all six passes continue to read live dictionaries and re-evaluate policy, health, timing, hostility, distance, and RNG inputs; poison is the final shared-roster consumer and fatal poison erasure cannot expose a stale id to a later shared consumer",
+          "same-process reference and optimized paths execute identical commands for at least 600 ticks in an empty-policy 335-entity moving case and a mixed case covering all six policies, animal-AI RNG, fear routing, fatal poison erasure, and restore between ticks",
+          "every tick has identical state hash, ordered event digest, RNG state, entity ids, winner, health, routes, and policy state with no warning, fallback, missing sample, or skipped comparison",
+          "alternating same-process measurements prove the empty-policy optimized cluster p99 is at most 0.85 times reference p99; mixed-policy cluster and whole-tick timings remain telemetry rather than portable absolute thresholds"
+        ]
+      },
+      "verificationCommands": [
+        {
+          "steps": [
+            {
+              "toolRole": "powershell",
+              "invocation": "script",
+              "target": "tools/gate-perf-sim-roster.ps1",
+              "args": [],
+              "toolchainProfile": "rotwk-gate-v1"
+            }
+          ],
+          "availability": "pinned-godot",
+          "timeoutSeconds": 1800,
+          "expectedMarkers": [
+            "PERF_SIM_ROSTER PASS entities=335 state_exact=true event_exact=true empty_ratio<=0.85"
           ],
           "diagnosticPolicy": "strict-default"
         }
