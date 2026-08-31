@@ -3176,17 +3176,14 @@
       "kind": "repository-hygiene",
       "priority": "P0",
       "allocationClass": "worker-lane",
-      "status": "in-progress",
+      "status": "complete",
       "domainIds": [],
       "rootQueryIds": [],
       "dependsOn": [],
       "ownership": {
-        "state": "assigned",
-        "assignee": "codex-code-map-corrective",
-        "ownedPaths": [
-          "tools/check-repository-boundaries.py",
-          "importer/tests/test_repository_boundaries.py"
-        ],
+        "state": "accepted",
+        "assignee": null,
+        "ownedPaths": [],
         "candidatePaths": [
           "tools/check-repository-boundaries.py",
           "importer/tests/test_repository_boundaries.py"
