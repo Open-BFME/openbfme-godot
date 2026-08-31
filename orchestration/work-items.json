@@ -8973,7 +8973,7 @@
       "kind": "repository-hygiene",
       "priority": "P0",
       "allocationClass": "worker-lane",
-      "status": "in-progress",
+      "status": "complete",
       "domainIds": [],
       "rootQueryIds": [],
       "dependsOn": [
@@ -13237,12 +13237,9 @@
       ],
       "dependsOn": [],
       "ownership": {
-        "state": "assigned",
-        "assignee": "codex-playtest-version-v4",
-        "ownedPaths": [
-          "VERSION",
-          "docs/patch-notes/v0.2.13.md"
-        ],
+        "state": "accepted",
+        "assignee": null,
+        "ownedPaths": [],
         "candidatePaths": [
           "VERSION",
           "docs/patch-notes/v0.2.13.md"
