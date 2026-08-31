@@ -12299,7 +12299,7 @@
       "kind": "conversion-behavior",
       "priority": "P1",
       "allocationClass": "worker-lane",
-      "status": "in-progress",
+      "status": "blocked",
       "domainIds": [
         "retail-skirmish"
       ],
@@ -12313,19 +12313,9 @@
         "P0-CODE-MAP-001"
       ],
       "ownership": {
-        "state": "assigned",
-        "assignee": "codex-minas-gate",
-        "ownedPaths": [
-          "importer/openbfme_importer/playable_unit_compiler.py",
-          "importer/openbfme_importer/castle_fixtures.py",
-          "importer/tests/test_playable_unit_compiler.py",
-          "importer/tests/test_castle_fixtures.py",
-          "game/src/retail_slice/retail_map_data.gd",
-          "game/src/retail_slice/retail_sim_contracts_abilities.gd",
-          "game/src/retail_slice/retail_sim_neutrals.gd",
-          "game/tests/minas_gate_nav_v202_runner.gd",
-          "tools/gate-minas-gate-v202.ps1"
-        ],
+        "state": "unassigned",
+        "assignee": null,
+        "ownedPaths": [],
         "candidatePaths": [
           "importer/openbfme_importer/playable_unit_compiler.py",
           "importer/openbfme_importer/castle_fixtures.py",
@@ -12390,6 +12380,99 @@
           "diagnosticPolicy": "strict-default"
         }
       ],
+      "blockers": [
+        "Independent review rejected 866b208c802f67d0bd4e8c24e9a4c69aeeb07c6c because the focused breach test bypassed live combat destruction; superseded by P1-MINAS-GATE-002"
+      ]
+    },
+    {
+      "id": "P1-MINAS-GATE-002",
+      "title": "Close exact Minas Tirith gate navigation through live combat destruction",
+      "kind": "conversion-behavior",
+      "priority": "P1",
+      "allocationClass": "worker-lane",
+      "status": "pending",
+      "domainIds": [
+        "retail-skirmish"
+      ],
+      "rootQueryIds": [
+        "all-map-payloads",
+        "retail-reference-closure"
+      ],
+      "dependsOn": [
+        "P0-SOURCE-001",
+        "P0-CORPUS-001",
+        "P0-CODE-MAP-001"
+      ],
+      "ownership": {
+        "state": "unassigned",
+        "assignee": null,
+        "ownedPaths": [],
+        "candidatePaths": [
+          "importer/openbfme_importer/playable_unit_compiler.py",
+          "importer/openbfme_importer/castle_fixtures.py",
+          "importer/tests/test_playable_unit_compiler.py",
+          "importer/tests/test_castle_fixtures.py",
+          "game/src/retail_slice/retail_map_data.gd",
+          "game/src/retail_slice/retail_sim_contracts_abilities.gd",
+          "game/src/retail_slice/retail_sim_combat.gd",
+          "game/src/retail_slice/retail_sim_neutrals.gd",
+          "game/tests/minas_gate_nav_v202_runner.gd",
+          "tools/gate-minas-gate-v202.ps1"
+        ]
+      },
+      "scope": {
+        "deliverable": "A fresh one-commit implementation of the exact v9.7.7 Minas gate anchor and named geometry whose open, close, reopen, and live combat-destruction transitions synchronously update the authored navigation channel.",
+        "notIncluded": "Whole-map qualification, visual approval, selection publication, or direct map-API breach assertions that bypass structure damage."
+      },
+      "sourceEvidence": [
+        "E-BL-202",
+        "E-EFFECTIVE-TREE-20260830"
+      ],
+      "artifacts": [
+        "workspace/logs/P1-MINAS-GATE-002/minas-gate-check.json"
+      ],
+      "acceptance": {
+        "requiredLevels": [
+          "L1",
+          "L2",
+          "L4"
+        ],
+        "requiredOutputDimensions": {
+          "SOURCE": "REQUIRED",
+          "CONVERT": "REQUIRED",
+          "LOAD": "NOT_REQUIRED",
+          "BEHAVIOR": "REQUIRED",
+          "VISUAL": "NOT_REQUIRED",
+          "AUDIO": "NOT_REQUIRED"
+        },
+        "criteria": [
+          "the layered winner manifest proves data/ini/object/civilian/ministirithbuildings.ini SHA-256 f5e06cc70ac92b2e505c2f6430c50ded012a37ae4ad80200b280335ab4f14b07 from precedence-zero __patch202.big",
+          "GeometryRotationAnchorOffset and Closed, OpenLeft, and OpenRight named geometry survive production conversion without guessed values",
+          "map yaw plus authored anchor and geometry determine the gate channel; the four-axis nearest-region heuristic is removed as parity authority",
+          "request_gate_open synchronizes navigation before returning, close and reopen split and connect the deterministic seam, and no required transition uses a fallback",
+          "the focused behavior runner destroys a closed gate through the production structure-damage path, proves the route opens from the resulting zero health, and proves the breached channel cannot reclose",
+          "no direct set_castle_gate_pathing breached=true call stands in for the required combat transition"
+        ]
+      },
+      "verificationCommands": [
+        {
+          "steps": [
+            {
+              "toolRole": "powershell",
+              "invocation": "script",
+              "target": "tools/gate-minas-gate-v202.ps1",
+              "args": [],
+              "toolchainProfile": "rotwk-gate-v1"
+            }
+          ],
+          "availability": "current-private-source-and-pinned-godot",
+          "timeoutSeconds": 1200,
+          "expectedMarkers": [
+            "MINAS_GATE_202 PASS"
+          ],
+          "diagnosticPolicy": "strict-default"
+        }
+      ],
       "blockers": []
     },
     {
@@ -12398,7 +12481,7 @@
       "kind": "conversion-presentation",
       "priority": "P1",
       "allocationClass": "worker-lane",
-      "status": "in-progress",
+      "status": "blocked",
       "domainIds": [
         "retail-skirmish"
       ],
@@ -12412,16 +12495,9 @@
         "P0-CODE-MAP-001"
       ],
       "ownership": {
-        "state": "assigned",
-        "assignee": "codex-fortress-plume",
-        "ownedPaths": [
-          "game/src/view/w3d_texture_mappers.gd",
-          "game/src/view/w3d_shader_materials.gd",
-          "game/src/view/asset_factory.gd",
-          "game/tests/w3d_texture_mapper_runner.gd",
-          "game/tests/fortress_plume_v202_runner.gd",
-          "tools/gate-fortress-plume-v202.ps1"
-        ],
+        "state": "unassigned",
+        "assignee": null,
+        "ownedPaths": [],
         "candidatePaths": [
           "game/src/view/w3d_texture_mappers.gd",
           "game/src/view/w3d_shader_materials.gd",
@@ -12482,7 +12558,9 @@
           "diagnosticPolicy": "strict-default"
         }
       ],
-      "blockers": []
+      "blockers": [
+        "Same-camera isolation proved GBFFLAG/EXGFlagSeq, FIREGLOW/PG02, and FLAMES/EXFireTorchSeq do not produce the sampled artifact; the capture was actually running supplemental bfme2-men-vslice/4023ce rather than a target RotWK pack"
+      ]
     },
     {
       "id": "P1-ANGMAR-THRALL-001",
@@ -12490,7 +12568,7 @@
       "kind": "conversion-behavior",
       "priority": "P1",
       "allocationClass": "worker-lane",
-      "status": "in-progress",
+      "status": "blocked",
       "domainIds": [
         "retail-skirmish"
       ],
@@ -12504,16 +12582,9 @@
         "P0-CODE-MAP-001"
       ],
       "ownership": {
-        "state": "assigned",
-        "assignee": "codex-angmar-thrall",
-        "ownedPaths": [
-          "importer/openbfme_importer/module_contracts.py",
-          "importer/tests/test_module_contracts_batch.py",
-          "game/src/retail_slice/retail_sim_module_contracts.gd",
-          "game/src/retail_slice/retail_sim_upgrades.gd",
-          "game/tests/angmar_thrall_replacement_runner.gd",
-          "tools/run-angmar-thrall-replacement.ps1"
-        ],
+        "state": "unassigned",
+        "assignee": null,
+        "ownedPaths": [],
         "candidatePaths": [
           "importer/openbfme_importer/module_contracts.py",
           "importer/tests/test_module_contracts_batch.py",
@@ -12575,7 +12646,9 @@
           "diagnosticPolicy": "strict-default"
         }
       ],
-      "blockers": []
+      "blockers": [
+        "Independent review rejected f693931876274847dc103f6f249a37375022d382: kind-wide executable promotion overclaimed unrelated rows, the Den gate was caller-invented, and seven hashed support sources were not production-parsed"
+      ]
     }
   ]
 }
