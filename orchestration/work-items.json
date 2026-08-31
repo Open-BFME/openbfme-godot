@@ -1595,7 +1595,7 @@
     },
     {
       "id": "P0-GATES-001",
-      "title": "Independently verify fail-closed runtime admission and finish canonical work-item gate",
+      "title": "Build the fail-closed canonical work-item gate harness",
       "kind": "verification-foundation",
       "priority": "P0",
       "allocationClass": "worker-lane",
@@ -1618,8 +1618,8 @@
         ]
       },
       "scope": {
-        "deliverable": "Independently accept the implemented failed==0 runner repair, then ensure contradictory markers, forbidden stderr, identity drift, or SKIP cannot pass the canonical work-item-aware wrapper.",
-        "notIncluded": "Whitelisting known failures, using assertion floors as acceptance, or closing stale defaults tracked by P0-DEFAULTS-001."
+        "deliverable": "A history-independent L0 control-plane harness that binds the exact assigned row and executed bytes, rejects unsafe selection/provenance paths, and contains every child process while enforcing fail-closed runtime markers.",
+        "notIncluded": "Claiming SOURCE or LOAD from synthetic tests or rejection of legacy packs, whitelisting known failures, using assertion floors as acceptance, or closing stale defaults tracked by P0-DEFAULTS-001."
       },
       "sourceEvidence": [
         "E-AUDIT-CURRENT-20260829"
@@ -1629,13 +1629,12 @@
       ],
       "acceptance": {
         "requiredLevels": [
-          "L0",
-          "L3"
+          "L0"
         ],
         "requiredOutputDimensions": {
-          "SOURCE": "REQUIRED",
+          "SOURCE": "NOT_REQUIRED",
           "CONVERT": "NOT_REQUIRED",
-          "LOAD": "REQUIRED",
+          "LOAD": "NOT_REQUIRED",
           "BEHAVIOR": "NOT_REQUIRED",
           "VISUAL": "NOT_REQUIRED",
           "AUDIO": "NOT_REQUIRED"
@@ -1645,10 +1644,12 @@
           "exact RETAIL_SLICE_RESULT failed=0 is required",
           "stdout and stderr are both inspected",
           "negative tests pin exact diagnostics",
-          "generic wrapper reads the ledger and rejects blocked/unassigned/unknown items",
+          "generic wrapper binds the exact assignment, row, branch, commit, ownership, and structured command rather than trusting ignored lane metadata",
           "lane admission is bound to the exact item, assignee, assignment commit, branch, structured command, and clean executed bytes",
           "content and pack roots reject reparse traversal and source recipe identities are content-bound rather than shape-only",
-          "every child process has a deterministic timeout and complete descendant cleanup"
+          "history-independent synthetic rows cover blocked, unassigned, unknown, and unrelated ledger-state changes without hard-coded mutable work-item IDs",
+          "every child process has a deterministic timeout, concurrent stream draining, and complete Windows Job descendant cleanup",
+          "legacy selections are rejected before runtime and that negative result is never recorded as SOURCE or LOAD acceptance"
         ]
       },
       "verificationCommands": [
@@ -1671,6 +1672,88 @@
         }
       ],
       "blockers": []
+    },
+    {
+      "id": "P0-GATES-LIVE-001",
+      "title": "Accept the live identity-bound 2.02 runtime gate",
+      "kind": "verification-foundation",
+      "priority": "P0",
+      "allocationClass": "rollup",
+      "status": "blocked",
+      "domainIds": [
+        "retail-skirmish",
+        "retail-shell"
+      ],
+      "rootQueryIds": [
+        "skirmish-roots",
+        "shell-roots"
+      ],
+      "dependsOn": [
+        "P0-GATES-001",
+        "P0-SELECTION-002"
+      ],
+      "ownership": {
+        "state": "unassigned",
+        "assignee": null,
+        "ownedPaths": [],
+        "candidatePaths": []
+      },
+      "scope": {
+        "deliverable": "Integration-owner acceptance of the canonical gate against one clean selected v9.7.7 topology, with exact revision, selection, pack, producer-recipe, executable, runtime-output, and no-fallback identities.",
+        "notIncluded": "Gate implementation, synthetic harness acceptance, publishing packs, selecting content, behavior parity, visual parity, or audio parity."
+      },
+      "sourceEvidence": [
+        "E-BL-202"
+      ],
+      "artifacts": [
+        "workspace/logs/P0-GATES-LIVE-001/live-runtime-gate.json"
+      ],
+      "acceptance": {
+        "requiredLevels": [
+          "L1",
+          "L3"
+        ],
+        "requiredOutputDimensions": {
+          "SOURCE": "REQUIRED",
+          "CONVERT": "NOT_REQUIRED",
+          "LOAD": "REQUIRED",
+          "BEHAVIOR": "NOT_REQUIRED",
+          "VISUAL": "NOT_REQUIRED",
+          "AUDIO": "NOT_REQUIRED"
+        },
+        "criteria": [
+          "the owner runs the accepted P0-GATES-001 harness only after P0-SELECTION-002 has published and atomically selected a clean target topology",
+          "every selected pack binds the exact baseline and catalog plus a recomputed provenance/manifest.json importer_recipe.tree_sha256 over the actual producer source inventory",
+          "the live Godot process reports the exact selected pack-set identity with failed=0, no contradictory marker, forbidden diagnostic, SKIP, fallback, or identity drift",
+          "the receipt binds the clean Git revision, gate and executable bytes, selection and pack manifests, producer recipe trees, command, stdout, stderr, exit code, and private artifact digest",
+          "an independent reviewer reruns the same live command and SOURCE and LOAD remain unproved until both receipts agree"
+        ]
+      },
+      "verificationCommands": [
+        {
+          "steps": [
+            {
+              "toolRole": "powershell",
+              "invocation": "script",
+              "target": "tools/gate-rotwk-202.ps1",
+              "args": [
+                "-WorkItemId",
+                "P0-GATES-LIVE-001"
+              ],
+              "toolchainProfile": "rotwk-gate-v1"
+            }
+          ],
+          "availability": "planned-after-P0-SELECTION-002",
+          "timeoutSeconds": 3600,
+          "expectedMarkers": [
+            "OPENBFME_WORK_ITEM PASS id=P0-GATES-LIVE-001"
+          ],
+          "diagnosticPolicy": "strict-default"
+        }
+      ],
+      "blockers": [
+        "P0-GATES-001 harness and P0-SELECTION-002 clean target selection are incomplete"
+      ]
     },
     {
       "id": "P0-ORACLE-001",
@@ -8622,7 +8705,7 @@
         "P0-DEFAULTS-001",
         "P0-EVIDENCE-001",
         "P0-SELECTION-002",
-        "P0-GATES-001"
+        "P0-GATES-LIVE-001"
       ],
       "ownership": {
         "state": "unassigned",
@@ -8689,7 +8772,7 @@
         }
       ],
       "blockers": [
-        "P0-LANES-001, P0-DEFAULTS-001, P0-EVIDENCE-001, P0-SELECTION-002, and P0-GATES-001 are incomplete"
+        "P0-LANES-001, P0-DEFAULTS-001, P0-EVIDENCE-001, P0-SELECTION-002, and P0-GATES-LIVE-001 are incomplete"
       ]
     },
     {
@@ -9430,7 +9513,7 @@
         "P0-LANES-001",
         "P0-EVIDENCE-001",
         "P0-SELECTION-002",
-        "P0-GATES-001"
+        "P0-GATES-LIVE-001"
       ],
       "ownership": {
         "state": "unassigned",
@@ -9522,7 +9605,7 @@
         "P0-LANES-001",
         "P0-EVIDENCE-001",
         "P0-SELECTION-002",
-        "P0-GATES-001"
+        "P0-GATES-LIVE-001"
       ],
       "ownership": {
         "state": "unassigned",
@@ -9612,7 +9695,7 @@
         "P0-LANES-001",
         "P0-EVIDENCE-001",
         "P0-SELECTION-002",
-        "P0-GATES-001"
+        "P0-GATES-LIVE-001"
       ],
       "ownership": {
         "state": "unassigned",
@@ -9702,7 +9785,7 @@
         "P0-DEFAULTS-001",
         "P0-EVIDENCE-001",
         "P0-SELECTION-002",
-        "P0-GATES-001"
+        "P0-GATES-LIVE-001"
       ],
       "ownership": {
         "state": "unassigned",
@@ -10165,7 +10248,7 @@
         "P0-LANES-001",
         "P0-EVIDENCE-001",
         "P0-SELECTION-002",
-        "P0-GATES-001"
+        "P0-GATES-LIVE-001"
       ],
       "ownership": {
         "state": "unassigned",
