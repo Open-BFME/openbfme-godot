@@ -13299,7 +13299,7 @@
       "kind": "conversion-behavior",
       "priority": "P1",
       "allocationClass": "worker-lane",
-      "status": "in-progress",
+      "status": "blocked",
       "domainIds": [
         "content-pipeline"
       ],
@@ -13311,21 +13311,9 @@
         "P0-CORPUS-001"
       ],
       "ownership": {
-        "state": "assigned",
-        "assignee": "codex-incremental-rotwk-202",
-        "ownedPaths": [
-          "importer/openbfme_importer/incremental_rebuild.py",
-          "importer/openbfme_importer/faction_object_cache.py",
-          "importer/openbfme_importer/faction_import.py",
-          "importer/openbfme_importer/playable_unit_compiler.py",
-          "importer/openbfme_importer/playable_structure_compiler.py",
-          "importer/openbfme_importer/spellbook_compiler.py",
-          "importer/tests/test_incremental_rebuild.py",
-          "importer/tests/test_faction_object_cache.py",
-          "importer/tests/test_faction_import.py",
-          "tools/gate-incremental-rotwk-202.ps1",
-          "tools/incremental-rebuild.md"
-        ],
+        "state": "unassigned",
+        "assignee": null,
+        "ownedPaths": [],
         "candidatePaths": [
           "importer/openbfme_importer/incremental_rebuild.py",
           "importer/openbfme_importer/faction_object_cache.py",
@@ -13392,7 +13380,9 @@
           "diagnosticPolicy": "strict-default"
         }
       ],
-      "blockers": []
+      "blockers": [
+        "Worker commit 62332e21b5ad7788a24c3e2bb78b46f70a118205 passed its synthetic 67-test contract but the handoff correctly marked SOURCE, CONVERT, and BEHAVIOR UNPROVED: no catalog-bound private v9.7.7 unit, structure, science, DDS, or W3D mutation demonstrated exact dependents or warm-versus-cold byte identity; preserved under workspace/archive/perf-transition-20260831-r2 and superseded by P1-INCREMENTAL-IMPORT-202-002"
+      ]
     },
     {
       "id": "P1-AUDIO-FOG-002",
@@ -13480,7 +13470,7 @@
       "kind": "performance",
       "priority": "P1",
       "allocationClass": "worker-lane",
-      "status": "in-progress",
+      "status": "blocked",
       "domainIds": [
         "runtime-performance"
       ],
@@ -13489,16 +13479,9 @@
       ],
       "dependsOn": [],
       "ownership": {
-        "state": "assigned",
-        "assignee": "codex-perf-boot",
-        "ownedPaths": [
-          "game/src/content/content_db.gd",
-          "game/src/content/mod_loader.gd",
-          "game/src/core/boot_profile.gd",
-          "game/tests/boot_startup_runner.gd",
-          "game/tests/content_db_snapshot_runner.gd",
-          "tools/gate-perf-boot.ps1"
-        ],
+        "state": "unassigned",
+        "assignee": null,
+        "ownedPaths": [],
         "candidatePaths": [
           "game/src/content/content_db.gd",
           "game/src/content/mod_loader.gd",
@@ -13554,7 +13537,9 @@
           "diagnosticPolicy": "strict-default"
         }
       ],
-      "blockers": []
+      "blockers": [
+        "Committed lane fce22c7fcad40bcbaea76ec648dce75803099254 had no valid handoff: the exact committed-tree run recorded one correlated cold outlier at ContentDB 2986 ms, first frame 10023 ms, and shell visible 16771 ms, while the private follow-up harness failed before measured samples and could not attribute the tail; preserved under workspace/archive/perf-transition-20260831-r2 and superseded by P1-PERF-BOOT-002"
+      ]
     },
     {
       "id": "P1-PERF-PRESENT-001",
@@ -13562,7 +13547,7 @@
       "kind": "performance",
       "priority": "P1",
       "allocationClass": "worker-lane",
-      "status": "in-progress",
+      "status": "blocked",
       "domainIds": [
         "runtime-performance"
       ],
@@ -13571,15 +13556,9 @@
       ],
       "dependsOn": [],
       "ownership": {
-        "state": "assigned",
-        "assignee": "codex-perf-present",
-        "ownedPaths": [
-          "game/src/retail_slice/retail_vertical_slice.gd",
-          "game/src/retail_slice/retail_battalion.gd",
-          "game/src/view/member_render_batcher.gd",
-          "game/tests/retail_frame_budget_runner.gd",
-          "tools/gate-perf-frame.ps1"
-        ],
+        "state": "unassigned",
+        "assignee": null,
+        "ownedPaths": [],
         "candidatePaths": [
           "game/src/retail_slice/retail_vertical_slice.gd",
           "game/src/retail_slice/retail_battalion.gd",
@@ -13630,6 +13609,350 @@
           "timeoutSeconds": 3600,
           "expectedMarkers": [
             "PERF_FRAME PASS stage=5000-60fps"
+          ],
+          "diagnosticPolicy": "strict-default"
+        }
+      ],
+      "blockers": [
+        "Uncommitted prototype proved flat far-army node scaling but violated the live MemberLodPolicy contract by limiting full presenters to eight, allowing the ninth simultaneous NEAR or MID battalion to become a static proxy; its nearTier=0 benchmark did not prove animated VISUAL parity, so the exact diff and receipts were preserved under workspace/archive/perf-transition-20260831-r2 and the work was superseded by P1-PERF-PRESENT-002"
+      ]
+    },
+    {
+      "id": "P1-PERF-PRESENT-002",
+      "title": "Remove far-army SceneTree growth without changing the current visual tiers",
+      "kind": "performance",
+      "priority": "P1",
+      "allocationClass": "worker-lane",
+      "status": "pending",
+      "domainIds": [
+        "runtime-performance"
+      ],
+      "rootQueryIds": [
+        "skirmish-roots"
+      ],
+      "dependsOn": [],
+      "ownership": {
+        "state": "unassigned",
+        "assignee": null,
+        "ownedPaths": [],
+        "candidatePaths": [
+          "game/src/retail_slice/retail_vertical_slice.gd",
+          "game/src/view/member_render_batcher.gd",
+          "game/tests/retail_frame_budget_runner.gd",
+          "tools/gate-perf-frame.ps1"
+        ]
+      },
+      "scope": {
+        "deliverable": "Keep mass-army state in flat presentation buffers and instantiate ordinary battalion subtrees only where the current MemberLodPolicy already requires full skinned presentation, so FAR and CULLED army size no longer creates proportional SceneTree cost while every NEAR, MID, selected, refused, or active one-shot battalion retains the current exact presenter.",
+        "notIncluded": "A fixed presenter cap, demoting any NEAR or MID battalion to a static proxy, changing simulation semantics, introducing a new visual LOD, GPU skeletal animation, battlefield flattening, or claiming 5000 members at 144 FPS."
+      },
+      "sourceEvidence": [],
+      "artifacts": [
+        "workspace/logs/P1-PERF-PRESENT-002/perf-present-architecture.json",
+        "workspace/logs/P1-PERF-PRESENT-002/visual-tier-oracle.json"
+      ],
+      "acceptance": {
+        "requiredLevels": [
+          "L4"
+        ],
+        "requiredOutputDimensions": {
+          "SOURCE": "NOT_REQUIRED",
+          "CONVERT": "NOT_REQUIRED",
+          "LOAD": "REQUIRED",
+          "BEHAVIOR": "REQUIRED",
+          "VISUAL": "REQUIRED",
+          "AUDIO": "NOT_REQUIRED"
+        },
+        "criteria": [
+          "windowed 250, 1000, and 5000-member FAR or CULLED runs record named build, selected-pack, map, hardware, camera, node, draw, simulation, sync, CPU-frame, and GPU-frame identities, with full battalion node count zero and army node growth bounded by exact model-team batch groups rather than member count",
+          "an adversarial scene with more than eight simultaneous NEAR and MID battalions proves every qualifying battalion remains fully skinned and animated with no fixed promotion cap; selected, refused, and active attack, death, construction, corpse, mount, and banner one-shots retain full fail-closed presenters",
+          "pre-change and optimized matched-condition captures at multiple animation times are raw-pixel identical for NEAR, MID, FAR, fog-hidden, reveal, selection, mount, and one-shot cases, and exact picking, member counts, transforms, visibility sets, and deterministic simulation hashes match",
+          "flat-buffer replacement and promotion leave zero stale nodes, RIDs, event connections, order indicators, display roots, or hidden units after removal, match restart, and repeated near-far transitions",
+          "the focused measurements report the remaining simulation, battlefield, and GPU costs honestly; this row cannot emit or imply the 5000-member 60 FPS or 144 FPS terminal marker"
+        ]
+      },
+      "verificationCommands": [
+        {
+          "steps": [
+            {
+              "toolRole": "powershell",
+              "invocation": "script",
+              "target": "tools/gate-perf-frame.ps1",
+              "args": [],
+              "toolchainProfile": "rotwk-gate-v1"
+            }
+          ],
+          "availability": "current-selected-pack-pinned-godot-and-visible-gpu",
+          "timeoutSeconds": 3600,
+          "expectedMarkers": [
+            "PERF_PRESENT_ARCH PASS far_members=5000 near_exact=true"
+          ],
+          "diagnosticPolicy": "strict-default"
+        }
+      ],
+      "blockers": []
+    },
+    {
+      "id": "P1-PERF-BOOT-002",
+      "title": "Harden the validated registry snapshot against real startup tails",
+      "kind": "performance",
+      "priority": "P1",
+      "allocationClass": "worker-lane",
+      "status": "pending",
+      "domainIds": [
+        "runtime-performance"
+      ],
+      "rootQueryIds": [
+        "skirmish-roots"
+      ],
+      "dependsOn": [],
+      "ownership": {
+        "state": "unassigned",
+        "assignee": null,
+        "ownedPaths": [],
+        "candidatePaths": [
+          "game/src/content/content_db.gd",
+          "game/src/content/mod_loader.gd",
+          "game/src/core/boot_profile.gd",
+          "game/tests/boot_startup_runner.gd",
+          "game/tests/content_db_snapshot_runner.gd",
+          "tools/gate-perf-boot.ps1"
+        ]
+      },
+      "scope": {
+        "deliverable": "Carry forward the exact content-identity-keyed validated registry snapshot while adding causal phase and child-process telemetry and removing the reproducible product-side cold, first-frame, and shell-visible tail rather than accepting a lucky rerun.",
+        "notIncluded": "Waiving an outlier as host noise, accepting stale or fallback registries, hiding work after the shell appears, lowering the existing thresholds, or amending the archived P1-PERF-BOOT-001 commit."
+      },
+      "sourceEvidence": [],
+      "artifacts": [
+        "workspace/logs/P1-PERF-BOOT-002/perf-boot.json",
+        "workspace/logs/P1-PERF-BOOT-002/perf-boot-launches.json"
+      ],
+      "acceptance": {
+        "requiredLevels": [
+          "L4"
+        ],
+        "requiredOutputDimensions": {
+          "SOURCE": "NOT_REQUIRED",
+          "CONVERT": "NOT_REQUIRED",
+          "LOAD": "REQUIRED",
+          "BEHAVIOR": "REQUIRED",
+          "VISUAL": "NOT_REQUIRED",
+          "AUDIO": "NOT_REQUIRED"
+        },
+        "criteria": [
+          "five cold and ten warm child-process launches record wall UTC, elapsed phase boundaries, PID, available child CPU and peak working set, compact host contention counters, ContentDB, first-frame, and shell-visible durations with named machine, build, Godot, selected-pack, and snapshot identities",
+          "cached and uncached registry hashes, topology, order, and counts are exact; all 627 declared registry inputs participate in the identity and any selected-pack byte change invalidates the snapshot without fallback, warning, skipped document, or stale receipt",
+          "cold ContentDB p95 is at most 2724 ms, warm p95 is at most 1500 ms, first-frame p95 is at most 7000 ms, and shell-visible p95 is at most 12000 ms across the exact committed-tree matrix",
+          "a slow trial is attributed to a recorded product phase or retained as a failure; missing telemetry, unavailable exit status, a correlated whole-process tail, or a pre-commit green receipt cannot be used to waive acceptance",
+          "the committed-tree handoff reruns the same matrix once and independently reproduces the marker without modifying thresholds or process priority"
+        ]
+      },
+      "verificationCommands": [
+        {
+          "steps": [
+            {
+              "toolRole": "powershell",
+              "invocation": "script",
+              "target": "tools/gate-perf-boot.ps1",
+              "args": [],
+              "toolchainProfile": "rotwk-gate-v1"
+            }
+          ],
+          "availability": "current-selected-pack-and-pinned-godot",
+          "timeoutSeconds": 3600,
+          "expectedMarkers": [
+            "PERF_BOOT PASS"
+          ],
+          "diagnosticPolicy": "strict-default"
+        }
+      ],
+      "blockers": []
+    },
+    {
+      "id": "P1-INCREMENTAL-IMPORT-202-002",
+      "title": "Prove exact v9.7.7 incremental rebuilds on private retail mutations",
+      "kind": "conversion-behavior",
+      "priority": "P1",
+      "allocationClass": "worker-lane",
+      "status": "pending",
+      "domainIds": [
+        "content-pipeline"
+      ],
+      "rootQueryIds": [
+        "retail-reference-closure"
+      ],
+      "dependsOn": [
+        "P0-SOURCE-001",
+        "P0-CORPUS-001"
+      ],
+      "ownership": {
+        "state": "unassigned",
+        "assignee": null,
+        "ownedPaths": [],
+        "candidatePaths": [
+          "importer/openbfme_importer/incremental_rebuild.py",
+          "importer/openbfme_importer/faction_object_cache.py",
+          "importer/openbfme_importer/faction_import.py",
+          "importer/openbfme_importer/playable_unit_compiler.py",
+          "importer/openbfme_importer/playable_structure_compiler.py",
+          "importer/openbfme_importer/spellbook_compiler.py",
+          "importer/tests/test_incremental_rebuild.py",
+          "importer/tests/test_faction_object_cache.py",
+          "importer/tests/test_faction_import.py",
+          "tools/prove-incremental-rotwk-202-private.py",
+          "tools/gate-incremental-rotwk-202-private.ps1",
+          "tools/gate-incremental-rotwk-202.ps1",
+          "tools/incremental-rebuild.md"
+        ]
+      },
+      "scope": {
+        "deliverable": "Carry forward the fail-closed consumed-document graph and prove it against the catalog-bound effective RotWK 2.02 v9.7.7 source view with one unit, structure, science, DDS, and W3D mutation, exact dependent sets, immutable cache behavior, and warm output recursively identical to a cold no-cache cook.",
+        "notIncluded": "Using the stale pure-2.01 tree, publishing a selected pack, hand-editing a content-addressed pack, weakening cold release A/B attestation, accepting synthetic-only tests as source evidence, or claiming unmeasured asset families are incremental."
+      },
+      "sourceEvidence": [
+        "E-BL-202",
+        "E-EFFECTIVE-TREE-20260830"
+      ],
+      "artifacts": [
+        "workspace/logs/P1-INCREMENTAL-IMPORT-202-002/command-01.stdout.txt",
+        "workspace/logs/P1-INCREMENTAL-IMPORT-202-002/private-mutation-proof.json"
+      ],
+      "acceptance": {
+        "requiredLevels": [
+          "L1",
+          "L2",
+          "L4"
+        ],
+        "requiredOutputDimensions": {
+          "SOURCE": "REQUIRED",
+          "CONVERT": "REQUIRED",
+          "LOAD": "NOT_REQUIRED",
+          "BEHAVIOR": "REQUIRED",
+          "VISUAL": "NOT_REQUIRED",
+          "AUDIO": "NOT_REQUIRED"
+        },
+        "criteria": [
+          "the private proof constructs the accepted layered v9.7.7 source view from the pinned catalog and records baseline, catalog, compiler, source, mutation, cache, and output digests without exposing retail bytes",
+          "same-width reversible mutations to angmardirewolf.ini, angmarsentrytower.ini, science.ini, kudirewolf.dds, and kudirewolf_skn.w3d invalidate exactly the source-attested named dependent sets with zero unrelated object rebuilds",
+          "each warm partial result is recursively byte-identical to a fresh cold no-cache cook, cache entries are immutable, changed output publishes a new content identity, and a no-op second run performs zero conversions with explicit hit reasons",
+          "the 18-process proof matrix restores every private source byte even on failure, never changes canonical selection state, and retains machine-readable before, mutation, warm, cold, restore, and digest receipts",
+          "the synthetic focused tests and unchanged release cold A/B safety backstop still pass, but neither substitutes for the private mutation evidence"
+        ]
+      },
+      "verificationCommands": [
+        {
+          "steps": [
+            {
+              "toolRole": "powershell",
+              "invocation": "script",
+              "target": "tools/gate-incremental-rotwk-202-private.ps1",
+              "args": [],
+              "toolchainProfile": "rotwk-gate-v1"
+            }
+          ],
+          "availability": "current-private-source-and-pinned-python",
+          "timeoutSeconds": 14400,
+          "expectedMarkers": [
+            "INCREMENTAL_ROTWK_202_PRIVATE PASS baseline=rotwk-202-v9.7.7-en faction=angmar mutations=5"
+          ],
+          "diagnosticPolicy": "strict-default"
+        }
+      ],
+      "blockers": []
+    },
+    {
+      "id": "P1-PERF-GPU-ANIM-001",
+      "title": "Prove deterministic GPU bone-atlas animation for one infantry model",
+      "kind": "performance",
+      "priority": "P1",
+      "allocationClass": "worker-lane",
+      "status": "pending",
+      "domainIds": [
+        "runtime-performance",
+        "content-pipeline"
+      ],
+      "rootQueryIds": [
+        "skirmish-roots",
+        "retail-reference-closure"
+      ],
+      "dependsOn": [
+        "P0-SOURCE-001",
+        "P0-CORPUS-001",
+        "P1-PERF-PRESENT-002"
+      ],
+      "ownership": {
+        "state": "unassigned",
+        "assignee": null,
+        "ownedPaths": [],
+        "candidatePaths": [
+          "importer/openbfme_importer/gpu_animation_atlas.py",
+          "importer/openbfme_importer/playable_unit_pack_compiler.py",
+          "importer/tests/test_gpu_animation_atlas.py",
+          "game/src/view/gpu_animation_atlas.gd",
+          "game/src/view/gpu_animation_atlas.gd.uid",
+          "game/src/view/gpu_animated_member_batcher.gd",
+          "game/src/view/gpu_animated_member_batcher.gd.uid",
+          "game/src/view/shaders/gpu_unit_skinning.gdshader",
+          "game/src/view/shaders/gpu_unit_skinning.gdshader.uid",
+          "game/src/retail_slice/retail_vertical_slice.gd",
+          "game/tests/gpu_animated_member_runner.gd",
+          "tools/gate-perf-gpu-animation.ps1"
+        ]
+      },
+      "scope": {
+        "deliverable": "For one common catalog-bound infantry model, deterministically sample the exact stable idle and run clips into a per-rig bone-matrix atlas, load that identity through the shipping selected-pack path, and render large ordinary-member batches with vertex-shader skinning, exact house color, shadows, fog compaction, CPU-owned clocks, picking, and fail-closed fallback.",
+        "notIncluded": "Animation transitions, attack or death one-shots, mounts, upgrades, bone attachments, particles, audio cues, unsupported materials or eight-weight rigs, all-faction rollout, VAT, compute shaders, GPU simulation, or a 5000-member 144 FPS claim."
+      },
+      "sourceEvidence": [
+        "E-BL-202",
+        "E-EFFECTIVE-TREE-20260830"
+      ],
+      "artifacts": [
+        "workspace/logs/P1-PERF-GPU-ANIM-001/gpu-animation-atlas.json",
+        "workspace/logs/P1-PERF-GPU-ANIM-001/gpu-animation-oracle.json",
+        "workspace/logs/P1-PERF-GPU-ANIM-001/perf-gpu-animation.json"
+      ],
+      "acceptance": {
+        "requiredLevels": [
+          "L1",
+          "L2",
+          "L3",
+          "L4"
+        ],
+        "requiredOutputDimensions": {
+          "SOURCE": "REQUIRED",
+          "CONVERT": "REQUIRED",
+          "LOAD": "REQUIRED",
+          "BEHAVIOR": "REQUIRED",
+          "VISUAL": "REQUIRED",
+          "AUDIO": "NOT_REQUIRED"
+        },
+        "criteria": [
+          "the effective v9.7.7 source W3D, converted GLB, rig, skin, bind, joint order, stable idle clip, stable run clip, authored 30 FPS sampling, atlas layout, material signature, and output digests are recorded and two clean conversions are byte-identical",
+          "the selected-pack runtime loads the exact atlas and clip-table identity without fallback; unsupported material, rig, bind, joint, weight, or shader variants stay on the full presenter and emit one stable refusal reason",
+          "at every authored frame, sampled joint skin matrices match the current full-presenter oracle and representative CPU-skinned vertex positions and normals remain within 0.0001 model units with identical clip, phase, loop, root transform, fog, and team inputs",
+          "same-tick idle, run, house-color, shadow, visible, and fog-hidden captures preserve silhouette, depth, alpha coverage, material grouping, and one-LSB-bounded color output against the full presenter; fog-hidden members contribute no color or shadow instance",
+          "a windowed 1000-member identical-model soak uses no per-member Skeleton3D, AnimationPlayer, or member subtree, records bounded spatial MultiMesh groups and bulk instance upload, and separately reports CPU, GPU, draw, vertex, atlas, and upload costs without claiming the terminal mixed-army target",
+          "animation selection, phase clocks, picking, deterministic simulation hashes, and visible-member compaction stay CPU-authoritative and exact; the GPU performs deformation only"
+        ]
+      },
+      "verificationCommands": [
+        {
+          "steps": [
+            {
+              "toolRole": "powershell",
+              "invocation": "script",
+              "target": "tools/gate-perf-gpu-animation.ps1",
+              "args": [],
+              "toolchainProfile": "rotwk-gate-v1"
+            }
+          ],
+          "availability": "current-private-source-selected-pack-pinned-python-pinned-godot-and-visible-gpu",
+          "timeoutSeconds": 3600,
+          "expectedMarkers": [
+            "GPU_ANIMATION_ATLAS PASS model=GondorFighter clips=2",
+            "GPU_ANIMATION_ORACLE PASS members=1000"
           ],
           "diagnosticPolicy": "strict-default"
         }
