@@ -1517,16 +1517,26 @@
       "kind": "tooling-foundation",
       "priority": "P0",
       "allocationClass": "worker-lane",
-      "status": "pending",
+      "status": "in-progress",
       "domainIds": [],
       "rootQueryIds": [],
       "dependsOn": [
         "P0-SOURCE-001"
       ],
       "ownership": {
-        "state": "unassigned",
-        "assignee": null,
-        "ownedPaths": [],
+        "state": "assigned",
+        "assignee": "codex-defaults",
+        "ownedPaths": [
+          "run_game.bat",
+          "importer/openbfme_importer/cli.py",
+          "importer/openbfme_importer/paths.py",
+          "tools/rotwk_multimap_skirmish.py",
+          "tools/gate-rotwk-systems.ps1",
+          "game/tests/goal_map_matrix_runner.gd",
+          "importer/tests/test_cli.py",
+          "importer/tests/test_rotwk_official_map_corpus.py",
+          "importer/tests/test_rotwk_202_defaults.py"
+        ],
         "candidatePaths": [
           "run_game.bat",
           "importer/openbfme_importer/cli.py",
