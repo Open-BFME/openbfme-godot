@@ -1,7 +1,7 @@
 {
   "schema": "openbfme.work-items",
   "schemaVersion": 2,
-  "asOfDate": "2026-08-30",
+  "asOfDate": "2026-08-31",
   "authority": {
     "writeOwner": "integration-owner",
     "workerRule": "Workers never edit this ledger. The integration owner uses the workflow to assign one dependency-ready worker-lane row and promote its exact candidatePaths to non-overlapping ownedPaths.",
@@ -1672,10 +1672,7 @@
           "diagnosticPolicy": "strict-default"
         }
       ],
-      "blockers": [
-        "independent review rejected commit 9fcc95dc8bda23c7e61fe49b711984fdc0b743a5: its hard-coded Oracle disposition is already stale on current main, so the exact integrated check would fail",
-        "the replacement gate must bind lane admission and executed bytes to the assigned row, reject reparse/content-root escape, validate content-bound source recipe identity, and time out and clean up child processes"
-      ]
+      "blockers": []
     },
     {
       "id": "P0-ORACLE-001",
@@ -1755,10 +1752,7 @@
           "diagnosticPolicy": "strict-default"
         }
       ],
-      "blockers": [
-        "independent review rejected commit df5140c247d6702859274b9de3a16b8efce8d2bb: distinct scenario profiles emitted identical unbound profile/* environment maps, allowing cross-scenario collisions",
-        "the replacement oracle must bind environment paths to each content-addressed scenario run, close the launch-argument surface, and add a two-scenario adversarial isolation test"
-      ]
+      "blockers": []
     },
     {
       "id": "P0-AGENTS-001",
