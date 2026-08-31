@@ -1833,7 +1833,7 @@
         }
       ],
       "blockers": [
-        "the compact workflow has completed an assignment, one-commit handoff, exact main rerun, and independent review; final owner completion receipt, hostile post-transition review, and remote publication remain pending"
+        "publish this closure-candidate revision, bind the private owner receipt and hostile review to those exact remote bytes, then perform a later ledger-only owner acceptance transition"
       ]
     },
     {

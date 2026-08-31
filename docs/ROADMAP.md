@@ -151,7 +151,7 @@ P0 does not add a parity percentage. It prevents agents from optimizing stale
 | `P0-DEFAULTS-001` | Retarget stale defaults and pins | No `men-fords-v0`, five-map, 72/74, or old hash can pass a 2.02 gate. |
 | `P0-GATES-001` | Independently accept fail-closed runtime admission | Implemented: the runner now requires `failed == 0` and has a focused static regression; final independent proof and canonical wrapper admission remain open. |
 | `P0-ORACLE-001` | Build isolated 2.02 oracle harness | Exact executable/source identity and matched scenario recipes are reproducible without contaminating live installs. |
-| `P0-AGENTS-001` | Implement autonomous worker lanes | In verification: the compact workflow has exercised literal-path assignment, one sibling worktree/commit, closed checks, private receipts, owner integration, and independent review; final hostile review, typed owner closure, and remote publication remain open. |
+| `P0-AGENTS-001` | Implement autonomous worker lanes | Closure candidate: the published compact workflow exercised literal-path assignment, one sibling worktree/commit, closed checks, private receipts, owner integration, independent review, Ponytail commit/push review, and deterministic ready selection. Final acceptance is the ledger's owner transition. |
 | `P0-HISTORY-INDEX-001` | Seal stale-history disposition | A read-only checker freezes exactly 91 deletion records and seven support mutations before any deletion is allocatable. |
 | `P0-HISTORY-001` | Remove stale narrative/evidence authority | The accepted 91-record index is executed exactly; old briefs/reports and the frozen 2.01 coverage page remain recoverable only from Git history. |
 | `P0-HYGIENE-001` | Restore publication-boundary hygiene | The focused gate stays green after integration and a durable sanitized receipt closes the item. |
@@ -191,7 +191,7 @@ P0-AGENTS-001 + P0-CODE-MAP-001
        -> P0-GODOT-IDENTITY-INDEX-001 -> P0-GODOT-IDENTITY-001
        -> P0-ASSET-EXPORT-001 -> P0-ASSET-CLOSE-001
 
-The braces abbreviate the seven `P0-ASSET-*` disposition IDs listed above.
+The braces abbreviate the seven named P0 asset-disposition IDs listed above.
 Every deletion path is machine-authorized by a completed direct index dependency;
 none of these L0 hygiene results proves retail asset parity.
 
@@ -243,19 +243,19 @@ not that no code exists.
 
 | Subsystem | Exact target and evidence | Structural state | Runtime/behavior state | Visual/audio state | Work items |
 |---|---|---|---|---|---|
-| Source/catalog | 217 archives, 53,433 records, 48,566 winners (`E-BL-202`, `E-EFFECTIVE-TREE-20260830`) | Policy/catalog and effective winner receipt accepted | not applicable | not applicable | `P0-SOURCE-001/002`, `P0-CORPUS-001` |
-| Repository/code boundaries | all current 2,692 tracked paths, 27 rules, 14 generated consumers, 7 autoloads, and 13 high-conflict files | `P0-CODE-MAP-001` machine classification passes its focused checker but remains in independent verification; compact lane admission and later envelope splitting remain blocked on `P0-AGENTS-001`/`P0-LANES-001` | not applicable | not applicable | `P0-CODE-MAP-001`, `P0-AGENTS-001`, `P0-LANES-001`, `P0-HYGIENE-001` |
+| Source/catalog | 217 archives, 53,433 records, 48,566 winners (`E-BL-202`, `E-EFFECTIVE-TREE-20260830`) | Policy/catalog and effective winner receipt accepted | not applicable | not applicable | `P0-SOURCE-001`, `P0-SOURCE-002`, `P0-CORPUS-001` |
+| Repository/code boundaries | all current 2,692 tracked paths, 27 rules, 14 generated consumers, 7 autoloads, and 13 high-conflict files | `P0-CODE-MAP-001` machine classification passes its focused checker but remains in independent verification; compact lane admission is live, while exact envelope splitting remains blocked on `P0-LANES-001` | not applicable | not applicable | `P0-CODE-MAP-001`, `P0-AGENTS-001`, `P0-LANES-001`, `P0-HYGIENE-001` |
 | Public non-retail assets | 611 exact Git/LFS records in eight disjoint sets (`E-AUDIT-ASSETS-20260829`) | census and machine plan exist; index, dispositions, identity repair, export admission, and closure are not implemented | rooted consumers are mapped but current approximations and `all_resources` export remain live | no public asset establishes retail visual/audio parity | `P0-ASSET-HYGIENE-001` through `P0-ASSET-CLOSE-001`, `P0-GODOT-IDENTITY-INDEX-001`, `P0-GODOT-IDENTITY-001` |
 | Requirement graph and routing | 850 docs, 36,940 definitions, 597,886 assignments, 188,543 asset refs (`E-LEXICAL-CENSUS-20260830`) | lexical census accepted; executed semantic roots/edges and owner routing absent | target consumption matrix absent | target oracle matrix absent | `P0-CORPUS-003`, `P0-ROUTING-001`, `P0-EVIDENCE-001`, `P1-DATA-001` |
 | Factions/objects | 5,494 lexical object identifiers (`E-LEXICAL-CENSUS-20260830`) | faction/root reachability and domain membership await `P0-CORPUS-003`; current packs compile only 137 units/155 structures | broad 2.02 faction behavior unproved | broad authored presentation/audio unproved | `P0-CORPUS-003`, `P1-OBJECT-001`, `P1-SIM-001` |
 | Object modules | 236 lexical kinds / 24,230 declaration sites (`E-LEXICAL-CENSUS-20260830`) | exact 2.02 census accepted; semantic ownership/execution mapping absent | 2.02 execution/oracles absent | module-driven draw/animation/effects unproved | `P0-CORPUS-003`, `P1-MODULE-001`, `P1-MODULE-010`, `P1-MODULE-020`, `P1-MODULE-030`, `P1-MODULE-040`, `P1-MODULE-050` |
-| Maps | 419 effective paths; 349 MapCache rows; 299 MP payloads (`E-BL-202`, `E-AUDIT-CORPUS-20260829`) | old selected pack has 74 only; old reports pin 72/74 and 2.01 | nav, complete matches, scripts, AI, and mode parity absent | per-map visual/audio oracles absent | `P1-MAP-001/002`, `P1-SCRIPT-001`, `P1-QUAL-001` |
+| Maps | 419 effective paths; 349 MapCache rows; 299 MP payloads (`E-BL-202`, `E-AUDIT-CORPUS-20260829`) | old selected pack has 74 only; old reports pin 72/74 and 2.01 | nav, complete matches, scripts, AI, and mode parity absent | per-map visual/audio oracles absent | `P1-MAP-001`, `P1-MAP-002`, `P1-SCRIPT-001`, `P1-QUAL-001` |
 | Scripts/AI | 4,384 lexical script-call sites (`E-LEXICAL-CENSUS-20260830`) | AI roots, reference reachability, and domain membership await semantic closure | target call/state and authored AI outcome matrix absent | scripted cinematic/audio effects unproved | `P0-CORPUS-003`, `P1-SCRIPT-001`, `P1-AI-001` |
 | W3D | 14,539 effective paths; 545 overlay-touched (`E-AUDIT-CORPUS-20260829`, `E-BL-202`) | target recook/closure absent | strict target bundle load absent | matched models, animation, material, lighting evidence absent | `P1-ASSET-001`, `P1-VISUAL-001` |
 | Images/UI art | 9,063 effective image paths; 1,903 overlay-touched (`E-AUDIT-CORPUS-20260829`, `E-BL-202`) | target recook and authored-use graph absent | strict UI/object consumption absent | matched HUD/shell/terrain evidence absent | `P1-ASSET-002`, `P1-UI-001`, `P1-VISUAL-001` |
 | Effects | 233 BSE paths (`E-AUDIT-CORPUS-20260829`) | target conversion/closure absent | trigger/timing/attachment behavior unproved | particles/decals/weather/effects unproved | `P1-ASSET-003`, `P1-VISUAL-001` |
-| Audio/music | 19,194 effective paths; 390 overlay-touched; EnglishAudio contributes 2,066 winners (`E-AUDIT-CORPUS-20260829`) | target closure/recook absent | event/EVA/music routing unproved | timing, spatialization, priority, ducking, and mix unapproved | `P1-AUDIO-001/002` |
-| APT/WND shell/HUD | 86 APT and 18 WND effective paths plus the required shell-root query (`E-AUDIT-CORPUS-20260829`, `E-SCOPE-202`) | some authored conversion exists, but the shell-root graph and target closure await `P0-CORPUS-003` | all controls/transitions and target selection identity unproved | complete matched shell/HUD visuals/audio unapproved | `P0-CORPUS-003`, `P1-UI-001`, `P2-SHELL-001/002` |
+| Audio/music | 19,194 effective paths; 390 overlay-touched; EnglishAudio contributes 2,066 winners (`E-AUDIT-CORPUS-20260829`) | target closure/recook absent | event/EVA/music routing unproved | timing, spatialization, priority, ducking, and mix unapproved | `P1-AUDIO-001`, `P1-AUDIO-002` |
+| APT/WND shell/HUD | 86 APT and 18 WND effective paths plus the required shell-root query (`E-AUDIT-CORPUS-20260829`, `E-SCOPE-202`) | some authored conversion exists, but the shell-root graph and target closure await `P0-CORPUS-003` | all controls/transitions and target selection identity unproved | complete matched shell/HUD visuals/audio unapproved | `P0-CORPUS-003`, `P1-UI-001`, `P2-SHELL-001`, `P2-SHELL-002` |
 | Tutorials and campaigns | product policy requires BASIC/ADVANCED/WOTR tutorial and Good/Evil/Angmar roots and payloads (`E-SCOPE-202`) | the live menu still disables those entries (`game/src/ui/main_menu.gd:174-190`), no tracked `game/src/campaign/` runtime exists, and executed roots/membership/reachability await `P0-CORPUS-003` | tutorial/campaign missions, progression, and cinematics are unproved | tutorial/campaign presentation and audio are unapproved | `P0-CORPUS-003`, `P2-CAMPAIGN-001`, `P2-CAMPAIGN-002`, `P2-CAMPAIGN-003` |
 | War of the Ring | product policy requires all strategic roots (`E-SCOPE-202`) | executed roots, membership, and reachability await `P0-CORPUS-003` | turns, handoff, persistence, SP/MP unproved | strategic UI/audio unapproved | `P0-CORPUS-003`, `P2-WOTR-001`, `P2-WOTR-002`, `P2-WOTR-003` |
 | Create-a-Hero | product policy requires all CaH source/root families (`E-SCOPE-202`) | executed roots, membership, and reachability await `P0-CORPUS-003` | rules, progression, persistence, skirmish integration unproved | authoring UI/animation/audio unapproved | `P0-CORPUS-003`, `P2-CAH-001`, `P2-CAH-002` |
@@ -313,8 +313,8 @@ Cleanup is evidence-preserving work, not a delete sweep.
   evidence or last-known-good bundle.
 - **Worktrees:** the accepted 2026-08-30 inventory found 86 registered trees.
   Eighty have since been retired through exact state-bound archive/remove
-  protocols. Six remain registered: main, the active retention lane, and four
-  quarantined trees with tracked dirt, unmerged history, large physical
+  protocols. Five remain registered: main, the active retention lane, and three
+  quarantined legacy `.claude` trees with tracked dirt, unmerged history, large physical
   payloads, or missing/external junction targets. They require the hardened
   recovery path; generic forced worktree removal remains forbidden.
 - **Private packs/workspace:** retention and provenance pruning is a separate
@@ -345,10 +345,9 @@ As of this roadmap's audit identity:
 The integration owner should pull work in dependency order from the canonical
 ledger. Repository-readiness lanes run before product lanes:
 
-1. `P0-AGENTS-001` - finish hostile review and typed owner acceptance of the
-   exercised main-only control plane, then publish it so fresh agents receive
-   the same allocation, sibling-worktree, focused-check, evidence, and handoff
-   authority.
+1. `P0-AGENTS-001` - use the published control-plane candidate for allocation,
+   sibling worktrees, focused checks, typed evidence, and handoff while the
+   ledger governs final owner acceptance; do not revive pre-contract lanes.
 2. `P0-REPO-001`, `P0-HISTORY-INDEX-001` -> `P0-HISTORY-001`, and
    `P0-HYGIENE-001` - inventory all legacy trees, freeze exact dispositions,
    retire competing instructions, and close publication hygiene without
