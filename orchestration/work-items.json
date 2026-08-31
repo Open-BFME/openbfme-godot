@@ -1601,22 +1601,16 @@
       "kind": "verification-foundation",
       "priority": "P0",
       "allocationClass": "worker-lane",
-      "status": "in-progress",
+      "status": "blocked",
       "domainIds": [],
       "rootQueryIds": [],
       "dependsOn": [
         "P0-SOURCE-001"
       ],
       "ownership": {
-        "state": "assigned",
-        "assignee": "codex-gates",
-        "ownedPaths": [
-          "game/tests/retail_slice_runner.gd",
-          "importer/tests/test_retail_gate_script.py",
-          "run_retail_slice.bat",
-          "tools/gate-retail.ps1",
-          "tools/gate-rotwk-202.ps1"
-        ],
+        "state": "unassigned",
+        "assignee": null,
+        "ownedPaths": [],
         "candidatePaths": [
           "game/tests/retail_slice_runner.gd",
           "importer/tests/test_retail_gate_script.py",
@@ -1653,7 +1647,10 @@
           "exact RETAIL_SLICE_RESULT failed=0 is required",
           "stdout and stderr are both inspected",
           "negative tests pin exact diagnostics",
-          "generic wrapper reads the ledger and rejects blocked/unassigned/unknown items"
+          "generic wrapper reads the ledger and rejects blocked/unassigned/unknown items",
+          "lane admission is bound to the exact item, assignee, assignment commit, branch, structured command, and clean executed bytes",
+          "content and pack roots reject reparse traversal and source recipe identities are content-bound rather than shape-only",
+          "every child process has a deterministic timeout and complete descendant cleanup"
         ]
       },
       "verificationCommands": [
@@ -1675,7 +1672,10 @@
           "diagnosticPolicy": "strict-default"
         }
       ],
-      "blockers": []
+      "blockers": [
+        "independent review rejected commit 9fcc95dc8bda23c7e61fe49b711984fdc0b743a5: its hard-coded Oracle disposition is already stale on current main, so the exact integrated check would fail",
+        "the replacement gate must bind lane admission and executed bytes to the assigned row, reject reparse/content-root escape, validate content-bound source recipe identity, and time out and clean up child processes"
+      ]
     },
     {
       "id": "P0-ORACLE-001",
