@@ -869,6 +869,355 @@
       "blockers": []
     },
     {
+      "id": "P0-CORPUS-SCHEMA-001",
+      "title": "Close the semantic graph schema and identity algebra",
+      "kind": "source-foundation",
+      "priority": "P0",
+      "allocationClass": "worker-lane",
+      "status": "blocked",
+      "domainIds": [],
+      "rootQueryIds": [],
+      "dependsOn": [
+        "P0-CORPUS-002"
+      ],
+      "ownership": {
+        "state": "unassigned",
+        "assignee": null,
+        "ownedPaths": [],
+        "candidatePaths": [
+          "importer/openbfme_importer/semantic_graph_schema.py",
+          "tools/check-rotwk-202-semantic-schema.py",
+          "importer/tests/test_rotwk_202_semantic_schema.py"
+        ]
+      },
+      "scope": {
+        "deliverable": "A closed machine-validated schema for every semantic node, occurrence, edge, disposition, residual, evidence reference, stable ID preimage, canonical encoding, shard manifest, and resource bound used by the later projection, parser, closure, and assembly stages.",
+        "notIncluded": "Reading private retail payloads, projecting accepted rows, parsing non-lexical formats, executing roots, or claiming SOURCE closure."
+      },
+      "sourceEvidence": [],
+      "artifacts": [
+        "workspace/logs/P0-CORPUS-SCHEMA-001/semantic-schema-contract.json"
+      ],
+      "acceptance": {
+        "requiredLevels": [
+          "L0"
+        ],
+        "requiredOutputDimensions": {
+          "SOURCE": "NOT_REQUIRED",
+          "CONVERT": "NOT_REQUIRED",
+          "LOAD": "NOT_REQUIRED",
+          "BEHAVIOR": "NOT_REQUIRED",
+          "VISUAL": "NOT_REQUIRED",
+          "AUDIO": "NOT_REQUIRED"
+        },
+        "criteria": [
+          "the closed node-table universe explicitly includes source records, documents, definitions, assignments, all 5988 accepted object occurrences, module declarations, module-kind taxonomy, assets, opaque tokens, scripts, nested/directive/unknown sites, maps, map objects/libraries, APT movies/symbols, WND windows, and parser dispositions while explicitly excluding administrative tables",
+          "every table has exact required and optional fields, primitive/container types, enum values, foreign-key targets, evidence-ID referents, row ordering, type tag, ID prefix, and complete canonical ID preimage; case-fold collisions and duplicate preimages fail",
+          "every edge kind has one exact source family, target family, direction, occurrence/evidence cardinality, and rule for resolved, unresolved, and ambiguous emission",
+          "selector candidate families, assignment-to-owner lifting, containment direction, permitted root traversal edges, seed promotion, fixed-point iteration numbering, domain/map membership, residual backlinks, and orphan scope are closed without prose inference",
+          "accepted lexical rows and non-lexical parser rows have disjoint exact destinations, including explicit dispositions for the 332 effective INI/INC winners outside the 850 accepted lexical documents and for additive shadows that were not lexically scanned",
+          "canonical UTF-8 JSONL sharding, manifest hashing, maximum line/shard/row/edge/output sizes, streaming validation, and deterministic overflow diagnostics are fixed before any private generation",
+          "positive and hostile synthetic fixtures prove independent ID/foreign-key/cardinality validation without importing a builder closure helper"
+        ]
+      },
+      "verificationCommands": [
+        {
+          "steps": [
+            {
+              "toolRole": "python",
+              "invocation": "script",
+              "target": "tools/check-rotwk-202-semantic-schema.py",
+              "args": [
+                "--check"
+              ],
+              "toolchainProfile": "python-hermetic-v1"
+            }
+          ],
+          "availability": "planned",
+          "timeoutSeconds": 300,
+          "expectedMarkers": [
+            "ROTWK_202_SEMANTIC_SCHEMA PASS"
+          ],
+          "diagnosticPolicy": "strict-default"
+        }
+      ],
+      "blockers": [
+        "the schema design must receive an independent implementability review before worker allocation; rejected design-v3 left object, taxonomy, ID, edge, candidate, residual, and resource contracts open"
+      ]
+    },
+    {
+      "id": "P0-CORPUS-PROJECTION-001",
+      "title": "Project accepted source and lexical rows into typed semantic shards",
+      "kind": "source-foundation",
+      "priority": "P0",
+      "allocationClass": "worker-lane",
+      "status": "blocked",
+      "domainIds": [
+        "retail-skirmish",
+        "retail-campaigns",
+        "retail-war-of-the-ring",
+        "retail-create-a-hero",
+        "retail-shell"
+      ],
+      "rootQueryIds": [
+        "effective-retail-winners"
+      ],
+      "dependsOn": [
+        "P0-CORPUS-SCHEMA-001"
+      ],
+      "ownership": {
+        "state": "unassigned",
+        "assignee": null,
+        "ownedPaths": [],
+        "candidatePaths": [
+          "importer/openbfme_importer/semantic_projection.py",
+          "tools/build-rotwk-202-semantic-projection.py",
+          "importer/tests/test_rotwk_202_semantic_projection.py"
+        ]
+      },
+      "scope": {
+        "deliverable": "Content-addressed streaming projection of all 53433 source records and every accepted lexical document, definition, assignment, object occurrence, module site, asset-reference site, script call, nested site, directive, and unknown row into the accepted schema with exact provenance and total winner/shadow disposition.",
+        "notIncluded": "Parsing map/APT/WND or other non-lexical payloads, guessing opaque token semantics, resolving semantic references, executing roots, or assembling the final graph."
+      },
+      "sourceEvidence": [
+        "E-EFFECTIVE-TREE-20260830",
+        "E-LEXICAL-CENSUS-20260830"
+      ],
+      "artifacts": [
+        "workspace/retail-work/reports/compatibility/semantic-projection/manifest.json"
+      ],
+      "acceptance": {
+        "requiredLevels": [
+          "L1"
+        ],
+        "requiredOutputDimensions": {
+          "SOURCE": "REQUIRED",
+          "CONVERT": "NOT_REQUIRED",
+          "LOAD": "NOT_REQUIRED",
+          "BEHAVIOR": "NOT_REQUIRED",
+          "VISUAL": "NOT_REQUIRED",
+          "AUDIO": "NOT_REQUIRED"
+        },
+        "criteria": [
+          "trusted lane-to-main resolution binds the exact assignment row before using the canonical main private artifacts; arbitrary roots, recursive assignment discovery, reparse traversal, case aliases, or stale input digests fail",
+          "all 53433 effective-tree records project once with 48566 winner and 4867 shadow dispositions, and the 850 accepted lexical documents join bijectively to exact source record identity without silently treating unscanned additive shadows as lexical contributors",
+          "36940 definitions, 597886 assignments, all 5988 object occurrences representing 5494 unique IDs, 188543 asset-reference sites, 24230 module sites, 4384 script calls, and every accepted nested/directive/unknown row project exactly once",
+          "raw assignment joins verify exact value hash and token count; scalar rows emit no references, accepted reference rows are not retokenized, and opaque tokens remain non-semantic residual inputs",
+          "every effective winner receives exactly one lexical-covered, non-lexical-parser-required, or identity-only disposition under the accepted schema, including the measured 332 INI/INC winners outside the lexical census",
+          "generation streams schema-bounded shards, stays within the accepted resource envelope, is byte-identical across two runs, and binds baseline, policy, catalog, effective-tree, lexical-census, schema, and transitive source digests"
+        ]
+      },
+      "verificationCommands": [
+        {
+          "steps": [
+            {
+              "toolRole": "retail-python",
+              "invocation": "script",
+              "target": "tools/build-rotwk-202-semantic-projection.py",
+              "args": [
+                "--check"
+              ],
+              "toolchainProfile": "retail-python-hermetic-v1"
+            }
+          ],
+          "availability": "planned",
+          "timeoutSeconds": 7200,
+          "expectedMarkers": [
+            "ROTWK_202_SEMANTIC_PROJECTION PASS"
+          ],
+          "diagnosticPolicy": "strict-default"
+        }
+      ],
+      "blockers": [
+        "P0-CORPUS-SCHEMA-001 is incomplete"
+      ]
+    },
+    {
+      "id": "P0-CORPUS-PARSER-001",
+      "title": "Parse and disposition every non-lexical effective winner",
+      "kind": "source-foundation",
+      "priority": "P0",
+      "allocationClass": "worker-lane",
+      "status": "blocked",
+      "domainIds": [
+        "retail-skirmish",
+        "retail-campaigns",
+        "retail-war-of-the-ring",
+        "retail-create-a-hero",
+        "retail-shell"
+      ],
+      "rootQueryIds": [
+        "effective-retail-winners",
+        "all-map-payloads"
+      ],
+      "dependsOn": [
+        "P0-CORPUS-SCHEMA-001",
+        "P0-CORPUS-PROJECTION-001"
+      ],
+      "ownership": {
+        "state": "unassigned",
+        "assignee": null,
+        "ownedPaths": [],
+        "candidatePaths": [
+          "importer/openbfme_importer/semantic_nonlexical.py",
+          "tools/build-rotwk-202-semantic-nonlexical.py",
+          "importer/tests/test_rotwk_202_semantic_nonlexical.py"
+        ]
+      },
+      "scope": {
+        "deliverable": "Total, format-authenticated parser or identity-only disposition for every effective winner not covered by the accepted lexical census, with typed map, MapCache, APT/CONST/DAT/RU, WND, string/localization, script, terrain/navigation, audio/effect, movie, CaH, and WotR rows or explicit parser residuals.",
+        "notIncluded": "Inferring format from path prose, executing product roots, resolving cross-format semantic references, conversion, runtime support, or parity."
+      },
+      "sourceEvidence": [
+        "E-EFFECTIVE-TREE-20260830",
+        "E-LEXICAL-CENSUS-20260830"
+      ],
+      "artifacts": [
+        "workspace/retail-work/reports/compatibility/semantic-nonlexical/manifest.json"
+      ],
+      "acceptance": {
+        "requiredLevels": [
+          "L1"
+        ],
+        "requiredOutputDimensions": {
+          "SOURCE": "REQUIRED",
+          "CONVERT": "NOT_REQUIRED",
+          "LOAD": "NOT_REQUIRED",
+          "BEHAVIOR": "NOT_REQUIRED",
+          "VISUAL": "NOT_REQUIRED",
+          "AUDIO": "NOT_REQUIRED"
+        },
+        "criteria": [
+          "every projection row marked non-lexical-parser-required receives exactly one schema-declared parser family and parsed, identity-only, unsupported, or failed disposition; no effective winner is selected by a guessed path substring",
+          "the 332 measured INI/INC winners outside the lexical census have an explicit parser or identity-only contract rather than being mislabeled accepted lexical input",
+          "every map payload is retained even on parse failure; exact MapCache identity and map registration, multiplayer/scenario evidence, map object types, library targets, terrain, navigation, and script surfaces remain typed and hash-bound",
+          "APT companions are admitted only by exact same-stem triplets, RU geometry by exact admitted identity, WND through its real parser, and missing/ambiguous companions, limits, unsupported chunks/actions, or callbacks become explicit residuals",
+          "format-family counts, input source bytes, parser profiles, transitive parser source closure, errors, and sanitized reason codes independently validate against the schema",
+          "generation streams bounded shards, is byte-identical across two runs, and contains no machine path, raw retail payload, timestamp, or hidden fallback"
+        ]
+      },
+      "verificationCommands": [
+        {
+          "steps": [
+            {
+              "toolRole": "retail-python",
+              "invocation": "script",
+              "target": "tools/build-rotwk-202-semantic-nonlexical.py",
+              "args": [
+                "--check"
+              ],
+              "toolchainProfile": "retail-python-hermetic-v1"
+            }
+          ],
+          "availability": "planned",
+          "timeoutSeconds": 7200,
+          "expectedMarkers": [
+            "ROTWK_202_SEMANTIC_NONLEXICAL PASS"
+          ],
+          "diagnosticPolicy": "strict-default"
+        }
+      ],
+      "blockers": [
+        "P0-CORPUS-SCHEMA-001 and P0-CORPUS-PROJECTION-001 are incomplete"
+      ]
+    },
+    {
+      "id": "P0-CORPUS-CLOSURE-001",
+      "title": "Resolve semantic occurrences and execute all product roots",
+      "kind": "source-foundation",
+      "priority": "P0",
+      "allocationClass": "worker-lane",
+      "status": "blocked",
+      "domainIds": [
+        "retail-skirmish",
+        "retail-campaigns",
+        "retail-war-of-the-ring",
+        "retail-create-a-hero",
+        "retail-shell"
+      ],
+      "rootQueryIds": [
+        "effective-retail-winners",
+        "retail-reference-closure",
+        "skirmish-roots",
+        "all-map-payloads",
+        "campaign-roots",
+        "war-of-the-ring-roots",
+        "create-a-hero-roots",
+        "shell-roots"
+      ],
+      "dependsOn": [
+        "P0-CORPUS-PROJECTION-001",
+        "P0-CORPUS-PARSER-001"
+      ],
+      "ownership": {
+        "state": "unassigned",
+        "assignee": null,
+        "ownedPaths": [],
+        "candidatePaths": [
+          "importer/openbfme_importer/semantic_closure.py",
+          "tools/build-rotwk-202-semantic-closure.py",
+          "importer/tests/test_rotwk_202_semantic_closure.py"
+        ]
+      },
+      "scope": {
+        "deliverable": "Schema-exact reference occurrences, edges, residuals, literal selector dispositions, independently recomputable fixed points for all eight roots, and total five-domain plus map/mode dispositions over the accepted projection and non-lexical shards.",
+        "notIncluded": "Changing projection/parser rows, routing implementation files, conversion, runtime support, or treating unresolved/ambiguous/opaque rows as closure."
+      },
+      "sourceEvidence": [
+        "E-SCOPE-202",
+        "E-EFFECTIVE-TREE-20260830",
+        "E-LEXICAL-CENSUS-20260830"
+      ],
+      "artifacts": [
+        "workspace/retail-work/reports/compatibility/semantic-closure/manifest.json"
+      ],
+      "acceptance": {
+        "requiredLevels": [
+          "L1"
+        ],
+        "requiredOutputDimensions": {
+          "SOURCE": "REQUIRED",
+          "CONVERT": "NOT_REQUIRED",
+          "LOAD": "NOT_REQUIRED",
+          "BEHAVIOR": "NOT_REQUIRED",
+          "VISUAL": "NOT_REQUIRED",
+          "AUDIO": "NOT_REQUIRED"
+        },
+        "criteria": [
+          "every schema-declared semantic occurrence receives exactly one resolved, unresolved, ambiguous, or unsupported disposition with exact candidates, target, owner lift, evidence, and residual/edge cardinality",
+          "literal finite selector tables contain no wildcard, guessed retail name, or path substring; every candidate under every root has exactly one seed, promoted-seed, or not-seed disposition and every promotion cites its permitted edge",
+          "all eight root fixed points are recomputed independently from sorted seeds and the root-specific edge allowlist, with exact reached nodes, traversed edges, residuals, promotion iterations, and no placeholder or residual-blocked result",
+          "the semantic node universe is the schema's closed NODE_TABLES set; every node receives exactly one five-key domain disposition and every map exactly one many-to-many domain plus set-valued mode disposition",
+          "unknown, opaque, unresolved, ambiguous, unsupported, orphaned, unclassified, parser-failed, and mode-conflict rows remain explicit blocking residuals with reciprocal backlinks",
+          "hostile fixtures reject tampered seeds/reachability/iteration, owner lifting, edge direction, duplicate occurrence, missing domain key, duplicate map disposition, ID collision, extraneous row, and output/count/resource drift"
+        ]
+      },
+      "verificationCommands": [
+        {
+          "steps": [
+            {
+              "toolRole": "retail-python",
+              "invocation": "script",
+              "target": "tools/build-rotwk-202-semantic-closure.py",
+              "args": [
+                "--check"
+              ],
+              "toolchainProfile": "retail-python-hermetic-v1"
+            }
+          ],
+          "availability": "planned",
+          "timeoutSeconds": 7200,
+          "expectedMarkers": [
+            "ROTWK_202_SEMANTIC_CLOSURE PASS"
+          ],
+          "diagnosticPolicy": "strict-default"
+        }
+      ],
+      "blockers": [
+        "P0-CORPUS-PROJECTION-001 and P0-CORPUS-PARSER-001 are incomplete"
+      ]
+    },
+    {
       "id": "P0-CORPUS-003",
       "title": "Close the executable 2.02 semantic requirement graph",
       "kind": "source-foundation",
@@ -893,7 +1242,10 @@
         "shell-roots"
       ],
       "dependsOn": [
-        "P0-CORPUS-002"
+        "P0-CORPUS-SCHEMA-001",
+        "P0-CORPUS-PROJECTION-001",
+        "P0-CORPUS-PARSER-001",
+        "P0-CORPUS-CLOSURE-001"
       ],
       "ownership": {
         "state": "unassigned",
@@ -906,8 +1258,8 @@
         ]
       },
       "scope": {
-        "deliverable": "Execute all eight product root queries and emit stable typed nodes, semantic reference/provenance edges, domain membership, map/mode rows, resolution states, and explicit residuals for the exact accepted lexical census.",
-        "notIncluded": "Inferring implementation ownership, mutable files, terminal envelopes, conversion support, runtime support, or parity from lexical categories."
+        "deliverable": "Independently validate and assemble the accepted schema, projection, non-lexical parser, and executed-root closure shards into one content-addressed semantic requirement graph manifest for downstream routing and denominator discovery.",
+        "notIncluded": "Reimplementing child-stage parsing or closure, inferring implementation ownership, mutable files, terminal envelopes, conversion support, runtime support, or parity."
       },
       "sourceEvidence": [
         "E-SCOPE-202",
@@ -915,7 +1267,7 @@
         "E-LEXICAL-CENSUS-20260830"
       ],
       "artifacts": [
-        "workspace/retail-work/reports/compatibility/rotwk-202-v9.7.7-semantic-graph.json"
+        "workspace/retail-work/reports/compatibility/rotwk-202-v9.7.7-semantic-graph/manifest.json"
       ],
       "acceptance": {
         "requiredLevels": [
@@ -930,13 +1282,12 @@
           "AUDIO": "NOT_REQUIRED"
         },
         "criteria": [
-          "all eight root queries execute against the accepted effective-tree and lexical-census identities rather than copying policy descriptions",
-          "stable hash-derived node and edge IDs cover definitions, assignments, references, assets, scripts, modules, maps, roots, domains, provenance, and residuals",
-          "every lexical assignment projects exactly once as scalar, reference, collection-reference, or opaque-unresolved",
-          "every semantic reference edge projects exactly once as resolved, unresolved, or ambiguous, and every root, domain, and map payload has exactly one typed membership/mode disposition",
-          "all five required retail domains have explicit membership and every effective map payload has a mode/domain disposition",
-          "unknown, opaque, unresolved, ambiguous, orphaned, and unclassified rows remain explicit blocking residuals",
-          "repeat generation is byte-identical and binds the exact baseline, effective-tree, lexical-census, product-policy, and source-schema digests"
+          "the assembler accepts only the exact independently reviewed child manifests and recomputes every shard hash, schema/version, identity chain, foreign key, row count, resource bound, and cross-stage cardinality",
+          "all 53433 source records and every accepted lexical family row reconcile once, every non-lexical-required winner has one parser disposition, and no child row is missing, duplicated, or extraneous",
+          "all eight root results independently recompute from the assembled typed edges and every root, closed semantic node, five-domain disposition, map/mode row, reference occurrence, and residual backlink has exact schema cardinality",
+          "unknown, opaque, unresolved, ambiguous, unsupported, parser-failed, orphaned, unclassified, and mode-conflict rows remain explicit blocking residuals rather than disappearing during assembly",
+          "the final portable manifest exposes stable content addresses and summary counts without embedding machine paths or retail payloads, and downstream consumers load only addressed shards through the schema validator",
+          "two fresh assemblies are byte-identical and bind the exact baseline, product policy, effective tree, lexical census, schema, projection, parser, closure, and transitive implementation source identities"
         ]
       },
       "verificationCommands": [
@@ -963,8 +1314,8 @@
         }
       ],
       "blockers": [
-        "independent review rejected commit a6a73bedda66c0541218da6eecf5385d25820973: root queries were placeholder rows rather than executed results, and required definition/asset/script/module/provenance node families were absent",
-        "the accepted lexical census already retains asset reference tokens, resolution candidates, and moduleKind sites; the next design must project those rows, execute all roots, and reparse only opaque or absent semantic data against exact effective source before SOURCE can close"
+        "independent reviews rejected implementation a6a73bed and monolithic design-v3 cde6fc40197aa735d0aa2a66e9f1b512b99cc1123ffc4509dfc74795c26b1a32 for placeholder roots, omitted object/taxonomy families, undefined IDs and edge cardinality, a measured 850-versus-1182 INI dispatch gap, unsafe lane input discovery, shadow ambiguity, incoherent selector owner lifting, and unbounded multi-gigabyte scope",
+        "P0-CORPUS-SCHEMA-001, P0-CORPUS-PROJECTION-001, P0-CORPUS-PARSER-001, and P0-CORPUS-CLOSURE-001 must be independently accepted before final assembly"
       ]
     },
     {
