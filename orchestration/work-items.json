@@ -13019,7 +13019,7 @@
       "kind": "repository-hygiene",
       "priority": "P0",
       "allocationClass": "worker-lane",
-      "status": "pending",
+      "status": "blocked",
       "domainIds": [
         "release-hygiene"
       ],
@@ -13043,6 +13043,79 @@
       "sourceEvidence": [],
       "artifacts": [
         "workspace/logs/P0-PLAYTEST-VERSION-001/dist-pipeline-check.txt"
+      ],
+      "acceptance": {
+        "requiredLevels": [
+          "L4"
+        ],
+        "requiredOutputDimensions": {
+          "SOURCE": "NOT_REQUIRED",
+          "CONVERT": "NOT_REQUIRED",
+          "LOAD": "NOT_REQUIRED",
+          "BEHAVIOR": "REQUIRED",
+          "VISUAL": "NOT_REQUIRED",
+          "AUDIO": "NOT_REQUIRED"
+        },
+        "criteria": [
+          "VERSION, game/project.godot, game/scenes/boot.tscn, and game/data/build_info.json agree exactly on 0.2.13",
+          "docs/patch-notes/v0.2.13.md exists, is substantive, names how to launch, summarizes only accepted commits after ed02c11bf8ed7c4c23023eb93ebc21ddd0d29577, and contains an explicit Known gaps section",
+          "the notes do not claim rejected, blocked, worker-lane-only, or unmerged Angmar, Minas Gate, or fortress plume work",
+          "the existing publisher preflight accepts the version chain without weakening any refusal"
+        ]
+      },
+      "verificationCommands": [
+        {
+          "steps": [
+            {
+              "toolRole": "powershell",
+              "invocation": "script",
+              "target": "tools/Test-DistPipeline.ps1",
+              "args": [],
+              "toolchainProfile": "rotwk-gate-v1"
+            }
+          ],
+          "availability": "current-windows-toolchain",
+          "timeoutSeconds": 900,
+          "expectedMarkers": [
+            "DIST PIPELINE GATE PASSED"
+          ],
+          "diagnosticPolicy": "strict-default"
+        }
+      ],
+      "blockers": [
+        "The corrected exact command invalidated the original assignment hash after its clean two-file patch was prepared; superseded by P0-PLAYTEST-VERSION-002 from the corrected baseline"
+      ]
+    },
+    {
+      "id": "P0-PLAYTEST-VERSION-002",
+      "title": "Repair the existing v0.2.13 playtest metadata chain from the corrected gate baseline",
+      "kind": "repository-hygiene",
+      "priority": "P0",
+      "allocationClass": "worker-lane",
+      "status": "pending",
+      "domainIds": [
+        "release-hygiene"
+      ],
+      "rootQueryIds": [
+        "repository-hygiene"
+      ],
+      "dependsOn": [],
+      "ownership": {
+        "state": "unassigned",
+        "assignee": null,
+        "ownedPaths": [],
+        "candidatePaths": [
+          "VERSION",
+          "docs/patch-notes/v0.2.13.md"
+        ]
+      },
+      "scope": {
+        "deliverable": "Make the already-authored in-game v0.2.13 identity consistent by advancing VERSION to 0.2.13 and adding honest player-facing patch notes for accepted main history since the v0.2.12 build commit ed02c11bf8ed7c4c23023eb93ebc21ddd0d29577.",
+        "notIncluded": "Changing gameplay code, claiming unmerged Angmar or Minas work, publishing or building v0.2.13, changing the existing project/boot/build-info 0.2.13 identity, or editing the canonical-current pointer implementation."
+      },
+      "sourceEvidence": [],
+      "artifacts": [
+        "workspace/logs/P0-PLAYTEST-VERSION-002/dist-pipeline-check.txt"
       ],
       "acceptance": {
         "requiredLevels": [
