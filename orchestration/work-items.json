@@ -12390,7 +12390,7 @@
       "kind": "conversion-behavior",
       "priority": "P1",
       "allocationClass": "worker-lane",
-      "status": "in-progress",
+      "status": "blocked",
       "domainIds": [
         "retail-skirmish"
       ],
@@ -12404,20 +12404,9 @@
         "P0-CODE-MAP-001"
       ],
       "ownership": {
-        "state": "assigned",
-        "assignee": "codex-minas-gate-v2",
-        "ownedPaths": [
-          "importer/openbfme_importer/playable_unit_compiler.py",
-          "importer/openbfme_importer/castle_fixtures.py",
-          "importer/tests/test_playable_unit_compiler.py",
-          "importer/tests/test_castle_fixtures.py",
-          "game/src/retail_slice/retail_map_data.gd",
-          "game/src/retail_slice/retail_sim_contracts_abilities.gd",
-          "game/src/retail_slice/retail_sim_combat.gd",
-          "game/src/retail_slice/retail_sim_neutrals.gd",
-          "game/tests/minas_gate_nav_v202_runner.gd",
-          "tools/gate-minas-gate-v202.ps1"
-        ],
+        "state": "unassigned",
+        "assignee": null,
+        "ownedPaths": [],
         "candidatePaths": [
           "importer/openbfme_importer/playable_unit_compiler.py",
           "importer/openbfme_importer/castle_fixtures.py",
@@ -12463,6 +12452,99 @@
           "request_gate_open synchronizes navigation before returning, close and reopen split and connect the deterministic seam, and no required transition uses a fallback",
           "the focused behavior runner destroys a closed gate through the production structure-damage path, proves the route opens from the resulting zero health, and proves the breached channel cannot reclose",
           "no direct set_castle_gate_pathing breached=true call stands in for the required combat transition"
+        ]
+      },
+      "verificationCommands": [
+        {
+          "steps": [
+            {
+              "toolRole": "powershell",
+              "invocation": "script",
+              "target": "tools/gate-minas-gate-v202.ps1",
+              "args": [],
+              "toolchainProfile": "rotwk-gate-v1"
+            }
+          ],
+          "availability": "current-private-source-and-pinned-godot",
+          "timeoutSeconds": 1200,
+          "expectedMarkers": [
+            "MINAS_GATE_202 PASS"
+          ],
+          "diagnosticPolicy": "strict-default"
+        }
+      ],
+      "blockers": [
+        "Independent review rejected 09ef0569f2e6571856cae5e05e906b27b3551d77 because angle 0 never exercised yaw rotation and the runner used stale 10500 ms reset timing instead of effective v9.7.7 6000 ms; superseded by P1-MINAS-GATE-003"
+      ]
+    },
+    {
+      "id": "P1-MINAS-GATE-003",
+      "title": "Prove exact rotated Minas gate navigation and combat breach timing",
+      "kind": "conversion-behavior",
+      "priority": "P1",
+      "allocationClass": "worker-lane",
+      "status": "pending",
+      "domainIds": [
+        "retail-skirmish"
+      ],
+      "rootQueryIds": [
+        "all-map-payloads",
+        "retail-reference-closure"
+      ],
+      "dependsOn": [
+        "P0-SOURCE-001",
+        "P0-CORPUS-001",
+        "P0-CODE-MAP-001"
+      ],
+      "ownership": {
+        "state": "unassigned",
+        "assignee": null,
+        "ownedPaths": [],
+        "candidatePaths": [
+          "importer/openbfme_importer/playable_unit_compiler.py",
+          "importer/openbfme_importer/castle_fixtures.py",
+          "importer/tests/test_playable_unit_compiler.py",
+          "importer/tests/test_castle_fixtures.py",
+          "game/src/retail_slice/retail_map_data.gd",
+          "game/src/retail_slice/retail_sim_contracts_abilities.gd",
+          "game/src/retail_slice/retail_sim_combat.gd",
+          "game/src/retail_slice/retail_sim_neutrals.gd",
+          "game/tests/minas_gate_nav_v202_runner.gd",
+          "tools/gate-minas-gate-v202.ps1"
+        ]
+      },
+      "scope": {
+        "deliverable": "A fresh one-commit implementation and focused proof of the exact v9.7.7 Minas gate anchor, named geometry, non-zero authored placement yaw, 6000 ms reset, and synchronous open, close, reopen, and live combat-destruction navigation transitions.",
+        "notIncluded": "Whole-map qualification, visual approval, selection publication, axis-aligned proof substitutes, stale 2.01 timing, or direct map-API breach assertions that bypass structure damage."
+      },
+      "sourceEvidence": [
+        "E-BL-202",
+        "E-EFFECTIVE-TREE-20260830"
+      ],
+      "artifacts": [
+        "workspace/logs/P1-MINAS-GATE-003/minas-gate-check.json"
+      ],
+      "acceptance": {
+        "requiredLevels": [
+          "L1",
+          "L2",
+          "L4"
+        ],
+        "requiredOutputDimensions": {
+          "SOURCE": "REQUIRED",
+          "CONVERT": "REQUIRED",
+          "LOAD": "NOT_REQUIRED",
+          "BEHAVIOR": "REQUIRED",
+          "VISUAL": "NOT_REQUIRED",
+          "AUDIO": "NOT_REQUIRED"
+        },
+        "criteria": [
+          "the layered winner manifest proves data/ini/object/civilian/ministirithbuildings.ini SHA-256 f5e06cc70ac92b2e505c2f6430c50ded012a37ae4ad80200b280335ab4f14b07 from precedence-zero __patch202.big and the focused conversion asserts ResetTimeInMilliseconds 6000",
+          "GeometryRotationAnchorOffset plus Closed, OpenLeft, and OpenRight named geometry survive production conversion without guessed values",
+          "the runner uses the exact non-zero authored Minas placement yaw when available, or a separately source-labeled non-cardinal mutation proof, and analytically asserts the rotated anchor origin and rotated channel so removing or sign-flipping the production rotation fails",
+          "map yaw plus authored anchor and geometry determine the gate channel; the four-axis nearest-region heuristic is removed as parity authority and an axis-aligned seam cannot satisfy the focused check",
+          "request_gate_open synchronizes navigation before returning and the effective 6000 ms reset is represented as exactly 60 deterministic 100 ms ticks",
+          "the focused runner closes and reopens the rotated seam, destroys a closed gate through production structure damage, proves zero-health route opening, and proves the breached channel cannot reclose without any direct breached=true shortcut or fallback"
         ]
       },
       "verificationCommands": [
