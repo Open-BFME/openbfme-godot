@@ -12836,7 +12836,7 @@
       "kind": "conversion-behavior",
       "priority": "P1",
       "allocationClass": "worker-lane",
-      "status": "pending",
+      "status": "in-progress",
       "domainIds": [
         "retail-skirmish"
       ],
@@ -12850,9 +12850,19 @@
         "P0-CODE-MAP-001"
       ],
       "ownership": {
-        "state": "unassigned",
-        "assignee": null,
-        "ownedPaths": [],
+        "state": "assigned",
+        "assignee": "codex-angmar-thrall-v2",
+        "ownedPaths": [
+          "importer/openbfme_importer/module_contracts.py",
+          "importer/openbfme_importer/playable_unit_compiler.py",
+          "importer/tests/test_module_contracts_batch.py",
+          "importer/tests/test_playable_unit_compiler.py",
+          "game/src/retail_slice/retail_sim_config.gd",
+          "game/src/retail_slice/retail_sim_contracts_behaviors.gd",
+          "game/src/retail_slice/retail_sim_upgrades.gd",
+          "game/tests/angmar_thrall_replacement_runner.gd",
+          "tools/run-angmar-thrall-replacement.ps1"
+        ],
         "candidatePaths": [
           "importer/openbfme_importer/module_contracts.py",
           "importer/openbfme_importer/playable_unit_compiler.py",
