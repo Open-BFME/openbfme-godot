@@ -1683,7 +1683,7 @@
       "kind": "oracle-foundation",
       "priority": "P0",
       "allocationClass": "worker-lane",
-      "status": "in-progress",
+      "status": "blocked",
       "domainIds": [
         "retail-skirmish",
         "retail-campaigns",
@@ -1696,12 +1696,9 @@
         "P0-SOURCE-001"
       ],
       "ownership": {
-        "state": "assigned",
-        "assignee": "codex-oracle",
-        "ownedPaths": [
-          "tools/rotwk_202_oracle.py",
-          "importer/tests/test_rotwk_202_oracle_contract.py"
-        ],
+        "state": "unassigned",
+        "assignee": null,
+        "ownedPaths": [],
         "candidatePaths": [
           "tools/rotwk_202_oracle.py",
           "importer/tests/test_rotwk_202_oracle_contract.py"
@@ -1733,6 +1730,8 @@
         "criteria": [
           "oracle executable SHA-256 matches baseline",
           "profiles and outputs are isolated",
+          "every launch-plan profile and environment path resolves inside its own content-addressed scenario run and differs across scenarios",
+          "launch arguments use a closed contract that cannot override profile, output, source, or executable containment",
           "scenario schema covers behavior, visual, and audio matched conditions",
           "reviewer identity/disposition is mandatory and no rows are pre-approved"
         ]
@@ -1756,7 +1755,10 @@
           "diagnosticPolicy": "strict-default"
         }
       ],
-      "blockers": []
+      "blockers": [
+        "independent review rejected commit df5140c247d6702859274b9de3a16b8efce8d2bb: distinct scenario profiles emitted identical unbound profile/* environment maps, allowing cross-scenario collisions",
+        "the replacement oracle must bind environment paths to each content-addressed scenario run, close the launch-argument surface, and add a two-scenario adversarial isolation test"
+      ]
     },
     {
       "id": "P0-AGENTS-001",
