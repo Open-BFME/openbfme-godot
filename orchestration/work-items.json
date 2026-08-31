@@ -1767,7 +1767,7 @@
       "kind": "oracle-foundation",
       "priority": "P0",
       "allocationClass": "worker-lane",
-      "status": "blocked",
+      "status": "in-progress",
       "domainIds": [
         "retail-skirmish",
         "retail-campaigns",
@@ -1780,9 +1780,12 @@
         "P0-SOURCE-001"
       ],
       "ownership": {
-        "state": "unassigned",
-        "assignee": null,
-        "ownedPaths": [],
+        "state": "assigned",
+        "assignee": "codex-oracle-v2",
+        "ownedPaths": [
+          "tools/rotwk_202_oracle.py",
+          "importer/tests/test_rotwk_202_oracle_contract.py"
+        ],
         "candidatePaths": [
           "tools/rotwk_202_oracle.py",
           "importer/tests/test_rotwk_202_oracle_contract.py"
