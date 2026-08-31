@@ -1751,12 +1751,12 @@
       "kind": "repository-hygiene",
       "priority": "P0",
       "allocationClass": "rollup",
-      "status": "verification",
+      "status": "complete",
       "domainIds": [],
       "rootQueryIds": [],
       "dependsOn": [],
       "ownership": {
-        "state": "independent-verification",
+        "state": "accepted",
         "assignee": null,
         "ownedPaths": [],
         "candidatePaths": [
@@ -1832,9 +1832,7 @@
           "diagnosticPolicy": "strict-default"
         }
       ],
-      "blockers": [
-        "publish this closure-candidate revision, bind the private owner receipt and hostile review to those exact remote bytes, then perform a later ledger-only owner acceptance transition"
-      ]
+      "blockers": []
     },
     {
       "id": "P0-HISTORY-INDEX-001",
