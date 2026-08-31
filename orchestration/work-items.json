@@ -2734,19 +2734,17 @@
       "kind": "repository-hygiene",
       "priority": "P0",
       "allocationClass": "worker-lane",
-      "status": "verification",
+      "status": "blocked",
       "domainIds": [],
       "rootQueryIds": [],
       "dependsOn": [],
       "ownership": {
-        "state": "independent-verification",
+        "state": "unassigned",
         "assignee": null,
         "ownedPaths": [],
         "candidatePaths": [
-          "docs/CODE_OWNERSHIP.md",
           "tools/check-repository-boundaries.py",
-          "importer/tests/test_repository_boundaries.py",
-          "game/project.godot"
+          "importer/tests/test_repository_boundaries.py"
         ]
       },
       "scope": {
@@ -2776,6 +2774,7 @@
           "every tracked top-level and game data root has one non-overlapping class",
           "shipping Godot entrypoint and GDScript authority are explicit",
           "generated and historical files cannot satisfy current source evidence",
+          "every row traversed while rooting current evidence is itself current; a historical intermediary cannot relay a current root",
           "files over the conflict threshold have owner seams and focused test routes",
           "project metadata names exact RotWK Patch 2.02 v9.7.7 rather than an inspired approximation"
         ]
@@ -2833,9 +2832,7 @@
           "retention": "Current focused regression test; run with the pinned importer interpreter."
         }
       ],
-      "blockers": [
-        "fresh typed completion/source/dimension receipts required after P0-AGENTS-001 integration"
-      ]
+      "blockers": []
     },
     {
       "id": "P0-ASSET-HYGIENE-001",
