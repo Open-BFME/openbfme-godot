@@ -23,7 +23,7 @@
   },
   "target": {
     "contractId": "openbfme.rotwk-202-v9.7.7.product-scope",
-    "productPolicySha256": "56a7a427947abb06e8fd820d5a3b6f116ae31f7ffe5950949431143d9a96ec10",
+    "productPolicySha256": "ff292f92857a4ebcac17ada3649563d7d810e1718683212bc4486c9b67af7b58",
     "baselineId": "rotwk-202-v9.7.7-en",
     "baselineReceiptSha256": "2f52ff76871f654aafd2c87dea790f737e67864078b84a2cb07dd40a69644064",
     "archivePolicySha256": "aaf30a92eacc76a8b11c0534235e569653f06fecb47400e28260981b5a04cf31",
@@ -206,7 +206,7 @@
       "id": "E-SCOPE-202",
       "type": "tracked-contract",
       "path": "contracts/rotwk-202-v9.7.7-product-scope.json",
-      "productPolicySha256": "56a7a427947abb06e8fd820d5a3b6f116ae31f7ffe5950949431143d9a96ec10",
+      "productPolicySha256": "ff292f92857a4ebcac17ada3649563d7d810e1718683212bc4486c9b67af7b58",
       "retailDomains": [
         "retail-skirmish",
         "retail-campaigns",
@@ -301,8 +301,8 @@
       ],
       "artifact": {
         "path": "workspace/retail-work/reports/compatibility/rotwk-202-v9.7.7-feature-graph.json",
-        "bytes": 322749028,
-        "sha256": "d116ea3cc09a7454f3bc52ffe6db0dbc9b03010cfe3cab86d7a50888f7c3793b",
+        "bytes": 322749077,
+        "sha256": "cdb25cf7043b8d3e0d8649c54c365c1bddf6ad15966b35405ea8836aff22d7fa",
         "implementationRevision": "68cbdde1"
       },
       "measurements": {
@@ -840,7 +840,7 @@
           "290942 opaque assignments, 76656 unresolved asset references, and 2203 ambiguous asset references remain explicit lexical residuals and do not imply semantic closure",
           "census binds source schema, accepted effective tree, and exact catalog",
           "the accepted artifact receipt binds implementation revision, portable feature-census path, byte length, and lowercase SHA-256",
-          "accepted private feature graph is 322749028 bytes with SHA-256 d116ea3cc09a7454f3bc52ffe6db0dbc9b03010cfe3cab86d7a50888f7c3793b at implementation revision 68cbdde1"
+          "accepted private feature graph is 322749077 bytes with SHA-256 cdb25cf7043b8d3e0d8649c54c365c1bddf6ad15966b35405ea8836aff22d7fa at implementation revision 68cbdde1"
         ]
       },
       "verificationCommands": [
@@ -10606,7 +10606,7 @@
     },
     {
       "id": "P2-CAMPAIGN-001",
-      "title": "Convert and strict-load all campaign roots, maps, and progression data",
+      "title": "Convert and strict-load all tutorial and campaign roots, maps, and progression data",
       "kind": "conversion",
       "priority": "P2",
       "allocationClass": "closure-envelope",
@@ -10635,8 +10635,8 @@
         ]
       },
       "scope": {
-        "deliverable": "Good/Evil/Angmar campaign roots, maps, progression, object/assets, and transitions convert and strict-load.",
-        "notIncluded": "Mission behavior/cinematics or full campaign qualification."
+        "deliverable": "BASIC/ADVANCED/WOTR tutorial and Good/Evil/Angmar campaign roots, maps, progression, object/assets, and transitions convert and strict-load.",
+        "notIncluded": "Tutorial/campaign mission behavior, cinematics, or full qualification."
       },
       "sourceEvidence": [
         "E-SCOPE-202",
@@ -10660,9 +10660,9 @@
           "AUDIO": "NOT_REQUIRED"
         },
         "criteria": [
-          "all campaign graph roots and references close",
+          "all BASIC/ADVANCED/WOTR tutorial and Good/Evil/Angmar campaign graph roots and references close",
           "clean conversion is deterministic",
-          "all required missions strict-load exact bundles",
+          "all required tutorial and campaign missions strict-load exact bundles",
           "unknown payloads block"
         ]
       },
@@ -10694,7 +10694,7 @@
     },
     {
       "id": "P2-CAMPAIGN-002",
-      "title": "Execute campaign mission scripts, objectives, cinematics, UI, and audio",
+      "title": "Execute tutorial and campaign mission scripts, objectives, cinematics, UI, and audio",
       "kind": "parity",
       "priority": "P2",
       "allocationClass": "closure-envelope",
@@ -10726,8 +10726,8 @@
         ]
       },
       "scope": {
-        "deliverable": "All mission state, objectives, briefings, cinematics, scripted events, transitions, UI, and audio execute from authored data.",
-        "notIncluded": "Qualification of full campaign runs."
+        "deliverable": "All tutorial and campaign mission state, objectives, briefings, cinematics, scripted events, transitions, UI, and audio execute from authored data.",
+        "notIncluded": "Qualification of complete tutorial and campaign runs."
       },
       "sourceEvidence": [
         "E-SCOPE-202"
@@ -10750,9 +10750,9 @@
           "AUDIO": "REQUIRED"
         },
         "criteria": [
-          "every required mission script/objective/cinematic row executes",
+          "every required tutorial and campaign mission script/objective/cinematic row executes",
           "progression/state is deterministic",
-          "matched behavior/interaction/audio scenarios pass",
+          "matched tutorial and campaign behavior/interaction/audio scenarios pass",
           "no skipped/deferred mission blocker remains"
         ]
       },
@@ -10779,12 +10779,12 @@
         }
       ],
       "blockers": [
-        "Campaign content and shared script/UI/audio systems are incomplete"
+        "Tutorial/campaign content and shared script/UI/audio systems are incomplete"
       ]
     },
     {
       "id": "P2-CAMPAIGN-003",
-      "title": "Qualify complete campaign progression and mission parity",
+      "title": "Qualify complete tutorial and campaign progression and mission parity",
       "kind": "product-qualification",
       "priority": "P2",
       "allocationClass": "closure-envelope",
@@ -10813,7 +10813,7 @@
         ]
       },
       "scope": {
-        "deliverable": "Complete mission/progression/save-resume/reliability and matched behavior/visual/audio qualification across shipped campaigns.",
+        "deliverable": "Complete mission/progression/save-resume/reliability and matched behavior/visual/audio qualification across shipped tutorials and Good/Evil/Angmar campaigns.",
         "notIncluded": "Other product domains."
       },
       "sourceEvidence": [
@@ -10836,9 +10836,9 @@
           "AUDIO": "REQUIRED"
         },
         "criteria": [
-          "all required campaign rows are current and complete",
-          "campaigns complete end to end with persistence",
-          "matched presentation and behavior rows are approved",
+          "all required tutorial and Good/Evil/Angmar campaign rows are current and complete",
+          "tutorials and Good/Evil/Angmar campaigns complete end to end with persistence",
+          "matched tutorial/campaign presentation and behavior rows are approved",
           "zero severity-0/1 or reliability blockers"
         ]
       },
@@ -10865,7 +10865,7 @@
         }
       ],
       "blockers": [
-        "Campaign runtime and shared visual/audio parity are incomplete"
+        "Tutorial/campaign runtime and shared visual/audio parity are incomplete"
       ]
     },
     {

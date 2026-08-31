@@ -33,7 +33,7 @@ tracked files contain only identities, counts, methods, and sanitized results.
 | `E-SCOPE-202` | [`contracts/rotwk-202-v9.7.7-product-scope.json`](../contracts/rotwk-202-v9.7.7-product-scope.json) | included product domains, root discovery, evidence lanes, complete-claim rules | Policy/denominator only |
 | `E-AUDIT-CORPUS-20260829` | Sanitized receipt in the canonical ledger, reproduced with `InstallCatalog`, `retail-ini-coverage.py`, and `map_census.py` against catalog `e1485aa8...` | effective winner, file-type, semantic, object-module, map-cache, and audio counts | Structural L1; no conversion/parity claim |
 | `E-EFFECTIVE-TREE-20260830` | Accepted private artifact at implementation `55802bba`, SHA-256 `52fe8f2e...` | 53,433 archive records, 48,566 effective winners, 4,867 shadows, and precedence/provenance chains | L1 effective-tree closure only |
-| `E-LEXICAL-CENSUS-20260830` | Accepted private artifact at implementation `68cbdde1`, SHA-256 `d116ea3c...` | exhaustive lexical accounting for 850 INIs, 36,940 definitions, 597,886 assignments, modules, scripts, and asset-reference sites | L1 lexical census only; no executed roots, semantic reference closure, domain routing, conversion, or parity |
+| `E-LEXICAL-CENSUS-20260830` | Accepted private artifact at implementation `68cbdde1`, SHA-256 `cdb25cf...` | exhaustive lexical accounting for 850 INIs, 36,940 definitions, 597,886 assignments, modules, scripts, and asset-reference sites | L1 lexical census only; no executed roots, semantic reference closure, domain routing, conversion, or parity |
 | `E-AUDIT-CURRENT-20260829` | Baseline `currentCheckoutSnapshot`, `workspace/content-packs/selection.json`, and named private reports | audited implementation/selection boundary and stale-report diagnoses | Historical red baseline only |
 | `E-AUDIT-REPO-20260829` | Read-only Git/worktree and ignored-payload inventory summarized in the ledger | cleanup risk and retention requirements | Repository hygiene only |
 | `E-AUDIT-ASSETS-20260829` | Git-object/LFS census over two exact roots and eight exact extra paths at revision `f70f13eb...` | 611-record public-asset universe, eight disjoint disposition sets, Godot metadata debt, and literal candidate digests | L0 inventory and planning only; no deletion, load, or parity claim |
@@ -51,7 +51,7 @@ The source identity is pinned. Product conversion and parity are not.
 | Archive policy | **Accepted**: policy `aaf30a92eacc76a8b11c0534235e569653f06fecb47400e28260981b5a04cf31` | `E-BL-202` | Nearby 2.01, BFME2-only, and arbitrary install scans are not substitutes. |
 | Layered catalog | **Accepted**: catalog `e1485aa8af794e0d154d2f5ccb65fa24af937c4ac9731f27d62e0eef9753c748` | `E-BL-202` | The exact denominator is 53,433 raw records. |
 | Effective tree receipt | **Sealed**: 48,566 winners + 4,867 shadows, SHA-256 `52fe8f2e...` | `E-EFFECTIVE-TREE-20260830` | Precedence and byte provenance are closed; feature semantics are not. |
-| Lexical feature census | **Sealed with a strict claim limit**: SHA-256 `d116ea3c...` | `E-LEXICAL-CENSUS-20260830` | Syntax is exhaustively accounted, but 290,942 opaque assignments, 76,656 unresolved asset references, and 2,203 ambiguous asset references remain explicit. |
+| Lexical feature census | **Sealed with a strict claim limit**: SHA-256 `cdb25cf...` | `E-LEXICAL-CENSUS-20260830` | Syntax is exhaustively accounted, but 290,942 opaque assignments, 76,656 unresolved asset references, and 2,203 ambiguous asset references remain explicit. |
 | Semantic requirement graph | **Absent** | `P0-CORPUS-003` | Product roots, typed target edges, domain membership, map/mode rows, and residual closure are not yet generated. |
 | Owner routing policy | **Absent** | `P0-ROUTING-001` | No agent may infer terminal envelope, mutable files, prerequisites, checks, or evidence dimensions. |
 | Current selected packs | **Invalid for 2.02 parity**: 100 mounted refs, zero audited 2.02 source markers | `E-AUDIT-CURRENT-20260829` | Old pack success cannot count toward 2.02. |
@@ -60,7 +60,7 @@ The source identity is pinned. Product conversion and parity are not.
 | Behavior parity | **Unproved** | `E-BL-202`, `E-SCOPE-202` | No subsystem may claim gameplay parity. |
 | Visual parity | **Unproved** | `E-BL-202`, `E-SCOPE-202` | Asset presence, load, and screenshots without matched oracle conditions do not qualify. |
 | Audio parity | **Unproved** | `E-BL-202`, `E-SCOPE-202` | Audio paths or playback alone do not qualify timing, routing, and mix. |
-| Complete product | **Blocked** | `E-SCOPE-202` | Skirmish, shell, campaigns, War of the Ring, and Create-a-Hero all remain required. |
+| Complete product | **Blocked** | `E-SCOPE-202` | Skirmish, shell, BASIC/ADVANCED/WOTR tutorials, Good/Evil/Angmar campaigns, War of the Ring, and Create-a-Hero all remain required. |
 
 The current checkout snapshot reported 7 compiled factions, 137 units, 155
 structures, and `369 passed / 61 failed` in the retail-slice runner. Its active
@@ -227,7 +227,7 @@ from retail parity.
 
 | Domain | Work items | Required result |
 |---|---|---|
-| Campaigns | `P2-CAMPAIGN-001` through `P2-CAMPAIGN-003` | Good/Evil/Angmar campaign roots, mission maps/scripts/objectives/cinematics/UI/audio, progression, and complete mission oracles qualify. |
+| Tutorials and campaigns | `P2-CAMPAIGN-001` through `P2-CAMPAIGN-003` | BASIC/ADVANCED/WOTR tutorial and Good/Evil/Angmar campaign roots, mission maps/scripts/objectives/cinematics/UI/audio, progression, and complete mission oracles qualify. |
 | War of the Ring | `P2-WOTR-001` through `P2-WOTR-003` | Strategic data, turns, territories, armies, battle handoff, persistence, UI/audio, SP/MP behavior, and original-game comparisons qualify. |
 | Create-a-Hero | `P2-CAH-001`, `P2-CAH-002` | Classes, parts, powers, progression, authoring UI, persistence, skirmish use, and oracle evidence qualify. |
 | Complete retail shell | `P2-SHELL-001`, `P2-SHELL-002` | Main menu, options, loading, localization, save/load, replay, observer, credits/cinematics, and all domain transitions qualify. |
@@ -256,7 +256,7 @@ not that no code exists.
 | Effects | 233 BSE paths (`E-AUDIT-CORPUS-20260829`) | target conversion/closure absent | trigger/timing/attachment behavior unproved | particles/decals/weather/effects unproved | `P1-ASSET-003`, `P1-VISUAL-001` |
 | Audio/music | 19,194 effective paths; 390 overlay-touched; EnglishAudio contributes 2,066 winners (`E-AUDIT-CORPUS-20260829`) | target closure/recook absent | event/EVA/music routing unproved | timing, spatialization, priority, ducking, and mix unapproved | `P1-AUDIO-001/002` |
 | APT/WND shell/HUD | 86 APT and 18 WND effective paths plus the required shell-root query (`E-AUDIT-CORPUS-20260829`, `E-SCOPE-202`) | some authored conversion exists, but the shell-root graph and target closure await `P0-CORPUS-003` | all controls/transitions and target selection identity unproved | complete matched shell/HUD visuals/audio unapproved | `P0-CORPUS-003`, `P1-UI-001`, `P2-SHELL-001/002` |
-| Campaigns | product policy requires Good/Evil/Angmar roots and payloads (`E-SCOPE-202`) | executed roots, membership, and reachability await `P0-CORPUS-003` | missions/progression/cinematics unproved | campaign presentation/audio unapproved | `P0-CORPUS-003`, `P2-CAMPAIGN-*` |
+| Tutorials and campaigns | product policy requires BASIC/ADVANCED/WOTR tutorial and Good/Evil/Angmar roots and payloads (`E-SCOPE-202`) | the live menu still disables those entries (`game/src/ui/main_menu.gd:174-190`), no tracked `game/src/campaign/` runtime exists, and executed roots/membership/reachability await `P0-CORPUS-003` | tutorial/campaign missions, progression, and cinematics are unproved | tutorial/campaign presentation and audio are unapproved | `P0-CORPUS-003`, `P2-CAMPAIGN-*` |
 | War of the Ring | product policy requires all strategic roots (`E-SCOPE-202`) | executed roots, membership, and reachability await `P0-CORPUS-003` | turns, handoff, persistence, SP/MP unproved | strategic UI/audio unapproved | `P0-CORPUS-003`, `P2-WOTR-*` |
 | Create-a-Hero | product policy requires all CaH source/root families (`E-SCOPE-202`) | executed roots, membership, and reachability await `P0-CORPUS-003` | rules, progression, persistence, skirmish integration unproved | authoring UI/animation/audio unapproved | `P0-CORPUS-003`, `P2-CAH-*` |
 | Networking | OpenBFME contract, 2-8 slots (`E-SCOPE-202`) | partial code is not qualification | cross-platform determinism/fault/recovery/scale/security incomplete | presentation is not the primary claim | `P2-NET-001` |

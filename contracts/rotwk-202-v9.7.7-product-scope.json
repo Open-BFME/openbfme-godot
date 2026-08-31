@@ -8,7 +8,7 @@
     "algorithm": "sha256",
     "canonicalization": "UTF-8 JSON with lexicographically sorted keys and no insignificant whitespace",
     "envelope": "All top-level fields and nested values except policy_digest.value.",
-    "value": "56a7a427947abb06e8fd820d5a3b6f116ae31f7ffe5950949431143d9a96ec10"
+    "value": "ff292f92857a4ebcac17ada3649563d7d810e1718683212bc4486c9b67af7b58"
   },
   "classification_policy": {
     "authority": "full effective RotWK Patch 2.02 v9.7.7 catalog (BFME2 1.06 base + RotWK 2.01 expansion + official-2 v9.7.7 overlay)",
@@ -69,6 +69,8 @@
       "scope": [
         "good-campaign",
         "evil-campaign",
+        "angmar-campaign",
+        "tutorials",
         "campaign-maps",
         "scripts-objectives-cinematics-ui-and-audio"
       ],
@@ -262,8 +264,8 @@
     },
     {
       "id": "campaign-roots",
-      "source_authority": "retail campaign definitions and campaign-classified map payloads",
-      "operation": "Discover both campaign graphs, missions, scripts, objectives, transitions, cinematics, and reachable presentation content.",
+      "source_authority": "retail tutorial and Good/Evil/Angmar campaign definitions and campaign-classified map payloads",
+      "operation": "Discover all three campaign graphs, every tutorial mission, scripts, objectives, transitions, cinematics, and reachable presentation content.",
       "unknown_handling": "emit-unclassified-root"
     },
     {
@@ -572,7 +574,7 @@
       "Every reachable reference is resolved or has an explicit owner-approved disposition.",
       "No definition remains unowned or unclassified.",
       "Every row required by the selected claim profile has complete, non-stale evidence for every required lane.",
-      "Campaigns, War of the Ring, Create-a-Hero, shell, and skirmish are all included and independently evidenced; sequencing never removes them from the complete denominator.",
+      "Tutorials, Good/Evil/Angmar campaigns, War of the Ring, Create-a-Hero, shell, and skirmish are all included and independently evidenced; sequencing never removes them from the complete denominator.",
       "Angmar and all RotWK-only objects/maps in the skirmish graph remain in the denominator.",
       "BFME2-only comparison installs are optional diagnostics and cannot replace RotWK evidence.",
       "OpenBFME networking and modern modding requirements are excluded from retail-parity denominators and reported separately."
@@ -612,6 +614,7 @@
     "claim_rule": "No completeness claim may be emitted from this policy file alone.",
     "private_root": "workspace/retail-work/reports/compatibility",
     "feature_graph": "rotwk-202-v9.7.7-feature-graph.json",
+    "semantic_requirement_graph": "rotwk-202-v9.7.7-semantic-graph.json",
     "evidence_catalog": "rotwk-202-v9.7.7-evidence-catalog.json",
     "coverage_matrix": "rotwk-202-v9.7.7-coverage-matrix.json",
     "views_directory": "generated-views"
