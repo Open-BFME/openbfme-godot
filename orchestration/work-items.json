@@ -1607,16 +1607,22 @@
       "kind": "verification-foundation",
       "priority": "P0",
       "allocationClass": "worker-lane",
-      "status": "pending",
+      "status": "in-progress",
       "domainIds": [],
       "rootQueryIds": [],
       "dependsOn": [
         "P0-SOURCE-001"
       ],
       "ownership": {
-        "state": "unassigned",
-        "assignee": null,
-        "ownedPaths": [],
+        "state": "assigned",
+        "assignee": "codex-gates",
+        "ownedPaths": [
+          "game/tests/retail_slice_runner.gd",
+          "importer/tests/test_retail_gate_script.py",
+          "run_retail_slice.bat",
+          "tools/gate-retail.ps1",
+          "tools/gate-rotwk-202.ps1"
+        ],
         "candidatePaths": [
           "game/tests/retail_slice_runner.gd",
           "importer/tests/test_retail_gate_script.py",
