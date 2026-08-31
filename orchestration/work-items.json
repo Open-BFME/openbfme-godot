@@ -12661,7 +12661,7 @@
       "kind": "load-presentation",
       "priority": "P1",
       "allocationClass": "worker-lane",
-      "status": "pending",
+      "status": "in-progress",
       "domainIds": [
         "retail-skirmish"
       ],
@@ -12675,9 +12675,15 @@
         "P0-CODE-MAP-001"
       ],
       "ownership": {
-        "state": "unassigned",
-        "assignee": null,
-        "ownedPaths": [],
+        "state": "assigned",
+        "assignee": "codex-fortress-subobjects",
+        "ownedPaths": [
+          "game/src/retail_slice/retail_vertical_slice.gd",
+          "game/src/retail_slice/retail_structure.gd",
+          "game/tests/retail_render_capture_runner.gd",
+          "game/tests/fortress_subobjects_v202_runner.gd",
+          "tools/gate-fortress-subobjects-v202.ps1"
+        ],
         "candidatePaths": [
           "game/src/retail_slice/retail_vertical_slice.gd",
           "game/src/retail_slice/retail_structure.gd",
