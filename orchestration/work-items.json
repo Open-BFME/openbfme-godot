@@ -1517,26 +1517,17 @@
       "kind": "tooling-foundation",
       "priority": "P0",
       "allocationClass": "worker-lane",
-      "status": "in-progress",
+      "status": "blocked",
       "domainIds": [],
       "rootQueryIds": [],
       "dependsOn": [
-        "P0-SOURCE-001"
+        "P0-SOURCE-001",
+        "P0-CORPUS-003"
       ],
       "ownership": {
-        "state": "assigned",
-        "assignee": "codex-defaults",
-        "ownedPaths": [
-          "run_game.bat",
-          "importer/openbfme_importer/cli.py",
-          "importer/openbfme_importer/paths.py",
-          "tools/rotwk_multimap_skirmish.py",
-          "tools/gate-rotwk-systems.ps1",
-          "game/tests/goal_map_matrix_runner.gd",
-          "importer/tests/test_cli.py",
-          "importer/tests/test_rotwk_official_map_corpus.py",
-          "importer/tests/test_rotwk_202_defaults.py"
-        ],
+        "state": "unassigned",
+        "assignee": null,
+        "ownedPaths": [],
         "candidatePaths": [
           "run_game.bat",
           "importer/openbfme_importer/cli.py",
@@ -1599,7 +1590,10 @@
           "diagnosticPolicy": "strict-default"
         }
       ],
-      "blockers": []
+      "blockers": [
+        "independent review and Grok rejected commit d1ee54edc2bb60bd6622cc426800e4c9cbfa865f: arbitrary caller-authored semantic JSON and self-consistent pack counts could impersonate the target denominator",
+        "P0-CORPUS-003 must first provide an accepted content-bound semantic graph identity; a replacement defaults lane must verify that exact receipt rather than shape-checking graph or recipe hashes"
+      ]
     },
     {
       "id": "P0-GATES-001",
