@@ -334,6 +334,31 @@ def test_minimal_boundary_contract_passes(tmp_path: Path, monkeypatch) -> None:
     ) == set()
 
 
+def test_current_evidence_chain_rejects_historical_intermediary(
+    tmp_path: Path, monkeypatch
+) -> None:
+    checker, root, _tracked, ledger, _manifest, path = _fixture(tmp_path, monkeypatch)
+    ledger["evidenceSources"].append(
+        {
+            "id": "E-CURRENT-CHAIN",
+            "type": "sanitized-read-only-audit-receipt",
+            "inputEvidence": ["E-RECEIPT"],
+        }
+    )
+    _write_json(root / "orchestration/work-items.json", ledger)
+    errors, _receipt = checker.validate(root, path)
+    assert errors == []
+
+    evidence_by_id = {row["id"]: row for row in ledger["evidenceSources"]}
+    evidence_by_id["E-OLD"]["inputEvidence"] = ["E-SCOPE"]
+    evidence_by_id["E-RECEIPT"]["inputEvidence"] = ["E-OLD"]
+    _write_json(root / "orchestration/work-items.json", ledger)
+    errors, receipt = checker.validate(root, path)
+    assert "current evidence E-RECEIPT has no classified source root" in errors
+    assert "current evidence E-CURRENT-CHAIN has no classified source root" in errors
+    assert receipt["status"] == "fail"
+
+
 def test_boundary_mutations_fail_closed(tmp_path: Path, monkeypatch) -> None:
     def reject(case: str, fragment: str, mutate) -> None:
         checker, root, tracked, ledger, manifest, path = _fixture(tmp_path / case, monkeypatch)

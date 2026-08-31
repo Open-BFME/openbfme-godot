@@ -563,11 +563,13 @@ def validate(root: Path, manifest_path: Path) -> tuple[list[str], dict[str, Any]
             directly_rooted[evidence_id] = rooted
 
     def evidence_is_rooted(evidence_id: str, visiting: set[str]) -> bool:
+        row = evidence_by_id.get(evidence_id, {})
+        if row.get("type") not in current_types:
+            return False
         if directly_rooted.get(evidence_id, False):
             return True
         if evidence_id in visiting:
             return False
-        row = evidence_by_id.get(evidence_id, {})
         return any(
             isinstance(input_id, str)
             and evidence_is_rooted(input_id, visiting | {evidence_id})
