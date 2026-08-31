@@ -2923,9 +2923,7 @@
           "retention": "Current focused regression test; run with the pinned importer interpreter."
         }
       ],
-      "blockers": [
-        "assignment 0e9d7a43 was created from a poisoned base where completed P0-SELECTION-001 still cited historical diagnostics; the untouched lane must be retired and recreated after the owner correction"
-      ]
+      "blockers": []
     },
     {
       "id": "P0-ASSET-HYGIENE-001",
