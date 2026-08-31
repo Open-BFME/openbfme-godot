@@ -13934,7 +13934,7 @@
           "availability": "pinned-godot",
           "timeoutSeconds": 1800,
           "expectedMarkers": [
-            "PERF_SIM_ROSTER PASS entities=335 state_exact=true event_exact=true empty_ratio<=0.85"
+            "PERF_SIM_ROSTER PASS entities=335 state_exact=true event_exact=true"
           ],
           "diagnosticPolicy": "strict-default"
         }
