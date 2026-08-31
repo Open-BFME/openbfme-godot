@@ -13703,7 +13703,7 @@
       "kind": "performance",
       "priority": "P1",
       "allocationClass": "worker-lane",
-      "status": "pending",
+      "status": "in-progress",
       "domainIds": [
         "runtime-performance"
       ],
@@ -13712,9 +13712,16 @@
       ],
       "dependsOn": [],
       "ownership": {
-        "state": "unassigned",
-        "assignee": null,
-        "ownedPaths": [],
+        "state": "assigned",
+        "assignee": "codex-perf-boot-v2",
+        "ownedPaths": [
+          "game/src/content/content_db.gd",
+          "game/src/content/mod_loader.gd",
+          "game/src/core/boot_profile.gd",
+          "game/tests/boot_startup_runner.gd",
+          "game/tests/content_db_snapshot_runner.gd",
+          "tools/gate-perf-boot.ps1"
+        ],
         "candidatePaths": [
           "game/src/content/content_db.gd",
           "game/src/content/mod_loader.gd",
