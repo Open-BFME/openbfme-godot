@@ -22,6 +22,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -29,6 +30,11 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "importer"))
 
 from openbfme_importer.pipeline import bundle_digest  # noqa: E402
+from openbfme_importer.pack_recipe_catalog_identity import audit_pack_target_identity  # noqa: E402
+
+
+BASELINE = REPO_ROOT / "contracts" / "rotwk-202-v9.7.7-baseline.json"
+SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
 def default_packs_root() -> Path:
@@ -47,6 +53,32 @@ def selection_entries(root: Path) -> list[str]:
     entries = [str(document["activePack"])]
     entries.extend(str(value) for value in document.get("supplementalPacks", []))
     return entries
+
+
+def _assignment_main_root() -> Path | None:
+    assignments = list((REPO_ROOT / "workspace" / "logs").glob("*/assignment.json"))
+    if len(assignments) != 1:
+        return None
+    value = json.loads(assignments[0].read_text(encoding="utf-8"))
+    main = Path(str(value.get("mainPath", "")))
+    return main.resolve() if main.is_dir() else None
+
+
+def _workspace_root(path: Path) -> Path:
+    if (path / "selection.json").is_file():
+        return path
+    main = _assignment_main_root()
+    fallback = main / "workspace" / "content-packs" if main else None
+    return fallback if fallback and (fallback / "selection.json").is_file() else path
+
+
+def _target_contract(baseline_id: str) -> tuple[str, str]:
+    baseline = json.loads(BASELINE.read_text(encoding="utf-8"))
+    expected_id = str(baseline.get("baselineId", ""))
+    catalog = str(baseline.get("authority", {}).get("catalogSha256", ""))
+    if baseline_id != expected_id or SHA256_RE.fullmatch(catalog) is None:
+        raise ValueError("required baseline differs from the tracked exact target")
+    return expected_id, catalog
 
 
 def check_root(label: str, root: Path) -> tuple[list[dict], list[dict]]:
@@ -73,14 +105,42 @@ def check_root(label: str, root: Path) -> tuple[list[dict], list[dict]]:
     return honest, drifted
 
 
+def audit_root_identity(
+    label: str, root: Path, *, baseline_id: str, catalog_sha256: str,
+) -> list[dict]:
+    records: list[dict] = []
+    for entry in selection_entries(root):
+        pack_id, _, declared = entry.rpartition("/")
+        pack_dir = root / pack_id / declared
+        manifest = pack_dir / "pack.json"
+        record: dict = {"root": label, "entry": entry}
+        if not manifest.is_file():
+            record.update({
+                "matchesTarget": False,
+                "observed": {"baselineId": None, "catalogSha256": None, "recipeSha256": None},
+                "failures": ["pack-manifest-missing"],
+            })
+        else:
+            pack = json.loads(manifest.read_text(encoding="utf-8"))
+            if not isinstance(pack, dict):
+                raise ValueError(f"pack manifest is not an object: {entry}")
+            record.update(audit_pack_target_identity(
+                pack, baseline_id=baseline_id, catalog_sha256=catalog_sha256,
+            ))
+        records.append(record)
+    return records
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--packs-root", type=Path, default=default_packs_root())
     parser.add_argument("--durable-root", type=Path, default=default_durable_root())
     parser.add_argument("--json", action="store_true")
+    parser.add_argument("--require-baseline")
     args = parser.parse_args(argv)
 
-    roots: list[tuple[str, Path]] = [("workspace", args.packs_root)]
+    packs_root = _workspace_root(args.packs_root)
+    roots: list[tuple[str, Path]] = [("workspace", packs_root)]
     if args.durable_root is not None and (args.durable_root / "selection.json").is_file():
         roots.append(("durable", args.durable_root))
 
@@ -93,6 +153,39 @@ def main(argv: list[str] | None = None) -> int:
         root_honest, root_drifted = check_root(label, root)
         honest.extend(root_honest)
         drifted.extend(root_drifted)
+
+    identity_records: list[dict] = []
+    if args.require_baseline:
+        baseline_id, catalog_sha256 = _target_contract(args.require_baseline)
+        for label, root in roots:
+            identity_records.extend(audit_root_identity(
+                label, root, baseline_id=baseline_id, catalog_sha256=catalog_sha256,
+            ))
+        matched = sum(bool(row["matchesTarget"]) for row in identity_records)
+        report = {
+            "schema": "openbfme.legacy-selection-audit",
+            "schemaVersion": 1,
+            "baselineId": baseline_id,
+            "catalogSha256": catalog_sha256,
+            "roots": [label for label, _ in roots],
+            "selectedEntries": len(identity_records),
+            "targetMatches": matched,
+            "addressDrift": len(drifted),
+            "records": identity_records,
+        }
+        artifact = REPO_ROOT / "workspace" / "logs" / "P0-SELECTION-001" / "legacy-selection-audit.json"
+        artifact.parent.mkdir(parents=True, exist_ok=True)
+        artifact.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8", newline="\n")
+        if args.json:
+            print(json.dumps(report, indent=2, sort_keys=True))
+        if drifted:
+            print(f"PACK_ADDRESS_NEGATIVE FAIL address-drift={len(drifted)}", file=sys.stderr)
+            return 1
+        if matched:
+            print(f"PACK_ADDRESS_NEGATIVE FAIL target-markers={matched}", file=sys.stderr)
+            return 1
+        print(f"PACK_ADDRESS_NEGATIVE PASS baseline={baseline_id}")
+        return 0
 
     if args.json:
         print(json.dumps({"honest": honest, "drifted": drifted}, indent=2, sort_keys=True))

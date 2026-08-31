@@ -13,6 +13,7 @@ pack recipe must archive-resolve when a catalog is available.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+import re
 from typing import Protocol
 
 
@@ -22,6 +23,30 @@ class _CatalogResolve(Protocol):
 
 class PackRecipeCatalogIdentityError(ValueError):
     """A pack recipe names required patterns the catalog cannot resolve."""
+
+
+_SHA256 = re.compile(r"^[0-9a-f]{64}$")
+
+
+def audit_pack_target_identity(
+    pack: Mapping[str, object], *, baseline_id: str, catalog_sha256: str,
+) -> dict[str, object]:
+    """Classify one immutable pack manifest against the exact target identity."""
+
+    observed = {
+        "baselineId": pack.get("sourceBaselineId"),
+        "catalogSha256": pack.get("sourceCatalogIdentitySha256"),
+        "recipeSha256": pack.get("sourceRecipeSha256"),
+    }
+    failures: list[str] = []
+    if observed["baselineId"] != baseline_id:
+        failures.append("missing-or-mismatched-source-baseline")
+    if observed["catalogSha256"] != catalog_sha256:
+        failures.append("missing-or-mismatched-source-catalog")
+    recipe = observed["recipeSha256"]
+    if not isinstance(recipe, str) or _SHA256.fullmatch(recipe) is None:
+        failures.append("missing-or-invalid-source-recipe")
+    return {"matchesTarget": not failures, "observed": observed, "failures": failures}
 
 
 def missing_required_catalog_patterns(
@@ -93,6 +118,7 @@ def filter_virtual_paths_to_catalog(
 
 __all__ = [
     "PackRecipeCatalogIdentityError",
+    "audit_pack_target_identity",
     "assert_pack_recipe_catalog_identity",
     "filter_virtual_paths_to_catalog",
     "missing_required_catalog_patterns",

@@ -7,9 +7,36 @@ import pytest
 from openbfme_importer.pack_recipe_catalog_identity import (
     PackRecipeCatalogIdentityError,
     assert_pack_recipe_catalog_identity,
+    audit_pack_target_identity,
     filter_virtual_paths_to_catalog,
     missing_required_catalog_patterns,
 )
+
+
+def test_target_identity_requires_baseline_catalog_and_recipe() -> None:
+    expected = {
+        "sourceBaselineId": "rotwk-202-v9.7.7-en",
+        "sourceCatalogIdentitySha256": "a" * 64,
+        "sourceRecipeSha256": "b" * 64,
+    }
+    audit = audit_pack_target_identity(
+        expected, baseline_id="rotwk-202-v9.7.7-en", catalog_sha256="a" * 64,
+    )
+    assert audit["matchesTarget"] is True
+    assert audit["failures"] == []
+
+
+def test_target_identity_names_every_missing_or_mismatched_marker() -> None:
+    audit = audit_pack_target_identity(
+        {"sourceBaselineId": "rotwk-201-en", "sourceCatalogIdentitySha256": "c" * 64},
+        baseline_id="rotwk-202-v9.7.7-en", catalog_sha256="a" * 64,
+    )
+    assert audit["matchesTarget"] is False
+    assert audit["failures"] == [
+        "missing-or-mismatched-source-baseline",
+        "missing-or-mismatched-source-catalog",
+        "missing-or-invalid-source-recipe",
+    ]
 
 
 class _FakeCatalog:
