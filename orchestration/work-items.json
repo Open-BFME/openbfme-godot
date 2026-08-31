@@ -13228,7 +13228,7 @@
       "kind": "repository-hygiene",
       "priority": "P0",
       "allocationClass": "worker-lane",
-      "status": "pending",
+      "status": "in-progress",
       "domainIds": [
         "release-hygiene"
       ],
@@ -13237,9 +13237,12 @@
       ],
       "dependsOn": [],
       "ownership": {
-        "state": "unassigned",
-        "assignee": null,
-        "ownedPaths": [],
+        "state": "assigned",
+        "assignee": "codex-playtest-version-v4",
+        "ownedPaths": [
+          "VERSION",
+          "docs/patch-notes/v0.2.13.md"
+        ],
         "candidatePaths": [
           "VERSION",
           "docs/patch-notes/v0.2.13.md"
