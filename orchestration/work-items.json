@@ -12660,6 +12660,97 @@
       "blockers": [
         "Independent review rejected f693931876274847dc103f6f249a37375022d382: kind-wide executable promotion overclaimed unrelated rows, the Den gate was caller-invented, and seven hashed support sources were not production-parsed"
       ]
+    },
+    {
+      "id": "P1-ANGMAR-THRALL-002",
+      "title": "Source-connect the exact normal-match Angmar Thrall replacement graph",
+      "kind": "conversion-behavior",
+      "priority": "P1",
+      "allocationClass": "worker-lane",
+      "status": "pending",
+      "domainIds": [
+        "retail-skirmish"
+      ],
+      "rootQueryIds": [
+        "skirmish-roots",
+        "retail-reference-closure"
+      ],
+      "dependsOn": [
+        "P0-SOURCE-001",
+        "P0-CORPUS-001",
+        "P0-CODE-MAP-001"
+      ],
+      "ownership": {
+        "state": "unassigned",
+        "assignee": null,
+        "ownedPaths": [],
+        "candidatePaths": [
+          "importer/openbfme_importer/module_contracts.py",
+          "importer/openbfme_importer/playable_unit_compiler.py",
+          "importer/tests/test_module_contracts_batch.py",
+          "importer/tests/test_playable_unit_compiler.py",
+          "game/src/retail_slice/retail_sim_config.gd",
+          "game/src/retail_slice/retail_sim_contracts_behaviors.gd",
+          "game/src/retail_slice/retail_sim_upgrades.gd",
+          "game/tests/angmar_thrall_replacement_runner.gd",
+          "tools/run-angmar-thrall-replacement.ps1"
+        ]
+      },
+      "scope": {
+        "deliverable": "A fresh one-commit, source-connected graph for only the four normal v9.7.7 Angmar Thrall branches, using the real pack command surface, authored Den aura and MonitorCondition transition, production upgrade queue, and descriptor-backed replacement.",
+        "notIncluded": "Inn Hillmen, global module-kind executability, caller-provided Den booleans, synthetic packs=0 fixtures, L5 state-transfer approval, summon FX, visuals, or audio."
+      },
+      "sourceEvidence": [
+        "E-BL-202",
+        "E-EFFECTIVE-TREE-20260830"
+      ],
+      "artifacts": [
+        "workspace/logs/P1-ANGMAR-THRALL-002/angmar-thrall-check.json"
+      ],
+      "acceptance": {
+        "requiredLevels": [
+          "L1",
+          "L2",
+          "L4"
+        ],
+        "requiredOutputDimensions": {
+          "SOURCE": "REQUIRED",
+          "CONVERT": "REQUIRED",
+          "LOAD": "NOT_REQUIRED",
+          "BEHAVIOR": "REQUIRED",
+          "VISUAL": "NOT_REQUIRED",
+          "AUDIO": "NOT_REQUIRED"
+        },
+        "criteria": [
+          "the layered winner manifest proves all eight precedence-zero __patch202.big source identities named by the row, including angmarthrallmaster.ini SHA-256 a3702118d838392e71e487dcaebe4d3b52a8a5e2a8c0f79582ce1fd048668922",
+          "production conversion joins base and Den command palettes, fake and real Wolf buttons, the Den level-one aura and 2000 ms refresh, USER_1 modifier, MonitorCondition command-set swap, four purchase upgrades, summon buttons and powers, replacement modules, target hordes, command points, and exact 1000 ms plus 1000 ms timing with source provenance",
+          "DoCommandUpgrade and SummonReplacementSpecialAbilityUpdate remain globally deferred; only the exact four closed normal Thrall joins are executable, Inn Hillmen stays deferred, and unrelated module rows retain unsupported evidence",
+          "the focused gate cooks the private Angmar pack twice to an identical content identity, boots real ContentDB with packs greater than zero through an isolated selection, and refuses stale, fallback, or synthetic contracts",
+          "the real command surface starts with the fake disabled Wolf button, derives the Den transition through the authored timed aura, USER_1 model condition, and MonitorCondition command-set swap, and never accepts a caller-provided Den Boolean",
+          "the production upgrade queue completes each of the four branches after no less and no more than the authored unpack and preparation phases into exactly one descriptor-backed target with deterministic command-point release and commit",
+          "L5 replacement state transfer plus FX_ThrallSummon and BoromirHorn audio remain explicit open receipts and are not presented as accepted"
+        ]
+      },
+      "verificationCommands": [
+        {
+          "steps": [
+            {
+              "toolRole": "powershell",
+              "invocation": "script",
+              "target": "tools/run-angmar-thrall-replacement.ps1",
+              "args": [],
+              "toolchainProfile": "rotwk-gate-v1"
+            }
+          ],
+          "availability": "current-private-source-and-pinned-godot",
+          "timeoutSeconds": 1200,
+          "expectedMarkers": [
+            "ANGMAR_THRALL_REPLACEMENT PASS branches=4 failed=0"
+          ],
+          "diagnosticPolicy": "strict-default"
+        }
+      ],
+      "blockers": []
     }
   ]
 }
