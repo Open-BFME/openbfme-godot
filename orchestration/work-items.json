@@ -1949,22 +1949,16 @@
       "kind": "verification-foundation",
       "priority": "P0",
       "allocationClass": "worker-lane",
-      "status": "in-progress",
+      "status": "blocked",
       "domainIds": [],
       "rootQueryIds": [],
       "dependsOn": [
         "P0-SOURCE-001"
       ],
       "ownership": {
-        "state": "assigned",
-        "assignee": "codex-gates-v2",
-        "ownedPaths": [
-          "game/tests/retail_slice_runner.gd",
-          "importer/tests/test_retail_gate_script.py",
-          "run_retail_slice.bat",
-          "tools/gate-retail.ps1",
-          "tools/gate-rotwk-202.ps1"
-        ],
+        "state": "unassigned",
+        "assignee": null,
+        "ownedPaths": [],
         "candidatePaths": [
           "game/tests/retail_slice_runner.gd",
           "importer/tests/test_retail_gate_script.py",
@@ -2002,7 +1996,11 @@
           "negative tests pin exact diagnostics",
           "generic wrapper binds the exact assignment, row, branch, commit, ownership, and structured command rather than trusting ignored lane metadata",
           "lane admission is bound to the exact item, assignee, assignment commit, branch, structured command, and clean executed bytes",
+          "canonical main is discovered from the repository's unique registered refs/heads/main worktree and cannot be redirected by ignored assignment metadata",
           "content and pack roots reject reparse traversal and source recipe identities are content-bound rather than shape-only",
+          "selection and every parent component are contained and reparse-free before selection bytes are read or any pack checker starts",
+          "the exact resolved Godot executable and version are validated and hashed before runtime; ambient OPENBFME_GODOT cannot substitute a marker-printing process",
+          "git-exact producer provenance verifies the declared revision and clean state against the actual producer repository rather than accepting shaped fields",
           "history-independent synthetic rows cover blocked, unassigned, unknown, and unrelated ledger-state changes without hard-coded mutable work-item IDs",
           "every child process has a deterministic timeout, concurrent stream draining, and complete Windows Job descendant cleanup",
           "legacy selections are rejected before runtime and that negative result is never recorded as SOURCE or LOAD acceptance"
@@ -2027,7 +2025,10 @@
           "diagnosticPolicy": "strict-default"
         }
       ],
-      "blockers": []
+      "blockers": [
+        "independent review rejected commit 0495083a964b78ae95568531fffb74f4d73ba2bb: ignored assignment metadata can redirect canonical main, the resolved Godot executable is unbound, selection is read before full reparse containment, and git-exact producer revision/clean state are shape-only",
+        "the replacement may retain the accepted Windows Job containment and exact marker parser but must close canonical-main, Godot, selection containment, and producer-repository identities before L0 acceptance"
+      ]
     },
     {
       "id": "P0-GATES-LIVE-001",
@@ -2117,7 +2118,7 @@
       "kind": "oracle-foundation",
       "priority": "P0",
       "allocationClass": "worker-lane",
-      "status": "in-progress",
+      "status": "blocked",
       "domainIds": [
         "retail-skirmish",
         "retail-campaigns",
@@ -2130,12 +2131,9 @@
         "P0-SOURCE-001"
       ],
       "ownership": {
-        "state": "assigned",
-        "assignee": "codex-oracle-v2",
-        "ownedPaths": [
-          "tools/rotwk_202_oracle.py",
-          "importer/tests/test_rotwk_202_oracle_contract.py"
-        ],
+        "state": "unassigned",
+        "assignee": null,
+        "ownedPaths": [],
         "candidatePaths": [
           "tools/rotwk_202_oracle.py",
           "importer/tests/test_rotwk_202_oracle_contract.py"
@@ -2168,7 +2166,12 @@
           "oracle executable SHA-256 matches baseline",
           "profiles and outputs are isolated",
           "every launch-plan profile and environment path resolves inside its own content-addressed scenario run and differs across scenarios",
+          "at least two semantically distinct real scenarios are required; changing only scenario or requirement identity cannot satisfy isolation",
           "launch arguments use a closed contract that cannot override profile, output, source, or executable containment",
+          "Windows device basenames and trailing dot/space aliases are rejected after basename normalization",
+          "all scenarios publish through one atomic content-addressed run-set rename, so a failure cannot expose a partially finalized scenario set",
+          "prepare and prelaunch exact-key validate the full index and reassert every pending/unproved/no-preapproval invariant before filesystem mutation",
+          "build, prepare, and prelaunch reverify the exact source tree, reject every descendant reparse, and bind a real distinct retail-install witness plus the private v9.7.7 runtime executable",
           "scenario schema covers behavior, visual, and audio matched conditions",
           "reviewer identity/disposition is mandatory and no rows are pre-approved"
         ]
@@ -2192,7 +2195,10 @@
           "diagnosticPolicy": "strict-default"
         }
       ],
-      "blockers": []
+      "blockers": [
+        "independent review rejected commit 515f04acd7a76678ed5a70cb2430763c72d4f03a: the actual index has one scenario, Windows device aliases pass, multi-scenario finalization can be partial, prepare accepts tampered preapproval state, and source/reparse identity is not reverified",
+        "tracked v3 code can fit the two candidate paths, but SOURCE remains blocked until the owner supplies at least two real semantically distinct scenarios and a physical non-reparse three-layer source; the current junction-backed layered-install is not acceptable"
+      ]
     },
     {
       "id": "P0-AGENTS-001",
