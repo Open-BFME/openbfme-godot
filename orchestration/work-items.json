@@ -13391,7 +13391,7 @@
       "kind": "audio-behavior",
       "priority": "P1",
       "allocationClass": "worker-lane",
-      "status": "pending",
+      "status": "in-progress",
       "domainIds": [
         "retail-skirmish"
       ],
@@ -13404,9 +13404,13 @@
         "P0-CORPUS-001"
       ],
       "ownership": {
-        "state": "unassigned",
-        "assignee": null,
-        "ownedPaths": [],
+        "state": "assigned",
+        "assignee": "codex-audio-fog-v2",
+        "ownedPaths": [
+          "game/src/retail_slice/retail_slice_audio.gd",
+          "game/tests/retail_sfx_shroud_production_runner.gd",
+          "tools/gate-audio-fog-production.ps1"
+        ],
         "candidatePaths": [
           "game/src/retail_slice/retail_slice_audio.gd",
           "game/tests/retail_sfx_shroud_production_runner.gd",
