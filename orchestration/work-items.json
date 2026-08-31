@@ -12939,7 +12939,7 @@
       "kind": "repository-hygiene",
       "priority": "P0",
       "allocationClass": "worker-lane",
-      "status": "pending",
+      "status": "in-progress",
       "domainIds": [
         "release-hygiene"
       ],
@@ -12948,9 +12948,16 @@
       ],
       "dependsOn": [],
       "ownership": {
-        "state": "unassigned",
-        "assignee": null,
-        "ownedPaths": [],
+        "state": "assigned",
+        "assignee": "codex-playtest-current",
+        "ownedPaths": [
+          "PLAY-CURRENT.bat",
+          "tools/Publish-DistBuild.ps1",
+          "tools/dist-pipeline-common.ps1",
+          "tools/Test-DistPipeline.ps1",
+          "docs/BUILD_AND_RELEASE.md",
+          "docs/RELEASE_CYCLE.md"
+        ],
         "candidatePaths": [
           "PLAY-CURRENT.bat",
           "tools/Publish-DistBuild.ps1",
