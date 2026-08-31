@@ -12292,6 +12292,266 @@
       "blockers": [
         "Full retail, networking, modding, and hygiene qualifications are incomplete"
       ]
+    },
+    {
+      "id": "P1-MINAS-GATE-001",
+      "title": "Drive Minas Tirith gate navigation from exact v9.7.7 authored geometry",
+      "kind": "conversion-behavior",
+      "priority": "P1",
+      "allocationClass": "worker-lane",
+      "status": "pending",
+      "domainIds": [
+        "retail-skirmish"
+      ],
+      "rootQueryIds": [
+        "all-map-payloads",
+        "retail-reference-closure"
+      ],
+      "dependsOn": [
+        "P0-SOURCE-001",
+        "P0-CORPUS-001",
+        "P0-CODE-MAP-001"
+      ],
+      "ownership": {
+        "state": "unassigned",
+        "assignee": null,
+        "ownedPaths": [],
+        "candidatePaths": [
+          "importer/openbfme_importer/playable_unit_compiler.py",
+          "importer/openbfme_importer/castle_fixtures.py",
+          "importer/tests/test_playable_unit_compiler.py",
+          "importer/tests/test_castle_fixtures.py",
+          "game/src/retail_slice/retail_map_data.gd",
+          "game/src/retail_slice/retail_sim_contracts_abilities.gd",
+          "game/src/retail_slice/retail_sim_neutrals.gd",
+          "game/tests/minas_gate_nav_v202_runner.gd",
+          "tools/gate-minas-gate-v202.ps1"
+        ]
+      },
+      "scope": {
+        "deliverable": "The Minas Tirith gate projects its exact v9.7.7 rotation anchor and named geometry through conversion, opens and closes the authored navigation channel, and immediately synchronizes every gate state transition.",
+        "notIncluded": "Whole-map qualification, visual approval, selection publication, or a generic gate/navigation rewrite."
+      },
+      "sourceEvidence": [
+        "E-BL-202",
+        "E-EFFECTIVE-TREE-20260830"
+      ],
+      "artifacts": [
+        "workspace/logs/P1-MINAS-GATE-001/minas-gate-check.json"
+      ],
+      "acceptance": {
+        "requiredLevels": [
+          "L1",
+          "L2",
+          "L4"
+        ],
+        "requiredOutputDimensions": {
+          "SOURCE": "REQUIRED",
+          "CONVERT": "REQUIRED",
+          "LOAD": "NOT_REQUIRED",
+          "BEHAVIOR": "REQUIRED",
+          "VISUAL": "NOT_REQUIRED",
+          "AUDIO": "NOT_REQUIRED"
+        },
+        "criteria": [
+          "the private effective winner data/ini/object/civilian/ministirithbuildings.ini is SHA-256 f5e06cc70ac92b2e505c2f6430c50ded012a37ae4ad80200b280335ab4f14b07 from precedence-zero __patch202.big",
+          "GeometryRotationAnchorOffset and the Closed, OpenLeft, and OpenRight named geometry rows survive deterministic conversion without guessed values",
+          "map yaw plus authored anchor and geometry determine the gate channel; the four-axis nearest-region heuristic is not the parity authority",
+          "open, close, reopen, and breach transitions deterministically connect or split the Minas city and field as authored",
+          "request_gate_open synchronizes navigation before returning and no required state transition relies on fallback"
+        ]
+      },
+      "verificationCommands": [
+        {
+          "steps": [
+            {
+              "toolRole": "powershell",
+              "invocation": "script",
+              "target": "tools/gate-minas-gate-v202.ps1",
+              "args": [],
+              "toolchainProfile": "rotwk-gate-v1"
+            }
+          ],
+          "availability": "current-private-source-and-pinned-godot",
+          "timeoutSeconds": 1200,
+          "expectedMarkers": [
+            "MINAS_GATE_202 PASS"
+          ],
+          "diagnosticPolicy": "strict-default"
+        }
+      ],
+      "blockers": []
+    },
+    {
+      "id": "P1-FORTRESS-PLUME-001",
+      "title": "Remove the Men fortress white plume through exact source identity",
+      "kind": "conversion-presentation",
+      "priority": "P1",
+      "allocationClass": "worker-lane",
+      "status": "pending",
+      "domainIds": [
+        "retail-skirmish"
+      ],
+      "rootQueryIds": [
+        "skirmish-roots",
+        "retail-reference-closure"
+      ],
+      "dependsOn": [
+        "P0-SOURCE-001",
+        "P0-CORPUS-001",
+        "P0-CODE-MAP-001"
+      ],
+      "ownership": {
+        "state": "unassigned",
+        "assignee": null,
+        "ownedPaths": [],
+        "candidatePaths": [
+          "game/src/view/w3d_texture_mappers.gd",
+          "game/src/view/w3d_shader_materials.gd",
+          "game/src/view/asset_factory.gd",
+          "game/tests/w3d_texture_mapper_runner.gd",
+          "game/tests/fortress_plume_v202_runner.gd",
+          "tools/gate-fortress-plume-v202.ps1"
+        ]
+      },
+      "scope": {
+        "deliverable": "Identify the exact fortress mesh, material, texture, and cache identity producing the blue-white tower plume, then correct only that source-driven conversion/presentation route.",
+        "notIncluded": "Invented smoke, global material retuning, selection publication, or final visual parity approval without a target-bound matched retail capture."
+      },
+      "sourceEvidence": [
+        "E-BL-202",
+        "E-EFFECTIVE-TREE-20260830"
+      ],
+      "artifacts": [
+        "workspace/logs/P1-FORTRESS-PLUME-001/fortress-plume-check.json"
+      ],
+      "acceptance": {
+        "requiredLevels": [
+          "L1",
+          "L2"
+        ],
+        "requiredOutputDimensions": {
+          "SOURCE": "REQUIRED",
+          "CONVERT": "REQUIRED",
+          "LOAD": "NOT_REQUIRED",
+          "BEHAVIOR": "NOT_REQUIRED",
+          "VISUAL": "NOT_REQUIRED",
+          "AUDIO": "NOT_REQUIRED"
+        },
+        "criteria": [
+          "the exact effective gbfortress.w3d, exgflagseq.dds, and exfiretorchseq.dds identities are verified before diagnosis",
+          "the offending rendered mesh, material, texture, mapper, and cache route are named by the focused receipt",
+          "the correction follows the authored W3D and texture semantics and introduces no procedural or borrowed visual substitute",
+          "existing flag, flame, mapper, and shader-material focused checks remain green",
+          "the current playable capture no longer shows the diagnosed erroneous plume; final target-bound VISUAL acceptance remains explicitly open"
+        ]
+      },
+      "verificationCommands": [
+        {
+          "steps": [
+            {
+              "toolRole": "powershell",
+              "invocation": "script",
+              "target": "tools/gate-fortress-plume-v202.ps1",
+              "args": [],
+              "toolchainProfile": "rotwk-gate-v1"
+            }
+          ],
+          "availability": "current-private-source-and-pinned-godot",
+          "timeoutSeconds": 1200,
+          "expectedMarkers": [
+            "FORTRESS_PLUME_202 PASS"
+          ],
+          "diagnosticPolicy": "strict-default"
+        }
+      ],
+      "blockers": []
+    },
+    {
+      "id": "P1-ANGMAR-THRALL-001",
+      "title": "Restore exact v9.7.7 Angmar Thrall Master summon-replacement loop",
+      "kind": "conversion-behavior",
+      "priority": "P1",
+      "allocationClass": "worker-lane",
+      "status": "pending",
+      "domainIds": [
+        "retail-skirmish"
+      ],
+      "rootQueryIds": [
+        "skirmish-roots",
+        "retail-reference-closure"
+      ],
+      "dependsOn": [
+        "P0-SOURCE-001",
+        "P0-CORPUS-001",
+        "P0-CODE-MAP-001"
+      ],
+      "ownership": {
+        "state": "unassigned",
+        "assignee": null,
+        "ownedPaths": [],
+        "candidatePaths": [
+          "importer/openbfme_importer/module_contracts.py",
+          "importer/tests/test_module_contracts_batch.py",
+          "game/src/retail_slice/retail_sim_module_contracts.gd",
+          "game/src/retail_slice/retail_sim_upgrades.gd",
+          "game/tests/angmar_thrall_replacement_runner.gd",
+          "tools/run-angmar-thrall-replacement.ps1"
+        ]
+      },
+      "scope": {
+        "deliverable": "An Angmar Thrall Master exposes the four exact normal-match v9.7.7 choices and deterministically completes the authored preparation and summon replacement into Orc Warriors, Wolf Riders, Rhudaur Spearmen, or Rhudaur Slingers.",
+        "notIncluded": "Inn Hillmen, final summon FX/audio, whole Angmar closure, target selection publication, or L5 replacement-transfer approval without the required original-game observation."
+      },
+      "sourceEvidence": [
+        "E-BL-202",
+        "E-EFFECTIVE-TREE-20260830"
+      ],
+      "artifacts": [
+        "workspace/logs/P1-ANGMAR-THRALL-001/angmar-thrall-check.json"
+      ],
+      "acceptance": {
+        "requiredLevels": [
+          "L1",
+          "L2",
+          "L4"
+        ],
+        "requiredOutputDimensions": {
+          "SOURCE": "REQUIRED",
+          "CONVERT": "REQUIRED",
+          "LOAD": "NOT_REQUIRED",
+          "BEHAVIOR": "REQUIRED",
+          "VISUAL": "NOT_REQUIRED",
+          "AUDIO": "NOT_REQUIRED"
+        },
+        "criteria": [
+          "the eight precedence-zero __patch202.big winners named by the row are hash-verified, including angmarthrallmaster.ini a3702118d838392e71e487dcaebe4d3b52a8a5e2a8c0f79582ce1fd048668922",
+          "DoCommandUpgrade and SummonReplacementSpecialAbilityUpdate convert as typed contracts with exact 1000 ms preparation and 1000 ms replacement timing",
+          "the normal command surface exposes exactly AngmarOrcWarriors, AngmarWolfRiders, AngmarRhudaurSpearmen, and AngmarRhudaurSlingers with the authored Den gate and fake Wolf button transition",
+          "each accepted choice replaces one Thrall Master with exactly one authored branch outcome and deterministic command-point bookkeeping",
+          "unsupported receipts for the implemented contracts disappear while unimplemented FX/audio and L5 transfer semantics remain explicitly open"
+        ]
+      },
+      "verificationCommands": [
+        {
+          "steps": [
+            {
+              "toolRole": "powershell",
+              "invocation": "script",
+              "target": "tools/run-angmar-thrall-replacement.ps1",
+              "args": [],
+              "toolchainProfile": "rotwk-gate-v1"
+            }
+          ],
+          "availability": "current-private-source-and-pinned-godot",
+          "timeoutSeconds": 1200,
+          "expectedMarkers": [
+            "ANGMAR_THRALL_REPLACEMENT PASS branches=4 failed=0"
+          ],
+          "diagnosticPolicy": "strict-default"
+        }
+      ],
+      "blockers": []
     }
   ]
 }
