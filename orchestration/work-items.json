@@ -1347,14 +1347,14 @@
       "kind": "selection-foundation",
       "priority": "P0",
       "allocationClass": "worker-lane",
-      "status": "verification",
+      "status": "complete",
       "domainIds": [],
       "rootQueryIds": [],
       "dependsOn": [
         "P0-SOURCE-001"
       ],
       "ownership": {
-        "state": "independent-verification",
+        "state": "accepted",
         "assignee": null,
         "ownedPaths": [],
         "candidatePaths": [
@@ -1408,7 +1408,7 @@
               "toolchainProfile": "python-hermetic-v1"
             }
           ],
-          "availability": "current",
+          "availability": "current-accepted",
           "timeoutSeconds": 300,
           "expectedMarkers": [
             "PACK_ADDRESS_NEGATIVE PASS baseline=rotwk-202-v9.7.7-en"
@@ -1416,10 +1416,7 @@
           "diagnosticPolicy": "strict-default"
         }
       ],
-      "blockers": [
-        "implementation ec0092471a34eb4e02bb42f7b4909b0f9c0eed2f was independently reviewed and integrated as 93d3d526873bae537b08179302e93fc05fbcb953; typed owner SOURCE/L1 acceptance remains pending",
-        "future positive P0-SELECTION-002 admission must content-bind the producer's provenance/manifest.json importer_recipe.tree_sha256 rather than treating the legacy pack.json negative marker as positive recipe proof"
-      ]
+      "blockers": []
     },
     {
       "id": "P0-SELECTION-002",
@@ -1481,6 +1478,7 @@
         "criteria": [
           "clean repeated cook yields identical bundle addresses",
           "every selected bundle binds baseline, catalog, feature graph, tool, and recipe",
+          "positive admission content-binds provenance/manifest.json importer_recipe.tree_sha256 to the actual recipe and source bytes; a shape-valid legacy pack.json marker is never positive recipe proof",
           "selection contains no obsolete 2.01-only supplement",
           "strict isolated runtime reports exact selected digest and no fallback"
         ]
