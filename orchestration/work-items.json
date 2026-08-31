@@ -12661,7 +12661,7 @@
       "kind": "load-presentation",
       "priority": "P1",
       "allocationClass": "worker-lane",
-      "status": "in-progress",
+      "status": "blocked",
       "domainIds": [
         "retail-skirmish"
       ],
@@ -12675,15 +12675,9 @@
         "P0-CODE-MAP-001"
       ],
       "ownership": {
-        "state": "assigned",
-        "assignee": "codex-fortress-subobjects",
-        "ownedPaths": [
-          "game/src/retail_slice/retail_vertical_slice.gd",
-          "game/src/retail_slice/retail_structure.gd",
-          "game/tests/retail_render_capture_runner.gd",
-          "game/tests/fortress_subobjects_v202_runner.gd",
-          "tools/gate-fortress-subobjects-v202.ps1"
-        ],
+        "state": "unassigned",
+        "assignee": null,
+        "ownedPaths": [],
         "candidatePaths": [
           "game/src/retail_slice/retail_vertical_slice.gd",
           "game/src/retail_slice/retail_structure.gd",
@@ -12746,7 +12740,9 @@
           "diagnosticPolicy": "strict-default"
         }
       ],
-      "blockers": []
+      "blockers": [
+        "Exact GBFFLAMING isolation removes four dark triangular pieces but not the four narrow white-blue tower ribbons; the source-correct citadel SubObjectsUpgrade binding is symptom-irrelevant and no implementation was accepted"
+      ]
     },
     {
       "id": "P1-ANGMAR-THRALL-001",
