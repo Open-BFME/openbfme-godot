@@ -13873,7 +13873,7 @@
       "kind": "performance",
       "priority": "P1",
       "allocationClass": "worker-lane",
-      "status": "pending",
+      "status": "in-progress",
       "domainIds": [
         "runtime-performance"
       ],
@@ -13882,9 +13882,14 @@
       ],
       "dependsOn": [],
       "ownership": {
-        "state": "unassigned",
-        "assignee": null,
-        "ownedPaths": [],
+        "state": "assigned",
+        "assignee": "codex-perf-sim-roster",
+        "ownedPaths": [
+          "game/src/retail_slice/retail_slice_sim.gd",
+          "game/src/retail_slice/retail_sim_contracts_behaviors.gd",
+          "game/tests/retail_sim_roster_runner.gd",
+          "tools/gate-perf-sim-roster.ps1"
+        ],
         "candidatePaths": [
           "game/src/retail_slice/retail_slice_sim.gd",
           "game/src/retail_slice/retail_sim_contracts_behaviors.gd",
