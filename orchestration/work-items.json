@@ -12932,6 +12932,84 @@
         }
       ],
       "blockers": []
+    },
+    {
+      "id": "P0-PLAYTEST-CURRENT-001",
+      "title": "Make one verified local playtest build canonical and double-clickable",
+      "kind": "repository-hygiene",
+      "priority": "P0",
+      "allocationClass": "worker-lane",
+      "status": "pending",
+      "domainIds": [
+        "release-hygiene"
+      ],
+      "rootQueryIds": [
+        "repository-hygiene"
+      ],
+      "dependsOn": [],
+      "ownership": {
+        "state": "unassigned",
+        "assignee": null,
+        "ownedPaths": [],
+        "candidatePaths": [
+          "PLAY-CURRENT.bat",
+          "tools/Publish-DistBuild.ps1",
+          "tools/dist-pipeline-common.ps1",
+          "tools/Test-DistPipeline.ps1",
+          "docs/BUILD_AND_RELEASE.md",
+          "docs/RELEASE_CYCLE.md"
+        ]
+      },
+      "scope": {
+        "deliverable": "After a numbered local playtest bundle passes its complete existing verification, atomically promote that exact immutable dist/v<version> bundle as dist/current, emit a machine-readable build index, and provide one obvious repository-root double-click launcher that resolves only the verified current build.",
+        "notIncluded": "Building from a dirty worker lane, changing VERSION or cutting v0.2.13 before accepted gameplay work lands, committing dist or retail-derived bytes, weakening bundle checks, publishing a GitHub release, or making a failed candidate replace the last verified current build."
+      },
+      "sourceEvidence": [],
+      "artifacts": [
+        "workspace/logs/P0-PLAYTEST-CURRENT-001/dist-pipeline-check.txt"
+      ],
+      "acceptance": {
+        "requiredLevels": [
+          "L4"
+        ],
+        "requiredOutputDimensions": {
+          "SOURCE": "NOT_REQUIRED",
+          "CONVERT": "NOT_REQUIRED",
+          "LOAD": "REQUIRED",
+          "BEHAVIOR": "REQUIRED",
+          "VISUAL": "NOT_REQUIRED",
+          "AUDIO": "NOT_REQUIRED"
+        },
+        "criteria": [
+          "the publisher keeps immutable dist/v<version> bundles and changes dist/current only after the numbered candidate passes the complete existing bundle verification",
+          "dist/current resolves to the exact numbered verified bundle without copying or drifting bytes, and a failed or interrupted publish leaves the previous current target unchanged",
+          "dist/build-index.json records schema, version, full commit, build number, UTC timestamp, numbered bundle path, patch-notes path, verification result, and current double-click target",
+          "PLAY-CURRENT.bat fails clearly when no verified current build exists and otherwise launches only dist/current/PLAY-OPENBFME.bat; each promoted bundle retains run-with-log.bat and gains the consistent PLAY-OPENBFME.bat entry point",
+          "the publisher still refuses version/build-info/patch-note drift and verifies that Git tracks no dist path or retail-derived build byte",
+          "docs name dist/current/PLAY-OPENBFME.bat as the definitive local playtest target and distinguish local promotion from public signed release publication"
+        ]
+      },
+      "verificationCommands": [
+        {
+          "steps": [
+            {
+              "toolRole": "powershell",
+              "invocation": "script",
+              "target": "tools/Test-DistPipeline.ps1",
+              "args": [],
+              "toolchainProfile": "rotwk-gate-v1"
+            }
+          ],
+          "availability": "current-windows-toolchain",
+          "timeoutSeconds": 900,
+          "expectedMarkers": [
+            "DIST_PIPELINE PASS",
+            "CURRENT_PLAYTEST_POINTER PASS"
+          ],
+          "diagnosticPolicy": "strict-default"
+        }
+      ],
+      "blockers": []
     }
   ]
 }
