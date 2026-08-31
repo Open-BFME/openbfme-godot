@@ -1347,16 +1347,20 @@
       "kind": "selection-foundation",
       "priority": "P0",
       "allocationClass": "worker-lane",
-      "status": "pending",
+      "status": "in-progress",
       "domainIds": [],
       "rootQueryIds": [],
       "dependsOn": [
         "P0-SOURCE-001"
       ],
       "ownership": {
-        "state": "unassigned",
-        "assignee": null,
-        "ownedPaths": [],
+        "state": "assigned",
+        "assignee": "codex-selection-audit",
+        "ownedPaths": [
+          "importer/openbfme_importer/pack_recipe_catalog_identity.py",
+          "tools/check_pack_addresses.py",
+          "importer/tests/test_pack_recipe_catalog_identity.py"
+        ],
         "candidatePaths": [
           "importer/openbfme_importer/pack_recipe_catalog_identity.py",
           "tools/check_pack_addresses.py",
