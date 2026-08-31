@@ -13003,7 +13003,7 @@
           "availability": "current-windows-toolchain",
           "timeoutSeconds": 900,
           "expectedMarkers": [
-            "DIST_PIPELINE PASS",
+            "DIST PIPELINE GATE PASSED",
             "CURRENT_PLAYTEST_POINTER PASS"
           ],
           "diagnosticPolicy": "strict-default"
@@ -13080,7 +13080,7 @@
           "availability": "current-windows-toolchain",
           "timeoutSeconds": 900,
           "expectedMarkers": [
-            "DIST_PIPELINE PASS"
+            "DIST PIPELINE GATE PASSED"
           ],
           "diagnosticPolicy": "strict-default"
         }
