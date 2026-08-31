@@ -1368,8 +1368,7 @@
         "notIncluded": "Deleting or changing selection.json, packs, or private payloads."
       },
       "sourceEvidence": [
-        "E-BL-202",
-        "E-AUDIT-CURRENT-20260829"
+        "E-BL-202"
       ],
       "artifacts": [
         "workspace/logs/P0-SELECTION-001/legacy-selection-audit.json"
@@ -2826,17 +2825,14 @@
       "kind": "repository-hygiene",
       "priority": "P0",
       "allocationClass": "worker-lane",
-      "status": "in-progress",
+      "status": "blocked",
       "domainIds": [],
       "rootQueryIds": [],
       "dependsOn": [],
       "ownership": {
-        "state": "assigned",
-        "assignee": "codex-code-map-corrective",
-        "ownedPaths": [
-          "tools/check-repository-boundaries.py",
-          "importer/tests/test_repository_boundaries.py"
-        ],
+        "state": "unassigned",
+        "assignee": null,
+        "ownedPaths": [],
         "candidatePaths": [
           "tools/check-repository-boundaries.py",
           "importer/tests/test_repository_boundaries.py"
@@ -2927,7 +2923,9 @@
           "retention": "Current focused regression test; run with the pinned importer interpreter."
         }
       ],
-      "blockers": []
+      "blockers": [
+        "assignment 0e9d7a43 was created from a poisoned base where completed P0-SELECTION-001 still cited historical diagnostics; the untouched lane must be retired and recreated after the owner correction"
+      ]
     },
     {
       "id": "P0-ASSET-HYGIENE-001",
