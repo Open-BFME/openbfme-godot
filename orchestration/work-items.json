@@ -874,7 +874,7 @@
       "kind": "source-foundation",
       "priority": "P0",
       "allocationClass": "worker-lane",
-      "status": "pending",
+      "status": "in-progress",
       "domainIds": [
         "retail-skirmish",
         "retail-campaigns",
@@ -896,9 +896,13 @@
         "P0-CORPUS-002"
       ],
       "ownership": {
-        "state": "unassigned",
-        "assignee": null,
-        "ownedPaths": [],
+        "state": "assigned",
+        "assignee": "codex-semantic-graph",
+        "ownedPaths": [
+          "importer/openbfme_importer/semantic_requirement_graph.py",
+          "tools/build-rotwk-202-compatibility.py",
+          "importer/tests/test_rotwk_202_semantic_graph.py"
+        ],
         "candidatePaths": [
           "importer/openbfme_importer/semantic_requirement_graph.py",
           "tools/build-rotwk-202-compatibility.py",
