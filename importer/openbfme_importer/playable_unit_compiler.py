@@ -28,6 +28,7 @@ from .module_contracts import (
     ModuleContractError,
     compile_activate_module_special_powers,
     compile_all_module_contracts,
+    compile_attribute_modifier_aura_updates,
     compile_dominate_enemy_special_powers,
     compile_grab_passenger_special_powers,
     compile_fling_passenger_special_ability_updates,
@@ -95,6 +96,49 @@ SCHEMA_VERSION = 0
 COMMAND_SET_PATH = "data/ini/commandset.ini"
 COMMAND_BUTTON_PATH = "data/ini/commandbutton.ini"
 PLAYER_TEMPLATE_PATH = "data/ini/playertemplate.ini"
+
+_ANGMAR_THRALL_SOURCE_PATHS = frozenset(
+    {
+        "data/ini/object/evilfaction/units/angmar/angmarthrallmaster.ini",
+        "data/ini/object/evilfaction/hordes/angmar/angmarhordes.ini",
+        "data/ini/object/evilfaction/structures/angmar/angmarden.ini",
+        COMMAND_BUTTON_PATH,
+        COMMAND_SET_PATH,
+        "data/ini/specialpower.ini",
+        "data/ini/upgrade.ini",
+        "data/ini/attributemodifier.ini",
+    }
+)
+_ANGMAR_THRALL_BRANCHES: tuple[tuple[str, str, str, str, int], ...] = (
+    (
+        "AngmarOrcWarriors",
+        "Upgrade_ThrallMasterOrcWarriors",
+        "Command_UpgradeThrallMasterOrcWarriors",
+        "SpecialAbilityAngmarThrallMasterSummonOrc",
+        2,
+    ),
+    (
+        "AngmarWolfRiders",
+        "Upgrade_ThrallMasterWolfRiders",
+        "Command_UpgradeThrallMasterWolfRiders_Fake",
+        "SpecialAbilityAngmarThrallMasterSummonWolfRiders",
+        5,
+    ),
+    (
+        "AngmarRhudaurSpearmen",
+        "Upgrade_ThrallMasterRhudaurSpearmen",
+        "Command_UpgradeThrallMasterRhudaurSpearmen",
+        "SpecialAbilityAngmarThrallMasterSummonRhudaurSpearmen",
+        3,
+    ),
+    (
+        "AngmarRhudaurSlingers",
+        "Upgrade_ThrallMasterRhudaurSlingers",
+        "Command_UpgradeThrallMasterRhudaurSlingers",
+        "SpecialAbilityAngmarThrallMasterSummonRhudaurSlingers",
+        4,
+    ),
+)
 
 _CATEGORIES = frozenset(
     {"infantry", "ranged-infantry", "cavalry", "hero", "siege", "monster", "naval"}
@@ -10771,6 +10815,510 @@ def _bind_horde_dispatch_graphs(
     return result
 
 
+def _thrall_definition(
+    prepared: PlayableUnitCompilerInputs, kind: str, identifier: str, path: str
+) -> dict[str, list[dict[str, object]]]:
+    values = _named_definition_values(
+        prepared.documents, kind, identifier,
+        cache=prepared.named_definition_cache, cache_lock=prepared.cache_lock,
+    )
+    if values is None or {p.casefold() for p in _provenance_paths(values)} != {
+        path.casefold()
+    }:
+        raise PlayableUnitCompilerError(
+            f"Angmar Thrall graph lacks exact {kind} {identifier}"
+        )
+    return values
+
+
+def _thrall_field(
+    values: Mapping[str, Sequence[Mapping[str, object]]], field: str, label: str
+) -> Mapping[str, object]:
+    rows = values.get(field.casefold(), ())
+    if len(rows) != 1:
+        raise PlayableUnitCompilerError(f"Angmar Thrall {label} requires one {field}")
+    return rows[0]
+
+
+def _thrall_expression(row: Mapping[str, object]) -> str:
+    return str(row.get("expression", "")).strip()
+
+
+def _thrall_source(row: Mapping[str, object]) -> dict[str, object]:
+    return {"sourceIni": str(row["sourceIni"]), "line": int(row["line"])}
+
+
+def _thrall_target_projection(
+    target: SageObject,
+    prepared: PlayableUnitCompilerInputs,
+    *,
+    game: str,
+) -> tuple[str, dict[str, object], dict[str, object], set[str]]:
+    """Compile only the shipping entity projection for a summon-only horde."""
+
+    lineage = _ancestry(prepared.objects, target)
+    members, primary, _consumed = _member_rows(
+        target, lineage, prepared.objects, prepared.numeric_defines
+    )
+    member_lineage = _ancestry(prepared.objects, primary)
+    category = _category(
+        _kind_of(lineage, prepared.token_defines),
+        _kind_of(member_lineage, prepared.token_defines),
+        bool(members[0]["objectId"] != target.name),
+    )
+    try:
+        contracts = compile_all_module_contracts(
+            lineage,
+            target.name,
+            numeric_defines=prepared.numeric_defines,
+            numeric_define_provenance=prepared.numeric_define_provenance,
+        )
+        if target.name.casefold() != primary.name.casefold():
+            contracts += compile_all_module_contracts(
+                member_lineage,
+                primary.name,
+                numeric_defines=prepared.numeric_defines,
+                numeric_define_provenance=prepared.numeric_define_provenance,
+            )
+    except ModuleContractError as error:
+        raise PlayableUnitCompilerError(str(error)) from error
+    destroy: list[dict[str, object]] = []
+    fades: list[dict[str, object]] = []
+    for owner_lineage, role in ((lineage, "container"), (member_lineage, "primaryMember")):
+        if role == "primaryMember" and target.name.casefold() == primary.name.casefold():
+            continue
+        policies, _consumed_destroy = _destroy_die_policies(owner_lineage, role)
+        destroy.extend(policies)
+        fades.extend(_slow_death_fade_rows(owner_lineage, role, prepared.numeric_defines))
+    simulation = _simulation_contract(
+        _scalar_fields(lineage),
+        _scalar_fields(member_lineage),
+        member_lineage,
+        members,
+        prepared.numeric_defines,
+        prepared.documents,
+        lineage,
+        token_defines=prepared.token_defines,
+        flat_kind_cache=prepared.flat_kind_cache,
+        named_definition_cache=prepared.named_definition_cache,
+        cache_lock=prepared.cache_lock,
+        game=game,
+        destroy_die_policies=destroy,
+        module_contracts=contracts,
+        slow_death_fades=fades,
+    )
+    composition = {
+        "containerObjectId": target.name,
+        "members": list(members),
+        "primaryMemberObjectId": primary.name,
+    }
+    sources = {
+        *(row.source_virtual_path for row in lineage),
+        *(row.source_virtual_path for row in member_lineage),
+        *_provenance_paths(simulation),
+    }
+    return category, composition, simulation, sources
+
+
+def _angmar_thrall_replacement_graph(
+    target_lineage: Sequence[SageObject],
+    module_contracts: Sequence[Mapping[str, object]],
+    prepared: PlayableUnitCompilerInputs,
+    *,
+    game: str,
+) -> dict[str, object] | None:
+    """Close only the four normal v9.7.7 Thrall joins around deferred modules."""
+
+    target = target_lineage[-1]
+    if target.name.casefold() != "angmarthrallmaster":
+        return None
+    for path in _ANGMAR_THRALL_SOURCE_PATHS:
+        _required_document(prepared.documents, path)
+    paths = {
+        "target": "data/ini/object/evilfaction/units/angmar/angmarthrallmaster.ini",
+        "hordes": "data/ini/object/evilfaction/hordes/angmar/angmarhordes.ini",
+        "den": "data/ini/object/evilfaction/structures/angmar/angmarden.ini",
+        "upgrades": "data/ini/upgrade.ini",
+        "powers": "data/ini/specialpower.ini",
+        "modifiers": "data/ini/attributemodifier.ini",
+    }
+    base_set_id = "AngmarThrallMasterCommandSet"
+    den_set_id = "AngmarThrallMasterCommandSet_DenPresent"
+    authored_set = _first(
+        tuple(row.value for row in _effective_values(target_lineage, "CommandSet"))
+    )
+    if (
+        target.source_virtual_path.casefold() != paths["target"].casefold()
+        or authored_set != base_set_id
+    ):
+        raise PlayableUnitCompilerError("AngmarThrallMaster source surface drifted")
+    base_set = _thrall_definition(
+        prepared, "CommandSet", base_set_id, COMMAND_SET_PATH
+    )
+    den_set = _thrall_definition(
+        prepared, "CommandSet", den_set_id, COMMAND_SET_PATH
+    )
+
+    def typed_rows(kind: str, field: str) -> dict[str, Mapping[str, object]]:
+        rows = [row for row in module_contracts if row.get("module") == kind]
+        result = {
+            str(row["fields"][field]["value"]).casefold(): row
+            for row in rows
+            if isinstance(row.get("fields"), Mapping)
+        }
+        if (
+            len(rows) != len(result) or len(rows) != 4
+            or any(
+                row.get("runtimeStatus") != "deferred"
+                or row.get("extraction") != "typed" for row in rows
+            )
+        ):
+            raise PlayableUnitCompilerError(
+                f"Angmar Thrall graph requires four deferred typed {kind} rows"
+            )
+        return result
+
+    do_rows = typed_rows("DoCommandUpgrade", "TriggeredBy")
+    summon_rows = typed_rows(
+        "SummonReplacementSpecialAbilityUpdate", "MountedTemplate"
+    )
+    starters = {
+        str(_first(tuple(
+            row.value for row in block.assignments
+            if row.key.casefold() == "specialpowertemplate"
+        ))).casefold(): block
+        for block in _effective_top_blocks(target_lineage)
+        if (block.header_key or "").casefold() == "behavior"
+        and block.kind.casefold() == "specialpowermodule"
+    }
+
+    def purchase(
+        command_set_id: str,
+        command_set: Mapping[str, Sequence[Mapping[str, object]]],
+        slot: int,
+        button_id: str,
+        upgrade_id: str,
+        needed_id: str = "",
+    ) -> dict[str, object]:
+        slot_row = _thrall_field(command_set, str(slot), command_set_id)
+        button = _thrall_definition(
+            prepared, "CommandButton", button_id, COMMAND_BUTTON_PATH
+        )
+        values = {
+            key: _thrall_field(button, key, button_id)
+            for key in ("Command", "Object", "Upgrade", "Options")
+        }
+        needed_rows = button.get("neededupgrade", ())
+        needed = _thrall_expression(needed_rows[0]) if len(needed_rows) == 1 else ""
+        actual = (
+            _thrall_expression(slot_row), _thrall_expression(values["Command"]),
+            _thrall_expression(values["Object"]), _thrall_expression(values["Upgrade"]),
+            needed,
+        )
+        expected = (button_id, "OBJECT_UPGRADE", "AngmarThrallMaster", upgrade_id, needed_id)
+        if tuple(v.casefold() for v in actual) != tuple(v.casefold() for v in expected):
+            raise PlayableUnitCompilerError(f"Angmar Thrall purchase {button_id} drifted")
+        options = list(_tokens(_thrall_expression(values["Options"])))
+        if needed_id and "NEED_UPGRADE" not in options:
+            raise PlayableUnitCompilerError("fake Wolf purchase lost NEED_UPGRADE")
+        result = {
+            "commandButtonId": button_id, "commandSetId": command_set_id,
+            "slot": slot, "upgradeId": upgrade_id, "options": options,
+            **_thrall_source(values["Command"]),
+            "commandSetSourceIni": str(slot_row["sourceIni"]),
+            "commandSetLine": int(slot_row["line"]),
+        }
+        if needed:
+            result["neededUpgradeId"] = needed
+        return result
+
+    branches: list[dict[str, object]] = []
+    target_sources = {
+        path.casefold(): {
+            "virtualPath": path,
+            "sha256": hashlib.sha256(
+                _required_document(prepared.documents, path)
+            ).hexdigest(),
+        }
+        for path in _ANGMAR_THRALL_SOURCE_PATHS
+    }
+    allowed_angmar_units = {paths["target"].casefold()}
+    for target_id, upgrade_id, purchase_id, power_id, slot in _ANGMAR_THRALL_BRANCHES:
+        summon_button_id = "Command_" + power_id
+        needed_id = (
+            "Upgrade_ThrallMasterCanSummonWolfRiders"
+            if target_id == "AngmarWolfRiders" else ""
+        )
+        purchase_row = purchase(
+            base_set_id, base_set, slot, purchase_id, upgrade_id, needed_id
+        )
+        den_purchase_id = (
+            "Command_UpgradeThrallMasterWolfRiders"
+            if target_id == "AngmarWolfRiders" else purchase_id
+        )
+        den_purchase = purchase(
+            den_set_id, den_set, slot, den_purchase_id, upgrade_id
+        )
+        upgrade = _thrall_definition(
+            prepared, "Upgrade", upgrade_id, paths["upgrades"]
+        )
+        upgrade_type = _thrall_field(upgrade, "Type", upgrade_id)
+        _thrall_field(upgrade, "BuildCost", upgrade_id)
+        _thrall_field(upgrade, "BuildTime", upgrade_id)
+        do_row = do_rows.get(upgrade_id.casefold())
+        summon_row = summon_rows.get(target_id.casefold())
+        if do_row is None or summon_row is None:
+            raise PlayableUnitCompilerError(f"Angmar Thrall {target_id} modules drifted")
+        do_fields = do_row["fields"]
+        summon_fields = summon_row["fields"]
+        summon_button = _thrall_definition(
+            prepared, "CommandButton", summon_button_id, COMMAND_BUTTON_PATH
+        )
+        summon_command = _thrall_field(summon_button, "Command", summon_button_id)
+        summon_power = _thrall_field(
+            summon_button, "SpecialPower", summon_button_id
+        )
+        power = _thrall_definition(
+            prepared, "SpecialPower", power_id, paths["powers"]
+        )
+        power_fields = {
+            key: _thrall_field(power, key, power_id)
+            for key in (
+                "Enum", "ReloadTime", "InitiateAtLocationSound", "Flags",
+                "ForbiddenObjectFilter", "ForbiddenObjectRange",
+            )
+        }
+        starter = starters.get(power_id.casefold())
+        starter_values = {
+            row.key.casefold(): _first((row.value,)) for row in starter.assignments
+        } if starter is not None else {}
+        actual = (
+            _thrall_expression(upgrade_type),
+            str(do_fields["GetUpgradeCommandButtonName"].get("value", "")),
+            _thrall_expression(summon_command), _thrall_expression(summon_power),
+            _thrall_expression(power_fields["Enum"]),
+            _thrall_expression(power_fields["ReloadTime"]),
+            _thrall_expression(power_fields["InitiateAtLocationSound"]),
+            starter_values.get("updatemodulestartsattack", ""),
+            starter_values.get("startspaused", ""), starter_values.get("triggerfx", ""),
+            str(summon_fields["SpecialPowerTemplate"].get("value", "")),
+            str(summon_fields["UnpackTime"].get("milliseconds", "")),
+            str(summon_fields["PreparationTime"].get("milliseconds", "")),
+            str(summon_fields["PersistentPrepTime"].get("milliseconds", "")),
+            str(summon_fields["PackTime"].get("milliseconds", "")),
+            str(summon_fields["AwardXPForTriggering"].get("value", "")),
+            str(summon_fields["IgnoreFacingCheck"].get("value", "")).lower(),
+            str(summon_fields["MustFinishAbility"].get("value", "")).lower(),
+        )
+        expected = (
+            "OBJECT", summon_button_id, "SPECIAL_POWER", power_id,
+            "SPECIAL_TOGGLE_MOUNTED", "1000", "BoromirHorn",
+            "Yes", "No", "FX_ThrallSummon", power_id,
+            "1000", "1000", "0", "0", "0", "true", "true",
+        )
+        if tuple(v.casefold() for v in actual) != tuple(v.casefold() for v in expected):
+            raise PlayableUnitCompilerError(
+                f"Angmar Thrall branch {target_id} source contract drifted"
+            )
+        horde = prepared.objects.get(target_id.casefold())
+        if horde is None or horde.source_virtual_path.casefold() != paths["hordes"].casefold():
+            raise PlayableUnitCompilerError(f"Angmar Thrall horde {target_id} drifted")
+        target_category, target_composition, simulation, projection_sources = (
+            _thrall_target_projection(horde, prepared, game=game)
+        )
+        command_points = simulation.get("resolved", {}).get("commandPoints", {}).get("value")
+        if not isinstance(command_points, (int, float)):
+            raise PlayableUnitCompilerError(f"{target_id} CommandPoints unresolved")
+        for source_path in projection_sources:
+            target_sources[source_path.casefold()] = {
+                "virtualPath": source_path,
+                "sha256": hashlib.sha256(
+                    _required_document(prepared.documents, source_path)
+                ).hexdigest(),
+            }
+        member = prepared.objects.get(
+            str(target_composition["primaryMemberObjectId"]).casefold()
+        )
+        if member is not None:
+            allowed_angmar_units.update(
+                row.source_virtual_path.casefold()
+                for row in _ancestry(prepared.objects, member)
+            )
+        branch: dict[str, object] = {
+            "graphStatus": "executable", "purchaseCommand": purchase_row,
+            "upgradeId": upgrade_id, "upgradeSource": _thrall_source(upgrade_type),
+            "doCommand": {
+                "moduleTag": str(do_row.get("tag", "")), "runtimeStatus": "deferred",
+                "commandButtonId": summon_button_id, **_thrall_source(do_row),
+            },
+            "summonCommand": {
+                "commandButtonId": summon_button_id, "specialPowerId": power_id,
+                **_thrall_source(summon_command),
+            },
+            "specialPower": {
+                "id": power_id, "reloadMilliseconds": 1000,
+                **_thrall_source(power_fields["Enum"]),
+            },
+            "summonStarter": {
+                "specialPowerId": power_id, "triggerFx": "FX_ThrallSummon",
+                **_thrall_source({"sourceIni": starter.source_virtual_path, "line": starter.line}),
+            },
+            "summonModule": {
+                "moduleTag": str(summon_row.get("tag", "")),
+                "runtimeStatus": "deferred", "specialPowerId": power_id,
+                "unpackMilliseconds": 1000, "preparationMilliseconds": 1000,
+                "persistentPrepMilliseconds": 0, "packMilliseconds": 0,
+                "awardXpForTriggering": 0, "targetObjectId": target_id,
+                "ignoreFacingCheck": True, "mustFinishAbility": True,
+                **_thrall_source(summon_row),
+            },
+            "targetHordeId": target_id, "targetObjectId": target_id,
+            "targetCategory": target_category,
+            "targetComposition": target_composition,
+            "targetSimulation": simulation, "commandPoints": int(command_points),
+        }
+        if target_id == "AngmarWolfRiders":
+            branch["denPurchaseCommand"] = den_purchase
+        branches.append(branch)
+
+    den = prepared.objects.get("angmarden")
+    if den is None or den.source_virtual_path.casefold() != paths["den"].casefold():
+        raise PlayableUnitCompilerError("AngmarDen source drifted")
+    try:
+        auras = compile_attribute_modifier_aura_updates(
+            _ancestry(prepared.objects, den), "AngmarDen"
+        )
+    except ModuleContractError as error:
+        raise PlayableUnitCompilerError(str(error)) from error
+    auras = [row for row in auras if row.get("tag") == "ModuleTag_GrantWolfRiderSummon"]
+    monitors = [
+        row for row in module_contracts
+        if row.get("module") == "MonitorConditionUpdate"
+        and row.get("tag") == "ModuleTag_CommandSetSwapper"
+    ]
+    if len(auras) != 1 or len(monitors) != 1:
+        raise PlayableUnitCompilerError("Angmar Thrall Den transition is ambiguous")
+    aura, monitor = auras[0], monitors[0]
+    aura_fields = aura["fields"]
+    monitor_route = monitor["fields"]["ModelConditionRoute"]
+    modifier = _thrall_definition(
+        prepared, "ModifierList", "CanSummonWolfRiders", paths["modifiers"]
+    )
+    modifier_fields = {
+        key: _thrall_field(modifier, key, "CanSummonWolfRiders")
+        for key in ("Category", "Duration", "ModelCondition")
+    }
+    actual = (
+        aura_fields["TriggeredBy"].get("value"),
+        aura_fields["BonusName"].get("value"),
+        aura_fields["RefreshDelay"].get("milliseconds"),
+        aura_fields["Range"].get("value"), aura_fields["ObjectFilter"].get("value"),
+        _thrall_expression(modifier_fields["Category"]),
+        _thrall_expression(modifier_fields["Duration"]),
+        _thrall_expression(modifier_fields["ModelCondition"]),
+        monitor_route["flags"].get("value"),
+        monitor_route["commandSet"].get("value"),
+    )
+    expected = (
+        ["Upgrade_ObjectLevel1"], "CanSummonWolfRiders", 2000, 99999,
+        ["ANY", "+AngmarThrallMaster"], "WEAPON", "3000", "USER_1",
+        ["USER_1"], den_set_id,
+    )
+    if actual != expected:
+        raise PlayableUnitCompilerError("Angmar Thrall Den transition fields drifted")
+    unexpected = sorted(
+        str(row["virtualPath"]) for row in target_sources.values()
+        if str(row["virtualPath"]).casefold().startswith(
+            "data/ini/object/evilfaction/units/angmar/"
+        )
+        and str(row["virtualPath"]).casefold() not in allowed_angmar_units
+    )
+    if unexpected:
+        raise PlayableUnitCompilerError(
+            "Angmar Thrall targets reached unrelated Angmar sources: " + ", ".join(unexpected)
+        )
+    return {
+        "graphStatus": "executable", "sourceObjectId": "AngmarThrallMaster",
+        "baseCommandSetId": base_set_id, "denCommandSetId": den_set_id,
+        "wolfCondition": {
+            "modelCondition": "USER_1",
+            "neededUpgradeId": "Upgrade_ThrallMasterCanSummonWolfRiders",
+            "baseCommandButtonId": "Command_UpgradeThrallMasterWolfRiders_Fake",
+            "denCommandButtonId": "Command_UpgradeThrallMasterWolfRiders",
+        },
+        "denAura": {
+            "sourceObjectId": "AngmarDen", "triggeredBy": "Upgrade_ObjectLevel1",
+            "bonusName": "CanSummonWolfRiders", "refreshMilliseconds": 2000,
+            "range": 99999, "objectFilter": ["ANY", "+AngmarThrallMaster"],
+            "moduleContract": dict(aura),
+            **_thrall_source(aura),
+        },
+        "modifier": {
+            "id": "CanSummonWolfRiders", "category": "WEAPON",
+            "durationMilliseconds": 3000, "modelCondition": "USER_1",
+            **_thrall_source(modifier_fields["Category"]),
+        },
+        "monitor": {
+            "condition": "model-condition", "modelCondition": "USER_1",
+            "commandSetId": den_set_id, "moduleContract": dict(monitor),
+            **_thrall_source(monitor),
+        },
+        "branches": branches,
+        "openReceipts": [
+            "l5-replacement-transfer-unproved", "fx:FX_ThrallSummon",
+            "audio:BoromirHorn",
+        ],
+        "sourceDocuments": sorted(
+            target_sources.values(), key=lambda row: str(row["virtualPath"]).casefold()
+        ),
+    }
+
+
+def compile_angmar_thrall_replacement_graph(
+    documents: Mapping[str, bytes],
+    *,
+    game: str = "rotwk",
+) -> dict[str, object]:
+    """Compile the closed Thrall graph without unrelated descriptor surfaces."""
+
+    prepared = prepare_playable_unit_compiler(documents)
+    target = prepared.objects.get("angmarthrallmaster")
+    if target is None:
+        raise PlayableUnitCompilerError(
+            "effective Object is missing: AngmarThrallMaster"
+        )
+    target_lineage = _ancestry(prepared.objects, target)
+    _members, primary, _consumed = _member_rows(
+        target, target_lineage, prepared.objects, prepared.numeric_defines
+    )
+    member_lineage = _ancestry(prepared.objects, primary)
+    try:
+        module_contracts = compile_all_module_contracts(
+            target_lineage,
+            target.name,
+            numeric_defines=prepared.numeric_defines,
+            numeric_define_provenance=prepared.numeric_define_provenance,
+        )
+        if target.name.casefold() != primary.name.casefold():
+            module_contracts += compile_all_module_contracts(
+                member_lineage,
+                primary.name,
+                numeric_defines=prepared.numeric_defines,
+                numeric_define_provenance=prepared.numeric_define_provenance,
+            )
+    except ModuleContractError as error:
+        raise PlayableUnitCompilerError(str(error)) from error
+    graph = _angmar_thrall_replacement_graph(
+        target_lineage, module_contracts, prepared, game=game
+    )
+    if graph is None:
+        raise PlayableUnitCompilerError(
+            "AngmarThrallMaster replacement graph did not compile"
+        )
+    return graph
+
+
+
 def compile_playable_unit_descriptor(
     target_id: str,
     documents: Mapping[str, bytes],
@@ -11391,6 +11939,18 @@ def compile_playable_unit_descriptor(
         slow_death_fades=slow_death_fades,
         scenario_admission=scenario_admission,
     )
+    angmar_thrall_replacement = _angmar_thrall_replacement_graph(
+        target_lineage, module_contracts, prepared, game=game
+    )
+    if angmar_thrall_replacement is not None:
+        resolved_simulation = simulation.get("resolved")
+        if not isinstance(resolved_simulation, dict):
+            raise PlayableUnitCompilerError(
+                "Angmar Thrall graph has no resolved simulation envelope"
+            )
+        resolved_simulation["angmarThrallReplacement"] = (
+            angmar_thrall_replacement
+        )
     formation_toggle = _formation_toggle_contract(
         target_lineage,
         objects,
@@ -11462,6 +12022,11 @@ def compile_playable_unit_descriptor(
         *(item.source_virtual_path for item in member_lineage),
     }
     used_paths.update(_provenance_paths(simulation))
+    if angmar_thrall_replacement is not None:
+        used_paths.update(
+            str(row["virtualPath"])
+            for row in angmar_thrall_replacement["sourceDocuments"]
+        )
     if formation_toggle is not None:
         used_paths.update(_provenance_paths(formation_toggle))
     used_paths.update(_provenance_paths(abilities))
@@ -11493,6 +12058,14 @@ def compile_playable_unit_descriptor(
         semantic_scopes[path.casefold()].append(
             {"kind": "ResolvedPlayableUnitSimulation", "contract": simulation}
         )
+    if angmar_thrall_replacement is not None:
+        for row in angmar_thrall_replacement["sourceDocuments"]:
+            semantic_scopes[str(row["virtualPath"]).casefold()].append(
+                {
+                    "kind": "ResolvedAngmarThrallReplacement",
+                    "contract": angmar_thrall_replacement,
+                }
+            )
     if formation_toggle is not None:
         for path in _provenance_paths(formation_toggle):
             semantic_scopes[path.casefold()].append(
@@ -12791,6 +13364,7 @@ __all__ = [
     "PlayableUnitCompilerError",
     "SCHEMA",
     "SCHEMA_VERSION",
+    "compile_angmar_thrall_replacement_graph",
     "compile_playable_unit_descriptor",
     "prepare_playable_unit_compiler",
     "playable_object_kind_of",

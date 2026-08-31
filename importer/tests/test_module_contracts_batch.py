@@ -84,6 +84,7 @@ from openbfme_importer.module_contracts import (
     compile_activate_module_special_powers,
     compile_weapon_mode_special_power_updates,
     compile_dominate_enemy_special_powers,
+    compile_do_command_upgrades,
     compile_grab_passenger_special_powers,
     compile_fling_passenger_special_ability_updates,
     compile_temporarily_defect_update_default,
@@ -98,6 +99,7 @@ from openbfme_importer.module_contracts import (
     compile_special_disguise_updates,
     compile_unleash_special_powers,
     compile_special_enemy_sense_updates,
+    compile_summon_replacement_special_ability_updates,
     compile_scavenger_special_powers,
     compile_fire_weapon_when_dead_behaviors,
     compile_geometry_upgrades,
@@ -127,6 +129,130 @@ def _lineage(text: str, name: str = "FixtureObject"):
     objects = [obj for obj in document.objects if obj.name.casefold() == name.casefold()]
     assert objects, f"missing object {name}"
     return objects
+
+
+def test_thrall_command_and_summon_replacement_contracts_are_typed_deferred() -> None:
+    lineage = _lineage(
+        """
+Object FixtureObject
+  Behavior = DoCommandUpgrade ModuleTag_UpgradeOrcs
+    TriggeredBy = Upgrade_ThrallMasterOrcWarriors
+    GetUpgradeCommandButtonName = Command_SpecialAbilityAngmarThrallMasterSummonOrc
+  End
+  Behavior = SummonReplacementSpecialAbilityUpdate ModuleTag_SummonOrcs
+    SpecialPowerTemplate = SpecialAbilityAngmarThrallMasterSummonOrc
+    UnpackTime = 1000
+    PreparationTime = 1000
+    PersistentPrepTime = 0
+    PackTime = 0
+    AwardXPForTriggering = 0
+    MountedTemplate = AngmarOrcWarriors
+    IgnoreFacingCheck = Yes
+    MustFinishAbility = Yes
+  End
+End
+"""
+    )
+    command = compile_do_command_upgrades(lineage, "FixtureObject")[0]
+    summon = compile_summon_replacement_special_ability_updates(
+        lineage, "FixtureObject"
+    )[0]
+
+    assert command["extraction"] == summon["extraction"] == "typed"
+    assert command["runtimeStatus"] == summon["runtimeStatus"] == "deferred"
+    assert command["fields"]["TriggeredBy"]["value"] == (
+        "Upgrade_ThrallMasterOrcWarriors"
+    )
+    assert command["fields"]["GetUpgradeCommandButtonName"]["value"] == (
+        "Command_SpecialAbilityAngmarThrallMasterSummonOrc"
+    )
+    assert summon["fields"]["UnpackTime"]["milliseconds"] == 1000
+    assert summon["fields"]["PreparationTime"]["milliseconds"] == 1000
+    assert summon["fields"]["MountedTemplate"]["value"] == "AngmarOrcWarriors"
+    assert "DoCommandUpgrade" not in (
+        module_contracts_subject.EXECUTABLE_TYPED_MODULE_EVIDENCE
+    )
+    assert "SummonReplacementSpecialAbilityUpdate" not in (
+        module_contracts_subject.EXECUTABLE_TYPED_MODULE_EVIDENCE
+    )
+
+    all_rows = compile_all_module_contracts(lineage, "FixtureObject")
+    selected = [
+        row
+        for row in all_rows
+        if row["module"]
+        in {"DoCommandUpgrade", "SummonReplacementSpecialAbilityUpdate"}
+    ]
+    assert len(selected) == 2
+    assert all(row["extraction"] == "typed" for row in selected)
+    assert all(row["runtimeStatus"] == "deferred" for row in selected)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "TriggeredBy = Upgrade_X",
+        "GetUpgradeCommandButtonName = Command_X",
+        (
+            "TriggeredBy = Upgrade_X\n"
+            "    GetUpgradeCommandButtonName = Command_X\n"
+            "    Unknown = 1"
+        ),
+    ],
+)
+def test_do_command_upgrade_fails_closed(body: str) -> None:
+    with pytest.raises(ModuleContractError):
+        compile_do_command_upgrades(
+            _lineage(
+                "Object FixtureObject\n"
+                "  Behavior = DoCommandUpgrade ModuleTag_Test\n    "
+                + body
+                + "\n  End\nEnd"
+            ),
+            "FixtureObject",
+        )
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        (
+            "UnpackTime = 1000\n"
+            "    PreparationTime = 1000\n"
+            "    MountedTemplate = AngmarOrcWarriors\n"
+            "    IgnoreFacingCheck = Yes\n"
+            "    MustFinishAbility = Yes"
+        ),
+        (
+            "SpecialPowerTemplate = SpecialAbilityX\n"
+            "    UnpackTime = -1\n"
+            "    PreparationTime = 1000\n"
+            "    MountedTemplate = AngmarOrcWarriors\n"
+            "    IgnoreFacingCheck = Yes\n"
+            "    MustFinishAbility = Yes"
+        ),
+        (
+            "SpecialPowerTemplate = SpecialAbilityX\n"
+            "    UnpackTime = 1000\n"
+            "    PreparationTime = 1000\n"
+            "    MountedTemplate = AngmarOrcWarriors\n"
+            "    IgnoreFacingCheck = Maybe\n"
+            "    MustFinishAbility = Yes"
+        ),
+    ],
+)
+def test_summon_replacement_fails_closed(body: str) -> None:
+    with pytest.raises(ModuleContractError):
+        compile_summon_replacement_special_ability_updates(
+            _lineage(
+                "Object FixtureObject\n"
+                "  Behavior = SummonReplacementSpecialAbilityUpdate "
+                "ModuleTag_Test\n    "
+                + body
+                + "\n  End\nEnd"
+            ),
+            "FixtureObject",
+        )
 
 
 def test_attribute_modifier_upgrade_extracts_trigger_and_modifier() -> None:
@@ -3925,7 +4051,7 @@ def test_opaque_and_typed_sets_disjoint() -> None:
     )
 
     assert not (OPAQUE_DEFERRED_MODULE_KINDS & TYPED_MODULE_KINDS)
-    assert len(OPAQUE_DEFERRED_MODULE_KINDS) == 86
+    assert len(OPAQUE_DEFERRED_MODULE_KINDS) == 84
     assert len(EXECUTABLE_TYPED_MODULE_KINDS) == 65
     assert {
         "DeployStyleAIUpdate",

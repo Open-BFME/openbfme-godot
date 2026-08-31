@@ -784,6 +784,15 @@ func _attach_monitor_condition_contract(row: Dictionary, contract: Dictionary) -
 	var unsupported: Array[String] = ["command-surface-consumer-unwired"]
 	if not model_route.is_empty(): unsupported.append("model-condition-producer-unwired")
 	if default_set == "": unsupported.append("default-command-set-unresolved")
+	var thrall_graph := (sim._rules.get("angmar_thrall_replacement", {}) as Dictionary)
+	if (
+		String(row.get("unit_type", "")) == String(thrall_graph.get("runtimeSourceUnitType", ""))
+		and String(row.get("object_id", "")) == String(thrall_graph.get("runtimeSourceObjectId", ""))
+		and String(thrall_graph.get("graphStatus", "")) == "executable"
+		and String((thrall_graph.get("monitor", {}) as Dictionary).get("commandSetId", "")) == String(model_route.get("command_set", ""))
+	):
+		unsupported.erase("command-surface-consumer-unwired")
+		unsupported.erase("model-condition-producer-unwired")
 	row["monitor_condition_update"] = {
 		"default_command_set": default_set,
 		"active_command_set": default_set,
@@ -832,6 +841,29 @@ func _step_monitor_condition_row(object_id: int, row: Dictionary) -> void:
 	if policy.is_empty() or (policy.get("unsupported_semantics", []) as Array).has("default-command-set-unresolved"):
 		return
 	var model_conditions := _upper_token_set(row.get("model_conditions", []))
+	# The exact Thrall graph closes the previously deferred producer edge:
+	# CanSummonWolfRiders is a timed ModifierList whose MODEL_CONDITION USER_1
+	# drives MonitorConditionUpdate.  Keep this scoped to the compiler-joined
+	# graph; other modifier consumers remain honestly deferred.
+	var thrall_graph := (sim._rules.get("angmar_thrall_replacement", {}) as Dictionary)
+	if (
+		String(row.get("unit_type", "")) == String(thrall_graph.get("runtimeSourceUnitType", ""))
+		and String(row.get("object_id", "")) == String(thrall_graph.get("runtimeSourceObjectId", ""))
+		and String(thrall_graph.get("graphStatus", "")) == "executable"
+	):
+		for timed_value in (row.get("timed_modifiers", {}) as Dictionary).values():
+			var timed := timed_value as Dictionary
+			if int(timed.get("expires_tick", -1)) <= sim.tick_index:
+				continue
+			for effect_value in timed.get("modifiers", []) as Array:
+				var effect := effect_value as Dictionary
+				if String(effect.get("kind", "")).to_upper() != "MODEL_CONDITION":
+					continue
+				var value: Variant = effect.get("value", effect.get("tokens", []))
+				if typeof(value) == TYPE_ARRAY:
+					for token in value as Array: model_conditions[String(token).to_upper()] = true
+				elif String(value) != "":
+					model_conditions[String(value).to_upper()] = true
 	var weapon_flags := _upper_token_set(row.get("weapon_set_flags", []))
 	var selected_set := String(policy.get("default_command_set", ""))
 	var selected_route := "default"

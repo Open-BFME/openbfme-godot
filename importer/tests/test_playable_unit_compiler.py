@@ -25,6 +25,7 @@ from openbfme_importer.playable_unit_compiler import (
     _object_index,
     _permanent_weapon_locks,
     _hero_ability_effect,
+    compile_angmar_thrall_replacement_graph,
     compile_playable_unit_descriptor,
     playable_object_kind_of,
     prepare_playable_unit_compiler,
@@ -200,6 +201,251 @@ End
         "data/ini/gamedata.ini": b"#define GOOD_HORDE_SIZE 10\n",
     }
 
+
+def _angmar_thrall_documents() -> dict[str, bytes]:
+    documents = _documents()
+    branches = (
+        ("AngmarOrcWarriors", "OrcWarriors", "Orc", 50),
+        ("AngmarWolfRiders", "WolfRiders", "WolfRiders", 70),
+        ("AngmarRhudaurSpearmen", "RhudaurSpearmen", "RhudaurSpearmen", 50),
+        ("AngmarRhudaurSlingers", "RhudaurSlingers", "RhudaurSlingers", 50),
+    )
+
+    def block(
+        header: str,
+        fields: dict[object, object],
+        children: tuple[str, ...] = (),
+        indent: str = "",
+    ) -> str:
+        rows = "".join(
+            f"{indent}  {key} = {value}\n" for key, value in fields.items()
+        )
+        return f"{indent}{header}\n{rows}{''.join(children)}{indent}End\n"
+
+    purchases = {
+        2: "OrcWarriors", 3: "RhudaurSpearmen",
+        4: "RhudaurSlingers", 5: "WolfRiders",
+    }
+    command_sets = "".join(
+        block(
+            "CommandSet " + set_id,
+            {
+                1: "Command_ToggleStance",
+                **{
+                    slot: "Command_UpgradeThrallMaster" + suffix + (
+                        "_Fake" if slot == 5 and fake_wolf else ""
+                    )
+                    for slot, suffix in purchases.items()
+                },
+            },
+        )
+        for set_id, fake_wolf in (
+            ("AngmarThrallMasterCommandSet", True),
+            ("AngmarThrallMasterCommandSet_DenPresent", False),
+        )
+    )
+    documents["data/ini/commandset.ini"] = documents[
+        "data/ini/commandset.ini"
+    ].replace(
+        b"  7 = Command_BuildChildHorde\nEnd\n",
+        b"  7 = Command_BuildChildHorde\n"
+        b"  8 = Command_BuildAngmarThrallMaster\nEnd\n",
+        1,
+    ) + command_sets.encode()
+    buttons = [
+        block("CommandButton Command_ToggleStance", {"Command": "STANCE"}),
+        block(
+            "CommandButton Command_BuildAngmarThrallMaster",
+            {"Command": "UNIT_BUILD", "Object": "AngmarThrallMaster"},
+        ),
+    ]
+    upgrades, powers, modules, hordes = [], [], [], []
+    for target, suffix, power_suffix, command_points in branches:
+        upgrade = "Upgrade_ThrallMaster" + suffix
+        purchase = "Command_UpgradeThrallMaster" + suffix
+        power = "SpecialAbilityAngmarThrallMasterSummon" + power_suffix
+        purchase_fields = {
+            "Command": "OBJECT_UPGRADE", "Object": "AngmarThrallMaster",
+            "Upgrade": upgrade, "Options": "CANCELABLE OK_FOR_MULTI_SELECT",
+        }
+        if suffix == "WolfRiders":
+            buttons.append(block(
+                "CommandButton " + purchase + "_Fake",
+                {
+                    **purchase_fields,
+                    "Options": "NEED_UPGRADE OK_FOR_MULTI_SELECT",
+                    "NeededUpgrade": "Upgrade_ThrallMasterCanSummonWolfRiders",
+                },
+            ))
+        buttons.extend((
+            block("CommandButton " + purchase, purchase_fields),
+            block("CommandButton Command_" + power, {
+                "Command": "SPECIAL_POWER", "SpecialPower": power,
+                "Options": "TOGGLE_IMAGE_ON_WEAPONSET ON_GROUND_ONLY",
+            }),
+        ))
+        upgrades.append(block("Upgrade " + upgrade, {
+            "Type": "OBJECT", "BuildCost": 100, "BuildTime": 5,
+        }))
+        powers.append(block("SpecialPower " + power, {
+            "Enum": "SPECIAL_TOGGLE_MOUNTED", "ReloadTime": 1000,
+            "InitiateAtLocationSound": "BoromirHorn",
+            "Flags": "NO_FORBIDDEN_OBJECTS",
+            "ForbiddenObjectFilter": "ANY +STRUCTURE",
+            "ForbiddenObjectRange": 5,
+        }))
+        modules.extend((
+            block("Behavior = DoCommandUpgrade ModuleTag_Upgrade" + suffix, {
+                "TriggeredBy": upgrade,
+                "GetUpgradeCommandButtonName": "Command_" + power,
+            }, indent="  "),
+            block("Behavior = SpecialPowerModule ModuleTag_Starter" + suffix, {
+                "SpecialPowerTemplate": power, "UpdateModuleStartsAttack": "Yes",
+                "StartsPaused": "No", "TriggerFX": "FX_ThrallSummon",
+            }, indent="  "),
+            block(
+                "Behavior = SummonReplacementSpecialAbilityUpdate "
+                "ModuleTag_Summon" + suffix,
+                {
+                    "SpecialPowerTemplate": power, "UnpackTime": 1000,
+                    "PreparationTime": 1000, "PersistentPrepTime": 0,
+                    "PackTime": 0, "AwardXPForTriggering": 0,
+                    "MountedTemplate": target, "IgnoreFacingCheck": "Yes",
+                    "MustFinishAbility": "Yes",
+                },
+                indent="  ",
+            ),
+        ))
+        member = target + "Member"
+        hordes.extend((
+            block("Object " + member, {"KindOf": "PRELOAD SELECTABLE INFANTRY"}, (
+                block("Body = ActiveBody ModuleTag_Body", {"MaxHealth": 100}, indent="  "),
+            )),
+            block("Object " + target, {
+                "KindOf": "PRELOAD SELECTABLE HORDE INFANTRY",
+                "CommandPoints": command_points,
+            }, (
+                block("Behavior = HordeContain ModuleTag_HordeContain", {
+                    "InitialPayload": member + " 1",
+                }, indent="  "),
+            )),
+        ))
+    documents["data/ini/commandbutton.ini"] += "".join(buttons).encode()
+    documents["data/ini/upgrade.ini"] = "".join(upgrades).encode()
+    documents["data/ini/specialpower.ini"] = "".join(powers).encode()
+    documents[
+        "data/ini/object/evilfaction/units/angmar/angmarthrallmaster.ini"
+    ] = block("Object AngmarThrallMaster", {
+        "KindOf": "PRELOAD SELECTABLE INFANTRY",
+        "CommandSet": "AngmarThrallMasterCommandSet",
+    }, (
+        block("Body = ActiveBody ModuleTag_Body", {"MaxHealth": 200}, indent="  "),
+        *modules,
+        block("Behavior = MonitorConditionUpdate ModuleTag_CommandSetSwapper", {
+            "ModelConditionFlags": "USER_1",
+            "ModelConditionCommandSet": "AngmarThrallMasterCommandSet_DenPresent",
+        }, indent="  "),
+    )).encode()
+    documents[
+        "data/ini/object/evilfaction/hordes/angmar/angmarhordes.ini"
+    ] = "".join(hordes).encode()
+    documents[
+        "data/ini/object/evilfaction/structures/angmar/angmarden.ini"
+    ] = block("Object AngmarDen", {}, (
+        block("Behavior = AttributeModifierAuraUpdate ModuleTag_GrantWolfRiderSummon", {
+            "StartsActive": "No", "TriggeredBy": "Upgrade_ObjectLevel1",
+            "BonusName": "CanSummonWolfRiders", "RefreshDelay": 2000,
+            "Range": 99999, "ObjectFilter": "ANY +AngmarThrallMaster",
+        }, indent="  "),
+    )).encode()
+    documents["data/ini/attributemodifier.ini"] = block(
+        "ModifierList CanSummonWolfRiders",
+        {"Category": "WEAPON", "Duration": 3000, "ModelCondition": "USER_1"},
+    ).encode()
+    return documents
+
+
+def test_angmar_thrall_graph_joins_exact_four_normal_branches_and_sources() -> None:
+    documents = _angmar_thrall_documents()
+    descriptor = compile_playable_unit_descriptor(
+        "AngmarThrallMaster", documents,
+        prepared=prepare_playable_unit_compiler(documents),
+    )
+    graph = descriptor["gameplay"]["simulation"]["resolved"]["angmarThrallReplacement"]
+    assert compile_angmar_thrall_replacement_graph(documents) == graph
+    assert (
+        graph["graphStatus"], graph["sourceObjectId"],
+        graph["baseCommandSetId"], graph["denCommandSetId"],
+    ) == (
+        "executable", "AngmarThrallMaster", "AngmarThrallMasterCommandSet",
+        "AngmarThrallMasterCommandSet_DenPresent",
+    )
+    assert (
+        graph["denAura"]["refreshMilliseconds"],
+        graph["modifier"]["durationMilliseconds"],
+        graph["monitor"]["modelCondition"],
+    ) == (2000, 3000, "USER_1")
+    assert graph["denAura"]["moduleContract"]["module"] == (
+        "AttributeModifierAuraUpdate"
+    )
+    assert graph["monitor"]["moduleContract"]["module"] == (
+        "MonitorConditionUpdate"
+    )
+    branches = graph["branches"]
+    assert [(row["targetObjectId"], row["commandPoints"]) for row in branches] == [
+        ("AngmarOrcWarriors", 50), ("AngmarWolfRiders", 70),
+        ("AngmarRhudaurSpearmen", 50), ("AngmarRhudaurSlingers", 50),
+    ]
+    for row in branches:
+        assert (
+            row["graphStatus"], row["doCommand"]["runtimeStatus"],
+            row["summonModule"]["runtimeStatus"],
+            row["summonModule"]["unpackMilliseconds"],
+            row["summonModule"]["preparationMilliseconds"],
+            row["targetCategory"],
+        ) == ("executable", "deferred", "deferred", 1000, 1000, "infantry")
+        assert row["targetComposition"]["containerObjectId"] == row["targetObjectId"]
+        assert (
+            row["targetSimulation"]["resolved"]["commandPoints"]["value"]
+            == row["commandPoints"]
+        )
+    wolf = branches[1]
+    assert wolf["purchaseCommand"]["neededUpgradeId"] == (
+        "Upgrade_ThrallMasterCanSummonWolfRiders"
+    )
+    assert wolf["denPurchaseCommand"]["commandButtonId"] == (
+        "Command_UpgradeThrallMasterWolfRiders"
+    )
+    assert graph["openReceipts"] == [
+        "l5-replacement-transfer-unproved", "fx:FX_ThrallSummon",
+        "audio:BoromirHorn",
+    ]
+    mandatory = {
+        "data/ini/object/evilfaction/units/angmar/angmarthrallmaster.ini",
+        "data/ini/object/evilfaction/hordes/angmar/angmarhordes.ini",
+        "data/ini/object/evilfaction/structures/angmar/angmarden.ini",
+        "data/ini/commandbutton.ini", "data/ini/commandset.ini",
+        "data/ini/specialpower.ini", "data/ini/upgrade.ini",
+        "data/ini/attributemodifier.ini",
+    }
+    sources = {row["virtualPath"] for row in graph["sourceDocuments"]}
+    assert mandatory <= sources <= {
+        row["virtualPath"] for row in descriptor["sourceDocuments"]
+    }
+    assert all(len(row["sha256"]) == 64 for row in graph["sourceDocuments"])
+
+
+@pytest.mark.parametrize("missing_path", (
+    "data/ini/object/evilfaction/structures/angmar/angmarden.ini",
+    "data/ini/attributemodifier.ini",
+    "data/ini/specialpower.ini",
+    "data/ini/upgrade.ini",
+))
+def test_angmar_thrall_graph_requires_every_joined_source(missing_path: str) -> None:
+    documents = _angmar_thrall_documents()
+    del documents[missing_path]
+    with pytest.raises(PlayableUnitCompilerError):
+        compile_angmar_thrall_replacement_graph(documents)
 
 @pytest.mark.parametrize(
     ("target", "category", "member_count"),

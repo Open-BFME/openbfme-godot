@@ -205,7 +205,7 @@ func queue_battalion_upgrade(team: int, entity_id: int, upgrade_id: String) -> D
 	if int(row.get("health", 0)) <= 0:
 		return {"ok": false, "reason": "entity-unavailable"}
 	var command: Dictionary = {}
-	for candidate_value in _sorted_unit_upgrade_commands(String(row.get("unit_type", ""))):
+	for candidate_value in _live_unit_upgrade_commands(row):
 		if String((candidate_value as Dictionary).get("upgrade_id", "")) == upgrade_id:
 			command = candidate_value
 			break
@@ -233,6 +233,8 @@ func queue_battalion_upgrade(team: int, entity_id: int, upgrade_id: String) -> D
 		"complete_tick": _sim.tick_index + duration_ticks,
 		"cancelable": bool(command.get("cancelable", false)),
 	}
+	if typeof(command.get("thrall_replacement")) == TYPE_DICTIONARY:
+		item["thrall_replacement"] = (command.get("thrall_replacement") as Dictionary).duplicate(true)
 	queue.append(item)
 	row["upgrade_queue"] = queue
 	_sim.team_resources[team] = _sim.resources_for_team(team) - cost
@@ -331,6 +333,7 @@ func _step_structure_upgrades() -> void:
 
 func _step_battalion_upgrades() -> void:
 	var _sim = sim
+	_step_thrall_replacement_phases()
 	for entity_id in _sim.entity_ids():
 		var row: Dictionary = _sim.entities[entity_id]
 		if int(row.get("health", 0)) <= 0:
@@ -363,6 +366,8 @@ func _step_battalion_upgrades() -> void:
 				"upgrades": [upgrade_id],
 				"unsupported_effects": ["banner-carrier-member-spawn"],
 			})
+		elif typeof(item.get("thrall_replacement")) == TYPE_DICTIONARY:
+			_start_thrall_replacement(row, item.get("thrall_replacement", {}) as Dictionary)
 		else:
 			_sim._apply_equipment_to_horde(row, [upgrade_id])
 		_sim._emit_event("battalion_upgrade.completed", 0, entity_id, {
@@ -482,6 +487,124 @@ func _sorted_unit_upgrade_commands(unit_type: String) -> Array:
 		return String(a.get("upgrade_id", "")).naturalnocasecmp_to(String(b.get("upgrade_id", ""))) < 0
 	)
 	return rows
+
+
+func _live_unit_upgrade_commands(row: Dictionary) -> Array:
+	## MonitorConditionUpdate owns the live Thrall palette.  A command from a
+	## different authored CommandSet is not queueable merely because it shares
+	## an Upgrade id with the visible row (the fake and real Wolf buttons do).
+	var current_set := String(row.get("command_set_id", ""))
+	var result: Array = []
+	for value in _sorted_unit_upgrade_commands(String(row.get("unit_type", ""))):
+		var command := value as Dictionary
+		var command_set := String(command.get("command_set_id", ""))
+		if command_set != "" and current_set != "" and command_set != current_set:
+			continue
+		result.append(command)
+	return result
+
+
+func _start_thrall_replacement(row: Dictionary, graph: Dictionary) -> void:
+	var _sim = sim
+	var source_graph := (_sim._rules.get("angmar_thrall_replacement", {}) as Dictionary)
+	if (
+		String(source_graph.get("graphStatus", "")) != "executable"
+		or String(graph.get("graphStatus", "")) != "executable"
+		or String(row.get("unit_type", "")) != String(source_graph.get("runtimeSourceUnitType", ""))
+		or String(row.get("object_id", "")) != String(source_graph.get("runtimeSourceObjectId", ""))
+	):
+		_sim.configuration_error = "queued Thrall replacement lost its exact graph"
+		return
+	var summon := graph.get("summonModule", {}) as Dictionary
+	var special_power := graph.get("specialPower", {}) as Dictionary
+	if (
+		String(summon.get("targetObjectId", "")) != String(graph.get("targetHordeId", ""))
+		or String(summon.get("specialPowerId", "")) != String(special_power.get("id", ""))
+	):
+		_sim.configuration_error = "queued Thrall replacement module identity drifted"
+		return
+	var unpack_ticks := maxi(0, _sim._ship_contract_delay_ticks(float(summon.get("unpackMilliseconds", 0))))
+	var preparation_ticks := maxi(0, _sim._ship_contract_delay_ticks(float(summon.get("preparationMilliseconds", 0))))
+	if unpack_ticks <= 0 or preparation_ticks <= 0:
+		_sim.configuration_error = "queued Thrall replacement has invalid authored timing"
+		return
+	row["thrall_replacement_pending"] = {
+		"branch": graph.duplicate(true),
+		"started_tick": _sim.tick_index,
+		"unpack_complete_tick": _sim.tick_index + unpack_ticks,
+		"complete_tick": _sim.tick_index + unpack_ticks + preparation_ticks,
+		"phase": "unpacking",
+	}
+	_sim._emit_event("thrall.replacement_started", int(row.get("id", 0)), 0, {
+		"target_horde_id": String(graph.get("targetHordeId", "")),
+		"unpack_ticks": unpack_ticks,
+		"preparation_ticks": preparation_ticks,
+	})
+
+
+func _step_thrall_replacement_phases() -> void:
+	var _sim = sim
+	for entity_id in _sim.entity_ids():
+		if not _sim.entities.has(entity_id):
+			continue
+		var row := _sim.entities[entity_id] as Dictionary
+		var pending := row.get("thrall_replacement_pending", {}) as Dictionary
+		if pending.is_empty():
+			continue
+		if String(pending.get("phase", "")) == "unpacking" and _sim.tick_index >= int(pending.get("unpack_complete_tick", 0)):
+			pending["phase"] = "preparing"
+			row["thrall_replacement_pending"] = pending
+			_sim._emit_event("thrall.replacement_preparing", entity_id, 0)
+		if _sim.tick_index < int(pending.get("complete_tick", 0)):
+			continue
+		_complete_thrall_replacement(entity_id, row, pending.get("branch", {}) as Dictionary)
+
+
+func _complete_thrall_replacement(entity_id: int, source: Dictionary, branch: Dictionary) -> void:
+	var _sim = sim
+	var target_horde := String(branch.get("targetHordeId", ""))
+	var target_object := String(branch.get("runtimeTargetObjectId", ""))
+	var target_unit_type := String(branch.get("runtimeTargetUnitType", ""))
+	var production := _sim._unit_production_rules.get(target_horde, {}) as Dictionary
+	if (
+		target_horde == ""
+		or target_object == ""
+		or target_unit_type == ""
+		or production.is_empty()
+		or String(production.get("object_id", "")) != target_object
+		or String(production.get("runtime_unit_type", "")) != target_unit_type
+	):
+		_sim.configuration_error = "Thrall replacement target is not descriptor-backed"
+		return
+	var unit_rules := _sim._rules.get("unit_rules", {}) as Dictionary
+	var target_rule := unit_rules.get(target_object, {}) as Dictionary
+	if target_rule.is_empty():
+		_sim.configuration_error = "Thrall replacement target rule is unavailable"
+		return
+	var team := int(source.get("team", -1))
+	var source_points := int(source.get("command_points", 0))
+	var target_points := int(production.get("default_command_points", -1))
+	if target_points < 0 or target_points != int(branch.get("commandPoints", -1)):
+		_sim.configuration_error = "Thrall replacement command points drifted from target descriptor"
+		return
+	var at := Vector2(source.get("position", Vector2.ZERO))
+	var display_name := String(production.get("display_name", target_horde))
+	_sim.entities.erase(entity_id)
+	_sim.team_command_points[team] = int(_sim.team_command_points.get(team, 0)) - source_points + target_points
+	_sim._add_battalion(entity_id, team, at, display_name, target_object, target_unit_type, target_points, target_rule)
+	if not _sim.entities.has(entity_id):
+		_sim.configuration_error = "Thrall replacement target spawn failed"
+		return
+	var replacement := _sim.entities[entity_id] as Dictionary
+	replacement["replacement_source"] = "SummonReplacementSpecialAbilityUpdate"
+	replacement["replacement_transfer_status"] = "unproved-l5"
+	replacement["unsupported_semantics"] = ["l5-replacement-transfer-unproved", "fx:FX_ThrallSummon", "audio:BoromirHorn"]
+	_sim._emit_event("thrall.replacement_completed", entity_id, 0, {
+		"target_horde_id": target_horde,
+		"released_command_points": source_points,
+		"committed_command_points": target_points,
+		"command_points_used": int(_sim.team_command_points[team]),
+	})
 
 
 func _discounted_battalion_upgrade_cost(team: int, command: Dictionary) -> int:
@@ -676,7 +799,7 @@ func battalion_upgrade_commands(entity_id: int) -> Array[Dictionary]:
 	var team := int(row.get("team", -1))
 	var applied: Dictionary = row.get("applied_upgrades", {})
 	var queued: Array = row.get("upgrade_queue", [])
-	for command_value in _sorted_unit_upgrade_commands(String(row.get("unit_type", ""))):
+	for command_value in _live_unit_upgrade_commands(row):
 		var command := command_value as Dictionary
 		var upgrade_id := String(command.get("upgrade_id", ""))
 		var missing := _battalion_gate_unsatisfied(team, command)

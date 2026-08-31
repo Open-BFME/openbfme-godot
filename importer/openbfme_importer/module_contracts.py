@@ -3783,6 +3783,9 @@ def _horde_payload_count(
 def compile_horde_contains(
     lineage: Sequence[SageObject],
     target_id: str,
+    *,
+    numeric_defines: Mapping[str, int | float] | None = None,
+    numeric_define_provenance: Mapping[str, Mapping[str, object]] | None = None,
 ) -> list[dict[str, object]]:
     """Compile every measured HordeContain scalar and repeated row."""
 
@@ -3869,9 +3872,11 @@ def compile_horde_contains(
             if value is not None:
                 fields[key] = value
         for key in ("FlankedDelay", "BackUpMinDelayTime", "BackUpMaxDelayTime"):
-            value = _milliseconds_field(
+            value = _slow_death_milliseconds_field(
                 amap.get(key.casefold()),
-                f"{target_id} HordeContain {key}",
+                label=f"{target_id} HordeContain {key}",
+                numeric_defines=numeric_defines,
+                numeric_define_provenance=numeric_define_provenance,
             )
             if value is not None:
                 fields[key] = value
@@ -9543,6 +9548,136 @@ def compile_castle_upgrades(lineage: Sequence[SageObject], target_id: str) -> li
     rows.sort(key=lambda r:(str(r["sourceIni"]).casefold(),int(r["line"])));return rows
 
 
+def compile_do_command_upgrades(
+    lineage: Sequence[SageObject], target_id: str
+) -> list[dict[str, object]]:
+    """Type the authored upgrade-to-command handoff without promoting it."""
+
+    rows: list[dict[str, object]] = []
+    for block in _behavior_blocks(lineage, "DoCommandUpgrade"):
+        amap = _assignment_map(block)
+        if (
+            block.blocks
+            or len(amap) != len(block.assignments)
+            or set(amap) - {"triggeredby", "getupgradecommandbuttonname"}
+        ):
+            raise ModuleContractError(f"{target_id} DoCommandUpgrade malformed")
+        trigger = _string_field(amap.get("triggeredby"))
+        command = _string_field(amap.get("getupgradecommandbuttonname"))
+        if trigger is None or command is None:
+            raise ModuleContractError(
+                f"{target_id} DoCommandUpgrade incomplete core fields"
+            )
+        if (
+            re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", str(trigger["value"])) is None
+            or re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", str(command["value"]))
+            is None
+        ):
+            raise ModuleContractError(
+                f"{target_id} DoCommandUpgrade malformed identifier"
+            )
+        # _row deliberately leaves this deferred: executable evidence is for
+        # the exact source-joined Thrall graph, not this module kind globally.
+        rows.append(
+            _row(
+                "DoCommandUpgrade",
+                block,
+                {
+                    "TriggeredBy": trigger,
+                    "GetUpgradeCommandButtonName": command,
+                },
+            )
+        )
+    rows.sort(key=lambda row: (str(row["sourceIni"]).casefold(), int(row["line"])))
+    return rows
+
+
+def compile_summon_replacement_special_ability_updates(
+    lineage: Sequence[SageObject], target_id: str
+) -> list[dict[str, object]]:
+    """Type replacement target and timing without claiming transfer semantics."""
+
+    supported = {
+        "specialpowertemplate",
+        "unpacktime",
+        "preparationtime",
+        "persistentpreptime",
+        "packtime",
+        "awardxpfortriggering",
+        "mountedtemplate",
+        "ignorefacingcheck",
+        "mustfinishability",
+    }
+    required = {
+        "specialpowertemplate",
+        "unpacktime",
+        "preparationtime",
+        "mountedtemplate",
+        "ignorefacingcheck",
+        "mustfinishability",
+    }
+    rows: list[dict[str, object]] = []
+    for block in _behavior_blocks(
+        lineage, "SummonReplacementSpecialAbilityUpdate"
+    ):
+        amap = _assignment_map(block)
+        if (
+            block.blocks
+            or len(amap) != len(block.assignments)
+            or set(amap) - supported
+            or not required.issubset(amap)
+        ):
+            raise ModuleContractError(
+                f"{target_id} SummonReplacementSpecialAbilityUpdate malformed"
+            )
+        fields: dict[str, object] = {}
+        for key in ("SpecialPowerTemplate", "MountedTemplate"):
+            value = _string_field(amap.get(key.casefold()))
+            assert value is not None
+            if re.fullmatch(
+                r"[A-Za-z_][A-Za-z0-9_]*", str(value["value"])
+            ) is None:
+                raise ModuleContractError(
+                    f"{target_id} SummonReplacementSpecialAbilityUpdate "
+                    f"malformed {key}"
+                )
+            fields[key] = value
+        for key in (
+            "UnpackTime",
+            "PreparationTime",
+            "PersistentPrepTime",
+            "PackTime",
+        ):
+            value = _milliseconds_field(
+                amap.get(key.casefold()),
+                f"{target_id} SummonReplacementSpecialAbilityUpdate {key}",
+            )
+            if value is not None:
+                fields[key] = value
+        award = _integer_assignment_field(
+            amap.get("awardxpfortriggering"),
+            f"{target_id} SummonReplacementSpecialAbilityUpdate "
+            "AwardXPForTriggering",
+            minimum=0,
+        )
+        if award is not None:
+            fields["AwardXPForTriggering"] = award
+        for key in ("IgnoreFacingCheck", "MustFinishAbility"):
+            value = _yes_no_field(
+                amap.get(key.casefold()),
+                f"{target_id} SummonReplacementSpecialAbilityUpdate {key}",
+            )
+            assert value is not None
+            fields[key] = value
+        # This remains deferred globally. The playable-unit compiler may close
+        # an exact object-specific graph around a measured subset of these rows.
+        rows.append(
+            _row("SummonReplacementSpecialAbilityUpdate", block, fields)
+        )
+    rows.sort(key=lambda row: (str(row["sourceIni"]).casefold(), int(row["line"])))
+    return rows
+
+
 # Remaining Class C/D/E kinds converted as opaque-authored deferred evidence.
 # Typed extractors above own their kinds; this set must not overlap them.
 # Generated from retail_module_census unhandled status at conversion time;
@@ -9574,7 +9709,6 @@ OPAQUE_DEFERRED_MODULE_KINDS: frozenset[str] = frozenset(
         "DetachableRiderBody",
         "DetachableRiderUpdate",
         "DevastateSpecialPower",
-        "DoCommandUpgrade",
         "DynamicShroudClearingRangeUpdate",
         "ElvenWoodSpecialPower",
         "EvaAnnounceClientCreate",
@@ -9609,7 +9743,6 @@ OPAQUE_DEFERRED_MODULE_KINDS: frozenset[str] = frozenset(
         "SlaveWatcherBehavior",
         "StrafeAreaUpdate",
         "StructureToppleUpdate",
-        "SummonReplacementSpecialAbilityUpdate",
         "SupplyCenterDockUpdate",
         "SwayClientUpdate",
         "SymbioticStructuresBody",
@@ -9716,6 +9849,7 @@ TYPED_MODULE_KINDS: frozenset[str] = frozenset(
         "ActivateModuleSpecialPower",
         "WeaponModeSpecialPowerUpdate",
         "DominateEnemySpecialPower",
+        "DoCommandUpgrade",
         "GrabPassengerSpecialPower",
         "FlingPassengerSpecialAbilityUpdate",
         "TemporarilyDefectUpdate",
@@ -9730,6 +9864,7 @@ TYPED_MODULE_KINDS: frozenset[str] = frozenset(
         "SpecialDisguiseUpdate",
         "UnleashSpecialPower",
         "SpecialEnemySenseUpdate",
+        "SummonReplacementSpecialAbilityUpdate",
         "ScavengerSpecialPower",
         "GeometryUpgrade",
         "SubObjectsUpgrade",
@@ -9904,7 +10039,12 @@ def compile_all_module_contracts(
     rows.extend(compile_lifetime_updates(lineage, target_id))
     rows.extend(compile_ai_update_interfaces(lineage, target_id))
     rows.extend(compile_stances_behaviors(lineage, target_id))
-    rows.extend(compile_horde_contains(lineage, target_id))
+    rows.extend(compile_horde_contains(
+        lineage,
+        target_id,
+        numeric_defines=numeric_defines,
+        numeric_define_provenance=numeric_define_provenance,
+    ))
     rows.extend(compile_horde_ai_updates(lineage, target_id))
     rows.extend(compile_pickup_stuff_updates(lineage, target_id))
     rows.extend(compile_auto_ability_behaviors(lineage, target_id))
@@ -9984,6 +10124,7 @@ def compile_all_module_contracts(
     rows.extend(compile_activate_module_special_powers(lineage, target_id))
     rows.extend(compile_weapon_mode_special_power_updates(lineage, target_id))
     rows.extend(compile_dominate_enemy_special_powers(lineage, target_id))
+    rows.extend(compile_do_command_upgrades(lineage, target_id))
     rows.extend(compile_grab_passenger_special_powers(lineage, target_id))
     rows.extend(compile_fling_passenger_special_ability_updates(lineage, target_id))
     rows.extend(compile_repair_special_powers(lineage, target_id))
@@ -10002,6 +10143,9 @@ def compile_all_module_contracts(
         numeric_defines=numeric_defines,
         numeric_define_provenance=numeric_define_provenance,
     ))
+    rows.extend(
+        compile_summon_replacement_special_ability_updates(lineage, target_id)
+    )
     rows.extend(compile_scavenger_special_powers(lineage, target_id))
     rows.extend(compile_all_opaque_deferred(lineage, target_id))
     rows.sort(

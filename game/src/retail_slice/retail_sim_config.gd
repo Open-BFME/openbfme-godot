@@ -561,6 +561,120 @@ func _compiled_unit_upgrade_commands(document: Dictionary) -> Array:
 	return rows
 
 
+func _compiled_angmar_thrall_graph(document: Dictionary) -> Dictionary:
+	## The two deferred module kinds are never executable on their own.  Only
+	## this exact eight-document, object-specific compiler join may opt the four
+	## ordinary Thrall purchases into the shipping command/queue path.
+	if String(document.get("objectId", "")) != "AngmarThrallMaster":
+		return {}
+	var gameplay_value: Variant = (document.get("registration", {}) as Dictionary).get("gameplay", {})
+	if typeof(gameplay_value) != TYPE_DICTIONARY:
+		return {}
+	var resolved_value: Variant = (gameplay_value as Dictionary).get("simulation", {})
+	if typeof(resolved_value) != TYPE_DICTIONARY:
+		return {}
+	var graph_value: Variant = (resolved_value as Dictionary).get("resolved", {})
+	if typeof(graph_value) != TYPE_DICTIONARY:
+		return {}
+	var contract_value: Variant = (graph_value as Dictionary).get("angmarThrallReplacement", {})
+	if typeof(contract_value) != TYPE_DICTIONARY:
+		return {}
+	var graph := (contract_value as Dictionary).duplicate(true)
+	if (
+		String(graph.get("graphStatus", "")) != "executable"
+		or String(graph.get("sourceObjectId", "")) != "AngmarThrallMaster"
+		or String(graph.get("baseCommandSetId", "")) != "AngmarThrallMasterCommandSet"
+		or String(graph.get("denCommandSetId", "")) != "AngmarThrallMasterCommandSet_DenPresent"
+	):
+		return {}
+	var branches_value: Variant = graph.get("branches", [])
+	if typeof(branches_value) != TYPE_ARRAY or (branches_value as Array).size() != 4:
+		return {}
+	var expected_targets := {
+		"AngmarOrcWarriors": true,
+		"AngmarWolfRiders": true,
+		"AngmarRhudaurSpearmen": true,
+		"AngmarRhudaurSlingers": true,
+	}
+	for branch_value in branches_value as Array:
+		if typeof(branch_value) != TYPE_DICTIONARY:
+			return {}
+		var branch := branch_value as Dictionary
+		var target := String(branch.get("targetHordeId", ""))
+		var summon := branch.get("summonModule", {}) as Dictionary
+		if (
+			not expected_targets.erase(target)
+			or String(branch.get("graphStatus", "")) != "executable"
+			or int(summon.get("unpackMilliseconds", -1)) != 1000
+			or int(summon.get("preparationMilliseconds", -1)) != 1000
+			or String(summon.get("runtimeStatus", "")) != "deferred"
+			or String((branch.get("doCommand", {}) as Dictionary).get("runtimeStatus", "")) != "deferred"
+		):
+			return {}
+	if not expected_targets.is_empty():
+		return {}
+	var aura := graph.get("denAura", {}) as Dictionary
+	var modifier := graph.get("modifier", {}) as Dictionary
+	var monitor := graph.get("monitor", {}) as Dictionary
+	if (
+		String(aura.get("sourceObjectId", "")) != "AngmarDen"
+		or int(aura.get("refreshMilliseconds", -1)) != 2000
+		or String(aura.get("bonusName", "")) != "CanSummonWolfRiders"
+		or String(modifier.get("id", "")) != "CanSummonWolfRiders"
+		or int(modifier.get("durationMilliseconds", -1)) != 3000
+		or String(modifier.get("modelCondition", "")) != "USER_1"
+		or String(monitor.get("modelCondition", "")) != "USER_1"
+		or String(monitor.get("commandSetId", "")) != String(graph.get("denCommandSetId", ""))
+	):
+		return {}
+	return graph
+
+
+func _register_angmar_thrall_targets(graph: Dictionary, configured_unit_rules: Dictionary) -> bool:
+	## The four replacement hordes are summon-only, so they are not independent
+	## playable-unit pack rows.  Their compiler-resolved descriptor projections
+	## ride the closed graph and are normalized by the same shipping adapter as
+	## ordinary units; no hand-authored combat/entity rule is admitted here.
+	var normalized_branches: Array = []
+	for branch_value in graph.get("branches", []) as Array:
+		var branch := (branch_value as Dictionary).duplicate(true)
+		var target_doc := {
+			"objectId": String(branch.get("targetHordeId", "")),
+			"category": String(branch.get("targetCategory", "")),
+			"registration": {
+				"production": [],
+				"composition": (branch.get("targetComposition", {}) as Dictionary).duplicate(true),
+				"simulation": (branch.get("targetSimulation", {}) as Dictionary).duplicate(true),
+			},
+		}
+		var simulation: Dictionary = sim.PlayableUnitAdapter.simulation_rule(target_doc, false)
+		var unit_rule: Dictionary = sim.PlayableUnitAdapter.normalized_unit_rule(
+			simulation, float(sim._rules.get("source_map_transform_scale", 0.0))
+		)
+		if simulation.is_empty() or unit_rule.is_empty():
+			return false
+		var runtime_horde_id := String(simulation.get("unit_type", ""))
+		var runtime_member_id := String(simulation.get("object_id", ""))
+		if runtime_horde_id == "" or runtime_member_id == "":
+			return false
+		branch["runtimeTargetUnitType"] = runtime_horde_id
+		branch["runtimeTargetObjectId"] = runtime_member_id
+		configured_unit_rules[runtime_member_id] = unit_rule
+		sim._unit_production_rules[String(branch.get("targetHordeId", ""))] = {
+			"category": String(simulation.get("category", "")),
+			"object_id": runtime_member_id,
+			"runtime_unit_type": runtime_horde_id,
+			"display_name": String(simulation.get("display_name", "")),
+			"default_cost": int(simulation.get("default_cost", 0)),
+			"default_build_ticks": int(simulation.get("default_build_ticks", 1)),
+			"default_command_points": int(simulation.get("default_command_points", 0)),
+			"replacement_only": true,
+		}
+		normalized_branches.append(branch)
+	graph["branches"] = normalized_branches
+	return normalized_branches.size() == 4
+
+
 func _filter_kind_matches(kind: String, target: Dictionary, target_kind: String) -> bool:
 	var folded := kind.to_lower()
 	if folded == "structure":
@@ -919,6 +1033,33 @@ func _configure_playable_unit_runtime_contracts() -> void:
 				_sim._unit_level_upgrades[armor_id] = level_up_rules
 		var banner_rule := _compiled_banner_carrier(document_value as Dictionary)
 		var document_gameplay := (((document_value as Dictionary).get("registration", {}) as Dictionary).get("gameplay", {}) as Dictionary)
+		var thrall_graph := _compiled_angmar_thrall_graph(document_value as Dictionary)
+		if object_id == "AngmarThrallMaster" and thrall_graph.is_empty():
+			_sim.configuration_error = "AngmarThrallMaster runtime has no closed exact replacement graph"
+			return
+		if not thrall_graph.is_empty():
+			if armor_unit_id == "" or armor_member_id == "":
+				_sim.configuration_error = "AngmarThrallMaster runtime identity is unresolved"
+				return
+			thrall_graph["runtimeSourceUnitType"] = armor_unit_id
+			thrall_graph["runtimeSourceObjectId"] = armor_member_id
+			if not _register_angmar_thrall_targets(thrall_graph, configured_unit_rules):
+				_sim.configuration_error = "AngmarThrallMaster replacement targets have no descriptor-backed simulation rules"
+				return
+			_sim._rules["angmar_thrall_replacement"] = thrall_graph.duplicate(true)
+			var modifier := thrall_graph.get("modifier", {}) as Dictionary
+			var modifier_id := String(modifier.get("id", ""))
+			var modifier_rules := _sim._rules.get("attribute_modifier_rules", {}) as Dictionary
+			modifier_rules[modifier_id] = {
+				"category": String(modifier.get("category", "")),
+				"duration_ms": int(modifier.get("durationMilliseconds", 0)),
+				"effects": [{"kind": "MODEL_CONDITION", "value": String(modifier.get("modelCondition", ""))}],
+				"provenance": {
+					"sourceIni": String(modifier.get("sourceIni", "")),
+					"line": int(modifier.get("line", 0)),
+				},
+			}
+			_sim._rules["attribute_modifier_rules"] = modifier_rules
 		if typeof(document_gameplay.get("bannerCarrier")) == TYPE_DICTIONARY and banner_rule.is_empty():
 			_sim.configuration_error = "Playable-unit runtime '%s' has an unresolved banner carrier target" % object_id
 			return
@@ -954,6 +1095,11 @@ func _configure_playable_unit_runtime_contracts() -> void:
 			var weapon_upgrade_ids: Dictionary = _sim._unit_weapon_upgrades.get(armor_member_id, {}) as Dictionary
 			var level_upgrade_ids: Dictionary = _sim._unit_level_upgrades.get(armor_member_id, {}) as Dictionary
 			var accepted_purchase_rows: Array = []
+			var thrall_branches_by_upgrade: Dictionary = {}
+			if not thrall_graph.is_empty():
+				for branch_value in thrall_graph.get("branches", []) as Array:
+					var branch := branch_value as Dictionary
+					thrall_branches_by_upgrade[String(branch.get("upgradeId", ""))] = branch
 			for row_value in purchase_rows:
 				var purchase := row_value as Dictionary
 				var purchase_id := String(purchase.get("upgrade_id", ""))
@@ -965,6 +1111,32 @@ func _configure_playable_unit_runtime_contracts() -> void:
 					or level_upgrade_ids.has(purchase_id)
 				):
 					accepted_purchase_rows.append(purchase)
+				elif thrall_branches_by_upgrade.has(purchase_id):
+					var branch := thrall_branches_by_upgrade[purchase_id] as Dictionary
+					var purchase_contract := branch.get("purchaseCommand", {}) as Dictionary
+					var purchase_contracts: Array[Dictionary] = [purchase_contract]
+					var den_purchase_value: Variant = branch.get("denPurchaseCommand", {})
+					if typeof(den_purchase_value) == TYPE_DICTIONARY and not (den_purchase_value as Dictionary).is_empty():
+						purchase_contracts.append(den_purchase_value as Dictionary)
+					var exact_purchase := false
+					for contract in purchase_contracts:
+						var needed: Array = []
+						if String(contract.get("neededUpgradeId", "")) != "":
+							needed.append(String(contract.get("neededUpgradeId", "")))
+						if (
+							String(purchase.get("command_id", "")) == String(contract.get("commandButtonId", ""))
+							and String(purchase.get("command_set_id", "")) == String(contract.get("commandSetId", ""))
+							and int(purchase.get("slot", 0)) == int(contract.get("slot", -1))
+							and (purchase.get("needed_upgrade_ids", []) as Array) == needed
+						):
+							exact_purchase = true
+							break
+					if not exact_purchase:
+						_sim.configuration_error = "Thrall purchase '%s' disagrees with its exact graph" % purchase_id
+						return
+					var accepted_thrall := purchase.duplicate(true)
+					accepted_thrall["thrall_replacement"] = branch.duplicate(true)
+					accepted_purchase_rows.append(accepted_thrall)
 				else:
 					print(
 						"[RetailSliceSim] unit '%s' purchase '%s' has no compiled weapon/armor/level effect; deferred from purchase surface"
@@ -1010,6 +1182,8 @@ func _configure_playable_unit_runtime_contracts() -> void:
 			if command_set_id != "" and not authored_command_sets.has(command_set_id): authored_command_sets.append(command_set_id)
 		if authored_command_sets.size() == 1:
 			unit_rule["default_command_set_id"] = authored_command_sets[0]
+		if not thrall_graph.is_empty():
+			unit_rule["default_command_set_id"] = String(thrall_graph.get("baseCommandSetId", ""))
 		var authored_formation_toggle = _sim._authored_formation_toggle(document_value as Dictionary)
 		if not authored_formation_toggle.is_empty():
 			unit_rule["formation_toggle"] = authored_formation_toggle
