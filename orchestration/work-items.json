@@ -210,6 +210,25 @@
       "claimLimit": "Accepted immutable semantic registries, row shapes, identities, bounds, and pure validators consumed by STORE only; no retail SOURCE, reconstruction, CONVERT, LOAD, BEHAVIOR, VISUAL, or AUDIO evidence."
     },
     {
+      "id": "E-SEMANTIC-STORE-001-73DB4957",
+      "type": "accepted-private-artifact-receipt",
+      "path": "workspace/logs/P0-CORPUS-SCHEMA-STORE-001/semantic-store-contract.json",
+      "identity": {
+        "bytes": 21166,
+        "sha256": "73db49572aa08f32da7b2620ffab2cd62b5158180cc843f2c3b0ac828b7ad38e",
+        "implementationRevision": "765fcc0b",
+        "workerCommit": "a9528b0b3f1a09646cb1faa7547b3a3612454a22",
+        "artifactSchema": "openbfme.rotwk-202-semantic-store-contract",
+        "artifactSchemaVersion": 1,
+        "semanticSchema": "openbfme.rotwk-202-semantic-schema-manifest",
+        "semanticSchemaVersion": 4,
+        "baselineId": "rotwk-202-v9.7.7-en",
+        "contentSha256": "1d93a10897cbc57162de021826a6323e2d45f63bbe85ab53417dac755c00806c",
+        "implementationClosureSha256": "deed4fc77df9b25a031b43e97b4c4eabe4f6d101d67f9ff62e2ef4301060c853"
+      },
+      "claimLimit": "Accepted bounded semantics-free SQLite, lookup, canonical shard, streaming manifest, diagnostic, and publication contract only; exact main integration command and independent rerun passed with no skipped stage. No retail SOURCE, reconstruction, CONVERT, LOAD, BEHAVIOR, VISUAL, or AUDIO evidence."
+    },
+    {
       "id": "E-PRIVATE-GODOT-005-TERMINAL-22D36A40",
       "type": "historical-private-terminal-receipt",
       "path": "workspace/archive/P1-PERF-PRIVATE-GODOT-005/20260901T062912-0400-terminal/STATUS.md",
@@ -1145,20 +1164,16 @@
       "kind": "source-foundation",
       "priority": "P0",
       "allocationClass": "worker-lane",
-      "status": "in-progress",
+      "status": "complete",
       "domainIds": [],
       "rootQueryIds": [],
       "dependsOn": [
         "P0-CORPUS-SCHEMA-CORE-002"
       ],
       "ownership": {
-        "state": "assigned",
-        "assignee": "codex-schema-store-v2",
-        "ownedPaths": [
-          "importer/openbfme_importer/semantic_graph_store.py",
-          "importer/tests/test_rotwk_202_semantic_graph_store.py",
-          "tools/check-rotwk-202-semantic-store.py"
-        ],
+        "state": "accepted",
+        "assignee": null,
+        "ownedPaths": [],
         "candidatePaths": [
           "importer/openbfme_importer/semantic_graph_store.py",
           "importer/tests/test_rotwk_202_semantic_graph_store.py",
@@ -1195,7 +1210,8 @@
           "per-line, per-shard, per-table, node, occurrence, edge, residual, total-row, shard-count, byte, and output bounds fail before the violating allocation, open, insert, or publish in the contract's exact diagnostic order",
           "physical hostile fixtures cover BOM, CRLF, NUL, duplicate JSON keys, false counts, wrong hashes, one-row-too-large, exact-limit and plus-one line/shard/output cases, rollback, and two byte-identical atomic publishes",
           "the exact callable/record API orders and types, contained private SQLite database, five-table exact-DDL schema, three exact secondary indexes, closed lookup/path projections with null/omit/sort semantics including Unicode-casefolded assignment rootKind and rootName, safe-subtree and greatest-preceding behavior, core cross-family row-shape enforcement, byte-exact STORE diagnostics in accepted core precedence, section-12-only physical inheritance, canonical publication literals, and closed semantic-store-contract.json nested shapes match OWNER-SEMANTIC-STORE-V2-67AA0FED exactly without copied core registries or semantic conformance work",
-          "the exact checker validates the accepted core artifact before opening SQLite, serializes the store contract twice in fresh isolated interpreters, independently validates every literal and the three-file implementation closure, writes atomically only at the declared lane artifact leaf, and handoff plus independent review bind its non-empty SHA-256"
+          "the exact checker validates the accepted core artifact before opening SQLite, serializes the store contract twice in fresh isolated interpreters, independently validates every literal and the three-file implementation closure, writes atomically only at the declared lane artifact leaf, and handoff plus independent review bind its non-empty SHA-256",
+          "worker commit a9528b0b3f1a09646cb1faa7547b3a3612454a22 passed its exact handoff and independent review; integrated revision 765fcc0b passed mandatory Ponytail pre-commit and pre-push review plus exact owner and independent reruns, and semantic-store-contract.json SHA-256 is 73db49572aa08f32da7b2620ffab2cd62b5158180cc843f2c3b0ac828b7ad38e"
         ]
       },
       "verificationCommands": [
@@ -1211,7 +1227,7 @@
               "toolchainProfile": "python-hermetic-v1"
             }
           ],
-          "availability": "planned",
+          "availability": "current-accepted",
           "timeoutSeconds": 300,
           "expectedMarkers": [
             "ROTWK_202_SEMANTIC_STORE PASS"
@@ -1227,7 +1243,7 @@
       "kind": "source-foundation",
       "priority": "P0",
       "allocationClass": "worker-lane",
-      "status": "blocked",
+      "status": "pending",
       "domainIds": [],
       "rootQueryIds": [],
       "dependsOn": [
@@ -1292,9 +1308,7 @@
           "diagnosticPolicy": "strict-default"
         }
       ],
-      "blockers": [
-        "The accepted core contract and bounded store are required before semantic reconstruction can be tested without self-trust."
-      ]
+      "blockers": []
     },
     {
       "id": "P0-CORPUS-SCHEMA-001",
