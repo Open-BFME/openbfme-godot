@@ -259,20 +259,36 @@
       "claimLimit": "Recoverable rejected CONFORMANCE-002 implementation and false-positive exact-gate identity. Manual independent review found absent exhaustive proof, graph-sized Python retention, incorrect or incomplete source/parser/MapCache/object/occurrence/edge derivations, and wrong domain diagnostics. This is not accepted implementation or product evidence."
     },
     {
-      "id": "OWNER-PERF-PRESENT-DIRECT-V1-21BB561C",
+      "id": "OWNER-PERF-PRESENT-DIRECT-V1-F12197F3",
       "type": "private-owner-contract",
       "path": "workspace/logs/P1-PERF-PRESENT-DIRECT-001/direct-performance-design.md",
       "identity": {
-        "bytes": 42898,
-        "sha256": "21bb561c15b2ec5799d8c997604cb33b40de82e8cd0df9ff61aac4b198f291d0",
-        "startingRevision": "c87e3c6e",
-        "shippingSliceSha256": "d7f21577f97ac2a1b90a0c32ab2b95539b1ae780173b064ca7af042f7f8dc82e",
-        "shippingBatcherSha256": "bbe461cfae385ad68b6d1634b2408db0b3f30b2493e3b20d3dac4f8ab73818db",
+        "bytes": 45677,
+        "sha256": "f12197f3feac812cce808e72e0718019381dd6f949943db5460907a4556b84aa",
+        "sourceAnchorRevision": "32a076f7cd9b80591147f09050d73a5d21d31ddd",
+        "sourceIdentityProfile": "canonical-tracked-source-lf-v1",
+        "shippingSliceGitBlob": "1816e2c06fda3d053977b8686ff2a31e19107aff",
+        "shippingSliceSha256": "09dc28dbb19fe432ce1ef02f863fcb9eead1c920e9cc148dcf729509c0c9c2c0",
+        "shippingBatcherGitBlob": "28b7523bcb8060992154397e1e32f73a2947daed",
+        "shippingBatcherSha256": "9690b6c6ce17d166d66f12a96da58d94baf53d0fcf8cb020530ee50f5a739322",
         "selectionSha256": "8889f5f47b7398afcd1710c28019672669ec66859975920f5bf7d83e102328ff",
         "godotSha256": "b2ca888d5115a6cedee564764a2ee494a625f2ec2edbabd010fe33c9a88a6bf8",
         "review": "independent-critic-and-direct-grok-approved"
       },
-      "claimLimit": "Normative dormant runner-only 66-battalion, 990-member stationary-idle FAR/CULLED flat-presentation proof contract. It does not enable normal gameplay, moving units, selection, picking, promotion, combat, GPU animation, 5,000 units, or 144 FPS, and final VISUAL/performance acceptance requires the named human artifact."
+      "claimLimit": "Normative dormant runner-only 66-battalion, 990-member stationary-idle FAR/CULLED flat-presentation proof contract with portable canonical tracked-source identity and same-process raw plus canonical endpoint drift guards. It does not enable normal gameplay, moving units, selection, picking, promotion, combat, GPU animation, 5,000 units, or 144 FPS, and final VISUAL/performance acceptance requires the named human artifact."
+    },
+    {
+      "id": "E-PERF-PRESENT-DIRECT-001-REBIND-0ECCB9F2",
+      "type": "historical-private-terminal-receipt",
+      "path": "workspace/archive/P1-PERF-PRESENT-DIRECT-001/20260901T111714-0400-source-identity/STATUS.md",
+      "identity": {
+        "bytes": 1416,
+        "sha256": "0eccb9f2a4c15ad614f1a60b2c70008669887d91541fb09d66ba4453ac378a2c",
+        "assignmentCommit": "32a076f7cd9b80591147f09050d73a5d21d31ddd",
+        "assignmentSha256": "9d4d32ad9b51c27c84de4a7068e95ee5055cf9a3c0c47c2e7f861bb69d8bb01c",
+        "briefSha256": "1cb12d43f45910ff5635e05012ec59c1b7ede4618711c03852707a54ddabf3d7"
+      },
+      "claimLimit": "Clean pre-edit assignment return caused only by ambient checkout EOL bytes in the superseded owner contract. No implementation, gate, parity, performance, visual, or acceptance evidence exists."
     },
     {
       "id": "E-SEMANTIC-CONFORMANCE-001-AUTHORITY-GAP-E79CB743",
@@ -15319,7 +15335,7 @@
       "kind": "performance",
       "priority": "P1",
       "allocationClass": "worker-lane",
-      "status": "in-progress",
+      "status": "pending",
       "domainIds": [
         "runtime-performance"
       ],
@@ -15331,17 +15347,9 @@
         "P0-CORPUS-001"
       ],
       "ownership": {
-        "state": "assigned",
-        "assignee": "codex-perf-present-direct-v1",
-        "ownedPaths": [
-          "game/src/retail_slice/retail_vertical_slice.gd",
-          "game/src/view/member_render_batcher.gd",
-          "game/tests/retail_far_batch_contract_runner.gd",
-          "game/tests/retail_far_batch_contract_runner.gd.uid",
-          "game/tests/retail_far_batch_perf_runner.gd",
-          "game/tests/retail_far_batch_perf_runner.gd.uid",
-          "tools/gate-perf-present-direct.ps1"
-        ],
+        "state": "unassigned",
+        "assignee": null,
+        "ownedPaths": [],
         "candidatePaths": [
           "game/src/retail_slice/retail_vertical_slice.gd",
           "game/src/view/member_render_batcher.gd",
@@ -15353,11 +15361,12 @@
         ]
       },
       "scope": {
-        "deliverable": "A dormant runner-only direct flat presentation path for exactly 66 newly materialized, stationary, idle, visible FAR Gondor fighter battalions with 15 authored members each, plus exact same-process legacy-control equivalence and provisional measured evidence under OWNER-PERF-PRESENT-DIRECT-V1-21BB561C.",
+        "deliverable": "A dormant runner-only direct flat presentation path for exactly 66 newly materialized, stationary, idle, visible FAR Gondor fighter battalions with 15 authored members each, plus exact same-process legacy-control equivalence and provisional measured evidence under OWNER-PERF-PRESENT-DIRECT-V1-F12197F3.",
         "notIncluded": "Normal-game enablement; moving units; selection or data-backed picking; FAR-to-NEAR promotion or demotion; combat, mounts, upgrades, model-condition changes, one-shots, particles, audio, GPU skeletal animation, simulation changes, a reusable benchmark or hydration wrapper, 5,000 units, or a 144 FPS claim."
       },
       "sourceEvidence": [
-        "OWNER-PERF-PRESENT-DIRECT-V1-21BB561C"
+        "OWNER-PERF-PRESENT-DIRECT-V1-F12197F3",
+        "E-PERF-PRESENT-DIRECT-001-REBIND-0ECCB9F2"
       ],
       "artifacts": [
         "workspace/logs/P1-PERF-PRESENT-DIRECT-001/functional-receipt.json",
