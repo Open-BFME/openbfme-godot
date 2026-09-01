@@ -2852,19 +2852,16 @@
       "kind": "verification-foundation",
       "priority": "P0",
       "allocationClass": "worker-lane",
-      "status": "in-progress",
+      "status": "complete",
       "domainIds": [],
       "rootQueryIds": [],
       "dependsOn": [
         "P0-SOURCE-001"
       ],
       "ownership": {
-        "state": "assigned",
-        "assignee": "claude-fable-gates-v3",
-        "ownedPaths": [
-          "importer/tests/test_retail_gate_script.py",
-          "tools/gate-rotwk-202.ps1"
-        ],
+        "state": "accepted",
+        "assignee": null,
+        "ownedPaths": [],
         "candidatePaths": [
           "importer/tests/test_retail_gate_script.py",
           "tools/gate-rotwk-202.ps1"
