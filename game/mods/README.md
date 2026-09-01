@@ -1,25 +1,10 @@
-# Open BFME mods
+# Retired ambient mod folder
 
-Drop a folder here (or in `user://mods`) with:
+`game/mods/` and `user://mods` are diagnostic-only ambient locations. Packs
+placed there are diagnosed and are **not mounted**.
 
-```
-my_mod/
-  pack.json          # { "id": "my_mod", "priority": 50 }
-  units/*.json       # same schema as data/base/units
-  buildings/*.json
-  factions/*.json
-  abilities/*.json
-  maps/*.json
-  globals.json       # optional overrides
-  assets/...         # optional meshes/icons
-```
+Use only an explicit `OPENBFME_CONTENT` pack root or an explicit
+`selection.json` load set. The loader does not scan sibling pack directories.
 
-Later packs (higher `priority`) override earlier definitions by `id`.
-
-External content root (absolute path) can also be set via env:
-
-```
-OPENBFME_CONTENT=C:\path\to\content_root
-```
-
-where `content_root` contains one or more pack folders with `pack.json`.
+See the [modding guide](../../docs/MODDING.md) and the
+[non-shipping example mod](../../examples/mods/example_hard_orcs/).
