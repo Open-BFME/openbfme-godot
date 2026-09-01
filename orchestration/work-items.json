@@ -179,7 +179,7 @@
       "identity": {
         "sha256": "d5f9d8fc12a631156b4c3b73737f23faae8e40c71b7577a800e06f6c2e39090c"
       },
-      "claimLimit": "Normative semantic schema registries and expected vectors only; not retail SOURCE, CONVERT, LOAD, BEHAVIOR, VISUAL, or AUDIO evidence."
+      "claimLimit": "Normative semantic schema registries and expected vectors only; not retail SOURCE, CONVERT, LOAD, BEHAVIOR, VISUAL, or AUDIO evidence. Authority addendum: canonical P0-CORPUS-SCHEMA-CORE-001 ownership supersedes design-v4 sections 1 and 1.1 only where they name the rejected facade's three old paths or require CORE to derive that old source-schema closure; CORE changes only its three semantic_graph_contract paths and declares the source-schema input symbol and shape, while closure derivation belongs to P0-CORPUS-SCHEMA-001."
     },
     {
       "id": "E-BL-202",
@@ -926,7 +926,6 @@
           "AUDIO": "NOT_REQUIRED"
         },
         "criteria": [
-          "this canonical row supersedes design-v4 sections 1 and 1.1 only where they name the rejected facade's three old paths or require this CORE lane to derive that old source-schema closure: CORE changes only its three assigned semantic_graph_contract paths and declares the source-schema input symbol and shape, while closure derivation belongs to the later P0-CORPUS-SCHEMA-001 facade",
           "the sole normative input is the owner-authored private brief workspace/logs/P0-CORPUS-SCHEMA-001/schema-design-v4.md with SHA-256 d5f9d8fc12a631156b4c3b73737f23faae8e40c71b7577a800e06f6c2e39090c; its path and digest must be copied into the assignment brief, and worker plus reviewer must independently verify those exact bytes before using its complete table, field, type, enum, foreign-key, evidence, edge, occurrence, root, domain, ID-preimage, canonical-encoding, bound registries, and expected vectors",
           "this ledger row is the authoritative addendum to design-v4 section 12.3: named occurrence, edge, and residual limits are evaluated before the generic administrative-table limit; specifically, when an edge insertion violates both maxEdges and maxRowsPerAdminTable, E_EDGE_ROWS_LIMIT wins, while E_ADMIN_TABLE_ROWS_LIMIT remains reachable through an over-limit non-named administrative table",
           "table-driven hostile fixtures cover every missing and wrong field, ID/FK/evidence digest mismatch, casefold collision, duplicate preimage, edge direction/cardinality declaration, occurrence state/cardinality declaration, and exact canonical atom refusal without importing production registries into expected values",
@@ -14188,29 +14187,25 @@
         }
       ],
       "blockers": [
-        "Predecessor 003 stopped on unstable cold reference pixels. The three exact 004 attempts then stopped before any candidate measurement on, respectively, a missing isolated fog import, whole-project Godot import heap corruption, and a malformed 122 KB PowerShell proof harness that wrote System.Object[] instead of seven autoload declarations. No implementation commit exists. The four-file packet, stale base telemetry, captures, and Grok sessions are recoverably archived under ignored workspace/archive/P1-PERF-PRESENT-004; do not cherry-pick it or treat its reference-only measurements as candidate evidence. Replace through P1-PERF-PRIVATE-GODOT-001 and P1-PERF-PRESENT-005."
+        "Predecessor 003 stopped on unstable cold reference pixels. The three exact 004 attempts then stopped before any candidate measurement on, respectively, a missing isolated fog import, whole-project Godot import heap corruption, and a malformed 122 KB PowerShell proof harness that wrote System.Object[] instead of seven autoload declarations. No implementation commit exists. The four-file packet, stale base telemetry, captures, and Grok sessions are recoverably archived under ignored workspace/archive/P1-PERF-PRESENT-004; do not cherry-pick it or treat its reference-only measurements as candidate evidence. Replace through P1-PERF-PRIVATE-GODOT-002 and P1-PERF-PRESENT-005."
       ]
     },
     {
       "id": "P1-PERF-PRIVATE-GODOT-001",
-      "title": "Build a small reusable private Godot proof harness",
+      "title": "Blocked first private Godot proof harness attempt",
       "kind": "performance-infrastructure",
       "priority": "P1",
       "allocationClass": "worker-lane",
-      "status": "in-progress",
+      "status": "blocked",
       "domainIds": [
         "runtime-performance"
       ],
       "rootQueryIds": [],
       "dependsOn": [],
       "ownership": {
-        "state": "assigned",
-        "assignee": "codex-private-godot",
-        "ownedPaths": [
-          "tools/private-godot-proof.ps1",
-          "tools/check-private-godot-proof.ps1",
-          "tools/tests/private-godot-proof-fixtures.ps1"
-        ],
+        "state": "unassigned",
+        "assignee": null,
+        "ownedPaths": [],
         "candidatePaths": [
           "tools/private-godot-proof.ps1",
           "tools/check-private-godot-proof.ps1",
@@ -14264,6 +14259,49 @@
           "diagnosticPolicy": "strict-default"
         }
       ],
+      "blockers": [
+        "The final hard-capped exact run passed archive and overlay setup but failed before Godot import/check because Get-PrivateGodotOrdinalSort pipeline-unrolled its one-row typed array to a scalar and strict-mode .Count failed. No contract, implementation commit, handoff, or push exists; exact owned bytes, Grok logs, failure history, and successor audit are recoverably archived at workspace/archive/P1-PERF-PRIVATE-GODOT-001/20260901T035644-0400. Replace only through P1-PERF-PRIVATE-GODOT-002."
+      ]
+    },
+    {
+      "id": "P1-PERF-PRIVATE-GODOT-002",
+      "title": "Land the reviewed private Godot proof harness with stable array shape",
+      "kind": "performance-infrastructure",
+      "priority": "P1",
+      "allocationClass": "worker-lane",
+      "status": "pending",
+      "domainIds": ["runtime-performance"],
+      "rootQueryIds": [],
+      "dependsOn": [],
+      "ownership": {
+        "state": "unassigned",
+        "assignee": null,
+        "ownedPaths": [],
+        "candidatePaths": [
+          "tools/private-godot-proof.ps1",
+          "tools/check-private-godot-proof.ps1",
+          "tools/tests/private-godot-proof-fixtures.ps1"
+        ]
+      },
+      "scope": {
+        "deliverable": "Re-review the archived single-purpose helper, preserve its accepted archive, overlay, hydration, process-isolation, import, check-only, and receipt trust boundaries, fix PowerShell empty/single/many array shape centrally, and produce one fresh exact accepted contract.",
+        "notIncluded": "Blindly copying the archive, reusing any failed attempt as evidence, feature-specific presentation policy, performance thresholds, retail selection, captures, a generic gate framework, or widening the three-file implementation."
+      },
+      "sourceEvidence": [],
+      "artifacts": ["workspace/logs/P1-PERF-PRIVATE-GODOT-002/private-godot-proof-contract.json"],
+      "acceptance": {
+        "requiredLevels": ["L0"],
+        "requiredOutputDimensions": {"SOURCE": "NOT_REQUIRED", "CONVERT": "NOT_REQUIRED", "LOAD": "NOT_REQUIRED", "BEHAVIOR": "NOT_REQUIRED", "VISUAL": "NOT_REQUIRED", "AUDIO": "NOT_REQUIRED"},
+        "criteria": [
+          "the worker independently reads the archived STATUS.md and all three archived owned files, verifies their exact recorded SHA-256 values, re-reviews every accepted trust boundary and Grok finding, and copies no stale receipt because none exists",
+          "Get-PrivateGodotOrdinalSort and every caller preserve typed array shape for zero, one, and many rows under Set-StrictMode; direct literal fixtures prove Count, indexing, equality, and hashing for all three shapes before any archive or Godot process",
+          "the helper accepts exact Git, tar, Godot, commit, and literal overlay identities, preflights the Git tree and both fresh non-worktree extractions, rejects case/Windows/reparse hazards before lossy use, and proves exact pristine-to-control/candidate deltas without ambient index, cache, or user state",
+          "canonical reduced project text uses explicit scalar lines and exact duplicate-preserving autoload rows; raw UID sidecars, generated UID deltas, class registry/cache, UID cache, exact-one import metadata/output, source manifests, isolated process roots, and transferred own-tree .godot closure are independently content-bound before and after strict check-only",
+          "nonzero, timeout, warning/error, source mutation beyond predeclared UID sidecars, cross-tree copy, ambient state, missing/extra artifact, duplicate import identity, receipt drift, or identity drift fails closed through literal hostile fixtures without launching a feature workload",
+          "the exact gate persists stdout and stderr under the lane log root, emits a fresh self-verifying reconstructable contract, and reports only PRIVATE_GODOT_PROOF PASS; the production helper remains single-purpose and Ponytail-approved"
+        ]
+      },
+      "verificationCommands": [{"steps": [{"toolRole": "powershell", "invocation": "script", "target": "tools/check-private-godot-proof.ps1", "args": [], "toolchainProfile": "rotwk-gate-v1"}], "availability": "pinned-godot", "timeoutSeconds": 600, "expectedMarkers": ["PRIVATE_GODOT_PROOF PASS"], "diagnosticPolicy": "strict-default"}],
       "blockers": []
     },
     {
@@ -14282,7 +14320,7 @@
       "dependsOn": [
         "P0-SOURCE-001",
         "P0-CORPUS-001",
-        "P1-PERF-PRIVATE-GODOT-001"
+        "P1-PERF-PRIVATE-GODOT-002"
       ],
       "ownership": {
         "state": "unassigned",
@@ -14320,7 +14358,7 @@
         },
         "criteria": [
           "the two production files are reviewed independently from the rejected archive and implement one readable flat batch architecture: every NEAR/MID or stateful/refused battalion retains the shipping presenter, ordinary visible FAR/CULLED members occupy exact model-team MultiMesh groups, fog-hidden members contribute no instance, and lifecycle cleanup releases all nodes/RIDs/rows",
-          "the compact feature gate delegates all archive, overlay, hydration, import, parse, source/cache manifest, and process-root work to the accepted P1-PERF-PRIVATE-GODOT-001 helper and contains only presentation-specific fixture, identity, parity, and threshold assertions",
+          "the compact feature gate delegates all archive, overlay, hydration, import, parse, source/cache manifest, and process-root work to the accepted P1-PERF-PRIVATE-GODOT-002 helper and contains only presentation-specific fixture, identity, parity, and threshold assertions",
           "three fresh frozen-base visual processes complete one fixed untimed materialization warmup and explicit draw/sync/post-draw barrier; all raw buffers and PNGs agree unanimously before the candidate launches and the candidate exactly matches the designated control at both animation times across near/mid, far/culled, fog, reveal, selection, mount, one-shot, and structured-refusal cases",
           "selection.activePack is the exact RotWK locator, the BFME2 capability host is one exact supplemental locator, and independent pack/manifest hashes plus ModLoader.runtime_pack_report prove exact selected-plus-supplement membership/order with zero fallback, ambient, foreign, missing, extra, diagnostic, or supplement failure",
           "actual frozen-base and candidate processes each record at least 100 direct samples at 1000 and 5000 moving members; presentation-sync p99 is at most 0.70 times base, CPU-frame p99 at most 0.85, GPU p99 at most 1.05, simulation/picking/transform/visibility hashes are exact, and repeated remove/restart leaves zero residue",
@@ -14347,7 +14385,7 @@
         }
       ],
       "blockers": [
-        "P1-PERF-PRIVATE-GODOT-001 must first replace the rejected monolithic 004 gate with an independently accepted reusable private-tree and hydration proof primitive."
+        "P1-PERF-PRIVATE-GODOT-002 must first land an independently accepted reusable private-tree and hydration proof primitive with stable PowerShell empty/single/many array shape."
       ]
     },
     {
