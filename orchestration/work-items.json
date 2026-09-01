@@ -14527,20 +14527,16 @@
       "kind": "performance-infrastructure",
       "priority": "P1",
       "allocationClass": "worker-lane",
-      "status": "in-progress",
+      "status": "blocked",
       "domainIds": [
         "runtime-performance"
       ],
       "rootQueryIds": [],
       "dependsOn": [],
       "ownership": {
-        "state": "assigned",
-        "assignee": "codex-private-godot-v4",
-        "ownedPaths": [
-          "tools/private-godot-proof.ps1",
-          "tools/check-private-godot-proof.ps1",
-          "tools/tests/private-godot-proof-fixtures.ps1"
-        ],
+        "state": "unassigned",
+        "assignee": null,
+        "ownedPaths": [],
         "candidatePaths": [
           "tools/private-godot-proof.ps1",
           "tools/check-private-godot-proof.ps1",
@@ -14591,6 +14587,81 @@
           "timeoutSeconds": 600,
           "expectedMarkers": [
             "PRIVATE_GODOT_PROOF PASS"
+          ],
+          "diagnosticPolicy": "strict-default"
+        }
+      ],
+      "blockers": [
+        "The final owner-authorized 004 entry passed the real empty/one-byte scalar capture preflight and ran the control reduced Godot import, then refused while validating the control pre-import manifest binding before atomically publishing post-import-source-delta.json. Candidate import never ran; neither declared JSON artifact, proof contract, nor mapped mutation identity exists, so the two preserved anonymous canonical 20-byte UID payloads cannot authorize any path or policy change. No implementation commit or handoff exists. Exact owned files, current and prior gate logs, control process bytes, raw UID payloads, Grok logs, assignment, brief, STATUS, and empty tracked diff are recoverably archived at workspace/archive/P1-PERF-PRIVATE-GODOT-004/20260901T054549-0400. No further 004 retry is allowed; continue only through P1-PERF-PRIVATE-GODOT-005."
+      ]
+    },
+    {
+      "id": "P1-PERF-PRIVATE-GODOT-005",
+      "title": "Publish pre-import-bound private Godot source-delta evidence",
+      "kind": "performance-infrastructure",
+      "priority": "P1",
+      "allocationClass": "worker-lane",
+      "status": "pending",
+      "domainIds": [
+        "runtime-performance"
+      ],
+      "rootQueryIds": [],
+      "dependsOn": [],
+      "ownership": {
+        "state": "unassigned",
+        "assignee": null,
+        "ownedPaths": [],
+        "candidatePaths": [
+          "tools/private-godot-proof.ps1",
+          "tools/check-private-godot-proof.ps1",
+          "tools/tests/private-godot-proof-fixtures.ps1"
+        ]
+      },
+      "scope": {
+        "deliverable": "Verify and carry the terminal 004 archive with no-commit semantics, make both fresh control and candidate hydration manifests independently reconstructable and durably self-validating before any Godot launch, then execute exactly one control/candidate reduced-import diagnostic entry and preserve complete mapped source-delta, process, and raw-byte evidence for independent classification.",
+        "notIncluded": "Retrying 004; inferring a source path or policy from its two anonymous UID payloads; changing the UID census, source allowlist, evidence, import, closure, or presentation policy; strict check-only or reusable-proof acceptance; a performance workload; more than one Godot diagnostic entry; deleting or replacing evidence before independent review; or broad PowerShell refactoring."
+      },
+      "sourceEvidence": [],
+      "artifacts": [
+        "workspace/logs/P1-PERF-PRIVATE-GODOT-005/pre-import-source-manifests.json",
+        "workspace/logs/P1-PERF-PRIVATE-GODOT-005/post-import-source-delta.json"
+      ],
+      "acceptance": {
+        "requiredLevels": [
+          "L0"
+        ],
+        "requiredOutputDimensions": {
+          "SOURCE": "NOT_REQUIRED",
+          "CONVERT": "NOT_REQUIRED",
+          "LOAD": "NOT_REQUIRED",
+          "BEHAVIOR": "NOT_REQUIRED",
+          "VISUAL": "NOT_REQUIRED",
+          "AUDIO": "NOT_REQUIRED"
+        },
+        "criteria": [
+          "the worker verifies the 004 STATUS.md, all three archived owned-file hashes, both terminal gate logs, and every preserved control evidence file; carries exactly the three frozen owned files with no-commit semantics; and changes no UID, source-allowlist, import, closure, presentation, or workload policy",
+          "before launching Godot, the helper creates both fresh control and candidate hydration roots and atomically publishes pre-import-source-manifests.json outside the run tree with exact schema, version, commit, runRoot, and ordered unique control/candidate records containing hydrationRoot, count, sha256, and rows; it reopens the file, rejects every reparse component, recomputes order, count, and digest from literal rows, re-enumerates both live hydration trees, and exact-compares their path, byte, and SHA rows to the published records",
+          "focused fixtures prove stale leaf, malformed keys, missing or duplicate label, swapped order, wrong root, count, row order, digest, path, byte count, SHA, reparse, and post-publication tree drift refuse; the same real pre-import serialization and validation path executes in the exact gate before the first Godot process",
+          "only after the pre-import artifact passes, one fresh diagnostic entry imports control and candidate exactly once each; after each import it atomically publishes or replaces post-import-source-delta.json and durable exact stdout, stderr, and every added UID byte file, with pre/post manifest rows, expected, actual, and symmetric rows, process state, executable and Godot identity, and evidence path, byte, and SHA bindings; control is durably reopen-validated before candidate launches, and both ordered records are durably reopen-validated before success",
+          "the diagnostic gate succeeds only when both records are reconstructable and prints PRIVATE_GODOT_DIAGNOSTIC PASS pre_import_bound=true control=true candidate=true policy_changed=false; source-delta mismatch is evidence, not permission, and the worker then stops, commits only the three owned paths, and handoff plus independent review bind identical non-empty SHA-256 digests for both declared artifacts",
+          "any pre-import binding failure, process failure, warning or error, missing candidate, missing or mismatched raw evidence, artifact drift, cleanup, second entry, or policy change terminally blocks 005; no source suffix or allowlist may change until a separate owner-authored successor cites independently reviewed mapped control and candidate evidence"
+        ]
+      },
+      "verificationCommands": [
+        {
+          "steps": [
+            {
+              "toolRole": "powershell",
+              "invocation": "script",
+              "target": "tools/check-private-godot-proof.ps1",
+              "args": [],
+              "toolchainProfile": "rotwk-gate-v1"
+            }
+          ],
+          "availability": "pinned-godot",
+          "timeoutSeconds": 600,
+          "expectedMarkers": [
+            "PRIVATE_GODOT_DIAGNOSTIC PASS pre_import_bound=true control=true candidate=true policy_changed=false"
           ],
           "diagnosticPolicy": "strict-default"
         }
