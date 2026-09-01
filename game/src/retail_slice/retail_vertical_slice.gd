@@ -1726,6 +1726,13 @@ func _gameplay_rules(member_definition: Dictionary, horde_definition: Dictionary
 	# is built, exactly as allow_ring_heroes is.
 	if OS.get_environment("OPENBFME_FOG_OF_WAR").strip_edges() != "0":
 		rules["enable_fog_of_war"] = true
+	# SAGE legs-locomotor speed model (turn slowdown, braking distance, no
+	# overshoot). Opt-in with OPENBFME_LOCOMOTOR_PHYSICS=1 until the 36000-tick
+	# AI defeat chain in retail_slice_runner passes with it on (one AI unit was
+	# seen idling/chasing a creep with the fortress never hit). Same footgun as
+	# the fog key: it is hashed, so every peer must agree.
+	if OS.get_environment("OPENBFME_LOCOMOTOR_PHYSICS").strip_edges() == "1":
+		rules["retail_locomotor_physics"] = true
 	var manifest_for_rules: Dictionary = faction_manifest.duplicate(true)
 	# Retail skirmish start: fortress + porter only — the base is built, not
 	# given. Gate runners set OPENBFME_STARTER_ARMY=1 to keep the legacy
