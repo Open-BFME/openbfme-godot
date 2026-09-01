@@ -1198,17 +1198,16 @@ func request_gate_open(structure_id:int,requester_id:int=0)->Dictionary:
 	var policy:=gate.get("gate_behavior",{}) as Dictionary
 	if policy.is_empty():return {"ok":false,"reason":"typed-gate-contract-missing"}
 	if requester_id!=0 and not gate_portal_allows(structure_id,requester_id):return {"ok":false,"reason":"portal-denied"}
-	policy["open"]=true;policy["open_fraction"]=1.0;policy["pathing_open"]=true;policy["close_tick"]=_sim.tick_index+int(policy.get("reset_ticks",0));gate["gate_behavior"]=policy;_sim._emit_event("gate.opened",requester_id,structure_id,{"close_tick":policy["close_tick"]});return {"ok":true,"reason":"","close_tick":policy["close_tick"]}
+	policy["open"]=true;policy["open_fraction"]=1.0;policy["pathing_open"]=true;policy["close_tick"]=_sim.tick_index+int(policy.get("reset_ticks",0));gate["gate_behavior"]=policy
 	_sync_gate_passage(structure_id)
+	_sim._emit_event("gate.opened",requester_id,structure_id,{"close_tick":policy["close_tick"]});return {"ok":true,"reason":"","close_tick":policy["close_tick"]}
 
 
 func _sync_gate_passage(structure_id: int) -> void:
-	## The gate's pathing state mirrored onto the ground grid (see
-	## RetailMapData.set_gate_passage): open gates are passages through the
-	## painted wall band; closed gates seal them again. Called at seeding and on
-	## every pathing_open transition (open, timed close, manual close, death).
+	## Mirror the gate state onto the exact source-index channel which
+	## RetailMapData derived from the authored rotation anchor and Closed box.
 	var _sim = sim
-	if _sim.route_provider == null or not _sim.route_provider.has_method("set_gate_passage"):
+	if _sim.route_provider == null or not _sim.route_provider.has_method("set_castle_gate_pathing"):
 		return
 	if not _sim.structures.has(structure_id):
 		return
@@ -1216,17 +1215,13 @@ func _sync_gate_passage(structure_id: int) -> void:
 	var policy: Dictionary = gate.get("gate_behavior", {})
 	if policy.is_empty():
 		return
-	var geometries: Dictionary = gate.get("gate_geometries", {})
-	var closed: Dictionary = geometries.get("Closed", {})
-	# The authored closed box: MajorRadius along the facing (door thickness),
-	# MinorRadius across it (the passage half-width).
-	var half_width := float(closed.get("minorRadius", 0.0))
-	if half_width <= 0.0:
+	var source_index := int(gate.get("source_index", -1))
+	if source_index < 0:
 		return
-	var open := bool(policy.get("pathing_open", false)) or int(gate.get("health", 0)) <= 0
-	var result: Dictionary = _sim.route_provider.call("set_gate_passage", structure_id, Vector2(gate.get("position", Vector2.ZERO)), half_width, open)
-	if bool(result.get("changed", false)):
-		_sim._emit_event("gate.passage", 0, structure_id, {"open": open, "cells": int(result.get("cells", 0)), "depth_fwd": result.get("depth_fwd"), "depth_back": result.get("depth_back")})
+	var breached := int(gate.get("health", 0)) <= 0
+	var open := bool(policy.get("pathing_open", false)) or breached
+	if bool(_sim.route_provider.call("set_castle_gate_pathing", source_index, open, breached)):
+		_sim._emit_event("gate.passage", 0, structure_id, {"open": open, "breached": breached, "source_index": source_index})
 
 
 func gate_portal_allows(structure_id:int,requester_id:int)->bool:

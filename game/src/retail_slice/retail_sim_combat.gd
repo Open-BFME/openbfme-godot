@@ -401,6 +401,11 @@ func _apply_structure_damage(
 		_sim._last_base_under_attack_tick = _sim.tick_index
 		_sim._emit_event("eva.base_under_attack", 0, target_id, {"team": _sim.PLAYER_TEAM, "structure_kind": structure_kind})
 	if int(target["health"]) == 0:
+		# Gate destruction is itself a pathing transition. Synchronize while the
+		# zero-health structure still carries its typed gate contract and before
+		# any death callback can observe the battlefield topology.
+		if target.has("gate_behavior"):
+			_sim._sync_gate_passage(target_id)
 		_sim._record_cah_structure_kill(attacker_id, target)
 		_sim._award_scavenger_bounty(attacker_id, target, "structure")
 		var queue: Array = target.get("queue", [])

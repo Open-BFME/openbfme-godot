@@ -345,6 +345,9 @@ func navigation_component_size(component_id: int) -> int:
 	return int(_navigation_component_sizes.get(component_id, 0))
 var _failed_bridge_component_pairs: Dictionary = {}
 var _ground_portal_components: Dictionary = {}
+var _gate_navigation_channel_cells: Dictionary = {}
+var _gate_navigation_pathing_open: Dictionary = {}
+var _gate_navigation_breached: Dictionary = {}
 var _water_navigation_grid: AStarGrid2D
 ## Q51: wall tops are a distinct navigation domain. The ground grid above is
 ## never mutated by this layer; a deck/ramp cell only exists here when it came
@@ -1026,7 +1029,19 @@ func _derive_castle_fixture_placements() -> void:
 		if record.has("initialHealth"):
 			row["initial_health"] = float(record.get("initialHealth"))
 		if record.has("gate"):
-			row["gate"] = (record.get("gate") as Dictionary).duplicate(true)
+			var gate := (record.get("gate") as Dictionary).duplicate(true)
+			row["gate"] = gate
+			var anchor_value: Variant = gate.get("rotationAnchorOffset", null)
+			if _valid_fixture_vector2(anchor_value):
+				# SAGE rotates the authored XY anchor by the map-object yaw before
+				# adding it to the object position. The cooked horizontal plane is
+				# (sage.x, -sage.y), hence the two sign conversions below.
+				var source_yaw := float(record.get("angle", 0.0))
+				var anchor_godot := Vector2(float(anchor_value[0]), -float(anchor_value[1])).rotated(-source_yaw)
+				var source_position := _vector3(record.get("position", []))
+				var geometry_source_position := source_position + Vector3(anchor_godot.x, 0.0, anchor_godot.y)
+				var geometry_local := source_to_local(geometry_source_position)
+				row["gate_geometry_origin"] = Vector2(geometry_local.x, geometry_local.z)
 		if record.has("garrison"):
 			row["garrison"] = (record.get("garrison", {}) as Dictionary).duplicate(true)
 		if record.has("walkSurfaces"):
@@ -1037,6 +1052,15 @@ func _derive_castle_fixture_placements() -> void:
 				row["walk_surface_scale"] = Vector3(bound_placement.get("scale", Vector3.ONE))
 				row["walk_surface_sources"] = (bound_placement.get("walk_surface_sources", {}) as Dictionary).duplicate(true)
 		castle_fixture_placements.append(row)
+
+
+func _valid_fixture_vector2(value: Variant) -> bool:
+	return (
+		typeof(value) == TYPE_ARRAY
+		and (value as Array).size() == 2
+		and typeof((value as Array)[0]) in [TYPE_INT, TYPE_FLOAT]
+		and typeof((value as Array)[1]) in [TYPE_INT, TYPE_FLOAT]
+	)
 
 
 var _validation_cancel_check := Callable()
@@ -2542,6 +2566,7 @@ func _build_navigation() -> bool:
 				navigation_walkable_count += 1
 			if is_ford_corridor_cell(cell):
 				navigation_ford_corridor_count += 1
+	_build_gate_navigation_channels()
 	navigation_build_count += 1
 	_build_water_navigation_grid()
 	# Ford-corridor topology is a per-map contract (Fords of Isen II). Maps
@@ -3488,6 +3513,122 @@ func set_gate_passage(gate_id: int, local_position: Vector2, half_width_source: 
 	if changed > 0:
 		_navigation_topology_mutated()
 	return {"ok": true, "changed": changed > 0, "cells": (passage["cells"] as Array).size(), "axis": passage.get("axis"), "depth_fwd": passage.get("depth_fwd"), "depth_back": passage.get("depth_back")}
+
+
+func gate_navigation_opened_cell_count(source_index: int) -> int:
+	if not bool(_gate_navigation_pathing_open.get(source_index, false)):
+		return 0
+	return (_gate_navigation_channel_cells.get(source_index, []) as Array).size()
+
+
+func gate_navigation_channel_cells(source_index: int) -> Array[Vector2i]:
+	var result: Array[Vector2i] = []
+	for cell_value in _gate_navigation_channel_cells.get(source_index, []) as Array:
+		result.append(Vector2i(cell_value))
+	return result
+
+
+func set_castle_gate_pathing(source_index: int, pathing_open: bool, breached: bool = false) -> bool:
+	if _navigation_grid == null or not _gate_navigation_channel_cells.has(source_index):
+		return false
+	if breached:
+		_gate_navigation_breached[source_index] = true
+	var desired_open := pathing_open or bool(_gate_navigation_breached.get(source_index, false))
+	if bool(_gate_navigation_pathing_open.get(source_index, false)) == desired_open:
+		return true
+	var changed := false
+	for cell_value in _gate_navigation_channel_cells.get(source_index, []) as Array:
+		var cell := Vector2i(cell_value)
+		var was_walkable := not _navigation_grid.is_point_solid(cell)
+		if was_walkable == desired_open:
+			continue
+		_navigation_grid.set_point_solid(cell, not desired_open)
+		navigation_walkable_count += 1 if desired_open else -1
+		changed = true
+	_gate_navigation_pathing_open[source_index] = desired_open
+	if changed:
+		_navigation_topology_mutated()
+	return true
+
+
+func _build_gate_navigation_channels() -> void:
+	_gate_navigation_channel_cells.clear()
+	_gate_navigation_pathing_open.clear()
+	_gate_navigation_breached.clear()
+	for placement_value in castle_fixture_placements:
+		var placement := placement_value as Dictionary
+		if String(placement.get("role", "")) != "gate":
+			continue
+		var gate := placement.get("gate", {}) as Dictionary
+		var geometries := gate.get("geometries", {}) as Dictionary
+		var closed := geometries.get("Closed", {}) as Dictionary
+		if closed.is_empty() or not placement.has("gate_geometry_origin"):
+			continue
+		var source_index := int(placement.get("source_index", -1))
+		var origin := Vector2(placement.get("gate_geometry_origin", Vector2.ZERO))
+		var pivot := Vector2(placement.get("position", origin))
+		var barrier := _gate_first_inward_barrier(origin, pivot)
+		if barrier.size() != 2:
+			continue
+		var source_reach := maxf(float(closed.get("majorRadius", 0.0)), float(closed.get("minorRadius", 0.0)))
+		var reach_cells := ceili(source_reach / maxf(horizontal_scale, 0.001)) + 2
+		var start_cell := Vector2i(barrier[0])
+		var end_cell := Vector2i(barrier[1])
+		var source_solid_channel: Array[Vector2i] = []
+		for grid_y in range(maxi(navigation_grid_min.y, mini(start_cell.y, end_cell.y) - reach_cells), mini(navigation_grid_max.y, maxi(start_cell.y, end_cell.y) + reach_cells) + 1):
+			for grid_x in range(maxi(navigation_grid_min.x, mini(start_cell.x, end_cell.x) - reach_cells), mini(navigation_grid_max.x, maxi(start_cell.x, end_cell.x) + reach_cells) + 1):
+				var cell := Vector2i(grid_x, grid_y)
+				var local := grid_to_local_horizontal(cell)
+				if not _gate_barrier_geometry_contains_local(local, origin, pivot, closed) or not _navigation_grid.is_point_solid(cell):
+					continue
+				source_solid_channel.append(cell)
+		_gate_navigation_channel_cells[source_index] = source_solid_channel
+		var starts_open := bool(gate.get("openByDefault", false))
+		_gate_navigation_pathing_open[source_index] = starts_open
+		if starts_open:
+			for cell in source_solid_channel:
+				_navigation_grid.set_point_solid(cell, false)
+				navigation_walkable_count += 1
+
+
+func _gate_first_inward_barrier(origin: Vector2, pivot: Vector2) -> Array[Vector2i]:
+	## The authored yaw and anchor define this ray. Walking inward selects the
+	## first contiguous source-solid wall band; no four-axis region search is
+	## used as the castle gate's parity authority.
+	var ray_cells := _cells_on_segment(local_to_grid_float(origin), local_to_grid_float(pivot))
+	var first := Vector2i(-1, -1)
+	var last := Vector2i(-1, -1)
+	for cell in ray_cells:
+		if not is_grid_inside_navigation(cell):
+			continue
+		if _navigation_grid.is_point_solid(cell):
+			if first.x < 0:
+				first = cell
+			last = cell
+		elif first.x >= 0:
+			return [first, last]
+	return []
+
+
+func _gate_barrier_geometry_contains_local(point: Vector2, origin: Vector2, pivot: Vector2, geometry: Dictionary) -> bool:
+	if String(geometry.get("shape", "")).to_upper() != "BOX":
+		return false
+	var major := float(geometry.get("majorRadius", 0.0)) * local_transform_scale
+	var minor := float(geometry.get("minorRadius", 0.0)) * local_transform_scale
+	if major <= 0.0 or minor <= 0.0:
+		return false
+	# The exact authored anchor ray is the orientation authority. Barrier cells
+	# locate the first source-solid band only; their quantized centres must not
+	# replace the non-cardinal map yaw with a grid-snapped angle.
+	var axis := origin.direction_to(pivot)
+	if axis.is_zero_approx():
+		return false
+	var minimum_along := -major
+	var maximum_along := origin.distance_to(pivot) + major
+	var delta := point - origin
+	var along := delta.dot(axis)
+	var across := absf(delta.dot(Vector2(-axis.y, axis.x)))
+	return along >= minimum_along and along <= maximum_along and across <= minor
 
 
 func gate_passage_report(gate_id: int) -> Dictionary:
@@ -4552,6 +4693,9 @@ func _reset() -> void:
 	_navigation_component_ids = PackedInt32Array()
 	_failed_bridge_component_pairs.clear()
 	_ground_portal_components.clear()
+	_gate_navigation_channel_cells.clear()
+	_gate_navigation_pathing_open.clear()
+	_gate_navigation_breached.clear()
 	_navigation_grid = null
 	_water_navigation_grid = null
 	_clear_walk_surface_navigation()

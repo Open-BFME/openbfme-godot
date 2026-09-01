@@ -11,17 +11,22 @@ pins live in ``test_castle_fixtures_oracle.py``.
 from __future__ import annotations
 
 import json
+import os
+from pathlib import Path
 
 import pytest
 
 from openbfme_importer.castle_fixtures import (
     MAP_FIXTURES_SCHEMA,
     CastleFixturesError,
+    _compile_lineage,
+    _gate_block,
     build_map_fixtures,
     compile_map_object_descriptor,
     validate_map_fixtures,
 )
 from openbfme_importer.sage_map import SageMapError, convert_sage_map
+from openbfme_importer.playable_unit_compiler import _numeric_defines, _object_index
 from importer.tests.test_sage_map import _synthetic_map
 
 
@@ -93,6 +98,7 @@ _DOCUMENTS = {
         b"    TriggerWidthY = 150.0\n"
         b"  End\n"
         b"  Geometry = BOX\n"
+        b"  GeometryRotationAnchorOffset = X:425 Y:-12\n"
         b"  GeometryMajorRadius = 130.0\n"
         b"  GeometryMinorRadius = 7.5\n"
         b"  GeometryHeight = 140\n"
@@ -247,6 +253,38 @@ _DOCUMENTS = {
 }
 
 
+def test_v202_minas_gate_exact_source_projection() -> None:
+    source_path = os.environ.get("OPENBFME_MINAS_GATE_SOURCE", "")
+    if not source_path:
+        pytest.skip("focused v9.7.7 source path is supplied by the work-item gate")
+    source = Path(source_path).read_bytes()
+    documents = {
+        "data/ini/object/civilian/ministirithbuildings.ini": source,
+    }
+    descriptor = compile_map_object_descriptor("MinisGateDoor", documents)
+    assert descriptor["geometry"]["rotationAnchorOffset"] == {
+        "x": 987.2,
+        "y": 0.0,
+    }
+    pieces = {
+        piece["name"]: piece for piece in descriptor["geometry"]["pieces"]
+    }
+    assert set(pieces) == {"Closed", "OpenLeft", "OpenRight"}
+    _, lineage = _compile_lineage("MinisGateDoor", _object_index(documents))
+    gate = _gate_block(lineage, _numeric_defines(documents), "MinisGateDoor")
+    assert gate["rotationAnchorOffset"] == [987.2, 0.0]
+    assert gate["openByDefault"] is True
+    assert gate["resetMilliseconds"] == 6000
+    assert gate["percentOpenForPathing"] == 50
+    assert gate["geometries"]["Closed"] == {
+        "shape": "BOX",
+        "majorRadius": 7.2,
+        "minorRadius": 58.4,
+        "height": 61.0,
+        "offset": [0.0, 0.0, 0.0],
+    }
+
+
 def _placement(index: int, type_name: str, **properties: object) -> dict[str, object]:
     bag: dict[str, object] = {
         "originalOwner": "Player_1/teamPlayer_1",
@@ -312,6 +350,7 @@ def test_admission_compiles_gate_health_armor_geometry_and_modules() -> None:
     }
     assert set(pieces) == {"Closed", "OpenLeft", "OpenRight"}
     assert pieces["Closed"]["majorRadius"]["value"] == 130.0
+    assert descriptor["geometry"]["rotationAnchorOffset"] == {"x": 425.0, "y": -12.0}
     assert pieces["OpenLeft"]["offset"] == {"x": -115.0, "y": 68.0, "z": 0.0}
     gate = _module_row(descriptor, "GateOpenAndCloseBehavior")
     assert gate["fields"]["ResetTimeInMilliseconds"]["authored"].strip() == "5000"
@@ -396,6 +435,7 @@ def test_gate_fixture_carries_module_block_and_named_geometries() -> None:
     assert block["openByDefault"] is True
     assert block["resetMilliseconds"] == 5000
     assert block["percentOpenForPathing"] == 50
+    assert block["rotationAnchorOffset"] == [425.0, -12.0]
     assert block["commandSet"] == "CastleGateCommandSet"
     assert block["commandSetRows"] == [
         {"slot": 1, "commandId": "Command_ToggleGate"},

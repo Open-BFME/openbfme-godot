@@ -4057,6 +4057,7 @@ def _geometry_contract(
     pieces: list[dict[str, object]] = []
     current: dict[str, object] | None = None
     is_small: bool | None = None
+    rotation_anchor_offset: dict[str, float] | None = None
     for row in owner.assignments:
         key = row.key.casefold()
         if key in {"geometry", "additionalgeometry"}:
@@ -4074,6 +4075,11 @@ def _geometry_contract(
             continue
         if key == "geometryissmall":
             is_small = row.value.strip().casefold() in {"yes", "true", "1"}
+            continue
+        if key == "geometryrotationanchoroffset":
+            parsed = _geometry_offset(row.value)
+            if parsed is not None:
+                rotation_anchor_offset = parsed
             continue
         if current is None:
             continue
@@ -4094,6 +4100,11 @@ def _geometry_contract(
     }
     if is_small is not None:
         contract["isSmall"] = is_small
+    if rotation_anchor_offset is not None:
+        contract["rotationAnchorOffset"] = {
+            "x": rotation_anchor_offset["x"],
+            "y": rotation_anchor_offset["y"],
+        }
     primary = pieces[0]
     for field in ("shape", "majorRadius", "minorRadius", "height"):
         if field in primary:

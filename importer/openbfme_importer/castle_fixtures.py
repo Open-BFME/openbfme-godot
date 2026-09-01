@@ -414,6 +414,12 @@ def _gate_block(
         ),
     }
     geometry = _geometry_contract(ancestry, defines)
+    rotation_anchor = (geometry or {}).get("rotationAnchorOffset")
+    if isinstance(rotation_anchor, Mapping):
+        block["rotationAnchorOffset"] = [
+            float(rotation_anchor["x"]),
+            float(rotation_anchor["y"]),
+        ]
     geometries: dict[str, Any] = {}
     for piece in (geometry or {}).get("pieces", []):
         name = piece.get("name")
@@ -744,6 +750,14 @@ def _validate_gate_block(block: object, label: str) -> None:
     if not _is_number(percent) or float(percent) < 0:  # type: ignore[arg-type]
         raise CastleFixturesError(f"{label} has an invalid gate module block")
     _validate_geometries(block.get("geometries"), label)
+    rotation_anchor = block.get("rotationAnchorOffset")
+    if rotation_anchor is not None and (
+        not isinstance(rotation_anchor, Sequence)
+        or isinstance(rotation_anchor, (str, bytes))
+        or len(rotation_anchor) != 2
+        or not all(_is_number(value) for value in rotation_anchor)
+    ):
+        raise CastleFixturesError(f"{label} has an invalid rotation anchor offset")
     if "commandSet" in block and (
         not isinstance(block.get("commandSet"), str) or not block["commandSet"].strip()
     ):
