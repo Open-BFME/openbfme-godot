@@ -959,14 +959,20 @@
       "kind": "source-foundation",
       "priority": "P0",
       "allocationClass": "worker-lane",
-      "status": "pending",
+      "status": "in-progress",
       "domainIds": [],
       "rootQueryIds": [],
-      "dependsOn": ["P0-CORPUS-002"],
+      "dependsOn": [
+        "P0-CORPUS-002"
+      ],
       "ownership": {
-        "state": "unassigned",
-        "assignee": null,
-        "ownedPaths": [],
+        "state": "assigned",
+        "assignee": "codex-schema-core-v2",
+        "ownedPaths": [
+          "importer/openbfme_importer/semantic_graph_contract.py",
+          "importer/tests/test_rotwk_202_semantic_graph_contract.py",
+          "tools/check-rotwk-202-semantic-contract.py"
+        ],
         "candidatePaths": [
           "importer/openbfme_importer/semantic_graph_contract.py",
           "importer/tests/test_rotwk_202_semantic_graph_contract.py",
@@ -977,11 +983,24 @@
         "deliverable": "Carry the independently reviewed CORE-001 implementation into one fresh implementation commit and make the exact checker deterministically publish and self-verify the declared semantic-contract-core.json artifact and digest.",
         "notIncluded": "Changing accepted registries or validators without a new source finding, adding SQLite/I/O to the contract module, storage/traversal/APT/projection work, accepting the archived commit directly, amending it, or generating an ad hoc artifact outside the exact command."
       },
-      "sourceEvidence": ["OWNER-SEMANTIC-SCHEMA-V4-D5F9D8FC"],
-      "artifacts": ["workspace/logs/P0-CORPUS-SCHEMA-CORE-002/semantic-contract-core.json"],
+      "sourceEvidence": [
+        "OWNER-SEMANTIC-SCHEMA-V4-D5F9D8FC"
+      ],
+      "artifacts": [
+        "workspace/logs/P0-CORPUS-SCHEMA-CORE-002/semantic-contract-core.json"
+      ],
       "acceptance": {
-        "requiredLevels": ["L0"],
-        "requiredOutputDimensions": {"SOURCE": "NOT_REQUIRED", "CONVERT": "NOT_REQUIRED", "LOAD": "NOT_REQUIRED", "BEHAVIOR": "NOT_REQUIRED", "VISUAL": "NOT_REQUIRED", "AUDIO": "NOT_REQUIRED"},
+        "requiredLevels": [
+          "L0"
+        ],
+        "requiredOutputDimensions": {
+          "SOURCE": "NOT_REQUIRED",
+          "CONVERT": "NOT_REQUIRED",
+          "LOAD": "NOT_REQUIRED",
+          "BEHAVIOR": "NOT_REQUIRED",
+          "VISUAL": "NOT_REQUIRED",
+          "AUDIO": "NOT_REQUIRED"
+        },
         "criteria": [
           "the worker verifies the archived STATUS.md, history bundle, binary diff, commit d6fde23a, three final file hashes, and independent rejection receipt, then applies that single commit with no-commit semantics so the successor still produces exactly one normal Ponytail-reviewed implementation commit",
           "the independently reviewed archived CORE-001 registry and validator semantics remain byte- or AST-equivalent except for independently reviewed changes required to expose one canonical serialization function; all literal registries, hostile fixtures, owner authority addenda, and named-limit precedence stay exact",
@@ -990,7 +1009,27 @@
           "the exact command fails if the artifact is missing, stale, outside the lane log root, self-inconsistent, not reconstructable from committed code, or different between runs; handoff and independent review must bind its non-empty SHA-256 in artifactDigests"
         ]
       },
-      "verificationCommands": [{"steps": [{"toolRole": "python", "invocation": "script", "target": "tools/check-rotwk-202-semantic-contract.py", "args": ["--check"], "toolchainProfile": "python-hermetic-v1"}], "availability": "planned", "timeoutSeconds": 180, "expectedMarkers": ["ROTWK_202_SEMANTIC_CONTRACT PASS"], "diagnosticPolicy": "strict-default"}],
+      "verificationCommands": [
+        {
+          "steps": [
+            {
+              "toolRole": "python",
+              "invocation": "script",
+              "target": "tools/check-rotwk-202-semantic-contract.py",
+              "args": [
+                "--check"
+              ],
+              "toolchainProfile": "python-hermetic-v1"
+            }
+          ],
+          "availability": "planned",
+          "timeoutSeconds": 180,
+          "expectedMarkers": [
+            "ROTWK_202_SEMANTIC_CONTRACT PASS"
+          ],
+          "diagnosticPolicy": "strict-default"
+        }
+      ],
       "blockers": []
     },
     {
@@ -14382,7 +14421,9 @@
       "priority": "P1",
       "allocationClass": "worker-lane",
       "status": "pending",
-      "domainIds": ["runtime-performance"],
+      "domainIds": [
+        "runtime-performance"
+      ],
       "rootQueryIds": [],
       "dependsOn": [],
       "ownership": {
@@ -14405,8 +14446,17 @@
         "workspace/logs/P1-PERF-PRIVATE-GODOT-003/post-import-source-delta.json"
       ],
       "acceptance": {
-        "requiredLevels": ["L0"],
-        "requiredOutputDimensions": {"SOURCE": "NOT_REQUIRED", "CONVERT": "NOT_REQUIRED", "LOAD": "NOT_REQUIRED", "BEHAVIOR": "NOT_REQUIRED", "VISUAL": "NOT_REQUIRED", "AUDIO": "NOT_REQUIRED"},
+        "requiredLevels": [
+          "L0"
+        ],
+        "requiredOutputDimensions": {
+          "SOURCE": "NOT_REQUIRED",
+          "CONVERT": "NOT_REQUIRED",
+          "LOAD": "NOT_REQUIRED",
+          "BEHAVIOR": "NOT_REQUIRED",
+          "VISUAL": "NOT_REQUIRED",
+          "AUDIO": "NOT_REQUIRED"
+        },
         "criteria": [
           "the worker verifies the 002 STATUS.md and all archived hashes, independently re-reviews the three files, and carries them with no intermediate commit; strict array-shape, archive, overlay, process, import, closure, receipt, and hostile boundaries remain intact",
           "before any cleanup or refusal, the exact checker atomically persists a bounded diagnostic artifact containing pre/post source manifest digests, sorted expected and actual delta rows with byte counts and SHA-256 values, symmetric difference, process identity/exit/diagnostics, Godot identity, and no private payload bytes",
@@ -14415,7 +14465,25 @@
           "the final exact run persists stdout/stderr and the diagnostic artifact even on failure, completes independent control/candidate import plus strict check-only with stable source/cache identities, publishes a fresh reconstructable proof contract, and handoff/review bind non-empty digests for both declared artifacts"
         ]
       },
-      "verificationCommands": [{"steps": [{"toolRole": "powershell", "invocation": "script", "target": "tools/check-private-godot-proof.ps1", "args": [], "toolchainProfile": "rotwk-gate-v1"}], "availability": "pinned-godot", "timeoutSeconds": 600, "expectedMarkers": ["PRIVATE_GODOT_PROOF PASS"], "diagnosticPolicy": "strict-default"}],
+      "verificationCommands": [
+        {
+          "steps": [
+            {
+              "toolRole": "powershell",
+              "invocation": "script",
+              "target": "tools/check-private-godot-proof.ps1",
+              "args": [],
+              "toolchainProfile": "rotwk-gate-v1"
+            }
+          ],
+          "availability": "pinned-godot",
+          "timeoutSeconds": 600,
+          "expectedMarkers": [
+            "PRIVATE_GODOT_PROOF PASS"
+          ],
+          "diagnosticPolicy": "strict-default"
+        }
+      ],
       "blockers": []
     },
     {
