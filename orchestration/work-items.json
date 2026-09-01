@@ -13949,7 +13949,7 @@
       "kind": "performance",
       "priority": "P1",
       "allocationClass": "worker-lane",
-      "status": "in-progress",
+      "status": "blocked",
       "domainIds": [
         "runtime-performance"
       ],
@@ -13958,14 +13958,9 @@
       ],
       "dependsOn": [],
       "ownership": {
-        "state": "assigned",
-        "assignee": "codex-perf-sim-roster-v2",
-        "ownedPaths": [
-          "game/src/retail_slice/retail_slice_sim.gd",
-          "game/src/retail_slice/retail_sim_contracts_behaviors.gd",
-          "game/tests/retail_sim_roster_runner.gd",
-          "tools/gate-perf-sim-roster.ps1"
-        ],
+        "state": "unassigned",
+        "assignee": null,
+        "ownedPaths": [],
         "candidatePaths": [
           "game/src/retail_slice/retail_slice_sim.gd",
           "game/src/retail_slice/retail_sim_contracts_behaviors.gd",
@@ -13999,6 +13994,157 @@
           "a production-supported TERROR or UNCONTROLLABLE pulse positively proves fear scatter in both paths through an exact displaced position, cleared route and route_cells, cleared target and attack-move state, fear source and type, and ordered combat.fear_scatter event",
           "a supported damage-field death weapon fires after poison erases one hostile target and positively proves fresh membership through an exact one-target module.death_weapon_fired event, damage to the surviving hostile target, absence of the erased target, and no unresolved or unsupported diagnostic",
           "every tick has identical state hash, ordered event digest, RNG state, entity ids, winner, health, routes, and policy state; the gate rejects any warning, fallback, unsupported or unresolved path, skipped comparison, missing sample, missing coverage marker, stale revision, or artifact mismatch",
+          "at least 80 alternating same-process direct single-cluster samples prove the empty-policy optimized p99 is at most 0.85 times reference p99; batched averages cannot be labeled p99 and mixed-policy plus whole-tick timings remain telemetry"
+        ]
+      },
+      "verificationCommands": [
+        {
+          "steps": [
+            {
+              "toolRole": "powershell",
+              "invocation": "script",
+              "target": "tools/gate-perf-sim-roster.ps1",
+              "args": [],
+              "toolchainProfile": "rotwk-gate-v1"
+            }
+          ],
+          "availability": "pinned-godot",
+          "timeoutSeconds": 1800,
+          "expectedMarkers": [
+            "PERF_SIM_ROSTER PASS entities=335 state_exact=true event_exact=true coverage_exact=true"
+          ],
+          "diagnosticPolicy": "strict-default"
+        }
+      ],
+      "blockers": [
+        "The carried runtime refactor and corrected adversarial oracle reached the exact ledger check, but the check failed before performance sampling because the supported death-weapon fixture was supplied to setup instead of registered through the production register_death_weapon_rule API, so both paths emitted an unresolved damage-field diagnostic. The same run also exposed a repository-wide warning from the tracked game/mods/example_hard_orcs pack, which strict-default diagnostics correctly reject. No report, implementation commit, handoff, or independent acceptance exists; the dirty uncommitted lane is retained for evidence and P1-PERF-SIM-ROSTER-003 must wait for P0-REPO-AMBIENT-MOD-001."
+      ]
+    },
+    {
+      "id": "P0-REPO-AMBIENT-MOD-001",
+      "title": "Remove the tracked ambient example mod from the shipping Godot tree",
+      "kind": "repository-hygiene",
+      "priority": "P0",
+      "allocationClass": "worker-lane",
+      "status": "pending",
+      "domainIds": [],
+      "rootQueryIds": [],
+      "dependsOn": [],
+      "ownership": {
+        "state": "unassigned",
+        "assignee": null,
+        "ownedPaths": [],
+        "candidatePaths": [
+          "game/mods/example_hard_orcs/pack.json",
+          "game/mods/example_hard_orcs/units/orc.json",
+          "examples/mods/example_hard_orcs/pack.json",
+          "examples/mods/example_hard_orcs/units/orc.json",
+          "docs/MODDING.md",
+          "game/tests/ambient_mod_clean_runner.gd",
+          "tools/gate-ambient-mod-clean.ps1"
+        ]
+      },
+      "scope": {
+        "deliverable": "Move the project-authored example mod outside the exported Godot project, update the modding guide to require an explicit copy or selected source, and prove the clean shipping tree no longer emits the known ambient-pack warning while ModLoader's explicit-source policy remains fail closed.",
+        "notIncluded": "Silencing or weakening ModLoader diagnostics, changing explicit pack-selection semantics, enabling ambient auto-mounting, changing retail pack state, changing export policy, or modifying unrelated examples or mods."
+      },
+      "sourceEvidence": [],
+      "artifacts": [
+        "workspace/logs/P0-REPO-AMBIENT-MOD-001/ambient-mod-clean.json"
+      ],
+      "acceptance": {
+        "requiredLevels": [
+          "L3"
+        ],
+        "requiredOutputDimensions": {
+          "SOURCE": "NOT_REQUIRED",
+          "CONVERT": "NOT_REQUIRED",
+          "LOAD": "REQUIRED",
+          "BEHAVIOR": "REQUIRED",
+          "VISUAL": "NOT_REQUIRED",
+          "AUDIO": "NOT_REQUIRED"
+        },
+        "criteria": [
+          "the example pack.json and units/orc.json bytes are preserved under examples/mods/example_hard_orcs and no tracked pack.json remains under game/mods",
+          "docs/MODDING.md identifies the non-shipping example and describes an explicit copy or selected external source without claiming that ambient game/mods packs auto-mount",
+          "a pinned headless Godot runner exercises ModLoader diagnostics from the shipping project and emits the exact clean marker without the res://mods/example_hard_orcs ambient-pack warning",
+          "the gate fails closed on parse or script errors, the known ambient example warning, a missing example, a tracked game/mods pack.json, or a missing marker; ModLoader source and explicit-source behavior are unchanged"
+        ]
+      },
+      "verificationCommands": [
+        {
+          "steps": [
+            {
+              "toolRole": "powershell",
+              "invocation": "script",
+              "target": "tools/gate-ambient-mod-clean.ps1",
+              "args": [],
+              "toolchainProfile": "rotwk-gate-v1"
+            }
+          ],
+          "availability": "pinned-godot",
+          "timeoutSeconds": 300,
+          "expectedMarkers": [
+            "AMBIENT_MOD_CLEAN PASS tracked_shipping_packs=0 example=examples/mods/example_hard_orcs"
+          ],
+          "diagnosticPolicy": "strict-default"
+        }
+      ],
+      "blockers": []
+    },
+    {
+      "id": "P1-PERF-SIM-ROSTER-003",
+      "title": "Land exact behavior-roster reuse after ambient diagnostics are clean",
+      "kind": "performance",
+      "priority": "P1",
+      "allocationClass": "worker-lane",
+      "status": "pending",
+      "domainIds": [
+        "runtime-performance"
+      ],
+      "rootQueryIds": [
+        "skirmish-roots"
+      ],
+      "dependsOn": [
+        "P0-REPO-AMBIENT-MOD-001"
+      ],
+      "ownership": {
+        "state": "unassigned",
+        "assignee": null,
+        "ownedPaths": [],
+        "candidatePaths": [
+          "game/src/retail_slice/retail_slice_sim.gd",
+          "game/src/retail_slice/retail_sim_contracts_behaviors.gd",
+          "game/tests/retail_sim_roster_runner.gd",
+          "tools/gate-perf-sim-roster.ps1"
+        ]
+      },
+      "scope": {
+        "deliverable": "Carry the unmerged one-roster refactor forward without an automatic commit, retain the corrected adversarial oracle, register the supported death-weapon fixture through the production API after setup, and prove exact behavior plus direct p99 improvement on a warning-clean tree.",
+        "notIncluded": "Merging or amending ae968f7f, persistent indexes, lifecycle hooks, damage-field roster reuse, presentation synchronization, threading, tick-rate changes, gameplay-rule changes, diagnostic suppression, or any whole-game FPS claim."
+      },
+      "sourceEvidence": [],
+      "artifacts": [
+        "workspace/logs/P1-PERF-SIM-ROSTER-003/perf-sim-roster.json"
+      ],
+      "acceptance": {
+        "requiredLevels": [
+          "L4"
+        ],
+        "requiredOutputDimensions": {
+          "SOURCE": "NOT_REQUIRED",
+          "CONVERT": "NOT_REQUIRED",
+          "LOAD": "REQUIRED",
+          "BEHAVIOR": "REQUIRED",
+          "VISUAL": "NOT_REQUIRED",
+          "AUDIO": "NOT_REQUIRED"
+        },
+        "criteria": [
+          "the implementation takes one ascending entity_ids snapshot immediately before large-group bonus and reuses it only through poisoned behavior while every pass reads live rows and re-evaluates policy, health, timing, hostility, distance, and RNG inputs; damage fields and later systems obtain a fresh roster",
+          "same-process reference and optimized paths execute identical commands for at least 600 ticks in an empty-policy 335-entity moving case and a mixed case covering all six policies, animal-AI RNG, fatal poison erasure, and restore between ticks",
+          "an isolated production-supported TERROR or UNCONTROLLABLE pulse positively proves fear scatter in both paths through an exact displaced position, cleared route and route_cells, cleared target and attack-move state, fear source and type, and ordered combat.fear_scatter event",
+          "a supported death-weapon rule registered through register_death_weapon_rule after setup fires after poison erases one of two hostile targets and positively proves fresh membership through an exact one-target module.death_weapon_fired event, damage to the surviving target, absence of the erased target, and no unresolved or unsupported diagnostic",
+          "both paths expose positive fear and damage-field coverage markers and every tick has identical state hash, ordered event digest, RNG state, entity ids, winner, health, routes, and policy state; the gate rejects any warning, fallback, unsupported or unresolved path, skipped comparison, missing sample, missing coverage marker, stale revision, or artifact mismatch",
           "at least 80 alternating same-process direct single-cluster samples prove the empty-policy optimized p99 is at most 0.85 times reference p99; batched averages cannot be labeled p99 and mixed-policy plus whole-tick timings remain telemetry"
         ]
       },
