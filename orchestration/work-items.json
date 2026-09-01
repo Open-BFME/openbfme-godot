@@ -13879,7 +13879,7 @@
       "kind": "performance",
       "priority": "P1",
       "allocationClass": "worker-lane",
-      "status": "pending",
+      "status": "in-progress",
       "domainIds": [
         "runtime-performance"
       ],
@@ -13891,9 +13891,14 @@
         "P0-CORPUS-001"
       ],
       "ownership": {
-        "state": "unassigned",
-        "assignee": null,
-        "ownedPaths": [],
+        "state": "assigned",
+        "assignee": "codex-perf-present-v4",
+        "ownedPaths": [
+          "game/src/retail_slice/retail_vertical_slice.gd",
+          "game/src/view/member_render_batcher.gd",
+          "game/tests/retail_frame_budget_runner.gd",
+          "tools/gate-perf-frame.ps1"
+        ],
         "candidatePaths": [
           "game/src/retail_slice/retail_vertical_slice.gd",
           "game/src/view/member_render_batcher.gd",
