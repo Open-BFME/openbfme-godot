@@ -14601,16 +14601,20 @@
       "kind": "performance-infrastructure",
       "priority": "P1",
       "allocationClass": "worker-lane",
-      "status": "pending",
+      "status": "in-progress",
       "domainIds": [
         "runtime-performance"
       ],
       "rootQueryIds": [],
       "dependsOn": [],
       "ownership": {
-        "state": "unassigned",
-        "assignee": null,
-        "ownedPaths": [],
+        "state": "assigned",
+        "assignee": "codex-private-godot-v5",
+        "ownedPaths": [
+          "tools/private-godot-proof.ps1",
+          "tools/check-private-godot-proof.ps1",
+          "tools/tests/private-godot-proof-fixtures.ps1"
+        ],
         "candidatePaths": [
           "tools/private-godot-proof.ps1",
           "tools/check-private-godot-proof.ps1",
