@@ -12576,7 +12576,7 @@
       "kind": "conversion-behavior",
       "priority": "P1",
       "allocationClass": "worker-lane",
-      "status": "pending",
+      "status": "in-progress",
       "domainIds": [
         "retail-skirmish"
       ],
@@ -12590,9 +12590,20 @@
         "P0-CODE-MAP-001"
       ],
       "ownership": {
-        "state": "unassigned",
-        "assignee": null,
-        "ownedPaths": [],
+        "state": "assigned",
+        "assignee": "codex-minas-gate-v4",
+        "ownedPaths": [
+          "importer/openbfme_importer/playable_unit_compiler.py",
+          "importer/openbfme_importer/castle_fixtures.py",
+          "importer/tests/test_playable_unit_compiler.py",
+          "importer/tests/test_castle_fixtures.py",
+          "game/src/retail_slice/retail_map_data.gd",
+          "game/src/retail_slice/retail_sim_contracts_abilities.gd",
+          "game/src/retail_slice/retail_sim_combat.gd",
+          "game/src/retail_slice/retail_sim_neutrals.gd",
+          "game/tests/minas_gate_nav_v202_runner.gd",
+          "tools/gate-minas-gate-v202.ps1"
+        ],
         "candidatePaths": [
           "importer/openbfme_importer/playable_unit_compiler.py",
           "importer/openbfme_importer/castle_fixtures.py",
