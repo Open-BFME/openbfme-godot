@@ -13849,7 +13849,8 @@
           "windowed 250, 1000, and 5000-member FAR or CULLED runs record named build, selected-pack, map, hardware, camera, node, draw, simulation, sync, CPU-frame, and GPU-frame identities, with full battalion node count zero and army node growth bounded by exact model-team batch groups rather than member count",
           "the adversarial scene proves every qualifying NEAR and MID battalion remains fully skinned and animated with no fixed promotion cap; selected, refused, and active attack, death, construction, corpse, mount, and banner one-shots retain full fail-closed presenters",
           "exact picking, member counts, transforms, visibility sets, deterministic simulation hashes, and repeated near-far transitions match, with zero stale nodes, RIDs, event connections, order indicators, display roots, or hidden units after removal and match restart",
-          "the focused measurements preserve the previously demonstrated flat architecture and report remaining simulation, battlefield, CPU-frame, and GPU-frame costs honestly; this row cannot emit or imply a 5000-member 60 FPS or 144 FPS terminal marker"
+          "same-process warmed alternating baseline and optimized measurements record at least 100 direct samples per mode at 1000 and 5000 moving members; optimized presentation-sync p99 is at most 0.70 times baseline, optimized total CPU-frame p99 is at most 0.85 times baseline, simulation hashes remain exact, and GPU p99 is separately reported and does not regress by more than 5 percent",
+          "the focused measurements preserve the previously demonstrated flat architecture and report remaining simulation, battlefield, CPU-frame, and GPU-frame costs honestly; missing ratios, unstable A/A captures, or a threshold miss reject the change, and this row cannot emit or imply a 5000-member 60 FPS or 144 FPS terminal marker"
         ]
       },
       "verificationCommands": [
@@ -13866,7 +13867,7 @@
           "availability": "current-selected-pack-pinned-godot-and-visible-gpu",
           "timeoutSeconds": 3600,
           "expectedMarkers": [
-            "PERF_PRESENT_ARCH PASS far_members=5000 near_exact=true"
+            "PERF_PRESENT_ARCH PASS far_members=5000 near_exact=true aa_stable=true cpu_improved=true"
           ],
           "diagnosticPolicy": "strict-default"
         }
