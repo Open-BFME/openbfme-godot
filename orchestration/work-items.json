@@ -15431,7 +15431,7 @@
       "kind": "performance",
       "priority": "P1",
       "allocationClass": "worker-lane",
-      "status": "pending",
+      "status": "in-progress",
       "domainIds": [
         "runtime-performance"
       ],
@@ -15443,9 +15443,20 @@
         "P0-CORPUS-001"
       ],
       "ownership": {
-        "state": "unassigned",
-        "assignee": null,
-        "ownedPaths": [],
+        "state": "assigned",
+        "assignee": "codex-perf-present-direct-v7",
+        "ownedPaths": [
+          "game/src/retail_slice/retail_vertical_slice.gd",
+          "game/src/view/member_render_batcher.gd",
+          "game/tests/retail_far_batch_contract_runner.gd",
+          "game/tests/retail_far_batch_contract_runner.gd.uid",
+          "game/tests/retail_far_batch_perf_runner.gd",
+          "game/tests/retail_far_batch_perf_runner.gd.uid",
+          "game/tests/retail_far_batch_proof_common.gd",
+          "game/tests/retail_far_batch_proof_common.gd.uid",
+          "tools/perf_present_direct_validator.py",
+          "tools/gate-perf-present-direct.ps1"
+        ],
         "candidatePaths": [
           "game/src/retail_slice/retail_vertical_slice.gd",
           "game/src/view/member_render_batcher.gd",
