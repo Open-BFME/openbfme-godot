@@ -14269,14 +14269,20 @@
       "kind": "performance-infrastructure",
       "priority": "P1",
       "allocationClass": "worker-lane",
-      "status": "pending",
-      "domainIds": ["runtime-performance"],
+      "status": "in-progress",
+      "domainIds": [
+        "runtime-performance"
+      ],
       "rootQueryIds": [],
       "dependsOn": [],
       "ownership": {
-        "state": "unassigned",
-        "assignee": null,
-        "ownedPaths": [],
+        "state": "assigned",
+        "assignee": "codex-private-godot-v2",
+        "ownedPaths": [
+          "tools/private-godot-proof.ps1",
+          "tools/check-private-godot-proof.ps1",
+          "tools/tests/private-godot-proof-fixtures.ps1"
+        ],
         "candidatePaths": [
           "tools/private-godot-proof.ps1",
           "tools/check-private-godot-proof.ps1",
@@ -14288,10 +14294,21 @@
         "notIncluded": "Blindly copying the archive, reusing any failed attempt as evidence, feature-specific presentation policy, performance thresholds, retail selection, captures, a generic gate framework, or widening the three-file implementation."
       },
       "sourceEvidence": [],
-      "artifacts": ["workspace/logs/P1-PERF-PRIVATE-GODOT-002/private-godot-proof-contract.json"],
+      "artifacts": [
+        "workspace/logs/P1-PERF-PRIVATE-GODOT-002/private-godot-proof-contract.json"
+      ],
       "acceptance": {
-        "requiredLevels": ["L0"],
-        "requiredOutputDimensions": {"SOURCE": "NOT_REQUIRED", "CONVERT": "NOT_REQUIRED", "LOAD": "NOT_REQUIRED", "BEHAVIOR": "NOT_REQUIRED", "VISUAL": "NOT_REQUIRED", "AUDIO": "NOT_REQUIRED"},
+        "requiredLevels": [
+          "L0"
+        ],
+        "requiredOutputDimensions": {
+          "SOURCE": "NOT_REQUIRED",
+          "CONVERT": "NOT_REQUIRED",
+          "LOAD": "NOT_REQUIRED",
+          "BEHAVIOR": "NOT_REQUIRED",
+          "VISUAL": "NOT_REQUIRED",
+          "AUDIO": "NOT_REQUIRED"
+        },
         "criteria": [
           "the worker independently reads the archived STATUS.md and all three archived owned files, verifies their exact recorded SHA-256 values, re-reviews every accepted trust boundary and Grok finding, and copies no stale receipt because none exists",
           "Get-PrivateGodotOrdinalSort and every caller preserve typed array shape for zero, one, and many rows under Set-StrictMode; direct literal fixtures prove Count, indexing, equality, and hashing for all three shapes before any archive or Godot process",
@@ -14301,7 +14318,25 @@
           "the exact gate persists stdout and stderr under the lane log root, emits a fresh self-verifying reconstructable contract, and reports only PRIVATE_GODOT_PROOF PASS; the production helper remains single-purpose and Ponytail-approved"
         ]
       },
-      "verificationCommands": [{"steps": [{"toolRole": "powershell", "invocation": "script", "target": "tools/check-private-godot-proof.ps1", "args": [], "toolchainProfile": "rotwk-gate-v1"}], "availability": "pinned-godot", "timeoutSeconds": 600, "expectedMarkers": ["PRIVATE_GODOT_PROOF PASS"], "diagnosticPolicy": "strict-default"}],
+      "verificationCommands": [
+        {
+          "steps": [
+            {
+              "toolRole": "powershell",
+              "invocation": "script",
+              "target": "tools/check-private-godot-proof.ps1",
+              "args": [],
+              "toolchainProfile": "rotwk-gate-v1"
+            }
+          ],
+          "availability": "pinned-godot",
+          "timeoutSeconds": 600,
+          "expectedMarkers": [
+            "PRIVATE_GODOT_PROOF PASS"
+          ],
+          "diagnosticPolicy": "strict-default"
+        }
+      ],
       "blockers": []
     },
     {
