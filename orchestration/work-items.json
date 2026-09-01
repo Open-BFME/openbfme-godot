@@ -311,6 +311,48 @@
       "claimLimit": "Exact terminal PRIVATE-GODOT-006 source and console-only Windows PowerShell compatibility failure identity; no stdout or stderr artifact exists, and this is not retail SOURCE, accepted implementation, Godot execution, or permission to change policy."
     },
     {
+      "id": "E-PRIVATE-GODOT-007-TERMINAL-DC8BAA6D",
+      "type": "historical-private-terminal-receipt",
+      "path": "workspace/archive/P1-PERF-PRIVATE-GODOT-007/20260901T071558-0400-terminal/STATUS.md",
+      "identity": {
+        "bytes": 2726,
+        "sha256": "dc8baa6db4f16190d638ccc7aa21dc96c197b16af03e2bebeddb29f78125be5b",
+        "assignmentCommit": "07fda2ba1074dc357209663739bc7e2025621e11",
+        "runtimeProfile": "rotwk-gate-v1 Windows PowerShell 5.1",
+        "failureBinding": "memory-only duplicate refusal is wrapped by MethodInvocationException from ScriptBlock.Invoke before mode selection",
+        "ownedFiles": [
+          {
+            "path": "tools/private-godot-proof.ps1",
+            "bytes": 129796,
+            "sha256": "569527996bc00650b883d64569f4025ee04354ff7ac42b35077591d9206464bc"
+          },
+          {
+            "path": "tools/check-private-godot-proof.ps1",
+            "bytes": 3823,
+            "sha256": "169a4c1e6024cad30411a6ad7af38b5c73b525eda77e5a2a16ee0fba6e23d1ee"
+          },
+          {
+            "path": "tools/tests/private-godot-proof-fixtures.ps1",
+            "bytes": 17371,
+            "sha256": "bf2216de117c746cda657e352f0752c5859acb6fe5301bceb7c387a27585b7dc"
+          }
+        ],
+        "controllerFiles": [
+          {
+            "path": "logs/assignment.json",
+            "bytes": 740,
+            "sha256": "6e61dfad8b21ceab729b8514c2f393fb86cd29d009da301e87515dafd5dc980a"
+          },
+          {
+            "path": "logs/brief.md",
+            "bytes": 4491,
+            "sha256": "36bc1a6259fd56e3c9da8c4ca134f6404091e836cb2055874ed05f5ac7f1db8a"
+          }
+        ]
+      },
+      "claimLimit": "Exact terminal PRIVATE-GODOT-007 source and memory-only Windows PowerShell invocation-wrapper failure identity; no mode, artifact, scenario, stdout, stderr, child-process, or Godot evidence exists, and this is not permission to change detector or policy."
+    },
+    {
       "id": "E-BL-202",
       "type": "tracked-contract",
       "path": "contracts/rotwk-202-v9.7.7-baseline.json",
@@ -14854,20 +14896,16 @@
       "kind": "performance-infrastructure",
       "priority": "P1",
       "allocationClass": "worker-lane",
-      "status": "in-progress",
+      "status": "blocked",
       "domainIds": [
         "runtime-performance"
       ],
       "rootQueryIds": [],
       "dependsOn": [],
       "ownership": {
-        "state": "assigned",
-        "assignee": "codex-private-godot-v7",
-        "ownedPaths": [
-          "tools/private-godot-proof.ps1",
-          "tools/check-private-godot-proof.ps1",
-          "tools/tests/private-godot-proof-fixtures.ps1"
-        ],
+        "state": "unassigned",
+        "assignee": null,
+        "ownedPaths": [],
         "candidatePaths": [
           "tools/private-godot-proof.ps1",
           "tools/check-private-godot-proof.ps1",
@@ -14902,6 +14940,82 @@
           "artifact-selected diagnostic producer and read-only validator, literal controller-root allowlist and temporary family, exact assignment/source/artifact validation, canonical actual-basename and known-005 scenarios, literal outcome recording and known-mismatch reproduction, semantic-tamper hostiles, AST child-process closure, and legacy detector bytes remain behavior- and schema-equivalent to the archived 006 source except for regenerated item, assignment, artifact-path, and marker identities",
           "producer invokes no Git, Godot, executable preflight, archive, hydration, import, check-only, or other child process; atomically publishes and strictly reopens mode-detection-diagnostic.json, then prints PRIVATE_GODOT_MODE_DIAGNOSTIC PASS reproduced=true child_process=false; validator writes nothing, launches nothing, independently reconstructs all bindings, prints the same marker, and preserves the identical artifact SHA-256 for handoff and review",
           "any compatibility-preflight failure, missing reproduction, missing or corrupt artifact, child-process reachability, second producer entry, detector or policy drift, cleanup before publication, or validator mutation terminally blocks 007; detector correction and control or candidate import remain blocked for a separate owner update citing the independently reviewed diagnostic artifact"
+        ]
+      },
+      "verificationCommands": [
+        {
+          "steps": [
+            {
+              "toolRole": "powershell",
+              "invocation": "script",
+              "target": "tools/check-private-godot-proof.ps1",
+              "args": [],
+              "toolchainProfile": "rotwk-gate-v1"
+            }
+          ],
+          "availability": "local",
+          "timeoutSeconds": 120,
+          "expectedMarkers": [
+            "PRIVATE_GODOT_MODE_DIAGNOSTIC PASS reproduced=true child_process=false"
+          ],
+          "diagnosticPolicy": "strict-default"
+        }
+      ],
+      "blockers": [
+        "The sole authorized 007 check reached the intended memory-only duplicate refusal before Add, but Windows PowerShell 5.1 wrapped the ScriptBlock.Invoke exception in MethodInvocationException and the fixture compared only the outer message. Mode selection, artifact/scenario validation, child-proof checks, stdout/stderr publication, Git, and Godot were never reached; no declared artifact or implementation commit exists. Exact source, assignment, brief, STATUS, and empty tracked diff are recoverably archived at workspace/archive/P1-PERF-PRIVATE-GODOT-007/20260901T071558-0400-terminal. No retry is allowed; continue only through P1-PERF-PRIVATE-GODOT-008."
+      ]
+    },
+    {
+      "id": "P1-PERF-PRIVATE-GODOT-008",
+      "title": "Validate the exact PowerShell 5.1 invocation refusal wrapper",
+      "kind": "performance-infrastructure",
+      "priority": "P1",
+      "allocationClass": "worker-lane",
+      "status": "pending",
+      "domainIds": [
+        "runtime-performance"
+      ],
+      "rootQueryIds": [],
+      "dependsOn": [],
+      "ownership": {
+        "state": "unassigned",
+        "assignee": null,
+        "ownedPaths": [],
+        "candidatePaths": [
+          "tools/private-godot-proof.ps1",
+          "tools/check-private-godot-proof.ps1",
+          "tools/tests/private-godot-proof-fixtures.ps1"
+        ]
+      },
+      "scope": {
+        "deliverable": "Verify and carry the terminal 007 child-free diagnostic source with no-commit semantics, change only the refusal fixture to recognize the exact bounded Windows PowerShell 5.1 ScriptBlock.Invoke exception chain, then publish and validate the unchanged canonical-name diagnostic artifact.",
+        "notIncluded": "Retrying 007; broad or recursive exception unwrapping; substring matching the outer wrapper; changing the mode detector, scenarios, artifact schema, controller allowlist, child closure, assignment/source binding, UID, source allowlist, evidence, import, presentation, closure, or workload policy; invoking Git or Godot; a performance workload; or more than one diagnostic production entry."
+      },
+      "sourceEvidence": [
+        "E-PRIVATE-GODOT-007-TERMINAL-DC8BAA6D"
+      ],
+      "artifacts": [
+        "workspace/logs/P1-PERF-PRIVATE-GODOT-008/mode-detection-diagnostic.json"
+      ],
+      "acceptance": {
+        "requiredLevels": [
+          "L0"
+        ],
+        "requiredOutputDimensions": {
+          "SOURCE": "NOT_REQUIRED",
+          "CONVERT": "NOT_REQUIRED",
+          "LOAD": "NOT_REQUIRED",
+          "BEHAVIOR": "NOT_REQUIRED",
+          "VISUAL": "NOT_REQUIRED",
+          "AUDIO": "NOT_REQUIRED"
+        },
+        "criteria": [
+          "the worker verifies E-PRIVATE-GODOT-007-TERMINAL-DC8BAA6D at its exact archive path including STATUS, assignment commit, runtime profile, all three owned-file identities, and both controller-file identities; carries exactly those three frozen files with no-commit semantics; and changes only Assert-ModeFixtureRefusal, 008 identities, and memory-only wrapper hostiles",
+          "the refusal helper accepts only this exact closed Windows PowerShell 5.1 ScriptBlock.Invoke chain: outer System.Management.Automation.MethodInvocationException, its InnerException System.Management.Automation.RuntimeException, that exception's InnerException one terminal System.Management.Automation.RuntimeException, and a null terminal InnerException; both RuntimeException messages must match the complete anchored PRIVATE_GODOT_PROOF REFUSED pattern, with no recursive graph walk or outer-message substring acceptance",
+          "pre-mode memory-only hostiles prove the exact three-node type chain, non-null two inner nodes, null terminal InnerException, anchored correct refusal messages, unexpected success refusal, wrong outer/intermediate/terminal type, missing or extra inner node, wrong inner message, duplicate refusal before Add, and unchanged dictionary count and value; the production census remains explicit ContainsKey then Add with no TryAdd token",
+          "artifact-selected producer/read-only-validator behavior, controller-root allowlist, temporary family, assignment/source/artifact validation, canonical actual-basename and known-005 scenarios, literal outcome recording and mismatch reproduction, semantic-tamper hostiles, AST no-child closure, and detector bytes remain equivalent to the archived 007 source except regenerated item, assignment, artifact-path, and marker identities",
+          "producer and validator invoke no Git, Godot, executable preflight, archive, hydration, import, check-only, or any other child process; producer atomically publishes and reopens the diagnostic, validator writes nothing, and both print PRIVATE_GODOT_MODE_DIAGNOSTIC PASS reproduced=true child_process=false with identical artifact SHA-256",
+          "any preflight ambiguity, broad exception acceptance, missing reproduction, corrupt artifact, child reachability, second producer entry, detector/policy drift, cleanup before publication, or validator mutation terminally blocks 008; detector correction and real control/candidate imports remain a separate owner decision after independent review"
         ]
       },
       "verificationCommands": [
