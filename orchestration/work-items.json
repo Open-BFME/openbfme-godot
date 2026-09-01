@@ -182,6 +182,34 @@
       "claimLimit": "Normative semantic schema registries and expected vectors only; not retail SOURCE, CONVERT, LOAD, BEHAVIOR, VISUAL, or AUDIO evidence. Authority addendum: canonical P0-CORPUS-SCHEMA-CORE-002 ownership supersedes design-v4 sections 1 and 1.1 only where they name the rejected facade's three old paths or require CORE to derive that old source-schema closure; CORE changes only its three semantic_graph_contract paths and declares the source-schema input symbol and shape, while closure derivation belongs to P0-CORPUS-SCHEMA-001."
     },
     {
+      "id": "OWNER-SEMANTIC-STORE-V1-5B7C76AE",
+      "type": "private-owner-contract",
+      "path": "workspace/logs/P0-CORPUS-SCHEMA-STORE-001/store-design-v1.md",
+      "identity": {
+        "sha256": "5b7c76aeaed390499330ece28830196c98270f58035daa7d0c524cf5498f5895",
+        "normativeSchemaSha256": "d5f9d8fc12a631156b4c3b73737f23faae8e40c71b7577a800e06f6c2e39090c",
+        "coreArtifactSha256": "83dad1c2c2baa297fefb24e77e181fdf8d9c5ff299f14dcf01c694db09caa89a"
+      },
+      "claimLimit": "Normative semantics-free STORE API, SQLite/index, lookup, diagnostic, publication, and artifact contract only; no retail SOURCE, reconstruction, CONVERT, LOAD, BEHAVIOR, VISUAL, or AUDIO evidence."
+    },
+    {
+      "id": "E-SEMANTIC-CORE-002-83DAD1C2",
+      "type": "accepted-private-artifact-receipt",
+      "path": "workspace/logs/P0-CORPUS-SCHEMA-CORE-002/semantic-contract-core.json",
+      "identity": {
+        "sha256": "83dad1c2c2baa297fefb24e77e181fdf8d9c5ff299f14dcf01c694db09caa89a",
+        "implementationRevision": "097d2034",
+        "artifactSchema": "openbfme.rotwk-202-semantic-contract-core",
+        "artifactSchemaVersion": 1,
+        "semanticSchema": "openbfme.rotwk-202-semantic-schema-manifest",
+        "semanticSchemaVersion": 4,
+        "baselineId": "rotwk-202-v9.7.7-en",
+        "normativeDesignSha256": "d5f9d8fc12a631156b4c3b73737f23faae8e40c71b7577a800e06f6c2e39090c",
+        "registryPayloadSha256": "2c6b185f7a32002ff705d2ce1859fc704a834ab8f5dfd760be7cbef1671d505b"
+      },
+      "claimLimit": "Accepted immutable semantic registries, row shapes, identities, bounds, and pure validators consumed by STORE only; no retail SOURCE, reconstruction, CONVERT, LOAD, BEHAVIOR, VISUAL, or AUDIO evidence."
+    },
+    {
       "id": "E-BL-202",
       "type": "tracked-contract",
       "path": "contracts/rotwk-202-v9.7.7-baseline.json",
@@ -1035,7 +1063,7 @@
       "kind": "source-foundation",
       "priority": "P0",
       "allocationClass": "worker-lane",
-      "status": "blocked",
+      "status": "pending",
       "domainIds": [],
       "rootQueryIds": [],
       "dependsOn": [
@@ -1055,7 +1083,11 @@
         "deliverable": "A semantics-free streaming SQLite ingestion/query layer plus atomic canonical JSONL shard and manifest writer/validator with exact pre-write resource limits.",
         "notIncluded": "Semantic edge reconstruction, occurrence resolution, APT admission, root execution, domain classification, retail payload parsing, or duplicating contract registries."
       },
-      "sourceEvidence": [],
+      "sourceEvidence": [
+        "OWNER-SEMANTIC-SCHEMA-V4-D5F9D8FC",
+        "OWNER-SEMANTIC-STORE-V1-5B7C76AE",
+        "E-SEMANTIC-CORE-002-83DAD1C2"
+      ],
       "artifacts": [
         "workspace/logs/P0-CORPUS-SCHEMA-STORE-001/semantic-store-contract.json"
       ],
@@ -1075,7 +1107,9 @@
           "all graph-sized IDs, foreign keys, source keys, edges, occurrences, roots, residuals, and domains stay in indexed SQLite tables or contract-bounded per-key windows; one-shot iterables prove no whole graph, APT movie list, or shard set is retained",
           "Unicode casefold keys are normalized identically on insertion and query and mixed-case lexical paths, duplicate casefold keys, plus-one candidates, and safe-subtree lookups have direct SQLite hostile coverage",
           "per-line, per-shard, per-table, node, occurrence, edge, residual, total-row, shard-count, byte, and output bounds fail before the violating allocation, open, insert, or publish in the contract's exact diagnostic order",
-          "physical hostile fixtures cover BOM, CRLF, NUL, duplicate JSON keys, false counts, wrong hashes, one-row-too-large, exact-limit and plus-one line/shard/output cases, rollback, and two byte-identical atomic publishes"
+          "physical hostile fixtures cover BOM, CRLF, NUL, duplicate JSON keys, false counts, wrong hashes, one-row-too-large, exact-limit and plus-one line/shard/output cases, rollback, and two byte-identical atomic publishes",
+          "the exact callable/record API orders and types, contained private SQLite database, five-table exact-DDL schema, three exact secondary indexes, closed lookup/path projections with null/omit/sort semantics, safe-subtree and greatest-preceding behavior, core cross-family row-shape enforcement, byte-exact STORE diagnostics in accepted core precedence, section-12-only physical inheritance, canonical publication literals, and closed semantic-store-contract.json nested shapes match OWNER-SEMANTIC-STORE-V1-5B7C76AE exactly without copied core registries or semantic conformance work",
+          "the exact checker validates the accepted core artifact before opening SQLite, serializes the store contract twice in fresh isolated interpreters, independently validates every literal and the three-file implementation closure, writes atomically only at the declared lane artifact leaf, and handoff plus independent review bind its non-empty SHA-256"
         ]
       },
       "verificationCommands": [
@@ -1099,9 +1133,7 @@
           "diagnosticPolicy": "strict-default"
         }
       ],
-      "blockers": [
-        "P0-CORPUS-SCHEMA-CORE-002 is accepted, but this row still lacks owner-pinned source evidence for the consumed core artifact and exact storage/query API, SQLite schema/index contract, diagnostic envelope, and semantic-store-contract.json shape; keep blocked until those interfaces are canonicalized for an autonomous worker."
-      ]
+      "blockers": []
     },
     {
       "id": "P0-CORPUS-SCHEMA-CONFORMANCE-001",
