@@ -362,7 +362,7 @@
     {
       "id": "E-PERF-PRESENT-DIRECT-001-V5-PARTIAL-D13422FE",
       "type": "historical-private-partial-patch-receipt",
-      "path": "workspace/archive/worktrees/wt-fcc66fd352b19432/complete.json",
+      "path": "workspace/archive/worktrees/history/wt-fcc66fd352b19432-v5-83b3aeea/complete.json",
       "identity": {
         "bytes": 1300,
         "sha256": "efa86bfc15a7f2a36440af68298ef8102783d4c1471e467787a7f170d8a41134",
@@ -372,6 +372,20 @@
         "trackedPatchSha256": "d13422fe551c0ad30296b5dfbd196330d5ca9d53b64d99e29ac2c1e6d2f4f1f6"
       },
       "claimLimit": "Recoverable exact replay of the independently approved v4 two-production-file core, still not a completed item or parity evidence. The worker stopped before runners, gate, staging, cache, commit, or Godot import after proving v1/v2 terminal-publication and caller-graph contradictions. Its patch is byte-identical to v4 and adds no new implementation claim; reuse remains subject to the v3 contract."
+    },
+    {
+      "id": "E-GODOT-UID-CLOSURE-V7-FCF9B7A2",
+      "type": "historical-private-import-receipt",
+      "path": "workspace/archive/worktrees/wt-fcc66fd352b19432/complete.json",
+      "identity": {
+        "bytes": 292748,
+        "sha256": "fcf9b7a231eb2706061816c8a3bf2ee357314ac9db8482f0cc2a4ec4c81dead2",
+        "head": "e56811e7abb6e62db19452673a66346d175adce9",
+        "stateSha256": "2cfe08d40dd291ee6a02817cf0586033e4df94e892912a1afc407c937624fe68",
+        "uidPathSetSha256": "d325381282bdc784a98a89cd5276a6ef600ccb1e1cc77d57cda4bb9f3df92749",
+        "uidPathContentManifestSha256": "acda99ded352ad811730a3961be944e81387993da7f50caca463c0a7a5cc843f"
+      },
+      "claimLimit": "Exact rejected v7 first-import receipt for the 69 well-formed unique Godot-generated UID sidecars missing from canonical main b4f256c7. It authorizes only byte-for-byte UID baseline closure and proves no gameplay, performance, visual, or final acceptance claim."
     },
     {
       "id": "E-PERF-PRESENT-DIRECT-001-REBIND-0ECCB9F2",
@@ -15426,12 +15440,154 @@
       ]
     },
     {
+      "id": "P0-GODOT-UID-CLOSURE-001",
+      "title": "Close the current Godot script UID baseline",
+      "kind": "repository-readiness",
+      "priority": "P0",
+      "allocationClass": "worker-lane",
+      "status": "pending",
+      "domainIds": [
+        "runtime-performance"
+      ],
+      "rootQueryIds": [],
+      "dependsOn": [
+        "P0-SOURCE-001",
+        "P0-CORPUS-001"
+      ],
+      "ownership": {
+        "state": "unassigned",
+        "assignee": null,
+        "ownedPaths": [],
+        "candidatePaths": [
+          "game/src/retail_slice/retail_save_games.gd.uid",
+          "game/src/retail_slice/retail_sim_abilities.gd.uid",
+          "game/src/retail_slice/retail_sim_ability_runtime.gd.uid",
+          "game/src/retail_slice/retail_sim_ai.gd.uid",
+          "game/src/retail_slice/retail_sim_attacks.gd.uid",
+          "game/src/retail_slice/retail_sim_bases.gd.uid",
+          "game/src/retail_slice/retail_sim_collision.gd.uid",
+          "game/src/retail_slice/retail_sim_combat.gd.uid",
+          "game/src/retail_slice/retail_sim_config.gd.uid",
+          "game/src/retail_slice/retail_sim_construction.gd.uid",
+          "game/src/retail_slice/retail_sim_contracts_abilities.gd.uid",
+          "game/src/retail_slice/retail_sim_contracts_behaviors.gd.uid",
+          "game/src/retail_slice/retail_sim_damage.gd.uid",
+          "game/src/retail_slice/retail_sim_economy.gd.uid",
+          "game/src/retail_slice/retail_sim_experience.gd.uid",
+          "game/src/retail_slice/retail_sim_field_effects.gd.uid",
+          "game/src/retail_slice/retail_sim_fog.gd.uid",
+          "game/src/retail_slice/retail_sim_module_contracts.gd.uid",
+          "game/src/retail_slice/retail_sim_movement.gd.uid",
+          "game/src/retail_slice/retail_sim_neutrals.gd.uid",
+          "game/src/retail_slice/retail_sim_orders.gd.uid",
+          "game/src/retail_slice/retail_sim_persistence.gd.uid",
+          "game/src/retail_slice/retail_sim_physics.gd.uid",
+          "game/src/retail_slice/retail_sim_power_casts.gd.uid",
+          "game/src/retail_slice/retail_sim_powers.gd.uid",
+          "game/src/retail_slice/retail_sim_production.gd.uid",
+          "game/src/retail_slice/retail_sim_projectiles.gd.uid",
+          "game/src/retail_slice/retail_sim_ring.gd.uid",
+          "game/src/retail_slice/retail_sim_script_world.gd.uid",
+          "game/src/retail_slice/retail_sim_skirmish_ai.gd.uid",
+          "game/src/retail_slice/retail_sim_spatial.gd.uid",
+          "game/src/retail_slice/retail_sim_spawn.gd.uid",
+          "game/src/retail_slice/retail_sim_spellbook_compile.gd.uid",
+          "game/src/retail_slice/retail_sim_stepper.gd.uid",
+          "game/src/retail_slice/retail_sim_subsystem.gd.uid",
+          "game/src/retail_slice/retail_sim_transport.gd.uid",
+          "game/src/retail_slice/retail_sim_upgrades.gd.uid",
+          "game/src/retail_slice/retail_sim_victory.gd.uid",
+          "game/src/ui/retail_screen_apt_runtime.gd.uid",
+          "game/src/view/w3d_shader_materials.gd.uid",
+          "game/tests/ambient_mod_clean_runner.gd.uid",
+          "game/tests/angmar_thrall_replacement_runner.gd.uid",
+          "game/tests/camera_scroll_direction_runner.gd.uid",
+          "game/tests/castle_ai_site_scan_unit_test.gd.uid",
+          "game/tests/castle_wall_walk_census_runner.gd.uid",
+          "game/tests/castle_wall_walk_runner.gd.uid",
+          "game/tests/hero_command_capture_runner.gd.uid",
+          "game/tests/hud_diagnostic_runner.gd.uid",
+          "game/tests/hud_text_labels_runner.gd.uid",
+          "game/tests/manifest_fallback_refusal_runner.gd.uid",
+          "game/tests/minas_gate_map_dump_runner.gd.uid",
+          "game/tests/minas_gate_nav_v202_runner.gd.uid",
+          "game/tests/q80-compare-constants-vs-packs.gd.uid",
+          "game/tests/q80-find-missing-field.gd.uid",
+          "game/tests/q80-manifest-diagnostic-runner.gd.uid",
+          "game/tests/q80-state-pin-diagnostic-runner.gd.uid",
+          "game/tests/radar_look_runner.gd.uid",
+          "game/tests/retail_pathing_pin_runner.gd.uid",
+          "game/tests/retail_projectile_pin_runner.gd.uid",
+          "game/tests/retail_screen_apt_runtime_runner.gd.uid",
+          "game/tests/retail_sfx_shroud_attenuation_runner.gd.uid",
+          "game/tests/retail_sfx_shroud_production_runner.gd.uid",
+          "game/tests/retail_turn_model_runner.gd.uid",
+          "game/tests/save_load_roundtrip_runner.gd.uid",
+          "game/tests/skirmish_ai_document_runner.gd.uid",
+          "game/tests/skirmish_ai_interpreter_runner.gd.uid",
+          "game/tests/ui_parity_gate_runner.gd.uid",
+          "game/tests/w3d_hidden_mesh_runner.gd.uid",
+          "game/tests/w3d_shader_material_runner.gd.uid",
+          "tools/gate-godot-uid-closure.ps1"
+        ]
+      },
+      "scope": {
+        "deliverable": "Track the exact 69 Godot 4.7-generated UID sidecars missing from the current 639-script main baseline and prove two independent fresh committed-tree imports create no additional script identity mutations.",
+        "notIncluded": "Changing any GDScript, editor cache policy, post-asset identity plan, selected-pack state, gameplay behavior, performance code, or accepting malformed, duplicate, orphaned, manually invented, or ambient UID values."
+      },
+      "sourceEvidence": [
+        "E-GODOT-UID-CLOSURE-V7-FCF9B7A2"
+      ],
+      "artifacts": [
+        "workspace/logs/P0-GODOT-UID-CLOSURE-001/godot-uid-closure.json"
+      ],
+      "acceptance": {
+        "requiredLevels": [
+          "L0"
+        ],
+        "requiredOutputDimensions": {
+          "SOURCE": "NOT_REQUIRED",
+          "CONVERT": "NOT_REQUIRED",
+          "LOAD": "NOT_REQUIRED",
+          "BEHAVIOR": "NOT_REQUIRED",
+          "VISUAL": "NOT_REQUIRED",
+          "AUDIO": "NOT_REQUIRED"
+        },
+        "criteria": [
+        "the UID discovery baseline is canonical main b4f256c71381e6a01516edcb92d6a4d2aa7e2dce; every assignment-base tracked GDScript path and byte remains identical to that baseline, and the implementation adds exactly the 69 candidate .gd.uid sidecars plus one bounded gate without changing any GDScript",
+        "all 639 tracked game GDScripts have exactly one tracked, LF-terminated, well-formed uid:// sibling; UID values are unique, no orphan sidecar exists, and the 69 added paths and bytes match evidence E-GODOT-UID-CLOSURE-V7-FCF9B7A2 with path-set SHA-256 d325381282bdc784a98a89cd5276a6ef600ccb1e1cc77d57cda4bb9f3df92749 and path-content-manifest SHA-256 acda99ded352ad811730a3961be944e81387993da7f50caca463c0a7a5cc843f",
+        "the pinned Godot 4.7 console and engine identities are exact, and two independent fresh committed-tree copies each receive one headless import that exits zero without stderr or any non-.godot filesystem mutation",
+        "the gate writes one private JSON receipt binding the Git revision, 639 ordered script paths and hashes, 639 UID paths and hashes, executable identities, both independent import results, full before/after non-.godot manifests, and the zero-mutation census, then prints GODOT_UID_CLOSURE PASS scripts=639 uids=639 missing=0 orphan=0 duplicate=0 imports=2"
+        ]
+      },
+      "verificationCommands": [
+        {
+          "steps": [
+            {
+              "toolRole": "powershell",
+              "invocation": "script",
+              "target": "tools/gate-godot-uid-closure.ps1",
+              "args": [],
+              "toolchainProfile": "rotwk-gate-v1"
+            }
+          ],
+        "availability": "pinned-godot",
+          "timeoutSeconds": 1200,
+          "expectedMarkers": [
+            "GODOT_UID_CLOSURE PASS scripts=639 uids=639 missing=0 orphan=0 duplicate=0 imports=2"
+          ],
+          "diagnosticPolicy": "strict-default"
+        }
+      ],
+      "blockers": []
+    },
+    {
       "id": "P1-PERF-PRESENT-DIRECT-001",
       "title": "Prove dormant flat FAR presentation for 990 stationary members",
       "kind": "performance",
       "priority": "P1",
       "allocationClass": "worker-lane",
-      "status": "in-progress",
+      "status": "blocked",
       "domainIds": [
         "runtime-performance"
       ],
@@ -15440,23 +15596,13 @@
       ],
       "dependsOn": [
         "P0-SOURCE-001",
-        "P0-CORPUS-001"
+        "P0-CORPUS-001",
+        "P0-GODOT-UID-CLOSURE-001"
       ],
       "ownership": {
-        "state": "assigned",
-        "assignee": "codex-perf-present-direct-v7",
-        "ownedPaths": [
-          "game/src/retail_slice/retail_vertical_slice.gd",
-          "game/src/view/member_render_batcher.gd",
-          "game/tests/retail_far_batch_contract_runner.gd",
-          "game/tests/retail_far_batch_contract_runner.gd.uid",
-          "game/tests/retail_far_batch_perf_runner.gd",
-          "game/tests/retail_far_batch_perf_runner.gd.uid",
-          "game/tests/retail_far_batch_proof_common.gd",
-          "game/tests/retail_far_batch_proof_common.gd.uid",
-          "tools/perf_present_direct_validator.py",
-          "tools/gate-perf-present-direct.ps1"
-        ],
+        "state": "unassigned",
+        "assignee": null,
+        "ownedPaths": [],
         "candidatePaths": [
           "game/src/retail_slice/retail_vertical_slice.gd",
           "game/src/view/member_render_batcher.gd",
@@ -15540,7 +15686,9 @@
           "diagnosticPolicy": "strict-default"
         }
       ],
-      "blockers": []
+      "blockers": [
+        "The v7 import exposed 69 legitimate missing tracked Godot UID sidecars and a false scene_groups_cache.cfg requirement. Its exact dirty state and implementation commit e56811e7 are preserved under workspace/archive/worktrees/wt-fcc66fd352b19432. Complete P0-GODOT-UID-CLOSURE-001 before issuing the minimal v4 execution contract and creating a fresh lane."
+      ]
     },
     {
       "id": "P1-PERF-BOOT-002",
