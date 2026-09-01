@@ -1,17 +1,171 @@
 from __future__ import annotations
 
 from pathlib import Path
+import json
 import re
+import subprocess
+import sys
 
 
 ROOT = Path(__file__).resolve().parents[2]
 GATE = ROOT / "tools" / "gate-retail.ps1"
 WRAPPER = ROOT / "run_retail_pipeline_tests.bat"
 SLICE_RUNNER = ROOT / "game" / "tests" / "retail_slice_runner.gd"
+ROTWK_GATE = ROOT / "tools" / "gate-rotwk-202.ps1"
+ROTWK_WORK_ITEM_ID = "P0-GATES-002"
+ROTWK_ARTIFACT = ROOT / "workspace" / "logs" / ROTWK_WORK_ITEM_ID / "runtime-gate-negative-tests.json"
+_SCRIPT_MODE = False
 
 
 def _gate_text() -> str:
     return GATE.read_text(encoding="utf-8")
+
+
+def _rotwk_gate_text() -> str:
+    return ROTWK_GATE.read_text(encoding="utf-8")
+
+
+def _canonical_main() -> Path | None:
+    """The unique registered refs/heads/main worktree, as the gate discovers it."""
+
+    if sys.platform != "win32":
+        return None
+    listing = subprocess.run(
+        ["git", "-C", str(ROOT), "worktree", "list", "--porcelain"],
+        text=True, encoding="utf-8", capture_output=True, check=False,
+    )
+    mains: list[str] = []
+    current = None
+    for line in listing.stdout.splitlines():
+        if line.startswith("worktree "):
+            current = line[9:]
+        elif line == "branch refs/heads/main" and current is not None:
+            mains.append(current)
+    return Path(mains[0]) if listing.returncode == 0 and len(mains) == 1 else None
+
+
+def _require_private_gate_inputs() -> None:
+    """The self-test needs the pinned Godot and private Python from canonical main.
+
+    Public CI has neither, so under pytest the case is SKIP for that lane (never
+    success). The ledger check runs this module as a script, where missing inputs
+    are a failure.
+    """
+
+    main = _canonical_main()
+    required = [] if main is None else [
+        main / ".tools" / "godot" / "Godot_v4.7-stable_win64_console.exe",
+        main / ".tools" / "godot" / "Godot_v4.7-stable_win64.exe",
+        main / "workspace" / "retail-work" / "tools" / "python-3.12-env" / "Scripts" / "python.exe",
+    ]
+    missing = ["canonical main"] if main is None else [str(p) for p in required if not p.is_file()]
+    if not missing:
+        return
+    if _SCRIPT_MODE:
+        raise AssertionError(f"private gate inputs missing: {missing}")
+    import pytest
+
+    pytest.skip(f"private gate inputs missing: {missing}")
+
+
+def _run_rotwk_self_test() -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [
+            "powershell.exe", "-NoLogo", "-NoProfile", "-NonInteractive",
+            "-ExecutionPolicy", "Bypass", "-File", str(ROTWK_GATE),
+            "-WorkItemId", ROTWK_WORK_ITEM_ID, "-SelfTest",
+        ],
+        cwd=ROOT, text=True, encoding="utf-8", errors="replace",
+        capture_output=True, timeout=600, check=False,
+    )
+
+
+def test_rotwk_gate_self_test_pins_every_negative_case() -> None:
+    _require_private_gate_inputs()
+    completed = _run_rotwk_self_test()
+    assert completed.returncode == 0, (completed.stdout, completed.stderr)
+    assert completed.stderr == ""
+    assert re.fullmatch(r"ROTWK_202_GATE_SELF_TEST PASS cases=\d+\s*", completed.stdout)
+
+    artifact = json.loads(ROTWK_ARTIFACT.read_text(encoding="utf-8"))
+    assert artifact["schema"] == "openbfme.runtime-gate-negative-tests"
+    assert artifact["schemaVersion"] == 3
+    assert artifact["workItemId"] == ROTWK_WORK_ITEM_ID
+    assert artifact["result"] == "PASS"
+    assert artifact["caseCount"] == len(artifact["cases"]) == len(set(artifact["cases"]))
+    assert artifact["claimBoundary"] == {
+        "level": "L0", "source": "NOT_REQUIRED", "load": "NOT_REQUIRED",
+        "legacyRejectionIsEvidence": False,
+    }
+    assert {
+        "runtime-pass", "failed-nonzero", "exit-code-nonzero", "missing-result",
+        "duplicate-result", "contradictory-marker", "skip", "forbidden-stdout",
+        "forbidden-stderr", "known-failures-nonzero",
+        "unknown-synthetic-row", "blocked-synthetic-row", "unassigned-synthetic-row",
+        "unrelated-synthetic-row-ignored", "canonical-main-unique-parse",
+        "synthetic-lane-binding", "ignored-metadata-cannot-redirect-main",
+        "lane-assignment-must-match-owner-copy", "dirty-main-ledger-refused",
+        "content-bound-recipe", "recipe-source-tamper",
+        "recipe-not-at-declared-revision", "recipe-commit-unknown",
+        "recipe-dirty-producer-refused", "recipe-marker-only-refused",
+        "contained-selection-admitted-then-checked",
+        "junctioned-selection-refused-before-checker",
+        "legacy-selection-rejected-before-runtime",
+        "ambient-godot-ignored", "substituted-godot-refused",
+        "job-timeout-descendant-cleanup", "concurrent-stream-drain",
+    } <= set(artifact["cases"])
+    assert artifact["pinnedGodot"]["version"] == "4.7.stable.official.5b4e0cb0f"
+    assert {"gate", "gateTests", "retailPython", "powershell", "git"} == set(artifact["executedFiles"])
+    assert all(re.fullmatch(r"[0-9a-f]{64}", value) for value in artifact["executedFiles"].values())
+
+
+def test_rotwk_gate_binds_main_godot_selection_and_producer_by_content() -> None:
+    text = _rotwk_gate_text()
+    for fragment in (
+        # canonical main comes from the registered worktree list, never from ignored metadata
+        "worktree', 'list', '--porcelain'",
+        "canonical-main-not-unique",
+        "assignment-main-not-canonical",
+        "assignment-owner-copy-mismatch",
+        "assignment-commit-subject-mismatch",
+        "assignment-commit-not-on-main",
+        "main-control-plane-dirty",
+        "assignment-row-digest-mismatch",
+        "assignment-command-digest-mismatch",
+        "assignment-revoked",
+        # Godot is the pinned main tool root, hashed and version-checked; ambient names are cleared
+        "godot-identity-mismatch",
+        "godot-version-mismatch",
+        "'OPENBFME_GODOT', 'GODOT_CONSOLE', 'GODOT_EXE', 'GODOT'",
+        "Clear-AmbientGodot",
+        # selection containment precedes selection bytes, the pack checker, and runtime
+        "reparse-point-refused",
+        "Invoke-SelectionAdmission",
+        "& $PackChecker $SelectionRoot $entries.Count",
+        # producer provenance is verified against the actual repository revision
+        "recipe-commit-unknown",
+        "recipe-file-not-at-declared-revision",
+        "'ls-tree', '-r', '-z', $commit",
+        "Get-GitBlobSha1",
+        # fixed executed identity and contained children
+        "executed-identity-drift",
+        "selectionSha256",
+        "CreateProcessW",
+        "JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE",
+        "child-timeout",
+    ):
+        assert fragment in text, fragment
+    # No ambient Godot resolution, no batch indirection, no mutable ledger IDs.
+    assert "resolve-godot" not in text
+    assert "run_retail_slice.bat" not in text
+    assert "P0-GATES-00" not in text
+    assert "P0-SELECTION-002" not in text
+    assert "SOURCE=ACCEPTED" not in text
+    assert "LOAD=ACCEPTED" not in text
+    # Selection bytes are read only after the full chain is contained.
+    admission = text.split("function Invoke-SelectionAdmission", 1)[1].split("\nfunction ", 1)[0]
+    assert admission.index("Assert-ContainedPath") < admission.index("ReadAllBytes")
+    assert admission.index("Assert-PackProvenance") < admission.index("& $PackChecker")
 
 
 def test_batch_wrapper_forwards_only_to_hardened_gate() -> None:
@@ -330,3 +484,25 @@ def test_build_and_explicit_release_paths_are_exact() -> None:
     )
     assert 'Join-Path $publishRoot "selection.json"' in text
     assert '$expectedActivePack = "$expectedPackId/$($second.bundle_sha256)"' in text
+
+
+def _run_as_script() -> int:
+    global _SCRIPT_MODE
+    _SCRIPT_MODE = True
+    tests = sorted(
+        (name, value)
+        for name, value in globals().items()
+        if name.startswith("test_") and callable(value)
+    )
+    for name, test in tests:
+        try:
+            test()
+        except Exception as exc:
+            print(f"RETAIL_GATE_TESTS FAIL test={name} detail={exc}")
+            return 1
+    print(f"RETAIL_GATE_TESTS PASS tests={len(tests)}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(_run_as_script())
