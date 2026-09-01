@@ -12483,7 +12483,7 @@
       "kind": "conversion-behavior",
       "priority": "P1",
       "allocationClass": "worker-lane",
-      "status": "in-progress",
+      "status": "blocked",
       "domainIds": [
         "retail-skirmish"
       ],
@@ -12497,20 +12497,9 @@
         "P0-CODE-MAP-001"
       ],
       "ownership": {
-        "state": "assigned",
-        "assignee": "codex-minas-gate-v3",
-        "ownedPaths": [
-          "importer/openbfme_importer/playable_unit_compiler.py",
-          "importer/openbfme_importer/castle_fixtures.py",
-          "importer/tests/test_playable_unit_compiler.py",
-          "importer/tests/test_castle_fixtures.py",
-          "game/src/retail_slice/retail_map_data.gd",
-          "game/src/retail_slice/retail_sim_contracts_abilities.gd",
-          "game/src/retail_slice/retail_sim_combat.gd",
-          "game/src/retail_slice/retail_sim_neutrals.gd",
-          "game/tests/minas_gate_nav_v202_runner.gd",
-          "tools/gate-minas-gate-v202.ps1"
-        ],
+        "state": "unassigned",
+        "assignee": null,
+        "ownedPaths": [],
         "candidatePaths": [
           "importer/openbfme_importer/playable_unit_compiler.py",
           "importer/openbfme_importer/castle_fixtures.py",
@@ -12556,6 +12545,100 @@
           "map yaw plus authored anchor and geometry determine the gate channel; the four-axis nearest-region heuristic is removed as parity authority and an axis-aligned seam cannot satisfy the focused check",
           "request_gate_open synchronizes navigation before returning and the effective 6000 ms reset is represented as exactly 60 deterministic 100 ms ticks",
           "the focused runner closes and reopens the rotated seam, destroys a closed gate through production structure damage, proves zero-health route opening, and proves the breached channel cannot reclose without any direct breached=true shortcut or fallback"
+        ]
+      },
+      "verificationCommands": [
+        {
+          "steps": [
+            {
+              "toolRole": "powershell",
+              "invocation": "script",
+              "target": "tools/gate-minas-gate-v202.ps1",
+              "args": [],
+              "toolchainProfile": "rotwk-gate-v1"
+            }
+          ],
+          "availability": "current-private-source-and-pinned-godot",
+          "timeoutSeconds": 1200,
+          "expectedMarkers": [
+            "MINAS_GATE_202 PASS"
+          ],
+          "diagnosticPolicy": "strict-default"
+        }
+      ],
+      "blockers": [
+        "Independent review rejected Ponytail-approved commit 2afc317d because the runner hardcoded reset_ticks=60 instead of deriving 6000 ms through the shipping _ship_contract_delay_ticks path, and it proved only the rotated anchor origin rather than an exact rotated channel footprint with sign-flipped and axis-aligned negative controls. The passing focused gate is self-fulfilled on both omitted claims; no handoff or acceptance exists, and the clean unmerged lane is retained for P1-MINAS-GATE-004."
+      ]
+    },
+    {
+      "id": "P1-MINAS-GATE-004",
+      "title": "Close production reset and rotated-channel proof for the Minas gate",
+      "kind": "conversion-behavior",
+      "priority": "P1",
+      "allocationClass": "worker-lane",
+      "status": "pending",
+      "domainIds": [
+        "retail-skirmish"
+      ],
+      "rootQueryIds": [
+        "all-map-payloads",
+        "retail-reference-closure"
+      ],
+      "dependsOn": [
+        "P0-SOURCE-001",
+        "P0-CORPUS-001",
+        "P0-CODE-MAP-001"
+      ],
+      "ownership": {
+        "state": "unassigned",
+        "assignee": null,
+        "ownedPaths": [],
+        "candidatePaths": [
+          "importer/openbfme_importer/playable_unit_compiler.py",
+          "importer/openbfme_importer/castle_fixtures.py",
+          "importer/tests/test_playable_unit_compiler.py",
+          "importer/tests/test_castle_fixtures.py",
+          "game/src/retail_slice/retail_map_data.gd",
+          "game/src/retail_slice/retail_sim_contracts_abilities.gd",
+          "game/src/retail_slice/retail_sim_combat.gd",
+          "game/src/retail_slice/retail_sim_neutrals.gd",
+          "game/tests/minas_gate_nav_v202_runner.gd",
+          "tools/gate-minas-gate-v202.ps1"
+        ]
+      },
+      "scope": {
+        "deliverable": "Carry rejected commit 2afc317d with no automatic commit, preserve its source-bound conversion and live combat breach behavior, and replace both self-fulfilled assertions with production-derived 6000 ms reset timing and an analytic exact rotated-channel oracle with negative controls.",
+        "notIncluded": "Merging or amending 2afc317d, whole-map qualification, visual approval, selection publication, axis-aligned proof substitutes, stale 2.01 timing, direct map-API breach assertions that bypass structure damage, or broad navigation rewrites."
+      },
+      "sourceEvidence": [
+        "E-BL-202",
+        "E-EFFECTIVE-TREE-20260830"
+      ],
+      "artifacts": [
+        "workspace/logs/P1-MINAS-GATE-004/minas-gate-check.json"
+      ],
+      "acceptance": {
+        "requiredLevels": [
+          "L1",
+          "L2",
+          "L4"
+        ],
+        "requiredOutputDimensions": {
+          "SOURCE": "REQUIRED",
+          "CONVERT": "REQUIRED",
+          "LOAD": "NOT_REQUIRED",
+          "BEHAVIOR": "REQUIRED",
+          "VISUAL": "NOT_REQUIRED",
+          "AUDIO": "NOT_REQUIRED"
+        },
+        "criteria": [
+          "the layered winner manifest proves data/ini/object/civilian/ministirithbuildings.ini SHA-256 f5e06cc70ac92b2e505c2f6430c50ded012a37ae4ad80200b280335ab4f14b07 from precedence-zero __patch202.big and the focused conversion asserts ResetTimeInMilliseconds 6000",
+          "GeometryRotationAnchorOffset plus Closed, OpenLeft, and OpenRight named geometry survive production conversion without guessed values",
+          "the runner obtains reset_ticks only by exercising the shipping millisecond-to-tick projection on the converted 6000 ms value, asserts exactly 60 deterministic 100 ms ticks, and contains no independently injected or hardcoded reset_ticks=60 policy oracle",
+          "the runner uses the exact non-zero authored Minas placement yaw when available, or a separately source-labeled non-cardinal mutation proof, and independently computes the exact rotated anchor and gate-channel cell footprint from authored anchor, Closed geometry, and yaw",
+          "the exact production channel footprint equals the independent rotated oracle, while sign-flipped-yaw and axis-aligned control footprints are unequal and cannot satisfy the focused route seam; removing or sign-flipping production rotation must fail",
+          "map yaw plus authored anchor and geometry determine the gate channel; the four-axis nearest-region heuristic is removed as parity authority and a broad or merely connected carve cannot satisfy the exact footprint check",
+          "request_gate_open synchronizes navigation before returning; the focused runner closes and reopens the rotated seam, destroys a closed gate through production structure damage, proves zero-health route opening, and proves the breached channel cannot reclose without any direct breached=true shortcut or fallback"
         ]
       },
       "verificationCommands": [
