@@ -874,7 +874,7 @@
       "kind": "source-foundation",
       "priority": "P0",
       "allocationClass": "worker-lane",
-      "status": "blocked",
+      "status": "ready",
       "domainIds": [],
       "rootQueryIds": [],
       "dependsOn": [
@@ -941,9 +941,7 @@
           "diagnosticPolicy": "strict-default"
         }
       ],
-      "blockers": [
-        "the schema design must receive an independent implementability review before worker allocation; rejected design-v3 left object, taxonomy, ID, edge, candidate, residual, and resource contracts open"
-      ]
+      "blockers": []
     },
     {
       "id": "P0-CORPUS-PROJECTION-001",
