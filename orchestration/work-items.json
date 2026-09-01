@@ -14026,14 +14026,22 @@
       "kind": "repository-hygiene",
       "priority": "P0",
       "allocationClass": "worker-lane",
-      "status": "pending",
+      "status": "in-progress",
       "domainIds": [],
       "rootQueryIds": [],
       "dependsOn": [],
       "ownership": {
-        "state": "unassigned",
-        "assignee": null,
-        "ownedPaths": [],
+        "state": "assigned",
+        "assignee": "codex-ambient-mod-clean",
+        "ownedPaths": [
+          "game/mods/example_hard_orcs/pack.json",
+          "game/mods/example_hard_orcs/units/orc.json",
+          "examples/mods/example_hard_orcs/pack.json",
+          "examples/mods/example_hard_orcs/units/orc.json",
+          "docs/MODDING.md",
+          "game/tests/ambient_mod_clean_runner.gd",
+          "tools/gate-ambient-mod-clean.ps1"
+        ],
         "candidatePaths": [
           "game/mods/example_hard_orcs/pack.json",
           "game/mods/example_hard_orcs/units/orc.json",
