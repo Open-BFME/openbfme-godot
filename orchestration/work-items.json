@@ -14026,22 +14026,14 @@
       "kind": "repository-hygiene",
       "priority": "P0",
       "allocationClass": "worker-lane",
-      "status": "in-progress",
+      "status": "complete",
       "domainIds": [],
       "rootQueryIds": [],
       "dependsOn": [],
       "ownership": {
-        "state": "assigned",
-        "assignee": "codex-ambient-mod-clean",
-        "ownedPaths": [
-          "game/mods/example_hard_orcs/pack.json",
-          "game/mods/example_hard_orcs/units/orc.json",
-          "examples/mods/example_hard_orcs/pack.json",
-          "examples/mods/example_hard_orcs/units/orc.json",
-          "docs/MODDING.md",
-          "game/tests/ambient_mod_clean_runner.gd",
-          "tools/gate-ambient-mod-clean.ps1"
-        ],
+        "state": "accepted",
+        "assignee": null,
+        "ownedPaths": [],
         "candidatePaths": [
           "game/mods/example_hard_orcs/pack.json",
           "game/mods/example_hard_orcs/units/orc.json",
@@ -14094,6 +14086,75 @@
           "timeoutSeconds": 300,
           "expectedMarkers": [
             "AMBIENT_MOD_CLEAN PASS tracked_shipping_packs=0 example=examples/mods/example_hard_orcs"
+          ],
+          "diagnosticPolicy": "strict-default"
+        }
+      ],
+      "blockers": []
+    },
+    {
+      "id": "P0-REPO-AMBIENT-MOD-DOCS-001",
+      "title": "Retire the stale ambient-mod drop-folder instructions",
+      "kind": "repository-hygiene",
+      "priority": "P0",
+      "allocationClass": "worker-lane",
+      "status": "pending",
+      "domainIds": [],
+      "rootQueryIds": [],
+      "dependsOn": [
+        "P0-REPO-AMBIENT-MOD-001"
+      ],
+      "ownership": {
+        "state": "unassigned",
+        "assignee": null,
+        "ownedPaths": [],
+        "candidatePaths": [
+          "game/mods/README.md",
+          "tools/gate-ambient-mod-docs.ps1"
+        ]
+      },
+      "scope": {
+        "deliverable": "Replace the last tracked instruction to drop packs under game/mods with a short truthful tombstone that points contributors to the non-shipping example and explicit pack or selection loading, backed by a focused stale-claim gate.",
+        "notIncluded": "Changing ModLoader, moving more files, adding a second mod guide, enabling ambient mounting, changing selection semantics, or editing docs/MODDING.md again."
+      },
+      "sourceEvidence": [],
+      "artifacts": [
+        "workspace/logs/P0-REPO-AMBIENT-MOD-DOCS-001/ambient-mod-docs.json"
+      ],
+      "acceptance": {
+        "requiredLevels": [
+          "L0"
+        ],
+        "requiredOutputDimensions": {
+          "SOURCE": "NOT_REQUIRED",
+          "CONVERT": "NOT_REQUIRED",
+          "LOAD": "NOT_REQUIRED",
+          "BEHAVIOR": "NOT_REQUIRED",
+          "VISUAL": "NOT_REQUIRED",
+          "AUDIO": "NOT_REQUIRED"
+        },
+        "criteria": [
+          "game/mods/README.md states that game/mods and user://mods are diagnostic-only ambient locations and are not mounted",
+          "the tombstone points to examples/mods/example_hard_orcs and docs/MODDING.md and requires OPENBFME_CONTENT or an explicit selection.json load set",
+          "no tracked modding guide claims that dropping a pack under game/mods mounts it, that ambient packs layer by priority, or that a directory of sibling packs is scanned",
+          "the focused gate writes a private receipt and fails closed on a missing marker, stale claim, missing destination, parse error, warning, fallback, skip, or working-tree drift"
+        ]
+      },
+      "verificationCommands": [
+        {
+          "steps": [
+            {
+              "toolRole": "powershell",
+              "invocation": "script",
+              "target": "tools/gate-ambient-mod-docs.ps1",
+              "args": [],
+              "toolchainProfile": "rotwk-gate-v1"
+            }
+          ],
+          "availability": "current-windows-toolchain",
+          "timeoutSeconds": 120,
+          "expectedMarkers": [
+            "AMBIENT_MOD_DOCS PASS retired_ambient_docs=true"
           ],
           "diagnosticPolicy": "strict-default"
         }
