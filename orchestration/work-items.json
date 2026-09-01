@@ -278,6 +278,31 @@
       "claimLimit": "Normative dormant runner-only 66-battalion, 990-member stationary-idle FAR/CULLED flat-presentation proof contract with portable canonical tracked-source identity and same-process raw plus canonical endpoint drift guards. It does not enable normal gameplay, moving units, selection, picking, promotion, combat, GPU animation, 5,000 units, or 144 FPS, and final VISUAL/performance acceptance requires the named human artifact."
     },
     {
+      "id": "OWNER-PERF-PRESENT-DIRECT-PROOF-V1-658537D3",
+      "type": "private-owner-contract-addendum",
+      "path": "workspace/logs/P1-PERF-PRESENT-DIRECT-001/direct-performance-proof-protocol-v1.md",
+      "identity": {
+        "bytes": 20791,
+        "sha256": "658537d3b01abe466a4c6ac1646872edada9c705a0f7a913ff366fea5549e67a",
+        "baseContractSha256": "f12197f3feac812cce808e72e0718019381dd6f949943db5460907a4556b84aa",
+        "review": "independent-critic-and-direct-grok-approved"
+      },
+      "claimLimit": "Normative proof representation and execution addendum only: closed functional, measured, refusal, runtime, human, cache, sticky, CULLED, cleanup, census, machine, percentile, candidate-binding, and gate cross-check semantics for the frozen direct FAR base contract. It changes no product scope, owned path, threshold, command, line cap, or human requirement."
+    },
+    {
+      "id": "E-PERF-PRESENT-DIRECT-001-V2-PARTIAL-3206358E",
+      "type": "historical-private-partial-patch-receipt",
+      "path": "workspace/archive/worktrees/wt-fcc66fd352b19432/complete.json",
+      "identity": {
+        "bytes": 1300,
+        "sha256": "676627a7f2f31c83b23a00e2db52a41b47626ed5bd10d41e3d92917ea3a76a5a",
+        "assignmentCommit": "63353960636e596401c58e96e740b6ed32e68d93",
+        "stateSha256": "ebe82e1c40e053d3a23e5687018b78d1a5a4c9a538bda888a07899407ee7b806",
+        "trackedPatchSha256": "3206358e11b06bbc680e650069613abb6eba36b79aec2a081dfd3b76852d1cbd"
+      },
+      "claimLimit": "Recoverable uncompiled two-production-file partial patch, not implementation or evidence. Independent code review classified seven concepts reusable and eleven hunks rewrite-required; raw application is forbidden because it changes normal shipping cadence, uses row dictionaries instead of SoA, leaves context-invalid groups, and undercloses donor, receipt, buffer, and teardown semantics."
+    },
+    {
       "id": "E-PERF-PRESENT-DIRECT-001-REBIND-0ECCB9F2",
       "type": "historical-private-terminal-receipt",
       "path": "workspace/archive/P1-PERF-PRESENT-DIRECT-001/20260901T111714-0400-source-identity/STATUS.md",
@@ -15335,7 +15360,7 @@
       "kind": "performance",
       "priority": "P1",
       "allocationClass": "worker-lane",
-      "status": "in-progress",
+      "status": "pending",
       "domainIds": [
         "runtime-performance"
       ],
@@ -15347,17 +15372,9 @@
         "P0-CORPUS-001"
       ],
       "ownership": {
-        "state": "assigned",
-        "assignee": "codex-perf-present-direct-v2",
-        "ownedPaths": [
-          "game/src/retail_slice/retail_vertical_slice.gd",
-          "game/src/view/member_render_batcher.gd",
-          "game/tests/retail_far_batch_contract_runner.gd",
-          "game/tests/retail_far_batch_contract_runner.gd.uid",
-          "game/tests/retail_far_batch_perf_runner.gd",
-          "game/tests/retail_far_batch_perf_runner.gd.uid",
-          "tools/gate-perf-present-direct.ps1"
-        ],
+        "state": "unassigned",
+        "assignee": null,
+        "ownedPaths": [],
         "candidatePaths": [
           "game/src/retail_slice/retail_vertical_slice.gd",
           "game/src/view/member_render_batcher.gd",
@@ -15369,15 +15386,18 @@
         ]
       },
       "scope": {
-        "deliverable": "A dormant runner-only direct flat presentation path for exactly 66 newly materialized, stationary, idle, visible FAR Gondor fighter battalions with 15 authored members each, plus exact same-process legacy-control equivalence and provisional measured evidence under OWNER-PERF-PRESENT-DIRECT-V1-F12197F3.",
+        "deliverable": "A dormant runner-only direct flat presentation path for exactly 66 newly materialized, stationary, idle, visible FAR Gondor fighter battalions with 15 authored members each, plus exact same-process legacy-control equivalence and provisional measured evidence under OWNER-PERF-PRESENT-DIRECT-V1-F12197F3 and OWNER-PERF-PRESENT-DIRECT-PROOF-V1-658537D3.",
         "notIncluded": "Normal-game enablement; moving units; selection or data-backed picking; FAR-to-NEAR promotion or demotion; combat, mounts, upgrades, model-condition changes, one-shots, particles, audio, GPU skeletal animation, simulation changes, a reusable benchmark or hydration wrapper, 5,000 units, or a 144 FPS claim."
       },
       "sourceEvidence": [
         "OWNER-PERF-PRESENT-DIRECT-V1-F12197F3",
+        "OWNER-PERF-PRESENT-DIRECT-PROOF-V1-658537D3",
+        "E-PERF-PRESENT-DIRECT-001-V2-PARTIAL-3206358E",
         "E-PERF-PRESENT-DIRECT-001-REBIND-0ECCB9F2"
       ],
       "artifacts": [
         "workspace/logs/P1-PERF-PRESENT-DIRECT-001/functional-receipt.json",
+        "workspace/logs/P1-PERF-PRESENT-DIRECT-001/measured-receipt.json",
         "workspace/logs/P1-PERF-PRESENT-DIRECT-001/human-visible-capture-approval.json"
       ],
       "acceptance": {
