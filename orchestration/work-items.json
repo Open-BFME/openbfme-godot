@@ -1,7 +1,7 @@
 {
   "schema": "openbfme.work-items",
   "schemaVersion": 2,
-  "asOfDate": "2026-08-31",
+  "asOfDate": "2026-09-01",
   "authority": {
     "writeOwner": "integration-owner",
     "workerRule": "Workers never edit this ledger. The integration owner uses the workflow to assign one dependency-ready worker-lane row and promote its exact candidatePaths to non-overlapping ownedPaths.",
@@ -172,6 +172,15 @@
     }
   },
   "evidenceSources": [
+    {
+      "id": "OWNER-SEMANTIC-SCHEMA-V4-D5F9D8FC",
+      "type": "private-owner-contract",
+      "path": "workspace/logs/P0-CORPUS-SCHEMA-001/schema-design-v4.md",
+      "identity": {
+        "sha256": "d5f9d8fc12a631156b4c3b73737f23faae8e40c71b7577a800e06f6c2e39090c"
+      },
+      "claimLimit": "Normative semantic schema registries and expected vectors only; not retail SOURCE, CONVERT, LOAD, BEHAVIOR, VISUAL, or AUDIO evidence."
+    },
     {
       "id": "E-BL-202",
       "type": "tracked-contract",
@@ -869,83 +878,138 @@
       "blockers": []
     },
     {
-      "id": "P0-CORPUS-SCHEMA-001",
-      "title": "Close the semantic graph schema and identity algebra",
+      "id": "P0-CORPUS-SCHEMA-CORE-001",
+      "title": "Define the closed semantic graph contract without storage or closure logic",
       "kind": "source-foundation",
       "priority": "P0",
       "allocationClass": "worker-lane",
-      "status": "in-progress",
+      "status": "pending",
       "domainIds": [],
       "rootQueryIds": [],
       "dependsOn": [
         "P0-CORPUS-002"
       ],
       "ownership": {
-        "state": "assigned",
-        "assignee": "codex-corpus-schema-v4",
-        "ownedPaths": [
-          "importer/openbfme_importer/semantic_graph_schema.py",
-          "tools/check-rotwk-202-semantic-schema.py",
-          "importer/tests/test_rotwk_202_semantic_schema.py"
-        ],
+        "state": "unassigned",
+        "assignee": null,
+        "ownedPaths": [],
         "candidatePaths": [
-          "importer/openbfme_importer/semantic_graph_schema.py",
-          "tools/check-rotwk-202-semantic-schema.py",
-          "importer/tests/test_rotwk_202_semantic_schema.py"
+          "importer/openbfme_importer/semantic_graph_contract.py",
+          "importer/tests/test_rotwk_202_semantic_graph_contract.py",
+          "tools/check-rotwk-202-semantic-contract.py"
         ]
       },
       "scope": {
-        "deliverable": "A closed machine-validated schema for every semantic node, occurrence, edge, disposition, residual, evidence reference, stable ID preimage, canonical encoding, shard manifest, and resource bound used by the later projection, parser, closure, and assembly stages.",
-        "notIncluded": "Reading private retail payloads, projecting accepted rows, parsing non-lexical formats, executing roots, or claiming SOURCE closure."
+        "deliverable": "Small immutable definitions for every semantic table, field, type, foreign key, stable-ID preimage, evidence variant, edge/occurrence/root registry, canonical atom, and resolved resource-bound precedence.",
+        "notIncluded": "SQLite, filesystem or shard I/O, semantic reconstruction, APT companion lookup, fixed-point execution, private retail payloads, or a compatibility facade."
       },
-      "sourceEvidence": [],
+      "sourceEvidence": [
+        "OWNER-SEMANTIC-SCHEMA-V4-D5F9D8FC"
+      ],
       "artifacts": [
-        "workspace/logs/P0-CORPUS-SCHEMA-001/semantic-schema-contract.json"
+        "workspace/logs/P0-CORPUS-SCHEMA-CORE-001/semantic-contract-core.json"
       ],
       "acceptance": {
-        "requiredLevels": [
-          "L0"
-        ],
-        "requiredOutputDimensions": {
-          "SOURCE": "NOT_REQUIRED",
-          "CONVERT": "NOT_REQUIRED",
-          "LOAD": "NOT_REQUIRED",
-          "BEHAVIOR": "NOT_REQUIRED",
-          "VISUAL": "NOT_REQUIRED",
-          "AUDIO": "NOT_REQUIRED"
-        },
+        "requiredLevels": ["L0"],
+        "requiredOutputDimensions": {"SOURCE": "NOT_REQUIRED", "CONVERT": "NOT_REQUIRED", "LOAD": "NOT_REQUIRED", "BEHAVIOR": "NOT_REQUIRED", "VISUAL": "NOT_REQUIRED", "AUDIO": "NOT_REQUIRED"},
         "criteria": [
-          "the closed node-table universe explicitly includes source records, documents, definitions, assignments, all 5988 accepted object occurrences, module declarations, module-kind taxonomy, assets, opaque tokens, scripts, nested/directive/unknown sites, maps, map objects/libraries, APT movies/symbols, WND windows, and parser dispositions while explicitly excluding administrative tables",
-          "every table has exact required and optional fields, primitive/container types, enum values, foreign-key targets, evidence-ID referents, row ordering, type tag, ID prefix, and complete canonical ID preimage; case-fold collisions and duplicate preimages fail",
-          "every edge kind has one exact source family, target family, direction, occurrence/evidence cardinality, and rule for resolved, unresolved, and ambiguous emission",
-          "selector candidate families, assignment-to-owner lifting, containment direction, permitted root traversal edges, seed promotion, fixed-point iteration numbering, domain/map membership, residual backlinks, and orphan scope are closed without prose inference",
-          "accepted lexical rows and non-lexical parser rows have disjoint exact destinations, including explicit dispositions for the 332 effective INI/INC winners outside the 850 accepted lexical documents and for additive shadows that were not lexically scanned",
-          "canonical UTF-8 JSONL sharding, manifest hashing, maximum line/shard/row/edge/output sizes, streaming validation, and deterministic overflow diagnostics are fixed before any private generation",
-          "positive and hostile synthetic fixtures prove independent ID/foreign-key/cardinality validation without importing a builder closure helper"
+          "the sole normative input is the owner-authored private brief workspace/logs/P0-CORPUS-SCHEMA-001/schema-design-v4.md with SHA-256 d5f9d8fc12a631156b4c3b73737f23faae8e40c71b7577a800e06f6c2e39090c; its path and digest must be copied into the assignment brief, and worker plus reviewer must independently verify those exact bytes before using its complete table, field, type, enum, foreign-key, evidence, edge, occurrence, root, domain, ID-preimage, canonical-encoding, bound registries, and expected vectors",
+          "this ledger row is the authoritative addendum to design-v4 section 12.3: named occurrence, edge, and residual limits are evaluated before the generic administrative-table limit; specifically, when an edge insertion violates both maxEdges and maxRowsPerAdminTable, E_EDGE_ROWS_LIMIT wins, while E_ADMIN_TABLE_ROWS_LIMIT remains reachable through an over-limit non-named administrative table",
+          "table-driven hostile fixtures cover every missing and wrong field, ID/FK/evidence digest mismatch, casefold collision, duplicate preimage, edge direction/cardinality declaration, occurrence state/cardinality declaration, and exact canonical atom refusal without importing production registries into expected values",
+          "the module contains no SQLite, filesystem writer, root traversal, APT companion, or projection code and stays a readable contract dependency for later autonomous workers"
         ]
       },
-      "verificationCommands": [
-        {
-          "steps": [
-            {
-              "toolRole": "python",
-              "invocation": "script",
-              "target": "tools/check-rotwk-202-semantic-schema.py",
-              "args": [
-                "--check"
-              ],
-              "toolchainProfile": "python-hermetic-v1"
-            }
-          ],
-          "availability": "planned",
-          "timeoutSeconds": 300,
-          "expectedMarkers": [
-            "ROTWK_202_SEMANTIC_SCHEMA PASS"
-          ],
-          "diagnosticPolicy": "strict-default"
-        }
-      ],
+      "verificationCommands": [{"steps": [{"toolRole": "python", "invocation": "script", "target": "tools/check-rotwk-202-semantic-contract.py", "args": ["--check"], "toolchainProfile": "python-hermetic-v1"}], "availability": "planned", "timeoutSeconds": 180, "expectedMarkers": ["ROTWK_202_SEMANTIC_CONTRACT PASS"], "diagnosticPolicy": "strict-default"}],
       "blockers": []
+    },
+    {
+      "id": "P0-CORPUS-SCHEMA-STORE-001",
+      "title": "Implement bounded semantic SQLite and canonical shard storage",
+      "kind": "source-foundation",
+      "priority": "P0",
+      "allocationClass": "worker-lane",
+      "status": "blocked",
+      "domainIds": [],
+      "rootQueryIds": [],
+      "dependsOn": ["P0-CORPUS-SCHEMA-CORE-001"],
+      "ownership": {"state": "unassigned", "assignee": null, "ownedPaths": [], "candidatePaths": ["importer/openbfme_importer/semantic_graph_store.py", "importer/tests/test_rotwk_202_semantic_graph_store.py", "tools/check-rotwk-202-semantic-store.py"]},
+      "scope": {
+        "deliverable": "A semantics-free streaming SQLite ingestion/query layer plus atomic canonical JSONL shard and manifest writer/validator with exact pre-write resource limits.",
+        "notIncluded": "Semantic edge reconstruction, occurrence resolution, APT admission, root execution, domain classification, retail payload parsing, or duplicating contract registries."
+      },
+      "sourceEvidence": [],
+      "artifacts": ["workspace/logs/P0-CORPUS-SCHEMA-STORE-001/semantic-store-contract.json"],
+      "acceptance": {
+        "requiredLevels": ["L0"],
+        "requiredOutputDimensions": {"SOURCE": "NOT_REQUIRED", "CONVERT": "NOT_REQUIRED", "LOAD": "NOT_REQUIRED", "BEHAVIOR": "NOT_REQUIRED", "VISUAL": "NOT_REQUIRED", "AUDIO": "NOT_REQUIRED"},
+        "criteria": [
+          "all graph-sized IDs, foreign keys, source keys, edges, occurrences, roots, residuals, and domains stay in indexed SQLite tables or contract-bounded per-key windows; one-shot iterables prove no whole graph, APT movie list, or shard set is retained",
+          "Unicode casefold keys are normalized identically on insertion and query and mixed-case lexical paths, duplicate casefold keys, plus-one candidates, and safe-subtree lookups have direct SQLite hostile coverage",
+          "per-line, per-shard, per-table, node, occurrence, edge, residual, total-row, shard-count, byte, and output bounds fail before the violating allocation, open, insert, or publish in the contract's exact diagnostic order",
+          "physical hostile fixtures cover BOM, CRLF, NUL, duplicate JSON keys, false counts, wrong hashes, one-row-too-large, exact-limit and plus-one line/shard/output cases, rollback, and two byte-identical atomic publishes"
+        ]
+      },
+      "verificationCommands": [{"steps": [{"toolRole": "python", "invocation": "script", "target": "tools/check-rotwk-202-semantic-store.py", "args": ["--check"], "toolchainProfile": "python-hermetic-v1"}], "availability": "planned", "timeoutSeconds": 300, "expectedMarkers": ["ROTWK_202_SEMANTIC_STORE PASS"], "diagnosticPolicy": "strict-default"}],
+      "blockers": ["P0-CORPUS-SCHEMA-CORE-001 must first freeze the literal contract and reachable bound precedence consumed by this storage layer."]
+    },
+    {
+      "id": "P0-CORPUS-SCHEMA-CONFORMANCE-001",
+      "title": "Implement semantic reconstruction and exhaustive conformance",
+      "kind": "source-foundation",
+      "priority": "P0",
+      "allocationClass": "worker-lane",
+      "status": "blocked",
+      "domainIds": [],
+      "rootQueryIds": [],
+      "dependsOn": ["P0-CORPUS-SCHEMA-CORE-001", "P0-CORPUS-SCHEMA-STORE-001"],
+      "ownership": {"state": "unassigned", "assignee": null, "ownedPaths": [], "candidatePaths": ["importer/openbfme_importer/semantic_graph_conformance.py", "importer/tests/test_rotwk_202_semantic_graph_conformance.py", "tools/check-rotwk-202-semantic-conformance.py"]},
+      "scope": {
+        "deliverable": "Bounded semantic reconstruction for containment, every edge and occurrence, APT/parser authority, lexical partition, roots, domains, live counts, and reciprocal residual exposure using only the accepted contract and store interfaces.",
+        "notIncluded": "Contract or storage duplication, private graph generation, parser implementation, projection, selected-pack assembly, or a compatibility facade."
+      },
+      "sourceEvidence": [],
+      "artifacts": ["workspace/logs/P0-CORPUS-SCHEMA-CONFORMANCE-001/semantic-conformance-contract.json"],
+      "acceptance": {
+        "requiredLevels": ["L0"],
+        "requiredOutputDimensions": {"SOURCE": "NOT_REQUIRED", "CONVERT": "NOT_REQUIRED", "LOAD": "NOT_REQUIRED", "BEHAVIOR": "NOT_REQUIRED", "VISUAL": "NOT_REQUIRED", "AUDIO": "NOT_REQUIRED"},
+        "criteria": [
+          "greatest-strictly-preceding owner reconstruction, exact 5988 object and 24230 module closures, accepted 850 versus non-lexical 332 plus additive-shadow partition, parser/asset ownership, and evidence digests are independently recomputed through indexed queries",
+          "literal independent fixtures mutate direction, 1/T, 1/S, top-level, acyclic, field-exact, parser-reachability, candidate, target, edge, residual, owner-lift, and evidence cardinality for every one of the 50 edge kinds and every occurrence family/state",
+          "APT facts stream once into SQLite with incremental digest and exact bound-plus-one refusal; companion lookup is same-directory casefold-stem-suffix exact and geometry stays in the indexed safe subtree",
+          "all eight hand-authored normalized roots cover seed, non-seed, prepromotion, already-reached, self, cycle, missing traversal, reciprocal residual exposure, and multi-domain residual digests without importing a builder closure helper"
+        ]
+      },
+      "verificationCommands": [{"steps": [{"toolRole": "python", "invocation": "script", "target": "tools/check-rotwk-202-semantic-conformance.py", "args": ["--check"], "toolchainProfile": "python-hermetic-v1"}], "availability": "planned", "timeoutSeconds": 300, "expectedMarkers": ["ROTWK_202_SEMANTIC_CONFORMANCE PASS"], "diagnosticPolicy": "strict-default"}],
+      "blockers": ["The accepted core contract and bounded store are required before semantic reconstruction can be tested without self-trust."]
+    },
+    {
+      "id": "P0-CORPUS-SCHEMA-001",
+      "title": "Assemble the accepted semantic schema facade and receipt",
+      "kind": "source-foundation",
+      "priority": "P0",
+      "allocationClass": "worker-lane",
+      "status": "blocked",
+      "domainIds": [],
+      "rootQueryIds": [],
+      "dependsOn": ["P0-CORPUS-SCHEMA-CORE-001", "P0-CORPUS-SCHEMA-STORE-001", "P0-CORPUS-SCHEMA-CONFORMANCE-001"],
+      "ownership": {"state": "unassigned", "assignee": null, "ownedPaths": [], "candidatePaths": ["importer/openbfme_importer/semantic_graph_schema.py", "importer/tests/test_rotwk_202_semantic_schema.py", "tools/check-rotwk-202-semantic-schema.py"]},
+      "scope": {
+        "deliverable": "A thin compatibility facade and exact end-to-end receipt that composes the independently accepted contract, store, and conformance modules for projection, parser, closure, and assembly consumers.",
+        "notIncluded": "Duplicating registry, storage, semantic, root, or hostile-fixture implementation; reviving or cherry-picking the archived 320 KB rejected monolith; reading private retail payloads; or claiming SOURCE closure."
+      },
+      "sourceEvidence": [],
+      "artifacts": ["workspace/logs/P0-CORPUS-SCHEMA-001/semantic-schema-contract.json"],
+      "acceptance": {
+        "requiredLevels": ["L0"],
+        "requiredOutputDimensions": {"SOURCE": "NOT_REQUIRED", "CONVERT": "NOT_REQUIRED", "LOAD": "NOT_REQUIRED", "BEHAVIOR": "NOT_REQUIRED", "VISUAL": "NOT_REQUIRED", "AUDIO": "NOT_REQUIRED"},
+        "criteria": [
+          "the public facade contains only imports, typed delegation, and stable compatibility names; no copied registry, SQLite, writer, semantic reconstruction, or root traversal body is accepted",
+          "the exact contract serialization, atomic writer to streaming validator round trip, semantic conformance, all-eight-root fixture, and consumer import surface pass together with fixed child artifact and implementation digests",
+          "the artifact binds all three independently accepted child manifests and two fresh end-to-end assemblies are byte-identical with no stale monolith receipt or fallback"
+        ]
+      },
+      "verificationCommands": [{"steps": [{"toolRole": "python", "invocation": "script", "target": "tools/check-rotwk-202-semantic-schema.py", "args": ["--check"], "toolchainProfile": "python-hermetic-v1"}], "availability": "planned", "timeoutSeconds": 300, "expectedMarkers": ["ROTWK_202_SEMANTIC_SCHEMA PASS"], "diagnosticPolicy": "strict-default"}],
+      "blockers": ["The archived codex-corpus-schema-v4 candidate was rejected after independent review found shipping casefold, boundedness, cardinality, reachable-bound, and hostile-fixture defects; replace it only through the three modular predecessor rows."]
     },
     {
       "id": "P0-CORPUS-PROJECTION-001",
@@ -13879,7 +13943,7 @@
       "kind": "performance",
       "priority": "P1",
       "allocationClass": "worker-lane",
-      "status": "in-progress",
+      "status": "blocked",
       "domainIds": [
         "runtime-performance"
       ],
@@ -13891,14 +13955,9 @@
         "P0-CORPUS-001"
       ],
       "ownership": {
-        "state": "assigned",
-        "assignee": "codex-perf-present-v4",
-        "ownedPaths": [
-          "game/src/retail_slice/retail_vertical_slice.gd",
-          "game/src/view/member_render_batcher.gd",
-          "game/tests/retail_frame_budget_runner.gd",
-          "tools/gate-perf-frame.ps1"
-        ],
+        "state": "unassigned",
+        "assignee": null,
+        "ownedPaths": [],
         "candidatePaths": [
           "game/src/retail_slice/retail_vertical_slice.gd",
           "game/src/view/member_render_batcher.gd",
@@ -13959,7 +14018,96 @@
           "diagnosticPolicy": "strict-default"
         }
       ],
+      "blockers": [
+        "Predecessor 003 stopped on unstable cold reference pixels. The three exact 004 attempts then stopped before any candidate measurement on, respectively, a missing isolated fog import, whole-project Godot import heap corruption, and a malformed 122 KB PowerShell proof harness that wrote System.Object[] instead of seven autoload declarations. No implementation commit exists. The four-file packet, stale base telemetry, captures, and Grok sessions are recoverably archived under ignored workspace/archive/P1-PERF-PRESENT-004; do not cherry-pick it or treat its reference-only measurements as candidate evidence. Replace through P1-PERF-PRIVATE-GODOT-001 and P1-PERF-PRESENT-005."
+      ]
+    },
+    {
+      "id": "P1-PERF-PRIVATE-GODOT-001",
+      "title": "Build a small reusable private Godot proof harness",
+      "kind": "performance-infrastructure",
+      "priority": "P1",
+      "allocationClass": "worker-lane",
+      "status": "pending",
+      "domainIds": ["runtime-performance"],
+      "rootQueryIds": [],
+      "dependsOn": [],
+      "ownership": {
+        "state": "unassigned",
+        "assignee": null,
+        "ownedPaths": [],
+        "candidatePaths": [
+          "tools/private-godot-proof.ps1",
+          "tools/check-private-godot-proof.ps1",
+          "tools/tests/private-godot-proof-fixtures.ps1"
+        ]
+      },
+      "scope": {
+        "deliverable": "One compact Windows-native helper that creates exact private Git-archive control and candidate trees, applies literal overlays, constructs canonical reduced Godot hydration projects, imports and parses them with the pinned executable, and returns content-bound manifests without running a feature test.",
+        "notIncluded": "Presentation assertions, performance thresholds, retail content selection, captures, feature-specific receipts, ambient or shared cache reuse, accepting a nonzero process, or embedding another all-purpose gate framework."
+      },
+      "sourceEvidence": [],
+      "artifacts": ["workspace/logs/P1-PERF-PRIVATE-GODOT-001/private-godot-proof-contract.json"],
+      "acceptance": {
+        "requiredLevels": ["L0"],
+        "requiredOutputDimensions": {"SOURCE": "NOT_REQUIRED", "CONVERT": "NOT_REQUIRED", "LOAD": "NOT_REQUIRED", "BEHAVIOR": "NOT_REQUIRED", "VISUAL": "NOT_REQUIRED", "AUDIO": "NOT_REQUIRED"},
+        "criteria": [
+          "the helper accepts an exact Git commit plus literal overlay map, creates fresh non-worktree roots under one caller-owned private directory, and proves pristine-to-control and pristine-to-candidate deltas without reading ambient Git index, worktree cache, or user environment state",
+          "canonical reduced project text is assembled from explicit scalar lines and exact autoload rows; literal fixtures prove arrays never stringify as System.Object[], malformed paths and duplicate autoloads fail, and the helper never imports unrelated image, audio, OBJ, or GLB assets",
+          "raw UID sidecars, generated UID deltas, class-name registry, UID cache, fog import metadata/output, source manifests, process roots, and transferred full-tree .godot closure are independently content-bound and rechecked after strict check-only execution",
+          "nonzero exit, warning/error, source mutation beyond predeclared missing UID sidecars, cross-tree copy, ambient cache, missing/extra artifact, or identity drift fails closed; hostile fixtures cover every refusal without launching the 5000-member performance workload",
+          "the production helper and focused checker remain small, single-purpose, and Ponytail-approved; feature-specific policy and assertion code is prohibited from this module"
+        ]
+      },
+      "verificationCommands": [{"steps": [{"toolRole": "powershell", "invocation": "script", "target": "tools/check-private-godot-proof.ps1", "args": [], "toolchainProfile": "rotwk-gate-v1"}], "availability": "pinned-godot", "timeoutSeconds": 600, "expectedMarkers": ["PRIVATE_GODOT_PROOF PASS"], "diagnosticPolicy": "strict-default"}],
       "blockers": []
+    },
+    {
+      "id": "P1-PERF-PRESENT-005",
+      "title": "Land flat large-army presentation through the reusable private proof path",
+      "kind": "performance",
+      "priority": "P1",
+      "allocationClass": "worker-lane",
+      "status": "blocked",
+      "domainIds": ["runtime-performance"],
+      "rootQueryIds": ["skirmish-roots"],
+      "dependsOn": ["P0-SOURCE-001", "P0-CORPUS-001", "P1-PERF-PRIVATE-GODOT-001"],
+      "ownership": {
+        "state": "unassigned",
+        "assignee": null,
+        "ownedPaths": [],
+        "candidatePaths": [
+          "game/src/retail_slice/retail_vertical_slice.gd",
+          "game/src/view/member_render_batcher.gd",
+          "game/tests/retail_frame_budget_runner.gd",
+          "tools/gate-perf-frame.ps1"
+        ]
+      },
+      "scope": {
+        "deliverable": "Re-review and carry only the useful flat FAR/CULLED production design from the rejected archive, then prove it through the accepted private-Godot helper with unanimous frozen-base pixels, exact behavior/lifecycle, selected RotWK mount closure, and material 1000/5000-member CPU improvement.",
+        "notIncluded": "Copying the rejected 122 KB gate, accepting any old 003/004 receipt or capture, embedding generic hydration logic in the feature gate, pixel tolerances, a promotion cap, simulation changes, GPU skeletal animation, or a 60/144 FPS terminal claim."
+      },
+      "sourceEvidence": [],
+      "artifacts": [
+        "workspace/logs/P1-PERF-PRESENT-005/perf-present-architecture.json",
+        "workspace/logs/P1-PERF-PRESENT-005/visual-tier-oracle.json",
+        "workspace/logs/P1-PERF-PRESENT-005/visual-oracle-repeatability.json",
+        "workspace/logs/P1-PERF-PRESENT-005/assignment-base-performance.json"
+      ],
+      "acceptance": {
+        "requiredLevels": ["L4"],
+        "requiredOutputDimensions": {"SOURCE": "NOT_REQUIRED", "CONVERT": "NOT_REQUIRED", "LOAD": "REQUIRED", "BEHAVIOR": "REQUIRED", "VISUAL": "REQUIRED", "AUDIO": "NOT_REQUIRED"},
+        "criteria": [
+          "the two production files are reviewed independently from the rejected archive and implement one readable flat batch architecture: every NEAR/MID or stateful/refused battalion retains the shipping presenter, ordinary visible FAR/CULLED members occupy exact model-team MultiMesh groups, fog-hidden members contribute no instance, and lifecycle cleanup releases all nodes/RIDs/rows",
+          "the compact feature gate delegates all archive, overlay, hydration, import, parse, source/cache manifest, and process-root work to the accepted P1-PERF-PRIVATE-GODOT-001 helper and contains only presentation-specific fixture, identity, parity, and threshold assertions",
+          "three fresh frozen-base visual processes complete one fixed untimed materialization warmup and explicit draw/sync/post-draw barrier; all raw buffers and PNGs agree unanimously before the candidate launches and the candidate exactly matches the designated control at both animation times across near/mid, far/culled, fog, reveal, selection, mount, one-shot, and structured-refusal cases",
+          "selection.activePack is the exact RotWK locator, the BFME2 capability host is one exact supplemental locator, and independent pack/manifest hashes plus ModLoader.runtime_pack_report prove exact selected-plus-supplement membership/order with zero fallback, ambient, foreign, missing, extra, diagnostic, or supplement failure",
+          "actual frozen-base and candidate processes each record at least 100 direct samples at 1000 and 5000 moving members; presentation-sync p99 is at most 0.70 times base, CPU-frame p99 at most 0.85, GPU p99 at most 1.05, simulation/picking/transform/visibility hashes are exact, and repeated remove/restart leaves zero residue",
+          "missing identity, sample, ratio, capture, unanimity, lifecycle, refusal, or threshold evidence fails; the marker reports only the bounded presentation win and remaining CPU/GPU costs"
+        ]
+      },
+      "verificationCommands": [{"steps": [{"toolRole": "powershell", "invocation": "script", "target": "tools/gate-perf-frame.ps1", "args": [], "toolchainProfile": "rotwk-gate-v1"}], "availability": "accepted-private-godot-helper-current-selected-pack-visible-gpu", "timeoutSeconds": 3600, "expectedMarkers": ["PERF_PRESENT_ARCH PASS far_members=5000 near_exact=true aa_stable=true cpu_improved=true mount_chain_exact=true"], "diagnosticPolicy": "strict-default"}],
+      "blockers": ["P1-PERF-PRIVATE-GODOT-001 must first replace the rejected monolithic 004 gate with an independently accepted reusable private-tree and hydration proof primitive."]
     },
     {
       "id": "P1-PERF-BOOT-002",
@@ -14527,7 +14675,7 @@
       "dependsOn": [
         "P0-SOURCE-001",
         "P0-CORPUS-001",
-        "P1-PERF-PRESENT-004"
+        "P1-PERF-PRESENT-005"
       ],
       "ownership": {
         "state": "unassigned",
