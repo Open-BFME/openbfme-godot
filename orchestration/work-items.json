@@ -14199,7 +14199,8 @@
       },
       "sourceEvidence": [],
       "artifacts": [
-        "workspace/logs/P1-PERF-SIM-ROSTER-003/perf-sim-roster.json"
+        "workspace/logs/P1-PERF-SIM-ROSTER-003/perf-sim-roster.json",
+        "workspace/logs/P1-PERF-SIM-ROSTER-003/progress.json"
       ],
       "acceptance": {
         "requiredLevels": [
@@ -14219,8 +14220,8 @@
           "an isolated production-supported TERROR or UNCONTROLLABLE pulse positively proves fear scatter in both paths through an exact displaced position, cleared route and route_cells, cleared target and attack-move state, fear source and type, and ordered combat.fear_scatter event",
           "after setup, both paths register the supported death-weapon rule through register_death_weapon_rule, assert the exact normalized rule, and only then attach the damage-field policy; the field fires after poison erases one of two hostile targets and positively proves fresh membership through an exact one-target module.death_weapon_fired event, damage to the surviving target, absence of the erased target, and no unresolved or unsupported diagnostic",
           "first-tick assertions in both paths positively prove all six shared-roster consumers: large-group activation and modifier attachment, hit-reaction expiry, animal-AI wander plus RNG advance, exact nearest-hostile threat selection, exact terror scatter, and fatal poison erasure; fear and damage-field coverage remain separately positive",
-          "every tick has identical state hash, ordered event digest, RNG state, entity ids, winner, health, routes, and policy state, and both complete event streams are scanned for warning, fallback, unsupported, unresolved, skipped, or missing diagnostics; diagnosticsExact cannot be a hardcoded claim",
-          "at least 100 alternating same-process direct single-cluster samples with exact recorded sample counts prove the empty-policy optimized p99 is at most 0.85 times reference p99; batched averages cannot be labeled p99 and mixed-policy plus whole-tick timings remain telemetry"
+          "every tick has a byte-identical authoritative snapshot plus identical ordered event delta and cumulative digest; production state_hash is identical at initial state, tick 1, tick 300 before restore, immediately after restore, and tick 600, while first-tick assertions retain explicit RNG state, entity ids, winner, health, routes, and policy coverage; both complete event streams are equal and scanned for warning, fallback, unsupported, unresolved, skipped, or missing diagnostics, and diagnosticsExact cannot be a hardcoded claim",
+          "at least 100 alternating same-process direct single-cluster samples with exact recorded sample counts prove the empty-policy optimized p99 is at most 0.85 times reference p99; exact state, event, and RNG boundaries are checked before warmup, after warmup, and after sampling without putting oracle work inside the timed call, batched averages cannot be labeled p99, and mixed-policy plus whole-tick timings remain telemetry"
         ]
       },
       "verificationCommands": [
