@@ -318,6 +318,22 @@
       "claimLimit": "Normative proof-implementation closure only: immutable sibling publication, actual caller graph, one scoped shared GDScript helper, one pinned Python validator, thin PowerShell modes, CRLF-safe tooling identity, lane-local staged promotion, fresh runtime isolation, Python-held Windows mutex, exact ABBA names, human live-view dwell, and a closed validation-only terminal state table. It changes no gameplay scope, production semantics, fixture, donor, threshold, evidence dimension, v1 capture approval, no-argument ledger command, or success marker."
     },
     {
+      "id": "OWNER-PERF-PRESENT-DIRECT-EXEC-V4-FBC55E94",
+      "type": "private-owner-contract-addendum",
+      "path": "workspace/logs/P1-PERF-PRESENT-DIRECT-001/direct-performance-execution-protocol-v4.md",
+      "identity": {
+        "bytes": 8922,
+        "sha256": "fbc55e949f58311a1e29983a38d7dd38a4e4db43a0659b520609b72b3c954a8d",
+        "assignmentBase": "17f0dfb7c543866677331848781ee3b76f17297a",
+        "baseContractSha256": "f12197f3feac812cce808e72e0718019381dd6f949943db5460907a4556b84aa",
+        "protocolV1Sha256": "4bc5e9ccaa72773ee025eb108a14dbe34eb961e86bbee52a4ee1a73ed8694c70",
+        "protocolV2Sha256": "54dc2d24dee12336a8ae4ccd92c099baccddb8c7b00c55865a39d3dc0be8fee9",
+        "protocolV3Sha256": "dd7a9da3ec2608500bca4c2c6ebe8cfa5448f66e426efc63a4e1d1e75c19f50f",
+        "review": "independent-critic-and-direct-grok-approved"
+      },
+      "claimLimit": "Normative post-UID execution correction only: the authoritative cache snapshot has seven keys, requires global_script_class_cache.cfg and uid_cache.bin present, requires scene_groups_cache.cfg absent, rejects new Git-visible UID source identity, and replaces protocolV3Sha256 in the specified receipt schemas. It changes no gameplay scope, owned path, threshold, exact ledger command, success marker, line cap, or human evidence requirement."
+    },
+    {
       "id": "E-PERF-PRESENT-DIRECT-001-V2-PARTIAL-3206358E",
       "type": "historical-private-partial-patch-receipt",
       "path": "workspace/archive/worktrees/history/wt-fcc66fd352b19432-v2-63353960/complete.json",
@@ -15587,7 +15603,7 @@
       "kind": "performance",
       "priority": "P1",
       "allocationClass": "worker-lane",
-      "status": "blocked",
+      "status": "pending",
       "domainIds": [
         "runtime-performance"
       ],
@@ -15617,7 +15633,7 @@
         ]
       },
       "scope": {
-        "deliverable": "A dormant runner-only direct flat presentation path for exactly 66 newly materialized, stationary, idle, visible FAR Gondor fighter battalions with 15 authored members each, plus exact same-process legacy-control equivalence and provisional measured evidence under OWNER-PERF-PRESENT-DIRECT-V1-F12197F3, OWNER-PERF-PRESENT-DIRECT-PROOF-V1-4BC5E9CC, OWNER-PERF-PRESENT-DIRECT-EXEC-V2-54DC2D24, and OWNER-PERF-PRESENT-DIRECT-EXEC-V3-DD7A9DA3.",
+        "deliverable": "A dormant runner-only direct flat presentation path for exactly 66 newly materialized, stationary, idle, visible FAR Gondor fighter battalions with 15 authored members each, plus exact same-process legacy-control equivalence and provisional measured evidence under OWNER-PERF-PRESENT-DIRECT-V1-F12197F3, OWNER-PERF-PRESENT-DIRECT-PROOF-V1-4BC5E9CC, OWNER-PERF-PRESENT-DIRECT-EXEC-V2-54DC2D24, OWNER-PERF-PRESENT-DIRECT-EXEC-V3-DD7A9DA3, and OWNER-PERF-PRESENT-DIRECT-EXEC-V4-FBC55E94.",
         "notIncluded": "Normal-game enablement; moving units; selection or data-backed picking; FAR-to-NEAR promotion or demotion; combat, mounts, upgrades, model-condition changes, one-shots, particles, audio, GPU skeletal animation, simulation changes, a reusable benchmark or hydration wrapper, 5,000 units, or a 144 FPS claim."
       },
       "sourceEvidence": [
@@ -15625,6 +15641,7 @@
         "OWNER-PERF-PRESENT-DIRECT-PROOF-V1-4BC5E9CC",
         "OWNER-PERF-PRESENT-DIRECT-EXEC-V2-54DC2D24",
         "OWNER-PERF-PRESENT-DIRECT-EXEC-V3-DD7A9DA3",
+        "OWNER-PERF-PRESENT-DIRECT-EXEC-V4-FBC55E94",
         "E-PERF-PRESENT-DIRECT-001-V2-PARTIAL-3206358E",
         "E-PERF-PRESENT-DIRECT-001-V3-PARTIAL-059056CE",
         "E-PERF-PRESENT-DIRECT-001-V4-PARTIAL-D13422FE",
@@ -15686,9 +15703,7 @@
           "diagnosticPolicy": "strict-default"
         }
       ],
-      "blockers": [
-        "The v7 import exposed 69 legitimate missing tracked Godot UID sidecars and a false scene_groups_cache.cfg requirement. Its exact dirty state and implementation commit e56811e7 are preserved under workspace/archive/worktrees/wt-fcc66fd352b19432. Complete P0-GODOT-UID-CLOSURE-001 before issuing the minimal v4 execution contract and creating a fresh lane."
-      ]
+      "blockers": []
     },
     {
       "id": "P1-PERF-BOOT-002",
