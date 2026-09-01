@@ -1243,7 +1243,7 @@
       "kind": "source-foundation",
       "priority": "P0",
       "allocationClass": "worker-lane",
-      "status": "pending",
+      "status": "in-progress",
       "domainIds": [],
       "rootQueryIds": [],
       "dependsOn": [
@@ -1251,9 +1251,13 @@
         "P0-CORPUS-SCHEMA-STORE-001"
       ],
       "ownership": {
-        "state": "unassigned",
-        "assignee": null,
-        "ownedPaths": [],
+        "state": "assigned",
+        "assignee": "codex-semantic-conformance-v1",
+        "ownedPaths": [
+          "importer/openbfme_importer/semantic_graph_conformance.py",
+          "importer/tests/test_rotwk_202_semantic_graph_conformance.py",
+          "tools/check-rotwk-202-semantic-conformance.py"
+        ],
         "candidatePaths": [
           "importer/openbfme_importer/semantic_graph_conformance.py",
           "importer/tests/test_rotwk_202_semantic_graph_conformance.py",
