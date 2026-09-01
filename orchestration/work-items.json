@@ -959,20 +959,16 @@
       "kind": "source-foundation",
       "priority": "P0",
       "allocationClass": "worker-lane",
-      "status": "in-progress",
+      "status": "complete",
       "domainIds": [],
       "rootQueryIds": [],
       "dependsOn": [
         "P0-CORPUS-002"
       ],
       "ownership": {
-        "state": "assigned",
-        "assignee": "codex-schema-core-v2",
-        "ownedPaths": [
-          "importer/openbfme_importer/semantic_graph_contract.py",
-          "importer/tests/test_rotwk_202_semantic_graph_contract.py",
-          "tools/check-rotwk-202-semantic-contract.py"
-        ],
+        "state": "accepted",
+        "assignee": null,
+        "ownedPaths": [],
         "candidatePaths": [
           "importer/openbfme_importer/semantic_graph_contract.py",
           "importer/tests/test_rotwk_202_semantic_graph_contract.py",
@@ -1006,7 +1002,8 @@
           "the independently reviewed archived CORE-001 registry and validator semantics remain byte- or AST-equivalent except for independently reviewed changes required to expose one canonical serialization function; all literal registries, hostile fixtures, owner authority addenda, and named-limit precedence stay exact",
           "the exact checker serializes one closed artifact containing schema/version, baseline and owner-design identity, every immutable registry and bound in declared order, independently expected vector/digests, implementation closure digests, and no private retail payload or ambient path",
           "artifact bytes are canonical UTF-8 LF JSON with fixed field/key/row order; the checker reparses and independently validates every field/count/digest against literal fixture expectations, writes atomically under the declared lane log root, and two isolated serializations are byte-identical",
-          "the exact command fails if the artifact is missing, stale, outside the lane log root, self-inconsistent, not reconstructable from committed code, or different between runs; handoff and independent review must bind its non-empty SHA-256 in artifactDigests"
+          "the exact command fails if the artifact is missing, stale, outside the lane log root, self-inconsistent, not reconstructable from committed code, or different between runs; handoff and independent review must bind its non-empty SHA-256 in artifactDigests",
+          "accepted worker commit 5a8c42cbf05c83b865ea87a29ef9dab033ae7f8e was integrated as 097d2034; Ponytail approved packet 296bf8ab481d7b307810fdb812e4ea574adbb33a195aee1f7731cb96db0d839a, worker and independent receipts passed, and semantic-contract-core.json SHA-256 is 83dad1c2c2baa297fefb24e77e181fdf8d9c5ff299f14dcf01c694db09caa89a"
         ]
       },
       "verificationCommands": [
@@ -1022,7 +1019,7 @@
               "toolchainProfile": "python-hermetic-v1"
             }
           ],
-          "availability": "planned",
+          "availability": "current-accepted",
           "timeoutSeconds": 180,
           "expectedMarkers": [
             "ROTWK_202_SEMANTIC_CONTRACT PASS"
@@ -1103,7 +1100,7 @@
         }
       ],
       "blockers": [
-        "P0-CORPUS-SCHEMA-CORE-002 must first publish the reviewed literal contract, reachable bound precedence, and deterministic artifact consumed by this storage layer."
+        "P0-CORPUS-SCHEMA-CORE-002 is accepted, but this row still lacks owner-pinned source evidence for the consumed core artifact and exact storage/query API, SQLite schema/index contract, diagnostic envelope, and semantic-store-contract.json shape; keep blocked until those interfaces are canonicalized for an autonomous worker."
       ]
     },
     {
