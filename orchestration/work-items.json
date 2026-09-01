@@ -290,6 +290,19 @@
       "claimLimit": "Normative proof representation and execution addendum only: closed functional, measured, refusal, runtime, human, cache, sticky, CULLED, cleanup, census, machine, percentile, candidate-binding, and gate cross-check semantics for the frozen direct FAR base contract. It changes no product scope, owned path, threshold, command, line cap, or human requirement."
     },
     {
+      "id": "OWNER-PERF-PRESENT-DIRECT-EXEC-V2-54DC2D24",
+      "type": "private-owner-contract-addendum",
+      "path": "workspace/logs/P1-PERF-PRESENT-DIRECT-001/direct-performance-execution-protocol-v2.md",
+      "identity": {
+        "bytes": 15834,
+        "sha256": "54dc2d24dee12336a8ae4ccd92c099baccddb8c7b00c55865a39d3dc0be8fee9",
+        "baseContractSha256": "f12197f3feac812cce808e72e0718019381dd6f949943db5460907a4556b84aa",
+        "protocolV1Sha256": "4bc5e9ccaa72773ee025eb108a14dbe34eb961e86bbee52a4ee1a73ed8694c70",
+        "review": "independent-critic-and-direct-grok-approved"
+      },
+      "claimLimit": "Normative execution-order and cache-integrity addendum only: fresh candidate-local import authority, immutable prepared-cache anchoring, startup and measured cache-drift closure, once-only measured launch with machine-bound process identity, unchanged v1 visual approval, postmeasurement human witness, and validation-only later checks with fresh workflow receipts. It changes no product scope, owned path, threshold, exact ledger command, success marker, or line cap."
+    },
+    {
       "id": "E-PERF-PRESENT-DIRECT-001-V2-PARTIAL-3206358E",
       "type": "historical-private-partial-patch-receipt",
       "path": "workspace/archive/worktrees/history/wt-fcc66fd352b19432-v2-63353960/complete.json",
@@ -305,7 +318,7 @@
     {
       "id": "E-PERF-PRESENT-DIRECT-001-V3-PARTIAL-059056CE",
       "type": "historical-private-partial-patch-receipt",
-      "path": "workspace/archive/worktrees/wt-fcc66fd352b19432/complete.json",
+      "path": "workspace/archive/worktrees/history/wt-fcc66fd352b19432-v3-8ac79947/complete.json",
       "identity": {
         "bytes": 1299,
         "sha256": "09dbbcbb4cdee54eb7fd3e7923ecc7d4002d21e7af3774376f9a5943c821254a",
@@ -315,6 +328,21 @@
         "trackedPatchSha256": "059056ce6fdd3e7e899e2007b31787e6ecaab22d944aed1ab988ab6419070d37"
       },
       "claimLimit": "Recoverable uncompiled one-production-file partial skeleton, not implementation or evidence. It stopped after the cleanup oracle was found to rely on copied RID validity, which cannot prove renderer-resource release. Raw application is forbidden; only individually reviewed concepts may be reimplemented under the corrected proof protocol."
+    },
+    {
+      "id": "E-PERF-PRESENT-DIRECT-001-V4-PARTIAL-D13422FE",
+      "type": "historical-private-partial-patch-receipt",
+      "path": "workspace/archive/worktrees/wt-fcc66fd352b19432/complete.json",
+      "identity": {
+        "bytes": 1300,
+        "sha256": "48e79dc344a9e0b955d26de001211455efc163ebcfd4ca8851d4b071de1a0a62",
+        "assignmentCommit": "94ebe08b6a274f68fff51838d2b77baa6e63bb06",
+        "stateSha256": "a2b7f554a4641fbc07cce6b6717b8bf25c965b56bd3578c19a1aeafd7d9e2b34",
+        "trackedPatchBytes": 47712,
+        "trackedPatchSha256": "d13422fe551c0ad30296b5dfbd196330d5ca9d53b64d99e29ac2c1e6d2f4f1f6",
+        "review": "independent-production-core-approved-grok-no-terminal-verdict"
+      },
+      "claimLimit": "Recoverable uncommitted two-production-file implementation core, not a completed work item or parity evidence. Independent adversarial review approved its dormant runner-only path, sticky eligibility, SoA rows, exact donor/receipt matching, 12-float dirty buffer upload, CULLED retention, and teardown after concrete fixes. No runner, gate, functional receipt, captures, measurement, or human approval exists; Grok timed out without a code verdict. Raw patch application is forbidden, but the reviewed two-file concepts and hunks may be carefully reapplied under the approved v2 execution protocol."
     },
     {
       "id": "E-PERF-PRESENT-DIRECT-001-REBIND-0ECCB9F2",
@@ -15374,7 +15402,7 @@
       "kind": "performance",
       "priority": "P1",
       "allocationClass": "worker-lane",
-      "status": "in-progress",
+      "status": "pending",
       "domainIds": [
         "runtime-performance"
       ],
@@ -15386,17 +15414,9 @@
         "P0-CORPUS-001"
       ],
       "ownership": {
-        "state": "assigned",
-        "assignee": "codex-perf-present-direct-v4",
-        "ownedPaths": [
-          "game/src/retail_slice/retail_vertical_slice.gd",
-          "game/src/view/member_render_batcher.gd",
-          "game/tests/retail_far_batch_contract_runner.gd",
-          "game/tests/retail_far_batch_contract_runner.gd.uid",
-          "game/tests/retail_far_batch_perf_runner.gd",
-          "game/tests/retail_far_batch_perf_runner.gd.uid",
-          "tools/gate-perf-present-direct.ps1"
-        ],
+        "state": "unassigned",
+        "assignee": null,
+        "ownedPaths": [],
         "candidatePaths": [
           "game/src/retail_slice/retail_vertical_slice.gd",
           "game/src/view/member_render_batcher.gd",
@@ -15408,20 +15428,31 @@
         ]
       },
       "scope": {
-        "deliverable": "A dormant runner-only direct flat presentation path for exactly 66 newly materialized, stationary, idle, visible FAR Gondor fighter battalions with 15 authored members each, plus exact same-process legacy-control equivalence and provisional measured evidence under OWNER-PERF-PRESENT-DIRECT-V1-F12197F3 and OWNER-PERF-PRESENT-DIRECT-PROOF-V1-4BC5E9CC.",
+        "deliverable": "A dormant runner-only direct flat presentation path for exactly 66 newly materialized, stationary, idle, visible FAR Gondor fighter battalions with 15 authored members each, plus exact same-process legacy-control equivalence and provisional measured evidence under OWNER-PERF-PRESENT-DIRECT-V1-F12197F3, OWNER-PERF-PRESENT-DIRECT-PROOF-V1-4BC5E9CC, and OWNER-PERF-PRESENT-DIRECT-EXEC-V2-54DC2D24.",
         "notIncluded": "Normal-game enablement; moving units; selection or data-backed picking; FAR-to-NEAR promotion or demotion; combat, mounts, upgrades, model-condition changes, one-shots, particles, audio, GPU skeletal animation, simulation changes, a reusable benchmark or hydration wrapper, 5,000 units, or a 144 FPS claim."
       },
       "sourceEvidence": [
         "OWNER-PERF-PRESENT-DIRECT-V1-F12197F3",
         "OWNER-PERF-PRESENT-DIRECT-PROOF-V1-4BC5E9CC",
+        "OWNER-PERF-PRESENT-DIRECT-EXEC-V2-54DC2D24",
         "E-PERF-PRESENT-DIRECT-001-V2-PARTIAL-3206358E",
         "E-PERF-PRESENT-DIRECT-001-V3-PARTIAL-059056CE",
+        "E-PERF-PRESENT-DIRECT-001-V4-PARTIAL-D13422FE",
         "E-PERF-PRESENT-DIRECT-001-REBIND-0ECCB9F2"
       ],
       "artifacts": [
+        "workspace/logs/P1-PERF-PRESENT-DIRECT-001/prepared-cache-anchor.json",
         "workspace/logs/P1-PERF-PRESENT-DIRECT-001/functional-receipt.json",
+        "workspace/logs/P1-PERF-PRESENT-DIRECT-001/functional-cache-observation.json",
+        "workspace/logs/P1-PERF-PRESENT-DIRECT-001/control-far-0.png",
+        "workspace/logs/P1-PERF-PRESENT-DIRECT-001/flat-far-0.png",
+        "workspace/logs/P1-PERF-PRESENT-DIRECT-001/control-far-1.png",
+        "workspace/logs/P1-PERF-PRESENT-DIRECT-001/flat-far-1.png",
+        "workspace/logs/P1-PERF-PRESENT-DIRECT-001/measured-launch.json",
         "workspace/logs/P1-PERF-PRESENT-DIRECT-001/measured-receipt.json",
-        "workspace/logs/P1-PERF-PRESENT-DIRECT-001/human-visible-capture-approval.json"
+        "workspace/logs/P1-PERF-PRESENT-DIRECT-001/measured-cache-observation.json",
+        "workspace/logs/P1-PERF-PRESENT-DIRECT-001/human-visible-capture-approval.json",
+        "workspace/logs/P1-PERF-PRESENT-DIRECT-001/human-visible-measurement-witness.json"
       ],
       "acceptance": {
         "requiredLevels": [
