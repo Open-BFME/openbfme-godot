@@ -2602,7 +2602,7 @@
       "dependsOn": [
         "P0-EVIDENCE-001",
         "P0-SELECTION-001",
-        "P0-GATES-001"
+        "P0-GATES-002"
       ],
       "ownership": {
         "state": "unassigned",
@@ -2662,7 +2662,7 @@
               "toolchainProfile": "rotwk-gate-v1"
             }
           ],
-          "availability": "planned-by-P0-GATES-001",
+          "availability": "planned-by-P0-GATES-002",
           "timeoutSeconds": 3600,
           "expectedMarkers": [
             "OPENBFME_WORK_ITEM PASS id=P0-SELECTION-002"
@@ -2842,8 +2842,86 @@
       ],
       "blockers": [
         "independent review rejected commit 0495083a964b78ae95568531fffb74f4d73ba2bb: ignored assignment metadata can redirect canonical main, the resolved Godot executable is unbound, selection is read before full reparse containment, and git-exact producer revision/clean state are shape-only",
-        "the replacement may retain the accepted Windows Job containment and exact marker parser but must close canonical-main, Godot, selection containment, and producer-repository identities before L0 acceptance"
+        "the replacement may retain the accepted Windows Job containment and exact marker parser but must close canonical-main, Godot, selection containment, and producer-repository identities before L0 acceptance",
+        "superseded by P0-GATES-002; the rejected commit 0495083a remains unmerged on work/p0-gates-001 for reference only"
       ]
+    },
+    {
+      "id": "P0-GATES-002",
+      "title": "Replace the rejected canonical work-item gate harness with identity-bound admission",
+      "kind": "verification-foundation",
+      "priority": "P0",
+      "allocationClass": "worker-lane",
+      "status": "pending",
+      "domainIds": [],
+      "rootQueryIds": [],
+      "dependsOn": [
+        "P0-SOURCE-001"
+      ],
+      "ownership": {
+        "state": "unassigned",
+        "assignee": null,
+        "ownedPaths": [],
+        "candidatePaths": [
+          "importer/tests/test_retail_gate_script.py",
+          "tools/gate-rotwk-202.ps1"
+        ]
+      },
+      "scope": {
+        "deliverable": "Carry the accepted Windows Job containment and exact marker parser from rejected commit 0495083a into a history-independent L0 harness whose lane admission discovers canonical main only from the unique registered refs/heads/main worktree, validates the pinned Godot 4.7 console and engine bytes and version before any runtime, contains selection.json and every parent and pack component before reading selection bytes or starting the pack checker, and verifies git-exact producer recipes against the actual producer repository revision.",
+        "notIncluded": "Merging or amending 0495083a, claiming SOURCE or LOAD from synthetic fixtures or legacy-pack rejection, whitelisting known failures, using assertion floors as acceptance, changing run_retail_slice.bat or retail_slice_runner.gd, closing stale defaults tracked by P0-DEFAULTS-001, or building or selecting any pack."
+      },
+      "sourceEvidence": [
+        "E-AUDIT-CURRENT-20260829"
+      ],
+      "artifacts": [
+        "workspace/logs/P0-GATES-002/runtime-gate-negative-tests.json"
+      ],
+      "acceptance": {
+        "requiredLevels": [
+          "L0"
+        ],
+        "requiredOutputDimensions": {
+          "SOURCE": "NOT_REQUIRED",
+          "CONVERT": "NOT_REQUIRED",
+          "LOAD": "NOT_REQUIRED",
+          "BEHAVIOR": "NOT_REQUIRED",
+          "VISUAL": "NOT_REQUIRED",
+          "AUDIO": "NOT_REQUIRED"
+        },
+        "criteria": [
+          "canonical main is discovered only from the unique registered refs/heads/main worktree; an assignment whose mainPath names any other directory, a repository with zero or multiple main worktrees, and a lane assignment that differs from the owner copy are each rejected with a pinned diagnostic",
+          "lane admission binds the exact item, assignee, assignment commit subject and ancestry, branch, row and command digests of the ledger at the assignment commit, the unrevoked current main ledger row, owned paths, and clean executed bytes",
+          "the Godot console and engine executables are resolved only from the canonical main pinned tool root, contained, hashed against the pinned SHA-256 identities, and version-checked before runtime; OPENBFME_GODOT, GODOT_CONSOLE, GODOT_EXE, and GODOT are ignored and a tampered or substituted executable is rejected",
+          "selection.json and every ancestor, pack directory, pack.json, and provenance manifest component are contained and reparse-free before selection bytes are read, before any pack checker starts, and before runtime; a junctioned component is rejected with the pack checker never launched",
+          "git-exact producer provenance verifies that the declared commit exists in the actual producer repository and that every inventory file's bytes equal both the recipe digest and the blob recorded at that commit; an unknown commit, a file that differs from its committed blob, and a dirty-worktree recipe are each rejected",
+          "the selection digest, selected pack identities, and the Godot, Git, Python, PowerShell, gate, runner, and checker hashes are part of one executed identity compared before and after runtime",
+          "retail_slice failed>0, a missing or duplicated RETAIL_SLICE_RESULT, contradictory terminal markers, SKIP, and forbidden diagnostics on stdout or stderr cannot pass; every negative self-test case pins its exact diagnostic",
+          "history-independent synthetic ledger rows and temporary Git fixtures cover blocked, unassigned, unknown, unrelated, non-canonical-main, tampered-executable, junctioned-selection, and producer-revision cases without hard-coded mutable work-item IDs",
+          "every child process runs under a Windows Job with a deterministic timeout, concurrent stream draining, and descendant cleanup",
+          "legacy selections are rejected before runtime and that rejection is never recorded as SOURCE or LOAD acceptance"
+        ]
+      },
+      "verificationCommands": [
+        {
+          "steps": [
+            {
+              "toolRole": "retail-python",
+              "invocation": "script",
+              "target": "importer/tests/test_retail_gate_script.py",
+              "args": [],
+              "toolchainProfile": "retail-python-hermetic-v1"
+            }
+          ],
+          "availability": "pinned-godot-and-private-python",
+          "timeoutSeconds": 900,
+          "expectedMarkers": [
+            "RETAIL_GATE_TESTS PASS"
+          ],
+          "diagnosticPolicy": "strict-default"
+        }
+      ],
+      "blockers": []
     },
     {
       "id": "P0-GATES-LIVE-001",
@@ -2861,7 +2939,7 @@
         "shell-roots"
       ],
       "dependsOn": [
-        "P0-GATES-001",
+        "P0-GATES-002",
         "P0-SELECTION-002"
       ],
       "ownership": {
@@ -9943,7 +10021,7 @@
               "toolchainProfile": "rotwk-gate-v1"
             }
           ],
-          "availability": "planned-by-P0-GATES-001",
+          "availability": "planned-by-P0-GATES-002",
           "timeoutSeconds": 3600,
           "expectedMarkers": [
             "OPENBFME_WORK_ITEM PASS id=P1-DATA-001"
@@ -10034,7 +10112,7 @@
               "toolchainProfile": "rotwk-gate-v1"
             }
           ],
-          "availability": "planned-by-P0-GATES-001",
+          "availability": "planned-by-P0-GATES-002",
           "timeoutSeconds": 7200,
           "expectedMarkers": [
             "OPENBFME_WORK_ITEM PASS id=P1-OBJECT-001"
@@ -10120,7 +10198,7 @@
               "toolchainProfile": "rotwk-gate-v1"
             }
           ],
-          "availability": "planned-by-P0-GATES-001",
+          "availability": "planned-by-P0-GATES-002",
           "timeoutSeconds": 900,
           "expectedMarkers": [
             "OPENBFME_WORK_ITEM PASS id=P1-MODULE-001"
@@ -10209,7 +10287,7 @@
               "toolchainProfile": "rotwk-gate-v1"
             }
           ],
-          "availability": "planned-by-P0-GATES-001",
+          "availability": "planned-by-P0-GATES-002",
           "timeoutSeconds": 3600,
           "expectedMarkers": [
             "OPENBFME_WORK_ITEM PASS id=P1-MODULE-010"
@@ -10298,7 +10376,7 @@
               "toolchainProfile": "rotwk-gate-v1"
             }
           ],
-          "availability": "planned-by-P0-GATES-001",
+          "availability": "planned-by-P0-GATES-002",
           "timeoutSeconds": 3600,
           "expectedMarkers": [
             "OPENBFME_WORK_ITEM PASS id=P1-MODULE-020"
@@ -10387,7 +10465,7 @@
               "toolchainProfile": "rotwk-gate-v1"
             }
           ],
-          "availability": "planned-by-P0-GATES-001",
+          "availability": "planned-by-P0-GATES-002",
           "timeoutSeconds": 3600,
           "expectedMarkers": [
             "OPENBFME_WORK_ITEM PASS id=P1-MODULE-030"
@@ -10476,7 +10554,7 @@
               "toolchainProfile": "rotwk-gate-v1"
             }
           ],
-          "availability": "planned-by-P0-GATES-001",
+          "availability": "planned-by-P0-GATES-002",
           "timeoutSeconds": 3600,
           "expectedMarkers": [
             "OPENBFME_WORK_ITEM PASS id=P1-MODULE-040"
@@ -10568,7 +10646,7 @@
               "toolchainProfile": "rotwk-gate-v1"
             }
           ],
-          "availability": "planned-by-P0-GATES-001",
+          "availability": "planned-by-P0-GATES-002",
           "timeoutSeconds": 5400,
           "expectedMarkers": [
             "OPENBFME_WORK_ITEM PASS id=P1-MODULE-050"
@@ -10660,7 +10738,7 @@
               "toolchainProfile": "rotwk-gate-v1"
             }
           ],
-          "availability": "planned-by-P0-GATES-001",
+          "availability": "planned-by-P0-GATES-002",
           "timeoutSeconds": 7200,
           "expectedMarkers": [
             "OPENBFME_WORK_ITEM PASS id=P1-SIM-001"
@@ -10752,7 +10830,7 @@
               "toolchainProfile": "rotwk-gate-v1"
             }
           ],
-          "availability": "planned-by-P0-GATES-001",
+          "availability": "planned-by-P0-GATES-002",
           "timeoutSeconds": 14400,
           "expectedMarkers": [
             "OPENBFME_WORK_ITEM PASS id=P1-ASSET-001"
@@ -10844,7 +10922,7 @@
               "toolchainProfile": "rotwk-gate-v1"
             }
           ],
-          "availability": "planned-by-P0-GATES-001",
+          "availability": "planned-by-P0-GATES-002",
           "timeoutSeconds": 7200,
           "expectedMarkers": [
             "OPENBFME_WORK_ITEM PASS id=P1-ASSET-002"
@@ -10933,7 +11011,7 @@
               "toolchainProfile": "rotwk-gate-v1"
             }
           ],
-          "availability": "planned-by-P0-GATES-001",
+          "availability": "planned-by-P0-GATES-002",
           "timeoutSeconds": 7200,
           "expectedMarkers": [
             "OPENBFME_WORK_ITEM PASS id=P1-ASSET-003"
@@ -11024,7 +11102,7 @@
               "toolchainProfile": "rotwk-gate-v1"
             }
           ],
-          "availability": "planned-by-P0-GATES-001",
+          "availability": "planned-by-P0-GATES-002",
           "timeoutSeconds": 14400,
           "expectedMarkers": [
             "OPENBFME_WORK_ITEM PASS id=P1-MAP-001"
@@ -11115,7 +11193,7 @@
               "toolchainProfile": "rotwk-gate-v1"
             }
           ],
-          "availability": "planned-by-P0-GATES-001",
+          "availability": "planned-by-P0-GATES-002",
           "timeoutSeconds": 14400,
           "expectedMarkers": [
             "OPENBFME_WORK_ITEM PASS id=P1-MAP-002"
@@ -11208,7 +11286,7 @@
               "toolchainProfile": "rotwk-gate-v1"
             }
           ],
-          "availability": "planned-by-P0-GATES-001",
+          "availability": "planned-by-P0-GATES-002",
           "timeoutSeconds": 7200,
           "expectedMarkers": [
             "OPENBFME_WORK_ITEM PASS id=P1-SCRIPT-001"
@@ -11300,7 +11378,7 @@
               "toolchainProfile": "rotwk-gate-v1"
             }
           ],
-          "availability": "planned-by-P0-GATES-001",
+          "availability": "planned-by-P0-GATES-002",
           "timeoutSeconds": 14400,
           "expectedMarkers": [
             "OPENBFME_WORK_ITEM PASS id=P1-AI-001"
@@ -11395,7 +11473,7 @@
               "toolchainProfile": "rotwk-gate-v1"
             }
           ],
-          "availability": "planned-by-P0-GATES-001",
+          "availability": "planned-by-P0-GATES-002",
           "timeoutSeconds": 7200,
           "expectedMarkers": [
             "OPENBFME_WORK_ITEM PASS id=P1-UI-001"
@@ -11486,7 +11564,7 @@
               "toolchainProfile": "rotwk-gate-v1"
             }
           ],
-          "availability": "planned-by-P0-GATES-001",
+          "availability": "planned-by-P0-GATES-002",
           "timeoutSeconds": 7200,
           "expectedMarkers": [
             "OPENBFME_WORK_ITEM PASS id=P1-AUDIO-001"
@@ -11574,7 +11652,7 @@
               "toolchainProfile": "rotwk-gate-v1"
             }
           ],
-          "availability": "planned-by-P0-GATES-001",
+          "availability": "planned-by-P0-GATES-002",
           "timeoutSeconds": 14400,
           "expectedMarkers": [
             "OPENBFME_WORK_ITEM PASS id=P1-AUDIO-002"
@@ -11664,7 +11742,7 @@
               "toolchainProfile": "rotwk-gate-v1"
             }
           ],
-          "availability": "planned-by-P0-GATES-001",
+          "availability": "planned-by-P0-GATES-002",
           "timeoutSeconds": 14400,
           "expectedMarkers": [
             "OPENBFME_WORK_ITEM PASS id=P1-ORACLE-001"
@@ -11756,7 +11834,7 @@
               "toolchainProfile": "rotwk-gate-v1"
             }
           ],
-          "availability": "planned-by-P0-GATES-001",
+          "availability": "planned-by-P0-GATES-002",
           "timeoutSeconds": 14400,
           "expectedMarkers": [
             "OPENBFME_WORK_ITEM PASS id=P1-VISUAL-001"
@@ -11849,7 +11927,7 @@
               "toolchainProfile": "rotwk-gate-v1"
             }
           ],
-          "availability": "planned-by-P0-GATES-001",
+          "availability": "planned-by-P0-GATES-002",
           "timeoutSeconds": 28800,
           "expectedMarkers": [
             "OPENBFME_WORK_ITEM PASS id=P1-QUAL-001 claim=rotwk-202-v9.7.7-skirmish-complete"
@@ -11937,7 +12015,7 @@
               "toolchainProfile": "rotwk-gate-v1"
             }
           ],
-          "availability": "planned-by-P0-GATES-001",
+          "availability": "planned-by-P0-GATES-002",
           "timeoutSeconds": 14400,
           "expectedMarkers": [
             "OPENBFME_WORK_ITEM PASS id=P2-CAMPAIGN-001"
@@ -12027,7 +12105,7 @@
               "toolchainProfile": "rotwk-gate-v1"
             }
           ],
-          "availability": "planned-by-P0-GATES-001",
+          "availability": "planned-by-P0-GATES-002",
           "timeoutSeconds": 14400,
           "expectedMarkers": [
             "OPENBFME_WORK_ITEM PASS id=P2-CAMPAIGN-002"
@@ -12113,7 +12191,7 @@
               "toolchainProfile": "rotwk-gate-v1"
             }
           ],
-          "availability": "planned-by-P0-GATES-001",
+          "availability": "planned-by-P0-GATES-002",
           "timeoutSeconds": 28800,
           "expectedMarkers": [
             "OPENBFME_WORK_ITEM PASS id=P2-CAMPAIGN-003"
@@ -12199,7 +12277,7 @@
               "toolchainProfile": "rotwk-gate-v1"
             }
           ],
-          "availability": "planned-by-P0-GATES-001",
+          "availability": "planned-by-P0-GATES-002",
           "timeoutSeconds": 7200,
           "expectedMarkers": [
             "OPENBFME_WORK_ITEM PASS id=P2-WOTR-001"
@@ -12286,7 +12364,7 @@
               "toolchainProfile": "rotwk-gate-v1"
             }
           ],
-          "availability": "planned-by-P0-GATES-001",
+          "availability": "planned-by-P0-GATES-002",
           "timeoutSeconds": 14400,
           "expectedMarkers": [
             "OPENBFME_WORK_ITEM PASS id=P2-WOTR-002"
@@ -12375,7 +12453,7 @@
               "toolchainProfile": "rotwk-gate-v1"
             }
           ],
-          "availability": "planned-by-P0-GATES-001",
+          "availability": "planned-by-P0-GATES-002",
           "timeoutSeconds": 28800,
           "expectedMarkers": [
             "OPENBFME_WORK_ITEM PASS id=P2-WOTR-003"
@@ -12464,7 +12542,7 @@
               "toolchainProfile": "rotwk-gate-v1"
             }
           ],
-          "availability": "planned-by-P0-GATES-001",
+          "availability": "planned-by-P0-GATES-002",
           "timeoutSeconds": 7200,
           "expectedMarkers": [
             "OPENBFME_WORK_ITEM PASS id=P2-CAH-001"
@@ -12554,7 +12632,7 @@
               "toolchainProfile": "rotwk-gate-v1"
             }
           ],
-          "availability": "planned-by-P0-GATES-001",
+          "availability": "planned-by-P0-GATES-002",
           "timeoutSeconds": 14400,
           "expectedMarkers": [
             "OPENBFME_WORK_ITEM PASS id=P2-CAH-002"
@@ -12644,7 +12722,7 @@
               "toolchainProfile": "rotwk-gate-v1"
             }
           ],
-          "availability": "planned-by-P0-GATES-001",
+          "availability": "planned-by-P0-GATES-002",
           "timeoutSeconds": 14400,
           "expectedMarkers": [
             "OPENBFME_WORK_ITEM PASS id=P2-SHELL-001"
@@ -12739,7 +12817,7 @@
               "toolchainProfile": "rotwk-gate-v1"
             }
           ],
-          "availability": "planned-by-P0-GATES-001",
+          "availability": "planned-by-P0-GATES-002",
           "timeoutSeconds": 14400,
           "expectedMarkers": [
             "OPENBFME_WORK_ITEM PASS id=P2-SHELL-002"
@@ -12822,7 +12900,7 @@
               "toolchainProfile": "rotwk-gate-v1"
             }
           ],
-          "availability": "planned-by-P0-GATES-001",
+          "availability": "planned-by-P0-GATES-002",
           "timeoutSeconds": 28800,
           "expectedMarkers": [
             "OPENBFME_WORK_ITEM PASS id=P2-NET-001"
@@ -12907,7 +12985,7 @@
               "toolchainProfile": "rotwk-gate-v1"
             }
           ],
-          "availability": "planned-by-P0-GATES-001",
+          "availability": "planned-by-P0-GATES-002",
           "timeoutSeconds": 7200,
           "expectedMarkers": [
             "OPENBFME_WORK_ITEM PASS id=P2-MOD-001"
@@ -13003,7 +13081,7 @@
               "toolchainProfile": "rotwk-gate-v1"
             }
           ],
-          "availability": "planned-by-P0-GATES-001",
+          "availability": "planned-by-P0-GATES-002",
           "timeoutSeconds": 43200,
           "expectedMarkers": [
             "OPENBFME_WORK_ITEM PASS id=P2-QUAL-001 claim=rotwk-202-v9.7.7-complete"
@@ -13096,7 +13174,7 @@
               "toolchainProfile": "rotwk-gate-v1"
             }
           ],
-          "availability": "planned-by-P0-GATES-001",
+          "availability": "planned-by-P0-GATES-002",
           "timeoutSeconds": 43200,
           "expectedMarkers": [
             "OPENBFME_WORK_ITEM PASS id=P2-RELEASE-001"
