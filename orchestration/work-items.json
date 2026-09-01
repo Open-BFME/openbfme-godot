@@ -229,6 +229,20 @@
       "claimLimit": "Accepted bounded semantics-free SQLite, lookup, canonical shard, streaming manifest, diagnostic, and publication contract only; exact main integration command and independent rerun passed with no skipped stage. No retail SOURCE, reconstruction, CONVERT, LOAD, BEHAVIOR, VISUAL, or AUDIO evidence."
     },
     {
+      "id": "OWNER-SEMANTIC-CONFORMANCE-V1-948813EA",
+      "type": "private-owner-contract",
+      "path": "workspace/logs/P0-CORPUS-SCHEMA-CONFORMANCE-002/conformance-design-v1.md",
+      "identity": {
+        "bytes": 56447,
+        "sha256": "948813ea6ebd43772ba0492de4a1c5a3bbb2eb958d04fba822e910622a6cf74d",
+        "normativeSchemaSha256": "d5f9d8fc12a631156b4c3b73737f23faae8e40c71b7577a800e06f6c2e39090c",
+        "coreArtifactSha256": "83dad1c2c2baa297fefb24e77e181fdf8d9c5ff299f14dcf01c694db09caa89a",
+        "storeArtifactSha256": "73db49572aa08f32da7b2620ffab2cd62b5158180cc843f2c3b0ac828b7ad38e",
+        "review": "independent-critic-and-direct-grok-approved"
+      },
+      "claimLimit": "Normative bounded relational-internal-consistency validator contract over one accepted STORE snapshot. Source/archive completeness, lexical and parser-fact completeness, non-output preimages, graph production, physical shards, live census, and every product evidence dimension remain explicitly deferred."
+    },
+    {
       "id": "E-SEMANTIC-CONFORMANCE-001-AUTHORITY-GAP-E79CB743",
       "type": "historical-private-terminal-receipt",
       "path": "workspace/archive/P0-CORPUS-SCHEMA-CONFORMANCE-001/20260901T-authority-gap/STATUS.md",
@@ -1416,6 +1430,83 @@
       "blockers": [
         "The worker returned clean before editing because this row required source reconstruction and live counts while excluding graph production and providing no CONFORMANCE API, adapter, diagnostic, or artifact authority. The assignment and exact clean state are archived at workspace/archive/P0-CORPUS-SCHEMA-CONFORMANCE-001/20260901T-authority-gap. Do not implement this row; replace it only with a reviewed owner-authored bounded relational conformance successor."
       ]
+    },
+    {
+      "id": "P0-CORPUS-SCHEMA-CONFORMANCE-002",
+      "title": "Implement bounded relational semantic conformance",
+      "kind": "source-foundation",
+      "priority": "P0",
+      "allocationClass": "worker-lane",
+      "status": "pending",
+      "domainIds": [],
+      "rootQueryIds": [],
+      "dependsOn": [
+        "P0-CORPUS-SCHEMA-CORE-002",
+        "P0-CORPUS-SCHEMA-STORE-001"
+      ],
+      "ownership": {
+        "state": "unassigned",
+        "assignee": null,
+        "ownedPaths": [],
+        "candidatePaths": [
+          "importer/openbfme_importer/semantic_graph_conformance.py",
+          "importer/tests/test_rotwk_202_semantic_graph_conformance.py",
+          "tools/check-rotwk-202-semantic-conformance.py"
+        ]
+      },
+      "scope": {
+        "deliverable": "A bounded deterministic relational-internal-consistency validator over one finalized accepted STORE snapshot, with the closed public API, trust boundary, diagnostics, resource precedence, digest transcript, artifact byte contract, and focused proof frozen by OWNER-SEMANTIC-CONFORMANCE-V1-948813EA.",
+        "notIncluded": "Source or archive authentication; lexical, parser-fact, evidence-preimage, or residual-reason completeness; graph production; supplied-instance physical shard validation; live v9.7.7 census; retail SOURCE, CONVERT, LOAD, BEHAVIOR, VISUAL, or AUDIO acceptance; an adapter or compatibility facade."
+      },
+      "sourceEvidence": [
+        "OWNER-SEMANTIC-CONFORMANCE-V1-948813EA",
+        "E-SEMANTIC-CORE-002-83DAD1C2",
+        "E-SEMANTIC-STORE-001-73DB4957"
+      ],
+      "artifacts": [
+        "workspace/logs/P0-CORPUS-SCHEMA-CONFORMANCE-002/semantic-conformance-contract.json"
+      ],
+      "acceptance": {
+        "requiredLevels": [
+          "L0"
+        ],
+        "requiredOutputDimensions": {
+          "SOURCE": "NOT_REQUIRED",
+          "CONVERT": "NOT_REQUIRED",
+          "LOAD": "NOT_REQUIRED",
+          "BEHAVIOR": "NOT_REQUIRED",
+          "VISUAL": "NOT_REQUIRED",
+          "AUDIO": "NOT_REQUIRED"
+        },
+        "criteria": [
+          "the exact reviewed owner contract and accepted CORE/STORE identities are verified before one concrete finalized SemanticGraphStore is read exactly once per ALL_TABLES member; all later work uses the private snapshot and the caller store is never mutated or closed",
+          "the validator independently recomputes every derivable row identity, foreign key, owner, per-family candidate set, occurrence consequence, all 50 edge relations, selectors, eight roots, residuals, domain and map dispositions, counts, backlinks, and graph digest while every source-preimage-only assertion remains explicitly trusted or deferred",
+          "the closed local value walk, observed-once logical output accounting, separate private scratch limits, diagnostic precedence, public records and exception, artifact paths and identities, canonical JSON bytes, implementation closure, and applied resource-code list exactly match OWNER-SEMANTIC-CONFORMANCE-V1-948813EA",
+          "focused literal hostile fixtures reach every relational, bound, diagnostic, ordering, digest, API, and artifact branch through the frozen private snapshot-row seam; end-to-end fixtures use only the accepted STORE public lifecycle and no test claims a deferred source, physical-shard, live-census, or product-evidence result"
+        ]
+      },
+      "verificationCommands": [
+        {
+          "steps": [
+            {
+              "toolRole": "python",
+              "invocation": "script",
+              "target": "tools/check-rotwk-202-semantic-conformance.py",
+              "args": [
+                "--check"
+              ],
+              "toolchainProfile": "python-hermetic-v1"
+            }
+          ],
+          "availability": "planned",
+          "timeoutSeconds": 300,
+          "expectedMarkers": [
+            "ROTWK_202_SEMANTIC_CONFORMANCE PASS"
+          ],
+          "diagnosticPolicy": "strict-default"
+        }
+      ],
+      "blockers": []
     },
     {
       "id": "P0-CORPUS-SCHEMA-001",
