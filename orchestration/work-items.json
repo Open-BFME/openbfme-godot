@@ -14178,7 +14178,7 @@
       "kind": "performance",
       "priority": "P1",
       "allocationClass": "worker-lane",
-      "status": "in-progress",
+      "status": "blocked",
       "domainIds": [
         "runtime-performance"
       ],
@@ -14189,14 +14189,9 @@
         "P0-REPO-AMBIENT-MOD-001"
       ],
       "ownership": {
-        "state": "assigned",
-        "assignee": "codex-perf-sim-roster-v3",
-        "ownedPaths": [
-          "game/src/retail_slice/retail_slice_sim.gd",
-          "game/src/retail_slice/retail_sim_contracts_behaviors.gd",
-          "game/tests/retail_sim_roster_runner.gd",
-          "tools/gate-perf-sim-roster.ps1"
-        ],
+        "state": "unassigned",
+        "assignee": null,
+        "ownedPaths": [],
         "candidatePaths": [
           "game/src/retail_slice/retail_slice_sim.gd",
           "game/src/retail_slice/retail_sim_contracts_behaviors.gd",
@@ -14254,7 +14249,9 @@
           "diagnosticPolicy": "strict-default"
         }
       ],
-      "blockers": []
+      "blockers": [
+        "The corrected 335-entity oracle completed both 600-tick equivalence cases and both 100-sample direct measurement phases in 181986 ms with no state, event, coverage, or diagnostic mismatch, but the optimized empty-policy direct p99 ratio was 1.0888 against the required maximum 0.85. Independent review found no measurement defect: calls were individually timed, evenly alternated, warmed, and isolated from oracle/progress work. No implementation commit, report, handoff, or acceptance exists; the dirty uncommitted lane is retained as rejected evidence and this refactor must not land."
+      ]
     },
     {
       "id": "P1-PERF-GPU-ANIM-001",
