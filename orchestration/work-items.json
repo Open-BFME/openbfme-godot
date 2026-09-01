@@ -179,7 +179,7 @@
       "identity": {
         "sha256": "d5f9d8fc12a631156b4c3b73737f23faae8e40c71b7577a800e06f6c2e39090c"
       },
-      "claimLimit": "Normative semantic schema registries and expected vectors only; not retail SOURCE, CONVERT, LOAD, BEHAVIOR, VISUAL, or AUDIO evidence. Authority addendum: canonical P0-CORPUS-SCHEMA-CORE-001 ownership supersedes design-v4 sections 1 and 1.1 only where they name the rejected facade's three old paths or require CORE to derive that old source-schema closure; CORE changes only its three semantic_graph_contract paths and declares the source-schema input symbol and shape, while closure derivation belongs to P0-CORPUS-SCHEMA-001."
+      "claimLimit": "Normative semantic schema registries and expected vectors only; not retail SOURCE, CONVERT, LOAD, BEHAVIOR, VISUAL, or AUDIO evidence. Authority addendum: canonical P0-CORPUS-SCHEMA-CORE-002 ownership supersedes design-v4 sections 1 and 1.1 only where they name the rejected facade's three old paths or require CORE to derive that old source-schema closure; CORE changes only its three semantic_graph_contract paths and declares the source-schema input symbol and shape, while closure derivation belongs to P0-CORPUS-SCHEMA-001."
     },
     {
       "id": "E-BL-202",
@@ -879,24 +879,20 @@
     },
     {
       "id": "P0-CORPUS-SCHEMA-CORE-001",
-      "title": "Define the closed semantic graph contract without storage or closure logic",
+      "title": "Rejected semantic graph core packet without its declared artifact",
       "kind": "source-foundation",
       "priority": "P0",
       "allocationClass": "worker-lane",
-      "status": "in-progress",
+      "status": "blocked",
       "domainIds": [],
       "rootQueryIds": [],
       "dependsOn": [
         "P0-CORPUS-002"
       ],
       "ownership": {
-        "state": "assigned",
-        "assignee": "codex-schema-core",
-        "ownedPaths": [
-          "importer/openbfme_importer/semantic_graph_contract.py",
-          "importer/tests/test_rotwk_202_semantic_graph_contract.py",
-          "tools/check-rotwk-202-semantic-contract.py"
-        ],
+        "state": "unassigned",
+        "assignee": null,
+        "ownedPaths": [],
         "candidatePaths": [
           "importer/openbfme_importer/semantic_graph_contract.py",
           "importer/tests/test_rotwk_202_semantic_graph_contract.py",
@@ -953,6 +949,48 @@
           "diagnosticPolicy": "strict-default"
         }
       ],
+      "blockers": [
+        "Commit d6fde23a passed Ponytail, the exact worker command, and the exact independent review command, but both receipts report declared semantic-contract-core.json missing with empty artifactDigests. The clean unmerged commit, binary diff, bundle, Grok log, and receipts are recoverably archived at workspace/archive/P0-CORPUS-SCHEMA-CORE-001/20260901T042809-0400. Do not accept or merge it directly; replace through P0-CORPUS-SCHEMA-CORE-002."
+      ]
+    },
+    {
+      "id": "P0-CORPUS-SCHEMA-CORE-002",
+      "title": "Publish the reviewed semantic core with a deterministic artifact",
+      "kind": "source-foundation",
+      "priority": "P0",
+      "allocationClass": "worker-lane",
+      "status": "pending",
+      "domainIds": [],
+      "rootQueryIds": [],
+      "dependsOn": ["P0-CORPUS-002"],
+      "ownership": {
+        "state": "unassigned",
+        "assignee": null,
+        "ownedPaths": [],
+        "candidatePaths": [
+          "importer/openbfme_importer/semantic_graph_contract.py",
+          "importer/tests/test_rotwk_202_semantic_graph_contract.py",
+          "tools/check-rotwk-202-semantic-contract.py"
+        ]
+      },
+      "scope": {
+        "deliverable": "Carry the independently reviewed CORE-001 implementation into one fresh implementation commit and make the exact checker deterministically publish and self-verify the declared semantic-contract-core.json artifact and digest.",
+        "notIncluded": "Changing accepted registries or validators without a new source finding, adding SQLite/I/O to the contract module, storage/traversal/APT/projection work, accepting the archived commit directly, amending it, or generating an ad hoc artifact outside the exact command."
+      },
+      "sourceEvidence": ["OWNER-SEMANTIC-SCHEMA-V4-D5F9D8FC"],
+      "artifacts": ["workspace/logs/P0-CORPUS-SCHEMA-CORE-002/semantic-contract-core.json"],
+      "acceptance": {
+        "requiredLevels": ["L0"],
+        "requiredOutputDimensions": {"SOURCE": "NOT_REQUIRED", "CONVERT": "NOT_REQUIRED", "LOAD": "NOT_REQUIRED", "BEHAVIOR": "NOT_REQUIRED", "VISUAL": "NOT_REQUIRED", "AUDIO": "NOT_REQUIRED"},
+        "criteria": [
+          "the worker verifies the archived STATUS.md, history bundle, binary diff, commit d6fde23a, three final file hashes, and independent rejection receipt, then applies that single commit with no-commit semantics so the successor still produces exactly one normal Ponytail-reviewed implementation commit",
+          "the independently reviewed archived CORE-001 registry and validator semantics remain byte- or AST-equivalent except for independently reviewed changes required to expose one canonical serialization function; all literal registries, hostile fixtures, owner authority addenda, and named-limit precedence stay exact",
+          "the exact checker serializes one closed artifact containing schema/version, baseline and owner-design identity, every immutable registry and bound in declared order, independently expected vector/digests, implementation closure digests, and no private retail payload or ambient path",
+          "artifact bytes are canonical UTF-8 LF JSON with fixed field/key/row order; the checker reparses and independently validates every field/count/digest against literal fixture expectations, writes atomically under the declared lane log root, and two isolated serializations are byte-identical",
+          "the exact command fails if the artifact is missing, stale, outside the lane log root, self-inconsistent, not reconstructable from committed code, or different between runs; handoff and independent review must bind its non-empty SHA-256 in artifactDigests"
+        ]
+      },
+      "verificationCommands": [{"steps": [{"toolRole": "python", "invocation": "script", "target": "tools/check-rotwk-202-semantic-contract.py", "args": ["--check"], "toolchainProfile": "python-hermetic-v1"}], "availability": "planned", "timeoutSeconds": 180, "expectedMarkers": ["ROTWK_202_SEMANTIC_CONTRACT PASS"], "diagnosticPolicy": "strict-default"}],
       "blockers": []
     },
     {
@@ -965,7 +1003,7 @@
       "domainIds": [],
       "rootQueryIds": [],
       "dependsOn": [
-        "P0-CORPUS-SCHEMA-CORE-001"
+        "P0-CORPUS-SCHEMA-CORE-002"
       ],
       "ownership": {
         "state": "unassigned",
@@ -1026,7 +1064,7 @@
         }
       ],
       "blockers": [
-        "P0-CORPUS-SCHEMA-CORE-001 must first freeze the literal contract and reachable bound precedence consumed by this storage layer."
+        "P0-CORPUS-SCHEMA-CORE-002 must first publish the reviewed literal contract, reachable bound precedence, and deterministic artifact consumed by this storage layer."
       ]
     },
     {
@@ -1039,7 +1077,7 @@
       "domainIds": [],
       "rootQueryIds": [],
       "dependsOn": [
-        "P0-CORPUS-SCHEMA-CORE-001",
+        "P0-CORPUS-SCHEMA-CORE-002",
         "P0-CORPUS-SCHEMA-STORE-001"
       ],
       "ownership": {
@@ -1114,7 +1152,7 @@
       "domainIds": [],
       "rootQueryIds": [],
       "dependsOn": [
-        "P0-CORPUS-SCHEMA-CORE-001",
+        "P0-CORPUS-SCHEMA-CORE-002",
         "P0-CORPUS-SCHEMA-STORE-001",
         "P0-CORPUS-SCHEMA-CONFORMANCE-001"
       ],
@@ -14187,7 +14225,7 @@
         }
       ],
       "blockers": [
-        "Predecessor 003 stopped on unstable cold reference pixels. The three exact 004 attempts then stopped before any candidate measurement on, respectively, a missing isolated fog import, whole-project Godot import heap corruption, and a malformed 122 KB PowerShell proof harness that wrote System.Object[] instead of seven autoload declarations. No implementation commit exists. The four-file packet, stale base telemetry, captures, and Grok sessions are recoverably archived under ignored workspace/archive/P1-PERF-PRESENT-004; do not cherry-pick it or treat its reference-only measurements as candidate evidence. Replace through P1-PERF-PRIVATE-GODOT-002 and P1-PERF-PRESENT-005."
+        "Predecessor 003 stopped on unstable cold reference pixels. The three exact 004 attempts then stopped before any candidate measurement on, respectively, a missing isolated fog import, whole-project Godot import heap corruption, and a malformed 122 KB PowerShell proof harness that wrote System.Object[] instead of seven autoload declarations. No implementation commit exists. The four-file packet, stale base telemetry, captures, and Grok sessions are recoverably archived under ignored workspace/archive/P1-PERF-PRESENT-004; do not cherry-pick it or treat its reference-only measurements as candidate evidence. Replace through P1-PERF-PRIVATE-GODOT-003 and P1-PERF-PRESENT-005."
       ]
     },
     {
@@ -14260,29 +14298,25 @@
         }
       ],
       "blockers": [
-        "The final hard-capped exact run passed archive and overlay setup but failed before Godot import/check because Get-PrivateGodotOrdinalSort pipeline-unrolled its one-row typed array to a scalar and strict-mode .Count failed. No contract, implementation commit, handoff, or push exists; exact owned bytes, Grok logs, failure history, and successor audit are recoverably archived at workspace/archive/P1-PERF-PRIVATE-GODOT-001/20260901T035644-0400. Replace only through P1-PERF-PRIVATE-GODOT-002."
+        "The final hard-capped exact run passed archive and overlay setup but failed before Godot import/check because Get-PrivateGodotOrdinalSort pipeline-unrolled its one-row typed array to a scalar and strict-mode .Count failed. No contract, implementation commit, handoff, or push exists; exact owned bytes, Grok logs, failure history, and successor audit are recoverably archived at workspace/archive/P1-PERF-PRIVATE-GODOT-001/20260901T035644-0400. Its 002 replacement is also terminal-blocked and the active successor is P1-PERF-PRIVATE-GODOT-003."
       ]
     },
     {
       "id": "P1-PERF-PRIVATE-GODOT-002",
-      "title": "Land the reviewed private Godot proof harness with stable array shape",
+      "title": "Blocked private Godot proof at unexplained post-import mutation",
       "kind": "performance-infrastructure",
       "priority": "P1",
       "allocationClass": "worker-lane",
-      "status": "in-progress",
+      "status": "blocked",
       "domainIds": [
         "runtime-performance"
       ],
       "rootQueryIds": [],
       "dependsOn": [],
       "ownership": {
-        "state": "assigned",
-        "assignee": "codex-private-godot-v2",
-        "ownedPaths": [
-          "tools/private-godot-proof.ps1",
-          "tools/check-private-godot-proof.ps1",
-          "tools/tests/private-godot-proof-fixtures.ps1"
-        ],
+        "state": "unassigned",
+        "assignee": null,
+        "ownedPaths": [],
         "candidatePaths": [
           "tools/private-godot-proof.ps1",
           "tools/check-private-godot-proof.ps1",
@@ -14337,6 +14371,51 @@
           "diagnosticPolicy": "strict-default"
         }
       ],
+      "blockers": [
+        "The final exact run passed strict empty/single/many shape checks, Git census/archive, both extractions, overlays, and pre-import census, then the first real reduced Godot import changed source beyond predeclared .gd.uid sidecars. The proof correctly refused before closure transfer/check-only, but scratch cleanup deleted the expected/actual delta rows, so root cause is not reconstructable and no contract/commit/handoff exists. Exact owned bytes, logs, Grok disposition, and status are archived at workspace/archive/P1-PERF-PRIVATE-GODOT-002/20260901T041754-0400. Replace diagnostically through P1-PERF-PRIVATE-GODOT-003 without relaxing the UID-only rule."
+      ]
+    },
+    {
+      "id": "P1-PERF-PRIVATE-GODOT-003",
+      "title": "Diagnose and close the exact reduced-import source delta",
+      "kind": "performance-infrastructure",
+      "priority": "P1",
+      "allocationClass": "worker-lane",
+      "status": "pending",
+      "domainIds": ["runtime-performance"],
+      "rootQueryIds": [],
+      "dependsOn": [],
+      "ownership": {
+        "state": "unassigned",
+        "assignee": null,
+        "ownedPaths": [],
+        "candidatePaths": [
+          "tools/private-godot-proof.ps1",
+          "tools/check-private-godot-proof.ps1",
+          "tools/tests/private-godot-proof-fixtures.ps1"
+        ]
+      },
+      "scope": {
+        "deliverable": "Carry the reviewed private proof forward, persist bounded expected and actual post-import source deltas before cleanup on every refusal, reproduce the exact mutation once, classify its path and raw bytes, and then close only the evidenced deterministic UID-bearing resource case before producing a fresh accepted contract.",
+        "notIncluded": "Blindly allowing arbitrary source mutation, guessing that the path is a shader UID, deleting scratch before evidence publication, changing presentation policy, running a 5000-member workload, broad retries, or reusing any 001/002 run as acceptance."
+      },
+      "sourceEvidence": [],
+      "artifacts": [
+        "workspace/logs/P1-PERF-PRIVATE-GODOT-003/private-godot-proof-contract.json",
+        "workspace/logs/P1-PERF-PRIVATE-GODOT-003/post-import-source-delta.json"
+      ],
+      "acceptance": {
+        "requiredLevels": ["L0"],
+        "requiredOutputDimensions": {"SOURCE": "NOT_REQUIRED", "CONVERT": "NOT_REQUIRED", "LOAD": "NOT_REQUIRED", "BEHAVIOR": "NOT_REQUIRED", "VISUAL": "NOT_REQUIRED", "AUDIO": "NOT_REQUIRED"},
+        "criteria": [
+          "the worker verifies the 002 STATUS.md and all archived hashes, independently re-reviews the three files, and carries them with no intermediate commit; strict array-shape, archive, overlay, process, import, closure, receipt, and hostile boundaries remain intact",
+          "before any cleanup or refusal, the exact checker atomically persists a bounded diagnostic artifact containing pre/post source manifest digests, sorted expected and actual delta rows with byte counts and SHA-256 values, symmetric difference, process identity/exit/diagnostics, Godot identity, and no private payload bytes",
+          "one diagnostic run reproduces the 002 refusal and its persisted evidence is independently reviewed before policy changes; if the mutation is not one deterministic UID sidecar for an explicitly hydrated UID-bearing source, or varies across fresh control/candidate imports, the item remains blocked",
+          "only after exact evidence may the source UID census and allowlist be generalized from GDScript to a closed literal set of explicitly hydrated UID-bearing resource suffixes; every expected sidecar path is predeclared, raw bytes are canonical and content-bound per tree, and any other source delta still refuses",
+          "the final exact run persists stdout/stderr and the diagnostic artifact even on failure, completes independent control/candidate import plus strict check-only with stable source/cache identities, publishes a fresh reconstructable proof contract, and handoff/review bind non-empty digests for both declared artifacts"
+        ]
+      },
+      "verificationCommands": [{"steps": [{"toolRole": "powershell", "invocation": "script", "target": "tools/check-private-godot-proof.ps1", "args": [], "toolchainProfile": "rotwk-gate-v1"}], "availability": "pinned-godot", "timeoutSeconds": 600, "expectedMarkers": ["PRIVATE_GODOT_PROOF PASS"], "diagnosticPolicy": "strict-default"}],
       "blockers": []
     },
     {
@@ -14355,7 +14434,7 @@
       "dependsOn": [
         "P0-SOURCE-001",
         "P0-CORPUS-001",
-        "P1-PERF-PRIVATE-GODOT-002"
+        "P1-PERF-PRIVATE-GODOT-003"
       ],
       "ownership": {
         "state": "unassigned",
@@ -14393,7 +14472,7 @@
         },
         "criteria": [
           "the two production files are reviewed independently from the rejected archive and implement one readable flat batch architecture: every NEAR/MID or stateful/refused battalion retains the shipping presenter, ordinary visible FAR/CULLED members occupy exact model-team MultiMesh groups, fog-hidden members contribute no instance, and lifecycle cleanup releases all nodes/RIDs/rows",
-          "the compact feature gate delegates all archive, overlay, hydration, import, parse, source/cache manifest, and process-root work to the accepted P1-PERF-PRIVATE-GODOT-002 helper and contains only presentation-specific fixture, identity, parity, and threshold assertions",
+          "the compact feature gate delegates all archive, overlay, hydration, import, parse, source/cache manifest, and process-root work to the accepted P1-PERF-PRIVATE-GODOT-003 helper and contains only presentation-specific fixture, identity, parity, and threshold assertions",
           "three fresh frozen-base visual processes complete one fixed untimed materialization warmup and explicit draw/sync/post-draw barrier; all raw buffers and PNGs agree unanimously before the candidate launches and the candidate exactly matches the designated control at both animation times across near/mid, far/culled, fog, reveal, selection, mount, one-shot, and structured-refusal cases",
           "selection.activePack is the exact RotWK locator, the BFME2 capability host is one exact supplemental locator, and independent pack/manifest hashes plus ModLoader.runtime_pack_report prove exact selected-plus-supplement membership/order with zero fallback, ambient, foreign, missing, extra, diagnostic, or supplement failure",
           "actual frozen-base and candidate processes each record at least 100 direct samples at 1000 and 5000 moving members; presentation-sync p99 is at most 0.70 times base, CPU-frame p99 at most 0.85, GPU p99 at most 1.05, simulation/picking/transform/visibility hashes are exact, and repeated remove/restart leaves zero residue",
@@ -14420,7 +14499,7 @@
         }
       ],
       "blockers": [
-        "P1-PERF-PRIVATE-GODOT-002 must first land an independently accepted reusable private-tree and hydration proof primitive with stable PowerShell empty/single/many array shape."
+        "P1-PERF-PRIVATE-GODOT-003 must first land an independently accepted reusable private-tree and hydration proof primitive with persisted post-import source-delta evidence."
       ]
     },
     {
