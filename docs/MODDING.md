@@ -6,7 +6,8 @@ under `workspace/` (see [ONBOARDING.md](ONBOARDING.md)).
 
 Two ideas, keep them separate:
 
-1. **Loose packs (works today)** - drop a folder with `pack.json` and overrides.
+1. **Explicit development packs (works today)** - create a folder with
+   `pack.json` and overrides, then name that pack or its selection explicitly.
    Good for local experiments. Not a multiplayer parity contract.
 2. **Production sim vs presentation packs (target)** - strict manifests and
    digests so multiplayer stays fair. Policy lives in
@@ -22,14 +23,18 @@ Two ideas, keep them separate:
 | **Presentation** | Looks/sounds (meshes, UI art, music). Can differ between players later. |
 | **Fail closed** | Missing required data = error, not silent fake content. |
 
-## Quick start: the example mod in this repo
+## Example mod in this repo
 
-There is a real example under `game/mods/example_hard_orcs/`.
+The non-shipping example lives under `examples/mods/example_hard_orcs/`.
+It is outside the exported Godot project on purpose: packs found under
+`game/mods/` or `user://mods` are diagnosed as ambient content and are **not**
+mounted. The runtime loads only an explicit pack root or an explicit
+`selection.json` load set.
 
 **Layout:**
 
 ```text
-game/mods/example_hard_orcs/
+examples/mods/example_hard_orcs/
   pack.json
   units/orc.json
 ```
@@ -57,34 +62,48 @@ game/mods/example_hard_orcs/
 }
 ```
 
-How to try it (loose / dev lane, not a retail multiplayer proof):
+How to inspect it by itself (loose / dev lane, not a retail multiplayer proof):
 
-1. Keep `game/mods/example_hard_orcs/` in the tree (already committed).
-2. Set Godot and launch the client:
+1. Copy the example outside `game/` to a writable development folder:
    ```bat
+   xcopy /E /I examples\mods\example_hard_orcs C:\OpenBFME-Mods\example_hard_orcs
+   ```
+2. Select that copied pack root explicitly, set Godot, and launch:
+   ```bat
+   set OPENBFME_CONTENT=C:\OpenBFME-Mods\example_hard_orcs
    set OPENBFME_GODOT=C:\Path\To\Godot_v4.7-stable_win64_console.exe
    run_game.bat
    ```
-3. Loose packs under `game/mods/` load with base game data for local experiments.
-4. Higher `priority` wins on the same object `id`. This example uses
-   `"priority": 50`. Converted **retail** packs often use **100+**, so if both
-   define `orc`, the retail pack may win. For a clear override against retail,
-   raise the example priority above the retail pack or load base content only.
+3. An explicit pack root is the complete load set for that run; the loader does
+   not add base, retail, sibling, or ambient packs automatically. This small
+   example is therefore a schema/layout inspection unless it is explicitly
+   composed with a complete selected pack set.
+
+To layer it onto a selected development load set, copy it under that content
+root and add its cache-relative directory to the selection document's
+`supplementalPacks` array. Every supplement is named explicitly; invalid or
+missing entries fail closed, and sibling directories are never scanned. Do not
+edit or add supplements to an immutable retail selection in place; publish a
+new development selection through the content tooling instead.
+
+Within an explicitly composed development selection, higher `priority` wins on
+the same object `id`. This example uses `"priority": 50`; the selected pack may
+therefore win if it declares the same `orc` row at a higher priority.
 
 There is no single headless "orc HP = 620" gate for this sample yet. Treat it as
 a **layout + JSON schema demo** you can edit and re-launch.
 
-Optional: point at an external content root:
+An external directory must be either one valid pack root, as above, or contain
+a valid `selection.json`. A directory of sibling pack folders is not scanned:
 
 ```bat
 set OPENBFME_CONTENT=C:\Path\To\my_content_root
 ```
 
-`my_content_root` should contain one or more pack folders, each with `pack.json`.
+If that path names neither a valid pack nor a valid selection, loading fails
+closed instead of falling back to ambient or stale content.
 
-More notes: [game/mods/README.md](../game/mods/README.md).
-
-## Make your own loose pack
+## Make your own explicit development pack
 
 ```text
 my_mod/
