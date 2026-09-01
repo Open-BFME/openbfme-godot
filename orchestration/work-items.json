@@ -229,6 +229,25 @@
       "claimLimit": "Accepted bounded semantics-free SQLite, lookup, canonical shard, streaming manifest, diagnostic, and publication contract only; exact main integration command and independent rerun passed with no skipped stage. No retail SOURCE, reconstruction, CONVERT, LOAD, BEHAVIOR, VISUAL, or AUDIO evidence."
     },
     {
+      "id": "E-SEMANTIC-CONFORMANCE-001-AUTHORITY-GAP-E79CB743",
+      "type": "historical-private-terminal-receipt",
+      "path": "workspace/archive/P0-CORPUS-SCHEMA-CONFORMANCE-001/20260901T-authority-gap/STATUS.md",
+      "identity": {
+        "bytes": 1688,
+        "sha256": "e79cb743b8f856ab68e7e57227890dfed90cae7cdecc108010597eda0f42b34f",
+        "assignmentCommit": "921179047f2cc51387a680d532c9778a8dacd9ec",
+        "assignment": {
+          "bytes": 820,
+          "sha256": "4b1cd70a7336077f12e862b59d25d19c03f577f369dac7499591806c0d25c22d"
+        },
+        "brief": {
+          "bytes": 3054,
+          "sha256": "9360d86e39193c908ff771f6b302da0d0fad3ba03b2155c5c089ab4bd97fa1e4"
+        }
+      },
+      "claimLimit": "Clean terminal return before implementation because CONFORMANCE API, responsibility, adapters, diagnostics, and artifact authority were absent. No source changes, exact check, artifact, Godot, retail, parser, or acceptance evidence exists."
+    },
+    {
       "id": "E-PRIVATE-GODOT-005-TERMINAL-22D36A40",
       "type": "historical-private-terminal-receipt",
       "path": "workspace/archive/P1-PERF-PRIVATE-GODOT-005/20260901T062912-0400-terminal/STATUS.md",
@@ -351,6 +370,48 @@
         ]
       },
       "claimLimit": "Exact terminal PRIVATE-GODOT-007 source and memory-only Windows PowerShell invocation-wrapper failure identity; no mode, artifact, scenario, stdout, stderr, child-process, or Godot evidence exists, and this is not permission to change detector or policy."
+    },
+    {
+      "id": "E-PRIVATE-GODOT-008-TERMINAL-16595987",
+      "type": "historical-private-terminal-receipt",
+      "path": "workspace/archive/P1-PERF-PRIVATE-GODOT-008/20260901T-terminal/STATUS.md",
+      "identity": {
+        "bytes": 2081,
+        "sha256": "165959876a2e6816c49f0526a51c25dfe7210d7f6fe774775978636b652d8499",
+        "assignmentCommit": "3abe764a27d7bb785477597e3a45502e4e7af7af",
+        "runtimeProfile": "rotwk-gate-v1 Windows PowerShell 5.1",
+        "failureBinding": "the sole exact check failed with an array-bounds exception before mode or artifact evidence; no stack, stdout, or stderr bytes survived",
+        "ownedFiles": [
+          {
+            "path": "tools/private-godot-proof.ps1",
+            "bytes": 129796,
+            "sha256": "1c03c08c1f72a7b84c3ee64508b39e6370b9909b27d3d59549f96619958f9697"
+          },
+          {
+            "path": "tools/check-private-godot-proof.ps1",
+            "bytes": 3823,
+            "sha256": "fca2ec128435222c2be34d4118d56265562914d0389bd6d134caac76340c8a91"
+          },
+          {
+            "path": "tools/tests/private-godot-proof-fixtures.ps1",
+            "bytes": 23451,
+            "sha256": "69f25de48241688943865e0c9e736dc9b37b88e982b90b4ae5ae77c3dc440b31"
+          }
+        ],
+        "controllerFiles": [
+          {
+            "path": "logs/assignment.json",
+            "bytes": 740,
+            "sha256": "28e2b5c42edb4a309e9fc525ae7cce6a22ae6d278baa1998e3afbfdb749ed8ec"
+          },
+          {
+            "path": "logs/brief.md",
+            "bytes": 4743,
+            "sha256": "44a307a485d3869877c0ede4240f8e387a22c35437192213015724b5fda878c1"
+          }
+        ]
+      },
+      "claimLimit": "Exact terminal PRIVATE-GODOT-008 source and pre-mode array-bounds failure identity only. The cause is unclassified; no diagnostic artifact, mode, scenario, child-process, Git, Godot, or performance evidence exists. Do not retry or create a 009 wrapper successor."
     },
     {
       "id": "E-BL-202",
@@ -1285,7 +1346,7 @@
       "kind": "source-foundation",
       "priority": "P0",
       "allocationClass": "worker-lane",
-      "status": "in-progress",
+      "status": "blocked",
       "domainIds": [],
       "rootQueryIds": [],
       "dependsOn": [
@@ -1293,13 +1354,9 @@
         "P0-CORPUS-SCHEMA-STORE-001"
       ],
       "ownership": {
-        "state": "assigned",
-        "assignee": "codex-semantic-conformance-v1",
-        "ownedPaths": [
-          "importer/openbfme_importer/semantic_graph_conformance.py",
-          "importer/tests/test_rotwk_202_semantic_graph_conformance.py",
-          "tools/check-rotwk-202-semantic-conformance.py"
-        ],
+        "state": "unassigned",
+        "assignee": null,
+        "ownedPaths": [],
         "candidatePaths": [
           "importer/openbfme_importer/semantic_graph_conformance.py",
           "importer/tests/test_rotwk_202_semantic_graph_conformance.py",
@@ -1310,7 +1367,9 @@
         "deliverable": "Bounded semantic reconstruction for containment, every edge and occurrence, APT/parser authority, lexical partition, roots, domains, live counts, and reciprocal residual exposure using only the accepted contract and store interfaces.",
         "notIncluded": "Contract or storage duplication, private graph generation, parser implementation, projection, selected-pack assembly, or a compatibility facade."
       },
-      "sourceEvidence": [],
+      "sourceEvidence": [
+        "E-SEMANTIC-CONFORMANCE-001-AUTHORITY-GAP-E79CB743"
+      ],
       "artifacts": [
         "workspace/logs/P0-CORPUS-SCHEMA-CONFORMANCE-001/semantic-conformance-contract.json"
       ],
@@ -1354,7 +1413,9 @@
           "diagnosticPolicy": "strict-default"
         }
       ],
-      "blockers": []
+      "blockers": [
+        "The worker returned clean before editing because this row required source reconstruction and live counts while excluding graph production and providing no CONFORMANCE API, adapter, diagnostic, or artifact authority. The assignment and exact clean state are archived at workspace/archive/P0-CORPUS-SCHEMA-CONFORMANCE-001/20260901T-authority-gap. Do not implement this row; replace it only with a reviewed owner-authored bounded relational conformance successor."
+      ]
     },
     {
       "id": "P0-CORPUS-SCHEMA-001",
@@ -14971,20 +15032,16 @@
       "kind": "performance-infrastructure",
       "priority": "P1",
       "allocationClass": "worker-lane",
-      "status": "in-progress",
+      "status": "blocked",
       "domainIds": [
         "runtime-performance"
       ],
       "rootQueryIds": [],
       "dependsOn": [],
       "ownership": {
-        "state": "assigned",
-        "assignee": "codex-private-godot-v8",
-        "ownedPaths": [
-          "tools/private-godot-proof.ps1",
-          "tools/check-private-godot-proof.ps1",
-          "tools/tests/private-godot-proof-fixtures.ps1"
-        ],
+        "state": "unassigned",
+        "assignee": null,
+        "ownedPaths": [],
         "candidatePaths": [
           "tools/private-godot-proof.ps1",
           "tools/check-private-godot-proof.ps1",
@@ -14996,7 +15053,8 @@
         "notIncluded": "Retrying 007; broad or recursive exception unwrapping; substring matching the outer wrapper; changing the mode detector, scenarios, artifact schema, controller allowlist, child closure, assignment/source binding, UID, source allowlist, evidence, import, presentation, closure, or workload policy; invoking Git or Godot; a performance workload; or more than one diagnostic production entry."
       },
       "sourceEvidence": [
-        "E-PRIVATE-GODOT-007-TERMINAL-DC8BAA6D"
+        "E-PRIVATE-GODOT-007-TERMINAL-DC8BAA6D",
+        "E-PRIVATE-GODOT-008-TERMINAL-16595987"
       ],
       "artifacts": [
         "workspace/logs/P1-PERF-PRIVATE-GODOT-008/mode-detection-diagnostic.json"
@@ -15041,7 +15099,9 @@
           "diagnosticPolicy": "strict-default"
         }
       ],
-      "blockers": []
+      "blockers": [
+        "The sole exact 008 check terminally failed before mode selection with PRIVATE_GODOT_MODE_DIAGNOSTIC FAIL Index was outside the bounds of the array. No stack, stdout, stderr, declared artifact, implementation commit, or Godot evidence exists. Exact source, controller files, empty tracked diff, and STATUS are recoverably archived at workspace/archive/P1-PERF-PRIVATE-GODOT-008/20260901T-terminal. Four consecutive wrapper-only 005-008 failures produced no Godot proof, so 008 must not be retried and no 009 successor may be created; return to a simpler player-facing or performance slice."
+      ]
     },
     {
       "id": "P1-PERF-PRESENT-005",
