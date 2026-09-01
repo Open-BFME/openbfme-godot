@@ -14098,16 +14098,19 @@
       "kind": "repository-hygiene",
       "priority": "P0",
       "allocationClass": "worker-lane",
-      "status": "pending",
+      "status": "in-progress",
       "domainIds": [],
       "rootQueryIds": [],
       "dependsOn": [
         "P0-REPO-AMBIENT-MOD-001"
       ],
       "ownership": {
-        "state": "unassigned",
-        "assignee": null,
-        "ownedPaths": [],
+        "state": "assigned",
+        "assignee": "codex-ambient-mod-docs",
+        "ownedPaths": [
+          "game/mods/README.md",
+          "tools/gate-ambient-mod-docs.ps1"
+        ],
         "candidatePaths": [
           "game/mods/README.md",
           "tools/gate-ambient-mod-docs.ps1"
