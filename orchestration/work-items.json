@@ -1063,16 +1063,20 @@
       "kind": "source-foundation",
       "priority": "P0",
       "allocationClass": "worker-lane",
-      "status": "pending",
+      "status": "in-progress",
       "domainIds": [],
       "rootQueryIds": [],
       "dependsOn": [
         "P0-CORPUS-SCHEMA-CORE-002"
       ],
       "ownership": {
-        "state": "unassigned",
-        "assignee": null,
-        "ownedPaths": [],
+        "state": "assigned",
+        "assignee": "codex-schema-store-v1",
+        "ownedPaths": [
+          "importer/openbfme_importer/semantic_graph_store.py",
+          "importer/tests/test_rotwk_202_semantic_graph_store.py",
+          "tools/check-rotwk-202-semantic-store.py"
+        ],
         "candidatePaths": [
           "importer/openbfme_importer/semantic_graph_store.py",
           "importer/tests/test_rotwk_202_semantic_graph_store.py",
