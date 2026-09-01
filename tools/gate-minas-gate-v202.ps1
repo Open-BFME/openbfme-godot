@@ -66,7 +66,12 @@ try {
     $classCacheTarget = Join-Path $repoRoot "game\.godot\global_script_class_cache.cfg"
     Assert-ProofTrue (Test-Path -LiteralPath $classCacheSource -PathType Leaf) "Pinned Godot script-class cache is missing."
     New-Item -ItemType Directory -Force (Split-Path -Parent $classCacheTarget) | Out-Null
-    Copy-Item -LiteralPath $classCacheSource -Destination $classCacheTarget -Force
+    if (-not [StringComparer]::OrdinalIgnoreCase.Equals(
+        [IO.Path]::GetFullPath($classCacheSource),
+        [IO.Path]::GetFullPath($classCacheTarget)
+    )) {
+        Copy-Item -LiteralPath $classCacheSource -Destination $classCacheTarget -Force
+    }
     $initialIdentity = Get-ProofWorkingTreeIdentity $repoRoot
     $godot = Resolve-ProofGodot $GodotPath $mainRoot
     $behaviorOutput = Invoke-ProofChecked $gate "behavior" $godot @(
