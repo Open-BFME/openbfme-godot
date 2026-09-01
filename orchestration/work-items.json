@@ -874,7 +874,7 @@
       "kind": "source-foundation",
       "priority": "P0",
       "allocationClass": "worker-lane",
-      "status": "ready",
+      "status": "pending",
       "domainIds": [],
       "rootQueryIds": [],
       "dependsOn": [
