@@ -14601,20 +14601,16 @@
       "kind": "performance-infrastructure",
       "priority": "P1",
       "allocationClass": "worker-lane",
-      "status": "in-progress",
+      "status": "pending",
       "domainIds": [
         "runtime-performance"
       ],
       "rootQueryIds": [],
       "dependsOn": [],
       "ownership": {
-        "state": "assigned",
-        "assignee": "codex-private-godot-v5",
-        "ownedPaths": [
-          "tools/private-godot-proof.ps1",
-          "tools/check-private-godot-proof.ps1",
-          "tools/tests/private-godot-proof-fixtures.ps1"
-        ],
+        "state": "unassigned",
+        "assignee": null,
+        "ownedPaths": [],
         "candidatePaths": [
           "tools/private-godot-proof.ps1",
           "tools/check-private-godot-proof.ps1",
@@ -14623,7 +14619,7 @@
       },
       "scope": {
         "deliverable": "Verify and carry the terminal 004 archive with no-commit semantics, make both fresh control and candidate hydration manifests independently reconstructable and durably self-validating before any Godot launch, then execute exactly one control/candidate reduced-import diagnostic entry and preserve complete mapped source-delta, process, and raw-byte evidence for independent classification.",
-        "notIncluded": "Retrying 004; inferring a source path or policy from its two anonymous UID payloads; changing the UID census, source allowlist, evidence, import, closure, or presentation policy; strict check-only or reusable-proof acceptance; a performance workload; more than one Godot diagnostic entry; deleting or replacing evidence before independent review; or broad PowerShell refactoring."
+        "notIncluded": "Retrying 004; inferring a source path or policy from its two anonymous UID payloads; changing the UID census, source allowlist, evidence, import, closure, or presentation policy; strict check-only or reusable-proof acceptance; a performance workload; more than one Godot diagnostic entry; deleting or replacing declared artifacts or evidence after producer publication; or broad PowerShell refactoring. Caller-owned scratch and run trees may be deleted only after both declared artifacts are complete and reopened, and only when later validation binds no surviving path to those trees."
       },
       "sourceEvidence": [],
       "artifacts": [
@@ -14644,11 +14640,13 @@
         },
         "criteria": [
           "the worker verifies the 004 STATUS.md, all three archived owned-file hashes, both terminal gate logs, and every preserved control evidence file; carries exactly the three frozen owned files with no-commit semantics; and changes no UID, source-allowlist, import, closure, presentation, or workload policy",
-          "before launching Godot, the helper creates both fresh control and candidate hydration roots and atomically publishes pre-import-source-manifests.json outside the run tree with exact schema, version, commit, runRoot, and ordered unique control/candidate records containing hydrationRoot, count, sha256, and rows; it reopens the file, rejects every reparse component, recomputes order, count, and digest from literal rows, re-enumerates both live hydration trees, and exact-compares their path, byte, and SHA rows to the published records",
+          "the exact checker selects producer mode only when both declared artifacts and the complete evidence root are absent, selects validator mode only when both artifacts and the complete evidence root exist, and refuses every partial, mixed, stale, corrupt, extra, or mode-forced state before mutation or process launch",
+          "before launching Godot in producer mode, the helper creates both fresh control and candidate hydration roots and atomically publishes pre-import-source-manifests.json outside the run tree with exact schema, version, commit, runRoot, and ordered unique control/candidate records containing hydrationRoot, count, sha256, and rows; it reopens the file, rejects every reparse component, recomputes order, count, and digest from literal rows, re-enumerates both live hydration trees, and exact-compares their path, byte, and SHA rows to the published records",
           "focused fixtures prove stale leaf, malformed keys, missing or duplicate label, swapped order, wrong root, count, row order, digest, path, byte count, SHA, reparse, and post-publication tree drift refuse; the same real pre-import serialization and validation path executes in the exact gate before the first Godot process",
-          "only after the pre-import artifact passes, one fresh diagnostic entry imports control and candidate exactly once each; after each import it atomically publishes or replaces post-import-source-delta.json and durable exact stdout, stderr, and every added UID byte file, with pre/post manifest rows, expected, actual, and symmetric rows, process state, executable and Godot identity, and evidence path, byte, and SHA bindings; control is durably reopen-validated before candidate launches, and both ordered records are durably reopen-validated before success",
-          "the diagnostic gate succeeds only when both records are reconstructable and prints PRIVATE_GODOT_DIAGNOSTIC PASS pre_import_bound=true control=true candidate=true policy_changed=false; source-delta mismatch is evidence, not permission, and the worker then stops, commits only the three owned paths, and handoff plus independent review bind identical non-empty SHA-256 digests for both declared artifacts",
-          "any pre-import binding failure, process failure, warning or error, missing candidate, missing or mismatched raw evidence, artifact drift, cleanup, second entry, or policy change terminally blocks 005; no source suffix or allowlist may change until a separate owner-authored successor cites independently reviewed mapped control and candidate evidence"
+          "only after the pre-import artifact passes, producer mode performs the sole fresh diagnostic entry and imports control and candidate exactly once each; after each import it atomically publishes or replaces post-import-source-delta.json and durable exact stdout, stderr, and every added UID byte file, with pre/post manifest rows, expected, actual, and symmetric rows, process state, executable and Godot identity, and evidence path, byte, and SHA bindings; control is durably reopen-validated before candidate launches, and both ordered records are durably reopen-validated before producer success",
+          "validator mode launches no preflight, Git, Godot, or other child process; writes, replaces, renames, or deletes nothing; independently reconstructs and exact-validates every document, row, digest, raw evidence byte, process identity, Godot identity, and containment binding needed by the two complete producer artifacts; and emits the same PRIVATE_GODOT_DIAGNOSTIC PASS pre_import_bound=true control=true candidate=true policy_changed=false marker",
+          "producer and validator succeed only when both records are reconstructable; source-delta mismatch is evidence, not permission; after producer success the worker stops and commits only the three owned paths, while handoff and independent review rerun the same exact command in validator mode and bind identical non-empty SHA-256 digests for both unchanged declared artifacts",
+          "any pre-import binding failure, process failure, warning or error, missing candidate, missing or mismatched raw evidence, artifact drift, mutation during validator mode, second producer entry, or policy change terminally blocks 005; no source suffix or allowlist may change until a separate owner-authored successor cites independently reviewed mapped control and candidate evidence"
         ]
       },
       "verificationCommands": [
