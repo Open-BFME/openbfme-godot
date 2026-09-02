@@ -40,11 +40,15 @@ public sealed class AiRetailProofTests
                 : RetailLimitTicks;
         var peaks = new long[2];
         var finishedTick = 0;
+        var damageEvents = 0;
+        var deathEvents = 0;
         var stopwatch = Stopwatch.StartNew();
         for (var tick = 1; tick <= limitTicks; tick++)
         {
             first.Tick();
             second.Tick();
+            damageEvents += first.EventsThisTick.Count(value => value.Kind == "damage");
+            deathEvents += first.EventsThisTick.Count(value => value.Kind == "death");
             if (tick == 1 || tick % 300 == 0)
                 Assert.Equal(first.StateHash(), second.StateHash());
             peaks[0] = Math.Max(peaks[0], ArmyValue(first, 0));
@@ -65,8 +69,33 @@ public sealed class AiRetailProofTests
         var averageMicroseconds = stopwatch.ElapsedTicks * 1_000_000L
             / Stopwatch.Frequency / Math.Max(1, ticks * 2L);
         _output.WriteLine($"retail_ai_result finished={finishedTick != 0} winner={winner} ticks={ticks} " +
-            $"army_peaks={peaks[0]}:{peaks[1]} average_us_per_tick={averageMicroseconds} " +
-            $"left_commands={leftCommands} right_commands={rightCommands} twin_hash_equal=true");
+            $"army_peaks={peaks[0]}:{peaks[1]} average_ms_per_tick={FormatMilliseconds(averageMicroseconds)} " +
+            $"left_commands={leftCommands} right_commands={rightCommands} damage_events={damageEvents} " +
+            $"death_events={deathEvents} twin_hash_equal=true");
+        for (var team = 0; team < 2; team++)
+        {
+            var structures = first.Objects.Values.Where(value => value.Team == team
+                    && (AiTemplateRoles.Classify(value.Template) & AiUnitRole.Structure) != 0)
+                .Select(value => $"{value.Id}:{value.TemplateName}@{value.Position.X.ToIntFloor()}:{value.Position.Y.ToIntFloor()}={value.Health.ToIntFloor()}");
+            _output.WriteLine($"retail_structures team={team} {string.Join(',', structures)}");
+            _output.WriteLine($"retail_hordes team={team} count={first.Hordes.Count(value => value.Owner == team)} " +
+                $"members={first.Hordes.Where(value => value.Owner == team).Sum(value => value.Members.Count)}");
+            foreach (var horde in first.Hordes.Where(value => value.Owner == team).Take(4))
+            {
+                var carrier = first.Objects[horde.Id];
+                var member = first.Objects[horde.Members[0]];
+                first.Movement.TryGetHordeState(horde.Id, out var movement);
+                _output.WriteLine($"retail_horde_state team={team} id={horde.Id} " +
+                    $"carrier={carrier.Position.X.ToIntFloor()}:{carrier.Position.Y.ToIntFloor()} " +
+                    $"member={member.Position.X.ToIntFloor()}:{member.Position.Y.ToIntFloor()} " +
+                    $"member_template={member.TemplateName} weapons={member.Template.WeaponSets.Count} " +
+                    $"horde_order={movement?.HasOrder} speed={movement?.CurrentSpeed} " +
+                    $"reforming={movement?.IsReforming} stopped_reform={movement?.StoppedForReformLastTick} " +
+                    $"combat_order={member.Combat?.OrderKind} " +
+                    $"combat_goal={member.Combat?.AttackMoveGoal.X.ToIntFloor()}:{member.Combat?.AttackMoveGoal.Y.ToIntFloor()} " +
+                    $"engaged={member.Combat?.EngagedTargetId}");
+            }
+        }
         _output.WriteLine("retail_command_diagnostics=" + string.Join(',', first.Diagnostics
             .GroupBy(value => value.Code)
             .OrderBy(value => value.Key, StringComparer.Ordinal)
@@ -79,6 +108,9 @@ public sealed class AiRetailProofTests
         Assert.True(first.AiCommandCounts(1).TryGetValue("build", out var rightBuild) && rightBuild > 0);
         Assert.True(first.AiCommandCounts(0).TryGetValue("train", out var leftTrain) && leftTrain > 0);
         Assert.True(first.AiCommandCounts(1).TryGetValue("train", out var rightTrain) && rightTrain > 0);
+        Assert.True(finishedTick > 0,
+            $"retail match did not annihilate a side within {RetailLimitTicks} ticks");
+        Assert.DoesNotContain(winner, new[] { "none", "draw" });
     }
 
     internal static RetailSetup SelectSetup(BundleDocument document, string left, string right) =>
@@ -116,6 +148,8 @@ public sealed class AiRetailProofTests
         var world = SimWorld.FromBundle(launch, document);
         var leftBase = SpawnFortress(world, document, setup.Left, 0, At(100, 100));
         var rightBase = SpawnFortress(world, document, setup.Right, 1, At(400, 100));
+        if (!world.IsAttackable(leftBase) || !world.IsAttackable(rightBase))
+            throw new InvalidOperationException("Retail AI proof requires attackable starting structures");
         var leftBuilder = world.SpawnObject(setup.Left.Builder, 0, At(110, 100));
         var rightBuilder = world.SpawnObject(setup.Right.Builder, 1, At(390, 100));
         world.SetBuildPlots(PlotRing(leftBase, leftBuilder, setup.Left, 1)
@@ -219,18 +253,25 @@ public sealed class AiRetailProofTests
         var candidates = new[] { side.Fortress }.Concat(document.Templates
                 .Where(value => value.Side == side.Side
                     && value.KindOf.Contains("STRUCTURE", StringComparer.OrdinalIgnoreCase)
-                    && (value.KindOf.Contains("BASE_SITE", StringComparer.OrdinalIgnoreCase)
-                        || value.Name.Contains("Fortress", StringComparison.OrdinalIgnoreCase)))
+                    && !value.KindOf.Contains("UNATTACKABLE", StringComparer.OrdinalIgnoreCase)
+                    && value.Modules.Any(module => module.Carrier == "Body"
+                        && module.Type != ImmortalBodyModule.TypeName))
                 .Select(value => value.Name))
+            .Concat(new[] { side.Producer, side.Resource })
             .Distinct(StringComparer.Ordinal)
             .OrderBy(value => value == side.Fortress ? 0 : 1)
+            .ThenBy(value => value == side.Producer ? 0 : 1)
             .ThenBy(value => value, StringComparer.Ordinal);
         var failures = new List<string>();
         foreach (var name in candidates)
         {
             try
             {
-                return world.SpawnObject(name, team, position);
+                var candidate = world.SpawnObject(name, team, position);
+                if (world.IsAttackable(candidate)) return candidate;
+                candidate.MarkDead();
+                world.Tick();
+                failures.Add($"{name}: spawned object is not attackable");
             }
             catch (Exception exception)
             {
@@ -278,6 +319,9 @@ public sealed class AiRetailProofTests
 
     private static string FormatCounts(IReadOnlyDictionary<string, int> counts) =>
         string.Join(',', counts.Select(value => $"{value.Key}:{value.Value}"));
+
+    private static string FormatMilliseconds(long microseconds) =>
+        $"{microseconds / 1_000}.{microseconds % 1_000:D3}";
 
     private static FixedVector2 At(int x, int y) =>
         new(Fixed64.FromInt(x), Fixed64.FromInt(y));
