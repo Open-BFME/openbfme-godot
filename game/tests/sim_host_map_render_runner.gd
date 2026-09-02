@@ -11,6 +11,8 @@ var _minimum_fps := INF
 
 func _initialize() -> void:
 	DisplayServer.window_set_size(Vector2i(1280, 720))
+	DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_DISABLED)
+	Engine.max_fps = 0
 	call_deferred("_run")
 
 
@@ -27,6 +29,12 @@ func _run() -> void:
 		printerr("SIM_HOST_MAP_RENDER FAIL %s" % match_scene.startup_error())
 		_finish(match_scene)
 		return
+	var camera_rig = match_scene.get_node_or_null("RtsCamera")
+	if camera_rig != null:
+		camera_rig.edge_pan_enabled = false
+		camera_rig.distance = 1050.0
+		camera_rig.focus(match_scene.presentation_capture_focus())
+		camera_rig.process_mode = Node.PROCESS_MODE_DISABLED
 	var started := Time.get_ticks_msec()
 	var next_fps_second := 5
 	var capture_index := 0
@@ -36,7 +44,12 @@ func _run() -> void:
 		if elapsed_seconds >= next_fps_second:
 			var fps := Engine.get_frames_per_second()
 			_minimum_fps = minf(_minimum_fps, fps)
-			print("SIM_HOST_MAP_RENDER_FPS seconds=%d fps=%.2f" % [next_fps_second, fps])
+			print("SIM_HOST_MAP_RENDER_FPS seconds=%d fps=%.2f audio=%s fx=%s" % [
+				next_fps_second,
+				fps,
+				JSON.stringify((match_scene.presentation_counts() as Dictionary).get("audio", {})),
+				JSON.stringify((match_scene.presentation_counts() as Dictionary).get("fx", {})),
+			])
 			next_fps_second += 5
 		if capture_index < CAPTURE_SECONDS.size() and elapsed_seconds >= int(CAPTURE_SECONDS[capture_index]):
 			await process_frame
@@ -49,7 +62,14 @@ func _run() -> void:
 			capture_index += 1
 	_check("scene_running_at_30s", match_scene.is_running())
 	_check("all_screenshots", capture_index == CAPTURE_SECONDS.size())
-	_check("fps_target_60", _minimum_fps >= 60.0)
+	_check("fps_target_144", _minimum_fps >= 144.0)
+	var terrain := match_scene.terrain_presentation_summary() as Dictionary
+	_check("retail_terrain_path", String(terrain.get("path", "")) == "cooked-retail-map")
+	_check("retail_terrain_layers", int(terrain.get("textures", 0)) > 0)
+	_check("retail_water", int(terrain.get("water_polygons", 0)) > 0)
+	print("SIM_HOST_MAP_RENDER_PRESENT terrain=%s counts=%s" % [
+		JSON.stringify(terrain), JSON.stringify(match_scene.presentation_counts())
+	])
 	_finish(match_scene)
 
 

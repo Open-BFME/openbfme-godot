@@ -104,7 +104,9 @@ func _run_session(
 	var ticks_seen := 0
 	var final_snapshot: Dictionary = {}
 	while ticks_seen < TICKS:
-		var snapshots: Array[Dictionary] = client.step(1)
+		# The full Fords object set must exercise the same packed steady-state path
+		# as the native match. JSON snapshots can exceed the 500 ms frame deadline.
+		var snapshots: Array[Dictionary] = client.step(1, "packed")
 		if snapshots.size() != 1:
 			_check("step_%s_%d" % [inspect, ticks_seen], false)
 			break

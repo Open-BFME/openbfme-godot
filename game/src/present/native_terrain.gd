@@ -3,6 +3,23 @@ extends Node3D
 ## Retail map presentation over the native core's read-only map-v1 height grid.
 
 const PlainTerrainScript := preload("res://src/map/map_terrain_mesh.gd")
+const FORDS_AFTERNOON_TERRAIN_LIGHTS: Array[Dictionary] = [
+	{
+		"ambient": Vector3(0.04313725605607033, 0.03529411926865578, 0.04313725605607033),
+		"color": Vector3(0.6235294342041016, 0.49803921580314636, 0.45098039507865906),
+		"direction": Vector3(0.2649596631526947, 0.4240240752696991, -0.8660253882408142),
+	},
+	{
+		"ambient": Vector3.ZERO,
+		"color": Vector3(0.2235294133424759, 0.3333333432674408, 0.29019609093666077),
+		"direction": Vector3(0.5065234899520874, -0.6036512851715088, -0.6156614422798157),
+	},
+	{
+		"ambient": Vector3(0.04313725605607033, 0.03529411926865578, 0.04313725605607033),
+		"color": Vector3(0.6235294342041016, 0.49803921580314636, 0.45098039507865906),
+		"direction": Vector3(0.2649596631526947, 0.4240240752696991, -0.8660253882408142),
+	},
+]
 
 var error := ""
 var presentation_path := "unconfigured"
@@ -14,6 +31,8 @@ var three_way_blend_cell_count := 0
 var cliff_cell_count := 0
 var water_polygon_count := 0
 var water_triangle_count := 0
+var water_focus_world := Vector3.ZERO
+var terrain_light_count := 0
 var map_data
 var terrain_mesh: MeshInstance3D
 var water_mesh: MeshInstance3D
@@ -56,7 +75,7 @@ func configure(map_v1, content_root: String = "") -> bool:
 		])
 	if not _build_textured_height_grid(map_v1):
 		return false
-	if not _build_water():
+	if not _build_water(map_v1):
 		return false
 	weather_fx = load("res://src/retail_slice/retail_weather_fx.gd").new()
 	weather_fx.name = "RetailWeatherFx"
@@ -173,6 +192,7 @@ func _build_textured_height_grid(map_v1) -> bool:
 	_terrain_material = builder.build(map_data)
 	if _terrain_material == null:
 		return _fail("retail terrain material refused: %s" % builder.error)
+	_apply_source_terrain_lighting()
 	mesh.surface_set_material(0, _terrain_material)
 	terrain_mesh = MeshInstance3D.new()
 	terrain_mesh.name = "MapV1RetailTerrain"
@@ -187,7 +207,37 @@ func _build_textured_height_grid(map_v1) -> bool:
 	return texture_layer_count > 0
 
 
-func _build_water() -> bool:
+func _apply_source_terrain_lighting() -> void:
+	# RetailTerrainMaterialBuilder deliberately starts fail-dark. The placeholder
+	# scene binds this exact source-authored Fords afternoon rig after building;
+	# the native adapter must do the same or every valid texture samples black.
+	var ambient := Vector3.ZERO
+	for row in FORDS_AFTERNOON_TERRAIN_LIGHTS:
+		ambient += row.ambient as Vector3
+	_terrain_material.set_shader_parameter("sage_ambient_color", ambient)
+	for index in FORDS_AFTERNOON_TERRAIN_LIGHTS.size():
+		var row := FORDS_AFTERNOON_TERRAIN_LIGHTS[index]
+		_terrain_material.set_shader_parameter("sage_light_%d_color" % index, row.color as Vector3)
+		_terrain_material.set_shader_parameter(
+			"sage_light_%d_direction" % index,
+			_sage_direction_to_local(row.direction as Vector3)
+		)
+	_terrain_material.set_meta("sage_ambient_color", ambient)
+	_terrain_material.set_meta("sage_lighting_model", "opensage-terrain-three-light-lambert")
+	terrain_light_count = FORDS_AFTERNOON_TERRAIN_LIGHTS.size()
+
+
+func _sage_direction_to_local(source_direction: Vector3) -> Vector3:
+	var godot_horizontal := Vector2(source_direction.x, -source_direction.y)
+	var local_direction := Vector3(
+		godot_horizontal.dot(map_data.local_axis_x),
+		source_direction.z,
+		godot_horizontal.dot(map_data.local_axis_z)
+	)
+	return local_direction.normalized() if local_direction.length_squared() > 0.0 else Vector3.DOWN
+
+
+func _build_water(map_v1) -> bool:
 	water_polygon_count = map_data.standing_water_polygons.size() + map_data.river_strips.size()
 	if water_polygon_count == 0:
 		return true
@@ -199,11 +249,12 @@ func _build_water() -> bool:
 		var polygon := polygon_value as PackedVector3Array
 		var flat := PackedVector2Array()
 		for point in polygon:
-			flat.append(Vector2(point.x, point.z))
+			var native_point := _cooked_point_to_map_v1(point, map_v1)
+			flat.append(Vector2(native_point.x, native_point.z))
 		var triangles := Geometry2D.triangulate_polygon(flat)
 		var base := vertices.size()
 		for point in polygon:
-			vertices.append(point + Vector3.UP * 0.025)
+			vertices.append(_cooked_point_to_map_v1(point, map_v1) + Vector3.UP * 0.025)
 			normals.append(Vector3.UP)
 			colors.append(Color.WHITE)
 		for triangle in triangles:
@@ -215,7 +266,7 @@ func _build_water() -> bool:
 			var second := sections[section_index + 1] as PackedVector3Array
 			var base := vertices.size()
 			for point in [first[0], first[1], second[0], second[1]]:
-				vertices.append((point as Vector3) + Vector3.UP * 0.03)
+				vertices.append(_cooked_point_to_map_v1(point as Vector3, map_v1) + Vector3.UP * 0.03)
 				normals.append(Vector3.UP)
 				colors.append(Color.WHITE)
 			indices.append_array(PackedInt32Array([base, base + 2, base + 1, base + 1, base + 2, base + 3]))
@@ -245,7 +296,24 @@ func _build_water() -> bool:
 	water_mesh.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	add_child(water_mesh)
 	water_triangle_count = indices.size() / 3
+	for point in vertices:
+		water_focus_world += point
+	water_focus_world /= float(vertices.size())
 	return true
+
+
+func _cooked_point_to_map_v1(point: Vector3, map_v1) -> Vector3:
+	# RetailMapData presents geometry in its player-start-centred local frame.
+	# The native host and map-v1 use the raw height-grid frame (origin at grid
+	# 0,0), so convert horizontal coordinates back through the cooked grid and
+	# undo the local elevation scale before sharing the geometry with snapshots.
+	var grid: Vector2 = map_data.local_to_grid_float(Vector2(point.x, point.z))
+	var source_height: float = (
+		point.y / map_data.local_transform_scale + map_data.reference_elevation
+		if map_data.local_transform_scale > 0.0
+		else point.y
+	)
+	return Vector3(grid.x * float(map_v1.cell_size), source_height, grid.y * float(map_v1.cell_size))
 
 
 static func _read_json(path: String) -> Dictionary:
@@ -273,6 +341,8 @@ func _clear_generated() -> void:
 	cliff_cell_count = 0
 	water_polygon_count = 0
 	water_triangle_count = 0
+	water_focus_world = Vector3.ZERO
+	terrain_light_count = 0
 	for child in get_children():
 		remove_child(child)
 		child.queue_free()

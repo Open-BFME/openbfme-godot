@@ -27,17 +27,23 @@ var _last_tick := -1
 var _height_provider := Callable()
 
 
-func configure(template_rows: Array[Dictionary], retail_map_data, map_pack_root: String) -> bool:
+func configure(
+	template_rows: Array[Dictionary],
+	retail_map_data,
+	map_pack_root: String,
+	native_height_provider: Callable = Callable()
+) -> bool:
 	error = ""
 	_catalog = template_rows.duplicate(true)
-	for index in _catalog.size():
-		_template_rows[index] = _catalog[index]
+	for fallback_index in _catalog.size():
+		var row := _catalog[fallback_index]
+		_template_rows[int(row.get("index", fallback_index))] = row
 	var documents := _matching_runtime_documents()
 	if documents.is_empty():
 		return _fail("no mounted FX documents matched native templates")
 	var registry: Dictionary = AbilityFxControllerScript.collect_fx_registry(documents.values())
 	var animation_registry: Dictionary = AbilityFxControllerScript.collect_ability_animation_registry(documents.values())
-	_height_provider = func(point: Vector2) -> float:
+	_height_provider = native_height_provider if native_height_provider.is_valid() else func(point: Vector2) -> float:
 		return 0.0 if retail_map_data == null else float(retail_map_data.local_ground_height(point))
 	ability_controller = AbilityFxControllerScript.new()
 	ability_controller.name = "RetailAbilityFxController"
@@ -246,6 +252,19 @@ func _index_snapshot(snapshot: Dictionary) -> void:
 		var id := int(ids[index])
 		_object_positions[id] = Vector2(float(xs[index]), float(zs[index]))
 		_object_template[id] = int(templates[index])
+	for value in snapshot.get("hordes", []) as Array:
+		var horde := value as Dictionary
+		var horde_id := int(horde.get("id", 0))
+		_object_template[horde_id] = int(horde.get("template", -1))
+		var centre := Vector2.ZERO
+		var count := 0
+		for member_value in horde.get("members", []) as Array:
+			var member := int(member_value)
+			if _object_positions.has(member):
+				centre += _object_positions[member] as Vector2
+				count += 1
+		if count > 0:
+			_object_positions[horde_id] = centre / float(count)
 
 
 func _position(object_id: int) -> Vector2:
@@ -255,7 +274,10 @@ func _position(object_id: int) -> Vector2:
 func _fx_ids_for_object(object_id: int) -> Array[String]:
 	var template_index := int(_object_template.get(object_id, _last_templates.get(object_id, -1)))
 	var row := _template_rows.get(template_index, {}) as Dictionary
-	return (_fx_by_template.get(String(row.get("name", "")).to_lower(), []) as Array[String]).duplicate()
+	var result: Array[String] = []
+	for value in _fx_by_template.get(String(row.get("name", "")).to_lower(), []) as Array:
+		result.append(String(value))
+	return result
 
 
 func _ground_height(point: Vector2) -> float:

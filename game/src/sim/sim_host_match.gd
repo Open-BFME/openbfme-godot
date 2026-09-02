@@ -209,7 +209,12 @@ func _start_match() -> void:
 		_native_fx = NativeFxScript.new()
 		_native_fx.name = "NativeFx"
 		add_child(_native_fx)
-		if not _native_fx.configure(_catalog, _terrain.map_data, _terrain.pack_root):
+		if not _native_fx.configure(
+			_catalog,
+			_terrain.map_data,
+			_terrain.pack_root,
+			func(point: Vector2) -> float: return _map_document.height_at_world(point)
+		):
 			print("SIM_HOST_PRESENT_FX unavailable=%s" % _native_fx.error)
 			_native_fx.queue_free()
 			_native_fx = null
@@ -683,6 +688,30 @@ func object_count() -> int:
 
 func event_counts() -> Vector2i:
 	return Vector2i(_damage_events, _death_events)
+
+
+func presentation_counts() -> Dictionary:
+	return {
+		"audio": _native_audio.play_counts.duplicate(true) if _native_audio != null else {},
+		"fx": _native_fx.play_counts.duplicate(true) if _native_fx != null else {},
+	}
+
+
+func terrain_presentation_summary() -> Dictionary:
+	if _terrain == null:
+		return {}
+	return {
+		"path": _terrain.presentation_path,
+		"textures": _terrain.texture_layer_count,
+		"water_polygons": _terrain.water_polygon_count,
+		"water_triangles": _terrain.water_triangle_count,
+	}
+
+
+func presentation_capture_focus() -> Vector3:
+	if _terrain != null and _terrain.water_focus_world != Vector3.ZERO:
+		return _terrain.water_focus_world
+	return _player_centroid()
 
 
 func model_resolution_summary() -> String:

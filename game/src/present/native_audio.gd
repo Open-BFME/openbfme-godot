@@ -22,6 +22,9 @@ var _object_id_by_template: Dictionary = {}
 var _object_positions: Dictionary = {}
 var _object_owner: Dictionary = {}
 var _object_template: Dictionary = {}
+var _last_positions: Dictionary = {}
+var _last_owner: Dictionary = {}
+var _last_template: Dictionary = {}
 var _listener := Vector2.ZERO
 var _last_tick := -1
 var _sequence := 1
@@ -88,6 +91,9 @@ func submit_snapshot(snapshot: Dictionary) -> bool:
 		var value: Variant = events[event_index]
 		if value is Dictionary:
 			_consume_snapshot_event(value as Dictionary, tick, event_index)
+	_last_positions = _object_positions.duplicate()
+	_last_owner = _object_owner.duplicate()
+	_last_template = _object_template.duplicate()
 	if _battle_music and tick - _last_combat_tick >= 300:
 		_present_music("explore")
 		_battle_music = false
@@ -100,6 +106,8 @@ func present_selection(horde_ids: Array[int], snapshot: Dictionary) -> void:
 	_index_snapshot(snapshot)
 	var member := _first_horde_member(int(horde_ids[0]), snapshot)
 	var object_id := _runtime_object_id(member)
+	if object_id.is_empty():
+		object_id = _runtime_object_id_for_horde(int(horde_ids[0]), snapshot)
 	_present_route("select", audio.route_roster_voice(object_id, "select", _take_sequence()), member)
 
 
@@ -110,6 +118,8 @@ func present_order(command_type: String, horde_ids: Array[int], snapshot: Dictio
 	var member := _first_horde_member(int(horde_ids[0]), snapshot)
 	var kind := "attack" if command_type in ["attack", "attack_move"] else "move"
 	var object_id := _runtime_object_id(member)
+	if object_id.is_empty():
+		object_id = _runtime_object_id_for_horde(int(horde_ids[0]), snapshot)
 	_present_route(kind, audio.route_roster_voice(object_id, kind, _take_sequence()), member)
 
 
@@ -135,13 +145,20 @@ func _consume_snapshot_event(event: Dictionary, tick: int, event_index: int) -> 
 			var runtime_id := _runtime_object_id(object_id)
 			var route: Dictionary = audio.call("_route_weapon_swing", runtime_id, sequence)
 			if not authored_name.is_empty():
-				route = audio.route_audio_event(authored_name, sequence)
+				var authored_route: Dictionary = audio.route_audio_event(authored_name, sequence)
+				if bool(authored_route.get("ok", false)):
+					route = authored_route
 			_present_route("fire", route, object_id)
 			_enter_battle_music(tick)
 		"damage":
+			var impacted := target_id if target_id > 0 else object_id
+			var impact_route: Dictionary = audio.route_crush_impact(_runtime_object_id(impacted), sequence)
 			if not authored_name.is_empty():
-				_present_route("impact", audio.route_audio_event(authored_name, sequence), target_id if target_id > 0 else object_id)
-			if int(_object_owner.get(target_id, -1)) == 0 and _eva_due("under_attack", tick, 300):
+				var authored_route: Dictionary = audio.route_audio_event(authored_name, sequence)
+				if bool(authored_route.get("ok", false)):
+					impact_route = authored_route
+			_present_route("impact", impact_route, impacted, false)
+			if int(_object_owner.get(target_id, _last_owner.get(target_id, -1))) == 0 and _eva_due("under_attack", tick, 300):
 				_present_eva("UnitUnderAttack", "eva_under_attack", sequence, tick)
 			_enter_battle_music(tick)
 		"death":
@@ -149,7 +166,7 @@ func _consume_snapshot_event(event: Dictionary, tick: int, event_index: int) -> 
 			var runtime_id := _runtime_object_id(dead)
 			_present_route("death", audio.route_roster_voice(runtime_id, "death", sequence), dead)
 			_present_route("death", audio.call("_route_bodyfall", runtime_id, sequence), dead, false)
-			if int(_object_owner.get(dead, -1)) == 0:
+			if int(_object_owner.get(dead, _last_owner.get(dead, -1))) == 0:
 				if _runtime_by_object(dead).is_empty():
 					_present_eva("CampDestroyed", "eva_structure_lost", sequence, tick)
 				else:
@@ -169,7 +186,7 @@ func _present_route(kind: String, route: Dictionary, snapshot_object_id: int, co
 	var accepted := bool(route.get("ok", false))
 	if accepted:
 		play_counts[kind] = int(play_counts.get(kind, 0)) + 1
-		var world_position: Variant = _object_positions.get(snapshot_object_id, null)
+		var world_position: Variant = _object_positions.get(snapshot_object_id, _last_positions.get(snapshot_object_id, null))
 		if kind in ["select", "move", "attack"]:
 			audio.call("_play_world_routed", route, audio.voice_player, world_position)
 		else:
@@ -182,7 +199,7 @@ func _present_route(kind: String, route: Dictionary, snapshot_object_id: int, co
 	receipt.erase("stream")
 	receipt["native_kind"] = kind
 	receipt["snapshot_object"] = snapshot_object_id
-	receipt["position"] = _object_positions.get(snapshot_object_id, null)
+	receipt["position"] = _object_positions.get(snapshot_object_id, _last_positions.get(snapshot_object_id, null))
 	route_log.append(receipt)
 
 
@@ -212,9 +229,9 @@ func _enter_battle_music(tick: int) -> void:
 
 func _index_templates() -> void:
 	_template_rows.clear()
-	for index in _catalog.size():
-		var row := _catalog[index]
-		_template_rows[index] = row
+	for fallback_index in _catalog.size():
+		var row := _catalog[fallback_index]
+		_template_rows[int(row.get("index", fallback_index))] = row
 
 
 func _matching_runtime_documents() -> Dictionary:
@@ -271,16 +288,30 @@ func _index_snapshot(snapshot: Dictionary) -> void:
 		_object_positions[id] = Vector2(float(xs[index]), float(zs[index]))
 		_object_owner[id] = int(owners[index])
 		_object_template[id] = int(templates[index])
+	for value in snapshot.get("hordes", []) as Array:
+		var horde := value as Dictionary
+		var horde_id := int(horde.get("id", 0))
+		_object_owner[horde_id] = int(horde.get("owner", -1))
+		_object_template[horde_id] = int(horde.get("template", -1))
+		var centre := Vector2.ZERO
+		var count := 0
+		for member_value in horde.get("members", []) as Array:
+			var member := int(member_value)
+			if _object_positions.has(member):
+				centre += _object_positions[member] as Vector2
+				count += 1
+		if count > 0:
+			_object_positions[horde_id] = centre / float(count)
 
 
 func _runtime_object_id(snapshot_object_id: int) -> String:
-	var template_index := int(_object_template.get(snapshot_object_id, -1))
+	var template_index := int(_object_template.get(snapshot_object_id, _last_template.get(snapshot_object_id, -1)))
 	var row := _template_rows.get(template_index, {}) as Dictionary
 	return String(_object_id_by_template.get(String(row.get("name", "")).to_lower(), ""))
 
 
 func _runtime_by_object(snapshot_object_id: int) -> Dictionary:
-	var template_index := int(_object_template.get(snapshot_object_id, -1))
+	var template_index := int(_object_template.get(snapshot_object_id, _last_template.get(snapshot_object_id, -1)))
 	var row := _template_rows.get(template_index, {}) as Dictionary
 	return _runtime_by_template.get(String(row.get("name", "")).to_lower(), {}) as Dictionary
 
@@ -292,6 +323,17 @@ func _first_horde_member(horde_id: int, snapshot: Dictionary) -> int:
 			var members := horde.get("members", []) as Array
 			return 0 if members.is_empty() else int(members[0])
 	return 0
+
+
+func _runtime_object_id_for_horde(horde_id: int, snapshot: Dictionary) -> String:
+	for value in snapshot.get("hordes", []) as Array:
+		var horde := value as Dictionary
+		if int(horde.get("id", 0)) != horde_id:
+			continue
+		var template_index := int(horde.get("template", -1))
+		var row := _template_rows.get(template_index, {}) as Dictionary
+		return String(_object_id_by_template.get(String(row.get("name", "")).to_lower(), ""))
+	return ""
 
 
 func _eva_due(key: String, tick: int, cadence_ticks: int) -> bool:

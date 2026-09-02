@@ -3,14 +3,17 @@ extends RefCounted
 ## Non-blocking pipe client for OpenBfme.Host's line-delimited JSON protocol.
 ##
 ## Godot 4.7's OS.execute_with_pipe is used with non-blocking pipes. Each
-## steady-state response line gets at most READ_TIMEOUT_MS (500 ms) of polling;
+## steady-state response line gets at most READ_TIMEOUT_MS (2 s) of polling;
 ## step(K) performs one such bounded read per requested tick, so a frame that
 ## requests one tick can never wait longer than one steady-state read timeout.
-## Initial .NET cold start is allowed STARTUP_TIMEOUT_MS (5 s) and launch should
-## be performed from a loading transition, not a gameplay frame.
+## Initial .NET cold start plus a full-corpus JSON bundle load and the first
+## full-map snapshot are allowed STARTUP_TIMEOUT_MS (30 s). Both occur in the
+## loading transition, never a gameplay frame. Every later packed-step read
+## remains bounded to 2 s; live matches perform those reads on the stream thread,
+## so renderer cadence is not blocked by a transient full-map simulation spike.
 
-const READ_TIMEOUT_MS := 500
-const STARTUP_TIMEOUT_MS := 5000
+const READ_TIMEOUT_MS := 2000
+const STARTUP_TIMEOUT_MS := 30000
 const POLL_DELAY_MS := 1
 const PACKED_OBJECT_FORMAT := "openbfme.snapshot.objects.packed.v1"
 const PACKED_COLUMNS := [
@@ -38,6 +41,7 @@ var _profile_step_max_usec := 0
 var _profile_steps := 0
 var _packed_objects: Dictionary = {}
 var _packed_tick := -1
+var _received_snapshot := false
 var _stream_thread: Thread
 var _stream_mutex := Mutex.new()
 var _stream_running := false
@@ -157,7 +161,7 @@ func step(ticks: int, format: String = "json") -> Array[Dictionary]:
 			_set_error("step ticks must be non-negative")
 		return snapshots
 	for _index in ticks:
-		var reply := _read_document(READ_TIMEOUT_MS)
+		var reply := _read_document(STARTUP_TIMEOUT_MS if not _received_snapshot else READ_TIMEOUT_MS)
 		if String(reply.get("op", "")) != "snapshot":
 			_set_error(_reply_error("step", reply))
 			return snapshots
@@ -170,6 +174,7 @@ func step(ticks: int, format: String = "json") -> Array[Dictionary]:
 			snapshot = _decode_packed_snapshot(snapshot)
 			if snapshot.is_empty():
 				return snapshots
+		_received_snapshot = true
 		snapshots.append(snapshot)
 	var step_elapsed := Time.get_ticks_usec() - step_started
 	_profile_mutex.lock()
