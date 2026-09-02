@@ -45,12 +45,17 @@ var _next_seq := 0
 var _primed := false
 var _handshake_sent := false
 var _last_snapshot: Dictionary = {}
+var _step_in_flight := false
+var _rejoin_thread: Thread
+var _rejoin_future_bundles: Array[Dictionary] = []
+var _checkpoint_tick := 0
+var _checkpoint_state := ""
+var _applied_bundles: Array[Dictionary] = []
 var _desync_report_path := ""
 var _desync_tick := -1
 var _desync_local_hash := ""
 var _send_delay_ms := 0
 var _delayed_packets: Array[Dictionary] = []
-var _restored_through_tick := -1
 var _last_error := ""
 
 
@@ -70,6 +75,7 @@ func configure(
 	if input_delay_ticks < 1 or hash_interval_ticks < 1:
 		return _fail("lockstep input delay and hash interval must be positive")
 	_client = sim_client
+	_client.set_startup_timeout(120_000)
 	_match = match_launch.duplicate(true)
 	_launch_identity = JSON.stringify(_match).sha256_text()
 	_bundle_identity = bundle_identity.to_lower()
@@ -83,6 +89,8 @@ func configure(
 	if saved.is_empty():
 		return _fail("lockstep could not read initial host state")
 	current_tick = int(saved.get("tick", 0))
+	_checkpoint_tick = current_tick
+	_checkpoint_state = String(saved.get("state", ""))
 	return true
 
 
@@ -105,7 +113,7 @@ func host(port: int = 7777) -> Error:
 	return OK
 
 
-func join(address: String, port: int = 7777, requested_seat: int = 1) -> Error:
+func join(address: String, port: int = 7777, requested_seat: int = -1) -> Error:
 	if _client == null:
 		_fail("configure must precede join")
 		return ERR_UNCONFIGURED
@@ -123,6 +131,12 @@ func join(address: String, port: int = 7777, requested_seat: int = 1) -> Error:
 func poll() -> void:
 	if _peer == null:
 		return
+	if not _is_host and _peer.get_connection_status() == MultiplayerPeer.CONNECTION_DISCONNECTED:
+		if handshake_complete:
+			handshake_complete = false
+			disconnected.emit(local_seat)
+			status_changed.emit("Disconnected from lockstep host")
+		return
 	_peer.poll()
 	_flush_delayed_packets()
 	if not _is_host and not _handshake_sent \
@@ -130,8 +144,8 @@ func poll() -> void:
 		_handshake_sent = true
 		_send_to(HOST_PEER_ID, _handshake_message(local_seat), CONTROL_CHANNEL)
 	while _peer.get_available_packet_count() > 0:
-		var bytes := _peer.get_packet()
 		var sender := _peer.get_packet_peer()
+		var bytes := _peer.get_packet()
 		var line := bytes.get_string_from_utf8()
 		if not line.ends_with("\n"):
 			_reject("packet is not newline terminated")
@@ -141,6 +155,7 @@ func poll() -> void:
 			_reject("packet is not a JSON object")
 			continue
 		_receive(sender, parsed as Dictionary)
+	_complete_rejoin_if_ready()
 
 
 func local_commands(bundle: Dictionary) -> bool:
@@ -168,23 +183,30 @@ func step() -> Dictionary:
 		return {}
 	_finalize_local_bundle(current_tick + input_delay)
 	poll()
-	if not tick_ready():
-		stalled_ticks += 1
-		return {}
 	var tick := current_tick + 1
-	var rows := _ordered_bundles(tick)
-	for bundle in rows:
-		if tick <= _restored_through_tick or (bundle.get("commands", []) as Array).is_empty():
-			continue
-		if not _client.send_commands(bundle):
-			_fail("native host command failed: %s" % _client.last_error())
-			paused = true
+	if not _step_in_flight:
+		if not tick_ready():
+			stalled_ticks += 1
 			return {}
+		var rows := _ordered_bundles(tick)
+		for bundle in rows:
+			if (bundle.get("commands", []) as Array).is_empty():
+				continue
+			if not _client.send_commands(bundle):
+				_fail("native host command failed: %s" % _client.last_error())
+				paused = true
+				return {}
+			_applied_bundles.append(bundle.duplicate(true))
+		_step_in_flight = true
 	var snapshots: Array[Dictionary] = _client.step(1, "packed")
 	if snapshots.size() != 1:
+		if _client.has_pending_step():
+			stalled_ticks += 1
+			return {}
 		_fail("native host step failed: %s" % _client.last_error())
 		paused = true
 		return {}
+	_step_in_flight = false
 	_last_snapshot = snapshots[0]
 	current_tick = int(_last_snapshot.get("tick", tick))
 	_bundles.erase(tick)
@@ -202,6 +224,9 @@ func last_error() -> String:
 
 
 func shutdown() -> void:
+	if _rejoin_thread != null:
+		_rejoin_thread.wait_to_finish()
+		_rejoin_thread = null
 	if _peer != null:
 		_peer.close()
 	_peer = null
@@ -282,6 +307,10 @@ func _receive_welcome(sender: int, message: Dictionary) -> void:
 
 
 func _receive_start(sender: int, message: Dictionary) -> void:
+	# Reconnect activation is completed by the asynchronous sidecar restore. The
+	# host's ordered start marker may arrive while that worker is still running.
+	if not _is_host and sender == HOST_PEER_ID and _rejoin_thread != null:
+		return
 	if _is_host or sender != HOST_PEER_ID or int(message.get("tick", -1)) != current_tick:
 		_reject("start message is invalid")
 		return
@@ -322,10 +351,13 @@ func _finalize_local_bundle(tick: int) -> void:
 
 
 func _receive_bundle(sender: int, message: Dictionary) -> void:
-	if not handshake_complete or not (message.get("bundle") is Dictionary):
-		_reject("bundle arrived before start or has no document")
+	# ENet orders packets within each channel, not across channels. A host bundle
+	# may therefore beat the control-channel start packet to a welcomed guest.
+	var welcomed_guest := not _is_host and _handshake_sent and sender == HOST_PEER_ID
+	if (not handshake_complete and not welcomed_guest) or not (message.get("bundle") is Dictionary):
+		_reject("bundle arrived before welcome or has no document")
 		return
-	var bundle := message["bundle"] as Dictionary
+	var bundle := _normalize_bundle(message["bundle"] as Dictionary)
 	var seat := int(bundle.get("seat", -1))
 	if not _sender_owns_seat(sender, seat) or not _valid_bundle(bundle):
 		_reject("bundle sender or document is invalid")
@@ -333,7 +365,26 @@ func _receive_bundle(sender: int, message: Dictionary) -> void:
 	if not _store_bundle(bundle):
 		return
 	if _is_host:
-		_broadcast(message, BUNDLE_CHANNEL, sender)
+		_broadcast({"schema": WIRE_SCHEMA, "kind": "bundle", "bundle": bundle}, BUNDLE_CHANNEL, sender)
+
+
+func _normalize_bundle(source: Dictionary) -> Dictionary:
+	var bundle := source.duplicate(true)
+	for field in ["tick", "seat", "seq"]:
+		bundle[field] = int(bundle.get(field, -1))
+	var commands := bundle.get("commands", []) as Array
+	for command_value in commands:
+		if not (command_value is Dictionary):
+			continue
+		var args := (command_value as Dictionary).get("args", {}) as Dictionary
+		for field in ["object", "target", "index", "count"]:
+			if args.has(field):
+				args[field] = int(args[field])
+		if args.get("objects") is Array:
+			var object_ids := args.get("objects", []) as Array
+			for index in object_ids.size():
+				object_ids[index] = int(object_ids[index])
+	return bundle
 
 
 func _valid_bundle(bundle: Dictionary) -> bool:
@@ -474,8 +525,7 @@ func _receive_desync_state(sender: int, message: Dictionary) -> void:
 
 
 func _send_rejoin(peer_id: int) -> void:
-	var saved: Dictionary = _client.save()
-	var pending: Array = []
+	var pending: Array = _applied_bundles.duplicate(true)
 	var through := current_tick
 	for tick_value in _bundles.keys():
 		var tick := int(tick_value)
@@ -485,8 +535,8 @@ func _send_rejoin(peer_id: int) -> void:
 		for bundle in _ordered_bundles(tick):
 			pending.append(bundle)
 	_send_to(peer_id, {
-		"schema": WIRE_SCHEMA, "kind": "rejoin", "tick": current_tick,
-		"state": String(saved.get("state", "")), "bundles": pending,
+		"schema": WIRE_SCHEMA, "kind": "rejoin", "tick": _checkpoint_tick,
+		"target_tick": current_tick, "state": _checkpoint_state, "bundles": pending,
 		"pending_through": through,
 	}, CONTROL_CHANNEL)
 
@@ -495,19 +545,54 @@ func _receive_rejoin(sender: int, message: Dictionary) -> void:
 	if _is_host or sender != HOST_PEER_ID or not (message.get("bundles") is Array):
 		_reject("rejoin message is invalid")
 		return
-	var joined: Dictionary = _client.join(
-		String(message.get("state", "")), int(message.get("tick", -1)), []
+	if _rejoin_thread != null:
+		_reject("rejoin restore is already running")
+		return
+	var target_tick := int(message.get("target_tick", -1))
+	var catchup: Array = []
+	_rejoin_future_bundles.clear()
+	for value in message.get("bundles", []) as Array:
+		if not (value is Dictionary):
+			continue
+		var bundle := _normalize_bundle(value as Dictionary)
+		if int(bundle.get("tick", -1)) <= target_tick:
+			if not (bundle.get("commands", []) as Array).is_empty():
+				catchup.append(bundle)
+		else:
+			_rejoin_future_bundles.append(bundle)
+	var checkpoint_state := String(message.get("state", ""))
+	var checkpoint_tick := int(message.get("tick", -1))
+	paused = true
+	handshake_complete = false
+	_rejoin_thread = Thread.new()
+	var started := _rejoin_thread.start(func() -> Dictionary:
+		# A restarted peer has already reconstructed the exact launched checkpoint.
+		# Keep its live derived module caches after the sidecar verifies the
+		# checkpoint hash, then replay the authoritative command history onto it.
+		return _client.join(checkpoint_state, checkpoint_tick, catchup, target_tick, true)
 	)
+	if started != OK:
+		_rejoin_thread = null
+		_fail("native host rejoin worker could not start")
+		return
+	status_changed.emit("Restoring lockstep state through tick %d" % target_tick)
+
+
+func _complete_rejoin_if_ready() -> void:
+	if _rejoin_thread == null or _rejoin_thread.is_alive():
+		return
+	var joined_value: Variant = _rejoin_thread.wait_to_finish()
+	_rejoin_thread = null
+	var joined: Dictionary = joined_value as Dictionary if joined_value is Dictionary else {}
 	if joined.is_empty():
 		_fail("native host rejoin failed: %s" % _client.last_error())
 		paused = true
 		return
 	current_tick = int(joined.get("tick", -1))
 	_bundles.clear()
-	for value in message.get("bundles", []) as Array:
-		if value is Dictionary:
-			_store_bundle(value as Dictionary)
-	_restored_through_tick = int(message.get("pending_through", current_tick))
+	for bundle in _rejoin_future_bundles:
+		_store_bundle(bundle)
+	_rejoin_future_bundles.clear()
 	_primed = false
 	paused = false
 	_activate()

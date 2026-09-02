@@ -45,7 +45,7 @@
         "effective_tree_sha256": { "$ref": "#/$defs/sha256" },
         "map_identity": { "type": "string", "minLength": 1 },
         "input_delay": { "type": "integer", "minimum": 1 },
-        "requested_seat": { "type": "integer", "minimum": 0, "maximum": 7 }
+        "requested_seat": { "type": "integer", "minimum": -1, "maximum": 7 }
       }
     },
     "welcome": {
@@ -96,12 +96,13 @@
     },
     "rejoin": {
       "type": "object",
-      "required": ["schema", "kind", "tick", "state", "bundles", "pending_through"],
+      "required": ["schema", "kind", "tick", "target_tick", "state", "bundles", "pending_through"],
       "additionalProperties": false,
       "properties": {
         "schema": { "const": "openbfme.lockstep-wire.v1" },
         "kind": { "const": "rejoin" },
-        "tick": { "type": "integer", "minimum": 0 },
+        "tick": { "type": "integer", "minimum": 0, "description": "Tick encoded by state." },
+        "target_tick": { "type": "integer", "minimum": 0, "description": "Authoritative host tick reached by replaying bundles from state." },
         "state": { "type": "string", "contentEncoding": "base64" },
         "bundles": { "type": "array", "items": { "$ref": "#/$defs/commandBundle" } },
         "pending_through": { "type": "integer", "minimum": 0 }

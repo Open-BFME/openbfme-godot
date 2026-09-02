@@ -24,6 +24,7 @@ var _stderr: FileAccess
 var _pid := -1
 var _host_path := ""
 var _last_error := ""
+var _startup_timeout_ms := STARTUP_TIMEOUT_MS
 var _last_launch_reply: Dictionary = {}
 var _read_buffer := ""
 var _profile_read_usec := 0
@@ -38,6 +39,8 @@ var _profile_step_max_usec := 0
 var _profile_steps := 0
 var _packed_objects: Dictionary = {}
 var _packed_tick := -1
+var _step_reply_pending := false
+var _step_pending_format := ""
 var _stream_thread: Thread
 var _stream_mutex := Mutex.new()
 var _stream_running := false
@@ -72,7 +75,7 @@ func _launch_source(
 	request[source_field] = source_path
 	if not map_path.is_empty():
 		request["map"] = map_path
-	var reply := _exchange_with_timeout(request, STARTUP_TIMEOUT_MS)
+	var reply := _exchange_with_timeout(request, _startup_timeout_ms)
 	if String(reply.get("op", "")) != "launched":
 		_set_error(_reply_error("launch", reply))
 		_close_pipes()
@@ -83,7 +86,7 @@ func _launch_source(
 
 func templates() -> Array[Dictionary]:
 	var result: Array[Dictionary] = []
-	var reply := _exchange({"op": "templates"})
+	var reply := _exchange_with_timeout({"op": "templates"}, _startup_timeout_ms)
 	if String(reply.get("op", "")) != "templates":
 		_set_error(_reply_error("templates", reply))
 		return result
@@ -98,13 +101,13 @@ func templates() -> Array[Dictionary]:
 
 
 func spawn(template_name: String, player: int, position: Vector2) -> Dictionary:
-	var reply := _exchange({
+	var reply := _exchange_with_timeout({
 		"op": "spawn",
 		"template": template_name,
 		"player": player,
 		"x": position.x,
 		"y": position.y,
-	})
+	}, _startup_timeout_ms)
 	if String(reply.get("op", "")) != "spawned":
 		_set_error(_reply_error("spawn", reply))
 		return {}
@@ -112,12 +115,12 @@ func spawn(template_name: String, player: int, position: Vector2) -> Dictionary:
 
 
 func spawn_at_start(template_name: String, player: int, start: int) -> Dictionary:
-	var reply := _exchange({
+	var reply := _exchange_with_timeout({
 		"op": "spawn",
 		"template": template_name,
 		"player": player,
 		"start": start,
-	})
+	}, _startup_timeout_ms)
 	if String(reply.get("op", "")) != "spawned":
 		_set_error(_reply_error("spawn", reply))
 		return {}
@@ -149,16 +152,25 @@ func step(ticks: int, format: String = "json") -> Array[Dictionary]:
 	if format not in ["json", "packed"]:
 		_set_error("step format must be json or packed")
 		return snapshots
+	if _step_reply_pending and (ticks != 1 or format != _step_pending_format):
+		_set_error("one sidecar step reply is still pending")
+		return snapshots
 	var request := {"op": "step", "ticks": ticks}
 	if format == "packed":
 		request["format"] = "packed"
-	if ticks < 0 or not _write_request(request):
+	if ticks < 0 or (not _step_reply_pending and not _write_request(request)):
 		if ticks < 0:
 			_set_error("step ticks must be non-negative")
 		return snapshots
+	if ticks == 1:
+		_step_reply_pending = true
+		_step_pending_format = format
 	for _index in ticks:
 		var reply := _read_document(READ_TIMEOUT_MS)
 		if String(reply.get("op", "")) != "snapshot":
+			if not _last_error.begins_with("host response timed out"):
+				_step_reply_pending = false
+				_step_pending_format = ""
 			_set_error(_reply_error("step", reply))
 			return snapshots
 		var snapshot_value: Variant = reply.get("snapshot")
@@ -171,6 +183,9 @@ func step(ticks: int, format: String = "json") -> Array[Dictionary]:
 			if snapshot.is_empty():
 				return snapshots
 		snapshots.append(snapshot)
+	_step_reply_pending = false
+	_step_pending_format = ""
+	_last_error = ""
 	var step_elapsed := Time.get_ticks_usec() - step_started
 	_profile_mutex.lock()
 	_profile_step_usec += step_elapsed
@@ -178,6 +193,14 @@ func step(ticks: int, format: String = "json") -> Array[Dictionary]:
 	_profile_steps += 1
 	_profile_mutex.unlock()
 	return snapshots
+
+
+func has_pending_step() -> bool:
+	return _step_reply_pending
+
+
+func set_startup_timeout(milliseconds: int) -> void:
+	_startup_timeout_ms = maxi(STARTUP_TIMEOUT_MS, milliseconds)
 
 
 func start_packed_stream() -> bool:
@@ -351,18 +374,47 @@ func hash() -> String:
 
 
 func save() -> Dictionary:
-	var reply := _exchange({"op": "save"})
+	var reply := _exchange_with_timeout({"op": "save"}, _startup_timeout_ms)
 	if String(reply.get("op", "")) != "save":
 		_set_error(_reply_error("save", reply))
 		return {}
 	return reply
 
 
-func join(state: String, tick: int, catchup: Array) -> Dictionary:
-	var reply := _exchange_with_timeout(
-		{"op": "join", "state": state, "tick": tick, "catchup": catchup},
-		STARTUP_TIMEOUT_MS
-	)
+func join(
+	state: String,
+	tick: int,
+	catchup: Array,
+	target_tick: int = -1,
+	reuse_current: bool = false
+) -> Dictionary:
+	var request := {"op": "join", "tick": tick, "catchup": catchup}
+	if target_tick >= 0:
+		request["target_tick"] = target_tick
+	if reuse_current:
+		request["reuse_current"] = true
+	var state_path := ""
+	# FileAccessPipe is non-blocking on Windows. Large restored worlds can exceed
+	# the anonymous-pipe write buffer, so hand the same base64 state to the local
+	# sidecar through one exact temporary file while keeping small joins inline.
+	if state.length() > 8192:
+		var directory := ProjectSettings.globalize_path("user://sidecar-join")
+		DirAccess.make_dir_recursive_absolute(directory)
+		state_path = directory.path_join(
+			"join-%d-%d.state" % [OS.get_process_id(), Time.get_ticks_usec()]
+		)
+		var state_file := FileAccess.open(state_path, FileAccess.WRITE)
+		if state_file == null:
+			_set_error("join could not create temporary state file")
+			return {}
+		state_file.store_string(state)
+		state_file.close()
+		request["state_path"] = state_path
+	else:
+		request["state"] = state
+	var reply := _exchange_with_timeout(request, _startup_timeout_ms)
+	if not state_path.is_empty() and FileAccess.file_exists(state_path):
+		DirAccess.remove_absolute(state_path)
 	if String(reply.get("op", "")) != "joined":
 		_set_error(_reply_error("join", reply))
 		return {}
@@ -370,10 +422,28 @@ func join(state: String, tick: int, catchup: Array) -> Dictionary:
 
 
 func diff(state: String, path: String = "") -> Dictionary:
-	var request := {"op": "diff", "state": state}
+	var request := {"op": "diff"}
+	var state_path := ""
+	if state.length() > 8192:
+		var directory := ProjectSettings.globalize_path("user://sidecar-join")
+		DirAccess.make_dir_recursive_absolute(directory)
+		state_path = directory.path_join(
+			"diff-%d-%d.state" % [OS.get_process_id(), Time.get_ticks_usec()]
+		)
+		var state_file := FileAccess.open(state_path, FileAccess.WRITE)
+		if state_file == null:
+			_set_error("diff could not create temporary state file")
+			return {}
+		state_file.store_string(state)
+		state_file.close()
+		request["state_path"] = state_path
+	else:
+		request["state"] = state
 	if not path.is_empty():
 		request["path"] = path
-	var reply := _exchange(request)
+	var reply := _exchange_with_timeout(request, _startup_timeout_ms)
+	if not state_path.is_empty() and FileAccess.file_exists(state_path):
+		DirAccess.remove_absolute(state_path)
 	if String(reply.get("op", "")) != "diff":
 		_set_error(_reply_error("diff", reply))
 		return {}
@@ -381,7 +451,9 @@ func diff(state: String, path: String = "") -> Dictionary:
 
 
 func record(path: String) -> bool:
-	var reply := _exchange({"op": "record", "path": path})
+	var reply := _exchange_with_timeout(
+		{"op": "record", "path": path}, _startup_timeout_ms
+	)
 	if String(reply.get("op", "")) != "recording":
 		_set_error(_reply_error("record", reply))
 		return false
@@ -399,7 +471,7 @@ func replay(path: String, verify: bool = true) -> Dictionary:
 		return {}
 	var progress: Array[Dictionary] = []
 	while true:
-		var reply := _read_document(STARTUP_TIMEOUT_MS * 6 if progress.is_empty() else READ_TIMEOUT_MS)
+		var reply := _read_document(_startup_timeout_ms * 6 if progress.is_empty() else READ_TIMEOUT_MS)
 		var op := String(reply.get("op", ""))
 		if op == "replay_progress":
 			progress.append(reply)
@@ -416,7 +488,7 @@ func quit() -> bool:
 	stop_packed_stream()
 	if _stdio == null:
 		return true
-	var reply := _exchange({"op": "quit"})
+	var reply := _exchange_with_timeout({"op": "quit"}, _startup_timeout_ms)
 	var clean := String(reply.get("op", "")) == "quit"
 	if not clean:
 		_set_error(_reply_error("quit", reply))
@@ -468,6 +540,10 @@ func take_profile() -> Dictionary:
 
 func host_path() -> String:
 	return _host_path
+
+
+func process_id() -> int:
+	return _pid
 
 
 func launch_reply() -> Dictionary:
@@ -636,3 +712,5 @@ func _close_pipes() -> void:
 	_read_buffer = ""
 	_packed_objects = {}
 	_packed_tick = -1
+	_step_reply_pending = false
+	_step_pending_format = ""

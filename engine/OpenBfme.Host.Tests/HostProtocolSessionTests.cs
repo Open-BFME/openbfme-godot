@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using OpenBfme.Host;
@@ -327,6 +328,40 @@ public sealed class HostProtocolSessionTests : IDisposable
     }
 
     [Fact]
+    public void FreshHostCanJoinFromAFileBackedStateWithoutADeepPipeRequest()
+    {
+        var first = new HostProtocolSession();
+        Assert.Equal("launched", Op(Single(first.HandleLine(LaunchLine()))));
+        Assert.Equal(200, first.HandleLine("{\"op\":\"step\",\"ticks\":200}").Count);
+        using var save = Parse(Single(first.HandleLine("{\"op\":\"save\"}")));
+        var state = save.RootElement.GetProperty("state").GetString()!;
+        var statePath = Path.Combine(_temporaryDirectory, "join.state");
+        File.WriteAllText(statePath, state, Encoding.UTF8);
+
+        Assert.Equal(20, first.HandleLine("{\"op\":\"step\",\"ticks\":20}").Count);
+        using var firstHash = Parse(Single(first.HandleLine("{\"op\":\"hash\"}")));
+
+        var second = new HostProtocolSession();
+        Assert.Equal("launched", Op(Single(second.HandleLine(LaunchLine()))));
+        Assert.Equal(200, second.HandleLine("{\"op\":\"step\",\"ticks\":200}").Count);
+        using var joined = Parse(Single(second.HandleLine(JsonSerializer.Serialize(new
+        {
+            op = "join",
+            state_path = statePath,
+            tick = 200,
+            catchup = Array.Empty<object>(),
+            target_tick = 220,
+            reuse_current = true,
+        }))));
+
+        Assert.Equal("joined", joined.RootElement.GetProperty("op").GetString());
+        Assert.Equal(220, joined.RootElement.GetProperty("tick").GetInt32());
+        Assert.Equal(
+            firstHash.RootElement.GetProperty("hash").GetString(),
+            joined.RootElement.GetProperty("hash").GetString());
+    }
+
+    [Fact]
     public void DiffIsDeterministicNamesFirstDifferenceAndCanWriteExactReport()
     {
         var first = new HostProtocolSession();
@@ -359,6 +394,15 @@ public sealed class HostProtocolSessionTests : IDisposable
         Assert.Equal(1, report.RootElement.GetProperty("other_tick").GetInt32());
         Assert.False(report.RootElement.GetProperty("difference").GetProperty("path")
             .GetString()!.Length == 0);
+
+        var statePath = Path.Combine(_temporaryDirectory, "desync.state");
+        File.WriteAllText(statePath, secondState, Encoding.UTF8);
+        using var fileBacked = Parse(Single(first.HandleLine(JsonSerializer.Serialize(new
+               { op = "diff", state_path = statePath }))));
+        Assert.Equal("diff", fileBacked.RootElement.GetProperty("op").GetString());
+        Assert.Equal(
+            JsonValueKind.Object,
+            fileBacked.RootElement.GetProperty("difference").ValueKind);
     }
 
     public void Dispose()
