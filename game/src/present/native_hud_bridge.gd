@@ -334,7 +334,10 @@ func _commands_for_selection(rows: Array[Dictionary]) -> Array[Dictionary]:
 		elif kind == "upgrade":
 			row["upgrade"] = String(fields.get("Upgrade", ""))
 		else:
-			row["power"] = String(fields.get("Science", fields.get("SpecialPower", "")))
+			var power_name := String(fields.get("Science", ""))
+			if power_name.is_empty():
+				power_name = String(fields.get("SpecialPower", ""))
+			row["power"] = power_name
 		result.append(row)
 	result.append_array(_order_commands())
 	return result

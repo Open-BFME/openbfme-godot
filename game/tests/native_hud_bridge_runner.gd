@@ -57,7 +57,7 @@ func _run() -> void:
 		_check("selected_members", int(row.get("member_count", 0)) > 0)
 		_check("selected_health", float(row.get("health", 0.0)) > 0.0 and float(row.get("max_health", 0.0)) >= float(row.get("health", 0.0)))
 		_check("selected_template", not String(row.get("template_name", "")).is_empty())
-		_check("selected_portrait_field", row.has("portrait"))
+		_check("selected_portrait", not String(row.get("portrait", "")).is_empty())
 	_check("selected_command_set", not bridge.selected_command_buttons().is_empty())
 
 	var objects := snapshot.get("objects", {}) as Dictionary

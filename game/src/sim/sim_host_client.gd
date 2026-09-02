@@ -381,7 +381,13 @@ func diff(state: String, path: String = "") -> Dictionary:
 
 
 func record(path: String) -> bool:
-	var reply := _exchange({"op": "record", "path": path})
+	# Recording is a one-time startup operation. The whole-corpus host may still
+	# be JIT-compiling after the map bootstrap, so use the startup budget here;
+	# steady-state commands and snapshot reads retain READ_TIMEOUT_MS.
+	var reply := _exchange_with_timeout(
+		{"op": "record", "path": path},
+		STARTUP_TIMEOUT_MS
+	)
 	if String(reply.get("op", "")) != "recording":
 		_set_error(_reply_error("record", reply))
 		return false
