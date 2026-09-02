@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using OpenBfme.Host;
 using Xunit;
 
@@ -132,6 +133,129 @@ public sealed class HostProtocolSessionTests : IDisposable
         Assert.Equal("hash", Op(Single(session.HandleLine("{\"op\":\"hash\"}"))));
     }
 
+    [Fact]
+    public void RecordedThreeHundredTickReplayVerifiesAndTamperFindsFirstDivergence()
+    {
+        var replayPath = Path.Combine(_temporaryDirectory, "roundtrip.replay.json");
+        var session = new HostProtocolSession();
+        Assert.Equal("launched", Op(Single(session.HandleLine(LaunchLine()))));
+        Assert.Equal("recording", Op(Single(session.HandleLine(JsonSerializer.Serialize(new
+        {
+            op = "record",
+            path = replayPath,
+        })))));
+        Assert.Equal("ack", Op(Single(session.HandleLine(CommandLine(1, 0, 200, 40)))));
+        Assert.Equal("ack", Op(Single(session.HandleLine(CommandLine(151, 1, 340, 160)))));
+        Assert.Equal(300, session.HandleLine("{\"op\":\"step\",\"ticks\":300}").Count);
+        Assert.Equal("quit", Op(Single(session.HandleLine("{\"op\":\"quit\"}"))));
+
+        var replay = new HostProtocolSession().HandleLine(JsonSerializer.Serialize(new
+        {
+            op = "replay",
+            path = replayPath,
+            verify = true,
+        }));
+        Assert.Equal(301, replay.Count);
+        Assert.All(replay.Take(300), line =>
+        {
+            using var progress = Parse(line);
+            Assert.Equal("replay_progress", progress.RootElement.GetProperty("op").GetString());
+            Assert.True(progress.RootElement.GetProperty("hash_ok").GetBoolean());
+        });
+        using (var done = Parse(replay[^1]))
+        {
+            Assert.Equal("replay_done", done.RootElement.GetProperty("op").GetString());
+            Assert.Equal(300, done.RootElement.GetProperty("ticks").GetInt32());
+            Assert.Equal(JsonValueKind.Null, done.RootElement.GetProperty("divergence_tick").ValueKind);
+        }
+
+        var tamperedPath = Path.Combine(_temporaryDirectory, "tampered.replay.json");
+        var tampered = JsonNode.Parse(File.ReadAllText(replayPath))!.AsObject();
+        tampered["command_bundles"]![0]!["commands"]![0]!["args"]!["x"] = 201;
+        File.WriteAllText(tamperedPath, tampered.ToJsonString());
+        var tamperedReplay = new HostProtocolSession().HandleLine(JsonSerializer.Serialize(new
+        {
+            op = "replay",
+            path = tamperedPath,
+            verify = true,
+        }));
+        using var tamperedDone = Parse(tamperedReplay[^1]);
+        Assert.Equal(1, tamperedDone.RootElement.GetProperty("divergence_tick").GetInt32());
+        using var firstProgress = Parse(tamperedReplay[0]);
+        Assert.False(firstProgress.RootElement.GetProperty("hash_ok").GetBoolean());
+    }
+
+    [Fact]
+    public void FreshHostJoinsTickTwoHundredAndCatchesUpToIdenticalTickFourHundredHash()
+    {
+        var first = new HostProtocolSession();
+        Assert.Equal("launched", Op(Single(first.HandleLine(LaunchLine()))));
+        Assert.Equal(200, first.HandleLine("{\"op\":\"step\",\"ticks\":200}").Count);
+        using var save = Parse(Single(first.HandleLine("{\"op\":\"save\"}")));
+        var state = save.RootElement.GetProperty("state").GetString()!;
+        var catchup = new List<JsonElement>();
+        for (var tick = 201; tick <= 400; tick++)
+        {
+            var line = CommandLine(tick, tick - 201, 200 + tick, 40 + tick);
+            using var command = JsonDocument.Parse(line);
+            catchup.Add(command.RootElement.GetProperty("bundle").Clone());
+            Assert.Equal("ack", Op(Single(first.HandleLine(line))));
+        }
+        Assert.Equal(200, first.HandleLine("{\"op\":\"step\",\"ticks\":200}").Count);
+        using var firstHash = Parse(Single(first.HandleLine("{\"op\":\"hash\"}")));
+
+        var second = new HostProtocolSession();
+        Assert.Equal("launched", Op(Single(second.HandleLine(LaunchLine()))));
+        var joinedLine = Single(second.HandleLine(JsonSerializer.Serialize(new
+        {
+            op = "join",
+            state,
+            tick = 200,
+            catchup,
+        })));
+        using var joined = Parse(joinedLine);
+        Assert.Equal("joined", joined.RootElement.GetProperty("op").GetString());
+        Assert.Equal(400, joined.RootElement.GetProperty("tick").GetInt32());
+        Assert.Equal(
+            firstHash.RootElement.GetProperty("hash").GetString(),
+            joined.RootElement.GetProperty("hash").GetString());
+    }
+
+    [Fact]
+    public void DiffIsDeterministicNamesFirstDifferenceAndCanWriteExactReport()
+    {
+        var first = new HostProtocolSession();
+        var second = new HostProtocolSession();
+        Assert.Equal("launched", Op(Single(first.HandleLine(LaunchLine()))));
+        Assert.Equal("launched", Op(Single(second.HandleLine(LaunchLine()))));
+        _ = first.HandleLine("{\"op\":\"step\",\"ticks\":1}");
+        Assert.Equal("ack", Op(Single(second.HandleLine(CommandLine(1, 0, 400, 300)))));
+        _ = second.HandleLine("{\"op\":\"step\",\"ticks\":1}");
+        using var firstSave = Parse(Single(first.HandleLine("{\"op\":\"save\"}")));
+        using var secondSave = Parse(Single(second.HandleLine("{\"op\":\"save\"}")));
+        var firstState = firstSave.RootElement.GetProperty("state").GetString()!;
+        var secondState = secondSave.RootElement.GetProperty("state").GetString()!;
+
+        using (var identical = Parse(Single(first.HandleLine(JsonSerializer.Serialize(new
+               { op = "diff", state = firstState })))))
+        {
+            Assert.Equal(JsonValueKind.Null, identical.RootElement.GetProperty("difference").ValueKind);
+        }
+        var reportPath = Path.Combine(_temporaryDirectory, "desync.json");
+        var reportLine = Single(first.HandleLine(JsonSerializer.Serialize(new
+        {
+            op = "diff",
+            state = secondState,
+            path = reportPath,
+        })));
+        Assert.Equal(reportLine + Environment.NewLine, File.ReadAllText(reportPath));
+        using var report = Parse(reportLine);
+        Assert.Equal(1, report.RootElement.GetProperty("tick").GetInt32());
+        Assert.Equal(1, report.RootElement.GetProperty("other_tick").GetInt32());
+        Assert.False(report.RootElement.GetProperty("difference").GetProperty("path")
+            .GetString()!.Length == 0);
+    }
+
     public void Dispose()
     {
         if (Directory.Exists(_temporaryDirectory))
@@ -170,6 +294,23 @@ public sealed class HostProtocolSessionTests : IDisposable
         "{\"op\":\"commands\",\"bundle\":{"
         + "\"schema\":\"openbfme.command.v1\",\"tick\":1,\"seat\":0,\"seq\":0,"
         + "\"commands\":[{\"type\":\"move\",\"args\":{\"objects\":[1],\"x\":200,\"y\":40}}]}}";
+
+    private static string CommandLine(int tick, int seq, int x, int y) =>
+        JsonSerializer.Serialize(new
+        {
+            op = "commands",
+            bundle = new
+            {
+                schema = "openbfme.command.v1",
+                tick,
+                seat = 0,
+                seq,
+                commands = new[]
+                {
+                    new { type = "move", args = new { objects = new[] { 1 }, x, y } },
+                },
+            },
+        });
 
     private static IReadOnlyList<string> SnapshotRequiredKeys()
     {

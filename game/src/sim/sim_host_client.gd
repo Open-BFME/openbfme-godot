@@ -33,22 +33,7 @@ func _launch_source(match: Dictionary, source_field: String, source_path: String
 	if _stdio != null:
 		_set_error("host is already running")
 		return false
-	var resolved := _resolve_host_path()
-	if resolved.is_empty():
-		_set_error("OpenBfme.Host executable was not found")
-		return false
-	_host_path = String(resolved[0])
-	print("SIM_HOST_EXECUTABLE source=%s path=%s" % [String(resolved[1]), _host_path])
-	var pipe := OS.execute_with_pipe(_host_path, PackedStringArray(), false)
-	if pipe.is_empty():
-		_set_error("OS.execute_with_pipe could not start %s" % _host_path)
-		return false
-	_stdio = pipe.get("stdio") as FileAccess
-	_stderr = pipe.get("stderr") as FileAccess
-	_pid = int(pipe.get("pid", -1))
-	if _stdio == null or _pid <= 0:
-		_set_error("host pipe did not return stdio and pid")
-		_close_pipes()
+	if not _start_host():
 		return false
 	var request := {"op": "launch", "match": _wire_match(match)}
 	request[source_field] = source_path
@@ -126,6 +111,68 @@ func hash() -> String:
 	return String(reply.get("hash", ""))
 
 
+func save() -> Dictionary:
+	var reply := _exchange({"op": "save"})
+	if String(reply.get("op", "")) != "save":
+		_set_error(_reply_error("save", reply))
+		return {}
+	return reply
+
+
+func join(state: String, tick: int, catchup: Array) -> Dictionary:
+	var reply := _exchange_with_timeout(
+		{"op": "join", "state": state, "tick": tick, "catchup": catchup},
+		STARTUP_TIMEOUT_MS
+	)
+	if String(reply.get("op", "")) != "joined":
+		_set_error(_reply_error("join", reply))
+		return {}
+	return reply
+
+
+func diff(state: String, path: String = "") -> Dictionary:
+	var request := {"op": "diff", "state": state}
+	if not path.is_empty():
+		request["path"] = path
+	var reply := _exchange(request)
+	if String(reply.get("op", "")) != "diff":
+		_set_error(_reply_error("diff", reply))
+		return {}
+	return reply
+
+
+func record(path: String) -> bool:
+	var reply := _exchange({"op": "record", "path": path})
+	if String(reply.get("op", "")) != "recording":
+		_set_error(_reply_error("record", reply))
+		return false
+	return true
+
+
+func replay(path: String, verify: bool = true) -> Dictionary:
+	if _stdio != null:
+		_set_error("host is already running")
+		return {}
+	if not _start_host():
+		return {}
+	if not _write_request({"op": "replay", "path": path, "verify": verify}):
+		_close_pipes()
+		return {}
+	var progress: Array[Dictionary] = []
+	while true:
+		var reply := _read_document(STARTUP_TIMEOUT_MS * 6 if progress.is_empty() else READ_TIMEOUT_MS)
+		var op := String(reply.get("op", ""))
+		if op == "replay_progress":
+			progress.append(reply)
+			continue
+		if op == "replay_done":
+			return {"progress": progress, "done": reply}
+		_set_error(_reply_error("replay", reply))
+		_close_pipes()
+		return {}
+	return {}
+
+
 func quit() -> bool:
 	if _stdio == null:
 		return true
@@ -157,6 +204,27 @@ func _exchange_with_timeout(request: Dictionary, timeout_ms: int) -> Dictionary:
 	if not _write_request(request):
 		return {}
 	return _read_document(timeout_ms)
+
+
+func _start_host() -> bool:
+	var resolved := _resolve_host_path()
+	if resolved.is_empty():
+		_set_error("OpenBfme.Host executable was not found")
+		return false
+	_host_path = String(resolved[0])
+	print("SIM_HOST_EXECUTABLE source=%s path=%s" % [String(resolved[1]), _host_path])
+	var pipe := OS.execute_with_pipe(_host_path, PackedStringArray(), false)
+	if pipe.is_empty():
+		_set_error("OS.execute_with_pipe could not start %s" % _host_path)
+		return false
+	_stdio = pipe.get("stdio") as FileAccess
+	_stderr = pipe.get("stderr") as FileAccess
+	_pid = int(pipe.get("pid", -1))
+	if _stdio == null or _pid <= 0:
+		_set_error("host pipe did not return stdio and pid")
+		_close_pipes()
+		return false
+	return true
 
 
 func _write_request(request: Dictionary) -> bool:

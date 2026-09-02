@@ -54,6 +54,9 @@ func _run_session(match: Dictionary, bundle_path: String, inspect: bool) -> Dict
 		return {}
 	var catalog: Array[Dictionary] = client.templates()
 	_check("session_catalog_%s" % inspect, not catalog.is_empty())
+	var replay_path := _repo_path("workspace/logs/lane-net-a/sim-host-match.replay.json")
+	if inspect:
+		_check("session_record_started", client.record(replay_path))
 	var names := {
 		"p0_fighter": SimHostMatchScript.choose_horde_template(catalog, "GondorFighterHorde", "gondor", "fighter"),
 		"p0_archer": SimHostMatchScript.choose_horde_template(catalog, "GondorArcherHorde", "gondor", "archer"),
@@ -87,7 +90,6 @@ func _run_session(match: Dictionary, bundle_path: String, inspect: bool) -> Dict
 		else:
 			opponent_hordes.append(id)
 	_check("session_eight_hordes_%s" % inspect, player_hordes.size() == 4 and opponent_hordes.size() == 4)
-
 	var player_order: Dictionary = SimHostMatchScript.make_command_bundle(
 		1, 0, 0, "attack_move", player_hordes, Vector2(1500.0, 950.0)
 	)
@@ -123,7 +125,28 @@ func _run_session(match: Dictionary, bundle_path: String, inspect: bool) -> Dict
 		print("SIM_HOST_MATCH_FINAL_POSITIONS %s" % _position_ranges(final_snapshot))
 	var digest := client.hash()
 	_check("session_quit_%s" % inspect, client.quit())
+	if inspect:
+		_verify_replay(replay_path)
 	return {"hash": digest, "damage": damage_events, "death": death_events}
+
+
+func _verify_replay(path: String) -> void:
+	_check("recorded_replay_exists", FileAccess.file_exists(path))
+	var replay_client = SimHostClientScript.new()
+	var result: Dictionary = replay_client.replay(path, true)
+	_check("recorded_replay_loaded", not result.is_empty())
+	if result.is_empty():
+		return
+	var progress := result.get("progress", []) as Array
+	_check("recorded_replay_tick_count", progress.size() == TICKS)
+	var all_hashes_ok := true
+	for row_value in progress:
+		all_hashes_ok = all_hashes_ok and bool((row_value as Dictionary).get("hash_ok", false))
+	_check("recorded_replay_hash_ok_every_tick", all_hashes_ok)
+	var done := result.get("done", {}) as Dictionary
+	_check("recorded_replay_done_tick", int(done.get("ticks", -1)) == TICKS)
+	_check("recorded_replay_no_divergence", done.get("divergence_tick") == null)
+	_check("recorded_replay_quit", replay_client.quit())
 
 
 func _position_ranges(snapshot: Dictionary) -> String:

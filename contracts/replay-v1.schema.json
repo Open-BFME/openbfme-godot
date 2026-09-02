@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "openbfme.replay.v1",
+  "title": "OpenBFME replay v1",
+  "description": "A deterministic match launch, source identity, initial canonical state, ordered command bundles, and verification hashes.",
+  "type": "object",
+  "required": ["schema", "match", "source", "initial_tick", "initial_state", "setup", "command_bundles", "hash_log_interval", "hash_log", "final_tick", "final_hash", "build"],
+  "additionalProperties": false,
+  "properties": {
+    "schema": { "const": "openbfme.replay.v1" },
+    "match": { "$ref": "match-launch-v1.schema.json" },
+    "source": {
+      "type": "object",
+      "required": ["kind", "path", "map"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": { "type": "string", "enum": ["bundle", "templates"] },
+        "path": { "type": "string", "minLength": 1 },
+        "effective_tree_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "map": {
+          "type": "object",
+          "required": ["path"],
+          "additionalProperties": false,
+          "properties": {
+            "path": { "type": "string", "minLength": 1 },
+            "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "kind": { "const": "bundle" } } },
+          "then": { "required": ["effective_tree_sha256"] }
+        }
+      ]
+    },
+    "initial_tick": { "type": "integer", "minimum": 0 },
+    "initial_state": { "type": "string", "contentEncoding": "base64" },
+    "setup": {
+      "type": "array",
+      "description": "Deterministic host setup operations, such as test-harness spawns, performed after launch and before tick zero.",
+      "items": {
+        "type": "object",
+        "required": ["op"],
+        "properties": { "op": { "const": "spawn" } }
+      }
+    },
+    "command_bundles": {
+      "type": "array",
+      "items": { "$ref": "command-v1.schema.json" }
+    },
+    "hash_log_interval": { "type": "integer", "minimum": 1 },
+    "hash_log": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["tick", "hash"],
+        "additionalProperties": false,
+        "properties": {
+          "tick": { "type": "integer", "minimum": 0 },
+          "hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+        }
+      }
+    },
+    "final_tick": { "type": "integer", "minimum": 0 },
+    "final_hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "build": {
+      "type": "object",
+      "required": ["identity"],
+      "additionalProperties": false,
+      "properties": {
+        "identity": { "type": "string", "minLength": 1 }
+      }
+    }
+  }
+}
