@@ -30,6 +30,9 @@ public sealed class MovementSystem
 
     private readonly SortedDictionary<int, FlowField> _flowFields = new();
     private readonly SortedDictionary<int, HordeMotion> _hordeMotions = new();
+    private MemberTarget[] _memberTargets = new MemberTarget[4];
+    private int[] _memberTargetGenerations = new int[4];
+    private int _memberTargetGeneration;
 
     public MovementSystem(PassabilityGrid grid)
     {
@@ -46,6 +49,7 @@ public sealed class MovementSystem
         if (ReferenceEquals(Grid, grid)) return;
         Grid = grid;
         _flowFields.Clear();
+        foreach (var motion in _hordeMotions.Values) motion.CachedField = null;
     }
 
     public bool CanReach(FixedVector2 destination)
@@ -58,20 +62,27 @@ public sealed class MovementSystem
     public void Tick(SimWorld world)
     {
         ArgumentNullException.ThrowIfNull(world);
-        var memberTargets = BuildHordeMemberTargets(world);
+        world.BeginPhase(SimTickPhase.MovementTargets);
+        BuildHordeMemberTargets(world);
+        world.EndPhase(SimTickPhase.MovementTargets);
+        world.BeginPhase(SimTickPhase.MovementObjects);
         foreach (var gameObject in world.Objects.Values)
         {
             if (gameObject.IsDead || gameObject.IsDying) continue;
-            if (memberTargets.TryGetValue(gameObject.Id, out var memberTarget))
+            if ((uint)gameObject.Id < (uint)_memberTargetGenerations.Length
+                && _memberTargetGenerations[gameObject.Id] == _memberTargetGeneration)
             {
-                StepMember(world, gameObject, memberTarget);
+                StepMember(world, gameObject, _memberTargets[gameObject.Id]);
             }
             else
             {
                 StepObject(world, gameObject);
             }
         }
+        world.EndPhase(SimTickPhase.MovementObjects);
+        world.BeginPhase(SimTickPhase.MovementFinish);
         FinishHordeReforms(world);
+        world.EndPhase(SimTickPhase.MovementFinish);
     }
 
     public bool SetHordeOrder(
@@ -88,6 +99,7 @@ public sealed class MovementSystem
             motion = CreateHordeMotion(world, horde);
             _hordeMotions.Add(horde.Id, motion);
         }
+        if (motion.Destination != destination) motion.CachedField = null;
         motion.Destination = destination;
         motion.OrderKind = kind;
         motion.HasOrder = true;
@@ -143,26 +155,44 @@ public sealed class MovementSystem
 
     internal void RestoreHordeMotion(HordeMotion motion) => _hordeMotions.Add(motion.HordeId, motion);
 
-    private SortedDictionary<int, MemberTarget> BuildHordeMemberTargets(SimWorld world)
+    private void BuildHordeMemberTargets(SimWorld world)
     {
-        var targets = new SortedDictionary<int, MemberTarget>();
+        if (_memberTargetGeneration == int.MaxValue)
+        {
+            Array.Clear(_memberTargetGenerations);
+            _memberTargetGeneration = 0;
+        }
+        _memberTargetGeneration++;
         foreach (var horde in world.Hordes)
         {
             if (!_hordeMotions.TryGetValue(horde.Id, out var motion)) continue;
             StepHordeLeader(world, horde, motion);
+            motion.EnsureSlotOffsets(horde.Members.Count);
             for (var index = 0; index < horde.Members.Count; index++)
             {
                 var memberId = horde.Members[index];
-                if (world.Objects.ContainsKey(memberId))
+                if (!world.Objects.ContainsKey(memberId)) continue;
+                EnsureMemberTargetCapacity(memberId);
+                if (_memberTargetGenerations[memberId] == _memberTargetGeneration)
                 {
-                    targets.Add(memberId, new MemberTarget(
-                        horde.Id,
-                        SlotPosition(motion, horde.Members.Count, index),
-                        motion.LeaderHeading));
+                    throw new ArgumentException($"Member {memberId} belongs to more than one horde");
                 }
+                _memberTargets[memberId] = new MemberTarget(
+                    horde.Id,
+                    motion.LeaderPosition + motion.RotatedSlotOffsets[index],
+                    motion.LeaderHeading);
+                _memberTargetGenerations[memberId] = _memberTargetGeneration;
             }
         }
-        return targets;
+    }
+
+    private void EnsureMemberTargetCapacity(int memberId)
+    {
+        if (memberId < _memberTargets.Length) return;
+        var capacity = _memberTargets.Length;
+        while (capacity <= memberId) capacity = checked(capacity * 2);
+        Array.Resize(ref _memberTargets, capacity);
+        Array.Resize(ref _memberTargetGenerations, capacity);
     }
 
     private void StepHordeLeader(SimWorld world, SnapshotHorde horde, HordeMotion motion)
@@ -185,7 +215,7 @@ public sealed class MovementSystem
             return;
         }
 
-        var field = FieldFor(motion.Destination);
+        var field = FieldFor(motion);
         var direction = DirectionAt(field, motion.LeaderPosition);
         if (direction == FlowDirection.None)
         {
@@ -327,7 +357,7 @@ public sealed class MovementSystem
 
             if (motion.IsReforming)
             {
-                var field = FieldFor(motion.Destination);
+                var field = FieldFor(motion);
                 var direction = DirectionAt(field, motion.LeaderPosition);
                 var desired = direction == FlowDirection.None
                     ? motion.LeaderHeading
@@ -357,6 +387,12 @@ public sealed class MovementSystem
             _flowFields.Add(key, field);
         }
         return field;
+    }
+
+    private FlowField FieldFor(HordeMotion motion)
+    {
+        motion.CachedField ??= FieldFor(motion.Destination);
+        return motion.CachedField;
     }
 
     private static FlowDirection DirectionAt(FlowField field, FixedVector2 position)
@@ -469,16 +505,8 @@ public sealed class MovementSystem
 
     private static FixedVector2 SlotPosition(HordeMotion motion, int memberCount, int memberIndex)
     {
-        var columns = 1;
-        while (columns * columns < memberCount) columns++;
-        var rows = (memberCount + columns - 1) / columns;
-        var column = memberIndex % columns;
-        var row = memberIndex / columns;
-        var spacing = Fixed64.FromInt(2);
-        var local = new FixedVector2(
-            Fixed64.FromFraction(2L * column - (columns - 1), 2) * spacing,
-            Fixed64.FromFraction(2L * row - (rows - 1), 2) * spacing);
-        return motion.LeaderPosition + FixedAngles.Rotate(local, motion.LeaderHeading);
+        motion.EnsureSlotOffsets(memberCount);
+        return motion.LeaderPosition + motion.RotatedSlotOffsets[memberIndex];
     }
 
     private readonly record struct MemberTarget(int HordeId, FixedVector2 Position, Fixed64 Heading);
@@ -503,4 +531,42 @@ internal sealed class HordeMotion
     public bool IsReforming { get; set; }
     public bool StoppedForReformLastTick { get; set; }
     public bool IsSettling { get; set; }
+    public FlowField? CachedField { get; set; }
+    public FixedVector2[] RotatedSlotOffsets { get; private set; } = Array.Empty<FixedVector2>();
+    private FixedVector2[] _localSlotOffsets = Array.Empty<FixedVector2>();
+    private Fixed64 _slotHeading;
+    private bool _slotHeadingValid;
+
+    public void EnsureSlotOffsets(int memberCount)
+    {
+        if (_localSlotOffsets.Length != memberCount)
+        {
+            _localSlotOffsets = new FixedVector2[memberCount];
+            RotatedSlotOffsets = new FixedVector2[memberCount];
+            var columns = 1;
+            while (columns * columns < memberCount) columns++;
+            var rows = (memberCount + columns - 1) / columns;
+            var spacing = Fixed64.FromInt(2);
+            for (var memberIndex = 0; memberIndex < memberCount; memberIndex++)
+            {
+                var column = memberIndex % columns;
+                var row = memberIndex / columns;
+                _localSlotOffsets[memberIndex] = new FixedVector2(
+                    Fixed64.FromFraction(2L * column - (columns - 1), 2) * spacing,
+                    Fixed64.FromFraction(2L * row - (rows - 1), 2) * spacing);
+            }
+            _slotHeadingValid = false;
+        }
+        if (_slotHeadingValid && _slotHeading == LeaderHeading) return;
+        var (cos, sin) = FixedAngles.SinCos(LeaderHeading);
+        for (var memberIndex = 0; memberIndex < memberCount; memberIndex++)
+        {
+            var local = _localSlotOffsets[memberIndex];
+            RotatedSlotOffsets[memberIndex] = new FixedVector2(
+                local.X * cos - local.Y * sin,
+                local.X * sin + local.Y * cos);
+        }
+        _slotHeading = LeaderHeading;
+        _slotHeadingValid = true;
+    }
 }

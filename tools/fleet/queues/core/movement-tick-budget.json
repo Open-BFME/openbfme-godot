@@ -1,7 +1,9 @@
 {
-  "title": "Movement tick budget: 10,000 members must step in under 33 ms per tick",
-  "rank": 5,
   "detail": "MovementSystemTests.ThousandHordesOfTenMoveToTwentyGoalsForThreeHundredTicks measured 23,433 ms for 300 ticks (78 ms/tick) on 2026-09-02. Profile engine/OpenBfme.Sim/Kernel/MovementSystem.cs and SimWorld.Movement.cs: suspects are per-tick flow-field lookups through SortedDictionary, per-member CORDIC calls, and the GameObject-to-ObjectStore mirror in SynchronizeObjectStore. Keep determinism (twin-run test) and every existing test green; no floats in state.",
+  "done_at": "2026-09-02",
+  "done_by": "sol-kerneld",
   "oracle": "dotnet test engine/OpenBfme.Engine.sln --nologo --filter FullyQualifiedName~ThousandHordesOfTen --logger \"console;verbosity=detailed\"   # printed ms / 300 < 33",
-  "status": "open"
+  "rank": 5,
+  "status": "done",
+  "title": "Movement tick budget: 10,000 members must step in under 33 ms per tick"
 }
