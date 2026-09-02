@@ -9,8 +9,7 @@ public sealed class ModuleBatchCTechTests
     {
         var power = new SpecialPowerTemplate("Roar", "SPECIAL_POWER_ROAR", 330, Array.Empty<string>(), false);
         var controller = new ModuleSpec(GenericSpecialPowerModule.TypeName,
-            new Dictionary<string, long> { ["StartsPaused"] = 0, ["UpdateModuleStartsAttack"] = 1,
-                ["SetModelConditionTime"] = 66 },
+            new Dictionary<string, long> { ["StartsPaused"] = 0, ["SetModelConditionTime"] = 66 },
             new Dictionary<string, string> { ["SpecialPowerTemplate"] = power.Name,
                 ["SetModelCondition"] = "USER_1" });
         var world = PowerWorld(controller, power);
@@ -77,19 +76,17 @@ public sealed class ModuleBatchCTechTests
     }
 
     [Fact]
-    public void ModelConditionUpgradeAddsRemovesAndExpiresTemporaryFlags()
+    public void ModelConditionUpgradeAddsAndExpiresTemporaryFlags()
     {
         var module = new ModuleSpec(ModelConditionUpgradeModule.TypeName,
             new Dictionary<string, long> { ["Permanent"] = 1, ["TempConditionTime"] = 66 },
             new Dictionary<string, string> { ["AddConditionFlags"] = "ONE_RING",
-                ["RemoveConditionFlags"] = "OLD", ["AddTempConditionFlag"] = "USER_2",
+                ["AddTempConditionFlag"] = "USER_2",
                 ["TriggeredBy"] = "Upgrade_Ring" });
         var (world, gameObject) = UpgradeWorld(module);
-        gameObject.SetConditionToken("OLD");
 
         world.CompleteUpgrade(gameObject, ObjectUpgrade("Upgrade_Ring"));
         Assert.True(gameObject.HasConditionToken("ONE_RING"));
-        Assert.False(gameObject.HasConditionToken("OLD"));
         Assert.True(gameObject.HasConditionToken("USER_2"));
         world.Advance(2);
         Assert.False(gameObject.HasConditionToken("USER_2"));

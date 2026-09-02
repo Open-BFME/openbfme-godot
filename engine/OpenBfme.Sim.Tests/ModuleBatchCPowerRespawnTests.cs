@@ -7,7 +7,7 @@ public sealed class ModuleBatchCPowerRespawnTests
     [Fact]
     public void AutoAbilityBehaviorSubmitsOrdinaryPowerCommandAgainstNearestEnemy()
     {
-        var power = new SpecialPowerTemplate("AutoPower", "SPECIAL_POWER_AUTO", 330, Array.Empty<string>(), false);
+        var power = new SpecialPowerTemplate("AutoPower", "SPECIAL_POWER_AUTO", 0, Array.Empty<string>(), false);
         var button = Button("AutoButton", power.Name);
         var set = Set("AutoSet", button);
         var auto = new ModuleSpec(AutoAbilityBehaviorModule.TypeName,
@@ -23,6 +23,77 @@ public sealed class ModuleBatchCPowerRespawnTests
         world.SpawnObject("caster", 0, At(0));
         world.SpawnObject("target", 1, At(10));
 
+        world.Advance(2);
+
+        Assert.Contains(world.EventsThisTick, value => value.Kind == "ability" && value.Name == power.Name);
+    }
+
+    [Fact]
+    public void AutoAbilityBehaviorHonorsRichRangeStartAndActivationShape()
+    {
+        var power = new SpecialPowerTemplate("AutoPower", "SPECIAL_POWER_AUTO", 0, Array.Empty<string>(), false);
+        var button = Button("AutoButton", power.Name);
+        var set = Set("AutoSet", button);
+        // Exact one-row corpus shape.
+        var auto = new ModuleSpec(AutoAbilityBehaviorModule.TypeName,
+            data: new Dictionary<string, long>
+            {
+                ["AdjustAttackMeleePosition"] = 0,
+                ["BaseMaxRangeFromStartPosRaw"] = Fixed64.FromInt(20).Raw,
+                ["IdleTimeSecondsRaw"] = Fixed64.FromFraction(1, 33).Raw,
+                ["MaxScanRangeRaw"] = Fixed64.FromInt(50).Raw,
+                ["MinScanRangeRaw"] = Fixed64.FromInt(5).Raw,
+                ["StartsActive"] = 0,
+            },
+            stringData: new Dictionary<string, string>
+            {
+                ["Query"] = "ANY +INFANTRY ENEMIES",
+                ["SpecialAbility"] = button.Name,
+            });
+        var controller = new ModuleSpec(GenericSpecialPowerModule.TypeName, stringData:
+            new Dictionary<string, string> { ["SpecialPowerTemplate"] = power.Name });
+        var casterTemplate = new ObjectTemplate("caster", new[] { auto, controller },
+            bodyHealth: Body(100), commandSetName: set.Name);
+        var targetTemplate = new ObjectTemplate("target", Array.Empty<ModuleSpec>(), bodyHealth: Body(100));
+        var world = World(new[] { casterTemplate, targetTemplate }, power, button, set);
+        var caster = world.SpawnObject("caster", 0, At(0));
+        world.SpawnObject("target", 1, At(2));
+        world.SpawnObject("target", 1, At(10));
+
+        world.Advance(2);
+        Assert.DoesNotContain(world.EventsThisTick, value => value.Kind == "ability");
+        caster.FindModule<AutoAbilityBehaviorModule>()!.SetActive(true);
+        world.Advance(2);
+
+        Assert.Contains(world.EventsThisTick, value => value.Kind == "ability" && value.Name == power.Name);
+    }
+
+    [Fact]
+    public void AutoAbilityBehaviorHonorsForbiddenStatusCorpusShape()
+    {
+        var power = new SpecialPowerTemplate("AutoPower", "SPECIAL_POWER_AUTO", 0, Array.Empty<string>(), false);
+        var button = Button("AutoButton", power.Name);
+        var set = Set("AutoSet", button);
+        // Exact seven-row corpus shape.
+        var auto = new ModuleSpec(AutoAbilityBehaviorModule.TypeName,
+            data: new Dictionary<string, long> { ["AllowSelf"] = 1 },
+            stringData: new Dictionary<string, string>
+            {
+                ["ForbiddenStatus"] = "BUSY",
+                ["Query"] = "ALLIES",
+                ["SpecialAbility"] = button.Name,
+            });
+        var controller = new ModuleSpec(GenericSpecialPowerModule.TypeName, stringData:
+            new Dictionary<string, string> { ["SpecialPowerTemplate"] = power.Name });
+        var template = new ObjectTemplate("caster", new[] { auto, controller },
+            bodyHealth: Body(100), commandSetName: set.Name);
+        var world = World(new[] { template }, power, button, set);
+        var caster = world.SpawnObject("caster", 0, At(0));
+        caster.SetConditionToken("BUSY");
+
+        world.Advance(2);
+        Assert.DoesNotContain(world.EventsThisTick, value => value.Kind == "ability");
+        caster.SetConditionToken("BUSY", false);
         world.Advance(2);
 
         Assert.Contains(world.EventsThisTick, value => value.Kind == "ability" && value.Name == power.Name);
@@ -53,12 +124,19 @@ public sealed class ModuleBatchCPowerRespawnTests
     public void RespawnUpdateUsesTrainCommandLevelTableAndRetainsLevel()
     {
         var respawn = new ModuleSpec(RespawnUpdateModule.TypeName,
-            data: new Dictionary<string, long> { ["DeathAnimationTime"] = 33 },
+            data: new Dictionary<string, long> { ["DeathAnimationTime"] = 33,
+                ["RespawnAnimationTime"] = 33 },
             stringData: new Dictionary<string, string>
             {
                 ["AutoRespawnAtObjectFilter"] = "NONE +CASTLE_KEEP",
+                ["ButtonImage"] = "SyntheticButton",
+                ["DeathAnim"] = "DYING",
+                ["DeathFX"] = "SyntheticDeathFx",
+                ["InitialSpawnFX"] = "SyntheticInitialFx",
+                ["RespawnAnim"] = "RESPAWN",
                 ["RespawnRules"] = "AutoSpawn:No Cost:100 Time:66 Health:100%",
                 ["RespawnEntry"] = "Level:2 Cost:200 Time:66\nLevel:3 Cost:300 Time:66",
+                ["RespawnFX"] = "SyntheticRespawnFx",
             });
         var hero = new ObjectTemplate("hero", new ModuleSpec[]
         {
@@ -119,6 +197,42 @@ public sealed class ModuleBatchCPowerRespawnTests
     }
 
     [Fact]
+    public void InvisibilityUpdateHonorsRequiredUpgradesCorpusShape()
+    {
+        var nugget = new BundleBlock("InvisibilityNugget", "",
+            new Dictionary<string, BundleValue>
+            {
+                ["DetectionRange"] = BundleValue.Whole(0),
+                ["ForbiddenConditions"] = BundleValue.Text("MOVING"),
+                ["InvisibilityType"] = BundleValue.Text("CAMOUFLAGE"),
+            }, Array.Empty<BundleBlock>());
+        // Exact one-row corpus shape.
+        var module = new ModuleSpec(InvisibilityUpdateModule.TypeName,
+            data: new Dictionary<string, long>
+            {
+                ["Broadcast"] = 0,
+                ["BroadcastRangeRaw"] = Fixed64.FromInt(100).Raw,
+                ["StartsActive"] = 1,
+                ["UpdatePeriod"] = 33,
+            },
+            stringData: new Dictionary<string, string>
+            {
+                ["BroadcastObjectFilter"] = "ANY +INFANTRY",
+                ["RequiredUpgrades"] = "Upgrade_Stealth",
+            }, blocks: new[] { nugget });
+        var template = new ObjectTemplate("hidden", new[] { module }, bodyHealth: Body(100), techEnabled: true);
+        var world = new SimWorld(new SimConfig(new[] { template }, 7, 2), ModuleRegistry.CreateDefault(), 33);
+        var hidden = world.SpawnObject("hidden", 0, At(0));
+
+        world.Tick();
+        Assert.False(hidden.FindModule<InvisibilityUpdateModule>()!.IsInvisible);
+        Assert.True(world.GrantObjectUpgrade(hidden, "Upgrade_Stealth"));
+        world.Tick();
+
+        Assert.True(hidden.FindModule<InvisibilityUpdateModule>()!.IsInvisible);
+    }
+
+    [Fact]
     public void GiveUpgradeUpdateDeliversAuthoredUpgradeThroughEvaluator()
     {
         var power = new SpecialPowerTemplate("Deliver", "SPECIAL_POWER_DELIVER", 0, Array.Empty<string>(), false);
@@ -126,9 +240,11 @@ public sealed class ModuleBatchCPowerRespawnTests
         var set = Set("DeliverSet", button);
         var delivery = new ModuleSpec(GiveUpgradeUpdateModule.TypeName,
             data: new Dictionary<string, long> { ["StartAbilityRangeRaw"] = Fixed64.FromInt(30).Raw,
-                ["ApproachRequiresLOS"] = 1, ["PackTime"] = 100 },
+                ["ApproachRequiresLOS"] = 1, ["FadeOutSpeedRaw"] = Fixed64.FromInt(1).Raw,
+                ["PackTime"] = 100, ["PersistentPrepTime"] = 0, ["PreparationTime"] = 0,
+                ["UnpackTime"] = 0 },
             stringData: new Dictionary<string, string> { ["DeliverUpgrade"] = "Upgrade_Gift",
-                ["SpecialPowerTemplate"] = power.Name });
+                ["SpawnOutFX"] = "SyntheticSpawnOut", ["SpecialPowerTemplate"] = power.Name });
         var receiverUpgrade = new ModuleSpec(ModelConditionUpgradeModule.TypeName,
             stringData: new Dictionary<string, string> { ["AddConditionFlags"] = "GIFTED",
                 ["TriggeredBy"] = "Upgrade_Gift" });

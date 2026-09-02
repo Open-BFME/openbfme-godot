@@ -56,6 +56,7 @@ public sealed class ModuleBatchCUpgradeContainTests
         var set = new CommandSetTemplate("MountSet", new[] { new CommandSetEntryTemplate(1, button.Name, button) });
         var toggle = new ModuleSpec(ToggleMountedSpecialAbilityUpdateModule.TypeName,
             data: new Dictionary<string, long> { ["AwardXPForTriggering"] = 0, ["PackTime"] = 2_000,
+                ["OpacityTargetRaw"] = Fixed64.One.Raw, ["PersistentPrepTime"] = 0,
                 ["PreparationTime"] = 1, ["UnpackTime"] = 2_000 },
             stringData: new Dictionary<string, string> { ["SpecialPowerTemplate"] = power.Name });
         var template = new ObjectTemplate("hero", new[] { toggle }, bodyHealth: Body(100), commandSetName: set.Name);
@@ -77,10 +78,17 @@ public sealed class ModuleBatchCUpgradeContainTests
     public void CitadelSlaughterConsumesPassengerAndPaysAuthoredCashback()
     {
         var contain = new ModuleSpec(CitadelSlaughterHordeContainModule.TypeName,
-            data: new Dictionary<string, long> { ["AllowOwnPlayerInsideOverride"] = 1, ["ContainMax"] = 99 },
+            data: new Dictionary<string, long> { ["AllowAlliesInside"] = 1, ["AllowEnemiesInside"] = 0,
+                ["AllowNeutralInside"] = 0, ["AllowOwnPlayerInsideOverride"] = 0, ["ContainMax"] = 99 },
             stringData: new Dictionary<string, string> { ["CashBackPercent"] = "200%",
+                ["EnterSound"] = "SyntheticEnter", ["EntryOffset"] = "X:0 Y:0 Z:0",
+                ["EntryPosition"] = "X:0 Y:0 Z:0", ["ExitOffset"] = "X:0 Y:0 Z:0",
+                ["FXForRingEntry"] = "SyntheticRingFx",
                 ["PassengerFilter"] = "ANY +INFANTRY +CAVALRY -HERO",
-                ["ObjectStatusOfContained"] = "UNSELECTABLE ENCLOSED" });
+                ["ObjectStatusOfContained"] = "UNSELECTABLE ENCLOSED",
+                ["ObjectToDestroyForRingEntry"] = "NONE +RING",
+                ["StatusForRingEntry"] = "RING_HOLDER",
+                ["UpgradeForRingEntry"] = "Upgrade_Ring" });
         var citadelTemplate = new ObjectTemplate("citadel", new[] { contain }, bodyHealth: Body(1_000));
         var passengerTemplate = new ObjectTemplate("orc", Array.Empty<ModuleSpec>(),
             economy: new EconomyTemplate(50), kindOf: new[] { "INFANTRY" });

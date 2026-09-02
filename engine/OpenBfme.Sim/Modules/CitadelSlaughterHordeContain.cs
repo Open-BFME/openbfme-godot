@@ -1,8 +1,10 @@
 namespace OpenBfme.Sim;
 
 /// <summary>
-/// Citadel/slaughterhouse entry processor. TryEnter enforces ownership,
-/// ContainMax, and positive/negative PassengerFilter KindOf terms. Ordinary
+/// Citadel/slaughterhouse entry processor. TryEnter enforces same-team/allied,
+/// enemy, neutral, ContainMax, and positive/negative PassengerFilter terms.
+/// The kernel currently has team-level ownership, so AllowOwnPlayerInsideOverride
+/// and AllowAlliesInside are alternative permissions for same-team objects. Ordinary
 /// passengers are consumed for CashBackPercent of BuildCost; ring objects are
 /// consumed, apply StatusForRingEntry, and grant every UpgradeForRingEntry
 /// through the normal evaluator. Entry geometry, sounds, and FX are deferred.
@@ -47,10 +49,10 @@ public sealed class CitadelSlaughterHordeContainModule : ModuleBase
     public bool TryEnter(SimWorld world, GameObject self, GameObject passenger)
     {
         if (_maximum > 0 && _entriesProcessed >= _maximum) return false;
-        var owner = passenger.Team == self.Team;
-        if ((owner && !_allowOwner) || (passenger.Team < 0 && !_allowNeutral)
-            || (!owner && passenger.Team >= 0 && !_allowEnemies)) return false;
-        if (!owner && passenger.Team == self.Team && !_allowAllies) return false;
+        var sameTeam = passenger.Team == self.Team;
+        if ((sameTeam && !(_allowOwner || _allowAllies))
+            || (passenger.Team < 0 && !_allowNeutral)
+            || (!sameTeam && passenger.Team >= 0 && !_allowEnemies)) return false;
         if ((_requiredKinds.Length > 0 && !_requiredKinds.Any(kind => passenger.Template.KindOf.Contains(kind,
                 StringComparer.OrdinalIgnoreCase)))
             || _forbiddenKinds.Any(kind => passenger.Template.KindOf.Contains(kind,

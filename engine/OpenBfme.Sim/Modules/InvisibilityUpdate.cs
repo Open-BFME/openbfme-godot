@@ -2,10 +2,10 @@ namespace OpenBfme.Sim;
 
 /// <summary>
 /// Periodically evaluates authored InvisibilityNugget rows. StartsActive,
-/// UpdatePeriod, DetectionRange, ForbiddenConditions, InvisibilityType, and
-/// DETECTED_BY_FRIENDLIES drive authoritative STEALTHED condition state. Hidden
-/// objects are excluded from normal combat acquisition. Broadcast and stealth
-/// transition FX/audio are presentation/deferred filter work.
+/// UpdatePeriod, RequiredUpgrades, DetectionRange, ForbiddenConditions,
+/// InvisibilityType, and DETECTED_BY_FRIENDLIES drive authoritative STEALTHED
+/// condition state. Hidden objects are excluded from normal combat acquisition.
+/// Broadcast object filtering and stealth transition FX/audio are deferred.
 /// </summary>
 [SageModule("InvisibilityUpdate", ModuleTier.Structural)]
 public sealed class InvisibilityUpdateModule : ModuleBase
@@ -13,6 +13,7 @@ public sealed class InvisibilityUpdateModule : ModuleBase
     public const string TypeName = "InvisibilityUpdate";
     private readonly bool _startsActive;
     private readonly long _periodMilliseconds;
+    private readonly string[] _requiredUpgrades;
     private readonly InvisibilityNugget[] _nuggets;
     private int _ticksUntilUpdate;
     private bool _invisible;
@@ -21,6 +22,8 @@ public sealed class InvisibilityUpdateModule : ModuleBase
     {
         _startsActive = spec.GetLong("StartsActive", 0) != 0;
         _periodMilliseconds = Math.Max(1, spec.GetLong("UpdatePeriod", 1_000));
+        _requiredUpgrades = spec.GetString("RequiredUpgrades", "")
+            .Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
         _nuggets = spec.Blocks.Where(block => block.Type.Equals("InvisibilityNugget",
                 StringComparison.OrdinalIgnoreCase)).Select(Parse).ToArray();
         _invisible = _startsActive;
@@ -36,7 +39,8 @@ public sealed class InvisibilityUpdateModule : ModuleBase
             if (_ticksUntilUpdate > 0) return;
         }
         _ticksUntilUpdate = IniValueReader.MillisecondsToTicks(_periodMilliseconds, world.TickMilliseconds);
-        var hidden = _startsActive && _nuggets.Length > 0;
+        var hidden = _startsActive && _nuggets.Length > 0
+            && _requiredUpgrades.All(upgrade => world.ObjectHasUpgrade(self, upgrade));
         foreach (var nugget in _nuggets)
         {
             if (nugget.ForbiddenConditions.Any(self.HasConditionToken)) { hidden = false; break; }

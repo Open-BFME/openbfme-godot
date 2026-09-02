@@ -14,8 +14,8 @@ public sealed class ModuleBatchCCombatUtilityTests
                 ["OneShot"] = BundleValue.Flag(true),
                 ["WeaponName"] = BundleValue.Text("PulseWeapon"),
             }, Array.Empty<BundleBlock>());
-        var fire = new ModuleSpec(FireWeaponUpdateModule.TypeName,
-            data: new Dictionary<string, long> { ["AliveOnly"] = 1 }, blocks: new[] { block });
+        // Empty is the exact 33-row top-level corpus shape.
+        var fire = new ModuleSpec(FireWeaponUpdateModule.TypeName, blocks: new[] { block });
         var attacker = new ObjectTemplate("attacker", new[] { fire }, bodyHealth: Body(100));
         var target = new ObjectTemplate("target", Array.Empty<ModuleSpec>(), bodyHealth: Body(100));
         var weapon = new WeaponTemplate("PulseWeapon", Fixed64.FromInt(20), Fixed64.Zero,
@@ -93,13 +93,24 @@ public sealed class ModuleBatchCCombatUtilityTests
     {
         var module = new ModuleSpec(GateOpenAndCloseBehaviorModule.TypeName,
             new Dictionary<string, long> { ["OpenByDefault"] = 0, ["PercentOpenForPathing"] = 50,
-                ["ResetTimeInMilliseconds"] = 66, ["RepelCollidingUnits"] = 1 });
+                ["RepelCollidingUnits"] = 1, ["ResetTimeInMilliseconds"] = 66,
+                ["TimeBeforePlayingClosedSound"] = 0, ["TimeBeforePlayingOpenSound"] = 0 },
+            new Dictionary<string, string>
+            {
+                ["SoundClosingGateLoop"] = "SyntheticCloseLoop",
+                ["SoundFinishedClosingGate"] = "SyntheticClosed",
+                ["SoundFinishedOpeningGate"] = "SyntheticOpened",
+                ["SoundOpeningGateLoop"] = "SyntheticOpenLoop",
+            });
         var template = new ObjectTemplate("gate", new[] { module }, bodyHealth: Body(100));
         var world = World(new[] { template });
         var gate = world.SpawnObject("gate", 0, At(0));
         var behavior = gate.FindModule<GateOpenAndCloseBehaviorModule>()!;
 
         behavior.RequestOpen(world, gate);
+        behavior.SetAnimationOpenPercent(gate, 49);
+        Assert.False(behavior.IsPathable);
+        behavior.SetAnimationOpenPercent(gate, 50);
         Assert.True(behavior.IsPathable);
         Assert.True(behavior.RepelsCollidingUnits);
         world.Advance(2);
