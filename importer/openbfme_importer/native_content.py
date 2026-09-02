@@ -18,8 +18,10 @@ from .cook._bundle import _root_paths, cook_ini_root, write_bundle
 from .cook.maps import SCHEMA as MAP_SCHEMA
 from .cook.maps import convert_cooked_map
 from .effective_assets_identity import verify_effective_assets
+from .map_kinds import classify_map_path
 from .paths import ensure_external_to_repo, repo_root_from_module
 from .pipeline import ImportPipeline
+from .util import write_json_atomic
 
 
 SELECTION_SCHEMA = "openbfme.native-selection"
@@ -33,6 +35,8 @@ class NativeMapSource:
     slug: str
     players: int
     cooked_root: Path
+    kind: str = "other"
+    virtual_path: str | None = None
 
 
 @dataclass(frozen=True)
@@ -42,6 +46,7 @@ class NativeBuildResult:
     maps_written: int
     selection_written: bool
     maps: tuple[Mapping[str, object], ...]
+    failures: tuple[Mapping[str, object], ...] = ()
 
 
 def _emit(phase: str, message: str, percent: float) -> None:
@@ -182,41 +187,13 @@ def _safe_slug(value: str) -> str:
     return slug
 
 
-def _map_sources_from_pack(pack_root: Path) -> list[NativeMapSource]:
-    catalog_path = pack_root / "data" / "maps.json"
-    if not catalog_path.is_file():
-        return []
-    document = json.loads(catalog_path.read_text(encoding="utf-8"))
-    sources: list[NativeMapSource] = []
-    for row in document.get("maps", []):
-        if not isinstance(row, Mapping):
-            continue
-        relative = Path(str(row.get("map", "")))
-        cooked = (pack_root / relative).resolve().parent
-        try:
-            cooked.relative_to(pack_root.resolve())
-        except ValueError as exc:
-            raise ValueError(f"map catalog path escapes pack: {relative}") from exc
-        if not (cooked / "map.json").is_file():
-            continue
-        slug = _safe_slug(relative.parent.name or str(row.get("id", "")).split(".")[-1])
-        sources.append(
-            NativeMapSource(
-                name=str(row.get("displayName") or slug.replace("-", " ").title()),
-                slug=slug,
-                players=int(row.get("playerCount", row.get("registryPlayerCount", 0)) or 0),
-                cooked_root=cooked,
-            )
-        )
-    return sources
+def _corpus_slug(value: object) -> str:
+    """Validate, but do not rewrite, the corpus cache key."""
 
-
-def _pack_roots(state_root: Path) -> list[Path]:
-    roots = [
-        state_root / "editions" / "rotwk" / "packs" / "rotwk-skirmish-maps-private",
-        state_root / "packs" / "rotwk-skirmish-maps-private",
-    ]
-    return [path.resolve() for path in roots if path.is_dir()]
+    slug = str(value).strip().casefold()
+    if not slug or any(char not in "abcdefghijklmnopqrstuvwxyz0123456789-" for char in slug):
+        raise ValueError(f"unsafe corpus map slug: {value!r}")
+    return slug
 
 
 def _corpus_report_path(state_root: Path) -> Path:
@@ -240,9 +217,14 @@ def _corpus_sources(state_root: Path) -> list[NativeMapSource]:
     sources: list[NativeMapSource] = []
     for row in _read_corpus_rows(state_root):
         verdict = str(row.get("verdict", ""))
-        if not verdict.startswith("cooked"):
+        if verdict not in {
+            "cooked",
+            "cooked-and-connected",
+            "cooked-but-starts-disconnected",
+            "under-two-player-starts",
+        }:
             continue
-        slug = _safe_slug(str(row.get("slug", "")))
+        slug = _corpus_slug(row.get("slug", ""))
         cooked = cache_root / slug
         if not (cooked / "map.json").is_file():
             continue
@@ -252,24 +234,11 @@ def _corpus_sources(state_root: Path) -> list[NativeMapSource]:
                 slug=slug,
                 players=int(row.get("registryPlayerCount", row.get("playerStarts", 0)) or 0),
                 cooked_root=cooked.resolve(),
+                kind=str(row.get("kind") or classify_map_path(str(row.get("path", "")))),
+                virtual_path=str(row.get("path", "")),
             )
         )
     return sources
-
-
-def _merge_sources(*groups: Sequence[NativeMapSource]) -> list[NativeMapSource]:
-    merged: dict[str, NativeMapSource] = {}
-    for group in groups:
-        for source in group:
-            incumbent = merged.get(source.slug)
-            if incumbent is not None:
-                if _cooked_source_sha256(incumbent.cooked_root) != _cooked_source_sha256(
-                    source.cooked_root
-                ):
-                    raise ValueError(f"conflicting cooked maps share slug {source.slug}")
-                continue
-            merged[source.slug] = source
-    return [merged[key] for key in sorted(merged)]
 
 
 def _expected_corpus_slugs(state_root: Path, limit: int | None) -> list[str]:
@@ -279,9 +248,15 @@ def _expected_corpus_slugs(state_root: Path, limit: int | None) -> list[str]:
     if limit is not None:
         rows = rows[:limit]
     return [
-        _safe_slug(str(row.get("slug", "")))
+        _corpus_slug(row.get("slug", ""))
         for row in rows
-        if str(row.get("verdict", "")).startswith("cooked")
+        if str(row.get("verdict", ""))
+        in {
+            "cooked",
+            "cooked-and-connected",
+            "cooked-but-starts-disconnected",
+            "under-two-player-starts",
+        }
     ]
 
 
@@ -291,9 +266,13 @@ def _corpus_report_covers_request(state_root: Path, limit: int | None) -> bool:
         return False
     try:
         document = json.loads(path.read_text(encoding="utf-8"))
+        if int(document.get("schemaVersion", -1)) != 3:
+            return False
         processed = int(document.get("mapCount", -1))
         eligible = int(document.get("eligibleMapCount", -1))
     except (OSError, UnicodeError, json.JSONDecodeError, TypeError, ValueError):
+        return False
+    if limit is None and eligible != 419:
         return False
     required = eligible if limit is None else min(limit, eligible)
     return eligible >= 0 and processed == required
@@ -332,7 +311,9 @@ def _run_corpus_cook(
         capture_output=True,
         check=False,
     )
-    if completed.returncode != 0:
+    if completed.returncode not in {0, 3} or not _corpus_report_covers_request(
+        state_root, limit
+    ):
         tail = (completed.stderr or completed.stdout).strip()[-2000:]
         raise RuntimeError(
             f"corpus map cook exited {completed.returncode}: {tail or 'no output'}"
@@ -342,21 +323,17 @@ def _run_corpus_cook(
 def ensure_map_sources(
     layered_install: Path, state_root: Path, limit: int | None
 ) -> tuple[list[NativeMapSource], bool]:
-    pack_sources = _merge_sources(
-        *[_map_sources_from_pack(pack) for pack in _pack_roots(state_root)]
-    )
-    existing = _merge_sources(pack_sources, _corpus_sources(state_root))
+    existing = _corpus_sources(state_root)
     expected = _expected_corpus_slugs(state_root, limit)
     existing_slugs = {source.slug for source in existing}
-    enough_for_limit = limit is not None and len(existing) >= limit
     complete_report = (
         _corpus_report_covers_request(state_root, limit)
         and all(slug in existing_slugs for slug in expected)
     )
-    needs_cook = not enough_for_limit and not complete_report
+    needs_cook = not complete_report
     if needs_cook:
         _run_corpus_cook(layered_install, state_root, limit)
-        existing = _merge_sources(pack_sources, _corpus_sources(state_root))
+        existing = _corpus_sources(state_root)
         expected = _expected_corpus_slugs(state_root, limit)
         existing_slugs = {source.slug for source in existing}
         missing = [slug for slug in expected if slug not in existing_slugs]
@@ -366,8 +343,6 @@ def ensure_map_sources(
             )
     if limit is not None:
         existing = existing[:limit]
-    if not existing:
-        raise RuntimeError("no cooked skirmish maps are available")
     return existing, needs_cook
 
 
@@ -431,15 +406,32 @@ def build_native_documents(
         write_bundle(result.bundle, bundle_path)
 
     map_rows: list[Mapping[str, object]] = []
+    map_failures: list[Mapping[str, object]] = []
     maps_written = 0
     for source in sorted(map_sources, key=lambda item: item.slug):
-        source_sha = _cooked_source_sha256(source.cooked_root)
+        source_path = source.virtual_path or source.slug + ".map"
         output = version_root / "maps" / f"{source.slug}.map-v1.json"
-        if _valid_map(output, source_sha):
-            document = json.loads(output.read_text(encoding="utf-8"))
-        else:
-            document = convert_cooked_map(source.cooked_root, output)
-            maps_written += 1
+        try:
+            source_sha = _cooked_source_sha256(source.cooked_root)
+            if _valid_map(output, source_sha):
+                document = json.loads(output.read_text(encoding="utf-8"))
+            else:
+                document = convert_cooked_map(
+                    source.cooked_root, output, source_path=source_path
+                )
+                maps_written += 1
+        except (OSError, UnicodeError, ValueError) as exc:
+            map_failures.append(
+                {
+                    "path": source_path,
+                    "slug": source.slug,
+                    "kind": source.kind,
+                    "file": str(source.cooked_root),
+                    "class": type(exc).__name__,
+                    "message": str(exc),
+                }
+            )
+            continue
         players = source.players or len(document.get("start_positions", {}))
         map_rows.append(
             {
@@ -447,6 +439,7 @@ def build_native_documents(
                 "slug": source.slug,
                 "path": _relative_path(output, content),
                 "players": players,
+                "kind": source.kind,
             }
         )
 
@@ -466,7 +459,85 @@ def build_native_documents(
         maps_written=maps_written,
         selection_written=selection_written,
         maps=tuple(map_rows),
+        failures=tuple(map_failures),
     )
+
+
+def write_map_sweep_report(
+    state_root: Path,
+    result: NativeBuildResult,
+    *,
+    install: Path,
+    content_root: Path,
+) -> Path:
+    """Merge strict-cook and map-v1 outcomes into one deterministic 419-row report."""
+
+    success_by_slug = {str(row["slug"]): row for row in result.maps}
+    failure_by_slug = {str(row["slug"]): row for row in result.failures}
+    command = " ".join(
+        (
+            f'"{sys.executable}"',
+            "-m openbfme_importer.native_content",
+            f'--install "{install}"',
+            f'--state-root "{state_root}"',
+            f'--content-root "{content_root}"',
+            "--maps all",
+        )
+    )
+    rows: list[dict[str, object]] = []
+    for cooked in sorted(_read_corpus_rows(state_root), key=lambda row: str(row.get("path", "")).casefold()):
+        path = str(cooked.get("path", ""))
+        slug = str(cooked.get("slug", ""))
+        row: dict[str, object] = {
+            "path": path,
+            "slug": slug,
+            "kind": str(cooked.get("kind") or classify_map_path(path)),
+            "players": int(cooked.get("registryPlayerCount", cooked.get("playerStarts", 0)) or 0),
+            "rerunCommand": command,
+        }
+        if slug in success_by_slug:
+            selection_row = success_by_slug[slug]
+            row.update(
+                {
+                    "status": "ok",
+                    "mapV1": selection_row["path"],
+                    "players": int(selection_row["players"]),
+                }
+            )
+        elif slug in failure_by_slug:
+            failure = failure_by_slug[slug]
+            row.update(
+                {
+                    "status": "failed",
+                    "stage": "map-v1",
+                    "failure": {
+                        "class": failure["class"],
+                        "file": failure["file"],
+                        "message": failure["message"],
+                    },
+                }
+            )
+        else:
+            failure = cooked.get("failure")
+            if not isinstance(failure, Mapping):
+                failure = {
+                    "class": "CookOutputUnavailable",
+                    "file": path,
+                    "message": str(cooked.get("error") or cooked.get("verdict") or "cooked output unavailable"),
+                }
+            row.update({"status": "failed", "stage": "sage-map", "failure": dict(failure)})
+        rows.append(row)
+    report = {
+        "schema": "openbfme.native-map-sweep",
+        "schemaVersion": 1,
+        "attempted": len(rows),
+        "ok": sum(row["status"] == "ok" for row in rows),
+        "failed": sum(row["status"] == "failed" for row in rows),
+        "maps": rows,
+    }
+    path = state_root / "reports" / "rotwk-map-v1-sweep.json"
+    write_json_atomic(path, report)
+    return path
 
 
 def _parse_maps(value: str) -> int | None:
@@ -522,6 +593,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         _emit("native-documents", "Cooking native bundle and map-v1 documents.", 65)
         result = build_native_documents(ini_root, map_sources, content_root)
+        sweep_report = write_map_sweep_report(
+            state_root,
+            result,
+            install=install,
+            content_root=content_root,
+        )
         changed = result.bundle_written or result.maps_written or result.selection_written
         detail = (
             f"Wrote bundle={result.bundle_written}, maps={result.maps_written}, "
@@ -532,7 +609,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         _emit("selection", detail, 95)
         _emit(
             "complete",
-            f"Native content ready: {len(result.maps)} maps, active {result.active}.",
+            f"Native content ready: {len(result.maps)} maps, {len(result.failures)} map-v1 failures, "
+            f"active {result.active}; sweep report {sweep_report}.",
             100,
         )
         return 0

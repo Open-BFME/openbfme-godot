@@ -1,3 +1,5 @@
+using System.Reflection;
+
 namespace OpenBfme.Sim;
 
 public sealed record BundleTemplateFailure(int Index, string Template, string Reason);
@@ -111,6 +113,7 @@ public static class BundleTemplateLoader
                 }
                 AddResolvedLocomotor(row.Name, effective.Blocks, specs, document.Locomotors,
                     locomotors, locomotorSets, unresolved, registry);
+                ValidateStructuralModules(specs, registry);
                 var body = ResolveBodyHealth(effective, specs);
                 var commandSetName = effective.Fields.TryGetValue("CommandSet", out var commandSetValue)
                     ? ValueStrings(commandSetValue).FirstOrDefault() ?? ""
@@ -159,6 +162,35 @@ public static class BundleTemplateLoader
             notes.ToArray());
         return new BundleTemplateLoadResult(
             templates.ToArray(), indices, weapons.Values.ToArray(), armors.Values.ToArray(), tech, report);
+    }
+
+    private static void ValidateStructuralModules(
+        IReadOnlyList<ModuleSpec> specs,
+        ModuleRegistry registry)
+    {
+        foreach (var spec in specs.Where(value => value.Tier == ModuleTier.Structural))
+        {
+            try
+            {
+                if (!registry.TryCreate(spec, out _))
+                {
+                    throw new BundleTemplateException(
+                        $"unknown structural module '{spec.TypeName}' ({spec.Carrier})");
+                }
+            }
+            catch (TargetInvocationException exception)
+                when (exception.InnerException is ArgumentException or FormatException or OverflowException)
+            {
+                throw new BundleTemplateException(
+                    $"structural module '{spec.TypeName}' is invalid: {exception.InnerException.Message}");
+            }
+            catch (Exception exception)
+                when (exception is ArgumentException or FormatException or OverflowException)
+            {
+                throw new BundleTemplateException(
+                    $"structural module '{spec.TypeName}' is invalid: {exception.Message}");
+            }
+        }
     }
 
     private static EffectiveTemplate Resolve(

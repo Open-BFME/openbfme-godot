@@ -274,6 +274,66 @@ def _completion_index(
     return completed, reasons
 
 
+def _native_map_completion(content_root: Path) -> dict[str, str]:
+    """Index valid map-v1 documents named by the private native selection."""
+
+    selection_path = content_root / "native" / "selection.json"
+    if not selection_path.is_file():
+        return {}
+    try:
+        selection = _json(selection_path)
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return {}
+    if not isinstance(selection, Mapping) or not isinstance(selection.get("maps"), list):
+        return {}
+    root = content_root.resolve()
+    completed: dict[str, str] = {}
+    for row in selection["maps"]:
+        if not isinstance(row, Mapping) or not isinstance(row.get("path"), str):
+            continue
+        try:
+            relative = Path(*PurePosixPath(str(row["path"])).parts)
+            document_path = (root / relative).resolve()
+            document_path.relative_to(root)
+            document = _json(document_path)
+        except (OSError, UnicodeError, json.JSONDecodeError, ValueError):
+            continue
+        if not isinstance(document, Mapping):
+            continue
+        source = document.get("source")
+        if (
+            document.get("schema") != "openbfme.map.v1"
+            or not isinstance(source, Mapping)
+            or not isinstance(source.get("path"), str)
+        ):
+            continue
+        completed[_canonical(str(source["path"]))] = str(row["path"])
+    return completed
+
+
+def _map_sweep_failures(content_root: Path) -> dict[str, Mapping[str, object]]:
+    report_path = (
+        content_root.resolve().parent
+        / "retail-work"
+        / "reports"
+        / "rotwk-map-v1-sweep.json"
+    )
+    if not report_path.is_file():
+        return {}
+    try:
+        report = _json(report_path)
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return {}
+    rows = report.get("maps", []) if isinstance(report, Mapping) else []
+    return {
+        _canonical(str(row["path"])): row
+        for row in rows
+        if isinstance(row, Mapping)
+        and row.get("status") == "failed"
+        and isinstance(row.get("path"), str)
+    }
+
+
 def _archive_identity(archive: str, pack: str) -> str:
     parts = archive.replace("\\", "/").casefold().split("/")
     match = re.fullmatch(r"layer-\d{1,4}(?:-([a-z0-9]+))?", parts[0])
@@ -506,16 +566,18 @@ def generate_queue_documents(
     for kind in requested:
         entries = _entries_for_kind(inventory, kind)
         completed, _reasons = _completion_index(catalog, entries, provenance, kind)
+        native_maps = _native_map_completion(content_path) if kind == "maps" else {}
+        sweep_failures = _map_sweep_failures(content_path) if kind == "maps" else {}
         rows = []
         for item in entries:
             item_id = _canonical(item.virtual_path)
-            if item_id in completed:
+            if item_id in completed or item_id in native_maps:
                 continue
             extension = _entry_extension(item)
             rank, priority = _rank(item, kind, multiplayer, references)
             converter = _converter(extension)
-            rows.append(
-                {
+            oracle = _oracle(kind, item_id, install_path, content_path)
+            row = {
                     "id": item_id,
                     "title": f"Convert {item_id}",
                     "rank": rank,
@@ -523,9 +585,20 @@ def generate_queue_documents(
                         f"{item.size} bytes; archive {item.archive}; converter {converter}; "
                         f"priority: {priority}; no selected pack provenance owns a complete output"
                     ),
-                    "oracle": _oracle(kind, item_id, install_path, content_path),
+                    "oracle": oracle,
+                    "rerunCommand": oracle,
                 }
-            )
+            failure_row = sweep_failures.get(item_id)
+            if failure_row is not None:
+                failure = failure_row.get("failure")
+                if isinstance(failure, Mapping):
+                    message = str(failure.get("message") or "map sweep failed")
+                    row["lastFailure"] = message
+                    row["detail"] += f"; last failure: {message}"
+                rerun = failure_row.get("rerunCommand")
+                if isinstance(rerun, str) and rerun:
+                    row["rerunCommand"] = rerun
+            rows.append(row)
         rows.sort(key=lambda row: (int(row["rank"]), str(row["id"])))
         documents[kind] = {
             "schema": "openbfme.fleet-derived-queue",

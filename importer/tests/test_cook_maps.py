@@ -89,6 +89,17 @@ def test_clean_room_cooked_map_is_complete_and_byte_deterministic(tmp_path: Path
     assert document["passability_grid"]["data_base64"] == "AAIA"
 
 
+def test_startless_scenario_preserves_empty_start_and_plot_sets(tmp_path: Path) -> None:
+    cooked = tmp_path / "cooked"
+    _synthetic_cooked_map(cooked)
+    _write_json(cooked / "waypoints.json", {"waypoints": [], "playerStarts": {}})
+
+    document = convert_cooked_map(cooked, tmp_path / "scenario.json")
+
+    assert document["start_positions"] == {}
+    assert document["plots"] == []
+
+
 def test_real_fords_pack_converts_when_available(tmp_path: Path) -> None:
     roots = list(
         Path("workspace/content-packs/bfme2-skirmish-maps-private").glob("*/data/maps.json")

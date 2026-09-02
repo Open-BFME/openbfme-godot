@@ -175,7 +175,6 @@ public sealed record MapDocument(
                 Fixed(property.Value, "y", $"start_positions.{property.Name}.y"),
                 Fixed(property.Value, "facing", $"start_positions.{property.Name}.facing")));
         }
-        if (result.Count == 0) throw new MapDocumentException("start_positions must not be empty");
         return new ReadOnlyDictionary<int, MapStartPosition>(result);
     }
 
