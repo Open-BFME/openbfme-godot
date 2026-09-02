@@ -1,0 +1,47 @@
+{
+  "schema": "openbfme.objects",
+  "schemaVersion": 0,
+  "objects": [
+    {
+      "id": "sim-host.infantry",
+      "kind": "member",
+      "displayName": "Clean-room Host Infantry",
+      "simulation": {
+        "health": 180,
+        "speed": 90,
+        "weapon": "SimHostSword",
+        "armor": "SimHostLeather"
+      },
+      "weapon": {
+        "name": "SimHostSword",
+        "attackRange": 12,
+        "delayBetweenShotsMilliseconds": 900,
+        "damage": 18,
+        "damageType": "SLASH"
+      },
+      "armor": {
+        "name": "SimHostLeather",
+        "defaultPercent": 100,
+        "slashPercent": 80
+      }
+    },
+    {
+      "id": "sim-host.horde-a",
+      "kind": "battalion",
+      "displayName": "Clean-room Host Horde A",
+      "memberObjectId": "sim-host.infantry",
+      "memberCount": 8,
+      "commandPoints": 20,
+      "simulation": { "health": 240, "speed": 90 }
+    },
+    {
+      "id": "sim-host.horde-b",
+      "kind": "battalion",
+      "displayName": "Clean-room Host Horde B",
+      "memberObjectId": "sim-host.infantry",
+      "memberCount": 8,
+      "commandPoints": 20,
+      "simulation": { "health": 240, "speed": 90 }
+    }
+  ]
+}
