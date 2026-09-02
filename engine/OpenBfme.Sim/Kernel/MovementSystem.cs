@@ -54,8 +54,7 @@ public sealed class MovementSystem
 
     public bool CanReach(FixedVector2 destination)
     {
-        var x = destination.X.ToIntFloor();
-        var y = destination.Y.ToIntFloor();
+        var (x, y) = Grid.WorldToCell(destination);
         return Grid.IsPassable(x, y);
     }
 
@@ -320,10 +319,10 @@ public sealed class MovementSystem
         var step = Fixed64.Min(distance, module.CurrentSpeed);
         var offset = target.Position - member.Position;
         var position = member.Position + offset * (step / distance);
-        if (!Grid.IsPassable(position.X.ToIntFloor(), position.Y.ToIntFloor()))
+        var (positionCellX, positionCellY) = Grid.WorldToCell(position);
+        if (!Grid.IsPassable(positionCellX, positionCellY))
         {
-            var goalX = target.Position.X.ToIntFloor();
-            var goalY = target.Position.Y.ToIntFloor();
+            var (goalX, goalY) = Grid.WorldToCell(target.Position);
             if (Grid.IsPassable(goalX, goalY))
             {
                 position = StepFlow(FieldFor(target.Position), member.Position, step);
@@ -378,8 +377,7 @@ public sealed class MovementSystem
 
     private FlowField FieldFor(FixedVector2 destination)
     {
-        var goalX = destination.X.ToIntFloor();
-        var goalY = destination.Y.ToIntFloor();
+        var (goalX, goalY) = Grid.WorldToCell(destination);
         var key = Grid.IndexOf(goalX, goalY);
         if (!_flowFields.TryGetValue(key, out var field))
         {
@@ -397,8 +395,7 @@ public sealed class MovementSystem
 
     private static FlowDirection DirectionAt(FlowField field, FixedVector2 position)
     {
-        var x = position.X.ToIntFloor();
-        var y = position.Y.ToIntFloor();
+        var (x, y) = field.Grid.WorldToCell(position);
         return field.Grid.IsPassable(x, y) ? field.DirectionAt(x, y) : FlowDirection.None;
     }
 
@@ -416,7 +413,8 @@ public sealed class MovementSystem
             var dx = direction.X == 0 ? Fixed64.Zero : direction.X > 0 ? scale : -scale;
             var dy = direction.Y == 0 ? Fixed64.Zero : direction.Y > 0 ? scale : -scale;
             var candidate = new FixedVector2(position.X + dx, position.Y + dy);
-            if (!field.Grid.IsPassable(candidate.X.ToIntFloor(), candidate.Y.ToIntFloor())) break;
+            var (candidateX, candidateY) = field.Grid.WorldToCell(candidate);
+            if (!field.Grid.IsPassable(candidateX, candidateY)) break;
             position = candidate;
             remaining -= quantum;
         }
@@ -429,9 +427,8 @@ public sealed class MovementSystem
         return Fixed64.Min(data.Speed, current + data.Acceleration);
     }
 
-    private static bool IsInGoalCell(FixedVector2 position, FixedVector2 destination) =>
-        position.X.ToIntFloor() == destination.X.ToIntFloor()
-        && position.Y.ToIntFloor() == destination.Y.ToIntFloor();
+    private bool IsInGoalCell(FixedVector2 position, FixedVector2 destination) =>
+        Grid.WorldToCell(position) == Grid.WorldToCell(destination);
 
     private static Fixed64 Decelerate(Fixed64 speed, Fixed64 braking) =>
         Fixed64.Max(Fixed64.Zero, speed - braking);

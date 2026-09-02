@@ -19,6 +19,7 @@ from .fleet_queues import (
     selected_provenance,
 )
 from .native_backtest import validate_cooked_sage_map
+from .cook.maps import convert_cooked_map, validate_map_document
 from .sage_apt import parse_apt_constants, parse_apt_movie, parse_wnd_layout
 from .sage_map import convert_sage_map
 from .util import write_json_atomic
@@ -176,6 +177,15 @@ def _verify_map(source: bytes, item_id: str, record: PackProvenance) -> dict[str
             raise ItemVerificationError(
                 f"map-strict-load-failed: {item_id}: {evidence.get('errors', [])}"
             )
+        engine_document_path = root / "map-v1.json"
+        engine_document = convert_cooked_map(
+            output,
+            engine_document_path,
+            source_path=item_id,
+        )
+        validate_map_document(engine_document)
+        if not engine_document_path.is_file():
+            raise ItemVerificationError(f"map-v1-write-failed: {item_id}")
     cooked = [value for path, value in _json_outputs(record) if path.name.casefold() == "map.json"]
     if not cooked or not any(
         isinstance(value, Mapping)
@@ -186,7 +196,11 @@ def _verify_map(source: bytes, item_id: str, record: PackProvenance) -> dict[str
         raise ItemVerificationError(
             f"cooked-map-source-mismatch: {item_id} map.json is absent or names another source"
         )
-    return {"strictLoad": True, "checkedFiles": len(evidence.get("inventory", []))}
+    return {
+        "strictLoad": True,
+        "engineMapV1": True,
+        "checkedFiles": len(evidence.get("inventory", [])),
+    }
 
 
 def _verify_screen(

@@ -37,7 +37,8 @@ public sealed partial class SimWorld
         _powerReadyTicks[ValidateTeam(team)].TryGetValue(name, out var tick) ? tick : 0;
 
     internal bool ObjectHasUpgrade(GameObject gameObject, string name) =>
-        gameObject.HasObjectUpgrade(name) || TeamHasUpgrade(gameObject.Team, name);
+        gameObject.HasObjectUpgrade(name)
+        || (gameObject.Team >= 0 && TeamHasUpgrade(gameObject.Team, name));
 
     internal bool HasUpgradeTemplate(string name) => _config.Tech.Upgrades.ContainsKey(name);
     internal UpgradeTemplate UpgradeTemplate(string name) => _config.Tech.Upgrades[name];
@@ -104,6 +105,7 @@ public sealed partial class SimWorld
 
     private void ApplyOwnedPlayerUpgrades(GameObject gameObject)
     {
+        if (gameObject.Team < 0) return;
         if (_teamUpgrades[gameObject.Team].Count > 0) EvaluateUpgradeModules(gameObject);
     }
 

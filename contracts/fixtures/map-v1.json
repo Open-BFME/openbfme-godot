@@ -1,0 +1,37 @@
+{
+  "schema": "openbfme.map.v1",
+  "source": {
+    "path": "maps/test/wall.map",
+    "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+  },
+  "world": { "width": 80, "height": 60, "cell_size": 10 },
+  "height_grid": {
+    "width": 8, "height": 6,
+    "encoding": "uint16-little-endian-row-major",
+    "data_base64": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+  },
+  "passability_grid": {
+    "width": 8, "height": 6,
+    "encoding": "one-is-impassable-lsb-first-row-padded",
+    "row_stride_bytes": 1,
+    "data_base64": "CAgIAAgI"
+  },
+  "water": { "impassable": false, "polygons": [] },
+  "start_positions": {
+    "0": { "x": 15, "y": 15, "facing": 0 },
+    "1": { "x": 65, "y": 45, "facing": 3.1415926535 }
+  },
+  "waypoints": { "Center": { "x": 45, "y": 35 } },
+  "objects": [
+    { "template": "CookBase", "x": 15, "y": 15, "z": 2.5, "angle": 0, "owner": "Player_1", "original_owner": "Player_1/teamPlayer_1", "properties": { "uniqueID": "base 1" } },
+    { "template": "CookBase", "x": 65, "y": 45, "z": 2.5, "angle": 3.1415926535, "owner": "Player_2", "original_owner": "Player_2/teamPlayer_2", "properties": { "uniqueID": "base 2" } },
+    { "template": "CookMember", "x": 55, "y": 15, "z": 1, "angle": 0.25, "owner": "PlyrCivilian", "original_owner": "PlyrCivilian/teamPlyrCivilian", "properties": { "enabled": true } },
+    { "template": "MissingRock", "x": 25, "y": 45, "z": 0, "angle": 0, "owner": "", "original_owner": "/team", "properties": {} }
+  ],
+  "plots": [
+    { "base_index": 0, "index": 0, "x": 25, "y": 15, "kind": "structure" },
+    { "base_index": 0, "index": 1, "x": 15, "y": 25, "kind": "resource" },
+    { "base_index": 1, "index": 0, "x": 55, "y": 45, "kind": "structure" },
+    { "base_index": 1, "index": 1, "x": 65, "y": 35, "kind": "resource" }
+  ]
+}
