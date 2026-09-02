@@ -11,7 +11,11 @@ from importer.tests.test_sage_apt import _apt, _const
 from importer.tests.test_sage_map import _synthetic_map
 from openbfme_importer.catalog import InstallCatalog
 from openbfme_importer.fleet_queues import KINDS, generate_queue_documents, main
-from openbfme_importer.sage_apt import parse_wnd_layout
+from openbfme_importer.sage_apt import (
+    parse_apt_constants,
+    parse_apt_movie,
+    parse_wnd_layout,
+)
 from openbfme_importer.sage_map import convert_sage_map
 from openbfme_importer.util import write_json_atomic
 from openbfme_importer.verify_item import ItemVerificationError, verify_item
@@ -184,6 +188,37 @@ def test_verify_item_accepts_converted_fixtures_and_names_corruption(tmp_path: P
         )
         assert result["status"] == "verified"
         assert result["id"] == item_id
+
+    pack = content_root / "fixture-pack" / "one"
+    apt_output = pack / "screens" / "open.json"
+    write_json_atomic(
+        apt_output,
+        parse_apt_movie(
+            _apt(), parse_apt_constants(_const(), "apt/open.const"), "apt/open.apt"
+        ),
+    )
+    manifest_path = pack / "provenance" / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["entries"].append(
+        {
+            "kind": "screen",
+            "converter": "sage-apt-screen-runtime",
+            "source": {
+                "virtual_path": "apt/open.apt",
+                "sha256": hashlib.sha256(_apt()).hexdigest(),
+            },
+            "outputs": [_receipt(apt_output, pack)],
+        }
+    )
+    write_json_atomic(manifest_path, manifest)
+    apt_result = verify_item(
+        kind="screens",
+        item_id="apt/open.apt",
+        install=install,
+        content_root=content_root,
+    )
+    assert apt_result["status"] == "verified"
+    assert apt_result["structural"] == {"frameCount": 1}
 
     proof.write_bytes(b"corrupt")
     with pytest.raises(ItemVerificationError, match="converted-output-corrupt.*output-size-mismatch"):
