@@ -28,3 +28,8 @@ template with an unknown or unparseable body fails with that type named.
 Unknown `Behavior`, `Draw`, `ClientUpdate`, `ClientBehavior`, `Flasher`, and
 all other carriers are Cosmetic. Their templates load, while `BundleLoadReport`
 records each gap with template, type, and carrier and aggregates counts by type.
+
+A file here that only records a gap (its effect calls `RecordTechGap`/`RecordGap`
+or derives from a `Cosmetic*Gap` placeholder) is a stub, not an implementation.
+`tools/fleet/work.py` keeps such types open in the core-modules queue until the
+real effect lands.

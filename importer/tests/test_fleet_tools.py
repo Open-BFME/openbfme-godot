@@ -46,10 +46,12 @@ def test_core_modules_queue_reads_census_and_excludes_existing_files(tmp_path, m
     modules = tmp_path / "Modules"
     modules.mkdir()
     (modules / "AutoHealBehavior.cs").write_text("// done", encoding="utf-8")
+    (modules / "HordeContain.cs").write_text("=> world.RecordTechGap(TypeName);", encoding="utf-8")
     monkeypatch.setattr(fl, "CENSUS", census)
     monkeypatch.setattr(fl, "MODULES_DIR", modules)
     units, total = fl.core_modules_units()
     assert total == 2
+    # A gap-recording stub is not an implementation; it stays open.
     assert [u["id"] for u in units] == ["core-modules/HordeContain"]
 
 

@@ -48,10 +48,21 @@ def tracked_files() -> list[str]:
 
 # ---------------------------------------------------------------- derived queues
 
+GAP_MARKERS = ("RecordTechGap(", "RecordGap(", "CosmeticUpgradeGap", "CosmeticSpecialPowerGap")
+
+
 def _module_file_names() -> set[str]:
+    """Module files that implement their type. A file whose effect only records a
+    gap is a placeholder and stays open in the queue (see Modules/README.md)."""
     if not MODULES_DIR.is_dir():
         return set()
-    return {p.stem for p in MODULES_DIR.glob("*.cs")}
+    done = set()
+    for path in MODULES_DIR.glob("*.cs"):
+        text = path.read_text(encoding="utf-8", errors="ignore")
+        if any(marker in text for marker in GAP_MARKERS):
+            continue
+        done.add(path.stem)
+    return done
 
 
 def core_modules_units() -> tuple[list[dict], int]:
