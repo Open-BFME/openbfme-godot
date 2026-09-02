@@ -203,8 +203,12 @@ public sealed class BundleDocument
         using (parsed)
         {
             var root = RequireKind(parsed.RootElement, JsonValueKind.Object, "$", "object");
+            // Every table the cook emits (contracts/bundle-v1.schema.json). Tables this
+            // reader does not consume yet (tech tables) are accepted and ignored so a
+            // newer cook never breaks an older core; unknown names still fail loudly.
             CheckProperties(root, "$", "schema", "source", "templates", "defines", "diagnostics",
-                "weapons", "armors", "damage_fx", "locomotors", "locomotor_sets", "hordes");
+                "weapons", "armors", "damage_fx", "locomotors", "locomotor_sets", "hordes",
+                "upgrades", "sciences", "special_powers", "command_buttons", "command_sets");
             var schema = RequireString(root, "schema", "$", nonEmpty: true);
             if (schema != ExpectedSchema)
             {

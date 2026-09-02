@@ -36,9 +36,15 @@ public sealed class BundleLoaderTests
         Assert.True(gap.Gap);
         Assert.Equal("ModuleTag_Malformed", gap.Type);
         Assert.Equal(8, gap.Fields["Count"].Integer);
-        Assert.Equal(6, document.Source.Paths.Count);
-        Assert.Equal(10, document.Defines.Count);
-        Assert.Equal(2, document.Diagnostics.Count);
+        // The shared golden fixture grows whenever a cook lane adds a table, so
+        // compare the reader's counts against the fixture itself, not constants.
+        using var raw = System.Text.Json.JsonDocument.Parse(
+            File.ReadAllBytes(MatchLaunchTests.RepoPath("contracts", "fixtures", "bundle-v1.json")));
+        var rawRoot = raw.RootElement;
+        Assert.Equal(rawRoot.GetProperty("source").GetProperty("paths").GetArrayLength(), document.Source.Paths.Count);
+        Assert.Equal(rawRoot.GetProperty("defines").EnumerateObject().Count(), document.Defines.Count);
+        Assert.Equal(rawRoot.GetProperty("diagnostics").GetArrayLength(), document.Diagnostics.Count);
+        Assert.True(document.Source.Paths.Count >= 6);
     }
 
     [Fact]
