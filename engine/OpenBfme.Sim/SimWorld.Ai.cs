@@ -12,8 +12,6 @@ public sealed partial class SimWorld
 
     internal SimConfig AiConfig => _config;
 
-    internal bool IsAiTeam(int team) => _aiPlayers.Values.Any(value => value.Team == team && value.Enabled);
-
     private void InitializeAi(MatchLaunch launch)
     {
         _aiPlayers.Clear();

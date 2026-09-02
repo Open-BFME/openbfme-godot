@@ -80,11 +80,10 @@ public sealed class CastleBehaviorModule : ModuleBase
             var position = new FixedVector2(
                 self.Position.X + ox,
                 self.Position.Y + oy);
-            world.SpawnObjectFrom(
+            world.SpawnObject(
                 template,
                 self.Team,
                 position,
-                self,
                 self.Elevation + oz,
                 self.HeadingRadians + angle);
         }

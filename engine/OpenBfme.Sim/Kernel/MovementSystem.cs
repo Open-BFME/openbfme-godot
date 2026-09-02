@@ -262,12 +262,6 @@ public sealed class MovementSystem
         if (module == null) return;
         module.StoppedForReformLastTick = false;
         var locomotor = module.DataForTick(world.TickMilliseconds);
-        var movementMultiplier = world.MovementMultiplier(gameObject);
-        if (movementMultiplier <= Fixed64.Zero)
-        {
-            module.CurrentSpeed = Fixed64.Zero;
-            return;
-        }
         if (!module.HasOrder)
         {
             module.CurrentSpeed = Decelerate(module.CurrentSpeed, locomotor.Braking);
@@ -297,7 +291,6 @@ public sealed class MovementSystem
             locomotor,
             module.CurrentSpeed,
             Fixed64.Sqrt(distanceSquared));
-        module.CurrentSpeed *= movementMultiplier;
         var position = StepFlow(field, gameObject.Position, module.CurrentSpeed);
         if (IsInGoalCell(position, destination)) position = destination;
         gameObject.SetTransform(position, gameObject.Elevation, heading);

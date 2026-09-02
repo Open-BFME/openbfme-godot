@@ -10,11 +10,5 @@ public sealed class GenericSpecialPowerModule : SpecialPowerEffectModuleBase
         SimWorld world,
         GameObject caster,
         int targetId,
-        FixedVector2 targetPosition)
-    {
-        var handled = false;
-        foreach (var heal in caster.Modules.OfType<AutoHealBehaviorModule>())
-            handled |= heal.TriggerButton(world);
-        if (!handled) world.RecordTechGap(TypeName);
-    }
+        FixedVector2 targetPosition) => world.RecordTechGap(TypeName);
 }
