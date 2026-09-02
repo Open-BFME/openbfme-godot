@@ -84,6 +84,36 @@ public sealed class BundleLoaderTests
     }
 
     [Fact]
+    public void AuthoredRemoveReplaceAndAddModuleDirectivesAreHonoredInOrder()
+    {
+        var document = BundleDocument.Parse(MinimalBundle("""
+            {"name":"Parent","kind":"object","parent":null,"kindof":[],"geometry":{},"fields":{},"blocks":[],
+             "modules":[
+               {"carrier":"Body","type":"ActiveBody","tag":"ModuleTag_Body","fields":{"MaxHealth":100},"blocks":[],"gap":false},
+               {"carrier":"Behavior","type":"ProductionUpdate","tag":"ModuleTag_Production","fields":{"QueueMax":1},"blocks":[],"gap":false},
+               {"carrier":"Draw","type":"W3DScriptedModelDraw","tag":"ModuleTag_Draw","fields":{},"blocks":[],"gap":false}]},
+            {"name":"Child","kind":"child","parent":"Parent","kindof":[],"geometry":{},"fields":{},"blocks":[],
+             "modules":[
+               {"carrier":"Behavior","type":"DestroyDie","tag":"ModuleTag_Destroy","fields":{"RemoveModule":"ModuleTag_Draw"},"blocks":[],"gap":false},
+               {"carrier":"Body","type":"ActiveBody","tag":"ModuleTag_NewBody","fields":{"ReplaceModule":"ModuleTag_Body","MaxHealth":200},"blocks":[],"gap":false},
+               {"carrier":"Behavior","type":"ProductionUpdate","tag":"ModuleTag_Production","fields":{"AddModule":true,"QueueMax":4},"blocks":[],"gap":false}]}
+            """));
+
+        var result = BundleTemplateLoader.Load(document, ModuleRegistry.CreateDefault(), 33);
+        var child = Assert.Single(result.Templates, template => template.Name == "Child");
+
+        Assert.DoesNotContain(child.Modules, module => module.Tag == "ModuleTag_Draw");
+        var body = Assert.Single(child.Modules, module => module.TypeName == ActiveBodyModule.TypeName);
+        Assert.Equal("ModuleTag_NewBody", body.Tag);
+        Assert.Equal(200, body.GetLong("MaxHealth", -1));
+        Assert.Equal(2, child.Modules.Count(module => module.TypeName == ProductionModule.TypeName));
+        Assert.Contains(child.Modules,
+            module => module.TypeName == DestroyDieModule.TypeName && module.Tag == "ModuleTag_Destroy");
+        Assert.DoesNotContain(result.Report.Notes,
+            note => note.Contains("not authored", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void BundleWorldSpawnsEveryLoadedFixtureTemplateAndPublishesBundleIndexes()
     {
         var launch = MatchLaunch.Load(MatchLaunchTests.RepoPath(
