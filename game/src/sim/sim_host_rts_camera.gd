@@ -76,12 +76,28 @@ func camera() -> Camera3D:
 	return _camera
 
 
+func focus(world_position: Vector3) -> void:
+	target = world_position
+	if _camera != null:
+		_camera.far = 10_000.0
+	_update_transform()
+
+
+func focus_toward(world_position: Vector3, look_toward: Vector3) -> void:
+	var inward := Vector2(look_toward.x - world_position.x, look_toward.z - world_position.z)
+	if inward.length_squared() > 0.01:
+		inward = inward.normalized()
+		yaw = atan2(-inward.x, -inward.y)
+	distance = 650.0
+	focus(world_position)
+
+
 func screen_to_ground(screen_position: Vector2) -> Variant:
 	if _camera == null:
 		return null
 	var origin := _camera.project_ray_origin(screen_position)
 	var direction := _camera.project_ray_normal(screen_position)
-	return Plane(Vector3.UP, 0.0).intersects_ray(origin, direction)
+	return Plane(Vector3.UP, target.y).intersects_ray(origin, direction)
 
 
 func _update_transform() -> void:
