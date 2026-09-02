@@ -617,6 +617,9 @@ public sealed partial class SimWorld
             case "power":
                 ApplyPowerCommand(command);
                 break;
+            case "ability":
+                ApplyAbilityCommand(command);
+                break;
             default:
                 // Unknown command types are ignored deterministically (validated upstream
                 // by the lockstep layer); they still affected the hash while queued.
