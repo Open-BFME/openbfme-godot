@@ -10,7 +10,7 @@ extends SceneTree
 ## skirmish off the live selection and proves it on the real roster instead of a
 ## fixture.
 ##
-## Authored sources (workspace/retail-extract/data/ini):
+## Authored sources (the retail INI extract under workspace):
 ##   locomotor.ini:142  HumanLocomotor    Acceleration/Braking 510, TurnTime 500
 ##   locomotor.ini:1026 HorseLocomotor    Acceleration 1500, Braking 2000, TurnTime 1500
 ##   locomotor.ini:1683 CatapultLocomotor Acceleration/Braking 1000, TurnTime 1000

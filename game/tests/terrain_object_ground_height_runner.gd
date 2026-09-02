@@ -14,11 +14,11 @@ extends SceneTree
 ## is the difference between a wall on the rampart and a wall over the valley.
 ##
 ## ORACLE (external, never this repo's own runtime):
-##   OpenSAGE src/OpenSage.Game/Terrain/HeightMap.cs
+##   OpenSAGE Terrain HeightMap
 ##     ConvertWorldCoordinates: p = p / HorizontalScale + BorderWidth
 ##     GetPosition(x, y):       ((x - BorderWidth) * 10, (y - BorderWidth) * 10, h)
 ##     GetHeight(float, float): bilinear over the four surrounding samples
-##   OpenSAGE src/OpenSage.Game/Logic/Object/GameObject.cs
+##   OpenSAGE Logic GameObject
 ##     height = HeightMap.GetHeight(position.X, position.Y) + mapObject.Position.Z
 ##   i.e. an authored object's Z float is an OFFSET ABOVE THE TERRAIN.
 ## Leg B re-derives nothing: it compares the runtime sample against the ground Z

@@ -37,7 +37,7 @@ const FORDS_TRANSFORM_SCALE := 0.02649232738129
 ## any supplemental pack converts it, so the tower renders bare however correct
 ## the mount offset is. EMPTY THIS LIST when the importer ships the visual.
 ##
-## EXACT RECOOK SOURCE (verified 2026-08-26, workspace/retail-extract):
+## EXACT RECOOK SOURCE (verified 2026-08-26 against the retail extract under workspace):
 ##   data/ini/object/goodfaction/units/men/trebuchet.ini:854
 ##       ChildObject MenTrebuchetFortress GondorTrebuchet
 ##           Draw = W3DTruckDraw ...  Model = GUFSgTreb_SKN  (DYING: GUFSgTreb_DIEA)

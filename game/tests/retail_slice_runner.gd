@@ -4029,7 +4029,7 @@ func _finish() -> void:
 	## workspace/retail-work/packs/bfme2-men-vslice the runner reported
 	## failed=48 = 9 real failures + 39 = KNOWN_FAILURE_NAMES.size() spurious
 	## retail_gate_update_allowlist_* rows. That is what broke
-	## tools/gate-retail.ps1, whose regex demands failed=0 against exactly that
+	## run_tests.bat, whose regex demands failed=0 against exactly that
 	## profile-built bfme2 pack (it carries no data/playable-units at all).
 	##
 	## A pin that did not fire is only evidence of anything if the check that

@@ -17,6 +17,7 @@ ROWS = [
     ("core-modules", "SAGE module types implemented in engine/"),
     ("red", "headless slice checks passing"),
     ("bugs", "playtest issues closed (open shown as remaining)"),
+    ("launcher", "launcher units landed"),
     ("maps", "maps cooked, booted, AI-finished"),
     ("assets", "corpus assets converted and verified"),
     ("screens", "APT/WND screens loading"),

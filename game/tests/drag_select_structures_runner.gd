@@ -2,7 +2,7 @@ extends SceneTree
 ## Drag-select (band-box) must follow retail's structure rule.
 ##
 ## Retail truth (OpenSAGE `SelectionSystem.MultiSelect`, the faithful SAGE
-## band-box reimplementation — src/OpenSage.Game/Logic/SelectionSystem.cs):
+## band-box reimplementation — the OpenSAGE SelectionSystem (Logic)):
 ##   foreach own object whose RoughCollider intersects the box frustum:
 ##       non-structure -> selectedObjects.Add(id)
 ##       structure     -> structure ??= id   (remembered, not added)

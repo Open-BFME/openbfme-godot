@@ -83,7 +83,7 @@ const PIN_TICKS := 3000
 ##    behaviour. (Removing both keys again yields e25bd4a3..., still not the old
 ##    value, so authored behaviour moved too - both causes are real.)
 ## 5. Root cause of the SILENCE, now fixed: this runner was CI-only. It was never
-##    invoked by `tools/gate-retail.ps1`, so a week of local development never
+##    invoked by `run_tests.bat`, so a week of local development never
 ##    saw it fail. It is wired into that gate as of this change, which is what
 ##    stops the next week of drift from going unnoticed.
 ##

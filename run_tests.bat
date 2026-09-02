@@ -32,6 +32,8 @@ echo === headless slice runner
 call "%~dp0tools\resolve-godot.bat" --console
 if errorlevel 1 exit /b 1
 if not defined OPENBFME_CONTENT set "OPENBFME_CONTENT=%CD%\workspace\content-packs"
+REM BFME2 oracle for the few runners that check base-game-only authoring; absent means those checks print SKIP.
+if not defined OPENBFME_BFME2_EXTRACT if exist "%CD%\workspace\retail-extract\data\ini\weapon.ini" set "OPENBFME_BFME2_EXTRACT=%CD%\workspace\retail-extract"
 if not exist "%CD%\workspace\logs" mkdir "%CD%\workspace\logs"
 "%OPENBFME_GODOT%" --headless --path game --script res://tests/retail_slice_runner.gd > "%CD%\workspace\logs\latest-retail_slice_runner.txt" 2>&1
 set "RC=%ERRORLEVEL%"

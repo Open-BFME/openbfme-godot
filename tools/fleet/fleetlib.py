@@ -186,7 +186,7 @@ def manual_units(name: str) -> tuple[list[dict], int]:
 
 
 QUEUE_ORDER = [
-    "bugs", "red", "core-modules", "cook", "render", "assets", "maps",
+    "bugs", "red", "launcher", "core-modules", "cook", "render", "assets", "maps",
     "screens", "missions", "ai", "net", "mods",
 ]
 

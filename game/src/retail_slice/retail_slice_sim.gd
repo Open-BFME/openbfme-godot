@@ -6229,7 +6229,7 @@ const CASTLE_AI_KIND_LEVEL_REFUSALS := [
 
 ## Retail's skirmish AI does not search the map for base sites: aidata.ini
 ## authors the whole base outright. `SkirmishBuildList Gondor`
-## (workspace/retail-extract/data/ini/default/aidata.ini:145-202) places eight
+## (retail extract, data/ini/default/aidata.ini:145-202) places eight
 ## structures, and the farthest from that list's centroid (997.51, 1132.77) is
 ## GondorWorkshop at X:821.34 Y:1365.61 — 291.98 source units away. That is the
 ## measured retail base footprint radius, and it is what bounds ONE tick of the

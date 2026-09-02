@@ -11,11 +11,11 @@ $workspace = "$state\editions\rotwk"
 $assets = "$workspace\cache\effective-assets"
 $content = 'workspace\content-packs'
 
-& $python tools\rotwk_faction_convert_batch.py --install F:\RotWK --game rotwk --state-root $state --assets-root $assets --faction men --faction elves --faction dwarves --faction isengard --faction mordor --faction wild --faction angmar
+& $python tools\rotwk_faction_convert_batch.py --install <RotWK-install> --game rotwk --state-root $state --assets-root $assets --faction men --faction elves --faction dwarves --faction isengard --faction mordor --faction wild --faction angmar
 & $python tools\openbfme_import.py --state-root $state compile-cah-system --game rotwk --assets-root $assets
 & $python tools\openbfme_import.py --state-root $state compile-ring-system --game rotwk --assets-root $assets
-& $python tools\rotwk_faction_pack_proof.py --install F:\RotWK --game rotwk --state-root $state --faction men --faction elves --faction dwarves --faction isengard --faction mordor --faction wild --faction angmar --publish
-& $python tools\rotwk_multimap_skirmish.py --install F:\RotWK --game rotwk --state-root $state --effective-assets $assets --full-profile --build --publish
+& $python tools\rotwk_faction_pack_proof.py --install <RotWK-install> --game rotwk --state-root $state --faction men --faction elves --faction dwarves --faction isengard --faction mordor --faction wild --faction angmar --publish
+& $python tools\rotwk_multimap_skirmish.py --install <RotWK-install> --game rotwk --state-root $state --effective-assets $assets --full-profile --build --publish
 
 # Read each exact bundleSha256 from:
 #   $state\reports\rotwk-faction-pack-proof.json

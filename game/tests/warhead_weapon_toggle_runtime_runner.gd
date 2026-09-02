@@ -16,7 +16,12 @@ extends SceneTree
 const Sim = preload("res://src/retail_slice/retail_slice_sim.gd")
 const Adapter = preload("res://src/retail_slice/playable_unit_runtime_adapter.gd")
 const INI_ROOT := "res://../workspace/retail-work/editions/rotwk/cache/effective-assets/data/ini/"
-const BFME2_WEAPON_ORACLE := "res://../workspace/retail-extract/data/ini/weapon.ini"
+## BFME2 1.06 weapon.ini authors the two-component trebuchet warhead this
+## runner checks; RotWK's effective weapon.ini authors one. Point
+## OPENBFME_BFME2_EXTRACT at an extracted BFME2 data root (run_tests.bat does
+## when workspace holds one). Without it the check is printed as SKIP, never
+## counted as a pass.
+const BFME2_EXTRACT_ENV := "OPENBFME_BFME2_EXTRACT"
 const SOURCE_SCALE := 0.1
 const WATCHDOG_FRAMES := 1800
 
@@ -84,13 +89,17 @@ func _run() -> void:
 	_check("oracle_resolves_rock_range", rock_range > 0.0)
 
 	# --- Gondor trebuchet: the compiler-facing warhead component contract -----
-	var trebuchet_warhead := _block(_read(BFME2_WEAPON_ORACLE), "Weapon GondorTrebuchetRockWarhead")
-	var trebuchet_radii := _numeric_fields(trebuchet_warhead, "Radius")
-	var trebuchet_tapers := _numeric_fields(trebuchet_warhead, "DamageTaperOff")
-	_check(
-		"compiled_trebuchet_warhead_keeps_two_radius_and_taper_components radii=%s tapers=%s" % [str(trebuchet_radii), str(trebuchet_tapers)],
-		trebuchet_radii == [20.0, 100.0] and trebuchet_tapers == [50.0]
-	)
+	var bfme2_root := OS.get_environment(BFME2_EXTRACT_ENV)
+	if bfme2_root == "":
+		print("WARHEAD_WEAPON_TOGGLE SKIP compiled_trebuchet_warhead_keeps_two_radius_and_taper_components reason=%s unset" % BFME2_EXTRACT_ENV)
+	else:
+		var trebuchet_warhead := _block(_read(bfme2_root.path_join("data/ini/weapon.ini")), "Weapon GondorTrebuchetRockWarhead")
+		var trebuchet_radii := _numeric_fields(trebuchet_warhead, "Radius")
+		var trebuchet_tapers := _numeric_fields(trebuchet_warhead, "DamageTaperOff")
+		_check(
+			"compiled_trebuchet_warhead_keeps_two_radius_and_taper_components radii=%s tapers=%s" % [str(trebuchet_radii), str(trebuchet_tapers)],
+			trebuchet_radii == [20.0, 100.0] and trebuchet_tapers == [50.0]
+		)
 
 	# --- adapter: the compiled mode carries the warhead damage ---------------
 	var haldir := Adapter.normalized_unit_rule(

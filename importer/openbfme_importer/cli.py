@@ -3701,7 +3701,7 @@ def _dispatch_main(argv: list[str] | None = None) -> int:
             # every legitimate map-pack build. The roster gate needs no such
             # artefact - it compares the cook against what is already on disk.
             # Only when this build actually publishes. A --no-publish proof
-            # build (tools/gate-retail.ps1 runs two of them) cooks into the
+            # build (run_tests.bat runs two of them) cooks into the
             # private pack root and ships nothing, so there is no publication
             # to refuse and blocking it would break the gate.
             build_pack_id = getattr(resolved, "pack_id", "") or ""

@@ -45,11 +45,16 @@ def audit(candidates: list[str]) -> dict[str, list[str]]:
             continue
     report: dict[str, list[str]] = {}
     for cand in candidates:
-        cand = cand.replace("\\", "/").strip()
+        cand = cand.replace("\\", "/").strip().rstrip("/")
         if not cand:
             continue
+        # A directory candidate matches only by its path (a bare "models" or
+        # "audio" would hit half the tree). A file matches by path or base name,
+        # but a generic base name like README.md matches by path only.
+        is_dir = (fl.REPO / cand).is_dir()
         name = Path(cand).name
-        hits = [rel for rel, text in texts.items() if name in text and not _ignored(rel, cand)]
+        needles = [cand] if is_dir or name.lower() in {"readme.md", "readme.txt", ".gitkeep", "__init__.py"} else [cand, name]
+        hits = [rel for rel, text in texts.items() if any(n in text for n in needles) and not _ignored(rel, cand)]
         report[cand] = sorted(hits)
     return report
 
