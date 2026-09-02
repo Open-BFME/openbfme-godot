@@ -98,4 +98,5 @@ run_tests.bat                importer tests + engine tests + headless slice runn
 run_launcher.bat             launcher from source
 run_importer.bat             importer CLI
 run_rotwk_one_button.bat     convert all factions + maps from a RotWK install
+run_sim_match.bat            launch the first playable match on the new core
 ```

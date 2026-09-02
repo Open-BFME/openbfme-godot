@@ -18,9 +18,18 @@ var _stderr: FileAccess
 var _pid := -1
 var _host_path := ""
 var _last_error := ""
+var _last_launch_reply: Dictionary = {}
 
 
 func launch(match: Dictionary, templates_path: String) -> bool:
+	return _launch_source(match, "templates", templates_path)
+
+
+func launch_bundle(match: Dictionary, bundle_path: String) -> bool:
+	return _launch_source(match, "bundle", bundle_path)
+
+
+func _launch_source(match: Dictionary, source_field: String, source_path: String) -> bool:
 	if _stdio != null:
 		_set_error("host is already running")
 		return false
@@ -41,15 +50,45 @@ func launch(match: Dictionary, templates_path: String) -> bool:
 		_set_error("host pipe did not return stdio and pid")
 		_close_pipes()
 		return false
-	var reply := _exchange_with_timeout(
-		{"op": "launch", "match": _wire_match(match), "templates": templates_path},
-		STARTUP_TIMEOUT_MS
-	)
+	var request := {"op": "launch", "match": _wire_match(match)}
+	request[source_field] = source_path
+	var reply := _exchange_with_timeout(request, STARTUP_TIMEOUT_MS)
 	if String(reply.get("op", "")) != "launched":
 		_set_error(_reply_error("launch", reply))
 		_close_pipes()
 		return false
+	_last_launch_reply = reply.duplicate(true)
 	return true
+
+
+func templates() -> Array[Dictionary]:
+	var result: Array[Dictionary] = []
+	var reply := _exchange({"op": "templates"})
+	if String(reply.get("op", "")) != "templates":
+		_set_error(_reply_error("templates", reply))
+		return result
+	var rows: Variant = reply.get("templates", [])
+	if not (rows is Array):
+		_set_error("templates reply has no template array")
+		return result
+	for row_value in rows as Array:
+		if row_value is Dictionary:
+			result.append((row_value as Dictionary).duplicate(true))
+	return result
+
+
+func spawn(template_name: String, player: int, position: Vector2) -> Dictionary:
+	var reply := _exchange({
+		"op": "spawn",
+		"template": template_name,
+		"player": player,
+		"x": position.x,
+		"y": position.y,
+	})
+	if String(reply.get("op", "")) != "spawned":
+		_set_error(_reply_error("spawn", reply))
+		return {}
+	return reply
 
 
 func send_commands(bundle: Dictionary) -> bool:
@@ -104,6 +143,10 @@ func last_error() -> String:
 
 func host_path() -> String:
 	return _host_path
+
+
+func launch_reply() -> Dictionary:
+	return _last_launch_reply.duplicate(true)
 
 
 func _exchange(request: Dictionary) -> Dictionary:
@@ -215,3 +258,4 @@ func _close_pipes() -> void:
 	_stdio = null
 	_stderr = null
 	_pid = -1
+	_last_launch_reply = {}

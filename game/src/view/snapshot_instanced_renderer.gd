@@ -12,6 +12,7 @@ const REQUIRED_OBJECT_ARRAYS := [
 	"id", "template", "owner", "x", "y", "z", "yaw", "health",
 	"max_health", "state", "anim", "anim_frame", "flags",
 ]
+const TemplateMeshResolverScript := preload("res://src/view/snapshot_template_mesh_resolver.gd")
 
 class Group:
 	extends RefCounted
@@ -29,6 +30,10 @@ var _mesh_source := "capsule"
 var _mesh_path := ""
 var _tint_material: ShaderMaterial
 var _rendered_instances := 0
+var _template_mesh_resolver = TemplateMeshResolverScript.new()
+var _resolved_template_indices: Dictionary = {}
+var _fallback_template_indices: Dictionary = {}
+var _printed_model_summary := false
 
 
 func _ready() -> void:
@@ -46,6 +51,13 @@ func submit_snapshot(document: Dictionary) -> bool:
 	_current = document.duplicate(true)
 	_previous_slots = _slot_index(_previous)
 	return true
+
+
+func configure_templates(template_rows: Array[Dictionary]) -> void:
+	_template_mesh_resolver.configure(template_rows)
+	_resolved_template_indices.clear()
+	_fallback_template_indices.clear()
+	_printed_model_summary = false
 
 
 func render_interpolated(alpha: float) -> bool:
@@ -85,6 +97,9 @@ func render_interpolated(alpha: float) -> bool:
 			)
 		group.multimesh.buffer = group.buffer
 		_rendered_instances += slots.size()
+	if not _printed_model_summary:
+		_printed_model_summary = true
+		print(model_resolution_summary())
 	return _rendered_instances == int(_current["object_count"])
 
 
@@ -112,6 +127,14 @@ func group_count() -> int:
 	return _groups.size()
 
 
+func model_resolution_summary() -> String:
+	return "SIM_HOST_MODEL_RESOLUTION resolved=%d fallback=%d templates=%d" % [
+		_resolved_template_indices.size(),
+		_fallback_template_indices.size(),
+		_resolved_template_indices.size() + _fallback_template_indices.size(),
+	]
+
+
 func _ensure_group(key: String, wanted: int) -> Group:
 	var group: Group = _groups.get(key)
 	if group == null:
@@ -119,7 +142,15 @@ func _ensure_group(key: String, wanted: int) -> Group:
 		group.multimesh = MultiMesh.new()
 		group.multimesh.transform_format = MultiMesh.TRANSFORM_3D
 		group.multimesh.use_custom_data = true
-		group.multimesh.mesh = _mesh
+		var template_index := int(key.get_slice("|", 0))
+		var resolved: Dictionary = _template_mesh_resolver.resolve(template_index)
+		var template_mesh: Mesh = resolved.get("mesh") as Mesh
+		if template_mesh != null:
+			group.multimesh.mesh = template_mesh
+			_resolved_template_indices[template_index] = String(resolved.get("path", ""))
+		else:
+			group.multimesh.mesh = _mesh
+			_fallback_template_indices[template_index] = _mesh_source
 		group.node = MultiMeshInstance3D.new()
 		group.node.name = "SnapshotBatch_%s" % key.replace("|", "_")
 		group.node.multimesh = group.multimesh
