@@ -6,7 +6,7 @@ extends CanvasLayer
 signal command_bundle_emitted(bundle: Dictionary)
 signal command_acknowledged(bundle: Dictionary)
 
-const RetailHudScript := preload("res://src/retail_slice/retail_hud.gd")
+const RETAIL_HUD_SCRIPT_PATH := "res://src/retail_slice/retail_hud.gd"
 const MAX_BUNDLE_BYTES := 128 * 1024 * 1024
 const COMMAND_KIND := {
 	"UNIT_BUILD": "train",
@@ -64,7 +64,7 @@ class MapView extends RefCounted:
 		return Vector3(source.x, source.y, -source.z)
 
 
-var hud: RetailHud
+var hud
 var last_bundle: Dictionary = {}
 var last_acknowledged := false
 var error := ""
@@ -106,7 +106,7 @@ func configure(
 	_map_view.configure(map_document)
 	_view = SnapshotView.new(self)
 	_build_hud(camera)
-	return true
+	return hud != null
 
 
 func accept_snapshot(snapshot: Dictionary) -> void:
@@ -245,7 +245,11 @@ func radar_structure(id: int) -> Dictionary:
 func _build_hud(camera: Camera3D) -> void:
 	if hud != null:
 		hud.queue_free()
-	hud = RetailHudScript.new()
+	var retail_hud_script := load(RETAIL_HUD_SCRIPT_PATH)
+	if retail_hud_script == null:
+		error = "retail HUD script unavailable"
+		return
+	hud = retail_hud_script.new()
 	hud.name = "NativeRetailHud"
 	hud.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	add_child(hud)
@@ -255,7 +259,7 @@ func _build_hud(camera: Camera3D) -> void:
 	if apt_pack_root != "" and _content_db != null:
 		var roots: Array = (_content_db.get("pack_roots") as Array).duplicate()
 		_content_db.call("prefetch_retail_ui_assets", [apt_pack_root] + roots)
-		var bind_error := hud.bind_retail_train_commands(_content_db, apt_pack_root, true, roots)
+		var bind_error: String = hud.bind_retail_train_commands(_content_db, apt_pack_root, true, roots)
 		if bind_error != "":
 			push_warning("Native HUD retail bind degraded: %s" % bind_error)
 	for button_value in hud.train_buttons.values():
