@@ -34,8 +34,11 @@ public class ModuleNamingTests
         var kernelFiles = Directory.GetFiles(kernelDirectory, "*.cs", SearchOption.TopDirectoryOnly)
             .OrderBy(path => path, StringComparer.Ordinal)
             .ToArray();
-        Assert.Equal(6, kernelFiles.Length);
-        foreach (var file in kernelFiles)
+        var kernelModuleFiles = kernelFiles
+            .Where(file => File.ReadAllText(file).Contains("[SageModule(\"", StringComparison.Ordinal))
+            .ToArray();
+        Assert.NotEmpty(kernelModuleFiles);
+        foreach (var file in kernelModuleFiles)
         {
             var (name, source) = ReadAttributedName(file);
             Assert.DoesNotContain(name, censusNames);

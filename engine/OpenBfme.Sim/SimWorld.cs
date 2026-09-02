@@ -1,3 +1,5 @@
+using OpenBfme.Sim.Pathing;
+
 namespace OpenBfme.Sim;
 
 /// <summary>Immutable per-match configuration: templates, seed, teams. Not part of the state hash.</summary>
@@ -6,9 +8,16 @@ public sealed class SimConfig
     public IReadOnlyDictionary<string, ObjectTemplate> Templates { get; }
     public ulong RandomSeed { get; }
     public int TeamCount { get; }
+    public int MapWidthCells { get; }
+    public int MapHeightCells { get; }
     private readonly IReadOnlyDictionary<string, int> _templateIndices;
 
-    public SimConfig(IEnumerable<ObjectTemplate> templates, ulong randomSeed, int teamCount)
+    public SimConfig(
+        IEnumerable<ObjectTemplate> templates,
+        ulong randomSeed,
+        int teamCount,
+        int mapWidthCells = 512,
+        int mapHeightCells = 512)
     {
         if (teamCount < 1)
         {
@@ -18,6 +27,10 @@ public sealed class SimConfig
         foreach (var template in templates)
         {
             map.Add(template.Name, template);
+        }
+        if (mapWidthCells < 1 || mapHeightCells < 1)
+        {
+            throw new ArgumentOutOfRangeException(nameof(mapWidthCells), "Map grid dimensions must be positive");
         }
         Templates = map;
         var indices = new SortedDictionary<string, int>(StringComparer.Ordinal);
@@ -29,6 +42,8 @@ public sealed class SimConfig
         _templateIndices = indices;
         RandomSeed = randomSeed;
         TeamCount = teamCount;
+        MapWidthCells = mapWidthCells;
+        MapHeightCells = mapHeightCells;
     }
 
     public int TemplateIndexOf(string templateName) => _templateIndices[templateName];
@@ -39,7 +54,7 @@ public sealed class SimConfig
 /// mutation only, canonical hash + snapshot. This is the P0 kernel the module
 /// vocabulary grows into.
 /// </summary>
-public sealed class SimWorld
+public sealed partial class SimWorld
 {
     public const int TicksPerSecond = 30;
 
@@ -71,15 +86,21 @@ public sealed class SimWorld
     public ObjectStore ObjectStore { get; } = new();
     public IReadOnlyList<SimEvent> EventsThisTick => _eventsThisTick;
     public IReadOnlyList<SnapshotHorde> Hordes => _hordes;
+    public MovementSystem Movement { get; }
+    public PassabilityGrid PassabilityGrid => Movement.Grid;
     /// <summary>Module type names that had no registered implementation, with occurrence counts. Fail-closed accounting.</summary>
     public IReadOnlyDictionary<string, int> ModuleGaps => _moduleGaps;
 
     public SimWorld(SimConfig config, ModuleRegistry registry)
-        : this(config, registry, tickMilliseconds: 33)
+        : this(config, registry, tickMilliseconds: 33, passabilityGrid: null)
     {
     }
 
-    private SimWorld(SimConfig config, ModuleRegistry registry, int tickMilliseconds)
+    public SimWorld(
+        SimConfig config,
+        ModuleRegistry registry,
+        int tickMilliseconds,
+        PassabilityGrid? passabilityGrid = null)
     {
         _config = config ?? throw new ArgumentNullException(nameof(config));
         _registry = registry ?? throw new ArgumentNullException(nameof(registry));
@@ -88,6 +109,8 @@ public sealed class SimWorld
             throw new ArgumentOutOfRangeException(nameof(tickMilliseconds));
         }
         TickMilliseconds = tickMilliseconds;
+        Movement = new MovementSystem(passabilityGrid
+            ?? PassabilityGrid.Uniform(config.MapWidthCells, config.MapHeightCells));
         _teamResources = new long[config.TeamCount];
         _playerTeams = Enumerable.Range(0, config.TeamCount).ToArray();
         _commandPoints = new long[config.TeamCount];
@@ -99,16 +122,22 @@ public sealed class SimWorld
     public SimWorld(
         MatchLaunch launch,
         IEnumerable<ObjectTemplate>? templates = null,
-        ModuleRegistry? registry = null)
+        ModuleRegistry? registry = null,
+        PassabilityGrid? passabilityGrid = null)
         : this(
             CreateConfig(launch, templates),
             registry ?? ModuleRegistry.CreateDefault(),
-            launch?.Rules.TickMilliseconds ?? throw new ArgumentNullException(nameof(launch)))
+            launch?.Rules.TickMilliseconds ?? throw new ArgumentNullException(nameof(launch)),
+            passabilityGrid)
     {
         _playerTeams = launch.Players.Select(player => player.Team).ToArray();
         _commandPoints = new long[launch.Players.Count];
         _commandPointsMax = new long[launch.Players.Count];
         _powerPoints = new long[launch.Players.Count];
+        foreach (var player in launch.Players)
+        {
+            _seatTeams.Add(player.Seat, player.Team);
+        }
         for (var team = 0; team < _teamResources.Length; team++)
         {
             if (_playerTeams.Contains(team))
@@ -178,6 +207,8 @@ public sealed class SimWorld
         }
         _hordes.Add(horde with { Members = horde.Members.ToArray() });
     }
+
+    public void SetPassabilityGrid(PassabilityGrid grid) => Movement.ReplaceGrid(grid);
 
     public void RaiseEvent(SimEvent simEvent)
     {
@@ -259,6 +290,7 @@ public sealed class SimWorld
         _eventsThisTick.Clear();
         TickIndex++;
         ApplyPendingCommands();
+        Movement.Tick(this);
         // The object dictionary is frozen for the whole sweep: mid-sweep spawns
         // divert to _pendingSpawns (so modules scanning Objects never see it
         // mutate) and join afterwards, first updating next tick. Dead objects
@@ -340,12 +372,9 @@ public sealed class SimWorld
             return;
         }
         _pendingCommands.Remove(TickIndex);
-        commands.Sort(static (a, b) =>
-        {
-            var byTeam = a.Team.CompareTo(b.Team);
-            return byTeam != 0 ? byTeam : a.Seq.CompareTo(b.Seq);
-        });
-        foreach (var command in commands)
+        foreach (var command in commands
+            .OrderBy(command => command.Team)
+            .ThenBy(command => command.Seq))
         {
             ApplyCommand(command);
         }
@@ -360,11 +389,9 @@ public sealed class SimWorld
                     new FixedVector2(command.GetFixed("x"), command.GetFixed("y")));
                 break;
             case "move":
-                if (_objects.TryGetValue((int)command.GetLong("id"), out var mover) && mover.Team == command.Team)
-                {
-                    mover.FindModule<LinearMoverModule>()?.SetDestination(
-                        new FixedVector2(command.GetFixed("x"), command.GetFixed("y")));
-                }
+            case "attack_move":
+            case "stop":
+                ApplyMovementCommand(command);
                 break;
             case "damage":
                 if (_objects.TryGetValue((int)command.GetLong("id"), out var victim))
@@ -509,6 +536,7 @@ public sealed class SimWorld
                 command.WriteTo(writer);
             }
         }
+        WriteMovementExtension(writer);
     }
 
     public string StateHash()
@@ -528,9 +556,13 @@ public sealed class SimWorld
     }
 
     /// <summary>Reconstructs a world from a snapshot. Requires the same config and registry the snapshot was taken with.</summary>
-    public static SimWorld Restore(byte[] snapshot, SimConfig config, ModuleRegistry registry)
+    public static SimWorld Restore(
+        byte[] snapshot,
+        SimConfig config,
+        ModuleRegistry registry,
+        PassabilityGrid? passabilityGrid = null)
     {
-        var world = new SimWorld(config, registry);
+        var world = new SimWorld(config, registry, tickMilliseconds: 33, passabilityGrid);
         var reader = new CanonicalReader(snapshot);
         world.TickIndex = reader.ReadInt();
         world._nextObjectId = reader.ReadInt();
@@ -562,6 +594,10 @@ public sealed class SimWorld
                 commands.Add(SimCommand.ReadFrom(reader));
             }
             world._pendingCommands.Add(tick, commands);
+        }
+        if (reader.HasRemaining)
+        {
+            world.ReadMovementExtension(reader);
         }
         reader.ExpectEnd();
         world.RebuildAuraTable(); // derived state: not in the snapshot, rebuilt from module caches
@@ -635,8 +671,8 @@ public sealed class SimWorld
         ObjectStore.TemplateIndex[slot] = _config.TemplateIndexOf(gameObject.TemplateName);
         ObjectStore.Owner[slot] = gameObject.Team;
         ObjectStore.X[slot] = gameObject.Position.X;
-        ObjectStore.Y[slot] = gameObject.Position.Y;
-        ObjectStore.Z[slot] = gameObject.Elevation;
+        ObjectStore.Y[slot] = gameObject.Elevation;
+        ObjectStore.Z[slot] = gameObject.Position.Y;
         ObjectStore.Yaw[slot] = gameObject.HeadingRadians;
         var (health, maximumHealth) = ReadHealth(gameObject);
         ObjectStore.Health[slot] = health;

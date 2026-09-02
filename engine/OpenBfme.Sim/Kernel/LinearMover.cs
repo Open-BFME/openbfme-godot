@@ -25,6 +25,8 @@ public sealed class LinearMoverModule : ModuleBase
         _moving = true;
     }
 
+    public void ClearDestination() => _moving = false;
+
     public override void OnUpdate(SimWorld world, GameObject self)
     {
         if (!_moving)

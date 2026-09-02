@@ -65,6 +65,7 @@ public sealed class CanonicalReader
     public bool ReadBool() => _reader.ReadByte() != 0;
     public Fixed64 ReadFixed() => Fixed64.FromRaw(_reader.ReadInt64());
     public FixedVector2 ReadVector() => new(Fixed64.FromRaw(_reader.ReadInt64()), Fixed64.FromRaw(_reader.ReadInt64()));
+    public bool HasRemaining => _reader.BaseStream.Position < _reader.BaseStream.Length;
 
     public string ReadString()
     {
