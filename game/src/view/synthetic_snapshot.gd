@@ -70,7 +70,7 @@ func next_tick() -> Dictionary:
 		if death_tick >= 0 and _tick == death_tick:
 			member["health"] = 0.0
 			member["flags"] = int(member["flags"]) | DYING_FLAG
-			member["state"] = 3
+			member["state"] = 4
 			member["anim"] = 3
 			member["anim_frame"] = 0.0
 			_events.append({"kind": "death", "object": int(member["id"])})

@@ -9,6 +9,13 @@ const TEMPLATE_COUNT := 5
 const WARMUP_FRAMES := 60
 const MEASURE_FRAMES := 300
 const SIM_TICK_SECONDS := 1.0 / 30.0
+const TEMPLATE_ROWS: Array[Dictionary] = [
+	{"index": 0, "name": "GondorFighter"},
+	{"index": 1, "name": "GondorArcher"},
+	{"index": 2, "name": "GondorRanger"},
+	{"index": 3, "name": "MordorFighter"},
+	{"index": 4, "name": "MordorArcher"},
+]
 
 var passed := 0
 var failed := 0
@@ -35,7 +42,7 @@ func _run() -> void:
 		if passed + failed == completed_before:
 			failed += 1
 			print(
-				"RENDER_BENCH members=%d fps=0.00 frame_ms_p95=0.000 draw_calls=0 nodes=%d mesh=unavailable"
+				"RENDER_BENCH members=%d fps=0.00 frame_ms_p95=0.000 draw_calls=0 nodes=%d mesh=unavailable anim=static"
 				% [count, int(Performance.get_monitor(Performance.OBJECT_NODE_COUNT))]
 			)
 	print("RENDER_BENCH_RESULT passed=%d failed=%d" % [passed, failed])
@@ -76,6 +83,7 @@ func _benchmark_count(member_count: int) -> void:
 	var renderer = RendererScript.new()
 	renderer.name = "SnapshotRenderer_%d" % member_count
 	_stage.add_child(renderer)
+	renderer.configure_templates(TEMPLATE_ROWS)
 	var current: Dictionary = generator.snapshot()
 	var accepted := renderer.submit_snapshot(current)
 	accepted = renderer.render_interpolated(1.0) and accepted
@@ -128,14 +136,23 @@ func _benchmark_count(member_count: int) -> void:
 		and renderer.group_count() > 0
 		and p95_draw_calls > 0
 		and renderer.mesh_source() in ["glb", "capsule"]
+		and renderer.animation_mode() == "atlas"
 	)
 	if success:
 		passed += 1
 	else:
 		failed += 1
 	print(
-		"RENDER_BENCH members=%d fps=%.2f frame_ms_p95=%.3f draw_calls=%d nodes=%d mesh=%s"
-		% [member_count, fps, p95_ms, p95_draw_calls, peak_nodes, renderer.mesh_source()]
+		"RENDER_BENCH members=%d fps=%.2f frame_ms_p95=%.3f draw_calls=%d nodes=%d mesh=%s anim=%s"
+		% [
+			member_count,
+			fps,
+			p95_ms,
+			p95_draw_calls,
+			peak_nodes,
+			renderer.mesh_source(),
+			renderer.animation_mode(),
+		]
 	)
 	renderer.queue_free()
 	await process_frame
