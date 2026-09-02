@@ -16,7 +16,12 @@ from openbfme_importer.cook.objects import (
 
 FIXTURE_ROOT = Path(__file__).parent / "fixtures" / "cook" / "objects"
 IMPORTER_ROOT = Path(__file__).resolve().parents[1]
-CONTRACT_FIXTURE = Path(__file__).resolve().parents[2] / "contracts" / "fixtures" / "bundle-v1.json"
+CONTRACT_FIXTURE = (
+    Path(__file__).resolve().parents[2]
+    / "contracts"
+    / "fixtures"
+    / "bundle-v1-objects.json"
+)
 
 
 def _by_name(bundle: dict[str, object]) -> dict[str, dict[str, object]]:
