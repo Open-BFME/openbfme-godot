@@ -5,12 +5,13 @@ namespace OpenBfme.Sim.Tests;
 public sealed class ModuleBatchCCombatUtilityTests
 {
     [Fact]
-    public void FireWeaponUpdateExecutesAuthoredNuggetThroughCombatDamage()
+    public void FireWeaponUpdateMatchesReferenceSelfPositionAndAuthoredOffsetGolden()
     {
         var block = new BundleBlock("FireWeaponNugget", "",
             new Dictionary<string, BundleValue>
             {
                 ["FireDelay"] = BundleValue.Whole(33),
+                ["Offset"] = BundleValue.Text("X:4 Y:0 Z:0"),
                 ["OneShot"] = BundleValue.Flag(true),
                 ["WeaponName"] = BundleValue.Text("PulseWeapon"),
             }, Array.Empty<BundleBlock>());
@@ -20,16 +21,19 @@ public sealed class ModuleBatchCCombatUtilityTests
         var target = new ObjectTemplate("target", Array.Empty<ModuleSpec>(), bodyHealth: Body(100));
         var weapon = new WeaponTemplate("PulseWeapon", Fixed64.FromInt(20), Fixed64.Zero,
             1, 0, PreAttackType.PER_SHOT, 0, 0, 0,
-            new[] { new DamageNugget(Fixed64.FromInt(25), Fixed64.Zero, 0,
+            new[] { new DamageNugget(Fixed64.FromInt(25), Fixed64.One, 0,
                 DamageType.DEFAULT, "", "NORMAL") });
         var world = World(new[] { attacker, target }, new[] { weapon });
         var source = world.SpawnObject("attacker", 0, At(0));
-        var victim = world.SpawnObject("target", 1, At(5));
+        source.SetTransform(At(0), Fixed64.Zero, FixedAngles.HalfPi);
+        var victim = world.SpawnObject("target", 1, At(0, 4));
 
         world.Tick();
 
         Assert.Equal(Fixed64.FromInt(75), victim.Health);
         Assert.Equal(1, source.FindModule<FireWeaponUpdateModule>()!.FiredCount);
+        Assert.Contains(world.EventsThisTick, value => value.Kind == "fire"
+            && value.Object == source.Id && value.Target == null);
     }
 
     [Fact]
@@ -51,13 +55,16 @@ public sealed class ModuleBatchCCombatUtilityTests
     }
 
     [Fact]
-    public void DeletionUpdateUsesExactAuthoredLifetimeAndTwinRunState()
+    public void DeletionUpdateMatchesReferenceDestroyWithoutDeathGoldenAndTwinRun()
     {
         var module = new ModuleSpec(DeletionUpdateModule.TypeName,
             new Dictionary<string, long> { ["MinLifetime"] = 66, ["MaxLifetime"] = 66 });
-        var template = new ObjectTemplate("temporary", new[] { module });
-        var first = World(new[] { template });
-        var second = World(new[] { template });
+        var deathProbe = new ModuleSpec(CreateObjectDieModule.TypeName, stringData:
+            new Dictionary<string, string> { ["ObjectTemplate"] = "death-child" });
+        var template = new ObjectTemplate("temporary", new[] { module, deathProbe });
+        var child = new ObjectTemplate("death-child", Array.Empty<ModuleSpec>());
+        var first = World(new[] { template, child });
+        var second = World(new[] { template, child });
         first.SpawnObject("temporary", 0, At(0));
         second.SpawnObject("temporary", 0, At(0));
 
@@ -69,6 +76,20 @@ public sealed class ModuleBatchCCombatUtilityTests
         second.Tick();
         Assert.Equal(first.StateHash(), second.StateHash());
         Assert.Empty(first.Objects);
+        Assert.DoesNotContain(first.EventsThisTick, value => value.Kind == "death");
+        Assert.DoesNotContain(first.Objects.Values, value => value.TemplateName == "death-child");
+
+        var slowDeath = new ModuleSpec(SlowDeathModule.TypeName,
+            new Dictionary<string, long> { ["DeathTicks"] = 99 });
+        var claimedTemplate = new ObjectTemplate("claimed", new[] { slowDeath, module });
+        var claimedWorld = World(new[] { claimedTemplate });
+        var claimed = claimedWorld.SpawnObject("claimed", 0, At(0));
+        claimedWorld.HandleDeath(claimed);
+        Assert.True(claimed.IsDying);
+
+        claimedWorld.Advance(2);
+
+        Assert.Empty(claimedWorld.Objects);
     }
 
     [Fact]

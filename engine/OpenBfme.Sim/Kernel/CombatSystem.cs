@@ -413,15 +413,16 @@ public sealed class CombatSystem
         }
     }
 
-    internal bool FireScriptedWeapon(SimWorld world, GameObject attacker, string weaponName)
+    internal bool FireScriptedWeaponAt(
+        SimWorld world,
+        GameObject attacker,
+        string weaponName,
+        FixedVector2 impactPoint)
     {
         if (!_config.WeaponTemplates.TryGetValue(weaponName, out var weapon)) return false;
-        var targetId = FindNearestEnemy(attacker, weapon.AttackRange);
-        var impactPoint = targetId != 0 && world.Objects.TryGetValue(targetId, out var target)
-            ? target.Position : attacker.Position;
-        world.RaiseEvent(new SimEvent("fire", attacker.Id, targetId == 0 ? null : targetId, Name: weaponName));
+        world.RaiseEvent(new SimEvent("fire", attacker.Id, Name: weaponName));
         for (var index = 0; index < weapon.DamageNuggets.Count; index++)
-            ApplyNugget(world, attacker.Id, attacker.Team, targetId, impactPoint,
+            ApplyNugget(world, attacker.Id, attacker.Team, 0, impactPoint,
                 weapon.DamageNuggets[index], index == 0 ? weapon.MetaImpact : null);
         return true;
     }

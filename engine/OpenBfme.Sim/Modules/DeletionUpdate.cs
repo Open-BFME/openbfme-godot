@@ -2,7 +2,9 @@ namespace OpenBfme.Sim;
 
 /// <summary>
 /// Deletes the object after a deterministic inclusive lifetime selected from
-/// authored MinLifetime/MaxLifetime milliseconds. The PCG draw and remaining
+/// authored MinLifetime/MaxLifetime milliseconds. As in the supplied SAGE
+/// DeletionUpdate.cpp reference, expiry destroys rather than kills: it emits
+/// no death event and invokes no OnDeath modules. The PCG draw and remaining
 /// tick count are canonical state; zero lifetime deletes on the first update.
 /// </summary>
 [SageModule("DeletionUpdate", ModuleTier.Structural)]
@@ -33,7 +35,7 @@ public sealed class DeletionUpdateModule : ModuleBase
             _initialized = true;
         }
         if (_ticksRemaining > 0) _ticksRemaining--;
-        if (_ticksRemaining == 0) world.HandleDeath(self);
+        if (_ticksRemaining == 0) world.DestroyObject(self);
     }
 
     public override void WriteState(CanonicalWriter writer)

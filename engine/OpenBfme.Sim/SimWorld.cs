@@ -668,6 +668,12 @@ public sealed partial class SimWorld
         target.MarkDead();
     }
 
+    /// <summary>Removes an object without emitting death or invoking OnDeath modules.</summary>
+    internal void DestroyObject(GameObject target)
+    {
+        if (!target.IsDead) target.MarkDead();
+    }
+
     private void RemoveDeadObjects()
     {
         List<int>? deadIds = null;

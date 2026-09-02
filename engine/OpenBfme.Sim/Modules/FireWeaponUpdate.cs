@@ -2,10 +2,12 @@ namespace OpenBfme.Sim;
 
 /// <summary>
 /// Executes each authored FireWeaponNugget after FireDelay through the cooked
-/// weapon table and normal damage/armor path. OneShot controls repetition;
+/// weapon table and normal damage/armor path. The supplied SAGE
+/// FireWeaponUpdate.cpp reference force-fires at the owner's position; authored
+/// X/Y Offset moves that impact point in model space. OneShot controls repetition;
 /// AliveOnly, ChargingModeTrigger, and HeroModeTrigger gate firing using
-/// authoritative object state/condition tokens. Offsets and weapon presentation
-/// are deferred because bundle-v1 has no 3D scripted-impact command.
+/// authoritative object state/condition tokens. Offset Z and weapon presentation
+/// are deferred because the simulation damage plane is two-dimensional.
 /// </summary>
 [SageModule("FireWeaponUpdate", ModuleTier.Structural)]
 public sealed class FireWeaponUpdateModule : ModuleBase
@@ -39,7 +41,10 @@ public sealed class FireWeaponUpdateModule : ModuleBase
                 nugget.TicksRemaining = IniValueReader.MillisecondsToTicks(nugget.DelayMilliseconds, world.TickMilliseconds);
             if (nugget.TicksRemaining > 0) nugget.TicksRemaining--;
             if (nugget.TicksRemaining > 0) continue;
-            nugget.Fired = world.Combat.FireScriptedWeapon(world, self, nugget.WeaponName) || nugget.Fired;
+            var offset = self.HeadingRadians == Fixed64.Zero
+                ? nugget.Offset : FixedAngles.Rotate(nugget.Offset, self.HeadingRadians);
+            nugget.Fired = world.Combat.FireScriptedWeaponAt(
+                world, self, nugget.WeaponName, self.Position + offset) || nugget.Fired;
             nugget.TicksRemaining = nugget.OneShot ? 0
                 : IniValueReader.MillisecondsToTicks(nugget.DelayMilliseconds, world.TickMilliseconds);
         }
@@ -50,7 +55,7 @@ public sealed class FireWeaponUpdateModule : ModuleBase
         var weapon = Text(block, "WeaponName");
         var delay = Whole(block, "FireDelay");
         var oneShot = Flag(block, "OneShot");
-        return new NuggetState(weapon, Math.Max(0, delay), oneShot);
+        return new NuggetState(weapon, Math.Max(0, delay), oneShot, Vector(block, "Offset"));
     }
 
     private static string Text(BundleBlock block, string name) =>
@@ -61,6 +66,22 @@ public sealed class FireWeaponUpdateModule : ModuleBase
             ? value.Integer : 0;
     private static bool Flag(BundleBlock block, string name) =>
         block.Fields.TryGetValue(name, out var value) && value.Kind == BundleValueKind.Boolean && value.Boolean;
+
+    private static FixedVector2 Vector(BundleBlock block, string name)
+    {
+        var text = Text(block, name);
+        return new FixedVector2(Axis(text, 'X'), Axis(text, 'Y'));
+    }
+
+    private static Fixed64 Axis(string text, char axis)
+    {
+        foreach (var token in text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries))
+            if (token.Length > 2 && char.ToUpperInvariant(token[0]) == axis && token[1] == ':'
+                && decimal.TryParse(token[2..], System.Globalization.NumberStyles.Number,
+                    System.Globalization.CultureInfo.InvariantCulture, out var value))
+                return Fixed64.FromFraction((long)(value * 1_000_000m), 1_000_000);
+        return Fixed64.Zero;
+    }
 
     public override void WriteState(CanonicalWriter writer)
     {
@@ -80,11 +101,16 @@ public sealed class FireWeaponUpdateModule : ModuleBase
         }
     }
 
-    private sealed class NuggetState(string weaponName, long delayMilliseconds, bool oneShot)
+    private sealed class NuggetState(
+        string weaponName,
+        long delayMilliseconds,
+        bool oneShot,
+        FixedVector2 offset)
     {
         public string WeaponName { get; } = weaponName;
         public long DelayMilliseconds { get; } = delayMilliseconds;
         public bool OneShot { get; } = oneShot;
+        public FixedVector2 Offset { get; } = offset;
         public int TicksRemaining { get; set; } = -1;
         public bool Fired { get; set; }
     }
