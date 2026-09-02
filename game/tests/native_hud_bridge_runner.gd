@@ -103,6 +103,21 @@ func _run() -> void:
 	_check("resources_match_snapshot", int(readouts.get("resources", -1)) == int(player.get("resources", -2)))
 	_check("command_points_match_snapshot", int(readouts.get("command_points", -1)) == int(player.get("command_points", -2)) and int(readouts.get("command_points_max", -1)) == int(player.get("command_points_max", -2)))
 	_check("power_points_match_snapshot", int(readouts.get("power_points", -1)) == int(player.get("power_points", -2)))
+	bridge.hud.main_menu_requested.emit()
+	await process_frame
+	await process_frame
+	_check("hud_main_menu_returns_to_retail_shell", current_scene != null and current_scene.scene_file_path == "res://scenes/boot.tscn")
+	if current_scene == null or current_scene.scene_file_path != "res://scenes/boot.tscn":
+		_finish()
+		return
+	match_scene = packed.instantiate()
+	root.add_child(match_scene)
+	current_scene = match_scene
+	for _frame in WAIT_FRAMES:
+		if match_scene.startup_failed() or match_scene.is_running():
+			break
+		await process_frame
+	_check("escape_probe_match_running", match_scene.is_running(), match_scene.startup_error())
 	var escape := InputEventKey.new()
 	escape.pressed = true
 	escape.keycode = KEY_ESCAPE

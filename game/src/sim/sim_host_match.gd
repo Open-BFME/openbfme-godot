@@ -49,9 +49,11 @@ var _profile_started_msec := 0
 var _profile_next_msec := 0
 var _hud_bridge: NativeHudBridge
 var _active_launch_document: Dictionary = {}
+var _loading_screen: CanvasLayer
 
 
 func _ready() -> void:
+	_loading_screen = get_tree().get_first_node_in_group("retail_loading_screen") as CanvasLayer
 	_renderer = get_node("SnapshotInstancedRenderer")
 	_camera_rig = get_node("RtsCamera")
 	_selection_box = get_node("Overlay/SelectionBox") as ColorRect
@@ -236,6 +238,7 @@ func _start_match() -> void:
 	if not _client.start_packed_stream():
 		_fail("step stream: %s" % _client.last_error())
 		return
+	_finish_loading_screen()
 	print(
 		"SIM_HOST_MATCH_READY hordes=%d members=%d tick=%d loaded=%d failed=%d"
 		% [
@@ -246,6 +249,14 @@ func _start_match() -> void:
 			int(_client.launch_reply().get("templates_failed", 0)),
 		]
 	)
+
+
+func _finish_loading_screen() -> void:
+	if _loading_screen == null:
+		return
+	_loading_screen.call("set_load_progress", 1.0, "Native core ready")
+	_loading_screen.call("fade_out_and_free")
+	_loading_screen = null
 
 
 func _print_profile() -> void:

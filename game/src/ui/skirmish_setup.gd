@@ -427,7 +427,7 @@ func _on_play_pressed() -> void:
 		hint_label.text = "NATIVE CORE COULD NOT REACH GAME STATE"
 		return
 	game_state.set_meta("native_match_launch", document.duplicate(true))
-	get_tree().change_scene_to_file("res://scenes/native_loading_boot.tscn")
+	get_tree().change_scene_to_file("res://scenes/retail_loading_boot.tscn")
 
 
 func _set_tab(tab: String) -> void:

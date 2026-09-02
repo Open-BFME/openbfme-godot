@@ -3,7 +3,6 @@ extends SceneTree
 
 const SetupScript := preload("res://src/ui/skirmish_setup.gd")
 const NativeMatchLaunchScript := preload("res://src/present/native_match_launch.gd")
-const NativeLoadingBootScript := preload("res://src/present/native_loading_boot.gd")
 
 var passed := 0
 var failed := 0
@@ -54,7 +53,8 @@ func _run() -> void:
 	await process_frame
 	await process_frame
 	var boot = current_scene
-	_check("setup_entered_native_loading_boot", boot != null and boot.scene_file_path == "res://scenes/native_loading_boot.tscn")
+	_check("setup_entered_shared_retail_loading_boot", boot != null and boot.scene_file_path == "res://scenes/retail_loading_boot.tscn")
+	_check("shared_boot_targets_native_match", boot != null and String(boot.get("_match_scene_path")) == "res://scenes/sim_host_match.tscn")
 	_check("launch_reached_game_state", game_state != null and (game_state.get_meta("native_match_launch", {}) as Dictionary) == document)
 	_check("retail_loading_screen_created", boot.get("_screen") != null)
 	for _frame in 600:

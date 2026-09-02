@@ -82,6 +82,8 @@ var _object_slots: Dictionary = {}
 var _hordes_by_id: Dictionary = {}
 var _radar_unit_ids: Array[int] = []
 var _radar_units: Dictionary = {}
+var _radar_structure_ids: Array[int] = []
+var _radar_structures: Dictionary = {}
 var _bundle_templates: Dictionary = {}
 var _command_sets: Dictionary = {}
 var _command_buttons: Dictionary = {}
@@ -262,16 +264,11 @@ func radar_entity(id: int) -> Dictionary:
 
 
 func radar_structure_ids() -> Array[int]:
-	var result: Array[int] = []
-	for value in (_snapshot.get("objects", {}) as Dictionary).get("id", []) as Array:
-		var id := int(value)
-		if _is_structure_slot(_object_slot(id)):
-			result.append(id)
-	return result
+	return _radar_structure_ids.duplicate()
 
 
 func radar_structure(id: int) -> Dictionary:
-	return _radar_row(id, true)
+	return _radar_structures.get(id, {}) as Dictionary
 
 
 func _build_hud(camera: Camera3D) -> void:
@@ -572,10 +569,18 @@ func _index_snapshot() -> void:
 	_hordes_by_id.clear()
 	_radar_unit_ids.clear()
 	_radar_units.clear()
+	_radar_structure_ids.clear()
+	_radar_structures.clear()
 	var objects := _snapshot.get("objects", {}) as Dictionary
 	var ids := (_snapshot.get("objects", {}) as Dictionary).get("id", []) as Array
 	for index in ids.size():
 		_object_slots[int(ids[index])] = index
+	for index in ids.size():
+		if not _is_structure_slot(index):
+			continue
+		var structure_id := int(ids[index])
+		_radar_structure_ids.append(structure_id)
+		_radar_structures[structure_id] = _radar_row(structure_id, true)
 	for value in _snapshot.get("hordes", []) as Array:
 		var horde := value as Dictionary
 		var horde_id := int(horde.get("id", 0))
