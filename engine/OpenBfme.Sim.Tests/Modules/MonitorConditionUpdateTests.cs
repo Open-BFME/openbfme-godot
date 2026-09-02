@@ -5,23 +5,37 @@ namespace OpenBfme.Sim.Tests.Modules;
 public sealed class MonitorConditionUpdateTests
 {
     [Fact]
-    public void WeaponSetFlagRaisesAuthoredModelCondition()
+    public void CorpusPairsSelectTheirAuthoredCommandSetsIndependently()
     {
-        var template = ModuleBatchBTestSupport.Template("corsairs", new[]
+        var modelTemplate = ModuleBatchBTestSupport.Template("catapult", new[]
         {
             ModuleBatchBTestSupport.Spec(MonitorConditionUpdateModule.TypeName,
                 strings: new Dictionary<string, string>
                 {
-                    ["WeaponSetFlags"] = "WEAPONSET_TOGGLE_1", ["ModelConditionFlags"] = "USER_1",
+                    ["ModelConditionFlags"] = "ATTACKING_POSITION",
+                    ["ModelConditionCommandSet"] = "CatapultStopBombardCommandSet",
                 }),
-        });
-        var world = ModuleBatchBTestSupport.World(new[] { template });
+        }, commandSet: "CatapultCommandSet", techEnabled: true);
+        var weaponTemplate = ModuleBatchBTestSupport.Template("corsairs", new[]
+        {
+            ModuleBatchBTestSupport.Spec(MonitorConditionUpdateModule.TypeName,
+                strings: new Dictionary<string, string>
+                {
+                    ["WeaponSetFlags"] = "WEAPONSET_TOGGLE_1",
+                    ["WeaponToggleCommandSet"] = "CorsairFireBombCommandSet",
+                }),
+        }, commandSet: "CorsairCommandSet", techEnabled: true);
+        var world = ModuleBatchBTestSupport.World(new[] { modelTemplate, weaponTemplate });
+        var catapult = world.SpawnObject("catapult", 0, ModuleBatchBTestSupport.At(0));
         var corsairs = world.SpawnObject("corsairs", 0, ModuleBatchBTestSupport.At(0));
+        catapult.SetConditionToken("MODEL:ATTACKING_POSITION");
         corsairs.SetConditionToken("WEAPONSET_TOGGLE_1");
 
         world.Tick();
 
-        Assert.True(corsairs.FindModule<MonitorConditionUpdateModule>()!.IsActive);
-        Assert.Contains("MODEL:USER_1", corsairs.ConditionTokens);
+        Assert.True(catapult.FindModule<MonitorConditionUpdateModule>()!.IsModelConditionActive);
+        Assert.Equal("CatapultStopBombardCommandSet", catapult.CurrentCommandSet);
+        Assert.True(corsairs.FindModule<MonitorConditionUpdateModule>()!.IsWeaponToggleActive);
+        Assert.Equal("CorsairFireBombCommandSet", corsairs.CurrentCommandSet);
     }
 }

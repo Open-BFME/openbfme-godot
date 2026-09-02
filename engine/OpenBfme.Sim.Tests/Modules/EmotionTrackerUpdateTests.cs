@@ -10,7 +10,12 @@ public sealed class EmotionTrackerUpdateTests
         var actorTemplate = ModuleBatchBTestSupport.Template("actor", new[]
         {
             ModuleBatchBTestSupport.Spec(EmotionTrackerUpdateModule.TypeName,
-                new Dictionary<string, long> { ["FearScanDistance"] = 10, ["TerrorDuration"] = 500 }),
+                new Dictionary<string, long> { ["FearScanDistance"] = 10 },
+                new Dictionary<string, string>
+                {
+                    ["AddEmotion"] = "Terror_Base",
+                    ["AfraidOf"] = "NONE +TERROR",
+                }),
             ModuleBatchBTestSupport.Spec(LinearMoverModule.TypeName,
                 new Dictionary<string, long> { ["SpeedPerTickRaw"] = Fixed64.One.Raw }),
         });

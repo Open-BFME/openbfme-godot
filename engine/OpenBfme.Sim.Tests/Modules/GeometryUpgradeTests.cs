@@ -5,13 +5,12 @@ namespace OpenBfme.Sim.Tests.Modules;
 public sealed class GeometryUpgradeTests
 {
     [Fact]
-    public void TriggeredByAppliesAuthoredRadiiAndShowHideGeometry()
+    public void TriggeredByAppliesCorpusAuthoredShowHideGeometry()
     {
         var template = ModuleBatchBTestSupport.Template("fort", new[]
         {
             ModuleBatchBTestSupport.Spec(GeometryUpgradeModule.TypeName,
-                new Dictionary<string, long> { ["GeometryMajorRadius"] = 25, ["GeometryMinorRadius"] = 10 },
-                new Dictionary<string, string>
+                strings: new Dictionary<string, string>
                 {
                     ["TriggeredBy"] = "Level2", ["ShowGeometry"] = "Geom_V2", ["HideGeometry"] = "Geom_Orig",
                 }),
@@ -21,7 +20,9 @@ public sealed class GeometryUpgradeTests
 
         Assert.True(world.GrantUpgrade(fort, "Level2"));
         var module = fort.FindModule<GeometryUpgradeModule>()!;
-        Assert.Equal(Fixed64.FromInt(25), module.MajorRadius);
         Assert.Equal("Geom_V2", module.ShownGeometry);
+        Assert.Equal("Geom_Orig", module.HiddenGeometry);
+        Assert.Contains("GEOMETRY_SHOW:Geom_V2", fort.ConditionTokens);
+        Assert.Contains("GEOMETRY_HIDE:Geom_Orig", fort.ConditionTokens);
     }
 }

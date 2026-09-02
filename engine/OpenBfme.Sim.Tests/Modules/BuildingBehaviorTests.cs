@@ -5,13 +5,12 @@ namespace OpenBfme.Sim.Tests.Modules;
 public sealed class BuildingBehaviorTests
 {
     [Fact]
-    public void AuthoredWindowsReactToFireAndRebuildTimeRestoresStructure()
+    public void CorpusAuthoredWindowsReactToFireAndFoundationPersists()
     {
         var template = ModuleBatchBTestSupport.Template("tower", new[]
         {
             ModuleBatchBTestSupport.Spec(BuildingBehaviorModule.TypeName,
-                new Dictionary<string, long> { ["RebuildTime"] = 200 },
-                new Dictionary<string, string>
+                strings: new Dictionary<string, string>
                 {
                     ["NightWindowName"] = "WINDOW_N01",
                     ["FireWindowName"] = "WINDOW_F01",
@@ -35,7 +34,7 @@ public sealed class BuildingBehaviorTests
         Assert.True(module.IsRebuildHole);
         world.Advance(2);
 
-        Assert.False(tower.IsDying);
-        Assert.Equal(tower.MaxHealth, tower.Health);
+        Assert.True(tower.IsDying);
+        Assert.True(module.IsRebuildHole);
     }
 }

@@ -17,13 +17,15 @@ internal static class ModuleBatchBTestSupport
         IReadOnlyList<string>? kindOf = null,
         IReadOnlyList<WeaponSet>? weaponSets = null,
         string commandSet = "",
-        EconomyTemplate? economy = null) => new(
+        EconomyTemplate? economy = null,
+        bool techEnabled = false) => new(
             name,
             modules.ToArray(),
             weaponSets,
             bodyHealth: health > 0 ? new BodyHealthTemplate(Fixed64.FromInt(health)) : null,
             economy: economy,
             commandSetName: commandSet,
+            techEnabled: techEnabled,
             kindOf: kindOf);
 
     public static SimWorld World(
