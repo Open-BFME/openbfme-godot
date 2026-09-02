@@ -1,0 +1,21 @@
+{
+  "schema": "openbfme.screen.v1",
+  "schemaVersion": 1,
+  "kind": "wnd",
+  "id": "window/fixture.wnd",
+  "source": {
+    "path": "window/fixture.wnd",
+    "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "files": []
+  },
+  "stage": {
+    "width": 800,
+    "height": 600,
+    "frameCount": 1,
+    "millisecondsPerFrame": 0
+  },
+  "actionScripts": [],
+  "clipActionPrograms": [],
+  "vmConstants": {},
+  "atlases": []
+}

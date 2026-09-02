@@ -152,8 +152,9 @@ def test_queue_documents_are_whole_corpus_and_byte_identical(tmp_path: Path) -> 
         assert one == two
         document = json.loads(one)
         assert document["total"] == 3
-        assert document["done"] == 1
-        assert len(document["open"]) == 2
+        expected_done = 0 if kind == "screens" else 1
+        assert document["done"] == expected_done
+        assert len(document["open"]) == 3 - expected_done
         assert document["kind"] == kind
         assert all(
             {"id", "title", "rank", "detail", "oracle"} <= set(row)
@@ -244,6 +245,87 @@ def test_native_map_v1_completes_queue_and_failure_is_actionable(tmp_path: Path)
     assert [row["id"] for row in document["open"]] == ["maps/cinematic/two.map"]
     assert document["open"][0]["lastFailure"] == "unsupported BlendTileData version 19"
     assert document["open"][0]["rerunCommand"].endswith("--maps all")
+
+
+def test_native_screen_requires_identity_bound_green_load_receipt(tmp_path: Path) -> None:
+    install, content_root, _proof = _fixture(tmp_path)
+    screen = content_root / "native" / "fixture" / "screens" / "shell.screen-v1.json"
+    write_json_atomic(
+        screen,
+        {
+            "schema": "openbfme.screen.v1",
+            "schemaVersion": 1,
+            "kind": "wnd",
+            "id": "apt/shell.wnd",
+            "source": {"path": "apt/shell.wnd", "sha256": hashlib.sha256(_WND).hexdigest(), "files": []},
+            "stage": {"width": 800, "height": 600, "frameCount": 1, "millisecondsPerFrame": 0},
+            "actionScripts": [],
+            "vmConstants": {},
+            "atlases": [],
+        },
+    )
+    digest = hashlib.sha256(screen.read_bytes()).hexdigest()
+    receipt = content_root / "native" / "fixture" / "screens" / "shell.load.json"
+    write_json_atomic(
+        receipt,
+        {
+            "schema": "openbfme.screen-load-receipt",
+            "schemaVersion": 1,
+            "id": "apt/shell.wnd",
+            "documentSha256": digest,
+            "passed": True,
+            "opcodesUnimplemented": 0,
+        },
+    )
+    index = content_root / "native" / "fixture" / "screens" / "index.json"
+    write_json_atomic(
+        index,
+        {
+            "schema": "openbfme.native-screens-index",
+            "schemaVersion": 1,
+            "screens": [
+                {
+                    "id": "apt/shell.wnd",
+                    "status": "ok",
+                    "document": screen.relative_to(content_root).as_posix(),
+                    "documentSha256": digest,
+                    "receipt": receipt.relative_to(content_root).as_posix(),
+                }
+            ],
+        },
+    )
+    write_json_atomic(
+        content_root / "native" / "selection.json",
+        {
+            "schema": "openbfme.native-selection",
+            "version": 1,
+            "active": "fixture",
+            "bundle": "native/fixture/bundle-v1.json",
+            "maps": [],
+            "screens": index.relative_to(content_root).as_posix(),
+        },
+    )
+
+    document = generate_queue_documents(
+        InstallCatalog.build(install),
+        install=install,
+        content_root=content_root,
+        kinds=("screens",),
+    )["screens"]
+
+    assert document["done"] == 1
+    assert {row["id"] for row in document["open"]} == {"apt/open.apt", "apt/other.wnd"}
+
+    receipt_document = json.loads(receipt.read_text(encoding="utf-8"))
+    receipt_document["opcodesUnimplemented"] = 1
+    write_json_atomic(receipt, receipt_document)
+    reopened = generate_queue_documents(
+        InstallCatalog.build(install),
+        install=install,
+        content_root=content_root,
+        kinds=("screens",),
+    )["screens"]
+    assert reopened["done"] == 0
 
 
 def test_verify_item_accepts_converted_fixtures_and_names_corruption(tmp_path: Path) -> None:

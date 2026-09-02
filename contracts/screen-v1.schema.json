@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openbfme.org/contracts/screen-v1.schema.json",
+  "title": "OpenBFME native screen document v1",
+  "type": "object",
+  "required": [
+    "schema",
+    "schemaVersion",
+    "kind",
+    "id",
+    "source",
+    "stage",
+    "actionScripts",
+    "vmConstants",
+    "atlases"
+  ],
+  "properties": {
+    "schema": {"const": "openbfme.screen.v1"},
+    "schemaVersion": {"const": 1},
+    "kind": {"enum": ["apt", "wnd"]},
+    "id": {"type": "string", "minLength": 1},
+    "source": {
+      "type": "object",
+      "required": ["path", "sha256", "files"],
+      "properties": {
+        "path": {"type": "string", "minLength": 1},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "files": {"type": "array"}
+      }
+    },
+    "stage": {
+      "type": "object",
+      "required": ["width", "height", "frameCount", "millisecondsPerFrame"]
+    },
+    "actionScripts": {"type": "array"},
+    "clipActionPrograms": {"type": "array"},
+    "vmConstants": {"type": "object"},
+    "atlases": {"type": "array"}
+  }
+}

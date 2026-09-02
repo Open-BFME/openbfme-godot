@@ -656,8 +656,8 @@ def _parse_rect(statement: str, context: str) -> dict[str, list[int]]:
     if not match:
         raise AptParseError(f"{context} malformed SCREENRECT")
     values = [int(value) for value in match.groups()]
-    if values[4:] != [800, 600]:
-        raise AptParseError(f"{context} changed authored resolution")
+    if any(value <= 0 or value > 16_384 for value in values[4:]):
+        raise AptParseError(f"{context} authored resolution is out of bounds")
     if values[2] < values[0] or values[3] < values[1]:
         raise AptParseError(f"{context} inverted SCREENRECT")
     return {

@@ -311,6 +311,63 @@ def _native_map_completion(content_root: Path) -> dict[str, str]:
     return completed
 
 
+def _native_screen_completion(content_root: Path) -> dict[str, str]:
+    """Accept only screen-v1 documents with identity-bound green load receipts."""
+
+    selection_path = content_root / "native" / "selection.json"
+    if not selection_path.is_file():
+        return {}
+    try:
+        selection = _json(selection_path)
+        relative_index = selection.get("screens") if isinstance(selection, Mapping) else None
+        if not isinstance(relative_index, str):
+            return {}
+        root = content_root.resolve()
+        index_path = (root / Path(*PurePosixPath(relative_index).parts)).resolve()
+        index_path.relative_to(root)
+        index = _json(index_path)
+    except (OSError, UnicodeError, json.JSONDecodeError, ValueError):
+        return {}
+    rows = index.get("screens", []) if isinstance(index, Mapping) else []
+    completed: dict[str, str] = {}
+    for row in rows if isinstance(rows, list) else []:
+        if (
+            not isinstance(row, Mapping)
+            or row.get("status") != "ok"
+            or not isinstance(row.get("id"), str)
+            or not isinstance(row.get("document"), str)
+            or not isinstance(row.get("documentSha256"), str)
+            or not isinstance(row.get("receipt"), str)
+        ):
+            continue
+        try:
+            document_path = (root / Path(*PurePosixPath(str(row["document"])).parts)).resolve()
+            receipt_path = (root / Path(*PurePosixPath(str(row["receipt"])).parts)).resolve()
+            document_path.relative_to(root)
+            receipt_path.relative_to(root)
+            document_bytes = document_path.read_bytes()
+            document = json.loads(document_bytes)
+            receipt = _json(receipt_path)
+        except (OSError, UnicodeError, json.JSONDecodeError, ValueError):
+            continue
+        source = document.get("source") if isinstance(document, Mapping) else None
+        if (
+            not isinstance(source, Mapping)
+            or document.get("schema") != "openbfme.screen.v1"
+            or _canonical(str(source.get("path", ""))) != _canonical(str(row["id"]))
+            or hashlib.sha256(document_bytes).hexdigest() != str(row["documentSha256"])
+            or not isinstance(receipt, Mapping)
+            or receipt.get("schema") != "openbfme.screen-load-receipt"
+            or receipt.get("passed") is not True
+            or _canonical(str(receipt.get("id", ""))) != _canonical(str(row["id"]))
+            or receipt.get("documentSha256") != row["documentSha256"]
+            or int(receipt.get("opcodesUnimplemented", -1)) != 0
+        ):
+            continue
+        completed[_canonical(str(row["id"]))] = str(row["document"])
+    return completed
+
+
 def _map_sweep_failures(content_root: Path) -> dict[str, Mapping[str, object]]:
     report_path = (
         content_root.resolve().parent
@@ -566,12 +623,18 @@ def generate_queue_documents(
     for kind in requested:
         entries = _entries_for_kind(inventory, kind)
         completed, _reasons = _completion_index(catalog, entries, provenance, kind)
+        if kind == "screens":
+            # A converted JSON in an arbitrary selected pack is not a screen
+            # load oracle. The native index plus the Godot receipt is the sole
+            # completion authority for this queue.
+            completed = {}
         native_maps = _native_map_completion(content_path) if kind == "maps" else {}
+        native_screens = _native_screen_completion(content_path) if kind == "screens" else {}
         sweep_failures = _map_sweep_failures(content_path) if kind == "maps" else {}
         rows = []
         for item in entries:
             item_id = _canonical(item.virtual_path)
-            if item_id in completed or item_id in native_maps:
+            if item_id in completed or item_id in native_maps or item_id in native_screens:
                 continue
             extension = _entry_extension(item)
             rank, priority = _rank(item, kind, multiplayer, references)

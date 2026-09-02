@@ -143,7 +143,7 @@ def test_audit_deps_finds_referrers() -> None:
 
 
 def test_contract_fixtures_match_required_keys() -> None:
-    for name in ("snapshot-v1", "match-launch-v1", "bundle-v1"):
+    for name in ("snapshot-v1", "match-launch-v1", "bundle-v1", "screen-v1"):
         schema = json.loads((ROOT / "contracts" / f"{name}.schema.json").read_text(encoding="utf-8"))
         fixture = json.loads((ROOT / "contracts" / "fixtures" / f"{name}.json").read_text(encoding="utf-8"))
         assert set(schema["required"]) <= set(fixture), name

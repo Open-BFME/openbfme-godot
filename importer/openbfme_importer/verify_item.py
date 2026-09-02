@@ -250,6 +250,70 @@ def _verify_screen(
     return fact
 
 
+def _verified_native_screen(
+    content_root: Path, item_id: str
+) -> dict[str, object] | None:
+    """Read the same native document/load receipt pair as queue completion."""
+
+    selection_path = content_root / "native" / "selection.json"
+    if not selection_path.is_file():
+        return None
+    try:
+        selection = json.loads(selection_path.read_text(encoding="utf-8"))
+        index_relative = selection.get("screens")
+        if not isinstance(index_relative, str):
+            return None
+        root = content_root.resolve()
+        index_path = (root / Path(*PurePosixPath(index_relative).parts)).resolve()
+        index_path.relative_to(root)
+        index = json.loads(index_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError, ValueError, AttributeError):
+        return None
+    for row in index.get("screens", []):
+        if not isinstance(row, Mapping) or _canonical(str(row.get("id", ""))) != item_id:
+            continue
+        if row.get("status") != "ok":
+            failure = row.get("failure", {})
+            raise ItemVerificationError(
+                f"screen-convert-failed: {item_id}: {failure.get('class', 'unknown')}: "
+                f"{failure.get('message', '')}"
+            )
+        try:
+            document_path = (root / Path(*PurePosixPath(str(row["document"])).parts)).resolve()
+            receipt_path = (root / Path(*PurePosixPath(str(row["receipt"])).parts)).resolve()
+            document_path.relative_to(root)
+            receipt_path.relative_to(root)
+            payload = document_path.read_bytes()
+            document = json.loads(payload)
+            receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError, KeyError, ValueError) as exc:
+            raise ItemVerificationError(
+                f"screen-load-receipt-missing: {item_id}: {exc}"
+            ) from exc
+        digest = hashlib.sha256(payload).hexdigest()
+        if (
+            document.get("schema") != "openbfme.screen.v1"
+            or digest != row.get("documentSha256")
+            or receipt.get("schema") != "openbfme.screen-load-receipt"
+            or receipt.get("passed") is not True
+            or receipt.get("documentSha256") != digest
+            or int(receipt.get("opcodesUnimplemented", -1)) != 0
+        ):
+            raise ItemVerificationError(
+                f"screen-load-refused: {item_id}: "
+                f"{receipt.get('failureClass', 'invalid-or-stale-receipt')}"
+            )
+        return {
+            "pack": f"native/{selection.get('active', '')}",
+            "converter": "screen-v1",
+            "document": str(row["document"]),
+            "documentSha256": digest,
+            "loadReceipt": str(row["receipt"]),
+            "opcodesUnimplemented": 0,
+        }
+    return None
+
+
 def verify_item(
     *, kind: str, item_id: str, install: Path | str, content_root: Path | str
 ) -> dict[str, object]:
@@ -270,6 +334,18 @@ def verify_item(
         )
     source = _read_source(catalog, entry)
     source_sha256 = hashlib.sha256(source).hexdigest()
+    if kind == "screens":
+        native = _verified_native_screen(Path(content_root), canonical_id)
+        if native is not None:
+            return {
+                "status": "verified",
+                "kind": kind,
+                "id": canonical_id,
+                "pack": native.pop("pack"),
+                "converter": native.pop("converter"),
+                "sourceSha256": source_sha256,
+                "structural": native,
+            }
     record = _verified_record(Path(content_root), canonical_id, source_sha256, kind)
     if extension == ".w3d":
         structural = _verify_w3d(source, canonical_id, record)
