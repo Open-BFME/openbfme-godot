@@ -38,3 +38,9 @@ PYTHONPATH=importer python -m openbfme_importer.fleet_queues --install ROOT --co
 `"status": "done"` in that file. No shared list to conflict on.
 
 Priority order is the order in `work.py QUEUE_ORDER`.
+
+For the `maps` queue, **boot** includes both the existing Godot cooked-map load
+and the new-core C# path: load `openbfme.map.v1` through `MapDocument`, then
+apply it through `MapWorldBuilder`. `verify_item --kind maps` performs the
+Python-side conversion to map-v1 and required-key validation; the C# test suite
+proves the strict engine load and world build.

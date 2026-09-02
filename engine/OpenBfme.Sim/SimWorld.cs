@@ -140,6 +140,7 @@ public sealed partial class SimWorld
     /// <summary>Module type names that had no registered implementation, with occurrence counts. Fail-closed accounting.</summary>
     public IReadOnlyDictionary<string, int> ModuleGaps => _moduleGaps;
     public BundleLoadReport? BundleLoadReport { get; private set; }
+    public Map.MapLoadReport? MapLoadReport { get; internal set; }
 
     public SimWorld(SimConfig config, ModuleRegistry registry)
         : this(config, registry, tickMilliseconds: 33, passabilityGrid: null)
@@ -234,6 +235,11 @@ public sealed partial class SimWorld
         return world;
     }
 
+    public static SimWorld FromBundle(
+        MatchLaunch launch,
+        BundleDocument document,
+        Map.MapDocument map) => Map.MapWorldBuilder.Build(launch, document, map);
+
     private static SimConfig CreateConfig(
         MatchLaunch launch,
         IEnumerable<ObjectTemplate>? templates,
@@ -317,7 +323,11 @@ public sealed partial class SimWorld
         Fixed64 elevation = default,
         Fixed64 headingRadians = default)
     {
-        ValidateTeam(team);
+        if (team < -1 || team >= _config.TeamCount)
+        {
+            throw new ArgumentOutOfRangeException(nameof(team),
+                $"Team {team} outside neutral (-1) or 0..{_config.TeamCount - 1}");
+        }
         if (!_config.Templates.TryGetValue(templateName, out var template))
         {
             throw new KeyNotFoundException($"Unknown object template '{templateName}'");

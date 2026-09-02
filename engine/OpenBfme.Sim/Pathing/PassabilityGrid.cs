@@ -6,7 +6,7 @@ public sealed class PassabilityGrid
     private readonly bool[] _passable;
     private readonly int[] _cost;
 
-    public PassabilityGrid(int width, int height, bool[] passable, int[] cost)
+    public PassabilityGrid(int width, int height, bool[] passable, int[] cost, int cellSize = 1)
     {
         if (width < 1)
         {
@@ -15,6 +15,10 @@ public sealed class PassabilityGrid
         if (height < 1)
         {
             throw new ArgumentOutOfRangeException(nameof(height));
+        }
+        if (cellSize < 1)
+        {
+            throw new ArgumentOutOfRangeException(nameof(cellSize));
         }
         var cellCount = checked(width * height);
         if (passable.Length != cellCount)
@@ -34,17 +38,25 @@ public sealed class PassabilityGrid
         }
         Width = width;
         Height = height;
+        CellSize = cellSize;
         _passable = (bool[])passable.Clone();
         _cost = (int[])cost.Clone();
     }
 
     public int Width { get; }
     public int Height { get; }
+    public int CellSize { get; }
     public int CellCount => _passable.Length;
 
     public bool IsInside(int x, int y) => x >= 0 && y >= 0 && x < Width && y < Height;
 
     public bool IsPassable(int x, int y) => IsInside(x, y) && _passable[IndexOf(x, y)];
+
+    public int WorldToCell(Fixed64 coordinate) =>
+        (coordinate / Fixed64.FromInt(CellSize)).ToIntFloor();
+
+    public (int X, int Y) WorldToCell(FixedVector2 position) =>
+        (WorldToCell(position.X), WorldToCell(position.Y));
 
     public int Cost(int x, int y)
     {
@@ -73,13 +85,14 @@ public sealed class PassabilityGrid
         return (index % Width, index / Width);
     }
 
-    public static PassabilityGrid Uniform(int width, int height, int cost = 1)
+    public static PassabilityGrid Uniform(int width, int height, int cost = 1, int cellSize = 1)
     {
         var cellCount = checked(width * height);
         return new PassabilityGrid(
             width,
             height,
             Enumerable.Repeat(true, cellCount).ToArray(),
-            Enumerable.Repeat(cost, cellCount).ToArray());
+            Enumerable.Repeat(cost, cellCount).ToArray(),
+            cellSize);
     }
 }

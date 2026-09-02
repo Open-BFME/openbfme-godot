@@ -12,8 +12,7 @@ public static class FlowFieldMover
         {
             throw new ArgumentOutOfRangeException(nameof(speed));
         }
-        var cellX = position.X.ToIntFloor();
-        var cellY = position.Y.ToIntFloor();
+        var (cellX, cellY) = field.Grid.WorldToCell(position);
         if (!field.Grid.IsInside(cellX, cellY)
             || !field.Grid.IsPassable(cellX, cellY)
             || (cellX == field.GoalX && cellY == field.GoalY)

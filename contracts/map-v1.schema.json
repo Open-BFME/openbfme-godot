@@ -1,0 +1,114 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "openbfme.map.v1",
+  "title": "OpenBFME engine cooked map v1",
+  "description": "Self-contained engine input. Height samples are little-endian uint16 values in row-major order. Passability is the source SAGE one-is-impassable bit grid, least-significant bit first with the declared row stride. All coordinates are retail world units.",
+  "type": "object",
+  "required": ["schema", "source", "world", "height_grid", "passability_grid", "start_positions", "waypoints", "objects", "plots"],
+  "additionalProperties": false,
+  "properties": {
+    "schema": { "const": "openbfme.map.v1" },
+    "source": {
+      "type": "object",
+      "required": ["path", "sha256"],
+      "additionalProperties": false,
+      "properties": {
+        "path": { "type": "string", "minLength": 1 },
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    },
+    "world": {
+      "type": "object",
+      "required": ["width", "height", "cell_size"],
+      "additionalProperties": false,
+      "properties": {
+        "width": { "type": "integer", "minimum": 1 },
+        "height": { "type": "integer", "minimum": 1 },
+        "cell_size": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "height_grid": { "$ref": "#/$defs/grid" },
+    "passability_grid": { "$ref": "#/$defs/passability" },
+    "water": {
+      "type": "object",
+      "required": ["impassable", "polygons"],
+      "additionalProperties": false,
+      "properties": {
+        "impassable": { "type": "boolean", "description": "When true, cells whose centers lie in a water polygon are blocked in addition to the source passability bits." },
+        "polygons": {
+          "type": "array",
+          "items": {
+            "type": "array",
+            "minItems": 3,
+            "items": { "$ref": "#/$defs/point" }
+          }
+        }
+      }
+    },
+    "start_positions": {
+      "type": "object",
+      "additionalProperties": { "$ref": "#/$defs/facingPoint" }
+    },
+    "waypoints": {
+      "type": "object",
+      "additionalProperties": { "$ref": "#/$defs/point" }
+    },
+    "objects": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["template", "x", "y", "z", "angle", "owner", "original_owner", "properties"],
+        "additionalProperties": false,
+        "properties": {
+          "template": { "type": "string", "minLength": 1 },
+          "x": { "type": "number" }, "y": { "type": "number" }, "z": { "type": "number" },
+          "angle": { "type": "number" },
+          "owner": { "type": "string" }, "original_owner": { "type": "string" },
+          "properties": { "type": "object" }
+        }
+      }
+    },
+    "plots": {
+      "type": "array",
+      "description": "Authored expansion pads when identifiable; otherwise exactly six deterministic offsets around each start: (200,0), (100,173), (-100,173), (-200,0), (-100,-173), (100,-173).",
+      "items": {
+        "type": "object",
+        "required": ["base_index", "index", "x", "y", "kind"],
+        "additionalProperties": false,
+        "properties": {
+          "base_index": { "type": "integer", "minimum": 0 },
+          "index": { "type": "integer", "minimum": 0 },
+          "x": { "type": "number" }, "y": { "type": "number" },
+          "kind": { "type": "string", "minLength": 1 }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "point": {
+      "type": "object", "required": ["x", "y"], "additionalProperties": false,
+      "properties": { "x": { "type": "number" }, "y": { "type": "number" } }
+    },
+    "facingPoint": {
+      "type": "object", "required": ["x", "y", "facing"], "additionalProperties": false,
+      "properties": { "x": { "type": "number" }, "y": { "type": "number" }, "facing": { "type": "number" } }
+    },
+    "grid": {
+      "type": "object", "required": ["width", "height", "encoding", "data_base64"], "additionalProperties": false,
+      "properties": {
+        "width": { "type": "integer", "minimum": 1 }, "height": { "type": "integer", "minimum": 1 },
+        "encoding": { "const": "uint16-little-endian-row-major" },
+        "data_base64": { "type": "string", "contentEncoding": "base64" }
+      }
+    },
+    "passability": {
+      "type": "object", "required": ["width", "height", "encoding", "row_stride_bytes", "data_base64"], "additionalProperties": false,
+      "properties": {
+        "width": { "type": "integer", "minimum": 1 }, "height": { "type": "integer", "minimum": 1 },
+        "encoding": { "const": "one-is-impassable-lsb-first-row-padded" },
+        "row_stride_bytes": { "type": "integer", "minimum": 1 },
+        "data_base64": { "type": "string", "contentEncoding": "base64" }
+      }
+    }
+  }
+}
