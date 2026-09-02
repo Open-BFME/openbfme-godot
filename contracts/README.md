@@ -12,9 +12,12 @@ schema is its own unit and bumps the version in the file name.
 | `command-v1.schema.json` | shell/net | sim | draft v1 |
 
 `fixtures/bundle-v1.json` is the complete generic-cook oracle produced from
-both sibling fixture trees under `importer/tests/fixtures/cook/`; it includes
-Object templates plus Weapon, Armor, DamageFX, Locomotor, LocomotorSet, and
-horde formation tables. `fixtures/bundle-v1-objects.json` is the focused
+the fixture trees under `importer/tests/fixtures/cook/`; it includes Object
+templates plus Weapon, Armor, DamageFX, Locomotor, LocomotorSet, horde
+formation, Upgrade, Science, SpecialPower, CommandButton, and CommandSet
+tables. Every named-definition table retains all authored assignments as typed
+fields and promotes repeated keys to ordered lists. CommandSet rows retain
+authored slot order. `fixtures/bundle-v1-objects.json` is the focused
 Object-family producer oracle retained for `cook.objects`. Both are canonical
 JSON. The complete fixture is the schema-validation fixture; the Object-only
 fixture deliberately exercises that producer before the remaining tables are

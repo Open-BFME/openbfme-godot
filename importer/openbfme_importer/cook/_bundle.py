@@ -14,6 +14,7 @@ from . import objects
 from ._blocks import normalize_documents
 from .combat import add_combat_tables
 from .movement import add_movement_tables
+from .tech import add_tech_tables
 
 
 REPORT_SCHEMA = "openbfme.cook.bundle.report.v1"
@@ -37,6 +38,11 @@ def _combined_report(
         "locomotors": len(bundle.get("locomotors", [])),
         "locomotor_sets": len(bundle.get("locomotor_sets", [])),
         "hordes": len(bundle.get("hordes", [])),
+        "upgrades": len(bundle.get("upgrades", [])),
+        "sciences": len(bundle.get("sciences", [])),
+        "special_powers": len(bundle.get("special_powers", [])),
+        "command_buttons": len(bundle.get("command_buttons", [])),
+        "command_sets": len(bundle.get("command_sets", [])),
         "nuggets_by_kind": dict(sorted(nuggets.items())),
         "parse_failures": [dict(row) for row in failures],
         "objects": dict(object_report),
@@ -59,6 +65,7 @@ def cook_documents(
     ]
     failures.extend(add_combat_tables(bundle, normalized))
     failures.extend(add_movement_tables(bundle, normalized))
+    failures.extend(add_tech_tables(bundle, normalized))
     return objects.CookResult(
         bundle=bundle,
         report=_combined_report(bundle, object_result.report, failures),

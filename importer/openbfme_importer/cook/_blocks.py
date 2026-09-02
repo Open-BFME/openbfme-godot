@@ -111,6 +111,7 @@ def _parse_block(
     kind: str,
     name: str,
     target_kinds: frozenset[str],
+    retain_malformed: bool,
 ) -> tuple[CookBlock | None, int, dict[str, str] | None]:
     root = _MutableBlock(kind, name, path, start + 1, [], [])
     stack = [root]
@@ -122,7 +123,7 @@ def _parse_block(
             continue
         header = _HEADER.fullmatch(text)
         if len(stack) == 1 and header and header.group("kind").casefold() in target_kinds:
-            return None, index, {
+            return (_freeze(root) if retain_malformed else None), index, {
                 "file": path,
                 "block": name,
                 "message": f"{path}:{start + 1}: unterminated {kind} {name}",
@@ -145,7 +146,7 @@ def _parse_block(
         stack[-1].blocks.append(child)
         stack.append(child)
         index += 1
-    return None, len(lines), {
+    return (_freeze(root) if retain_malformed else None), len(lines), {
         "file": path,
         "block": name,
         "message": f"{path}:{start + 1}: unterminated {kind} {name}",
@@ -153,7 +154,10 @@ def _parse_block(
 
 
 def parse_named_blocks(
-    documents: Sequence[tuple[str, bytes]], kinds: Iterable[str]
+    documents: Sequence[tuple[str, bytes]],
+    kinds: Iterable[str],
+    *,
+    retain_malformed: bool = False,
 ) -> ParseResult:
     """Parse selected named block families and recover after malformed siblings."""
 
@@ -183,7 +187,7 @@ def parse_named_blocks(
             kind = spellings[header.group("kind").casefold()]
             name = header.group("name")
             block, next_index, failure = _parse_block(
-                lines, index, path, kind, name, targets
+                lines, index, path, kind, name, targets, retain_malformed
             )
             if failure is not None:
                 failures.append(failure)
