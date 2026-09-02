@@ -208,6 +208,19 @@ public sealed partial class SimWorld
                     $"object {producer.Id} command set '{producer.CurrentCommandSet}' does not offer '{template}'");
                 continue;
             }
+            var waitingHero = _objects.Values.FirstOrDefault(value => value.Team == command.Team
+                && value.TemplateName.Equals(template, StringComparison.Ordinal)
+                && value.IsDying && value.FindModule<RespawnUpdateModule>() is { IsWaiting: true });
+            if (waitingHero?.FindModule<RespawnUpdateModule>() is { } respawn)
+            {
+                var respawnRefusal = "invalid_count";
+                var started = count == 1
+                    && respawn.TryBeginRespawn(this, waitingHero, producer, out respawnRefusal);
+                if (!started)
+                    RecordDiagnostic(command, producer.Id, count != 1 ? "invalid_count" : respawnRefusal,
+                        $"object {producer.Id} refused hero respawn '{template}'");
+                continue;
+            }
             if (!production.TryQueue(this, producer, template, count, out var refusal))
             {
                 RecordDiagnostic(command, producer.Id, refusal, $"object {producer.Id} refused training '{template}' x{count}");

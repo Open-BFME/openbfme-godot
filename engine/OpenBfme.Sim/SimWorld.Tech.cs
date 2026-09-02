@@ -43,6 +43,14 @@ public sealed partial class SimWorld
     internal bool HasUpgradeTemplate(string name) => _config.Tech.Upgrades.ContainsKey(name);
     internal UpgradeTemplate UpgradeTemplate(string name) => _config.Tech.Upgrades[name];
 
+    internal bool GrantObjectUpgrade(GameObject target, string name)
+    {
+        if (!target.AddObjectUpgrade(name)) return false;
+        EvaluateUpgradeModules(target);
+        RaiseEvent(new SimEvent("upgrade", target.Id, Name: name));
+        return true;
+    }
+
     internal void RecordTechGap(string typeName) =>
         _moduleGaps[typeName] = _moduleGaps.TryGetValue(typeName, out var count) ? count + 1 : 1;
 

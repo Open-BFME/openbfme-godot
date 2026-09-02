@@ -609,7 +609,8 @@ public sealed class CombatSystem
     }
 
     private static bool IsHostileTarget(GameObject attacker, GameObject target) =>
-        attacker.Team != target.Team && !target.IsDead && !target.IsDying;
+        attacker.Team != target.Team && !target.IsDead && !target.IsDying
+        && target.FindModule<InvisibilityUpdateModule>()?.IsInvisible != true;
 
     private static bool IsWithinWeaponRange(GameObject attacker, GameObject target, WeaponTemplate weapon)
     {
