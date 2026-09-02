@@ -10,6 +10,7 @@ from openbfme_importer.native_content import (
     NativeMapSource,
     SELECTION_SCHEMA,
     _corpus_report_covers_request,
+    _corpus_sources,
     build_native_documents,
     ensure_map_sources,
 )
@@ -78,7 +79,16 @@ def test_fixture_cook_selection_and_idempotence(tmp_path: Path) -> None:
     cooked = tmp_path / "cooked-map"
     _cooked_map(cooked)
     content = tmp_path / "content-packs"
-    sources = [NativeMapSource("Native Test Map", "native-test-map", 2, cooked)]
+    sources = [
+        NativeMapSource(
+            "Native Test Map",
+            "native-test-map",
+            2,
+            cooked,
+            "multiplayer",
+            "maps/map mp native test/map mp native test.map",
+        )
+    ]
 
     first = build_native_documents(ini_root, sources, content)
     selection_path = content / "native" / "selection.json"
@@ -99,6 +109,7 @@ def test_fixture_cook_selection_and_idempotence(tmp_path: Path) -> None:
                 "slug": "native-test-map",
                 "path": f"native/{first.active}/maps/native-test-map.map-v1.json",
                 "players": 2,
+                "kind": "multiplayer",
             }
         ],
     }
@@ -158,12 +169,51 @@ def test_limited_corpus_report_is_not_complete_for_all(tmp_path: Path) -> None:
     report = state / "reports" / "rotwk-map-cook-corpus.json"
     report.parent.mkdir(parents=True)
     report.write_text(
-        json.dumps({"eligibleMapCount": 7, "mapCount": 2, "maps": []}),
+        json.dumps(
+            {
+                "schemaVersion": 3,
+                "eligibleMapCount": 7,
+                "mapCount": 2,
+                "maps": [],
+            }
+        ),
         encoding="utf-8",
     )
 
     assert _corpus_report_covers_request(state, 2)
     assert not _corpus_report_covers_request(state, None)
+
+
+def test_corpus_source_preserves_punctuation_in_cache_slug(tmp_path: Path) -> None:
+    state = tmp_path / "state"
+    slug = "cin-amon-sul---castle-pan"
+    cooked = state / "editions" / "rotwk" / "cache" / "native-cooked-maps" / slug
+    cooked.parent.mkdir(parents=True)
+    _cooked_map(cooked)
+    report = state / "reports" / "rotwk-map-cook-corpus.json"
+    report.parent.mkdir(parents=True)
+    report.write_text(
+        json.dumps(
+            {
+                "maps": [
+                    {
+                        "path": "maps/cin amon sul - castle pan/cin amon sul - castle pan.map",
+                        "slug": slug,
+                        "kind": "campaign",
+                        "verdict": "under-two-player-starts",
+                        "playerStarts": 1,
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    sources = _corpus_sources(state)
+
+    assert len(sources) == 1
+    assert sources[0].slug == slug
+    assert sources[0].cooked_root == cooked.resolve()
 
 
 def test_corpus_backed_map_source_when_private_install_is_available(tmp_path: Path) -> None:

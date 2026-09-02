@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
-"""Cook official multiplayer maps from a RotWK (or BFME2) retail catalog.
+"""Cook every effective ``.map`` winner from a RotWK (or BFME2) catalog.
 
-Uses the same mapcache selection rule as ``census-maps`` (official multiplayer
-with a shipped payload). For each map: strict ``convert_sage_map`` into a
-**private** job directory, then a passability connectivity check on player starts.
+For each map: strict ``convert_sage_map`` with its corpus profile into a
+**private** job directory, then an optional passability connectivity check.
 
 Writes a private JSON report under state-root/reports by default.
 
@@ -33,7 +32,12 @@ from openbfme_importer.catalog import (  # noqa: E402
     ArchivePolicy,
     DEFAULT_BFME2_ARCHIVE_POLICY,
     InstallCatalog,
-    catalog_provenance_reason,
+)
+from openbfme_importer.asset_census import census_assets  # noqa: E402
+from openbfme_importer.map_kinds import (  # noqa: E402
+    canonical_map_path,
+    classify_map_path,
+    sage_profile_for_map,
 )
 from openbfme_importer.map_census import (  # noqa: E402
     MAPCACHE_VIRTUAL_PATH,
@@ -54,7 +58,7 @@ from openbfme_importer.conversion_ledger import ConversionLedger  # noqa: E402
 from openbfme_importer.util import write_json_atomic  # noqa: E402
 
 REPORT_SCHEMA = "openbfme.rotwk-map-cook-corpus"
-REPORT_SCHEMA_VERSION = 2
+REPORT_SCHEMA_VERSION = 3
 
 # Explicitly non-fatal gap verdicts (tool still exits 0 if only these occur).
 NONFATAL_VERDICTS = frozenset(
@@ -81,23 +85,8 @@ def _load_catalog(state_root: Path, game: str, install: Path) -> InstallCatalog:
     source_policy = (
         ArchivePolicy.load(DEFAULT_BFME2_ARCHIVE_POLICY) if game == "bfme2" else None
     )
-    if path.is_file():
-        catalog = InstallCatalog.load(path)
-        reason = catalog_provenance_reason(
-            (archive.relative_path for archive in catalog.archives), game
-        )
-        if reason is not None:
-            raise SystemExit(f"catalog-game-mismatch for {game}: {reason}")
-        # Bind catalog to requested install when identity is present.
-        if getattr(catalog, "install_root", None) is not None:
-            catalog_root = Path(catalog.install_root).resolve()
-            if catalog_root != install.resolve():
-                # Rebuild rather than silently census the wrong install.
-                catalog = InstallCatalog.build(install, source_policy=source_policy)
-                path.parent.mkdir(parents=True, exist_ok=True)
-                catalog.save(path)
-                return catalog
-        return catalog
+    # A cached catalog can predate a layered patch or base-game junction.  The
+    # denominator is cheap to rebuild and must reflect the live effective view.
     catalog = InstallCatalog.build(install, source_policy=source_policy)
     path.parent.mkdir(parents=True, exist_ok=True)
     catalog.save(path)
@@ -116,7 +105,7 @@ def _map_slug(virtual_path: str) -> str:
     """Stable unique slug; keep mp/wor/ang kind tokens to avoid name collisions."""
     parts = virtual_path.replace("\\", "/").split("/")
     folder = parts[-2] if len(parts) >= 2 else Path(virtual_path).stem
-    words = [w for w in folder.casefold().split() if w]
+    words = [w for w in folder.casefold().replace("_", " ").split() if w]
     if words and words[0] == "map":
         words = words[1:]
     return "-".join(words) if words else Path(virtual_path).stem.casefold()
@@ -133,6 +122,29 @@ def _companion_flags(catalog: InstallCatalog, map_virtual: str) -> dict[str, boo
         "art": has(f"{stem}_art.tga") or has(f"{stem}_art.TGA"),
         "pic": has(f"{stem}_pic.tga") or has(f"{stem}_pic.TGA"),
         "map_ini": has("map.ini") or has("Map.ini"),
+    }
+
+
+def _all_effective_maps(catalog: InstallCatalog) -> list[str]:
+    paths = {
+        canonical_map_path(item.virtual_path)
+        for item in census_assets(catalog).entries
+        if Path(item.virtual_path).suffix.casefold() == ".map"
+    }
+    return sorted(paths)
+
+
+def _registry_player_counts(catalog: InstallCatalog) -> dict[str, int]:
+    try:
+        source = _read_virtual(
+            catalog, MAPCACHE_VIRTUAL_PATH, max_bytes=MAX_MAPCACHE_BYTES
+        )
+        rows = parse_mapcache_bytes(source)
+    except (FileNotFoundError, OSError, ValueError):
+        return {}
+    return {
+        canonical_map_path(str(row["virtualPath"])): int(row["playerCount"])
+        for row in rows
     }
 
 
@@ -333,18 +345,9 @@ def main(argv: list[str] | None = None) -> int:
         install_root=str(install),
         sink_path=reports_dir / f"{args.game}-map-cook-ledger-{run_id}.jsonl",
     )
-    registry_source = _read_virtual(
-        catalog, MAPCACHE_VIRTUAL_PATH, max_bytes=MAX_MAPCACHE_BYTES
-    )
-    registry = parse_mapcache_bytes(registry_source)
-    selected = [
-        row
-        for row in registry
-        if bool(row["isMultiplayer"])
-        and bool(row["isOfficial"])
-        and not bool(row["isScenarioMp"])
-    ]
-    selected.sort(key=lambda row: str(row["virtualPath"]).casefold())
+    registry_players = _registry_player_counts(catalog)
+    multiplayer_paths = frozenset(registry_players)
+    selected = _all_effective_maps(catalog)
     eligible_count = len(selected)
     if args.limit and args.limit > 0:
         selected = selected[: args.limit]
@@ -365,39 +368,53 @@ def main(argv: list[str] | None = None) -> int:
     job_root.mkdir(parents=True, exist_ok=True)
 
     try:
-        for index, record in enumerate(selected):
-            virtual = str(record["virtualPath"])
+        for index, virtual in enumerate(selected):
             slug = _map_slug(virtual)
             if slug in slug_owners and slug_owners[slug] != virtual.casefold():
                 # Disambiguate collisions
                 slug = f"{slug}-{index:04d}"
             slug_owners[slug] = virtual.casefold()
             map_id = f"openbfme.map.{slug}"
+            kind = classify_map_path(virtual, multiplayer_paths=multiplayer_paths)
+            profile = sage_profile_for_map(virtual, kind)
             entry: dict[str, Any] = {
                 "path": virtual,
                 "slug": slug,
                 "mapId": map_id,
-                "registryPlayerCount": int(record["playerCount"]),
+                "kind": kind,
+                "profile": profile,
+                "registryPlayerCount": registry_players.get(virtual, 0),
                 "companions": _companion_flags(catalog, virtual),
+                "rerunCommand": (
+                    f'{sys.executable} {Path(__file__).resolve()} --install "{install}" '
+                    f'--game {args.game} --state-root "{state_root}" '
+                    f'--cooked-root "{cooked_root}"'
+                ),
             }
             try:
                 entry_meta = catalog.resolve_exact(virtual)
                 if entry_meta is None:
-                    entry["verdict"] = "registry-stale-missing-payload"
+                    entry["verdict"] = "effective-map-missing-payload"
+                    entry["status"] = "failed"
+                    entry["failure"] = {
+                        "class": "FileNotFoundError",
+                        "file": virtual,
+                        "message": f"missing catalog entry: {virtual}",
+                    }
                     results.append(entry)
                     verdicts[entry["verdict"]] += 1
                     ledger.record(
                         kind="map-cook",
                         unit_id=virtual,
                         status="skipped",
-                        detail="registry-stale-missing-payload",
+                        detail="effective-map-missing-payload",
                     )
                     print(f"[{index + 1}/{len(selected)}] {entry['verdict']}: {virtual}")
                     continue
                 source = _read_virtual(catalog, virtual, max_bytes=MAX_SOURCE_BYTES)
                 entry["sourceSha256"] = hashlib.sha256(source).hexdigest()
                 entry["sourceBytes"] = len(source)
-                parsed = parse_sage_map_bytes(source, profile="multiplayer")
+                parsed = parse_sage_map_bytes(source, profile=profile)
                 starts = len(parsed.player_starts)
                 entry["playerStarts"] = starts
                 work = job_root / f"{index:04d}-{slug}"
@@ -419,7 +436,7 @@ def main(argv: list[str] | None = None) -> int:
                         metadata={"id": map_id, "displayName": slug},
                         expected={},
                         object_bindings=None,
-                        profile="multiplayer",
+                        profile=profile,
                     )
                     entry["cacheHit"] = False
                 map_doc = json.loads((cooked / "map.json").read_text(encoding="utf-8"))
@@ -447,11 +464,24 @@ def main(argv: list[str] | None = None) -> int:
                     entry["cookedPath"] = str(cached)
             except SageMapError as exc:
                 entry["verdict"] = "cook-rejected"
-                entry["error"] = str(exc)[:800]
+                entry["error"] = str(exc)
+                entry["failure"] = {
+                    "class": type(exc).__name__,
+                    "file": virtual,
+                    "message": str(exc),
+                }
             except Exception as exc:
                 entry["verdict"] = "cook-error"
-                entry["error"] = f"{type(exc).__name__}: {exc}"[:800]
-                entry["traceback"] = traceback.format_exc()[-1000:]
+                entry["error"] = f"{type(exc).__name__}: {exc}"
+                entry["failure"] = {
+                    "class": type(exc).__name__,
+                    "file": virtual,
+                    "message": str(exc),
+                }
+                entry["traceback"] = traceback.format_exc()
+            entry.setdefault(
+                "status", "failed" if entry["verdict"] in FATAL_VERDICTS else "ok"
+            )
             results.append(entry)
             verdicts[entry["verdict"]] += 1
             status = str(entry["verdict"])
@@ -507,8 +537,9 @@ def main(argv: list[str] | None = None) -> int:
         "installRoot": str(install.resolve()),
         "installIdentitySha256": install_sha,
         "criteria": (
-            "mapcache isMultiplayer+isOfficial+!isScenarioMP; catalog payload; "
-            "strict convert_sage_map multiplayer; passability start-component "
+            "every case-folded effective catalog .map winner; mapcache only supplies "
+            "multiplayer classification and player capacity; strict convert_sage_map "
+            "with per-kind profile; passability start-component "
             "connectivity when not --skip-connectivity; temp under private jobs"
         ),
         "eligibleMapCount": eligible_count,

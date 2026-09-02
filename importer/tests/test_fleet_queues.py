@@ -10,7 +10,9 @@ from importer.tests.test_big import make_big
 from importer.tests.test_sage_apt import _apt, _const
 from importer.tests.test_sage_map import _synthetic_map
 from openbfme_importer.catalog import InstallCatalog
+from openbfme_importer.cook.maps import convert_cooked_map
 from openbfme_importer.fleet_queues import KINDS, generate_queue_documents, main
+from openbfme_importer.map_kinds import classify_map_path, sage_profile_for_map
 from openbfme_importer.sage_apt import (
     parse_apt_constants,
     parse_apt_movie,
@@ -171,6 +173,77 @@ def test_asset_priority_uses_playable_object_reference(tmp_path: Path) -> None:
     rows = {row["id"]: row for row in documents["assets"]["open"]}
     assert rows["art/compiledtextures/open.png"]["rank"] == 100
     assert all("openbfme_importer.verify_item" in row["oracle"] for row in rows.values())
+
+
+def test_map_kind_classification_covers_product_modes() -> None:
+    multiplayer = frozenset({"maps/custom/arena.map"})
+    assert classify_map_path("maps/custom/arena.map", multiplayer_paths=multiplayer) == "multiplayer"
+    assert classify_map_path("maps/map good celduin/map good celduin.map") == "campaign"
+    assert classify_map_path("maps/map beginner tutorial/map beginner tutorial.map") == "tutorial"
+    assert classify_map_path("maps/map wor rohan/map wor rohan.map") == "wotr"
+    assert classify_map_path("maps/map mp super test arena/test.map") == "test"
+    assert classify_map_path("libraries/ai_debug.map") == "other"
+    assert sage_profile_for_map("libraries/ai_debug.map", "other") == "library"
+
+
+def test_native_map_v1_completes_queue_and_failure_is_actionable(tmp_path: Path) -> None:
+    install, content_root, _proof = _fixture(tmp_path)
+    pack = content_root / "fixture-pack" / "one"
+    native_map = content_root / "native" / "fixture" / "maps" / "campaign.map-v1.json"
+    convert_cooked_map(
+        pack / "maps" / "arena",
+        native_map,
+        source_path="maps/campaign/one.map",
+    )
+    write_json_atomic(
+        content_root / "native" / "selection.json",
+        {
+            "schema": "openbfme.native-selection",
+            "version": 1,
+            "active": "fixture",
+            "bundle": "native/fixture/bundle-v1.json",
+            "maps": [
+                {
+                    "name": "Campaign One",
+                    "slug": "campaign-one",
+                    "path": "native/fixture/maps/campaign.map-v1.json",
+                    "players": 2,
+                    "kind": "campaign",
+                }
+            ],
+        },
+    )
+    write_json_atomic(
+        content_root.parent / "retail-work" / "reports" / "rotwk-map-v1-sweep.json",
+        {
+            "schema": "openbfme.native-map-sweep",
+            "schemaVersion": 1,
+            "maps": [
+                {
+                    "path": "maps/cinematic/two.map",
+                    "status": "failed",
+                    "failure": {
+                        "class": "SageMapError",
+                        "file": "maps/cinematic/two.map",
+                        "message": "unsupported BlendTileData version 19",
+                    },
+                    "rerunCommand": "python -m openbfme_importer.native_content --maps all",
+                }
+            ],
+        },
+    )
+
+    document = generate_queue_documents(
+        InstallCatalog.build(install),
+        install=install,
+        content_root=content_root,
+        kinds=("maps",),
+    )["maps"]
+
+    assert document["done"] == 2
+    assert [row["id"] for row in document["open"]] == ["maps/cinematic/two.map"]
+    assert document["open"][0]["lastFailure"] == "unsupported BlendTileData version 19"
+    assert document["open"][0]["rerunCommand"].endswith("--maps all")
 
 
 def test_verify_item_accepts_converted_fixtures_and_names_corruption(tmp_path: Path) -> None:
