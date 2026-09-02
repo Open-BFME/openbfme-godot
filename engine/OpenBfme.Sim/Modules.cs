@@ -100,6 +100,8 @@ public sealed class ObjectTemplate
     public IReadOnlyList<ArmorSet> ArmorSets { get; }
     public BodyHealthTemplate? BodyHealth { get; }
     public EconomyTemplate Economy { get; }
+    public string CommandSetName { get; }
+    public bool HasTechState { get; }
 
     public ObjectTemplate(
         string name,
@@ -107,7 +109,9 @@ public sealed class ObjectTemplate
         IReadOnlyList<WeaponSet>? weaponSets = null,
         IReadOnlyList<ArmorSet>? armorSets = null,
         BodyHealthTemplate? bodyHealth = null,
-        EconomyTemplate? economy = null)
+        EconomyTemplate? economy = null,
+        string commandSetName = "",
+        bool techEnabled = false)
     {
         Name = name ?? throw new ArgumentNullException(nameof(name));
         Modules = modules ?? throw new ArgumentNullException(nameof(modules));
@@ -120,6 +124,10 @@ public sealed class ObjectTemplate
         }
         BodyHealth = bodyHealth;
         Economy = economy ?? EconomyTemplate.FromModules(modules);
+        CommandSetName = commandSetName ?? throw new ArgumentNullException(nameof(commandSetName));
+        HasTechState = techEnabled || CommandSetName.Length > 0 || modules.Any(spec =>
+            spec.TypeName.EndsWith("Upgrade", StringComparison.Ordinal)
+            || spec.TypeName.Contains("SpecialPower", StringComparison.Ordinal));
     }
 }
 
@@ -188,6 +196,16 @@ public sealed class ModuleRegistry
         if (_factories.TryGetValue(spec.TypeName, out var factory))
         {
             module = factory(spec);
+            return true;
+        }
+        if (spec.Tier == ModuleTier.Cosmetic && spec.TypeName.EndsWith("Upgrade", StringComparison.Ordinal))
+        {
+            module = new CosmeticUpgradeGapModule(spec);
+            return true;
+        }
+        if (spec.Tier == ModuleTier.Cosmetic && spec.TypeName.Contains("SpecialPower", StringComparison.Ordinal))
+        {
+            module = new CosmeticSpecialPowerGapModule(spec);
             return true;
         }
         module = null;

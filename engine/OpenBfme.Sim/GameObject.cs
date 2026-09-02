@@ -18,6 +18,7 @@ public sealed class GameObject
     public bool IsUnderConstruction { get; private set; }
     public IReadOnlyList<ModuleBase> Modules { get; }
     internal CombatState? Combat { get; }
+    private readonly ObjectTechState? _tech;
 
     internal GameObject(
         int id,
@@ -26,7 +27,8 @@ public sealed class GameObject
         FixedVector2 position,
         IReadOnlyList<ModuleBase> modules,
         Fixed64 elevation = default,
-        Fixed64 headingRadians = default)
+        Fixed64 headingRadians = default,
+        bool techEnabled = false)
     {
         Id = id;
         Template = template ?? throw new ArgumentNullException(nameof(template));
@@ -40,6 +42,7 @@ public sealed class GameObject
         {
             Combat = new CombatState(template);
         }
+        if (techEnabled || template.HasTechState) _tech = new ObjectTechState(template.CommandSetName);
     }
 
     public void SetPosition(FixedVector2 position) => Position = position;
@@ -99,6 +102,16 @@ public sealed class GameObject
 
     public Fixed64 Health => Combat?.HasBody == true ? Combat.Health : Fixed64.Zero;
     public Fixed64 MaxHealth => Combat?.HasBody == true ? Combat.MaxHealth : Fixed64.Zero;
+    public IReadOnlySet<string> OwnedUpgrades => _tech?.Upgrades ?? EmptyUpgrades.Instance;
+    public string CurrentCommandSet => _tech?.CurrentCommandSet ?? Template.CommandSetName;
+
+    internal bool AddObjectUpgrade(string name) =>
+        (_tech ?? throw new InvalidOperationException("Object template has no tech state")).AddUpgrade(name);
+
+    internal bool HasObjectUpgrade(string name) => _tech?.HasUpgrade(name) == true;
+
+    internal void SetCurrentCommandSet(string name) =>
+        (_tech ?? throw new InvalidOperationException("Object template has no tech state")).SetCommandSet(name);
 
     public T? FindModule<T>() where T : ModuleBase
     {
@@ -128,5 +141,23 @@ public sealed class GameObject
         {
             module.WriteState(writer);
         }
+        _tech?.Write(writer);
+    }
+
+    internal void ReadTechState(CanonicalReader reader) => _tech?.Read(reader);
+
+    private sealed class EmptyUpgrades : IReadOnlySet<string>
+    {
+        public static readonly EmptyUpgrades Instance = new();
+        public int Count => 0;
+        public bool Contains(string item) => false;
+        public IEnumerator<string> GetEnumerator() => Enumerable.Empty<string>().GetEnumerator();
+        System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
+        public bool IsProperSubsetOf(IEnumerable<string> other) => other.Any();
+        public bool IsProperSupersetOf(IEnumerable<string> other) => false;
+        public bool IsSubsetOf(IEnumerable<string> other) => true;
+        public bool IsSupersetOf(IEnumerable<string> other) => !other.Any();
+        public bool Overlaps(IEnumerable<string> other) => false;
+        public bool SetEquals(IEnumerable<string> other) => !other.Any();
     }
 }

@@ -176,6 +176,12 @@ public sealed partial class SimWorld
                 RecordDiagnostic(command, producer.Id, "missing_production", $"object {producer.Id} has no ProductionUpdate");
                 continue;
             }
+            if (!CommandAllows(producer, "train", template))
+            {
+                RecordDiagnostic(command, producer.Id, "not_in_command_set",
+                    $"object {producer.Id} command set '{producer.CurrentCommandSet}' does not offer '{template}'");
+                continue;
+            }
             if (!production.TryQueue(this, producer, template, count, out var refusal))
             {
                 RecordDiagnostic(command, producer.Id, refusal, $"object {producer.Id} refused training '{template}' x{count}");
@@ -245,6 +251,12 @@ public sealed partial class SimWorld
             if (!_config.Templates.TryGetValue(templateName, out var template))
             {
                 RecordDiagnostic(command, baseObject.Id, "unknown_template", $"unknown build template '{templateName}'");
+                continue;
+            }
+            if (!CommandAllows(baseObject, "build", templateName))
+            {
+                RecordDiagnostic(command, baseObject.Id, "not_in_command_set",
+                    $"base {baseObject.Id} command set '{baseObject.CurrentCommandSet}' does not offer '{templateName}'");
                 continue;
             }
             if (baseObject.Template.Economy.CommandSet.Count > 0
@@ -382,6 +394,9 @@ public sealed partial class SimWorld
                 break;
             case EconomyExtensionMagic:
                 ReadEconomyExtension(reader);
+                break;
+            case TechExtensionMagic:
+                ReadTechExtension(reader);
                 break;
             default:
                 throw new InvalidDataException($"Unknown canonical state extension 0x{magic:X8}");

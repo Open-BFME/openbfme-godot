@@ -14,6 +14,7 @@ public sealed class SimConfig
     public int MapHeightCells { get; }
     public IReadOnlyDictionary<string, WeaponTemplate> WeaponTemplates { get; }
     public IReadOnlyDictionary<string, ArmorTemplate> ArmorTemplates { get; }
+    public TechCatalog Tech { get; }
     public long MaxCommandPoints { get; }
     private readonly IReadOnlyDictionary<string, int> _templateIndices;
 
@@ -26,7 +27,8 @@ public sealed class SimConfig
         IEnumerable<WeaponTemplate>? weaponTemplates = null,
         IEnumerable<ArmorTemplate>? armorTemplates = null,
         long maxCommandPoints = 0,
-        IReadOnlyDictionary<string, int>? templateIndices = null)
+        IReadOnlyDictionary<string, int>? templateIndices = null,
+        TechCatalog? tech = null)
     {
         if (teamCount < 1)
         {
@@ -64,6 +66,7 @@ public sealed class SimConfig
         MapHeightCells = mapHeightCells;
         WeaponTemplates = NamedTemplates(weaponTemplates, value => value.Name);
         ArmorTemplates = NamedTemplates(armorTemplates, value => value.Name);
+        Tech = tech ?? TechCatalog.Empty;
         if (maxCommandPoints < 0) throw new ArgumentOutOfRangeException(nameof(maxCommandPoints));
         MaxCommandPoints = maxCommandPoints;
     }
@@ -164,6 +167,7 @@ public sealed partial class SimWorld
         _commandPoints = new long[config.TeamCount];
         _commandPointsMax = Enumerable.Repeat(config.MaxCommandPoints, config.TeamCount).ToArray();
         _powerPoints = new long[config.TeamCount];
+        InitializeTechState();
         _random = new DeterministicRandom(config.RandomSeed);
     }
 
@@ -220,7 +224,8 @@ public sealed partial class SimWorld
             weaponTemplates: loaded.WeaponTemplates,
             armorTemplates: loaded.ArmorTemplates,
             maxCommandPoints: scaledCap,
-            templateIndices: loaded.TemplateIndices);
+            templateIndices: loaded.TemplateIndices,
+            tech: loaded.Tech);
         var world = new SimWorld(config, registry, launch.Rules.TickMilliseconds, passabilityGrid)
         {
             BundleLoadReport = loaded.Report,
@@ -335,7 +340,8 @@ public sealed partial class SimWorld
             }
         }
         var gameObject = new GameObject(
-            _nextObjectId++, template, team, position, modules, elevation, headingRadians);
+            _nextObjectId++, template, team, position, modules, elevation, headingRadians,
+            techEnabled: !_config.Tech.IsEmpty);
         gameObject.StoreSlot = ObjectStore.Allocate(gameObject.Id);
         SynchronizeObject(gameObject);
         if (_inUpdateSweep)
@@ -350,6 +356,7 @@ public sealed partial class SimWorld
         {
             _objects.Add(gameObject.Id, gameObject);
         }
+        ApplyOwnedPlayerUpgrades(gameObject);
         RaiseEvent(new SimEvent("spawn", gameObject.Id, Name: templateName));
         return gameObject;
     }
@@ -554,6 +561,12 @@ public sealed partial class SimWorld
             case "sell":
                 ApplySellCommand(command);
                 break;
+            case "upgrade":
+                ApplyUpgradeCommand(command);
+                break;
+            case "power":
+                ApplyPowerCommand(command);
+                break;
             default:
                 // Unknown command types are ignored deterministically (validated upstream
                 // by the lockstep layer); they still affected the hash while queued.
@@ -679,6 +692,7 @@ public sealed partial class SimWorld
         }
         WriteMovementExtension(writer);
         WriteEconomyExtension(writer);
+        WriteTechExtension(writer);
     }
 
     public string StateHash()
@@ -779,13 +793,15 @@ public sealed partial class SimWorld
             }
         }
         var gameObject = new GameObject(
-            id, template, team, position, modules, elevation, headingRadians);
+            id, template, team, position, modules, elevation, headingRadians,
+            techEnabled: !_config.Tech.IsEmpty);
         gameObject.StoreSlot = ObjectStore.Allocate(id);
         gameObject.Combat?.Read(reader);
         foreach (var module in modules)
         {
             module.ReadState(reader);
         }
+        gameObject.ReadTechState(reader);
         if (isDead)
         {
             gameObject.MarkDead();

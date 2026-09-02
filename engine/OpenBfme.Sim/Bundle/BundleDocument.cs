@@ -139,7 +139,12 @@ public sealed class BundleDocument
         IReadOnlyList<BundleNamedRow>? damageFx,
         IReadOnlyList<BundleNamedRow>? locomotors,
         IReadOnlyList<BundleNamedRow>? locomotorSets,
-        IReadOnlyList<BundleHordeRow>? hordes)
+        IReadOnlyList<BundleHordeRow>? hordes,
+        IReadOnlyList<UpgradeTemplate>? upgrades,
+        IReadOnlyList<ScienceTemplate>? sciences,
+        IReadOnlyList<SpecialPowerTemplate>? specialPowers,
+        IReadOnlyList<CommandButtonTemplate>? commandButtons,
+        IReadOnlyList<BundleCommandSetRow>? commandSets)
     {
         Schema = schema;
         Source = source;
@@ -152,6 +157,11 @@ public sealed class BundleDocument
         Locomotors = locomotors;
         LocomotorSets = locomotorSets;
         Hordes = hordes;
+        Upgrades = upgrades;
+        Sciences = sciences;
+        SpecialPowers = specialPowers;
+        CommandButtons = commandButtons;
+        CommandSets = commandSets;
     }
 
     public string Schema { get; }
@@ -165,6 +175,11 @@ public sealed class BundleDocument
     public IReadOnlyList<BundleNamedRow>? Locomotors { get; }
     public IReadOnlyList<BundleNamedRow>? LocomotorSets { get; }
     public IReadOnlyList<BundleHordeRow>? Hordes { get; }
+    public IReadOnlyList<UpgradeTemplate>? Upgrades { get; }
+    public IReadOnlyList<ScienceTemplate>? Sciences { get; }
+    public IReadOnlyList<SpecialPowerTemplate>? SpecialPowers { get; }
+    public IReadOnlyList<CommandButtonTemplate>? CommandButtons { get; }
+    public IReadOnlyList<BundleCommandSetRow>? CommandSets { get; }
 
     public static BundleDocument Load(string path)
     {
@@ -203,9 +218,7 @@ public sealed class BundleDocument
         using (parsed)
         {
             var root = RequireKind(parsed.RootElement, JsonValueKind.Object, "$", "object");
-            // Every table the cook emits (contracts/bundle-v1.schema.json). Tables this
-            // reader does not consume yet (tech tables) are accepted and ignored so a
-            // newer cook never breaks an older core; unknown names still fail loudly.
+            // Every table the cook emits (contracts/bundle-v1.schema.json).
             CheckProperties(root, "$", "schema", "source", "templates", "defines", "diagnostics",
                 "weapons", "armors", "damage_fx", "locomotors", "locomotor_sets", "hordes",
                 "upgrades", "sciences", "special_powers", "command_buttons", "command_sets");
@@ -234,7 +247,12 @@ public sealed class BundleDocument
                 ReadOptionalNamedTable(root, "damage_fx"),
                 ReadOptionalNamedTable(root, "locomotors"),
                 ReadOptionalNamedTable(root, "locomotor_sets"),
-                ReadOptionalHordes(root));
+                ReadOptionalHordes(root),
+                ReadOptionalParsedTable(root, "upgrades", TechCatalog.ParseUpgrade),
+                ReadOptionalParsedTable(root, "sciences", TechCatalog.ParseScience),
+                ReadOptionalParsedTable(root, "special_powers", TechCatalog.ParseSpecialPower),
+                ReadOptionalParsedTable(root, "command_buttons", TechCatalog.ParseCommandButton),
+                ReadOptionalCommandSets(root));
         }
     }
 
@@ -482,6 +500,60 @@ public sealed class BundleDocument
             RequireString(row, "name", path, nonEmpty: true),
             ReadFields(RequireKind(Require(row, "fields", path), JsonValueKind.Object,
                 path + ".fields", "object"), path + ".fields", listsAllowed: true));
+    }
+
+    private static IReadOnlyList<T>? ReadOptionalParsedTable<T>(
+        JsonElement root,
+        string name,
+        Func<BundleNamedRow, T> parse)
+    {
+        var rows = ReadOptionalNamedTable(root, name);
+        return rows?.Select(parse).ToArray();
+    }
+
+    private static IReadOnlyList<BundleCommandSetRow>? ReadOptionalCommandSets(JsonElement root)
+    {
+        if (!root.TryGetProperty("command_sets", out var element)) return null;
+        const string path = "$.command_sets";
+        RequireKind(element, JsonValueKind.Array, path, "array");
+        var result = new List<BundleCommandSetRow>();
+        var index = 0;
+        foreach (var row in element.EnumerateArray())
+        {
+            var itemPath = $"{path}[{index}]";
+            RequireKind(row, JsonValueKind.Object, itemPath, "object");
+            CheckProperties(row, itemPath, "name", "entries", "fields");
+            var entriesElement = RequireKind(Require(row, "entries", itemPath),
+                JsonValueKind.Array, itemPath + ".entries", "array");
+            var entries = new List<BundleCommandSetEntry>();
+            var entryIndex = 0;
+            foreach (var entry in entriesElement.EnumerateArray())
+            {
+                var entryPath = $"{itemPath}.entries[{entryIndex}]";
+                RequireKind(entry, JsonValueKind.Object, entryPath, "object");
+                CheckProperties(entry, entryPath, "slot", "button");
+                var slot = OptionalLong(entry, "slot", entryPath)
+                    ?? throw Error(entryPath + ".slot", "is required");
+                if (slot is < 0 or > int.MaxValue)
+                    throw Error(entryPath + ".slot", "is outside the simulation range");
+                var buttonElement = Require(entry, "button", entryPath);
+                string? button = buttonElement.ValueKind switch
+                {
+                    JsonValueKind.Null => null,
+                    JsonValueKind.String => buttonElement.GetString(),
+                    _ => throw Error(entryPath + ".button", "must be a string or null"),
+                };
+                entries.Add(new BundleCommandSetEntry((int)slot, button));
+                entryIndex++;
+            }
+            result.Add(new BundleCommandSetRow(
+                RequireString(row, "name", itemPath, nonEmpty: true),
+                entries.ToArray(),
+                ReadFields(RequireKind(Require(row, "fields", itemPath), JsonValueKind.Object,
+                    itemPath + ".fields", "object"), itemPath + ".fields", listsAllowed: true)));
+            index++;
+        }
+        return result.ToArray();
     }
 
     private static IReadOnlyList<BundleWeaponRow>? ReadOptionalWeapons(JsonElement root)
