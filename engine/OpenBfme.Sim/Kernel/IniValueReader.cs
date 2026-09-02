@@ -163,6 +163,7 @@ internal static class IniValueReader
         short number => number,
         int number => number,
         long number => number,
+        Fixed64 number when number.Raw % Fixed64.OneRaw == 0 => number.Raw / Fixed64.OneRaw,
         JsonElement json when json.ValueKind == JsonValueKind.Number && json.TryGetInt64(out var number) => number,
         _ => throw new FormatException($"Field '{name}' is not an integer"),
     };

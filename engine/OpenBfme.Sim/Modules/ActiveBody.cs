@@ -6,7 +6,7 @@ namespace OpenBfme.Sim;
 /// death flagging for the world's removal sweep.
 /// </summary>
 [SageModule("ActiveBody", ModuleTier.Structural)]
-public sealed class ActiveBodyModule : ModuleBase
+public class ActiveBodyModule : ModuleBase
 {
     public const string TypeName = "ActiveBody";
 

@@ -21,6 +21,10 @@ public enum DamageType : byte
     POISON,
     FLY_INTO,
     UNRESISTABLE,
+    CHOP,
+    FORCE,
+    FROST,
+    LOGICAL_FIRE,
 }
 
 public static class DamageTypeNames

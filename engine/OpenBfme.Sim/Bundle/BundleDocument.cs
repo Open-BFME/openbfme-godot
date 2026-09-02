@@ -290,11 +290,6 @@ public sealed class BundleDocument
             RequireKind(row, JsonValueKind.Object, itemPath, "object");
             CheckProperties(row, itemPath, "carrier", "type", "tag", "fields", "blocks", "gap");
             var carrier = RequireString(row, "carrier", itemPath, nonEmpty: true);
-            if (carrier is not ("Behavior" or "Body" or "Draw" or "ClientUpdate"
-                or "ClientBehavior" or "Flasher" or "other"))
-            {
-                throw Error(itemPath + ".carrier", $"unknown carrier '{carrier}'");
-            }
             result.Add(new BundleModuleRow(
                 carrier,
                 RequireString(row, "type", itemPath, nonEmpty: true),
