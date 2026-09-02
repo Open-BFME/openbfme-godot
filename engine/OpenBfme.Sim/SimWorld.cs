@@ -685,6 +685,7 @@ public sealed partial class SimWorld
             ReleasePlotForObject(id);
             _objects[id].FindModule<ProductionModule>()?.RefundAll(this, _objects[id]);
             ObjectStore.Free(_objects[id].StoreSlot);
+            _presentationTracks.Remove(id);
             _objects.Remove(id);
         }
     }
@@ -869,6 +870,7 @@ public sealed partial class SimWorld
         ObjectStore.Health[slot] = health;
         ObjectStore.MaxHealth[slot] = maximumHealth;
         ObjectStore.Flags[slot] = (ObjectStore.Flags[slot] & ~4) | (gameObject.IsDying ? 4 : 0);
+        SynchronizePresentation(gameObject, slot);
     }
 
     private static (Fixed64 Health, Fixed64 MaxHealth) ReadHealth(GameObject gameObject)
