@@ -24,7 +24,8 @@ public sealed class SimConfig
         int mapHeightCells = 512,
         IEnumerable<WeaponTemplate>? weaponTemplates = null,
         IEnumerable<ArmorTemplate>? armorTemplates = null,
-        long maxCommandPoints = 0)
+        long maxCommandPoints = 0,
+        IReadOnlyDictionary<string, int>? templateIndices = null)
     {
         if (teamCount < 1)
         {
@@ -41,10 +42,19 @@ public sealed class SimConfig
         }
         Templates = map;
         var indices = new SortedDictionary<string, int>(StringComparer.Ordinal);
-        var index = 0;
-        foreach (var name in map.Keys)
+        if (templateIndices == null)
         {
-            indices.Add(name, index++);
+            var index = 0;
+            foreach (var name in map.Keys) indices.Add(name, index++);
+        }
+        else
+        {
+            foreach (var name in map.Keys)
+            {
+                if (!templateIndices.TryGetValue(name, out var index) || index < 0)
+                    throw new ArgumentException($"Template '{name}' has no valid source index", nameof(templateIndices));
+                indices.Add(name, index);
+            }
         }
         _templateIndices = indices;
         RandomSeed = randomSeed;
@@ -61,11 +71,12 @@ public sealed class SimConfig
 
     public ObjectTemplate TemplateAtIndex(int templateIndex)
     {
-        if (templateIndex < 0 || templateIndex >= _templateIndices.Count)
+        if (templateIndex < 0) throw new ArgumentOutOfRangeException(nameof(templateIndex));
+        foreach (var (name, index) in _templateIndices)
         {
-            throw new ArgumentOutOfRangeException(nameof(templateIndex));
+            if (index == templateIndex) return Templates[name];
         }
-        return Templates.Values.ElementAt(templateIndex);
+        throw new ArgumentOutOfRangeException(nameof(templateIndex));
     }
 
     private static IReadOnlyDictionary<string, T> NamedTemplates<T>(
@@ -123,6 +134,7 @@ public sealed partial class SimWorld
     public PassabilityGrid PassabilityGrid => Movement.Grid;
     /// <summary>Module type names that had no registered implementation, with occurrence counts. Fail-closed accounting.</summary>
     public IReadOnlyDictionary<string, int> ModuleGaps => _moduleGaps;
+    public BundleLoadReport? BundleLoadReport { get; private set; }
 
     public SimWorld(SimConfig config, ModuleRegistry registry)
         : this(config, registry, tickMilliseconds: 33, passabilityGrid: null)
@@ -165,6 +177,11 @@ public sealed partial class SimWorld
             launch?.Rules.TickMilliseconds ?? throw new ArgumentNullException(nameof(launch)),
             passabilityGrid)
     {
+        InitializeLaunch(launch);
+    }
+
+    private void InitializeLaunch(MatchLaunch launch)
+    {
         _playerTeams = launch.Players.Select(player => player.Team).ToArray();
         _commandPoints = new long[launch.Players.Count];
         _commandPointsMax = Enumerable.Repeat(_config.MaxCommandPoints, launch.Players.Count).ToArray();
@@ -180,6 +197,34 @@ public sealed partial class SimWorld
                 _teamResources[team] = launch.Rules.StartingResources;
             }
         }
+    }
+
+    public static SimWorld FromBundle(
+        MatchLaunch launch,
+        BundleDocument document,
+        PassabilityGrid? passabilityGrid = null)
+    {
+        ArgumentNullException.ThrowIfNull(launch);
+        ArgumentNullException.ThrowIfNull(document);
+        var registry = ModuleRegistry.CreateDefault();
+        var loaded = BundleTemplateLoader.Load(document, registry, launch.Rules.TickMilliseconds);
+        var teamCount = launch.Players.Max(player => player.Team) + 1;
+        var scaledCap = EconomyTemplate.ScaleInteger(
+            SimConfig.DefaultMaxCommandPoints, launch.Rules.CommandPointMultiplier);
+        var config = new SimConfig(
+            loaded.Templates,
+            launch.Seed,
+            teamCount,
+            weaponTemplates: loaded.WeaponTemplates,
+            armorTemplates: loaded.ArmorTemplates,
+            maxCommandPoints: scaledCap,
+            templateIndices: loaded.TemplateIndices);
+        var world = new SimWorld(config, registry, launch.Rules.TickMilliseconds, passabilityGrid)
+        {
+            BundleLoadReport = loaded.Report,
+        };
+        world.InitializeLaunch(launch);
+        return world;
     }
 
     private static SimConfig CreateConfig(
