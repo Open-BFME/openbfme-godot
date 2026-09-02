@@ -144,8 +144,6 @@ def _starts(waypoints: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
                 continue
             x, y = _point(values, f"waypoints.playerStarts.{name}")
             result[str(int(match.group(1)) - 1)] = {"x": x, "y": y, "facing": 0}
-    if not result:
-        raise MapCookError("map has no authored player starts")
     return dict(sorted(result.items(), key=lambda item: int(item[0])))
 
 
