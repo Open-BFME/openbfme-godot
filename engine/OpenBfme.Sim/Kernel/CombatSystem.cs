@@ -413,6 +413,19 @@ public sealed class CombatSystem
         }
     }
 
+    internal bool FireScriptedWeapon(SimWorld world, GameObject attacker, string weaponName)
+    {
+        if (!_config.WeaponTemplates.TryGetValue(weaponName, out var weapon)) return false;
+        var targetId = FindNearestEnemy(attacker, weapon.AttackRange);
+        var impactPoint = targetId != 0 && world.Objects.TryGetValue(targetId, out var target)
+            ? target.Position : attacker.Position;
+        world.RaiseEvent(new SimEvent("fire", attacker.Id, targetId == 0 ? null : targetId, Name: weaponName));
+        for (var index = 0; index < weapon.DamageNuggets.Count; index++)
+            ApplyNugget(world, attacker.Id, attacker.Team, targetId, impactPoint,
+                weapon.DamageNuggets[index], index == 0 ? weapon.MetaImpact : null);
+        return true;
+    }
+
     private static void ApplyMetaImpact(
         GameObject target,
         FixedVector2 impactPoint,
