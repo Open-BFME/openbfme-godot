@@ -5,6 +5,7 @@ extends Node3D
 const SimHostClientScript := preload("res://src/sim/sim_host_client.gd")
 const NativeLockstepSessionScript := preload("res://src/net/native_lockstep_session.gd")
 const NativeContentLocatorScript := preload("res://src/sim/native_content_locator.gd")
+const NativeHudBridgeScript := preload("res://src/present/native_hud_bridge.gd")
 const MapDocumentScript := preload("res://src/map/map_document.gd")
 const NativeTerrainScript := preload("res://src/present/native_terrain.gd")
 const NativeAudioScript := preload("res://src/present/native_audio.gd")
@@ -54,13 +55,20 @@ var _profile_draw_max_usec := 0
 var _profile_frames := 0
 var _profile_started_msec := 0
 var _profile_next_msec := 0
+var _hud_bridge: NativeHudBridge
+var _active_launch_document: Dictionary = {}
+var _loading_screen: CanvasLayer
 
 
 func _ready() -> void:
+	_loading_screen = get_tree().get_first_node_in_group("retail_loading_screen") as CanvasLayer
 	_renderer = get_node("SnapshotInstancedRenderer")
 	_camera_rig = get_node("RtsCamera")
 	_selection_box = get_node("Overlay/SelectionBox") as ColorRect
 	_setup_selection_rings()
+	_hud_bridge = NativeHudBridgeScript.new()
+	_hud_bridge.name = "NativeHudBridge"
+	add_child(_hud_bridge)
 	call_deferred("_start_match")
 
 
@@ -111,7 +119,11 @@ func _unhandled_input(event: InputEvent) -> void:
 		return
 	if event is InputEventKey and (event as InputEventKey).pressed and not (event as InputEventKey).echo:
 		var key_event := event as InputEventKey
-		if key_event.keycode == KEY_A:
+		if key_event.keycode == KEY_ESCAPE:
+			get_viewport().set_input_as_handled()
+			return_to_shell()
+			return
+		elif key_event.keycode == KEY_A:
 			_attack_move_armed = true
 			get_viewport().set_input_as_handled()
 		elif key_event.keycode == KEY_S:
@@ -136,11 +148,14 @@ func _start_match() -> void:
 	if not requested_replay.is_empty():
 		_start_replay(requested_replay)
 		return
-	var match := _load_json(_repo_path("contracts/fixtures/match-launch-v1.json"))
-	if match.is_empty():
+	var launch_document := _requested_match_launch()
+	if launch_document.is_empty():
+		launch_document = _load_json(_repo_path("contracts/fixtures/match-launch-v1.json"))
+	if launch_document.is_empty():
 		_fail("match-launch fixture could not be read")
 		return
-	var preferred_map := String((match.get("map", {}) as Dictionary).get("path", ""))
+	_active_launch_document = launch_document.duplicate(true)
+	var preferred_map := String((launch_document.get("map", {}) as Dictionary).get("path", ""))
 	var native_content: Dictionary = NativeContentLocatorScript.resolve(preferred_map)
 	var bundle_path := String(native_content.get("bundle", ""))
 	var bundle_source := String(native_content.get("bundle_source", "unresolved"))
@@ -165,7 +180,7 @@ func _start_match() -> void:
 	var host_requested := OS.get_environment("OPENBFME_MP_HOST") == "1"
 	var join_requested := OS.get_environment("OPENBFME_MP_JOIN").strip_edges()
 	_mp_active = host_requested or not join_requested.is_empty()
-	var players := match.get("players", []) as Array
+	var players := launch_document.get("players", []) as Array
 	if players.size() >= 2 and not _mp_active:
 		var opponent := players[1] as Dictionary
 		opponent["controller"] = "ai"
@@ -184,9 +199,9 @@ func _start_match() -> void:
 		print("SIM_HOST_MATCH_MAP source=%s path=<absent-mapless-fallback>" % map_source)
 	_client = SimHostClientScript.new()
 	var launched: bool = (
-		_client.launch_bundle(match, bundle_path)
+		_client.launch_bundle(launch_document, bundle_path)
 		if map_path.is_empty()
-		else _client.launch_bundle_map(match, bundle_path, map_path)
+		else _client.launch_bundle_map(launch_document, bundle_path, map_path)
 	)
 	if not launched:
 		_fail(_client.last_error())
@@ -243,7 +258,7 @@ func _start_match() -> void:
 		if old_ground != null:
 			old_ground.visible = false
 		var setup: Dictionary = MapBootstrapScript.spawn_match(
-			_client, match, _map_document, _catalog
+			_client, launch_document, _map_document, _catalog
 		)
 		if setup.has("error"):
 			_fail(String(setup.error))
@@ -260,23 +275,32 @@ func _start_match() -> void:
 	else:
 		if not _spawn_mapless_armies():
 			return
-	var initial: Array[Dictionary] = _client.step(1, "packed")
+	# The first snapshot includes whole-corpus JIT and belongs to the loading
+	# transition; steady streamed snapshots retain the client's 500 ms bound.
+	var initial: Array[Dictionary] = _client.step(1, "packed", _client.STARTUP_TIMEOUT_MS)
 	if initial.size() != 1:
 		_fail("initial snapshot: %s" % _client.last_error())
 		return
 	_accept_snapshot(initial[0])
+	if not _hud_bridge.configure(
+		self, _client, _catalog, bundle_path, _map_document, _camera_rig.camera()
+	):
+		_fail("native HUD: %s" % _hud_bridge.error)
+		return
+	_hud_bridge.accept_snapshot(initial[0])
 	_running = true
 	_client.reset_profile()
 	_renderer.reset_profile()
 	_profile_started_msec = Time.get_ticks_msec()
 	_profile_next_msec = _profile_started_msec + 5000
 	if _mp_active:
-		if not _start_lockstep(match, bundle_path, map_path, host_requested, join_requested):
+		if not _start_lockstep(launch_document, bundle_path, map_path, host_requested, join_requested):
 			return
 	else:
 		if not _client.start_packed_stream():
 			_fail("step stream: %s" % _client.last_error())
 			return
+	_finish_loading_screen()
 	print(
 		"SIM_HOST_MATCH_READY hordes=%d members=%d tick=%d loaded=%d failed=%d"
 		% [
@@ -287,6 +311,14 @@ func _start_match() -> void:
 			int(_client.launch_reply().get("templates_failed", 0)),
 		]
 	)
+
+
+func _finish_loading_screen() -> void:
+	if _loading_screen == null:
+		return
+	_loading_screen.call("set_load_progress", 1.0, "Native core ready")
+	_loading_screen.call("fade_out_and_free")
+	_loading_screen = null
 
 
 func _print_profile() -> void:
@@ -482,6 +514,8 @@ func _accept_snapshot(snapshot: Dictionary) -> void:
 		_native_audio.submit_snapshot(snapshot)
 	if _native_fx != null:
 		_native_fx.submit_snapshot(snapshot)
+	if _hud_bridge != null and _hud_bridge.hud != null:
+		_hud_bridge.accept_snapshot(snapshot)
 	_update_selection_rings()
 
 
@@ -514,6 +548,8 @@ func _handle_left_button(button: InputEventMouseButton) -> void:
 		)
 		if _native_audio != null:
 			_native_audio.present_selection(_selected_hordes, _latest_snapshot)
+		if _hud_bridge != null:
+			_hud_bridge.set_selection(_selected_hordes)
 		_dragging = false
 		_selection_box.visible = false
 		_update_selection_rings()
@@ -704,6 +740,11 @@ func shutdown() -> bool:
 	return clean
 
 
+func return_to_shell() -> void:
+	shutdown()
+	get_tree().change_scene_to_file("res://scenes/boot.tscn")
+
+
 func _print_replay_path() -> void:
 	if not _replay_path.is_empty():
 		print("SIM_HOST_MATCH_REPLAY path=%s mode=%s" % [
@@ -757,6 +798,22 @@ func presentation_capture_focus() -> Vector3:
 	if _terrain != null and _terrain.water_focus_world != Vector3.ZERO:
 		return _terrain.water_focus_world
 	return _player_centroid()
+
+
+func hud_bridge() -> NativeHudBridge:
+	return _hud_bridge
+
+
+func host_client():
+	return _client
+
+
+func latest_snapshot() -> Dictionary:
+	return _latest_snapshot.duplicate(true)
+
+
+func active_match_launch() -> Dictionary:
+	return _active_launch_document.duplicate(true)
 
 
 func model_resolution_summary() -> String:
@@ -848,6 +905,18 @@ func _load_json(path: String) -> Dictionary:
 		return {}
 	var parsed: Variant = JSON.parse_string(file.get_as_text())
 	return parsed as Dictionary if parsed is Dictionary else {}
+
+
+func _requested_match_launch() -> Dictionary:
+	var game_state := get_node_or_null("/root/GameState")
+	if game_state == null:
+		return {}
+	var value: Variant = game_state.get_meta("native_match_launch", {})
+	if not (value is Dictionary) or (value as Dictionary).is_empty():
+		return {}
+	var document := (value as Dictionary).duplicate(true)
+	game_state.remove_meta("native_match_launch")
+	return document
 
 
 func _repo_path(relative: String) -> String:
