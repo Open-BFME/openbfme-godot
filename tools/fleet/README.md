@@ -25,6 +25,14 @@ the current state, so finishing a unit removes it automatically:
 - `maps`, `assets`, `screens`: corpus census minus converted digests, when the census reports exist under `workspace/retail-work/reports/`.
 - `bugs`: open GitHub issues labelled `playtest` (needs `gh`).
 
+Generate the three private corpus-backed queues from the layered install and
+the currently selected content packs (add `--kind assets|maps|screens` to
+refresh only one):
+
+```text
+PYTHONPATH=importer python -m openbfme_importer.fleet_queues --install ROOT --content-root workspace/content-packs --out-dir workspace/retail-work/reports
+```
+
 **Manual** queues are directories of one JSON file per unit under
 `queues/<name>/`. Adding a unit is adding a file; marking it done sets
 `"status": "done"` in that file. No shared list to conflict on.

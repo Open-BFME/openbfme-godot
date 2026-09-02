@@ -66,6 +66,44 @@ def test_red_queue_parses_fail_lines(tmp_path, monkeypatch) -> None:
     assert [u["id"] for u in units] == ["red/beta"]
 
 
+def test_generated_queue_document_loads_through_units_for(tmp_path, monkeypatch) -> None:
+    reports = tmp_path / "reports"
+    reports.mkdir()
+    (reports / "rotwk-assets-queue.json").write_text(
+        json.dumps(
+            {
+                "total": 3,
+                "done": 1,
+                "open": [
+                    {
+                        "id": "art/w3d/open-one.w3d",
+                        "title": "Convert open one",
+                        "rank": 0,
+                        "detail": "fixture",
+                        "oracle": "python -m openbfme_importer.verify_item --kind assets --id open-one",
+                    },
+                    {
+                        "id": "art/w3d/open-two.w3d",
+                        "title": "Convert open two",
+                        "rank": 100,
+                        "detail": "fixture",
+                        "oracle": "python -m openbfme_importer.verify_item --kind assets --id open-two",
+                    },
+                ],
+            },
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(fl, "REPORTS", reports)
+    units, total = fl.units_for("assets")
+    assert total == 3
+    assert [unit["id"] for unit in units] == [
+        "assets/art/w3d/open-one.w3d",
+        "assets/art/w3d/open-two.w3d",
+    ]
+
+
 def test_queue_next_prints_a_unit_or_no_work() -> None:
     result = _run("work.py", "next", "cook")
     assert result.returncode in (0, 1)
