@@ -1,0 +1,32 @@
+{
+  "schema": "openbfme.lockstep-wire.fixture.v1",
+  "messages": [
+    {
+      "schema": "openbfme.lockstep-wire.v1",
+      "kind": "handshake",
+      "launch_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+      "match_launch": {
+        "schema": "openbfme.match-launch.v1",
+        "seed": 20260901,
+        "pack": { "id": "rotwk-full", "sha256": "0000000000000000000000000000000000000000000000000000000000000000" },
+        "map": { "path": "maps/map mp fords of isen ii/map mp fords of isen ii.map" },
+        "rules": { "tick_ms": 33, "starting_resources": 1000, "command_point_multiplier": 1.0, "fog_of_war": true, "game_speed": 1.0, "victory": "annihilation" },
+        "players": [
+          { "seat": 0, "team": 0, "faction": "FactionMen", "controller": "human" },
+          { "seat": 1, "team": 1, "faction": "FactionMordor", "controller": "human" }
+        ]
+      },
+      "effective_tree_sha256": "cb87f11a40749309579b3d3239780c37968ab19c513c035b8de7b35b6ba758bf",
+      "map_identity": "maps/map mp fords of isen ii/map mp fords of isen ii.map",
+      "input_delay": 3,
+      "requested_seat": 1
+    },
+    { "schema": "openbfme.lockstep-wire.v1", "kind": "welcome", "seat": 1, "seat_count": 2, "input_delay": 3, "reconnect": false, "tick": 0 },
+    { "schema": "openbfme.lockstep-wire.v1", "kind": "start", "tick": 0 },
+    { "schema": "openbfme.lockstep-wire.v1", "kind": "bundle", "bundle": { "schema": "openbfme.command.v1", "tick": 1, "seat": 0, "seq": 0, "commands": [] } },
+    { "schema": "openbfme.lockstep-wire.v1", "kind": "bundle", "bundle": { "schema": "openbfme.command.v1", "tick": 1, "seat": 1, "seq": 0, "commands": [{ "type": "move", "args": { "objects": [2], "x": 200, "y": 40 } }] } },
+    { "schema": "openbfme.lockstep-wire.v1", "kind": "hash", "tick": 30, "seat": 0, "hash": "2222222222222222222222222222222222222222222222222222222222222222" },
+    { "schema": "openbfme.lockstep-wire.v1", "kind": "hash", "tick": 30, "seat": 1, "hash": "2222222222222222222222222222222222222222222222222222222222222222" },
+    { "schema": "openbfme.lockstep-wire.v1", "kind": "rejoin", "tick": 1000, "state": "AA==", "bundles": [], "pending_through": 1000 }
+  ]
+}
