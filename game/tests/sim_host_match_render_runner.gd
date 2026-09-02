@@ -79,7 +79,7 @@ func _process(_delta: float) -> bool:
 
 func _capture(index: int) -> void:
 	_record_animation_proof(int(CAPTURE_SECONDS[index]))
-	var path := _repo_path("workspace/logs/lane-render-anim/sim-host-match-%02ds.png" % int(CAPTURE_SECONDS[index]))
+	var path := _capture_path(int(CAPTURE_SECONDS[index]))
 	DirAccess.make_dir_recursive_absolute(path.get_base_dir())
 	var image := root.get_texture().get_image()
 	var result := image.save_png(path)
@@ -93,7 +93,7 @@ func _finish() -> void:
 	_finished = true
 	var captures_ok := _capture_index == CAPTURE_SECONDS.size()
 	for second in CAPTURE_SECONDS:
-		var path := _repo_path("workspace/logs/lane-render-anim/sim-host-match-%02ds.png" % int(second))
+		var path := _capture_path(int(second))
 		captures_ok = captures_ok and FileAccess.file_exists(path)
 	var running_ok: bool = _match.is_running()
 	var quit_ok: bool = _match.shutdown()
@@ -122,6 +122,14 @@ func _repo_path(relative: String) -> String:
 	return game_root.get_base_dir().path_join(relative)
 
 
+func _capture_path(second: int) -> String:
+	var directory := OS.get_environment("OPENBFME_LOG_DIR").strip_edges()
+	if directory.is_empty():
+		directory = _repo_path("workspace/logs/lane-render-anim")
+	DirAccess.make_dir_recursive_absolute(directory)
+	return directory.path_join("sim-host-match-%02ds.png" % second)
+
+
 func _issue_walk_to_combat_order() -> void:
 	var hordes := _match.get("_spawned_hordes") as Array[int]
 	var owners := _match.get("_horde_owners") as Dictionary
@@ -129,17 +137,47 @@ func _issue_walk_to_combat_order() -> void:
 	for id in hordes:
 		if int(owners.get(id, -1)) == 0:
 			player_hordes.append(id)
+	var target := Vector2(1760.0, 1050.0)
+	var command_type := "attack_move"
+	var target_horde := 0
+	var map_document: Variant = _match.get("_map_document")
+	if map_document != null:
+		var client: Variant = _match.get("_client")
+		client.stop_packed_stream()
+		for snapshot in client.take_stream_snapshots():
+			_match.call("_accept_snapshot", snapshot)
+		var player_start: Vector2 = map_document.start_horizontal(0)
+		var opponent_start: Vector2 = map_document.start_horizontal(1)
+		var inward := player_start.direction_to(opponent_start)
+		var probe: Dictionary = client.spawn(
+			"MordorFighterHorde", 1, player_start + inward * 460.0
+		)
+		if probe.is_empty():
+			_fail("combat probe: %s" % client.last_error())
+			return
+		target_horde = int(probe.get("id", 0))
+		command_type = "attack"
+		target = player_start + inward * 460.0
 	var bundle: Dictionary = _match.make_command_bundle(
 		_match.tick_index() + 1,
 		0,
 		int(_match.get("_player_seq")),
-		"attack_move",
+		command_type,
 		player_hordes,
-		Vector2(1760.0, 1050.0)
+		target,
+		target_horde
 	)
 	_match.call("_send_player_bundle", bundle)
+	if map_document != null:
+		var client: Variant = _match.get("_client")
+		if not client.start_packed_stream():
+			_fail("combat probe stream restart: %s" % client.last_error())
+			return
 	_proof_order_sent = true
-	print("SIM_HOST_MATCH_PROOF_ORDER hordes=%d target=(1760,1050)" % player_hordes.size())
+	print(
+		"SIM_HOST_MATCH_PROOF_ORDER hordes=%d type=%s target=%s target_horde=%d"
+		% [player_hordes.size(), command_type, str(target), target_horde]
+	)
 
 
 func _record_animation_proof(second: int) -> void:

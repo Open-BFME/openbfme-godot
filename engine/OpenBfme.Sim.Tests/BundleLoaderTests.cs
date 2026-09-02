@@ -308,8 +308,12 @@ public sealed class BundleLoaderTests
             first.Report.TemplatesLoaded + first.Report.TemplatesFailed.Count);
         Assert.Equal(JsonSerializer.Serialize(first.Report), JsonSerializer.Serialize(second.Report));
 
-        var reportPath = MatchLaunchTests.RepoPath(
-            "workspace", "logs", "lane-kernel-5", "corpus-load-report.json");
+        var configuredReportPath = Environment.GetEnvironmentVariable(
+            "OPENBFME_CORPUS_LOAD_REPORT");
+        var reportPath = string.IsNullOrWhiteSpace(configuredReportPath)
+            ? MatchLaunchTests.RepoPath(
+                "workspace", "logs", "lane-kernel-5", "corpus-load-report.json")
+            : Path.GetFullPath(configuredReportPath);
         Directory.CreateDirectory(Path.GetDirectoryName(reportPath)!);
         File.WriteAllText(reportPath, JsonSerializer.Serialize(first.Report,
             new JsonSerializerOptions { WriteIndented = true }));

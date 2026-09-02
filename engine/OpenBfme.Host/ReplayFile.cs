@@ -7,11 +7,13 @@ namespace OpenBfme.Host;
 
 internal sealed class ReplayRecorder
 {
+    private const int CheckpointIntervalTicks = 30;
     private readonly string _path;
     private readonly JsonObject _root;
     private readonly JsonArray _commands = new();
     private readonly JsonArray _hashLog = new();
     private readonly JsonArray _setup = new();
+    private int _lastFlushedTick;
 
     public ReplayRecorder(
         string path,
@@ -46,6 +48,7 @@ internal sealed class ReplayRecorder
             ["final_hash"] = world.StateHash(),
             ["build"] = new JsonObject { ["identity"] = BuildIdentity() },
         };
+        _lastFlushedTick = world.TickIndex;
     }
 
     public string Path => _path;
@@ -88,6 +91,15 @@ internal sealed class ReplayRecorder
         {
             WriteIndented = true,
         }) + Environment.NewLine);
+        _lastFlushedTick = world.TickIndex;
+    }
+
+    public void FlushCheckpoint(SimWorld world)
+    {
+        if (world.TickIndex - _lastFlushedTick >= CheckpointIntervalTicks)
+        {
+            Flush(world);
+        }
     }
 
     private static string BuildIdentity()

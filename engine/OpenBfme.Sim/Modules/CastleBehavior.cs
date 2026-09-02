@@ -18,6 +18,7 @@ public sealed class CastleBehaviorModule : ModuleBase
         Fixed64 Oy,
         Fixed64 Oz,
         Fixed64 Angle)> _pieces = new();
+    private readonly bool _hasInlineLayout;
     private bool _unpacked;
 
     public CastleBehaviorModule(ModuleSpec spec) : base(spec)
@@ -56,18 +57,22 @@ public sealed class CastleBehaviorModule : ModuleBase
             _pieces.Add((legacyCitadel, Fixed64.Zero, Fixed64.Zero,
                 Fixed64.Zero, Fixed64.Zero));
         }
-        if (_pieces.Count == 0)
-        {
-            throw new ArgumentException("CastleBehavior requires at least one BSE piece");
-        }
+        _hasInlineLayout = _pieces.Count != 0;
     }
 
     public bool HasUnpacked => _unpacked;
+    public bool HasInlineLayout => _hasInlineLayout;
 
     public override void OnUpdate(SimWorld world, GameObject self)
     {
         if (_unpacked || self.IsDead || self.IsDying)
         {
+            return;
+        }
+        if (!_hasInlineLayout)
+        {
+            world.RecordTechGap($"castle layout not authored inline: {self.TemplateName}");
+            _unpacked = true;
             return;
         }
         foreach (var (template, ox, oy, oz, angle) in _pieces)

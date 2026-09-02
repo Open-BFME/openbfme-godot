@@ -12,6 +12,12 @@ extends RefCounted
 const READ_TIMEOUT_MS := 500
 const STARTUP_TIMEOUT_MS := 5000
 const POLL_DELAY_MS := 1
+const PACKED_OBJECT_FORMAT := "openbfme.snapshot.objects.packed.v1"
+const PACKED_COLUMNS := [
+	"id", "template", "owner", "state", "anim", "flags",
+	"x", "y", "z", "yaw", "health", "max_health", "anim_frame",
+]
+const PACKED_INT_COLUMNS := 6
 
 var _stdio: FileAccess
 var _stderr: FileAccess
@@ -20,6 +26,26 @@ var _host_path := ""
 var _last_error := ""
 var _last_launch_reply: Dictionary = {}
 var _read_buffer := ""
+var _profile_read_usec := 0
+var _profile_parse_usec := 0
+var _profile_concat_usec := 0
+var _profile_read_max_usec := 0
+var _profile_parse_max_usec := 0
+var _profile_documents := 0
+var _profile_characters := 0
+var _profile_step_usec := 0
+var _profile_step_max_usec := 0
+var _profile_steps := 0
+var _packed_objects: Dictionary = {}
+var _packed_tick := -1
+var _stream_thread: Thread
+var _stream_mutex := Mutex.new()
+var _stream_running := false
+var _stream_stop := false
+var _stream_snapshots: Array[Dictionary] = []
+var _stream_commands: Array[Dictionary] = []
+var _stream_error := ""
+var _profile_mutex := Mutex.new()
 
 
 func launch(match: Dictionary, templates_path: String) -> bool:
@@ -99,6 +125,17 @@ func spawn_at_start(template_name: String, player: int, start: int) -> Dictionar
 
 
 func send_commands(bundle: Dictionary) -> bool:
+	_stream_mutex.lock()
+	var streaming := _stream_running
+	if streaming:
+		_stream_commands.append(bundle.duplicate(true))
+	_stream_mutex.unlock()
+	if streaming:
+		return true
+	return _send_commands_now(bundle)
+
+
+func _send_commands_now(bundle: Dictionary) -> bool:
 	var reply := _exchange({"op": "commands", "bundle": bundle})
 	if String(reply.get("op", "")) != "ack":
 		_set_error(_reply_error("commands", reply))
@@ -106,9 +143,16 @@ func send_commands(bundle: Dictionary) -> bool:
 	return true
 
 
-func step(ticks: int) -> Array[Dictionary]:
+func step(ticks: int, format: String = "json") -> Array[Dictionary]:
+	var step_started := Time.get_ticks_usec()
 	var snapshots: Array[Dictionary] = []
-	if ticks < 0 or not _write_request({"op": "step", "ticks": ticks}):
+	if format not in ["json", "packed"]:
+		_set_error("step format must be json or packed")
+		return snapshots
+	var request := {"op": "step", "ticks": ticks}
+	if format == "packed":
+		request["format"] = "packed"
+	if ticks < 0 or not _write_request(request):
 		if ticks < 0:
 			_set_error("step ticks must be non-negative")
 		return snapshots
@@ -121,8 +165,181 @@ func step(ticks: int) -> Array[Dictionary]:
 		if not (snapshot_value is Dictionary):
 			_set_error("step reply has no snapshot dictionary")
 			return snapshots
-		snapshots.append(snapshot_value as Dictionary)
+		var snapshot := snapshot_value as Dictionary
+		if String(reply.get("format", "json")) == "packed":
+			snapshot = _decode_packed_snapshot(snapshot)
+			if snapshot.is_empty():
+				return snapshots
+		snapshots.append(snapshot)
+	var step_elapsed := Time.get_ticks_usec() - step_started
+	_profile_mutex.lock()
+	_profile_step_usec += step_elapsed
+	_profile_step_max_usec = maxi(_profile_step_max_usec, step_elapsed)
+	_profile_steps += 1
+	_profile_mutex.unlock()
 	return snapshots
+
+
+func start_packed_stream() -> bool:
+	_stream_mutex.lock()
+	if _stream_running:
+		_stream_mutex.unlock()
+		return true
+	_stream_stop = false
+	_stream_error = ""
+	_stream_snapshots.clear()
+	_stream_commands.clear()
+	_stream_running = true
+	_stream_mutex.unlock()
+	_stream_thread = Thread.new()
+	if _stream_thread.start(_stream_loop) != OK:
+		_stream_mutex.lock()
+		_stream_running = false
+		_stream_mutex.unlock()
+		_set_error("packed snapshot stream thread could not start")
+		return false
+	return true
+
+
+func take_stream_snapshots() -> Array[Dictionary]:
+	_stream_mutex.lock()
+	var result := _stream_snapshots.duplicate()
+	_stream_snapshots.clear()
+	_stream_mutex.unlock()
+	return result
+
+
+func stream_error() -> String:
+	_stream_mutex.lock()
+	var result := _stream_error
+	_stream_mutex.unlock()
+	return result
+
+
+func is_streaming() -> bool:
+	_stream_mutex.lock()
+	var result := _stream_running
+	_stream_mutex.unlock()
+	return result
+
+
+func stop_packed_stream() -> void:
+	_stream_mutex.lock()
+	var thread := _stream_thread
+	_stream_stop = true
+	_stream_mutex.unlock()
+	if thread != null and thread.is_started():
+		thread.wait_to_finish()
+	_stream_mutex.lock()
+	_stream_running = false
+	_stream_thread = null
+	_stream_mutex.unlock()
+
+
+func _stream_loop() -> void:
+	while true:
+		var commands: Array[Dictionary] = []
+		_stream_mutex.lock()
+		var should_stop := _stream_stop
+		commands = _stream_commands.duplicate()
+		_stream_commands.clear()
+		_stream_mutex.unlock()
+		if should_stop:
+			break
+		for bundle in commands:
+			if not _send_commands_now(bundle):
+				_stream_fail(_last_error)
+				return
+		var started := Time.get_ticks_msec()
+		var snapshots := step(1, "packed")
+		if snapshots.size() != 1:
+			_stream_fail(_last_error)
+			return
+		_stream_mutex.lock()
+		_stream_snapshots.append(snapshots[0])
+		if _stream_snapshots.size() > 4:
+			_stream_snapshots.pop_front()
+		_stream_mutex.unlock()
+		var remaining := 33 - int(Time.get_ticks_msec() - started)
+		if remaining > 0:
+			OS.delay_msec(remaining)
+	_stream_mutex.lock()
+	_stream_running = false
+	_stream_mutex.unlock()
+
+
+func _stream_fail(message: String) -> void:
+	_stream_mutex.lock()
+	_stream_error = message
+	_stream_running = false
+	_stream_mutex.unlock()
+
+
+func _decode_packed_snapshot(snapshot: Dictionary) -> Dictionary:
+	var packed_value: Variant = snapshot.get("objects")
+	if not (packed_value is Dictionary):
+		_set_error("packed snapshot has no objects dictionary")
+		return {}
+	var packed := packed_value as Dictionary
+	if (
+		String(packed.get("format", "")) != PACKED_OBJECT_FORMAT
+		or String(packed.get("encoding", "")) != "base64+brotli"
+		or int(packed.get("column_width_bytes", 0)) != 4
+	):
+		_set_error("packed snapshot object header is invalid")
+		return {}
+	var count := int(snapshot.get("object_count", -1))
+	if count < 0:
+		_set_error("packed snapshot object count is invalid")
+		return {}
+	var full := bool(packed.get("full", false))
+	var slots: Array = []
+	if not full:
+		if int(packed.get("base_tick", -1)) != _packed_tick or _packed_objects.is_empty():
+			_set_error("packed snapshot delta does not match its base tick")
+			return {}
+		var slots_value: Variant = packed.get("slots")
+		if not (slots_value is Array):
+			_set_error("packed snapshot delta has no slot array")
+			return {}
+		slots = slots_value as Array
+		for slot_value in slots:
+			var slot := int(slot_value)
+			if slot < 0 or slot >= count:
+				_set_error("packed snapshot delta slot is out of range")
+				return {}
+	var value_count := count if full else slots.size()
+	var compressed := Marshalls.base64_to_raw(String(packed.get("data", "")))
+	var uncompressed_bytes := int(packed.get("uncompressed_bytes", -1))
+	if uncompressed_bytes < 0:
+		_set_error("packed snapshot uncompressed byte count is invalid")
+		return {}
+	var bytes := compressed.decompress_dynamic(uncompressed_bytes, FileAccess.COMPRESSION_BROTLI)
+	if bytes.size() != uncompressed_bytes:
+		_set_error("packed snapshot Brotli payload could not be decoded")
+		return {}
+	if bytes.size() != value_count * PACKED_COLUMNS.size() * 4:
+		_set_error("packed snapshot object payload length is invalid")
+		return {}
+	var objects := {} if full else _packed_objects.duplicate(true)
+	for column_index in PACKED_COLUMNS.size():
+		var values: Array = [] if full else (objects[PACKED_COLUMNS[column_index]] as Array)
+		if full:
+			values.resize(count)
+		var offset := column_index * value_count * 4
+		for value_index in value_count:
+			var slot := value_index if full else int(slots[value_index])
+			values[slot] = (
+				bytes.decode_s32(offset + value_index * 4)
+				if column_index < PACKED_INT_COLUMNS
+				else bytes.decode_float(offset + value_index * 4)
+			)
+		objects[PACKED_COLUMNS[column_index]] = values
+	_packed_objects = objects
+	_packed_tick = int(snapshot.get("tick", -1))
+	var decoded := snapshot.duplicate(false)
+	decoded["objects"] = objects
+	return decoded
 
 
 func hash() -> String:
@@ -196,6 +413,7 @@ func replay(path: String, verify: bool = true) -> Dictionary:
 
 
 func quit() -> bool:
+	stop_packed_stream()
 	if _stdio == null:
 		return true
 	var reply := _exchange({"op": "quit"})
@@ -208,6 +426,44 @@ func quit() -> bool:
 
 func last_error() -> String:
 	return _last_error
+
+
+func reset_profile() -> void:
+	_profile_mutex.lock()
+	_reset_profile_unlocked()
+	_profile_mutex.unlock()
+
+
+func _reset_profile_unlocked() -> void:
+	_profile_read_usec = 0
+	_profile_parse_usec = 0
+	_profile_concat_usec = 0
+	_profile_read_max_usec = 0
+	_profile_parse_max_usec = 0
+	_profile_documents = 0
+	_profile_characters = 0
+	_profile_step_usec = 0
+	_profile_step_max_usec = 0
+	_profile_steps = 0
+
+
+func take_profile() -> Dictionary:
+	_profile_mutex.lock()
+	var result := {
+		"read_usec": _profile_read_usec,
+		"parse_usec": _profile_parse_usec,
+		"concat_usec": _profile_concat_usec,
+		"read_max_usec": _profile_read_max_usec,
+		"parse_max_usec": _profile_parse_max_usec,
+		"documents": _profile_documents,
+		"characters": _profile_characters,
+		"step_usec": _profile_step_usec,
+		"step_max_usec": _profile_step_max_usec,
+		"steps": _profile_steps,
+	}
+	_reset_profile_unlocked()
+	_profile_mutex.unlock()
+	return result
 
 
 func host_path() -> String:
@@ -266,19 +522,41 @@ func _read_document(timeout_ms: int) -> Dictionary:
 	if _stdio == null:
 		_set_error("host is not running")
 		return {}
+	var read_started := Time.get_ticks_usec()
+	var document_parse_usec := 0
+	var document_concat_usec := 0
+	var document_characters := 0
 	var deadline := Time.get_ticks_msec() + timeout_ms
 	while Time.get_ticks_msec() <= deadline:
 		var fragment := _stdio.get_line()
 		if not fragment.is_empty():
+			var concat_started := Time.get_ticks_usec()
 			_read_buffer += fragment
+			document_concat_usec += Time.get_ticks_usec() - concat_started
+			document_characters += fragment.length()
 			var parser := JSON.new()
+			var parse_started := Time.get_ticks_usec()
 			if parser.parse(_read_buffer) == OK:
+				var parse_elapsed := Time.get_ticks_usec() - parse_started
+				document_parse_usec += parse_elapsed
 				var parsed: Variant = parser.data
 				_read_buffer = ""
+				var read_elapsed := Time.get_ticks_usec() - read_started
+				_profile_mutex.lock()
+				_profile_read_usec += read_elapsed
+				_profile_parse_usec += document_parse_usec
+				_profile_concat_usec += document_concat_usec
+				_profile_characters += document_characters
+				_profile_read_max_usec = maxi(_profile_read_max_usec, read_elapsed)
+				_profile_parse_max_usec = maxi(_profile_parse_max_usec, document_parse_usec)
+				_profile_documents += 1
+				_profile_mutex.unlock()
 				if parsed is Dictionary:
 					return parsed as Dictionary
 				_set_error("host returned a JSON value that is not an object")
 				return {}
+			var parse_elapsed := Time.get_ticks_usec() - parse_started
+			document_parse_usec += parse_elapsed
 		if _pid > 0 and not OS.is_process_running(_pid):
 			var partial := " with %d buffered characters" % _read_buffer.length() if not _read_buffer.is_empty() else ""
 			_set_error("host process %d exited before replying%s%s" % [_pid, partial, _stderr_suffix()])
@@ -356,3 +634,5 @@ func _close_pipes() -> void:
 	_pid = -1
 	_last_launch_reply = {}
 	_read_buffer = ""
+	_packed_objects = {}
+	_packed_tick = -1

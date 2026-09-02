@@ -35,6 +35,7 @@ public sealed class HostProtocolSession
     private string? _sourceKind;
     private string? _sourcePath;
     private ReplayRecorder? _recorder;
+    private readonly PackedSnapshotStreamWriter _packedSnapshots = new();
 
     public bool IsRunning { get; private set; } = true;
 
@@ -183,6 +184,7 @@ public sealed class HostProtocolSession
         _launch = launch;
         _seatTeams = launch.Players.ToDictionary(player => player.Seat, player => player.Team);
         _world = world;
+		_packedSnapshots.Reset();
         _nextHordeId = 100_000;
         _launchJson = launchJson;
         _recorder = null;
@@ -408,15 +410,27 @@ public sealed class HostProtocolSession
         {
             throw new ProtocolException("step field 'ticks' must be an integer in 0..100000");
         }
+        var format = "json";
+        if (root.TryGetProperty("format", out var formatElement))
+        {
+            if (formatElement.ValueKind != JsonValueKind.String)
+                throw new ProtocolException("step field 'format' must be 'json' or 'packed'");
+            format = formatElement.GetString() ?? "";
+        }
+        if (format is not ("json" or "packed"))
+            throw new ProtocolException("step field 'format' must be 'json' or 'packed'");
         var replies = new string[ticks];
         for (var index = 0; index < ticks; index++)
         {
             world.Tick();
             _recorder?.RecordHash(world);
-            replies[index] = "{\"op\":\"snapshot\",\"snapshot\":"
-                + SnapshotWriter.WriteJson(world) + "}";
+            var snapshot = format == "packed"
+                ? _packedSnapshots.WriteJson(world)
+                : SnapshotWriter.WriteJson(world);
+            replies[index] = "{\"op\":\"snapshot\",\"format\":\"" + format
+                + "\",\"snapshot\":" + snapshot + "}";
         }
-        _recorder?.Flush(world);
+        _recorder?.FlushCheckpoint(world);
         return replies;
     }
 
@@ -461,6 +475,7 @@ public sealed class HostProtocolSession
         }
         _world = SimWorld.Restore(
             payload, _restoreConfig, ModuleRegistry.CreateDefault(), _restoreGrid);
+		_packedSnapshots.Reset();
         return new[] { Reply(writer =>
         {
             writer.WriteString("op", "loaded");
@@ -660,7 +675,11 @@ public sealed class HostProtocolSession
         return new[] { reply };
     }
 
-    private void RestoreState(string state) => _world = RestoreWorld(state);
+    private void RestoreState(string state)
+    {
+        _world = RestoreWorld(state);
+        _packedSnapshots.Reset();
+    }
 
     private SimWorld RestoreWorld(string state)
     {
