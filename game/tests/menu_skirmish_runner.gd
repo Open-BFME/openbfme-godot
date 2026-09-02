@@ -245,6 +245,10 @@ func _run() -> void:
 	# Availability comes from the slice's own fail-closed signals: the men
 	# pack gate for the default faction, RetailFactionManifest.from_registries
 	# over the slice's fieldable-unit classification for every faction.
+	var sweep_started := Time.get_ticks_msec()
+	while not bool(menu.get("_skirmish_sweep_complete")) and Time.get_ticks_msec() - sweep_started < 600_000:
+		await process_frame
+	_check("availability_sweep_completed", bool(menu.get("_skirmish_sweep_complete")))
 	var slice_probe = slice_script.new()
 	var availability: Dictionary = menu.get_retail_faction_availability()
 	_check("availability_covers_seven_factions", availability.size() == 7)
@@ -277,17 +281,20 @@ func _run() -> void:
 	_check("men_faction_available", String(availability.get("men", "missing")) == "", str(availability.get("men", "missing")))
 	var unavailable_flagged_and_disabled := true
 	var converted_count := 0
+	var availability_mismatches: Array[String] = []
 	for index in range(player_opt.item_count):
-		var note := String(availability.get(String(player_opt.get_item_metadata(index)), ""))
+		var faction_id := String(player_opt.get_item_metadata(index))
+		var note := String(availability.get(faction_id, ""))
 		if note == "":
 			converted_count += 1
 		if player_opt.is_item_disabled(index) != (note != "") or enemy_opt.is_item_disabled(index) != (note != ""):
 			unavailable_flagged_and_disabled = false
+			availability_mismatches.append("%s:note=%s player_disabled=%s enemy_disabled=%s" % [faction_id, note, player_opt.is_item_disabled(index), enemy_opt.is_item_disabled(index)])
 		if (note != "") != player_opt.get_item_text(index).ends_with(" (not converted)"):
 			unavailable_flagged_and_disabled = false
 		if note != "" and not player_opt.get_item_tooltip(index).contains(note):
 			unavailable_flagged_and_disabled = false
-	_check("unconverted_factions_disabled_with_note", unavailable_flagged_and_disabled)
+	_check("unconverted_factions_disabled_with_note", unavailable_flagged_and_disabled, str(availability_mismatches))
 	# Faction packs convert continuously; men is the anchor today, others follow.
 	_check("at_least_men_converted", converted_count >= 1, "converted=%d" % converted_count)
 
@@ -564,7 +571,7 @@ func _run() -> void:
 		if enemy_opt.is_item_disabled(index):
 			disabled_index = index
 			break
-	_check("unconverted_option_exists", disabled_index >= 0 or converted_count == 7)
+	_check("unconverted_option_exists", disabled_index >= 0 or converted_count == 7, "converted=%d availability=%s" % [converted_count, str(availability)])
 	if disabled_index >= 0:
 		game_state.set("retail_player_faction", "sentinel-player")
 		game_state.set("retail_enemy_faction", "sentinel-enemy")
