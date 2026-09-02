@@ -1,0 +1,508 @@
+class_name SimHostMatch
+extends Node3D
+## First playable native-core match: host-owned simulation, snapshot-only view.
+
+const SimHostClientScript := preload("res://src/sim/sim_host_client.gd")
+const TICK_SECONDS := 1.0 / 30.0
+const SCRIPTED_OPPONENT_TICKS := 300
+const PICK_RADIUS_PIXELS := 32.0
+
+var _client
+var _renderer
+var _camera_rig
+var _selection_box: ColorRect
+var _selection_rings: MultiMeshInstance3D
+var _ring_multimesh: MultiMesh
+var _catalog: Array[Dictionary] = []
+var _latest_snapshot: Dictionary = {}
+var _horde_owners: Dictionary = {}
+var _spawned_hordes: Array[int] = []
+var _selected_hordes: Array[int] = []
+var _accumulator := 0.0
+var _tick := 0
+var _player_seq := 0
+var _opponent_seq := 0
+var _next_opponent_tick := SCRIPTED_OPPONENT_TICKS
+var _drag_start := Vector2.ZERO
+var _dragging := false
+var _attack_move_armed := false
+var _running := false
+var _startup_failed := false
+var _startup_error := ""
+var _damage_events := 0
+var _death_events := 0
+
+
+func _ready() -> void:
+	_renderer = get_node("SnapshotInstancedRenderer")
+	_camera_rig = get_node("RtsCamera")
+	_selection_box = get_node("Overlay/SelectionBox") as ColorRect
+	_setup_selection_rings()
+	call_deferred("_start_match")
+
+
+func _exit_tree() -> void:
+	shutdown()
+
+
+func _process(delta: float) -> void:
+	if not _running:
+		return
+	_accumulator += minf(delta, 0.25)
+	var steps := 0
+	while _accumulator >= TICK_SECONDS and steps < 5:
+		_accumulator -= TICK_SECONDS
+		var snapshots: Array[Dictionary] = _client.step(1)
+		if snapshots.size() != 1:
+			_fail("step: %s" % _client.last_error())
+			return
+		_accept_snapshot(snapshots[0])
+		steps += 1
+	if steps == 5 and _accumulator >= TICK_SECONDS:
+		_accumulator = fmod(_accumulator, TICK_SECONDS)
+	_renderer.render_interpolated(clampf(_accumulator / TICK_SECONDS, 0.0, 1.0))
+
+
+func _unhandled_input(event: InputEvent) -> void:
+	if not _running:
+		return
+	if event is InputEventKey and (event as InputEventKey).pressed and not (event as InputEventKey).echo:
+		var key_event := event as InputEventKey
+		if key_event.keycode == KEY_A:
+			_attack_move_armed = true
+			get_viewport().set_input_as_handled()
+		elif key_event.keycode == KEY_S:
+			_send_player_bundle(make_command_bundle(
+				_tick + 1, 0, _player_seq, "stop", _selected_hordes
+			))
+			get_viewport().set_input_as_handled()
+	if not (event is InputEventMouseButton or event is InputEventMouseMotion):
+		return
+	if event is InputEventMouseButton:
+		var button := event as InputEventMouseButton
+		if button.button_index == MOUSE_BUTTON_LEFT:
+			_handle_left_button(button)
+		elif button.button_index == MOUSE_BUTTON_RIGHT and button.pressed:
+			_handle_right_click(button.position)
+	elif event is InputEventMouseMotion and _dragging:
+		_update_selection_box((event as InputEventMouseMotion).position)
+
+
+func _start_match() -> void:
+	var match := _load_json(_repo_path("contracts/fixtures/match-launch-v1.json"))
+	if match.is_empty():
+		_fail("match-launch fixture could not be read")
+		return
+	var configured_bundle := OS.get_environment("OPENBFME_BUNDLE").strip_edges()
+	var bundle_path := configured_bundle
+	var source := "OPENBFME_BUNDLE"
+	if bundle_path.is_empty():
+		bundle_path = _repo_path("workspace/logs/lane-cook-c/corpus-bundle-full.json")
+		source = "default"
+	print("SIM_HOST_MATCH_BUNDLE source=%s path=%s" % [source, bundle_path])
+	if not FileAccess.file_exists(bundle_path):
+		_fail("bundle is absent at %s" % bundle_path)
+		return
+	_client = SimHostClientScript.new()
+	if not _client.launch_bundle(match, bundle_path):
+		_fail(_client.last_error())
+		return
+	_catalog = _client.templates()
+	if _catalog.is_empty():
+		_fail(_client.last_error())
+		return
+	_renderer.configure_templates(_catalog)
+
+	var names := {
+		"p0_fighter": choose_horde_template(_catalog, "GondorFighterHorde", "gondor", "fighter"),
+		"p0_archer": choose_horde_template(_catalog, "GondorArcherHorde", "gondor", "archer"),
+		"p1_fighter": choose_horde_template(_catalog, "MordorFighterHorde", "mordor", "fighter"),
+		"p1_archer": choose_horde_template(_catalog, "MordorArcherHorde", "mordor", "archer"),
+	}
+	for key in names:
+		if String(names[key]).is_empty():
+			_fail("no loaded horde equivalent for %s" % key)
+			return
+	print(
+		"SIM_HOST_MATCH_TEMPLATES player0_fighter=%s player0_archer=%s player1_fighter=%s player1_archer=%s"
+		% [names.p0_fighter, names.p0_archer, names.p1_fighter, names.p1_archer]
+	)
+	var requests := [
+		[names.p0_fighter, 0, Vector2(1140.0, 760.0)],
+		[names.p0_fighter, 0, Vector2(1200.0, 800.0)],
+		[names.p0_fighter, 0, Vector2(1260.0, 840.0)],
+		[names.p0_archer, 0, Vector2(1190.0, 910.0)],
+		[names.p1_fighter, 1, Vector2(1740.0, 1060.0)],
+		[names.p1_fighter, 1, Vector2(1800.0, 1100.0)],
+		[names.p1_fighter, 1, Vector2(1860.0, 1140.0)],
+		[names.p1_archer, 1, Vector2(1810.0, 990.0)],
+	]
+	for request in requests:
+		var reply: Dictionary = _client.spawn(String(request[0]), int(request[1]), request[2] as Vector2)
+		if reply.is_empty():
+			_fail(_client.last_error())
+			return
+		var id := int(reply.get("id", 0))
+		_spawned_hordes.append(id)
+		_horde_owners[id] = int(request[1])
+	var initial: Array[Dictionary] = _client.step(1)
+	if initial.size() != 1:
+		_fail("initial snapshot: %s" % _client.last_error())
+		return
+	_accept_snapshot(initial[0])
+	_running = true
+	print(
+		"SIM_HOST_MATCH_READY hordes=%d members=%d tick=%d loaded=%d failed=%d"
+		% [
+			_spawned_hordes.size(),
+			int(_latest_snapshot.get("object_count", 0)),
+			_tick,
+			int(_client.launch_reply().get("templates_loaded", 0)),
+			int(_client.launch_reply().get("templates_failed", 0)),
+		]
+	)
+
+
+static func choose_horde_template(
+	template_rows: Array[Dictionary], preferred: String, faction_token: String, role_token: String
+) -> String:
+	var candidates: Array[String] = []
+	for row in template_rows:
+		if not bool(row.get("horde", false)):
+			continue
+		var name := String(row.get("name", ""))
+		if name.nocasecmp_to(preferred) == 0:
+			return name
+		var folded := name.to_lower()
+		if folded.contains(faction_token.to_lower()) and folded.contains(role_token.to_lower()):
+			candidates.append(name)
+	if candidates.is_empty():
+		for row in template_rows:
+			if bool(row.get("horde", false)):
+				var name := String(row.get("name", ""))
+				if name.to_lower().contains(faction_token.to_lower()):
+					candidates.append(name)
+	candidates.sort_custom(func(a: String, b: String) -> bool: return a.naturalnocasecmp_to(b) < 0)
+	return "" if candidates.is_empty() else candidates[0]
+
+
+static func selection_from_screen_points(
+	horde_points: Array[Dictionary], rectangle: Rect2, owner: int
+) -> Array[int]:
+	var selected: Array[int] = []
+	for row in horde_points:
+		if int(row.get("owner", -1)) != owner:
+			continue
+		var point: Vector2 = row.get("point", Vector2.ZERO)
+		if rectangle.has_point(point):
+			selected.append(int(row.get("id", 0)))
+	selected.sort()
+	return selected
+
+
+static func make_command_bundle(
+	tick: int,
+	seat: int,
+	seq: int,
+	command_type: String,
+	objects: Array[int],
+	position: Vector2 = Vector2.ZERO,
+	target: int = 0
+) -> Dictionary:
+	if objects.is_empty():
+		return {}
+	var args := {"objects": objects.duplicate()}
+	if command_type in ["move", "attack_move"]:
+		args["x"] = position.x
+		args["y"] = position.y
+	elif command_type == "attack":
+		args["target"] = target
+	return {
+		"schema": "openbfme.command.v1",
+		"tick": tick,
+		"seat": seat,
+		"seq": seq,
+		"commands": [{"type": command_type, "args": args}],
+	}
+
+
+static func right_click_command_from_pick(
+	objects: Array[int], tick: int, seq: int, enemy_horde: int, ground: Vector2
+) -> Dictionary:
+	return make_command_bundle(
+		tick,
+		0,
+		seq,
+		"attack" if enemy_horde > 0 else "move",
+		objects,
+		ground,
+		enemy_horde
+	)
+
+
+func _accept_snapshot(snapshot: Dictionary) -> void:
+	_latest_snapshot = snapshot
+	_tick = int(snapshot.get("tick", _tick))
+	for event_value in snapshot.get("events", []) as Array:
+		if not (event_value is Dictionary):
+			continue
+		var kind := String((event_value as Dictionary).get("kind", ""))
+		_damage_events += 1 if kind == "damage" else 0
+		_death_events += 1 if kind == "death" else 0
+	_renderer.submit_snapshot(snapshot)
+	_update_selection_rings()
+	if _tick >= _next_opponent_tick:
+		_issue_scripted_opponent()
+		_next_opponent_tick += SCRIPTED_OPPONENT_TICKS
+
+
+func _issue_scripted_opponent() -> void:
+	var enemy_ids: Array[int] = []
+	for id in _spawned_hordes:
+		if int(_horde_owners.get(id, -1)) == 1 and _horde_exists(id):
+			enemy_ids.append(id)
+	var target := _player_centroid()
+	var bundle := make_command_bundle(
+		_tick + 1, 1, _opponent_seq, "attack_move", enemy_ids, Vector2(target.x, target.z)
+	)
+	if not bundle.is_empty() and _client.send_commands(bundle):
+		_opponent_seq += 1
+	else:
+		_fail("scripted opponent command: %s" % _client.last_error())
+
+
+func _handle_left_button(button: InputEventMouseButton) -> void:
+	if button.pressed and _attack_move_armed:
+		var hit: Variant = _camera_rig.screen_to_ground(button.position)
+		if hit is Vector3:
+			var point := hit as Vector3
+			_send_player_bundle(make_command_bundle(
+				_tick + 1,
+				0,
+				_player_seq,
+				"attack_move",
+				_selected_hordes,
+				Vector2(point.x, point.z)
+			))
+		_attack_move_armed = false
+		get_viewport().set_input_as_handled()
+		return
+	if button.pressed:
+		_drag_start = button.position
+		_dragging = true
+		_update_selection_box(button.position)
+	else:
+		var rect := _screen_rect(_drag_start, button.position)
+		if rect.size.length() < 8.0:
+			rect = Rect2(button.position - Vector2(12.0, 12.0), Vector2(24.0, 24.0))
+		_selected_hordes = selection_from_screen_points(_horde_screen_points(), rect, 0)
+		_dragging = false
+		_selection_box.visible = false
+		_update_selection_rings()
+	get_viewport().set_input_as_handled()
+
+
+func _handle_right_click(screen_position: Vector2) -> void:
+	if _selected_hordes.is_empty():
+		return
+	var enemy := _enemy_horde_at(screen_position)
+	var hit: Variant = _camera_rig.screen_to_ground(screen_position)
+	if not (hit is Vector3):
+		return
+	var point := hit as Vector3
+	_send_player_bundle(right_click_command_from_pick(
+		_selected_hordes, _tick + 1, _player_seq, enemy, Vector2(point.x, point.z)
+	))
+	get_viewport().set_input_as_handled()
+
+
+func _send_player_bundle(bundle: Dictionary) -> void:
+	if bundle.is_empty():
+		return
+	if _client.send_commands(bundle):
+		_player_seq += 1
+	else:
+		_fail("player command: %s" % _client.last_error())
+
+
+func _horde_screen_points() -> Array[Dictionary]:
+	var result: Array[Dictionary] = []
+	var camera = _camera_rig.camera()
+	for horde_value in _latest_snapshot.get("hordes", []) as Array:
+		var horde := horde_value as Dictionary
+		var world := _horde_centroid(int(horde.get("id", 0)))
+		if camera == null or camera.is_position_behind(world):
+			continue
+		result.append({
+			"id": int(horde.get("id", 0)),
+			"owner": int(horde.get("owner", -1)),
+			"point": camera.unproject_position(world),
+		})
+	return result
+
+
+func _enemy_horde_at(screen_position: Vector2) -> int:
+	var best_id := 0
+	var best_distance := PICK_RADIUS_PIXELS
+	for row in _horde_screen_points():
+		if int(row.get("owner", -1)) != 1:
+			continue
+		var distance_pixels := screen_position.distance_to(row.get("point", Vector2.ZERO))
+		if distance_pixels <= best_distance:
+			best_distance = distance_pixels
+			best_id = int(row.get("id", 0))
+	return best_id
+
+
+func _horde_centroid(horde_id: int) -> Vector3:
+	var horde: Dictionary = {}
+	for value in _latest_snapshot.get("hordes", []) as Array:
+		if int((value as Dictionary).get("id", 0)) == horde_id:
+			horde = value as Dictionary
+			break
+	if horde.is_empty():
+		return Vector3.ZERO
+	var objects := _latest_snapshot.get("objects", {}) as Dictionary
+	var slots: Dictionary = {}
+	var ids := objects.get("id", []) as Array
+	for index in ids.size():
+		slots[int(ids[index])] = index
+	var sum := Vector3.ZERO
+	var count := 0
+	for member_value in horde.get("members", []) as Array:
+		var member := int(member_value)
+		if not slots.has(member):
+			continue
+		var slot := int(slots[member])
+		sum += Vector3(
+			float((objects.get("x", []) as Array)[slot]),
+			float((objects.get("y", []) as Array)[slot]),
+			float((objects.get("z", []) as Array)[slot])
+		)
+		count += 1
+	return Vector3.ZERO if count == 0 else sum / float(count)
+
+
+func _player_centroid() -> Vector3:
+	var sum := Vector3.ZERO
+	var count := 0
+	for id in _spawned_hordes:
+		if int(_horde_owners.get(id, -1)) == 0 and _horde_exists(id):
+			sum += _horde_centroid(id)
+			count += 1
+	return Vector3(1200.0, 0.0, 800.0) if count == 0 else sum / float(count)
+
+
+func _horde_exists(horde_id: int) -> bool:
+	for horde_value in _latest_snapshot.get("hordes", []) as Array:
+		if int((horde_value as Dictionary).get("id", 0)) == horde_id:
+			return true
+	return false
+
+
+func _setup_selection_rings() -> void:
+	_selection_rings = get_node("SelectionRings") as MultiMeshInstance3D
+	_ring_multimesh = MultiMesh.new()
+	_ring_multimesh.transform_format = MultiMesh.TRANSFORM_3D
+	var ring := TorusMesh.new()
+	ring.inner_radius = 19.0
+	ring.outer_radius = 22.0
+	ring.rings = 24
+	ring.ring_segments = 6
+	var material := StandardMaterial3D.new()
+	material.albedo_color = Color(0.2, 1.0, 0.3, 0.9)
+	material.emission_enabled = true
+	material.emission = Color(0.1, 0.8, 0.2)
+	ring.material = material
+	_ring_multimesh.mesh = ring
+	_selection_rings.multimesh = _ring_multimesh
+
+
+func _update_selection_rings() -> void:
+	if _ring_multimesh == null:
+		return
+	var live: Array[int] = []
+	for id in _selected_hordes:
+		if _horde_exists(id):
+			live.append(id)
+	_selected_hordes = live
+	_ring_multimesh.instance_count = live.size()
+	_ring_multimesh.visible_instance_count = live.size()
+	for index in live.size():
+		var position := _horde_centroid(live[index])
+		position.y += 0.25
+		_ring_multimesh.set_instance_transform(index, Transform3D(Basis.IDENTITY, position))
+
+
+func _update_selection_box(current: Vector2) -> void:
+	var rect := _screen_rect(_drag_start, current)
+	_selection_box.position = rect.position
+	_selection_box.size = rect.size
+	_selection_box.visible = true
+
+
+static func _screen_rect(first: Vector2, second: Vector2) -> Rect2:
+	return Rect2(
+		Vector2(minf(first.x, second.x), minf(first.y, second.y)),
+		Vector2(absf(second.x - first.x), absf(second.y - first.y))
+	)
+
+
+func shutdown() -> bool:
+	_running = false
+	if _client == null:
+		return true
+	var clean: bool = _client.quit()
+	_client = null
+	return clean
+
+
+func is_running() -> bool:
+	return _running
+
+
+func startup_failed() -> bool:
+	return _startup_failed
+
+
+func startup_error() -> String:
+	return _startup_error
+
+
+func tick_index() -> int:
+	return _tick
+
+
+func object_count() -> int:
+	return int(_latest_snapshot.get("object_count", 0))
+
+
+func event_counts() -> Vector2i:
+	return Vector2i(_damage_events, _death_events)
+
+
+func model_resolution_summary() -> String:
+	return _renderer.model_resolution_summary()
+
+
+func _fail(message: String) -> void:
+	_startup_failed = true
+	_startup_error = message
+	_running = false
+	printerr("SIM_HOST_MATCH FAIL %s" % message)
+	if _client != null:
+		_client.quit()
+		_client = null
+
+
+func _load_json(path: String) -> Dictionary:
+	var file := FileAccess.open(path, FileAccess.READ)
+	if file == null:
+		return {}
+	var parsed: Variant = JSON.parse_string(file.get_as_text())
+	return parsed as Dictionary if parsed is Dictionary else {}
+
+
+func _repo_path(relative: String) -> String:
+	var game_root := ProjectSettings.globalize_path("res://").trim_suffix("/").trim_suffix("\\")
+	return game_root.get_base_dir().path_join(relative)

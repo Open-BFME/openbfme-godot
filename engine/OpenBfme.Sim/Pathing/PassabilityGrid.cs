@@ -85,6 +85,10 @@ public sealed class PassabilityGrid
         return (index % Width, index / Width);
     }
 
+    public int WorldToCell(int coordinate) => coordinate >= 0
+        ? coordinate / CellSize
+        : checked((int)(-((-(long)coordinate + CellSize - 1) / CellSize)));
+
     public static PassabilityGrid Uniform(int width, int height, int cost = 1, int cellSize = 1)
     {
         var cellCount = checked(width * height);

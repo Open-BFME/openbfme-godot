@@ -47,6 +47,23 @@ public class MovementSystemTests
     }
 
     [Fact]
+    public void ScaledPassabilityGridMovesAtRetailWorldCoordinates()
+    {
+        var grid = PassabilityGrid.Uniform(512, 384, cellSize: 4);
+        var world = CreateWorld(grid);
+        var unit = world.SpawnObject("unit", 0, Point(1200, 800));
+        var start = unit.Position;
+        SubmitMove(world, unit.Id, Point(1800, 1100));
+
+        world.Advance(10);
+
+        Assert.Equal(300, grid.WorldToCell(1200));
+        Assert.Equal(450, grid.WorldToCell(1800));
+        Assert.True(unit.FindModule<LocomotorModule>()!.HasOrder);
+        Assert.NotEqual(start, unit.Position);
+    }
+
+    [Fact]
     public void WallIsRoutedAroundWithoutEnteringAnImpassableCell()
     {
         const int width = 64;

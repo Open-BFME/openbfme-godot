@@ -1,0 +1,63 @@
+[gd_scene load_steps=7 format=3]
+
+[ext_resource type="Script" path="res://src/sim/sim_host_match.gd" id="1_match"]
+[ext_resource type="Script" path="res://src/sim/sim_host_rts_camera.gd" id="2_camera"]
+[ext_resource type="Script" path="res://src/view/snapshot_instanced_renderer.gd" id="3_renderer"]
+
+[sub_resource type="StandardMaterial3D" id="GroundMaterial"]
+albedo_color = Color(0.13, 0.24, 0.11, 1)
+roughness = 0.92
+
+[sub_resource type="PlaneMesh" id="GroundMesh"]
+material = SubResource("GroundMaterial")
+size = Vector2(4000, 3000)
+
+[sub_resource type="Environment" id="Environment"]
+background_mode = 1
+background_color = Color(0.055, 0.075, 0.09, 1)
+ambient_light_source = 3
+ambient_light_color = Color(0.55, 0.62, 0.72, 1)
+ambient_light_energy = 0.7
+
+[node name="SimHostMatch" type="Node3D"]
+script = ExtResource("1_match")
+
+[node name="Ground" type="MeshInstance3D" parent="."]
+mesh = SubResource("GroundMesh")
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="."]
+environment = SubResource("Environment")
+
+[node name="Sun" type="DirectionalLight3D" parent="."]
+rotation_degrees = Vector3(-58, -28, 0)
+light_energy = 1.1
+shadow_enabled = true
+
+[node name="SnapshotInstancedRenderer" type="Node3D" parent="."]
+script = ExtResource("3_renderer")
+
+[node name="SelectionRings" type="MultiMeshInstance3D" parent="."]
+
+[node name="RtsCamera" type="Node3D" parent="."]
+script = ExtResource("2_camera")
+
+[node name="Camera3D" type="Camera3D" parent="RtsCamera"]
+current = true
+
+[node name="Overlay" type="CanvasLayer" parent="."]
+
+[node name="Instructions" type="Label" parent="Overlay"]
+offset_left = 18.0
+offset_top = 16.0
+offset_right = 710.0
+offset_bottom = 48.0
+text = "WASD / edge pan | Wheel zoom | Middle-drag rotate | Drag select | Right-click order | A + click attack-move | S stop"
+theme_override_colors/font_color = Color(0.92, 0.95, 1, 0.92)
+theme_override_colors/font_shadow_color = Color(0, 0, 0, 0.9)
+theme_override_constants/shadow_offset_x = 2
+theme_override_constants/shadow_offset_y = 2
+
+[node name="SelectionBox" type="ColorRect" parent="Overlay"]
+visible = false
+mouse_filter = 2
+color = Color(0.2, 0.65, 1, 0.22)

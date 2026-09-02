@@ -79,15 +79,57 @@ public sealed class HostProtocolSessionTests : IDisposable
     }
 
     [Fact]
-    public void BundleLaunchReportsUnsupportedWithoutKillingSession()
+    public void BundleLaunchUsesFixtureAndReportsDeterministicAccounting()
     {
         var session = new HostProtocolSession();
-        var line = "{\"op\":\"launch\",\"match\":" + _matchJson
-            + ",\"bundle\":\"bundle.json\"}";
-        var error = Single(session.HandleLine(line));
-        Assert.Equal("error", Op(error));
-        Assert.Contains("unsupported", error, StringComparison.Ordinal);
+        var launched = Single(session.HandleLine(BundleLaunchLine()));
+        using var reply = Parse(launched);
+        Assert.Equal("launched", reply.RootElement.GetProperty("op").GetString());
+        Assert.Equal(33, reply.RootElement.GetProperty("tick_ms").GetInt32());
+        Assert.Equal(2, reply.RootElement.GetProperty("players").GetInt32());
+        Assert.Equal(7, reply.RootElement.GetProperty("templates_loaded").GetInt32());
+        Assert.Equal(0, reply.RootElement.GetProperty("templates_failed").GetInt32());
         Assert.True(session.IsRunning);
+    }
+
+    [Fact]
+    public void BundleSessionListsLoadedTemplatesAndSpawnsAuthoredHorde()
+    {
+        var session = new HostProtocolSession();
+        Assert.Equal("launched", Op(Single(session.HandleLine(BundleLaunchLine()))));
+
+        using var catalog = Parse(Single(session.HandleLine("{\"op\":\"templates\"}")));
+        var templates = catalog.RootElement.GetProperty("templates").EnumerateArray().ToArray();
+        var horde = Assert.Single(templates, row => row.GetProperty("name").GetString() == "CookHorde");
+        Assert.Equal("object", horde.GetProperty("kind").GetString());
+        Assert.Equal(JsonValueKind.Array, horde.GetProperty("kindof").ValueKind);
+
+        var spawned = Single(session.HandleLine(
+            "{\"op\":\"spawn\",\"template\":\"CookHorde\",\"player\":0,\"x\":1200,\"y\":800}"));
+        using var spawnReply = Parse(spawned);
+        Assert.Equal("spawned", spawnReply.RootElement.GetProperty("op").GetString());
+        Assert.Equal(100_000, spawnReply.RootElement.GetProperty("id").GetInt32());
+        Assert.Equal(3, spawnReply.RootElement.GetProperty("members").GetArrayLength());
+
+        using var snapshot = Parse(Single(session.HandleLine("{\"op\":\"step\",\"ticks\":1}")));
+        var snapshotRoot = snapshot.RootElement.GetProperty("snapshot");
+        Assert.Equal(3, snapshotRoot.GetProperty("object_count").GetInt32());
+        Assert.Equal(100_000, snapshotRoot.GetProperty("hordes")[0].GetProperty("id").GetInt32());
+    }
+
+    [Fact]
+    public void BundleSpawnUnknownTemplateReturnsErrorAndSessionSurvives()
+    {
+        var session = new HostProtocolSession();
+        Assert.Equal("launched", Op(Single(session.HandleLine(BundleLaunchLine()))));
+        var error = Single(session.HandleLine(
+            "{\"op\":\"spawn\",\"template\":\"UnknownHorde\",\"player\":0,\"x\":0,\"y\":0}"));
+        Assert.Equal("error", Op(error));
+        using var parsed = Parse(error);
+        Assert.Equal(
+            "unknown or unloaded template 'UnknownHorde'",
+            parsed.RootElement.GetProperty("message").GetString());
+        Assert.Equal("hash", Op(Single(session.HandleLine("{\"op\":\"hash\"}"))));
     }
 
     public void Dispose()
@@ -115,6 +157,13 @@ public sealed class HostProtocolSessionTests : IDisposable
         op = "launch",
         match = JsonSerializer.Deserialize<JsonElement>(_matchJson),
         templates = _templatesPath,
+    });
+
+    private string BundleLaunchLine() => JsonSerializer.Serialize(new
+    {
+        op = "launch",
+        match = JsonSerializer.Deserialize<JsonElement>(_matchJson),
+        bundle = RepoPath("contracts", "fixtures", "bundle-v1.json"),
     });
 
     private static string CommandsLine() =>

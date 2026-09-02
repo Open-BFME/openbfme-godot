@@ -39,6 +39,7 @@ if ([string]::IsNullOrWhiteSpace($RepoRoot)) {
 # Legitimate root files. Enumerated from the tree after the stage-3 cleanup.
 # Add a name here only when a new root file is an intended, lasting entry point.
 $RootAllowlist = @(
+    '.git'
     '.gitattributes'
     '.gitignore'
     'AGENTS.md'
@@ -53,6 +54,7 @@ $RootAllowlist = @(
     'run_launcher.bat'
     'run_rotwk_full_content.bat'
     'run_rotwk_one_button.bat'
+    'run_sim_match.bat'
     'run_tests.bat'
 )
 
