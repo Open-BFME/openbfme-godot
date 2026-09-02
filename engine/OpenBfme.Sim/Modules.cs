@@ -79,13 +79,15 @@ public sealed class ObjectTemplate
     public IReadOnlyList<WeaponSet> WeaponSets { get; }
     public IReadOnlyList<ArmorSet> ArmorSets { get; }
     public BodyHealthTemplate? BodyHealth { get; }
+    public EconomyTemplate Economy { get; }
 
     public ObjectTemplate(
         string name,
         IReadOnlyList<ModuleSpec> modules,
         IReadOnlyList<WeaponSet>? weaponSets = null,
         IReadOnlyList<ArmorSet>? armorSets = null,
-        BodyHealthTemplate? bodyHealth = null)
+        BodyHealthTemplate? bodyHealth = null,
+        EconomyTemplate? economy = null)
     {
         Name = name ?? throw new ArgumentNullException(nameof(name));
         Modules = modules ?? throw new ArgumentNullException(nameof(modules));
@@ -97,6 +99,7 @@ public sealed class ObjectTemplate
             throw new ArgumentOutOfRangeException(nameof(bodyHealth));
         }
         BodyHealth = bodyHealth;
+        Economy = economy ?? EconomyTemplate.FromModules(modules);
     }
 }
 

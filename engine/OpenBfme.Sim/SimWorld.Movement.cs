@@ -214,10 +214,6 @@ public sealed partial class SimWorld
 
     private void ReadMovementExtension(CanonicalReader reader)
     {
-        if (reader.ReadInt() != MovementExtensionMagic)
-        {
-            throw new InvalidDataException("Unknown canonical state extension");
-        }
         var hordeCount = ReadCount(reader, "horde");
         for (var index = 0; index < hordeCount; index++)
         {

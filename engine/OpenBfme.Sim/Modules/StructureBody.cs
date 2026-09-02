@@ -19,6 +19,8 @@ public sealed class StructureBodyModule : ModuleBase
         Health = MaxHealth;
     }
 
+    internal void SetConstructionHealth(long health) => Health = Math.Clamp(health, 0, MaxHealth);
+
     public override bool OnDamage(SimWorld world, GameObject self, long amount)
     {
         if (amount < 0)

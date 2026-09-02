@@ -41,6 +41,12 @@ internal static class IniValueReader
         return checked((int)number);
     }
 
+    public static long Integer64(IReadOnlyDictionary<string, object?> fields, string name, long fallback = 0)
+    {
+        var value = Value(fields, name);
+        return value == null ? fallback : Long(value, name);
+    }
+
     public static bool Boolean(IReadOnlyDictionary<string, object?> fields, string name, bool fallback = false)
     {
         var value = Value(fields, name);

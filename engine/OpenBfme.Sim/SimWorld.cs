@@ -5,6 +5,7 @@ namespace OpenBfme.Sim;
 /// <summary>Immutable per-match configuration: templates, seed, teams. Not part of the state hash.</summary>
 public sealed class SimConfig
 {
+    public const long DefaultMaxCommandPoints = 1_000;
     public IReadOnlyDictionary<string, ObjectTemplate> Templates { get; }
     public ulong RandomSeed { get; }
     public int TeamCount { get; }
@@ -12,6 +13,7 @@ public sealed class SimConfig
     public int MapHeightCells { get; }
     public IReadOnlyDictionary<string, WeaponTemplate> WeaponTemplates { get; }
     public IReadOnlyDictionary<string, ArmorTemplate> ArmorTemplates { get; }
+    public long MaxCommandPoints { get; }
     private readonly IReadOnlyDictionary<string, int> _templateIndices;
 
     public SimConfig(
@@ -21,7 +23,8 @@ public sealed class SimConfig
         int mapWidthCells = 512,
         int mapHeightCells = 512,
         IEnumerable<WeaponTemplate>? weaponTemplates = null,
-        IEnumerable<ArmorTemplate>? armorTemplates = null)
+        IEnumerable<ArmorTemplate>? armorTemplates = null,
+        long maxCommandPoints = 0)
     {
         if (teamCount < 1)
         {
@@ -50,9 +53,20 @@ public sealed class SimConfig
         MapHeightCells = mapHeightCells;
         WeaponTemplates = NamedTemplates(weaponTemplates, value => value.Name);
         ArmorTemplates = NamedTemplates(armorTemplates, value => value.Name);
+        if (maxCommandPoints < 0) throw new ArgumentOutOfRangeException(nameof(maxCommandPoints));
+        MaxCommandPoints = maxCommandPoints;
     }
 
     public int TemplateIndexOf(string templateName) => _templateIndices[templateName];
+
+    public ObjectTemplate TemplateAtIndex(int templateIndex)
+    {
+        if (templateIndex < 0 || templateIndex >= _templateIndices.Count)
+        {
+            throw new ArgumentOutOfRangeException(nameof(templateIndex));
+        }
+        return Templates.Values.ElementAt(templateIndex);
+    }
 
     private static IReadOnlyDictionary<string, T> NamedTemplates<T>(
         IEnumerable<T>? values,
@@ -134,7 +148,7 @@ public sealed partial class SimWorld
         _teamResources = new long[config.TeamCount];
         _playerTeams = Enumerable.Range(0, config.TeamCount).ToArray();
         _commandPoints = new long[config.TeamCount];
-        _commandPointsMax = new long[config.TeamCount];
+        _commandPointsMax = Enumerable.Repeat(config.MaxCommandPoints, config.TeamCount).ToArray();
         _powerPoints = new long[config.TeamCount];
         _random = new DeterministicRandom(config.RandomSeed);
     }
@@ -143,16 +157,17 @@ public sealed partial class SimWorld
         MatchLaunch launch,
         IEnumerable<ObjectTemplate>? templates = null,
         ModuleRegistry? registry = null,
-        PassabilityGrid? passabilityGrid = null)
+        PassabilityGrid? passabilityGrid = null,
+        long baseCommandPoints = SimConfig.DefaultMaxCommandPoints)
         : this(
-            CreateConfig(launch, templates),
+            CreateConfig(launch, templates, baseCommandPoints),
             registry ?? ModuleRegistry.CreateDefault(),
             launch?.Rules.TickMilliseconds ?? throw new ArgumentNullException(nameof(launch)),
             passabilityGrid)
     {
         _playerTeams = launch.Players.Select(player => player.Team).ToArray();
         _commandPoints = new long[launch.Players.Count];
-        _commandPointsMax = new long[launch.Players.Count];
+        _commandPointsMax = Enumerable.Repeat(_config.MaxCommandPoints, launch.Players.Count).ToArray();
         _powerPoints = new long[launch.Players.Count];
         foreach (var player in launch.Players)
         {
@@ -167,11 +182,19 @@ public sealed partial class SimWorld
         }
     }
 
-    private static SimConfig CreateConfig(MatchLaunch launch, IEnumerable<ObjectTemplate>? templates)
+    private static SimConfig CreateConfig(
+        MatchLaunch launch,
+        IEnumerable<ObjectTemplate>? templates,
+        long baseCommandPoints)
     {
         ArgumentNullException.ThrowIfNull(launch);
         var teamCount = launch.Players.Max(player => player.Team) + 1;
-        return new SimConfig(templates ?? Array.Empty<ObjectTemplate>(), launch.Seed, teamCount);
+        var scaledCap = EconomyTemplate.ScaleInteger(baseCommandPoints, launch.Rules.CommandPointMultiplier);
+        return new SimConfig(
+            templates ?? Array.Empty<ObjectTemplate>(),
+            launch.Seed,
+            teamCount,
+            maxCommandPoints: scaledCap);
     }
 
     public long TeamResources(int team) => _teamResources[ValidateTeam(team)];
@@ -207,7 +230,7 @@ public sealed partial class SimWorld
             players[index] = new SnapshotPlayer(
                 index,
                 _teamResources[_playerTeams[index]],
-                _commandPoints[index],
+                CommandPointsUsed(_playerTeams[index]),
                 _commandPointsMax[index],
                 _powerPoints[index]);
         }
@@ -221,11 +244,9 @@ public sealed partial class SimWorld
         {
             throw new ArgumentOutOfRangeException(nameof(horde));
         }
-        if (_hordes.Count > 0 && horde.Id <= _hordes[^1].Id)
-        {
-            throw new ArgumentException("Hordes must be added in ascending id order", nameof(horde));
-        }
-        _hordes.Add(horde with { Members = horde.Members.ToArray() });
+        var insertAt = _hordes.BinarySearch(horde, SnapshotHordeIdComparer.Instance);
+        if (insertAt >= 0) throw new ArgumentException($"Horde id {horde.Id} already exists", nameof(horde));
+        _hordes.Insert(~insertAt, horde with { Members = horde.Members.ToArray() });
     }
 
     public void SetPassabilityGrid(PassabilityGrid grid) => Movement.ReplaceGrid(grid);
@@ -282,7 +303,7 @@ public sealed partial class SimWorld
         {
             _objects.Add(gameObject.Id, gameObject);
         }
-        RaiseEvent(new SimEvent("spawn", gameObject.Id));
+        RaiseEvent(new SimEvent("spawn", gameObject.Id, Name: templateName));
         return gameObject;
     }
 
@@ -451,6 +472,21 @@ public sealed partial class SimWorld
                     canceller.FindModule<ProductionModule>()?.TryCancel(this, canceller, (int)command.GetLong("index"));
                 }
                 break;
+            case "train":
+                ApplyTrainCommand(command);
+                break;
+            case "cancel":
+                ApplyCancelCommand(command);
+                break;
+            case "rally":
+                ApplyRallyCommand(command);
+                break;
+            case "build":
+                ApplyBuildCommand(command);
+                break;
+            case "sell":
+                ApplySellCommand(command);
+                break;
             default:
                 // Unknown command types are ignored deterministically (validated upstream
                 // by the lockstep layer); they still affected the hash while queued.
@@ -531,9 +567,12 @@ public sealed partial class SimWorld
         {
             return;
         }
+        ExpandHordeDeaths(deadIds);
         PruneDeadHordeMembers(deadIds);
         foreach (var id in deadIds)
         {
+            ReleasePlotForObject(id);
+            _objects[id].FindModule<ProductionModule>()?.RefundAll(this, _objects[id]);
             ObjectStore.Free(_objects[id].StoreSlot);
             _objects.Remove(id);
         }
@@ -572,6 +611,7 @@ public sealed partial class SimWorld
             }
         }
         WriteMovementExtension(writer);
+        WriteEconomyExtension(writer);
     }
 
     public string StateHash()
@@ -630,10 +670,7 @@ public sealed partial class SimWorld
             }
             world._pendingCommands.Add(tick, commands);
         }
-        if (reader.HasRemaining)
-        {
-            world.ReadMovementExtension(reader);
-        }
+        while (reader.HasRemaining) world.ReadStateExtension(reader);
         reader.ExpectEnd();
         world.RebuildAuraTable(); // derived state: not in the snapshot, rebuilt from module caches
         return world;
@@ -742,6 +779,15 @@ public sealed partial class SimWorld
         }
         return (Fixed64.Zero, Fixed64.Zero);
     }
+}
+
+internal sealed class SnapshotHordeIdComparer : IComparer<SnapshotHorde>
+{
+    public static SnapshotHordeIdComparer Instance { get; } = new();
+
+    public int Compare(SnapshotHorde? left, SnapshotHorde? right) =>
+        (left ?? throw new ArgumentNullException(nameof(left))).Id.CompareTo(
+            (right ?? throw new ArgumentNullException(nameof(right))).Id);
 }
 
 public sealed class ModuleLoadException : Exception

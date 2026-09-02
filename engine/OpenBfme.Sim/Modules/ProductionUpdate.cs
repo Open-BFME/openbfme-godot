@@ -1,70 +1,140 @@
 namespace OpenBfme.Sim;
 
 /// <summary>
-/// ProductionUpdate-shaped queue (385 objects in the corpus). Design data encodes
-/// buildable entries as "Build:template-name" = build ticks and optional
-/// "Cost:template-name" = resource cost (default 0). TryQueue debits the owning
-/// team's resources and rejects unaffordable requests; TryCancel refunds.
-///
-/// Spawn phase matches the retail sim (dual-run oracle finding): a unit queued
-/// by a command applied at tick T spawns DURING tick T + build_ticks — build
-/// ticks T .. T+build_ticks-1 count down, and the completed head spawns on the
-/// following update. Optional "RallyXRaw"/"RallyYRaw" design data (producer-
-/// relative, Fixed64 raw) sends a spawned unit with a LinearMover walking from
-/// the exit point to the rally point — the retail door-walk shape.
+/// SAGE ProductionUpdate queue. Money is charged at enqueue, cancellation
+/// refunds the exact stored charge, and the head advances in fixed ticks.
 /// </summary>
 [SageModule("ProductionUpdate", ModuleTier.Structural)]
 public sealed class ProductionModule : ModuleBase
 {
     public const string TypeName = "ProductionUpdate";
-
     public const int MaxQueueLength = 9;
 
-    private readonly FixedVector2 _exitOffset;
-    private readonly List<(string Template, int TicksRemaining)> _queue = new();
+    private readonly int _maxQueueEntries;
+    private readonly List<ProductionEntry> _queue = new();
+    private bool _hasRallyPoint;
+    private FixedVector2 _rallyPoint;
 
     public ProductionModule(ModuleSpec spec) : base(spec)
     {
-        _exitOffset = new FixedVector2(
-            spec.GetFixed("ExitOffsetXRaw", Fixed64.FromInt(2)),
-            spec.GetFixed("ExitOffsetYRaw", Fixed64.Zero));
+        _maxQueueEntries = checked((int)Math.Clamp(
+            spec.GetLong("MaxQueueEntries", MaxQueueLength),
+            1,
+            int.MaxValue));
     }
 
     public int QueueLength => _queue.Count;
+    public bool HasRallyPoint => _hasRallyPoint;
+    public FixedVector2 RallyPoint => _rallyPoint;
+    public long ReservedCommandPoints => _queue.Sum(entry => entry.CommandPoints);
 
     public long CostOf(string templateName) => Math.Max(0, Spec.GetLong("Cost:" + templateName, 0));
 
-    public bool TryQueue(SimWorld world, GameObject self, string templateName)
+    public void SetRallyPoint(FixedVector2 point)
     {
-        var buildTicks = Spec.GetLong("Build:" + templateName, -1);
-        if (buildTicks <= 0 || _queue.Count >= MaxQueueLength)
+        _rallyPoint = point;
+        _hasRallyPoint = true;
+    }
+
+    public bool TryQueue(SimWorld world, GameObject self, string templateName) =>
+        TryQueue(world, self, templateName, 1, out _);
+
+    internal bool TryQueue(
+        SimWorld world,
+        GameObject self,
+        string templateName,
+        int count,
+        out string refusalCode)
+    {
+        refusalCode = "";
+        if (self.IsUnderConstruction)
         {
+            refusalCode = "producer_under_construction";
             return false;
         }
-        var cost = CostOf(templateName);
-        if (cost > 0)
+        if (self.IsDying)
         {
-            if (world.TeamResources(self.Team) < cost)
-            {
-                return false;
-            }
-            world.AddTeamResources(self.Team, -cost);
+            refusalCode = "producer_dying";
+            return false;
         }
-        _queue.Add((templateName, (int)buildTicks));
+        if (count < 1 || count > _maxQueueEntries - _queue.Count)
+        {
+            refusalCode = "queue_full";
+            return false;
+        }
+        if (!world.TryGetTemplate(templateName, out var template))
+        {
+            refusalCode = "unknown_template";
+            return false;
+        }
+        if (!CanProduce(self, templateName))
+        {
+            refusalCode = "not_in_command_set";
+            return false;
+        }
+        if (!world.CanSpawnProductionTemplate(template))
+        {
+            refusalCode = "invalid_horde_template";
+            return false;
+        }
+        var buildTicks = ResolveBuildTicks(world, template);
+        if (buildTicks <= 0)
+        {
+            refusalCode = "missing_build_time";
+            return false;
+        }
+        var cost = ResolveCost(template);
+        long totalCost;
+        long totalCommandPoints;
+        try
+        {
+            totalCost = checked(cost * count);
+            totalCommandPoints = checked(template.Economy.CommandPoints * count);
+        }
+        catch (OverflowException)
+        {
+            refusalCode = "economy_overflow";
+            return false;
+        }
+        if (world.TeamResources(self.Team) < totalCost)
+        {
+            refusalCode = "insufficient_money";
+            return false;
+        }
+        if (!world.CanReserveCommandPoints(self.Team, totalCommandPoints))
+        {
+            refusalCode = "command_points_exceeded";
+            return false;
+        }
+
+        world.AddTeamResources(self.Team, -totalCost);
+        for (var index = 0; index < count; index++)
+        {
+            _queue.Add(new ProductionEntry(
+                templateName,
+                buildTicks,
+                cost,
+                template.Economy.CommandPoints));
+        }
         return true;
     }
 
-    /// <summary>Cancels the queue entry at <paramref name="index"/> and refunds its cost.</summary>
     public bool TryCancel(SimWorld world, GameObject self, int index)
     {
         if (index < 0 || index >= _queue.Count)
         {
             return false;
         }
-        var (template, _) = _queue[index];
+        var entry = _queue[index];
         _queue.RemoveAt(index);
-        world.AddTeamResources(self.Team, CostOf(template));
+        world.AddTeamResources(self.Team, entry.Cost);
         return true;
+    }
+
+    internal void RefundAll(SimWorld world, GameObject self)
+    {
+        foreach (var entry in _queue) world.AddTeamResources(self.Team, entry.Cost);
+        _queue.Clear();
     }
 
     public override void OnUpdate(SimWorld world, GameObject self)
@@ -73,44 +143,103 @@ public sealed class ProductionModule : ModuleBase
         {
             return;
         }
-        var (template, ticksRemaining) = _queue[0];
-        if (ticksRemaining > 0)
+        var entry = _queue[0];
+        if (entry.TicksRemaining > 0)
         {
-            _queue[0] = (template, ticksRemaining - 1);
+            _queue[0] = entry with { TicksRemaining = entry.TicksRemaining - 1 };
             return;
         }
-        // ticksRemaining == 0: the head completed last tick; spawn this tick
-        // (command_tick + build_ticks). The next entry starts counting next tick.
         _queue.RemoveAt(0);
-        var spawned = world.SpawnObject(template, self.Team, self.Position + _exitOffset);
-        if (Spec.Data.ContainsKey("RallyXRaw") || Spec.Data.ContainsKey("RallyYRaw"))
-        {
-            var rally = self.Position + new FixedVector2(
-                Spec.GetFixed("RallyXRaw", Fixed64.Zero),
-                Spec.GetFixed("RallyYRaw", Fixed64.Zero));
-            spawned.FindModule<LinearMoverModule>()?.SetDestination(rally);
-        }
+        world.SpawnProducedObject(
+            self,
+            entry.Template,
+            self.Position + ResolveExitOffset(self),
+            ResolveRallyPoint(self));
     }
 
     public override void WriteState(CanonicalWriter writer)
     {
         writer.WriteInt(_queue.Count);
-        foreach (var (template, ticksRemaining) in _queue)
+        foreach (var entry in _queue)
         {
-            writer.WriteString(template);
-            writer.WriteInt(ticksRemaining);
+            writer.WriteString(entry.Template);
+            writer.WriteInt(entry.TicksRemaining);
+            writer.WriteLong(entry.Cost);
+            writer.WriteLong(entry.CommandPoints);
         }
+        writer.WriteBool(_hasRallyPoint);
+        writer.WriteVector(_rallyPoint);
     }
 
     public override void ReadState(CanonicalReader reader)
     {
         _queue.Clear();
         var count = reader.ReadInt();
-        for (var i = 0; i < count; i++)
+        if (count < 0 || count > _maxQueueEntries)
         {
-            var template = reader.ReadString();
-            var ticksRemaining = reader.ReadInt();
-            _queue.Add((template, ticksRemaining));
+            throw new InvalidDataException("Production queue length is invalid");
         }
+        for (var index = 0; index < count; index++)
+        {
+            _queue.Add(new ProductionEntry(
+                reader.ReadString(),
+                reader.ReadInt(),
+                reader.ReadLong(),
+                reader.ReadLong()));
+        }
+        _hasRallyPoint = reader.ReadBool();
+        _rallyPoint = reader.ReadVector();
     }
+
+    private bool CanProduce(GameObject self, string templateName)
+    {
+        if (self.Template.Economy.CommandSet.Count > 0)
+        {
+            return self.Template.Economy.CommandSet.Contains(templateName, StringComparer.Ordinal);
+        }
+        return Spec.Data.ContainsKey("Build:" + templateName);
+    }
+
+    private int ResolveBuildTicks(SimWorld world, ObjectTemplate template)
+    {
+        if (template.Economy.BuildTimeMilliseconds > 0)
+        {
+            return template.Economy.BuildTicks(world.TickMilliseconds);
+        }
+        return checked((int)Math.Max(0, Spec.GetLong("Build:" + template.Name, 0)));
+    }
+
+    private long ResolveCost(ObjectTemplate template) =>
+        template.Economy.BuildCost > 0 ? template.Economy.BuildCost : CostOf(template.Name);
+
+    private FixedVector2 ResolveExitOffset(GameObject self)
+    {
+        if (Spec.Data.ContainsKey("ExitOffsetXRaw") || Spec.Data.ContainsKey("ExitOffsetYRaw"))
+        {
+            return new FixedVector2(
+                Spec.GetFixed("ExitOffsetXRaw", Fixed64.FromInt(2)),
+                Spec.GetFixed("ExitOffsetYRaw", Fixed64.Zero));
+        }
+        return self.Template.Economy.ProductionExitOffset != FixedVector2.Zero
+            ? self.Template.Economy.ProductionExitOffset
+            : new FixedVector2(Fixed64.FromInt(2), Fixed64.Zero);
+    }
+
+    private FixedVector2? ResolveRallyPoint(GameObject self)
+    {
+        if (_hasRallyPoint) return _rallyPoint;
+        if (Spec.Data.ContainsKey("RallyXRaw") || Spec.Data.ContainsKey("RallyYRaw"))
+        {
+            return self.Position + new FixedVector2(
+                Spec.GetFixed("RallyXRaw", Fixed64.Zero),
+                Spec.GetFixed("RallyYRaw", Fixed64.Zero));
+        }
+        return null;
+    }
+
+    private sealed record ProductionEntry(
+        string Template,
+        int TicksRemaining,
+        long Cost,
+        long CommandPoints);
 }

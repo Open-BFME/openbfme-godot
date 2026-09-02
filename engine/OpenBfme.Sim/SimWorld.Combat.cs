@@ -71,4 +71,37 @@ public sealed partial class SimWorld
             }
         }
     }
+
+    private void ExpandHordeDeaths(List<int> deadIds)
+    {
+        var dead = new SortedSet<int>(deadIds);
+        var changed = true;
+        while (changed)
+        {
+            changed = false;
+            foreach (var horde in _hordes)
+            {
+                if (dead.Contains(horde.Id))
+                {
+                    foreach (var memberId in horde.Members)
+                    {
+                        if (dead.Add(memberId))
+                        {
+                            if (_objects.TryGetValue(memberId, out var member)) member.MarkDead();
+                            changed = true;
+                        }
+                    }
+                    continue;
+                }
+                if (_objects.TryGetValue(horde.Id, out var carrier)
+                    && horde.Members.All(member => dead.Contains(member) || !_objects.ContainsKey(member)))
+                {
+                    carrier.MarkDead();
+                    if (dead.Add(horde.Id)) changed = true;
+                }
+            }
+        }
+        deadIds.Clear();
+        deadIds.AddRange(dead);
+    }
 }

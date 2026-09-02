@@ -31,6 +31,7 @@ public sealed class HordeContainModule : ModuleBase
     }
 
     public int MemberCount => _memberHealth.Length;
+    public string MemberTemplateName => Spec.GetString("MemberTemplate", "");
     public long MemberMaxHealth => _memberMaxHealth;
     public long MemberHealthAt(int slot) => _memberHealth[slot];
 
