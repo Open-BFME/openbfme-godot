@@ -18,7 +18,7 @@ Object CookBase
 
   #include "base-behavior.inc"
 
-  Draw = W3DScriptedModelDraw ModuleTag_Draw
+  Draw	==	W3DScriptedModelDraw ModuleTag_Draw
     DefaultModelConditionState
       Model = COOK_MODEL
     End
@@ -52,5 +52,17 @@ Object CookMystery
     RawText = keep this text verbatim
     Repeated = alpha
     Repeated = beta
+    Count = 7
+  End
+End
+
+Object CookMalformed
+  Behavior = ModuleTag_Malformed
+    Count = 8
+    Enabled = Yes
+  End
+
+  AlienCarrier = AlienBehavior ModuleTag_Alien
+    Count = 9
   End
 End

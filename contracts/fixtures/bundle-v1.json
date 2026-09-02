@@ -8,25 +8,17 @@
   },
   "diagnostics": [
     {
-      "message": "data/ini/objects.inc:14: unknown module type ActiveBody retained with gap=true",
-      "template": "CookBase"
+      "message": "data/ini/objects.inc:60: module type ModuleTag_Malformed or carrier 'Behavior' could not be parsed into typed fields; retained verbatim with gap=true",
+      "template": "CookMalformed"
     },
     {
-      "message": "data/ini/objects.inc:21: unknown module type W3DScriptedModelDraw retained with gap=true",
-      "template": "CookBase"
-    },
-    {
-      "message": "data/ini/objects.inc:43: unknown module type W3DScriptedModelDraw retained with gap=true",
-      "template": "CookReskin"
-    },
-    {
-      "message": "data/ini/objects.inc:51: unknown module type MadeUpBehavior retained with gap=true",
-      "template": "CookMystery"
+      "message": "data/ini/objects.inc:65: module type AlienBehavior or carrier 'AlienCarrier' could not be parsed into typed fields; retained verbatim with gap=true",
+      "template": "CookMalformed"
     }
   ],
   "schema": "openbfme.bundle.v1",
   "source": {
-    "effective_tree_sha256": "a22df0fc4cd9c306a0b6c8fcd34082ee05700d891176856aef8e4df1acd6a7fd",
+    "effective_tree_sha256": "4dd86f5c05912538e0c11b91ba4f77d326015a5bf0fea02265b9432421ab74fe",
     "paths": [
       {
         "path": "data/ini/base-behavior.inc",
@@ -42,7 +34,7 @@
       },
       {
         "path": "data/ini/objects.inc",
-        "sha256": "7b3d1ad11b70b50c24b35207681331d2ea52f9ec7979e5828a5050b0fb6253dd"
+        "sha256": "6d417be7d91aff44f2e22cbc77a1c4aa3b709eb909c243b0da51654e6f643406"
       }
     ]
   },
@@ -99,10 +91,10 @@
           "blocks": [],
           "carrier": "Body",
           "fields": {
-            "MaxHealth": "COOK_HEALTH",
-            "MaxHealthDamaged": "600"
+            "MaxHealth": 1200,
+            "MaxHealthDamaged": 600
           },
-          "gap": true,
+          "gap": false,
           "tag": "ModuleTag_Body",
           "type": "ActiveBody"
         },
@@ -134,7 +126,7 @@
           ],
           "carrier": "Draw",
           "fields": {},
-          "gap": true,
+          "gap": false,
           "tag": "ModuleTag_Draw",
           "type": "W3DScriptedModelDraw"
         }
@@ -187,7 +179,7 @@
           ],
           "carrier": "Draw",
           "fields": {},
-          "gap": true,
+          "gap": false,
           "tag": "ModuleTag_Draw",
           "type": "W3DScriptedModelDraw"
         }
@@ -206,18 +198,51 @@
           "blocks": [],
           "carrier": "Behavior",
           "fields": {
+            "Count": 7,
             "RawText": "keep this text verbatim",
             "Repeated": [
               "alpha",
               "beta"
             ]
           },
-          "gap": true,
+          "gap": false,
           "tag": "ModuleTag_Mystery",
           "type": "MadeUpBehavior"
         }
       ],
       "name": "CookMystery",
+      "parent": null
+    },
+    {
+      "blocks": [],
+      "fields": {},
+      "geometry": {},
+      "kind": "object",
+      "kindof": [],
+      "modules": [
+        {
+          "blocks": [],
+          "carrier": "Behavior",
+          "fields": {
+            "Count": "8",
+            "Enabled": "Yes"
+          },
+          "gap": true,
+          "tag": "",
+          "type": "ModuleTag_Malformed"
+        },
+        {
+          "blocks": [],
+          "carrier": "other",
+          "fields": {
+            "Count": "9"
+          },
+          "gap": true,
+          "tag": "ModuleTag_Alien",
+          "type": "AlienBehavior"
+        }
+      ],
+      "name": "CookMalformed",
       "parent": null
     }
   ]

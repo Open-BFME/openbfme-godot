@@ -20,7 +20,6 @@ import re
 import sys
 from typing import Any
 
-from ..module_contracts import OPAQUE_DEFERRED_MODULE_KINDS, TYPED_MODULE_KINDS
 from ..playable_unit_compiler import _numeric_defines
 from ..sage_cst import (
     SageAssignment,
@@ -59,9 +58,7 @@ _CANONICAL_CARRIERS = {
     "clientbehavior": "ClientBehavior",
     "flasher": "Flasher",
 }
-_KNOWN_MODULES = frozenset(
-    name.casefold() for name in (TYPED_MODULE_KINDS | OPAQUE_DEFERRED_MODULE_KINDS)
-)
+_MODULE_TAG = re.compile(r"^ModuleTag(?:_|$)", re.IGNORECASE)
 
 
 @dataclass(frozen=True, slots=True)
@@ -227,9 +224,27 @@ def _walk_blocks(blocks: Iterable[SageBlock]) -> Iterable[SageBlock]:
         yield from _walk_blocks(block.blocks)
 
 
+def _is_module_block(block: SageBlock) -> bool:
+    carrier = (block.header_key or "").casefold()
+    return carrier in _CANONICAL_CARRIERS or bool(
+        block.instance_tag and _MODULE_TAG.match(block.instance_tag)
+    )
+
+
+def _module_has_typed_fields(block: SageBlock, carrier: str) -> bool:
+    """Return whether a parsed block has a usable module header and carrier."""
+
+    return bool(
+        carrier != "other"
+        and block.kind
+        and block.kind != "="
+        and not _MODULE_TAG.match(block.kind)
+    )
+
+
 def _module_row(block: SageBlock, defines: Mapping[str, object]) -> dict[str, object]:
     carrier = _CANONICAL_CARRIERS.get((block.header_key or "").casefold(), "other")
-    gap = block.kind.casefold() not in _KNOWN_MODULES
+    gap = not _module_has_typed_fields(block, carrier)
     return {
         "carrier": carrier,
         "type": block.kind,
@@ -295,7 +310,7 @@ def _template_row(
     module_blocks = [
         block
         for block in _walk_blocks(obj.blocks)
-        if (block.header_key or "").casefold() in _CANONICAL_CARRIERS
+        if _is_module_block(block)
     ]
     modules = [_module_row(block, defines) for block in module_blocks]
     for block, module in zip(module_blocks, modules, strict=True):
@@ -304,8 +319,9 @@ def _template_row(
                 {
                     "template": obj.name,
                     "message": (
-                        f"{block.source_virtual_path}:{block.line}: unknown module type "
-                        f"{module['type']} retained with gap=true"
+                        f"{block.source_virtual_path}:{block.line}: module type "
+                        f"{module['type']} or carrier {block.header_key!r} could not be "
+                        "parsed into typed fields; retained verbatim with gap=true"
                     ),
                 }
             )
@@ -320,7 +336,7 @@ def _template_row(
         "blocks": [
             _block_row(block, defines)
             for block in obj.blocks
-            if (block.header_key or "").casefold() not in _CANONICAL_CARRIERS
+            if not _is_module_block(block)
         ],
         "modules": modules,
     }
