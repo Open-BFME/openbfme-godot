@@ -204,6 +204,12 @@ public sealed class ProductionModule : ModuleBase
             _queue[0] = entry with { TicksRemaining = entry.TicksRemaining - 1 };
             return;
         }
+        var exit = self.FindModule<QueueProductionExitUpdateModule>();
+        if (!entry.Template.StartsWith(UpgradePrefix, StringComparison.Ordinal)
+            && exit != null && !exit.CanExit)
+        {
+            return;
+        }
         _queue.RemoveAt(0);
         if (entry.Template.StartsWith(UpgradePrefix, StringComparison.Ordinal))
         {
@@ -213,8 +219,9 @@ public sealed class ProductionModule : ModuleBase
         world.SpawnProducedObject(
             self,
             entry.Template,
-            self.Position + ResolveExitOffset(self),
+            exit?.ExitPosition(self) ?? self.Position + ResolveExitOffset(self),
             ResolveRallyPoint(self));
+        exit?.NotifyExit(world);
     }
 
     public override void WriteState(CanonicalWriter writer)
@@ -289,6 +296,8 @@ public sealed class ProductionModule : ModuleBase
     private FixedVector2? ResolveRallyPoint(GameObject self)
     {
         if (_hasRallyPoint) return _rallyPoint;
+        if (self.FindModule<QueueProductionExitUpdateModule>() is { } exit)
+            return exit.NaturalRallyPoint(self);
         if (Spec.Data.ContainsKey("RallyXRaw") || Spec.Data.ContainsKey("RallyYRaw"))
         {
             return self.Position + new FixedVector2(

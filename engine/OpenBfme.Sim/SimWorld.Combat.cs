@@ -20,6 +20,7 @@ public sealed partial class SimWorld
     internal bool IsAttackable(GameObject target)
     {
         if (target.IsDead || target.IsDying) return false;
+        if (target.FindModule<InactiveBodyModule>() != null) return false;
         if (target.Combat is { HasBody: true, Health.Raw: > 0 }) return true;
         var (health, maximum) = ReadHealth(target);
         return maximum > Fixed64.Zero && health > Fixed64.Zero;
@@ -28,6 +29,9 @@ public sealed partial class SimWorld
     internal Fixed64 ApplyCombatDamage(GameObject target, Fixed64 amount, DamageType damageType)
     {
         if (amount <= Fixed64.Zero || target.IsDead || target.IsDying) return Fixed64.Zero;
+        if (target.FindModule<InactiveBodyModule>() != null) return Fixed64.Zero;
+        if (target.FindModule<PorcupineFormationBodyModule>() is { } porcupine)
+            amount = porcupine.ModifyIncomingDamage(amount);
         if (target.Combat is { HasBody: true } combat)
         {
             if (target.FindModule<HighlanderBodyModule>() != null)
