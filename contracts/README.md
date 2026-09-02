@@ -11,6 +11,15 @@ schema is its own unit and bumps the version in the file name.
 | `bundle-v1.schema.json` | importer cook | sim + presentation | draft v1 |
 | `command-v1.schema.json` | shell/net | sim | draft v1 |
 
+`fixtures/bundle-v1.json` is the complete generic-cook oracle produced from
+both sibling fixture trees under `importer/tests/fixtures/cook/`; it includes
+Object templates plus Weapon, Armor, DamageFX, Locomotor, LocomotorSet, and
+horde formation tables. `fixtures/bundle-v1-objects.json` is the focused
+Object-family producer oracle retained for `cook.objects`. Both are canonical
+JSON. The complete fixture is the schema-validation fixture; the Object-only
+fixture deliberately exercises that producer before the remaining tables are
+composed.
+
 Archive identity JSON (`*-archives.json`, `*-baseline.json`,
 `*-overlay.json`) pins which retail files are the source. They are data, not
 governance, and the importer and launcher read them.

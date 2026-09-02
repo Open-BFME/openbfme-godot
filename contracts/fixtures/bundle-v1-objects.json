@@ -1,212 +1,44 @@
 {
-  "armors": [
-    {
-      "entries": [
-        {
-          "damage_type": "DEFAULT",
-          "percent": 100
-        },
-        {
-          "damage_type": "SLASH",
-          "percent": 35
-        }
-      ],
-      "fields": {
-        "DamageScalar": "90%"
-      },
-      "name": "CookArmor"
-    }
-  ],
-  "damage_fx": [
-    {
-      "fields": {
-        "AmountForMajorFX": 10,
-        "Sound": [
-          "CookImpactOne",
-          "CookImpactTwo"
-        ],
-        "ThrottleTime": 250
-      },
-      "name": "CookDamageFX"
-    }
-  ],
   "defines": {
-    "COOK_ARMOR_PERCENT": "35%",
-    "COOK_ATTACK_RANGE": 300,
     "COOK_COST": 725,
     "COOK_DAMAGE": 42,
     "COOK_HEALTH": 1200,
     "COOK_KINDOF": "PRELOAD SELECTABLE CAN_ATTACK",
-    "COOK_LOCOMOTOR_SPEED": 60,
-    "COOK_POSITION": 20,
-    "COOK_TIME": 15.5,
-    "COOK_WEAPON_DAMAGE": 55
+    "COOK_TIME": 15.5
   },
   "diagnostics": [
     {
-      "message": "data/ini/objects/objects.inc:60: module type ModuleTag_Malformed or carrier 'Behavior' could not be parsed into typed fields; retained verbatim with gap=true",
+      "message": "data/ini/objects.inc:60: module type ModuleTag_Malformed or carrier 'Behavior' could not be parsed into typed fields; retained verbatim with gap=true",
       "template": "CookMalformed"
     },
     {
-      "message": "data/ini/objects/objects.inc:65: module type AlienBehavior or carrier 'AlienCarrier' could not be parsed into typed fields; retained verbatim with gap=true",
+      "message": "data/ini/objects.inc:65: module type AlienBehavior or carrier 'AlienCarrier' could not be parsed into typed fields; retained verbatim with gap=true",
       "template": "CookMalformed"
-    }
-  ],
-  "hordes": [
-    {
-      "fields": {
-        "BannerCarrier": "CookBanner",
-        "InitialPayload": [
-          "CookMember 2",
-          "CookMember 3"
-        ],
-        "MaxTurnWithoutReform": 45,
-        "Slots": 5
-      },
-      "name": "CookHorde",
-      "rank_info": [
-        {
-          "position": [
-            {
-              "x": 20,
-              "y": 0
-            },
-            {
-              "x": 20,
-              "y": -20
-            }
-          ],
-          "rank": 1,
-          "unit_type": "CookMember"
-        },
-        {
-          "position": [
-            {
-              "x": 0,
-              "y": 10
-            }
-          ],
-          "rank": 2,
-          "unit_type": "CookMember"
-        }
-      ]
-    }
-  ],
-  "locomotor_sets": [
-    {
-      "fields": {
-        "Condition": "SET_NORMAL",
-        "Locomotor": "CookHordeLocomotor",
-        "Speed": 60
-      },
-      "name": "CookHorde"
-    }
-  ],
-  "locomotors": [
-    {
-      "fields": {
-        "Acceleration": 12.5,
-        "Braking": 10,
-        "MaxTurnWithoutReform": 45,
-        "MinTurnSpeed": "15%",
-        "Speed": 60,
-        "SpeedDamaged": 30,
-        "Surface": [
-          "GROUND",
-          "RUBBLE"
-        ],
-        "TurnRate": 120
-      },
-      "name": "CookHordeLocomotor"
     }
   ],
   "schema": "openbfme.bundle.v1",
   "source": {
-    "effective_tree_sha256": "f7a5a08e1192a56788dea9e7d3326a1ab0ea12e0e84864d9c4b790daac7b92fb",
+    "effective_tree_sha256": "4dd86f5c05912538e0c11b91ba4f77d326015a5bf0fea02265b9432421ab74fe",
     "paths": [
       {
-        "path": "data/ini/combat/constants.inc",
-        "sha256": "820078a35f2c2d27db8ab894241a5aad37ed97bca0a69e9e699abb08d3697392"
-      },
-      {
-        "path": "data/ini/combat/definitions.ini",
-        "sha256": "9002c5d83bc013af7180ec7b8cafad72862602571c3d68fcccdf78c3c5fddce5"
-      },
-      {
-        "path": "data/ini/objects/base-behavior.inc",
+        "path": "data/ini/base-behavior.inc",
         "sha256": "a4be1d98aa2eea0d1066e22132066782618304744df0428e608720a1cd72f03e"
       },
       {
-        "path": "data/ini/objects/constants.inc",
+        "path": "data/ini/constants.inc",
         "sha256": "016e2c47b27823b04b0ac7fd03d126d5f78de262a2ce795ab05c02ae18824fc0"
       },
       {
-        "path": "data/ini/objects/entry.ini",
+        "path": "data/ini/entry.ini",
         "sha256": "882575fda6a3b77475709d8af31ab6c1a268ac3abc95fedb64eec58909ffdb96"
       },
       {
-        "path": "data/ini/objects/objects.inc",
+        "path": "data/ini/objects.inc",
         "sha256": "6d417be7d91aff44f2e22cbc77a1c4aa3b709eb909c243b0da51654e6f643406"
       }
     ]
   },
   "templates": [
-    {
-      "blocks": [
-        {
-          "blocks": [],
-          "fields": {
-            "Condition": "SET_NORMAL",
-            "Locomotor": "CookHordeLocomotor",
-            "Speed": 60
-          },
-          "tag": "",
-          "type": "LocomotorSet"
-        }
-      ],
-      "fields": {},
-      "geometry": {},
-      "kind": "object",
-      "kindof": [],
-      "modules": [
-        {
-          "blocks": [],
-          "carrier": "Behavior",
-          "fields": {
-            "BannerCarrier": "CookBanner",
-            "InitialPayload": [
-              "CookMember 2",
-              "CookMember 3"
-            ],
-            "RankInfo": [
-              "RankNumber:1 UnitType:CookMember Position:X:COOK_POSITION Y:0 Position:X:COOK_POSITION Y:-20",
-              "RankNumber:2 UnitType:CookMember Position:X: 0 Y: 10"
-            ],
-            "Slots": 5
-          },
-          "gap": false,
-          "tag": "ModuleTag_HordeContain",
-          "type": "HordeContain"
-        }
-      ],
-      "name": "CookHorde",
-      "parent": null
-    },
-    {
-      "blocks": [],
-      "fields": {
-        "KindOf": "PRELOAD INFANTRY"
-      },
-      "geometry": {},
-      "kind": "object",
-      "kindof": [
-        "PRELOAD",
-        "INFANTRY"
-      ],
-      "modules": [],
-      "name": "CookMember",
-      "parent": null
-    },
     {
       "blocks": [
         {
@@ -412,52 +244,6 @@
       ],
       "name": "CookMalformed",
       "parent": null
-    }
-  ],
-  "weapons": [
-    {
-      "fields": {
-        "AttackRange": 300,
-        "DelayBetweenShots": 500,
-        "FireFX": [
-          "CookFireOne",
-          "CookFireTwo"
-        ],
-        "MinimumAttackRange": 10.5
-      },
-      "name": "CookSword",
-      "nuggets": [
-        {
-          "fields": {
-            "Damage": 55,
-            "DamageFXType": "CookDamageFX",
-            "DamageType": "SLASH",
-            "DeathType": "NORMAL",
-            "Radius": 5
-          },
-          "kind": "DamageNugget"
-        },
-        {
-          "fields": {
-            "Amount": 10,
-            "Radius": 12.5,
-            "TaperOff": 0.5
-          },
-          "kind": "MetaImpactNugget"
-        },
-        {
-          "fields": {
-            "ProjectileTemplateName": "CookProjectile"
-          },
-          "kind": "ProjectileNugget"
-        },
-        {
-          "fields": {
-            "LockWeaponSlot": "PRIMARY"
-          },
-          "kind": "other"
-        }
-      ]
     }
   ]
 }

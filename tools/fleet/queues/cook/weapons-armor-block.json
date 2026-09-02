@@ -1,7 +1,9 @@
 {
-  "title": "Generic cook: Weapon, Armor, and DamageFX blocks",
-  "rank": 20,
   "detail": "importer/cook/combat.py: Weapon (nuggets, slots, conditions), Armor tables, DamageFX. Reuse the existing parsers in armor_compiler.py and playable_unit_compiler.py where they are generic; do not route through faction profiles.",
+  "done_at": "2026-09-02",
+  "done_by": "COOK-B",
   "oracle": "python -m pytest importer/tests/test_cook_combat.py -q",
-  "status": "open"
+  "rank": 20,
+  "status": "done",
+  "title": "Generic cook: Weapon, Armor, and DamageFX blocks"
 }

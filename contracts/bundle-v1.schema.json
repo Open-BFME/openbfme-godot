@@ -4,7 +4,7 @@
   "title": "OpenBFME cooked bundle v1",
   "description": "Deterministic, faction-independent effective-INI data consumed by the simulation and presentation layers. Template array indexes are the ids published by snapshot-v1 objects.template.",
   "type": "object",
-  "required": ["schema", "source", "templates", "defines", "diagnostics"],
+  "required": ["schema", "source", "templates", "weapons", "armors", "damage_fx", "locomotors", "locomotor_sets", "hordes", "defines", "diagnostics"],
   "additionalProperties": false,
   "$defs": {
     "scalar": {
@@ -58,6 +58,58 @@
         "gap": {
           "type": "boolean",
           "description": "True only when the module block could not be parsed into typed fields because of a parse error, malformed block, or unknown carrier. Every well-formed module row is false regardless of runtime implementation; gap rows retain authored values verbatim."
+        }
+      }
+    },
+    "namedFields": {
+      "type": "object",
+      "required": ["name", "fields"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "fields": { "$ref": "#/$defs/fields" }
+      }
+    },
+    "weaponNugget": {
+      "type": "object",
+      "required": ["kind", "fields"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": ["DamageNugget", "MetaImpactNugget", "ProjectileNugget", "other"]
+        },
+        "fields": { "$ref": "#/$defs/fields" }
+      }
+    },
+    "armorEntry": {
+      "type": "object",
+      "required": ["damage_type", "percent"],
+      "additionalProperties": false,
+      "properties": {
+        "damage_type": { "type": "string", "minLength": 1 },
+        "percent": { "type": "number", "minimum": 0 }
+      }
+    },
+    "rankInfo": {
+      "type": "object",
+      "required": ["rank", "unit_type", "position"],
+      "additionalProperties": false,
+      "properties": {
+        "rank": { "type": "integer", "minimum": 1 },
+        "unit_type": { "type": "string", "minLength": 1 },
+        "position": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["x", "y"],
+            "additionalProperties": false,
+            "properties": {
+              "x": { "type": "number" },
+              "y": { "type": "number" }
+            }
+          }
         }
       }
     }
@@ -132,6 +184,76 @@
             "then": { "properties": { "parent": { "type": "string", "minLength": 1 } } }
           }
         ]
+      }
+    },
+    "weapons": {
+      "type": "array",
+      "description": "Ordered effective Weapon table in authored world units and milliseconds.",
+      "items": {
+        "type": "object",
+        "required": ["name", "fields", "nuggets"],
+        "additionalProperties": false,
+        "properties": {
+          "name": { "type": "string", "minLength": 1 },
+          "fields": { "$ref": "#/$defs/fields" },
+          "nuggets": {
+            "type": "array",
+            "items": { "$ref": "#/$defs/weaponNugget" }
+          }
+        }
+      }
+    },
+    "armors": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "entries", "fields"],
+        "additionalProperties": false,
+        "properties": {
+          "name": { "type": "string", "minLength": 1 },
+          "entries": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "$ref": "#/$defs/armorEntry" }
+          },
+          "fields": {
+            "$ref": "#/$defs/fields",
+            "description": "Non-Armor assignments retained losslessly, such as DamageScalar."
+          }
+        }
+      }
+    },
+    "damage_fx": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/namedFields" }
+    },
+    "locomotors": {
+      "type": "array",
+      "description": "Ordered Locomotor assignments in retail world units; the runtime performs tick scaling.",
+      "items": { "$ref": "#/$defs/namedFields" }
+    },
+    "locomotor_sets": {
+      "type": "array",
+      "description": "Authored Object LocomotorSet blocks in template and block order.",
+      "items": { "$ref": "#/$defs/namedFields" }
+    },
+    "hordes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "rank_info", "fields"],
+        "additionalProperties": false,
+        "properties": {
+          "name": { "type": "string", "minLength": 1 },
+          "rank_info": {
+            "type": "array",
+            "items": { "$ref": "#/$defs/rankInfo" }
+          },
+          "fields": {
+            "$ref": "#/$defs/fields",
+            "description": "HordeContain-family assignments other than RankInfo, plus the bound locomotor's MaxTurnWithoutReform when authored."
+          }
+        }
       }
     },
     "defines": {
