@@ -45,19 +45,20 @@ End
             [assignment.key.casefold() for assignment in target.assignments],
         )
 
-    def test_empty_bare_unit_specific_sounds_stays_ambiguous(self) -> None:
-        # The default object.ini template authors a bare UnitSpecificSounds
-        # whose body is all comments; it keeps failing closed instead of
-        # silently consuming the End.
+    def test_empty_bare_unit_specific_sounds_is_an_authored_block(self) -> None:
+        # SAGE defines UnitSpecificSounds as an End-terminated block even when
+        # the default template leaves its body empty.
         source = b"""
 Object DefaultTemplate
 \tUnitSpecificSounds
 \tEnd
 End
 """
-        with self.assertRaises(Exception) as caught:
-            parse_sage_document(source, "data/ini/default/object.ini")
-        self.assertIn("ambiguous bare statement", str(caught.exception))
+        target = parse_sage_document(
+            source, "data/ini/default/object.ini"
+        ).objects[0]
+        self.assertEqual([block.kind for block in target.blocks], ["UnitSpecificSounds"])
+        self.assertEqual(target.blocks[0].items, ())
 
     def test_endless_module_header_is_retained_as_assignment(self) -> None:
         # BFME2 1.06 retail declares an empty draw module with no body and no

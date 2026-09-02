@@ -34,7 +34,7 @@ var tests = new (string Name, Func<Task> Run)[]
     ("zip traversal", TestTraversal),
     ("Windows zip aliases", TestWindowsArchiveAliases),
     ("hash mismatch", TestHashMismatch),
-    ("scalar importer progress", TestScalarImporterProgress),
+    ("scalar importer progress", TestScalarImporterProgress), ("native content importer arguments", ImporterRunnerArgumentsTests.Run),
     ("diagnostic redaction", TestRedaction),
     ("diagnostics run layout", TestDiagnosticsRunLayout),
     ("diagnostics redaction of home paths and secrets", TestDiagnosticsRedaction),

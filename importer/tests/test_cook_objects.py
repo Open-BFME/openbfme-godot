@@ -232,3 +232,36 @@ def test_parse_failure_names_template_and_keeps_valid_sibling() -> None:
     assert len(result.report["parse_failures"]) == 1
     assert result.report["parse_failures"][0]["file"] == "data/ini/broken.ini"
     assert result.report["parse_failures"][0]["template"] == "BadObject"
+
+
+def test_empty_unit_sounds_and_cross_file_block_end_are_authored_syntax() -> None:
+    result = cook_documents(
+        [
+            (
+                "data/ini/cross.ini",
+                b"""
+Object CrossFileDraw
+  UnitSpecificSounds
+  End
+  Draw = W3DScriptedModelDraw ModuleTag_Draw
+    #include "draw-body.inc"
+End
+""",
+            ),
+            (
+                "data/ini/draw-body.inc",
+                b"""
+DefaultModelConditionState
+  Model = CrossModel
+End
+End
+""",
+            ),
+        ]
+    )
+
+    assert result.report["parse_failures"] == []
+    template = result.bundle["templates"][0]
+    draw = next(module for module in template["modules"] if module["type"] == "W3DScriptedModelDraw")
+    assert draw["blocks"][0]["type"] == "DefaultModelConditionState"
+    assert draw["blocks"][0]["fields"]["Model"] == "CrossModel"

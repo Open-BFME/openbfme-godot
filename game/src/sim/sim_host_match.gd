@@ -3,6 +3,7 @@ extends Node3D
 ## First playable native-core match: host-owned simulation, snapshot-only view.
 
 const SimHostClientScript := preload("res://src/sim/sim_host_client.gd")
+const NativeContentLocatorScript := preload("res://src/sim/native_content_locator.gd")
 const MapDocumentScript := preload("res://src/map/map_document.gd")
 const MapTerrainMeshScript := preload("res://src/map/map_terrain_mesh.gd")
 const MapBootstrapScript := preload("res://src/map/map_bootstrap.gd")
@@ -101,13 +102,25 @@ func _start_match() -> void:
 	if match.is_empty():
 		_fail("match-launch fixture could not be read")
 		return
-	var configured_bundle := OS.get_environment("OPENBFME_BUNDLE").strip_edges()
-	var bundle_path := configured_bundle
-	var source := "OPENBFME_BUNDLE"
-	if bundle_path.is_empty():
+	var preferred_map := String((match.get("map", {}) as Dictionary).get("path", ""))
+	var native_content: Dictionary = NativeContentLocatorScript.resolve(preferred_map)
+	var bundle_path := String(native_content.get("bundle", ""))
+	var bundle_source := String(native_content.get("bundle_source", "unresolved"))
+	if (
+		OS.get_environment("OPENBFME_BUNDLE").strip_edges().is_empty()
+		and not FileAccess.file_exists(bundle_path)
+	):
 		bundle_path = _repo_path("workspace/logs/lane-cook-c/corpus-bundle-full.json")
-		source = "default"
-	print("SIM_HOST_MATCH_BUNDLE source=%s path=%s" % [source, bundle_path])
+		bundle_source = "default"
+	var map_path := String(native_content.get("map", ""))
+	var map_source := String(native_content.get("map_source", "unresolved"))
+	if (
+		OS.get_environment("OPENBFME_MAP").strip_edges().is_empty()
+		and not FileAccess.file_exists(map_path)
+	):
+		map_path = _repo_path("workspace/logs/lane-map-scene/fords.map-v1.json")
+		map_source = "default"
+	print("SIM_HOST_MATCH_BUNDLE source=%s path=%s" % [bundle_source, bundle_path])
 	if not FileAccess.file_exists(bundle_path):
 		_fail("bundle is absent at %s" % bundle_path)
 		return
@@ -116,24 +129,15 @@ func _start_match() -> void:
 		var opponent := players[1] as Dictionary
 		opponent["controller"] = "ai"
 		opponent["ai_difficulty"] = "medium"
-	var configured_map := OS.get_environment("OPENBFME_MAP").strip_edges()
-	var map_path := configured_map
-	var map_source := "OPENBFME_MAP"
-	if map_path.is_empty():
-		map_path = _repo_path("workspace/logs/lane-map-scene/fords.map-v1.json")
-		map_source = "default"
 	if FileAccess.file_exists(map_path):
 		_map_document = MapDocumentScript.new()
 		if not _map_document.load_path(map_path):
 			_fail(_map_document.error)
 			return
 		print("SIM_HOST_MATCH_MAP source=%s path=%s" % [map_source, map_path])
-	elif not configured_map.is_empty():
-		_fail("OPENBFME_MAP is absent at %s" % map_path)
-		return
 	else:
 		map_path = ""
-		print("SIM_HOST_MATCH_MAP source=default path=<absent-mapless-fallback>")
+		print("SIM_HOST_MATCH_MAP source=%s path=<absent-mapless-fallback>" % map_source)
 	_client = SimHostClientScript.new()
 	var launched: bool = (
 		_client.launch_bundle(match, bundle_path)
@@ -143,6 +147,14 @@ func _start_match() -> void:
 	if not launched:
 		_fail(_client.last_error())
 		return
+	if _map_document != null:
+		var map_reply := _client.launch_reply().get("map", {}) as Dictionary
+		if map_reply.is_empty():
+			_fail("native host did not load the selected map")
+			return
+		print("SIM_HOST_MATCH_MAP loaded=true spawned=%d" % int(
+			map_reply.get("objects_spawned", 0)
+		))
 	_replay_path = _new_replay_path()
 	if not _client.record(_replay_path):
 		_fail("replay record: %s" % _client.last_error())

@@ -18,6 +18,7 @@ import argparse
 import hashlib
 import json
 import os
+import shutil
 import sys
 import traceback
 import uuid
@@ -228,6 +229,56 @@ def _constrain_output(path: Path, state_root: Path) -> Path:
     return resolved
 
 
+def _constrain_cooked_root(path: Path, state_root: Path) -> Path:
+    """Persistent cooked bytes must remain under the private state root."""
+
+    private_root = state_root.resolve()
+    resolved = path.expanduser().resolve()
+    try:
+        resolved.relative_to(private_root)
+    except ValueError as exc:
+        raise SystemExit(
+            f"--cooked-root must be under private state root {private_root}, got {resolved}"
+        ) from exc
+    return resolved
+
+
+def _cached_cook_matches(cooked: Path, source_sha256: str) -> bool:
+    try:
+        document = json.loads((cooked / "map.json").read_text(encoding="utf-8"))
+        source = document.get("source", {})
+        required = (
+            cooked / str(document.get("terrain", "terrain.json")),
+            cooked / str(document.get("objects", "objects.json")),
+            cooked / str(document.get("waypoints", "waypoints.json")),
+        )
+        return source.get("sha256") == source_sha256 and all(
+            path.is_file() for path in required
+        )
+    except (OSError, UnicodeError, json.JSONDecodeError, TypeError):
+        return False
+
+
+def _publish_cached_cook(staged: Path, destination: Path) -> None:
+    """Replace one private cache directory without exposing a partial cook."""
+
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    incoming = destination.parent / f".{destination.name}.incoming-{uuid.uuid4().hex}"
+    backup = destination.parent / f".{destination.name}.previous-{uuid.uuid4().hex}"
+    shutil.copytree(staged, incoming)
+    try:
+        if destination.exists():
+            os.replace(destination, backup)
+        os.replace(incoming, destination)
+    except Exception:
+        if not destination.exists() and backup.exists():
+            os.replace(backup, destination)
+        raise
+    finally:
+        shutil.rmtree(incoming, ignore_errors=True)
+        shutil.rmtree(backup, ignore_errors=True)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--install", required=True, type=Path)
@@ -236,6 +287,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--limit", type=int, default=0)
     parser.add_argument("--output", type=Path, default=None)
     parser.add_argument(
+        "--cooked-root",
+        type=Path,
+        default=None,
+        help=(
+            "private state-root directory that persistently caches strict cooked "
+            "map directories; unchanged source hashes are reused"
+        ),
+    )
+    parser.add_argument(
         "--skip-connectivity",
         action="store_true",
         help="only strict cook; skip passability start-component check",
@@ -243,7 +303,10 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     install = args.install.expanduser().resolve()
-    if not (install / "game.dat").is_file():
+    marker = install / "game.dat"
+    if args.game == "rotwk" and not marker.is_file():
+        marker = install / "layer-0-rotwk" / "game.dat"
+    if not marker.is_file():
         print(f"FAIL: install has no game.dat: {install}", file=sys.stderr)
         return 2
 
@@ -254,6 +317,11 @@ def main(argv: list[str] | None = None) -> int:
         Path(state_root).expanduser().resolve(), repo_root_from_module()
     )
     os.environ["OPENBFME_IMPORT_ROOT"] = str(state_root)
+    cooked_root = (
+        _constrain_cooked_root(args.cooked_root, state_root)
+        if args.cooked_root is not None
+        else None
+    )
 
     catalog = _load_catalog(state_root, args.game, install)
     run_id = uuid.uuid4().hex
@@ -277,6 +345,7 @@ def main(argv: list[str] | None = None) -> int:
         and not bool(row["isScenarioMp"])
     ]
     selected.sort(key=lambda row: str(row["virtualPath"]).casefold())
+    eligible_count = len(selected)
     if args.limit and args.limit > 0:
         selected = selected[: args.limit]
 
@@ -332,18 +401,27 @@ def main(argv: list[str] | None = None) -> int:
                 starts = len(parsed.player_starts)
                 entry["playerStarts"] = starts
                 work = job_root / f"{index:04d}-{slug}"
-                cooked = work / "cooked"
-                cooked.mkdir(parents=True, exist_ok=True)
-                source_path = work / "source.map"
-                source_path.write_bytes(source)
-                convert_sage_map(
-                    source_path,
-                    cooked,
-                    metadata={"id": map_id, "displayName": slug},
-                    expected={},
-                    object_bindings=None,
-                    profile="multiplayer",
+                cached = cooked_root / slug if cooked_root is not None else None
+                cache_hit = cached is not None and _cached_cook_matches(
+                    cached, entry["sourceSha256"]
                 )
+                if cache_hit:
+                    cooked = cached
+                    entry["cacheHit"] = True
+                else:
+                    cooked = work / "cooked"
+                    cooked.mkdir(parents=True, exist_ok=True)
+                    source_path = work / "source.map"
+                    source_path.write_bytes(source)
+                    convert_sage_map(
+                        source_path,
+                        cooked,
+                        metadata={"id": map_id, "displayName": slug},
+                        expected={},
+                        object_bindings=None,
+                        profile="multiplayer",
+                    )
+                    entry["cacheHit"] = False
                 map_doc = json.loads((cooked / "map.json").read_text(encoding="utf-8"))
                 entry["conversionStatus"] = map_doc.get("conversionStatus")
                 if starts < 2:
@@ -363,6 +441,10 @@ def main(argv: list[str] | None = None) -> int:
                     except Exception as conn_exc:
                         entry["verdict"] = "cooked-connectivity-check-failed"
                         entry["connectivityError"] = str(conn_exc)[:500]
+                if cached is not None and not cache_hit and entry["verdict"] not in FATAL_VERDICTS:
+                    _publish_cached_cook(cooked, cached)
+                if cached is not None and entry["verdict"] not in FATAL_VERDICTS:
+                    entry["cookedPath"] = str(cached)
             except SageMapError as exc:
                 entry["verdict"] = "cook-rejected"
                 entry["error"] = str(exc)[:800]
@@ -407,7 +489,7 @@ def main(argv: list[str] | None = None) -> int:
             pass
 
     install_sha = ""
-    game_dat = install / "game.dat"
+    game_dat = marker
     if game_dat.is_file():
         # Size + mtime marker only (not full hash of multi-GB tree).
         st = game_dat.stat()
@@ -429,6 +511,8 @@ def main(argv: list[str] | None = None) -> int:
             "strict convert_sage_map multiplayer; passability start-component "
             "connectivity when not --skip-connectivity; temp under private jobs"
         ),
+        "eligibleMapCount": eligible_count,
+        "requestedLimit": args.limit or None,
         "mapCount": len(results),
         "verdictCounts": dict(sorted(verdicts.items())),
         "fatalVerdictCount": sum(verdicts[v] for v in FATAL_VERDICTS if v in verdicts),

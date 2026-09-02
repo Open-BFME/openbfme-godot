@@ -218,6 +218,11 @@ jobs:
             importer/requirements-release-win.txt `
             contracts `
             tools/openbfme_import.py `
+            tools/rotwk_binding_factory.py `
+            tools/rotwk_faction_convert_batch.py `
+            tools/rotwk_layered_install.py `
+            tools/rotwk_map_cook_corpus.py `
+            tools/rotwk_multimap_skirmish.py `
             tools/bootstrap-importer-python.ps1
           if ($LASTEXITCODE -ne 0) { throw "Failed to archive committed bundled source." }
           Expand-Archive $sourceArchive -DestinationPath $launcher

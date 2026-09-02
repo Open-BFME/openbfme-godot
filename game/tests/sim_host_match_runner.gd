@@ -3,6 +3,7 @@ extends SceneTree
 
 const SimHostClientScript := preload("res://src/sim/sim_host_client.gd")
 const SimHostMatchScript := preload("res://src/sim/sim_host_match.gd")
+const NativeContentLocatorScript := preload("res://src/sim/native_content_locator.gd")
 const WatchdogScript := preload("res://tests/runner_watchdog.gd")
 const TICKS := 900
 
@@ -18,16 +19,18 @@ func _initialize() -> void:
 
 
 func _run() -> void:
-	var bundle_path := OS.get_environment("OPENBFME_BUNDLE").strip_edges()
-	if bundle_path.is_empty():
-		bundle_path = _repo_path("workspace/logs/lane-cook-c/corpus-bundle-full.json")
+	var match := _load_json(_repo_path("contracts/fixtures/match-launch-v1.json"))
+	_check("match_fixture_loaded", not match.is_empty())
+	var preferred_map := String((match.get("map", {}) as Dictionary).get("path", ""))
+	var native_content: Dictionary = NativeContentLocatorScript.resolve(preferred_map)
+	var bundle_path := String(native_content.get("bundle", ""))
+	var map_path := String(native_content.get("map", ""))
 	if not FileAccess.file_exists(bundle_path):
 		print("SIM_HOST_MATCH SKIP bundle absent at %s" % bundle_path)
 		_finish()
 		return
+	_check("selected_map_present", FileAccess.file_exists(map_path))
 	_check("host_executable_ready", _ensure_release_host())
-	var match := _load_json(_repo_path("contracts/fixtures/match-launch-v1.json"))
-	_check("match_fixture_loaded", not match.is_empty())
 	_test_input_mappings()
 	if failed > 0:
 		_finish()

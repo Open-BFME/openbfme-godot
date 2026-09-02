@@ -327,6 +327,9 @@ public sealed class HostProtocolSession
         MapLoadReport? report)
     {
         if (report == null) throw new ProtocolException("map launch produced no load report");
+        writer.WriteBoolean("map_loaded", true);
+        writer.WriteNumber("map_objects", report.MapObjectCount);
+        writer.WriteNumber("map_spawned", report.SpawnedObjectCount);
         writer.WriteStartObject("map");
         writer.WriteStartObject("grid");
         writer.WriteNumber("width", map.HeightGrid.Width);
