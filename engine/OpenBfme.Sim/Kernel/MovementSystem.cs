@@ -378,6 +378,11 @@ public sealed class MovementSystem
     private FlowField FieldFor(FixedVector2 destination)
     {
         var (goalX, goalY) = Grid.WorldToCell(destination);
+        // An order can name a point outside the grid (a target standing past the
+        // map edge, a plot ring around a fortress near a corner). The nearest
+        // in-bounds cell is the deterministic goal; throwing would abort the tick.
+        goalX = Math.Clamp(goalX, 0, Grid.Width - 1);
+        goalY = Math.Clamp(goalY, 0, Grid.Height - 1);
         var key = Grid.IndexOf(goalX, goalY);
         if (!_flowFields.TryGetValue(key, out var field))
         {
