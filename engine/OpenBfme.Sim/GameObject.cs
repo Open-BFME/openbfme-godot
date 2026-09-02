@@ -57,6 +57,42 @@ public sealed class GameObject
 
     public void SetUnderConstruction(bool value) => IsUnderConstruction = value;
 
+    internal (Fixed64 Initial, Fixed64 Maximum) ConstructionHealthBounds()
+    {
+        if (Template.BodyHealth is { } body) return (body.InitialHealth, body.MaxHealth);
+        if (FindModule<StructureBodyModule>() is { } structure)
+        {
+            return (
+                Fixed64.FromInt64(Math.Clamp(
+                    structure.Spec.GetLong("InitialHealth", structure.MaxHealth),
+                    0,
+                    structure.MaxHealth)),
+                Fixed64.FromInt64(structure.MaxHealth));
+        }
+        if (FindModule<ActiveBodyModule>() is { } active)
+        {
+            return (
+                Fixed64.FromInt64(Math.Clamp(
+                    active.Spec.GetLong("InitialHealth", active.MaxHealth),
+                    0,
+                    active.MaxHealth)),
+                Fixed64.FromInt64(active.MaxHealth));
+        }
+        return (Fixed64.Zero, Fixed64.Zero);
+    }
+
+    internal void SetConstructionHealth(Fixed64 health)
+    {
+        if (Combat is { HasBody: true } combat)
+        {
+            combat.Health = Fixed64.Min(combat.MaxHealth, Fixed64.Max(Fixed64.Zero, health));
+            return;
+        }
+        var integerHealth = Math.Max(0, health.Raw >> Fixed64.FractionBits);
+        FindModule<StructureBodyModule>()?.SetConstructionHealth(integerHealth);
+        FindModule<ActiveBodyModule>()?.SetConstructionHealth(integerHealth);
+    }
+
     public void SetConditionToken(string token, bool enabled = true) =>
         (Combat ?? throw new InvalidOperationException("Object template has no combat data"))
             .SetCondition(token, enabled);
