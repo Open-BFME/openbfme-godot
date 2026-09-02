@@ -47,10 +47,26 @@ public sealed partial class SimWorld
         if (targetId is < 1 or > int.MaxValue
             || !_objects.TryGetValue((int)targetId, out var target)
             || target.IsDead || target.IsDying || target.Team == gameObject.Team) return;
-        if (!Enum.TryParse<WeaponSlot>(button.WeaponSlot, true, out var slot)) return;
+        if (!WeaponSlotAllowsTarget(gameObject, button.WeaponSlot, target)
+            || !TryWeaponSlot(gameObject, button.WeaponSlot, out var weapon)) return;
+        Combat.FireWeaponOnce(this, gameObject, target, weapon);
+    }
+
+    internal bool WeaponSlotAllowsTarget(GameObject gameObject, string slotName, GameObject target)
+    {
+        if (!TryWeaponSlot(gameObject, slotName, out var weaponName)
+            || !_config.WeaponTemplates.TryGetValue(weaponName, out var weapon)) return false;
+        var distance = gameObject.Position.DistanceSquaredTo(target.Position);
+        return distance <= weapon.AttackRange * weapon.AttackRange
+            && distance >= weapon.MinimumAttackRange * weapon.MinimumAttackRange;
+    }
+
+    private static bool TryWeaponSlot(GameObject gameObject, string slotName, out string weapon)
+    {
+        weapon = "";
+        if (!Enum.TryParse<WeaponSlot>(slotName, true, out var slot)) return false;
         var set = gameObject.Template.WeaponSets.FirstOrDefault(value => value.Matches(gameObject.ConditionTokens))
             ?? gameObject.Template.WeaponSets.FirstOrDefault(value => value.Conditions.Count == 0);
-        if (set == null || !set.Weapons.TryGetValue(slot, out var weapon)) return;
-        Combat.FireWeaponOnce(this, gameObject, target, weapon);
+        return set != null && set.Weapons.TryGetValue(slot, out weapon!);
     }
 }

@@ -77,7 +77,7 @@ public sealed class AISpecialPowerUpdateModule : ModuleBase
         CommandButtonTemplate button)
     {
         if (self.Combat == null || !TryStance(button.Stances, out var stance, out var commandValue)
-            || DesiredStance(self.Combat) != stance || self.Combat.Stance == stance) return false;
+            || DesiredStance(self, state) != stance || self.Combat.Stance == stance) return false;
         commands.Add(new SimCommand(tick, state.Team, state.CommandSequence++, "stance", new[]
         {
             new KeyValuePair<string, CommandValue>("objects", CommandValue.OfLongList(new long[] { self.Id })),
@@ -114,7 +114,8 @@ public sealed class AISpecialPowerUpdateModule : ModuleBase
         CommandButtonTemplate button)
     {
         var target = SelectTarget(world, self);
-        if (target == null || button.WeaponSlot.Length == 0) return false;
+        if (target == null || button.WeaponSlot.Length == 0
+            || !world.WeaponSlotAllowsTarget(self, button.WeaponSlot, target)) return false;
         AddAbilityCommand(state, tick, commands, self, button, target);
         return true;
     }
@@ -144,9 +145,13 @@ public sealed class AISpecialPowerUpdateModule : ModuleBase
             && tech.CommandButtons.TryGetValue("Command_GoblinKingCallFromTheDeep", out button!);
     }
 
-    private static UnitStance DesiredStance(CombatState state) => state.Stance == UnitStance.HoldGround
-        ? UnitStance.HoldGround
-        : state.OrderKind == CombatOrderKind.Attack || state.EngagedTargetId != 0
+    private static UnitStance DesiredStance(GameObject self, AiPlayerState state) =>
+        (state.Phase == AiPhase.Defend
+            || self.FindModule<AIUpdateInterfaceModule>() is { AutoAcquireEnabled: false })
+            && self.Combat!.OrderKind == CombatOrderKind.None
+            && self.Combat.EngagedTargetId == 0
+            ? UnitStance.HoldGround
+        : self.Combat!.OrderKind == CombatOrderKind.Attack || self.Combat.EngagedTargetId != 0
             ? UnitStance.Aggressive
             : UnitStance.Battle;
 
@@ -198,6 +203,9 @@ public sealed class AISpecialPowerUpdateModule : ModuleBase
     {
         var roles = AiTemplateRoles.Classify(candidate.Template);
         if (structureTarget != ((roles & AiUnitRole.Structure) != 0)) return false;
+        if (_aiType == "AI_SPECIAL_POWER_CAPTURE_BUILDING"
+            && (candidate.Team != -1
+                || !candidate.Template.KindOf.Contains("CAPTURABLE", StringComparer.Ordinal))) return false;
         if (_aiType is "AI_SPECIAL_POWER_HEAL_AOE" or "AI_SPELLBOOK_REBUILD"
             && candidate.Health >= candidate.MaxHealth) return false;
         if (_aiType == "AI_SPELLBOOK_BUFFECONOMYBUILDING"

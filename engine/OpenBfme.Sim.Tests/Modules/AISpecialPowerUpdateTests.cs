@@ -213,6 +213,71 @@ public sealed class AISpecialPowerUpdateTests
     }
 
     [Fact]
+    public void AuthoredHoldGroundRowActivatesForDefensiveAiPhase()
+    {
+        var button = new CommandButtonTemplate("Command_SetStanceHoldGround", "SET_STANCE",
+            "", "", "", "", Stances: "HoldGround");
+        var set = new CommandSetTemplate("HordeSet",
+            new[] { new CommandSetEntryTemplate(1, button.Name, button) });
+        var tech = new TechCatalog(commandButtons: new[] { button }, commandSets: new[] { set });
+        var actorTemplate = ModuleBatchBTestSupport.Template("horde", new[]
+        {
+            ModuleBatchBTestSupport.Spec(AISpecialPowerUpdateModule.TypeName,
+                strings: new Dictionary<string, string>
+                {
+                    ["CommandButtonName"] = button.Name,
+                    ["SpecialPowerAIType"] = "AI_SPECIAL_POWER_STANCEHOLDGROUND",
+                }),
+        }, commandSet: set.Name);
+        var world = ModuleBatchBTestSupport.World(new[] { actorTemplate }, tech: tech);
+        var actor = world.SpawnObject("horde", 0, ModuleBatchBTestSupport.At(0));
+        var state = AiPlayerState.Create(0,
+            new MatchLaunchPlayer(0, 0, "Men", "ai", "hard", null, null, null, null, null));
+        state.Phase = AiPhase.Defend;
+        var commands = new List<SimCommand>();
+
+        Assert.True(actor.FindModule<AISpecialPowerUpdateModule>()!.TryPlan(world, actor, state, 1, commands));
+
+        Assert.Equal("hold_ground", Assert.Single(commands).GetString("stance"));
+    }
+
+    [Fact]
+    public void CaptureBuildingRequiresNeutralCapturableStructure()
+    {
+        var power = new SpecialPowerTemplate("Capture", "CAPTURE", 1_000, Array.Empty<string>(), false);
+        var button = new CommandButtonTemplate("Command_Capture", "SPECIAL_POWER",
+            "", "", "", power.Name);
+        var set = new CommandSetTemplate("CaptureSet",
+            new[] { new CommandSetEntryTemplate(1, button.Name, button) });
+        var tech = new TechCatalog(specialPowers: new[] { power }, commandButtons: new[] { button },
+            commandSets: new[] { set });
+        var casterTemplate = ModuleBatchBTestSupport.Template("capturer", new[]
+        {
+            ModuleBatchBTestSupport.Spec(AISpecialPowerUpdateModule.TypeName,
+                strings: new Dictionary<string, string>
+                {
+                    ["CommandButtonName"] = button.Name,
+                    ["SpecialPowerAIType"] = "AI_SPECIAL_POWER_CAPTURE_BUILDING",
+                }),
+        }, commandSet: set.Name);
+        var enemyStructure = ModuleBatchBTestSupport.Template("enemy-fort", Array.Empty<ModuleSpec>(),
+            kindOf: new[] { "STRUCTURE" });
+        var captureFlag = ModuleBatchBTestSupport.Template("CaptureFlag", Array.Empty<ModuleSpec>(),
+            kindOf: new[] { "CAPTURABLE", "STRUCTURE", "CAPTUREFLAG" });
+        var world = ModuleBatchBTestSupport.World(new[] { casterTemplate, enemyStructure, captureFlag }, tech: tech);
+        var caster = world.SpawnObject("capturer", 0, ModuleBatchBTestSupport.At(0));
+        world.SpawnObject("enemy-fort", 1, ModuleBatchBTestSupport.At(2));
+        var flag = world.SpawnObject("CaptureFlag", -1, ModuleBatchBTestSupport.At(10));
+        var state = AiPlayerState.Create(0,
+            new MatchLaunchPlayer(0, 0, "Men", "ai", "hard", null, null, null, null, null));
+        var commands = new List<SimCommand>();
+
+        Assert.True(caster.FindModule<AISpecialPowerUpdateModule>()!.TryPlan(world, caster, state, 1, commands));
+
+        Assert.Equal(flag.Id, Assert.Single(commands).GetLong("target"));
+    }
+
+    [Fact]
     public void AuthoredWeaponToggleUsesAbilityCommandAndToggleFlag()
     {
         var button = new CommandButtonTemplate("Command_ToggleSpiderRiderWeapon", "TOGGLE_WEAPONSET",
@@ -267,12 +332,15 @@ public sealed class AISpecialPowerUpdateTests
         var world = ModuleBatchBTestSupport.World(new[] { actorTemplate, enemyTemplate },
             new[] { ModuleBatchBTestSupport.Weapon("Axe", 25) }, tech);
         var gimli = world.SpawnObject("gimli", 0, ModuleBatchBTestSupport.At(0));
-        var enemy = world.SpawnObject("enemy", 1, ModuleBatchBTestSupport.At(5));
+        var enemy = world.SpawnObject("enemy", 1, ModuleBatchBTestSupport.At(200));
         var state = AiPlayerState.Create(0,
             new MatchLaunchPlayer(0, 0, "Men", "ai", "hard", null, null, null, null, null));
         var commands = new List<SimCommand>();
 
-        Assert.True(gimli.FindModule<AISpecialPowerUpdateModule>()!.TryPlan(world, gimli, state, 1, commands));
+        var module = gimli.FindModule<AISpecialPowerUpdateModule>()!;
+        Assert.False(module.TryPlan(world, gimli, state, 1, commands));
+        enemy.SetPosition(ModuleBatchBTestSupport.At(5));
+        Assert.True(module.TryPlan(world, gimli, state, 1, commands));
         Assert.True(world.SubmitCommand(Assert.Single(commands)));
         world.Tick();
 

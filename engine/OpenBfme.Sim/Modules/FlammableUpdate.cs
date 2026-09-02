@@ -6,7 +6,8 @@ public sealed class FlammableUpdateModule : ModuleBase
 {
     public const string TypeName = "FlammableUpdate";
 
-    private readonly Fixed64 _flameLimit;
+    private Fixed64 _flameLimit;
+    private readonly string _flameLimitExpression;
     private readonly long _burnedDelayMilliseconds;
     private readonly long _damageDelayMilliseconds;
     private readonly long _durationMilliseconds;
@@ -22,12 +23,20 @@ public sealed class FlammableUpdateModule : ModuleBase
     public FlammableUpdateModule(ModuleSpec spec) : base(spec)
     {
         _flameLimit = ModuleRuntime.ReadFixed(spec, "FlameDamageLimit", Fixed64.One);
+        _flameLimitExpression = spec.GetString("FlameDamageLimit", "");
         _burnedDelayMilliseconds = Math.Max(0, spec.GetLong("BurnedDelay", spec.GetLong("BurningDelay", 0)));
         _damageDelayMilliseconds = Math.Max(1, spec.GetLong("AflameDamageDelay", spec.GetLong("FireDamageDelay", 1_000)));
         _durationMilliseconds = Math.Max(0, spec.GetLong("AflameDuration", spec.GetLong("FlameDamageExpiration", 0)));
         _fireDamage = Math.Max(0, spec.GetLong("AflameDamageAmount", spec.GetLong("FireDamage", 0)));
         _damageType = spec.GetString("DamageType", "FLAME");
         _setBurnedStatus = ModuleRuntime.ReadBool(spec, "SetBurnedStatus", true);
+    }
+
+    public override void OnCreated(SimWorld world, GameObject self, GameObject? creator)
+    {
+        if (_flameLimitExpression.Contains("ROHAN_ENT_FIRE_THRESHOLD", StringComparison.Ordinal)
+            && self.MaxHealth > Fixed64.Zero)
+            _flameLimit = self.MaxHealth * Fixed64.FromFraction(1, 5);
     }
 
     public bool IsBurning => _burning;
