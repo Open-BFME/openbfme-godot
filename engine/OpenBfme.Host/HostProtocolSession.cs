@@ -1,3 +1,5 @@
+using System.Buffers.Binary;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Globalization;
@@ -591,10 +593,43 @@ public sealed class HostProtocolSession
 
     private IReadOnlyList<string> Join(JsonElement root)
     {
-        _ = RequireWorld();
-        var stateTick = RequiredInt(root, "tick", minimum: 0);
-        RestoreState(RequiredString(root, "state"));
         var world = RequireWorld();
+        var stateTick = RequiredInt(root, "tick", minimum: 0);
+        var state = RequiredState(root, "join");
+        var reuseCurrent = false;
+        if (root.TryGetProperty("reuse_current", out var reuseElement))
+        {
+            if (reuseElement.ValueKind is not (JsonValueKind.True or JsonValueKind.False))
+            {
+                throw new ProtocolException("join field 'reuse_current' must be boolean");
+            }
+            reuseCurrent = reuseElement.GetBoolean();
+        }
+        if (reuseCurrent)
+        {
+            var checkpoint = DecodeState(state);
+            var checkpointTick = checkpoint.Length >= sizeof(int)
+                ? BinaryPrimitives.ReadInt32LittleEndian(checkpoint)
+                : -1;
+            if (checkpointTick != stateTick || world.TickIndex != stateTick)
+            {
+                throw new ProtocolException(
+                    $"join tick {stateTick} does not match checkpoint tick {checkpointTick} "
+                    + $"and current tick {world.TickIndex}");
+            }
+            var checkpointHash = Convert.ToHexString(SHA256.HashData(checkpoint))
+                .ToLowerInvariant();
+            if (!checkpointHash.Equals(world.StateHash(), StringComparison.Ordinal))
+            {
+                throw new ProtocolException(
+                    "join reuse_current requires the launched world to match the checkpoint state");
+            }
+        }
+        else
+        {
+            RestoreState(state);
+            world = RequireWorld();
+        }
         if (world.TickIndex != stateTick)
         {
             throw new ProtocolException(
@@ -616,6 +651,15 @@ public sealed class HostProtocolSession
             SubmitCommandBundle(world, SimCommandBundle.Parse(element.GetRawText()));
         }
         var finalTick = bundles.Length == 0 ? stateTick : bundles.Max(CommandTick);
+        if (root.TryGetProperty("target_tick", out var targetTickElement))
+        {
+            if (!targetTickElement.TryGetInt32(out var targetTick) || targetTick < finalTick)
+            {
+                throw new ProtocolException(
+                    "join field 'target_tick' must be an integer at or after every catchup bundle");
+            }
+            finalTick = targetTick;
+        }
         while (world.TickIndex < finalTick) world.Tick();
         return new[] { Reply(writer =>
         {
@@ -628,7 +672,7 @@ public sealed class HostProtocolSession
     private IReadOnlyList<string> Diff(JsonElement root)
     {
         var world = RequireWorld();
-        var other = RestoreWorld(RequiredString(root, "state"));
+        var other = RestoreWorld(RequiredState(root, "diff"));
         // Authoritative state decides whether the peers agree. The snapshot-v1
         // JSON carries derived presentation columns (state/anim/anim_frame) that a
         // freshly restored world has not advanced, so it is only consulted to name
@@ -687,17 +731,20 @@ public sealed class HostProtocolSession
         {
             throw new ProtocolException("canonical state restore requires a launched session");
         }
-        byte[] payload;
+        return SimWorld.Restore(
+            DecodeState(state), _restoreConfig, ModuleRegistry.CreateDefault(), _restoreGrid);
+    }
+
+    private static byte[] DecodeState(string state)
+    {
         try
         {
-            payload = Convert.FromBase64String(state);
+            return Convert.FromBase64String(state);
         }
         catch (FormatException exception)
         {
             throw new ProtocolException("field 'state' is not valid base64", exception);
         }
-        return SimWorld.Restore(
-            payload, _restoreConfig, ModuleRegistry.CreateDefault(), _restoreGrid);
     }
 
     private int CommandTeam(JsonElement element) => TeamForSeat(CommandSeat(element));
@@ -801,6 +848,21 @@ public sealed class HostProtocolSession
                 members,
                 Formation: 0));
         }
+    }
+
+    private static string RequiredState(JsonElement root, string operation)
+    {
+        var hasState = root.TryGetProperty("state", out _);
+        var hasStatePath = root.TryGetProperty("state_path", out _);
+        if (hasState == hasStatePath)
+        {
+            throw new ProtocolException(
+                $"{operation} requires exactly one of 'state' or 'state_path'");
+        }
+        return hasState
+            ? RequiredString(root, "state")
+            : File.ReadAllText(
+                Path.GetFullPath(RequiredString(root, "state_path")), Encoding.UTF8);
     }
 
     private static string RequiredString(JsonElement root, string name)

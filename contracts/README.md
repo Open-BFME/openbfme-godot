@@ -11,6 +11,7 @@ schema is its own unit and bumps the version in the file name.
 | `bundle-v1.schema.json` | importer cook | sim + presentation | draft v1 |
 | `command-v1.schema.json` | shell/net | sim | draft v1 |
 | `replay-v1.schema.json` | sim host | sim host + match shell | draft v1 |
+| `lockstep-wire-v1.schema.json` | native match peers | native match peers | draft v1 |
 
 `fixtures/bundle-v1.json` is the complete generic-cook oracle produced from
 the fixture trees under `importer/tests/fixtures/cook/`; it includes Object
@@ -67,3 +68,21 @@ monotonic seat sequence and an ordered list of typed commands; the sim resolves
 seat ownership through match-launch and merges bundles by `(team, seq)` before
 the tick begins. Coordinates remain retail world units on the wire and are
 converted directly to deterministic fixed-point values by the sim.
+
+## Lockstep wire v1
+
+Native-core peers use a host-relayed star with seat 0 as host. Each peer runs
+its own sidecar and exchanges only newline-delimited JSON over reliable ENet
+channels. The implementation uses `ENetMultiplayerPeer` through the raw
+`MultiplayerPeer` packet API (no scene RPC), with control, bundle, and hash
+traffic on channels 0, 1, and 2. The line terminator is part of the framing
+contract even though one ENet packet contains exactly one line.
+
+The handshake pins the byte-canonical match launch, bundle
+`effective_tree_sha256`, map identity, and input delay. For tick T, a peer may
+advance only after it has one bundle from every seat. Empty bundles are valid
+on this wire and are not submitted to the sidecar. Non-empty bundles are
+submitted in `(resolved team asc, seq asc, seat asc)` order. Seat 0 relays each
+guest bundle and hash to all other guests. Rejoin transfers the host's `save`
+state plus its still-buffered future bundles; the guest restores through the
+sidecar `join` operation before resuming.

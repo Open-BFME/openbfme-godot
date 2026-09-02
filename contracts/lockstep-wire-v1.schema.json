@@ -1,0 +1,148 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "openbfme.lockstep-wire.v1",
+  "title": "OpenBFME native lockstep wire v1",
+  "description": "One newline-delimited JSON message, or a fixture transcript of such messages, carried on reliable ENet channels.",
+  "oneOf": [
+    { "$ref": "#/$defs/message" },
+    {
+      "type": "object",
+      "required": ["schema", "messages"],
+      "additionalProperties": false,
+      "properties": {
+        "schema": { "const": "openbfme.lockstep-wire.fixture.v1" },
+        "messages": { "type": "array", "items": { "$ref": "#/$defs/message" } }
+      }
+    }
+  ],
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "commandBundle": {
+      "type": "object",
+      "required": ["schema", "tick", "seat", "seq", "commands"],
+      "additionalProperties": false,
+      "properties": {
+        "schema": { "const": "openbfme.command.v1" },
+        "tick": { "type": "integer", "minimum": 0 },
+        "seat": { "type": "integer", "minimum": 0, "maximum": 7 },
+        "seq": { "type": "integer", "minimum": 0 },
+        "commands": {
+          "type": "array",
+          "description": "May be empty on the lockstep wire; empty bundles prove the seat is ready but are not submitted to the sidecar.",
+          "items": { "$ref": "command-v1.schema.json#/properties/commands/items" }
+        }
+      }
+    },
+    "handshake": {
+      "type": "object",
+      "required": ["schema", "kind", "launch_sha256", "match_launch", "effective_tree_sha256", "map_identity", "input_delay", "requested_seat"],
+      "additionalProperties": false,
+      "properties": {
+        "schema": { "const": "openbfme.lockstep-wire.v1" },
+        "kind": { "const": "handshake" },
+        "launch_sha256": { "$ref": "#/$defs/sha256" },
+        "match_launch": { "$ref": "match-launch-v1.schema.json" },
+        "effective_tree_sha256": { "$ref": "#/$defs/sha256" },
+        "map_identity": { "type": "string", "minLength": 1 },
+        "input_delay": { "type": "integer", "minimum": 1 },
+        "requested_seat": { "type": "integer", "minimum": -1, "maximum": 7 }
+      }
+    },
+    "welcome": {
+      "type": "object",
+      "required": ["schema", "kind", "seat", "seat_count", "input_delay", "reconnect", "tick"],
+      "additionalProperties": false,
+      "properties": {
+        "schema": { "const": "openbfme.lockstep-wire.v1" },
+        "kind": { "const": "welcome" },
+        "seat": { "type": "integer", "minimum": 1, "maximum": 7 },
+        "seat_count": { "type": "integer", "minimum": 2, "maximum": 8 },
+        "input_delay": { "type": "integer", "minimum": 1 },
+        "reconnect": { "type": "boolean" },
+        "tick": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "start": {
+      "type": "object",
+      "required": ["schema", "kind", "tick"],
+      "additionalProperties": false,
+      "properties": {
+        "schema": { "const": "openbfme.lockstep-wire.v1" },
+        "kind": { "const": "start" },
+        "tick": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "bundle": {
+      "type": "object",
+      "required": ["schema", "kind", "bundle"],
+      "additionalProperties": false,
+      "properties": {
+        "schema": { "const": "openbfme.lockstep-wire.v1" },
+        "kind": { "const": "bundle" },
+        "bundle": { "$ref": "#/$defs/commandBundle" }
+      }
+    },
+    "hash": {
+      "type": "object",
+      "required": ["schema", "kind", "tick", "seat", "hash"],
+      "additionalProperties": false,
+      "properties": {
+        "schema": { "const": "openbfme.lockstep-wire.v1" },
+        "kind": { "const": "hash" },
+        "tick": { "type": "integer", "minimum": 0 },
+        "seat": { "type": "integer", "minimum": 0, "maximum": 7 },
+        "hash": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "rejoin": {
+      "type": "object",
+      "required": ["schema", "kind", "tick", "target_tick", "state", "bundles", "pending_through"],
+      "additionalProperties": false,
+      "properties": {
+        "schema": { "const": "openbfme.lockstep-wire.v1" },
+        "kind": { "const": "rejoin" },
+        "tick": { "type": "integer", "minimum": 0, "description": "Tick encoded by state." },
+        "target_tick": { "type": "integer", "minimum": 0, "description": "Authoritative host tick reached by replaying bundles from state." },
+        "state": { "type": "string", "contentEncoding": "base64" },
+        "bundles": { "type": "array", "items": { "$ref": "#/$defs/commandBundle" } },
+        "pending_through": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "desyncRequest": {
+      "type": "object",
+      "required": ["schema", "kind", "tick", "hash"],
+      "additionalProperties": false,
+      "properties": {
+        "schema": { "const": "openbfme.lockstep-wire.v1" },
+        "kind": { "const": "desync_request" },
+        "tick": { "type": "integer", "minimum": 0 },
+        "hash": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "desyncState": {
+      "type": "object",
+      "required": ["schema", "kind", "tick", "seat", "hash", "state"],
+      "additionalProperties": false,
+      "properties": {
+        "schema": { "const": "openbfme.lockstep-wire.v1" },
+        "kind": { "const": "desync_state" },
+        "tick": { "type": "integer", "minimum": 0 },
+        "seat": { "type": "integer", "minimum": 0, "maximum": 7 },
+        "hash": { "$ref": "#/$defs/sha256" },
+        "state": { "type": "string", "contentEncoding": "base64" }
+      }
+    },
+    "message": {
+      "oneOf": [
+        { "$ref": "#/$defs/handshake" },
+        { "$ref": "#/$defs/welcome" },
+        { "$ref": "#/$defs/start" },
+        { "$ref": "#/$defs/bundle" },
+        { "$ref": "#/$defs/hash" },
+        { "$ref": "#/$defs/rejoin" },
+        { "$ref": "#/$defs/desyncRequest" },
+        { "$ref": "#/$defs/desyncState" }
+      ]
+    }
+  }
+}
