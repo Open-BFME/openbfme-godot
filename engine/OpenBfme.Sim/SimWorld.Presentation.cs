@@ -72,7 +72,7 @@ public sealed partial class SimWorld
         }
         if (gameObject.Combat?.Stance == UnitStance.HoldGround) state |= PresentationHold;
 
-        ObjectStore.State[slot] = state | ModuleRuntime.PresentationBits(gameObject);
+        ObjectStore.State[slot] = state;
         ObjectStore.Anim[slot] = track.Slot;
         ObjectStore.AnimFrame[slot] = track.Frame;
     }

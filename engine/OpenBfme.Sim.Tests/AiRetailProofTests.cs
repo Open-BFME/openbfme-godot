@@ -14,12 +14,14 @@ public sealed class AiRetailProofTests
     public AiRetailProofTests(ITestOutputHelper output) => _output = output;
 
     [Fact]
-    public void AnnihilationIgnoresDestroyedPersistentBuildingFoundations()
+    public void AnnihilationIgnoresStructuresInClaimedDeath()
     {
-        var building = new ModuleSpec(BuildingBehaviorModule.TypeName);
+        var slowDeath = new ModuleSpec(
+            SlowDeathModule.TypeName,
+            new Dictionary<string, long> { ["DeathTicks"] = 99 });
         var template = new ObjectTemplate(
             "fortress",
-            new[] { building },
+            new[] { slowDeath },
             bodyHealth: new BodyHealthTemplate(Fixed64.FromInt(100)),
             kindOf: new[] { "STRUCTURE" });
         var world = new SimWorld(
@@ -27,7 +29,7 @@ public sealed class AiRetailProofTests
             ModuleRegistry.CreateDefault());
         var fortress = world.SpawnObject("fortress", 1, At(0, 0));
 
-        world.DealDamage(fortress, 100);
+        world.HandleDeath(fortress);
 
         Assert.True(fortress.IsDying);
         Assert.False(HasStructure(world, 1));

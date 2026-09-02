@@ -23,7 +23,6 @@ internal static class AiPlanner
         PlanEconomy(world, state, tick, view, commands, ref budget);
         PlanProduction(world, state, tick, view, commands, ref budget);
         PlanTech(world, state, tick, view, commands, ref budget);
-        AiSpecialPowerPlanner.Plan(world, state, tick, commands);
         PlanArmy(world, state, tick, view, commands);
 
         if (!world.SubmitAiCommands(state, tick, commands))

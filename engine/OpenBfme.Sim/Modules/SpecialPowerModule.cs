@@ -44,8 +44,6 @@ public sealed class GenericSpecialPowerModule : SpecialPowerEffectModuleBase
         int targetId,
         FixedVector2 targetPosition)
     {
-        foreach (var heal in caster.Modules.OfType<AutoHealBehaviorModule>())
-            heal.TriggerButton(world);
         if (_attributeModifier.Length > 0) caster.SetConditionToken(_attributeModifier);
         foreach (var condition in _modelConditions) caster.SetConditionToken(condition);
         if (_modelConditions.Length > 0 && _conditionMilliseconds > 0)

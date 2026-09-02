@@ -136,7 +136,7 @@ public sealed class ObjectTemplate
             throw new ArgumentException("KindOf tokens must be non-empty", nameof(kindOf));
         }
         HasTechState = techEnabled || CommandSetName.Length > 0 || modules.Any(spec =>
-            spec.TypeName.Contains("Upgrade", StringComparison.Ordinal)
+            spec.TypeName.EndsWith("Upgrade", StringComparison.Ordinal)
             || spec.TypeName.Contains("SpecialPower", StringComparison.Ordinal));
     }
 }
@@ -153,26 +153,12 @@ public abstract class ModuleBase
 
     public ModuleSpec Spec { get; }
 
-    /// <summary>One-shot creation hook. Creator is the producing/spawning object when known.</summary>
-    public virtual void OnCreated(SimWorld world, GameObject self, GameObject? creator)
-    {
-    }
-
     public virtual void OnUpdate(SimWorld world, GameObject self)
     {
     }
 
     /// <summary>Returns true when the damage was consumed (e.g. by a body module).</summary>
     public virtual bool OnDamage(SimWorld world, GameObject self, long amount) => false;
-
-    /// <summary>Broadcast after authoritative health damage has landed.</summary>
-    public virtual void OnDamageReceived(
-        SimWorld world,
-        GameObject self,
-        Fixed64 amount,
-        string damageType)
-    {
-    }
 
     /// <summary>
     /// Armor-shaped pre-body hook: every module sees the incoming amount and may
@@ -187,11 +173,6 @@ public abstract class ModuleBase
     /// object is removed at end of tick.
     /// </summary>
     public virtual bool OnDeath(SimWorld world, GameObject self) => false;
-
-    /// <summary>Broadcast exactly once before the ordered death-claim chain starts.</summary>
-    public virtual void OnDeathStarted(SimWorld world, GameObject self)
-    {
-    }
 
     public virtual void WriteState(CanonicalWriter writer)
     {
