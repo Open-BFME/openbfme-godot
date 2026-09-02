@@ -26,8 +26,10 @@ from ..sage_cst import (
     SageBlock,
     SageCstError,
     SageObject,
+    parse_sage_document,
     resolve_sage_documents,
 )
+from ._textual_includes import expand_textual_includes
 
 
 BUNDLE_SCHEMA = "openbfme.bundle.v1"
@@ -456,7 +458,23 @@ def _recover_document(
                 )
             objects.append(candidates[0])
         except (SageCstError, ValueError) as exc:
-            failures.append({"file": path, "template": name, "message": str(exc)})
+            try:
+                expanded = expand_textual_includes(path, fragment_sources)
+                candidates = [
+                    obj
+                    for obj in parse_sage_document(expanded, path).objects
+                    if obj.name.casefold() == name.casefold()
+                ]
+                if len(candidates) != 1:
+                    raise ValueError(
+                        f"textual recovery expected one {name} definition in {path}, "
+                        f"found {len(candidates)}"
+                    )
+                objects.append(candidates[0])
+            except (SageCstError, ValueError) as fallback_exc:
+                failures.append(
+                    {"file": path, "template": name, "message": str(fallback_exc or exc)}
+                )
     return objects, failures
 
 
@@ -486,7 +504,7 @@ def _resolve_objects(
                     if key not in seen_failures:
                         failures.append(record)
                         seen_failures.add(key)
-        if not failures:
+        if not failures and "stray End in body fragment" not in str(exc):
             failures.append(_failure_record(str(exc), sources, _ENTRY_PATH))
         return recovered, failures
 

@@ -38,37 +38,142 @@ public sealed class ImporterRunner
         var bootstrapExit = await RunPythonAsync(bootstrap, progress, cancellationToken);
         if (bootstrapExit != 0) return bootstrapExit;
 
-        var start = NewProcess(launcherDirectory);
-        var firstCommand = game == "bfme2"
-            ? new[]
+        if (game == "bfme2")
+        {
+            var build = NewProcess(launcherDirectory);
+            foreach (var argument in new[]
             {
                 script, "--state-root", state, "--json", "build",
                 "--install", retail, "--game", game, "--profile", "men-fords-v0",
                 "--godot-content-root", contentRoot
-            }
-            : new[]
+            })
+                build.ArgumentList.Add(argument);
+            return await RunPythonAsync(build, progress, cancellationToken);
+        }
+
+        progress?.Report(new ImportProgress(
+            "Native content", "Preparing the layered RotWK effective INI tree.", null));
+        var prepare = NewProcess(
+            launcherDirectory,
+            isolated: false,
+            workingDirectory: Path.Combine(launcherDirectory, "importer"));
+        foreach (var argument in BuildNativePreparationArguments(retail, state, contentRoot))
+            prepare.ArgumentList.Add(argument);
+        var prepareExit = await RunPythonAsync(prepare, progress, cancellationToken);
+        if (prepareExit != 0) return prepareExit;
+
+        var batchTool = Path.GetFullPath(Path.Combine(
+            launcherDirectory, "tools", "rotwk_faction_convert_batch.py"));
+        var useBatch = File.Exists(batchTool);
+        if (useBatch)
+        {
+            progress?.Report(new ImportProgress(
+                "Factions", "Converting every faction discovered in the RotWK census.", null));
+            var batch = NewProcess(launcherDirectory);
+            foreach (var argument in BuildRotwkBatchArguments(batchTool, retail, state))
+                batch.ArgumentList.Add(argument);
+            var batchExit = await RunPythonAsync(batch, progress, cancellationToken);
+            if (batchExit != 0) return batchExit;
+        }
+        else
+        {
+            progress?.Report(new ImportProgress(
+                "Factions",
+                "The all-faction batch tool is absent; keeping the Men/Fords-based Angmar fallback.",
+                null));
+            var fallback = NewProcess(launcherDirectory);
+            foreach (var argument in new[]
             {
                 script, "--state-root", state, "--json", "import-faction",
                 "--install", retail, "--game", game, "--faction", "angmar", "--convert"
-            };
-        foreach (var argument in firstCommand)
-            start.ArgumentList.Add(argument);
-
-        var exitCode = await RunPythonAsync(start, progress, cancellationToken);
-        if (exitCode != 0) return exitCode;
-        if (game == "bfme2") return 0;
+            })
+                fallback.ArgumentList.Add(argument);
+            var fallbackExit = await RunPythonAsync(fallback, progress, cancellationToken);
+            if (fallbackExit != 0) return fallbackExit;
+        }
 
         progress?.Report(new ImportProgress("Packaging", "Building and selecting the local content pack.", null));
         var publish = NewProcess(launcherDirectory);
-        foreach (var argument in new[]
-        {
-            script, "--state-root", state, "--json", "publish-faction-to-slice",
-            "--install", retail, "--game", game, "--faction", game == "rotwk" ? "angmar" : "men",
-            "--base-profile", baseProfile, "--godot-content-root", contentRoot
-        })
+        foreach (var argument in BuildRotwkPublishArguments(
+                     script, retail, state, contentRoot, baseProfile, useBatch))
             publish.ArgumentList.Add(argument);
-        return await RunPythonAsync(publish, progress, cancellationToken);
+        var publishExit = await RunPythonAsync(publish, progress, cancellationToken);
+        if (publishExit != 0) return publishExit;
+
+        progress?.Report(new ImportProgress(
+            "Native content", "Building the native-core bundle and map documents.", null));
+        var native = NewProcess(
+            launcherDirectory,
+            isolated: false,
+            workingDirectory: Path.Combine(launcherDirectory, "importer"));
+        foreach (var argument in BuildNativeContentArguments(retail, state, contentRoot))
+            native.ArgumentList.Add(argument);
+        return await RunPythonAsync(native, progress, cancellationToken);
     }
+
+    internal static IReadOnlyList<string> BuildRotwkBatchArguments(
+        string batchTool,
+        string retailPath,
+        string stateRoot) =>
+        new[]
+        {
+            Path.GetFullPath(batchTool),
+            "--install", Path.GetFullPath(retailPath),
+            "--game", "rotwk",
+            "--state-root", Path.GetFullPath(stateRoot)
+        };
+
+    internal static IReadOnlyList<string> BuildRotwkPublishArguments(
+        string importerScript,
+        string retailPath,
+        string stateRoot,
+        string contentRoot,
+        string baseProfile,
+        bool allFactions)
+    {
+        var arguments = new List<string>
+        {
+            Path.GetFullPath(importerScript),
+            "--state-root", Path.GetFullPath(stateRoot),
+            "--json", "publish-faction-to-slice",
+            "--install", Path.GetFullPath(retailPath),
+            "--game", "rotwk"
+        };
+        foreach (var faction in allFactions
+                     ? new[] { "men", "elves", "dwarves", "isengard", "mordor", "wild", "angmar" }
+                     : new[] { "angmar" })
+        {
+            arguments.Add("--faction");
+            arguments.Add(faction);
+        }
+        arguments.AddRange(new[]
+        {
+            "--base-profile", Path.GetFullPath(baseProfile),
+            "--godot-content-root", Path.GetFullPath(contentRoot)
+        });
+        return arguments;
+    }
+
+    internal static IReadOnlyList<string> BuildNativeContentArguments(
+        string retailPath,
+        string stateRoot,
+        string contentRoot) =>
+        new[]
+        {
+            "-m", "openbfme_importer.native_content",
+            "--install", Path.GetFullPath(retailPath),
+            "--state-root", Path.GetFullPath(stateRoot),
+            "--content-root", Path.GetFullPath(contentRoot),
+            "--maps", "all"
+        };
+
+    internal static IReadOnlyList<string> BuildNativePreparationArguments(
+        string retailPath,
+        string stateRoot,
+        string contentRoot) =>
+        BuildNativeContentArguments(retailPath, stateRoot, contentRoot)
+            .Append("--prepare-only")
+            .ToArray();
 
     /// <summary>
     /// Run one bundled-Python step to completion, and — critically — make cancellation
@@ -163,12 +268,15 @@ public sealed class ImporterRunner
         return bundled;
     }
 
-    private static ProcessStartInfo NewProcess(string launcherDirectory)
+    private static ProcessStartInfo NewProcess(
+        string launcherDirectory,
+        bool isolated = true,
+        string? workingDirectory = null)
     {
         var start = new ProcessStartInfo
         {
             FileName = ResolvePython(launcherDirectory),
-            WorkingDirectory = launcherDirectory,
+            WorkingDirectory = workingDirectory ?? launcherDirectory,
             UseShellExecute = false,
             CreateNoWindow = true,
             RedirectStandardOutput = true,
@@ -177,7 +285,7 @@ public sealed class ImporterRunner
         start.ArgumentList.Add("-X");
         start.ArgumentList.Add("utf8");
         start.ArgumentList.Add("-B");
-        start.ArgumentList.Add("-I");
+        if (isolated) start.ArgumentList.Add("-I");
         start.ArgumentList.Add("-S");
         return start;
     }
@@ -204,22 +312,31 @@ public sealed class ImporterRunner
             var root = json.RootElement;
             if (root.ValueKind != JsonValueKind.Object)
                 return new ImportProgress("Importing", Redact(line), null);
-            var phase = root.TryGetProperty("stage", out var p)
-                ? p.GetString() ?? "Importing"
-                : "Importing";
-            var message = root.TryGetProperty("detail", out var m)
-                ? m.GetString() ?? phase
-                : phase;
-            double? percent = root.TryGetProperty("fraction", out var n)
-                && n.TryGetDouble(out var value)
-                ? Math.Clamp(value * 100, 0, 100)
-                : null;
+            var phase = TextProperty(root, "stage")
+                ?? TextProperty(root, "phase")
+                ?? "Importing";
+            var message = TextProperty(root, "detail")
+                ?? TextProperty(root, "message")
+                ?? phase;
+            double? percent = null;
+            if (root.TryGetProperty("fraction", out var fraction)
+                && fraction.TryGetDouble(out var fractionalValue))
+                percent = Math.Clamp(fractionalValue * 100, 0, 100);
+            else if (root.TryGetProperty("percent", out var direct)
+                     && direct.TryGetDouble(out var directValue))
+                percent = Math.Clamp(directValue, 0, 100);
             return new ImportProgress(phase, Redact(message), percent);
         }
         catch (JsonException)
         {
             return new ImportProgress("Importing", Redact(line), null);
         }
+
+        static string? TextProperty(JsonElement root, string name) =>
+            root.TryGetProperty(name, out var value)
+            && value.ValueKind == JsonValueKind.String
+                ? value.GetString()
+                : null;
     }
 
     private static async Task PumpErrorsAsync(

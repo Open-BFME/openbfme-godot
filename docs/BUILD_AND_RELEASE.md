@@ -85,6 +85,22 @@ The jobs run in this order:
     `gh release create` with `--verify-tag`; prerelease versions receive
     `--prerelease`.
 
+## Native content
+
+The RotWK launcher import first builds the existing faction packs, using the
+data-driven seven-faction batch converter when that bundled tool is present.
+It then runs `python -m openbfme_importer.native_content` with the same private
+state root and content root. That step writes an immutable native bundle and
+map documents under `content-packs/native/<effective-tree-sha256>/`, plus the
+separate atomic selector `content-packs/native/selection.json`. It never
+changes the art-pack `content-packs/selection.json`.
+
+The release archive already includes the complete
+`importer/openbfme_importer` package, so the native Python module and generic
+cook entry points need no individual archive entries. The archive does list
+the standalone RotWK batch, layered-install, map-corpus, binding, and multi-map
+tools because those scripts live outside the package and are launcher inputs.
+
 ## Security gates: YAML versus GitHub settings
 
 The YAML enforces all of the following:

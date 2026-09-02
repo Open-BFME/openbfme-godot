@@ -1,7 +1,9 @@
 {
-  "title": "Launcher: convert all seven factions and every map in one button, not one faction",
-  "rank": 1,
   "detail": "ImporterRunner.cs (rotwk branch) runs import-faction angmar + publish-faction-to-slice on the men-fords-v1 base profile. The repo's all-content path is tools/rotwk-systems.ps1 -ConvertFactions -MultiMapSkirmish -MultiMapFullProfile -MultiMapBuild -PublishSelection, which calls tools/rotwk_map_cook_corpus.py, rotwk_binding_factory.py, rotwk_faction_convert_batch.py, rotwk_multimap_skirmish.py in that order. Blockers found 2026-09-01: (1) those four scripts are not in the launcher bundle; extend the git-archive list in .github/workflows/release.yml around line 213 and BundleInventory follows automatically; (2) rotwk_multimap_skirmish.py hardcodes ROOT/workspace/content-packs for selection.json (line ~1260) and must take --godot-content-root like the CLI verbs do; (3) the steps take hours on a cold machine, so the runner needs per-step progress lines the launcher's ParseProgressLine understands. Oracle is a real end-to-end run from a clean state root.",
+  "done_at": "2026-09-02",
+  "done_by": "sol-launchera",
   "oracle": "tools/release/Test-LauncherHeadless.ps1 after a cold RunAsync on a RotWK install produces selection.json whose active pack lists 7 factions and every cooked map; dotnet run --project launcher/OpenBFME.Launcher.Tests",
-  "status": "open"
+  "rank": 1,
+  "status": "done",
+  "title": "Launcher: convert all seven factions and every map in one button, not one faction"
 }

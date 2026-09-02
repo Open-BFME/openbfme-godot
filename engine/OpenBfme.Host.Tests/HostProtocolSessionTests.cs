@@ -94,6 +94,43 @@ public sealed class HostProtocolSessionTests : IDisposable
     }
 
     [Fact]
+    public void BundleMapLaunchLoadsMapAndReplayRetainsDocumentPath()
+    {
+        var mapPath = RepoPath("contracts", "fixtures", "map-v1.json");
+        var match = JsonNode.Parse(_matchJson)!.AsObject();
+        match["map"] = new JsonObject
+        {
+            ["path"] = "maps/test/wall.map",
+            ["sha256"] = new string('1', 64),
+        };
+        var launch = JsonSerializer.Serialize(new
+        {
+            op = "launch",
+            match,
+            bundle = RepoPath("contracts", "fixtures", "bundle-v1.json"),
+            map = mapPath,
+        });
+        var session = new HostProtocolSession();
+        using (var reply = Parse(Single(session.HandleLine(launch))))
+        {
+            Assert.True(reply.RootElement.GetProperty("map_loaded").GetBoolean());
+            Assert.True(reply.RootElement.GetProperty("map_objects").GetInt32() >= 0);
+        }
+
+        var replayPath = Path.Combine(_temporaryDirectory, "mapped.replay.json");
+        Assert.Equal("recording", Op(Single(session.HandleLine(JsonSerializer.Serialize(new
+        {
+            op = "record",
+            path = replayPath,
+        }))))) ;
+        Assert.Equal("quit", Op(Single(session.HandleLine("{\"op\":\"quit\"}"))));
+        using var replay = Parse(Single(new HostProtocolSession().HandleLine(
+            JsonSerializer.Serialize(new { op = "replay", path = replayPath }))));
+        Assert.Equal("replay_done", replay.RootElement.GetProperty("op").GetString());
+        Assert.Equal(JsonValueKind.Null, replay.RootElement.GetProperty("divergence_tick").ValueKind);
+    }
+
+    [Fact]
     public void BundleSessionListsLoadedTemplatesAndSpawnsAuthoredHorde()
     {
         var session = new HostProtocolSession();

@@ -96,6 +96,38 @@ def test_constrain_output_rejects_public_paths(tmp_path: Path) -> None:
         mod._constrain_output(tmp_path / "public.json", state)
 
 
+def test_persistent_cook_cache_matches_source_and_replaces_atomically(tmp_path: Path) -> None:
+    mod = _load_tool()
+    staged = tmp_path / "staged"
+    staged.mkdir()
+    for name in ("terrain.json", "objects.json", "waypoints.json"):
+        (staged / name).write_text("{}", encoding="utf-8")
+    (staged / "map.json").write_text(
+        json.dumps(
+            {
+                "source": {"sha256": "a" * 64},
+                "terrain": "terrain.json",
+                "objects": "objects.json",
+                "waypoints": "waypoints.json",
+            }
+        ),
+        encoding="utf-8",
+    )
+    destination = tmp_path / "cache" / "map-one"
+
+    mod._publish_cached_cook(staged, destination)
+
+    assert mod._cached_cook_matches(destination, "a" * 64)
+    assert not mod._cached_cook_matches(destination, "b" * 64)
+    assert not list(destination.parent.glob(".map-one.*"))
+
+
+def test_report_contract_records_full_denominator() -> None:
+    source = TOOL.read_text(encoding="utf-8")
+    assert '"eligibleMapCount": eligible_count' in source
+    assert '"requestedLimit": args.limit or None' in source
+
+
 def test_fatal_and_nonfatal_verdict_sets_disjoint() -> None:
     mod = _load_tool()
     assert mod.FATAL_VERDICTS.isdisjoint(mod.NONFATAL_VERDICTS)

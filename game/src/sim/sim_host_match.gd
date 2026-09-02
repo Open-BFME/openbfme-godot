@@ -3,6 +3,7 @@ extends Node3D
 ## First playable native-core match: host-owned simulation, snapshot-only view.
 
 const SimHostClientScript := preload("res://src/sim/sim_host_client.gd")
+const NativeContentLocatorScript := preload("res://src/sim/native_content_locator.gd")
 const TICK_SECONDS := 1.0 / 30.0
 const SCRIPTED_OPPONENT_TICKS := 300
 const PICK_RADIUS_PIXELS := 32.0
@@ -99,20 +100,29 @@ func _start_match() -> void:
 	if match.is_empty():
 		_fail("match-launch fixture could not be read")
 		return
-	var configured_bundle := OS.get_environment("OPENBFME_BUNDLE").strip_edges()
-	var bundle_path := configured_bundle
-	var source := "OPENBFME_BUNDLE"
-	if bundle_path.is_empty():
-		bundle_path = _repo_path("workspace/logs/lane-cook-c/corpus-bundle-full.json")
-		source = "default"
-	print("SIM_HOST_MATCH_BUNDLE source=%s path=%s" % [source, bundle_path])
+	var preferred_map := String((match.get("map", {}) as Dictionary).get("path", ""))
+	var native_content: Dictionary = NativeContentLocatorScript.resolve(preferred_map)
+	var bundle_path := String(native_content.get("bundle", ""))
+	var map_path := String(native_content.get("map", ""))
+	print("SIM_HOST_MATCH_BUNDLE source=%s path=%s" % [
+		String(native_content.get("bundle_source", "unresolved")), bundle_path])
 	if not FileAccess.file_exists(bundle_path):
 		_fail("bundle is absent at %s" % bundle_path)
 		return
+	if not FileAccess.file_exists(map_path):
+		_fail("map is absent at %s" % map_path)
+		return
 	_client = SimHostClientScript.new()
-	if not _client.launch_bundle(match, bundle_path):
+	if not _client.launch_bundle(match, bundle_path, map_path):
 		_fail(_client.last_error())
 		return
+	if not bool(_client.launch_reply().get("map_loaded", false)):
+		_fail("native host did not load the selected map")
+		return
+	print("SIM_HOST_MATCH_MAP loaded=true objects=%d spawned=%d" % [
+		int(_client.launch_reply().get("map_objects", 0)),
+		int(_client.launch_reply().get("map_spawned", 0)),
+	])
 	_replay_path = _new_replay_path()
 	if not _client.record(_replay_path):
 		_fail("replay record: %s" % _client.last_error())

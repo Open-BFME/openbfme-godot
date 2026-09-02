@@ -25,11 +25,13 @@ func launch(match: Dictionary, templates_path: String) -> bool:
 	return _launch_source(match, "templates", templates_path)
 
 
-func launch_bundle(match: Dictionary, bundle_path: String) -> bool:
-	return _launch_source(match, "bundle", bundle_path)
+func launch_bundle(match: Dictionary, bundle_path: String, map_path: String = "") -> bool:
+	return _launch_source(match, "bundle", bundle_path, map_path)
 
 
-func _launch_source(match: Dictionary, source_field: String, source_path: String) -> bool:
+func _launch_source(
+	match: Dictionary, source_field: String, source_path: String, map_path: String = ""
+) -> bool:
 	if _stdio != null:
 		_set_error("host is already running")
 		return false
@@ -37,6 +39,8 @@ func _launch_source(match: Dictionary, source_field: String, source_path: String
 		return false
 	var request := {"op": "launch", "match": _wire_match(match)}
 	request[source_field] = source_path
+	if not map_path.is_empty():
+		request["map"] = map_path
 	var reply := _exchange_with_timeout(request, STARTUP_TIMEOUT_MS)
 	if String(reply.get("op", "")) != "launched":
 		_set_error(_reply_error("launch", reply))

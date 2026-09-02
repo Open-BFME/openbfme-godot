@@ -3,6 +3,7 @@ using System.Text.Json;
 using System.Globalization;
 using System.Numerics;
 using OpenBfme.Sim;
+using OpenBfme.Sim.Map;
 using OpenBfme.Sim.Pathing;
 
 namespace OpenBfme.Host;
@@ -31,6 +32,7 @@ public sealed class HostProtocolSession
     private string? _launchJson;
     private string? _sourceKind;
     private string? _sourcePath;
+    private string? _mapDocumentPath;
     private ReplayRecorder? _recorder;
 
     public bool IsRunning { get; private set; } = true;
@@ -90,6 +92,7 @@ public sealed class HostProtocolSession
         var launchJson = match.GetRawText();
         var launch = MatchLaunch.Parse(launchJson);
         SimWorld world;
+        MapLoadReport? mapReport = null;
         int templatesLoaded;
         int templatesFailed;
         if (hasBundle)
@@ -101,20 +104,38 @@ public sealed class HostProtocolSession
             }
             var path = Path.GetFullPath(bundlePath.GetString()!);
             var document = BundleDocument.Load(path);
-            world = SimWorld.FromBundle(
-                launch,
-                document,
-                PassabilityGrid.Uniform(
-                    MaplessGridWidth, MaplessGridHeight, cellSize: MaplessGridCellSize));
+            MapDocument? mapDocument = null;
+            string? mapPath = null;
+            if (root.TryGetProperty("map", out var mapPathElement))
+            {
+                if (mapPathElement.ValueKind != JsonValueKind.String
+                    || string.IsNullOrWhiteSpace(mapPathElement.GetString()))
+                {
+                    throw new ProtocolException("launch field 'map' must be a non-empty path");
+                }
+                mapPath = Path.GetFullPath(mapPathElement.GetString()!);
+                mapDocument = MapDocument.Load(mapPath);
+            }
+            world = mapDocument == null
+                ? SimWorld.FromBundle(
+                    launch,
+                    document,
+                    PassabilityGrid.Uniform(
+                        MaplessGridWidth, MaplessGridHeight, cellSize: MaplessGridCellSize))
+                : MapWorldBuilder.Build(launch, document, mapDocument);
             var report = world.BundleLoadReport
                 ?? throw new ProtocolException("bundle launch produced no load report");
             var loaded = BundleTemplateLoader.Load(
                 document, ModuleRegistry.CreateDefault(), launch.Rules.TickMilliseconds);
-            _restoreConfig = BuildConfig(
-                launch, loaded, MaplessGridWidth, MaplessGridHeight);
-            _restoreGrid = PassabilityGrid.Uniform(
-                MaplessGridWidth, MaplessGridHeight, cellSize: MaplessGridCellSize);
+            var grid = mapDocument == null
+                ? PassabilityGrid.Uniform(
+                    MaplessGridWidth, MaplessGridHeight, cellSize: MaplessGridCellSize)
+                : MapWorldBuilder.BuildPassabilityGrid(mapDocument);
+            _restoreConfig = BuildBundleConfig(launch, loaded);
+            _restoreGrid = grid;
             _bundle = document;
+            _mapDocumentPath = mapPath;
+            mapReport = world.MapLoadReport;
             _hordes = (document.Hordes ?? Array.Empty<BundleHordeRow>())
                 .ToDictionary(row => row.Name, StringComparer.OrdinalIgnoreCase);
             _loadedTemplateNames = loaded.Templates.Select(template => template.Name)
@@ -157,6 +178,7 @@ public sealed class HostProtocolSession
             templatesFailed = 0;
             _sourceKind = "templates";
             _sourcePath = path;
+            _mapDocumentPath = null;
         }
 
         _launch = launch;
@@ -173,6 +195,13 @@ public sealed class HostProtocolSession
             writer.WriteNumber("players", launch.Players.Count);
             writer.WriteNumber("templates_loaded", templatesLoaded);
             writer.WriteNumber("templates_failed", templatesFailed);
+            writer.WriteBoolean("map_loaded", mapReport != null);
+            if (mapReport != null)
+            {
+                writer.WriteNumber("map_objects", mapReport.MapObjectCount);
+                writer.WriteNumber("map_spawned", mapReport.SpawnedObjectCount);
+                writer.WriteNumber("map_unknown_templates", mapReport.UnknownTemplates.Values.Sum());
+            }
         }) };
     }
 
@@ -381,6 +410,7 @@ public sealed class HostProtocolSession
             _sourceKind,
             _sourcePath,
             _bundle?.Source.EffectiveTreeSha256,
+            _mapDocumentPath,
             world);
         _recorder.Flush(world);
         return new[] { Reply(writer =>
@@ -418,6 +448,10 @@ public sealed class HostProtocolSession
             ["match"] = replay.Match,
             [replay.SourceKind] = replay.SourcePath,
         };
+        if (replay.MapDocumentPath != null)
+        {
+            launchRequest["map"] = replay.MapDocumentPath;
+        }
         using (var launchDocument = JsonDocument.Parse(JsonSerializer.Serialize(launchRequest)))
         {
             _ = Launch(launchDocument.RootElement);
@@ -608,11 +642,9 @@ public sealed class HostProtocolSession
         return new SimConfig(templates, launch.Seed, teamCount, maxCommandPoints: commandPoints);
     }
 
-    private static SimConfig BuildConfig(
+    private static SimConfig BuildBundleConfig(
         MatchLaunch launch,
-        BundleTemplateLoadResult loaded,
-        int mapWidthCells,
-        int mapHeightCells)
+        BundleTemplateLoadResult loaded)
     {
         var teamCount = launch.Players.Max(player => player.Team) + 1;
         var commandPoints = EconomyTemplate.ScaleInteger(
@@ -621,12 +653,11 @@ public sealed class HostProtocolSession
             loaded.Templates,
             launch.Seed,
             teamCount,
-            mapWidthCells,
-            mapHeightCells,
             weaponTemplates: loaded.WeaponTemplates,
             armorTemplates: loaded.ArmorTemplates,
             maxCommandPoints: commandPoints,
-            templateIndices: loaded.TemplateIndices);
+            templateIndices: loaded.TemplateIndices,
+            tech: loaded.Tech);
     }
 
     private static void BootstrapTemplates(

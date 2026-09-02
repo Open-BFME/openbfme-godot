@@ -2,6 +2,7 @@ using System.Reflection;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using OpenBfme.Sim;
+using OpenBfme.Sim.Map;
 
 namespace OpenBfme.Host;
 
@@ -19,6 +20,7 @@ internal sealed class ReplayRecorder
         string sourceKind,
         string sourcePath,
         string? bundleHash,
+        string? mapDocumentPath,
         SimWorld world)
     {
         _path = System.IO.Path.GetFullPath(path);
@@ -30,7 +32,19 @@ internal sealed class ReplayRecorder
             ["path"] = sourcePath,
         };
         if (bundleHash != null) source["effective_tree_sha256"] = bundleHash;
-        if (match["map"] is JsonNode map) source["map"] = map.DeepClone();
+        if (mapDocumentPath != null)
+        {
+            var document = MapDocument.Load(mapDocumentPath);
+            source["map"] = new JsonObject
+            {
+                ["path"] = System.IO.Path.GetFullPath(mapDocumentPath),
+                ["sha256"] = document.Source.Sha256,
+            };
+        }
+        else if (match["map"] is JsonNode map)
+        {
+            source["map"] = map.DeepClone();
+        }
         _root = new JsonObject
         {
             ["schema"] = "openbfme.replay.v1",
@@ -117,6 +131,7 @@ internal sealed class ReplayFile
         string sourceKind,
         string sourcePath,
         string? bundleHash,
+        string? mapDocumentPath,
         string initialState,
         int initialTick,
         IReadOnlyList<JsonElement> commands,
@@ -129,6 +144,7 @@ internal sealed class ReplayFile
         SourceKind = sourceKind;
         SourcePath = sourcePath;
         BundleHash = bundleHash;
+        MapDocumentPath = mapDocumentPath;
         InitialState = initialState;
         InitialTick = initialTick;
         Commands = commands;
@@ -142,6 +158,7 @@ internal sealed class ReplayFile
     public string SourceKind { get; }
     public string SourcePath { get; }
     public string? BundleHash { get; }
+    public string? MapDocumentPath { get; }
     public string InitialState { get; }
     public int InitialTick { get; }
     public IReadOnlyList<JsonElement> Commands { get; }
@@ -180,6 +197,7 @@ internal sealed class ReplayFile
             RequiredString(source, "path"),
             source.TryGetProperty("effective_tree_sha256", out var hash)
                 ? hash.GetString() : null,
+            ReadMapDocumentPath(source),
             RequiredString(root, "initial_state"),
             RequiredInt(root, "initial_tick"),
             commands,
@@ -187,6 +205,23 @@ internal sealed class ReplayFile
             hashes,
             RequiredInt(root, "final_tick"),
             RequiredString(root, "final_hash"));
+    }
+
+    private static string? ReadMapDocumentPath(JsonElement source)
+    {
+        if (!source.TryGetProperty("map", out var map)
+            || map.ValueKind != JsonValueKind.Object
+            || !map.TryGetProperty("path", out var path)
+            || path.ValueKind != JsonValueKind.String)
+        {
+            return null;
+        }
+        var value = path.GetString();
+        return value != null
+               && value.EndsWith(".map-v1.json", StringComparison.OrdinalIgnoreCase)
+               && File.Exists(value)
+            ? System.IO.Path.GetFullPath(value)
+            : null;
     }
 
     private static IEnumerable<JsonElement> RequiredArray(JsonElement root, string name)
