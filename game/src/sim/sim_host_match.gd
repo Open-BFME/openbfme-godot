@@ -35,6 +35,16 @@ var _replay_mode := false
 var _replay_path := ""
 var _map_document
 var _terrain
+var _profile_elapsed := 0.0
+var _profile_seconds := 0
+var _profile_step_usec := 0
+var _profile_step_max_usec := 0
+var _profile_steps := 0
+var _profile_draw_usec := 0
+var _profile_draw_max_usec := 0
+var _profile_frames := 0
+var _profile_started_msec := 0
+var _profile_next_msec := 0
 
 
 func _ready() -> void:
@@ -52,19 +62,23 @@ func _exit_tree() -> void:
 func _process(delta: float) -> void:
 	if not _running:
 		return
+	_profile_elapsed += delta
+	var draw_usec := int(RenderingServer.get_frame_setup_time_cpu() * 1000.0)
+	_profile_draw_usec += draw_usec
+	_profile_draw_max_usec = maxi(_profile_draw_max_usec, draw_usec)
+	_profile_frames += 1
 	_accumulator += minf(delta, 0.25)
-	var steps := 0
-	while _accumulator >= TICK_SECONDS and steps < 5:
-		_accumulator -= TICK_SECONDS
-		var snapshots: Array[Dictionary] = _client.step(1)
-		if snapshots.size() != 1:
-			_fail("step: %s" % _client.last_error())
-			return
-		_accept_snapshot(snapshots[0])
-		steps += 1
-	if steps == 5 and _accumulator >= TICK_SECONDS:
-		_accumulator = fmod(_accumulator, TICK_SECONDS)
+	var snapshots: Array[Dictionary] = _client.take_stream_snapshots()
+	for snapshot in snapshots:
+		_accept_snapshot(snapshot)
+		_accumulator = 0.0
+	var stream_failure: String = _client.stream_error()
+	if not stream_failure.is_empty():
+		_fail("step stream: %s" % stream_failure)
+		return
 	_renderer.render_interpolated(clampf(_accumulator / TICK_SECONDS, 0.0, 1.0))
+	if Time.get_ticks_msec() >= _profile_next_msec:
+		_print_profile()
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -180,12 +194,19 @@ func _start_match() -> void:
 	else:
 		if not _spawn_mapless_armies():
 			return
-	var initial: Array[Dictionary] = _client.step(1)
+	var initial: Array[Dictionary] = _client.step(1, "packed")
 	if initial.size() != 1:
 		_fail("initial snapshot: %s" % _client.last_error())
 		return
 	_accept_snapshot(initial[0])
 	_running = true
+	_client.reset_profile()
+	_renderer.reset_profile()
+	_profile_started_msec = Time.get_ticks_msec()
+	_profile_next_msec = _profile_started_msec + 5000
+	if not _client.start_packed_stream():
+		_fail("step stream: %s" % _client.last_error())
+		return
 	print(
 		"SIM_HOST_MATCH_READY hordes=%d members=%d tick=%d loaded=%d failed=%d"
 		% [
@@ -196,6 +217,45 @@ func _start_match() -> void:
 			int(_client.launch_reply().get("templates_failed", 0)),
 		]
 	)
+
+
+func _print_profile() -> void:
+	_profile_seconds = int((Time.get_ticks_msec() - _profile_started_msec) / 1000)
+	var client_profile: Dictionary = _client.take_profile()
+	var renderer_profile: Dictionary = _renderer.take_profile()
+	var documents := maxi(1, int(client_profile.get("documents", 0)))
+	var uploads := maxi(1, int(renderer_profile.get("uploads", 0)))
+	var steps := maxi(1, int(client_profile.get("steps", 0)))
+	var frames := maxi(1, _profile_frames)
+	print(
+		"SIM_HOST_MAP_PROFILE seconds=%d objects=%d step_ms=%.3f step_max_ms=%.3f read_ms=%.3f read_max_ms=%.3f parse_ms=%.3f parse_max_ms=%.3f concat_ms=%.3f upload_ms=%.3f upload_max_ms=%.3f draw_ms=%.3f draw_max_ms=%.3f frames=%d snapshots=%d chars=%d"
+		% [
+			_profile_seconds,
+			object_count(),
+			float(client_profile.get("step_usec", 0)) / float(steps) / 1000.0,
+			float(client_profile.get("step_max_usec", 0)) / 1000.0,
+			float(client_profile.get("read_usec", 0)) / float(documents) / 1000.0,
+			float(client_profile.get("read_max_usec", 0)) / 1000.0,
+			float(client_profile.get("parse_usec", 0)) / float(documents) / 1000.0,
+			float(client_profile.get("parse_max_usec", 0)) / 1000.0,
+			float(client_profile.get("concat_usec", 0)) / float(documents) / 1000.0,
+			float(renderer_profile.get("upload_usec", 0)) / float(uploads) / 1000.0,
+			float(renderer_profile.get("upload_max_usec", 0)) / 1000.0,
+			float(_profile_draw_usec) / float(frames) / 1000.0,
+			float(_profile_draw_max_usec) / 1000.0,
+			_profile_frames,
+			int(client_profile.get("documents", 0)),
+			int(client_profile.get("characters", 0)),
+		]
+	)
+	_profile_elapsed = 0.0
+	_profile_next_msec += 5000
+	_profile_step_usec = 0
+	_profile_step_max_usec = 0
+	_profile_steps = 0
+	_profile_draw_usec = 0
+	_profile_draw_max_usec = 0
+	_profile_frames = 0
 
 
 func _spawn_mapless_armies() -> bool:
@@ -399,7 +459,10 @@ func _handle_right_click(screen_position: Vector2) -> void:
 func _send_player_bundle(bundle: Dictionary) -> void:
 	if bundle.is_empty():
 		return
-	if _client.send_commands(bundle):
+	var scheduled := bundle.duplicate(true)
+	if _client.is_streaming():
+		scheduled["tick"] = maxi(int(scheduled.get("tick", 0)), _tick + 2)
+	if _client.send_commands(scheduled):
 		_player_seq += 1
 	else:
 		_fail("player command: %s" % _client.last_error())

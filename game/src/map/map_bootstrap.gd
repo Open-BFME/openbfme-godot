@@ -4,7 +4,7 @@ extends RefCounted
 
 const FIGHTER_PREFERRED := {"Men": "GondorFighterHorde", "Mordor": "MordorFighterHorde"}
 const ARCHER_PREFERRED := {"Men": "GondorArcherHorde", "Mordor": "MordorArcherHorde"}
-const FORTRESS_PREFERRED := {"Men": "GondorCastleBaseKeep", "Mordor": "MordorCampKeep"}
+const FORTRESS_PREFERRED := {"Men": "MenFortress", "Mordor": "MordorFortress"}
 
 
 static func spawn_match(client, match: Dictionary, document, catalog: Array[Dictionary]) -> Dictionary:

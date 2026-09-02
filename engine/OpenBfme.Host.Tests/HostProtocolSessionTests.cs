@@ -64,6 +64,26 @@ public sealed class HostProtocolSessionTests : IDisposable
     }
 
     [Fact]
+    public void PackedStepUsesTheSameTickAndHashAsTheJsonProtocolPath()
+    {
+        var jsonSession = new HostProtocolSession();
+        var packedSession = new HostProtocolSession();
+        Assert.Equal("launched", Op(Single(jsonSession.HandleLine(LaunchLine()))));
+        Assert.Equal("launched", Op(Single(packedSession.HandleLine(LaunchLine()))));
+
+        using var jsonReply = Parse(Single(jsonSession.HandleLine("{\"op\":\"step\",\"ticks\":1}")));
+        using var packedReply = Parse(Single(packedSession.HandleLine(
+            "{\"op\":\"step\",\"ticks\":1,\"format\":\"packed\"}")));
+        var json = jsonReply.RootElement.GetProperty("snapshot");
+        var packed = packedReply.RootElement.GetProperty("snapshot");
+        Assert.Equal(json.GetProperty("tick").GetInt32(), packed.GetProperty("tick").GetInt32());
+        Assert.Equal(json.GetProperty("hash").GetString(), packed.GetProperty("hash").GetString());
+        Assert.True(packed.GetProperty("objects").GetProperty("full").GetBoolean());
+        Assert.Equal("packed", packedReply.RootElement.GetProperty("format").GetString());
+        PackedSnapshotProtocolTests.AssertObjectColumnsEqual(json, packed);
+    }
+
+    [Fact]
     public void TwinSessionsProduceByteIdenticalProtocolOutput()
     {
         Assert.Equal(RunTranscript(), RunTranscript());

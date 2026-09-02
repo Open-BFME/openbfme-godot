@@ -46,6 +46,9 @@ var _fallback_template_indices: Dictionary = {}
 var _animated_template_indices: Dictionary = {}
 var _atlas_refusals: Dictionary = {}
 var _printed_model_summary := false
+var _profile_upload_usec := 0
+var _profile_upload_max_usec := 0
+var _profile_uploads := 0
 
 
 func _ready() -> void:
@@ -57,10 +60,10 @@ func submit_snapshot(document: Dictionary) -> bool:
 		push_warning("[SnapshotInstancedRenderer] refused malformed snapshot-v1 document")
 		return false
 	if _current.is_empty():
-		_previous = document.duplicate(true)
+		_previous = document
 	else:
 		_previous = _current
-	_current = document.duplicate(true)
+	_current = document
 	_previous_slots = _slot_index(_previous)
 	_snapshot_serial += 1
 	return true
@@ -95,6 +98,7 @@ func render_interpolated(alpha: float) -> bool:
 		and _snapshot_serial - _uploaded_serial < LARGE_ARMY_UPLOAD_STRIDE
 	):
 		return _rendered_instances == object_count
+	var upload_started := Time.get_ticks_usec()
 	receive_animation_frames(objects["anim"] as Array, objects["anim_frame"] as Array)
 	if _layout_count != object_count:
 		_grouped_slots.clear()
@@ -134,10 +138,30 @@ func render_interpolated(alpha: float) -> bool:
 		group.multimesh.buffer = group.buffer
 		_rendered_instances += slots.size()
 	_uploaded_serial = _snapshot_serial
+	var upload_elapsed := Time.get_ticks_usec() - upload_started
+	_profile_upload_usec += upload_elapsed
+	_profile_upload_max_usec = maxi(_profile_upload_max_usec, upload_elapsed)
+	_profile_uploads += 1
 	if not _printed_model_summary:
 		_printed_model_summary = true
 		print(model_resolution_summary())
 	return _rendered_instances == int(_current["object_count"])
+
+
+func reset_profile() -> void:
+	_profile_upload_usec = 0
+	_profile_upload_max_usec = 0
+	_profile_uploads = 0
+
+
+func take_profile() -> Dictionary:
+	var result := {
+		"upload_usec": _profile_upload_usec,
+		"upload_max_usec": _profile_upload_max_usec,
+		"uploads": _profile_uploads,
+	}
+	reset_profile()
+	return result
 
 
 func receive_animation_frames(anim: Array, anim_frame: Array) -> void:

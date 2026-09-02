@@ -35,6 +35,24 @@ to draw. It is packed arrays indexed by object slot, never nodes or nested
 objects, so the renderer can upload it as-is and interpolate between two
 of them. The sim never reads anything back.
 
+The interactive host also accepts `{"op":"step","ticks":K,"format":"packed"}`.
+This does not replace snapshot-v1: the reply carries the same snapshot envelope,
+but `objects` is a base64 blob with format
+`openbfme.snapshot.objects.packed.v1`. `data` is Brotli-compressed then base64
+encoded; `uncompressed_bytes` bounds decoding. The decoded blob is
+column-major, little-endian, with four bytes per value. Its columns are, in order:
+
+1. int32: `id`, `template`, `owner`, `state`, `anim`, `flags`
+2. float32: `x`, `y`, `z`, `yaw`, `health`, `max_health`, `anim_frame`
+
+Each column contains exactly `object_count` values. `hordes`, `players`, and
+`events` remain JSON because they are small and variable-width. The default
+step format remains the full snapshot-v1 JSON contract for tools and tests.
+The first packed reply and any reply after slot identity changes has `full:true`.
+Otherwise `full:false`, `base_tick`, and `slots` identify changed object slots;
+the same thirteen columns then contain one value per listed slot. Consumers
+apply a delta only when `base_tick` equals their previous snapshot tick.
+
 ## Match launch v1
 
 What the shell hands the sim to start a match: players with seats, teams,
