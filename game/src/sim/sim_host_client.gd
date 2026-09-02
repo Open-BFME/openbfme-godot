@@ -51,6 +51,7 @@ var _stream_running := false
 var _stream_stop := false
 var _stream_snapshots: Array[Dictionary] = []
 var _stream_commands: Array[Dictionary] = []
+var _stream_acknowledged_sequences: Array[int] = []
 var _stream_error := ""
 var _profile_mutex := Mutex.new()
 
@@ -150,7 +151,7 @@ func _send_commands_now(bundle: Dictionary) -> bool:
 	return true
 
 
-func step(ticks: int, format: String = "json") -> Array[Dictionary]:
+func step(ticks: int, format: String = "json", timeout_ms: int = READ_TIMEOUT_MS) -> Array[Dictionary]:
 	var step_started := Time.get_ticks_usec()
 	var snapshots: Array[Dictionary] = []
 	if format not in ["json", "packed"]:
@@ -170,7 +171,7 @@ func step(ticks: int, format: String = "json") -> Array[Dictionary]:
 		_step_reply_pending = true
 		_step_pending_format = format
 	for _index in ticks:
-		var reply := _read_document(STARTUP_TIMEOUT_MS if not _received_snapshot else READ_TIMEOUT_MS)
+		var reply := _read_document(maxi(timeout_ms, STARTUP_TIMEOUT_MS if not _received_snapshot else READ_TIMEOUT_MS))
 		if String(reply.get("op", "")) != "snapshot":
 			if not _last_error.begins_with("host response timed out"):
 				_step_reply_pending = false
@@ -217,6 +218,7 @@ func start_packed_stream() -> bool:
 	_stream_error = ""
 	_stream_snapshots.clear()
 	_stream_commands.clear()
+	_stream_acknowledged_sequences.clear()
 	_stream_running = true
 	_stream_mutex.unlock()
 	_stream_thread = Thread.new()
@@ -233,6 +235,14 @@ func take_stream_snapshots() -> Array[Dictionary]:
 	_stream_mutex.lock()
 	var result := _stream_snapshots.duplicate()
 	_stream_snapshots.clear()
+	_stream_mutex.unlock()
+	return result
+
+
+func take_stream_command_acknowledgements() -> Array[int]:
+	_stream_mutex.lock()
+	var result := _stream_acknowledged_sequences.duplicate()
+	_stream_acknowledged_sequences.clear()
 	_stream_mutex.unlock()
 	return result
 
@@ -278,6 +288,9 @@ func _stream_loop() -> void:
 			if not _send_commands_now(bundle):
 				_stream_fail(_last_error)
 				return
+			_stream_mutex.lock()
+			_stream_acknowledged_sequences.append(int(bundle.get("seq", -1)))
+			_stream_mutex.unlock()
 		var started := Time.get_ticks_msec()
 		var snapshots := step(1, "packed")
 		if snapshots.size() != 1:

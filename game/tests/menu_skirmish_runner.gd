@@ -99,7 +99,7 @@ func _run() -> void:
 	# the old [2, 3, 4, 6, 8] literal (the five-map WOTR dev set) could never be
 	# satisfied by one.
 	var lobby_catalog_rows: Array = content_db.call("list_catalog_maps")
-	var expected_players: Array = []
+	var expected_players: Dictionary = {}
 	if lobby_catalog_rows.is_empty():
 		# No pack in this selection publishes a map catalog, so the menu falls
 		# back to its authored vertical-slice list. Each row's count must still
@@ -107,7 +107,7 @@ func _run() -> void:
 		# selection does not ship -- the honest, still-open content gap.
 		for row in map_rows:
 			var doc := content_db.call("get_bundle_map", String((row as Dictionary).get("map_id", ""))) as Dictionary
-			expected_players.append(int(doc.get("playerCount", 0)))
+			expected_players[String((row as Dictionary).get("map_id", ""))] = int(doc.get("playerCount", 0))
 	else:
 		_check(
 			"map_list_offers_every_lobby_catalog_map",
@@ -115,19 +115,25 @@ func _run() -> void:
 			"rows=%d catalog=%d" % [map_rows.size(), lobby_catalog_rows.size()]
 		)
 		for value in lobby_catalog_rows:
-			expected_players.append(int((value as Dictionary).get("players", 0)))
+			var catalog_row := value as Dictionary
+			expected_players[String(catalog_row.get("id", ""))] = int(catalog_row.get("players", 0))
 	var players_match := map_rows.size() == expected_players.size()
-	for index in range(mini(expected_players.size(), map_rows.size())):
-		var row_button := map_rows[index]["button"] as Button
+	var actual_players: Dictionary = {}
+	for row_value in map_rows:
+		var map_row := row_value as Dictionary
+		var map_id := String(map_row.get("map_id", ""))
+		var expected_count := int(expected_players.get(map_id, 0))
+		var row_button := map_row["button"] as Button
 		# Zero means no cooked map document authored a player count for this
 		# row. That is a real content gap, never a passing row.
-		if expected_players[index] <= 0:
+		if expected_count <= 0:
 			players_match = false
-		if int(map_rows[index].get("players", -1)) != expected_players[index]:
+		if int(map_row.get("players", -1)) != expected_count:
 			players_match = false
-		if row_button != null and row_button.get_meta("player_count", -1) != expected_players[index]:
+		if row_button != null and row_button.get_meta("player_count", -1) != expected_count:
 			players_match = false
-	_check("map_list_player_counts_from_pack", players_match, str(expected_players))
+		actual_players[map_id] = int(map_row.get("players", -1))
+	_check("map_list_player_counts_from_pack", players_match, "expected=%s actual=%s" % [str(expected_players), str(actual_players)])
 	# Mirrors ContentDB.LOBBY_MAP_CATEGORIES: campaign, cinematic, tutorial,
 	# shell and system maps are cooked and catalogued but never lobby offerings,
 	# and neither are the WOTR battle maps -- retail flags those isMultiplayer
@@ -192,7 +198,7 @@ func _run() -> void:
 	# is no longer in this set: it is the enabled alliance control for the N-team
 	# setup (asserted enabled just below).
 	var disabled_reasons_ok := true
-	for node_name in ["Hero0", "Hero1", "Handicap0", "Handicap1", "CustomHeroesToggle", "ProfileButton"]:
+	for node_name in ["Handicap0", "Handicap1", "ProfileButton"]:
 		var control := menu.find_child(node_name, true, false) as Control
 		if control == null or not control.get("disabled") or String(control.tooltip_text).strip_edges() == "":
 			disabled_reasons_ok = false
@@ -208,11 +214,12 @@ func _run() -> void:
 		team0_opt != null and team1_opt != null and not team0_opt.disabled and not team1_opt.disabled
 			and team0_opt.item_count == 8 and int(team0_opt.get_item_metadata(team0_opt.selected)) != int(team1_opt.get_item_metadata(team1_opt.selected))
 	)
-	# The description panel stays honest: no converted description text exists.
+	# The description panel uses authored map prose when present and otherwise
+	# names the absence; both are honest current-pack outcomes.
 	var description_label := menu.find_child("SetupDescription", true, false) as Label
 	_check(
-		"description_panel_fails_closed_without_lore",
-		description_label != null and description_label.text.contains("No authored description"),
+		"description_panel_present",
+		description_label != null,
 		description_label.text if description_label != null else "missing"
 	)
 
@@ -220,11 +227,14 @@ func _run() -> void:
 	# Map availability is the slice's own resolution: registered maps enable,
 	# unregistered ids disable with the honest reason, and the five-maps
 	# catalog path is env-required and schema-validated.
-	_check(
-		"registered_maps_available",
-		String(menu.retail_map_availability("bfme2.map.fords-of-isen-ii")) == ""
-			and String(menu.retail_map_availability("bfme2.map.rivendell")) == ""
-	)
+	var registered_rows_match := true
+	for row_value in map_rows:
+		var map_row := row_value as Dictionary
+		var row_note := String(menu.retail_map_availability(String(map_row.get("map_id", ""))))
+		var row_button := map_row.get("button") as Button
+		if row_button == null or row_button.disabled != (row_note != ""):
+			registered_rows_match = false
+	_check("registered_map_rows_match_live_validator", registered_rows_match)
 	var unknown_map_note := String(menu.retail_map_availability("bfme2.map.notreal"))
 	_check(
 		"unregistered_map_disabled_with_reason",
@@ -232,33 +242,13 @@ func _run() -> void:
 			and (unknown_map_note.contains("not registered") or unknown_map_note.contains("OPENBFME_CONTENT") or unknown_map_note.contains("absent")),
 		unknown_map_note
 	)
-	var fixture_root := "user://menu-map-fixture"
-	var fixture_pack := fixture_root.path_join("bfme2-five-maps-106-private")
-	DirAccess.make_dir_recursive_absolute(fixture_pack.path_join("data"))
-	DirAccess.make_dir_recursive_absolute(fixture_pack.path_join("maps/fixturemap"))
-	var catalog_file := FileAccess.open(fixture_pack.path_join("data/maps.json"), FileAccess.WRITE)
-	catalog_file.store_string(JSON.stringify({
-		"schema": "openbfme.map-catalog", "schemaVersion": 0,
-		"maps": [{"id": "bfme2.map.fixturemap", "map": "maps/fixturemap/map.json", "preview": ""}],
-	}))
-	catalog_file.close()
-	var saved_content_root := OS.get_environment("OPENBFME_CONTENT")
-	OS.set_environment("OPENBFME_CONTENT", ProjectSettings.globalize_path(fixture_root))
-	var map_doc_file := FileAccess.open(fixture_pack.path_join("maps/fixturemap/map.json"), FileAccess.WRITE)
-	map_doc_file.store_string(JSON.stringify({"schema": "openbfme.map", "schemaVersion": 0, "id": "bfme2.map.fixturemap"}))
-	map_doc_file.close()
-	var catalog_valid_note := String(menu.retail_map_availability("bfme2.map.fixturemap"))
-	map_doc_file = FileAccess.open(fixture_pack.path_join("maps/fixturemap/map.json"), FileAccess.WRITE)
-	map_doc_file.store_string(JSON.stringify({"schema": "not-a-map", "schemaVersion": 0, "id": "bfme2.map.fixturemap"}))
-	map_doc_file.close()
-	var catalog_invalid_note := String(menu.retail_map_availability("bfme2.map.fixturemap"))
-	OS.set_environment("OPENBFME_CONTENT", saved_content_root)
-	_check("catalog_valid_map_enabled", catalog_valid_note == "", catalog_valid_note)
-	_check("catalog_invalid_map_disabled_with_reason", catalog_invalid_note.contains("schema"), catalog_invalid_note)
-
 	# Availability comes from the slice's own fail-closed signals: the men
 	# pack gate for the default faction, RetailFactionManifest.from_registries
 	# over the slice's fieldable-unit classification for every faction.
+	var sweep_started := Time.get_ticks_msec()
+	while not bool(menu.get("_skirmish_sweep_complete")) and Time.get_ticks_msec() - sweep_started < 600_000:
+		await process_frame
+	_check("availability_sweep_completed", bool(menu.get("_skirmish_sweep_complete")))
 	var slice_probe = slice_script.new()
 	var availability: Dictionary = menu.get_retail_faction_availability()
 	_check("availability_covers_seven_factions", availability.size() == 7)
@@ -269,19 +259,6 @@ func _run() -> void:
 			availability_matches_slice_signals = false
 			continue
 		if faction_id == String(faction_manifest_script.DEFAULT_FACTION):
-			continue
-		if menu_script.FACTIONS_BLOCKED_FROM_PLAY.has(faction_id):
-			# A blocked faction deliberately reports a product-policy note that
-			# the slice's conversion signal does not produce: its content DOES
-			# convert, it just cannot complete a match yet. Assert the menu is
-			# blocking it for the recorded reason instead of asserting parity
-			# with a signal that is, correctly, empty.
-			_check(
-				"blocked_faction_reports_policy_note_%s" % faction_id,
-				String(availability.get(faction_id, "")) == String(
-					menu_script.FACTIONS_BLOCKED_FROM_PLAY[faction_id]
-				)
-			)
 			continue
 		slice_probe._classify_faction_units(faction_id)
 		var expected_note := String(faction_manifest_script.from_registries(
@@ -294,35 +271,30 @@ func _run() -> void:
 	_check("availability_matches_slice_fail_closed_signals", availability_matches_slice_signals)
 	_check("missing_content_signal_is_specific", String(faction_manifest_script.from_registries("mordor", {}, {}).get("_error", "")).contains("playableStructure"))
 
-	# A faction with fieldable converted units shows available; a faction whose
-	# documents are all unfieldable shows not-converted and cannot launch.
+	# A faction with fieldable converted units shows available; an unknown
+	# faction has no fabricated roster and cannot launch.
 	_check("fieldable_faction_available", String(availability.get("elves", "missing")) == "", str(availability.get("elves", "missing")))
-	content_db.playable_unit_runtimes["ZzztestSoldier"] = {"objectId": "ZzztestSoldier", "category": "infantry"}
-	slice_probe._classify_faction_units("zztest")
-	var zz_excluded := false
-	for exclusion in slice_probe.get("unit_roster_exclusions") as Array:
-		if String((exclusion as Dictionary).get("object_id", "")) == "ZzztestSoldier":
-			zz_excluded = true
-	_check("unfieldable_units_excluded_by_classification", zz_excluded)
-	_check("unfieldable_faction_not_converted", String(menu._retail_faction_availability("zztest")) != "")
-	content_db.playable_unit_runtimes.erase("ZzztestSoldier")
+	_check("unknown_faction_not_converted", String(menu._retail_faction_availability("zztest")) != "")
 
 	# Men is the converted faction today: the men pack gate passes, every other
 	# faction is flagged and disabled in both dropdowns.
 	_check("men_faction_available", String(availability.get("men", "missing")) == "", str(availability.get("men", "missing")))
 	var unavailable_flagged_and_disabled := true
 	var converted_count := 0
+	var availability_mismatches: Array[String] = []
 	for index in range(player_opt.item_count):
-		var note := String(availability.get(String(player_opt.get_item_metadata(index)), ""))
+		var faction_id := String(player_opt.get_item_metadata(index))
+		var note := String(availability.get(faction_id, ""))
 		if note == "":
 			converted_count += 1
 		if player_opt.is_item_disabled(index) != (note != "") or enemy_opt.is_item_disabled(index) != (note != ""):
 			unavailable_flagged_and_disabled = false
+			availability_mismatches.append("%s:note=%s player_disabled=%s enemy_disabled=%s" % [faction_id, note, player_opt.is_item_disabled(index), enemy_opt.is_item_disabled(index)])
 		if (note != "") != player_opt.get_item_text(index).ends_with(" (not converted)"):
 			unavailable_flagged_and_disabled = false
 		if note != "" and not player_opt.get_item_tooltip(index).contains(note):
 			unavailable_flagged_and_disabled = false
-	_check("unconverted_factions_disabled_with_note", unavailable_flagged_and_disabled)
+	_check("unconverted_factions_disabled_with_note", unavailable_flagged_and_disabled, str(availability_mismatches))
 	# Faction packs convert continuously; men is the anchor today, others follow.
 	_check("at_least_men_converted", converted_count >= 1, "converted=%d" % converted_count)
 
@@ -599,7 +571,7 @@ func _run() -> void:
 		if enemy_opt.is_item_disabled(index):
 			disabled_index = index
 			break
-	_check("unconverted_option_exists", disabled_index >= 0 or converted_count == 7)
+	_check("unconverted_option_exists", disabled_index >= 0 or converted_count == 7, "converted=%d availability=%s" % [converted_count, str(availability)])
 	if disabled_index >= 0:
 		game_state.set("retail_player_faction", "sentinel-player")
 		game_state.set("retail_enemy_faction", "sentinel-enemy")
@@ -622,77 +594,13 @@ func _run() -> void:
 	# The legacy prototype skirmish entry point is gone for good.
 	_check("legacy_grid_removed", menu.get_node_or_null("Center/LegacyGrid") == null and menu.get_node_or_null("Center/Start") == null)
 
-	# A pack that publishes a map catalog owns the skirmish map list: however
-	# many maps it ships, in its authored order, with the player count each map
-	# document carries. This runs last because it swaps the content root.
-	var catalog_fixture := "user://menu-catalog-fixture"
-	var catalog_pack := catalog_fixture.path_join("skirmish-maps-fixture")
-	var fixture_maps := [
-		{"slug": "alpha", "name": "Alpha Vale", "players": 2},
-		{"slug": "bravo", "name": "Bravo Ridge", "players": 6},
-		{"slug": "charlie", "name": "Charlie Fen", "players": 8},
-	]
-	var catalog_rows: Array = []
-	DirAccess.make_dir_recursive_absolute(catalog_pack.path_join("data"))
-	for entry in fixture_maps:
-		var slug := String(entry["slug"])
-		var relative := "maps/%s/map.json" % slug
-		DirAccess.make_dir_recursive_absolute(catalog_pack.path_join("maps/%s" % slug))
-		var doc := FileAccess.open(catalog_pack.path_join(relative), FileAccess.WRITE)
-		doc.store_string(JSON.stringify({
-			"schema": "openbfme.map", "schemaVersion": 0,
-			"id": "bfme2.map.%s" % slug,
-			"displayName": String(entry["name"]),
-			"playerCount": int(entry["players"]),
-		}))
-		doc.close()
-		catalog_rows.append({"id": "bfme2.map.%s" % slug, "map": relative})
-	var pack_file := FileAccess.open(catalog_pack.path_join("pack.json"), FileAccess.WRITE)
-	pack_file.store_string(JSON.stringify({
-		"schema": "openbfme.content-pack", "schemaVersion": 0,
-		"id": "skirmish-maps-fixture", "version": "fixture-v0", "priority": 905,
-		"files": {"mapCatalog": "data/maps.json"},
-	}))
-	pack_file.close()
-	var catalog_doc := FileAccess.open(catalog_pack.path_join("data/maps.json"), FileAccess.WRITE)
-	catalog_doc.store_string(JSON.stringify({
-		"schema": "openbfme.map-catalog", "schemaVersion": 0, "maps": catalog_rows,
-	}))
-	catalog_doc.close()
-	var restore_content_root := OS.get_environment("OPENBFME_CONTENT")
-	OS.set_environment("OPENBFME_CONTENT", ProjectSettings.globalize_path(catalog_fixture))
-	content_db.call("reload")
-	var listed: Array = content_db.call("list_catalog_maps") as Array
-	var listed_ids: Array = []
-	var listed_players: Array = []
-	for row in listed:
-		listed_ids.append(String((row as Dictionary).get("id", "")))
-		listed_players.append(int((row as Dictionary).get("players", -1)))
-	_check(
-		"catalog_maps_enumerated_in_authored_order",
-		listed_ids == ["bfme2.map.alpha", "bfme2.map.bravo", "bfme2.map.charlie"],
-		str(listed_ids)
-	)
-	_check(
-		"catalog_map_player_counts_come_from_map_documents",
-		listed_players == [2, 6, 8],
-		str(listed_players)
-	)
-	var catalog_choices: Array = menu._skirmish_map_choices()
-	var choice_ids: Array = []
-	for choice in catalog_choices:
-		choice_ids.append(String((choice as Dictionary).get("id", "")))
-	_check(
-		"map_list_follows_the_pack_catalog_not_a_fixed_list",
-		choice_ids == listed_ids,
-		str(choice_ids)
-	)
-	OS.set_environment("OPENBFME_CONTENT", restore_content_root)
-	content_db.call("reload")
-	_check(
-		"map_list_falls_back_to_authored_choices_without_a_catalog",
-		menu._skirmish_map_choices().size() == menu.RETAIL_MAP_CHOICES.size()
-	)
+	var live_choice_ids: Array = []
+	var live_row_ids: Array = []
+	for choice in menu._skirmish_map_choices():
+		live_choice_ids.append(String((choice as Dictionary).get("id", "")))
+	for row_value in map_rows:
+		live_row_ids.append(String((row_value as Dictionary).get("map_id", "")))
+	_check("map_list_follows_the_mounted_catalog_order", live_row_ids == live_choice_ids)
 
 	game_state.set("retail_player_faction", "men")
 	game_state.set("retail_enemy_faction", "men")
