@@ -39,6 +39,7 @@ def test_cook_round_trips_authored_object_module_and_weapon_set_assignments() ->
         "CookChild",
         "CookReskin",
         "CookMystery",
+        "CookMalformed",
     ]
     assert base["fields"]["VoiceSelect"] == ["CookVoiceOne", "CookVoiceTwo"]
     assert base["fields"] == {
@@ -75,8 +76,8 @@ def test_cook_round_trips_authored_object_module_and_weapon_set_assignments() ->
         "Bonus": ["FIRST", "SECOND"],
     }
     assert _module(base, "ActiveBody")["fields"] == {
-        "MaxHealth": "COOK_HEALTH",
-        "MaxHealthDamaged": "600",
+        "MaxHealth": 1200,
+        "MaxHealthDamaged": 600,
     }
     draw = _module(base, "W3DScriptedModelDraw")
     assert draw["blocks"][0]["fields"]["Model"] == "COOK_MODEL"
@@ -104,15 +105,46 @@ def test_cook_records_inheritance_without_flattening() -> None:
     assert "health" not in reskin
 
 
-def test_unknown_module_is_retained_as_gap_with_repeated_fields() -> None:
+def test_well_formed_unknown_module_is_typed_without_a_runtime_contract() -> None:
     mystery = _by_name(cook_ini_root(FIXTURE_ROOT).bundle)["CookMystery"]
     unknown = _module(mystery, "MadeUpBehavior")
 
-    assert unknown["gap"] is True
+    assert unknown["gap"] is False
     assert unknown["fields"] == {
         "RawText": "keep this text verbatim",
         "Repeated": ["alpha", "beta"],
+        "Count": 7,
     }
+
+
+def test_malformed_module_and_unknown_carrier_are_verbatim_gaps() -> None:
+    malformed = _by_name(cook_ini_root(FIXTURE_ROOT).bundle)["CookMalformed"]
+    assert malformed["blocks"] == []
+
+    missing_type = _module(malformed, "ModuleTag_Malformed")
+    assert missing_type["carrier"] == "Behavior"
+    assert missing_type["gap"] is True
+    assert missing_type["fields"] == {"Count": "8", "Enabled": "Yes"}
+
+    unknown_carrier = _module(malformed, "AlienBehavior")
+    assert unknown_carrier["carrier"] == "other"
+    assert unknown_carrier["tag"] == "ModuleTag_Alien"
+    assert unknown_carrier["gap"] is True
+    assert unknown_carrier["fields"] == {"Count": "9"}
+
+
+def test_doubled_module_delimiter_never_becomes_equals_type() -> None:
+    result = cook_ini_root(FIXTURE_ROOT)
+    base = _by_name(result.bundle)["CookBase"]
+
+    draw = _module(base, "W3DScriptedModelDraw")
+    assert draw["carrier"] == "Draw"
+    assert draw["tag"] == "ModuleTag_Draw"
+    assert all(
+        module["type"] != "="
+        for template in result.bundle["templates"]
+        for module in template["modules"]
+    )
 
 
 def test_defines_are_resolved_and_source_identity_is_relative() -> None:
@@ -176,7 +208,7 @@ def test_module_cli_entrypoint_writes_bundle_and_report(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stdout + result.stderr
     assert json.loads(out.read_text(encoding="utf-8"))["schema"] == "openbfme.bundle.v1"
     census = json.loads(report.read_text(encoding="utf-8"))
-    assert census["templates_by_kind"] == {"child": 1, "object": 2, "reskin": 1}
+    assert census["templates_by_kind"] == {"child": 1, "object": 3, "reskin": 1}
     assert census["parse_failures"] == []
 
 

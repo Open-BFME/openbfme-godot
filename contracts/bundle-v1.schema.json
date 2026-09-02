@@ -57,7 +57,7 @@
         },
         "gap": {
           "type": "boolean",
-          "description": "True when no known importer module-field contract owns this module type. The authored row is still retained verbatim."
+          "description": "True only when the module block could not be parsed into typed fields because of a parse error, malformed block, or unknown carrier. Every well-formed module row is false regardless of runtime implementation; gap rows retain authored values verbatim."
         }
       }
     }

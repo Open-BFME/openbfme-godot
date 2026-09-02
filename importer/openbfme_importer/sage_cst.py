@@ -646,7 +646,7 @@ def _assignment_parts(text: str) -> tuple[str, str] | None:
     key, value = (part.strip() for part in text.split("=", 1))
     if not key or any(character.isspace() for character in key):
         return None
-    return key, value
+    return key, value.removeprefix("=").lstrip() if key.casefold() in _MODULE_CARRIERS else value
 
 
 def _looks_like_module(key: str, tokens: tuple[str, ...]) -> bool:
