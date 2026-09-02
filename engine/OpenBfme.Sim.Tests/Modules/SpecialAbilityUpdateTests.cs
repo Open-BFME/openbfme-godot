@@ -14,8 +14,12 @@ public sealed class SpecialAbilityUpdateTests
         var hero = ModuleBatchBTestSupport.Template("hero", new[]
         {
             ModuleBatchBTestSupport.Spec(SpecialAbilityUpdateModule.TypeName,
-                new Dictionary<string, long> { ["UnpackTime"] = 100, ["PreparationTime"] = 100, ["PackTime"] = 100 },
-                new Dictionary<string, string> { ["SpecialPowerTemplate"] = power.Name }),
+                new Dictionary<string, long> { ["PackTime"] = 100 },
+                new Dictionary<string, string>
+                {
+                    ["SpecialPowerTemplate"] = power.Name,
+                    ["UnpackTime"] = "0\n2000",
+                }),
             ModuleBatchBTestSupport.Spec(OCLSpecialPowerModule.TypeName, strings: new Dictionary<string, string>
             {
                 ["SpecialPowerTemplate"] = power.Name, ["ObjectNames"] = "wolf",
@@ -28,7 +32,11 @@ public sealed class SpecialAbilityUpdateTests
             ("objects", CommandValue.OfLongList(new long[] { caster.Id })),
             ("name", CommandValue.OfString(power.Name)))));
 
-        world.Advance(2);
+        world.Tick();
+        Assert.DoesNotContain(world.EventsThisTick, value => value.Kind == "ability");
+        Assert.DoesNotContain(world.Objects.Values, value => value.TemplateName == "wolf");
+
+        world.Advance(19);
 
         Assert.Contains(world.EventsThisTick, value => value.Kind == "ability" && value.Name == power.Name);
         Assert.Contains(world.Objects.Values, value => value.TemplateName == "wolf");

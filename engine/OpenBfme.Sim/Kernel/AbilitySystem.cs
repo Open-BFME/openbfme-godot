@@ -18,12 +18,23 @@ public abstract class TimedSpecialAbilityModuleBase : SpecialPowerEffectModuleBa
 
     protected TimedSpecialAbilityModuleBase(ModuleSpec spec) : base(spec)
     {
-        _unpackMilliseconds = Math.Max(0, spec.GetLong("UnpackTime", 0));
-        _preparationMilliseconds = Math.Max(0, spec.GetLong("PreparationTime", 0));
-        _persistentPreparationMilliseconds = Math.Max(0, spec.GetLong("PersistentPrepTime", 0));
-        _packMilliseconds = Math.Max(0, spec.GetLong("PackTime", 0));
-        _persistentCount = checked((int)Math.Max(1, spec.GetLong("PersistentCount", 1)));
+        _unpackMilliseconds = Math.Max(0, ReadLastLong(spec, "UnpackTime", 0));
+        _preparationMilliseconds = Math.Max(0, ReadLastLong(spec, "PreparationTime", 0));
+        _persistentPreparationMilliseconds = Math.Max(0, ReadLastLong(spec, "PersistentPrepTime", 0));
+        _packMilliseconds = Math.Max(0, ReadLastLong(spec, "PackTime", 0));
+        _persistentCount = checked((int)Math.Max(1, ReadLastLong(spec, "PersistentCount", 1)));
         _startRange = ModuleRuntime.ReadFixed(spec, "StartAbilityRange", Fixed64.Zero);
+    }
+
+    private static long ReadLastLong(ModuleSpec spec, string name, long fallback)
+    {
+        if (spec.Data.TryGetValue(name, out var numeric)) return numeric;
+        var result = fallback;
+        foreach (var token in ModuleRuntime.Tokens(spec.GetString(name, "")))
+            if (long.TryParse(token, System.Globalization.NumberStyles.Integer,
+                System.Globalization.CultureInfo.InvariantCulture, out var value))
+                result = value;
+        return result;
     }
 
     public bool IsActive => _phase != 0;

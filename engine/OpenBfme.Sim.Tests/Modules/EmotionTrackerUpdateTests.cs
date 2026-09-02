@@ -46,21 +46,31 @@ public sealed class EmotionTrackerUpdateTests
 
         Assert.Equal("FEAR", afraidActor.FindModule<EmotionTrackerUpdateModule>()!.Emotion);
 
+        var alertSpec = new ModuleSpec(EmotionTrackerUpdateModule.TypeName,
+            data: new Dictionary<string, long>
+            {
+                ["TauntAndPointDistance"] = 300,
+                ["TauntAndPointUpdateDelay"] = 1000,
+            },
+            blocks: new[]
+            {
+                new BundleBlock("AddEmotion", "OVERRIDE Alert_Base",
+                    new Dictionary<string, BundleValue> { ["Duration"] = BundleValue.Whole(9_999_999) },
+                    Array.Empty<BundleBlock>()),
+            });
         var alertOnly = ModuleBatchBTestSupport.Template("alert-actor", new[]
         {
-            ModuleBatchBTestSupport.Spec(EmotionTrackerUpdateModule.TypeName,
-                new Dictionary<string, long> { ["FearScanDistance"] = 10 },
-                new Dictionary<string, string>
-                {
-                    ["AddEmotion"] = "Alert_Base",
-                    ["AlwaysAfraidOf"] = "NONE +MordorBalrog",
-                }),
+            alertSpec,
         });
         var alertWorld = ModuleBatchBTestSupport.World(new[] { alertOnly, terrorTemplate });
         var alertActor = alertWorld.SpawnObject("alert-actor", 0, ModuleBatchBTestSupport.At(0));
-        alertWorld.SpawnObject("MordorBalrog", 1, ModuleBatchBTestSupport.At(2));
+        var alertTarget = alertWorld.SpawnObject("MordorBalrog", 1, ModuleBatchBTestSupport.At(2));
         alertWorld.Tick();
 
-        Assert.Equal("", alertActor.FindModule<EmotionTrackerUpdateModule>()!.Emotion);
+        var alertTracker = alertActor.FindModule<EmotionTrackerUpdateModule>()!;
+        Assert.Equal("ALERT", alertTracker.Emotion);
+        alertWorld.DealDamage(alertTarget, 100);
+        alertWorld.Tick();
+        Assert.Equal("ALERT", alertTracker.Emotion);
     }
 }

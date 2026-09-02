@@ -17,9 +17,16 @@ public sealed class ObjectCreationUpgradeTests
                     ["TriggeredBy"] = "SanctumPurchased",
                     ["GrantUpgrade"] = "Upgrade_AngmarFortressSanctumReady",
                 }),
+            ModuleBatchBTestSupport.Spec(ObjectCreationUpgradeModule.TypeName,
+                strings: new Dictionary<string, string>
+                {
+                    ["TriggeredBy"] = "TrebuchetTurret",
+                    ["UpgradeObject"] = "OCL_MinisWallBTTrebuchetUpgrade",
+                }),
         }, techEnabled: true);
         var child = ModuleBatchBTestSupport.Template("spikes", Array.Empty<ModuleSpec>());
-        var world = ModuleBatchBTestSupport.World(new[] { parent, child });
+        var trebuchet = ModuleBatchBTestSupport.Template("GondorTrebuchetWall", Array.Empty<ModuleSpec>());
+        var world = ModuleBatchBTestSupport.World(new[] { parent, child, trebuchet });
         var fort = world.SpawnObject("fort", 1, ModuleBatchBTestSupport.At(4));
 
         Assert.True(world.GrantUpgrade(fort, "Level2"));
@@ -30,5 +37,10 @@ public sealed class ObjectCreationUpgradeTests
 
         Assert.True(world.GrantUpgrade(fort, "SanctumPurchased"));
         Assert.Contains("Upgrade_AngmarFortressSanctumReady", fort.OwnedUpgrades);
+
+        Assert.True(world.GrantUpgrade(fort, "TrebuchetTurret"));
+        var wallTrebuchet = Assert.Single(world.Objects.Values,
+            value => value.TemplateName == "GondorTrebuchetWall");
+        Assert.Equal(fort.Position, wallTrebuchet.Position);
     }
 }

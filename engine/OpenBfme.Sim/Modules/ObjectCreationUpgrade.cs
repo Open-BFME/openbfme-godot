@@ -1,11 +1,11 @@
 namespace OpenBfme.Sim;
 
-/// <summary>TriggeredBy upgrade spawns ThingToSpawn/UpgradeObject after Delay and tracks DestroyWhenSold children.</summary>
+/// <summary>TriggeredBy upgrade spawns ThingToSpawn or the authored UpgradeObject OCL after Delay and tracks DestroyWhenSold children.</summary>
 [SageModule("ObjectCreationUpgrade", ModuleTier.Structural)]
 public sealed class ObjectCreationUpgradeModule : UpgradeTriggeredModuleBase
 {
     public const string TypeName = "ObjectCreationUpgrade";
-    private readonly string _template;
+    private readonly string[] _templates;
     private readonly string _grantUpgrade;
     private readonly long _delayMilliseconds;
     private readonly bool _destroyWithParent;
@@ -15,7 +15,11 @@ public sealed class ObjectCreationUpgradeModule : UpgradeTriggeredModuleBase
 
     public ObjectCreationUpgradeModule(ModuleSpec spec) : base(spec)
     {
-        _template = FirstToken(spec, "ThingToSpawn", "UpgradeObject");
+        var directTemplate = FirstToken(spec, "ThingToSpawn");
+        var upgradeObject = FirstToken(spec, "UpgradeObject");
+        _templates = directTemplate.Length > 0
+            ? new[] { directTemplate }
+            : ObjectCreationListCatalog.Resolve(upgradeObject);
         _grantUpgrade = FirstToken(spec, "GrantUpgrade");
         _delayMilliseconds = Math.Max(0, spec.GetLong("Delay", 0));
         _destroyWithParent = ModuleRuntime.ReadBool(spec, "DestroyWhenSold");
@@ -53,10 +57,13 @@ public sealed class ObjectCreationUpgradeModule : UpgradeTriggeredModuleBase
     private void Spawn(SimWorld world, GameObject self)
     {
         if (_grantUpgrade.Length > 0) world.GrantUpgrade(self, _grantUpgrade);
-        if (_template.Length == 0 || !world.TryGetTemplate(_template, out _)) return;
-        var child = world.SpawnObjectFrom(_template, self.Team, self.Position, self,
-            self.Elevation, self.HeadingRadians);
-        _children.Add(child.Id);
+        foreach (var template in _templates)
+        {
+            if (!world.TryGetTemplate(template, out _)) continue;
+            var child = world.SpawnObjectFrom(template, self.Team, self.Position, self,
+                self.Elevation, self.HeadingRadians);
+            _children.Add(child.Id);
+        }
     }
 
     public override void WriteState(CanonicalWriter writer)

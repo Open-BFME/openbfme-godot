@@ -4,9 +4,10 @@ namespace OpenBfme.Sim;
 /// Deterministic emotion mapping: nearby TERROR carriers select TERROR,
 /// authored AlwaysAfraidOf targets select TERROR, AfraidOf/FEAR carriers and
 /// allied HERO deaths select FEAR, and an authored TauntAndPointDistance
-/// selects TAUNT. AddEmotion selects the available profiles. Override Duration
-/// values are honored; without one, fear/terror last only while their source
-/// remains in range. TERROR and FEAR feed shared movement/damage modifiers.
+/// selects TAUNT or ALERT according to AddEmotion. Override Duration values are
+/// honored; without one, fear/terror last only while their source remains in
+/// range. TERROR and FEAR feed shared movement/damage modifiers; ALERT and
+/// TAUNT are presentation-only states.
 /// </summary>
 [SageModule("EmotionTrackerUpdate", ModuleTier.Structural)]
 public sealed class EmotionTrackerUpdateModule : ModuleBase,
@@ -22,12 +23,15 @@ public sealed class EmotionTrackerUpdateModule : ModuleBase,
     private readonly bool _tracksFear;
     private readonly bool _tracksTerror;
     private readonly bool _tracksTaunt;
+    private readonly bool _tracksAlert;
     private readonly long _fearMilliseconds;
     private readonly long _terrorMilliseconds;
     private readonly long _tauntMilliseconds;
+    private readonly long _alertMilliseconds;
     private int _fearTicks;
     private int _terrorTicks;
     private int _tauntTicks;
+    private int _alertTicks;
 
     public EmotionTrackerUpdateModule(ModuleSpec spec) : base(spec)
     {
@@ -40,14 +44,20 @@ public sealed class EmotionTrackerUpdateModule : ModuleBase,
         _tracksTerror = profiles.Any(IsTerrorProfile);
         _tracksFear = profiles.Any(IsFearProfile);
         _tracksTaunt = profiles.Any(IsTauntProfile);
+        _tracksAlert = profiles.Any(IsAlertProfile);
         _fearMilliseconds = Math.Max(0, ProfileDuration(spec, IsFearProfile));
         _terrorMilliseconds = Math.Max(0, ProfileDuration(spec, IsTerrorProfile));
         _tauntMilliseconds = Math.Max(0, ProfileDuration(spec, IsTauntProfile));
+        _alertMilliseconds = Math.Max(0, ProfileDuration(spec, IsAlertProfile));
         if (_tauntMilliseconds == 0)
             _tauntMilliseconds = Math.Max(0, spec.GetLong("TauntAndPointUpdateDelay", 0));
     }
 
-    public string Emotion => _terrorTicks > 0 ? "TERROR" : _fearTicks > 0 ? "FEAR" : _tauntTicks > 0 ? "TAUNT" : "";
+    public string Emotion => _terrorTicks > 0 ? "TERROR"
+        : _fearTicks > 0 ? "FEAR"
+        : _tauntTicks > 0 ? "TAUNT"
+        : _alertTicks > 0 ? "ALERT"
+        : "";
     public Fixed64 MovementSpeedMultiplier => _terrorTicks > 0
         ? Fixed64.FromFraction(1, 2)
         : _fearTicks > 0 ? Fixed64.FromFraction(3, 4) : Fixed64.One;
@@ -74,8 +84,11 @@ public sealed class EmotionTrackerUpdateModule : ModuleBase,
                     || candidate.Template.KindOf.Contains("FEAR", StringComparer.Ordinal)))
                     _fearTicks = DurationTicks(_fearMilliseconds, world);
             }
-            if (_tracksTaunt && _tauntRadius > Fixed64.Zero && candidate.Team != self.Team && distance <= tauntSquared)
-                _tauntTicks = DurationTicks(_tauntMilliseconds, world);
+            if (_tauntRadius > Fixed64.Zero && candidate.Team != self.Team && distance <= tauntSquared)
+            {
+                if (_tracksTaunt) _tauntTicks = DurationTicks(_tauntMilliseconds, world);
+                if (_tracksAlert) _alertTicks = DurationTicks(_alertMilliseconds, world);
+            }
         }
         if (_heroRadius > Fixed64.Zero)
         {
@@ -90,6 +103,8 @@ public sealed class EmotionTrackerUpdateModule : ModuleBase,
         self.TrySetConditionToken("EMOTION_TERROR", _terrorTicks > 0);
         self.TrySetConditionToken("EMOTION_FEAR", _terrorTicks == 0 && _fearTicks > 0);
         self.TrySetConditionToken("EMOTION_TAUNT", _terrorTicks == 0 && _fearTicks == 0 && _tauntTicks > 0);
+        self.TrySetConditionToken("EMOTION_ALERT",
+            _terrorTicks == 0 && _fearTicks == 0 && _tauntTicks == 0 && _alertTicks > 0);
     }
 
     private void Decay()
@@ -97,6 +112,7 @@ public sealed class EmotionTrackerUpdateModule : ModuleBase,
         if (_fearTicks > 0) _fearTicks--;
         if (_terrorTicks > 0) _terrorTicks--;
         if (_tauntTicks > 0) _tauntTicks--;
+        if (_alertTicks > 0) _alertTicks--;
     }
 
     private static int DurationTicks(long milliseconds, SimWorld world) => milliseconds > 0
@@ -134,14 +150,17 @@ public sealed class EmotionTrackerUpdateModule : ModuleBase,
 
     private static bool IsTauntProfile(string profile) =>
         profile.Contains("Taunt", StringComparison.OrdinalIgnoreCase)
-        || profile.Contains("Point", StringComparison.OrdinalIgnoreCase)
-        || profile.Contains("Alert", StringComparison.OrdinalIgnoreCase);
+        || profile.Contains("Point", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsAlertProfile(string profile) =>
+        profile.Contains("Alert", StringComparison.OrdinalIgnoreCase);
 
     public override void WriteState(CanonicalWriter writer)
     {
         writer.WriteInt(_fearTicks);
         writer.WriteInt(_terrorTicks);
         writer.WriteInt(_tauntTicks);
+        writer.WriteInt(_alertTicks);
     }
 
     public override void ReadState(CanonicalReader reader)
@@ -149,5 +168,6 @@ public sealed class EmotionTrackerUpdateModule : ModuleBase,
         _fearTicks = reader.ReadInt();
         _terrorTicks = reader.ReadInt();
         _tauntTicks = reader.ReadInt();
+        _alertTicks = reader.ReadInt();
     }
 }
