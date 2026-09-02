@@ -37,8 +37,13 @@ public sealed class AISpecialPowerUpdateTests
     [Fact]
     public void AuthoredSpellBookButtonUsesTheNormalPowerAuthorizationPath()
     {
-        var power = new SpecialPowerTemplate("SpellBookWarChant", "SPELL_BOOK", 1_000,
-            Array.Empty<string>(), false);
+        var power = TechCatalog.ParseSpecialPower(new BundleNamedRow("SpellBookWarChant",
+            new Dictionary<string, BundleValue>
+            {
+                ["Enum"] = BundleValue.Text("SPELL_BOOK"),
+                ["ReloadTime"] = BundleValue.Whole(1_000),
+                ["RequiredSciences"] = BundleValue.Text("ScienceWarChant"),
+            }));
         var button = new CommandButtonTemplate("Command_SpellBookWarChant", "SPELL_BOOK",
             "", "", "", power.Name);
         var set = new CommandSetTemplate("EvilSpellBookCommandSet",
@@ -63,6 +68,9 @@ public sealed class AISpecialPowerUpdateTests
             new MatchLaunchPlayer(0, 0, "Men", "ai", "hard", null, null, null, null, null));
         var commands = new List<SimCommand>();
 
+        Assert.False(spellBook.FindModule<AISpecialPowerUpdateModule>()!
+            .TryPlan(world, spellBook, state, 1, commands));
+        world.GrantScience(0, "ScienceWarChant");
         Assert.True(spellBook.FindModule<AISpecialPowerUpdateModule>()!
             .TryPlan(world, spellBook, state, 1, commands));
         var command = Assert.Single(commands);
@@ -73,6 +81,98 @@ public sealed class AISpecialPowerUpdateTests
         world.Tick();
 
         Assert.Equal(11, world.PowerReadyTick(0, power.Name));
+    }
+
+    [Fact]
+    public void RadiusScoresClustersWithoutBecomingRangeAndDebuffTargetsEnemy()
+    {
+        var blast = new SpecialPowerTemplate("Blast", "BLAST", 1_000, Array.Empty<string>(), false);
+        var blastButton = new CommandButtonTemplate("Command_Blast", "SPECIAL_POWER",
+            "", "", "", blast.Name);
+        var debuff = new SpecialPowerTemplate("Debuff", "DEBUFF", 1_000, Array.Empty<string>(), false);
+        var debuffButton = new CommandButtonTemplate("Command_Debuff", "SPECIAL_POWER",
+            "", "", "", debuff.Name);
+        var set = new CommandSetTemplate("PowerSet", new[]
+        {
+            new CommandSetEntryTemplate(1, blastButton.Name, blastButton),
+            new CommandSetEntryTemplate(2, debuffButton.Name, debuffButton),
+        });
+        var tech = new TechCatalog(specialPowers: new[] { blast, debuff },
+            commandButtons: new[] { blastButton, debuffButton }, commandSets: new[] { set });
+        var casterTemplate = ModuleBatchBTestSupport.Template("caster", new[]
+        {
+            ModuleBatchBTestSupport.Spec(AISpecialPowerUpdateModule.TypeName,
+                new Dictionary<string, long> { ["SpecialPowerRadius"] = 10 },
+                new Dictionary<string, string>
+                {
+                    ["CommandButtonName"] = blastButton.Name,
+                    ["SpecialPowerAIType"] = "AI_SPECIAL_POWER_RANGED_AOE_ATTACK",
+                }),
+            ModuleBatchBTestSupport.Spec(AISpecialPowerUpdateModule.TypeName,
+                strings: new Dictionary<string, string>
+                {
+                    ["CommandButtonName"] = debuffButton.Name,
+                    ["SpecialPowerAIType"] = "AI_SPECIAL_POWER_BASIC_SELF_DEBUFF",
+                }),
+        }, commandSet: set.Name);
+        var targetTemplate = ModuleBatchBTestSupport.Template("target", Array.Empty<ModuleSpec>());
+        var world = ModuleBatchBTestSupport.World(new[] { casterTemplate, targetTemplate }, tech: tech);
+        var caster = world.SpawnObject("caster", 0, ModuleBatchBTestSupport.At(0));
+        var isolated = world.SpawnObject("target", 1, ModuleBatchBTestSupport.At(40));
+        var clustered = world.SpawnObject("target", 1, ModuleBatchBTestSupport.At(80));
+        world.SpawnObject("target", 1, ModuleBatchBTestSupport.At(85));
+        var ally = world.SpawnObject("target", 0, ModuleBatchBTestSupport.At(1));
+        world.DealDamage(ally, 10);
+        var state = AiPlayerState.Create(0,
+            new MatchLaunchPlayer(0, 0, "Men", "ai", "hard", null, null, null, null, null));
+        var modules = caster.Modules.OfType<AISpecialPowerUpdateModule>().ToArray();
+        var commands = new List<SimCommand>();
+
+        Assert.True(modules[0].TryPlan(world, caster, state, 1, commands));
+        Assert.Equal(clustered.Id, Assert.Single(commands).GetLong("target"));
+        commands.Clear();
+        Assert.True(modules[1].TryPlan(world, caster, state, 2, commands));
+        Assert.Equal(isolated.Id, Assert.Single(commands).GetLong("target"));
+    }
+
+    [Fact]
+    public void PlannerStopsAfterFirstSuccessfulAuthoredPower()
+    {
+        var first = new SpecialPowerTemplate("First", "FIRST", 1_000, Array.Empty<string>(), false);
+        var second = new SpecialPowerTemplate("Second", "SECOND", 1_000, Array.Empty<string>(), false);
+        var firstButton = new CommandButtonTemplate("Command_First", "SPECIAL_POWER", "", "", "", first.Name);
+        var secondButton = new CommandButtonTemplate("Command_Second", "SPECIAL_POWER", "", "", "", second.Name);
+        var set = new CommandSetTemplate("HeroSet", new[]
+        {
+            new CommandSetEntryTemplate(1, firstButton.Name, firstButton),
+            new CommandSetEntryTemplate(2, secondButton.Name, secondButton),
+        });
+        var tech = new TechCatalog(specialPowers: new[] { first, second },
+            commandButtons: new[] { firstButton, secondButton }, commandSets: new[] { set });
+        var casterTemplate = ModuleBatchBTestSupport.Template("hero", new[]
+        {
+            ModuleBatchBTestSupport.Spec(AISpecialPowerUpdateModule.TypeName,
+                strings: new Dictionary<string, string>
+                {
+                    ["CommandButtonName"] = firstButton.Name,
+                    ["SpecialPowerAIType"] = "AI_SPECIAL_POWER_BASIC_SELF_BUFF",
+                }),
+            ModuleBatchBTestSupport.Spec(AISpecialPowerUpdateModule.TypeName,
+                strings: new Dictionary<string, string>
+                {
+                    ["CommandButtonName"] = secondButton.Name,
+                    ["SpecialPowerAIType"] = "AI_SPECIAL_POWER_BASIC_SELF_BUFF",
+                }),
+        }, commandSet: set.Name);
+        var world = ModuleBatchBTestSupport.World(new[] { casterTemplate }, tech: tech);
+        world.SpawnObject("hero", 0, ModuleBatchBTestSupport.At(0));
+        var state = AiPlayerState.Create(0,
+            new MatchLaunchPlayer(0, 0, "Men", "ai", "hard", null, null, null, null, null));
+        var commands = new List<SimCommand>();
+
+        AiSpecialPowerPlanner.Plan(world, state, 1, commands);
+
+        Assert.Equal(first.Name, Assert.Single(commands).GetString("name"));
     }
 
     [Fact]

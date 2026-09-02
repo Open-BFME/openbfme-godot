@@ -17,10 +17,12 @@ public sealed class AutoHealBehaviorModule : ModuleBase
     private readonly bool _wholePlayer;
     private readonly bool _onlyOthers;
     private readonly bool _singleBurst;
+    private readonly bool _buttonTriggered;
     private int _ticksRemaining;
     private int _lastDamagedTick = int.MinValue;
     private bool _initialized;
     private bool _burstDone;
+    private bool _buttonArmed;
 
     public AutoHealBehaviorModule(ModuleSpec spec) : base(spec)
     {
@@ -37,6 +39,7 @@ public sealed class AutoHealBehaviorModule : ModuleBase
         _wholePlayer = ModuleRuntime.ReadBool(spec, "AffectsWholePlayer");
         _onlyOthers = ModuleRuntime.ReadBool(spec, "HealOnlyOthers");
         _singleBurst = ModuleRuntime.ReadBool(spec, "SingleBurst");
+        _buttonTriggered = ModuleRuntime.ReadBool(spec, "ButtonTriggered");
     }
 
     public override void OnDamageReceived(SimWorld world, GameObject self, Fixed64 amount, string damageType) =>
@@ -61,11 +64,23 @@ public sealed class AutoHealBehaviorModule : ModuleBase
         HealPulse(world, self);
         _ticksRemaining = ModuleRuntime.MillisecondsToTicks(_delayMilliseconds, world.TickMilliseconds);
         _burstDone = _singleBurst;
+        if (_singleBurst && _buttonTriggered) _buttonArmed = false;
     }
 
     private bool IsActive(SimWorld world, GameObject self) =>
-        (_startsActive && _triggeredBy.Length == 0)
+        _buttonArmed
+        || (_startsActive && _triggeredBy.Length == 0)
         || (_triggeredBy.Length > 0 && world.ObjectHasUpgrade(self, _triggeredBy));
+
+    internal bool TriggerButton(SimWorld world)
+    {
+        if (!_buttonTriggered) return false;
+        _buttonArmed = true;
+        _burstDone = false;
+        _initialized = true;
+        _ticksRemaining = ModuleRuntime.MillisecondsToTicks(_startMilliseconds, world.TickMilliseconds);
+        return true;
+    }
 
     private void HealPulse(SimWorld world, GameObject self)
     {
@@ -91,6 +106,7 @@ public sealed class AutoHealBehaviorModule : ModuleBase
         writer.WriteInt(_lastDamagedTick);
         writer.WriteBool(_initialized);
         writer.WriteBool(_burstDone);
+        writer.WriteBool(_buttonArmed);
     }
 
     public override void ReadState(CanonicalReader reader)
@@ -99,5 +115,6 @@ public sealed class AutoHealBehaviorModule : ModuleBase
         _lastDamagedTick = reader.ReadInt();
         _initialized = reader.ReadBool();
         _burstDone = reader.ReadBool();
+        _buttonArmed = reader.ReadBool();
     }
 }

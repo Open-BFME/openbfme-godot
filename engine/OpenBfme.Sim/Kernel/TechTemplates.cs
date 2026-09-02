@@ -116,7 +116,8 @@ public sealed class TechCatalog
         row.Name,
         TechField.String(row.Fields, "Enum", row.Name),
         TechField.Integer(row.Fields, "ReloadTime"),
-        TechField.Tokens(row.Fields, "RequiredScience"),
+        TechField.Tokens(row.Fields,
+            row.Fields.ContainsKey("RequiredSciences") ? "RequiredSciences" : "RequiredScience"),
         TechField.Boolean(row.Fields, "PublicTimer"));
 
     internal static CommandButtonTemplate ParseCommandButton(BundleNamedRow row) => new(

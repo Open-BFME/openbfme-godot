@@ -14,7 +14,7 @@ internal static class AiSpecialPowerPlanner
             if (gameObject.Team != state.Team || gameObject.IsDead || gameObject.IsDying
                 || gameObject.IsUnderConstruction) continue;
             foreach (var module in gameObject.Modules.OfType<AISpecialPowerUpdateModule>())
-                module.TryPlan(world, gameObject, state, tick, commands);
+                if (module.TryPlan(world, gameObject, state, tick, commands)) break;
         }
     }
 }
