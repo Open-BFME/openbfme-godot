@@ -14,6 +14,7 @@ import fleetlib as fl
 STATE = fl.WORKSPACE / "fleet" / "progress-last.json"
 
 ROWS = [
+    ("core", "kernel units landed in engine/"),
     ("core-modules", "SAGE module types implemented in engine/"),
     ("red", "headless slice checks passing"),
     ("bugs", "playtest issues closed (open shown as remaining)"),
