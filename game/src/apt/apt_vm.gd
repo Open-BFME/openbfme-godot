@@ -1035,7 +1035,7 @@ func _run_frame(entry_ip: int, depth: int, end_ip: int = -1) -> bool:
 				if _fault != "":
 					return false
 				if df_nparams > MAX_FUNCTION_PARAMS \
-						or not _require(df_table, df_nparams * 4):
+						or (df_nparams > 0 and not _require(df_table, df_nparams * 4)):
 					_fault = "bad_function"
 					return false
 				var df_params: Array = []
@@ -1080,7 +1080,7 @@ func _run_frame(entry_ip: int, depth: int, end_ip: int = -1) -> bool:
 				if _fault != "":
 					return false
 				if d2_nparams > MAX_FUNCTION_PARAMS \
-						or not _require(d2_table, d2_nparams * 8):
+						or (d2_nparams > 0 and not _require(d2_table, d2_nparams * 8)):
 					_fault = "bad_function"
 					return false
 				var d2_params: Array = []
