@@ -195,11 +195,17 @@ public sealed partial class SimWorld
             RecordDiagnostic(command, caster.Id, "power_reloading", $"special power '{power.Name}' is reloading");
             return;
         }
+        var matchingEffects = caster.Modules.OfType<SpecialPowerEffectModuleBase>()
+            .Where(effect => effect.Matches(power)).ToArray();
+        if (matchingEffects.Any(effect => !effect.CanCast(this, caster, power)))
+        {
+            RecordDiagnostic(command, caster.Id, "power_paused", $"special power '{power.Name}' is paused");
+            return;
+        }
         if (!TryPowerTarget(command, caster, out var targetId, out var position)) return;
 
-        foreach (var module in caster.Modules)
-            if (module is SpecialPowerEffectModuleBase effect && effect.Matches(power))
-                effect.Cast(this, caster, targetId, position);
+        foreach (var effect in matchingEffects)
+            effect.Cast(this, caster, targetId, position);
         RaiseEvent(new SimEvent("ability", caster.Id, targetId == 0 ? null : targetId, Name: power.Name));
         _powerReadyTicks[command.Team][power.Name] = checked(TickIndex + power.ReloadTicks(TickMilliseconds));
     }

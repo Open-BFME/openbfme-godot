@@ -45,7 +45,7 @@ public abstract class UpgradeTriggeredModuleBase : ModuleBase
         return "";
     }
 
-    protected static string[] Tokens(string value) =>
+    protected internal static string[] Tokens(string value) =>
         value.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
 
     public override void WriteState(CanonicalWriter writer) => writer.WriteBool(_consumed);
