@@ -32,6 +32,11 @@ public sealed class ModuleSpec
     public string TypeName { get; }
     public IReadOnlyDictionary<string, long> Data => _data;
     public IReadOnlyDictionary<string, string> StringData => _stringData;
+    public IReadOnlyDictionary<string, BundleValue> Fields { get; }
+    public IReadOnlyList<BundleBlock> Blocks { get; }
+    public string Carrier { get; }
+    public string Tag { get; }
+    public bool Gap { get; }
     public ModuleTier Tier { get; }
 
     private readonly SortedDictionary<string, long> _data;
@@ -41,10 +46,25 @@ public sealed class ModuleSpec
         string typeName,
         IEnumerable<KeyValuePair<string, long>>? data = null,
         IEnumerable<KeyValuePair<string, string>>? stringData = null,
-        ModuleTier tier = ModuleTier.Cosmetic)
+        ModuleTier tier = ModuleTier.Cosmetic,
+        IReadOnlyDictionary<string, BundleValue>? fields = null,
+        IReadOnlyList<BundleBlock>? blocks = null,
+        string carrier = "",
+        string tag = "",
+        bool gap = false)
     {
         TypeName = typeName ?? throw new ArgumentNullException(nameof(typeName));
         Tier = tier;
+        var copiedFields = new SortedDictionary<string, BundleValue>(StringComparer.Ordinal);
+        if (fields != null)
+        {
+            foreach (var pair in fields) copiedFields.Add(pair.Key, pair.Value);
+        }
+        Fields = copiedFields;
+        Blocks = blocks?.ToArray() ?? Array.Empty<BundleBlock>();
+        Carrier = carrier ?? "";
+        Tag = tag ?? "";
+        Gap = gap;
         _data = new SortedDictionary<string, long>(StringComparer.Ordinal);
         if (data != null)
         {
@@ -148,13 +168,20 @@ public abstract class ModuleBase
 public sealed class ModuleRegistry
 {
     private readonly SortedDictionary<string, Func<ModuleSpec, ModuleBase>> _factories = new(StringComparer.Ordinal);
+    private readonly SortedDictionary<string, ModuleTier> _tiers = new(StringComparer.Ordinal);
 
     public IReadOnlyCollection<string> RegisteredNames => _factories.Keys;
 
-    public void Register(string typeName, Func<ModuleSpec, ModuleBase> factory)
+    public void Register(
+        string typeName,
+        Func<ModuleSpec, ModuleBase> factory,
+        ModuleTier tier = ModuleTier.Structural)
     {
         _factories.Add(typeName, factory);
+        _tiers.Add(typeName, tier);
     }
+
+    public bool TryGetTier(string typeName, out ModuleTier tier) => _tiers.TryGetValue(typeName, out tier);
 
     public bool TryCreate(ModuleSpec spec, out ModuleBase? module)
     {
@@ -189,7 +216,7 @@ public sealed class ModuleRegistry
                 ?? throw new InvalidOperationException(
                     $"[SageModule] type '{type.FullName}' needs a public ModuleSpec constructor");
             registry.Register(attribute.Name, spec =>
-                (ModuleBase)constructor.Invoke(new object[] { spec }));
+                (ModuleBase)constructor.Invoke(new object[] { spec }), attribute.Tier);
         }
         return registry;
     }
