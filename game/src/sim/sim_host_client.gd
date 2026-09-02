@@ -6,11 +6,11 @@ extends RefCounted
 ## steady-state response line gets at most READ_TIMEOUT_MS (500 ms) of polling;
 ## step(K) performs one such bounded read per requested tick, so a frame that
 ## requests one tick can never wait longer than one steady-state read timeout.
-## Initial .NET cold start is allowed STARTUP_TIMEOUT_MS (5 s) and launch should
-## be performed from a loading transition, not a gameplay frame.
+## Initial .NET plus whole-corpus bundle/map load is allowed one loading-screen
+## budget (30 s); steady-state reads remain bounded to 500 ms.
 
 const READ_TIMEOUT_MS := 500
-const STARTUP_TIMEOUT_MS := 5000
+const STARTUP_TIMEOUT_MS := 30_000
 const POLL_DELAY_MS := 1
 const PACKED_OBJECT_FORMAT := "openbfme.snapshot.objects.packed.v1"
 const PACKED_COLUMNS := [
@@ -143,7 +143,7 @@ func _send_commands_now(bundle: Dictionary) -> bool:
 	return true
 
 
-func step(ticks: int, format: String = "json") -> Array[Dictionary]:
+func step(ticks: int, format: String = "json", timeout_ms: int = READ_TIMEOUT_MS) -> Array[Dictionary]:
 	var step_started := Time.get_ticks_usec()
 	var snapshots: Array[Dictionary] = []
 	if format not in ["json", "packed"]:
@@ -157,7 +157,7 @@ func step(ticks: int, format: String = "json") -> Array[Dictionary]:
 			_set_error("step ticks must be non-negative")
 		return snapshots
 	for _index in ticks:
-		var reply := _read_document(READ_TIMEOUT_MS)
+		var reply := _read_document(timeout_ms)
 		if String(reply.get("op", "")) != "snapshot":
 			_set_error(_reply_error("step", reply))
 			return snapshots

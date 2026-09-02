@@ -4,6 +4,7 @@ extends Node3D
 
 const SimHostClientScript := preload("res://src/sim/sim_host_client.gd")
 const NativeContentLocatorScript := preload("res://src/sim/native_content_locator.gd")
+const NativeHudBridgeScript := preload("res://src/present/native_hud_bridge.gd")
 const MapDocumentScript := preload("res://src/map/map_document.gd")
 const MapTerrainMeshScript := preload("res://src/map/map_terrain_mesh.gd")
 const MapBootstrapScript := preload("res://src/map/map_bootstrap.gd")
@@ -46,6 +47,7 @@ var _profile_draw_max_usec := 0
 var _profile_frames := 0
 var _profile_started_msec := 0
 var _profile_next_msec := 0
+var _hud_bridge: NativeHudBridge
 
 
 func _ready() -> void:
@@ -53,6 +55,9 @@ func _ready() -> void:
 	_camera_rig = get_node("RtsCamera")
 	_selection_box = get_node("Overlay/SelectionBox") as ColorRect
 	_setup_selection_rings()
+	_hud_bridge = NativeHudBridgeScript.new()
+	_hud_bridge.name = "NativeHudBridge"
+	add_child(_hud_bridge)
 	call_deferred("_start_match")
 
 
@@ -87,7 +92,11 @@ func _unhandled_input(event: InputEvent) -> void:
 		return
 	if event is InputEventKey and (event as InputEventKey).pressed and not (event as InputEventKey).echo:
 		var key_event := event as InputEventKey
-		if key_event.keycode == KEY_A:
+		if key_event.keycode == KEY_ESCAPE:
+			shutdown()
+			get_tree().change_scene_to_file("res://scenes/main_menu.tscn")
+			get_viewport().set_input_as_handled()
+		elif key_event.keycode == KEY_A:
 			_attack_move_armed = true
 			get_viewport().set_input_as_handled()
 		elif key_event.keycode == KEY_S:
@@ -206,11 +215,19 @@ func _start_match() -> void:
 	else:
 		if not _spawn_mapless_armies():
 			return
-	var initial: Array[Dictionary] = _client.step(1, "packed")
+	# The first snapshot includes whole-corpus JIT and belongs to the loading
+	# transition; steady streamed snapshots retain the client's 500 ms bound.
+	var initial: Array[Dictionary] = _client.step(1, "packed", _client.STARTUP_TIMEOUT_MS)
 	if initial.size() != 1:
 		_fail("initial snapshot: %s" % _client.last_error())
 		return
 	_accept_snapshot(initial[0])
+	if not _hud_bridge.configure(
+		self, _client, _catalog, bundle_path, _map_document, _camera_rig.camera()
+	):
+		_fail("native HUD: %s" % _hud_bridge.error)
+		return
+	_hud_bridge.accept_snapshot(initial[0])
 	_running = true
 	_client.reset_profile()
 	_renderer.reset_profile()
@@ -420,6 +437,8 @@ func _accept_snapshot(snapshot: Dictionary) -> void:
 		_damage_events += 1 if kind == "damage" else 0
 		_death_events += 1 if kind == "death" else 0
 	_renderer.submit_snapshot(snapshot)
+	if _hud_bridge != null and _hud_bridge.hud != null:
+		_hud_bridge.accept_snapshot(snapshot)
 	_update_selection_rings()
 
 
@@ -448,6 +467,8 @@ func _handle_left_button(button: InputEventMouseButton) -> void:
 		if rect.size.length() < 8.0:
 			rect = Rect2(button.position - Vector2(12.0, 12.0), Vector2(24.0, 24.0))
 		_selected_hordes = selection_from_screen_points(_horde_screen_points(), rect, 0)
+		if _hud_bridge != null:
+			_hud_bridge.set_selection(_selected_hordes)
 		_dragging = false
 		_selection_box.visible = false
 		_update_selection_rings()
@@ -643,6 +664,18 @@ func object_count() -> int:
 
 func event_counts() -> Vector2i:
 	return Vector2i(_damage_events, _death_events)
+
+
+func hud_bridge() -> NativeHudBridge:
+	return _hud_bridge
+
+
+func host_client():
+	return _client
+
+
+func latest_snapshot() -> Dictionary:
+	return _latest_snapshot.duplicate(true)
 
 
 func model_resolution_summary() -> String:
