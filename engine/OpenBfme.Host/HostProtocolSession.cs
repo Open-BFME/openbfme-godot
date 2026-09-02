@@ -2,6 +2,7 @@ using System.Text;
 using System.Text.Json;
 using System.Globalization;
 using System.Numerics;
+using System.Reflection;
 using OpenBfme.Sim;
 using OpenBfme.Sim.Map;
 using OpenBfme.Sim.Pathing;
@@ -24,6 +25,7 @@ public sealed class HostProtocolSession
     private SimConfig? _restoreConfig;
     private PassabilityGrid? _restoreGrid;
     private BundleDocument? _bundle;
+    private MapDocument? _map;
     private IReadOnlyDictionary<string, BundleHordeRow> _hordes =
         new Dictionary<string, BundleHordeRow>();
     private IReadOnlySet<string> _loadedTemplateNames = new HashSet<string>();
@@ -32,7 +34,6 @@ public sealed class HostProtocolSession
     private string? _launchJson;
     private string? _sourceKind;
     private string? _sourcePath;
-    private string? _mapDocumentPath;
     private ReplayRecorder? _recorder;
 
     public bool IsRunning { get; private set; } = true;
@@ -84,15 +85,19 @@ public sealed class HostProtocolSession
         }
         var hasTemplates = root.TryGetProperty("templates", out var templatesPath);
         var hasBundle = root.TryGetProperty("bundle", out var bundlePath);
+        var hasMap = root.TryGetProperty("map", out var mapPath);
         if (hasTemplates == hasBundle)
         {
             throw new ProtocolException("launch requires exactly one of 'bundle' or 'templates'");
+        }
+        if (hasMap && !hasBundle)
+        {
+            throw new ProtocolException("launch field 'map' requires a bundle-v1 source");
         }
 
         var launchJson = match.GetRawText();
         var launch = MatchLaunch.Parse(launchJson);
         SimWorld world;
-        MapLoadReport? mapReport = null;
         int templatesLoaded;
         int templatesFailed;
         if (hasBundle)
@@ -104,38 +109,32 @@ public sealed class HostProtocolSession
             }
             var path = Path.GetFullPath(bundlePath.GetString()!);
             var document = BundleDocument.Load(path);
-            MapDocument? mapDocument = null;
-            string? mapPath = null;
-            if (root.TryGetProperty("map", out var mapPathElement))
+            MapDocument? map = null;
+            if (hasMap)
             {
-                if (mapPathElement.ValueKind != JsonValueKind.String
-                    || string.IsNullOrWhiteSpace(mapPathElement.GetString()))
+                if (mapPath.ValueKind != JsonValueKind.String
+                    || string.IsNullOrWhiteSpace(mapPath.GetString()))
                 {
-                    throw new ProtocolException("launch field 'map' must be a non-empty path");
+                    throw new ProtocolException("launch requires non-empty string field 'map'");
                 }
-                mapPath = Path.GetFullPath(mapPathElement.GetString()!);
-                mapDocument = MapDocument.Load(mapPath);
+                map = MapDocument.Load(Path.GetFullPath(mapPath.GetString()!));
             }
-            world = mapDocument == null
-                ? SimWorld.FromBundle(
-                    launch,
-                    document,
-                    PassabilityGrid.Uniform(
-                        MaplessGridWidth, MaplessGridHeight, cellSize: MaplessGridCellSize))
-                : MapWorldBuilder.Build(launch, document, mapDocument);
+            var grid = map == null
+                ? PassabilityGrid.Uniform(
+                    MaplessGridWidth, MaplessGridHeight, cellSize: MaplessGridCellSize)
+                : MapWorldBuilder.BuildPassabilityGrid(map);
+            world = map == null
+                ? SimWorld.FromBundle(launch, document, grid)
+                : SimWorld.FromBundle(launch, document, map);
             var report = world.BundleLoadReport
                 ?? throw new ProtocolException("bundle launch produced no load report");
             var loaded = BundleTemplateLoader.Load(
                 document, ModuleRegistry.CreateDefault(), launch.Rules.TickMilliseconds);
-            var grid = mapDocument == null
-                ? PassabilityGrid.Uniform(
-                    MaplessGridWidth, MaplessGridHeight, cellSize: MaplessGridCellSize)
-                : MapWorldBuilder.BuildPassabilityGrid(mapDocument);
-            _restoreConfig = BuildBundleConfig(launch, loaded);
+            _restoreConfig = BuildConfig(
+                launch, loaded, grid.Width, grid.Height);
             _restoreGrid = grid;
             _bundle = document;
-            _mapDocumentPath = mapPath;
-            mapReport = world.MapLoadReport;
+            _map = map;
             _hordes = (document.Hordes ?? Array.Empty<BundleHordeRow>())
                 .ToDictionary(row => row.Name, StringComparer.OrdinalIgnoreCase);
             _loadedTemplateNames = loaded.Templates.Select(template => template.Name)
@@ -170,6 +169,7 @@ public sealed class HostProtocolSession
             _restoreConfig = BuildConfig(launch, loaded.Templates);
             _restoreGrid = null;
             _bundle = null;
+            _map = null;
             _hordes = new Dictionary<string, BundleHordeRow>();
             _loadedTemplateNames = loaded.Templates.Select(template => template.Name)
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
@@ -178,7 +178,6 @@ public sealed class HostProtocolSession
             templatesFailed = 0;
             _sourceKind = "templates";
             _sourcePath = path;
-            _mapDocumentPath = null;
         }
 
         _launch = launch;
@@ -195,13 +194,7 @@ public sealed class HostProtocolSession
             writer.WriteNumber("players", launch.Players.Count);
             writer.WriteNumber("templates_loaded", templatesLoaded);
             writer.WriteNumber("templates_failed", templatesFailed);
-            writer.WriteBoolean("map_loaded", mapReport != null);
-            if (mapReport != null)
-            {
-                writer.WriteNumber("map_objects", mapReport.MapObjectCount);
-                writer.WriteNumber("map_spawned", mapReport.SpawnedObjectCount);
-                writer.WriteNumber("map_unknown_templates", mapReport.UnknownTemplates.Values.Sum());
-            }
+            if (_map != null) WriteMapReply(writer, _map, world.MapLoadReport);
         }) };
     }
 
@@ -241,7 +234,7 @@ public sealed class HostProtocolSession
         var templateName = RequiredString(root, "template");
         var player = RequiredInt(root, "player", minimum: 0);
         var team = TeamForSeat(player);
-        var origin = new FixedVector2(RequiredFixed(root, "x"), RequiredFixed(root, "y"));
+        var origin = SpawnOrigin(root);
         if (!_loadedTemplateNames.Contains(templateName))
         {
             throw new ProtocolException($"unknown or unloaded template '{templateName}'");
@@ -249,7 +242,7 @@ public sealed class HostProtocolSession
 
         if (!_hordes.TryGetValue(templateName, out var horde))
         {
-            var gameObject = world.SpawnObject(templateName, team, origin);
+            var gameObject = world.SpawnObject(templateName, team, origin, MapHeightAt(origin));
             _recorder?.RecordSetup(root.GetRawText());
             return new[] { SpawnReply(gameObject.Id, new[] { gameObject.Id }) };
         }
@@ -264,12 +257,14 @@ public sealed class HostProtocolSession
         var members = new List<int>();
         foreach (var rank in horde.RankInfo.OrderBy(value => value.Rank))
         {
-            foreach (var position in rank.Positions)
+            foreach (var memberPosition in rank.Positions)
             {
                 var offset = new FixedVector2(
-                    Fixed64.FromRaw(position.X.Raw / 10),
-                    Fixed64.FromRaw(position.Y.Raw / 10));
-                members.Add(world.SpawnObject(rank.UnitType, team, origin + offset).Id);
+                    Fixed64.FromRaw(memberPosition.X.Raw / 10),
+                    Fixed64.FromRaw(memberPosition.Y.Raw / 10));
+                var position = origin + offset;
+                members.Add(world.SpawnObject(
+                    rank.UnitType, team, position, MapHeightAt(position)).Id);
             }
         }
         if (members.Count == 0)
@@ -292,6 +287,83 @@ public sealed class HostProtocolSession
         foreach (var member in members) writer.WriteNumberValue(member);
         writer.WriteEndArray();
     });
+
+    private FixedVector2 SpawnOrigin(JsonElement root)
+    {
+        var hasStart = root.TryGetProperty("start", out var startElement);
+        var hasX = root.TryGetProperty("x", out _);
+        var hasY = root.TryGetProperty("y", out _);
+        if (hasStart)
+        {
+            if (hasX || hasY)
+                throw new ProtocolException("spawn accepts either 'start' or 'x' and 'y', not both");
+            if (_map == null)
+                throw new ProtocolException("spawn field 'start' requires a map-v1 launched session");
+            if (!startElement.TryGetInt32(out var start) || start < 0)
+                throw new ProtocolException("spawn field 'start' must be a non-negative integer");
+            if (!_map.StartPositions.TryGetValue(start, out var position))
+                throw new ProtocolException($"spawn selects missing start position {start}");
+            return new FixedVector2(position.X, position.Y);
+        }
+        if (!hasX || !hasY)
+            throw new ProtocolException("spawn requires either field 'start' or numeric fields 'x' and 'y'");
+        return new FixedVector2(RequiredFixed(root, "x"), RequiredFixed(root, "y"));
+    }
+
+    private Fixed64 MapHeightAt(FixedVector2 position)
+    {
+        if (_map == null) return Fixed64.Zero;
+        var cellRaw = checked((long)_map.World.CellSize * Fixed64.OneRaw);
+        var x = Math.Clamp((int)(position.X.Raw / cellRaw), 0, _map.HeightGrid.Width - 1);
+        var y = Math.Clamp((int)(position.Y.Raw / cellRaw), 0, _map.HeightGrid.Height - 1);
+        var sample = _map.HeightGrid.Samples[y * _map.HeightGrid.Width + x];
+        // SAGE height-map samples use the fixed retail 5/128 world-unit scale.
+        return Fixed64.FromFraction((long)sample * 5, 128);
+    }
+
+    private static void WriteMapReply(
+        Utf8JsonWriter writer,
+        MapDocument map,
+        MapLoadReport? report)
+    {
+        if (report == null) throw new ProtocolException("map launch produced no load report");
+        writer.WriteBoolean("map_loaded", true);
+        writer.WriteNumber("map_objects", report.MapObjectCount);
+        writer.WriteNumber("map_spawned", report.SpawnedObjectCount);
+        writer.WriteStartObject("map");
+        writer.WriteStartObject("grid");
+        writer.WriteNumber("width", map.HeightGrid.Width);
+        writer.WriteNumber("height", map.HeightGrid.Height);
+        writer.WriteNumber("cell_size", map.World.CellSize);
+        writer.WriteEndObject();
+        writer.WriteStartObject("start_positions");
+        foreach (var (index, start) in map.StartPositions)
+        {
+            writer.WriteStartObject(index.ToString(CultureInfo.InvariantCulture));
+            WriteFixed(writer, "x", start.X);
+            WriteFixed(writer, "y", start.Y);
+            WriteFixed(writer, "facing", start.Facing);
+            writer.WriteEndObject();
+        }
+        writer.WriteEndObject();
+        writer.WriteStartObject("plots_per_player");
+        foreach (var (player, count) in report.PlotsPerPlayer)
+            writer.WriteNumber(player.ToString(CultureInfo.InvariantCulture), count);
+        writer.WriteEndObject();
+        writer.WriteNumber("objects_spawned", report.SpawnedObjectCount);
+        writer.WriteNumber("objects_unknown", report.UnknownTemplates.Values.Sum());
+        writer.WriteStartObject("unknown_templates");
+        foreach (var (template, count) in report.UnknownTemplates)
+            writer.WriteNumber(template, count);
+        writer.WriteEndObject();
+        writer.WriteEndObject();
+    }
+
+    private static void WriteFixed(Utf8JsonWriter writer, string name, Fixed64 value)
+    {
+        writer.WritePropertyName(name);
+        writer.WriteNumberValue((decimal)value.Raw / Fixed64.OneRaw);
+    }
 
     private IReadOnlyList<string> Commands(JsonElement root)
     {
@@ -410,7 +482,6 @@ public sealed class HostProtocolSession
             _sourceKind,
             _sourcePath,
             _bundle?.Source.EffectiveTreeSha256,
-            _mapDocumentPath,
             world);
         _recorder.Flush(world);
         return new[] { Reply(writer =>
@@ -448,10 +519,6 @@ public sealed class HostProtocolSession
             ["match"] = replay.Match,
             [replay.SourceKind] = replay.SourcePath,
         };
-        if (replay.MapDocumentPath != null)
-        {
-            launchRequest["map"] = replay.MapDocumentPath;
-        }
         using (var launchDocument = JsonDocument.Parse(JsonSerializer.Serialize(launchRequest)))
         {
             _ = Launch(launchDocument.RootElement);
@@ -642,9 +709,11 @@ public sealed class HostProtocolSession
         return new SimConfig(templates, launch.Seed, teamCount, maxCommandPoints: commandPoints);
     }
 
-    private static SimConfig BuildBundleConfig(
+    private static SimConfig BuildConfig(
         MatchLaunch launch,
-        BundleTemplateLoadResult loaded)
+        BundleTemplateLoadResult loaded,
+        int mapWidthCells,
+        int mapHeightCells)
     {
         var teamCount = launch.Players.Max(player => player.Team) + 1;
         var commandPoints = EconomyTemplate.ScaleInteger(
@@ -653,11 +722,12 @@ public sealed class HostProtocolSession
             loaded.Templates,
             launch.Seed,
             teamCount,
+            mapWidthCells,
+            mapHeightCells,
             weaponTemplates: loaded.WeaponTemplates,
             armorTemplates: loaded.ArmorTemplates,
             maxCommandPoints: commandPoints,
-            templateIndices: loaded.TemplateIndices,
-            tech: loaded.Tech);
+            templateIndices: loaded.TemplateIndices);
     }
 
     private static void BootstrapTemplates(
@@ -772,6 +842,8 @@ public sealed class HostProtocolSession
 
     private static string SafeMessage(Exception exception)
     {
+        while (exception is TargetInvocationException { InnerException: not null })
+            exception = exception.InnerException;
         var message = exception.Message.Replace('\r', ' ').Replace('\n', ' ').Trim();
         return message.Length == 0 ? exception.GetType().Name : message;
     }

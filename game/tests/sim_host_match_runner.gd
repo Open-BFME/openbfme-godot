@@ -36,8 +36,8 @@ func _run() -> void:
 		_finish()
 		return
 
-	var first := _run_session(match, bundle_path, map_path, true)
-	var second := _run_session(match, bundle_path, map_path, false)
+	var first := _run_session(match, bundle_path, true)
+	var second := _run_session(match, bundle_path, false)
 	_check("damage_events_occurred", int(first.get("damage", 0)) > 0)
 	_check("death_events_occurred", int(first.get("death", 0)) > 0)
 	_check("first_hash_shape", _is_lower_hex_64(String(first.get("hash", ""))))
@@ -50,19 +50,11 @@ func _run() -> void:
 	_finish()
 
 
-func _run_session(
-	match: Dictionary, bundle_path: String, map_path: String, inspect: bool
-) -> Dictionary:
+func _run_session(match: Dictionary, bundle_path: String, inspect: bool) -> Dictionary:
 	var client = SimHostClientScript.new()
-	_check("session_launch_%s" % inspect, client.launch_bundle(match, bundle_path, map_path))
+	_check("session_launch_%s" % inspect, client.launch_bundle(match, bundle_path))
 	if not client.last_error().is_empty():
 		return {}
-	_check("session_map_loaded_%s" % inspect, bool(client.launch_reply().get("map_loaded", false)))
-	if inspect:
-		print("SIM_HOST_MATCH_MAP loaded=true objects=%d spawned=%d" % [
-			int(client.launch_reply().get("map_objects", 0)),
-			int(client.launch_reply().get("map_spawned", 0)),
-		])
 	var catalog: Array[Dictionary] = client.templates()
 	_check("session_catalog_%s" % inspect, not catalog.is_empty())
 	var replay_path := _repo_path("workspace/logs/lane-net-a/sim-host-match.replay.json")

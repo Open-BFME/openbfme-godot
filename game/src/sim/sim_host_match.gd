@@ -4,8 +4,10 @@ extends Node3D
 
 const SimHostClientScript := preload("res://src/sim/sim_host_client.gd")
 const NativeContentLocatorScript := preload("res://src/sim/native_content_locator.gd")
+const MapDocumentScript := preload("res://src/map/map_document.gd")
+const MapTerrainMeshScript := preload("res://src/map/map_terrain_mesh.gd")
+const MapBootstrapScript := preload("res://src/map/map_bootstrap.gd")
 const TICK_SECONDS := 1.0 / 30.0
-const SCRIPTED_OPPONENT_TICKS := 300
 const PICK_RADIUS_PIXELS := 32.0
 
 var _client
@@ -22,8 +24,6 @@ var _selected_hordes: Array[int] = []
 var _accumulator := 0.0
 var _tick := 0
 var _player_seq := 0
-var _opponent_seq := 0
-var _next_opponent_tick := SCRIPTED_OPPONENT_TICKS
 var _drag_start := Vector2.ZERO
 var _dragging := false
 var _attack_move_armed := false
@@ -34,6 +34,8 @@ var _damage_events := 0
 var _death_events := 0
 var _replay_mode := false
 var _replay_path := ""
+var _map_document
+var _terrain
 
 
 func _ready() -> void:
@@ -103,26 +105,56 @@ func _start_match() -> void:
 	var preferred_map := String((match.get("map", {}) as Dictionary).get("path", ""))
 	var native_content: Dictionary = NativeContentLocatorScript.resolve(preferred_map)
 	var bundle_path := String(native_content.get("bundle", ""))
+	var bundle_source := String(native_content.get("bundle_source", "unresolved"))
+	if (
+		OS.get_environment("OPENBFME_BUNDLE").strip_edges().is_empty()
+		and not FileAccess.file_exists(bundle_path)
+	):
+		bundle_path = _repo_path("workspace/logs/lane-cook-c/corpus-bundle-full.json")
+		bundle_source = "default"
 	var map_path := String(native_content.get("map", ""))
-	print("SIM_HOST_MATCH_BUNDLE source=%s path=%s" % [
-		String(native_content.get("bundle_source", "unresolved")), bundle_path])
+	var map_source := String(native_content.get("map_source", "unresolved"))
+	if (
+		OS.get_environment("OPENBFME_MAP").strip_edges().is_empty()
+		and not FileAccess.file_exists(map_path)
+	):
+		map_path = _repo_path("workspace/logs/lane-map-scene/fords.map-v1.json")
+		map_source = "default"
+	print("SIM_HOST_MATCH_BUNDLE source=%s path=%s" % [bundle_source, bundle_path])
 	if not FileAccess.file_exists(bundle_path):
 		_fail("bundle is absent at %s" % bundle_path)
 		return
-	if not FileAccess.file_exists(map_path):
-		_fail("map is absent at %s" % map_path)
-		return
+	var players := match.get("players", []) as Array
+	if players.size() >= 2:
+		var opponent := players[1] as Dictionary
+		opponent["controller"] = "ai"
+		opponent["ai_difficulty"] = "medium"
+	if FileAccess.file_exists(map_path):
+		_map_document = MapDocumentScript.new()
+		if not _map_document.load_path(map_path):
+			_fail(_map_document.error)
+			return
+		print("SIM_HOST_MATCH_MAP source=%s path=%s" % [map_source, map_path])
+	else:
+		map_path = ""
+		print("SIM_HOST_MATCH_MAP source=%s path=<absent-mapless-fallback>" % map_source)
 	_client = SimHostClientScript.new()
-	if not _client.launch_bundle(match, bundle_path, map_path):
+	var launched: bool = (
+		_client.launch_bundle(match, bundle_path)
+		if map_path.is_empty()
+		else _client.launch_bundle_map(match, bundle_path, map_path)
+	)
+	if not launched:
 		_fail(_client.last_error())
 		return
-	if not bool(_client.launch_reply().get("map_loaded", false)):
-		_fail("native host did not load the selected map")
-		return
-	print("SIM_HOST_MATCH_MAP loaded=true objects=%d spawned=%d" % [
-		int(_client.launch_reply().get("map_objects", 0)),
-		int(_client.launch_reply().get("map_spawned", 0)),
-	])
+	if _map_document != null:
+		var map_reply := _client.launch_reply().get("map", {}) as Dictionary
+		if map_reply.is_empty():
+			_fail("native host did not load the selected map")
+			return
+		print("SIM_HOST_MATCH_MAP loaded=true spawned=%d" % int(
+			map_reply.get("objects_spawned", 0)
+		))
 	_replay_path = _new_replay_path()
 	if not _client.record(_replay_path):
 		_fail("replay record: %s" % _client.last_error())
@@ -132,7 +164,53 @@ func _start_match() -> void:
 		_fail(_client.last_error())
 		return
 	_renderer.configure_templates(_catalog)
+	if _map_document != null:
+		_terrain = MapTerrainMeshScript.new()
+		_terrain.name = "NativeMapTerrain"
+		add_child(_terrain)
+		if not _terrain.build(_map_document):
+			_fail("map terrain mesh build failed")
+			return
+		var old_ground := get_node_or_null("Ground") as MeshInstance3D
+		if old_ground != null:
+			old_ground.visible = false
+		var setup: Dictionary = MapBootstrapScript.spawn_match(
+			_client, match, _map_document, _catalog
+		)
+		if setup.has("error"):
+			_fail(String(setup.error))
+			return
+		for id_value in setup.get("hordes", []) as Array:
+			_spawned_hordes.append(int(id_value))
+		_horde_owners = (setup.get("horde_owners", {}) as Dictionary).duplicate()
+		var player_start := int((players[0] as Dictionary).get("start_position", 0))
+		var opponent_start := int((players[1] as Dictionary).get("start_position", 1))
+		_camera_rig.focus_toward(
+			_map_document.start_world(player_start),
+			_map_document.start_world(opponent_start)
+		)
+	else:
+		if not _spawn_mapless_armies():
+			return
+	var initial: Array[Dictionary] = _client.step(1)
+	if initial.size() != 1:
+		_fail("initial snapshot: %s" % _client.last_error())
+		return
+	_accept_snapshot(initial[0])
+	_running = true
+	print(
+		"SIM_HOST_MATCH_READY hordes=%d members=%d tick=%d loaded=%d failed=%d"
+		% [
+			_spawned_hordes.size(),
+			int(_latest_snapshot.get("object_count", 0)),
+			_tick,
+			int(_client.launch_reply().get("templates_loaded", 0)),
+			int(_client.launch_reply().get("templates_failed", 0)),
+		]
+	)
 
+
+func _spawn_mapless_armies() -> bool:
 	var names := {
 		"p0_fighter": choose_horde_template(_catalog, "GondorFighterHorde", "gondor", "fighter"),
 		"p0_archer": choose_horde_template(_catalog, "GondorArcherHorde", "gondor", "archer"),
@@ -142,7 +220,7 @@ func _start_match() -> void:
 	for key in names:
 		if String(names[key]).is_empty():
 			_fail("no loaded horde equivalent for %s" % key)
-			return
+			return false
 	print(
 		"SIM_HOST_MATCH_TEMPLATES player0_fighter=%s player0_archer=%s player1_fighter=%s player1_archer=%s"
 		% [names.p0_fighter, names.p0_archer, names.p1_fighter, names.p1_archer]
@@ -161,26 +239,11 @@ func _start_match() -> void:
 		var reply: Dictionary = _client.spawn(String(request[0]), int(request[1]), request[2] as Vector2)
 		if reply.is_empty():
 			_fail(_client.last_error())
-			return
+			return false
 		var id := int(reply.get("id", 0))
 		_spawned_hordes.append(id)
 		_horde_owners[id] = int(request[1])
-	var initial: Array[Dictionary] = _client.step(1)
-	if initial.size() != 1:
-		_fail("initial snapshot: %s" % _client.last_error())
-		return
-	_accept_snapshot(initial[0])
-	_running = true
-	print(
-		"SIM_HOST_MATCH_READY hordes=%d members=%d tick=%d loaded=%d failed=%d"
-		% [
-			_spawned_hordes.size(),
-			int(_latest_snapshot.get("object_count", 0)),
-			_tick,
-			int(_client.launch_reply().get("templates_loaded", 0)),
-			int(_client.launch_reply().get("templates_failed", 0)),
-		]
-	)
+	return true
 
 
 func _start_replay(path: String) -> void:
@@ -298,24 +361,6 @@ func _accept_snapshot(snapshot: Dictionary) -> void:
 		_death_events += 1 if kind == "death" else 0
 	_renderer.submit_snapshot(snapshot)
 	_update_selection_rings()
-	if not _replay_mode and _tick >= _next_opponent_tick:
-		_issue_scripted_opponent()
-		_next_opponent_tick += SCRIPTED_OPPONENT_TICKS
-
-
-func _issue_scripted_opponent() -> void:
-	var enemy_ids: Array[int] = []
-	for id in _spawned_hordes:
-		if int(_horde_owners.get(id, -1)) == 1 and _horde_exists(id):
-			enemy_ids.append(id)
-	var target := _player_centroid()
-	var bundle := make_command_bundle(
-		_tick + 1, 1, _opponent_seq, "attack_move", enemy_ids, Vector2(target.x, target.z)
-	)
-	if not bundle.is_empty() and _client.send_commands(bundle):
-		_opponent_seq += 1
-	else:
-		_fail("scripted opponent command: %s" % _client.last_error())
 
 
 func _handle_left_button(button: InputEventMouseButton) -> void:
