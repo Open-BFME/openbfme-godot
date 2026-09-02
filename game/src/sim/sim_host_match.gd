@@ -6,7 +6,9 @@ const SimHostClientScript := preload("res://src/sim/sim_host_client.gd")
 const NativeLockstepSessionScript := preload("res://src/net/native_lockstep_session.gd")
 const NativeContentLocatorScript := preload("res://src/sim/native_content_locator.gd")
 const MapDocumentScript := preload("res://src/map/map_document.gd")
-const MapTerrainMeshScript := preload("res://src/map/map_terrain_mesh.gd")
+const NativeTerrainScript := preload("res://src/present/native_terrain.gd")
+const NativeAudioScript := preload("res://src/present/native_audio.gd")
+const NativeFxScript := preload("res://src/present/native_fx.gd")
 const MapBootstrapScript := preload("res://src/map/map_bootstrap.gd")
 const TICK_SECONDS := 1.0 / 30.0
 const PICK_RADIUS_PIXELS := 32.0
@@ -40,6 +42,8 @@ var _replay_mode := false
 var _replay_path := ""
 var _map_document
 var _terrain
+var _native_audio
+var _native_fx
 var _profile_elapsed := 0.0
 var _profile_seconds := 0
 var _profile_step_usec := 0
@@ -93,6 +97,11 @@ func _process(delta: float) -> void:
 		_fail("step stream: %s" % stream_failure)
 		return
 	_renderer.render_interpolated(clampf(_accumulator / TICK_SECONDS, 0.0, 1.0))
+	var listener: Vector3 = _camera_rig.camera().global_position if _camera_rig.camera() != null else _player_centroid()
+	if _terrain != null:
+		_terrain.set_camera_anchor(listener)
+	if _native_audio != null:
+		_native_audio.set_listener(listener)
 	if Time.get_ticks_msec() >= _profile_next_msec:
 		_print_profile()
 
@@ -200,12 +209,36 @@ func _start_match() -> void:
 		return
 	_renderer.configure_templates(_catalog)
 	if _map_document != null:
-		_terrain = MapTerrainMeshScript.new()
+		_terrain = NativeTerrainScript.new()
 		_terrain.name = "NativeMapTerrain"
 		add_child(_terrain)
-		if not _terrain.build(_map_document):
-			_fail("map terrain mesh build failed")
+		if not _terrain.configure(_map_document, OS.get_environment("OPENBFME_CONTENT")):
+			_fail("map presentation terrain failed: %s" % _terrain.error)
 			return
+		_native_audio = NativeAudioScript.new()
+		_native_audio.name = "NativeAudio"
+		add_child(_native_audio)
+		if not _native_audio.configure(
+			_catalog,
+			_terrain.pack_root,
+			OS.get_environment("OPENBFME_CONTENT"),
+			DisplayServer.get_name() != "headless"
+		):
+			print("SIM_HOST_PRESENT_AUDIO unavailable=%s" % _native_audio.error)
+			_native_audio.queue_free()
+			_native_audio = null
+		_native_fx = NativeFxScript.new()
+		_native_fx.name = "NativeFx"
+		add_child(_native_fx)
+		if not _native_fx.configure(
+			_catalog,
+			_terrain.map_data,
+			_terrain.pack_root,
+			func(point: Vector2) -> float: return _map_document.height_at_world(point)
+		):
+			print("SIM_HOST_PRESENT_FX unavailable=%s" % _native_fx.error)
+			_native_fx.queue_free()
+			_native_fx = null
 		var old_ground := get_node_or_null("Ground") as MeshInstance3D
 		if old_ground != null:
 			old_ground.visible = false
@@ -445,6 +478,10 @@ func _accept_snapshot(snapshot: Dictionary) -> void:
 		_damage_events += 1 if kind == "damage" else 0
 		_death_events += 1 if kind == "death" else 0
 	_renderer.submit_snapshot(snapshot)
+	if _native_audio != null:
+		_native_audio.submit_snapshot(snapshot)
+	if _native_fx != null:
+		_native_fx.submit_snapshot(snapshot)
 	_update_selection_rings()
 
 
@@ -475,6 +512,8 @@ func _handle_left_button(button: InputEventMouseButton) -> void:
 		_selected_hordes = selection_from_screen_points(
 			_horde_screen_points(), rect, _local_player_seat()
 		)
+		if _native_audio != null:
+			_native_audio.present_selection(_selected_hordes, _latest_snapshot)
 		_dragging = false
 		_selection_box.visible = false
 		_update_selection_rings()
@@ -499,6 +538,12 @@ func _handle_right_click(screen_position: Vector2) -> void:
 func _send_player_bundle(bundle: Dictionary) -> void:
 	if bundle.is_empty():
 		return
+	var commands := bundle.get("commands", []) as Array
+	if _native_audio != null and not commands.is_empty():
+		var command := commands[0] as Dictionary
+		var command_type := String(command.get("type", ""))
+		if command_type in ["move", "attack", "attack_move"]:
+			_native_audio.present_order(command_type, _selected_hordes, _latest_snapshot)
 	if _mp_active:
 		if _lockstep.local_commands(bundle):
 			_player_seq += 1
@@ -688,6 +733,30 @@ func object_count() -> int:
 
 func event_counts() -> Vector2i:
 	return Vector2i(_damage_events, _death_events)
+
+
+func presentation_counts() -> Dictionary:
+	return {
+		"audio": _native_audio.play_counts.duplicate(true) if _native_audio != null else {},
+		"fx": _native_fx.play_counts.duplicate(true) if _native_fx != null else {},
+	}
+
+
+func terrain_presentation_summary() -> Dictionary:
+	if _terrain == null:
+		return {}
+	return {
+		"path": _terrain.presentation_path,
+		"textures": _terrain.texture_layer_count,
+		"water_polygons": _terrain.water_polygon_count,
+		"water_triangles": _terrain.water_triangle_count,
+	}
+
+
+func presentation_capture_focus() -> Vector3:
+	if _terrain != null and _terrain.water_focus_world != Vector3.ZERO:
+		return _terrain.water_focus_world
+	return _player_centroid()
 
 
 func model_resolution_summary() -> String:
