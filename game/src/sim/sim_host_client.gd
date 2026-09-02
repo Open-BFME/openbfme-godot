@@ -44,6 +44,7 @@ var _stream_running := false
 var _stream_stop := false
 var _stream_snapshots: Array[Dictionary] = []
 var _stream_commands: Array[Dictionary] = []
+var _stream_acknowledged_sequences: Array[int] = []
 var _stream_error := ""
 var _profile_mutex := Mutex.new()
 
@@ -189,6 +190,7 @@ func start_packed_stream() -> bool:
 	_stream_error = ""
 	_stream_snapshots.clear()
 	_stream_commands.clear()
+	_stream_acknowledged_sequences.clear()
 	_stream_running = true
 	_stream_mutex.unlock()
 	_stream_thread = Thread.new()
@@ -205,6 +207,14 @@ func take_stream_snapshots() -> Array[Dictionary]:
 	_stream_mutex.lock()
 	var result := _stream_snapshots.duplicate()
 	_stream_snapshots.clear()
+	_stream_mutex.unlock()
+	return result
+
+
+func take_stream_command_acknowledgements() -> Array[int]:
+	_stream_mutex.lock()
+	var result := _stream_acknowledged_sequences.duplicate()
+	_stream_acknowledged_sequences.clear()
 	_stream_mutex.unlock()
 	return result
 
@@ -250,6 +260,9 @@ func _stream_loop() -> void:
 			if not _send_commands_now(bundle):
 				_stream_fail(_last_error)
 				return
+			_stream_mutex.lock()
+			_stream_acknowledged_sequences.append(int(bundle.get("seq", -1)))
+			_stream_mutex.unlock()
 		var started := Time.get_ticks_msec()
 		var snapshots := step(1, "packed")
 		if snapshots.size() != 1:

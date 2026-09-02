@@ -32,9 +32,24 @@ static func native_context() -> Dictionary:
 	var map_override := OS.get_environment("OPENBFME_MAP").strip_edges()
 	if maps.is_empty() and not map_override.is_empty() and FileAccess.file_exists(map_override):
 		maps = [{"slug": _map_slug(map_override), "name": map_override.get_file().get_basename(), "path": map_override, "players": 8}]
-	var digest := String(selection.get("active", ""))
-	if not _is_sha256(digest) and FileAccess.file_exists(bundle_path):
-		digest = FileAccess.get_sha256(bundle_path).to_lower()
+	elif not map_override.is_empty() and FileAccess.file_exists(map_override):
+		var override_slug := _map_slug(map_override)
+		var override_document := _read_json(map_override, MAX_SELECTION_BYTES)
+		var override_source := override_document.get("source", {}) as Dictionary
+		if not String(override_source.get("path", "")).is_empty():
+			override_slug = _map_slug(String(override_source.get("path", "")))
+		for index in maps.size():
+			if not (maps[index] is Dictionary):
+				continue
+			var row := (maps[index] as Dictionary).duplicate(true)
+			var row_slug := _map_slug(String(row.get("slug", "")))
+			if row_slug.contains(override_slug) or override_slug.contains(row_slug):
+				row["path"] = map_override
+				maps[index] = row
+	# The launch contract identifies the bytes actually handed to the host. The
+	# selection digest may describe another selected pack when an explicit bundle
+	# override is active, so it can never substitute for hashing the resolved file.
+	var digest := FileAccess.get_sha256(bundle_path).to_lower() if FileAccess.file_exists(bundle_path) else ""
 	return {
 		"content_root": content_root,
 		"selection_path": selection_path,
@@ -63,7 +78,10 @@ static func build_from_setup(setup: Node, retail_map_id: String = "", retail_map
 	var map_row := choose_map(context.get("maps", []) as Array, retail_map_id, retail_map_name)
 	if map_row.is_empty():
 		return {}
-	var players := _players_from_setup(setup)
+	var map_contract_path := _map_contract_path(map_row, String(context.get("content_root", "")))
+	if map_contract_path.is_empty():
+		return {}
+	var players := _players_from_setup(setup, int(map_row.get("players", 8)))
 	if players.is_empty():
 		return {}
 	var resources := _selected_integer(setup.get("initial_resources_opt"), 1200)
@@ -75,7 +93,7 @@ static func build_from_setup(setup: Node, retail_map_id: String = "", retail_map
 			"id": String(context.get("pack_id", "native-core")),
 			"sha256": String(context.get("pack_sha256", "")),
 		},
-		"map": {"path": String(map_row.get("path", ""))},
+		"map": {"path": map_contract_path},
 		"rules": {
 			"tick_ms": 33,
 			"starting_resources": maxi(0, resources),
@@ -149,7 +167,7 @@ static func validate(document: Dictionary) -> bool:
 	return true
 
 
-static func _players_from_setup(setup: Node) -> Array:
+static func _players_from_setup(setup: Node, start_count: int) -> Array:
 	var armies := setup.get("row_army_opts") as Array
 	var controllers := setup.get("row_controller_opts") as Array
 	var difficulties := setup.get("row_difficulty_opts") as Array
@@ -171,7 +189,6 @@ static func _players_from_setup(setup: Node) -> Array:
 			"faction": faction,
 			"controller": "human" if is_human else "ai",
 			"color": _selected_index(colors[row] as OptionButton, row),
-			"start_position": row,
 			"handicap": 1.0,
 			"name": "Player %d" % (row + 1),
 		}
@@ -180,7 +197,33 @@ static func _players_from_setup(setup: Node) -> Array:
 			var tier := String(difficulty.get_item_metadata(difficulty.selected)) if difficulty != null and difficulty.selected >= 0 else "medium"
 			player["ai_difficulty"] = tier if tier in ["easy", "medium", "hard", "brutal"] else "medium"
 		result.append(player)
+	_assign_start_positions(setup, result, start_count)
 	return result
+
+
+static func _assign_start_positions(setup: Node, players: Array, start_count: int) -> void:
+	var available: Array[int] = []
+	for index in maxi(players.size(), start_count):
+		available.append(index)
+	var human_index := 0
+	for index in players.size():
+		if String((players[index] as Dictionary).get("controller", "")) == "human":
+			human_index = index
+			break
+	var authored_start := 0
+	var game_state := setup.get_node_or_null("/root/GameState")
+	if game_state != null:
+		# The retail shell exposes Player_N_Start as one-based labels; map-v1 and
+		# match-launch-v1 address the same starts with zero-based indices.
+		var shell_start := int(game_state.get("retail_player_start_index"))
+		if shell_start > 0 and shell_start <= available.size():
+			authored_start = shell_start - 1
+	(players[human_index] as Dictionary)["start_position"] = authored_start
+	available.erase(authored_start)
+	for index in players.size():
+		if index == human_index:
+			continue
+		(players[index] as Dictionary)["start_position"] = available.pop_front()
 
 
 static func _team_id(option: OptionButton, row: int) -> int:
@@ -193,6 +236,15 @@ static func _team_id(option: OptionButton, row: int) -> int:
 
 static func _selected_index(option: OptionButton, fallback: int) -> int:
 	return option.selected if option != null and option.selected >= 0 else fallback
+
+
+static func _map_contract_path(row: Dictionary, content_root: String) -> String:
+	var artifact_path := String(row.get("path", ""))
+	if not FileAccess.file_exists(artifact_path):
+		artifact_path = _selected_path(content_root, artifact_path)
+	var document := _read_json(artifact_path, MAX_SELECTION_BYTES)
+	var source := document.get("source", {}) as Dictionary
+	return String(source.get("path", ""))
 
 
 static func _faction_contract(value: String) -> String:

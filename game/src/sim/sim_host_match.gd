@@ -48,6 +48,7 @@ var _profile_frames := 0
 var _profile_started_msec := 0
 var _profile_next_msec := 0
 var _hud_bridge: NativeHudBridge
+var _active_launch_document: Dictionary = {}
 
 
 func _ready() -> void:
@@ -93,9 +94,9 @@ func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventKey and (event as InputEventKey).pressed and not (event as InputEventKey).echo:
 		var key_event := event as InputEventKey
 		if key_event.keycode == KEY_ESCAPE:
-			shutdown()
-			get_tree().change_scene_to_file("res://scenes/main_menu.tscn")
 			get_viewport().set_input_as_handled()
+			return_to_shell()
+			return
 		elif key_event.keycode == KEY_A:
 			_attack_move_armed = true
 			get_viewport().set_input_as_handled()
@@ -127,6 +128,7 @@ func _start_match() -> void:
 	if launch_document.is_empty():
 		_fail("match-launch fixture could not be read")
 		return
+	_active_launch_document = launch_document.duplicate(true)
 	var preferred_map := String((launch_document.get("map", {}) as Dictionary).get("path", ""))
 	var native_content: Dictionary = NativeContentLocatorScript.resolve(preferred_map)
 	var bundle_path := String(native_content.get("bundle", ""))
@@ -150,10 +152,6 @@ func _start_match() -> void:
 		_fail("bundle is absent at %s" % bundle_path)
 		return
 	var players := launch_document.get("players", []) as Array
-	if players.size() >= 2:
-		var opponent := players[1] as Dictionary
-		opponent["controller"] = "ai"
-		opponent["ai_difficulty"] = "medium"
 	if FileAccess.file_exists(map_path):
 		_map_document = MapDocumentScript.new()
 		if not _map_document.load_path(map_path):
@@ -637,6 +635,11 @@ func shutdown() -> bool:
 	return clean
 
 
+func return_to_shell() -> void:
+	shutdown()
+	get_tree().change_scene_to_file("res://scenes/boot.tscn")
+
+
 func _print_replay_path() -> void:
 	if not _replay_path.is_empty():
 		print("SIM_HOST_MATCH_REPLAY path=%s mode=%s" % [
@@ -678,6 +681,10 @@ func host_client():
 
 func latest_snapshot() -> Dictionary:
 	return _latest_snapshot.duplicate(true)
+
+
+func active_match_launch() -> Dictionary:
+	return _active_launch_document.duplicate(true)
 
 
 func model_resolution_summary() -> String:

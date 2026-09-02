@@ -8,6 +8,7 @@ signal command_acknowledged(bundle: Dictionary)
 
 const RETAIL_HUD_SCRIPT_PATH := "res://src/retail_slice/retail_hud.gd"
 const MAX_BUNDLE_BYTES := 128 * 1024 * 1024
+const STREAM_COMMAND_LEAD_TICKS := 16
 const COMMAND_KIND := {
 	"UNIT_BUILD": "train",
 	"DOZER_CONSTRUCT": "build",
@@ -88,6 +89,7 @@ var _command_rows: Array[Dictionary] = []
 var _native_buttons: Array[Button] = []
 var _tick := 0
 var _seq := 0
+var _pending_bundles: Dictionary = {}
 var _content_db: Node
 var _view: SnapshotView
 var _map_view := MapView.new()
@@ -126,6 +128,10 @@ func accept_snapshot(snapshot: Dictionary) -> void:
 	_tick = int(snapshot.get("tick", _tick))
 	_prune_selection()
 	_refresh_hud()
+
+
+func _process(_delta: float) -> void:
+	_consume_command_acknowledgements()
 
 
 func set_selection(ids: Array) -> void:
@@ -168,7 +174,8 @@ func press_command(command: Variant) -> bool:
 				break
 	if row.is_empty():
 		return false
-	var lead := 2 if _client != null and _client.is_streaming() else 1
+	var streaming: bool = _client != null and _client.is_streaming()
+	var lead := STREAM_COMMAND_LEAD_TICKS if streaming else 1
 	var bundle := make_command_bundle(row, _tick + lead, 0, _seq, _selected_ids)
 	if bundle.is_empty():
 		return false
@@ -178,9 +185,26 @@ func press_command(command: Variant) -> bool:
 	if _client == null or not _client.send_commands(bundle):
 		return false
 	_seq += 1
-	last_acknowledged = true
-	command_acknowledged.emit(last_bundle.duplicate(true))
+	if streaming:
+		_pending_bundles[int(bundle.get("seq", -1))] = bundle.duplicate(true)
+	else:
+		last_acknowledged = true
+		command_acknowledged.emit(last_bundle.duplicate(true))
 	return true
+
+
+func _consume_command_acknowledgements() -> void:
+	if _client == null or not _client.has_method("take_stream_command_acknowledgements"):
+		return
+	for sequence in _client.take_stream_command_acknowledgements():
+		var seq := int(sequence)
+		if not _pending_bundles.has(seq):
+			continue
+		var bundle := _pending_bundles[seq] as Dictionary
+		_pending_bundles.erase(seq)
+		if int(last_bundle.get("seq", -2)) == seq:
+			last_acknowledged = true
+		command_acknowledged.emit(bundle.duplicate(true))
 
 
 static func make_command_bundle(
@@ -630,9 +654,10 @@ func _find_apt_pack_root() -> String:
 
 
 func _return_to_shell() -> void:
-	if _host_match != null and _host_match.has_method("shutdown"):
-		_host_match.call("shutdown")
-	get_tree().change_scene_to_file("res://scenes/main_menu.tscn")
+	if _host_match != null and _host_match.has_method("return_to_shell"):
+		_host_match.call("return_to_shell")
+		return
+	get_tree().change_scene_to_file("res://scenes/boot.tscn")
 
 
 func _fail(message: String) -> bool:

@@ -81,11 +81,15 @@ func _run() -> void:
 	_check("fortress_train_button", fortress_id > 0 and not train_row.is_empty())
 	if fortress_id > 0:
 		var client = match_scene.host_client()
-		client.stop_packed_stream()
-		for queued_snapshot in client.take_stream_snapshots():
-			bridge.accept_snapshot(queued_snapshot)
 		bridge.set_selection([fortress_id])
-		_check("train_button_acknowledged", bridge.press_command(train_row) and bridge.last_acknowledged, client.last_error())
+		var submitted: bool = bridge.press_command(train_row)
+		_check("train_button_submitted", submitted, client.last_error())
+		_check("train_not_acknowledged_before_host_reply", not bridge.last_acknowledged)
+		for _frame in 300:
+			if bridge.last_acknowledged or not client.stream_error().is_empty():
+				break
+			await process_frame
+		_check("train_button_acknowledged", bridge.last_acknowledged, client.stream_error())
 		var bundle: Dictionary = bridge.last_bundle
 		var commands := bundle.get("commands", []) as Array
 		var args := (commands[0] as Dictionary).get("args", {}) as Dictionary if commands.size() == 1 else {}
@@ -99,9 +103,13 @@ func _run() -> void:
 	_check("resources_match_snapshot", int(readouts.get("resources", -1)) == int(player.get("resources", -2)))
 	_check("command_points_match_snapshot", int(readouts.get("command_points", -1)) == int(player.get("command_points", -2)) and int(readouts.get("command_points_max", -1)) == int(player.get("command_points_max", -2)))
 	_check("power_points_match_snapshot", int(readouts.get("power_points", -1)) == int(player.get("power_points", -2)))
-	match_scene.shutdown()
-	match_scene.queue_free()
+	var escape := InputEventKey.new()
+	escape.pressed = true
+	escape.keycode = KEY_ESCAPE
+	match_scene.call("_unhandled_input", escape)
 	await process_frame
+	await process_frame
+	_check("escape_returns_to_retail_shell", current_scene != null and current_scene.scene_file_path == "res://scenes/boot.tscn")
 	_finish()
 
 
