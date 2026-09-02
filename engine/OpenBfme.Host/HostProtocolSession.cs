@@ -28,6 +28,10 @@ public sealed class HostProtocolSession
     private IReadOnlySet<string> _loadedTemplateNames = new HashSet<string>();
     private IReadOnlyDictionary<int, int> _seatTeams = new Dictionary<int, int>();
     private int _nextHordeId = 100_000;
+    private string? _launchJson;
+    private string? _sourceKind;
+    private string? _sourcePath;
+    private ReplayRecorder? _recorder;
 
     public bool IsRunning { get; private set; } = true;
 
@@ -52,6 +56,10 @@ public sealed class HostProtocolSession
                 "hash" => Hash(),
                 "save" => Save(),
                 "load" => Load(root),
+                "record" => Record(root),
+                "replay" => Replay(root),
+                "join" => Join(root),
+                "diff" => Diff(root),
                 "quit" => Quit(),
                 _ => throw new ProtocolException($"unsupported op '{op}'"),
             };
@@ -79,7 +87,8 @@ public sealed class HostProtocolSession
             throw new ProtocolException("launch requires exactly one of 'bundle' or 'templates'");
         }
 
-        var launch = MatchLaunch.Parse(match.GetRawText());
+        var launchJson = match.GetRawText();
+        var launch = MatchLaunch.Parse(launchJson);
         SimWorld world;
         int templatesLoaded;
         int templatesFailed;
@@ -113,6 +122,8 @@ public sealed class HostProtocolSession
             _templates = loaded.Templates;
             templatesLoaded = report.TemplatesLoaded;
             templatesFailed = report.TemplatesFailed.Count;
+            _sourceKind = "bundle";
+            _sourcePath = path;
         }
         else
         {
@@ -144,12 +155,16 @@ public sealed class HostProtocolSession
             _templates = loaded.Templates;
             templatesLoaded = loaded.Templates.Count;
             templatesFailed = 0;
+            _sourceKind = "templates";
+            _sourcePath = path;
         }
 
         _launch = launch;
         _seatTeams = launch.Players.ToDictionary(player => player.Seat, player => player.Team);
         _world = world;
         _nextHordeId = 100_000;
+        _launchJson = launchJson;
+        _recorder = null;
 
         return new[] { Reply(writer =>
         {
@@ -206,6 +221,7 @@ public sealed class HostProtocolSession
         if (!_hordes.TryGetValue(templateName, out var horde))
         {
             var gameObject = world.SpawnObject(templateName, team, origin);
+            _recorder?.RecordSetup(root.GetRawText());
             return new[] { SpawnReply(gameObject.Id, new[] { gameObject.Id }) };
         }
         var missingMember = horde.RankInfo.Select(rank => rank.UnitType)
@@ -235,6 +251,7 @@ public sealed class HostProtocolSession
         var templateIndex = document.Templates.Single(row =>
             row.Name.Equals(templateName, StringComparison.OrdinalIgnoreCase)).Index;
         world.AddHorde(new SnapshotHorde(hordeId, team, templateIndex, members, Formation: 0));
+        _recorder?.RecordSetup(root.GetRawText());
         return new[] { SpawnReply(hordeId, members) };
     }
 
@@ -255,7 +272,19 @@ public sealed class HostProtocolSession
         {
             throw new ProtocolException("commands requires object field 'bundle'");
         }
-        var bundle = SimCommandBundle.Parse(bundleElement.GetRawText());
+        var bundleJson = bundleElement.GetRawText();
+        var bundle = SimCommandBundle.Parse(bundleJson);
+        SubmitCommandBundle(world, bundle);
+        _recorder?.RecordCommand(bundleJson);
+        return new[] { Reply(writer =>
+        {
+            writer.WriteString("op", "ack");
+            writer.WriteNumber("tick", bundle.Tick);
+        }) };
+    }
+
+    private void SubmitCommandBundle(SimWorld world, SimCommandBundle bundle)
+    {
         if (bundle.Tick <= world.TickIndex)
         {
             throw new ProtocolException(
@@ -268,11 +297,6 @@ public sealed class HostProtocolSession
                 throw new ProtocolException($"command bundle for tick {bundle.Tick} was refused");
             }
         }
-        return new[] { Reply(writer =>
-        {
-            writer.WriteString("op", "ack");
-            writer.WriteNumber("tick", bundle.Tick);
-        }) };
     }
 
     private IReadOnlyList<string> Step(JsonElement root)
@@ -287,9 +311,11 @@ public sealed class HostProtocolSession
         for (var index = 0; index < ticks; index++)
         {
             world.Tick();
+            _recorder?.RecordHash(world);
             replies[index] = "{\"op\":\"snapshot\",\"snapshot\":"
                 + SnapshotWriter.WriteJson(world) + "}";
         }
+        _recorder?.Flush(world);
         return replies;
     }
 
@@ -341,8 +367,221 @@ public sealed class HostProtocolSession
         }) };
     }
 
+    private IReadOnlyList<string> Record(JsonElement root)
+    {
+        var world = RequireWorld();
+        if (_launchJson == null || _sourceKind == null || _sourcePath == null)
+        {
+            throw new ProtocolException("record requires a launched session");
+        }
+        var path = Path.GetFullPath(RequiredString(root, "path"));
+        _recorder = new ReplayRecorder(
+            path,
+            _launchJson,
+            _sourceKind,
+            _sourcePath,
+            _bundle?.Source.EffectiveTreeSha256,
+            world);
+        _recorder.Flush(world);
+        return new[] { Reply(writer =>
+        {
+            writer.WriteString("op", "recording");
+            writer.WriteString("path", path);
+        }) };
+    }
+
+    private IReadOnlyList<string> Replay(JsonElement root)
+    {
+        if (_world != null)
+        {
+            throw new ProtocolException("replay requires a fresh host session");
+        }
+        var replay = ReplayFile.Load(RequiredString(root, "path"));
+        var verify = !root.TryGetProperty("verify", out var verifyElement)
+            || verifyElement.ValueKind != JsonValueKind.False;
+        if (replay.SourceKind == "bundle")
+        {
+            var bundle = BundleDocument.Load(replay.SourcePath);
+            if (!string.Equals(bundle.Source.EffectiveTreeSha256, replay.BundleHash,
+                    StringComparison.Ordinal))
+            {
+                throw new ProtocolException("replay bundle effective tree identity does not match");
+            }
+        }
+        else if (replay.SourceKind != "templates")
+        {
+            throw new ProtocolException($"unsupported replay source kind '{replay.SourceKind}'");
+        }
+        var launchRequest = new Dictionary<string, object?>
+        {
+            ["op"] = "launch",
+            ["match"] = replay.Match,
+            [replay.SourceKind] = replay.SourcePath,
+        };
+        using (var launchDocument = JsonDocument.Parse(JsonSerializer.Serialize(launchRequest)))
+        {
+            _ = Launch(launchDocument.RootElement);
+        }
+        var world = RequireWorld();
+        if (replay.Setup.Count == 0)
+        {
+            RestoreState(replay.InitialState);
+            world = RequireWorld();
+        }
+        else
+        {
+            foreach (var setup in replay.Setup) _ = Spawn(setup);
+        }
+        if (world.TickIndex != replay.InitialTick)
+        {
+            throw new ProtocolException("replay initial tick does not match its canonical state");
+        }
+        foreach (var bundleElement in replay.Commands
+                     .OrderBy(CommandTick)
+                     .ThenBy(CommandTeam)
+                     .ThenBy(CommandSequence)
+                     .ThenBy(CommandSeat))
+        {
+            SubmitCommandBundle(world, SimCommandBundle.Parse(bundleElement.GetRawText()));
+        }
+        var replies = new List<string>();
+        int? divergenceTick = null;
+        while (world.TickIndex < replay.FinalTick)
+        {
+            world.Tick();
+            var actual = world.StateHash();
+            var hashOk = !verify || !replay.Hashes.TryGetValue(world.TickIndex, out var expected)
+                || string.Equals(actual, expected, StringComparison.Ordinal);
+            if (!hashOk && divergenceTick == null) divergenceTick = world.TickIndex;
+            replies.Add("{\"op\":\"replay_progress\",\"tick\":"
+                + world.TickIndex.ToString(CultureInfo.InvariantCulture)
+                + ",\"hash_ok\":" + (hashOk ? "true" : "false")
+                + ",\"snapshot\":" + SnapshotWriter.WriteJson(world) + "}");
+        }
+        if (verify && divergenceTick == null
+            && !string.Equals(world.StateHash(), replay.FinalHash, StringComparison.Ordinal))
+        {
+            divergenceTick = world.TickIndex;
+        }
+        replies.Add(Reply(writer =>
+        {
+            writer.WriteString("op", "replay_done");
+            writer.WriteNumber("ticks", world.TickIndex);
+            if (divergenceTick == null) writer.WriteNull("divergence_tick");
+            else writer.WriteNumber("divergence_tick", divergenceTick.Value);
+        }));
+        return replies;
+    }
+
+    private IReadOnlyList<string> Join(JsonElement root)
+    {
+        _ = RequireWorld();
+        var stateTick = RequiredInt(root, "tick", minimum: 0);
+        RestoreState(RequiredString(root, "state"));
+        var world = RequireWorld();
+        if (world.TickIndex != stateTick)
+        {
+            throw new ProtocolException(
+                $"join tick {stateTick} does not match state tick {world.TickIndex}");
+        }
+        if (!root.TryGetProperty("catchup", out var catchup)
+            || catchup.ValueKind != JsonValueKind.Array)
+        {
+            throw new ProtocolException("join requires array field 'catchup'");
+        }
+        var bundles = catchup.EnumerateArray().Select(value => value.Clone())
+            .OrderBy(CommandTick)
+            .ThenBy(CommandTeam)
+            .ThenBy(CommandSequence)
+            .ThenBy(CommandSeat)
+            .ToArray();
+        foreach (var element in bundles)
+        {
+            SubmitCommandBundle(world, SimCommandBundle.Parse(element.GetRawText()));
+        }
+        var finalTick = bundles.Length == 0 ? stateTick : bundles.Max(CommandTick);
+        while (world.TickIndex < finalTick) world.Tick();
+        return new[] { Reply(writer =>
+        {
+            writer.WriteString("op", "joined");
+            writer.WriteNumber("tick", world.TickIndex);
+            writer.WriteString("hash", world.StateHash());
+        }) };
+    }
+
+    private IReadOnlyList<string> Diff(JsonElement root)
+    {
+        var world = RequireWorld();
+        var other = RestoreWorld(RequiredString(root, "state"));
+        using var localJson = JsonDocument.Parse(SnapshotWriter.WriteJson(world));
+        using var otherJson = JsonDocument.Parse(SnapshotWriter.WriteJson(other));
+        var difference = CanonicalStateDifference.First(
+            localJson.RootElement, otherJson.RootElement);
+        difference ??= CanonicalStateDifference.FirstBytes(world.Snapshot(), other.Snapshot());
+        var reply = Reply(writer =>
+        {
+            writer.WriteString("op", "diff");
+            writer.WriteNumber("tick", world.TickIndex);
+            writer.WriteNumber("other_tick", other.TickIndex);
+            if (difference == null)
+            {
+                writer.WriteNull("difference");
+            }
+            else
+            {
+                writer.WriteStartObject("difference");
+                writer.WriteString("path", difference.Path);
+                writer.WritePropertyName("local");
+                writer.WriteRawValue(difference.LocalJson);
+                writer.WritePropertyName("other");
+                writer.WriteRawValue(difference.OtherJson);
+                writer.WriteEndObject();
+            }
+        });
+        if (root.TryGetProperty("path", out var pathElement))
+        {
+            if (pathElement.ValueKind != JsonValueKind.String
+                || string.IsNullOrWhiteSpace(pathElement.GetString()))
+            {
+                throw new ProtocolException("diff field 'path' must be a non-empty string");
+            }
+            var path = Path.GetFullPath(pathElement.GetString()!);
+            var directory = Path.GetDirectoryName(path);
+            if (!string.IsNullOrEmpty(directory)) Directory.CreateDirectory(directory);
+            File.WriteAllText(path, reply + Environment.NewLine);
+        }
+        return new[] { reply };
+    }
+
+    private void RestoreState(string state) => _world = RestoreWorld(state);
+
+    private SimWorld RestoreWorld(string state)
+    {
+        if (_launch == null || _templates == null || _restoreConfig == null)
+        {
+            throw new ProtocolException("canonical state restore requires a launched session");
+        }
+        byte[] payload;
+        try
+        {
+            payload = Convert.FromBase64String(state);
+        }
+        catch (FormatException exception)
+        {
+            throw new ProtocolException("field 'state' is not valid base64", exception);
+        }
+        return SimWorld.Restore(
+            payload, _restoreConfig, ModuleRegistry.CreateDefault(), _restoreGrid);
+    }
+
+    private int CommandTeam(JsonElement element) => TeamForSeat(CommandSeat(element));
+    private static int CommandTick(JsonElement element) => RequiredInt(element, "tick", 0);
+    private static int CommandSeat(JsonElement element) => RequiredInt(element, "seat", 0);
+    private static int CommandSequence(JsonElement element) => RequiredInt(element, "seq", 0);
+
     private IReadOnlyList<string> Quit()
     {
+        if (_world != null) _recorder?.Flush(_world);
         IsRunning = false;
         return new[] { Reply(writer => writer.WriteString("op", "quit")) };
     }

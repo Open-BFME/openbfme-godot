@@ -1,0 +1,58 @@
+{
+  "schema": "openbfme.replay.v1",
+  "match": {
+    "schema": "openbfme.match-launch.v1",
+    "seed": 20260901,
+    "pack": {
+      "id": "rotwk-full",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    "map": {
+      "path": "maps/map mp fords of isen ii/map mp fords of isen ii.map"
+    },
+    "rules": {
+      "tick_ms": 33,
+      "starting_resources": 1000,
+      "command_point_multiplier": 1.0,
+      "fog_of_war": true,
+      "game_speed": 1.0,
+      "victory": "annihilation"
+    },
+    "players": [
+      { "seat": 0, "team": 0, "faction": "FactionMen", "controller": "human" },
+      { "seat": 1, "team": 1, "faction": "FactionMordor", "controller": "ai", "ai_difficulty": "hard" }
+    ],
+    "mode": "skirmish"
+  },
+  "source": {
+    "kind": "bundle",
+    "path": "contracts/fixtures/bundle-v1.json",
+    "effective_tree_sha256": "cb87f11a40749309579b3d3239780c37968ab19c513c035b8de7b35b6ba758bf",
+    "map": {
+      "path": "maps/map mp fords of isen ii/map mp fords of isen ii.map"
+    }
+  },
+  "initial_tick": 0,
+  "initial_state": "AA==",
+  "setup": [],
+  "command_bundles": [
+    {
+      "schema": "openbfme.command.v1",
+      "tick": 1,
+      "seat": 0,
+      "seq": 0,
+      "commands": [
+        { "type": "move", "args": { "objects": [1], "x": 200, "y": 40 } }
+      ]
+    }
+  ],
+  "hash_log_interval": 1,
+  "hash_log": [
+    { "tick": 1, "hash": "0000000000000000000000000000000000000000000000000000000000000000" }
+  ],
+  "final_tick": 1,
+  "final_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+  "build": {
+    "identity": "fixture"
+  }
+}

@@ -31,6 +31,8 @@ var _startup_failed := false
 var _startup_error := ""
 var _damage_events := 0
 var _death_events := 0
+var _replay_mode := false
+var _replay_path := ""
 
 
 func _ready() -> void:
@@ -64,7 +66,7 @@ func _process(delta: float) -> void:
 
 
 func _unhandled_input(event: InputEvent) -> void:
-	if not _running:
+	if not _running or _replay_mode:
 		return
 	if event is InputEventKey and (event as InputEventKey).pressed and not (event as InputEventKey).echo:
 		var key_event := event as InputEventKey
@@ -89,6 +91,10 @@ func _unhandled_input(event: InputEvent) -> void:
 
 
 func _start_match() -> void:
+	var requested_replay := _replay_argument()
+	if not requested_replay.is_empty():
+		_start_replay(requested_replay)
+		return
 	var match := _load_json(_repo_path("contracts/fixtures/match-launch-v1.json"))
 	if match.is_empty():
 		_fail("match-launch fixture could not be read")
@@ -106,6 +112,10 @@ func _start_match() -> void:
 	_client = SimHostClientScript.new()
 	if not _client.launch_bundle(match, bundle_path):
 		_fail(_client.last_error())
+		return
+	_replay_path = _new_replay_path()
+	if not _client.record(_replay_path):
+		_fail("replay record: %s" % _client.last_error())
 		return
 	_catalog = _client.templates()
 	if _catalog.is_empty():
@@ -161,6 +171,33 @@ func _start_match() -> void:
 			int(_client.launch_reply().get("templates_failed", 0)),
 		]
 	)
+
+
+func _start_replay(path: String) -> void:
+	_replay_mode = true
+	_replay_path = ProjectSettings.globalize_path(path) if path.begins_with("user://") else path
+	_client = SimHostClientScript.new()
+	var result: Dictionary = _client.replay(_replay_path, true)
+	if result.is_empty():
+		_fail("replay: %s" % _client.last_error())
+		return
+	_catalog = _client.templates()
+	if _catalog.is_empty():
+		_fail("replay templates: %s" % _client.last_error())
+		return
+	_renderer.configure_templates(_catalog)
+	var all_hashes_ok := true
+	for row_value in result.get("progress", []) as Array:
+		var row := row_value as Dictionary
+		all_hashes_ok = all_hashes_ok and bool(row.get("hash_ok", false))
+		var snapshot_value: Variant = row.get("snapshot")
+		if snapshot_value is Dictionary:
+			_accept_snapshot(snapshot_value as Dictionary)
+	var done := result.get("done", {}) as Dictionary
+	if not all_hashes_ok or done.get("divergence_tick") != null:
+		_fail("replay diverged at %s" % str(done.get("divergence_tick")))
+		return
+	print("SIM_HOST_MATCH_REPLAY_DONE ticks=%d path=%s" % [int(done.get("ticks", 0)), _replay_path])
 
 
 static func choose_horde_template(
@@ -251,7 +288,7 @@ func _accept_snapshot(snapshot: Dictionary) -> void:
 		_death_events += 1 if kind == "death" else 0
 	_renderer.submit_snapshot(snapshot)
 	_update_selection_rings()
-	if _tick >= _next_opponent_tick:
+	if not _replay_mode and _tick >= _next_opponent_tick:
 		_issue_scripted_opponent()
 		_next_opponent_tick += SCRIPTED_OPPONENT_TICKS
 
@@ -451,10 +488,19 @@ static func _screen_rect(first: Vector2, second: Vector2) -> Rect2:
 func shutdown() -> bool:
 	_running = false
 	if _client == null:
+		_print_replay_path()
 		return true
 	var clean: bool = _client.quit()
 	_client = null
+	_print_replay_path()
 	return clean
+
+
+func _print_replay_path() -> void:
+	if not _replay_path.is_empty():
+		print("SIM_HOST_MATCH_REPLAY path=%s mode=%s" % [
+			_replay_path, "playback" if _replay_mode else "recorded"
+		])
 
 
 func is_running() -> bool:
@@ -506,3 +552,18 @@ func _load_json(path: String) -> Dictionary:
 func _repo_path(relative: String) -> String:
 	var game_root := ProjectSettings.globalize_path("res://").trim_suffix("/").trim_suffix("\\")
 	return game_root.get_base_dir().path_join(relative)
+
+
+func _new_replay_path() -> String:
+	var directory := ProjectSettings.globalize_path("user://replays")
+	DirAccess.make_dir_recursive_absolute(directory)
+	var timestamp := Time.get_datetime_string_from_system().replace(":", "-")
+	return directory.path_join("%s.replay.json" % timestamp)
+
+
+func _replay_argument() -> String:
+	var args := OS.get_cmdline_user_args()
+	for index in args.size() - 1:
+		if String(args[index]) == "--replay":
+			return String(args[index + 1])
+	return ""

@@ -10,6 +10,7 @@ schema is its own unit and bumps the version in the file name.
 | `match-launch-v1.schema.json` | shell (game/src/ui) | sim | draft v1 |
 | `bundle-v1.schema.json` | importer cook | sim + presentation | draft v1 |
 | `command-v1.schema.json` | shell/net | sim | draft v1 |
+| `replay-v1.schema.json` | sim host | sim host + match shell | draft v1 |
 
 `fixtures/bundle-v1.json` is the complete generic-cook oracle produced from
 the fixture trees under `importer/tests/fixtures/cook/`; it includes Object

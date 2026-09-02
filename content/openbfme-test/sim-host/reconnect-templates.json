@@ -1,0 +1,21 @@
+{
+  "schema": "openbfme.objects",
+  "schemaVersion": 0,
+  "objects": [
+    {
+      "id": "sim-host.reconnect-member",
+      "kind": "member",
+      "displayName": "Reconnect Test Member",
+      "simulation": { "health": 100, "speed": 90 }
+    },
+    {
+      "id": "sim-host.reconnect-horde",
+      "kind": "battalion",
+      "displayName": "Reconnect Test Horde",
+      "memberObjectId": "sim-host.reconnect-member",
+      "memberCount": 1,
+      "commandPoints": 1,
+      "simulation": { "health": 100, "speed": 90 }
+    }
+  ]
+}
