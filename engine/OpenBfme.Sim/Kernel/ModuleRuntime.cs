@@ -84,8 +84,10 @@ internal static class ModuleRuntime
     {
         var positives = Tokens(filter).Where(value => value[0] == '+').Select(value => value[1..]).ToArray();
         var negatives = Tokens(filter).Where(value => value[0] == '-').Select(value => value[1..]).ToArray();
-        if (negatives.Any(gameObject.Template.KindOf.Contains)) return false;
-        return positives.Length == 0 || positives.Any(gameObject.Template.KindOf.Contains);
+        bool Matches(string token) => gameObject.TemplateName.Equals(token, StringComparison.Ordinal)
+            || gameObject.Template.KindOf.Contains(token, StringComparer.Ordinal);
+        if (negatives.Any(Matches)) return false;
+        return positives.Length == 0 || positives.Any(Matches);
     }
 }
 

@@ -14,15 +14,17 @@ public sealed class EmotionTrackerUpdateTests
                 new Dictionary<string, string>
                 {
                     ["AddEmotion"] = "Terror_Base",
-                    ["AfraidOf"] = "NONE +TERROR",
+                    ["AfraidOf"] = "NONE +MordorCaveTroll",
+                    ["AlwaysAfraidOf"] = "NONE +MordorBalrog",
                 }),
             ModuleBatchBTestSupport.Spec(LinearMoverModule.TypeName,
                 new Dictionary<string, long> { ["SpeedPerTickRaw"] = Fixed64.One.Raw }),
         });
-        var terrorTemplate = ModuleBatchBTestSupport.Template("terror", Array.Empty<ModuleSpec>(), kindOf: new[] { "TERROR" });
+        var terrorTemplate = ModuleBatchBTestSupport.Template("MordorBalrog", Array.Empty<ModuleSpec>(),
+            kindOf: new[] { "MONSTER" });
         var world = ModuleBatchBTestSupport.World(new[] { actorTemplate, terrorTemplate });
         var actor = world.SpawnObject("actor", 0, ModuleBatchBTestSupport.At(0));
-        world.SpawnObject("terror", 1, ModuleBatchBTestSupport.At(2));
+        world.SpawnObject("MordorBalrog", 1, ModuleBatchBTestSupport.At(2));
         actor.FindModule<LinearMoverModule>()!.SetDestination(ModuleBatchBTestSupport.At(10));
 
         world.Tick();

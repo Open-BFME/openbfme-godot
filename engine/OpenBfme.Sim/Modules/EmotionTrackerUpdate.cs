@@ -2,7 +2,8 @@ namespace OpenBfme.Sim;
 
 /// <summary>
 /// Deterministic emotion mapping: nearby TERROR carriers select TERROR,
-/// nearby FEAR carriers and allied HERO deaths select FEAR, and an authored
+/// authored AlwaysAfraidOf targets select TERROR, AfraidOf/FEAR carriers and
+/// allied HERO deaths select FEAR, and an authored
 /// TauntAndPointDistance selects TAUNT. Authored duration fields are
 /// TerrorDuration/FearDuration/TauntDuration (milliseconds). TERROR and FEAR
 /// feed the shared movement/outgoing-damage modifier paths; TAUNT is cosmetic.
@@ -16,6 +17,8 @@ public sealed class EmotionTrackerUpdateModule : ModuleBase,
     private readonly Fixed64 _fearRadius;
     private readonly Fixed64 _heroRadius;
     private readonly Fixed64 _tauntRadius;
+    private readonly string _afraidOf;
+    private readonly string _alwaysAfraidOf;
     private readonly long _fearMilliseconds;
     private readonly long _terrorMilliseconds;
     private readonly long _tauntMilliseconds;
@@ -28,6 +31,8 @@ public sealed class EmotionTrackerUpdateModule : ModuleBase,
         _fearRadius = ModuleRuntime.ReadFixed(spec, "FearScanDistance", Fixed64.Zero);
         _heroRadius = ModuleRuntime.ReadFixed(spec, "HeroScanDistance", _fearRadius);
         _tauntRadius = ModuleRuntime.ReadFixed(spec, "TauntAndPointDistance", Fixed64.Zero);
+        _afraidOf = spec.GetString("AfraidOf", "");
+        _alwaysAfraidOf = spec.GetString("AlwaysAfraidOf", "");
         _fearMilliseconds = Math.Max(0, spec.GetLong("FearDuration", 3_000));
         _terrorMilliseconds = Math.Max(0, spec.GetLong("TerrorDuration", 5_000));
         _tauntMilliseconds = Math.Max(0, spec.GetLong("TauntDuration",
@@ -54,9 +59,11 @@ public sealed class EmotionTrackerUpdateModule : ModuleBase,
             var distance = self.Position.DistanceSquaredTo(candidate.Position);
             if (candidate.Team != self.Team && distance <= fearSquared)
             {
-                if (candidate.Template.KindOf.Contains("TERROR", StringComparer.Ordinal))
+                if ((_alwaysAfraidOf.Length > 0 && ModuleRuntime.MatchesKindOf(candidate, _alwaysAfraidOf))
+                    || candidate.Template.KindOf.Contains("TERROR", StringComparer.Ordinal))
                     _terrorTicks = DurationTicks(_terrorMilliseconds, world);
-                else if (candidate.Template.KindOf.Contains("FEAR", StringComparer.Ordinal))
+                else if ((_afraidOf.Length > 0 && ModuleRuntime.MatchesKindOf(candidate, _afraidOf))
+                    || candidate.Template.KindOf.Contains("FEAR", StringComparer.Ordinal))
                     _fearTicks = DurationTicks(_fearMilliseconds, world);
             }
             if (_tauntRadius > Fixed64.Zero && candidate.Team != self.Team && distance <= tauntSquared)
