@@ -2671,7 +2671,7 @@
         }
       ],
       "blockers": [
-        "P0-EVIDENCE-001, P0-SELECTION-001, and P0-GATES-001 are incomplete"
+        "P0-EVIDENCE-001 is incomplete"
       ]
     },
     {
@@ -3002,7 +3002,7 @@
         }
       ],
       "blockers": [
-        "P0-GATES-001 harness and P0-SELECTION-002 clean target selection are incomplete"
+        "P0-SELECTION-002 clean target selection is incomplete"
       ]
     },
     {
@@ -16440,7 +16440,7 @@
       "dependsOn": [
         "P0-SOURCE-001",
         "P0-CORPUS-001",
-        "P1-PERF-PRESENT-DIRECT-001"
+        "P1-PERF-PRESENT-SHIPPING-001"
       ],
       "ownership": {
         "state": "unassigned",
