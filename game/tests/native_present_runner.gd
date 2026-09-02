@@ -4,6 +4,7 @@ extends SceneTree
 const MapDocumentScript := preload("res://src/map/map_document.gd")
 const NativeTerrainScript := preload("res://src/present/native_terrain.gd")
 const NativeAudioScript := preload("res://src/present/native_audio.gd")
+const NativeFxScript := preload("res://src/present/native_fx.gd")
 
 var passed := 0
 var failed := 0
@@ -45,6 +46,20 @@ func _run() -> void:
 	_check("audio_fire_plays", int(native_audio.play_counts.fire) > 0)
 	_check("audio_death_plays", int(native_audio.play_counts.death) > 0)
 	print("NATIVE_PRESENT_AUDIO counts=%s routes=%d" % [JSON.stringify(native_audio.play_counts), native_audio.route_log.size()])
+	var native_fx = NativeFxScript.new()
+	root.add_child(native_fx)
+	_check("fx_configured", native_fx.configure(catalog, terrain.map_data, terrain.pack_root))
+	for horde_name in ["GondorFighterHorde", "GondorArcherHorde", "MordorFighterHorde", "MordorArcherHorde"]:
+		var fx := native_fx.resolve_fx_names(horde_name)
+		_check("fx_%s" % horde_name, not String(fx.get("weapon_fx", "")).is_empty())
+		print("NATIVE_PRESENT_FX template=%s weapon=%s resolved=%s" % [
+			horde_name, String(fx.get("weapon_fx", "")), JSON.stringify(fx.get("resolved", []))
+		])
+	_check("fx_event_replay", native_fx.submit_snapshot(fixture))
+	_check("fx_fire_play", int(native_fx.play_counts.fire) > 0)
+	_check("fx_impact_play", int(native_fx.play_counts.impact) > 0)
+	_check("fx_death_play", int(native_fx.play_counts.death) > 0)
+	print("NATIVE_PRESENT_FX_COUNTS counts=%s routes=%d" % [JSON.stringify(native_fx.play_counts), native_fx.route_log.size()])
 	print("NATIVE_PRESENT_TERRAIN textures=%d primary_blends=%d three_way=%d cliffs=%d water_polygons=%d water_triangles=%d cooked=%s" % [
 		terrain.texture_layer_count,
 		terrain.primary_blend_cell_count,
@@ -56,6 +71,7 @@ func _run() -> void:
 	])
 	terrain.queue_free()
 	native_audio.queue_free()
+	native_fx.queue_free()
 	print("NATIVE_PRESENT_RESULT passed=%d failed=%d" % [passed, failed])
 	quit(0 if failed == 0 else 1)
 

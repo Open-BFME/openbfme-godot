@@ -7,6 +7,7 @@ const NativeContentLocatorScript := preload("res://src/sim/native_content_locato
 const MapDocumentScript := preload("res://src/map/map_document.gd")
 const NativeTerrainScript := preload("res://src/present/native_terrain.gd")
 const NativeAudioScript := preload("res://src/present/native_audio.gd")
+const NativeFxScript := preload("res://src/present/native_fx.gd")
 const MapBootstrapScript := preload("res://src/map/map_bootstrap.gd")
 const TICK_SECONDS := 1.0 / 30.0
 const PICK_RADIUS_PIXELS := 32.0
@@ -38,6 +39,7 @@ var _replay_path := ""
 var _map_document
 var _terrain
 var _native_audio
+var _native_fx
 var _profile_elapsed := 0.0
 var _profile_seconds := 0
 var _profile_step_usec := 0
@@ -204,6 +206,13 @@ func _start_match() -> void:
 			print("SIM_HOST_PRESENT_AUDIO unavailable=%s" % _native_audio.error)
 			_native_audio.queue_free()
 			_native_audio = null
+		_native_fx = NativeFxScript.new()
+		_native_fx.name = "NativeFx"
+		add_child(_native_fx)
+		if not _native_fx.configure(_catalog, _terrain.map_data, _terrain.pack_root):
+			print("SIM_HOST_PRESENT_FX unavailable=%s" % _native_fx.error)
+			_native_fx.queue_free()
+			_native_fx = null
 		var old_ground := get_node_or_null("Ground") as MeshInstance3D
 		if old_ground != null:
 			old_ground.visible = false
@@ -441,6 +450,8 @@ func _accept_snapshot(snapshot: Dictionary) -> void:
 	_renderer.submit_snapshot(snapshot)
 	if _native_audio != null:
 		_native_audio.submit_snapshot(snapshot)
+	if _native_fx != null:
+		_native_fx.submit_snapshot(snapshot)
 	_update_selection_rings()
 
 
