@@ -1,0 +1,7 @@
+{
+  "title": "Gate the load-every-map corpus test behind OPENBFME_SLOW_TESTS so the engine suite stays under 3 minutes",
+  "rank": 2,
+  "detail": "MapWorldBuilderTests (or the sweep test added by lane/maps-sweep) loads all 415 native map-v1 documents with the full corpus bundle and pushed the sim suite from ~2.5 to ~8.5 minutes. Keep it, but skip unless OPENBFME_SLOW_TESTS=1 (print the reason), and run it nightly. Same treatment for any test over 60 s: list them with `dotnet test --logger console;verbosity=normal` durations in the report.",
+  "oracle": "dotnet test engine/OpenBfme.Engine.sln --nologo   # under 3 minutes wall clock without OPENBFME_SLOW_TESTS; with it set, the map sweep test runs and passes",
+  "status": "open"
+}
