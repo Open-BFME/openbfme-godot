@@ -9,6 +9,7 @@ signal command_acknowledged(bundle: Dictionary)
 const RETAIL_HUD_SCRIPT_PATH := "res://src/retail_slice/retail_hud.gd"
 const MAX_BUNDLE_BYTES := 128 * 1024 * 1024
 const STREAM_COMMAND_LEAD_TICKS := 16
+const HUD_UPDATE_STRIDE_TICKS := 3
 const COMMAND_KIND := {
 	"UNIT_BUILD": "train",
 	"DOZER_CONSTRUCT": "build",
@@ -88,6 +89,7 @@ var _selected_ids: Array[int] = []
 var _command_rows: Array[Dictionary] = []
 var _native_buttons: Array[Button] = []
 var _tick := 0
+var _last_indexed_tick := -1
 var _seq := 0
 var _pending_bundles: Dictionary = {}
 var _content_db: Node
@@ -124,8 +126,11 @@ func accept_snapshot(snapshot: Dictionary) -> void:
 	# SimHostMatch and SimHostClient hand snapshots off immutably. Retaining the
 	# document avoids a second deep copy of every object array for presentation.
 	_snapshot = snapshot
-	_index_snapshot()
 	_tick = int(snapshot.get("tick", _tick))
+	if _last_indexed_tick >= 0 and _tick - _last_indexed_tick < HUD_UPDATE_STRIDE_TICKS:
+		return
+	_last_indexed_tick = _tick
+	_index_snapshot()
 	_prune_selection()
 	_refresh_hud()
 
