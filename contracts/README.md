@@ -9,7 +9,7 @@ schema is its own unit and bumps the version in the file name.
 | `snapshot-v1.schema.json` | sim (engine/, placeholder) | presentation (game/src/view) | draft v1 |
 | `match-launch-v1.schema.json` | shell (game/src/ui) | sim | draft v1 |
 | `bundle-v1.schema.json` | importer cook | sim + presentation | not written |
-| `command-v1.schema.json` | shell/net | sim | not written |
+| `command-v1.schema.json` | shell/net | sim | draft v1 |
 
 Archive identity JSON (`*-archives.json`, `*-baseline.json`,
 `*-overlay.json`) pins which retail files are the source. They are data, not
@@ -28,3 +28,11 @@ What the shell hands the sim to start a match: players with seats, teams,
 factions, colors, AI difficulty; map identity; rules (tick rate, command
 points, starting resources, fog, game speed); pack identity; seed. Save and
 replay files embed one.
+
+## Command v1
+
+One seat's command bundle for one simulation tick. Each bundle carries a
+monotonic seat sequence and an ordered list of typed commands; the sim resolves
+seat ownership through match-launch and merges bundles by `(team, seq)` before
+the tick begins. Coordinates remain retail world units on the wire and are
+converted directly to deterministic fixed-point values by the sim.

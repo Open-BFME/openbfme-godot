@@ -1,0 +1,1 @@
+{"schema":"openbfme.command.v1","tick":12,"seat":0,"seq":7,"commands":[{"type":"move","args":{"objects":[1,2],"x":200,"y":40}},{"type":"attack","args":{"objects":[1],"target":9}},{"type":"stance","args":{"name":"aggressive","objects":[1,2]}}]}
