@@ -52,11 +52,11 @@ public sealed class ObjectCreationUpgradeModule : UpgradeTriggeredModuleBase
 
     private void Spawn(SimWorld world, GameObject self)
     {
+        if (_grantUpgrade.Length > 0) world.GrantUpgrade(self, _grantUpgrade);
         if (_template.Length == 0 || !world.TryGetTemplate(_template, out _)) return;
         var child = world.SpawnObjectFrom(_template, self.Team, self.Position, self,
             self.Elevation, self.HeadingRadians);
         _children.Add(child.Id);
-        if (_grantUpgrade.Length > 0) world.GrantUpgrade(child, _grantUpgrade);
     }
 
     public override void WriteState(CanonicalWriter writer)

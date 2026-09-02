@@ -11,6 +11,8 @@ public sealed class FlammableUpdateModule : ModuleBase
     private readonly long _damageDelayMilliseconds;
     private readonly long _durationMilliseconds;
     private readonly long _fireDamage;
+    private readonly string _damageType;
+    private readonly bool _setBurnedStatus;
     private Fixed64 _flameExposure;
     private int _igniteTicks;
     private int _damageTicks;
@@ -24,6 +26,8 @@ public sealed class FlammableUpdateModule : ModuleBase
         _damageDelayMilliseconds = Math.Max(1, spec.GetLong("AflameDamageDelay", spec.GetLong("FireDamageDelay", 1_000)));
         _durationMilliseconds = Math.Max(0, spec.GetLong("AflameDuration", spec.GetLong("FlameDamageExpiration", 0)));
         _fireDamage = Math.Max(0, spec.GetLong("AflameDamageAmount", spec.GetLong("FireDamage", 0)));
+        _damageType = spec.GetString("DamageType", "FLAME");
+        _setBurnedStatus = ModuleRuntime.ReadBool(spec, "SetBurnedStatus", true);
     }
 
     public bool IsBurning => _burning;
@@ -69,7 +73,7 @@ public sealed class FlammableUpdateModule : ModuleBase
             _durationTicks = _durationMilliseconds == 0
                 ? 0
                 : ModuleRuntime.MillisecondsToTicks(_durationMilliseconds, world.TickMilliseconds);
-            self.TrySetConditionToken("BURNING");
+            if (_setBurnedStatus) self.TrySetConditionToken("BURNING");
         }
         if (!_burning) return;
         if (_durationTicks > 0 && --_durationTicks <= 0)
@@ -80,7 +84,7 @@ public sealed class FlammableUpdateModule : ModuleBase
         if (--_damageTicks <= 0)
         {
             _damageTicks = ModuleRuntime.MillisecondsToTicks(_damageDelayMilliseconds, world.TickMilliseconds);
-            if (_fireDamage > 0) world.DealDamage(self, _fireDamage, "FLAME");
+            if (_fireDamage > 0) world.DealDamage(self, _fireDamage, _damageType);
         }
     }
 

@@ -33,5 +33,14 @@ public sealed class EmotionTrackerUpdateTests
         Assert.Equal("TERROR", tracker.Emotion);
         Assert.Equal(Fixed64.FromFraction(1, 2), tracker.MovementSpeedMultiplier);
         Assert.True(actor.Position.X > Fixed64.Zero && actor.Position.X < Fixed64.One);
+
+        var fearTarget = ModuleBatchBTestSupport.Template("MordorCaveTroll", Array.Empty<ModuleSpec>(),
+            kindOf: new[] { "MONSTER" });
+        var fearWorld = ModuleBatchBTestSupport.World(new[] { actorTemplate, fearTarget });
+        var afraidActor = fearWorld.SpawnObject("actor", 0, ModuleBatchBTestSupport.At(0));
+        fearWorld.SpawnObject("MordorCaveTroll", 1, ModuleBatchBTestSupport.At(2));
+        fearWorld.Tick();
+
+        Assert.Equal("FEAR", afraidActor.FindModule<EmotionTrackerUpdateModule>()!.Emotion);
     }
 }

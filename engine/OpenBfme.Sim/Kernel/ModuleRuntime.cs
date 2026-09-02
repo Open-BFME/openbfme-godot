@@ -82,7 +82,12 @@ internal static class ModuleRuntime
 
     public static bool MatchesKindOf(GameObject gameObject, string filter)
     {
-        var positives = Tokens(filter).Where(value => value[0] == '+').Select(value => value[1..]).ToArray();
+        var positives = Tokens(filter)
+            .Where(value => value[0] != '-'
+                && !value.Equals("ANY", StringComparison.OrdinalIgnoreCase)
+                && !value.Equals("NONE", StringComparison.OrdinalIgnoreCase))
+            .Select(value => value[0] == '+' ? value[1..] : value)
+            .ToArray();
         var negatives = Tokens(filter).Where(value => value[0] == '-').Select(value => value[1..]).ToArray();
         bool Matches(string token) => gameObject.TemplateName.Equals(token, StringComparison.Ordinal)
             || gameObject.Template.KindOf.Contains(token, StringComparer.Ordinal);
