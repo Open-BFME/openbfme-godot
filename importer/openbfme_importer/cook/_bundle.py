@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import argparse
-from collections import Counter
+from collections import Counter, OrderedDict
 from collections.abc import Iterable, Mapping, Sequence
 import os
 from pathlib import Path
@@ -73,14 +73,75 @@ def cook_documents(
 
 
 def _root_paths(root: Path) -> list[Path]:
+    def is_nested_package(path: Path) -> bool:
+        parts = [part.casefold() for part in path.relative_to(root).parts]
+        return any(
+            parts[index : index + 2] == ["data", "ini"]
+            for index in range(len(parts) - 1)
+        )
+
     return sorted(
         (
             path
             for path in root.rglob("*")
-            if path.is_file() and path.suffix.casefold() in {".ini", ".inc"}
+            if path.is_file()
+            and path.suffix.casefold() in {".ini", ".inc"}
+            and not is_nested_package(path)
         ),
         key=lambda path: (path.relative_to(root).as_posix().casefold(), path.as_posix()),
     )
+
+
+def _layer_rows(root: Path, label: str) -> list[tuple[str, bytes, str]]:
+    rows: list[tuple[str, bytes, str]] = []
+    for path in _root_paths(root):
+        relative = path.relative_to(root).as_posix()
+        virtual_path = f"data/ini/{relative}"
+        source = objects._normalize_newlines(path.read_bytes())
+        rows.append((virtual_path, source, f"{label}/{virtual_path}"))
+    return rows
+
+
+def layered_documents(
+    ini_root: Path | str, mods: Sequence[Path | str]
+) -> tuple[list[tuple[str, bytes]], list[tuple[str, bytes]]]:
+    """Return effective documents plus provenance rows for loose mod layers."""
+
+    base = Path(ini_root).resolve()
+    if not base.is_dir():
+        raise ValueError(f"INI root is not a directory: {base}")
+    layers: list[tuple[Path, str]] = [(base, "layer-000-base")]
+    for index, raw_mod in enumerate(mods, start=1):
+        mod = Path(raw_mod).resolve()
+        ini = mod / "data" / "ini"
+        if not ini.is_dir():
+            raise ValueError(f"mod has no data/ini directory: {mod}")
+        layers.append((ini, f"layer-{index:03d}-mod"))
+
+    effective: OrderedDict[str, tuple[str, bytes]] = OrderedDict()
+    identity: list[tuple[str, bytes]] = []
+    for root, label in layers:
+        rows = _layer_rows(root, label)
+        if not rows:
+            raise ValueError(f"INI layer contains no .ini or .inc files: {root}")
+        for virtual_path, source, identity_path in rows:
+            effective[virtual_path.casefold()] = (virtual_path, source)
+            identity.append((identity_path, source))
+    documents = sorted(
+        effective.values(), key=lambda item: (item[0].casefold(), item[0])
+    )
+    return documents, identity
+
+
+def cook_layered_ini(
+    ini_root: Path | str, mods: Sequence[Path | str]
+) -> objects.CookResult:
+    if not mods:
+        return cook_ini_root(ini_root)
+    documents, identity = layered_documents(ini_root, mods)
+    result = cook_documents(documents)
+    result.bundle["source"] = objects._source_identity(identity)
+    return result
 
 
 def cook_ini_root(ini_root: Path | str) -> objects.CookResult:
@@ -113,12 +174,15 @@ def run_cli(label: str, description: str | None, argv: Sequence[str] | None) -> 
     inputs = parser.add_mutually_exclusive_group(required=True)
     inputs.add_argument("--ini-root", type=Path)
     inputs.add_argument("--files", type=Path, nargs="+")
+    parser.add_argument("--mod", type=Path, action="append", default=[])
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--report", type=Path)
     args = parser.parse_args(argv)
+    if args.mod and args.ini_root is None:
+        parser.error("--mod requires --ini-root")
     try:
         result = (
-            cook_ini_root(args.ini_root)
+            cook_layered_ini(args.ini_root, args.mod)
             if args.ini_root is not None
             else cook_files(args.files)
         )

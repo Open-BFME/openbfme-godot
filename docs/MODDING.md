@@ -133,6 +133,20 @@ match what you want to replace).
 Convert through the importer if you need retail-derived content, and keep that
 under `workspace/`.
 
+## Validating a mod
+
+Loose INI mods put overrides and additions beneath `MODDIR/data/ini/`. Validate
+one against an extracted base INI tree with:
+
+```bat
+python -m openbfme_importer.cook.validate --ini-root BASE --mod MODDIR --json validation.json
+```
+
+Repeat `--mod MODDIR` to add layers; later mods win when virtual paths match.
+The command exits `0` when there are no failures, `1` when any named reference
+or parse failure remains, and `2` for invalid command usage. Gap rows are
+reported in the JSON list but do not make validation fail.
+
 ## Production direction (not fully implemented)
 
 When the strict contract ships, packs declare category, version, dependencies,
