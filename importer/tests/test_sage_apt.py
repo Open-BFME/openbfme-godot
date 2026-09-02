@@ -155,7 +155,7 @@ class AptParserTests(unittest.TestCase):
             parse_wnd_layout(
                 b"FILE_VERSION = 2;\nWINDOW\nWINDOWTYPE = USER;\n"
                 b"SCREENRECT = UPPERLEFT: 0 0, BOTTOMRIGHT: 1 1, "
-                b"CREATIONRESOLUTION: 1920 1080;\n",
+                b"CREATIONRESOLUTION: 0 1080;\n",
                 "bad.wnd",
             )
 

@@ -193,6 +193,43 @@ def build_screen_scene(
         code = str(row["code"])
         blocker_counts[code] = blocker_counts.get(code, 0) + 1
 
+    action_programs = [
+        dict(flattener.action_programs[key])
+        for key in sorted(flattener.action_programs)
+    ]
+    clip_action_programs = [
+        dict(flattener.clip_action_programs[key])
+        for key in sorted(flattener.clip_action_programs)
+    ]
+    # The HUD contract only exposes raw VM bytes for programs accepted by its
+    # older typed-effect subset.  The generic screen loader instead judges the
+    # real tier-2 VM, so carry the exact byte-space contract for every decoded
+    # program without changing the HUD lane's pinned document.
+    for program in (*action_programs, *clip_action_programs):
+        if "vmBytecode" in program:
+            continue
+        movie_key = str(program["movie"]).casefold()
+        loaded = movies[movie_key]
+        start = int(program["instructionOffset"])
+        end = start + int(program["byteLength"])
+        program["vmBytecode"] = hud._vm_bytecode_contract(
+            loaded, list(program["instructions"]), start, end
+        )
+    vm_constants: dict[str, Any] = {}
+    for program in (*action_programs, *clip_action_programs):
+        movie_key = str(program["movie"]).casefold()
+        if movie_key in vm_constants:
+            continue
+        loaded = movies[movie_key]
+        vm_constants[movie_key] = {
+            "movie": loaded.name,
+            "sha256": str(loaded.constants["sha256"]),
+            "entries": [
+                {"type": int(entry["type"]), "value": entry.get("value")}
+                for entry in loaded.constants["entries"]
+            ],
+        }
+
     return {
         "schema": "openbfme.retail-screen-scene",
         "schemaVersion": 0,
@@ -218,6 +255,9 @@ def build_screen_scene(
         "buttonInstances": flattener.button_instances,
         "timelineInstances": flattener.timeline_instances,
         "timelines": [flattener.timelines[key] for key in sorted(flattener.timelines)],
+        "actionScripts": action_programs,
+        "clipActionPrograms": clip_action_programs,
+        "vmConstants": {key: vm_constants[key] for key in sorted(vm_constants)},
         "clipActions": flattener.clip_actions,
         "blockers": flattener.blockers,
         "blockerCounts": dict(sorted(blocker_counts.items())),

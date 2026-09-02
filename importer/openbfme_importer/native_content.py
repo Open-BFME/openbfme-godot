@@ -558,6 +558,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--state-root", required=True, type=Path)
     parser.add_argument("--content-root", required=True, type=Path)
     parser.add_argument("--maps", default="all", type=_parse_maps)
+    parser.add_argument(
+        "--sweep",
+        action="store_true",
+        help="after bundle/maps, convert and index the complete APT/WND corpus",
+    )
     parser.add_argument("--prepare-only", action="store_true", help=argparse.SUPPRESS)
     return parser
 
@@ -599,6 +604,21 @@ def main(argv: Sequence[str] | None = None) -> int:
             install=install,
             content_root=content_root,
         )
+        screen_detail = ""
+        if args.sweep:
+            _emit("screens", "Converting and indexing every effective APT/WND screen.", 85)
+            # Local import avoids a module cycle: cook.screens deliberately
+            # reuses this module's edition-specific effective-tree preparation.
+            from .cook.screens import convert_screen_corpus
+
+            screen_result = convert_screen_corpus(
+                install=install,
+                state_root=state_root,
+                content_root=content_root,
+            )
+            screen_detail = (
+                f", screens={screen_result.converted}/{screen_result.attempted}"
+            )
         changed = result.bundle_written or result.maps_written or result.selection_written
         detail = (
             f"Wrote bundle={result.bundle_written}, maps={result.maps_written}, "
@@ -610,7 +630,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         _emit(
             "complete",
             f"Native content ready: {len(result.maps)} maps, {len(result.failures)} map-v1 failures, "
-            f"active {result.active}; sweep report {sweep_report}.",
+            f"active {result.active}{screen_detail}; sweep report {sweep_report}.",
             100,
         )
         return 0

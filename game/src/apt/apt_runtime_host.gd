@@ -538,7 +538,11 @@ func playback(op_name: String, args: Array) -> void:
 				if args[0] is int or args[0] is float:
 					widget["frame"] = int(args[0])
 				else:
-					_apply_label(_scope_path, String(args[0]))
+					# Real screen bytecode can pass an object-like ActionScript
+					# value here. String(value) has no Object constructor in
+					# GDScript and raised outside the VM; str(value) is total and
+					# preserves the fail-open playback contract deterministically.
+					_apply_label(_scope_path, str(args[0]))
 				widget["playing"] = play_after
 				_event_playback("goto_frame2", _scope_path,
 					{"target": args[0], "play": play_after})
