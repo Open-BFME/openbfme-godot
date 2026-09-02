@@ -10,14 +10,16 @@ public enum ModuleTier
 [AttributeUsage(AttributeTargets.Class, AllowMultiple = false, Inherited = false)]
 public sealed class SageModuleAttribute : Attribute
 {
-    public SageModuleAttribute(string name, ModuleTier tier)
+    public SageModuleAttribute(string name, ModuleTier tier, bool kernel = false)
     {
         Name = name ?? throw new ArgumentNullException(nameof(name));
         Tier = tier;
+        Kernel = kernel;
     }
 
     public string Name { get; }
     public ModuleTier Tier { get; }
+    public bool Kernel { get; }
 }
 
 /// <summary>
@@ -179,7 +181,7 @@ public sealed class ModuleRegistry
 
 /// <summary>
 /// Shared shape for death-claiming modules that hold the object for a timer
-/// (SlowDeath, StructureCollapse, KeepObjectDie). Subclasses differ only in
+/// (SlowDeathBehavior, StructureCollapseUpdate, KeepObjectDie). Subclasses differ only in
 /// type name, default duration, and whether zero duration means forever.
 /// </summary>
 public abstract class TimedDeathModuleBase : ModuleBase

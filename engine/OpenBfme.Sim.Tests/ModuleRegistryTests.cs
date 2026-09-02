@@ -14,14 +14,19 @@ public class ModuleRegistryTests
             .OrderBy(type => type.Name, StringComparer.Ordinal)
             .ToArray();
         var registry = ModuleRegistry.CreateDefault();
+        var kernelModuleCount = 0;
 
         foreach (var type in moduleTypes)
         {
             var attribute = type.GetCustomAttribute<SageModuleAttribute>();
             Assert.NotNull(attribute);
-            Assert.EndsWith(attribute!.Name + ".cs", type.Name.Replace("Module", "") + ".cs", StringComparison.Ordinal);
+            if (attribute!.Kernel)
+            {
+                kernelModuleCount++;
+            }
             Assert.Contains(attribute.Name, registry.RegisteredNames);
         }
+        Assert.Equal(6, kernelModuleCount);
         Assert.Equal(moduleTypes.Length, registry.RegisteredNames.Count);
     }
 

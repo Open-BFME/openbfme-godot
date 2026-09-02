@@ -10,10 +10,10 @@ namespace OpenBfme.Sim;
 /// Design: MinLevel (default 2), OffsetXRaw, OffsetYRaw,
 /// DestroyHordeOnBannerDeath, optional RespawnTicks, string BannerTemplate.
 /// </summary>
-[SageModule("BannerCarrier", ModuleTier.Structural)]
+[SageModule("BannerCarrierUpdate", ModuleTier.Structural)]
 public sealed class BannerCarrierModule : ModuleBase
 {
-    public const string TypeName = "BannerCarrier";
+    public const string TypeName = "BannerCarrierUpdate";
 
     private readonly int _minLevel;
     private readonly Fixed64 _offsetX;
@@ -40,7 +40,7 @@ public sealed class BannerCarrierModule : ModuleBase
         _respawnTicks = (int)Math.Clamp(spec.GetLong("RespawnTicks", 0), 0, int.MaxValue);
         if (string.IsNullOrEmpty(_bannerTemplate))
         {
-            throw new ArgumentException("BannerCarrier requires BannerTemplate string data");
+            throw new ArgumentException("BannerCarrierUpdate requires BannerTemplate string data");
         }
     }
 

@@ -5,7 +5,7 @@ namespace OpenBfme.Sim;
 /// within VisionRangeRaw (ties broken by lowest id — deterministic), hands it
 /// to the weapon, and walks into weapon range via the LinearMover when needed.
 /// </summary>
-[SageModule("AiCombat", ModuleTier.Structural)]
+[SageModule("AiCombat", ModuleTier.Structural, kernel: true)]
 public sealed class AiCombatModule : ModuleBase
 {
     public const string TypeName = "AiCombat";

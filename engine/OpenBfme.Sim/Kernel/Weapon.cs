@@ -5,7 +5,7 @@ namespace OpenBfme.Sim;
 /// when within RangeRaw, dealing Damage of DamageType. Target selection is the
 /// AI module's job; this module owns only the firing mechanics.
 /// </summary>
-[SageModule("Weapon", ModuleTier.Structural)]
+[SageModule("Weapon", ModuleTier.Structural, kernel: true)]
 public sealed class WeaponModule : ModuleBase
 {
     public const string TypeName = "Weapon";

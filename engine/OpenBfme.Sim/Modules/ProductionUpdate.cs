@@ -13,10 +13,10 @@ namespace OpenBfme.Sim;
 /// relative, Fixed64 raw) sends a spawned unit with a LinearMover walking from
 /// the exit point to the rally point — the retail door-walk shape.
 /// </summary>
-[SageModule("Production", ModuleTier.Structural)]
+[SageModule("ProductionUpdate", ModuleTier.Structural)]
 public sealed class ProductionModule : ModuleBase
 {
-    public const string TypeName = "Production";
+    public const string TypeName = "ProductionUpdate";
 
     public const int MaxQueueLength = 9;
 

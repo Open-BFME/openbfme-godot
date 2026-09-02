@@ -11,10 +11,10 @@ namespace OpenBfme.Sim;
 /// Design data: FlightTicks (default 10), Damage (default 10),
 /// string DamageType (default "default").
 /// </summary>
-[SageModule("BezierProjectile", ModuleTier.Structural)]
+[SageModule("BezierProjectileBehavior", ModuleTier.Structural)]
 public sealed class BezierProjectileModule : ModuleBase
 {
-    public const string TypeName = "BezierProjectile";
+    public const string TypeName = "BezierProjectileBehavior";
 
     private readonly int _flightTicks;
     private readonly long _damage;

@@ -5,10 +5,10 @@ namespace OpenBfme.Sim;
 /// claims the death, keeps the object in the world for DeathTicks (presentation
 /// plays the death sequence there), then releases it for removal.
 /// </summary>
-[SageModule("SlowDeath", ModuleTier.Structural)]
+[SageModule("SlowDeathBehavior", ModuleTier.Structural)]
 public sealed class SlowDeathModule : ModuleBase
 {
-    public const string TypeName = "SlowDeath";
+    public const string TypeName = "SlowDeathBehavior";
 
     private readonly int _deathTicks;
     private int _ticksRemaining;

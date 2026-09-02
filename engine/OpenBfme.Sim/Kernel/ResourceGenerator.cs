@@ -4,7 +4,7 @@ namespace OpenBfme.Sim;
 /// Periodic team income in the shape of TerrainResourceBehavior (152 objects in
 /// the corpus): every IntervalTicks, credit Amount to the owner's resources.
 /// </summary>
-[SageModule("ResourceGenerator", ModuleTier.Structural)]
+[SageModule("ResourceGenerator", ModuleTier.Structural, kernel: true)]
 public sealed class ResourceGeneratorModule : ModuleBase
 {
     public const string TypeName = "ResourceGenerator";

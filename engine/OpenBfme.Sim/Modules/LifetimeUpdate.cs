@@ -5,10 +5,10 @@ namespace OpenBfme.Sim;
 /// routed through the normal death pipeline so SlowDeath-class modules can
 /// still claim the removal.
 /// </summary>
-[SageModule("Lifetime", ModuleTier.Structural)]
+[SageModule("LifetimeUpdate", ModuleTier.Structural)]
 public sealed class LifetimeModule : ModuleBase
 {
-    public const string TypeName = "Lifetime";
+    public const string TypeName = "LifetimeUpdate";
 
     private int _ticksRemaining;
     private bool _expired;

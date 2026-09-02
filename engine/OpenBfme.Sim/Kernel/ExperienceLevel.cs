@@ -7,7 +7,7 @@ namespace OpenBfme.Sim;
 /// Design data: LevelCap (default 10), RequiredExperience:N keys for level N+1
 /// thresholds (optional; GrantLevels can force ranks without XP tables).
 /// </summary>
-[SageModule("ExperienceLevel", ModuleTier.Structural)]
+[SageModule("ExperienceLevel", ModuleTier.Structural, kernel: true)]
 public sealed class ExperienceLevelModule : ModuleBase
 {
     public const string TypeName = "ExperienceLevel";

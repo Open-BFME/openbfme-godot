@@ -6,10 +6,10 @@ namespace OpenBfme.Sim;
 /// the build completes. P1 scope: time-driven completion; builder escorting
 /// arrives with the worker lane.
 /// </summary>
-[SageModule("GettingBuilt", ModuleTier.Structural)]
+[SageModule("GettingBuiltBehavior", ModuleTier.Structural)]
 public sealed class GettingBuiltModule : ModuleBase
 {
-    public const string TypeName = "GettingBuilt";
+    public const string TypeName = "GettingBuiltBehavior";
 
     private int _ticksRemaining;
     private bool _started;

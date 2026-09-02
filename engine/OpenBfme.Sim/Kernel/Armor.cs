@@ -5,7 +5,7 @@ namespace OpenBfme.Sim;
 /// points, 10000 = 100% damage taken. Design data keys: "Armor:&lt;type&gt;";
 /// unlisted types take "ArmorDefault" (default 10000).
 /// </summary>
-[SageModule("Armor", ModuleTier.Structural)]
+[SageModule("Armor", ModuleTier.Structural, kernel: true)]
 public sealed class ArmorModule : ModuleBase
 {
     public const string TypeName = "Armor";

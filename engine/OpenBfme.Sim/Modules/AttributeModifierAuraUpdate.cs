@@ -21,10 +21,10 @@ namespace OpenBfme.Sim;
 /// ArmorBonusBp (default 0; 1000 = 10% less incoming damage).
 /// Aura carriers do not buff themselves.
 /// </summary>
-[SageModule("AttributeModifierAura", ModuleTier.Structural)]
+[SageModule("AttributeModifierAuraUpdate", ModuleTier.Structural)]
 public sealed class AttributeModifierAuraModule : ModuleBase
 {
-    public const string TypeName = "AttributeModifierAura";
+    public const string TypeName = "AttributeModifierAuraUpdate";
 
     private readonly Fixed64 _radius;
     private readonly int _recomputeTicks;

@@ -5,7 +5,7 @@ namespace OpenBfme.Sim;
 /// tick. Stands in for the locomotor lane until P2 brings pathing; exists in P0
 /// so the determinism gates exercise continuous fixed-point state every tick.
 /// </summary>
-[SageModule("LinearMover", ModuleTier.Structural)]
+[SageModule("LinearMover", ModuleTier.Structural, kernel: true)]
 public sealed class LinearMoverModule : ModuleBase
 {
     public const string TypeName = "LinearMover";
