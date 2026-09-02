@@ -1464,6 +1464,14 @@ var scenario_map_placements_enabled := false
 ##
 ## See workspace/scratch/opus17-formation-extraction.md for the full citation set.
 var retail_formation_movement := false
+## SAGE legs-locomotor speed model opt-in (rules key "retail_locomotor_physics"):
+## goal speed scales to zero at 45 deg off heading, braking begins at
+## 0.5*v^2/braking*1.05 of on-path distance to the order destination, and the
+## per-tick speed change never overshoots the goal speed. Absent resolves false
+## so every pinned runner stays byte-identical; retail_vertical_slice.gd sets
+## it only when OPENBFME_LOCOMOTOR_PHYSICS=1. Formulas from the GPL Generals
+## Locomotor.cpp (moveTowardsPositionLegs, calcSlowDownDist); no code copied.
+var retail_locomotor_physics := false
 ## Diagnostic-only, never serialized: one fallback line per unit type whose
 ## document did not author TurnTime/TurnRate. Such rows retain the pre-change
 ## snap/direct movement path instead of receiving a made-up rate.
@@ -1994,6 +2002,7 @@ func _apply_gameplay_rules(gameplay_rules: Dictionary) -> void:
 	# legacy runner and the untouched menu) resolves false, so the pinned
 	# behaviour signature stays byte-identical.
 	retail_formation_movement = bool(_rules.get("retail_formation_movement", false))
+	retail_locomotor_physics = bool(_rules.get("retail_locomotor_physics", false))
 	# Retail shroud/fog-of-war opt-in. Absent resolves false, which is what every
 	# legacy runner and the pinned scenario get. Note this flag CANNOT move any
 	# hash even when true: the fog grid is derived presentation state and

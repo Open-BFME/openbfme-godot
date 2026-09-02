@@ -117,14 +117,10 @@ func _step_route(row: Dictionary) -> void:
 		)
 		return
 	var current_speed := float(row.get("current_speed", 0.0))
-	# Accelerate toward max; near the final waypoint begin braking for snappier
-	# stops. Braking only ever applies on the last leg, so summing the whole
-	# remaining route was wasted per-tick work.
-	var stop_distance := (current_speed * current_speed) / maxf(0.001, 2.0 * braking)
-	if route.size() <= 1 and position.distance_to(waypoint) <= stop_distance:
-		current_speed = maxf(0.0, current_speed - braking * _sim.TICK_SECONDS)
+	if _sim.retail_locomotor_physics:
+		current_speed = _legs_locomotor_speed(row, route, position, waypoint, current_speed, max_speed, acceleration, braking)
 	else:
-		current_speed = minf(max_speed, current_speed + acceleration * _sim.TICK_SECONDS)
+		current_speed = _legacy_ramp_speed(route, position, waypoint, current_speed, max_speed, acceleration, braking)
 	row["current_speed"] = current_speed
 	var step_distance = current_speed * _sim.TICK_SECONDS
 	var movement_direction := position.direction_to(waypoint)
@@ -241,7 +237,14 @@ func _step_route(row: Dictionary) -> void:
 	# must complete the authored turn instead of teleporting sideways onto the
 	# point merely because its scalar step is longer than the remaining gap.
 	var facing_toward_waypoint := travel_direction.dot(movement_direction) > 0.0
-	if pre_move_gap <= maxf(step_distance, 0.001) and facing_toward_waypoint:
+	var arrival_step: float = step_distance
+	if _sim.retail_locomotor_physics:
+		# The braking curve shortens the last steps below the gap, and a
+		# partial step can be refused by the corridor check below forever.
+		# Snap within one full-speed step, the distance the legacy ramp
+		# always covered, so arrival stays reachable.
+		arrival_step = maxf(arrival_step, max_speed * _sim.TICK_SECONDS)
+	if pre_move_gap <= maxf(arrival_step, 0.001) and facing_toward_waypoint:
 		travel_step = waypoint - position
 		position = waypoint
 		route.pop_front()
@@ -292,6 +295,8 @@ func _step_route(row: Dictionary) -> void:
 	row["position"] = position
 	_sim._spatial_sync(row)
 	row["route"] = route
+	if _sim.retail_locomotor_physics:
+		row["loco_stalled"] = not route.is_empty() and tick_start_position.distance_to(position) < 0.001
 	# Authored crush, or the legacy cavalry trample when crush fields are absent.
 	# Eligibility is the actual displacement this tick. The locomotor speed can
 	# contain the MinTurnSpeed floor during a zero-distance slow pivot and must
@@ -303,6 +308,87 @@ func _step_route(row: Dictionary) -> void:
 		_clear_pending_route(row, int(row["target_id"]) == 0)
 		if int(row["target_id"]) == 0:
 			row["state"] = "idle"
+
+
+func _legacy_ramp_speed(
+	route: Array,
+	position: Vector2,
+	waypoint: Vector2,
+	current_speed: float,
+	max_speed: float,
+	acceleration: float,
+	braking: float
+) -> float:
+	# Accelerate toward max; near the final waypoint begin braking for snappier
+	# stops. Braking only ever applies on the last leg, so summing the whole
+	# remaining route was wasted per-tick work.
+	var stop_distance := (current_speed * current_speed) / maxf(0.001, 2.0 * braking)
+	if route.size() <= 1 and position.distance_to(waypoint) <= stop_distance:
+		return maxf(0.0, current_speed - braking * sim.TICK_SECONDS)
+	return minf(max_speed, current_speed + acceleration * sim.TICK_SECONDS)
+
+
+func _legs_locomotor_speed(
+	row: Dictionary,
+	route: Array,
+	position: Vector2,
+	waypoint: Vector2,
+	current_speed: float,
+	max_speed: float,
+	acceleration: float,
+	braking: float
+) -> float:
+	## SAGE legs locomotor speed step (rules "retail_locomotor_physics").
+	## 1. Goal speed falls linearly to zero as the heading error grows to 45
+	##    degrees, so a horde slows into a turn instead of sliding through it.
+	## 2. Once the remaining on-path distance is inside the braking distance
+	##    0.5*v^2/braking (with the engine's 5% fudge) the goal speed is the
+	##    locomotor MinSpeed. Retail authors MinSpeed on no ground locomotor, so
+	##    the compiled row carries none and the floor is zero.
+	## 3. The per-tick speed change is the authored ramp, clamped so it never
+	##    overshoots the goal: no accelerate-past-then-brake jitter.
+	## Deterministic: fixed TICK_SECONDS, no RNG, no wall clock.
+	var _sim = sim
+	var gap := position.distance_to(waypoint)
+	var handoff_band := maxf(max_speed * _sim.TICK_SECONDS, float(row.get("fast_turn_radius", 0.0)))
+	if gap <= handoff_band or bool(row.get("loco_stalled", false)):
+		# ponytail: the last metre belongs to the legacy ramp. Inside one full
+		# step or the authored FastTurnRadius the existing arrival, pivot and
+		# footprint-deflection machinery is tuned for the legacy speeds, and a
+		# unit the previous tick could not move at all (pinned on a footprint
+		# ring) needs the same. Cruise and approach stay on the SAGE model.
+		return _legacy_ramp_speed(route, position, waypoint, current_speed, max_speed, acceleration, braking)
+	var goal_speed := max_speed
+	# The turn slowdown only applies where turning is rate-bound. Rows with an
+	# authored FastTurnRadius turn on a speed-bound arc (rate = v / r), so
+	# slowing them for heading error would also slow their turn and spiral
+	# them away from the waypoint; the arc already governs their turning.
+	if _sim._should_honor_turn_rate(row) and not row.has("fast_turn_radius"):
+		var facing := Vector2(row.get("facing", Vector2.ZERO))
+		var direction := position.direction_to(waypoint)
+		if facing.length_squared() > 0.000001 and direction.length_squared() > 0.000001:
+			var heading_error := absf(wrapf(direction.angle() - facing.angle(), -PI, PI))
+			goal_speed *= 1.0 - minf(1.0, heading_error / (PI / 4.0))
+	var min_speed := float(row.get("min_speed", 0.0))
+	var remaining := gap
+	for index in range(1, route.size()):
+		remaining += Vector2(route[index - 1]).distance_to(Vector2(route[index]))
+	var speed_over_min := current_speed - min_speed
+	if speed_over_min > 0.0:
+		var slow_down_distance := 0.5 * speed_over_min * speed_over_min / braking * 1.05
+		if remaining < slow_down_distance:
+			# ponytail: at a 0.1s tick a pure MinSpeed=0 goal parks the unit one
+			# step short of the order. Follow the stopping curve v = sqrt(2*b*d)
+			# instead: it decelerates every tick and still reaches the point.
+			# Refine against a sage_live trace when the oracle lane lands.
+			goal_speed = clampf(sqrt(2.0 * braking * remaining), min_speed, goal_speed)
+	var speed_delta := goal_speed - current_speed
+	if speed_delta == 0.0:
+		return current_speed
+	var change: float = (acceleration if speed_delta > 0.0 else -braking) * _sim.TICK_SECONDS
+	if absf(change) > absf(speed_delta):
+		change = speed_delta
+	return maxf(0.0, current_speed + change)
 
 
 func _build_route(from: Vector2, to: Vector2) -> Array[Vector2]:
