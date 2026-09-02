@@ -285,6 +285,7 @@ public sealed partial class SimWorld
             var structure = SpawnObject(templateName, command.Team, plot.Position);
             structure.FindModule<GettingBuiltModule>()!.StartConstruction(this, structure);
             _buildPlots[(baseObject.Id, plotIndex)] = plot with { OccupantObjectId = structure.Id };
+            baseObject.FindModule<FoundationAIUpdateModule>()?.ApplyBuildVariation(structure);
             RaiseEvent(new SimEvent("build_start", structure.Id, Target: baseObject.Id, Name: templateName));
             baseObject.FindModule<FoundationAIUpdateModule>()?.CompleteFoundation(this, baseObject);
         }

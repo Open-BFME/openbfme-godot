@@ -9,7 +9,8 @@ public sealed class FoundationAIUpdateTests
     {
         var foundation = ModuleBatchBTestSupport.Template("foundation", new[]
         {
-            ModuleBatchBTestSupport.Spec(FoundationAIUpdateModule.TypeName),
+            ModuleBatchBTestSupport.Spec(FoundationAIUpdateModule.TypeName,
+                new Dictionary<string, long> { ["BuildVariation"] = 2 }),
         }, economy: new EconomyTemplate(commandSet: new[] { "tower" }));
         var tower = ModuleBatchBTestSupport.Template("tower", new[]
         {
@@ -24,7 +25,8 @@ public sealed class FoundationAIUpdateTests
 
         world.Tick();
 
-        Assert.Contains(world.Objects.Values, value => value.TemplateName == "tower");
+        var built = Assert.Single(world.Objects.Values, value => value.TemplateName == "tower");
+        Assert.Contains("BUILD_VARIATION_TWO", built.ConditionTokens);
         Assert.DoesNotContain(plot.Id, world.Objects.Keys);
         Assert.Empty(world.BuildPlots);
     }

@@ -147,12 +147,12 @@ public sealed partial class SimWorld
         return replacement;
     }
 
-    internal void RegisterFoundation(GameObject foundation, string variation)
+    internal void RegisterFoundation(GameObject foundation)
     {
         if (_buildPlots.ContainsKey((foundation.Id, 0))) return;
-        var allowed = variation.Length > 0
-            ? new[] { variation }
-            : foundation.Template.Economy.CommandSet.OrderBy(value => value, StringComparer.Ordinal).ToArray();
+        var allowed = foundation.Template.Economy.CommandSet
+            .OrderBy(value => value, StringComparer.Ordinal)
+            .ToArray();
         _buildPlots.Add((foundation.Id, 0), new BuildPlot(foundation.Id, 0, foundation.Position, allowed));
     }
 
