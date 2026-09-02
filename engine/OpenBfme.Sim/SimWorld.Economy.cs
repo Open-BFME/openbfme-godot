@@ -398,6 +398,9 @@ public sealed partial class SimWorld
             case TechExtensionMagic:
                 ReadTechExtension(reader);
                 break;
+            case AiExtensionMagic:
+                ReadAiExtension(reader);
+                break;
             default:
                 throw new InvalidDataException($"Unknown canonical state extension 0x{magic:X8}");
         }

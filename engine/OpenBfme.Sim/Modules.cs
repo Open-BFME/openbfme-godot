@@ -102,6 +102,8 @@ public sealed class ObjectTemplate
     public EconomyTemplate Economy { get; }
     public string CommandSetName { get; }
     public bool HasTechState { get; }
+    public string Side { get; }
+    public IReadOnlyList<string> KindOf { get; }
 
     public ObjectTemplate(
         string name,
@@ -111,7 +113,9 @@ public sealed class ObjectTemplate
         BodyHealthTemplate? bodyHealth = null,
         EconomyTemplate? economy = null,
         string commandSetName = "",
-        bool techEnabled = false)
+        bool techEnabled = false,
+        string side = "",
+        IReadOnlyList<string>? kindOf = null)
     {
         Name = name ?? throw new ArgumentNullException(nameof(name));
         Modules = modules ?? throw new ArgumentNullException(nameof(modules));
@@ -125,6 +129,12 @@ public sealed class ObjectTemplate
         BodyHealth = bodyHealth;
         Economy = economy ?? EconomyTemplate.FromModules(modules);
         CommandSetName = commandSetName ?? throw new ArgumentNullException(nameof(commandSetName));
+        Side = side ?? throw new ArgumentNullException(nameof(side));
+        KindOf = kindOf?.ToArray() ?? Array.Empty<string>();
+        if (KindOf.Any(string.IsNullOrWhiteSpace))
+        {
+            throw new ArgumentException("KindOf tokens must be non-empty", nameof(kindOf));
+        }
         HasTechState = techEnabled || CommandSetName.Length > 0 || modules.Any(spec =>
             spec.TypeName.EndsWith("Upgrade", StringComparison.Ordinal)
             || spec.TypeName.Contains("SpecialPower", StringComparison.Ordinal));

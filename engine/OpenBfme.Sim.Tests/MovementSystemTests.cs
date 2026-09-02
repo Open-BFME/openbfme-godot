@@ -132,6 +132,7 @@ public class MovementSystemTests
         var launch = MatchLaunch.Load(MatchLaunchTests.RepoPath("contracts", "fixtures", "match-launch-v1.json"));
         var grid = PassabilityGrid.Uniform(64, 64);
         var world = new SimWorld(launch, new[] { UnitTemplate() }, passabilityGrid: grid);
+        world.SetAiEnabled(1, false);
         var owned = world.SpawnObject("unit", 0, Point(4, 4));
         var enemy = world.SpawnObject("unit", 1, Point(8, 4));
         var bundleJson = """
