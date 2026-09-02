@@ -51,6 +51,7 @@ public sealed class CastleMemberBehaviorModule : ModuleBase
 
     private void ApplyAuthoredPresentation(SimWorld world, GameObject self)
     {
+        if (_countsForEvaCastleBreached) self.TrySetConditionToken("CASTLE_MEMBER_COUNTS_FOR_EVA_BREACH");
         if (_storeUpgradePrice) self.TrySetConditionToken("CASTLE_MEMBER_STORE_UPGRADE_PRICE");
         if (_beingBuiltSound.Length > 0)
             world.RaiseEvent(new SimEvent("sound", self.Id, Target: _castleId == 0 ? null : _castleId, Name: _beingBuiltSound));
@@ -61,7 +62,7 @@ public sealed class CastleMemberBehaviorModule : ModuleBase
         if (_castleId == 0 || self.IsDying) return;
         if (!world.Objects.TryGetValue(_castleId, out var castle) || castle.IsDead)
         {
-            if (_countsForEvaCastleBreached && !_destroyedPresentationRaised)
+            if (!_destroyedPresentationRaised)
             {
                 foreach (var eventName in _destroyedEvaEvents)
                     world.RaiseEvent(new SimEvent("sound", self.Id, Target: _castleId, Name: eventName));
