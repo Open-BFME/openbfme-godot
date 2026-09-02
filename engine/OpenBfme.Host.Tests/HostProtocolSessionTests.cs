@@ -119,6 +119,65 @@ public sealed class HostProtocolSessionTests : IDisposable
     }
 
     [Fact]
+    public void MapLaunchPublishesTerrainStartsPlotsAndSupportsStartSpawn()
+    {
+        var session = new HostProtocolSession();
+        using var launched = Parse(Single(session.HandleLine(MapLaunchLine())));
+        Assert.Equal("launched", launched.RootElement.GetProperty("op").GetString());
+        var map = launched.RootElement.GetProperty("map");
+        Assert.Equal(8, map.GetProperty("grid").GetProperty("width").GetInt32());
+        Assert.Equal(6, map.GetProperty("grid").GetProperty("height").GetInt32());
+        Assert.Equal(10, map.GetProperty("grid").GetProperty("cell_size").GetInt32());
+        Assert.Equal(2, map.GetProperty("start_positions").EnumerateObject().Count());
+        Assert.Equal(2, map.GetProperty("plots_per_player").GetProperty("0").GetInt32());
+        Assert.Equal(3, map.GetProperty("objects_spawned").GetInt32());
+        Assert.Equal(1, map.GetProperty("objects_unknown").GetInt32());
+
+        using var spawned = Parse(Single(session.HandleLine(
+            "{\"op\":\"spawn\",\"template\":\"CookHorde\",\"player\":0,\"start\":1}")));
+        Assert.Equal("spawned", spawned.RootElement.GetProperty("op").GetString());
+        Assert.Equal(3, spawned.RootElement.GetProperty("members").GetArrayLength());
+        using var snapshot = Parse(Single(session.HandleLine("{\"op\":\"step\",\"ticks\":1}")));
+        var objects = snapshot.RootElement.GetProperty("snapshot").GetProperty("objects");
+        var ids = objects.GetProperty("id").EnumerateArray().Select(value => value.GetInt32()).ToArray();
+        var memberIds = spawned.RootElement.GetProperty("members").EnumerateArray()
+            .Select(value => value.GetInt32()).ToArray();
+        var memberSlots = memberIds.Select(id => Array.IndexOf(ids, id)).ToArray();
+        Assert.All(memberSlots, slot => Assert.True(slot >= 0));
+        var averageX = memberSlots.Average(slot => objects.GetProperty("x")[slot].GetDecimal());
+        var averageY = memberSlots.Average(slot => objects.GetProperty("z")[slot].GetDecimal());
+        Assert.InRange(averageX, 62m, 68m);
+        Assert.InRange(averageY, 42m, 48m);
+    }
+
+    [Fact]
+    public void CorpusFordsMapLaunchReportsFullMapAccountingWhenPrivateInputsExist()
+    {
+        var bundle = RepoPath("workspace", "logs", "lane-cook-c", "corpus-bundle-full.json");
+        var map = RepoPath("workspace", "logs", "lane-map-scene", "fords.map-v1.json");
+        if (!File.Exists(bundle) || !File.Exists(map))
+            return; // Private-input skip: the public/clean checkout has neither artifact.
+
+        var session = new HostProtocolSession();
+        using var launched = Parse(Single(session.HandleLine(JsonSerializer.Serialize(new
+        {
+            op = "launch",
+            match = JsonSerializer.Deserialize<JsonElement>(_matchJson),
+            bundle,
+            map,
+        }))));
+        Assert.Equal("launched", launched.RootElement.GetProperty("op").GetString());
+        var report = launched.RootElement.GetProperty("map");
+        Assert.Equal(415, report.GetProperty("grid").GetProperty("width").GetInt32());
+        Assert.Equal(353, report.GetProperty("grid").GetProperty("height").GetInt32());
+        Assert.Equal(10, report.GetProperty("grid").GetProperty("cell_size").GetInt32());
+        Assert.Equal(2, report.GetProperty("start_positions").EnumerateObject().Count());
+        Assert.True(report.GetProperty("plots_per_player").GetProperty("0").GetInt32() > 0);
+        Assert.True(report.GetProperty("plots_per_player").GetProperty("1").GetInt32() > 0);
+        Assert.True(report.GetProperty("objects_spawned").GetInt32() > 1_000);
+    }
+
+    [Fact]
     public void BundleSpawnUnknownTemplateReturnsErrorAndSessionSurvives()
     {
         var session = new HostProtocolSession();
@@ -289,6 +348,19 @@ public sealed class HostProtocolSessionTests : IDisposable
         match = JsonSerializer.Deserialize<JsonElement>(_matchJson),
         bundle = RepoPath("contracts", "fixtures", "bundle-v1.json"),
     });
+
+    private string MapLaunchLine()
+    {
+        var match = JsonNode.Parse(_matchJson)!.AsObject();
+        match["map"] = new JsonObject { ["path"] = "maps/test/wall.map" };
+        return JsonSerializer.Serialize(new
+        {
+            op = "launch",
+            match = JsonSerializer.Deserialize<JsonElement>(match.ToJsonString()),
+            bundle = RepoPath("contracts", "fixtures", "bundle-v1.json"),
+            map = RepoPath("contracts", "fixtures", "map-v1.json"),
+        });
+    }
 
     private static string CommandsLine() =>
         "{\"op\":\"commands\",\"bundle\":{"

@@ -19,6 +19,7 @@ var _pid := -1
 var _host_path := ""
 var _last_error := ""
 var _last_launch_reply: Dictionary = {}
+var _read_buffer := ""
 
 
 func launch(match: Dictionary, templates_path: String) -> bool:
@@ -29,7 +30,13 @@ func launch_bundle(match: Dictionary, bundle_path: String) -> bool:
 	return _launch_source(match, "bundle", bundle_path)
 
 
-func _launch_source(match: Dictionary, source_field: String, source_path: String) -> bool:
+func launch_bundle_map(match: Dictionary, bundle_path: String, map_path: String) -> bool:
+	return _launch_source(match, "bundle", bundle_path, map_path)
+
+
+func _launch_source(
+	match: Dictionary, source_field: String, source_path: String, map_path: String = ""
+) -> bool:
 	if _stdio != null:
 		_set_error("host is already running")
 		return false
@@ -37,6 +44,8 @@ func _launch_source(match: Dictionary, source_field: String, source_path: String
 		return false
 	var request := {"op": "launch", "match": _wire_match(match)}
 	request[source_field] = source_path
+	if not map_path.is_empty():
+		request["map"] = map_path
 	var reply := _exchange_with_timeout(request, STARTUP_TIMEOUT_MS)
 	if String(reply.get("op", "")) != "launched":
 		_set_error(_reply_error("launch", reply))
@@ -69,6 +78,19 @@ func spawn(template_name: String, player: int, position: Vector2) -> Dictionary:
 		"player": player,
 		"x": position.x,
 		"y": position.y,
+	})
+	if String(reply.get("op", "")) != "spawned":
+		_set_error(_reply_error("spawn", reply))
+		return {}
+	return reply
+
+
+func spawn_at_start(template_name: String, player: int, start: int) -> Dictionary:
+	var reply := _exchange({
+		"op": "spawn",
+		"template": template_name,
+		"player": player,
+		"start": start,
 	})
 	if String(reply.get("op", "")) != "spawned":
 		_set_error(_reply_error("spawn", reply))
@@ -246,18 +268,24 @@ func _read_document(timeout_ms: int) -> Dictionary:
 		return {}
 	var deadline := Time.get_ticks_msec() + timeout_ms
 	while Time.get_ticks_msec() <= deadline:
-		var line := _stdio.get_line()
-		if not line.is_empty():
-			var parsed: Variant = JSON.parse_string(line)
-			if parsed is Dictionary:
-				return parsed as Dictionary
-			_set_error("host returned malformed JSON: %s" % line)
-			return {}
+		var fragment := _stdio.get_line()
+		if not fragment.is_empty():
+			_read_buffer += fragment
+			var parser := JSON.new()
+			if parser.parse(_read_buffer) == OK:
+				var parsed: Variant = parser.data
+				_read_buffer = ""
+				if parsed is Dictionary:
+					return parsed as Dictionary
+				_set_error("host returned a JSON value that is not an object")
+				return {}
 		if _pid > 0 and not OS.is_process_running(_pid):
-			_set_error("host process %d exited before replying%s" % [_pid, _stderr_suffix()])
+			var partial := " with %d buffered characters" % _read_buffer.length() if not _read_buffer.is_empty() else ""
+			_set_error("host process %d exited before replying%s%s" % [_pid, partial, _stderr_suffix()])
 			return {}
 		OS.delay_msec(POLL_DELAY_MS)
-	_set_error("host response timed out after %d ms%s" % [timeout_ms, _stderr_suffix()])
+	var partial := " with %d buffered characters" % _read_buffer.length() if not _read_buffer.is_empty() else ""
+	_set_error("host response timed out after %d ms%s%s" % [timeout_ms, partial, _stderr_suffix()])
 	return {}
 
 
@@ -327,3 +355,4 @@ func _close_pipes() -> void:
 	_stderr = null
 	_pid = -1
 	_last_launch_reply = {}
+	_read_buffer = ""
