@@ -258,7 +258,8 @@ public sealed partial class SimWorld
             if (commandType == "upgrade" && button.Command is "PLAYER_UPGRADE" or "OBJECT_UPGRADE"
                 && button.Upgrade == targetName) return true;
             if (commandType == "power" && button.Command == "PURCHASE_SCIENCE" && button.Science == targetName) return true;
-            if (commandType == "power" && button.Command == "SPECIAL_POWER" && button.SpecialPower == targetName) return true;
+            if (commandType == "power" && button.Command is "SPECIAL_POWER" or "SPELL_BOOK"
+                && button.SpecialPower == targetName) return true;
         }
         return false;
     }

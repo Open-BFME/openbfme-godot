@@ -35,6 +35,47 @@ public sealed class AISpecialPowerUpdateTests
     }
 
     [Fact]
+    public void AuthoredSpellBookButtonUsesTheNormalPowerAuthorizationPath()
+    {
+        var power = new SpecialPowerTemplate("SpellBookWarChant", "SPELL_BOOK", 1_000,
+            Array.Empty<string>(), false);
+        var button = new CommandButtonTemplate("Command_SpellBookWarChant", "SPELL_BOOK",
+            "", "", "", power.Name);
+        var set = new CommandSetTemplate("EvilSpellBookCommandSet",
+            new[] { new CommandSetEntryTemplate(1, button.Name, button) });
+        var tech = new TechCatalog(specialPowers: new[] { power },
+            commandButtons: new[] { button }, commandSets: new[] { set });
+        var spellBookTemplate = ModuleBatchBTestSupport.Template("EvilSpellBook", new[]
+        {
+            ModuleBatchBTestSupport.Spec(AISpecialPowerUpdateModule.TypeName,
+                strings: new Dictionary<string, string>
+                {
+                    ["CommandButtonName"] = button.Name,
+                    ["SpecialPowerAIType"] = "AI_SPELLBOOK_ASSIST_BATTLE_BUFF",
+                }),
+        }, commandSet: set.Name);
+        var allyTemplate = ModuleBatchBTestSupport.Template("ally", Array.Empty<ModuleSpec>());
+        var world = ModuleBatchBTestSupport.World(new[] { spellBookTemplate, allyTemplate }, tech: tech);
+        var spellBook = world.SpawnObject("EvilSpellBook", 0, ModuleBatchBTestSupport.At(0));
+        var ally = world.SpawnObject("ally", 0, ModuleBatchBTestSupport.At(5));
+        world.DealDamage(ally, 25);
+        var state = AiPlayerState.Create(0,
+            new MatchLaunchPlayer(0, 0, "Men", "ai", "hard", null, null, null, null, null));
+        var commands = new List<SimCommand>();
+
+        Assert.True(spellBook.FindModule<AISpecialPowerUpdateModule>()!
+            .TryPlan(world, spellBook, state, 1, commands));
+        var command = Assert.Single(commands);
+        Assert.Equal("power", command.Type);
+        Assert.Equal(power.Name, command.GetString("name"));
+        Assert.Equal(ally.Id, command.GetLong("target"));
+        Assert.True(world.SubmitCommand(command));
+        world.Tick();
+
+        Assert.Equal(11, world.PowerReadyTick(0, power.Name));
+    }
+
+    [Fact]
     public void AuthoredStanceButtonUsesNormalCommandPathForCurrentCombatOrder()
     {
         var button = new CommandButtonTemplate("Command_SetStanceAggressive", "SET_STANCE",
