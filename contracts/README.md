@@ -8,7 +8,7 @@ schema is its own unit and bumps the version in the file name.
 |---|---|---|---|
 | `snapshot-v1.schema.json` | sim (engine/, placeholder) | presentation (game/src/view) | draft v1 |
 | `match-launch-v1.schema.json` | shell (game/src/ui) | sim | draft v1 |
-| `bundle-v1.schema.json` | importer cook | sim + presentation | not written |
+| `bundle-v1.schema.json` | importer cook | sim + presentation | draft v1 |
 | `command-v1.schema.json` | shell/net | sim | not written |
 
 Archive identity JSON (`*-archives.json`, `*-baseline.json`,

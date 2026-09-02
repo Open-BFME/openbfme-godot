@@ -1,0 +1,155 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "openbfme.bundle.v1",
+  "title": "OpenBFME cooked bundle v1",
+  "description": "Deterministic, faction-independent effective-INI data consumed by the simulation and presentation layers. Template array indexes are the ids published by snapshot-v1 objects.template.",
+  "type": "object",
+  "required": ["schema", "source", "templates", "defines", "diagnostics"],
+  "additionalProperties": false,
+  "$defs": {
+    "scalar": {
+      "type": ["string", "number", "boolean", "null"]
+    },
+    "fieldValue": {
+      "oneOf": [
+        { "$ref": "#/$defs/scalar" },
+        {
+          "type": "array",
+          "minItems": 2,
+          "items": { "$ref": "#/$defs/scalar" }
+        }
+      ]
+    },
+    "fields": {
+      "type": "object",
+      "additionalProperties": { "$ref": "#/$defs/fieldValue" }
+    },
+    "block": {
+      "type": "object",
+      "required": ["type", "tag", "fields", "blocks"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "type": "string", "minLength": 1 },
+        "tag": { "type": "string" },
+        "fields": { "$ref": "#/$defs/fields" },
+        "blocks": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/block" }
+        }
+      }
+    },
+    "module": {
+      "type": "object",
+      "required": ["carrier", "type", "tag", "fields", "blocks", "gap"],
+      "additionalProperties": false,
+      "properties": {
+        "carrier": {
+          "type": "string",
+          "enum": ["Behavior", "Body", "Draw", "ClientUpdate", "ClientBehavior", "Flasher", "other"]
+        },
+        "type": { "type": "string", "minLength": 1 },
+        "tag": { "type": "string" },
+        "fields": { "$ref": "#/$defs/fields" },
+        "blocks": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/block" },
+          "description": "Ordered nested state and configuration blocks retained for lossless round trips."
+        },
+        "gap": {
+          "type": "boolean",
+          "description": "True when no known importer module-field contract owns this module type. The authored row is still retained verbatim."
+        }
+      }
+    }
+  },
+  "properties": {
+    "schema": { "const": "openbfme.bundle.v1" },
+    "source": {
+      "type": "object",
+      "required": ["effective_tree_sha256", "paths"],
+      "additionalProperties": false,
+      "properties": {
+        "effective_tree_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "SHA-256 of the ordered virtual path and content-digest rows."
+        },
+        "paths": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["path", "sha256"],
+            "additionalProperties": false,
+            "properties": {
+              "path": { "type": "string", "minLength": 1 },
+              "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+            }
+          }
+        }
+      }
+    },
+    "templates": {
+      "type": "array",
+      "description": "Ordered template table. An array index is the template id used by snapshot-v1.",
+      "items": {
+        "type": "object",
+        "required": ["name", "kind", "parent", "kindof", "geometry", "fields", "blocks", "modules"],
+        "additionalProperties": false,
+        "properties": {
+          "name": { "type": "string", "minLength": 1 },
+          "kind": { "type": "string", "enum": ["object", "child", "reskin"] },
+          "parent": { "type": ["string", "null"] },
+          "side": { "type": "string", "minLength": 1, "description": "Authored SAGE Side/faction identifier." },
+          "kindof": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+          "geometry": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "shape": { "type": "string", "minLength": 1 },
+              "major_radius": { "type": "number" },
+              "minor_radius": { "type": "number" },
+              "height": { "type": "number" }
+            }
+          },
+          "build_cost": { "type": "number" },
+          "build_time": { "type": "number" },
+          "command_points": { "type": "number" },
+          "health": { "type": "number", "minimum": 0 },
+          "fields": { "$ref": "#/$defs/fields", "description": "All authored top-level assignments, before inheritance." },
+          "blocks": {
+            "type": "array",
+            "items": { "$ref": "#/$defs/block" },
+            "description": "Ordered non-module blocks such as WeaponSet, retained before inheritance."
+          },
+          "modules": {
+            "type": "array",
+            "items": { "$ref": "#/$defs/module" }
+          }
+        },
+        "allOf": [
+          {
+            "if": { "properties": { "kind": { "enum": ["child", "reskin"] } }, "required": ["kind"] },
+            "then": { "properties": { "parent": { "type": "string", "minLength": 1 } } }
+          }
+        ]
+      }
+    },
+    "defines": {
+      "type": "object",
+      "description": "Resolved effective #define constants. Numeric values are JSON numbers; other bodies remain authored strings.",
+      "additionalProperties": { "$ref": "#/$defs/scalar" }
+    },
+    "diagnostics": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["template", "message"],
+        "additionalProperties": false,
+        "properties": {
+          "template": { "type": "string" },
+          "message": { "type": "string", "minLength": 1 }
+        }
+      }
+    }
+  }
+}

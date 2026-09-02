@@ -1,0 +1,224 @@
+{
+  "defines": {
+    "COOK_COST": 725,
+    "COOK_DAMAGE": 42,
+    "COOK_HEALTH": 1200,
+    "COOK_KINDOF": "PRELOAD SELECTABLE CAN_ATTACK",
+    "COOK_TIME": 15.5
+  },
+  "diagnostics": [
+    {
+      "message": "data/ini/objects.inc:14: unknown module type ActiveBody retained with gap=true",
+      "template": "CookBase"
+    },
+    {
+      "message": "data/ini/objects.inc:21: unknown module type W3DScriptedModelDraw retained with gap=true",
+      "template": "CookBase"
+    },
+    {
+      "message": "data/ini/objects.inc:43: unknown module type W3DScriptedModelDraw retained with gap=true",
+      "template": "CookReskin"
+    },
+    {
+      "message": "data/ini/objects.inc:51: unknown module type MadeUpBehavior retained with gap=true",
+      "template": "CookMystery"
+    }
+  ],
+  "schema": "openbfme.bundle.v1",
+  "source": {
+    "effective_tree_sha256": "a22df0fc4cd9c306a0b6c8fcd34082ee05700d891176856aef8e4df1acd6a7fd",
+    "paths": [
+      {
+        "path": "data/ini/base-behavior.inc",
+        "sha256": "a4be1d98aa2eea0d1066e22132066782618304744df0428e608720a1cd72f03e"
+      },
+      {
+        "path": "data/ini/constants.inc",
+        "sha256": "016e2c47b27823b04b0ac7fd03d126d5f78de262a2ce795ab05c02ae18824fc0"
+      },
+      {
+        "path": "data/ini/entry.ini",
+        "sha256": "882575fda6a3b77475709d8af31ab6c1a268ac3abc95fedb64eec58909ffdb96"
+      },
+      {
+        "path": "data/ini/objects.inc",
+        "sha256": "7b3d1ad11b70b50c24b35207681331d2ea52f9ec7979e5828a5050b0fb6253dd"
+      }
+    ]
+  },
+  "templates": [
+    {
+      "blocks": [
+        {
+          "blocks": [],
+          "fields": {
+            "Conditions": "None",
+            "Damage": 42,
+            "Weapon": [
+              "PRIMARY CookSword",
+              "SECONDARY CookBow"
+            ]
+          },
+          "tag": "",
+          "type": "WeaponSet"
+        }
+      ],
+      "build_cost": 725,
+      "build_time": 15.5,
+      "command_points": 25,
+      "fields": {
+        "BuildCost": 725,
+        "BuildTime": 15.5,
+        "CommandPoints": 25,
+        "Geometry": "BOX",
+        "GeometryHeight": 20,
+        "GeometryMajorRadius": 12,
+        "GeometryMinorRadius": 7.5,
+        "KindOf": "PRELOAD SELECTABLE CAN_ATTACK",
+        "Side": "CookFaction",
+        "VoiceSelect": [
+          "CookVoiceOne",
+          "CookVoiceTwo"
+        ]
+      },
+      "geometry": {
+        "height": 20,
+        "major_radius": 12,
+        "minor_radius": 7.5,
+        "shape": "BOX"
+      },
+      "health": 1200,
+      "kind": "object",
+      "kindof": [
+        "PRELOAD",
+        "SELECTABLE",
+        "CAN_ATTACK"
+      ],
+      "modules": [
+        {
+          "blocks": [],
+          "carrier": "Body",
+          "fields": {
+            "MaxHealth": "COOK_HEALTH",
+            "MaxHealthDamaged": "600"
+          },
+          "gap": true,
+          "tag": "ModuleTag_Body",
+          "type": "ActiveBody"
+        },
+        {
+          "blocks": [],
+          "carrier": "Behavior",
+          "fields": {
+            "Bonus": [
+              "FIRST",
+              "SECOND"
+            ],
+            "GiveNoXP": true,
+            "QueueMax": 3
+          },
+          "gap": false,
+          "tag": "ModuleTag_Production",
+          "type": "ProductionUpdate"
+        },
+        {
+          "blocks": [
+            {
+              "blocks": [],
+              "fields": {
+                "Model": "COOK_MODEL"
+              },
+              "tag": "",
+              "type": "DefaultModelConditionState"
+            }
+          ],
+          "carrier": "Draw",
+          "fields": {},
+          "gap": true,
+          "tag": "ModuleTag_Draw",
+          "type": "W3DScriptedModelDraw"
+        }
+      ],
+      "name": "CookBase",
+      "parent": null,
+      "side": "CookFaction"
+    },
+    {
+      "blocks": [],
+      "build_cost": 800,
+      "fields": {
+        "BuildCost": 800
+      },
+      "geometry": {},
+      "kind": "child",
+      "kindof": [],
+      "modules": [
+        {
+          "blocks": [],
+          "carrier": "Behavior",
+          "fields": {
+            "QueueMax": 5
+          },
+          "gap": false,
+          "tag": "ModuleTag_Production",
+          "type": "ProductionUpdate"
+        }
+      ],
+      "name": "CookChild",
+      "parent": "CookBase"
+    },
+    {
+      "blocks": [],
+      "fields": {},
+      "geometry": {},
+      "kind": "reskin",
+      "kindof": [],
+      "modules": [
+        {
+          "blocks": [
+            {
+              "blocks": [],
+              "fields": {
+                "Model": "COOK_RESKIN_MODEL"
+              },
+              "tag": "",
+              "type": "DefaultModelConditionState"
+            }
+          ],
+          "carrier": "Draw",
+          "fields": {},
+          "gap": true,
+          "tag": "ModuleTag_Draw",
+          "type": "W3DScriptedModelDraw"
+        }
+      ],
+      "name": "CookReskin",
+      "parent": "CookBase"
+    },
+    {
+      "blocks": [],
+      "fields": {},
+      "geometry": {},
+      "kind": "object",
+      "kindof": [],
+      "modules": [
+        {
+          "blocks": [],
+          "carrier": "Behavior",
+          "fields": {
+            "RawText": "keep this text verbatim",
+            "Repeated": [
+              "alpha",
+              "beta"
+            ]
+          },
+          "gap": true,
+          "tag": "ModuleTag_Mystery",
+          "type": "MadeUpBehavior"
+        }
+      ],
+      "name": "CookMystery",
+      "parent": null
+    }
+  ]
+}
