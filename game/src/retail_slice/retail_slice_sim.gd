@@ -1468,9 +1468,9 @@ var retail_formation_movement := false
 ## goal speed scales to zero at 45 deg off heading, braking begins at
 ## 0.5*v^2/braking*1.05 of on-path distance to the order destination, and the
 ## per-tick speed change never overshoots the goal speed. Absent resolves false
-## so every pinned runner stays byte-identical; retail_vertical_slice.gd turns
-## it on for a real match. Formulas from the GPL Generals Locomotor.cpp
-## (moveTowardsPositionLegs, calcSlowDownDist); no code copied.
+## so every pinned runner stays byte-identical; retail_vertical_slice.gd sets
+## it only when OPENBFME_LOCOMOTOR_PHYSICS=1. Formulas from the GPL Generals
+## Locomotor.cpp (moveTowardsPositionLegs, calcSlowDownDist); no code copied.
 var retail_locomotor_physics := false
 ## Diagnostic-only, never serialized: one fallback line per unit type whose
 ## document did not author TurnTime/TurnRate. Such rows retain the pre-change
