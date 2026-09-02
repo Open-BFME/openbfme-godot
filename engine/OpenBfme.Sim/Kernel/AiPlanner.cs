@@ -48,6 +48,7 @@ internal static class AiPlanner
     {
         var ownedStructures = new List<GameObject>();
         var enemyStructures = new List<GameObject>();
+        var enemyBuilders = new List<GameObject>();
         var ownedArmy = new List<GameObject>();
         var enemyArmy = new List<GameObject>();
         var hordeMembers = new HashSet<int>();
@@ -68,6 +69,11 @@ internal static class AiPlanner
                 (own ? ownedStructures : enemyStructures).Add(gameObject);
                 continue;
             }
+            if (!own && IsBuilder(gameObject.Template))
+            {
+                enemyBuilders.Add(gameObject);
+                continue;
+            }
             if (gameObject.IsUnderConstruction) continue;
             if (hordeMembers.Contains(gameObject.Id)) continue;
             if (hordeCarriers.Contains(gameObject.Id) || IsArmyObject(gameObject, roles))
@@ -80,6 +86,7 @@ internal static class AiPlanner
         return new AiWorldView(
             ownedStructures,
             enemyStructures,
+            enemyBuilders,
             ownedArmy,
             enemyArmy,
             CountEconomy(ownedStructures),
@@ -140,6 +147,7 @@ internal static class AiPlanner
             var production = producer.FindModule<ProductionModule>()!;
             var candidates = AuthorizedObjects(world, state, producer, "UNIT_BUILD", AiBuildCategory.Unit)
                 .Where(template => (AiTemplateRoles.Classify(template) & AiUnitRole.Structure) == 0)
+                .Where(world.CanSpawnProductionTemplate)
                 .ToArray();
             if (candidates.Length == 0) continue;
             hasTrainCapableProducer = true;
@@ -267,7 +275,10 @@ internal static class AiPlanner
         var aboveMargin = view.ArmyStrength > 0
             && view.ArmyStrength * 100 >= Math.Max(1, view.EnemyStrength) * state.AttackMarginPercent;
         var aboveThreshold = maximum == 0 || used * 100 >= maximum * state.AttackCommandPointPercent;
-        var attackTarget = view.EnemyStructures.FirstOrDefault();
+        var strategicTargets = view.EnemyBuilders.Count > 0
+            ? view.EnemyBuilders
+            : view.EnemyStructures;
+        var attackTarget = strategicTargets.FirstOrDefault();
         var attackScore = aboveMargin && aboveThreshold && attackTarget != null
             ? 800L + view.ArmyStrength - view.EnemyStrength
             : 0;
@@ -275,7 +286,7 @@ internal static class AiPlanner
             $"strength={view.ArmyStrength}:{view.EnemyStrength} cp={used}:{maximum} margin={state.AttackMarginPercent}");
         if (attackScore > 0 && ids.Length > 0)
         {
-            attackTarget = Nearest(view.RallyPoint, view.EnemyStructures);
+            attackTarget = Nearest(view.RallyPoint, strategicTargets);
             commands.Add(MoveCommand(state, tick, "attack_move", ids, attackTarget!.Position));
             state.Phase = AiPhase.Attack;
             state.Retreating = false;
@@ -356,6 +367,7 @@ internal static class AiPlanner
     {
         var names = new List<string>();
         var set = CommandSet(world, issuer);
+        var commandSetAuthorized = set != null;
         if (set != null)
         {
             foreach (var entry in set.Entries)
@@ -371,7 +383,7 @@ internal static class AiPlanner
             names = world.AiConfig.AiBuildLists.OrderCandidates(state.Faction, category, names).ToList();
         foreach (var name in names)
             if (world.AiConfig.Templates.TryGetValue(name, out var template)
-                && AiTemplateRoles.IsSide(template, state.Faction))
+                && (commandSetAuthorized || AiTemplateRoles.IsSide(template, state.Faction)))
                 yield return template;
     }
 
@@ -454,6 +466,10 @@ internal static class AiPlanner
             | AiUnitRole.Hero | AiUnitRole.Siege)) != 0
         || gameObject.FindModule<LocomotorModule>() != null
         || gameObject.FindModule<LinearMoverModule>() != null);
+
+    private static bool IsBuilder(ObjectTemplate template) => template.KindOf.Any(value =>
+        value.Equals("DOZER", StringComparison.OrdinalIgnoreCase)
+        || value.Equals("PORTER", StringComparison.OrdinalIgnoreCase));
 
     private static int CountEconomy(IEnumerable<GameObject> structures) =>
         structures.Count(value => (AiTemplateRoles.Classify(value.Template) & AiUnitRole.Economy) != 0);
@@ -542,6 +558,7 @@ internal static class AiPlanner
     private sealed record AiWorldView(
         IReadOnlyList<GameObject> Structures,
         IReadOnlyList<GameObject> EnemyStructures,
+        IReadOnlyList<GameObject> EnemyBuilders,
         IReadOnlyList<GameObject> Army,
         IReadOnlyList<GameObject> EnemyArmy,
         int EconomyStructures,

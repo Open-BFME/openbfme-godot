@@ -267,14 +267,15 @@ public sealed class MovementSystem
             module.CurrentSpeed = Decelerate(module.CurrentSpeed, locomotor.Braking);
             return;
         }
-        var distanceSquared = gameObject.Position.DistanceSquaredTo(module.Destination);
+        var destination = ClampDestination(module.Destination);
+        var distanceSquared = gameObject.Position.DistanceSquaredTo(destination);
         if (distanceSquared <= ArrivalDistanceSquared)
         {
             module.CurrentSpeed = Fixed64.Zero;
             module.ClearOrder();
             return;
         }
-        var field = FieldFor(module.Destination);
+        var field = FieldFor(destination);
         var direction = DirectionAt(field, gameObject.Position);
         if (direction == FlowDirection.None)
         {
@@ -291,9 +292,9 @@ public sealed class MovementSystem
             module.CurrentSpeed,
             Fixed64.Sqrt(distanceSquared));
         var position = StepFlow(field, gameObject.Position, module.CurrentSpeed);
-        if (IsInGoalCell(position, module.Destination)) position = module.Destination;
+        if (IsInGoalCell(position, destination)) position = destination;
         gameObject.SetTransform(position, gameObject.Elevation, heading);
-        if (position.DistanceSquaredTo(module.Destination) <= ArrivalDistanceSquared)
+        if (position.DistanceSquaredTo(destination) <= ArrivalDistanceSquared)
         {
             module.CurrentSpeed = Fixed64.Zero;
             module.ClearOrder();
@@ -390,6 +391,23 @@ public sealed class MovementSystem
             _flowFields.Add(key, field);
         }
         return field;
+    }
+
+    private FixedVector2 ClampDestination(FixedVector2 destination)
+    {
+        var (cellX, cellY) = Grid.WorldToCell(destination);
+        if (Grid.IsInside(cellX, cellY)) return destination;
+        var x = cellX < 0
+            ? Fixed64.Zero
+            : cellX >= Grid.Width
+                ? Fixed64.FromInt(checked((Grid.Width - 1) * Grid.CellSize))
+                : destination.X;
+        var y = cellY < 0
+            ? Fixed64.Zero
+            : cellY >= Grid.Height
+                ? Fixed64.FromInt(checked((Grid.Height - 1) * Grid.CellSize))
+                : destination.Y;
+        return new FixedVector2(x, y);
     }
 
     private FlowField FieldFor(HordeMotion motion)

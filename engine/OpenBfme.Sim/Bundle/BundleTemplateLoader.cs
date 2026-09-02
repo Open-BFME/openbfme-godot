@@ -25,6 +25,7 @@ public sealed record BundleLoadReport(
 public sealed record BundleTemplateLoadResult(
     IReadOnlyList<ObjectTemplate> Templates,
     IReadOnlyDictionary<string, int> TemplateIndices,
+    IReadOnlyList<HordeProductionTemplate> HordeTemplates,
     IReadOnlyList<WeaponTemplate> WeaponTemplates,
     IReadOnlyList<ArmorTemplate> ArmorTemplates,
     TechCatalog Tech,
@@ -107,6 +108,11 @@ public static class BundleTemplateLoader
                 foreach (var module in effective.Modules)
                 {
                     var spec = ToModuleSpec(module, registry);
+                    if (spec.TypeName == HordeContainModule.TypeName
+                        && hordes.TryGetValue(row.Name, out var horde))
+                    {
+                        spec = AttachHorde(spec, horde);
+                    }
                     specs.Add(spec);
                     if (spec.Gap)
                         templateGaps.Add(new BundleModuleGap(row.Name, spec.TypeName, spec.Carrier));
@@ -161,7 +167,8 @@ public static class BundleTemplateLoader
             diagnostics.ToArray(),
             notes.ToArray());
         return new BundleTemplateLoadResult(
-            templates.ToArray(), indices, weapons.Values.ToArray(), armors.Values.ToArray(), tech, report);
+            templates.ToArray(), indices, BuildHordeTemplates(hordes.Values),
+            weapons.Values.ToArray(), armors.Values.ToArray(), tech, report);
     }
 
     private static void ValidateStructuralModules(
@@ -224,7 +231,7 @@ public static class BundleTemplateLoader
             var effective = new EffectiveTemplate(
                 row.Name,
                 row.Side ?? parent?.Side,
-                row.KindOf.Count == 0 && parent != null ? parent.KindOf : row.KindOf,
+                ResolveKindOf(parent?.KindOf, row.KindOf),
                 fields,
                 blocks.ToArray(),
                 modules.ToArray(),
@@ -294,6 +301,51 @@ public static class BundleTemplateLoader
             row.Type, data, strings, tier, row.Fields, row.Blocks,
             row.Carrier, row.Tag, row.Gap || !known);
     }
+
+    private static IReadOnlyList<string> ResolveKindOf(
+        IReadOnlyList<string>? inherited,
+        IReadOnlyList<string> authored)
+    {
+        if (authored.Count == 0) return inherited?.ToArray() ?? Array.Empty<string>();
+        if (!authored.Any(value => value.StartsWith('+') || value.StartsWith('-')))
+            return authored.ToArray();
+        var result = inherited?.ToList() ?? new List<string>();
+        foreach (var token in authored)
+        {
+            var remove = token.StartsWith('-');
+            var normalized = token.StartsWith('+') || remove ? token[1..] : token;
+            if (normalized.Length == 0) continue;
+            result.RemoveAll(value => value.Equals(normalized, StringComparison.OrdinalIgnoreCase));
+            if (!remove) result.Add(normalized);
+        }
+        return result.ToArray();
+    }
+
+    private static ModuleSpec AttachHorde(ModuleSpec spec, BundleHordeRow horde)
+    {
+        var data = new SortedDictionary<string, long>(StringComparer.Ordinal);
+        foreach (var pair in spec.Data) data.Add(pair.Key, pair.Value);
+        data["MemberCount"] = horde.RankInfo.Sum(value => (long)value.Positions.Count);
+        var strings = new SortedDictionary<string, string>(StringComparer.Ordinal);
+        foreach (var pair in spec.StringData) strings.Add(pair.Key, pair.Value);
+        var memberTypes = horde.RankInfo.Select(value => value.UnitType)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        if (memberTypes.Length == 1) strings["MemberTemplate"] = memberTypes[0];
+        return new ModuleSpec(
+            spec.TypeName, data, strings, spec.Tier, spec.Fields, spec.Blocks,
+            spec.Carrier, spec.Tag, spec.Gap);
+    }
+
+    private static IReadOnlyList<HordeProductionTemplate> BuildHordeTemplates(
+        IEnumerable<BundleHordeRow> hordes) => hordes
+        .Select(horde => new HordeProductionTemplate(
+            horde.Name,
+            horde.RankInfo.Select(rank => new HordeProductionRank(
+                rank.Rank,
+                rank.UnitType,
+                rank.Positions.Select(position => new FixedVector2(position.X, position.Y)).ToArray()))))
+        .ToArray();
 
     private static void MapFields(
         IReadOnlyDictionary<string, BundleValue> fields,

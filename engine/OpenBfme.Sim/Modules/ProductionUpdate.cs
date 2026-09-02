@@ -281,17 +281,7 @@ public sealed class ProductionModule : ModuleBase
         template.Economy.BuildCost > 0 ? template.Economy.BuildCost : CostOf(template.Name);
 
     private FixedVector2 ResolveExitOffset(GameObject self)
-    {
-        if (Spec.Data.ContainsKey("ExitOffsetXRaw") || Spec.Data.ContainsKey("ExitOffsetYRaw"))
-        {
-            return new FixedVector2(
-                Spec.GetFixed("ExitOffsetXRaw", Fixed64.FromInt(2)),
-                Spec.GetFixed("ExitOffsetYRaw", Fixed64.Zero));
-        }
-        return self.Template.Economy.ProductionExitOffset != FixedVector2.Zero
-            ? self.Template.Economy.ProductionExitOffset
-            : new FixedVector2(Fixed64.FromInt(2), Fixed64.Zero);
-    }
+        => ProductionSpawnGeometry.ResolveExitOffset(self.Template, Spec);
 
     private FixedVector2? ResolveRallyPoint(GameObject self)
     {

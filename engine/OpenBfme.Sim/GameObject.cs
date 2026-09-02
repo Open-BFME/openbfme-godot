@@ -62,7 +62,18 @@ public sealed class GameObject
 
     internal (Fixed64 Initial, Fixed64 Maximum) ConstructionHealthBounds()
     {
-        if (Template.BodyHealth is { } body) return (body.InitialHealth, body.MaxHealth);
+        if (Template.BodyHealth is { } body)
+        {
+            var authoredBody = Modules.LastOrDefault(module => module.Spec.Carrier == "Body")
+                ?? (ModuleBase?)FindModule<StructureBodyModule>()
+                ?? FindModule<ActiveBodyModule>();
+            if (authoredBody?.Spec.Data.TryGetValue("InitialHealthRaw", out var initialRaw) == true)
+                return (Fixed64.FromRaw(initialRaw), body.MaxHealth);
+            if (authoredBody?.Spec.Data.TryGetValue("InitialHealth", out var initialInteger) == true)
+                return (Fixed64.FromInt64(initialInteger), body.MaxHealth);
+            return (FindModule<GettingBuiltModule>() == null ? body.InitialHealth : Fixed64.Zero,
+                body.MaxHealth);
+        }
         if (FindModule<StructureBodyModule>() is { } structure)
         {
             return (

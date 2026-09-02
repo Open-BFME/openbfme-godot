@@ -14,6 +14,7 @@ public sealed class SimConfig
     public int MapHeightCells { get; }
     public IReadOnlyDictionary<string, WeaponTemplate> WeaponTemplates { get; }
     public IReadOnlyDictionary<string, ArmorTemplate> ArmorTemplates { get; }
+    public IReadOnlyDictionary<string, HordeProductionTemplate> HordeTemplates { get; }
     public TechCatalog Tech { get; }
     public long MaxCommandPoints { get; }
     public IAiBuildListProvider? AiBuildLists { get; }
@@ -30,7 +31,8 @@ public sealed class SimConfig
         long maxCommandPoints = 0,
         IReadOnlyDictionary<string, int>? templateIndices = null,
         TechCatalog? tech = null,
-        IAiBuildListProvider? aiBuildLists = null)
+        IAiBuildListProvider? aiBuildLists = null,
+        IEnumerable<HordeProductionTemplate>? hordeTemplates = null)
     {
         if (teamCount < 1)
         {
@@ -68,6 +70,7 @@ public sealed class SimConfig
         MapHeightCells = mapHeightCells;
         WeaponTemplates = NamedTemplates(weaponTemplates, value => value.Name);
         ArmorTemplates = NamedTemplates(armorTemplates, value => value.Name);
+        HordeTemplates = NamedTemplates(hordeTemplates, value => value.Name);
         Tech = tech ?? TechCatalog.Empty;
         if (maxCommandPoints < 0) throw new ArgumentOutOfRangeException(nameof(maxCommandPoints));
         MaxCommandPoints = maxCommandPoints;
@@ -246,7 +249,8 @@ public sealed partial class SimWorld
             armorTemplates: loaded.ArmorTemplates,
             maxCommandPoints: scaledCap,
             templateIndices: loaded.TemplateIndices,
-            tech: loaded.Tech);
+            tech: loaded.Tech,
+            hordeTemplates: loaded.HordeTemplates);
         var world = new SimWorld(config, registry, launch.Rules.TickMilliseconds, passabilityGrid)
         {
             BundleLoadReport = loaded.Report,
