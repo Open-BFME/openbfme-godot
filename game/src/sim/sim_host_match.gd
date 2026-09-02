@@ -5,7 +5,7 @@ extends Node3D
 const SimHostClientScript := preload("res://src/sim/sim_host_client.gd")
 const NativeContentLocatorScript := preload("res://src/sim/native_content_locator.gd")
 const MapDocumentScript := preload("res://src/map/map_document.gd")
-const MapTerrainMeshScript := preload("res://src/map/map_terrain_mesh.gd")
+const NativeTerrainScript := preload("res://src/present/native_terrain.gd")
 const MapBootstrapScript := preload("res://src/map/map_bootstrap.gd")
 const TICK_SECONDS := 1.0 / 30.0
 const PICK_RADIUS_PIXELS := 32.0
@@ -179,11 +179,11 @@ func _start_match() -> void:
 		return
 	_renderer.configure_templates(_catalog)
 	if _map_document != null:
-		_terrain = MapTerrainMeshScript.new()
+		_terrain = NativeTerrainScript.new()
 		_terrain.name = "NativeMapTerrain"
 		add_child(_terrain)
-		if not _terrain.build(_map_document):
-			_fail("map terrain mesh build failed")
+		if not _terrain.configure(_map_document, OS.get_environment("OPENBFME_CONTENT")):
+			_fail("map presentation terrain failed: %s" % _terrain.error)
 			return
 		var old_ground := get_node_or_null("Ground") as MeshInstance3D
 		if old_ground != null:
