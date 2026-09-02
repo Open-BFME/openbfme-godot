@@ -26,6 +26,15 @@ module-first architecture it follows.
 - Publishes `contracts/snapshot-v1.schema.json`; starts from
   `contracts/match-launch-v1.schema.json`.
 
+## Object state transition
+
+`ObjectStore` owns the renderer-facing structure-of-arrays: identity,
+template/owner indexes, transforms, health, model state, animation state, and
+flags. During the compatibility transition, `GameObject` still owns template
+names, module instances and their serialized state, lifecycle flags, and the
+legacy module-facing transform API. `SimWorld` deterministically mirrors those
+legacy values into `ObjectStore`; new presentation code reads the store only.
+
 ## Lanes
 
 - **Kernel** is one assigned lane until the skeleton is complete: objects as
