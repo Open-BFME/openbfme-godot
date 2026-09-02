@@ -2,7 +2,7 @@
   "detail": "Every peer already computes the per-tick hash. On mismatch, exchange snapshots and write workspace/logs/desync-<tick>.json with the first differing key path.",
   "done_at": "2026-09-02",
   "done_by": "sol-neta",
-  "oracle": "godot --headless --path game --script res://tests/lockstep_desync_report_runner.gd",
+  "oracle": "godot --headless --path game --script res://tests/sim_host_desync_runner.gd",
   "rank": 30,
   "status": "done",
   "title": "Desync report: on hash mismatch, dump both peers' authoritative state diff to a file"

@@ -2,7 +2,7 @@
   "detail": "retail_lockstep_session.gd already has snapshot()/restore(); add the join handshake, catch-up command replay, and hash confirmation.",
   "done_at": "2026-09-02",
   "done_by": "sol-neta",
-  "oracle": "godot --headless --path game --script res://tests/lockstep_reconnect_runner.gd",
+  "oracle": "godot --headless --path game --script res://tests/sim_host_reconnect_runner.gd",
   "rank": 20,
   "status": "done",
   "title": "Reconnect: a dropped peer rejoins from the host's snapshot and resumes lockstep"
