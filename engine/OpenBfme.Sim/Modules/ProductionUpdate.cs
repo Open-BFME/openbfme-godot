@@ -27,6 +27,10 @@ public sealed class ProductionModule : ModuleBase
     public bool HasRallyPoint => _hasRallyPoint;
     public FixedVector2 RallyPoint => _rallyPoint;
     public long ReservedCommandPoints => _queue.Sum(entry => entry.CommandPoints);
+    public bool HasQueuedUpgrade(string name) =>
+        _queue.Any(entry => entry.Template == UpgradePrefix + name);
+
+    private const string UpgradePrefix = "@upgrade:";
 
     public long CostOf(string templateName) => Math.Max(0, Spec.GetLong("Cost:" + templateName, 0));
 
@@ -119,6 +123,57 @@ public sealed class ProductionModule : ModuleBase
         return true;
     }
 
+    internal bool TryQueueUpgrade(
+        SimWorld world,
+        GameObject self,
+        UpgradeTemplate upgrade,
+        out string refusalCode)
+    {
+        refusalCode = "";
+        if (self.IsUnderConstruction)
+        {
+            refusalCode = "producer_under_construction";
+            return false;
+        }
+        if (self.IsDying)
+        {
+            refusalCode = "producer_dying";
+            return false;
+        }
+        if (_queue.Count >= _maxQueueEntries)
+        {
+            refusalCode = "queue_full";
+            return false;
+        }
+        if (upgrade.Type == UpgradeType.Player
+            ? world.TeamHasUpgrade(self.Team, upgrade.Name)
+            : self.HasObjectUpgrade(upgrade.Name))
+        {
+            refusalCode = "upgrade_already_owned";
+            return false;
+        }
+        if (world.IsUpgradeInProgress(self, upgrade))
+        {
+            refusalCode = "upgrade_in_progress";
+            return false;
+        }
+        if (upgrade.Prerequisites.Any(name => world.HasUpgradeTemplate(name)
+                && !world.ObjectHasUpgrade(self, name)))
+        {
+            refusalCode = "upgrade_prerequisite_missing";
+            return false;
+        }
+        if (world.TeamResources(self.Team) < upgrade.BuildCost)
+        {
+            refusalCode = "insufficient_money";
+            return false;
+        }
+        var ticks = Math.Max(1, upgrade.BuildTicks(world.TickMilliseconds));
+        world.AddTeamResources(self.Team, -upgrade.BuildCost);
+        _queue.Add(new ProductionEntry(UpgradePrefix + upgrade.Name, ticks, upgrade.BuildCost, 0));
+        return true;
+    }
+
     public bool TryCancel(SimWorld world, GameObject self, int index)
     {
         if (index < 0 || index >= _queue.Count)
@@ -150,6 +205,11 @@ public sealed class ProductionModule : ModuleBase
             return;
         }
         _queue.RemoveAt(0);
+        if (entry.Template.StartsWith(UpgradePrefix, StringComparison.Ordinal))
+        {
+            world.CompleteUpgrade(self, world.UpgradeTemplate(entry.Template[UpgradePrefix.Length..]));
+            return;
+        }
         world.SpawnProducedObject(
             self,
             entry.Template,
@@ -193,6 +253,7 @@ public sealed class ProductionModule : ModuleBase
 
     private bool CanProduce(GameObject self, string templateName)
     {
+        if (self.CurrentCommandSet.Length > 0) return true;
         if (self.Template.Economy.CommandSet.Count > 0)
         {
             return self.Template.Economy.CommandSet.Contains(templateName, StringComparer.Ordinal);

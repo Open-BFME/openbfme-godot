@@ -18,6 +18,7 @@ public sealed record BundleTemplateLoadResult(
     IReadOnlyDictionary<string, int> TemplateIndices,
     IReadOnlyList<WeaponTemplate> WeaponTemplates,
     IReadOnlyList<ArmorTemplate> ArmorTemplates,
+    TechCatalog Tech,
     BundleLoadReport Report);
 
 /// <summary>Resolves bundle-v1 rows directly into deterministic core templates.</summary>
@@ -37,6 +38,12 @@ public static class BundleTemplateLoader
         if (document.Hordes == null) absent.Add("hordes");
         if (document.Locomotors == null) absent.Add("locomotors");
         if (document.Weapons == null) absent.Add("weapons");
+        if (document.Upgrades == null) absent.Add("upgrades");
+        if (document.Sciences == null) absent.Add("sciences");
+        if (document.SpecialPowers == null) absent.Add("special_powers");
+        if (document.CommandButtons == null) absent.Add("command_buttons");
+        if (document.CommandSets == null) absent.Add("command_sets");
+        absent.Add("object_creation_lists");
 
         var diagnostics = document.Diagnostics
             .Select(item => $"{item.Template}: {item.Message}")
@@ -44,6 +51,7 @@ public static class BundleTemplateLoader
         var notes = new List<string>();
         var gapCounts = new SortedDictionary<string, int>(StringComparer.Ordinal);
         var unresolved = NewUnresolved();
+        var tech = BuildTechCatalog(document, diagnostics, unresolved);
         var weapons = ParseWeapons(document.Weapons, tickMilliseconds, diagnostics);
         var armors = ParseArmors(document.Armors, diagnostics);
         _ = IndexRows(document.DamageFx, "damage_fx", diagnostics);
@@ -59,7 +67,7 @@ public static class BundleTemplateLoader
             foreach (var module in row.Modules)
             {
                 var known = registry.TryGetTier(module.Type, out var tier);
-                if (!known) tier = CarrierTier(module.Carrier);
+                if (!known) tier = CarrierTier(module.Carrier, module.Type);
                 if (module.Gap || (!known && tier == ModuleTier.Cosmetic))
                     Count(gapCounts, module.Type);
                 if (module.Gap)
@@ -97,9 +105,14 @@ public static class BundleTemplateLoader
                 AddResolvedLocomotor(row.Name, effective.Blocks, specs, document.Locomotors,
                     locomotors, locomotorSets, unresolved, registry);
                 var body = ResolveBodyHealth(effective, specs);
+                var commandSetName = effective.Fields.TryGetValue("CommandSet", out var commandSetValue)
+                    ? ValueStrings(commandSetValue).FirstOrDefault() ?? ""
+                    : "";
+                if (commandSetName.Length > 0 && !tech.CommandSets.ContainsKey(commandSetName))
+                    unresolved["command_set"].Add(new BundleReferenceIssue(row.Name, commandSetName));
                 templates.Add(new ObjectTemplate(
                     row.Name, specs, weaponSets, armorSets, body,
-                    BuildEconomy(effective)));
+                    BuildEconomy(effective), commandSetName, techEnabled: !tech.IsEmpty));
                 indices.Add(row.Name, row.Index);
             }
             catch (Exception exception) when (exception is BundleTemplateException
@@ -118,7 +131,7 @@ public static class BundleTemplateLoader
             diagnostics.ToArray(),
             notes.ToArray());
         return new BundleTemplateLoadResult(
-            templates.ToArray(), indices, weapons.Values.ToArray(), armors.Values.ToArray(), report);
+            templates.ToArray(), indices, weapons.Values.ToArray(), armors.Values.ToArray(), tech, report);
     }
 
     private static EffectiveTemplate Resolve(
@@ -209,7 +222,7 @@ public static class BundleTemplateLoader
     private static ModuleSpec ToModuleSpec(BundleModuleRow row, ModuleRegistry registry)
     {
         var known = registry.TryGetTier(row.Type, out var tier);
-        if (!known) tier = CarrierTier(row.Carrier);
+        if (!known) tier = CarrierTier(row.Carrier, row.Type);
         if ((!known || row.Gap) && tier == ModuleTier.Structural)
         {
             var state = row.Gap ? "unparseable" : "unknown";
@@ -270,16 +283,10 @@ public static class BundleTemplateLoader
 
     private static EconomyTemplate BuildEconomy(EffectiveTemplate row)
     {
-        var commandSet = row.Fields.TryGetValue("CommandSet", out var authoredCommandSet)
-            ? ValueStrings(authoredCommandSet)
-                .SelectMany(value => value.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries))
-                .ToArray()
-            : Array.Empty<string>();
         return new EconomyTemplate(
             row.BuildCost is { } cost ? ExactLong(cost, "BuildCost") : 0,
             row.BuildTime is { } time ? ExactMilliseconds(time, "BuildTime") : 0,
-            row.CommandPoints ?? 0,
-            commandSet);
+            row.CommandPoints ?? 0);
     }
 
     private static long ExactLong(Fixed64 value, string name)
@@ -522,7 +529,11 @@ public static class BundleTemplateLoader
         };
     }
 
-    private static ModuleTier CarrierTier(string carrier) => carrier switch
+    private static ModuleTier CarrierTier(string carrier, string typeName) =>
+        typeName.Contains("SpecialPower", StringComparison.Ordinal)
+            || typeName.EndsWith("Upgrade", StringComparison.Ordinal)
+            ? ModuleTier.Cosmetic
+            : carrier switch
     {
         "Draw" or "ClientUpdate" or "ClientBehavior" or "Flasher" or "other" => ModuleTier.Cosmetic,
         _ => ModuleTier.Structural,
@@ -532,10 +543,84 @@ public static class BundleTemplateLoader
         new(StringComparer.Ordinal)
         {
             ["armor"] = new List<BundleReferenceIssue>(),
+            ["command_button"] = new List<BundleReferenceIssue>(),
+            ["command_set"] = new List<BundleReferenceIssue>(),
             ["horde"] = new List<BundleReferenceIssue>(),
             ["locomotor"] = new List<BundleReferenceIssue>(),
+            ["object_template"] = new List<BundleReferenceIssue>(),
+            ["science"] = new List<BundleReferenceIssue>(),
+            ["special_power"] = new List<BundleReferenceIssue>(),
+            ["upgrade"] = new List<BundleReferenceIssue>(),
             ["weapon"] = new List<BundleReferenceIssue>(),
         };
+
+    private static TechCatalog BuildTechCatalog(
+        BundleDocument document,
+        ICollection<string> diagnostics,
+        IDictionary<string, List<BundleReferenceIssue>> unresolved)
+    {
+        var upgrades = IndexTech(document.Upgrades, value => value.Name, "upgrade", diagnostics);
+        var sciences = IndexTech(document.Sciences, value => value.Name, "science", diagnostics);
+        var powers = IndexTech(document.SpecialPowers, value => value.Name, "special_power", diagnostics);
+        var buttons = IndexTech(document.CommandButtons, value => value.Name, "command_button", diagnostics);
+        var sets = new List<CommandSetTemplate>();
+        var setNames = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var row in document.CommandSets ?? Array.Empty<BundleCommandSetRow>())
+        {
+            if (!setNames.Add(row.Name))
+            {
+                diagnostics.Add($"command_set table has duplicate name '{row.Name}'");
+                continue;
+            }
+            var entries = new List<CommandSetEntryTemplate>();
+            foreach (var entry in row.Entries.OrderBy(value => value.Slot))
+            {
+                if (string.IsNullOrWhiteSpace(entry.Button)) continue;
+                if (!buttons.TryGetValue(entry.Button, out var button))
+                {
+                    unresolved["command_button"].Add(new BundleReferenceIssue(row.Name, entry.Button));
+                    continue;
+                }
+                entries.Add(new CommandSetEntryTemplate(entry.Slot, entry.Button, button));
+            }
+            sets.Add(new CommandSetTemplate(row.Name, entries.ToArray()));
+        }
+
+        foreach (var science in sciences.Values)
+            foreach (var prerequisite in science.PrerequisiteSciences)
+                if (!sciences.ContainsKey(prerequisite))
+                    unresolved["science"].Add(new BundleReferenceIssue(science.Name, prerequisite));
+        foreach (var power in powers.Values)
+            foreach (var required in power.RequiredSciences)
+                if (!sciences.ContainsKey(required))
+                    unresolved["science"].Add(new BundleReferenceIssue(power.Name, required));
+        foreach (var button in buttons.Values)
+        {
+            if (button.Upgrade.Length > 0 && !upgrades.ContainsKey(button.Upgrade))
+                unresolved["upgrade"].Add(new BundleReferenceIssue(button.Name, button.Upgrade));
+            if (button.Science.Length > 0 && !sciences.ContainsKey(button.Science))
+                unresolved["science"].Add(new BundleReferenceIssue(button.Name, button.Science));
+            if (button.SpecialPower.Length > 0 && !powers.ContainsKey(button.SpecialPower))
+                unresolved["special_power"].Add(new BundleReferenceIssue(button.Name, button.SpecialPower));
+            if (button.Object.Length > 0 && !document.Templates.Any(row => row.Name == button.Object))
+                unresolved["object_template"].Add(new BundleReferenceIssue(button.Name, button.Object));
+        }
+        return new TechCatalog(upgrades.Values, sciences.Values, powers.Values, buttons.Values, sets);
+    }
+
+    private static SortedDictionary<string, T> IndexTech<T>(
+        IReadOnlyList<T>? rows,
+        Func<T, string> name,
+        string kind,
+        ICollection<string> diagnostics)
+    {
+        var result = new SortedDictionary<string, T>(StringComparer.Ordinal);
+        foreach (var row in rows ?? Array.Empty<T>())
+        {
+            if (!result.TryAdd(name(row), row)) diagnostics.Add($"{kind} table has duplicate name '{name(row)}'");
+        }
+        return result;
+    }
 
     private static IReadOnlyDictionary<string, IReadOnlyList<BundleReferenceIssue>> FreezeUnresolved(
         IReadOnlyDictionary<string, List<BundleReferenceIssue>> source)

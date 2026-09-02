@@ -67,15 +67,16 @@ public sealed class BundleLoaderTests
     [Fact]
     public void LoaderReplacesInheritedModuleByTagAndReportsUnknownsAndAbsentTables()
     {
+        var document = BundleDocument.Load(FixturePath());
         var result = BundleTemplateLoader.Load(
-            BundleDocument.Load(FixturePath()), ModuleRegistry.CreateDefault(), tickMilliseconds: 33);
+            document, ModuleRegistry.CreateDefault(), tickMilliseconds: 33);
 
         Assert.Equal(5, result.Report.TemplatesLoaded);
         Assert.Equal(2, result.Report.TemplatesFailed.Count);
         Assert.Contains(result.Report.TemplatesFailed,
             failure => failure.Template == "CookMystery" && failure.Reason.Contains("MadeUpBehavior", StringComparison.Ordinal));
         Assert.Contains(result.Report.GapRowsByType, pair => pair.Key == "ModuleTag_Malformed");
-        Assert.Empty(result.Report.AbsentTables);
+        Assert.Equal(new[] { "object_creation_lists" }, result.Report.AbsentTables);
 
         var child = Assert.Single(result.Templates, template => template.Name == "CookChild");
         Assert.Single(child.Modules, module => module.TypeName == ActiveBodyModule.TypeName);
@@ -87,6 +88,13 @@ public sealed class BundleLoaderTests
         Assert.Equal(25, child.Economy.CommandPoints);
         Assert.Equal(Fixed64.FromInt(1200), child.BodyHealth!.MaxHealth);
         Assert.Equal("CookSword", Assert.Single(child.WeaponSets).PrimaryWeaponName);
+        Assert.Equal("CookUpgrade", Assert.Single(document.Upgrades!).Name);
+        Assert.Equal(450, document.Upgrades![0].BuildCost);
+        Assert.Equal(12_500, document.Upgrades[0].BuildTimeMilliseconds);
+        Assert.Equal("SCIENCE_CookKnowledge", Assert.Single(document.Sciences!).Name);
+        Assert.Equal(90_000, Assert.Single(document.SpecialPowers!).ReloadTimeMilliseconds);
+        Assert.Equal("Command_CookUpgrade", Assert.Single(document.CommandButtons!).Name);
+        Assert.Equal("CookCommandSet", Assert.Single(document.CommandSets!).Name);
     }
 
     [Fact]
@@ -193,7 +201,11 @@ public sealed class BundleLoaderTests
 
         var result = BundleTemplateLoader.Load(document, ModuleRegistry.CreateDefault(), 33);
 
-        Assert.Empty(result.Report.AbsentTables);
+        Assert.Equal(new[]
+        {
+            "command_buttons", "command_sets", "object_creation_lists", "sciences",
+            "special_powers", "upgrades",
+        }, result.Report.AbsentTables);
         Assert.All(result.Report.UnresolvedReferences, pair => Assert.Empty(pair.Value));
         Assert.Single(result.WeaponTemplates);
         Assert.Single(result.ArmorTemplates);
