@@ -39,7 +39,10 @@ func _run() -> void:
 			print("SIM_HOST_MAP_RENDER_FPS seconds=%d fps=%.2f" % [next_fps_second, fps])
 			next_fps_second += 5
 		if capture_index < CAPTURE_SECONDS.size() and elapsed_seconds >= int(CAPTURE_SECONDS[capture_index]):
-			await process_frame
+			# Read the viewport only after the renderer has presented this frame.
+			# A process-frame wait can race the final 30-second capture and return
+			# the cleared backbuffer even though the match is still running.
+			await RenderingServer.frame_post_draw
 			var seconds := int(CAPTURE_SECONDS[capture_index])
 			var path := _capture_path(seconds)
 			var image := root.get_texture().get_image()

@@ -75,6 +75,11 @@ var _client
 var _snapshot: Dictionary = {}
 var _catalog: Array[Dictionary] = []
 var _catalog_by_index: Dictionary = {}
+var _catalog_by_name_index: Dictionary = {}
+var _object_slots: Dictionary = {}
+var _hordes_by_id: Dictionary = {}
+var _radar_unit_ids: Array[int] = []
+var _radar_units: Dictionary = {}
 var _bundle_templates: Dictionary = {}
 var _command_sets: Dictionary = {}
 var _command_buttons: Dictionary = {}
@@ -86,6 +91,10 @@ var _seq := 0
 var _content_db: Node
 var _view: SnapshotView
 var _map_view := MapView.new()
+var _last_readout_signature := ""
+var _last_selection_signature := ""
+var _last_command_signature := ""
+var _last_portrait_id := ""
 
 
 func configure(
@@ -110,7 +119,10 @@ func configure(
 
 
 func accept_snapshot(snapshot: Dictionary) -> void:
-	_snapshot = snapshot.duplicate(true)
+	# SimHostMatch and SimHostClient hand snapshots off immutably. Retaining the
+	# document avoids a second deep copy of every object array for presentation.
+	_snapshot = snapshot
+	_index_snapshot()
 	_tick = int(snapshot.get("tick", _tick))
 	_prune_selection()
 	_refresh_hud()
@@ -123,6 +135,7 @@ func set_selection(ids: Array) -> void:
 		if id > 0 and not _selected_ids.has(id):
 			_selected_ids.append(id)
 	_selected_ids.sort()
+	_last_selection_signature = ""
 	_refresh_hud()
 
 
@@ -212,21 +225,11 @@ func player_readouts(player_index: int = 0) -> Dictionary:
 
 
 func radar_entity_ids() -> Array[int]:
-	var result: Array[int] = []
-	var hordes: Dictionary = {}
-	for value in _snapshot.get("hordes", []) as Array:
-		for member in (value as Dictionary).get("members", []) as Array:
-			hordes[int(member)] = true
-	var objects := _snapshot.get("objects", {}) as Dictionary
-	for value in objects.get("id", []) as Array:
-		var id := int(value)
-		if hordes.has(id):
-			result.append(id)
-	return result
+	return _radar_unit_ids.duplicate()
 
 
 func radar_entity(id: int) -> Dictionary:
-	return _radar_row(id, false)
+	return _radar_units.get(id, {}) as Dictionary
 
 
 func radar_structure_ids() -> Array[int]:
@@ -250,6 +253,10 @@ func _build_hud(camera: Camera3D) -> void:
 		error = "retail HUD script unavailable"
 		return
 	hud = retail_hud_script.new()
+	_last_readout_signature = ""
+	_last_selection_signature = ""
+	_last_command_signature = ""
+	_last_portrait_id = ""
 	hud.name = "NativeRetailHud"
 	hud.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	add_child(hud)
@@ -279,7 +286,9 @@ func _refresh_hud() -> void:
 	if hud == null:
 		return
 	var player := player_readouts()
-	if not player.is_empty():
+	var readout_signature := JSON.stringify(player)
+	if not player.is_empty() and readout_signature != _last_readout_signature:
+		_last_readout_signature = readout_signature
 		hud.set_resources(
 			int(player.get("resources", 0)),
 			int(player.get("command_points", 0)),
@@ -287,6 +296,10 @@ func _refresh_hud() -> void:
 		)
 		hud.refresh_powers(int(player.get("power_points", 0)), [], {})
 	var rows := selected_rows()
+	var selection_signature := JSON.stringify(rows)
+	if selection_signature == _last_selection_signature:
+		return
+	_last_selection_signature = selection_signature
 	_command_rows = _commands_for_selection(rows)
 	_sync_native_buttons()
 	if rows.is_empty():
@@ -355,6 +368,10 @@ func _order_commands() -> Array[Dictionary]:
 
 
 func _sync_native_buttons() -> void:
+	var signature := JSON.stringify(_command_rows)
+	if signature == _last_command_signature:
+		return
+	_last_command_signature = signature
 	for button in _native_buttons:
 		button.queue_free()
 	_native_buttons.clear()
@@ -401,6 +418,9 @@ func _apply_button_texture(button: Button, image_id: String) -> void:
 func _apply_portrait(image_id: String) -> void:
 	if hud.selection_portrait == null:
 		return
+	if image_id == _last_portrait_id:
+		return
+	_last_portrait_id = image_id
 	var path := String(_content_db.call("resolve_retail_ui_image_path", image_id)) if _content_db != null and not image_id.is_empty() else ""
 	if path.is_empty():
 		hud.selection_portrait.visible = false
@@ -511,19 +531,47 @@ func _prune_selection() -> void:
 
 
 func _horde(id: int) -> Dictionary:
-	for value in _snapshot.get("hordes", []) as Array:
-		var row := value as Dictionary
-		if int(row.get("id", 0)) == id:
-			return row
-	return {}
+	return _hordes_by_id.get(id, {}) as Dictionary
 
 
 func _object_slot(id: int) -> int:
+	return int(_object_slots.get(id, -1))
+
+
+func _index_snapshot() -> void:
+	_object_slots.clear()
+	_hordes_by_id.clear()
+	_radar_unit_ids.clear()
+	_radar_units.clear()
+	var objects := _snapshot.get("objects", {}) as Dictionary
 	var ids := (_snapshot.get("objects", {}) as Dictionary).get("id", []) as Array
 	for index in ids.size():
-		if int(ids[index]) == id:
-			return index
-	return -1
+		_object_slots[int(ids[index])] = index
+	for value in _snapshot.get("hordes", []) as Array:
+		var horde := value as Dictionary
+		var horde_id := int(horde.get("id", 0))
+		_hordes_by_id[horde_id] = horde
+		var position := Vector2.ZERO
+		var health := 0.0
+		var member_count := 0
+		for member in horde.get("members", []) as Array:
+			var slot := _object_slot(int(member))
+			if slot < 0:
+				continue
+			position += Vector2(
+				float((objects.get("x", []) as Array)[slot]),
+				float((objects.get("y", []) as Array)[slot])
+			)
+			health += _object_number("health", slot)
+			member_count += 1
+		if member_count > 0:
+			_radar_unit_ids.append(horde_id)
+			_radar_units[horde_id] = {
+				"id": horde_id,
+				"health": int(health),
+				"position": position / float(member_count),
+				"team": int(horde.get("owner", -1)),
+			}
 
 
 func _object_number(column: String, slot: int) -> float:
@@ -536,16 +584,15 @@ func _template_name(index: int) -> String:
 
 
 func _catalog_by_name(name: String) -> Dictionary:
-	for row in _catalog:
-		if String(row.get("name", "")) == name:
-			return row
-	return {}
+	return _catalog_by_name_index.get(name, {}) as Dictionary
 
 
 func _index_catalog() -> void:
 	_catalog_by_index.clear()
+	_catalog_by_name_index.clear()
 	for row in _catalog:
 		_catalog_by_index[int(row.get("index", -1))] = row
+		_catalog_by_name_index[String(row.get("name", ""))] = row
 
 
 func _load_bundle(path: String) -> bool:
