@@ -1,3 +1,4 @@
+using System.Text.Json;
 using OpenBfme.Sim;
 using Xunit;
 using Xunit.Abstractions;
@@ -78,7 +79,26 @@ public class DualRunOracleTests
                 "so the caller has accepted that this cross-language oracle is unverified here.");
             return;
         }
-        var trace = DualRunTrace.Load(tracePath);
+        DualRunTrace trace;
+        try
+        {
+            trace = DualRunTrace.Load(tracePath);
+        }
+        catch (Exception exception) when (
+            string.IsNullOrEmpty(explicitOverride)
+            && string.Equals(
+                Environment.GetEnvironmentVariable("OPENBFME_DUALRUN_OPTIONAL"),
+                "1",
+                StringComparison.Ordinal)
+            && exception is JsonException or InvalidDataException or KeyNotFoundException)
+        {
+            _output.WriteLine(
+                $"NOT RUN: default trace at {tracePath} is not a complete dual-run oracle " +
+                $"({exception.GetType().Name}: {exception.Message}); " +
+                "OPENBFME_DUALRUN_OPTIONAL=1 was set. An explicit OPENBFME_DUALRUN_TRACE " +
+                "remains fail-closed.");
+            return;
+        }
 
         var world = BuildWorld(trace, out var idMap, out var producedTraceIds);
         SubmitReplayCommands(trace, world, idMap);

@@ -2,6 +2,7 @@ namespace OpenBfme.Sim;
 
 public sealed class GameObject
 {
+    internal int StoreSlot { get; set; }
     public int Id { get; }
     public string TemplateName { get; }
     public int Team { get; }

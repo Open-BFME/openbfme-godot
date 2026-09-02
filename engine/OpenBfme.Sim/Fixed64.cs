@@ -22,6 +22,15 @@ public readonly struct Fixed64 : IEquatable<Fixed64>, IComparable<Fixed64>
 
     public static Fixed64 FromRaw(long raw) => new(raw);
     public static Fixed64 FromInt(int value) => new((long)value << FractionBits);
+    public static Fixed64 FromInt64(long value)
+    {
+        var raw = (System.Numerics.BigInteger)value << FractionBits;
+        if (raw > long.MaxValue || raw < long.MinValue)
+        {
+            throw new OverflowException("Fixed64 integer conversion overflow");
+        }
+        return new Fixed64((long)raw);
+    }
 
     /// <summary>Exact rational construction; the only sanctioned bridge from design data.</summary>
     public static Fixed64 FromFraction(long numerator, long denominator)

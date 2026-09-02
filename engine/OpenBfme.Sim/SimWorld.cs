@@ -6,6 +6,7 @@ public sealed class SimConfig
     public IReadOnlyDictionary<string, ObjectTemplate> Templates { get; }
     public ulong RandomSeed { get; }
     public int TeamCount { get; }
+    private readonly IReadOnlyDictionary<string, int> _templateIndices;
 
     public SimConfig(IEnumerable<ObjectTemplate> templates, ulong randomSeed, int teamCount)
     {
@@ -19,9 +20,18 @@ public sealed class SimConfig
             map.Add(template.Name, template);
         }
         Templates = map;
+        var indices = new SortedDictionary<string, int>(StringComparer.Ordinal);
+        var index = 0;
+        foreach (var name in map.Keys)
+        {
+            indices.Add(name, index++);
+        }
+        _templateIndices = indices;
         RandomSeed = randomSeed;
         TeamCount = teamCount;
     }
+
+    public int TemplateIndexOf(string templateName) => _templateIndices[templateName];
 }
 
 /// <summary>
@@ -39,6 +49,12 @@ public sealed class SimWorld
     private readonly SortedDictionary<int, List<SimCommand>> _pendingCommands = new();
     private readonly long[] _teamResources;
     private readonly SortedDictionary<string, int> _moduleGaps = new(StringComparer.Ordinal);
+    private readonly List<SimEvent> _eventsThisTick = new();
+    private readonly List<SnapshotHorde> _hordes = new();
+    private int[] _playerTeams;
+    private long[] _commandPoints;
+    private long[] _commandPointsMax;
+    private long[] _powerPoints;
     private DeterministicRandom _random;
     private int _nextObjectId = 1;
     private bool _inUpdateSweep;
@@ -50,21 +66,125 @@ public sealed class SimWorld
     private readonly SortedDictionary<int, long> _auraArmorBonusBp = new();
 
     public int TickIndex { get; private set; }
+    public int TickMilliseconds { get; }
     public IReadOnlyDictionary<int, GameObject> Objects => _objects;
+    public ObjectStore ObjectStore { get; } = new();
+    public IReadOnlyList<SimEvent> EventsThisTick => _eventsThisTick;
+    public IReadOnlyList<SnapshotHorde> Hordes => _hordes;
     /// <summary>Module type names that had no registered implementation, with occurrence counts. Fail-closed accounting.</summary>
     public IReadOnlyDictionary<string, int> ModuleGaps => _moduleGaps;
 
     public SimWorld(SimConfig config, ModuleRegistry registry)
+        : this(config, registry, tickMilliseconds: 33)
+    {
+    }
+
+    private SimWorld(SimConfig config, ModuleRegistry registry, int tickMilliseconds)
     {
         _config = config ?? throw new ArgumentNullException(nameof(config));
         _registry = registry ?? throw new ArgumentNullException(nameof(registry));
+        if (tickMilliseconds < 1)
+        {
+            throw new ArgumentOutOfRangeException(nameof(tickMilliseconds));
+        }
+        TickMilliseconds = tickMilliseconds;
         _teamResources = new long[config.TeamCount];
+        _playerTeams = Enumerable.Range(0, config.TeamCount).ToArray();
+        _commandPoints = new long[config.TeamCount];
+        _commandPointsMax = new long[config.TeamCount];
+        _powerPoints = new long[config.TeamCount];
         _random = new DeterministicRandom(config.RandomSeed);
+    }
+
+    public SimWorld(
+        MatchLaunch launch,
+        IEnumerable<ObjectTemplate>? templates = null,
+        ModuleRegistry? registry = null)
+        : this(
+            CreateConfig(launch, templates),
+            registry ?? ModuleRegistry.CreateDefault(),
+            launch?.Rules.TickMilliseconds ?? throw new ArgumentNullException(nameof(launch)))
+    {
+        _playerTeams = launch.Players.Select(player => player.Team).ToArray();
+        _commandPoints = new long[launch.Players.Count];
+        _commandPointsMax = new long[launch.Players.Count];
+        _powerPoints = new long[launch.Players.Count];
+        for (var team = 0; team < _teamResources.Length; team++)
+        {
+            if (_playerTeams.Contains(team))
+            {
+                _teamResources[team] = launch.Rules.StartingResources;
+            }
+        }
+    }
+
+    private static SimConfig CreateConfig(MatchLaunch launch, IEnumerable<ObjectTemplate>? templates)
+    {
+        ArgumentNullException.ThrowIfNull(launch);
+        var teamCount = launch.Players.Max(player => player.Team) + 1;
+        return new SimConfig(templates ?? Array.Empty<ObjectTemplate>(), launch.Seed, teamCount);
     }
 
     public long TeamResources(int team) => _teamResources[ValidateTeam(team)];
 
     public void AddTeamResources(int team, long amount) => _teamResources[ValidateTeam(team)] += amount;
+
+    public uint NextRandomUInt32() => _random.NextUInt32();
+
+    public void SetPlayerEconomy(
+        int playerIndex,
+        long commandPoints,
+        long commandPointsMax,
+        long powerPoints)
+    {
+        if ((uint)playerIndex >= (uint)_playerTeams.Length)
+        {
+            throw new ArgumentOutOfRangeException(nameof(playerIndex));
+        }
+        if (commandPoints < 0 || commandPointsMax < 0 || powerPoints < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(commandPoints));
+        }
+        _commandPoints[playerIndex] = commandPoints;
+        _commandPointsMax[playerIndex] = commandPointsMax;
+        _powerPoints[playerIndex] = powerPoints;
+    }
+
+    public IReadOnlyList<SnapshotPlayer> SnapshotPlayers()
+    {
+        var players = new SnapshotPlayer[_playerTeams.Length];
+        for (var index = 0; index < players.Length; index++)
+        {
+            players[index] = new SnapshotPlayer(
+                index,
+                _teamResources[_playerTeams[index]],
+                _commandPoints[index],
+                _commandPointsMax[index],
+                _powerPoints[index]);
+        }
+        return players;
+    }
+
+    public void AddHorde(SnapshotHorde horde)
+    {
+        ArgumentNullException.ThrowIfNull(horde);
+        if (horde.Id < 1 || horde.Owner < -1 || horde.TemplateIndex < 0 || horde.Formation < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(horde));
+        }
+        if (_hordes.Count > 0 && horde.Id <= _hordes[^1].Id)
+        {
+            throw new ArgumentException("Hordes must be added in ascending id order", nameof(horde));
+        }
+        _hordes.Add(horde with { Members = horde.Members.ToArray() });
+    }
+
+    public void RaiseEvent(SimEvent simEvent)
+    {
+        ArgumentNullException.ThrowIfNull(simEvent);
+        simEvent.Validate();
+        _eventsThisTick.Add(simEvent);
+    }
 
     public GameObject SpawnObject(
         string templateName,
@@ -85,6 +205,11 @@ public sealed class SimWorld
             {
                 modules.Add(module!);
             }
+            else if (spec.Tier == ModuleTier.Structural)
+            {
+                throw new ModuleLoadException(
+                    $"Template '{templateName}' requires unknown structural module '{spec.TypeName}'");
+            }
             else
             {
                 _moduleGaps[spec.TypeName] = _moduleGaps.TryGetValue(spec.TypeName, out var count) ? count + 1 : 1;
@@ -92,6 +217,8 @@ public sealed class SimWorld
         }
         var gameObject = new GameObject(
             _nextObjectId++, templateName, team, position, modules, elevation, headingRadians);
+        gameObject.StoreSlot = ObjectStore.Allocate(gameObject.Id);
+        SynchronizeObject(gameObject);
         if (_inUpdateSweep)
         {
             // Spawns requested by modules mid-sweep (production, death rubble)
@@ -104,6 +231,7 @@ public sealed class SimWorld
         {
             _objects.Add(gameObject.Id, gameObject);
         }
+        RaiseEvent(new SimEvent("spawn", gameObject.Id));
         return gameObject;
     }
 
@@ -128,6 +256,7 @@ public sealed class SimWorld
 
     public void Tick()
     {
+        _eventsThisTick.Clear();
         TickIndex++;
         ApplyPendingCommands();
         // The object dictionary is frozen for the whole sweep: mid-sweep spawns
@@ -165,6 +294,7 @@ public sealed class SimWorld
         _pendingSpawns.Clear();
         RemoveDeadObjects();
         RebuildAuraTable();
+        SynchronizeObjectStore();
     }
 
     /// <summary>
@@ -299,6 +429,7 @@ public sealed class SimWorld
         {
             return;
         }
+        RaiseEvent(new SimEvent("damage", target.Id, Amount: Fixed64.FromInt64(amount)));
         foreach (var module in target.Modules)
         {
             if (module.OnDamage(this, target, amount))
@@ -314,6 +445,7 @@ public sealed class SimWorld
     /// </summary>
     public void HandleDeath(GameObject target)
     {
+        RaiseEvent(new SimEvent("death", target.Id));
         foreach (var module in target.Modules)
         {
             if (module.OnDeath(this, target))
@@ -340,6 +472,7 @@ public sealed class SimWorld
         }
         foreach (var id in deadIds)
         {
+            ObjectStore.Free(_objects[id].StoreSlot);
             _objects.Remove(id);
         }
     }
@@ -380,6 +513,7 @@ public sealed class SimWorld
 
     public string StateHash()
     {
+        SynchronizeObjectStore();
         var writer = new CanonicalWriter();
         WriteAuthoritativeState(writer);
         return writer.ToSha256Hex();
@@ -387,6 +521,7 @@ public sealed class SimWorld
 
     public byte[] Snapshot()
     {
+        SynchronizeObjectStore();
         var writer = new CanonicalWriter();
         WriteAuthoritativeState(writer);
         return writer.ToArray();
@@ -455,6 +590,11 @@ public sealed class SimWorld
             {
                 modules.Add(module!);
             }
+            else if (spec.Tier == ModuleTier.Structural)
+            {
+                throw new ModuleLoadException(
+                    $"Snapshot template '{templateName}' requires unknown structural module '{spec.TypeName}'");
+            }
             else
             {
                 _moduleGaps[spec.TypeName] = _moduleGaps.TryGetValue(spec.TypeName, out var count) ? count + 1 : 1;
@@ -462,6 +602,7 @@ public sealed class SimWorld
         }
         var gameObject = new GameObject(
             id, templateName, team, position, modules, elevation, headingRadians);
+        gameObject.StoreSlot = ObjectStore.Allocate(id);
         foreach (var module in modules)
         {
             module.ReadState(reader);
@@ -476,5 +617,60 @@ public sealed class SimWorld
         }
         gameObject.SetUnderConstruction(isUnderConstruction);
         _objects.Add(id, gameObject);
+        SynchronizeObject(gameObject);
+    }
+
+    internal void SynchronizeObjectStore()
+    {
+        foreach (var gameObject in _objects.Values)
+        {
+            SynchronizeObject(gameObject);
+        }
+    }
+
+    private void SynchronizeObject(GameObject gameObject)
+    {
+        var slot = gameObject.StoreSlot;
+        ObjectStore.Id[slot] = gameObject.Id;
+        ObjectStore.TemplateIndex[slot] = _config.TemplateIndexOf(gameObject.TemplateName);
+        ObjectStore.Owner[slot] = gameObject.Team;
+        ObjectStore.X[slot] = gameObject.Position.X;
+        ObjectStore.Y[slot] = gameObject.Position.Y;
+        ObjectStore.Z[slot] = gameObject.Elevation;
+        ObjectStore.Yaw[slot] = gameObject.HeadingRadians;
+        var (health, maximumHealth) = ReadHealth(gameObject);
+        ObjectStore.Health[slot] = health;
+        ObjectStore.MaxHealth[slot] = maximumHealth;
+        ObjectStore.Flags[slot] = (ObjectStore.Flags[slot] & ~4) | (gameObject.IsDying ? 4 : 0);
+    }
+
+    private static (Fixed64 Health, Fixed64 MaxHealth) ReadHealth(GameObject gameObject)
+    {
+        if (gameObject.FindModule<ActiveBodyModule>() is { } active)
+        {
+            return (Fixed64.FromInt64(active.Health), Fixed64.FromInt64(active.MaxHealth));
+        }
+        if (gameObject.FindModule<StructureBodyModule>() is { } structure)
+        {
+            return (Fixed64.FromInt64(structure.Health), Fixed64.FromInt64(structure.MaxHealth));
+        }
+        if (gameObject.FindModule<ImmortalBodyModule>() is { } immortal)
+        {
+            return (Fixed64.FromInt64(immortal.Health), Fixed64.FromInt64(immortal.MaxHealth));
+        }
+        if (gameObject.FindModule<HordeContainModule>() is { } horde)
+        {
+            return (
+                Fixed64.FromInt64(horde.TotalHealth),
+                Fixed64.FromInt64(checked(horde.MemberCount * horde.MemberMaxHealth)));
+        }
+        return (Fixed64.Zero, Fixed64.Zero);
+    }
+}
+
+public sealed class ModuleLoadException : Exception
+{
+    public ModuleLoadException(string message) : base(message)
+    {
     }
 }
