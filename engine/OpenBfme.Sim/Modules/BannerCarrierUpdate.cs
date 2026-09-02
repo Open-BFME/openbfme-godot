@@ -38,11 +38,12 @@ public sealed class BannerCarrierModule : ModuleBase
         _destroyHordeOnBannerDeath = spec.GetLong("DestroyHordeOnBannerDeath", 0) != 0;
         _hasAuthoredRespawn = spec.Data.ContainsKey("RespawnTicks");
         _respawnTicks = (int)Math.Clamp(spec.GetLong("RespawnTicks", 0), 0, int.MaxValue);
-        if (string.IsNullOrEmpty(_bannerTemplate))
-        {
-            throw new ArgumentException("BannerCarrierUpdate requires BannerTemplate string data");
-        }
+        // Retail authors 39 BannerCarrierUpdate rows without a BannerTemplate (the
+        // banner comes from an upgrade or is simply absent). Missing optional data
+        // is not a broken module: the carrier loads and never spawns a banner.
     }
+
+    public bool HasBannerTemplate => !string.IsNullOrEmpty(_bannerTemplate);
 
     public bool HasSpawned => _spawned;
     public int BannerObjectId => _bannerObjectId;
@@ -51,6 +52,10 @@ public sealed class BannerCarrierModule : ModuleBase
 
     public override void OnUpdate(SimWorld world, GameObject self)
     {
+        if (!HasBannerTemplate)
+        {
+            return;
+        }
         if (self.IsDead || self.IsDying)
         {
             return;

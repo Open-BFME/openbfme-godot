@@ -5,14 +5,18 @@ namespace OpenBfme.Sim.Tests;
 public sealed class BundleModuleValidationTests
 {
     [Fact]
-    public void InvalidRegisteredStructuralModulesFailTheirTemplatesAtBundleLoad()
+    public void RegisteredStructuralModulesWithMissingOptionalDataLoadFailOpen()
     {
+        // Missing optional data on a registered structural module is not a broken
+        // module: retail authors BannerCarrierUpdate rows without BannerTemplate and
+        // fortress CastleBehavior rows whose layout lives in a .bse file. Both load;
+        // the missing facts are visible on the module, never a template failure.
         var document = BundleDocument.Parse(MinimalBundle("""
-            {"name":"BadBanner","kind":"object","parent":null,"kindof":[],"geometry":{},
+            {"name":"BareBanner","kind":"object","parent":null,"kindof":[],"geometry":{},
              "fields":{},"blocks":[],"modules":[
                {"carrier":"Behavior","type":"BannerCarrierUpdate","tag":"ModuleTag_Banner",
                 "fields":{},"blocks":[],"gap":false}]},
-            {"name":"BadCastle","kind":"object","parent":null,"kindof":[],"geometry":{},
+            {"name":"BareCastle","kind":"object","parent":null,"kindof":[],"geometry":{},
              "fields":{},"blocks":[],"modules":[
                {"carrier":"Behavior","type":"CastleBehavior","tag":"ModuleTag_Castle",
                 "fields":{},"blocks":[],"gap":false}]}
@@ -20,19 +24,10 @@ public sealed class BundleModuleValidationTests
 
         var result = BundleTemplateLoader.Load(document, ModuleRegistry.CreateDefault(), 33);
 
-        Assert.Empty(result.Templates);
-        Assert.Collection(
-            result.Report.TemplatesFailed.OrderBy(row => row.Template),
-            row =>
-            {
-                Assert.Equal("BadBanner", row.Template);
-                Assert.Contains("BannerTemplate", row.Reason, StringComparison.Ordinal);
-            },
-            row =>
-            {
-                Assert.Equal("BadCastle", row.Template);
-                Assert.Contains("BSE piece", row.Reason, StringComparison.Ordinal);
-            });
+        Assert.Empty(result.Report.TemplatesFailed);
+        Assert.Equal(new[] { "BareBanner", "BareCastle" }, result.Templates.Select(template => template.Name).OrderBy(name => name, StringComparer.Ordinal));
+        var banner = new BannerCarrierModule(Assert.Single(result.Templates.Single(t => t.Name == "BareBanner").Modules));
+        Assert.False(banner.HasBannerTemplate);
     }
 
     private static string MinimalBundle(string templates) => $$"""
