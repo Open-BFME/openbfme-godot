@@ -42,7 +42,7 @@ public sealed class SlowDeathModule : ModuleBase
         _ticksRemaining--;
         if (_ticksRemaining <= 0)
         {
-            self.MarkDead();
+            world.CompleteClaimedDeath(self, this);
         }
     }
 

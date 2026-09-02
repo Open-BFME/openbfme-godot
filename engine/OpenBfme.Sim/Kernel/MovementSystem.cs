@@ -106,6 +106,8 @@ public sealed class MovementSystem
         }
     }
 
+    internal void RemoveHorde(int hordeId) => _hordeMotions.Remove(hordeId);
+
     public bool TryGetHordeState(int hordeId, out HordeMovementView? view)
     {
         if (_hordeMotions.TryGetValue(hordeId, out var motion))
