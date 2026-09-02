@@ -114,6 +114,7 @@ public sealed class GameObject
     public Fixed64 Health => Combat?.HasBody == true ? Combat.Health : Fixed64.Zero;
     public Fixed64 MaxHealth => Combat?.HasBody == true ? Combat.MaxHealth : Fixed64.Zero;
     public IReadOnlySet<string> OwnedUpgrades => _tech?.Upgrades ?? EmptyUpgrades.Instance;
+    public bool HasConditionToken(string token) => Combat?.Conditions.Contains(token) == true;
     public string CurrentCommandSet => _tech?.CurrentCommandSet ?? Template.CommandSetName;
 
     internal bool AddObjectUpgrade(string name) =>

@@ -43,6 +43,14 @@ public sealed partial class SimWorld
     internal bool HasUpgradeTemplate(string name) => _config.Tech.Upgrades.ContainsKey(name);
     internal UpgradeTemplate UpgradeTemplate(string name) => _config.Tech.Upgrades[name];
 
+    internal bool GrantObjectUpgrade(GameObject target, string name)
+    {
+        if (!target.AddObjectUpgrade(name)) return false;
+        EvaluateUpgradeModules(target);
+        RaiseEvent(new SimEvent("upgrade", target.Id, Name: name));
+        return true;
+    }
+
     internal void RecordTechGap(string typeName) =>
         _moduleGaps[typeName] = _moduleGaps.TryGetValue(typeName, out var count) ? count + 1 : 1;
 
@@ -195,11 +203,17 @@ public sealed partial class SimWorld
             RecordDiagnostic(command, caster.Id, "power_reloading", $"special power '{power.Name}' is reloading");
             return;
         }
+        var matchingEffects = caster.Modules.OfType<SpecialPowerEffectModuleBase>()
+            .Where(effect => effect.Matches(power)).ToArray();
+        if (matchingEffects.Any(effect => !effect.CanCast(this, caster, power)))
+        {
+            RecordDiagnostic(command, caster.Id, "power_paused", $"special power '{power.Name}' is paused");
+            return;
+        }
         if (!TryPowerTarget(command, caster, out var targetId, out var position)) return;
 
-        foreach (var module in caster.Modules)
-            if (module is SpecialPowerEffectModuleBase effect && effect.Matches(power))
-                effect.Cast(this, caster, targetId, position);
+        foreach (var effect in matchingEffects)
+            effect.Cast(this, caster, targetId, position);
         RaiseEvent(new SimEvent("ability", caster.Id, targetId == 0 ? null : targetId, Name: power.Name));
         _powerReadyTicks[command.Team][power.Name] = checked(TickIndex + power.ReloadTicks(TickMilliseconds));
     }

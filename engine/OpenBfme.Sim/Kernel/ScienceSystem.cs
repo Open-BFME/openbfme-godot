@@ -13,6 +13,8 @@ public abstract class SpecialPowerEffectModuleBase : ModuleBase
         || _powerName.Equals(power.Name, StringComparison.Ordinal)
         || _powerName.Equals(power.Enum, StringComparison.Ordinal);
 
+    internal virtual bool CanCast(SimWorld world, GameObject caster, SpecialPowerTemplate power) => true;
+
     internal abstract void Cast(
         SimWorld world,
         GameObject caster,

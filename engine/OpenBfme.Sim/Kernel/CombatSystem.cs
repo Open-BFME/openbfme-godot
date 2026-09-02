@@ -413,6 +413,20 @@ public sealed class CombatSystem
         }
     }
 
+    internal bool FireScriptedWeaponAt(
+        SimWorld world,
+        GameObject attacker,
+        string weaponName,
+        FixedVector2 impactPoint)
+    {
+        if (!_config.WeaponTemplates.TryGetValue(weaponName, out var weapon)) return false;
+        world.RaiseEvent(new SimEvent("fire", attacker.Id, Name: weaponName));
+        for (var index = 0; index < weapon.DamageNuggets.Count; index++)
+            ApplyNugget(world, attacker.Id, attacker.Team, 0, impactPoint,
+                weapon.DamageNuggets[index], index == 0 ? weapon.MetaImpact : null);
+        return true;
+    }
+
     private static void ApplyMetaImpact(
         GameObject target,
         FixedVector2 impactPoint,
@@ -609,7 +623,8 @@ public sealed class CombatSystem
     }
 
     private static bool IsHostileTarget(GameObject attacker, GameObject target) =>
-        attacker.Team != target.Team && !target.IsDead && !target.IsDying;
+        attacker.Team != target.Team && !target.IsDead && !target.IsDying
+        && target.FindModule<InvisibilityUpdateModule>()?.IsInvisible != true;
 
     private static bool IsWithinWeaponRange(GameObject attacker, GameObject target, WeaponTemplate weapon)
     {
