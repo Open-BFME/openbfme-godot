@@ -7,6 +7,7 @@ using Xunit.Abstractions;
 
 namespace OpenBfme.Sim.Tests;
 
+[Collection(TickBudgetCollection.Name)]
 public class MovementSystemTests
 {
     private readonly ITestOutputHelper _output;
@@ -227,13 +228,23 @@ public class MovementSystemTests
             Assert.True(world.SubmitCommand(MoveCommand(1, 0, hordeIndex, hordeId, goal)));
         }
 
+        var profile = new TickPhaseProbe();
+        world.TickPhaseObserver = profile;
         var stopwatch = Stopwatch.StartNew();
-        world.Advance(300);
+        for (var tick = 0; tick < 300; tick++)
+        {
+            world.Tick();
+            _ = world.StateHash();
+        }
         stopwatch.Stop();
 
         _output.WriteLine($"horde movement scale: 1,000 hordes x 10 members x 300 ticks = {stopwatch.ElapsedMilliseconds} ms");
+        profile.WriteTable(_output, "movement 1,000 hordes x 10 members", 300, stopwatch.ElapsedMilliseconds);
         Assert.Equal(20, world.Movement.CachedFlowFieldCount);
-        Assert.True(stopwatch.ElapsedMilliseconds >= 0);
+#if RELEASE
+        Assert.True(stopwatch.ElapsedMilliseconds < 33L * 300,
+            $"movement averaged {(double)stopwatch.ElapsedMilliseconds / 300:F3} ms/tick; budget is 33 ms/tick");
+#endif
     }
 
     private static SimWorld CreateWorld(PassabilityGrid grid, int speed = 55) =>

@@ -50,7 +50,7 @@ public readonly struct Fixed64 : IEquatable<Fixed64>, IComparable<Fixed64>
 
     public static Fixed64 operator *(Fixed64 a, Fixed64 b)
     {
-        var product = (System.Numerics.BigInteger)a.Raw * b.Raw >> FractionBits;
+        var product = (Int128)a.Raw * b.Raw >> FractionBits;
         if (product > long.MaxValue || product < long.MinValue)
         {
             throw new OverflowException("Fixed64 multiplication overflow");
@@ -64,7 +64,7 @@ public readonly struct Fixed64 : IEquatable<Fixed64>, IComparable<Fixed64>
         {
             throw new DivideByZeroException("Fixed64 division by zero");
         }
-        var quotient = ((System.Numerics.BigInteger)a.Raw << FractionBits) / b.Raw;
+        var quotient = ((Int128)a.Raw << FractionBits) / b.Raw;
         if (quotient > long.MaxValue || quotient < long.MinValue)
         {
             throw new OverflowException("Fixed64 division overflow");
@@ -106,7 +106,7 @@ public readonly struct Fixed64 : IEquatable<Fixed64>, IComparable<Fixed64>
         // Monotone integer Newton (x, y=(x+t/x)/2 while y<x) — terminates for every
         // input and returns floor(sqrt(t)). The naive `while (estimate != previous)`
         // form oscillates forever between k and k+1 for some inputs (e.g. t=8).
-        var target = (System.Numerics.BigInteger)value.Raw << FractionBits;
+        var target = (UInt128)value.Raw << FractionBits;
         var x = target;
         var y = (x + 1) >> 1;
         while (y < x)

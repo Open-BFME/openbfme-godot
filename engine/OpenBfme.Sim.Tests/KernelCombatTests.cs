@@ -6,6 +6,7 @@ using Xunit.Abstractions;
 
 namespace OpenBfme.Sim.Tests;
 
+[Collection(TickBudgetCollection.Name)]
 public sealed class KernelCombatTests
 {
     private readonly ITestOutputHelper _output;
@@ -519,12 +520,22 @@ public sealed class KernelCombatTests
         world.SubmitCommand(AttackMove(1, leftHordes, Position(450, 105), 0));
         world.SubmitCommand(AttackMove(1, rightHordes, Position(50, 105), 1));
 
+        var profile = new TickPhaseProbe();
+        world.TickPhaseObserver = profile;
         var stopwatch = Stopwatch.StartNew();
-        world.Advance(300);
+        for (var tick = 0; tick < 300; tick++)
+        {
+            world.Tick();
+            _ = world.StateHash();
+        }
         stopwatch.Stop();
 
         _output.WriteLine($"scale_200x10_per_team_300_ticks_elapsed_ms={stopwatch.ElapsedMilliseconds}");
-        Assert.True(stopwatch.ElapsedMilliseconds >= 0);
+        profile.WriteTable(_output, "combat 200 hordes x 10 members per side", 300, stopwatch.ElapsedMilliseconds);
+#if RELEASE
+        Assert.True(stopwatch.ElapsedMilliseconds < 33L * 300,
+            $"combat averaged {(double)stopwatch.ElapsedMilliseconds / 300:F3} ms/tick; budget is 33 ms/tick");
+#endif
     }
 
     [Fact]

@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using OpenBfme.Sim.Pathing;
 
 namespace OpenBfme.Sim;
@@ -106,6 +107,7 @@ public sealed partial class SimWorld
     private int _nextObjectId = 1;
     private bool _inUpdateSweep;
     private readonly List<GameObject> _pendingSpawns = new();
+    internal ISimTickPhaseObserver? TickPhaseObserver { get; set; }
     // Aura armor table: summed basis points of incoming-damage reduction per
     // object id. DERIVED state — rebuilt at end of every tick (and after
     // Restore) from AttributeModifierAuraModule caches in ascending carrier id
@@ -330,14 +332,21 @@ public sealed partial class SimWorld
     {
         _eventsThisTick.Clear();
         TickIndex++;
+        BeginPhase(SimTickPhase.Commands);
         ApplyPendingCommands();
+        EndPhase(SimTickPhase.Commands);
+        BeginPhase(SimTickPhase.Movement);
         Combat.PrepareMovement(this);
         Movement.Tick(this);
+        EndPhase(SimTickPhase.Movement);
+        BeginPhase(SimTickPhase.Combat);
         Combat.Resolve(this);
+        EndPhase(SimTickPhase.Combat);
         // The object dictionary is frozen for the whole sweep: mid-sweep spawns
         // divert to _pendingSpawns (so modules scanning Objects never see it
         // mutate) and join afterwards, first updating next tick. Dead objects
         // never update.
+        BeginPhase(SimTickPhase.Modules);
         var updateList = new List<GameObject>(_objects.Values);
         _inUpdateSweep = true;
         try
@@ -350,7 +359,11 @@ public sealed partial class SimWorld
                 }
                 foreach (var module in gameObject.Modules)
                 {
+                    var economyModule = TickPhaseObserver != null
+                        && module is ProductionModule or AutoDepositUpdateModule or GettingBuiltModule;
+                    if (economyModule) BeginPhase(SimTickPhase.Economy);
                     module.OnUpdate(this, gameObject);
+                    if (economyModule) EndPhase(SimTickPhase.Economy);
                     if (gameObject.IsDead)
                     {
                         break;
@@ -369,8 +382,17 @@ public sealed partial class SimWorld
         _pendingSpawns.Clear();
         RemoveDeadObjects();
         RebuildAuraTable();
+        EndPhase(SimTickPhase.Modules);
+        BeginPhase(SimTickPhase.StoreSync);
         SynchronizeObjectStore();
+        EndPhase(SimTickPhase.StoreSync);
     }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    internal void BeginPhase(SimTickPhase phase) => TickPhaseObserver?.Begin(phase);
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    internal void EndPhase(SimTickPhase phase) => TickPhaseObserver?.End(phase);
 
     /// <summary>
     /// Rebuilds the aura armor table from every living, non-dying, constructed
@@ -616,10 +638,13 @@ public sealed partial class SimWorld
 
     public string StateHash()
     {
+        BeginPhase(SimTickPhase.Hash);
         SynchronizeObjectStore();
         var writer = new CanonicalWriter();
         WriteAuthoritativeState(writer);
-        return writer.ToSha256Hex();
+        var hash = writer.ToSha256Hex();
+        EndPhase(SimTickPhase.Hash);
+        return hash;
     }
 
     public byte[] Snapshot()
