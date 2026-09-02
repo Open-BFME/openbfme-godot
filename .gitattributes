@@ -24,3 +24,4 @@ game/data/*.json text eol=lf
 # Contract fixtures are byte-compared by tests; keep them LF everywhere.
 contracts/*.json text eol=lf
 contracts/fixtures/*.json text eol=lf
+importer/tests/fixtures/cook/** text eol=lf

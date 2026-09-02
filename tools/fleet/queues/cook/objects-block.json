@@ -1,7 +1,9 @@
 {
-  "title": "Generic cook: Object and ChildObject blocks to typed bundle rows",
-  "rank": 10,
   "detail": "importer/cook/objects.py: every Object/ChildObject/ObjectReskin in the effective tree becomes one bundle row with its module list and fields, no faction profile. Denominator: 5,494 unique object identifiers. Unknown module types are kept verbatim with a gap flag, never dropped.",
+  "done_at": "2026-09-02",
+  "done_by": "Codex Sol",
   "oracle": "python -m pytest importer/tests/test_cook_objects.py -q   # round-trip: parse, emit, reload, compare every assignment to source",
-  "status": "open"
+  "rank": 10,
+  "status": "done",
+  "title": "Generic cook: Object and ChildObject blocks to typed bundle rows"
 }
