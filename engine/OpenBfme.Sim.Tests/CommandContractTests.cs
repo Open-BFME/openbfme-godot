@@ -9,10 +9,12 @@ public class CommandContractTests
     public void GoldenFixtureRoundTripsByteIdentically()
     {
         var path = MatchLaunchTests.RepoPath("contracts", "fixtures", "command-v1.json");
-        var expected = File.ReadAllBytes(path);
+        // Git may check the fixture out with CRLF on Windows; the wire form is
+        // LF-only, so compare after trimming trailing line-ending bytes.
+        var expected = TrimTrailingNewlines(File.ReadAllBytes(path));
 
         var bundle = SimCommand.ParseBundle(expected);
-        var actual = SimCommand.SerializeBundle(bundle);
+        var actual = TrimTrailingNewlines(SimCommand.SerializeBundle(bundle));
 
         Assert.Equal(expected, actual);
         Assert.Equal(SimCommandBundle.SchemaName, bundle.Schema);
@@ -56,5 +58,15 @@ public class CommandContractTests
         Assert.Throws<CommandContractException>(() => SimCommandBundle.Parse("""
             {"schema":"openbfme.command.v1","tick":1,"seat":0,"seq":0,"commands":[{"type":"move","args":{"objects":[1],"x":"bad","y":2}}]}
             """));
+    }
+
+    private static byte[] TrimTrailingNewlines(byte[] bytes)
+    {
+        var end = bytes.Length;
+        while (end > 0 && (bytes[end - 1] == 0x0A || bytes[end - 1] == 0x0D))
+        {
+            end--;
+        }
+        return bytes[..end];
     }
 }
