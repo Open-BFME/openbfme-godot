@@ -1,0 +1,7 @@
+{
+  "title": "Replay file: match-launch document plus ordered command log",
+  "rank": 10,
+  "detail": "Write on every match, replay through the same lockstep path, compare per-tick hashes to the recorded ones.",
+  "oracle": "godot --headless --path game --script res://tests/replay_roundtrip_runner.gd",
+  "status": "open"
+}

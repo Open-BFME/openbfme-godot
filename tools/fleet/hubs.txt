@@ -1,0 +1,15 @@
+# Files locked to one agent at a time (python tools/fleet/lock.py acquire <path>).
+# Placeholder-sim hubs: never split, bug fixes only.
+game/src/retail_slice/retail_vertical_slice.gd
+game/src/retail_slice/retail_slice_sim.gd
+game/src/retail_slice/retail_slice_script_world.gd
+# Surviving shell hubs: split once by an assigned lane, then remove from this list.
+game/src/ui/wotr_screen.gd
+game/src/ui/main_menu.gd
+game/src/retail_slice/retail_hud.gd
+game/src/retail_slice/retail_hud_apt_runtime.gd
+game/src/wotr/wotr_map_view.gd
+# Shared entry points.
+game/project.godot
+importer/openbfme_importer/cli.py
+launcher/OpenBFME.Launcher/ImporterRunner.cs

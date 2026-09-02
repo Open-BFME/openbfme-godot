@@ -1,0 +1,7 @@
+{
+  "title": "Mod validator: layer a mod folder on the install and name every broken reference",
+  "rank": 10,
+  "detail": "python tools/openbfme_import.py validate-mod --install X --mod Y. Depends on the generic cook (cook queue). Output is a list, never a crash.",
+  "oracle": "python -m pytest importer/tests/test_mod_validator.py -q",
+  "status": "open"
+}

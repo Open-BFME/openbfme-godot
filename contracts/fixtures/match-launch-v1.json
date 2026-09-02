@@ -1,0 +1,29 @@
+{
+  "schema": "openbfme.match-launch.v1",
+  "seed": 20260901,
+  "pack": {
+    "id": "rotwk-full",
+    "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "map": {
+    "path": "maps/map mp fords of isen ii/map mp fords of isen ii.map"
+  },
+  "rules": {
+    "tick_ms": 33,
+    "starting_resources": 1000,
+    "command_point_multiplier": 1.0,
+    "fog_of_war": true,
+    "game_speed": 1.0,
+    "victory": "annihilation",
+    "classic": false,
+    "improvements": {
+      "flow_field_pathing": true,
+      "queue_across_buildings": true
+    }
+  },
+  "players": [
+    { "seat": 0, "team": 0, "faction": "FactionMen", "controller": "human", "color": 0, "start_position": 0, "name": "Player" },
+    { "seat": 1, "team": 1, "faction": "FactionMordor", "controller": "ai", "ai_difficulty": "hard", "color": 3, "start_position": 1 }
+  ],
+  "mode": "skirmish"
+}

@@ -1,0 +1,7 @@
+{
+  "title": "Write contracts/bundle-v1.schema.json and its golden fixture",
+  "rank": 5,
+  "detail": "The typed bundle the generic cook emits and engine/ loads: template table, module rows, weapons, armor, upgrades, sciences, locomotors, hordes, FX lists, asset digests. Sits beside snapshot-v1 and match-launch-v1 in contracts/.",
+  "oracle": "python -m pytest importer/tests/test_contracts_fixtures.py -q",
+  "status": "open"
+}

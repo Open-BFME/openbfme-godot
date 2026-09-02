@@ -1,0 +1,7 @@
+{
+  "title": "AI vs AI sweep runner: every map, every faction pair, every difficulty, headless, prints winner and ticks",
+  "rank": 1,
+  "detail": "The oracle for the maps and ai queues. Runs nightly. A match that does not finish in 60 minutes of sim time is a FAIL with the last 20 diagnostics.",
+  "oracle": "godot --headless --path game --script res://tests/ai_sweep_runner.gd -- --maps all --limit 3",
+  "status": "open"
+}

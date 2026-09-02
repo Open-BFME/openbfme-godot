@@ -1229,7 +1229,7 @@ class ImportGui(tk.Tk):
             "Launch Godot",
             self._launch_godot,
             kind="default",
-            hover="Launch the retail vertical slice (Men pack). Needs run_retail_slice.bat or OPENBFME_GODOT.",
+            hover="Launch the game. Needs run_game.bat or OPENBFME_GODOT.",
             side="left",
         )
 
@@ -1753,7 +1753,7 @@ class ImportGui(tk.Tk):
         self._append_log(f"copied {self._last_report}", "meta")
 
     def _launch_godot(self) -> None:
-        bat = REPO_ROOT / "run_retail_slice.bat"
+        bat = REPO_ROOT / "run_game.bat"
         if bat.is_file():
             try:
                 os.startfile(bat)  # type: ignore[attr-defined]
@@ -1769,7 +1769,7 @@ class ImportGui(tk.Tk):
             return
         messagebox.showinfo(
             "Godot",
-            "Could not find run_retail_slice.bat or Godot.\nSet OPENBFME_GODOT.",
+            "Could not find run_game.bat or Godot.\nSet OPENBFME_GODOT.",
         )
 
     def _next_label(self, stage_id: str) -> str:

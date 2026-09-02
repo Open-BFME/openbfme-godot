@@ -75,7 +75,7 @@ func _run() -> void:
 	# frame, so quitting straight after it leaves every mesh, material and
 	# instance RID allocated - which Godot reports as "RID allocations ... were
 	# leaked at exit", and which this runner's harness step
-	# (tools/gate-m2-focused.ps1) scans stderr for. The rows above are already
+	# (the retired proof gate) scans stderr for. The rows above are already
 	# counted; these frames only let the tree finish tearing itself down.
 	for _drain_frame in 8:
 		await process_frame
@@ -90,7 +90,7 @@ func _redraw(overlay) -> void:
 	## Calling `_draw()` by hand raises "Drawing is only allowed inside this
 	## node's `_draw()`" for every draw_rect it performs. The counters still came
 	## out right, so the runner looked green - but this runner's harness step
-	## (tools/gate-m2-focused.ps1, Invoke-ProofChecked) scans stderr for
+	## (the retired proof gate) scans stderr for
 	## /ERROR/, so the step could never pass no matter what the RESULT line
 	## said. The overlay queues its own redraw every `_process`, so asking for one
 	## and yielding two frames gets a genuine NOTIFICATION_DRAW.

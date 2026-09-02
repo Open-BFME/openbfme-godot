@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "openbfme.match-launch.v1",
+  "title": "OpenBFME match launch v1",
+  "description": "Everything the shell hands the sim to start a match. Deterministic: two peers with equal documents and equal command logs produce equal snapshots. Saves and replays embed one.",
+  "type": "object",
+  "required": ["schema", "seed", "pack", "map", "rules", "players"],
+  "additionalProperties": false,
+  "properties": {
+    "schema": { "const": "openbfme.match-launch.v1" },
+    "seed": { "type": "integer", "minimum": 0 },
+    "pack": {
+      "type": "object",
+      "required": ["id", "sha256"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    },
+    "map": {
+      "type": "object",
+      "required": ["path"],
+      "additionalProperties": false,
+      "properties": {
+        "path": { "type": "string", "description": "Effective archive path of the source map, e.g. maps/map mp fords of isen ii/map mp fords of isen ii.map" },
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    },
+    "rules": {
+      "type": "object",
+      "required": ["tick_ms", "starting_resources", "command_point_multiplier", "fog_of_war", "game_speed", "victory"],
+      "additionalProperties": false,
+      "properties": {
+        "tick_ms": { "type": "integer", "minimum": 1, "description": "33 for retail-like 30 Hz." },
+        "starting_resources": { "type": "integer", "minimum": 0 },
+        "command_point_multiplier": { "type": "number", "minimum": 0 },
+        "fog_of_war": { "type": "boolean" },
+        "game_speed": { "type": "number", "exclusiveMinimum": 0 },
+        "victory": { "type": "string", "enum": ["annihilation", "fortress", "timed"] },
+        "classic": { "type": "boolean", "default": false, "description": "Retail behavior preset: disables every gameplay improvement toggle." },
+        "improvements": {
+          "type": "object",
+          "additionalProperties": { "type": "boolean" },
+          "description": "Named gameplay improvements, each off under classic. Names are registered by the sim from its improvement directory."
+        }
+      }
+    },
+    "players": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 8,
+      "items": {
+        "type": "object",
+        "required": ["seat", "team", "faction", "controller"],
+        "additionalProperties": false,
+        "properties": {
+          "seat": { "type": "integer", "minimum": 0, "maximum": 7 },
+          "team": { "type": "integer", "minimum": 0 },
+          "faction": { "type": "string", "minLength": 1, "description": "PlayerTemplate side name from the INI, e.g. FactionMen." },
+          "controller": { "type": "string", "enum": ["human", "ai", "observer", "none"] },
+          "ai_difficulty": { "type": "string", "enum": ["easy", "medium", "hard", "brutal"] },
+          "color": { "type": "integer", "minimum": 0 },
+          "start_position": { "type": "integer", "minimum": 0 },
+          "handicap": { "type": "number", "minimum": 0, "maximum": 1 },
+          "custom_hero": { "type": "string" },
+          "name": { "type": "string" }
+        }
+      }
+    },
+    "mode": { "type": "string", "enum": ["skirmish", "multiplayer", "campaign", "wotr", "tutorial"], "default": "skirmish" },
+    "mission": { "type": "string", "description": "Campaign or tutorial mission id when mode is campaign or tutorial." }
+  }
+}

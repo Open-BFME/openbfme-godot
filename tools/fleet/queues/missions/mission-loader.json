@@ -1,0 +1,7 @@
+{
+  "title": "Campaign mission loader: campaign.ini and the three campaign map lists strict-load",
+  "rank": 10,
+  "detail": "Enable the Good/Evil/Angmar entries in main_menu.gd once a mission's map, scripts, and objectives load through the existing script executor. Denominator: every mission in campaign.ini plus the tutorials.",
+  "oracle": "godot --headless --path game --script res://tests/campaign_mission_load_runner.gd   # prints MISSION PASS/FAIL per mission id",
+  "status": "open"
+}

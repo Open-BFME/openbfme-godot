@@ -1,0 +1,7 @@
+{
+  "title": "Reconnect: a dropped peer rejoins from the host's snapshot and resumes lockstep",
+  "rank": 20,
+  "detail": "retail_lockstep_session.gd already has snapshot()/restore(); add the join handshake, catch-up command replay, and hash confirmation.",
+  "oracle": "godot --headless --path game --script res://tests/lockstep_reconnect_runner.gd",
+  "status": "open"
+}

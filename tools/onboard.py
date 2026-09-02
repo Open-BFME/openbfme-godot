@@ -801,7 +801,7 @@ def step_gates(ctx: WizardContext) -> list[GateOutcome]:
     godot = resolve_godot_console(ctx.godot_exe)
     env = dict(os.environ)
     env["OPENBFME_CONTENT"] = str(ctx.content_root)
-    # Mirror run_retail_slice.bat: the reviewed ranger-overlay approval hash
+    # Mirror run_game.bat: the reviewed ranger-overlay approval hash
     # lets ContentDB mount the optional Men ranger overlay pack when present.
     env.setdefault(
         "OPENBFME_REVIEWED_RANGER_OVERLAY_SHA256",
@@ -853,15 +853,14 @@ def print_summary(ctx: WizardContext, outcomes: Sequence[GateOutcome]) -> bool:
         print()
         print("Next steps:")
         print("  - Launch the game:      run_game.bat (uses OPENBFME_GODOT if set)")
-        print("  - Launch the slice:     run_retail_slice.bat")
-        print("  - Headless smoke test:  run_retail_slice.bat --test")
+        print("  - Run the tests:        run_tests.bat")
         print("  - In-game settings persist under Godot user:// (user_settings)")
         print("  - Pack selection lives in workspace/content-packs/selection.json")
-        print("  - Docs: docs/ONBOARDING.md")
+        print("  - Docs: AGENTS.md and docs/REORG-PLAN.md")
     else:
         print("RESULT: FAIL — one or more verification gates did not pass.")
         print("  Re-run with --skip-gates to finish setup only, or check")
-        print("  orchestration/work-items.json for currently known failures before filing an issue.")
+        print("  python tools/fleet/work.py list red for currently known failures before filing an issue.")
     return ok
 
 

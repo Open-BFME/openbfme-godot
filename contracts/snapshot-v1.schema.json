@@ -1,0 +1,83 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "openbfme.snapshot.v1",
+  "title": "OpenBFME simulation snapshot v1",
+  "description": "One logic tick of authoritative state published by the sim for presentation. Arrays are parallel and indexed by object slot. Slot 0 is reserved. Presentation interpolates between consecutive snapshots and never writes back.",
+  "type": "object",
+  "required": ["schema", "tick", "tick_ms", "hash", "object_count", "objects", "hordes", "players", "events"],
+  "additionalProperties": false,
+  "properties": {
+    "schema": { "const": "openbfme.snapshot.v1" },
+    "tick": { "type": "integer", "minimum": 0 },
+    "tick_ms": { "type": "integer", "minimum": 1, "description": "Logic tick length in milliseconds, a match rule (33 for 30 Hz)." },
+    "hash": { "type": "string", "pattern": "^[0-9a-f]{64}$", "description": "Canonical state hash for this tick; equal on every lockstep peer." },
+    "object_count": { "type": "integer", "minimum": 0, "description": "Number of live slots; every array in objects has this length." },
+    "objects": {
+      "type": "object",
+      "description": "Structure-of-arrays. Positions are retail world units. Angles are radians.",
+      "required": ["id", "template", "owner", "x", "y", "z", "yaw", "health", "max_health", "state", "anim", "anim_frame", "flags"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "array", "items": { "type": "integer", "minimum": 1 } },
+        "template": { "type": "array", "items": { "type": "integer", "minimum": 0 }, "description": "Index into the bundle template table." },
+        "owner": { "type": "array", "items": { "type": "integer", "minimum": -1 }, "description": "Player index; -1 neutral." },
+        "x": { "type": "array", "items": { "type": "number" } },
+        "y": { "type": "array", "items": { "type": "number" } },
+        "z": { "type": "array", "items": { "type": "number" } },
+        "yaw": { "type": "array", "items": { "type": "number" } },
+        "health": { "type": "array", "items": { "type": "number", "minimum": 0 } },
+        "max_health": { "type": "array", "items": { "type": "number", "minimum": 0 } },
+        "state": { "type": "array", "items": { "type": "integer", "minimum": 0 }, "description": "Model-condition bit set index; presentation maps it to a clip." },
+        "anim": { "type": "array", "items": { "type": "integer", "minimum": 0 }, "description": "Clip index into the template's animation table." },
+        "anim_frame": { "type": "array", "items": { "type": "number", "minimum": 0 } },
+        "flags": { "type": "array", "items": { "type": "integer", "minimum": 0 }, "description": "Bit flags: 1 selected-capable, 2 stealthed, 4 dying, 8 garrisoned, 16 invisible-to-viewer." }
+      }
+    },
+    "hordes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "owner", "template", "members", "formation"],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "type": "integer", "minimum": 1 },
+          "owner": { "type": "integer", "minimum": -1 },
+          "template": { "type": "integer", "minimum": 0 },
+          "members": { "type": "array", "items": { "type": "integer", "minimum": 1 }, "description": "Object ids." },
+          "formation": { "type": "integer", "minimum": 0 }
+        }
+      }
+    },
+    "players": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["index", "resources", "command_points", "command_points_max", "power_points"],
+        "additionalProperties": false,
+        "properties": {
+          "index": { "type": "integer", "minimum": 0 },
+          "resources": { "type": "integer" },
+          "command_points": { "type": "integer", "minimum": 0 },
+          "command_points_max": { "type": "integer", "minimum": 0 },
+          "power_points": { "type": "integer", "minimum": 0 }
+        }
+      }
+    },
+    "events": {
+      "type": "array",
+      "description": "Presentation-relevant events raised this tick, in deterministic order. Presentation may play FX and audio from them; it never changes state.",
+      "items": {
+        "type": "object",
+        "required": ["kind", "object"],
+        "additionalProperties": false,
+        "properties": {
+          "kind": { "type": "string", "enum": ["spawn", "death", "damage", "fire", "ability", "build_start", "build_done", "capture", "upgrade", "sound"] },
+          "object": { "type": "integer", "minimum": 0 },
+          "target": { "type": "integer", "minimum": 0 },
+          "amount": { "type": "number" },
+          "name": { "type": "string" }
+        }
+      }
+    }
+  }
+}

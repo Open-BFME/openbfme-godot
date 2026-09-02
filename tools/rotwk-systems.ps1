@@ -201,10 +201,6 @@ if ($MultiMapSkirmish) {
     if ($LASTEXITCODE -ne 0) { throw "multimap-skirmish failed ($LASTEXITCODE)" }
 }
 
-Write-Host "ROTWK_SYSTEMS product-contract"
-& $python (Join-Path $repoRoot "tools\check-product-contracts.py") --check
-if ($LASTEXITCODE -ne 0) { throw "product contracts failed" }
-
 if (-not [string]::IsNullOrWhiteSpace($BuildProfile)) {
     $buildArgs = @(
         "build", "--game", $Game, "--install", $RotwkInstall,

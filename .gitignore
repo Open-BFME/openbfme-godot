@@ -103,3 +103,9 @@ game/src/retail_slice/*.pending
 
 # Transient test-run logs (pytest/godot runners), never part of the repo.
 *.log
+
+# Fleet tools: machine-local state
+workspace/attempts/
+workspace/locks/
+workspace/fleet/
+workspace/agents/

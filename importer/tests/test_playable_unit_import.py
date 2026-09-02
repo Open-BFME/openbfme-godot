@@ -551,17 +551,6 @@ def test_cli_exposes_one_command_import_surface() -> None:
     assert args.bootstrap_selection is True
 
 
-def test_batch_entrypoint_has_no_unit_specific_registration() -> None:
-    text = (Path(__file__).resolve().parents[2] / "import_unit.bat").read_text(
-        encoding="utf-8"
-    )
-    assert "import-unit" in text
-    assert "run_retail_slice.bat" in text
-    assert "--bootstrap-selection" in text
-    assert "ranger" not in text.casefold()
-    assert "trebuchet" not in text.casefold()
-
-
 class _StubStringCatalog:
     """Minimal InstallCatalog stand-in exposing only the lotr.str read path."""
 

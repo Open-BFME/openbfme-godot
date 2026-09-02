@@ -1,0 +1,7 @@
+{
+  "title": "Synthetic snapshot generator for the renderer lane",
+  "rank": 1,
+  "detail": "game/tests/synthetic_snapshot.gd: emits contracts/snapshot-v1 documents for N members of M templates marching, fighting, and dying, deterministic from a seed. Lets every render unit run with no sim.",
+  "oracle": "godot --headless --path game --script res://tests/synthetic_snapshot_runner.gd   # validates against contracts/fixtures/snapshot-v1.json shape",
+  "status": "open"
+}

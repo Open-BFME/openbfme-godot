@@ -7,10 +7,10 @@
 > retargeted to RotWK Patch 2.02 v9.7.7. They must not publish/select target
 > packs or support current performance, determinism, conversion, or parity
 > claims without a new [work item](../orchestration/work-items.json) sequenced
-> by the [roadmap](../docs/ROADMAP.md). Current authority is the
+> by the [roadmap](../docs/REORG-PLAN.md). Current authority is the
 > [product scope](../contracts/rotwk-202-v9.7.7-product-scope.json),
 > [retail baseline](../contracts/rotwk-202-v9.7.7-baseline.json),
-> [architecture](../docs/ARCHITECTURE.md), and
+> [architecture](../docs/REORG-PLAN.md), and
 > [verification](../docs/VERIFICATION.md).
 
 The faction object cache combines these identities:

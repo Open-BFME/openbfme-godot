@@ -1,16 +1,41 @@
-# OpenBfme.Sim — FROZEN (owner decision 2026-08-25, queue Q89)
+# OpenBfme.Sim - the new core
 
-This C# deterministic sim kernel is **parked, not deleted**. No new lanes, no
-new behaviors, no maintenance beyond keeping CI's existing test job green.
+This C# project is the simulation that replaces the placeholder GDScript sim
+in `game/src/retail_slice`. It is the fleet's main target. See
+`docs/REORG-PLAN.md` sections 2 and 7, and `DESIGN.md` here for the
+module-first architecture it follows.
 
-Why: the shipping simulation is the GDScript retail slice, whose lockstep
-determinism is proven continuously — per-tick state hashes bit-identical
-across Windows and Linux in CI, plus the retail_state_pin /
-retail_projectile_pin / retail_pathing_pin family. The cross-platform
-float-drift risk this kernel was insurance against has not materialized.
+## Shape
 
-The doorway back stays open: `game/tests/retail_dualrun_trace_runner.gd`
-replays GDScript traces against this kernel. Revive this project only if the
-determinism pins ever catch cross-platform drift, and only after the
-trace-replay boundary DIRECTION.md describes is an executable contract.
-See DESIGN.md for the original architecture intent.
+- `OpenBfme.Sim/` kernel: fixed-point math, PCG32 RNG, object ids, command
+  queue, tick loop, module registry, canonical hash, snapshot/restore.
+- `OpenBfme.Sim/Modules/<Name>.cs` one file per SAGE module type, registered
+  by its INI name through a directory-driven registry. Adding a module is
+  adding a file.
+- `OpenBfme.Sim.Tests/` xunit: determinism gates, per-module golden traces,
+  dual-run against placeholder traces.
+
+## Rules
+
+- No floats in state. `Fixed64` and integers only.
+- No `System.Random`, no wall clock, no unordered iteration.
+- Zero engine dependencies. `dotnet test` is the dev loop.
+- One mutation path: `SimCommand` ordered by `(team, seq)` at tick start.
+- Unknown module type: structural kinds are a load error, cosmetic kinds
+  record a gap. Both are queryable.
+- Publishes `contracts/snapshot-v1.schema.json`; starts from
+  `contracts/match-launch-v1.schema.json`.
+
+## Lanes
+
+- **Kernel** is one assigned lane until the skeleton is complete: objects as
+  structure-of-arrays, 30 Hz default tick from `rules.tick_ms`, flow-field
+  pathing, weapon and armor resolution, horde membership, snapshot writer.
+- **`core-modules` queue** opens when the kernel lane declares the module
+  interface stable. `python tools/fleet/work.py next` serves module types
+  ranked by retail object count.
+
+## Reference
+
+Engine semantics: `workspace/reference/open-bfme-1` (BFME1 decompile and
+Ghidra pseudo-C). INI is the balance authority.

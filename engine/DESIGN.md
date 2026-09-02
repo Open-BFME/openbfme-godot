@@ -1,18 +1,9 @@
 # OpenBfme.Sim - deterministic module-based simulation kernel
 
-> **HISTORICAL C# EXPERIMENT - NOT PATCH 2.02 TARGET EVIDENCE.** The status,
-> measurements, phases, test counts, and dual-run plan below are a frozen
-> 2026-07-22 design receipt derived from BFME2 and a 2.01-era corpus. Preserve
-> that measured content, but do not treat it as current implementation status,
-> v9.7.7 coverage, or authority. The live gameplay authority is the GDScript
-> `RetailSliceSim`; C# remains a non-shipping experiment unless an accepted
-> trace-qualified cutover changes [architecture](../docs/ARCHITECTURE.md).
-> Current target and evidence are governed by the
-> [product scope](../contracts/rotwk-202-v9.7.7-product-scope.json),
-> [retail baseline](../contracts/rotwk-202-v9.7.7-baseline.json), and
-> [verification contract](../docs/VERIFICATION.md). New work must come from the
-> [roadmap](../docs/ROADMAP.md) and
-> [work-item ledger](../orchestration/work-items.json).
+> **Design receipt from 2026-07-22.** Status lines below are historical. As of
+> 2026-09-01 this kernel is the new core (see `README.md` here and
+> `docs/REORG-PLAN.md`); the module-first architecture described below is the
+> one being built out.
 
 **Status:** P0 kernel complete + adversarially reviewed; P1 started - death pipeline
 (OnDeath interception, IsDying), SlowDeath, Production, GettingBuilt landed with

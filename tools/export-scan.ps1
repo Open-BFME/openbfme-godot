@@ -183,7 +183,6 @@ $allowList = @{
     # Public clone instructions must name the active repository so strangers can
     # download the tree. Retired names remain forbidden outside this allow-list.
     "README.md"                             = @("hardcoded release target")
-    "docs/ONBOARDING.md"                    = @("hardcoded release target")
     "docs/BUILD_AND_RELEASE.md"             = @("hardcoded release target")
 }
 

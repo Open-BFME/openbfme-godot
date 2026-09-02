@@ -1,0 +1,7 @@
+{
+  "title": "Benchmark scene: fps at 800, 3000, 10000 members from the synthetic snapshot",
+  "rank": 2,
+  "detail": "game/tests/render_benchmark_runner.gd prints RENDER_BENCH members=N fps=F draw_calls=D. Runs nightly; every render unit cites before/after numbers from it.",
+  "oracle": "godot --path game --script res://tests/render_benchmark_runner.gd",
+  "status": "open"
+}

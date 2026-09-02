@@ -101,13 +101,20 @@ jobs:
 
       # Oracle tests that need a retail install skip themselves when
       # BFME2_INSTALL is unset, which is always the case on a public runner.
-      - name: Run importer tests
+      - name: Run importer and fleet-tool tests
         env:
           PYTHONPATH: importer
           TEMP: ${{ runner.temp }}
           TMP: ${{ runner.temp }}
           TMPDIR: ${{ runner.temp }}
         run: python -m pytest importer/tests -q
+
+      # Pass-2 deletion candidates must stay auditable: the tool that decides
+      # what may go has to keep working on a public runner.
+      - name: Fleet tools smoke
+        run: |
+          python tools/fleet/work.py queues
+          python tools/fleet/audit_deps.py --list tools/fleet/pass2-candidates.txt
 
   engine:
     name: engine determinism (${{ matrix.os }})

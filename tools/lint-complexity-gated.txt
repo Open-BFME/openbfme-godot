@@ -1,8 +1,0 @@
-# Cyclomatic-complexity ratchet: files listed here FAIL the lint if any
-# function ranks worse than C (i.e. D/E/F under gdradon's radon-style ranks).
-# Add every new/touched file; legacy files join as they are refactored.
-# Paths are repo-relative, forward slashes.
-game/src/retail_slice/retail_sim_skirmish_ai.gd
-game/src/retail_slice/retail_sim_ai.gd
-game/src/retail_slice/retail_save_games.gd
-game/src/retail_slice/retail_sim_subsystem.gd

@@ -1,0 +1,7 @@
+{
+  "title": "Generic cook: Locomotor, LocomotorSet, horde RankInfo and formations",
+  "rank": 40,
+  "detail": "importer/cook/movement.py. Emit every Locomotor and every horde's rank layout in retail world units, no runtime scaling.",
+  "oracle": "python -m pytest importer/tests/test_cook_movement.py -q",
+  "status": "open"
+}

@@ -1,0 +1,7 @@
+{
+  "title": "Draw every member through MultiMesh with baked bone-atlas animation",
+  "rank": 10,
+  "detail": "Replace per-member Skeleton3D+AnimationPlayer subtrees with one MultiMeshInstance3D per (model, team, clip) and a bone-atlas texture sampled in the shader. member_render_batcher.gd and skinned_pose_baker.gd are the starting point; the far-distance tier becomes the only path.",
+  "oracle": "render_benchmark_runner: 144 fps at 10000 members on the reference GPU; retail_state_pin unchanged",
+  "status": "open"
+}
