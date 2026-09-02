@@ -131,6 +131,27 @@ public sealed class BundleLoaderTests
     }
 
     [Fact]
+    public void KindOfAddRemoveModifiersResolveAgainstInheritedRetailTokens()
+    {
+        var document = BundleDocument.Parse(MinimalBundle("""
+            {"name":"EconomyParent","kind":"object","parent":null,
+             "kindof":["STRUCTURE","ECONOMY_STRUCTURE","IGNORE_FOR_VICTORY"],"geometry":{},
+             "fields":{},"blocks":[],"modules":[]},
+            {"name":"EconomyChild","kind":"child","parent":"EconomyParent",
+             "kindof":["+LIVING_WORLD_BUILDING_MIRROR","-IGNORE_FOR_VICTORY"],"geometry":{},
+             "fields":{},"blocks":[],"modules":[]}
+            """));
+
+        var loaded = BundleTemplateLoader.Load(document, ModuleRegistry.CreateDefault(), 33);
+        var child = Assert.Single(loaded.Templates, value => value.Name == "EconomyChild");
+
+        Assert.Equal(new[] { "STRUCTURE", "ECONOMY_STRUCTURE", "LIVING_WORLD_BUILDING_MIRROR" },
+            child.KindOf);
+        Assert.Equal(AiUnitRole.Structure | AiUnitRole.Economy,
+            AiTemplateRoles.Classify(child));
+    }
+
+    [Fact]
     public void BundleWorldSpawnsEveryLoadedFixtureTemplateAndPublishesBundleIndexes()
     {
         var launch = MatchLaunch.Load(MatchLaunchTests.RepoPath(

@@ -97,6 +97,11 @@ public sealed partial class SimWorld
     {
         var hordeSpec = template.Modules.FirstOrDefault(module => module.TypeName == HordeContainModule.TypeName);
         if (hordeSpec == null) return true;
+        if (_config.HordeTemplates.TryGetValue(template.Name, out var horde))
+        {
+            return horde.MemberCount > 0
+                && horde.Ranks.All(rank => _config.Templates.ContainsKey(rank.UnitType));
+        }
         var memberTemplate = !string.IsNullOrWhiteSpace(template.Economy.HordeMemberTemplate)
             ? template.Economy.HordeMemberTemplate
             : hordeSpec.GetString("MemberTemplate", "");
@@ -120,6 +125,27 @@ public sealed partial class SimWorld
 
         var carrier = SpawnObject(templateName, producer.Team, exitPosition);
         var contain = carrier.FindModule<HordeContainModule>()!;
+        if (_config.HordeTemplates.TryGetValue(templateName, out var horde))
+        {
+            var authoredMembers = new List<int>(horde.MemberCount);
+            foreach (var rank in horde.Ranks)
+            foreach (var position in rank.Positions)
+            {
+                var formationOffset = new FixedVector2(
+                    Fixed64.FromRaw(position.X.Raw / 10),
+                    Fixed64.FromRaw(position.Y.Raw / 10));
+                var member = SpawnObject(rank.UnitType, producer.Team, exitPosition + formationOffset);
+                authoredMembers.Add(member.Id);
+                ApplyRallyOrder(member, rallyPoint);
+            }
+            AddHorde(new SnapshotHorde(
+                carrier.Id,
+                producer.Team,
+                _config.TemplateIndexOf(templateName),
+                authoredMembers,
+                0));
+            return;
+        }
         var memberTemplate = !string.IsNullOrWhiteSpace(template.Economy.HordeMemberTemplate)
             ? template.Economy.HordeMemberTemplate
             : contain.MemberTemplateName;

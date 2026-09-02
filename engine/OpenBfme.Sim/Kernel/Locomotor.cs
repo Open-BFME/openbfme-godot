@@ -49,7 +49,13 @@ public sealed record Locomotor
         var braking = Read(values, "Braking", acceleration);
         Speed = Scale(speed, tickMilliseconds, 1000);
         SpeedDamaged = Scale(damaged, tickMilliseconds, 1000);
-        TurnRate = Scale(Read(values, "TurnRate", Fixed64.Zero), tickMilliseconds, 1000);
+        var turnRate = Read(values, "TurnRate", Fixed64.Zero);
+        var turnTime = Read(values, "TurnTime", Fixed64.Zero);
+        if (turnRate <= Fixed64.Zero && turnTime > Fixed64.Zero)
+        {
+            turnRate = Fixed64.FromInt(360_000) / turnTime;
+        }
+        TurnRate = Scale(turnRate, tickMilliseconds, 1000);
         var tickSquared = checked((long)tickMilliseconds * tickMilliseconds);
         Acceleration = Scale(acceleration, tickSquared, 1_000_000);
         Braking = Scale(braking, tickSquared, 1_000_000);
@@ -107,7 +113,7 @@ public sealed record Locomotor
 
     private static readonly string[] FieldNames =
     {
-        "Speed", "SpeedDamaged", "TurnRate", "Acceleration", "Braking",
+        "Speed", "SpeedDamaged", "TurnRate", "TurnTime", "Acceleration", "Braking",
         "MinTurnSpeed", "MaxTurnWithoutReform",
     };
 }
