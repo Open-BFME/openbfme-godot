@@ -24,6 +24,7 @@ signal hero_changed(row: int)
 
 const TAB_MAP := "map"
 const TAB_RULES := "rules"
+const NativeMatchLaunchScript := preload("res://src/present/native_match_launch.gd")
 ## Skirmish capacity floor/ceiling. Two rows is the retail default (one human +
 ## one AI); the ceiling is the largest skirmish the sim's roster admits.
 const MIN_PLAYER_ROWS := 2
@@ -49,6 +50,7 @@ var cp_factor_opt: OptionButton
 var build_mode_opt: OptionButton
 var custom_heroes_toggle: CheckButton
 var ring_heroes_toggle: CheckButton
+var engine_opt: OptionButton
 var rules_reset_btn: Button
 var hero_dropdowns: Array[OptionButton] = []
 var team_dropdowns: Array[OptionButton] = []
@@ -169,6 +171,15 @@ func _build_rules_content() -> void:
 	var build_mode_label := _label(rules_content, "BuildModeLabel", "Build Mode", Vector2(0, 114), Vector2(220, 30), 17, Color("b7dc94"))
 	build_mode_opt = _option(rules_content, "BuildMode", Vector2(230, 110), Vector2(220, 40))
 	build_mode_opt.tooltip_text = "BFME2 Freeform builds anywhere; BFME1 Plots restricts construction to fixed build plots"
+	_label(rules_content, "EngineLabel", "Game Engine", Vector2(0, 162), Vector2(220, 30), 17, Color("b7dc94"))
+	engine_opt = _option(rules_content, "GameEngine", Vector2(230, 158), Vector2(220, 40))
+	engine_opt.add_item("Retail slice")
+	engine_opt.set_item_metadata(0, "placeholder")
+	engine_opt.add_item("Native core")
+	engine_opt.set_item_metadata(1, "native")
+	engine_opt.set_item_disabled(1, not NativeMatchLaunchScript.is_available())
+	engine_opt.select(0)
+	engine_opt.tooltip_text = "Native core uses the same retail setup, loading screen and HUD"
 	custom_heroes_toggle = CheckButton.new()
 	custom_heroes_toggle.name = "CustomHeroesToggle"
 	custom_heroes_toggle.text = "Allow Custom Heroes"
@@ -393,7 +404,30 @@ func _build_bottom_bar() -> void:
 	hint_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	play_btn = _button(self, "Retail", "PLAY", Vector2(size.x - 290, size.y - 66), Vector2(260, 52))
 	play_btn.theme_type_variation = "PrimaryButton"
-	play_btn.pressed.connect(func() -> void: play_pressed.emit())
+	play_btn.pressed.connect(_on_play_pressed)
+
+
+func _on_play_pressed() -> void:
+	if not native_core_selected():
+		play_pressed.emit()
+		return
+	var map_id := ""
+	var map_name := ""
+	if selected_map_row >= 0 and selected_map_row < map_rows.size():
+		var row := map_rows[selected_map_row] as Dictionary
+		map_id = String(row.get("map_id", ""))
+		var button := row.get("button") as Button
+		map_name = button.text if button != null else ""
+	var document := build_native_match_launch(map_id, map_name)
+	if document.is_empty():
+		hint_label.text = "NATIVE CORE COULD NOT RESOLVE THIS SETUP"
+		return
+	var game_state := get_node_or_null("/root/GameState")
+	if game_state == null:
+		hint_label.text = "NATIVE CORE COULD NOT REACH GAME STATE"
+		return
+	game_state.set_meta("native_match_launch", document.duplicate(true))
+	get_tree().change_scene_to_file("res://scenes/native_loading_boot.tscn")
 
 
 func _set_tab(tab: String) -> void:
@@ -412,6 +446,22 @@ func set_selected_map_row(index: int) -> void:
 	for row_index in map_rows.size():
 		var row_button := map_rows[row_index]["button"] as Button
 		row_button.button_pressed = row_index == index
+
+
+func native_core_available() -> bool:
+	return NativeMatchLaunchScript.is_available()
+
+
+func native_core_selected() -> bool:
+	return (
+		engine_opt != null
+		and engine_opt.selected >= 0
+		and String(engine_opt.get_item_metadata(engine_opt.selected)) == "native"
+	)
+
+
+func build_native_match_launch(retail_map_id: String = "", retail_map_name: String = "") -> Dictionary:
+	return NativeMatchLaunchScript.build_from_setup(self, retail_map_id, retail_map_name)
 
 
 func _panel(parent: Control, node_name: String, rect: Rect2) -> Panel:

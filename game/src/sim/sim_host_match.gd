@@ -121,11 +121,13 @@ func _start_match() -> void:
 	if not requested_replay.is_empty():
 		_start_replay(requested_replay)
 		return
-	var match := _load_json(_repo_path("contracts/fixtures/match-launch-v1.json"))
-	if match.is_empty():
+	var launch_document := _requested_match_launch()
+	if launch_document.is_empty():
+		launch_document = _load_json(_repo_path("contracts/fixtures/match-launch-v1.json"))
+	if launch_document.is_empty():
 		_fail("match-launch fixture could not be read")
 		return
-	var preferred_map := String((match.get("map", {}) as Dictionary).get("path", ""))
+	var preferred_map := String((launch_document.get("map", {}) as Dictionary).get("path", ""))
 	var native_content: Dictionary = NativeContentLocatorScript.resolve(preferred_map)
 	var bundle_path := String(native_content.get("bundle", ""))
 	var bundle_source := String(native_content.get("bundle_source", "unresolved"))
@@ -147,7 +149,7 @@ func _start_match() -> void:
 	if not FileAccess.file_exists(bundle_path):
 		_fail("bundle is absent at %s" % bundle_path)
 		return
-	var players := match.get("players", []) as Array
+	var players := launch_document.get("players", []) as Array
 	if players.size() >= 2:
 		var opponent := players[1] as Dictionary
 		opponent["controller"] = "ai"
@@ -163,9 +165,9 @@ func _start_match() -> void:
 		print("SIM_HOST_MATCH_MAP source=%s path=<absent-mapless-fallback>" % map_source)
 	_client = SimHostClientScript.new()
 	var launched: bool = (
-		_client.launch_bundle(match, bundle_path)
+		_client.launch_bundle(launch_document, bundle_path)
 		if map_path.is_empty()
-		else _client.launch_bundle_map(match, bundle_path, map_path)
+		else _client.launch_bundle_map(launch_document, bundle_path, map_path)
 	)
 	if not launched:
 		_fail(_client.last_error())
@@ -198,7 +200,7 @@ func _start_match() -> void:
 		if old_ground != null:
 			old_ground.visible = false
 		var setup: Dictionary = MapBootstrapScript.spawn_match(
-			_client, match, _map_document, _catalog
+			_client, launch_document, _map_document, _catalog
 		)
 		if setup.has("error"):
 			_fail(String(setup.error))
@@ -698,6 +700,18 @@ func _load_json(path: String) -> Dictionary:
 		return {}
 	var parsed: Variant = JSON.parse_string(file.get_as_text())
 	return parsed as Dictionary if parsed is Dictionary else {}
+
+
+func _requested_match_launch() -> Dictionary:
+	var game_state := get_node_or_null("/root/GameState")
+	if game_state == null:
+		return {}
+	var value: Variant = game_state.get_meta("native_match_launch", {})
+	if not (value is Dictionary) or (value as Dictionary).is_empty():
+		return {}
+	var document := (value as Dictionary).duplicate(true)
+	game_state.remove_meta("native_match_launch")
+	return document
 
 
 func _repo_path(relative: String) -> String:
