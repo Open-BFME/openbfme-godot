@@ -42,7 +42,10 @@ public sealed record CommandButtonTemplate(
     string Object,
     string Upgrade,
     string Science,
-    string SpecialPower);
+    string SpecialPower,
+    string Stances = "",
+    string FlagsUsedForToggle = "",
+    string WeaponSlot = "");
 
 public sealed record BundleCommandSetEntry(int Slot, string? Button);
 
@@ -113,7 +116,8 @@ public sealed class TechCatalog
         row.Name,
         TechField.String(row.Fields, "Enum", row.Name),
         TechField.Integer(row.Fields, "ReloadTime"),
-        TechField.Tokens(row.Fields, "RequiredScience"),
+        TechField.Tokens(row.Fields,
+            row.Fields.ContainsKey("RequiredSciences") ? "RequiredSciences" : "RequiredScience"),
         TechField.Boolean(row.Fields, "PublicTimer"));
 
     internal static CommandButtonTemplate ParseCommandButton(BundleNamedRow row) => new(
@@ -122,7 +126,10 @@ public sealed class TechCatalog
         TechField.String(row.Fields, "Object"),
         TechField.String(row.Fields, "Upgrade"),
         TechField.String(row.Fields, "Science"),
-        TechField.String(row.Fields, "SpecialPower"));
+        TechField.String(row.Fields, "SpecialPower"),
+        TechField.String(row.Fields, "Stances"),
+        TechField.String(row.Fields, "FlagsUsedForToggle"),
+        TechField.String(row.Fields, "WeaponSlot"));
 
     private static IReadOnlyDictionary<string, T> Index<T>(IEnumerable<T>? values, Func<T, string> name)
     {

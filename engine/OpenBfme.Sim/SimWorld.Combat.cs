@@ -38,6 +38,8 @@ public sealed partial class SimWorld
                 amount = HighlanderBodyModule.ClampIncomingDamage(combat.Health, amount, damageType);
             var applied = Fixed64.Min(combat.Health, amount);
             combat.Health -= applied;
+            foreach (var module in target.Modules)
+                module.OnDamageReceived(this, target, applied, damageType.ToString());
             if (combat.Health == Fixed64.Zero) HandleDeath(target);
             return applied;
         }
@@ -56,7 +58,11 @@ public sealed partial class SimWorld
             if (module.OnDamage(this, target, integerAmount)) break;
         }
         var after = ReadHealth(target).Health;
-        return before > after ? before - after : Fixed64.Zero;
+        var appliedLegacy = before > after ? before - after : Fixed64.Zero;
+        if (appliedLegacy > Fixed64.Zero)
+            foreach (var module in target.Modules)
+                module.OnDamageReceived(this, target, appliedLegacy, legacyType);
+        return appliedLegacy;
     }
 
     private void PruneDeadHordeMembers(IReadOnlyCollection<int> deadIds)
