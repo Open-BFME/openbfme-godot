@@ -30,6 +30,8 @@ public sealed partial class SimWorld
         if (amount <= Fixed64.Zero || target.IsDead || target.IsDying) return Fixed64.Zero;
         if (target.Combat is { HasBody: true } combat)
         {
+            if (target.FindModule<HighlanderBodyModule>() != null)
+                amount = HighlanderBodyModule.ClampIncomingDamage(combat.Health, amount, damageType);
             var applied = Fixed64.Min(combat.Health, amount);
             combat.Health -= applied;
             if (combat.Health == Fixed64.Zero) HandleDeath(target);

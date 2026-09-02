@@ -18,3 +18,13 @@ Reference behavior comes from the pseudo-C in
 
 The registry and shared module base stay in `../Modules.cs`; every concrete
 SAGE module implementation lives here and is discovered from its attribute.
+
+## Runtime tier policy
+
+Tiering follows the carrier without a hand-maintained module-name list. When
+the reflection registry has an implementation, its `SageModule` attribute is
+authoritative. For an unknown type, only the `Body` carrier is Structural: a
+template with an unknown or unparseable body fails with that type named.
+Unknown `Behavior`, `Draw`, `ClientUpdate`, `ClientBehavior`, `Flasher`, and
+all other carriers are Cosmetic. Their templates load, while `BundleLoadReport`
+records each gap with template, type, and carrier and aggregates counts by type.

@@ -8,4 +8,5 @@ public static class DamageTypes
     public const string Pierce = "pierce";
     public const string Siege = "siege";
     public const string Crush = "crush";
+    public const string Unresistable = "unresistable";
 }

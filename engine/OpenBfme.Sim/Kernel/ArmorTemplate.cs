@@ -13,7 +13,7 @@ public sealed class ArmorTemplate
         foreach (var (damageType, multiplier) in multipliers)
         {
             if (multiplier < Fixed64.Zero) throw new ArgumentOutOfRangeException(nameof(multipliers));
-            _multipliers.Add(damageType, multiplier);
+            _multipliers[damageType] = multiplier;
         }
         if (!_multipliers.ContainsKey(DamageType.DEFAULT))
         {
@@ -106,7 +106,10 @@ public sealed class WeaponSet
         IEnumerable<KeyValuePair<WeaponSlot, IReadOnlyList<string>>>? autoChooseSources = null,
         IEnumerable<KeyValuePair<WeaponSlot, IReadOnlyList<string>>>? preferredAgainst = null)
     {
-        _conditions = new SortedSet<string>(conditions ?? Array.Empty<string>(), StringComparer.Ordinal);
+        _conditions = new SortedSet<string>(
+            (conditions ?? Array.Empty<string>()).Where(condition =>
+                !condition.Equals("None", StringComparison.OrdinalIgnoreCase)),
+            StringComparer.Ordinal);
         _weapons = new SortedDictionary<WeaponSlot, string>();
         foreach (var (slot, name) in weapons)
         {
@@ -219,7 +222,10 @@ public sealed class ArmorSet
     public ArmorSet(IEnumerable<string>? conditions, string armorName, string damageFX = "")
     {
         if (string.IsNullOrWhiteSpace(armorName)) throw new ArgumentException("Armor name is required", nameof(armorName));
-        _conditions = new SortedSet<string>(conditions ?? Array.Empty<string>(), StringComparer.Ordinal);
+        _conditions = new SortedSet<string>(
+            (conditions ?? Array.Empty<string>()).Where(condition =>
+                !condition.Equals("None", StringComparison.OrdinalIgnoreCase)),
+            StringComparer.Ordinal);
         ArmorName = armorName;
         DamageFX = damageFX ?? "";
     }

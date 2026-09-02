@@ -11,6 +11,8 @@ public enum PreAttackType : byte
 {
     PER_SHOT,
     PER_CLIP,
+    PER_ATTACK,
+    PER_POSITION,
 }
 
 [Flags]

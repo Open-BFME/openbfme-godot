@@ -65,15 +65,18 @@ public sealed class BundleLoaderTests
     }
 
     [Fact]
-    public void LoaderReplacesInheritedModuleByTagAndReportsUnknownsAndAbsentTables()
+    public void LoaderReplacesInheritedModuleByTagAndReportsCarrierTieredGapsAndAbsentTables()
     {
         var result = BundleTemplateLoader.Load(
             BundleDocument.Load(FixturePath()), ModuleRegistry.CreateDefault(), tickMilliseconds: 33);
 
-        Assert.Equal(5, result.Report.TemplatesLoaded);
-        Assert.Equal(2, result.Report.TemplatesFailed.Count);
-        Assert.Contains(result.Report.TemplatesFailed,
-            failure => failure.Template == "CookMystery" && failure.Reason.Contains("MadeUpBehavior", StringComparison.Ordinal));
+        Assert.Equal(7, result.Report.TemplatesLoaded);
+        Assert.Empty(result.Report.TemplatesFailed);
+        Assert.Contains("unknown Body carriers are Structural", result.Report.ModuleTierPolicy,
+            StringComparison.Ordinal);
+        Assert.Contains(result.Report.Gaps,
+            gap => gap.Template == "CookMystery" && gap.Type == "MadeUpBehavior"
+                && gap.Carrier == "Behavior");
         Assert.Contains(result.Report.GapRowsByType, pair => pair.Key == "ModuleTag_Malformed");
         Assert.Empty(result.Report.AbsentTables);
 
@@ -139,18 +142,25 @@ public sealed class BundleLoaderTests
         world.Advance(100);
 
         using var snapshot = JsonDocument.Parse(SnapshotWriter.Write(world));
-        Assert.Equal(new[] { 0, 1, 2, 3, 4 }, snapshot.RootElement.GetProperty("objects")
+        var expectedIndices = document.Templates
+            .Where(row => loadedNames.Contains(row.Name, StringComparer.Ordinal))
+            .Select(row => row.Index)
+            .ToArray();
+        Assert.Equal(expectedIndices, snapshot.RootElement.GetProperty("objects")
             .GetProperty("template").EnumerateArray().Select(item => item.GetInt32()).ToArray());
     }
 
     [Fact]
-    public void UnknownStructuralModuleFailsOnlyItsTemplateAndWorldStillConstructs()
+    public void UnknownBodyFailsOnlyItsTemplateWhileUnknownBehaviorIsQueryableGap()
     {
         var document = BundleDocument.Parse(MinimalBundle("""
             {"name":"Bad","kind":"object","parent":null,"kindof":[],"geometry":{},"fields":{},"blocks":[],
-             "modules":[{"carrier":"Behavior","type":"MissingStructuralBehavior","tag":"ModuleTag_Bad","fields":{},"blocks":[],"gap":false}]},
+             "modules":[{"carrier":"Body","type":"MissingBody","tag":"ModuleTag_Bad","fields":{},"blocks":[],"gap":false}]},
             {"name":"Good","kind":"object","parent":null,"kindof":[],"geometry":{},"fields":{},"blocks":[],
-             "modules":[{"carrier":"Body","type":"ActiveBody","tag":"ModuleTag_Body","fields":{"MaxHealth":10},"blocks":[],"gap":false}]}
+             "modules":[
+               {"carrier":"Body","type":"ActiveBody","tag":"ModuleTag_Body","fields":{"MaxHealth":10},"blocks":[],"gap":false},
+               {"carrier":"Behavior","type":"FutureModBehavior","tag":"ModuleTag_Mod","fields":{},"blocks":[],"gap":false},
+               {"carrier":"FutureCarrier","type":"FutureCarrierModule","tag":"ModuleTag_Future","fields":{},"blocks":[],"gap":false}]}
             """));
         var launch = MatchLaunch.Load(MatchLaunchTests.RepoPath(
             "contracts", "fixtures", "match-launch-v1.json"));
@@ -159,10 +169,40 @@ public sealed class BundleLoaderTests
 
         var failure = Assert.Single(world.BundleLoadReport!.TemplatesFailed);
         Assert.Equal("Bad", failure.Template);
-        Assert.Contains("MissingStructuralBehavior", failure.Reason, StringComparison.Ordinal);
+        Assert.Contains("MissingBody", failure.Reason, StringComparison.Ordinal);
+        Assert.Contains("(Body)", failure.Reason, StringComparison.Ordinal);
         Assert.Equal(1, world.BundleLoadReport.TemplatesLoaded);
+        Assert.Equal(2, world.BundleLoadReport.Gaps.Count);
+        Assert.Contains(new BundleModuleGap("Good", "FutureModBehavior", "Behavior"),
+            world.BundleLoadReport.Gaps);
+        Assert.Contains(new BundleModuleGap("Good", "FutureCarrierModule", "FutureCarrier"),
+            world.BundleLoadReport.Gaps);
+        Assert.Equal(1, world.BundleLoadReport.GapRowsByType["FutureModBehavior"]);
         Assert.Throws<KeyNotFoundException>(() => world.SpawnObject("Bad", 0, FixedVector2.Zero));
         world.SpawnObject("Good", 0, FixedVector2.Zero);
+    }
+
+    [Fact]
+    public void RegisteredImplementationTierOverridesItsCarrierFallback()
+    {
+        var registry = ModuleRegistry.CreateDefault();
+        registry.Register("RegisteredCosmetic", spec => new RegisteredCosmeticModule(spec),
+            ModuleTier.Cosmetic);
+        var document = BundleDocument.Parse(MinimalBundle("""
+            {"name":"Known","kind":"object","parent":null,"kindof":[],"geometry":{},"fields":{},"blocks":[],
+             "modules":[
+               {"carrier":"Body","type":"RegisteredCosmetic","tag":"ModuleTag_Cosmetic","fields":{},"blocks":[],"gap":false},
+               {"carrier":"Behavior","type":"ActiveBody","tag":"ModuleTag_Body","fields":{"MaxHealth":10},"blocks":[],"gap":false}]}
+            """));
+
+        var result = BundleTemplateLoader.Load(document, registry, 33);
+
+        var template = Assert.Single(result.Templates);
+        Assert.Equal(ModuleTier.Cosmetic,
+            Assert.Single(template.Modules, module => module.TypeName == "RegisteredCosmetic").Tier);
+        Assert.Equal(ModuleTier.Structural,
+            Assert.Single(template.Modules, module => module.TypeName == ActiveBodyModule.TypeName).Tier);
+        Assert.Empty(result.Report.Gaps);
     }
 
     [Fact]
@@ -237,7 +277,7 @@ public sealed class BundleLoaderTests
     public void CorpusLoadsAtScaleWritesReportAndTwinLoadsAreIdentical()
     {
         var corpusPath = MatchLaunchTests.RepoPath(
-            "workspace", "logs", "lane-cook", "corpus-bundle.json");
+            "workspace", "logs", "lane-cook-c", "corpus-bundle-full.json");
         if (!File.Exists(corpusPath))
         {
             _output.WriteLine($"SKIP: corpus bundle absent at {corpusPath}; CI has no workspace corpus");
@@ -257,16 +297,136 @@ public sealed class BundleLoaderTests
         Assert.Equal(JsonSerializer.Serialize(first.Report), JsonSerializer.Serialize(second.Report));
 
         var reportPath = MatchLaunchTests.RepoPath(
-            "workspace", "logs", "lane-kernel-4", "corpus-load-report.json");
+            "workspace", "logs", "lane-kernel-5", "corpus-load-report.json");
         Directory.CreateDirectory(Path.GetDirectoryName(reportPath)!);
         File.WriteAllText(reportPath, JsonSerializer.Serialize(first.Report,
             new JsonSerializerOptions { WriteIndented = true }));
         _output.WriteLine(
             $"corpus bundle: loaded={first.Report.TemplatesLoaded} failed={first.Report.TemplatesFailed.Count} " +
             $"unresolved={string.Join(',', first.Report.UnresolvedReferences.Select(pair => $"{pair.Key}:{pair.Value.Count}"))} " +
-            $"gaps={string.Join(',', first.Report.GapRowsByType.Select(pair => $"{pair.Key}:{pair.Value}"))} " +
+            $"gap_rows={first.Report.Gaps.Count} gap_types={first.Report.GapRowsByType.Count} " +
             $"elapsed_ms={stopwatch.ElapsedMilliseconds} report={reportPath}");
     }
+
+    [Fact]
+    public void FullCorpusFighterHordesSpawnFightDieAndTwinRunIdentically()
+    {
+        var corpusPath = FullCorpusPath();
+        if (!File.Exists(corpusPath))
+        {
+            _output.WriteLine($"SKIP: full corpus bundle absent at {corpusPath}; CI has no workspace corpus");
+            return;
+        }
+
+        var document = BundleDocument.Load(corpusPath);
+        var launch = MatchLaunch.Load(MatchLaunchTests.RepoPath(
+            "contracts", "fixtures", "match-launch-v1.json"));
+
+        (SimWorld World, string LeftName, string RightName, int LeftMembers, int RightMembers) Build()
+        {
+            var world = SimWorld.FromBundle(launch, document);
+            var loaded = document.Templates
+                .Where(row => world.BundleLoadReport!.TemplatesFailed.All(failure => failure.Template != row.Name))
+                .Select(row => row.Name)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var left = SelectHorde(document, loaded, "GondorFighterHorde");
+            var right = SelectHorde(document, loaded, "MordorFighterHorde");
+            var leftMembers = SpawnHorde(world, document, left, 0, 100_000, Fixed64.FromInt(20));
+            var rightMembers = SpawnHorde(world, document, right, 1, 100_001, Fixed64.FromInt(80));
+            Assert.True(world.SubmitCommand(AttackMove(100_000, 0)));
+            Assert.True(world.SubmitCommand(AttackMove(100_001, 1)));
+            return (world, left.Name, right.Name, leftMembers, rightMembers);
+        }
+
+        var first = Build();
+        var second = Build();
+        Assert.Equal(first.LeftName, second.LeftName);
+        Assert.Equal(first.RightName, second.RightName);
+        Assert.Equal(first.LeftMembers, Assert.Single(first.World.Hordes, horde => horde.Id == 100_000).Members.Count);
+        Assert.Equal(first.RightMembers, Assert.Single(first.World.Hordes, horde => horde.Id == 100_001).Members.Count);
+
+        var damageEvents = 0;
+        var deathEvents = 0;
+        for (var tick = 1; tick <= 600; tick++)
+        {
+            first.World.Tick();
+            second.World.Tick();
+            damageEvents += first.World.EventsThisTick.Count(value => value.Kind == "damage");
+            deathEvents += first.World.EventsThisTick.Count(value => value.Kind == "death");
+            Assert.Equal(first.World.StateHash(), second.World.StateHash());
+        }
+
+        _output.WriteLine($"retail spawn proof: left={first.LeftName} members={first.LeftMembers} " +
+            $"right={first.RightName} members={first.RightMembers} damage_events={damageEvents} " +
+            $"death_events={deathEvents} ticks=600 twin_hash_equal=true");
+        foreach (var horde in first.World.Hordes)
+        {
+            var member = first.World.Objects[horde.Members[0]];
+            var locomotor = member.FindModule<LocomotorModule>();
+            _output.WriteLine($"retail horde state: id={horde.Id} first_member={member.TemplateName} " +
+                $"position={member.Position.X},{member.Position.Y} weapons={member.Template.WeaponSets.Count} " +
+                $"locomotor={(locomotor == null ? "none" : locomotor.DataForTick(first.World.TickMilliseconds).Speed.ToString())}");
+        }
+        foreach (var diagnostic in first.World.Diagnostics.Take(10))
+            _output.WriteLine($"retail diagnostic: {diagnostic.Code} {diagnostic.Message}");
+        Assert.True(damageEvents > 0, "retail hordes produced no damage events");
+        Assert.True(deathEvents > 0, "retail hordes produced no death events");
+    }
+
+    private static BundleHordeRow SelectHorde(
+        BundleDocument document,
+        IReadOnlySet<string> loaded,
+        string preferred)
+    {
+        var candidates = document.Hordes!
+            .Where(horde => loaded.Contains(horde.Name)
+                && horde.RankInfo.Count > 0
+                && horde.RankInfo.All(rank => loaded.Contains(rank.UnitType)))
+            .OrderBy(horde => horde.Name, StringComparer.Ordinal)
+            .ToArray();
+        return candidates.FirstOrDefault(horde => horde.Name.Equals(preferred, StringComparison.OrdinalIgnoreCase))
+            ?? candidates.First();
+    }
+
+    private static int SpawnHorde(
+        SimWorld world,
+        BundleDocument document,
+        BundleHordeRow horde,
+        int team,
+        int hordeId,
+        Fixed64 originX)
+    {
+        var members = new List<int>();
+        foreach (var rank in horde.RankInfo.OrderBy(value => value.Rank))
+        {
+            foreach (var position in rank.Positions)
+            {
+                var xOffset = Fixed64.FromRaw(position.X.Raw / 10);
+                var yOffset = Fixed64.FromRaw(position.Y.Raw / 10);
+                var x = team == 0 ? originX + xOffset : originX - xOffset;
+                members.Add(world.SpawnObject(rank.UnitType, team,
+                    new FixedVector2(x, Fixed64.FromInt(50) + yOffset)).Id);
+            }
+        }
+        var templateIndex = document.Templates.Single(row =>
+            row.Name.Equals(horde.Name, StringComparison.OrdinalIgnoreCase)).Index;
+        world.AddHorde(new SnapshotHorde(hordeId, team, templateIndex, members, 0));
+        return members.Count;
+    }
+
+    private static SimCommand AttackMove(int hordeId, int team) =>
+        TestWorlds.Command(1, team, 0, "attack_move",
+            ("objects", CommandValue.OfLongList(new long[] { hordeId })),
+            ("x", CommandValue.OfFixed(Fixed64.FromInt(50))),
+            ("y", CommandValue.OfFixed(Fixed64.FromInt(50))));
+
+    private sealed class RegisteredCosmeticModule : ModuleBase
+    {
+        public RegisteredCosmeticModule(ModuleSpec spec) : base(spec) { }
+    }
+
+    private static string FullCorpusPath() => MatchLaunchTests.RepoPath(
+        "workspace", "logs", "lane-cook-c", "corpus-bundle-full.json");
 
     private static string FixturePath() => MatchLaunchTests.RepoPath(
         "contracts", "fixtures", "bundle-v1.json");

@@ -2,12 +2,19 @@ namespace OpenBfme.Sim;
 
 public sealed record BundleTemplateFailure(int Index, string Template, string Reason);
 public sealed record BundleReferenceIssue(string Template, string Name);
+public sealed record BundleModuleGap(string Template, string Type, string Carrier);
 
-/// <summary>Deterministic, JSON-serializable accounting for one bundle load.</summary>
+/// <summary>
+/// Deterministic, JSON-serializable accounting for one bundle load. Registered
+/// module implementations use their declared tier. Unknown Body carriers are
+/// structural; unknown modules on every other carrier are cosmetic load gaps.
+/// </summary>
 public sealed record BundleLoadReport(
+    string ModuleTierPolicy,
     int TemplatesLoaded,
     IReadOnlyList<BundleTemplateFailure> TemplatesFailed,
     IReadOnlyDictionary<string, IReadOnlyList<BundleReferenceIssue>> UnresolvedReferences,
+    IReadOnlyList<BundleModuleGap> Gaps,
     IReadOnlyDictionary<string, int> GapRowsByType,
     IReadOnlyList<string> AbsentTables,
     IReadOnlyList<string> Diagnostics,
@@ -42,14 +49,16 @@ public static class BundleTemplateLoader
             .Select(item => $"{item.Template}: {item.Message}")
             .ToList();
         var notes = new List<string>();
-        var gapCounts = new SortedDictionary<string, int>(StringComparer.Ordinal);
+        var gaps = new List<BundleModuleGap>();
         var unresolved = NewUnresolved();
         var weapons = ParseWeapons(document.Weapons, tickMilliseconds, diagnostics);
         var armors = ParseArmors(document.Armors, diagnostics);
+        var weaponNames = ReferenceNames(document.Weapons?.Select(row => row.Name));
+        var armorNames = ReferenceNames(document.Armors?.Select(row => row.Name));
         _ = IndexRows(document.DamageFx, "damage_fx", diagnostics);
         var locomotors = IndexRows(document.Locomotors, "locomotor", diagnostics);
         var locomotorSets = IndexRows(document.LocomotorSets, "locomotor_set", diagnostics);
-        _ = IndexHordes(document.Hordes, diagnostics); // consumed for strict shape and duplicate/name validation
+        var hordes = IndexHordes(document.Hordes, diagnostics);
 
         var rawByName = new Dictionary<string, BundleTemplateRow>(StringComparer.OrdinalIgnoreCase);
         var duplicateNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -57,14 +66,8 @@ public static class BundleTemplateLoader
         {
             if (!rawByName.TryAdd(row.Name, row)) duplicateNames.Add(row.Name);
             foreach (var module in row.Modules)
-            {
-                var known = registry.TryGetTier(module.Type, out var tier);
-                if (!known) tier = CarrierTier(module.Carrier);
-                if (module.Gap || (!known && tier == ModuleTier.Cosmetic))
-                    Count(gapCounts, module.Type);
                 if (module.Gap)
                     diagnostics.Add($"{row.Name}: unparseable {module.Carrier} module '{module.Type}' retained as a load gap");
-            }
         }
 
         var resolvedRows = new Dictionary<string, EffectiveTemplate>(StringComparer.OrdinalIgnoreCase);
@@ -86,13 +89,17 @@ public static class BundleTemplateLoader
                     throw new BundleTemplateException($"duplicate template name '{row.Name}'");
                 var effective = Resolve(row, rawByName, resolvedRows, resolving);
                 var weaponSets = ParseWeaponSets(row.Name, effective.Blocks, document.Weapons != null,
-                    weapons, unresolved, diagnostics);
+                    weaponNames, unresolved, diagnostics);
                 var armorSets = ParseArmorSets(row.Name, effective.Blocks, document.Armors != null,
-                    armors, unresolved, diagnostics);
+                    armorNames, unresolved, diagnostics);
                 var specs = new List<ModuleSpec>();
+                var templateGaps = new List<BundleModuleGap>();
                 foreach (var module in effective.Modules)
                 {
-                    specs.Add(ToModuleSpec(module, registry));
+                    var spec = ToModuleSpec(module, registry);
+                    specs.Add(spec);
+                    if (spec.Gap)
+                        templateGaps.Add(new BundleModuleGap(row.Name, spec.TypeName, spec.Carrier));
                 }
                 AddResolvedLocomotor(row.Name, effective.Blocks, specs, document.Locomotors,
                     locomotors, locomotorSets, unresolved, registry);
@@ -101,6 +108,7 @@ public static class BundleTemplateLoader
                     row.Name, specs, weaponSets, armorSets, body,
                     BuildEconomy(effective)));
                 indices.Add(row.Name, row.Index);
+                gaps.AddRange(templateGaps);
             }
             catch (Exception exception) when (exception is BundleTemplateException
                 or FormatException or OverflowException or ArgumentException)
@@ -109,10 +117,28 @@ public static class BundleTemplateLoader
             }
         }
 
+        var loadedNames = templates.Select(template => template.Name)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        foreach (var horde in hordes.Values)
+        {
+            foreach (var memberType in horde.RankInfo.Select(rank => rank.UnitType)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .OrderBy(value => value, StringComparer.Ordinal))
+            {
+                if (!loadedNames.Contains(memberType))
+                    unresolved["horde member"].Add(new BundleReferenceIssue(horde.Name, memberType));
+            }
+        }
+
+        var gapCounts = new SortedDictionary<string, int>(StringComparer.Ordinal);
+        foreach (var gap in gaps) Count(gapCounts, gap.Type);
+
         var report = new BundleLoadReport(
+            "Registered implementations use their declared tier; unknown Body carriers are Structural; unknown modules on all other carriers are Cosmetic gaps.",
             templates.Count,
             failures.ToArray(),
             FreezeUnresolved(unresolved),
+            gaps.ToArray(),
             new SortedDictionary<string, int>(gapCounts, StringComparer.Ordinal),
             absent.OrderBy(value => value, StringComparer.Ordinal).ToArray(),
             diagnostics.ToArray(),
@@ -304,7 +330,7 @@ public static class BundleTemplateLoader
         string template,
         IReadOnlyList<BundleBlock> blocks,
         bool tablePresent,
-        IReadOnlyDictionary<string, WeaponTemplate> table,
+        IReadOnlySet<string> authoredNames,
         IDictionary<string, List<BundleReferenceIssue>> unresolved,
         ICollection<string> diagnostics)
     {
@@ -317,7 +343,8 @@ public static class BundleTemplateLoader
                 result.Add(set);
                 foreach (var weapon in set.Weapons.Values)
                 {
-                    if (!tablePresent || !table.ContainsKey(weapon))
+                    if (!weapon.Equals("None", StringComparison.OrdinalIgnoreCase)
+                        && (!tablePresent || !authoredNames.Contains(weapon)))
                         unresolved["weapon"].Add(new BundleReferenceIssue(template, weapon));
                 }
             }
@@ -333,7 +360,7 @@ public static class BundleTemplateLoader
         string template,
         IReadOnlyList<BundleBlock> blocks,
         bool tablePresent,
-        IReadOnlyDictionary<string, ArmorTemplate> table,
+        IReadOnlySet<string> authoredNames,
         IDictionary<string, List<BundleReferenceIssue>> unresolved,
         ICollection<string> diagnostics)
     {
@@ -344,7 +371,7 @@ public static class BundleTemplateLoader
             {
                 var set = ArmorSet.Parse(ParserRow(block.Fields, block.Blocks));
                 result.Add(set);
-                if (!tablePresent || !table.ContainsKey(set.ArmorName))
+                if (!tablePresent || !authoredNames.Contains(set.ArmorName))
                     unresolved["armor"].Add(new BundleReferenceIssue(template, set.ArmorName));
             }
             catch (Exception exception) when (exception is FormatException or ArgumentException or OverflowException)
@@ -368,16 +395,15 @@ public static class BundleTemplateLoader
         if (specs.Any(spec => spec.TypeName == LocomotorModule.TypeName)) return;
         var references = blocks
             .Where(item => item.Type.Equals("LocomotorSet", StringComparison.OrdinalIgnoreCase))
-            .Select(item => item.Fields.TryGetValue("Locomotor", out var value) ? value : null)
-            .Where(value => value != null)
-            .Cast<BundleValue>()
+            .Where(item => item.Fields.ContainsKey("Locomotor"))
+            .Select(item => (Reference: item.Fields["Locomotor"], Overrides: item.Fields))
             .ToList();
         if (references.Count == 0 && locomotorSets.TryGetValue(template, out var set)
             && set.Fields.TryGetValue("Locomotor", out var tableReference))
-            references.Add(tableReference);
-        foreach (var value in references)
+            references.Add((tableReference, set.Fields));
+        foreach (var reference in references)
         {
-            foreach (var line in ValueStrings(value))
+            foreach (var line in ValueStrings(reference.Reference))
             {
                 var tokens = line.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
                 var name = tokens.Length >= 2 ? tokens[^1] : tokens.FirstOrDefault();
@@ -387,8 +413,11 @@ public static class BundleTemplateLoader
                     unresolved["locomotor"].Add(new BundleReferenceIssue(template, name));
                     return;
                 }
+                var fields = new SortedDictionary<string, BundleValue>(StringComparer.Ordinal);
+                foreach (var pair in row.Fields) fields.Add(pair.Key, pair.Value);
+                foreach (var pair in reference.Overrides) fields[pair.Key] = pair.Value;
                 var module = new BundleModuleRow("Behavior", LocomotorModule.TypeName,
-                    "ModuleTag_BundleLocomotor", row.Fields, Array.Empty<BundleBlock>(), false);
+                    "ModuleTag_BundleLocomotor", fields, Array.Empty<BundleBlock>(), false);
                 specs.Add(ToModuleSpec(module, registry));
                 return;
             }
@@ -524,18 +553,22 @@ public static class BundleTemplateLoader
 
     private static ModuleTier CarrierTier(string carrier) => carrier switch
     {
-        "Draw" or "ClientUpdate" or "ClientBehavior" or "Flasher" or "other" => ModuleTier.Cosmetic,
-        _ => ModuleTier.Structural,
+        "Body" => ModuleTier.Structural,
+        _ => ModuleTier.Cosmetic,
     };
 
     private static SortedDictionary<string, List<BundleReferenceIssue>> NewUnresolved() =>
         new(StringComparer.Ordinal)
         {
             ["armor"] = new List<BundleReferenceIssue>(),
-            ["horde"] = new List<BundleReferenceIssue>(),
+            ["horde member"] = new List<BundleReferenceIssue>(),
             ["locomotor"] = new List<BundleReferenceIssue>(),
             ["weapon"] = new List<BundleReferenceIssue>(),
         };
+
+    private static IReadOnlySet<string> ReferenceNames(IEnumerable<string>? names) =>
+        names?.ToHashSet(StringComparer.OrdinalIgnoreCase)
+        ?? new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
     private static IReadOnlyDictionary<string, IReadOnlyList<BundleReferenceIssue>> FreezeUnresolved(
         IReadOnlyDictionary<string, List<BundleReferenceIssue>> source)
