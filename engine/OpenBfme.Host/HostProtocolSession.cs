@@ -513,11 +513,17 @@ public sealed class HostProtocolSession
     {
         var world = RequireWorld();
         var other = RestoreWorld(RequiredString(root, "state"));
-        using var localJson = JsonDocument.Parse(SnapshotWriter.WriteJson(world));
-        using var otherJson = JsonDocument.Parse(SnapshotWriter.WriteJson(other));
-        var difference = CanonicalStateDifference.First(
-            localJson.RootElement, otherJson.RootElement);
-        difference ??= CanonicalStateDifference.FirstBytes(world.Snapshot(), other.Snapshot());
+        // Authoritative state decides whether the peers agree. The snapshot-v1
+        // JSON carries derived presentation columns (state/anim/anim_frame) that a
+        // freshly restored world has not advanced, so it is only consulted to name
+        // a readable path once the canonical bytes already differ.
+        CanonicalStateDifference? difference = null;
+        if (CanonicalStateDifference.FirstBytes(world.Snapshot(), other.Snapshot()) is { } bytes)
+        {
+            using var localJson = JsonDocument.Parse(SnapshotWriter.WriteJson(world));
+            using var otherJson = JsonDocument.Parse(SnapshotWriter.WriteJson(other));
+            difference = CanonicalStateDifference.First(localJson.RootElement, otherJson.RootElement) ?? bytes;
+        }
         var reply = Reply(writer =>
         {
             writer.WriteString("op", "diff");
