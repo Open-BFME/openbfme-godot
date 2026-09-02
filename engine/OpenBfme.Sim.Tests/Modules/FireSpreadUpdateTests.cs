@@ -11,7 +11,7 @@ public sealed class FireSpreadUpdateTests
         {
             ModuleBatchBTestSupport.Spec(FlammableUpdateModule.TypeName, new Dictionary<string, long> { ["FlameDamageLimit"] = 1 }),
             ModuleBatchBTestSupport.Spec(FireSpreadUpdateModule.TypeName,
-                new Dictionary<string, long> { ["SpreadTryRange"] = 5, ["MinSpreadDelay"] = 100, ["MaxSpreadDelay"] = 100 }),
+                new Dictionary<string, long> { ["SpreadTryRange"] = 5, ["MinSpreadDelay"] = 300, ["MaxSpreadDelay"] = 300 }),
         });
         var target = ModuleBatchBTestSupport.Template("target", new[]
         {
@@ -23,6 +23,9 @@ public sealed class FireSpreadUpdateTests
         burning.FindModule<FlammableUpdateModule>()!.Ignite(world, burning);
 
         world.Advance(2);
+        Assert.False(neighbour.FindModule<FlammableUpdateModule>()!.IsBurning);
+
+        world.Tick();
 
         Assert.True(neighbour.FindModule<FlammableUpdateModule>()!.IsBurning);
     }

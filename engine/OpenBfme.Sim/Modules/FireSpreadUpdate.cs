@@ -18,6 +18,9 @@ public sealed class FireSpreadUpdateModule : ModuleBase
         _intervalMilliseconds = minimum + (maximum - minimum) / 2;
     }
 
+    public override void OnCreated(SimWorld world, GameObject self, GameObject? creator) =>
+        _ticksRemaining = ModuleRuntime.MillisecondsToTicks(_intervalMilliseconds, world.TickMilliseconds);
+
     public override void OnUpdate(SimWorld world, GameObject self)
     {
         if (self.FindModule<FlammableUpdateModule>() is not { IsBurning: true }) return;
