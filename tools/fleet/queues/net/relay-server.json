@@ -1,0 +1,7 @@
+{
+  "title": "Add a headless internet relay for native lockstep peers behind NAT",
+  "rank": 40,
+  "detail": "Implement a headless relay process that forwards the existing lockstep wire v1 reliable-channel messages without observing or running the simulation; retain direct ENet as the LAN path and prove reconnect plus an 8-seat 30-minute zero-desync run through the relay.",
+  "oracle": "scripted eight-peer internet-relay harness: 30 simulated minutes, zero desyncs, reconnect succeeds, replay bytes identical",
+  "status": "open"
+}

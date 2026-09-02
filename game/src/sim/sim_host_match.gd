@@ -3,6 +3,7 @@ extends Node3D
 ## First playable native-core match: host-owned simulation, snapshot-only view.
 
 const SimHostClientScript := preload("res://src/sim/sim_host_client.gd")
+const NativeLockstepSessionScript := preload("res://src/net/native_lockstep_session.gd")
 const NativeContentLocatorScript := preload("res://src/sim/native_content_locator.gd")
 const MapDocumentScript := preload("res://src/map/map_document.gd")
 const MapTerrainMeshScript := preload("res://src/map/map_terrain_mesh.gd")
@@ -11,6 +12,9 @@ const TICK_SECONDS := 1.0 / 30.0
 const PICK_RADIUS_PIXELS := 32.0
 
 var _client
+var _lockstep
+var _mp_active := false
+var _mp_status_label: Label
 var _renderer
 var _camera_rig
 var _selection_box: ColorRect
@@ -69,6 +73,17 @@ func _process(delta: float) -> void:
 	_profile_draw_max_usec = maxi(_profile_draw_max_usec, draw_usec)
 	_profile_frames += 1
 	_accumulator += minf(delta, 0.25)
+	if _mp_active:
+		_lockstep.poll()
+		if _accumulator >= TICK_SECONDS:
+			var snapshot: Dictionary = _lockstep.step()
+			if not snapshot.is_empty():
+				_accept_snapshot(snapshot)
+				_accumulator -= TICK_SECONDS
+			else:
+				_accumulator = minf(_accumulator, TICK_SECONDS)
+		_renderer.render_interpolated(clampf(_accumulator / TICK_SECONDS, 0.0, 1.0))
+		return
 	var snapshots: Array[Dictionary] = _client.take_stream_snapshots()
 	for snapshot in snapshots:
 		_accept_snapshot(snapshot)
@@ -92,7 +107,7 @@ func _unhandled_input(event: InputEvent) -> void:
 			get_viewport().set_input_as_handled()
 		elif key_event.keycode == KEY_S:
 			_send_player_bundle(make_command_bundle(
-				_tick + 1, 0, _player_seq, "stop", _selected_hordes
+				_tick + 1, _local_player_seat(), _player_seq, "stop", _selected_hordes
 			))
 			get_viewport().set_input_as_handled()
 	if not (event is InputEventMouseButton or event is InputEventMouseMotion):
@@ -138,11 +153,17 @@ func _start_match() -> void:
 	if not FileAccess.file_exists(bundle_path):
 		_fail("bundle is absent at %s" % bundle_path)
 		return
+	var host_requested := OS.get_environment("OPENBFME_MP_HOST") == "1"
+	var join_requested := OS.get_environment("OPENBFME_MP_JOIN").strip_edges()
+	_mp_active = host_requested or not join_requested.is_empty()
 	var players := match.get("players", []) as Array
-	if players.size() >= 2:
+	if players.size() >= 2 and not _mp_active:
 		var opponent := players[1] as Dictionary
 		opponent["controller"] = "ai"
 		opponent["ai_difficulty"] = "medium"
+	elif players.size() >= 2 and not (players[1] as Dictionary).has("controller"):
+		# Multiplayer seats are human unless the launch explicitly marks AI.
+		(players[1] as Dictionary)["controller"] = "human"
 	if FileAccess.file_exists(map_path):
 		_map_document = MapDocumentScript.new()
 		if not _map_document.load_path(map_path):
@@ -216,9 +237,13 @@ func _start_match() -> void:
 	_renderer.reset_profile()
 	_profile_started_msec = Time.get_ticks_msec()
 	_profile_next_msec = _profile_started_msec + 5000
-	if not _client.start_packed_stream():
-		_fail("step stream: %s" % _client.last_error())
-		return
+	if _mp_active:
+		if not _start_lockstep(match, bundle_path, map_path, host_requested, join_requested):
+			return
+	else:
+		if not _client.start_packed_stream():
+			_fail("step stream: %s" % _client.last_error())
+			return
 	print(
 		"SIM_HOST_MATCH_READY hordes=%d members=%d tick=%d loaded=%d failed=%d"
 		% [
@@ -397,11 +422,11 @@ static func make_command_bundle(
 
 
 static func right_click_command_from_pick(
-	objects: Array[int], tick: int, seq: int, enemy_horde: int, ground: Vector2
+	objects: Array[int], tick: int, seq: int, enemy_horde: int, ground: Vector2, seat: int = 0
 ) -> Dictionary:
 	return make_command_bundle(
 		tick,
-		0,
+		seat,
 		seq,
 		"attack" if enemy_horde > 0 else "move",
 		objects,
@@ -430,7 +455,7 @@ func _handle_left_button(button: InputEventMouseButton) -> void:
 			var point := hit as Vector3
 			_send_player_bundle(make_command_bundle(
 				_tick + 1,
-				0,
+				_local_player_seat(),
 				_player_seq,
 				"attack_move",
 				_selected_hordes,
@@ -447,7 +472,9 @@ func _handle_left_button(button: InputEventMouseButton) -> void:
 		var rect := _screen_rect(_drag_start, button.position)
 		if rect.size.length() < 8.0:
 			rect = Rect2(button.position - Vector2(12.0, 12.0), Vector2(24.0, 24.0))
-		_selected_hordes = selection_from_screen_points(_horde_screen_points(), rect, 0)
+		_selected_hordes = selection_from_screen_points(
+			_horde_screen_points(), rect, _local_player_seat()
+		)
 		_dragging = false
 		_selection_box.visible = false
 		_update_selection_rings()
@@ -463,13 +490,20 @@ func _handle_right_click(screen_position: Vector2) -> void:
 		return
 	var point := hit as Vector3
 	_send_player_bundle(right_click_command_from_pick(
-		_selected_hordes, _tick + 1, _player_seq, enemy, Vector2(point.x, point.z)
+		_selected_hordes, _tick + 1, _player_seq, enemy, Vector2(point.x, point.z),
+		_local_player_seat()
 	))
 	get_viewport().set_input_as_handled()
 
 
 func _send_player_bundle(bundle: Dictionary) -> void:
 	if bundle.is_empty():
+		return
+	if _mp_active:
+		if _lockstep.local_commands(bundle):
+			_player_seq += 1
+		else:
+			_fail("lockstep refused local command: %s" % _lockstep.last_error())
 		return
 	var scheduled := bundle.duplicate(true)
 	if _client.is_streaming():
@@ -499,8 +533,9 @@ func _horde_screen_points() -> Array[Dictionary]:
 func _enemy_horde_at(screen_position: Vector2) -> int:
 	var best_id := 0
 	var best_distance := PICK_RADIUS_PIXELS
+	var local_seat := _local_player_seat()
 	for row in _horde_screen_points():
-		if int(row.get("owner", -1)) != 1:
+		if int(row.get("owner", -1)) == local_seat:
 			continue
 		var distance_pixels := screen_position.distance_to(row.get("point", Vector2.ZERO))
 		if distance_pixels <= best_distance:
@@ -541,11 +576,18 @@ func _horde_centroid(horde_id: int) -> Vector3:
 func _player_centroid() -> Vector3:
 	var sum := Vector3.ZERO
 	var count := 0
+	var local_seat := _local_player_seat()
 	for id in _spawned_hordes:
-		if int(_horde_owners.get(id, -1)) == 0 and _horde_exists(id):
+		if int(_horde_owners.get(id, -1)) == local_seat and _horde_exists(id):
 			sum += _horde_centroid(id)
 			count += 1
 	return Vector3(1200.0, 0.0, 800.0) if count == 0 else sum / float(count)
+
+
+func _local_player_seat() -> int:
+	if _mp_active and _lockstep != null and _lockstep.local_seat >= 0:
+		return _lockstep.local_seat
+	return 0
 
 
 func _horde_exists(horde_id: int) -> bool:
@@ -605,6 +647,9 @@ static func _screen_rect(first: Vector2, second: Vector2) -> Rect2:
 
 func shutdown() -> bool:
 	_running = false
+	if _lockstep != null:
+		_lockstep.shutdown()
+		_lockstep = null
 	if _client == null:
 		_print_replay_path()
 		return true
@@ -657,6 +702,75 @@ func _fail(message: String) -> void:
 	if _client != null:
 		_client.quit()
 		_client = null
+
+
+func _start_lockstep(
+	match: Dictionary,
+	bundle_path: String,
+	map_path: String,
+	host_requested: bool,
+	join_requested: String
+) -> bool:
+	var bundle_document := _load_json(bundle_path)
+	var bundle_source := bundle_document.get("source", {}) as Dictionary
+	var bundle_identity := String(bundle_source.get("effective_tree_sha256", ""))
+	var map_identity := String((match.get("map", {}) as Dictionary).get("sha256", ""))
+	if map_identity.is_empty() and not map_path.is_empty():
+		var map_document := _load_json(map_path)
+		map_identity = String((map_document.get("source", {}) as Dictionary).get("sha256", ""))
+	if map_identity.is_empty():
+		map_identity = String((match.get("map", {}) as Dictionary).get("path", "mapless"))
+	var input_ticks := maxi(1, int(OS.get_environment("OPENBFME_MP_INPUT_DELAY"))) \
+		if not OS.get_environment("OPENBFME_MP_INPUT_DELAY").is_empty() else 3
+	var hash_ticks := maxi(1, int(OS.get_environment("OPENBFME_MP_HASH_INTERVAL"))) \
+		if not OS.get_environment("OPENBFME_MP_HASH_INTERVAL").is_empty() else 30
+	_lockstep = NativeLockstepSessionScript.new()
+	var report_path := _repo_path("workspace/logs/lane-net-b/desync-match.json")
+	if not _lockstep.configure(
+		_client, match, bundle_identity, map_identity, input_ticks, hash_ticks, report_path
+	):
+		_fail(_lockstep.last_error())
+		return false
+	_lockstep.status_changed.connect(_show_mp_message)
+	_lockstep.desync_detected.connect(_on_lockstep_desync)
+	var port := 7777
+	if not OS.get_environment("OPENBFME_MP_PORT").is_empty():
+		port = int(OS.get_environment("OPENBFME_MP_PORT"))
+	var result: Error
+	if host_requested:
+		result = _lockstep.host(port)
+	else:
+		var split := join_requested.rsplit(":", true, 1)
+		if split.size() != 2 or int(split[1]) < 1:
+			_fail("OPENBFME_MP_JOIN must be host:port")
+			return false
+		result = _lockstep.join(String(split[0]), int(split[1]))
+	if result != OK:
+		_fail(_lockstep.last_error())
+		return false
+	_show_mp_message("Native lockstep starting")
+	return true
+
+
+func _show_mp_message(message: String) -> void:
+	if _mp_status_label == null:
+		_mp_status_label = Label.new()
+		_mp_status_label.name = "MultiplayerStatus"
+		_mp_status_label.position = Vector2(24.0, 24.0)
+		_mp_status_label.add_theme_font_size_override("font_size", 22)
+		_mp_status_label.add_theme_color_override("font_color", Color.WHITE)
+		_mp_status_label.add_theme_color_override("font_shadow_color", Color.BLACK)
+		_mp_status_label.add_theme_constant_override("shadow_offset_x", 2)
+		_mp_status_label.add_theme_constant_override("shadow_offset_y", 2)
+		get_node("Overlay").add_child(_mp_status_label)
+	_mp_status_label.text = message
+	_mp_status_label.visible = true
+
+
+func _on_lockstep_desync(tick: int, _local_hash: String, _remote_hash: String, report_path: String) -> void:
+	_show_mp_message("DESYNC at tick %d - paused%s" % [
+		tick, "\nReport: %s" % report_path if not report_path.is_empty() else ""
+	])
 
 
 func _load_json(path: String) -> Dictionary:

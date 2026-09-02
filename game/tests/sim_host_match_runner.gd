@@ -183,6 +183,10 @@ func _test_input_mappings() -> void:
 		points, Rect2(80.0, 80.0, 80.0, 80.0), 0
 	)
 	_check("selection_mapping_player_zero", selected == [100000])
+	var guest_selected: Array[int] = SimHostMatchScript.selection_from_screen_points(
+		points, Rect2(80.0, 80.0, 80.0, 80.0), 1
+	)
+	_check("selection_mapping_guest_seat", guest_selected == [100004])
 	var attack: Dictionary = SimHostMatchScript.right_click_command_from_pick(
 		selected, 7, 2, 100004, Vector2(50.0, 60.0)
 	)
@@ -191,13 +195,20 @@ func _test_input_mappings() -> void:
 		selected, 8, 3, 0, Vector2(50.0, 60.0)
 	)
 	_check("right_click_ground_command_well_formed", _well_formed_bundle(move, "move"))
+	var guest_move: Dictionary = SimHostMatchScript.right_click_command_from_pick(
+		guest_selected, 9, 4, 0, Vector2(50.0, 60.0), 1
+	)
+	_check(
+		"right_click_guest_command_uses_guest_seat",
+		_well_formed_bundle(guest_move, "move", 1)
+	)
 
 
-func _well_formed_bundle(bundle: Dictionary, expected_type: String) -> bool:
+func _well_formed_bundle(bundle: Dictionary, expected_type: String, expected_seat: int = 0) -> bool:
 	if (
 		String(bundle.get("schema", "")) != "openbfme.command.v1"
 		or int(bundle.get("tick", 0)) < 1
-		or int(bundle.get("seat", -1)) != 0
+		or int(bundle.get("seat", -1)) != expected_seat
 		or int(bundle.get("seq", -1)) < 0
 	):
 		return false
