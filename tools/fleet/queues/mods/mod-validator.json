@@ -1,8 +1,8 @@
 {
-  "detail": "python tools/openbfme_import.py validate-mod --install X --mod Y. Depends on the generic cook (cook queue). Output is a list, never a crash.",
+  "detail": "python -m openbfme_importer.cook.validate --ini-root BASE --mod MODDIR [--json FILE]: cooks base plus loose-file mods and names every dangling reference with file and line; exit 0 clean or gap-only, 1 failures, 2 usage.",
   "done_at": "2026-09-02",
   "done_by": "lane-cook-d",
-  "oracle": "python -m pytest importer/tests/test_mod_validator.py -q",
+  "oracle": "python -m pytest importer/tests/test_cook_validate.py -q   # python -m openbfme_importer.cook.validate --ini-root BASE --mod DIR",
   "rank": 10,
   "status": "done",
   "title": "Mod validator: layer a mod folder on the install and name every broken reference"
