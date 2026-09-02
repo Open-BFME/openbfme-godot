@@ -113,12 +113,12 @@ public sealed partial class SimWorld
         var hordeSpec = template.Modules.FirstOrDefault(module => module.TypeName == HordeContainModule.TypeName);
         if (hordeSpec == null)
         {
-            var unit = SpawnObject(templateName, producer.Team, exitPosition);
+            var unit = SpawnObjectFrom(templateName, producer.Team, exitPosition, producer);
             ApplyRallyOrder(unit, rallyPoint);
             return;
         }
 
-        var carrier = SpawnObject(templateName, producer.Team, exitPosition);
+        var carrier = SpawnObjectFrom(templateName, producer.Team, exitPosition, producer);
         var contain = carrier.FindModule<HordeContainModule>()!;
         var memberTemplate = !string.IsNullOrWhiteSpace(template.Economy.HordeMemberTemplate)
             ? template.Economy.HordeMemberTemplate
@@ -130,7 +130,7 @@ public sealed partial class SimWorld
         var members = new int[contain.MemberCount];
         for (var index = 0; index < members.Length; index++)
         {
-            var member = SpawnObject(memberTemplate, producer.Team, exitPosition);
+            var member = SpawnObjectFrom(memberTemplate, producer.Team, exitPosition, producer);
             members[index] = member.Id;
             ApplyRallyOrder(member, rallyPoint);
         }
@@ -286,6 +286,7 @@ public sealed partial class SimWorld
             structure.FindModule<GettingBuiltModule>()!.StartConstruction(this, structure);
             _buildPlots[(baseObject.Id, plotIndex)] = plot with { OccupantObjectId = structure.Id };
             RaiseEvent(new SimEvent("build_start", structure.Id, Target: baseObject.Id, Name: templateName));
+            baseObject.FindModule<FoundationAIUpdateModule>()?.CompleteFoundation(this, baseObject);
         }
     }
 

@@ -197,10 +197,21 @@ public sealed partial class SimWorld
         }
         if (!TryPowerTarget(command, caster, out var targetId, out var position)) return;
 
-        foreach (var module in caster.Modules)
-            if (module is SpecialPowerEffectModuleBase effect && effect.Matches(power))
-                effect.Cast(this, caster, targetId, position);
-        RaiseEvent(new SimEvent("ability", caster.Id, targetId == 0 ? null : targetId, Name: power.Name));
+        var driver = caster.Modules
+            .OfType<TimedSpecialAbilityModuleBase>()
+            .FirstOrDefault(effect => effect.Matches(power));
+        if (driver != null)
+        {
+            driver.Cast(this, caster, targetId, position);
+            if (!driver.CastAccepted) return;
+        }
+        else
+        {
+            foreach (var module in caster.Modules)
+                if (module is SpecialPowerEffectModuleBase effect && effect.Matches(power))
+                    effect.Cast(this, caster, targetId, position);
+            RaiseEvent(new SimEvent("ability", caster.Id, targetId == 0 ? null : targetId, Name: power.Name));
+        }
         _powerReadyTicks[command.Team][power.Name] = checked(TickIndex + power.ReloadTicks(TickMilliseconds));
     }
 

@@ -99,7 +99,11 @@ public sealed class CombatSystem
             {
                 continue;
             }
-            var weapon = WeaponFor(gameObject);
+            var currentTarget = state.EngagedTargetId != 0
+                && world.Objects.TryGetValue(state.EngagedTargetId, out var selectedTarget)
+                    ? selectedTarget
+                    : null;
+            var weapon = WeaponFor(gameObject, currentTarget);
             if (weapon == null) continue;
             RefreshTarget(world, gameObject, state, weapon);
             if (state.EngagedTargetId != 0
@@ -125,9 +129,10 @@ public sealed class CombatSystem
             if (state == null) continue;
             ResolvePendingImpacts(world, attacker, state);
             if (attacker.IsDead || attacker.IsDying || attacker.IsUnderConstruction) continue;
-            var weapon = WeaponFor(attacker);
-            if (weapon == null || state.EngagedTargetId == 0) continue;
-            if (!world.Objects.TryGetValue(state.EngagedTargetId, out var target)
+            if (state.EngagedTargetId == 0
+                || !world.Objects.TryGetValue(state.EngagedTargetId, out var target)) continue;
+            var weapon = WeaponFor(attacker, target);
+            if (weapon == null
                 || !IsHostileTarget(attacker, target)
                 || !IsWithinWeaponRange(attacker, target, weapon))
             {
@@ -399,7 +404,9 @@ public sealed class CombatSystem
         DamageNugget nugget,
         MetaImpactNugget? metaImpact)
     {
-        var amount = nugget.Damage * ArmorMultiplier(target, nugget.DamageType);
+        var amount = nugget.Damage
+            * world.OutgoingDamageMultiplier(attackerId)
+            * ArmorMultiplier(target, nugget.DamageType);
         var applied = world.ApplyCombatDamage(target, amount, nugget.DamageType);
         if (applied > Fixed64.Zero)
         {
@@ -452,11 +459,52 @@ public sealed class CombatSystem
         return armor.MultiplierFor(damageType);
     }
 
-    private WeaponTemplate? WeaponFor(GameObject gameObject)
+    private WeaponTemplate? WeaponFor(GameObject gameObject, GameObject? target = null)
     {
         var set = SelectWeaponSet(gameObject.Template.WeaponSets, gameObject.Combat?.Conditions);
         var name = set?.PrimaryWeaponName;
+        if (set != null && target != null
+            && gameObject.FindModule<DualWeaponBehaviorModule>() is { } dual
+            && dual.UseSecondary(gameObject, target)
+            && set.Weapons.TryGetValue(WeaponSlot.SECONDARY, out var secondary))
+        {
+            name = secondary;
+        }
         return name != null && _config.WeaponTemplates.TryGetValue(name, out var weapon) ? weapon : null;
+    }
+
+    internal bool FireWeaponOnce(SimWorld world, GameObject attacker, GameObject target, string weaponName)
+    {
+        if (!_config.WeaponTemplates.TryGetValue(weaponName, out var weapon)
+            || target.IsDead || target.IsDying) return false;
+        world.RaiseEvent(new SimEvent("fire", attacker.Id, target.Id, Name: weapon.Name));
+        for (var index = 0; index < weapon.DamageNuggets.Count; index++)
+            ApplyNugget(world, attacker.Id, attacker.Team, target.Id, target.Position,
+                weapon.DamageNuggets[index], index == 0 ? weapon.MetaImpact : null);
+        return true;
+    }
+
+    internal bool FireWeaponAtPosition(
+        SimWorld world,
+        GameObject attacker,
+        string weaponName,
+        FixedVector2 position)
+    {
+        if (!_config.WeaponTemplates.TryGetValue(weaponName, out var weapon)) return false;
+        var target = world.Objects.Values
+            .Where(value => value.Team != attacker.Team && !value.IsDead && !value.IsDying)
+            .OrderBy(value => value.Position.DistanceSquaredTo(position))
+            .ThenBy(value => value.Id)
+            .FirstOrDefault();
+        world.RaiseEvent(new SimEvent("fire", attacker.Id, target?.Id, Name: weapon.Name));
+        for (var index = 0; index < weapon.DamageNuggets.Count; index++)
+        {
+            var nugget = weapon.DamageNuggets[index];
+            if (nugget.Radius <= Fixed64.Zero && target == null) continue;
+            ApplyNugget(world, attacker.Id, attacker.Team, target?.Id ?? 0, position,
+                nugget, index == 0 ? weapon.MetaImpact : null);
+        }
+        return true;
     }
 
     private static WeaponSet? SelectWeaponSet(
