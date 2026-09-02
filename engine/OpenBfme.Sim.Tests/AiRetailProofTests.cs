@@ -14,6 +14,26 @@ public sealed class AiRetailProofTests
     public AiRetailProofTests(ITestOutputHelper output) => _output = output;
 
     [Fact]
+    public void AnnihilationIgnoresDestroyedPersistentBuildingFoundations()
+    {
+        var building = new ModuleSpec(BuildingBehaviorModule.TypeName);
+        var template = new ObjectTemplate(
+            "fortress",
+            new[] { building },
+            bodyHealth: new BodyHealthTemplate(Fixed64.FromInt(100)),
+            kindOf: new[] { "STRUCTURE" });
+        var world = new SimWorld(
+            new SimConfig(new[] { template }, randomSeed: 19, teamCount: 2),
+            ModuleRegistry.CreateDefault());
+        var fortress = world.SpawnObject("fortress", 1, At(0, 0));
+
+        world.DealDamage(fortress, 100);
+
+        Assert.True(fortress.IsDying);
+        Assert.False(HasStructure(world, 1));
+    }
+
+    [Fact]
     public void MenHardVsMordorMediumRetailProofReportsHonestOutcomeAndTwinHash()
     {
         var path = CorpusPath();
@@ -308,7 +328,8 @@ public sealed class AiRetailProofTests
             + Math.Max(0, value.Health.ToIntFloor()));
 
     private static bool HasStructure(SimWorld world, int team) => world.Objects.Values.Any(value =>
-        value.Team == team && (AiTemplateRoles.Classify(value.Template) & AiUnitRole.Structure) != 0);
+        value.Team == team && !value.IsDead && !value.IsDying
+            && (AiTemplateRoles.Classify(value.Template) & AiUnitRole.Structure) != 0);
 
     private static string Winner(SimWorld world)
     {
