@@ -16,6 +16,7 @@ public sealed class SimConfig
     public IReadOnlyDictionary<string, ArmorTemplate> ArmorTemplates { get; }
     public TechCatalog Tech { get; }
     public long MaxCommandPoints { get; }
+    public IAiBuildListProvider? AiBuildLists { get; }
     private readonly IReadOnlyDictionary<string, int> _templateIndices;
 
     public SimConfig(
@@ -28,7 +29,8 @@ public sealed class SimConfig
         IEnumerable<ArmorTemplate>? armorTemplates = null,
         long maxCommandPoints = 0,
         IReadOnlyDictionary<string, int>? templateIndices = null,
-        TechCatalog? tech = null)
+        TechCatalog? tech = null,
+        IAiBuildListProvider? aiBuildLists = null)
     {
         if (teamCount < 1)
         {
@@ -69,6 +71,7 @@ public sealed class SimConfig
         Tech = tech ?? TechCatalog.Empty;
         if (maxCommandPoints < 0) throw new ArgumentOutOfRangeException(nameof(maxCommandPoints));
         MaxCommandPoints = maxCommandPoints;
+        AiBuildLists = aiBuildLists;
     }
 
     public int TemplateIndexOf(string templateName) => _templateIndices[templateName];
@@ -186,6 +189,22 @@ public sealed partial class SimWorld
         InitializeLaunch(launch);
     }
 
+    public SimWorld(
+        MatchLaunch launch,
+        SimConfig config,
+        ModuleRegistry? registry = null,
+        PassabilityGrid? passabilityGrid = null)
+        : this(
+            config ?? throw new ArgumentNullException(nameof(config)),
+            registry ?? ModuleRegistry.CreateDefault(),
+            launch?.Rules.TickMilliseconds ?? throw new ArgumentNullException(nameof(launch)),
+            passabilityGrid)
+    {
+        if (launch.Players.Max(player => player.Team) >= config.TeamCount)
+            throw new ArgumentException("Launch player team is outside the supplied SimConfig", nameof(launch));
+        InitializeLaunch(launch);
+    }
+
     private void InitializeLaunch(MatchLaunch launch)
     {
         _playerTeams = launch.Players.Select(player => player.Team).ToArray();
@@ -203,6 +222,7 @@ public sealed partial class SimWorld
                 _teamResources[team] = launch.Rules.StartingResources;
             }
         }
+        InitializeAi(launch);
     }
 
     public static SimWorld FromBundle(
@@ -383,6 +403,7 @@ public sealed partial class SimWorld
     public void Tick()
     {
         _eventsThisTick.Clear();
+        RunAiForTick(checked(TickIndex + 1));
         TickIndex++;
         BeginPhase(SimTickPhase.Commands);
         ApplyPendingCommands();
@@ -693,6 +714,7 @@ public sealed partial class SimWorld
         WriteMovementExtension(writer);
         WriteEconomyExtension(writer);
         WriteTechExtension(writer);
+        WriteAiExtension(writer);
     }
 
     public string StateHash()

@@ -119,7 +119,8 @@ public static class BundleTemplateLoader
                     unresolved["command_set"].Add(new BundleReferenceIssue(row.Name, commandSetName));
                 templates.Add(new ObjectTemplate(
                     row.Name, specs, weaponSets, armorSets, body,
-                    BuildEconomy(effective), commandSetName, techEnabled: !tech.IsEmpty));
+                    BuildEconomy(effective), commandSetName, techEnabled: !tech.IsEmpty,
+                    side: effective.Side ?? "", kindOf: effective.KindOf));
                 indices.Add(row.Name, row.Index);
                 gaps.AddRange(templateGaps);
             }
