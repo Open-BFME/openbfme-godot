@@ -29,7 +29,8 @@ public sealed class LinearMoverModule : ModuleBase
 
     public override void OnUpdate(SimWorld world, GameObject self)
     {
-        if (!_moving)
+        var movementMultiplier = world.MovementMultiplier(self);
+        if (!_moving || movementMultiplier <= Fixed64.Zero)
         {
             return;
         }
@@ -45,13 +46,14 @@ public sealed class LinearMoverModule : ModuleBase
             return;
         }
         var distance = Fixed64.Sqrt(distanceSquared);
-        if (distance <= _speedPerTick)
+        var speed = _speedPerTick * movementMultiplier;
+        if (distance <= speed)
         {
             self.SetPosition(_destination);
             _moving = false;
             return;
         }
-        var step = offset * (_speedPerTick / distance);
+        var step = offset * (speed / distance);
         self.SetPosition(self.Position + step);
     }
 

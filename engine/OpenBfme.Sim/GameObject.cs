@@ -58,6 +58,13 @@ public sealed class GameObject
 
     public void MarkDying() => IsDying = true;
 
+    internal void RestoreFromRebuild(Fixed64 health)
+    {
+        IsDead = false;
+        IsDying = false;
+        SetConstructionHealth(health);
+    }
+
     public void SetUnderConstruction(bool value) => IsUnderConstruction = value;
 
     internal (Fixed64 Initial, Fixed64 Maximum) ConstructionHealthBounds()
@@ -113,6 +120,7 @@ public sealed class GameObject
 
     public Fixed64 Health => Combat?.HasBody == true ? Combat.Health : Fixed64.Zero;
     public Fixed64 MaxHealth => Combat?.HasBody == true ? Combat.MaxHealth : Fixed64.Zero;
+    public IReadOnlySet<string> ConditionTokens => Combat?.Conditions ?? EmptyUpgrades.Instance;
     public IReadOnlySet<string> OwnedUpgrades => _tech?.Upgrades ?? EmptyUpgrades.Instance;
     public string CurrentCommandSet => _tech?.CurrentCommandSet ?? Template.CommandSetName;
 
@@ -123,6 +131,20 @@ public sealed class GameObject
 
     internal void SetCurrentCommandSet(string name) =>
         (_tech ?? throw new InvalidOperationException("Object template has no tech state")).SetCommandSet(name);
+
+    internal bool TrySetCurrentCommandSet(string name)
+    {
+        if (_tech == null) return false;
+        _tech.SetCommandSet(name);
+        return true;
+    }
+
+    internal bool TrySetConditionToken(string token, bool enabled = true)
+    {
+        if (Combat == null) return false;
+        Combat.SetCondition(token, enabled);
+        return true;
+    }
 
     public T? FindModule<T>() where T : ModuleBase
     {

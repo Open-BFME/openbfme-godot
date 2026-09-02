@@ -345,7 +345,25 @@ public sealed partial class SimWorld
         int team,
         FixedVector2 position,
         Fixed64 elevation = default,
-        Fixed64 headingRadians = default)
+        Fixed64 headingRadians = default) =>
+        SpawnObjectInternal(templateName, team, position, elevation, headingRadians, creator: null);
+
+    internal GameObject SpawnObjectFrom(
+        string templateName,
+        int team,
+        FixedVector2 position,
+        GameObject creator,
+        Fixed64 elevation = default,
+        Fixed64 headingRadians = default) =>
+        SpawnObjectInternal(templateName, team, position, elevation, headingRadians, creator);
+
+    private GameObject SpawnObjectInternal(
+        string templateName,
+        int team,
+        FixedVector2 position,
+        Fixed64 elevation,
+        Fixed64 headingRadians,
+        GameObject? creator)
     {
         if (team < -1 || team >= _config.TeamCount)
         {
@@ -390,6 +408,7 @@ public sealed partial class SimWorld
         {
             _objects.Add(gameObject.Id, gameObject);
         }
+        foreach (var module in gameObject.Modules) module.OnCreated(this, gameObject, creator);
         ApplyOwnedPlayerUpgrades(gameObject);
         RaiseEvent(new SimEvent("spawn", gameObject.Id, Name: templateName));
         return gameObject;
@@ -602,6 +621,9 @@ public sealed partial class SimWorld
             case "power":
                 ApplyPowerCommand(command);
                 break;
+            case "ability":
+                ApplyAbilityCommand(command);
+                break;
             default:
                 // Unknown command types are ignored deterministically (validated upstream
                 // by the lockstep layer); they still affected the hash while queued.
@@ -615,6 +637,14 @@ public sealed partial class SimWorld
     {
         if (target.IsDead || target.IsDying)
         {
+            return;
+        }
+        if (target.Combat is { HasBody: true })
+        {
+            var typed = DamageTypeNames.TryParse(damageType, out var parsed) ? parsed : DamageType.DEFAULT;
+            var applied = ApplyCombatDamage(target, Fixed64.FromInt64(amount), typed);
+            if (applied > Fixed64.Zero)
+                RaiseEvent(new SimEvent("damage", target.Id, Amount: applied));
             return;
         }
         // Crush damage only lands on objects that declare themselves crushable.
@@ -642,6 +672,8 @@ public sealed partial class SimWorld
         {
             if (module.OnDamage(this, target, amount))
             {
+                foreach (var observer in target.Modules)
+                    observer.OnDamageReceived(this, target, Fixed64.FromInt64(amount), damageType);
                 return;
             }
         }
@@ -658,6 +690,7 @@ public sealed partial class SimWorld
             return;
         }
         RaiseEvent(new SimEvent("death", target.Id));
+        foreach (var module in target.Modules) module.OnDeathStarted(this, target);
         foreach (var module in target.Modules)
         {
             if (module.OnDeath(this, target))
