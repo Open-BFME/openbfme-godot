@@ -76,11 +76,27 @@ public sealed class ObjectTemplate
 {
     public string Name { get; }
     public IReadOnlyList<ModuleSpec> Modules { get; }
+    public IReadOnlyList<WeaponSet> WeaponSets { get; }
+    public IReadOnlyList<ArmorSet> ArmorSets { get; }
+    public BodyHealthTemplate? BodyHealth { get; }
 
-    public ObjectTemplate(string name, IReadOnlyList<ModuleSpec> modules)
+    public ObjectTemplate(
+        string name,
+        IReadOnlyList<ModuleSpec> modules,
+        IReadOnlyList<WeaponSet>? weaponSets = null,
+        IReadOnlyList<ArmorSet>? armorSets = null,
+        BodyHealthTemplate? bodyHealth = null)
     {
         Name = name ?? throw new ArgumentNullException(nameof(name));
         Modules = modules ?? throw new ArgumentNullException(nameof(modules));
+        WeaponSets = weaponSets?.ToArray() ?? Array.Empty<WeaponSet>();
+        ArmorSets = armorSets?.ToArray() ?? Array.Empty<ArmorSet>();
+        if (bodyHealth is { MaxHealth: var maximum, InitialHealth: var initial }
+            && (maximum <= Fixed64.Zero || initial < Fixed64.Zero || initial > maximum))
+        {
+            throw new ArgumentOutOfRangeException(nameof(bodyHealth));
+        }
+        BodyHealth = bodyHealth;
     }
 }
 
@@ -222,7 +238,7 @@ public abstract class TimedDeathModuleBase : ModuleBase
         _ticksRemaining--;
         if (_ticksRemaining <= 0)
         {
-            self.MarkDead();
+            world.CompleteClaimedDeath(self, this);
         }
     }
 

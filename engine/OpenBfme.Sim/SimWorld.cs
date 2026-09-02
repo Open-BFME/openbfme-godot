@@ -10,6 +10,8 @@ public sealed class SimConfig
     public int TeamCount { get; }
     public int MapWidthCells { get; }
     public int MapHeightCells { get; }
+    public IReadOnlyDictionary<string, WeaponTemplate> WeaponTemplates { get; }
+    public IReadOnlyDictionary<string, ArmorTemplate> ArmorTemplates { get; }
     private readonly IReadOnlyDictionary<string, int> _templateIndices;
 
     public SimConfig(
@@ -17,7 +19,9 @@ public sealed class SimConfig
         ulong randomSeed,
         int teamCount,
         int mapWidthCells = 512,
-        int mapHeightCells = 512)
+        int mapHeightCells = 512,
+        IEnumerable<WeaponTemplate>? weaponTemplates = null,
+        IEnumerable<ArmorTemplate>? armorTemplates = null)
     {
         if (teamCount < 1)
         {
@@ -44,9 +48,23 @@ public sealed class SimConfig
         TeamCount = teamCount;
         MapWidthCells = mapWidthCells;
         MapHeightCells = mapHeightCells;
+        WeaponTemplates = NamedTemplates(weaponTemplates, value => value.Name);
+        ArmorTemplates = NamedTemplates(armorTemplates, value => value.Name);
     }
 
     public int TemplateIndexOf(string templateName) => _templateIndices[templateName];
+
+    private static IReadOnlyDictionary<string, T> NamedTemplates<T>(
+        IEnumerable<T>? values,
+        Func<T, string> name)
+    {
+        var result = new SortedDictionary<string, T>(StringComparer.Ordinal);
+        if (values != null)
+        {
+            foreach (var value in values) result.Add(name(value), value);
+        }
+        return result;
+    }
 }
 
 /// <summary>
@@ -87,6 +105,7 @@ public sealed partial class SimWorld
     public IReadOnlyList<SimEvent> EventsThisTick => _eventsThisTick;
     public IReadOnlyList<SnapshotHorde> Hordes => _hordes;
     public MovementSystem Movement { get; }
+    public CombatSystem Combat { get; }
     public PassabilityGrid PassabilityGrid => Movement.Grid;
     /// <summary>Module type names that had no registered implementation, with occurrence counts. Fail-closed accounting.</summary>
     public IReadOnlyDictionary<string, int> ModuleGaps => _moduleGaps;
@@ -111,6 +130,7 @@ public sealed partial class SimWorld
         TickMilliseconds = tickMilliseconds;
         Movement = new MovementSystem(passabilityGrid
             ?? PassabilityGrid.Uniform(config.MapWidthCells, config.MapHeightCells));
+        Combat = new CombatSystem(config);
         _teamResources = new long[config.TeamCount];
         _playerTeams = Enumerable.Range(0, config.TeamCount).ToArray();
         _commandPoints = new long[config.TeamCount];
@@ -247,7 +267,7 @@ public sealed partial class SimWorld
             }
         }
         var gameObject = new GameObject(
-            _nextObjectId++, templateName, team, position, modules, elevation, headingRadians);
+            _nextObjectId++, template, team, position, modules, elevation, headingRadians);
         gameObject.StoreSlot = ObjectStore.Allocate(gameObject.Id);
         SynchronizeObject(gameObject);
         if (_inUpdateSweep)
@@ -290,7 +310,9 @@ public sealed partial class SimWorld
         _eventsThisTick.Clear();
         TickIndex++;
         ApplyPendingCommands();
+        Combat.PrepareMovement(this);
         Movement.Tick(this);
+        Combat.Resolve(this);
         // The object dictionary is frozen for the whole sweep: mid-sweep spawns
         // divert to _pendingSpawns (so modules scanning Objects never see it
         // mutate) and join afterwards, first updating next tick. Dead objects
@@ -389,9 +411,17 @@ public sealed partial class SimWorld
                     new FixedVector2(command.GetFixed("x"), command.GetFixed("y")));
                 break;
             case "move":
+                ApplyMovementCommand(command);
+                Combat.ApplyCommand(this, command, ownershipAlreadyChecked: true);
+                break;
             case "attack_move":
             case "stop":
                 ApplyMovementCommand(command);
+                Combat.ApplyCommand(this, command, ownershipAlreadyChecked: true);
+                break;
+            case "attack":
+            case "stance":
+                Combat.ApplyCommand(this, command);
                 break;
             case "damage":
                 if (_objects.TryGetValue((int)command.GetLong("id"), out var victim))
@@ -472,6 +502,10 @@ public sealed partial class SimWorld
     /// </summary>
     public void HandleDeath(GameObject target)
     {
+        if (target.IsDead || target.IsDying)
+        {
+            return;
+        }
         RaiseEvent(new SimEvent("death", target.Id));
         foreach (var module in target.Modules)
         {
@@ -497,6 +531,7 @@ public sealed partial class SimWorld
         {
             return;
         }
+        PruneDeadHordeMembers(deadIds);
         foreach (var id in deadIds)
         {
             ObjectStore.Free(_objects[id].StoreSlot);
@@ -637,8 +672,9 @@ public sealed partial class SimWorld
             }
         }
         var gameObject = new GameObject(
-            id, templateName, team, position, modules, elevation, headingRadians);
+            id, template, team, position, modules, elevation, headingRadians);
         gameObject.StoreSlot = ObjectStore.Allocate(id);
+        gameObject.Combat?.Read(reader);
         foreach (var module in modules)
         {
             module.ReadState(reader);
@@ -682,6 +718,10 @@ public sealed partial class SimWorld
 
     private static (Fixed64 Health, Fixed64 MaxHealth) ReadHealth(GameObject gameObject)
     {
+        if (gameObject.Combat is { HasBody: true } combat)
+        {
+            return (combat.Health, combat.MaxHealth);
+        }
         if (gameObject.FindModule<ActiveBodyModule>() is { } active)
         {
             return (Fixed64.FromInt64(active.Health), Fixed64.FromInt64(active.MaxHealth));

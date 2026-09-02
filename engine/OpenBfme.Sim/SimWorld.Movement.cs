@@ -148,6 +148,14 @@ public sealed partial class SimWorld
         return null;
     }
 
+    internal SnapshotHorde? FindHordeForCombat(int id) => FindHorde(id);
+
+    internal void RecordCombatOwnershipDiagnostic(SimCommand command, int id, int ownerTeam) =>
+        RecordOwnershipDiagnostic(command, id, ownerTeam);
+
+    internal void RecordCombatDiagnostic(SimCommand command, int id, string code, string message) =>
+        RecordDiagnostic(command, id, code, message);
+
     private void RecordOwnershipDiagnostic(SimCommand command, int id, int ownerTeam) =>
         RecordDiagnostic(
             command,

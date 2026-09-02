@@ -5,6 +5,7 @@ public sealed class GameObject
     internal int StoreSlot { get; set; }
     public int Id { get; }
     public string TemplateName { get; }
+    public ObjectTemplate Template { get; }
     public int Team { get; }
     public FixedVector2 Position { get; private set; }
     /// <summary>Authoritative vertical placement in world units.</summary>
@@ -16,10 +17,11 @@ public sealed class GameObject
     public bool IsDying { get; private set; }
     public bool IsUnderConstruction { get; private set; }
     public IReadOnlyList<ModuleBase> Modules { get; }
+    internal CombatState? Combat { get; }
 
     internal GameObject(
         int id,
-        string templateName,
+        ObjectTemplate template,
         int team,
         FixedVector2 position,
         IReadOnlyList<ModuleBase> modules,
@@ -27,12 +29,17 @@ public sealed class GameObject
         Fixed64 headingRadians = default)
     {
         Id = id;
-        TemplateName = templateName;
+        Template = template ?? throw new ArgumentNullException(nameof(template));
+        TemplateName = template.Name;
         Team = team;
         Position = position;
         Elevation = elevation;
         HeadingRadians = headingRadians;
         Modules = modules;
+        if (template.BodyHealth != null || template.WeaponSets.Count > 0 || template.ArmorSets.Count > 0)
+        {
+            Combat = new CombatState(template);
+        }
     }
 
     public void SetPosition(FixedVector2 position) => Position = position;
@@ -49,6 +56,13 @@ public sealed class GameObject
     public void MarkDying() => IsDying = true;
 
     public void SetUnderConstruction(bool value) => IsUnderConstruction = value;
+
+    public void SetConditionToken(string token, bool enabled = true) =>
+        (Combat ?? throw new InvalidOperationException("Object template has no combat data"))
+            .SetCondition(token, enabled);
+
+    public Fixed64 Health => Combat?.HasBody == true ? Combat.Health : Fixed64.Zero;
+    public Fixed64 MaxHealth => Combat?.HasBody == true ? Combat.MaxHealth : Fixed64.Zero;
 
     public T? FindModule<T>() where T : ModuleBase
     {
@@ -73,6 +87,7 @@ public sealed class GameObject
         writer.WriteBool(IsDead);
         writer.WriteBool(IsDying);
         writer.WriteBool(IsUnderConstruction);
+        Combat?.Write(writer);
         foreach (var module in Modules)
         {
             module.WriteState(writer);
