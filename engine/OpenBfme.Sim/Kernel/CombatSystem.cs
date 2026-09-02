@@ -37,7 +37,9 @@ public sealed class CombatSystem
             }
             foreach (var gameObject in OwnedObjects(world, command, ids, ownershipAlreadyChecked))
             {
-                if (gameObject.Combat != null) gameObject.Combat.Stance = stance;
+                if (gameObject.Combat == null) continue;
+                gameObject.Combat.Stance = stance;
+                gameObject.FindModule<StancesBehaviorModule>()?.ApplyProfile(gameObject, stance);
             }
             return;
         }
@@ -166,6 +168,7 @@ public sealed class CombatSystem
         var range = weapon.AttackRange;
         if (state.Stance == UnitStance.Aggressive) range += AggressiveAcquireMargin;
         else if (state.OrderKind == CombatOrderKind.AttackMove) range += AttackMoveAcquireMargin;
+        if (state.OrderKind == CombatOrderKind.None && !IdleAcquisitionAllowed(world, attacker)) return;
         var targetId = FindNearestEnemy(attacker, range);
         if (targetId != 0)
         {
@@ -310,7 +313,9 @@ public sealed class CombatSystem
             }
             else
             {
-                ApplyNugget(world, attacker.Id, attacker.Team, target.Id, target.Position, nugget);
+                ApplyNugget(
+                    world, attacker.Id, attacker.Team, target.Id, target.Position, nugget,
+                    index == 0 ? weapon.MetaImpact : null);
             }
         }
         state.ShotsInClip++;
@@ -352,7 +357,8 @@ public sealed class CombatSystem
                 attacker.Team,
                 impact.TargetId,
                 impact.ImpactPoint,
-                weapon.DamageNuggets[impact.NuggetIndex]);
+                weapon.DamageNuggets[impact.NuggetIndex],
+                impact.NuggetIndex == 0 ? weapon.MetaImpact : null);
         }
     }
 
@@ -362,14 +368,15 @@ public sealed class CombatSystem
         int attackerTeam,
         int targetId,
         FixedVector2 impactPoint,
-        DamageNugget nugget)
+        DamageNugget nugget,
+        MetaImpactNugget? metaImpact)
     {
         if (nugget.Radius <= Fixed64.Zero)
         {
             if (world.Objects.TryGetValue(targetId, out var target)
                 && (nugget.FriendlyFire || target.Team != attackerTeam))
             {
-                ApplyDamage(world, attackerId, target, nugget);
+                ApplyDamage(world, attackerId, target, impactPoint, nugget, metaImpact);
             }
             return;
         }
@@ -379,19 +386,63 @@ public sealed class CombatSystem
             if (target.IsDead || target.IsDying || (!nugget.FriendlyFire && target.Team == attackerTeam)) continue;
             if (target.Position.DistanceSquaredTo(impactPoint) <= radiusSquared)
             {
-                ApplyDamage(world, attackerId, target, nugget);
+                ApplyDamage(world, attackerId, target, impactPoint, nugget, metaImpact);
             }
         }
     }
 
-    private void ApplyDamage(SimWorld world, int attackerId, GameObject target, DamageNugget nugget)
+    private void ApplyDamage(
+        SimWorld world,
+        int attackerId,
+        GameObject target,
+        FixedVector2 impactPoint,
+        DamageNugget nugget,
+        MetaImpactNugget? metaImpact)
     {
         var amount = nugget.Damage * ArmorMultiplier(target, nugget.DamageType);
         var applied = world.ApplyCombatDamage(target, amount, nugget.DamageType);
         if (applied > Fixed64.Zero)
         {
             world.RaiseEvent(new SimEvent("damage", attackerId, target.Id, applied));
+            var impulseOrigin = nugget.Radius > Fixed64.Zero
+                ? impactPoint
+                : world.Objects.TryGetValue(attackerId, out var attacker)
+                    ? attacker.Position
+                    : impactPoint;
+            ApplyMetaImpact(target, impulseOrigin, metaImpact);
         }
+    }
+
+    private static void ApplyMetaImpact(
+        GameObject target,
+        FixedVector2 impactPoint,
+        MetaImpactNugget? metaImpact)
+    {
+        if (metaImpact == null || metaImpact.Amount <= Fixed64.Zero
+            || target.FindModule<PhysicsBehaviorModule>() is not { } physics) return;
+        var force = metaImpact.Amount;
+        if (metaImpact.Radius > Fixed64.Zero)
+        {
+            var distance = Fixed64.Sqrt(target.Position.DistanceSquaredTo(impactPoint));
+            if (distance > metaImpact.Radius) return;
+            var falloff = Fixed64.Clamp(
+                Fixed64.One - distance / metaImpact.Radius * metaImpact.TaperOff,
+                Fixed64.Zero,
+                Fixed64.One);
+            force *= falloff;
+        }
+        physics.ApplyKnockback(impactPoint, target, force);
+    }
+
+    private bool IdleAcquisitionAllowed(SimWorld world, GameObject attacker)
+    {
+        if (attacker.FindModule<AIUpdateInterfaceModule>() is { } ai)
+            return ai.ShouldAutoAcquire(world, attacker);
+        if (_memberHordes.TryGetValue(attacker.Id, out var horde)
+            && world.Objects.TryGetValue(horde.Id, out var carrier)
+            && carrier.FindModule<HordeAIUpdateModule>() is { } hordeAi)
+            return hordeAi.ShouldAutoAcquire(world);
+        return true;
     }
 
     private Fixed64 ArmorMultiplier(GameObject target, DamageType damageType)
