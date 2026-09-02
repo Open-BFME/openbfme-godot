@@ -1,7 +1,9 @@
 {
-  "title": "Generic cook: Upgrade, Science, SpecialPower, CommandButton, CommandSet",
-  "rank": 30,
   "detail": "importer/cook/tech.py. spellbook_compiler.py already covers sciences and powers for the slice; lift the generic parts out of it.",
+  "done_at": "2026-09-02",
+  "done_by": "Codex Sol",
   "oracle": "python -m pytest importer/tests/test_cook_tech.py -q",
-  "status": "open"
+  "rank": 30,
+  "status": "done",
+  "title": "Generic cook: Upgrade, Science, SpecialPower, CommandButton, CommandSet"
 }

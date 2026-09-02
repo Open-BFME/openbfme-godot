@@ -17,6 +17,46 @@
       "name": "CookArmor"
     }
   ],
+  "command_buttons": [
+    {
+      "fields": {
+        "ButtonImage": "BICookUpgrade",
+        "Command": "OBJECT_UPGRADE",
+        "Object": "CookTarget",
+        "Options": [
+          "NEED_UPGRADE",
+          "CANCELABLE"
+        ],
+        "Science": "SCIENCE_CookKnowledge",
+        "SpecialPower": "SpecialPowerCookBeacon",
+        "TextLabel": "CONTROLBAR:CookUpgrade",
+        "Upgrade": "CookUpgrade"
+      },
+      "name": "Command_CookUpgrade"
+    }
+  ],
+  "command_sets": [
+    {
+      "entries": [
+        {
+          "button": "Command_CookUpgrade",
+          "slot": 4
+        },
+        {
+          "button": "Command_CookFirst",
+          "slot": 1
+        },
+        {
+          "button": "Command_CookLast",
+          "slot": 7
+        }
+      ],
+      "fields": {
+        "InitialVisible": 2
+      },
+      "name": "CookCommandSet"
+    }
+  ],
   "damage_fx": [
     {
       "fields": {
@@ -33,12 +73,16 @@
   "defines": {
     "COOK_ARMOR_PERCENT": "35%",
     "COOK_ATTACK_RANGE": 300,
+    "COOK_BUTTON_COMMAND": "OBJECT_UPGRADE",
     "COOK_COST": 725,
     "COOK_DAMAGE": 42,
     "COOK_HEALTH": 1200,
     "COOK_KINDOF": "PRELOAD SELECTABLE CAN_ATTACK",
     "COOK_LOCOMOTOR_SPEED": 60,
     "COOK_POSITION": 20,
+    "COOK_RELOAD_TIME": 90000,
+    "COOK_TECH_COST": 450,
+    "COOK_TECH_TIME": 12.5,
     "COOK_TIME": 15.5,
     "COOK_WEAPON_DAMAGE": 55
   },
@@ -121,8 +165,21 @@
     }
   ],
   "schema": "openbfme.bundle.v1",
+  "sciences": [
+    {
+      "fields": {
+        "IsGrantable": true,
+        "PrerequisiteSciences": [
+          "SCIENCE_CookRoot",
+          "SCIENCE_CookAlly"
+        ],
+        "SciencePurchasePointCost": 3
+      },
+      "name": "SCIENCE_CookKnowledge"
+    }
+  ],
   "source": {
-    "effective_tree_sha256": "f7a5a08e1192a56788dea9e7d3326a1ab0ea12e0e84864d9c4b790daac7b92fb",
+    "effective_tree_sha256": "cb87f11a40749309579b3d3239780c37968ab19c513c035b8de7b35b6ba758bf",
     "paths": [
       {
         "path": "data/ini/combat/constants.inc",
@@ -147,9 +204,31 @@
       {
         "path": "data/ini/objects/objects.inc",
         "sha256": "6d417be7d91aff44f2e22cbc77a1c4aa3b709eb909c243b0da51654e6f643406"
+      },
+      {
+        "path": "data/ini/tech/constants.inc",
+        "sha256": "cea417143470bfbec6a36145309698d1142d7dea3088e8e4ba6173ef084a46b8"
+      },
+      {
+        "path": "data/ini/tech/definitions.ini",
+        "sha256": "6e43d15c228ba32873d6028d632546828ae58be2ed445ad9055af99f0986a468"
       }
     ]
   },
+  "special_powers": [
+    {
+      "fields": {
+        "Enum": "SPECIAL_POWER_COOK_BEACON",
+        "PublicTimer": false,
+        "ReloadTime": 90000,
+        "RequiredScience": [
+          "SCIENCE_CookKnowledge",
+          "SCIENCE_CookAlly"
+        ]
+      },
+      "name": "SpecialPowerCookBeacon"
+    }
+  ],
   "templates": [
     {
       "blocks": [
@@ -412,6 +491,21 @@
       ],
       "name": "CookMalformed",
       "parent": null
+    }
+  ],
+  "upgrades": [
+    {
+      "fields": {
+        "BuildCost": 450,
+        "BuildTime": 12.5,
+        "Prerequisites": [
+          "CookForge",
+          "CookAcademy"
+        ],
+        "Tooltip": "CONTROLBAR:CookUpgrade",
+        "Type": "OBJECT"
+      },
+      "name": "CookUpgrade"
     }
   ],
   "weapons": [

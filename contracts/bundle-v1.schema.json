@@ -4,7 +4,7 @@
   "title": "OpenBFME cooked bundle v1",
   "description": "Deterministic, faction-independent effective-INI data consumed by the simulation and presentation layers. Template array indexes are the ids published by snapshot-v1 objects.template.",
   "type": "object",
-  "required": ["schema", "source", "templates", "weapons", "armors", "damage_fx", "locomotors", "locomotor_sets", "hordes", "defines", "diagnostics"],
+  "required": ["schema", "source", "templates", "weapons", "armors", "damage_fx", "locomotors", "locomotor_sets", "hordes", "upgrades", "sciences", "special_powers", "command_buttons", "command_sets", "defines", "diagnostics"],
   "additionalProperties": false,
   "$defs": {
     "scalar": {
@@ -111,6 +111,18 @@
             }
           }
         }
+      }
+    },
+    "commandSetEntry": {
+      "type": "object",
+      "required": ["slot", "button"],
+      "additionalProperties": false,
+      "properties": {
+        "slot": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "button": { "$ref": "#/$defs/scalar" }
       }
     }
   },
@@ -252,6 +264,46 @@
           "fields": {
             "$ref": "#/$defs/fields",
             "description": "HordeContain-family assignments other than RankInfo, plus the bound locomotor's MaxTurnWithoutReform when authored."
+          }
+        }
+      }
+    },
+    "upgrades": {
+      "type": "array",
+      "description": "Ordered effective Upgrade definitions. Fields retain every authored assignment, including Type, BuildCost, BuildTime, Prerequisites, and Tooltip.",
+      "items": { "$ref": "#/$defs/namedFields" }
+    },
+    "sciences": {
+      "type": "array",
+      "description": "Ordered effective Science definitions, including authored PrerequisiteSciences, SciencePurchasePointCost, and IsGrantable fields.",
+      "items": { "$ref": "#/$defs/namedFields" }
+    },
+    "special_powers": {
+      "type": "array",
+      "description": "Ordered effective SpecialPower definitions, including authored Enum, ReloadTime, RequiredScience, and PublicTimer fields.",
+      "items": { "$ref": "#/$defs/namedFields" }
+    },
+    "command_buttons": {
+      "type": "array",
+      "description": "Ordered effective CommandButton definitions, including authored Command, Object, Upgrade, Science, SpecialPower, Options, TextLabel, and ButtonImage fields.",
+      "items": { "$ref": "#/$defs/namedFields" }
+    },
+    "command_sets": {
+      "type": "array",
+      "description": "Ordered effective CommandSet definitions; entries preserve authored slot order.",
+      "items": {
+        "type": "object",
+        "required": ["name", "entries", "fields"],
+        "additionalProperties": false,
+        "properties": {
+          "name": { "type": "string", "minLength": 1 },
+          "entries": {
+            "type": "array",
+            "items": { "$ref": "#/$defs/commandSetEntry" }
+          },
+          "fields": {
+            "$ref": "#/$defs/fields",
+            "description": "Typed non-slot assignments such as InitialVisible."
           }
         }
       }
