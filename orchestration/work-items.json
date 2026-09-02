@@ -15791,7 +15791,7 @@
       "kind": "performance",
       "priority": "P1",
       "allocationClass": "worker-lane",
-      "status": "pending",
+      "status": "in-progress",
       "domainIds": [
         "runtime-performance"
       ],
@@ -15804,9 +15804,16 @@
         "P0-GODOT-UID-CLOSURE-001"
       ],
       "ownership": {
-        "state": "unassigned",
-        "assignee": null,
-        "ownedPaths": [],
+        "state": "assigned",
+        "assignee": "codex-perf-shipping-v1",
+        "ownedPaths": [
+          "game/src/retail_slice/retail_vertical_slice.gd",
+          "game/src/retail_slice/retail_battalion.gd",
+          "game/src/view/member_render_batcher.gd",
+          "game/tests/retail_far_batch_shipping_runner.gd",
+          "game/tests/retail_far_batch_shipping_runner.gd.uid",
+          "tools/gate-perf-present-shipping.ps1"
+        ],
         "candidatePaths": [
           "game/src/retail_slice/retail_vertical_slice.gd",
           "game/src/retail_slice/retail_battalion.gd",
