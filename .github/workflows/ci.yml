@@ -36,6 +36,7 @@ jobs:
   publication-boundary:
     name: publication boundary
     runs-on: windows-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -60,6 +61,7 @@ jobs:
   launcher-mcp:
     name: launcher MCP surface
     runs-on: windows-latest
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: tools/bfme-launcher-mcp
@@ -88,6 +90,7 @@ jobs:
   importer:
     name: importer suite
     runs-on: windows-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
@@ -124,6 +127,7 @@ jobs:
       matrix:
         os: [windows-latest, ubuntu-latest]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5.0.0
@@ -144,6 +148,7 @@ jobs:
     name: launcher security suite
     needs: publication-boundary
     runs-on: windows-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5.0.0
@@ -172,6 +177,7 @@ jobs:
   godot-exports:
     name: godot export (windows + linux)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     needs: [publication-boundary, engine]
     env:
       GODOT_VERSION: "4.7"
@@ -261,12 +267,14 @@ jobs:
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: openbfme-windows
+          retention-days: 7
           path: |
             dist/windows/
             dist/SHA256SUMS.txt
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: openbfme-linux
+          retention-days: 7
           path: |
             dist/linux/
             dist/SHA256SUMS.txt
@@ -298,6 +306,7 @@ jobs:
             asset: Godot_v4.7-stable_win64.exe.zip
             bin: Godot_v4.7-stable_win64_console.exe
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
     defaults:
       run:
         shell: bash
@@ -323,6 +332,16 @@ jobs:
           python -c "import zipfile,sys; zipfile.ZipFile(sys.argv[1]).extractall('.')" "${{ matrix.asset }}"
           chmod +x "${{ matrix.bin }}" || true
           test -f "${{ matrix.bin }}"
+
+      # `game/.godot/` is gitignored, so a fresh checkout has no global class
+      # cache and `class_name` types do not resolve. retail_slice_sim.gd
+      # annotates with SageScriptExecutor/SageScriptEnv, so without this pass it
+      # fails to parse, every dependent runner dies at load, and the runner then
+      # idles forever instead of exiting. godot-exports already does this; this
+      # job was the one that did not. Measured 2026-09-06: hangs without it,
+      # emits the pinned hash in seconds with it.
+      - name: Import project (build the global class cache)
+        run: '"$HOME/godot/${{ matrix.bin }}" --headless --path game --import'
       # Runs in this job because it needs a verified Godot and NOTHING else: the
       # diagnostics contract is pack-free by design, so it is one of the few
       # runners that can be gated on a public runner with no private content.
@@ -348,12 +367,14 @@ jobs:
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: sim-state-pin-${{ matrix.os }}
+          retention-days: 7
           path: pin-hash.txt
 
   sim-state-pin-compare:
     name: sim state pin agrees across platforms
     needs: sim-state-pin
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:

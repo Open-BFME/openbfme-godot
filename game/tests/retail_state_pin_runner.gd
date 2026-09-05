@@ -35,6 +35,7 @@ extends SceneTree
 
 const SimScript = preload("res://src/retail_slice/retail_slice_sim.gd")
 const FactionManifestScript = preload("res://src/retail_slice/retail_faction_manifest.gd")
+const Watchdog = preload("res://tests/runner_watchdog.gd")
 
 const PIN_TICKS := 3000
 
@@ -246,7 +247,14 @@ const EXPECTED_HASH := "2723894946831a3cf4ffecc7ad316cc0e27696a70597effca37dd3c4
 const SUBMIT_THROUGH_TICK := 1500
 
 
+var _watchdog := Watchdog.new()
+
+
 func _initialize() -> void:
+	# Without this, a GDScript runtime error in _run() unwinds past every quit()
+	# below and the headless process idles until CI's 6h ceiling kills it. That
+	# cost $63 of Actions time on 2026-08-09 alone.
+	_watchdog.start(self, "RETAIL_STATE_PIN")
 	call_deferred("_run")
 
 
@@ -258,6 +266,7 @@ func _run() -> void:
 			accepted = sim.submit_command(cmd) and accepted
 	if not accepted:
 		printerr("RETAIL_STATE_PIN FAIL a scripted command was rejected during submission")
+		_watchdog.stop()
 		quit(1)
 		return
 
@@ -290,9 +299,11 @@ func _run() -> void:
 				+ "simulation. Re-minting is the owner's decision alone."
 			) % [hash, EXPECTED_HASH]
 		)
+		_watchdog.stop()
 		quit(1)
 		return
 	print("RETAIL_STATE_PIN OK hash matches the pinned value")
+	_watchdog.stop()
 	quit(0)
 
 
@@ -372,6 +383,7 @@ func _make_sim():
 	sim.setup({}, {})
 	if sim.configuration_error != "":
 		printerr("RETAIL_STATE_PIN FAIL configuration error: %s" % sim.configuration_error)
+		_watchdog.stop()
 		quit(1)
 		return sim
 	sim.ai_enabled = true
