@@ -38,6 +38,12 @@ public sealed class AiRetailProofTests
     [Fact]
     public void MenHardVsMordorMediumRetailProofReportsHonestOutcomeAndTwinHash()
     {
+        if (!SlowTests.Require(_output,
+                nameof(MenHardVsMordorMediumRetailProofReportsHonestOutcomeAndTwinHash)))
+        {
+            return;
+        }
+
         var path = CorpusPath();
         if (!File.Exists(path))
         {

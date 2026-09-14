@@ -31,6 +31,11 @@ public sealed class MapDocumentCorpusTests
     [Fact]
     public void EveryNativeSelectionMapLoadsAndBuildsAWorld()
     {
+        if (!SlowTests.Require(_output, nameof(EveryNativeSelectionMapLoadsAndBuildsAWorld)))
+        {
+            return;
+        }
+
         var selectionPath = RepoPath("workspace", "content-packs", "native", "selection.json");
         if (!File.Exists(selectionPath))
         {

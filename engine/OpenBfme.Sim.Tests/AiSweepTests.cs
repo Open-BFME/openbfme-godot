@@ -22,6 +22,12 @@ public sealed class AiSweepTests
     [Fact]
     public void EveryPlayableFactionPairBothOrdersHardVsMediumIsDeterministicAndUsesCoreLoop()
     {
+        if (!SlowTests.Require(_output,
+                nameof(EveryPlayableFactionPairBothOrdersHardVsMediumIsDeterministicAndUsesCoreLoop)))
+        {
+            return;
+        }
+
         var path = MatchLaunchTests.RepoPath(
             "workspace", "logs", "lane-cook-c", "corpus-bundle-full.json");
         if (!File.Exists(path))

@@ -1,0 +1,40 @@
+# OpenBFME nightly — the slow gate.
+#
+# The fast gate (pre-commit) and per-push CI keep the default engine suite
+# inside its budget; corpus-scale tests — the every-native-map sweep, the
+# ordered AI faction sweep, the full-tick retail AI proof — are gated behind
+# OPENBFME_SLOW_TESTS=1 and run here instead.
+#
+# Those tests read workspace/ artifacts (corpus bundle, native selection,
+# dual-run trace), which exist only on the owner's hardware, so this job
+# follows the ci.yml convention for pack-gated runners. The tests still fail
+# closed on what they do find: a corrupt or incomplete corpus is a red
+# nightly, not a silent pass.
+
+name: nightly
+
+on:
+  schedule:
+    - cron: "17 4 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  engine-slow-tests:
+    name: engine suite with corpus-scale tests
+    runs-on: [self-hosted, openbfme-private]
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5.0.0
+        with:
+          dotnet-version: "8.0.x"
+      - name: Run OpenBfme.Sim test suite including corpus-scale tests
+        env:
+          OPENBFME_SLOW_TESTS: "1"
+          # The trace lives on this hardware; if a lane runner without it ever
+          # picks the job up, the oracle reports NOT RUN instead of a false pass.
+          OPENBFME_DUALRUN_OPTIONAL: "1"
+        run: dotnet test engine/OpenBfme.Engine.sln --nologo --configuration Release
