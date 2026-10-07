@@ -16,9 +16,11 @@ The uploader checks the authorized channel before uploading and records the visi
 
 ## Discord data
 
-In the designated public feedback channel, the bot processes the message content, author ID, message ID, channel ID, timestamp, and its reply. This data is stored in a local SQLite database. A local export containing the 100 most recent feedback items is available to authorized project developers.
+In the designated opt-in feedback channel and bot-owned devblog feedback threads, the bot processes message content, author ID, message ID, channel or thread ID, timestamp, and its reply. This data is stored in a local SQLite database. A local export containing the 100 most recent feedback items is available to authorized project developers.
 
-Feedback text is sent to Anthropic's Claude service to draft a reply. Claude's tools are disabled for this task. The bot is limited to the designated feedback and updates channels. It replies to feedback in the feedback channel and reads updates history to avoid duplicate video notices; it is denied access elsewhere by its configuration and Discord permissions.
+To manage enrollment, the bot reads reactions to its designated role-selection message in `#start-here`. It stores subscriber user IDs and selection state locally to assign or revoke the `Claude Godot Port` role and control future upload mentions. Removing the reaction revokes the role and mention subscription. This enrollment data is not sent to Anthropic unless the user separately posts feedback.
+
+Feedback text is sent to Anthropic's Claude service to draft a reply. Claude's tools are disabled for this task. The bot is limited to the designated feedback and updates channels, its own feedback threads, and the role-selection event in `#start-here`. It replies to feedback and reads updates history to avoid duplicate video notices; access outside these purposes is denied by its configuration and Discord permissions.
 
 ## Sharing and use
 
@@ -26,7 +28,7 @@ The services use data only to publish owner-selected videos, verify the target Y
 
 ## Retention and deletion
 
-Discord feedback records and replies remain in local storage until the operator deletes them. The service does not promise automatic deletion.
+Discord feedback records, replies, subscriber user IDs, and selection state remain in local storage until the operator deletes them. The service does not promise automatic deletion.
 
 You can revoke the uploader's Google access from your Google Account permissions. The operator can also remove the private credential files or remove the Discord bot from the server. To request deletion of stored Discord feedback associated with your account, open an issue in the [OpenBFME Godot repository](https://github.com/Open-BFME/openbfme-godot/issues).
 
