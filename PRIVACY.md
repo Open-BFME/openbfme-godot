@@ -18,7 +18,7 @@ The uploader checks the authorized channel before uploading and records the visi
 
 In the designated public feedback channel, the bot processes the message content, author ID, message ID, channel ID, timestamp, and its reply. This data is stored in a local SQLite database. A local export containing the 100 most recent feedback items is available to authorized project developers.
 
-Feedback text is sent to Anthropic's Claude service to draft a reply. Claude's tools are disabled for this task. The bot reads and responds only in the designated feedback channel and posts video notices only in the designated updates channel; it is denied access elsewhere by its configuration and Discord permissions.
+Feedback text is sent to Anthropic's Claude service to draft a reply. Claude's tools are disabled for this task. The bot is limited to the designated feedback and updates channels. It replies to feedback in the feedback channel and reads updates history to avoid duplicate video notices; it is denied access elsewhere by its configuration and Discord permissions.
 
 ## Sharing and use
 
