@@ -119,6 +119,21 @@ W3DStopHit W3D_Bare_Clip_Stop(const std::string &clipName, const std::string &hi
 	return h;
 }
 
+W3DStopHit W3D_Pose_Cull_Stop()
+{
+	W3DStopHit h;
+	h.Id = "S-1730";
+	h.Message = W3D_Stop_Message("S-1730", "poses of instances outside the camera's frustum are left pending (pose culling, presentation only): the bound tested is "
+		"1.5 x (the farthest bind-pose pivot + the largest mesh extent) + 30 units, not retail's render-object bounds; an animation that reaches beyond it at the "
+		"frustum's edge would show its last pose there");
+	return h;
+}
+
+float W3D_Pose_Cull_Radius(float farthestPivot, float largestMeshExtent)
+{
+	return (farthestPivot + largestMeshExtent) * 1.5f + 30.0f;
+}
+
 W3DStopHit W3D_Pose_Order_Stop(size_t instances)
 {
 	W3DStopHit h;

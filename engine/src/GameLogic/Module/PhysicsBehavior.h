@@ -59,6 +59,7 @@
 
 class ModuleFactory;
 class StateHasher;
+struct DamageInfo;
 struct MultiIniFieldParse;
 
 struct PhysicsBehaviorModuleData : public ModuleData
@@ -164,4 +165,11 @@ namespace ObjectKnockback
 bool apply(Object &obj, float angleDegrees, float power, float zFactor, const char *projectileType = "NONE");
 // RW 0x4B3D8D Object::relativeAngle2D: the signed angle from the object's facing to `point` (0 at the object's own position)
 float relativeAngle2D(const Object &obj, const Coord3D &point);
+// RW 0x6968BC (lane COMBAT-4): Object's shockwave handler, called by Object::doAttemptDamage (RW 0x697E50) with every hit; it acts only when the hit's shockwave amount
+// (D+0x40) and radius (D+0x44) are above 0. See the target facts at the definition.
+void shockWave(Object &obj, const DamageInfo &info);
+// the template's ShockwaveResistance (+0x620, parseReal; 0 when the template does not set it)
+float shockwaveResistance(const Object &obj);
+// RW 0x403175 Coord3D::normalize: len = (float) CRT sqrt (PC24) of the float32 sum of squares (RW 0x403111); unless 0, each component times the float32 1 / len (SSE)
+void normalize(Coord3D &v);
 } // namespace ObjectKnockback

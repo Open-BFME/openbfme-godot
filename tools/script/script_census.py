@@ -173,7 +173,12 @@ def dump(path):
             shown = []
             for t, v in vals:
                 shown.append("%d:%s" % (t, ("%.1f,%.1f,%.1f" % v) if t == 16 else (v[2] if v[2] else ("%d/%g" % (v[0], v[1])))))
-            print("  " * depth + "%s %s(%s)" % ({"Condition": "IF", "ScriptAction": "DO", "ScriptActionFalse": "ELSE"}[leaf], name, ", ".join(shown)))
+            prefix = {"Condition": "IF", "ScriptAction": "DO", "ScriptActionFalse": "ELSE"}[leaf]
+            if leaf == "Condition" and ver >= 5:
+                # the v5 flags (Condition + 0x4C enabled, + 0x4D inverted: RW 0x7ED72C inverts an ordinal >= 5's answer; lane CAMP-1)
+                enabled, inverted = r.i32(), r.i32()
+                prefix += (" NOT" if inverted else "") + ("" if enabled else " (disabled)")
+            print("  " * depth + "%s %s(%s)" % (prefix, name, ", ".join(shown)))
         elif leaf == "ScriptList":
             print("  " * depth + "ScriptList")
         elif leaf == "OrCondition":

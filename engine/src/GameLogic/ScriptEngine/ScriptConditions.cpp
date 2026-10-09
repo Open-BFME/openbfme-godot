@@ -3,6 +3,7 @@
 // See GameLogic/ScriptEngine/ScriptConditions.h.
 
 #include "GameLogic/ScriptEngine/ScriptConditions.h"
+#include "GameLogic/Module/EmotionModules.h"
 
 #include "Common/Player.h"
 #include "Common/PlayerList.h"
@@ -20,6 +21,8 @@
 #include "Common/Thing/ThingFactory.h"
 #include "Common/Thing/ThingTemplate.h"
 #include "GameLogic/Module/AIUpdate.h"
+#include "GameLogic/Module/ActiveBody.h"
+#include "GameLogic/Object/PartitionManager.h"
 #include "GameLogic/Module/CastleModules.h"
 #include "GameLogic/Module/ConstructionModules.h"
 #include "GameLogic/Object/ExperienceTracker.h"
@@ -97,7 +100,19 @@ enum ConditionType
 	HAS_DELAYED_CARRYOVER_UNIT_OF_TYPE = 195,
 	IS_GAME_MODE_ACTIVE = 201,
 	HAS_FINISHED_AUDIO = 50,
-	CAN_BUILD_AT_BASE = 127
+	CAN_BUILD_AT_BASE = 127,
+	NAMED_ATTACKED_BY_PLAYER = 21,                    // lane CAMP-1
+	TEAM_ATTACKED_BY_PLAYER = 22,                     // lane CAMP-1
+	TEAM_ENTERED_AREA_ENTIRELY = 40,                  // lane CAMP-1
+	TEAM_ENTERED_AREA_PARTIALLY = 41,                 // lane CAMP-1
+	TEAM_EXITED_AREA_ENTIRELY = 42,                   // lane CAMP-1
+	TEAM_EXITED_AREA_PARTIALLY = 43,                  // lane CAMP-1
+	ENEMY_SIGHTED = 52,                               // lane CAMP-1
+	SKIRMISH_PLAYER_HAS_BEEN_ATTACKED_BY_PLAYER = 97, // lane CAMP-1
+	SKIRMISH_PLAYER_IS_OUTSIDE_AREA = 98,             // lane CAMP-1
+	ENEMY_SIGHTED_BY_TEAM = 133,                      // lane CAMP-1
+	TEAM_CREATED = 25,                                // lane CAMP-1
+	NAMED_TOTALLY_DEAD = 57                           // lane CAMP-1
 };
 
 int kindOfBit(const char *name)
@@ -258,6 +273,93 @@ void forPlayerTeamMembers(GameLogic &logic, const Player *p, F f)
 	}
 }
 
+// lane CAMP-1: a player parameter as its mask (RW 0x75968D: 1 << Player + 0x54 for each player of the parameter)
+std::uint32_t playerMaskOf(ScriptEngine &engine, const std::string &parameter)
+{
+	std::uint32_t mask = 0;
+	for (Player *p : ScriptConditions::players(engine, parameter))
+	{
+		if (p->getPlayerIndex() >= 0 && p->getPlayerIndex() < 32)
+		{
+			mask |= 1u << p->getPlayerIndex();
+		}
+	}
+	return mask;
+}
+
+// lane CAMP-1: RW 0x68DD73 (didEnter) / RW 0x68DDB2 (didExit): the object's trigger flags are current and an entry of the trigger has the flag
+bool didEnterOrExit(const Object &o, int trigger, UnsignedInt frame, bool enter)
+{
+	if (!triggerFlagsCurrent(o, frame))
+	{
+		return false;
+	}
+	for (int i = 0; i < o.triggerCount(); ++i)
+	{
+		const Object::TriggerEntry &e = o.triggerEntry(i);
+		if ((enter ? e.entered : e.exited) && e.trigger == trigger)
+		{
+			return true;
+		}
+	}
+	return false;
+}
+
+// lane CAMP-1: Team + 0x5C (ZH Team::m_enteredOrExited, refreshed before the scripts by Team::updateState): a member entered or exited a trigger in this
+// frame or the previous one. INFERENCE (S-1365): computed from the members' own enter / exit frames (RW 0x68DD46) instead of a stored team flag
+bool teamEnteredOrExited(const Team &t, UnsignedInt frame)
+{
+	for (const Object *o = t.getFirstMember(); o; o = o->friend_teamNext())
+	{
+		if (triggerFlagsCurrent(*o, frame))
+		{
+			return true;
+		}
+	}
+	return false;
+}
+
+// lane CAMP-1: the member filter of RW 0x7A0A71 / 0x7A0B21 / 0x7A0B9C / 0x7A0C17: the surfaces bit in the AI's surface mask (1 without an AI), alive, not INERT
+bool enterExitMember(const Object &o, int surfaces)
+{
+	const unsigned bit = surfaces >= 0 && surfaces < 32 ? (1u << surfaces) : 0u;
+	unsigned mask = 1u;
+	if (const AIUpdateInterface *ai = o.getAIUpdateInterface())
+	{
+		mask = ai->locomotorInfo().validSurfaces;
+	}
+	return (mask & bit) != 0 && !o.isEffectivelyDead() && !isKindOfName(o, "INERT");
+}
+
+// lane CAMP-1: ENEMY_SIGHTED's search (RW 0x7E62A2 per player of the parameter): ThePartitionManager's closest object (RW 0xA39090, 2D centres) within the
+// unit's vision range (RW 0x68E43B) that is not INERT / MOVE_ONLY (RW 0x46E72F(0, 0x59, 0x86)), alive (RW 0xC10E20), of the relationship to the unit
+// (RW 0xC11DC0 with RW 0x7E4C8C's flags), owned by the player (RW 0xC10E38), not stealthed-and-undetected for the unit's player (RW 0x660D2C) and seen by
+// the unit (lane CAMP-1H: RW 0xC1D66C -> RW 0x6612AC: Object::canSee(candidate, -1) == true, RW 0x68FA3D: the vision range plus both bounding circles,
+// EmotionModules::canSeeObject; range -1 is the vision range, RW 0x68FA4A). The vision range is the object's (RW 0x68E43B), with or without an AI.
+bool sightsPlayer(GameLogic &logic, const Object &unit, int relation, const Player &player)
+{
+	(void)logic;
+	Object &viewerObject = const_cast<Object &>(unit);
+	const float range = AIUpdateInterface::objectVisionRangeOf(viewerObject);
+	const Player *viewer = unit.getControllingPlayer();
+	PartitionFilterFn filter([&](Object &o) {
+		if (&o == &unit || o.isEffectivelyDead() || isKindOfName(o, "INERT") || isKindOfName(o, "MOVE_ONLY") || o.getControllingPlayer() != &player)
+		{
+			return false;
+		}
+		if ((int)unit.getRelationship(o) != relation)
+		{
+			return false;
+		}
+		if (InvisibilityManager::isStealthedAndUndetected(o, viewer))
+		{
+			return false;
+		}
+		return EmotionModules::canSeeObject(viewerObject, o, range); // RW 0x6612AC (+ 0x10 = -1.0, RW 0xBD19DC: the vision range)
+	});
+	return logic.partition().getClosestObject(*unit.getPosition(), range, FROM_CENTER_2D, { &filter }) != nullptr;
+}
+
 } // namespace
 
 // ---- helpers ------------------------------------------------------------------------------------------------------------------------------------
@@ -349,12 +451,16 @@ Player *ScriptConditions::firstPlayer(ScriptEngine &engine, const std::string &p
 	return v.empty() ? nullptr : v.front();
 }
 
-Team *ScriptConditions::team(ScriptEngine &engine, const std::string &name)
+Team *ScriptConditions::team(ScriptEngine &engine, const std::string &name, bool create)
 {
 	if (name == "<This Team>")
 	{
-		// RW 0x759FDA: + 0x1A210 (a team script's team: not ported), else + 0x1A218 (the condition team: a sequential record's team, lane SCRIPT-3;
-		// a script's condition team iteration is S-1183)
+		// RW 0x759FDA: + 0x1A210 (lane CAMP-1H: the team of a team script, ScriptEngine::runScript / the generic scripts), else + 0x1A218 (the condition
+		// team: a sequential record's team, lane SCRIPT-3; a script's condition team iteration is S-1183)
+		if (Team *t = engine.thisTeam())
+		{
+			return t;
+		}
 		if (engine.conditionTeam() != 0)
 		{
 			return engine.logic().players().teams().findTeamByID(engine.conditionTeam());
@@ -362,10 +468,64 @@ Team *ScriptConditions::team(ScriptEngine &engine, const std::string &name)
 		engine.note("[S-1183] <This Team> (the condition team) is not ported");
 		return nullptr;
 	}
-	// RW 0x759FDA: the name qualified by RW 0x604043 (a plain name is the current side's), then the prototype of that owner and name (RW 0x7A2C47).
-	// INFERENCE (S-1185): the + 0x191C4 name cache, the "Referencing multiple team" report and the singleton's active flag (+ 0x5D) are not kept
+	// RW 0x759FDA: the name qualified by RW 0x604043 (a plain name is the current side's), then the prototype of that owner and name (RW 0x7A2C47), then
+	// (lane CAMP-1H) its instance list's head (+ 0x334, the newest):
+	//   * not a singleton (+ 0x18 bit 0 clear): the head; none: with `create` a new ACTIVE team (RW 0x7A6FCB), else none;
+	//   * a singleton: no head: none; a head that is not active (+ 0x5D): with `create` it is activated (+ 0x5E = + 0x5D = 1), else none.
+	// `create` is the caller's flag (RW 0x759FDA's second parameter: the conditions and most actions pass 0, the creation actions 1).
+	// INFERENCE (S-1185): the + 0x191C4 name cache and the "Referencing multiple team" report are not kept
 	const std::pair<std::string, std::string> q = engine.qualify(name);
-	return engine.logic().players().teams().findTeam(q.first + "/" + q.second);
+	TeamFactory &teams = engine.logic().players().teams();
+	// RW 0x759FDA (lane CAMP-1H r2, Sol): after the qualification the contextual team wins when the owner and prototype name match it - the team of the
+	// running team script (+ 0x1A210), else the condition team (+ 0x1A218) - before the prototype / head lookup, so a script of an older instance acts on it
+	auto matches = [&](const Team *t) {
+		const TeamPrototype *tp = t ? t->getPrototype() : nullptr;
+		if (!tp || tp->getName() != q.second)
+		{
+			return false;
+		}
+		const Player *owner = tp->getControllingPlayer();
+		return (owner ? owner->getPlayerName() : std::string()) == q.first;
+	};
+	if (matches(engine.thisTeam()))
+	{
+		return engine.thisTeam();
+	}
+	if (engine.conditionTeam() != 0)
+	{
+		Team *ct = teams.findTeamByID(engine.conditionTeam());
+		if (matches(ct))
+		{
+			return ct;
+		}
+	}
+	TeamPrototype *proto = teams.findTeamPrototype(q.first, q.second);
+	if (!proto)
+	{
+		return nullptr;
+	}
+	Team *head = proto->getNewestTeam();
+	if (!proto->getIsSingleton())
+	{
+		if (!head && create)
+		{
+			head = teams.createTeam(proto, true);
+		}
+		return head;
+	}
+	if (!head)
+	{
+		return nullptr;
+	}
+	if (!head->isActive())
+	{
+		if (!create)
+		{
+			return nullptr;
+		}
+		head->setActive();
+	}
+	return head;
 }
 
 std::int32_t ScriptConditions::countPlayerObjects(GameLogic &logic, const Player &p, const std::vector<const ThingTemplate *> &types)
@@ -530,8 +690,8 @@ bool ScriptConditions::evaluate(ScriptEngine &engine, const ScriptCondition &c)
 		{
 			return false;
 		}
-		engine.note("[S-1185] TEAM_DESTROYED: the team's created flag (+ 0x128) is taken as set");
-		return !teamHasAnyUnits(*tm);
+		// lane CAMP-1: + 0x128 is Team::hadMembers (set when an object first joins; S-1365 for the active / creation steps of RW 0x7A208C)
+		return tm->hadMembers() && !teamHasAnyUnits(*tm);
 	}
 	case TEAM_HAS_UNITS: // RW 0x7E9F44: any instance of the prototype with a live unit (RW 0x7A07D8)
 	{
@@ -1013,6 +1173,169 @@ bool ScriptConditions::evaluate(ScriptEngine &engine, const ScriptCondition &c)
 		// setup here (S-1180)
 		engine.note("[S-1180] IS_GAME_MODE_ACTIVE: the ring heroes option (RW 0xDE892C + 0x68) is not part of the game setup (false)");
 		return false;
+	case NAMED_ATTACKED_BY_PLAYER: // RW 0x7EA513: the body's last damage record (vslot 0x40), its source object (+ 8) in the world, controlled by a player of the mask
+	{
+		const Object *o = engine.getUnitNamed(param(c, 0).stringValue);
+		const ActiveBody *body = o ? dynamic_cast<const ActiveBody *>(o->getBodyModule()) : nullptr;
+		if (!body || body->lastDamageFrame() == 0xFFFFFFFFu)
+		{
+			return false;
+		}
+		const Object *attacker = logic.findObjectByID(body->lastDamager());
+		if (!attacker || !attacker->getControllingPlayer())
+		{
+			return false;
+		}
+		const int index = attacker->getControllingPlayer()->getPlayerIndex();
+		return index >= 0 && index < 32 && (playerMaskOf(engine, param(c, 1).stringValue) & (1u << index)) != 0;
+	}
+	case TEAM_ATTACKED_BY_PLAYER: // RW 0x7E7361: a member whose last damage record's source player mask (+ 0xC) equals the parameter's mask
+	{
+		const Team *tm = team(engine, param(c, 0).stringValue);
+		if (!tm)
+		{
+			return false;
+		}
+		const std::uint32_t mask = playerMaskOf(engine, param(c, 1).stringValue);
+		for (const Object *o = tm->getFirstMember(); o; o = o->friend_teamNext())
+		{
+			const ActiveBody *body = dynamic_cast<const ActiveBody *>(o->getBodyModule());
+			if (body && body->lastDamageFrame() != 0xFFFFFFFFu && body->lastDamagerPlayerMask() == mask)
+			{
+				return true;
+			}
+		}
+		return false;
+	}
+	case TEAM_ENTERED_AREA_ENTIRELY:  // RW 0x7E7987 -> RW 0x7A0A71: some counted member entered, none of them outside (neither entered nor inside)
+	case TEAM_ENTERED_AREA_PARTIALLY: // RW 0x7E79E9 -> RW 0x7A0B21: some counted member entered
+	case TEAM_EXITED_AREA_ENTIRELY:   // RW 0x7E7A4B -> RW 0x7A0C17: counted members (also not MOVE_ONLY), some exited, none still inside
+	case TEAM_EXITED_AREA_PARTIALLY:  // RW 0x7E7C27 -> RW 0x7A0B9C: some counted member exited
+	{
+		const Team *tm = team(engine, param(c, 0).stringValue);
+		const TriggerArea *area = engine.findTrigger(param(c, 1).stringValue);
+		if (!tm || !area || !teamEnteredOrExited(*tm, logic.getFrame()))
+		{
+			return false;
+		}
+		const int trig = engine.triggerIndex(area);
+		const int surfaces = param(c, 2).intValue;
+		const UnsignedInt frame = logic.getFrame();
+		bool hit = false, against = false, counted = false;
+		for (const Object *o = tm->getFirstMember(); o; o = o->friend_teamNext())
+		{
+			if (!enterExitMember(*o, surfaces))
+			{
+				continue;
+			}
+			if (c.resolved == TEAM_ENTERED_AREA_PARTIALLY || c.resolved == TEAM_EXITED_AREA_PARTIALLY)
+			{
+				if (didEnterOrExit(*o, trig, frame, c.resolved == TEAM_ENTERED_AREA_PARTIALLY))
+				{
+					return true;
+				}
+				continue;
+			}
+			if (c.resolved == TEAM_ENTERED_AREA_ENTIRELY)
+			{
+				if (didEnterOrExit(*o, trig, frame, true))
+				{
+					hit = true;
+				}
+				else if (!insideTracked(*o, trig))
+				{
+					against = true;
+				}
+				continue;
+			}
+			if (isKindOfName(*o, "MOVE_ONLY")) // TEAM_EXITED_AREA_ENTIRELY
+			{
+				continue;
+			}
+			counted = true;
+			if (didEnterOrExit(*o, trig, frame, false))
+			{
+				hit = true;
+			}
+			else if (insideTracked(*o, trig))
+			{
+				against = true;
+			}
+		}
+		if (c.resolved == TEAM_ENTERED_AREA_ENTIRELY)
+		{
+			return hit && !against;
+		}
+		return c.resolved == TEAM_EXITED_AREA_ENTIRELY && counted && hit && !against;
+	}
+	case ENEMY_SIGHTED: // RW 0x7E62A2 (unit, relationship, player)
+	{
+		const Object *o = engine.getUnitNamed(param(c, 0).stringValue);
+		if (!o)
+		{
+			return false;
+		}
+		for (Player *p : players(engine, param(c, 2).stringValue))
+		{
+			if (sightsPlayer(logic, *o, param(c, 1).intValue, *p))
+			{
+				return true;
+			}
+		}
+		return false;
+	}
+	case ENEMY_SIGHTED_BY_TEAM: // RW 0x7E7412 (team, relationship, player): the same search from every member with a vision range above 0
+	{
+		const Team *tm = team(engine, param(c, 0).stringValue);
+		if (!tm)
+		{
+			return false;
+		}
+		for (Player *p : players(engine, param(c, 2).stringValue))
+		{
+			for (const Object *o = tm->getFirstMember(); o; o = o->friend_teamNext())
+			{
+				if (AIUpdateInterface::objectVisionRangeOf(const_cast<Object &>(*o)) > 0.0f && sightsPlayer(logic, *o, param(c, 1).intValue, *p))
+				{
+					return true;
+				}
+			}
+		}
+		return false;
+	}
+	case SKIRMISH_PLAYER_HAS_BEEN_ATTACKED_BY_PLAYER: // RW 0x7E57D7: a player of the first mask was attacked by a player of the second (RW 0x6AAC22)
+	{
+		for (Player *victim : players(engine, param(c, 0).stringValue))
+		{
+			for (Player *attacker : players(engine, param(c, 1).stringValue))
+			{
+				if (victim->getAttackedBy(attacker->getPlayerIndex()))
+				{
+					return true;
+				}
+			}
+		}
+		return false;
+	}
+	case NAMED_TOTALLY_DEAD: // RW 0x7E4A66: no unit of that name (RW 0x75A3D8) and the name had one (RW 0x758F46)
+		return engine.getUnitNamed(param(c, 0).stringValue) == nullptr && engine.didUnitExist(param(c, 0).stringValue);
+	case TEAM_CREATED: // RW 0x7E73E0: the team's + 0x5E
+	{
+		// RW 0x7E73E0: + 0x5E is set when a team is activated (RW 0x7A6FDE ..) and cleared by Team::updateState (RW 0x7A208C) when the creation step runs
+		// (lane CAMP-1H r2, Sol: it was the had-members flag before, which missed an empty activated team and stayed true afterwards)
+		const Team *tm = team(engine, param(c, 0).stringValue);
+		return tm && tm->scriptState().created;
+	}
+	case SKIRMISH_PLAYER_IS_OUTSIDE_AREA: // RW 0x7E8580: the area exists and the player has no units in it (RW 0x7E83FE, SKIRMISH_PLAYER_HAS_UNITS_IN_AREA)
+	{
+		if (!engine.findTrigger(param(c, 1).stringValue))
+		{
+			return false;
+		}
+		ScriptCondition inside = c;
+		inside.resolved = SKIRMISH_PLAYER_HAS_UNITS_IN_AREA;
+		return !evaluate(engine, inside);
+	}
 	default:
 		engine.noteUnportedCondition(t->name);
 		return false;

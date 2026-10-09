@@ -129,18 +129,23 @@ private:
 	bool handleWeaponFireFX(const Drawable &shooter, const FXEvent &e, const FXList *fx);
 	void destroySystems(Attached &a);
 	void createSystems(Drawable &d, Attached &a);
-	void frameEvents(Drawable &d, size_t entryIndex, const DrawEntry &e);
+	struct FrameEventState
+	{
+		const void *animState = nullptr; ///< the animation state the frames belong to
+		int lastFrame = -1;              ///< the integer frame the events were last evaluated for
+	};
+	using FrameEventMap = std::map<std::pair<DrawableID, size_t>, FrameEventState>;
+	// lane PERF-3: `pos` walks m_frameEvents alongside updateAttachedSystems' walk over the drawables in id order (both are in key order): each entry's
+	// lookup is a step of the walk instead of a search of the map
+	void frameEvents(Drawable &d, size_t entryIndex, const DrawEntry &e, FrameEventMap::iterator &pos);
 	void fireFrameEvent(Drawable &d, const FXEventInfo &ev, const RenderObjPrototype *model);
 
 	LiveGame &m_game;
 	FXPlayback &m_playback;
 	Stats m_stats;
 	std::map<DrawableID, Attached> m_attached;
-	struct FrameEventState
-	{
-		const void *animState = nullptr; ///< the animation state the frames belong to
-		int lastFrame = -1;              ///< the integer frame the events were last evaluated for
-	};
-	std::map<std::pair<DrawableID, size_t>, FrameEventState> m_frameEvents; // looked up only (and pruned), never ordered by pointer
+	FrameEventMap m_frameEvents; // looked up only (and pruned), never ordered by pointer
+	W3DDrawFrame m_eventFrame;   // lane PERF-3: frameEvents' frame of the entry (its storage reused)
+	std::vector<const void *> m_states; // lane PERF-3: updateAttachedSystems' states of the drawable (its storage reused)
 	std::map<std::pair<const RenderObjPrototype *, std::string>, std::pair<bool, Matrix3D>> m_boneCache; // looked up only, never iterated
 };

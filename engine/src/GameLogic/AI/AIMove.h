@@ -86,6 +86,9 @@ public:
 	// ---- lane AUDIO-3 ----
 	// AIInternalMoveToState's move sounds, fire-and-forget audio (nothing comes back into the logic): startMoveSound RW 0x748C0B at the end of a successful
 	// onEnter that moves more than 2.5 (RW 0x74E06F); stopMoveSound removes the kept loop (onEnter's start RW 0x74DAE4, onExit RW 0x748E06). Default: nothing
+	// lane MOVE-2 r3: RW 0x66D16E's step aside is the AI command aiMoveToPosition(pos, CMD_FROM_AI) (RW 0x66C4CA); a host without the command keeps the explicit
+	// locomotor goal (false)
+	virtual bool moveToPositionFromAI(const Coord3D &p) { (void)p; return false; }
 	virtual void startMoveSound() {}
 	virtual void stopMoveSound() {}
 };
@@ -124,6 +127,7 @@ public:
 	void setGoalExplicit(const Coord3D &p);
 	void setGoalExplicitWithPath(const Coord3D &p);
 	void setGoalAngle(float angle);
+	float goalAngle() const { return m_goalAngle; } // lane EXIT-1: AI + 0x200 of an angle goal
 	void setGoalNone();
 	void setDesiredSpeed(float s) { m_desiredSpeed = s; }
 	float desiredSpeed() const { return m_desiredSpeed; }
@@ -184,6 +188,12 @@ public:
 	// the path is built now (RW computePath 0x665C33); false when none could be made
 	bool computePath(const Coord3D &dest);
 	bool computeQuickPath(const Coord3D &dest);
+	// lane EXIT-1 (factored out of doLocomotor for the horde member update RW 0x66C748): RW 0x6F1B3E, the straight step `from` -> `to` toward the locomotor goal is
+	// valid; RW 0x6F74D0, a path from `from` that reaches the locomotor goal, else null
+	bool stepValid(const Coord3D &from, const Coord3D &to);
+	Path *pathReachingGoal(const Coord3D &from);
+	// lane EXIT-1: the horde member update's switch to the path goal around doLocomotor (RW 0x66CD29 / 0x66CD41 write AI + 0x1FC directly)
+	void setGoalTypeRaw(AIGoalType t) { m_goalType = t; }
 	// distance left to the goal for the current goal type (RW 0x664127)
 	float locomotorDistanceToGoal() const;
 

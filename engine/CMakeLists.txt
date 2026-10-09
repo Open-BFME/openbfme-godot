@@ -83,12 +83,14 @@ include(cmake/Smooth.cmake)     # OPENBFME_SMOOTH_SOURCES / OPENBFME_SMOOTH_TEST
 include(cmake/Phys1.cmake)      # PHYS-1: collision and separation, PhysicsBehavior (appends to OPENBFME_SIM_SOURCES; OPENBFME_PHYS1_TESTS)
 include(cmake/Perf1.cmake)      # OPENBFME_PERF1_TESTS (lane PERF-1: benchmarks, optimisation determinism)
 include(cmake/Perf2.cmake)      # PERF-2: the job system, parallel phases (appends to OPENBFME_SIM_SOURCES; OPENBFME_PERF2_TESTS)
+include(cmake/Perf3.cmake)      # PERF-3: client frame-time work (OPENBFME_PERF3_TESTS)
 include(cmake/Audio3.cmake)     # AUDIO-3: the sound request log, building sounds (appends to OPENBFME_SIM_SOURCES; OPENBFME_AUDIO3_TESTS)
 include(cmake/Audio4.cmake)     # AUDIO-4: QA-1's sound follow-ups (OPENBFME_AUDIO4_TESTS)
 include(cmake/End1.cmake)       # END-1: the score keeper, the end sequence and the score screen (appends to OPENBFME_SIM_SOURCES; OPENBFME_END1_SOURCES / _TESTS)
 include(cmake/Qa1.cmake)       # OPENBFME_QA1_SOURCES / OPENBFME_QA1_TESTS (lane QA-1: the drawn-model pick)
 include(cmake/Mp2.cmake)        # MP-2: the disconnect path, a dropped player's assets (appends to OPENBFME_SIM_SOURCES; OPENBFME_MP2_TESTS)
 include(cmake/Script1.cmake)    # SCRIPT-1: the map script engine (appends to OPENBFME_SIM_SOURCES; OPENBFME_SCRIPT1_TESTS)
+include(cmake/Camp1.cmake)      # CAMP-1: the campaigns (OPENBFME_CAMP1_SOURCES / OPENBFME_CAMP1_TESTS)
 include(cmake/Ui1.cmake)        # UI-1: interface gaps (client only; OPENBFME_UI1_CLIENT_SOURCES / OPENBFME_UI1_TESTS)
 include(cmake/Release1.cmake)   # RELEASE-1: install discovery, version, session log (client only; OPENBFME_RELEASE1_SOURCES / _GODOT_SOURCES / _TESTS)
 include(cmake/Mod4.cmake)       # MOD-4: AISpecialPowerUpdate, RepairSpecialPower, ... (appends to OPENBFME_SIM_SOURCES; OPENBFME_MOD4_TESTS)
@@ -97,7 +99,10 @@ include(cmake/Anim1.cmake)      # OPENBFME_ANIM1_TESTS (lane ANIM-1: combat anim
 include(cmake/Win1.cmake)       # WIN-1: the MSVCR71 real parser (appends to OPENBFME_SIM_SOURCES; OPENBFME_WIN1_TESTS: cross-OS lockstep)
 include(cmake/Garrison3.cmake)  # GARRISON-3: the garrison exit (OPENBFME_GARRISON3_TESTS)
 include(cmake/Combat3.cmake)    # COMBAT-3: cavalry charges and siege crews (OPENBFME_COMBAT3_TESTS)
+include(cmake/Combat4.cmake)    # COMBAT-4: shockwaves, siege crews in motion, corpses (OPENBFME_COMBAT4_TESTS)
 include(cmake/Hud4.cmake)       # HUD-4: every command reachable, every hotkey (appends to OPENBFME_SIM_SOURCES; OPENBFME_HUD4_TESTS)
+include(cmake/Qa2fix.cmake)     # QA2-FIX: a player's wall span through the HUD, the lobby after a game (OPENBFME_QA2FIX_TESTS)
+include(cmake/Exit1.cmake)      # EXIT-1: the horde member update, stale MOVING (appends to OPENBFME_SIM_SOURCES; OPENBFME_EXIT1_TESTS)
 add_library(openbfme_core STATIC
     ${OPENBFME_APT_SOURCES}
     ${OPENBFME_AUDIO4_CLIENT_SOURCES}
@@ -125,6 +130,7 @@ add_library(openbfme_core STATIC
     ${OPENBFME_RELEASE1_SOURCES}
     ${OPENBFME_UI2_CLIENT_SOURCES}
     ${OPENBFME_SCRIPT1_SOURCES}
+    ${OPENBFME_CAMP1_SOURCES}
     src/Common/AsciiString.cpp
     src/Common/LogicFrameClock.cpp
     src/Common/MD5.cpp
@@ -380,6 +386,7 @@ add_library(openbfme SHARED
     ${OPENBFME_RENDER4_GODOT_SOURCES}
     ${OPENBFME_AUDIO_GODOT_SOURCES}
     ${OPENBFME_SCRIPT1_GODOT_SOURCES}
+    ${OPENBFME_CAMP1_GODOT_SOURCES}
     ${OPENBFME_RELEASE1_GODOT_SOURCES}
     ${OPENBFME_UI2_GODOT_SOURCES}
     ${OPENBFME_HUD4_GODOT_SOURCES})
@@ -440,6 +447,7 @@ add_executable(openbfme_tests
     ${OPENBFME_PHYS1_TESTS}
     ${OPENBFME_PERF1_TESTS}
     ${OPENBFME_PERF2_TESTS}
+    ${OPENBFME_PERF3_TESTS}
     ${OPENBFME_AUDIO3_TESTS}
     ${OPENBFME_AUDIO4_TESTS}
     ${OPENBFME_PROJ2_TESTS}
@@ -451,13 +459,17 @@ add_executable(openbfme_tests
     ${OPENBFME_END1_TESTS}
     ${OPENBFME_MP2_TESTS}
     ${OPENBFME_SCRIPT1_TESTS}
+    ${OPENBFME_CAMP1_TESTS}
     ${OPENBFME_UI1_TESTS}
     ${OPENBFME_RELEASE1_TESTS}
     ${OPENBFME_MOD4_TESTS}
     ${OPENBFME_UI2_TESTS}
     ${OPENBFME_GARRISON3_TESTS}
     ${OPENBFME_COMBAT3_TESTS}
+    ${OPENBFME_COMBAT4_TESTS}
     ${OPENBFME_HUD4_TESTS}
+    ${OPENBFME_QA2FIX_TESTS}
+    ${OPENBFME_EXIT1_TESTS}
     tests/test_main.cpp
     tests/test_big_archive.cpp
     tests/test_archive_order.cpp

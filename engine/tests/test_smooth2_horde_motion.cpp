@@ -88,9 +88,17 @@ Metrics measure(const HordeRun &run, int perFrame, ObjectID only, PoseFn pose)
 	Metrics m;
 	std::map<ObjectID, std::vector<RenderInterpolation::Pose>> drawn;
 	std::map<ObjectID, std::vector<Coord3D>> logic;
+	// lane MOVE-2 r2: from the first order on (the "march" phase): the Gondor horde is created with some slots on the cliff north-east of (1200, 1100) (pathfinder
+	// cells x >= 121, y >= 111 are CLIFF), and RotWK's slot destination test RW 0x6F0889 sends those members to the horde's cell, which they reach by the
+	// doLocomotor fallback RW 0x669AF1 (put on the goal) at frame 2: a creation pop, not motion of the manoeuvres this probe measures
+	const UnsignedInt firstFrame = run.phases.empty() ? 0u : run.phases.front().first;
 	for (size_t k = 0; k < run.snaps.size(); ++k)
 	{
 		const LogicSnapshot &s = *run.snaps[k];
+		if (s.frame < firstFrame)
+		{
+			continue;
+		}
 		for (const auto &hm : run.hordeOf)
 		{
 			if (only != INVALID_ID && run.hordeOf.at(hm.first) != only)
@@ -290,7 +298,10 @@ TEST_CASE("smooth2 retail: hordes and cavalry march, turn, charge, fight and re-
 		// no 5 Hz pulse: the drawn speed just after a logic frame boundary is the speed just before it (retail's own curve: about 2.5 .. 2.9 times on average)
 		CHECK(smooth.meanBoundaryJump < 1.1);
 		CHECK(smooth.worstBoundaryJump < 1.5);
-		CHECK(retail.meanBoundaryJump > 2.0); // the pulse retail's pending position gives a member without a path (what smoothPose removes)
+		// lane EXIT-1: the 5 Hz pulse of retailPose came from the pending position the locomotor's movers leave on a member (2.5 .. 2.9 times before). In RotWK a
+		// busy member or one with an explicit goal moves through the member update RW 0x66C748, whose transform write (RW 0x70BA76) records no pending position:
+		// retail's own pose of these members has no pulse either (measured 1.12)
+		CHECK(retail.meanBoundaryJump < 1.5);
 	}
 	// S-812 resolved: a member moving without a path has the pre-move position as its pending position (RW 0x5E5B4E after RW 0x62618F's clear), never a point
 	// of an earlier frame. Before SMOOTH-2 most moving member records had a pending position more than 2.5 steps from the current one.
@@ -313,7 +324,8 @@ TEST_CASE("smooth2 retail: hordes and cavalry march, turn, charge, fight and re-
 			far += len2(r->nextPos.x - r->position.x, r->nextPos.y - r->position.y) > 2.5 * step + 1.0 ? 1 : 0;
 		}
 	}
-	CHECK(moving > 1000);
+	// lane EXIT-1: most member steps now come from the member update (no pending position, RW 0x70BA76): 79 moving records with one measured, 1000+ before
+	CHECK(moving > 20);
 	CHECK(far == 0);
 }
 

@@ -323,7 +323,9 @@ void ScriptCameraDirector::update(double ms)
 		}
 		else
 		{
-			v = f.minV;
+			// lane CAMP-1: ZH ScriptEngine::updateFades ends a fade with FADE_NONE: no fade is applied any more (not the last value: the Amon Sul intro's
+			// CAMERA_FADE_SUBTRACT(1, 0, 0, 0, 0) left the view black)
+			v = 0.0f;
 			f.active = false;
 		}
 		m_fade = clamp01(v);

@@ -12,6 +12,8 @@
 #include "Libraries/WWVegas/WW3D2/motchan.h"
 #include "Libraries/WWVegas/WW3D2/w3dsort.h"
 
+#include <cmath>
+
 #include <godot_cpp/classes/array_mesh.hpp>
 #include <godot_cpp/classes/camera3d.hpp>
 #include <godot_cpp/classes/geometry_instance3d.hpp>
@@ -97,6 +99,9 @@ void W3DInstancer::_bind_methods()
 	ClassDB::bind_method(D_METHOD("set_time_scale", "scale"), &W3DInstancer::set_time_scale);
 	ClassDB::bind_method(D_METHOD("set_worker_threads", "count"), &W3DInstancer::set_worker_threads);
 	ClassDB::bind_method(D_METHOD("get_worker_threads"), &W3DInstancer::get_worker_threads);
+	ClassDB::bind_method(D_METHOD("set_pose_culling", "enabled"), &W3DInstancer::set_pose_culling); // lane PERF-3
+	ClassDB::bind_method(D_METHOD("get_pose_culling"), &W3DInstancer::get_pose_culling);
+	ClassDB::bind_method(D_METHOD("get_instance_palette", "instance"), &W3DInstancer::get_instance_palette);
 	ClassDB::bind_method(D_METHOD("update_now"), &W3DInstancer::update_now);
 	ClassDB::bind_method(D_METHOD("update_mappers"), &W3DInstancer::update_mappers);
 	ClassDB::bind_method(D_METHOD("get_mapper_state"), &W3DInstancer::get_mapper_state);
@@ -167,8 +172,8 @@ void W3DInstancer::set_auto_update(bool enabled)
 // ---- worker pool -----------------------------------------------------------------------------------------------------
 
 // lane PERF-2: the slices run on the process's client job pool (JobSystem::client()) instead of a pool of threads per instancer (two instancers and the
-// client pool were three sets of threads competing for the cores). `Workers` still bounds the parallelism: the work is cut into at most Workers slices,
-// so at most Workers threads run them at once; each slice writes only its own instances / draw items.
+// client pool were three sets of threads competing for the cores). Each slice writes only its own instances / draw items. Lane PERF-3: `Workers` sets the
+// slice size (four slices per worker, at least 32 items each) instead of the number of slices, so the pool's threads share the work out as they come free.
 void W3DInstancer::set_worker_threads(int count)
 {
 	count = std::max(1, std::min(count, 32));
@@ -182,7 +187,9 @@ void W3DInstancer::run_parallel(size_t count, const std::function<void(size_t, s
 		fn(0, count);
 		return;
 	}
-	const size_t slice = (count + (size_t)Workers - 1) / (size_t)Workers;
+	// lane PERF-3: four chunks per thread (at least 32 items each): the threads that finish early take the remaining chunks, so one slow slice (blended
+	// poses, many pivots) or a late worker no longer holds the render thread
+	const size_t slice = std::max<size_t>(32, (count + (size_t)Workers * 4 - 1) / ((size_t)Workers * 4));
 	JobSystem::client().parallelFor(count, slice, [&fn](size_t, size_t begin, size_t end) { fn(begin, end); });
 }
 
@@ -690,9 +697,20 @@ void W3DInstancer::grow_palette(int texels)
 {
 	const int capacity = std::max(texels, (PaletteHeight * W3D_PALETTE_WIDTH * 3) / 2);
 	const int height = std::max(1, (capacity + W3D_PALETTE_WIDTH - 1) / W3D_PALETTE_WIDTH);
-	PaletteData.resize((size_t)height * W3D_PALETTE_WIDTH * 4, 0.0f);
+	// lane PERF-3: the new image takes the old one's texels and zeros after them (the palette lives in the image's buffer)
+	const Ref<Image> old = PaletteImage;
+	const size_t oldBytes = old.is_valid() ? (size_t)PaletteHeight * W3D_PALETTE_WIDTH * 16 : 0;
 	PaletteHeight = height;
 	PaletteImage = Image::create_empty(W3D_PALETTE_WIDTH, PaletteHeight, false, Image::FORMAT_RGBAF);
+	{
+		std::uint8_t *dst = PaletteImage->ptrw();
+		const size_t bytes = (size_t)PaletteHeight * W3D_PALETTE_WIDTH * 16;
+		if (oldBytes > 0)
+		{
+			std::memcpy(dst, old->ptr(), oldBytes);
+		}
+		std::memset(dst + oldBytes, 0, bytes - oldBytes);
+	}
 	PaletteTexture = ImageTexture::create_from_image(PaletteImage);
 	PaletteGrown = true;
 	PaletteChanged = true;
@@ -763,19 +781,46 @@ const HAnimClass *W3DInstancer::resolve_clip_cached(Model &m, const std::string 
 
 bool W3DInstancer::set_instance_pose_native(int64_t instance, const std::string &clip0, double frame0, const std::string &clip1, double frame1, double percentage)
 {
+	return set_instance_pose_keyed(instance, clip0, nullptr, frame0, clip1, nullptr, frame1, percentage);
+}
+
+bool W3DInstancer::set_instance_pose_keyed(int64_t instance, const std::string &clip0, const void *key0, double frame0, const std::string &clip1, const void *key1,
+	double frame1, double percentage)
+{
 	if (instance < 0 || instance >= (int64_t)Instances.size() || !Assets) return false;
 	Instance &inst = Instances[(size_t)instance];
 	Model &m = *Models[(size_t)inst.Model];
 	const HAnimClass *a0 = nullptr;
 	const HAnimClass *a1 = nullptr;
+	// lane PERF-3: the instance's last names first (a string compare instead of the model's hash lookup); only resolved clips are kept, so a failing name
+	// still reports on every call
+	auto resolve = [&](int k, const std::string &clip, const void *key) -> const HAnimClass * {
+		if (inst.MemoAnim[k] && key != nullptr && key == inst.MemoKey[k])
+		{
+			return inst.MemoAnim[k]; // the key stands for the name the memo holds
+		}
+		if (inst.MemoAnim[k] && clip == inst.MemoClip[k])
+		{
+			inst.MemoKey[k] = key;
+			return inst.MemoAnim[k];
+		}
+		const HAnimClass *a = resolve_clip_cached(m, clip);
+		if (a)
+		{
+			inst.MemoClip[k] = clip;
+			inst.MemoAnim[k] = a;
+			inst.MemoKey[k] = key;
+		}
+		return a;
+	};
 	if (!clip0.empty())
 	{
-		a0 = resolve_clip_cached(m, clip0);
+		a0 = resolve(0, clip0, key0);
 		if (!a0) return false;
 	}
 	if (!clip1.empty())
 	{
-		a1 = resolve_clip_cached(m, clip1);
+		a1 = resolve(1, clip1, key1);
 		if (!a1) return false;
 	}
 	const HAnimClass *anim1 = a0 ? a1 : nullptr;
@@ -796,6 +841,75 @@ bool W3DInstancer::set_instance_pose_native(int64_t instance, const std::string 
 	PoseDirty = true;
 	return true;
 }
+
+bool W3DInstancer::set_instance_bone_spins_native(int64_t instance, const std::vector<std::string> &bones, const std::vector<float> &angles)
+{
+	if (instance < 0 || instance >= (int64_t)Instances.size() || bones.size() != angles.size()) return false;
+	Instance &inst = Instances[(size_t)instance];
+	const Model &m = *Models[(size_t)inst.Model];
+	if (!m.Proto || !m.Proto->Tree) return false;
+	std::vector<std::pair<int, float>> spins;
+	for (size_t i = 0; i < bones.size(); ++i)
+	{
+		const int pivot = m.Proto->Tree->Get_Bone_Index(bones[i]);
+		if (pivot > 0)
+		{
+			spins.emplace_back(pivot, angles[i]);
+		}
+	}
+	if (spins == inst.BoneSpins) return true;
+	inst.BoneSpins = std::move(spins);
+	inst.PoseStale = true;
+	PoseDirty = true;
+	return true;
+}
+
+namespace
+{
+// lane COMBAT-4: the pivot `p` of the evaluated pose turned by Rotate_Y(angle) in its own frame (Control_Bone after the animation): its world becomes W * R and
+// every pivot under it follows (W' * W^-1 * child); the hierarchy lists parents before children
+void spinPivot(const HTreeClass &tree, HTreePose &pose, int p, float angle)
+{
+	const Matrix3D w = pose.Transform[(size_t)p];
+	Matrix3D r;
+	const float c = std::cos(angle), s = std::sin(angle);
+	r.Row[0][0] = c;
+	r.Row[0][2] = s;
+	r.Row[2][0] = -s;
+	r.Row[2][2] = c;
+	Matrix3D wNew;
+	Matrix3D::Multiply(w, r, &wNew);
+	// W^-1 of a rigid transform: the transposed rotation and -R^T t
+	Matrix3D inv;
+	for (int i = 0; i < 3; ++i)
+	{
+		for (int j = 0; j < 3; ++j)
+		{
+			inv.Row[i][j] = w.Row[j][i];
+		}
+	}
+	for (int i = 0; i < 3; ++i)
+	{
+		inv.Row[i][3] = -(inv.Row[i][0] * w.Row[0][3] + inv.Row[i][1] * w.Row[1][3] + inv.Row[i][2] * w.Row[2][3]);
+	}
+	Matrix3D delta;
+	Matrix3D::Multiply(wNew, inv, &delta);
+	pose.Transform[(size_t)p] = wNew;
+	std::vector<std::uint8_t> under((size_t)pose.Num_Pivots(), 0);
+	under[(size_t)p] = 1;
+	for (int i = p + 1; i < pose.Num_Pivots(); ++i)
+	{
+		const int parent = tree.Get_Pivot(i).ParentIdx;
+		if (parent >= 0 && under[(size_t)parent])
+		{
+			under[(size_t)i] = 1;
+			Matrix3D moved;
+			Matrix3D::Multiply(delta, pose.Transform[(size_t)i], &moved);
+			pose.Transform[(size_t)i] = moved;
+		}
+	}
+}
+} // namespace
 
 bool W3DInstancer::set_instance_pose(int64_t instance, const String &clip0, double frame0, const String &clip1, double frame1, double percentage)
 {
@@ -873,6 +987,22 @@ void W3DInstancer::rebuild_layout()
 
 void W3DInstancer::evaluate_pose(Instance &inst) const
 {
+	evaluate_animation_pose(inst);
+	if (!inst.BoneSpins.empty())
+	{
+		const HTreeClass &tree = *Models[(size_t)inst.Model]->Proto->Tree;
+		for (const std::pair<int, float> &sp : inst.BoneSpins)
+		{
+			if (sp.first < inst.Pose.Num_Pivots())
+			{
+				spinPivot(tree, inst.Pose, sp.first, sp.second);
+			}
+		}
+	}
+}
+
+void W3DInstancer::evaluate_animation_pose(Instance &inst) const
+{
 	const Model &m = *Models[(size_t)inst.Model];
 	const HTreeClass &tree = *m.Proto->Tree;
 	if (inst.Anim == nullptr)
@@ -902,10 +1032,71 @@ void W3DInstancer::evaluate_pose(Instance &inst) const
 	inst.Inexact = !inst.Pose.ExactOperationOrder;
 }
 
+float W3DInstancer::cull_radius(Model &m) const
+{
+	if (m.CullRadius >= 0.0f)
+	{
+		return m.CullRadius;
+	}
+	// the farthest pivot of the bind pose plus the largest mesh extent (skin vertices are in bone space, rigid ones hang on their pivot), with room for
+	// animations that reach beyond the bind pose (a swing, a fall, a mount's stride): 1.5 times that plus 30 units (stop S-1730: our bound, not retail's)
+	float pivots = 0.0f;
+	if (m.Proto && m.Proto->Tree)
+	{
+		HTreePose base;
+		m.Proto->Tree->Base_Pose(Matrix3D(), base);
+		for (int i = 0; i < base.Num_Pivots(); ++i)
+		{
+			const ::Vector3 t = base.Transform[(size_t)i].Get_Translation();
+			pivots = std::max(pivots, std::sqrt(t.X * t.X + t.Y * t.Y + t.Z * t.Z));
+		}
+	}
+	float extent = 0.0f;
+	for (const DrawItem &d : m.Draws)
+	{
+		const float *lo = d.Mesh->Data.BoundsMin, *hi = d.Mesh->Data.BoundsMax;
+		const float x = std::max(std::fabs(lo[0]), std::fabs(hi[0])), y = std::max(std::fabs(lo[1]), std::fabs(hi[1])), z = std::max(std::fabs(lo[2]), std::fabs(hi[2]));
+		extent = std::max(extent, std::sqrt(x * x + y * y + z * z));
+	}
+	m.CullRadius = W3D_Pose_Cull_Radius(pivots, extent); // S-1730
+	return m.CullRadius;
+}
+
+PackedFloat32Array W3DInstancer::get_instance_palette(int64_t instance) const
+{
+	PackedFloat32Array out;
+	if (instance < 0 || instance >= (int64_t)Instances.size() || PaletteImage.is_null())
+	{
+		return out;
+	}
+	const Instance &inst = Instances[(size_t)instance];
+	if (inst.Removed || inst.PaletteSize == 0)
+	{
+		return out;
+	}
+	out.resize((int64_t)inst.PaletteSize * 4);
+	const PackedByteArray data = PaletteImage->get_data();
+	std::memcpy(out.ptrw(), data.ptr() + (size_t)inst.PaletteOffset * 16, (size_t)inst.PaletteSize * 16);
+	return out;
+}
+
+void W3DInstancer::ensure_pose(const Instance &inst) const
+{
+	if (PoseCulling && inst.PoseStale && !inst.Removed)
+	{
+		Instance &mut = const_cast<Instance &>(inst); // the pose is a cache of the instance's inputs: evaluating it does not change what the instance is
+		evaluate_pose(mut);
+	}
+}
+
 void W3DInstancer::write_palette(const Instance &inst)
 {
 	const int pivots = inst.Pose.Num_Pivots();
-	float *out = PaletteData.data() + (size_t)inst.PaletteOffset * 4;
+	if (!PaletteWrite || inst.PaletteSize == 0)
+	{
+		return;
+	}
+	float *out = PaletteWrite + (size_t)inst.PaletteOffset * 4;
 	for (int p = 0; p < pivots; ++p)
 	{
 		const Matrix3D &m = inst.Pose.Transform[(size_t)p];
@@ -1116,15 +1307,57 @@ void W3DInstancer::update_now()
 	std::mutex errorMutex;
 	const bool timeMoved = GlobalTime != PosedTime;
 	PosedTime = GlobalTime;
+	// lane PERF-3: pose culling (set_pose_culling): the frustum of the viewport's camera in this node's parent space
+	Plane frustum[6];
+	bool cull = false;
+	Transform3D nodeXf;
+	if (PoseCulling && is_inside_tree() && get_viewport() != nullptr && get_viewport()->get_camera_3d() != nullptr)
+	{
+		const TypedArray<Plane> planes = get_viewport()->get_camera_3d()->get_frustum();
+		if (planes.size() == 6)
+		{
+			for (int k = 0; k < 6; ++k)
+			{
+				frustum[k] = planes[k];
+			}
+			nodeXf = get_global_transform();
+			cull = true;
+		}
+	}
+	PoseCulled = 0;
 	StaleScratch.clear();
 	for (size_t i = 0; i < Instances.size(); ++i)
 	{
-		const Instance &inst = Instances[i];
+		Instance &inst = Instances[i];
 		if (!inst.Removed && (inst.PoseStale || (timeMoved && inst.Anim != nullptr && !inst.Explicit)))
 		{
+			if (cull)
+			{
+				// the bounding sphere of the model around the instance's origin, scaled by the larger of the node's and the instance's scale
+				const Vector3 centre = nodeXf.xform(inst.Xf.origin);
+				const Vector3 sc = inst.Xf.basis.get_scale_abs();
+				const Vector3 ns = nodeXf.basis.get_scale_abs();
+				const real_t r = cull_radius(*Models[(size_t)inst.Model]) * std::max(sc.x, std::max(sc.y, sc.z)) * std::max(ns.x, std::max(ns.y, ns.z));
+				bool outside = false;
+				for (const Plane &pl : frustum)
+				{
+					if (pl.distance_to(centre) > r)
+					{
+						outside = true;
+						break;
+					}
+				}
+				if (outside)
+				{
+					inst.PoseStale = true; // pending: posed by the first update that sees it (with the inputs of that frame)
+					++PoseCulled;
+					continue;
+				}
+			}
 			StaleScratch.push_back(i);
 		}
 	}
+	PaletteWrite = StaleScratch.empty() || PaletteImage.is_null() ? nullptr : reinterpret_cast<float *>(PaletteImage->ptrw()); // the image's buffer (not shared: no copy)
 	run_parallel(StaleScratch.size(), [&](size_t begin, size_t end) {
 		for (size_t k = begin; k < end; ++k)
 		{
@@ -1150,6 +1383,10 @@ void W3DInstancer::update_now()
 		Models[(size_t)Instances[i].Model]->BuffersDirty = true; // the pivot visibility and fade the buffers read may have changed
 	}
 	PoseEvaluations = (int)StaleScratch.size();
+	if (PoseCulled > 0)
+	{
+		warn(W3D_Pose_Cull_Stop().Message); // S-1730 (once: warn keeps each message once)
+	}
 	if (!StaleScratch.empty())
 	{
 		PaletteChanged = true;
@@ -1180,10 +1417,7 @@ void W3DInstancer::update_now()
 	write_buffers();
 	if (PaletteChanged)
 	{
-		PackedByteArray bytes;
-		bytes.resize((int64_t)PaletteData.size() * 4);
-		std::memcpy(bytes.ptrw(), PaletteData.data(), PaletteData.size() * 4);
-		PaletteImage->set_data(W3D_PALETTE_WIDTH, PaletteHeight, false, Image::FORMAT_RGBAF, bytes);
+		// lane PERF-3: the poses were written into the image's own buffer: no byte array allocated and copied per frame
 		PaletteTexture->update(PaletteImage);
 		PaletteChanged = false;
 	}
@@ -1215,6 +1449,7 @@ Vector3 W3DInstancer::get_bone_position(int64_t instance, int bone) const
 {
 	if (instance < 0 || instance >= (int64_t)Instances.size()) return Vector3();
 	const Instance &inst = Instances[(size_t)instance];
+	ensure_pose(inst);
 	if (bone < 0 || bone >= inst.Pose.Num_Pivots()) return Vector3();
 	::Vector3 t = inst.Pose.Transform[(size_t)bone].Get_Translation();
 	return Vector3(t.X, t.Y, t.Z);
@@ -1246,6 +1481,7 @@ bool W3DInstancer::get_bone_transform_native(int64_t instance, int bone, ::Matri
 		return false;
 	}
 	const Instance &inst = Instances[(size_t)instance];
+	ensure_pose(inst);
 	if (bone < 0 || bone >= inst.Pose.Num_Pivots())
 	{
 		return false;
@@ -1269,6 +1505,7 @@ Dictionary W3DInstancer::get_stats() const
 	s["pose_ms"] = PoseMs;
 	s["upload_ms"] = UploadMs;
 	s["pose_evaluations"] = PoseEvaluations; // SMOOTH-1: instances posed in the last update (only the changed ones)
+	s["pose_culled"] = PoseCulled;           // lane PERF-3: instances whose pose the last update left pending (outside the frustum, set_pose_culling)
 	s["buffer_writes"] = BufferWrites;       // SMOOTH-1: models whose MultiMesh buffers were rewritten in the last update
 	s["mapper_ms"] = MapperMs;
 	s["visible_draw_instances"] = VisibleInstances;

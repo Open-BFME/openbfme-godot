@@ -18,6 +18,8 @@
 #include "GameLogic/GameLogic.h"
 #include "GameLogic/Module/ActiveBody.h"
 #include "GameLogic/Module/AIUpdate.h"
+#include "GameLogic/Module/PhysicsBehavior.h"
+#include "GameLogic/ObjectTemplateInfo.h"
 #include "GameLogic/Object/Object.h"
 #include "GameLogic/SimMath.h"
 
@@ -27,8 +29,6 @@
 namespace
 {
 const char *const kSlowDeathNames[] = { "INITIAL", "MIDPOINT", "FINAL", "HIT_GROUND", nullptr }; // ZH TheSlowDeathPhaseNames + RW 0x12AE110 (HIT_GROUND is RotWK's fourth phase: a flung object landing)
-const float kBeginMidpointRatio = 0.35f;
-const float kEndMidpointRatio = 0.65f;
 
 // FX = <phase> <name> [<name> ...] (RW 0x86158d; the FX list store is the client's: the names are kept)
 void parsePhaseNames(INI *ini, std::vector<std::string> *lists)
@@ -227,6 +227,9 @@ SlowDeathBehavior::SlowDeathBehavior(Thing *thing, const SlowDeathBehaviorModule
 	{
 		throw std::logic_error("SlowDeathBehavior: ProbabilityModifier must be >= 1"); // ZH ctor: INI_INVALID_DATA
 	}
+	// RW 0x8604E2: + 0x40 is set when the HIT_GROUND phase has an FX, OCL, Weapon or Sound entry (data + 0x7C / 0xAC / 0xDC / 0x10C: the fourth list of each)
+	m_hitGroundPending = !data->m_fx[SDPHASE_HIT_GROUND].empty() || !data->m_ocl[SDPHASE_HIT_GROUND].empty() || !data->m_weapon[SDPHASE_HIT_GROUND].empty() ||
+		!data->m_sounds[SDPHASE_HIT_GROUND].empty();
 	setWakeFrame(getObject(), UPDATE_SLEEP_FOREVER);
 }
 
@@ -236,22 +239,27 @@ bool SlowDeathBehavior::isDieApplicable(const DieModuleInterface::Event &event) 
 	return m_data->m_dieMux.isDieApplicable(*getObject(), event, &angle);
 }
 
-// ZH SlowDeathBehavior::getProbabilityModifier: overkill = dealt - clipped, as a fraction of the max health, times the bonus per overkill percent
+// RW 0x860608 (SlowDeathBehaviorInterface slot 1): overkill = (int)(dealt - clipped) (cvttss2si), fild; divided by the body's max health (body slot 0x1C, x87), times
+// ModifierBonusPerOverkillPercent, _ftol2, plus ProbabilityModifier; at most 1 below: 1
 int SlowDeathBehavior::probabilityModifier(const DieModuleInterface::Event &event) const
 {
 	const Object *obj = getObject();
 	int bonus = 0;
 	if (BodyModuleInterface *body = obj->getBodyModule())
 	{
-		const float overkill = SimMath::subf32(event.actualDamageDealt, event.actualDamageClipped);
-		const float percent = SimMath::divf32((float)SimMath::truncToInt32(overkill), body->getMaxHealth());
-		bonus = SimMath::truncToInt32(SimMath::mulf32(percent, m_data->m_modifierBonusPerOverkillPercent));
+		const int overkill = SimMath::cvttss2si(SimMath::subf32(event.actualDamageDealt, event.actualDamageClipped));
+		const float overkillF = SimMath::fstpDword((double)overkill); // fild; fstp dword
+		bonus = SimMath::ftol2(SimMath::pc24MulW(SimMath::pc24DivW((double)overkillF, (double)body->getMaxHealth()), (double)m_data->m_modifierBonusPerOverkillPercent));
 	}
 	const int total = m_data->m_probabilityModifier + bonus;
-	return total < 1 ? 1 : total;
+	return total > 1 ? total : 1;
 }
 
-// ZH SlowDeathBehavior::onDie: the first applicable module marks the AI dead and rolls among every applicable slow death of the object
+// RW 0x861712 (the die interface slot 0): unless the die mux refuses; an AI already dead (+ 0x3BD) ends it, otherwise the AI is marked dead (RW 0x66264E); the object
+// leaves the selections (RW 0x625759, client) and the draw's ... (RW 0x68BE3C, template + 0x642 clear); every module with a SlowDeathBehaviorInterface (behavior slot 0x5C)
+// whose die mux accepts the death joins with its probability; then roll GameLogicRandomValue(0, total - 1) (SlowDeathBehavior.cpp:0x32F), walk the weights (a roll
+// below a weight picks it, otherwise the weight is taken off), take the pick's weight off the total; a pick still applicable whose slot 0xC answers (RW 0x8BD372: true)
+// begins its slow death (slot 0), otherwise it leaves the candidates (swapped with the last) and the roll repeats
 void SlowDeathBehavior::onDie(const DieModuleInterface::Event &event)
 {
 	Object *obj = getObject();
@@ -269,57 +277,180 @@ void SlowDeathBehavior::onDie(const DieModuleInterface::Event &event)
 	}
 	int total = 0;
 	std::vector<SlowDeathBehavior *> candidates;
+	std::vector<int> weights;
 	for (const std::unique_ptr<BehaviorModule> &m : obj->modules())
 	{
 		if (SlowDeathBehavior *sd = dynamic_cast<SlowDeathBehavior *>(m.get()))
 		{
 			if (sd->isDieApplicable(event))
 			{
-				total += sd->probabilityModifier(event);
+				const int w = sd->probabilityModifier(event);
+				total += w;
 				candidates.push_back(sd);
+				weights.push_back(w);
 			}
 		}
 	}
-	int roll = obj->logic().random().getValue(1, total, "SlowDeathBehavior.cpp", 0);
-	for (SlowDeathBehavior *sd : candidates)
+	while (!candidates.empty())
 	{
-		roll -= sd->probabilityModifier(event);
-		if (roll <= 0)
+		int roll = obj->logic().random().getValue(0, total - 1, "SlowDeathBehavior.cpp", 0x32F);
+		size_t i = 0;
+		for (; i < weights.size(); ++i)
 		{
-			sd->beginSlowDeath();
+			if (roll < weights[i])
+			{
+				break;
+			}
+			roll -= weights[i];
+		}
+		if (i == weights.size())
+		{
+			i = weights.size() - 1; // RW reads the end element; the weights always sum to the total, so the walk stops inside
+		}
+		total -= weights[i];
+		SlowDeathBehavior *pick = candidates[i];
+		if (pick->isDieApplicable(event))
+		{
+			pick->beginSlowDeath(event);
 			return;
 		}
+		candidates[i] = candidates.back();
+		weights[i] = weights.back();
+		candidates.pop_back();
+		weights.pop_back();
 	}
 }
 
-// ZH SlowDeathBehavior::beginSlowDeath (the LOD scale is 1: S-324)
-void SlowDeathBehavior::beginSlowDeath()
+// RW 0x70B8AE Object::getHeightAboveTerrain: the position's z over the terrain (S-161: the ground)
+float SlowDeathBehavior::heightAboveTerrain() const
 {
-	if (m_activated)
+	const Object *obj = getObject();
+	const Coord3D &p = *obj->getPosition();
+	return SimMath::subf32(p.z, obj->logic().getGroundHeight(p.x, p.y));
+}
+
+// RW 0x860E93 beginSlowDeath (SlowDeathBehaviorInterface slot 0). TARGET FACTS:
+//   * once (+ 0x3C bit 0); ATTACKING (model condition 37) cleared; the DeathFlags statuses (+ 0x174) set (RW 0x68D440); with DeathFlags model conditions (+ 0x128):
+//     those and DYING (62) set; the drawable's shadow (ShadowWhenDead off) and RW 0x67093E(0, -0.2) are client;
+//   * the LOD death scale (TheGameLODManager + 0x179C; 1.0 in 2.01) 0 with no OCL / Weapon entry (+ 0x18C & 6): destroyed at once;
+//   * a HULK with TheGameLogic + 0xA0 != -1: sink 1, midpoint 5 / 2 + 1, destruction 5 + 1 (not reached: see the header);
+//   * otherwise sink = _ftol2(fild(GameLogicRandomValue(0, SinkDelayVariance) [line 0x1A5] + SinkDelay) * scale), destruction likewise ([line 0x1A6]), decay =
+//     _ftol2(DecayBeginTime * scale); midpoint: DoNotRandomizeMidpoint: _ftol2(destruction * 0.5 (double)), otherwise GameLogicRandomValue(_ftol2(destruction * 0.35),
+//     _ftol2(0.65 * destruction)) [line 0x1AB]; FadeDelay other than 0xFACADE00: the fade frame _ftol2(FadeDelay * scale);
+//   * FlingForce > 0: with a PhysicsBehavior: a body less than 1.0 above the ground is raised by 1.0 (RW 0x70C201); the fling vector RW 0x860664 (FlingForce +
+//     FlingForceVariance, FlingPitch + FlingPitchVariance), fling (RW 0x792DBD), the angle atan2(v.y, v.x) (RW 0x441BF4, 0x70C31E), EXPLODED_FLAILING (120), flag 4; the
+//     wake is the next frame; an object with a slaved update (+ 0x1C8 bit 3) tells it first (RW 0x861173: not ported, inference: no ported object sets the bit);
+//   * otherwise the wake is the next frame with a HIT_GROUND entry (+ 0x40), else the earliest of sink, destruction, midpoint and decay (when not 0);
+//   * every frame (decay only when not 0, the fade frame always) plus TheGameLogic's frame; flag 1; the INITIAL phase (RW 0x8609A8).
+void SlowDeathBehavior::beginSlowDeath(const DieModuleInterface::Event &)
+{
+	if (m_flags & kActivated)
 	{
 		return;
 	}
 	Object *obj = getObject();
 	GameLogic &logic = obj->logic();
 	const SlowDeathBehaviorModuleData *d = m_data;
-	m_sinkFrame = d->m_sinkDelay + (unsigned)logic.random().getValue(0, (int)d->m_sinkDelayVariance, "SlowDeathBehavior.cpp", 0);
-	m_destructionFrame = d->m_destructionDelay + (unsigned)logic.random().getValue(0, (int)d->m_destructionDelayVariance, "SlowDeathBehavior.cpp", 0);
-	m_midpointFrame = (unsigned)logic.random().getValue(SimMath::truncToInt32(SimMath::mulf32(kBeginMidpointRatio, (float)m_destructionFrame)),
-		SimMath::truncToInt32(SimMath::mulf32(kEndMidpointRatio, (float)m_destructionFrame)), "SlowDeathBehavior.cpp", 0);
-	unsigned wake = m_sinkFrame;
-	if (wake > m_destructionFrame)
+	static const int kAttacking = CombatNames::modelCondition("ATTACKING");
+	static const int kDying = CombatNames::modelCondition("DYING");
+	static const int kExplodedFlailing = CombatNames::modelCondition("EXPLODED_FLAILING");
+	obj->setModelConditionState(kAttacking, false);
+	bool anyDeathFlag = false;
+	for (const std::string &f : d->m_deathFlags)
 	{
-		wake = m_destructionFrame;
+		obj->setStatus((unsigned)CombatNames::status(f.c_str()), true);                 // RW + 0x174 (RW 0x68D440)
+		obj->setModelConditionState(CombatNames::modelCondition(f.c_str()), true);      // RW + 0x128 (RW 0x5E3BA5)
+		anyDeathFlag = true;
 	}
-	if (wake > m_midpointFrame)
+	if (anyDeathFlag && !obj->testModelCondition(kDying))
 	{
-		wake = m_midpointFrame;
+		obj->setModelConditionState(kDying, true);
+	}
+	const float scale = 1.0f; // TheGameLODManager's SlowDeathScale (see the header)
+	auto scaled = [&](unsigned v) { return (unsigned)SimMath::ftol2(SimMath::pc24MulW((double)v, (double)scale)); }; // fild (+ 2^32 when negative); fmul; _ftol2
+	m_sinkFrame = scaled((unsigned)logic.random().getValue(0, (int)d->m_sinkDelayVariance, "SlowDeathBehavior.cpp", 0x1A5) + d->m_sinkDelay);
+	m_destructionFrame = scaled((unsigned)logic.random().getValue(0, (int)d->m_destructionDelayVariance, "SlowDeathBehavior.cpp", 0x1A6) + d->m_destructionDelay);
+	m_decayFrame = scaled(d->m_decayBeginTime);
+	if (d->m_doNotRandomizeMidpoint)
+	{
+		m_midpointFrame = (unsigned)SimMath::ftol2(SimMath::mulD((double)m_destructionFrame, 0.5)); // fmul qword 0.5 (RW 0xBD86A0)
+	}
+	else
+	{
+		const int hi = SimMath::ftol2(SimMath::pc24MulW(0.649999976, (double)m_destructionFrame)); // RW 0xC58804
+		const int lo = SimMath::ftol2(SimMath::pc24MulW((double)m_destructionFrame, 0.349999994)); // RW 0xC58800
+		m_midpointFrame = (unsigned)logic.random().getValue(lo, hi, "SlowDeathBehavior.cpp", 0x1AB);
+	}
+	if (d->m_fadeDelay != 0xFACADE00u)
+	{
+		m_fadeFrame = scaled(d->m_fadeDelay);
 	}
 	const unsigned now = logic.getFrame();
-	setWakeFrame(obj, UPDATE_SLEEP(wake < 1 ? 1 : (int)wake));
+	unsigned wake = 1;
+	PhysicsBehavior *phys = d->m_flingForce > 0.0f ? PhysicsBehavior::find(*obj) : nullptr;
+	if (d->m_flingForce > 0.0f)
+	{
+		if (phys)
+		{
+			if (1.0f > heightAboveTerrain())
+			{
+				Coord3D p = *obj->getPosition();
+				p.z = SimMath::addf32(p.z, 1.0f);
+				obj->setPosition(&p);
+			}
+			// RW 0x860664: angle GameLogicRandomValueReal(-pi, pi) [0x139], pitch (FlingPitch, + variance) [0x13A], force (FlingForce, + variance) [0x13B]; the rows of
+			// force * identity turned by the angle (CRT cos / sin) and by -pitch (SSE, the zero terms kept)
+			const float force0 = d->m_flingForce, force1 = SimMath::addf32(d->m_flingForceVariance, d->m_flingForce);
+			const float pitch0 = d->m_flingPitch, pitch1 = SimMath::addf32(d->m_flingPitchVariance, d->m_flingPitch);
+			const float angle = logic.random().getValueReal(-3.14159274f, 3.14159274f, "SlowDeathBehavior.cpp", 0x139);
+			const float pitch = logic.random().getValueReal(pitch0, pitch1, "SlowDeathBehavior.cpp", 0x13A);
+			const float f = logic.random().getValueReal(force0, force1, "SlowDeathBehavior.cpp", 0x13B);
+			const float z0 = SimMath::mulf32(f, 0.0f);
+			const float c = SimMath::fstpDword(SimMath::cosd(angle)), sn = SimMath::fstpDword(SimMath::sind(angle));
+			const float ax = SimMath::addf32(SimMath::mulf32(z0, sn), SimMath::mulf32(f, c));
+			const float bx = SimMath::addf32(SimMath::mulf32(f, sn), SimMath::mulf32(z0, c));
+			const float cx = SimMath::addf32(SimMath::mulf32(z0, sn), SimMath::mulf32(z0, c));
+			const float negPitch = SimMath::subf32(0.0f, pitch); // fchs
+			const float sp = SimMath::fstpDword(SimMath::sind(negPitch)), cp = SimMath::fstpDword(SimMath::cosd(negPitch));
+			Coord3D v;
+			v.x = SimMath::subf32(SimMath::mulf32(cp, ax), SimMath::mulf32(z0, sp));
+			v.y = SimMath::subf32(SimMath::mulf32(bx, cp), SimMath::mulf32(z0, sp));
+			v.z = SimMath::subf32(SimMath::mulf32(cx, cp), SimMath::mulf32(f, sp));
+			phys->fling(v, 0, 0);
+			obj->setOrientation(SimMath::fstpDword(SimMath::atan2d(v.y, v.x))); // RW 0x441BF4, 0x70C31E
+			if (!obj->testModelCondition(kExplodedFlailing))
+			{
+				obj->setModelConditionState(kExplodedFlailing, true);
+			}
+			m_flags |= kFlung;
+		}
+	}
+	else if (!m_hitGroundPending)
+	{
+		wake = m_sinkFrame;
+		if (wake > m_destructionFrame)
+		{
+			wake = m_destructionFrame;
+		}
+		if (wake > m_midpointFrame)
+		{
+			wake = m_midpointFrame;
+		}
+		if (m_decayFrame != 0 && m_decayFrame < wake)
+		{
+			wake = m_decayFrame;
+		}
+	}
+	setWakeFrame(obj, UPDATE_SLEEP(wake < 1 ? 1 : (int)wake)); // RW 0x850C32 (a 0 is the next frame)
 	m_sinkFrame += now;
 	m_destructionFrame += now;
 	m_midpointFrame += now;
+	if (m_decayFrame != 0)
+	{
+		m_decayFrame += now;
+	}
+	m_fadeFrame += now;
+	m_flags |= kActivated;
 	m_activated = true;
 	doPhase(SDPHASE_INITIAL);
 }
@@ -397,6 +528,16 @@ int SlowDeathBehaviorModuleData::resolvedMask() const
 	return (any(m_fx, false) ? 1 : 0) | (any(m_ocl, false) ? 2 : 0) | (any(m_weapon, false) ? 4 : 0) | (any(m_sounds, true) ? 8 : 0);
 }
 
+// RW 0x860B39 (the update interface slot 0). The LOD scale's rescale (RW 0x860B5B .. 0x860BC8) is not reached (scale 1.0). Then, in this order:
+//   * flung and not down: every frame (decay only when not 0) one later; once the body is no longer above the ground (RW 0x4B12E8: height > 0): EXPLODED_FLAILING goes,
+//     EXPLODED_BOUNCING (121) comes (RW 0x68D607), flag 8;
+//   * a HIT_GROUND entry pending: RUBBLE (5) cleared; less than 1.0 above the ground: the HIT_GROUND phase, RUBBLE set, no longer pending;
+//   * the fade frame reached with a FadeDelay: once (+ 0x48) the drawable fades over FadeTime (client);
+//   * the sink frame reached with a SinkRate above 0: without a flight in progress (PhysicsBehavior's points) and not significantly above the ground (RW 0x70C50C(0): not
+//     CAN_CLIMB_WALLS / SHIP, height > gravity * -9.0) the object is DISABLED_HELD for good (RW 0x692432(3)); SINKING (status 0x38) set; z - SinkRate / scale (x87),
+//     5.7 more (RW 0xC588F0, SSE) while that is still above the terrain; setPosition;
+//   * the midpoint frame: once, the MIDPOINT phase; the destruction frame: the FINAL phase and TheGameLogic->destroyObject; the decay frame (not 0): DECAY (153).
+// The update asks to run every frame (1).
 UpdateSleepTime SlowDeathBehavior::update()
 {
 	if (!m_activated)
@@ -407,22 +548,85 @@ UpdateSleepTime SlowDeathBehavior::update()
 	GameLogic &logic = obj->logic();
 	const unsigned now = logic.getFrame();
 	const SlowDeathBehaviorModuleData *d = m_data;
-	if (now >= m_sinkFrame && d->m_sinkRate > 0.0f)
+	static const int kExplodedFlailing = CombatNames::modelCondition("EXPLODED_FLAILING");
+	static const int kExplodedBouncing = CombatNames::modelCondition("EXPLODED_BOUNCING");
+	static const int kRubble = CombatNames::modelCondition("RUBBLE");
+	static const int kDecay = CombatNames::modelCondition("DECAY");
+	static const int kSinking = CombatNames::status("SINKING");
+	static const int kClimb = ObjectTemplateInfoBuilder::kindOfIndex("CAN_CLIMB_WALLS");
+	static const int kShip = ObjectTemplateInfoBuilder::kindOfIndex("SHIP");
+	if ((m_flags & kFlung) && !(m_flags & kLanded))
 	{
-		Coord3D pos = *obj->getPosition();
-		pos.z = SimMath::subf32(pos.z, d->m_sinkRate);
-		obj->setPosition(&pos);
+		++m_sinkFrame;
+		++m_midpointFrame;
+		++m_destructionFrame;
+		++m_fadeFrame;
+		if (m_decayFrame != 0)
+		{
+			++m_decayFrame;
+		}
+		if (!(heightAboveTerrain() > 0.0f))
+		{
+			Object::ModelConditionBits clear{}, set{};
+			clear[(size_t)kExplodedFlailing >> 5] |= 1u << (kExplodedFlailing & 31);
+			set[(size_t)kExplodedBouncing >> 5] |= 1u << (kExplodedBouncing & 31);
+			obj->clearAndSetModelConditionFlags(clear, set);
+			m_flags |= kLanded;
+		}
 	}
-	if (now >= m_midpointFrame && !m_midpointDone)
+	if (m_hitGroundPending)
+	{
+		if (obj->testModelCondition(kRubble))
+		{
+			obj->setModelConditionState(kRubble, false);
+		}
+		if (1.0f > heightAboveTerrain())
+		{
+			m_hitGroundPending = false;
+			doPhase(SDPHASE_HIT_GROUND);
+			if (!obj->testModelCondition(kRubble))
+			{
+				obj->setModelConditionState(kRubble, true);
+			}
+		}
+	}
+	if (m_fadeFrame <= now && d->m_fadeDelay != 0xFACADE00u && !m_fadeBegun)
+	{
+		m_fadeBegun = true; // RW 0x670A50(FadeTime) on the drawable: the client fades the body (fadeFrame() / fadeBegun())
+	}
+	if (m_sinkFrame <= now && d->m_sinkRate > 0.0f)
+	{
+		PhysicsBehavior *phys = PhysicsBehavior::find(*obj);
+		const bool significantlyAbove = !obj->isKindOf((unsigned)kClimb) && !obj->isKindOf((unsigned)kShip) &&
+			(double)heightAboveTerrain() > SimMath::pc24MulW((double)logic.settings().gravity, -9.0); // RW 0x70C50C: fld; fadd 0; fcompi with gravity * -9.0 (RW 0xC1EBC0)
+		if ((!phys || !phys->isFlying()) && !significantlyAbove)
+		{
+			obj->setDisabled(3, 0x3FFFFFFFu); // DISABLED_HELD (RW 0x6907F1)
+		}
+		obj->setStatus((unsigned)kSinking, true); // RW 0x62684D(0x38, 1)
+		Coord3D p = *obj->getPosition();
+		float z = SimMath::fstpDword(SimMath::pc24SubW((double)p.z, SimMath::pc24DivW((double)d->m_sinkRate, 1.0))); // fld SinkRate; fdiv scale; fsubr z
+		if (z > logic.getGroundHeight(p.x, p.y)) // TheTerrainLogic slot 0x1C with the layer (S-161: the ground)
+		{
+			z = SimMath::subf32(z, 5.69999981f);
+		}
+		p.z = z;
+		obj->setPosition(&p);
+	}
+	if (m_midpointFrame <= now && !(m_flags & kMidpoint))
 	{
 		doPhase(SDPHASE_MIDPOINT);
+		m_flags |= kMidpoint;
 		m_midpointDone = true;
 	}
-	if (now >= m_destructionFrame)
+	if (m_destructionFrame <= now)
 	{
 		doPhase(SDPHASE_FINAL);
 		logic.destroyObject(obj);
-		return UPDATE_SLEEP_FOREVER;
+	}
+	if (m_decayFrame != 0 && m_decayFrame <= now && !obj->testModelCondition(kDecay))
+	{
+		obj->setModelConditionState(kDecay, true);
 	}
 	return UPDATE_SLEEP_NONE;
 }
@@ -435,4 +639,9 @@ void SlowDeathBehavior::crc(StateHasher &h) const
 	h.addU32(m_sinkFrame);
 	h.addU32(m_midpointFrame);
 	h.addU32(m_destructionFrame);
+	h.addU32(m_decayFrame); // lane COMBAT-4
+	h.addU32(m_flags);
+	h.addBool(m_hitGroundPending);
+	h.addBool(m_fadeBegun);
+	h.addU32(m_fadeFrame);
 }

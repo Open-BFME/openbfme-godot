@@ -40,22 +40,23 @@ const int kCrushedDecelerateModifier = 0x1A;   // CRUSHED_DECELERATE
 const char *const kStop =
 	"[S-580] crush: SquishCollide (RW 0x8BFBAE), the crush levels with CRUSHABLE_LEVEL / CRUSHER_LEVEL (RW 0x68D4D0 / 0x695070), canCrush (RW 0x68D524), onCrush (RW 0x69320D: the "
 	"CrushKnockback fling through Object::doKnockback RW 0x692223, the deceleration with CRUSH_DECELERATE / CRUSHED_DECELERATE / MINIMUM_CRUSH_VELOCITY) and the bump (RW 0x696800: "
-	"the speed hold) are ported; NOT ported: RamPower's shockwave hit and the bump's contact attack (S-1600), RotWK's AI-goal exemption (AI vslot 0x188) and ZH's hijacker / TNT "
+	"the speed hold) and RamPower's shockwave hit (lane COMBAT-4) are ported; NOT ported: the bump's contact attack (S-1600), RotWK's AI-goal exemption (AI vslot 0x188) and ZH's hijacker / TNT "
 	"exemptions, SoundCrushing (client); INFERENCE: the contact pairs are MOVE-1's overlap pass of the AI units in id order (S-220, not RW's partition contacts), the shape test is "
 	"planar (circles and oriented rectangles; RW 0xAD2CE0's height test is not read), the crush / revenge weapons fire through the object's ObjectWeapons";
 
 const char *const kCombat3Stop =
-	"[S-1600] crush (COMBAT-3): NOT ported: the shockwave handler RW 0x6968BC (Object.cpp: DamageInfo's shockwave vector / amount / radius / taper / z mult, RESIST_KNOCKBACK, the "
-	"random strength RW 0x6D332C, the stand-up RW 0x792AFF of a stunned victim) that RamPower's 0-damage hit (RW 0x8BFF08 .. 0x8BFF68) and the weapons' ShockWave* nuggets feed (ram hits "
-	"counted, not applied); the bump's contact attack RW 0x6962DB (counted); the formation AttributeModifiers' other paths (interface slot 0x30 RW 0x86D056 for a joining member, slot "
-	"0x74 RW 0x876481, slot 0x1F8 RW 0x8791C5; the payload's and the formation swap's are ported); INFERENCE: the knockback's MSVCR71 cos / sin and RW 0x4B3D8D's acos use the "
-	"deterministic SimMath pair (S-167)";
+	"[S-1600] shockwaves (COMBAT-3 / COMBAT-4): ported (lane COMBAT-4): the shockwave handler RW 0x6968BC (Object.cpp: RESIST_KNOCKBACK, the strength GameLogicRandomValueReal(0.85, "
+	"1.15), the taper, the z mult, the clear-radius flight RW 0x792997, the cyclone, SHIP's downward z, the stand-up RW 0x792AFF of a resisting object, the kill of a flung object in AI "
+	"state 0x2D), fed by RamPower's 0-damage hit (RW 0x8BFF08 .. 0x8BFF68) and MetaImpactNugget (RW 0x910025 / 0x9108EE / 0x910179 / 0x91062F / 0x910380, shouldDeliver RW "
+	"0x910070); NOT ported: the bump's contact attack RW 0x6962DB (counted); the formation AttributeModifiers' other paths (interface slot 0x30 RW 0x86D056 for a joining member, slot "
+	"0x74 RW 0x876481, slot 0x1F8 RW 0x8791C5; the payload's and the formation swap's are ported); the rest is stop S-1790; INFERENCE: the knockback's MSVCR71 cos / sin and RW 0x4B3D8D's "
+	"acos use the deterministic SimMath pair (S-167)";
 
 const char *const kCrewStop =
-	"[S-1601] siege crew (COMBAT-3): a rider or crew member on a bone takes its bone's BoneSpecificConditionState (RW 0x868F0B .. 0x868F4B) and its timed model conditions run while it is "
-	"held (SMCHelper: RW 0x8B3313, every disabled type); NOT identified: the writer that gives a WORKING_PASSENGER crew (Grond's trolls, the rams' Uruks, the siege tower's trolls) the "
-	"container's MOVING / TURN_* / BACKING_UP, which their pushing AnimationStates need: TransportContain::update (RW 0x86B92C) mirrors only TRANSPORT_MOVING onto OpenContain's riders, "
-	"not the crew, and no MOVING writer found in the binary reads the container; the crew keeps its idle / swing states while the engine rolls";
+	"[S-1601] siege crew (COMBAT-3 / COMBAT-4): a rider or crew member on a bone takes its bone's BoneSpecificConditionState (RW 0x868F0B .. 0x868F4B) and its timed model conditions run "
+	"while it is held (SMCHelper: RW 0x8B3313, every disabled type); the container's MOVING / TURN_* / BACKING_UP reach a WORKING_PASSENGER crew on the CLIENT (lane COMBAT-4): the "
+	"container draw's DependencySharedModelFlags go to its dependent drawables (W3DModelDraw::replaceModelConditionState RW 0x4BF2D8, Drawable::applyDependencyFlags); the crew objects "
+	"keep their own flags; the dependent list's writer is inference (S-1791)";
 
 // ---- template fields (the object table keeps them in the template's field slots, S-072) --------------------------------------------
 std::string firstTok(const RawTokens &raw)
@@ -587,7 +588,23 @@ void SquishCollide::onCollide(Object *other, const Coord3D *, const Coord3D *)
 	ObjectCrush::onCrush(*other, *self);
 	if (ot.ramPower > 0.0f)
 	{
-		++logic.combat().counters().crushKnockbacksSkipped; // the 0-damage shockwave hit (RW 0x8BFF68 -> RW 0x6968BC): S-1600
+		// RW 0x8BFEC6 .. 0x8BFF68 (lane COMBAT-4): a 0-damage CRUSH hit from the crusher whose shockwave half throws self: the vector is the normalised
+		// self - crusher (Coord3D::normalize RW 0x403175), the amount RamPower (+0x618), the radius 10.0 (RW 0xBD83D8), the taper 1.0, the z mult RamZMult (+0x61C)
+		DamageInfo info; // RW 0x66365E
+		Coord3D v{ SimMath::subf32(self->getPosition()->x, other->getPosition()->x), SimMath::subf32(self->getPosition()->y, other->getPosition()->y),
+			SimMath::subf32(self->getPosition()->z, other->getPosition()->z) };
+		ObjectKnockback::normalize(v);
+		info.m_input.m_shockWaveVector = v;
+		info.m_input.m_shockWaveAmount = ot.ramPower;
+		info.m_input.m_shockWaveZMult = ot.ramZMult;
+		info.m_input.m_shockWaveRadius = 10.0f;
+		info.m_input.m_shockWaveTaperOff = 1.0f;
+		info.m_input.m_sourceID = other->getID();
+		info.m_input.m_deathType = DEATH_NORMAL;
+		info.m_input.m_damageType = DAMAGE_CRUSH;
+		info.m_input.m_amount = 0.0f;
+		self->attemptDamage(info); // RW 0x698E7D
+		++logic.combat().counters().ramHits;
 	}
 	++logic.combat().counters().crushes;
 	ObjectWeapons *ow = other->getWeapons();

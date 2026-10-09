@@ -43,7 +43,10 @@ void parseModifier(INI *ini, void *instance, void *, const void *)
 	{
 		throw INIException(3, "Attribute '%s' not found", typeName); // RW 0xC4EA38
 	}
-	const char *valueToken = ini->getNextToken();
+	// RW 0x8062A8: the value token is read by RW 0x42DCEA (the token, then preprocessMacro) and its '%' is looked for in the EXPANDED text (RW 0x8062B0
+	// strchr): a macro "#define X 50%" is a percentage (0.5). lane CAMP-1H: the raw token was tested before, so the 27 retail lists whose value is such a
+	// macro (the stonework armor bonuses, the AI difficulty bonuses, ...) read 50 instead of 0.5. A missing token is code 3 here (retail: strchr(null))
+	const char *valueToken = ini->getNextTokenPreprocess();
 	const float value = std::strchr(valueToken, '%') ? ini->scanPercentToReal(valueToken) : ini->scanReal(valueToken); // RW 0x8062D1
 	std::vector<std::string> names;
 	INI::parseAsciiStringVectorAppend(ini, instance, &names, nullptr); // RW 0x42E59E

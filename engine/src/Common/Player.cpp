@@ -143,6 +143,15 @@ void Player::crc(StateHasher &h) const
 	h.addU32(m_nightColor);
 	h.addI32(m_skirmishDifficulty);
 	h.addBool(m_colorExplicit);
+	// lane CAMP-1: the attacked-by flags, hashed only when one is set (a game without player damage keeps its hash)
+	for (int i = 0; i < kAttackedBySlots; ++i)
+	{
+		if (m_attackedBy[i])
+		{
+			h.addI32(0xA77 + i);
+			h.addU32(m_attackedFrame);
+		}
+	}
 	m_money.crc(h);
 	m_score.crc(h);
 	m_commandPoints.crc(h);
@@ -387,6 +396,16 @@ float Player::getUpgradeCostChange(const std::string &upgradeName) const
 		sum = NumericState::pc24Add(v, sum);
 	}
 	return sum;
+}
+
+// lane CAMP-1H: RW 0x6AC6B0 (Player::setDefaultTeam): the team "team" + the player's name (RW 0x7A7147) becomes + 0x30C and is activated
+void Player::setDefaultTeam(Team *team)
+{
+	m_defaultTeam = team;
+	if (team)
+	{
+		team->setActive();
+	}
 }
 
 // ---- lane UPGRADE-1 ---------------------------------------------------------------------------------------------------------------------

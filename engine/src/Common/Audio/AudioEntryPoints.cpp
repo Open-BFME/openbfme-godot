@@ -276,6 +276,20 @@ std::uint64_t callsWithoutEva()
 
 bool reportEva(const std::string &n, const Coord3D *position)
 {
+	// lane CAMP-1H: a report from the logic worker (AttachUpdate's cues, RW 0x8952BD / 0x895448) is queued for the audio owner like the other S-814
+	// requests (the Eva belongs to the manager's thread)
+	const bool hasPosition = position != nullptr;
+	const Coord3D at = hasPosition ? *position : Coord3D{ 0.0f, 0.0f, 0.0f };
+	switch (route(Binding::Manager, [n, hasPosition, at]() { reportEva(n, hasPosition ? &at : nullptr); }))
+	{
+	case Route::Run:
+		break;
+	case Route::Deferred:
+		return true; // S-814: reported on the audio owner at the next idle point
+	case Route::Unbound:
+		g_withoutEva.fetch_add(1, std::memory_order_relaxed);
+		return false;
+	}
 	Eva *eva = nullptr;
 	AudioManager *mgr = nullptr;
 	{

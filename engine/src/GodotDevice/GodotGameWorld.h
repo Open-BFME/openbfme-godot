@@ -17,6 +17,7 @@
 
 #pragma once
 
+#include "GameClient/VideoPlayer.h" // lane CAMP-1H: m_videos (complete for the unique_ptr)
 #include "GameClient/EndGame.h"
 #include "GameClient/ScriptCameraDirector.h"
 #include "GameClient/LiveGame.h"
@@ -304,6 +305,25 @@ public:
 	Dictionary debug_script_place_at(const String &name, double x, double y);
 	Dictionary debug_script_kill_team(const String &name);
 	static void bindScriptMethods();
+	// ---- lane CAMP-1 (GodotDevice/GodotGameWorldCampaign.cpp): the linear campaigns ----
+	// TheLinearCampaignManager's campaigns: [ { name, display_label, intro_movie, carryover: [..], missions: [ { name, map, intro_movie, load_screen_image,
+	// load_screen_music, fade_up_frames, delay_carryover: [..] } ] } ] (the world must be set up)
+	Array get_campaigns() const;
+	// loads a campaign mission as the game (load_map with the campaign rules): options { campaign, mission (index), difficulty (0 easy, 1 normal, 2 hard),
+	// logic_thread, progress, test_hooks }; the report of start_new_game plus "start" { local_player, local_player_index, camera_start (the map's
+	// InitialCameraPosition waypoint, else Player_1_Start), slot_players [], starting_objects [] } and "mission" (the mission's record)
+	Dictionary start_campaign_mission(const Dictionary &options);
+	// the running mission's end: { ended, victory, action, frame } (the script engine's VICTORY / QUICKVICTORY / DEFEAT, ScriptEngine::endRequests)
+	Dictionary campaign_status() const;
+	// the campaign progress sidecar (CampaignProgress's text, never a retail save format): load -> { ok, campaign, mission, difficulty, victorious, error };
+	// save { campaign, mission, difficulty, victorious } -> { ok, error }
+	Dictionary campaign_progress_load(const String &path) const;
+	Dictionary campaign_progress_save(const String &path, const Dictionary &progress) const;
+	// lane CAMP-1H: a movie by its Video title (TheVideoPlayer, GameClient/VideoPlayer.h: RW 0x490EE6's lookup): { ok, error, title, path, width, height,
+	// frames, duration_ms, audio_events: [ "<file>_Music"?, "<file>"? ] (the ones the audio INIs define, RW 0x49112C), stops: [..] }. The Video INIs are read
+	// on the first call; the movie files are the install's loose Data\Movies (ROTWK_INSTALL / user://install-paths.cfg)
+	Dictionary get_movie(const String &title);
+	static void bindCampaignMethods();
 	// ---- player commands (lane MOVE-1): everything goes through the lockstep command path (LiveGame::commands(), executed by the logic's command list row of the
 	// next logic frame), never by touching the AI directly ----
 	// Orders the objects `ids` to (x, y) in SAGE coordinates: a select message and a move message of the first object's controlling player. options: type: "move" (default),
@@ -331,6 +351,10 @@ public:
 	// lane SMOOTH-1: LiveGame::setRenderInterpolation (off: the stepped 5 Hz look, for comparisons)
 	void set_render_interpolation(bool enabled);
 	bool get_render_interpolation() const;
+	// lane PERF-3: the pose culling of the live objects' instancer (W3DInstancer::set_pose_culling) on / off, for before / after measurements in one build;
+	// it changes no pixel of a frame and nothing of the simulation. Default on
+	void set_perf3_client(bool enabled);
+	bool get_perf3_client() const { return m_perf3Client; }
 	// SMOOTH-1 (S-810): the logic worker thread on / off (the single-thread fallback for debugging); also the default of the next load (option logic_thread)
 	void set_logic_thread(bool enabled);
 	bool get_logic_thread() const;
@@ -424,9 +448,16 @@ private:
 		std::string model;              ///< the lower-case model the instance shows ("" none)
 		std::string rawModel, rawLowered; ///< lane PERF-1: the last model name as the draw gave it and its lower-case form (lowered once per change)
 		std::vector<std::string> hidden;
+		std::uint32_t hiddenGeneration = 0; ///< lane PERF-3: the draw's hidden set generation and model `hidden` was made from (names made only when they change)
+		const void *hiddenModel = nullptr;
+		const void *streakSource = nullptr;  ///< lane PERF-3: the entry's module data the streak cast below was made from
+		const W3DStreakDrawModuleData *streak = nullptr; ///< lane PERF-3: that data as a W3DStreakDraw's (refresh_streaks), null for other modules
+		bool streakKnown = false;
 		bool posed = false;
 		float offsetZ = 0.0f;           ///< RENDER-2: the construction offset the instance's transform carries (DrawEntry::constructionOffsetZ)
 		float opacity = 1.0f;           ///< PROJ-2: the drawable's fade the instance shows (Drawable::drawOpacity)
+		unsigned tireChanges = 0xFFFFFFFFu; ///< lane COMBAT-4: DrawEntry::tireChanges the instance's bone spins show
+		int64_t tireInstance = -1;          ///< the instance they were handed to
 	};
 	struct DrawableView
 	{
@@ -451,6 +482,8 @@ private:
 
 	Ref<RetailFileSystem> m_fs;
 	std::unique_ptr<RetailObjectWorld> m_world;
+	std::unique_ptr<VideoPlayer> m_videos; // lane CAMP-1H: TheVideoPlayer's Video blocks (get_movie)
+	std::string m_videosError;             // lane CAMP-1H: why the Video INIs did not load
 	std::unique_ptr<GameLogicSettings> m_settings;   ///< GameData / AIData / MultiplayerSettings (and the lobby colours), read once by setup()
 	std::unique_ptr<MapObjectOptions> m_options;
 	std::unique_ptr<ArchiveW3DFileSource> m_source;
@@ -501,6 +534,7 @@ private:
 	bool m_paused = false;
 	bool m_animations = true;
 	bool m_houseColors = true;
+	bool m_perf3Client = true; // lane PERF-3: set_perf3_client
 	bool m_textureAnimation = true;
 	double m_timeScale = 1.0;
 	double m_textureClock = 0.0;
@@ -526,7 +560,7 @@ private:
 		bool seen = false;
 		float opacity = 1.0f; ///< PROJ-2: the drawable's opacity (RW 0x672FC4, Drawable::drawOpacity)
 	};
-	W3DDrawFrame m_viewFrame;                 ///< lane PERF-1: refresh_views' frame of the drawable entry being shown (its storage reused across entries and frames)
+	W3DDrawPoseView m_viewPose;               ///< lane PERF-3: refresh_views reads the pose request by reference (W3DScriptedModelDraw::poseView)
 	int m_streakWeather = 0;                  ///< lane PERF-1: the map's WeatherType for the streak textures (0 NORMAL, 1 SNOWY), set by load_map
 	std::map<uint64_t, StreakView> m_streaks;  ///< key = drawable id << 8 | entry index
 	std::unique_ptr<W3DMaterialFactory> m_streakTextures;

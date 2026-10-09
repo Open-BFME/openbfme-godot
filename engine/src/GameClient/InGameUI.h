@@ -113,16 +113,26 @@ public:
 
 	// ---- the building waiting for placement (ZH placeBuildAvailable; lane BUILD-1: PlaceEventTranslator places it) ----
 	// an empty name ends the mode. The ghost (location, angle and the legality code of BuildPlacement) is what the translator sets from the pointer; the device layer draws it
-	void placeBuildAvailable(const std::string &templateName, ObjectID sourceObject)
+	// `command` is the build button that asked for the site (lane QA2-FIX: RotWK's processCommandUI DOZER_CONSTRUCT case RW 0x940A86 calls placeBuildAvailable, then
+	// jumps to RW 0x94089B: setGUICommand(button); the wall span message takes its Options from getGUICommand (RW 0x83E999). The port keeps the button with the placement
+	// instead of making it the GUI command, so the translators that wait for a GUI command target are not entered (inference: RotWK's placement end RW 0x83E6A4 clears
+	// both together, vslots 0xBC(0) and 0xDC(0, 0))
+	void placeBuildAvailable(const std::string &templateName, ObjectID sourceObject, const CommandButton *command = nullptr)
 	{
 		m_placeTemplate = templateName;
 		m_placeSource = sourceObject;
+		m_placeCommand = templateName.empty() ? nullptr : command;
 		m_placeHasGhost = false;
 		m_placeAngle = 0.0f;
 		m_placeLegal = 0;
 	}
 	const std::string &placeBuildTemplate() const { return m_placeTemplate; }
 	ObjectID placeBuildSource() const { return m_placeSource; }
+	const CommandButton *placeBuildCommand() const { return m_placeCommand; }
+	// RotWK's line build flag (InGameUI + 0x8C6; vslot 0xFC reads it, vslot 0x100 sets it, RW 0x48E8ED / 0x48E8F4): the placement update RW 0x6A2D26 sets it on the
+	// first client frame a pending line build (a wall hub from a wall hub) is not anchored; the placement release sends the span only while it is set (RW 0x83E924)
+	bool isLineBuildStarted() const { return m_lineBuildStarted; }
+	void setLineBuildStarted(bool on) { m_lineBuildStarted = on; }
 	bool isPlacing() const { return !m_placeTemplate.empty(); }
 	void setPlaceGhost(const Coord3D &location, float angle, int legalCode)
 	{
@@ -152,6 +162,8 @@ private:
 	std::vector<std::string> m_messages;
 	std::string m_placeTemplate;
 	ObjectID m_placeSource = INVALID_ID;
+	const CommandButton *m_placeCommand = nullptr;
+	bool m_lineBuildStarted = false;
 	Coord3D m_placeLocation;
 	float m_placeAngle = 0.0f;
 	int m_placeLegal = 0;

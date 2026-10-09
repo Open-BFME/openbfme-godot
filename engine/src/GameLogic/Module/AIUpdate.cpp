@@ -232,6 +232,8 @@ public:
 		}
 		return m_physics != nullptr && m_physics->isStunned();
 	}
+	// lane EXIT-1: obj+0x264, the PhysicsBehavior RW caches at creation (RW 0x69A420); the port finds the module
+	bool hasPhysicsModule() const override { return PhysicsBehavior::find(obj()) != nullptr; }
 	bool zMotionSuppressed() const override { return false; }
 	unsigned logicFrame() const override { return obj().logic().getFrame(); }
 	bool containerAllowsBackingUp() const override { return false; }
@@ -433,7 +435,13 @@ UpdateSleepTime AIUpdateInterface::update()
 {
 	m_isInUpdate = true;
 	getObject()->setStatus((unsigned)CombatNames::statuses().updatingAI, true); // RW: damage dealt to this object during its own update waits a frame
-	getObject()->logic().scriptModelConditionEvents(*getObject(), m_luaConditionSnapshot); // lane HERO-2: RW 0x66964D -> 0x663E32
+	// lane EXIT-1: RW 0x66E6E1 .. 0x66E70C: a horde member that is busy or has an explicit / angle goal runs the member update RW 0x66C748 instead of RW 0x6695EF
+	// (which holds the script condition events, the machine, the movement-complete block, the turret and doLocomotor)
+	const bool memberUpdate = runsHordeMemberUpdate();
+	if (!memberUpdate)
+	{
+		getObject()->logic().scriptModelConditionEvents(*getObject(), m_luaConditionSnapshot); // lane HERO-2: RW 0x66964D -> 0x663E32
+	}
 	if (ObjectWeapons *w = getObject()->getWeapons())
 	{
 		// the weapon model conditions (RW 0x68E197) are the WeaponStatusHelper's (lane PROJ-2: a PHASE_FINAL module, after this update; RW 0x66DA50 is
@@ -453,6 +461,13 @@ UpdateSleepTime AIUpdateInterface::update()
 				aiAttackObject(t, CMD_FROM_AI);
 			}
 		}
+	}
+	if (memberUpdate)
+	{
+		const unsigned memberSleep = hordeMemberUpdate();
+		m_isInUpdate = false;
+		getObject()->setStatus((unsigned)CombatNames::statuses().updatingAI, false);
+		return (UpdateSleepTime)(memberSleep < 1u ? 1u : memberSleep);
 	}
 	unsigned sleep = (unsigned)UPDATE_SLEEP_FOREVER;
 	const StateReturnType st = m_machine->updateStateMachine();
@@ -627,7 +642,7 @@ void AIUpdateInterface::privateMoveToPosition(const Coord3D &pos, CommandSourceT
 
 void AIUpdateInterface::aiMoveToPositionAndOrientate(const Coord3D &pos, float angle, CommandSourceType source)
 {
-	if (!acceptCommand(source, -1))
+	if (!acceptCommand(source, kCommandUnidentifiedMove))
 	{
 		return; // lane MODULES-3: RW 0x667174
 	}
@@ -725,7 +740,7 @@ void AIUpdateInterface::aiFollowPath(const std::vector<Coord3D> &path, Object *i
 // B1 AIUpdate.cpp:5005: add a point to the path being followed (or start one)
 void AIUpdateInterface::aiFollowPathAppend(const Coord3D &pos, CommandSourceType source)
 {
-	if (!acceptCommand(source, -1))
+	if (!acceptCommand(source, kCommandUnidentifiedMove))
 	{
 		return; // lane MODULES-3: RW 0x667174
 	}
@@ -1328,7 +1343,7 @@ bool AIUpdateInterface::isCellTypeTwo(const Coord3D &p, PathfindLayerEnum layer)
 
 std::vector<std::string> AIUpdateInterface::allStops()
 {
-	return { kStopCommands, kStopUpdate, kStopLocomotor, kStopHost, kStopStates };
+	return { kStopCommands, kStopUpdate, kStopLocomotor, kStopHost, kStopStates, hordeMemberUpdateStop() };
 }
 
 std::vector<std::string> AIUpdateInterface::stopsRaised() const

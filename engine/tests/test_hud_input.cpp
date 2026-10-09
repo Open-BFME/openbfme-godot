@@ -341,12 +341,13 @@ TEST_CASE("hud input: a batch of raw events gives the messages the same events d
 TEST_CASE("stops S-280 .. S-288: the HUD input reports what it does not port, and an unported meta command is counted, never dropped")
 {
 	const std::vector<std::string> stops = HudInput::acceptanceStops();
-	REQUIRE(stops.size() == 9);
+	REQUIRE(stops.size() == 10);
 	// the control bar, radar and Palantir report S-289 .. S-294 (their own test: test_hud_palantir.cpp)
-	for (size_t i = 0; i < stops.size(); ++i)
+	for (size_t i = 0; i < 9; ++i)
 	{
 		CHECK(stops[i].compare(0, 7, "[S-" + std::to_string(280 + (int)i) + "]") == 0);
 	}
+	CHECK(stops[9].compare(0, 8, "[S-1770]") == 0); // lane QA2-FIX: the wall line build (PlaceEventTranslator::stopLines)
 	if (!haveWorld("hud stops"))
 	{
 		return;

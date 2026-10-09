@@ -55,7 +55,7 @@ struct ScriptCondition
 	int version = 0;
 	int resolved = 0;        ///< the RotWK parser's ordinal (see the header comment); `params` are the resolved parameters
 	bool enabled = true;     ///< Condition + 0x4C: flagA != 0 for v >= 5, else 1 (RW 0x7B783F); a disabled condition is skipped (RW 0x60936C)
-	bool flagB4D = false;    ///< Condition + 0x4D: flagB != 0 for v >= 5 (never read by the evaluation, RW 0x6092A9)
+	bool flagB4D = false;    ///< Condition + 0x4D: flagB != 0 for v >= 5; inverts an ordinal >= 5's answer (RW 0x7ED72C, lane CAMP-1)
 };
 
 struct ScriptActionRec

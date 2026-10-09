@@ -6,6 +6,7 @@
 #include "GameLogic/AI/AIWorld.h"
 #include "GameLogic/Module/AIUpdate.h"
 
+#include "Common/Team.h"
 #include "Common/Thing/ThingFactory.h"
 #include "GameLogic/Object/Object.h"
 #include "GameLogic/ObjectTemplateInfo.h"
@@ -89,6 +90,7 @@ MapObjectLoopResult MapObjectLoop::create(GameLogic &logic, const LoadedMap &map
 				obj->setPosition(&d.position);
 			}
 			obj->friend_onBuildComplete(); // RW 0x62E176: a map object is complete at birth (the claim of a resource building, ...)
+			team->setActive();             // lane CAMP-1H: RW 0x62E17B .. 0x62E185: its team is activated (its OnCreate script runs at the next team update)
 			// updateObjValuesFromMapProperties (RW 0x695A06): the properties this layer applies
 			bool exists = false;
 			const std::string objName = o.m_properties.getAsciiString("objectName", &exists);

@@ -195,6 +195,14 @@ public:
 	bool isStateActive() const { return !m_machine || !m_machine->currentState() ? true : m_machine->currentState()->isActive(); }
 	bool isBlocked() const { return m_mover->isBlocked(); }
 	bool isBusy() const { return m_machine && m_machine->currentStateId() == AI_BUSY; }
+	// ---- lane EXIT-1: the horde member update (GameLogic/Module/AIUpdateHordeMember.cpp) ----
+	// RW 0x66E654 .. 0x66E6F4: a HORDE_MEMBER whose machine is busy (RW 0x741724) or whose locomotor goal is explicit / an angle / explicit with a path (not a
+	// DOZER with an angle goal) runs RW 0x66C748 instead of the ordinary update RW 0x6695EF
+	bool runsHordeMemberUpdate() const;
+	// RW 0x66C748; returns the frames to sleep
+	unsigned hordeMemberUpdate();
+	unsigned long long memberUpdates() const { return m_memberUpdates; } ///< frames run through RW 0x66C748 (a counter, not state)
+	static std::string hordeMemberUpdateStop();
 	bool isDoingGroundMovement() const;       // B1 AIUpdate.cpp:3978
 	bool isAircraftThatAdjustsDestination() const; // B1 AIUpdate.cpp:4010
 	bool canPathThroughUnits() const { return m_canPathThroughUnits; }
@@ -271,6 +279,7 @@ public:
 	void startMoveSound() override; // lane AUDIO-3: RW 0x748C0B
 	void stopMoveSound() override;
 	float relativeAngleTo(const Coord3D &p) const override;
+	bool moveToPositionFromAI(const Coord3D &p) override { aiMoveToPosition(p, CMD_FROM_AI); return true; } // lane MOVE-2 r3: RW 0x66C4CA from RW 0x66D16E
 	bool isCellTypeTwo(const Coord3D &p, PathfindLayerEnum layer) const override;
 	// ---- lane PHYS-1 (AIUpdateAllies.cpp) ----
 	bool attackRangeFrom(const Coord3D &from, PathfindObjectID victim, const Coord3D &victimPos, float extra) override;
@@ -297,17 +306,21 @@ public:
 	// move order meets a locomotor set speed of 0. Every ai* command of this class asks it first
 	bool allowedToRespondToCommand(CommandSourceType source, int command) const;
 	// lane AUDIO-3 r2: aiDoCommand's entry: the gate, then (passed) the module's own reaction before the command runs (commandAccepted). Every ai* command calls this
-	bool acceptCommand(CommandSourceType source, int command)
+	bool acceptCommand(CommandSourceType source, int command, Object *target = nullptr)
 	{
 		if (!allowedToRespondToCommand(source, command))
 		{
 			return false;
 		}
-		commandAccepted(source, command);
+		commandAccepted(source, command, target);
 		return true;
 	}
-	// a command passed the gate and is about to run (RotWK DozerAIUpdate::aiDoCommand RW 0x88E44F cancels its task on a player command); default nothing
-	virtual void commandAccepted(CommandSourceType source, int command) { (void)source; (void)command; }
+	// lane MOVE-2: the command number of a move variant whose RotWK number is not identified (the group move with a final angle, a queued waypoint): the gate
+	// treats it as an unknown command (-1), HordeAIUpdate's member hand-off (RW 0x89E169) as a move (INFERENCE, S-1501)
+	static const int kCommandUnidentifiedMove = -2;
+	// a command passed the gate and is about to run (RotWK DozerAIUpdate::aiDoCommand RW 0x88E44F cancels its task on a player command; HordeAIUpdate::aiDoCommand
+	// RW 0x89E169 makes its members busy, lane MOVE-2); `target` is the command's object (attack commands 0xB / 0xC), else null; default nothing
+	virtual void commandAccepted(CommandSourceType source, int command, Object *target) { (void)source; (void)command; (void)target; }
 	void setPreventPlayerCommands(bool on) { m_preventPlayerCommands = on; } // RW + 0x3C5 (the nugget start / stop with PreventPlayerCommands)
 	bool preventPlayerCommands() const { return m_preventPlayerCommands; }
 	// RW + 0x3C4: the panic cower's short cower (MinCowerTime / 4); its writer is not identified (S-1027), only state 21's exit clears it
@@ -318,6 +331,7 @@ public:
 	unsigned maxCowerTime() const { return m_maxCowerTime; }
 	// RW 0x68E43B: the object's vision range (Object + 0x1B0, the template's VisionRange: S-1027) x (1 + the attribute modifier sum of type 16) x the height bonus
 	float objectVisionRange() const;
+	static float objectVisionRangeOf(Object &object); ///< the same for any object (RW 0x68E43B is Object's; lane CAMP-1H)
 	// AIMoveHost (lane MODULES-3: the safe path of the run-away-panic state)
 	bool repulsorPosition(PathfindObjectID id, Coord3D &out) override;
 	float safePathRadius() override;
@@ -366,6 +380,7 @@ private:
 	bool m_canPathThroughUnits = false;
 	ObjectID m_moveAwayRequesters[2] = { INVALID_ID, INVALID_ID }; // lane PHYS-1: RW AI +0x198 / +0x19C (RW 0x66DA5F)
 	bool m_isInUpdate = false;
+	unsigned long long m_memberUpdates = 0; // lane EXIT-1 (a counter, not hashed)
 	std::array<std::uint32_t, 19> m_luaConditionSnapshot{}; ///< lane HERO-2: + 0x290, the ModelCondition script events' snapshot (RW 0x663E32)
 	bool m_moveLoopPosted = false; // lane AUDIO-3: a move loop is kept for this object on the audio side (audio bookkeeping only: no logic reads it, not hashed)
 	bool m_destroying = false; // set by the destructor: the machine's exits run on an object whose drawable the world hooks already removed

@@ -10,9 +10,14 @@ separators) yields tokens; a finding is
   * a string literal that names such an API or a network library (`GetProcAddress(h, "WSASocketW")`, `dlopen("libcurl.so")`);
   * an #include of a socket / network header.
 GDScript (godot/, not godot/tests): the same lexing for "..." / '...' / triple-quoted strings and # comments; a finding is any
-networking class, `OS.execute` / `create_process` / `shell_open` / `request_permission`, or a string literal naming a networking class
+networking class, `OS.execute` / `create_process` / `shell_open` / `request_permission` (except the developer profiler's literal
+`OS.create_process("perf", ...)` / `OS.execute("kill", ...)`, PERF-3's --perf-stat), or a string literal naming a networking class
 (`ClassDB.instantiate("HTTPRequest")`).
 Only engine/src/GameNetwork/Transport.cpp (the LAN transport, UDP) may have C / C++ findings.
+The launcher (launcher/, not launcher/tests; lane LAUNCH-1) is checked the same way with its own allow list, finding by finding:
+HTTPClient only in launcher/scripts/net/http_fetch.gd (whose every request passes NetPolicy.check: GitHub's release hosts over HTTPS),
+OS.create_process only where the launcher starts the game (updater.gd) and its own updated executable (self_update.gd), OS.execute
+only for the self-update's atomic replace on Windows (self_update.gd: cmd /c move /y).
 """
 from __future__ import annotations
 
@@ -31,6 +36,11 @@ NATIVE_LIBRARY = re.compile(r"(?i)(ws2_32|wsock32|wininet|winhttp|urlmon|libcurl
 NATIVE_HEADER = re.compile(r"(?i)^(sys/socket\.h|netinet/.*|arpa/inet\.h|netdb\.h|sys/un\.h|winsock2?\.h|ws2tcpip\.h|ws2def\.h|mswsock\.h|"
                            r"wininet\.h|winhttp\.h|urlmon\.h|curl/.*)$")
 ALLOWED_NATIVE = {"engine/src/GameNetwork/Transport.cpp"}
+# launcher file -> the findings it may have (the text after "line <n>: ")
+ALLOWED_LAUNCHER = {"launcher/scripts/net/http_fetch.gd": {"HTTPClient"},
+                    "launcher/scripts/core/updater.gd": {"OS.create_process"},
+                    # OS.execute: `cmd /c move /y` on Windows, the one atomic replace of the launcher's executable (MoveFileEx)
+                    "launcher/scripts/core/self_update.gd": {"OS.create_process", "OS.execute"}}
 
 GODOT_NET = re.compile(r"(HTTPRequest|HTTPClient|WebSocketPeer|WebSocketMultiplayerPeer|StreamPeerTCP|StreamPeerTLS|TCPServer|PacketPeerUDP|"
                        r"PacketPeerDTLS|DTLSServer|UDPServer|ENetConnection|ENetMultiplayerPeer|ENetPacketPeer|WebRTC\w*|JavaScriptBridge|"
@@ -267,13 +277,24 @@ def lex_gd(text: str) -> tuple[list[tuple[str, int]], list[tuple[str, int]]]:
     return tokens, strings
 
 
+# the developer profiler (lane PERF-3, --perf-stat): Linux `perf stat` on the game's own process and `kill -INT` of that perf. Allowed only as a
+# literal first argument, and only when every process call on the line is one of these (a call naming anything else stays a finding)
+PROFILER_CALL = re.compile(r'OS\.(create_process|execute)\(\s*"(perf|kill)"\s*,')
+PROCESS_CALL = re.compile(r'OS\.(\w+)\s*\(')
+
+
 def gdscript_findings(text: str) -> list[str]:
     tokens, strings = lex_gd(text)
+    lines = text.splitlines()
     found = []
     for k, (tok, line) in enumerate(tokens):
         if GODOT_NET.match(tok) and not (k and tokens[k - 1][0] == "."):
             found.append(f"line {line}: {tok}")
         if tok in GODOT_OS_CALLS and k >= 2 and tokens[k - 1][0] == "." and tokens[k - 2][0] == "OS":
+            src = lines[line - 1] if 0 < line <= len(lines) else ""
+            calls = [m for m in PROCESS_CALL.finditer(src) if m.group(1) in GODOT_OS_CALLS]
+            if calls and len(calls) == len(PROFILER_CALL.findall(src)):
+                continue
             found.append(f"line {line}: OS.{tok}")
     for s, line in strings:
         if GODOT_NET.match(s):
@@ -301,12 +322,34 @@ def scan() -> dict[str, list[str]]:
     return out
 
 
+def scan_launcher() -> dict[str, list[str]]:
+    """{file: findings} for the launcher's shipped GDScript (launcher/ without launcher/tests)."""
+    out = {}
+    for gd in sorted((REPO / "launcher").rglob("*.gd")):
+        rel = gd.relative_to(REPO / "launcher").parts
+        if rel[0] in ("tests", ".godot"):
+            continue
+        f = gdscript_findings(gd.read_text(encoding="utf-8", errors="replace"))
+        if f:
+            out[str(gd.relative_to(REPO))] = f
+    return out
+
+
+def launcher_finding_allowed(path: str, finding: str) -> bool:
+    return finding.split(": ", 1)[-1] in ALLOWED_LAUNCHER.get(path, set())
+
+
 def main() -> int:
     bad = 0
     for path, findings in scan().items():
         allowed = path in ALLOWED_NATIVE
         bad += 0 if allowed else 1
         for f in findings:
+            print(f"{'allowed' if allowed else 'FINDING'} {path}: {f}")
+    for path, findings in scan_launcher().items():
+        for f in findings:
+            allowed = launcher_finding_allowed(path, f)
+            bad += 0 if allowed else 1
             print(f"{'allowed' if allowed else 'FINDING'} {path}: {f}")
     return 1 if bad else 0
 

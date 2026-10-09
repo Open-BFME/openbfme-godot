@@ -131,7 +131,7 @@ TEST_CASE("horde2 hash: the banner carrier's spawn count, the crush weapon's sta
 	MUTATE2("crushes", ++w.combat().counters().crushes);
 	MUTATE2("crush weapon shots", ++w.combat().counters().crushWeaponShots);
 	MUTATE2("bumps", ++w.combat().counters().crushBumps);
-	MUTATE2("knockbacks", ++w.combat().counters().crushKnockbacksSkipped);
+	MUTATE2("ram hits", ++w.combat().counters().ramHits);
 	MUTATE2("decelerations", ++w.combat().counters().crushDecelerations);
 	MUTATE2("flank tests", ++w.combat().counters().flankTests);
 	MUTATE2("flanks", ++w.combat().counters().flanks);

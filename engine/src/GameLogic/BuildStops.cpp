@@ -22,9 +22,10 @@ std::vector<std::string> BuildStops::lines()
 		"RW 0x88C2FE, the primary machine RW 0x88C06B, PickActionPos / MoveToActionPos / DoAction RW 0x88D7D2 / 0x88C5C7 / 0x88D993); INFERENCE: the structure is "
 		"made at the order with every BUILD-1 effect (RW makes it PHANTOM and places it on arrival, RW 0x88D44F: the port keeps the placement's health of 1 and "
 		"removes the unplaced structure with a refund when the task is cancelled before arrival, but does not repeat its legality test, flags 0x15)",
-		"[S-306] placement mode: PlaceEventTranslator (priority 30) is ZH's: the rotation drag, shift to keep placing, the illegal-site cursor and message are inference (RotWK's translator body was not "
-		"read); a plot's FOUNDATION_CONSTRUCT button builds at once on the plot (no ghost); the ghost is the template's first default model tinted by the legality code (the BUILD_PLACEMENT_CURSOR "
-		"animation state is not played); line building of walls is not ported",
+		"[S-306] placement mode: PlaceEventTranslator (priority 30) is ZH's: the rotation drag, shift to keep placing, the illegal-site cursor and message are inference (RotWK's translator body was read "
+		"only for the line build, S-1770); a plot's FOUNDATION_CONSTRUCT button builds at once on the plot (no ghost); the ghost is the template's first default model tinted by the legality code (the BUILD_PLACEMENT_CURSOR "
+		"animation state is not played); line building of walls is ported (lane QA2-FIX: the hub's Begin Wall Span click sends "
+		"MSG_WALL_HUB_CONSTRUCT_SPAN, RW 0x83E93A; its gaps are S-1770)",
 		"[S-307] walls: BUILD-2 ported WallHubBehavior and the span a hub builds (MSG_WALL_HUB_CONSTRUCT_SPAN); what is still open is S-657. Repair is ported (S-656)",
 	};
 	for (const std::string &s : CastleBehavior::stopLines()) // lane CASTLE-1

@@ -29,6 +29,10 @@ bool ControlBar::pressButton(int slot, bool inPalantir)
 		return false;
 	}
 	m_ctx.ui.placeBuildAvailable(std::string(), INVALID_ID);
+	if (obj->isKindOfName("WALL_HUB"))
+	{
+		m_ctx.ui.setLineBuildStarted(false); // lane QA2-FIX: RW 0x94078F: a wall hub's command first clears the line build flag (TheInGameUI vslot 0x100(0))
+	}
 	if (cb->state == ButtonState::CantAfford)
 	{
 		m_ctx.ui.message("GUI:NotEnoughMoneyToBuild"); // processCommandUI: CANMAKE_NO_MONEY
@@ -87,7 +91,7 @@ bool ControlBar::pressButton(int slot, bool inPalantir)
 				m.appendReal(0.0f);
 				return true;
 			}
-			m_ctx.ui.placeBuildAvailable(tt->getName(), obj->getID());
+			m_ctx.ui.placeBuildAvailable(tt->getName(), obj->getID(), &b); // RW 0x940AA1, then the button as the GUI command (RW 0x94089B; see InGameUI.h)
 			return true;
 		}
 		case GUI_COMMAND_STOP:

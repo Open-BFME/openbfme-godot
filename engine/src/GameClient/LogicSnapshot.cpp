@@ -232,6 +232,7 @@ std::shared_ptr<const LogicSnapshot> LogicSnapshot::build(GameLogic &logic, cons
 			s.objectShroud = (int)os;
 		}
 		s.drawableHidden = o->isDrawableHidden(); // lane GARRISON-1
+		s.containedBy = o->getContainedBy() ? o->getContainedBy()->getID() : (ObjectID)INVALID_ID; // lane COMBAT-4
 		s.stealthLook = InvisibilityManager::clientLook(*o, local); // lane STEALTH-1
 		if (s.stealthLook == 1 || s.stealthLook == 4)
 		{

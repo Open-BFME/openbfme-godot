@@ -51,7 +51,10 @@ func _run() -> int:
 		for tab in ["Units", "Structures", "Resources", "FinalScore"]:
 			_check(text.contains("GAME END tab %s: graph mode %s" % [tab, tab]), "%s: the %s tab plots its series" % [variant[0], tab])
 		_check(text.contains("GAME END stats row: Session Length#ffffffff") and text.contains("Structures Created#ffffffff") and not text.contains("MISSING"), "%s: the statistics page lists the STAT:RTS rows" % variant[0])
-		_check(text.contains("GAME END Continue showed: [\"MainMenu.apt\", \"Skirmish.apt\"]"), "%s: Continue returned to the Skirmish lobby (TheShell + 0x9C)" % variant[0])
+		_check(text.contains("GAME END Continue showed: [\"MainMenu.apt\", \"Skirmish.apt\"]"), "%s: Continue returned to the Skirmish lobby (S-1771)" % variant[0])
+		# lane QA2-FIX (QA-2 #5): the main menu under the lobby is hidden (its movie loaded before the lobby covered it)
+		_check(text.contains("GAME END Continue covered screens hidden: true"), "%s: the main menu does not show through the lobby after the game" % variant[0])
+		_check(text.count("GAME STOP [S-1771]") == 1, "%s: the stop S-1771 is reported once" % variant[0])
 		if exit_code != 0:
 			for line in text.split("\n"):
 				if line.begins_with("GAME FAIL") or line.contains("handle_crash"):

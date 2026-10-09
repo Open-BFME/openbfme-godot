@@ -24,6 +24,7 @@
 #include "Common/Thing/ThingFactory.h"
 #include "Common/Upgrade.h"
 #include "GameClient/ControlBarCommands.h"
+#include "GameClient/LinearCampaign.h"
 #include "GameLogic/AttributeModifiers.h"
 #include "GameLogic/CreateAHeroSystem.h"
 #include "GameLogic/ExperienceLevels.h"
@@ -86,6 +87,7 @@ public:
 	const AttributeModifierStore &attributeModifiers() const { return m_attributeModifiers; }
 	const StanceTemplateStore &stances() const { return m_stances; } // INTEG-1
 	const EmotionSystem &emotions() const { return m_emotions; }     // MODULES-2: TheEmotionSystem (the EmotionNugget blocks)
+	const LinearCampaignManager &linearCampaigns() const { return m_linearCampaigns; } // CAMP-1: TheLinearCampaignManager (the LinearCampaign blocks)
 	const CreateAHeroSystem &createAHeroSystem() const { return m_createAHero; } // HERO-2: TheCreateAHeroSystem (Data\INI\CreateAHeroSystem.ini)
 	// MOVE-1: the INI macro table the object templates were loaded with (a LocomotorSet block's Speed may be a macro: AIWorld parses those blocks at runtime)
 	const INIMacroTable &iniMacros() const { return m_env.macros; }
@@ -151,6 +153,7 @@ private:
 	AttributeModifierStore m_attributeModifiers;  // XP-1
 	StanceTemplateStore m_stances;                // INTEG-1
 	EmotionSystem m_emotions;                     // MODULES-2
+	LinearCampaignManager m_linearCampaigns;      // CAMP-1
 	CreateAHeroSystem m_createAHero;              // HERO-2
 	std::unique_ptr<AudioIniState> m_audio;
 	std::unique_ptr<SkirmishAIStore> m_skirmishAI;

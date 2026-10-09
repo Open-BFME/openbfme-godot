@@ -100,6 +100,24 @@ struct W3DDrawFrame
 	std::vector<std::string> hiddenSubObjects; ///< names hidden by scripts (and the sub objects under them), proto order
 };
 
+// lane PERF-3: the part of W3DDrawFrame the render side reads every render frame for every animated drawable, by reference into the module (frame()
+// copies the model, state, clip and label names of every track and the hidden sub object names). The values are those frame() gives: clip0 is track 0's
+// clip name whenever a track is in use, clip1 track 1's while blending, frame0 the frame of the first track with an animation.
+struct W3DDrawPoseView
+{
+	const std::string *modelName = nullptr;          ///< never null after poseView
+	const RenderObjPrototype *model = nullptr;
+	const std::string *clip0 = nullptr;              ///< never null after poseView (an empty name when no track is in use)
+	float frame0 = 0.0f;
+	const std::string *clip1 = nullptr;              ///< never null after poseView (an empty name unless blending)
+	const void *clipKey0 = nullptr;                  ///< the animation clip0 names (the track's resolved handle: one name per handle), null when none
+	const void *clipKey1 = nullptr;                  ///< the same for clip1
+	float frame1 = 0.0f;
+	float blendPercentage = 0.0f;
+	const std::set<int> *hiddenSubObjects = nullptr; ///< indices into model->SubObjects (frame() names them; empty without a model)
+	std::uint32_t hiddenGeneration = 0;             ///< changes whenever the module's hidden set may have changed (with the same model: the same set)
+};
+
 struct W3DScriptedModelDrawOptions
 {
 	float scale = 1.0f;
@@ -145,6 +163,8 @@ public:
 	// Drawable::setModelConditionState: the object's current model condition flags (RW 0x4BF2D8). Both lists are re-matched; see the
 	// header comment for the pending state rule.
 	void setModelConditionFlags(const ModelConditionFlags &flags);
+	// lane COMBAT-4: the module data's DependencySharedModelFlags (+ 0xBC, RW table row 0xBE1420): the flags the module's dependents share (RW 0x4BF2D8)
+	const ModelConditionFlags &dependencySharedModelFlags() const { return m_data.m_dependencySharedModelFlags; }
 
 	// Advances the animations by `elapsedMs` of render time (RW 0x4BF560). Call it once per render frame; logic frames (5 per second)
 	// only change the flags.
@@ -154,6 +174,8 @@ public:
 	// lane PERF-1: the same frame written into `f`, reusing its strings' and vector's storage (the render side asks for every animated drawable's frame
 	// in every render frame)
 	void frame(W3DDrawFrame &f) const;
+	// lane PERF-3: the pose request and model of frame(), without copies (W3DDrawPoseView)
+	void poseView(W3DDrawPoseView &v) const;
 
 	// The construction look (lane RENDER-2). The caller passes the object's construction percent (Object + 0x288, 0..100), whether the client is on
 	// the first client frame of a logic frame (RW 0x63252F: the cached percent (+0x26C) is refreshed only then), the object's build rate (RW 0x68BD71:
@@ -287,6 +309,7 @@ private:
 	int m_renderObjectsCreated = 0;
 	W3DModelBones m_bones;
 	std::set<int> m_hiddenSubObjects;
+	std::uint32_t m_hiddenGeneration = 0; ///< lane PERF-3: incremented by every change of m_hiddenSubObjects (W3DDrawPoseView::hiddenGeneration)
 
 	W3DDrawTrack m_tracks[3];                // RW +0x110, stride 0x1C
 	float m_blendCountdown = 0.0f;           // RW +0x90

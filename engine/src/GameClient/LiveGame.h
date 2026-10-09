@@ -100,6 +100,9 @@ public:
 		// map load (viewers, object tests); 0 never; 1 always. A campaign mission is a single player game (GameLogic + 0x110 = 0) with the map's own sides.
 		int mapScripts = -1;
 		bool campaign = false;
+		// lane CAMP-1: the campaign's difficulty (0 easy, 1 normal, 2 hard: the main menu command's first character, RW 0x91C108): lane CAMP-1H: the
+		// new game message's difficulty, TheGameLogic + 0xA4 (prepareNewGame RW 0x77948E; the script engine's stays 1); -1 leaves GameLogic's reset value (1)
+		int difficulty = -1;
 	};
 
 	// `world`, `fs`, `assets` and `mapOptions` must outlive the game; `mapOptions` is MapObjectGameData / playerTemplates / creationScripts as the

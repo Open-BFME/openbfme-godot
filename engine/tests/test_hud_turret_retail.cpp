@@ -50,7 +50,19 @@ Coord3D centre(Rig &r, float clear)
 	float mx = 0, my = 0;
 	REQUIRE(r.logic().terrain() != nullptr);
 	REQUIRE(r.logic().terrain()->getExtent(0, mx, my));
-	return r.freeSpot(mx * 0.5f, my * 0.5f, clear);
+	// lane MOVE-2: the spot must be on the map, at least 400 inside its edge (with clear = 900 the ring search on "map mp fall back 4p", 5500 x 2500, ended at
+	// y = 3150, off the map: the units moved outside the pathfinder's grid, every cell test clamped to its edge, and the members only followed their horde
+	// while the slot destination test RW 0x6F0889 was not ported); the clearance shrinks until such a spot exists
+	for (float c = clear; c >= 300.0f; c -= 100.0f)
+	{
+		const Coord3D p = r.freeSpot(mx * 0.5f, my * 0.5f, c);
+		if (p.x >= 400.0f && p.y >= 400.0f && p.x <= mx - 400.0f && p.y <= my - 400.0f)
+		{
+			return p;
+		}
+	}
+	FAIL("no spot on the map");
+	return Coord3D{};
 }
 
 void setBowMode(Object &horde)
@@ -146,7 +158,7 @@ TEST_CASE("turret retail: every Rohirrim rider has the AI's turret (TurretTurnRa
 	CHECK(slots["other"] == 0);
 }
 
-TEST_CASE("turret retail: Rohirrim in bow mode attack warg riders, then ride on: the riders turn their turret to the target and shoot while the horses run, the arrows hurt it")
+TEST_CASE("turret retail: Rohirrim in bow mode attack warg riders, then ride on: the busy riders hold fire while the horses march (RW 0x6658D3), the arrows hurt it")
 {
 	if (!haveWorld("turret retail"))
 	{
@@ -182,14 +194,15 @@ TEST_CASE("turret retail: Rohirrim in bow mode attack warg riders, then ride on:
 	}
 	REQUIRE(horde->getAIUpdateInterface()->aiAttackObject(wargs, CMD_FROM_AI));
 	r.frame(20);
-	// the Rohirrim ride on past the wargs: the riders keep their target and turn their bows to it while the horses run
+	// the Rohirrim ride on past the wargs: the ride-on order makes the riders busy (the horde hand-off), and RotWK skips a turret's update while its owner is busy
+	// (RW 0x6658D3), so no shot leaves while the horses march; the turrets resume after the march
 	horde->getAIUpdateInterface()->aiMoveToPosition(Coord3D{ c0.x + 150.0f, c0.y + 600.0f, 0.0f }, CMD_FROM_AI);
 	std::map<ObjectID, Coord3D> last;
 	std::map<ObjectID, unsigned long long> lastShots;
 	for (Object *m : members)
 	{
 		last[m->getID()] = *m->getPosition();
-		lastShots[m->getID()] = 0;
+		lastShots[m->getID()] = turretOf(*m)->stats().shots; // shots fired before the march are not "while moving"
 	}
 	unsigned long long shots = 0, shotsWhileMoving = 0, turnFrames = 0;
 	float maxOffAxis = 0.0f;
@@ -238,9 +251,11 @@ TEST_CASE("turret retail: Rohirrim in bow mode attack warg riders, then ride on:
 	            "health %.0f -> %.0f\n",
 	            shots, shotsWhileMoving, turnFrames, maxOffAxis, before, after);
 	CHECK(shots > 0u);
-	CHECK(shotsWhileMoving > 0u);
-	// merge ANIM-1 / BUILD-4 / WIN-1 / GARRISON-3 on MOD-4 + AUDIO-4: the multi-frame turn counter is not pinned: at TurretTurnRate 360 degrees a second (72 a frame)
-	// the targets can lie within one frame's turn, so it may stay 0 (lane MOVE-2 r2 reached the same conclusion and checks the turret's angle at its shots instead)
+	CHECK(shotsWhileMoving == 0u); // RW 0x6658D3: no turret update while the owner is busy (Sol r2: the earlier 12 were pre-march shots counted on the first moving frame)
+	// lane MOVE-2 r2: RotWK's horde command hand-off (RW 0x89E169 -> slot 0x14 RW 0x87594C) makes the riders busy at the ride-on order: their attacks end,
+	// their turrets do not update while busy (RW 0x6658D3), and afterwards the turrets find targets with their own idle scan (RW 0x8DCBA6); the turret is
+	// off the horse's axis at its shots
+	CHECK(maxOffAxis > 0.3f);
 	CHECK(after < before);
 }
 

@@ -599,8 +599,9 @@ bool DozerAIUpdate::repair(Object &structure)
 	return true;
 }
 
-void DozerAIUpdate::commandAccepted(CommandSourceType source, int command)
+void DozerAIUpdate::commandAccepted(CommandSourceType source, int command, Object *target)
 {
+	(void)target;
 	// RW 0x88E44F: ACTIVELY_CONSTRUCTING cleared, the machine made; the default case cancels the current task of a PLAYER command (slot 0x34) and, after the base
 	// aiDoCommand (RW 0x66A7EC), resets the primary machine; repair (0x13) / resume (0x14) / move away (0x34) have their own cases (DozerAIUpdate::repair /
 	// resumeConstruction; the move away runs as the base command)

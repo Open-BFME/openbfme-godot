@@ -60,19 +60,29 @@ struct StructRow
 // Lane MODULES-2 merge: the retail logic random draws of the emotion trackers (one QuarrelProbability draw per tracker and frame, RW 0x8B5DF3) and of the
 // group bonus's first wake (RW 0x8937B5) move the random stream the melee machine reads: 434 -> 456, 324 -> 334, 724 -> 784, 454 -> 484, 62 -> 64,
 // 108 -> 118, 434 -> 456 (without those two draws the pins above come back unchanged).
+// Lane MOVE-2 r2: the horde's command hand-off (RW 0x89E169 -> slot 0x14 RW 0x87594C: the attack order first makes the members busy), the move hub's full
+// busy rule (RW 0x874749: the horde's isMoving or the member's isIdle) and the member order's active-member rule / leash (RW 0x877B69 / 0x877B4F) change which
+// members swing when: 456 -> 448, 334 -> 344, 784 -> 714, 484 -> 488, 64 -> 60, 118 -> 94, 456 -> 448. Engine pins.
 // Lane MOD-4: AISpecialPowerUpdate runs (the Gondor horde's stance and capture modules): the UpdateModule constructor (RW 0x653114) wakes it in the first frame where the
 // UnportedModule slept from its creation, which moves the update order the melee machine's draws follow: 456 -> 446, 334 -> 354, 784 -> 794, 484 -> 468,
 // 64 -> 62, 118 -> 112, 456 -> 446 (with AISpecialPowerUpdate unregistered the pins above come back unchanged). Engine pins.
+// Lane MOVE-2 r3 (the melee member pass: the contain runs the Amoeba update and moves the members to their melee destinations through the hub, RW 0x872EFC /
+// 0x870A1B / 0x877D89; blockedBy's step aside as the AI command RW 0x66C4CA; the stored orientation wrapped, RW 0x70C31E): 454 -> 468, 334 -> 344, 740 -> 714, 424 -> 460, 58 -> 76, 108 -> 128, 454 -> 468. Engine pins.
 const StructRow kRows[] = {
+	// Merge MOD-4 + AUDIO-4: the death frames re-measured on the merged tree (MOD-4's powers / creeps and LargeGroupAudioUpdate's logic random draws both move them). Engine pins
 	// Merge MOD-4 + AUDIO-4 + ANIM-1: the death frames re-measured on the merged tree (MOD-4's powers / creeps, LargeGroupAudioUpdate's logic random draws and
 	// ANIM-1's attack timing all move them). Engine pins
-	{ "FactionMen", "GondorBarracks", "ActiveBody", 3000.0f, 20.0f, 75, 155.0f, true, 432 },
-	{ "FactionElves", "ElvenBarracks", "StructureBody", 3000.0f, 20.0f, 0, 100.0f, true, 326 }, // no BountyValue line
-	{ "FactionDwarves", "DwarfBarracks", "ActiveBody", 5000.0f, 20.0f, 125, 155.0f, true, 742 },
-	{ "FactionIsengard", "IsengardUrukPit", "StructureBody", 3000.0f, 20.0f, 88, 89.0f, true, 482 },
-	{ "FactionMordor", "MordorBarracks", "StructureBody", 1500.0f, 100.0f, 0, 0.0f, false, 58 },
-	{ "FactionWild", "GoblinCave", "ActiveBody", 1500.0f, 50.0f, 100, 25.0f, true, 112 },
-	{ "FactionAngmar", "AngmarBarracks", "ActiveBody", 3000.0f, 20.0f, 75, 155.0f, true, 432 },
+	// Lane EXIT-1 (the hub's busy rule RW 0x87471B, the horde member update RW 0x66C748, maintainCurrentPosition RW 0x5E7CC7): the members reach the barracks in
+	// RW's straight member steps: 432 -> 356, 326 unchanged, 742 -> 590, 482 -> 420, 58 -> 62, 112 -> 118, 432 -> 356. Engine pins
+	// Merge EXIT-1 + MOVE-2 (EXIT-1's straight member steps with MOVE-2's melee member pass and the hand-off of the attack order): 356 -> 436, 326 -> 324,
+	// 590 -> 664, 420 -> 384, 62 -> 52, 118 -> 110, 356 -> 436; the hit counts are unchanged. Engine pins
+	{ "FactionMen", "GondorBarracks", "ActiveBody", 3000.0f, 20.0f, 75, 155.0f, true, 436 },
+	{ "FactionElves", "ElvenBarracks", "StructureBody", 3000.0f, 20.0f, 0, 100.0f, true, 324 }, // no BountyValue line
+	{ "FactionDwarves", "DwarfBarracks", "ActiveBody", 5000.0f, 20.0f, 125, 155.0f, true, 664 },
+	{ "FactionIsengard", "IsengardUrukPit", "StructureBody", 3000.0f, 20.0f, 88, 89.0f, true, 384 },
+	{ "FactionMordor", "MordorBarracks", "StructureBody", 1500.0f, 100.0f, 0, 0.0f, false, 52 },
+	{ "FactionWild", "GoblinCave", "ActiveBody", 1500.0f, 50.0f, 100, 25.0f, true, 110 },
+	{ "FactionAngmar", "AngmarBarracks", "ActiveBody", 3000.0f, 20.0f, 75, 155.0f, true, 436 },
 };
 
 // n * (n - 1) / 2 * 1.28 >= H, the first n

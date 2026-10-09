@@ -544,9 +544,24 @@ std::vector<std::string> SkirmishAIManager::stopLines()
 		"port creates a dozer's structure at the order (RW: PENDING_CONSTRUCTION, which that call skips)",
 		"[S-891] skirmish ai tactic idle check inference (lane AI-2): a team member is engaged when its AI has a current victim (RW 0x7A03AB reads "
 		"AIUpdate + 0x40 through RW 0x668303); (lane AI-3) the bit 0x70 at + 0x10C that RW 0x8F135E also tests is the model condition CAPTURING",
-		"[S-892] horde member hub busy rule (lane AI-2): RW's move hub (RW 0x87468B) makes a moving or idle member busy (AI command 0x31); the port applies the "
-		"moving, non-idle half only, and the member order's leash (the same command, RW 0x877B4F) is counted only (the complete rule still exposes unresolved "
-		"attack / member lifecycle differences; AIMover::isMoving already implements RW 0x664485)",
+		"[S-892] horde member hub busy rule (lane AI-2; lane MOVE-2 r2 applied it in full): RW's move hub (RW 0x87468B) makes a member busy (AI command 0x31) "
+		"unless both it and its horde are active, when its HORDE moves or it is idle (RW 0x874749: the isMoving is the horde's), unless it is busy; the member "
+		"order's leash (RW 0x877B4F, edge distance RW 0x66352C) and active-member rule (RW 0x877B69) are applied with their prerequisite, the horde command "
+		"hand-off (RW 0x89E169 -> slot 0x14 RW 0x87594C, S-1501); open: H + 0x2A0 is taken as the melee freeze and its branch (RW 0x874967: a member neither idle "
+		"nor active gets aiIdle) is not run (no member pass in a melee)",
+		"[S-1500] horde member slot destination inference (lane MOVE-2): RW 0x6F0889 (via RW 0x871897) is ported for the ground layer; pathfinder + 0x48, which "
+		"it clears first, is taken as the ignored obstacle id; a cell of another layer than the horde's fails (the raised-layer tests RW 0x6E82B3 / 0x5E2F24 and "
+		"the wall-scaling branch RW 0x86E214 are not ported: S-161, S-084)",
+		"[S-1501] horde command hand-off inference (lane MOVE-2 r2): RW 0x89E169's container test (the container's contain vslot 0x10) is taken as \"the horde "
+		"is contained\"; its porcupine / stance branch (contain vslots 0xF0 / 0x5C / 0x60, RW 0x89DE81 / 0x89DF11) is not read; slot 0x10 RW 0x8759FF(0) is "
+		"run as acceptMemberFromGarrison for every member on its way (no re-form snap); the port's move variants without an identified RotWK command number "
+		"(a group move with a final angle, a queued waypoint) count as moves; a wall scaler's ground placement RW 0x70C0AD is a full setPosition",
+		"[S-1502] horde melee member pass (lane MOVE-2 r3, community feedback G2): ported from RW 0x872EFC / 0x870A1B / 0x877D89 / 0x98F819: while the horde "
+		"melees the contain runs the melee behaviour's update (Amoeba RW 0x9902A1: steps are stored in the member records) and turns the horde to its target, "
+		"then the member pass moves every member to its record's destination (else its formation slot) through the move hub (an explicit goal, the "
+		"Amoeba's always-turn near arm). INFERENCE: HoldGround's record turn states (its slots 0x20 / 0x28 / 0x2C) are not modelled (the 10 degree rule), and "
+		"the horde's turn is kept from carrying the members (the port's contain would place them); G2 measured, not solved: GondorFighterHorde engages 20 % of "
+		"its members on average against MordorFighterHorde (test_move2_slot_distance's MOVE2 MELEE report)",
 		"[S-893] skirmish ai targetless tactics (lane AI-2 r3): the 11 prototypes, FarmKillSquad's constructor draw, the per-frame pick RW 0x90C5E2 and FarmKillSquad's "
 		"applicability, setup, cleanup and update flow are ported; the other 10 prototypes' applicability and bodies and FarmKillSquad's farm choice (RW 0x9BBA51 / "
 		"0x9BB5E4 and their draws) are not (a nearest-farm stand-in)",

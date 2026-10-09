@@ -10,8 +10,13 @@
 #include <cstdint>
 #include <string>
 
+struct Coord3D;
+
 namespace AudioApi
 {
+// lane CAMP-1H: an Eva event by name at a position (or none) for TheEva (RW 0x5DD9EE); from the logic worker it is queued for the audio owner (S-814).
+// false: unknown / no Eva / dropped (the logic never reads it). Also declared in AudioEntryPoints.h
+bool reportEva(const std::string &eventName, const Coord3D *position);
 std::uint32_t playSoundForObject(const std::string &eventName, std::uint32_t objectId, int owningPlayerIndex = -1);
 std::uint32_t playSoundForDrawable(const std::string &eventName, std::uint32_t drawableId, int owningPlayerIndex = -1);
 // true when the event exists (the "Invalid Sound" check of the INI field parsers and Lua's audio lookups)

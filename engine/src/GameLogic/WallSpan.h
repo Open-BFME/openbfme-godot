@@ -19,7 +19,7 @@
 //   2 * (geometry half extent in y - 1), the cap half extent, the 2/3 snap to an end hub, the 20.0 search radius, MaxLineBuildObjects) are read there.
 // Not ported (stop S-657): the RotWK legal-build codes the plan acts on (5 / 6: a cliff cap ends the span; 8: blocked mid-way; 10: an equivalent dead segment is
 // rebuilt) belong to RW 0x797A96, which is not read (S-301): the port's ZH codes only refuse a tile; the end-hub link path (RW 0x793DB9 then slot 0x58) and the
-// rebuild of dead segments; the HUD's wall mode (the client's drag that makes the message) and the hub's CANCEL_NEIGHBORHOOD.
+// rebuild of dead segments; the hub's CANCEL_NEIGHBORHOOD. The HUD's line build that makes the message is lane QA2-FIX's (PlaceEventTranslator.h, S-1770).
 //
 // Simulation maths goes through SimMath.
 

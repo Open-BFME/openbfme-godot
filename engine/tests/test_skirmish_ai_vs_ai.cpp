@@ -588,7 +588,20 @@ TEST_CASE("skirmish ai vs ai: Evendim, 30 game-minutes: every pairing ends - Mor
 	// Merge COMBAT-3 (+ HUD-4, RENDER-4) on MOD-4 / AUDIO-4 / ANIM-1 (all change the simulation on purpose; COMBAT-3: crush knockback, slow-down, pike formation
 	// modifiers): re-measured on the merged tree: seed 2 ends with Mordor's defeat (start position 0) at 7706, seed 7 with Mordor's defeat (start position 1) at
 	// 6119, seed 1234 with Men's defeat (start position 1) at 7147. Engine pins, not retail values.
-	for (const Game &g : { Game{ "FactionMordor", "FactionMen", 2u, 0, 7706 }, Game{ "FactionMen", "FactionMordor", 7u, 1, 6119 }, Game{ "FactionMordor", "FactionMen", 1234u, 1, 7147 } })
+	// Lane CAMP-1H: the computer players' objects receive retail's AI difficulty upgrade (Object::initObject RW 0x693D63 -> Player::
+	// applyDifficultyBonusesForObject RW 0x6AC32D: Upgrade_MediumAIMultiPlayer -> MediumAIMultiPlayer_Bonus, DAMAGE_MULT 100% = 1.0) and the teams update their
+	// state (Team::updateState RW 0x7A208C): the three pins are unchanged. (Measured on the way: while ModifierList read a percent macro as 100 instead of
+	// 1.0, RW 0x8062A8 expands before looking for '%', these games ended at open / 2153 / 1913.) Engine pins.
+	// Merge EXIT-1 + MOVE-2 (+ PERF-3, QA2-FIX): the horde members' busy rule and steps (EXIT-1), the melee member pass, the jitter fixes and the DamageArc
+	// test for radius damage (MOVE-2) change the fights: seed 2 ends with Mordor's defeat at 8421, seed 7 with Mordor's defeat at 6075, seed 1234 with
+	// Men's defeat at 7852 (the same losers). Engine pins, not retail values.
+	// Lane COMBAT-4 (shockwaves: MetaImpactNugget, RamPower's hit and DamageDealtAtSelfPosition throw units; RotWK's SlowDeathBehavior): re-measured on the lane's
+	// tree: seed 2 ends with Men's defeat (start position 1) at 7132, seed 7 is open at 9000, seed 1234 ends with Men's defeat at 5681. Engine pins, not retail values.
+	// COMBAT-4 r2 (HitPercentage rolls for a shot with no victim, RW 0x6CCCA7; no retail weapon has both DamageDealtAtSelfPosition and HitPercentage below 100%, and the
+	// pins, the PERF-1 vectors and the structure death frames were re-measured unchanged on the lane's tree after it). Engine pins, not retail values.
+	// Merge COMBAT-4 (+ r2) on EXIT-1 / MOVE-2 / CAMP-1H: shockwaves throw units, RotWK's slow death and the HitPercentage draw change the fights:
+	// seed 2 ends with Mordor's defeat at 8208, seed 7 now with Men's defeat (start position 0) at 6498, seed 1234 with Men's defeat at 7694. Engine pins.
+	for (const Game &g : { Game{ "FactionMordor", "FactionMen", 2u, 0, 8208 }, Game{ "FactionMen", "FactionMordor", 7u, 0, 6498 }, Game{ "FactionMordor", "FactionMen", 1234u, 1, 7694 } })
 	{
 		INFO(g.a << " vs " << g.b << " seed " << g.seed);
 		VersusRun run;

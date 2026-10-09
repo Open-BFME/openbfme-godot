@@ -609,6 +609,12 @@ void GameLogic::update(int phase)
 		for (int i = 0; i < m_players.getPlayerCount(); ++i)
 		{
 			Player *p = m_players.getNthPlayer(i);
+			// lane CAMP-1H: RW 0x6AF2FA .. 0x6AF32B, before the score: the player's teams run their generic scripts (Team::updateGenericScripts RW 0x7A267D;
+			// a game without map scripts has none)
+			if (m_scriptEngine->loaded())
+			{
+				m_scriptEngine->updateGenericScripts(*p);
+			}
 			p->getScoreKeeper().recordPerFrameStats(*this, *p, m_frame);
 		}
 	}
@@ -855,6 +861,7 @@ void GameLogic::reset()
 	m_templateInfo.clear();
 	m_crushInfo.clear();
 	m_frame = 0;
+	m_gameDifficulty = 1; // lane CAMP-1H: GameLogic::reset RW 0x62D3EB (+ 0xA4 = 1)
 	m_nextObjectID = 1;
 	m_objectCount = 0;
 	m_lastPhase = 0;
@@ -964,6 +971,7 @@ std::uint32_t GameLogic::hashState(std::vector<StateHashSection> *sections, std:
 	section("frame, object ids, RNG", [&](StateHasher &x) {
 		x.addU32(m_frame);
 		x.addBool(m_frameAdvance); // RW GameLogic + 0x44: when false the frame counter does not advance
+		x.addI32(m_gameDifficulty); // lane CAMP-1H: RW GameLogic + 0xA4
 		x.addU32(m_nextObjectID);
 		x.addU32((std::uint32_t)m_objectCount);
 		for (std::uint32_t w : m_random.seedArray())

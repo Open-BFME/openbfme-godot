@@ -1,0 +1,35 @@
+; Lane LAUNCH-1: the OpenBFME Launcher, a separate small Godot project (no GDExtension, no game files). It installs, verifies and starts
+; the game builds of the project's GitHub Releases (docs/RELEASE.md, "The launcher"). Its data folder is user:// =
+; ~/.local/share/OpenBFMELauncher (Linux) / %APPDATA%\OpenBFMELauncher (Windows).
+
+config_version=5
+
+[application]
+
+config/name="OpenBFME Launcher"
+run/main_scene="res://scenes/main.tscn"
+config/features=PackedStringArray("4.7", "Compatibility")
+config/use_custom_user_dir=true
+config/custom_user_dir_name="OpenBFMELauncher"
+run/low_processor_mode=true
+
+[debug]
+
+file_logging/enable_file_logging=false
+file_logging/enable_file_logging.pc=false
+
+[display]
+
+window/size/viewport_width=900
+window/size/viewport_height=600
+
+[rendering]
+
+renderer/rendering_method="gl_compatibility"
+renderer/rendering_method.mobile="gl_compatibility"
+
+[editor]
+
+; scenes are exported as their committed text (.tscn), like the game's project: the binary conversion gives every export new random ids,
+; which would make the packages unreproducible (docs/RELEASE.md)
+export/convert_text_resources_to_binary=false

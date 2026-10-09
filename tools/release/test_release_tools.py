@@ -303,6 +303,19 @@ def test_game_scripts_make_no_network_calls():
     assert found == {}
 
 
+@pytest.mark.parametrize("line, allowed", [
+    ('\tvar pid := OS.create_process("perf", ["stat", "-t", str(OS.get_process_id())])', True),
+    ('\tOS.execute("kill", ["-INT", str(p)])', True),
+    ('\tOS.execute("curl", ["https://example.com"])', False),
+    ('\tOS.create_process(tool, ["stat"])', False),
+    ('\tOS.execute("kill", []); OS.execute("wget", ["x"])', False),
+    ('\tOS.shell_open("https://example.com")', False),
+])
+def test_only_the_profiler_may_start_processes(line, allowed):
+    """PERF-3's --perf-stat starts `perf stat` and stops it with `kill -INT`: those literal calls are allowed, every other process call is a finding."""
+    assert (net_guard.gdscript_findings("func f():\n" + line + "\n") == []) == allowed
+
+
 def test_only_the_lan_transport_opens_sockets():
     """Native network references live in GameNetwork/Transport.cpp (UDP: the LAN lobby's broadcast and the game's peers) and nowhere else."""
     found = {f for f in net_guard.scan() if not f.endswith(".gd")}

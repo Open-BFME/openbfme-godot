@@ -7,6 +7,8 @@
 #include <godot_cpp/classes/file_access.hpp>
 #include <godot_cpp/variant/packed_byte_array.hpp>
 #include "GodotDevice/GodotGameWorld.h"
+
+#include "Common/Prefetch.h"
 #include "GameLogic/CreateAHeroSystem.h"
 #include "GameLogic/SkirmishAI/SkirmishAIManager.h"
 
@@ -181,15 +183,6 @@ Array toArray(const std::vector<std::string> &v)
 	return a;
 }
 
-bool applyFrame(W3DInstancer *inst, int64_t instance, const W3DDrawFrame &f)
-{
-	// SMOOTH-1: the native call (no Godot String round trip per animated drawable per frame; the instancer caches the clip lookups)
-	static const std::string none;
-	const std::string &clip0 = f.trackCount > 0 ? f.tracks[0].clipName : none;
-	const std::string &clip1 = (f.blending && f.trackCount > 1) ? f.tracks[1].clipName : none;
-	return inst->set_instance_pose_native(instance, clip0, f.frame0, clip1, f.frame1, f.blendPercentage);
-}
-
 W3DInstancer *instancerOf(uint64_t id)
 {
 	if (id == 0 || !UtilityFunctions::is_instance_id_valid(id))
@@ -210,6 +203,7 @@ void GameWorld::_bind_methods()
 	bindHeroMethods(); // lane HERO-1 (GodotGameWorldHeroes.cpp)
 	bindStealthMethods(); // lane STEALTH-1 (GodotGameWorldStealth.cpp)
 	bindScriptMethods();  // lane SCRIPT-1 (GodotGameWorldScripts.cpp)
+	bindCampaignMethods(); // lane CAMP-1 (GodotGameWorldCampaign.cpp)
 	bindGarrisonMethods(); // lane GARRISON-1 (GodotGameWorldGarrison.cpp)
 	ClassDB::bind_method(D_METHOD("setup", "fs"), &GameWorld::setup);
 	ClassDB::bind_method(D_METHOD("load_map", "map_name", "options"), &GameWorld::load_map, DEFVAL(Dictionary()));
@@ -281,6 +275,8 @@ void GameWorld::_bind_methods()
 	ClassDB::bind_method(D_METHOD("get_stats"), &GameWorld::get_stats);
 	ClassDB::bind_method(D_METHOD("get_frame_timings"), &GameWorld::get_frame_timings);
 	ClassDB::bind_method(D_METHOD("set_render_interpolation", "enabled"), &GameWorld::set_render_interpolation);
+	ClassDB::bind_method(D_METHOD("set_perf3_client", "enabled"), &GameWorld::set_perf3_client); // lane PERF-3
+	ClassDB::bind_method(D_METHOD("get_perf3_client"), &GameWorld::get_perf3_client);
 	ClassDB::bind_method(D_METHOD("set_logic_thread", "enabled"), &GameWorld::set_logic_thread);
 	ClassDB::bind_method(D_METHOD("get_logic_thread"), &GameWorld::get_logic_thread);
 	ClassDB::bind_method(D_METHOD("get_frame_hashes"), &GameWorld::get_frame_hashes);
@@ -926,6 +922,7 @@ Dictionary GameWorld::load_internal(const LiveGame::Options &loIn, const String 
 	}
 	dyn->set_house_colors_enabled(m_houseColors);
 	dyn->set_playing(false); // time only enters through set_instance_pose
+	dyn->set_pose_culling(m_perf3Client); // lane PERF-3: the main camera is the only one that sees this world's live objects
 	timings["static_layer_ms"] = timing::elapsedMs(t0);
 
 	t0 = nowMs();
@@ -1222,8 +1219,46 @@ void GameWorld::refresh_views(double deltaMs)
 	}
 	size_t animated = 0;
 	const std::shared_ptr<const LogicSnapshot> presented = m_game->presentedSnapshot(); // SMOOTH-1: the frame the drawables show
-	for (size_t id = 1; id < dm.slotCount() && id < m_views.size(); ++id)
+	const size_t viewSlots = std::min(dm.slotCount(), m_views.size());
+	for (size_t id = 1; id < viewSlots; ++id)
 	{
+		// lane PERF-3: the blocks of the drawables ahead (the object, its entry array and draw module, the view's entries) are fetched while this one is
+		// worked on, in three steps so each step reads only what the previous one fetched (Common/Prefetch.h)
+		if (id + 12 < viewSlots)
+		{
+			if (const Drawable *a = dm.find((DrawableID)(id + 12)))
+			{
+				OPENBFME_PREFETCH(&a->entries());
+			}
+		}
+		if (id + 8 < viewSlots)
+		{
+			if (const Drawable *b = dm.find((DrawableID)(id + 8)))
+			{
+				const std::vector<DrawEntry> &en = b->entries();
+				if (!en.empty())
+				{
+					OPENBFME_PREFETCH(&en[0].kind);
+					OPENBFME_PREFETCH(&en[0].constructionOffsetZ);
+				}
+			}
+			if (!m_views[id + 8].entries.empty())
+			{
+				OPENBFME_PREFETCH(&m_views[id + 8].entries[0].instance);
+				OPENBFME_PREFETCH(&m_views[id + 8].entries[0].offsetZ);
+			}
+		}
+		if (id + 4 < viewSlots)
+		{
+			if (const Drawable *c = dm.find((DrawableID)(id + 4)))
+			{
+				const std::vector<DrawEntry> &en = c->entries();
+				if (!en.empty() && en[0].draw)
+				{
+					OPENBFME_PREFETCH(en[0].draw.get());
+				}
+			}
+		}
 		DrawableView &v = m_views[id];
 		if (!v.valid)
 		{
@@ -1244,7 +1279,12 @@ void GameWorld::refresh_views(double deltaMs)
 		const ObjectSnapshot *stealthRec = nullptr;
 		if (presented)
 		{
-			const ObjectSnapshot *rec = presented->find(d->getObjectID());
+			bool synced = false;
+			const ObjectSnapshot *rec = d->syncedRecord(*presented, synced); // lane PERF-3: the record syncTransforms found in this snapshot
+			if (!synced)
+			{
+				rec = presented->find(d->getObjectID());
+			}
 			if (m_shroudDrawn)
 			{
 				fogHidden = rec && rec->shroudedForLocal;
@@ -1280,6 +1320,28 @@ void GameWorld::refresh_views(double deltaMs)
 			ev.offsetZ = e.constructionOffsetZ;
 			if (e.kind == W3D_DRAWKIND_MODEL && e.draw)
 			{
+				// lane COMBAT-4: a W3DTruckDraw's tires (Drawable::advanceTires, RW 0x4CBFFB): the front set and the mid / rear sets turn about their Y
+				auto applyTires = [&]() {
+					if (ev.instance < 0 || (e.frontTireBones.empty() && e.rearTireBones.empty()) || (ev.tireChanges == e.tireChanges && ev.tireInstance == ev.instance))
+					{
+						return;
+					}
+					std::vector<std::string> bones;
+					std::vector<float> angles;
+					for (const std::string &b : e.frontTireBones)
+					{
+						bones.push_back(b);
+						angles.push_back(e.tireFront);
+					}
+					for (const std::string &b : e.rearTireBones)
+					{
+						bones.push_back(b);
+						angles.push_back(e.tireRear);
+					}
+					dyn->set_instance_bone_spins_native(ev.instance, bones, angles);
+					ev.tireChanges = e.tireChanges;
+					ev.tireInstance = ev.instance;
+				};
 				const bool animatedNow = e.animated && m_animations;
 				animated += animatedNow ? 1 : 0;
 				if (!flagsChanged && !animatedNow && ev.posed)
@@ -1297,15 +1359,16 @@ void GameWorld::refresh_views(double deltaMs)
 							ev.opacity = pulse;
 						}
 					}
+					applyTires();
 					continue;
 				}
-				W3DDrawFrame &f = m_viewFrame;
-				e.draw->frame(f);
+				W3DDrawPoseView &f = m_viewPose; // lane PERF-3: the frame's pose request and model by reference (frame() copied every name of the module)
+				e.draw->poseView(f);
 				const bool shown = f.model && !e.moduleHidden && !fogHidden;
-				if (shown && f.modelName != ev.rawModel)
+				if (shown && *f.modelName != ev.rawModel)
 				{
-					ev.rawModel = f.modelName;
-					ev.rawLowered = AsciiStringUtil::lowered(f.modelName);
+					ev.rawModel = *f.modelName;
+					ev.rawLowered = AsciiStringUtil::lowered(*f.modelName);
 				}
 				static const std::string kNoModel;
 				const std::string &model = shown ? ev.rawLowered : kNoModel;
@@ -1319,6 +1382,7 @@ void GameWorld::refresh_views(double deltaMs)
 					ev.model = model;
 					ev.posed = false;
 					ev.hidden.clear();
+					ev.hiddenModel = nullptr;
 					ev.opacity = 1.0f; // a new instance starts opaque
 					if (!model.empty())
 					{
@@ -1327,7 +1391,7 @@ void GameWorld::refresh_views(double deltaMs)
 						if (it == m_dynamicModels.end())
 						{
 							const double tm = nowMs();
-							mid = dyn->add_model(toGodot(f.modelName));
+							mid = dyn->add_model(toGodot(*f.modelName));
 							m_dynamicModels[model] = mid;
 							m_lastNewModelMs = timing::sumMs(m_lastNewModelMs, timing::elapsedMs(tm));
 							++m_lastNewModels;
@@ -1358,14 +1422,30 @@ void GameWorld::refresh_views(double deltaMs)
 					}
 					if (!ev.posed || animatedNow || flagsChanged) // RENDER-2: a MANUAL track (the build-up) changes its frame without being "animated"
 					{
-						applyFrame(dyn, ev.instance, f);
+						// SMOOTH-1: the native call (no Godot String round trip per animated drawable per frame; the instancer caches the clip lookups)
+						dyn->set_instance_pose_keyed(ev.instance, *f.clip0, f.clipKey0, f.frame0, *f.clip1, f.clipKey1, f.frame1, f.blendPercentage); // lane PERF-3: keyed
 						ev.posed = true;
 					}
-					if (f.hiddenSubObjects != ev.hidden)
+					// the names frame() gives (the model's sub objects at the hidden indices, in index order), made when the draw's hidden set or the model changed
+					if (f.model != ev.hiddenModel || f.hiddenGeneration != ev.hiddenGeneration)
 					{
-						dyn->set_instance_hidden_subobjects(ev.instance, toPacked(f.hiddenSubObjects));
-						ev.hidden = f.hiddenSubObjects;
+						ev.hiddenModel = f.model;
+						ev.hiddenGeneration = f.hiddenGeneration;
+						std::vector<std::string> names;
+						if (f.model)
+						{
+							for (int i : *f.hiddenSubObjects)
+							{
+								names.push_back(f.model->SubObjects[(size_t)i].Name);
+							}
+						}
+						if (names != ev.hidden)
+						{
+							dyn->set_instance_hidden_subobjects(ev.instance, toPacked(names));
+							ev.hidden = std::move(names);
+						}
 					}
+					applyTires();
 					// PROJ-2: the drawable's fade (a launched stone hidden for its InvisibleFrames, then faded in: GameClient/DrawableFade)
 					const float opacity = StealthLook::drawOpacity(d->drawOpacity(), stealthRec, presented.get(), m_stealthClockMs); // lane STEALTH-1: the friend's invisibility pulse
 					if (opacity != ev.opacity)
@@ -1774,9 +1854,26 @@ void GameWorld::refresh_streaks(bool record)
 				continue;
 			}
 			const std::vector<DrawEntry> &entries = d->entries();
+			DrawableView *view = id < m_views.size() && m_views[id].valid ? &m_views[id] : nullptr;
 			for (size_t k = 0; k < entries.size() && k < 256; ++k)
 			{
-				const W3DStreakDrawModuleData *data = dynamic_cast<const W3DStreakDrawModuleData *>(entries[k].data);
+				// lane PERF-3: the cast is made once per entry's module data (kept in the drawable's view; refresh_views keeps the views of every drawable)
+				const W3DStreakDrawModuleData *data;
+				if (view && k < view->entries.size())
+				{
+					EntryView &ev = view->entries[k];
+					if (!ev.streakKnown || ev.streakSource != entries[k].data)
+					{
+						ev.streak = dynamic_cast<const W3DStreakDrawModuleData *>(entries[k].data);
+						ev.streakSource = entries[k].data;
+						ev.streakKnown = true;
+					}
+					data = ev.streak;
+				}
+				else
+				{
+					data = dynamic_cast<const W3DStreakDrawModuleData *>(entries[k].data);
+				}
 				if (!data || entries[k].moduleHidden)
 				{
 					continue;
@@ -2049,6 +2146,15 @@ Dictionary GameWorld::get_object(int64_t id) const
 	if (const Drawable *dr = m_game->drawables().findByObject(o->getID())) // SMOOTH-1: the render side's drawable of the object
 	{
 		d["drawable"] = (int64_t)dr->getID();
+		for (const DrawEntry &te : dr->entries()) // lane COMBAT-4: a W3DTruckDraw's tire angles (Drawable::advanceTires)
+		{
+			if (!te.frontTireBones.empty() || !te.rearTireBones.empty())
+			{
+				d["tire_front"] = te.tireFront;
+				d["tire_rear"] = te.tireRear;
+				d["tire_bones"] = (int64_t)(te.frontTireBones.size() + te.rearTireBones.size());
+			}
+		}
 		const Coord3D *dp = dr->getPosition();
 		{
 			int64_t live = 0, posed = 0;
@@ -2762,6 +2868,15 @@ void GameWorld::set_render_interpolation(bool enabled)
 bool GameWorld::get_render_interpolation() const
 {
 	return m_renderInterpolation;
+}
+
+void GameWorld::set_perf3_client(bool enabled)
+{
+	m_perf3Client = enabled;
+	if (W3DInstancer *d = instancerOf(m_dynamicId))
+	{
+		d->set_pose_culling(enabled);
+	}
 }
 
 void GameWorld::set_logic_thread(bool enabled)

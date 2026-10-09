@@ -831,23 +831,36 @@ void LiveFX::fireFrameEvent(Drawable &d, const FXEventInfo &ev, const RenderObjP
 }
 
 // RW 0x4BCE68, the first loop (see the header comment)
-void LiveFX::frameEvents(Drawable &d, size_t entryIndex, const DrawEntry &e)
+void LiveFX::frameEvents(Drawable &d, size_t entryIndex, const DrawEntry &e, FrameEventMap::iterator &pos)
 {
 	const AnimationStateInfo *as = e.draw->currentAnimationState();
 	const auto key = std::make_pair(d.getID(), entryIndex);
+	while (pos != m_frameEvents.end() && pos->first < key)
+	{
+		++pos; // keys the walk passes are kept (as the lookup by key left them)
+	}
+	const bool found = pos != m_frameEvents.end() && pos->first == key;
 	if (!as || as->fxEvents.empty())
 	{
-		m_frameEvents.erase(key);
+		if (found)
+		{
+			pos = m_frameEvents.erase(pos);
+		}
 		return;
 	}
-	const W3DDrawFrame f = e.draw->frame();
+	e.draw->frame(m_eventFrame);
+	const W3DDrawFrame &f = m_eventFrame;
 	if (f.trackCount < 1)
 	{
 		return;
 	}
 	const int cur = (int)f.tracks[0].frame;
 	const int prev = (int)f.tracks[0].prevFrame;
-	FrameEventState &st = m_frameEvents[key];
+	if (!found)
+	{
+		pos = m_frameEvents.emplace_hint(pos, key, FrameEventState());
+	}
+	FrameEventState &st = pos->second;
 	if (st.animState == as && st.lastFrame == cur)
 	{
 		return; // evaluated for this integer frame already
@@ -931,9 +944,14 @@ void LiveFX::updateAttachedSystems()
 	{
 		it = dm.find(it->first.first) ? std::next(it) : m_frameEvents.erase(it);
 	}
-	std::vector<const void *> states;
+	// lane PERF-3: the drawables are visited in id order and both maps are in key order: their entries are found by walking them along (no search per
+	// drawable and entry); the calls and their order are those of the lookups by key
+	std::vector<const void *> &states = m_states;
+	FrameEventMap::iterator events = m_frameEvents.begin();
+	auto attached = m_attached.begin();
 	for (DrawableID id = 1; id < (DrawableID)dm.slotCount(); ++id)
 	{
+		dm.prefetchAhead(id); // lane PERF-3
 		Drawable *d = dm.find(id);
 		if (!d)
 		{
@@ -952,17 +970,21 @@ void LiveFX::updateAttachedSystems()
 		{
 			if (d->entries()[k].draw)
 			{
-				frameEvents(*d, k, d->entries()[k]);
+				frameEvents(*d, k, d->entries()[k], events);
 			}
 		}
-		auto it = m_attached.find(id);
-		if (it != m_attached.end() && it->second.states == states)
+		while (attached != m_attached.end() && attached->first < id)
+		{
+			++attached;
+		}
+		auto it = attached;
+		if (it != m_attached.end() && it->first == id && it->second.states == states)
 		{
 			continue;
 		}
-		if (it == m_attached.end())
+		if (it == m_attached.end() || it->first != id)
 		{
-			it = m_attached.emplace(id, Attached()).first;
+			it = attached = m_attached.emplace_hint(attached, id, Attached());
 		}
 		destroySystems(it->second);
 		it->second.states = states;

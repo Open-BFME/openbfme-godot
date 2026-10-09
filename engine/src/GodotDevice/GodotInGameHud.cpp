@@ -1632,19 +1632,22 @@ void InGameHudNode::handleInput(const Ref<InputEvent> &event)
 
 void InGameHudNode::camera_look_at(const Vector2 &sage_xy)
 {
-	waitLogic(d.get());
+	// lane PERF-3: no wait for the logic worker: the camera is client state whose terrain heights are the immutable height field, as its per-frame update
+	// and get_camera read it (the wait held a script that moves the camera every render frame, e.g. a benchmark's sweep, until each logic frame finished)
 	if (d->cam)
 	{
 		d->cam->lookAt(Coord3D{ sage_xy.x, sage_xy.y, 0.0f });
+		d->cam->snapInterpolation(); // lane MOVE-2 r2: a script's pose is drawn at once (no 30 Hz steps when it is set every render frame)
 	}
 }
 
 void InGameHudNode::camera_set_height(float height_above_ground)
 {
-	waitLogic(d.get());
+	// lane PERF-3: client state, no wait for the logic worker (camera_look_at)
 	if (d->cam)
 	{
 		d->cam->setHeightAboveGround(height_above_ground);
+		d->cam->snapInterpolation(); // lane MOVE-2 r2
 	}
 }
 

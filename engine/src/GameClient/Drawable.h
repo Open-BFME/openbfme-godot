@@ -29,6 +29,7 @@
 #include "Common/Thing/ThingTemplate.h"
 #include "GameClient/ClientEvents.h"
 #include "GameClient/LogicSnapshot.h"
+#include "GameClient/RenderInterpolation.h"
 #include "GameEngineDevice/W3DDevice/GameClient/Drawable/Draw/W3DDrawModules.h"
 #include "GameEngineDevice/W3DDevice/GameClient/Drawable/Draw/W3DDrawServices.h"
 #include "GameEngineDevice/W3DDevice/GameClient/Drawable/Draw/W3DLuaDrawScriptHost.h"
@@ -93,6 +94,11 @@ struct DrawEntry
 	float constructionOffsetZ = 0.0f; ///< RENDER-2: the model's move along its own Z while being built (RW 0x4B686D, ADJUST_HEIGHT_BY_CONSTRUCTION_PERCENT)
 	bool conditionHidden = false;     ///< RENDER-2: a W3DFloorDraw whose HideIfModelConditions match the drawable's flags (the foundation floor while being built)
 	std::vector<ModelConditionFlags> hideIf; ///< RENDER-2: that floor draw's HideIfModelConditions (one set per line)
+	// lane COMBAT-4: a W3DTruckDraw's tire spin (RW 0x4CBFFB): the front and rear wheel angles (W3DTruckDraw + 0x310 / + 0x314; the mid tires take the front's / the
+	// rear's: + 0x318 / + 0x31C) and the bones they turn (the module data's tire bone names; the front set, then the rear set)
+	float tireFront = 0.0f, tireRear = 0.0f;
+	std::vector<std::string> frontTireBones, rearTireBones;
+	unsigned tireChanges = 0; ///< bumped when an angle changed (the device layer re-poses the instance)
 };
 
 class Drawable : public Thing
@@ -117,6 +123,11 @@ public:
 
 	// ZH Drawable::setModelConditionState / clearModelConditionState and the whole-set form this layer needs
 	const ModelConditionFlags &getModelConditionFlags() const { return m_flags; }
+	// lane COMBAT-4, RW 0x4BF2D8 (W3DModelDraw::replaceModelConditionState): the union of the model draws' DependencySharedModelFlags (+ 0xBC of the module data)
+	ModelConditionFlags dependencySharedModelFlags() const;
+	// the dependent's half of RW 0x4BF2D8: the container's flags within `shared` are set, the shared ones it lacks cleared (RW 0x67651E clearAndSet on the dependent
+	// drawable); the draw modules take the result at once when it changed. True when it changed
+	bool applyDependencyFlags(const ModelConditionFlags &shared, const ModelConditionFlags &containerFlags);
 	void setModelConditionFlags(const ModelConditionFlags &flags);
 	void setModelCondition(int bit, bool on);
 	// lane ANIM-1, RW 0x679512 / 0x67449C (see ClientEvents.h): a changed bit is stored and marks the drawable dirty; flushModelConditions hands the
@@ -150,6 +161,7 @@ public:
 	bool hasAnimatedEntry() const;
 	// steps every model draw's animations by `elapsedMs` of render time
 	void advanceAnimation(double elapsedMs);
+	void advanceTires(DrawEntry &e, double elapsedMs); ///< lane COMBAT-4: W3DTruckDraw's tire spin (RW 0x4CBFFB)
 
 	// RW 0x6789B4 Drawable::showModule: the draw module whose tag is `name` (exact, case sensitive) takes the request (true: a module exists; the
 	// module-first rule: no fall through to a sub object of the same name) and its entry is hidden / shown (DrawEntry::moduleHidden).
@@ -164,6 +176,32 @@ public:
 	// The render transform from the object's record in a completed logic frame's snapshot (SMOOTH-1: RenderInterpolation::retailPose, RW 0x6765B9;
 	// `interpolate` false: the record's current transform, the stepped look). Then the construction look (updateConstruction).
 	void syncFromSnapshot(const ObjectSnapshot &s, UnsignedInt snapshotFrame, double alpha, bool interpolate);
+	// lane PERF-3: syncFromSnapshot in two parts, for DrawableManager::syncTransforms to run the first on the client job pool. prepareSync reads only this
+	// drawable and the record and writes only this drawable's own state (the construction look, the move speed, the script target) and `out` (the pose,
+	// with the cos / sin of a rotation about Z); commitSync then sets the transform, whose reaction (the footstep manager's lists) needs the drawables'
+	// order. prepareSync then commitSync leave the state syncFromSnapshot leaves.
+	struct SyncPrep
+	{
+		const ObjectSnapshot *rec = nullptr;
+		RenderInterpolation::Pose pose;
+		bool sameBasis = false; ///< a rotation about Z already set on this basis: no new orientation
+		float c = 0.0f, s = 0.0f;
+	};
+	void prepareSync(const ObjectSnapshot &rec, UnsignedInt snapshotFrame, double alpha, bool interpolate, SyncPrep &out);
+	void commitSync(const SyncPrep &prep);
+	// lane PERF-3: the record DrawableManager::syncTransforms found for this drawable in `snapshot` (null: none), so the render side asks the same snapshot
+	// again without a search. syncedRecord answers only for the snapshot (and frame) of the last sync; otherwise `found` is false
+	void setSyncedRecord(const LogicSnapshot *snapshot, const ObjectSnapshot *rec)
+	{
+		m_syncSnapshot = snapshot;
+		m_syncFrame = snapshot ? snapshot->frame : 0;
+		m_syncRec = rec;
+	}
+	const ObjectSnapshot *syncedRecord(const LogicSnapshot &snapshot, bool &found) const
+	{
+		found = m_syncSnapshot == &snapshot && m_syncFrame == snapshot.frame;
+		return found ? m_syncRec : nullptr;
+	}
 	// RENDER-2, once per client frame: RW 0x675996 Drawable::updateDrawable -> RW 0x6730E1: while the flags hold ACTIVELY_BEING_CONSTRUCTED every model draw's
 	// RW 0x4B51B5 (the build-up animation frame from the object's construction percent), and every model draw's RW 0x4B686D height adjustment. `alpha` is
 	// the client sub-frame fraction; the cached percent is refreshed on the first client frame of a new logic frame (RW 0x63252F). The rate is
@@ -219,6 +257,14 @@ private:
 	std::vector<std::pair<std::string, bool>> m_pendingModuleRequests; ///< lane BUILD-4: script module requests made meanwhile
 	float m_moveSpeed = 0.0f; ///< lane SMOOTH-3: the presented record's moveSpeed (the Distance animations' speed sync)
 	DrawableScriptTarget m_scriptTarget; ///< lane FX-3
+	// lane PERF-3: the angle whose rotation basis syncFromSnapshot last set and that basis; a render frame that presents the same angle (bit for bit) on that
+	// basis skips setOrientation's trigonometry (its result would be these same values)
+	const LogicSnapshot *m_syncSnapshot = nullptr; ///< lane PERF-3: setSyncedRecord
+	UnsignedInt m_syncFrame = 0;
+	const ObjectSnapshot *m_syncRec = nullptr;
+	bool m_zBasisCached = false;
+	float m_zCachedAngle = 0.0f;
+	float m_zCachedBasis[9] = {};
 	bool m_flagsDirty = false;           ///< lane ANIM-1: RW Drawable + 0x443
 	bool m_hasWeaponTiming = false;      ///< lane ANIM-1: the last flush's weapon cycle (RW 0x4BEE31 reads the object's when the draw applies the flags)
 	int m_weaponTimingFrames = 0;

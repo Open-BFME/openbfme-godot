@@ -120,6 +120,26 @@ void Team::crc(StateHasher &h) const
 		h.addI32(kv.first);
 		h.addI32((int)kv.second);
 	}
+	if (m_hadMembers)
+	{
+		h.addU32(0x128u); // lane CAMP-1: + 0x128, hashed when set
+	}
+	if (m_script.active) // lane CAMP-1H: the script state, hashed once the team is active (an inactive team never changes it)
+	{
+		h.addBool(m_script.created);
+		h.addBool(m_script.ready);
+		h.addBool(m_script.checkEnemySighted);
+		h.addBool(m_script.seeEnemy);
+		h.addBool(m_script.prevSeeEnemy);
+		h.addBool(m_script.wasIdle);
+		h.addI32(m_script.destroyThreshold);
+		h.addI32(m_script.curUnits);
+		for (int i = 0; i < 32; ++i)
+		{
+			h.addBool(m_script.attemptGeneric[i]);
+			h.addU32(m_script.genericNextFrame[i]);
+		}
+	}
 	if (!m_state.empty() || !m_customStates.empty()) // lane SCRIPT-2: hashed once a script set them
 	{
 		h.addString(m_state);
@@ -167,16 +187,52 @@ TeamPrototype *TeamFactory::initTeam(const std::string &name, Player *owner, boo
 	return tp;
 }
 
-Team *TeamFactory::createTeam(TeamPrototype *proto)
+Team *TeamFactory::createTeam(TeamPrototype *proto, bool activate)
 {
 	if (proto->getIsSingleton() && !proto->m_teams.empty())
 	{
-		return proto->m_teams.front(); // a singleton prototype has exactly one team
+		Team *t = proto->m_teams.front(); // a singleton prototype has exactly one team
+		if (activate)
+		{
+			t->setActive();
+		}
+		return t;
 	}
 	m_teams.emplace_back(proto, m_nextTeamID++);
 	Team *t = &m_teams.back();
 	proto->m_teams.push_back(t);
+	// lane CAMP-1H: the constructor (RW 0x7A6C91 -> RW 0x7A6E0D): + 0x60 when the prototype has an EnemySighted (+ 0x1FC) or AllClear (+ 0x200) script
+	const TeamTemplateScripts &ts = proto->templateScripts();
+	t->scriptState().checkEnemySighted = !ts.enemySighted.empty() || !ts.allClear.empty();
+	if (activate)
+	{
+		t->setActive();
+	}
 	return t;
+}
+
+const TeamTemplateScripts &TeamPrototype::templateScripts() const
+{
+	if (!m_scripts)
+	{
+		// RW 0x7A2C96: a missing key leaves the field empty / 0 (the AsciiString / int / real reads RW 0x714E6D / 0x714A98 / 0x714ACA)
+		auto ts = std::make_unique<TeamTemplateScripts>();
+		ts->onCreate = m_dict.getAsciiString("teamOnCreateScript");
+		ts->eventsList = m_dict.getAsciiString("teamEventsList");
+		ts->onIdle = m_dict.getAsciiString("teamOnIdleScript");
+		ts->initialIdleFrames = m_dict.getInt("teamInitialIdleSeconds") * 5; // RW 0x7A373B: x [0xD9F608] (5 frames a second)
+		ts->enemySighted = m_dict.getAsciiString("teamEnemySightedScript");
+		ts->allClear = m_dict.getAsciiString("teamAllClearScript");
+		ts->onUnitDestroyed = m_dict.getAsciiString("teamOnUnitDestroyedScript");
+		ts->onDestroyed = m_dict.getAsciiString("teamOnDestroyedScript");
+		ts->destroyedThreshold = m_dict.getReal("teamDestroyedThreshold");
+		for (int i = 0; i < 32; ++i)
+		{
+			ts->generic[i] = m_dict.getAsciiString("teamGenericScriptHook" + std::to_string(i)); // "%s%d" (RW 0xC1222C)
+		}
+		m_scripts = std::move(ts);
+	}
+	return *m_scripts;
 }
 
 TeamPrototype *TeamFactory::findTeamPrototype(const std::string &name) const
@@ -216,7 +272,8 @@ Team *TeamFactory::findTeam(const std::string &name)
 	{
 		return nullptr;
 	}
-	Team *t = tp->getFirstTeam();
+	// lane CAMP-1: RW 0x759FDA answers the prototype's list head (+ 0x334), the newest instance (a reinforcement team made by a script, not an older one)
+	Team *t = tp->getNewestTeam();
 	if (!t && !tp->getIsSingleton())
 	{
 		t = createTeam(tp);

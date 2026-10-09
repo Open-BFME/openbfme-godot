@@ -408,6 +408,7 @@ public:
 	virtual bool isTurnLimited() const = 0;                  // ai vfunc 0x228 (halves turns)
 	virtual bool isChargeOrdered() const = 0;                // obj+0x251
 	virtual bool physicsMotionDisabled() const = 0;          // RW 0x5E3A1B: obj+0x264 module byte +0x5C
+	virtual bool hasPhysicsModule() const = 0;               // obj+0x264 != 0 (the object's PhysicsBehavior; lane EXIT-1, RW 0x5E7DE0)
 	virtual bool zMotionSuppressed() const = 0;              // RW 0x5E774A: obj+0x1C8 bit 3 or THROWN_PROJECTILE
 	virtual unsigned logicFrame() const = 0;                 // TheGameLogic+0x40
 	virtual bool containerAllowsBackingUp() const = 0;       // RW 0x5E6530-0x5E655A (HORDE_MEMBER inside a container whose template flag +0xD8 is set)
@@ -439,7 +440,7 @@ public:
 enum LocomotorFlags
 {
 	LOCOMOTOR_FLAG_BRAKING = 0x01,      // RW 0x5E5970 sets, 0x5E5911 clears
-	LOCOMOTOR_FLAG_BIT2 = 0x04,         // cleared by the dispatcher on entry (RW 0x5E8875); setter not located
+	LOCOMOTOR_FLAG_BIT2 = 0x04,         // cleared by the dispatcher on entry (RW 0x5E8875); set by maintainCurrentPosition with the held position (RW 0x5E7D2A, lane EXIT-1)
 	LOCOMOTOR_FLAG_NO_BRAKE = 0x10,     // moveForward does not start braking while it is set (setter not located)
 	LOCOMOTOR_FLAG_BACKING_UP = 0x80    // Legs / Wheels / HORDE movers
 };
@@ -465,6 +466,9 @@ public:
 	void locomotorMoveTowardsPosition(LocomotorHost &host, const Coord3D &goal, float onPathDistToGoal, float desiredSpeed);
 	// RW 0x5E98D6 (lane SMOOTH-3): the angle goal (AIMover goal type 3) turns at this locomotor's rate instead of being set at once
 	void locomotorMoveTowardsAngle(LocomotorHost &host, float angle);
+	// RW 0x5E7CC7 (lane EXIT-1): the locomotor of a unit without a goal (AIMover goal type 0, RW 0x669A60) holds its position: the walk's model conditions
+	// go (MOVING for the legged / wheeled / horde / treads appearances); returns whether the locomotor wants to be called every frame (RW's result)
+	bool locomotorMaintainCurrentPosition(LocomotorHost &host);
 
 	// ---- the movers, public for tests ----
 	void moveTowardsPositionLegs(LocomotorHost &host, const Coord3D &goal, float onPathDistToGoal, float desiredSpeed);   // RW 0x5E63F3
@@ -484,6 +488,8 @@ public:
 	// ---- state (RW offsets) ----
 	float speed() const { return m_speed; }                 // +0x40 current speed per frame
 	void setSpeed(float s) { m_speed = s; }
+	// RW 0x5E4C40 (lane EXIT-1): the speed moves toward `v`, up by at most the acceleration (x87 fadd, stored), down at once, then within [0, the maximum speed]
+	void setSpeedTowards(const LocomotorHost &host, float v);
 	unsigned flags() const { return m_flags; }              // +0x44
 	void setFlags(unsigned f) { m_flags = f; }
 	const LocomotorMatrix &matrix() const { return m_matrix; } // +0x68
@@ -523,6 +529,7 @@ private:
 	float m_desiredSpeedCap = 0.0f;     // +0x5C
 	unsigned m_desiredSpeedCapUntilFrame = 0; // +0x60
 	LocomotorMatrix m_matrix;           // +0x68
+	Coord3D m_maintainPosition{ 0.0f, 0.0f, 0.0f }; // +0x08: the position held while there is no goal (flag 4; RW 0x5E7D10, lane EXIT-1)
 	bool m_byte98 = false;              // +0x98 (set by moveForward's animation part, cleared by the movers)
 	bool m_nearPathEnd = false;         // +0x99: the path is within 10 of its end (dispatcher, RW 0x5E8925)
 	bool m_byte9a = false;              // +0x9A (HORDE mover formation state)

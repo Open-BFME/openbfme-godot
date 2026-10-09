@@ -845,3 +845,27 @@ TEST_CASE("camera: the render interpolation runs from the pose committed at the 
 	CHECK(c.eye().x > mid.x + 1.0f);
 	r.key(kKeyRight, false);
 }
+
+// lane MOVE-2 r2: a pose a script sets between client frames (InGameHudNode::camera_look_at / camera_set_height, called every render frame by the viewers) is drawn
+// at once: snapInterpolation makes the previous and committed poses the live one, so the interpolation never mixes an old committed pose with the new live one (the
+// 30 Hz steps of a camera moved every render frame)
+TEST_CASE("camera: a pose set between client frames is drawn at once (snapInterpolation)")
+{
+	if (!haveWorld("camera snap"))
+	{
+		return;
+	}
+	CamRig r(shared());
+	TacticalCamera &c = *r.cam;
+	r.frame(1);
+	const Coord3D t0 = c.target();
+	c.lookAt(Coord3D{ t0.x + 50.0f, t0.y, 0.0f });
+	CHECK(c.previousEye().x != doctest::Approx(c.eye().x)); // without the snap the drawn pose would still start from the old one
+	c.snapInterpolation();
+	CHECK(c.previousEye().x == c.eye().x);
+	CHECK(c.previousEye().y == c.eye().y);
+	CHECK(c.previousTarget().x == c.target().x);
+	// the next client frame starts from the snapped pose
+	r.frame(1);
+	CHECK(c.previousEye().x == doctest::Approx(c.eye().x));
+}

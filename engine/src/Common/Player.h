@@ -94,6 +94,8 @@ public:
 	// the skirmish AI level of the side (skirmishDifficulty: 0 easy .. 3 brutal), -1 for a side without one; the AI lane reads it
 	int getSkirmishDifficulty() const { return m_skirmishDifficulty; }
 	void setSkirmishDifficulty(int d) { m_skirmishDifficulty = d; }
+	// lane CAMP-1H: RW 0x6AC32D, the difficulty bonus of `obj` (Object::setReceivingDifficultyBonus); defined in GameLogic/Object/Object.cpp (it reads the logic)
+	void applyDifficultyBonusesForObject(Object &obj, bool apply);
 	// the colour tints the player's models: the map or the lobby chose it, or the faction is one that can be played (a template with a
 	// StartingBuilding; Civilian, Neutral and Observer have no team colour). MAPOBJ-1's rule for side colours (stop S-119).
 	bool hasTeamColor() const { return m_colorExplicit || (m_template && m_template->hasStartingBuilding()); }
@@ -102,7 +104,8 @@ public:
 	const Money *getMoney() const { return &m_money; }
 
 	Team *getDefaultTeam() const { return m_defaultTeam; }
-	void setDefaultTeam(Team *team) { m_defaultTeam = team; }
+	// lane CAMP-1H: RW 0x6AC6B0 also activates the default team (Team::setActive, RW 0x6AC6F7); defined in Player.cpp
+	void setDefaultTeam(Team *team);
 
 	// ZH Player::getRelationship(const Team *): a team override, then one for the team's player, else NEUTRAL
 	Relationship getRelationship(const Team *that) const;
@@ -175,6 +178,18 @@ public:
 		}
 	}
 	bool isScienceDisabled(ScienceType st) const { return std::find(m_disabledSciences.begin(), m_disabledSciences.end(), st) != m_disabledSciences.end(); }
+	// lane CAMP-1: the players that damaged this player's objects (RW + 0x360 + index, set by ActiveBody::attemptDamage through RW 0x6AAC05, which also
+	// stores the frame at + 0x374; read by SKIRMISH_PLAYER_HAS_BEEN_ATTACKED_BY_PLAYER through RW 0x6AAC22)
+	void setAttackedBy(int playerIndex, std::uint32_t frame)
+	{
+		if (playerIndex >= 0 && playerIndex < kAttackedBySlots)
+		{
+			m_attackedBy[playerIndex] = true;
+			m_attackedFrame = frame;
+		}
+	}
+	bool getAttackedBy(int playerIndex) const { return playerIndex >= 0 && playerIndex < kAttackedBySlots && m_attackedBy[playerIndex]; }
+	std::uint32_t attackedFrame() const { return m_attackedFrame; }
 	bool isScienceHidden(ScienceType st) const { return std::find(m_hiddenSciences.begin(), m_hiddenSciences.end(), st) != m_hiddenSciences.end(); }
 	// The player's current selection as an ordered list of object ids (ZH: the player's selected group, set by the selection messages of the command
 	// list; RW 0x6AAB85 gives a command the issuing player's selection). Simulation state: hashed, because the first selected object is the
@@ -327,6 +342,9 @@ private:
 	bool m_canBuildUnits = true, m_canBuildBase = true;
 	std::set<unsigned short> m_disabledTemplateIds;
 	std::vector<ScienceType> m_disabledSciences, m_hiddenSciences; ///< lane SCRIPT-3 (RW + 0x31C / + 0x328)
+	static const int kAttackedBySlots = 20; ///< RW + 0x360 .. + 0x373 (the frame follows at + 0x374)
+	bool m_attackedBy[kAttackedBySlots] = {}; ///< lane CAMP-1
+	std::uint32_t m_attackedFrame = 0;        ///< lane CAMP-1: RW + 0x374
 	std::vector<ObjectID> m_selection;
 	std::array<std::vector<ObjectID>, NUM_HOTKEY_SQUADS> m_hotkeySquads;
 	std::shared_ptr<TunnelTracker> m_tunnelTracker; ///< lane GARRISON-2 (RW + 0x308)

@@ -94,12 +94,18 @@ void CombatState::crc(StateHasher &h) const
 	h.addU64(m_counters.crushes);
 	h.addU64(m_counters.crushWeaponShots);
 	h.addU64(m_counters.crushBumps);
-	h.addU64(m_counters.crushKnockbacksSkipped);
+	h.addU64(m_counters.ramHits);
 	h.addU64(m_counters.crushKnockbacks);
 	h.addU64(m_counters.crushBumpAttacksNotPorted);
 	h.addU64(m_counters.crushDecelerations);
 	h.addU64(m_counters.flanks);
 	h.addU64(m_counters.flankTests);
+	h.addU64(m_counters.metaImpactHits); // lane COMBAT-4
+	h.addU64(m_counters.metaImpactKills);
+	h.addU64(m_counters.metaImpactNestedHorde);
+	h.addU64(m_counters.shockwaveFlings);
+	h.addU64(m_counters.shockwaveStandUps);
+	h.addU64(m_counters.shockwaveRampageKills);
 	h.addU32((std::uint32_t)m_breaches.size());
 	for (const CastleBreach &b : m_breaches)
 	{
@@ -117,13 +123,12 @@ std::vector<std::string> CombatState::stops()
 		"target pitch test and the FiringTrackerHelper shell (the tracker runs from the AI update; the WeaponStatusHelper is ported, lane PROJ-2) are not available; a weapon that needs them answers as "
 		"if they were neutral",
 		"[S-321] delivery: DamageNugget is delivered (radius damage scans the object list in list order, RW's partition order is implementation defined); a weapon with a ProjectileNugget launches a projectile "
-		"object through ProjectileLauncher (lane PROJ-1, stops S-360..S-364); every other nugget kind (FX, OCL, MetaImpact, Paralyze, DOT, ...) and the passenger hit roll are counted and not executed",
+		"object through ProjectileLauncher (lane PROJ-1, stops S-360..S-364); MetaImpactNugget throws through the shockwave handler (lane COMBAT-4, S-1600 / S-1790); every other nugget kind (FX, OCL, Paralyze, DOT, ...) and the passenger hit roll are counted and not executed",
 		"[S-322] ActiveBody: armour is the ArmorSet of the object's armor flags looked up per hit (RW 0x5D893C; the flank test RW 0x68FB63 is lane HORDE-2's, S-582); the ARMOR / INVULNERABLE attribute modifiers, the burning death "
 		"fire cap, doDamageFX and the damage modules' onDamage are not ported (the damage state model conditions are COMBAT-2's, S-342); ImmortalBody / HighlanderBody / ActiveBody share the data table 0xC71D68, "
 		"StructureBody (an extra EMPTY table 0xC84858), InactiveBody, RespawnBody, DelayedDeathBody and SymbioticStructuresBody run since COMBAT-2 (S-340, S-343)",
 		"[S-323] kill credit: Object::scoreTheKill (RW 0x6955BC) skips a victim with KindOf IGNORED_IN_GUI (0x695661), requires an enemy of another owner (0x6956E8..0x6956F7) and then pays the bounty through Economy::awardBounty (call 0x695743 -> 0x6AC06F); the victim's playable-side test (0x69574F) comes after the bounty in RW and only gates skill points, so it is not applied to the bounty; the score keeper, the skill points, the experience tracker, the academy statistics and the EVA of a lost unit are other lanes'",
-		"[S-324] death: SlowDeathBehavior runs the roulette of ZH (ProbabilityModifier and the overkill bonus), sinks and destroys on its delays; its FX / Weapon phase effects, Sound, DeathFlags, "
-		"fling, decay and fade fields are parsed and counted, not executed (the phase OCL runs since lane SPELL-2: RW 0x860A46, OCL::create from the object, S-530); DestroyDie and KeepObjectDie act; FXListDie, CreateObjectDie and every other die module have no runtime",
+		"[S-324] death: SlowDeathBehavior is RotWK's (lane COMBAT-4): the roulette RW 0x861712 (GameLogicRandomValue(0, total - 1) at line 0x32F, the overkill probability RW 0x860608), beginSlowDeath RW 0x860E93 (DeathFlags' statuses and model conditions with DYING, the sink / destruction / midpoint draws at lines 0x1A5 / 0x1A6 / 0x1AB, DoNotRandomizeMidpoint, DecayBeginTime, the FadeDelay frame, FlingForce: the body thrown by RW 0x860664, EXPLODED_FLAILING, its timers held while it flies) and the update RW 0x860B39 (EXPLODED_BOUNCING on landing, the HIT_GROUND phase, SINKING, DISABLED_HELD, z - SinkRate and 5.7 more above the terrain, MIDPOINT, FINAL and the destruction, DECAY); the phase OCL runs (lane SPELL-2: RW 0x860A46, S-530); NOT ported: the Weapon phase effect (counted), the drawable's fade and shadow (client), the LOD death scale (1.0 at every 2.01 GameLOD level) and its rescale, the HULK quick death (needs the script hulk lifetime override, never set), a slaved update's notice on a fling; DestroyDie and KeepObjectDie act; FXListDie, CreateObjectDie and every other die module have no runtime",
 		"[S-325] attack machine: AIAttackState and its sub machine (Pursue 0x64, Approach 0x65, Aim 0x66, Fire 0x67, WaitUntilFinishedFiring 0x68) are the B1 ids and transitions (RW's own ids were not read); "
 		"the transition conditions (weapon range test, victim death) are inference; no turrets, a stealthed and undetected victim ends the attack state (lane STEALTH-1, inference of the RW sub-state), no garrison fire points, no combo locomotors, no attack position / area / squad, no retaliation",
 		"[S-326] acquisition: an idle unit scans for an enemy every MoodAttackCheckRate frames within its vision range (the template's VisionRange), nearest first, ties by object id; AttackPriority tables, "
@@ -160,7 +165,10 @@ std::vector<std::string> CombatState::report() const
 		", unported nuggets " + std::to_string(m_counters.unportedNuggets) + ", flank tests ignored " + std::to_string(m_counters.flankIgnored));
 	out.push_back("[S-580..S-584 counters] crushes " + std::to_string(m_counters.crushes) + ", crush weapon shots " + std::to_string(m_counters.crushWeaponShots) + ", bumps " +
 		std::to_string(m_counters.crushBumps) + " (contact attacks not ported " + std::to_string(m_counters.crushBumpAttacksNotPorted) + "), knockbacks " +
-		std::to_string(m_counters.crushKnockbacks) + ", ram hits not applied " + std::to_string(m_counters.crushKnockbacksSkipped) + ", decelerations " + std::to_string(m_counters.crushDecelerations) +
+		std::to_string(m_counters.crushKnockbacks) + ", ram hits " + std::to_string(m_counters.ramHits) + ", decelerations " + std::to_string(m_counters.crushDecelerations) +
 		", flank tests " + std::to_string(m_counters.flankTests) + " flanked " + std::to_string(m_counters.flanks));
+	out.push_back("[S-1600 / S-1790 counters] meta impact hits " + std::to_string(m_counters.metaImpactHits) + ", kill filter kills " + std::to_string(m_counters.metaImpactKills) +
+		", nested horde hits not ported " + std::to_string(m_counters.metaImpactNestedHorde) + ", shockwave flings " + std::to_string(m_counters.shockwaveFlings) + ", stand-ups " +
+		std::to_string(m_counters.shockwaveStandUps) + ", rampage kills " + std::to_string(m_counters.shockwaveRampageKills));
 	return out;
 }

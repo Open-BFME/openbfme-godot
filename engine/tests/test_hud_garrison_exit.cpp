@@ -257,13 +257,19 @@ void checkExit(const ExitTrace &t, const Coord3D &towerPos, float towerAngle, in
 			MESSAGE(describe(t, f));
 		}
 	}
-	// the exit frame: every member stands on the contain's EntryPosition (the tower's base), the members are not on their slots yet
+	// the exit frame: every member stands on the contain's EntryPosition (the tower's base), the members are not on their slots yet. Lane EXIT-1: a member that
+	// came out in the horde object's own frame rejoins the horde at once (RW 0x8759FF), the hub makes it busy (RW 0x87471B: its horde idle) and, when its AI
+	// updates after the horde's, the member update (RW 0x66C748) already takes its first step toward its slot in that frame: at most one step from the exit
 	const std::map<ObjectID, Coord3D> &out = t.frames[(size_t)t.exitFrame];
+	int stepped = 0;
 	for (ObjectID id : t.ids)
 	{
 		REQUIRE(out.count(id));
-		CHECK_MESSAGE(dist2d(out.at(id), t.exitSpot) < 0.01f, "member " << id << " came out at (" << out.at(id).x << ", " << out.at(id).y << "), not at the exit");
+		const float d = dist2d(out.at(id), t.exitSpot);
+		stepped += d < 0.01f ? 0 : 1;
+		CHECK_MESSAGE(d <= 2.0f * t.speed.at(id) + 0.01f, "member " << id << " came out at (" << out.at(id).x << ", " << out.at(id).y << "), not at the exit");
 	}
+	MESSAGE(stepped << " members took their first step in the exit frame");
 	// no teleport: from the exit frame on, no member moves farther in a frame than twice its locomotor speed
 	float worst = 0.0f;
 	for (int f = t.exitFrame + 1; f < (int)t.frames.size(); ++f)

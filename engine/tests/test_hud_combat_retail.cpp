@@ -362,11 +362,16 @@ struct SideLog
 {
 	const UnitRow *row = nullptr;
 	std::vector<ObjectID> ids;
+	std::set<ObjectID> everIds;       // lane MOVE-2 r2: every object that was a member of the horde during the fight (a banner carrier's refills included)
+	size_t everAliveAtEnd = 0;        // lane MOVE-2 r2: those still alive when the kills and the cash are read
+	std::map<ObjectID, long long> bountyOf; // lane MOVE-2 r2: each member's template BountyValue (a banner carrier's differs from its soldiers')
+	long long deadBounty = 0;         // lane MOVE-2 r2: the BountyValue of every member that died
 	std::vector<float> lost;          // at the end of the fight
 	std::vector<int> deathFrame;
 	std::vector<int> minGap;          // smallest number of frames between two shots of the member
 	std::vector<unsigned> lastFire;
 	int firstDamageFrame = -1;        // the first frame a member of this side lost health
+	int firstAttackFrame = 1 << 30;   // lane MOVE-2 r5: the first frame (the setup frames are -2 and -1) after which the horde or a member is attacking
 	bool offStep = false;             // a member's health was not hp - k * hit at some frame
 	int veteranFrame = -1;            // lane XP-1: the first frame a member of this side reached veterancy rank 2 (its level bonuses change the arithmetic)
 	std::string offStepWhat;
@@ -400,8 +405,29 @@ FactionFight fightFactions(const char *factionA, const char *hordeA, const char 
 	a.player(1)->setBountyPercent(bountyPercent);
 	Object *h[2] = { a.place(hordeA, 0, 500.0f, 500.0f), a.place(hordeB, 1, 640.0f, 500.0f) };
 	const ObjectID hid[2] = { h[0]->getID(), h[1]->getID() };
+	// the frame each side starts attacking (neither horde is ordered in the two setup frames: an idle member may acquire an enemy on its own then)
+	auto noteAttack = [&](int frame) {
+		for (int k = 0; k < 2; ++k)
+		{
+			Object *hk = a.logic.findObjectByID(hid[k]);
+			bool attacking = hk && hk->getAIUpdateInterface() && hk->getAIUpdateInterface()->isAttacking();
+			if (hk && hk->getContain() && hk->getContain()->getContainedItemsList())
+			{
+				for (const Object *m : *hk->getContain()->getContainedItemsList())
+				{
+					attacking = attacking || (m->getAIUpdateInterface() && m->getAIUpdateInterface()->isAttacking());
+				}
+			}
+			if (attacking && frame < out.side[k].firstAttackFrame)
+			{
+				out.side[k].firstAttackFrame = frame;
+			}
+		}
+	};
 	a.logic.runLogicFrame();
+	noteAttack(-2);
 	a.logic.runLogicFrame();
+	noteAttack(-1);
 	const char *names[2] = { hordeA, hordeB };
 	for (int k = 0; k < 2; ++k)
 	{
@@ -424,6 +450,25 @@ FactionFight fightFactions(const char *factionA, const char *hordeA, const char 
 	{
 		a.logic.runLogicFrame();
 		out.hashes.push_back(a.logic.computeStateHash());
+		noteAttack(f);
+		for (int k = 0; k < 2; ++k)
+		{
+			out.side[k].everIds.insert(out.side[k].ids.begin(), out.side[k].ids.end());
+			if (Object *hk = a.logic.findObjectByID(hid[k]))
+			{
+				if (hk->getContain() && hk->getContain()->getContainedItemsList())
+				{
+					for (const Object *m : *hk->getContain()->getContainedItemsList())
+					{
+						out.side[k].everIds.insert(m->getID());
+						if (!out.side[k].bountyOf.count(m->getID()))
+						{
+							out.side[k].bountyOf[m->getID()] = Economy::templateInt(*static_cast<const ThingTemplate *>(m->getTemplate()), "BountyValue");
+						}
+					}
+				}
+			}
+		}
 		if (out.flankFrame < 0 && a.logic.combat().counters().flanks != flanksBefore)
 		{
 			out.flankFrame = f;
@@ -499,6 +544,20 @@ FactionFight fightFactions(const char *factionA, const char *hordeA, const char 
 		}
 	}
 	out.kills = a.logic.combat().counters().kills;
+	for (int k = 0; k < 2; ++k)
+	{
+		for (ObjectID id : out.side[k].everIds)
+		{
+			const Object *o = a.logic.findObjectByID(id);
+			const bool aliveNow = o && !o->isEffectivelyDead();
+			out.side[k].everAliveAtEnd += aliveNow ? 1u : 0u;
+			if (!aliveNow)
+			{
+				auto it = out.side[k].bountyOf.find(id);
+				out.side[k].deadBounty += it != out.side[k].bountyOf.end() ? it->second : (long long)out.side[k].row->bounty;
+			}
+		}
+	}
 	out.unportedNuggets = a.logic.combat().counters().unportedNuggets;
 	for (int k = 0; k < 2; ++k)
 	{
@@ -601,10 +660,11 @@ void checkFight(const FactionFight &f, const char *label)
 		MESSAGE(std::string(label) << ": a member reached veterancy rank 2 at frame " << std::max(f.side[0].veteranFrame, f.side[1].veteranFrame) << " (lane XP-1): the hit count is not checked");
 	}
 	// (3) the kills: the loser has no member left, the winner lost the members that reached 0
+	// (lane MOVE-2 r2: counted over every member each horde had, so a member the loser's banner carrier refilled before the carrier died counts as a kill too)
 	size_t dead = 0;
 	for (int k = 0; k < 2; ++k)
 	{
-		dead += (size_t)f.side[k].ids.size() - f.side[k].alive;
+		dead += (size_t)f.side[k].everIds.size() - f.side[k].everAliveAtEnd;
 	}
 	CHECK(f.side[f.loserSide].alive == 0);
 	CHECK(f.side[1 - f.loserSide].alive > 0);
@@ -618,7 +678,13 @@ void checkFight(const FactionFight &f, const char *label)
 		{
 			continue; // lane HERO-2: the close range weapon's pre-attack and delay are not the row's
 		}
-		CHECK(f.side[k].firstDamageFrame >= framesOf(enemy.preAttackMs));
+		// the pre-attack counts from the first frame the hitting side was seen attacking (after that frame's update: an acquisition may start its pre-attack in
+		// the frame it happens; the order, given before frame 0, is first seen after frame 0, so an ordered side's first hit comes at frame preAttack at the
+		// earliest). Lane MOVE-2 r5: neither horde is ordered during the two setup frames, and an idle member may acquire an enemy then, the attacker's too
+		// (DwarvenPhalanxHorde's front rank meets AngmarDarkDunedainHorde's, which walked toward it, and hits at frame 2 with its 3 frame pre-attack); the old
+		// bound counted from the order with the 2 setup frames allowed to the defender only
+		REQUIRE(f.side[1 - k].firstAttackFrame <= f.side[k].firstDamageFrame);
+		CHECK(f.side[k].firstDamageFrame >= f.side[1 - k].firstAttackFrame + framesOf(enemy.preAttackMs));
 		for (int gap : f.side[1 - k].minGap)
 		{
 			CHECK(gap >= framesOf(enemy.gapMs));
@@ -643,8 +709,7 @@ void checkFight(const FactionFight &f, const char *label)
 	{
 		const SideLog &sl = f.side[k];
 		const SideLog &en = f.side[1 - k];
-		size_t enemyDead = en.ids.size() - en.alive;
-		CHECK(sl.cash == (std::uint32_t)(enemyDead * (size_t)en.row->bounty)); // percent 1.0: the BountyValue of each kill
+		CHECK(sl.cash == (std::uint32_t)en.deadBounty); // percent 1.0: the BountyValue of each kill (lane MOVE-2 r2: each killed member's own template's)
 		CHECK(sl.usageBefore == sl.row->commandPoints * sl.row->count);
 		CHECK(sl.usageAfter == sl.row->commandPoints * ((int)sl.alive + sl.replenished) + sl.carrierPoints);
 	}

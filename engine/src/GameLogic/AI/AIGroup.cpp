@@ -128,7 +128,7 @@ void AIGroup::groupMoveToPosition(const Coord3D &posIn, bool addWaypoint, Comman
 		}
 		// lane MODULES-3 r2: each unit's order passes aiDoCommand's gate (RW 0x667174) before anything of it changes: a refused unit keeps its reservation and
 		// takes no part in the group's layout
-		if (!ai->acceptCommand(source, addWaypoint || haveFinalAngle ? -1 : 0))
+		if (!ai->acceptCommand(source, addWaypoint || haveFinalAngle ? AIUpdateInterface::kCommandUnidentifiedMove : 0))
 		{
 			continue;
 		}

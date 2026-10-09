@@ -105,7 +105,7 @@ public:
 	~DozerAIUpdate() override; // RW 0x88D1AC: finishBuildingSound (RW 0x88BFA9) first
 	// RW 0x88E44F (DozerAIUpdate::aiDoCommand): a PLAYER command other than repair (0x13), resume construction (0x14) and move away (0x34) cancels the current task
 	// before it runs (dozer interface slot 0x34) and resets the primary machine
-	void commandAccepted(CommandSourceType source, int command) override;
+	void commandAccepted(CommandSourceType source, int command, Object *target) override;
 	static void registerClass(ModuleFactory &modules);
 	// lane BUILD-2: WorkerAIUpdate (create RW 0x64EF9C, data RW 0x654238, mask 0x11; ctor RW 0x8ADAA0, size 0x594): ZH's WorkerAIUpdate = a dozer plus a supply truck. Field
 	// table RW 0xC058C8: MaxBoxes, RepairHealthPercentPerSecond (+0x68), BoredTime, BoredRange, the supply / harvest fields. The dozer half runs as this class (the same named
