@@ -1,0 +1,4 @@
+idx	token	parse_va	parse_kind	userdata	offset	userdata_list
+0	RequiredUpgradeNames	0x42eed6	parseAsciiStringVector	0x0	0x128	
+1	ForbiddenUpgradeNames	0x42eed6	parseAsciiStringVector	0x0	0x134	
+2	SpecialObjectFilter	0x76392f	parseObjectFilter	0x0	0x140	

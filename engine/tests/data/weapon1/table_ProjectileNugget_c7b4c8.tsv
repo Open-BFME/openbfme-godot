@@ -1,0 +1,7 @@
+idx	token	parse_va	parse_kind	userdata	offset	userdata_list
+0	WarheadTemplateName	0x42ee5e	parseAsciiString	0x0	0x150	
+1	ProjectileTemplateName	0x42ee5e	parseAsciiString	0x0	0x154	
+2	ProjectileStreamName	0x42ee5e	parseAsciiString	0x0	0x158	
+3	WeaponLaunchBoneSlotOverride	0x90f933	parseWeaponLaunchBoneSlot	0x0	0x15c	
+4	AlwaysAttackHereOffset	0x42f247	parseCoord3D	0x0	0x160	
+5	UseAlwaysAttackOffset	0x42e558	parseBool	0x0	0x16c	

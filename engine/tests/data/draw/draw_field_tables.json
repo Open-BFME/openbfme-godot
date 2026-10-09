@@ -1,0 +1,883 @@
+{
+ "nameArray": "0xd9fad8",
+ "tables": {
+  "W3DScriptedModelDraw": {
+   "va": "0xbe1320",
+   "rows": [
+    {
+     "token": "InitialRecoilSpeed",
+     "parse": "0x73a4b6",
+     "userData": "0x0",
+     "offset": 84
+    },
+    {
+     "token": "MaxRecoilDistance",
+     "parse": "0x42ed00",
+     "userData": "0x0",
+     "offset": 88
+    },
+    {
+     "token": "RecoilDamping",
+     "parse": "0x42ed00",
+     "userData": "0x0",
+     "offset": 92
+    },
+    {
+     "token": "RecoilSettleSpeed",
+     "parse": "0x73a4b6",
+     "userData": "0x0",
+     "offset": 96
+    },
+    {
+     "token": "OkToChangeModelColor",
+     "parse": "0x42e558",
+     "userData": "0x0",
+     "offset": 104
+    },
+    {
+     "token": "AnimationsRequirePower",
+     "parse": "0x42e558",
+     "userData": "0x0",
+     "offset": 107
+    },
+    {
+     "token": "MinLODRequired",
+     "parse": "0x42e956",
+     "userData": "0xd9e6bc",
+     "offset": 100
+    },
+    {
+     "token": "ProjectileBoneFeedbackEnabledSlots",
+     "parse": "0x42e840",
+     "userData": "0xda12e4",
+     "offset": 80
+    },
+    {
+     "token": "DefaultModelConditionState",
+     "parse": "0x4c800e",
+     "userData": "0x1",
+     "offset": 0
+    },
+    {
+     "token": "ModelConditionState",
+     "parse": "0x4c800e",
+     "userData": "0x0",
+     "offset": 0
+    },
+    {
+     "token": "IdleAnimationState",
+     "parse": "0x4c8840",
+     "userData": "0x1",
+     "offset": 0
+    },
+    {
+     "token": "TransitionState",
+     "parse": "0x4c8840",
+     "userData": "0x2",
+     "offset": 0
+    },
+    {
+     "token": "AnimationState",
+     "parse": "0x4c8840",
+     "userData": "0x0",
+     "offset": 0
+    },
+    {
+     "token": "TrackMarks",
+     "parse": "0x4b65ba",
+     "userData": "0x0",
+     "offset": 60
+    },
+    {
+     "token": "ExtraPublicBone",
+     "parse": "0x42e59e",
+     "userData": "0x0",
+     "offset": 48
+    },
+    {
+     "token": "AttachToBoneInAnotherModule",
+     "parse": "0x4b65ba",
+     "userData": "0x0",
+     "offset": 64
+    },
+    {
+     "token": "DependencySharedModelFlags",
+     "parse": "0x4b8c21",
+     "userData": "0x0",
+     "offset": 188
+    },
+    {
+     "token": "TimeOfDayTexture",
+     "parse": "0x4c42a8",
+     "userData": "0x0",
+     "offset": 0
+    },
+    {
+     "token": "UseProducerTexture",
+     "parse": "0x42e558",
+     "userData": "0x0",
+     "offset": 184
+    },
+    {
+     "token": "NoRotate",
+     "parse": "0x42e558",
+     "userData": "0x0",
+     "offset": 105
+    },
+    {
+     "token": "UseFiringArcRotation",
+     "parse": "0x42e558",
+     "userData": "0x0",
+     "offset": 106
+    },
+    {
+     "token": "RandomTexture",
+     "parse": "0x4c7c56",
+     "userData": "0x0",
+     "offset": 0
+    },
+    {
+     "token": "RandomTextureFixedRandomIndex",
+     "parse": "0x42e558",
+     "userData": "0x0",
+     "offset": 136
+    },
+    {
+     "token": "BurntTexture",
+     "parse": "0x4c3321",
+     "userData": "0x0",
+     "offset": 0
+    },
+    {
+     "token": "AttachModel",
+     "parse": "0x4c7e42",
+     "userData": "0x0",
+     "offset": 0
+    },
+    {
+     "token": "ParticlesAttachedToAnimatedBones",
+     "parse": "0x42e558",
+     "userData": "0x0",
+     "offset": 264
+    },
+    {
+     "token": "TrackMarksLeftBone",
+     "parse": "0x42ee5e",
+     "userData": "0x0",
+     "offset": 68
+    },
+    {
+     "token": "TrackMarksRightBone",
+     "parse": "0x42ee5e",
+     "userData": "0x0",
+     "offset": 72
+    },
+    {
+     "token": "RampMesh1",
+     "parse": "0x42ee5e",
+     "userData": "0x0",
+     "offset": 276
+    },
+    {
+     "token": "RampMesh2",
+     "parse": "0x42ee5e",
+     "userData": "0x0",
+     "offset": 280
+    },
+    {
+     "token": "EmbedPortal",
+     "parse": "0x4c30bd",
+     "userData": "0x0",
+     "offset": 284
+    },
+    {
+     "token": "WallBoundsMesh",
+     "parse": "0x42ee5e",
+     "userData": "0x0",
+     "offset": 268
+    },
+    {
+     "token": "RaisedWallMesh",
+     "parse": "0x42ee5e",
+     "userData": "0x0",
+     "offset": 272
+    },
+    {
+     "token": "GlowEnabled",
+     "parse": "0x42e558",
+     "userData": "0x0",
+     "offset": 296
+    },
+    {
+     "token": "GlowEmissive",
+     "parse": "0x42e558",
+     "userData": "0x0",
+     "offset": 297
+    },
+    {
+     "token": "ParticleBonesCheckDrawable",
+     "parse": "0x42e558",
+     "userData": "0x0",
+     "offset": 298
+    },
+    {
+     "token": "ShadowForceDisable",
+     "parse": "0x42e558",
+     "userData": "0x0",
+     "offset": 299
+    },
+    {
+     "token": "HighDetailLODThreshold",
+     "parse": "0x42ed00",
+     "userData": "0x0",
+     "offset": 300
+    },
+    {
+     "token": "LowDetailLODThreshold",
+     "parse": "0x42ed00",
+     "userData": "0x0",
+     "offset": 304
+    },
+    {
+     "token": "SwitchModelLODMode",
+     "parse": "0x42e558",
+     "userData": "0x0",
+     "offset": 308
+    },
+    {
+     "token": "StaticModelLODMode",
+     "parse": "0x42e558",
+     "userData": "0x0",
+     "offset": 309
+    },
+    {
+     "token": "ShowShadowWhileContained",
+     "parse": "0x42e558",
+     "userData": "0x0",
+     "offset": 310
+    },
+    {
+     "token": "UseStandardModelNames",
+     "parse": "0x42e558",
+     "userData": "0x0",
+     "offset": 311
+    },
+    {
+     "token": "UseDefaultAnimation",
+     "parse": "0x42e558",
+     "userData": "0x0",
+     "offset": 312
+    },
+    {
+     "token": "AlphaRefAnimated",
+     "parse": "0x42e558",
+     "userData": "0x0",
+     "offset": 313
+    },
+    {
+     "token": "AlphaRefRange",
+     "parse": "0x42f2fa",
+     "userData": "0x0",
+     "offset": 316
+    },
+    {
+     "token": "WadingParticleSys",
+     "parse": "0x42ee5e",
+     "userData": "0x0",
+     "offset": 20
+    },
+    {
+     "token": "AlphaCameraFadeOuterRadius",
+     "parse": "0x42ed1c",
+     "userData": "0x0",
+     "offset": 324
+    },
+    {
+     "token": "AlphaCameraFadeInnerRadius",
+     "parse": "0x42ed1c",
+     "userData": "0x0",
+     "offset": 328
+    },
+    {
+     "token": "AlphaCameraAtInnerRadius",
+     "parse": "0x42eefa",
+     "userData": "0x0",
+     "offset": 332
+    },
+    {
+     "token": "StaticSortLevelWhileFading",
+     "parse": "0x42ec5e",
+     "userData": "0x0",
+     "offset": 344
+    },
+    {
+     "token": "BirthFadeTime",
+     "parse": "0x73a429",
+     "userData": "0x0",
+     "offset": 336
+    },
+    {
+     "token": "BirthFadeAdditive",
+     "parse": "0x42e558",
+     "userData": "0x0",
+     "offset": 340
+    },
+    {
+     "token": "ZWriteDisableOverride",
+     "parse": "0x42e558",
+     "userData": "0x0",
+     "offset": 348
+    },
+    {
+     "token": "MultiPlayerOnly",
+     "parse": "0x42e558",
+     "userData": "0x0",
+     "offset": 349
+    },
+    {
+     "token": "AffectedByStealth",
+     "parse": "0x42e558",
+     "userData": "0x0",
+     "offset": 350
+    },
+    {
+     "token": "HighDetailOnly",
+     "parse": "0x42e558",
+     "userData": "0x0",
+     "offset": 351
+    }
+   ]
+  },
+  "W3DHordeModelDraw.LodOptions": {
+   "va": "0xbdcaa0",
+   "rows": [
+    {
+     "token": "LodOptions",
+     "parse": "0x478b94",
+     "userData": "0x0",
+     "offset": 0
+    }
+   ]
+  },
+  "LodOptions.row": {
+   "va": "0xbdca20",
+   "rows": [
+    {
+     "token": "AllowMultipleModels",
+     "parse": "0x42e558",
+     "userData": "0x0",
+     "offset": 0
+    },
+    {
+     "token": "MaxRandomTextures",
+     "parse": "0x42ec5e",
+     "userData": "0x0",
+     "offset": 4
+    },
+    {
+     "token": "MaxRandomAnimations",
+     "parse": "0x42ec5e",
+     "userData": "0x0",
+     "offset": 8
+    },
+    {
+     "token": "MaxAnimFrameDelta",
+     "parse": "0x42ed00",
+     "userData": "0x0",
+     "offset": 12
+    },
+    {
+     "token": "RandomStartFramePercent",
+     "parse": "0x42ec5e",
+     "userData": "0x0",
+     "offset": 16
+    }
+   ]
+  },
+  "ModelConditionState": {
+   "va": "0xbe0a78",
+   "rows": [
+    {
+     "token": "Model",
+     "parse": "0x4c21ee",
+     "userData": "0x0",
+     "offset": 0
+    },
+    {
+     "token": "Skeleton",
+     "parse": "0x4b65ba",
+     "userData": "0x0",
+     "offset": 88
+    },
+    {
+     "token": "ModelAnimationPrefix",
+     "parse": "0x42ee5e",
+     "userData": "0x0",
+     "offset": 112
+    },
+    {
+     "token": "Texture",
+     "parse": "0x4c2eec",
+     "userData": "0x0",
+     "offset": 100
+    },
+    {
+     "token": "PortraitImageName",
+     "parse": "0x42ee5e",
+     "userData": "0x0",
+     "offset": 96
+    },
+    {
+     "token": "ButtonImageName",
+     "parse": "0x42ee5e",
+     "userData": "0x0",
+     "offset": 92
+    },
+    {
+     "token": "WeaponFireFXBone",
+     "parse": "0x4c317b",
+     "userData": "0x0",
+     "offset": 132
+    },
+    {
+     "token": "WeaponLaunchBone",
+     "parse": "0x4c317b",
+     "userData": "0x0",
+     "offset": 168
+    },
+    {
+     "token": "WeaponRecoilBone",
+     "parse": "0x4c317b",
+     "userData": "0x0",
+     "offset": 144
+    },
+    {
+     "token": "WeaponMuzzleFlash",
+     "parse": "0x4c317b",
+     "userData": "0x0",
+     "offset": 156
+    },
+    {
+     "token": "ParticleSysBone",
+     "parse": "0x4bce4e",
+     "userData": "0x0",
+     "offset": 0
+    },
+    {
+     "token": "OverrideTooltip",
+     "parse": "0x42ee5e",
+     "userData": "0x0",
+     "offset": 116
+    },
+    {
+     "token": "FXEvent",
+     "parse": "0x4c425b",
+     "userData": "0x0",
+     "offset": 0
+    },
+    {
+     "token": "RetainSubObjects",
+     "parse": "0x42e558",
+     "userData": "0x0",
+     "offset": 244
+    },
+    {
+     "token": "Shadow",
+     "parse": "0x4b92d3",
+     "userData": "0xd99eb0",
+     "offset": 0
+    },
+    {
+     "token": "ShadowSizeX",
+     "parse": "0x4b265f",
+     "userData": "0x0",
+     "offset": 12
+    },
+    {
+     "token": "ShadowSizeY",
+     "parse": "0x4b265f",
+     "userData": "0x0",
+     "offset": 16
+    },
+    {
+     "token": "ShadowOffsetX",
+     "parse": "0x4b265f",
+     "userData": "0x0",
+     "offset": 20
+    },
+    {
+     "token": "ShadowOffsetY",
+     "parse": "0x4b265f",
+     "userData": "0x0",
+     "offset": 24
+    },
+    {
+     "token": "ShadowSunAngle",
+     "parse": "0x4b265f",
+     "userData": "0x0",
+     "offset": 28
+    },
+    {
+     "token": "ShadowTexture",
+     "parse": "0x4b2687",
+     "userData": "0x0",
+     "offset": 0
+    },
+    {
+     "token": "ShadowMaxHeight",
+     "parse": "0x4b265f",
+     "userData": "0x0",
+     "offset": 32
+    },
+    {
+     "token": "ShadowOverrideLODVisibility",
+     "parse": "0x4b26af",
+     "userData": "0x0",
+     "offset": 36
+    },
+    {
+     "token": "ShadowOpacityStart",
+     "parse": "0x42ecb2",
+     "userData": "0x0",
+     "offset": 224
+    },
+    {
+     "token": "ShadowOpacityFadeInTime",
+     "parse": "0x42ed00",
+     "userData": "0x0",
+     "offset": 228
+    },
+    {
+     "token": "ShadowOpacityPeak",
+     "parse": "0x42ecb2",
+     "userData": "0x0",
+     "offset": 232
+    },
+    {
+     "token": "ShadowOpacityFadeOutTime",
+     "parse": "0x42ed00",
+     "userData": "0x0",
+     "offset": 236
+    },
+    {
+     "token": "ShadowOpacityEnd",
+     "parse": "0x42ecb2",
+     "userData": "0x0",
+     "offset": 240
+    },
+    {
+     "token": "Turret",
+     "parse": "0x4c232a",
+     "userData": "0x0",
+     "offset": 0
+    },
+    {
+     "token": "TurretArtAngle",
+     "parse": "0x4b65fe",
+     "userData": "0x0",
+     "offset": 0
+    },
+    {
+     "token": "TurretPitch",
+     "parse": "0x4c236f",
+     "userData": "0x0",
+     "offset": 0
+    },
+    {
+     "token": "TurretArtPitch",
+     "parse": "0x4b661e",
+     "userData": "0x0",
+     "offset": 0
+    }
+   ]
+  },
+  "AnimationState": {
+   "va": "0xd99f60",
+   "rows": [
+    {
+     "token": "Animation",
+     "parse": "0x4c7a89",
+     "userData": "0x0",
+     "offset": 80
+    },
+    {
+     "token": "StateName",
+     "parse": "0x42ee5e",
+     "userData": "0x0",
+     "offset": 0
+    },
+    {
+     "token": "Flags",
+     "parse": "0x42e840",
+     "userData": "0xd99f18",
+     "offset": 92
+    },
+    {
+     "token": "ShareAnimation",
+     "parse": "0x42e558",
+     "userData": "0x0",
+     "offset": 100
+    },
+    {
+     "token": "EnteringStateFX",
+     "parse": "0x73a302",
+     "userData": "0x0",
+     "offset": 104
+    },
+    {
+     "token": "BeginScript",
+     "parse": "0x42db44",
+     "userData": "0x0",
+     "offset": 108
+    },
+    {
+     "token": "FrameForPristineBonePositions",
+     "parse": "0x42ec5e",
+     "userData": "0x0",
+     "offset": 96
+    },
+    {
+     "token": "AllowRepeatInRandomPick",
+     "parse": "0x42e558",
+     "userData": "0x0",
+     "offset": 157
+    },
+    {
+     "token": "FXEvent",
+     "parse": "0x4c4284",
+     "userData": "0x0",
+     "offset": 0
+    },
+    {
+     "token": "LuaEvent",
+     "parse": "0x4c3236",
+     "userData": "0x0",
+     "offset": 0
+    },
+    {
+     "token": "ParticleSysBone",
+     "parse": "0x4bce37",
+     "userData": "0x0",
+     "offset": 0
+    },
+    {
+     "token": "SimilarRestart",
+     "parse": "0x42e558",
+     "userData": "0x0",
+     "offset": 156
+    }
+   ]
+  },
+  "Animation": {
+   "va": "0xbe04b8",
+   "rows": [
+    {
+     "token": "AnimationName",
+     "parse": "0x42eed6",
+     "userData": "0x0",
+     "offset": 0
+    },
+    {
+     "token": "AnimationMode",
+     "parse": "0x42e956",
+     "userData": "0xd99ef8",
+     "offset": 28
+    },
+    {
+     "token": "Distance",
+     "parse": "0x42ed00",
+     "userData": "0x0",
+     "offset": 20
+    },
+    {
+     "token": "AnimationBlendTime",
+     "parse": "0x42ed00",
+     "userData": "0x0",
+     "offset": 32
+    },
+    {
+     "token": "AnimationMustCompleteBlend",
+     "parse": "0x42e558",
+     "userData": "0x0",
+     "offset": 44
+    },
+    {
+     "token": "AnimationSpeedFactorRange",
+     "parse": "0x4b262a",
+     "userData": "0x0",
+     "offset": 0
+    },
+    {
+     "token": "UseWeaponTiming",
+     "parse": "0x42e558",
+     "userData": "0x0",
+     "offset": 45
+    },
+    {
+     "token": "AnimationPriority",
+     "parse": "0x42ec5e",
+     "userData": "0x0",
+     "offset": 48
+    },
+    {
+     "token": "FadeBeginFrame",
+     "parse": "0x42ed00",
+     "userData": "0x0",
+     "offset": 52
+    },
+    {
+     "token": "FadeEndFrame",
+     "parse": "0x42ed00",
+     "userData": "0x0",
+     "offset": 56
+    },
+    {
+     "token": "FadingIn",
+     "parse": "0x42e558",
+     "userData": "0x0",
+     "offset": 60
+    }
+   ]
+  },
+  "AttachModel": {
+   "va": "0xbe06e8",
+   "rows": [
+    {
+     "token": "Bone",
+     "parse": "0x42ee5e",
+     "userData": "0x0",
+     "offset": 0
+    },
+    {
+     "token": "Offset",
+     "parse": "0x42f247",
+     "userData": "0x0",
+     "offset": 4
+    },
+    {
+     "token": "Model",
+     "parse": "0x4c33c8",
+     "userData": "0x0",
+     "offset": 0
+    }
+   ]
+  }
+ },
+ "lists": {
+  "WeaponSlotType": [
+   "PRIMARY",
+   "SECONDARY",
+   "TERTIARY",
+   "QUATERNARY",
+   "QUINARY"
+  ],
+  "AnimationState.Flags": [
+   "RANDOMSTART",
+   "START_FRAME_FIRST",
+   "START_FRAME_LAST",
+   "ADJUST_HEIGHT_BY_CONSTRUCTION_PERCENT",
+   "MAINTAIN_FRAME_ACROSS_STATES",
+   "RESTART_ANIM_WHEN_COMPLETE",
+   "MAINTAIN_FRAME_ACROSS_STATES2",
+   "MAINTAIN_FRAME_ACROSS_STATES3",
+   "MAINTAIN_FRAME_ACROSS_STATES4"
+  ],
+  "Animation.AnimationMode": [
+   "MANUAL",
+   "LOOP",
+   "ONCE",
+   "LOOP_PINGPONG",
+   "PLAY_TO_FRAME",
+   "LOOP_BACKWARDS",
+   "ONCE_BACKWARDS"
+  ],
+  "ShadowType": [
+   "SHADOW_DECAL",
+   "SHADOW_VOLUME",
+   "SHADOW_VOLUME_NEW",
+   "SHADOW_DYNAMIC_PROJECTION",
+   "SHADOW_DIRECTIONAL_PROJECTION",
+   "SHADOW_ALPHA_DECAL",
+   "SHADOW_ADDITIVE_DECAL",
+   "SHADOW_VOLUME_NON_SELF_1",
+   "SHADOW_VOLUME_NON_SELF_2",
+   "SHADOW_VOLUME_NON_SELF_3",
+   "SHADOW_ALPHA_DECAL_DYNAMIC",
+   "SHADOW_ADDITIVE_DECAL_DYNAMIC",
+   "SHADOW_MERGE_DECAL",
+   "SHADOW_DECAL_TERRAIN_CLAIM",
+   "SHADOW_VOLUME_OR_DECAL",
+   "SHADOW_VOLUME_NEW_OR_DECAL",
+   "SHADOW_SUBTRACT_DECAL_DYNAMIC"
+  ],
+  "StaticGameLODLevel": [
+   "Low",
+   "Medium",
+   "High",
+   "UltraHigh",
+   "VeryLow",
+   "Low",
+   "Medium",
+   "High",
+   "UltraHigh",
+   "VeryLow",
+   "Low",
+   "Medium",
+   "High",
+   "UltraHigh",
+   "Off",
+   "Low",
+   "High",
+   "Low",
+   "Medium",
+   "High",
+   "UltraHigh",
+   "Off",
+   "Low",
+   "Medium",
+   "High",
+   "UltraHigh",
+   "Low",
+   "Medium",
+   "High",
+   "Low",
+   "Medium",
+   "High",
+   "Low",
+   "Medium",
+   "High",
+   "UltraHigh",
+   "VeryLow",
+   "Low",
+   "Medium",
+   "High",
+   "VeryHigh",
+   "Low",
+   "High",
+   "XX",
+   "P3",
+   "P4",
+   "K7"
+  ],
+  "ParticleSysBone.FXTrigger": [
+   "NONE",
+   "CATAPULT_ROCK",
+   "TREBUCHET_ROCK"
+  ],
+  "ParticleSysBone.Persist": [
+   "NONE",
+   "HOLD",
+   "KILL",
+   "SPAWN"
+  ],
+  "TimeOfDay": [
+   "NONE",
+   "MORNING",
+   "AFTERNOON",
+   "EVENING",
+   "NIGHT",
+   "INTERPOLATE"
+  ]
+ },
+ "conditionNameCount": 591
+}

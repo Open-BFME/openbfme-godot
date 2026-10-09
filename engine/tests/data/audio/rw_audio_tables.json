@@ -1,0 +1,1941 @@
+{
+ "blocks": {
+  "AmbientStream": {
+   "function": "0x5da1ed",
+   "tables": [
+    [
+     {
+      "name": "Filename",
+      "offset": 12,
+      "parser": "0x42ee5e"
+     },
+     {
+      "name": "Volume",
+      "offset": 16,
+      "parser": "0x42eefa"
+     },
+     {
+      "name": "VolumeShift",
+      "offset": 20,
+      "parser": "0x42eefa"
+     },
+     {
+      "name": "PerFileVolumeShift",
+      "offset": 24,
+      "parser": "0x42eefa"
+     },
+     {
+      "name": "MinVolume",
+      "offset": 28,
+      "parser": "0x42eefa"
+     },
+     {
+      "name": "PitchShift",
+      "offset": 32,
+      "parser": "0x42f334"
+     },
+     {
+      "name": "PerFilePitchShift",
+      "offset": 40,
+      "parser": "0x42f334"
+     },
+     {
+      "name": "PlayPercent",
+      "offset": 48,
+      "parser": "0x42eefa"
+     },
+     {
+      "name": "Delay",
+      "offset": 52,
+      "parser": "0x42f382"
+     },
+     {
+      "name": "Limit",
+      "offset": 60,
+      "parser": "0x42ec5e"
+     },
+     {
+      "name": "Priority",
+      "offset": 68,
+      "parser": "0x42e956"
+     },
+     {
+      "name": "Type",
+      "offset": 72,
+      "parser": "0x42e840"
+     },
+     {
+      "name": "Control",
+      "offset": 76,
+      "parser": "0x42e840"
+     },
+     {
+      "name": "Sounds",
+      "offset": 80,
+      "parser": "0x5da4cd"
+     },
+     {
+      "name": "Attack",
+      "offset": 96,
+      "parser": "0x5da4cd"
+     },
+     {
+      "name": "Decay",
+      "offset": 112,
+      "parser": "0x5da4cd"
+     },
+     {
+      "name": "MinRange",
+      "offset": 148,
+      "parser": "0x42ed00"
+     },
+     {
+      "name": "MaxRange",
+      "offset": 152,
+      "parser": "0x42ed00"
+     },
+     {
+      "name": "LowPassCutoff",
+      "offset": 144,
+      "parser": "0x42eefa"
+     },
+     {
+      "name": "ZoomedInOffscreenVolumePercent",
+      "offset": 156,
+      "parser": "0x42eefa"
+     },
+     {
+      "name": "ZoomedInOffscreenMinVolumePercent",
+      "offset": 160,
+      "parser": "0x42eefa"
+     },
+     {
+      "name": "ZoomedInOffscreenOcclusionPercent",
+      "offset": 164,
+      "parser": "0x42eefa"
+     },
+     {
+      "name": "ReverbEffectLevel",
+      "offset": 168,
+      "parser": "0x42eefa"
+     },
+     {
+      "name": "DryLevel",
+      "offset": 172,
+      "parser": "0x42eefa"
+     },
+     {
+      "name": "SubmixSlider",
+      "offset": 180,
+      "parser": "0x42e956"
+     },
+     {
+      "name": "VolumeSliderMultiplier",
+      "offset": 184,
+      "parser": "0x5d9620"
+     }
+    ]
+   ]
+  },
+  "AnimationSoundClientBehaviorGlobalSetting": {
+   "function": "0x83f3ea",
+   "tables": [
+    [
+     {
+      "name": "MinMicrophoneDistanceToDirty",
+      "offset": 0,
+      "parser": "0x42ed00"
+     }
+    ]
+   ]
+  },
+  "AudioEvent": {
+   "function": "0x5da159",
+   "tables": [
+    [
+     {
+      "name": "Filename",
+      "offset": 12,
+      "parser": "0x42ee5e"
+     },
+     {
+      "name": "Volume",
+      "offset": 16,
+      "parser": "0x42eefa"
+     },
+     {
+      "name": "VolumeShift",
+      "offset": 20,
+      "parser": "0x42eefa"
+     },
+     {
+      "name": "PerFileVolumeShift",
+      "offset": 24,
+      "parser": "0x42eefa"
+     },
+     {
+      "name": "MinVolume",
+      "offset": 28,
+      "parser": "0x42eefa"
+     },
+     {
+      "name": "PitchShift",
+      "offset": 32,
+      "parser": "0x42f334"
+     },
+     {
+      "name": "PerFilePitchShift",
+      "offset": 40,
+      "parser": "0x42f334"
+     },
+     {
+      "name": "PlayPercent",
+      "offset": 48,
+      "parser": "0x42eefa"
+     },
+     {
+      "name": "Delay",
+      "offset": 52,
+      "parser": "0x42f382"
+     },
+     {
+      "name": "Limit",
+      "offset": 60,
+      "parser": "0x42ec5e"
+     },
+     {
+      "name": "Priority",
+      "offset": 68,
+      "parser": "0x42e956"
+     },
+     {
+      "name": "Type",
+      "offset": 72,
+      "parser": "0x42e840"
+     },
+     {
+      "name": "Control",
+      "offset": 76,
+      "parser": "0x42e840"
+     },
+     {
+      "name": "Sounds",
+      "offset": 80,
+      "parser": "0x5da4cd"
+     },
+     {
+      "name": "Attack",
+      "offset": 96,
+      "parser": "0x5da4cd"
+     },
+     {
+      "name": "Decay",
+      "offset": 112,
+      "parser": "0x5da4cd"
+     },
+     {
+      "name": "MinRange",
+      "offset": 148,
+      "parser": "0x42ed00"
+     },
+     {
+      "name": "MaxRange",
+      "offset": 152,
+      "parser": "0x42ed00"
+     },
+     {
+      "name": "LowPassCutoff",
+      "offset": 144,
+      "parser": "0x42eefa"
+     },
+     {
+      "name": "ZoomedInOffscreenVolumePercent",
+      "offset": 156,
+      "parser": "0x42eefa"
+     },
+     {
+      "name": "ZoomedInOffscreenMinVolumePercent",
+      "offset": 160,
+      "parser": "0x42eefa"
+     },
+     {
+      "name": "ZoomedInOffscreenOcclusionPercent",
+      "offset": 164,
+      "parser": "0x42eefa"
+     },
+     {
+      "name": "ReverbEffectLevel",
+      "offset": 168,
+      "parser": "0x42eefa"
+     },
+     {
+      "name": "DryLevel",
+      "offset": 172,
+      "parser": "0x42eefa"
+     },
+     {
+      "name": "SubmixSlider",
+      "offset": 180,
+      "parser": "0x42e956"
+     },
+     {
+      "name": "VolumeSliderMultiplier",
+      "offset": 184,
+      "parser": "0x5d9620"
+     }
+    ]
+   ]
+  },
+  "AudioLOD": {
+   "function": "0x602905",
+   "tables": [
+    [
+     {
+      "name": "MaximumAmbientStreams",
+      "offset": 0,
+      "parser": "0x42ec5e"
+     },
+     {
+      "name": "AllowDolby",
+      "offset": 4,
+      "parser": "0x42e558"
+     },
+     {
+      "name": "AllowReverb",
+      "offset": 5,
+      "parser": "0x42e558"
+     }
+    ]
+   ]
+  },
+  "AudioSettings": {
+   "function": "0x44107a",
+   "tables": [
+    [
+     {
+      "name": "UseDigital",
+      "offset": 84,
+      "parser": "0x42e558"
+     },
+     {
+      "name": "UseMidi",
+      "offset": 85,
+      "parser": "0x42e558"
+     },
+     {
+      "name": "OutputRate",
+      "offset": 88,
+      "parser": "0x42ec5e"
+     },
+     {
+      "name": "OutputBits",
+      "offset": 92,
+      "parser": "0x42ec5e"
+     },
+     {
+      "name": "OutputChannels",
+      "offset": 96,
+      "parser": "0x42ec5e"
+     },
+     {
+      "name": "SampleCount2D",
+      "offset": 100,
+      "parser": "0x42ec5e"
+     },
+     {
+      "name": "SampleCount3D",
+      "offset": 104,
+      "parser": "0x42ec5e"
+     },
+     {
+      "name": "StreamCount",
+      "offset": 108,
+      "parser": "0x42ec5e"
+     },
+     {
+      "name": "MixaheadLatency",
+      "offset": 132,
+      "parser": "0x42ecb2"
+     },
+     {
+      "name": "MixaheadLatencyDuringMovies",
+      "offset": 136,
+      "parser": "0x42ecb2"
+     },
+     {
+      "name": "LoopBufferLengthMS",
+      "offset": 140,
+      "parser": "0x42ecb2"
+     },
+     {
+      "name": "LoopBufferCallbackCallsPerBufferLength",
+      "offset": 144,
+      "parser": "0x42ecb2"
+     },
+     {
+      "name": "AutomaticSubtitleDurationMS",
+      "offset": 148,
+      "parser": "0x42ec5e"
+     },
+     {
+      "name": "AutomaticSubtitleWindowWidth",
+      "offset": 152,
+      "parser": "0x42ec5e"
+     },
+     {
+      "name": "AutomaticSubtitleLines",
+      "offset": 156,
+      "parser": "0x42ec5e"
+     },
+     {
+      "name": "AutomaticSubtitleWindowColor",
+      "offset": 160,
+      "parser": "0x42f13e"
+     },
+     {
+      "name": "AutomaticSubtitleTextColor",
+      "offset": 164,
+      "parser": "0x42f13e"
+     },
+     {
+      "name": "ForceResetTimeSeconds",
+      "offset": 168,
+      "parser": "0x42ec5e"
+     },
+     {
+      "name": "EmergencyResetTimeSeconds",
+      "offset": 172,
+      "parser": "0x42ec5e"
+     },
+     {
+      "name": "SuppressOcclusion",
+      "offset": 188,
+      "parser": "0x42e558"
+     },
+     {
+      "name": "MinOcclusion",
+      "offset": 192,
+      "parser": "0x42eefa"
+     },
+     {
+      "name": "MillisecondsPriorToPlayingToReadSoundFile",
+      "offset": 180,
+      "parser": "0x42ec5e"
+     },
+     {
+      "name": "MinSampleVolume",
+      "offset": 184,
+      "parser": "0x42eefa"
+     },
+     {
+      "name": "PositionDeltaForReverbRecheck",
+      "offset": 176,
+      "parser": "0x42ed00"
+     },
+     {
+      "name": "GlobalMinRange",
+      "offset": 112,
+      "parser": "0x42ec5e"
+     },
+     {
+      "name": "GlobalMaxRange",
+      "offset": 116,
+      "parser": "0x42ec5e"
+     },
+     {
+      "name": "TimeToFadeAudio",
+      "offset": 120,
+      "parser": "0x42ec5e"
+     },
+     {
+      "name": "AmbientStreamHysteresisVolume",
+      "offset": 124,
+      "parser": "0x42ec5e"
+     },
+     {
+      "name": "AudioFootprintInBytes",
+      "offset": 128,
+      "parser": "0x42ecb2"
+     },
+     {
+      "name": "GlobalPaddedCellReverbMultiplier",
+      "offset": 200,
+      "parser": "0x42eefa"
+     },
+     {
+      "name": "GlobalRoomReverbMultiplier",
+      "offset": 204,
+      "parser": "0x42eefa"
+     },
+     {
+      "name": "GlobalBathroomReverbMultiplier",
+      "offset": 208,
+      "parser": "0x42eefa"
+     },
+     {
+      "name": "GlobalLivingRoomReverbMultiplier",
+      "offset": 212,
+      "parser": "0x42eefa"
+     },
+     {
+      "name": "GlobalStoneRoomReverbMultiplier",
+      "offset": 216,
+      "parser": "0x42eefa"
+     },
+     {
+      "name": "GlobalAuditoriumReverbMultiplier",
+      "offset": 220,
+      "parser": "0x42eefa"
+     },
+     {
+      "name": "GlobalConcertHallReverbMultiplier",
+      "offset": 224,
+      "parser": "0x42eefa"
+     },
+     {
+      "name": "GlobalCaveReverbMultiplier",
+      "offset": 228,
+      "parser": "0x42eefa"
+     },
+     {
+      "name": "GlobalArenaReverbMultiplier",
+      "offset": 232,
+      "parser": "0x42eefa"
+     },
+     {
+      "name": "GlobalHangarReverbMultiplier",
+      "offset": 236,
+      "parser": "0x42eefa"
+     },
+     {
+      "name": "GlobalCarpetedHallwayReverbMultiplier",
+      "offset": 240,
+      "parser": "0x42eefa"
+     },
+     {
+      "name": "GlobalHallwayReverbMultiplier",
+      "offset": 244,
+      "parser": "0x42eefa"
+     },
+     {
+      "name": "GlobalStoneCorridorReverbMultiplier",
+      "offset": 248,
+      "parser": "0x42eefa"
+     },
+     {
+      "name": "GlobalAlleyReverbMultiplier",
+      "offset": 252,
+      "parser": "0x42eefa"
+     },
+     {
+      "name": "GlobalForestReverbMultiplier",
+      "offset": 256,
+      "parser": "0x42eefa"
+     },
+     {
+      "name": "GlobalCityReverbMultiplier",
+      "offset": 260,
+      "parser": "0x42eefa"
+     },
+     {
+      "name": "GlobalMountainsReverbMultiplier",
+      "offset": 264,
+      "parser": "0x42eefa"
+     },
+     {
+      "name": "GlobalQuarryReverbMultiplier",
+      "offset": 268,
+      "parser": "0x42eefa"
+     },
+     {
+      "name": "GlobalPlainReverbMultiplier",
+      "offset": 272,
+      "parser": "0x42eefa"
+     },
+     {
+      "name": "GlobalParkingLotReverbMultiplier",
+      "offset": 276,
+      "parser": "0x42eefa"
+     },
+     {
+      "name": "GlobalSewerPipeReverbMultiplier",
+      "offset": 280,
+      "parser": "0x42eefa"
+     },
+     {
+      "name": "GlobalUnderwaterReverbMultiplier",
+      "offset": 284,
+      "parser": "0x42eefa"
+     },
+     {
+      "name": "GlobalDruggedReverbMultiplier",
+      "offset": 288,
+      "parser": "0x42eefa"
+     },
+     {
+      "name": "GlobalDizzyReverbMultiplier",
+      "offset": 292,
+      "parser": "0x42eefa"
+     },
+     {
+      "name": "GlobalPsychoticReverbMultiplier",
+      "offset": 296,
+      "parser": "0x42eefa"
+     },
+     {
+      "name": "MicrophonePreferredFractionCameraToGround",
+      "offset": 300,
+      "parser": "0x42eefa"
+     },
+     {
+      "name": "MicrophonePullTowardsTerrainLookAtPointPercent",
+      "offset": 324,
+      "parser": "0x42eefa"
+     },
+     {
+      "name": "MicrophoneMinDistanceToCamera",
+      "offset": 308,
+      "parser": "0x42ed00"
+     },
+     {
+      "name": "MicrophoneMaxDistanceToCamera",
+      "offset": 316,
+      "parser": "0x42ed00"
+     },
+     {
+      "name": "ZoomMinDistance",
+      "offset": 328,
+      "parser": "0x42ed00"
+     },
+     {
+      "name": "ZoomMaxDistance",
+      "offset": 336,
+      "parser": "0x42ed00"
+     },
+     {
+      "name": "ZoomSoundVolumePercentageAmount",
+      "offset": 344,
+      "parser": "0x42eefa"
+     },
+     {
+      "name": "ZoomFadeDistanceForMaxEffect",
+      "offset": 348,
+      "parser": "0x42ed00"
+     },
+     {
+      "name": "ZoomFadeZeroEffectEdgeLength",
+      "offset": 356,
+      "parser": "0x42ed00"
+     },
+     {
+      "name": "ZoomFadeFullEffectEdgeLength",
+      "offset": 364,
+      "parser": "0x42ed00"
+     },
+     {
+      "name": "LivingWorldMicrophonePreferredFractionCameraToGround",
+      "offset": 372,
+      "parser": "0x42eefa"
+     },
+     {
+      "name": "LivingWorldMicrophoneMinDistanceToCamera",
+      "offset": 380,
+      "parser": "0x42ed00"
+     },
+     {
+      "name": "LivingWorldMicrophoneMaxDistanceToCamera",
+      "offset": 388,
+      "parser": "0x42ed00"
+     },
+     {
+      "name": "LivingWorldZoomMinDistance",
+      "offset": 400,
+      "parser": "0x42ed00"
+     },
+     {
+      "name": "LivingWorldZoomMaxDistance",
+      "offset": 408,
+      "parser": "0x42ed00"
+     },
+     {
+      "name": "LivingWorldMicrophonePullTowardsTerrainLookAtPointPercent",
+      "offset": 396,
+      "parser": "0x42eefa"
+     },
+     {
+      "name": "LivingWorldZoomSoundVolumePercentageAmount",
+      "offset": 416,
+      "parser": "0x42eefa"
+     },
+     {
+      "name": "LivingWorldZoomFadeDistanceForMaxEffect",
+      "offset": 420,
+      "parser": "0x42ed00"
+     },
+     {
+      "name": "LivingWorldZoomFadeZeroEffectEdgeLength",
+      "offset": 428,
+      "parser": "0x42ed00"
+     },
+     {
+      "name": "LivingWorldZoomFadeFullEffectEdgeLength",
+      "offset": 436,
+      "parser": "0x42ed00"
+     }
+    ],
+    [
+     {
+      "name": "AudioRoot",
+      "offset": 80,
+      "parser": "0x42ee5e"
+     },
+     {
+      "name": "SoundsFolder",
+      "offset": 4,
+      "parser": "0x42ee5e"
+     },
+     {
+      "name": "MusicFolder",
+      "offset": 8,
+      "parser": "0x42ee5e"
+     },
+     {
+      "name": "StreamingFolder",
+      "offset": 12,
+      "parser": "0x42ee5e"
+     },
+     {
+      "name": "AmbientStreamFolder",
+      "offset": 16,
+      "parser": "0x42ee5e"
+     },
+     {
+      "name": "SoundsExtension",
+      "offset": 20,
+      "parser": "0x42ee5e"
+     },
+     {
+      "name": "MusicScriptLibraryName",
+      "offset": 24,
+      "parser": "0x42ee5e"
+     },
+     {
+      "name": "DefaultSoundVolume",
+      "offset": 28,
+      "parser": "0x42eefa"
+     },
+     {
+      "name": "DefaultVoiceVolume",
+      "offset": 32,
+      "parser": "0x42eefa"
+     },
+     {
+      "name": "DefaultMusicVolume",
+      "offset": 36,
+      "parser": "0x42eefa"
+     },
+     {
+      "name": "DefaultMovieVolume",
+      "offset": 44,
+      "parser": "0x42eefa"
+     },
+     {
+      "name": "DefaultAmbientVolume",
+      "offset": 40,
+      "parser": "0x42eefa"
+     },
+     {
+      "name": "VoiceMoveToCampMaxCampnessAtStartPoint",
+      "offset": 68,
+      "parser": "0x42ecb2"
+     },
+     {
+      "name": "VoiceMoveToCampMinCampnessAtEndPoint",
+      "offset": 72,
+      "parser": "0x42ecb2"
+     },
+     {
+      "name": "MinDelayBetweenEnterStateVoiceMS",
+      "offset": 76,
+      "parser": "0x73a429"
+     }
+    ]
+   ]
+  },
+  "CrowdResponse": {
+   "function": "0x826674",
+   "tables": [
+    [
+     {
+      "name": "Weight",
+      "offset": 4,
+      "parser": "0x42ec5e"
+     },
+     {
+      "name": "Threshold",
+      "offset": 8,
+      "parser": "0x8264d2"
+     }
+    ]
+   ]
+  },
+  "DialogEvent": {
+   "function": "0x5da1a3",
+   "tables": [
+    [
+     {
+      "name": "Filename",
+      "offset": 12,
+      "parser": "0x42ee5e"
+     },
+     {
+      "name": "Volume",
+      "offset": 16,
+      "parser": "0x42eefa"
+     },
+     {
+      "name": "VolumeShift",
+      "offset": 20,
+      "parser": "0x42eefa"
+     },
+     {
+      "name": "PerFileVolumeShift",
+      "offset": 24,
+      "parser": "0x42eefa"
+     },
+     {
+      "name": "MinVolume",
+      "offset": 28,
+      "parser": "0x42eefa"
+     },
+     {
+      "name": "PitchShift",
+      "offset": 32,
+      "parser": "0x42f334"
+     },
+     {
+      "name": "PerFilePitchShift",
+      "offset": 40,
+      "parser": "0x42f334"
+     },
+     {
+      "name": "PlayPercent",
+      "offset": 48,
+      "parser": "0x42eefa"
+     },
+     {
+      "name": "Delay",
+      "offset": 52,
+      "parser": "0x42f382"
+     },
+     {
+      "name": "Limit",
+      "offset": 60,
+      "parser": "0x42ec5e"
+     },
+     {
+      "name": "Priority",
+      "offset": 68,
+      "parser": "0x42e956"
+     },
+     {
+      "name": "Type",
+      "offset": 72,
+      "parser": "0x42e840"
+     },
+     {
+      "name": "Control",
+      "offset": 76,
+      "parser": "0x42e840"
+     },
+     {
+      "name": "Sounds",
+      "offset": 80,
+      "parser": "0x5da4cd"
+     },
+     {
+      "name": "Attack",
+      "offset": 96,
+      "parser": "0x5da4cd"
+     },
+     {
+      "name": "Decay",
+      "offset": 112,
+      "parser": "0x5da4cd"
+     },
+     {
+      "name": "MinRange",
+      "offset": 148,
+      "parser": "0x42ed00"
+     },
+     {
+      "name": "MaxRange",
+      "offset": 152,
+      "parser": "0x42ed00"
+     },
+     {
+      "name": "LowPassCutoff",
+      "offset": 144,
+      "parser": "0x42eefa"
+     },
+     {
+      "name": "ZoomedInOffscreenVolumePercent",
+      "offset": 156,
+      "parser": "0x42eefa"
+     },
+     {
+      "name": "ZoomedInOffscreenMinVolumePercent",
+      "offset": 160,
+      "parser": "0x42eefa"
+     },
+     {
+      "name": "ZoomedInOffscreenOcclusionPercent",
+      "offset": 164,
+      "parser": "0x42eefa"
+     },
+     {
+      "name": "ReverbEffectLevel",
+      "offset": 168,
+      "parser": "0x42eefa"
+     },
+     {
+      "name": "DryLevel",
+      "offset": 172,
+      "parser": "0x42eefa"
+     },
+     {
+      "name": "SubmixSlider",
+      "offset": 180,
+      "parser": "0x42e956"
+     },
+     {
+      "name": "VolumeSliderMultiplier",
+      "offset": 184,
+      "parser": "0x5d9620"
+     }
+    ]
+   ]
+  },
+  "LargeGroupAudioUnusedKnownKeys": {
+   "function": "0x60dadd",
+   "tables": [
+    [
+     {
+      "name": "Key",
+      "offset": 16,
+      "parser": "0x7eec77"
+     }
+    ]
+   ]
+  },
+  "LivingWorldSound": {
+   "function": "0x7fc8e1",
+   "tables": [
+    [
+     {
+      "name": "Position",
+      "offset": 8,
+      "parser": "0x42f247"
+     },
+     {
+      "name": "Sound",
+      "offset": 20,
+      "parser": "0x73b217"
+     },
+     {
+      "name": "Flags",
+      "offset": 24,
+      "parser": "0x7fce85"
+     },
+     {
+      "name": "ZoomRegionLow",
+      "offset": 28,
+      "parser": "0x42f298"
+     },
+     {
+      "name": "ZoomRegionHigh",
+      "offset": 36,
+      "parser": "0x42f298"
+     }
+    ]
+   ]
+  },
+  "MiscAudio": {
+   "function": "0x5ece27",
+   "tables": [
+    [
+     {
+      "name": "RadarNotifyHarvesterUnderAttackSound",
+      "offset": 0,
+      "parser": "0x73b217"
+     },
+     {
+      "name": "RadarNotifyStructureUnderAttackSound",
+      "offset": 4,
+      "parser": "0x73b217"
+     },
+     {
+      "name": "RadarNotifyInfiltrationSound",
+      "offset": 8,
+      "parser": "0x73b217"
+     },
+     {
+      "name": "RadarNotifyOnlineSound",
+      "offset": 12,
+      "parser": "0x73b217"
+     },
+     {
+      "name": "RadarNotifyOfflineSound",
+      "offset": 16,
+      "parser": "0x73b217"
+     },
+     {
+      "name": "GenericRadarEvent",
+      "offset": 20,
+      "parser": "0x73b217"
+     },
+     {
+      "name": "BeaconPlacedSound",
+      "offset": 24,
+      "parser": "0x73b217"
+     },
+     {
+      "name": "BeaconPlacementFailed",
+      "offset": 28,
+      "parser": "0x73b217"
+     },
+     {
+      "name": "DefectorTimerTickSound",
+      "offset": 32,
+      "parser": "0x73b217"
+     },
+     {
+      "name": "DefectorTimerDingSound",
+      "offset": 36,
+      "parser": "0x73b217"
+     },
+     {
+      "name": "AllCheerSound",
+      "offset": 40,
+      "parser": "0x73b217"
+     },
+     {
+      "name": "NoCanDoSound",
+      "offset": 44,
+      "parser": "0x73b217"
+     },
+     {
+      "name": "StealthDiscoveredSound",
+      "offset": 48,
+      "parser": "0x73b217"
+     },
+     {
+      "name": "StealthNeutralizedSound",
+      "offset": 52,
+      "parser": "0x73b217"
+     },
+     {
+      "name": "MoneyDepositSound",
+      "offset": 56,
+      "parser": "0x73b217"
+     },
+     {
+      "name": "MoneyWithdrawSound",
+      "offset": 60,
+      "parser": "0x73b217"
+     },
+     {
+      "name": "BuildingDisabled",
+      "offset": 64,
+      "parser": "0x73b217"
+     },
+     {
+      "name": "BuildingReenabled",
+      "offset": 68,
+      "parser": "0x73b217"
+     },
+     {
+      "name": "VehicleDisabled",
+      "offset": 72,
+      "parser": "0x73b217"
+     },
+     {
+      "name": "VehicleReenabled",
+      "offset": 76,
+      "parser": "0x73b217"
+     },
+     {
+      "name": "SplatterVehiclePilotsBrain",
+      "offset": 80,
+      "parser": "0x73b217"
+     },
+     {
+      "name": "CrateHeal",
+      "offset": 84,
+      "parser": "0x73b217"
+     },
+     {
+      "name": "CrateShroud",
+      "offset": 88,
+      "parser": "0x73b217"
+     },
+     {
+      "name": "CrateFreeUnit",
+      "offset": 92,
+      "parser": "0x73b217"
+     },
+     {
+      "name": "CrateMoney",
+      "offset": 96,
+      "parser": "0x73b217"
+     },
+     {
+      "name": "UnitPromoted",
+      "offset": 100,
+      "parser": "0x73b217"
+     },
+     {
+      "name": "RepairSparks",
+      "offset": 104,
+      "parser": "0x73b217"
+     },
+     {
+      "name": "EnterCloseCombat",
+      "offset": 108,
+      "parser": "0x73b217"
+     },
+     {
+      "name": "ExitCloseCombat",
+      "offset": 112,
+      "parser": "0x73b217"
+     },
+     {
+      "name": "IncomingChatNotification",
+      "offset": 116,
+      "parser": "0x73b217"
+     },
+     {
+      "name": "PrivateMessageNotification",
+      "offset": 120,
+      "parser": "0x73b217"
+     },
+     {
+      "name": "BuddyMessageNotification",
+      "offset": 124,
+      "parser": "0x73b217"
+     },
+     {
+      "name": "EnabledHotKeyPressed",
+      "offset": 128,
+      "parser": "0x73b217"
+     },
+     {
+      "name": "DisabledHotKeyPressed",
+      "offset": 132,
+      "parser": "0x73b217"
+     },
+     {
+      "name": "DisabledButtonClicked",
+      "offset": 136,
+      "parser": "0x73b217"
+     },
+     {
+      "name": "LowLODShellMusic",
+      "offset": 140,
+      "parser": "0x73b217"
+     },
+     {
+      "name": "HighLODShellMusic",
+      "offset": 144,
+      "parser": "0x73b217"
+     },
+     {
+      "name": "ScoreScreenMusic",
+      "offset": 148,
+      "parser": "0x73b217"
+     },
+     {
+      "name": "ShellMapLoadMusic",
+      "offset": 152,
+      "parser": "0x73b217"
+     },
+     {
+      "name": "FullScreenSubMenuMusic",
+      "offset": 156,
+      "parser": "0x73b217"
+     },
+     {
+      "name": "SaveFileLoadMusic",
+      "offset": 160,
+      "parser": "0x73b217"
+     },
+     {
+      "name": "CreditsMusic",
+      "offset": 164,
+      "parser": "0x73b217"
+     },
+     {
+      "name": "VolumeSampleMusic",
+      "offset": 176,
+      "parser": "0x73b217"
+     },
+     {
+      "name": "VolumeSampleSoundFX",
+      "offset": 168,
+      "parser": "0x73b217"
+     },
+     {
+      "name": "VolumeSampleVoice",
+      "offset": 172,
+      "parser": "0x73b217"
+     },
+     {
+      "name": "VolumeSampleAmbient",
+      "offset": 180,
+      "parser": "0x73b217"
+     },
+     {
+      "name": "VolumeSampleMovie",
+      "offset": 184,
+      "parser": "0x73b217"
+     },
+     {
+      "name": "MissionBriefingCharacterClick",
+      "offset": 188,
+      "parser": "0x73b217"
+     },
+     {
+      "name": "ComboBoxClick",
+      "offset": 192,
+      "parser": "0x73b217"
+     },
+     {
+      "name": "GameSpyCommunicatorOpen",
+      "offset": 196,
+      "parser": "0x73b217"
+     },
+     {
+      "name": "RIFThingTemplateReloadedSound",
+      "offset": 200,
+      "parser": "0x73b217"
+     },
+     {
+      "name": "RIFObjectsRefreshedSound",
+      "offset": 204,
+      "parser": "0x73b217"
+     },
+     {
+      "name": "FastForwardModeOn",
+      "offset": 208,
+      "parser": "0x73b217"
+     },
+     {
+      "name": "FastForwardModeOff",
+      "offset": 212,
+      "parser": "0x73b217"
+     },
+     {
+      "name": "RallyPointSet",
+      "offset": 216,
+      "parser": "0x73b217"
+     },
+     {
+      "name": "UnableToSetRallyPoint",
+      "offset": 220,
+      "parser": "0x73b217"
+     },
+     {
+      "name": "PlanningModeOrderGiven",
+      "offset": 224,
+      "parser": "0x73b217"
+     },
+     {
+      "name": "BuildingPlacementSound",
+      "offset": 228,
+      "parser": "0x73b217"
+     },
+     {
+      "name": "BadBuildingPlacementSound",
+      "offset": 232,
+      "parser": "0x73b217"
+     },
+     {
+      "name": "WallPlacementSound",
+      "offset": 236,
+      "parser": "0x73b217"
+     },
+     {
+      "name": "TargetObjectWithSpecialPowerSound",
+      "offset": 240,
+      "parser": "0x73b217"
+     }
+    ]
+   ]
+  },
+  "MiscEvaData": {
+   "function": "0x5dc743",
+   "tables": [
+    [
+     {
+      "name": "EnemySightedMaxVoicePositionScanRange",
+      "offset": 0,
+      "parser": "0x42ed00"
+     },
+     {
+      "name": "EnemyCampDestroyedDamageTimeoutMS",
+      "offset": 4,
+      "parser": "0x73a429"
+     },
+     {
+      "name": "FriendlyCampDestroyedDamageTimeoutMS",
+      "offset": 8,
+      "parser": "0x73a429"
+     },
+     {
+      "name": "MaxMillisecondsToKeepJumpToEvents",
+      "offset": 12,
+      "parser": "0x73a429"
+     },
+     {
+      "name": "MaxMillisecondsBeforeResettingLastJumpTo",
+      "offset": 16,
+      "parser": "0x42ecb2"
+     },
+     {
+      "name": "MinDistanceBetweenJumpToEvents",
+      "offset": 20,
+      "parser": "0x42ed00"
+     }
+    ]
+   ]
+  },
+  "Multisound": {
+   "function": "0x5d9c6d",
+   "tables": [
+    [
+     {
+      "name": "Control",
+      "offset": 76,
+      "parser": "0x42e840"
+     },
+     {
+      "name": "Subsounds",
+      "offset": 128,
+      "parser": "0x5da4f7"
+     }
+    ]
+   ]
+  },
+  "MusicTrack": {
+   "function": "0x5da10f",
+   "tables": [
+    [
+     {
+      "name": "Filename",
+      "offset": 12,
+      "parser": "0x42ee5e"
+     },
+     {
+      "name": "Volume",
+      "offset": 16,
+      "parser": "0x42eefa"
+     },
+     {
+      "name": "VolumeShift",
+      "offset": 20,
+      "parser": "0x42eefa"
+     },
+     {
+      "name": "PerFileVolumeShift",
+      "offset": 24,
+      "parser": "0x42eefa"
+     },
+     {
+      "name": "MinVolume",
+      "offset": 28,
+      "parser": "0x42eefa"
+     },
+     {
+      "name": "PitchShift",
+      "offset": 32,
+      "parser": "0x42f334"
+     },
+     {
+      "name": "PerFilePitchShift",
+      "offset": 40,
+      "parser": "0x42f334"
+     },
+     {
+      "name": "PlayPercent",
+      "offset": 48,
+      "parser": "0x42eefa"
+     },
+     {
+      "name": "Delay",
+      "offset": 52,
+      "parser": "0x42f382"
+     },
+     {
+      "name": "Limit",
+      "offset": 60,
+      "parser": "0x42ec5e"
+     },
+     {
+      "name": "Priority",
+      "offset": 68,
+      "parser": "0x42e956"
+     },
+     {
+      "name": "Type",
+      "offset": 72,
+      "parser": "0x42e840"
+     },
+     {
+      "name": "Control",
+      "offset": 76,
+      "parser": "0x42e840"
+     },
+     {
+      "name": "Sounds",
+      "offset": 80,
+      "parser": "0x5da4cd"
+     },
+     {
+      "name": "Attack",
+      "offset": 96,
+      "parser": "0x5da4cd"
+     },
+     {
+      "name": "Decay",
+      "offset": 112,
+      "parser": "0x5da4cd"
+     },
+     {
+      "name": "MinRange",
+      "offset": 148,
+      "parser": "0x42ed00"
+     },
+     {
+      "name": "MaxRange",
+      "offset": 152,
+      "parser": "0x42ed00"
+     },
+     {
+      "name": "LowPassCutoff",
+      "offset": 144,
+      "parser": "0x42eefa"
+     },
+     {
+      "name": "ZoomedInOffscreenVolumePercent",
+      "offset": 156,
+      "parser": "0x42eefa"
+     },
+     {
+      "name": "ZoomedInOffscreenMinVolumePercent",
+      "offset": 160,
+      "parser": "0x42eefa"
+     },
+     {
+      "name": "ZoomedInOffscreenOcclusionPercent",
+      "offset": 164,
+      "parser": "0x42eefa"
+     },
+     {
+      "name": "ReverbEffectLevel",
+      "offset": 168,
+      "parser": "0x42eefa"
+     },
+     {
+      "name": "DryLevel",
+      "offset": 172,
+      "parser": "0x42eefa"
+     },
+     {
+      "name": "SubmixSlider",
+      "offset": 180,
+      "parser": "0x42e956"
+     },
+     {
+      "name": "VolumeSliderMultiplier",
+      "offset": 184,
+      "parser": "0x5d9620"
+     }
+    ]
+   ]
+  },
+  "NewEvaEvent": {
+   "function": "0x5deb41",
+   "tables": [
+    [
+     {
+      "name": "Priority",
+      "offset": 16,
+      "parser": "0x42ecb2"
+     },
+     {
+      "name": "TimeBetweenEventsMS",
+      "offset": 0,
+      "parser": "0x42ecb2"
+     },
+     {
+      "name": "ExpirationTimeMS",
+      "offset": 4,
+      "parser": "0x42ecb2"
+     },
+     {
+      "name": "QuietTimeMS",
+      "offset": 8,
+      "parser": "0x42ecb2"
+     },
+     {
+      "name": "MillisecondsToWaitBeforePlaying",
+      "offset": 12,
+      "parser": "0x73a429"
+     },
+     {
+      "name": "AlwaysPlayFromHomeBase",
+      "offset": 44,
+      "parser": "0x42e558"
+     },
+     {
+      "name": "SideSound",
+      "offset": 20,
+      "parser": "0x5de087"
+     },
+     {
+      "name": "OtherEvaEventsToBlock",
+      "offset": 32,
+      "parser": "0x5de179"
+     },
+     {
+      "name": "CountAsJumpToLocation",
+      "offset": 45,
+      "parser": "0x42e558"
+     }
+    ]
+   ]
+  },
+  "PredefinedEvaEvent": {
+   "function": "0x5de1aa",
+   "tables": [
+    [
+     {
+      "name": "Priority",
+      "offset": 16,
+      "parser": "0x42ecb2"
+     },
+     {
+      "name": "TimeBetweenEventsMS",
+      "offset": 0,
+      "parser": "0x42ecb2"
+     },
+     {
+      "name": "ExpirationTimeMS",
+      "offset": 4,
+      "parser": "0x42ecb2"
+     },
+     {
+      "name": "QuietTimeMS",
+      "offset": 8,
+      "parser": "0x42ecb2"
+     },
+     {
+      "name": "MillisecondsToWaitBeforePlaying",
+      "offset": 12,
+      "parser": "0x73a429"
+     },
+     {
+      "name": "AlwaysPlayFromHomeBase",
+      "offset": 44,
+      "parser": "0x42e558"
+     },
+     {
+      "name": "SideSound",
+      "offset": 20,
+      "parser": "0x5de087"
+     },
+     {
+      "name": "OtherEvaEventsToBlock",
+      "offset": 32,
+      "parser": "0x5de179"
+     },
+     {
+      "name": "CountAsJumpToLocation",
+      "offset": 45,
+      "parser": "0x42e558"
+     }
+    ]
+   ]
+  },
+  "ScoredKillEvaAnnouncer": {
+   "function": "0x8258bf",
+   "tables": [
+    [
+     {
+      "name": "EvaEvent",
+      "offset": 8,
+      "parser": "0x5de588"
+     },
+     {
+      "name": "CountOnlyKillsByLocalPlayer",
+      "offset": 24,
+      "parser": "0x42e558"
+     },
+     {
+      "name": "CountOnlyKillsAgainstLocalPlayer",
+      "offset": 25,
+      "parser": "0x42e558"
+     },
+     {
+      "name": "MinimumCountForAnnouncement",
+      "offset": 12,
+      "parser": "0x42ecb2"
+     },
+     {
+      "name": "MaximumTimeForAnnouncementMS",
+      "offset": 16,
+      "parser": "0x73a429"
+     },
+     {
+      "name": "ObjectFilter",
+      "offset": 20,
+      "parser": "0x76392f"
+     }
+    ]
+   ]
+  },
+  "StreamedSound": {
+   "function": "0x5da237",
+   "tables": [
+    [
+     {
+      "name": "Filename",
+      "offset": 12,
+      "parser": "0x42ee5e"
+     },
+     {
+      "name": "Volume",
+      "offset": 16,
+      "parser": "0x42eefa"
+     },
+     {
+      "name": "VolumeShift",
+      "offset": 20,
+      "parser": "0x42eefa"
+     },
+     {
+      "name": "PerFileVolumeShift",
+      "offset": 24,
+      "parser": "0x42eefa"
+     },
+     {
+      "name": "MinVolume",
+      "offset": 28,
+      "parser": "0x42eefa"
+     },
+     {
+      "name": "PitchShift",
+      "offset": 32,
+      "parser": "0x42f334"
+     },
+     {
+      "name": "PerFilePitchShift",
+      "offset": 40,
+      "parser": "0x42f334"
+     },
+     {
+      "name": "PlayPercent",
+      "offset": 48,
+      "parser": "0x42eefa"
+     },
+     {
+      "name": "Delay",
+      "offset": 52,
+      "parser": "0x42f382"
+     },
+     {
+      "name": "Limit",
+      "offset": 60,
+      "parser": "0x42ec5e"
+     },
+     {
+      "name": "Priority",
+      "offset": 68,
+      "parser": "0x42e956"
+     },
+     {
+      "name": "Type",
+      "offset": 72,
+      "parser": "0x42e840"
+     },
+     {
+      "name": "Control",
+      "offset": 76,
+      "parser": "0x42e840"
+     },
+     {
+      "name": "Sounds",
+      "offset": 80,
+      "parser": "0x5da4cd"
+     },
+     {
+      "name": "Attack",
+      "offset": 96,
+      "parser": "0x5da4cd"
+     },
+     {
+      "name": "Decay",
+      "offset": 112,
+      "parser": "0x5da4cd"
+     },
+     {
+      "name": "MinRange",
+      "offset": 148,
+      "parser": "0x42ed00"
+     },
+     {
+      "name": "MaxRange",
+      "offset": 152,
+      "parser": "0x42ed00"
+     },
+     {
+      "name": "LowPassCutoff",
+      "offset": 144,
+      "parser": "0x42eefa"
+     },
+     {
+      "name": "ZoomedInOffscreenVolumePercent",
+      "offset": 156,
+      "parser": "0x42eefa"
+     },
+     {
+      "name": "ZoomedInOffscreenMinVolumePercent",
+      "offset": 160,
+      "parser": "0x42eefa"
+     },
+     {
+      "name": "ZoomedInOffscreenOcclusionPercent",
+      "offset": 164,
+      "parser": "0x42eefa"
+     },
+     {
+      "name": "ReverbEffectLevel",
+      "offset": 168,
+      "parser": "0x42eefa"
+     },
+     {
+      "name": "DryLevel",
+      "offset": 172,
+      "parser": "0x42eefa"
+     },
+     {
+      "name": "SubmixSlider",
+      "offset": 180,
+      "parser": "0x42e956"
+     },
+     {
+      "name": "VolumeSliderMultiplier",
+      "offset": 184,
+      "parser": "0x5d9620"
+     }
+    ]
+   ]
+  }
+ },
+ "eventTable": [
+  {
+   "name": "Filename",
+   "offset": 12,
+   "parser": "0x42ee5e"
+  },
+  {
+   "name": "Volume",
+   "offset": 16,
+   "parser": "0x42eefa"
+  },
+  {
+   "name": "VolumeShift",
+   "offset": 20,
+   "parser": "0x42eefa"
+  },
+  {
+   "name": "PerFileVolumeShift",
+   "offset": 24,
+   "parser": "0x42eefa"
+  },
+  {
+   "name": "MinVolume",
+   "offset": 28,
+   "parser": "0x42eefa"
+  },
+  {
+   "name": "PitchShift",
+   "offset": 32,
+   "parser": "0x42f334"
+  },
+  {
+   "name": "PerFilePitchShift",
+   "offset": 40,
+   "parser": "0x42f334"
+  },
+  {
+   "name": "PlayPercent",
+   "offset": 48,
+   "parser": "0x42eefa"
+  },
+  {
+   "name": "Delay",
+   "offset": 52,
+   "parser": "0x42f382"
+  },
+  {
+   "name": "Limit",
+   "offset": 60,
+   "parser": "0x42ec5e"
+  },
+  {
+   "name": "Priority",
+   "offset": 68,
+   "parser": "0x42e956"
+  },
+  {
+   "name": "Type",
+   "offset": 72,
+   "parser": "0x42e840"
+  },
+  {
+   "name": "Control",
+   "offset": 76,
+   "parser": "0x42e840"
+  },
+  {
+   "name": "Sounds",
+   "offset": 80,
+   "parser": "0x5da4cd"
+  },
+  {
+   "name": "Attack",
+   "offset": 96,
+   "parser": "0x5da4cd"
+  },
+  {
+   "name": "Decay",
+   "offset": 112,
+   "parser": "0x5da4cd"
+  },
+  {
+   "name": "MinRange",
+   "offset": 148,
+   "parser": "0x42ed00"
+  },
+  {
+   "name": "MaxRange",
+   "offset": 152,
+   "parser": "0x42ed00"
+  },
+  {
+   "name": "LowPassCutoff",
+   "offset": 144,
+   "parser": "0x42eefa"
+  },
+  {
+   "name": "ZoomedInOffscreenVolumePercent",
+   "offset": 156,
+   "parser": "0x42eefa"
+  },
+  {
+   "name": "ZoomedInOffscreenMinVolumePercent",
+   "offset": 160,
+   "parser": "0x42eefa"
+  },
+  {
+   "name": "ZoomedInOffscreenOcclusionPercent",
+   "offset": 164,
+   "parser": "0x42eefa"
+  },
+  {
+   "name": "ReverbEffectLevel",
+   "offset": 168,
+   "parser": "0x42eefa"
+  },
+  {
+   "name": "DryLevel",
+   "offset": 172,
+   "parser": "0x42eefa"
+  },
+  {
+   "name": "SubmixSlider",
+   "offset": 180,
+   "parser": "0x42e956"
+  },
+  {
+   "name": "VolumeSliderMultiplier",
+   "offset": 184,
+   "parser": "0x5d9620"
+  }
+ ],
+ "nameArrays": {
+  "control": [
+   "LOOP",
+   "SEQUENTIAL",
+   "RANDOMSTART",
+   "INTERRUPT",
+   "FADE_ON_KILL",
+   "FADE_ON_START",
+   "\not used by INI files",
+   "PLAY_ONE"
+  ],
+  "predefinedEva": [
+   "DefaultEvaEvent",
+   "BeaconDetected",
+   "GeneralLevelUp",
+   "UnitLevelUp",
+   "UpgradeComplete",
+   "CastleBreached",
+   "AllyDefeated",
+   "EnemyDefeated",
+   "EnemyCampDestroyed",
+   "CampDestroyed",
+   "AllyCampDestroyed",
+   "BuildQueuePausedDueToCPLimit",
+   "CannotBuildDueToCPLimit",
+   "BuildQueuePausedDueToFunds",
+   "CannotBuildDueToFunds",
+   "WallsBeingClimbed",
+   "BuildingBeingStolen",
+   "BuildingStolen",
+   "WorldMustBattle",
+   "WorldMustRetreat",
+   "WorldMustChooseOwner",
+   "WorldRegionLostUncontested"
+  ],
+  "priority": [
+   "LOWEST",
+   "LOW",
+   "NORMAL",
+   "HIGH",
+   "CRITICAL"
+  ],
+  "soundType": [
+   "UI",
+   "WORLD",
+   "SHROUDED",
+   "GLOBAL",
+   "VOICE",
+   "PLAYER",
+   "ALLIES",
+   "ENEMIES",
+   "EVERYONE",
+   "FAKE",
+   "DEFAULT"
+  ],
+  "submixSlider": [
+   "SOUNDFX",
+   "VOICE",
+   "MUSIC",
+   "AMBIENT",
+   "MOVIE",
+   "NONE"
+  ]
+ }
+}

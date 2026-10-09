@@ -1,0 +1,574 @@
+# Reviewed baseline of the survivable script errors and the player notes while each of the 86 retail movies runs 100 frames
+# alone as _level1 on the headless stub host.  kind<TAB>movie: identity<TAB>count.  Notes are registered stops (docs/STOPS.md).
+error	campaignmenu: extern.CampaignMenu:Victorious read: no extern provider is registered under that name	3
+error	campaignmenu: extern.CampaignMenu:Victorious write: no extern provider is registered under that name	1
+error	campaignreview: extern.NumberFormatter read: no extern provider is registered under that name	1
+error	createahero: extern.AptCreateAHero::SuppressCAHPromo read: no extern provider is registered under that name	1
+error	disconnectscreen: extern.DisconnectScreen:PlayerColor:0 read: no extern provider is registered under that name	4
+error	disconnectscreen: extern.DisconnectScreen:PlayerColor:1 read: no extern provider is registered under that name	4
+error	disconnectscreen: extern.DisconnectScreen:PlayerColor:2 read: no extern provider is registered under that name	4
+error	disconnectscreen: extern.DisconnectScreen:PlayerColor:3 read: no extern provider is registered under that name	4
+error	disconnectscreen: extern.DisconnectScreen:PlayerColor:4 read: no extern provider is registered under that name	4
+error	disconnectscreen: extern.DisconnectScreen:PlayerColor:5 read: no extern provider is registered under that name	4
+error	disconnectscreen: extern.DisconnectScreen:PlayerColor:6 read: no extern provider is registered under that name	4
+error	disconnectscreen: extern.DisconnectScreen:PlayerColor:7 read: no extern provider is registered under that name	4
+error	guitest: method 'registerClass' is not a function on a value of type function	1
+error	guitest: new MovieClip(): constructing a movie clip from script has no decoded EA behaviour (S-104)	1
+error	ingamenotificationbox: extern._level1_MessageWidth write: no extern provider is registered under that name	1
+error	lanlobby: extern.AptMpGameRules::ShowChat read: no extern provider is registered under that name	2
+error	lanlobby: extern.AptMpGameRules::ShowClans read: no extern provider is registered under that name	1
+error	lanlobby: extern.LastLanLobbyScreen write: no extern provider is registered under that name	1
+error	lanlobby: extern.MpGameSetup::HostMode read: no extern provider is registered under that name	3
+error	lanlobby: extern.MpGameSetup::HostMode write: no extern provider is registered under that name	1
+error	loadscreen: extern.GameLoading:PlayerColor:0 read: no extern provider is registered under that name	8
+error	loadscreen: extern.GameLoading:PlayerColor:1 read: no extern provider is registered under that name	8
+error	loadscreen: extern.GameLoading:PlayerColor:2 read: no extern provider is registered under that name	8
+error	loadscreen: extern.GameLoading:PlayerColor:3 read: no extern provider is registered under that name	8
+error	loadscreen: extern.GameLoading:PlayerColor:4 read: no extern provider is registered under that name	8
+error	loadscreen: extern.GameLoading:PlayerColor:5 read: no extern provider is registered under that name	8
+error	loadscreen: extern.GameLoading:PlayerColor:6 read: no extern provider is registered under that name	8
+error	loadscreen: extern.GameLoading:PlayerColor:7 read: no extern provider is registered under that name	8
+error	messenger: extern.IsMaximized read: no extern provider is registered under that name	2
+error	messenger: extern.MessengerActiveTab read: no extern provider is registered under that name	1
+error	messenger: extern.MessengerX read: no extern provider is registered under that name	1
+error	messenger: extern.MessengerY read: no extern provider is registered under that name	1
+error	messenger: extern.ShowPlayerButtons read: no extern provider is registered under that name	3
+error	objectives: extern.Objective1 read: no extern provider is registered under that name	1
+error	onlinehome: method 'registerClass' is not a function on a value of type function	1
+error	onlinehome: new MovieClip(): constructing a movie clip from script has no decoded EA behaviour (S-104)	1
+error	onlineshell: extern.OnlineShellStartScreen read: no extern provider is registered under that name	1
+error	options: extern.AdvancedOnly read: no extern provider is registered under that name	1
+error	options: extern.AllowAdvancedOptions read: no extern provider is registered under that name	2
+error	options: extern.AllowResolutionChange read: no extern provider is registered under that name	13
+error	options: extern.NetworkEnabled read: no extern provider is registered under that name	1
+error	palantir: extern.MinLOD read: no extern provider is registered under that name	1
+error	palantir: extern.PalantirMinLOD read: no extern provider is registered under that name	1
+error	playerstatus: extern.InSkirmish read: no extern provider is registered under that name	2
+error	playerstatus: extern.NumOfPlayers read: no extern provider is registered under that name	1
+error	playertribute: extern._level1.OuterFrame.Pages.StatusPage.Table.0_color read: no extern provider is registered under that name	1
+error	playertribute: extern._level1.OuterFrame.Pages.StatusPage.Table.1_color read: no extern provider is registered under that name	1
+error	playertribute: extern._level1.OuterFrame.Pages.StatusPage.Table.2_color read: no extern provider is registered under that name	1
+error	playertribute: extern._level1.OuterFrame.Pages.StatusPage.Table.3_color read: no extern provider is registered under that name	1
+error	playertribute: extern._level1.OuterFrame.Pages.StatusPage.Table.4_color read: no extern provider is registered under that name	1
+error	playertribute: extern._level1.OuterFrame.Pages.StatusPage_NumOfPlayers read: no extern provider is registered under that name	1
+error	playertribute: extern._level1_TributeEnabled read: no extern provider is registered under that name	2
+error	saveload: extern.CurrentGameType write: no extern provider is registered under that name	4
+error	saveload: extern.GameTypes read: no extern provider is registered under that name	1
+error	saveload: extern.SaveLoadMode read: no extern provider is registered under that name	1
+error	scorescreen: extern.ShowCampaign read: no extern provider is registered under that name	9
+error	skirmish: extern.AptMapPreview::GameMapType read: no extern provider is registered under that name	1
+error	strategicconflictresults: extern.Player_0_Color read: no extern provider is registered under that name	1
+error	strategicconflictresults: extern.Player_1_Color read: no extern provider is registered under that name	1
+error	strategicconflictresults: extern.Player_2_Color read: no extern provider is registered under that name	1
+error	strategicconflictresults: extern.Player_3_Color read: no extern provider is registered under that name	1
+error	strategicconflictresults: extern.Player_4_Color read: no extern provider is registered under that name	1
+error	strategicconflictresults: extern.Player_5_Color read: no extern provider is registered under that name	1
+error	strategicconflictresults: extern.Player_WinIcon0_Color read: no extern provider is registered under that name	1
+error	strategicconflictresults: extern.Player_WinIcon1_Color read: no extern provider is registered under that name	1
+error	strategicconflictresults: extern.Player_WinIcon2_Color read: no extern provider is registered under that name	1
+error	strategicconflictresults: extern.Player_WinIcon3_Color read: no extern provider is registered under that name	1
+error	strategicconflictresults: extern.Player_WinIcon4_Color read: no extern provider is registered under that name	1
+error	strategicconflictresults: extern.Player_WinIcon5_Color read: no extern provider is registered under that name	1
+error	strategicconflictresults: extern.StrategicConflicResults::NumPlayers read: no extern provider is registered under that name	1
+error	strategicconflictresults: extern.StrategicConflicResults::NumWinners read: no extern provider is registered under that name	1
+error	strategicdetailsarmies: extern._level1_PlayerColor read: no extern provider is registered under that name	1
+error	strategicdetailsregion: extern._level1.main.armies_PlayerColor read: no extern provider is registered under that name	1
+error	strategicdetailstray: extern._level1.tray.main.armies_PlayerColor read: no extern provider is registered under that name	1
+error	strategicplayerstatus: attachMovie: no export named 'AlliesEnemyHeader'	1
+error	strategicplayerstatus: extern.StrategicPlayerStatus::NumAlliedPlayers read: no extern provider is registered under that name	1
+error	strategicplayerstatus: extern.StrategicPlayerStatus::NumEnemyPlayers read: no extern provider is registered under that name	1
+error	strategicplayerstatus: extern.StrategicPlayerStatus::PlayerIndex read: no extern provider is registered under that name	1
+error	strategicveterancy: extern.CreatedHeroVetUpgrade1 write: no extern provider is registered under that name	1
+error	strategicveterancy: extern.StrategicVeterancy::NumRows read: no extern provider is registered under that name	1
+error	strategicveterancy: extern.StrategicVeterancy::TreasuryBalance read: no extern provider is registered under that name	1
+error	strategicveterancy: extern.StrategicVeterancy::UnitChargeList read: no extern provider is registered under that name	1
+error	strategicveterancy: extern.StrategicVeterancy::UnitHeroFlags read: no extern provider is registered under that name	1
+error	strategicveterancy: extern.StrategicVeterancy::UnitNewFlags read: no extern provider is registered under that name	1
+error	strategicveterancy: extern.StrategicVeterancy::UnitUpgradeFlags read: no extern provider is registered under that name	1
+error	timeline: extern.TimeLine:GraphFocus:0 write: no extern provider is registered under that name	6
+error	timeline: extern.TimeLine:GraphFocus:1 write: no extern provider is registered under that name	1
+error	timeline: extern.TimeLine:GraphFocus:2 write: no extern provider is registered under that name	1
+error	timeline: extern.TimeLine:GraphFocus:3 write: no extern provider is registered under that name	1
+error	timeline: extern.TimeLine:GraphFocus:4 write: no extern provider is registered under that name	1
+error	timeline: extern.TimeLine:GraphFocus:5 write: no extern provider is registered under that name	1
+error	timeline: extern.TimeLine:GraphFocus:6 write: no extern provider is registered under that name	1
+error	timeline: extern.TimeLine:GraphFocus:7 write: no extern provider is registered under that name	1
+error	timeline: extern.TimeLine:NumCahAwards read: no extern provider is registered under that name	1
+error	timeline: extern.TimeLine:NumOfPlayers read: no extern provider is registered under that name	1
+error	timeline: extern.TimeLine:ScreenMode read: no extern provider is registered under that name	1
+error	timeline: extern.TimeLine:ShowSaveReplay read: no extern provider is registered under that name	1
+error	timeline: extern.TimeLine:StrategicEnd read: no extern provider is registered under that name	1
+note	cahappearance: apt-transform-unverified: _height [S-1262]	1
+note	cahappearance: apt-transform-unverified: _width [S-1262]	1
+note	cahappearance: call-without-function: call of undefined function '_gotoAndPlay' (EA_CallNamedFuncPop at file offset 50479) [in _level1.Screen.TypeWindow.Appearance.0.instance1]	1
+note	cahappearance: call-without-function: call of undefined function '_gotoAndPlay' (EA_CallNamedFuncPop at file offset 50479) [in _level1.Screen.TypeWindow.Appearance.1.instance1]	1
+note	cahappearance: call-without-function: call of undefined function '_gotoAndPlay' (EA_CallNamedFuncPop at file offset 50479) [in _level1.Screen.TypeWindow.Appearance.2.instance1]	1
+note	cahappearance: call-without-function: call of undefined function '_gotoAndPlay' (EA_CallNamedFuncPop at file offset 50479) [in _level1.Screen.TypeWindow.Appearance.3.instance1]	1
+note	cahappearance: call-without-function: call of undefined function '_gotoAndPlay' (EA_CallNamedFuncPop at file offset 50479) [in _level1.Screen.TypeWindow.Appearance.4.instance1]	1
+note	cahappearance: call-without-function: call of undefined function '_gotoAndPlay' (EA_CallNamedFuncPop at file offset 50479) [in _level1.Screen.TypeWindow.Appearance.5.instance1]	1
+note	cahappearance: call-without-function: call of undefined function '_gotoAndPlay' (EA_CallNamedFuncPop at file offset 50479) [in _level1.Screen.TypeWindow.Appearance.6.instance1]	1
+note	cahappearance: call-without-function: method 'GetExtern' is not a function on a value of type movieclip [in _level1.Screen.TypeWindow.Appearance.0.instance1]	1
+note	cahappearance: call-without-function: method 'GetExtern' is not a function on a value of type movieclip [in _level1.Screen.TypeWindow.Appearance.1.instance1]	1
+note	cahappearance: call-without-function: method 'GetExtern' is not a function on a value of type movieclip [in _level1.Screen.TypeWindow.Appearance.2.instance1]	1
+note	cahappearance: call-without-function: method 'GetExtern' is not a function on a value of type movieclip [in _level1.Screen.TypeWindow.Appearance.3.instance1]	1
+note	cahappearance: call-without-function: method 'GetExtern' is not a function on a value of type movieclip [in _level1.Screen.TypeWindow.Appearance.4.instance1]	1
+note	cahappearance: call-without-function: method 'GetExtern' is not a function on a value of type movieclip [in _level1.Screen.TypeWindow.Appearance.5.instance1]	1
+note	cahappearance: call-without-function: method 'GetExtern' is not a function on a value of type movieclip [in _level1.Screen.TypeWindow.Appearance.6.instance1]	1
+note	cahappearance: call-without-function: method 'GetExtern' is not a function on a value of type movieclip [in _level1.Screen.TypeWindow.Appearance.SkinColor.ColorPicker]	100
+note	cahappearance: call-without-function: method 'IsCreateNewHero' is not a function on a value of type movieclip [in _level1.MainButtons]	1
+note	cahappearance: movie-in-clip-root-is-level-root: _level1.Screen.TypeWindow.Appearance.SkinColor.ColorPicker	1
+note	cahappearance: movieclip-native-unread: Color	32
+note	cahappearance: movieclip-native-unread: Color.setRGB	32
+note	cahappearance: opaque-character: character type 10 id 25 in GameWindowGadgets	1
+note	cahclass: call-without-function: method 'GetExtern' is not a function on a value of type movieclip [in _level1.Screen.ClassWindow.ClassIcons]	1
+note	cahclass: call-without-function: method 'GetExtern' is not a function on a value of type movieclip [in _level1.Screen.TypeWindow.TypeIcons]	1
+note	cahclass: call-without-function: method 'GetExtern' is not a function on a value of type movieclip [in _level1.Screen.TypeWindow]	6
+note	cahclass: call-without-function: method 'IsCreateNewHero' is not a function on a value of type movieclip [in _level1.mcClassButtons]	1
+note	cahclass: call-without-function: method 'SpaceTypeIcons' is not a function on a value of type movieclip [in _level1.Screen]	1
+note	cahclass: movieclip-native-unread: Color	11
+note	cahclass: movieclip-native-unread: Color.setRGB	11
+note	cahmanager: call-without-function: method 'GameCode' is not a function on a value of type movieclip [in _level1]	1
+note	cahmanager: call-without-function: method 'GetExtern' is not a function on a value of type movieclip [in _level1.Screen.HeroList]	1
+note	cahmanager: call-without-function: method 'GetExtern' is not a function on a value of type movieclip [in _level1.Screen.TabNav.Appearance.HeroDesc]	7
+note	cahmanager: call-without-function: method 'GetExtern' is not a function on a value of type movieclip [in _level1.Screen.TabNav.Appearance]	1
+note	cahmanager: call-without-function: method 'ShowHeroMap' is not a function on a value of type movieclip [in _level1.Screen.TabNav]	1
+note	cahmanager: movieclip-native-unread: Color	8
+note	cahmanager: movieclip-native-unread: Color.setRGB	8
+note	cahmanager: opaque-character: character type 10 id 20 in GameWindowGadgets	1
+note	cahmanager: opaque-character: character type 10 id 259 in cahmanager	1
+note	cahmanager: opaque-character: character type 10 id 261 in cahmanager	1
+note	cahmanager: opaque-character: character type 10 id 264 in cahmanager	2
+note	cahmanager: opaque-character: character type 10 id 266 in cahmanager	1
+note	cahpowers: apt-transform-unverified: _height [S-1262]	6
+note	cahpowers: apt-transform-unverified: _rotation [S-1262]	1
+note	cahpowers: apt-transform-unverified: _width [S-1262]	2
+note	cahpowers: call-without-function: method 'FindAbsolute' is not a function on a value of type movieclip [in _level1.Screen.mcPowersMenu]	2
+note	cahpowers: call-without-function: method 'GetExtern' is not a function on a value of type movieclip [in _level1.Screen.PowersList]	1
+note	cahpowers: call-without-function: method 'GetExtern' is not a function on a value of type movieclip [in _level1.Screen.mcPowersMenu]	1
+note	cahpowers: call-without-function: method 'IsCreateNewHero' is not a function on a value of type movieclip [in _level1.mcClassButtons]	1
+note	cahpowers: call-without-function: method 'PlayFlash' is not a function on a value of type movieclip [in _level1.Screen.MessageBox]	1
+note	cahpowers: label-not-found: _undefined	1
+note	cahpowers: label-not-found: _unused	2
+note	cahpowers: movie-in-clip-root-is-level-root: _level1.Screen.mcPowersMenu.instance1471.theBar	1
+note	cahpowers: movieclip-native-unread: Color	4
+note	cahpowers: movieclip-native-unread: Color.setRGB	8
+note	cahpowers: movieclip-native-unread: attachMovie	25
+note	cahpowers: movieclip-native-unread: createEmptyMovieClip	2
+note	cahpowers: setInterval-id-and-first-call: 	1
+note	campaignmenu: movieclip-native-unread: Color	2
+note	campaignmenu: movieclip-native-unread: Color.setRGB	2
+note	campaignreview: goto-operand-not-string-or-integer: undefined	4
+note	campaignreview: movieclip-native-unread: Color	14
+note	campaignreview: movieclip-native-unread: Color.setRGB	14
+note	campaignreview: movieclip-native-unread: attachMovie	1
+note	campaignreview: movieclip-native-unread: unloadMovie	1
+note	campaignreview: opaque-character: character type 10 id 20 in GameWindowGadgets	9
+note	connections: movieclip-native-unread: Color	12
+note	connections: movieclip-native-unread: Color.setRGB	12
+note	createahero: apt-transform-unverified: _height [S-1262]	1
+note	createahero: apt-transform-unverified: _width [S-1262]	1
+note	createahero: movie-in-clip-root-is-level-root: _level1.Main.mcNewFeaturesScreen	1
+note	createahero: movieclip-native-unread: loadMovie	1
+note	disconnectscreen: apt-transform-unverified: _width [S-1262]	16
+note	disconnectscreen: movieclip-native-unread: Color	32
+note	disconnectscreen: movieclip-native-unread: Color.setRGB	32
+note	disconnectscreen: opaque-character: character type 10 id 20 in GameWindowGadgets	4
+note	disconnectscreen: opaque-character: character type 10 id 25 in GameWindowGadgets	2
+note	gadgetcolorpicker: apt-transform-unverified: _height [S-1262]	1
+note	gadgetcolorpicker: apt-transform-unverified: _width [S-1262]	1
+note	gadgetcolorpicker: call-without-function: method 'GetExtern' is not a function on a value of type movieclip [in _level1]	100
+note	guitest: movieclip-native-unread: attachMovie	10
+note	ingamechat: movieclip-native-unread: Color	2
+note	ingamechat: movieclip-native-unread: Color.setRGB	2
+note	ingamechat: opaque-character: character type 10 id 25 in GameWindowGadgets	1
+note	ingamehelpbox: call-without-function: method 'OnHelpBoxMovieLoaded' is not a function on a value of type undefined [in _level1]	1
+note	ingameheroselect: call-without-function: method 'OnHeroSelectMovieLoaded' is not a function on a value of type undefined [in _level1]	1
+note	ingameheroselect: call-without-function: method 'SetImageState' is not a function on a value of type movieclip [in _level1.SelectAllHeroesBttn]	1
+note	ingameheroselect: call-without-function: method 'gotoAndPlay' is not a function on a value of type undefined [in _level1.SelectAllHeroesBttn]	1
+note	ingameheroselect: call-without-function: method 'gotoAndPlay' is not a function on a value of type undefined [in _level1]	2
+note	ingameplanningmode: call-without-function: method 'OnPlanningModeUILoaded' is not a function on a value of type undefined [in _level1]	1
+note	ingameradialmenustage: call-without-function: method 'OnRadialMenuStageLoaded' is not a function on a value of type undefined [in _level1]	1
+note	ingamesidecommandbar: call-without-function: method 'UpdateFrameState' is not a function on a value of type movieclip [in _level1.ButtonSet.Button0]	1
+note	ingamesidecommandbar: call-without-function: method 'UpdateFrameState' is not a function on a value of type movieclip [in _level1.ButtonSet.Button10]	1
+note	ingamesidecommandbar: call-without-function: method 'UpdateFrameState' is not a function on a value of type movieclip [in _level1.ButtonSet.Button1]	1
+note	ingamesidecommandbar: call-without-function: method 'UpdateFrameState' is not a function on a value of type movieclip [in _level1.ButtonSet.Button2]	1
+note	ingamesidecommandbar: call-without-function: method 'UpdateFrameState' is not a function on a value of type movieclip [in _level1.ButtonSet.Button3]	1
+note	ingamesidecommandbar: call-without-function: method 'UpdateFrameState' is not a function on a value of type movieclip [in _level1.ButtonSet.Button4]	1
+note	ingamesidecommandbar: call-without-function: method 'UpdateFrameState' is not a function on a value of type movieclip [in _level1.ButtonSet.Button5]	1
+note	ingamesidecommandbar: call-without-function: method 'UpdateFrameState' is not a function on a value of type movieclip [in _level1.ButtonSet.Button6]	1
+note	ingamesidecommandbar: call-without-function: method 'UpdateFrameState' is not a function on a value of type movieclip [in _level1.ButtonSet.Button7]	1
+note	ingamesidecommandbar: call-without-function: method 'UpdateFrameState' is not a function on a value of type movieclip [in _level1.ButtonSet.Button8]	1
+note	ingamesidecommandbar: call-without-function: method 'UpdateFrameState' is not a function on a value of type movieclip [in _level1.ButtonSet.Button9]	1
+note	ingamesidecommandbar: call-without-function: method 'gotoAndPlay' is not a function on a value of type undefined [in _level1.ButtonSet]	4
+note	ingamespellbook: call-without-function: method 'gotoAndPlay' is not a function on a value of type undefined [in _level1.Spell11.instance9]	1
+note	ingamespellbook: call-without-function: method 'gotoAndPlay' is not a function on a value of type undefined [in _level1]	6
+note	lanlobby: call-without-function: method 'gotoAndPlay' is not a function on a value of type undefined [in _level1]	1
+note	lanlobby: label-not-found: _lobby	1
+note	lanlobby: movie-in-clip-root-is-level-root: _level1.LanOpenPlay	1
+note	lanlobby: movieclip-native-unread: Color	18
+note	lanlobby: movieclip-native-unread: Color.setRGB	18
+note	lanlobby: movieclip-native-unread: loadMovie	1
+note	lanlobby: opaque-character: character type 10 id 16 in GameWindowGadgets	40
+note	lanlobby: opaque-character: character type 10 id 20 in GameWindowGadgets	5
+note	lanlobby: opaque-character: character type 10 id 25 in GameWindowGadgets	2
+note	lanlobby: opaque-character: character type 10 id 302 in MpGameSetup	8
+note	lanopenplay: call-without-function: method 'GetExtern' is not a function on a value of type movieclip [in _level1.CreateComponents.instance1]	1
+note	lanopenplay: call-without-function: method 'GetExtern' is not a function on a value of type movieclip [in _level1.LobbyMain.instance1.MapsTabSelected]	1
+note	lanopenplay: call-without-function: method 'GetExtern' is not a function on a value of type movieclip [in _level1.LobbyMain.instance1.instance167]	1
+note	lanopenplay: call-without-function: method 'GetExtern' is not a function on a value of type movieclip [in _level1.LobbyMain.instance1]	2
+note	lanopenplay: call-without-function: method 'ToggleExtern' is not a function on a value of type movieclip [in _level1.LobbyMain.instance1.MapsTabSelected]	1
+note	lanopenplay: movieclip-native-unread: Color	18
+note	lanopenplay: movieclip-native-unread: Color.setRGB	18
+note	lanopenplay: opaque-character: character type 10 id 16 in GameWindowGadgets	40
+note	lanopenplay: opaque-character: character type 10 id 20 in GameWindowGadgets	5
+note	lanopenplay: opaque-character: character type 10 id 25 in GameWindowGadgets	2
+note	lanopenplay: opaque-character: character type 10 id 302 in MpGameSetup	8
+note	lanstrategic: call-without-function: method 'GetExtern' is not a function on a value of type movieclip [in _level1.CreateComponents.instance267.instance1]	1
+note	lanstrategic: call-without-function: method 'GetExtern' is not a function on a value of type movieclip [in _level1.CreateComponents.instance64]	1
+note	lanstrategic: call-without-function: method 'GetExtern' is not a function on a value of type movieclip [in _level1.LobbyMain.instance1.MapsTabSelected]	1
+note	lanstrategic: call-without-function: method 'GetExtern' is not a function on a value of type movieclip [in _level1.LobbyMain.instance1.instance167]	1
+note	lanstrategic: call-without-function: method 'GetExtern' is not a function on a value of type movieclip [in _level1.LobbyMain.instance1]	2
+note	lanstrategic: call-without-function: method 'ToggleExtern' is not a function on a value of type movieclip [in _level1.LobbyMain.instance1.MapsTabSelected]	1
+note	lanstrategic: call-without-function: method 'gotoAndStop' is not a function on a value of type undefined [in _level1]	1
+note	lanstrategic: movieclip-native-unread: Color	24
+note	lanstrategic: movieclip-native-unread: Color.setRGB	24
+note	lanstrategic: opaque-character: character type 10 id 16 in GameWindowGadgets	89
+note	lanstrategic: opaque-character: character type 10 id 20 in GameWindowGadgets	6
+note	lanstrategic: opaque-character: character type 10 id 25 in GameWindowGadgets	2
+note	lanstrategic: opaque-character: character type 10 id 302 in MpGameSetup	16
+note	libsnow: duplicate-copies-placement-only: 	150
+note	loadscreen: apt-transform-unverified: _width [S-1262]	64
+note	loadscreen: call-without-function: method 'gotoAndPlay' is not a function on a value of type undefined [in _level1]	2
+note	loadscreen: movieclip-native-unread: Color	69
+note	loadscreen: movieclip-native-unread: Color.setRGB	69
+note	loadscreen: opaque-character: character type 10 id 20 in GameWindowGadgets	2
+note	mainmenu: call-without-function: method 'stop' is not a function on a value of type undefined [in _level1]	1
+note	mainmenu: clearInterval-unknown-id: 	1
+note	mainmenu: setInterval-id-and-first-call: 	1
+note	menuexport: movieclip-native-unread: Color	1
+note	menuexport: movieclip-native-unread: Color.setRGB	1
+note	messenger: apt-transform-unverified: _rotation [S-1262]	2
+note	messenger: label-not-found: _minTab	1
+note	messenger: opaque-character: character type 10 id 20 in GameWindowGadgets	2
+note	messenger: opaque-character: character type 10 id 25 in GameWindowGadgets	1
+note	mpgamesetup: apt-transform-unverified: _width [S-1262]	8
+note	mpgamesetup: call-without-function: method 'GetExtern' is not a function on a value of type movieclip [in _level1.Tabs.instance92]	1
+note	mpgamesetup: call-without-function: method 'GetExtern' is not a function on a value of type movieclip [in _level1.Tabs]	2
+note	mpgamesetup: call-without-function: method 'GetExtern' is not a function on a value of type movieclip [in _level1.instance119.Matrix]	1
+note	mpgamesetup: call-without-function: method 'GetExtern' is not a function on a value of type movieclip [in _level1.instance170]	1
+note	mpgamesetup: call-without-function: method 'GetExtern' is not a function on a value of type movieclip [in _level1.instance186.instance1]	1
+note	mpgamesetup: call-without-function: method 'GetExtern' is not a function on a value of type movieclip [in _level1.instance1]	1
+note	mpgamesetup: call-without-function: method 'GetExtern' is not a function on a value of type movieclip [in _level1.instance303.instance90]	1
+note	mpgamesetup: call-without-function: method 'GetExtern' is not a function on a value of type movieclip [in _level1.instance303]	2
+note	mpgamesetup: call-without-function: method 'GetExtern' is not a function on a value of type movieclip [in _level1.instance394.MapsTabSelected]	1
+note	mpgamesetup: call-without-function: method 'GetExtern' is not a function on a value of type movieclip [in _level1.instance394.instance167]	1
+note	mpgamesetup: call-without-function: method 'GetExtern' is not a function on a value of type movieclip [in _level1.instance394]	2
+note	mpgamesetup: call-without-function: method 'ToggleExtern' is not a function on a value of type movieclip [in _level1.instance394.MapsTabSelected]	1
+note	mpgamesetup: movieclip-native-unread: Color	60
+note	mpgamesetup: movieclip-native-unread: Color.setRGB	60
+note	mpgamesetup: opaque-character: character type 10 id 16 in GameWindowGadgets	162
+note	mpgamesetup: opaque-character: character type 10 id 20 in GameWindowGadgets	5
+note	mpgamesetup: opaque-character: character type 10 id 302 in mpgamesetup	32
+note	onlinehome: call-without-function: method 'GetExtern' is not a function on a value of type movieclip [in _level1.OnlineHomeMain.instance13.instance2]	1
+note	onlinehome: movieclip-native-unread: Color	6
+note	onlinehome: movieclip-native-unread: Color.setRGB	6
+note	onlinehome: opaque-character: character type 10 id 20 in GameWindowGadgets	2
+note	onlinehome: setInterval-id-and-first-call: 	1
+note	onlinelogin: call-without-function: method 'gotoAndPlay' is not a function on a value of type undefined [in _level1]	1
+note	onlinelogin: movieclip-native-unread: Color	9
+note	onlinelogin: movieclip-native-unread: Color.setRGB	9
+note	onlinelogin: opaque-character: character type 10 id 16 in GameWindowGadgets	4
+note	onlinelogin: opaque-character: character type 10 id 20 in GameWindowGadgets	2
+note	onlinelogin: opaque-character: character type 10 id 22 in onlinelogin	1
+note	onlinelogin: opaque-character: character type 10 id 23 in onlinelogin	1
+note	onlinelogin: opaque-character: character type 10 id 24 in onlinelogin	1
+note	onlinelogin: opaque-character: character type 10 id 25 in GameWindowGadgets	2
+note	onlinelogin: opaque-character: character type 10 id 25 in onlinelogin	1
+note	onlinelogin: opaque-character: character type 10 id 26 in onlinelogin	1
+note	onlinelogin: opaque-character: character type 10 id 27 in onlinelogin	1
+note	onlinelogin: opaque-character: character type 10 id 28 in onlinelogin	1
+note	onlinelogin: opaque-character: character type 10 id 29 in onlinelogin	1
+note	onlinelogin: opaque-character: character type 10 id 30 in onlinelogin	1
+note	onlinelogin: opaque-character: character type 10 id 33 in onlinelogin	1
+note	onlinelogin: opaque-character: character type 10 id 34 in onlinelogin	1
+note	onlinelogin: opaque-character: character type 10 id 37 in onlinelogin	1
+note	onlinelogin: opaque-character: character type 10 id 38 in onlinelogin	1
+note	onlinelogin: opaque-character: character type 10 id 40 in onlinelogin	1
+note	onlineopenplay: call-without-function: method 'EnableComponents' is not a function on a value of type movieclip [in _level1]	2
+note	onlineopenplay: call-without-function: method 'GetExtern' is not a function on a value of type movieclip [in _level1.CreateComponents.instance14]	1
+note	onlineopenplay: call-without-function: method 'GetExtern' is not a function on a value of type movieclip [in _level1.CreateComponents.instance217.Matrix]	1
+note	onlineopenplay: call-without-function: method 'GetExtern' is not a function on a value of type movieclip [in _level1.CreateComponents.instance422.instance167]	1
+note	onlineopenplay: call-without-function: method 'GetExtern' is not a function on a value of type movieclip [in _level1.CreateComponents.instance422]	2
+note	onlineopenplay: call-without-function: method 'GetExtern' is not a function on a value of type movieclip [in _level1.Main.instance22.MapsTabSelected]	1
+note	onlineopenplay: call-without-function: method 'GetExtern' is not a function on a value of type movieclip [in _level1.Main.instance22.instance167]	1
+note	onlineopenplay: call-without-function: method 'GetExtern' is not a function on a value of type movieclip [in _level1.Main.instance22]	2
+note	onlineopenplay: call-without-function: method 'ShowButtonBar' is not a function on a value of type movieclip [in _level1]	2
+note	onlineopenplay: call-without-function: method 'ToggleExtern' is not a function on a value of type movieclip [in _level1.Main.instance22.MapsTabSelected]	1
+note	onlineopenplay: movieclip-native-unread: Color	34
+note	onlineopenplay: movieclip-native-unread: Color.setRGB	34
+note	onlineopenplay: opaque-character: character type 10 id 16 in GameWindowGadgets	82
+note	onlineopenplay: opaque-character: character type 10 id 20 in GameWindowGadgets	5
+note	onlineopenplay: opaque-character: character type 10 id 25 in GameWindowGadgets	2
+note	onlineopenplay: opaque-character: character type 10 id 302 in MpGameSetup	16
+note	onlineprofile: apt-transform-unverified: _width [S-1262]	6
+note	onlineprofile: call-without-function: method 'GameCode' is not a function on a value of type movieclip [in _level1]	1
+note	onlineprofile: call-without-function: method 'GetExtern' is not a function on a value of type movieclip [in _level1.componentImages.LevelBarA]	2
+note	onlineprofile: call-without-function: method 'GetExtern' is not a function on a value of type movieclip [in _level1.componentImages.LevelBarB]	2
+note	onlineprofile: call-without-function: method 'GetExtern' is not a function on a value of type movieclip [in _level1.componentImages.LevelBarC]	2
+note	onlineprofile: call-without-function: method 'GetExtern' is not a function on a value of type movieclip [in _level1.componentImages.LevelBarD]	2
+note	onlineprofile: call-without-function: method 'GetExtern' is not a function on a value of type movieclip [in _level1.componentImages.LevelBarE]	2
+note	onlineprofile: call-without-function: method 'GetExtern' is not a function on a value of type movieclip [in _level1.componentImages.LevelBarF]	2
+note	onlineprofile: call-without-function: method 'ShowButtons' is not a function on a value of type movieclip [in _level1]	1
+note	onlinequickmatch: movieclip-native-unread: Color	9
+note	onlinequickmatch: movieclip-native-unread: Color.setRGB	9
+note	onlinequickmatch: opaque-character: character type 10 id 16 in GameWindowGadgets	6
+note	onlinequickmatch: opaque-character: character type 10 id 302 in MpGameSetup	2
+note	onlinestrategic: call-without-function: method 'EnableComponents' is not a function on a value of type movieclip [in _level1]	2
+note	onlinestrategic: call-without-function: method 'GetExtern' is not a function on a value of type movieclip [in _level1.CreateComponents.instance14]	1
+note	onlinestrategic: call-without-function: method 'GetExtern' is not a function on a value of type movieclip [in _level1.CreateComponents.instance30.Matrix]	1
+note	onlinestrategic: call-without-function: method 'GetExtern' is not a function on a value of type movieclip [in _level1.CreateComponents.instance48.instance167]	1
+note	onlinestrategic: call-without-function: method 'GetExtern' is not a function on a value of type movieclip [in _level1.CreateComponents.instance48]	2
+note	onlinestrategic: call-without-function: method 'GetExtern' is not a function on a value of type movieclip [in _level1.Main.instance22.MapsTabSelected]	1
+note	onlinestrategic: call-without-function: method 'GetExtern' is not a function on a value of type movieclip [in _level1.Main.instance22.instance167]	1
+note	onlinestrategic: call-without-function: method 'GetExtern' is not a function on a value of type movieclip [in _level1.Main.instance22]	2
+note	onlinestrategic: call-without-function: method 'ShowButtonBar' is not a function on a value of type movieclip [in _level1]	2
+note	onlinestrategic: call-without-function: method 'ToggleExtern' is not a function on a value of type movieclip [in _level1.Main.instance22.MapsTabSelected]	1
+note	onlinestrategic: movieclip-native-unread: Color	34
+note	onlinestrategic: movieclip-native-unread: Color.setRGB	34
+note	onlinestrategic: opaque-character: character type 10 id 16 in GameWindowGadgets	82
+note	onlinestrategic: opaque-character: character type 10 id 20 in GameWindowGadgets	4
+note	onlinestrategic: opaque-character: character type 10 id 25 in GameWindowGadgets	2
+note	onlinestrategic: opaque-character: character type 10 id 302 in MpGameSetup	16
+note	options: call-without-function: method 'gotoAndPlay' is not a function on a value of type undefined [in _level1]	1
+note	options: movieclip-native-unread: Color	17
+note	options: movieclip-native-unread: Color.setRGB	17
+note	options: opaque-character: character type 10 id 156 in options	1
+note	options: opaque-character: character type 10 id 16 in GameWindowGadgets	15
+note	options: opaque-character: character type 10 id 25 in GameWindowGadgets	1
+note	palantir: call-without-function: call of undefined function 'SetEnemyHouseColor' (EA_CallNamedFuncPop at file offset 365867) [in _level1]	1
+note	palantir: call-without-function: method 'CreateContent' is not a function on a value of type movieclip [in _level1]	1
+note	palantir: call-without-function: method 'SetImageState' is not a function on a value of type movieclip [in _level1.HeroSelectUI.SelectAllHeroesBttn]	1
+note	palantir: call-without-function: method 'Show' is not a function on a value of type movieclip [in _level1]	1
+note	palantir: call-without-function: method 'ShowHeroSelectInterface' is not a function on a value of type movieclip [in _level1]	1
+note	palantir: call-without-function: method 'UpdateFrameState' is not a function on a value of type movieclip [in _level1.SideCommandBar.ButtonSet.Button0]	1
+note	palantir: call-without-function: method 'UpdateFrameState' is not a function on a value of type movieclip [in _level1.SideCommandBar.ButtonSet.Button10]	1
+note	palantir: call-without-function: method 'UpdateFrameState' is not a function on a value of type movieclip [in _level1.SideCommandBar.ButtonSet.Button1]	1
+note	palantir: call-without-function: method 'UpdateFrameState' is not a function on a value of type movieclip [in _level1.SideCommandBar.ButtonSet.Button2]	1
+note	palantir: call-without-function: method 'UpdateFrameState' is not a function on a value of type movieclip [in _level1.SideCommandBar.ButtonSet.Button3]	1
+note	palantir: call-without-function: method 'UpdateFrameState' is not a function on a value of type movieclip [in _level1.SideCommandBar.ButtonSet.Button4]	1
+note	palantir: call-without-function: method 'UpdateFrameState' is not a function on a value of type movieclip [in _level1.SideCommandBar.ButtonSet.Button5]	1
+note	palantir: call-without-function: method 'UpdateFrameState' is not a function on a value of type movieclip [in _level1.SideCommandBar.ButtonSet.Button6]	1
+note	palantir: call-without-function: method 'UpdateFrameState' is not a function on a value of type movieclip [in _level1.SideCommandBar.ButtonSet.Button7]	1
+note	palantir: call-without-function: method 'UpdateFrameState' is not a function on a value of type movieclip [in _level1.SideCommandBar.ButtonSet.Button8]	1
+note	palantir: call-without-function: method 'UpdateFrameState' is not a function on a value of type movieclip [in _level1.SideCommandBar.ButtonSet.Button9]	1
+note	palantir: call-without-function: method 'gotoAndPlay' is not a function on a value of type undefined [in _level1.HeroSelectUI.SelectAllHeroesBttn]	1
+note	palantir: call-without-function: method 'gotoAndPlay' is not a function on a value of type undefined [in _level1.HeroSelectUI]	2
+note	palantir: call-without-function: method 'gotoAndPlay' is not a function on a value of type undefined [in _level1.SideCommandBar.ButtonSet]	4
+note	palantir: call-without-function: method 'gotoAndPlay' is not a function on a value of type undefined [in _level1.SpellBookUI.Spell11.instance9]	1
+note	palantir: call-without-function: method 'gotoAndPlay' is not a function on a value of type undefined [in _level1.SpellBookUI]	6
+note	palantir: call-without-function: method 'gotoAndPlay' is not a function on a value of type undefined [in _level1]	6
+note	palantir: call-without-function: method 'gotoAndStop' is not a function on a value of type undefined [in _level1]	1
+note	palantir: movie-in-clip-root-is-level-root: _level1.HeroSelectUI	1
+note	palantir: movie-in-clip-root-is-level-root: _level1.SideCommandBar	1
+note	palantir: movie-in-clip-root-is-level-root: _level1.SpellBookUI	1
+note	palantir: movie-in-clip-root-is-level-root: _level1.helpBox	1
+note	palantir: movie-in-clip-root-is-level-root: _level1.planningModeUI	1
+note	palantir: movieclip-native-unread: attachMovie	6
+note	playertribute: movieclip-native-unread: Color	8
+note	playertribute: movieclip-native-unread: Color.setRGB	8
+note	quitmenu: call-without-function: call of undefined function 'ShowDebugButtons' (EA_CallNamedFuncPop at file offset 29458) [in _level1]	1
+note	quitmenu: call-without-function: method 'gotoAndPlay' is not a function on a value of type undefined [in _level1]	1
+note	saveload: movieclip-native-unread: Color	16
+note	saveload: movieclip-native-unread: Color.setRGB	16
+note	saveload: opaque-character: character type 10 id 20 in GameWindowGadgets	11
+note	saveload: opaque-character: character type 10 id 25 in GameWindowGadgets	3
+note	scorescreen: movieclip-native-unread: Color	6
+note	scorescreen: movieclip-native-unread: Color.setRGB	6
+note	scorescreen: opaque-character: character type 10 id 20 in GameWindowGadgets	1
+note	scorescreen: opaque-character: character type 10 id 25 in GameWindowGadgets	1
+note	sidecommandbar: call-without-function: method 'onSideCommandBarLoaded' is not a function on a value of type movieclip [in _level1]	1
+note	skirmish: call-without-function: method 'loadMovie' is not a function on a value of type undefined [in _level1]	1
+note	skirmish: movieclip-native-unread: Color	3
+note	skirmish: movieclip-native-unread: Color.setRGB	3
+note	skirmish: opaque-character: character type 10 id 20 in GameWindowGadgets	1
+note	skirmish: opaque-character: character type 10 id 25 in GameWindowGadgets	1
+note	skirmishopenplay: call-without-function: call of undefined function 'SetProgressBar' (EA_CallFuncPop at file offset 4996) [in _level1]	1
+note	skirmishopenplay: call-without-function: method 'GameCodeNoPrefix' is not a function on a value of type movieclip [in _level1.instance1.PlayerList.~7.Ready]	1
+note	skirmishopenplay: call-without-function: method 'GetExtern' is not a function on a value of type movieclip [in _level1.MpMapAndSettings.MapsTabSelected]	1
+note	skirmishopenplay: call-without-function: method 'GetExtern' is not a function on a value of type movieclip [in _level1.MpMapAndSettings.instance167]	1
+note	skirmishopenplay: call-without-function: method 'GetExtern' is not a function on a value of type movieclip [in _level1.MpMapAndSettings]	2
+note	skirmishopenplay: call-without-function: method 'GetExtern' is not a function on a value of type movieclip [in _level1.instance1]	1
+note	skirmishopenplay: call-without-function: method 'ToggleExtern' is not a function on a value of type movieclip [in _level1.MpMapAndSettings.MapsTabSelected]	1
+note	skirmishopenplay: movieclip-native-unread: Color	11
+note	skirmishopenplay: movieclip-native-unread: Color.setRGB	11
+note	skirmishopenplay: opaque-character: character type 10 id 16 in GameWindowGadgets	40
+note	skirmishopenplay: opaque-character: character type 10 id 20 in GameWindowGadgets	1
+note	skirmishopenplay: opaque-character: character type 10 id 302 in MpGameSetup	8
+note	skirmishstrategic: call-without-function: method 'GetExtern' is not a function on a value of type movieclip [in _level1]	1
+note	skirmishstrategic: call-without-function: method 'SetExtern' is not a function on a value of type movieclip [in _level1]	1
+note	skirmishstrategic: call-without-function: method 'ShowPromoNav' is not a function on a value of type undefined [in _level1]	1
+note	spellstore: goto-operand-not-string-or-integer: undefined	16
+note	stats: apt-transform-unverified: _rotation [S-1262]	28
+note	stats: apt-transform-unverified: _width [S-1262]	7
+note	stats: call-without-function: method 'GetExtern' is not a function on a value of type movieclip [in _level1.Main]	7
+note	stats: movieclip-native-unread: Color	35
+note	stats: movieclip-native-unread: Color.setRGB	35
+note	stats: movieclip-native-unread: attachMovie	28
+note	stats: opaque-character: character type 10 id 20 in GameWindowGadgets	1
+note	stats: script-depth-occupied: depth 10	1
+note	stats: script-depth-occupied: depth 11	1
+note	stats: script-depth-occupied: depth 12	1
+note	stats: script-depth-occupied: depth 13	1
+note	stats: script-depth-occupied: depth 14	1
+note	stats: script-depth-occupied: depth 15	1
+note	stats: script-depth-occupied: depth 16	1
+note	stats: script-depth-occupied: depth 17	1
+note	stats: script-depth-occupied: depth 18	1
+note	stats: script-depth-occupied: depth 19	1
+note	stats: script-depth-occupied: depth 20	1
+note	stats: script-depth-occupied: depth 21	1
+note	strategicarmyunitswapper: apt-transform-unverified: _height [S-1262]	8
+note	strategicarmyunitswapper: call-without-function: method 'OnContentLoaded' is not a function on a value of type undefined [in _level1]	1
+note	strategicarmyunitswapper: movie-in-clip-root-is-level-root: _level1.main.bottomPanel	1
+note	strategicarmyunitswapper: movie-in-clip-root-is-level-root: _level1.main.bottomPanel.main.scrollBar.theBar	1
+note	strategicarmyunitswapper: movie-in-clip-root-is-level-root: _level1.main.topPanel	1
+note	strategicarmyunitswapper: movie-in-clip-root-is-level-root: _level1.main.topPanel.main.scrollBar.theBar	1
+note	strategicarmyunitswapper: movieclip-native-unread: Color	4
+note	strategicarmyunitswapper: movieclip-native-unread: Color.setRGB	8
+note	strategicbattleprompt: apt-transform-unverified: _rotation [S-1262]	3
+note	strategicbattleprompt: call-without-function: method 'OnContentLoaded' is not a function on a value of type movieclip [in _level1.main.allies]	1
+note	strategicbattleprompt: call-without-function: method 'OnContentLoaded' is not a function on a value of type movieclip [in _level1.main.enemies]	1
+note	strategicbattleprompt: call-without-function: method 'OnContentLoaded' is not a function on a value of type undefined [in _level1]	1
+note	strategicbattleprompt: movie-in-clip-root-is-level-root: _level1.main.allies	1
+note	strategicbattleprompt: movie-in-clip-root-is-level-root: _level1.main.allies.garrison	1
+note	strategicbattleprompt: movie-in-clip-root-is-level-root: _level1.main.allies.hero0	1
+note	strategicbattleprompt: movie-in-clip-root-is-level-root: _level1.main.allies.hero1	1
+note	strategicbattleprompt: movie-in-clip-root-is-level-root: _level1.main.allies.hero2	1
+note	strategicbattleprompt: movie-in-clip-root-is-level-root: _level1.main.allies.hero3	1
+note	strategicbattleprompt: movie-in-clip-root-is-level-root: _level1.main.enemies	1
+note	strategicbattleprompt: movie-in-clip-root-is-level-root: _level1.main.enemies.garrison	1
+note	strategicbattleprompt: movie-in-clip-root-is-level-root: _level1.main.enemies.hero0	1
+note	strategicbattleprompt: movie-in-clip-root-is-level-root: _level1.main.enemies.hero1	1
+note	strategicbattleprompt: movie-in-clip-root-is-level-root: _level1.main.enemies.hero2	1
+note	strategicbattleprompt: movie-in-clip-root-is-level-root: _level1.main.enemies.hero3	1
+note	strategicbattleprompt: movieclip-native-unread: Color	25
+note	strategicbattleprompt: movieclip-native-unread: Color.setRGB	23
+note	strategicbattleprompt: movieclip-native-unread: loadMovie	12
+note	strategicbattlepromptarmypanel: call-without-function: method 'OnContentLoaded' is not a function on a value of type undefined [in _level1]	1
+note	strategicbattlepromptarmypanel: movieclip-native-unread: Color	2
+note	strategicbattlepromptplayerpage: call-without-function: method 'OnContentLoaded' is not a function on a value of type undefined [in _level1]	1
+note	strategicbattlepromptplayerpage: movie-in-clip-root-is-level-root: _level1.garrison	1
+note	strategicbattlepromptplayerpage: movie-in-clip-root-is-level-root: _level1.hero0	1
+note	strategicbattlepromptplayerpage: movie-in-clip-root-is-level-root: _level1.hero1	1
+note	strategicbattlepromptplayerpage: movie-in-clip-root-is-level-root: _level1.hero2	1
+note	strategicbattlepromptplayerpage: movie-in-clip-root-is-level-root: _level1.hero3	1
+note	strategicbattlepromptplayerpage: movieclip-native-unread: Color	12
+note	strategicbattlepromptplayerpage: movieclip-native-unread: Color.setRGB	12
+note	strategicbattlepromptplayerpage: movieclip-native-unread: loadMovie	5
+note	strategicchecklist: apt-transform-unverified: _height [S-1262]	4
+note	strategicchecklist: call-without-function: method 'OnChecklistLoaded' is not a function on a value of type undefined [in _level1]	1
+note	strategicchecklist: movie-in-clip-root-is-level-root: _level1.scrollBar.theBar	1
+note	strategicchecklist: movieclip-native-unread: Color	3
+note	strategicchecklist: movieclip-native-unread: Color.setRGB	4
+note	strategicconflictresults: apt-transform-unverified: _rotation [S-1262]	15
+note	strategicconflictresults: apt-transform-unverified: _width [S-1262]	30
+note	strategicconflictresults: movieclip-native-unread: Color	12
+note	strategicconflictresults: movieclip-native-unread: Color.setRGB	12
+note	strategicdetailsarmies: call-without-function: method 'OnContentLoaded' is not a function on a value of type undefined [in _level1]	1
+note	strategicdetailsarmies: movieclip-native-unread: Color	7
+note	strategicdetailsarmies: movieclip-native-unread: Color.setRGB	7
+note	strategicdetailsarmies: movieclip-native-unread: attachMovie	23
+note	strategicdetailsarmies: movieclip-native-unread: removeMovieClip	10
+note	strategicdetailsarmies: script-depth-occupied: depth 0	1
+note	strategicdetailsarmies: script-depth-occupied: depth 1	1
+note	strategicdetailsarmies: script-depth-occupied: depth 2	1
+note	strategicdetailsarmies: script-depth-occupied: depth 3	1
+note	strategicdetailsarmies: script-depth-occupied: depth 4	1
+note	strategicdetailsarmies: script-depth-occupied: depth 5	1
+note	strategicdetailsarmyretinue: apt-transform-unverified: _height [S-1262]	4
+note	strategicdetailsarmyretinue: call-without-function: method 'OnContentLoaded' is not a function on a value of type undefined [in _level1]	1
+note	strategicdetailsarmyretinue: movie-in-clip-root-is-level-root: _level1.main.scrollBar.theBar	1
+note	strategicdetailsarmyretinue: movieclip-native-unread: Color	2
+note	strategicdetailsarmyretinue: movieclip-native-unread: Color.setRGB	4
+note	strategicdetailsbuildqueue: call-without-function: method 'OnContentLoaded' is not a function on a value of type undefined [in _level1]	1
+note	strategicdetailsregion: call-without-function: method 'OnContentLoaded' is not a function on a value of type undefined [in _level1]	1
+note	strategicdetailsregion: movie-in-clip-root-is-level-root: _level1.main.armies	1
+note	strategicdetailsregion: movie-in-clip-root-is-level-root: _level1.main.structures	1
+note	strategicdetailsregion: movie-in-clip-root-is-level-root: _level1.main.territory	1
+note	strategicdetailsregion: movieclip-native-unread: Color	7
+note	strategicdetailsregion: movieclip-native-unread: Color.setRGB	7
+note	strategicdetailsregion: movieclip-native-unread: attachMovie	43
+note	strategicdetailsregion: movieclip-native-unread: removeMovieClip	20
+note	strategicdetailsregion: script-depth-occupied: depth 0	2
+note	strategicdetailsregion: script-depth-occupied: depth 1	2
+note	strategicdetailsregion: script-depth-occupied: depth 2	2
+note	strategicdetailsregion: script-depth-occupied: depth 3	2
+note	strategicdetailsregion: script-depth-occupied: depth 4	2
+note	strategicdetailsregion: script-depth-occupied: depth 5	2
+note	strategicdetailsstructures: call-without-function: method 'OnContentLoaded' is not a function on a value of type undefined [in _level1]	1
+note	strategicdetailsstructures: movieclip-native-unread: attachMovie	20
+note	strategicdetailsstructures: movieclip-native-unread: removeMovieClip	10
+note	strategicdetailsstructures: script-depth-occupied: depth 0	1
+note	strategicdetailsstructures: script-depth-occupied: depth 1	1
+note	strategicdetailsstructures: script-depth-occupied: depth 2	1
+note	strategicdetailsstructures: script-depth-occupied: depth 3	1
+note	strategicdetailsstructures: script-depth-occupied: depth 4	1
+note	strategicdetailsstructures: script-depth-occupied: depth 5	1
+note	strategicdetailsterritory: call-without-function: method 'OnContentLoaded' is not a function on a value of type undefined [in _level1]	1
+note	strategicdetailstray: call-without-function: method 'OnContentLoaded' is not a function on a value of type movieclip [in _level1.tray]	1
+note	strategicdetailstray: call-without-function: method 'OnSelectionDetailsTrayLoaded' is not a function on a value of type undefined [in _level1]	1
+note	strategicdetailstray: movie-in-clip-root-is-level-root: _level1.tray	1
+note	strategicdetailstray: movie-in-clip-root-is-level-root: _level1.tray.main.armies	1
+note	strategicdetailstray: movie-in-clip-root-is-level-root: _level1.tray.main.structures	1
+note	strategicdetailstray: movie-in-clip-root-is-level-root: _level1.tray.main.territory	1
+note	strategicdetailstray: movieclip-native-unread: Color	7
+note	strategicdetailstray: movieclip-native-unread: Color.setRGB	7
+note	strategicdetailstray: movieclip-native-unread: attachMovie	43
+note	strategicdetailstray: movieclip-native-unread: loadMovie	1
+note	strategicdetailstray: movieclip-native-unread: removeMovieClip	20
+note	strategicdetailstray: script-depth-occupied: depth 0	2
+note	strategicdetailstray: script-depth-occupied: depth 1	2
+note	strategicdetailstray: script-depth-occupied: depth 2	2
+note	strategicdetailstray: script-depth-occupied: depth 3	2
+note	strategicdetailstray: script-depth-occupied: depth 4	2
+note	strategicdetailstray: script-depth-occupied: depth 5	2
+note	strategicdetailstray: unload-descendant-order: _level1.tray.panelFrame	1
+note	strategicdynamicautoresolve: apt-transform-unverified: _rotation [S-1262]	43
+note	strategicdynamicautoresolve: call-without-function: method 'OnContentLoaded' is not a function on a value of type undefined [in _level1]	1
+note	strategicdynamicautoresolve: movieclip-native-unread: Color	30
+note	strategicendturnbutton: call-without-function: method 'OnEndTurnButtonLoaded' is not a function on a value of type undefined [in _level1]	1
+note	strategichud: apt-transform-unverified: _height [S-1262]	3
+note	strategichud: movie-in-clip-root-is-level-root: _level1.helpBox	1
+note	strategichud: movie-in-clip-root-is-level-root: _level1.main.checklist	1
+note	strategichud: movie-in-clip-root-is-level-root: _level1.main.checklist.scrollBar.theBar	1
+note	strategichud: movie-in-clip-root-is-level-root: _level1.main.endTurnButton	1
+note	strategichud: movie-in-clip-root-is-level-root: _level1.main.globe	1
+note	strategichud: movie-in-clip-root-is-level-root: _level1.main.selectionDetails	1
+note	strategichud: movie-in-clip-root-is-level-root: _level1.main.stats	1
+note	strategichud: movie-in-clip-root-is-level-root: _level1.newTurnIndicator	1
+note	strategichud: movie-in-clip-root-is-level-root: _level1.radialMenuStage	1
+note	strategichud: movieclip-native-unread: Color	3
+note	strategichud: movieclip-native-unread: Color.setRGB	2
+note	strategicnextturnind: call-without-function: method 'OnNewTurnIndicatorLoaded' is not a function on a value of type undefined [in _level1]	1
+note	strategicpalantir: call-without-function: method 'OnStrategicPalantirLoaded' is not a function on a value of type undefined [in _level1]	1
+note	strategicplayerstatus: movieclip-native-unread: Color	1
+note	strategicplayerstatus: movieclip-native-unread: Color.setRGB	1
+note	strategicplayerstatus: movieclip-native-unread: attachMovie	2
+note	strategicplayerstatus: movieclip-native-unread: createEmptyMovieClip	2
+note	strategicregionaward: call-without-function: method 'OnContentLoaded' is not a function on a value of type undefined [in _level1]	1
+note	strategicregionaward: call-without-function: method 'gotoAndPlay' is not a function on a value of type undefined [in _level1.Frame]	2
+note	strategicregionaward: call-without-function: method 'setRGB' is not a function on a value of type undefined [in _level1]	10
+note	strategicregionaward: movieclip-native-unread: Color	3
+note	strategicstats: call-without-function: method 'OnStatsDisplayLoaded' is not a function on a value of type undefined [in _level1]	1
+note	strategicveterancy: apt-transform-unverified: _height [S-1262]	4
+note	strategicveterancy: call-without-function: method 'split' is not a function on a value of type undefined [in _level1.Main.Veterancy]	4
+note	strategicveterancy: movie-in-clip-root-is-level-root: _level1.Main.Veterancy.instance12.theBar	1
+note	strategicveterancy: movieclip-native-unread: Color	2
+note	strategicveterancy: movieclip-native-unread: Color.setRGB	6
+note	timeline: goto-operand-not-string-or-integer: undefined	2
+note	timeline: movieclip-native-unread: Color	7
+note	timeline: movieclip-native-unread: Color.setRGB	7
+note	verticalscrollbar: call-without-function: method 'GetScrollBarParam' is not a function on a value of type undefined [in _level1]	1
+note	verticalscrollbar: call-without-function: method 'OnScrollBarLoaded' is not a function on a value of type undefined [in _level1]	1
+note	verticalscrollbar: movieclip-native-unread: Color	2
+note	verticalscrollbar: movieclip-native-unread: Color.setRGB	4

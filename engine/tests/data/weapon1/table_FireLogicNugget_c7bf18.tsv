@@ -1,0 +1,5 @@
+idx	token	parse_va	parse_kind	userdata	offset	userdata_list
+0	LogicType	0x42e956	parseIndexList	0xdb6694	0x1c4	list_db6694
+1	MinMaxBurnRate	0x42ec5e	parseInt	0x0	0x1c8	
+2	MinDecay	0x42ec5e	parseInt	0x0	0x1cc	
+3	MaxResistance	0x42ec5e	parseInt	0x0	0x1d0	

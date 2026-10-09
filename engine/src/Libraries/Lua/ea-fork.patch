@@ -1,0 +1,1651 @@
+--- a/lua-4.0.1/src/lapi.c
++++ b/lua-4.0.1/src/lapi.c
+@@ -1,3 +1,9 @@
++/* ALTERED SOURCE VERSION. This file is NOT the original Lua 4.0.1 software:
++** it is the pristine file from lua-4.0.1.tar.gz plus the OpenBFME patch layer
++** that reproduces EA's fork of Lua (the BFME/RotWK build). The change list,
++** the evidence for each change and the diff against the pristine file are in
++** engine/src/Libraries/Lua/README.md and engine/src/Libraries/Lua/ea-fork.patch.
++** Altered source versions must be plainly marked as such (Lua copyright notice). */
+ /*
+ ** $Id: lapi.c,v 1.110a 2000/10/30 12:50:09 roberto Exp $
+ ** Lua API
+@@ -112,7 +118,21 @@
+ }
+ 
+ LUA_API const char *lua_typename (lua_State *L, int t) {
+-  UNUSED(L);
++  if (t == LUA_TBOOLEAN) {
++    static const char msg[] = "the type name of a boolean was asked for: retail reads the four bytes after luaO_typenames "
++                              "(RW 0xD0B298, the string \"table\") as a pointer and faults (S-041)";
++    if (L->eaprofile == LUA_EA_PROFILE_ENHANCED) {  /* the repaired answer, only when the Enhanced profile was selected */
++      if (L->eahost && L->eahost->report)
++        L->eahost->report(L->eahost->user, "S-120", "Enhanced profile: the type name of a boolean is answered \"boolean\" (retail faults, S-041)");
++    }
++    else {  /* retail-compatible: report, count the fault and abort the running chunk with a Lua error (no value is returned) */
++      if (L->eahost && L->eahost->fault)
++        L->eahost->fault(L->eahost->user, "S-120", msg);
++      else if (L->eahost && L->eahost->report)
++        L->eahost->report(L->eahost->user, "S-120", msg);
++      lua_error(L, "compatibility fault S-041: type name of a boolean (retail faults here)");
++    }
++  }
+   return (t == LUA_TNONE) ? "no value" : luaO_typenames[t];
+ }
+ 
+@@ -300,10 +320,57 @@
+ 
+ 
+ LUA_API void lua_newtable (lua_State *L) {
+-  hvalue(L->top) = luaH_new(L, 0);
++  hvalue(L->top) = luaH_new(L, 0, 0);
+   ttype(L->top) = LUA_TTABLE;
+   api_incr_top(L);
+ }
++
++
++/* ---- EA additions (lua_ea.h) ---- */
++
++void lua_pushboolean (lua_State *L, int b) {  /* RW 0xB5B790 */
++  ttype(L->top) = LUA_TBOOLEAN;
++  bvalue(L->top) = b;
++  api_incr_top(L);
++}
++
++
++int lua_toboolean (lua_State *L, int index) {  /* RW 0xB5B5C0 */
++  StkId o = luaA_indexAcceptable(L, index);
++  if (o == NULL || ttype(o) == LUA_TNIL) return 0;
++  if (ttype(o) == LUA_TBOOLEAN) return bvalue(o);
++  return 1;
++}
++
++
++int lua_toobjid (lua_State *L, int index) {  /* RW 0xB5B3E0 */
++  StkId o = luaA_indexAcceptable(L, index);
++  return (o == NULL || ttype(o) != LUA_TTABLE) ? 0 : hvalue(o)->reqsize;
++}
++
++
++void lua_newtablewithid (lua_State *L, int id) {  /* RW 0xB5BB30 */
++  hvalue(L->top) = luaH_new(L, 0, id);
++  ttype(L->top) = LUA_TTABLE;
++  api_incr_top(L);
++}
++
++
++unsigned long lua_ea_serial (lua_State *L, int index) {
++  StkId o = luaA_indexAcceptable(L, index);
++  if (o == NULL) return 0;
++  if (ttype(o) == LUA_TTABLE) return hvalue(o)->serial;
++  if (ttype(o) == LUA_TFUNCTION) return clvalue(o)->serial;
++  return 0;
++}
++
++
++void lua_ea_sethost (lua_State *L, const lua_EA_Host *host) { L->eahost = host; }
++const lua_EA_Host *lua_ea_gethost (lua_State *L) { return L->eahost; }
++void lua_ea_setprofile (lua_State *L, int profile) { L->eaprofile = profile; }
++int lua_ea_getprofile (lua_State *L) { return L->eaprofile; }
++void lua_ea_setnumericmode (lua_State *L, int mode) { L->eanumeric = mode; }
++int lua_ea_getnumericmode (lua_State *L) { return L->eanumeric; }
+ 
+ 
+ 
+--- a/lua-4.0.1/include/lauxlib.h
++++ b/lua-4.0.1/include/lauxlib.h
+@@ -1,3 +1,9 @@
++/* ALTERED SOURCE VERSION. This file is NOT the original Lua 4.0.1 software:
++** it is the pristine file from lua-4.0.1.tar.gz plus the OpenBFME patch layer
++** that reproduces EA's fork of Lua (the BFME/RotWK build). The change list,
++** the evidence for each change and the diff against the pristine file are in
++** engine/src/Libraries/Lua/README.md and engine/src/Libraries/Lua/ea-fork.patch.
++** Altered source versions must be plainly marked as such (Lua copyright notice). */
+ /*
+ ** $Id: lauxlib.h,v 1.30 2000/10/30 12:38:50 roberto Exp $
+ ** Auxiliary functions for building Lua libraries
+@@ -52,10 +58,13 @@
+                                                luaL_argerror(L, numarg,extramsg)
+ #define luaL_check_string(L,n)	(luaL_check_lstr(L, (n), NULL))
+ #define luaL_opt_string(L,n,d)	(luaL_opt_lstr(L, (n), (d), NULL))
+-#define luaL_check_int(L,n)	((int)luaL_check_number(L, n))
+-#define luaL_check_long(L,n)	((long)luaL_check_number(L, n))
+-#define luaL_opt_int(L,n,d)	((int)luaL_opt_number(L, n,d))
+-#define luaL_opt_long(L,n,d)	((long)luaL_opt_number(L, n,d))
++/* EA/OpenBFME: retail converts a number to an int with the CRT _ftol (the low 32 bits of the truncated 64 bit value; RW 0xA3CFA4), `long' is 32 bits there;
++** a C cast of an out of range double is undefined and differs between hosts (lua_ea.h: luaEA_ftol) */
++#include "lua_ea.h"
++#define luaL_check_int(L,n)	(luaEA_ftol(luaL_check_number(L, n)))
++#define luaL_check_long(L,n)	((long)luaEA_ftol(luaL_check_number(L, n)))
++#define luaL_opt_int(L,n,d)	(luaEA_ftol(luaL_opt_number(L, n,d)))
++#define luaL_opt_long(L,n,d)	((long)luaEA_ftol(luaL_opt_number(L, n,d)))
+ #define luaL_openl(L,a)		luaL_openlib(L, a, (sizeof(a)/sizeof(a[0])))
+ 
+ 
+--- a/lua-4.0.1/src/lib/lbaselib.c
++++ b/lua-4.0.1/src/lib/lbaselib.c
+@@ -1,3 +1,9 @@
++/* ALTERED SOURCE VERSION. This file is NOT the original Lua 4.0.1 software:
++** it is the pristine file from lua-4.0.1.tar.gz plus the OpenBFME patch layer
++** that reproduces EA's fork of Lua (the BFME/RotWK build). The change list,
++** the evidence for each change and the diff against the pristine file are in
++** engine/src/Libraries/Lua/README.md and engine/src/Libraries/Lua/ea-fork.patch.
++** Altered source versions must be plainly marked as such (Lua copyright notice). */
+ /*
+ ** $Id: lbaselib.c,v 1.17a 2000/11/06 13:45:18 roberto Exp $
+ ** Basic library
+@@ -14,6 +20,7 @@
+ #include "lua.h"
+ 
+ #include "lauxlib.h"
++#include "lua_ea.h"
+ #include "luadebug.h"
+ #include "lualib.h"
+ 
+@@ -24,7 +31,12 @@
+ ** redefine _ERRORMESSAGE so that it won't need _ALERT.
+ */
+ static int luaB__ALERT (lua_State *L) {
+-  fputs(luaL_check_string(L, 1), stderr);
++  /* EA/OpenBFME: stock writes to stderr. Retail registers its own _ALERT after opening the libraries (RW 0x734E41:
++  ** it builds "LUA Alert: " + message and drops it); this one hands the message to the host (lua_EA_Host.alert),
++  ** which the engine uses to keep a record of it. */
++  const char *msg = luaL_check_string(L, 1);
++  const lua_EA_Host *host = lua_ea_gethost(L);
++  if (host && host->alert) host->alert(host->user, msg);
+   return 0;
+ }
+ 
+@@ -75,11 +87,11 @@
+     s = lua_tostring(L, -1);  /* get result */
+     if (s == NULL)
+       lua_error(L, "`tostring' must return a string to `print'");
+-    if (i>1) fputs("\t", stdout);
+-    fputs(s, stdout);
++    if (i>1) luaEA_log(L, "\t");
++    luaEA_log(L, s);
+     lua_pop(L, 1);  /* pop result */
+   }
+-  fputs("\n", stdout);
++  luaEA_log(L, "\n");
+   return 0;
+ }
+ 
+@@ -96,9 +108,9 @@
+   else {
+     const char *s1 = luaL_check_string(L, 1);
+     char *s2;
+-    unsigned long n;
++    unsigned int n;  /* EA/OpenBFME: retail's strtoul result is 32 bits and is widened as an UNSIGNED value (RW 0xB5FA89-0xB5FAE1) */
+     luaL_arg_check(L, 2 <= base && base <= 36, 2, "base out of range");
+-    n = strtoul(s1, &s2, base);
++    n = luaEA_strtoul(s1, &s2, base);
+     if (s1 != s2) {  /* at least one valid digit? */
+       while (isspace((unsigned char)*s2)) s2++;  /* skip trailing spaces */
+       if (*s2 == '\0') {  /* no invalid trailing characters? */
+@@ -264,9 +276,9 @@
+ 
+ 
+ static int luaB_dofile (lua_State *L) {
+-  int oldtop = lua_gettop(L);
+-  const char *fname = luaL_opt_string(L, 1, NULL);
+-  return passresults(L, lua_dofile(L, fname), oldtop);
++  /* OpenBFME: dofile reads a host file; the port refuses it and reports it (stop S-122) */
++  luaEA_refuse(L, "dofile");
++  return 0;
+ }
+ 
+ 
+@@ -312,19 +324,22 @@
+   char buff[64];
+   switch (lua_type(L, 1)) {
+     case LUA_TNUMBER:
++    case LUA_TBOOLEAN:  /* EA: the boolean is converted by lua_tostring ("true" / "false"), like a number */
+       lua_pushstring(L, lua_tostring(L, 1));
+       return 1;
+     case LUA_TSTRING:
+       lua_pushvalue(L, 1);
+       return 1;
+     case LUA_TTABLE:
+-      sprintf(buff, "table: %p", lua_topointer(L, 1));
++      /* EA/OpenBFME: retail prints the address with %p (MSVCR71: 8 upper case hex digits); the port prints the object's
++      ** creation serial in the same shape, so the text never depends on the heap */
++      sprintf(buff, "table: %08lX", lua_ea_serial(L, 1));
+       break;
+     case LUA_TFUNCTION:
+-      sprintf(buff, "function: %p", lua_topointer(L, 1));
++      sprintf(buff, "function: %08lX", lua_ea_serial(L, 1));
+       break;
+     case LUA_TUSERDATA:
+-      sprintf(buff, "userdata(%d): %p", lua_tag(L, 1), lua_touserdata(L, 1));
++      sprintf(buff, "userdata(%d): %08lX", lua_tag(L, 1), 0UL);
+       break;
+     case LUA_TNIL:
+       lua_pushstring(L, "nil");
+--- a/lua-4.0.1/src/lcode.c
++++ b/lua-4.0.1/src/lcode.c
+@@ -1,3 +1,9 @@
++/* ALTERED SOURCE VERSION. This file is NOT the original Lua 4.0.1 software:
++** it is the pristine file from lua-4.0.1.tar.gz plus the OpenBFME patch layer
++** that reproduces EA's fork of Lua (the BFME/RotWK build). The change list,
++** the evidence for each change and the diff against the pristine file are in
++** engine/src/Libraries/Lua/README.md and engine/src/Libraries/Lua/ea-fork.patch.
++** Altered source versions must be plainly marked as such (Lua copyright notice). */
+ /*
+ ** $Id: lcode.c,v 1.51 2000/09/29 12:42:13 roberto Exp $
+ ** Code generator for Lua
+@@ -334,7 +340,7 @@
+           luaK_adjuststack(fs, 1);
+         }
+         p_nil = code_label(fs, OP_PUSHNILJMP, 0);
+-        p_1 = code_label(fs, OP_PUSHINT, 1);
++        p_1 = code_label(fs, OP_PUSHBOOL, 1);  /* EA: a real `true', not stock's PUSHINT 1 */
+         luaK_patchlist(fs, j, luaK_getlabel(fs));
+       }
+       final = luaK_getlabel(fs);
+@@ -654,6 +660,7 @@
+   {iAB, 0, 0},	/* OP_TAILCALL */
+   {iU, VD, 0},	/* OP_PUSHNIL */
+   {iU, VD, 0},	/* OP_POP */
++  {iS, 1, 0},	/* OP_PUSHBOOL */
+   {iS, 1, 0},	/* OP_PUSHINT */
+   {iU, 1, 0},	/* OP_PUSHSTRING */
+   {iU, 1, 0},	/* OP_PUSHNUM */
+--- a/lua-4.0.1/src/lfunc.c
++++ b/lua-4.0.1/src/lfunc.c
+@@ -1,3 +1,9 @@
++/* ALTERED SOURCE VERSION. This file is NOT the original Lua 4.0.1 software:
++** it is the pristine file from lua-4.0.1.tar.gz plus the OpenBFME patch layer
++** that reproduces EA's fork of Lua (the BFME/RotWK build). The change list,
++** the evidence for each change and the diff against the pristine file are in
++** engine/src/Libraries/Lua/README.md and engine/src/Libraries/Lua/ea-fork.patch.
++** Altered source versions must be plainly marked as such (Lua copyright notice). */
+ /*
+ ** $Id: lfunc.c,v 1.34 2000/10/30 12:20:29 roberto Exp $
+ ** Auxiliary functions to manipulate prototypes and closures
+@@ -23,6 +29,7 @@
+   c->next = L->rootcl;
+   L->rootcl = c;
+   c->mark = c;
++  c->serial = ++L->gcserial;
+   c->nupvalues = nelems;
+   L->nblocks += size;
+   return c;
+--- a/lua-4.0.1/src/lib/liolib.c
++++ b/lua-4.0.1/src/lib/liolib.c
+@@ -1,7 +1,26 @@
++/* ALTERED SOURCE VERSION. This file is NOT the original Lua 4.0.1 software:
++** it is the pristine file from lua-4.0.1.tar.gz plus the OpenBFME patch layer
++** that reproduces EA's fork of Lua (the BFME/RotWK build). The change list,
++** the evidence for each change and the diff against the pristine file are in
++** engine/src/Libraries/Lua/README.md and engine/src/Libraries/Lua/ea-fork.patch.
++** Altered source versions must be plainly marked as such (Lua copyright notice). */
+ /*
+ ** $Id: liolib.c,v 1.91 2000/10/31 13:10:24 roberto Exp $
+ ** Standard I/O (and system) library
+ ** See Copyright Notice in lua.h
++**
++** OpenBFME: this is the structure of stock liolib.c (the 11 `iolib' functions, the 9 `iolibtag' functions with
++** their IOCtrl upvalue and the two tags created by lua_iolibopen, the global handles _STDIN, _STDOUT, _STDERR,
++** _INPUT, _OUTPUT and the `gc' tag method) with every body that touches the host replaced by a refusal:
++**
++**   TARGET (RotWK game.dat, spec lua-scripting.md 2.4): lua_iolibopen RW 0xB5F820 registers the 11 functions of
++**   the table at 0xD0A9A0 (_ERRORMESSAGE = errorfb 0xB5F3E0, clock, date, debug, execute, exit, getenv, remove,
++**   rename, setlocale, tmpname) and then opens the file functions through RW 0xB5F6E0. io.debug is EA's console
++**   callback (luaB_debug.cpp); the rest is stock.
++**   PORT: a file, process, clock, locale or environment function of the host is not available to a script: it
++**   raises a Lua error and reports it to the host (stop S-122), because the port is deterministic (no host time, no
++**   locale, no files). `errorfb' (the traceback _ERRORMESSAGE) is stock and unchanged. Retail data uses none of
++**   these functions (spec 1.5).
+ */
+ 
+ 
+@@ -9,44 +28,13 @@
+ #include <stdio.h>
+ #include <stdlib.h>
+ #include <string.h>
+-#include <time.h>
+ 
+ #include "lua.h"
+ 
+ #include "lauxlib.h"
++#include "lua_ea.h"
+ #include "luadebug.h"
+ #include "lualib.h"
+-
+-
+-#ifndef OLD_ANSI
+-#include <errno.h>
+-#include <locale.h>
+-#define realloc(b,s)    ((b) == NULL ? malloc(s) : (realloc)(b, s))
+-#define free(b)         if (b) (free)(b)
+-#else
+-/* no support for locale and for strerror: fake them */
+-#define setlocale(a,b)	((void)a, strcmp((b),"C")==0?"C":NULL)
+-#define LC_ALL		0
+-#define LC_COLLATE	0
+-#define LC_CTYPE	0
+-#define LC_MONETARY	0
+-#define LC_NUMERIC	0
+-#define LC_TIME		0
+-#define strerror(e)	"generic I/O error"
+-#define errno		(-1)
+-#endif
+-
+-
+-
+-#ifdef POPEN
+-/* FILE *popen();
+-int pclose(); */
+-#define CLOSEFILE(L, f)    ((pclose(f) == -1) ? fclose(f) : 0)
+-#else
+-/* no support for popen */
+-#define popen(x,y) NULL  /* that is, popen always fails */
+-#define CLOSEFILE(L, f)    (fclose(f))
+-#endif
+ 
+ 
+ #define INFILE	0
+@@ -62,60 +50,11 @@
+ 
+ static const char *const filenames[] = {"_INPUT", "_OUTPUT"};
+ 
+-
+-static int pushresult (lua_State *L, int i) {
+-  if (i) {
+-    lua_pushuserdata(L, NULL);
+-    return 1;
+-  }
+-  else {
+-    lua_pushnil(L);
+-    lua_pushstring(L, strerror(errno));
+-    lua_pushnumber(L, errno);
+-    return 3;;
+-  }
+-}
+-
+-
+-/*
+-** {======================================================
+-** FILE Operations
+-** =======================================================
+-*/
+-
+-
+-static FILE *gethandle (lua_State *L, IOCtrl *ctrl, int f) {
+-  void *p = lua_touserdata(L, f);
+-  if (p != NULL) {  /* is `f' a userdata ? */
+-    int ftag = lua_tag(L, f);
+-    if (ftag == ctrl->iotag)  /* does it have the correct tag? */
+-      return (FILE *)p;
+-    else if (ftag == ctrl->closedtag)
+-      lua_error(L, "cannot access a closed file");
+-    /* else go through */
+-  }
+-  return NULL;
+-}
+-
+-
+-static FILE *getnonullfile (lua_State *L, IOCtrl *ctrl, int arg) {
+-  FILE *f = gethandle(L, ctrl, arg);
+-  luaL_arg_check(L, f, arg, "invalid file handle");
+-  return f;
+-}
+-
+-
+-static FILE *getfilebyref (lua_State *L, IOCtrl *ctrl, int inout) {
+-  FILE *f;
+-  lua_getglobals(L);
+-  lua_getref(L, ctrl->ref[inout]);
+-  lua_rawget(L, -2);
+-  f = gethandle(L, ctrl, -1);
+-  if (f == NULL)
+-    luaL_verror(L, "global variable `%.10s' is not a file handle",
+-                filenames[inout]);
+-  return f;
+-}
++/* OpenBFME: the standard handles are userdata whose value stands for the stream: no file is ever used (every operation refuses), and a
++** deterministic value keeps the userdata table's bucket order independent of the C runtime's addresses */
++#define EA_HSTDIN ((FILE *)1)
++#define EA_HSTDOUT ((FILE *)2)
++#define EA_HSTDERR ((FILE *)3)
+ 
+ 
+ static void setfilebyname (lua_State *L, IOCtrl *ctrl, FILE *f,
+@@ -128,458 +67,38 @@
+ #define setfile(L,ctrl,f,inout)	(setfilebyname(L,ctrl,f,filenames[inout]))
+ 
+ 
+-static int setreturn (lua_State *L, IOCtrl *ctrl, FILE *f, int inout) {
+-  if (f == NULL)
+-    return pushresult(L, 0);
+-  else {
+-    setfile(L, ctrl, f, inout);
+-    lua_pushusertag(L, f, ctrl->iotag);
+-    return 1;
+-  }
+-}
+-
+-
+-static int closefile (lua_State *L, IOCtrl *ctrl, FILE *f) {
+-  if (f == stdin || f == stdout || f == stderr)
+-    return 1;
+-  else {
+-    lua_pushusertag(L, f, ctrl->iotag);
+-    lua_settag(L, ctrl->closedtag);
+-    return (CLOSEFILE(L, f) == 0);
+-  }
+-}
+-
+-
+-static int io_close (lua_State *L) {
+-  IOCtrl *ctrl = (IOCtrl *)lua_touserdata(L, -1);
+-  lua_pop(L, 1);  /* remove upvalue */
+-  return pushresult(L, closefile(L, ctrl, getnonullfile(L, ctrl, 1)));
+-}
+-
+-
++/* the handles are only the three standard streams, which are never closed */
+ static int file_collect (lua_State *L) {
+-  IOCtrl *ctrl = (IOCtrl *)lua_touserdata(L, -1);
+-  FILE *f = getnonullfile(L, ctrl, 1);
+-  if (f != stdin && f != stdout && f != stderr)
+-    CLOSEFILE(L, f);
+   return 0;
+ }
+ 
+ 
+-static int io_open (lua_State *L) {
+-  IOCtrl *ctrl = (IOCtrl *)lua_touserdata(L, -1);
+-  FILE *f;
+-  lua_pop(L, 1);  /* remove upvalue */
+-  f = fopen(luaL_check_string(L, 1), luaL_check_string(L, 2));
+-  if (f) {
+-    lua_pushusertag(L, f, ctrl->iotag);
+-    return 1;
+-  }
+-  else
+-    return pushresult(L, 0);
+-}
+-
+-
+-
+-static int io_fromto (lua_State *L, int inout, const char *mode) {
+-  IOCtrl *ctrl = (IOCtrl *)lua_touserdata(L, -1);
+-  FILE *current;
+-  lua_pop(L, 1);  /* remove upvalue */
+-  if (lua_isnull(L, 1)) {
+-    closefile(L, ctrl, getfilebyref(L, ctrl, inout));
+-    current = (inout == 0) ? stdin : stdout;    
+-  }
+-  else if (lua_tag(L, 1) == ctrl->iotag)  /* deprecated option */
+-    current = (FILE *)lua_touserdata(L, 1);
+-  else {
+-    const char *s = luaL_check_string(L, 1);
+-    current = (*s == '|') ? popen(s+1, mode) : fopen(s, mode);
+-  }
+-  return setreturn(L, ctrl, current, inout);
+-}
+-
+-
+-static int io_readfrom (lua_State *L) {
+-  return io_fromto(L, INFILE, "r");
+-}
+-
+-
+-static int io_writeto (lua_State *L) {
+-  return io_fromto(L, OUTFILE, "w");
+-}
+-
+-
+-static int io_appendto (lua_State *L) {
+-  IOCtrl *ctrl = (IOCtrl *)lua_touserdata(L, -1);
+-  FILE *current;
+-  lua_pop(L, 1);  /* remove upvalue */
+-  current = fopen(luaL_check_string(L, 1), "a");
+-  return setreturn(L, ctrl, current, OUTFILE);
+-}
+-
+-
+-
+-/*
+-** {======================================================
+-** READ
+-** =======================================================
+-*/
+-
+-
+-
+-#ifdef LUA_COMPAT_READPATTERN
+-
+-/*
+-** We cannot lookahead without need, because this can lock stdin.
+-** This flag signals when we need to read a next char.
+-*/
+-#define NEED_OTHER (EOF-1)  /* just some flag different from EOF */
+-
+-
+-static int read_pattern (lua_State *L, FILE *f, const char *p) {
+-  int inskip = 0;  /* {skip} level */
+-  int c = NEED_OTHER;
+-  luaL_Buffer b;
+-  luaL_buffinit(L, &b);
+-  while (*p != '\0') {
+-    switch (*p) {
+-      case '{':
+-        inskip++;
+-        p++;
+-        continue;
+-      case '}':
+-        if (!inskip) lua_error(L, "unbalanced braces in read pattern");
+-        inskip--;
+-        p++;
+-        continue;
+-      default: {
+-        const char *ep = luaI_classend(L, p);  /* get what is next */
+-        int m;  /* match result */
+-        if (c == NEED_OTHER) c = getc(f);
+-        m = (c==EOF) ? 0 : luaI_singlematch(c, p, ep);
+-        if (m) {
+-          if (!inskip) luaL_putchar(&b, c);
+-          c = NEED_OTHER;
+-        }
+-        switch (*ep) {
+-          case '+':  /* repetition (1 or more) */
+-            if (!m) goto break_while;  /* pattern fails? */
+-            /* else go through */
+-          case '*':  /* repetition (0 or more) */
+-            while (m) {  /* reads the same item until it fails */
+-              c = getc(f);
+-              m = (c==EOF) ? 0 : luaI_singlematch(c, p, ep);
+-              if (m && !inskip) luaL_putchar(&b, c);
+-            }
+-            /* go through to continue reading the pattern */
+-          case '?':  /* optional */
+-            p = ep+1;  /* continues reading the pattern */
+-            continue;
+-          default:
+-            if (!m) goto break_while;  /* pattern fails? */
+-            p = ep;  /* else continues reading the pattern */
+-        }
+-      }
+-    }
+-  } break_while:
+-  if (c != NEED_OTHER) ungetc(c, f);
+-  luaL_pushresult(&b);  /* close buffer */
+-  return (*p == '\0');
+-}
+-
+-#else
+-
+-#define read_pattern(L, f, p) (lua_error(L, "read patterns are deprecated"), 0)
+-
+-#endif
+-
+-
+-static int read_number (lua_State *L, FILE *f) {
+-  double d;
+-  if (fscanf(f, "%lf", &d) == 1) {
+-    lua_pushnumber(L, d);
+-    return 1;
+-  }
+-  else return 0;  /* read fails */
+-}
+-
+-
+-static int read_word (lua_State *L, FILE *f) {
+-  int c;
+-  luaL_Buffer b;
+-  luaL_buffinit(L, &b);
+-  do { c = fgetc(f); } while (isspace(c));  /* skip spaces */
+-  while (c != EOF && !isspace(c)) {
+-    luaL_putchar(&b, c);
+-    c = fgetc(f);
+-  }
+-  ungetc(c, f);
+-  luaL_pushresult(&b);  /* close buffer */
+-  return (lua_strlen(L, -1) > 0);
+-}
+-
+-
+-static int read_line (lua_State *L, FILE *f) {
+-  int n = 0;
+-  luaL_Buffer b;
+-  luaL_buffinit(L, &b);
+-  for (;;) {
+-    char *p = luaL_prepbuffer(&b);
+-    if (!fgets(p, LUAL_BUFFERSIZE, f))  /* read fails? */
+-      break;
+-    n = strlen(p);
+-    if (p[n-1] != '\n')
+-      luaL_addsize(&b, n); 
+-    else {
+-      luaL_addsize(&b, n-1);  /* do not add the `\n' */
+-      break;
+-    }
+-  }
+-  luaL_pushresult(&b);  /* close buffer */
+-  return (n > 0);  /* read something? */
+-}
+-
+-
+-static void read_file (lua_State *L, FILE *f) {
+-  size_t len = 0;
+-  size_t size = BUFSIZ;
+-  char *buffer = NULL;
+-  for (;;) {
+-    char *newbuffer = (char *)realloc(buffer, size);
+-    if (newbuffer == NULL) {
+-      free(buffer);
+-      lua_error(L, "not enough memory to read a file");
+-    }
+-    buffer = newbuffer;
+-    len += fread(buffer+len, sizeof(char), size-len, f);
+-    if (len < size) break;  /* did not read all it could */
+-    size *= 2;
+-  }
+-  lua_pushlstring(L, buffer, len);
+-  free(buffer);
+-}
+-
+-
+-static int read_chars (lua_State *L, FILE *f, size_t n) {
+-  char *buffer;
+-  size_t n1;
+-  char statbuff[BUFSIZ];
+-  if (n <= BUFSIZ)
+-    buffer = statbuff;
+-  else {
+-    buffer = (char  *)malloc(n);
+-    if (buffer == NULL)
+-      lua_error(L, "not enough memory to read a file");
+-  }
+-  n1 = fread(buffer, sizeof(char), n, f);
+-  lua_pushlstring(L, buffer, n1);
+-  if (buffer != statbuff) free(buffer);
+-  return (n1 > 0 || n == 0);
+-}
+-
+-
+-static int io_read (lua_State *L) {
+-  IOCtrl *ctrl = (IOCtrl *)lua_touserdata(L, -1);
+-  int lastarg = lua_gettop(L) - 1;
+-  int firstarg = 1;
+-  FILE *f = gethandle(L, ctrl, firstarg);
+-  int n;
+-  if (f) firstarg++;
+-  else f = getfilebyref(L, ctrl, INFILE);  /* get _INPUT */
+-  lua_pop(L, 1);
+-  if (firstarg > lastarg) {  /* no arguments? */
+-    lua_settop(L, 0);  /* erase upvalue and other eventual garbage */
+-    firstarg = lastarg = 1;  /* correct indices */
+-    lua_pushstring(L, "*l");  /* push default argument */
+-  }
+-  else  /* ensure stack space for all results and for auxlib's buffer */
+-    luaL_checkstack(L, lastarg-firstarg+1+LUA_MINSTACK, "too many arguments");
+-  for (n = firstarg; n<=lastarg; n++) {
+-    int success;
+-    if (lua_isnumber(L, n))
+-      success = read_chars(L, f, (size_t)lua_tonumber(L, n));
+-    else {
+-      const char *p = luaL_check_string(L, n);
+-      if (p[0] != '*')
+-        success = read_pattern(L, f, p);  /* deprecated! */
+-      else {
+-        switch (p[1]) {
+-          case 'n':  /* number */
+-            if (!read_number(L, f)) goto endloop;  /* read fails */
+-            continue;  /* number is already pushed; avoid the "pushstring" */
+-          case 'l':  /* line */
+-            success = read_line(L, f);
+-            break;
+-          case 'a':  /* file */
+-            read_file(L, f);
+-            success = 1; /* always success */
+-            break;
+-          case 'w':  /* word */
+-            success = read_word(L, f);
+-            break;
+-          default:
+-            luaL_argerror(L, n, "invalid format");
+-            success = 0;  /* to avoid warnings */
+-        }
+-      }
+-    }
+-    if (!success) {
+-      lua_pop(L, 1);  /* remove last result */
+-      break;  /* read fails */
+-    }
+-  } endloop:
+-  return n - firstarg;
+-}
+-
+-/* }====================================================== */
+-
+-
+-static int io_write (lua_State *L) {
+-  int lastarg = lua_gettop(L) - 1;
+-  IOCtrl *ctrl = (IOCtrl *)lua_touserdata(L, -1);
+-  int arg = 1;
+-  int status = 1;
+-  FILE *f = gethandle(L, ctrl, arg);
+-  if (f) arg++;
+-  else f = getfilebyref(L, ctrl, OUTFILE);  /* get _OUTPUT */
+-  for (; arg <=  lastarg; arg++) {
+-    if (lua_type(L, arg) == LUA_TNUMBER) {  /* LUA_NUMBER */
+-      /* optimization: could be done exactly as for strings */
+-      status = status && fprintf(f, "%.16g", lua_tonumber(L, arg)) > 0;
+-    }
+-    else {
+-      size_t l;
+-      const char *s = luaL_check_lstr(L, arg, &l);
+-      status = status && (fwrite(s, sizeof(char), l, f) == l);
+-    }
+-  }
+-  pushresult(L, status);
+-  return 1;
+-}
+-
+-
+-static int io_seek (lua_State *L) {
+-  static const int mode[] = {SEEK_SET, SEEK_CUR, SEEK_END};
+-  static const char *const modenames[] = {"set", "cur", "end", NULL};
+-  IOCtrl *ctrl = (IOCtrl *)lua_touserdata(L, -1);
+-  FILE *f;
+-  int op;
+-  long offset;
+-  lua_pop(L, 1);  /* remove upvalue */
+-  f = getnonullfile(L, ctrl, 1);
+-  op = luaL_findstring(luaL_opt_string(L, 2, "cur"), modenames);
+-  offset = luaL_opt_long(L, 3, 0);
+-  luaL_arg_check(L, op != -1, 2, "invalid mode");
+-  op = fseek(f, offset, mode[op]);
+-  if (op)
+-    return pushresult(L, 0);  /* error */
+-  else {
+-    lua_pushnumber(L, ftell(f));
+-    return 1;
+-  }
+-}
+-
+-
+-static int io_flush (lua_State *L) {
+-  IOCtrl *ctrl = (IOCtrl *)lua_touserdata(L, -1);
+-  FILE *f;
+-  lua_pop(L, 1);  /* remove upvalue */
+-  f = gethandle(L, ctrl, 1);
+-  luaL_arg_check(L, f || lua_isnull(L, 1), 1, "invalid file handle");
+-  return pushresult(L, fflush(f) == 0);
+-}
+-
+-/* }====================================================== */
+-
+-
+-/*
+-** {======================================================
+-** Other O.S. Operations
+-** =======================================================
+-*/
+-
+-static int io_execute (lua_State *L) {
+-  lua_pushnumber(L, system(luaL_check_string(L, 1)));
+-  return 1;
+-}
+-
+-
+-static int io_remove (lua_State *L) {
+-  return pushresult(L, remove(luaL_check_string(L, 1)) == 0);
+-}
+-
+-
+-static int io_rename (lua_State *L) {
+-  return pushresult(L, rename(luaL_check_string(L, 1),
+-                    luaL_check_string(L, 2)) == 0);
+-}
+-
+-
+-static int io_tmpname (lua_State *L) {
+-  lua_pushstring(L, tmpnam(NULL));
+-  return 1;
+-}
+-
+-
+-
+-static int io_getenv (lua_State *L) {
+-  lua_pushstring(L, getenv(luaL_check_string(L, 1)));  /* if NULL push nil */
+-  return 1;
+-}
+-
+-
+-static int io_clock (lua_State *L) {
+-  lua_pushnumber(L, ((double)clock())/CLOCKS_PER_SEC);
+-  return 1;
+-}
+-
+-
+-static int io_date (lua_State *L) {
+-  char b[256];
+-  const char *s = luaL_opt_string(L, 1, "%c");
+-  struct tm *stm;
+-  time_t t;
+-  time(&t); stm = localtime(&t);
+-  if (strftime(b, sizeof(b), s, stm))
+-    lua_pushstring(L, b);
+-  else
+-    lua_error(L, "invalid `date' format");
+-  return 1;
+-}
+-
+-
+-static int setloc (lua_State *L) {
+-  static const int cat[] = {LC_ALL, LC_COLLATE, LC_CTYPE, LC_MONETARY,
+-                      LC_NUMERIC, LC_TIME};
+-  static const char *const catnames[] = {"all", "collate", "ctype", "monetary",
+-     "numeric", "time", NULL};
+-  int op = luaL_findstring(luaL_opt_string(L, 2, "all"), catnames);
+-  luaL_arg_check(L, op != -1, 2, "invalid option");
+-  lua_pushstring(L, setlocale(cat[op], luaL_check_string(L, 1)));
+-  return 1;
+-}
+-
+-
+-static int io_exit (lua_State *L) {
+-  exit(luaL_opt_int(L, 1, EXIT_SUCCESS));
+-  return 0;  /* to avoid warnings */
+-}
+-
+-/* }====================================================== */
+-
+-
+-
+-static int io_debug (lua_State *L) {
+-  for (;;) {
+-    char buffer[250];
+-    fprintf(stderr, "lua_debug> ");
+-    if (fgets(buffer, sizeof(buffer), stdin) == 0 ||
+-        strcmp(buffer, "cont\n") == 0)
+-      return 0;
+-    lua_dostring(L, buffer);
+-    lua_settop(L, 0);  /* remove eventual returns */
+-  }
+-}
++/* the refusals: every function below is registered under its retail name */
++#define REFUSE(fname, name) \
++  static int fname (lua_State *L) { \
++    luaEA_refuse(L, name); \
++    return 0; \
++  }
++
++REFUSE(io_appendto, "appendto")
++REFUSE(io_close, "closefile")
++REFUSE(io_flush, "flush")
++REFUSE(io_open, "openfile")
++REFUSE(io_read, "read")
++REFUSE(io_readfrom, "readfrom")
++REFUSE(io_seek, "seek")
++REFUSE(io_write, "write")
++REFUSE(io_writeto, "writeto")
++REFUSE(io_clock, "clock")
++REFUSE(io_date, "date")
++REFUSE(io_debug, "debug")
++REFUSE(io_execute, "execute")
++REFUSE(io_exit, "exit")
++REFUSE(io_getenv, "getenv")
++REFUSE(io_remove, "remove")
++REFUSE(io_rename, "rename")
++REFUSE(setloc, "setlocale")
++REFUSE(io_tmpname, "tmpname")
+ 
+ 
+ #define LEVELS1	12	/* size of the first part of the stack */
+@@ -700,11 +219,11 @@
+   lua_pushstring(L, filenames[OUTFILE]);
+   ctrl->ref[OUTFILE] = lua_ref(L, 1);
+   /* predefined file handles */
+-  setfile(L, ctrl, stdin, INFILE);
+-  setfile(L, ctrl, stdout, OUTFILE);
+-  setfilebyname(L, ctrl, stdin, "_STDIN");
+-  setfilebyname(L, ctrl, stdout, "_STDOUT");
+-  setfilebyname(L, ctrl, stderr, "_STDERR");
++  setfile(L, ctrl, EA_HSTDIN, INFILE);
++  setfile(L, ctrl, EA_HSTDOUT, OUTFILE);
++  setfilebyname(L, ctrl, EA_HSTDIN, "_STDIN");
++  setfilebyname(L, ctrl, EA_HSTDOUT, "_STDOUT");
++  setfilebyname(L, ctrl, EA_HSTDERR, "_STDERR");
+   /* close files when collected */
+   lua_pushcclosure(L, file_collect, 1);  /* pops `ctrl' from stack */
+   lua_settagmethod(L, ctrl->iotag, "gc");
+--- a/lua-4.0.1/src/llex.c
++++ b/lua-4.0.1/src/llex.c
+@@ -1,3 +1,9 @@
++/* ALTERED SOURCE VERSION. This file is NOT the original Lua 4.0.1 software:
++** it is the pristine file from lua-4.0.1.tar.gz plus the OpenBFME patch layer
++** that reproduces EA's fork of Lua (the BFME/RotWK build). The change list,
++** the evidence for each change and the diff against the pristine file are in
++** engine/src/Libraries/Lua/README.md and engine/src/Libraries/Lua/ea-fork.patch.
++** Altered source versions must be plainly marked as such (Lua copyright notice). */
+ /*
+ ** $Id: llex.c,v 1.72 2000/10/20 16:39:03 roberto Exp $
+ ** Lexical Analyzer
+@@ -31,7 +37,7 @@
+ static const char *const token2string [] = {
+     "and", "break", "do", "else", "elseif", "end", "for",
+     "function", "if", "local", "nil", "not", "or", "repeat", "return", "then",
+-    "until", "while", "", "..", "...", "==", ">=", "<=", "~=", "", "", "<eof>"};
++    "until", "while", "true", "false", "", "..", "...", "==", ">=", "<=", "~=", "", "", "<eof>"};
+ 
+ 
+ void luaX_init (lua_State *L) {
+--- a/lua-4.0.1/src/llex.h
++++ b/lua-4.0.1/src/llex.h
+@@ -1,3 +1,9 @@
++/* ALTERED SOURCE VERSION. This file is NOT the original Lua 4.0.1 software:
++** it is the pristine file from lua-4.0.1.tar.gz plus the OpenBFME patch layer
++** that reproduces EA's fork of Lua (the BFME/RotWK build). The change list,
++** the evidence for each change and the diff against the pristine file are in
++** engine/src/Libraries/Lua/README.md and engine/src/Libraries/Lua/ea-fork.patch.
++** Altered source versions must be plainly marked as such (Lua copyright notice). */
+ /*
+ ** $Id: llex.h,v 1.31 2000/09/27 17:41:58 roberto Exp $
+ ** Lexical Analyzer
+@@ -26,13 +32,14 @@
+   TK_AND = FIRST_RESERVED, TK_BREAK,
+   TK_DO, TK_ELSE, TK_ELSEIF, TK_END, TK_FOR, TK_FUNCTION, TK_IF, TK_LOCAL,
+   TK_NIL, TK_NOT, TK_OR, TK_REPEAT, TK_RETURN, TK_THEN, TK_UNTIL, TK_WHILE,
++  TK_TRUE, TK_FALSE,  /* EA: reserved words of the boolean constants (RW luaX_tokens 0xD0BCE4) */
+   /* other terminal symbols */
+   TK_NAME, TK_CONCAT, TK_DOTS, TK_EQ, TK_GE, TK_LE, TK_NE, TK_NUMBER,
+   TK_STRING, TK_EOS
+ };
+ 
+ /* number of reserved words */
+-#define NUM_RESERVED	((int)(TK_WHILE-FIRST_RESERVED+1))
++#define NUM_RESERVED	((int)(TK_FALSE-FIRST_RESERVED+1))
+ 
+ 
+ typedef union {
+--- a/lua-4.0.1/src/llimits.h
++++ b/lua-4.0.1/src/llimits.h
+@@ -1,3 +1,9 @@
++/* ALTERED SOURCE VERSION. This file is NOT the original Lua 4.0.1 software:
++** it is the pristine file from lua-4.0.1.tar.gz plus the OpenBFME patch layer
++** that reproduces EA's fork of Lua (the BFME/RotWK build). The change list,
++** the evidence for each change and the diff against the pristine file are in
++** engine/src/Libraries/Lua/README.md and engine/src/Libraries/Lua/ea-fork.patch.
++** Altered source versions must be plainly marked as such (Lua copyright notice). */
+ /*
+ ** $Id: llimits.h,v 1.19 2000/10/26 12:47:05 roberto Exp $
+ ** Limits, basic types, and some other "installation-dependent" definitions
+@@ -10,6 +16,8 @@
+ 
+ #include <limits.h>
+ #include <stddef.h>
++
++#include "lua_ea.h"
+ 
+ 
+ 
+@@ -43,10 +51,12 @@
+ 
+ /* function to convert a Number to a string */
+ #define NUMBER_FMT	"%.16g"		/* LUA_NUMBER */
+-#define lua_number2str(s,n)	sprintf((s), NUMBER_FMT, (n))
++/* EA/OpenBFME: retail's text is MSVCR71's printf("%.16g") (lua_ea.h: luaEA_number2str) */
++#define lua_number2str(s,n)	luaEA_number2str((s), (n))
+ 
+ /* function to convert a string to a Number */
+-#define lua_str2number(s,p)	strtod((s), (p))
++/* EA/OpenBFME: MSVCR71's strtod, locale independent (lua_ea.h: luaEA_str2number) */
++#define lua_str2number(s,p)	luaEA_str2number((s), (p))
+ 
+ 
+ 
+@@ -62,7 +72,8 @@
+ ** conversion of pointer to int (for hashing only)
+ ** (the shift removes bits that are usually 0 because of alignment)
+ */
+-#define IntPoint(p)  (((unsigned long)(p)) >> 3)
++/* OpenBFME: 32 bits like retail's, whatever the host's pointer and `long' widths */
++#define IntPoint(p)  ((unsigned long)(unsigned int)(((size_t)(p)) >> 3))
+ 
+ 
+ 
+--- a/lua-4.0.1/src/lib/lmathlib.c
++++ b/lua-4.0.1/src/lib/lmathlib.c
+@@ -1,3 +1,9 @@
++/* ALTERED SOURCE VERSION. This file is NOT the original Lua 4.0.1 software:
++** it is the pristine file from lua-4.0.1.tar.gz plus the OpenBFME patch layer
++** that reproduces EA's fork of Lua (the BFME/RotWK build). The change list,
++** the evidence for each change and the diff against the pristine file are in
++** engine/src/Libraries/Lua/README.md and engine/src/Libraries/Lua/ea-fork.patch.
++** Altered source versions must be plainly marked as such (Lua copyright notice). */
+ /*
+ ** $Id: lmathlib.c,v 1.32 2000/10/31 13:10:24 roberto Exp $
+ ** Standard mathematical library
+@@ -11,6 +17,7 @@
+ #include "lua.h"
+ 
+ #include "lauxlib.h"
++#include "lua_ea.h"
+ #include "lualib.h"
+ 
+ 
+@@ -168,7 +175,9 @@
+ static int math_random (lua_State *L) {
+   /* the '%' avoids the (rare) case of r==1, and is needed also because on
+      some systems (SunOS!) "rand()" may return a value larger than RAND_MAX */
+-  double r = (double)(rand()%RAND_MAX) / (double)RAND_MAX;
++  /* EA/OpenBFME: retail calls the CRT rand() of MSVCR71 (RAND_MAX 0x7FFF, seed 1 until srand); the port keeps that
++  ** generator's state in the Lua state (luaEA_rand), so the sequence never depends on the host or on other code */
++  double r = (double)(luaEA_rand(L)%0x7FFF) / (double)0x7FFF;
+   switch (lua_gettop(L)) {  /* check number of arguments */
+     case 0: {  /* no arguments */
+       lua_pushnumber(L, r);  /* Number between 0 and 1 */
+@@ -194,7 +203,7 @@
+ 
+ 
+ static int math_randomseed (lua_State *L) {
+-  srand(luaL_check_int(L, 1));
++  luaEA_srand(L, (unsigned int)luaL_check_int(L, 1));
+   return 0;
+ }
+ 
+--- a/lua-4.0.1/src/lobject.c
++++ b/lua-4.0.1/src/lobject.c
+@@ -1,3 +1,9 @@
++/* ALTERED SOURCE VERSION. This file is NOT the original Lua 4.0.1 software:
++** it is the pristine file from lua-4.0.1.tar.gz plus the OpenBFME patch layer
++** that reproduces EA's fork of Lua (the BFME/RotWK build). The change list,
++** the evidence for each change and the diff against the pristine file are in
++** engine/src/Libraries/Lua/README.md and engine/src/Libraries/Lua/ea-fork.patch.
++** Altered source versions must be plainly marked as such (Lua copyright notice). */
+ /*
+ ** $Id: lobject.c,v 1.55 2000/10/20 16:36:32 roberto Exp $
+ ** Some generic functions over Lua objects
+@@ -21,8 +27,11 @@
+ const TObject luaO_nilobject = {LUA_TNIL, {NULL}};
+ 
+ 
++/* EA: retail's array has the six stock names and NO seventh entry (RW 0xD0B298..0xD0B2AF, followed directly by the string
++** "table"), so reading the name of a boolean (type(true), an argument error naming a boolean, an ordering error) reads
++** the four bytes 'tabl' as a pointer and crashes. The port names it "boolean" and reports it (lua_typename, stop S-120). */
+ const char *const luaO_typenames[] = {
+-  "userdata", "nil", "number", "string", "table", "function"
++  "userdata", "nil", "number", "string", "table", "function", "boolean"
+ };
+ 
+ 
+@@ -48,6 +57,8 @@
+       return hvalue(t1) == hvalue(t2);
+     case LUA_TFUNCTION:
+       return clvalue(t1) == clvalue(t2);
++    case LUA_TBOOLEAN:  /* EA: RW luaO_equalObj 0xB62310 compares the int at value+8 */
++      return bvalue(t1) == bvalue(t2);
+     default:
+       LUA_ASSERT(ttype(t1) == LUA_TNIL, "invalid type");
+       return 1; /* LUA_TNIL */
+--- a/lua-4.0.1/src/lobject.h
++++ b/lua-4.0.1/src/lobject.h
+@@ -1,3 +1,9 @@
++/* ALTERED SOURCE VERSION. This file is NOT the original Lua 4.0.1 software:
++** it is the pristine file from lua-4.0.1.tar.gz plus the OpenBFME patch layer
++** that reproduces EA's fork of Lua (the BFME/RotWK build). The change list,
++** the evidence for each change and the diff against the pristine file are in
++** engine/src/Libraries/Lua/README.md and engine/src/Libraries/Lua/ea-fork.patch.
++** Altered source versions must be plainly marked as such (Lua copyright notice). */
+ /*
+ ** $Id: lobject.h,v 1.82 2000/10/30 17:49:19 roberto Exp $
+ ** Type definitions for Lua objects
+@@ -10,6 +16,7 @@
+ 
+ #include "llimits.h"
+ #include "lua.h"
++#include "lua_ea.h"
+ 
+ 
+ #ifdef LUA_DEBUG
+@@ -31,12 +38,15 @@
+ #endif
+ 
+ 
+-/* mark for closures active in the stack */
+-#define LUA_TMARK	6
+-
+-
+-/* tags for values visible from Lua == first user-created tag */
+-#define NUM_TAGS	6
++/* mark for closures active in the stack.
++** EA: the BFME build has one more built-in tag than stock 4.0.1 (the boolean,
++** tag 6, see lua_ea.h), so LUA_TMARK is 7 (RW 0xB60D70..: luaD_call stores 7) */
++#define LUA_TMARK	7
++
++
++/* tags for values visible from Lua == first user-created tag
++** EA: 7, stock has 6 (tags 0..5, the boolean being tag 6) */
++#define NUM_TAGS	7
+ 
+ 
+ /* check whether `t' is a mark */
+@@ -49,6 +59,7 @@
+   struct Hash *a;	/* LUA_TTABLE */
+   struct CallInfo *i;	/* LUA_TLMARK */
+   Number n;		/* LUA_TNUMBER */
++  int b;		/* EA: LUA_TBOOLEAN (tag 6): the int at value+8 (RW 0xB5B790) */
+ } Value;
+ 
+ 
+@@ -59,6 +70,7 @@
+ #define clvalue(o)      ((o)->value.cl)
+ #define hvalue(o)       ((o)->value.a)
+ #define infovalue(o)	((o)->value.i)
++#define bvalue(o)       ((o)->value.b)
+ #define svalue(o)       (tsvalue(o)->str)
+ 
+ 
+@@ -88,6 +100,7 @@
+     struct {  /* for userdata */
+       int tag;
+       void *value;
++      unsigned int hash;  /* OpenBFME: deterministic hash (see lstring.c) */
+     } d;
+   } u;
+   size_t len;
+@@ -141,6 +154,7 @@
+   } f;
+   struct Closure *next;
+   struct Closure *mark;  /* marked closures (point to itself when not marked) */
++  unsigned long serial;  /* OpenBFME: creation serial, the deterministic hash (no pointer order) */
+   short isC;  /* 0 for Lua functions, 1 for C functions */
+   short nupvalues;
+   TObject upvalue[1];
+@@ -160,6 +174,8 @@
+   Node *node;
+   int htag;
+   int size;
++  int reqsize;  /* EA: the integer payload of a table (RW luaH_new 0xB649C0 stores it at Hash+0xC); an object handle's id */
++  unsigned long serial;  /* OpenBFME: creation serial, the deterministic hash (no pointer order) */
+   Node *firstfree;  /* this position is free; all positions after it are full */
+   struct Hash *next;
+   struct Hash *mark;  /* marked tables (point to itself when not marked) */
+--- a/lua-4.0.1/src/lopcodes.h
++++ b/lua-4.0.1/src/lopcodes.h
+@@ -1,3 +1,9 @@
++/* ALTERED SOURCE VERSION. This file is NOT the original Lua 4.0.1 software:
++** it is the pristine file from lua-4.0.1.tar.gz plus the OpenBFME patch layer
++** that reproduces EA's fork of Lua (the BFME/RotWK build). The change list,
++** the evidence for each change and the diff against the pristine file are in
++** engine/src/Libraries/Lua/README.md and engine/src/Libraries/Lua/ea-fork.patch.
++** Altered source versions must be plainly marked as such (Lua copyright notice). */
+ /*
+ ** $Id: lopcodes.h,v 1.68 2000/10/24 16:05:59 roberto Exp $
+ ** Opcodes for Lua virtual machine
+@@ -91,6 +97,8 @@
+ OP_PUSHNIL,/*	U	-		nil_1-nil_u			*/
+ OP_POP,/*	U	a_u-a_1		-				*/
+ 
++OP_PUSHBOOL,/*	S	-		(boolean)s			*/
++
+ OP_PUSHINT,/*	S	-		(Number)s			*/
+ OP_PUSHSTRING,/* K	-		KSTR[k]				*/
+ OP_PUSHNUM,/*	N	-		KNUM[n]				*/
+--- a/lua-4.0.1/src/lparser.c
++++ b/lua-4.0.1/src/lparser.c
+@@ -1,3 +1,9 @@
++/* ALTERED SOURCE VERSION. This file is NOT the original Lua 4.0.1 software:
++** it is the pristine file from lua-4.0.1.tar.gz plus the OpenBFME patch layer
++** that reproduces EA's fork of Lua (the BFME/RotWK build). The change list,
++** the evidence for each change and the diff against the pristine file are in
++** engine/src/Libraries/Lua/README.md and engine/src/Libraries/Lua/ea-fork.patch.
++** Altered source versions must be plainly marked as such (Lua copyright notice). */
+ /*
+ ** $Id: lparser.c,v 1.117 2000/11/29 11:57:42 roberto Exp $
+ ** LL(1) Parser and code generator for Lua
+@@ -618,6 +624,16 @@
+       next(ls);
+       break;
+     }
++    case TK_TRUE: {  /* simpleexp -> TRUE (EA) */
++      next(ls);
++      luaK_code1(fs, OP_PUSHBOOL, 1);
++      break;
++    }
++    case TK_FALSE: {  /* simpleexp -> FALSE (EA) */
++      next(ls);
++      luaK_code1(fs, OP_PUSHBOOL, 0);
++      break;
++    }
+     case TK_NIL: {  /* simpleexp -> NIL */
+       luaK_adjuststack(fs, -1);
+       next(ls);
+--- a/lua-4.0.1/src/lstate.c
++++ b/lua-4.0.1/src/lstate.c
+@@ -1,3 +1,9 @@
++/* ALTERED SOURCE VERSION. This file is NOT the original Lua 4.0.1 software:
++** it is the pristine file from lua-4.0.1.tar.gz plus the OpenBFME patch layer
++** that reproduces EA's fork of Lua (the BFME/RotWK build). The change list,
++** the evidence for each change and the diff against the pristine file are in
++** engine/src/Libraries/Lua/README.md and engine/src/Libraries/Lua/ea-fork.patch.
++** Altered source versions must be plainly marked as such (Lua copyright notice). */
+ /*
+ ** $Id: lstate.c,v 1.48 2000/10/30 16:29:59 roberto Exp $
+ ** Global State
+@@ -47,7 +53,7 @@
+     stacksize = DEFAULT_STACK_SIZE;
+   else
+     stacksize += LUA_MINSTACK;
+-  L->gt = luaH_new(L, 10);  /* table of globals */
++  L->gt = luaH_new(L, 10, 0);  /* table of globals */
+   luaD_init(L, stacksize);
+   luaS_init(L);
+   luaX_init(L);
+@@ -87,6 +93,11 @@
+   L->linehook = NULL;
+   L->allowhooks = 1;
+   L->errorJmp = NULL;
++  L->gcserial = 0;
++  L->eanumeric = LUA_EA_NUM_PC24;
++  L->eahost = NULL;
++  L->rngstate = 1;
++  L->eaprofile = LUA_EA_PROFILE_RETAIL;
+   if (luaD_runprotected(L, f_luaopen, &stacksize) != 0) {
+     /* memory allocation error: free partial state */
+     lua_close(L);
+--- a/lua-4.0.1/src/lstate.h
++++ b/lua-4.0.1/src/lstate.h
+@@ -1,3 +1,9 @@
++/* ALTERED SOURCE VERSION. This file is NOT the original Lua 4.0.1 software:
++** it is the pristine file from lua-4.0.1.tar.gz plus the OpenBFME patch layer
++** that reproduces EA's fork of Lua (the BFME/RotWK build). The change list,
++** the evidence for each change and the diff against the pristine file are in
++** engine/src/Libraries/Lua/README.md and engine/src/Libraries/Lua/ea-fork.patch.
++** Altered source versions must be plainly marked as such (Lua copyright notice). */
+ /*
+ ** $Id: lstate.h,v 1.41 2000/10/05 13:00:17 roberto Exp $
+ ** Global State
+@@ -10,6 +16,7 @@
+ #include "lobject.h"
+ #include "lua.h"
+ #include "luadebug.h"
++#include "lua_ea.h"
+ 
+ 
+ 
+@@ -70,6 +77,12 @@
+   lua_Hook callhook;
+   lua_Hook linehook;
+   int allowhooks;
++  /* OpenBFME additions (no retail counterpart): */
++  unsigned long gcserial;  /* creation serial of the last table / closure / userdata: their deterministic hash */
++  int eanumeric;  /* LUA_EA_NUM_DOUBLE / LUA_EA_NUM_PC24 (lua_ea.h) */
++  const struct lua_EA_Host *eahost;  /* print / _ALERT / host report callbacks (lua_ea.h) */
++  int eaprofile;  /* LUA_EA_PROFILE_RETAIL / LUA_EA_PROFILE_ENHANCED */
++  unsigned int rngstate;  /* the CRT rand() state of math.random (MSVCR71: seed 1 until srand) */
+ };
+ 
+ 
+--- a/lua-4.0.1/src/lstring.c
++++ b/lua-4.0.1/src/lstring.c
+@@ -1,3 +1,9 @@
++/* ALTERED SOURCE VERSION. This file is NOT the original Lua 4.0.1 software:
++** it is the pristine file from lua-4.0.1.tar.gz plus the OpenBFME patch layer
++** that reproduces EA's fork of Lua (the BFME/RotWK build). The change list,
++** the evidence for each change and the diff against the pristine file are in
++** engine/src/Libraries/Lua/README.md and engine/src/Libraries/Lua/ea-fork.patch.
++** Altered source versions must be plainly marked as such (Lua copyright notice). */
+ /*
+ ** $Id: lstring.c,v 1.45a 2000/10/30 17:49:19 roberto Exp $
+ ** String table (keeps all strings handled by Lua)
+@@ -44,12 +50,19 @@
+ }
+ 
+ 
+-static unsigned long hash_s (const char *s, size_t l) {
+-  unsigned long h = l;  /* seed */
++/* EA/OpenBFME: retail is a 32 bit build, its `unsigned long' is 32 bits and the hash wraps there; the port uses an explicit 32 bit type so the
++** hash (and with it every table's iteration order) is the same on LP64 and LLP64 hosts */
++static unsigned int hash_s (const char *s, size_t l) {
++  unsigned int h = (unsigned int)l;  /* seed */
+   size_t step = (l>>5)|1;  /* if string is too long, don't hash all its chars */
+   for (; l>=step; l-=step)
+     h = h ^ ((h<<5)+(h>>2)+(unsigned char)*(s++));
+   return h;
++}
++
++
++unsigned int luaEA_stringhash (const char *s, size_t l) {
++  return hash_s(s, l);
+ }
+ 
+ 
+@@ -62,7 +75,7 @@
+     TString *p = tb->hash[i];
+     while (p) {  /* for each node in the list */
+       TString *next = p->nexthash;  /* save next */
+-      unsigned long h = (tb == &L->strt) ? p->u.s.hash : IntPoint(p->u.d.value);
++      unsigned long h = (tb == &L->strt) ? p->u.s.hash : p->u.d.hash;
+       int h1 = h&(newsize-1);  /* new position */
+       LUA_ASSERT(h%newsize == (h&(newsize-1)),
+                     "a&(x-1) == a%x, for x power of 2");
+@@ -89,7 +102,7 @@
+ 
+ 
+ TString *luaS_newlstr (lua_State *L, const char *str, size_t l) {
+-  unsigned long h = hash_s(str, l);
++  unsigned int h = hash_s(str, l);
+   int h1 = h & (L->strt.size-1);
+   TString *ts;
+   for (ts = L->strt.hash[h1]; ts; ts = ts->nexthash) {
+@@ -120,19 +133,29 @@
+   ts->len = s;
+   ts->u.d.tag = 0;
+   ts->u.d.value = (s > 0) ? uts+1 : udata;
++  /* OpenBFME: EVERY userdata (a lua_newuserdata block and a lua_pushusertag record made from a caller's pointer) hashes its creation serial, never
++  ** its address and never the caller's pointer value, so the bucket layout of the udata table, the order the collector visits userdata in
++  ** and the iteration order of a table keyed by them are the same on every host and after any heap history. A pointer / tag pair is found
++  ** again by luaS_createudata through an equality scan, not through a bucket. */
++  ts->u.d.hash = (unsigned int)(++L->gcserial);
+   L->nblocks += sizestring(s);
+  /* insert it on table */
+-  newentry(L, &L->udt, ts, IntPoint(ts->u.d.value) & (L->udt.size-1));
++  newentry(L, &L->udt, ts, ts->u.d.hash & (L->udt.size-1));
+   return ts;
+ }
+ 
+ 
+ TString *luaS_createudata (lua_State *L, void *udata, int tag) {
+-  int h1 = IntPoint(udata) & (L->udt.size-1);
++  /* OpenBFME: the records are bucketed by serial (above), so a repeated pointer / tag pair is found by comparing the pointer of every record.
++  ** The scan order is bucket by bucket, newest first within a bucket: deterministic, and LUA_ANYTAG keeps meaning "the first record of that pointer
++  ** in this order" as in the original, where the chain order was likewise an implementation detail. */
++  int i;
+   TString *ts;
+-  for (ts = L->udt.hash[h1]; ts; ts = ts->nexthash) {
+-    if (udata == ts->u.d.value && (tag == ts->u.d.tag || tag == LUA_ANYTAG))
+-      return ts;
++  for (i=0; i<L->udt.size; i++) {
++    for (ts = L->udt.hash[i]; ts; ts = ts->nexthash) {
++      if (udata == ts->u.d.value && (tag == ts->u.d.tag || tag == LUA_ANYTAG))
++        return ts;
++    }
+   }
+   /* not found */
+   ts = luaS_newudata(L, 0, udata);
+--- a/lua-4.0.1/src/ltable.c
++++ b/lua-4.0.1/src/ltable.c
+@@ -1,3 +1,9 @@
++/* ALTERED SOURCE VERSION. This file is NOT the original Lua 4.0.1 software:
++** it is the pristine file from lua-4.0.1.tar.gz plus the OpenBFME patch layer
++** that reproduces EA's fork of Lua (the BFME/RotWK build). The change list,
++** the evidence for each change and the diff against the pristine file are in
++** engine/src/Libraries/Lua/README.md and engine/src/Libraries/Lua/ea-fork.patch.
++** Altered source versions must be plainly marked as such (Lua copyright notice). */
+ /*
+ ** $Id: ltable.c,v 1.58 2000/10/26 12:47:05 roberto Exp $
+ ** Lua tables (hash)
+@@ -43,19 +49,19 @@
+   unsigned long h;
+   switch (ttype(key)) {
+     case LUA_TNUMBER:
+-      h = (unsigned long)(long)nvalue(key);
++      h = luaEA_numhash(nvalue(key));
+       break;
+     case LUA_TSTRING:
+       h = tsvalue(key)->u.s.hash;
+       break;
+-    case LUA_TUSERDATA:
+-      h = IntPoint(tsvalue(key));
+-      break;
+-    case LUA_TTABLE:
+-      h = IntPoint(hvalue(key));
++    case LUA_TUSERDATA:  /* OpenBFME: the userdata's own deterministic hash, not the address of its TString */
++      h = tsvalue(key)->u.d.hash;
++      break;
++    case LUA_TTABLE:  /* OpenBFME: the creation serial, never the address (deterministic iteration order) */
++      h = hvalue(key)->serial;
+       break;
+     case LUA_TFUNCTION:
+-      h = IntPoint(clvalue(key));
++      h = clvalue(key)->serial;
+       break;
+     default:
+       return NULL;  /* invalid key */
+@@ -82,7 +88,7 @@
+ 
+ /* specialized version for numbers */
+ const TObject *luaH_getnum (const Hash *t, Number key) {
+-  Node *n = &t->node[(unsigned long)(long)key&(t->size-1)];
++  Node *n = &t->node[luaEA_numhash(key)&(t->size-1)];
+   do {
+     if (ttype(&n->key) == LUA_TNUMBER && nvalue(&n->key) == key)
+       return &n->val;
+@@ -173,8 +179,10 @@
+ }
+ 
+ 
+-Hash *luaH_new (lua_State *L, int size) {
++Hash *luaH_new (lua_State *L, int size, int reqsize) {
+   Hash *t = luaM_new(L, Hash);
++  t->reqsize = reqsize;  /* EA: RW 0xB649C0 stores the payload at Hash+0xC */
++  t->serial = ++L->gcserial;
+   t->htag = TagDefault;
+   t->next = L->roottable;
+   L->roottable = t;
+--- a/lua-4.0.1/src/ltable.h
++++ b/lua-4.0.1/src/ltable.h
+@@ -1,3 +1,9 @@
++/* ALTERED SOURCE VERSION. This file is NOT the original Lua 4.0.1 software:
++** it is the pristine file from lua-4.0.1.tar.gz plus the OpenBFME patch layer
++** that reproduces EA's fork of Lua (the BFME/RotWK build). The change list,
++** the evidence for each change and the diff against the pristine file are in
++** engine/src/Libraries/Lua/README.md and engine/src/Libraries/Lua/ea-fork.patch.
++** Altered source versions must be plainly marked as such (Lua copyright notice). */
+ /*
+ ** $Id: ltable.h,v 1.24 2000/08/31 14:08:27 roberto Exp $
+ ** Lua tables (hash)
+@@ -14,7 +20,7 @@
+ #define key(n)		(&(n)->key)
+ #define val(n)		(&(n)->val)
+ 
+-Hash *luaH_new (lua_State *L, int nhash);
++Hash *luaH_new (lua_State *L, int nhash, int reqsize);  /* EA: the extra argument is the table's integer payload */
+ void luaH_free (lua_State *L, Hash *t);
+ const TObject *luaH_get (lua_State *L, const Hash *t, const TObject *key);
+ const TObject *luaH_getnum (const Hash *t, Number key);
+--- a/lua-4.0.1/src/lvm.c
++++ b/lua-4.0.1/src/lvm.c
+@@ -1,3 +1,9 @@
++/* ALTERED SOURCE VERSION. This file is NOT the original Lua 4.0.1 software:
++** it is the pristine file from lua-4.0.1.tar.gz plus the OpenBFME patch layer
++** that reproduces EA's fork of Lua (the BFME/RotWK build). The change list,
++** the evidence for each change and the diff against the pristine file are in
++** engine/src/Libraries/Lua/README.md and engine/src/Libraries/Lua/ea-fork.patch.
++** Altered source versions must be plainly marked as such (Lua copyright notice). */
+ /*
+ ** $Id: lvm.c,v 1.146a 2000/10/26 12:47:05 roberto Exp $
+ ** Lua virtual machine
+@@ -39,6 +45,10 @@
+ 
+ 
+ 
++/* EA: nil and a boolean whose int is 0 are the false values (the 4 conditional jumps test it, RW 0xB63887-0xB63912) */
++#define isfalse(o)	(ttype(o) == LUA_TNIL || (ttype(o) == LUA_TBOOLEAN && bvalue(o) == 0))
++
++
+ int luaV_tonumber (TObject *obj) {
+   if (ttype(obj) != LUA_TSTRING)
+     return 1;
+@@ -52,6 +62,11 @@
+ 
+ 
+ int luaV_tostring (lua_State *L, TObject *obj) {  /* LUA_NUMBER */
++  if (ttype(obj) == LUA_TBOOLEAN) {  /* EA: RW luaV_tostring 0xB625B0 gives "true" / "false" */
++    tsvalue(obj) = luaS_new(L, bvalue(obj) ? "true" : "false");
++    ttype(obj) = LUA_TSTRING;
++    return 0;
++  }
+   if (ttype(obj) != LUA_TNUMBER)
+     return 1;
+   else {
+@@ -274,6 +289,8 @@
+     return (nvalue(l) < nvalue(r));
+   else if (ttype(l) == LUA_TSTRING && ttype(r) == LUA_TSTRING)
+     return (luaV_strcomp(tsvalue(l), tsvalue(r)) < 0);
++  else if (ttype(l) == LUA_TBOOLEAN && ttype(r) == LUA_TBOOLEAN)  /* EA: RW 0xB62CE0, signed int compare */
++    return (bvalue(l) < bvalue(r));
+   else {  /* call TM */
+     luaD_checkstack(L, 2);
+     *top++ = *l;
+@@ -321,7 +338,7 @@
+ 
+ static void luaV_pack (lua_State *L, StkId firstelem) {
+   int i;
+-  Hash *htab = luaH_new(L, 0);
++  Hash *htab = luaH_new(L, 0, 0);
+   for (i=0; firstelem+i<L->top; i++)
+     *luaH_setint(L, htab, i+1) = *(firstelem+i);
+   /* store counter in field `n' */
+@@ -406,6 +423,12 @@
+         top++;
+         break;
+       }
++      case OP_PUSHBOOL: {  /* EA: RW 0xB63160 stores tag 6 and the argument as the int at value+8 */
++        ttype(top) = LUA_TBOOLEAN;
++        bvalue(top) = GETARG_S(i);
++        top++;
++        break;
++      }
+       case OP_PUSHSTRING: {
+         ttype(top) = LUA_TSTRING;
+         tsvalue(top) = kstr[GETARG_U(i)];
+@@ -470,7 +493,7 @@
+       case OP_CREATETABLE: {
+         L->top = top;
+         luaC_checkGC(L);
+-        hvalue(top) = luaH_new(L, GETARG_U(i));
++        hvalue(top) = luaH_new(L, GETARG_U(i), 0);
+         ttype(top) = LUA_TTABLE;
+         top++;
+         break;
+@@ -516,7 +539,7 @@
+         if (tonumber(top-2) || tonumber(top-1))
+           call_arith(L, top, TM_ADD);
+         else
+-          nvalue(top-2) += nvalue(top-1);
++          nvalue(top-2) = luaEA_add(L->eanumeric, nvalue(top-2), nvalue(top-1));
+         top--;
+         break;
+       }
+@@ -527,14 +550,14 @@
+           call_arith(L, top+1, TM_ADD);
+         }
+         else
+-          nvalue(top-1) += (Number)GETARG_S(i);
++          nvalue(top-1) = luaEA_add(L->eanumeric, nvalue(top-1), (Number)GETARG_S(i));
+         break;
+       }
+       case OP_SUB: {
+         if (tonumber(top-2) || tonumber(top-1))
+           call_arith(L, top, TM_SUB);
+         else
+-          nvalue(top-2) -= nvalue(top-1);
++          nvalue(top-2) = luaEA_sub(L->eanumeric, nvalue(top-2), nvalue(top-1));
+         top--;
+         break;
+       }
+@@ -542,7 +565,7 @@
+         if (tonumber(top-2) || tonumber(top-1))
+           call_arith(L, top, TM_MUL);
+         else
+-          nvalue(top-2) *= nvalue(top-1);
++          nvalue(top-2) = luaEA_mul(L->eanumeric, nvalue(top-2), nvalue(top-1));
+         top--;
+         break;
+       }
+@@ -550,7 +573,7 @@
+         if (tonumber(top-2) || tonumber(top-1))
+           call_arith(L, top, TM_DIV);
+         else
+-          nvalue(top-2) /= nvalue(top-1);
++          nvalue(top-2) = luaEA_div(L->eanumeric, nvalue(top-2), nvalue(top-1));
+         top--;
+         break;
+       }
+@@ -578,9 +601,17 @@
+         break;
+       }
+       case OP_NOT: {
+-        ttype(top-1) =
+-           (ttype(top-1) == LUA_TNIL) ? LUA_TNUMBER : LUA_TNIL;
+-        nvalue(top-1) = 1;
++        /* EA (RW 0xB63759): the tag is overwritten with the boolean tag FIRST and the truth value of the operand is
++        ** read afterwards, so it is read from a value that already has tag 6: nil and numbers are tested through the
++        ** int at value+8 like a boolean. The result is then stored through the NUMBER member (`fild; fstp qword'), a
++        ** double 1.0 or 0.0 whose low word, the int a boolean reads, is 0 in both cases. Whatever the operand, the
++        ** value `not x' leaves on the stack is a boolean that tests false. (The compiler removes the OP_NOT in
++        ** `if not x then' and `while not x do': OP_NOT + OP_JMPF is rewritten to OP_JMPT; only `not' used as a
++        ** value reaches this code.) */
++        int truthy;
++        ttype(top-1) = LUA_TBOOLEAN;
++        truthy = bvalue(top-1);  /* retail's truth test (nil -> 0, tag 6 -> its int, else 1) sees tag 6 here */
++        nvalue(top-1) = (Number)(truthy == 0);
+         break;
+       }
+       case OP_JMPNE: {
+@@ -613,21 +644,23 @@
+         if (!luaV_lessthan(L, top, top+1, top+2)) dojump(pc, i);
+         break;
+       }
+-      case OP_JMPT: {
+-        if (ttype(--top) != LUA_TNIL) dojump(pc, i);
+-        break;
+-      }
+-      case OP_JMPF: {
+-        if (ttype(--top) == LUA_TNIL) dojump(pc, i);
+-        break;
+-      }
+-      case OP_JMPONT: {
+-        if (ttype(top-1) == LUA_TNIL) top--;
++      case OP_JMPT: {  /* EA: false (a boolean with int 0) counts as nil: RW 0xB63887 */
++        top--;
++        if (!isfalse(top)) dojump(pc, i);
++        break;
++      }
++      case OP_JMPF: {  /* RW 0xB638AF */
++        top--;
++        if (isfalse(top)) dojump(pc, i);
++        break;
++      }
++      case OP_JMPONT: {  /* RW 0xB638CF */
++        if (isfalse(top-1)) top--;
+         else dojump(pc, i);
+         break;
+       }
+-      case OP_JMPONF: {
+-        if (ttype(top-1) != LUA_TNIL) top--;
++      case OP_JMPONF: {  /* RW 0xB638F3 */
++        if (!isfalse(top-1)) top--;
+         else dojump(pc, i);
+         break;
+       }
+@@ -635,8 +668,10 @@
+         dojump(pc, i);
+         break;
+       }
+-      case OP_PUSHNILJMP: {
+-        ttype(top++) = LUA_TNIL;
++      case OP_PUSHNILJMP: {  /* EA: RW 0xB63917 pushes a boolean false, not nil */
++        bvalue(top) = 0;
++        ttype(top) = LUA_TBOOLEAN;
++        top++;
+         pc++;
+         break;
+       }
+@@ -660,7 +695,7 @@
+         LUA_ASSERT(ttype(top-2) == LUA_TNUMBER, "invalid limit");
+         if (ttype(top-3) != LUA_TNUMBER)
+           lua_error(L, "`for' index must be a number");
+-        nvalue(top-3) += nvalue(top-1);  /* increment index */
++        nvalue(top-3) = luaEA_add(L->eanumeric, nvalue(top-3), nvalue(top-1));  /* increment index */
+         if (nvalue(top-1) > 0 ?
+             nvalue(top-3) > nvalue(top-2) :
+             nvalue(top-3) < nvalue(top-2))

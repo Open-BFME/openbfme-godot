@@ -80,8 +80,24 @@ game/src/retail_slice/*.pending
 # Transient test-run logs (pytest/godot runners), never part of the repo.
 *.log
 
+# Archived legacy codebase: the same local-only paths, one level down
+archive/game/.godot/
+archive/game/*.translation
+archive/game/export/
+archive/game/exports/
+archive/game/.import/
+archive/game/.captures/
+archive/game/workspace/
+archive/game/src/retail_slice/*.pending
+archive/importer/.ruff_cache/
+
 # Fleet tools: machine-local state
 workspace/attempts/
 workspace/locks/
 workspace/fleet/
 workspace/agents/
+
+# Rebuild: engine build tree, Godot import cache, built GDExtension binaries
+/engine/build/
+/godot/.godot/
+/godot/bin/

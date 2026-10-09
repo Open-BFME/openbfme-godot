@@ -1,6 +1,0 @@
-# Pass-2 deletion candidates. Delete only what `audit_deps.py --list this --check` reports FREE,
-# or after rewriting the consumer it names. See docs/REORG-PLAN.md section 3.
-# Kept on 2026-09-01 after audit: proof-gate-common.ps1 (angmar thrall runner), module-coverage-report.py
-# (census test), onboard.py (human wizard), rotwk_full_content.py (bat + tests), game/data/*.json (runtime data).
-# examples/mods stays: ambient_mod_clean_runner mounts it explicitly as its fixture.
-# 2026-09-01: base asset trees deleted after boot + slice proofs (see docs/lessons.md). Nothing left on this list.

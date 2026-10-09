@@ -1,0 +1,8 @@
+{
+  "schema": "openbfme.retail-archive-exclusions",
+  "schemaVersion": 1,
+  "game": "bfme2",
+  "patch": "1.06",
+  "note": "No known non-retail archives. Any archive in a BFME2 install that is not in the 1.06 policy stops mounting.",
+  "archives": []
+}

@@ -1,0 +1,102 @@
+offset	field_names	parse_kinds	ctor_default_hex	ctor_default_typed	ctor_store_va	role_or_note
+0x0	(not in table)		0xc18428	12682280	0x6cdea0	vtable pointer (0xC18428)
+0x4	(not in table)		0x0	0	0x6cdea6	override link: newOverride (0x6CECC6) stores the overridden template here; copy-assign copies it
+0x8	(not in table)		0x0	0	0x6cdeac	AsciiString name (ctor default literal "NoNameWeapon", then set by the store from the block name)
+0xc	(not in table)		0x0	0	0x6cdf8c	NameKeyType = TheNameKeyGenerator.nameToKey(name) (0x49F474); the store looks templates up by this key
+0x10	FXTrigger	parseIndexList	0x0	0	0x6cdf95	
+0x14	AttackRange	parseReal	0x0	0f	0x6cdf3a	
+0x18	MinimumAttackRange	parseReal	0x0	0f	0x6cdf3f	
+0x1c	RangeBonusMinHeight	parseReal	0x0	0f	0x6cdf44	
+0x20	RangeBonus	parseReal	0x0	0f	0x6cdf49	
+0x24	RangeBonusPerFoot	parseReal	0x0	0f	0x6cdf4e	
+0x28	RequestAssistRange	parseReal	0x0	0f	0x6cdf53	
+0x2c	AcceptableAimDelta	parseAngleReal	0x0	0f	0x6cdf58	
+0x30	AimDirection	parseAngleReal	0x0	0f	0x6cdf5d	
+0x34	ScatterRadius	parseReal	0x0	0f	0x6cdf62	
+0x38	ScatterTargetScalar	parseReal	0x0	0f	0x6cdf67	
+0x3c	ScatterIndependently	parseBool	0x0	false	0x6cdf8f	
+0x3d	DisableScatterForTargetsOnWall	parseBool	0x0	false	0x6cdf92	
+0x58	DamageType	parseIndexList	0x16	22	0x6cdf98	
+0x5c	DeathType	parseIndexList	0x0	0	0x6cdf9f	
+0x60	DamageFXType	parseIndexList	0x1d	29	0x6cdfa2	
+0x64	DamageSubType	parseIndexList	0x0	0	0x6cdfa9	
+0x68	WeaponSpeed	parseVelocityReal	0x497423f0	999999f	0x6cdfac	
+0x6c	MinWeaponSpeed	parseVelocityReal	0x497423f0	999999f	0x6cdfb1	
+0x70	MaxWeaponSpeed	parseVelocityReal	0x497423f0	999999f	0x6cdfb6	
+0x74	ScaleWeaponSpeed	parseBool	0x0	false	0x6cdfbb	
+0x75	CanBeDodged	parseBool	0x0	false	0x6cdfbe	
+0x78	IdleAfterFiringDelay	parseDurationUnsignedInt	0xffffffff	4294967295	0x6cdf36	|= 0xffffffff (or -1: all bits set)
+0x7c	HoldAfterFiringDelay	parseDurationUnsignedInt	0x0	0	0x6cdfc1	
+0x80	HoldDuringReload	parseBool	0x0	false	0x6cdfd4	
+0x81	CanFireWhileMoving	parseBool	0x0	false	0x6cdfce	
+0x82	CanFireWhileCharging	parseBool	0x0	false	0x6cdfda	
+0x83	CanSwoop	parseBool	0x0	false	0x6cdfe0	
+0x84	WeaponRecoil	parseAngleReal	0x0	0f	0x6cdf6c	
+0x88	MinTargetPitch	parseAngleReal	0xc0490fdb	-3.14159f	0x6cdf7c	
+0x8c	MaxTargetPitch	parseAngleReal	0x40490fdb	3.14159f	0x6cdfc6	
+0x90	PreferredTargetBone	parseAsciiString	0x0	0	0x6cdec9	
+0x94	ProjectileExhaust|VeterancyProjectileExhaust	parseProjectileExhaust|parseVeterancyProjectileExhaust	0x0	0	0x6cdfed	
+0xa4	FireFX|VeterancyFireFX	parseFireFX|parseVeterancyFireFX	0x0	0	0x6cdff0	
+0xb4	FireFlankFX	parseFXList	0x0	0	0x6ce009	
+0xb8	PreAttackFX	parseFireFX	0x0	0	0x6cdff2	
+0xc8	FireSound	parseAudioEventRTS	0x0	0	0x6cdecf	
+0xcc	FireSoundLoopTime	parseDurationUnsignedInt	0x0	0	0x6ce0be	
+0xd0	OverrideVoiceAttackSound	parseDynamicAudioEventRTS_noEVA				dynamic audio pair {int id=-1; smart ptr} (OverrideVoiceAttackSound); no constructor store
+0xd8	OverrideVoiceEnterStateAttackSound	parseDynamicAudioEventRTS_noEVA				dynamic audio pair {int id=-1; smart ptr} (OverrideVoiceEnterStateAttackSound); no constructor store
+0xe0	(not in table)		0x0	0	0x6ce0c4	WeaponBonusSet* (0x210 bytes), null until the first WeaponBonus line (parse 0x6CB5AB)
+0xe4	ClipSize	parseInt	0x0	0	0x6ce088	
+0xe8	(not in table)		0x0	0	0x6ce0a6	ClipReloadTime min (frames), set by custom parse 0x6C9E7A
+0xec	(not in table)		0x0	0	0x6ce0ac	ClipReloadTime max (frames), set by custom parse 0x6C9E7A
+0xf0	(not in table)		0x0	0	0x6ce0b2	DelayBetweenShots min (frames), set by custom parse 0x6C9D99
+0xf4	(not in table)		0x0	0	0x6ce0b8	DelayBetweenShots max (frames), set by custom parse 0x6C9D99
+0xf8	ContinuousFireOne	parseInt	0x7fffffff	2147483647	0x6ce08e	
+0xfc	ContinuousFireTwo	parseInt	0x7fffffff	2147483647	0x6ce094	
+0x100	ContinuousFireCoast	parseDurationUnsignedInt	0x0	0	0x6ce09a	
+0x104	AutoReloadWhenIdle	parseDurationUnsignedInt	0x0	0	0x6ce0a0	
+0x108	ShotsPerBarrel	parseInt	0x1	1	0x6ce0ca	
+0x10c	AntiAirborneVehicle|AntiGround|AntiProjectile|AntiSmallMissile|AntiMine|AntiParachute|AntiAirborneInfantry|AntiAirborneMonster|AntiBallisticMissile|AntiStructure	parseBitInInt32|parseBitInInt32|parseBitInInt32|parseBitInInt32|parseBitInInt32|parseBitInInt32|parseBitInInt32|parseBitInInt32|parseBitInInt32|parseBitInInt32	0x2	2	0x6ce0d4	
+0x110	RadiusDamageAffects	parseBitString32	0xe	14	0x6ce062	
+0x114	(not in table)		0x0	0	0x6ce06c	flag byte: set to 1 by DamageNugget/DamageFieldNugget/DOTNugget parse, cleared by ClearNuggets; read at 0x6C9B4C (weapon-set summary byte +0x35)
+0x118	ProjectileCollidesWith	parseBitString32	0x8	8	0x6ce072	
+0x11c	DamageDealtAtSelfPosition	parseBool	0x0	false	0x6ce00f	
+0x120	ProjectileFilterInContainer	parseObjectFilter				no constructor store
+0x124	ProjectileSelf	parseBool	0x0	false	0x6ce050	
+0x125	MeleeWeapon	parseBool	0x0	false	0x6ce056	
+0x126	ChaseWeapon	parseBool	0x0	false	0x6ce05c	
+0x128	AutoReloadsClip	parseIndexList	0x0	0	0x6ce07c	
+0x12c	PreAttackType	parseIndexList	0x0	0	0x6ce082	
+0x130	LeechRangeWeapon	parseBool	0x0	false	0x6ce0de	
+0x131	HitStoredTarget	parseBool	0x0	false	0x6ce0e4	
+0x132	CapableOfFollowingWaypoints	parseBool	0x0	false	0x6ce0ea	
+0x133	ShowsAmmoPips	parseBool	0x0	false	0x6ce0f0	
+0x134	AllowAttackGarrisonedBldgs	parseBool	0x0	false	0x6ce0f6	
+0x135	PlayFXWhenStealthed	parseBool	0x0	false	0x6ce0fc	
+0x138	PreAttackDelay	parseDurationUnsignedInt	0x0	0	0x6ce10e	
+0x13c	PreAttackRandomAmount	parseDurationUnsignedInt	0x0	0	0x6ce114	
+0x140	PassengerProportionalAttack	parseBool	0x0	false	0x6ce102	
+0x141	MaxAttackPassengers	parseInt	0x0	0	0x6ce108	
+0x144	FiringDuration	parseDurationUnsignedInt	0x0	0	0x6ce11a	
+0x148	ContinueAttackRange	parseReal	0x0	0f	0x6ce120	
+0x14c	ScatterRadiusVsInfantry	parseReal	0x0	0f	0x6ce128	
+0x150	SuspendFXDelay	parseDurationUnsignedInt	0x0	0	0x6ce130	
+0x154	IgnoreLinearFirstTarget	parseBool	0x0	false	0x6ce136	
+0x155	ForceDisplayPercentReady	parseBool	0x0	false	0x6ce13c	
+0x156	IsAimingWeapon	parseBool	0x0	false	0x6ce142	
+0x157	(not in table)		0x0	0	0x6ce148	flag byte: set to 1 by GrabNugget parse (NOT cleared by ClearNuggets); getter 0x6C9BFF, read at 0x6CA3DF
+0x158	HitPercentage	parsePercentToReal	0x3f800000	1f	0x6ce14e	
+0x15c	HitPassengerPercentage	parsePercentToReal	0x0	0f	0x6ce156	
+0x160	(not in table)		0x0	0	0x6ce15e	isOverride byte: 1 on templates made by newOverride; appendNugget copies it to nugget+0x144
+0x161	FinishAttackOnceStarted	parseBool	0x1	true	0x6ce164	
+0x164	RestrictedHeightRange	parseReal	0x0	0f	0x6ce16b	
+0x168	CannotTargetCastleVictims	parseBool	0x0	false	0x6ce173	
+0x169	RequireFollowThru	parseBool	0x0	false	0x6ce179	
+0x16a	ShareTimers	parseBool	0x0	false	0x6ce17f	
+0x16b	NoVictimNeeded	parseBool	0x0	false	0x6ce185	
+0x16c	RotatingTurret	parseBool	0x0	false	0x6ce18b	
+0x16d	ShouldPlayUnderAttackEvaEvent	parseBool	0x1	true	0x6ce191	
+0x16e	InstantLoadClipOnActivate	parseBool	0x0	false	0x6ce198	
+0x16f	LockWhenUsing	parseBool	0x0	false	0x6ce19e	
+0x170	BombardType	parseBool	0x0	false	0x6ce1a4	
+0x171	UseInnateAttributes	parseBool	0x0	false	0x6ce1aa	
+0x174	(not in table)		0xffffffff	-1	0x6ce03e	int, ctor -1; copy-assign copies it; type-5 reload path writes 1 (retired template) / 0 (replacement); setter 0x6C9C14; |= 0xffffffff (or -1: all bits set)
+0x178	ProjectileStreamName	parseAsciiString	0x0	0	0x6cdf02	

@@ -1,0 +1,7 @@
+idx	token	parse_va	parse_kind	userdata	offset	userdata_list
+0	Radius	0x42ed00	parseReal	0x0	0x148	
+1	Duration	0x73a429	parseDurationUnsignedInt	0x0	0x14c	
+2	DamageArc	0x42ee15	parseAngleReal	0x0	0x150	
+3	ParalyzeFX	0x73a302	parseFXList	0x0	0x154	
+4	FreezeAnimation	0x42e558	parseBool	0x0	0x158	
+5	AffectHordeMembers	0x42e558	parseBool	0x0	0x159	

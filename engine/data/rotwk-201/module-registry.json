@@ -1,0 +1,9073 @@
+{
+ "addModuleSites": 330,
+ "binary": "RotWK 2.01 game.dat (stop S-001: community-modified image)",
+ "classes": [
+  {
+   "create": "0x64f7c6",
+   "createData": "0x64f7fe",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 1,
+   "name": "AIGateUpdate",
+   "sites": [
+    "0x657ca2"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc6d0c4"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc07a30"
+  },
+  {
+   "create": "0x64fad8",
+   "createData": "0x64fb10",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 1,
+   "name": "AISpecialPowerUpdate",
+   "sites": [
+    "0x65a1d2"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc6dad0"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc6db40"
+  },
+  {
+   "create": "0x64baa0",
+   "createData": "0x64badb",
+   "extra": "0x0",
+   "isAiModuleData": true,
+   "mask": 17,
+   "name": "AIUpdateInterface",
+   "sites": [
+    "0x659232"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc0f530"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc10440"
+  },
+  {
+   "create": "0x650dbc",
+   "createData": "0x650df4",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 17,
+   "name": "AODCrushCollide",
+   "sites": [
+    "0x65af0e"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc710a8"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc70f50"
+  },
+  {
+   "create": "0x64b80a",
+   "createData": "0x64b845",
+   "extra": "0x87d91c",
+   "isAiModuleData": false,
+   "mask": 95,
+   "name": "AODHordeContain",
+   "sites": [
+    "0x6582d3"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc59f30"
+    },
+    {
+     "extra": 8,
+     "table": "0xc76bd8"
+    },
+    {
+     "extra": 0,
+     "table": "0xc5abd8"
+    },
+    {
+     "extra": 0,
+     "table": "0xc5bb50"
+    },
+    {
+     "extra": 0,
+     "table": "0xc5ce50"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc5cc70"
+  },
+  {
+   "create": "0x652fa5",
+   "createData": "0x656ac2",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 1,
+   "name": "ActivateModuleSpecialPower",
+   "sites": [
+    "0x65ab54"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc55f40"
+    },
+    {
+     "extra": 0,
+     "table": "0xc769a0"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc0a1f0"
+  },
+  {
+   "create": "0x65114b",
+   "createData": "0x651186",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 32,
+   "name": "ActiveBody",
+   "sites": [
+    "0x65b120"
+   ],
+   "slot7": true,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc71d68"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc71af8"
+  },
+  {
+   "create": "0x64adac",
+   "createData": "0x64ade4",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 1,
+   "name": "AimWeaponBehavior",
+   "sites": [
+    "0x657df2"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc58178"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc07a30"
+  },
+  {
+   "create": "0x650650",
+   "createData": "0x6545bd",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 132,
+   "name": "AllowBannerSpawnUpgrade",
+   "sites": [
+    "0x65a8d2"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 8,
+     "table": "0xc76ad8"
+    },
+    {
+     "extra": 0,
+     "table": "0xc84858"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc6eac8"
+  },
+  {
+   "create": "0x64bb7e",
+   "createData": "0x64bbb9",
+   "extra": "0x0",
+   "isAiModuleData": true,
+   "mask": 17,
+   "name": "AnimalAIUpdate",
+   "sites": [
+    "0x659f1e"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc0f530"
+    },
+    {
+     "extra": 0,
+     "table": "0xc04ee8"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc2def8"
+  },
+  {
+   "create": "0x64c4ca",
+   "createData": "0x654ad2",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 10,
+   "name": "AnnounceBirthAndDeathBehavior",
+   "sites": [
+    "0x6587e7"
+   ],
+   "slot7": false,
+   "tables": [],
+   "type": 0,
+   "vtable": "0xc07a30"
+  },
+  {
+   "create": "0x64fb61",
+   "createData": "0x654341",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 132,
+   "name": "ArmorUpgrade",
+   "sites": [
+    "0x65a27a"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 8,
+     "table": "0xc76ad8"
+    },
+    {
+     "extra": 0,
+     "table": "0xd9f8b0"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc6eac8"
+  },
+  {
+   "create": "0x64d29f",
+   "createData": "0x64d2da",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 1,
+   "name": "ArrowStormUpdate",
+   "sites": [
+    "0x6595c4"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc55f40"
+    },
+    {
+     "extra": 0,
+     "table": "0xc05168"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc63dd0"
+  },
+  {
+   "create": "0x64cf3c",
+   "createData": "0x64cf77",
+   "extra": "0x0",
+   "isAiModuleData": true,
+   "mask": 17,
+   "name": "AssaultTransportAIUpdate",
+   "sites": [
+    "0x658d2a"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc0f530"
+    },
+    {
+     "extra": 0,
+     "table": "0xc050d4"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc2def8"
+  },
+  {
+   "create": "0x64c8ea",
+   "createData": "0x653986",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 1,
+   "name": "AssistedTargetingUpdate",
+   "sites": [
+    "0x658af7"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc618a0"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc07a30"
+  },
+  {
+   "create": "0x64d573",
+   "createData": "0x64d5ab",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 1,
+   "name": "AttachUpdate",
+   "sites": [
+    "0x65994c"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc643b8"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc64488"
+  },
+  {
+   "create": "0x64e30c",
+   "createData": "0x64e344",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 129,
+   "name": "AttributeModifierAuraUpdate",
+   "sites": [
+    "0x659ac2"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 40,
+     "table": "0xc76ad8"
+    },
+    {
+     "extra": 0,
+     "table": "0xc67640"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc67760"
+  },
+  {
+   "create": "0x64c3c8",
+   "createData": "0x654ad2",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 1,
+   "name": "AttributeModifierPoolUpdate",
+   "sites": [
+    "0x65a091"
+   ],
+   "slot7": false,
+   "tables": [],
+   "type": 0,
+   "vtable": "0xc07a30"
+  },
+  {
+   "create": "0x650334",
+   "createData": "0x6555b0",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 132,
+   "name": "AttributeModifierUpgrade",
+   "sites": [
+    "0x65a6da"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 8,
+     "table": "0xc76ad8"
+    },
+    {
+     "extra": 0,
+     "table": "0xc6f478"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc09b50"
+  },
+  {
+   "create": "0x6504fa",
+   "createData": "0x650532",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 131,
+   "name": "AudioLoopUpgrade",
+   "sites": [
+    "0x65a82a"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 20,
+     "table": "0xc76ad8"
+    },
+    {
+     "extra": 324,
+     "table": "0xc76bd8"
+    },
+    {
+     "extra": 0,
+     "table": "0xc6f9f8"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc6f958"
+  },
+  {
+   "create": "0x64ac9a",
+   "createData": "0x64acd2",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 1,
+   "name": "AutoAbilityBehavior",
+   "sites": [
+    "0x657d82"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc57ec0"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc57d98"
+  },
+  {
+   "create": "0x64e1d5",
+   "createData": "0x653f1f",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 1,
+   "name": "AutoDepositUpdate",
+   "sites": [
+    "0x658fca"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc07fd8"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc07ed8"
+  },
+  {
+   "create": "0x64db9f",
+   "createData": "0x64dbd7",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 1,
+   "name": "AutoFindHealingUpdate",
+   "sites": [
+    "0x658b2f"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc653a0"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc07a30"
+  },
+  {
+   "create": "0x64a5c9",
+   "createData": "0x656648",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 133,
+   "name": "AutoHealBehavior",
+   "sites": [
+    "0x657a03"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc09f70"
+    },
+    {
+     "extra": 8,
+     "table": "0xc76ad8"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc07a30"
+  },
+  {
+   "create": "0x64dd3a",
+   "createData": "0x64dd72",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 1,
+   "name": "AutoPickUpUpdate",
+   "sites": [
+    "0x6593b2"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc65b60"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc657b0"
+  },
+  {
+   "create": "0x64de4c",
+   "createData": "0x64de84",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 1,
+   "name": "BannerCarrierUpdate",
+   "sites": [
+    "0x659486"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc66090"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc65f18"
+  },
+  {
+   "create": "0x64fb99",
+   "createData": "0x64fbd1",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 132,
+   "name": "BaseUpgrade",
+   "sites": [
+    "0x65a2b2"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 8,
+     "table": "0xc76ad8"
+    },
+    {
+     "extra": 0,
+     "table": "0xc6deb8"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc6de00"
+  },
+  {
+   "create": "0x64ded5",
+   "createData": "0x64df10",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 1,
+   "name": "BattlePlanUpdate",
+   "sites": [
+    "0x6594bb"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc66600"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc661a8"
+  },
+  {
+   "create": "0x64ae35",
+   "createData": "0x64ae70",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 17,
+   "name": "BezierProjectileBehavior",
+   "sites": [
+    "0x657e2a"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc58368"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc07a30"
+  },
+  {
+   "create": "0x64a4ab",
+   "createData": "0x64a4e3",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 1,
+   "name": "BloodthirstyUpdate",
+   "sites": [
+    "0x65a05c"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc557b0"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc557f0"
+  },
+  {
+   "create": "0x650ab5",
+   "createData": "0x65428c",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 4,
+   "name": "BoneFXDamage",
+   "sites": [
+    "0x65ad66"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc84858"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc07a30"
+  },
+  {
+   "create": "0x64c922",
+   "createData": "0x6539db",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 1,
+   "name": "BoneFXUpdate",
+   "sites": [
+    "0x659e4a"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc073f0"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc619a0"
+  },
+  {
+   "create": "0x64ddc3",
+   "createData": "0x64ddfb",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 1,
+   "name": "BoredUpdate",
+   "sites": [
+    "0x6593e7"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc65cc0"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc65c38"
+  },
+  {
+   "create": "0x64a8ed",
+   "createData": "0x64a928",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 7,
+   "name": "BridgeBehavior",
+   "sites": [
+    "0x657b52"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc57338"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc57228"
+  },
+  {
+   "create": "0x64a97d",
+   "createData": "0x654ad2",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 1,
+   "name": "BridgeScaffoldBehavior",
+   "sites": [
+    "0x657b8a"
+   ],
+   "slot7": false,
+   "tables": [],
+   "type": 0,
+   "vtable": "0xc07a30"
+  },
+  {
+   "create": "0x64a9b5",
+   "createData": "0x708243",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 6,
+   "name": "BridgeTowerBehavior",
+   "sites": [
+    "0x657bc2"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0x0"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc07a30"
+  },
+  {
+   "create": "0x64e8d5",
+   "createData": "0x6551ee",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 129,
+   "name": "BroadcastStealthUpdate",
+   "sites": [
+    "0x658ba2"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 48,
+     "table": "0xc76ad8"
+    },
+    {
+     "extra": 0,
+     "table": "0xc68cb0"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc09850"
+  },
+  {
+   "create": "0x650618",
+   "createData": "0x654571",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 132,
+   "name": "BuildableHeroListUpgrade",
+   "sites": [
+    "0x65a89a"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 8,
+     "table": "0xc76ad8"
+    },
+    {
+     "extra": 0,
+     "table": "0xc84858"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc6eac8"
+  },
+  {
+   "create": "0x64a864",
+   "createData": "0x64a89c",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 1,
+   "name": "BuildingBehavior",
+   "sites": [
+    "0x657b1a"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc56f70"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc56fc0"
+  },
+  {
+   "create": "0x650cc3",
+   "createData": "0x650cfb",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 4,
+   "name": "CallHelpOnDamage",
+   "sites": [
+    "0x65ae6f"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc84858"
+    },
+    {
+     "extra": 0,
+     "table": "0xc70c28"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc70b70"
+  },
+  {
+   "create": "0x6516bd",
+   "createData": "0x6516f5",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 256,
+   "name": "CashHackSpecialPower",
+   "sites": [
+    "0x65b3da"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc64db0"
+    },
+    {
+     "extra": 0,
+     "table": "0xc733a4"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc73308"
+  },
+  {
+   "create": "0x64a74f",
+   "createData": "0x64a78a",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 9,
+   "name": "CastleBehavior",
+   "sites": [
+    "0x657aac"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc06338"
+    },
+    {
+     "extra": 0,
+     "table": "0xc312f8"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc30fb0"
+  },
+  {
+   "create": "0x64a7db",
+   "createData": "0x64a813",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 4,
+   "name": "CastleMemberBehavior",
+   "sites": [
+    "0x657ae2"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc30a68"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc30ad8"
+  },
+  {
+   "create": "0x65036c",
+   "createData": "0x655608",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 132,
+   "name": "CastleUpgrade",
+   "sites": [
+    "0x65a712"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 8,
+     "table": "0xc76ad8"
+    },
+    {
+     "extra": 0,
+     "table": "0xc6f524"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc09bd0"
+  },
+  {
+   "create": "0x64b47c",
+   "createData": "0x657425",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 95,
+   "name": "CaveContain",
+   "sites": [
+    "0x657fed"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc59f30"
+    },
+    {
+     "extra": 8,
+     "table": "0xc76bd8"
+    },
+    {
+     "extra": 0,
+     "table": "0xc04e28"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc5a5c0"
+  },
+  {
+   "create": "0x64bdae",
+   "createData": "0x64bde9",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 95,
+   "name": "CitadelSlaughterHordeContain",
+   "sites": [
+    "0x658507"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc59f30"
+    },
+    {
+     "extra": 8,
+     "table": "0xc76bd8"
+    },
+    {
+     "extra": 0,
+     "table": "0xc095f0"
+    },
+    {
+     "extra": 0,
+     "table": "0xc5c9a0"
+    },
+    {
+     "extra": 0,
+     "table": "0xc5efe8"
+    },
+    {
+     "extra": 0,
+     "table": "0xc5f080"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc5f5f0"
+  },
+  {
+   "create": "0x65108a",
+   "createData": "0x6510c2",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 16,
+   "name": "CivilianSpawnCollide",
+   "sites": [
+    "0x65b0b6"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc71748"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc716b8"
+  },
+  {
+   "create": "0x64bc0d",
+   "createData": "0x64bc45",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 1,
+   "name": "CivilianSpawnUpdate",
+   "sites": [
+    "0x65941c"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc5ec68"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc5ed20"
+  },
+  {
+   "create": "0x64c1f6",
+   "createData": "0x64c22e",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 3,
+   "name": "ClearanceTestingSlowDeathBehavior",
+   "sites": [
+    "0x658705"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc58a98"
+    },
+    {
+     "extra": 8,
+     "table": "0xc76bd8"
+    },
+    {
+     "extra": 0,
+     "table": "0xc60590"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc60788"
+  },
+  {
+   "create": "0x64ab88",
+   "createData": "0x64abc0",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 1,
+   "name": "ClickReactionBehavior",
+   "sites": [
+    "0x657d12"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc57b28"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc07a30"
+  },
+  {
+   "create": "0x651bbd",
+   "createData": "0x651bf5",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 256,
+   "name": "CloudBreakSpecialPower",
+   "sites": [
+    "0x65b5cf"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc64db0"
+    },
+    {
+     "extra": 0,
+     "table": "0xc74000"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc740f0"
+  },
+  {
+   "create": "0x652556",
+   "createData": "0x65258e",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 256,
+   "name": "CombineHordeSpecialPower",
+   "sites": [
+    "0x65b9b9"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc64db0"
+    },
+    {
+     "extra": 0,
+     "table": "0xc75398"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc75268"
+  },
+  {
+   "create": "0x64dc28",
+   "createData": "0x64dc60",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 1,
+   "name": "CommandButtonHuntUpdate",
+   "sites": [
+    "0x659348"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc653f8"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc07a30"
+  },
+  {
+   "create": "0x650688",
+   "createData": "0x654638",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 132,
+   "name": "CommandPointsUpgrade",
+   "sites": [
+    "0x65a90a"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 8,
+     "table": "0xc76ad8"
+    },
+    {
+     "extra": 0,
+     "table": "0xc6fda0"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc088e8"
+  },
+  {
+   "create": "0x64fc25",
+   "createData": "0x655446",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 132,
+   "name": "CommandSetUpgrade",
+   "sites": [
+    "0x65a2ea"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 8,
+     "table": "0xc76ad8"
+    },
+    {
+     "extra": 0,
+     "table": "0xc6df70"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc09a50"
+  },
+  {
+   "create": "0x650078",
+   "createData": "0x6500b0",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 140,
+   "name": "CostModifierUpgrade",
+   "sites": [
+    "0x65a20a"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 8,
+     "table": "0xc76ad8"
+    },
+    {
+     "extra": 0,
+     "table": "0xc6ef48"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc6ee80"
+  },
+  {
+   "create": "0x64c53a",
+   "createData": "0x6570ad",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 2,
+   "name": "CreateCrateDie",
+   "sites": [
+    "0x6588ff"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 8,
+     "table": "0xc76bd8"
+    },
+    {
+     "extra": 0,
+     "table": "0xc069d8"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc0a2b8"
+  },
+  {
+   "create": "0x64c572",
+   "createData": "0x64c5aa",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 2,
+   "name": "CreateObjectDie",
+   "sites": [
+    "0x65896f"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 8,
+     "table": "0xc76bd8"
+    },
+    {
+     "extra": 0,
+     "table": "0xc61120"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc61180"
+  },
+  {
+   "create": "0x64c5fb",
+   "createData": "0x64c633",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 2,
+   "name": "CreateObjectDieIfEldestKindof",
+   "sites": [
+    "0x6589a7"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 8,
+     "table": "0xc76bd8"
+    },
+    {
+     "extra": 0,
+     "table": "0xc61120"
+    },
+    {
+     "extra": 0,
+     "table": "0xc61160"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc61200"
+  },
+  {
+   "create": "0x65266b",
+   "createData": "0x6526a3",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 17,
+   "name": "CritterEmitterUpdate",
+   "sites": [
+    "0x6581af"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc75640"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc755b8"
+  },
+  {
+   "create": "0x64c711",
+   "createData": "0x65378a",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 2,
+   "name": "CrushDie",
+   "sites": [
+    "0x65888f"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 8,
+     "table": "0xc76bd8"
+    },
+    {
+     "extra": 0,
+     "table": "0xc06b00"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc069f8"
+  },
+  {
+   "create": "0x652cda",
+   "createData": "0x652d15",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 1,
+   "name": "CurseSpecialPower",
+   "sites": [
+    "0x65aab2"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc55f40"
+    },
+    {
+     "extra": 0,
+     "table": "0xc76440"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc763a8"
+  },
+  {
+   "create": "0x64d461",
+   "createData": "0x64d499",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 1,
+   "name": "DamageFieldUpdate",
+   "sites": [
+    "0x6590aa"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc62a40"
+    },
+    {
+     "extra": 0,
+     "table": "0xc64018"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc64058"
+  },
+  {
+   "create": "0x64c684",
+   "createData": "0x64c6bc",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 6,
+   "name": "DamageFilteredCreateObjectDie",
+   "sites": [
+    "0x6589df"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 8,
+     "table": "0xc76bd8"
+    },
+    {
+     "extra": 0,
+     "table": "0xc613d8"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc07a30"
+  },
+  {
+   "create": "0x651d61",
+   "createData": "0x651d99",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 256,
+   "name": "DarknessSpecialPower",
+   "sites": [
+    "0x65b677"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc64db0"
+    },
+    {
+     "extra": 0,
+     "table": "0xc74448"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc75268"
+  },
+  {
+   "create": "0x64c95d",
+   "createData": "0x653a59",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 1,
+   "name": "DefaultProductionExitUpdate",
+   "sites": [
+    "0x6599eb"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc086a8"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc07a30"
+  },
+  {
+   "create": "0x651749",
+   "createData": "0x651781",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 256,
+   "name": "DefectorSpecialPower",
+   "sites": [
+    "0x65b412"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc64db0"
+    },
+    {
+     "extra": 0,
+     "table": "0xc733e4"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc75268"
+  },
+  {
+   "create": "0x651e79",
+   "createData": "0x651eb1",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 273,
+   "name": "DeflectSpecialPower",
+   "sites": [
+    "0x65b6e7"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc87588"
+    },
+    {
+     "extra": 0,
+     "table": "0xc84858"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc749e8"
+  },
+  {
+   "create": "0x651385",
+   "createData": "0x6513c0",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 32,
+   "name": "DelayedDeathBody",
+   "sites": [
+    "0x65b229"
+   ],
+   "slot7": true,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc71d68"
+    },
+    {
+     "extra": 0,
+     "table": "0xc723fc"
+    },
+    {
+     "extra": 0,
+     "table": "0xc72628"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc72958"
+  },
+  {
+   "create": "0x64edf1",
+   "createData": "0x64ee29",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 1,
+   "name": "DelayedLuaEventUpdate",
+   "sites": [
+    "0x658e0a"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc84858"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc07a30"
+  },
+  {
+   "create": "0x64fc5d",
+   "createData": "0x6543b0",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 132,
+   "name": "DelayedUpgrade",
+   "sites": [
+    "0x65a322"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 8,
+     "table": "0xc76ad8"
+    },
+    {
+     "extra": 0,
+     "table": "0xc0878c"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc6eac8"
+  },
+  {
+   "create": "0x64c995",
+   "createData": "0x64c9cd",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 1,
+   "name": "DelayedWeaponSetUpgradeUpdate",
+   "sites": [
+    "0x658c4a"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc84858"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc07a30"
+  },
+  {
+   "create": "0x64ca1e",
+   "createData": "0x653abb",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 1,
+   "name": "DeletionUpdate",
+   "sites": [
+    "0x658c82"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc07ad0"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc07a30"
+  },
+  {
+   "create": "0x64dcb1",
+   "createData": "0x64dce9",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 1,
+   "name": "DemoTrapUpdate",
+   "sites": [
+    "0x65937d"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc65580"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc07a30"
+  },
+  {
+   "create": "0x64cebf",
+   "createData": "0x654ecd",
+   "extra": "0x0",
+   "isAiModuleData": true,
+   "mask": 17,
+   "name": "DeployStyleAIUpdate",
+   "sites": [
+    "0x658cf2"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc0f530"
+    },
+    {
+     "extra": 0,
+     "table": "0xc05010"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc096d0"
+  },
+  {
+   "create": "0x64c749",
+   "createData": "0x654bcc",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 2,
+   "name": "DestroyDie",
+   "sites": [
+    "0x65881f"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 8,
+     "table": "0xc76bd8"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc07a30"
+  },
+  {
+   "create": "0x64f128",
+   "createData": "0x64f160",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 1,
+   "name": "DestroyEnvironmentUpdate",
+   "sites": [
+    "0x658f5a"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc6b844"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc07a30"
+  },
+  {
+   "create": "0x6514a3",
+   "createData": "0x6514de",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 32,
+   "name": "DetachableRiderBody",
+   "sites": [
+    "0x65b293"
+   ],
+   "slot7": true,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc71d68"
+    },
+    {
+     "extra": 100,
+     "table": "0xc76ad8"
+    },
+    {
+     "extra": 0,
+     "table": "0xc72a0c"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc73028"
+  },
+  {
+   "create": "0x64f603",
+   "createData": "0x64f63b",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 1,
+   "name": "DetachableRiderUpdate",
+   "sites": [
+    "0x659ff2"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc6c2e8"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc6c1c0"
+  },
+  {
+   "create": "0x6523b8",
+   "createData": "0x6523f0",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 256,
+   "name": "DevastateSpecialPower",
+   "sites": [
+    "0x65b911"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc64db0"
+    },
+    {
+     "extra": 0,
+     "table": "0xc75000"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc75148"
+  },
+  {
+   "create": "0x64fe48",
+   "createData": "0x655563",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 132,
+   "name": "DoCommandUpgrade",
+   "sites": [
+    "0x65a402"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 8,
+     "table": "0xc76ad8"
+    },
+    {
+     "extra": 0,
+     "table": "0xc6e7b4"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc09ad0"
+  },
+  {
+   "create": "0x652c4b",
+   "createData": "0x652c86",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 1,
+   "name": "DominateEnemySpecialPower",
+   "sites": [
+    "0x65a974"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc55f40"
+    },
+    {
+     "extra": 0,
+     "table": "0xc76268"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc76328"
+  },
+  {
+   "create": "0x64ca56",
+   "createData": "0x64ca91",
+   "extra": "0x0",
+   "isAiModuleData": true,
+   "mask": 17,
+   "name": "DozerAIUpdate",
+   "sites": [
+    "0x659c38"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc0f530"
+    },
+    {
+     "extra": 0,
+     "table": "0xc61eb0"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc2def8"
+  },
+  {
+   "create": "0x64ad23",
+   "createData": "0x64ad5b",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 1,
+   "name": "DualWeaponBehavior",
+   "sites": [
+    "0x657dba"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc58088"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc07a30"
+  },
+  {
+   "create": "0x64b164",
+   "createData": "0x64b19c",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 142,
+   "name": "DynamicPortalBehaviour",
+   "sites": [
+    "0x658107"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 8,
+     "table": "0xc76ad8"
+    },
+    {
+     "extra": 0,
+     "table": "0xc59220"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc59118"
+  },
+  {
+   "create": "0x64cae2",
+   "createData": "0x64cb1d",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 1,
+   "name": "DynamicShroudClearingRangeUpdate",
+   "sites": [
+    "0x658cba"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc62648"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc62720"
+  },
+  {
+   "create": "0x651a19",
+   "createData": "0x651a51",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 256,
+   "name": "ElvenWoodSpecialPower",
+   "sites": [
+    "0x65b527"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc64db0"
+    },
+    {
+     "extra": 0,
+     "table": "0xc73c98"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc73bb8"
+  },
+  {
+   "create": "0x64f84f",
+   "createData": "0x64f88a",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 513,
+   "name": "EmotionTrackerUpdate",
+   "sites": [
+    "0x65a0fe"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc6d450"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc6d120"
+  },
+  {
+   "create": "0x64aa76",
+   "createData": "0x64aaae",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 1,
+   "name": "EnragedBehavior",
+   "sites": [
+    "0x657c32"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc577c0"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc07a30"
+  },
+  {
+   "create": "0x64f8e1",
+   "createData": "0x64f919",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 1,
+   "name": "EntEnragedUpdate",
+   "sites": [
+    "0x657c6a"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc6d690"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc6d578"
+  },
+  {
+   "create": "0x650bb1",
+   "createData": "0x650be9",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 4,
+   "name": "EvacuateDamage",
+   "sites": [
+    "0x65ae05"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc70a88"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc709b0"
+  },
+  {
+   "create": "0x652f16",
+   "createData": "0x652f51",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 1,
+   "name": "EvacuateGarrisonSpecialPower",
+   "sites": [
+    "0x65aa7d"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc55f40"
+    },
+    {
+     "extra": 0,
+     "table": "0xc84858"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc763a8"
+  },
+  {
+   "create": "0x65092c",
+   "createData": "0x650964",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 8,
+   "name": "ExperienceLevelCreate",
+   "sites": [
+    "0x65acfc"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc7026c"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc702a0"
+  },
+  {
+   "create": "0x650190",
+   "createData": "0x6501c8",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 132,
+   "name": "ExperienceScalarUpgrade",
+   "sites": [
+    "0x65a632"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 8,
+     "table": "0xc76ad8"
+    },
+    {
+     "extra": 0,
+     "table": "0xc6f194"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc6eac8"
+  },
+  {
+   "create": "0x64c781",
+   "createData": "0x653817",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 2,
+   "name": "FXListDie",
+   "sites": [
+    "0x658857"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 8,
+     "table": "0xc76bd8"
+    },
+    {
+     "extra": 0,
+     "table": "0xc06b78"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc07a30"
+  },
+  {
+   "create": "0x64ea47",
+   "createData": "0x6553af",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 1,
+   "name": "FadeAndDieOrnamentUpdate",
+   "sites": [
+    "0x659d76"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc08668"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc09950"
+  },
+  {
+   "create": "0x64b1f6",
+   "createData": "0x64b22e",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 11,
+   "name": "FakePathfindPortalBehaviour",
+   "sites": [
+    "0x65813f"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 8,
+     "table": "0xc76ad8"
+    },
+    {
+     "extra": 0,
+     "table": "0xc592f8"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc6eac8"
+  },
+  {
+   "create": "0x652150",
+   "createData": "0x65218b",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 1,
+   "name": "FellBeastSwoopPower",
+   "sites": [
+    "0x65b7f9"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc55f40"
+    },
+    {
+     "extra": 0,
+     "table": "0xc0616c"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc763a8"
+  },
+  {
+   "create": "0x64cb6e",
+   "createData": "0x64cba6",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 1,
+   "name": "FireSpreadUpdate",
+   "sites": [
+    "0x659002"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc62828"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc07a30"
+  },
+  {
+   "create": "0x650d4c",
+   "createData": "0x6547e0",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 16,
+   "name": "FireWeaponCollide",
+   "sites": [
+    "0x65aea4"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc70e48"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc07a30"
+  },
+  {
+   "create": "0x64cbf7",
+   "createData": "0x64cc2f",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 1,
+   "name": "FireWeaponUpdate",
+   "sites": [
+    "0x65903a"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc62a40"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc62940"
+  },
+  {
+   "create": "0x64bfe2",
+   "createData": "0x653466",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 133,
+   "name": "FireWeaponWhenDamagedBehavior",
+   "sites": [
+    "0x6585ea"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc06698"
+    },
+    {
+     "extra": 8,
+     "table": "0xc76ad8"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc07a30"
+  },
+  {
+   "create": "0x64c020",
+   "createData": "0x65353f",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 131,
+   "name": "FireWeaponWhenDeadBehavior",
+   "sites": [
+    "0x658625"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc067a0"
+    },
+    {
+     "extra": 8,
+     "table": "0xc76ad8"
+    },
+    {
+     "extra": 332,
+     "table": "0xc76bd8"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc07a30"
+  },
+  {
+   "create": "0x64cd09",
+   "createData": "0x64cd41",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 5,
+   "name": "FlammableUpdate",
+   "sites": [
+    "0x65911a"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc62e30"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc62c38"
+  },
+  {
+   "create": "0x64db10",
+   "createData": "0x64db4b",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 1,
+   "name": "FlingPassengerSpecialAbilityUpdate",
+   "sites": [
+    "0x659843"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc55f40"
+    },
+    {
+     "extra": 0,
+     "table": "0xc0556c"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc763a8"
+  },
+  {
+   "create": "0x64cd92",
+   "createData": "0x64cdca",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 1,
+   "name": "FloatUpdate",
+   "sites": [
+    "0x659152"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc62fd4"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc07a30"
+  },
+  {
+   "create": "0x64ce1b",
+   "createData": "0x64ce53",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 1,
+   "name": "FloodUpdate",
+   "sites": [
+    "0x65918a"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc631d8"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc630f0"
+  },
+  {
+   "create": "0x64a713",
+   "createData": "0x653209",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 1,
+   "name": "FoundationAIUpdate",
+   "sites": [
+    "0x659f53"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc06338"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc07a30"
+  },
+  {
+   "create": "0x651414",
+   "createData": "0x65144f",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 32,
+   "name": "FreeLifeBody",
+   "sites": [
+    "0x65b25e"
+   ],
+   "slot7": true,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc71d68"
+    },
+    {
+     "extra": 0,
+     "table": "0xc723fc"
+    },
+    {
+     "extra": 0,
+     "table": "0xc727f8"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc72958"
+  },
+  {
+   "create": "0x651cd5",
+   "createData": "0x651d0d",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 256,
+   "name": "FreezingRainSpecialPower",
+   "sites": [
+    "0x65b63f"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc64db0"
+    },
+    {
+     "extra": 0,
+     "table": "0xc74348"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc75268"
+  },
+  {
+   "create": "0x64b740",
+   "createData": "0x654cdf",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 95,
+   "name": "GarrisonContain",
+   "sites": [
+    "0x65830b"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc59f30"
+    },
+    {
+     "extra": 8,
+     "table": "0xc76bd8"
+    },
+    {
+     "extra": 0,
+     "table": "0xc095f0"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc5c8f0"
+  },
+  {
+   "create": "0x650040",
+   "createData": "0x654b02",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 132,
+   "name": "GarrisonUpgrade",
+   "sites": [
+    "0x65a7ba"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 8,
+     "table": "0xc76ad8"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc6eac8"
+  },
+  {
+   "create": "0x64df64",
+   "createData": "0x653cdb",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 17,
+   "name": "GateOpenAndCloseBehavior",
+   "sites": [
+    "0x6594f0"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc07d08"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc66918"
+  },
+  {
+   "create": "0x653d2c",
+   "createData": "0x653d6d",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 17,
+   "name": "GateProxyBehavior",
+   "sites": [
+    "0x659525"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc07d08"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc05628"
+  },
+  {
+   "create": "0x6503a4",
+   "createData": "0x6503dc",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 132,
+   "name": "GeometryUpgrade",
+   "sites": [
+    "0x65a74a"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 8,
+     "table": "0xc76ad8"
+    },
+    {
+     "extra": 0,
+     "table": "0xc6f578"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc6f650"
+  },
+  {
+   "create": "0x64a68a",
+   "createData": "0x64a6c2",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 1,
+   "name": "GettingBuiltBehavior",
+   "sites": [
+    "0x657a74"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc56ac8"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc568b8"
+  },
+  {
+   "create": "0x64cfc8",
+   "createData": "0x64d003",
+   "extra": "0x0",
+   "isAiModuleData": true,
+   "mask": 17,
+   "name": "GiantBirdAIUpdate",
+   "sites": [
+    "0x658d62"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc0f530"
+    },
+    {
+     "extra": 0,
+     "table": "0xc2e020"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc2def8"
+  },
+  {
+   "create": "0x64b282",
+   "createData": "0x64b2ba",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 3,
+   "name": "GiantBirdSlowDeathBehavior",
+   "sites": [
+    "0x657fb5"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc58a98"
+    },
+    {
+     "extra": 8,
+     "table": "0xc76bd8"
+    },
+    {
+     "extra": 0,
+     "table": "0xc59430"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc595c0"
+  },
+  {
+   "create": "0x652d69",
+   "createData": "0x652da4",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 1,
+   "name": "GiveOrRestoreUpgradeSpecialPower",
+   "sites": [
+    "0x65aae7"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc55f40"
+    },
+    {
+     "extra": 0,
+     "table": "0xc764f0"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc76530"
+  },
+  {
+   "create": "0x64e4ad",
+   "createData": "0x64e4e8",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 1,
+   "name": "GiveUpgradeUpdate",
+   "sites": [
+    "0x659878"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc55f40"
+    },
+    {
+     "extra": 0,
+     "table": "0xc67ad8"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc67bb8"
+  },
+  {
+   "create": "0x64f2cc",
+   "createData": "0x64f307",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 1,
+   "name": "GloriousChargeUpdate",
+   "sites": [
+    "0x659ca2"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc55f40"
+    },
+    {
+     "extra": 0,
+     "table": "0xc6bbe8"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc763a8"
+  },
+  {
+   "create": "0x651ded",
+   "createData": "0x651e25",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 256,
+   "name": "GrabPassengerSpecialPower",
+   "sites": [
+    "0x65b6af"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc64db0"
+    },
+    {
+     "extra": 0,
+     "table": "0xc74534"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc75268"
+  },
+  {
+   "create": "0x6508a3",
+   "createData": "0x6508db",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 8,
+   "name": "GrantUpgradeCreate",
+   "sites": [
+    "0x65acc7"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc70158"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc70198"
+  },
+  {
+   "create": "0x64b4b7",
+   "createData": "0x64b4f2",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 95,
+   "name": "HealContain",
+   "sites": [
+    "0x65821f"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc59f30"
+    },
+    {
+     "extra": 8,
+     "table": "0xc76bd8"
+    },
+    {
+     "extra": 0,
+     "table": "0xc5a3a4"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc5a5c0"
+  },
+  {
+   "create": "0x650ece",
+   "createData": "0x650e7d",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 16,
+   "name": "HealCrateCollide",
+   "sites": [
+    "0x65af78"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc71390"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc71248"
+  },
+  {
+   "create": "0x64d057",
+   "createData": "0x64d08f",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 1,
+   "name": "HeightDieUpdate",
+   "sites": [
+    "0x6591c2"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc637f8"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc07a30"
+  },
+  {
+   "create": "0x6515f9",
+   "createData": "0x653868",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 2,
+   "name": "HeroDie",
+   "sites": [
+    "0x6588c7"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 8,
+     "table": "0xc76bd8"
+    },
+    {
+     "extra": 0,
+     "table": "0xc06bc0"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc07a30"
+  },
+  {
+   "create": "0x64d6a0",
+   "createData": "0x64d6db",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 1,
+   "name": "HeroModeSpecialAbilityUpdate",
+   "sites": [
+    "0x6597a4"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc55f40"
+    },
+    {
+     "extra": 0,
+     "table": "0xc052f0"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc646e0"
+  },
+  {
+   "create": "0x6511d7",
+   "createData": "0x651186",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 32,
+   "name": "HighlanderBody",
+   "sites": [
+    "0x65b155"
+   ],
+   "slot7": true,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc71d68"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc71af8"
+  },
+  {
+   "create": "0x64ea0f",
+   "createData": "0x655f3a",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 1,
+   "name": "HijackerUpdate",
+   "sites": [
+    "0x659d41"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc08628"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc099d0"
+  },
+  {
+   "create": "0x64aaff",
+   "createData": "0x64ab37",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 1,
+   "name": "HitReactionBehavior",
+   "sites": [
+    "0x657cda"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc57920"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc07a30"
+  },
+  {
+   "create": "0x64e20d",
+   "createData": "0x653f70",
+   "extra": "0x0",
+   "isAiModuleData": true,
+   "mask": 17,
+   "name": "HordeAIUpdate",
+   "sites": [
+    "0x65926a"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc0f530"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc2def8"
+  },
+  {
+   "create": "0x64b5d5",
+   "createData": "0x64b610",
+   "extra": "0x86ccb0",
+   "isAiModuleData": false,
+   "mask": 95,
+   "name": "HordeContain",
+   "sites": [
+    "0x65825b"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc59f30"
+    },
+    {
+     "extra": 8,
+     "table": "0xc76bd8"
+    },
+    {
+     "extra": 0,
+     "table": "0xc5abd8"
+    },
+    {
+     "extra": 0,
+     "table": "0xc5bb50"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc5be10"
+  },
+  {
+   "create": "0x6525e2",
+   "createData": "0x65261a",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 256,
+   "name": "HordeDispatchSpecialPower",
+   "sites": [
+    "0x65b9f1"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc64db0"
+    },
+    {
+     "extra": 0,
+     "table": "0xc84858"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc75268"
+  },
+  {
+   "create": "0x64b77b",
+   "createData": "0x64b7b6",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 95,
+   "name": "HordeGarrisonContain",
+   "sites": [
+    "0x65845f"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc59f30"
+    },
+    {
+     "extra": 8,
+     "table": "0xc76bd8"
+    },
+    {
+     "extra": 0,
+     "table": "0xc095f0"
+    },
+    {
+     "extra": 0,
+     "table": "0xc5c9a0"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc5cbe8"
+  },
+  {
+   "create": "0x650e45",
+   "createData": "0x654811",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 16,
+   "name": "HordeMemberCollide",
+   "sites": [
+    "0x65af43"
+   ],
+   "slot7": false,
+   "tables": [],
+   "type": 0,
+   "vtable": "0xc07a30"
+  },
+  {
+   "create": "0x654f1e",
+   "createData": "0x653bcf",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 1,
+   "name": "HordeNotifyTargetsOfImminentProbableCrushingUpdate",
+   "sites": [
+    "0x659917"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 8,
+     "table": "0xc76c48"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc07a30"
+  },
+  {
+   "create": "0x64b928",
+   "createData": "0x64b963",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 95,
+   "name": "HordeSiegeEngineContain",
+   "sites": [
+    "0x6583b7"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc59f30"
+    },
+    {
+     "extra": 8,
+     "table": "0xc76bd8"
+    },
+    {
+     "extra": 0,
+     "table": "0xc5abd8"
+    },
+    {
+     "extra": 0,
+     "table": "0xc5d900"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc5dc18"
+  },
+  {
+   "create": "0x64b6b1",
+   "createData": "0x64b6ec",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 95,
+   "name": "HordeTransportContain",
+   "sites": [
+    "0x658427"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc59f30"
+    },
+    {
+     "extra": 8,
+     "table": "0xc76bd8"
+    },
+    {
+     "extra": 0,
+     "table": "0xc5abd8"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc5c5e0"
+  },
+  {
+   "create": "0x650c3a",
+   "createData": "0x650c72",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 4,
+   "name": "HordeTransportContainDamage",
+   "sites": [
+    "0x65ae3a"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc84858"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc07a30"
+  },
+  {
+   "create": "0x64e248",
+   "createData": "0x653f70",
+   "extra": "0x0",
+   "isAiModuleData": true,
+   "mask": 17,
+   "name": "HordeWorkerAIUpdate",
+   "sites": [
+    "0x6592a2"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc0f530"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc2def8"
+  },
+  {
+   "create": "0x64b664",
+   "createData": "0x65330b",
+   "extra": "0x87d91c",
+   "isAiModuleData": false,
+   "mask": 95,
+   "name": "HorseHordeContain",
+   "sites": [
+    "0x658297"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc59f30"
+    },
+    {
+     "extra": 8,
+     "table": "0xc76bd8"
+    },
+    {
+     "extra": 0,
+     "table": "0xc5abd8"
+    },
+    {
+     "extra": 0,
+     "table": "0xc5bb50"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc5cc70"
+  },
+  {
+   "create": "0x651212",
+   "createData": "0x651186",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 32,
+   "name": "ImmortalBody",
+   "sites": [
+    "0x65b18a"
+   ],
+   "slot7": true,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc71d68"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc71af8"
+  },
+  {
+   "create": "0x651113",
+   "createData": "0x708243",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 32,
+   "name": "InactiveBody",
+   "sites": [
+    "0x65b0eb"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0x0"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc07a30"
+  },
+  {
+   "create": "0x650a25",
+   "createData": "0x650a5d",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 8,
+   "name": "InheritUpgradeCreate",
+   "sites": [
+    "0x65ad31"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc703e0"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc70420"
+  },
+  {
+   "create": "0x64aec4",
+   "createData": "0x64aefc",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 2,
+   "name": "InstantDeathBehavior",
+   "sites": [
+    "0x657ed2"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 8,
+     "table": "0xc76bd8"
+    },
+    {
+     "extra": 0,
+     "table": "0xc587a8"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc58728"
+  },
+  {
+   "create": "0x651631",
+   "createData": "0x651669",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 256,
+   "name": "InvisibilitySpecialPower",
+   "sites": [
+    "0x65b3a2"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc64db0"
+    },
+    {
+     "extra": 0,
+     "table": "0xc730e8"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc731d8"
+  },
+  {
+   "create": "0x64e99c",
+   "createData": "0x6552e8",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 1,
+   "name": "InvisibilityUpdate",
+   "sites": [
+    "0x658c12"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc68e58"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc098d0"
+  },
+  {
+   "create": "0x64c8b2",
+   "createData": "0x65391a",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 2,
+   "name": "KeepObjectDie",
+   "sites": [
+    "0x658abf"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 8,
+     "table": "0xc76bd8"
+    },
+    {
+     "extra": 0,
+     "table": "0xc06c2c"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc07a30"
+  },
+  {
+   "create": "0x64f013",
+   "createData": "0x64f04e",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 1,
+   "name": "LargeGroupAudioUpdate",
+   "sites": [
+    "0x6598ad"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc6b380"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc6b510"
+  },
+  {
+   "create": "0x64d0e0",
+   "createData": "0x64d118",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 1,
+   "name": "LargeGroupBonusUpdate",
+   "sites": [
+    "0x658d9a"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc639d8"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc63ad8"
+  },
+  {
+   "create": "0x6517d5",
+   "createData": "0x651810",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 1,
+   "name": "LevelGrantSpecialPower",
+   "sites": [
+    "0x65b447"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc55f40"
+    },
+    {
+     "extra": 0,
+     "table": "0xc73550"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc734a8"
+  },
+  {
+   "create": "0x64fc95",
+   "createData": "0x654404",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 132,
+   "name": "LevelUpUpgrade",
+   "sites": [
+    "0x65a35a"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 8,
+     "table": "0xc76ad8"
+    },
+    {
+     "extra": 0,
+     "table": "0xc6e09c"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc087b0"
+  },
+  {
+   "create": "0x64e053",
+   "createData": "0x64e08b",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 1,
+   "name": "LifetimeUpdate",
+   "sites": [
+    "0x658e42"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc31860"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc07a30"
+  },
+  {
+   "create": "0x650730",
+   "createData": "0x650768",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 8,
+   "name": "LockWeaponCreate",
+   "sites": [
+    "0x65ab89"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc6fff0"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc07a30"
+  },
+  {
+   "create": "0x64fccd",
+   "createData": "0x65445a",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 132,
+   "name": "LocomotorSetUpgrade",
+   "sites": [
+    "0x65a4e2"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 8,
+     "table": "0xc76ad8"
+    },
+    {
+     "extra": 0,
+     "table": "0xc08844"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc6eac8"
+  },
+  {
+   "create": "0x6521df",
+   "createData": "0x65247c",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 256,
+   "name": "ManTheWallsSpecialPower",
+   "sites": [
+    "0x65b831"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc64db0"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc75268"
+  },
+  {
+   "create": "0x65021c",
+   "createData": "0x650254",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 132,
+   "name": "MaxHealthUpgrade",
+   "sites": [
+    "0x65a66a"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 8,
+     "table": "0xc76ad8"
+    },
+    {
+     "extra": 0,
+     "table": "0xc6f24c"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc6eac8"
+  },
+  {
+   "create": "0x64b30e",
+   "createData": "0x64b346",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 11,
+   "name": "MineshaftPortalBehaviour",
+   "sites": [
+    "0x658177"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 8,
+     "table": "0xc76ad8"
+    },
+    {
+     "extra": 0,
+     "table": "0xc592f8"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc6eac8"
+  },
+  {
+   "create": "0x64ec4d",
+   "createData": "0x64ec88",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 17,
+   "name": "MissileUpdate",
+   "sites": [
+    "0x657e62"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc58368"
+    },
+    {
+     "extra": 0,
+     "table": "0xc69ec0"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc6a0b8"
+  },
+  {
+   "create": "0x64d349",
+   "createData": "0x64d384",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 1,
+   "name": "ModelConditionSpecialAbilityUpdate",
+   "sites": [
+    "0x659631"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc55f40"
+    },
+    {
+     "extra": 0,
+     "table": "0xc05230"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc63f98"
+  },
+  {
+   "create": "0x6502a8",
+   "createData": "0x6502e0",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 132,
+   "name": "ModelConditionUpgrade",
+   "sites": [
+    "0x65a6a2"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 8,
+     "table": "0xc76ad8"
+    },
+    {
+     "extra": 0,
+     "table": "0xc6f3a0"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc6eac8"
+  },
+  {
+   "create": "0x650f21",
+   "createData": "0x6560af",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 16,
+   "name": "MoneyCrateCollide",
+   "sites": [
+    "0x65afad"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc71390"
+    },
+    {
+     "extra": 0,
+     "table": "0xc05e14"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc09cd0"
+  },
+  {
+   "create": "0x64d4ea",
+   "createData": "0x64d522",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 1,
+   "name": "MonitorConditionUpdate",
+   "sites": [
+    "0x6590e2"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc64170"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc641c0"
+  },
+  {
+   "create": "0x64e7d9",
+   "createData": "0x64e814",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 1,
+   "name": "MonsterDockUpdate",
+   "sites": [
+    "0x659c03"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc87674"
+    },
+    {
+     "extra": 0,
+     "table": "0xc686dc"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc68798"
+  },
+  {
+   "create": "0x654f56",
+   "createData": "0x653bcf",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 1,
+   "name": "NotifyTargetsOfImminentProbableCrushingUpdate",
+   "sites": [
+    "0x6598e2"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 8,
+     "table": "0xc76c48"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc07a30"
+  },
+  {
+   "create": "0x6518f0",
+   "createData": "0x651928",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 256,
+   "name": "OCLSpecialPower",
+   "sites": [
+    "0x65b4b7"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc64db0"
+    },
+    {
+     "extra": 0,
+     "table": "0xc73a40"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc73930"
+  },
+  {
+   "create": "0x64e283",
+   "createData": "0x64e2bb",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 1,
+   "name": "OCLUpdate",
+   "sites": [
+    "0x659a8a"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc67420"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc07a30"
+  },
+  {
+   "create": "0x651532",
+   "createData": "0x651186",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 32,
+   "name": "OathbreakerBody",
+   "sites": [
+    "0x65b2c8"
+   ],
+   "slot7": true,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc71d68"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc71af8"
+  },
+  {
+   "create": "0x6506f8",
+   "createData": "0x65469c",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 1,
+   "name": "OathbreakersFadeAwayBehavior",
+   "sites": [
+    "0x658095"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc6ff84"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc07a30"
+  },
+  {
+   "create": "0x64fd05",
+   "createData": "0x64fd46",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 129,
+   "name": "ObjectCreationUpgrade",
+   "sites": [
+    "0x65a51a"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc6e2f8"
+    },
+    {
+     "extra": 16,
+     "table": "0xc76ad8"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc6e3b8"
+  },
+  {
+   "create": "0x64cc80",
+   "createData": "0x64ccb8",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 1,
+   "name": "OilSpillUpdate",
+   "sites": [
+    "0x659072"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc62a40"
+    },
+    {
+     "extra": 0,
+     "table": "0xc62ad8"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc62b28"
+  },
+  {
+   "create": "0x64e0dc",
+   "createData": "0x64e114",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 3,
+   "name": "OneRingPenaltyUpdate",
+   "sites": [
+    "0x658e7a"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc66b18"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc66a00"
+  },
+  {
+   "create": "0x64b3d2",
+   "createData": "0x64b40d",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 95,
+   "name": "OpenContain",
+   "sites": [
+    "0x658025"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc59f30"
+    },
+    {
+     "extra": 8,
+     "table": "0xc76bd8"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc59cd8"
+  },
+  {
+   "create": "0x64f1b1",
+   "createData": "0x64f1e9",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 1,
+   "name": "PartTheHeavensUpdate",
+   "sites": [
+    "0x658f92"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc6b8f8"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc6b958"
+  },
+  {
+   "create": "0x64c403",
+   "createData": "0x64c43b",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 1,
+   "name": "PassiveAreaEffectBehavior",
+   "sites": [
+    "0x65a93f"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc60b78"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc60c80"
+  },
+  {
+   "create": "0x64e424",
+   "createData": "0x64e45c",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 1,
+   "name": "PhysicsBehavior",
+   "sites": [
+    "0x657e9a"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc30538"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc07a30"
+  },
+  {
+   "create": "0x64d5fc",
+   "createData": "0x64d634",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 1,
+   "name": "PickupStuffUpdate",
+   "sites": [
+    "0x659981"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc64600"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc64550"
+  },
+  {
+   "create": "0x64c492",
+   "createData": "0x6535ed",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 8192,
+   "name": "PillageModule",
+   "sites": [
+    "0x65ab1f"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc84858"
+    },
+    {
+     "extra": 0,
+     "table": "0xc068b8"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc06800"
+  },
+  {
+   "create": "0x65232c",
+   "createData": "0x652364",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 256,
+   "name": "PlayerHealSpecialPower",
+   "sites": [
+    "0x65b8d9"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc64db0"
+    },
+    {
+     "extra": 0,
+     "table": "0xc74ec0"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc75268"
+  },
+  {
+   "create": "0x6522a0",
+   "createData": "0x6522d8",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 256,
+   "name": "PlayerUpgradeSpecialPower",
+   "sites": [
+    "0x65b8a1"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc64db0"
+    },
+    {
+     "extra": 0,
+     "table": "0xc74e64"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc74de8"
+  },
+  {
+   "create": "0x64c05b",
+   "createData": "0x64c093",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 5,
+   "name": "PoisonedBehavior",
+   "sites": [
+    "0x65865d"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc60134"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc07a30"
+  },
+  {
+   "create": "0x65156d",
+   "createData": "0x6515a8",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 32,
+   "name": "PorcupineFormationBodyModule",
+   "sites": [
+    "0x65b2fd"
+   ],
+   "slot7": true,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc71d68"
+    },
+    {
+     "extra": 0,
+     "table": "0xc72e18"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc73028"
+  },
+  {
+   "create": "0x6509b5",
+   "createData": "0x708243",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 8,
+   "name": "PreorderCreate",
+   "sites": [
+    "0x65abbe"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0x0"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc07a30"
+  },
+  {
+   "create": "0x64be3d",
+   "createData": "0x64be78",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 95,
+   "name": "ProductionQueueHordeContain",
+   "sites": [
+    "0x65853f"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc59f30"
+    },
+    {
+     "extra": 8,
+     "table": "0xc76bd8"
+    },
+    {
+     "extra": 0,
+     "table": "0xc095f0"
+    },
+    {
+     "extra": 0,
+     "table": "0xc5c9a0"
+    },
+    {
+     "extra": 0,
+     "table": "0xc5f964"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc5f988"
+  },
+  {
+   "create": "0x651864",
+   "createData": "0x65189c",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 256,
+   "name": "ProductionSpeedBonus",
+   "sites": [
+    "0x65b47f"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc64db0"
+    },
+    {
+     "extra": 0,
+     "table": "0xc73620"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc73700"
+  },
+  {
+   "create": "0x64e53c",
+   "createData": "0x64e577",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 3,
+   "name": "ProductionUpdate",
+   "sites": [
+    "0x659cd7"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc68128"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc67f28"
+  },
+  {
+   "create": "0x64f9f3",
+   "createData": "0x654ad2",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 1,
+   "name": "ProjectileStreamUpdate",
+   "sites": [
+    "0x65a168"
+   ],
+   "slot7": false,
+   "tables": [],
+   "type": 0,
+   "vtable": "0xc07a30"
+  },
+  {
+   "create": "0x64e5c8",
+   "createData": "0x64e600",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 1,
+   "name": "ProneUpdate",
+   "sites": [
+    "0x659d0c"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc6829c"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc07a30"
+  },
+  {
+   "create": "0x64becc",
+   "createData": "0x64bf04",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 3,
+   "name": "PropagandaTowerBehavior",
+   "sites": [
+    "0x658577"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc5fb38"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc5fa58"
+  },
+  {
+   "create": "0x64e651",
+   "createData": "0x65401c",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 1,
+   "name": "QueueProductionExitUpdate",
+   "sites": [
+    "0x65955a"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc08158"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc08068"
+  },
+  {
+   "create": "0x64e689",
+   "createData": "0x65405e",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 1,
+   "name": "RadarUpdate",
+   "sites": [
+    "0x659e7f"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc08208"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc07a30"
+  },
+  {
+   "create": "0x64fda0",
+   "createData": "0x6544a7",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 132,
+   "name": "RadarUpgrade",
+   "sites": [
+    "0x65a4aa"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 8,
+     "table": "0xc76ad8"
+    },
+    {
+     "extra": 0,
+     "table": "0xc6e4c0"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc6eac8"
+  },
+  {
+   "create": "0x64e398",
+   "createData": "0x64e3d0",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 129,
+   "name": "RadiateFearUpdate",
+   "sites": [
+    "0x659afa"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 32,
+     "table": "0xc76ad8"
+    },
+    {
+     "extra": 0,
+     "table": "0xc679f0"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc67928"
+  },
+  {
+   "create": "0x64e19d",
+   "createData": "0x65428c",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 1,
+   "name": "RadiusDecalUpdate",
+   "sites": [
+    "0x658eea"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc84858"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc07a30"
+  },
+  {
+   "create": "0x64f09f",
+   "createData": "0x64f0d7",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 1,
+   "name": "RainOfFireUpdate",
+   "sites": [
+    "0x658f22"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc6b618"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc07a30"
+  },
+  {
+   "create": "0x64a9ed",
+   "createData": "0x64aa25",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 1,
+   "name": "RampageBehavior",
+   "sites": [
+    "0x657bfa"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc576a8"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc57728"
+  },
+  {
+   "create": "0x64c0e4",
+   "createData": "0x64c11c",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 3,
+   "name": "RebuildHoleBehavior",
+   "sites": [
+    "0x658695"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc60230"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc60170"
+  },
+  {
+   "create": "0x64c7b9",
+   "createData": "0x64c7f1",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 2,
+   "name": "RebuildHoleExposeDie",
+   "sites": [
+    "0x658a4f"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 8,
+     "table": "0xc76bd8"
+    },
+    {
+     "extra": 0,
+     "table": "0xc616b8"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc615f8"
+  },
+  {
+   "create": "0x650b28",
+   "createData": "0x650b60",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 4,
+   "name": "ReflectDamage",
+   "sites": [
+    "0x65add0"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc70928"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc07a30"
+  },
+  {
+   "create": "0x64c502",
+   "createData": "0x6536a3",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 2,
+   "name": "RefundDie",
+   "sites": [
+    "0x658937"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 8,
+     "table": "0xc76bd8"
+    },
+    {
+     "extra": 0,
+     "table": "0xc06998"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc068f8"
+  },
+  {
+   "create": "0x65058c",
+   "createData": "0x6505c4",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 132,
+   "name": "RemoveUpgradeUpgrade",
+   "sites": [
+    "0x65a862"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 8,
+     "table": "0xc76ad8"
+    },
+    {
+     "extra": 0,
+     "table": "0xc6fb00"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc6fb50"
+  },
+  {
+   "create": "0x64e74d",
+   "createData": "0x64e788",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 1,
+   "name": "RepairDockUpdate",
+   "sites": [
+    "0x65958f"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc87674"
+    },
+    {
+     "extra": 0,
+     "table": "0xc68608"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc07a30"
+  },
+  {
+   "create": "0x6524cd",
+   "createData": "0x652505",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 256,
+   "name": "RepairSpecialPower",
+   "sites": [
+    "0x65b981"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc64db0"
+    },
+    {
+     "extra": 0,
+     "table": "0xc84858"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc75268"
+  },
+  {
+   "create": "0x64fa49",
+   "createData": "0x64fa84",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 1,
+   "name": "ReplaceObjectUpdate",
+   "sites": [
+    "0x65a19d"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc55f40"
+    },
+    {
+     "extra": 0,
+     "table": "0xc05cb8"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc6d870"
+  },
+  {
+   "create": "0x650430",
+   "createData": "0x650468",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 140,
+   "name": "ReplaceSelfUpgrade",
+   "sites": [
+    "0x65a782"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 8,
+     "table": "0xc76ad8"
+    },
+    {
+     "extra": 0,
+     "table": "0xc6f6e8"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc6f7a0"
+  },
+  {
+   "create": "0x64c282",
+   "createData": "0x64c2ba",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 129,
+   "name": "ReplenishUnitsBehavior",
+   "sites": [
+    "0x658777"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc60940"
+    },
+    {
+     "extra": 8,
+     "table": "0xc76ad8"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc07a30"
+  },
+  {
+   "create": "0x6512f9",
+   "createData": "0x651334",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 32,
+   "name": "RespawnBody",
+   "sites": [
+    "0x65b332"
+   ],
+   "slot7": true,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc71d68"
+    },
+    {
+     "extra": 0,
+     "table": "0xc723fc"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc72540"
+  },
+  {
+   "create": "0x64f68c",
+   "createData": "0x64f6c4",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 1,
+   "name": "RespawnUpdate",
+   "sites": [
+    "0x65a027"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc6ce80"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc6c3a8"
+  },
+  {
+   "create": "0x64ba11",
+   "createData": "0x64ba4c",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 95,
+   "name": "RiderChangeContain",
+   "sites": [
+    "0x658497"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc59f30"
+    },
+    {
+     "extra": 8,
+     "table": "0xc76bd8"
+    },
+    {
+     "extra": 0,
+     "table": "0xc5abd8"
+    },
+    {
+     "extra": 0,
+     "table": "0xc5d590"
+    },
+    {
+     "extra": 0,
+     "table": "0xdaee78"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc5e2f0"
+  },
+  {
+   "create": "0x64f23d",
+   "createData": "0x64f278",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 1,
+   "name": "RousingSpeechUpdate",
+   "sites": [
+    "0x659c6d"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc55f40"
+    },
+    {
+     "extra": 0,
+     "table": "0xc6ba48"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc6bb68"
+  },
+  {
+   "create": "0x64eab7",
+   "createData": "0x6563f3",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 3,
+   "name": "RubbleRiseUpdate",
+   "sites": [
+    "0x659e15"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc69408"
+    },
+    {
+     "extra": 8,
+     "table": "0xc76bd8"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc09dd0"
+  },
+  {
+   "create": "0x64b39a",
+   "createData": "0x654c73",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 0,
+   "name": "RunOffMapBehavior",
+   "sites": [
+    "0x65873c"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc59698"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc09528"
+  },
+  {
+   "create": "0x651052",
+   "createData": "0x655980",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 16,
+   "name": "SalvageCrateCollide",
+   "sites": [
+    "0x65b081"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc71390"
+    },
+    {
+     "extra": 0,
+     "table": "0xc05f80"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc09d50"
+  },
+  {
+   "create": "0x64da66",
+   "createData": "0x64daa1",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 1,
+   "name": "ScaleWallSpecialAbilityUpdate",
+   "sites": [
+    "0x65980e"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc55f40"
+    },
+    {
+     "extra": 0,
+     "table": "0xc05514"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc763a8"
+  },
+  {
+   "create": "0x651b31",
+   "createData": "0x651b69",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 256,
+   "name": "ScavengerSpecialPower",
+   "sites": [
+    "0x65b597"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc64db0"
+    },
+    {
+     "extra": 0,
+     "table": "0xc73efc"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc75268"
+  },
+  {
+   "create": "0x64bc96",
+   "createData": "0x64bcce",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 1,
+   "name": "ShareExperienceBehavior",
+   "sites": [
+    "0x659451"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc5ef30"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc5eea0"
+  },
+  {
+   "create": "0x64afd9",
+   "createData": "0x64b011",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 3,
+   "name": "ShipSlowDeathBehavior",
+   "sites": [
+    "0x657f42"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc58a98"
+    },
+    {
+     "extra": 8,
+     "table": "0xc76bd8"
+    },
+    {
+     "extra": 0,
+     "table": "0xc84858"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc595c0"
+  },
+  {
+   "create": "0x650f59",
+   "createData": "0x650e7d",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 16,
+   "name": "ShroudCrateCollide",
+   "sites": [
+    "0x65afe2"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc71390"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc71248"
+  },
+  {
+   "create": "0x64d169",
+   "createData": "0x64d1a4",
+   "extra": "0x0",
+   "isAiModuleData": true,
+   "mask": 17,
+   "name": "SiegeAIUpdate",
+   "sites": [
+    "0x6591fa"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc0f530"
+    },
+    {
+     "extra": 0,
+     "table": "0xc84858"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc2def8"
+  },
+  {
+   "create": "0x651f91",
+   "createData": "0x651fc9",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 257,
+   "name": "SiegeDeployHordeSpecialPower",
+   "sites": [
+    "0x65b757"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc87588"
+    },
+    {
+     "extra": 0,
+     "table": "0xc74958"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc749e8"
+  },
+  {
+   "create": "0x651f08",
+   "createData": "0x651f40",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 257,
+   "name": "SiegeDeploySpecialPower",
+   "sites": [
+    "0x65b71f"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc87588"
+    },
+    {
+     "extra": 0,
+     "table": "0xc747e8"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc749e8"
+  },
+  {
+   "create": "0x64ac11",
+   "createData": "0x64ac49",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 1,
+   "name": "SiegeDockingBehavior",
+   "sites": [
+    "0x657d4a"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc57c14"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc07a30"
+  },
+  {
+   "create": "0x64b899",
+   "createData": "0x64b8d4",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 95,
+   "name": "SiegeEngineContain",
+   "sites": [
+    "0x65837f"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc59f30"
+    },
+    {
+     "extra": 8,
+     "table": "0xc76bd8"
+    },
+    {
+     "extra": 0,
+     "table": "0xc5abd8"
+    },
+    {
+     "extra": 0,
+     "table": "0xc5d590"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc5d878"
+  },
+  {
+   "create": "0x64bd1f",
+   "createData": "0x64bd5a",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 95,
+   "name": "SlaughterHordeContain",
+   "sites": [
+    "0x6584cf"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc59f30"
+    },
+    {
+     "extra": 8,
+     "table": "0xc76bd8"
+    },
+    {
+     "extra": 0,
+     "table": "0xc095f0"
+    },
+    {
+     "extra": 0,
+     "table": "0xc5c9a0"
+    },
+    {
+     "extra": 0,
+     "table": "0xc5efe8"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc5f570"
+  },
+  {
+   "create": "0x64c30e",
+   "createData": "0x64c349",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 1,
+   "name": "SlaveWatcherBehavior",
+   "sites": [
+    "0x6587af"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc609f8"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc60a88"
+  },
+  {
+   "create": "0x64e865",
+   "createData": "0x6550ee",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 1,
+   "name": "SlavedUpdate",
+   "sites": [
+    "0x659a55"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc08420"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc09750"
+  },
+  {
+   "create": "0x64af4d",
+   "createData": "0x64af85",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 3,
+   "name": "SlowDeathBehavior",
+   "sites": [
+    "0x657f0a"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc58a98"
+    },
+    {
+     "extra": 8,
+     "table": "0xc76bd8"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc588f8"
+  },
+  {
+   "create": "0x64b0ee",
+   "createData": "0x657397",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 135,
+   "name": "SpawnBehavior",
+   "sites": [
+    "0x657f7d"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 92,
+     "table": "0xc76ad8"
+    },
+    {
+     "extra": 44,
+     "table": "0xc76bd8"
+    },
+    {
+     "extra": 0,
+     "table": "0xc06498"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc0a338"
+  },
+  {
+   "create": "0x64e9d4",
+   "createData": "0x655eba",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 1,
+   "name": "SpawnPointProductionExitUpdate",
+   "sites": [
+    "0x659a20"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc085e4"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc09950"
+  },
+  {
+   "create": "0x6506c0",
+   "createData": "0x65579f",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 1,
+   "name": "SpawnUnitBehavior",
+   "sites": [
+    "0x65805d"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc6fef0"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc099d0"
+  },
+  {
+   "create": "0x6546d3",
+   "createData": "0x65794c",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 8,
+   "name": "SpawnedModelConditionCreate",
+   "sites": [
+    "0x65abf3"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc31780"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc0a438"
+  },
+  {
+   "create": "0x64a534",
+   "createData": "0x64a56f",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 1,
+   "name": "SpecialAbilityUpdate",
+   "sites": [
+    "0x659b2f"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc55f40"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc559b8"
+  },
+  {
+   "create": "0x64f733",
+   "createData": "0x64f76e",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 9,
+   "name": "SpecialDisguiseUpdate",
+   "sites": [
+    "0x65a0c6"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc55f40"
+    },
+    {
+     "extra": 0,
+     "table": "0xc05c10"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc6cfe8"
+  },
+  {
+   "create": "0x64e165",
+   "createData": "0x653e58",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 1,
+   "name": "SpecialEnemySenseUpdate",
+   "sites": [
+    "0x658eb2"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc07e98"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc07de8"
+  },
+  {
+   "create": "0x64c842",
+   "createData": "0x653868",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 2,
+   "name": "SpecialPowerCompletionDie",
+   "sites": [
+    "0x658a17"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 8,
+     "table": "0xc76bd8"
+    },
+    {
+     "extra": 0,
+     "table": "0xc06bc0"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc07a30"
+  },
+  {
+   "create": "0x6509ed",
+   "createData": "0x708243",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 8,
+   "name": "SpecialPowerCreate",
+   "sites": [
+    "0x65ac92"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0x0"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc07a30"
+  },
+  {
+   "create": "0x64d92d",
+   "createData": "0x64d965",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 256,
+   "name": "SpecialPowerModule",
+   "sites": [
+    "0x65b36a"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc64db0"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc64aa0"
+  },
+  {
+   "create": "0x654884",
+   "createData": "0x64d965",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 256,
+   "name": "SpecialPowerTimerRefreshSpecialPower",
+   "sites": [
+    "0x65b4ef"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc64db0"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc64aa0"
+  },
+  {
+   "create": "0x650104",
+   "createData": "0x65013c",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 140,
+   "name": "SpellRechargeModifierUpgrade",
+   "sites": [
+    "0x65a242"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 8,
+     "table": "0xc76ad8"
+    },
+    {
+     "extra": 0,
+     "table": "0xc6f0d0"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc6f050"
+  },
+  {
+   "create": "0x652444",
+   "createData": "0x65247c",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 256,
+   "name": "SplitHordeSpecialPower",
+   "sites": [
+    "0x65b949"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc64db0"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc75268"
+  },
+  {
+   "create": "0x650d84",
+   "createData": "0x654811",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 16,
+   "name": "SquishCollide",
+   "sites": [
+    "0x65aed9"
+   ],
+   "slot7": false,
+   "tables": [],
+   "type": 0,
+   "vtable": "0xc07a30"
+  },
+  {
+   "create": "0x64b065",
+   "createData": "0x64b09d",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 1,
+   "name": "StancesBehavior",
+   "sites": [
+    "0x6581e7"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc58cc8"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc07a30"
+  },
+  {
+   "create": "0x64fdd8",
+   "createData": "0x654503",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 132,
+   "name": "StatusBitsUpgrade",
+   "sites": [
+    "0x65a392"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 8,
+     "table": "0xc76ad8"
+    },
+    {
+     "extra": 0,
+     "table": "0xc6e574"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc6eac8"
+  },
+  {
+   "create": "0x64fe10",
+   "createData": "0x65549a",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 132,
+   "name": "StatusBitsUpgradeIfEldestKindof",
+   "sites": [
+    "0x65a3ca"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 8,
+     "table": "0xc76ad8"
+    },
+    {
+     "extra": 0,
+     "table": "0xc6e574"
+    },
+    {
+     "extra": 0,
+     "table": "0xc6e5a4"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc08868"
+  },
+  {
+   "create": "0x64e89d",
+   "createData": "0x655173",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 1,
+   "name": "StealthDetectorUpdate",
+   "sites": [
+    "0x658b67"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc68b78"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc097d0"
+  },
+  {
+   "create": "0x64e90d",
+   "createData": "0x64e948",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 1,
+   "name": "StealthUpdate",
+   "sites": [
+    "0x658bda"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc2e968"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc2ec30"
+  },
+  {
+   "create": "0x64feb8",
+   "createData": "0x654b02",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 132,
+   "name": "StealthUpgrade",
+   "sites": [
+    "0x65a472"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 8,
+     "table": "0xc76ad8"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc6eac8"
+  },
+  {
+   "create": "0x65201a",
+   "createData": "0x652052",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 256,
+   "name": "StopSpecialPower",
+   "sites": [
+    "0x65b78f"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc64db0"
+    },
+    {
+     "extra": 0,
+     "table": "0xc74a78"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc75268"
+  },
+  {
+   "create": "0x652e87",
+   "createData": "0x652ec2",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 1,
+   "name": "StoreObjectsSpecialPower",
+   "sites": [
+    "0x65aa13"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc55f40"
+    },
+    {
+     "extra": 0,
+     "table": "0xc767cc"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc763a8"
+  },
+  {
+   "create": "0x64d3d8",
+   "createData": "0x64d410",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 1,
+   "name": "StrafeAreaUpdate",
+   "sites": [
+    "0x659666"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc31968"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc319d8"
+  },
+  {
+   "create": "0x651268",
+   "createData": "0x656d84",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 32,
+   "name": "StructureBody",
+   "sites": [
+    "0x65b1bf"
+   ],
+   "slot7": true,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc71d68"
+    },
+    {
+     "extra": 0,
+     "table": "0xc84858"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc73028"
+  },
+  {
+   "create": "0x64ea7f",
+   "createData": "0x6568e7",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 3,
+   "name": "StructureCollapseUpdate",
+   "sites": [
+    "0x659de0"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc69238"
+    },
+    {
+     "extra": 8,
+     "table": "0xc76bd8"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc0a0c0"
+  },
+  {
+   "create": "0x64eaef",
+   "createData": "0x6578f8",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 3,
+   "name": "StructureToppleUpdate",
+   "sites": [
+    "0x659dab"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc69680"
+    },
+    {
+     "extra": 8,
+     "table": "0xc76bd8"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc0a538"
+  },
+  {
+   "create": "0x64fe80",
+   "createData": "0x657522",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 132,
+   "name": "SubObjectsUpgrade",
+   "sites": [
+    "0x65a43a"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 8,
+     "table": "0xc76ad8"
+    },
+    {
+     "extra": 0,
+     "table": "0xc6e928"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc0a3b8"
+  },
+  {
+   "create": "0x64f574",
+   "createData": "0x64f5af",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 9,
+   "name": "SummonReplacementSpecialAbilityUpdate",
+   "sites": [
+    "0x6599b6"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc55f40"
+    },
+    {
+     "extra": 0,
+     "table": "0xc05af8"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc6c088"
+  },
+  {
+   "create": "0x650833",
+   "createData": "0x708243",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 8,
+   "name": "SupplyCenterCreate",
+   "sites": [
+    "0x65ac28"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0x0"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc07a30"
+  },
+  {
+   "create": "0x64e6c1",
+   "createData": "0x64e6fc",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 1,
+   "name": "SupplyCenterDockUpdate",
+   "sites": [
+    "0x659b99"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc87674"
+    },
+    {
+     "extra": 0,
+     "table": "0xc68478"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc07a30"
+  },
+  {
+   "create": "0x64eb27",
+   "createData": "0x653a59",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 1,
+   "name": "SupplyCenterProductionExitUpdate",
+   "sites": [
+    "0x659b64"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc086a8"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc07a30"
+  },
+  {
+   "create": "0x64ebbe",
+   "createData": "0x64ebf9",
+   "extra": "0x0",
+   "isAiModuleData": true,
+   "mask": 17,
+   "name": "SupplyTruckAIUpdate",
+   "sites": [
+    "0x6592da"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc0f530"
+    },
+    {
+     "extra": 0,
+     "table": "0xc05758"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc2def8"
+  },
+  {
+   "create": "0x65086b",
+   "createData": "0x708243",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 8,
+   "name": "SupplyWarehouseCreate",
+   "sites": [
+    "0x65ac5d"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0x0"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc07a30"
+  },
+  {
+   "create": "0x64c16d",
+   "createData": "0x64c1a5",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 5,
+   "name": "SupplyWarehouseCripplingBehavior",
+   "sites": [
+    "0x6586cd"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc60420"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc07a30"
+  },
+  {
+   "create": "0x64ecdc",
+   "createData": "0x64ed17",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 1,
+   "name": "SupplyWarehouseDockUpdate",
+   "sites": [
+    "0x659bce"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc87674"
+    },
+    {
+     "extra": 0,
+     "table": "0xc6a15c"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc07a30"
+  },
+  {
+   "create": "0x6512be",
+   "createData": "0x656a4d",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 32,
+   "name": "SymbioticStructuresBody",
+   "sites": [
+    "0x65b1f4"
+   ],
+   "slot7": true,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc71d68"
+    },
+    {
+     "extra": 0,
+     "table": "0xc0602c"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc0a170"
+  },
+  {
+   "create": "0x651c49",
+   "createData": "0x651c81",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 256,
+   "name": "TaintSpecialPower",
+   "sites": [
+    "0x65b607"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc64db0"
+    },
+    {
+     "extra": 0,
+     "table": "0xc741a0"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc74290"
+  },
+  {
+   "create": "0x64d89e",
+   "createData": "0x64d8d9",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 1,
+   "name": "TeleportSpecialAbilityUpdate",
+   "sites": [
+    "0x65976f"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc55f40"
+    },
+    {
+     "extra": 0,
+     "table": "0xc054b0"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc64990"
+  },
+  {
+   "create": "0x652df8",
+   "createData": "0x652e33",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 1,
+   "name": "TeleportToCasterSpecialPower",
+   "sites": [
+    "0x65a9a9"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc55f40"
+    },
+    {
+     "extra": 0,
+     "table": "0xc76710"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc763a8"
+  },
+  {
+   "create": "0x652c13",
+   "createData": "0x6549e9",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 1,
+   "name": "TemporarilyDefectUpdate",
+   "sites": [
+    "0x65a9de"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc76214"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc07a30"
+  },
+  {
+   "create": "0x64bf55",
+   "createData": "0x64bf8d",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 11,
+   "name": "TerrainResourceBehavior",
+   "sites": [
+    "0x6585af"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc5fd78"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc5fcc8"
+  },
+  {
+   "create": "0x64f96a",
+   "createData": "0x64f9a2",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 1,
+   "name": "ThreatFinderUpdate",
+   "sites": [
+    "0x65a133"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc4c320"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc07a30"
+  },
+  {
+   "create": "0x64f4ca",
+   "createData": "0x64f505",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 1,
+   "name": "ToggleDeploySpecialAbilityUpdate",
+   "sites": [
+    "0x659705"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc55f40"
+    },
+    {
+     "extra": 0,
+     "table": "0xc05ac8"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc6bf90"
+  },
+  {
+   "create": "0x64f420",
+   "createData": "0x64f45b",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 1,
+   "name": "ToggleHiddenSpecialAbilityUpdate",
+   "sites": [
+    "0x6596d0"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc55f40"
+    },
+    {
+     "extra": 0,
+     "table": "0xc05a8c"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc763a8"
+  },
+  {
+   "create": "0x64f376",
+   "createData": "0x64f3b1",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 9,
+   "name": "ToggleMountedSpecialAbilityUpdate",
+   "sites": [
+    "0x65969b"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc55f40"
+    },
+    {
+     "extra": 0,
+     "table": "0xc05a18"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc6be00"
+  },
+  {
+   "create": "0x6504c2",
+   "createData": "0x655697",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 132,
+   "name": "TooltipUpgrade",
+   "sites": [
+    "0x65a7f2"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 8,
+     "table": "0xc76ad8"
+    },
+    {
+     "extra": 0,
+     "table": "0xc6f898"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc09ad0"
+  },
+  {
+   "create": "0x64ed68",
+   "createData": "0x64eda0",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 17,
+   "name": "ToppleUpdate",
+   "sites": [
+    "0x658dd2"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc6a490"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc6a3b0"
+  },
+  {
+   "create": "0x650aed",
+   "createData": "0x654748",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 4,
+   "name": "TransitionDamageFX",
+   "sites": [
+    "0x65ad9b"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc84858"
+    },
+    {
+     "extra": 0,
+     "table": "0xc08d10"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc707d8"
+  },
+  {
+   "create": "0x64ee7a",
+   "createData": "0x64badb",
+   "extra": "0x0",
+   "isAiModuleData": true,
+   "mask": 17,
+   "name": "TransportAIUpdate",
+   "sites": [
+    "0x659eb4"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc0f530"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc10440"
+  },
+  {
+   "create": "0x64b546",
+   "createData": "0x64b581",
+   "extra": "0x86a688",
+   "isAiModuleData": false,
+   "mask": 95,
+   "name": "TransportContain",
+   "sites": [
+    "0x658347"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc59f30"
+    },
+    {
+     "extra": 8,
+     "table": "0xc76bd8"
+    },
+    {
+     "extra": 0,
+     "table": "0xc5abd8"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc5a888"
+  },
+  {
+   "create": "0x64b9d2",
+   "createData": "0x65771b",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 95,
+   "name": "TunnelContain",
+   "sites": [
+    "0x6583ef"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc59f30"
+    },
+    {
+     "extra": 8,
+     "table": "0xc76bd8"
+    },
+    {
+     "extra": 0,
+     "table": "0xc095f0"
+    },
+    {
+     "extra": 0,
+     "table": "0xc5c9a0"
+    },
+    {
+     "extra": 0,
+     "table": "0xc04e58"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc5cbe8"
+  },
+  {
+   "create": "0x650fac",
+   "createData": "0x655866",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 16,
+   "name": "UnitCrateCollide",
+   "sites": [
+    "0x65b017"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc71390"
+    },
+    {
+     "extra": 0,
+     "table": "0xc05e4c"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc09c50"
+  },
+  {
+   "create": "0x652fe0",
+   "createData": "0x65301b",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 1,
+   "name": "UnleashSpecialPower",
+   "sites": [
+    "0x65aa48"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc55f40"
+    },
+    {
+     "extra": 0,
+     "table": "0xc84858"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc763a8"
+  },
+  {
+   "create": "0x64fef0",
+   "createData": "0x64ff28",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 132,
+   "name": "UnpauseSpecialPowerUpgrade",
+   "sites": [
+    "0x65a552"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 8,
+     "table": "0xc76ad8"
+    },
+    {
+     "extra": 0,
+     "table": "0xc6eb5c"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc6eac8"
+  },
+  {
+   "create": "0x652217",
+   "createData": "0x65224f",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 256,
+   "name": "UntamedAllegianceSpecialPower",
+   "sites": [
+    "0x65b869"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc64db0"
+    },
+    {
+     "extra": 0,
+     "table": "0xc84858"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc75268"
+  },
+  {
+   "create": "0x64c87a",
+   "createData": "0x654e52",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 2,
+   "name": "UpgradeDie",
+   "sites": [
+    "0x658a87"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 8,
+     "table": "0xc76bd8"
+    },
+    {
+     "extra": 0,
+     "table": "0xc06bf0"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc09650"
+  },
+  {
+   "create": "0x650fff",
+   "createData": "0x6558db",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 16,
+   "name": "VeterancyCrateCollide",
+   "sites": [
+    "0x65b04c"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc71390"
+    },
+    {
+     "extra": 0,
+     "table": "0xc05eb8"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc09cd0"
+  },
+  {
+   "create": "0x64a601",
+   "createData": "0x64a639",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 1,
+   "name": "WallHubBehavior",
+   "sites": [
+    "0x657a3c"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc56700"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc567c0"
+  },
+  {
+   "create": "0x64efd7",
+   "createData": "0x65428c",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 5,
+   "name": "WallUpgradeUpdate",
+   "sites": [
+    "0x659fbd"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc84858"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc07a30"
+  },
+  {
+   "create": "0x64eef5",
+   "createData": "0x64ef30",
+   "extra": "0x0",
+   "isAiModuleData": true,
+   "mask": 17,
+   "name": "WanderAIUpdate",
+   "sites": [
+    "0x659ee9"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc0f530"
+    },
+    {
+     "extra": 0,
+     "table": "0xc05828"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc2def8"
+  },
+  {
+   "create": "0x64b12c",
+   "createData": "0x6532bc",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 0,
+   "name": "WargBehavior",
+   "sites": [
+    "0x6580cc"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc84858"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc07a30"
+  },
+  {
+   "create": "0x64ff7c",
+   "createData": "0x654b02",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 132,
+   "name": "WeaponBonusUpgrade",
+   "sites": [
+    "0x65a58a",
+    "0x65a5fa"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 8,
+     "table": "0xc76ad8"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc6eac8"
+  },
+  {
+   "create": "0x651aa5",
+   "createData": "0x651add",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 256,
+   "name": "WeaponChangeSpecialPowerModule",
+   "sites": [
+    "0x65b55f"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc64db0"
+    },
+    {
+     "extra": 0,
+     "table": "0xc73d70"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc73e70"
+  },
+  {
+   "create": "0x64d7f4",
+   "createData": "0x64d82f",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 1,
+   "name": "WeaponFireSpecialAbilityUpdate",
+   "sites": [
+    "0x65973a"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc55f40"
+    },
+    {
+     "extra": 0,
+     "table": "0xc05408"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc64890"
+  },
+  {
+   "create": "0x64d9c2",
+   "createData": "0x64d9fa",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 257,
+   "name": "WeaponModeSpecialPowerUpdate",
+   "sites": [
+    "0x6595fc"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc87588"
+    },
+    {
+     "extra": 0,
+     "table": "0xc650a0"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc651c0"
+  },
+  {
+   "create": "0x64d74a",
+   "createData": "0x64d785",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 1,
+   "name": "WeaponSetSpecialAbilityUpdate",
+   "sites": [
+    "0x6597d9"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc55f40"
+    },
+    {
+     "extra": 0,
+     "table": "0xc05368"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc763a8"
+  },
+  {
+   "create": "0x64ffb4",
+   "createData": "0x64ffec",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 132,
+   "name": "WeaponSetUpgrade",
+   "sites": [
+    "0x65a5c2"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 8,
+     "table": "0xc76ad8"
+    },
+    {
+     "extra": 0,
+     "table": "0xc6ec90"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc6eac8"
+  },
+  {
+   "create": "0x64ef9c",
+   "createData": "0x654238",
+   "extra": "0x0",
+   "isAiModuleData": true,
+   "mask": 17,
+   "name": "WorkerAIUpdate",
+   "sites": [
+    "0x659f88"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc0f530"
+    },
+    {
+     "extra": 0,
+     "table": "0xc058c8"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc086d8"
+  },
+  {
+   "create": "0x6520a6",
+   "createData": "0x6520e1",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 1,
+   "name": "WoundArrowUpdate",
+   "sites": [
+    "0x65b7c4"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc55f40"
+    },
+    {
+     "extra": 0,
+     "table": "0xc74b40"
+    }
+   ],
+   "type": 0,
+   "vtable": "0xc763a8"
+  },
+  {
+   "create": "0x46481e",
+   "createData": "0x464856",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 1024,
+   "name": "W3DBoatWakeModelDraw",
+   "sites": [
+    "0x464ee4"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xbe3ec4"
+    }
+   ],
+   "type": 1,
+   "vtable": "0xbe3e48"
+  },
+  {
+   "create": "0x464453",
+   "createData": "0x46448b",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 1024,
+   "name": "W3DBuffDraw",
+   "sites": [
+    "0x464e39"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xbe318c"
+    }
+   ],
+   "type": 1,
+   "vtable": "0xbe3108"
+  },
+  {
+   "create": "0x464022",
+   "createData": "0x708243",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 1024,
+   "name": "W3DDebrisDraw",
+   "sites": [
+    "0x464b39"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0x0"
+    }
+   ],
+   "type": 1,
+   "vtable": "0xc07a30"
+  },
+  {
+   "create": "0x46405a",
+   "createData": "0x708243",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 1024,
+   "name": "W3DDefaultDraw",
+   "sites": [
+    "0x464b04"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0x0"
+    }
+   ],
+   "type": 1,
+   "vtable": "0xc07a30"
+  },
+  {
+   "create": "0x464565",
+   "createData": "0x46459d",
+   "extra": "0x4d091c",
+   "isAiModuleData": false,
+   "mask": 1024,
+   "name": "W3DFloorDraw",
+   "sites": [
+    "0x464d8b"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xbe3340"
+    },
+    {
+     "extra": 0,
+     "table": "0xbe3548"
+    }
+   ],
+   "type": 1,
+   "vtable": "0xbe3470"
+  },
+  {
+   "create": "0x464677",
+   "createData": "0x4646b2",
+   "extra": "0x4ca9a7",
+   "isAiModuleData": false,
+   "mask": 1024,
+   "name": "W3DHordeModelDraw",
+   "sites": [
+    "0x464bb1"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xbdcaa0"
+    },
+    {
+     "extra": 0,
+     "table": "0xbe1320"
+    }
+   ],
+   "type": 1,
+   "vtable": "0xbe3a78"
+  },
+  {
+   "create": "0x464121",
+   "createData": "0x464159",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 1024,
+   "name": "W3DLaserDraw",
+   "sites": [
+    "0x464bea"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xbe1798"
+    }
+   ],
+   "type": 1,
+   "vtable": "0xbe18b8"
+  },
+  {
+   "create": "0x4645ee",
+   "createData": "0x464626",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 1024,
+   "name": "W3DLightDraw",
+   "sites": [
+    "0x464e00"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xbe3638"
+    }
+   ],
+   "type": 1,
+   "vtable": "0xbe37d0"
+  },
+  {
+   "create": "0x4648a7",
+   "createData": "0x4648df",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 1024,
+   "name": "W3DProjectileStreamDraw",
+   "sites": [
+    "0x464f1d"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xbe3f90"
+    }
+   ],
+   "type": 1,
+   "vtable": "0xbe3ef8"
+  },
+  {
+   "create": "0x4644dc",
+   "createData": "0x464514",
+   "extra": "0x4d091c",
+   "isAiModuleData": false,
+   "mask": 1024,
+   "name": "W3DPropDraw",
+   "sites": [
+    "0x464dc7"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xbe3340"
+    }
+   ],
+   "type": 1,
+   "vtable": "0xbe32b8"
+  },
+  {
+   "create": "0x4641aa",
+   "createData": "0x464a0f",
+   "extra": "0x4ca9a7",
+   "isAiModuleData": false,
+   "mask": 1024,
+   "name": "W3DQuadrupedDraw",
+   "sites": [
+    "0x464c26"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xbe1320"
+    },
+    {
+     "extra": 0,
+     "table": "0xbe1a80"
+    }
+   ],
+   "type": 1,
+   "vtable": "0xbdba10"
+  },
+  {
+   "create": "0x4641e5",
+   "createData": "0x708243",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 1024,
+   "name": "W3DRopeDraw",
+   "sites": [
+    "0x464c5f"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0x0"
+    }
+   ],
+   "type": 1,
+   "vtable": "0xc07a30"
+  },
+  {
+   "create": "0x46478f",
+   "createData": "0x4647ca",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 1024,
+   "name": "W3DSailModelDraw",
+   "sites": [
+    "0x464eab"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xbe1320"
+    },
+    {
+     "extra": 0,
+     "table": "0xbe3b30"
+    }
+   ],
+   "type": 1,
+   "vtable": "0xbe3a78"
+  },
+  {
+   "create": "0x464092",
+   "createData": "0x4640cd",
+   "extra": "0x4c2992",
+   "isAiModuleData": false,
+   "mask": 1024,
+   "name": "W3DScriptedModelDraw",
+   "sites": [
+    "0x464b75"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xbe1320"
+    }
+   ],
+   "type": 1,
+   "vtable": "0xbe0d40"
+  },
+  {
+   "create": "0x464706",
+   "createData": "0x46473e",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 1024,
+   "name": "W3DStreakDraw",
+   "sites": [
+    "0x464e72"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xbe39f8"
+    }
+   ],
+   "type": 1,
+   "vtable": "0xbe3948"
+  },
+  {
+   "create": "0x46421d",
+   "createData": "0x464258",
+   "extra": "0x4ca9a7",
+   "isAiModuleData": false,
+   "mask": 1024,
+   "name": "W3DSupplyDraw",
+   "sites": [
+    "0x464c9b"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xbe1320"
+    },
+    {
+     "extra": 0,
+     "table": "0xbe1e38"
+    }
+   ],
+   "type": 1,
+   "vtable": "0xbe2030"
+  },
+  {
+   "create": "0x46433b",
+   "createData": "0x464376",
+   "extra": "0x4ca9a7",
+   "isAiModuleData": false,
+   "mask": 1024,
+   "name": "W3DTankDraw",
+   "sites": [
+    "0x464d13"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xbe1320"
+    },
+    {
+     "extra": 0,
+     "table": "0xbe2968"
+    }
+   ],
+   "type": 1,
+   "vtable": "0xbe29f0"
+  },
+  {
+   "create": "0x464930",
+   "createData": "0x464968",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 1024,
+   "name": "W3DTornadoDraw",
+   "sites": [
+    "0x464f56"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xbe4130"
+    }
+   ],
+   "type": 1,
+   "vtable": "0xbe4178"
+  },
+  {
+   "create": "0x4643ca",
+   "createData": "0x464402",
+   "extra": "0x4ce519",
+   "isAiModuleData": false,
+   "mask": 1024,
+   "name": "W3DTreeDraw",
+   "sites": [
+    "0x464d4f"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xbe2e80"
+    }
+   ],
+   "type": 1,
+   "vtable": "0xbe2c88"
+  },
+  {
+   "create": "0x4642ac",
+   "createData": "0x4642e7",
+   "extra": "0x4ca9a7",
+   "isAiModuleData": false,
+   "mask": 1024,
+   "name": "W3DTruckDraw",
+   "sites": [
+    "0x464cd7"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xbe1320"
+    },
+    {
+     "extra": 0,
+     "table": "0xbe22b8"
+    }
+   ],
+   "type": 1,
+   "vtable": "0xbe2468"
+  },
+  {
+   "create": "0x6526f8",
+   "createData": "0x708243",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 2048,
+   "name": "AnimatedParticleSysBoneClientUpdate",
+   "sites": [
+    "0x65ba2a"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0x0"
+    }
+   ],
+   "type": 2,
+   "vtable": "0xc07a30"
+  },
+  {
+   "create": "0x652768",
+   "createData": "0x6527a0",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 2048,
+   "name": "BeaconClientUpdate",
+   "sites": [
+    "0x65ba9c"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc757c4"
+    }
+   ],
+   "type": 2,
+   "vtable": "0xc07a30"
+  },
+  {
+   "create": "0x6527f1",
+   "createData": "0x652829",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 2048,
+   "name": "EvaAnnounceClientCreate",
+   "sites": [
+    "0x65bc64"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc758e8"
+    }
+   ],
+   "type": 2,
+   "vtable": "0xc07a30"
+  },
+  {
+   "create": "0x64d1fb",
+   "createData": "0x64d233",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 2048,
+   "name": "LaserUpdate",
+   "sites": [
+    "0x659313"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc2d890"
+    }
+   ],
+   "type": 2,
+   "vtable": "0xc2d7a8"
+  },
+  {
+   "create": "0x65287a",
+   "createData": "0x6528b2",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 2048,
+   "name": "RadarMarkerClientUpdate",
+   "sites": [
+    "0x65bad5"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc759c8"
+    }
+   ],
+   "type": 2,
+   "vtable": "0xc75a28"
+  },
+  {
+   "create": "0x652730",
+   "createData": "0x708243",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 2048,
+   "name": "SwayClientUpdate",
+   "sites": [
+    "0x65ba63"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0x0"
+    }
+   ],
+   "type": 2,
+   "vtable": "0xc07a30"
+  },
+  {
+   "create": "0x65292b",
+   "createData": "0x652963",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 4096,
+   "name": "AnimationSoundClientBehavior",
+   "sites": [
+    "0x65bb0e"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc75c94"
+    }
+   ],
+   "type": 3,
+   "vtable": "0xc75b00"
+  },
+  {
+   "create": "0x652b03",
+   "createData": "0x652b3b",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 4096,
+   "name": "ModelConditionAudioLoopClientBehavior",
+   "sites": [
+    "0x65bbf2"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc761a4"
+    }
+   ],
+   "type": 3,
+   "vtable": "0xc760d8"
+  },
+  {
+   "create": "0x6559d4",
+   "createData": "0x6529b4",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 4096,
+   "name": "ModelConditionSoundSelectorClientBehavior",
+   "sites": [
+    "0x65bb47"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc75d80"
+    }
+   ],
+   "type": 3,
+   "vtable": "0xc75cc8"
+  },
+  {
+   "create": "0x652acb",
+   "createData": "0x657640",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 4096,
+   "name": "RandomSoundSelectorClientBehavior",
+   "sites": [
+    "0x65bbb9"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc75f48"
+    },
+    {
+     "extra": 8,
+     "table": "0xc26720"
+    }
+   ],
+   "type": 3,
+   "vtable": "0xc0a4b8"
+  },
+  {
+   "create": "0x6549b1",
+   "createData": "0x708243",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 4096,
+   "name": "TerrainResourceClientBehavior",
+   "sites": [
+    "0x65bc2b"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0x0"
+    }
+   ],
+   "type": 3,
+   "vtable": "0xc07a30"
+  },
+  {
+   "create": "0x654979",
+   "createData": "0x652a05",
+   "extra": "0x0",
+   "isAiModuleData": false,
+   "mask": 4096,
+   "name": "UpgradeSoundSelectorClientBehavior",
+   "sites": [
+    "0x65bb80"
+   ],
+   "slot7": false,
+   "tables": [
+    {
+     "extra": 0,
+     "table": "0xc75f0c"
+    }
+   ],
+   "type": 3,
+   "vtable": "0xc75e80"
+  }
+ ],
+ "moduleTypes": {
+  "0": "BEHAVIOR",
+  "1": "DRAW",
+  "2": "CLIENT_UPDATE",
+  "3": "CLIENT_BEHAVIOR"
+ },
+ "registrationSequence": [
+  {
+   "name": "AutoHealBehavior",
+   "site": "0x657a03",
+   "type": 0
+  },
+  {
+   "name": "WallHubBehavior",
+   "site": "0x657a3c",
+   "type": 0
+  },
+  {
+   "name": "GettingBuiltBehavior",
+   "site": "0x657a74",
+   "type": 0
+  },
+  {
+   "name": "CastleBehavior",
+   "site": "0x657aac",
+   "type": 0
+  },
+  {
+   "name": "CastleMemberBehavior",
+   "site": "0x657ae2",
+   "type": 0
+  },
+  {
+   "name": "BuildingBehavior",
+   "site": "0x657b1a",
+   "type": 0
+  },
+  {
+   "name": "BridgeBehavior",
+   "site": "0x657b52",
+   "type": 0
+  },
+  {
+   "name": "BridgeScaffoldBehavior",
+   "site": "0x657b8a",
+   "type": 0
+  },
+  {
+   "name": "BridgeTowerBehavior",
+   "site": "0x657bc2",
+   "type": 0
+  },
+  {
+   "name": "RampageBehavior",
+   "site": "0x657bfa",
+   "type": 0
+  },
+  {
+   "name": "EnragedBehavior",
+   "site": "0x657c32",
+   "type": 0
+  },
+  {
+   "name": "EntEnragedUpdate",
+   "site": "0x657c6a",
+   "type": 0
+  },
+  {
+   "name": "AIGateUpdate",
+   "site": "0x657ca2",
+   "type": 0
+  },
+  {
+   "name": "HitReactionBehavior",
+   "site": "0x657cda",
+   "type": 0
+  },
+  {
+   "name": "ClickReactionBehavior",
+   "site": "0x657d12",
+   "type": 0
+  },
+  {
+   "name": "SiegeDockingBehavior",
+   "site": "0x657d4a",
+   "type": 0
+  },
+  {
+   "name": "AutoAbilityBehavior",
+   "site": "0x657d82",
+   "type": 0
+  },
+  {
+   "name": "DualWeaponBehavior",
+   "site": "0x657dba",
+   "type": 0
+  },
+  {
+   "name": "AimWeaponBehavior",
+   "site": "0x657df2",
+   "type": 0
+  },
+  {
+   "name": "BezierProjectileBehavior",
+   "site": "0x657e2a",
+   "type": 0
+  },
+  {
+   "name": "MissileUpdate",
+   "site": "0x657e62",
+   "type": 0
+  },
+  {
+   "name": "PhysicsBehavior",
+   "site": "0x657e9a",
+   "type": 0
+  },
+  {
+   "name": "InstantDeathBehavior",
+   "site": "0x657ed2",
+   "type": 0
+  },
+  {
+   "name": "SlowDeathBehavior",
+   "site": "0x657f0a",
+   "type": 0
+  },
+  {
+   "name": "ShipSlowDeathBehavior",
+   "site": "0x657f42",
+   "type": 0
+  },
+  {
+   "name": "SpawnBehavior",
+   "site": "0x657f7d",
+   "type": 0
+  },
+  {
+   "name": "GiantBirdSlowDeathBehavior",
+   "site": "0x657fb5",
+   "type": 0
+  },
+  {
+   "name": "CaveContain",
+   "site": "0x657fed",
+   "type": 0
+  },
+  {
+   "name": "OpenContain",
+   "site": "0x658025",
+   "type": 0
+  },
+  {
+   "name": "SpawnUnitBehavior",
+   "site": "0x65805d",
+   "type": 0
+  },
+  {
+   "name": "OathbreakersFadeAwayBehavior",
+   "site": "0x658095",
+   "type": 0
+  },
+  {
+   "name": "WargBehavior",
+   "site": "0x6580cc",
+   "type": 0
+  },
+  {
+   "name": "DynamicPortalBehaviour",
+   "site": "0x658107",
+   "type": 0
+  },
+  {
+   "name": "FakePathfindPortalBehaviour",
+   "site": "0x65813f",
+   "type": 0
+  },
+  {
+   "name": "MineshaftPortalBehaviour",
+   "site": "0x658177",
+   "type": 0
+  },
+  {
+   "name": "CritterEmitterUpdate",
+   "site": "0x6581af",
+   "type": 0
+  },
+  {
+   "name": "StancesBehavior",
+   "site": "0x6581e7",
+   "type": 0
+  },
+  {
+   "name": "HealContain",
+   "site": "0x65821f",
+   "type": 0
+  },
+  {
+   "name": "HordeContain",
+   "site": "0x65825b",
+   "type": 0
+  },
+  {
+   "name": "HorseHordeContain",
+   "site": "0x658297",
+   "type": 0
+  },
+  {
+   "name": "AODHordeContain",
+   "site": "0x6582d3",
+   "type": 0
+  },
+  {
+   "name": "GarrisonContain",
+   "site": "0x65830b",
+   "type": 0
+  },
+  {
+   "name": "TransportContain",
+   "site": "0x658347",
+   "type": 0
+  },
+  {
+   "name": "SiegeEngineContain",
+   "site": "0x65837f",
+   "type": 0
+  },
+  {
+   "name": "HordeSiegeEngineContain",
+   "site": "0x6583b7",
+   "type": 0
+  },
+  {
+   "name": "TunnelContain",
+   "site": "0x6583ef",
+   "type": 0
+  },
+  {
+   "name": "HordeTransportContain",
+   "site": "0x658427",
+   "type": 0
+  },
+  {
+   "name": "HordeGarrisonContain",
+   "site": "0x65845f",
+   "type": 0
+  },
+  {
+   "name": "RiderChangeContain",
+   "site": "0x658497",
+   "type": 0
+  },
+  {
+   "name": "SlaughterHordeContain",
+   "site": "0x6584cf",
+   "type": 0
+  },
+  {
+   "name": "CitadelSlaughterHordeContain",
+   "site": "0x658507",
+   "type": 0
+  },
+  {
+   "name": "ProductionQueueHordeContain",
+   "site": "0x65853f",
+   "type": 0
+  },
+  {
+   "name": "PropagandaTowerBehavior",
+   "site": "0x658577",
+   "type": 0
+  },
+  {
+   "name": "TerrainResourceBehavior",
+   "site": "0x6585af",
+   "type": 0
+  },
+  {
+   "name": "FireWeaponWhenDamagedBehavior",
+   "site": "0x6585ea",
+   "type": 0
+  },
+  {
+   "name": "FireWeaponWhenDeadBehavior",
+   "site": "0x658625",
+   "type": 0
+  },
+  {
+   "name": "PoisonedBehavior",
+   "site": "0x65865d",
+   "type": 0
+  },
+  {
+   "name": "RebuildHoleBehavior",
+   "site": "0x658695",
+   "type": 0
+  },
+  {
+   "name": "SupplyWarehouseCripplingBehavior",
+   "site": "0x6586cd",
+   "type": 0
+  },
+  {
+   "name": "ClearanceTestingSlowDeathBehavior",
+   "site": "0x658705",
+   "type": 0
+  },
+  {
+   "name": "RunOffMapBehavior",
+   "site": "0x65873c",
+   "type": 0
+  },
+  {
+   "name": "ReplenishUnitsBehavior",
+   "site": "0x658777",
+   "type": 0
+  },
+  {
+   "name": "SlaveWatcherBehavior",
+   "site": "0x6587af",
+   "type": 0
+  },
+  {
+   "name": "AnnounceBirthAndDeathBehavior",
+   "site": "0x6587e7",
+   "type": 0
+  },
+  {
+   "name": "DestroyDie",
+   "site": "0x65881f",
+   "type": 0
+  },
+  {
+   "name": "FXListDie",
+   "site": "0x658857",
+   "type": 0
+  },
+  {
+   "name": "CrushDie",
+   "site": "0x65888f",
+   "type": 0
+  },
+  {
+   "name": "HeroDie",
+   "site": "0x6588c7",
+   "type": 0
+  },
+  {
+   "name": "CreateCrateDie",
+   "site": "0x6588ff",
+   "type": 0
+  },
+  {
+   "name": "RefundDie",
+   "site": "0x658937",
+   "type": 0
+  },
+  {
+   "name": "CreateObjectDie",
+   "site": "0x65896f",
+   "type": 0
+  },
+  {
+   "name": "CreateObjectDieIfEldestKindof",
+   "site": "0x6589a7",
+   "type": 0
+  },
+  {
+   "name": "DamageFilteredCreateObjectDie",
+   "site": "0x6589df",
+   "type": 0
+  },
+  {
+   "name": "SpecialPowerCompletionDie",
+   "site": "0x658a17",
+   "type": 0
+  },
+  {
+   "name": "RebuildHoleExposeDie",
+   "site": "0x658a4f",
+   "type": 0
+  },
+  {
+   "name": "UpgradeDie",
+   "site": "0x658a87",
+   "type": 0
+  },
+  {
+   "name": "KeepObjectDie",
+   "site": "0x658abf",
+   "type": 0
+  },
+  {
+   "name": "AssistedTargetingUpdate",
+   "site": "0x658af7",
+   "type": 0
+  },
+  {
+   "name": "AutoFindHealingUpdate",
+   "site": "0x658b2f",
+   "type": 0
+  },
+  {
+   "name": "StealthDetectorUpdate",
+   "site": "0x658b67",
+   "type": 0
+  },
+  {
+   "name": "BroadcastStealthUpdate",
+   "site": "0x658ba2",
+   "type": 0
+  },
+  {
+   "name": "StealthUpdate",
+   "site": "0x658bda",
+   "type": 0
+  },
+  {
+   "name": "InvisibilityUpdate",
+   "site": "0x658c12",
+   "type": 0
+  },
+  {
+   "name": "DelayedWeaponSetUpgradeUpdate",
+   "site": "0x658c4a",
+   "type": 0
+  },
+  {
+   "name": "DeletionUpdate",
+   "site": "0x658c82",
+   "type": 0
+  },
+  {
+   "name": "DynamicShroudClearingRangeUpdate",
+   "site": "0x658cba",
+   "type": 0
+  },
+  {
+   "name": "DeployStyleAIUpdate",
+   "site": "0x658cf2",
+   "type": 0
+  },
+  {
+   "name": "AssaultTransportAIUpdate",
+   "site": "0x658d2a",
+   "type": 0
+  },
+  {
+   "name": "GiantBirdAIUpdate",
+   "site": "0x658d62",
+   "type": 0
+  },
+  {
+   "name": "LargeGroupBonusUpdate",
+   "site": "0x658d9a",
+   "type": 0
+  },
+  {
+   "name": "ToppleUpdate",
+   "site": "0x658dd2",
+   "type": 0
+  },
+  {
+   "name": "DelayedLuaEventUpdate",
+   "site": "0x658e0a",
+   "type": 0
+  },
+  {
+   "name": "LifetimeUpdate",
+   "site": "0x658e42",
+   "type": 0
+  },
+  {
+   "name": "OneRingPenaltyUpdate",
+   "site": "0x658e7a",
+   "type": 0
+  },
+  {
+   "name": "SpecialEnemySenseUpdate",
+   "site": "0x658eb2",
+   "type": 0
+  },
+  {
+   "name": "RadiusDecalUpdate",
+   "site": "0x658eea",
+   "type": 0
+  },
+  {
+   "name": "RainOfFireUpdate",
+   "site": "0x658f22",
+   "type": 0
+  },
+  {
+   "name": "DestroyEnvironmentUpdate",
+   "site": "0x658f5a",
+   "type": 0
+  },
+  {
+   "name": "PartTheHeavensUpdate",
+   "site": "0x658f92",
+   "type": 0
+  },
+  {
+   "name": "AutoDepositUpdate",
+   "site": "0x658fca",
+   "type": 0
+  },
+  {
+   "name": "FireSpreadUpdate",
+   "site": "0x659002",
+   "type": 0
+  },
+  {
+   "name": "FireWeaponUpdate",
+   "site": "0x65903a",
+   "type": 0
+  },
+  {
+   "name": "OilSpillUpdate",
+   "site": "0x659072",
+   "type": 0
+  },
+  {
+   "name": "DamageFieldUpdate",
+   "site": "0x6590aa",
+   "type": 0
+  },
+  {
+   "name": "MonitorConditionUpdate",
+   "site": "0x6590e2",
+   "type": 0
+  },
+  {
+   "name": "FlammableUpdate",
+   "site": "0x65911a",
+   "type": 0
+  },
+  {
+   "name": "FloatUpdate",
+   "site": "0x659152",
+   "type": 0
+  },
+  {
+   "name": "FloodUpdate",
+   "site": "0x65918a",
+   "type": 0
+  },
+  {
+   "name": "HeightDieUpdate",
+   "site": "0x6591c2",
+   "type": 0
+  },
+  {
+   "name": "SiegeAIUpdate",
+   "site": "0x6591fa",
+   "type": 0
+  },
+  {
+   "name": "AIUpdateInterface",
+   "site": "0x659232",
+   "type": 0
+  },
+  {
+   "name": "HordeAIUpdate",
+   "site": "0x65926a",
+   "type": 0
+  },
+  {
+   "name": "HordeWorkerAIUpdate",
+   "site": "0x6592a2",
+   "type": 0
+  },
+  {
+   "name": "SupplyTruckAIUpdate",
+   "site": "0x6592da",
+   "type": 0
+  },
+  {
+   "name": "LaserUpdate",
+   "site": "0x659313",
+   "type": 2
+  },
+  {
+   "name": "CommandButtonHuntUpdate",
+   "site": "0x659348",
+   "type": 0
+  },
+  {
+   "name": "DemoTrapUpdate",
+   "site": "0x65937d",
+   "type": 0
+  },
+  {
+   "name": "AutoPickUpUpdate",
+   "site": "0x6593b2",
+   "type": 0
+  },
+  {
+   "name": "BoredUpdate",
+   "site": "0x6593e7",
+   "type": 0
+  },
+  {
+   "name": "CivilianSpawnUpdate",
+   "site": "0x65941c",
+   "type": 0
+  },
+  {
+   "name": "ShareExperienceBehavior",
+   "site": "0x659451",
+   "type": 0
+  },
+  {
+   "name": "BannerCarrierUpdate",
+   "site": "0x659486",
+   "type": 0
+  },
+  {
+   "name": "BattlePlanUpdate",
+   "site": "0x6594bb",
+   "type": 0
+  },
+  {
+   "name": "GateOpenAndCloseBehavior",
+   "site": "0x6594f0",
+   "type": 0
+  },
+  {
+   "name": "GateProxyBehavior",
+   "site": "0x659525",
+   "type": 0
+  },
+  {
+   "name": "QueueProductionExitUpdate",
+   "site": "0x65955a",
+   "type": 0
+  },
+  {
+   "name": "RepairDockUpdate",
+   "site": "0x65958f",
+   "type": 0
+  },
+  {
+   "name": "ArrowStormUpdate",
+   "site": "0x6595c4",
+   "type": 0
+  },
+  {
+   "name": "WeaponModeSpecialPowerUpdate",
+   "site": "0x6595fc",
+   "type": 0
+  },
+  {
+   "name": "ModelConditionSpecialAbilityUpdate",
+   "site": "0x659631",
+   "type": 0
+  },
+  {
+   "name": "StrafeAreaUpdate",
+   "site": "0x659666",
+   "type": 0
+  },
+  {
+   "name": "ToggleMountedSpecialAbilityUpdate",
+   "site": "0x65969b",
+   "type": 0
+  },
+  {
+   "name": "ToggleHiddenSpecialAbilityUpdate",
+   "site": "0x6596d0",
+   "type": 0
+  },
+  {
+   "name": "ToggleDeploySpecialAbilityUpdate",
+   "site": "0x659705",
+   "type": 0
+  },
+  {
+   "name": "WeaponFireSpecialAbilityUpdate",
+   "site": "0x65973a",
+   "type": 0
+  },
+  {
+   "name": "TeleportSpecialAbilityUpdate",
+   "site": "0x65976f",
+   "type": 0
+  },
+  {
+   "name": "HeroModeSpecialAbilityUpdate",
+   "site": "0x6597a4",
+   "type": 0
+  },
+  {
+   "name": "WeaponSetSpecialAbilityUpdate",
+   "site": "0x6597d9",
+   "type": 0
+  },
+  {
+   "name": "ScaleWallSpecialAbilityUpdate",
+   "site": "0x65980e",
+   "type": 0
+  },
+  {
+   "name": "FlingPassengerSpecialAbilityUpdate",
+   "site": "0x659843",
+   "type": 0
+  },
+  {
+   "name": "GiveUpgradeUpdate",
+   "site": "0x659878",
+   "type": 0
+  },
+  {
+   "name": "LargeGroupAudioUpdate",
+   "site": "0x6598ad",
+   "type": 0
+  },
+  {
+   "name": "NotifyTargetsOfImminentProbableCrushingUpdate",
+   "site": "0x6598e2",
+   "type": 0
+  },
+  {
+   "name": "HordeNotifyTargetsOfImminentProbableCrushingUpdate",
+   "site": "0x659917",
+   "type": 0
+  },
+  {
+   "name": "AttachUpdate",
+   "site": "0x65994c",
+   "type": 0
+  },
+  {
+   "name": "PickupStuffUpdate",
+   "site": "0x659981",
+   "type": 0
+  },
+  {
+   "name": "SummonReplacementSpecialAbilityUpdate",
+   "site": "0x6599b6",
+   "type": 0
+  },
+  {
+   "name": "DefaultProductionExitUpdate",
+   "site": "0x6599eb",
+   "type": 0
+  },
+  {
+   "name": "SpawnPointProductionExitUpdate",
+   "site": "0x659a20",
+   "type": 0
+  },
+  {
+   "name": "SlavedUpdate",
+   "site": "0x659a55",
+   "type": 0
+  },
+  {
+   "name": "OCLUpdate",
+   "site": "0x659a8a",
+   "type": 0
+  },
+  {
+   "name": "AttributeModifierAuraUpdate",
+   "site": "0x659ac2",
+   "type": 0
+  },
+  {
+   "name": "RadiateFearUpdate",
+   "site": "0x659afa",
+   "type": 0
+  },
+  {
+   "name": "SpecialAbilityUpdate",
+   "site": "0x659b2f",
+   "type": 0
+  },
+  {
+   "name": "SupplyCenterProductionExitUpdate",
+   "site": "0x659b64",
+   "type": 0
+  },
+  {
+   "name": "SupplyCenterDockUpdate",
+   "site": "0x659b99",
+   "type": 0
+  },
+  {
+   "name": "SupplyWarehouseDockUpdate",
+   "site": "0x659bce",
+   "type": 0
+  },
+  {
+   "name": "MonsterDockUpdate",
+   "site": "0x659c03",
+   "type": 0
+  },
+  {
+   "name": "DozerAIUpdate",
+   "site": "0x659c38",
+   "type": 0
+  },
+  {
+   "name": "RousingSpeechUpdate",
+   "site": "0x659c6d",
+   "type": 0
+  },
+  {
+   "name": "GloriousChargeUpdate",
+   "site": "0x659ca2",
+   "type": 0
+  },
+  {
+   "name": "ProductionUpdate",
+   "site": "0x659cd7",
+   "type": 0
+  },
+  {
+   "name": "ProneUpdate",
+   "site": "0x659d0c",
+   "type": 0
+  },
+  {
+   "name": "HijackerUpdate",
+   "site": "0x659d41",
+   "type": 0
+  },
+  {
+   "name": "FadeAndDieOrnamentUpdate",
+   "site": "0x659d76",
+   "type": 0
+  },
+  {
+   "name": "StructureToppleUpdate",
+   "site": "0x659dab",
+   "type": 0
+  },
+  {
+   "name": "StructureCollapseUpdate",
+   "site": "0x659de0",
+   "type": 0
+  },
+  {
+   "name": "RubbleRiseUpdate",
+   "site": "0x659e15",
+   "type": 0
+  },
+  {
+   "name": "BoneFXUpdate",
+   "site": "0x659e4a",
+   "type": 0
+  },
+  {
+   "name": "RadarUpdate",
+   "site": "0x659e7f",
+   "type": 0
+  },
+  {
+   "name": "TransportAIUpdate",
+   "site": "0x659eb4",
+   "type": 0
+  },
+  {
+   "name": "WanderAIUpdate",
+   "site": "0x659ee9",
+   "type": 0
+  },
+  {
+   "name": "AnimalAIUpdate",
+   "site": "0x659f1e",
+   "type": 0
+  },
+  {
+   "name": "FoundationAIUpdate",
+   "site": "0x659f53",
+   "type": 0
+  },
+  {
+   "name": "WorkerAIUpdate",
+   "site": "0x659f88",
+   "type": 0
+  },
+  {
+   "name": "WallUpgradeUpdate",
+   "site": "0x659fbd",
+   "type": 0
+  },
+  {
+   "name": "DetachableRiderUpdate",
+   "site": "0x659ff2",
+   "type": 0
+  },
+  {
+   "name": "RespawnUpdate",
+   "site": "0x65a027",
+   "type": 0
+  },
+  {
+   "name": "BloodthirstyUpdate",
+   "site": "0x65a05c",
+   "type": 0
+  },
+  {
+   "name": "AttributeModifierPoolUpdate",
+   "site": "0x65a091",
+   "type": 0
+  },
+  {
+   "name": "SpecialDisguiseUpdate",
+   "site": "0x65a0c6",
+   "type": 0
+  },
+  {
+   "name": "EmotionTrackerUpdate",
+   "site": "0x65a0fe",
+   "type": 0
+  },
+  {
+   "name": "ThreatFinderUpdate",
+   "site": "0x65a133",
+   "type": 0
+  },
+  {
+   "name": "ProjectileStreamUpdate",
+   "site": "0x65a168",
+   "type": 0
+  },
+  {
+   "name": "ReplaceObjectUpdate",
+   "site": "0x65a19d",
+   "type": 0
+  },
+  {
+   "name": "AISpecialPowerUpdate",
+   "site": "0x65a1d2",
+   "type": 0
+  },
+  {
+   "name": "CostModifierUpgrade",
+   "site": "0x65a20a",
+   "type": 0
+  },
+  {
+   "name": "SpellRechargeModifierUpgrade",
+   "site": "0x65a242",
+   "type": 0
+  },
+  {
+   "name": "ArmorUpgrade",
+   "site": "0x65a27a",
+   "type": 0
+  },
+  {
+   "name": "BaseUpgrade",
+   "site": "0x65a2b2",
+   "type": 0
+  },
+  {
+   "name": "CommandSetUpgrade",
+   "site": "0x65a2ea",
+   "type": 0
+  },
+  {
+   "name": "DelayedUpgrade",
+   "site": "0x65a322",
+   "type": 0
+  },
+  {
+   "name": "LevelUpUpgrade",
+   "site": "0x65a35a",
+   "type": 0
+  },
+  {
+   "name": "StatusBitsUpgrade",
+   "site": "0x65a392",
+   "type": 0
+  },
+  {
+   "name": "StatusBitsUpgradeIfEldestKindof",
+   "site": "0x65a3ca",
+   "type": 0
+  },
+  {
+   "name": "DoCommandUpgrade",
+   "site": "0x65a402",
+   "type": 0
+  },
+  {
+   "name": "SubObjectsUpgrade",
+   "site": "0x65a43a",
+   "type": 0
+  },
+  {
+   "name": "StealthUpgrade",
+   "site": "0x65a472",
+   "type": 0
+  },
+  {
+   "name": "RadarUpgrade",
+   "site": "0x65a4aa",
+   "type": 0
+  },
+  {
+   "name": "LocomotorSetUpgrade",
+   "site": "0x65a4e2",
+   "type": 0
+  },
+  {
+   "name": "ObjectCreationUpgrade",
+   "site": "0x65a51a",
+   "type": 0
+  },
+  {
+   "name": "UnpauseSpecialPowerUpgrade",
+   "site": "0x65a552",
+   "type": 0
+  },
+  {
+   "name": "WeaponBonusUpgrade",
+   "site": "0x65a58a",
+   "type": 0
+  },
+  {
+   "name": "WeaponSetUpgrade",
+   "site": "0x65a5c2",
+   "type": 0
+  },
+  {
+   "name": "WeaponBonusUpgrade",
+   "site": "0x65a5fa",
+   "type": 0
+  },
+  {
+   "name": "ExperienceScalarUpgrade",
+   "site": "0x65a632",
+   "type": 0
+  },
+  {
+   "name": "MaxHealthUpgrade",
+   "site": "0x65a66a",
+   "type": 0
+  },
+  {
+   "name": "ModelConditionUpgrade",
+   "site": "0x65a6a2",
+   "type": 0
+  },
+  {
+   "name": "AttributeModifierUpgrade",
+   "site": "0x65a6da",
+   "type": 0
+  },
+  {
+   "name": "CastleUpgrade",
+   "site": "0x65a712",
+   "type": 0
+  },
+  {
+   "name": "GeometryUpgrade",
+   "site": "0x65a74a",
+   "type": 0
+  },
+  {
+   "name": "ReplaceSelfUpgrade",
+   "site": "0x65a782",
+   "type": 0
+  },
+  {
+   "name": "GarrisonUpgrade",
+   "site": "0x65a7ba",
+   "type": 0
+  },
+  {
+   "name": "TooltipUpgrade",
+   "site": "0x65a7f2",
+   "type": 0
+  },
+  {
+   "name": "AudioLoopUpgrade",
+   "site": "0x65a82a",
+   "type": 0
+  },
+  {
+   "name": "RemoveUpgradeUpgrade",
+   "site": "0x65a862",
+   "type": 0
+  },
+  {
+   "name": "BuildableHeroListUpgrade",
+   "site": "0x65a89a",
+   "type": 0
+  },
+  {
+   "name": "AllowBannerSpawnUpgrade",
+   "site": "0x65a8d2",
+   "type": 0
+  },
+  {
+   "name": "CommandPointsUpgrade",
+   "site": "0x65a90a",
+   "type": 0
+  },
+  {
+   "name": "PassiveAreaEffectBehavior",
+   "site": "0x65a93f",
+   "type": 0
+  },
+  {
+   "name": "DominateEnemySpecialPower",
+   "site": "0x65a974",
+   "type": 0
+  },
+  {
+   "name": "TeleportToCasterSpecialPower",
+   "site": "0x65a9a9",
+   "type": 0
+  },
+  {
+   "name": "TemporarilyDefectUpdate",
+   "site": "0x65a9de",
+   "type": 0
+  },
+  {
+   "name": "StoreObjectsSpecialPower",
+   "site": "0x65aa13",
+   "type": 0
+  },
+  {
+   "name": "UnleashSpecialPower",
+   "site": "0x65aa48",
+   "type": 0
+  },
+  {
+   "name": "EvacuateGarrisonSpecialPower",
+   "site": "0x65aa7d",
+   "type": 0
+  },
+  {
+   "name": "CurseSpecialPower",
+   "site": "0x65aab2",
+   "type": 0
+  },
+  {
+   "name": "GiveOrRestoreUpgradeSpecialPower",
+   "site": "0x65aae7",
+   "type": 0
+  },
+  {
+   "name": "PillageModule",
+   "site": "0x65ab1f",
+   "type": 0
+  },
+  {
+   "name": "ActivateModuleSpecialPower",
+   "site": "0x65ab54",
+   "type": 0
+  },
+  {
+   "name": "LockWeaponCreate",
+   "site": "0x65ab89",
+   "type": 0
+  },
+  {
+   "name": "PreorderCreate",
+   "site": "0x65abbe",
+   "type": 0
+  },
+  {
+   "name": "SpawnedModelConditionCreate",
+   "site": "0x65abf3",
+   "type": 0
+  },
+  {
+   "name": "SupplyCenterCreate",
+   "site": "0x65ac28",
+   "type": 0
+  },
+  {
+   "name": "SupplyWarehouseCreate",
+   "site": "0x65ac5d",
+   "type": 0
+  },
+  {
+   "name": "SpecialPowerCreate",
+   "site": "0x65ac92",
+   "type": 0
+  },
+  {
+   "name": "GrantUpgradeCreate",
+   "site": "0x65acc7",
+   "type": 0
+  },
+  {
+   "name": "ExperienceLevelCreate",
+   "site": "0x65acfc",
+   "type": 0
+  },
+  {
+   "name": "InheritUpgradeCreate",
+   "site": "0x65ad31",
+   "type": 0
+  },
+  {
+   "name": "BoneFXDamage",
+   "site": "0x65ad66",
+   "type": 0
+  },
+  {
+   "name": "TransitionDamageFX",
+   "site": "0x65ad9b",
+   "type": 0
+  },
+  {
+   "name": "ReflectDamage",
+   "site": "0x65add0",
+   "type": 0
+  },
+  {
+   "name": "EvacuateDamage",
+   "site": "0x65ae05",
+   "type": 0
+  },
+  {
+   "name": "HordeTransportContainDamage",
+   "site": "0x65ae3a",
+   "type": 0
+  },
+  {
+   "name": "CallHelpOnDamage",
+   "site": "0x65ae6f",
+   "type": 0
+  },
+  {
+   "name": "FireWeaponCollide",
+   "site": "0x65aea4",
+   "type": 0
+  },
+  {
+   "name": "SquishCollide",
+   "site": "0x65aed9",
+   "type": 0
+  },
+  {
+   "name": "AODCrushCollide",
+   "site": "0x65af0e",
+   "type": 0
+  },
+  {
+   "name": "HordeMemberCollide",
+   "site": "0x65af43",
+   "type": 0
+  },
+  {
+   "name": "HealCrateCollide",
+   "site": "0x65af78",
+   "type": 0
+  },
+  {
+   "name": "MoneyCrateCollide",
+   "site": "0x65afad",
+   "type": 0
+  },
+  {
+   "name": "ShroudCrateCollide",
+   "site": "0x65afe2",
+   "type": 0
+  },
+  {
+   "name": "UnitCrateCollide",
+   "site": "0x65b017",
+   "type": 0
+  },
+  {
+   "name": "VeterancyCrateCollide",
+   "site": "0x65b04c",
+   "type": 0
+  },
+  {
+   "name": "SalvageCrateCollide",
+   "site": "0x65b081",
+   "type": 0
+  },
+  {
+   "name": "CivilianSpawnCollide",
+   "site": "0x65b0b6",
+   "type": 0
+  },
+  {
+   "name": "InactiveBody",
+   "site": "0x65b0eb",
+   "type": 0
+  },
+  {
+   "name": "ActiveBody",
+   "site": "0x65b120",
+   "type": 0
+  },
+  {
+   "name": "HighlanderBody",
+   "site": "0x65b155",
+   "type": 0
+  },
+  {
+   "name": "ImmortalBody",
+   "site": "0x65b18a",
+   "type": 0
+  },
+  {
+   "name": "StructureBody",
+   "site": "0x65b1bf",
+   "type": 0
+  },
+  {
+   "name": "SymbioticStructuresBody",
+   "site": "0x65b1f4",
+   "type": 0
+  },
+  {
+   "name": "DelayedDeathBody",
+   "site": "0x65b229",
+   "type": 0
+  },
+  {
+   "name": "FreeLifeBody",
+   "site": "0x65b25e",
+   "type": 0
+  },
+  {
+   "name": "DetachableRiderBody",
+   "site": "0x65b293",
+   "type": 0
+  },
+  {
+   "name": "OathbreakerBody",
+   "site": "0x65b2c8",
+   "type": 0
+  },
+  {
+   "name": "PorcupineFormationBodyModule",
+   "site": "0x65b2fd",
+   "type": 0
+  },
+  {
+   "name": "RespawnBody",
+   "site": "0x65b332",
+   "type": 0
+  },
+  {
+   "name": "SpecialPowerModule",
+   "site": "0x65b36a",
+   "type": 0
+  },
+  {
+   "name": "InvisibilitySpecialPower",
+   "site": "0x65b3a2",
+   "type": 0
+  },
+  {
+   "name": "CashHackSpecialPower",
+   "site": "0x65b3da",
+   "type": 0
+  },
+  {
+   "name": "DefectorSpecialPower",
+   "site": "0x65b412",
+   "type": 0
+  },
+  {
+   "name": "LevelGrantSpecialPower",
+   "site": "0x65b447",
+   "type": 0
+  },
+  {
+   "name": "ProductionSpeedBonus",
+   "site": "0x65b47f",
+   "type": 0
+  },
+  {
+   "name": "OCLSpecialPower",
+   "site": "0x65b4b7",
+   "type": 0
+  },
+  {
+   "name": "SpecialPowerTimerRefreshSpecialPower",
+   "site": "0x65b4ef",
+   "type": 0
+  },
+  {
+   "name": "ElvenWoodSpecialPower",
+   "site": "0x65b527",
+   "type": 0
+  },
+  {
+   "name": "WeaponChangeSpecialPowerModule",
+   "site": "0x65b55f",
+   "type": 0
+  },
+  {
+   "name": "ScavengerSpecialPower",
+   "site": "0x65b597",
+   "type": 0
+  },
+  {
+   "name": "CloudBreakSpecialPower",
+   "site": "0x65b5cf",
+   "type": 0
+  },
+  {
+   "name": "TaintSpecialPower",
+   "site": "0x65b607",
+   "type": 0
+  },
+  {
+   "name": "FreezingRainSpecialPower",
+   "site": "0x65b63f",
+   "type": 0
+  },
+  {
+   "name": "DarknessSpecialPower",
+   "site": "0x65b677",
+   "type": 0
+  },
+  {
+   "name": "GrabPassengerSpecialPower",
+   "site": "0x65b6af",
+   "type": 0
+  },
+  {
+   "name": "DeflectSpecialPower",
+   "site": "0x65b6e7",
+   "type": 0
+  },
+  {
+   "name": "SiegeDeploySpecialPower",
+   "site": "0x65b71f",
+   "type": 0
+  },
+  {
+   "name": "SiegeDeployHordeSpecialPower",
+   "site": "0x65b757",
+   "type": 0
+  },
+  {
+   "name": "StopSpecialPower",
+   "site": "0x65b78f",
+   "type": 0
+  },
+  {
+   "name": "WoundArrowUpdate",
+   "site": "0x65b7c4",
+   "type": 0
+  },
+  {
+   "name": "FellBeastSwoopPower",
+   "site": "0x65b7f9",
+   "type": 0
+  },
+  {
+   "name": "ManTheWallsSpecialPower",
+   "site": "0x65b831",
+   "type": 0
+  },
+  {
+   "name": "UntamedAllegianceSpecialPower",
+   "site": "0x65b869",
+   "type": 0
+  },
+  {
+   "name": "PlayerUpgradeSpecialPower",
+   "site": "0x65b8a1",
+   "type": 0
+  },
+  {
+   "name": "PlayerHealSpecialPower",
+   "site": "0x65b8d9",
+   "type": 0
+  },
+  {
+   "name": "DevastateSpecialPower",
+   "site": "0x65b911",
+   "type": 0
+  },
+  {
+   "name": "SplitHordeSpecialPower",
+   "site": "0x65b949",
+   "type": 0
+  },
+  {
+   "name": "RepairSpecialPower",
+   "site": "0x65b981",
+   "type": 0
+  },
+  {
+   "name": "CombineHordeSpecialPower",
+   "site": "0x65b9b9",
+   "type": 0
+  },
+  {
+   "name": "HordeDispatchSpecialPower",
+   "site": "0x65b9f1",
+   "type": 0
+  },
+  {
+   "name": "AnimatedParticleSysBoneClientUpdate",
+   "site": "0x65ba2a",
+   "type": 2
+  },
+  {
+   "name": "SwayClientUpdate",
+   "site": "0x65ba63",
+   "type": 2
+  },
+  {
+   "name": "BeaconClientUpdate",
+   "site": "0x65ba9c",
+   "type": 2
+  },
+  {
+   "name": "RadarMarkerClientUpdate",
+   "site": "0x65bad5",
+   "type": 2
+  },
+  {
+   "name": "AnimationSoundClientBehavior",
+   "site": "0x65bb0e",
+   "type": 3
+  },
+  {
+   "name": "ModelConditionSoundSelectorClientBehavior",
+   "site": "0x65bb47",
+   "type": 3
+  },
+  {
+   "name": "UpgradeSoundSelectorClientBehavior",
+   "site": "0x65bb80",
+   "type": 3
+  },
+  {
+   "name": "RandomSoundSelectorClientBehavior",
+   "site": "0x65bbb9",
+   "type": 3
+  },
+  {
+   "name": "ModelConditionAudioLoopClientBehavior",
+   "site": "0x65bbf2",
+   "type": 3
+  },
+  {
+   "name": "TerrainResourceClientBehavior",
+   "site": "0x65bc2b",
+   "type": 3
+  },
+  {
+   "name": "EvaAnnounceClientCreate",
+   "site": "0x65bc64",
+   "type": 2
+  },
+  {
+   "name": "W3DDefaultDraw",
+   "site": "0x464b04",
+   "type": 1
+  },
+  {
+   "name": "W3DDebrisDraw",
+   "site": "0x464b39",
+   "type": 1
+  },
+  {
+   "name": "W3DScriptedModelDraw",
+   "site": "0x464b75",
+   "type": 1
+  },
+  {
+   "name": "W3DHordeModelDraw",
+   "site": "0x464bb1",
+   "type": 1
+  },
+  {
+   "name": "W3DLaserDraw",
+   "site": "0x464bea",
+   "type": 1
+  },
+  {
+   "name": "W3DQuadrupedDraw",
+   "site": "0x464c26",
+   "type": 1
+  },
+  {
+   "name": "W3DRopeDraw",
+   "site": "0x464c5f",
+   "type": 1
+  },
+  {
+   "name": "W3DSupplyDraw",
+   "site": "0x464c9b",
+   "type": 1
+  },
+  {
+   "name": "W3DTruckDraw",
+   "site": "0x464cd7",
+   "type": 1
+  },
+  {
+   "name": "W3DTankDraw",
+   "site": "0x464d13",
+   "type": 1
+  },
+  {
+   "name": "W3DTreeDraw",
+   "site": "0x464d4f",
+   "type": 1
+  },
+  {
+   "name": "W3DFloorDraw",
+   "site": "0x464d8b",
+   "type": 1
+  },
+  {
+   "name": "W3DPropDraw",
+   "site": "0x464dc7",
+   "type": 1
+  },
+  {
+   "name": "W3DLightDraw",
+   "site": "0x464e00",
+   "type": 1
+  },
+  {
+   "name": "W3DBuffDraw",
+   "site": "0x464e39",
+   "type": 1
+  },
+  {
+   "name": "W3DStreakDraw",
+   "site": "0x464e72",
+   "type": 1
+  },
+  {
+   "name": "W3DSailModelDraw",
+   "site": "0x464eab",
+   "type": 1
+  },
+  {
+   "name": "W3DBoatWakeModelDraw",
+   "site": "0x464ee4",
+   "type": 1
+  },
+  {
+   "name": "W3DProjectileStreamDraw",
+   "site": "0x464f1d",
+   "type": 1
+  },
+  {
+   "name": "W3DTornadoDraw",
+   "site": "0x464f56",
+   "type": 1
+  }
+ ],
+ "schema": "openbfme.rw-module-registry",
+ "schemaVersion": 1
+}

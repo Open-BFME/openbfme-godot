@@ -1,0 +1,476 @@
+{
+ "tables": {
+  "W3DTreeDraw": {
+   "va": "0xbe2e80",
+   "rows": [
+    {
+     "token": "ModelName",
+     "parse": "0x42ee5e",
+     "userData": "0x0",
+     "offset": 8
+    },
+    {
+     "token": "TextureName",
+     "parse": "0x42ee5e",
+     "userData": "0x0",
+     "offset": 12
+    },
+    {
+     "token": "MoveOutwardTime",
+     "parse": "0x73a429",
+     "userData": "0x0",
+     "offset": 16
+    },
+    {
+     "token": "MoveInwardTime",
+     "parse": "0x73a429",
+     "userData": "0x0",
+     "offset": 20
+    },
+    {
+     "token": "MoveOutwardDistanceFactor",
+     "parse": "0x42ed00",
+     "userData": "0x0",
+     "offset": 24
+    },
+    {
+     "token": "DarkeningFactor",
+     "parse": "0x42ed00",
+     "userData": "0x0",
+     "offset": 28
+    },
+    {
+     "token": "ToppleFX",
+     "parse": "0x73a302",
+     "userData": "0x0",
+     "offset": 32
+    },
+    {
+     "token": "BounceFX",
+     "parse": "0x73a302",
+     "userData": "0x0",
+     "offset": 36
+    },
+    {
+     "token": "StumpName",
+     "parse": "0x42ee5e",
+     "userData": "0x0",
+     "offset": 40
+    },
+    {
+     "token": "KillWhenFinishedToppling",
+     "parse": "0x42e558",
+     "userData": "0x0",
+     "offset": 60
+    },
+    {
+     "token": "DoTopple",
+     "parse": "0x42e558",
+     "userData": "0x0",
+     "offset": 61
+    },
+    {
+     "token": "InitialVelocityPercent",
+     "parse": "0x42eefa",
+     "userData": "0x0",
+     "offset": 44
+    },
+    {
+     "token": "InitialAccelPercent",
+     "parse": "0x42eefa",
+     "userData": "0x0",
+     "offset": 48
+    },
+    {
+     "token": "BounceVelocityPercent",
+     "parse": "0x42eefa",
+     "userData": "0x0",
+     "offset": 52
+    },
+    {
+     "token": "MinimumToppleSpeed",
+     "parse": "0x42ed1c",
+     "userData": "0x0",
+     "offset": 56
+    },
+    {
+     "token": "SinkDistance",
+     "parse": "0x42ed1c",
+     "userData": "0x0",
+     "offset": 68
+    },
+    {
+     "token": "SinkTime",
+     "parse": "0x73a429",
+     "userData": "0x0",
+     "offset": 64
+    },
+    {
+     "token": "MorphTree",
+     "parse": "0x42ee5e",
+     "userData": "0x0",
+     "offset": 72
+    },
+    {
+     "token": "MorphTime",
+     "parse": "0x73a429",
+     "userData": "0x0",
+     "offset": 76
+    },
+    {
+     "token": "MorphFX",
+     "parse": "0x73a302",
+     "userData": "0x0",
+     "offset": 80
+    },
+    {
+     "token": "TaintedTree",
+     "parse": "0x42e558",
+     "userData": "0x0",
+     "offset": 84
+    },
+    {
+     "token": "FadeRate",
+     "parse": "0x42ecb2",
+     "userData": "0x0",
+     "offset": 88
+    },
+    {
+     "token": "FadeTarget",
+     "parse": "0x42ecb2",
+     "userData": "0x0",
+     "offset": 92
+    },
+    {
+     "token": "FadeDistance",
+     "parse": "0x42ed00",
+     "userData": "0x0",
+     "offset": 96
+    }
+   ]
+  },
+  "W3DPropDraw": {
+   "va": "0xbe3340",
+   "rows": [
+    {
+     "token": "ModelName",
+     "parse": "0x42ee5e",
+     "userData": "0x0",
+     "offset": 8
+    },
+    {
+     "token": "DistanceFog",
+     "parse": "0x42e558",
+     "userData": "0x0",
+     "offset": 12
+    }
+   ]
+  },
+  "W3DFloorDraw": {
+   "va": "0xbe3548",
+   "rows": [
+    {
+     "token": "StaticModelLODMode",
+     "parse": "0x42e558",
+     "userData": "0x0",
+     "offset": 28
+    },
+    {
+     "token": "ForceToBack",
+     "parse": "0x42e558",
+     "userData": "0x0",
+     "offset": 29
+    },
+    {
+     "token": "StartHidden",
+     "parse": "0x42e558",
+     "userData": "0x0",
+     "offset": 30
+    },
+    {
+     "token": "FloorFadeRateOnObjectDeath",
+     "parse": "0x42ed00",
+     "userData": "0x0",
+     "offset": 32
+    },
+    {
+     "token": "WeatherTexture",
+     "parse": "0x4cf066",
+     "userData": "0x0",
+     "offset": 16
+    },
+    {
+     "token": "HideIfModelConditions",
+     "parse": "0x4cef06",
+     "userData": "0x0",
+     "offset": 0
+    }
+   ]
+  },
+  "W3DTruckDraw": {
+   "va": "0xbe22b8",
+   "rows": [
+    {
+     "token": "Dust",
+     "parse": "0x42ee5e",
+     "userData": "0x0",
+     "offset": 392
+    },
+    {
+     "token": "DirtSpray",
+     "parse": "0x42ee5e",
+     "userData": "0x0",
+     "offset": 396
+    },
+    {
+     "token": "PowerslideSpray",
+     "parse": "0x42ee5e",
+     "userData": "0x0",
+     "offset": 400
+    },
+    {
+     "token": "LeftFrontTireBone",
+     "parse": "0x42ee5e",
+     "userData": "0x0",
+     "offset": 404
+    },
+    {
+     "token": "RightFrontTireBone",
+     "parse": "0x42ee5e",
+     "userData": "0x0",
+     "offset": 408
+    },
+    {
+     "token": "LeftRearTireBone",
+     "parse": "0x42ee5e",
+     "userData": "0x0",
+     "offset": 412
+    },
+    {
+     "token": "RightRearTireBone",
+     "parse": "0x42ee5e",
+     "userData": "0x0",
+     "offset": 416
+    },
+    {
+     "token": "MidLeftFrontTireBone",
+     "parse": "0x42ee5e",
+     "userData": "0x0",
+     "offset": 420
+    },
+    {
+     "token": "MidRightFrontTireBone",
+     "parse": "0x42ee5e",
+     "userData": "0x0",
+     "offset": 424
+    },
+    {
+     "token": "MidLeftRearTireBone",
+     "parse": "0x42ee5e",
+     "userData": "0x0",
+     "offset": 428
+    },
+    {
+     "token": "MidRightRearTireBone",
+     "parse": "0x42ee5e",
+     "userData": "0x0",
+     "offset": 432
+    },
+    {
+     "token": "MidLeftMidTireBone",
+     "parse": "0x42ee5e",
+     "userData": "0x0",
+     "offset": 436
+    },
+    {
+     "token": "MidRightMidTireBone",
+     "parse": "0x42ee5e",
+     "userData": "0x0",
+     "offset": 440
+    },
+    {
+     "token": "LeftFrontTireBone2",
+     "parse": "0x42ee5e",
+     "userData": "0x0",
+     "offset": 444
+    },
+    {
+     "token": "RightFrontTireBone2",
+     "parse": "0x42ee5e",
+     "userData": "0x0",
+     "offset": 448
+    },
+    {
+     "token": "LeftRearTireBone2",
+     "parse": "0x42ee5e",
+     "userData": "0x0",
+     "offset": 452
+    },
+    {
+     "token": "RightRearTireBone2",
+     "parse": "0x42ee5e",
+     "userData": "0x0",
+     "offset": 456
+    },
+    {
+     "token": "MidLeftMidTireBone2",
+     "parse": "0x42ee5e",
+     "userData": "0x0",
+     "offset": 460
+    },
+    {
+     "token": "MidRightMidTireBone2",
+     "parse": "0x42ee5e",
+     "userData": "0x0",
+     "offset": 464
+    },
+    {
+     "token": "TireRotationMultiplier",
+     "parse": "0x42ed00",
+     "userData": "0x0",
+     "offset": 488
+    },
+    {
+     "token": "PowerslideRotationAddition",
+     "parse": "0x42ed00",
+     "userData": "0x0",
+     "offset": 492
+    },
+    {
+     "token": "CabBone",
+     "parse": "0x42ee5e",
+     "userData": "0x0",
+     "offset": 468
+    },
+    {
+     "token": "TrailerBone",
+     "parse": "0x42ee5e",
+     "userData": "0x0",
+     "offset": 472
+    },
+    {
+     "token": "CabRotationMultiplier",
+     "parse": "0x42ed00",
+     "userData": "0x0",
+     "offset": 476
+    },
+    {
+     "token": "TrailerRotationMultiplier",
+     "parse": "0x42ed00",
+     "userData": "0x0",
+     "offset": 480
+    },
+    {
+     "token": "RotationDamping",
+     "parse": "0x42ed00",
+     "userData": "0x0",
+     "offset": 484
+    }
+   ]
+  },
+  "W3DSailModelDraw": {
+   "va": "0xbe3b30",
+   "rows": [
+    {
+     "token": "MaxRotationDegrees",
+     "parse": "0x42ee15",
+     "userData": "0x0",
+     "offset": 392
+    },
+    {
+     "token": "BlowingThresholdDegrees",
+     "parse": "0x42ee15",
+     "userData": "0x0",
+     "offset": 396
+    },
+    {
+     "token": "AboutDamping",
+     "parse": "0x42ed00",
+     "userData": "0x0",
+     "offset": 400
+    }
+   ]
+  },
+  "W3DQuadrupedDraw": {
+   "va": "0xbe1a80",
+   "rows": [
+    {
+     "token": "LeftFrontFootBone",
+     "parse": "0x42ee5e",
+     "userData": "0x0",
+     "offset": 392
+    },
+    {
+     "token": "RightFrontFootBone",
+     "parse": "0x42ee5e",
+     "userData": "0x0",
+     "offset": 396
+    },
+    {
+     "token": "LeftRearFootBone",
+     "parse": "0x42ee5e",
+     "userData": "0x0",
+     "offset": 400
+    },
+    {
+     "token": "RightRearFootBone",
+     "parse": "0x42ee5e",
+     "userData": "0x0",
+     "offset": 404
+    }
+   ]
+  },
+  "W3DTankDraw": {
+   "va": "0xbe2968",
+   "rows": [
+    {
+     "token": "TreadDebrisLeft",
+     "parse": "0x42ee5e",
+     "userData": "0x0",
+     "offset": 392
+    },
+    {
+     "token": "TreadDebrisRight",
+     "parse": "0x42ee5e",
+     "userData": "0x0",
+     "offset": 396
+    },
+    {
+     "token": "TreadAnimationRate",
+     "parse": "0x73a4b6",
+     "userData": "0x0",
+     "offset": 400
+    },
+    {
+     "token": "TreadPivotSpeedFraction",
+     "parse": "0x42ed00",
+     "userData": "0x0",
+     "offset": 404
+    },
+    {
+     "token": "TreadDriveSpeedFraction",
+     "parse": "0x42ed00",
+     "userData": "0x0",
+     "offset": 408
+    }
+   ]
+  },
+  "W3DSupplyDraw": {
+   "va": "0xbe1e38",
+   "rows": [
+    {
+     "token": "SupplyBonePrefix",
+     "parse": "0x42ee5e",
+     "userData": "0x0",
+     "offset": 392
+    }
+   ]
+  }
+ },
+ "lists": {
+  "WeatherTexture.weather": [
+   "NORMAL",
+   "SNOWY"
+  ]
+ }
+}

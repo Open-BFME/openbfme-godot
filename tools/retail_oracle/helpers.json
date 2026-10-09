@@ -1,0 +1,30 @@
+{
+  "comment": "Helper executables the engine tests and the retail_oracle tests run, and what each is built from. A helper is stale when any input is newer than its exe. Paths are relative to this file; an input that is a directory counts every file under it. Consumed by helper_stale.ps1 (build.bat skips fresh helpers) and helpers.py (tests refuse stale ones). Add an input here when a helper starts including a new header or source.",
+  "rebuild": "tools\\retail_oracle\\build.bat",
+  "helpers": {
+    "retail_oracle": {
+      "exe": "build/retail_oracle.exe",
+      "inputs": ["retail_oracle.cpp", "build.bat"]
+    },
+    "x87_oracle": {
+      "exe": "../x87_oracle/build/x87_oracle.exe",
+      "inputs": ["../x87_oracle/x87_oracle.cpp", "../x87_oracle/build.bat"]
+    },
+    "numeric_driver": {
+      "exe": "build/numeric_driver.exe",
+      "inputs": ["numeric_driver.cpp", "build.bat", "../../engine/src/Common/NumericState.h", "../../engine/src/Common/System/NumericState.cpp"]
+    },
+    "apt_driver": {
+      "exe": "build/apt_driver.exe",
+      "inputs": ["apt_driver.cpp", "build.bat", "../../engine/src/Common/NumericState.h", "../../engine/src/Common/System/NumericState.cpp", "../../engine/src/Libraries/Source/Apt"]
+    },
+    "refpack_driver": {
+      "exe": "build/refpack_driver.exe",
+      "inputs": ["refpack_driver.cpp", "build.bat", "../../engine/src/Libraries/Compression/EAC"]
+    },
+    "hash_driver": {
+      "exe": "build/hash_driver.exe",
+      "inputs": ["hash_driver.cpp", "build.bat", "../../engine/src/Common", "../../engine/src/Libraries/file", "../../engine/src/Libraries/Source/Apt"]
+    }
+  }
+}

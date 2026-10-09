@@ -1,0 +1,3 @@
+idx	token	parse_va	parse_kind	userdata	offset	userdata_list
+0	DamageInterval	0x73a429	parseDurationUnsignedInt	0x0	0x1c4	
+1	DamageDuration	0x73a429	parseDurationUnsignedInt	0x0	0x1c8	

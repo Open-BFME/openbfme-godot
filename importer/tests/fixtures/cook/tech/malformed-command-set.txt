@@ -1,2 +1,0 @@
-CommandSet CookMalformedCommandSet
-  2 = Command_CookBroken
