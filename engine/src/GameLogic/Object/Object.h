@@ -115,6 +115,11 @@ public:
 	// lane HERO-2: + 0x46C, the leader of a rousing speech this object follows (RousingSpeechUpdate RW 0x8B0AAE / 0x8B05D1); its other readers are not located
 	void setSpeechLeader(ObjectID id) { m_speechLeader = id; }
 	ObjectID getSpeechLeader() const { return m_speechLeader; }
+	// lane CAMP-1H: + 0x45C, the object receives the difficulty bonus. RW 0x68B907: a change is stored and, with a controlling player, handed to it
+	// (Player::applyDifficultyBonusesForObject RW 0x6AC32D, which acts only when the flag turns on); set by initObject (RW 0x693D63, when the script
+	// engine's + 0x1A5D5 says so) and OBJECT_ALLOW_BONUSES (RW 0x7BD730)
+	void setReceivingDifficultyBonus(bool receive);
+	bool isReceivingDifficultyBonus() const { return m_receivingDifficultyBonus; }
 
 	// ---- lane ECON-1: command points, the price paid, build completion, death ------------------------------------------------------
 	// RW 0x68E0C2 / 0x68E114: the object's command points join / leave its player's pool once (the `counted` byte, RW + 0x4A0); nothing counts while the object is
@@ -154,8 +159,11 @@ public:
 	// ZH Object::getRelationship: this object's team toward the other's (NEUTRAL when either has no team)
 	Relationship getRelationship(const Object &other) const;
 	// RW 0x698E7D Object::attemptDamage: a hit with a delay waits in the pending list (RW obj + 0x460), a hit made while this object runs its AI waits one frame (delay = 1.0);
-	// else RW 0x697E50 doAttemptDamage: the body's attemptDamage when this object is not dead
+	// else RW 0x697E50 doAttemptDamage: the body's attemptDamage when this object is not dead, then (lane COMBAT-4) the shockwave handler RW 0x6968BC when the object
+	// is still alive or the hit carries a shockwave amount
 	void attemptDamage(DamageInfo &info);
+	// RW 0x697E50 (the immediate half of attemptDamage, also the pending list's)
+	void doAttemptDamage(DamageInfo &info);
 	// RW 0x690532 Object::attemptHealing: a HEALING hit from `source` (INVALID_ID: itself)
 	void attemptHealing(float amount, const Object *source);
 	// lane BUILD-2: RW 0x690584 Object::attemptHealingFromSoleBenefactor(amount, source, duration): only one healer at a time (RW + 0x3D4 its id, + 0x3D8 the frame its claim
@@ -452,6 +460,7 @@ private:
 	std::uint32_t m_weaponBonusMask = 0;
 	Team *m_originalTeam = nullptr;       ///< lane HERO-2: + 0x320 (the team setTeam last recorded, RW 0x69959D)
 	ObjectID m_speechLeader = INVALID_ID; ///< lane HERO-2: + 0x46C
+	bool m_receivingDifficultyBonus = false; ///< lane CAMP-1H: + 0x45C (hashed)
 	ObjectID m_capturerID = INVALID_ID;   ///< lane HERO-2: + 0x80
 	unsigned m_undeadKillFrame = 0;       ///< lane HERO-2: + 0x450
 	bool m_constructed = false;           ///< the constructor has finished: setTeam may run the owner change

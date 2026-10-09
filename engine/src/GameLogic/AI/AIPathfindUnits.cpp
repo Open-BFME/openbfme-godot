@@ -810,6 +810,183 @@ void Pathfinder::adjustCoordToCell(int cellX, int cellY, bool centerInCell, Coor
 	pos.z = m_terrain ? m_terrain->getGroundHeight(pos.x, pos.y) : 0.0f;
 }
 
+namespace
+{
+// RW 0x6E95B2: a Bresenham walk of cells from `a` to `b` on `layer`; true (blocked) at the first cell other than `skip` whose type is neither CLEAR nor WATER or
+// that is pinched (cell dword bits 0-3 / bit 16). A cell off the grid ends the walk unblocked (RW returns 0 there).
+bool memberLineBlocked(Pathfinder &pf, ICoord2D a, ICoord2D b, PathfindLayerEnum layer, ICoord2D skip)
+{
+	int dx = b.x - a.x, dy = b.y - a.y;
+	dx = dx < 0 ? -dx : dx;
+	dy = dy < 0 ? -dy : dy;
+	const bool steep = dx < dy;
+	int d, diag, count, minor;
+	if (steep)
+	{
+		d = dx * 2 - dy;
+		diag = dx - dy;
+		count = dy;
+		minor = dx;
+	}
+	else
+	{
+		diag = dy - dx;
+		d = dy * 2 - dx;
+		count = dx;
+		minor = dy;
+	}
+	int xs1 = steep ? 0 : 1, ys1 = steep ? 1 : 0; // the straight step (d < 0)
+	int xs2 = 1, ys2 = 1;                         // the diagonal step
+	int x = a.x, y = a.y;
+	if (b.x < x)
+	{
+		xs1 = -xs1;
+		xs2 = -1;
+	}
+	if (b.y < y)
+	{
+		ys1 = -ys1;
+		ys2 = -1;
+	}
+	for (int k = 0; k < count + 1; ++k)
+	{
+		const PathfindCell *c = pf.getCell(layer, x, y);
+		if (!c)
+		{
+			return false;
+		}
+		if (x != skip.x || y != skip.y)
+		{
+			const PathfindCell::CellType t = c->getType();
+			if ((t != PathfindCell::CELL_CLEAR && t != PathfindCell::CELL_WATER) || c->getPinched())
+			{
+				return true;
+			}
+		}
+		int sx = xs2, sy = ys2, inc = diag;
+		if (d < 0)
+		{
+			sx = xs1;
+			sy = ys1;
+			inc = minor;
+		}
+		d += inc * 2;
+		x += sx;
+		y += sy;
+	}
+	return false;
+}
+} // namespace
+
+// RW 0x6EA5B2 with the scanner RW 0x6E87F9 builds in RW 0x6F0889: the member's footprint at `cell` (radius / centre of RW 0x6ED071)
+bool Pathfinder::memberFootprintFits(const PathfindMovement &mv, PathfindLayerEnum memberLayer, PathfindLayerEnum hordeLayer, const ICoord2D &hordeCell,
+	int radius, bool center, const ICoord2D &cell)
+{
+	const int n = radius + (center ? 1 : 0);
+	bool first = true;
+	float h0 = 0.0f;
+	for (int i = cell.x - radius; i < cell.x + n; ++i)
+	{
+		for (int j = cell.y - radius; j < cell.y + n; ++j)
+		{
+			const PathfindCell *c = getCell(memberLayer, i, j);
+			if (!c || c->getPinched())
+			{
+				return false;
+			}
+			const PathfindLayerEnum cl = c->getLayer();
+			if (cl != hordeLayer)
+			{
+				// RW: a cell of another layer than the horde's fails unless it is the wall layer, or the horde is on a raised layer whose tests (RW 0x6E82B3 /
+				// 0x5E2F24) pass; only the ground layer is ported (S-161): any other mismatch fails
+				if (hordeLayer == LAYER_GROUND && cl != LAYER_WALL)
+				{
+					return false;
+				}
+				if (hordeLayer != LAYER_GROUND)
+				{
+					return false;
+				}
+			}
+			if (!validMovementPosition(mv, c))
+			{
+				return false;
+			}
+			// RW: the terrain height at the cell's centre (cell * 10 + 5), on the cell's layer; the footprint is no more than 10 from its first cell
+			const float h = m_terrain ? m_terrain->getGroundHeight(SimMath::addf32((float)(i * 10), 5.0f), SimMath::addf32((float)(j * 10), 5.0f)) : 0.0f;
+			if (first)
+			{
+				first = false;
+				h0 = h;
+			}
+			else if (SimMath::absD(SimMath::subD((double)h, (double)h0)) > 10.0)
+			{
+				return false;
+			}
+		}
+	}
+	// RW 0x76550F: the line to the horde's cell is tested on the ground layer and the layers from 0x10 (the wall layer of the port is 15: only the ground runs here)
+	if (hordeLayer == LAYER_GROUND && (cell.x != hordeCell.x || cell.y != hordeCell.y))
+	{
+		if (memberLineBlocked(*this, cell, hordeCell, hordeLayer, hordeCell))
+		{
+			return false;
+		}
+	}
+	return true;
+}
+
+bool Pathfinder::adjustHordeMemberDestination(const PathfindObject &member, const PathfindLocomotorInfo &loco, const PathfindObject &horde, Coord3D *dest)
+{
+	// RW 0x6F0889 (lane MOVE-2, read with Ghidra). INFERENCE: RW clears pathfinder + 0x48 first (taken as the ignored obstacle id)
+	m_ignoreObstacleID = PATHFIND_INVALID_ID;
+	// RW 0x6EF346: the horde's cell (RW 0x6ECFDE, the horde's own centre rule); no cell -> false, `dest` unchanged
+	const ICoord2D hordeCell = cellOfPosition(horde, horde.getPosition());
+	const PathfindLayerEnum hordeLayer = horde.getLayer();
+	if (!getCell(hordeLayer, hordeCell.x, hordeCell.y))
+	{
+		return false;
+	}
+	const PathfindMovement mv = makeMovement(&member, loco); // RW 0x6F08B2 .. 0x6F0902: the movement struct of RW 0x6EA04D's layout
+	int radius = 0;
+	bool center = false;
+	getRadiusAndCenter(&member, radius, center); // RW 0x6ED071
+	const PathfindLayerEnum memberLayer = member.getLayer();
+	ICoord2D cell;
+	worldToCell(dest, center, &cell); // RW 0x6E8CE6
+	if (memberFootprintFits(mv, memberLayer, hordeLayer, hordeCell, radius, center, cell))
+	{
+		return true;
+	}
+	ICoord2D last{ -1, -1 };
+	const Coord3D &hp = horde.getPosition();
+	for (int i = 1; i < 16; ++i)
+	{
+		// RW 0x6F097E .. 0x6F09CD: t = i * 1/16 (SSE); x = horde.x * t + dest.x * (1 - t), y = dest.y * (1 - t) + horde.y * t
+		const float t = SimMath::mulf32((float)i, 0.0625f);
+		const float s = SimMath::subf32(1.0f, t);
+		const float x = SimMath::addf32(SimMath::mulf32(hp.x, t), SimMath::mulf32(dest->x, s));
+		const float y = SimMath::addf32(SimMath::mulf32(s, dest->y), SimMath::mulf32(t, hp.y));
+		const Coord3D p{ x, y, 0.0f };
+		ICoord2D c;
+		worldToCell(&p, center, &c); // RW floors x * 0.1 (+ 0.5 off centre) under the 24 bit FPU precision: the float32 product
+		if (c.x == last.x && c.y == last.y)
+		{
+			continue;
+		}
+		last = c;
+		if (memberFootprintFits(mv, memberLayer, hordeLayer, hordeCell, radius, center, c))
+		{
+			dest->x = x;
+			dest->y = y;
+			dest->z = m_terrain ? m_terrain->getGroundHeight(x, y) : dest->z; // RW 0x680A75 (the destination's layer: the ground) then the layer height
+			return true;
+		}
+	}
+	adjustCoordToCell(hordeCell.x, hordeCell.y, center, *dest, hordeLayer); // RW 0x6EA0CB -> 0x6E8E19, the member's centre rule on the horde's cell
+	return false;
+}
+
 void Pathfinder::snapPosition(PathfindObject &obj, Coord3D *pos)
 {
 	// RW 0x6F3F95 (VERIFIED the same as ZH by the earlier analysis)

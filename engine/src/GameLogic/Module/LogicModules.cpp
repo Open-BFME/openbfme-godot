@@ -1,6 +1,7 @@
 // OpenBFME. GPL-3.0.
 // See GameLogic/Module/LogicModules.h.
 
+#include "GameLogic/Module/AttachUpdate.h"
 #include "GameLogic/Module/AISpecialPowerUpdate.h"
 #include "GameLogic/Module/RepairSpecialPower.h"
 #include "GameLogic/Module/SlavedUpdate.h"
@@ -93,6 +94,7 @@ void LogicModules::registerAll(ModuleFactory &modules)
 	InvisibilityModules::registerAll(modules); // lane STEALTH-1: InvisibilityUpdate, StealthDetectorUpdate, StealthUpdate (data)
 	GarrisonContain::registerClasses(modules); // lane GARRISON-1: GarrisonContain, HordeGarrisonContain
 	TransportContain::registerClasses(modules); // lane GARRISON-2: TransportContain, HordeTransportContain, SiegeEngineContain, HordeSiegeEngineContain
+	AttachUpdate::registerClass(modules); // lane CAMP-1: the carried objects (MAP ANG Dark Eye's palantir shards)
 	AISpecialPowerUpdate::registerClass(modules); // lane MOD-4: the units' own use of their powers (computer players)
 	RepairSpecialPower::registerClass(modules); // lane MOD-4: the builders' repair power
 	SpawnBehavior::registerClass(modules); // lane MOD-4: the lairs' spawns

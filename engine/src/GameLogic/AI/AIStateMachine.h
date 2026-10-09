@@ -139,6 +139,9 @@ public:
 	unsigned currentStateId() const { return m_currentState ? m_currentState->id() : (unsigned)AI_NO_STATE; }
 	// lane PHYS-1: the temporary state's id (AI_NO_STATE when none; RW machine + 0x50)
 	unsigned temporaryStateId() const { return m_temporaryState ? m_temporaryState->id() : (unsigned)AI_NO_STATE; }
+	// lane EXIT-1, RW 0x741724 (machine vslot 0x30): the temporary state's slot 0x28, else (RW 0x8DB6BD) the current state's; slot 0x28 is true only for
+	// AIBusyState (RW 0x8BD372 in its vtable 0xC274F8)
+	bool isBusyState() const { return temporaryStateId() == (unsigned)AI_BUSY || currentStateId() == (unsigned)AI_BUSY; }
 	AIState *findState(unsigned id) const;
 	size_t stateCount() const { return m_states.size(); }
 

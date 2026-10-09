@@ -160,6 +160,9 @@ public:
 	float currentT() const { return m_t; }
 	// RW 0x765A4B (the HORDE mover): the position of the node two ahead of the current one
 	Coord3D positionTwoAhead() const;
+	// lane EXIT-1: the node of the last computePointAhead (RW PathPoint.node) has a next optimised node (RW node + 8): the horde member update RW 0x66CDC9
+	// keeps the path while the point ahead is not on the last node
+	bool lastAheadHasNext() const { return m_lastAheadNode && m_lastAheadNode->m_nextOpti; }
 
 private:
 	PathNode *m_path;
@@ -666,6 +669,13 @@ public:
 	bool checkDestination(const PathfindObject *obj, int cellX, int cellY, PathfindLayerEnum layer, int iRadius, bool centerInCell,
 		int *out = nullptr, bool ignoreUnits = false);
 	void adjustCoordToCell(int cellX, int cellY, bool centerInCell, Coord3D &pos, PathfindLayerEnum layer);
+	// lane MOVE-2: RW 0x6F0889 (reached from the horde member order through RW 0x871897), a horde member's slot destination. True with `dest` unchanged when the
+	// member's footprint at the slot passes RW 0x6EA5B2 (every cell present, not pinched, on the horde's layer, valid for the member's movement, within 10 of the
+	// first cell's height, and a straight cell line to the horde's cell free of anything but clear / water cells); else the first of the points 1/16 .. 15/16 of the
+	// way to the horde (in new cells only) that passes, `dest` moved there with its height. False when none does: `dest` is then the horde's cell (RW 0x6E8E19)
+	bool adjustHordeMemberDestination(const PathfindObject &member, const PathfindLocomotorInfo &loco, const PathfindObject &horde, Coord3D *dest);
+	bool memberFootprintFits(const PathfindMovement &mv, PathfindLayerEnum memberLayer, PathfindLayerEnum hordeLayer, const ICoord2D &hordeCell, int radius,
+		bool center, const ICoord2D &cell);
 	void snapPosition(PathfindObject &obj, Coord3D *pos);
 	void snapClosestGoalPosition(PathfindObject &obj, Coord3D *pos);
 	bool goalPosition(PathfindObject &obj, Coord3D *pos);

@@ -274,7 +274,7 @@ about 10-15 for multiplayer (M6), then about 25-35 for M7-M10. Lanes run in para
 (three to five at a time has worked). The order above is fixed by dependencies;
 the pace is set by parallelism and review capacity.
 
-## Community feedback intake (FB items, updated 2026-10-08)
+## Community feedback intake (FB items, updated 2026-10-09)
 
 Reports from the project's Discord feedback channel are evidence to reproduce, not
 diagnoses: each one is checked against retail data and the binary before work, and
@@ -284,25 +284,25 @@ is kept in the community service (`bfme-community feedback-status`).
 
 | Item | Report (short) | State | Where |
 |---|---|---|---|
-| FB-0001 | units run in place | attack treadmill fixed; exit / idle MOVING in review | ANIM-1 (merged), EXIT-1 |
-| FB-0002 | Grond moves without its trolls, wheels locked | crew drawn; crew animation + wheels open (S-1601) | COMBAT-3 (merged), next combat lane |
-| FB-0003 | cavalry charges don't throw infantry | knockback / slow-down / pikes ported; re-checking in real games | COMBAT-3 (merged) |
-| FB-0004 | troll hit timing, troll clubs don't launch units | swing timing fixed; MetaImpactNugget / shockwave knockback open (S-1600) | ANIM-1 (merged), next combat lane |
-| FB-0005 | units stuck around buildings | likely the barracks-exit defect | EXIT-1 |
-| FB-0006 | two hordes on identical coordinates | to investigate | next movement lane |
+| FB-0001 | units run in place | mostly fixed (2.3-2.8 per game left, from 5.8-8.8): idle units keeping MOVING | ANIM-1, EXIT-1 (merged), follow-up lane |
+| FB-0002 | Grond moves without its trolls, wheels locked | fixed: crew pushes, wheels turn | COMBAT-3, COMBAT-4 (merged) |
+| FB-0003 | cavalry charges don't throw infantry | fixed: crush throw measured against retail, RamPower hit ported | COMBAT-3, COMBAT-4 (merged) |
+| FB-0004 | troll hit timing, troll clubs don't launch units | fixed: shockwaves / MetaImpactNugget | ANIM-1, COMBAT-4 (merged) |
+| FB-0005 | units stuck around buildings | fixed (the barracks exit); reopen if seen elsewhere | EXIT-1 (merged) |
+| FB-0006 | two hordes on identical coordinates | in progress | MOVE-3 |
 | FB-0007 | main-menu button text not vertically centred | to investigate | next UI lane |
 | FB-0008 | no ring animation on victory / defeat | fixed | UI-2 (merged) |
 | FB-0009 | jerky archer firing cycle | fixed | ANIM-1 (merged) |
 | FB-0010 | menu / spell book opacity | fixed (binary-derived) | UI-2 (merged) |
-| FB-0011 | corpses vanish too fast (SlowDeathBehavior timing) | to investigate | next combat lane |
-| FB-0012 | hostile hordes pass through each other | to investigate | next movement lane |
-| FB-0013 | rear ranks run in place at the melee leash | in review | MOVE-2 |
+| FB-0011 | corpses vanish too fast (SlowDeathBehavior timing) | fixed: RotWK's SlowDeathBehavior; the fast vanish did not reproduce | COMBAT-4 (merged) |
+| FB-0012 | hostile hordes pass through each other | in progress | MOVE-3 |
+| FB-0013 | rear ranks run in place at the melee leash | fixed | MOVE-2 (merged) |
 | FB-0014 | archers teleport out of towers | fixed | GARRISON-3 (merged) |
 | FB-0015 | Rohirrim shooting animations / arrows from the body | fixed | ANIM-1, HUD-4 (merged) |
 | FB-0016 | multiplayer lobby layout | fixed | UI-1, UI-2 (merged) |
-| FB-0017 | no campaign voice lines | narrated intros added; review fixes | CAMP-1H |
-| FB-0018 | unit jitter, wandering infantry | camera interpolation + lost members fixed on the branch | MOVE-2 |
-| FB-0019 | walls rise all at once | rise fixed (merged); player wall placement in review | BUILD-4 (merged), QA2-FIX |
+| FB-0017 | no campaign voice lines | fixed: narrated intros and script voice lines | CAMP-1H (merged) |
+| FB-0018 | unit jitter, wandering infantry | fixed | MOVE-2 (merged) |
+| FB-0019 | walls rise all at once | fixed: the rise and player wall placement | BUILD-4, QA2-FIX (merged) |
 
 ## Online multiplayer direction (owner, 2026-10-08)
 

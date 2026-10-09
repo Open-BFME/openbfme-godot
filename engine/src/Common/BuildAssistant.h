@@ -72,6 +72,10 @@ bool isEquivalentTo(const ThingTemplate *a, const ThingTemplate *b);
 // builder, player upgrades by its owner) and the owner able to build it. The hero / REVIVE path (buildIndex != -1) is HERO-1's: false.
 bool isInProducersCommandSet(Object &builder, const ThingTemplate *what, int buildIndex);
 
+// lane QA2-FIX: RW 0x793E33 (BuildAssistant vtable slot 0x60, the line build test the placement code asks, RW 0x83E911 / 0x6A2B6D): `what` and the builder's
+// template both carry KindOf WALL_HUB (template + 0x118 & 0x10000000, i.e. + 0x11B bit 4); a null `what` or builder is no line build
+bool isLineBuildTemplate(GameLogic &logic, const ThingTemplate *what, const Object *builder);
+
 // ZH BuildAssistant::canMakeUnit, RW vtable + 0x64 (RW 0x793ECB)
 CanMakeType canMakeUnit(Object &builder, const ThingTemplate *what, int buildIndex);
 } // namespace BuildAssistant

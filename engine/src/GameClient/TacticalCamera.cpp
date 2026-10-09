@@ -199,6 +199,12 @@ TacticalCamera::TacticalCamera(const CameraSettings &gameData)
 	m_prevTarget = m_committedTarget = m_target;
 }
 
+void TacticalCamera::snapInterpolation()
+{
+	m_prevEye = m_committedEye = m_eye;
+	m_prevTarget = m_committedTarget = m_target;
+}
+
 void TacticalCamera::commitFrame()
 {
 	m_prevEye = m_committedEye;

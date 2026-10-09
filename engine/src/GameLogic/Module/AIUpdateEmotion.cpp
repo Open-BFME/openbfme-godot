@@ -121,8 +121,13 @@ bool AIUpdateInterface::allowedToRespondToCommand(CommandSourceType source, int 
 
 float AIUpdateInterface::objectVisionRange() const
 {
-	// RW 0x68E43B
-	Object *obj = getObject();
+	return objectVisionRangeOf(*getObject());
+}
+
+float AIUpdateInterface::objectVisionRangeOf(Object &object)
+{
+	// RW 0x68E43B (an Object function: lane CAMP-1H reads it for objects without an AI too, ENEMY_SIGHTED)
+	Object *obj = &object;
 	const ThingTemplate *tt = static_cast<const ThingTemplate *>(obj->getTemplate())->getFinalOverride();
 	float range = 0.0f; // Object + 0x1B0 (S-1027: the template's VisionRange)
 	if (const FieldValue *v = tt->findField("VisionRange"))

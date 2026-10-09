@@ -67,12 +67,19 @@ public:
 		unsigned long long crushes = 0;              ///< SquishCollide crushes (RW 0x8BFBAE step 9)
 		unsigned long long crushWeaponShots = 0;     ///< CrushWeapon / CrushRevengeWeapon fired
 		unsigned long long crushBumps = 0;           ///< contacts where canCrush failed (RW 0x696800, lane COMBAT-3)
-		unsigned long long crushKnockbacksSkipped = 0; ///< RamPower shockwave hits not applied (the shockwave handler RW 0x6968BC: S-1600)
+		unsigned long long ramHits = 0;              ///< lane COMBAT-4: RamPower's 0-damage shockwave hits (RW 0x8BFF08 .. 0x8BFF68 -> the handler RW 0x6968BC)
 		unsigned long long crushKnockbacks = 0;      ///< lane COMBAT-3: CrushKnockback flings (RW 0x692223) that threw the victim
 		unsigned long long crushBumpAttacksNotPorted = 0; ///< lane COMBAT-3: bumps of an enemy whose contact attack RW 0x6962DB is not ported (S-1600)
 		unsigned long long crushDecelerations = 0;   ///< onCrush slowed the crusher's (or its horde's) locomotor
 		unsigned long long flanks = 0;               ///< flank tests that answered yes (RW 0x876FC4)
 		unsigned long long flankTests = 0;           ///< flank tests asked (RW 0x68FB63)
+		// lane COMBAT-4 (S-1600, S-1790)
+		unsigned long long metaImpactHits = 0;        ///< MetaImpactNugget shockwave hits handed to Object::attemptDamage (RW 0x91062F -> 0x698E7D)
+		unsigned long long metaImpactKills = 0;       ///< victims the nugget's KillObjectFilter killed (RW 0x910695)
+		unsigned long long metaImpactNestedHorde = 0; ///< hits on a member of a horde inside another container (RW 0x910764 .. 0x9107AF): NOT ported (S-1790)
+		unsigned long long shockwaveFlings = 0;       ///< the shockwave handler threw its object (RW 0x696D95 fling / RW 0x696BB7 flyTo)
+		unsigned long long shockwaveStandUps = 0;     ///< the handler's stand-up of a resisting object (RW 0x696A24)
+		unsigned long long shockwaveRampageKills = 0; ///< flung objects in AI state 0x2D killed (RW 0x696E17)
 	};
 	Counters &counters() { return m_counters; }
 	const Counters &counters() const { return m_counters; }

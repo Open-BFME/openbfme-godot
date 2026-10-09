@@ -125,6 +125,7 @@ struct MockHost : LocomotorHost
 	bool turnLimited = false;
 	bool chargeOrdered = false;
 	bool motionDisabled = false;
+	bool physics = true; // obj+0x264 (lane EXIT-1: maintainCurrentPosition)
 	bool zSuppressed = false;
 	unsigned frame = 100;
 	bool containerBack = false;
@@ -193,6 +194,7 @@ struct MockHost : LocomotorHost
 	bool isTurnLimited() const override { return turnLimited; }
 	bool isChargeOrdered() const override { return chargeOrdered; }
 	bool physicsMotionDisabled() const override { return motionDisabled; }
+	bool hasPhysicsModule() const override { return physics; }
 	bool zMotionSuppressed() const override { return zSuppressed; }
 	unsigned logicFrame() const override { return frame; }
 	bool containerAllowsBackingUp() const override { return containerBack; }
@@ -793,12 +795,14 @@ TEST_CASE("turn model conditions: TURN_LEFT / TURN_RIGHT and the high speed pair
 TEST_CASE("Locomotor stops S-081 and S-084 are reported and pinned")
 {
 	const std::vector<std::string> stops = Locomotor::allStops();
-	REQUIRE(stops.size() == 2);
+	REQUIRE(stops.size() == 3);
 	CHECK(stops[0].rfind("S-081:", 0) == 0);
 	CHECK(stops[0].find("x87 and SSE") != std::string::npos);
 	CHECK(stops[1].rfind("S-084:", 0) == 0);
 	CHECK(stops[1].find("HOVER, SHIP and GIANT_BIRD") != std::string::npos);
 	CHECK(stops[1].find("ScalesWalls") != std::string::npos);
+	CHECK(stops[2].rfind("S-1750:", 0) == 0);
+	CHECK(stops[2].find("RW 0x5E7CC7") != std::string::npos);
 	LocoFixture f(kHuman);
 	Locomotor loco(f.tmpl());
 	MockHost h;
@@ -807,4 +811,65 @@ TEST_CASE("Locomotor stops S-081 and S-084 are reported and pinned")
 	REQUIRE_FALSE(loco.unverified().empty());
 	CHECK(loco.unverified()[0] == stops[0]); // every move reports S-081
 	CHECK_THROWS_AS(Locomotor(nullptr), std::logic_error);
+}
+
+TEST_CASE("maintainCurrentPosition: a goal-less locomotor drops the walk's model conditions and its speed by appearance (RW 0x5E7CC7, lane EXIT-1)")
+{
+	const char *walk[] = { "TURN_LEFT", "TURN_RIGHT", "TURN_LEFT_HIGH_SPEED", "TURN_RIGHT_HIGH_SPEED", "ACCELERATE", "DECELERATE", "WALKING" };
+	// legs: MOVING is cleared, the speed is zeroed, no constant calling; the turn / walk conditions only go while MOVING is already off (RW 0x5E7D30 tests
+	// MOVING before the appearance switch clears it), so a second call takes them
+	LocoFixture f(kHuman);
+	Locomotor loco(f.tmpl());
+	MockHost h;
+	h.place(5, 6, 0);
+	loco.locomotorMoveTowardsPosition(h, Coord3D{ 1000, 0, 0 }, 1000.0f, 11.0f);
+	REQUIRE(loco.speed() > 0.0f);
+	h.mc.insert(mcIndex("MOVING"));
+	for (const char *c : walk)
+	{
+		h.mc.insert(mcIndex(c));
+	}
+	CHECK_FALSE(loco.locomotorMaintainCurrentPosition(h));
+	CHECK(h.mc.count(mcIndex("MOVING")) == 0);
+	CHECK(h.mc.count(mcIndex("TURN_LEFT")) == 1);
+	CHECK(loco.speed() == 0.0f);
+	CHECK((loco.flags() & (unsigned)LOCOMOTOR_FLAG_BIT2) != 0);
+	CHECK((loco.flags() & (unsigned)LOCOMOTOR_FLAG_BRAKING) == 0);
+	CHECK_FALSE(loco.locomotorMaintainCurrentPosition(h));
+	for (const char *c : walk)
+	{
+		CHECK_MESSAGE(h.mc.count(mcIndex(c)) == 0, c);
+	}
+	REQUIRE(loco.unverified().size() >= 1);
+	CHECK(loco.unverified().back() == Locomotor::allStops()[2]);
+	// no physics module (obj+0x264 null): the conditions still go, MOVING and the speed stay, constant calling
+	Locomotor l2(f.tmpl());
+	MockHost h2;
+	h2.physics = false;
+	h2.place(0, 0, 0);
+	l2.locomotorMoveTowardsPosition(h2, Coord3D{ 1000, 0, 0 }, 1000.0f, 11.0f);
+	h2.mc.insert(mcIndex("MOVING"));
+	CHECK(l2.locomotorMaintainCurrentPosition(h2));
+	CHECK(h2.mc.count(mcIndex("MOVING")) == 1);
+	CHECK(l2.speed() > 0.0f);
+	// HOVER: the speed is zeroed, MOVING stays, constant calling (RW 0x5E7E26)
+	LocoFixture fh("  Surfaces = GROUND\n  Appearance = HOVER\n  ZAxisBehavior = NO_Z_MOTIVE_FORCE\n");
+	Locomotor l3(fh.tmpl());
+	MockHost h3;
+	h3.place(0, 0, 0);
+	h3.mc.insert(mcIndex("MOVING"));
+	CHECK(l3.locomotorMaintainCurrentPosition(h3));
+	CHECK(h3.mc.count(mcIndex("MOVING")) == 1);
+	// TREADS: MOVING is cleared, the speed is kept (RW 0x5E7DFD enters the shared clear after the speed reset of the legged cases)
+	LocoFixture ft("  Surfaces = GROUND\n  Appearance = TREADS\n  ZAxisBehavior = NO_Z_MOTIVE_FORCE\n  Acceleration = 510\n  Braking = 510\n  TurnTime = 500\n");
+	Locomotor l4(ft.tmpl());
+	MockHost h4;
+	h4.place(0, 0, 0);
+	h4.setSpeed = 50.0f;
+	l4.locomotorMoveTowardsPosition(h4, Coord3D{ 1000, 0, 0 }, 1000.0f, 11.0f);
+	const float treadsSpeed = l4.speed();
+	h4.mc.insert(mcIndex("MOVING"));
+	CHECK_FALSE(l4.locomotorMaintainCurrentPosition(h4));
+	CHECK(h4.mc.count(mcIndex("MOVING")) == 0);
+	CHECK(l4.speed() == treadsSpeed);
 }

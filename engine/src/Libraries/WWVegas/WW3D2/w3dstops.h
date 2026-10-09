@@ -47,6 +47,12 @@ W3DStopHit W3D_Bare_Clip_Stop(const std::string &clipName, const std::string &hi
 // `instances` is how many poses of the update were affected.
 W3DStopHit W3D_Pose_Order_Stop(size_t instances);
 
+// S-1730 (lane PERF-3): the instancer leaves the poses of instances outside the camera's frustum pending (W3DInstancer::set_pose_culling); the bound it
+// tests is its own (W3D_Pose_Cull_Radius), not retail's render-object bounds. Reported once per instancer, when the first pose is left pending.
+W3DStopHit W3D_Pose_Cull_Stop();
+// The cull radius of a model, in model units: 1.5 * (the farthest pivot of the bind pose + the largest mesh extent) + 30.
+float W3D_Pose_Cull_Radius(float farthestPivot, float largestMeshExtent);
+
 // S-029: an opaque surface whose pivot fade is below 1 is drawn with a screen-door dither instead of retail's alpha-blended pass.
 W3DStopHit W3D_Fade_Dither_Stop(size_t instances);
 

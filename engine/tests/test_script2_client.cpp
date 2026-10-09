@@ -119,3 +119,41 @@ TEST_CASE("script2 camera director: CAMERA_FOLLOW_NAMED / STOP_FOLLOW, ZOOM_CAME
 	CHECK(d.objectives()[0].first == 3);
 	CHECK(d.objectives()[0].second);
 }
+
+// lane CAMP-1H (owner feedback F6, "no campaign voice lines"): the mission dialogue of MAP ANG Amon Sul / Angmar (PLAY_SOUND_EFFECT of voice.ini's
+// "world everyone voice" events, no position) reaches the device: the files start, 2D, at a volume above zero (MISSION_DIALOG_VOLUME_REDUCED times
+// the voice slider); the GUI cue of the same scripts is refused for a player index that is not the local player's (RW 0x4533A9, UI type).
+TEST_CASE("camp1h voice: the campaign's dialogue lines start on the audio device")
+{
+	if (!haveWorld("camp1h voice"))
+	{
+		return;
+	}
+	SharedWorld &s = shared();
+	auto scope = s.world->enterContext();
+	Rig r(s);
+	AudioAssetCache cache(s.mount->fs.get(), 16u << 20);
+	SimulatedAudioDevice device(&cache);
+	AudioManager audio(const_cast<AudioIniState &>(s.world->audio()), cache, device, RandomAlgorithm::ZH_CarryChain, 7);
+	LiveGameAudio att(*r.game, audio);
+	CHECK(att.applyScriptRequest(request("PLAY_SOUND_EFFECT", { str(12, "MAAmonS_Witchking04") })));
+	CHECK(att.applyScriptRequest(request("PLAY_SOUND_EFFECT", { str(12, "MAFound_Witchking01") })));
+	for (int i = 1; i < 30; ++i)
+	{
+		device.setTime(i * 33.0);
+		audio.update(i * 33.0);
+	}
+	int started = 0;
+	for (const auto &kv : device.voices())
+	{
+		const std::string &f = kv.second.start.file;
+		if (f == "Data\\Audio\\Sounds\\MAAmonS_Wtkg004.wav" || f == "Data\\Audio\\Sounds\\MAFound_Wtkg001.wav")
+		{
+			++started;
+			CHECK(kv.second.start.kind == VoiceKind::Sample2D);
+			CHECK(kv.second.params.volume > 0.3f);
+		}
+	}
+	CHECK(started == 2);
+	CHECK(audio.report().errors.empty());
+}

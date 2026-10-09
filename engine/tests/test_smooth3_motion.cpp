@@ -164,7 +164,10 @@ TEST_CASE("smooth3 retail: the walk / run cycle of a Distance animation keeps pa
 
 // RW 0x5E98D6 (Locomotor::locomotorMoveTowardsAngle): a member's angle goal (the hub's near arm turning it to the formation's facing) turns at the locomotor's rate,
 // 2 pi / TurnTime frames (RW 0x5E372D); the port set the heading at once (a member spun up to 180 degrees in one logic frame on reaching its slot).
-TEST_CASE("smooth3 retail: horde members turn to their slot's facing at the locomotor's turn rate, never at once")
+// Lane EXIT-1 (RW 0x66E58F read in full): a HORDE_MEMBER with an angle goal does not reach doLocomotor: unless it is a DOZER, its update is the member update
+// RW 0x66C748, which takes the goal angle at once (RW 0x66CA71: RW 0x70C31E) and clears the goal the frame after (inside 2^-23); an explicit step faces its goal
+// at once as well (RW 0x66CE54 .. 0x66D100). So in RotWK members do turn to their slot's facing at once; the client's interpolation smooths the drawn turn.
+TEST_CASE("smooth3 retail: horde members take their slot's facing at once through the member update (RW 0x66C748), the client interpolates the turn")
 {
 	if (!hudtest::haveWorld("smooth3 member turns"))
 	{
@@ -185,8 +188,10 @@ TEST_CASE("smooth3 retail: horde members turn to their slot's facing at the loco
 		members.push_back(m->getID());
 	}
 	REQUIRE(members.size() >= 5);
-	// a march, then a turn of the whole horde (the members re-slot and turn to the new facing)
-	const Coord3D orders[] = { { 1450.0f, 1150.0f, 0.0f }, { 1450.0f, 1450.0f, 0.0f } };
+	// a march, then a turn of the whole horde (the members re-slot and turn to the new facing), then a short sidestep to the east (lane MOVE-2: with the slot
+	// destinations of RW 0x6F0889 the knights reach their slots of the first two moves already facing the formation's way, so the near arm's angle goal never
+	// turned anyone; the sidestep turns the formation a quarter while the members walk only a little, so they arrive turned off it)
+	const Coord3D orders[] = { { 1450.0f, 1150.0f, 0.0f }, { 1450.0f, 1450.0f, 0.0f }, { 1500.0f, 1460.0f, 0.0f } };
 	std::map<ObjectID, float> last;
 	double worstOverRate = 0.0, worstAngleGoal = 0.0;
 	int angleTurns = 0, angleGoalTurns = 0;
@@ -235,9 +240,9 @@ TEST_CASE("smooth3 retail: horde members turn to their slot's facing at the loco
 	MESSAGE("SMOOTH3 member turns: " << angleTurns << " turning member-frames (" << angleGoalTurns << " under the angle goal), the largest turn of one frame is "
 									 << worstOverRate << " x the turn rate (" << worstAngleGoal << " under the angle goal)");
 	CHECK(angleTurns > 20);
-	CHECK(angleGoalTurns >= 1); // the goal is cleared in the frame its turn ends: the frames seen under it are the ones still turning
-	CHECK(worstAngleGoal <= 1.0001);
-	// at most two mover calls a frame: RW doLocomotor's goal type 4 undoes an invalid straight step by position only (RW 0x70C201) and moves along the new path
-	// with a second RW 0x5E8865 call; no member turns faster than that (with the heading set at once a member turned up to pi in one frame)
-	CHECK(worstOverRate <= 2.0001);
+	CHECK(angleGoalTurns >= 1);
+	// lane EXIT-1: the facing is set at once (the angle goal RW 0x66CA71, an explicit step's bearing RW 0x66CE54): members turn faster than their locomotor's
+	// rate (3.9 times measured; the hub sets a goal after or before the member's own update in the frame, so the frame a turn shows in varies)
+	CHECK(worstOverRate > 1.5);
+	MESSAGE("SMOOTH3 the largest member turn in one frame under an angle goal: " << worstAngleGoal << " x the locomotor's turn rate");
 }

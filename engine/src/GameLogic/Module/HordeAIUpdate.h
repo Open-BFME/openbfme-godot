@@ -33,6 +33,12 @@ public:
 	}
 
 	AttackMachineKind attackMachineKind() const override { return ATTACK_MACHINE_HORDE; }
+	// lane MOVE-2 r2: HordeAIUpdate::aiDoCommand RW 0x89E169: after the gate, a horde command of the hand-off list first ends its members' orders (HordeContain
+	// slot 0x14, RW 0x87594C) unless the horde stands in a container; then the base command runs
+	void commandAccepted(CommandSourceType source, int command, Object *target) override;
+	// the command numbers RW 0x89E169's switch sends to slot 0x14 (0, 1, 3, 4, 6 .. 9, 0xB, 0xC, 0xE, 0xF, 0x17, 0x18, 0x24, 0x32 .. 0x34, 0x36, 0x38, 0x41,
+	// 0x42, 0x4E) and the port's unidentified move variants (AIUpdateInterface::kCommandUnidentifiedMove, INFERENCE S-1501)
+	static bool commandEndsMemberOrders(int command);
 	std::unique_ptr<AIStateMachine> makeHordeAttackMachine(AIAttackState *att) override;
 	void crc(StateHasher &hasher) const override;
 
@@ -50,6 +56,15 @@ public:
 	void resetMeleeRuntime(int kind);
 	// RW 0x009902A1 Amoeba per-frame update: the members that are not fighting attack what is in reach or step toward the enemy
 	void meleeTick(Object &target);
+	// lane MOVE-2 r3 (S-1502): RW 0x870A1B, the melee part of the contain's update (RW 0x872FD8): the engaged target gone -> the melee ends (slot 0x138); else the
+	// melee behaviour's update (slot 0x14: Amoeba RW 0x9902A1, HoldGround RW 0x98B7CC) and the horde turns to face the target (or its horde)
+	void containMeleeUpdate();
+	// lane MOVE-2 r3: the melee behaviour's slot 0x34, read by the contain's slot 7 (RW 0x877D89) while the horde melees: Amoeba RW 0x98F819 hands out the member
+	// record's destination when its flag (+ 0x39) is set; HoldGround RW 0x8F8014 none (the member keeps its formation slot)
+	bool meleeDestination(ObjectID member, Coord3D &out) const;
+	// lane MOVE-2 r3: the move hub's melee turn test (RW 0x874FA6 .. with the behaviour's slots 0x1C / 0x20 / 0x24): the Amoeba's 0x1C and 0x24 answer true
+	// (RW 0x9B501B), so a member at its melee destination always turns to the formation's facing and is never put on it; HoldGround's 0x1C is false
+	bool meleeAlwaysTurns() const;
 	ObjectID engagedTarget() const { return m_engagedTarget; }
 	// ---- lane HORDE-2: what HordeMemberCollide (RW 0x8C0518) asks the horde of a member (RW HordeContainInterface slots; the port keeps the melee target id and the readiness
 	// expiry here: RW +0x16C / +0x170 are the cache this class keeps as m_cacheTarget / m_cacheExpiry) ----

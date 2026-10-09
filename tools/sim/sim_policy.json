@@ -49,12 +49,24 @@
    "reason": "lane RENDER-2: the construction look of a drawable (the build-up animation frame and the height offset of a structure being built, RW 0x4B51B5 / 0x4B686D): reads the object, writes only draw frames and render offsets, never simulation state"
   },
   {
+   "glob": "src/GodotDevice/GodotGameWorldCampaign.cpp",
+   "reason": "lane CAMP-1: the GDExtension's campaign list, a campaign mission's load options (LiveGame::Options), the mission's end as the script engine reports it and the progress sidecar file; it reads logic state between frames and never writes it"
+  },
+  {
    "glob": "src/GodotDevice/GodotGameWorldScripts.cpp",
    "reason": "lane SCRIPT-1: GameWorld's view of the map script engine (the client requests handed to the script camera director, the engine's report, a waypoint lookup): reads the logic, never writes simulation state"
   },
   {
    "glob": "src/GameClient/ScriptAudioLength.cpp",
    "reason": "lane SCRIPT-3: HAS_FINISHED_AUDIO's audio length model (stop S-1187): reads the audio INI and the archives' audio headers and returns whole milliseconds by integer arithmetic (frames * 1000 / rate) to the logic's timer list; the audio headers' float helpers it includes are not called"
+  },
+  {
+   "glob": "src/GameClient/VideoPlayer.cpp",
+   "reason": "lane CAMP-1H: TheVideoPlayer's Video INI blocks, the movie file lookup and its VP6 header (the client's movie presentation and its audio events); no logic state"
+  },
+  {
+   "glob": "src/GameClient/LinearCampaign.cpp",
+   "reason": "lane CAMP-1: TheLinearCampaignManager's LinearCampaign INI blocks and the shell's campaign progress (which mission to load next); no logic state, the logic gets only the map name and the difficulty"
   },
   {
    "glob": "src/GameClient/ScriptCameraDirector.cpp",

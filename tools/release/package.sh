@@ -2,10 +2,15 @@
 # Lane RELEASE-1: the closed-test packages.
 #
 #   tools/release/package.sh [--out DIR] [--platforms linux[,windows]] [--windows-dll FILE] [--godot BIN] [--allow-dirty]
+#                            [--repo OWNER/NAME] [--release-key FILE] [--no-launcher]
 #
 # Produces, for the commit checked out:
 #   <out>/openbfme-<version>-linux-x64.tar.gz     OpenBFME.x86_64 + OpenBFME.pck + the GDExtension .so, README_TESTERS.txt, LICENSE, NOTICE, VERSION
 #   <out>/openbfme-<version>-windows-x64.zip      the same for Windows (needs --windows-dll: WIN-1's cross-built openbfme DLL of this commit)
+#   <out>/openbfme-launcher-<version>-linux-x64.tar.gz / -windows-x64.zip   the OpenBFME Launcher of each platform (lane LAUNCH-1,
+#                                                 tools/release/build_launcher.sh): updates from --repo (default Open-BFME/openbfme-godot)
+#                                                 and trusts the Ed25519 key of --release-key (default launcher/release_key.pub, committed
+#                                                 by the coordinator; missing = an error, or --no-launcher for a game-only trial)
 #   <out>/SHA256SUMS-<version>.txt
 # <version> = git describe (the build's version, engine/cmake/BuildVersion.cmake). Default <out>: workspace/release (git-ignored).
 #
@@ -30,6 +35,9 @@ GODOT_BIN="${GODOT:-godot}"
 ALLOW_DIRTY=0
 VERIFY_DIR=""
 SELF_VERIFY=1
+TARGET_REPO="Open-BFME/openbfme-godot"
+RELEASE_KEY="$REPO/launcher/release_key.pub"
+LAUNCHER=1
 while [ $# -gt 0 ]; do
   case "$1" in
     --out) OUT=$2; shift 2 ;;
@@ -39,7 +47,10 @@ while [ $# -gt 0 ]; do
     --allow-dirty) ALLOW_DIRTY=1; shift ;;
     --verify) VERIFY_DIR=$2; shift 2 ;;
     --no-self-verify) SELF_VERIFY=0; shift ;;
-    -h|--help) sed -n '2,22p' "$0"; exit 0 ;;
+    --repo) TARGET_REPO=$2; shift 2 ;;
+    --release-key) RELEASE_KEY=$2; shift 2 ;;
+    --no-launcher) LAUNCHER=0; shift ;;
+    -h|--help) sed -n '2,27p' "$0"; exit 0 ;;
     *) echo "package.sh: unknown argument $1" >&2; exit 2 ;;
   esac
 done
@@ -58,14 +69,20 @@ if [ -n "$VERIFY_DIR" ]; then
   for a in "$VERIFY_DIR"/openbfme-*-linux-x64.tar.gz "$VERIFY_DIR"/openbfme-*-windows-x64.zip; do archives+=("$(basename "$a")"); done
   [ ${#archives[@]} -gt 0 ] || fail "no package archives in $VERIFY_DIR"
   python3 "$REPO/tools/release/audit_package.py" --sums "${sums[0]}" "${archives[@]}" || fail "the checksum file does not list the archives exactly"
-  plats=""; wdll=()
-  for a in "${archives[@]}"; do case "$a" in *-linux-x64.tar.gz) plats="$plats,linux" ;; *) plats="$plats,windows" ;; esac; done
+  plats=""; wdll=(); lopts=(--no-launcher)
+  for a in "${archives[@]}"; do
+    case "$a" in
+      openbfme-launcher-*) lopts=(--repo "$TARGET_REPO" --release-key "$RELEASE_KEY") ;;
+      *-linux-x64.tar.gz) plats="$plats,linux" ;;
+      *) plats="$plats,windows" ;;
+    esac
+  done
   plats=${plats#,}
   case "$plats" in *windows*) [ -n "$WINDLL" ] || fail "--windows-dll is needed to rebuild the Windows package"; wdll=(--windows-dll "$WINDLL") ;; esac
   base=$(dirname "$VERIFY_DIR")
   rebuilt=$(mktemp -d "$base/.verify.XXXXXX")
   trap 'rm -rf "$rebuilt"' EXIT
-  "$0" --out "$rebuilt" --platforms "$plats" "${wdll[@]}" --godot "$GODOT_BIN" --no-self-verify $([ "$ALLOW_DIRTY" = 1 ] && echo --allow-dirty) >"$rebuilt.log" 2>&1 \
+  "$0" --out "$rebuilt" --platforms "$plats" "${wdll[@]}" "${lopts[@]}" --godot "$GODOT_BIN" --no-self-verify $([ "$ALLOW_DIRTY" = 1 ] && echo --allow-dirty) >"$rebuilt.log" 2>&1 \
     || { tail -20 "$rebuilt.log"; rm -f "$rebuilt.log"; fail "the rebuild failed"; }
   rm -f "$rebuilt.log"
   bad=0
@@ -98,6 +115,9 @@ for p in ${PLATFORMS//,/ }; do
     *) fail "unknown platform $p (linux, windows)" ;;
   esac
 done
+if [ $LAUNCHER = 1 ] && [ ! -f "$RELEASE_KEY" ]; then
+  fail "the release public key $RELEASE_KEY does not exist: generate the release key offline (tools/release/sign_manifest.py --generate-key <path outside the repository>), commit its public key as launcher/release_key.pub, or pass --no-launcher for a game-only trial"
+fi
 command -v "$GODOT_BIN" >/dev/null || fail "Godot not found ($GODOT_BIN): set GODOT or --godot"
 "$GODOT_BIN" --version | grep -q "^4\.7\.2\." || fail "Godot 4.7.2 is required, found $("$GODOT_BIN" --version)"
 
@@ -166,8 +186,23 @@ for p in ${PLATFORMS//,/ }; do
   echo "PACKAGE $OUT/$name.$ext ($(du -h "$OUT/$name.$ext" | cut -f1))"
 done
 
+if [ $LAUNCHER = 1 ]; then
+  # the launcher of every platform, from the same commit (tools/release/build_launcher.sh: git archive HEAD launcher, audited)
+  bl_out=$("$REPO/tools/release/build_launcher.sh" --out "$OUT" --version "$VERSION" --commit "$HEAD" --repo "$TARGET_REPO" \
+    --key-file "$RELEASE_KEY" --mtime "$SOURCE_DATE_EPOCH" --platforms "$PLATFORMS" --godot "$GODOT_BIN" 2>&1) || { echo "$bl_out" | tail -30; fail "the launcher packages"; }
+  for p in ${PLATFORMS//,/ }; do
+    if [ "$p" = linux ]; then ARCHIVES+=("openbfme-launcher-$VERSION-linux-x64.tar.gz"); else ARCHIVES+=("openbfme-launcher-$VERSION-windows-x64.zip"); fi
+    echo "PACKAGE $OUT/${ARCHIVES[-1]} ($(du -h "$OUT/${ARCHIVES[-1]}" | cut -f1))"
+  done
+fi
+
 for a in "${ARCHIVES[@]}"; do
-  case "$a" in *-linux-x64.tar.gz) ap=linux ;; *) ap=windows ;; esac
+  case "$a" in
+    openbfme-launcher-*-linux-x64.tar.gz) ap=launcher-linux ;;
+    openbfme-launcher-*) ap=launcher-windows ;;
+    *-linux-x64.tar.gz) ap=linux ;;
+    *) ap=windows ;;
+  esac
   (cd "$OUT" && python3 "$REPO/tools/release/audit_package.py" --release "$ap" "$a") || fail "$a failed the release allowlist"
 done
 (cd "$OUT" && sha256sum "${ARCHIVES[@]}" > "SHA256SUMS-$VERSION.txt")
@@ -180,6 +215,7 @@ python3 -c 'import sys, zlib; print("python", sys.version.split()[0], "zlib", zl
 if [ "$SELF_VERIFY" = 1 ]; then
   # a package is only good if this commit rebuilds it byte for byte (docs/RELEASE.md, "Threat model")
   extra=(); [ -n "$WINDLL" ] && extra=(--windows-dll "$WINDLL")
+  if [ $LAUNCHER = 1 ]; then extra+=(--repo "$TARGET_REPO" --release-key "$RELEASE_KEY"); fi
   [ "$ALLOW_DIRTY" = 1 ] && extra+=(--allow-dirty)
   KEEP_WORK=0 "$0" --verify "$OUT" --godot "$GODOT_BIN" "${extra[@]}" || fail "the package is not reproducible"
 fi

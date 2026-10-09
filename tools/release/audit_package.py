@@ -375,8 +375,13 @@ RELEASE_FILES = {
               "README_TESTERS.txt": "text", "LICENSE": "text", "NOTICE": "text", "VERSION": "text"},
     "windows": {"OpenBFME.exe": "pe", "OpenBFME.console.exe": "pe", "openbfme.windows.template_debug.x86_64.dll": "pe", "OpenBFME.pck": "pck",
                 "README_TESTERS.txt": "text", "LICENSE": "text", "NOTICE": "text", "VERSION": "text"},
+    # lane LAUNCH-1: the OpenBFME Launcher packages (tools/release/build_launcher.sh)
+    # the launcher's pack is embedded in its executable (one file: a self-update replaces it with one rename, Sol r1)
+    "launcher-linux": {"OpenBFMELauncher.x86_64": "elf+pck", "README.txt": "text", "LICENSE": "text", "NOTICE": "text", "VERSION": "text"},
+    "launcher-windows": {"OpenBFMELauncher.exe": "pe+pck", "README.txt": "text", "LICENSE": "text", "NOTICE": "text", "VERSION": "text"},
 }
-TOP_DIR = re.compile(r"^openbfme-[0-9A-Za-z][0-9A-Za-z.+_-]*-(linux|windows)-x64$")
+TOP_DIR = re.compile(r"^openbfme-(?!launcher-)[0-9A-Za-z][0-9A-Za-z.+_-]*-(linux|windows)-x64$")
+LAUNCHER_TOP_DIR = re.compile(r"^openbfme-launcher-[0-9A-Za-z][0-9A-Za-z.+_-]*-(linux|windows)-x64$")
 
 # the Godot resource types of this project a pack may hold (godot/export_presets.cfg exports scripts as text), each with its format check
 PCK_RULES = [
@@ -390,6 +395,17 @@ PCK_RULES = [
     (re.compile(r"^project\.binary$"), "ecfg"),
     (re.compile(r"^openbfme\.gdextension$"), "text"),
     (re.compile(r"^tests/[\w.-]+\.txt$"), "text"),
+]
+# the launcher's pack (launcher/export_presets.cfg): its scripts and scene as text, the project settings, the UID and class caches and the
+# build information build_launcher.sh writes; no tests, no GDExtension
+LAUNCHER_PCK_RULES = [
+    (re.compile(r"^scripts/[\w/.-]+\.gd$"), "text"),
+    (re.compile(r"^scenes/[\w/.-]+\.tscn$"), "scene"),
+    (re.compile(r"^[\w/.-]+\.(tscn|tres)\.remap$"), "remap"),
+    (re.compile(r"^\.godot/(extension_list|global_script_class_cache)\.cfg$"), "text"),
+    (re.compile(r"^\.godot/uid_cache\.bin$"), "uidcache"),
+    (re.compile(r"^project\.binary$"), "ecfg"),
+    (re.compile(r"^build_info\.json$"), "text"),
 ]
 # signatures that may not appear ANYWHERE inside a pack entry or a text file: retail formats and containers / compressed streams of any kind
 EMBEDDED_SIGNATURES = {b"BIGF": "BIG archive", b"BIG4": "BIG archive", b"DDS |": "DDS texture", b"WAVEfmt": "RIFF/WAVE audio",
@@ -464,6 +480,37 @@ def binary_problems(name: str, kind: str, b: bytes) -> list[str]:
     return problems
 
 
+def embedded_pack_problems(name: str, kind: str, b: bytes) -> list[str]:
+    """The launcher's executable with its pack embedded the way Godot 4.7's export does it: the pack is the executable's last section
+    (ELF: covered by the section table; PE: a section named "pck", no overlay), followed by the <u64 pack size> "GDPC" trailer inside it;
+    every byte of the file is the image or the pack, and the pack holds only the launcher's resource types (LAUNCHER_PCK_RULES)."""
+    problems = []
+    found = retail_content(b)
+    if found:
+        problems.append(f"{name}: retail-format bytes ({found})")
+    base = embedded_pck_base(b)
+    if base is None:
+        return problems + [f"{name}: no embedded Godot pack"]
+    try:
+        if kind == "elf+pck":
+            if elf_extent(b) != len(b):
+                problems.append(f"{name}: bytes outside what the ELF headers describe")
+        else:
+            import pefile  # noqa: PLC0415
+            pe = pefile.PE(data=b, fast_load=True)
+            if pe.get_overlay_data_start_offset() is not None:
+                problems.append(f"{name}: bytes after the PE image (an overlay)")
+            last = pe.sections[-1]
+            if last.Name.rstrip(b"\0") != b"pck" or last.PointerToRawData != base or last.PointerToRawData + last.SizeOfRawData != len(b):
+                problems.append(f"{name}: the pack is not exactly the last PE section")
+    except (ValueError, struct.error, Exception) as e:
+        problems.append(f"{name}: not a valid {kind.split('+')[0].upper()} file ({e})")
+    problems += pck_release_problems(f"{name}:pck", b[base:len(b) - 12], LAUNCHER_PCK_RULES)
+    if embedded_pck_base(b[:base]) is not None:
+        problems.append(f"{name}: a second pack is embedded")
+    return problems
+
+
 def uid_cache_problem(b: bytes) -> str:
     """ResourceUID's cache: u32 count, then per entry i64 id, u32 length, the path; exactly to the end."""
     try:
@@ -497,7 +544,8 @@ def ecfg_problem(b: bytes) -> str:
         return "truncated"
 
 
-def pck_release_problems(name: str, data: bytes) -> list[str]:
+def pck_release_problems(name: str, data: bytes, rules: list | None = None) -> list[str]:
+    rules = PCK_RULES if rules is None else rules
     try:
         entries = pck_entries(data)
     except (ValueError, struct.error) as e:
@@ -505,7 +553,7 @@ def pck_release_problems(name: str, data: bytes) -> list[str]:
     problems = []
     for path, content in entries:
         where = f"{name}:{path}"
-        rule = next((kind for rx, kind in PCK_RULES if rx.match(path)), None)
+        rule = next((kind for rx, kind in rules if rx.match(path)), None)
         if rule is None:
             problems.append(f"{where}: not a resource type this project exports")
             continue
@@ -550,8 +598,10 @@ def release_file_problems(platform: str, files: dict[str, bytes], where: str) ->
         kind, data = allowed[n], files[n]
         if kind in ("elf", "pe"):
             problems += binary_problems(f"{where}/{n}", kind, data)
+        elif kind in ("elf+pck", "pe+pck"):
+            problems += embedded_pack_problems(f"{where}/{n}", kind, data)
         elif kind == "pck":
-            problems += pck_release_problems(f"{where}/{n}", data)
+            problems += pck_release_problems(f"{where}/{n}", data, LAUNCHER_PCK_RULES if platform.startswith("launcher-") else PCK_RULES)
         else:
             t = text_problem(data) or retail_content(data)
             if t:
@@ -685,8 +735,10 @@ def read_release_zip(data: bytes, where: str) -> tuple[str | None, dict[str, byt
 
 
 def check_release(platform: str, path: Path) -> list[str]:
-    """A package folder, a package archive, or a SHA256SUMS file (with its archives next to it)."""
+    """A package folder, a package archive, or a SHA256SUMS file (with its archives next to it). `platform`: linux, windows,
+    launcher-linux or launcher-windows."""
     where = path.name
+    base = platform.removeprefix("launcher-")
     if path.is_dir():
         files, problems = {}, []
         for f in sorted(path.rglob("*")):
@@ -702,16 +754,18 @@ def check_release(platform: str, path: Path) -> list[str]:
         return sums_problems(platform, path)
     else:
         data = path.read_bytes()
-        if path.name.endswith(".tar.gz") and platform == "linux":
+        if path.name.endswith(".tar.gz") and base == "linux":
             top, files, problems = read_release_tar_gz(data, where)
-        elif path.name.endswith(".zip") and platform == "windows":
+        elif path.name.endswith(".zip") and base == "windows":
             top, files, problems = read_release_zip(data, where)
         else:
             return [f"{where}: not a {platform} package archive"]
-        if top and path.name != top + (".tar.gz" if platform == "linux" else ".zip"):
+        if top and path.name != top + (".tar.gz" if base == "linux" else ".zip"):
             problems.append(f"{where}: the folder inside is {top}")
-    if not top or not TOP_DIR.match(top) or not top.endswith(f"-{platform}-x64"):
-        problems.append(f"{where}: the package folder {top!r} is not openbfme-<version>-{platform}-x64")
+    top_rx = LAUNCHER_TOP_DIR if platform.startswith("launcher-") else TOP_DIR
+    if not top or not top_rx.match(top) or not top.endswith(f"-{base}-x64"):
+        kind = "openbfme-launcher" if platform.startswith("launcher-") else "openbfme"
+        problems.append(f"{where}: the package folder {top!r} is not {kind}-<version>-{base}-x64")
     return problems + release_file_problems(platform, files, where)
 
 
@@ -768,7 +822,7 @@ def main(argv: list[str]) -> int:
         return 1 if problems else 0
     if argv[0] == "--release":
         if len(argv) < 3 or argv[1] not in RELEASE_FILES:
-            print("usage: audit_package.py --release linux|windows <package folder | archive | SHA256SUMS file> ...")
+            print("usage: audit_package.py --release linux|windows|launcher-linux|launcher-windows <package folder | archive | SHA256SUMS file> ...")
             return 2
         problems = []
         for a in argv[2:]:

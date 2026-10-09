@@ -333,6 +333,12 @@ public:
 	}
 	const std::map<std::string, unsigned> &notedStopHits() const { return m_notedStopHits; }
 
+	// lane CAMP-1H: TheGameLogic + 0xA4, the game's difficulty (0 easy, 1 normal, 2 hard, 3 brutal): reset to 1 (GameLogic::reset RW 0x62D3EB),
+	// prepareNewGame (RW 0x77948E) stores the new game message's difficulty here (the script engine's stays 1). Read by the difficulty bonus of a computer
+	// player's objects outside a multiplayer game (Player::applyDifficultyBonusesForObject RW 0x6AC3E3) and the mission restart (RW 0x9221B6). Hashed.
+	void setGameDifficulty(int d) { m_gameDifficulty = d; }
+	int getGameDifficulty() const { return m_gameDifficulty; }
+
 	// ---- frame ------------------------------------------------------------------------------------------------------------
 	UnsignedInt getFrame() const { return m_frame; }
 	// RW 0x625130: the logic is running (the frame advances in phase 1)
@@ -645,6 +651,7 @@ private:
 	unsigned long long m_creationsWithoutDispatch = 0;
 
 	UnsignedInt m_frame = 0;
+	int m_gameDifficulty = 1;     ///< lane CAMP-1H: RW GameLogic + 0xA4
 	bool m_frameAdvance = true;   ///< RW GameLogic + 0x44
 	bool m_inUpdate = false;      ///< RW + 0x70
 	int m_lastPhase = 0;          ///< RW + 0x17C

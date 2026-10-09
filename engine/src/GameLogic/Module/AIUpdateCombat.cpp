@@ -242,7 +242,7 @@ Object *AIUpdateInterface::replacementVictim()
 // B1 AIUpdate.cpp privateAttackObject: the unit must be able to attack, then the machine restarts in the attack state
 bool AIUpdateInterface::aiAttackObject(Object *victim, CommandSourceType source)
 {
-	if (!acceptCommand(source, -1))
+	if (!acceptCommand(source, 0xB, victim))
 	{
 		return false; // lane MODULES-3: RW 0x667174
 	}
@@ -275,7 +275,7 @@ bool AIUpdateInterface::aiAttackObject(Object *victim, CommandSourceType source)
 
 bool AIUpdateInterface::aiForceAttackObject(Object *victim, CommandSourceType source)
 {
-	if (!acceptCommand(source, -1))
+	if (!acceptCommand(source, 0xC, victim))
 	{
 		return false; // lane MODULES-3: RW 0x667174
 	}
@@ -489,7 +489,7 @@ Object *AIUpdateInterface::nextMoodTarget()
 // ZH groupAttackMoveToPosition (stop S-328)
 bool AIUpdateInterface::armAttackMove(const Coord3D &goal, CommandSourceType source)
 {
-	if (!acceptCommand(source, -1))
+	if (!acceptCommand(source, 0xF))
 	{
 		return false; // lane MODULES-3 r2: RW 0x667174 refuses the order before it changes anything
 	}

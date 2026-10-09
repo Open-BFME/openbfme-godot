@@ -115,7 +115,7 @@ void createOnTeamAtWaypoint(ScriptEngine &engine, const std::string &name, const
 		engine.note("WARNING: Object with name " + name + " already exists.  Failed Create.");
 		return;
 	}
-	Team *team = ScriptConditions::team(engine, teamName);
+	Team *team = ScriptConditions::team(engine, teamName, true); // lane CAMP-1H: RW 0x7C5BC1 passes 1 (a missing team is made, an inactive one activated)
 	if (!team)
 	{
 		engine.note("***WARNING: Team not found:*** " + teamName);
@@ -283,7 +283,7 @@ void ScriptActions::execute(ScriptEngine &engine, const ScriptActionRec &a)
 	if (name == "UNIT_SET_TEAM") // RW 0x7BF794 (the AI's team hook, vslot 0x54, is not ported)
 	{
 		Object *o = engine.getUnitNamed(param(a, 0).stringValue);
-		Team *tm = ScriptConditions::team(engine, param(a, 1).stringValue);
+		Team *tm = ScriptConditions::team(engine, param(a, 1).stringValue, true); // lane CAMP-1H: RW 0x7BF7BF passes 1 (the team made / activated)
 		if (o && tm)
 		{
 			o->setTeam(tm);
@@ -435,7 +435,7 @@ void ScriptActions::execute(ScriptEngine &engine, const ScriptActionRec &a)
 		}
 		return;
 	}
-	if (executeUnitAction(engine, a, name))
+	if (executeUnitAction(engine, a, name) || executeCampaignAction(engine, a, name))
 	{
 		return;
 	}

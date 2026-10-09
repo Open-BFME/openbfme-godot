@@ -4,8 +4,10 @@
 // it with the game type at + 0x284 and fills it, RW 0x9275EC; the data contract is GameClient/EndGame.h ScoreScreenData).
 //
 // TARGET FACTS (RotWK game.dat, caveat S-001; the registration RW 0x9265BD):
-//   * commands: AptTimeLine::OnInitialized (RW 0x924C63), ::OnButtonContinue (RW 0x925699 via RW 0x925FF2: for the skirmish / LAN types the shell's
-//     screen + 0x9C is shown again (TheShell vslot 0x138, RW 0x6DA95E / 0x6DA774, vslot 0x64): the way back to the menus), ::OnButtonSaveReplay (RW 0x924C83),
+//   * commands: AptTimeLine::OnInitialized (RW 0x924C63), ::OnButtonContinue (RW 0x925699 via RW 0x925FF2: for the skirmish / LAN types the shell
+//     music starts again with a fade (TheAudio 0xDE42FC vslot 0x138(2) + 0x9C, the event RW 0x6DA95E / setShouldFade RW 0x6DA774, vslot 0x64) and TheGameEngine
+//     + 0x310 is set (RW 0x62215B); the engine's next update (RW 0x624EE7) pops the shell's top screen (RW 0x75DB34, Shell::pop): the way back to the menus
+//     is the screen the shell kept under the game; lane QA2-FIX corrected END-1's reading of TheAudio as TheShell, stop S-1771), ::OnButtonSaveReplay (RW 0x924C83),
 //     ::CaHAwardNumber (RW 0x9253C5); the render component AptTimeLine::RenderGraph (RW 0x9257F2, registered with RW 0x624348).
 //   * providers (RW 0x925026, table RW 0xC7E0E8): TimeLine:ScreenMode = "OtherSingle" for the types 1 / 2 / 8, "OtherOnlineLan" for 3 / 4 / 5, "WOTRSingle" for 6,
 //     "WOTROnlineLan" for 7; TimeLine:ShowSaveReplay = "0" when GlobalData + 0x9D4 & 3, else "%d" of (type 3 or 4); TimeLine:NumOfPlayers = the entries;

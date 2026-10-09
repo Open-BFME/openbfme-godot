@@ -134,6 +134,14 @@ float hordeSpeed(Object *h)
 	return loco ? loco->speed() : 0.0f;
 }
 
+// the charging horde's speed limit this frame: the desired speed cap a crush sets for LOGICFRAMES_PER_SECOND (RW 0x5E39E6), else the maximum (RW 0x5E4137)
+float hordeSpeedCap(Object *h)
+{
+	AIUpdateInterface *ai = h->getAIUpdateInterface();
+	Locomotor *loco = ai ? ai->curLocomotor() : nullptr;
+	return loco ? loco->getCurrentMaxSpeed(ai->locomotorHost(), h->logic().getFrame()) : 0.0f;
+}
+
 void togglePorcupine(Arena &a, Object *h)
 {
 	GameLogicDispatch dispatch(a.logic);
@@ -156,8 +164,9 @@ struct Charge
 	int victimsFlungSurvived = 0;  ///< flailing victims alive at the end
 	float farthestThrow = 0.0f;    ///< the largest one-frame move of a flailing victim
 	float speedBefore = 0.0f;      ///< the charging horde's speed the frame before its first crush
-	float lowestAfter = 1.0e9f;    ///< its lowest speed in the 10 frames after the first crush
+	float lowestAfter = 1.0e9f;    ///< its lowest speed limit (hordeSpeedCap) in the 10 frames after the first crush
 	std::vector<float> speeds;     ///< the charging horde's speed per frame
+	std::vector<float> caps;       ///< the charging horde's speed limit per frame (hordeSpeedCap)
 	std::vector<std::uint32_t> hashes;
 	bool porcupineListOnMembers = false;
 };
@@ -182,25 +191,31 @@ Charge charge(const char *charger, const char *factionB, const char *victim, boo
 	Object *h0 = a.place(charger, 0, 300.0f, 600.0f, 0.0f);
 	a.frames(2);
 	const std::vector<ObjectID> m1 = a.memberIds(h1);
+	const ObjectID h0id = h0->getID();
 	std::map<ObjectID, Coord3D> last;
 	std::set<ObjectID> flailing, lying, standing, splatted;
 	REQUIRE(h0->getAIUpdateInterface()->aiAttackObject(h1, CMD_FROM_PLAYER));
 	unsigned long long lastCrushes = a.counters().crushes;
 	for (int f = 0; f < frames; ++f)
 	{
-		const float before = hordeSpeed(h0);
+		const float before = a.logic.findObjectByID(h0id) ? hordeSpeed(h0) : 0.0f; // the charging horde dies before the end of the open charge
 		a.logic.runLogicFrame();
-		const float speed = hordeSpeed(h0);
+		const float speed = a.logic.findObjectByID(h0id) ? hordeSpeed(h0) : 0.0f;
 		out.speeds.push_back(speed);
+		// the deceleration is measured on the speed limit, not the speed: a horde that reaches its target has no goal, and the locomotor's maintainCurrentPosition
+		// (RW 0x5E7CC7, lane EXIT-1) zeroes the speed of a stopped HORDE / legged unit, so after the stop the speed says nothing about the crushes (the open
+		// formation's charge ends at its target 4 frames after the first crush, the porcupine's at once)
+		const float cap = a.logic.findObjectByID(h0id) ? hordeSpeedCap(h0) : 0.0f;
+		out.caps.push_back(cap);
 		if (a.counters().crushes > lastCrushes && out.firstCrushFrame < 0)
 		{
 			out.firstCrushFrame = f;
 			out.speedBefore = before;
 		}
 		lastCrushes = a.counters().crushes;
-		if (out.firstCrushFrame >= 0 && f <= out.firstCrushFrame + 10 && speed < out.lowestAfter)
+		if (out.firstCrushFrame >= 0 && f <= out.firstCrushFrame + 10 && cap < out.lowestAfter)
 		{
-			out.lowestAfter = speed;
+			out.lowestAfter = cap;
 		}
 		for (ObjectID id : m1)
 		{
@@ -409,7 +424,7 @@ TEST_CASE("combat3 retail: pikemen in their porcupine formation stop a Rohirrim 
 	REQUIRE(open.firstCrushFrame >= 0);
 	REQUIRE(pikes.firstCrushFrame >= 0);
 	// the frame after the first crush: the open formation slows the riders by a little, the porcupine to the locomotor's minimum at once
-	const float openAfter = open.speeds[(size_t)open.firstCrushFrame + 1], pikesAfter = pikes.speeds[(size_t)pikes.firstCrushFrame + 1];
+	const float openAfter = open.caps[(size_t)open.firstCrushFrame + 1], pikesAfter = pikes.caps[(size_t)pikes.firstCrushFrame + 1];
 	CHECK(pikesAfter < openAfter);
 	CHECK(pikes.lowestAfter < open.lowestAfter);
 	CHECK(pikes.crushes * 3 < open.crushes);

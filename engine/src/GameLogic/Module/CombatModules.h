@@ -14,9 +14,12 @@
 //     FXListDie: create 0x64C781, data 0x653817, DieMux + DeathFX / OrientToObject (0xC06B78).
 // DONOR: ZH SlowDeathBehavior.cpp / B1 SlowDeathBehavior.cpp (onDie roulette, beginSlowDeath, update), ZH DestroyDie.cpp.
 //
-// WHAT IS INFERENCE / NOT PORTED (stop S-324): the FX / OCL / Weapon phase effects and the Sound of SlowDeathBehavior (parsed and counted, not played), DeathFlags (parsed as a token
-// list), FlingForce (needs PhysicsBehavior), DecayBeginTime / FadeDelay / FadeTime / ShadowWhenDead (client side fading), the LOD death speed-up and the DISABLED_HELD of a sinking
-// body; KeepObjectDie does nothing (an object with no DestroyDie / SlowDeath simply stays); FXListDie records the event without playing the FX list.
+// lane COMBAT-4 (FB-0011): SlowDeathBehavior is RotWK's, not ZH's: the roulette RW 0x861712, the probability RW 0x860608, beginSlowDeath RW 0x860E93 and the update RW 0x860B39
+// (see the definitions): DeathFlags, DoNotRandomizeMidpoint, DecayBeginTime (DECAY), FadeDelay (the fade frame), FlingForce (the body thrown, its timers held while it flies,
+// EXPLODED_FLAILING / EXPLODED_BOUNCING), the HIT_GROUND phase, SINKING, DISABLED_HELD and the 5.7 drop of a body above the ground are ported.
+// WHAT IS INFERENCE / NOT PORTED (stop S-324): the Weapon phase effect (counted), the client's FX / Sound picks, the drawable's fade and shadow (client), the LOD death scale
+// (TheGameLODManager's SlowDeathScale: 1.0 at every level of the 2.01 GameLOD.ini, so the port takes 1.0 and has no rescale of RW 0x860B6B), the HULK quick death (RW 0x860FBC: TheGameLogic + 0xA0, the
+// hulk lifetime override of SCRIPTING_OVERRIDE_HULK_LIFETIME, which no ported script action sets: it stays -1 and the branch never runs); KeepObjectDie does nothing (an object with no DestroyDie / SlowDeath simply stays); FXListDie records the event without playing the FX list.
 
 #pragma once
 
@@ -147,10 +150,11 @@ public:
 	std::vector<std::string> m_sounds[SDPHASE_COUNT];  ///< lane FX-2: every name of the Sound lines per phase (RW + 0xE8 + 12 * phase)
 	float m_flingForce = 0.0f, m_flingForceVariance = 0.0f; ///< +0x118 / +0x11C
 	float m_flingPitch = 0.0f, m_flingPitchVariance = 0.0f; ///< +0x120 / +0x124
-	std::vector<std::string> m_deathFlags;             ///< DeathFlags tokens
-	bool m_shadowWhenDead = false;
-	unsigned m_fadeDelay = 0, m_fadeTime = 0;
-	bool m_doNotRandomizeMidpoint = false;
+	std::vector<std::string> m_deathFlags;             ///< DeathFlags tokens (DEATH_1 .. DEATH_5: the model conditions RW + 0x128 and the statuses RW + 0x174, parser RW 0x8612E7)
+	bool m_shadowWhenDead = false;                     ///< +0x18D
+	unsigned m_fadeDelay = 0xFACADE00u;                ///< +0x188 (RW ctor 0x8613DA: the 0xFACADE00 sentinel = no fade)
+	unsigned m_fadeTime = 6;                           ///< +0x184 (RW ctor: 6)
+	bool m_doNotRandomizeMidpoint = false;             ///< +0x18E
 	// lane FX-2 review: RW byte +0x18C, the mask of resolved phase entries (1 FX, 2 OCL, 4 Weapon, 8 Sound); zero: the phases do nothing (RW 0x8609BE)
 	int resolvedMask() const;
 	static void buildFieldParse(MultiIniFieldParse &p);
@@ -175,12 +179,31 @@ public:
 	bool isDieApplicable(const DieModuleInterface::Event &event) const;
 	unsigned sinkFrame() const { return m_sinkFrame; }
 	unsigned destructionFrame() const { return m_destructionFrame; }
+	unsigned midpointFrame() const { return m_midpointFrame; }
+	unsigned decayFrame() const { return m_decayFrame; }
+	unsigned fadeFrame() const { return m_fadeFrame; }
+	bool isFlung() const { return (m_flags & kFlung) != 0; }
+	bool hasLanded() const { return (m_flags & kLanded) != 0; }
+	bool fadeBegun() const { return m_fadeBegun; }
 
 private:
-	void beginSlowDeath();
+	enum : unsigned
+	{
+		kActivated = 1, ///< RW + 0x3C bit 0
+		kMidpoint = 2,  ///< bit 1: the MIDPOINT phase ran
+		kFlung = 4,     ///< bit 2: FlingForce threw the body (its timers wait while it flies)
+		kLanded = 8     ///< bit 3: the flung body is down
+	};
+	void beginSlowDeath(const DieModuleInterface::Event &event); // RW 0x860E93 (SlowDeathBehaviorInterface slot 0)
 	void doPhase(SlowDeathPhase phase);
+	float heightAboveTerrain() const;
 	const SlowDeathBehaviorModuleData *m_data;
 	bool m_activated = false;
 	bool m_midpointDone = false;
 	unsigned m_sinkFrame = 0, m_midpointFrame = 0, m_destructionFrame = 0;
+	unsigned m_decayFrame = 0;          ///< RW + 0x34 (0: none)
+	unsigned m_flags = 0;               ///< RW + 0x3C
+	bool m_hitGroundPending = false;    ///< RW + 0x40: the module has a HIT_GROUND phase entry (the constructor), cleared when the body is down
+	bool m_fadeBegun = false;           ///< RW + 0x48
+	unsigned m_fadeFrame = 0xFFFFFFFFu; ///< RW + 0x4C (the constructor's -1)
 };

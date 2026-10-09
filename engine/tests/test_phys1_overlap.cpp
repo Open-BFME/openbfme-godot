@@ -17,6 +17,8 @@ namespace
 struct MeleeRun
 {
 	phystest::OverlapStats stats;
+	phystest::OverlapStats fight; ///< lane MOVE-2 r5: the frames while both sides have units (the melee itself; after it the survivors stand where they stopped)
+	int fightFrames = 0;          ///< the frames until one side has no unit left (the run's length when both still have units)
 	std::vector<std::uint32_t> hashes;
 	std::vector<std::string> stops; // the logic report's stop lines at the end
 };
@@ -43,7 +45,24 @@ MeleeRun bigMelee(int frames, bool hashes)
 	for (int f = 0; f < frames; ++f)
 	{
 		a.logic.runLogicFrame();
-		out.stats.add(phystest::measure(a.logic));
+		const phystest::OverlapSample sample = phystest::measure(a.logic);
+		out.stats.add(sample);
+		if (out.fightFrames == f)
+		{
+			int units[2] = { 0, 0 };
+			for (const phystest::Body &b : phystest::bodies(a.logic))
+			{
+				if (!b.structure)
+				{
+					units[b.owner == a.player(0) ? 0 : 1] += 1;
+				}
+			}
+			if (units[0] > 0 && units[1] > 0)
+			{
+				out.fight.add(sample);
+				out.fightFrames = f + 1;
+			}
+		}
 		if (hashes)
 		{
 			out.hashes.push_back(a.logic.computeStateHash());
@@ -72,15 +91,22 @@ TEST_CASE("phys1 retail: the overlap statistic of a big melee between two barrac
 	}
 	const MeleeRun r = bigMelee(600, false);
 	print("big melee", r.stats);
+	print("big melee while both sides fight", r.fight);
 	CHECK(r.stats.frames == 600);
+	CHECK(r.fightFrames > 100);
+	CHECK(r.fightFrames < 600); // one side is wiped out within the run
 	// lane PHYS-1 round 2: the Amoeba's steps pass RW 0x6F1C90 (Pathfinder::crowdingAllowsStep). Without it the melee's members stepped into the barracks (measured: 5
 	// units, a centre 22.44 deep, 118 of 600 frames with a unit inside; mean enemy overlap 6.27, mean allied overlap across hordes 8.32); with it no unit centre is inside a
 	// structure shape (mean enemy overlap 2.85, allied 4.26). A scenario measurement on template geometry, not a bound. Lane SMOOTH-3: the members' angle goal
 	// turns at the locomotor's rate (RW 0x5E98D6) instead of setting the heading, and the hub's near arm is RotWK's: mean enemy overlap 4.15, allied 0.71.
 	CHECK(r.stats.worst.centreDepth == 0.0f);
 	CHECK(r.stats.framesWithUnitsInside == 0);
-	CHECK(r.stats.meanEnemyOverlap / r.stats.frames < 5.0);
-	CHECK(r.stats.meanAllyOverlap / r.stats.frames < 6.0);
+	// lane MOVE-2 r5: the means are taken while both sides fight. Over all 600 frames they were dominated by the parked end: once one side is gone (after 238
+	// frames on the stack6 merge) the survivors stand still for good, and the run's mean took the closest parked pair of two allied hordes 300 more times (a
+	// penetration of 11.63 from frame 300 on: the mean 6.80). That rest layout moved with EXIT-1's horde member update (RW 0x66C748, the straight member
+	// steps) while the melee did not: over the fight the allied mean is 2.02 (enemy 1.40) with the member update and 1.97 (enemy 1.59) with it switched off
+	CHECK(r.fight.meanEnemyOverlap / r.fight.frames < 5.0);
+	CHECK(r.fight.meanAllyOverlap / r.fight.frames < 6.0);
 	// the collision pass reports what it is not (S-780) and that it left allied overlaps alone (S-781)
 	size_t s780 = 0, s781 = 0;
 	for (const std::string &line : r.stops)

@@ -82,6 +82,13 @@ public:
 	// lane SMOOTH-1 (C++ only, not bound): set_instance_pose without the Godot String round trip, for GameWorld's per-frame posing; clip names are
 	// resolved once per model (cached) and an unchanged pose is not evaluated again
 	bool set_instance_pose_native(int64_t instance, const std::string &clip0, double frame0, const std::string &clip1, double frame1, double percentage);
+	// lane PERF-3: the same with a key per clip that stands for its name (the caller's resolved animation: equal keys, equal names; null: no key), so a
+	// drawable posed with the same clips frame after frame is matched without comparing the names
+	bool set_instance_pose_keyed(int64_t instance, const std::string &clip0, const void *key0, double frame0, const std::string &clip1, const void *key1, double frame1,
+		double percentage);
+	// lane COMBAT-4 (C++ only): bones turned about their own Y axis after the pose (W3D Control_Bone with Rotate_Y, what W3DTruckDraw does to its tires, RW 0x4CBFFB);
+	// a bone the hierarchy lacks is skipped. An unchanged list is not evaluated again
+	bool set_instance_bone_spins_native(int64_t instance, const std::vector<std::string> &bones, const std::vector<float> &angles);
 	// Hides sub objects of ONE instance by name (case-insensitive; the names the draw module runtime reports in W3DDrawFrame::hiddenSubObjects,
 	// i.e. what the retail BeginScript bodies hide): a hidden sub object is not written to its MultiMesh for that instance. An empty list shows
 	// everything again. Unknown names are an error (returns false, recorded). (Added by lane MAPOBJ-1.)
@@ -115,6 +122,13 @@ public:
 	void set_time_scale(double scale) { TimeScale = scale; }
 	void set_worker_threads(int count);
 	int get_worker_threads() const { return Workers; }
+	// lane PERF-3 (presentation only): instances whose bounds lie outside the current camera's frustum are not posed; their pose stays pending and is
+	// evaluated in the first update that sees them (and by the bone queries below). Godot draws a MultiMesh whole, so a culled instance is drawn with its
+	// last pose, off screen. Off by default (a scene with other cameras on the same world, or tests reading poses, keeps every pose current)
+	void set_pose_culling(bool enabled) { PoseCulling = enabled; }
+	// lane PERF-3 (tests): the palette texels of one instance as the last update wrote them (3 RGBA texels per pivot), empty for an unknown instance
+	PackedFloat32Array get_instance_palette(int64_t instance) const;
+	bool get_pose_culling() const { return PoseCulling; }
 
 	// Evaluates everything now (also done by _process).
 	void update_now();
@@ -198,6 +212,7 @@ private:
 		bool HasSorted = false;          // a draw item sorts back to front: rewritten whenever the camera moves
 		int Dithered = 0;                // S-029 counts of the last write of this model
 		int SortedItems = 0;
+		float CullRadius = -1.0f;        // lane PERF-3: cull_radius, computed on first use
 	};
 	struct Instance
 	{
@@ -221,13 +236,22 @@ private:
 		bool PoseStale = true;                // SMOOTH-1: the pose inputs changed since the last evaluation (clip-driven instances follow GlobalTime)
 		bool Inexact = false;                 // SMOOTH-1: the last evaluation used an arm whose summation order is not retail's (S-028)
 		int PaletteSize = 0;                  // SMOOTH-1: texels of the palette block (pivots * W3D_PALETTE_TEXELS_PER_PIVOT); 0 = none yet
+		// lane PERF-3: the clip names of the last set_instance_pose_native and what they resolved to (a drawable asks for the same clips frame after frame)
+		std::string MemoClip[2];
+		const HAnimClass *MemoAnim[2] = { nullptr, nullptr };
+		const void *MemoKey[2] = { nullptr, nullptr };
+		std::vector<std::pair<int, float>> BoneSpins; // lane COMBAT-4: (pivot, angle about its Y) applied after the pose (set_instance_bone_spins_native)
 	};
+	// lane PERF-3: the radius around an instance's origin, in model units, that holds every vertex of the model in any pose (pose culling)
+	float cull_radius(Model &m) const;
+	void ensure_pose(const Instance &inst) const; // the bone queries: a pose that culling left pending is evaluated now
 
 	void warn(const std::string &message);
 	const HAnimClass *resolve_clip(const Model &m, const std::string &name); // nullptr (and an error recorded) when the clip is not registered
 	std::shared_ptr<MeshGpu> build_mesh(const MeshModelClass &mesh, std::vector<std::string> &errors);
 	void rebuild_layout();
 	void evaluate_pose(Instance &inst) const;
+	void evaluate_animation_pose(Instance &inst) const; ///< the animation part of evaluate_pose (lane COMBAT-4 adds the bone spins after it)
 	void write_palette(const Instance &inst);
 	void write_buffers();
 	const HAnimClass *resolve_clip_cached(Model &m, const std::string &name);
@@ -246,8 +270,8 @@ private:
 	std::vector<Ref<ShaderMaterial>> AllMaterials;
 	std::vector<W3DMapperBinding> Mappers;
 
-	// palette
-	std::vector<float> PaletteData;
+	// palette (lane PERF-3: the poses are written into PaletteImage's own buffer, PaletteWrite during an update; no separate copy is kept)
+	float *PaletteWrite = nullptr;
 	int PaletteTexels = 0;
 	int PaletteHeight = 0;
 	Ref<ImageTexture> PaletteTexture;
@@ -297,6 +321,8 @@ private:
 
 	// worker threads (pose evaluation and buffer writing are independent per instance / per draw item); lane PERF-2: the slices run on the client job pool
 	int Workers = 1;
+	bool PoseCulling = false;                    // lane PERF-3: set_pose_culling
+	int PoseCulled = 0;                          // instances whose pose the last update left pending (outside the frustum)
 };
 
 } // namespace godot

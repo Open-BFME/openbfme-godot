@@ -11,6 +11,8 @@
 #include "GameClient/RenderInterpolation.h"
 #include "GameLogic/ObjectTemplateInfo.h"
 #include "GameEngineDevice/W3DDevice/GameClient/Drawable/Draw/W3DTreeDraw.h"
+#include "GameEngineDevice/W3DDevice/GameClient/Drawable/Draw/W3DModelDrawVariants.h"
+#include "Common/ModelState.h"
 #include "GameLogic/SimMath.h"
 
 #include <cmath>
@@ -219,6 +221,48 @@ void Drawable::setModelConditionFlags(const ModelConditionFlags &flags)
 	}
 }
 
+ModelConditionFlags Drawable::dependencySharedModelFlags() const
+{
+	ModelConditionFlags out;
+	for (const DrawEntry &e : m_entries)
+	{
+		if (e.draw)
+		{
+			const ModelConditionFlags &f = e.draw->dependencySharedModelFlags();
+			for (int b = 0; b < MODELCONDITION_COUNT; ++b)
+			{
+				if (f.test(b))
+				{
+					out.set(b);
+				}
+			}
+		}
+	}
+	return out;
+}
+
+bool Drawable::applyDependencyFlags(const ModelConditionFlags &shared, const ModelConditionFlags &containerFlags)
+{
+	ModelConditionFlags next = m_flags;
+	for (int b = 0; b < MODELCONDITION_COUNT; ++b)
+	{
+		if (shared.test(b))
+		{
+			next.set(b, containerFlags.test(b));
+		}
+	}
+	bool changed = false;
+	for (int b = 0; b < MODELCONDITION_COUNT && !changed; ++b)
+	{
+		changed = next.test(b) != m_flags.test(b);
+	}
+	if (changed)
+	{
+		setModelConditionFlags(next);
+	}
+	return changed;
+}
+
 void Drawable::scriptModuleVisible(const std::string &name, bool visible)
 {
 	if (m_buildingEntries)
@@ -321,13 +365,84 @@ void Drawable::advanceAnimation(double elapsedMs)
 		{
 			e.draw->advance(elapsedMs);
 		}
+		advanceTires(e, elapsedMs);
+	}
+}
+
+// lane COMBAT-4 (FB-0002), RW 0x4CBFFB (W3DTruckDraw's draw update, run once per client frame: 6 per logic frame, RW 0xDE4324 + 0x38): with a front tire bone
+// (+ 0x320) or a mid-left one (+ 0x328), speed = the object's locomotor speed (RW 0x68B34C, per logic frame), negated with PowerslideRotationAddition while the
+// locomotor moves backwards (locomotor + 0x44 bit 7); step = TireRotationMultiplier (+ 0x1E8) / 6; front += step * speed; rear += step * speed (powerslide:
+// (PowerslideRotationAddition + speed) * step); each tire bone is controlled (render object slots 0xD8 / 0xE4) with Rotate_Y of its angle. The port advances by the
+// client frame's share of a logic frame (elapsed / 200 ms) instead of a fixed sixth. INFERENCE / NOT PORTED (stop S-1792): backwards is read from BACKING_UP (the
+// locomotor flag is not in the snapshot); the drawable's wheel record (+ 0x13C + 0x3C: the suspension heights and the steering angle of the front tires, a powerslide)
+// is not kept, so the tires only spin; the speed gate RW 0x46E918 is not read; the cab / trailer bones and the dust / dirt / powerslide effects are not run.
+void Drawable::advanceTires(DrawEntry &e, double elapsedMs)
+{
+	const W3DTruckDrawModuleData *truck = e.draw ? dynamic_cast<const W3DTruckDrawModuleData *>(e.data) : nullptr;
+	if (!truck)
+	{
+		return;
+	}
+	if (e.frontTireBones.empty() && e.rearTireBones.empty())
+	{
+		for (const std::string *b : { &truck->m_leftFrontTireBone, &truck->m_rightFrontTireBone, &truck->m_leftFrontTireBone2, &truck->m_rightFrontTireBone2,
+				 &truck->m_midLeftFrontTireBone, &truck->m_midRightFrontTireBone, &truck->m_midLeftMidTireBone, &truck->m_midRightMidTireBone,
+				 &truck->m_midLeftMidTireBone2, &truck->m_midRightMidTireBone2 })
+		{
+			if (!b->empty())
+			{
+				e.frontTireBones.push_back(*b);
+			}
+		}
+		for (const std::string *b : { &truck->m_leftRearTireBone, &truck->m_rightRearTireBone, &truck->m_leftRearTireBone2, &truck->m_rightRearTireBone2,
+				 &truck->m_midLeftRearTireBone, &truck->m_midRightRearTireBone })
+		{
+			if (!b->empty())
+			{
+				e.rearTireBones.push_back(*b);
+			}
+		}
+	}
+	if (e.frontTireBones.empty() && e.rearTireBones.empty())
+	{
+		return;
+	}
+	static const int kBackingUp = ModelCondition::indexOf("BACKING_UP");
+	float speed = m_moveSpeed;
+	float powerslide = truck->m_powerslideRotationAddition;
+	if (kBackingUp >= 0 && m_flags.test(kBackingUp))
+	{
+		speed = -speed;
+		powerslide = -powerslide;
+	}
+	(void)powerslide; // the powerslide (+ 0x2EA) comes from the wheel record, which is not kept
+	const float share = SimMath::fstpDword(SimMath::divD(elapsedMs, 200.0));
+	const float step = SimMath::mulf32(SimMath::mulf32(truck->m_tireRotationMultiplier, speed), share);
+	if (step != 0.0f)
+	{
+		const float twoPi = 6.28318548f;
+		auto wrap = [twoPi](float a) {
+			while (a >= twoPi)
+			{
+				a = SimMath::subf32(a, twoPi);
+			}
+			while (0.0f > a)
+			{
+				a = SimMath::addf32(a, twoPi);
+			}
+			return a;
+		};
+		e.tireFront = wrap(SimMath::addf32(e.tireFront, step));
+		e.tireRear = wrap(SimMath::addf32(e.tireRear, step));
+		++e.tireChanges;
 	}
 }
 
 void Drawable::syncFromSnapshot(const ObjectSnapshot &rec, UnsignedInt snapshotFrame, double alpha, bool interpolate)
 {
-	// lane SMOOTH-1: the pose of the completed frame's record (RW 0x6765B9: Catmull-Rom translation, slerped rotation, the stale snap); without
-	// interpolation the record's current transform (the stepped 5 Hz look of the comparisons)
+	// the sequential form (lane PERF-3 keeps it as the reference of prepareSync / commitSync, DrawableManager::setParallelSync(false)). Lane SMOOTH-1: the
+	// pose of the completed frame's record (RW 0x6765B9: Catmull-Rom translation, slerped rotation, the stale snap); without interpolation the record's
+	// current transform (the stepped 5 Hz look of the comparisons)
 	RenderInterpolation::Pose p;
 	if (interpolate)
 	{
@@ -349,7 +464,65 @@ void Drawable::syncFromSnapshot(const ObjectSnapshot &rec, UnsignedInt snapshotF
 	{
 		setTransform(&p.position, p.basis);
 	}
+	m_zBasisCached = false; // the next prepareSync recomputes its trigonometry
 	updateConstruction(rec, snapshotFrame, alpha); // RENDER-2 (DrawableConstruction.cpp)
 	m_moveSpeed = rec.moveSpeed;                   // lane SMOOTH-3: the walk / run cycle's speed source (RW 0x4B67D4)
 	m_scriptTarget = rec.scriptTarget;             // lane FX-3
+}
+
+void Drawable::prepareSync(const ObjectSnapshot &rec, UnsignedInt snapshotFrame, double alpha, bool interpolate, SyncPrep &out)
+{
+	// lane SMOOTH-1: the pose of the completed frame's record (RW 0x6765B9: Catmull-Rom translation, slerped rotation, the stale snap); without
+	// interpolation the record's current transform (the stepped 5 Hz look of the comparisons)
+	out.rec = &rec;
+	RenderInterpolation::Pose &p = out.pose;
+	if (interpolate)
+	{
+		p = RenderInterpolation::smoothPose(rec, snapshotFrame, alpha); // lane SMOOTH-2: retail's pose without its 5 Hz pulse (RenderInterpolation.h)
+	}
+	else
+	{
+		p.position = rec.position;
+		p.angle = rec.angle;
+		std::memcpy(p.basis, rec.basis, sizeof(p.basis));
+		p.zRotation = RenderInterpolation::isZRotation(rec.basis);
+	}
+	out.sameBasis = false;
+	if (p.zRotation)
+	{
+		// lane PERF-3: the same angle on the basis made from it is the state setOrientation would leave (m_angle = angle, the basis of its cos / sin); the
+		// transform reaction it would add is the one setPosition makes next (the footstep manager's toDirty is idempotent, RW 0x83F159)
+		const float current = getOrientation();
+		out.sameBasis = m_zBasisCached && std::memcmp(&p.angle, &m_zCachedAngle, sizeof(float)) == 0 && std::memcmp(&current, &m_zCachedAngle, sizeof(float)) == 0 &&
+			std::memcmp(getBasis(), m_zCachedBasis, sizeof(m_zCachedBasis)) == 0;
+		if (!out.sameBasis)
+		{
+			out.c = SimMath::cosf32(p.angle); // Thing::setOrientation's values
+			out.s = SimMath::sinf32(p.angle);
+		}
+	}
+	// the transform does not enter these (the construction look reads the record and the flags): done here, before commitSync sets it
+	updateConstruction(rec, snapshotFrame, alpha); // RENDER-2 (DrawableConstruction.cpp)
+	m_moveSpeed = rec.moveSpeed;                   // lane SMOOTH-3: the walk / run cycle's speed source (RW 0x4B67D4)
+	m_scriptTarget = rec.scriptTarget;             // lane FX-3
+}
+
+void Drawable::commitSync(const SyncPrep &prep)
+{
+	const RenderInterpolation::Pose &p = prep.pose;
+	if (p.zRotation)
+	{
+		if (!prep.sameBasis)
+		{
+			setOrientationTrig(p.angle, prep.c, prep.s);
+			m_zCachedAngle = p.angle;
+			std::memcpy(m_zCachedBasis, getBasis(), sizeof(m_zCachedBasis));
+			m_zBasisCached = true;
+		}
+		setPosition(&p.position);
+	}
+	else
+	{
+		setTransform(&p.position, p.basis);
+	}
 }

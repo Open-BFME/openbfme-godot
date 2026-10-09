@@ -27,6 +27,7 @@
 #pragma once
 
 #include <string>
+#include <vector>
 
 struct ScriptActionRec;
 class ScriptEngine;
@@ -40,6 +41,10 @@ public:
 	static void clientRequest(ScriptEngine &engine, const ScriptActionRec &a);
 	// lane SCRIPT-2 (ScriptActionsUnits.cpp): the unit / team / relationship / counter-math actions; false when `name` is not one of them
 	static bool executeUnitAction(ScriptEngine &engine, const ScriptActionRec &a, const std::string &name);
+	// lane CAMP-1 (ScriptActionsCampaign.cpp): the actions of the Angmar campaign missions; false when `name` is not one of them
+	static bool executeCampaignAction(ScriptEngine &engine, const ScriptActionRec &a, const std::string &name);
+	// lane CAMP-1: the stops of the campaign script ports (S-1363, S-1365, S-1366; lane CAMP-1H: S-1712)
+	static std::vector<std::string> campaignStopLines();
 	// true for the actions this port records as client requests
 	static bool isClientAction(int ordinal);
 	// lane SCRIPT-3 r2: RW 0x7C4668: TEAM_ATTACK_NAMED's TEAM parameter (param 0, the name as written) is "Aragorn 2" (RW 0xC361B8, strcmp): the group's

@@ -126,6 +126,10 @@ public:
 	virtual void setFacePoint(const Coord3D &p) = 0;      ///< slot 0x210 (RW 0x86C1C6)
 	virtual void clearFacePoint() = 0;                    ///< slot 0x214 (RW 0x86C1E5)
 	virtual bool attackedWithin(unsigned frames, ObjectID &attacker) const = 0; ///< slot 0x90 (RW 0x86EE52)
+	// ---- lane MOVE-2: the horde's command hand-off (HordeAIUpdate::aiDoCommand RW 0x89E169 calls it before the command runs) ----
+	// slot 0x14 (RW 0x87594C): members on their way into a garrison come back (slot 0x10, RW 0x8759FF(0)), a melee ends (slot 0x138, RW 0x86C0F9), then every member
+	// that is not busy and not attacking `target` (or a member of its horde: RW 0x86BDD3) gets AI command 0x31 from the AI (busy): its attack ends, its target goes
+	virtual void prepareMembersForCommand(Object *target) = 0;
 };
 
 class HordeContain : public UpdateModule, public ContainModuleInterface, public CreateModuleInterface, public HordeContainInterface
@@ -211,6 +215,7 @@ public:
 	void setFacePoint(const Coord3D &p) override;
 	void clearFacePoint() override { m_hasFacePoint = false; }
 	bool attackedWithin(unsigned frames, ObjectID &attacker) const override;
+	void prepareMembersForCommand(Object *target) override; // lane MOVE-2 (HordeMemberPass.cpp)
 	// the emotion stop lines (S-1028)
 	static std::vector<std::string> emotionStops();
 	struct BackUpEntry
@@ -240,6 +245,8 @@ public:
 		unsigned long long waits = 0;        // UseSlowHordeMovement: the member stopped to let the formation catch up
 		unsigned long long leashCommands = 0; // the leash command (0, 2): lane AI-2 identified it as AI command 0x31 (busy) from the AI, RW 0x852E2A
 		unsigned long long busyOrders = 0;    // lane AI-2: members the move hub made busy (RW 0x87471B)
+		unsigned long long attackHolds = 0;   // lane MOVE-2: members the order left to their active state (RW 0x877B69)
+		unsigned long long handoffBusy = 0;   // lane MOVE-2: members a horde command made busy (slot 0x14, RW 0x87594C)
 	};
 	const PassStats &passStats() const { return m_stats; }
 	bool dirty() const { return m_dirty; }

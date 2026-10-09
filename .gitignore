@@ -101,3 +101,6 @@ workspace/agents/
 /engine/build/
 /godot/.godot/
 /godot/bin/
+/launcher/.godot/
+# written by tools/release/package.sh into the staged launcher (version, commit, repo, release key): never committed
+/launcher/build_info.json

@@ -50,10 +50,11 @@ int bitIndex(const char *const *names, const char *name)
 
 struct Bits
 {
-	int walking, accelerate, decelerate, backingUp, turnLeft, turnRight, turnLeftHigh, turnRightHigh, emotionTerror, charging;
+	int moving, walking, accelerate, decelerate, backingUp, turnLeft, turnRight, turnLeftHigh, turnRightHigh, emotionTerror, charging;
 	int statusAttacking, statusLeashed, statusContesting, statusHordeMember;
 	Bits()
-		: walking(bitIndex(TheModelConditionNames, "WALKING"))
+		: moving(bitIndex(TheModelConditionNames, "MOVING"))
+		, walking(bitIndex(TheModelConditionNames, "WALKING"))
 		, accelerate(bitIndex(TheModelConditionNames, "ACCELERATE"))
 		, decelerate(bitIndex(TheModelConditionNames, "DECELERATE"))
 		, backingUp(bitIndex(TheModelConditionNames, "BACKING_UP"))
@@ -168,7 +169,10 @@ std::vector<std::string> Locomotor::allStops()
 		"(lane WIN-1: the same bits on every OS), not the retail CRT / x87 results.",
 		"S-084: locomotor cases not ported: HOVER, SHIP and GIANT_BIRD movers, the ScalesWalls look-ahead (RW 0x5E8956-0x5E8FF8), "
 		"ZAxisBehavior other than NO_Z_MOTIVE_FORCE and the layer / projectile / falling special cases of RW 0x5E774A / 0x5E5785, "
-		"and the HORDE mover's formation path nodes (types 2, 3, 7, 8; RW 0x5E6E20-0x5E7148)."
+		"and the HORDE mover's formation path nodes (types 2, 3, 7, 8; RW 0x5E6E20-0x5E7148).",
+		"S-1750: maintainCurrentPosition (RW 0x5E7CC7) is ported without its tail: the held position's z behaviour (RW 0x5E76AC on +0x08) with its "
+		"constant-calling result, the transform write (RW 0x70BA76) and the WINGS hold (RW 0x5E74C1) are not run; an idle unit's height and sleep follow "
+		"the movers' last frame."
 	};
 }
 
@@ -1097,6 +1101,105 @@ void Locomotor::locomotorMoveTowardsAngle(LocomotorHost &host, float angle)
 	handleBehaviorZ(host, pos);                // RW 0x5E76AC(obj, obj + 0x38)
 }
 
+// RW 0x5E4C40 (lane EXIT-1): comiss v, speed; above: speed += getMaxAcceleration (x87 fadd, fst dword) and, when that passed v, v; else v. Then clamped to
+// [0, getMaxSpeedForCondition] (SSE: 0 when 0 > speed, the maximum when speed > it)
+void Locomotor::setSpeedTowards(const LocomotorHost &host, float v)
+{
+	if (v > m_speed)
+	{
+		m_speed = SimMath::addf32(getMaxAcceleration(host), m_speed);
+		if (m_speed > v)
+		{
+			m_speed = v;
+		}
+	}
+	else
+	{
+		m_speed = v;
+	}
+	const float maxSpeed = getMaxSpeedForCondition(host);
+	if (0.0f > m_speed)
+	{
+		m_speed = 0.0f;
+	}
+	else if (m_speed > maxSpeed)
+	{
+		m_speed = maxSpeed;
+	}
+}
+
+// ---- maintainCurrentPosition (RW 0x5E7CC7; lane EXIT-1) ------------------------------------------------------------------------
+// TARGET FACTS (RotWK game.dat, caveat S-001), Ghidra decompile of RW 0x5E7CC7(this = locomotor, obj), called by doLocomotor (RW 0x669932) for goal type 0:
+//   null obj: false. The object's transform (obj+0x08..+0x37) becomes the working matrix (+0x68). Without flag 4 (+0x44) the object's position (+0x38) is the
+//   held position (+0x08) and flag 4 is set. While the object's MOVING (+0x110 bit 29) is off: TURN_LEFT, TURN_RIGHT, TURN_LEFT_HIGH_SPEED,
+//   TURN_RIGHT_HIGH_SPEED, ACCELERATE, DECELERATE and WALKING (+0x11C bits 0x20 0x40 0x200 0x400 0x80 0x100 0x08) are cleared, one by one (RW 0x68B53C each).
+//   Then flag 1 (braking) and +0x98 are cleared. No physics module (obj+0x264): true. By appearance (template +0x74): LEGS_TWO, WHEELS_FOUR,
+//   LEGS_FOUR_HUGE, HORDE, LEGS_TWO_HUGE: speed (+0x40) = 0, MOVING cleared (RW 0x5E5D7E), result false; TREADS: MOVING cleared, result false (the
+//   speed is kept); HOVER, GIANT_BIRD: speed = 0, true; WINGS: RW 0x5E74C1, true; any other: speed = 0, MOVING cleared, true. Then RW 0x5E76AC on the
+//   held position (true when it says so) and the transform write RW 0x70BA76 (both not ported: S-1750).
+// Before this port the goal-less unit's locomotor did nothing, so a unit whose walk ended without the move state's exit (a horde member released to its
+// melee, an idle member of a parked horde) kept MOVING and the turn conditions: the run cycle on the spot of QA-2's finding 2.
+bool Locomotor::locomotorMaintainCurrentPosition(LocomotorHost &host)
+{
+	const Bits &b = bits();
+	m_matrix = host.getTransform();
+	if ((m_flags & (unsigned)LOCOMOTOR_FLAG_BIT2) == 0)
+	{
+		m_maintainPosition = host.getPosition();
+		m_flags |= (unsigned)LOCOMOTOR_FLAG_BIT2;
+	}
+	if (!host.testModelCondition(b.moving))
+	{
+		for (int bit : { b.turnLeft, b.turnRight, b.turnLeftHigh, b.turnRightHigh, b.accelerate, b.decelerate, b.walking })
+		{
+			if (host.testModelCondition(bit))
+			{
+				host.setModelCondition(bit, false);
+			}
+		}
+	}
+	m_flags &= ~(unsigned)LOCOMOTOR_FLAG_BRAKING;
+	m_byte98 = false;
+	if (!host.hasPhysicsModule())
+	{
+		return true;
+	}
+	bool result = true;
+	switch (m_template->m_appearance)
+	{
+	case LOCO_LEGS_TWO:
+	case LOCO_WHEELS_FOUR:
+	case LOCO_LEGS_FOUR_HUGE:
+	case LOCO_HORDE:
+	case LOCO_LEGS_TWO_HUGE:
+		m_speed = 0.0f;
+		// fall through (RW 0x5E7DFD: TREADS joins here)
+	case LOCO_TREADS:
+		if (host.testModelCondition(b.moving))
+		{
+			host.setModelCondition(b.moving, false); // RW 0x5E5D7E
+		}
+		result = false;
+		break;
+	case LOCO_HOVER:
+	case LOCO_GIANT_BIRD:
+		m_speed = 0.0f;
+		break;
+	case LOCO_WINGS:
+		noteStop(allStops()[2].c_str()); // RW 0x5E74C1, not ported
+		break;
+	default:
+		m_speed = 0.0f;
+		if (host.testModelCondition(b.moving))
+		{
+			host.setModelCondition(b.moving, false);
+		}
+		break;
+	}
+	noteStop(allStops()[2].c_str()); // the tail (RW 0x5E76AC on the held position, RW 0x70BA76) is not run
+	return result;
+}
+
 // ---- the dispatcher (RW 0x5E8865) ---------------------------------------------------------------------------------------------
 void Locomotor::locomotorMoveTowardsPosition(LocomotorHost &host, const Coord3D &goal, float onPathDistToGoal, float desiredSpeed)
 {
@@ -1192,4 +1295,7 @@ void Locomotor::crc(StateHasher &h) const
 	h.addFloat(m_preferredPoint.x);
 	h.addFloat(m_preferredPoint.y);
 	h.addFloat(m_preferredPoint.z);
+	h.addFloat(m_maintainPosition.x); // lane EXIT-1
+	h.addFloat(m_maintainPosition.y);
+	h.addFloat(m_maintainPosition.z);
 }

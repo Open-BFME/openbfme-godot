@@ -72,6 +72,9 @@ struct ObjectSnapshot
 	int stealthLook = 0;
 	// lane GARRISON-1: Object::isDrawableHidden (RW 0x6718FB, set by the contains): the device layer draws nothing for it
 	bool drawableHidden = false;
+	// lane COMBAT-4: the object this one is contained in (Object + 0x27C; INVALID_ID when none): the drawable of a rider / crew member takes its container's
+	// DependencySharedModelFlags (RW 0x4BF2D8, DrawableManager::syncTransforms)
+	ObjectID containedBy = INVALID_ID;
 	float stealthOpacityMin = 1.0f, stealthOpacityMax = 1.0f; ///< the friend's pulse range (InvisibilityManager::clientOpacityRange), set for looks 1 / 4
 	unsigned stealthCycleFrames = 0;
 	// lane PROJ-2: a launched projectile (ProjectileUpdateInterface::projectileClientInfo): the frame of its last launch or bounce, its launcher, the end

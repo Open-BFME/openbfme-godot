@@ -671,6 +671,50 @@ bool AIMover::goalCellOnGridAndNotStart(const Coord3D &from)
 	return m_pf.getCell(LAYER_GROUND, goalCell.x, goalCell.y) != nullptr; // the layer of RW 0x680A75: only the ground is ported (S-161)
 }
 
+// RW 0x6F1B3E (unit, from, to, goal = the locomotor goal): the straight step is valid. Shared by doLocomotor's type 4 goal and the horde member update RW 0x66C748
+// (lane EXIT-1 factored it out of doLocomotor, unchanged)
+bool AIMover::stepValid(const Coord3D &from, const Coord3D &to)
+{
+	PathfindObject &obj = m_host.pathfindObject();
+	const PathfindLocomotorInfo info = m_host.locomotorInfo();
+	m_pf.setIgnoreObstacleID(m_ignoreObstacleId); // a unit leaving its factory ignores the footprint it stands in
+	// lane HORDE-2: RW 0x6F1B3E first asks RW 0x6EF865(unit, new position, goal): a step that ends in the GOAL's cell is valid (the path is then deleted,
+	// RW 0x669B14) whatever the cell holds; without it a member whose slot cell is occupied kept its fallback path for good (S-532)
+	Coord3D at = to;
+	const bool valid = stepEndsInGoalCell(at) || m_pf.isLinePassable(&obj, info.validSurfaces, obj.getLayer(), from, at, false, true) ||
+		m_pf.validMovementPosition(&obj, info, obj.getLayer(), &at);
+	m_pf.setIgnoreObstacleID(PATHFIND_INVALID_ID);
+	return valid;
+}
+
+// RW 0x6F74D0 (unit, goal = the locomotor goal) from `from`: a path that reaches the goal, else null (lane EXIT-1 factored it out of doLocomotor, unchanged)
+Path *AIMover::pathReachingGoal(const Coord3D &from)
+{
+	PathfindObject &obj = m_host.pathfindObject();
+	const PathfindLocomotorInfo info = m_host.locomotorInfo();
+	bool partial = false;
+	Path *path = nullptr;
+	// lane INTEG-1: RW 0x6F74D0 first measures the start cell (RW 0x6ECFC5 / 0x6E8D88, the unit's position) and the goal cell (RW 0x6E8CE6) with
+	// the unit's centre rule and returns no path when they are the same cell (RW 0x4047C9) or when the goal cell is not on the grid (RW 0x5E2E9C
+	// returns null; the goal is never clipped). Pathfinder::findPath clips the goal to the grid's edge: a goal in the map border (the exit point of a
+	// barracks on the map's edge) got a "full" path to the edge cell, and the unit stood at its end for good, the straight step still invalid
+	if (goalCellOnGridAndNotStart(from))
+	{
+		Coord3D start = from;
+		path = m_pf.findPath(&obj, info, &start, &m_goal, &partial);
+	}
+	// lane HORDE-2: RW 0x6F74D0 (read with Ghidra) returns a path that REACHES the goal or nothing (no path when the goal cell is the start cell or is
+	// not passable, nothing after 200 expansions); it never hands back the partial path to the closest cell. A partial path left a horde member
+	// standing at its end for good (the straight step stays invalid, the path is never deleted, and the member order RW 0x877A7A leaves a member
+	// with a type 4 goal and a path alone): the stranded member of S-532. As in RW, no full path puts the unit on its goal (RW 0x70C201, the caller).
+	if (path && partial)
+	{
+		delete path;
+		path = nullptr;
+	}
+	return path;
+}
+
 unsigned AIMover::doLocomotor()
 {
 	PathfindObject &obj = m_host.pathfindObject();
@@ -716,36 +760,13 @@ unsigned AIMover::doLocomotor()
 			if (m_goalType == AIGOAL_EXPLICIT_WITH_PATH)
 			{
 				const Coord3D now = obj.getPosition();
-				const PathfindLocomotorInfo info = m_host.locomotorInfo();
-				m_pf.setIgnoreObstacleID(m_ignoreObstacleId); // a unit leaving its factory ignores the footprint it stands in
-				// lane HORDE-2: RW 0x6F1B3E first asks RW 0x6EF865(unit, new position, goal): a step that ends in the GOAL's cell is valid (the path is then deleted,
-				// RW 0x669B14) whatever the cell holds; without it a member whose slot cell is occupied kept its fallback path for good (S-532)
-				valid = stepEndsInGoalCell(now) || m_pf.isLinePassable(&obj, info.validSurfaces, obj.getLayer(), pos, now, false, true) ||
-					m_pf.validMovementPosition(&obj, info, obj.getLayer(), &now);
-				m_pf.setIgnoreObstacleID(PATHFIND_INVALID_ID);
+				valid = stepValid(pos, now);
 				if (!valid)
 				{
 					m_host.setPosition(pos);
 					if (m_path == nullptr)
 					{
-						bool partial = false;
-						// lane INTEG-1: RW 0x6F74D0 first measures the start cell (RW 0x6ECFC5 / 0x6E8D88, the unit's position) and the goal cell (RW 0x6E8CE6) with
-						// the unit's centre rule and returns no path when they are the same cell (RW 0x4047C9) or when the goal cell is not on the grid (RW 0x5E2E9C
-						// returns null; the goal is never clipped). Pathfinder::findPath clips the goal to the grid's edge: a goal in the map border (the exit point of a
-						// barracks on the map's edge) got a "full" path to the edge cell, and the unit stood at its end for good, the straight step still invalid
-						if (goalCellOnGridAndNotStart(pos))
-						{
-							m_path = m_pf.findPath(&obj, info, &pos, &m_goal, &partial);
-						}
-						// lane HORDE-2: RW 0x6F74D0 (read with Ghidra) returns a path that REACHES the goal or nothing (no path when the goal cell is the start cell or is
-						// not passable, nothing after 200 expansions); it never hands back the partial path to the closest cell. A partial path left a horde member
-						// standing at its end for good (the straight step stays invalid, the path is never deleted, and the member order RW 0x877A7A leaves a member
-						// with a type 4 goal and a path alone): the stranded member of S-532. As in RW, no full path puts the unit on its goal (RW 0x70C201).
-						if (m_path && partial)
-						{
-							delete m_path;
-							m_path = nullptr;
-						}
+						m_path = pathReachingGoal(pos);
 						if (m_path == nullptr)
 						{
 							m_host.setPosition(m_goal);
@@ -793,8 +814,10 @@ unsigned AIMover::doLocomotor()
 				}
 				return AI_SLEEP_FOREVER;
 			}
+			// RW 0x669D05: RW 0x766173(point, locomotor) reads the locomotor's speed (RW 0x5E36F7) and RW 0x765F31 raises it to 0.1; 40 (RW 0xBDD28C) only without
+			// a locomotor (lane MOVE-2: the port took 40 for a unit standing still, so a unit starting a path aimed 40 ahead instead of at its closest point)
 			const float ahead = loco->speed();
-			const LocomotorPathPoint pt = m_path->computePointAhead(ahead > 0.0f ? ahead : 40.0f);
+			const LocomotorPathPoint pt = m_path->computePointAhead(ahead);
 			if (m_path->currentNode() && m_path->currentNode()->getWaypointID() != PathNode::NO_WAYPOINT)
 			{
 				note(kStopSpecialLayer);
@@ -840,9 +863,10 @@ unsigned AIMover::doLocomotor()
 			break;
 		}
 		case AIGOAL_NONE:
-			// the glide to the final position (RW 0x66A2DC) is dead code: doFinalPosition is never set to 1 at runtime. The
-			// locomotor's maintainCurrentPosition (RW 0x5E7CC7) is not in the locomotor port: nothing needs constant calling.
-			requiresConstantCalling = false;
+			// the glide to the final position (RW 0x66A2DC) is dead code: doFinalPosition is never set to 1 at runtime. Then the locomotor holds the
+			// position (RW 0x669A60 -> RW 0x5E7CC7, lane EXIT-1): the walk's model conditions go (MOVING, the turns), and its result says whether the
+			// locomotor needs constant calling (RW EBP-0xD, tested at RW 0x66A4B5)
+			requiresConstantCalling = loco->locomotorMaintainCurrentPosition(lh);
 			break;
 		}
 	}
@@ -1052,7 +1076,12 @@ bool AIMover::blockedBy(PathfindObject &other)
 		m_pf.adjustToPossibleDestination(obj, m_host.locomotorInfo(), &p);
 		if (p.x != before.x || p.y != before.y || p.z != before.z)
 		{
-			setGoalExplicit(p); // aiMoveToPosition (CMD_FROM_AI) is the host's command; the explicit goal is the stand-in
+			// RW 0x66D5F0: aiMoveToPosition(p, CMD_FROM_AI) (RW 0x66C4CA). Lane MOVE-2 r3: the command itself (the port set a bare explicit goal: a horde object stepped
+			// aside 140 away from its standing members, which never followed: the goblins left behind on fall back 4p)
+			if (!m_host.moveToPositionFromAI(p))
+			{
+				setGoalExplicit(p);
+			}
 		}
 		return false;
 	}

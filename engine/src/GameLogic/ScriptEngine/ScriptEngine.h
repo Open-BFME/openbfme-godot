@@ -130,10 +130,15 @@ public:
 	void newGame(const std::vector<SideScripts> &sides, const std::vector<TriggerArea> *triggers, const std::vector<NamedCamera> *cameras,
 		bool warOfTheRing);
 	void setHost(ScriptEngineHost *host) { m_host = host; }
-	// ScriptEngine + 0x1A5C4, the game's difficulty (0 easy, 1 normal, 2 hard): the campaign's choice; a skirmish human player uses it too. INFERENCE: 1 when
-	// nothing sets it (the shell's difficulty selection is not ported, S-1185)
+	// ScriptEngine + 0x1A5C4, the scripts' difficulty (0 easy, 1 normal, 2 hard; the script difficulty filter RW 0x603878, an AIPlayer's difficulty RW 0x8F7FEB).
+	// lane CAMP-1H: reset (RW 0x609685) and prepareNewGame (RW 0x77948E -> RW 0x603517(1)) set it to 1 for every game, the campaign's included: the chosen
+	// difficulty goes to GameLogic::gameDifficulty (TheGameLogic + 0xA4) instead
 	void setGameDifficulty(int d) { m_gameDifficulty = d; }
 	int gameDifficulty() const { return m_gameDifficulty; }
+	// lane CAMP-1H: ScriptEngine + 0x1A5D5, whether a new object receives the difficulty bonus (Object::initObject RW 0x693D63); reset (RW 0x609685) sets
+	// it, OBJECT_ALLOW_BONUSES (RW 0x7BD718) sets every object's flag and this one
+	void setObjectsReceiveDifficultyBonus(bool b) { m_objectsReceiveDifficultyBonus = b; }
+	bool objectsReceiveDifficultyBonus() const { return m_objectsReceiveDifficultyBonus; }
 	bool loaded() const { return m_loaded; }
 	void reset();
 
@@ -148,6 +153,8 @@ public:
 	Object *getUnitNamed(const std::string &name) const; // RW 0x75A243 (the cache)
 	// RW 0x60A1D5: a cache entry for `name` (a new name appended, a known one re-pointed) without renaming the object (SET_REF_TO_... actions)
 	void nameInCache(const std::string &name, Object &obj);
+	// lane CAMP-1: RW 0x759601, the object has an entry in the named cache
+	bool isInNamedCache(const Object &obj) const;
 	bool didUnitExist(const std::string &name) const;    // RW 0x758F46: an entry whose object is gone
 
 	// ---- counters / flags / timers (side-qualified names, RW 0x72C43C) ------------------------------------------------------------------------
@@ -161,6 +168,9 @@ public:
 	Counter &counter(const std::string &name);                           // get or create (RW 0x60817A)
 	bool *findFlag(const std::string &name);
 	bool &flag(const std::string &name);                                  // get or create (RW 0x6082CF)
+	// lane CAMP-1: every flag / counter by (side, name), for reports and the mission tests' progress logs
+	const std::map<std::pair<std::string, std::string>, bool> &allFlags() const { return m_flags; }
+	const std::map<std::pair<std::string, std::string>, Counter> &allCounters() const { return m_counters; }
 	// the (side, name) key RW 0x72C43C gives a name with the current side as the default
 	std::pair<std::string, std::string> qualify(const std::string &name) const;
 
@@ -221,6 +231,9 @@ public:
 		std::map<std::string, unsigned long long> clientRequests;     ///< by name (S-1182)
 		std::map<std::string, unsigned long long> notes;              ///< retail's own reports ("Script not defined" ...) and the port's stops met
 		size_t sides = 0, scripts = 0, groups = 0;
+		// lane CAMP-1H: the team scripts run (runScript, by the team field that asked: "OnCreate", "EnemySighted", ...) and the generic hooks that fired
+		std::map<std::string, unsigned long long> teamScripts;
+		unsigned long long genericScriptsFired = 0;
 	};
 	const Stats &stats() const { return m_stats; }
 	Stats &mutableStats() { return m_stats; }
@@ -282,6 +295,31 @@ public:
 	bool hasFinishedAudio(const std::string &name, bool consume);
 	// lane SCRIPT-3: RW + 0x1A218, the team "<This Team>" names (RW 0x759FDA) while a sequential script's action runs (RW 0x60C674); 0 none
 	std::uint32_t conditionTeam() const { return m_conditionTeam; }
+	// lane CAMP-1H: RW + 0x1A210, the team of a team script ("<This Team>" asks it first, RW 0x759FDA): set by runScript (RW 0x60BD42) around the script,
+	// by the generic scripts around their conditions (RW 0x60930F) and actions (RW 0x60D053); a script's own conditions see none (RW 0x60930F with no team)
+	Team *thisTeam() const { return m_thisTeam; }
+	// lane CAMP-1H r2: runs inside a scope with + 0x1A210 = team (restored after); runScript and the generic scripts do the same inline (tests use it)
+	struct ThisTeamScope
+	{
+		ScriptEngine &engine;
+		Team *saved;
+		ThisTeamScope(ScriptEngine &e, Team *t) : engine(e), saved(e.m_thisTeam) { e.m_thisTeam = t; }
+		~ThisTeamScope() { engine.m_thisTeam = saved; }
+		ThisTeamScope(const ThisTeamScope &) = delete;
+		ThisTeamScope &operator=(const ThisTeamScope &) = delete;
+	};
+	// lane CAMP-1H: RW 0x60BD42 ScriptEngine::runScript(side, name, team): "" / "<none>" nothing; `side` current (+ 0x1A20C); the team context (+ 0x1A210 = team, + 0x1A218 = 0, the current
+	// player (+ 0x1A230) = the team's controlling player, RW 0x79FD6F) around the call of a subroutine group (its scripts, RW 0x60A377) or subroutine script
+	// (RW 0x60A15C) of that name, the names' side current (RW 0x604243); all restored after. "***Script not defined: ***" / "***Attempting to call script
+	// that is not a subroutine***" are noted
+	void runScript(const std::string &side, const std::string &name, Team *team);
+	// lane CAMP-1H: ThePlayerList->updateTeamStates (RW 0x6A8541, after the side scripts of ScriptEngine::update): the 20 player slots in index order, each
+	// player's team prototypes (Player + 0x34C) and their instances from the list head (the newest), Team::updateState (RW 0x7A208C)
+	void updateTeamStates();
+	void updateTeamState(Team &t);
+	// lane CAMP-1H: Player::update's team pass (RW 0x6AF269 -> RW 0x7A267D Team::updateGenericScripts) for one player
+	void updateGenericScripts(Player &p);
+	void updateGenericScripts(Team &t);
 
 	struct RSide
 	{
@@ -302,6 +340,10 @@ private:
 	void executeScript(RScript &s);
 	bool shouldEvaluate(RScript &s) const;
 	bool evaluateConditions(const Script &s);
+	bool evaluateConditions(const Script &s, Team *team); // lane CAMP-1H: RW 0x60930F with a team (+ 0x1A210, the team's player current)
+	bool evaluateConditionsNoContext(const Script &s);    // the OR of ANDs itself
+	bool teamReady(const Team &t) const;                  // lane CAMP-1H: RW 0x7A09E4
+	void handTeamToDefault(Team &t);                      // lane CAMP-1H: RW 0x7A12F4
 	void executeActions(const std::vector<ScriptActionRec> &actions, RScript &s);
 	void updateSequentialScripts(); // RW 0x60C441
 	bool startSequentialScript(RScript &s); // RW 0x609C3A's record
@@ -327,6 +369,7 @@ private:
 	bool m_firstUpdate = true;
 	bool m_warOfTheRing = false;
 	int m_gameDifficulty = 1;
+	bool m_objectsReceiveDifficultyBonus = true; ///< lane CAMP-1H: + 0x1A5D5 (hashed)
 	std::vector<RSide> m_sides;
 	std::map<std::pair<std::string, std::string>, Counter> m_counters;
 	std::map<std::pair<std::string, std::string>, bool> m_flags;
@@ -345,6 +388,16 @@ private:
 	std::array<AcquiredScienceQueue, 20> m_acquiredSciences; ///< lane AUDIO-4: + 0x1A3A8, one per player index (RW 0x759646 bound 0x14)
 	std::vector<AudioTimer> m_audioTimers;                  ///< lane SCRIPT-3: RW + 0x1A35C
 	std::uint32_t m_conditionTeam = 0; ///< lane SCRIPT-3: RW + 0x1A218 while a sequential action runs (the record's team): "<This Team>" (not state)
+	Team *m_thisTeam = nullptr;        ///< lane CAMP-1H: RW + 0x1A210 while a team script runs (not state: set and restored inside one call)
+	// lane CAMP-1H: the generic scripts of a prototype (RW 0x7A1759: looked up once by name in the prototype owner's side and DUPLICATED, RW 0x7B7F2B: the copy
+	// keeps its own active flag + 0x40); keyed by the prototype id, [i] null when the hook names no script
+	struct GenericCopy
+	{
+		const Script *def = nullptr;
+		std::string side;
+		bool active = false;
+	};
+	std::map<int, std::vector<GenericCopy>> m_genericScripts;
 	Stats m_stats;
 	friend class ScriptConditions;
 	friend class ScriptActions;

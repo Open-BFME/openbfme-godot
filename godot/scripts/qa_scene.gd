@@ -11,7 +11,7 @@
 ##   rohirrim  G8: Rohirrim shoot standing, then while riding past (missing fire animations, arrows out of the bodies)
 ##   charge    G4: Knights of Dol Amroth charge an orc horde (knock-back, slow-down)
 ##   garrison  G6: a Gondor archer horde garrisons a keep through a click and leaves through the Evacuate button (the common exit)
-##   grond     G7: Grond moves (its troll crew)
+##   grond     G7 / FB-0002: Grond moves once its crew is drawn (the trolls push, the wheels turn)
 ##   wall      F7: a wall hub's Begin Wall Span button and a click (the span rises along its length)
 ##   produce   QA-2's treadmill finding: a barracks trains three soldier hordes through its buttons; every member's AI state is counted for 60 s
 ##             (members left in AI_FOLLOW_EXITPRODUCTION_PATH standing still with MOVING set)
@@ -188,6 +188,21 @@ func _zoom_in(p: Vector2) -> void:
 			break
 		h0 = h
 	print("QA scene camera: %s" % JSON.stringify(_hud.get_camera()).left(300))
+	await _look(p)
+
+
+## lane COMBAT-4: `notches` wheel steps toward the ground over `p` (a large object stays in the picture)
+func _zoom_some(p: Vector2, notches: int) -> void:
+	await _look(p)
+	var h0: float = _hud.get_camera().get("height_above_ground", 0.0)
+	var sign := 1
+	for i in notches:
+		_hud.inject_mouse_wheel(2 * sign, _hud.world_to_pixel(p))
+		await _frames(8)
+		var h: float = _hud.get_camera().get("height_above_ground", 0.0)
+		if i == 0 and h > h0:
+			sign = -1
+		h0 = h
 	await _look(p)
 
 
@@ -424,8 +439,9 @@ func _scene_garrison() -> void:
 func _scene_grond() -> void:
 	var ang := _dir.angle()
 	var grond := _hook_create("MordorGrond", _local_index(), _spot, ang)
-	await _wait_game(3.0)
-	await _look(_spot)
+	# lane COMBAT-4: the crew trolls have Model None while JUST_BUILT (BuildFadeInOnCreateTime 16 s): wait them out, close enough to see the push and the wheels
+	await _wait_game(18.0)
+	await _zoom_some(_spot, 3)
 	_shot("grond-start")
 	print("QA scene grond: %s" % JSON.stringify(_world.get_object(grond)).left(600))
 	if not await _select_id(grond):
@@ -455,7 +471,9 @@ func _scene_wall() -> void:
 	var commands := []
 	for b in _hud.get_command_buttons():
 		commands.append("%s %s" % [b.name, b.command])
-		if b.name.find("BeginWallSpan") >= 0 or b.name.find("WallSpan") >= 0:
+		# lane QA2-FIX: the line build button (DOZER_CONSTRUCT); since HUD-4 the hub's side bar also shows Command_CancelWallSpan, which the old
+		# name match ("WallSpan", last one wins) pressed instead
+		if b.command == "DOZER_CONSTRUCT" and b.name.find("WallSpan") >= 0:
 			span = b
 	print("QA scene wall hub buttons: %s" % str(commands))
 	if span.is_empty():
@@ -465,6 +483,9 @@ func _scene_wall() -> void:
 	if not await _press(span):
 		return
 	await _frames(4)
+	var after_press: Dictionary = _hud.get_state()
+	print("QA scene wall after the press: placement %s, messages %s, unported presses %s" % [JSON.stringify(_hud.get_placement()), str(after_press.get("messages", [])),
+		str(_hud.get_report().get("unported_presses", {}))])
 	var end := _spot + side * 320.0
 	await _look(_spot + side * 160.0)
 	_hud.inject_mouse_move(_hud.world_to_pixel(end))

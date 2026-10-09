@@ -194,6 +194,14 @@ bool LiveGame::load(const Options &options, std::string *error)
 	m_logic->settings().night = m_map.chunks.hasGlobalLighting && m_map.chunks.lighting.timeOfDay == 4;
 	m_logic->settings().snowy = m_map.chunks.hasWorldInfo && m_map.chunks.worldInfo.getInt("weather") == 1;
 	m_logic->setTerrain(&m_terrain);
+	// lane CAMP-1 / CAMP-1H: the new game message's difficulty (the campaign's: RW 0x91C108). prepareNewGame (RW 0x77948E) sets the script engine's
+	// difficulty to 1 (RW 0x603517(1); newGame's reset did) and stores the message's in TheGameLogic + 0xA4: the scripts of every mission run as normal,
+	// the choice reaches the game through the computer players' difficulty bonus (Player::applyDifficultyBonusesForObject RW 0x6AC32D),
+	// given as each object is made: set before the map's objects
+	if (options.difficulty >= 0)
+	{
+		m_logic->setGameDifficulty(options.difficulty);
+	}
 	if (options.start)
 	{
 		m_logic->random() = options.start->random; // the stream the resolution of the random choices already advanced

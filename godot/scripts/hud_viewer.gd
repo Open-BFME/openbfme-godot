@@ -33,6 +33,9 @@
 ##                           member (velocity reversals per member-second, the largest step of one render frame against the median moving step, facing turns) and
 ##                           the frame pacing (render frame times, the worker's held presentations). --bench-seconds=<s> per segment (default 8), --caption=<text>,
 ##                           --s2-csv=<path> (every member's drawn pose per render frame), --s2-height=<h> the camera height (default 240), --s2-follow=<n> follow the n-th --spawn only, --s2-offset-y=<d> shift the followed point
+##   --scenario=move2        (lane MOVE-2) the slot-distance test's march: every --m2-horde=<Template> side by side at --m2-from=x,y, each sent on its own to
+##                           --m2-to=x,y (default: the test's route on fall back 4p), the camera following from --s2-height; MOVE2 SPREAD every 2 s (per horde the
+##                           farthest member from its horde object); --bench-seconds the run's length
 ##   --scenario=smooth_churn (lane SMOOTH-1) creation / destruction churn: 30 rounds of 8 objects of every --spawn template made and destroyed; prints SMOOTH CHURN per
 ##                           round (the dynamic instancer's instances, palette rows, the worst pose / upload / sync time of the round's frames)
 ##   --render-size=WxH       render at WxH whatever the window size (content scale mode viewport); screenshots are WxH
@@ -51,6 +54,14 @@
 ##   --audio                 (lane FX-2) boot the retail audio manager (GameAudio): the effects' Sound nuggets and the other engine sounds play, heard from the camera
 ##   --fx-cam=<dx>,<dy>,<h>  (fx_battle) the camera looks at the building plus (dx, dy) from height h (default: between the siege and the building, 520)
 ##   --soft-particles=on|off (lane FX-3 round 2) the live FX player's soft particles (default: the project setting openbfme/rendering/soft_particles)
+##   --army=<slot>:<Template>:<dx>,<dy>   (lane PERF-3, repeatable) an object for player slot 1..4 at exactly focus + (dx, dy) (no free-spot search: the
+##                           benchmark's grid is laid out by its caller); slots 3 / 4 add Player_3 (--army3-faction, default FactionElves, our team) and
+##                           Player_4 (--army4-faction, default FactionIsengard, the opponent's team)
+##   --scenario=perf3_battle (lane PERF-3) the 4-player mass battle: every army attack-moves into the middle of all armies; per segment (approach, melee, pan:
+##                           the camera sweeps over the fight) SMOOTH PERF / TIMER / LOW as smooth_bench prints them; --bench-seconds=<s> per segment
+##   --perf-stat=<prefix>    (lane PERF-3, Linux with perf) every benchmark segment counts the main thread's and the whole process's user instructions and
+##                           cycles with `perf stat` (written to <prefix>-<segment>-main.txt / -all.txt) and prints PERF3 STAT per render frame (the work
+##                           per frame, which a loaded machine does not change, unlike the frame time)
 ##   --fx-frames=<n>         (fx_battle) the render frames to run at most (default 2400); --fx-speed=<f> the logic speed (default 1.0)
 extends Node3D
 
@@ -58,6 +69,10 @@ var _map_name := "map mp fall back 4p"
 var _faction := "FactionMen"
 var _spawn_args: Array = []
 var _enemy_args: Array = []
+var _army_args: Array = []    # lane PERF-3: --army=<slot>:<Template>:<dx>,<dy>
+var _perf_stat := ""          # lane PERF-3: --perf-stat=<prefix>
+var _army_factions := {3: "FactionElves", 4: "FactionIsengard"}
+var _army_ids := {1: [], 2: [], 3: [], 4: []}
 var _alternate := false
 var _soft_particles := ""   # lane FX-3 round 2: --soft-particles=on|off overrides the project setting openbfme/rendering/soft_particles
 var _edge_scroll := false
@@ -89,6 +104,10 @@ var _s2_caption := ""   # lane SMOOTH-2: --caption=<text> before the segment nam
 var _s2_csv := ""       # lane SMOOTH-2: --s2-csv=<path> every member's drawn pose per render frame
 var _s2_height := 240.0 # lane SMOOTH-3: --s2-height=<h> the smooth2 scenario's camera height (default 240)
 var _s2_offset_y := 0.0 # lane SMOOTH-3: --s2-offset-y=<d> added to the followed centre (the look-at point is not the screen centre at a low camera)
+var _m2_hordes: Array = []           # lane MOVE-2: --m2-horde=<Template> (repeatable) the hordes of the move2 scenario
+var _m2_from := Vector2(1921.5, 871.5) # lane MOVE-2: --m2-from=x,y / --m2-to=x,y the march (default: the slot-distance test's route on fall back 4p)
+var _m2_to := Vector2(3568.5, 1618.5)
+var _m2_fixed_camera := false          # lane MOVE-2: --m2-fixed-camera the camera stays where it starts (the frame pacing of the units alone)
 var _s2_follow := -1    # lane SMOOTH-3: --s2-follow=<n> the camera follows the members of the n-th --spawn only (default: all of ours)
 var _logic_thread := true   # lane SMOOTH-1: --logic-thread=on|off (the logic worker, S-810, or the main-thread fallback)
 var _spell_science := "SCIENCE_EyeofSauron"   # lane SPELL-1: the spell scenario buys this science ...
@@ -137,6 +156,14 @@ func _ready() -> void:
 			_spawn_args.append(arg.substr(8))
 		elif arg.begins_with("--enemy="):
 			_enemy_args.append(arg.substr(8))
+		elif arg.begins_with("--army="):
+			_army_args.append(arg.substr(7))
+		elif arg.begins_with("--perf-stat="):
+			_perf_stat = arg.substr(12)
+		elif arg.begins_with("--army3-faction="):
+			_army_factions[3] = arg.substr(16)
+		elif arg.begins_with("--army4-faction="):
+			_army_factions[4] = arg.substr(16)
 		elif arg.begins_with("--soft-particles="):
 			_soft_particles = arg.substr(17)
 		elif arg == "--alternate-mouse":
@@ -199,6 +226,16 @@ func _ready() -> void:
 			_s2_height = float(arg.substr(12))
 		elif arg.begins_with("--s2-follow="):
 			_s2_follow = int(arg.substr(12))
+		elif arg == "--m2-fixed-camera":
+			_m2_fixed_camera = true
+		elif arg.begins_with("--m2-horde="):
+			_m2_hordes.append(arg.substr(11))
+		elif arg.begins_with("--m2-from="):
+			var a: PackedStringArray = arg.substr(10).split(",")
+			_m2_from = Vector2(float(a[0]), float(a[1]))
+		elif arg.begins_with("--m2-to="):
+			var b: PackedStringArray = arg.substr(8).split(",")
+			_m2_to = Vector2(float(b[0]), float(b[1]))
 		elif arg.begins_with("--s2-offset-y="):
 			_s2_offset_y = float(arg.substr(14))
 		elif arg.begins_with("--logic-thread="):
@@ -258,6 +295,13 @@ func _ready() -> void:
 		{"player": "Player_1", "faction": _faction, "human": true, "team": 0, "start_index": 0},
 		{"player": "Player_2", "faction": "FactionMordor", "human": false, "team": 1, "start_index": 1},
 	]
+	# lane PERF-3: the 4-player mass battle's third and fourth armies
+	var army_slots := {}
+	for a in _army_args:
+		army_slots[int(String(a).get_slice(":", 0))] = true
+	if army_slots.has(3) or army_slots.has(4):
+		slots.append({"player": "Player_3", "faction": _army_factions[3], "human": false, "team": 0, "start_index": 2})
+		slots.append({"player": "Player_4", "faction": _army_factions[4], "human": false, "team": 1, "start_index": 3})
 	var rep: Dictionary = _world.load_map(_map_name, {"slots": slots, "seed": 4711, "logic_thread": _logic_thread})
 	if not rep.ok:
 		_fail("load_map failed: %s" % [rep.errors.slice(0, 5)])
@@ -306,6 +350,25 @@ func _ready() -> void:
 		print("ENEMY %s at (%.0f, %.0f): object %d" % [f2[0], spot2.x, spot2.y, id2])
 		_enemies[f2[0]] = id2
 		_enemy_ids.append(id2)
+	if not _army_args.is_empty():
+		var slot_index := {}
+		var pi := 0
+		for pl in rep.players:
+			for k in [1, 2, 3, 4]:
+				if ("Player_%d" % k) in str(pl) and not slot_index.has(k):
+					slot_index[k] = pi
+			pi += 1
+		for a in _army_args:
+			var f3: PackedStringArray = String(a).split(":")
+			var k3 := int(f3[0])
+			var xy3: PackedStringArray = f3[2].split(",")
+			var at := _focus + Vector2(float(xy3[0]), float(xy3[1]))
+			var id3: int = _world.create_object(f3[1], slot_index.get(k3, -1), at.x, at.y, 0.0)
+			if id3 < 0:
+				_fail("army %s: object not created" % a)
+				return
+			_army_ids[k3].append(id3)
+		print("ARMY objects %d (slots 1..4: %d %d %d %d hordes / objects)" % [_world.get_object_count(), _army_ids[1].size(), _army_ids[2].size(), _army_ids[3].size(), _army_ids[4].size()])
 	await get_tree().process_frame
 	var hs: Dictionary = _hud.setup(_fs, _world, _camera, "Player_1", {"alternate_mouse": _alternate, "show_placeholders": _show_placeholders, "camera_start": Vector3(_focus.x, 0.0, -_focus.y), "edge_scroll": _edge_scroll})
 	print("HUD setup: ok=%s errors=%s" % [hs.ok, hs.errors])
@@ -1483,10 +1546,14 @@ func _run_scenario() -> void:
 			_save(shots.path_join("combat2-victory.png"))
 		"smooth_bench":
 			await _smooth_bench()
+		"perf3_battle":
+			await _perf3_battle()
 		"smooth_churn":
 			await _smooth_churn()
 		"smooth2":
 			await _smooth2()
+		"move2":
+			await _move2()
 		"fx_battle":
 			await _fx_battle(shots)
 		"phys1_melee":
@@ -1625,7 +1692,7 @@ func _bench_segment(label: String, seconds: float, interp: bool) -> void:
 	var keys := ["logic_ms", "sync_ms", "streak_ms", "dyn_pose_ms", "dyn_upload_ms", "dyn_mapper_ms", "static_mapper_ms", "worker_frame_ms", "main_cpu_ms"]
 	var timers := {}
 	var hud_keys := ["hud_update_ms", "hud_camera_ms", "hud_cursor_ms"]
-	for k in keys + hud_keys + ["render_cpu_ms", "render_gpu_ms"]:
+	for k in keys + hud_keys + ["render_cpu_ms", "render_gpu_ms", "draw_calls", "primitives_k"]:
 		timers[k] = []
 	var vp := get_viewport().get_viewport_rid()
 	RenderingServer.viewport_set_measure_render_time(vp, true)
@@ -1640,6 +1707,7 @@ func _bench_segment(label: String, seconds: float, interp: bool) -> void:
 	var frames := 0
 	var hitches: Array = []
 	var cpu0 := _main_thread_cpu_ms()
+	var stat_pids: Array = _perf_stat_start(label)
 	var game_time := 0.0 # the engine's frame deltas (with --write-movie the frames are rendered slower than real time: the segment is game time)
 	while game_time < seconds:
 		await get_tree().process_frame
@@ -1662,6 +1730,9 @@ func _bench_segment(label: String, seconds: float, interp: bool) -> void:
 			timers[k].append(ht.get(k, 0.0))
 		timers["render_cpu_ms"].append(RenderingServer.viewport_get_measured_render_time_cpu(vp) + RenderingServer.get_frame_setup_time_cpu())
 		timers["render_gpu_ms"].append(RenderingServer.viewport_get_measured_render_time_gpu(vp))
+		# lane PERF-3: the frame's draw calls and primitives (thousands), all viewports
+		timers["draw_calls"].append(float(RenderingServer.get_rendering_info(RenderingServer.RENDERING_INFO_TOTAL_DRAW_CALLS_IN_FRAME)))
+		timers["primitives_k"].append(float(RenderingServer.get_rendering_info(RenderingServer.RENDERING_INFO_TOTAL_PRIMITIVES_IN_FRAME)) / 1000.0)
 		for id in probes if have_pose else []:
 			var rp: Dictionary = _world.get_render_pose(id)
 			if not rp.get("ok", false):
@@ -1686,6 +1757,7 @@ func _bench_segment(label: String, seconds: float, interp: bool) -> void:
 		mean_ms += x
 	mean_ms /= maxf(times.size(), 1)
 	var cpu1 := _main_thread_cpu_ms()
+	await _perf_stat_end(label, stat_pids, frames)
 	if cpu0 >= 0.0 and frames > 0:
 		print("SMOOTH CPU %s interp=%s main thread %.2f ms CPU per render frame (%.0f fps if the main thread were alone on its core)" % [label, interp, (cpu1 - cpu0) / frames,
 			1000.0 / maxf((cpu1 - cpu0) / frames, 0.001)])
@@ -1713,6 +1785,35 @@ func _bench_segment(label: String, seconds: float, interp: bool) -> void:
 		var_v += (v - mean_v) * (v - mean_v)
 	var cv := sqrt(var_v / maxf(steps.size(), 1)) / maxf(mean_v, 0.0001)
 	print("SMOOTH MOTION %s interp=%s probes=%d moving_samples=%d still_samples=%d (%.1f%%) travelled=%.0f speed_mean=%.1f/s cv=%.3f" % [label, interp, probes.size(), steps.size(), stills, 100.0 * stills / maxf(steps.size(), 1), travelled, mean_v, cv])
+
+
+# lane PERF-3: --perf-stat: `perf stat` on the main thread (its id is the process id) and on the whole process for one segment
+func _perf_stat_start(label: String) -> Array:
+	if _perf_stat.is_empty():
+		return []
+	var pid := str(OS.get_process_id())
+	var ev := "instructions:u,cycles:u"
+	return [OS.create_process("perf", ["stat", "-x", ",", "-e", ev, "-t", pid, "-o", "%s-%s-main.txt" % [_perf_stat, label]]),
+		OS.create_process("perf", ["stat", "-x", ",", "-e", ev, "-p", pid, "-o", "%s-%s-all.txt" % [_perf_stat, label]])]
+
+
+func _perf_stat_end(label: String, pids: Array, frames: int) -> void:
+	if pids.is_empty():
+		return
+	for p in pids:
+		OS.execute("kill", ["-INT", str(p)])
+	await _frames(10)
+	var parts := PackedStringArray()
+	for which in ["main", "all"]:
+		var f := FileAccess.open("%s-%s-%s.txt" % [_perf_stat, label, which], FileAccess.READ)
+		if f == null:
+			parts.append("%s: no output" % which)
+			continue
+		for line in f.get_as_text().split("\n"):
+			var c := line.split(",")
+			if c.size() > 2 and c[0].is_valid_int():
+				parts.append("%s %s/frame=%.2fM" % [which, c[2].split(":")[0], float(c[0]) / maxf(frames, 1) / 1.0e6])
+	print("PERF3 STAT %s frames=%d %s" % [label, frames, " ".join(parts)])
 
 
 func _old_timings() -> Dictionary:
@@ -1752,6 +1853,37 @@ func _smooth_bench() -> void:
 	print("SMOOTH COMBAT ", _world.get_combat_report())
 
 
+# lane PERF-3: the 4-player mass battle (about 3000 objects with --army grids from tools/perf3/battle_args.py): both teams attack-move into the middle of all
+# armies; the frame time is measured while they close in, while they fight, and while the camera sweeps over the fight (the instancer's culling and sorting)
+func _perf3_battle() -> void:
+	var ours: Array = _army_ids[1] + _army_ids[3]
+	var theirs: Array = _army_ids[2] + _army_ids[4]
+	if ours.is_empty() or theirs.is_empty():
+		_fail("perf3_battle needs --army objects on both teams")
+		return
+	var mid := (_centroid(ours) + _centroid(theirs)) * 0.5
+	_cam_target = mid
+	_cam_height = 520.0
+	_place_camera()
+	await _frames(20)
+	print("PERF3 ORDER approach ", _world.order_move(ours, mid.x, mid.y, {"type": "attack"}), " ", _world.order_move(theirs, mid.x, mid.y, {"type": "attack"}))
+	if not _shots_dir.is_empty():
+		_save(_shots_dir.path_join("perf3-start.png"))
+	await _bench_segment("approach", _bench_seconds, true)
+	await _bench_segment("melee", _bench_seconds, true)
+	if not _shots_dir.is_empty():
+		_save(_shots_dir.path_join("perf3-melee.png"))
+	var t0 := Time.get_ticks_msec()
+	var sweep := func() -> void:
+		var u := (Time.get_ticks_msec() - t0) / 1000.0 / maxf(_bench_seconds, 0.001)
+		_cam_target = mid + Vector2(cos(u * TAU) * 300.0, sin(u * TAU) * 200.0)
+		_place_camera()
+	get_tree().process_frame.connect(sweep)
+	await _bench_segment("pan", _bench_seconds, true)
+	get_tree().process_frame.disconnect(sweep)
+	print("PERF3 COMBAT ", _world.get_combat_report(), " objects ", _world.get_object_count())
+
+
 func _bench_follow_segment(label: String, interp: bool) -> void:
 	# the camera stays put during a segment (the probe measures the drawable in world space, but a still camera keeps the video readable); it jumps to the action between segments
 	var probes := _probe_members(_spawn_ids, 1)
@@ -1776,7 +1908,7 @@ func _smooth2() -> void:
 	await _frames(20)
 	var csv: FileAccess = FileAccess.open(_s2_csv, FileAccess.WRITE) if not _s2_csv.is_empty() else null
 	if csv:
-		csv.store_line("segment,t,dt,id,x,y,angle,frame,alpha")
+		csv.store_line("segment,t,dt,id,x,y,angle,frame,alpha,wall_us,held,horde")
 	print("SMOOTH2 ORDER march ", _world.order_move(_spawn_ids, ours.x + side.x * 500.0, ours.y + side.y * 500.0, {}), " ", _world.order_move(_enemy_ids, theirs.x + side.x * 500.0, theirs.y + side.y * 500.0, {}))
 	await _smooth2_segment("march", csv)
 	var here := _centroid(_spawn_ids)
@@ -1838,7 +1970,8 @@ func _smooth2_segment(label: String, csv: FileAccess) -> void:
 				continue
 			var p := Vector2(rp.x, rp.y)
 			if csv:
-				csv.store_line("%s,%.5f,%.5f,%d,%.4f,%.4f,%.5f,%d,%.4f" % [label, game_time, dt, id, p.x, p.y, rp.angle, rp.frame, timing.get("presented_alpha", 0.0)])
+				csv.store_line("%s,%.5f,%.5f,%d,%.4f,%.4f,%.5f,%d,%.4f,%d,%d,0" % [label, game_time, dt, id, p.x, p.y, rp.angle, rp.frame, timing.get("presented_alpha", 0.0), now,
+					timing.get("held_presentations", 0)])
 			if ours.has(id):
 				sum += p
 				n += 1
@@ -1856,6 +1989,13 @@ func _smooth2_segment(label: String, csv: FileAccess) -> void:
 				last_step[id] = step
 			last[id] = p
 			last_angle[id] = rp.angle
+		# lane MOVE-2: the horde objects' drawn poses too (the devlog camera's focus follows them), flagged in the last column
+		if csv:
+			for h in _spawn_ids + _enemy_ids:
+				var hp: Dictionary = _world.get_render_pose(h)
+				if hp.get("ok", false):
+					csv.store_line("%s,%.5f,%.5f,%d,%.4f,%.4f,%.5f,%d,%.4f,%d,%d,1" % [label, game_time, dt, h, hp.x, hp.y, hp.angle, hp.frame, timing.get("presented_alpha", 0.0), now,
+						timing.get("held_presentations", 0)])
 		# the camera follows our members' drawn centre, eased (a still camera would lose them; the ease keeps the video readable)
 		if n > 0:
 			cam = cam.lerp(sum / n + Vector2(0.0, _s2_offset_y), clampf(dt * (2.0 if _s2_follow < 0 else 6.0), 0.0, 1.0))
@@ -1874,6 +2014,98 @@ func _smooth2_segment(label: String, csv: FileAccess) -> void:
 	for x in times:
 		dev += (x - mean) * (x - mean)
 	print("SMOOTH2 PACING %s frames=%d fps=%.1f frame_ms: %s stdev %.2f held_presentations=%d" % [label, times.size(), 1000.0 / maxf(mean, 0.001), _summary(times), sqrt(dev / maxf(times.size(), 1)), held1 - held0])
+
+
+# lane MOVE-2 (FEEDBACK-1 F4): the slot-distance test's march (engine/tests/test_move2_slot_distance.cpp) drawn: every --m2-horde side by side 110 apart at
+# --m2-from, each ordered on its own to --m2-to (offset sideways as it started), then left standing; the camera follows the members' drawn centre from
+# --s2-height. Every 2 s it prints MOVE2 SPREAD: per horde the largest distance of a member from its horde object (a lost member stays far behind).
+func _move2() -> void:
+	if _m2_hordes.is_empty():
+		_fail("move2 needs --m2-horde objects")
+		return
+	var dir := (_m2_to - _m2_from).normalized()
+	var side := Vector2(-dir.y, dir.x)
+	var ids: Array = []
+	for i in _m2_hordes.size():
+		var off: float = (float(i) - float(_m2_hordes.size() - 1) * 0.5) * 110.0
+		var p := _m2_from + side * off
+		var id: int = _world.create_object(_m2_hordes[i], _local_index, p.x, p.y, atan2(dir.y, dir.x))
+		if id <= 0:
+			_fail("move2: cannot create " + str(_m2_hordes[i]))
+			return
+		ids.append(id)
+	_cam_target = _m2_from
+	_cam_height = _s2_height
+	_place_camera()
+	await _frames(30)
+	for i in ids.size():
+		var off2: float = (float(i) - float(ids.size() - 1) * 0.5) * 110.0
+		var q := _m2_to + side * off2
+		_world.order_move([ids[i]], q.x, q.y, {})
+	_caption = "%s%s" % [_s2_caption + "  -  " if not _s2_caption.is_empty() else "", "march"]
+	var t := 0.0
+	var next_report := 0.0
+	var cam := _cam_target
+	# lane MOVE-2 r2: --s2-csv writes smooth2's rows (segment "march", the members' drawn poses, the wall clock) for tools/move/jitter_report.py; the frame
+	# times are summarised as MOVE2 PACING at the end
+	var csv: FileAccess = FileAccess.open(_s2_csv, FileAccess.WRITE) if not _s2_csv.is_empty() else null
+	if csv:
+		csv.store_line("segment,t,dt,id,x,y,angle,frame,alpha,wall_us,held,horde")
+	var member_ids: Array = []
+	var member_lists := {}
+	for h0 in ids:
+		member_lists[h0] = _world.get_object(h0).get("members", [])
+		member_ids.append_array(member_lists[h0])
+	var times: Array = []
+	var t_prev := Time.get_ticks_usec()
+	var held0: int = _world.get_frame_timings().get("held_presentations", 0)
+	while t < _bench_seconds:
+		await get_tree().process_frame
+		var dt := get_process_delta_time()
+		t += dt
+		var now := Time.get_ticks_usec()
+		times.append((now - t_prev) / 1000.0)
+		t_prev = now
+		if csv:
+			var timing: Dictionary = _world.get_frame_timings()
+			for mid in member_ids:
+				var mp: Dictionary = _world.get_render_pose(mid)
+				if mp.get("ok", false):
+					csv.store_line("march,%.5f,%.5f,%d,%.4f,%.4f,%.5f,%d,%.4f,%d,%d,0" % [t, dt, mid, mp.x, mp.y, mp.angle, mp.frame, timing.get("presented_alpha", 0.0), now,
+						timing.get("held_presentations", 0)])
+		# per frame only the drawn poses (get_object waits for the logic worker: the member lists are read again only at the 2 s report)
+		var report := t >= next_report
+		var sum := Vector2.ZERO
+		var n := 0
+		var spread: Array = []
+		for h in ids:
+			var hp: Dictionary = _world.get_render_pose(h)
+			var worst := 0.0
+			for m in (_world.get_object(h).get("members", []) if report else member_lists.get(h, [])):
+				var rp: Dictionary = _world.get_render_pose(m)
+				if rp.get("ok", false):
+					sum += Vector2(rp.x, rp.y)
+					n += 1
+					if hp.get("ok", false):
+						worst = maxf(worst, Vector2(rp.x - hp.x, rp.y - hp.y).length())
+			spread.append("%.0f" % worst)
+		if n > 0 and not _m2_fixed_camera:
+			cam = cam.lerp(sum / n, clampf(dt * 1.5, 0.0, 1.0))
+			_cam_target = cam
+			_place_camera()
+		if report:
+			next_report += 2.0
+			for h1 in ids:
+				member_lists[h1] = _world.get_object(h1).get("members", [])
+			print("MOVE2 SPREAD t=%.0f %s" % [t, " ".join(spread)])
+	if csv:
+		csv.close()
+	var held1: int = _world.get_frame_timings().get("held_presentations", 0)
+	var mean := 0.0
+	for x in times:
+		mean += x
+	mean /= maxf(times.size(), 1)
+	print("MOVE2 PACING frames=%d fps=%.1f frame_ms: %s held_presentations=%d" % [times.size(), 1000.0 / maxf(mean, 0.001), _summary(times), held1 - held0])
 
 
 func _smooth_churn() -> void:
@@ -2000,21 +2232,24 @@ func _fx_battle(shots: String) -> void:
 	var sync_sum := 0.0
 	var fx_us_sum := 0.0
 	var fx_us_max := 0.0
+	var building_now: Dictionary = bo # lane PERF-3: the building as last asked (every 5 frames)
 	for i in _fx_frames:
 		await get_tree().process_frame
 		var now := Time.get_ticks_usec()
 		times.append((now - t_prev) / 1000.0)
 		t_prev = now
-		var st: Dictionary = _world.get_stats()
-		adv.append(st.get("last_advance_ms", 0.0))
+		# lane PERF-3: the frame's timers from get_frame_timings (get_stats hashes the whole simulation on this thread: the measurement was mostly that)
+		var st: Dictionary = _world.get_frame_timings() if _world.has_method("get_frame_timings") else _world.get_stats()
+		adv.append(st.get("advance_ms", st.get("last_advance_ms", 0.0)))
 		var fx: Dictionary = _world.get_fx_report()
 		var ps: Dictionary = fx.get("particles", {})
-		sync_sum += st.get("last_sync_ms", 0.0)
+		sync_sum += st.get("sync_ms", st.get("last_sync_ms", 0.0))
 		fx_us_sum += ps.get("step_us", 0.0) + ps.get("build_us", 0.0) + ps.get("upload_us", 0.0)
 		fx_us_max = maxf(fx_us_max, ps.get("step_us", 0.0) + ps.get("build_us", 0.0) + ps.get("upload_us", 0.0))
 		peak.particles = maxi(peak.particles, ps.get("particles", 0))
 		peak.systems = maxi(peak.systems, ps.get("systems", 0))
-		peak.objects = maxi(peak.objects, _world.get_object_count())
+		if i % 30 == 0: # lane PERF-3: a live query (it waits for the logic worker), not every frame
+			peak.objects = maxi(peak.objects, _world.get_object_count())
 		var played: Dictionary = fx.get("played", {})
 		if i % 300 == 0:
 			print("FX2 TICK %d frame %d objects %d particles %d systems %d played %s" % [i, _world.get_frame(), _world.get_object_count(), ps.get("particles", 0), ps.get("systems", 0), played])
@@ -2026,22 +2261,24 @@ func _fx_battle(shots: String) -> void:
 			saved["impact"] = i + 3
 		last_fire = fire
 		last_die = die
-		var bd: Dictionary = _world.get_object(building)
-		if bd.get("ok", false):
-			if damaged_at < 0 and bd.get("damage_state", 0) >= 1 and fx.get("attached_live", 0) > 0:
-				damaged_at = i
-				saved["damaged"] = i + 90
-			if not saved.has("collapse") and bd.get("z", 0.0) < -8.0:
+		if i % 5 == 0: # lane PERF-3: the building is a live query (it waits for the logic worker): every 5 frames
+			building_now = _world.get_object(building)
+			var bd: Dictionary = building_now
+			if bd.get("ok", false):
+				if damaged_at < 0 and bd.get("damage_state", 0) >= 1 and fx.get("attached_live", 0) > 0:
+					damaged_at = i
+					saved["damaged"] = i + 90
+				if not saved.has("collapse") and bd.get("z", 0.0) < -8.0:
+					saved["collapse"] = i
+			elif not saved.has("collapse"):
 				saved["collapse"] = i
-		elif not saved.has("collapse"):
-			saved["collapse"] = i
 		if not saved.has("deaths") and played.get("SlowDeath INITIAL", 0) >= 6:
 			saved["deaths"] = i + 2
 		for k in ["fire", "impact", "damaged", "collapse", "deaths"]:
 			if saved.has(k) and typeof(saved[k]) == TYPE_INT and saved[k] == i:
 				_save(shots.path_join("fx2-%s.png" % k))
 				saved[k] = "done"
-		if not bd.get("ok", false) and saved.get("collapse", 0) is String and i > damaged_at + 450:
+		if not building_now.get("ok", false) and saved.get("collapse", 0) is String and i > damaged_at + 450:
 			break
 	times.sort()
 	adv.sort()

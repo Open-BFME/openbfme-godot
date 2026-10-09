@@ -570,8 +570,17 @@ TEST_CASE("modules retail: FlammableUpdate ignites past its FlameDamageLimit, bu
 		CHECK(fa->aflameDamageTicks() >= (unsigned)(fd->m_aflameDuration / fd->m_aflameDamageDelay) - 1);
 		CHECK(fa->aflameDamageTicks() <= (unsigned)(fd->m_aflameDuration / fd->m_aflameDamageDelay) + 1);
 		CHECK(g.logic->getFrame() - ignited >= fd->m_aflameDuration);
-		CHECK(fa->status() == (fd->m_setBurnedStatus ? FlammableUpdate::FS_BURNED : FlammableUpdate::FS_NORMAL));
-		CHECK_FALSE(a->testStatus(10));
+		// lane COMBAT-4: a tree the fire killed sinks with DISABLED_HELD (RotWK's SlowDeathBehavior update RW 0x860B39), and FlammableUpdate's update has the default
+		// disabled mask (RW 0x6530FA: the global RW 0xDE8B8C, only ever zeroed), so a dead, sinking tree stays AFLAME: the burn's end is checked on a live one
+		if (a->isEffectivelyDead() && (a->getDisabledMask() & (1u << 3)) != 0)
+		{
+			CHECK(fa->status() == FlammableUpdate::FS_AFLAME);
+		}
+		else
+		{
+			CHECK(fa->status() == (fd->m_setBurnedStatus ? FlammableUpdate::FS_BURNED : FlammableUpdate::FS_NORMAL));
+			CHECK_FALSE(a->testStatus(10));
+		}
 		CHECK(sa->spreads() >= 1);
 		CHECK(fb->status() != FlammableUpdate::FS_NORMAL);
 		CHECK(reportHas(g, "[S-983] FlammableUpdate"));

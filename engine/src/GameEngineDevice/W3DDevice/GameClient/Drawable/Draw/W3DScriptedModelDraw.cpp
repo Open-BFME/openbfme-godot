@@ -1,6 +1,7 @@
 // OpenBFME. GPL-3.0. See W3DScriptedModelDraw.h for the sources and the stops.
 
 #include "GameEngineDevice/W3DDevice/GameClient/Drawable/Draw/W3DScriptedModelDraw.h"
+#include "GameEngineDevice/W3DDevice/GameClient/Drawable/Draw/W3DModelDrawVariants.h"
 
 #include "Common/AsciiString.h"
 #include "Common/Audio/AudioLog.h"
@@ -69,9 +70,17 @@ void W3DScriptedModelDraw::initializeState()
 	{
 		stop("S-096", "the module sets AlphaCameraFade* / BirthFadeTime / StaticSortLevelWhileFading; the camera distance fade and the birth fade are not applied");
 	}
-	if (!m_data.m_attachModels.empty() || m_data.m_dependencySharedModelFlags.any())
+	if (m_data.m_dependencySharedModelFlags.any())
 	{
-		stop("S-090", "the module has AttachModel / DependencySharedModelFlags; the attached model update of replaceModelConditionState (RW 0x4BF2D8) is not ported");
+		stop("S-1791", "the module has DependencySharedModelFlags: they reach the drawables of the objects its container holds (riders, crew) every client frame (Drawable::applyDependencyFlags); inference: RW 0x4BF2D8's dependent list (W3DModelDraw + 0xA8) has no writer found, so other dependents (attached models, riders not on bones) are not served");
+	}
+	if (dynamic_cast<const W3DTruckDrawModuleData *>(&m_data))
+	{
+		stop("S-1792", "W3DTruckDraw: the tires spin about Y by TireRotationMultiplier x the locomotor speed (RW 0x4CBFFB); not ported: the wheel record (suspension heights, the front tires' steering angle, the powerslide), the speed gate RW 0x46E918, the cab / trailer bones and the dust / dirt / powerslide effects; backwards is read from BACKING_UP");
+	}
+	if (!m_data.m_attachModels.empty())
+	{
+		stop("S-090", "the module has AttachModel; the attached model update of replaceModelConditionState (RW 0x4BF2D8) is not ported");
 	}
 	// stop S-094: what the parse stored without a recovered meaning (and the constructor members that were not recovered)
 	for (const std::string &item : m_data.unverifiedParseItems())
@@ -196,6 +205,7 @@ void W3DScriptedModelDraw::applyModelState(const ModelConditionInfo *state)
 		}
 		// hidden sub objects: a new render object starts with its meshes' own HIDDEN flags; RetainSubObjects keeps what scripts hid
 		m_hiddenSubObjects.clear();
+		++m_hiddenGeneration; // lane PERF-3
 		if (m_model)
 		{
 			for (size_t i = 0; i < m_model->SubObjects.size(); ++i)
@@ -1122,6 +1132,34 @@ void W3DScriptedModelDraw::frame(W3DDrawFrame &f) const
 	}
 }
 
+void W3DScriptedModelDraw::poseView(W3DDrawPoseView &v) const
+{
+	static const std::string none;
+	static const std::set<int> noHidden;
+	v.modelName = m_curModelInfo ? &m_curModelInfo->modelName() : &none;
+	v.model = m_model;
+	int n = 0;
+	for (int i = 0; i < 3; ++i)
+	{
+		if (m_tracks[i].anim)
+		{
+			n = i + 1;
+		}
+	}
+	const W3DDrawTrack *first = m_tracks[0].anim ? &m_tracks[0] : (m_tracks[1].anim ? &m_tracks[1] : nullptr);
+	const bool blending = m_tracks[0].anim && m_tracks[1].anim;
+	v.clip0 = n > 0 ? &m_tracks[0].clipName : &none; // as GameWorld's applyFrame reads frame(): f.tracks[0].clipName when trackCount > 0
+	v.frame0 = first ? first->frame : 0.0f;
+	v.clip1 = blending ? &m_tracks[1].clipName : &none;
+	// a track's handle and name are set together (startAnimation(handle, resolved name)) and copied together: the handle stands for the name
+	v.clipKey0 = n > 0 ? m_tracks[0].anim : nullptr;
+	v.clipKey1 = blending ? m_tracks[1].anim : nullptr;
+	v.frame1 = blending ? m_tracks[1].frame : 0.0f;
+	v.blendPercentage = blending ? 1.0f - m_blendCountdown / m_blendInitial : 0.0f;
+	v.hiddenSubObjects = m_model ? &m_hiddenSubObjects : &noHidden;
+	v.hiddenGeneration = m_hiddenGeneration;
+}
+
 bool W3DScriptedModelDraw::modelCondition(const std::string &name)
 {
 	const int bit = ModelCondition::indexOf(name);
@@ -1294,6 +1332,7 @@ bool W3DScriptedModelDraw::applySubObjectHidden(const std::string &name, bool hi
 			m_hiddenSubObjects.erase(i);
 		}
 	}
+	++m_hiddenGeneration; // lane PERF-3
 	return true;
 }
 

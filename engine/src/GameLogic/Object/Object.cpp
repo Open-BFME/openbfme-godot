@@ -2,6 +2,7 @@
 // See GameLogic/Object/Object.h for the creation order and its sources.
 
 #include "GameLogic/Object/Object.h"
+#include "GameLogic/Module/PhysicsBehavior.h"
 #include "GameLogic/ScriptEngine/ScriptEngine.h"
 #include "GameLogic/ScriptEngine/ScriptConditions.h"
 #include "GameClient/MapChunks.h"
@@ -917,6 +918,13 @@ void Object::friend_initObject()
 	if (getControllingPlayer())
 	{
 		addToPlayerCommandPoints();
+		// lane CAMP-1H: RW 0x693D58 .. 0x693D6F: with an owner, an object not yet receiving it gets the difficulty bonus when the script engine allows it
+		// (+ 0x1A5D5, on after every reset; OBJECT_ALLOW_BONUSES). NOT PORTED: RW 0x693D74 .. 0x693D87, the owner's handicap (Player + 0xAC / 0xB0 / 0xB4,
+		// RW 0x6AD3E6; see S-1712)
+		if (!m_receivingDifficultyBonus && m_logic.scriptEngine().objectsReceiveDifficultyBonus())
+		{
+			setReceivingDifficultyBonus(true);
+		}
 	}
 	m_logic.emotions().objectInitialized(*this); // RW 0x693E79 .. 0x693E95 (lane MODULES-2): a SCARY or HERO object joins TheEmotionSystem's list
 	// lane HERO-2: RW 0x693EE8 .. 0x693F06: a CREATE_A_HERO (not while a save game loads, GameLogic + 0x6F) takes its player's Create-a-Hero record (RW 0x61B17D)
@@ -936,6 +944,68 @@ void Object::friend_initObject()
 	if (Player *p = getControllingPlayer())
 	{
 		p->getScoreKeeper().addObjectBuilt(m_logic, *this, 1);
+	}
+}
+
+// ---------------------------------------------------------------------------------------------------------------------------------
+// lane CAMP-1H: the difficulty bonus (TARGET FACTS, rotwk201_game.exe, caveat S-001)
+// RW 0x68B907: a different value is stored (+ 0x45C) and, when the object has a controlling player (RW 0x68B678), handed to that player.
+void Object::setReceivingDifficultyBonus(bool receive)
+{
+	if (receive == m_receivingDifficultyBonus)
+	{
+		return;
+	}
+	m_receivingDifficultyBonus = receive;
+	if (Player *p = getControllingPlayer())
+	{
+		p->applyDifficultyBonusesForObject(*this, m_receivingDifficultyBonus);
+	}
+}
+
+// RW 0x6AC32D (Player::applyDifficultyBonusesForObject; its only caller is RW 0x68B907). Nothing happens when `apply` is false (retail never takes a
+// bonus back), for an object of a human player (RW 0x68B68A), one without a controlling player, or one whose player's template (Player + 0x34) is not a
+// PlayableSide (+ 0x151). Then the upgrade by difficulty:
+//   * a multiplayer game (RW 0x625456: LAN, skirmish, internet) and the player has an AI (Player + 0x2FC: every computer player, RW 0x6AA450): the AI's
+//     difficulty (+ 0x30, RW 0x9A5E0C): a skirmish AI's level, an AIPlayer's the script engine's (RW 0x8F7FEB) - Upgrade_{Easy,Medium,Hard,Brutal}AIMultiPlayer;
+//   * otherwise TheGameLogic + 0xA4 (prepareNewGame's difficulty: the campaign's choice) - Upgrade_{Easy,Medium,Hard,Brutal}AISinglePlayer;
+//   * any other difficulty value: no name, no upgrade.
+// The upgrade is found by name (RW 0x5487EC -> TheUpgradeCenter RW 0x66F230; an unknown name gives nothing) and given to the object (RW 0x69388B).
+// The names are the binary's (RW 0xC13EEC .. 0xC13FB8), the upgrades and their AttributeModifierUpgrade modules are the data's (upgrade.ini,
+// default\object.ini's DefaultThingTemplate).
+void Player::applyDifficultyBonusesForObject(Object &obj, bool apply)
+{
+	if (!apply)
+	{
+		return;
+	}
+	const Player *owner = obj.getControllingPlayer();
+	if (!owner || owner->getPlayerType() == PLAYER_HUMAN || !owner->getPlayerTemplate() || !owner->getPlayerTemplate()->m_playableSide)
+	{
+		return;
+	}
+	GameLogic &logic = obj.logic();
+	static const char *const kMulti[4] = { "Upgrade_EasyAIMultiPlayer", "Upgrade_MediumAIMultiPlayer", "Upgrade_HardAIMultiPlayer", "Upgrade_BrutalAIMultiPlayer" };
+	static const char *const kSingle[4] = { "Upgrade_EasyAISinglePlayer", "Upgrade_MediumAISinglePlayer", "Upgrade_HardAISinglePlayer",
+		"Upgrade_BrutalAISinglePlayer" };
+	const char *name = nullptr;
+	if (logic.economy().isMultiplayerGame() && getPlayerType() == PLAYER_COMPUTER)
+	{
+		const int d = getSkirmishDifficulty() >= 0 ? getSkirmishDifficulty() : logic.scriptEngine().gameDifficulty();
+		name = d >= 0 && d < 4 ? kMulti[d] : nullptr;
+	}
+	else
+	{
+		const int d = logic.getGameDifficulty();
+		name = d >= 0 && d < 4 ? kSingle[d] : nullptr;
+	}
+	if (!name || !TheUpgradeCenter)
+	{
+		return;
+	}
+	if (const UpgradeTemplate *u = TheUpgradeCenter->findUpgrade(name))
+	{
+		obj.giveUpgrade(u);
 	}
 }
 
@@ -1168,10 +1238,20 @@ void Object::attemptDamage(DamageInfo &info)
 		m_pendingDamage.push_back(PendingDamage{ info }); // RW 0x695031: appended
 		return;
 	}
-	// RW 0x697E50 doAttemptDamage
+	doAttemptDamage(info);
+}
+
+// RW 0x697E50 doAttemptDamage: alive (+ 0x458 bit 0 clear): the body (+ 0x25C) slot 0; then the shockwave handler RW 0x6968BC when the object is still alive, or
+// when it is dead and the hit's shockwave amount (D+0x40) is above 0 (lane COMBAT-4). The drawable's refresh after it (RW 0x697E8F: + 0x84, + 0x43C) is client
+void Object::doAttemptDamage(DamageInfo &info)
+{
 	if (!m_effectivelyDead && m_body)
 	{
 		m_body->attemptDamage(info);
+	}
+	if (!m_effectivelyDead || info.m_input.m_shockWaveAmount > 0.0f)
+	{
+		ObjectKnockback::shockWave(*this, info);
 	}
 }
 
@@ -1230,10 +1310,7 @@ void Object::updatePendingDamage()
 		{
 			m_pendingDamage.erase(m_pendingDamage.begin() + (long)i);
 			info.m_input.m_delay = 0.0f;
-			if (!m_effectivelyDead && m_body)
-			{
-				m_body->attemptDamage(info);
-			}
+			doAttemptDamage(info); // RW 0x697EEA
 		}
 		else
 		{
@@ -1544,6 +1621,7 @@ void Object::crc(StateHasher &h) const
 	h.addU32(m_team ? m_team->getID() : 0u);
 	h.addU32(m_originalTeam ? m_originalTeam->getID() : 0u); // lane HERO-2
 	h.addU32(m_speechLeader);                                 // lane HERO-2
+	h.addBool(m_receivingDifficultyBonus);                    // lane CAMP-1H
 	h.addU32(m_capturerID);                                   // lane HERO-2
 	h.addU32(m_undeadKillFrame);                              // lane HERO-2
 	for (std::uint32_t w : m_status)
@@ -1669,6 +1747,25 @@ void Object::crc(StateHasher &h) const
 		h.addBool(in.m_shouldPlayUnderAttackEva);
 		h.addFloat(in.m_delay);
 		h.addI32(in.m_fxTrigger);
+		// lane COMBAT-4: the shockwave half, only for a hit that carries one (an ordinary hit's hash stream is unchanged)
+		if (in.m_shockWaveAmount != 0.0f || in.m_shockWaveRadius != 0.0f)
+		{
+			h.addU32(in.m_shockWaveSourceID);
+			h.addFloat(in.m_shockWaveVector.x);
+			h.addFloat(in.m_shockWaveVector.y);
+			h.addFloat(in.m_shockWaveVector.z);
+			h.addFloat(in.m_shockWaveAmount);
+			h.addFloat(in.m_shockWaveRadius);
+			h.addFloat(in.m_shockWaveTaperOff);
+			h.addFloat(in.m_shockWaveZMult);
+			h.addBool(in.m_shockWaveClearRadius);
+			h.addFloat(in.m_shockWaveClearMult);
+			h.addFloat(in.m_shockWaveClearFlingHeight);
+			h.addFloat(in.m_shockWaveClearCenter.x);
+			h.addFloat(in.m_shockWaveClearCenter.y);
+			h.addFloat(in.m_shockWaveClearCenter.z);
+			h.addFloat(in.m_cyclonicFactor);
+		}
 	}
 	h.addBool(m_weapons != nullptr);
 	if (m_weapons)

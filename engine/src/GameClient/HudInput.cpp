@@ -113,6 +113,7 @@ size_t HudInput::update()
 	{
 		m_ui.forgetObject(id);
 	}
+	m_place.frame(); // lane QA2-FIX: the placement update's line build step (RW 0x6A2D12) runs in InGameUI::update, before the stream (ZH GameEngine::update)
 	const int local = m_ctx.localPlayer() ? m_ctx.localPlayer()->getPlayerIndex() : 0;
 	std::vector<ClientMessage> out = m_stream.propagate();
 	size_t n = 0;
@@ -135,7 +136,7 @@ size_t HudInput::update()
 
 std::vector<std::string> HudInput::acceptanceStops()
 {
-	return {
+	std::vector<std::string> out = {
 		"[S-280] translator pipeline: the translator priorities are ZH's (MetaEvent 20, PlaceEvent 30 (BUILD-1), GUICommand 40, Selection 50, Command 70; HotKey is not ported; LookAt 60 is lane CAM-1's, attached by attachCamera), the RotWK 2.01 "
 		"translators were not read; a drag selection does not emit MSG_AREA_SELECTION (GameMessage has no pixel-region argument; the logic does not act on the message); MSG_ADD_TO_TEAM0..9 (1138 .. 1147) "
 		"is not generated and stays unhandled by the dispatcher (S-208)",
@@ -158,6 +159,11 @@ std::vector<std::string> HudInput::acceptanceStops()
 		"[S-288] selection filters: the shroud (VIS-1) is not applied to what a pick or a drag may select (an enemy's invisible, undetected object is not picked: lane STEALTH-1, "
 		"InvisibilityManager::clientLook); the double click selects the matching units of the screen by template identity, across the map with the alt key",
 	};
+	for (const std::string &s : PlaceEventTranslator::stopLines()) // lane QA2-FIX
+	{
+		out.push_back(s);
+	}
+	return out;
 }
 
 std::vector<std::string> HudInput::stops() const

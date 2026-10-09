@@ -2,6 +2,7 @@
 // BFME2 1.06, load the object world once, and order units and hordes of the real templates to a point.
 
 #include "doctest.h"
+#include "GameLogic/Module/PhysicsBehavior.h"
 #include "GameLogic/Module/StructureModules.h"
 
 #include "Common/AsciiString.h"
@@ -33,6 +34,8 @@
 #include <map>
 #include <memory>
 #include <set>
+
+extern const char *const TheModelConditionNames[];
 
 namespace
 {
@@ -213,6 +216,7 @@ struct SweepResult
 	unsigned lifetimeDieFrame = 0;    // COMBAT-2: the LifetimeUpdate's scheduled expiry (its dieFrame at creation), 0 without one
 	unsigned lifetimeWaitsForWake = 0; // the module sleeps until woken (WaitForWakeUp): it never expires by itself
 	unsigned deadFrame = 0;           // the first logic frame the object was dead or gone, 0 when it lived through the sweep
+	bool knocked = false;             // lane COMBAT-4 r3: the object lay stunned (thrown by a shockwave or a crush) at some frame of the sweep
 };
 
 // orders every template of `batch` (spread over the map) to a point and runs the logic; returns one result per template
@@ -282,6 +286,14 @@ std::vector<SweepResult> sweepBatch(RetailGame &g, const std::vector<const Thing
 		g.logic.runLogicFrame();
 		for (size_t i = 0; i < objs.size(); ++i)
 		{
+			if (objs[i] && !out[i].knocked)
+			{
+				if (Object *now = g.logic.findObjectByID(ids[i]))
+				{
+					const PhysicsBehavior *phys = PhysicsBehavior::find(*now);
+					out[i].knocked = phys && phys->isStunned();
+				}
+			}
 			if (objs[i] && out[i].lifetimeDieFrame != 0 && out[i].deadFrame == 0)
 			{
 				const Object *now = g.logic.findObjectByID(ids[i]);
@@ -336,6 +348,17 @@ std::vector<SweepResult> sweepBatch(RetailGame &g, const std::vector<const Thing
 				(int)a->mover().goalType(), (int)a->mover().isWaitingForPath(), a->mover().path() ? 1 : 0, a->mover().blockedFrames(), a->curLocomotor() ? a->curLocomotor()->getTemplate().m_surfaces : 0u,
 				a->curLocomotor() ? a->curLocomotor()->getTemplate().m_appearance : -1, a->curLocomotor() ? a->curLocomotor()->speed() : -1.0f);
 			out[i].detail = buf;
+			// lane COMBAT-4 r3: why a unit stood (dead, stunned by a fling or a shockwave, its health and model conditions)
+			const PhysicsBehavior *phys = PhysicsBehavior::find(*objs[i]);
+			out[i].detail += std::string(" dead ") + (objs[i]->isEffectivelyDead() ? "1" : "0") + " stunned " + (phys && phys->isStunned() ? "1" : "0") + " flying " +
+				(phys && phys->isFlying() ? "1" : "0") + " health " + std::to_string(objs[i]->getBodyModule() ? (int)objs[i]->getBodyModule()->getHealth() : -1) + " conditions";
+			for (int b = 0; b < 19 * 32 && TheModelConditionNames[b]; ++b)
+			{
+				if (objs[i]->testModelCondition(b))
+				{
+					out[i].detail += std::string(" ") + TheModelConditionNames[b];
+				}
+			}
 		}
 	}
 	// remove them (the next batch starts clean)
@@ -380,7 +403,8 @@ TEST_CASE("move retail: every ground unit and horde template of the install, ord
 		}
 	}
 	REQUIRE(units.size() > 650);
-	size_t moved = 0, still = 0, unported = 0, hordes = 0, hordesChecked = 0, lifetimeLimited = 0;
+	size_t moved = 0, still = 0, unported = 0, hordes = 0, hordesChecked = 0, lifetimeLimited = 0, knocked = 0;
+	std::vector<std::string> knockedNames;
 	std::vector<std::string> lifetimeNames;
 	std::vector<std::string> unexplained, badHordes, ridersWithoutSlots;
 	for (size_t b = 0; b < units.size(); b += 42)
@@ -406,6 +430,14 @@ TEST_CASE("move retail: every ground unit and horde template of the install, ord
 				// COMBAT-2 ported LifetimeUpdate (RW 0x7A7F8B): the create-a-hero replacement objects die when their SCHEDULED lifetime runs out, in exactly that frame
 				++lifetimeLimited;
 				lifetimeNames.push_back(r.name);
+			}
+			else if (r.knocked)
+			{
+				// lane COMBAT-4 r3: an enemy threw it down during the sweep (e.g. a Wyrm's AutoAbilityBehavior teleports next to the nearest enemy and fires
+				// WyrmDisappearWeapon / WyrmAppearWeapon, MetaImpactNuggets: the shockwave handler RW 0x6968BC stuns the victim); the sweeps' auto-acquire switch does
+				// not cover abilities. A unit lying stunned does not walk (RW 0x5E3A1B): not a movement failure
+				++knocked;
+				knockedNames.push_back(r.name);
 			}
 			else if (g.ai->movementFailures().count(r.name + ": S-084: ZAxisBehavior other than NO_Z_MOTIVE_FORCE, FLOATING_Z and SCALING_WALLS is not ported") != 0)
 			{
@@ -445,7 +477,16 @@ TEST_CASE("move retail: every ground unit and horde template of the install, ord
 	CHECK(ridersWithoutSlots[1].rfind("MordorHaradrimArcherHordeOnMumakil", 0) == 0);
 	// the pinned totals of this install: 710 templates; the ones that do not walk are still by data or the two unported Oathbreakers (below)
 	CHECK(units.size() == 710);
-	CHECK(moved + still + unported + lifetimeLimited + unexplained.size() == units.size());
+	CHECK(moved + still + unported + lifetimeLimited + knocked + unexplained.size() == units.size());
+	{
+		std::string joined;
+		for (const std::string &n : knockedNames)
+		{
+			joined += " " + n;
+		}
+		MESSAGE("knocked down by an enemy during the sweep (" << knocked << "):" << joined);
+		CHECK(knocked <= 3u); // a few at most: the sweep is a march, not a battle
+	}
 	{
 		std::sort(lifetimeNames.begin(), lifetimeNames.end());
 		std::string joined;

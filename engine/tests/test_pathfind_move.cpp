@@ -66,6 +66,7 @@ struct LocoHostMock : LocomotorHost
 	bool isTurnLimited() const override { return false; }
 	bool isChargeOrdered() const override { return false; }
 	bool physicsMotionDisabled() const override { return false; }
+	bool hasPhysicsModule() const override { return true; } // a unit with a PhysicsBehavior (lane EXIT-1)
 	bool zMotionSuppressed() const override { return false; }
 	unsigned logicFrame() const override;
 	bool containerAllowsBackingUp() const override { return false; }

@@ -133,6 +133,16 @@ public:
 		std::uint64_t updates = 0, moduleUpdates = 0, played = 0, refused = 0, cleaned = 0, redirtied = 0;
 	};
 	const Stats &stats() const { return m_stats; }
+	// lane PERF-3 (tests): the modules of the dirty / clean list from its head, in list order
+	std::vector<const AnimationSoundClientBehavior *> listOrder(bool dirty) const
+	{
+		std::vector<const AnimationSoundClientBehavior *> out;
+		for (const AnimationSoundClientBehavior *m = dirty ? m_dirtyHead : m_cleanHead; m; m = m->m_next)
+		{
+			out.push_back(m);
+		}
+		return out;
+	}
 	size_t moduleCount() const { return m_count; }
 	size_t dirtyCount() const;
 	size_t cleanCount() const;

@@ -305,7 +305,7 @@ std::int32_t counterMath(std::int32_t lhs, int op, std::int32_t rhs, ScriptEngin
 // radius + 0xB8), the row's y, then the next row 2 * radius further (SSE); each object placed (RW 0x70C201, angle 0), its create modules told the
 // build is complete (RW 0x6902F5 -> 0x68D252), its upgrades given (RW 0x693A9A) and its level raised (RW 0x694FB4). INFERENCE / NOT PORTED (S-1186):
 // the transport (+ 0x22C) and its loading, the auto-transport (+ 0x234), the origin waypoint (+ 0x230: the units start at the waypoint here, so
-// no group move follows), the team's OnCreate script (+ 0x240) and created flag, a horde's own upgrade / level slots (RW 0x68C866 0xB4 / 0xB8,
+// no group move follows), a horde's own upgrade / level slots (RW 0x68C866 0xB4 / 0xB8,
 // 0x694BF8 0xC4: the object's own paths run)
 void createReinforcements(ScriptEngine &engine, const std::string &teamName, const std::string &waypointName)
 {
@@ -394,6 +394,7 @@ void createReinforcements(ScriptEngine &engine, const std::string &teamName, con
 		}
 		rowY = SimMath::sseAdd(SimMath::sseMul(radius, 2.0f), rowY);
 	}
+	team->setActive(); // lane CAMP-1H: RW 0x7C8CFA .. 0x7C8D0E: the new team (made inactive, RW 0x7A6E8E) is activated after its units are placed
 }
 
 } // namespace
@@ -458,7 +459,7 @@ bool ScriptActions::executeUnitAction(ScriptEngine &engine, const ScriptActionRe
 	if (name == "TEAM_MERGE_INTO_TEAM")
 	{
 		Team *from = ScriptConditions::team(engine, param(a, 0).stringValue);
-		Team *to = ScriptConditions::team(engine, param(a, 1).stringValue);
+		Team *to = ScriptConditions::team(engine, param(a, 1).stringValue, true); // lane CAMP-1H: RW 0x7C0C75 passes 1 for the target
 		if (!from || !to || from == to)
 		{
 			return true;
@@ -478,6 +479,7 @@ bool ScriptActions::executeUnitAction(ScriptEngine &engine, const ScriptActionRe
 				break;
 			}
 		}
+		to->setActive(); // lane CAMP-1H: RW 0x7C0D8C .. 0x7C0D90
 		return true;
 	}
 	if (name == "UNIT_TELEPORT_TO_WAYPOINT")
@@ -893,8 +895,11 @@ bool ScriptActions::executeUnitAction(ScriptEngine &engine, const ScriptActionRe
 		}
 		return true;
 	}
-	if (name == "SET_REF_TO_NEREST_TEAM_OF_TYPE_OWNED_BY_PLAYER")
+	if (name == "SET_REF_TO_NEREST_TEAM_OF_TYPE_OWNED_BY_PLAYER" || name == "SET_REF_TO_NEREST_TEAM_OF_UNNAMED_TYPE_OWNED_BY_PLAYER")
 	{
+		// lane CAMP-1: the UNNAMED form (RW 0x7CF1E7) is the same call with its flag set: one more filter (RW 0xC36060 -> RW 0x6611DD) keeps only the objects
+		// that are not in the script engine's named cache (RW 0x759601), on both the type and the object list path (RW 0x7C2F85)
+		const bool unnamedOnly = name == "SET_REF_TO_NEREST_TEAM_OF_UNNAMED_TYPE_OWNED_BY_PLAYER";
 		// RW 0x7C3E5E (types, player, team, reference name): the first player of the mask, the team's centre (RW 0x7A02E1: the mean of the live members'
 		// positions), the closest object of the player of the type (TheParitionManager RW 0xA39090, FROM_CENTER_2D, within 1e6; an object list: the
 		// closest per type by 3D distance, RW 0x7C2F85); its name in the cache (RW 0x608397 / 0x60A1D5)
@@ -925,7 +930,9 @@ bool ScriptActions::executeUnitAction(ScriptEngine &engine, const ScriptActionRe
 		}
 		const auto closestOf = [&](const ThingTemplate *tt) -> Object * {
 			auto owned = [p](Object &o) { return o.getControllingPlayer() == p; };
-			auto typed = [tt](Object &o) { return ScriptConditions::equivalentTemplates(o.getTemplate(), tt); };
+			auto typed = [tt, unnamedOnly, &engine](Object &o) {
+				return ScriptConditions::equivalentTemplates(o.getTemplate(), tt) && !(unnamedOnly && engine.isInNamedCache(o));
+			};
 			PartitionFilterFn<decltype(owned)> fOwned(owned);
 			PartitionFilterFn<decltype(typed)> fTyped(typed);
 			return logic.partition().getClosestObject(centre, 1000000.0f, FROM_CENTER_2D, { &fOwned, &fTyped });

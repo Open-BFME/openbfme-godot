@@ -44,8 +44,8 @@ public:
 	// the players of a player parameter (RW 0x758F7C), in index order
 	static std::vector<Player *> players(ScriptEngine &engine, const std::string &parameter);
 	static Player *firstPlayer(ScriptEngine &engine, const std::string &parameter); // RW 0x6A85B6
-	// a team by its (side-qualified) name, ZH ScriptEngine::getTeamNamed (RW 0x759FDA); "<This Team>" is not ported (null)
-	static Team *team(ScriptEngine &engine, const std::string &name);
+	// a team by its (side-qualified) name, ZH ScriptEngine::getTeamNamed (RW 0x759FDA); "<This Team>" is the team script's team, else the condition team
+	static Team *team(ScriptEngine &engine, const std::string &name, bool create = false); // lane CAMP-1H: `create` (RW 0x759FDA's flag)
 	// RW 0x70CF29
 	static bool pointInTrigger(const TriggerArea &t, float x, float y);
 	// RW 0x96E85F: the type names of a type parameter (an object list's types, or the one type)

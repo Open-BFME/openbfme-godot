@@ -2,6 +2,7 @@
 // See GameLogic/Object/Contain/HordeContainRuntime.h.
 
 #include "GameLogic/Object/Contain/HordeContainRuntime.h"
+#include "GameLogic/Module/HordeAIUpdate.h"
 #include "GameLogic/SimMath.h"
 
 #include "Common/StateHash.h"
@@ -127,7 +128,12 @@ UpdateSleepTime HordeContain::update()
 	}
 	if (m_meleeEngaged)
 	{
-		return UPDATE_SLEEP_NONE; // the formation is frozen while the horde melees (COMBAT-1)
+		// lane MOVE-2 r3 (S-1502), RW 0x872FD3 .. 0x872FDD -> 0x870A1B: the melee behaviour's update runs here, before the member pass; the pass then runs every
+		// frame (dirty, RW 0x873155) and moves the members to their melee destinations (slot 7 RW 0x877D89). COMBAT-1 froze the formation instead.
+		if (HordeAIUpdate *hai = dynamic_cast<HordeAIUpdate *>(ai))
+		{
+			hai->containMeleeUpdate();
+		}
 	}
 	if (!ai)
 	{
@@ -454,6 +460,18 @@ Coord3D HordeContain::getMemberFormationPosition(const Object *member) const
 	owner.position = *horde->getPosition();
 	owner.angle = horde->getOrientation();
 	Coord3D pos = owner.position;
+	// lane MOVE-2 r3: RW 0x877D89 asks the melee behaviour first while the horde melees (+ 0x184): its slot 0x34 (Amoeba RW 0x98F819) hands out the member's
+	// melee destination as it is
+	if (m_meleeEngaged)
+	{
+		if (const HordeAIUpdate *hai = dynamic_cast<const HordeAIUpdate *>(horde->getAIUpdateInterface()))
+		{
+			if (hai->meleeDestination(member->getID(), pos))
+			{
+				return pos;
+			}
+		}
+	}
 	if (m_core->slotOf(member->getID()) >= 0)
 	{
 		float slotAngle = 0.0f;

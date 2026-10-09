@@ -6,6 +6,8 @@
 #include "GameClient/ClientEvents.h"
 
 #include "Common/AsciiString.h"
+#include "Common/JobSystem.h"
+#include "Common/Prefetch.h"
 #include "Common/Player.h"
 #include "Common/Team.h"
 #include "GameClient/MapObjectRuntime.h"
@@ -227,10 +229,44 @@ std::vector<DrawableManager::Event> DrawableManager::takeEvents()
 	return out;
 }
 
+void DrawableManager::prefetchAhead(size_t i) const
+{
+	const size_t n = m_slots.size();
+	if (i + 12 < n && m_slots[i + 12])
+	{
+		OPENBFME_PREFETCH(&m_slots[i + 12]->entries());
+	}
+	if (i + 8 < n && m_slots[i + 8])
+	{
+		const Drawable &b = *m_slots[i + 8];
+		if (!b.entries().empty())
+		{
+			OPENBFME_PREFETCH(&b.entries()[0].draw);
+		}
+		if (!b.clientModules().empty())
+		{
+			OPENBFME_PREFETCH(&b.clientModules()[0]);
+		}
+	}
+	if (i + 4 < n && m_slots[i + 4])
+	{
+		const Drawable &c = *m_slots[i + 4];
+		if (!c.entries().empty() && c.entries()[0].draw)
+		{
+			OPENBFME_PREFETCH(c.entries()[0].draw.get());
+		}
+		if (!c.clientModules().empty())
+		{
+			OPENBFME_PREFETCH(c.clientModules()[0].get());
+		}
+	}
+}
+
 void DrawableManager::advance(double elapsedMs)
 {
 	for (size_t i = 1; i < m_slots.size(); ++i)
 	{
+		prefetchAhead(i); // lane PERF-3
 		if (Drawable *d = m_slots[i].get())
 		{
 			d->advanceAnimation(elapsedMs);
@@ -242,15 +278,82 @@ void DrawableManager::advance(double elapsedMs)
 void DrawableManager::syncTransforms(const LogicSnapshot &snapshot, double alpha, bool interpolate)
 {
 	m_scriptFrame = snapshot.frame;
+	// lane COMBAT-4: RW 0x4BF2D8 (W3DModelDraw::replaceModelConditionState): a model draw with DependencySharedModelFlags hands the flags of that set to its dependent
+	// drawables (+ 0xA8, by drawable id; RW 0x67651E clearAndSet on each): Grond's MOVING / TURN_* / BACKING_UP reach its troll crew, whose pushing AnimationStates
+	// need them. INFERENCE (stop S-1791): the dependents are the drawables of the objects the container holds (its riders and crew); the writer of the list is not read
 	for (size_t i = 1; i < m_slots.size(); ++i)
 	{
-		if (Drawable *d = m_slots[i].get())
+		Drawable *d = m_slots[i].get();
+		const ObjectSnapshot *rec = d ? snapshot.find(d->getObjectID()) : nullptr;
+		if (!rec || rec->containedBy == INVALID_ID)
 		{
-			if (const ObjectSnapshot *rec = snapshot.find(d->getObjectID()))
+			continue;
+		}
+		Drawable *container = findByObject(rec->containedBy);
+		if (!container)
+		{
+			continue;
+		}
+		const ModelConditionFlags shared = container->dependencySharedModelFlags();
+		if (shared.any() && d->applyDependencyFlags(shared, container->getModelConditionFlags()))
+		{
+			++m_dependencyUpdates;
+		}
+	}
+	// lane PERF-3: the part of every drawable's sync that reads only the drawable and its record (the interpolated pose and its trigonometry, the construction
+	// look) runs on the client job pool, each chunk writing only its own slots; then, in slot order on this thread, what reaches shared state (the projectile
+	// fade's first sight, the transform and its reaction: the footstep manager's lists). Per drawable the result is syncFromSnapshot's.
+	const size_t slots = m_slots.size();
+	if (!m_parallelSync)
+	{
+		for (size_t i = 1; i < slots; ++i)
+		{
+			if (Drawable *d = m_slots[i].get())
 			{
-				d->startProjectileFade(*rec, snapshot); // lane PROJ-2: RW 0x85EE00 for a launch the drawable has not seen (DrawableFade.cpp)
-				d->syncFromSnapshot(*rec, snapshot.frame, alpha, interpolate);
+				const ObjectSnapshot *rec = snapshot.find(d->getObjectID());
+				d->setSyncedRecord(&snapshot, rec);
+				if (rec)
+				{
+					d->startProjectileFade(*rec, snapshot);
+					d->syncFromSnapshot(*rec, snapshot.frame, alpha, interpolate);
+				}
 			}
+		}
+		m_animationSounds.update();
+		return;
+	}
+	if (m_syncScratch.size() < slots)
+	{
+		m_syncScratch.resize(slots + slots / 2);
+	}
+	// below m_parallelSyncMinimum slots (512) the work is one chunk, run on this thread (waking the pool would cost more than it saves)
+	JobSystem::client().parallelFor(slots, slots < m_parallelSyncMinimum ? slots : 64, [&](size_t, size_t begin, size_t end) {
+		for (size_t i = begin; i < end; ++i)
+		{
+			Drawable::SyncPrep &prep = m_syncScratch[i];
+			prep.rec = nullptr;
+			Drawable *d = i > 0 ? m_slots[i].get() : nullptr;
+			if (!d)
+			{
+				continue;
+			}
+			const ObjectSnapshot *rec = snapshot.find(d->getObjectID());
+			d->setSyncedRecord(&snapshot, rec); // lane PERF-3: the render side's lookup of the same record
+			if (rec)
+			{
+				d->prepareSync(*rec, snapshot.frame, alpha, interpolate, prep);
+			}
+		}
+	});
+	for (size_t i = 1; i < slots; ++i)
+	{
+		prefetchAhead(i); // lane PERF-3
+		Drawable *d = m_slots[i].get();
+		const Drawable::SyncPrep &prep = m_syncScratch[i];
+		if (d && prep.rec)
+		{
+			d->startProjectileFade(*prep.rec, snapshot); // lane PROJ-2: RW 0x85EE00 for a launch the drawable has not seen (DrawableFade.cpp)
+			d->commitSync(prep);
 		}
 	}
 	// lane AUDIO-4: TheAnimationSoundModuleManager's client update (RW 0x83F321), after the animations advanced and the drawables moved

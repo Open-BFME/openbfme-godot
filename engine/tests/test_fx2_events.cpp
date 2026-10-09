@@ -342,7 +342,7 @@ TEST_CASE("fx2 events: a death plays FXListDie's DeathFX on the corpse with the 
 			sdLines.push_back(call.line);
 		}
 	}
-	// the roulette, the sink / destruction / midpoint draws of beginSlowDeath (line 0), then the OCL pick of the INITIAL phase
+	// the roulette (0x32F), the sink / destruction / midpoint draws of beginSlowDeath (0x1A5 / 0x1A6 / 0x1AB, lane COMBAT-4), then the OCL pick of the INITIAL phase
 	REQUIRE(!sdLines.empty());
 	CHECK(sdLines.back() == 0x221);
 	CHECK(std::count(sdLines.begin(), sdLines.end(), 0x221) == 1);
@@ -412,7 +412,8 @@ TEST_CASE("fx2 events: the slow death does nothing when its resolved-entry mask 
 	REQUIRE(w.byId(id) == nullptr);
 	for (const GameLogicRandom::Call &call : w.logic->random().callLog())
 	{
-		CHECK_FALSE((call.file == "SlowDeathBehavior.cpp" && call.line != 0));
+		// the phase picks (OCL 0x221, Weapon 0x22B); the roulette (0x32F) and the timer draws (0x1A5 / 0x1A6 / 0x1AB, lane COMBAT-4) are not phase draws
+		CHECK_FALSE((call.file == "SlowDeathBehavior.cpp" && (call.line == 0x221 || call.line == 0x22B)));
 	}
 	CHECK(rec.events.empty());
 }

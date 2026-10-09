@@ -24,6 +24,7 @@
 #include "Common/Thing/ThingTemplate.h"
 #include "GameLogic/AI/AIAttack.h"
 #include "GameLogic/AI/AIAttackMelee.h"
+#include "GameLogic/AI/AIEmotionStates.h"
 #include "GameLogic/AI/AIApproachMath.h"
 #include "GameLogic/AI/AIWorld.h"
 #include "GameLogic/Combat/CombatNames.h"
@@ -48,6 +49,7 @@ namespace
 const char *const kAmoebaCpp = "HordeMeleeAmoeba.cpp"; // RW string; the line of the draw is not read
 const unsigned kReadyCacheFrames = 15;                 // RotWK 3 * FPS
 const unsigned kWaitPathRetry = 7;                     // RotWK FPS + 2
+const float kNearestMemberStart = 99999.0f;            // RW 0xBDF350 (RW 0x86FA87: the start of the nearest-member search and its range without one)
 const float kCellStep = 10.0f;
 
 HordeContain *hordeContainOf(Object &horde)
@@ -757,7 +759,7 @@ struct HordeMeleeWaitState : AIState
 		{
 			return STATE_FAILURE; // the contact is over: WaitPath
 		}
-		h.meleeTick(*victim);
+		// lane MOVE-2 r3: the melee behaviour's update is the contain's (RW 0x872FD8 -> 0x870A1B, HordeAIUpdate::containMeleeUpdate), not this state's
 		return STATE_CONTINUE;
 	}
 	void onExit(StateExitType) override
@@ -1146,6 +1148,67 @@ void HordeAIUpdate::recentreOnMembers()
 	}
 }
 
+// lane MOVE-2 r3: RW 0x870A1B (read with Ghidra)
+void HordeAIUpdate::containMeleeUpdate()
+{
+	if (m_engagedTarget == 0)
+	{
+		return;
+	}
+	Object *target = getObject()->logic().findObjectByID(m_engagedTarget);
+	if (!target)
+	{
+		endMelee(); // slot 0x138 (RW 0x86C0F9), + 0x2A0 = 0
+		return;
+	}
+	meleeTick(*target); // the melee behaviour's slot 0x14
+	// the horde faces the target's container when it has one (target + 0x27C), else the target: its orientation plus the relative angle (RW 0x4B3D8D, 0x70C31E)
+	Object *look = target->getContainedBy() ? target->getContainedBy() : target;
+	Object *horde = getObject();
+	const float rel = emotionRelAngle(*horde, *look->getPosition());
+	// RW 0x70C31E turns the horde object only; the port's contain would carry the members along unless it is told the move is the horde's own (as recentreOnMembers)
+	HordeContainInterface *hci = horde->getContain() ? horde->getContain()->getHordeContainInterface() : nullptr;
+	if (hci)
+	{
+		hci->setLocomoting(true);
+	}
+	horde->setOrientation(SimMath::addf32(rel, horde->getOrientation()));
+	if (hci)
+	{
+		hci->setLocomoting(false);
+	}
+}
+
+bool HordeAIUpdate::meleeDestination(ObjectID member, Coord3D &out) const
+{
+	const HordeContain *hc = hordeContainOf(*const_cast<HordeAIUpdate *>(this)->getObject());
+	const MeleeBehaviorModuleData *mb = hc ? hc->meleeBehaviorData() : nullptr;
+	if (!mb || mb->m_kind != MeleeBehaviorModuleData::AMOEBA)
+	{
+		return false; // HoldGround RW 0x8F8014 (and the unported Swarm): no destination
+	}
+	for (const MemberRecord &r : m_records)
+	{
+		if (r.id == member)
+		{
+			if (!r.hasDest)
+			{
+				return false;
+			}
+			out = r.dest;
+			return true;
+		}
+	}
+	return false;
+}
+
+bool HordeAIUpdate::meleeAlwaysTurns() const
+{
+	const HordeContain *hc = hordeContainOf(*const_cast<HordeAIUpdate *>(this)->getObject());
+	const MeleeBehaviorModuleData *mb = hc ? hc->meleeBehaviorData() : nullptr;
+	return mb && mb->m_kind == MeleeBehaviorModuleData::AMOEBA;
+}
+
 // RW 0x9902A1: the Amoeba per-frame update (read with Ghidra). See the stop line S-588 for what is inference.
 void HordeAIUpdate::meleeTick(Object &targetIn)
 {
@@ -1312,15 +1375,26 @@ void HordeAIUpdate::meleeTick(Object &targetIn)
 					Object *obj = &target;
 					if (isHordeObject(target))
 					{
+						// lane MOVE-2 r4 (Sol r3): RW 0x86FA87 (the contain's slot 0x48, called with no status filter and no range): over the contain list in its order,
+						// the member whose 3D distance to the cell point (Coord3D::length, the cell at the member's height) is strictly smallest, starting from
+						// RW 0xBDF350; the port measured in the plane over the living members only
 						obj = nullptr;
-						float bd = 0.0f;
-						for (Object *e : aliveMembers(target))
+						float bd = kNearestMemberStart;
+						if (const auto *list = target.getContain() ? target.getContain()->getContainedItemsList() : nullptr)
 						{
-							const float d2 = SimMath::sumSquares2(SimMath::subf32(e->getPosition()->x, p.x), SimMath::subf32(e->getPosition()->y, p.y));
-							if (!obj || d2 < bd)
+							for (Object *e : *list)
 							{
-								obj = e;
-								bd = d2;
+								if (!e)
+								{
+									continue;
+								}
+								const float d = (float)SimMath::length3d(SimMath::subf32(p.x, e->getPosition()->x), SimMath::subf32(p.y, e->getPosition()->y),
+									SimMath::subf32(p.z, e->getPosition()->z));
+								if (d < bd)
+								{
+									obj = e;
+									bd = d;
+								}
 							}
 						}
 						if (!obj)
@@ -1409,9 +1483,10 @@ void HordeAIUpdate::meleeTick(Object &targetIn)
 				rec.dest = bestPos;
 				rec.hasDest = true;
 				pushHistory(rec, bestCell.x, bestCell.y);
-				Coord3D dest = bestPos;
-				dest.z = logic.getGroundHeight(dest.x, dest.y);
-				ai->hordeMemberMoveExplicit(dest);
+				const Coord3D &dest = rec.dest; // MOVE-2 r3 review (Sol): retail keeps the candidate's Z, it does not snap the destination to the terrain height
+				// lane MOVE-2 r3 (S-1502): RW 0x990A8C .. 0x990AB8 only stores the step in the record (destination, + 0x39 set, history) and reserves its cell: the member
+				// walks there through the contain's member pass (slot 7 RW 0x877D89 -> slot 0x34 RW 0x98F819) and the move hub, not by an order given here (the port
+				// ordered hordeMemberMoveExplicit at once and ran no member pass in a melee)
 				// lane PHYS-1: RW 0x990AB8 calls Object::setPathfindGoalPosition (RW 0x68B3BD -> updateGoal 0x8E24D3) with the step's destination on the member's layer
 				// (RW 0x68BBE0): the member's goal reservation moves with the step (before, it stayed on the old cell and RW 0x6F1C90 refused the other members' steps)
 				if (world().mapReady())

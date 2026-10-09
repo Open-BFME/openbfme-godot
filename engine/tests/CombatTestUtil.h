@@ -300,6 +300,10 @@ const char kCombatObjects[] =
 	"    AutoAcquireEnemiesWhenIdle = Yes\n"
 	"    MoodAttackCheckRate = 400\n"
 	"  End\n"
+	// lane EXIT-1: retail infantry carries a PhysicsBehavior (obj + 0x264); without one RW's maintainCurrentPosition (RW 0x5E7CC7) wants the goal-less unit's
+	// locomotor called every frame, so the AI never sleeps and two overlapping idle units step apart
+	"  Behavior = PhysicsBehavior ModuleTag_Physics\n"
+	"  End\n"
 	"  Behavior = SlowDeathBehavior ModuleTag_Death\n"
 	"    DeathTypes = ALL\n"
 	"    SinkDelay = 1000\n"
@@ -329,6 +333,8 @@ const char kCombatObjects[] =
 	"    MaxHealth = 100\n"
 	"  End\n"
 	"  Behavior = AIUpdateInterface ModuleTag_AI\n"
+	"  End\n"
+	"  Behavior = PhysicsBehavior ModuleTag_Physics\n"
 	"  End\n"
 	"  Behavior = DestroyDie ModuleTag_Destroy\n"
 	"  End\n"

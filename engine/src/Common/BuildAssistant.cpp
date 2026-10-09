@@ -401,6 +401,17 @@ bool BuildAssistant::isInProducersCommandSet(Object &builder, const ThingTemplat
 }
 
 // RW 0x793ECB
+bool BuildAssistant::isLineBuildTemplate(GameLogic &logic, const ThingTemplate *what, const Object *builder)
+{
+	// RW 0x793E33: test [what + 0x118], 0x10000000 and the same bit of the builder's template (object + 4)
+	const int bit = ObjectTemplateInfoBuilder::kindOfIndex("WALL_HUB");
+	if (!what || !builder || bit < 0)
+	{
+		return false;
+	}
+	return MaskTest(logic.templateInfo(what->getFinalOverride()).kindOf, (unsigned)bit) && builder->isKindOf((unsigned)bit);
+}
+
 CanMakeType BuildAssistant::canMakeUnit(Object &builder, const ThingTemplate *what, int buildIndex)
 {
 	if (!what && buildIndex == -1)

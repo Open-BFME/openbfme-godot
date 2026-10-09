@@ -24,6 +24,8 @@ var _look := ""           # lane SCRIPT-3: the unit / team the camera follows be
 var _drive_step := 0
 var _base_distance := 520.0
 var _base_pitch := deg_to_rad(-40.0)
+var hud_mode := false      # lane CAMP-1: in the game (scripts/campaign_flow.gd) the HUD's camera rules outside the cinematics (letterbox, a script move, input off)
+var movie_hook := Callable() # lane CAMP-1H: PLAY_MOVIE_IN_GAME's title goes there (scripts/campaign_flow.gd plays it with scripts/movie_player.gd)
 
 
 func setup(w: Node3D, cam: Camera3D, start: Vector3, ui_parent: Node, audio: Node = null) -> void:
@@ -81,6 +83,8 @@ func _process(delta: float) -> void:
 		for p in r.params:
 			ps.append(p.string if not String(p.string).is_empty() else (str(p.real) if p.type == 1 else str(p.int)))
 		print("SCRIPTREQ frame %d %s(%s) [%s]" % [r.frame, r.action, ", ".join(ps), r.script])
+		if r.action == "PLAY_MOVIE_IN_GAME" and movie_hook.is_valid() and r.params.size() > 0:
+			movie_hook.call(String(r.params[0].string))
 	var st: Dictionary = world.update_script_view(delta * 1000.0, {"x": target.x, "y": target.y, "z": target.z, "angle": angle})
 	if st.has_target and (_look.is_empty() or st.moving): # a drive's follow (lane SCRIPT-3) holds the camera between the script's moves
 		target = Vector3(st.x, st.y, world.get_ground_height(st.x, st.y))
@@ -91,7 +95,8 @@ func _process(delta: float) -> void:
 	# ZOOM_CAMERA / PITCH_CAMERA: factors of the default framing (S-1182)
 	distance = _base_distance * float(st.get("zoom", 1.0))
 	pitch = _base_pitch * float(st.get("pitch", 1.0))
-	_place_camera()
+	if not hud_mode or st.letterbox or st.moving or st.input_disabled:
+		_place_camera()
 	if _audio != null:
 		_audio.set_listener(Vector3(target.x, target.y, target.z), Vector3(sin(angle), cos(angle), 0.0))
 	var size := get_viewport().get_visible_rect().size
@@ -130,6 +135,9 @@ func _place_camera() -> void:
 
 ## lane SCRIPT-2: the player's part of MAP ANG Angmar's first objective (the heroes reach Rogash, his attackers fall), by the GameWorld test hooks
 func _drive() -> void:
+	if drive.begins_with("kill:"):
+		_drive_kill()
+		return
 	if drive == "rhudaur":
 		_drive_rhudaur()
 		return
@@ -216,3 +224,18 @@ func _drive_rhudaur() -> void:
 			if f >= _drive_frame + 25:
 				_follow("Witch King")
 				_drive_step = 11
+
+
+## lane CAMP-1: --cine-drive=kill:<name>@<frame> (the montage of scripts/campaign_flow.gd's missions): the camera follows the named unit from 150 frames
+## before, then the test hook kills it (the mission's decisive moment: a tower, a citadel, the Witch King); the map's scripts play the rest
+func _drive_kill() -> void:
+	var spec := drive.substr(5)
+	var at := int(spec.get_slice("@", 1))
+	var name := spec.get_slice("@", 0)
+	var f: int = world.get_frame()
+	if _drive_step == 0 and f >= at - 150:
+		_follow(name)
+		_drive_step = 1
+	elif _drive_step == 1 and f >= at:
+		print("DRIVE kill %s: %s" % [name, world.debug_script_kill(name)])
+		_drive_step = 2

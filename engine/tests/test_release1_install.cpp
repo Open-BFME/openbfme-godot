@@ -138,6 +138,8 @@ TEST_CASE("release1: Wine registry values (escapes, sections, str(2), case)")
 	CHECK_FALSE(wineRegistryValue(reg, "Software\\Microsoft\\Windows\\CurrentVersion\\App Paths\\lotrbfme2.exe", "CacheSize", v));
 }
 
+#ifndef _WIN32 // Wine prefixes exist only on Linux hosts (discover() takes the registry branch on Windows), and on Windows "dosdevices" / "c:" is a
+               // drive-relative path, not a folder name
 TEST_CASE("release1: Windows paths inside a Wine prefix")
 {
 	TempDir t("prefix");
@@ -218,6 +220,7 @@ TEST_CASE("release1: discovery in Wine, Proton and Lutris prefixes (Linux)")
 	env.env["WINEPREFIX"] = (home / "Games/bfme").u8string();
 	CHECK(fs::path(winePrefixes(env)[0]) == fs::canonical(home / "Games/bfme"));
 }
+#endif
 
 TEST_CASE("release1: discovery on Windows (registry first, then the folder hints)")
 {

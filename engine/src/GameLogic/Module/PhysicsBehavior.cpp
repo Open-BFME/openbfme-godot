@@ -16,6 +16,9 @@
 #include "GameLogic/BitFlags.h"
 #include "GameLogic/Combat/BezierSegment.h"
 #include "GameLogic/Combat/CombatNames.h"
+#include "GameLogic/Combat/CombatState.h"
+#include "GameLogic/Damage.h"
+#include "GameLogic/Module/ActiveBody.h"
 #include "GameLogic/FXEvents.h"
 #include "GameLogic/Module/AIUpdate.h"
 #include "GameLogic/GameLogic.h"
@@ -25,6 +28,7 @@
 #include "GameLogic/SimMath.h"
 
 #include <cstddef>
+#include <variant>
 #include <stdexcept>
 
 namespace
@@ -691,4 +695,168 @@ bool ObjectKnockback::apply(Object &obj, float angleDegrees, float power, float 
 		ai->wakeUpNow(); // AI vslot 0x264 (RW 0x662552)
 	}
 	return true;
+}
+
+// RW 0x403175 Coord3D::normalize
+void ObjectKnockback::normalize(Coord3D &v)
+{
+	const float len = SimMath::fstpDword(retailLength(v.x, v.y, v.z)); // RW 0x403111, fstp dword
+	if (len != 0.0f)                                                     // fldz; fucompi
+	{
+		const float inv = SimMath::divf32(1.0f, len);
+		v.x = SimMath::mulf32(v.x, inv);
+		v.y = SimMath::mulf32(v.y, inv);
+		v.z = SimMath::mulf32(v.z, inv);
+	}
+}
+
+float ObjectKnockback::shockwaveResistance(const Object &obj)
+{
+	const ThingTemplate *tt = static_cast<const ThingTemplate *>(obj.getTemplate())->getFinalOverride();
+	const FieldValue *v = tt->findField("ShockwaveResistance"); // + 0x620, parseReal (RW 0x42ED00); the ThingTemplate constructor leaves 0
+	const float *f = v ? std::get_if<float>(v) : nullptr;
+	return f ? *f : 0.0f;
+}
+
+// RW 0x6968BC Object's shockwave handler (lane COMBAT-4). TARGET FACTS (RotWK game.dat, caveat S-001), `d` the DamageInfo:
+//   * RW 0x6968D7 / 0x696E39: the drawable's projectile type (+ 0x360) is cleared, then set to D+0x2C at the end (client);
+//   * nothing unless D+0x40 (amount) > 0 and D+0x44 (radius) > 0 (comiss); cyclonic = D+0x68 != 0; nothing without a PhysicsBehavior (+ 0x264) or when it is
+//     stunned (+ 0x5C) and the hit is not cyclonic;
+//   * RW 0x696947 .. 0x696A0E (drawable present and not stunned): an audio event of the template's (RW 0x68FFBD / 0x68FFD6) through TheAudio (RW 0xDE42FC slot 0x64):
+//     client, not ported;
+//   * RW 0x68E16A(cyclonic): the template's ShockwaveResistance (+ 0x620) >= 100 (RW 0xBD88D8) and not (cyclonic and KindOf SHIP, template + 0x11F bit 7): the
+//     object stands up (RW 0x792AFF) and nothing more;
+//   * RESIST_KNOCKBACK (attribute modifier 10, RW 0x804F39 through the pool RW 0x68C4A6) at least 1.0: nothing;
+//   * len = (float)|D+0x34| (RW 0x403111); m = min(len / radius, 1.0) (divss, comiss / ja); r = GameLogicRandomValueReal(0.85, 1.15) (RW 0xBFB4BC / 0xC12234,
+//     "Object.cpp" line 0x1030);
+//   * ClearRadius (D+0x50): c = ClearMult (D+0x54), 0 when negative; the planar unit vector of D+0x34 (normalize with z = 0); the landing = D+0x5C + dir * (((radius *
+//     c) * r) * m + radius) (SSE), its z the terrain height there (TheTerrainLogic RW 0xDE4690 slot 0x1C with the layer RW 0x680A75, S-161: the ground); flyTo(landing,
+//     ClearFlingHeight (D+0x58) * r, amount) (RW 0x792997);
+//   * otherwise: s = 1 - (1 - taper (D+0x48)) * m; dir = normalize(D+0x34) (RW 0x403175);
+//       not cyclonic: f = (amount * s) * r; v = dir * f (SSE: f * x, y * f, f * z); v.z = |v| (RW 0x403111, x87) * ZMult (D+0x4C) * r (fmul dword, fstp);
+//       cyclonic: src = findObjectByID(D+0x30); none: v = dir (no strength); else t = 1 - ((src.z - obj.z) * -1.0) / radius (RW 0x661673, RW 0xBD19DC);
+//         f = ((amount * t) * s) * r; r2 = GameLogicRandomValueReal(0.65, 1.35) (RW 0xBE43D0 / 0xBE43F4, line 0x107C); t < 0: f *= 2.0 (RW 0xBD889C); v = dir * f;
+//         v.z = (1 - d2 / (radius * radius)) * 0.5 * amount * r2 (x87; d2 = RW 0x66137C, the planar squared distance obj - src, kept wide);
+//       KindOf SHIP (template + 0x11C bit 31): a positive v.z is negated; otherwise a negative v.z is negated (0 - z); fling(v, 0, 0) (RW 0x792DBD);
+//   * then: STUNNED_FLAILING (obj + 0x118 bit 31, RW 0x68B53C) when not set; stun(1) (RW 0x792A69); with an AI whose state (RW 0x662D70: the temporary state's id, else
+//     the current one's) is 0x2D (RW AIRampageState, vtable 0xC28068): the body's last damager (body slot 0x40 = body + 0x30, its + 8) scores the kill unless the object
+//     is dead (RW 0x6955BC(obj, 1)), and Object::kill(UNRESISTABLE, NORMAL) twice (RW 0x698EC3); AI slot 0x264 (wake up); RW 0x67B4B7 on the drawable (client).
+// INFERENCE: the port's AI machine has no temporary state id apart from its current state (AIUpdateInterface::currentStateId); no ported state has id 0x2D.
+void ObjectKnockback::shockWave(Object &obj, const DamageInfo &info)
+{
+	const DamageInfoInput &d = info.m_input;
+	if (!(d.m_shockWaveAmount > 0.0f) || !(d.m_shockWaveRadius > 0.0f))
+	{
+		return;
+	}
+	const bool cyclonic = d.m_cyclonicFactor != 0.0f; // ucomiss; lahf; test ah, 0x44 (an unordered NaN counts as cyclonic)
+	PhysicsBehavior *phys = PhysicsBehavior::find(obj);
+	if (!phys || (phys->isStunned() && !cyclonic))
+	{
+		return;
+	}
+	GameLogic &logic = obj.logic();
+	CombatState::Counters &counters = logic.combat().counters();
+	static const int kShip = ObjectTemplateInfoBuilder::kindOfIndex("SHIP");
+	// RW 0x68E16A
+	if (shockwaveResistance(obj) >= 100.0f && !(cyclonic && obj.isKindOf((unsigned)kShip)))
+	{
+		phys->standUp(); // RW 0x792AFF
+		++counters.shockwaveStandUps;
+		return;
+	}
+	float resist = 0.0f; // RW 0x696A39: the pool's sum (it starts at 0); an object without a pool leaves the local unwritten in RW (every retail object has one)
+	obj.attributeModifierSum(10, nullptr, resist); // RESIST_KNOCKBACK
+	if (resist >= 1.0f)
+	{
+		return;
+	}
+	const float len = SimMath::fstpDword(retailLength(d.m_shockWaveVector.x, d.m_shockWaveVector.y, d.m_shockWaveVector.z));
+	const float ratio = SimMath::divf32(len, d.m_shockWaveRadius);
+	const float m = ratio > 1.0f ? 1.0f : ratio;
+	const float r = logic.random().getValueReal(0.85f, 1.15f, "Object.cpp", 0x1030);
+	if (d.m_shockWaveClearRadius)
+	{
+		const float c = 0.0f > d.m_shockWaveClearMult ? 0.0f : d.m_shockWaveClearMult;
+		Coord3D dir{ d.m_shockWaveVector.x, d.m_shockWaveVector.y, 0.0f };
+		normalize(dir);
+		const float dist = SimMath::addf32(SimMath::mulf32(SimMath::mulf32(SimMath::mulf32(d.m_shockWaveRadius, c), r), m), d.m_shockWaveRadius);
+		Coord3D landing;
+		landing.x = SimMath::addf32(d.m_shockWaveClearCenter.x, SimMath::mulf32(dir.x, dist));
+		landing.y = SimMath::addf32(d.m_shockWaveClearCenter.y, SimMath::mulf32(dir.y, dist));
+		landing.z = logic.getGroundHeight(landing.x, landing.y); // TheTerrainLogic slot 0x1C (the layer height: S-161 the ground)
+		phys->flyTo(landing, SimMath::mulf32(d.m_shockWaveClearFlingHeight, r), d.m_shockWaveAmount); // RW 0x792997
+	}
+	else
+	{
+		const float s = SimMath::subf32(1.0f, SimMath::mulf32(SimMath::subf32(1.0f, d.m_shockWaveTaperOff), m));
+		Coord3D v = d.m_shockWaveVector;
+		normalize(v);
+		if (!cyclonic)
+		{
+			const float f = SimMath::mulf32(SimMath::mulf32(d.m_shockWaveAmount, s), r);
+			v.x = SimMath::mulf32(f, v.x);
+			v.y = SimMath::mulf32(v.y, f);
+			v.z = SimMath::mulf32(f, v.z);
+			v.z = SimMath::fstpDword(SimMath::pc24MulW(SimMath::pc24MulW(retailLength(v.x, v.y, v.z), (double)d.m_shockWaveZMult), (double)r));
+		}
+		else if (Object *src = logic.findObjectByID(d.m_shockWaveSourceID))
+		{
+			const Coord3D &op = *obj.getPosition();
+			const Coord3D &sp = *src->getPosition();
+			const float gz = SimMath::subf32(sp.z, op.z); // RW 0x5E3C12: src - obj
+			const float t = SimMath::subf32(1.0f, SimMath::divf32(SimMath::mulf32(gz, -1.0f), d.m_shockWaveRadius));
+			float f = SimMath::mulf32(SimMath::mulf32(SimMath::mulf32(d.m_shockWaveAmount, t), s), r);
+			const float r2 = logic.random().getValueReal(0.65f, 1.35f, "Object.cpp", 0x107C);
+			if (0.0f > t)
+			{
+				f = SimMath::mulf32(f, 2.0f);
+			}
+			v.x = SimMath::mulf32(v.x, f);
+			v.y = SimMath::mulf32(v.y, f);
+			v.z = SimMath::mulf32(f, v.z);
+			// RW 0x66137C: x87 (obj.x - src.x)^2 + (obj.y - src.y)^2, wide
+			const double dx = SimMath::pc24SubW((double)op.x, (double)sp.x);
+			const double dy = SimMath::pc24SubW((double)op.y, (double)sp.y);
+			const double d2 = SimMath::pc24AddW(SimMath::pc24MulW(dx, dx), SimMath::pc24MulW(dy, dy));
+			const double rr = SimMath::pc24MulW((double)d.m_shockWaveRadius, (double)d.m_shockWaveRadius);
+			const double k = SimMath::pc24SubW(1.0, SimMath::pc24DivW(d2, rr)); // fdivp; fsubr 1.0
+			v.z = SimMath::fstpDword(SimMath::pc24MulW(SimMath::pc24MulW(SimMath::pc24MulW(k, 0.5), (double)d.m_shockWaveAmount), (double)r2));
+		}
+		if (obj.isKindOf((unsigned)kShip))
+		{
+			if (v.z > 0.0f)
+			{
+				v.z = SimMath::subf32(0.0f, v.z);
+			}
+		}
+		else if (0.0f > v.z)
+		{
+			v.z = SimMath::subf32(0.0f, v.z);
+		}
+		phys->fling(v, 0, 0); // RW 0x792DBD
+	}
+	++counters.shockwaveFlings;
+	if (!obj.testModelCondition(physNames().flailing))
+	{
+		obj.setModelConditionState(physNames().flailing, true); // + 0x118 bit 31 (RW 0x68B53C)
+	}
+	phys->setStunned(true); // RW 0x792A69(1)
+	AIUpdateInterface *ai = obj.getAIUpdateInterface();
+	if (ai && ai->currentStateId() == 0x2D)
+	{
+		const ActiveBody *body = dynamic_cast<const ActiveBody *>(obj.getBodyModule());
+		Object *killer = body ? logic.findObjectByID(body->lastDamager()) : nullptr;
+		if (killer && !obj.isEffectivelyDead())
+		{
+			killer->scoreTheKill(obj, 1); // RW 0x6955BC
+		}
+		obj.kill(DEATH_NORMAL); // RW 0x698EC3(8, 0), twice
+		obj.kill(DEATH_NORMAL);
+		++counters.shockwaveRampageKills;
+	}
+	if (AIUpdateInterface *ai2 = obj.getAIUpdateInterface())
+	{
+		ai2->wakeUpNow(); // AI slot 0x264
+	}
 }

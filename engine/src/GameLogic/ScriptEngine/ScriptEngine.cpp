@@ -9,6 +9,10 @@
 #include "Common/StateHash.h"
 #include "Common/Team.h"
 #include "GameLogic/Module/AIUpdate.h"
+#include "GameLogic/Module/BehaviorModule.h"
+#include "GameLogic/Module/EmotionModules.h"
+#include "GameLogic/Object/PartitionManager.h"
+#include "GameLogic/ObjectTemplateInfo.h"
 #include "GameLogic/AI/AIHunt.h"
 #include "GameLogic/AI/AIWaypointPath.h"
 #include "GameClient/MapChunks.h"
@@ -95,6 +99,8 @@ void ScriptEngine::reset()
 {
 	m_loaded = false;
 	m_firstUpdate = true;
+	m_gameDifficulty = 1;                  // lane CAMP-1H: RW 0x609851 (+ 0x1A5C4 = 1)
+	m_objectsReceiveDifficultyBonus = true; // lane CAMP-1H: RW 0x609857 (+ 0x1A5D5 = 1)
 	m_sides.clear();
 	m_counters.clear();
 	m_flags.clear();
@@ -114,6 +120,8 @@ void ScriptEngine::reset()
 		m_acquiredSciences[i].clear(p ? &p->science() : nullptr);
 	}
 	m_audioTimers.clear();
+	m_genericScripts.clear(); // lane CAMP-1H
+	m_thisTeam = nullptr;
 	m_stats = Stats();
 }
 
@@ -406,6 +414,18 @@ void ScriptEngine::nameInCache(const std::string &name, Object &obj)
 	m_namedObjects.emplace_back(name, obj.getID());
 }
 
+bool ScriptEngine::isInNamedCache(const Object &obj) const
+{
+	for (const auto &e : m_namedObjects)
+	{
+		if (e.second == obj.getID())
+		{
+			return true;
+		}
+	}
+	return false;
+}
+
 Object *ScriptEngine::getUnitNamed(const std::string &name) const
 {
 	if (name.empty())
@@ -488,7 +508,8 @@ void ScriptEngine::update()
 		m_currentPlayer = nullptr;
 		m_currentSide.clear();
 	}
-	// RW 0x6A8541 (team states) and RW 0x862535: not ported (S-1185); then the sequential scripts (RW 0x60C441)
+	// lane CAMP-1H: RW 0x6A8541 (ThePlayerList->updateTeamStates); RW 0x862535 is not ported (S-1185); then the sequential scripts (RW 0x60C441)
+	updateTeamStates();
 	updateSequentialScripts();
 }
 
@@ -612,8 +633,30 @@ void ScriptEngine::executeScript(RScript &s)
 	m_currentScript = saved;
 }
 
-// RW 0x60930F
+// RW 0x60930F (team, player) as executeScript calls it (RW 0x609B89 / 0x609C55: no team, no player): + 0x1A210 is cleared around the conditions (lane
+// CAMP-1H: inside a team script a called script's conditions do not see its team; its actions do), the current player stays
 bool ScriptEngine::evaluateConditions(const Script &s)
+{
+	return evaluateConditions(s, nullptr);
+}
+
+// RW 0x60930F: + 0x1A210 = team; the current player (+ 0x1A230) = the team's controlling player (RW 0x79FD6F), else unchanged; both restored after
+bool ScriptEngine::evaluateConditions(const Script &s, Team *team)
+{
+	Team *const savedTeam = m_thisTeam;
+	Player *const savedPlayer = m_currentPlayer;
+	m_thisTeam = team;
+	if (team && team->getControllingPlayer())
+	{
+		m_currentPlayer = team->getControllingPlayer();
+	}
+	const bool r = evaluateConditionsNoContext(s);
+	m_thisTeam = savedTeam;
+	m_currentPlayer = savedPlayer;
+	return r;
+}
+
+bool ScriptEngine::evaluateConditionsNoContext(const Script &s)
 {
 	for (const OrCondition &orc : s.orConditions)
 	{
@@ -654,7 +697,13 @@ bool ScriptEngine::evaluateCondition(const ScriptCondition &c)
 	case 2: return evaluateFlag(c);
 	case 3: return true;
 	case 4: return evaluateTimer(c);
-	default: return ScriptConditions::evaluate(*this, c);
+	default:
+	{
+		// lane CAMP-1: TheScriptConditions vslot 0x38 is RW 0x7ED72C (vtable RW 0xC4BE78 + 0x38), which runs RW 0x7EB7CD and inverts the answer when the
+		// condition's + 0x4D (the v5 second flag, the editor's NOT) is set; the ordinals 0 .. 4 above are the engine's own and never inverted
+		const bool result = ScriptConditions::evaluate(*this, c);
+		return c.flagB4D ? !result : result;
+	}
 	}
 }
 
@@ -1231,6 +1280,441 @@ void ScriptEngine::callSubroutine(const ScriptActionRec &a)
 	--m_callDepth;
 }
 
+// ---- lane CAMP-1H: the team scripts ------------------------------------------------------------------------------------------------------------
+// TARGET FACTS (rotwk201_game.exe, caveat S-001); the donor is ZH Team::updateState / updateGenericScripts (Team.cpp) and ScriptEngine::runScript,
+// RotWK differs where noted.
+
+// RW 0x60BD42 (side, name, team): the side (the team prototype's owner, prototype + 0x10, from Team::updateState) is made current (RW 0x60BDAE ->
+// RW 0x604243) before the name is looked up, so a plain name is that side's script
+void ScriptEngine::runScript(const std::string &side, const std::string &name, Team *team)
+{
+	if (name.empty() || name == "<none>")
+	{
+		return;
+	}
+	if (++m_callDepth > 64)
+	{
+		--m_callDepth;
+		note("team script recursion deeper than 64: " + name);
+		return;
+	}
+	Team *const savedTeam = m_thisTeam;
+	Player *const savedPlayer = m_currentPlayer;
+	const std::uint32_t savedConditionTeam = m_conditionTeam;
+	const std::string savedSide = m_currentSide;
+	m_thisTeam = team;          // + 0x1A210
+	m_conditionTeam = 0;        // + 0x1A218
+	if (team)
+	{
+		m_currentPlayer = team->getControllingPlayer(); // + 0x1A230 (RW 0x79FD6F; a team without one: none)
+	}
+	else
+	{
+		m_currentPlayer = nullptr;
+	}
+	m_currentSide = side;
+	const std::string calledSide = qualify(name).first;
+	// RW 0x6049DD (a group of that name) first, then RW 0x604A5D (a script)
+	if (RGroup *g = findGroup(name))
+	{
+		if (!g->subroutine)
+		{
+			note("***Attempting to call script that is not a subroutine: " + name);
+		}
+		else if (g->active)
+		{
+			m_currentSide = calledSide; // RW 0x604243 (+ 0x1A20C)
+			executeScripts(g->scripts);
+		}
+	}
+	else if (RScript *sc = findScript(name))
+	{
+		if (sc->def->isSubroutine)
+		{
+			m_currentSide = calledSide;
+			executeScript(*sc);
+		}
+		else
+		{
+			note("***Attempting to call script that is not a subroutine: " + name);
+		}
+	}
+	else
+	{
+		note("***Script not defined: " + name);
+	}
+	m_currentSide = savedSide;
+	m_currentPlayer = savedPlayer;
+	m_conditionTeam = savedConditionTeam;
+	m_thisTeam = savedTeam;
+	--m_callDepth;
+}
+
+void ScriptEngine::updateTeamStates()
+{
+	// RW 0x6A8541: the 20 slots (RW 0x6ABE5B per player: Player + 0x34C, the prototypes in the order the player received them; RW 0x7A676D each
+	// prototype's instance list from its head). The port's prototypes are in creation order, which is the order a player received them
+	PlayerList &players = m_logic.players();
+	for (int i = 0; i < players.getPlayerCount(); ++i)
+	{
+		const Player *p = players.getNthPlayer(i);
+		if (!p)
+		{
+			continue;
+		}
+		for (const auto &proto : players.teams().prototypes())
+		{
+			if (proto->getControllingPlayer() != p)
+			{
+				continue;
+			}
+			// the instance list from its head: the newest first (a team script may add instances: the ones made now are not visited in this pass)
+			const std::vector<Team *> instances(proto->teams().rbegin(), proto->teams().rend());
+			for (Team *t : instances)
+			{
+				updateTeamState(*t);
+			}
+		}
+	}
+}
+
+namespace
+{
+// RW 0x7A208C's member count: a member whose contain is a horde (Object + 0x258, its slot 0x7C) counts its members (slot 0x180(0): the contain count;
+// the field the horde slot adds, interface + 0x58, is taken as 0 as in HordeBanner.cpp), any other member counts 1
+std::int32_t unitCount(const Object &o)
+{
+	const ContainModuleInterface *c = o.getContain();
+	if (c && const_cast<ContainModuleInterface *>(c)->getHordeContainInterface())
+	{
+		return (std::int32_t)c->getContainCount();
+	}
+	return 1;
+}
+
+bool kindOf(const Object &o, int bit)
+{
+	return bit >= 0 && o.isKindOf((unsigned)bit);
+}
+} // namespace
+
+// RW 0x7A208C Team::updateState
+void ScriptEngine::updateTeamState(Team &t)
+{
+	TeamPrototype *proto = t.getPrototype();
+	if (!proto)
+	{
+		return;
+	}
+	Team::ScriptState &st = t.scriptState();
+	// (+ 0x5C, the entered / exited flag, is cleared here in retail; the port computes it from the members' enter / exit frames: S-1365)
+	if (!st.active)
+	{
+		return;
+	}
+	const TeamTemplateScripts &ts = proto->templateScripts();
+	const std::string ownerSide = proto->getControllingPlayer() ? proto->getControllingPlayer()->getPlayerName() : std::string(); // prototype + 0x10
+	// the creation step (RW 0x7A20C8 .. 0x7A221B): once the team is not being built (+ 0x113) and ready (RW 0x7A09E4)
+	if (st.created && !st.beingBuilt && teamReady(t))
+	{
+		st.created = false;
+		st.ready = true;
+		if (!ts.onCreate.empty())
+		{
+			++m_stats.teamScripts["OnCreate"];
+		}
+		runScript(ownerSide, ts.onCreate, &t); // + 0x1EC (TeamTemplateInfo + 0xC0)
+		if (!ts.eventsList.empty())
+		{
+			// + 0x1F0: the event list (RW 0x7396E8) handed to every member with an AI (RW 0x662597): not ported (S-1365)
+			note("[S-1365] teamEventsList '" + ts.eventsList + "' of team " + proto->getName() + " is not handed to the members");
+		}
+		if (!ts.onDestroyed.empty())
+		{
+			// + 0x208: the units now (every member, the dead too: RW 0x7A2188 .. 0x7A21C9) and the threshold (+ 0x20C real): RW 0x7A21CE .. 0x7A21E2
+			// cvtsi2ss cur; mulss threshold * cur; subss cur - that; cvttss2si; clamped to [0, cur - 1]
+			for (const Object *o = t.getFirstMember(); o; o = o->friend_teamNext())
+			{
+				st.curUnits += unitCount(*o);
+			}
+			const float cur = SimMath::sseFromInt32(st.curUnits);
+			std::int32_t th = SimMath::cvttss2si(SimMath::sseSub(cur, SimMath::sseMul(ts.destroyedThreshold, cur)));
+			if (th > st.curUnits - 1)
+			{
+				th = st.curUnits - 1;
+			}
+			if (th < 0)
+			{
+				th = 0;
+			}
+			st.destroyThreshold = th;
+		}
+		// RW 0x695003 per member (the object's upgrade list + 0x4B4 and veterancy + 0x4B8): the port's creators give them when they make the unit
+	}
+	if (!st.ready)
+	{
+		return;
+	}
+	if (!t.hadMembers() && t.getFirstMember()) // RW 0x7A2230: + 0x128 (RW 0x7A11FF: a first member)
+	{
+		t.setHadMembers();
+	}
+	// enemy sighted / all clear (RW 0x7A2252 ..): every 8th frame of this team ((team id ^ frame) & 7 == 0), a living member that sees an enemy
+	if (st.checkEnemySighted && ((t.getID() ^ m_logic.getFrame()) & 7u) == 0)
+	{
+		st.prevSeeEnemy = st.seeEnemy;
+		st.seeEnemy = false;
+		static const int kInert = ObjectTemplateInfoBuilder::kindOfIndex("INERT"), kMoveOnly = ObjectTemplateInfoBuilder::kindOfIndex("MOVE_ONLY");
+		for (Object *m = t.getFirstMember(); m; m = m->friend_teamNext())
+		{
+			if (m->isEffectivelyDead()) // + 0x458 bit 0
+			{
+				continue;
+			}
+			// ThePartitionManager's closest object (RW 0xA39090, 2D centres) within the member's vision range (RW 0x68E43B) with the filters RW 0xC1D66C
+			// (canSee(o, -1) == true), RW 0x46E72F(0, 0x59, 0x86) (not INERT / MOVE_ONLY), RW 0xC0F374 (the same off-map status, Object + 0x458 bit 3:
+			// INFERENCE: every object is on the map here), RW 0xC10E20 (alive), RW 0xC11DC0 (the member's relationship to it is ENEMIES)
+			const float range = AIUpdateInterface::objectVisionRangeOf(*m);
+			PartitionFilterFn filter([&](Object &o) {
+				if (&o == m || o.isEffectivelyDead() || kindOf(o, kInert) || kindOf(o, kMoveOnly))
+				{
+					return false;
+				}
+				if (m->getRelationship(o) != ENEMIES)
+				{
+					return false;
+				}
+				return EmotionModules::canSeeObject(*m, o, range);
+			});
+			if (m_logic.partition().getClosestObject(*m->getPosition(), range, FROM_CENTER_2D, { &filter }))
+			{
+				st.seeEnemy = true;
+				break;
+			}
+		}
+		if (st.prevSeeEnemy != st.seeEnemy)
+		{
+			++m_stats.teamScripts[st.seeEnemy ? "EnemySighted" : "AllClear"];
+			runScript(ownerSide, st.seeEnemy ? ts.enemySighted : ts.allClear, &t); // + 0xD0 / + 0xD4
+		}
+	}
+	// the destroyed check (RW 0x7A22F0 ..): the living units now; a change at or under the threshold runs the script once
+	if (!ts.onDestroyed.empty())
+	{
+		const std::int32_t prev = st.curUnits;
+		st.curUnits = 0;
+		for (const Object *o = t.getFirstMember(); o; o = o->friend_teamNext())
+		{
+			if (!o->isEffectivelyDead())
+			{
+				st.curUnits += unitCount(*o);
+			}
+		}
+		if (st.curUnits != prev && st.curUnits <= st.destroyThreshold)
+		{
+			++m_stats.teamScripts["OnDestroyed"];
+			runScript(ownerSide, ts.onDestroyed, &t); // + 0xDC
+			st.destroyThreshold = -1;
+		}
+	}
+	// the idle check (RW 0x7A2377 ..): every living member with an AI idle (AI vslot 0x1B8), twice in a row
+	if (!ts.onIdle.empty())
+	{
+		bool idle = true, any = false;
+		for (Object *o = t.getFirstMember(); o; o = o->friend_teamNext())
+		{
+			if (o->isEffectivelyDead())
+			{
+				continue;
+			}
+			if (const AIUpdateInterface *ai = o->getAIUpdateInterface())
+			{
+				any = true;
+				if (!ai->isIdle())
+				{
+					idle = false;
+				}
+			}
+		}
+		if (any && idle && st.wasIdle)
+		{
+			++m_stats.teamScripts["OnIdle"];
+			runScript(ownerSide, ts.onIdle, &t); // + 0xC8
+		}
+		st.wasIdle = idle;
+	}
+	// RW 0x7A23E4 ..: when every living member with an AI is SUPPORT (template + 0x123 bit 2), the team goes to its owner's default team (RW 0x7A12F4)
+	{
+		static const int kSupport = ObjectTemplateInfoBuilder::kindOfIndex("SUPPORT");
+		bool any = false, other = false;
+		for (Object *o = t.getFirstMember(); o; o = o->friend_teamNext())
+		{
+			if (!o->isEffectivelyDead() && o->getAIUpdateInterface())
+			{
+				any = true;
+				if (!kindOf(*o, kSupport))
+				{
+					other = true;
+					break;
+				}
+			}
+		}
+		if (any && !other)
+		{
+			handTeamToDefault(t);
+		}
+	}
+	// NOT PORTED (S-1365): the attacker records' expiry (RW 0x7A1FB1 / 0x7A2004: + 0x140 after 900 frames, + 0x13C after 3000) and the team's vslot 0x14
+	// (RW 0x7A59CB, a threat record)
+}
+
+// RW 0x7A09E4: a team flagged + 0x112 (built by an AIPlayer, not ported: never set here) waits until no member is mid-creation (RW 0x44DDEC(2)) and every
+// HORDE member's horde has members and is complete (horde slots 0xA4 / 0x9C)
+bool ScriptEngine::teamReady(const Team &t) const
+{
+	return !t.scriptState().wasBuilt;
+}
+
+// RW 0x7A12F4: a team with an owner gives its members to the owner's default team (RW 0x7A0F74, not to itself); without an owner (+ 8 of the prototype)
+// every member leaves its team (RW 0x69954A(null)): not ported (the port's teams always have an owner; noted)
+void ScriptEngine::handTeamToDefault(Team &t)
+{
+	Player *owner = t.getPrototype() ? t.getPrototype()->getControllingPlayer() : nullptr;
+	if (!owner)
+	{
+		note("[S-1365] a SUPPORT-only team without an owner (RW 0x7A12F4's null branch) keeps its members");
+		return;
+	}
+	Team *def = owner->getDefaultTeam();
+	if (!def || def == &t)
+	{
+		return;
+	}
+	while (Object *o = t.getFirstMember())
+	{
+		o->setTeam(def); // RW 0x7A0F74 -> RW 0x69954A
+	}
+}
+
+void ScriptEngine::updateGenericScripts(Player &p)
+{
+	// RW 0x6AF2FA .. 0x6AF32B: a copy of Player + 0x34C, each prototype's instances from the head
+	for (const auto &proto : m_logic.players().teams().prototypes())
+	{
+		if (proto->getControllingPlayer() != &p)
+		{
+			continue;
+		}
+		const std::vector<Team *> instances(proto->teams().rbegin(), proto->teams().rend());
+		for (Team *t : instances)
+		{
+			updateGenericScripts(*t);
+		}
+	}
+}
+
+// RW 0x7A267D Team::updateGenericScripts
+void ScriptEngine::updateGenericScripts(Team &t)
+{
+	TeamPrototype *proto = t.getPrototype();
+	Team::ScriptState &st = t.scriptState();
+	if (!proto || !st.ready)
+	{
+		return;
+	}
+	// RW 0x7A1759: the 32 hooks looked up once by name (RW 0x758ECB: the prototype owner's side) and duplicated (RW 0x7B7F2B)
+	auto it = m_genericScripts.find(proto->getID());
+	if (it == m_genericScripts.end())
+	{
+		std::vector<GenericCopy> copies(32);
+		const TeamTemplateScripts &ts = proto->templateScripts();
+		const std::string owner = proto->getControllingPlayer() ? proto->getControllingPlayer()->getPlayerName() : std::string();
+		for (int i = 0; i < 32; ++i)
+		{
+			if (ts.generic[i].empty())
+			{
+				continue;
+			}
+			const size_t slash = ts.generic[i].find('/');
+			const std::string side = slash == std::string::npos ? owner : ts.generic[i].substr(0, slash);
+			const std::string name = slash == std::string::npos ? ts.generic[i] : ts.generic[i].substr(slash + 1);
+			RSide *rs = findSide(side);
+			RScript *sc = rs ? findScriptIn(rs->root, name) : nullptr;
+			if (!sc)
+			{
+				note("generic script not found: '" + ts.generic[i] + "' (team " + proto->getName() + ")");
+				continue;
+			}
+			copies[(size_t)i].def = sc->def;
+			copies[(size_t)i].side = side;
+			copies[(size_t)i].active = sc->active; // the duplicate's + 0x40 (copied now)
+		}
+		it = m_genericScripts.emplace(proto->getID(), std::move(copies)).first;
+	}
+	const UnsignedInt frame = m_logic.getFrame();
+	for (int i = 0; i < 32; ++i)
+	{
+		if (!st.attemptGeneric[i])
+		{
+			continue;
+		}
+		const GenericCopy &g = it->second[(size_t)i];
+		if (!g.def || !g.active)
+		{
+			st.attemptGeneric[i] = false;
+			continue;
+		}
+		// the script's DelayEvaluationSeconds (+ 0x20): evaluated again from + 0x90 + 4i on
+		if (g.def->delayEvaluationSeconds >= 1 && frame < st.genericNextFrame[i])
+		{
+			continue;
+		}
+		const std::string savedSide = m_currentSide;
+		m_currentSide = g.side; // RW 0x609D97 / 0x60D053: RW 0x604243 with the hook's side
+		if (evaluateConditions(*g.def, &t)) // RW 0x609D97(side, script, team, 0)
+		{
+			if (g.def->isOneShot) // + 0x29
+			{
+				st.attemptGeneric[i] = false;
+			}
+			if (!g.def->actionsFireSequentially) // + 0x10
+			{
+				// RW 0x60D053: the actions with + 0x1A210 = the team and its controlling player current
+				Team *const savedTeam = m_thisTeam;
+				Player *const savedPlayer = m_currentPlayer;
+				m_thisTeam = &t;
+				m_currentPlayer = t.getControllingPlayer();
+				RScript tmp;
+				tmp.def = g.def;
+				tmp.sideName = g.side;
+				tmp.active = true;
+				executeActions(g.def->actions, tmp);
+				m_thisTeam = savedTeam;
+				m_currentPlayer = savedPlayer;
+				++m_stats.genericScriptsFired;
+			}
+			else if (g.def->isOneShot)
+			{
+				// RW 0x7A2830 ..: a sequential one-shot hook becomes a sequential record of this team (RW 0x604121 / 0x606FDA); a sequential hook that is
+				// not one-shot runs nothing (RW's else-if)
+				SequentialScript r;
+				r.team = t.getID();
+				r.side = g.side;
+				r.scriptName = g.def->name;
+				r.script = g.def;
+				r.loopCount = g.def->loopCount; // + 0x1C = script + 0x14
+				appendSequentialScript(r);
+				++m_stats.genericScriptsFired;
+			}
+		}
+		m_currentSide = savedSide;
+		if (g.def->delayEvaluationSeconds > 0)
+		{
+			st.genericNextFrame[i] = (UnsignedInt)(5 * g.def->delayEvaluationSeconds) + frame; // [0xD9F608] * + 0x20 + frame
+		}
+	}
+}
+
 // ---- output -------------------------------------------------------------------------------------------------------------------------------------
 
 void ScriptEngine::addClientRequest(ScriptClientRequest r)
@@ -1285,6 +1769,18 @@ void ScriptEngine::crc(StateHasher &h) const
 	h.addBool(m_loaded);
 	h.addBool(m_firstUpdate);
 	h.addI32(m_gameDifficulty);
+	h.addBool(m_objectsReceiveDifficultyBonus); // lane CAMP-1H
+	// lane CAMP-1H: the prototypes' generic script copies made so far (when, and with which active flag, is state)
+	h.addU32((std::uint32_t)m_genericScripts.size());
+	for (const auto &kv : m_genericScripts)
+	{
+		h.addI32(kv.first);
+		for (const GenericCopy &g : kv.second)
+		{
+			h.addBool(g.def != nullptr);
+			h.addBool(g.active);
+		}
+	}
 	h.addU32((std::uint32_t)m_sides.size());
 	for (const RSide &s : m_sides)
 	{
@@ -1427,7 +1923,7 @@ std::vector<std::string> ScriptEngine::stopLines()
 		"client (CAMERA_MOVEMENT_FINISHED, NAMED_SELECTED ...) are unported and false, and FLAG's UI-interaction fallback is not implemented",
 		"[S-1183] map scripts: a script with a condition team does not run once per team member",
 		"[S-1184] map scripts: SET_COUNTER_TO_CLIENT_RANDOM_VALUE keeps its low bound (retail draws the client generator RW 0x6D32E4 inside the logic)",
-		"[S-1185] map scripts: team states (updateTeamStates), the team created flag and the War of the Ring per-player gate are not ported; sequential scripts run "
+		"[S-1185] map scripts: the War of the Ring per-player gate and RW 0x862535 are not ported (lane CAMP-1H: the team states, RW 0x6A8541, run); sequential scripts run "
 		"(lane SCRIPT-2) without the wait actions' sequential interface (they pass at once) and the AI busy flag + 0x3CA",
 		"[S-1186] map scripts: the AI orders without an AI state here run as stand-ins: the attack-follow waypoint orders march (attack move) to the end of "
 		"the path along each waypoint's first link, the face orders turn at once; NAMED_ATTACK_TEAM and the AI recruiting flag are not ported, nor a group "

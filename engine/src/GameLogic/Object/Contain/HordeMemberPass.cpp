@@ -24,9 +24,12 @@
 // BFME1's: turn first, snap only while the horde stands, no walk to a free cell (that walk is the BFME1 hub's block 22).
 
 #include "Common/Thing/ThingTemplate.h"
+#include "GameLogic/Combat/CombatQueries.h"
+#include "GameLogic/AI/AIStateMachine.h"
 #include "GameLogic/AI/AIWorld.h"
 #include "GameLogic/GameLogic.h"
 #include "GameLogic/Module/AIUpdate.h"
+#include "GameLogic/Module/HordeAIUpdate.h"
 #include "GameLogic/Object/Contain/HordeContainBehaviorData.h"
 #include "GameLogic/Object/Contain/HordeContainCore.h"
 #include "GameLogic/Object/Contain/HordeContainRuntime.h"
@@ -77,6 +80,10 @@ struct Bits
 	int bannerCarrier = ObjectTemplateInfoBuilder::kindOfIndex("HORDE_BANNER_CARRIER");
 	int moving = AIUpdateInterface::modelConditionBit("MOVING");
 	int transportMoving = AIUpdateInterface::modelConditionBit("TRANSPORT_MOVING");
+	int climbing = AIUpdateInterface::modelConditionBit("CLIMBING");               // condition 0x67
+	int rappelling = AIUpdateInterface::modelConditionBit("RAPPELLING");           // condition 0x69
+	int scalingWall = AIUpdateInterface::modelConditionBit("SCALING_WALL_HORDE");  // condition 0x1BB
+	int runningDown = ObjectTemplateInfoBuilder::objectStatusIndex("RUNNING_DOWN_FROM_BEHIND"); // status 0x4B
 };
 const Bits &bits()
 {
@@ -87,7 +94,80 @@ bool hasKind(const Object &o, int bit)
 {
 	return bit >= 0 && o.isKindOf((unsigned)bit);
 }
+
+// RW 0x693A1A(0): the object itself when it is a HORDE, else its container when that is a HORDE, else none
+const Object *hordeOfObject(const Object *o)
+{
+	if (!o)
+	{
+		return nullptr;
+	}
+	if (hasKind(*o, bits().horde))
+	{
+		return o;
+	}
+	const Object *c = o->getContainedBy();
+	return c && hasKind(*c, bits().horde) ? c : nullptr;
+}
+
+// RW 0x86BDD3 (member AI, target): the member attacks (AI vslot 0x1BC) and its machine's goal object (machine + 0x20, RW 0x8DBACE) is `target` or shares its horde
+bool attacksTarget(AIUpdateInterface &ai, Object &member, Object *target)
+{
+	if (!target || !ai.isStateActive())
+	{
+		return false;
+	}
+	const AIStateMachine *machine = ai.stateMachineOrNull();
+	Object *victim = machine ? machine->goalObject() : nullptr;
+	if (!victim)
+	{
+		return false;
+	}
+	if (victim == target)
+	{
+		return true;
+	}
+	const Object *vh = hordeOfObject(victim);
+	(void)member;
+	return vh && vh == hordeOfObject(target);
+}
 } // namespace
+
+// lane MOVE-2: slot 0x14, RW 0x87594C (read with Ghidra), called by HordeAIUpdate::aiDoCommand RW 0x89E169 before the horde's command runs
+void HordeContain::prepareMembersForCommand(Object *target)
+{
+	Object *horde = getObject();
+	// interface + 0x58 (members on their way into a garrison): slot 0x10 = RW 0x8759FF(0): they rejoin the horde (INFERENCE S-1501: as TransportContain's removal runs
+	// RW 0x8759FF(1), through acceptMemberFromGarrison; RW's re-form without the snap of the argument 1)
+	if (!m_garrisonEntering.empty())
+	{
+		const std::vector<ObjectID> entering(m_garrisonEntering.begin(), m_garrisonEntering.end());
+		for (ObjectID id : entering)
+		{
+			if (Object *m = horde->logic().findObjectByID(id))
+			{
+				acceptMemberFromGarrison(m);
+			}
+		}
+	}
+	// interface + 0x184 (the melee): slot 0x138 = RW 0x86C0F9, the fight ends (HordeAIUpdate::commandAccepted calls the AI's endMelee before this)
+	if (m_meleeEngaged)
+	{
+		setMeleeEngaged(false);
+	}
+	// the contain list (RW 0x865598 copy), in its order: a member with an AI that does not attack `target` and is not busy (AI vslot 0x1C4) gets RW 0x852E2A(0, 2)
+	const std::vector<Object *> members(m_members.begin(), m_members.end());
+	for (Object *m : members)
+	{
+		AIUpdateInterface *ai = m ? m->getAIUpdateInterface() : nullptr;
+		if (!ai || attacksTarget(*ai, *m, target) || ai->isBusy())
+		{
+			continue;
+		}
+		ai->aiBusy(CMD_FROM_AI);
+		++m_stats.handoffBusy;
+	}
+}
 
 // TransportContain::update, the part BFME added (B1 TransportContainUpdate.cpp): the owner's MOVING (condition 60 in BFME1, 61 in RotWK's registry) is
 // mirrored onto the passengers as TRANSPORT_MOVING (88 / 89) whenever the owner's flag changes
@@ -172,42 +252,22 @@ bool HordeContain::slotCellClear(Object &member) const
 	return true;
 }
 
-// RW 0x6F0889 (B1 0x3E5010): the slot is used when its cell is passable for the member, else it slides toward the horde's centre in 1/16 steps
+// RW 0x871897 (the member order's destination step): unless the horde scales a wall (contain slot 0x238, RW 0x86BD54: wall scaling is not ported, S-084, so
+// that branch RW 0x86E214 is never taken) the pathfinder's RW 0x6F0889 (lane MOVE-2: Pathfinder::adjustHordeMemberDestination). Before MOVE-2 the port tested
+// only the slot's own cell (trunc, not the footprint), slid toward the horde's centre and, when nothing passed, left the slot as it was: a member whose slot lay
+// on a cliff or behind an obstacle walked into it, its straight steps refused, and stood at the end of a fallback path for good (a member of a
+// MordorFighterHorde never left its spawn on "map mp fall back 4p", 1809 from its slot at the end of the march). RW also refuses a slot whose cell line to
+// the horde's cell crosses a cliff / obstacle / pinched cell or whose footprint is not level, and falls back to the horde's own cell.
 bool HordeContain::adjustMemberDestination(Object &member, Coord3D &dest) const
 {
 	AIUpdateInterface *ai = member.getAIUpdateInterface();
-	Object *horde = getObject();
-	if (!ai || !ai->world().mapReady())
+	AIUpdateInterface *hordeAi = getObject()->getAIUpdateInterface();
+	if (!ai || !hordeAi || !ai->world().mapReady())
 	{
 		return true;
 	}
-	Pathfinder &pf = ai->world().pathfinder();
 	const PathfindLocomotorInfo info = ai->locomotorInfo();
-	if (info.validSurfaces == 0)
-	{
-		return true;
-	}
-	if (pf.validMovementPosition(&ai->adapter(), info, ai->adapter().getLayer(), &dest))
-	{
-		return true;
-	}
-	const Coord3D &c = *horde->getPosition();
-	for (int i = 1; i < 16; ++i)
-	{
-		const float t = SimMath::mulf32((float)i, 0.0625f);
-		const float s = SimMath::subf32(1.0f, t);
-		Coord3D p;
-		p.x = SimMath::addf32(SimMath::mulf32(dest.x, s), SimMath::mulf32(c.x, t));
-		p.y = SimMath::addf32(SimMath::mulf32(dest.y, s), SimMath::mulf32(c.y, t));
-		p.z = dest.z;
-		if (pf.validMovementPosition(&ai->adapter(), info, ai->adapter().getLayer(), &p))
-		{
-			dest = p;
-			dest.z = horde->logic().getGroundHeight(p.x, p.y);
-			return true;
-		}
-	}
-	return false;
+	return ai->world().pathfinder().adjustHordeMemberDestination(ai->adapter(), info, hordeAi->adapter(), &dest);
 }
 
 float HordeContain::worstMemberSlotError() const
@@ -248,6 +308,7 @@ bool HordeContain::runMemberPass()
 	// lane MODULES-3: the scarer of the back-up records (+ 0x2B0, RW 0x874043), looked up once per pass
 	Object *scarer = m_scarer != INVALID_ID ? horde->logic().findObjectByID(m_scarer) : nullptr;
 	const std::vector<Object *> passMembers(m_members.begin(), m_members.end()); // endQuarrel (below) does not change the list; the copy keeps the walk independent of it
+	const HordeAIUpdate *meleeHai = m_meleeEngaged ? dynamic_cast<const HordeAIUpdate *>(hordeAi) : nullptr;
 	for (Object *m : passMembers)
 	{
 		if (m && !m->isDestroyed() && m_core->slotOf(m->getID()) < 0)
@@ -266,6 +327,15 @@ bool HordeContain::runMemberPass()
 		float slotAngle = 0.0f;
 		Coord3D slot = m_core->getSlotWorldPos(m->getID(), owner, &slotAngle);
 		slot.z = horde->logic().getGroundHeight(slot.x, slot.y);
+		// lane MOVE-2 r3: the pass's slot is the contain's slot 0x1C (RW 0x874080 -> 0x877D89): in a melee the member's melee destination (RW 0x98F819)
+		if (meleeHai)
+		{
+			Coord3D dest;
+			if (meleeHai->meleeDestination(m->getID(), dest))
+			{
+				slot = dest;
+			}
+		}
 		float angle = SimMath::addf32(owner.angle, slotAngle);
 		if (!m_data->horde.m_isPorcupineFormation)
 		{
@@ -297,24 +367,67 @@ void HordeContain::memberOrder(Object &member, const Coord3D &slotPos, float ori
 	}
 	++m_stats.orders;
 	const bool ownerMoving = b->isMoving();
-	// the leash while marching (B1 245420 lines 0xCF..): the nearer of the horde and the slot beyond MeleeAttackLeashDistance gets the command (0, 2)
-	if (ownerMoving)
+	// the leash while marching (B1 245420 lines 0xCF..): the nearer of the horde and the slot beyond MeleeAttackLeashDistance gets the command (0, 2); RW 0x877AE3: only
+	// while H + 0x2A0 (the melee target) is 0
+	if (ownerMoving && !m_meleeEngaged)
 	{
 		const Coord3D &mp = *member.getPosition();
-		const Coord3D &hp = *horde->getPosition();
-		const float hx = SimMath::subf32(hp.x, mp.x), hy = SimMath::subf32(hp.y, mp.y), hz = SimMath::subf32(hp.z, mp.z);
-		const float distHorde = SimMath::addf32(SimMath::addf32(SimMath::mulf32(hx, hx), SimMath::mulf32(hy, hy)), SimMath::mulf32(hz, hz));
+		// RW 0x877AF0: RW 0x66352C(horde, member) = RW 0x6634BF, the squared 2D distance of the two bounding circles' edges (lane MOVE-2 r2: the port took the
+		// squared 3D centre distance)
+		const float distHorde = CombatQueries::edgeDistanceSquared2D(*horde, *horde->getPosition(), member, mp);
 		const float sx = SimMath::subf32(mp.x, slotPos.x), sy = SimMath::subf32(mp.y, slotPos.y);
 		const float distSlot = SimMath::addf32(SimMath::mulf32(sx, sx), SimMath::mulf32(sy, sy));
 		const float nearest = distHorde < distSlot ? distHorde : distSlot;
 		const float leash = m_data->horde.m_meleeAttackLeashDistance;
 		if (nearest > SimMath::mulf32(leash, leash) && !a->isBusy())
 		{
-			// RW 0x877B4F: RW 0x852E2A(0, 2) = AI command 0x31 from the AI (busy, RW 0x66498A). Lane AI-2 identified it but does not apply it (S-892): RW tests the
-			// horde's isMoving RW 0x664485 (already implemented by AIMover); enabling the leash exposes unresolved attack / member lifecycle differences and stops some
-			// firing archer hordes' released members (proj retail tests)
+			// RW 0x877B4F: RW 0x852E2A(0, 2) = AI command 0x31 from the AI (busy, RW 0x66498A): a member that strayed beyond the leash while its horde marches drops
+			// what it does. Lane AI-2 identified it and only counted it (S-892); lane MOVE-2 r2 applies it with its prerequisite, the horde's command hand-off (RW
+			// 0x89E169 -> slot 0x14 RW 0x87594C: a horde order first makes the members busy, so they leave their attacks), and the active-member rule below
+			a->aiBusy(CMD_FROM_AI);
 			++m_stats.leashCommands;
 		}
+	}
+	// lane MOVE-2 r2, RW 0x877B69 .. 0x877C32 (read with Ghidra): a member whose AI state is active (AI vslot 0x1BC: attacking, hunting, or no state) is not driven to
+	// its slot unless the horde moves and the member is RUNNING_DOWN_FROM_BEHIND (status 0x4B): its walk ends (RW 0x6627CB), MOVING is cleared, its locomotor goal
+	// is cleared (vslot 0x220) and nothing else is ordered; a member still SCALING_WALL_HORDE (condition 0x1BB) also loses CLIMBING / RAPPELLING /
+	// SCALING_WALL_HORDE (RW 0x665074 + 0x5E3B79) and is put on the ground (RW 0x70C0AD with the terrain's height; the port sets the position, INFERENCE S-1501).
+	// Before, the hub walked an attacking member to its slot while its attack state moved it to its target: the two fought every frame (F4's jerk)
+	if (a->isStateActive())
+	{
+		const bool chase = bits().runningDown >= 0 && member.testStatus((unsigned)bits().runningDown);
+		if (!ownerMoving || !chase)
+		{
+			if (a->isMoving())
+			{
+				a->mover().endingMove();
+			}
+			member.setModelConditionState(bits().moving, false);
+			a->setLocomotorGoalNone();
+			++m_stats.attackHolds;
+			if (bits().scalingWall >= 0 && member.testModelCondition(bits().scalingWall))
+			{
+				member.setModelConditionState(bits().climbing, false);
+				member.setModelConditionState(bits().rappelling, false);
+				member.setModelConditionState(bits().scalingWall, false);
+				Coord3D p = *member.getPosition();
+				p.z = horde->logic().getGroundHeight(p.x, p.y);
+				member.setPosition(&p);
+			}
+			return;
+		}
+	}
+	// lane MOVE-2 r3, RW 0x877C37 .. 0x877C72 (H + 0x2A0, the melee target, set): no destination adjustment, no wait: unless the member follows a path whose current
+	// node is a waypoint (RW 0x5E2DF4, never in the port: S-161) the hub walks it to the destination it was given (its melee destination)
+	if (m_meleeEngaged)
+	{
+		if (a->mover().goalType() == AIGOAL_EXPLICIT_WITH_PATH && a->mover().path() && a->mover().path()->hasExplicitZ())
+		{
+			m_workDone = true;
+			return;
+		}
+		moveHub(member, slotPos, orientation);
+		return;
 	}
 	// MACHINE members ride on the horde object: position and facing copied, the goal refreshed when the horde is parked (B1 lines 0x122..)
 	if (hasKind(member, bits().machine))
@@ -375,10 +488,18 @@ void HordeContain::moveHub(Object &member, const Coord3D &destIn, float orientat
 	// other branch (RW 0x87478C: aiIdle for a non-idle, inactive member) is not ported. PARTIAL (S-892): RW also makes an IDLE member busy ((moving || idle)); the port
 	// applies only the moving, non-idle half: the full rule exposes unresolved attack / member lifecycle differences (combat / projectile tests). Idle hordes do
 	// acquire targets at horde level; HORDE_MEMBER mood scans are disabled. Reconcile the attack idle / exit behaviour and memberOrder's active-member guard.
-	if (!m_meleeEngaged && (!a->isStateActive() || !b->isStateActive()) && a->isMoving() && !a->isIdle() && !a->isBusy())
+	// lane MOVE-2 r2 (RW 0x874749 .. 0x8747A3, read again): the isMoving is the HORDE's (RW 0x664485 with ECX = the horde's AI), the second test the member's
+	// isIdle (vslot 0x1B8): a member is made busy unless both it and its horde are active, when its horde moves or it is idle, unless it is busy already. The port
+	// tested the member's own isMoving and !isIdle (the half S-892 called partial). The other branch (H + 0x2A0 set, RW 0x874967: a member neither idle nor active
+	// gets aiIdle) is the melee freeze, where the port runs no member pass
+	if (!m_meleeEngaged && (!a->isStateActive() || !b->isStateActive()) && (b->isMoving() || a->isIdle()) && !a->isBusy())
 	{
 		a->aiBusy(CMD_FROM_AI);
 		++m_stats.busyOrders;
+	}
+	else if (m_meleeEngaged && !a->isIdle() && !a->isStateActive())
+	{
+		a->aiIdle(CMD_FROM_AI); // lane MOVE-2 r3: RW 0x874967 .. 0x87498C, the H + 0x2A0 branch: a member neither idle nor active goes idle (RW 0x5E821A)
 	}
 	AIWorld &world = a->world();
 	Pathfinder &pf = world.pathfinder();
@@ -392,14 +513,17 @@ void HordeContain::moveHub(Object &member, const Coord3D &destIn, float orientat
 	// block 4: the planar distance to the destination
 	const float dx = SimMath::subf32(dest.x, oldPosition.x), dy = SimMath::subf32(dest.y, oldPosition.y);
 	const float distance = SimMath::length2d(dx, dy);
-	// block 5: the extra distance handed to the member's locomotor: the horde's remaining path less the preferred height, plus the distance
+	// block 5 (RW 0x874BF7 .. 0x874C2E): the extra distance handed to the member's locomotor: the horde's remaining path from its point ahead plus the distance,
+	// less the horde locomotor's current speed (RW 0x5E36F7 reads locomotor + 0x40, the speed; lane MOVE-2: the port subtracted the preferred height, 0 on the
+	// ground). The point ahead is RW 0x766173 with the horde's locomotor: its speed, which RW 0x765F31 raises to 0.1 (the port used 40 for a standing horde: RW
+	// takes 40 only without a locomotor). The sum is x87: (remaining + distance) rounded to float, then less the speed
 	float adjusted = distance;
 	if (b->mover().path())
 	{
 		LocomotorPath *path = b->mover().path();
-		const LocomotorPathPoint ahead = path->computePointAhead(k->speed() > 0.0f ? k->speed() : 40.0f);
+		const LocomotorPathPoint ahead = path->computePointAhead(k->speed());
 		const float remaining = path->remainingDistanceFrom(ahead);
-		adjusted = SimMath::addf32(SimMath::subf32(remaining, k->getTemplate().m_preferredHeight), distance);
+		adjusted = SimMath::subf32(SimMath::addf32(remaining, distance), k->speed());
 	}
 	// block 8: the snap threshold
 	float t = l->getMaxAcceleration(host);
@@ -423,7 +547,10 @@ void HordeContain::moveHub(Object &member, const Coord3D &destIn, float orientat
 		}
 		// the turn comes first (RW 0x874FA6 .. 0x8750E1): a member more than 10 degrees off the slot's facing turns where it stands; nothing moves it this frame
 		const float angle = absF32(normalizeAngle(SimMath::subf32(orientation, member.getOrientation())));
-		if (angle > kTurnThreshold)
+		// lane MOVE-2 r3: in a melee the melee behaviour decides (RW 0x874FBC .. 0x87505F, its slots 0x1C / 0x20 / 0x24): the Amoeba always turns the member
+		const HordeAIUpdate *meleeHai = m_meleeEngaged ? dynamic_cast<const HordeAIUpdate *>(b) : nullptr;
+		const bool meleeTurn = meleeHai && meleeHai->meleeAlwaysTurns();
+		if (meleeTurn || angle > kTurnThreshold)
 		{
 			if (hasKind(member, bits().dozer))
 			{
@@ -472,7 +599,14 @@ void HordeContain::moveHub(Object &member, const Coord3D &destIn, float orientat
 		pf.removeGoal(a->adapter()); // B1 0x3E3D20: the member's old goal reservation goes while the horde moves
 	}
 	a->mover().ignoreObstacle(horde->getProducerID()); // a member made by a factory walks out of its footprint (inference, S-224)
-	a->hordeMemberMoveTo(dest);        // RW vslot 0x214
+	if (m_meleeEngaged)
+	{
+		a->hordeMemberMoveExplicit(dest); // RW vslot 0x210 (H + 0x2A0 set: an explicit goal without a path)
+	}
+	else
+	{
+		a->hordeMemberMoveTo(dest); // RW vslot 0x214
+	}
 	a->setPathExtraDistance(adjusted); // RW 0x6631AE
 	member.setModelConditionState(bits().moving, true);
 	++m_stats.walks;

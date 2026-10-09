@@ -88,6 +88,50 @@ public:
 	int currentWaypointId() const { return m_currentWaypoint; }
 	void setCurrentWaypointId(int id) { m_currentWaypoint = id; }
 
+	// lane CAMP-1: team + 0x128, the team has had objects (TEAM_DESTROYED RW 0x7E69C6 needs it). lane CAMP-1H: set by Team::updateState (RW 0x7A208C ->
+	// 0x7A2230) when the team is active (+ 0x5D) past its creation step (+ 0x5F) and has any object (RW 0x7A11FF), see ScriptEngine::updateTeamState
+	bool hadMembers() const { return m_hadMembers; }
+	void setHadMembers() { m_hadMembers = true; }
+
+	// lane CAMP-1H: the team's script state (TARGET FACTS, rotwk201_game.exe; the constructor RW 0x7A6C91 clears it, the INI-free parts of Team::updateState
+	// RW 0x7A208C and Team::updateGenericScripts RW 0x7A267D read and write it, ScriptEngine::updateTeamState runs both)
+	struct ScriptState
+	{
+		bool active = false;           ///< + 0x5D (activation, inlined at every creator: "if (!+0x5D) { +0x5E = 1; +0x5D = 1; }")
+		bool created = false;          ///< + 0x5E: activated, its creation step not yet run (TEAM_CREATED RW 0x7E73E0 answers it)
+		bool ready = false;            ///< + 0x5F: past the creation step (the generic scripts and the per-frame checks run)
+		bool checkEnemySighted = false;///< + 0x60: the prototype has an EnemySighted or AllClear script (RW 0x7A6E0D)
+		bool seeEnemy = false;         ///< + 0x61
+		bool prevSeeEnemy = false;     ///< + 0x62
+		bool wasIdle = false;          ///< + 0x63
+		std::int32_t destroyThreshold = 0; ///< + 0x64
+		std::int32_t curUnits = 0;     ///< + 0x68
+		bool beingBuilt = false;       ///< + 0x113 (AIPlayer's team building RW 0x79FE29; not ported: never set)
+		bool wasBuilt = false;         ///< + 0x112 (RW 0x79FE29: the ready test RW 0x7A09E4 then waits for its hordes; never set here)
+		bool attemptGeneric[32];       ///< + 0x70: generic script i is still tried (the constructor sets all, RW 0x7A6E63)
+		std::uint32_t genericNextFrame[32]; ///< + 0x90: the frame generic script i is evaluated again (its DelayEvaluationSeconds)
+		ScriptState()
+		{
+			for (int i = 0; i < 32; ++i)
+			{
+				attemptGeneric[i] = true;
+				genericNextFrame[i] = 0;
+			}
+		}
+	};
+	ScriptState &scriptState() { return m_script; }
+	const ScriptState &scriptState() const { return m_script; }
+	// the activation inlined at every creator of a live team (RW 0x7A6FDE, 0x62E17B, 0x6AC6F7, 0x7C8D02, 0x7C0D86, ...)
+	void setActive()
+	{
+		if (!m_script.active)
+		{
+			m_script.created = true;
+			m_script.active = true;
+		}
+	}
+	bool isActive() const { return m_script.active; }
+
 	// the members, in insertion order
 	Object *getFirstMember() const { return m_head; }
 	unsigned getMemberCount() const { return m_count; }
@@ -107,6 +151,20 @@ private:
 	std::set<std::string> m_customStates;   ///< lane SCRIPT-2
 	std::uint32_t m_teamTarget = 0;         ///< lane SCRIPT-3: + 0x114
 	int m_currentWaypoint = -1;             ///< lane SCRIPT-3: + 0x6C
+	bool m_hadMembers = false;              ///< lane CAMP-1: + 0x128
+	ScriptState m_script;                   ///< lane CAMP-1H
+};
+
+// lane CAMP-1H: the team scripts of a prototype's TeamTemplateInfo (prototype + 0x12C), read from the map's team dict by RW 0x7A2C96 with the keys of RW
+// 0xDA2B14 ..: teamOnCreateScript + 0xC0, teamEventsList + 0xC4, teamOnIdleScript + 0xC8, teamInitialIdleSeconds + 0xCC (x 5 frames), teamEnemySightedScript
+// + 0xD0, teamAllClearScript + 0xD4, teamOnUnitDestroyedScript + 0xD8, teamOnDestroyedScript + 0xDC, teamDestroyedThreshold + 0xE0 (real),
+// teamGenericScriptHook0 .. 31 + 0x118 (the key "teamGenericScriptHook%d", RW 0xC1222C)
+struct TeamTemplateScripts
+{
+	std::string onCreate, eventsList, onIdle, enemySighted, allClear, onUnitDestroyed, onDestroyed;
+	std::int32_t initialIdleFrames = 0;
+	float destroyedThreshold = 0.0f;
+	std::string generic[32];
 };
 
 class TeamPrototype
@@ -130,6 +188,10 @@ public:
 	const Dict &getDict() const { return m_dict; }
 	const std::vector<Team *> &teams() const { return m_teams; }
 	Team *getFirstTeam() const { return m_teams.empty() ? nullptr : m_teams.front(); }
+	// lane CAMP-1: the head of retail's instance list (prototype + 0x334): a new team is PREPENDED (RW 0x79FA5C -> RW 0x79F9D0), so the head is the newest
+	Team *getNewestTeam() const { return m_teams.empty() ? nullptr : m_teams.back(); }
+	// lane CAMP-1H: the TeamTemplateInfo's scripts (read from the dict once)
+	const TeamTemplateScripts &templateScripts() const;
 
 private:
 	friend class TeamFactory;
@@ -139,6 +201,7 @@ private:
 	int m_id;
 	Dict m_dict;
 	std::vector<Team *> m_teams;
+	mutable std::unique_ptr<TeamTemplateScripts> m_scripts; ///< lane CAMP-1H: templateScripts()
 };
 
 class TeamFactory
@@ -151,8 +214,9 @@ public:
 	void clear();
 	// ZH TeamFactory::initTeam: a duplicate name is an error (std::runtime_error)
 	TeamPrototype *initTeam(const std::string &name, Player *owner, bool singleton, const Dict *dict = nullptr);
-	// a new team of a prototype (ZH createInactiveTeam / createTeam: a singleton prototype has exactly one)
-	Team *createTeam(TeamPrototype *proto);
+	// a new team of a prototype (ZH createInactiveTeam / createTeam: a singleton prototype has exactly one). lane CAMP-1H: `activate` is RW 0x7A6FCB's
+	// createTeam (active) against RW 0x7A6E8E's createInactiveTeam (the singleton's existing team is activated too, RW 0x7A70CE with its flag)
+	Team *createTeam(TeamPrototype *proto, bool activate = false);
 
 	TeamPrototype *findTeamPrototype(const std::string &name) const;
 	// lane SCRIPT-2: RW 0x7A2C47, the prototype of that name owned by the player of that name (the maps reuse a team name under several owners:

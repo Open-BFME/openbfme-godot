@@ -26,3 +26,8 @@ list(APPEND OPENBFME_SMOOTH_TESTS
 list(APPEND OPENBFME_SMOOTH_TESTS
     tests/test_smooth3_motion.cpp
 )
+
+# lane MOVE-2 (FEEDBACK-1 F3 / F4: jitter, members that wander, get lost or jerk): the slot-distance report
+list(APPEND OPENBFME_SMOOTH_TESTS
+    tests/test_move2_slot_distance.cpp
+)

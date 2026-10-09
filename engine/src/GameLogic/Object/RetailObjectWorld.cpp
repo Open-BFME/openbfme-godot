@@ -49,7 +49,8 @@ RetailObjectWorld::RetailObjectWorld(ArchiveFileSystem &fs)
 		"ExperienceLevel", "ExperienceScalarTable", "ModifierList", // XP-1: these three are parsed for real
 		"StanceTemplate", // INTEG-1: TheStanceTemplateStore (RW 0x835967)
 		"EmotionNugget", // MODULES-2: TheEmotionSystem (RW 0x8E0D59)
-		"CreateAHeroSystem" }; // HERO-2: TheCreateAHeroSystem (its own file, RW 0x61A10F)
+		"CreateAHeroSystem", // HERO-2: TheCreateAHeroSystem (its own file, RW 0x61A10F)
+		"LinearCampaign" }; // CAMP-1: TheLinearCampaignManager (RW 0x5ECCB9)
 	// AUDIO-1: the audio blocks (AudioEvent, DialogEvent, MusicTrack, ..., EvaEvent, AudioSettings, MiscAudio) are parsed for real
 	skip.insert(skip.end(), AudioIniState::blockKeywords().begin(), AudioIniState::blockKeywords().end());
 	// AI-1: the skirmish AI blocks are parsed for real (GameLogic/SkirmishAI/SkirmishAIData.h)
@@ -81,6 +82,7 @@ RetailObjectWorld::RetailObjectWorld(ArchiveFileSystem &fs)
 	m_emotions.registerBlock(m_env.blocks); // MODULES-2: TheEmotionSystem (RW 0xDE8C88; EmotionNugget RW 0x8E0D59)
 	m_createAHero.registerBlock(m_env.blocks); // HERO-2: TheCreateAHeroSystem (RW 0xDE3D84)
 	SpellStores::registerBlocks(m_env.blocks); // SPELL-1
+	m_linearCampaigns.registerBlock(m_env.blocks); // CAMP-1
 }
 
 const AudioIniState &RetailObjectWorld::audio() const
@@ -128,6 +130,11 @@ GlobalOwnerChain<EmotionSystem *> &emotionChain()
 	static thread_local ThreadOwnerChain<EmotionSystem *> chain(TheEmotionSystem); // MODULES-2: per thread, as the stances
 	return chain.get();
 }
+GlobalOwnerChain<LinearCampaignManager *> &linearCampaignChain()
+{
+	static thread_local ThreadOwnerChain<LinearCampaignManager *> chain(TheLinearCampaignManager); // CAMP-1: per thread, as the stances
+	return chain.get();
+}
 GlobalOwnerChain<CreateAHeroSystem *> &createAHeroChain()
 {
 	static thread_local ThreadOwnerChain<CreateAHeroSystem *> chain(TheCreateAHeroSystem); // HERO-2: per thread, as the stances
@@ -159,6 +166,7 @@ void RetailObjectWorld::registerContext()
 	attributeModifierChain().install(this, &m_attributeModifiers); // XP-1
 	stanceChain().install(this, &m_stances);                       // INTEG-1
 	emotionChain().install(this, &m_emotions);                     // MODULES-2
+	linearCampaignChain().install(this, &m_linearCampaigns);       // CAMP-1
 	createAHeroChain().install(this, &m_createAHero);              // HERO-2
 	fxListChain().install(this, m_recorder.fxLists.get());         // XP-1: the FXList blocks fill this world's store; LevelUpFx / ModifierList FX validate against it
 	// AUDIO-1: object parsing (OpenContain / HordeContain sound fields) asks whether an audio event exists. No AudioManager exists at INI time,
@@ -180,6 +188,7 @@ void RetailObjectWorld::unregisterContext()
 	attributeModifierChain().remove(this);
 	stanceChain().remove(this);
 	emotionChain().remove(this);
+	linearCampaignChain().remove(this);
 	createAHeroChain().remove(this);
 	fxListChain().remove(this);
 	audioChain().remove(this);

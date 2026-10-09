@@ -11,6 +11,7 @@
 #include "GameLogic/ExperienceWorld.h"
 #include "GameLogic/Object/Object.h"
 
+#include "Common/Player.h"
 #include "Common/StateHash.h"
 #include "Common/Thing/ThingTemplate.h"
 #include "GameLogic/Armor.h"
@@ -157,6 +158,10 @@ void ActiveBody::crc(StateHasher &h) const
 	h.addFloat(m_damageScalar);
 	h.addU32(m_lastDamageFrame);
 	h.addU32(m_lastDamager);
+	if (m_lastDamagerPlayerMask != 0)
+	{
+		h.addU32(m_lastDamagerPlayerMask ^ 0xCA391u); // lane CAMP-1: hashed only when set (a game without player damage keeps its hash)
+	}
 	h.addU32((std::uint32_t)m_curDamageState);
 }
 
@@ -398,6 +403,19 @@ void ActiveBody::attemptDamage(DamageInfo &info)
 		// (16)
 		m_lastDamageFrame = logic.getFrame();
 		m_lastDamager = info.m_input.m_sourceID;
+		m_lastDamagerPlayerMask = info.m_input.m_sourcePlayerMask; // lane CAMP-1
+		// lane CAMP-1, RW 0x8C430F .. 0x8C4341: the last damage record's source object, when it exists, marks its controlling player as an attacker of the
+		// victim's controlling player (RW 0x6AAC05). INFERENCE: retail runs this after the record block whether or not the record changed this hit; here only
+		// when it did
+		if (const Object *source = logic.findObjectByID(m_lastDamager))
+		{
+			Player *victimPlayer = obj.getControllingPlayer();
+			const Player *sourcePlayer = source->getControllingPlayer();
+			if (victimPlayer && sourcePlayer)
+			{
+				victimPlayer->setAttackedBy(sourcePlayer->getPlayerIndex(), logic.getFrame());
+			}
+		}
 		++logic.combat().counters().damageApplications;
 		// ZH: the damage modules hear of the hit (RW 0x79B757 CastleMemberBehavior::onDamage reads the amount dealt)
 		if (info.m_output.m_actualDamageDealt > 0.0f)

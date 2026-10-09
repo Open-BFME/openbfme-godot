@@ -112,6 +112,19 @@ struct DamageInfoInput
 	bool m_shouldPlayUnderAttackEva = true;   // D+0x25
 	float m_delay = 0.0f;                     // D+0x28 (frames)
 	int m_fxTrigger = 0;                      // D+0x2C
+	// lane COMBAT-4: the shockwave half (ctor RW 0x66341C: the vector, amount, radius, taper and center 0, ZMult and ClearMult 1.0, ClearFlingHeight 100.0 RW 0xBD88D8),
+	// written by MetaImpactNugget (RW 0x910380) and RamPower's crush hit (RW 0x8BFF08), read by Object's shockwave handler RW 0x6968BC
+	unsigned m_shockWaveSourceID = 0;         // D+0x30 (the nugget's source object id: the cyclone's centre)
+	Coord3D m_shockWaveVector{};              // D+0x34
+	float m_shockWaveAmount = 0.0f;           // D+0x40
+	float m_shockWaveRadius = 0.0f;           // D+0x44
+	float m_shockWaveTaperOff = 0.0f;         // D+0x48
+	float m_shockWaveZMult = 1.0f;            // D+0x4C
+	bool m_shockWaveClearRadius = false;      // D+0x50
+	float m_shockWaveClearMult = 1.0f;        // D+0x54
+	float m_shockWaveClearFlingHeight = 100.0f; // D+0x58
+	Coord3D m_shockWaveClearCenter{};         // D+0x5C (the source's position when ClearRadius)
+	float m_cyclonicFactor = 0.0f;            // D+0x68
 };
 
 struct DamageInfoOutput

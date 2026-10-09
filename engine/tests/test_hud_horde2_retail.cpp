@@ -297,11 +297,11 @@ TEST_CASE("horde2 retail: a flank attack does more damage than a frontal one (Fl
 	};
 	unsigned long long frontFlanks = 0, backFlanks = 0;
 	std::vector<float> front, back;
-	// 70 frames (lane SMOOTH-3: with RotWK's member hub the Gondor horde destroys the passive orc horde from behind before frame 120; the first hits come well before 70)
-	// lane AUDIO-4: 60 frames (LargeGroupAudioUpdate's logic random draws, RW 0x8AEEC3, move the fight: at 70 the orc horde is gone from behind; with the module
-	// unregistered 70 holds again; at 60 both fights have their first hits and the orc horde stands)
-	fight(3.14159265f, 520.0f, frontFlanks, front, 60);
-	fight(0.0f, 480.0f, backFlanks, back, 60);
+	// 50 frames (lane SMOOTH-3: with RotWK's member hub the Gondor horde destroys the passive orc horde from behind before frame 120; lane AUDIO-4: 60 frames,
+	// LargeGroupAudioUpdate's logic random draws, RW 0x8AEEC3, move the fight; lane MOVE-2 r2: with the horde command hand-off and the hub's full busy rule,
+	// RW 0x89E169 / 0x874749, the orc horde falls before frame 70; the first hits come well before 50)
+	fight(3.14159265f, 520.0f, frontFlanks, front, 50);
+	fight(0.0f, 480.0f, backFlanks, back, 50);
 	CHECK(frontFlanks == 0);
 	CHECK(backFlanks > 0);
 	REQUIRE_FALSE(front.empty());

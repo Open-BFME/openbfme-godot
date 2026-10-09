@@ -149,6 +149,10 @@ public:
 	// the live pose the committed one, so the movement of the next frame (the translator's scroll, then update) is interpolated from it.
 	const Coord3D &previousEye() const { return m_prevEye; }
 	const Coord3D &previousTarget() const { return m_prevTarget; }
+	// lane MOVE-2 r2: a pose set from outside the 30 Hz client frames (a script's lookAt / height, called every render frame by the viewers) is drawn at once: the
+	// committed and previous poses become the live one. Without it the render interpolation mixed the previous committed pose with a live pose that had moved
+	// meanwhile, and a camera moved every render frame stepped at 30 Hz (frame-to-frame screen motion alternating about 4 : 1 at 60 fps)
+	void snapInterpolation();
 	void commitFrame();
 	float nearPlane() const { return 10.0f; }
 	float farPlane() const { return 1800.0f; }

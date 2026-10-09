@@ -31,6 +31,9 @@
 ##                           and statistics page), Continue returns to the Skirmish lobby and a second game starts; --screens writes end2-*.png
 ##     --quit-restart        Esc, Restart and its confirmation start the same game again
 ##     --perf                (lane SMOOTH-1) while playing, print GAME PERF every 5 s: render fps, frame time mean / p95 / p99 / max and the C++ parts of the frame
+##     --perf-stat=<prefix>  (lane PERF-3, with --perf; Linux with perf) `perf stat` counts the main thread's user instructions and cycles in each GAME PERF window
+##                           (<prefix>-<n>.txt) and GAME PERF STAT prints them per render frame one window later: the work per frame, which other load on the
+##                           machine does not change (unlike the frame time)
 ##     --fps                 (lane SMOOTH-1) show the render frame rate and frame time in a corner
 ##     --opponents=<n>       (lane PERF-1, with --auto) slots 1..n are computers of level --ai (default 1; a 4-player map takes 3)
 ##     --warp=<seconds>      (lane PERF-1, with --auto) run the game at --warp-scale (default 8) times speed until this much game time has passed, then at normal speed
@@ -82,6 +85,14 @@
 ##     --lan-shot-start=FILE (host, lane UI-1) save the window 8 s after Play Game: the start countdown's QM:STARTINGGAME box (the media)
 ##     --net-shot=FILE:FRAME save the window once the network game reached logic frame FRAME (the media)
 ##
+##   lane CAMP-1, the campaigns (scripts/campaign_flow.gd): the main menu's campaign commands (Expansion1Campaign, BonusCampaign, ContinueCampaign) play the
+##   linear campaigns mission by mission
+##     --campaign=NAME       start the campaign at once (no menu): ANGMAR_CAMPAIGN, ANGMAR_BONUS_CAMPAIGN; --mission=N its N-th mission (from 0);
+##                           --difficulty=E|N|H
+##     --campaign-win        (test hooks) each mission's decisive moment is played by the GameWorld test hooks (Amon Sul, Fornost, the bonus mission)
+##     --campaign-check=N    quit after N missions ended (exit 0 when all were won), printing the CAMPAIGN lines
+##     --movies=off          (lane CAMP-1H) the campaign movies (intro, mission intros, PLAY_MOVIE_IN_GAME: their narration over black, S-1710) are not played
+##
 ## HOOKS OF OTHER LANES (leave the names as they are):
 ##   _on_shell_service(kind, a, b)   every ShellServices call: kind "sound" (a = the sound name) is AUDIO-1's hook for UI sounds and music cues; "load_music" carries the faction's
 ##                                   LoadScreenMusic when a load starts; "background", "mouse_visible", "tooltip" are the others
@@ -113,6 +124,10 @@ var _warp_scale := 8.0
 var _show_fps := false
 var _perf_times: Array = []
 var _perf_cpu0 := -1.0       # lane PERF-1: the main thread's CPU time at the start of the GAME PERF window
+var _perf_stat := ""          # lane PERF-3: --perf-stat=<prefix>
+var _perf_stat_pid := -1      # the perf stat of the current window
+var _perf_stat_index := 0
+var _perf_stat_done := {}     # the finished window's { file, frames }, read at the next window's end
 var _perf_deltas: Array = []
 var _perf_parts := {}
 var _perf_last := 0
@@ -214,6 +229,14 @@ var _local_name := ""
 var _second_game_ok := false
 var _net_lobby_again := false
 var _continuing := false
+var _campaign_flow: Node        # lane CAMP-1: scripts/campaign_flow.gd
+var _campaign_complete := false
+var _cli_campaign := ""
+var _cli_mission := 0
+var _cli_difficulty := 1
+var _campaign_win := false
+var _campaign_check := -1
+var _campaign_movies := true    # lane CAMP-1H: --movies=off
 var _qa := false                # lane QA-1
 var _qa_idle := false
 var _qa_minutes := 20.0
@@ -235,6 +258,8 @@ func _ready() -> void:
 			_seed = int(arg.substr(7))
 		elif arg == "--auto":
 			_auto = true
+		elif arg.begins_with("--perf-stat="):
+			_perf_stat = arg.substr(12)
 		elif arg == "--perf":
 			_perf = true
 		elif arg == "--fps":
@@ -340,6 +365,18 @@ func _ready() -> void:
 			_replay_menu_test = true
 		elif arg == "--no-record":
 			_record = false
+		elif arg.begins_with("--campaign="):
+			_cli_campaign = arg.substr(11)
+		elif arg.begins_with("--mission="):
+			_cli_mission = int(arg.substr(10))
+		elif arg.begins_with("--difficulty="):
+			_cli_difficulty = preload("res://scripts/campaign_flow.gd").difficulty_from_command(arg.substr(13))
+		elif arg == "--campaign-win":
+			_campaign_win = true
+		elif arg.begins_with("--campaign-check="):
+			_campaign_check = int(arg.substr(17))
+		elif arg == "--movies=off":
+			_campaign_movies = false
 		elif arg.begins_with("--lan="):
 			_lan_mode = arg.substr(6)
 		elif arg.begins_with("--lan-ai="):
@@ -444,6 +481,20 @@ func _boot() -> void:
 	_audio.play_shell_music(false) # no shell map yet (View3D is a stop): the low-LOD shell music, as menu_viewer
 	_state = State.MENU
 	set_process(true)
+	_campaign_flow = load("res://scripts/campaign_flow.gd").new() # lane CAMP-1
+	_campaign_flow.name = "CampaignFlow"
+	_campaign_flow.game = self
+	_campaign_flow.world = _world
+	_campaign_flow.hooks = _campaign_win
+	_campaign_flow.auto_win = _campaign_win
+	_campaign_flow.movies = _campaign_movies # lane CAMP-1H
+	add_child(_campaign_flow)
+	if not _cli_campaign.is_empty():
+		_campaign_flow.mission = _cli_mission
+		_campaign_flow.campaign = _cli_campaign
+		_campaign_flow.difficulty = _cli_difficulty
+		_campaign_flow.begin_mission()
+		return
 	if _auto and not _auto_task_started:
 		_auto_task_started = true
 		_run_auto()
@@ -456,6 +507,7 @@ func _boot() -> void:
 func _process(delta: float) -> void:
 	_frames += 1
 	Release.set_in_game(_state == State.PLAYING) # lane RELEASE-1: the version corner in the menus only
+	_campaign_check_tick() # lane CAMP-1
 	if _state == State.MENU:
 		# the engine reveals the main menu once its first frames ran (menus-apt.md 1.2, S-139: who calls ShowMainMenu is not read)
 		if not _menu_revealed and _frames >= LEVEL_MAIN_MENU_FRAMES and _shell.shell_top_level() >= 0 and _shell.shell_stack().size() > 0 and _shell.shell_stack()[-1] == "MainMenu.apt":
@@ -478,6 +530,8 @@ func _process(delta: float) -> void:
 			_net_tick()
 		_update_listener()
 		_end_game_tick()
+		if _campaign_flow != null and _campaign_flow.active:
+			_campaign_flow.tick() # lane CAMP-1
 		if _replay_active:
 			_replay_tick()
 		if _perf or _show_fps:
@@ -525,6 +579,12 @@ func _on_shell_request(action: String, argument: String) -> void:
 		_open_lan_lobby()
 	elif action == "LanGameStart":
 		_lan_game_start()
+	elif action == "Expansion1Campaign": # lane CAMP-1: RW 0x91BE64 (ANGMAR_CAMPAIGN; the demo campaign only with [0xDE4324] + 0x60)
+		_campaign_flow.start("ANGMAR_CAMPAIGN", _campaign_flow.difficulty_from_command(argument))
+	elif action == "BonusCampaign": # RW 0x91BEFA
+		_campaign_flow.start("ANGMAR_BONUS_CAMPAIGN", _campaign_flow.difficulty_from_command(argument))
+	elif action == "ContinueCampaign":
+		_campaign_flow.continue_saved()
 
 	elif action == "ToggleQuitMenu":
 		_toggle_quit_menu()
@@ -1236,9 +1296,12 @@ func _score_tick() -> void:
 	_graph_node.queue_redraw()
 
 
-## AptTimeLine::OnButtonContinue (RW 0x925699): for a skirmish or LAN game (types 2 / 3) the shell shows again the screens it held when the game started
-## (TheShell vslot 0x138 + 0x9C, RW 0x925798 .. 0x9257CC): MainMenu and Skirmish for a skirmish; a LAN game here is started without the shell's LAN screens
-## (MP-1), so its peers open the LAN lobby again (GameNetwork/LANLobby: the host hosts, the joiner joins)
+## AptTimeLine::OnButtonContinue (RW 0x925699): for a skirmish or LAN game (types 2 / 3) the shell music starts again with a fade (TheAudio 0xDE42FC vslot 0x138(2)
+## + 0x9C, the event RW 0x6DA95E / setShouldFade RW 0x6DA774, vslot 0x64; lane QA2-FIX: END-2 read this as TheShell) and TheGameEngine + 0x310 is set (RW 0x62215B),
+## on which the engine's next update (RW 0x624EE7) pops the shell's top screen (RW 0x75DB34: Shell::pop, the score screen): retail's lobby is the screen the
+## shell kept under the game. INFERENCE (stop S-1771): the port pops the shell when the game starts (_enter_game), so it pushes again the screens it held
+## then: MainMenu and Skirmish for a skirmish, each loaded before the next covers it (a screen covered before its movie loaded stays drawn: QA-2 #5); a LAN
+## game here is started without the shell's LAN screens (MP-1), so its peers open the LAN lobby again (GameNetwork/LANLobby: the host hosts, the joiner joins)
 func _score_continue() -> void:
 	if _state != State.SCORE or _continuing:
 		return # a second Continue the shell's ticks below deliver is the same press
@@ -1252,15 +1315,25 @@ func _score_continue() -> void:
 		_shell.tick(0.033)
 	_audio.stop_music(false)
 	var screens: PackedStringArray = _start_stack if _start_stack.size() > 0 else PackedStringArray(["MainMenu.apt"])
+	var levels: Array[int] = []
 	for screen in screens:
 		_shell.shell_push(screen) # over a screen that is shown the push waits for its closing transition (Shell::push, pending)
 		var ticks := 0
-		while (_shell.shell_stack().size() == 0 or _shell.shell_stack()[-1] != screen) and ticks < 300:
+		# lane QA2-FIX (QA-2 #5): the screen's movie must be in its level before the next push shuts the screen down: the window manager loads a pushed
+		# movie on its next update, and hideAptWindow on a window that is not loaded yet does nothing (WindowManager_hideAptWindow), so MainMenu's buttons
+		# showed through the lobby after every game
+		while (_shell.shell_stack().size() == 0 or _shell.shell_stack()[-1] != screen or not _shell.has_level(_shell.shell_top_level())) and ticks < 300:
 			_shell.tick(0.033)
 			ticks += 1
-		if _shell.shell_stack().size() == 0 or _shell.shell_stack()[-1] != screen:
+		if _shell.shell_stack().size() == 0 or _shell.shell_stack()[-1] != screen or not _shell.has_level(_shell.shell_top_level()):
 			_fail("the shell refused %s: %s" % [screen, str(_shell.get_shell_report().errors)])
 			return
+		levels.append(_shell.shell_top_level())
+	var covered_hidden := true
+	for i in levels.size() - 1:
+		covered_hidden = covered_hidden and not bool(_shell.instance_info(levels[i], "").get("visible", true))
+	print("GAME END Continue covered screens hidden: %s (levels %s)" % [covered_hidden, str(levels)])
+	print("GAME STOP [S-1771] Continue pushes the shell's start screens again (retail pops the score screen off the stack it kept through the game, RW 0x75DB34)")
 	_audio.play_shell_music(false)
 	_menu_revealed = false
 	_frames = 0
@@ -1527,8 +1600,18 @@ func _perf_frame(delta: float) -> void:
 		_fps_label.text = "%d fps  %.1f ms" % [Engine.get_frames_per_second(), _perf_times.back()]
 	if _perf_cpu0 < 0.0:
 		_perf_cpu0 = _main_thread_cpu_ms()
+	if _perf and not _perf_stat.is_empty() and _perf_stat_pid < 0:
+		_perf_stat_index += 1
+		_perf_stat_pid = OS.create_process("perf", ["stat", "-x", ",", "-e", "instructions:u,cycles:u", "-t", str(OS.get_process_id()), "-o", "%s-%d.txt" % [_perf_stat, _perf_stat_index]])
 	if now - _perf_last < 5000000:
 		return
+	if _perf_stat_pid >= 0:
+		# lane PERF-3: this window's counts are complete once perf exits; they are printed at the next window's end
+		OS.execute("kill", ["-INT", str(_perf_stat_pid)])
+		if not _perf_stat_done.is_empty():
+			_print_perf_stat(_perf_stat_done)
+		_perf_stat_done = {"file": "%s-%d.txt" % [_perf_stat, _perf_stat_index], "frames": _perf_times.size(), "index": _perf_stat_index}
+		_perf_stat_pid = -1
 	var n := _perf_times.size()
 	var cpu1 := _main_thread_cpu_ms()
 	var cpu_per_frame := (cpu1 - _perf_cpu0) / maxf(n, 1) if _perf_cpu0 >= 0.0 else -1.0
@@ -1556,6 +1639,19 @@ func _perf_frame(delta: float) -> void:
 	_perf_deltas.clear()
 	_perf_parts.clear()
 	_perf_last = now
+func _print_perf_stat(w: Dictionary) -> void:
+	var f := FileAccess.open(w.file, FileAccess.READ)
+	if f == null:
+		print("GAME PERF STAT window %d: no perf output" % w.index)
+		return
+	var parts := PackedStringArray()
+	for line in f.get_as_text().split("\n"):
+		var c := line.split(",")
+		if c.size() > 2 and c[0].is_valid_int():
+			parts.append("%s/frame=%.2fM" % [c[2].split(":")[0], float(c[0]) / maxf(w.frames, 1) / 1.0e6])
+	print("GAME PERF STAT window %d frames=%d main %s" % [w.index, w.frames, " ".join(parts)])
+
+
 # ---- lane MP-1: a LAN game ---------------------------------------------------------------------------------------------------------------------
 
 func _net_open() -> void:
@@ -2130,6 +2226,22 @@ func _run_quit() -> void:
 		get_tree().quit(1)
 		return
 	await _finish_end_flow(faction, "end2")
+
+
+## lane CAMP-1: --campaign-check=N: quit once N missions ended (or the campaign is complete); exit 0 when every one was won
+func _campaign_check_tick() -> void:
+	if _campaign_check <= 0 or _campaign_flow == null:
+		return
+	var ended: Array = _campaign_flow.ended_log
+	# quit once the flow went on after the N-th end: the next mission is playing, or the main menu is back
+	var next_playing: bool = _campaign_flow.active and _campaign_flow.begun > ended.size() and _state == State.PLAYING
+	var menu_back: bool = not _campaign_flow.active and _state == State.MENU
+	if ended.size() >= _campaign_check and (next_playing or menu_back):
+		var won := 0
+		for l in ended:
+			won += 1 if String(l).contains(" victory ") else 0
+		print("CAMPAIGN CHECK %d missions ended, %d won: %s" % [ended.size(), won, str(ended)])
+		get_tree().quit(0 if won == ended.size() and ended.size() > 0 else 1)
 
 
 # ---- lane QA-1: the scripted player -------------------------------------------------------------------------------------------------------------------

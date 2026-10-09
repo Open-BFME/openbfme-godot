@@ -43,7 +43,9 @@ std::unique_ptr<LANAPI> ui2Lan(int factions, int colors)
 #else
 	const int pid = (int)getpid();
 #endif
-	o.lobbyPortBase = (std::uint16_t)(46000 + (pid % 1000) * 16);
+	// below Windows' dynamic range (49152 ..), where Hyper-V / WSL reserve UDP ranges (51070 .. 51169 on the native Windows test host: the old base,
+	// 46000 + 321 * 16 = 51136, could never open there)
+	o.lobbyPortBase = (std::uint16_t)(44000 + (pid % 300) * 16);
 	o.lobbyPorts = 8;
 	o.broadcast = false;
 	o.extraTargets = { 0x7F000001u };
