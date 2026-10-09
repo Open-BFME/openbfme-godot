@@ -1,0 +1,8 @@
+idx	token	parse_va	parse_kind	userdata	offset	userdata_list
+0	AttributeModifier	0x42ee5e	parseAsciiString	0x0	0x148	
+1	DamageFXType	0x42e956	parseIndexList	0xdb5f40	0x14c	list_db5f40
+2	Radius	0x42ed00	parseReal	0x0	0x150	
+3	DamageArc	0x42ee15	parseAngleReal	0x0	0x154	
+4	AntiCategories	0x89f32d	parseBitMask32_names_0xD9FA40	0x0	0x158	
+5	AntiFX	0x73a302	parseFXList	0x0	0x15c	
+6	AffectHordeMembers	0x42e558	parseBool	0x0	0x160	

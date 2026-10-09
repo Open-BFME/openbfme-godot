@@ -1,0 +1,6 @@
+idx	token	parse_va	parse_kind	userdata	offset	userdata_list
+0	LuaEvent	0x42ee5e	parseAsciiString	0x0	0x148	
+1	Radius	0x42ed00	parseReal	0x0	0x14c	
+2	SendToEnemies	0x42e558	parseBool	0x0	0x150	
+3	SendToAllies	0x42e558	parseBool	0x0	0x151	
+4	SendToNeutral	0x42e558	parseBool	0x0	0x152	

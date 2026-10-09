@@ -1,0 +1,509 @@
+{
+ "FactionAngmar": {
+  "objectReasons": {
+   "AngmarDarkDunedainHorde": [
+    "unit_build:Command_ConstructAngmarDarkDunedainHorde"
+   ],
+   "AngmarDarkRangerHorde": [
+    "unit_build:Command_ConstructAngmarDarkRangerHorde"
+   ],
+   "AngmarDireWolfHorde": [
+    "unit_build:Command_ConstructAngmarDireWolfHorde"
+   ],
+   "AngmarHillTrollHorde": [
+    "unit_build:Command_ConstructAngmarHillTrollHorde"
+   ],
+   "AngmarNecromancerHorde": [
+    "unit_build:Command_ConstructAngmarNecromancerHorde"
+   ],
+   "AngmarPorter": [
+    "starting_unit",
+    "unit_build:Command_ConstructAngmarPorter"
+   ],
+   "AngmarSnowTrollHorde": [
+    "unit_build:Command_ConstructAngmarSnowTrollHorde"
+   ],
+   "AngmarThrallMaster": [
+    "unit_build:Command_ConstructAngmarThrallMaster"
+   ],
+   "AngmarTrollSling": [
+    "unit_build:Command_ConstructAngmarTrollSling"
+   ]
+  },
+  "side": "Angmar",
+  "startingBuilding": "AngmarFortress",
+  "structures": [
+   "AngmarBarracks",
+   "AngmarBattleTowerExpansion",
+   "AngmarCatapultExpansion",
+   "AngmarDen",
+   "AngmarForgeWorks",
+   "AngmarFortress",
+   "AngmarFortressCitadel",
+   "AngmarFortressExpansionPadCorner",
+   "AngmarFortressExpansionPadSide",
+   "AngmarHallofTwilight",
+   "AngmarKennelExpansion",
+   "AngmarMill",
+   "AngmarSentryTower",
+   "AngmarWallHubSmall",
+   "AngmarWallHubSmallExpansion"
+  ],
+  "trainable": [
+   "AngmarDarkDunedainHorde",
+   "AngmarDarkRangerHorde",
+   "AngmarDireWolfHorde",
+   "AngmarHillTrollHorde",
+   "AngmarNecromancerHorde",
+   "AngmarSnowTrollHorde",
+   "AngmarPorter",
+   "AngmarThrallMaster",
+   "AngmarTrollSling"
+  ]
+ },
+ "FactionDwarves": {
+  "objectReasons": {
+   "DwarvenAxeThrowerHorde": [
+    "unit_build:Command_ConstructDwarvenAxeThrowerHorde"
+   ],
+   "DwarvenBattleWagon": [
+    "unit_build:Command_ConstructDwarvenBattleWagon"
+   ],
+   "DwarvenCatapult": [
+    "unit_build:Command_ConstructDwarvenCatapult"
+   ],
+   "DwarvenDemolisher": [
+    "unit_build:Command_ConstructDwarvenDemolisher"
+   ],
+   "DwarvenGuardianHorde": [
+    "unit_build:Command_ConstructDwarvenGuardianHorde"
+   ],
+   "DwarvenMenOfDaleHorde": [
+    "unit_build:Command_ConstructDwarvenMenOfDaleHorde"
+   ],
+   "DwarvenPhalanxHorde": [
+    "unit_build:Command_ConstructDwarvenPhalanxHorde"
+   ],
+   "DwarvenPorter": [
+    "starting_unit",
+    "unit_build:Command_ConstructDwarvenPorter"
+   ],
+   "DwarvenZerkerHorde": [
+    "unit_build:Command_ConstructDwarvenZerkerHorde"
+   ]
+  },
+  "side": "Dwarves",
+  "startingBuilding": "DwarvenFortress",
+  "structures": [
+   "DwarfBarracks",
+   "DwarvenArcheryRange",
+   "DwarvenCatapultExpansion",
+   "DwarvenEreborTowerTowerExpansion",
+   "DwarvenFortress",
+   "DwarvenFortressCitadel",
+   "DwarvenFortressExpansionPadCorner",
+   "DwarvenFortressExpansionPadSide",
+   "DwarvenHallExpansion",
+   "DwarvenHearth",
+   "DwarvenMineShaft",
+   "DwarvenSentryTower",
+   "DwarvenSiegeWorks",
+   "DwarvenStatue",
+   "DwarvenWallHubSmall",
+   "DwarvenWallHubSmallExpansion"
+  ],
+  "trainable": [
+   "DwarvenAxeThrowerHorde",
+   "DwarvenGuardianHorde",
+   "DwarvenMenOfDaleHorde",
+   "DwarvenPhalanxHorde",
+   "DwarvenZerkerHorde",
+   "DwarvenBattleWagon",
+   "DwarvenCatapult",
+   "DwarvenDemolisher",
+   "DwarvenPorter"
+  ]
+ },
+ "FactionElves": {
+  "objectReasons": {
+   "ElvenLorienArcherHorde": [
+    "unit_build:Command_ConstructElvenLorienArcherHorde"
+   ],
+   "ElvenLorienWarriorHorde": [
+    "unit_build:Command_ConstructElvenLorienWarriorHorde"
+   ],
+   "ElvenMirkwoodArcherHorde": [
+    "unit_build:Command_ConstructElvenMirkwoodArcherHorde"
+   ],
+   "ElvenMithlondSentryHorde": [
+    "unit_build:Command_ConstructElvenMithlondSentryHorde"
+   ],
+   "ElvenPorter": [
+    "starting_unit",
+    "unit_build:Command_ConstructElvenPorter"
+   ],
+   "ElvenRivendellArcherHorde": [
+    "unit_build:Command_ConstructElvenRivendellArchers"
+   ],
+   "ElvenRivendellLancerHorde": [
+    "unit_build:Command_ConstructElvenRivendellLancers"
+   ],
+   "NoldorWarriorHorde": [
+    "unit_build:Command_ConstructNoldorWarriorHorde"
+   ],
+   "RohanGenericEnt": [
+    "unit_build:Command_ConstructEntGeneric"
+   ],
+   "RohanTreeBerd": [
+    "unit_build:Command_ConstructEntTreeBeard"
+   ]
+  },
+  "side": "Elves",
+  "startingBuilding": "ElvenFortress",
+  "structures": [
+   "ElvenBarracks",
+   "ElvenBattleTower",
+   "ElvenCastleWallHub",
+   "ElvenCastleWallHubExpansion",
+   "ElvenCitadel",
+   "ElvenEntMoot",
+   "ElvenFloodgateExpansion",
+   "ElvenFortress",
+   "ElvenFortressExpansionPadCorner",
+   "ElvenGreenPasture",
+   "ElvenMallornTree",
+   "ElvenMirrorOfGaladriel",
+   "ElvenStatue",
+   "ElvenVigilantEntExpansion",
+   "ElvenWatchtowerExpansion",
+   "EregionForge"
+  ],
+  "trainable": [
+   "ElvenLorienArcherHorde",
+   "ElvenLorienWarriorHorde",
+   "ElvenMirkwoodArcherHorde",
+   "ElvenMithlondSentryHorde",
+   "ElvenRivendellArcherHorde",
+   "ElvenRivendellLancerHorde",
+   "NoldorWarriorHorde",
+   "ElvenPorter",
+   "RohanGenericEnt"
+  ]
+ },
+ "FactionIsengard": {
+  "objectReasons": {
+   "IsengardBallista": [
+    "unit_build:Command_ConstructIsengardBallista"
+   ],
+   "IsengardBatteringRam": [
+    "unit_build:Command_ConstructIsengardBatteringRam"
+   ],
+   "IsengardBerserkerHorde": [
+    "unit_build:Command_ConstructIsengardBerserkerHorde"
+   ],
+   "IsengardBeserker": [
+    "unit_build:Command_ConstructIsengardBerserker"
+   ],
+   "IsengardExplosiveMine": [
+    "unit_build:Command_ConstructIsengardExplosiveMine"
+   ],
+   "IsengardFighterHorde": [
+    "unit_build:Command_ConstructIsengardFighterHorde"
+   ],
+   "IsengardPikemanHorde": [
+    "unit_build:Command_ConstructIsengardPikemanHorde"
+   ],
+   "IsengardPorter": [
+    "starting_unit",
+    "unit_build:Command_ConstructIsengardPorter"
+   ],
+   "IsengardUrukCrossbowHorde": [
+    "unit_build:Command_ConstructIsengardUrukCrossbowHorde"
+   ],
+   "IsengardWargPackHorde": [
+    "unit_build:Command_ConstructIsengardWargPackHorde"
+   ],
+   "IsengardWargRiderHorde": [
+    "unit_build:Command_ConstructIsengardWargRiderHorde"
+   ],
+   "IsengardWildmanAxeHorde": [
+    "unit_build:Command_ConstructIsengardWildmanAxeHorde"
+   ],
+   "IsengardWildmanHorde": [
+    "unit_build:Command_ConstructIsengardWildmanHorde"
+   ],
+   "MordorWorker": [
+    "unit_build:Command_BuildMordorWorker"
+   ]
+  },
+  "side": "Isengard",
+  "startingBuilding": "IsengardFortress",
+  "structures": [
+   "IsengardArmory",
+   "IsengardBallistaExpansion",
+   "IsengardBattleTower",
+   "IsengardCastleWallHub",
+   "IsengardCastleWallHubExpansion",
+   "IsengardFortress",
+   "IsengardFortressCitadel",
+   "IsengardFortressExpansionPadCorner",
+   "IsengardFurnace",
+   "IsengardLumberMill",
+   "IsengardMineLauncherExpansion",
+   "IsengardSiegeWorks",
+   "IsengardTavern",
+   "IsengardTowerExpansion",
+   "IsengardUrukPit",
+   "IsengardWargPit",
+   "IsengardWargSentry"
+  ],
+  "trainable": [
+   "IsengardBerserkerHorde",
+   "IsengardFighterHorde",
+   "IsengardPikemanHorde",
+   "IsengardUrukCrossbowHorde",
+   "IsengardWargPackHorde",
+   "IsengardWargRiderHorde",
+   "IsengardWildmanAxeHorde",
+   "IsengardWildmanHorde",
+   "IsengardBallista",
+   "IsengardBatteringRam",
+   "IsengardBeserker",
+   "IsengardExplosiveMine",
+   "IsengardPorter",
+   "MordorWorker"
+  ]
+ },
+ "FactionMen": {
+  "objectReasons": {
+   "GondorArcherHorde": [
+    "unit_build:Command_ConstructGondorArcherHorde"
+   ],
+   "GondorFighterHorde": [
+    "unit_build:Command_ConstructGondorFighterHorde"
+   ],
+   "GondorKnightHorde": [
+    "unit_build:Command_ConstructGondorKnightHorde"
+   ],
+   "GondorKnightsofDolHorde": [
+    "unit_build:Command_ConstructGondorKnightsofDolHorde"
+   ],
+   "GondorRangerHorde": [
+    "unit_build:Command_ConstructGondorRangerHorde"
+   ],
+   "GondorTowerShieldGuardHorde": [
+    "unit_build:Command_ConstructGondorTowerShieldGuardHorde"
+   ],
+   "GondorTrebuchet": [
+    "unit_build:Command_ConstructGondorTrebuchet"
+   ],
+   "MenPorter": [
+    "starting_unit",
+    "unit_build:Command_ConstructMenPorter"
+   ],
+   "RohanRohirrimHorde": [
+    "unit_build:Command_ConstructRohanRohirrimHorde"
+   ],
+   "RohanSpearmenHorde": [
+    "unit_build:Command_ConstructRohanSpearmenHorde"
+   ]
+  },
+  "side": "Men",
+  "startingBuilding": "MenFortress",
+  "structures": [
+   "GondorArcherRange",
+   "GondorBarracks",
+   "GondorBattleTower",
+   "GondorFarm",
+   "GondorForge",
+   "GondorMarketPlace",
+   "GondorStable",
+   "GondorStatue",
+   "GondorWell",
+   "GondorWorkshop",
+   "MenArrowTowerExpansion",
+   "MenFortress",
+   "MenFortressCitadel",
+   "MenFortressExpansionPadCorner",
+   "MenFortressExpansionPadSide",
+   "MenGarrisonTowerExpansion",
+   "MenTrebuchetExpansion",
+   "MenTrebuchetSideExpansion",
+   "MenWallHubSmall",
+   "MenWallHubSmallExpansion"
+  ],
+  "trainable": [
+   "GondorArcherHorde",
+   "GondorFighterHorde",
+   "GondorKnightHorde",
+   "GondorKnightsofDolHorde",
+   "GondorRangerHorde",
+   "GondorTowerShieldGuardHorde",
+   "RohanRohirrimHorde",
+   "RohanSpearmenHorde",
+   "GondorTrebuchet",
+   "MenPorter"
+  ]
+ },
+ "FactionMordor": {
+  "objectReasons": {
+   "MordorArcherHorde": [
+    "unit_build:Command_ConstructMordorOrcArcherHorde"
+   ],
+   "MordorAttackTroll": [
+    "unit_build:Command_ConstructMordorAttackTroll"
+   ],
+   "MordorBatteringRam": [
+    "unit_build:Command_ConstructMordorBatteringRam"
+   ],
+   "MordorBlackOrcHorde": [
+    "unit_build:Command_ConstructMordorBlackOrcFighterHorde"
+   ],
+   "MordorBlackRiderHorde": [
+    "unit_build:Command_ConstructMordorBlackRiderHorde"
+   ],
+   "MordorCatapult": [
+    "unit_build:Command_ConstructMordorCatapult"
+   ],
+   "MordorCorsairsOfUmbarHorde": [
+    "unit_build:Command_ConstructMordorCorsairsOfUmbarHorde"
+   ],
+   "MordorDrummerTroll": [
+    "unit_build:Command_ConstructMordorDrummerTroll"
+   ],
+   "MordorEasterlingHorde": [
+    "unit_build:Command_ConstructEasterlingHorde"
+   ],
+   "MordorFighterHorde": [
+    "unit_build:Command_ConstructMordorOrcFighterHorde"
+   ],
+   "MordorHaradrimArcherHorde": [
+    "unit_build:Command_ConstructMordorHaradrimArcherHorde"
+   ],
+   "MordorHaradrimRiderHorde": [
+    "unit_build:Command_ConstructMordorHaradrimRiderHorde"
+   ],
+   "MordorMountainTroll": [
+    "unit_build:Command_ConstructMordorMountainTroll"
+   ],
+   "MordorMumakil": [
+    "unit_build:Command_ConstructMordorMumakil"
+   ],
+   "MordorPorter": [
+    "starting_unit",
+    "unit_build:Command_ConstructMordorPorter"
+   ],
+   "MordorWorker": [
+    "unit_build:Command_BuildMordorWorker"
+   ]
+  },
+  "side": "Mordor",
+  "startingBuilding": "MordorFortress",
+  "structures": [
+   "MordorBase",
+   "MordorBase_DEMO",
+   "MordorBattleTower",
+   "MordorFortress",
+   "MordorFortressBarricadeExpansion",
+   "MordorFortressCitadel",
+   "MordorFortressExpansionPadCorner",
+   "MordorGateWatchersExpansion",
+   "MordorHaradrimPalace",
+   "MordorLumberMill",
+   "MordorMumakilPen",
+   "MordorOrcPit",
+   "MordorSiegeWorks",
+   "MordorSlaughterHouse",
+   "MordorTrollCage",
+   "MordorWallCatapultExpansion"
+  ],
+  "trainable": [
+   "MordorArcherHorde",
+   "MordorBlackOrcHorde",
+   "MordorBlackRiderHorde",
+   "MordorCorsairsOfUmbarHorde",
+   "MordorEasterlingHorde",
+   "MordorFighterHorde",
+   "MordorHaradrimArcherHorde",
+   "MordorHaradrimRiderHorde",
+   "MordorAttackTroll",
+   "MordorBatteringRam",
+   "MordorCatapult",
+   "MordorDrummerTroll",
+   "MordorMountainTroll",
+   "MordorMumakil",
+   "MordorPorter",
+   "MordorWorker"
+  ]
+ },
+ "FactionWild": {
+  "objectReasons": {
+   "GoblinArcherHorde": [
+    "unit_build:Command_ConstructGoblinArcherHorde"
+   ],
+   "GoblinCaveTroll": [
+    "unit_build:Command_ConstructGoblinTroll"
+   ],
+   "GoblinFighterHorde": [
+    "unit_build:Command_ConstructGoblinFighterHorde"
+   ],
+   "GoblinSpiderRiderHorde": [
+    "unit_build:Command_ConstructWildSpiderRiderHorde"
+   ],
+   "MordorWorker": [
+    "unit_build:Command_BuildMordorWorker"
+   ],
+   "WildBabyDrakeHorde": [
+    "unit_build:Command_ConstructWildBabyDrakeHorde"
+   ],
+   "WildMarauderHorde": [
+    "unit_build:Command_ConstructWildMarauderHorde"
+   ],
+   "WildMarauderSwordHorde": [
+    "unit_build:Command_ConstructWildMarauderSwordHorde"
+   ],
+   "WildMountainGiant": [
+    "unit_build:Command_ConstructWildMountainGiant"
+   ],
+   "WildPorter": [
+    "starting_unit",
+    "unit_build:Command_ConstructWildPorter"
+   ],
+   "WildSpiderlingHorde": [
+    "unit_build:Command_ConstructWildSpiderlingHorde"
+   ]
+  },
+  "side": "Wild",
+  "startingBuilding": "WildFortress",
+  "structures": [
+   "GoblinCave",
+   "GoblinFissure",
+   "WildArrowDenExpansion",
+   "WildBurrowsExpansion",
+   "WildFortress",
+   "WildFortressCitadel",
+   "WildFortressExpansionPadCorner",
+   "WildFortressExpansionPadSide",
+   "WildGiantSentryExpansion",
+   "WildLumberMill",
+   "WildMineShaft",
+   "WildSentryTower",
+   "WildSpiderHolesExpansion",
+   "WildSpiderPit",
+   "WildTreasureTrove"
+  ],
+  "trainable": [
+   "GoblinArcherHorde",
+   "GoblinFighterHorde",
+   "GoblinSpiderRiderHorde",
+   "WildBabyDrakeHorde",
+   "WildMarauderHorde",
+   "WildMarauderSwordHorde",
+   "WildSpiderlingHorde",
+   "GoblinCaveTroll",
+   "MordorWorker",
+   "WildMountainGiant",
+   "WildPorter"
+  ]
+ }
+}

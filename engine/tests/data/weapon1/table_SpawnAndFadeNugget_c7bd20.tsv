@@ -1,0 +1,4 @@
+idx	token	parse_va	parse_kind	userdata	offset	userdata_list
+0	ObjectTargetFilter	0x76392f	parseObjectFilter	0x0	0x148	
+1	SpawnedObjectName	0x42ee5e	parseAsciiString	0x0	0x14c	
+2	SpawnOffset	0x42f247	parseCoord3D	0x0	0x150	

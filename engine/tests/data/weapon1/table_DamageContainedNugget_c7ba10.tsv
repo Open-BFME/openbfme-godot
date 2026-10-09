@@ -1,0 +1,5 @@
+idx	token	parse_va	parse_kind	userdata	offset	userdata_list
+0	KillCount	0x42ec5e	parseInt	0x0	0x148	
+1	KillKindof	0x6564e7	parseKindOfMask	0x0	0x14c	
+2	KillKindofNot	0x6564e7	parseKindOfMask	0x0	0x168	
+3	DeathType	0x42e956	parseIndexList	0xdb63d8	0x184	list_db63d8

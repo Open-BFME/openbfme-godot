@@ -1,41 +1,77 @@
 @echo off
-setlocal EnableExtensions
-cd /d "%~dp0"
-REM Fast suites first, then the headless slice runner. Any failure exits non-zero.
-REM   run_tests.bat            everything
-REM   run_tests.bat --fast     importer + engine + fleet only (no Godot)
-set "FAST=0"
-if /I "%~1"=="--fast" set "FAST=1"
+rem Runs the C++ unit tests, the headless Godot smoke test against retail files, then the windowed shader test.
+rem   GODOT          path to Godot 4.7 (the _console.exe build), required
+rem   ROTWK_INSTALL  RotWK install dir  } both unset/empty -> smoke test prints SKIP, exit 77
+rem   BFME2_INSTALL  BFME2 install dir  }
+rem Exit code: 0 all passed, 77 unit tests passed but smoke test skipped, 1 failure.
+setlocal
+set "ROOT=%~dp0"
+set "TESTS=%ROOT%engine\build\openbfme_tests.exe"
 
-if not defined OPENBFME_IMPORT_ROOT set "OPENBFME_IMPORT_ROOT=%CD%\workspace\retail-work"
-set "PYTHON=%OPENBFME_IMPORT_ROOT%\tools\python-3.12-env\Scripts\python.exe"
-if not exist "%PYTHON%" set "PYTHON=python"
-set "PYTHONPATH=%CD%\importer"
+if exist "%TESTS%" goto have_tests
+echo ERROR: %TESTS% not found; run build.bat first.
+exit /b 1
+:have_tests
+echo == C++ unit tests
+"%TESTS%"
+if errorlevel 1 goto unit_failed
 
-echo === importer + fleet tests
-"%PYTHON%" -m pytest importer\tests -q --color=no -p no:cacheprovider
-if errorlevel 1 exit /b 1
+echo == Simulation floating-point audit (flags of every compile command, manifest, type-aware AST scan; needs python and the libclang package)
+rem SIM_AUDIT_ARGS=--ast=skip runs the flags and manifest checks only (exit 3: reported loudly, never a pass of the AST check)
+python "%ROOT%tools\sim\sim_audit.py" --build "%ROOT%engine\build" %SIM_AUDIT_ARGS%
+if errorlevel 4 goto audit_failed
+if errorlevel 3 echo WARNING: the AST part of the simulation audit was SKIPPED
+if errorlevel 3 goto audit_done
+if errorlevel 1 goto audit_failed
+:audit_done
 
-echo === engine tests
-where dotnet >nul 2>nul
-if errorlevel 1 (
-  echo dotnet not found; skipping engine tests
-) else (
-  set "OPENBFME_DUALRUN_OPTIONAL=1"
-  dotnet test engine\OpenBfme.Engine.sln --nologo
-  if errorlevel 1 exit /b 1
-)
+echo == Godot smoke test
+if not defined GODOT goto no_godot
+if not exist "%GODOT%" goto no_godot
+if not exist "%ROOT%godot\bin\openbfme.windows.template_debug.x86_64.dll" goto no_dll
+"%GODOT%" --headless --path "%ROOT%godot" --import >nul 2>nul
+"%GODOT%" --headless --path "%ROOT%godot" --script res://tests/smoke_test.gd
+set "SMOKE=%ERRORLEVEL%"
+if "%SMOKE%"=="0" goto shader_test
+if "%SMOKE%"=="77" goto smoke_skipped
+echo SMOKE TEST FAILED (exit %SMOKE%)
+exit /b 1
 
-if "%FAST%"=="1" exit /b 0
+:shader_test
+rem The numeric shader test renders on the GPU (a window, NOT --headless): the terrain composite's numbers and the
+rem fangorn map are drawn and read back. 77 = no display/extension: reported, not a failure of the other tests.
+echo == Godot shader test (windowed, GPU)
+"%GODOT%" --path "%ROOT%godot" --script res://tests/shader_test.gd
+set "SHADER=%ERRORLEVEL%"
+if "%SHADER%"=="0" goto all_passed
+if "%SHADER%"=="77" goto shader_skipped
+echo SHADER TEST FAILED (exit %SHADER%)
+exit /b 1
 
-echo === headless slice runner
-call "%~dp0tools\resolve-godot.bat" --console
-if errorlevel 1 exit /b 1
-if not defined OPENBFME_CONTENT set "OPENBFME_CONTENT=%CD%\workspace\content-packs"
-REM BFME2 oracle for the few runners that check base-game-only authoring; absent means those checks print SKIP.
-if not defined OPENBFME_BFME2_EXTRACT if exist "%CD%\workspace\retail-extract\data\ini\weapon.ini" set "OPENBFME_BFME2_EXTRACT=%CD%\workspace\retail-extract"
-if not exist "%CD%\workspace\logs" mkdir "%CD%\workspace\logs"
-"%OPENBFME_GODOT%" --headless --path game --script res://tests/retail_slice_runner.gd > "%CD%\workspace\logs\latest-retail_slice_runner.txt" 2>&1
-set "RC=%ERRORLEVEL%"
-findstr /C:"RETAIL_SLICE_RESULT" "%CD%\workspace\logs\latest-retail_slice_runner.txt"
-exit /b %RC%
+:shader_skipped
+echo UNIT AND SMOKE TESTS PASSED; SHADER TEST SKIPPED (no display)
+exit /b 77
+
+:all_passed
+echo ALL TESTS PASSED
+exit /b 0
+
+:smoke_skipped
+echo UNIT TESTS PASSED; SMOKE TEST SKIPPED (set ROTWK_INSTALL and BFME2_INSTALL)
+exit /b 77
+
+:audit_failed
+echo SIMULATION AUDIT FAILED
+exit /b 1
+
+:unit_failed
+echo UNIT TESTS FAILED
+exit /b 1
+
+:no_godot
+echo ERROR: set GODOT to the Godot 4.7 console executable (Godot_v4.7-stable_win64_console.exe).
+exit /b 1
+
+:no_dll
+echo ERROR: godot\bin\openbfme.windows.template_debug.x86_64.dll missing; run build.bat first.
+exit /b 1

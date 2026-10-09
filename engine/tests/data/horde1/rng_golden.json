@@ -1,0 +1,1537 @@
+{
+ "algorithms": {
+  "RotWK_GameDat_LCG": [
+   {
+    "raw": [
+     1,
+     134775814,
+     3693946007,
+     892771047,
+     1149155179,
+     2847985427,
+     1425048793,
+     736364987
+    ],
+    "seed": 0,
+    "seed_array": [
+     0,
+     0,
+     0,
+     0,
+     0,
+     0
+    ],
+    "sequence": [
+     {
+      "drew": true,
+      "hi": 99,
+      "lo": 0,
+      "op": "i",
+      "result": 1
+     },
+     {
+      "drew": true,
+      "hi": 5,
+      "lo": -5,
+      "op": "i",
+      "result": 3
+     },
+     {
+      "drew": true,
+      "hi_bits": 1065353216,
+      "lo_bits": 3212836864,
+      "op": "r",
+      "result_bits": 1060657738
+     },
+     {
+      "drew": true,
+      "hi": 5,
+      "lo": 5,
+      "op": "i",
+      "result": 5
+     },
+     {
+      "drew": false,
+      "hi": -1,
+      "lo": 0,
+      "op": "i",
+      "result": -1
+     },
+     {
+      "drew": true,
+      "hi_bits": 1065353216,
+      "lo_bits": 0,
+      "op": "r",
+      "result_bits": 1049165167
+     },
+     {
+      "drew": true,
+      "hi": 3,
+      "lo": 1,
+      "op": "i",
+      "result": 3
+     },
+     {
+      "drew": true,
+      "hi": 2147483647,
+      "lo": 0,
+      "op": "i",
+      "result": 1425048793
+     },
+     {
+      "drew": false,
+      "hi_bits": 1077936128,
+      "lo_bits": 1077936128,
+      "op": "r",
+      "result_bits": 1077936128
+     },
+     {
+      "drew": true,
+      "hi": 100,
+      "lo": -100,
+      "op": "i",
+      "result": -20
+     },
+     {
+      "drew": false,
+      "hi": 6,
+      "lo": 7,
+      "op": "i",
+      "result": 6
+     },
+     {
+      "drew": false,
+      "hi_bits": 1073741824,
+      "lo_bits": 1075838976,
+      "op": "r",
+      "result_bits": 1073741824
+     },
+     {
+      "drew": true,
+      "hi": 4,
+      "lo": 0,
+      "op": "i",
+      "result": 4
+     },
+     {
+      "drew": true,
+      "hi": 20,
+      "lo": 10,
+      "op": "i",
+      "result": 13
+     },
+     {
+      "drew": true,
+      "hi_bits": 1135869952,
+      "lo_bits": 0,
+      "op": "r",
+      "result_bits": 1107602144
+     },
+     {
+      "drew": true,
+      "hi": 99,
+      "lo": 0,
+      "op": "i",
+      "result": 83
+     },
+     {
+      "drew": true,
+      "hi": 5,
+      "lo": -5,
+      "op": "i",
+      "result": -5
+     },
+     {
+      "drew": true,
+      "hi_bits": 1101004800,
+      "lo_bits": 3248488448,
+      "op": "r",
+      "result_bits": 1096519624
+     },
+     {
+      "drew": true,
+      "hi": 5,
+      "lo": 5,
+      "op": "i",
+      "result": 5
+     },
+     {
+      "drew": false,
+      "hi": -1,
+      "lo": 0,
+      "op": "i",
+      "result": -1
+     },
+     {
+      "drew": true,
+      "hi_bits": 1056964608,
+      "lo_bits": 0,
+      "op": "r",
+      "result_bits": 1041686354
+     },
+     {
+      "drew": true,
+      "hi": 3,
+      "lo": 1,
+      "op": "i",
+      "result": 2
+     },
+     {
+      "drew": true,
+      "hi": 2147483647,
+      "lo": 0,
+      "op": "i",
+      "result": 1500608358
+     },
+     {
+      "drew": true,
+      "hi_bits": 1065353217,
+      "lo_bits": 1065353216,
+      "op": "r",
+      "result_bits": 1065353217
+     }
+    ]
+   },
+   {
+    "raw": [
+     698583960,
+     2689601660,
+     833877216,
+     164831939,
+     3949639410,
+     1983120200,
+     2151660768,
+     1052458637
+    ],
+    "seed": 12345,
+    "seed_array": [
+     2147249093,
+     2147249093,
+     2147249093,
+     2147249093,
+     2147249093,
+     2147249093
+    ],
+    "sequence": [
+     {
+      "drew": true,
+      "hi": 99,
+      "lo": 0,
+      "op": "i",
+      "result": 60
+     },
+     {
+      "drew": true,
+      "hi": 5,
+      "lo": -5,
+      "op": "i",
+      "result": 4
+     },
+     {
+      "drew": true,
+      "hi_bits": 1065353216,
+      "lo_bits": 3212836864,
+      "op": "r",
+      "result_bits": 3206322198
+     },
+     {
+      "drew": true,
+      "hi": 5,
+      "lo": 5,
+      "op": "i",
+      "result": 5
+     },
+     {
+      "drew": false,
+      "hi": -1,
+      "lo": 0,
+      "op": "i",
+      "result": -1
+     },
+     {
+      "drew": true,
+      "hi_bits": 1065353216,
+      "lo_bits": 0,
+      "op": "r",
+      "result_bits": 1064004279
+     },
+     {
+      "drew": true,
+      "hi": 3,
+      "lo": 1,
+      "op": "i",
+      "result": 3
+     },
+     {
+      "drew": true,
+      "hi": 2147483647,
+      "lo": 0,
+      "op": "i",
+      "result": 4177120
+     },
+     {
+      "drew": false,
+      "hi_bits": 1077936128,
+      "lo_bits": 1077936128,
+      "op": "r",
+      "result_bits": 1077936128
+     },
+     {
+      "drew": true,
+      "hi": 100,
+      "lo": -100,
+      "op": "i",
+      "result": 25
+     },
+     {
+      "drew": false,
+      "hi": 6,
+      "lo": 7,
+      "op": "i",
+      "result": 6
+     },
+     {
+      "drew": false,
+      "hi_bits": 1073741824,
+      "lo_bits": 1075838976,
+      "op": "r",
+      "result_bits": 1073741824
+     },
+     {
+      "drew": true,
+      "hi": 4,
+      "lo": 0,
+      "op": "i",
+      "result": 2
+     },
+     {
+      "drew": true,
+      "hi": 20,
+      "lo": 10,
+      "op": "i",
+      "result": 13
+     },
+     {
+      "drew": true,
+      "hi_bits": 1135869952,
+      "lo_bits": 0,
+      "op": "r",
+      "result_bits": 1130108987
+     },
+     {
+      "drew": true,
+      "hi": 99,
+      "lo": 0,
+      "op": "i",
+      "result": 53
+     },
+     {
+      "drew": true,
+      "hi": 5,
+      "lo": -5,
+      "op": "i",
+      "result": -5
+     },
+     {
+      "drew": true,
+      "hi_bits": 1101004800,
+      "lo_bits": 3248488448,
+      "op": "r",
+      "result_bits": 3234509216
+     },
+     {
+      "drew": true,
+      "hi": 5,
+      "lo": 5,
+      "op": "i",
+      "result": 5
+     },
+     {
+      "drew": false,
+      "hi": -1,
+      "lo": 0,
+      "op": "i",
+      "result": -1
+     },
+     {
+      "drew": true,
+      "hi_bits": 1056964608,
+      "lo_bits": 0,
+      "op": "r",
+      "result_bits": 1040383519
+     },
+     {
+      "drew": true,
+      "hi": 3,
+      "lo": 1,
+      "op": "i",
+      "result": 1
+     },
+     {
+      "drew": true,
+      "hi": 2147483647,
+      "lo": 0,
+      "op": "i",
+      "result": 587340494
+     },
+     {
+      "drew": true,
+      "hi_bits": 1065353217,
+      "lo_bits": 1065353216,
+      "op": "r",
+      "result_bits": 1065353216
+     }
+    ]
+   },
+   {
+    "raw": [
+     636509756,
+     1276833952,
+     2602822164,
+     4142211434,
+     1520526016,
+     21002201,
+     174268840,
+     843690961
+    ],
+    "seed": 4063039062,
+    "seed_array": [
+     111669150,
+     111669150,
+     111669150,
+     111669150,
+     111669150,
+     111669150
+    ],
+    "sequence": [
+     {
+      "drew": true,
+      "hi": 99,
+      "lo": 0,
+      "op": "i",
+      "result": 56
+     },
+     {
+      "drew": true,
+      "hi": 5,
+      "lo": -5,
+      "op": "i",
+      "result": 4
+     },
+     {
+      "drew": true,
+      "hi_bits": 1065353216,
+      "lo_bits": 3212836864,
+      "op": "r",
+      "result_bits": 1046028112
+     },
+     {
+      "drew": true,
+      "hi": 5,
+      "lo": 5,
+      "op": "i",
+      "result": 5
+     },
+     {
+      "drew": false,
+      "hi": -1,
+      "lo": 0,
+      "op": "i",
+      "result": -1
+     },
+     {
+      "drew": true,
+      "hi_bits": 1065353216,
+      "lo_bits": 0,
+      "op": "r",
+      "result_bits": 1052066502
+     },
+     {
+      "drew": true,
+      "hi": 3,
+      "lo": 1,
+      "op": "i",
+      "result": 3
+     },
+     {
+      "drew": true,
+      "hi": 2147483647,
+      "lo": 0,
+      "op": "i",
+      "result": 174268840
+     },
+     {
+      "drew": false,
+      "hi_bits": 1077936128,
+      "lo_bits": 1077936128,
+      "op": "r",
+      "result_bits": 1077936128
+     },
+     {
+      "drew": true,
+      "hi": 100,
+      "lo": -100,
+      "op": "i",
+      "result": -6
+     },
+     {
+      "drew": false,
+      "hi": 6,
+      "lo": 7,
+      "op": "i",
+      "result": 6
+     },
+     {
+      "drew": false,
+      "hi_bits": 1073741824,
+      "lo_bits": 1075838976,
+      "op": "r",
+      "result_bits": 1073741824
+     },
+     {
+      "drew": true,
+      "hi": 4,
+      "lo": 0,
+      "op": "i",
+      "result": 2
+     },
+     {
+      "drew": true,
+      "hi": 20,
+      "lo": 10,
+      "op": "i",
+      "result": 20
+     },
+     {
+      "drew": true,
+      "hi_bits": 1135869952,
+      "lo_bits": 0,
+      "op": "r",
+      "result_bits": 1129554346
+     },
+     {
+      "drew": true,
+      "hi": 99,
+      "lo": 0,
+      "op": "i",
+      "result": 21
+     },
+     {
+      "drew": true,
+      "hi": 5,
+      "lo": -5,
+      "op": "i",
+      "result": -5
+     },
+     {
+      "drew": true,
+      "hi_bits": 1101004800,
+      "lo_bits": 3248488448,
+      "op": "r",
+      "result_bits": 3233613788
+     },
+     {
+      "drew": true,
+      "hi": 5,
+      "lo": 5,
+      "op": "i",
+      "result": 5
+     },
+     {
+      "drew": false,
+      "hi": -1,
+      "lo": 0,
+      "op": "i",
+      "result": -1
+     },
+     {
+      "drew": true,
+      "hi_bits": 1056964608,
+      "lo_bits": 0,
+      "op": "r",
+      "result_bits": 1033212358
+     },
+     {
+      "drew": true,
+      "hi": 3,
+      "lo": 1,
+      "op": "i",
+      "result": 2
+     },
+     {
+      "drew": true,
+      "hi": 2147483647,
+      "lo": 0,
+      "op": "i",
+      "result": 1059967119
+     },
+     {
+      "drew": true,
+      "hi_bits": 1065353217,
+      "lo_bits": 1065353216,
+      "op": "r",
+      "result_bits": 1065353216
+     }
+    ]
+   },
+   {
+    "raw": [
+     1791078079,
+     3291255007,
+     2024731309,
+     3069029281,
+     1599113976,
+     656021595,
+     475144086,
+     2081103491
+    ],
+    "seed": 3735928559,
+    "seed_array": [
+     4179285059,
+     4179285059,
+     4179285059,
+     4179285059,
+     4179285059,
+     4179285059
+    ],
+    "sequence": [
+     {
+      "drew": true,
+      "hi": 99,
+      "lo": 0,
+      "op": "i",
+      "result": 79
+     },
+     {
+      "drew": true,
+      "hi": 5,
+      "lo": -5,
+      "op": "i",
+      "result": 2
+     },
+     {
+      "drew": true,
+      "hi_bits": 1065353216,
+      "lo_bits": 3212836864,
+      "op": "r",
+      "result_bits": 3177849264
+     },
+     {
+      "drew": true,
+      "hi": 5,
+      "lo": 5,
+      "op": "i",
+      "result": 5
+     },
+     {
+      "drew": false,
+      "hi": -1,
+      "lo": 0,
+      "op": "i",
+      "result": -1
+     },
+     {
+      "drew": true,
+      "hi_bits": 1065353216,
+      "lo_bits": 0,
+      "op": "r",
+      "result_bits": 1052680470
+     },
+     {
+      "drew": true,
+      "hi": 3,
+      "lo": 1,
+      "op": "i",
+      "result": 1
+     },
+     {
+      "drew": true,
+      "hi": 2147483647,
+      "lo": 0,
+      "op": "i",
+      "result": 475144086
+     },
+     {
+      "drew": false,
+      "hi_bits": 1077936128,
+      "lo_bits": 1077936128,
+      "op": "r",
+      "result_bits": 1077936128
+     },
+     {
+      "drew": true,
+      "hi": 100,
+      "lo": -100,
+      "op": "i",
+      "result": 43
+     },
+     {
+      "drew": false,
+      "hi": 6,
+      "lo": 7,
+      "op": "i",
+      "result": 6
+     },
+     {
+      "drew": false,
+      "hi_bits": 1073741824,
+      "lo_bits": 1075838976,
+      "op": "r",
+      "result_bits": 1073741824
+     },
+     {
+      "drew": true,
+      "hi": 4,
+      "lo": 0,
+      "op": "i",
+      "result": 2
+     },
+     {
+      "drew": true,
+      "hi": 20,
+      "lo": 10,
+      "op": "i",
+      "result": 11
+     },
+     {
+      "drew": true,
+      "hi_bits": 1135869952,
+      "lo_bits": 0,
+      "op": "r",
+      "result_bits": 1130859756
+     },
+     {
+      "drew": true,
+      "hi": 99,
+      "lo": 0,
+      "op": "i",
+      "result": 69
+     },
+     {
+      "drew": true,
+      "hi": 5,
+      "lo": -5,
+      "op": "i",
+      "result": 1
+     },
+     {
+      "drew": true,
+      "hi_bits": 1101004800,
+      "lo_bits": 3248488448,
+      "op": "r",
+      "result_bits": 1093292470
+     },
+     {
+      "drew": true,
+      "hi": 5,
+      "lo": 5,
+      "op": "i",
+      "result": 5
+     },
+     {
+      "drew": false,
+      "hi": -1,
+      "lo": 0,
+      "op": "i",
+      "result": -1
+     },
+     {
+      "drew": true,
+      "hi_bits": 1056964608,
+      "lo_bits": 0,
+      "op": "r",
+      "result_bits": 1053113574
+     },
+     {
+      "drew": true,
+      "hi": 3,
+      "lo": 1,
+      "op": "i",
+      "result": 2
+     },
+     {
+      "drew": true,
+      "hi": 2147483647,
+      "lo": 0,
+      "op": "i",
+      "result": 327861538
+     },
+     {
+      "drew": true,
+      "hi_bits": 1065353217,
+      "lo_bits": 1065353216,
+      "op": "r",
+      "result_bits": 1065353216
+     }
+    ]
+   }
+  ],
+  "ZH_CarryChain": [
+   {
+    "raw": [
+     1436176877,
+     659466229,
+     3894933472,
+     1991661106,
+     2132492267,
+     3941127662,
+     1359026287,
+     1702175322
+    ],
+    "seed": 0,
+    "seed_array": [
+     4063039062,
+     2284922601,
+     3324304687,
+     117621916,
+     2654289789,
+     1876900708
+    ],
+    "sequence": [
+     {
+      "drew": true,
+      "hi": 99,
+      "lo": 0,
+      "op": "i",
+      "result": 77
+     },
+     {
+      "drew": true,
+      "hi": 5,
+      "lo": -5,
+      "op": "i",
+      "result": -1
+     },
+     {
+      "drew": true,
+      "hi_bits": 1065353216,
+      "lo_bits": 3212836864,
+      "op": "r",
+      "result_bits": 1062227952
+     },
+     {
+      "drew": true,
+      "hi": 5,
+      "lo": 5,
+      "op": "i",
+      "result": 5
+     },
+     {
+      "drew": false,
+      "hi": -1,
+      "lo": 0,
+      "op": "i",
+      "result": -1
+     },
+     {
+      "drew": true,
+      "hi_bits": 1065353216,
+      "lo_bits": 0,
+      "op": "r",
+      "result_bits": 1056847488
+     },
+     {
+      "drew": true,
+      "hi": 3,
+      "lo": 1,
+      "op": "i",
+      "result": 3
+     },
+     {
+      "drew": true,
+      "hi": 2147483647,
+      "lo": 0,
+      "op": "i",
+      "result": 1359026287
+     },
+     {
+      "drew": false,
+      "hi_bits": 1077936128,
+      "lo_bits": 1077936128,
+      "op": "r",
+      "result_bits": 1077936128
+     },
+     {
+      "drew": true,
+      "hi": 100,
+      "lo": -100,
+      "op": "i",
+      "result": 89
+     },
+     {
+      "drew": false,
+      "hi": 6,
+      "lo": 7,
+      "op": "i",
+      "result": 6
+     },
+     {
+      "drew": false,
+      "hi_bits": 1073741824,
+      "lo_bits": 1075838976,
+      "op": "r",
+      "result_bits": 1073741824
+     },
+     {
+      "drew": true,
+      "hi": 4,
+      "lo": 0,
+      "op": "i",
+      "result": 2
+     },
+     {
+      "drew": true,
+      "hi": 20,
+      "lo": 10,
+      "op": "i",
+      "result": 11
+     },
+     {
+      "drew": true,
+      "hi_bits": 1135869952,
+      "lo_bits": 0,
+      "op": "r",
+      "result_bits": 1130864414
+     },
+     {
+      "drew": true,
+      "hi": 99,
+      "lo": 0,
+      "op": "i",
+      "result": 74
+     },
+     {
+      "drew": true,
+      "hi": 5,
+      "lo": -5,
+      "op": "i",
+      "result": -1
+     },
+     {
+      "drew": true,
+      "hi_bits": 1101004800,
+      "lo_bits": 3248488448,
+      "op": "r",
+      "result_bits": 3247310764
+     },
+     {
+      "drew": true,
+      "hi": 5,
+      "lo": 5,
+      "op": "i",
+      "result": 5
+     },
+     {
+      "drew": false,
+      "hi": -1,
+      "lo": 0,
+      "op": "i",
+      "result": -1
+     },
+     {
+      "drew": true,
+      "hi_bits": 1056964608,
+      "lo_bits": 0,
+      "op": "r",
+      "result_bits": 1051679336
+     },
+     {
+      "drew": true,
+      "hi": 3,
+      "lo": 1,
+      "op": "i",
+      "result": 2
+     },
+     {
+      "drew": true,
+      "hi": 2147483647,
+      "lo": 0,
+      "op": "i",
+      "result": 1219945058
+     },
+     {
+      "drew": true,
+      "hi_bits": 1065353217,
+      "lo_bits": 1065353216,
+      "op": "r",
+      "result_bits": 1065353217
+     }
+    ]
+   },
+   {
+    "raw": [
+     1436250947,
+     659725474,
+     3895624792,
+     1993216576,
+     2135603207,
+     3946831052,
+     1368803527,
+     1718063337
+    ],
+    "seed": 12345,
+    "seed_array": [
+     4063051407,
+     2284934946,
+     3324317032,
+     117634261,
+     2654302134,
+     1876913053
+    ],
+    "sequence": [
+     {
+      "drew": true,
+      "hi": 99,
+      "lo": 0,
+      "op": "i",
+      "result": 47
+     },
+     {
+      "drew": true,
+      "hi": 5,
+      "lo": -5,
+      "op": "i",
+      "result": -4
+     },
+     {
+      "drew": true,
+      "hi_bits": 1065353216,
+      "lo_bits": 3212836864,
+      "op": "r",
+      "result_bits": 1062233352
+     },
+     {
+      "drew": true,
+      "hi": 5,
+      "lo": 5,
+      "op": "i",
+      "result": 5
+     },
+     {
+      "drew": false,
+      "hi": -1,
+      "lo": 0,
+      "op": "i",
+      "result": -1
+     },
+     {
+      "drew": true,
+      "hi_bits": 1065353216,
+      "lo_bits": 0,
+      "op": "r",
+      "result_bits": 1056871792
+     },
+     {
+      "drew": true,
+      "hi": 3,
+      "lo": 1,
+      "op": "i",
+      "result": 3
+     },
+     {
+      "drew": true,
+      "hi": 2147483647,
+      "lo": 0,
+      "op": "i",
+      "result": 1368803527
+     },
+     {
+      "drew": false,
+      "hi_bits": 1077936128,
+      "lo_bits": 1077936128,
+      "op": "r",
+      "result_bits": 1077936128
+     },
+     {
+      "drew": true,
+      "hi": 100,
+      "lo": -100,
+      "op": "i",
+      "result": 59
+     },
+     {
+      "drew": false,
+      "hi": 6,
+      "lo": 7,
+      "op": "i",
+      "result": 6
+     },
+     {
+      "drew": false,
+      "hi_bits": 1073741824,
+      "lo_bits": 1075838976,
+      "op": "r",
+      "result_bits": 1073741824
+     },
+     {
+      "drew": true,
+      "hi": 4,
+      "lo": 0,
+      "op": "i",
+      "result": 2
+     },
+     {
+      "drew": true,
+      "hi": 20,
+      "lo": 10,
+      "op": "i",
+      "result": 11
+     },
+     {
+      "drew": true,
+      "hi_bits": 1135869952,
+      "lo_bits": 0,
+      "op": "r",
+      "result_bits": 1131160621
+     },
+     {
+      "drew": true,
+      "hi": 99,
+      "lo": 0,
+      "op": "i",
+      "result": 34
+     },
+     {
+      "drew": true,
+      "hi": 5,
+      "lo": -5,
+      "op": "i",
+      "result": -4
+     },
+     {
+      "drew": true,
+      "hi_bits": 1101004800,
+      "lo_bits": 3248488448,
+      "op": "r",
+      "result_bits": 3246609847
+     },
+     {
+      "drew": true,
+      "hi": 5,
+      "lo": 5,
+      "op": "i",
+      "result": 5
+     },
+     {
+      "drew": false,
+      "hi": -1,
+      "lo": 0,
+      "op": "i",
+      "result": -1
+     },
+     {
+      "drew": true,
+      "hi_bits": 1056964608,
+      "lo_bits": 0,
+      "op": "r",
+      "result_bits": 1052660619
+     },
+     {
+      "drew": true,
+      "hi": 3,
+      "lo": 1,
+      "op": "i",
+      "result": 3
+     },
+     {
+      "drew": true,
+      "hi": 2147483647,
+      "lo": 0,
+      "op": "i",
+      "result": 1635341963
+     },
+     {
+      "drew": true,
+      "hi_bits": 1065353217,
+      "lo_bits": 1065353216,
+      "op": "r",
+      "result_bits": 1065353217
+     }
+    ]
+   },
+   {
+    "raw": [
+     44607474,
+     83940614,
+     3791854260,
+     2833474700,
+     3816119451,
+     4164465964,
+     2355458697,
+     3858248893
+    ],
+    "seed": 4063039062,
+    "seed_array": [
+     3831110828,
+     2052994367,
+     3092376453,
+     4180660978,
+     2422361555,
+     1644972474
+    ],
+    "sequence": [
+     {
+      "drew": true,
+      "hi": 99,
+      "lo": 0,
+      "op": "i",
+      "result": 74
+     },
+     {
+      "drew": true,
+      "hi": 5,
+      "lo": -5,
+      "op": "i",
+      "result": 5
+     },
+     {
+      "drew": true,
+      "hi_bits": 1065353216,
+      "lo_bits": 3212836864,
+      "op": "r",
+      "result_bits": 1061422646
+     },
+     {
+      "drew": true,
+      "hi": 5,
+      "lo": 5,
+      "op": "i",
+      "result": 5
+     },
+     {
+      "drew": false,
+      "hi": -1,
+      "lo": 0,
+      "op": "i",
+      "result": -1
+     },
+     {
+      "drew": true,
+      "hi_bits": 1065353216,
+      "lo_bits": 0,
+      "op": "r",
+      "result_bits": 1063482717
+     },
+     {
+      "drew": true,
+      "hi": 3,
+      "lo": 1,
+      "op": "i",
+      "result": 2
+     },
+     {
+      "drew": true,
+      "hi": 2147483647,
+      "lo": 0,
+      "op": "i",
+      "result": 207975049
+     },
+     {
+      "drew": false,
+      "hi_bits": 1077936128,
+      "lo_bits": 1077936128,
+      "op": "r",
+      "result_bits": 1077936128
+     },
+     {
+      "drew": true,
+      "hi": 100,
+      "lo": -100,
+      "op": "i",
+      "result": -75
+     },
+     {
+      "drew": false,
+      "hi": 6,
+      "lo": 7,
+      "op": "i",
+      "result": 6
+     },
+     {
+      "drew": false,
+      "hi_bits": 1073741824,
+      "lo_bits": 1075838976,
+      "op": "r",
+      "result_bits": 1073741824
+     },
+     {
+      "drew": true,
+      "hi": 4,
+      "lo": 0,
+      "op": "i",
+      "result": 3
+     },
+     {
+      "drew": true,
+      "hi": 20,
+      "lo": 10,
+      "op": "i",
+      "result": 11
+     },
+     {
+      "drew": true,
+      "hi_bits": 1135869952,
+      "lo_bits": 0,
+      "op": "r",
+      "result_bits": 1133173196
+     },
+     {
+      "drew": true,
+      "hi": 99,
+      "lo": 0,
+      "op": "i",
+      "result": 22
+     },
+     {
+      "drew": true,
+      "hi": 5,
+      "lo": -5,
+      "op": "i",
+      "result": 5
+     },
+     {
+      "drew": true,
+      "hi_bits": 1101004800,
+      "lo_bits": 3248488448,
+      "op": "r",
+      "result_bits": 3244539246
+     },
+     {
+      "drew": true,
+      "hi": 5,
+      "lo": 5,
+      "op": "i",
+      "result": 5
+     },
+     {
+      "drew": false,
+      "hi": -1,
+      "lo": 0,
+      "op": "i",
+      "result": -1
+     },
+     {
+      "drew": true,
+      "hi_bits": 1056964608,
+      "lo_bits": 0,
+      "op": "r",
+      "result_bits": 1054263026
+     },
+     {
+      "drew": true,
+      "hi": 3,
+      "lo": 1,
+      "op": "i",
+      "result": 3
+     },
+     {
+      "drew": true,
+      "hi": 2147483647,
+      "lo": 0,
+      "op": "i",
+      "result": 1022375800
+     },
+     {
+      "drew": true,
+      "hi_bits": 1065353217,
+      "lo_bits": 1065353216,
+      "op": "r",
+      "result_bits": 1065353217
+     }
+    ]
+   },
+   {
+    "raw": [
+     2376911751,
+     1804554641,
+     2653535274,
+     272256981,
+     2988651309,
+     3363268922,
+     981978056,
+     3773826502
+    ],
+    "seed": 3735928559,
+    "seed_array": [
+     3504000325,
+     1725883864,
+     2765265950,
+     3853550475,
+     2095251052,
+     1317861971
+    ],
+    "sequence": [
+     {
+      "drew": true,
+      "hi": 99,
+      "lo": 0,
+      "op": "i",
+      "result": 51
+     },
+     {
+      "drew": true,
+      "hi": 5,
+      "lo": -5,
+      "op": "i",
+      "result": 5
+     },
+     {
+      "drew": true,
+      "hi_bits": 1065353216,
+      "lo_bits": 3212836864,
+      "op": "r",
+      "result_bits": 1047612896
+     },
+     {
+      "drew": true,
+      "hi": 5,
+      "lo": 5,
+      "op": "i",
+      "result": 5
+     },
+     {
+      "drew": false,
+      "hi": -1,
+      "lo": 0,
+      "op": "i",
+      "result": -1
+     },
+     {
+      "drew": true,
+      "hi_bits": 1065353216,
+      "lo_bits": 0,
+      "op": "r",
+      "result_bits": 1060250419
+     },
+     {
+      "drew": true,
+      "hi": 3,
+      "lo": 1,
+      "op": "i",
+      "result": 3
+     },
+     {
+      "drew": true,
+      "hi": 2147483647,
+      "lo": 0,
+      "op": "i",
+      "result": 981978056
+     },
+     {
+      "drew": false,
+      "hi_bits": 1077936128,
+      "lo_bits": 1077936128,
+      "op": "r",
+      "result_bits": 1077936128
+     },
+     {
+      "drew": true,
+      "hi": 100,
+      "lo": -100,
+      "op": "i",
+      "result": -54
+     },
+     {
+      "drew": false,
+      "hi": 6,
+      "lo": 7,
+      "op": "i",
+      "result": 6
+     },
+     {
+      "drew": false,
+      "hi_bits": 1073741824,
+      "lo_bits": 1075838976,
+      "op": "r",
+      "result_bits": 1073741824
+     },
+     {
+      "drew": true,
+      "hi": 4,
+      "lo": 0,
+      "op": "i",
+      "result": 0
+     },
+     {
+      "drew": true,
+      "hi": 20,
+      "lo": 10,
+      "op": "i",
+      "result": 14
+     },
+     {
+      "drew": true,
+      "hi_bits": 1135869952,
+      "lo_bits": 0,
+      "op": "r",
+      "result_bits": 1108214683
+     },
+     {
+      "drew": true,
+      "hi": 99,
+      "lo": 0,
+      "op": "i",
+      "result": 35
+     },
+     {
+      "drew": true,
+      "hi": 5,
+      "lo": -5,
+      "op": "i",
+      "result": -2
+     },
+     {
+      "drew": true,
+      "hi_bits": 1101004800,
+      "lo_bits": 3248488448,
+      "op": "r",
+      "result_bits": 1070383200
+     },
+     {
+      "drew": true,
+      "hi": 5,
+      "lo": 5,
+      "op": "i",
+      "result": 5
+     },
+     {
+      "drew": false,
+      "hi": -1,
+      "lo": 0,
+      "op": "i",
+      "result": -1
+     },
+     {
+      "drew": true,
+      "hi_bits": 1056964608,
+      "lo_bits": 0,
+      "op": "r",
+      "result_bits": 1015137820
+     },
+     {
+      "drew": true,
+      "hi": 3,
+      "lo": 1,
+      "op": "i",
+      "result": 1
+     },
+     {
+      "drew": true,
+      "hi": 2147483647,
+      "lo": 0,
+      "op": "i",
+      "result": 2082239443
+     },
+     {
+      "drew": true,
+      "hi_bits": 1065353217,
+      "lo_bits": 1065353216,
+      "op": "r",
+      "result_bits": 1065353216
+     }
+    ]
+   }
+  ]
+ },
+ "comment": "generated by tools/horde_oracle/rng_reference.py; do not edit"
+}

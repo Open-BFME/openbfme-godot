@@ -1,0 +1,9 @@
+idx	token	parse_va	parse_kind	userdata	offset	userdata_list
+0	ContainTargetOnEffect	0x42e558	parseBool	0x0	0x148	
+1	ImpactTargetOnEffect	0x42e558	parseBool	0x0	0x149	
+2	RemoveTargetFromOtherContain	0x42e558	parseBool	0x0	0x14a	
+3	ShockWaveAmount	0x42ed00	parseReal	0x0	0x14c	
+4	ShockWaveRadius	0x42ed00	parseReal	0x0	0x150	
+5	ShockWaveTaperOff	0x42ed00	parseReal	0x0	0x154	
+6	ShockWaveSpeed	0x42ed00	parseReal	0x0	0x158	
+7	ShockWaveZMult	0x42ed00	parseReal	0x0	0x15c	

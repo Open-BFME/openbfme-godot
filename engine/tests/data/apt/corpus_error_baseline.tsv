@@ -1,0 +1,353 @@
+# Reviewed baseline of the survivable script errors the stub scope causes while the 4,767 retail programs run
+# and every reachable function is called with no arguments.  kind<TAB>identity<TAB>count.
+# Every kind is removed by menus-apt.md step A2 or the host extern providers (docs/STOPS.md S-010).
+extern-read	DisconnectScreen:PlayerColor:	1
+extern-read	DoTrace	25
+extern-read	InBetaDemo	54
+extern-read	InDreamMachineDemo	54
+extern-read	InGame	123
+extern-read	PalantirMinLOD	2
+extern-read	PalantirShowHeroSelect:1	1
+extern-read	PalantirShowHeroSelect:2	1
+extern-read	PalantirShowHeroSelect:3	1
+extern-read	PalantirShowHeroSelect:4	1
+extern-read	PalantirShowHeroSelect:5	1
+extern-read	PalantirShowHeroSelect:6	1
+extern-read	PalantirShowHeroSelect:7	1
+extern-read	PalantirShowHeroSelect:8	1
+extern-read	PalantirShowHeroSelect:9	1
+extern-read	Player__Color	2
+extern-read	ScoreScreen:PlayerColor:	1
+extern-read	[MovieClip]_PlayerColor	1
+extern-read	_NumOfPlayers	4
+extern-read	_TributeEnabled	2
+extern-read	_color	2
+extern-write	.Frame	1
+extern-write	DoTrace	2
+extern-write	LastLanLobbyScreen	1
+extern-write	[MovieClip]_Height	1
+extern-write	[MovieClip]_ItemListViewHeight	1
+extern-write	[MovieClip]_TextWidth	1
+extern-write	[MovieClip]_UnitIconStageHeight	1
+extern-write	[MovieClip]_UnitIconStageWidth	1
+extern-write	_MessageWidth	1
+for-in-undefined	undefined	35
+method-not-function	AddBanner on object	2
+method-not-function	BuildName on object	1
+method-not-function	ButtonCallBack on movieclip	1
+method-not-function	ChangeTextColor on object	4
+method-not-function	ChangeViewTo on undefined	4
+method-not-function	CheckEnable on undefined	2
+method-not-function	CheckForStrategicEnd on object	2
+method-not-function	Close on undefined	1
+method-not-function	CloseAdvancedSettings on object	1
+method-not-function	CloseCurrentMovie on object	1
+method-not-function	ClosePopup on undefined	1
+method-not-function	CloseScreen on object	1
+method-not-function	CloseWindow on object	1
+method-not-function	CreateButton on undefined	1
+method-not-function	CreateContent on undefined	2
+method-not-function	CreateRadarPing on object	6
+method-not-function	CreateRegionPopup on object	1
+method-not-function	DefaultButtonCallBack on undefined	14
+method-not-function	DefaultDoButtonCallBack on undefined	4
+method-not-function	DisableBottomNav on object	2
+method-not-function	DisableButtonJoinGame on object	2
+method-not-function	DisableComponents on object	11
+method-not-function	DisplayBar on undefined	1
+method-not-function	DoButtonCallBack on movieclip	37
+method-not-function	DoDefaultButtonCallBack on undefined	2
+method-not-function	DoDisableButtons on undefined	2
+method-not-function	DoDrawTimeline on undefined	5
+method-not-function	DoEnableButtons on undefined	1
+method-not-function	DoExit on object	1
+method-not-function	DoGotoNextTab on undefined	1
+method-not-function	DoHit on undefined	1
+method-not-function	DoNewPowersMessage on undefined	4
+method-not-function	DoOpenPopMessage on object	2
+method-not-function	DoPress on undefined	1
+method-not-function	DoRelease on undefined	1
+method-not-function	DoRollOut on undefined	2
+method-not-function	DoRollOver on undefined	2
+method-not-function	DoSearchFunctions on undefined	1
+method-not-function	DoUpdateHeroBuildCost on object	1
+method-not-function	EnableBottomNav on object	2
+method-not-function	EnableButtonCreateGame on undefined	1
+method-not-function	EnableComponents on object	23
+method-not-function	EscapeKeyPressed on object	1
+method-not-function	FindAbsolute on object	8
+method-not-function	FlashObjectivesButton on object	1
+method-not-function	GameCode on object	133
+method-not-function	GameCodeNoPrefix on object	45
+method-not-function	GetCurrentPowerIndex on object	1
+method-not-function	GetExtern on object	181
+method-not-function	GetNumRows on undefined	1
+method-not-function	GetScrollBarParam on undefined	1
+method-not-function	GetScrollLineSize on undefined	4
+method-not-function	GetScrollPageSize on undefined	4
+method-not-function	Go on undefined	2
+method-not-function	GotoState on undefined	4
+method-not-function	HandleCloseVeterancyScreen on object	1
+method-not-function	HandleGameCall on undefined	5
+method-not-function	HandlePress on undefined	1
+method-not-function	HandleRelease on undefined	1
+method-not-function	HandleRollOut on undefined	1
+method-not-function	HandleRollOver on undefined	1
+method-not-function	Hide on undefined	1
+method-not-function	HideButtonBar on object	6
+method-not-function	HideSwirls on undefined	1
+method-not-function	IncreaseBar on undefined	2
+method-not-function	Init on undefined	3
+method-not-function	InitBackplate on object	4
+method-not-function	InitColoredTextString on object	2
+method-not-function	InitGlobeUIs on object	2
+method-not-function	Initialize on undefined	7
+method-not-function	IsCreateNewHero on object	3
+method-not-function	LoadAlliedSlots on object	1
+method-not-function	LoadEnemySlots on object	1
+method-not-function	LoadScreen on object	2
+method-not-function	LoadStatusObjectives on object	1
+method-not-function	MessengerButtonUpdate on object	2
+method-not-function	Move on undefined	1
+method-not-function	MoveButton on undefined	1
+method-not-function	MoveRadarPing on object	6
+method-not-function	MoveRegionPopup on object	1
+method-not-function	MovieComplete on object	18
+method-not-function	NextObjective on undefined	1
+method-not-function	OnButtonClick on object	4
+method-not-function	OnChecklistItemLoaded on undefined	1
+method-not-function	OnChecklistItemUnloaded on undefined	1
+method-not-function	OnChecklistLoaded on undefined	1
+method-not-function	OnChecklistUnloaded on undefined	1
+method-not-function	OnClansFlagChange on object	1
+method-not-function	OnColorChange on undefined	1
+method-not-function	OnCommandButtonSubMenuLoaded on undefined	1
+method-not-function	OnCommandButtonSubMenuUnloaded on undefined	1
+method-not-function	OnCommandButtonToggleFlashLoaded on undefined	1
+method-not-function	OnCommandButtonToggleFlashUnloaded on undefined	1
+method-not-function	OnCommandUILoaded on undefined	1
+method-not-function	OnCommandUIUnloaded on undefined	1
+method-not-function	OnConnectionsScreenClosed on object	1
+method-not-function	OnContentLoaded on undefined	12
+method-not-function	OnContentUnloaded on undefined	12
+method-not-function	OnEnabledContentLoaded on undefined	1
+method-not-function	OnEnabledContentUnloaded on undefined	1
+method-not-function	OnEndTurnButtonLoaded on undefined	1
+method-not-function	OnEndTurnButtonUnloaded on undefined	1
+method-not-function	OnGadgetColorPickerColorChange on undefined	1
+method-not-function	OnGadgetColorPickerLoaded on undefined	1
+method-not-function	OnHelpBoxMovieLoaded on undefined	1
+method-not-function	OnHelpBoxMovieUnloaded on undefined	1
+method-not-function	OnHeroSelectMovieLoaded on undefined	1
+method-not-function	OnHotSpotLoaded on undefined	1
+method-not-function	OnHotSpotUnloaded on undefined	1
+method-not-function	OnLoadMovieFrameLoaded on undefined	1
+method-not-function	OnLoadMovieFrameUnloaded on undefined	1
+method-not-function	OnMainMovieComplete on object	2
+method-not-function	OnMovieClipFrameLoaded on undefined	1
+method-not-function	OnMovieClipFrameUnloaded on undefined	1
+method-not-function	OnNewTurnIndicatorLoaded on undefined	1
+method-not-function	OnNewTurnIndicatorUnloaded on undefined	1
+method-not-function	OnNewWizardMessage on object	1
+method-not-function	OnPageFrameClosed on undefined	1
+method-not-function	OnPageFrameOpen on undefined	1
+method-not-function	OnPageLoaded on undefined	1
+method-not-function	OnPlanningModeUILoaded on undefined	1
+method-not-function	OnPlanningModeUIUnloaded on undefined	1
+method-not-function	OnPlayerPanelLoaded on undefined	2
+method-not-function	OnPlayerPanelUnloaded on undefined	2
+method-not-function	OnPlayerTabsLoaded on undefined	2
+method-not-function	OnPlayerTabsUnloaded on undefined	2
+method-not-function	OnRadialMenuStageLoaded on undefined	1
+method-not-function	OnRadialMenuStageUnloaded on undefined	1
+method-not-function	OnRegionStatsTrayLoaded on undefined	1
+method-not-function	OnRegionStatsTrayUnloaded on undefined	1
+method-not-function	OnRegionUILoaded on undefined	1
+method-not-function	OnRegionUIUnloaded on undefined	1
+method-not-function	OnReleased on movieclip	1
+method-not-function	OnRowHidden on undefined	2
+method-not-function	OnRowShown on undefined	2
+method-not-function	OnScrollBarLoaded on undefined	1
+method-not-function	OnScrollBarUnloaded on undefined	1
+method-not-function	OnScrollButtonPress on undefined	1
+method-not-function	OnSelectionDetailsTrayLoaded on undefined	1
+method-not-function	OnSelectionDetailsTrayUnloaded on undefined	1
+method-not-function	OnSelectionUILoaded on undefined	1
+method-not-function	OnSelectionUIUnloaded on undefined	1
+method-not-function	OnSliderBarClicked on undefined	1
+method-not-function	OnStatsDisplayLoaded on undefined	1
+method-not-function	OnStatsDisplayUnloaded on undefined	1
+method-not-function	OnStrategicCommandButtonLoaded on undefined	1
+method-not-function	OnStrategicCommandButtonUnloaded on undefined	1
+method-not-function	OnStrategicPalantirLoaded on undefined	1
+method-not-function	OnStrategicPalantirUnloaded on undefined	1
+method-not-function	OnTributePageLoaded on undefined	1
+method-not-function	OnTributePageUnloaded on undefined	1
+method-not-function	Open on undefined	1
+method-not-function	OpenPop on undefined	3
+method-not-function	Over on undefined	1
+method-not-function	PlayFlash on undefined	2
+method-not-function	PlaySound on object	214
+method-not-function	PopupSelectBttnDisable on object	1
+method-not-function	PopupSelectBttnEnable on object	2
+method-not-function	Press on undefined	19
+method-not-function	ReduceBar on undefined	2
+method-not-function	RefreshLevels on object	1
+method-not-function	Release on undefined	23
+method-not-function	ResetBackplate on object	12
+method-not-function	ReshowMainMenu on object	1
+method-not-function	RevealButtonList on object	3
+method-not-function	RollCall on undefined	1
+method-not-function	RollOut on undefined	23
+method-not-function	RollOver on undefined	18
+method-not-function	Rollover on undefined	4
+method-not-function	SetAutoAbilityOverlayState on undefined	1
+method-not-function	SetBarTo on undefined	2
+method-not-function	SetClassAndType on object	3
+method-not-function	SetCommandButtonState on object	4
+method-not-function	SetCreateNewHero on object	1
+method-not-function	SetCurrentGameType on object	4
+method-not-function	SetDefaultOptions on undefined	1
+method-not-function	SetDisbandRow on undefined	1
+method-not-function	SetEnabled on undefined	4
+method-not-function	SetExtern on object	66
+method-not-function	SetFlashEffectState on undefined	1
+method-not-function	SetGlassState on undefined	4
+method-not-function	SetHeight on undefined	8
+method-not-function	SetImageState on undefined	4
+method-not-function	SetLineSize on undefined	4
+method-not-function	SetPageSize on undefined	4
+method-not-function	SetPageTitle on object	3
+method-not-function	SetPaletteData on undefined	1
+method-not-function	SetPercent on undefined	4
+method-not-function	SetPowersSelectedNum on object	1
+method-not-function	SetSpellButtonState on object	2
+method-not-function	SetupButtons on object	3
+method-not-function	Show on undefined	4
+method-not-function	ShowAdvancedSettings on object	1
+method-not-function	ShowButtonBar on object	10
+method-not-function	ShowButtons on object	1
+method-not-function	ShowHeroMap on object	4
+method-not-function	ShowHeroSelectInterface on object	2
+method-not-function	ShowLobbyNav on undefined	1
+method-not-function	ShowPromoNav on undefined	2
+method-not-function	ShowScreen on object	2
+method-not-function	SpaceTypeIcons on object	1
+method-not-function	StartCloseConnectionsScreen on object	1
+method-not-function	StartParticles on undefined	1
+method-not-function	StartUpdatePosition on object	2
+method-not-function	StopUpdateList on undefined	1
+method-not-function	StopUpdatePosition on object	4
+method-not-function	ToggleExtern on object	2
+method-not-function	Update on undefined	5
+method-not-function	UpdateCreateGame on object	2
+method-not-function	UpdateHeroBuildCost on object	2
+method-not-function	UpdateJoinGame on object	2
+method-not-function	UpdatePowersSelectedNum on object	1
+method-not-function	UpdateSelectPowerIcon on object	3
+method-not-function	UpdateSkillUpgradeButton on object	1
+method-not-function	UpdateStatsText on object	1
+method-not-function	addListener on undefined	1
+method-not-function	attachMovie on movieclip	4
+method-not-function	attachMovie on object	2
+method-not-function	attachMovie on undefined	56
+method-not-function	charAt on undefined	24
+method-not-function	close on object	3
+method-not-function	createEmptyMovieClip on movieclip	3
+method-not-function	createEmptyMovieClip on undefined	3
+method-not-function	doSizing on undefined	1
+method-not-function	duplicateMovieClip on undefined	41
+method-not-function	getBounds on undefined	1
+method-not-function	getNextHighestDepth on undefined	1
+method-not-function	gotoAndPlay on movieclip	9
+method-not-function	gotoAndPlay on object	16
+method-not-function	gotoAndPlay on undefined	987
+method-not-function	gotoAndStop on movieclip	1
+method-not-function	gotoAndStop on object	1
+method-not-function	gotoAndStop on undefined	195
+method-not-function	hitTest on undefined	4
+method-not-function	loadMovie on undefined	13
+method-not-function	localToGlobal on undefined	5
+method-not-function	onPressed on movieclip	3
+method-not-function	onReleased on movieclip	4
+method-not-function	onSideCommandBarLoaded on object	1
+method-not-function	registerClass on function	2
+method-not-function	removeMovieClip on movieclip	5
+method-not-function	removeMovieClip on undefined	23
+method-not-function	setRGB on undefined	240
+method-not-function	setTransform on undefined	10
+method-not-function	showMessageBox on undefined	1
+method-not-function	split on undefined	12
+method-not-function	stop on undefined	6
+method-not-function	substr on undefined	20
+method-not-function	toString on undefined	1
+method-not-function	unloadMovie on movieclip	1
+method-not-function	unloadMovie on undefined	8
+method-not-function	vOnRelease on movieclip	1
+native-class	Color	231
+native-class	MovieClip	2
+non-function-undefined	undefined	33
+undefined-function	AnimsOpen	1
+undefined-function	CloseHost	1
+undefined-function	CloseJoin	1
+undefined-function	DisablePowersCustomize	1
+undefined-function	DoAssignColumnHeaderNames	7
+undefined-function	DoAssignTabButtonNames	3
+undefined-function	DoButtonCallBack	5
+undefined-function	DoDown	1
+undefined-function	DoFocusGraph	5
+undefined-function	DoListBonusObjectives	1
+undefined-function	DoOver	1
+undefined-function	DoRollOut	2
+undefined-function	DoRollOver	1
+undefined-function	DoShowHideTabs	5
+undefined-function	EnableAppearanceCustomize	1
+undefined-function	EnableButtonJoinGame	1
+undefined-function	EnableCustomizeButtons	1
+undefined-function	EnablePowersCustomize	1
+undefined-function	EscapeKeyPressed	1
+undefined-function	GameCode	1
+undefined-function	GetExtern	1
+undefined-function	HandleGameCall	14
+undefined-function	HideButton	10
+undefined-function	HideButtonBar	1
+undefined-function	HideGlobeUI	1
+undefined-function	InitButtons	2
+undefined-function	Initialize	1
+undefined-function	OnAnimDone	3
+undefined-function	OpenMainMovie	1
+undefined-function	PlayButtonLevelUpEffect	2
+undefined-function	PlayElvenEffect	4
+undefined-function	ReadyToTakePicture	1
+undefined-function	RefreshLevelDetail	4
+undefined-function	Release	4
+undefined-function	ResetButton	5
+undefined-function	ResetButtons	2
+undefined-function	SetButtonState	3
+undefined-function	SetCurrentTabMode	3
+undefined-function	SetEnemyHouseColor	1
+undefined-function	SetInactiveButton	4
+undefined-function	SetPageTitle	9
+undefined-function	SetProgressBar	2
+undefined-function	SetSpellButtonState	4
+undefined-function	ShowButtonBar	2
+undefined-function	ShowDebugButtons	2
+undefined-function	ShowGlobeUI	1
+undefined-function	ShowHidePlayButtons	6
+undefined-function	ShowPage	2
+undefined-function	ShowStatsLines	2
+undefined-function	StandForRoll	1
+undefined-function	StartLobby	2
+undefined-function	SubButtonInit	1
+undefined-function	ToggleTabsVisibility	9
+undefined-function	UpdateFrameState	1
+undefined-function	UpdateHeroBuildCost	1
+undefined-function	UpdateNeighborFrameStates	2
+undefined-function	VeterancyToggleRowAsNew	1
+undefined-function	WhileClick	1
+undefined-function	_PlaySound	1
+undefined-function	_gotoAndPlay	1
+undefined-function	attachMovie	1
+undefined-function	checkUpgrade	12
+undefined-function	clearInterval	5
+undefined-function	setInterval	8

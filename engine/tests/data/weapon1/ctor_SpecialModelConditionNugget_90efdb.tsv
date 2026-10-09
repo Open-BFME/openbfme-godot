@@ -1,0 +1,17 @@
+offset	size	value_hex	value_f32	store_va	note	via
+0x0	0			0x90efee	base constructor 0x90d901 (expanded below)	base
+0x0	4	0xc7ae40	1.83378e-38	0x90d919		0x90d901
+0x4	0			0x90d91f	call 0x5ea666: 0x90-byte upgrade mask zero-fill	0x90d901
+0x94	0			0x90d92a	call 0x5ea666: 0x90-byte upgrade mask zero-fill	0x90d901
+0x124	4	0x0		0x90d92f	&= 0x0 (0 = cleared)	0x90d901
+0x128	0			0x90d940	call 0x478cbe: STLport container ctor: begin=end=0 (empty vector)	0x90d901
+0x134	0			0x90d953	call 0x478cbe: STLport container ctor: begin=end=0 (empty vector)	0x90d901
+0x140	0			0x90d964	call 0x76406f: ObjectFilter default: handle = -1	0x90d901
+0x144	1	0x0		0x90d97b		0x90d901
+	0			0x90d982	call 0x444d65 args [14567908, None, None, None]: 28-byte copy of KINDOFMASK_NONE (0xDE49E4)	0x90d901
+	0			0x90d990	call 0x444d65 args [14567908, 14567908, None, None]: 28-byte copy of KINDOFMASK_NONE (0xDE49E4)	0x90d901
+0x140	0			0x90d997	call 0x763d11: ObjectFilter assign from two KINDOF masks: registers an INACTIVE (flag +0x88 = 0) filter when both masks are empty	0x90d901
+0x0	4	0xc7b25c	1.83392e-38	0x90f003		
+0x148	0			0x90f009	call 0x478cbe: STLport container ctor: begin=end=0 (empty vector)	call
+0x148	0			0x90f019	call 0x42ca04: vector.erase(begin,end) (clear)	call
+0x154	4	0x0		0x90f01e	&= 0x0 (0 = cleared)	

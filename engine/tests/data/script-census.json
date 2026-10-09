@@ -1,0 +1,4311 @@
+{
+ "action": {
+  "AI_PLAYER_BUILD_UPGRADE": {
+   "files": 1,
+   "uses": 23
+  },
+  "ALLOW_DISALLOW_ALL_BUILDINGS": {
+   "files": 2,
+   "uses": 4
+  },
+  "ALLOW_DISALLOW_ONE_BUILDING": {
+   "files": 33,
+   "uses": 328
+  },
+  "ATTACK_MOVE_NAMED_UNIT_TO": {
+   "files": 6,
+   "uses": 79
+  },
+  "ATTACK_MOVE_TEAM_TO": {
+   "files": 18,
+   "uses": 140
+  },
+  "ATTACK_MOVE_TEAM_TO_NAMED_OBJECT": {
+   "files": 2,
+   "uses": 4
+  },
+  "AUDIO_FADE_VOLUME": {
+   "files": 13,
+   "uses": 25
+  },
+  "AUDIO_MAKE_SOUND_IMMUNE_TO_FADE": {
+   "files": 12,
+   "uses": 126
+  },
+  "AUDIO_PUSH_MUSIC": {
+   "files": 2,
+   "uses": 2
+  },
+  "AUDIO_SET_REVERB_ROOM_TYPE": {
+   "files": 3,
+   "uses": 3
+  },
+  "AUDIO_SET_REVERB_SUPPRESSION_POLYGON": {
+   "files": 3,
+   "uses": 4
+  },
+  "BUILD_BASE_BUILDING": {
+   "files": 8,
+   "uses": 27
+  },
+  "BUILD_BASE_BUILDING_PER_TACTICAL_MARKER": {
+   "files": 15,
+   "uses": 226
+  },
+  "BUILD_BUILDING_ON_FOUNDATION": {
+   "files": 2,
+   "uses": 13
+  },
+  "BUILD_TEAM": {
+   "files": 3,
+   "uses": 4
+  },
+  "CALL_SUBROUTINE": {
+   "files": 45,
+   "uses": 1091
+  },
+  "CAMEO_FLASH": {
+   "files": 13,
+   "uses": 91
+  },
+  "CAMERA_FADE_ADD": {
+   "files": 20,
+   "uses": 23
+  },
+  "CAMERA_FADE_MULTIPLY": {
+   "files": 12,
+   "uses": 28
+  },
+  "CAMERA_FADE_SUBTRACT": {
+   "files": 15,
+   "uses": 39
+  },
+  "CAMERA_FOLLOW_NAMED": {
+   "files": 7,
+   "uses": 16
+  },
+  "CAMERA_LETTERBOX_BEGIN": {
+   "files": 48,
+   "uses": 87
+  },
+  "CAMERA_LETTERBOX_END": {
+   "files": 49,
+   "uses": 83
+  },
+  "CAMERA_LOOK_TOWARD_OBJECT": {
+   "files": 1,
+   "uses": 1
+  },
+  "CAMERA_LOOK_TOWARD_WAYPOINT": {
+   "files": 1,
+   "uses": 1
+  },
+  "CAMERA_MOD_FREEZE_TIME": {
+   "files": 2,
+   "uses": 4
+  },
+  "CAMERA_MOD_LOOK_TOWARD": {
+   "files": 6,
+   "uses": 16
+  },
+  "CAMERA_MOVE_HOME": {
+   "files": 1,
+   "uses": 2
+  },
+  "CAMERA_RESTRICT_TO_AREA": {
+   "files": 2,
+   "uses": 5
+  },
+  "CAMERA_STOP_FOLLOW": {
+   "files": 10,
+   "uses": 16
+  },
+  "CHANGE_BURN_RATE_AT_WAYPOINT": {
+   "files": 1,
+   "uses": 3
+  },
+  "CLOSE_OBJECTIVES_SCREEN": {
+   "files": 2,
+   "uses": 4
+  },
+  "COMMANDBAR_ADD_BUTTON_OBJECTTYPE_SLOT": {
+   "files": 3,
+   "uses": 5
+  },
+  "COMMANDBAR_REMOVE_BUTTON_OBJECTTYPE": {
+   "files": 29,
+   "uses": 131
+  },
+  "COUNTER_MATH_COUNTER": {
+   "files": 6,
+   "uses": 87
+  },
+  "COUNTER_MATH_VALUE": {
+   "files": 6,
+   "uses": 43
+  },
+  "CREATE_DELAYED_CARRYOVER_UNIT_AT_WAYPOINT": {
+   "files": 23,
+   "uses": 58
+  },
+  "CREATE_NAMED_ON_TEAM_AT_OBJECTTYPE": {
+   "files": 1,
+   "uses": 2
+  },
+  "CREATE_NAMED_ON_TEAM_AT_WAYPOINT": {
+   "files": 43,
+   "uses": 547
+  },
+  "CREATE_OBJECT": {
+   "files": 5,
+   "uses": 11
+  },
+  "CREATE_REINFORCEMENT_TEAM": {
+   "files": 23,
+   "uses": 577
+  },
+  "CREATE_REINFORCEMENT_TEAM_AT_UNIT_POSITION": {
+   "files": 2,
+   "uses": 9
+  },
+  "CREATE_UNIT_REVIVAL_ENTRY_AT_LEVEL": {
+   "files": 2,
+   "uses": 2
+  },
+  "CREATE_UNIT_REVIVAL_ENTRY_FROM_DELAYED_CARRYOVER_HERO": {
+   "files": 1,
+   "uses": 1
+  },
+  "CREATE_UNNAMED_ON_TEAM_AT_WAYPOINT": {
+   "files": 9,
+   "uses": 96
+  },
+  "DEBUG_STRING": {
+   "files": 6,
+   "uses": 9
+  },
+  "DECREMENT_COUNTER": {
+   "files": 8,
+   "uses": 29
+  },
+  "DEFEAT": {
+   "files": 15,
+   "uses": 15
+  },
+  "DEPLOY_SIEGE_NEAR_TEAM": {
+   "files": 2,
+   "uses": 6
+  },
+  "DESELECT": {
+   "files": 15,
+   "uses": 33
+  },
+  "DISABLE_BORDER_SHROUD": {
+   "files": 29,
+   "uses": 29
+  },
+  "DISABLE_COUNTDOWN_TIMER_DISPLAY": {
+   "files": 1,
+   "uses": 1
+  },
+  "DISABLE_INPUT": {
+   "files": 31,
+   "uses": 97
+  },
+  "DISABLE_PLANNING_MODE": {
+   "files": 2,
+   "uses": 2
+  },
+  "DISABLE_SCRIPT": {
+   "files": 50,
+   "uses": 609
+  },
+  "DISABLE_SPELL_STORE": {
+   "files": 2,
+   "uses": 2
+  },
+  "DISPLAY_COUNTDOWN_TIMER": {
+   "files": 11,
+   "uses": 28
+  },
+  "DISPLAY_COUNTER": {
+   "files": 5,
+   "uses": 13
+  },
+  "DISPLAY_NOTIFICATION_BOX": {
+   "files": 27,
+   "uses": 572
+  },
+  "DISPLAY_NOTIFICATION_BOX_WITH_OBJECT_TYPE_IMAGE_OVERRIDE": {
+   "files": 9,
+   "uses": 20
+  },
+  "DISPLAY_TEXT": {
+   "files": 1,
+   "uses": 4
+  },
+  "DRAW_SKYBOX_BEGIN": {
+   "files": 2,
+   "uses": 2
+  },
+  "ENABLE_BORDER_SHROUD": {
+   "files": 3,
+   "uses": 3
+  },
+  "ENABLE_COUNTDOWN_TIMER_DISPLAY": {
+   "files": 1,
+   "uses": 1
+  },
+  "ENABLE_HOUSE_COLOR": {
+   "files": 32,
+   "uses": 33
+  },
+  "ENABLE_INPUT": {
+   "files": 28,
+   "uses": 64
+  },
+  "ENABLE_OBJECTIVES_SCREEN": {
+   "files": 1,
+   "uses": 1
+  },
+  "ENABLE_OBJECT_SOUND": {
+   "files": 5,
+   "uses": 141
+  },
+  "ENABLE_SCRIPT": {
+   "files": 89,
+   "uses": 2333
+  },
+  "ENABLE_SPELL_STORE": {
+   "files": 1,
+   "uses": 1
+  },
+  "EVA_SET_ENABLED_DISABLED": {
+   "files": 13,
+   "uses": 34
+  },
+  "EXIT_SPECIFIC_BUILDING": {
+   "files": 5,
+   "uses": 24
+  },
+  "FIND_HOME_BASE_OF_PLAYER": {
+   "files": 2,
+   "uses": 2
+  },
+  "FIRE_SPECIAL_POWER_ON_NEAREST_OBJECTTYPE": {
+   "files": 7,
+   "uses": 18
+  },
+  "FIRE_SPECIAL_POWER_ON_NEAREST_OBJECTTYPE_BY_PLAYER": {
+   "files": 2,
+   "uses": 8
+  },
+  "FIRE_SPECIAL_POWER_ON_TEAM": {
+   "files": 10,
+   "uses": 22
+  },
+  "FLASH_OBJECTIVES_BUTTON": {
+   "files": 4,
+   "uses": 4
+  },
+  "FLASH_SPELL_STORE_BUTTON": {
+   "files": 6,
+   "uses": 8
+  },
+  "FOCAL_LENGTH_CAMERA": {
+   "files": 1,
+   "uses": 1
+  },
+  "FREEZE_TIME": {
+   "files": 3,
+   "uses": 4
+  },
+  "GATE_CLOSE": {
+   "files": 12,
+   "uses": 30
+  },
+  "GATE_OPEN": {
+   "files": 20,
+   "uses": 45
+  },
+  "GIVE_PLAYER_UPGRADE": {
+   "files": 5,
+   "uses": 19
+  },
+  "HERO_SELECT_BUTTON_FLASH": {
+   "files": 2,
+   "uses": 8
+  },
+  "HIDE_COUNTDOWN_TIMER": {
+   "files": 9,
+   "uses": 20
+  },
+  "HIDE_COUNTER": {
+   "files": 5,
+   "uses": 9
+  },
+  "HIDE_MISSION_OBJECTIVE": {
+   "files": 28,
+   "uses": 177
+  },
+  "HIDE_UI": {
+   "files": 40,
+   "uses": 53
+  },
+  "HUMAN_IMPASSABLE_AREA": {
+   "files": 5,
+   "uses": 17
+  },
+  "IDLE_ALL_UNITS": {
+   "files": 12,
+   "uses": 12
+  },
+  "INCREMENT_COUNTER": {
+   "files": 27,
+   "uses": 204
+  },
+  "KILL_HORDE_MEMBERS": {
+   "files": 1,
+   "uses": 4
+  },
+  "LOCK_CAMERA": {
+   "files": 1,
+   "uses": 2
+  },
+  "MAP_REVEAL_ALL": {
+   "files": 7,
+   "uses": 7
+  },
+  "MAP_REVEAL_ALL_PERM": {
+   "files": 37,
+   "uses": 40
+  },
+  "MAP_REVEAL_ALL_UNDO_PERM": {
+   "files": 2,
+   "uses": 2
+  },
+  "MAP_REVEAL_AT_WAYPOINT": {
+   "files": 4,
+   "uses": 10
+  },
+  "MAP_REVEAL_IN_TRIGGER": {
+   "files": 3,
+   "uses": 3
+  },
+  "MAP_REVEAL_PERMANENTLY_AT_WAYPOINT": {
+   "files": 22,
+   "uses": 86
+  },
+  "MAP_REVEAL_PERMANENTLY_IN_TRIGGER": {
+   "files": 31,
+   "uses": 132
+  },
+  "MAP_SHROUD_ALL": {
+   "files": 5,
+   "uses": 5
+  },
+  "MAP_SHROUD_AT_WAYPOINT": {
+   "files": 1,
+   "uses": 1
+  },
+  "MAP_SWITCH_BORDER": {
+   "files": 5,
+   "uses": 13
+  },
+  "MAP_UNDO_REVEAL_PERMANENTLY_AT_WAYPOINT": {
+   "files": 12,
+   "uses": 34
+  },
+  "MAP_UNDO_REVEAL_PERMANENTLY_IN_TRIGGER": {
+   "files": 12,
+   "uses": 30
+  },
+  "MARK_MISSION_OBJECTIVE_COMPLETED": {
+   "files": 29,
+   "uses": 215
+  },
+  "MOVE_CAMERA_ALONG_SPLINE_PATH": {
+   "files": 1,
+   "uses": 1
+  },
+  "MOVE_CAMERA_BY_ANIMATION": {
+   "files": 27,
+   "uses": 28
+  },
+  "MOVE_CAMERA_TO": {
+   "files": 47,
+   "uses": 192
+  },
+  "MOVE_NAMED_UNIT_TO": {
+   "files": 26,
+   "uses": 187
+  },
+  "MOVE_TEAM_TO": {
+   "files": 27,
+   "uses": 151
+  },
+  "MUSIC_PLAY_TRACK_FINITE_TIMES": {
+   "files": 13,
+   "uses": 28
+  },
+  "MUSIC_PLAY_TRACK_FINITE_TIMES_AND_NOTIFY": {
+   "files": 2,
+   "uses": 2
+  },
+  "MUSIC_RESET_MUSIC_SCRIPTING_SYSTEM": {
+   "files": 2,
+   "uses": 2
+  },
+  "MUSIC_RETURN_TO_MUSIC_SCRIPTING": {
+   "files": 3,
+   "uses": 4
+  },
+  "MUSIC_SCRIPT_PLAY_TRACK_FINITE_TIMES_AND_NOTIFY": {
+   "files": 1,
+   "uses": 21
+  },
+  "MUSIC_SCRIPT_POP_MUSIC": {
+   "files": 1,
+   "uses": 3
+  },
+  "MUSIC_SCRIPT_PUSH_TRACK_FINITE_TIMES_AND_NOTIFY": {
+   "files": 1,
+   "uses": 4
+  },
+  "MUSIC_SCRIPT_SET_TRACK": {
+   "files": 1,
+   "uses": 1
+  },
+  "MUSIC_SET_TRACK": {
+   "files": 3,
+   "uses": 4
+  },
+  "MUSIC_SET_VOLUME": {
+   "files": 2,
+   "uses": 9
+  },
+  "NAMED_APPLY_ATTACK_PRIORITY_SET": {
+   "files": 1,
+   "uses": 2
+  },
+  "NAMED_ATTACK_AREA": {
+   "files": 2,
+   "uses": 6
+  },
+  "NAMED_ATTACK_FOLLOW_WAYPOINTS": {
+   "files": 9,
+   "uses": 81
+  },
+  "NAMED_ATTACK_NAMED": {
+   "files": 10,
+   "uses": 56
+  },
+  "NAMED_ATTACK_TEAM": {
+   "files": 5,
+   "uses": 14
+  },
+  "NAMED_BASE_UNPACK": {
+   "files": 4,
+   "uses": 96
+  },
+  "NAMED_BASE_UNPACK_FREE": {
+   "files": 2,
+   "uses": 16
+  },
+  "NAMED_BUILD_STRUCTURE_AT_WAYPOINT": {
+   "files": 8,
+   "uses": 44
+  },
+  "NAMED_DELETE": {
+   "files": 23,
+   "uses": 154
+  },
+  "NAMED_FACE_NAMED": {
+   "files": 7,
+   "uses": 27
+  },
+  "NAMED_FACE_WAYPOINT": {
+   "files": 16,
+   "uses": 49
+  },
+  "NAMED_FLASH": {
+   "files": 8,
+   "uses": 53
+  },
+  "NAMED_FLASH_WHITE": {
+   "files": 3,
+   "uses": 11
+  },
+  "NAMED_FOLLOW_WAYPOINTS": {
+   "files": 17,
+   "uses": 96
+  },
+  "NAMED_FOLLOW_WAYPOINTS_EXACT": {
+   "files": 30,
+   "uses": 176
+  },
+  "NAMED_GARRISON_SPECIFIC_BUILDING": {
+   "files": 2,
+   "uses": 6
+  },
+  "NAMED_GARRISON_SPECIFIC_BUILDING_INSTANTLY": {
+   "files": 2,
+   "uses": 16
+  },
+  "NAMED_GUARD": {
+   "files": 4,
+   "uses": 16
+  },
+  "NAMED_HUNT": {
+   "files": 9,
+   "uses": 102
+  },
+  "NAMED_KILL": {
+   "files": 14,
+   "uses": 77
+  },
+  "NAMED_RECEIVE_UPGRADE": {
+   "files": 9,
+   "uses": 40
+  },
+  "NAMED_SET_ATTITUDE": {
+   "files": 10,
+   "uses": 303
+  },
+  "NAMED_SET_STEALTH_ENABLED": {
+   "files": 2,
+   "uses": 6
+  },
+  "NAMED_SET_TOPPLE_DIRECTION": {
+   "files": 4,
+   "uses": 19
+  },
+  "NAMED_SHOCK": {
+   "files": 1,
+   "uses": 1
+  },
+  "NAMED_STOP": {
+   "files": 6,
+   "uses": 13
+  },
+  "NAMED_STOP_FLUSH": {
+   "files": 2,
+   "uses": 10
+  },
+  "NAMED_TRANSFER_OWNERSHIP_PLAYER": {
+   "files": 11,
+   "uses": 42
+  },
+  "NAMED_USE_COMMANDBUTTON_ABILITY": {
+   "files": 23,
+   "uses": 127
+  },
+  "NAMED_USE_COMMANDBUTTON_ABILITY_AT_WAYPOINT": {
+   "files": 7,
+   "uses": 23
+  },
+  "NAMED_USE_COMMANDBUTTON_ABILITY_ON_NAMED": {
+   "files": 6,
+   "uses": 8
+  },
+  "NAMED_USE_COMMANDBUTTON_ON_NEAREST_ENEMY_UNIT": {
+   "files": 4,
+   "uses": 21
+  },
+  "NAMED_USE_COMMANDBUTTON_ON_NEAREST_KINDOF": {
+   "files": 1,
+   "uses": 1
+  },
+  "NAMED_USE_COMMANDBUTTON_ON_NEAREST_OBJECTTYPE": {
+   "files": 1,
+   "uses": 3
+  },
+  "NAME_SET_AUTO_ABILITY": {
+   "files": 7,
+   "uses": 19
+  },
+  "NO_OP": {
+   "files": 33,
+   "uses": 287
+  },
+  "OBJECTLIST_ADDOBJECTTYPE": {
+   "files": 21,
+   "uses": 1395
+  },
+  "OBJECT_CREATE_RADAR_EVENT": {
+   "files": 24,
+   "uses": 166
+  },
+  "OPTIONS_SET_DRAWICON_UI_MODE": {
+   "files": 25,
+   "uses": 25
+  },
+  "OPTIONS_SET_OCCLUSION_MODE": {
+   "files": 25,
+   "uses": 25
+  },
+  "OPTIONS_SET_PARTICLE_CAP_MODE": {
+   "files": 25,
+   "uses": 25
+  },
+  "OVERRIDE_PLAYER_COMMAND_POINTS": {
+   "files": 38,
+   "uses": 82
+  },
+  "PITCH_CAMERA": {
+   "files": 2,
+   "uses": 18
+  },
+  "PLAYER_DISABLE_BASE_CONSTRUCTION": {
+   "files": 8,
+   "uses": 9
+  },
+  "PLAYER_DISABLE_UNIT_CONSTRUCTION": {
+   "files": 5,
+   "uses": 6
+  },
+  "PLAYER_ENABLE_BASE_CONSTRUCTION": {
+   "files": 17,
+   "uses": 21
+  },
+  "PLAYER_ENABLE_FACTORIES": {
+   "files": 1,
+   "uses": 1
+  },
+  "PLAYER_ENABLE_UNIT_CONSTRUCTION": {
+   "files": 23,
+   "uses": 27
+  },
+  "PLAYER_FIRE_SPECIAL_POWER_AT_WAYPOINT": {
+   "files": 19,
+   "uses": 97
+  },
+  "PLAYER_FORCE_EMOTION": {
+   "files": 13,
+   "uses": 14
+  },
+  "PLAYER_GIVE_MONEY": {
+   "files": 15,
+   "uses": 49
+  },
+  "PLAYER_GRANT_SCIENCE": {
+   "files": 13,
+   "uses": 75
+  },
+  "PLAYER_HUNT": {
+   "files": 5,
+   "uses": 12
+  },
+  "PLAYER_KILL": {
+   "files": 1,
+   "uses": 1
+  },
+  "PLAYER_PURCHASE_SCIENCE": {
+   "files": 1,
+   "uses": 539
+  },
+  "PLAYER_RELATES_PLAYER": {
+   "files": 21,
+   "uses": 113
+  },
+  "PLAYER_SCIENCE_AVAILABILITY": {
+   "files": 26,
+   "uses": 311
+  },
+  "PLAYER_SELL_EVERYTHING": {
+   "files": 1,
+   "uses": 1
+  },
+  "PLAYER_SET_MAX_SPELLPOINTS": {
+   "files": 28,
+   "uses": 29
+  },
+  "PLAYER_SET_MONEY": {
+   "files": 38,
+   "uses": 75
+  },
+  "PLAYER_SET_OVERRIDE_RELATION_TO_TEAM": {
+   "files": 5,
+   "uses": 10
+  },
+  "PLAYER_SET_RANKLEVEL": {
+   "files": 1,
+   "uses": 1
+  },
+  "PLAYER_TRANSFER_OWNERSHIP_PLAYER": {
+   "files": 6,
+   "uses": 9
+  },
+  "PLAY_MOVIE_IN_GAME": {
+   "files": 28,
+   "uses": 28
+  },
+  "PLAY_SOUND_EFFECT": {
+   "files": 27,
+   "uses": 528
+  },
+  "PLAY_SOUND_EFFECT_AT": {
+   "files": 11,
+   "uses": 96
+  },
+  "PLAY_SOUND_EFFECT_AT_TEAM": {
+   "files": 10,
+   "uses": 91
+  },
+  "QUICKVICTORY": {
+   "files": 29,
+   "uses": 29
+  },
+  "RADAR_CREATE_EVENT": {
+   "files": 12,
+   "uses": 33
+  },
+  "RECRUIT_COMBO_UNITS_FROM_TEAM": {
+   "files": 3,
+   "uses": 9
+  },
+  "RECRUIT_TEAM_AT_TEAM": {
+   "files": 2,
+   "uses": 5
+  },
+  "REFRESH_RADAR": {
+   "files": 4,
+   "uses": 7
+  },
+  "RESET_CAMERA": {
+   "files": 25,
+   "uses": 57
+  },
+  "RESIZE_VIEW_GUARDBAND": {
+   "files": 26,
+   "uses": 26
+  },
+  "RESTART_TIMER": {
+   "files": 2,
+   "uses": 5
+  },
+  "RESUME_BACKGROUND_SOUNDS": {
+   "files": 1,
+   "uses": 2
+  },
+  "ROTATE_CAMERA": {
+   "files": 13,
+   "uses": 28
+  },
+  "ROTATE_CAMERA_LOCKED": {
+   "files": 1,
+   "uses": 2
+  },
+  "SCREEN_SHAKE": {
+   "files": 4,
+   "uses": 10
+  },
+  "SELECT_BUILDER_BUTTON_FLASH": {
+   "files": 4,
+   "uses": 11
+  },
+  "SELECT_OBJECT": {
+   "files": 2,
+   "uses": 5
+  },
+  "SETUP_CAMERA": {
+   "files": 5,
+   "uses": 11
+  },
+  "SET_ATTACK_PRIORITY_KIND_OF": {
+   "files": 3,
+   "uses": 5
+  },
+  "SET_ATTACK_PRIORITY_THING": {
+   "files": 16,
+   "uses": 447
+  },
+  "SET_BASE_CONSTRUCTION_SPEED": {
+   "files": 7,
+   "uses": 12
+  },
+  "SET_CAMERA_CLIP_DEPTH_MULTIPLIER": {
+   "files": 28,
+   "uses": 28
+  },
+  "SET_COUNTER": {
+   "files": 45,
+   "uses": 1909
+  },
+  "SET_COUNTER_TO_CLIENT_RANDOM_VALUE": {
+   "files": 1,
+   "uses": 1
+  },
+  "SET_COUNTER_TO_COUNTER": {
+   "files": 5,
+   "uses": 53
+  },
+  "SET_COUNTER_TO_TEAM_THREAT": {
+   "files": 2,
+   "uses": 13
+  },
+  "SET_DEFAULT_ATTACK_PRIORITY": {
+   "files": 2,
+   "uses": 4
+  },
+  "SET_FLAG": {
+   "files": 58,
+   "uses": 1841
+  },
+  "SET_FPS_LIMIT": {
+   "files": 7,
+   "uses": 7
+  },
+  "SET_LOGIC_FOG_STATE": {
+   "files": 1,
+   "uses": 1
+  },
+  "SET_MILLISECOND_TIMER": {
+   "files": 93,
+   "uses": 1570
+  },
+  "SET_PLAYER_COMMAND_POINTS_AVAILABLE_TO_COUNTER": {
+   "files": 1,
+   "uses": 1
+  },
+  "SET_PLAYER_COMMAND_POINTS_TOTAL_TO_COUNTER": {
+   "files": 1,
+   "uses": 1
+  },
+  "SET_PLAYER_COMMAND_POINTS_USED_TO_COUNTER": {
+   "files": 4,
+   "uses": 4
+  },
+  "SET_PLAYER_KILLS_OF_TYPE_TO_COUNTER": {
+   "files": 2,
+   "uses": 16
+  },
+  "SET_PLAYER_MONEY_TO_COUNTER": {
+   "files": 14,
+   "uses": 22
+  },
+  "SET_PLAYER_OWNERSHIP_OF_TYPE_COUNTER": {
+   "files": 8,
+   "uses": 44
+  },
+  "SET_PLAYER_OWNERSHIP_OF_TYPE_COUNTER_INCLUDE_DEAD": {
+   "files": 1,
+   "uses": 1
+  },
+  "SET_RANDOM_COUNTER": {
+   "files": 49,
+   "uses": 90
+  },
+  "SET_RANDOM_MSEC_TIMER": {
+   "files": 5,
+   "uses": 11
+  },
+  "SET_REF_TO_NEREST_TEAM_OF_TYPE_OWNED_BY_PLAYER": {
+   "files": 15,
+   "uses": 42
+  },
+  "SET_REF_TO_NEREST_TEAM_OF_UNNAMED_TYPE_OWNED_BY_PLAYER": {
+   "files": 7,
+   "uses": 39
+  },
+  "SET_TEAM_REFERENCE": {
+   "files": 4,
+   "uses": 4
+  },
+  "SET_TIMER": {
+   "files": 26,
+   "uses": 154
+  },
+  "SET_UNIT_REFERENCE": {
+   "files": 3,
+   "uses": 40
+  },
+  "SET_UNIT_REFERENCE_TO_REFERENCE": {
+   "files": 1,
+   "uses": 16
+  },
+  "SHOW_MILITARY_CAPTION": {
+   "files": 30,
+   "uses": 317
+  },
+  "SHOW_MISSION_OBJECTIVE": {
+   "files": 28,
+   "uses": 191
+  },
+  "SKIRMISH_FIRE_SPECIAL_POWER_AT_MOST_COST": {
+   "files": 4,
+   "uses": 7
+  },
+  "SOUND_DISABLE_TYPE": {
+   "files": 2,
+   "uses": 17
+  },
+  "SOUND_PLAY_NAMED": {
+   "files": 20,
+   "uses": 130
+  },
+  "SPEECH_PLAY": {
+   "files": 13,
+   "uses": 270
+  },
+  "STOP_TIMER": {
+   "files": 7,
+   "uses": 21
+  },
+  "SUSPEND_BACKGROUND_SOUNDS": {
+   "files": 1,
+   "uses": 1
+  },
+  "TEAM_AFFECT_OBJECT_PANEL_FLAGS": {
+   "files": 6,
+   "uses": 45
+  },
+  "TEAM_ALL_USE_COMMANDBUTTON_ON_NEAREST_ENEMY_BUILDING": {
+   "files": 1,
+   "uses": 2
+  },
+  "TEAM_ALL_USE_COMMANDBUTTON_ON_NEAREST_ENEMY_UNIT": {
+   "files": 5,
+   "uses": 19
+  },
+  "TEAM_ALL_USE_COMMANDBUTTON_ON_NEAREST_KINDOF": {
+   "files": 1,
+   "uses": 1
+  },
+  "TEAM_ALL_USE_COMMANDBUTTON_ON_NEAREST_OBJECTTYPE": {
+   "files": 1,
+   "uses": 1
+  },
+  "TEAM_APPLY_ATTACK_PRIORITY_SET": {
+   "files": 21,
+   "uses": 132
+  },
+  "TEAM_ATTACK_AREA": {
+   "files": 7,
+   "uses": 15
+  },
+  "TEAM_ATTACK_MOVE_FOLLOW_WAYPOINTS": {
+   "files": 16,
+   "uses": 76
+  },
+  "TEAM_ATTACK_NAMED": {
+   "files": 8,
+   "uses": 96
+  },
+  "TEAM_ATTACK_TEAM": {
+   "files": 13,
+   "uses": 31
+  },
+  "TEAM_CHANGE_OBJECT_STATUS": {
+   "files": 10,
+   "uses": 50
+  },
+  "TEAM_CREATE_RADAR_EVENT": {
+   "files": 12,
+   "uses": 50
+  },
+  "TEAM_DECREASE_PRIORITY": {
+   "files": 1,
+   "uses": 1
+  },
+  "TEAM_DELETE": {
+   "files": 15,
+   "uses": 55
+  },
+  "TEAM_DELETE_LIVING": {
+   "files": 2,
+   "uses": 4
+  },
+  "TEAM_EXECUTE_SEQUENTIAL_SCRIPT": {
+   "files": 23,
+   "uses": 119
+  },
+  "TEAM_EXECUTE_SEQUENTIAL_SCRIPT_LOOPING": {
+   "files": 8,
+   "uses": 12
+  },
+  "TEAM_EXIT_ALL_BUILDINGS": {
+   "files": 1,
+   "uses": 1
+  },
+  "TEAM_FACE_NAMED": {
+   "files": 2,
+   "uses": 4
+  },
+  "TEAM_FACE_WAYPOINT": {
+   "files": 9,
+   "uses": 89
+  },
+  "TEAM_FLASH": {
+   "files": 6,
+   "uses": 18
+  },
+  "TEAM_FLASH_WHITE": {
+   "files": 1,
+   "uses": 2
+  },
+  "TEAM_FOLLOW_WAYPOINTS": {
+   "files": 13,
+   "uses": 91
+  },
+  "TEAM_FOLLOW_WAYPOINTS_EXACT": {
+   "files": 15,
+   "uses": 66
+  },
+  "TEAM_FORCE_EMOTION": {
+   "files": 11,
+   "uses": 64
+  },
+  "TEAM_GARRISON_NEAREST_BUILDING": {
+   "files": 1,
+   "uses": 1
+  },
+  "TEAM_GARRISON_SPECIFIC_BUILDING": {
+   "files": 1,
+   "uses": 1
+  },
+  "TEAM_GARRISON_SPECIFIC_BUILDING_INSTANTLY": {
+   "files": 6,
+   "uses": 48
+  },
+  "TEAM_GARRISON_TEAM_INSTANTLY": {
+   "files": 2,
+   "uses": 7
+  },
+  "TEAM_GIVE_EXPERIENCE_POINTS": {
+   "files": 13,
+   "uses": 245
+  },
+  "TEAM_GUARD": {
+   "files": 16,
+   "uses": 57
+  },
+  "TEAM_GUARD_AREA": {
+   "files": 6,
+   "uses": 21
+  },
+  "TEAM_GUARD_AREA_FROM_POSITION": {
+   "files": 4,
+   "uses": 16
+  },
+  "TEAM_GUARD_FOR_FRAMECOUNT": {
+   "files": 3,
+   "uses": 3
+  },
+  "TEAM_GUARD_FOR_SECONDS": {
+   "files": 12,
+   "uses": 45
+  },
+  "TEAM_GUARD_NEAREST_KINDOF": {
+   "files": 1,
+   "uses": 2
+  },
+  "TEAM_GUARD_OBJECT": {
+   "files": 2,
+   "uses": 13
+  },
+  "TEAM_GUARD_POSITION": {
+   "files": 1,
+   "uses": 4
+  },
+  "TEAM_GUARD_TEAM": {
+   "files": 8,
+   "uses": 28
+  },
+  "TEAM_HUNT": {
+   "files": 36,
+   "uses": 403
+  },
+  "TEAM_IDLE_FOR_FRAMECOUNT": {
+   "files": 1,
+   "uses": 1
+  },
+  "TEAM_IDLE_FOR_SECONDS": {
+   "files": 9,
+   "uses": 38
+  },
+  "TEAM_INCREASE_PRIORITY": {
+   "files": 1,
+   "uses": 1
+  },
+  "TEAM_KILL": {
+   "files": 3,
+   "uses": 3
+  },
+  "TEAM_LOAD_TRANSPORTS": {
+   "files": 3,
+   "uses": 7
+  },
+  "TEAM_MERGE_INTO_TEAM": {
+   "files": 16,
+   "uses": 231
+  },
+  "TEAM_MOVE_TO_NEAREST_OBJECT_OF_KINDOF": {
+   "files": 1,
+   "uses": 1
+  },
+  "TEAM_MOVE_TO_NEAREST_OBJECT_OF_TYPE": {
+   "files": 15,
+   "uses": 31
+  },
+  "TEAM_MOVE_TO_NEAREST_OBJECT_OF_TYPE_OWNED_BY_PLAYER": {
+   "files": 20,
+   "uses": 184
+  },
+  "TEAM_PANIC": {
+   "files": 1,
+   "uses": 1
+  },
+  "TEAM_RECRUIT_UNITS": {
+   "files": 6,
+   "uses": 18
+  },
+  "TEAM_RECRUIT_UNITS_FROM_TEAM": {
+   "files": 6,
+   "uses": 29
+  },
+  "TEAM_REMOVE_ALL_OVERRIDE_RELATIONS": {
+   "files": 1,
+   "uses": 1
+  },
+  "TEAM_SET_ATTITUDE": {
+   "files": 29,
+   "uses": 320
+  },
+  "TEAM_SET_AUTO_ABILITY": {
+   "files": 4,
+   "uses": 10
+  },
+  "TEAM_SET_CUSTOM_STATE": {
+   "files": 17,
+   "uses": 385
+  },
+  "TEAM_SET_HEALTH": {
+   "files": 1,
+   "uses": 2
+  },
+  "TEAM_SET_MODELCONDITION_FOR_DURATION": {
+   "files": 8,
+   "uses": 11
+  },
+  "TEAM_SET_OVERRIDE_RELATION_TO_PLAYER": {
+   "files": 6,
+   "uses": 16
+  },
+  "TEAM_SET_OVERRIDE_RELATION_TO_TEAM": {
+   "files": 8,
+   "uses": 68
+  },
+  "TEAM_SET_PLAYERS_NEAREST_UNIT_OF_TYPE_TO_REFERENCE": {
+   "files": 5,
+   "uses": 11
+  },
+  "TEAM_SET_STATE": {
+   "files": 16,
+   "uses": 141
+  },
+  "TEAM_STAND_GROUND": {
+   "files": 16,
+   "uses": 51
+  },
+  "TEAM_STOP": {
+   "files": 26,
+   "uses": 85
+  },
+  "TEAM_STOP_AND_DISBAND": {
+   "files": 6,
+   "uses": 11
+  },
+  "TEAM_STOP_SEQUENTIAL_SCRIPT": {
+   "files": 1,
+   "uses": 3
+  },
+  "TEAM_TELEPORT_TO_WAYPOINT": {
+   "files": 1,
+   "uses": 1
+  },
+  "TEAM_TRANSFER_TO_PLAYER": {
+   "files": 21,
+   "uses": 116
+  },
+  "TEAM_UPGRADE": {
+   "files": 10,
+   "uses": 512
+  },
+  "TEAM_USE_COMMANDBUTTON_ABILITY": {
+   "files": 24,
+   "uses": 142
+  },
+  "TEAM_USE_COMMANDBUTTON_ABILITY_AT_WAYPOINT": {
+   "files": 6,
+   "uses": 41
+  },
+  "TEAM_USE_COMMANDBUTTON_ABILITY_ON_NAMED": {
+   "files": 1,
+   "uses": 1
+  },
+  "TEAM_WANDER": {
+   "files": 1,
+   "uses": 4
+  },
+  "TEAM_WANDER_IN_PLACE": {
+   "files": 4,
+   "uses": 10
+  },
+  "TECHTREE_MODIFY_BUILDABILITY_OBJECT": {
+   "files": 2,
+   "uses": 8
+  },
+  "TERRAIN_RENDER_DISABLE": {
+   "files": 1,
+   "uses": 1
+  },
+  "TOGGLE_AUTO_BUILD": {
+   "files": 1,
+   "uses": 1
+  },
+  "TOGGLE_AVI_CAPTURE": {
+   "files": 26,
+   "uses": 52
+  },
+  "UNFREEZE_TIME": {
+   "files": 3,
+   "uses": 4
+  },
+  "UNIT_AFFECT_OBJECT_PANEL_FLAGS": {
+   "files": 12,
+   "uses": 114
+  },
+  "UNIT_CHANGE_OBJECT_STATUS": {
+   "files": 4,
+   "uses": 18
+  },
+  "UNIT_FORCE_EMOTION": {
+   "files": 9,
+   "uses": 60
+  },
+  "UNIT_GAIN_LEVEL": {
+   "files": 2,
+   "uses": 5
+  },
+  "UNIT_GIVE_EXPERIENCE_LEVEL": {
+   "files": 2,
+   "uses": 4
+  },
+  "UNIT_GIVE_EXPERIENCE_POINTS": {
+   "files": 9,
+   "uses": 18
+  },
+  "UNIT_GUARD_AREA": {
+   "files": 2,
+   "uses": 2
+  },
+  "UNIT_GUARD_AREA_FROM_POSITION": {
+   "files": 3,
+   "uses": 29
+  },
+  "UNIT_GUARD_POSITION": {
+   "files": 1,
+   "uses": 1
+  },
+  "UNIT_IDLE_FOR_FRAMECOUNT": {
+   "files": 1,
+   "uses": 1
+  },
+  "UNIT_SET_EXPERIENCE_POINTS": {
+   "files": 4,
+   "uses": 9
+  },
+  "UNIT_SET_MAX_LEVEL": {
+   "files": 18,
+   "uses": 43
+  },
+  "UNIT_SET_MODELCONDITION": {
+   "files": 3,
+   "uses": 12
+  },
+  "UNIT_SET_MODELCONDITION_FOR_DURATION": {
+   "files": 21,
+   "uses": 55
+  },
+  "UNIT_SET_TEAM": {
+   "files": 17,
+   "uses": 78
+  },
+  "UNIT_SPAWN_NAMED_LOCATION_ORIENTATION": {
+   "files": 1,
+   "uses": 7
+  },
+  "UNIT_STAND_GROUND": {
+   "files": 4,
+   "uses": 24
+  },
+  "UNIT_TELEPORT_TO_WAYPOINT": {
+   "files": 7,
+   "uses": 13
+  },
+  "UPGRADE_NEAREST_WALL": {
+   "files": 1,
+   "uses": 13
+  },
+  "VICTORY": {
+   "files": 3,
+   "uses": 3
+  },
+  "VICTORY_SCREEN": {
+   "files": 13,
+   "uses": 13
+  },
+  "ZOOM_CAMERA": {
+   "files": 9,
+   "uses": 35
+  }
+ },
+ "categories": {
+  "campaign": {
+   "actions": 17024,
+   "conditions": 7087,
+   "falseActions": 260,
+   "files": 28,
+   "scripts": 5535
+  },
+  "library": {
+   "actions": 10074,
+   "conditions": 6776,
+   "falseActions": 126,
+   "files": 54,
+   "scripts": 2900
+  },
+  "other": {
+   "actions": 814,
+   "conditions": 356,
+   "files": 30,
+   "scripts": 353
+  },
+  "skirmish": {
+   "actions": 209,
+   "conditions": 97,
+   "falseActions": 16,
+   "files": 23,
+   "scripts": 97
+  },
+  "war_of_the_ring": {
+   "actions": 472,
+   "conditions": 177,
+   "falseActions": 20,
+   "files": 51,
+   "scripts": 176
+  }
+ },
+ "condition": {
+  "ANY_HERO_REACHED_RANK": {
+   "files": 1,
+   "uses": 1
+  },
+  "BUILT_BY_PLAYER": {
+   "files": 4,
+   "uses": 11
+  },
+  "CAMERA_SCROLL_DISTANCE": {
+   "files": 1,
+   "uses": 2
+  },
+  "CAN_BUILD_AT_BASE": {
+   "files": 19,
+   "uses": 217
+  },
+  "CAN_BUILD_OBJECTTYPE_AT_BASE": {
+   "files": 1,
+   "uses": 17
+  },
+  "COMPARE_NUM_PLAYERS_IN_GAME": {
+   "files": 1,
+   "uses": 6
+  },
+  "CONDITION_TRUE": {
+   "files": 127,
+   "uses": 1696
+  },
+  "COUNTER": {
+   "files": 73,
+   "uses": 1608
+  },
+  "COUNTER_COUNTER": {
+   "files": 24,
+   "uses": 1027
+  },
+  "COUNTER_SECONDS": {
+   "files": 4,
+   "uses": 26
+  },
+  "DISTANCE_BETWEEN_TEAM": {
+   "files": 1,
+   "uses": 1
+  },
+  "ENEMY_SIGHTED": {
+   "files": 6,
+   "uses": 19
+  },
+  "ENEMY_SIGHTED_BY_TEAM": {
+   "files": 10,
+   "uses": 36
+  },
+  "EVAL_TEAM_HEALTH": {
+   "files": 4,
+   "uses": 9
+  },
+  "FLAG": {
+   "files": 61,
+   "uses": 2645
+  },
+  "GATE_IS_OPEN": {
+   "files": 5,
+   "uses": 9
+  },
+  "HAS_DELAYED_CARRYOVER_UNIT_OF_TYPE": {
+   "files": 17,
+   "uses": 37
+  },
+  "HAS_EVA_EVENT_PLAYED_IN_LAST_N_SECONDS": {
+   "files": 1,
+   "uses": 2
+  },
+  "HAS_FINISHED_AUDIO": {
+   "files": 14,
+   "uses": 229
+  },
+  "IS_GAME_IN_SKIRMISH_OR_MULTIPLAYER": {
+   "files": 3,
+   "uses": 7
+  },
+  "IS_GAME_MODE_ACTIVE": {
+   "files": 19,
+   "uses": 19
+  },
+  "IS_NUM_OF_UNITS_BELONGING_TO_PLAYER_NEAR_EVA_EVENT_LAST_PLAYED_LOCATION_COMPARISON_INT": {
+   "files": 1,
+   "uses": 4
+  },
+  "MULTIPLAYER_ALLIED_DEFEAT": {
+   "files": 1,
+   "uses": 1
+  },
+  "MULTIPLAYER_ALLIED_VICTORY": {
+   "files": 1,
+   "uses": 1
+  },
+  "MULTIPLAYER_PLAYER_DEFEAT": {
+   "files": 2,
+   "uses": 2
+  },
+  "NAMED_ATTACKED_BY_OBJECTTYPE": {
+   "files": 3,
+   "uses": 9
+  },
+  "NAMED_ATTACKED_BY_PLAYER": {
+   "files": 13,
+   "uses": 51
+  },
+  "NAMED_BASE_UNPACKABLE_FOR_PLAYER": {
+   "files": 4,
+   "uses": 144
+  },
+  "NAMED_BUILDING_IS_EMPTY": {
+   "files": 2,
+   "uses": 28
+  },
+  "NAMED_CREATED": {
+   "files": 23,
+   "uses": 32
+  },
+  "NAMED_DESTROYED": {
+   "files": 31,
+   "uses": 471
+  },
+  "NAMED_DISCOVERED": {
+   "files": 11,
+   "uses": 108
+  },
+  "NAMED_ENTERED_AREA": {
+   "files": 11,
+   "uses": 31
+  },
+  "NAMED_EXITED_AREA": {
+   "files": 3,
+   "uses": 9
+  },
+  "NAMED_INSIDE_AREA": {
+   "files": 17,
+   "uses": 82
+  },
+  "NAMED_NOT_DESTROYED": {
+   "files": 27,
+   "uses": 116
+  },
+  "NAMED_OUTSIDE_AREA": {
+   "files": 2,
+   "uses": 2
+  },
+  "NAMED_OWNED_BY_PLAYER": {
+   "files": 17,
+   "uses": 107
+  },
+  "NAMED_RANK_LEVEL": {
+   "files": 1,
+   "uses": 1
+  },
+  "NAMED_SELECTED": {
+   "files": 9,
+   "uses": 36
+  },
+  "NAMED_TOTALLY_DEAD": {
+   "files": 1,
+   "uses": 1
+  },
+  "OBJECTIVES_SCREEN_IS_OPEN": {
+   "files": 1,
+   "uses": 2
+  },
+  "PLAYER_ACQUIRED_SCIENCE": {
+   "files": 6,
+   "uses": 20
+  },
+  "PLAYER_ALL_DESTROYED": {
+   "files": 1,
+   "uses": 1
+  },
+  "PLAYER_BUILT_UPGRADE": {
+   "files": 3,
+   "uses": 4
+  },
+  "PLAYER_CAN_PURCHASE_SCIENCE": {
+   "files": 1,
+   "uses": 539
+  },
+  "PLAYER_DESTROYED_N_BUILDINGS_PLAYER": {
+   "files": 1,
+   "uses": 1
+  },
+  "PLAYER_HAS_COMPARISON_UNIT_TYPE_IN_TRIGGER_AREA": {
+   "files": 17,
+   "uses": 104
+  },
+  "PLAYER_HAS_COMPARISON_UNIT_TYPE_IN_TRIGGER_AREA_COMPLETELY_BUILT": {
+   "files": 15,
+   "uses": 136
+  },
+  "PLAYER_HAS_CREDITS": {
+   "files": 15,
+   "uses": 136
+  },
+  "PLAYER_HAS_KILLED_TYPE_UNITS": {
+   "files": 5,
+   "uses": 9
+  },
+  "PLAYER_HAS_NUMBER_OBJECTS_WITH_MODELCONDITION": {
+   "files": 2,
+   "uses": 5
+  },
+  "PLAYER_HAS_NUMBER_UNITS_DISTANCE_FROM_OBJECT": {
+   "files": 1,
+   "uses": 2
+  },
+  "PLAYER_HAS_NUM_UNITS_WITH_UPGRADE": {
+   "files": 1,
+   "uses": 1
+  },
+  "PLAYER_HAS_N_OR_FEWER_BASES": {
+   "files": 2,
+   "uses": 2
+  },
+  "PLAYER_HAS_OBJECT_COMPARISON": {
+   "files": 42,
+   "uses": 706
+  },
+  "PLAYER_HAS_OBJECT_OF_VETERANCY": {
+   "files": 7,
+   "uses": 37
+  },
+  "PLAYER_HAS_REACHED_LEVEL_CAP": {
+   "files": 1,
+   "uses": 1
+  },
+  "PLAYER_HAS_SCIENCEPURCHASEPOINTS": {
+   "files": 1,
+   "uses": 5
+  },
+  "PLAYER_ISSUED_FORMATION_ORDER": {
+   "files": 1,
+   "uses": 1
+  },
+  "PLAYER_LOST_OBJECT_TYPE": {
+   "files": 1,
+   "uses": 1
+  },
+  "PLAYER_TRIGGERED_SPECIAL_POWER": {
+   "files": 3,
+   "uses": 4
+  },
+  "REGION_CAMPS_SHOULD_UNPACK": {
+   "files": 1,
+   "uses": 1
+  },
+  "SKIRMISH_COMMAND_BUTTON_READY_ALL": {
+   "files": 3,
+   "uses": 5
+  },
+  "SKIRMISH_COMMAND_BUTTON_READY_PARTIAL": {
+   "files": 3,
+   "uses": 39
+  },
+  "SKIRMISH_PLAYER_FACTION": {
+   "files": 18,
+   "uses": 86
+  },
+  "SKIRMISH_PLAYER_HAS_BEEN_ATTACKED_BY_PLAYER": {
+   "files": 6,
+   "uses": 16
+  },
+  "SKIRMISH_PLAYER_HAS_COMPARISON_GARRISONED": {
+   "files": 1,
+   "uses": 1
+  },
+  "SKIRMISH_PLAYER_HAS_UNITS_IN_AREA": {
+   "files": 26,
+   "uses": 307
+  },
+  "SKIRMISH_PLAYER_IS_OUTSIDE_AREA": {
+   "files": 12,
+   "uses": 24
+  },
+  "SKIRMISH_SPECIAL_POWER_READY": {
+   "files": 5,
+   "uses": 18
+  },
+  "SKIRMISH_VALUE_IN_AREA": {
+   "files": 2,
+   "uses": 4
+  },
+  "SPELL_STORE_IS_OPEN": {
+   "files": 1,
+   "uses": 4
+  },
+  "START_POSITION_IS": {
+   "files": 2,
+   "uses": 16
+  },
+  "TEAM_ALL_HAS_OBJECT_STATUS": {
+   "files": 1,
+   "uses": 2
+  },
+  "TEAM_ATTACKED_BY_OBJECTTYPE": {
+   "files": 2,
+   "uses": 3
+  },
+  "TEAM_ATTACKED_BY_PLAYER": {
+   "files": 23,
+   "uses": 67
+  },
+  "TEAM_CREATED": {
+   "files": 18,
+   "uses": 57
+  },
+  "TEAM_DESTROYED": {
+   "files": 33,
+   "uses": 169
+  },
+  "TEAM_DISCOVERED": {
+   "files": 9,
+   "uses": 94
+  },
+  "TEAM_ENTERED_AREA_ENTIRELY": {
+   "files": 4,
+   "uses": 6
+  },
+  "TEAM_ENTERED_AREA_PARTIALLY": {
+   "files": 7,
+   "uses": 23
+  },
+  "TEAM_EXITED_AREA_ENTIRELY": {
+   "files": 3,
+   "uses": 8
+  },
+  "TEAM_EXITED_AREA_PARTIALLY": {
+   "files": 4,
+   "uses": 9
+  },
+  "TEAM_HAS_CUSTOM_STATE": {
+   "files": 15,
+   "uses": 92
+  },
+  "TEAM_HAS_FEWER_THAN_X_UNITS_WITH_KINDOF": {
+   "files": 2,
+   "uses": 3
+  },
+  "TEAM_HAS_UNITS": {
+   "files": 19,
+   "uses": 345
+  },
+  "TEAM_INSIDE_AREA_ENTIRELY": {
+   "files": 5,
+   "uses": 34
+  },
+  "TEAM_INSIDE_AREA_PARTIALLY": {
+   "files": 19,
+   "uses": 154
+  },
+  "TEAM_IS_ATTACKED_AND_CANNOT_RETALIATE_ALL": {
+   "files": 1,
+   "uses": 1
+  },
+  "TEAM_OUTSIDE_AREA_ENTIRELY": {
+   "files": 1,
+   "uses": 1
+  },
+  "TEAM_REACHED_WAYPOINTS_END": {
+   "files": 1,
+   "uses": 1
+  },
+  "TEAM_SOME_HAVE_OBJECT_STATUS": {
+   "files": 5,
+   "uses": 49
+  },
+  "TEAM_STATE_IS": {
+   "files": 3,
+   "uses": 9
+  },
+  "TEAM_STATE_IS_NOT": {
+   "files": 14,
+   "uses": 40
+  },
+  "TEAM_THREAT_LEVEL": {
+   "files": 18,
+   "uses": 108
+  },
+  "TIMER_EXPIRED": {
+   "files": 98,
+   "uses": 1854
+  },
+  "TOGGLE_STANCE_SUBMENU_IS_OPEN": {
+   "files": 1,
+   "uses": 1
+  },
+  "TYPE_SELECTED": {
+   "files": 7,
+   "uses": 24
+  },
+  "TYPE_SIGHTED": {
+   "files": 5,
+   "uses": 9
+  },
+  "UNIT_HAS_GAINED_LEVEL": {
+   "files": 2,
+   "uses": 2
+  },
+  "UNIT_HAS_OBJECT_STATUS": {
+   "files": 4,
+   "uses": 52
+  },
+  "UNIT_HEALTH": {
+   "files": 17,
+   "uses": 86
+  },
+  "UNIT_IS_AT_LEVEL": {
+   "files": 2,
+   "uses": 7
+  },
+  "UNIT_THREAT_LEVEL": {
+   "files": 14,
+   "uses": 84
+  },
+  "UNIT_USING_STANCE": {
+   "files": 1,
+   "uses": 1
+  }
+ },
+ "falseAction": {
+  "ALLOW_DISALLOW_ONE_BUILDING": {
+   "files": 1,
+   "uses": 1
+  },
+  "ATTACK_MOVE_TEAM_TO_NAMED_OBJECT": {
+   "files": 1,
+   "uses": 4
+  },
+  "CALL_SUBROUTINE": {
+   "files": 11,
+   "uses": 64
+  },
+  "CREATE_NAMED_ON_TEAM_AT_OBJECTTYPE": {
+   "files": 1,
+   "uses": 1
+  },
+  "CREATE_NAMED_ON_TEAM_AT_WAYPOINT": {
+   "files": 15,
+   "uses": 37
+  },
+  "CREATE_REINFORCEMENT_TEAM": {
+   "files": 1,
+   "uses": 1
+  },
+  "DISABLE_SCRIPT": {
+   "files": 32,
+   "uses": 64
+  },
+  "ENABLE_SCRIPT": {
+   "files": 33,
+   "uses": 47
+  },
+  "GATE_OPEN": {
+   "files": 6,
+   "uses": 13
+  },
+  "NO_OP": {
+   "files": 1,
+   "uses": 4
+  },
+  "OBJECT_CREATE_RADAR_EVENT": {
+   "files": 2,
+   "uses": 4
+  },
+  "PLAYER_ENABLE_UNIT_CONSTRUCTION": {
+   "files": 1,
+   "uses": 1
+  },
+  "PLAYER_GIVE_MONEY": {
+   "files": 1,
+   "uses": 1
+  },
+  "PLAY_SOUND_EFFECT_AT_TEAM": {
+   "files": 1,
+   "uses": 3
+  },
+  "RESET_CAMERA": {
+   "files": 1,
+   "uses": 1
+  },
+  "SET_COUNTER": {
+   "files": 2,
+   "uses": 2
+  },
+  "SET_FLAG": {
+   "files": 19,
+   "uses": 131
+  },
+  "SET_MILLISECOND_TIMER": {
+   "files": 6,
+   "uses": 13
+  },
+  "SET_TIMER": {
+   "files": 3,
+   "uses": 5
+  },
+  "SHOW_MISSION_OBJECTIVE": {
+   "files": 1,
+   "uses": 1
+  },
+  "TEAM_ATTACK_MOVE_FOLLOW_WAYPOINTS": {
+   "files": 1,
+   "uses": 3
+  },
+  "TEAM_CHANGE_OBJECT_STATUS": {
+   "files": 1,
+   "uses": 7
+  },
+  "TEAM_EXECUTE_SEQUENTIAL_SCRIPT": {
+   "files": 10,
+   "uses": 10
+  },
+  "TEAM_HUNT": {
+   "files": 2,
+   "uses": 2
+  },
+  "TEAM_MOVE_TO_NEAREST_OBJECT_OF_TYPE_OWNED_BY_PLAYER": {
+   "files": 1,
+   "uses": 1
+  },
+  "TEAM_SET_ATTITUDE": {
+   "files": 1,
+   "uses": 1
+  }
+ },
+ "files": {
+  "bases\\camps\\camps.map": {
+   "lists": 7
+  },
+  "bases\\others\\others.map": {
+   "lists": 5
+  },
+  "libraries\\__old_ai_scripts\\ai_gondor\\ai_gondor.map": {
+   "actions": 129,
+   "conditions": 226,
+   "falseActions": 2,
+   "groups": 11,
+   "lists": 2,
+   "scripts": 67
+  },
+  "libraries\\__old_ai_scripts\\ai_gondorskirmish\\ai_gondorskirmish.map": {
+   "actions": 515,
+   "conditions": 381,
+   "falseActions": 1,
+   "groups": 17,
+   "lists": 2,
+   "scripts": 105
+  },
+  "libraries\\__old_ai_scripts\\ai_isengard\\ai_isengard.map": {
+   "actions": 136,
+   "conditions": 156,
+   "falseActions": 2,
+   "groups": 12,
+   "lists": 2,
+   "scripts": 59
+  },
+  "libraries\\__old_ai_scripts\\ai_isengardskirmish\\ai_isengardskirmish.map": {
+   "actions": 425,
+   "conditions": 200,
+   "falseActions": 4,
+   "groups": 17,
+   "lists": 2,
+   "scripts": 88
+  },
+  "libraries\\__old_ai_scripts\\ai_mordor\\ai_mordor.map": {
+   "actions": 161,
+   "conditions": 168,
+   "falseActions": 2,
+   "groups": 11,
+   "lists": 2,
+   "scripts": 60
+  },
+  "libraries\\__old_ai_scripts\\ai_mordorskirmish\\ai_mordorskirmish.map": {
+   "actions": 435,
+   "conditions": 224,
+   "falseActions": 3,
+   "groups": 16,
+   "lists": 2,
+   "scripts": 85
+  },
+  "libraries\\__old_ai_scripts\\ai_rohan\\ai_rohan.map": {
+   "actions": 226,
+   "conditions": 355,
+   "falseActions": 1,
+   "groups": 14,
+   "lists": 2,
+   "scripts": 117
+  },
+  "libraries\\__old_ai_scripts\\ai_rohanskirmish\\ai_rohanskirmish.map": {
+   "actions": 498,
+   "conditions": 321,
+   "falseActions": 1,
+   "groups": 17,
+   "lists": 2,
+   "scripts": 97
+  },
+  "libraries\\ai_attack_execution\\ai_attack_execution.map": {
+   "actions": 274,
+   "conditions": 336,
+   "groups": 9,
+   "lists": 2,
+   "scripts": 115
+  },
+  "libraries\\ai_debug\\ai_debug.map": {
+   "actions": 46,
+   "conditions": 27,
+   "groups": 2,
+   "lists": 2,
+   "scripts": 27
+  },
+  "libraries\\ai_defend_execution\\ai_defend_execution.map": {
+   "actions": 101,
+   "conditions": 164,
+   "falseActions": 2,
+   "groups": 8,
+   "lists": 2,
+   "scripts": 56
+  },
+  "libraries\\ai_desires\\ai_desires.map": {
+   "actions": 218,
+   "conditions": 201,
+   "falseActions": 3,
+   "groups": 10,
+   "lists": 2,
+   "scripts": 86
+  },
+  "libraries\\ai_economy_execution\\ai_economy_execution.map": {
+   "actions": 125,
+   "conditions": 165,
+   "falseActions": 4,
+   "groups": 4,
+   "lists": 2,
+   "scripts": 48
+  },
+  "libraries\\ai_gondor\\ai_gondor.map": {
+   "lists": 2
+  },
+  "libraries\\ai_gondorskirmish\\ai_gondorskirmish.map": {
+   "lists": 2
+  },
+  "libraries\\ai_gondorsps\\ai_gondorsps.map": {
+   "actions": 435,
+   "conditions": 156,
+   "falseActions": 10,
+   "groups": 13,
+   "lists": 2,
+   "scripts": 88
+  },
+  "libraries\\ai_initialize\\ai_initialize.map": {
+   "actions": 240,
+   "conditions": 35,
+   "falseActions": 8,
+   "groups": 5,
+   "lists": 2,
+   "scripts": 33
+  },
+  "libraries\\ai_isengard\\ai_isengard.map": {
+   "lists": 2
+  },
+  "libraries\\ai_isengardskirmish\\ai_isengardskirmish.map": {
+   "lists": 2
+  },
+  "libraries\\ai_isengardsps\\ai_isengardsps.map": {
+   "actions": 455,
+   "conditions": 143,
+   "falseActions": 2,
+   "groups": 18,
+   "lists": 2,
+   "scripts": 94
+  },
+  "libraries\\ai_isengardsps_dl0\\ai_isengardsps_dl0.map": {
+   "actions": 203,
+   "conditions": 81,
+   "falseActions": 3,
+   "groups": 5,
+   "lists": 2,
+   "scripts": 32
+  },
+  "libraries\\ai_isengardsps_dl1\\ai_isengardsps_dl1.map": {
+   "actions": 294,
+   "conditions": 122,
+   "falseActions": 3,
+   "groups": 15,
+   "lists": 2,
+   "scripts": 70
+  },
+  "libraries\\ai_men of the west\\ai_men of the west.map": {
+   "lists": 2
+  },
+  "libraries\\ai_mordor\\ai_mordor.map": {
+   "lists": 2
+  },
+  "libraries\\ai_mordorskirmish\\ai_mordorskirmish.map": {
+   "lists": 2
+  },
+  "libraries\\ai_mordorsps\\ai_mordorsps.map": {
+   "actions": 384,
+   "conditions": 141,
+   "falseActions": 2,
+   "groups": 18,
+   "lists": 2,
+   "scripts": 96
+  },
+  "libraries\\ai_mp_inherit_management\\ai_mp_inherit_management.map": {
+   "actions": 82,
+   "conditions": 51,
+   "falseActions": 24,
+   "groups": 2,
+   "lists": 2,
+   "scripts": 51
+  },
+  "libraries\\ai_opposition\\ai_opposition.map": {
+   "actions": 41,
+   "conditions": 38,
+   "groups": 3,
+   "lists": 2,
+   "scripts": 17
+  },
+  "libraries\\ai_predictive_building\\ai_predictive_building.map": {
+   "actions": 94,
+   "conditions": 151,
+   "falseActions": 1,
+   "groups": 7,
+   "lists": 2,
+   "scripts": 43
+  },
+  "libraries\\ai_rohan\\ai_rohan.map": {
+   "lists": 2
+  },
+  "libraries\\ai_rohanskirmish\\ai_rohanskirmish.map": {
+   "lists": 2
+  },
+  "libraries\\ai_rohansps\\ai_rohansps.map": {
+   "actions": 391,
+   "conditions": 149,
+   "falseActions": 10,
+   "groups": 14,
+   "lists": 2,
+   "scripts": 91
+  },
+  "libraries\\ai_spell_execution\\ai_spell_execution.map": {
+   "actions": 1756,
+   "conditions": 1591,
+   "groups": 96,
+   "lists": 2,
+   "scripts": 569
+  },
+  "libraries\\ai_upgrade_execution\\ai_upgrade_execution.map": {
+   "actions": 180,
+   "conditions": 324,
+   "falseActions": 4,
+   "groups": 24,
+   "lists": 2,
+   "scripts": 85
+  },
+  "libraries\\angmar unit object list.scb": {
+   "actions": 14,
+   "conditions": 1,
+   "lists": 1,
+   "scripts": 1
+  },
+  "libraries\\angmar victory and loss sequence.scb": {
+   "actions": 61,
+   "conditions": 28,
+   "groups": 4,
+   "lists": 1,
+   "scripts": 28
+  },
+  "libraries\\dl3_attack ai values\\dl3_attack ai values.map": {
+   "actions": 10,
+   "conditions": 4,
+   "groups": 1,
+   "lists": 2,
+   "scripts": 4
+  },
+  "libraries\\dl4_attack ai values\\dl4_attack ai values.map": {
+   "actions": 10,
+   "conditions": 4,
+   "groups": 1,
+   "lists": 2,
+   "scripts": 4
+  },
+  "libraries\\lib_attack_behaviors\\lib_attack_behaviors.map": {
+   "actions": 107,
+   "conditions": 39,
+   "groups": 3,
+   "lists": 2,
+   "scripts": 32
+  },
+  "libraries\\lib_defense_behaviors\\lib_defense_behaviors.map": {
+   "actions": 168,
+   "conditions": 111,
+   "falseActions": 1,
+   "groups": 5,
+   "lists": 2,
+   "scripts": 81
+  },
+  "libraries\\lib_economy_behaviors\\lib_economy_behaviors.map": {
+   "actions": 98,
+   "conditions": 41,
+   "groups": 2,
+   "lists": 2,
+   "scripts": 41
+  },
+  "libraries\\lib_end_mission\\lib_end_mission.map": {
+   "actions": 103,
+   "conditions": 52,
+   "falseActions": 2,
+   "groups": 6,
+   "lists": 2,
+   "scripts": 52
+  },
+  "libraries\\lib_enemy_determination\\lib_enemy_determination.map": {
+   "actions": 12,
+   "conditions": 7,
+   "falseActions": 6,
+   "groups": 2,
+   "lists": 2,
+   "scripts": 7
+  },
+  "libraries\\lib_formation_behaviors\\lib_formation_behaviors.map": {
+   "actions": 118,
+   "conditions": 82,
+   "groups": 16,
+   "lists": 2,
+   "scripts": 48
+  },
+  "libraries\\lib_gollumspawn\\lib_gollumspawn.map": {
+   "actions": 22,
+   "conditions": 11,
+   "falseActions": 2,
+   "groups": 2,
+   "lists": 2,
+   "scripts": 11
+  },
+  "libraries\\lib_hero_behaviors\\lib_hero_behaviors.map": {
+   "actions": 130,
+   "conditions": 130,
+   "groups": 17,
+   "lists": 2,
+   "scripts": 86
+  },
+  "libraries\\lib_object_lists\\lib_object_lists.map": {
+   "actions": 760,
+   "conditions": 30,
+   "groups": 1,
+   "lists": 2,
+   "scripts": 30
+  },
+  "libraries\\lib_priority_lists\\lib_priority_lists.map": {
+   "actions": 215,
+   "conditions": 27,
+   "groups": 3,
+   "lists": 2,
+   "scripts": 27
+  },
+  "libraries\\lib_skirmish_objectives\\lib_skirmish_objectives.map": {
+   "actions": 75,
+   "conditions": 52,
+   "falseActions": 12,
+   "groups": 3,
+   "lists": 2,
+   "scripts": 27
+  },
+  "libraries\\multiplayer_human\\multiplayer_human.map": {
+   "actions": 21,
+   "conditions": 24,
+   "falseActions": 9,
+   "groups": 4,
+   "lists": 2,
+   "scripts": 13
+  },
+  "libraries\\multiplayer_start_teams\\multiplayer_start_teams.map": {
+   "actions": 39,
+   "conditions": 27,
+   "falseActions": 1,
+   "groups": 1,
+   "lists": 2,
+   "scripts": 19
+  },
+  "libraries\\music_musicscripts_single\\music_musicscripts_single.map": {
+   "actions": 200,
+   "conditions": 163,
+   "groups": 5,
+   "lists": 2,
+   "scripts": 74
+  },
+  "libraries\\power restrictions.scb": {
+   "actions": 13,
+   "conditions": 1,
+   "lists": 1,
+   "scripts": 1
+  },
+  "libraries\\sps_initialize\\sps_initialize.map": {
+   "actions": 54,
+   "conditions": 36,
+   "falseActions": 1,
+   "groups": 4,
+   "lists": 2,
+   "scripts": 35
+  },
+  "maps\\camera_demo\\1shotcinematicstripts.scb": {
+   "actions": 23,
+   "conditions": 9,
+   "groups": 5,
+   "lists": 1,
+   "scripts": 9
+  },
+  "maps\\camera_demo\\camera_demo.map": {
+   "actions": 23,
+   "conditions": 9,
+   "groups": 4,
+   "lists": 2,
+   "scripts": 9
+  },
+  "maps\\camera_demo\\defaultcinematicscripts.scb": {
+   "actions": 13,
+   "conditions": 5,
+   "groups": 4,
+   "lists": 1,
+   "scripts": 5
+  },
+  "maps\\cin amon sul - castle pan2\\cin amon sul - castle pan2.map": {
+   "actions": 43,
+   "conditions": 15,
+   "groups": 5,
+   "lists": 5,
+   "scripts": 15
+  },
+  "maps\\cin amon sul - castle pan\\cin amon sul - castle pan.map": {
+   "actions": 22,
+   "conditions": 10,
+   "groups": 5,
+   "lists": 5,
+   "scripts": 10
+  },
+  "maps\\cin amon sul - invasion\\cin amon sul - invasion.map": {
+   "actions": 30,
+   "conditions": 14,
+   "groups": 5,
+   "lists": 5,
+   "scripts": 14
+  },
+  "maps\\cin angmar - rogash run\\cin angmar - rogash run.map": {
+   "actions": 23,
+   "conditions": 12,
+   "groups": 6,
+   "lists": 15,
+   "scripts": 12
+  },
+  "maps\\cin angmar - witchking rally\\cin angmar - witchking rally.map": {
+   "actions": 34,
+   "conditions": 16,
+   "groups": 6,
+   "lists": 16,
+   "scripts": 16
+  },
+  "maps\\cin barrow downs - sorcerer\\cin barrow downs - sorcerer.map": {
+   "actions": 21,
+   "conditions": 11,
+   "groups": 5,
+   "lists": 8,
+   "scripts": 11
+  },
+  "maps\\cin barrow downs - swamp pull\\cin barrow downs - swamp pull.map": {
+   "actions": 28,
+   "conditions": 12,
+   "groups": 6,
+   "lists": 8,
+   "scripts": 12
+  },
+  "maps\\cin fornost - invasion\\cin fornost - invasion.map": {
+   "actions": 38,
+   "conditions": 18,
+   "groups": 7,
+   "lists": 14,
+   "scripts": 18
+  },
+  "maps\\cin fornost - legions seige\\cin fornost - legions seige.map": {
+   "actions": 40,
+   "conditions": 20,
+   "groups": 7,
+   "lists": 14,
+   "scripts": 20
+  },
+  "maps\\cin fornost - peaceful pan - clean\\cin fornost - peaceful pan - clean.map": {
+   "actions": 13,
+   "conditions": 5,
+   "groups": 4,
+   "lists": 12,
+   "scripts": 5
+  },
+  "maps\\cin fornost - peaceful pan\\cin fornost - peaceful pan.map": {
+   "actions": 34,
+   "conditions": 11,
+   "groups": 5,
+   "lists": 12,
+   "scripts": 11
+  },
+  "maps\\cin fornost - shade of wolf\\cin fornost - shade of wolf.map": {
+   "actions": 22,
+   "conditions": 9,
+   "groups": 5,
+   "lists": 19,
+   "scripts": 9
+  },
+  "maps\\cin fornost - witchking fire\\cin fornost - witchking fire.map": {
+   "actions": 19,
+   "conditions": 8,
+   "groups": 5,
+   "lists": 12,
+   "scripts": 8
+  },
+  "maps\\cin fornost - witchking\\cin fornost - witchking.map": {
+   "actions": 19,
+   "conditions": 8,
+   "groups": 5,
+   "lists": 12,
+   "scripts": 8
+  },
+  "maps\\cin gundabad - snowy landscape2\\cin gundabad - snowy landscape2.map": {
+   "actions": 31,
+   "conditions": 14,
+   "groups": 6,
+   "lists": 9,
+   "scripts": 14
+  },
+  "maps\\cin gundabad - snowy landscape2_bright\\cin gundabad - snowy landscape2_bright.map": {
+   "actions": 31,
+   "conditions": 14,
+   "groups": 6,
+   "lists": 9,
+   "scripts": 14
+  },
+  "maps\\cin gundabad - snowy landscape\\cin gundabad - snowy landscape.map": {
+   "actions": 31,
+   "conditions": 14,
+   "groups": 6,
+   "lists": 9,
+   "scripts": 14
+  },
+  "maps\\cin gundabad - witchking\\cin gundabad - witchking.map": {
+   "actions": 31,
+   "conditions": 14,
+   "groups": 6,
+   "lists": 9,
+   "scripts": 14
+  },
+  "maps\\cin north downs - waterfall\\cin north downs - waterfall.map": {
+   "actions": 24,
+   "conditions": 11,
+   "groups": 5,
+   "lists": 8,
+   "scripts": 11
+  },
+  "maps\\cin rhudaur - hwalder battle\\cin rhudaur - hwalder battle.map": {
+   "actions": 30,
+   "conditions": 13,
+   "groups": 5,
+   "lists": 7,
+   "scripts": 13
+  },
+  "maps\\cin rhudaur - thrallmaster rally\\cin rhudaur - thrallmaster rally.map": {
+   "actions": 35,
+   "conditions": 18,
+   "groups": 6,
+   "lists": 7,
+   "scripts": 18
+  },
+  "maps\\cin thrallmaster battle - ithilien\\cin thrallmaster battle - ithilien.map": {
+   "actions": 81,
+   "conditions": 39,
+   "groups": 19,
+   "lists": 4,
+   "scripts": 39
+  },
+  "maps\\createahero\\createahero.map": {
+   "actions": 7,
+   "conditions": 3,
+   "lists": 4,
+   "scripts": 3
+  },
+  "maps\\map advanced tutorial\\map advanced tutorial.map": {
+   "actions": 342,
+   "conditions": 111,
+   "falseActions": 1,
+   "groups": 10,
+   "lists": 7,
+   "scripts": 78
+  },
+  "maps\\map ang amon sul\\map ang amon sul.map": {
+   "actions": 632,
+   "conditions": 266,
+   "falseActions": 29,
+   "groups": 34,
+   "lists": 6,
+   "scripts": 221
+  },
+  "maps\\map ang angmar\\map ang angmar.map": {
+   "actions": 698,
+   "conditions": 244,
+   "falseActions": 5,
+   "groups": 26,
+   "lists": 16,
+   "scripts": 191
+  },
+  "maps\\map ang barrow downs\\map ang barrow downs.map": {
+   "actions": 501,
+   "conditions": 202,
+   "falseActions": 10,
+   "groups": 16,
+   "lists": 8,
+   "scripts": 163
+  },
+  "maps\\map ang barrow wights\\map ang barrow wights.map": {
+   "actions": 785,
+   "conditions": 241,
+   "falseActions": 22,
+   "groups": 27,
+   "lists": 7,
+   "scripts": 209
+  },
+  "maps\\map ang bonus\\map ang bonus.map": {
+   "actions": 468,
+   "conditions": 167,
+   "falseActions": 2,
+   "groups": 12,
+   "lists": 10,
+   "scripts": 157
+  },
+  "maps\\map ang carn dum\\map ang carn dum.map": {
+   "actions": 1570,
+   "conditions": 774,
+   "falseActions": 72,
+   "groups": 70,
+   "lists": 11,
+   "scripts": 495
+  },
+  "maps\\map ang dark eye\\map ang dark eye.map": {
+   "actions": 839,
+   "conditions": 397,
+   "falseActions": 14,
+   "groups": 40,
+   "lists": 9,
+   "scripts": 272
+  },
+  "maps\\map ang fornost\\map ang fornost.map": {
+   "actions": 647,
+   "conditions": 300,
+   "falseActions": 25,
+   "groups": 42,
+   "lists": 16,
+   "scripts": 230
+  },
+  "maps\\map ang gundabad\\map ang gundabad.map": {
+   "actions": 385,
+   "conditions": 176,
+   "falseActions": 4,
+   "groups": 31,
+   "lists": 9,
+   "scripts": 157
+  },
+  "maps\\map ang rhudaur\\map ang rhudaur.map": {
+   "actions": 545,
+   "conditions": 213,
+   "falseActions": 14,
+   "groups": 17,
+   "lists": 11,
+   "scripts": 175
+  },
+  "maps\\map beginner tutorial\\map beginner tutorial.map": {
+   "actions": 508,
+   "conditions": 137,
+   "groups": 17,
+   "lists": 8,
+   "scripts": 113
+  },
+  "maps\\map evil erebor\\map evil erebor.map": {
+   "actions": 312,
+   "conditions": 170,
+   "groups": 15,
+   "lists": 7,
+   "scripts": 142
+  },
+  "maps\\map evil fornost\\map evil fornost.map": {
+   "actions": 260,
+   "conditions": 153,
+   "falseActions": 2,
+   "groups": 40,
+   "lists": 11,
+   "scripts": 121
+  },
+  "maps\\map evil grey havens\\map evil grey havens.map": {
+   "actions": 540,
+   "conditions": 239,
+   "falseActions": 1,
+   "groups": 43,
+   "lists": 10,
+   "scripts": 216
+  },
+  "maps\\map evil lorien\\map evil lorien.map": {
+   "actions": 648,
+   "conditions": 233,
+   "falseActions": 4,
+   "groups": 16,
+   "lists": 4,
+   "scripts": 171
+  },
+  "maps\\map evil mirkwood\\map evil mirkwood.map": {
+   "actions": 374,
+   "conditions": 321,
+   "falseActions": 18,
+   "groups": 25,
+   "lists": 9,
+   "scripts": 170
+  },
+  "maps\\map evil rivendell\\map evil rivendell.map": {
+   "actions": 455,
+   "conditions": 205,
+   "groups": 18,
+   "lists": 8,
+   "scripts": 168
+  },
+  "maps\\map evil shire\\map evil shire.map": {
+   "actions": 717,
+   "conditions": 317,
+   "falseActions": 1,
+   "groups": 77,
+   "lists": 6,
+   "scripts": 260
+  },
+  "maps\\map evil withered heath\\map evil withered heath.map": {
+   "actions": 233,
+   "conditions": 108,
+   "falseActions": 8,
+   "groups": 22,
+   "lists": 8,
+   "scripts": 86
+  },
+  "maps\\map good blue mountain\\map good blue mountain.map": {
+   "actions": 680,
+   "conditions": 286,
+   "falseActions": 9,
+   "groups": 60,
+   "lists": 6,
+   "scripts": 241
+  },
+  "maps\\map good celduin\\map good celduin.map": {
+   "actions": 805,
+   "conditions": 306,
+   "falseActions": 5,
+   "groups": 79,
+   "lists": 6,
+   "scripts": 275
+  },
+  "maps\\map good dol guldur\\map good dol guldur.map": {
+   "actions": 694,
+   "conditions": 235,
+   "groups": 5,
+   "lists": 16,
+   "scripts": 160
+  },
+  "maps\\map good erebor\\map good erebor.map": {
+   "actions": 767,
+   "conditions": 295,
+   "falseActions": 1,
+   "groups": 18,
+   "lists": 8,
+   "scripts": 271
+  },
+  "maps\\map good ettenmoors\\map good ettenmoors.map": {
+   "actions": 650,
+   "conditions": 303,
+   "falseActions": 8,
+   "groups": 68,
+   "lists": 6,
+   "scripts": 249
+  },
+  "maps\\map good grey havens\\map good grey havens.map": {
+   "actions": 833,
+   "conditions": 255,
+   "groups": 12,
+   "lists": 6,
+   "scripts": 197
+  },
+  "maps\\map good high pass\\map good high pass.map": {
+   "actions": 630,
+   "conditions": 252,
+   "falseActions": 5,
+   "groups": 49,
+   "lists": 6,
+   "scripts": 185
+  },
+  "maps\\map good rivendell\\map good rivendell.map": {
+   "actions": 506,
+   "conditions": 181,
+   "groups": 9,
+   "lists": 7,
+   "scripts": 162
+  },
+  "maps\\map mp adorn river\\map mp adorn river.map": {
+   "actions": 25,
+   "conditions": 14,
+   "falseActions": 2,
+   "groups": 4,
+   "lists": 19,
+   "scripts": 14
+  },
+  "maps\\map mp amon sul fortress\\map mp amon sul fortress.map": {
+   "actions": 52,
+   "conditions": 17,
+   "falseActions": 2,
+   "groups": 2,
+   "lists": 15,
+   "scripts": 17
+  },
+  "maps\\map mp anfalas\\map mp anfalas.map": {
+   "actions": 22,
+   "conditions": 11,
+   "falseActions": 2,
+   "groups": 2,
+   "lists": 19,
+   "scripts": 11
+  },
+  "maps\\map mp argonath\\map mp argonath.map": {
+   "lists": 16
+  },
+  "maps\\map mp brown lands\\map mp brown lands.map": {
+   "actions": 22,
+   "conditions": 11,
+   "falseActions": 2,
+   "groups": 2,
+   "lists": 16,
+   "scripts": 11
+  },
+  "maps\\map mp evendim\\map mp evendim.map": {
+   "lists": 16
+  },
+  "maps\\map mp fall back 4p\\map mp fall back 4p.map": {
+   "lists": 15
+  },
+  "maps\\map mp fall back 8p\\map mp fall back 8p.map": {
+   "lists": 19
+  },
+  "maps\\map mp fords of isen ii\\map mp fords of isen ii.map": {
+   "lists": 16
+  },
+  "maps\\map mp grey mountains\\map mp grey mountains.map": {
+   "lists": 16
+  },
+  "maps\\map mp harlindon\\map mp harlindon.map": {
+   "lists": 16
+  },
+  "maps\\map mp paths of the dead\\map mp paths of the dead.map": {
+   "actions": 22,
+   "conditions": 11,
+   "falseActions": 2,
+   "groups": 2,
+   "lists": 16,
+   "scripts": 11
+  },
+  "maps\\map mp the heubris\\map mp the heubris.map": {
+   "lists": 15
+  },
+  "maps\\map mp tournament gundabad\\map mp tournament gundabad.map": {
+   "actions": 22,
+   "conditions": 11,
+   "falseActions": 2,
+   "groups": 2,
+   "lists": 16,
+   "scripts": 11
+  },
+  "maps\\map mp tournament hills\\map mp tournament hills.map": {
+   "lists": 16
+  },
+  "maps\\map mp tournament mp1\\map mp tournament mp1.map": {
+   "lists": 16
+  },
+  "maps\\map mp tournament rhudaur\\map mp tournament rhudaur.map": {
+   "actions": 22,
+   "conditions": 11,
+   "falseActions": 2,
+   "groups": 2,
+   "lists": 16,
+   "scripts": 11
+  },
+  "maps\\map mp tournament udun\\map mp tournament udun.map": {
+   "lists": 16
+  },
+  "maps\\map mp tournament westmarch\\map mp tournament westmarch.map": {
+   "actions": 22,
+   "conditions": 11,
+   "falseActions": 2,
+   "groups": 2,
+   "lists": 15,
+   "scripts": 11
+  },
+  "maps\\map mp umbar\\map mp umbar.map": {
+   "lists": 16
+  },
+  "maps\\map mp weather hills\\map mp weather hills.map": {
+   "lists": 16
+  },
+  "maps\\map mp weathertop\\map mp weathertop.map": {
+   "lists": 16
+  },
+  "maps\\map mp withered heath\\map mp withered heath.map": {
+   "lists": 16
+  },
+  "maps\\map wor ang amon sul\\map wor ang amon sul.map": {
+   "actions": 22,
+   "conditions": 11,
+   "falseActions": 2,
+   "groups": 2,
+   "lists": 15,
+   "scripts": 11
+  },
+  "maps\\map wor ang angmar\\map wor ang angmar.map": {
+   "actions": 22,
+   "conditions": 11,
+   "falseActions": 2,
+   "groups": 2,
+   "lists": 15,
+   "scripts": 11
+  },
+  "maps\\map wor ang barrow downs\\map wor ang barrow downs.map": {
+   "actions": 22,
+   "conditions": 11,
+   "falseActions": 2,
+   "groups": 2,
+   "lists": 16,
+   "scripts": 11
+  },
+  "maps\\map wor ang carn dum\\map wor ang carn dum.map": {
+   "actions": 67,
+   "conditions": 21,
+   "falseActions": 2,
+   "groups": 4,
+   "lists": 16,
+   "scripts": 21
+  },
+  "maps\\map wor ang fornost\\map wor ang fornost.map": {
+   "actions": 47,
+   "conditions": 16,
+   "falseActions": 2,
+   "groups": 2,
+   "lists": 15,
+   "scripts": 16
+  },
+  "maps\\map wor ang gundabad\\map wor ang gundabad.map": {
+   "actions": 22,
+   "conditions": 11,
+   "falseActions": 2,
+   "groups": 2,
+   "lists": 16,
+   "scripts": 11
+  },
+  "maps\\map wor ang north downs\\map wor ang north downs.map": {
+   "actions": 22,
+   "conditions": 11,
+   "falseActions": 2,
+   "groups": 2,
+   "lists": 16,
+   "scripts": 11
+  },
+  "maps\\map wor ang rhudaur\\map wor ang rhudaur.map": {
+   "actions": 22,
+   "conditions": 11,
+   "falseActions": 2,
+   "groups": 2,
+   "lists": 16,
+   "scripts": 11
+  },
+  "maps\\map wor arnor\\map wor arnor.map": {
+   "lists": 16
+  },
+  "maps\\map wor belfalas\\map wor belfalas.map": {
+   "lists": 18
+  },
+  "maps\\map wor black gate\\map wor black gate.map": {
+   "lists": 16
+  },
+  "maps\\map wor buckland\\map wor buckland.map": {
+   "lists": 18
+  },
+  "maps\\map wor cair andros\\map wor cair andros.map": {
+   "lists": 17
+  },
+  "maps\\map wor cardolan\\map wor cardolan.map": {
+   "actions": 22,
+   "conditions": 11,
+   "falseActions": 2,
+   "groups": 2,
+   "lists": 16,
+   "scripts": 11
+  },
+  "maps\\map wor carrock\\map wor carrock.map": {
+   "actions": 22,
+   "conditions": 11,
+   "falseActions": 2,
+   "groups": 2,
+   "lists": 17,
+   "scripts": 11
+  },
+  "maps\\map wor celduin\\map wor celduin.map": {
+   "lists": 16
+  },
+  "maps\\map wor dagorlad\\map wor dagorlad.map": {
+   "lists": 18
+  },
+  "maps\\map wor dead marshes\\map wor dead marshes.map": {
+   "lists": 18
+  },
+  "maps\\map wor dol guldur\\map wor dol guldur.map": {
+   "actions": 17,
+   "conditions": 3,
+   "groups": 1,
+   "lists": 16,
+   "scripts": 3
+  },
+  "maps\\map wor dunland\\map wor dunland.map": {
+   "lists": 17
+  },
+  "maps\\map wor enedwaith\\map wor enedwaith.map": {
+   "lists": 16
+  },
+  "maps\\map wor erebor\\map wor erebor.map": {
+   "actions": 16,
+   "conditions": 2,
+   "lists": 16,
+   "scripts": 2
+  },
+  "maps\\map wor ettenmoors\\map wor ettenmoors.map": {
+   "lists": 17
+  },
+  "maps\\map wor fangorn\\map wor fangorn.map": {
+   "actions": 10,
+   "conditions": 5,
+   "groups": 1,
+   "lists": 16,
+   "scripts": 4
+  },
+  "maps\\map wor forlindon\\map wor forlindon.map": {
+   "lists": 16
+  },
+  "maps\\map wor forodwaith\\map wor forodwaith.map": {
+   "lists": 18
+  },
+  "maps\\map wor gap of rohan\\map wor gap of rohan.map": {
+   "lists": 16
+  },
+  "maps\\map wor gondor\\map wor gondor.map": {
+   "lists": 16
+  },
+  "maps\\map wor grey havens\\map wor grey havens.map": {
+   "actions": 1,
+   "conditions": 1,
+   "lists": 16,
+   "scripts": 1
+  },
+  "maps\\map wor harad\\map wor harad.map": {
+   "lists": 18
+  },
+  "maps\\map wor harlindon\\map wor harlindon.map": {
+   "lists": 16
+  },
+  "maps\\map wor helms deep\\map wor helms deep.map": {
+   "actions": 23,
+   "conditions": 5,
+   "lists": 16,
+   "scripts": 5
+  },
+  "maps\\map wor high pass\\map wor high pass.map": {
+   "lists": 16
+  },
+  "maps\\map wor iron hills\\map wor iron hills.map": {
+   "lists": 16
+  },
+  "maps\\map wor isengard\\map wor isengard.map": {
+   "actions": 18,
+   "conditions": 6,
+   "lists": 17,
+   "scripts": 6
+  },
+  "maps\\map wor ithilien\\map wor ithilien.map": {
+   "lists": 16
+  },
+  "maps\\map wor lorien\\map wor lorien.map": {
+   "lists": 16
+  },
+  "maps\\map wor lostriand\\map wor lostriand.map": {
+   "lists": 18
+  },
+  "maps\\map wor minas morgul\\map wor minas morgul.map": {
+   "actions": 19,
+   "conditions": 4,
+   "lists": 16,
+   "scripts": 4
+  },
+  "maps\\map wor minas tirith\\map wor minas tirith.map": {
+   "actions": 25,
+   "conditions": 5,
+   "lists": 16,
+   "scripts": 5
+  },
+  "maps\\map wor minhiriath\\map wor minhiriath.map": {
+   "lists": 18
+  },
+  "maps\\map wor mirkwood\\map wor mirkwood.map": {
+   "lists": 18
+  },
+  "maps\\map wor mordor\\map wor mordor.map": {
+   "lists": 16
+  },
+  "maps\\map wor mount doom\\map wor mount doom.map": {
+   "actions": 20,
+   "conditions": 16,
+   "lists": 17,
+   "scripts": 16
+  },
+  "maps\\map wor osgiliath\\map wor osgiliath.map": {
+   "actions": 22,
+   "conditions": 2,
+   "lists": 16,
+   "scripts": 2
+  },
+  "maps\\map wor redhorn pass\\map wor redhorn pass.map": {
+   "lists": 16
+  },
+  "maps\\map wor rhun\\map wor rhun.map": {
+   "lists": 16
+  },
+  "maps\\map wor rivendell\\map wor rivendell.map": {
+   "actions": 11,
+   "conditions": 3,
+   "lists": 17,
+   "scripts": 3
+  },
+  "maps\\map wor rohan\\map wor rohan.map": {
+   "lists": 16
+  },
+  "maps\\map wor shire\\map wor shire.map": {
+   "lists": 18
+  },
+  "maps\\map wor tower hills\\map wor tower hills.map": {
+   "lists": 16
+  },
+  "maps\\shellmap1\\shellmap1.map": {
+   "actions": 43,
+   "conditions": 13,
+   "groups": 5,
+   "lists": 2,
+   "scripts": 13
+  },
+  "maps\\shellmapbackup\\shellmapbackup.map": {
+   "actions": 25,
+   "conditions": 11,
+   "groups": 2,
+   "lists": 2,
+   "scripts": 8
+  }
+ },
+ "mismatches": [
+  {
+   "file": "libraries\\__old_ai_scripts\\ai_gondor\\ai_gondor.map",
+   "kind": "action",
+   "name": "TEAM_CHANGE_OBJECT_STATUS",
+   "params": 3,
+   "resolved": 537,
+   "resolvedName": "TEAM_CHANGE_OBJECT_STATUS",
+   "stored": 536
+  },
+  {
+   "file": "libraries\\__old_ai_scripts\\ai_gondor\\ai_gondor.map",
+   "kind": "action",
+   "name": "TEAM_CHANGE_OBJECT_STATUS",
+   "params": 3,
+   "resolved": 537,
+   "resolvedName": "TEAM_CHANGE_OBJECT_STATUS",
+   "stored": 536
+  },
+  {
+   "file": "libraries\\__old_ai_scripts\\ai_gondor\\ai_gondor.map",
+   "kind": "action",
+   "name": "TEAM_CHANGE_OBJECT_STATUS",
+   "params": 3,
+   "resolved": 537,
+   "resolvedName": "TEAM_CHANGE_OBJECT_STATUS",
+   "stored": 536
+  },
+  {
+   "file": "libraries\\__old_ai_scripts\\ai_gondorskirmish\\ai_gondorskirmish.map",
+   "kind": "action",
+   "name": "OVERRIDE_PLAYER_COMMAND_POINTS",
+   "params": 2,
+   "resolved": 5,
+   "resolvedName": "NO_OP",
+   "stored": 503
+  },
+  {
+   "file": "libraries\\__old_ai_scripts\\ai_gondorskirmish\\ai_gondorskirmish.map",
+   "kind": "action",
+   "name": "TEAM_STAND_GROUND",
+   "params": 2,
+   "resolved": 501,
+   "resolvedName": "TEAM_STAND_GROUND",
+   "stored": 500
+  },
+  {
+   "file": "libraries\\__old_ai_scripts\\ai_gondorskirmish\\ai_gondorskirmish.map",
+   "kind": "action",
+   "name": "TEAM_STAND_GROUND",
+   "params": 2,
+   "resolved": 501,
+   "resolvedName": "TEAM_STAND_GROUND",
+   "stored": 500
+  },
+  {
+   "file": "libraries\\__old_ai_scripts\\ai_gondorskirmish\\ai_gondorskirmish.map",
+   "kind": "action",
+   "name": "TEAM_STAND_GROUND",
+   "params": 2,
+   "resolved": 501,
+   "resolvedName": "TEAM_STAND_GROUND",
+   "stored": 500
+  },
+  {
+   "file": "libraries\\__old_ai_scripts\\ai_isengard\\ai_isengard.map",
+   "kind": "action",
+   "name": "TEAM_CHANGE_OBJECT_STATUS",
+   "params": 3,
+   "resolved": 537,
+   "resolvedName": "TEAM_CHANGE_OBJECT_STATUS",
+   "stored": 536
+  },
+  {
+   "file": "libraries\\__old_ai_scripts\\ai_isengardskirmish\\ai_isengardskirmish.map",
+   "kind": "action",
+   "name": "RECRUIT_COMBO_UNITS_FROM_TEAM",
+   "params": 4,
+   "resolved": 535,
+   "resolvedName": "RECRUIT_COMBO_UNITS_FROM_TEAM",
+   "stored": 534
+  },
+  {
+   "file": "libraries\\__old_ai_scripts\\ai_isengardskirmish\\ai_isengardskirmish.map",
+   "kind": "action",
+   "name": "RECRUIT_COMBO_UNITS_FROM_TEAM",
+   "params": 4,
+   "resolved": 535,
+   "resolvedName": "RECRUIT_COMBO_UNITS_FROM_TEAM",
+   "stored": 534
+  },
+  {
+   "file": "libraries\\__old_ai_scripts\\ai_isengardskirmish\\ai_isengardskirmish.map",
+   "kind": "action",
+   "name": "OVERRIDE_PLAYER_COMMAND_POINTS",
+   "params": 2,
+   "resolved": 5,
+   "resolvedName": "NO_OP",
+   "stored": 503
+  },
+  {
+   "file": "libraries\\__old_ai_scripts\\ai_isengardskirmish\\ai_isengardskirmish.map",
+   "kind": "action",
+   "name": "TEAM_STAND_GROUND",
+   "params": 2,
+   "resolved": 501,
+   "resolvedName": "TEAM_STAND_GROUND",
+   "stored": 500
+  },
+  {
+   "file": "libraries\\__old_ai_scripts\\ai_isengardskirmish\\ai_isengardskirmish.map",
+   "kind": "action",
+   "name": "TEAM_STAND_GROUND",
+   "params": 2,
+   "resolved": 501,
+   "resolvedName": "TEAM_STAND_GROUND",
+   "stored": 500
+  },
+  {
+   "file": "libraries\\__old_ai_scripts\\ai_isengardskirmish\\ai_isengardskirmish.map",
+   "kind": "action",
+   "name": "TEAM_STAND_GROUND",
+   "params": 2,
+   "resolved": 501,
+   "resolvedName": "TEAM_STAND_GROUND",
+   "stored": 500
+  },
+  {
+   "file": "libraries\\__old_ai_scripts\\ai_mordor\\ai_mordor.map",
+   "kind": "action",
+   "name": "TEAM_CHANGE_OBJECT_STATUS",
+   "params": 3,
+   "resolved": 537,
+   "resolvedName": "TEAM_CHANGE_OBJECT_STATUS",
+   "stored": 536
+  },
+  {
+   "file": "libraries\\__old_ai_scripts\\ai_mordorskirmish\\ai_mordorskirmish.map",
+   "kind": "action",
+   "name": "RECRUIT_COMBO_UNITS_FROM_TEAM",
+   "params": 4,
+   "resolved": 535,
+   "resolvedName": "RECRUIT_COMBO_UNITS_FROM_TEAM",
+   "stored": 534
+  },
+  {
+   "file": "libraries\\__old_ai_scripts\\ai_mordorskirmish\\ai_mordorskirmish.map",
+   "kind": "action",
+   "name": "OVERRIDE_PLAYER_COMMAND_POINTS",
+   "params": 2,
+   "resolved": 5,
+   "resolvedName": "NO_OP",
+   "stored": 503
+  },
+  {
+   "file": "libraries\\__old_ai_scripts\\ai_mordorskirmish\\ai_mordorskirmish.map",
+   "kind": "action",
+   "name": "TEAM_STAND_GROUND",
+   "params": 2,
+   "resolved": 501,
+   "resolvedName": "TEAM_STAND_GROUND",
+   "stored": 500
+  },
+  {
+   "file": "libraries\\__old_ai_scripts\\ai_mordorskirmish\\ai_mordorskirmish.map",
+   "kind": "action",
+   "name": "TEAM_STAND_GROUND",
+   "params": 2,
+   "resolved": 501,
+   "resolvedName": "TEAM_STAND_GROUND",
+   "stored": 500
+  },
+  {
+   "file": "libraries\\__old_ai_scripts\\ai_mordorskirmish\\ai_mordorskirmish.map",
+   "kind": "action",
+   "name": "TEAM_STAND_GROUND",
+   "params": 2,
+   "resolved": 501,
+   "resolvedName": "TEAM_STAND_GROUND",
+   "stored": 500
+  },
+  {
+   "file": "libraries\\__old_ai_scripts\\ai_rohanskirmish\\ai_rohanskirmish.map",
+   "kind": "action",
+   "name": "OVERRIDE_PLAYER_COMMAND_POINTS",
+   "params": 2,
+   "resolved": 5,
+   "resolvedName": "NO_OP",
+   "stored": 503
+  },
+  {
+   "file": "libraries\\__old_ai_scripts\\ai_rohanskirmish\\ai_rohanskirmish.map",
+   "kind": "action",
+   "name": "TEAM_STAND_GROUND",
+   "params": 2,
+   "resolved": 501,
+   "resolvedName": "TEAM_STAND_GROUND",
+   "stored": 500
+  },
+  {
+   "file": "libraries\\__old_ai_scripts\\ai_rohanskirmish\\ai_rohanskirmish.map",
+   "kind": "action",
+   "name": "TEAM_STAND_GROUND",
+   "params": 2,
+   "resolved": 501,
+   "resolvedName": "TEAM_STAND_GROUND",
+   "stored": 500
+  },
+  {
+   "file": "libraries\\__old_ai_scripts\\ai_rohanskirmish\\ai_rohanskirmish.map",
+   "kind": "action",
+   "name": "TEAM_STAND_GROUND",
+   "params": 2,
+   "resolved": 501,
+   "resolvedName": "TEAM_STAND_GROUND",
+   "stored": 500
+  },
+  {
+   "file": "libraries\\ai_attack_execution\\ai_attack_execution.map",
+   "kind": "action",
+   "name": "TEAM_CHANGE_OBJECT_STATUS",
+   "params": 3,
+   "resolved": 537,
+   "resolvedName": "TEAM_CHANGE_OBJECT_STATUS",
+   "stored": 536
+  },
+  {
+   "file": "libraries\\ai_attack_execution\\ai_attack_execution.map",
+   "kind": "action",
+   "name": "TEAM_CHANGE_OBJECT_STATUS",
+   "params": 3,
+   "resolved": 537,
+   "resolvedName": "TEAM_CHANGE_OBJECT_STATUS",
+   "stored": 536
+  },
+  {
+   "file": "libraries\\ai_attack_execution\\ai_attack_execution.map",
+   "kind": "action",
+   "name": "TEAM_CHANGE_OBJECT_STATUS",
+   "params": 3,
+   "resolved": 537,
+   "resolvedName": "TEAM_CHANGE_OBJECT_STATUS",
+   "stored": 536
+  },
+  {
+   "file": "libraries\\ai_attack_execution\\ai_attack_execution.map",
+   "kind": "action",
+   "name": "TEAM_CHANGE_OBJECT_STATUS",
+   "params": 3,
+   "resolved": 537,
+   "resolvedName": "TEAM_CHANGE_OBJECT_STATUS",
+   "stored": 536
+  },
+  {
+   "file": "libraries\\ai_attack_execution\\ai_attack_execution.map",
+   "kind": "action",
+   "name": "TEAM_CHANGE_OBJECT_STATUS",
+   "params": 3,
+   "resolved": 537,
+   "resolvedName": "TEAM_CHANGE_OBJECT_STATUS",
+   "stored": 536
+  },
+  {
+   "file": "libraries\\ai_attack_execution\\ai_attack_execution.map",
+   "kind": "action",
+   "name": "TEAM_CHANGE_OBJECT_STATUS",
+   "params": 3,
+   "resolved": 537,
+   "resolvedName": "TEAM_CHANGE_OBJECT_STATUS",
+   "stored": 536
+  },
+  {
+   "file": "libraries\\ai_attack_execution\\ai_attack_execution.map",
+   "kind": "action",
+   "name": "TEAM_STAND_GROUND",
+   "params": 2,
+   "resolved": 501,
+   "resolvedName": "TEAM_STAND_GROUND",
+   "stored": 500
+  },
+  {
+   "file": "libraries\\ai_attack_execution\\ai_attack_execution.map",
+   "kind": "action",
+   "name": "TEAM_STAND_GROUND",
+   "params": 2,
+   "resolved": 501,
+   "resolvedName": "TEAM_STAND_GROUND",
+   "stored": 500
+  },
+  {
+   "file": "libraries\\ai_attack_execution\\ai_attack_execution.map",
+   "kind": "action",
+   "name": "TEAM_CHANGE_OBJECT_STATUS",
+   "params": 3,
+   "resolved": 537,
+   "resolvedName": "TEAM_CHANGE_OBJECT_STATUS",
+   "stored": 536
+  },
+  {
+   "file": "libraries\\ai_attack_execution\\ai_attack_execution.map",
+   "kind": "action",
+   "name": "TEAM_CHANGE_OBJECT_STATUS",
+   "params": 3,
+   "resolved": 537,
+   "resolvedName": "TEAM_CHANGE_OBJECT_STATUS",
+   "stored": 536
+  },
+  {
+   "file": "libraries\\ai_attack_execution\\ai_attack_execution.map",
+   "kind": "action",
+   "name": "TEAM_CHANGE_OBJECT_STATUS",
+   "params": 3,
+   "resolved": 537,
+   "resolvedName": "TEAM_CHANGE_OBJECT_STATUS",
+   "stored": 536
+  },
+  {
+   "file": "libraries\\ai_attack_execution\\ai_attack_execution.map",
+   "kind": "action",
+   "name": "TEAM_CHANGE_OBJECT_STATUS",
+   "params": 3,
+   "resolved": 537,
+   "resolvedName": "TEAM_CHANGE_OBJECT_STATUS",
+   "stored": 536
+  },
+  {
+   "file": "libraries\\ai_attack_execution\\ai_attack_execution.map",
+   "kind": "action",
+   "name": "TEAM_CHANGE_OBJECT_STATUS",
+   "params": 3,
+   "resolved": 537,
+   "resolvedName": "TEAM_CHANGE_OBJECT_STATUS",
+   "stored": 536
+  },
+  {
+   "file": "libraries\\ai_attack_execution\\ai_attack_execution.map",
+   "kind": "action",
+   "name": "TEAM_CHANGE_OBJECT_STATUS",
+   "params": 3,
+   "resolved": 537,
+   "resolvedName": "TEAM_CHANGE_OBJECT_STATUS",
+   "stored": 536
+  },
+  {
+   "file": "libraries\\ai_attack_execution\\ai_attack_execution.map",
+   "kind": "action",
+   "name": "TEAM_CHANGE_OBJECT_STATUS",
+   "params": 3,
+   "resolved": 537,
+   "resolvedName": "TEAM_CHANGE_OBJECT_STATUS",
+   "stored": 536
+  },
+  {
+   "file": "libraries\\ai_attack_execution\\ai_attack_execution.map",
+   "kind": "action",
+   "name": "TEAM_CHANGE_OBJECT_STATUS",
+   "params": 3,
+   "resolved": 537,
+   "resolvedName": "TEAM_CHANGE_OBJECT_STATUS",
+   "stored": 536
+  },
+  {
+   "file": "libraries\\ai_attack_execution\\ai_attack_execution.map",
+   "kind": "action",
+   "name": "TEAM_CHANGE_OBJECT_STATUS",
+   "params": 3,
+   "resolved": 537,
+   "resolvedName": "TEAM_CHANGE_OBJECT_STATUS",
+   "stored": 536
+  },
+  {
+   "file": "libraries\\ai_attack_execution\\ai_attack_execution.map",
+   "kind": "action",
+   "name": "TEAM_CHANGE_OBJECT_STATUS",
+   "params": 3,
+   "resolved": 537,
+   "resolvedName": "TEAM_CHANGE_OBJECT_STATUS",
+   "stored": 536
+  },
+  {
+   "file": "libraries\\ai_attack_execution\\ai_attack_execution.map",
+   "kind": "action",
+   "name": "TEAM_CHANGE_OBJECT_STATUS",
+   "params": 3,
+   "resolved": 537,
+   "resolvedName": "TEAM_CHANGE_OBJECT_STATUS",
+   "stored": 536
+  },
+  {
+   "file": "libraries\\ai_debug\\ai_debug.map",
+   "kind": "action",
+   "name": "DISPLAY_TEXT",
+   "params": 1,
+   "resolved": 78,
+   "resolvedName": "DISPLAY_TEXT",
+   "stored": 77
+  },
+  {
+   "file": "libraries\\ai_debug\\ai_debug.map",
+   "kind": "action",
+   "name": "DISPLAY_TEXT",
+   "params": 1,
+   "resolved": 78,
+   "resolvedName": "DISPLAY_TEXT",
+   "stored": 77
+  },
+  {
+   "file": "libraries\\ai_debug\\ai_debug.map",
+   "kind": "action",
+   "name": "DISPLAY_TEXT",
+   "params": 1,
+   "resolved": 78,
+   "resolvedName": "DISPLAY_TEXT",
+   "stored": 77
+  },
+  {
+   "file": "libraries\\ai_debug\\ai_debug.map",
+   "kind": "action",
+   "name": "DISPLAY_TEXT",
+   "params": 1,
+   "resolved": 78,
+   "resolvedName": "DISPLAY_TEXT",
+   "stored": 77
+  },
+  {
+   "file": "libraries\\ai_debug\\ai_debug.map",
+   "kind": "action",
+   "name": "DISPLAY_COUNTER",
+   "params": 2,
+   "resolved": 240,
+   "resolvedName": "DISPLAY_COUNTER",
+   "stored": 238
+  },
+  {
+   "file": "libraries\\ai_debug\\ai_debug.map",
+   "kind": "action",
+   "name": "DISPLAY_COUNTER",
+   "params": 2,
+   "resolved": 240,
+   "resolvedName": "DISPLAY_COUNTER",
+   "stored": 238
+  },
+  {
+   "file": "libraries\\ai_debug\\ai_debug.map",
+   "kind": "action",
+   "name": "DISPLAY_COUNTER",
+   "params": 2,
+   "resolved": 240,
+   "resolvedName": "DISPLAY_COUNTER",
+   "stored": 238
+  },
+  {
+   "file": "libraries\\ai_debug\\ai_debug.map",
+   "kind": "action",
+   "name": "SET_COUNTER_TO_COUNTER",
+   "params": 2,
+   "resolved": 374,
+   "resolvedName": "SET_COUNTER_TO_COUNTER",
+   "stored": 372
+  },
+  {
+   "file": "libraries\\ai_debug\\ai_debug.map",
+   "kind": "action",
+   "name": "SET_COUNTER_TO_COUNTER",
+   "params": 2,
+   "resolved": 374,
+   "resolvedName": "SET_COUNTER_TO_COUNTER",
+   "stored": 372
+  },
+  {
+   "file": "libraries\\ai_debug\\ai_debug.map",
+   "kind": "action",
+   "name": "COUNTER_MATH_COUNTER",
+   "params": 3,
+   "resolved": 395,
+   "resolvedName": "COUNTER_MATH_COUNTER",
+   "stored": 393
+  },
+  {
+   "file": "libraries\\ai_debug\\ai_debug.map",
+   "kind": "action",
+   "name": "SET_COUNTER_TO_COUNTER",
+   "params": 2,
+   "resolved": 374,
+   "resolvedName": "SET_COUNTER_TO_COUNTER",
+   "stored": 372
+  },
+  {
+   "file": "libraries\\ai_debug\\ai_debug.map",
+   "kind": "action",
+   "name": "SET_COUNTER_TO_COUNTER",
+   "params": 2,
+   "resolved": 374,
+   "resolvedName": "SET_COUNTER_TO_COUNTER",
+   "stored": 372
+  },
+  {
+   "file": "libraries\\ai_debug\\ai_debug.map",
+   "kind": "action",
+   "name": "COUNTER_MATH_COUNTER",
+   "params": 3,
+   "resolved": 395,
+   "resolvedName": "COUNTER_MATH_COUNTER",
+   "stored": 393
+  },
+  {
+   "file": "libraries\\ai_debug\\ai_debug.map",
+   "kind": "action",
+   "name": "SET_COUNTER_TO_COUNTER",
+   "params": 2,
+   "resolved": 374,
+   "resolvedName": "SET_COUNTER_TO_COUNTER",
+   "stored": 372
+  },
+  {
+   "file": "libraries\\ai_debug\\ai_debug.map",
+   "kind": "action",
+   "name": "SET_COUNTER_TO_COUNTER",
+   "params": 2,
+   "resolved": 374,
+   "resolvedName": "SET_COUNTER_TO_COUNTER",
+   "stored": 372
+  },
+  {
+   "file": "libraries\\ai_debug\\ai_debug.map",
+   "kind": "action",
+   "name": "COUNTER_MATH_COUNTER",
+   "params": 3,
+   "resolved": 395,
+   "resolvedName": "COUNTER_MATH_COUNTER",
+   "stored": 393
+  },
+  {
+   "file": "libraries\\ai_debug\\ai_debug.map",
+   "kind": "action",
+   "name": "SHOW_MILITARY_CAPTION",
+   "params": 2,
+   "resolved": 142,
+   "resolvedName": "SHOW_MILITARY_CAPTION",
+   "stored": 141
+  },
+  {
+   "file": "libraries\\ai_debug\\ai_debug.map",
+   "kind": "action",
+   "name": "SHOW_MILITARY_CAPTION",
+   "params": 2,
+   "resolved": 142,
+   "resolvedName": "SHOW_MILITARY_CAPTION",
+   "stored": 141
+  },
+  {
+   "file": "libraries\\ai_debug\\ai_debug.map",
+   "kind": "action",
+   "name": "SHOW_MILITARY_CAPTION",
+   "params": 2,
+   "resolved": 142,
+   "resolvedName": "SHOW_MILITARY_CAPTION",
+   "stored": 141
+  },
+  {
+   "file": "libraries\\ai_debug\\ai_debug.map",
+   "kind": "action",
+   "name": "SHOW_MILITARY_CAPTION",
+   "params": 2,
+   "resolved": 142,
+   "resolvedName": "SHOW_MILITARY_CAPTION",
+   "stored": 141
+  },
+  {
+   "file": "libraries\\ai_defend_execution\\ai_defend_execution.map",
+   "kind": "action",
+   "name": "TEAM_CHANGE_OBJECT_STATUS",
+   "params": 3,
+   "resolved": 537,
+   "resolvedName": "TEAM_CHANGE_OBJECT_STATUS",
+   "stored": 536
+  },
+  {
+   "file": "libraries\\ai_gondorsps\\ai_gondorsps.map",
+   "kind": "action",
+   "name": "TEAM_STAND_GROUND",
+   "params": 2,
+   "resolved": 501,
+   "resolvedName": "TEAM_STAND_GROUND",
+   "stored": 500
+  },
+  {
+   "file": "libraries\\ai_gondorsps\\ai_gondorsps.map",
+   "kind": "action",
+   "name": "TEAM_STAND_GROUND",
+   "params": 2,
+   "resolved": 501,
+   "resolvedName": "TEAM_STAND_GROUND",
+   "stored": 500
+  },
+  {
+   "file": "libraries\\ai_gondorsps\\ai_gondorsps.map",
+   "kind": "action",
+   "name": "TEAM_STAND_GROUND",
+   "params": 2,
+   "resolved": 501,
+   "resolvedName": "TEAM_STAND_GROUND",
+   "stored": 500
+  },
+  {
+   "file": "libraries\\ai_gondorsps\\ai_gondorsps.map",
+   "kind": "action",
+   "name": "ENABLE_HOUSE_COLOR",
+   "params": 1,
+   "resolved": 518,
+   "resolvedName": "ENABLE_HOUSE_COLOR",
+   "stored": 517
+  },
+  {
+   "file": "libraries\\ai_initialize\\ai_initialize.map",
+   "kind": "action",
+   "name": "UNIT_SET_TEAM",
+   "params": 2,
+   "resolved": 499,
+   "resolvedName": "UNIT_SET_TEAM",
+   "stored": 498
+  },
+  {
+   "file": "libraries\\ai_initialize\\ai_initialize.map",
+   "kind": "action",
+   "name": "NAMED_BASE_UNPACK_FREE",
+   "params": 2,
+   "resolved": 493,
+   "resolvedName": "NAMED_BASE_UNPACK_FREE",
+   "stored": 492
+  },
+  {
+   "file": "libraries\\ai_initialize\\ai_initialize.map",
+   "kind": "action",
+   "name": "NAMED_BASE_UNPACK_FREE",
+   "params": 2,
+   "resolved": 493,
+   "resolvedName": "NAMED_BASE_UNPACK_FREE",
+   "stored": 492
+  },
+  {
+   "file": "libraries\\ai_initialize\\ai_initialize.map",
+   "kind": "action",
+   "name": "NAMED_BASE_UNPACK_FREE",
+   "params": 2,
+   "resolved": 493,
+   "resolvedName": "NAMED_BASE_UNPACK_FREE",
+   "stored": 492
+  },
+  {
+   "file": "libraries\\ai_initialize\\ai_initialize.map",
+   "kind": "action",
+   "name": "NAMED_BASE_UNPACK_FREE",
+   "params": 2,
+   "resolved": 493,
+   "resolvedName": "NAMED_BASE_UNPACK_FREE",
+   "stored": 492
+  },
+  {
+   "file": "libraries\\ai_initialize\\ai_initialize.map",
+   "kind": "action",
+   "name": "NAMED_BASE_UNPACK_FREE",
+   "params": 2,
+   "resolved": 493,
+   "resolvedName": "NAMED_BASE_UNPACK_FREE",
+   "stored": 492
+  },
+  {
+   "file": "libraries\\ai_initialize\\ai_initialize.map",
+   "kind": "action",
+   "name": "NAMED_BASE_UNPACK_FREE",
+   "params": 2,
+   "resolved": 493,
+   "resolvedName": "NAMED_BASE_UNPACK_FREE",
+   "stored": 492
+  },
+  {
+   "file": "libraries\\ai_initialize\\ai_initialize.map",
+   "kind": "action",
+   "name": "NAMED_BASE_UNPACK_FREE",
+   "params": 2,
+   "resolved": 493,
+   "resolvedName": "NAMED_BASE_UNPACK_FREE",
+   "stored": 492
+  },
+  {
+   "file": "libraries\\ai_initialize\\ai_initialize.map",
+   "kind": "action",
+   "name": "NAMED_BASE_UNPACK_FREE",
+   "params": 2,
+   "resolved": 493,
+   "resolvedName": "NAMED_BASE_UNPACK_FREE",
+   "stored": 492
+  },
+  {
+   "file": "libraries\\ai_isengardsps\\ai_isengardsps.map",
+   "kind": "action",
+   "name": "TEAM_STAND_GROUND",
+   "params": 2,
+   "resolved": 501,
+   "resolvedName": "TEAM_STAND_GROUND",
+   "stored": 500
+  },
+  {
+   "file": "libraries\\ai_isengardsps\\ai_isengardsps.map",
+   "kind": "action",
+   "name": "TEAM_STAND_GROUND",
+   "params": 2,
+   "resolved": 501,
+   "resolvedName": "TEAM_STAND_GROUND",
+   "stored": 500
+  },
+  {
+   "file": "libraries\\ai_isengardsps\\ai_isengardsps.map",
+   "kind": "action",
+   "name": "TEAM_STAND_GROUND",
+   "params": 2,
+   "resolved": 501,
+   "resolvedName": "TEAM_STAND_GROUND",
+   "stored": 500
+  },
+  {
+   "file": "libraries\\ai_isengardsps\\ai_isengardsps.map",
+   "kind": "action",
+   "name": "ENABLE_HOUSE_COLOR",
+   "params": 1,
+   "resolved": 518,
+   "resolvedName": "ENABLE_HOUSE_COLOR",
+   "stored": 517
+  },
+  {
+   "file": "libraries\\ai_isengardsps_dl0\\ai_isengardsps_dl0.map",
+   "kind": "action",
+   "name": "TEAM_STAND_GROUND",
+   "params": 2,
+   "resolved": 501,
+   "resolvedName": "TEAM_STAND_GROUND",
+   "stored": 500
+  },
+  {
+   "file": "libraries\\ai_isengardsps_dl0\\ai_isengardsps_dl0.map",
+   "kind": "action",
+   "name": "TEAM_STAND_GROUND",
+   "params": 2,
+   "resolved": 501,
+   "resolvedName": "TEAM_STAND_GROUND",
+   "stored": 500
+  },
+  {
+   "file": "libraries\\ai_isengardsps_dl0\\ai_isengardsps_dl0.map",
+   "kind": "action",
+   "name": "TEAM_STAND_GROUND",
+   "params": 2,
+   "resolved": 501,
+   "resolvedName": "TEAM_STAND_GROUND",
+   "stored": 500
+  },
+  {
+   "file": "libraries\\ai_isengardsps_dl0\\ai_isengardsps_dl0.map",
+   "kind": "action",
+   "name": "OVERRIDE_PLAYER_COMMAND_POINTS",
+   "params": 2,
+   "resolved": 5,
+   "resolvedName": "NO_OP",
+   "stored": 503
+  },
+  {
+   "file": "libraries\\ai_isengardsps_dl0\\ai_isengardsps_dl0.map",
+   "kind": "action",
+   "name": "ENABLE_HOUSE_COLOR",
+   "params": 1,
+   "resolved": 518,
+   "resolvedName": "ENABLE_HOUSE_COLOR",
+   "stored": 517
+  },
+  {
+   "file": "libraries\\ai_isengardsps_dl1\\ai_isengardsps_dl1.map",
+   "kind": "action",
+   "name": "TEAM_STAND_GROUND",
+   "params": 2,
+   "resolved": 501,
+   "resolvedName": "TEAM_STAND_GROUND",
+   "stored": 500
+  },
+  {
+   "file": "libraries\\ai_isengardsps_dl1\\ai_isengardsps_dl1.map",
+   "kind": "action",
+   "name": "TEAM_STAND_GROUND",
+   "params": 2,
+   "resolved": 501,
+   "resolvedName": "TEAM_STAND_GROUND",
+   "stored": 500
+  },
+  {
+   "file": "libraries\\ai_isengardsps_dl1\\ai_isengardsps_dl1.map",
+   "kind": "action",
+   "name": "TEAM_STAND_GROUND",
+   "params": 2,
+   "resolved": 501,
+   "resolvedName": "TEAM_STAND_GROUND",
+   "stored": 500
+  },
+  {
+   "file": "libraries\\ai_isengardsps_dl1\\ai_isengardsps_dl1.map",
+   "kind": "action",
+   "name": "OVERRIDE_PLAYER_COMMAND_POINTS",
+   "params": 2,
+   "resolved": 5,
+   "resolvedName": "NO_OP",
+   "stored": 503
+  },
+  {
+   "file": "libraries\\ai_isengardsps_dl1\\ai_isengardsps_dl1.map",
+   "kind": "action",
+   "name": "ENABLE_HOUSE_COLOR",
+   "params": 1,
+   "resolved": 518,
+   "resolvedName": "ENABLE_HOUSE_COLOR",
+   "stored": 517
+  },
+  {
+   "file": "libraries\\ai_mordorsps\\ai_mordorsps.map",
+   "kind": "action",
+   "name": "TEAM_STAND_GROUND",
+   "params": 2,
+   "resolved": 501,
+   "resolvedName": "TEAM_STAND_GROUND",
+   "stored": 500
+  },
+  {
+   "file": "libraries\\ai_mordorsps\\ai_mordorsps.map",
+   "kind": "action",
+   "name": "TEAM_STAND_GROUND",
+   "params": 2,
+   "resolved": 501,
+   "resolvedName": "TEAM_STAND_GROUND",
+   "stored": 500
+  },
+  {
+   "file": "libraries\\ai_mordorsps\\ai_mordorsps.map",
+   "kind": "action",
+   "name": "TEAM_STAND_GROUND",
+   "params": 2,
+   "resolved": 501,
+   "resolvedName": "TEAM_STAND_GROUND",
+   "stored": 500
+  },
+  {
+   "file": "libraries\\ai_mordorsps\\ai_mordorsps.map",
+   "kind": "action",
+   "name": "ENABLE_HOUSE_COLOR",
+   "params": 1,
+   "resolved": 518,
+   "resolvedName": "ENABLE_HOUSE_COLOR",
+   "stored": 517
+  },
+  {
+   "file": "libraries\\ai_rohansps\\ai_rohansps.map",
+   "kind": "action",
+   "name": "TEAM_STAND_GROUND",
+   "params": 2,
+   "resolved": 501,
+   "resolvedName": "TEAM_STAND_GROUND",
+   "stored": 500
+  },
+  {
+   "file": "libraries\\ai_rohansps\\ai_rohansps.map",
+   "kind": "action",
+   "name": "TEAM_STAND_GROUND",
+   "params": 2,
+   "resolved": 501,
+   "resolvedName": "TEAM_STAND_GROUND",
+   "stored": 500
+  },
+  {
+   "file": "libraries\\ai_rohansps\\ai_rohansps.map",
+   "kind": "action",
+   "name": "TEAM_STAND_GROUND",
+   "params": 2,
+   "resolved": 501,
+   "resolvedName": "TEAM_STAND_GROUND",
+   "stored": 500
+  },
+  {
+   "file": "libraries\\ai_rohansps\\ai_rohansps.map",
+   "kind": "action",
+   "name": "ENABLE_HOUSE_COLOR",
+   "params": 1,
+   "resolved": 518,
+   "resolvedName": "ENABLE_HOUSE_COLOR",
+   "stored": 517
+  },
+  {
+   "file": "libraries\\lib_attack_behaviors\\lib_attack_behaviors.map",
+   "kind": "action",
+   "name": "TEAM_CHANGE_OBJECT_STATUS",
+   "params": 3,
+   "resolved": 537,
+   "resolvedName": "TEAM_CHANGE_OBJECT_STATUS",
+   "stored": 536
+  },
+  {
+   "file": "libraries\\lib_attack_behaviors\\lib_attack_behaviors.map",
+   "kind": "action",
+   "name": "TEAM_CHANGE_OBJECT_STATUS",
+   "params": 3,
+   "resolved": 537,
+   "resolvedName": "TEAM_CHANGE_OBJECT_STATUS",
+   "stored": 536
+  },
+  {
+   "file": "libraries\\lib_attack_behaviors\\lib_attack_behaviors.map",
+   "kind": "action",
+   "name": "TEAM_STAND_GROUND",
+   "params": 2,
+   "resolved": 501,
+   "resolvedName": "TEAM_STAND_GROUND",
+   "stored": 500
+  },
+  {
+   "file": "libraries\\lib_attack_behaviors\\lib_attack_behaviors.map",
+   "kind": "action",
+   "name": "TEAM_CHANGE_OBJECT_STATUS",
+   "params": 3,
+   "resolved": 537,
+   "resolvedName": "TEAM_CHANGE_OBJECT_STATUS",
+   "stored": 536
+  },
+  {
+   "file": "libraries\\lib_attack_behaviors\\lib_attack_behaviors.map",
+   "kind": "action",
+   "name": "TEAM_STAND_GROUND",
+   "params": 2,
+   "resolved": 501,
+   "resolvedName": "TEAM_STAND_GROUND",
+   "stored": 500
+  },
+  {
+   "file": "libraries\\lib_attack_behaviors\\lib_attack_behaviors.map",
+   "kind": "action",
+   "name": "TEAM_CHANGE_OBJECT_STATUS",
+   "params": 3,
+   "resolved": 537,
+   "resolvedName": "TEAM_CHANGE_OBJECT_STATUS",
+   "stored": 536
+  },
+  {
+   "file": "libraries\\lib_defense_behaviors\\lib_defense_behaviors.map",
+   "kind": "action",
+   "name": "TEAM_STAND_GROUND",
+   "params": 2,
+   "resolved": 501,
+   "resolvedName": "TEAM_STAND_GROUND",
+   "stored": 500
+  },
+  {
+   "file": "libraries\\lib_defense_behaviors\\lib_defense_behaviors.map",
+   "kind": "action",
+   "name": "TEAM_STAND_GROUND",
+   "params": 2,
+   "resolved": 501,
+   "resolvedName": "TEAM_STAND_GROUND",
+   "stored": 500
+  },
+  {
+   "file": "libraries\\lib_defense_behaviors\\lib_defense_behaviors.map",
+   "kind": "action",
+   "name": "TEAM_STAND_GROUND",
+   "params": 2,
+   "resolved": 501,
+   "resolvedName": "TEAM_STAND_GROUND",
+   "stored": 500
+  },
+  {
+   "file": "libraries\\lib_defense_behaviors\\lib_defense_behaviors.map",
+   "kind": "action",
+   "name": "TEAM_STAND_GROUND",
+   "params": 2,
+   "resolved": 501,
+   "resolvedName": "TEAM_STAND_GROUND",
+   "stored": 500
+  },
+  {
+   "file": "libraries\\lib_end_mission\\lib_end_mission.map",
+   "kind": "action",
+   "name": "DESELECT",
+   "params": 0,
+   "resolved": 506,
+   "resolvedName": "DESELECT",
+   "stored": 505
+  },
+  {
+   "file": "libraries\\lib_end_mission\\lib_end_mission.map",
+   "kind": "action",
+   "name": "PLAYER_FORCE_EMOTION",
+   "params": 3,
+   "resolved": 521,
+   "resolvedName": "PLAYER_FORCE_EMOTION",
+   "stored": 520
+  },
+  {
+   "file": "libraries\\lib_end_mission\\lib_end_mission.map",
+   "kind": "action",
+   "name": "VICTORY_SCREEN",
+   "params": 0,
+   "resolved": 511,
+   "resolvedName": "VICTORY_SCREEN",
+   "stored": 510
+  },
+  {
+   "file": "libraries\\lib_end_mission\\lib_end_mission.map",
+   "kind": "action",
+   "name": "DESELECT",
+   "params": 0,
+   "resolved": 506,
+   "resolvedName": "DESELECT",
+   "stored": 505
+  },
+  {
+   "file": "libraries\\lib_formation_behaviors\\lib_formation_behaviors.map",
+   "kind": "action",
+   "name": "RECRUIT_COMBO_UNITS_FROM_TEAM",
+   "params": 4,
+   "resolved": 535,
+   "resolvedName": "RECRUIT_COMBO_UNITS_FROM_TEAM",
+   "stored": 534
+  },
+  {
+   "file": "libraries\\lib_formation_behaviors\\lib_formation_behaviors.map",
+   "kind": "action",
+   "name": "RECRUIT_COMBO_UNITS_FROM_TEAM",
+   "params": 4,
+   "resolved": 535,
+   "resolvedName": "RECRUIT_COMBO_UNITS_FROM_TEAM",
+   "stored": 534
+  },
+  {
+   "file": "libraries\\lib_formation_behaviors\\lib_formation_behaviors.map",
+   "kind": "action",
+   "name": "RECRUIT_COMBO_UNITS_FROM_TEAM",
+   "params": 4,
+   "resolved": 535,
+   "resolvedName": "RECRUIT_COMBO_UNITS_FROM_TEAM",
+   "stored": 534
+  },
+  {
+   "file": "libraries\\lib_formation_behaviors\\lib_formation_behaviors.map",
+   "kind": "action",
+   "name": "RECRUIT_COMBO_UNITS_FROM_TEAM",
+   "params": 4,
+   "resolved": 535,
+   "resolvedName": "RECRUIT_COMBO_UNITS_FROM_TEAM",
+   "stored": 534
+  },
+  {
+   "file": "libraries\\lib_formation_behaviors\\lib_formation_behaviors.map",
+   "kind": "action",
+   "name": "RECRUIT_COMBO_UNITS_FROM_TEAM",
+   "params": 4,
+   "resolved": 535,
+   "resolvedName": "RECRUIT_COMBO_UNITS_FROM_TEAM",
+   "stored": 534
+  },
+  {
+   "file": "libraries\\lib_formation_behaviors\\lib_formation_behaviors.map",
+   "kind": "action",
+   "name": "RECRUIT_COMBO_UNITS_FROM_TEAM",
+   "params": 4,
+   "resolved": 535,
+   "resolvedName": "RECRUIT_COMBO_UNITS_FROM_TEAM",
+   "stored": 534
+  },
+  {
+   "file": "libraries\\lib_hero_behaviors\\lib_hero_behaviors.map",
+   "kind": "action",
+   "name": "TEAM_CHANGE_OBJECT_STATUS",
+   "params": 3,
+   "resolved": 537,
+   "resolvedName": "TEAM_CHANGE_OBJECT_STATUS",
+   "stored": 536
+  },
+  {
+   "file": "libraries\\lib_hero_behaviors\\lib_hero_behaviors.map",
+   "kind": "action",
+   "name": "TEAM_CHANGE_OBJECT_STATUS",
+   "params": 3,
+   "resolved": 537,
+   "resolvedName": "TEAM_CHANGE_OBJECT_STATUS",
+   "stored": 536
+  },
+  {
+   "file": "libraries\\lib_skirmish_objectives\\lib_skirmish_objectives.map",
+   "kind": "action",
+   "name": "SELECT_OBJECT",
+   "params": 2,
+   "resolved": 505,
+   "resolvedName": "SELECT_OBJECT",
+   "stored": 504
+  },
+  {
+   "file": "libraries\\lib_skirmish_objectives\\lib_skirmish_objectives.map",
+   "kind": "action",
+   "name": "SELECT_OBJECT",
+   "params": 2,
+   "resolved": 505,
+   "resolvedName": "SELECT_OBJECT",
+   "stored": 504
+  },
+  {
+   "file": "libraries\\lib_skirmish_objectives\\lib_skirmish_objectives.map",
+   "kind": "action",
+   "name": "DESELECT",
+   "params": 0,
+   "resolved": 506,
+   "resolvedName": "DESELECT",
+   "stored": 505
+  },
+  {
+   "file": "libraries\\multiplayer_human\\multiplayer_human.map",
+   "kind": "action",
+   "name": "NAMED_BASE_UNPACK_FREE",
+   "params": 2,
+   "resolved": 493,
+   "resolvedName": "NAMED_BASE_UNPACK_FREE",
+   "stored": 492
+  },
+  {
+   "file": "libraries\\multiplayer_human\\multiplayer_human.map",
+   "kind": "action",
+   "name": "NAMED_BASE_UNPACK_FREE",
+   "params": 2,
+   "resolved": 493,
+   "resolvedName": "NAMED_BASE_UNPACK_FREE",
+   "stored": 492
+  },
+  {
+   "file": "libraries\\multiplayer_human\\multiplayer_human.map",
+   "kind": "action",
+   "name": "NAMED_BASE_UNPACK_FREE",
+   "params": 2,
+   "resolved": 493,
+   "resolvedName": "NAMED_BASE_UNPACK_FREE",
+   "stored": 492
+  },
+  {
+   "file": "libraries\\multiplayer_human\\multiplayer_human.map",
+   "kind": "action",
+   "name": "NAMED_BASE_UNPACK_FREE",
+   "params": 2,
+   "resolved": 493,
+   "resolvedName": "NAMED_BASE_UNPACK_FREE",
+   "stored": 492
+  },
+  {
+   "file": "libraries\\multiplayer_human\\multiplayer_human.map",
+   "kind": "action",
+   "name": "NAMED_BASE_UNPACK_FREE",
+   "params": 2,
+   "resolved": 493,
+   "resolvedName": "NAMED_BASE_UNPACK_FREE",
+   "stored": 492
+  },
+  {
+   "file": "libraries\\multiplayer_human\\multiplayer_human.map",
+   "kind": "action",
+   "name": "NAMED_BASE_UNPACK_FREE",
+   "params": 2,
+   "resolved": 493,
+   "resolvedName": "NAMED_BASE_UNPACK_FREE",
+   "stored": 492
+  },
+  {
+   "file": "libraries\\multiplayer_human\\multiplayer_human.map",
+   "kind": "action",
+   "name": "NAMED_BASE_UNPACK_FREE",
+   "params": 2,
+   "resolved": 493,
+   "resolvedName": "NAMED_BASE_UNPACK_FREE",
+   "stored": 492
+  },
+  {
+   "file": "libraries\\multiplayer_human\\multiplayer_human.map",
+   "kind": "action",
+   "name": "NAMED_BASE_UNPACK_FREE",
+   "params": 2,
+   "resolved": 493,
+   "resolvedName": "NAMED_BASE_UNPACK_FREE",
+   "stored": 492
+  },
+  {
+   "file": "libraries\\sps_initialize\\sps_initialize.map",
+   "kind": "action",
+   "name": "DESELECT",
+   "params": 0,
+   "resolved": 506,
+   "resolvedName": "DESELECT",
+   "stored": 505
+  },
+  {
+   "file": "libraries\\sps_initialize\\sps_initialize.map",
+   "kind": "action",
+   "name": "PLAYER_FORCE_EMOTION",
+   "params": 3,
+   "resolved": 521,
+   "resolvedName": "PLAYER_FORCE_EMOTION",
+   "stored": 520
+  },
+  {
+   "file": "libraries\\sps_initialize\\sps_initialize.map",
+   "kind": "action",
+   "name": "VICTORY_SCREEN",
+   "params": 0,
+   "resolved": 511,
+   "resolvedName": "VICTORY_SCREEN",
+   "stored": 510
+  }
+ ],
+ "noRetailCase": {
+  "action": {
+   "CAMERA_MOVE_HOME": 2,
+   "DRAW_SKYBOX_BEGIN": 2,
+   "MAP_SHROUD_AT_WAYPOINT": 1
+  },
+  "condition": {
+   "REGION_CAMPS_SHOULD_UNPACK": 1
+  },
+  "falseAction": {}
+ },
+ "totals": {
+  "actions": 28593,
+  "conditions": 14493,
+  "distinctActionTypes": 340,
+  "distinctConditionTypes": 106,
+  "falseActions": 422,
+  "filesScanned": 186,
+  "filesWithScripts": 130,
+  "groups": 1543,
+  "registryActions": 596,
+  "registryConditions": 196,
+  "rematched": 135,
+  "scripts": 9061
+ }
+}

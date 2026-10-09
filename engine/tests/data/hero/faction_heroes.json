@@ -1,0 +1,337 @@
+{
+ "FactionAngmar": {
+  "buildable_heroes_mp": [
+   "CreateAHero",
+   "AngmarHwaldar",
+   "AngmarKarsh",
+   "AngmarMorgramir",
+   "AngmarRogash",
+   "AngmarWitchking",
+   "MordorSauron_RingHero"
+  ],
+  "heroes": [
+   "AngmarHwaldar",
+   "AngmarKarsh",
+   "AngmarMorgramir",
+   "AngmarRogash",
+   "AngmarWitchking",
+   "CreateAHero",
+   "MordorSauron_RingHero"
+  ],
+  "horde_member_units": [
+   "AngmarDarkDunedain",
+   "AngmarDarkRanger",
+   "AngmarDireWolf",
+   "AngmarHillTroll",
+   "AngmarNecroAcolyte",
+   "AngmarNecromancerBanner",
+   "AngmarSnowTroll"
+  ],
+  "structures": [
+   "AngmarBarracks",
+   "AngmarBattleTowerExpansion",
+   "AngmarCatapultExpansion",
+   "AngmarDen",
+   "AngmarForgeWorks",
+   "AngmarFortress",
+   "AngmarFortressCitadel",
+   "AngmarFortressExpansionPadCorner",
+   "AngmarFortressExpansionPadSide",
+   "AngmarHallofTwilight",
+   "AngmarKennelExpansion",
+   "AngmarMill",
+   "AngmarSentryTower",
+   "AngmarWallHubSmall",
+   "AngmarWallHubSmallExpansion"
+  ]
+ },
+ "FactionDwarves": {
+  "buildable_heroes_mp": [
+   "CreateAHero",
+   "DwarvenCaptainofDale",
+   "DwarvenGloin",
+   "DwarvenGimli",
+   "DwarvenDain",
+   "ElvenGaladriel_RingHero"
+  ],
+  "heroes": [
+   "CreateAHero",
+   "DwarvenCaptainofDale",
+   "DwarvenDain",
+   "DwarvenGimli",
+   "DwarvenGloin",
+   "ElvenGaladriel_RingHero"
+  ],
+  "horde_member_units": [
+   "DwarvenAxeThrower",
+   "DwarvenGuardian",
+   "DwarvenMenOfDale",
+   "DwarvenPhalanx",
+   "DwarvenZerker"
+  ],
+  "structures": [
+   "DwarfBarracks",
+   "DwarvenArcheryRange",
+   "DwarvenCatapultExpansion",
+   "DwarvenEreborTowerTowerExpansion",
+   "DwarvenFortress",
+   "DwarvenFortressCitadel",
+   "DwarvenFortressExpansionPadCorner",
+   "DwarvenFortressExpansionPadSide",
+   "DwarvenHallExpansion",
+   "DwarvenHearth",
+   "DwarvenMineShaft",
+   "DwarvenSentryTower",
+   "DwarvenSiegeWorks",
+   "DwarvenStatue",
+   "DwarvenWallHubSmall",
+   "DwarvenWallHubSmallExpansion"
+  ]
+ },
+ "FactionElves": {
+  "buildable_heroes_mp": [
+   "CreateAHero",
+   "ElvenHaldir",
+   "ElvenGlorfindel",
+   "ElvenArwen",
+   "ElvenLegolas",
+   "ElvenThranduil",
+   "ElvenElrond",
+   "ElvenGaladriel_RingHero"
+  ],
+  "heroes": [
+   "CreateAHero",
+   "ElvenArwen",
+   "ElvenElrond",
+   "ElvenGaladriel_RingHero",
+   "ElvenGlorfindel",
+   "ElvenHaldir",
+   "ElvenLegolas",
+   "ElvenThranduil",
+   "RohanTreeBerd"
+  ],
+  "horde_member_units": [
+   "ElvenLorienArcher",
+   "ElvenLorienWarrior",
+   "ElvenMirkwoodArcher",
+   "ElvenMithlondSentry",
+   "ElvenRivendellArcher",
+   "ElvenRivendellLancer",
+   "NoldorWarrior"
+  ],
+  "structures": [
+   "ElvenBarracks",
+   "ElvenBattleTower",
+   "ElvenCastleWallHub",
+   "ElvenCastleWallHubExpansion",
+   "ElvenCitadel",
+   "ElvenEntMoot",
+   "ElvenFloodgateExpansion",
+   "ElvenFortress",
+   "ElvenFortressExpansionPadCorner",
+   "ElvenGreenPasture",
+   "ElvenMallornTree",
+   "ElvenMirrorOfGaladriel",
+   "ElvenStatue",
+   "ElvenVigilantEntExpansion",
+   "ElvenWatchtowerExpansion",
+   "EregionForge"
+  ]
+ },
+ "FactionIsengard": {
+  "buildable_heroes_mp": [
+   "CreateAHero",
+   "IsengardWormTongue",
+   "IsengardLurtz",
+   "IsengardSharku",
+   "IsengardSaruman",
+   "MordorSauron_RingHero"
+  ],
+  "heroes": [
+   "CreateAHero",
+   "IsengardLurtz",
+   "IsengardSaruman",
+   "IsengardSharku",
+   "IsengardWormTongue",
+   "MordorSauron_RingHero"
+  ],
+  "horde_member_units": [
+   "IsengardFanatic",
+   "IsengardFighter",
+   "IsengardPikeman",
+   "IsengardUrukCrossbow",
+   "IsengardWargPack",
+   "IsengardWargRider",
+   "IsengardWildman",
+   "IsengardWildmanAxe"
+  ],
+  "structures": [
+   "IsengardArmory",
+   "IsengardBallistaExpansion",
+   "IsengardBattleTower",
+   "IsengardCastleWallHub",
+   "IsengardCastleWallHubExpansion",
+   "IsengardFortress",
+   "IsengardFortressCitadel",
+   "IsengardFortressExpansionPadCorner",
+   "IsengardFurnace",
+   "IsengardLumberMill",
+   "IsengardMineLauncherExpansion",
+   "IsengardSiegeWorks",
+   "IsengardTavern",
+   "IsengardTowerExpansion",
+   "IsengardUrukPit",
+   "IsengardWargPit",
+   "IsengardWargSentry"
+  ]
+ },
+ "FactionMen": {
+  "buildable_heroes_mp": [
+   "CreateAHero",
+   "RohanEowyn",
+   "RohanEomer",
+   "GondorBoromir",
+   "RohanTheoden",
+   "GondorFaramir",
+   "GondorAragornMP",
+   "GondorGandalf",
+   "ElvenGaladriel_RingHero"
+  ],
+  "heroes": [
+   "CreateAHero",
+   "ElvenGaladriel_RingHero",
+   "GondorAragornMP",
+   "GondorBoromir",
+   "GondorFaramir",
+   "GondorGandalf",
+   "RohanEomer",
+   "RohanEowyn",
+   "RohanTheoden"
+  ],
+  "horde_member_units": [
+   "GondorArcher",
+   "GondorCavalry",
+   "GondorFighter",
+   "GondorKnightsofDol",
+   "GondorRanger",
+   "GondorTowerShieldGuard",
+   "RohanRohirrim",
+   "RohanSpearmen"
+  ],
+  "structures": [
+   "GondorArcherRange",
+   "GondorBarracks",
+   "GondorBattleTower",
+   "GondorFarm",
+   "GondorForge",
+   "GondorMarketPlace",
+   "GondorStable",
+   "GondorStatue",
+   "GondorWell",
+   "GondorWorkshop",
+   "MenArrowTowerExpansion",
+   "MenFortress",
+   "MenFortressCitadel",
+   "MenFortressExpansionPadCorner",
+   "MenFortressExpansionPadSide",
+   "MenGarrisonTowerExpansion",
+   "MenTrebuchetExpansion",
+   "MenTrebuchetSideExpansion",
+   "MenWallHubSmall",
+   "MenWallHubSmallExpansion"
+  ]
+ },
+ "FactionMordor": {
+  "buildable_heroes_mp": [
+   "CreateAHero",
+   "MordorGothmog",
+   "MordorMouthOfSauron",
+   "KhamulFellBeast",
+   "MorgomirFellBeast",
+   "MordorWitchKingOnFellBeast",
+   "MordorSauron_RingHero"
+  ],
+  "heroes": [
+   "CreateAHero",
+   "KhamulFellBeast",
+   "MordorGothmog",
+   "MordorMouthOfSauron",
+   "MordorSauron_RingHero",
+   "MordorWitchKingOnFellBeast",
+   "MorgomirFellBeast"
+  ],
+  "horde_member_units": [
+   "MordorArcher",
+   "MordorBlackOrc",
+   "MordorBlackRider",
+   "MordorCorsairsOfUmbar",
+   "MordorEasterling",
+   "MordorFighter",
+   "MordorHaradrimArcher",
+   "MordorHaradrimRider"
+  ],
+  "structures": [
+   "MordorBase",
+   "MordorBase_DEMO",
+   "MordorBattleTower",
+   "MordorFortress",
+   "MordorFortressBarricadeExpansion",
+   "MordorFortressCitadel",
+   "MordorFortressExpansionPadCorner",
+   "MordorGateWatchersExpansion",
+   "MordorHaradrimPalace",
+   "MordorLumberMill",
+   "MordorMumakilPen",
+   "MordorOrcPit",
+   "MordorSiegeWorks",
+   "MordorSlaughterHouse",
+   "MordorTrollCage",
+   "MordorWallCatapultExpansion"
+  ]
+ },
+ "FactionWild": {
+  "buildable_heroes_mp": [
+   "CreateAHero",
+   "WildGoblinKing",
+   "WildAzog",
+   "WildShelob",
+   "Drogoth",
+   "MordorSauron_RingHero"
+  ],
+  "heroes": [
+   "CreateAHero",
+   "Drogoth",
+   "MordorSauron_RingHero",
+   "WildAzog",
+   "WildGoblinKing",
+   "WildShelob"
+  ],
+  "horde_member_units": [
+   "GoblinArcher",
+   "GoblinFighter",
+   "GoblinSpiderRider",
+   "WildBabyDrake",
+   "WildMarauder",
+   "WildMarauderSwordBanner",
+   "WildMarauderSwords",
+   "WildSpiderlingHordeMember"
+  ],
+  "structures": [
+   "GoblinCave",
+   "GoblinFissure",
+   "WildArrowDenExpansion",
+   "WildBurrowsExpansion",
+   "WildFortress",
+   "WildFortressCitadel",
+   "WildFortressExpansionPadCorner",
+   "WildFortressExpansionPadSide",
+   "WildGiantSentryExpansion",
+   "WildLumberMill",
+   "WildMineShaft",
+   "WildSentryTower",
+   "WildSpiderHolesExpansion",
+   "WildSpiderPit",
+   "WildTreasureTrove"
+  ]
+ }
+}

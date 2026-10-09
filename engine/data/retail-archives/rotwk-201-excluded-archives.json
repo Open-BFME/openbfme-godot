@@ -1,0 +1,13 @@
+{
+  "schema": "openbfme.retail-archive-exclusions",
+  "schemaVersion": 1,
+  "game": "rotwk",
+  "patch": "2.01",
+  "note": "Archives known to sit in a RotWK install that are NOT part of pure RotWK 2.01. They are never mounted. Any other archive that is in neither the policy nor this list stops mounting.",
+  "archives": [
+    { "path": "__patch202.big", "reason": "community patch 2.02 (overrides INI/art ahead of _patch201*.big)" },
+    { "path": "_202music.big", "reason": "community patch 2.02 music" },
+    { "path": "___hdrotwk.v.0.9.big", "reason": "community HD edition art" },
+    { "path": "lang/englishpatch202.big", "reason": "community patch 2.02 strings" }
+  ]
+}

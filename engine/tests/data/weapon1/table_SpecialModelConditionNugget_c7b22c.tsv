@@ -1,0 +1,3 @@
+idx	token	parse_va	parse_kind	userdata	offset	userdata_list
+0	ModelConditionNames	0x42eed6	parseAsciiStringVector	0x0	0x148	
+1	ModelConditionDuration	0x73a429	parseDurationUnsignedInt	0x0	0x154	
