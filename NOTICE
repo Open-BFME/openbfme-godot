@@ -34,6 +34,15 @@ Copyright (C) 1994-2000 TeCGraf, PUC-Rio, under Lua's own permissive licence rep
 engine/thirdparty/lua-4.0.1/COPYRIGHT; engine/src/Libraries/Lua is the altered source
 version that reproduces EA's fork, plainly marked, see its README.md).
 
+engine/src/GameClient/VP6Decoder.cpp and VP6Tables.inc (lane CAMP-2, the movies' picture) are a
+C++ port of FFmpeg's On2 VP6 decoder (libavcodec: vp6.c, vp56.c, vp56data.c, vp6data.h, vp3dsp.c,
+vp6dsp.c, vpx_rac.c, h264chroma_template.c, videodsp_template.c, huffman.c, mathtables.c),
+Copyright (C) 2006 Aurelien Jacobs and the FFmpeg developers, licensed under the GNU Lesser
+General Public License version 2.1 or later and used here under the GNU GPL version 3: section 3
+of the LGPL 2.1 lets a copy be put under the ordinary GNU GPL (version 2 or later) instead. The
+FFmpeg copyright and warranty notices are kept at the head of both files. No FFmpeg library is
+linked or shipped.
+
 Electronic Arts ADDITIONAL TERMS per GNU GPL Section 7
 
 No trademark or publicity rights are granted. This license does NOT give you

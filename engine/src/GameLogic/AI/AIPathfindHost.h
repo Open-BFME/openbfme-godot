@@ -176,6 +176,14 @@ public:
 	virtual bool pathsThroughEachOther() const { return false; }
 	// lane PHYS-1: the unit's AI blocked-frame counter (INFERENCE S-783: RW AI + 0x16C, zeroed with a new path at RW 0x666F74 as computePath zeroes blockedFrames); 0 without an AI
 	virtual int aiBlockedFrames() const { return 0; }
+	// lane MOVE-3: RW updateGoal 0x8E24D3's HORDE branch: a horde's goal is only remembered, then the horde contain interface's slot 0xC8 (RW 0x86EF13) reserves
+	// every member's goal at its formation slot around the horde's new goal. A PathfindObject without a horde contain does nothing
+	virtual void onHordeGoalChanged() {}
+	// lane MOVE-3: RW 0x6F1584's horde scale: the contain answers slot 0x7C (a horde contain) and slot 0x70 (the module data's Slots, + 0x98) is positive; `count`
+	// is slot 0x114(0) (the contain list's size, interface + 0x38). False for anything else
+	virtual bool hordeFill(int &count, int &slots) const { (void)count; (void)slots; return false; }
+	// lane MOVE-3: Object + 0x458 bit 0 (effectively dead): RW 0x8E24D3 leaves such an object's goal alone
+	virtual bool isEffectivelyDead() const { return false; }
 };
 
 // TheGameLogic->findObjectByID

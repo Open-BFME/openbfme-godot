@@ -56,6 +56,7 @@ Known Wine-only differences: the random `shlwapi` oracle in `test_win32path.cpp`
 ## What only a real Windows PC can confirm (S-1541)
 
 1. `build.bat` and `run_tests.bat` with MSVC (the reference toolchain: never built so far), including the x87 oracle and the shlwapi oracle.
-2. The exported `OpenBFME.exe` against the player's own RotWK install (`ROTWK_INSTALL` / `BFME2_INSTALL` or the config), windowed.
+2. The exported `OpenBFME.exe` against the player's own RotWK install (`ROTWK_INSTALL` / `BFME2_INSTALL` or the config), windowed. Done: the
+   owner played Windows builds of the game (the reports behind lanes PLAY-1, INPUT-1 and WINCRASH-1; the Options crash was reproduced natively).
 3. One LAN game between that PC and a Linux peer with `--net-crc` (or `tools/net/cross_os_lockstep.sh` from a Linux box with the Windows peer
    on the PC): no desync, equal per-frame hashes.

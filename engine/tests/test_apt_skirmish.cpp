@@ -1083,8 +1083,11 @@ TEST_CASE("stops S-178 / S-179: the lobby reports its inferences, the profile ga
 	CHECK(detail("skirmish-inferences").find("faction rule") != std::string::npos);
 	CHECK(detail("skirmish-profile-unverified").find("[S-179]") == 0);
 	CHECK(detail("skirmish-environment-missing").find("[S-179]") != std::string::npos); // the in-memory profile store
-	// the Hero and Handicap combos exist and stay empty
-	CHECK(GadgetComboBoxGetLength(fx.screen->slotGadget(0, "Hero")) == 0);
+	// lane FB7-1 / CAH-2: RW 0x842C93 fills the Hero combo only when TheCreateAHeroSystem exists; this lobby has no Create-a-Hero context, so the
+	// combo stays empty (with one: "-", GUI:Random and the heroes, test_cah1.cpp). The Handicap combo stays empty
+	GameWindow *hero = fx.screen->slotGadget(0, "Hero");
+	REQUIRE(hero);
+	CHECK(GadgetComboBoxGetLength(hero) == 0);
 	CHECK(GadgetComboBoxGetLength(fx.screen->slotGadget(0, "Handicap")) == 0);
 	// the rule rows and the chat / clan tabs answer 0
 	std::string value;
@@ -1516,4 +1519,76 @@ TEST_CASE("skirmish lifetime: a screen removed before the next update leaves no 
 	shell.pop();
 	CHECK(wm.updateListenerCount() == 0);
 	wm.update(33);
+}
+
+// Lane FB7-1 r3 (the owner's report: "clicking a start position on the map preview does nothing"): RotWK's lobby handler RW 0x845830 for the map
+// window's spots (GBM_SELECTED / GBM_SELECTED_RIGHT forwarded by PassSelectedButtonsToParentSystem RW 0x6C1501) and updateMapStartSpots RW 0x7052BE
+TEST_CASE("fb7 retail lobby input: a click on a start spot gives it to the player, the next click passes it to the AI, then frees it; a right click frees it; the spot shows NUMBER:<slot>")
+{
+	OPENBFME_REQUIRE_RETAIL(mount);
+	LobbyFx fx(mount);
+	fx.text.set("NUMBER:1", "1");
+	fx.text.set("NUMBER:2", "2");
+	fx.text.set("TOOLTIP:StartPosition", "Start position");
+	fx.text.set("TOOLTIP:StartPositionN", "Player %d starts here");
+	fx.tick(60);
+	REQUIRE(fx.screen->setup());
+	typeText(fx, fx.screen->profileEntryWindow(), u"Gimli");
+	AptButtonInst *select = popupButton(fx, "ProfilePopup.Main.Select");
+	REQUIRE(select);
+	clickButton(fx, *select);
+	fx.tick(40);
+	const SkirmishGameInfo &info = fx.screen->setup()->info();
+	// the default lobby: the player in slot 0, an easy AI in slot 1 (SkirmishGameOptionsMenuInit), the default map's spots shown
+	REQUIRE(info.slots[1].isAI());
+	const std::vector<GameWindow *> &spots = fx.screen->mapStartSpotWindows();
+	REQUIRE(spots.size() == 8);
+	REQUIRE_FALSE(spots[0]->winIsHidden());
+	REQUIRE_FALSE(spots[1]->winIsHidden());
+	CHECK(info.slots[0].startPos == -1);
+	CHECK(info.slots[1].startPos == -1);
+	CHECK(spots[0]->winGetText().empty());
+	CHECK(spots[0]->winGetInstanceData()->getTooltipText() == u"Start position");
+
+	// a free spot: the first selectable slot (the player) takes it, the spot shows its number
+	clickWindowCentre(fx, spots[0]);
+	CHECK(info.slots[0].startPos == 0);
+	CHECK(spots[0]->winGetText() == u"1");
+	CHECK(spots[0]->winGetInstanceData()->getTooltipText() == u"Player 1 starts here");
+	// the player's spot again: passed to the next selectable slot after the holder (the AI)
+	clickWindowCentre(fx, spots[0]);
+	CHECK(info.slots[0].startPos == -1);
+	CHECK(info.slots[1].startPos == 0);
+	CHECK(spots[0]->winGetText() == u"2");
+	// the AI's spot: no selectable slot after it (the rest are closed): freed
+	clickWindowCentre(fx, spots[0]);
+	CHECK(info.slots[1].startPos == -1);
+	CHECK(spots[0]->winGetText().empty());
+	// another spot for the player, then a right click on it (the button's GBM_SELECTED_RIGHT through the map window): freed
+	clickWindowCentre(fx, spots[1]);
+	CHECK(info.slots[0].startPos == 1);
+	CHECK(spots[1]->winGetText() == u"1");
+	REQUIRE(fx.screen->currentMapWindow());
+	spots[1]->manager().winSendSystemMsg(fx.screen->currentMapWindow(), GBM_SELECTED_RIGHT, reinterpret_cast<WindowMsgData>(spots[1]), 0);
+	CHECK(info.slots[0].startPos == -1);
+	CHECK(spots[1]->winGetText().empty());
+}
+
+// Lane FB7-1 r3 (found by the menu walk): the lobby's MAIN MENU button sends AptSkirmish::Exit, which the port only noted
+TEST_CASE("fb7 retail lobby input: MAIN MENU leaves the lobby after a profile was accepted")
+{
+	OPENBFME_REQUIRE_RETAIL(mount);
+	LobbyFx fx(mount);
+	fx.tick(60);
+	typeText(fx, fx.screen->profileEntryWindow(), u"Gimli");
+	AptButtonInst *select = popupButton(fx, "ProfilePopup.Main.Select");
+	REQUIRE(select);
+	clickButton(fx, *select);
+	fx.tick(60);
+	AptButtonInst *back = popupButton(fx, "lobby.MainMenu");
+	REQUIRE(back);
+	clickButton(fx, *back);
+	fx.tick(120);
+	// RW 0x9280E8 -> 0x927FDA: the movie's Exit pops the screen as Back does
+	CHECK(fx.shell->findScreenByFilename("Skirmish.apt") == nullptr);
 }

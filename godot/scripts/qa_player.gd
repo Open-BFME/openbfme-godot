@@ -209,11 +209,15 @@ func _probe_motion() -> void:
 			var n: int = _treadmill.get(o.id, 0) + 1
 			_treadmill[o.id] = n
 			if n == TREADMILL_PROBES:
+				# lane IDLE-1: a soldier of a horde in a melee is counted apart as well (the member pass turns it there), and is an issue like any other
+				var melee := _in_melee_horde(full)
+				if melee:
+					count("treadmill_melee_units")
 				count("treadmill_units")
 				# which AI state leaves the flag on (idle = a stale MOVING; a move state = blocked while walking; attacking)
 				count("treadmill_ai_state_%d%s" % [int(full.get("ai_state", -1)), "_attacking" if conditions.has("ATTACKING") else ""])
-				issue("treadmill", o.template, "stands still for %d logic frames with MOVING set (conditions %s, AI state %d, AI moving %s)" % [
-					(TREADMILL_PROBES) * MOTION_PROBE_FRAMES, str(conditions), int(full.get("ai_state", -1)), str(full.get("moving", false))])
+				issue("treadmill", o.template, "stands still for %d logic frames with MOVING set (conditions %s, AI state %d, AI moving %s%s)" % [
+					(TREADMILL_PROBES) * MOTION_PROBE_FRAMES, str(conditions), int(full.get("ai_state", -1)), str(full.get("moving", false)), ", its horde in a melee" if melee else ""])
 		else:
 			_treadmill.erase(o.id)
 		if full.get("moving", false):
@@ -232,6 +236,12 @@ func _probe_motion() -> void:
 					o.x, o.y, f - int(_stuck_since[o.id]), int(full.get("ai_state", -1)), str(conditions)])
 		else:
 			_stuck_since.erase(o.id)
+
+
+## a member of a horde that fights a melee (counted apart: the member pass turns it every frame) (the container's HordeContain melee target, InGameWorld.get_object horde_melee)
+func _in_melee_horde(full: Dictionary) -> bool:
+	var c := int(full.get("contained_by", 0))
+	return c != 0 and _world.get_object(c).get("horde_melee", false)
 
 
 # ---- input: the player's hands ------------------------------------------------------------------------------------------------------------------------
@@ -273,14 +283,29 @@ func _key(dik: int) -> void:
 
 ## the player's click on an object: a right click on open ground first drops the selection (BFME's default mouse: with a builder selected a click on our
 ## building would be a context order), then the camera goes there and a left click lands where the object is drawn now; true when the HUD selected it
-## (or, for a horde member or a castle's shell, the object the HUD selects for it: a selected object of ours close to the click)
+## (or, for a horde member or a castle's shell, the object the HUD selects for it: a selected object of ours close to the click).
+## Lane IDLE-1: an object no player can select (not SELECTABLE: a projectile, an AI tactical marker, a ping, a NoSelect worker; HudObjects::isSelectable) is
+## not clicked at all, and a failed click is judged with the HUD's pick (InGameHudNode.pick_probe): where the ray meets the object's drawn model but the pick
+## answers a nearer object, the object stands behind it (a worker behind the citadel, a horde behind a mallorn tree: the overnight matrix's select_failed);
+## the player then clicks a part of it that shows (a pixel search around it). Only a click whose ray met the object's model with nothing nearer and still
+## did not select it is a select_failed; an object drawn wholly behind others is select_occluded, one whose model no tried pixel met select_missed.
 func _select(o: Dictionary) -> bool:
 	if not _hud.get_selection().is_empty():
 		await _deselect()
+	var now: Dictionary = _world.get_object(o.id)
+	if not now.get("ok", false) or now.get("destroyed", false):
+		count("select_target_gone") # it died or was removed before the click (a projectile that landed, a sold building): nothing to select
+		return false
+	if not now.get("selectable", false):
+		count("select_skipped_unselectable")
+		return false
 	await _look(Vector2(o.x, o.y))
 	var first := ""
+	var verdicts := {}   # "hit_other" / "miss" / "not_drawn" / ... -> clicks
+	var cover := ""      # the object the pick answered where the ray met ours
 	# the centre of where it is drawn, then (as a player clicking again on another part of it) points around it
 	# (the camera looks north: +y offsets are the parts of a building higher on the screen, above whatever stands in front of it)
+	var tried := []
 	for offset in [Vector2(), Vector2(0, 15), Vector2(0, 30), Vector2(18, 25), Vector2(-18, 25), Vector2(0, 45), Vector2(25, 0), Vector2(-25, 0), Vector2(0, -12)]:
 		var at := Vector2(o.x, o.y)
 		# a horde draws nothing itself: the player clicks one of its soldiers
@@ -293,33 +318,82 @@ func _select(o: Dictionary) -> bool:
 			at = Vector2(pose.x, pose.y)
 		at += offset
 		var px: Vector2 = _hud.world_to_pixel(at)
-		_hud.inject_mouse_move(px)
-		await _frames(1)
-		_hud.inject_mouse_button(1, true, px, false)
-		_hud.inject_mouse_button(1, false, px, false)
-		await _frames(4)
-		var sel: Array = _hud.get_selection()
-		var container := int(_world.get_object(o.id).get("contained_by", 0))
-		var ok := false
-		for s in sel:
-			var so: Dictionary = _world.get_object(s)
-			# the object, the horde of a member, or the object standing on the same spot that the HUD selects for a castle's shell
-			if int(s) == int(o.id) or int(s) == container or (not members.is_empty() and int(s) == int(o.id)) or (so.get("ok", false) and so.owner == _local and Vector2(so.x, so.y).distance_to(Vector2(o.x, o.y)) < 8.0):
-				ok = true
-		if ok:
+		tried.append([px, target_id])
+		if await _click_selects(o, px):
 			if not first.is_empty():
 				issue("select_needed_retry", o.template, first)
 			return true
+		var probe: Dictionary = _hud.pick_probe(px, target_id)
+		var verdict: String = probe.get("target", "?")
+		if verdict == "gone":
+			count("select_target_gone") # it died or was removed during the clicks
+			return false
+		if verdict == "hit" and int(probe.get("picked", 0)) != 0:
+			verdict = "hit_other"
+			cover = str(_world.get_object(int(probe.picked)).get("template", "?"))
+		verdicts[verdict] = int(verdicts.get(verdict, 0)) + 1
 		if first.is_empty():
 			var got := []
-			for s in sel:
+			for s in _hud.get_selection():
 				var so2: Dictionary = _world.get_object(s)
 				got.append("%s at (%.0f, %.0f)" % [so2.get("template", "?"), so2.get("x", 0.0), so2.get("y", 0.0)])
 			first = "a left click on the middle of %s at (%.0f, %.0f) (pixel %s) selected %s" % [o.template, at.x, at.y, str(px), str(got)]
 		if not _hud.get_selection().is_empty():
 			await _deselect()
-	issue("select_failed", o.template, first + "; clicks around it did not select it either")
+	# the part of it that shows: the pixels around where it is drawn whose pick answers it (what a player's eye finds), nearest first
+	var centre: Vector2 = tried[0][0]
+	var target0: int = tried[0][1]
+	var best := Vector2(-1e9, -1e9)
+	for r in range(6, 61, 6):
+		for k in range(16):
+			var a := TAU * k / 16.0
+			var px2: Vector2 = centre + Vector2(cos(a), sin(a)) * r
+			var probe2: Dictionary = _hud.pick_probe(px2, target0)
+			if probe2.get("ok", false) and _picks_it(o, int(probe2.get("picked", 0))):
+				best = px2
+				break
+		if best.x > -1e8:
+			break
+	if best.x > -1e8:
+		if await _click_selects(o, best):
+			issue("select_needed_retry", o.template, first + "; it showed at pixel %s (%s)" % [str(best), JSON.stringify(verdicts)])
+			return true
+		first += "; the pick answers it at pixel %s but the click there did not select it" % str(best)
+		if not _hud.get_selection().is_empty():
+			await _deselect()
+	elif verdicts.has("hit_other") and not verdicts.has("hit"):
+		count("select_occluded")
+		issue("select_occluded", o.template, first + "; drawn behind %s at every tried pixel (%s)" % [cover, JSON.stringify(verdicts)])
+		return false
+	elif not verdicts.has("hit") and not verdicts.has("hit_other"):
+		count("select_missed")
+		issue("select_missed", o.template, first + "; no tried pixel met its drawn model (%s)" % JSON.stringify(verdicts))
+		return false
+	issue("select_failed", o.template, first + "; clicks around it did not select it either (%s)" % JSON.stringify(verdicts))
 	return false
+
+
+## one left click at `px`: true when the HUD then selects `o` (or the object it stands for: see _picks_it)
+func _click_selects(o: Dictionary, px: Vector2) -> bool:
+	_hud.inject_mouse_move(px)
+	await _frames(1)
+	_hud.inject_mouse_button(1, true, px, false)
+	_hud.inject_mouse_button(1, false, px, false)
+	await _frames(4)
+	for s in _hud.get_selection():
+		if _picks_it(o, int(s)):
+			return true
+	return false
+
+
+## `s` is the object `o` or what the HUD selects for it: its container (a horde's member), its horde, or an object of ours on the same spot (a castle's shell)
+func _picks_it(o: Dictionary, s: int) -> bool:
+	if s == 0:
+		return false
+	if s == int(o.id) or s == int(_world.get_object(o.id).get("contained_by", 0)):
+		return true
+	var so: Dictionary = _world.get_object(s)
+	return so.get("ok", false) and so.owner == _local and Vector2(so.x, so.y).distance_to(Vector2(o.x, o.y)) < 8.0
 
 
 ## BFME's default mouse (alternate mouse off): a right click drops the selection

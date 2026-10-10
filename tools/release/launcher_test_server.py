@@ -20,6 +20,7 @@ class ReleaseServer:
         self.truncate: dict[str, int] = {}     # path -> bytes to send once before cutting the connection
         self.redirect: dict[str, str] = {}     # path -> Location
         self.ignore_range = False
+        self.status: dict[str, int] = {}       # path -> an HTTP error status to answer (lane AIO-1)
         self.requests: list[tuple[str, dict]] = []
         self.stopped = False
         srv = self
@@ -37,6 +38,9 @@ class ReleaseServer:
                     self.send_header("Location", srv.redirect[self.path])
                     self.send_header("Content-Length", "0")
                     self.end_headers()
+                    return
+                if self.path in srv.status:
+                    self.send_error(srv.status[self.path])
                     return
                 data = srv.files.get(self.path)
                 if data is None:

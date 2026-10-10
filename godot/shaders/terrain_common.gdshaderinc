@@ -52,6 +52,7 @@ uniform vec3 lightning_color = vec3(0.0);
 uniform float fog_enabled = 0.0;
 uniform vec3 fog_color = vec3(0.5);
 uniform float fog_range_start = 0.0;
+global uniform float w3d_fog_shift; // lane PLAY-1: the free camera's extra eye distance (TacticalCamera::fogShift; 0 = retail)
 uniform float fog_range_end = 1.0;
 
 uniform vec2 cloud_scale = vec2(0.0015151515);        // 1 / CloudTextureSize (weather.ini 660)
@@ -106,7 +107,7 @@ void terrain_vertex(vec3 vtx, vec3 nrm, vec3 cam_world, float time, out vec3 lts
 	vec3 h = normalize(eye - sp) + L;
 	hts = normalize(vec3(dot(h, T), dot(h, B), dot(h, n)));
 
-	float dist = length(eye - sp);
+	float dist = length(eye - sp) - w3d_fog_shift;
 	fog = 1.0 - fog_enabled * clamp((dist - fog_range_start) / max(fog_range_end - fog_range_start, 0.0001), 0.0, 1.0);
 
 	cloud = sp.xy * cloud_scale + fract(time * cloud_offset_per_second);

@@ -10,3 +10,4 @@ windows.debug.x86_64 = "res://bin/openbfme.windows.template_debug.x86_64.dll"
 windows.release.x86_64 = "res://bin/openbfme.windows.template_release.x86_64.dll"
 linux.debug.x86_64 = "res://bin/openbfme.linux.template_debug.x86_64.so"
 linux.release.x86_64 = "res://bin/openbfme.linux.template_debug.x86_64.so"
+

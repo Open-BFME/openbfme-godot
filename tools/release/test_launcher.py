@@ -268,7 +268,7 @@ def test_fresh_install_and_play(tmp_path, server, keys):
     assert signed["OpenBFME.pck"] == {"size": 14, "sha256": hashlib.sha256(b"pack of v0.2.0").hexdigest()}
     assert not list((data(tmp_path) / "downloads").glob("*.part")), "the verified download is removed after the install"
     agents = {h.get("user-agent") for _, h in server.requests}
-    assert agents == {"OpenBFME-Launcher/v0.0.0-dev"}, agents
+    assert agents == {"OpenBFME-Launcher/v0.0.0-dev (+https://github.com/Open-BFME/openbfme-godot)"}, agents
     assert any(p.startswith(f"/repos/{TEST_REPO}/releases") for p, _ in server.requests)
 
 

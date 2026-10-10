@@ -15,7 +15,10 @@
 //     (StringBase compare RW 0x406585: exact bytes), z clamped to getMaxHeightAbovePosition (x87 fcomp: when the height is below z), the overlap test RW 0xAD2CE0
 //     unless `preferred` is set (the dozer's call sets it; not ported otherwise), the smallest x87 PC24 distance (dx^2 + dy^2) + dz^2 strictly below the best (start
 //     FLT_MAX, RW 0x7F7FFFFF); the winner's z is clamped to the height again, then raised to height * 0.1f (RW 0xBD83D4, x87 PC24) when it lies below that.
-// INFERENCE: GeometryIsSmall / GeometryName / GeometryUsedForHealthBox rows are not read here (they do not change a shape's extent); a row's value that does not parse
+//   * lane HUD-5: GeometryName (RW 0xAD16B0) parses an AsciiString (INI::parseAsciiString) into the LAST shape's name (+ 0x1C); GeometryInfo::setActive(name, flag)
+//     (RW 0xAD3520, RotWK only: the gates' GeometryForOpen / GeometryForClosed) sets the active byte of every shape whose name equals `name` exactly (byte
+//     compare and equal length) and recomputes the bounds (RW 0xAD2860). An object keeps its own GeometryInfo (Object + 0xA8): Object::setGeometryActive.
+// INFERENCE: GeometryIsSmall / GeometryUsedForHealthBox rows are not read here (they do not change a shape's extent); a row's value that does not parse
 // is an error (PLAN rule 10), not a default.
 
 #pragma once
@@ -45,6 +48,7 @@ struct Shape
 	float minorRadius = 1.0f;
 	float offsetX = 0.0f, offsetY = 0.0f, offsetZ = 0.0f;
 	bool active = true;
+	std::string name; ///< lane HUD-5: GeometryName (+ 0x1C)
 };
 
 // the shapes the template's geometry rows build, in order (an empty list when the template has no geometry row); throws std::logic_error on a row that does not parse

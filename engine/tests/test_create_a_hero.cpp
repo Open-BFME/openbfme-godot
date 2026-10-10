@@ -678,3 +678,36 @@ TEST_CASE("create-a-hero retail: a game setup's slot hero is checked field by fi
 	CHECK_FALSE(slot.setCreateAHeroBytes(dup.save(), &why));
 	CHECK(why.find("wire form") != std::string::npos);
 }
+
+TEST_CASE("cah2 retail: a Create-a-Hero's creation hands its three record colours to the client as kind 3 (RW 0x80AF0B -> 0x80959A -> 0x6727B0)")
+{
+	REQUIRE_RETAIL(sh);
+	std::vector<std::string> errors;
+	const std::vector<CreateAHeroHero> heroes = CreateAHeroLibrary::systemHeroes(*sh.mount->fs, &errors);
+	const CreateAHeroHero *berethor = heroNamed(heroes, u"Berethor");
+	REQUIRE(berethor);
+	Game g(sh, "FactionMen");
+	const ThingTemplate *cah = sh.world->things().findTemplate("CreateAHero");
+	REQUIRE(cah);
+	struct Hooks : ObjectClientHooks
+	{
+		void objectCreated(Object &) override {}
+		void objectDestroyed(Object &) override {}
+		void setCustomColors(Object &obj, int kind, std::uint32_t c0, std::uint32_t c1, std::uint32_t c2) override
+		{
+			calls.push_back({ obj.getID(), (std::uint32_t)kind, c0, c1, c2 });
+		}
+		std::vector<std::vector<std::uint32_t>> calls;
+	} hooks;
+	g.logic->setClientHooks(&hooks);
+	g.logic->createAHeroes().assign(*g.me, *berethor);
+	g.logic->createAHeroes().startGame();
+	Object *hero = g.make(cah, g.me, 500.0f, 500.0f);
+	g.logic->setClientHooks(nullptr);
+	REQUIRE(hero);
+	REQUIRE(hooks.calls.size() == 1);
+	CHECK(hooks.calls[0] == std::vector<std::uint32_t>{ hero->getID(), 3u, berethor->primaryColor, berethor->secondaryColor, berethor->tertiaryColor });
+	const CreateAHeroHero *rec = g.logic->createAHeroes().heroOf(*g.me);
+	REQUIRE(rec);
+	CHECK((rec->flags & 8u) == 0u); // consumed
+}

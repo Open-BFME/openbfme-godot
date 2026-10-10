@@ -49,7 +49,7 @@ public:
 	int evaluateContextCommand(Object *target, const Coord3D *pos, EvaluateType type);
 	int evaluateForceAttack(Object *target, const Coord3D *pos, EvaluateType type);
 
-	// the standard (false) or alternate (true) mouse setup: which button issues the order (GlobalData m_useAlternateMouse; the retail default is stop S-285)
+	// the standard (false) or alternate (true) mouse setup: which button issues the order (GlobalData m_useAlternateMouse; RotWK's default is true, RW 0x642A4B: the right click orders; lane PLAY-1)
 	void setUseAlternateMouse(bool on) { m_alternateMouse = on; }
 	bool useAlternateMouse() const { return m_alternateMouse; }
 	// a right click on the radar: the selection moves to the ground point (a plain MSG_DO_MOVETO, the same message a click on the map issues)
@@ -58,6 +58,9 @@ public:
 
 	// ZH InGameUI::areSelectedObjectsControllable: the selection is the local player's and alive
 	bool areSelectedObjectsControllable() const;
+	// lane PLAY-1: what became of each click of the ordering button, counted by outcome (other-button, right-not-a-click, off-terrain, region,
+	// not-controllable, command / no command on an object / on the ground): the HUD's state reports it (a click that orders nothing is visible)
+	const std::map<std::string, unsigned> &clickOutcomes() const { return m_clickOutcomes; }
 	// meta commands counted and not executed (name -> count)
 	const std::map<std::string, unsigned> &unportedMeta() const { return m_unportedMeta; }
 	// lane HUD-4: the meta messages RotWK itself leaves unhandled (S-1673), counted
@@ -87,6 +90,7 @@ private:
 	int m_rightDown = 0, m_rightUp = 0;
 	std::map<const ThingTemplate *, bool> m_weaponCache;
 	std::map<std::string, unsigned> m_unportedMeta;
+	std::map<std::string, unsigned> m_clickOutcomes;
 	class Radar *m_radar = nullptr;
 	std::map<std::string, unsigned> m_retailNoOp;
 };

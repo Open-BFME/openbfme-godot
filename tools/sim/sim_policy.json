@@ -17,6 +17,14 @@
  ],
  "excluded": [
   {
+   "glob": "src/GameClient/DrawableIconUI.cpp",
+   "reason": "lane HUD-5: the drawable decorations (health bars, construction text, veterancy marks) as 2D draw operations: user interface, reads the logic and the drawables, never changes them"
+  },
+  {
+   "glob": "src/GameClient/GUI/PlayerStatusInfo.cpp",
+   "reason": "lane HUD-5: the players screen's Status rows (names, faction texts, team and status labels, colours for the movie): user interface, built from a resolved GameInfo and const queries of the live players, never read by the logic"
+  },
+  {
    "glob": "src/GameClient/GUI/LoadScreenInfo.cpp",
    "reason": "the loading screen's cards (names, faction texts, colours for the movie): user interface, built from a resolved GameInfo, never read by the logic"
   },
@@ -53,6 +61,26 @@
    "reason": "lane CAMP-1: the GDExtension's campaign list, a campaign mission's load options (LiveGame::Options), the mission's end as the script engine reports it and the progress sidecar file; it reads logic state between frames and never writes it"
   },
   {
+   "glob": "src/GameClient/CreateAHeroHeroList.cpp",
+   "reason": "lane CAH-1: the profile's and the archives' Create-a-Hero files (list, save, delete, the unique id from the client's random device): menu data; a hero reaches the logic only through the game setup's record"
+  },
+  {
+   "glob": "src/GameClient/GUI/CreateAHero/AptMyHero.cpp",
+   "reason": "lane CAH-1: the hero the Create-a-Hero builder screen edits (slots, points, providers): user interface, never simulation state"
+  },
+  {
+   "glob": "src/GameClient/GUI/AptScreens/AptCreateAHero.cpp",
+   "reason": "lane CAH-1: the Create-a-Hero builder screen (CreateAHero.apt and its pages): user interface, never simulation state"
+  },
+  {
+   "glob": "src/GameClient/UserDataFolder.cpp",
+   "reason": "lane CAH-2: the user data folder from the install's gi.dat (the Create-a-Hero save folder): files, never simulation state"
+  },
+  {
+   "glob": "src/GameClient/GUI/AptColorPicker.cpp",
+   "reason": "lane CAH-2: the ColorPicker render component of the menus (externs, texel pick): user interface, never simulation state"
+  },
+  {
    "glob": "src/GodotDevice/GodotGameWorldScripts.cpp",
    "reason": "lane SCRIPT-1: GameWorld's view of the map script engine (the client requests handed to the script camera director, the engine's report, a waypoint lookup): reads the logic, never writes simulation state"
   },
@@ -63,6 +91,10 @@
   {
    "glob": "src/GameClient/VideoPlayer.cpp",
    "reason": "lane CAMP-1H: TheVideoPlayer's Video INI blocks, the movie file lookup and its VP6 header (the client's movie presentation and its audio events); no logic state"
+  },
+  {
+   "glob": "src/GameClient/VP6Decoder.cpp",
+   "reason": "lane CAMP-2: the movies' VP6 picture decoder and EA's movie container (client presentation on the render clock); no logic state"
   },
   {
    "glob": "src/GameClient/LinearCampaign.cpp",
@@ -249,6 +281,10 @@
    "reason": "APT-4 GUI shell: windows, gadgets and Apt screens, client-side user interface; the only values it hands to the logic are the skirmish GameInfo, built by the (simulation-classified) src/GameClient/GUI/Skirmish sources"
   },
   {
+   "glob": "src/GodotDevice/GodotVideoStream.cpp",
+   "reason": "lane CAMP-2: VP6MovieStream, a movie's frames decoded into a texture on the render clock (client presentation); no logic state"
+  },
+  {
    "glob": "src/GodotDevice/register_types.cpp",
    "reason": "GDExtension class registration: engine glue, no game values"
   },
@@ -347,6 +383,10 @@
   {
    "glob": "src/GameClient/HudContext.cpp",
    "reason": "mouse.ini drag tolerances: client input settings"
+  },
+  {
+   "glob": "src/GameClient/MessageStream/HotKey.cpp",
+   "reason": "lane INPUT-1, the HotKeyTranslator (RW 0x75B068): a released key presses the command button its label marks; client input interpretation, the press goes through ControlBar::pressButton whose messages ControlBarCommandProcessing.cpp builds (manifested)"
   },
   {
    "glob": "src/GameClient/MessageStream/MetaEvent.cpp",

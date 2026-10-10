@@ -51,6 +51,7 @@ UnicodeString toU16(const std::string &utf8)
 AptSaveLoad::AptSaveLoad(WindowManager &windows, Shell &shell, ShellEnvironment &environment)
 	: AptScreen(windows, shell, "SaveLoad.apt", "AptSaveLoad"), m_env(environment)
 {
+	windows.setBackground(1); // lane FB7-1: the constructor shows the front-end background (RW 0x818BDC .. 0x818BDE)
 	registerCommand("AptSaveLoad::OnInitialized", [this](const std::string &) { populate(); });
 	registerCommand("AptSaveLoad::OnClosed", [](const std::string &) {});
 	registerCommand("AptSaveLoad::Load", [this](const std::string &) { load(); });

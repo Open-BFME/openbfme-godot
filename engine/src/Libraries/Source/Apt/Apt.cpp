@@ -447,6 +447,7 @@ bool Apt::unloadLevel(int level)
 	m_vm->global()->props.erase("_level" + std::to_string(level));
 	root->destroy(true);
 	m_input->forget(root);
+	m_userHost.levelUnloaded(level); // lane WINCRASH-1
 	return true;
 }
 
@@ -1021,7 +1022,13 @@ void Apt::processLoads()
 			}
 			else if (AptCharacterInst *t = req.targetClip ? req.targetClip : resolvePath(ctx, req.target))
 			{
-				if (AptSpriteInst *p = dynamic_cast<AptSpriteInst *>(t->parent()))
+				if (AptSpriteInst *sp = t->asSprite())
+				{
+					// lane CAH-1: the clip stays, empty (Flash's unloadMovie; S-105: EA's body not traced). CreateAHero.apt unloads a page's movie from its
+					// mcXScreen clip and later loads that page into the same clip again (Powers -> Manager), which a removed clip cannot take
+					sp->unloadContent();
+				}
+				else if (AptSpriteInst *p = dynamic_cast<AptSpriteInst *>(t->parent()))
 				{
 					p->removeObject(t->depth());
 				}

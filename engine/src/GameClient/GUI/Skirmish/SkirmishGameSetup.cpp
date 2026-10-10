@@ -497,6 +497,20 @@ bool SkirmishGameSetup::setSlotTeam(int slot, int team)
 	return true;
 }
 
+bool SkirmishGameSetup::setSlotCreateAHero(int slot, const CreateAHeroHero *hero, std::string *error)
+{
+	if (slot < 0 || slot >= MAX_SLOTS)
+	{
+		return false;
+	}
+	if (!hero)
+	{
+		m_info.slots[slot].clearCreateAHero();
+		return true;
+	}
+	return m_info.slots[slot].setCreateAHero(*hero, error);
+}
+
 bool SkirmishGameSetup::setSlotStartPos(int slot, int position)
 {
 	if (slot < 0 || slot >= MAX_SLOTS)

@@ -347,8 +347,10 @@ AptTextResolution ResolveAptText(const std::string &raw, const GameTextTable &ta
 		}
 		else
 		{
+			// lane HUD-5: retail's text for an unknown label (GameTextManager::fetchPtr, BFME2 decomp GameText.cpp 0x2E65B1: format L"MISSING: '%hs'", the
+			// RotWK string is in game.dat); still reported by the caller
 			r.found = false;
-			r.text = label; // visible, and reported by the caller
+			r.text = "MISSING: '" + label + "'";
 		}
 	}
 	else

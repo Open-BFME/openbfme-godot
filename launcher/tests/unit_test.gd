@@ -11,6 +11,9 @@ const Semver := preload("res://scripts/core/semver.gd")
 const NetPolicy := preload("res://scripts/net/net_policy.gd")
 const Manifest := preload("res://scripts/core/manifest.gd")
 const Archive := preload("res://scripts/core/archive.gd")
+const GameOptions := preload("res://scripts/core/game_options.gd")
+const AioInstall := preload("res://scripts/core/aio_install.gd")
+const AioPins := preload("res://scripts/core/aio_pins.gd")
 
 var _checks := 0
 var _failed := 0
@@ -110,9 +113,53 @@ func _init() -> void:
 			breaks[what].call(d)
 			_check(Manifest._schema(d) != "", "schema refuses: %s" % what)
 		_check(Manifest._schema(m.duplicate(true)) == "", "schema accepts the valid manifest")
+	_game_options()
+	_aio()
 	if _failed == 0:
 		print("UNIT OK %d checks" % _checks)
 		quit(0)
 	else:
 		print("UNIT FAIL %d of %d checks" % [_failed, _checks])
 		quit(1)
+
+
+## lane INPUT-1: the free camera box edits the game's Options.ini and leaves the rest of the file alone
+func _game_options() -> void:
+	var dir := OS.get_user_data_dir().path_join("game_options_test")
+	DirAccess.make_dir_recursive_absolute(dir)
+	var p := dir.path_join("Options.ini")
+	if FileAccess.file_exists(p):
+		DirAccess.remove_absolute(p)
+	_check(not GameOptions.free_camera(p), "no Options.ini: the free camera is off")
+	_check(GameOptions.set_free_camera(true, p) == "", "the first write creates Options.ini")
+	_check(FileAccess.get_file_as_string(p) == "OpenBFMEFreeCamera = yes\n" and GameOptions.free_camera(p), "the key is written as the game reads it")
+	var f := FileAccess.open(p, FileAccess.WRITE)
+	f.store_string("AlternateMouseSetup = no\nOpenBFMEFreeCamera = yes\nResolution = 1280 720\nOpenBFMEFreeCamera=yes\n")
+	f.close()
+	_check(GameOptions.set_free_camera(false, p) == "", "the box turned off writes")
+	_check(FileAccess.get_file_as_string(p) == "AlternateMouseSetup = no\nOpenBFMEFreeCamera = no\nResolution = 1280 720\n", "the other lines stay, the key's lines become one")
+	_check(not GameOptions.free_camera(p) and GameOptions.get_value("Resolution", p) == "1280 720", "read back")
+	DirAccess.remove_absolute(p)
+	var forced := OS.get_environment("OPENBFME_GAME_USER_DIR")
+	_check(GameOptions.game_user_dir().ends_with("app_userdata/OpenBFME") or forced != "", "the game's folder is Godot's app_userdata/OpenBFME")
+
+
+## lane AIO-1: the All In One BFME Launcher's hosts are allowed only while its opt-in download runs; its file names must be plain
+## relative paths; the pins are the 315 + 297 English files of the two packages
+func _aio() -> void:
+	var pol := NetPolicy.new()
+	_check(pol.check("https://bfmeladder.com/api/workshop/download?guid=original-RotWK") != "", "AIO: the service is refused by default")
+	pol.extra_hosts = AioInstall.HOSTS.duplicate()
+	_check(pol.check("https://bfmeladder.com/api/workshop/download?guid=original-RotWK") == "", "AIO: the API host during a download")
+	_check(pol.check("https://workshop-files.bfmeladder.com/x/0123") == "", "AIO: the file host during a download")
+	for bad in ["http://bfmeladder.com/api", "https://bfmeladder.com:8443/api", "https://evil.bfmeladder.com/x", "https://bfmeladder.com.evil.net/x",
+			"https://user@bfmeladder.com/x"]:
+		_check(pol.check(bad) != "", "AIO: refuses %s" % bad)
+	_check(pol.check("https://api.github.com/repos/a/b/releases") == "", "AIO: GitHub stays allowed")
+	for good in [["lang\\English.big", "lang/English.big"], ["_patch201.big", "_patch201.big"], ["data\\movies\\EALogo.vp6", "data/movies/EALogo.vp6"]]:
+		_check(AioInstall.safe_relative(good[0]) == good[1], "AIO: plain path %s" % good[0])
+	for bad in ["", "\\x.big", "/etc/passwd", "C:\\x.big", "a\\..\\..\\x", "./x", "a\\\\b", "a. \\b", "a.\\b", "x\tb", "caf\u00e9.big", "a|b", "a*b"]:
+		_check(AioInstall.safe_relative(bad) == "", "AIO: refuses the name '%s'" % bad.c_escape())
+	_check(AioPins.PACKAGES.size() == 2 and AioPins.PACKAGES[0].guid == "original-RotWK" and AioPins.PACKAGES[1].guid == "original-BFME2", "AIO: two packages")
+	_check(AioPins.PACKAGES[0].files.size() == 315 and AioPins.PACKAGES[1].files.size() == 297, "AIO: 315 + 297 pinned files")
+	_check(AioInstall._whole(2.0) and not AioInstall._whole(2.5) and not AioInstall._whole("2") and not AioInstall._whole(null), "AIO: whole numbers only")

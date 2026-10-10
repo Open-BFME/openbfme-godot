@@ -78,9 +78,31 @@ public:
 		ObjectID contextObject = INVALID_ID;
 		std::string commandSet;  ///< the context's CommandSet name
 		std::string portrait;    ///< the mapped image of the selection's portrait ("" none)
+		// lane HUD-5: Palantir::Impl::UpdatePlayerStats (RW 0x6D5C0F) reads the local player's science state (Player + 0x14 .. + 0x2C = PlayerScience + 0x0C ..
+		// + 0x24) and ControlBar RW 0x71FA12 for the 20 buttons of the player's science purchase command set
+		bool havePlayer = false;
+		float skillPoints = 0.0f;   ///< Player + 0x14 (PlayerScience + 0x0C)
+		int rankLevel = 1;          ///< Player + 0x1C (+ 0x14)
+		int purchasePoints = 0;     ///< Player + 0x24 (+ 0x1C): APT:PlayerRank shows it
+		int skillPointsNext = 0;    ///< Player + 0x28 (+ 0x20)
+		int skillPointsThis = 0;    ///< Player + 0x2C (+ 0x24)
+		bool purchasable[20] = {};  ///< RW 0x71FA12(player, i): the store's button i could be bought now
+		bool storeOpen = false;     ///< RW 0x822A35: the powers screen (SpellStore.apt) is up
+		// lane HUD-5: the rank interface of the selection (PalantirCommandUI::rankInfoFor, RW 0x9305CE) and the game texts it shows (UTF-8): APT:RankLabel's format
+		// ("%d" of the rank, RW 0x92FACB) and APT:PalantirTimeRemaining (RW 0x93079B)
+		int rankType = 2;
+		int rank = 0;
+		float rankProgress = 0.0f;
+		std::string rankLabelFormat, timeRemainingText;
 	};
 	void setLocalState(const LocalState &s) { m_local = s; }
+	// lane HUD-5: the movie calls UpdatePlayerStats made ("SetPlayerMagicProgress(37)", ...), the last 64, for tests and reports
+	const std::vector<std::string> &playerStatsCalls() const { return m_statsCalls; }
 	bool commandInterfaceShown() const { return m_commandShown; }
+	// lane HUD-5: the rank interface (RW 0x9305CE): shown, the APT:HeroRank text set, the bar's last value (-1 hidden), and the movie calls made (the last 64)
+	bool rankInterfaceShown() const { return m_rankShown; }
+	float rankProgressShown() const { return m_rankProgress; }
+	const std::vector<std::string> &rankCalls() const { return m_rankCalls; }
 	const std::string &portraitShown() const { return m_portraitShown; }
 	// the key under which the movie's RenderImage clip at `clipPath` finds its image: its `_imageMap` variable, else the clip's own path (retail keys the portrait
 	// by the clip path "CommandUI/Portrait", RW 0x9308F3)
@@ -120,12 +142,24 @@ public:
 	void setSpellStoreHandler(std::function<void()> open) { m_spellStoreOpen = std::move(open); }
 	// lane END-2: OnBttnOptions toggles the quit menu (RW 0x6D40C1 -> 0x9220BD): the request goes to the shell's services
 	void setServices(class ShellServices *services) { m_services = services; }
+	// lane INPUT-1: the DIPLOMACY key (Tab, RW 0x81FFAA) asks for what the flag above the radar opens (RW 0x625456 -> 0x914EF0 / 0x8E8843);
+	// false when no shell services are wired
+	bool requestObjectives();
+	// lane RADAR-1: the radar's pings (Palantir::Impl::RadarPing, RW 0x6D5A9D / 0x6D5B23 / 0x6D5BD9): CreateRadarPing(id, name), MoveRadarPing(id, x, y) in stage
+	// units, FadeOutRadarPing(id), called on the movie's root with the integer as "%d" and the floats as "%f" (RW 0x6D5445 / 0x6D54BA / 0x6D5587)
+	bool createRadarPing(int id, const std::string &name);
+	bool moveRadarPing(int id, float stageX, float stageY);
+	bool fadeOutRadarPing(int id);
+	unsigned radarPingCalls() const { return m_radarPingCalls; }
 	void syncSpellBook(const std::vector<SpellSlot> &slots); ///< RW 0x9312B9
 	bool pressSpellSlot(int slot); ///< RW 0x930DE5 (OnAptInGameSpellBookButtonPressed)
 	const std::string &spellBookPath() const { return m_spellPath; }
 	bool spellBookShown() const { return m_spellShown; }
 	int spellSlotState(int slot) const { return slot >= 0 && slot < kSpellSlots ? m_spellState[slot] : SPELL_UNUSED; }
 	static const char *spellStateName(int state);
+	// the clip state a command button of `state` with the CommandButton `options` shows (SetState); lane HUD-5: RW 0x9D2BEE (an active button is _up, a
+	// NONPRESSABLE one _static)
+	static const char *commandStateName(ButtonState state, std::uint32_t options);
 	unsigned long long moviesCalls() const { return m_calls; }
 	const std::vector<std::string> &callErrors() const { return m_callErrors; }
 
@@ -143,8 +177,10 @@ private:
 	std::set<std::string> m_pressRegistered; // the press callbacks registered, once per position
 	std::set<std::string> m_initRegistered;  // lane HUD-4: the _OnInitialized callbacks, once per position
 	bool call(const std::string &path, const std::string &fn, const std::vector<std::string> &args);
+	unsigned m_radarPingCalls = 0; ///< lane RADAR-1
 	void syncFrames(const std::vector<ControlBarButton> &buttons, bool arc);
 	void syncLocal();
+	void syncPlayerStats(); // lane HUD-5: RW 0x6D5C0F
 	std::string levelPrefix() const;
 
 	std::function<void(int, bool)> m_press;
@@ -161,7 +197,20 @@ private:
 	Slot m_arc[kArcPositions], m_side[kSidePositions];
 	bool m_arcShown = false, m_sideShown = false, m_started = false, m_evil = false;
 	LocalState m_local;
+	void syncRank();     // lane HUD-5: RW 0x9305CE
+	void hideRank();     // RW 0x92F636
+	void rankCall(const std::string &fn, const std::vector<std::string> &args);
+	bool m_rankShown = false, m_rankSet = false; ///< + 4 / + 0xC of the rank interface (PalantirCommandUI + 0x38)
+	int m_rankType = 2, m_rankValue = 0;          ///< + 8 / + 0x10
+	float m_rankProgress = -1.0f;                 ///< + 0x14
+	std::vector<std::string> m_rankCalls;
 	bool m_buttonsStateSent = false, m_buttonsStateEvil = false, m_magicEnabledSent = false, m_commandContext = false, m_commandShown = false;
+	// lane HUD-5: UpdatePlayerStats' cache (Palantir::Impl + 0x7E bits 0 / 4, + 0x80 / + 0x84 / + 0x88, + 0xD0 .. + 0xE4; reset RW 0x6D76D3: -1, 1, cleared)
+	bool m_rankSent = false, m_magicHighlightedSent = false, m_highlighted = false;
+	int m_lastLevel = -1, m_lastRank = 0, m_lastProgress = 1;
+	bool m_previousPurchasable[20] = {};
+	std::vector<std::string> m_statsCalls;
+	void statsCall(const std::string &fn, const std::vector<std::string> &args);
 	ObjectID m_contextObject = INVALID_ID;
 	std::string m_contextSet, m_factionSent, m_portraitShown;
 	std::string m_lastTexts;

@@ -159,6 +159,9 @@ public:
 	std::string selectedCheerAnimName, examineWeaponAnimName, examineSelfAnimName; ///< +0x1D4 / +0x1D8 / +0x1DC
 	int examineAnimTweakValue = 0;            ///< +0x1F4
 	std::string modelSwapFadeDown = "FadeCreateAHeroScreenDown", modelSwapFadeUp = "FadeCreateAHeroScreenUp"; ///< +0x1F8 / +0x1FC
+	// lane CAH-1: + 0x18C, set while the Create-a-Hero builder screen is up (RW 0x91A6F8 in AptCreateAHero's constructor): RW 0x80ACE3 then leaves the
+	// object's map mode / game mode upgrades alone (the builder's map mode). Never set in a game.
+	bool inBuilder = false;
 
 	void registerBlock(INIBlockRegistry &registry);
 	// RW 0x61A10F: Data\INI\CreateAHeroSystem.ini, type 1. Needs the upgrades (TheUpgradeCenter) of the same world.
@@ -210,6 +213,10 @@ public:
 	const std::map<int, CreateAHeroHero> &heroes() const { return m_heroes; }
 
 	void onCreated(Object &obj);                                  ///< RW 0x61B17D (Object::initObject)
+	// lane CAH-1: the builder's map mode (RW 0x9C0E03 then the screen's vslot 0x14 = RW 0x80ACE3): `hero` becomes the player's record, its object is the map's
+	// preview object `obj` (RW 0x80967A), its choices the subclass's lists (RW 0x80C3AB), and `obj` gets its upgrades with the record's dirty flags (a new
+	// record: 0x2FF). Needs TheCreateAHeroSystem.
+	void applyBuilder(Player &player, const CreateAHeroHero &hero, Object &obj);
 	void buildCommandSet(Object &obj, int rank);                  ///< RW 0x809FFB (level grant, revive)
 
 	// the per-group choices of a record (RW 0x80C3AB, + 0x74), computed by onCreated
@@ -221,6 +228,9 @@ public:
 	};
 	const Stats &stats() const { return m_stats; }
 	std::uint32_t crc() const;
+	// RW 0x809CA6 for any record (lane CAH-1: the builder screen's MyHero::HeroBuildCost, RW 0x809CF3): TheCommandStore's buttons, TheCreateAHeroSystem's
+	// discount
+	static int powerCostOf(const CreateAHeroHero &hero);
 	static std::vector<std::string> stopLines();
 
 private:

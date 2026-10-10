@@ -139,6 +139,8 @@ public:
 	const std::vector<Member> &members() const { return m_members; }
 	// The index memberIndex holds for an id, or -1 when the map has no entry (no insertion).
 	int slotOf(ObjectId id) const;
+	// RW 0x86DEAF (lane MOVE-3): the member's slot index from the member map (H + 0x17C), 0 when the member is not in it
+	int slotIndexOrZero(ObjectId id) const { const int s = slotOf(id); return s < 0 ? 0 : s; }
 	bool dirty() const { return m_dirty; }
 	void clearDirty() { m_dirty = false; }
 	const std::set<ObjectId> &registeredMembers() const { return m_registered; }

@@ -63,6 +63,18 @@ struct ObjectSnapshot
 	std::uint32_t ownerColor = 0;  ///< 0xRRGGBB of the controlling player
 	int ownerIndex = -1;           ///< the controlling player's index (-1: none)
 	bool structure = false;        ///< KINDOF STRUCTURE (a larger blip)
+	// lane RADAR-1: the object as TheRadar keeps it (Radar::captureObject: RW 0x6D9042 addObject, 0x68EBE9 getRadarPriority, 0x6D8C53 the colour)
+	struct RadarEntry
+	{
+		bool listed = false;          ///< on one of the radar's lists (priority visible, the structure / wall rules, alive)
+		bool local = false;           ///< the local list (Radar + 0x18: Object::isLocallyControlled), drawn after the others
+		std::int8_t priority = 0;     ///< RadarPriorityType (RW 0x68EBE9)
+		std::uint8_t shape = 0;       ///< Radar::Shape (the template's HERO / WALL_SEGMENT / COMMANDCENTER, RW 0x44FB4E .. 0x44FC4B)
+		std::uint32_t color = 0;      ///< 0xAARRGGBB, the RadarObject's colour (+ 0xC)
+		std::uint32_t indicator = 0;  ///< 0xAARRGGBB, Object::getIndicatorColor (RW 0x68B6F5; the wall's colour)
+		float boundingRadius = 0.0f;  ///< Object + 0xB8 (the command centre's circle, the wall's rectangle)
+	};
+	RadarEntry radar;
 	// merge with VIS-1 / HUD-2: the object is SHROUDED for the local player (ShroudManager::getObjectStatus, RW 0xB4E890) while the shroud is displayed:
 	// the radar leaves it out and the device layer does not draw it
 	bool shroudedForLocal = false;

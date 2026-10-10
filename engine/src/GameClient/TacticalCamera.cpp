@@ -460,13 +460,58 @@ void TacticalCamera::setHeightAboveGround(float h)
 		{
 			m_heightAboveGround = m_minHeight;
 		}
-		if (m_heightAboveGround > m_maxHeight)
+		if (m_heightAboveGround > zoomOutLimit()) // lane PLAY-1: m_maxHeight unless the free camera is on
 		{
-			m_heightAboveGround = m_maxHeight;
+			m_heightAboveGround = zoomOutLimit();
 		}
 	}
 	m_constraintValid = false;
 	setCameraTransform();
+}
+
+// lane PLAY-1 (presentation option, not retail)
+void TacticalCamera::setFreeCamera(bool on)
+{
+	if (m_free == on)
+	{
+		return;
+	}
+	m_free = on;
+	if (!on && m_heightAboveGround > m_maxHeight)
+	{
+		setHeightAboveGround(m_maxHeight);
+	}
+	m_constraintValid = false;
+}
+
+float TacticalCamera::freeMaxHeight() const
+{
+	float maxX = 0.0f, maxY = 0.0f;
+	if (m_logic && m_logic->terrain() && m_logic->terrain()->getExtent(0, maxX, maxY))
+	{
+		return std::max(m_maxHeight, std::max(maxX, maxY));
+	}
+	return m_maxHeight;
+}
+
+float TacticalCamera::farPlane() const
+{
+	return 1800.0f + 2.0f * fogShift(); // RW 0x48B7B1: 1800 (GlobalData + 0x950 = 1.0 times 1800); lane PLAY-1: the free camera's extra distance
+}
+
+float TacticalCamera::fogShift() const
+{
+	if (!m_free || m_cameraOffset.z <= 0.0f)
+	{
+		return 0.0f;
+	}
+	const float retailZoom = (m_maxHeight + m_terrainHeight) / m_cameraOffset.z;
+	if (m_zoom <= retailZoom)
+	{
+		return 0.0f;
+	}
+	const float len = std::sqrt(m_cameraOffset.x * m_cameraOffset.x + m_cameraOffset.y * m_cameraOffset.y + m_cameraOffset.z * m_cameraOffset.z);
+	return len * (m_zoom - retailZoom);
 }
 
 void TacticalCamera::zoomIn()
@@ -704,7 +749,7 @@ void TacticalCamera::update(bool uiScrolling, bool gamePaused)
 			{
 				const float scrollLen = std::sqrt(m_scrollX * m_scrollX + m_scrollY * m_scrollY);
 				if (m_gd.scrollAmountCutoff > scrollLen || m_minHeight > m_currentHeightAboveGround
-					|| (m_gd.enforceMaxCameraHeight && m_maxHeight < m_currentHeightAboveGround))
+					|| (m_gd.enforceMaxCameraHeight && zoomOutLimit() < m_currentHeightAboveGround)) // lane PLAY-1: m_maxHeight without the free camera
 				{
 					const float adj = (desiredZoom - m_zoom) * m_gd.cameraAdjustSpeed;
 					if (std::fabs((double)adj) >= 0.0001)

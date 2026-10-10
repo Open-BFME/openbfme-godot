@@ -48,6 +48,11 @@ std::string configFile()
 	return toNative(ProjectSettings::get_singleton()->globalize_path("user://install-paths.cfg"));
 }
 
+std::string downloadedMarker()
+{
+	return toNative(ProjectSettings::get_singleton()->globalize_path(String("user://") + InstallLocator::kDownloadedMarkerName));
+}
+
 PackedStringArray toArray(const std::vector<std::string> &v)
 {
 	PackedStringArray out;
@@ -82,6 +87,7 @@ void ReleaseInfo::_bind_methods()
 	ClassDB::bind_method(D_METHOD("build_record"), &ReleaseInfo::build_record);
 	ClassDB::bind_method(D_METHOD("redact", "text"), &ReleaseInfo::redact);
 	ClassDB::bind_method(D_METHOD("process_alive", "pid"), &ReleaseInfo::process_alive);
+	ClassDB::bind_method(D_METHOD("crash_test"), &ReleaseInfo::crash_test);
 }
 
 String ReleaseInfo::version() const
@@ -134,6 +140,14 @@ bool ReleaseInfo::process_alive(int64_t pid) const
 #else
 	return ::kill((pid_t)pid, 0) == 0 || errno == EPERM;
 #endif
+}
+
+void ReleaseInfo::crash_test() const
+{
+	std::fprintf(stderr, "RELEASE --crash-test: crashing on purpose (a write through a null pointer)\n");
+	std::fflush(stderr);
+	volatile int *volatile target = nullptr;
+	*target = 0x0BADF00D;
 }
 
 // ---- SessionLogger ----
@@ -269,6 +283,7 @@ void InstallSetup::_bind_methods()
 	ClassDB::bind_method(D_METHOD("config_path"), &InstallSetup::config_path);
 	ClassDB::bind_method(D_METHOD("configured"), &InstallSetup::configured);
 	ClassDB::bind_method(D_METHOD("discover"), &InstallSetup::discover);
+	ClassDB::bind_method(D_METHOD("downloaded_problem"), &InstallSetup::downloaded_problem);
 	ClassDB::bind_method(D_METHOD("check", "rotwk", "bfme2"), &InstallSetup::check);
 	ClassDB::bind_method(D_METHOD("remember", "rotwk", "bfme2"), &InstallSetup::remember);
 }
@@ -288,13 +303,29 @@ Dictionary InstallSetup::configured() const
 	return d;
 }
 
+String InstallSetup::downloaded_problem() const
+{
+	const std::string marker = downloadedMarker();
+	std::error_code ec;
+	if (!std::filesystem::exists(std::filesystem::u8path(marker), ec))
+		return String();
+	InstallLocator::Downloaded downloaded;
+	std::string why;
+	if (InstallLocator::readDownloaded(marker, downloaded, &why))
+		return String();
+	return toGodot("The game folders the OpenBFME launcher downloaded are not offered: its record " + why + ". Choose the folders below, or download them again with the launcher.");
+}
+
 Array InstallSetup::discover() const
 {
 	Array out;
 	RetailArchivePolicy rotwk, bfme2;
 	std::string error;
 	const bool policies = RetailArchivePolicy::loadBuiltin("rotwk-201", rotwk, &error) && RetailArchivePolicy::loadBuiltin("bfme2-106", bfme2, &error);
-	for (const InstallLocator::Candidate &c : InstallLocator::discover(InstallLocator::DiscoveryEnvironment::host()))
+	InstallLocator::DiscoveryEnvironment environment = InstallLocator::DiscoveryEnvironment::host();
+	// lane AIO-1: the launcher's record of the folders it downloaded (a file that cannot be read: downloaded_problem, shown on the screen)
+	environment.downloadedMarker = downloadedMarker();
+	for (const InstallLocator::Candidate &c : InstallLocator::discover(environment))
 	{
 		Dictionary d;
 		d["game"] = toGodot(c.game);

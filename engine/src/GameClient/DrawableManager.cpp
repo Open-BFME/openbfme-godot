@@ -186,6 +186,12 @@ void DrawableManager::applyEvents(const std::vector<ClientEvent> &events)
 				d->flushModelConditions(ev.hasWeaponTiming, ev.weaponTimingFrames);
 			}
 			break;
+		case ClientEvent::CUSTOM_COLORS: // lane CAH-2 (RW 0x80AF0B -> 0x6727B0)
+			if (Drawable *d = findByObject(ev.object))
+			{
+				d->setCustomColors(ev.customKind, ev.customColors);
+			}
+			break;
 		case ClientEvent::FADE_IN: // lane BUILD-4 (RW 0x670AA2)
 			if (Drawable *d = findByObject(ev.object))
 			{

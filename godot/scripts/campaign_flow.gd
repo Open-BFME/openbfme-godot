@@ -10,12 +10,11 @@
 ##   unlocked (the preference "BCU", RW 0x927F08) and the main menu returns. A lost mission returns to the main menu.
 ##
 ## lane CAMP-1H: the campaign movies (scripts/movie_player.gd, GameWorld.get_movie): the campaign's OverallCampaignIntroMovie when it starts from the menu
-## (INFERENCE: RotWK's caller of it was not located), a mission's IntroMovie before its load screen (INFERENCE: ZH SinglePlayerLoadScreen plays the mission's
-## movie first) and the maps' PLAY_MOVIE_IN_GAME (InGameUI RW 0x69B788 -> RW 0x6D5397) play their narration over a black screen (the VP6 picture: S-1710);
-## --movies=off (game.gd) leaves them out of scripted runs.
-## NOT PORTED (stops): the VP6 picture of the campaign movies (S-1710; formerly S-1364), CampaignMenu.apt / the
-## auto-save (S-1360: the progress is this engine's sidecar text, CampaignProgress), the mission's LoadScreenImage on LoadScreen.apt (S-1364), the carry-over
-## heroes between missions (S-1180).
+## (INFERENCE: RotWK's caller of it was not located), a mission's IntroMovie and the maps' PLAY_MOVIE_IN_GAME (InGameUI RW 0x69B788 -> RW 0x6D5397).
+## Lane CAMP-2: with their VP6 picture (S-2340); a mission's IntroMovie after its loading screen, as LinearCampaignExpansion1.ini's own comment says
+## (CAMP-1H played it before the load). --movies=off (game.gd) leaves them out of scripted runs.
+## NOT PORTED (stops): CampaignMenu.apt / the auto-save (S-1360: the progress is this engine's sidecar text, CampaignProgress), the mission's
+## LoadScreenImage on LoadScreen.apt (S-1364), the carry-over heroes between missions (S-1180).
 extends Node
 
 const PROGRESS_PATH := "user://Campaign/progress.txt"
@@ -73,8 +72,12 @@ func play_movie(title: String) -> void:
 	if movie == null:
 		movie = load("res://scripts/movie_player.gd").new()
 		movie.name = "CampaignMovie"
+		movie.skip_after_ms = game._movie_skip_after # lane CAMP-2 (tests)
+		movie.path_overrides = game._movie_files
 		add_child(movie)
 	await movie.play(world, game._audio, title)
+	if not movie.last.is_empty():
+		print("CAMPAIGN movie: ", JSON.stringify(movie.last)) # lane CAMP-2
 
 
 ## AptMainMenu::ContinueCampaign: the saved progress (the next mission after a won one)
@@ -103,7 +106,7 @@ func begin_mission() -> void:
 	_ended_at = -1
 	_win_step = 0
 	game._state = game.State.LOADING
-	await play_movie(String(m.intro_movie)) # lane CAMP-1H: the mission's narrated intro, before its load screen
+	game._shell_leave_for_game() # lane CAMP-2: the shell backdrop and the front-end background go, as for every game (CAMP-2 bug 1)
 	if not String(m.load_screen_music).is_empty():
 		game._audio.play_music(m.load_screen_music)
 	game._shell_load_screen_push()
@@ -117,9 +120,17 @@ func begin_mission() -> void:
 	if not rep.ok:
 		game._fail("start_campaign_mission failed")
 		return
+	# lane CAMP-2: the mission's IntroMovie plays after its loading screen (LinearCampaignExpansion1.ini: "A special movie which is played when the
+	# campaign starts, BEFORE the first map is loaded (all the other movies are played AFTER the loading screen)"; CAMP-1H played it before the load)
+	if movies and not String(m.intro_movie).is_empty():
+		game._audio.stop_music(true) # INFERENCE: the loading screen's music ends for the movie (its own <file>_Music event plays)
+	await play_movie(String(m.intro_movie))
+	game._game_kind = "campaign %s %d" % [campaign, mission] # lane CAMP-2
 	game._enter_game(rep)
 	_cine = load("res://scripts/campaign_cine.gd").new()
 	_cine.hud_mode = true
+	_cine.dev_overlay = game._dev_overlay # lane CAMP-2: no developer text in the real game
+	_cine.control_bar_hook = Callable(game, "_set_control_bar_hidden") # lane CAMP-2: the letterbox hides the Palantir as retail's (RW 0x7BC8B7)
 	game.add_child(_cine)
 	game._game_nodes.append(_cine)
 	_cine.setup(world, game._camera, rep.start.camera_start, _cine, null) # its overlay goes with it
@@ -196,6 +207,7 @@ func _teardown() -> void:
 
 
 func _to_main_menu() -> void:
+	game._shell_back_from_game() # lane CAMP-2
 	game._shell.shell_push("MainMenu.apt")
 	game._audio.play_shell_music(false)
 	game._menu_revealed = false

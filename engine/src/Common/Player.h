@@ -201,6 +201,11 @@ public:
 	enum { NUM_HOTKEY_SQUADS = 10 };
 	std::vector<ObjectID> &hotkeySquad(int n) { return m_hotkeySquads.at((size_t)n); }
 	const std::vector<ObjectID> &hotkeySquad(int n) const { return m_hotkeySquads.at((size_t)n); }
+	// lane INPUT-1 r2: the order mode (RotWK Player + 0x770, set by MSG_CHANGE_ORDERMODE RW 0x77BCA4 -> RW 0x6AAC78): 0 immediate orders, 1 queued
+	// orders (Alt held), 2 the War of the Ring planning. Not in the state hash: stored bookkeeping that
+	// no simulation code reads yet (lane INPUT-1 r4; AiOrdersManager is not ported, S-281); hash it once orders consume it
+	int orderMode() const { return m_orderMode; }
+	void setOrderMode(int mode) { m_orderMode = mode; }
 
 	// ---- lane ECON-1: money, command points, cost modifiers -------------------------------------------------------------------
 	// Money flows the way the retail callers make them (RW 0x7B17EF / 0x7B18B8): through the player's score keeper (Player + 0x3DC)
@@ -347,5 +352,6 @@ private:
 	std::uint32_t m_attackedFrame = 0;        ///< lane CAMP-1: RW + 0x374
 	std::vector<ObjectID> m_selection;
 	std::array<std::vector<ObjectID>, NUM_HOTKEY_SQUADS> m_hotkeySquads;
+	int m_orderMode = 0; // lane INPUT-1 r2
 	std::shared_ptr<TunnelTracker> m_tunnelTracker; ///< lane GARRISON-2 (RW + 0x308)
 };

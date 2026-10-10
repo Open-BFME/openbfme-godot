@@ -20,6 +20,7 @@
 #include <list>
 #include <cmath>
 #include <stdexcept>
+#include <string>
 
 namespace
 {
@@ -479,6 +480,58 @@ Coord3D HordeContain::getMemberFormationPosition(const Object *member) const
 	}
 	pos.z = horde->logic().getGroundHeight(pos.x, pos.y);
 	return pos;
+}
+
+// RW 0x86EF13 (horde interface slot 0xC8; lane MOVE-3): the pathfinder's updateGoal (RW 0x8E24D3) remembers a horde's goal without reserving cells and calls this. While
+// the horde melees (interface + 0x184) nothing happens; else, when the horde has a goal (RW 0x68B411: the goal cell's centre, RW 0x8E1BD4 -> 0x6ED049), its angle
+// (RW 0x68B425: angle code x pi / 6) is turned (fsincos) and every member of the contain list (module slot 0x118) whose + 0x458 bit 0 is clear (not effectively
+// dead) gets its goal (RW 0x68B3BD -> 0x8E28DB) at the slot record's first coordinates (+ 4 / + 8 of record RW 0x86DEAF: the member map's index, 0 when absent)
+// turned by that angle: x = gx + (c * sx - sy * s), y = gy + (sy * c + s * sx), z = gz, on the horde goal's layer (RW 0x68B43B)
+void HordeContain::reserveMemberGoals()
+{
+	if (m_meleeEngaged)
+	{
+		return;
+	}
+	Object *horde = getObject();
+	static const std::string kStopRankBox =
+		"[S-1832] a horde's destination check (RW 0x6F1584: the LARGE_RECTANGLE_PATHFIND box of its geometry, 6 x 10 cells for a 30 x 50 box, centred on the goal) "
+		"meets only the member goals reserved inside it (RW 0x86EF13): hordes whose ranks all stand 30 or more ahead of the horde object (ElvenLorienArcherHorde, "
+		"DwarvenAxeThrowerHorde) can be sent to one point and stand on it together; not verified against a retail run";
+	horde->logic().noteStop(kStopRankBox);
+	AIWorld *world = horde->logic().aiWorld();
+	if (world == nullptr || !world->mapReady())
+	{
+		return;
+	}
+	Pathfinder &pf = world->pathfinder();
+	Coord3D goal;
+	if (!pf.goalPosition(world->adapterFor(*horde), &goal))
+	{
+		return;
+	}
+	const float angle = pf.goalAngle(horde->getID());
+	const PathfindLayerEnum layer = pf.goalLayer(horde->getID());
+	const std::vector<HordeContainCore::Slot> &slots = m_core->slots();
+	const float c = SimMath::cosf32(angle), s = SimMath::sinf32(angle);
+	for (Object *m : m_members) // a member's goal reservation does not touch the contain list
+	{
+		if (m == nullptr || m->isEffectivelyDead())
+		{
+			continue;
+		}
+		const int idx = m_core->slotIndexOrZero(m->getID());
+		if (idx < 0 || (size_t)idx >= slots.size())
+		{
+			continue; // a horde without slot records: RW would read past its table; the port reserves nothing
+		}
+		const float sx = slots[(size_t)idx].x, sy = slots[(size_t)idx].y;
+		Coord3D p;
+		p.x = SimMath::addf32(goal.x, SimMath::subf32(SimMath::mulf32(c, sx), SimMath::mulf32(sy, s)));
+		p.y = SimMath::addf32(goal.y, SimMath::addf32(SimMath::mulf32(sy, c), SimMath::mulf32(s, sx)));
+		p.z = goal.z;
+		pf.updateGoal(world->adapterFor(*m), &p, layer);
+	}
 }
 
 void HordeContain::removeFromContain(Object *obj)

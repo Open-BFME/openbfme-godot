@@ -736,6 +736,66 @@ TEST_CASE("ComboBox: entries, opening the list by a click, picking an entry send
 	CHECK(GadgetComboBoxGetText(cb).empty());
 }
 
+namespace
+{
+// the top of the drawn selection bar of `list` (its first image), -1 when none
+int selectionBarTop(GadgetFx &fx, GameWindow *list)
+{
+	GadgetDrawList draw;
+	fx.gwm.winRepaint(draw);
+	int lx = 0, ly = 0, lw = 0, lh = 0;
+	list->winGetScreenPosition(&lx, &ly);
+	list->winGetSize(&lw, &lh);
+	for (const GadgetDrawCommand &c : draw.commands)
+	{
+		if (c.kind == GadgetDrawCommand::Kind::Image && c.image.rfind("Sel", 0) == 0 && c.y0 >= ly && c.y0 < ly + lh)
+		{
+			return c.y0;
+		}
+	}
+	return -1;
+}
+} // namespace
+
+// Lane FB7-1 r3 (the owner's report: "the highlight stays on the chosen entry instead of following the mouse"): RotWK's open drop-down list follows the
+// pointer (RW 0x72454E sets ListboxData +0x12 / +0x13 and starts +0x30 at the selection; GWM_MOUSE_POS RW 0x727081 / 0x7258E1; the draw RW 0x4A22D6)
+TEST_CASE("fb7 ComboBox: the open list's highlight starts on the chosen entry and follows the pointer; the click picks the row under it")
+{
+	GadgetFx fx;
+	GameWindow *cb = fx.load(comboWnd(154, 27), 200, 300);
+	cb->winSetSize(154, 27);
+	for (const char *t : { "Open", "Closed", "Easy AI", "Brutal AI" })
+	{
+		GadgetComboBoxAddEntry(cb, u(t), GameMakeColor(255, 255, 255, 255));
+	}
+	GadgetComboBoxSetSelectedPos(cb, 0);
+	GameWindow *list = GadgetComboBoxGetListBox(cb);
+	REQUIRE(list);
+	ListboxData *data = static_cast<ListboxData *>(list->winGetUserData());
+	REQUIRE(data);
+	CHECK_FALSE(data->trackHover);
+	fx.click(220, 310);
+	REQUIRE_FALSE(list->winIsHidden());
+	CHECK(data->trackHover);
+	CHECK(data->hoverActive);
+	CHECK(data->hoverPos == 0); // the chosen entry
+	int lx, ly;
+	list->winGetScreenPosition(&lx, &ly);
+	const int rowH = fx.gwm.winFontHeight(list->winGetFont()) + 1;
+	const int barAtChosen = selectionBarTop(fx, list);
+	REQUIRE(barAtChosen >= 0);
+	// the pointer over row 2: the highlight moves there, the selection does not change
+	fx.move(lx + 10, ly + 2 * rowH + 2);
+	CHECK(data->hoverPos == 2);
+	CHECK(data->selectPos == 0);
+	const int barAtRow2 = selectionBarTop(fx, list);
+	CHECK(barAtRow2 == barAtChosen + 2 * rowH); // two rows down (a row is the font height + 1)
+	// the click there picks it
+	fx.click(lx + 10, ly + 2 * rowH + 2);
+	CHECK(list->winIsHidden());
+	CHECK(narrow(GadgetComboBoxGetText(cb)) == "Easy AI");
+}
+
 TEST_CASE("ComboBox: a click outside an open box closes it (the lone window); few entries hide the scroll controls")
 {
 	GadgetFx fx;
@@ -756,7 +816,7 @@ TEST_CASE("ComboBox: a click outside an open box closes it (the lone window); fe
 	CHECK(fx.gwm.winGetLoneWindow() == nullptr);
 }
 
-TEST_CASE("TextEntry: typed characters (IME chars) fill the text up to MAXLEN - 1, backspace removes, numeric only filters, Enter reports EDIT_DONE")
+TEST_CASE("TextEntry: typed characters (IME chars) fill the text up to MAXLEN (RotWK RW 0x72260B), backspace removes, numeric only filters, Enter reports EDIT_DONE")
 {
 	GadgetFx fx;
 	GameWindow *e = fx.load(entryWnd(160, 25), 50, 50);
@@ -769,8 +829,10 @@ TEST_CASE("TextEntry: typed characters (IME chars) fill the text up to MAXLEN - 
 	{
 		fx.gwm.winProcessChar((char16_t)c);
 	}
-	CHECK(narrow(GadgetTextEntryGetText(e)) == "abcdefg"); // MAXLEN 8 holds 7 characters (charPos < maxTextLen - 1)
-	CHECK(GadgetFx::count(fx.take(), GEM_UPDATE_TEXT) == 7);
+	// lane CAH-2 r2: RotWK's insert refuses only when the text already holds maxTextLen characters (RW 0x72260B), so MAXLEN 8 holds 8 (ZH: 7)
+	CHECK(narrow(GadgetTextEntryGetText(e)) == "abcdefgh");
+	CHECK(GadgetFx::count(fx.take(), GEM_UPDATE_TEXT) == 8);
+	fx.gwm.winProcessKey(KEY_BACKSPACE, KEY_STATE_DOWN);
 	fx.gwm.winProcessKey(KEY_BACKSPACE, KEY_STATE_DOWN);
 	CHECK(narrow(GadgetTextEntryGetText(e)) == "abcdef");
 	// Enter (a '\r' char) is EDIT_DONE and does not change the text
@@ -841,7 +903,7 @@ TEST_CASE("HorzSlider: the position follows GSM_SET_SLIDER, a click moves the th
 	thumb->winGetPosition(&tx, &ty);
 	const SliderData *sd = static_cast<SliderData *>(s->winGetUserData());
 	CHECK(tx == (int)((60 - 0) * sd->numTicks));
-	CHECK(ty == HORIZONTAL_SLIDER_THUMB_POSITION);
+	CHECK(ty == HORIZONTAL_SLIDER_THUMB_Y); // lane FB7-1: RotWK keeps the thumb at y 0
 	// dragging the thumb with the mouse
 	fx.take();
 	ICoord2D p{ 100 + 20, 505 };
@@ -853,7 +915,7 @@ TEST_CASE("HorzSlider: the position follows GSM_SET_SLIDER, a click moves the th
 	fx.gwm.winProcessMouseEvent(GWM_LEFT_UP, &q, nullptr);
 	std::vector<Msg> got = fx.take();
 	CHECK(GadgetFx::count(got, GSM_SLIDER_TRACK) >= 1);
-	// the draw: filled boxes then empty boxes (disabled image 0 / 1), ZH's W3DGadgetHorizontalSliderImageDraw
+	// the draw: filled boxes then empty boxes (disabled image 0 / 1), RotWK W3DGadgetHorizontalSliderImageDraw (RW 0x4A1130)
 	GadgetSliderSetPosition(s, 50);
 	GadgetDrawList list;
 	fx.gwm.winRepaint(list);
@@ -1369,9 +1431,10 @@ TEST_CASE("retail Skirmish: the lobby places 48 slot combo boxes (Player, Player
 	REQUIRE(fx.shell->errors().empty());
 	CHECK(fx.layer->errors().empty());
 	// AptSkirmish owns the screen references the placeholders name (`_Init`); the gadgets it was told about are the component records that named one
+	// (lane WINCRASH-1: of the clips placed now; a removed placeholder's record stays, detached, until the level is unloaded)
 	for (const WindowManager::ComponentRecord &r : fx.wm->components())
 	{
-		if (r.window && !r.init.empty())
+		if (r.window && r.instance && !r.init.empty())
 		{
 			fx.initNames.push_back(r.instanceName);
 			styles[r.instanceName] = r.window->winGetStyle();
@@ -1405,4 +1468,29 @@ TEST_CASE("retail Skirmish: the lobby places 48 slot combo boxes (Player, Player
 	REQUIRE_FALSE(fx.wm->movieLoads().empty());
 	CHECK(fx.wm->movieLoads()[0].movie == "SkirmishOpenPlay");
 	CHECK(fx.wm->movieLoads()[0].target == "_level1.OpenPlay");
+}
+
+TEST_CASE("TextEntry: RotWK's character validator (RW 0x75E4DF) refuses the Thai blocks always and applies the flag bits in retail order")
+{
+	for (char16_t c : { (char16_t)0x0E01, (char16_t)0x0E3A, (char16_t)0x0E3F, (char16_t)0x0E5B })
+	{
+		CHECK_FALSE(GadgetTextEntryValidateCharacter(c, 0));
+	}
+	CHECK(GadgetTextEntryValidateCharacter((char16_t)0x0E3B, 0)); // between the two blocks
+	CHECK(GadgetTextEntryValidateCharacter((char16_t)0x0E5C, 0));
+	CHECK(GadgetTextEntryValidateCharacter(u'\u00E9', 0));
+	CHECK_FALSE(GadgetTextEntryValidateCharacter(u' ', 0x01));
+	CHECK(GadgetTextEntryValidateCharacter(u' ', 0x81)); // 0x80 allows the space before 0x01 refuses it
+	CHECK_FALSE(GadgetTextEntryValidateCharacter(u'%', 0x02));
+	CHECK_FALSE(GadgetTextEntryValidateCharacter(u'\\', 0x04));
+	CHECK_FALSE(GadgetTextEntryValidateCharacter(u'!', 0x04)); // below 0x22
+	CHECK(GadgetTextEntryValidateCharacter(u'"', 0x04));
+	CHECK_FALSE(GadgetTextEntryValidateCharacter(u'"', 0x08));
+	CHECK_FALSE(GadgetTextEntryValidateCharacter(u'|', 0x08));
+	CHECK_FALSE(GadgetTextEntryValidateCharacter(u'\u00E9', 0x10));
+	CHECK_FALSE(GadgetTextEntryValidateCharacter(u'a', 0x20));
+	CHECK(GadgetTextEntryValidateCharacter(u'7', 0x20));
+	CHECK_FALSE(GadgetTextEntryValidateCharacter(u'-', 0x40));
+	CHECK(GadgetTextEntryValidateCharacter(u'Q', 0x40));
+	CHECK(GadgetTextEntryValidateCharacter(u'Q', 0x100)); // only the low byte is read
 }

@@ -50,7 +50,7 @@ AI_LEVELS = {2: "easy", 3: "medium", 4: "hard", 5: "brutal"}
 SEVERITY = {
     "crash": 10, "flow_incomplete": 8, "stall": 8, "game_fail": 8, "timeout": 8,
     "unit_never_produced": 5, "structure_not_started": 5, "no_legal_site": 4, "build_button_no_placement": 5, "placement_no_message": 5,
-    "attack_no_message": 6, "select_all_empty": 5, "select_failed": 3, "button_no_effect": 4, "button_unported": 4, "target_click_no_message": 3,
+    "attack_no_message": 6, "select_all_empty": 5, "select_failed": 3, "select_occluded": 0, "select_missed": 2, "button_no_effect": 4, "button_unported": 4, "target_click_no_message": 3,
     "spell_no_message": 3, "button_window_missing": 3, "no_command_set": 3, "no_command_center": 6, "placement_no_ghost": 2,
     "live_error": 3, "hud_error": 2, "shell_error": 2, "load_error": 3, "godot_error": 3, "script_error": 6, "godot_warning": 1,
     "stop_hit": 1, "unported_module": 1, "never_won": 2, "construction_stalled": 5, "site_vanished": 4, "resume_not_sent": 5, "attack_move_not_sent": 4,
@@ -389,7 +389,7 @@ def motion_section(results: list[dict]) -> list[str]:
         c = r.get("summary", {}).get("counts", {})
         if "motion_probes" not in c:
             continue
-        rows.append(f"| {r['run']['tag']} | {c.get('motion_probes', 0)} | {c.get('treadmill_units', 0)} | {c.get('stuck_units', 0)} |")
+        rows.append(f"| {r['run']['tag']} | {c.get('motion_probes', 0)} | {c.get('treadmill_units', 0)} | {c.get('treadmill_melee_units', 0)} | {c.get('stuck_units', 0)} |")
         for k, v in c.items():
             if k.startswith("treadmill_ai_state_") or k.startswith("stuck_ai_state_"):
                 states[k] = states.get(k, 0) + v
@@ -397,7 +397,8 @@ def motion_section(results: list[dict]) -> list[str]:
         return []
     out = ["", "## Motion invariants (lane QA-2)", "",
            "treadmill = a unit standing still with the MOVING model condition for 3 probes (30 logic frames) in a row; stuck = the AI says moving, the "
-           "unit stood still for 150 logic frames.", "", "| run | probes | treadmill units | stuck units |", "|---|---|---|---|"] + rows
+           "unit stood still for 150 logic frames; melee treadmill = the treadmill units that were soldiers of a horde in a melee (included in the "
+           "treadmill count).", "", "| run | probes | treadmill units | melee treadmill | stuck units |", "|---|---|---|---|---|"] + rows
     if states:
         out += ["", "| AI state of the unit when met (all runs) | units |", "|---|---|"]
         out += [f"| {k} | {v} |" for k, v in sorted(states.items(), key=lambda kv: -kv[1])]

@@ -12,6 +12,39 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 # compile_commands.json for tools/sim/sim_audit.py: set BEFORE any subdirectory, the setting is read when a target is created
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+# WINCRASH-1: the llvm-mingw Windows build (tools/release/build_windows.sh) writes CodeView line tables to a PDB next to the GDExtension DLL
+# (and its test executables): tools/release/archive_symbols.sh keeps it per version, so a crash report's DLL offsets map to functions and
+# lines (llvm-symbolizer). It is not packaged: Godot 4.7's own Windows crash handler cannot read it (stop S-1923): it symbolizes with
+# libbacktrace for its executable only (checked on JonathanPC: bare DLL offsets with a PDB and with DWARF in the DLL). Line tables only (function names, files, lines; no types) keep the
+# PDB small; Clang's -g is meant not to change the code (e204772c with and without it: 24135 of 24141 functions keep their size), and
+# godot-cpp's release `-s` still strips the DLL (with --pdb, lld drops only the DWARF / symbol table). Set BEFORE godot-cpp so its frames
+# get line tables too. No absolute build path goes into the binaries or the PDB's debug info: the repository / toolchain / build prefixes are
+# remapped (__FILE__ too), the compiler command lines are left out, the DLL records only the PDB's file name (pdbaltpath). The linker still
+# records the toolchain's library paths in the PDB: build_windows.sh blanks their home folder prefix (tools/release/pdb_tools.py scrub).
+if(MINGW AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    get_filename_component(OPENBFME_REPO_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/.." ABSOLUTE)
+    # the most specific prefix last (the last matching map wins); the build folder may lie inside the repository
+    set(OPENBFME_PREFIX_MAPS "-ffile-prefix-map=${OPENBFME_REPO_ROOT}/=")
+    if(LLVM_MINGW_ROOT)
+        list(APPEND OPENBFME_PREFIX_MAPS "-ffile-prefix-map=${LLVM_MINGW_ROOT}/=llvm-mingw/")
+    endif()
+    list(APPEND OPENBFME_PREFIX_MAPS "-ffile-prefix-map=${CMAKE_BINARY_DIR}/=build/")
+    add_compile_options(-gcodeview -gline-tables-only -gno-codeview-command-line -fdebug-compilation-dir=. -fcoverage-compilation-dir=.
+                        ${OPENBFME_PREFIX_MAPS})
+    add_link_options("-Wl,--pdb=" "-Wl,-Xlink=-pdbaltpath:%_PDB%" "-Wl,-Xlink=-pdbsourcepath:C:/openbfme")
+endif()
+# WINCRASH-1: a release build for Linux testers can keep the GDExtension's symbols: -DOPENBFME_LINUX_DEBUG_FILE=ON compiles with -g (paths
+# remapped as above) and splits them into godot/bin/<lib>.so.debug after the link; the .so itself is stripped as godot-cpp's `-s` strips
+# it and points at the file (.gnu_debuglink). The .debug stays with the builder (tools/release/archive_symbols.sh), it is not packaged.
+# Off by default: -g costs compile memory (the Deck builds with -j3).
+option(OPENBFME_LINUX_DEBUG_FILE "Linux: split the GDExtension's debug info into godot/bin/<lib>.so.debug" OFF)
+if(OPENBFME_LINUX_DEBUG_FILE AND UNIX AND NOT APPLE)
+    get_filename_component(OPENBFME_REPO_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/.." ABSOLUTE)
+    # the build folder twice: with a slash for its files, bare for the compilation folder (DW_AT_comp_dir)
+    add_compile_options(-g "-ffile-prefix-map=${OPENBFME_REPO_ROOT}/=" "-ffile-prefix-map=${CMAKE_BINARY_DIR}/=build/"
+                        "-fdebug-prefix-map=${CMAKE_BINARY_DIR}=build")
+endif()
+
 # godot-cpp 10.x generates bindings for a chosen Godot API; the project targets Godot 4.7.
 set(GODOTCPP_API_VERSION "4.7" CACHE STRING "Godot API version for godot-cpp bindings")
 # -DOPENBFME_BUILD_GODOT=OFF builds only openbfme_core + openbfme_tests (no godot-cpp), e.g. to run the
@@ -79,6 +112,7 @@ include(cmake/Stealth.cmake)    # STEALTH-1: invisibility and detection (appends
 include(cmake/Garrison.cmake)   # GARRISON-1: garrisons (appends to OPENBFME_SIM_SOURCES; OPENBFME_GARRISON_TESTS)
 include(cmake/Transport.cmake)  # GARRISON-2: transports, siege carriers, turrets (appends to OPENBFME_SIM_SOURCES; OPENBFME_TRANSPORT_TESTS)
 include(cmake/Hud2.cmake)       # OPENBFME_HUD2_SOURCES / OPENBFME_HUD2_TESTS (lane HUD-2: radar terrain picture, Palantir globe and power cap)
+include(cmake/Radar1.cmake)     # OPENBFME_RADAR1_TESTS (lane RADAR-1: the radar's objects and view box as RotWK draws them)
 include(cmake/Smooth.cmake)     # OPENBFME_SMOOTH_SOURCES / OPENBFME_SMOOTH_TESTS (lane SMOOTH-1, client only)
 include(cmake/Phys1.cmake)      # PHYS-1: collision and separation, PhysicsBehavior (appends to OPENBFME_SIM_SOURCES; OPENBFME_PHYS1_TESTS)
 include(cmake/Perf1.cmake)      # OPENBFME_PERF1_TESTS (lane PERF-1: benchmarks, optimisation determinism)
@@ -91,6 +125,7 @@ include(cmake/Qa1.cmake)       # OPENBFME_QA1_SOURCES / OPENBFME_QA1_TESTS (lane
 include(cmake/Mp2.cmake)        # MP-2: the disconnect path, a dropped player's assets (appends to OPENBFME_SIM_SOURCES; OPENBFME_MP2_TESTS)
 include(cmake/Script1.cmake)    # SCRIPT-1: the map script engine (appends to OPENBFME_SIM_SOURCES; OPENBFME_SCRIPT1_TESTS)
 include(cmake/Camp1.cmake)      # CAMP-1: the campaigns (OPENBFME_CAMP1_SOURCES / OPENBFME_CAMP1_TESTS)
+include(cmake/Camp2.cmake)      # CAMP-2: the movies' VP6 picture (OPENBFME_CAMP2_SOURCES / _GODOT_SOURCES / _TESTS)
 include(cmake/Ui1.cmake)        # UI-1: interface gaps (client only; OPENBFME_UI1_CLIENT_SOURCES / OPENBFME_UI1_TESTS)
 include(cmake/Release1.cmake)   # RELEASE-1: install discovery, version, session log (client only; OPENBFME_RELEASE1_SOURCES / _GODOT_SOURCES / _TESTS)
 include(cmake/Mod4.cmake)       # MOD-4: AISpecialPowerUpdate, RepairSpecialPower, ... (appends to OPENBFME_SIM_SOURCES; OPENBFME_MOD4_TESTS)
@@ -102,7 +137,11 @@ include(cmake/Combat3.cmake)    # COMBAT-3: cavalry charges and siege crews (OPE
 include(cmake/Combat4.cmake)    # COMBAT-4: shockwaves, siege crews in motion, corpses (OPENBFME_COMBAT4_TESTS)
 include(cmake/Hud4.cmake)       # HUD-4: every command reachable, every hotkey (appends to OPENBFME_SIM_SOURCES; OPENBFME_HUD4_TESTS)
 include(cmake/Qa2fix.cmake)     # QA2-FIX: a player's wall span through the HUD, the lobby after a game (OPENBFME_QA2FIX_TESTS)
+include(cmake/Hud5.cmake)       # HUD-5: the owner's first Windows session (OPENBFME_HUD5_CLIENT_SOURCES / OPENBFME_HUD5_TESTS)
 include(cmake/Exit1.cmake)      # EXIT-1: the horde member update, stale MOVING (appends to OPENBFME_SIM_SOURCES; OPENBFME_EXIT1_TESTS)
+include(cmake/Cah1.cmake)       # CAH-1: the Create-a-Hero screens (client only; OPENBFME_CAH1_SOURCES / _GODOT_SOURCES / _TESTS)
+include(cmake/Move3.cmake)      # MOVE-3: horde spacing, the blocked path patch (appends to OPENBFME_SIM_SOURCES; OPENBFME_MOVE3_TESTS)
+include(cmake/Input1.cmake)     # INPUT-1: RotWK's input layer (OPENBFME_INPUT1_TESTS)
 add_library(openbfme_core STATIC
     ${OPENBFME_APT_SOURCES}
     ${OPENBFME_AUDIO4_CLIENT_SOURCES}
@@ -131,6 +170,9 @@ add_library(openbfme_core STATIC
     ${OPENBFME_UI2_CLIENT_SOURCES}
     ${OPENBFME_SCRIPT1_SOURCES}
     ${OPENBFME_CAMP1_SOURCES}
+    ${OPENBFME_HUD5_CLIENT_SOURCES}
+    ${OPENBFME_CAH1_SOURCES}
+    ${OPENBFME_CAMP2_SOURCES}
     src/Common/AsciiString.cpp
     src/Common/LogicFrameClock.cpp
     src/Common/MD5.cpp
@@ -341,7 +383,7 @@ target_sources(openbfme_core PRIVATE ${OPENBFME_SPELL_CLIENT_SOURCES}) # lane SP
 # game start (GameLogic/NewGame, a thin caller since START-1), creates the logic objects and queues the player's commands (HUD-1 moves the commands into core);
 # GodotGameStart.cpp marshals the lobby's NewGameMessage between Godot Dictionaries and the logic's struct (the values the logic consumes), so it is audited too.
 if(OPENBFME_BUILD_GODOT)
-    set(OPENBFME_SIM_SOURCES_GODOT src/GodotDevice/GodotGameWorld.cpp src/GodotDevice/GodotGameStart.cpp src/GodotDevice/GodotGameWorldHeroes.cpp src/GodotDevice/GodotGameWorldStealth.cpp src/GodotDevice/GodotGameWorldGarrison.cpp) # HERO-1: the hero commands; STEALTH-1: the stealth viewer helpers; GARRISON-1: the garrison commands
+    set(OPENBFME_SIM_SOURCES_GODOT src/GodotDevice/GodotGameWorld.cpp src/GodotDevice/GodotGameStart.cpp src/GodotDevice/GodotGameWorldHeroes.cpp src/GodotDevice/GodotGameWorldStealth.cpp src/GodotDevice/GodotGameWorldGarrison.cpp src/GodotDevice/GodotGameWorldCah.cpp) # CAH-1: the builder's map mode; HERO-1: the hero commands; STEALTH-1: the stealth viewer helpers; GARRISON-1: the garrison commands
 endif()
 openbfme_sim_write_manifest(${CMAKE_CURRENT_BINARY_DIR}/sim_manifest.json)
 # `cmake --build <dir> --target sim_audit` (after the build): the flags of every compile command, the manifest and the type-aware AST scan (tools/sim/sim_audit.py)
@@ -387,15 +429,28 @@ add_library(openbfme SHARED
     ${OPENBFME_AUDIO_GODOT_SOURCES}
     ${OPENBFME_SCRIPT1_GODOT_SOURCES}
     ${OPENBFME_CAMP1_GODOT_SOURCES}
+    ${OPENBFME_CAMP2_GODOT_SOURCES}
     ${OPENBFME_RELEASE1_GODOT_SOURCES}
     ${OPENBFME_UI2_GODOT_SOURCES}
-    ${OPENBFME_HUD4_GODOT_SOURCES})
+    ${OPENBFME_HUD4_GODOT_SOURCES}
+    ${OPENBFME_CAH1_GODOT_SOURCES})
 target_sources(openbfme PRIVATE ${OPENBFME_SIM_SOURCES_GODOT}) # the simulation sources of the extension (listed in the manifest)
 target_link_libraries(openbfme PRIVATE openbfme_core godot-cpp)
 if(UNIX AND NOT APPLE)
     # The extension links libstdc++ statically; without this its exported locale facet ids collide with the system runtime that Mesa loads into a
     # windowed Godot, and the first stream integer extraction (std::istream >> int) dispatches into the wrong codecvt and crashes (PROD-1 review r1).
     target_link_options(openbfme PRIVATE "-Wl,--exclude-libs,ALL")
+endif()
+if(OPENBFME_LINUX_DEBUG_FILE AND UNIX AND NOT APPLE)
+    # godot-cpp's interface holds only its release `-s` link option (cmake/common_compiler_flags.cmake): the strip happens after the split
+    set_property(TARGET godot-cpp PROPERTY INTERFACE_LINK_OPTIONS "")
+    find_program(OPENBFME_OBJCOPY NAMES objcopy llvm-objcopy REQUIRED)
+    add_custom_command(TARGET openbfme POST_BUILD
+        COMMAND "${OPENBFME_OBJCOPY}" --only-keep-debug "$<TARGET_FILE:openbfme>" "$<TARGET_FILE:openbfme>.debug"
+        COMMAND "${OPENBFME_OBJCOPY}" --strip-all "$<TARGET_FILE:openbfme>"
+        COMMAND "${CMAKE_COMMAND}" -E chdir "$<TARGET_FILE_DIR:openbfme>" "${OPENBFME_OBJCOPY}" "--add-gnu-debuglink=$<TARGET_FILE_NAME:openbfme>.debug"
+                "$<TARGET_FILE_NAME:openbfme>"
+        VERBATIM)
 endif()
 get_target_property(GODOTCPP_SUFFIX godot-cpp GODOTCPP_SUFFIX)
 set_target_properties(openbfme PROPERTIES
@@ -427,6 +482,7 @@ add_executable(openbfme_tests
     ${OPENBFME_HUD_TESTS}
     ${OPENBFME_QA1_TESTS}
     ${OPENBFME_HUD2_TESTS}
+    ${OPENBFME_RADAR1_TESTS}
     ${OPENBFME_COMBAT_TESTS}
     ${OPENBFME_STRUCTURE_TESTS}
     ${OPENBFME_SPELL_TESTS}
@@ -460,6 +516,7 @@ add_executable(openbfme_tests
     ${OPENBFME_MP2_TESTS}
     ${OPENBFME_SCRIPT1_TESTS}
     ${OPENBFME_CAMP1_TESTS}
+    ${OPENBFME_CAMP2_TESTS}
     ${OPENBFME_UI1_TESTS}
     ${OPENBFME_RELEASE1_TESTS}
     ${OPENBFME_MOD4_TESTS}
@@ -470,6 +527,10 @@ add_executable(openbfme_tests
     ${OPENBFME_HUD4_TESTS}
     ${OPENBFME_QA2FIX_TESTS}
     ${OPENBFME_EXIT1_TESTS}
+    ${OPENBFME_HUD5_TESTS}
+    ${OPENBFME_CAH1_TESTS}
+    ${OPENBFME_MOVE3_TESTS}
+    ${OPENBFME_INPUT1_TESTS}
     tests/test_main.cpp
     tests/test_big_archive.cpp
     tests/test_archive_order.cpp

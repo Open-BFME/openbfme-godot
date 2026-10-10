@@ -99,6 +99,12 @@ void showList(GameWindow *window, ImageComboData *d)
 		return;
 	}
 	d->list->winHide(false);
+	if (ListboxData *ld = static_cast<ListboxData *>(d->list->winGetUserData()))
+	{
+		// lane FB7-1: RW 0x725439 / 0x72525B: the image combo's list follows the pointer from the selected row
+		ld->trackHover = ld->hoverActive = true;
+		ld->hoverPos = ld->selectPos;
+	}
 	int w, h;
 	window->winGetSize(&w, &h);
 	d->closedHeight = h;

@@ -2,6 +2,7 @@
 // See GameClient/GUI/AptGadgetLayer.h.
 
 #include "GameClient/GUI/AptGadgetLayer.h"
+#include "GameClient/GUI/AptColorPicker.h"
 
 #include "Common/ArchiveFileSystem.h"
 #include "Common/INI.h"
@@ -70,6 +71,7 @@ AptGadgetLayer::AptGadgetLayer(WindowManager &windows, AptFileSource &source, Ga
 	m_lexicon.draw["W3DDrawMapPreview"] = W3DDrawMapPreview;
 	m_lexicon.system["PassSelectedButtonsToParentSystem"] = PassSelectedButtonsToParentSystem;
 	m_windows.setGadgetLayer(this);
+	m_pickers = std::make_unique<AptColorPickers>(m_windows, m_skins.images, m_source); // lane CAH-2
 }
 
 AptGadgetLayer::~AptGadgetLayer()
@@ -78,6 +80,7 @@ AptGadgetLayer::~AptGadgetLayer()
 	{
 		m_windows.setGadgetLayer(nullptr);
 	}
+	m_pickers.reset(); // lane CAH-2: its externs and component name go before the window manager's records
 	// the WindowManager's component records still hold shared_ptrs with deleters into this layer: drop them first
 	m_windows.releaseComponentWindows();
 	for (const std::string &symbol : componentSymbols())
@@ -101,6 +104,7 @@ void AptGadgetLayer::registerComponents()
 	{
 		m_windows.registerComponent(symbol, [this](AptComponentRequest &r) -> std::shared_ptr<GameWindow> { return createGadget(r); });
 	}
+	m_pickers->registerComponent(); // lane CAH-2: "ColorPicker" (RW 0x8151D2) has its own handler
 }
 
 std::shared_ptr<GameWindow> AptGadgetLayer::createGadget(AptComponentRequest &request)
@@ -265,6 +269,10 @@ void AptGadgetLayer::destroyEngineGadget(GameWindow *window)
 
 void AptGadgetLayer::update(int elapsedMs)
 {
+	if (m_pickers)
+	{
+		m_pickers->update(); // lane CAH-2: RW 0xB552BF's per-draw work
+	}
 	m_timeMs += (std::uint32_t)elapsedMs;
 	m_gwm.setTimeMs(m_timeMs);
 	for (const WindowManager::ComponentRecord &rec : m_windows.components())

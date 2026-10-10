@@ -13,6 +13,15 @@
 ##     --map=<key>           (with --auto) the map cache key, default maps/map mp evendim/map mp evendim.map
 ##     --faction=<Name>      (with --auto) slot 0's PlayerTemplate (default FactionMen); --ai=<2..5> slot 1's AI level; --color=<index> slot 0's colour (default random)
 ##     --advance=<seconds>   (with --auto) game time to run after the first frame, then quit
+##     --free-camera         (lane PLAY-1) lift the camera's zoom-out limit to the map's extent (not retail; Options.ini OpenBFMEFreeCamera = yes does the same)
+##     --hud5=<a,b,...>      (lane HUD-5, with --auto) the owner's first Windows session's items, scripted (scripts/hud5_player.gd: fortress, players, powers,
+##                           gate, construction, levels); "HUD5 <name>: ok / FAIL", screenshots hud5-<name>.png in --screens
+##     --start-spot=<n>      (with --auto) slot 0 clicks the lobby's start spot n first (RW 0x845830): e.g. 0 = Player_1_Start, a fortress map's fortress
+##     --play1=<a,b,...>     (lane PLAY-1, with --auto) the input-driven scenarios of scripts/play1_player.gd (orders, palantir, powers, camera, explore): every
+##                           action is an InputEvent pushed into the viewport; prints PLAY1 lines; with --end the end of the game follows
+##     --input1=<a,b,...>    (lane INPUT-1, with --auto) the keyboard scenarios of scripts/input1_player.gd (groups, ...): every key is an InputEventKey
+##                           given to Input.parse_input_event; prints INPUT1 lines
+##     --classic-mouse / --alternate-mouse  (lane PLAY-1) force the left / right click to order (default: Options.ini AlternateMouseSetup, else retail's right click)
 ##     --vsync=on|off|mailbox|adaptive, --max-fps=<n>   frame pacing (lane SMOOTH-1, scripts/frame_pacing.gd): default vsync on, no frame cap
 ##     --screens=<dir>       (with --auto) write start1-lobby.png, start1-loading.png and start1-game.png there
 ##     --check               (with --auto) no window assumptions: print the report lines and quit with the exit code (0 = no errors)
@@ -92,7 +101,26 @@
 ##     --campaign-win        (test hooks) each mission's decisive moment is played by the GameWorld test hooks (Amon Sul, Fornost, the bonus mission)
 ##     --campaign-check=N    quit after N missions ended (exit 0 when all were won), printing the CAMPAIGN lines
 ##     --movies=off          (lane CAMP-1H) the campaign movies (intro, mission intros, PLAY_MOVIE_IN_GAME: their narration over black, S-1710) are not played
+##     --campaign-menu=CMD[:ARG] (lane CAMP-2) once the main menu is shown, run its command AptMainMenu::CMD (Expansion1Campaign:N, BonusCampaign:N,
+##                           ContinueCampaign), as its button does
+##     every game's start and every return to the shell print "GAME SHELL PICTURES <where>: ..." (lane CAMP-2: the backdrop and the front-end background as
+##     the canvas drew them, and any developer text on screen; tests/camp2_test.gd)
+##     --shell-pictures-quit=N (lane CAMP-2) quit (exit 0) once N SHELL PICTURES lines were printed
+##     --intro / --no-intro  (lane CAMP-2) the start-up movies (EALogoMovie, NewLineLogo, TolkienLogo, Overall_Game_Intro: RW 0x645B8D / 0x64838D,
+##                           when GameData PlayIntro): by default they play in a windowed start without automation options (retail: not with a
+##                           .map file to start or headless, RW 0x63C9BB / 0x63CC07); --intro plays them anyway, --no-intro / --movies=off never
+##     --intro-check         (lane CAMP-2, tests) play the start-up movies, then quit (exit 0 when all played)
+##     --movie-file=TITLE=PATH (lane CAMP-2, tests) the movie TITLE opens PATH instead of its file (a damaged or missing movie)
+##     --movie-skip-after=MS (lane CAMP-2, tests) every movie is skipped MS milliseconds after its start, as a player's Esc
+##     --dev-overlay         (lane CAMP-2) the developer overlays of the campaign presentation (the logic frame, "input disabled", the objective list);
+##                           the real game draws no developer text (tests/textscan: tools/check_dev_overlays.py)
 ##
+##   lane CAH-1, Create-a-Hero: the main menu's Create-a-Hero opens CreateAHero.apt over its map mode (scripts/create_a_hero_view.gd); the heroes are the system
+##   heroes of the archives and the profile's MyHero_<id>.cah in retail's save folder (--cah-profile=DIR); the Skirmish / LAN lobby's Hero combo picks one for the slot
+##     --cah                 (with --auto) build a hero in the builder through the movies' own functions and commands (class, appearance, name, powers), save it,
+##                           back to the main menu, pick it in the Skirmish lobby's Hero combo (with --faction), start, recruit it at the fortress; exit 0 when the
+##                           hero was saved, chosen, installed and made. --screens writes cah1-*.png. Lane CAH-2 r2: the run saves into a temporary folder
+##                           of its own (--cah-real-profile: the real save folder) and removes its hero and that folder at its end
 ## HOOKS OF OTHER LANES (leave the names as they are):
 ##   _on_shell_service(kind, a, b)   every ShellServices call: kind "sound" (a = the sound name) is AUDIO-1's hook for UI sounds and music cues; "load_music" carries the faction's
 ##                                   LoadScreenMusic when a load starts; "background", "mouse_visible", "tooltip" are the others
@@ -150,7 +178,17 @@ var _loading_shot_done := false
 var _load_log: Array = []
 var _hud_installed := false
 var _hud: Node
-var _alternate_mouse := false
+## lane PLAY-1: the mouse setup forced on the command line ("alternate": the right click orders, "classic": the left click orders, "": the player's setting)
+var _mouse_override := ""
+var _move_hints: Node3D
+## lane PLAY-1: the free camera (the owner's presentation option, not retail): --free-camera or Options.ini "OpenBFMEFreeCamera = yes"
+var _free_camera_flag := false
+## lane PLAY-1: the input-driven scenarios of scripts/play1_player.gd (--play1=orders,palantir,powers,camera)
+var _play1 := PackedStringArray()
+var _hud5 := PackedStringArray() # lane HUD-5
+var _start_spot := -1            # lane HUD-5
+## lane INPUT-1: the keyboard scenarios of scripts/input1_player.gd (--input1=groups,...)
+var _input1 := PackedStringArray()
 var _game_frames := 0
 var _auto_task_started := false
 # lane MP-1
@@ -182,6 +220,13 @@ var _lan_port_base := -1
 var _lan_shot := ""
 var _end_capture := "" # lane UI-2: --end-capture=DIR
 var _options_shot := "" # lane UI-2: --options-shot=FILE
+var _menu_walk := "" # lane FB7-1: --menu-walk=DIR
+var _menu_walk_only := "" # lane CAH-2 r2: --menu-walk-only=BUTTON (one button, the probe)
+var _menu_walk_drop := "" # lane CAH-2 r2: --menu-walk-drop=ACTION (TEST HOOK: the host ignores that shell request, so the walk must fail)
+var _walk_failures := 0
+var _walk_finished := false
+var _walk_logger: Object = null
+const WALK_WATCHDOG_SECONDS := 1500
 var _options_shot_frames := 0
 var _lan_phase := 0
 var _lan_wait := 0
@@ -237,6 +282,19 @@ var _cli_difficulty := 1
 var _campaign_win := false
 var _campaign_check := -1
 var _campaign_movies := true    # lane CAMP-1H: --movies=off
+var _campaign_menu := ""        # lane CAMP-2: --campaign-menu=CMD[:ARG]
+var _game_kind := ""            # lane CAMP-2: how the game being entered started (the SHELL PICTURES lines)
+var _shell_pictures_pending := 0 # lane CAMP-2: reports still waiting for their frames (--campaign-check quits after them)
+var _shell_pictures_seen := 0
+var _shell_pictures_start_done := false
+var _shell_pictures_quit := 0    # lane CAMP-2: --shell-pictures-quit=N
+var _movie_files := {}          # lane CAMP-2: --movie-file=TITLE=PATH (tests: the file a movie title opens)
+var _movie_skip_after := -1     # lane CAMP-2: --movie-skip-after=MS (tests: every movie is skipped MS after its start, as by Esc)
+var _intro := "auto"            # lane CAMP-2: --intro (on) / --no-intro (off)
+var _intro_check := false       # lane CAMP-2: --intro-check (tests): the start-up movies, then quit
+const INTRO_QUIET_ARGS := ["--fps", "--dev-overlay", "--intro", "--alternate-mouse", "--free-camera"] # options that are not automation
+var _dev_overlay := false       # lane CAMP-2: --dev-overlay (developer text on screen; never in the real game)
+var _control_bar_hidden := false # lane CAMP-2: HideControlBar / ShowControlBar (RW 0x804576 / 0x8046A1) of the script's letterbox and HIDE_UI / SHOW_UI
 var _qa := false                # lane QA-1
 var _qa_idle := false
 var _qa_minutes := 20.0
@@ -246,6 +304,14 @@ var _qa_tag := "qa"
 var _qa_cash := 0
 var _teams := PackedStringArray()
 var _quit_flow := ""            # lane END-2: --quit / --quit-restart (the scripted quit menu)  # lane END-2: Continue after a LAN game opens the LAN lobby again
+var _cah: Node = null           # lane CAH-1: the Create-a-Hero builder's 3D view while CreateAHero.apt is up
+var _cah_profile := ""          # lane CAH-1: --cah-profile=DIR (the folder of the profile's MyHero*.cah; default <user data>/Save)
+var _cah_demo := false          # lane CAH-1: --cah (the scripted builder -> lobby -> game run)
+var _cah_builder_only := false  # lane CAH-1: --cah-builder-only (quit after the builder part)
+var _cah_real_profile := false   # lane CAH-2 r2: --cah-real-profile (the --cah run writes the player's real save folder; default: a temporary one)
+var _cah_temp_root := ""        # lane CAH-2 r2: the --cah run's temporary user data folder (removed at its end)
+var _rotwk_install := ""        # lane CAH-2: the mounted RotWK install folder (its gi.dat names the user data folder)
+var _cah_hero_id := ""          # lane CAH-1: the unique id of the hero the --cah run saved
 
 
 func _ready() -> void:
@@ -254,6 +320,15 @@ func _ready() -> void:
 		if arg.begins_with("--res="):
 			var p := arg.substr(6).split("x")
 			_res = Vector2i(int(p[0]), int(p[1]))
+		elif arg == "--cah":
+			_cah_demo = true
+		elif arg == "--cah-builder-only":
+			_cah_demo = true
+			_cah_builder_only = true
+		elif arg.begins_with("--cah-profile="):
+			_cah_profile = arg.substr(14)
+		elif arg == "--cah-real-profile":
+			_cah_real_profile = true
 		elif arg.begins_with("--seed="):
 			_seed = int(arg.substr(7))
 		elif arg == "--auto":
@@ -267,7 +342,19 @@ func _ready() -> void:
 		elif arg == "--check":
 			_check = true
 		elif arg == "--alternate-mouse":
-			_alternate_mouse = true
+			_mouse_override = "alternate"
+		elif arg == "--classic-mouse":
+			_mouse_override = "classic"
+		elif arg == "--free-camera":
+			_free_camera_flag = true
+		elif arg.begins_with("--play1="):
+			_play1 = arg.substr(8).split(",", false)
+		elif arg.begins_with("--hud5="):
+			_hud5 = arg.substr(7).split(",", false)
+		elif arg.begins_with("--start-spot="):
+			_start_spot = int(arg.substr(13))
+		elif arg.begins_with("--input1="):
+			_input1 = arg.substr(9).split(",", false)
 		elif arg == "--report":
 			_print_report = true
 		elif arg == "--end":
@@ -377,6 +464,24 @@ func _ready() -> void:
 			_campaign_check = int(arg.substr(17))
 		elif arg == "--movies=off":
 			_campaign_movies = false
+		elif arg == "--dev-overlay":
+			_dev_overlay = true
+		elif arg.begins_with("--movie-file="):
+			var spec := arg.substr(13)
+			_movie_files[spec.get_slice("=", 0)] = spec.substr(spec.find("=") + 1)
+		elif arg.begins_with("--movie-skip-after="):
+			_movie_skip_after = int(arg.substr(19))
+		elif arg == "--intro":
+			_intro = "on"
+		elif arg == "--no-intro":
+			_intro = "off"
+		elif arg == "--intro-check":
+			_intro = "on"
+			_intro_check = true
+		elif arg.begins_with("--campaign-menu="):
+			_campaign_menu = arg.substr(16)
+		elif arg.begins_with("--shell-pictures-quit="):
+			_shell_pictures_quit = int(arg.substr(22))
 		elif arg.begins_with("--lan="):
 			_lan_mode = arg.substr(6)
 		elif arg.begins_with("--lan-ai="):
@@ -387,6 +492,12 @@ func _ready() -> void:
 			_lan_targets = arg.substr(14)
 		elif arg.begins_with("--lan-port-base="):
 			_lan_port_base = int(arg.substr(16))
+		elif arg.begins_with("--menu-walk="):
+			_menu_walk = arg.substr(12)
+		elif arg.begins_with("--menu-walk-only="):
+			_menu_walk_only = arg.substr(17)
+		elif arg.begins_with("--menu-walk-drop="):
+			_menu_walk_drop = arg.substr(17)
 		elif arg.begins_with("--options-shot="):
 			_options_shot = arg.substr(15)
 		elif arg.begins_with("--end-capture="):
@@ -432,6 +543,7 @@ func _build_stage() -> void:
 
 
 func _fail(message: String) -> void:
+	_cah_cleanup() # lane CAH-2 r2: a failed --cah run leaves no hero behind either
 	_failed = message
 	_state = State.FAILED
 	printerr("GAME FAIL: ", message)
@@ -448,6 +560,7 @@ func _boot() -> void:
 	_fs = ClassDB.instantiate("RetailFileSystem")
 	# lane RELEASE-1: the environment, the remembered folders, or the first-run screen (scripts/release/release.gd)
 	var mount: Dictionary = await Release.mount_retail(_fs)
+	_rotwk_install = str(mount.get("rotwk_install", "")) # lane CAH-2: the Create-a-Hero save folder's name is in the install's gi.dat
 	if mount.get("quit", false):
 		get_tree().quit(0)
 		return
@@ -464,14 +577,26 @@ func _boot() -> void:
 		return
 	if not _boot_audio():
 		return
+	await _play_intro_movies() # lane CAMP-2
 	_shell = ClassDB.instantiate("AptMenuPlayer")
 	_shell.name = "Shell"
 	add_child(_shell)
-	var boot: Dictionary = _shell.boot_shell(_fs, _world, {"seed": _seed})
+	# lane FB7-1: the Options screen's inputs the device knows (AptSimpleScreens.h): the AudioSettings default volumes and the display modes (Godot lists
+	# no adapter modes: the screen's size and the window's; S-1913); the addresses come from the native LAN transport
+	var window_size := DisplayServer.window_get_size()
+	var screen_size := DisplayServer.screen_get_size()
+	var modes: Array = [window_size]
+	if screen_size != window_size:
+		modes.append(screen_size)
+	var boot: Dictionary = _shell.boot_shell(_fs, _world, {"seed": _seed, "default_volumes": _audio.get_default_volumes(),
+		"display_modes": modes, "current_resolution": window_size})
 	if not boot.ok:
 		_fail("shell: " + "\n".join(boot.errors))
 		return
 	print("GAME shell booted in %.0f ms: %d strings, lobby seed %d" % [boot.load_ms, boot.strings, boot.seed])
+	# lane CAH-1: the Create-a-Hero builder's and the lobby's heroes: the system heroes of the archives and the profile's MyHero*.cah (RW 0x61EEB6: <user data>\\Save\\)
+	var cah: Dictionary = _shell.set_create_a_hero(_world, _cah_profile_dir())
+	print("GAME Create-a-Hero heroes: %d in %s %s" % [cah.get("heroes", 0), _cah_profile_dir(), "" if cah.ok else str(cah.errors)])
 	_shell.shell_request.connect(_on_shell_request)
 	_shell.shell_service.connect(_on_shell_service)
 	_shell.shell_screen.connect(_on_shell_screen)
@@ -498,6 +623,8 @@ func _boot() -> void:
 	if _auto and not _auto_task_started:
 		_auto_task_started = true
 		_run_auto()
+	elif not _menu_walk.is_empty():
+		_run_menu_walk()
 	if _net_host > 0 or not _net_join.is_empty():
 		_net_open()
 	elif not _replay_file.is_empty():
@@ -515,6 +642,11 @@ func _process(delta: float) -> void:
 			var shown: Dictionary = _shell.shell_invoke(_shell.shell_top_level(), "ShowMainMenu", PackedStringArray())
 			if not shown.ok:
 				printerr("GAME ShowMainMenu: ", shown.error)
+			if not _shell_pictures_start_done:
+				_shell_pictures_start_done = true
+				_report_shell_pictures("in the shell at start") # lane CAMP-2: what a return to the shell must show again
+		if _cah != null:
+			_cah.tick(delta)
 		var message: Dictionary = _shell.take_new_game()
 		if not message.is_empty():
 			_begin_game(message)
@@ -522,6 +654,13 @@ func _process(delta: float) -> void:
 			_net_poll_lobby()
 		elif not _lan_mode.is_empty() and _menu_revealed:
 			_lan_script_tick()
+		elif not _campaign_menu.is_empty() and _menu_revealed and _frames >= LEVEL_MAIN_MENU_FRAMES + 30 and _shell_pictures_seen > 0:
+			# lane CAMP-2: the main menu's campaign button, by its command (AptMainMenu's fscommand table)
+			var cmd := _campaign_menu
+			_campaign_menu = ""
+			print("GAME campaign menu: AptMainMenu::%s (%s)" % [cmd.get_slice(":", 0), cmd.get_slice(":", 1)])
+			if not _shell.shell_fscommand("AptMainMenu::" + cmd.get_slice(":", 0), cmd.get_slice(":", 1)):
+				_fail("the main menu refused AptMainMenu::" + cmd)
 		elif not _options_shot.is_empty() and _menu_revealed:
 			_options_shot_tick()
 	elif _state == State.PLAYING:
@@ -540,17 +679,17 @@ func _process(delta: float) -> void:
 		_score_tick()
 
 
-# lane FX-2: the 3D sounds (effects, deaths, weapons) are heard from where the tactical camera looks: its ground position and heading, SAGE space (ZH sets the
-# listener from the view each frame; RotWK's call was not read: inference). Without it every positional sound is culled by distance from the origin.
+# lane AUDIO-5: the 3D sounds (effects, deaths, weapons) are heard from retail's microphone (RW recalculateMicrophone 0x45235B): between the tactical
+# camera's eye and the point it looks at, facing the camera's heading. get_camera gives both in Godot axes (x, z, -y); the audio core takes SAGE space.
 func _update_listener() -> void:
 	if _audio == null or _hud == null or not _hud.has_method("get_camera"):
 		return
 	var cam: Dictionary = _hud.get_camera()
-	if not cam.has("position"):
+	if not cam.has("eye") or not cam.has("target"):
 		return
-	var p: Vector2 = cam.position
-	var a: float = cam.get("angle", 0.0)
-	_audio.set_listener(Vector3(p.x, p.y, cam.get("ground_level", 0.0)), Vector3(cos(a), sin(a), 0.0))
+	var e: Vector3 = cam.eye
+	var t: Vector3 = cam.target
+	_audio.update_microphone(Vector3(e.x, -e.z, e.y), Vector3(t.x, -t.z, t.y), true)
 
 
 # ---- the shell's hooks -----------------------------------------------------------------------------------------------------------------------
@@ -561,12 +700,25 @@ func _on_shell_service(kind: String, a: String, b: String) -> void:
 		_audio.play_shell_sound(a)
 	elif kind == "load_music":
 		_audio.play_music(a)
+	elif kind == "option":
+		_apply_option(a, b)
 	elif kind == "tooltip" or kind == "mouse_visible" or kind == "background":
 		pass
 
 
+# lane FB7-1: an Options.ini entry the Options screen saved takes effect: the volumes (RW 0x91EC52 / 0x91FC9C: TheAudio vslot 0xE8(type, value * 0.01));
+# the movie volume has no slider in the audio device (S-1913), the brightness and the rest are not applied here (S-1913)
+const OPTION_VOLUME_SLIDERS := {"SFXVolume": "sound", "VoiceVolume": "voice", "MusicVolume": "music", "AmbientVolume": "ambient"}
+func _apply_option(key: String, value: String) -> void:
+	if OPTION_VOLUME_SLIDERS.has(key) and _audio != null:
+		_audio.set_volume(OPTION_VOLUME_SLIDERS[key], clampf(value.to_float() * 0.01, 0.0, 1.0))
+
+
 func _on_shell_request(action: String, argument: String) -> void:
 	print("GAME shell request: ", action, " (", argument, ")")
+	if not _menu_walk_drop.is_empty() and action == _menu_walk_drop:
+		print("GAME TEST HOOK: --menu-walk-drop drops the request ", action)
+		return
 	if action == "ExitGame":
 		get_tree().quit(0)
 	elif action == "ScoreScreenContinue":
@@ -584,12 +736,77 @@ func _on_shell_request(action: String, argument: String) -> void:
 	elif action == "BonusCampaign": # RW 0x91BEFA
 		_campaign_flow.start("ANGMAR_BONUS_CAMPAIGN", _campaign_flow.difficulty_from_command(argument))
 	elif action == "ContinueCampaign":
-		_campaign_flow.continue_saved()
+		if not _campaign_flow.continue_saved():
+			print("GAME stop: ", _shell.shell_screen_unavailable("ContinueCampaignNone")) # lane CAH-2: no progress must not leave the menu disabled
 
+	elif action == "CreateAHero":
+		_cah_begin()
+	elif action == "CreateAHeroExit":
+		_cah_end()
 	elif action == "ToggleQuitMenu":
 		_toggle_quit_menu()
+	elif action == "PalantirObjectives":
+		_palantir_objectives()
+	elif action == "TributeReturnToGame":
+		_close_tribute()
 	elif action.begins_with("QuitMenu"):
 		_quit_menu_action(action)
+	else:
+		# lane CAH-2 (S-1914): a main-menu request this host opens no screen for must not leave the menu disabled: the player gets a message box
+		# ("... is not available in this build yet") whose Ok makes the menu usable again, and the stop line is printed
+		var line: String = _shell.shell_screen_unavailable(action)
+		if not line.is_empty():
+			print("GAME stop: ", line)
+
+
+# ---- lane CAH-1: the Create-a-Hero builder (CreateAHero.apt over the map mode, scripts/create_a_hero_view.gd) ---------------------------------------------
+
+func _cah_profile_dir() -> String:
+	# lane CAH-2: retail's folder: <application data>\<gi.dat UserDataLeafName>\Save\ (RW 0x644148 / 0x6DD398), e.g. %APPDATA%\My The Lord of the Rings,
+	# The Rise of the Witch-king Files\Save\ on Windows; --cah-profile=DIR overrides it (tests)
+	if not _cah_profile.is_empty():
+		return _cah_profile
+	if _cah_demo and not _cah_real_profile:
+		# lane CAH-2 r2: the scripted --cah run never writes into the player's real profile unless --cah-real-profile says so: a fresh temporary
+		# folder of its own (removed by _cah_cleanup)
+		_cah_profile = OS.get_temp_dir().path_join("openbfme-cah-%d-%d" % [OS.get_process_id(), Time.get_ticks_usec()]).path_join("Save")
+		_cah_temp_root = _cah_profile.get_base_dir()
+		DirAccess.make_dir_recursive_absolute(_cah_profile)
+		print("CAH isolated save folder ", _cah_profile, " (--cah-real-profile writes the real one)")
+		return _cah_profile
+	var r: Dictionary = _shell.create_a_hero_save_folder(_rotwk_install)
+	if not r.ok:
+		printerr("GAME Create-a-Hero: no save folder: ", r.error, " (the builder cannot save heroes)")
+		return ""
+	return r.folder
+
+
+func _cah_begin() -> void:
+	if _cah != null:
+		return
+	_cah = load("res://scripts/create_a_hero_view.gd").new()
+	_cah.name = "CreateAHeroView"
+	add_child(_cah)
+	var size: Vector2i = get_viewport().get_visible_rect().size
+	if not _cah.begin(_world, _shell, size):
+		_fail("the Create-a-Hero map mode: " + "\n".join(_cah.errors))
+		return
+	# lane CAH-2: the map mode is a game start (RW 0x91A018 -> RW 0x7111E5(7)): the front-end background and the shell's backdrop go as at any game's start
+	# (RW 0x622C88(0), RW 0x601C62: showShellMap(0)), so the builder's 3D view is seen. INFERENCE (S-1405): the mode-7 start's own calls were not read
+	_shell.shell_hide_background()
+	_shell.shell_show_shell_map(false)
+	_apply_lighting(_cah.report)
+
+
+func _cah_end() -> void:
+	if _cah == null:
+		return
+	_cah.end()
+	_cah.queue_free()
+	_cah = null
+	# lane CAH-2: back in the shell (RW 0x7792BC: showShellMap(1)); the front-end background as the menus' openers show it (SetBackground "fadein")
+	_shell.shell_show_shell_map(true)
+	_shell.shell_fscommand("SetBackground", "fadein")
 
 
 func _on_shell_screen(filename: String) -> void:
@@ -618,6 +835,7 @@ func _boot_audio() -> bool:
 
 func _begin_game(message: Dictionary) -> void:
 	print("GAME new game: map %s seed %d cash %d" % [message.map, message.seed, message.starting_cash])
+	_game_kind = "lan" if _net_state == "loading" else ("network" if not _net_state.is_empty() else ("restart" if not _restart_stack.is_empty() else "skirmish"))
 	_last_new_game = message.duplicate(true) # lane END-2: the quit menu's Restart starts it again (RW 0x9220DE)
 	if _restart_stack.is_empty():
 		_start_stack = _shell.shell_stack() # lane END-2: the screens the score screen's Continue shows again (TheShell + 0x9C, RW 0x925798)
@@ -633,6 +851,7 @@ func _begin_game(message: Dictionary) -> void:
 		if s.state >= 2:
 			print("GAME   slot %d: state %d faction %d colour %d start %d team %d (was faction %d colour %d start %d)" % [i, s.state, s.player_template, s.color, s.start_pos, s.team, -1, -1, -1])
 	_state = State.LOADING
+	_shell_leave_for_game()
 	var cards: Dictionary = _shell.set_load_screen_from_game(resolved)
 	if cards.has("error"):
 		_fail("load screen: " + cards.error)
@@ -665,6 +884,123 @@ func _begin_game(message: Dictionary) -> void:
 	_enter_game(rep)
 
 
+## lane CAMP-2: every way into a game (a skirmish, a LAN game, Restart, a replay, a campaign mission, the campaign's next mission and Continue) takes the
+## shell's pictures away, as a game's start does in retail: the front-end background (Skirmish's start RW 0x9286D7: RW 0x622C88(0)) and the shell backdrop
+## (RW 0x601C62: showShellMap(0), lane FB7-1). The owner's campaign showed the backdrop (ShellMapLowLOD) over the whole mission (CAMP-2 bug 1)
+func _shell_leave_for_game() -> void:
+	_shell.shell_hide_background()
+	_shell.shell_show_shell_map(false)
+
+
+## lane CAMP-2: what is on screen behind the movies, from the scene: the shell backdrop the canvas drew, the front-end background's visible commands in the
+## render list, and the developer text (_dev_text_on_screen); printed 45 frames after a game's start (in game) or a return to the shell
+func _report_shell_pictures(where: String) -> void:
+	_shell_pictures_pending += 1
+	for i in 45:
+		await get_tree().process_frame
+	var b: Dictionary = _shell.get_backdrop_state()
+	# the front-end background (Background.apt) is a View3D clip whose hide is the 3D model's own animation: its clip stays in the render list, so its
+	# state is the window manager's mode (0 hidden, 1 front end, 2 in game; RW 0x622C88 / 0x6230B6) with the clip count for the record
+	print("GAME SHELL PICTURES %s: backdrop '%s', background mode %d (%d clip commands), control bar drawn %s, developer text %s" % [where,
+		b.backdrop_image, int(b.background_mode), int(b.background_commands), str(control_bar_drawn()) if _state == State.PLAYING else "-",
+		str(_dev_text_on_screen())])
+	_shell_pictures_pending -= 1
+	_shell_pictures_seen += 1
+	if _shell_pictures_quit > 0 and _shell_pictures_seen >= _shell_pictures_quit:
+		print("GAME SHELL PICTURES quit after %d reports" % _shell_pictures_seen)
+		get_tree().quit(0)
+
+
+## lane CAMP-2: the visible Labels with text that are not the game's own text (the nodes that show game text carry the meta "game_text"): developer
+## overlays, which must never show in the real game (--fps / --net-overlay / --dev-overlay put them there on purpose)
+func _dev_text_on_screen() -> Array:
+	var out: Array = []
+	var stack: Array = [get_tree().root]
+	while not stack.is_empty():
+		var n: Node = stack.pop_back()
+		if (n is Label or n is RichTextLabel) and n.is_visible_in_tree() and not String(n.text).strip_edges().is_empty() and not n.has_meta("game_text"):
+			out.append("%s: %s" % [n.get_path(), String(n.text).strip_edges().left(60)])
+		stack.append_array(n.get_children())
+	return out
+
+
+## lane CAMP-2: every way back to the shell (the score screen's Continue, the campaign's return to the main menu) shows the backdrop again (RW 0x7792BC:
+## showShellMap(1)); the front-end background comes back with the main menu's own FadeInBackground (SetBackground fadein, RW 0x815507)
+func _shell_back_from_game() -> void:
+	_shell.shell_show_shell_map(true)
+	_report_shell_pictures("back in the shell")
+
+
+## lane CAMP-2: HideControlBar(true) (RW 0x804576) / ShowControlBar(false) (RW 0x8046A1) as the map scripts call them: CAMERA_LETTERBOX_BEGIN / END
+## (ScriptActions::executeAction RW 0x7CAFA5 cases 118 / 119 -> doLetterBoxMode RW 0x7BC8B7, which also turns the display's letterbox on / off) and
+## HIDE_UI / SHOW_UI (cases 347 / 348). BFME2 decomp ControlBarVisibility.cpp (tier A for RW 0x804576): the palantir, the banner UI and the in-game UI part
+## are told to hide. Here the HUD movie's level (Palantir.apt, with the radar and the native components it carries) is hidden, and the HUD's own drawing
+## with it. INFERENCE: the hide animation (HideControlBar's immediate=true has none; ShowControlBar(false) animates in retail) is not played
+func _set_control_bar_hidden(hidden: bool) -> void:
+	if hidden == _control_bar_hidden:
+		return
+	_control_bar_hidden = hidden
+	print("GAME control bar %s" % ("hidden" if hidden else "shown"))
+	var stack: PackedStringArray = _shell.shell_stack()
+	if stack.size() > 0 and stack[0] == "Palantir.apt":
+		# the HUD movie is the shell's only game screen (_enter_game); a menu pushed over it (the quit menu) stays as it is
+		_shell.set_level_visible(_palantir_level(), not hidden)
+	if _hud != null:
+		_hud.visible = not hidden
+	# the tests read it back from the render list a few frames later
+	for i in 3:
+		await get_tree().process_frame
+	if _control_bar_hidden == hidden and _state == State.PLAYING:
+		print("GAME control bar drawn after the %s: %s" % ["hide" if hidden else "show", str(control_bar_drawn())])
+
+
+## the Apt level of the HUD movie (the bottom of the shell's stack in a game)
+func _palantir_level() -> int:
+	return int(_shell.shell_levels()[0]) if _shell.shell_levels().size() > 0 else -1
+
+
+## lane CAMP-2: whether the HUD movie is drawn (the tests read it from the render list, not from the flag)
+func control_bar_drawn() -> bool:
+	var level := _palantir_level()
+	return level >= 0 and _shell.level_drawn(level)
+
+
+## lane CAMP-2: the start-up movies, before the shell (GameClient's start-up callbacks): RW 0x645B8D plays EALogoMovie (display slot 0x10C with 0, 8),
+## RW 0x64838D NewLineLogo and TolkienLogo (0, 8) then Overall_Game_Intro (1, 0x30) and writes the preference HasSeenLogoMovies = yes; both only when
+## GlobalData + 0xAF2 (GameData PlayIntro) is set. Each can be skipped (scripts/movie_player.gd). NOT PORTED (stop S-2341): the two arguments of the
+## display's movie slot (ZH playLogoMovie: the minimum movie and copyright times; RotWK's meaning not read) and the preference write
+func _play_intro_movies() -> void:
+	var play := _intro == "on"
+	if _intro == "auto":
+		play = DisplayServer.get_name() != "headless"
+		for arg in OS.get_cmdline_user_args():
+			if not INTRO_QUIET_ARGS.has(arg):
+				play = false # an automated start (retail: a .map file to start with)
+	if _intro == "off" or not _campaign_movies:
+		play = false
+	var gate: Dictionary = _world.get_play_intro()
+	if not gate.get("ok", false):
+		printerr("GAME intro: GameData PlayIntro: ", gate.get("error", "?"))
+	print("GAME intro movies: %s (GameData PlayIntro %s%s)" % ["play" if play and gate.get("play_intro", true) else "not played", str(gate.get("play_intro", true)),
+		"" if gate.get("from_ini", false) else ", the default"])
+	if not play or not gate.get("play_intro", true):
+		return
+	var player: Node = load("res://scripts/movie_player.gd").new()
+	player.skip_after_ms = _movie_skip_after
+	player.path_overrides = _movie_files
+	player.name = "IntroMovies"
+	add_child(player)
+	for title in ["EALogoMovie", "NewLineLogo", "TolkienLogo", "Overall_Game_Intro"]:
+		await player.play(_world, _audio, title)
+		if not player.last.is_empty():
+			print("GAME intro movie: ", JSON.stringify(player.last))
+	print("GAME STOP [S-2341] the start-up movies' display arguments (0, 8 / 1, 0x30) and the preference HasSeenLogoMovies are not ported")
+	print("GAME intro movies done: %d errors %s" % [player.errors.size(), str(player.errors)])
+	player.queue_free()
+	if _intro_check:
+		get_tree().quit(0 if player.errors.is_empty() else 1)
+
+
 func _shell_load_screen_push() -> void:
 	if not _shell.shell_push("LoadScreen.apt"):
 		_fail("the shell refused LoadScreen.apt: " + str(_shell.get_shell_report().errors))
@@ -691,6 +1027,7 @@ func _enter_game(rep: Dictionary) -> void:
 		_fail("the shell refused Palantir.apt: " + str(_shell.get_shell_report().errors))
 		return
 	_shell.auto_process = true
+	_control_bar_hidden = false # lane CAMP-2: a new HUD movie is shown
 	_apply_lighting(rep)
 	_camera.current = true
 	# AUDIO-2 (review r1 fix 2): the live game's audio side before the game advances: sound owners, the player filter, ambient / group / move sounds, TheEva's
@@ -707,6 +1044,7 @@ func _enter_game(rep: Dictionary) -> void:
 	_world.set_auto_advance(true)
 	_state = State.PLAYING
 	_games_started += 1
+	_report_shell_pictures("in game (%s)" % _game_kind) # lane CAMP-2
 	print("GAME playing: frame %d, %d objects, hash %d" % [_world.get_frame(), _world.get_object_count(), _world.get_state_hash()])
 	if _print_report:
 		print("GAME REPORT ", JSON.stringify(rep))
@@ -740,7 +1078,15 @@ func _install_hud(rep: Dictionary) -> void:
 	if not _net_camera.is_empty():
 		var c := _net_camera.split(",")
 		camera_start = Vector3(float(c[0]), float(c[1]), float(c[2]))
-	var r: Dictionary = hud.attach(_fs, _world, _camera, _shell, local, {"alternate_mouse": _alternate_mouse, "camera_start": camera_start})
+	var alternate := _alternate_mouse_setup()
+	print("GAME mouse setup: %s orders" % ("the right click" if alternate else "the left click"))
+	var free_camera := _free_camera_setting()
+	if free_camera:
+		print("GAME free camera: on (the zoom-out limit is the map's extent; not retail)")
+	# lane HUD-5: Options.ini AllHealthBars (RW 0x6E6179: "yes" -> true, absent -> false) gates the infantry / cavalry health bars (GlobalData + 0x9BE)
+	var all_bars = _shell.get_option("AllHealthBars") if _shell != null and _shell.has_method("get_option") else null
+	var r: Dictionary = hud.attach(_fs, _world, _camera, _shell, local, {"alternate_mouse": alternate, "camera_start": camera_start, "free_camera": free_camera,
+		"all_health_bars": all_bars != null and str(all_bars) == "yes"})
 	print("GAME HUD installed: ok=%s errors=%s" % [r.ok, r.errors])
 	if not r.ok:
 		hud.queue_free()
@@ -753,6 +1099,39 @@ func _install_hud(rep: Dictionary) -> void:
 	add_child(ring)
 	_game_nodes.append(ring) # lane END-1: goes with the game
 	ring.setup(hud, _world)
+	# lane PLAY-1: the move hint on the ground where a move order was given (ZH W3DInGameUI::drawMoveHints, GameData MoveHintName)
+	_move_hints = load("res://scripts/move_hints.gd").new()
+	add_child(_move_hints)
+	_game_nodes.append(_move_hints)
+	var mh: Dictionary = _move_hints.setup(hud, _fs)
+	print("GAME move hints: ", JSON.stringify(mh))
+	if not mh.ok:
+		printerr("GAME move hints: ", mh.errors)
+
+
+## lane PLAY-1: which button orders. TARGET FACTS (RotWK game.dat, caveat S-001): GlobalData's constructor sets m_useAlternateMouse (+ 0x5C) to 1 (RW 0x642A4B:
+## the right click orders, the left click selects); at start RW 0x641E72 replaces it with OptionPreferences' answer (RW 0x6E61D4): the Options.ini key
+## "AlternateMouseSetup" absent -> GlobalData's value, present -> true unless the value is exactly "yes" (strcmp with RW 0xBD3D80 "yes", setne). The Options
+## screen shows the inverse (RW 0x920A80: neg / sbb / inc): its "alternate mouse setup" box is the left-click setup.
+func _alternate_mouse_setup() -> bool:
+	if _mouse_override != "":
+		return _mouse_override == "alternate"
+	# the scripted QA player (scripts/qa_player.gd, qa_scene.gd) is written for the left-click setup (it orders with left clicks and drops the selection with
+	# a right click): its runs keep that setup unless --alternate-mouse asks for the retail default
+	if _qa:
+		return false
+	var v = _shell.get_option("AlternateMouseSetup") if _shell != null and _shell.has_method("get_option") else null
+	if v == null:
+		return true
+	return str(v) != "yes"
+
+
+## lane PLAY-1: the free camera lifts retail's zoom-out limit (TacticalCamera::setFreeCamera; camera only, the simulation never sees it)
+func _free_camera_setting() -> bool:
+	if _free_camera_flag:
+		return true
+	var v = _shell.get_option("OpenBFMEFreeCamera") if _shell != null and _shell.has_method("get_option") else null
+	return v != null and str(v).to_lower() == "yes"
 
 
 func _apply_lighting(rep: Dictionary) -> void:
@@ -816,12 +1195,24 @@ func _click_button(level: int, path: String) -> bool:
 	return true
 
 
+## lane HUD-5: the viewport's picture, or null (logged) when the device cannot capture (the headless display server has no texture to read)
+func _capture_image(what: String) -> Image:
+	var tex := get_viewport().get_texture()
+	var image: Image = tex.get_image() if tex != null else null
+	if image == null or image.is_empty():
+		print("GAME screenshot %s skipped: the display device cannot capture (headless)" % what)
+		return null
+	return image
+
+
 func _save_screenshot(state: String) -> void:
 	if _screens.is_empty():
 		return
 	DirAccess.make_dir_recursive_absolute(_screens)
-	var image := get_viewport().get_texture().get_image()
 	var path := "%s/start1-%s.png" % [_screens, state]
+	var image := _capture_image(path)
+	if image == null:
+		return
 	var err := image.save_png(path)
 	print("GAME screenshot %s -> %s (%dx%d)" % [path, error_string(err), image.get_width(), image.get_height()])
 
@@ -829,12 +1220,45 @@ func _save_screenshot(state: String) -> void:
 func _run_auto() -> void:
 	# main menu: wait for ShowMainMenu, open the solo nav and click Skirmish (real mouse events)
 	await _step(LEVEL_MAIN_MENU_FRAMES + 70)
+	if _cah_demo:
+		await _run_cah()
+		return
 	if not await _auto_lobby_and_start():
 		return
 	await _step(30)
 	_save_screenshot("game")
 	if _qa:
 		await _run_qa()
+		return
+	if not _hud5.is_empty():
+		var h5: GDScript = load("res://scripts/hud5_player.gd")
+		if h5 == null or not h5.can_instantiate():
+			_fail("scripts/hud5_player.gd does not load")
+			return
+		var p5 = h5.new()
+		await p5.run(self, _hud5)
+		get_tree().quit(0 if p5.fail_count == 0 else 1)
+		return
+	if not _input1.is_empty():
+		var iscript: GDScript = load("res://scripts/input1_player.gd")
+		if iscript == null or not iscript.can_instantiate():
+			_fail("scripts/input1_player.gd does not load")
+			return
+		var iplayer = iscript.new()
+		await iplayer.run(self, _input1)
+		get_tree().quit(0 if iplayer.fail_count == 0 else 1)
+		return
+	if not _play1.is_empty():
+		var script: GDScript = load("res://scripts/play1_player.gd")
+		if script == null or not script.can_instantiate():
+			_fail("scripts/play1_player.gd does not load")
+			return
+		var player = script.new()
+		await player.run(self, _play1)
+		if _end:
+			await _run_end()
+			return
+		get_tree().quit(0 if player.fail_count == 0 else 1)
 		return
 	if _warp > 0.0:
 		# lane PERF-1: fast forward (the logic frames due run as fast as the worker allows), then measure the late game at normal speed
@@ -864,6 +1288,239 @@ func _run_auto() -> void:
 	_auto_report()
 
 
+## --cah (lane CAH-1): the builder, then the lobby and the game with the new hero
+func _cah_shot(name: String) -> void:
+	if _screens.is_empty():
+		return
+	DirAccess.make_dir_recursive_absolute(_screens)
+	get_viewport().get_texture().get_image().save_png(_screens.path_join("cah1-%s.png" % name))
+
+
+func _cah_invoke(function: String, args: Array = []) -> void:
+	var r: Dictionary = _shell.shell_invoke(_shell.shell_top_level(), function, PackedStringArray(args))
+	if not r.get("ok", false):
+		printerr("CAH invoke %s: %s" % [function, r.get("error", "")])
+
+
+func _cah_command(command: String, argument: String = "") -> void:
+	if not _shell.shell_fscommand(command, argument):
+		printerr("CAH command not registered: ", command)
+
+
+func _run_cah() -> void:
+	print("CAH the main menu's Create-a-Hero")
+	_cah_command("AptMainMenu::CreateAHero")
+	await _step(150)
+	_cah_shot("1-promo")
+	# the promo page's Continue (CahNewFeatures: SetExtern SuppressCAHPromo, ShowScreen Manager)
+	_cah_invoke("ShowScreen", ["Manager"])
+	await _step(150)
+	_cah_shot("2-manager")
+	print("CAH view ", JSON.stringify(_shell.get_create_a_hero_view()))
+	# Create new hero: the class page, the Wizard / the Men's class pairs
+	_cah_invoke("SetCreateNewHero", ["true"])
+	_cah_invoke("ShowScreen", ["Class"])
+	await _step(120)
+	for pair in [["1", "0"], ["2", "1"], ["0", "1"]]:
+		_cah_invoke("SetClassAndType", pair)
+		await _step(75)
+	_cah_shot("3-class")
+	_cah_invoke("ShowScreen", ["Appearance"])
+	await _step(120)
+	for slot in [0, 1, 2, 3, 4]:
+		_cah_command("AptCreateAHero::Appearance::NextAppearance", str(slot))
+		await _step(35)
+	_cah_command("AptCreateAHero::Appearance::AutoChangeBttn", "AttribRecommend")
+	await _step(20)
+	_cah_command("AptCreateAHero::Appearance::DecreaseAttribute", "4")
+	_cah_command("AptCreateAHero::Appearance::IncreaseAttribute", "0")
+	await _step(30)
+	if not _shell.create_a_hero_type_name("Hurin Ironhand"):
+		_fail("the builder's name entry is not up")
+		return
+	await _step(30)
+	_cah_shot("4-appearance")
+	# lane CAH-2 r2: a colour picked with the mouse on the shown colour tab's palette (GadgetColorPicker.swf's Click button: the drag writes <tab>Cursor,
+	# the ColorPicker component reads the palette texel, SetColor -> Appearance::On<tab>): the hero's record must change
+	var before: PackedByteArray = _shell.get_create_a_hero_view().get("record", PackedByteArray())
+	var picked := false
+	for b in _shell.list_buttons(_shell.shell_top_level()):
+		if b.hittable and String(b.path).contains("ColorPicker") and String(b.path).ends_with(".Click"):
+			var at := Vector2(b.x + 60.0, b.y + 4.0)
+			_mouse_event(at, false, false)
+			await _step(2)
+			_mouse_event(at, true, true)
+			await _step(6)
+			_mouse_event(at, false, true)
+			await _step(20)
+			picked = true
+			print("CAH colour picked on ", b.path)
+			break
+	var after: PackedByteArray = _shell.get_create_a_hero_view().get("record", PackedByteArray())
+	print("CAH colour pick changed the hero: ", str(picked and before != after))
+	if not picked or before == after:
+		_fail("the colour picker did not change the hero (picked %s)" % str(picked))
+		return
+	_cah_shot("4b-colour")
+	_cah_command("AptCreateAHero::Appearance::OnComplete")
+	_cah_invoke("ShowScreen", ["Powers"])
+	await _step(120)
+	for k in 10:
+		var v: Dictionary = _shell.get_create_a_hero_view()
+		var cell: String = v.get("available_power", "")
+		if cell.is_empty():
+			_cah_command("AptCreateAHero::OnNoPowerSelect")
+		else:
+			_cah_command("AptCreateAHero::OnPowerSelect", cell)
+		await _step(25)
+	_cah_shot("5-powers")
+	var view: Dictionary = _shell.get_create_a_hero_view()
+	print("CAH powers chosen: ", view.get("powers_chosen", 0))
+	_cah_command("AptCreateAHero::OnPowerSelectionComplete")
+	_cah_invoke("ShowScreen", ["Manager"])
+	await _step(150)
+	_cah_shot("6-saved")
+	for h in _shell.get_create_a_hero_heroes():
+		if h.name == "Hurin Ironhand" and not h.system:
+			_cah_hero_id = h.unique_id
+	if _cah_hero_id.is_empty():
+		_fail("the built hero was not saved: " + JSON.stringify(_shell.get_create_a_hero_view()))
+		return
+	print("CAH saved hero ", _cah_hero_id, " in ", _cah_profile_dir())
+	if not _cah_check_saved_file():
+		return
+	if _cah_builder_only:
+		var rep: Dictionary = _shell.get_shell_report()
+		for e in rep.get("errors", []):
+			print("CAH shell error: ", e)
+		print("CAH shell notes: ", JSON.stringify(rep.get("notes", {})))
+		print("CAH OK (builder only)")
+		_cah_cleanup()
+		get_tree().quit(0)
+		return
+	# back to the main menu (Class::Exit), then the Skirmish lobby with the hero
+	_cah_command("AptCreateAHero::Class::Exit")
+	await _step(120)
+	_menu_revealed = false
+	await _step(LEVEL_MAIN_MENU_FRAMES + 70)
+	if not await _auto_lobby_and_start():
+		return
+	await _step(60)
+	_save_screenshot("game")
+	await _cah_recruit()
+
+
+## lane CAH-2 r2: the --cah run removes what it wrote: the hero file it saved (also in the real profile with --cah-real-profile) and its temporary folder
+func _cah_cleanup() -> void:
+	if not _cah_demo:
+		return
+	if not _cah_hero_id.is_empty():
+		var path := _cah_profile_dir().path_join("MyHero_%s.cah" % _cah_hero_id)
+		if FileAccess.file_exists(path):
+			print("CAH cleanup: removed %s: %s" % [path, error_string(DirAccess.remove_absolute(path))])
+		_cah_hero_id = ""
+	if not _cah_temp_root.is_empty():
+		for sub in [_cah_temp_root.path_join("Save"), _cah_temp_root]:
+			if DirAccess.dir_exists_absolute(sub):
+				for f in DirAccess.get_files_at(sub):
+					DirAccess.remove_absolute(sub.path_join(f))
+				DirAccess.remove_absolute(sub)
+		print("CAH cleanup: removed the temporary folder ", _cah_temp_root, " (exists: %s)" % str(DirAccess.dir_exists_absolute(_cah_temp_root)))
+		_cah_temp_root = ""
+
+
+## lane CAH-2: the saved file is MyHero_<id>.cah in the save folder (RW 0x61A3AD) and holds exactly the record the save path writes (CreateAHeroHero::save,
+## RW 0x80B4F5); the folder read again from disk (RW 0x61EEB6) lists the hero with the same record
+func _cah_check_saved_file() -> bool:
+	var path := _cah_profile_dir().path_join("MyHero_%s.cah" % _cah_hero_id)
+	var bytes := FileAccess.get_file_as_bytes(path)
+	if bytes.is_empty():
+		_fail("the saved hero's file %s cannot be read: %s" % [path, error_string(FileAccess.get_open_error())])
+		return false
+	var record := PackedByteArray()
+	for h in _shell.get_create_a_hero_heroes():
+		if h.unique_id == _cah_hero_id:
+			record = h.record
+	var again: Dictionary = _shell.set_create_a_hero(_world, _cah_profile_dir())
+	var reloaded := PackedByteArray()
+	for h in _shell.get_create_a_hero_heroes():
+		if h.unique_id == _cah_hero_id and not h.system:
+			reloaded = h.record
+	print("CAH file %s: %d bytes, the save path's record %d bytes, equal %s; reloaded (%d heroes) equal %s" % [path, bytes.size(), record.size(), str(bytes == record), again.get("heroes", 0), str(reloaded == bytes)])
+	if bytes != record or reloaded != bytes:
+		_fail("the saved hero's file differs from the record the save path writes, or from the reloaded hero")
+		return false
+	return true
+
+
+func _cah_recruit() -> void:
+	var local_index := -1
+	var fortress := -1
+	var players: Array = _world.get_player_objects(_local_name)
+	for o in players:
+		if o.get("commandcenter", false):
+			fortress = int(o.id)
+	var st: Dictionary = _world.get_create_a_hero(0)
+	for i in 8:
+		var c: Dictionary = _world.get_create_a_hero(i)
+		if not c.is_empty():
+			local_index = i
+			st = c
+	print("CAH installed ", JSON.stringify(st))
+	if st.is_empty() or st.get("unique_id", "") != _cah_hero_id or not st.get("can_build", false):
+		_fail("the lobby's hero was not installed by the game start: " + JSON.stringify(st))
+		return
+	var heroes: Array = _world.get_heroes(local_index, fortress)
+	var index := -1
+	for h in heroes:
+		if h.template == "CreateAHero":
+			index = int(h.index)
+	if index < 0 or fortress < 0:
+		_fail("no CreateAHero in the fortress's hero list: " + JSON.stringify(heroes))
+		return
+	_world.give_money(local_index, 10000)
+	_world.queue_hero(local_index, fortress, index)
+	var fo: Dictionary = _world.get_object(fortress)
+	if _hud != null:
+		_hud.camera_look_at(Vector2(fo.x, fo.y))
+		_hud.camera_set_height(260.0)
+	_world.set_time_scale(4.0) # the recruitment's build time, fast forward (the video)
+	var made := -1
+	for i in 120:
+		await _step(30)
+		for o in _world.get_player_objects(_local_name):
+			if o.template == "CreateAHero":
+				made = int(o.id)
+		if made > 0:
+			break
+	_world.set_time_scale(1.0)
+	if made < 0:
+		_fail("the Create-a-Hero was not made")
+		return
+	var ho: Dictionary = _world.get_object(made)
+	print("CAH hero made: ", JSON.stringify(ho))
+	for i in 16: # follow it out of the gate
+		ho = _world.get_object(made)
+		if _hud != null:
+			_hud.camera_look_at(Vector2(ho.x, ho.y))
+			_hud.camera_set_height(110.0)
+		await _step(30)
+	if _hud != null:
+		# select it with a click: the Palantir shows the Create-a-Hero's portrait and its rank-1 command set
+		ho = _world.get_object(made)
+		var px: Vector2 = _hud.world_to_pixel(Vector2(ho.x, ho.y))
+		_hud.inject_mouse_move(px)
+		await _step(4)
+		_hud.inject_mouse_button(MOUSE_BUTTON_LEFT, true, px)
+		await _step(2)
+		_hud.inject_mouse_button(MOUSE_BUTTON_LEFT, false, px)
+		print("CAH selection: ", JSON.stringify(_hud.get_selection()))
+	_cah_shot("7-in-game")
+	print("CAH OK")
+	_cah_cleanup()
+	get_tree().quit(0)
+
+
 ## --replay-menu-test (lane MP-2): the game just played was recorded; leave it, open Load Replay from the main menu, then play the newest replay back to its end
 func _run_replay_menu_test() -> void:
 	var recorded: Dictionary = _world.recording_status()
@@ -876,7 +1533,9 @@ func _run_replay_menu_test() -> void:
 	await _step(90)
 	if not _screens.is_empty():
 		DirAccess.make_dir_recursive_absolute(_screens)
-		get_viewport().get_texture().get_image().save_png(_screens.path_join("mp2-replay-menu.png"))
+		var shot := _capture_image("mp2-replay-menu.png")
+		if shot != null:
+			shot.save_png(_screens.path_join("mp2-replay-menu.png"))
 	var files: Array = _world.list_replays(_replay_dir())
 	if files.is_empty():
 		_fail("no replay was recorded in " + _replay_dir())
@@ -906,6 +1565,8 @@ func _auto_lobby_and_start() -> bool:
 		return false
 	# the lobby: the profile popup, the map, the slots
 	var slots: Array = [{"slot": 0, "faction": _faction, "color": _color}]
+	if not _cah_hero_id.is_empty():
+		slots[0]["hero"] = _cah_hero_id # lane CAH-1: the Hero combo
 	for i in range(1, _opponents + 1):
 		slots.append({"slot": i, "state": _ai})
 	for i in range(mini(_teams.size(), slots.size())): # lane QA-1: --teams
@@ -927,6 +1588,22 @@ func _auto_lobby_and_start() -> bool:
 		_fail("lobby: " + str(applied.errors))
 		return false
 	await _step(90)
+	if _start_spot >= 0:
+		# lane HUD-5: slot 0 takes the start spot by a click (RW 0x845830), as the owner does in the lobby
+		var spot: Dictionary = _shell.lobby_gadget_rect("spot/%d" % _start_spot)
+		if not spot.found:
+			_fail("lobby: no start spot %d" % _start_spot)
+			return false
+		var c := Vector2(spot.x + spot.w * 0.5, spot.y + spot.h * 0.5)
+		_mouse_event(c, false, false)
+		await _step(2)
+		_mouse_event(c, true, true)
+		await _step(2)
+		_mouse_event(c, false, true)
+		await _step(30)
+		print("GAME lobby: slot 0 took start spot %d" % _start_spot)
+	if _cah_demo:
+		await _step(150) # lane CAH-1: the Hero combo with the new hero, on screen for the video
 	_save_screenshot("lobby")
 	var skirmish_level: int = _shell.shell_top_level()
 	if not await _click_button(skirmish_level, "lobby.StartGame"):
@@ -984,6 +1661,11 @@ func _end_game_tick() -> void:
 			_show_end_message(r)
 		elif r.kind == "transition":
 			_fade_tactical_sound()
+		elif r.kind == "clear_game_data":
+			# lane PLAY-1: the end-game timer ran out (RW 0x602FFE -> RW 0x603533: MSG_CLEAR_GAME_DATA, 25 logic frames after the local side's VICTORY /
+			# DEFEAT): the game is left to the score screen as retail leaves it (no surrender: the game is already decided for this player)
+			print("GAME END the end-game timer ran out: leaving to the score screen")
+			call_deferred("_exit_to_score_screen")
 	if _end_message_label != null and _end_message_until > 0 and Time.get_ticks_msec() > _end_message_until:
 		_end_message_label.text = ""
 		_end_message_until = 0
@@ -998,7 +1680,48 @@ func _input(event: InputEvent) -> void:
 		if _quit_open and not stack.is_empty() and stack[-1] == "Options.apt":
 			_shell.shell_pop()
 			return
+		# lane PLAY-1: Escape over the powers screen closes it with its purchases (AptSpellStore: OnBttnClose and Escape, RW 0x8232ED), not the quit menu
+		if _hud != null and _hud.get_spellbook_state().get("store", {}).get("open", false):
+			_hud.close_spell_store()
+			print("GAME powers screen closed by Escape")
+			return
+		# lane PLAY-1: Escape over the tribute screen closes it (its key handler RW 0x914E91 -> RW 0x914C51), not the quit menu
+		if not stack.is_empty() and stack[-1] == "PlayerTribute.apt":
+			_close_tribute()
+			return
 		_toggle_quit_menu()
+
+
+## lane PLAY-1: the Palantir's flag (AptPalantir::OnBttnObjectives RW 0x6D40C9). In a skirmish or a multiplayer game (RW 0x625456: mode 2 or a network game)
+## RW 0x914EF0 pushes PlayerTribute.apt over the game when none is up and the game is not ending (the end-game timer, RW 0x914F37); otherwise RW 0x8E8843 opens
+## the objectives screen, which is not ported (S-1922)
+func _palantir_objectives() -> void:
+	var ctx: Dictionary = _world.get_quit_menu_context()
+	var mode: int = ctx.get("mode", 2)
+	if mode != 2 and mode != 1 and mode != 5:
+		print("GAME STOP [S-1922] the objectives screen (RW 0x8E8843) is not ported")
+		return
+	if _shell.shell_stack().has("PlayerTribute.apt") or _quit_open or _state != State.PLAYING:
+		return
+	# lane HUD-5: the Status page's rows (name, army, team, status) from the live game, read when the movie loads the page (RW 0x9151C3 / 0x915BF6)
+	var ps: Dictionary = _shell.set_player_status(_world.get_player_status_state())
+	if not ps.get("ok", false):
+		printerr("GAME players screen: ", ps.get("error", "?"))
+	else:
+		print("GAME players screen rows: ", JSON.stringify(ps.rows))
+	if not _shell.shell_push("PlayerTribute.apt"):
+		printerr("GAME PlayerTribute.apt: ", str(_shell.get_shell_report().errors))
+		return
+	print("GAME tribute screen open (PlayerTribute.apt, RW 0x914EF0)")
+
+
+## PlayerTribute.apt closes (its <path>_ReturnToGame, Escape): RW 0x914C51 marks it closing and the shell pops it (RW 0x62215B)
+func _close_tribute() -> void:
+	var stack: PackedStringArray = _shell.shell_stack()
+	if stack.is_empty() or stack[-1] != "PlayerTribute.apt":
+		return
+	_shell.shell_pop()
+	print("GAME tribute screen closed")
 
 
 ## The in-game UI message (InGameUI vslot 0x3C / 0x48: "GUI:YouHaveBeenDefeated", "GUI:PlayerHasBeenDefeated" with the name). The Palantir's message area is
@@ -1014,6 +1737,7 @@ func _show_end_message(r: Dictionary) -> void:
 		_end_message_layer.layer = 90
 		add_child(_end_message_layer)
 		_end_message_label = Label.new()
+		_end_message_label.set_meta("game_text", true) # lane CAMP-2: the game's text (_dev_text_on_screen)
 		_end_message_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		_end_message_label.anchor_right = 1.0
 		_end_message_label.offset_top = 90
@@ -1335,6 +2059,7 @@ func _score_continue() -> void:
 	print("GAME END Continue covered screens hidden: %s (levels %s)" % [covered_hidden, str(levels)])
 	print("GAME STOP [S-1771] Continue pushes the shell's start screens again (retail pops the score screen off the stack it kept through the game, RW 0x75DB34)")
 	_audio.play_shell_music(false)
+	_shell_back_from_game() # lane FB7-1: back in the shell (RW 0x7792BC: showShellMap(1))
 	_menu_revealed = false
 	_frames = 0
 	_state = State.MENU
@@ -1345,6 +2070,415 @@ func _score_continue() -> void:
 		_net_open() # the LAN lobby again
 
 
+## lane FB7-1: --menu-walk=DIR: the main-menu paths a player takes, with real mouse events: every screen and the main menu after each return
+## saved as DIR/walk-<step>.png; prints MENUWALK lines (the stack, every button of the top screen and whether the mouse hits it); exit 0 when every
+## return reached a main menu whose nav buttons are hittable
+## lane CAH-2 r2: the walk's verdict. Every failure goes through _walk_fail (one counter, whatever function found it); a GDScript runtime error during
+## the walk (counted by scripts/walk_error_logger.gd) fails it too, and a walk that never reaches its end (a coroutine stopped by an error) fails by
+## the watchdog. Exit 0 only for 0 failures and 0 script errors.
+func _walk_fail(message: String) -> void:
+	_walk_failures += 1
+	print("MENUWALK FAIL ", message)
+
+
+func _walk_start() -> void:
+	_walk_failures = 0
+	_walk_logger = load("res://scripts/walk_error_logger.gd").new()
+	OS.add_logger(_walk_logger)
+	var watchdog := get_tree().create_timer(WALK_WATCHDOG_SECONDS)
+	watchdog.timeout.connect(func() -> void:
+		_walk_fail("watchdog: the walk did not finish in %d s (a step stopped by an error?)" % WALK_WATCHDOG_SECONDS)
+		_walk_finish())
+
+
+func _walk_finish() -> void:
+	if _walk_finished:
+		return
+	_walk_finished = true
+	var errors: int = _walk_logger.script_errors() if _walk_logger != null else 0
+	if errors > 0:
+		_walk_failures += errors
+		print("MENUWALK FAIL %d script error(s) during the walk, the first: %s" % [errors, _walk_logger.first_error()])
+	print("MENUWALK %s (%d failures)" % ["PASS" if _walk_failures == 0 else "FAIL", _walk_failures])
+	get_tree().quit(0 if _walk_failures == 0 else 1)
+
+
+func _run_menu_walk() -> void:
+	DirAccess.make_dir_recursive_absolute(_menu_walk)
+	_walk_start()
+	await _step(LEVEL_MAIN_MENU_FRAMES + 90)
+	var failures := 0
+	await _walk_shot("main-first")
+	failures += await _walk_main_ok("first")
+	if not _menu_walk_only.is_empty():
+		# lane CAH-2 r2: one button only (the probe): "SoloPlayNav.LoadGame" opens SoloPlayNav first; a name without a '.' is a button of its own
+		var dot := _menu_walk_only.find(".")
+		await _walk_press(_menu_walk_only.substr(0, dot) if dot > 0 else "", _menu_walk_only)
+		_walk_finish()
+		return
+	failures += await _walk_options_accept() # lane WINCRASH-1 (before Create-a-Hero, whose shell request leaves the navs disabled)
+	var paths := [
+		["options", ["OptionsNav", "OptionsNav.Settings"], "Options.apt"],
+		["skirmish", ["SoloPlayNav", "SoloPlayNav.Skirmish"], "Skirmish.apt"],
+		["lan", ["MultiPlayNav", "MultiPlayNav.LocalNetwork"], "LanLobby.apt"],
+		["replay", ["MultiPlayNav", "MultiPlayNav.Replay"], "SaveLoad.apt"],
+	]
+	for p in paths:
+		var name: String = p[0]
+		var level: int = _shell.shell_top_level()
+		for b in p[1]:
+			if not await _click_button(level, b):
+				_walk_fail("%s: cannot press %s" % [name, b])
+			await _step(60)
+		await _step(90)
+		var stack: PackedStringArray = _shell.shell_stack()
+		print("MENUWALK %s: stack %s" % [name, str(stack)])
+		if stack.size() == 0 or stack[-1] != p[2]:
+			_walk_fail("%s: %s is not on top" % [name, p[2]])
+			failures += 1
+			continue
+		await _walk_shot(name)
+		if name == "skirmish":
+			failures += await _walk_lobby_input()
+		for b in _shell.list_buttons(_shell.shell_top_level()):
+			print("MENUWALK   %s button %s (%.0f, %.0f) hittable=%s" % [name, b.path, b.x, b.y, b.hittable])
+		if not await _walk_back(name):
+			_shell.shell_pop()
+			await _step(120)
+			continue
+		await _step(120)
+		await _walk_shot("main-after-" + name)
+		failures += await _walk_main_ok(name)
+	failures += await _walk_every_nav_button()
+	_walk_finish()
+
+
+## lane CAH-2 (S-1914): every button of every main-menu nav, pressed with the mouse: the press must end in a screen on top (left again by its back
+## button), or the "not available in this build yet" box (closed by its Ok), and either way in a main menu whose nav buttons are hittable; a press
+## that leaves the menu disabled (a soft-lock) fails the walk. Buttons that start a game or quit are listed and not pressed (WALK_NOT_PRESSED).
+const WALK_NOT_PRESSED := ["Quit", "Exit", "Campaign", "Witch", "Bonus", "Continue", "Evil", "Good", "Angmar", "Tutorial"]
+func _walk_every_nav_button() -> int:
+	var failures := 0
+	for nav in ["SoloPlayNav", "MultiPlayNav", "OptionsNav"]:
+		var subs := await _walk_nav_subs(nav)
+		print("MENUWALK nav %s: %s" % [nav, str(subs)])
+		if subs.is_empty():
+			_walk_fail("nav %s: no buttons under it" % nav)
+			failures += 1
+		for sub in subs:
+			var skip := false
+			for word in WALK_NOT_PRESSED:
+				skip = skip or String(sub).containsn(word)
+			if skip:
+				print("MENUWALK not pressed (starts a game or quits) %s" % sub)
+				continue
+			failures += await _walk_press(nav, sub)
+	failures += await _walk_press("", "MyHeroes") # My Heroes is a button of its own, no nav
+	return failures
+
+
+# the buttons a nav shows once open: their clip paths below the nav (its own OpenButton left out)
+func _walk_nav_subs(nav: String) -> PackedStringArray:
+	var level: int = _shell.shell_top_level()
+	await _walk_open_nav(level, nav)
+	var out := PackedStringArray()
+	for b in _shell.list_buttons(level):
+		var path := String(b.path)
+		var at := path.find(nav + ".")
+		if at < 0 or not b.hittable:
+			continue
+		var sub := path.substr(at)
+		if sub.ends_with(".bttn"):
+			sub = sub.substr(0, sub.length() - 5)
+		if sub.containsn("OpenButton") or out.has(sub):
+			continue
+		out.push_back(sub)
+	_mouse_event(Vector2(5, 5), false, false)
+	await _step(10)
+	return out
+
+
+func _walk_open_nav(level: int, nav: String) -> void:
+	await _click_button(level, nav)
+	await _step(60)
+
+
+func _walk_press(nav: String, sub: String) -> int:
+	var name := sub.replace(".", "-")
+	var level: int = _shell.shell_top_level()
+	var target: Dictionary = _shell.find_button(level, sub)
+	var hittable := false
+	for x in _shell.list_buttons(level):
+		hittable = hittable or (target.found and x.path == target.path and x.hittable)
+	if not hittable and not nav.is_empty():
+		await _walk_open_nav(level, nav)
+	if not await _click_button(level, sub):
+		_walk_fail("%s: cannot press it" % name)
+		return 1
+	await _step(150)
+	var stack: PackedStringArray = _shell.shell_stack()
+	print("MENUWALK %s: stack %s" % [name, str(stack)])
+	if stack.size() > 0 and stack[-1] != "MainMenu.apt":
+		await _walk_shot(name)
+		if not await _walk_back(name):
+			_shell.shell_pop()
+			await _step(120)
+			return 1 + await _walk_main_ok(name) # _walk_back counted its failure
+		await _step(120)
+		return await _walk_main_ok(name)
+	var ok := _walk_find_box_ok()
+	if not ok.is_empty():
+		print("MENUWALK %s: the unavailable-screen box (%s)" % [name, ok.path])
+		await _walk_shot(name + "-box")
+		_mouse_event(Vector2(ok.x, ok.y), false, false)
+		await _step(2)
+		_mouse_event(Vector2(ok.x, ok.y), true, true)
+		await _step(2)
+		_mouse_event(Vector2(ok.x, ok.y), false, true)
+		await _step(120)
+		if not _walk_find_box_ok().is_empty():
+			_walk_fail("%s: the box's Ok did not close it" % name)
+			return 1
+	else:
+		# a page of the main menu itself (Credits: the _CreditsMovie clip and its Exit button, ExitCreditsButton -> ShowMainMenu)
+		for b in _shell.list_buttons(_shell.shell_top_level()):
+			var path := String(b.path)
+			if b.hittable and path.containsn("Exit") and not path.containsn("Quit"):
+				print("MENUWALK %s: a page of the main menu, left by %s" % [name, path])
+				await _walk_shot(name)
+				_mouse_event(Vector2(b.x, b.y), false, false)
+				await _step(2)
+				_mouse_event(Vector2(b.x, b.y), true, true)
+				await _step(2)
+				_mouse_event(Vector2(b.x, b.y), false, true)
+				await _step(150)
+				break
+	var bad := await _walk_main_ok(name)
+	if bad > 0:
+		_walk_fail("%s: soft-lock: the main menu is not usable after the press" % name)
+	return bad
+
+
+# the hittable Ok button of a message box on any level ({} when none is up)
+func _walk_find_box_ok() -> Dictionary:
+	for level in 16:
+		for b in _shell.list_buttons(level):
+			var path := String(b.path)
+			if b.hittable and path.contains("MessageBox") and path.containsn("Ok"):
+				return b
+	return {}
+
+
+## lane WINCRASH-1: Options left the ways that save, as the owner did on 2026-10-09 (e204772c crashed in AptOptions::Save): visit 0 clicks Accept
+## (the close animation plays, then GameCode('Save') reads every control); visit 1 clicks Advanced first (Main's advanced page removes the basic
+## page's clips) and leaves with Done (CloseOptions, then Save reads the basic page's sliders: the owner's crash path)
+func _walk_options_accept() -> int:
+	var failures := 0
+	for visit in 2:
+		await _wait_main_ready()
+		var level: int = _shell.shell_top_level()
+		for b in ["OptionsNav", "OptionsNav.Settings"]:
+			if not await _click_button(level, b):
+				_walk_fail("options-save: cannot press %s" % b) # lane CAH-2 r3: counted by the walk's verdict
+				failures += 1
+			await _step(60)
+		await _step(150)
+		var stack: PackedStringArray = _shell.shell_stack()
+		if stack.size() == 0 or stack[-1] != "Options.apt":
+			_walk_fail("options-save: Options.apt is not on top: " + str(stack))
+			return failures + 1
+		await _walk_shot("options-save-%d" % visit)
+		var leave := "Accept"
+		if visit == 1:
+			if not await _click_named_button("Advanced"):
+				_walk_fail("options-save: no Advanced button")
+				return failures + 1
+			await _step(120)
+			await _walk_shot("options-advanced")
+			leave = "Done"
+		if not await _click_named_button(leave):
+			_walk_fail("options-save: no %s button" % leave)
+			return failures + 1
+		await _step(240)
+		await _wait_main_ready()
+		print("MENUWALK options-save %d (%s): stack %s" % [visit, leave, str(_shell.shell_stack())])
+		failures += await _walk_main_ok("options-save-%d" % visit)
+	return failures
+
+
+# the main menu back and settled: its nav buttons hittable (its intro / return animation played out; a loaded machine renders slower and the
+# menu's timelines run on real time), at most 600 frames
+func _wait_main_ready() -> void:
+	for attempt in 40:
+		var stack: PackedStringArray = _shell.shell_stack()
+		if stack.size() > 0 and stack[-1] == "MainMenu.apt":
+			var level: int = _shell.shell_top_level()
+			var ready := 0
+			for nav in ["SoloPlayNav", "MultiPlayNav", "OptionsNav", "MyHeroes", "QuitMainMenu"]:
+				var b: Dictionary = _shell.find_button(level, nav)
+				for x in _shell.list_buttons(level) if b.found else []:
+					if x.path == b.path and x.hittable:
+						ready += 1
+			if ready == 5:
+				return
+		await _step(15)
+
+
+# clicks the hittable button of the top screen whose path ends with ".<name>" or holds ".<name>." (Options.apt: _level3.Buttons.Accept.bttn)
+func _click_named_button(name: String) -> bool:
+	var level: int = _shell.shell_top_level()
+	for button in _shell.list_buttons(level):
+		var p := String(button.path)
+		if button.hittable and (p.contains("." + name + ".") or p.ends_with("." + name)):
+			return await _click_button(level, p.substr(p.find(".") + 1).trim_suffix(".bttn"))
+	return false
+
+
+## lane FB7-1 r3: the lobby with real mouse events: the profile, a click on start spot 0 (RW 0x845830: the player takes it, the spot shows "1"), then
+## slot 0's Army list opened and the pointer on its third row (the highlight follows the pointer, RW 0x727081); one screenshot each
+func _walk_lobby_input() -> int:
+	var failures := 0
+	for attempt in 30:
+		if _shell.lobby_apply({"profile": "Gimli"}).ok:
+			break
+		await _step(10)
+	await _step(60)
+	var spot: Dictionary = _shell.lobby_gadget_rect("spot/0")
+	if not spot.found:
+		_walk_fail("lobby: no start spot 0")
+		return 1
+	var c := Vector2(spot.x + spot.w * 0.5, spot.y + spot.h * 0.5)
+	_mouse_event(c, false, false)
+	await _step(2)
+	_mouse_event(c, true, true)
+	await _step(2)
+	_mouse_event(c, false, true)
+	await _step(30)
+	await _walk_shot("skirmish-spot")
+	var army: Dictionary = _shell.lobby_gadget_rect("0/PlayerTemplate")
+	if not army.found:
+		_walk_fail("lobby: no Army combo for slot 0")
+		return failures + 1
+	var a := Vector2(army.x + army.w * 0.5, army.y + army.h * 0.5)
+	_mouse_event(a, false, false)
+	await _step(2)
+	_mouse_event(a, true, true)
+	await _step(2)
+	_mouse_event(a, false, true)
+	await _step(20)
+	var list: Dictionary = _shell.lobby_gadget_rect("list/0/PlayerTemplate")
+	if not list.found or list.h <= 0:
+		_walk_fail("lobby: the Army list did not open")
+		return failures + 1
+	# the third row: rows are the list's height over its visible rows; the pointer a little below the row's top
+	var row_h := float(list.h) / 8.0
+	_mouse_event(Vector2(list.x + list.w * 0.4, list.y + row_h * 2.5), false, false)
+	await _step(20)
+	await _walk_shot("dropdown-hover")
+	# close the list again (a click on the combo)
+	_mouse_event(a, true, true)
+	await _step(2)
+	_mouse_event(a, false, true)
+	await _step(20)
+	return failures
+
+
+func _walk_shot(name: String) -> void:
+	if DisplayServer.get_name() == "headless":
+		return # no frame to grab (the probe runs headless)
+	await RenderingServer.frame_post_draw
+	var path := "%s/walk-%s.png" % [_menu_walk, name]
+	var image := _capture_image(path)
+	if image == null:
+		return
+	print("MENUWALK screenshot %s -> %s" % [path, error_string(image.save_png(path))])
+
+
+# the back button of a screen: the first of these names the screen has
+func _walk_back(name: String) -> bool:
+	var level: int = _shell.shell_top_level()
+	# Skirmish's first visit asks for a profile (ProfilePopup): its Cancel first
+	for b in _shell.list_buttons(level):
+		if b.hittable and String(b.path).ends_with("ProfilePopup.Main.Cancel.bttn"):
+			await _click_button(level, "ProfilePopup.Main.Cancel")
+			await _step(60)
+			var st: PackedStringArray = _shell.shell_stack()
+			if st.size() > 0 and st[-1] == "MainMenu.apt":
+				print("MENUWALK %s: the profile popup's Cancel went back to the main menu" % name)
+				return true
+			level = _shell.shell_top_level()
+	for b in ["Buttons.Cancel", "Cancel", "cancel", "Back", "back", "BackButton", "MainMenu", "mainMenu", "lobby.MainMenu", "lobby.Back", "Exit", "BackBttn", "Buttons.Back", "Buttons.MainMenu", "MainButtons.MainMenu", "MainButtons.Cancel"]:
+		var found: Dictionary = _shell.find_button(level, b)
+		if found.found:
+			return await _click_button(level, b)
+	# lane CAH-2: a screen whose back button has another name (Create-a-Hero's promo page and Manager): the hittable buttons named like a way back,
+	# pressed until the main menu is on top (at most three pages)
+	for attempt in 3:
+		var pressed := false
+		for b in _shell.list_buttons(level):
+			var path := String(b.path)
+			if b.hittable and (path.containsn("MainMenu") or path.containsn("Back") or path.containsn("Exit") or path.containsn("Continue")):
+				print("MENUWALK %s: back through %s" % [name, path])
+				_mouse_event(Vector2(b.x, b.y), false, false)
+				await _step(2)
+				_mouse_event(Vector2(b.x, b.y), true, true)
+				await _step(2)
+				_mouse_event(Vector2(b.x, b.y), false, true)
+				await _step(120)
+				pressed = true
+				break
+		var st: PackedStringArray = _shell.shell_stack()
+		if st.size() > 0 and st[-1] == "MainMenu.apt":
+			return true
+		if not pressed:
+			break
+		level = _shell.shell_top_level()
+	for b in _shell.list_buttons(level):
+		print("MENUWALK   %s button %s (%.0f, %.0f) hittable=%s" % [name, b.path, b.x, b.y, b.hittable])
+	_walk_fail("%s: no back button" % name)
+	return false
+
+
+# the main menu is on top, its nav buttons are hittable, hovering one highlights it (prints the hit path)
+func _walk_main_ok(when: String) -> int:
+	var stack: PackedStringArray = _shell.shell_stack()
+	if stack.size() == 0 or stack[-1] != "MainMenu.apt":
+		_walk_fail("main menu (%s): stack %s" % [when, str(stack)])
+		return 1
+	var level: int = _shell.shell_top_level()
+	var bad := 0
+	print("MENUWALK main (%s) MainMenuShown=%s" % [when, str(_shell.get_member(level, "", "MainMenuShown"))])
+	if OS.has_environment("FB7_OPS"):
+		for line in _shell.describe_ops():
+			if line.contains("SoloPlayNav") or line.contains("MyHeroes"):
+				print("MENUWALK op (%s) %s" % [when, line])
+	for clip in ["SoloPlayNav", "MultiPlayNav", "OptionsNav", "MyHeroes", "QuitMainMenu", "SoloPlayNav.OpenButton", "SoloPlayNav.openbutton", "OptionsNav.OpenButton"]:
+		var info: Dictionary = _shell.instance_info(level, clip)
+		print("MENUWALK main (%s) %s frame %s/%s playing %s" % [when, clip, str(info.get("frame")), str(info.get("total_frames")), str(info.get("playing"))])
+	for nav in ["SoloPlayNav", "MultiPlayNav", "OptionsNav", "MyHeroes", "QuitMainMenu"]:
+		var b: Dictionary = _shell.find_button(level, nav)
+		if not b.found:
+			_walk_fail("main menu (%s): no %s" % [when, nav])
+			bad += 1
+			continue
+		var hits := false
+		for x in _shell.list_buttons(level):
+			if x.path == b.path:
+				hits = x.hittable
+		print("MENUWALK main (%s) %s hittable=%s" % [when, b.path, hits])
+		if not hits:
+			_walk_fail("main menu (%s): %s is not hittable" % [when, b.path])
+			bad += 1
+	var solo: Dictionary = _shell.find_button(level, "SoloPlayNav")
+	if solo.found: # lane CAH-2 r2: a missing nav is a failure counted above, not a script error here
+		_mouse_event(Vector2(solo.x, solo.y), false, false)
+		await _step(20)
+		await _walk_shot("hover-" + when)
+	_mouse_event(Vector2(5, 5), false, false)
+	await _step(10)
+	return bad
+
+
 ## lane UI-2: --options-shot: the main menu's Options screen (with the OpenBFME Soft particles box) saved to FILE, then quit
 func _options_shot_tick() -> void:
 	_options_shot_frames += 1
@@ -1352,7 +2486,10 @@ func _options_shot_tick() -> void:
 		if not _shell.shell_push("Options.apt"):
 			_fail("--options-shot: Options.apt: " + str(_shell.get_shell_report().errors))
 	elif _options_shot_frames == 150:
-		var image := get_viewport().get_texture().get_image()
+		var image := _capture_image(_options_shot)
+		if image == null:
+			get_tree().quit(0)
+			return
 		print("GAME options shot %s -> %s" % [_options_shot, error_string(image.save_png(_options_shot))])
 		get_tree().quit(0)
 
@@ -1365,7 +2502,9 @@ func _capture_end_frames() -> void:
 	var frames: Array[Image] = []
 	while Time.get_ticks_msec() - start < 5000:
 		await RenderingServer.frame_post_draw
-		var image := get_viewport().get_texture().get_image()
+		var image := _capture_image("end capture frame")
+		if image == null:
+			break
 		image.resize(image.get_width() / 2, image.get_height() / 2, Image.INTERPOLATE_BILINEAR) # half size in memory, written afterwards
 		frames.append(image)
 		times.append(str(Time.get_ticks_msec() - start))
@@ -1381,8 +2520,10 @@ func _save_named(name: String) -> void:
 	if _screens.is_empty():
 		return
 	DirAccess.make_dir_recursive_absolute(_screens)
-	var image := get_viewport().get_texture().get_image()
 	var path := "%s/%s.png" % [_screens, name]
+	var image := _capture_image(path)
+	if image == null:
+		return
 	print("GAME screenshot %s -> %s" % [path, error_string(image.save_png(path))])
 
 
@@ -1468,18 +2609,17 @@ func _run_end() -> void:
 		print("GAME END after Esc: end screen still showing: %s" % str(_world.get_end_game_state().get("showing", false)))
 		await _finish_end_flow(faction)
 		return
-	# updateEndGame hides it after 7 s
+	# lane PLAY-1: the end-game timer (RW 0x602FFE, 25 logic frames after VICTORY / DEFEAT) leaves the game to the score screen by itself (RW 0x603533),
+	# while the end screen still shows (updateEndGame hides it after 7 s of real time; leaving hides it first)
 	waited = 0.0
-	while waited < 12.0 and not _world.get_end_game_state().get("hidden", false):
+	while waited < 20.0 and _state != State.SCORE:
 		await _wait_seconds(0.25)
 		waited += 0.25
-	st = _world.get_end_game_state()
-	print("GAME END state after the end screen: ", JSON.stringify(st))
-	if not st.get("hidden", false):
-		_fail("the end screen did not hide")
+	print("GAME END left by the end-game timer: %s after %.2f s" % [str(_state == State.SCORE), waited])
+	if _state != State.SCORE:
+		print("GAME END state: ", JSON.stringify(_world.get_end_game_state()))
+		_fail("the end-game timer did not leave the game")
 		return
-	await _wait_seconds(1.5)
-	_exit_to_score_screen()
 	await _finish_end_flow(faction)
 
 
@@ -1845,6 +2985,8 @@ func _begin_replay(path: String) -> void:
 		return
 	_last_local_slot = int(prep.get("local_slot", -1))
 	_state = State.LOADING
+	_game_kind = "replay"
+	_shell_leave_for_game() # lane CAMP-2
 	var cards: Dictionary = _shell.set_load_screen_from_game(prep.resolved)
 	if cards.has("error"):
 		_fail("load screen: " + cards.error)
@@ -1928,11 +3070,13 @@ func _show_desync_box(dumps: Array) -> void:
 	var box := VBoxContainer.new()
 	panel.add_child(box)
 	var t := Label.new()
+	t.set_meta("game_text", true) # lane CAMP-2
 	t.text = title
 	t.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	t.add_theme_font_size_override("font_size", 24)
 	box.add_child(t)
 	var body := Label.new()
+	body.set_meta("game_text", true)
 	body.text = text
 	body.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	box.add_child(body)
@@ -1958,7 +3102,7 @@ func _main_thread_cpu_ms() -> float:
 
 
 ## --net-end (lanes END-1 / END-2): at --net-frames the joiner surrenders through the quit menu (Esc, Forfeit, its confirmation: MSG_SELF_DESTRUCT(false) on
-## the lockstep), both peers see the end (the joiner's defeat, the host's victory), leave through the quit menu's Exit to the score screen (type 3), and its
+## the lockstep), both peers see the end (the joiner's defeat, the host's victory), leave by the end-game timer (lane PLAY-1) to the score screen (type 3), and its
 ## Continue opens the LAN lobby again: the host hosts, the joiner joins, and a second LAN game starts and runs 20 frames
 func _net_end_flow(desyncs: int) -> void:
 	var ok := desyncs == 0
@@ -1983,20 +3127,13 @@ func _net_end_flow(desyncs: int) -> void:
 	ok = ok and es.get("shown", false) and es.get("victory_screen", false) == (not surrender)
 	await _wait_seconds(2.0)
 	_save_named("end2-lan-%s" % ("defeat" if surrender else "victory"))
+	# lane PLAY-1: the end-game timer (RW 0x602FFE, 25 logic frames after the local side's VICTORY / DEFEAT) leaves the game to the score screen
+	# (MSG_CLEAR_GAME_DATA, RW 0x603533): no quit menu is needed
 	waited = 0.0
-	while waited < 12.0 and not _world.get_end_game_state().get("hidden", false):
+	while _state != State.SCORE and waited < 30.0:
 		await _wait_seconds(0.25)
 		waited += 0.25
-	# Exit through the quit menu
-	await _press_escape()
-	await _wait_seconds(4.0)
-	ok = ok and await _click_quit("ExitMission")
-	await _wait_seconds(1.5)
-	ok = ok and await _click_quit("Yes")
-	waited = 0.0
-	while _state != State.SCORE and waited < 20.0:
-		await _wait_seconds(0.25)
-		waited += 0.25
+	print("GAME END left by the end-game timer: %s after %.2f s" % [str(_state == State.SCORE), waited])
 	var sd: Dictionary = _score_report.get("score_screen", {})
 	var entries: Array = sd.get("entries", [])
 	var local_result: int = entries[0].get("result", -1) if entries.size() > 0 else -1
@@ -2236,7 +3373,7 @@ func _campaign_check_tick() -> void:
 	# quit once the flow went on after the N-th end: the next mission is playing, or the main menu is back
 	var next_playing: bool = _campaign_flow.active and _campaign_flow.begun > ended.size() and _state == State.PLAYING
 	var menu_back: bool = not _campaign_flow.active and _state == State.MENU
-	if ended.size() >= _campaign_check and (next_playing or menu_back):
+	if ended.size() >= _campaign_check and (next_playing or menu_back) and _shell_pictures_pending == 0: # lane CAMP-2: after the SHELL PICTURES lines
 		var won := 0
 		for l in ended:
 			won += 1 if String(l).contains(" victory ") else 0

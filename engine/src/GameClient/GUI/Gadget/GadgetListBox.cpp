@@ -595,6 +595,18 @@ WindowMsgHandledType GadgetListBoxInput(GameWindow *window, std::uint32_t msg, W
 			break;
 		case GWM_LEFT_DOWN:
 			return MSG_HANDLED;
+		case GWM_MOUSE_POS:
+		{
+			// lane FB7-1: RW 0x727081 case 0x18: a list that follows the pointer (+0x12) takes the row under it (RW 0x7258E1: -1 past the last row)
+			// when no other window holds the mouse; the message RotWK then sends on (0x18 through the manager's +0xE8) is not ported [S-1916]
+			GameWindow *grab = mgr.winGetGrabWindow();
+			if (!list->trackHover || (grab && grab != window && !window->winIsChild(grab)))
+			{
+				return MSG_IGNORED;
+			}
+			list->hoverPos = rowAtMouse(window, (int)((mData1 >> 16) & 0xFFFF));
+			return MSG_HANDLED;
+		}
 		default:
 			return MSG_IGNORED;
 	}
@@ -1662,7 +1674,7 @@ void drawListBoxText(GameWindow *window, WinInstanceData *instData, int x, int y
 				}
 			}
 		}
-		else if (i == list->selectPos)
+		else if (i == ((list->trackHover && list->hoverActive) ? list->hoverPos : list->selectPos)) // lane FB7-1: RW 0x4A22D6
 		{
 			selected = true;
 		}

@@ -414,7 +414,20 @@ void EndGameController::start(int mode, int kind)
 	m_showing = m_shownOnce = m_hiddenOnce = m_fadeToScore = m_lastWasVictory = false;
 	m_singleAlliance = false;
 	m_shownAt = 0.0;
+	m_endGameTimer = -1;
+	m_endGameTimerFrame = 0;
 	m_requests.clear();
+}
+
+// RW 0x602FFE (lane PLAY-1, stop S-1921: client-side)
+void EndGameController::startEndGameTimer(unsigned frame)
+{
+	if (m_endGameTimer == 0)
+	{
+		return; // the game is already being left
+	}
+	m_endGameTimer = kEndGameTimerFrames;
+	m_endGameTimerFrame = frame;
 }
 
 // RW 0x808E1F
@@ -469,6 +482,16 @@ void EndGameController::update(const EndGameView *view, unsigned frame, double n
 	if (!view)
 	{
 		return;
+	}
+	// lane PLAY-1: the end-game timer (ScriptEngine::update RW 0x60CC67 decrements + 0x1A204 once per logic frame; at 0, RW 0x603533 sends
+	// MSG_CLEAR_GAME_DATA). The client sees presented frames, so it compares frame numbers: a frame skipped by the presentation still counts
+	if (m_endGameTimer > 0 && frame - m_endGameTimerFrame >= (unsigned)m_endGameTimer)
+	{
+		m_endGameTimer = 0;
+		EndGameRequest r;
+		r.kind = EndGameRequest::CLEAR_GAME_DATA;
+		r.text = "MSG_CLEAR_GAME_DATA";
+		m_requests.push_back(r);
 	}
 	m_singleAlliance = view->singleAllianceRemaining;
 	// the defeats of the frame (VictoryConditions::update, phase 5)
@@ -539,6 +562,7 @@ void EndGameController::update(const EndGameView *view, unsigned frame, double n
 			{
 				showEndGame(view->localAlive ? "APT:EndDefeat" : overLabel, view->localEvil, "Gui_DefeatScreen", std::string(), nowMs, false);
 			}
+			startEndGameTimer(frame); // RW 0x7C45E0 / 0x7BF15E -> RW 0x602FFE (lane PLAY-1)
 		}
 	}
 	else if (m_scriptsLoaded && view->localPlayerIndex >= 0)
@@ -549,11 +573,13 @@ void EndGameController::update(const EndGameView *view, unsigned frame, double n
 		{
 			// RW 0x7BF05C
 			showEndGame(view->localAlive ? "APT:EndVictorious" : overLabel, view->localEvil, "Gui_VictoryScreen", view->localEvil ? "Gui_VictoryCheerEvil" : "Gui_VictoryCheerGood", nowMs, true);
+			startEndGameTimer(frame); // RW 0x7C45E0 -> RW 0x602FFE (lane PLAY-1)
 		}
 		if (a.defeat)
 		{
 			// RW 0x7BF15E
 			showEndGame(view->localAlive ? "APT:EndDefeat" : overLabel, view->localEvil, "Gui_DefeatScreen", std::string(), nowMs, false);
+			startEndGameTimer(frame); // RW 0x7BF15E's end -> RW 0x602FFE (lane PLAY-1)
 		}
 	}
 }
@@ -567,6 +593,9 @@ std::vector<std::string> EndGameController::stopLines()
 		"GuiFX.apt at its BFME1 level 11 (RotWK calls _level13); doVictory's menu / input calls (RW 0x779173, RW 0x7BC586) and RW 0x61632F are not ported; the end screen timer runs "
 		"on the presentation clock; a presented frame that skips logic frames runs the scripts once; the defeat messages are drawn by a presentation label (the Palantir message area "
 		"is not drawn yet) and the MPorSkirmishFadeToScoreScreen sound fade takes one second",
+		"[S-1921] end-game timer (lane PLAY-1): ScriptEngine::startEndGameTimer (RW 0x602FFE, 25 logic frames after the local side's VICTORY / DEFEAT) and its "
+		"MSG_CLEAR_GAME_DATA (RW 0x603533) run on the client's end sequence, counting presented logic frames; the logic's side scripts are not stopped while it runs "
+		"(retail: only while ScriptEngine + 0x1A204 < 0); the campaign's messages 0x7ED / 0x7D9 (RW 0x602E64 true) are not sent",
 		"[S-1063] score screen: TimeLine.apt (AptTimeLine) gets its providers, names, faction icon records (RW 0x92632E), axis texts and the statistics page (StatsList: RW "
 		"0x9CDEC1 / 0x9F0B50, SetPlayerFocus RW 0x9CD723) from the logic's statistics; the movie's tabs switch _graphMode (the interpreter resolves eval(\"TabButtons.\" + tab)); not "
 		"ported: Save Replay, the Create-a-Hero awards and the War of the Ring modes; the graph (RenderGraph RW 0x9257F2) is drawn by the device layer from AptTimeLine::graph(); the "

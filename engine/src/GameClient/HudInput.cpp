@@ -15,9 +15,14 @@ HudInput::HudInput(GameLogic &logic, AIWorld *ai, TacticalView &view, CommandLis
 	, m_guiCommand(m_ctx)
 	, m_command(m_ctx)
 	, m_selection(m_ctx, m_command)
+	, m_hotKey(m_ctx)
 {
 	m_ui.setMessageStream(&m_stream);
+	m_ui.setLogic(&logic); // lane INPUT-1: getFrameSelectionChanged
+	// lane INPUT-1: RotWK's GameClient::init (RW 0x646771) attaches WindowTranslator 4 / 10, a translator at 5 (RW 0x83EE14), MetaEvent 20, HotKey 25, the War of
+	// the Ring translator 27 (RW 0x838EBA), PlaceEvent 30, Formation 35, GUICommand 40, Selection 50, LookAt 60, Command 70, HintSpy 100 and the dispatcher last
 	m_stream.attachTranslator(&m_meta, 20);
+	m_stream.attachTranslator(&m_hotKey, 25);
 	m_stream.attachTranslator(&m_place, 30); // BUILD-1 (ZH PlaceEventTranslator)
 	m_stream.attachTranslator(&m_guiCommand, 40);
 	m_stream.attachTranslator(&m_selection, 50);
@@ -65,11 +70,12 @@ void HudInput::mouseButton(Button button, bool down, int x, int y, int keyState,
 	}
 }
 
-void HudInput::key(int key, int keyState)
+void HudInput::key(int key, int keyState, char32_t character)
 {
 	ClientMessage &m = m_stream.append((keyState & KEY_STATE_UP) ? CMSG_RAW_KEY_UP : CMSG_RAW_KEY_DOWN);
 	m.appendInteger(key);
 	m.appendInteger(keyState);
+	m.appendInteger((int)character);
 }
 
 void HudInput::mouseWheel(int spin, int x, int y)
@@ -92,6 +98,7 @@ void HudInput::cameraFrame(unsigned nowMs, bool gamePaused)
 	{
 		return;
 	}
+	m_ui.advanceClientFrame(); // lane PLAY-1: the client frame the move hints age by
 	m_lookAt->tick(nowMs);
 	m_camera->update(m_ui.isScrolling(), gamePaused);
 	m_camera->commitFrame();
@@ -121,6 +128,7 @@ size_t HudInput::update()
 	{
 		if (m.isLogic())
 		{
+			hintSpy(m); // lane PLAY-1: ZH HintSpyTranslator (priority 100) sees what reaches the end of the stream
 			GameMessage msg = toGameMessage(m, local);
 			if (m_observer)
 			{
@@ -134,27 +142,63 @@ size_t HudInput::update()
 	return n;
 }
 
+// ZH HintSpy.cpp:114 .. 119 (MSG_DO_MOVETO_FORMATION: RotWK's, stop S-1920) and createMoveHint's immobile check (InGameUI.cpp:2077)
+void HudInput::hintSpy(const ClientMessage &m)
+{
+	switch (m.type())
+	{
+		case MSG_DO_MOVETO:
+		case MSG_DO_ATTACKMOVETO:
+		case MSG_DO_FORCEMOVETO:
+		case MSG_ADD_WAYPOINT:
+		case MSG_DO_MOVETO_FORMATION:
+			break;
+		default:
+			return;
+	}
+	if (m.argumentCount() == 0 || m.arg(0).kind != ClientArgKind::Location)
+	{
+		return;
+	}
+	if (m_ui.getSelectCount() == 1)
+	{
+		const Object *o = m_logic.findObjectByID(m_ui.firstSelected());
+		if (o && o->isKindOfName("IMMOBILE"))
+		{
+			return;
+		}
+	}
+	m_ui.createMoveHint(m.arg(0).location);
+}
+
 std::vector<std::string> HudInput::acceptanceStops()
 {
 	std::vector<std::string> out = {
-		"[S-280] translator pipeline: the translator priorities are ZH's (MetaEvent 20, PlaceEvent 30 (BUILD-1), GUICommand 40, Selection 50, Command 70; HotKey is not ported; LookAt 60 is lane CAM-1's, attached by attachCamera), the RotWK 2.01 "
-		"translators were not read; a drag selection does not emit MSG_AREA_SELECTION (GameMessage has no pixel-region argument; the logic does not act on the message); MSG_ADD_TO_TEAM0..9 (1138 .. 1147) "
-		"is not generated and stays unhandled by the dispatcher (S-208)",
-		"[S-281] CommandMap: the block grammar is ZH's MetaMap table (Key, Transition, Modifiers, UseableIn, Category, Description, DisplayName); the RotWK field table and the INI load order "
-		"(Data\\INI\\CommandMap.ini then the language's CommandMap.ini) were not read; the team message bodies (create / select / add) are ZH's (Player::processCreateTeamGameMessage ...)",
+		"[S-280] translator pipeline (narrowed, lane INPUT-1): RotWK's priorities (GameClient::init RW 0x646771): MetaEvent 20, HotKey 25, PlaceEvent 30, GUICommand 40, "
+		"Selection 50, LookAt 60, Command 70; the Window (4 / 10), RW 0x83EE14 (5), War of the Ring (27) and Formation (35) translators are not ported; the HotKey "
+		"manager registers the command bar only (no message-type actions, spell book, radial menu or garrison hotkeys; its sounds are counted, not played); the "
+		"SelectionTranslator's clicks and drag box were not compared with RW 0x83C29E; a drag selection does not emit MSG_AREA_SELECTION",
+		"[S-281] CommandMap (narrowed, lane INPUT-1): RotWK's field table RW 0xBF0E70 and modifier values are ported; open: the files the subsystem entry "
+		"\"CommandMap.ini\" (RW 0x63C4F6) resolves to (here Data\\INI\\CommandMap.ini, then the language's CommandMap.ini) and the MetaEventTranslator's PLANNING "
+		"bit (RW 0x5DA83D); the German Y / Z swap follows the keyboard layout (RW 0x63F024)",
 		"[S-282] tactical view: without HudInput::attachCamera the view is a PinholeView the device fills in (a stand-in with no limits); the retail camera, its translator and "
 		"its stops are lane CAM-1's (TacticalCamera::acceptanceStops(), S-450 .. S-459)",
 		"[S-283] InGameUI: only the state the translators and the control bar read is ported; radius decals, subtitles, floating text, superweapon timers, popups and the "
 		"alternate-mouse bookkeeping are not (the building placement is BUILD-1's, S-306)",
 		"[S-284] picking: without a drawable ray test (HudContext::pickRay, installed by InGameHud: S-1200) an object is hit by a ray against its Geometry volume (cylinder of the bounding "
 		"radius, height at least the radius), the nearest first; ZH tests the model's polygons; a region holds the objects whose position projects into it",
-		"[S-285] mouse setup: the retail default of the AlternateMouseSetup option (which button orders) was not read; CommandTranslator::setUseAlternateMouse selects it, false is ZH's default",
+		"[S-285] mouse setup: RESOLVED for the default (lane PLAY-1): RotWK's GlobalData sets m_useAlternateMouse = 1 (RW 0x642A4B: the right click orders) and Options.ini "
+		"AlternateMouseSetup replaces it (RW 0x6E61D4: true unless the value is \"yes\"); the device layer (game.gd) passes that to CommandTranslator::setUseAlternateMouse; still "
+		"not ported: the alternate setup's own left-click rules beyond ZH's (the selection never carries a context command)",
 		"[S-286] context commands: resume construction, dock, repair, heal, capture / hijack / sabotage / salvage / snipe, combat drop, special powers, weapon fire commands, unit voice "
 		"responses and the academy statistics are not ported; an attack is issued against an enemy when a selected object (or a member of a selected horde) can possibly have a weapon (RW 0x73C191), standing "
 		"for ActionManager::canAttackObject; a click on a container a selected object may enter is MSG_ENTER (lane GARRISON-1, ActionManager::canEnterObject; the order of the context checks is not read); select-all takes every mobile object of the player across the map",
-		"[S-287] meta commands: every meta command RotWK's handler (RW 0x81F8D8) executes is ported (select matching units and view home base: S-1202; select hero, the "
-		"stance keys and view last radar event: S-1673 / S-1674, lane HUD-4); select next / previous unit and worker have no case in RotWK and do nothing (S-1673); "
-		"CommandTranslator::unportedMeta() counts what remains",
+		"[S-287] meta commands: the cases of RotWK's handler (RW 0x81F8D8) are ported where the effect exists (select matching units and view home base: S-1202; select hero, the "
+		"stance keys and view last radar event: S-1673 / S-1674, lane HUD-4; sell, the spell store, diplomacy, screenshot, camera reset and the no-op cases: lane INPUT-1); "
+		"select next / previous unit and worker have no case in RotWK and do nothing (S-1673); CommandTranslator::unportedMeta() counts the cases whose effect is not "
+		"ported (chat, control bar toggle, cheer, beacon, order synchronize, planning, fast forward, the camera key flags); TOGGLE_ATTACKMOVE has no case in RotWK (a retail no-op: "
+		"A is the Attack Move button's hotkey); BEGIN_ / END_FORCEATTACK set the force-attack mode as ZH does (S-1675); ORDERMODE sends MSG_CHANGE_ORDERMODE, the "
+		"logic stores the order mode, whose AiOrdersManager queue is not ported (S-281: the orders ignore it)",
 
 		"[S-288] selection filters: the shroud (VIS-1) is not applied to what a pick or a drag may select (an enemy's invisible, undetected object is not picked: lane STEALTH-1, "
 		"InvisibilityManager::clientLook); the double click selects the matching units of the screen by template identity, across the map with the alt key",
@@ -163,6 +207,15 @@ std::vector<std::string> HudInput::acceptanceStops()
 	{
 		out.push_back(s);
 	}
+	// lane PLAY-1: the move hint (InGameUI::createMoveHint)
+	out.push_back("[S-1920] move hint: ZH's HintSpy / createMoveHint / drawMoveHints (256 slots, 40 client frames, GameData MoveHintName) stand for RotWK's, which were not read; "
+				  "MSG_DO_MOVETO_FORMATION is taken as a move; the model is drawn upright at the ground point (ZH aligns it with the terrain normal and lifts it to water)");
+	out.push_back("[S-1954] RotWK's pick (HUD-5): the cast's collision types (RW 0x4B583C), the hit order (RW 0x48AB28 / 0x489BE6) and each caller's pick types are ported: "
+				  "RW 0x71083F (SELECTABLE, FORCEATTACKABLE when forcing, SHRUBBERY / ROCK from the GUI command or the selection, RW 0x71077B), the point selection | OWN "
+				  "(RW 0x485CB8), the hover forced (RW 0x83CC13), the order click (RW 0x81FBB3), the double click SELECTABLE (RW 0x81F7C5), a GUI command's object target "
+				  "(RW 0x83D41A); not ported: the double click's own route (RotWK's CommandTranslator case RW 0x81F791 -> ControlBar RW 0x9403ED / InGameUI vslot 0x188; "
+				  "the port keeps ZH's select-matching in the SelectionTranslator), pickDrawable's forceAttack argument (the cast flag RW 0x48ABFF), the model draw's own "
+				  "override (W3DModelDraw + 0x214), the object status bits that clear the type (RW 0x4B5988 / 0x4B59CE, taken as effectively dead), the 0x40 type");
 	return out;
 }
 
@@ -173,6 +226,10 @@ std::vector<std::string> HudInput::stops() const
 				  "INFERENCE: the player's team list is its prototypes in creation order, the gate RW 0x81FDA8 is a local player, no drawable test); D / F / G send "
 				  "MSG_CHANGE_STANCE 2 / 1 / 3 (RW 0x8201F5 .. 0x820247); Shift+Up / Shift+Down (and the unit cycle keys) have no handler in RotWK 2.01 and pass "
 				  "unexecuted, as there");
+	// lane INPUT-1 r3
+	out.push_back("[S-1675] force attack (INFERENCE): Ctrl (BEGIN_ / END_FORCEATTACK) sets InGameUI's force-attack mode as ZH's CommandXlat.cpp:3483 does; RotWK's "
+				  "activation path was not recovered (its meta jump table RW 0x8207A0 and BFME2 1.06's send 0x74 / 0x75 to the default case, the setter RW 0x69AD1F has "
+				  "no reference, every other write of InGameUI + 0x8B8 clears it); the mode's readers are RotWK's (RW 0x81FBBC -> 0x81E4B5, RW 0x81DB0C)");
 	if (m_camera)
 	{
 		for (const std::string &s : TacticalCamera::acceptanceStops())

@@ -480,6 +480,17 @@ void HordeContain::moveHub(Object &member, const Coord3D &destIn, float orientat
 	{
 		return; // block 1: no locomotor on either side
 	}
+	// lane IDLE-1 r2, RW 0x874724 .. 0x874747 (read with the disassembly): a member whose physics motion is disabled (RW 0x5E3A1B: its PhysicsBehavior + 0x5C, a
+	// shockwave's throw or a stun) loses MOVING (+ 0x113 bit 0x20) and gets no order: no goal, no busy command, no work flag. The port gave it its walk: the hub
+	// set MOVING every frame while the member update (RW 0x66C8DE, the same test) left it standing: a stunned soldier ran on the spot for the whole stun
+	if (a->locomotorHost().physicsMotionDisabled())
+	{
+		if (member.testModelCondition(bits().moving))
+		{
+			member.setModelConditionState(bits().moving, false); // RW 0x874731 .. 0x87473F
+		}
+		return;
+	}
 	// lane AI-2, RW 0x87471B .. 0x874772 (the H + 0x2A0 == 0 branch): a moving or idle member (isIdle first follows an idle containing horde), unless both its state and the horde's
 	// are active (AIUpdate vslot 0x1BC) or it is already busy (vslot 0x1C4 -> machine slot 0x30 RW 0x741724: the state's slot 0x28, true only for AIBusyState), gets
 	// AI command 0x31 from the AI (RW 0x852E2A(0, 2) -> aiDoCommand case 0x31 -> vslot 0x140 RW 0x66498A: clear the machine, state 0x2A busy): the hub alone drives it
@@ -594,10 +605,10 @@ void HordeContain::moveHub(Object &member, const Coord3D &destIn, float orientat
 	}
 	// ---- the far arm: walk ----
 	m_workDone = true;
-	if (ownerMoving && world.mapReady())
-	{
-		pf.removeGoal(a->adapter()); // B1 0x3E3D20: the member's old goal reservation goes while the horde moves
-	}
+	// lane MOVE-3: the BFME1 hub removed the member's goal reservation here while the horde moves (B1 0x3E3D20); RotWK's hub (RW 0x87468B .. 0x8751C3) calls no
+	// removeGoal (RW 0x68B401): the member keeps the goal its horde's updateGoal reserved at its slot around the horde's goal (RW 0x8E24D3 -> 0x86EF13), which is
+	// what a second horde's destination adjustment meets. The hub only releases and sets the member's kind-1 slot record (RW 0x68B3F1 at 0x8747D3, RW 0x68B399
+	// at 0x874EF5; S-163: that record is not ported)
 	a->mover().ignoreObstacle(horde->getProducerID()); // a member made by a factory walks out of its footprint (inference, S-224)
 	if (m_meleeEngaged)
 	{

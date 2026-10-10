@@ -338,6 +338,54 @@ TEST_CASE("release1: checking a picked folder")
 	}
 }
 
+TEST_CASE("aio1: the launcher's downloaded folders are offered first (downloaded-installs.cfg)")
+{
+	TempDir t("downloaded");
+	const fs::path rotwk = t.path / "games" / "RotWK";
+	const fs::path bfme2 = t.path / "games" / "BFME2";
+	fs::create_directories(rotwk);
+	fs::create_directories(bfme2);
+	const fs::path marker = t.path / "user" / kDownloadedMarkerName;
+	writeFile(marker, "# OpenBFME Launcher\r\nSOURCE=All In One BFME Launcher service: original-RotWK, original-BFME2\r\nROTWK_INSTALL=" + rotwk.u8string() +
+		"\nBFME2_INSTALL=" + bfme2.u8string() + "\n");
+	Downloaded d;
+	std::string error;
+	REQUIRE(readDownloaded(marker.u8string(), d, &error));
+	CHECK(d.source == "All In One BFME Launcher service: original-RotWK, original-BFME2");
+	CHECK(d.rotwk == rotwk.u8string());
+	DiscoveryEnvironment env;
+	env.windows = false;
+	env.home = (t.path / "emptyhome").u8string();
+	env.downloadedMarker = marker.u8string();
+	std::vector<Candidate> found = discover(env);
+	REQUIRE(found.size() == 2);
+	CHECK(found[0].game == kRotwk);
+	CHECK(fs::path(found[0].path) == fs::canonical(rotwk));
+	CHECK(found[0].source == "downloaded by the OpenBFME launcher (All In One BFME Launcher service: original-RotWK, original-BFME2)");
+	CHECK(found[1].game == kBfme2);
+	CHECK(fs::path(found[1].path) == fs::canonical(bfme2));
+	// on Windows too, before the registry
+	env.windows = true;
+	env.registry = [](const RegistryQuery &, std::string &) { return false; };
+	found = discover(env);
+	REQUIRE(found.size() == 2);
+	CHECK(found[0].source.find("downloaded by the OpenBFME launcher") == 0);
+	env.windows = false;
+	env.registry = nullptr;
+	// a missing folder is not offered; a broken file offers nothing and says why
+	fs::remove_all(bfme2);
+	CHECK(discover(env).size() == 1);
+	writeFile(marker, "SOURCE=x\nROTWK_INSTALL=" + rotwk.u8string() + "\n");
+	CHECK_FALSE(readDownloaded(marker.u8string(), d, &error));
+	CHECK(error.find("SOURCE, ROTWK_INSTALL and BFME2_INSTALL are all needed") != std::string::npos);
+	CHECK(discover(env).empty());
+	writeFile(marker, "SOURCE=x\nROTWK_INSTALL=a\nBFME2_INSTALL=b\nMOD=c\n");
+	CHECK_FALSE(readDownloaded(marker.u8string(), d, &error));
+	CHECK(error.find("an unknown key 'MOD'") != std::string::npos);
+	CHECK_FALSE(readDownloaded((t.path / "nothing.cfg").u8string(), d, &error));
+	CHECK(error.find("cannot be read") != std::string::npos);
+}
+
 TEST_CASE("release1: remembering the pick")
 {
 	TempDir t("remember");

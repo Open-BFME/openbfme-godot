@@ -562,9 +562,55 @@ std::vector<std::string> winePrefixes(const DiscoveryEnvironment &e)
 	return found;
 }
 
+const char *const kDownloadedMarkerName = "downloaded-installs.cfg";
+
+bool readDownloaded(const std::string &markerPath, Downloaded &out, std::string *error)
+{
+	auto fail = [error, &markerPath](const std::string &e) {
+		if (error)
+			*error = markerPath + ": " + e;
+		return false;
+	};
+	std::ifstream in(fs::u8path(markerPath), std::ios::binary);
+	if (!in)
+		return fail("cannot be read");
+	out = Downloaded{};
+	std::string line;
+	while (std::getline(in, line))
+	{
+		if (!line.empty() && line.back() == '\r')
+			line.pop_back();
+		if (line.empty() || line[0] == '#')
+			continue;
+		const size_t eq = line.find('=');
+		if (eq == std::string::npos)
+			return fail("a line without '=': " + line.substr(0, 80));
+		const std::string key = line.substr(0, eq);
+		const std::string value = line.substr(eq + 1);
+		if (key == "SOURCE")
+			out.source = value;
+		else if (key == "ROTWK_INSTALL")
+			out.rotwk = value;
+		else if (key == "BFME2_INSTALL")
+			out.bfme2 = value;
+		else
+			return fail("an unknown key '" + key.substr(0, 40) + "'");
+	}
+	if (out.source.empty() || out.rotwk.empty() || out.bfme2.empty())
+		return fail("SOURCE, ROTWK_INSTALL and BFME2_INSTALL are all needed");
+	return true;
+}
+
 std::vector<Candidate> discover(const DiscoveryEnvironment &e)
 {
 	Collector c;
+	// lane AIO-1: the folders the launcher downloaded and checked come first (the player still confirms them)
+	Downloaded downloaded;
+	if (!e.downloadedMarker.empty() && fs::exists(fs::u8path(e.downloadedMarker)) && readDownloaded(e.downloadedMarker, downloaded, nullptr))
+	{
+		c.add(kRotwk, fs::u8path(downloaded.rotwk), "downloaded by the OpenBFME launcher (" + downloaded.source + ")");
+		c.add(kBfme2, fs::u8path(downloaded.bfme2), "downloaded by the OpenBFME launcher (" + downloaded.source + ")");
+	}
 	if (e.windows)
 	{
 		for (const char *game : { kRotwk, kBfme2 })

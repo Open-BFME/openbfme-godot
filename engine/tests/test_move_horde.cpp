@@ -98,13 +98,16 @@ TEST_CASE("horde: a horde marching straight keeps its members on their slots (th
 		{
 			worstEarly = std::max(worstEarly, w);
 		}
-		else if (ai->curLocomotor()->speed() >= 10.0f - 1e-4f && w < 1e-3f)
+		else if (ai->curLocomotor()->speed() >= 10.0f - 1e-4f && std::fabs(w - 10.0f) < 1e-3f)
 		{
-			++cruiseFrames; // at full speed the members stand exactly on their slots
+			// at full speed the members stand exactly one frame of the horde's march behind their slots: lane IDLE-1 r2, retail's update order (the AI updates in
+			// updates[0], RW 0x851E97, before HordeContain's member pass in updates[1], RW 0x490AC4): the horde object steps in phase 3 / 4 after the pass of the
+			// frame before gave the members their goals (the port ran the pass first and the members on their slots)
+			++cruiseFrames;
 		}
 		else if (f > 20 && ai->curLocomotor()->speed() >= 10.0f - 1e-4f)
 		{
-			worstCruise = std::max(worstCruise, w);
+			worstCruise = std::max(worstCruise, std::fabs(w - 10.0f));
 		}
 	}
 	// HordeLoco: Acceleration 500 ms = 3 frames at 10 a frame (Speed 50 x 0.2)
@@ -331,7 +334,7 @@ TEST_CASE("horde: two hordes sent through each other both arrive on slots (movin
 	CHECK(dist2d(*a->getPosition(), Coord3D{ 905.0f, 405.0f, 0.0f }) <= 60.0f);
 	CHECK(dist2d(*b->getPosition(), Coord3D{ 205.0f, 405.0f, 0.0f }) <= 110.0f);
 	CHECK(a->getPosition()->x > 905.0f - 1.0f);
-	CHECK(b->getPosition()->x > 205.0f);
+	CHECK(b->getPosition()->x >= 205.0f); // lane MOVE-3: a's member goals moved to a's new goal (RW 0x86EF13), so b's goal at a's start is free
 	settle(mw, a, 1.0f, 60);
 	settle(mw, b, 1.0f, 60);
 	CHECK(worstSlotError(mw, a) <= 1.0f);

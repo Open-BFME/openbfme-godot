@@ -41,6 +41,15 @@ public:
 	// ZH AIGroup::groupMoveToPosition. `addWaypoint` appends the destination to the path the units follow. `finalAngle` (when `haveFinalAngle`) is the facing every unit
 	// takes on arrival (the BFME formation move's drag direction, S-223).
 	void groupMoveToPosition(const Coord3D &pos, bool addWaypoint, CommandSourceType source, bool haveFinalAngle = false, float finalAngle = 0.0f);
+	// lane MOVE-3: MSG_DO_MOVETO / MSG_DO_ATTACKMOVETO with GameData + 0x11CA (PlanningModeEnabled, set by the GameData constructor RW 0x643982 and cleared only
+	// by a command-line switch RW 0x7B9F93; retail INI never names it): the group manager's move order (RW 0x75748C -> order RW 0x94E232, vtable 0xC81430)
+	// executed at once for every object of the group in group order (RW 0x7572FA -> 0x94ED4C -> slot 0x10 RW 0x94E184): an object that is not a horde member
+	// (RW 0x6939DF) and has an AI gets its own destination (RW 0x94DF97: a ground mover's is the point adjusted by adjustDestination RW 0x6FE456 with the
+	// point as the group destination, its goal reserved there, a LARGE_RECTANGLE_PATHFIND unit's with its heading to it) and the move (RW 0x94DF1B ->
+	// aiMoveToPosition RW 0x66C4CA) or attack-move (RW 0x696266) to it. Every unit is sent to the one point: the destinations spread only by the reservations
+	void planningMoveToPosition(const Coord3D &pos, bool attackMove, CommandSourceType source);
+	// the stop line S-1831 (raised by every planning move)
+	static const char *planningStopLine();
 	// ZH AIGroup::groupIdle
 	void groupIdle(CommandSourceType source);
 	// the stop line S-223 (raised by every group move)

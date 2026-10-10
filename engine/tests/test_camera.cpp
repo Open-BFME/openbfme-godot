@@ -8,6 +8,8 @@
 
 #include "Common/Dict.h"
 #include "GameClient/CameraSettings.h"
+#include "GameClient/DrawablePick.h"
+#include "GameClient/HudObjects.h"
 #include "GameClient/TacticalCamera.h"
 #include "GameEngineDevice/W3DDevice/GameClient/WorldHeightMap.h"
 #include "GameLogic/Map/TerrainLogic.h"
@@ -868,4 +870,171 @@ TEST_CASE("camera: a pose set between client frames is drawn at once (snapInterp
 	// the next client frame starts from the snapped pose
 	r.frame(1);
 	CHECK(c.previousEye().x == doctest::Approx(c.eye().x));
+}
+
+// ---- lane PLAY-1 ----------------------------------------------------------------------------------------------------------------------------------
+
+TEST_CASE("play1 camera: the free camera lifts the zoom-out limit to the map's extent, moves the far plane and the fog with the extra distance, and off is retail")
+{
+	if (!haveWorld("play1 free camera"))
+	{
+		return;
+	}
+	CamRig r(shared());
+	TacticalCamera &c = *r.cam;
+	CHECK_FALSE(c.freeCamera());
+	CHECK(c.zoomOutLimit() == c.maxHeight());
+	CHECK(c.farPlane() == 1800.0f); // RW 0x48B7B1
+	CHECK(c.fogShift() == 0.0f);
+	for (int i = 0; i < 200; ++i)
+	{
+		c.zoomOut();
+	}
+	CHECK(c.getHeightAboveGround() == c.maxHeight());
+	r.frame(60);
+	CHECK(c.fogShift() == 0.0f); // at retail's maximum nothing moves
+	CHECK(c.farPlane() == 1800.0f);
+	c.setFreeCamera(true);
+	float mx = 0.0f, my = 0.0f;
+	REQUIRE(r.game->logic().terrain()->getExtent(0, mx, my));
+	CHECK(c.freeMaxHeight() == std::max(c.maxHeight(), std::max(mx, my)));
+	CHECK(c.freeMaxHeight() > 3.0f * c.maxHeight());
+	for (int i = 0; i < 400; ++i)
+	{
+		c.zoomOut();
+	}
+	CHECK(c.getHeightAboveGround() == c.freeMaxHeight());
+	r.frame(90); // the zoom follows with CameraAdjustSpeed
+	CHECK(c.eye().z > c.maxHeight() * 2.0f);
+	CHECK(c.fogShift() > 0.0f);
+	CHECK(c.farPlane() == 1800.0f + 2.0f * c.fogShift());
+	// scrolling does not pull the free camera back down (the scroll's EnforceMaxCameraHeight compares with the zoom-out limit)
+	const float high = c.getHeightAboveGround();
+	r.key(kKeyRight, true);
+	r.frame(10);
+	r.key(kKeyRight, false);
+	CHECK(c.getHeightAboveGround() == high);
+	// the default view is still retail's maximum height
+	c.setZoomToDefault();
+	CHECK(c.getHeightAboveGround() == c.maxHeight());
+	// off again: back to the retail limit
+	for (int i = 0; i < 400; ++i)
+	{
+		c.zoomOut();
+	}
+	c.setFreeCamera(false);
+	CHECK(c.getHeightAboveGround() == c.maxHeight());
+	r.frame(120);
+	CHECK(c.fogShift() == 0.0f);
+	CHECK(c.farPlane() == 1800.0f);
+}
+
+TEST_CASE("play1 move hint: GameData's MoveHintName is read (GlobalData + 0x10) and the hints age by the camera's client frames")
+{
+	if (!haveWorld("play1 move hint"))
+	{
+		return;
+	}
+	CamRig r(shared());
+	CHECK(r.gd.moveHintName == "SCMoveHint");
+	InGameUI &ui = r.input->ui();
+	ui.createMoveHint(Coord3D{ 100.0f, 200.0f, 5.0f });
+	CHECK(ui.liveMoveHintCount() == 1);
+	r.frame(InGameUI::MOVE_HINT_FRAMES);
+	CHECK(ui.liveMoveHintCount() == 1);
+	r.frame(1);
+	CHECK(ui.liveMoveHintCount() == 0);
+	// 256 slots, round robin (ZH m_nextMoveHint)
+	for (int i = 0; i < InGameUI::MAX_MOVE_HINTS + 3; ++i)
+	{
+		ui.createMoveHint(Coord3D{ (float)i, 0.0f, 0.0f });
+	}
+	CHECK(ui.liveMoveHintCount() == InGameUI::MAX_MOVE_HINTS);
+	// the first hint took slot 0, so these went to slots 1 .. 255, 0, 1, 2, 3
+	CHECK(ui.moveHints()[3].pos.x == (float)(InGameUI::MAX_MOVE_HINTS + 2));
+	CHECK(ui.moveHints()[4].pos.x == 3.0f);
+}
+
+TEST_CASE("play1 mouse setup: RotWK's GlobalData defaults to the alternate setup and Options.ini AlternateMouseSetup reads as RW 0x6E61D4 says")
+{
+	const PeImage *pe = PeImage::fromEnvironment();
+	if (!pe)
+	{
+		retailtest::printSkip("play1 mouse setup binary facts (RW_GAME_DAT unset)");
+		return;
+	}
+	auto bytes = [&](std::uint32_t va, size_t n) {
+		std::vector<std::uint8_t> out;
+		REQUIRE(pe->read(va, n, &out));
+		return out;
+	};
+	// GlobalData::GlobalData RW 0x6429AD: eax = 1 (RW 0x6429E1 xor eax, eax; inc eax), then RW 0x642A4B: mov byte ptr [esi + 0x5C], al
+	CHECK(bytes(0x6429E1, 3) == std::vector<std::uint8_t>{ 0x33, 0xC0, 0x40 });
+	CHECK(bytes(0x642A4B, 3) == std::vector<std::uint8_t>{ 0x88, 0x46, 0x5C });
+	// OptionPreferences::getAlternateMouseModeEnabled RW 0x6E61D4: the key, GlobalData + 0x5C when absent, strcmp(value, "yes") != 0 otherwise
+	CHECK(pe->cstring(0xC1B2C8) == "AlternateMouseSetup");
+	CHECK(pe->cstring(0xBD3D80) == "yes");
+	CHECK(bytes(0x6E620A, 3) == std::vector<std::uint8_t>{ 0x8A, 0x40, 0x5C });
+	CHECK(bytes(0x6E622D, 3) == std::vector<std::uint8_t>{ 0x0F, 0x95, 0xC0 }); // setne al
+	// the start copies the answer into GlobalData (RW 0x641E72 / 0x641E7A)
+	CHECK(bytes(0x641E7A, 3) == std::vector<std::uint8_t>{ 0x88, 0x46, 0x5C });
+	// lane PLAY-1: MoveHintName's row { name, parseAsciiString RW 0x42EE5E, 0, GlobalData + 0x10 } (RW 0xBFF5C0)
+	CHECK(pe->cstring(pe->u32At(0xBFF5C0)) == "MoveHintName");
+	CHECK(pe->u32At(0xBFF5C4) == 0x42EE5Eu);
+	CHECK(pe->u32At(0xBFF5CC) == 0x10u);
+	// lane PLAY-1: the end-game timer: RW 0xBC2BD3 .. 0xBC2BDB [0xDE3BCC] = [0xD9F608] * 5 (LOGICFRAMES_PER_SECOND = 5), RW 0x602FFE stores it at + 0x1A204
+	CHECK(pe->u32At(0xD9F608) == 5u);
+	CHECK(bytes(0xBC2BD8, 3) == std::vector<std::uint8_t>{ 0x6B, 0xC0, 0x05 });
+	CHECK(bytes(0x603003, 6) == std::vector<std::uint8_t>{ 0x89, 0x81, 0x04, 0xA2, 0x01, 0x00 });
+}
+
+TEST_CASE("play1 orders: with the tactical camera attached (its LookAt translator in the stream), a left click selects and a right click orders the move")
+{
+	if (!haveWorld("play1 orders with the camera"))
+	{
+		return;
+	}
+	CamRig r(shared());
+	r.input->commandTranslator().setUseAlternateMouse(true); // RotWK's default (RW 0x642A4B)
+	r.frame(5);
+	// a unit of the local player near its start
+	Player *local = r.game->players().getLocalPlayer();
+	std::string err;
+	// the owner's first selection in the game run: the Men's worker (a porter), whose context command is a move too
+	Object *unit = r.game->createObject("MenPorter", local->getPlayerIndex(), Coord3D{ r.start.x + 150.0f, r.start.y - 150.0f, 0.0f }, 0.0f, &err);
+	REQUIRE_MESSAGE(unit != nullptr, err);
+	MESSAGE("unit " << unit->getTemplate()->getName());
+	r.cam->lookAt(*unit->getPosition());
+	r.frame(30);
+	ICoord2D pu{ -1, -1 };
+	REQUIRE(r.cam->worldToScreen(*unit->getPosition(), pu));
+	r.move(pu.x, pu.y);
+	r.button(HudInput::Button::Left, true, pu.x, pu.y);
+	r.button(HudInput::Button::Left, false, pu.x, pu.y);
+	r.frame(2);
+	REQUIRE(r.input->ui().getSelectCount() == 1);
+	const ICoord2D pg{ pu.x + 220, pu.y + 60 };
+	// the pick of the game (InGameHud: the ray against the drawn model's triangles, lane QA-1): the ground 220 pixels beside the unit picks nothing
+	// (the game run's first try clicked a second porter there: a right click on an own unit orders nothing, the scenario now looks for empty ground)
+	r.input->context().pickRay = [&](const Object &o, const Coord3D &origin, const Coord3D &dir, float *t) {
+		const Drawable *d = r.game->drawables().findByObject(o.getID());
+		return d ? DrawablePick::rayTest(*d, origin, dir, t) : DrawablePick::Result::NotDrawn;
+	};
+	{
+		const Object *picked = HudObjects::pickObject(r.input->context(), pg);
+		CHECK_MESSAGE(picked == nullptr, "picked " << (picked ? picked->getTemplate()->getName() : std::string()));
+	}
+	r.move(pg.x, pg.y);
+	r.frame(5);
+	CHECK(r.input->ui().cursor() == std::string(MouseCursorName::Move));
+	r.button(HudInput::Button::Right, true, pg.x, pg.y);
+	r.button(HudInput::Button::Right, false, pg.x, pg.y);
+	size_t moves = 0;
+	for (const std::string &l : r.input->messageLog())
+	{
+		MESSAGE(l);
+		moves += l.compare(0, 13, "MSG_DO_MOVETO") == 0 ? 1 : 0;
+	}
+	CHECK(moves == 1);
+	CHECK(r.input->ui().liveMoveHintCount() == 1);
 }

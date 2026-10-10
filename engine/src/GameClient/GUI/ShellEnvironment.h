@@ -7,7 +7,10 @@
 
 #pragma once
 
+#include <cstdint>
 #include <string>
+#include <utility>
+#include <vector>
 
 class GameTextSource;
 class SkirmishSetupSource;
@@ -19,6 +22,8 @@ class ShellServices;
 struct SaveLoadInfo;
 class LANAPI;
 class OptionPreferences;
+struct PlayerStatusInfo;
+struct CreateAHeroScreenContext;
 
 // lane END-2: what QuitMenu.apt asks of the game it is opened over (TheGameLogic + 0x110 / + 0x114, the recorder, the local player)
 struct QuitMenuContext
@@ -46,4 +51,15 @@ struct ShellEnvironment
 	QuitMenuContext *quitMenu = nullptr;      // lane END-2: the game QuitMenu.apt is opened over; null: no game (TheGameLogic null)
 	OptionPreferences *options = nullptr;     // lane UI-2: the player's Options.ini (GameClient/OptionPreferences.h); null: the Options screen saves nothing and says so
 	std::string optionsFile;                  // lane UI-2: where `options` is written (the user data folder's Options.ini)
+	// lane FB7-1: what the Options screen's InitGadgets reads besides Options.ini (RW 0x9205C4)
+	bool haveDefaultVolumes = false;          // AudioSettings DefaultSoundVolume .. DefaultMovieVolume (TheAudio's settings + 0x1C .., RW 0x6E5FB3)
+	float defaultVolumes[5] = { 0, 0, 0, 0, 0 }; // SFX, Voice, Music, Ambient, Movie (0..1)
+	bool haveScrollDefault = false;           // GameData KeyboardDefaultScrollSpeedFactor (GlobalData + 0xAFC, RW 0x6E59A9)
+	float keyboardDefaultScrollSpeedFactor = 0.0f;
+	std::vector<std::pair<std::string, std::uint32_t>> localAddresses; // the machine's IPv4 addresses (dotted text, host order value): RW 0x719C53's list
+	std::vector<std::pair<int, int>> displayModes; // the resolutions the device offers (RW TheDisplay vslot 0x5C / 0x60)
+	std::pair<int, int> currentResolution{ 0, 0 }; // the window's size now
+	bool shellMapOn = false;                  // lane FB7-1: GameData ShellMapOn (GlobalData + 0xAF0; Shell::showShellMap)
+	PlayerStatusInfo *playerStatus = nullptr; // lane HUD-5: the players screen's Status rows (GUI/PlayerStatusInfo.h); null: the page shows no rows and says so
+	CreateAHeroScreenContext *createAHero = nullptr; // lane CAH-1: what CreateAHero.apt edits (GUI/AptScreens/AptCreateAHero.h); null: it says so
 };

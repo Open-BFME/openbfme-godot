@@ -471,7 +471,7 @@ TEST_CASE("stops S-289 .. S-295: the control bar, the radar and the Palantir rep
 	{
 		ids.insert(l.substr(0, 7));
 	}
-	CHECK(ids == std::set<std::string>{ "[S-289]", "[S-290]", "[S-291]", "[S-292]", "[S-293]", "[S-294]", "[S-295]", "[S-761]", "[S-762]", "[S-763]", "[S-764]", "[S-1260", "[S-1674" }); // lane HUD-4: S-1674 (the radar events) // lane UI-1: S-1260 (the id is eight characters)
+	CHECK(ids == std::set<std::string>{ "[S-289]", "[S-290]", "[S-291]", "[S-292]", "[S-293]", "[S-294]", "[S-295]", "[S-761]", "[S-762]", "[S-763]", "[S-764]", "[S-1260", "[S-1674", "[S-1922", "[S-2450", "[S-2451", "[S-2452", "[S-2453", "[S-2454", "[S-2455", "[S-2456", "[S-2457" }); // lane HUD-4: S-1674 (the radar events) // lane UI-1: S-1260 (the id is eight characters) // lane RADAR-1: S-2450 .. S-2457
 }
 
 TEST_CASE("hud radar: the map picture, the object blips in the owners' colours, the view box and a click on the radar are world points")
@@ -574,4 +574,114 @@ TEST_CASE("hud radar input: a left click on the radar moves the view, a right cl
 		moves += l.compare(0, 11, "MSG_DO_MOVE") == 0;
 	}
 	CHECK(moves == 1);
+}
+
+namespace
+{
+// lane PLAY-1: a point inside the button's hit shape that the input routes to it (the centre of the content bounds may lie on another button)
+bool buttonHitPoint(HudRig &h, const std::string &path, int &x, int &y)
+{
+	AptButtonInst *b = firstButtonIn(h.hud->apt().resolvePath(h.hud->apt().level(h.hud->palantir()->level()), path));
+	float x0, y0, x1, y1;
+	if (!b || !b->contentBounds(x0, y0, x1, y1))
+	{
+		return false;
+	}
+	// the button's hit area: its mesh placed by each Hit record's matrix (AptButtonInst::hitTest); the file's bounds are the mesh's own
+	if (const AptButtonInfo *info = b->info())
+	{
+		bool any = false;
+		float hx0 = 0, hy0 = 0, hx1 = 0, hy1 = 0;
+		for (const AptButtonRecord &rec : info->records)
+		{
+			if (!(rec.stateMask & 8))
+			{
+				continue;
+			}
+			const float cxs[4] = { x0, x1, x1, x0 }, cys[4] = { y0, y0, y1, y1 };
+			for (int k = 0; k < 4; ++k)
+			{
+				const float px = rec.matrix[0] * cxs[k] + rec.matrix[2] * cys[k] + rec.translation[0];
+				const float py = rec.matrix[1] * cxs[k] + rec.matrix[3] * cys[k] + rec.translation[1];
+				hx0 = any ? std::min(hx0, px) : px;
+				hy0 = any ? std::min(hy0, py) : py;
+				hx1 = any ? std::max(hx1, px) : px;
+				hy1 = any ? std::max(hy1, py) : py;
+				any = true;
+			}
+		}
+		if (any)
+		{
+			x0 = hx0;
+			y0 = hy0;
+			x1 = hx1;
+			y1 = hy1;
+		}
+	}
+	// the hit point nearest the centre
+	float cx, cy, best = 0.0f;
+	bool found = false;
+	b->globalMatrix().apply((x0 + x1) / 2, (y0 + y1) / 2, cx, cy);
+	for (int gy = 1; gy < 16; ++gy)
+	{
+		for (int gx = 1; gx < 16; ++gx)
+		{
+			float px, py;
+			b->globalMatrix().apply(x0 + (x1 - x0) * (float)gx / 16.0f, y0 + (y1 - y0) * (float)gy / 16.0f, px, py);
+			const float d = (px - cx) * (px - cx) + (py - cy) * (py - cy);
+			if ((!found || d < best) && b->hitTest(px, py) && h.hud->apt().input().hitTestButtons(px, py) == b)
+			{
+				x = (int)px;
+				y = (int)py;
+				best = d;
+				found = true;
+			}
+		}
+	}
+	return found;
+}
+
+bool commandSeen(HudRig &h, const std::string &name)
+{
+	for (const std::string &l : h.hud->palantir()->commandLog())
+	{
+		if (l.compare(0, name.size(), name) == 0)
+		{
+			return true;
+		}
+	}
+	return false;
+}
+} // namespace
+
+TEST_CASE("play1 palantir input: the key, the powers button and the flag above the radar reach the engine as the movie's commands")
+{
+	if (!haveWorld("play1 palantir input"))
+	{
+		return;
+	}
+	SharedWorld &s = shared();
+	HudRig h(s);
+	h.hud->setWindowSize(1024, 768);
+	h.rig.view.setScreen(1024, 768);
+	h.frames(40);
+	struct Press
+	{
+		const char *path, *command;
+	};
+	for (const Press &p : { Press{ "PalantirButtons.Buttons.Options", "AptPalantir::OnBttnOptions" }, Press{ "PalantirButtons.Buttons.PlayerMagic", "AptPalantir::OnBttnSpellStore" },
+			 Press{ "PalantirButtons.Buttons.Objectives", "AptPalantir::OnBttnObjectives" } })
+	{
+		INFO(p.path);
+		int x = 0, y = 0;
+		REQUIRE(buttonHitPoint(h, p.path, x, y));
+		CHECK(h.hud->isOverGui(x, y));
+		h.hud->mouseMove(x, y);
+		h.frames(2);
+		h.hud->mouseButton(HudInput::Button::Left, true, x, y, 0, 2000);
+		h.frames(2);
+		h.hud->mouseButton(HudInput::Button::Left, false, x, y, 0, 2040);
+		h.frames(4);
+		CHECK_MESSAGE(commandSeen(h, p.command), p.command);
+	}
 }

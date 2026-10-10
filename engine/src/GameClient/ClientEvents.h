@@ -54,6 +54,7 @@ struct ClientEvent
 		REPLACED,        ///< lane STEALTH-2 (RW 0x776F03): the drawable made again as CREATED's fields say (tmpl: the look, flags: the object's conditions)
 		MODEL_FLUSH,     ///< lane ANIM-1 (RW 0x67449C / 0x6759C4): the drawable's changed flags reach its draw modules; scriptTarget, weapon timing
 		FADE_IN,         ///< lane BUILD-4 (RW 0x670AA2): fadeFrames client frames
+		CUSTOM_COLORS,   ///< lane CAH-2 (RW 0x80AF0B -> 0x6727B0): customKind and customColors, the drawable's house colour set
 	};
 	Kind kind = CREATED;
 	UnsignedInt frame = 0;   ///< the logic frame that made it (0 during the load)
@@ -84,6 +85,8 @@ struct ClientEvent
 	bool setFlags = false, setScale = false, mirror = false;
 	float scale = 1.0f;
 	UnsignedInt fadeFrames = 0;
+	int customKind = 0;                             ///< CUSTOM_COLORS (lane CAH-2)
+	std::uint32_t customColors[3] = { 0u, 0u, 0u }; ///< CUSTOM_COLORS: ARGB
 };
 
 class ClientEventRecorder : public ObjectClientHooks
@@ -99,6 +102,7 @@ public:
 	void showSubObject(Object &obj, const std::string &name, bool visible, bool permanent) override;
 	void replaceDrawable(Object &obj, const ThingTemplate *tmpl, bool hasColor, std::uint32_t color) override;
 	void fadeIn(Object &obj, UnsignedInt frames) override;
+	void setCustomColors(Object &obj, int kind, std::uint32_t c0, std::uint32_t c1, std::uint32_t c2) override; // lane CAH-2
 	// MapObjectLoop's afterCreate for a map object (DrawableManager::applyPlacement): the client part of the placement
 	void placement(Object &obj, const MapObjectDrawable &placement);
 

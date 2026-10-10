@@ -295,6 +295,7 @@ public:
 	// RW 0x7A7E60: the data's own range (a WaitForWakeUp module starts its lifetime here)
 	void wakeUp();
 	unsigned dieFrame() const { return m_dieFrame; }
+	unsigned startFrame() const { return m_startFrame; } ///< lane HUD-5: the Palantir's time bar (RW 0x92F7E2)
 	bool waitsForWakeUp() const { return m_data->m_waitForWakeUp; }
 	void crc(StateHasher &hasher) const override;
 

@@ -147,6 +147,9 @@ struct Sim
 	std::unique_ptr<AIMoveWorld> mw;
 	std::map<PathfindObjectID, std::unique_ptr<Unit>> units;
 	unsigned frame = 100;
+	// the physical blocking stand-in of step(true) (RotWK has none: units pass through each other unless their AI stops them); lane MOVE-3 turns it off where it
+	// would turn the retail patch of a blocked unit into a standstill
+	bool physicalBlocking = true;
 
 	PathfindConfig config = testConfig();
 	Sim(int w, int h) : terrain(w, h) {}
@@ -191,7 +194,7 @@ struct Sim
 			}
 			u.ai->update(AI_SLEEP_FOREVER);
 		}
-		if (collisions)
+		if (collisions && physicalBlocking)
 		{
 			// physical blocking: overlapping units go back to where they were, unless one of them has given up on the collision
 			// (blockedBy returned true: ignoreCollisionsUntil), which is how the retail give-up lets units through each other
@@ -234,6 +237,9 @@ struct Sim
 					}
 				}
 			}
+		}
+		if (collisions)
+		{
 			for (auto &a : units)
 			{
 				for (auto &b : units)
@@ -379,6 +385,7 @@ TEST_CASE("ai move: the same orders give the same positions every frame twice (d
 TEST_CASE("ai move: two enemy units crossing head on both arrive (nobody deadlocks)")
 {
 	Sim sim(60, 20);
+	sim.physicalBlocking = false; // lane MOVE-3: see below
 	sim.build();
 	Unit &a = sim.add(1, 25.0f, 105.0f);
 	Unit &b = sim.add(2, 555.0f, 105.0f, 1);
@@ -394,9 +401,11 @@ TEST_CASE("ai move: two enemy units crossing head on both arrive (nobody deadloc
 		framesDone = f;
 	}
 	CHECK(bothDone);
-	// the lower id (1) is blocked by the priority rule (equal priority, both moving, not the same way); it gives up once blockedFrames is
-	// above 11 on a frame where blockedFrames % 5 == id % 5 (16 at the collide), then ignores collisions for 10 frames and passes
-	CHECK(maxBlocked >= 12);
+	// the lower id (1) is blocked by the priority rule (equal priority, both moving, not the same way) and patches its path (lane MOVE-3: RotWK's blocked repath
+	// RW 0x6631BF / 0x6F7938): the first free point is next to it (a moving unit holds no position, RW 0x8E26B7), the patch leads straight on and clears the
+	// blocked frames, so the unit no longer stops to give up after 11 frames (the old whole-path repath found no other way and waited for the give-up); with the
+	// harness's physical blocking stand-in the two would hold each other forever, RotWK lets them pass
+	CHECK(maxBlocked >= 1);
 	CHECK(maxBlocked <= 20);
 	CHECK(framesDone < 120);
 	CHECK(distTo(a, 555.0f, 105.0f) <= 40.0f);
@@ -635,7 +644,7 @@ TEST_CASE("ai move queues: 50 blocked repaths and 50 path requests share one cel
 		{
 			if (!seenNormal)
 			{
-				CHECK(c.counter >= 10000); // the first path request sees what the repaths spent
+				CHECK(c.counter > 0); // the first path request sees what the repaths spent
 			}
 			seenNormal = true;
 			CHECK(c.counter < 20000);
@@ -644,8 +653,10 @@ TEST_CASE("ai move queues: 50 blocked repaths and 50 path requests share one cel
 	}
 	CHECK(blockedFirst);
 	CHECK(nBlocked > 0);
-	CHECK(nBlocked < 50);                                       // stopped at half the budget
-	CHECK(sim.pf->queuedBlockedRepaths() == 50 - nBlocked);      // the rest wait for the next frame
+	// lane MOVE-3: a blocked repath is RotWK's patch (RW 0x6F7938) to the first free point ahead, a search of a few cells here (no unit is in the way), so all 50
+	// fit below half the budget (the whole-path repaths it replaced walked round the wall and stopped at half the budget; the saturated case is the next test)
+	CHECK(nBlocked == 50);
+	CHECK(sim.pf->queuedBlockedRepaths() == 0);
 	CHECK(nNormal > 0);
 	CHECK(nNormal < 50);                                        // the shared budget ran out
 	CHECK(sim.pf->queuedRequests() == 50 - nNormal);
@@ -663,4 +674,65 @@ TEST_CASE("ai move queues: 50 blocked repaths and 50 path requests share one cel
 	{
 		CHECK(u->ai->path() != nullptr);
 	}
+}
+
+namespace
+{
+// a budget whose half a few of the 50 patches of the wall fixture fill
+constexpr int kSaturatedBudget = 40;
+} // namespace
+
+TEST_CASE("ai move queues: blocked repaths that fill half the cell budget stop there; the rest wait for the next frame")
+{
+	// lane MOVE-3 (review r1): the blocked pass (RW: AI vtable + 0x234) starts a repath only while the counter is below half the budget, so with patches that cost
+	// more than the half allows, the pass stops early and keeps the rest queued
+	Sim sim(80, 40);
+	sim.config.cellsPerFrame = kSaturatedBudget;
+	for (int y = 0; y < 32; ++y)
+	{
+		sim.terrain.cliff.insert({ 40, y });
+	}
+	sim.build();
+	RecordingWorld world(*sim.pf);
+	std::vector<Unit *> blocked;
+	for (int i = 0; i < 50; ++i)
+	{
+		Unit &u = sim.add((PathfindObjectID)(1 + i), 25.0f + 5.0f * (float)(i % 10), 25.0f + 10.0f * (float)(i / 10));
+		blocked.push_back(&u);
+		world.add(*u.ai);
+	}
+	for (Unit *u : blocked)
+	{
+		const Coord3D from = u->obj.pos, to{ 705.0f, 35.0f, 0.0f };
+		bool partial = false;
+		u->ai->setPath(sim.pf->findPath(&u->obj, groundLoco(), &from, &to, &partial));
+		REQUIRE(u->ai->path() != nullptr);
+		u->ai->setGoalOnPath();
+	}
+	for (Unit *u : blocked)
+	{
+		u->ai->requestBlockedRepath(900);
+	}
+	REQUIRE(sim.pf->queuedBlockedRepaths() == 50);
+	world.processQueues(); // the queue pass starts the counter at 0
+	size_t nBlocked = 0;
+	for (const RecordingWorld::Call &c : world.calls)
+	{
+		CHECK(c.blocked);
+		CHECK(c.counter < kSaturatedBudget / 2); // started below half the budget
+		++nBlocked;
+	}
+	MESSAGE("saturated blocked pass: " << nBlocked << " repaths, " << sim.pf->cumulativeCellsAllocated() << " cells"); // measured: 3 repaths, 24 cells
+	CHECK(nBlocked > 0);
+	CHECK(nBlocked < 50);                                         // stopped at half the budget
+	CHECK(sim.pf->cumulativeCellsAllocated() >= kSaturatedBudget / 2); // which is why it stopped
+	CHECK(sim.pf->queuedBlockedRepaths() == 50 - nBlocked);       // the rest wait for the next frame
+	for (int f = 0; f < 200 && sim.pf->queuedBlockedRepaths() > 0; ++f)
+	{
+		++sim.frame;
+		sim.world.frame = sim.frame;
+		world.processQueues();
+	}
+	CHECK(sim.pf->queuedBlockedRepaths() == 0);
+	CHECK(world.calls.size() == 50);
 }

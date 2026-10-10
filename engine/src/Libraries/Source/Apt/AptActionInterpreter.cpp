@@ -501,6 +501,13 @@ AptObject *AptActionInterpreter::resolveTarget(Frame &f, const AptValue &path)
 			{
 				AptValue v;
 				cur = (f.target && fetchMember(f.target, seg, v) && v.isObject()) ? v.asObject() : nullptr;
+				// lane PLAY-1: a path's first segment "_levelN" names a level root (the player keeps them as the globals "_levelN", Apt::loadLevel); a clip
+				// converted to its target path ("_level2.SpellStore.Buttons.ButtonsMain.Reset") and evaluated again (SpellStore.apt's Release(param):
+				// eval(param).gotoAndPlay) resolved to nothing, so the store's RESET and ACCEPT never ran their callbacks
+				if (!cur && key.compare(0, 6, "_level") == 0 && key.size() > 6 && m_global && fetchMember(m_global, key, v) && v.isObject())
+				{
+					cur = v.asObject();
+				}
 			}
 			first = false;
 		}

@@ -6,6 +6,7 @@
 #include "Common/Player.h"
 #include "Common/Thing/ThingTemplate.h"
 #include "GameClient/HudObjects.h"
+#include "GameLogic/PlayerCommands.h"
 #include "GameLogic/Object/Object.h"
 
 #include <algorithm>
@@ -275,7 +276,7 @@ const std::vector<ObjectID> &SelectionTranslator::squadFor(Player *player, int g
 	return m_predicting ? m_predicted[group] : player->hotkeySquad(group);
 }
 
-void SelectionTranslator::predictCreate(Player *player, int group, const std::vector<ObjectID> &members)
+void SelectionTranslator::predict(Player *player, int group, const std::vector<ObjectID> &members, bool create)
 {
 	if (!player)
 	{
@@ -291,8 +292,11 @@ void SelectionTranslator::predictCreate(Player *player, int group, const std::ve
 		m_predicting = true;
 		m_predictionFrame = m_ctx.logic.getFrame();
 	}
-	// PlayerCommands createTeam: the group is replaced, each member leaves every other squad
-	m_predicted[group].clear();
+	// PlayerCommands createTeam (RW 0x6AD555): the group is replaced, each member leaves every other squad; addToTeam (RW 0x6AD722) keeps the group
+	if (create)
+	{
+		m_predicted[group].clear();
+	}
 	for (ObjectID id : members)
 	{
 		for (int s = 0; s < Player::NUM_HOTKEY_SQUADS; ++s)
@@ -312,10 +316,12 @@ void SelectionTranslator::viewSquad(int group)
 		return;
 	}
 	const std::vector<ObjectID> &squad = squadFor(player, group);
-	// the last live member (ZH centres on objlist[numObjs-1])
+	// the last live member (RW 0x83D027: Squad::getLiveObjects()[size - 1], TacticalView::lookAt its drawable's position); getLiveObjects (RW 0x8DB103)
+	// hands out the members Object::isSelectable (RW 0x68DE58) passes: a garrisoned, dead or unselectable member is skipped, not dropped (lane INPUT-1 r2)
 	for (size_t i = squad.size(); i-- > 0;)
 	{
-		if (Object *o = m_ctx.logic.findObjectByID(squad[i]))
+		Object *o = m_ctx.logic.findObjectByID(squad[i]);
+		if (o && PlayerCommands::isSelectable(*o))
 		{
 			m_ctx.view.lookAt(*o->getPosition());
 			return;
@@ -336,7 +342,7 @@ MessageDisposition SelectionTranslator::doubleClick(const ClientMessage &msg)
 	{
 		return MessageDisposition::Keep;
 	}
-	Object *picked = HudObjects::pickObject(m_ctx, region.lo);
+	Object *picked = HudObjects::pickForDoubleClick(m_ctx, region.lo); // RotWK picks with SELECTABLE only (RW 0x81F7C5, S-1954)
 	if (!picked || !HudObjects::isSelectable(*picked) || !HudObjects::isLocallyControlled(m_ctx, *picked))
 	{
 		return MessageDisposition::Keep; // nobody to pick: propagate the double click
@@ -532,8 +538,6 @@ MessageDisposition SelectionTranslator::translate(const ClientMessage &msg)
 				selectMatching(nullptr, true);
 			}
 			return MessageDisposition::Destroy;
-		case CMSG_META_BEGIN_FORCEATTACK: m_ctx.ui.setForceAttackMode(true); break;
-		case CMSG_META_END_FORCEATTACK: m_ctx.ui.setForceAttackMode(false); break;
 		case CMSG_RAW_MOUSE_POSITION:
 		{
 			const ICoord2D pixel = msg.arg(0).pixel;
@@ -559,7 +563,7 @@ MessageDisposition SelectionTranslator::translate(const ClientMessage &msg)
 			else
 			{
 				// the mouseover hint for the command translator and the cursor
-				Object *under = HudObjects::pickObject(m_ctx, pixel);
+				Object *under = HudObjects::pickForHover(m_ctx, pixel); // RW 0x83CC13
 				if (under && (!HudObjects::isEffectivelyDead(*under) || under->isKindOfName("ALWAYS_SELECTABLE")))
 				{
 					m_ctx.ui.setMouseover(under->getID());
@@ -645,11 +649,15 @@ MessageDisposition SelectionTranslator::translate(const ClientMessage &msg)
 		default:
 			break;
 	}
-	// the control groups
-	if (t >= CMSG_META_CREATE_TEAM0 && t <= CMSG_META_CREATE_TEAM9)
+	// the control groups: RotWK's SelectionTranslator::translateGameMessage (RW 0x83C29E, the meta cases 0x34 .. 0x5B and 0xA1 .. 0xAA; lane INPUT-1)
+	if ((t >= CMSG_META_CREATE_TEAM0 && t <= CMSG_META_CREATE_TEAM9) || (t >= CMSG_META_ADD_TO_TEAM0 && t <= CMSG_META_ADD_TO_TEAM9))
 	{
-		const int group = t - CMSG_META_CREATE_TEAM0;
-		ClientMessage &m = m_ctx.stream.append(MSG_CREATE_TEAM0 + group);
+		// RW 0x83CD2C (CREATE_TEAMn: MSG_CREATE_TEAM0 + n) / 0x83D25A (ADD_TO_TEAMn: MSG_ADD_TO_TEAM0 + n): the message carries the ids of the
+		// selected drawables whose object is locally controlled, in the client's drawable list order (GameClient + 0x8C, next at + 0x104).
+		// INFERENCE: that list is newest first (ZH GameClient::addDrawable prepends), here the selection by descending object id.
+		const bool create = t <= CMSG_META_CREATE_TEAM9;
+		const int group = t - (create ? CMSG_META_CREATE_TEAM0 : CMSG_META_ADD_TO_TEAM0);
+		ClientMessage &m = m_ctx.stream.append((create ? MSG_CREATE_TEAM0 : MSG_ADD_TO_TEAM0) + group);
 		std::vector<ObjectID> members;
 		for (ObjectID id : m_ctx.ui.selected())
 		{
@@ -657,54 +665,100 @@ MessageDisposition SelectionTranslator::translate(const ClientMessage &msg)
 			{
 				if (HudObjects::isLocallyControlled(m_ctx, *o))
 				{
-					m.appendObjectID(id);
 					members.push_back(id);
 				}
 			}
 		}
-		predictCreate(m_ctx.localPlayer(), group, members);
+		std::sort(members.begin(), members.end(), [](ObjectID a, ObjectID b) { return a > b; });
+		for (ObjectID id : members)
+		{
+			m.appendObjectID(id);
+		}
+		predict(m_ctx.localPlayer(), group, members, create);
 		return MessageDisposition::Destroy;
 	}
-	if ((t >= CMSG_META_SELECT_TEAM0 && t <= CMSG_META_SELECT_TEAM9) || (t >= CMSG_META_ADD_TEAM0 && t <= CMSG_META_ADD_TEAM9))
+	if (t >= CMSG_META_SELECT_TEAM0 && t <= CMSG_META_SELECT_TEAM9)
 	{
-		const bool add = t >= CMSG_META_ADD_TEAM0;
-		const int group = t - (add ? CMSG_META_ADD_TEAM0 : CMSG_META_SELECT_TEAM0);
+		// RW 0x83CF3A
+		const int group = t - CMSG_META_SELECT_TEAM0;
+		const unsigned now = m_ctx.logic.getFrame(); // TheGameLogic + 0x40
+		if (m_lastGroupSelTime == 0)
+		{
+			m_lastGroupSelTime = now;
+		}
+		// RW 0x83CF64: the last group counts for a double press only while the selection has not changed since (InGameUI::getFrameSelectionChanged,
+		// vtable + 0x120) and every live member with a drawable is still selected
+		if (m_lastGroupSelGroup >= 0)
+		{
+			Player *player = m_ctx.localPlayer();
+			bool keep = m_ctx.ui.getFrameSelectionChanged() <= m_lastGroupSelTime && player;
+			if (keep)
+			{
+				for (ObjectID id : squadFor(player, m_lastGroupSelGroup))
+				{
+					const Object *o = m_ctx.logic.findObjectByID(id);
+					if (o && PlayerCommands::isSelectable(*o) && !m_ctx.ui.isSelected(id))
+					{
+						keep = false;
+						break;
+					}
+				}
+			}
+			if (!keep)
+			{
+				m_lastGroupSelGroup = -1;
+			}
+		}
+		if (now - m_lastGroupSelTime < kGroupDoublePressFrames && group == m_lastGroupSelGroup)
+		{
+			viewSquad(group); // RW 0x83CFEF
+		}
+		else
+		{
+			// RW 0x83D04E: MSG_DESTROY_SELECTED_GROUP (true), deselect all, MSG_SELECT_TEAM0 + n, then the members the local player controls
+			m_ctx.stream.append(MSG_DESTROY_SELECTED_GROUP).appendBoolean(true);
+			m_ctx.ui.deselectAll(false);
+			m_ctx.stream.append(MSG_SELECT_TEAM0 + group);
+			if (Player *player = m_ctx.localPlayer())
+			{
+				for (ObjectID id : squadFor(player, group))
+				{
+					Object *o = m_ctx.logic.findObjectByID(id);
+					if (o && PlayerCommands::isSelectable(*o) && o->getControllingPlayer() == player)
+					{
+						m_ctx.ui.selectObject(id);
+					}
+				}
+			}
+		}
+		m_lastGroupSelTime = now;
+		m_lastGroupSelGroup = group;
+		return MessageDisposition::Destroy;
+	}
+	if (t >= CMSG_META_ADD_TEAM0 && t <= CMSG_META_ADD_TEAM9)
+	{
+		// RW 0x83CE30: as SELECT_TEAM without the selection-changed test; MSG_ADD_TEAM0 + n, every live member is selected (no controlling player test)
+		const int group = t - CMSG_META_ADD_TEAM0;
 		const unsigned now = m_ctx.logic.getFrame();
 		if (m_lastGroupSelTime == 0)
 		{
 			m_lastGroupSelTime = now;
 		}
-		if (now - m_lastGroupSelTime < 20 && group == m_lastGroupSelGroup)
+		if (now - m_lastGroupSelTime < kGroupDoublePressFrames && group == m_lastGroupSelGroup)
 		{
-			viewSquad(group); // a double press looks at the group
+			viewSquad(group);
 		}
 		else
 		{
-			Player *player = m_ctx.localPlayer();
-			if (add)
-			{
-				Object *first = m_ctx.logic.findObjectByID(m_ctx.ui.firstSelected());
-				if (first && first->isKindOfName("STRUCTURE"))
-				{
-					m_ctx.ui.deselectAll(); // no mixing units into a selected structure (B1 / ZH Jan 2005 fix)
-				}
-				m_ctx.stream.append(MSG_ADD_TEAM0 + group);
-			}
-			else
-			{
-				m_ctx.ui.deselectAll(false);
-				m_ctx.stream.append(MSG_SELECT_TEAM0 + group);
-			}
-			if (player)
+			m_ctx.stream.append(MSG_ADD_TEAM0 + group);
+			if (Player *player = m_ctx.localPlayer())
 			{
 				for (ObjectID id : squadFor(player, group))
 				{
-					if (Object *o = m_ctx.logic.findObjectByID(id))
+					Object *o = m_ctx.logic.findObjectByID(id);
+					if (o && PlayerCommands::isSelectable(*o))
 					{
-						if (add || o->getControllingPlayer() == player)
-						{
-							m_ctx.ui.selectObject(id);
-						}
+						m_ctx.ui.selectObject(id);
 					}
 				}
 			}
@@ -715,7 +769,12 @@ MessageDisposition SelectionTranslator::translate(const ClientMessage &msg)
 	}
 	if (t >= CMSG_META_VIEW_TEAM0 && t <= CMSG_META_VIEW_TEAM9)
 	{
-		viewSquad(t - CMSG_META_VIEW_TEAM0);
+		// RW 0x83CDC0: the index test is `0 < n && n < 11`: VIEW_TEAM0 (Alt+0) looks nowhere in RotWK 2.01 (TARGET FACT, kept)
+		const int group = t - CMSG_META_VIEW_TEAM0;
+		if (group > 0)
+		{
+			viewSquad(group);
+		}
 		return MessageDisposition::Destroy;
 	}
 	if (t == CMSG_META_OPTIONS)

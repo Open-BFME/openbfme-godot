@@ -5,6 +5,7 @@
 // arguments only) or a GUI command mode. Kept apart from the view model (ControlBar.cpp) because it BUILDS GameMessages: this file is in the simulation audit manifest.
 
 #include "GameClient/ControlBar.h"
+#include "GameLogic/Module/GateModules.h"
 #include "Common/SpecialPower.h"
 #include "Common/Upgrade.h"
 
@@ -131,6 +132,27 @@ bool ControlBar::pressButton(int slot, bool inPalantir)
 			// lane HUD-4: RW 0x9412C8: MSG_WEAPONSET_TOGGLE with the context object's id (the logic case RW 0x77B529, GameLogic/WeaponSetToggle.cpp); the
 			// button's client side (RW 0x75D22E: the image index update) is not ported (S-1672)
 			ClientMessage &m = m_ctx.stream.append(MSG_WEAPONSET_TOGGLE);
+			m.appendObjectID(m_source);
+			return true;
+		}
+		case GUI_COMMAND_TOGGLE_GATE:
+		case GUI_COMMAND_OPEN_GATE:
+		case GUI_COMMAND_CLOSE_GATE:
+		{
+			// lane HUD-5: RW 0x9410D7 (TOGGLE_GATE): the context object's gate (GateOpenAndCloseBehavior; GateProxyBehavior is not ported, S-1941), only when settled:
+			// MSG_CLOSE_GATE when it is open, else MSG_OPEN_GATE; RW 0x9410AB: OPEN_GATE / CLOSE_GATE send their own message. The object id is the argument
+			// (RW 0x94152F). The unit voice response (RW 0x8DEDBB) is the client's (not ported)
+			GateOpenAndCloseBehavior *gate = obj ? GateOpenAndCloseBehavior::findGate(*obj) : nullptr;
+			int type = b.m_command == GUI_COMMAND_OPEN_GATE ? MSG_OPEN_GATE : MSG_CLOSE_GATE;
+			if (b.m_command == GUI_COMMAND_TOGGLE_GATE)
+			{
+				if (!gate || !gate->isSettled())
+				{
+					return false;
+				}
+				type = gate->isOpen() ? MSG_CLOSE_GATE : MSG_OPEN_GATE;
+			}
+			ClientMessage &m = m_ctx.stream.append(type);
 			m.appendObjectID(m_source);
 			return true;
 		}

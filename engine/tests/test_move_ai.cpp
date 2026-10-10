@@ -291,9 +291,11 @@ TEST_CASE("move: a game with a walker, a horde and a group order reports every s
 	mw.select(alice, { w, h });
 	mw.moveTo(alice, 605.0f, 605.0f);
 	mw.frames(10);
+	mw.moveTo(alice, 505.0f, 605.0f, MSG_DO_FORCEMOVETO); // lane MOVE-3: MSG_DO_MOVETO is the group manager's move order (S-1831), the force move the ZH group move (S-223)
+	mw.frames(2);
 	const std::vector<std::string> raised = mw.ai->stops();
 	const std::vector<std::string> all = AIWorld::allStops();
-	REQUIRE(all.size() == 9); // lane EXIT-1 added the horde member update's S-1751 (its members run RW 0x66C748 here)
+	REQUIRE(all.size() == 10); // lane EXIT-1 added the horde member update's S-1751 (its members run RW 0x66C748 here), lane MOVE-3 the move order's S-1831
 	std::set<std::string> ids;
 	for (const std::string &line : all)
 	{
@@ -301,7 +303,7 @@ TEST_CASE("move: a game with a walker, a horde and a group order reports every s
 		CHECK(std::find(raised.begin(), raised.end(), line) != raised.end());
 		ids.insert(line.substr(0, 5));
 	}
-	CHECK(ids == std::set<std::string>{ "S-175", "S-220", "S-221", "S-222", "S-223", "S-224" });
+	CHECK(ids == std::set<std::string>{ "S-175", "S-183", "S-220", "S-221", "S-222", "S-223", "S-224" });
 	for (const std::string &line : raised)
 	{
 		if (line.rfind("S-22", 0) == 0)

@@ -86,7 +86,9 @@ public:
 	}
 	int displayWidth() const { return m_displayWidth; }
 	int displayHeight() const { return m_displayHeight; }
-	// ZH GameWindowManager::sendMousePosMessages (static, false in retail): GWM_MOUSE_POS reaches the windows only when true
+	// ZH GameWindowManager::sendMousePosMessages (a static TRUE, GameWindowManager.cpp:78): GWM_MOUSE_POS reaches the windows only when true.
+	// Lane FB7-1: true by default. INFERENCE (S-1916): RotWK's window manager code never tests a message against 0x18 (the test is folded away) and its
+	// list box input handles 0x18 (RW 0x727081), so the windows get it
 	void setSendMousePosMessages(bool on) { m_sendMousePosMessages = on; }
 
 	// ---- fonts -------------------------------------------------------------------------------------------------------------------------
@@ -103,6 +105,8 @@ public:
 	GameWindow *winGetWindowList() { return m_windowList; }
 	GameWindow *winGetWindowFromId(GameWindow *window, int id);
 	int windowCount() const { return (int)m_owned.size(); }
+	// lane WINCRASH-1 (tests): is `window` a window of this manager that is not destroyed or waiting for destruction?
+	bool winIsAlive(const GameWindow *window) const;
 	void linkWindow(GameWindow *window);
 	void unlinkWindow(GameWindow *window);
 	void unlinkChildWindow(GameWindow *window);
@@ -203,7 +207,7 @@ private:
 	std::vector<GameWindow *> m_modal; // the head is the last element
 	GameWindow *m_drawWindow = nullptr;
 	GadgetDrawList *m_drawList = nullptr;
-	bool m_sendMousePosMessages = false;
+	bool m_sendMousePosMessages = true; // lane FB7-1 (S-1916)
 	std::uint32_t m_timeMs = 0;
 	int m_displayWidth = 1024;
 	int m_displayHeight = 768;

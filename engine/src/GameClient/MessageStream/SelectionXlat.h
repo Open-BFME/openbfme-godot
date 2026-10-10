@@ -10,9 +10,14 @@
 // kept for the CommandTranslator when the click selects nothing or is a context command (contextCommandForNewSelection, SelectionInfo.cpp); a left
 // click selects through MSG_CREATE_SELECTED_GROUP (arg: create a new group, then the object ids); a point click with the add mode on an already
 // selected object removes it (MSG_REMOVE_FROM_SELECTED_GROUP); a drag ends in MSG_AREA_SELECTION (the region) which falls through to
-// the left click handling with the region; a click on a group key twice within 20 logic frames looks at the group.
+// the left click handling with the region.
 //
-// TARGET: RotWK 2.01's translator was not read (stop S-280); the double click selects units of the same template on the screen (ZH selectMatchingAcrossScreen:
+// TARGET FACTS (lane INPUT-1, RotWK 2.01's SelectionTranslator::translateGameMessage RW 0x83C29E, attached at priority 50 by GameClient::init RW 0x646771):
+// the control group cases. CREATE_TEAMn / ADD_TO_TEAMn send the selected locally controlled objects; SELECT_TEAMn sends MSG_DESTROY_SELECTED_GROUP (true)
+// and MSG_SELECT_TEAMn and selects the members the local player controls; ADD_TEAMn sends MSG_ADD_TEAMn and selects every live member; a second press of
+// the same group within 5 logic frames (RW 0xD9F608) looks at the group's last live member instead, for SELECT only while the selection has not changed
+// since the last group press and the whole group is still selected; VIEW_TEAMn looks at the group for n = 1 .. 9 only.
+// The rest of the translator (the clicks, the drag box) was not compared with RotWK (stop S-280); the double click selects units of the same template on the screen (ZH selectMatchingAcrossScreen:
 // here the objects of the same template whose position projects on the screen) and the alt key across the map.
 
 #pragma once
@@ -52,7 +57,10 @@ private:
 	// The squads as they stand once the queued create-group messages have run: the translator creates a group and may read it again before the
 	// next logic frame dispatches the message (review HUD-1 r1 #2). The prediction is dropped when the logic frame has moved on (the dispatch ran).
 	const std::vector<ObjectID> &squadFor(Player *player, int group);
-	void predictCreate(Player *player, int group, const std::vector<ObjectID> &members);
+	// create: CREATE_TEAMn replaces the group; else ADD_TO_TEAMn appends to it
+	void predict(Player *player, int group, const std::vector<ObjectID> &members, bool create);
+	// RW 0xD9F608 (TARGET FACT, the dword 5): a second press of the same group key within this many logic frames looks at the group (ZH: 20)
+	static constexpr unsigned kGroupDoublePressFrames = 5;
 	MessageDisposition leftClick(const ClientMessage &msg);
 	MessageDisposition doubleClick(const ClientMessage &msg);
 

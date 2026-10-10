@@ -601,7 +601,24 @@ TEST_CASE("skirmish ai vs ai: Evendim, 30 game-minutes: every pairing ends - Mor
 	// pins, the PERF-1 vectors and the structure death frames were re-measured unchanged on the lane's tree after it). Engine pins, not retail values.
 	// Merge COMBAT-4 (+ r2) on EXIT-1 / MOVE-2 / CAMP-1H: shockwaves throw units, RotWK's slow death and the HitPercentage draw change the fights:
 	// seed 2 ends with Mordor's defeat at 8208, seed 7 now with Men's defeat (start position 0) at 6498, seed 1234 with Men's defeat at 7694. Engine pins.
-	for (const Game &g : { Game{ "FactionMordor", "FactionMen", 2u, 0, 8208 }, Game{ "FactionMen", "FactionMordor", 7u, 0, 6498 }, Game{ "FactionMordor", "FactionMen", 1234u, 1, 7694 } })
+	// Lane MOVE-3 (the hordes' own footprint RW 0x6ED071, the horde goal's member reservation RW 0x86EF13, the blocked unit's path patch RW 0x6631BF / 0x6F7938,
+	// the group manager's move order RW 0x75748C, the rally point adjustment RW 0x8A4189) change the fights: seed 2 ends with Mordor's defeat at 8741, seeds 7
+	// and 1234 are open at 9000. Engine pins, not retail values.
+	// Merge COMBAT-4 into MOVE-3 with MOVE-3 r2 (the exit's moveAlliesAwayFromDestination RW 0x6F85A6 and the move-away handler's horde forwarding RW 0x66DADB):
+	// seed 2 is open at 9000, seed 7 ends with Mordor's defeat (start position 1) at 6536, seed 1234 is open at 9000. Engine pins, not retail values.
+	// MOVE-3 r3 (review fixes: a horde's line test with radius 1 RW 0x6EE12D, the goal slot's own angle RW 0x8E28DB, the patch cost at the candidate cell RW 0x6ED46C,
+	// the closest raw segment's NaN rule RW 0x765598, ProductionUpdate's moveAlliesAwayFromDestination RW 0x8A291D): seed 2 is open at 9000, seed 7 ends with
+	// Men's defeat (start position 0) at 7427, seed 1234 with Men's defeat (start position 1) at 4851. Engine pins, not retail values.
+	// Lane IDLE-1: a contained object's idle mood scan keeps RW 0x66844A's container gate (CanAttackWhileContained, CONTESTING_BUILDING, the own contain's
+	// vslot 0xB8, the container not JUST_BUILT): the battering rams' crews no longer leave their bones to fight, so the rams batter on. Re-measured on the lane's
+	// tree: seed 2 ends with Mordor's defeat at 6471, seed 7 is open at 9000, seed 1234 ends with Men's defeat at 5531. Engine pins, not retail values.
+	// Lane IDLE-1 r2: the AI updates run in updates[0] and HordeContain in updates[1] (RW 0x851E97 / 0x490AC4, the scheduler RW 0x62E982: every member's own update
+	// before its horde's member pass), and the hub leaves a member whose physics motion is disabled without an order (RW 0x874724). Re-measured on the lane's
+	// tree: seed 2 is open at 9000, seed 7 ends with Mordor's defeat (start position 1) at 6009, seed 1234 is open at 9000. Engine pins, not retail values.
+	// Merge of IDLE-1 / PLAY-1 / AUDIO-5 / INPUT-1 / WINCRASH-1 / CAMP-2 (22e29980) into MOVE-3 with MOVE-3 r4 (the queue exit's clearing after its exit command,
+	// RW 0x8A4214 .. 0x8A424F; unclamped line ends RW 0x6E8CE6), re-measured on JonathanPC: seed 2 is open at 9000, seed 7 is open at 9000, seed 1234 ends with
+	// Men's defeat (start position 1) at 8249. Engine pins, not retail values.
+	for (const Game &g : { Game{ "FactionMordor", "FactionMen", 2u, -1, -1 }, Game{ "FactionMen", "FactionMordor", 7u, -1, -1 }, Game{ "FactionMordor", "FactionMen", 1234u, 1, 8249 } })
 	{
 		INFO(g.a << " vs " << g.b << " seed " << g.seed);
 		VersusRun run;
@@ -767,7 +784,9 @@ TEST_CASE("skirmish ai tactics: the offensive bodies make retail's draws in orde
 	// Pincer team its waypoints within 2600 frames any more; seeds 19 and 31 do (1 and 2 distances; 29, 37 and 67 would too)
 	// Merge MOD-4 + AUDIO-4 + ANIM-1: the random stream moved again and none of these eight hands a Pincer team its waypoints within 2600 frames; a probe of
 	// 18 seeds on the merged tree found seeds 29 and 67 (one Pincer each)
-	for (std::uint32_t seed : { 1234u, 2u, 7u, 11u, 13u, 17u, 19u, 31u, 29u, 67u })
+	// Merge of IDLE-1 (update phases) into MOVE-3 r4: none of these ten hands a Pincer team its waypoints within 2600 frames (1234 and 11 start one); a probe of
+	// 15 seeds on the merged tree found seeds 37 and 41
+	for (std::uint32_t seed : { 1234u, 2u, 7u, 11u, 13u, 17u, 19u, 31u, 29u, 67u, 37u, 41u })
 	{
 		NewGameStart start(RandomAlgorithm::ZH_CarryChain);
 		REQUIRE_MESSAGE(NewGame::prepareNewGame(versusMessage(*s, "FactionMen", -1, "FactionMordor", 2, seed), s->world->playerTemplates(), s->settings, cache,

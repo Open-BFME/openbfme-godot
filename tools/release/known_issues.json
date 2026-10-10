@@ -2,16 +2,21 @@
  "_comment": "Lane RELEASE-1: the known issues a tester meets, for README_TESTERS.txt (tools/release/readme_testers.py). Each item names the docs/STOPS.md rows it comes from; the generator copies their Area and fails when a row is gone (the issue was resolved or renumbered: update this list). Keep the text in a player's words.",
  "issues": [
   {"stops": ["S-1561"], "text": "Only the English versions of the two games are supported; a game in another language is refused on the first start."},
-  {"stops": ["S-175", "S-1064"], "text": "Campaign, War of the Ring, Save / Load and the Options screen are not available yet. Play skirmish against the computer or a LAN game."},
-  {"stops": ["S-1226"], "text": "Create-a-Hero is not available."},
-  {"stops": ["S-136"], "text": "The main menu has no 3D map behind it and no videos play; a few menu controls (sliders, check boxes, lists) are simplified or missing."},
-  {"stops": ["S-130", "S-455"], "text": "Menus are laid out for 1024x768: at other window sizes text and click targets can be slightly off. Widescreen camera framing may differ from the original."},
-  {"stops": ["S-108"], "text": "Menus cannot be used with the keyboard or a gamepad, only with the mouse."},
-  {"stops": ["S-413", "S-415", "S-417"], "text": "The computer opponent is incomplete: it builds a base, trains armies and attacks, but it does not yet defend well, expand, rebuild after losing its fortress or use heroes the way the original does."},
+  {"stops": ["S-1360", "S-1364"], "text": "Campaign: missions play with their movies and narration, but there is no campaign menu between missions and no saving of your progress the original way; the next mission loads directly. Loading screens do not show the mission picture."},
+  {"stops": ["S-1126"], "text": "Save / Load and War of the Ring are not available yet. Skirmish, the campaign and LAN games are."},
+  {"stops": ["S-1408"], "text": "Create-a-Hero: heroes can be built, coloured and saved, but how the house colour blends into the model is an educated guess, and the colour is not reapplied to lower-detail textures the way the original may do."},
+  {"stops": ["S-1922"], "text": "Tribute (sending resources to an ally) does not work yet."},
+  {"stops": ["S-119", "S-022"], "text": "Team colours on units and buildings are an educated guess at how the original blends them, and may look different."},
+  {"stops": ["S-413", "S-415", "S-417"], "text": "The computer opponent builds a base, trains armies, attacks and finishes games, but does not yet defend, expand or use heroes the way the original does."},
   {"stops": ["S-561"], "text": "Enemy buildings destroyed out of your sight disappear at once instead of staying in the fog until you look again."},
-  {"stops": ["S-022"], "text": "Team colours are not shown on units and buildings."},
-  {"stops": ["S-1242", "S-246", "S-248"], "text": "Some sounds are missing: footsteps and other animation sounds, damage sounds, scripted music and large-battle ambience."},
-  {"stops": ["S-1063", "S-1125"], "text": "Every game is recorded as a replay automatically, but replays cannot be saved under a name yet, and the score screen's graphs are simplified."},
-  {"stops": ["S-1123", "S-1261"], "text": "LAN: the lobby looks different from the original in places, and the disconnect screen has no chat."}
+  {"stops": ["S-1242", "S-246", "S-248"], "text": "Some sounds are missing: units being damaged, scripted music and parts of the big-battle ambience."},
+  {"stops": ["S-1710"], "text": "Movies have no subtitles."},
+  {"stops": ["S-130", "S-455"], "text": "Menus are laid out for 1024x768 and scaled: at other window sizes text and click targets can be slightly off. Widescreen camera framing may differ from the original."},
+  {"stops": ["S-108"], "text": "Menus cannot be used with the keyboard or a gamepad, only with the mouse."},
+  {"stops": ["S-1913", "S-1914"], "text": "The Options screen's advanced page is not done, and some lists and boxes of a menu show through pop-ups placed over them."},
+  {"stops": ["S-1675"], "text": "Ctrl+click on a unit or building force-attacks it, but Ctrl+click on the ground does not attack the spot yet."},
+  {"stops": ["S-2451", "S-2452"], "text": "Radar: attacks raise pings, but scripted pings, the Ring and beacon markers, and the \"under attack\" voice lines are missing."},
+  {"stops": ["S-1125", "S-1063"], "text": "Every game is recorded as a replay and can be watched from Load Replay, but replays cannot be saved under a name, there are no replay controls, and the score screen's graphs are simplified."},
+  {"stops": ["S-1123"], "text": "LAN: the disconnect screen has no chat."}
  ]
 }

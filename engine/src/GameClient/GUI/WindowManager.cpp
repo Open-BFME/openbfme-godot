@@ -69,6 +69,86 @@ std::string WindowManager::skipLevelPrefix(const std::string &path)
 	return path.substr(i);
 }
 
+// ---- the background movie (lane FB7-1) ----------------------------------------------------------------------------
+
+namespace
+{
+bool strcmpiAsciiImpl(const std::string &a, const char *b)
+{
+	std::size_t i = 0;
+	for (; i < a.size() && b[i]; ++i)
+	{
+		if (std::tolower((unsigned char)a[i]) != std::tolower((unsigned char)b[i]))
+		{
+			return false;
+		}
+	}
+	return i == a.size() && b[i] == 0;
+}
+} // namespace
+
+bool WindowManager::strcmpiAscii(const std::string &a, const char *b) { return strcmpiAsciiImpl(a, b); }
+
+bool WindowManager::loadBackground()
+{
+	// RW 0x6224C5
+	m_backgroundLevel = loadAptWindow("Apt\\", "Background.apt", true, 0, -1);
+	if (m_backgroundLevel < 0)
+	{
+		note("background", "Background.apt did not load");
+		return false;
+	}
+	return true;
+}
+
+void WindowManager::setBackground(int mode)
+{
+	// RW 0x6230B6
+	m_backgroundMode = mode;
+	if (mode == 0)
+	{
+		hideBackground(false);
+		return;
+	}
+	const char *function = mode == 1 ? "ShowFrontEndBackground" : mode == 2 ? "ShowInGameBackground" : nullptr;
+	if (!function)
+	{
+		return;
+	}
+	m_backgroundHidden = 0;
+	std::string error;
+	if (!invokeAS(m_backgroundLevel, function, {}, nullptr, &error))
+	{
+		note("background", std::string(function) + ": " + error);
+	}
+}
+
+void WindowManager::hideBackground(bool instant)
+{
+	// RW 0x622C88
+	const int mode = m_backgroundMode;
+	if (mode == 0)
+	{
+		if (instant && m_backgroundHidden != 0)
+		{
+			m_backgroundMode = m_backgroundHidden;
+			m_backgroundHidden = 0;
+			hideBackground(true);
+		}
+	}
+	else if (mode == 1 || mode == 2)
+	{
+		std::string error;
+		const char *function = mode == 1 ? "HideFrontEndBackground" : "HideInGameBackground";
+		if (!invokeAS(m_backgroundLevel, function, { instant ? "1" : "0" }, nullptr, &error))
+		{
+			note("background", std::string(function) + ": " + error);
+		}
+		m_backgroundHidden = mode;
+	}
+	m_backgroundMode = 0;
+}
+
 // ---- init / update ----------------------------------------------------------------------------------------------
 
 void WindowManager::init()
@@ -105,6 +185,10 @@ void WindowManager::update(int elapsedMs)
 		{
 			note("shell-missing", "a pending Shell pop with no Shell attached");
 		}
+	}
+	if (m_shell)
+	{
+		m_shell->update(); // lane FB7-1: Shell::update (RW 0x75E1D3), the backdrop part
 	}
 	if (m_windowsDirty)
 	{
@@ -828,21 +912,42 @@ void WindowManager::componentInstanceCreated(AptCharacterInst &inst, const std::
 
 void WindowManager::componentInstanceDestroyed(AptCharacterInst &inst)
 {
-	for (std::size_t i = 0; i < m_componentRecords.size(); ++i)
+	// Lane WINCRASH-1: the gadget window stays while its level is loaded. RotWK's component handler (RW 0x8142D2, the creation side) keeps
+	// the window in the hash table at RW 0xDE8A28 under the instance's name; only the level's unload (RW 0x814BA9 = BFME2 decomp
+	// BfmeConv1292.cpp Rva00411E80, called with the level index) or a new placement under the same name replaces it, never the removal of the
+	// placeholder clip. The screens keep the windows InitGadgets gave them and read them after their movie removed the clips: Options.apt's
+	// Advanced button plays Main's advanced page, which removes the basic page's placeholders, and its Done then closes the screen with
+	// GameCode('Save') (AptOptions::Save, RW 0x91FC9C, reads the basic page's sliders). The port destroyed the windows with the clips (the
+	// slider's GWM_DESTROY clears its SliderData), and Save read Brightness through a null SliderData: the owner's Windows crash of
+	// 2026-10-09 (e204772c, GadgetSliderGetPosition <- AptOptionsScreen::save). The window is hidden:
+	// a clip that is not on the display list is not drawn, so neither is its gadget [INFERENCE: retail's render callback is not called for
+	// it; whether retail also hides the window is not traced].
+	for (ComponentRecord &r : m_componentRecords)
 	{
-		if (m_componentRecords[i].instance == &inst)
+		if (r.instance == &inst)
 		{
-				m_componentRecords.erase(m_componentRecords.begin() + (std::ptrdiff_t)i);
+			r.instance = nullptr;
+			if (r.window)
+			{
+				r.window->winHide(true);
+			}
 			return;
 		}
 	}
+}
+
+void WindowManager::levelUnloaded(int level)
+{
+	// RW 0x814BA9: the records of the level go (the windows with them, AptGadgetLayer's deleter)
+	m_componentRecords.erase(std::remove_if(m_componentRecords.begin(), m_componentRecords.end(), [level](const ComponentRecord &r) { return r.level == level; }),
+		m_componentRecords.end());
 }
 
 GameWindow *WindowManager::componentWindow(const std::string &instancePath) const
 {
 	for (const ComponentRecord &r : m_componentRecords)
 	{
-		if (r.instancePath == instancePath)
+		if (r.instance && r.instancePath == instancePath) // a placed clip's (a detached record's window is not the clip's any more)
 		{
 			return r.window.get();
 		}
@@ -942,7 +1047,23 @@ void WindowManager::registerBuiltinCallbacks()
 {
 	// WindowManagerRegisterAptCallbacks0046FD40.cpp / ...00464080.cpp (BFME1); the RotWK binary carries the same names.
 	registerCommand("PlaySound", [this](const std::string &arg) { m_services.playSound(arg); });
-	registerCommand("SetBackground", [this](const std::string &arg) { m_services.setBackground(arg); });
+	registerCommand("SetBackground", [this](const std::string &arg) {
+		// RW 0x815507 (lane FB7-1): "fadein" shows the front-end background, "fadeout" hides it with its animation, "off" at once (_strcmpi);
+		// another argument does nothing. The shell is told as before (a device hook)
+		if (strcmpiAscii(arg, "fadein"))
+		{
+			setBackground(1);
+		}
+		else if (strcmpiAscii(arg, "fadeout"))
+		{
+			hideBackground(false);
+		}
+		else if (strcmpiAscii(arg, "off"))
+		{
+			hideBackground(true);
+		}
+		m_services.setBackground(arg);
+	});
 	registerCommand("MouseSetVisibility", [this](const std::string &arg) {
 		// the argument is the movie's boolean as a string ("1"/"true"); the exact accepted spellings were not read [S-175]
 		m_services.setMouseVisible(arg == "1" || arg == "true" || arg == "True" || arg == "TRUE");

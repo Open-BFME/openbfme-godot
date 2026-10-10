@@ -32,6 +32,12 @@
 //     (RW 0x9270AD: the local player first): + 4 the display name, + 8 the colour (Player + 0x2A0), + 0xC the side (Player + 0x58), + 0x10 the result
 //     (0 victorious: VictoryConditions vslot 0x38; 1 defeated: vslot 0x40; 2 disconnected: RW 0x90313E; 3 none of them), the ScoreKeeper's per-frame
 //     vector (+ 0x6F8) and its fortress marks (+ 0x704). See GUI/AptScreens/AptTimeLine.h for the screen.
+//   * lane PLAY-1: doVictory's caller (VICTORY, RW 0x7C45E0) and doDefeat (RW 0x7BF15E, at its end) call ScriptEngine::startEndGameTimer (RW 0x602FFE:
+//     + 0x1A204 = 25 frames); ScriptEngine::update (RW 0x60CC67) counts it down once per logic frame and at 0 sends RW 0x603533: the message 0x1D
+//     (MSG_CLEAR_GAME_DATA) when RW 0x602E64 is false (not the campaign kind 3), else 0x7ED / 0x7D9 (the campaign's defeat / victory). So a skirmish or a
+//     multiplayer game is left to the score screen 25 logic frames (5 s) after the local side's VICTORY / DEFEAT, under the end screen (7 s). Stop S-1921:
+//     the timer runs on the client (EndGameController, counting presented logic frames) instead of in the logic's ScriptEngine, and the logic's scripts are
+//     not stopped while it runs (retail runs the side scripts only while + 0x1A204 < 0).
 // INFERENCE / NOT PORTED (stop S-1060): the library is run once, for the local player (retail runs it for every human side; the end screen's + 0x10 test makes
 // a second VICTORY / DEFEAT a no-op); only the conditions CONDITION_TRUE and 44 / 45 / 46 and the actions VICTORY, DEFEAT, ENABLE_SCRIPT, DISABLE_SCRIPT and
 // SET_TIMER are answered here, every other condition is false and every other action is counted (their LOGIC effects, the base unpacking and the money of
@@ -96,7 +102,8 @@ struct EndGameRequest
 		HIDE_END_GAME = 1,
 		MESSAGE = 2,       ///< text = the game text label, name = the player's display name (PlayerHasBeenDefeated)
 		EVA = 3,           ///< eva = the Eva event index (6 AllyDefeated, 7 EnemyDefeated)
-		TRANSITION = 4     ///< text = the window transition group ("MPorSkirmishFadeToScoreScreen")
+		TRANSITION = 4,    ///< text = the window transition group ("MPorSkirmishFadeToScoreScreen")
+		CLEAR_GAME_DATA = 5 ///< lane PLAY-1: the end-game timer ran out: leave the game to the score screen (MSG_CLEAR_GAME_DATA, RW 0x603533)
 	};
 	int kind = SHOW_END_GAME;
 	std::string text;
@@ -164,6 +171,10 @@ public:
 	bool fadeToScore() const { return m_fadeToScore; }     ///< the transition group of hideEndGame ran (a single alliance remained)
 
 	static constexpr double kEndGameMs = 7000.0; // RW 0x808A31: cmp 7000 (timeGetTime milliseconds)
+	// lane PLAY-1: ScriptEngine::startEndGameTimer (RW 0x602FFE: + 0x1A204 = [0xDE3BCC], which the static initialiser RW 0xBC2BD3 sets to
+	// LOGICFRAMES_PER_SECOND (RW 0xD9F608 = 5) * 5)
+	static constexpr int kEndGameTimerFrames = 25;
+	int endGameTimer() const { return m_endGameTimer; } ///< -1 not started, > 0 counting, 0 ran out (the game is being left)
 	// the stops of the client end of a game (S-1060 end sequence, S-1063 score screen, S-1064 leaving the game)
 	static std::vector<std::string> stopLines();
 	// the predefined Eva event `index` (EvaEventStore::predefinedNames, RW 0xBF2168) by name ("" outside the table), and its report to TheEva (AudioApi::reportEva)
@@ -173,6 +184,7 @@ public:
 private:
 	void showEndGame(const std::string &label, bool evil, const std::string &sound, const std::string &cheer, double nowMs, bool victory);
 	void hideEndGame();
+	void startEndGameTimer(unsigned frame);
 
 	EndGameScripts m_scripts;
 	bool m_scriptsLoaded = false;
@@ -182,6 +194,8 @@ private:
 	bool m_showing = false, m_shownOnce = false, m_hiddenOnce = false, m_fadeToScore = false, m_lastWasVictory = false;
 	bool m_singleAlliance = false;
 	double m_shownAt = 0.0;
+	int m_endGameTimer = -1;       ///< lane PLAY-1: ScriptEngine + 0x1A204
+	unsigned m_endGameTimerFrame = 0; ///< the logic frame the timer was (re)started in
 	std::vector<EndGameRequest> m_requests;
 };
 

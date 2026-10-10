@@ -118,3 +118,36 @@ size_t HouseColorTable::House_Texture_Count() const
 	}
 	return houses.size();
 }
+
+void Recolor_House_Texel(const HouseColorParams &params, const std::uint8_t in[4], std::uint8_t out[4])
+{
+	// RW 0x531C77 (see HouseColor.h): RW 0x53184D unpacks a colour as [0] = R (bits 16..23), [1] = G, [2] = B
+	auto ch = [](std::uint32_t argb, int c) { return c == 0 ? (argb >> 16) & 255u : c == 1 ? (argb >> 8) & 255u : argb & 255u; };
+	const std::uint32_t R = in[0], G = in[1], B = in[2];
+	for (int c = 0; c < 3; ++c)
+	{
+		std::uint32_t v;
+		switch (params.kind)
+		{
+			case 1: v = (R * ch(params.colors[0], c)) >> 8; break;
+			case 2: v = ((R * ch(params.colors[0], c)) >> 8) + ((G * ch(params.colors[1], c)) >> 8); break;
+			case 3: v = ((R * ch(params.colors[0], c)) >> 8) + ((G * ch(params.colors[1], c)) >> 8) + ((B * ch(params.colors[2], c)) >> 8); break;
+			default: v = in[c]; break;
+		}
+		out[c] = (std::uint8_t)(v > 255u ? 255u : v);
+	}
+	out[3] = in[3];
+}
+
+void Recolor_House_Pixels(const HouseColorParams &params, std::uint8_t *rgba, std::size_t texels)
+{
+	for (std::size_t i = 0; i < texels; ++i)
+	{
+		std::uint8_t out[4];
+		Recolor_House_Texel(params, rgba + i * 4, out);
+		for (int c = 0; c < 4; ++c)
+		{
+			rgba[i * 4 + c] = out[c];
+		}
+	}
+}

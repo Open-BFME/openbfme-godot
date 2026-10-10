@@ -96,6 +96,7 @@ struct Peer
 	std::unique_ptr<LiveGame> game;
 	EndGameController end;
 	std::vector<EndGameRequest> requests;
+	std::vector<unsigned> requestFrames; ///< lane PLAY-1: the presented logic frame each request came in
 	unsigned lastFrame = 0;
 
 	void load(starttest::Shared &s, const NewGameMessage &message, int localSlot)
@@ -127,9 +128,22 @@ struct Peer
 		for (EndGameRequest &r : end.takeRequests())
 		{
 			requests.push_back(r);
+			requestFrames.push_back(lastFrame);
 		}
 	}
 	GameLogic &logic() { return game->logic(); }
+	// the frame of the first request of `kind` (and `text` when not empty); 0 none
+	unsigned frameOf(int kind, const std::string &text) const
+	{
+		for (size_t i = 0; i < requests.size(); ++i)
+		{
+			if (requests[i].kind == kind && (text.empty() || requests[i].text == text))
+			{
+				return i < requestFrames.size() ? requestFrames[i] : 0;
+			}
+		}
+		return 0;
+	}
 	bool requested(int kind, const std::string &text) const
 	{
 		return std::any_of(requests.begin(), requests.end(), [&](const EndGameRequest &r) { return r.kind == kind && (text.empty() || r.text == text); });

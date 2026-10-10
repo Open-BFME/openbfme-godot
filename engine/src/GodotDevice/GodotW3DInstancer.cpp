@@ -3,6 +3,8 @@
 #include "GodotDevice/GodotGammaComposite.h"
 #include "GodotDevice/GodotW3DInstancer.h"
 
+#include <cstdio>
+
 #include "Common/JobSystem.h"
 #include "GodotDevice/GodotRetailFileSystem.h"
 
@@ -116,6 +118,7 @@ void W3DInstancer::_bind_methods()
 	ClassDB::bind_method(D_METHOD("set_house_colors_enabled", "enabled"), &W3DInstancer::set_house_colors_enabled);
 	ClassDB::bind_method(D_METHOD("get_house_colors_enabled"), &W3DInstancer::get_house_colors_enabled);
 	ClassDB::bind_method(D_METHOD("set_instance_house_color", "instance", "color"), &W3DInstancer::set_instance_house_color);
+	ClassDB::bind_method(D_METHOD("add_model_colored", "model", "kind", "colors"), &W3DInstancer::add_model_colored); // lane CAH-2
 	ClassDB::bind_method(D_METHOD("set_instance_infantry_light", "instance", "infantry"), &W3DInstancer::set_instance_infantry_light);
 	ClassDB::bind_method(D_METHOD("set_instance_opacity", "instance", "opacity"), &W3DInstancer::set_instance_opacity);
 	ClassDB::bind_method(D_METHOD("get_auto_update"), &W3DInstancer::get_auto_update);
@@ -140,6 +143,7 @@ void W3DInstancer::set_instance_house_color(int64_t instance, const Color &color
 {
 	if (instance < 0 || instance >= (int64_t)Instances.size()) return;
 	Instance &inst = Instances[(size_t)instance];
+
 	inst.HcPacked = color.a < 0.5f ? 0.0f : W3D_Pack_House_Color((int)std::lround(color.r * 255.0f), (int)std::lround(color.g * 255.0f), (int)std::lround(color.b * 255.0f));
 	PoseDirty = true;
 	mark_model(instance);
@@ -235,7 +239,7 @@ Dictionary W3DInstancer::setup(const Ref<RetailFileSystem> &fs)
 
 std::shared_ptr<W3DInstancer::MeshGpu> W3DInstancer::build_mesh(const MeshModelClass &mesh, std::vector<std::string> &errors)
 {
-	const std::string key = AsciiStringUtil::lowered(mesh.Get_Name());
+	const std::string key = AsciiStringUtil::lowered(mesh.Get_Name()) + BuildSuffix; // lane CAH-2: a colour set's meshes have their own materials
 	auto cached = MeshCache.find(key);
 	if (cached != MeshCache.end())
 	{
@@ -406,6 +410,32 @@ std::shared_ptr<W3DInstancer::MeshGpu> W3DInstancer::build_mesh(const MeshModelC
 	for (const W3DMapperBinding &b : gpu->Mappers) Mappers.push_back(b);
 	LayoutDirty = true;
 	return gpu;
+}
+
+int64_t W3DInstancer::add_model_colored(const String &model_name, int64_t kind, const PackedInt64Array &colors)
+{
+	// lane CAH-2: RW 0x54BDE0 / 0x535BCF: the render object "#<model>#<options>" whose house colour textures are recoloured per texel (W3DMaterialFactory::
+	// Recolored_House_Texture); its meshes are built again under that name so their materials take the baked textures
+	HouseColorParams params;
+	params.kind = (int)kind;
+	for (int i = 0; i < 3; ++i)
+	{
+		params.colors[i] = i < colors.size() ? (std::uint32_t)colors[i] : 0u;
+	}
+	char opt[96];
+	std::snprintf(opt, sizeof(opt), "#%d&%d&%d&%d", params.kind, (int)params.colors[0], (int)params.colors[1], (int)params.colors[2]);
+	if (Materials)
+	{
+		Materials->Set_House_Params(params);
+	}
+	BuildSuffix = opt;
+	const int64_t id = add_model(model_name);
+	BuildSuffix.clear();
+	if (Materials)
+	{
+		Materials->Set_House_Params(HouseColorParams());
+	}
+	return id;
 }
 
 int64_t W3DInstancer::add_model(const String &model_name)
@@ -662,6 +692,7 @@ bool W3DInstancer::remove_instance(int64_t instance)
 		{
 			PaletteFree[inst.PaletteSize].push_back(inst.PaletteOffset);
 		}
+
 		inst.PaletteSize = 0;
 		inst.Pose = HTreePose();
 	}

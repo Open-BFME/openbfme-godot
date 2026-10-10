@@ -90,6 +90,15 @@ void ClientEventRecorder::fadeIn(Object &obj, UnsignedInt frames)
 	e.fadeFrames = frames;
 }
 
+void ClientEventRecorder::setCustomColors(Object &obj, int kind, std::uint32_t c0, std::uint32_t c1, std::uint32_t c2)
+{
+	ClientEvent &e = push(ClientEvent::CUSTOM_COLORS, obj);
+	e.customKind = kind;
+	e.customColors[0] = c0;
+	e.customColors[1] = c1;
+	e.customColors[2] = c2;
+}
+
 void ClientEventRecorder::replaceDrawable(Object &obj, const ThingTemplate *tmpl, bool hasColor, std::uint32_t color)
 {
 	if (!tmpl)

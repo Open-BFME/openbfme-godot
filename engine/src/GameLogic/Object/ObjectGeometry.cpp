@@ -139,6 +139,12 @@ std::vector<ObjectGeometry::Shape> ObjectGeometry::shapesOf(const ThingTemplate 
 			shapes.back().offsetY = c[1];
 			shapes.back().offsetZ = c[2];
 		}
+		else if (e.row == "GeometryName")
+		{
+			// lane HUD-5: RW 0xAD16B0 -> INI::parseAsciiString (the next token; none: the empty string, as getNextAsciiString answers: retail's
+			// AngmarHallofTwilight has `GeometryName =`)
+			shapes.back().name = e.tokens.empty() ? std::string() : e.tokens[0];
+		}
 		else if (e.row == "GeometryActive")
 		{
 			if (e.tokens.empty())

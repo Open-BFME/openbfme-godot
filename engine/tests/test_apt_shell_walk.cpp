@@ -158,12 +158,9 @@ TEST_CASE("retail shell walk: MainMenu, Skirmish lobby, Options, LoadScreen and 
 	fx.shell->push("Options.apt");
 	fx.tick(90);
 	// frame 0 calls _root.assignOpen, which plays Main: Options.apt places Main on frame 1
-	// remaining port gap: the four Options externs (registered by RotWK, strings in game.dat) have no provider; their handlers were not read
-	const std::vector<std::string> optionsExterns = { "extern.AdvancedOnly read: no extern provider is registered under that name",
-		"extern.NetworkEnabled read: no extern provider is registered under that name",
-		"extern.AllowAdvancedOptions read: no extern provider is registered under that name",
-		"extern.AllowResolutionChange read: no extern provider is registered under that name" };
-	expectScreen("Options", walk.take(), { "method 'gotoAndPlay' is not a function on a value of type undefined [in _level2]" }, optionsExterns);
+	// lane FB7-1: the Options externs (AdvancedOnly, NetworkEnabled, AllowAdvancedOptions, AllowResolutionChange) have RotWK's provider (RW 0x91F7F5): no
+	// script error is left
+	expectScreen("Options", walk.take(), { "method 'gotoAndPlay' is not a function on a value of type undefined [in _level2]" });
 	fx.shell->pop();
 	fx.tick(30);
 	expectScreen("Options -> MainMenu", walk.take(), {});

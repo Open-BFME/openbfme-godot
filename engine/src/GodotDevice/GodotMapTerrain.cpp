@@ -149,6 +149,7 @@ inline Vector3 toG(float x, float y, float z)
 
 Ref<Shader> loadShader(const char *path, Array &errors)
 {
+	W3D_Ensure_Light_Globals(); // lane PLAY-1: the terrain shader names the global w3d_fog_shift; it must exist before the shader compiles
 	Ref<Shader> sh = ResourceLoader::get_singleton()->load(path);
 	if (sh.is_null())
 	{

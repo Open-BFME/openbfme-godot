@@ -129,7 +129,8 @@ TEST_CASE("end1 stops: S-1061 / S-1062 are in the victory system's stops once, S
 	CHECK(count(v, "S-1061") == 1);
 	CHECK(count(v, "S-1062") == 1);
 	const std::vector<std::string> c = EndGameController::stopLines();
-	CHECK(c.size() == 3);
+	CHECK(c.size() == 4);
+	CHECK(count(c, "S-1921") == 1); // lane PLAY-1: the end-game timer
 	CHECK(count(c, "S-1060") == 1);
 	CHECK(count(c, "S-1063") == 1);
 	CHECK(count(c, "S-1064") == 1);
@@ -311,6 +312,23 @@ TEST_CASE("end1 retail: a skirmish on Evendim where one side is destroyed: stati
 			CHECK(r.eva == 7); // EnemyDefeated
 		}
 	}
+	// lane PLAY-1: VICTORY (RW 0x7C45E0) and DEFEAT (RW 0x7BF15E) start the script engine's end-game timer (RW 0x602FFE: 25 logic frames); when it runs out
+	// the game is left to the score screen (RW 0x603533: MSG_CLEAR_GAME_DATA). The loser's DEFEAT shows no second screen but still starts the timer
+	for (int f = 0; f < 30; ++f)
+	{
+		now += 200.0 / 30.0; // the logic frames of the test are faster than the end screen's 7 s of real time
+		peers[0].step(now);
+		peers[1].step(now);
+	}
+	for (int k = 0; k < 2; ++k)
+	{
+		CHECK(std::count_if(peers[k].requests.begin(), peers[k].requests.end(), [](const EndGameRequest &r) { return r.kind == EndGameRequest::CLEAR_GAME_DATA; }) == 1);
+		CHECK(peers[k].end.endGameTimer() == 0);
+	}
+	const unsigned victoryShown = peers[0].frameOf(EndGameRequest::SHOW_END_GAME, "APT:EndVictorious");
+	REQUIRE(victoryShown > 0);
+	CHECK(peers[0].frameOf(EndGameRequest::CLEAR_GAME_DATA, std::string()) == victoryShown + (unsigned)EndGameController::kEndGameTimerFrames);
+	CHECK(peers[1].frameOf(EndGameRequest::CLEAR_GAME_DATA, std::string()) >= peers[1].frameOf(EndGameRequest::SHOW_END_GAME, "APT:EndDefeat") + 25u);
 	// 7 s of real time later the end screen hides and the sound fades towards the score screen (RW 0x808A31 / 0x808D1B)
 	now += EndGameController::kEndGameMs + 1.0;
 	peers[0].end.update(nullptr, peers[0].lastFrame, now);
@@ -407,7 +425,12 @@ TEST_CASE("end1 diagnostic: dump a movie's ActionScript (OPENBFME_END1_APT=<name
 			std::printf("%s\n", line.c_str());
 			if (i.function && i.function->body)
 			{
-				std::printf("%s function %s\n", std::string(depth * 2, ' ').c_str(), i.function->name.c_str());
+				std::string params;
+				for (const AptFunctionParam &prm : i.function->params)
+				{
+					params += (params.empty() ? "" : ", ") + prm.name;
+				}
+				std::printf("%s function %s(%s)\n", std::string(depth * 2, ' ').c_str(), i.function->name.c_str(), params.c_str());
 				dump(*i.function->body, depth + 1);
 			}
 		}

@@ -279,8 +279,12 @@ TEST_CASE("combat4 retail: a troll's club swing throws the soldiers in front of 
 				victim = m;
 			}
 		}
-		const Coord3D behindStart = *behind->getPosition();
 		bool behindFlailed = false;
+		// lane MOVE-3 r4: the soldier behind counts as thrown when it flails, is stunned or is displaced while its AI does not move it. Since the IDLE-1 merge a
+		// thrown member lands beside it and keeps its ground goal there (RotWK's hub never removes a member's goal); the idle soldier, touching the troll, then
+		// steps aside one cell by AI order (blockedBy RW 0x66D16E -> aiMoveToPosition RW 0x66D5F0): a move, not a throw
+		float behindPushed = 0.0f;
+		Coord3D behindLast = *behind->getPosition();
 		troll->getWeapons()->fireExtraWeapon(*w, *victim);
 		*hits = a.counters().metaImpactHits;
 		std::set<ObjectID> flung;
@@ -305,13 +309,19 @@ TEST_CASE("combat4 retail: a troll's club swing throws the soldiers in front of 
 					}
 				}
 			}
+			const bool behindAIMoving = behind->getAIUpdateInterface()->currentStateId() != AI_IDLE;
 			a.logic.runLogicFrame();
 			behindFlailed = behindFlailed || behind->testModelCondition(cond("STUNNED_FLAILING"));
+			if (!behindAIMoving)
+			{
+				const float sx = behind->getPosition()->x - behindLast.x, sy = behind->getPosition()->y - behindLast.y;
+				behindPushed += std::sqrt(sx * sx + sy * sy);
+			}
+			behindLast = *behind->getPosition();
 			hashes->push_back(a.logic.computeStateHash());
 		}
 		*thrown = (int)flung.size();
-		const float bx = behind->getPosition()->x - behindStart.x, by = behind->getPosition()->y - behindStart.y;
-		*behindThrown = (behindFlailed || PhysicsBehavior::find(*behind)->isStunned() || std::sqrt(bx * bx + by * by) > 5.0f) ? 1 : 0;
+		*behindThrown = (behindFlailed || PhysicsBehavior::find(*behind)->isStunned() || behindPushed > 5.0f) ? 1 : 0;
 	};
 	std::vector<std::uint32_t> h1, h2;
 	int thrown = 0, behindThrown = 0, thrown2 = 0, behind2 = 0;

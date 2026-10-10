@@ -17,7 +17,7 @@ inline std::vector<std::string> lines()
 		"[S-201] production hands the produced object to its AI through GameLogic::aiCommands() (GameLogic/AI/AICommandSink.h): aiFollowExitProductionPath, aiIdle, aiMoveToPosition "
 		"run in a game with an AIWorld (lane MOVE-1 installs the handler: the unit walks to its rally point); a logic without an AIWorld only records them and counts them as "
 		"unexecuted, as does an object without an AI module",
-		"[S-202] the exit modules skip the pathfinder and partition calls (snapPosition RW 0x6EF225, adjustDestination RW 0x6FE456, moveAlliesAwayFromDestination RW 0x6F85A6, "
+		"[S-202] the exit modules skip the pathfinder and partition calls (snapPosition RW 0x6EF225, adjustDestination RW 0x6FE456 and moveAlliesAwayFromDestination RW 0x6F85A6 but in the queue exit and ProductionUpdate (lane MOVE-3), "
 		"addObjectToPathfindMap RW 0x6E85E9), the physics kick of an airborne exit (RW 0x792DBD), the rally override search (queryRallyOverride RW 0x8A3AB4: no Slaughter "
 		"contain is ported), the rally path validation of RW 0x779544 and the player group condition of releaseLastExit (RW 0x6A950B)",
 		"[S-203] ProductionUpdate does not port (hero / build-index entries are HERO-1's since S-850 .. S-855, upgrade entries UPGRADE-1's, S-486): the experience tracker (XP to the producer, VeteranUnitsFromVeteranFactory), "

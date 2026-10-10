@@ -36,6 +36,8 @@
 #include "GameClient/GUI/ShellEnvironment.h"
 #include "GameClient/GUI/Skirmish/SkirmishGameSetup.h"
 
+struct CreateAHeroHero;
+
 #include <array>
 #include <map>
 #include <memory>
@@ -68,6 +70,7 @@ public:
 	bool profileAcceptDisabled() const { return m_acceptDisabled; }
 	GameWindow *slotGadget(int slot, const std::string &leaf) const;
 	GameWindow *mapListWindow() const { return m_mapList; }
+	const std::vector<GameWindow *> &mapStartSpotWindows() const { return m_currentMapChildren; } // lane FB7-1 (tests)
 	// lane UI-2: the map preview window (MpGameSetup's CurrentMap, MpMapWindow.wnd) and its start-spot buttons
 	GameWindow *currentMapWindow() const { return m_currentMap; }
 	const std::vector<GameWindow *> &currentMapSpots() const { return m_currentMapChildren; }
@@ -90,6 +93,8 @@ public:
 		pruneDeadGadgets();
 		return m_chatList;
 	}
+	// lane CAH-1: the hero combo's choice of a slot (GameSlot + 0x5C: -1 none, -2 random, else the index into the hero list)
+	int slotHero(int slot) const { return slot >= 0 && slot < MAX_SLOTS ? m_slotHero[(size_t)slot] : -1; }
 	// The map cache keys in the order of the MapList rows.
 	const std::vector<std::string> &mapListKeys() const { return m_mapKeys; }
 
@@ -109,6 +114,9 @@ protected:
 		return true;
 	}
 	// MpGameSetup::OnReadyPress / OnKickPlayer and AptMpChat::Send (the skirmish lobby has no use for them: reported)
+	// lane CAH-1: the owner's applySlotHero (BFME2 MpGameSetup owner vslot 6 after 0x43DD34): the skirmish lobby stores the record on the slot; the LAN
+	// lobby asks the host (LANAPI::requestSlotCreateAHero). `hero` null: no hero
+	virtual bool applySlotHero(int slot, const CreateAHeroHero *hero);
 	virtual void onReadyPress(const std::string &argument);
 	virtual void onKickPlayer(const std::string &argument);
 	virtual void onChatSend(const std::u16string &text);
@@ -155,6 +163,10 @@ private:
 	void sendChat();
 	// ---- lobby ----
 	void populateSlotGadget(int slot, Leaf leaf, GameWindow *combo);
+	void fillHeroCombo(int slot, GameWindow *combo); ///< lane CAH-1, RW 0x842C93
+	void onHeroSelected(int slot, int value);        ///< lane CAH-1, BFME2 0x43E04D / 0x43DD34
+	int heroSide(int slot) const;                    ///< the slot's faction side as a Create-a-Hero faction index (-1: any)
+	bool heroUsable(int slot, const CreateAHeroHero &hero) const;
 	void populateMapList();
 	void setMapSort(int mode);
 	void refreshAll();
@@ -164,6 +176,12 @@ private:
 	void updateCurrentMapWindow(const MapCacheEntry *map); // lane UI-2: RW 0x9772E6 / 0x976F59
 	std::string mapPreviewImage(const MapCacheEntry &map);  // lane UI-2: RW 0x702689
 	void onComboSelected(GameWindow *combo);
+	// lane FB7-1: a click on a start spot of the map window (RW 0x845830, messages 0x4008 / 0x4009 = GBM_SELECTED / GBM_SELECTED_RIGHT); true when
+	// `button` is one of the spots
+	bool onStartSpotSelected(GameWindow *button, bool left);
+	int nextSelectableStartSlot(int from) const; // RW 0x975C3A
+	// lane FB7-1: updateMapStartSpots (RW 0x7052BE with onLoadScreen 0, run by the screen update when a start position changed, RW 0x846BB9)
+	void updateMapStartSpots();
 	void onMapListSelected(int row);
 	bool startGame();   // the part of the screen update that validates and posts the game (retail: state 10); true when the message was queued
 	void update();      // the screen's per-update state machine (RotWK 0x928CDB), run by the WindowManager while the screen exists
@@ -241,4 +259,9 @@ private:
 	GameWindow *m_chatEntry = nullptr;
 	std::vector<std::pair<std::u16string, Color>> m_chatHistory;
 	std::array<int, MAX_SLOTS> m_playerComboKind{ { -1, -1, -1, -1, -1, -1, -1, -1 } }; // lane MP-2: 1 the name entry, 0 the slot states
+	std::array<int, MAX_SLOTS> m_slotHero{ { -1, -1, -1, -1, -1, -1, -1, -1 } };        // lane CAH-1: GameSlot + 0x5C
+	bool m_heroStopReported = false;
+
+public:
+	static const char *const kHeroComboStop; ///< lane CAH-1: "[S-1406] ...", a "create-a-hero-stop" note when a Hero combo is first filled
 };

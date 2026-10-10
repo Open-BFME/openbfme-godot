@@ -15,12 +15,21 @@
 ##   --list                   print the installed versions
 ##   --play                   start the version Play starts
 ##   --version                print the launcher's version
+##   --free-camera=on|off     (lane INPUT-1) the game's free camera (Options.ini OpenBFMEFreeCamera, see scripts/core/game_options.gd)
+##   --aio=on|off             (lane AIO-1, on by default: AioInstall.DEFAULT_ENABLED) the setting "Install game files with the All In One
+##                            BFME Launcher"
+##   --aio-install=<folder> --aio-consent   with that setting on: download RotWK 2.01 and BFME2 1.06 from the All In One BFME Launcher's
+##                            service into <folder>/RotWK and <folder>/BFME2 (scripts/core/aio_install.gd, docs/AIO.md); --aio-consent is
+##                            the player's agreement to the text it logs (the window asks in a dialog)
 ## --screenshot=FILE (with the window): save the window as a PNG once the start-up check has finished, then quit (the layout check).
 ## Test options (honoured only by a development run or a test package, BuildInfo.tests_allowed):
 ##   --api-base=http://127.0.0.1:<port>   the API origin (a local test server); --trust-key=<64 hex>   the release key of a development run;
-##   --repo=<owner>/<name>   the repository
-## Exit status: 0 done; 1 an install / play / select failed; 2 updates skipped (offline, API error); 3 an update was rejected (signature,
-## size, digest, archive or rollback check). Every step prints a LAUNCHER line (also in user://launcher.log).
+##   --repo=<owner>/<name>   the repository; --aio-base=http://127.0.0.1:<port>   the AIO service's stand-in (both of its hosts);
+##   --aio-pins=<file>   made-up pinned tables (JSON) for that stand-in; --aio-stop-after=<folder>/<file>:<pause|cancel>   a stop right
+##   after that file was kept (the pause / cancel paths)
+## Exit status: 0 done; 1 an install / play / select failed (or the AIO download was refused: setting off, no consent, a bad folder); 2
+## updates skipped (offline, API error; an AIO download that broke or was stopped: it resumes next time); 3 an update was rejected (signature, size,
+## digest, archive or rollback check; the AIO service's data failed a check). Every step prints a LAUNCHER line (also in user://launcher.log).
 extends Control
 
 const BuildInfo := preload("res://scripts/core/build_info.gd")
@@ -28,11 +37,15 @@ const Updater := preload("res://scripts/core/updater.gd")
 const SelfUpdate := preload("res://scripts/core/self_update.gd")
 const Semver := preload("res://scripts/core/semver.gd")
 const Log := preload("res://scripts/core/launcher_log.gd")
+const GameOptions := preload("res://scripts/core/game_options.gd")
+const AioInstall := preload("res://scripts/core/aio_install.gd")
 
-const CLI_ACTIONS := ["--update", "--install=", "--select=", "--self-update", "--channel=", "--list", "--play", "--version"]
+const CLI_ACTIONS := ["--update", "--install=", "--select=", "--self-update", "--channel=", "--list", "--play", "--version", "--free-camera=",
+	"--aio=", "--aio-install="]
 
 var info: RefCounted
 var updater: Updater
+var aio: AioInstall
 var _thread: Thread
 var _releases: Array = []
 var _latest: Dictionary = {}
@@ -56,12 +69,24 @@ var _use: Button
 var _older: OptionButton
 var _install_older: Button
 var _confirm: ConfirmationDialog
+var _free_camera: CheckBox
+var _aio_box: CheckBox
+var _aio_button: Button
+var _aio_dialog: FileDialog
+var _aio_consent: ConfirmationDialog
+var _aio_consent_text: RichTextLabel
+var _aio_own: CheckBox
+var _aio_pause: Button
+var _aio_cancel: Button
+var _aio_target := ""      # the folder of the AIO download that runs or is paused
+var _aio_running := false
 
 
 func _ready() -> void:
 	Log.open()
 	info = BuildInfo.load_info()
 	updater = Updater.new(info)
+	aio = AioInstall.new(updater)
 	var args := OS.get_cmdline_user_args()
 	Log.line("LAUNCHER OpenBFME Launcher %s (%s, %s) updates from %s" % [info.version, info.commit.left(10) if info.commit != "" else "development run", info.platform(), info.repo])
 	var problem := ""
@@ -69,7 +94,8 @@ func _ready() -> void:
 		problem = info.error
 		Log.line("LAUNCHER " + info.error)
 	for a in args:
-		if a.begins_with("--api-base=") or a.begins_with("--trust-key=") or a.begins_with("--repo=") or a.begins_with("--test-kill-at="):
+		if a.begins_with("--api-base=") or a.begins_with("--trust-key=") or a.begins_with("--repo=") or a.begins_with("--test-kill-at=") \
+				or a.begins_with("--aio-base=") or a.begins_with("--aio-pins=") or a.begins_with("--aio-stop-after="):
 			if not info.tests_allowed():
 				Log.line("LAUNCHER ignored %s: test options are off in a release build" % a.get_slice("=", 0))
 				continue
@@ -84,6 +110,15 @@ func _ready() -> void:
 				info.repo = a.substr(7)
 			elif a.begins_with("--test-kill-at="):
 				Updater.kill_at = a.substr(15)
+			elif a.begins_with("--aio-stop-after="):
+				aio.test_stop_after = a.substr(17)
+			elif a.begins_with("--aio-base=") or a.begins_with("--aio-pins="):
+				var why := aio.set_test_origin(a.substr(11)) if a.begins_with("--aio-base=") else aio.set_test_pins(a.substr(11))
+				if why != "":
+					Log.line("LAUNCHER " + why)
+					get_tree().quit(1)
+					return
+				Log.line("LAUNCHER test AIO %s %s" % ["origin" if a.begins_with("--aio-base=") else "pins", a.substr(11)])
 			elif info.release_key.is_empty():
 				info.release_key = a.substr(12).hex_decode()
 	if info.release_key.size() != 32 and problem == "":
@@ -160,6 +195,34 @@ func _run_cli(args: PackedStringArray, problem: String) -> int:
 			Log.line("LAUNCHER channel %s" % ch)
 	if "--version" in args:
 		print("OpenBFME Launcher %s" % info.version)
+	for a in args:
+		if a.begins_with("--free-camera="):
+			var v := a.substr(14)
+			if not v in ["on", "off"]:
+				Log.line("LAUNCHER --free-camera takes on or off, not '%s'" % v)
+				return 1
+			var why := GameOptions.set_free_camera(v == "on")
+			Log.line("LAUNCHER free camera %s" % (v if why == "" else "not changed: " + why))
+			if why != "":
+				code = 1
+	for a in args:
+		if a.begins_with("--aio="):
+			var v := a.substr(6)
+			if not v in ["on", "off"]:
+				Log.line("LAUNCHER --aio takes on or off, not '%s'" % v)
+				return 1
+			aio.set_enabled(v == "on")
+			Log.line("LAUNCHER AIO setting %s" % v)
+	for a in args:
+		if a.begins_with("--aio-install="):
+			var r := aio.install(a.substr(14), "--aio-consent" in args)
+			if r.ok:
+				Log.line("LAUNCHER AIO done: %d files downloaded, %d already there; %s (the game offers them on its first start)" % [r.downloaded, r.kept, _folders_text(r.folders)])
+			else:
+				if r.kind == AioInstall.STOPPED and aio.stop_request == "cancel":
+					Log.line("LAUNCHER AIO removed %d partial files of this download" % aio.remove_partials(a.substr(14)))
+				Log.line("LAUNCHER AIO not installed: " + r.error)
+				code = {AioInstall.REFUSED: 1, AioInstall.NETWORK: 2, AioInstall.REJECTED: 3, AioInstall.STOPPED: 2}[r.kind]
 	for a in args:
 		if a.begins_with("--select="):
 			var v := a.substr(9)
@@ -325,6 +388,65 @@ func _build_ui() -> void:
 	_install_older.text = "Install this release"
 	_install_older.pressed.connect(_on_install_pick)
 	right.add_child(_install_older)
+	# lane INPUT-1: the game settings the launcher offers (written to the game's Options.ini, read at the game's start)
+	_free_camera = CheckBox.new()
+	_free_camera.text = "Free camera (zoom out further, not retail)"
+	_free_camera.tooltip_text = "Lets the camera zoom out to the whole map. Retail RotWK stops much closer. Applies the next time the game starts; in a game, Ctrl+Z toggles it."
+	_free_camera.button_pressed = GameOptions.free_camera()
+	_free_camera.toggled.connect(_on_free_camera)
+	box.add_child(_free_camera)
+	# lane AIO-1 (on by default, nothing downloads without the consent screen): download the game files from the All In One BFME Launcher's service
+	var aio_row := HBoxContainer.new()
+	box.add_child(aio_row)
+	_aio_box = CheckBox.new()
+	_aio_box.text = "Install game files with the All In One BFME Launcher"
+	_aio_box.tooltip_text = "Downloads The Rise of the Witch-king 2.01 and The Battle for Middle-earth II 1.06 from the All In One BFME Launcher's servers (bfmeladder.com). You are asked first."
+	_aio_box.button_pressed = aio.enabled()
+	_aio_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_aio_box.toggled.connect(_on_aio_toggled)
+	aio_row.add_child(_aio_box)
+	_aio_button = Button.new()
+	_aio_button.text = "Download the game files..."
+	_aio_button.visible = aio.enabled()
+	_aio_button.pressed.connect(_on_aio_pick)
+	aio_row.add_child(_aio_button)
+	_aio_pause = Button.new()
+	_aio_pause.text = "Pause"
+	_aio_pause.visible = false
+	_aio_pause.pressed.connect(_on_aio_pause)
+	aio_row.add_child(_aio_pause)
+	_aio_cancel = Button.new()
+	_aio_cancel.text = "Cancel"
+	_aio_cancel.visible = false
+	_aio_cancel.pressed.connect(_on_aio_cancel)
+	aio_row.add_child(_aio_cancel)
+	# the consent screen: where the files come from (a link to the project's page), what the player agrees to, the ownership box
+	_aio_consent = ConfirmationDialog.new()
+	_aio_consent.title = "Download the game files"
+	_aio_consent.ok_button_text = "Download"
+	var cbox := VBoxContainer.new()
+	cbox.custom_minimum_size = Vector2(720, 0)
+	_aio_consent.add_child(cbox)
+	_aio_consent_text = RichTextLabel.new()
+	_aio_consent_text.fit_content = true
+	_aio_consent_text.bbcode_enabled = false
+	cbox.add_child(_aio_consent_text)
+	var link := LinkButton.new()
+	link.text = "The All In One BFME Launcher: " + AioInstall.PAGE
+	link.uri = AioInstall.PAGE
+	cbox.add_child(link)
+	_aio_own = CheckBox.new()
+	_aio_own.text = "I own The Battle for Middle-earth II and The Rise of the Witch-king and want to download them from this service"
+	_aio_own.toggled.connect(func(on: bool) -> void: _aio_consent.get_ok_button().disabled = not on)
+	cbox.add_child(_aio_own)
+	_aio_consent.confirmed.connect(func() -> void: _start_aio(_aio_target))
+	add_child(_aio_consent)
+	_aio_dialog = FileDialog.new()
+	_aio_dialog.file_mode = FileDialog.FILE_MODE_OPEN_DIR
+	_aio_dialog.access = FileDialog.ACCESS_FILESYSTEM
+	_aio_dialog.title = "The folder for RotWK and BFME2"
+	_aio_dialog.dir_selected.connect(_on_aio_folder)
+	add_child(_aio_dialog)
 	_bar = ProgressBar.new()
 	_bar.show_percentage = false
 	box.add_child(_bar)
@@ -353,6 +475,69 @@ func _build_ui() -> void:
 	buttons.add_child(_play)
 	_confirm = ConfirmationDialog.new()
 	add_child(_confirm)
+
+
+func _on_free_camera(on: bool) -> void:
+	var why := GameOptions.set_free_camera(on)
+	if why != "":
+		_set_status("The free camera setting was not saved: " + why)
+		return
+	Log.line("LAUNCHER free camera %s (%s)" % ["on" if on else "off", GameOptions.options_path().replace(OS.get_environment("HOME"), "~") if OS.get_environment("HOME") != "" else GameOptions.options_path()])
+	_set_status("Free camera %s: it applies the next time the game starts." % ["on" if on else "off"])
+
+
+func _on_aio_toggled(on: bool) -> void:
+	aio.set_enabled(on)
+	_aio_button.visible = on
+	_set_status("Installing the game files with the All In One BFME Launcher is %s." % ["on" if on else "off"])
+
+
+func _on_aio_pick() -> void:
+	_aio_dialog.popup_centered_ratio(0.7)
+
+
+func _on_aio_folder(dir: String) -> void:
+	_aio_target = dir
+	var into := PackedStringArray()
+	for p in aio.packages:
+		into.append(dir.path_join(p.folder))
+	_aio_consent_text.text = "%s\n\nThey go into %s." % [aio.consent_text(), " and ".join(into)]
+	_aio_own.button_pressed = false
+	_aio_consent.get_ok_button().disabled = true
+	_aio_consent.popup_centered()
+
+
+func _start_aio(dir: String) -> void:
+	_aio_running = true
+	_aio_pause.text = "Pause"
+	_aio_pause.visible = true
+	_aio_cancel.visible = true
+	_start_job(_job_aio.bind(dir))
+
+
+## Pause stops the transfer and keeps the partial file (Resume continues it with a Range request); while paused it reads "Resume".
+func _on_aio_pause() -> void:
+	if _aio_running:
+		aio.request_stop("pause")
+	elif _aio_target != "":
+		_start_aio(_aio_target)
+
+
+func _on_aio_cancel() -> void:
+	if _aio_running:
+		aio.request_stop("cancel")
+		return
+	var n := aio.remove_partials(_aio_target)
+	_aio_pause.visible = false
+	_aio_cancel.visible = false
+	_set_status("The download was cancelled (%d partial files removed; the checked files are kept)." % n)
+
+
+static func _folders_text(folders: Dictionary) -> String:
+	var parts := PackedStringArray()
+	for k in folders:
+		parts.append("%s in %s" % [String(k).to_upper(), folders[k]])
+	return ", ".join(parts)
 
 
 func _set_warning(text: String) -> void:
@@ -392,6 +577,8 @@ func _set_buttons() -> void:
 	_use.disabled = busy
 	_channel.disabled = busy
 	_play.disabled = busy or updater.play_version() == ""
+	_aio_box.disabled = busy or _aio_pause.visible
+	_aio_button.disabled = busy or _aio_pause.visible
 
 
 func _start_job(job: Callable) -> void:
@@ -487,6 +674,29 @@ func _job_install(release: Dictionary, user_pick: bool) -> void:
 	_finish.call_deferred("Installed %s." % i.version if i.ok else "Not installed: " + i.error)
 
 
+func _job_aio(dir: String) -> void:
+	var r := aio.install(dir, true)
+	_after_aio.call_deferred(r)
+
+
+func _after_aio(r: Dictionary) -> void:
+	_aio_running = false
+	if r.ok:
+		_aio_pause.visible = false
+		_aio_cancel.visible = false
+		_finish("The game files are installed and checked: %s. OpenBFME offers these folders when it starts." % _folders_text(r.folders))
+	elif r.kind == AioInstall.STOPPED and aio.stop_request == "pause":
+		_aio_pause.text = "Resume"
+		_finish("The download is " + r.error)
+	else:
+		if r.kind == AioInstall.STOPPED:
+			aio.remove_partials(_aio_target)
+		_aio_pause.visible = r.kind == AioInstall.NETWORK  # a broken transfer can be resumed
+		_aio_pause.text = "Resume"
+		_aio_cancel.visible = _aio_pause.visible
+		_finish(("The download was " if r.kind == AioInstall.STOPPED else "The game files were not installed: ") + r.error)
+
+
 func _on_channel(idx: int) -> void:
 	updater.set_channel("preview" if idx == 1 else "stable")
 	_start_job(_job_check.bind(false))
@@ -544,5 +754,7 @@ func _on_play() -> void:
 
 func _exit_tree() -> void:
 	if _thread != null:
+		if _aio_running:
+			aio.request_stop("pause")
 		updater.http.cancelled = true
 		_thread.wait_to_finish()

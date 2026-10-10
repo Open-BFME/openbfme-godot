@@ -14,7 +14,7 @@
 ##   --enemy=<Template>:<dx>,<dy>   (repeatable) an object for the opponent (Player_2) near the first free spot (lane COMBAT-1: the combat scenario)
 ##   --alternate-mouse       the right click orders (default: the left click orders)
 ##   --edge-scroll           scroll when the pointer touches the window edge (retail does it in fullscreen only)
-##   --scenario=<name>       a scripted run (see _run_scenario): horde2 (lane HORDE-2: our horde charges the enemy horde, <prefix>-select / -contact / -melee / -aftermath), camera (lane CAM-1: the retail camera tour), streaks_paused (the arrow ribbons face a camera turned while paused), select_building, select_horde, drag_box, radar, rally, combat (box-select our horde, click the enemy horde, follow the fight),
+##   --scenario=<name>       a scripted run (see _run_scenario): horde2 (lane HORDE-2: our horde charges the enemy horde, <prefix>-select / -contact / -melee / -aftermath), camera (lane CAM-1: the retail camera tour), streaks_paused (the arrow ribbons face a camera turned while paused), select_building, select_horde, drag_box, radar, radar1 (lane RADAR-1: radar1-NN.png every 45 frames), rally, combat (box-select our horde, click the enemy horde, follow the fight),
 ##                           combat_building (lane COMBAT-2: the same against the enemy's BUILDING, the first --enemy: it is damaged, collapses into rubble and the victory report follows)
 ##   --no-audio / --build=<Template>   (lane AUDIO-2) run without the audio manager / the unit the audio scenario builds at the second --spawn
 ##   --screenshot=<path>     save the window after the scenario (or 30 frames) and quit
@@ -36,6 +36,9 @@
 ##   --scenario=move2        (lane MOVE-2) the slot-distance test's march: every --m2-horde=<Template> side by side at --m2-from=x,y, each sent on its own to
 ##                           --m2-to=x,y (default: the test's route on fall back 4p), the camera following from --s2-height; MOVE2 SPREAD every 2 s (per horde the
 ##                           farthest member from its horde object); --bench-seconds the run's length
+##   --scenario=move3        (lane MOVE-3, community feedback FB-0012 / FB-0006) three scenes around --m2-from, each --bench-seconds long with a fixed camera from
+##                           --s2-height: our --m3-a horde and the opponent's --m3-b horde cross at right angles with move orders, then head on, then two of our
+##                           --m3-same hordes are each ordered to one point (MSG_DO_MOVETO), and first an --m3-barracks of ours makes two --m3-prod hordes in a row (no rally point); MOVE3 prints the horde objects' closest distance and end positions per scene
 ##   --scenario=smooth_churn (lane SMOOTH-1) creation / destruction churn: 30 rounds of 8 objects of every --spawn template made and destroyed; prints SMOOTH CHURN per
 ##                           round (the dynamic instancer's instances, palette rows, the worst pose / upload / sync time of the round's frames)
 ##   --render-size=WxH       render at WxH whatever the window size (content scale mode viewport); screenshots are WxH
@@ -107,6 +110,12 @@ var _s2_offset_y := 0.0 # lane SMOOTH-3: --s2-offset-y=<d> added to the followed
 var _m2_hordes: Array = []           # lane MOVE-2: --m2-horde=<Template> (repeatable) the hordes of the move2 scenario
 var _m2_from := Vector2(1921.5, 871.5) # lane MOVE-2: --m2-from=x,y / --m2-to=x,y the march (default: the slot-distance test's route on fall back 4p)
 var _m2_to := Vector2(3568.5, 1618.5)
+var _m3_a := "GondorFighterHorde"     # lane MOVE-3: --m3-a=<Template> our crossing horde, --m3-b=<Template> the opponent's, --m3-same=<Template> the pair sent to one point
+var _m3_b := "MordorFighterHorde"
+var _m3_same := "GondorFighterHorde"
+var _m3_barracks := "GondorBarracks"  # lane MOVE-3 r2: --m3-barracks=<Template> the producer of the first scene, --m3-prod=<Template> the two hordes it makes,
+var _m3_prod := "GondorFighterHorde"  # --m3-cp-source=<Template> a building made far off for their command points
+var _m3_cp_source := "MenFortressCitadel"
 var _m2_fixed_camera := false          # lane MOVE-2: --m2-fixed-camera the camera stays where it starts (the frame pacing of the units alone)
 var _s2_follow := -1    # lane SMOOTH-3: --s2-follow=<n> the camera follows the members of the n-th --spawn only (default: all of ours)
 var _logic_thread := true   # lane SMOOTH-1: --logic-thread=on|off (the logic worker, S-810, or the main-thread fallback)
@@ -228,6 +237,18 @@ func _ready() -> void:
 			_s2_follow = int(arg.substr(12))
 		elif arg == "--m2-fixed-camera":
 			_m2_fixed_camera = true
+		elif arg.begins_with("--m3-a="):
+			_m3_a = arg.substr(7)
+		elif arg.begins_with("--m3-b="):
+			_m3_b = arg.substr(7)
+		elif arg.begins_with("--m3-same="):
+			_m3_same = arg.substr(10)
+		elif arg.begins_with("--m3-barracks="):
+			_m3_barracks = arg.substr(14)
+		elif arg.begins_with("--m3-prod="):
+			_m3_prod = arg.substr(10)
+		elif arg.begins_with("--m3-cp-source="):
+			_m3_cp_source = arg.substr(15)
 		elif arg.begins_with("--m2-horde="):
 			_m2_hordes.append(arg.substr(11))
 		elif arg.begins_with("--m2-from="):
@@ -408,15 +429,15 @@ func _boot_audio() -> void:
 
 
 func _update_listener() -> void:
-	# the listener stands where the tactical camera looks (ZH: the microphone near the look-at point; S-243)
+	# lane AUDIO-5: retail's microphone (RW 0x45235B) from the camera's eye and target (Godot axes (x, z, -y) -> SAGE)
 	if _audio == null or _hud == null:
 		return
 	var c: Dictionary = _hud.get_camera()
-	if c.is_empty():
+	if not c.has("eye") or not c.has("target"):
 		return
-	var p: Vector2 = c.get("position", Vector2.ZERO)
-	var a: float = c.get("angle", 0.0)
-	_audio.set_listener(Vector3(p.x, p.y, c.get("ground_level", 0.0)), Vector3(cos(a), sin(a), 0.0))
+	var e: Vector3 = c.eye
+	var t: Vector3 = c.target
+	_audio.update_microphone(Vector3(e.x, -e.z, e.y), Vector3(t.x, -t.z, t.y), true)
 
 
 func _fail(message: String) -> void:
@@ -705,12 +726,7 @@ func _process(delta: float) -> void:
 	if _hud == null or not _hud.is_ready():
 		return
 	if _audio != null and _camera != null:
-		# the listener stands where the tactical camera looks (ZH sets it from the view; inference for RotWK), SAGE space
-		var cam: Dictionary = _hud.get_camera()
-		if cam.has("position"):
-			var cpos: Vector2 = cam.position
-			var ca: float = cam.get("angle", 0.0)
-			_audio.set_listener(Vector3(cpos.x, cpos.y, cam.get("ground_level", 0.0)), Vector3(cos(ca), sin(ca), 0.0))
+		_update_listener()
 	# lane RENDER-1: arrows draw through GameWorld's W3DStreakDraw port (the textured streak of the template's Draw block); the stand-in boxes
 	# of _update_projectiles stay available with --placeholders
 	if _show_placeholders:
@@ -1062,6 +1078,15 @@ func _run_scenario() -> void:
 			await _frames(60)
 			print("SELECT ", _hud.get_selection(), " ", JSON.stringify(_hud.get_state().get("control_bar", {})))
 			_save(shots.path_join("hud1-select-horde.png"))
+		"radar1":
+			# lane RADAR-1: the radar's objects, view box and attack pings while our --spawn units fight the --enemy ones next to them: radar1-NN.png every
+			# 45 frames in --shots (the Palantir's radar at the lower left)
+			# an attack ping (type 3) and an information ping (type 0) at the first --spawn object, as a script's radar event would make them
+			var r1o: Dictionary = _world.get_object(_spawned[_spawned.keys()[0]])
+			print("RADAR1 event ", _hud.create_radar_event(Vector2(r1o.x, r1o.y), 3), " ", _hud.create_radar_event(Vector2(r1o.x + 900.0, r1o.y + 700.0), 0))
+			for k in 8:
+				await _frames(15 if k < 4 else 45)
+				_save(shots.path_join("radar1-%02d.png" % k))
 		"radar":
 			var rn: String = _spawned.keys()[0]
 			var ro: Dictionary = _world.get_object(_spawned[rn])
@@ -1554,6 +1579,8 @@ func _run_scenario() -> void:
 			await _smooth2()
 		"move2":
 			await _move2()
+		"move3":
+			await _move3()
 		"fx_battle":
 			await _fx_battle(shots)
 		"phys1_melee":
@@ -2106,6 +2133,101 @@ func _move2() -> void:
 		mean += x
 	mean /= maxf(times.size(), 1)
 	print("MOVE2 PACING frames=%d fps=%.1f frame_ms: %s held_presentations=%d" % [times.size(), 1000.0 / maxf(mean, 0.001), _summary(times), held1 - held0])
+
+
+# lane MOVE-3: one scene of the move3 scenario: the camera over `centre`, the orders given, `_bench_seconds` watched; prints the closest the two watched hordes came
+func _move3_scene(title: String, centre: Vector2, a: int, b: int) -> void:
+	_cam_target = centre + Vector2(0.0, _s2_offset_y)
+	_cam_height = _s2_height
+	_place_camera()
+	_caption = title
+	var t := 0.0
+	var closest := 1e9
+	var cam := _cam_target
+	while t < _bench_seconds:
+		await get_tree().process_frame
+		var dt := get_process_delta_time()
+		t += dt
+		var pa: Dictionary = _world.get_render_pose(a)
+		var pb: Dictionary = _world.get_render_pose(b)
+		if pa.get("ok", false) and pb.get("ok", false):
+			closest = minf(closest, Vector2(pa.x - pb.x, pa.y - pb.y).length())
+			# the camera follows the middle of the two horde objects (as move2 follows its members)
+			cam = cam.lerp(Vector2((pa.x + pb.x) * 0.5, (pa.y + pb.y) * 0.5 + _s2_offset_y), clampf(dt * 1.5, 0.0, 1.0))
+			_cam_target = cam
+			_place_camera()
+	var ea: Dictionary = _world.get_object(a)
+	var eb: Dictionary = _world.get_object(b)
+	print("MOVE3 %s closest=%.1f end a=(%.0f,%.0f) b=(%.0f,%.0f)" % [title, closest, ea.get("x", 0.0), ea.get("y", 0.0), eb.get("x", 0.0), eb.get("y", 0.0)])
+
+
+func _move3() -> void:
+	var c := _m2_from
+	# scene 0 (MOVE-3 r2): two hordes produced in a row by one barracks without a rally point (the logic runs 4x while they are made); first, while the
+	# player's command points are free
+	var c4 := c + Vector2(600.0, -500.0)
+	var barracks: int = _world.create_object(_m3_barracks, _local_index, c4.x, c4.y, 0.0)
+	if barracks <= 0:
+		_fail("move3: cannot create " + _m3_barracks)
+		return
+	# a second citadel far off gives the player the command points of two hordes (GENERIC_FORTRESS_COMMAND_POINT_BONUS)
+	_world.create_object(_m3_cp_source, _local_index, c.x - 1200.0, c.y, 0.0)
+	var before: Dictionary = {}
+	for id0 in _world.get_object_ids():
+		before[id0] = true
+	_world.queue_unit(_local_index, barracks, _m3_prod)
+	var queued := 1
+	_cam_target = c4 + Vector2(0.0, 100.0 + _s2_offset_y)
+	_cam_height = _s2_height
+	_place_camera()
+	_caption = "two hordes produced in a row, no rally point"
+	_world.set_time_scale(4.0)
+	var made: Array = []
+	var t := 0.0
+	while t < 120.0 and made.size() < 2:
+		await get_tree().process_frame
+		t += get_process_delta_time()
+		made.clear()
+		for id1 in _world.get_object_ids():
+			if not before.has(id1):
+				var o: Dictionary = _world.get_object(id1)
+				if o.get("template", "") == _m3_prod:
+					made.append(id1)
+		if made.size() == 1 and queued == 1 and _world.get_production(_local_index, barracks).get("queue", [1]).is_empty():
+			_world.queue_unit(_local_index, barracks, _m3_prod) # the second once the first horde is complete
+			queued = 2
+	await _frames(int(30.0 * 6.0))
+	_world.set_time_scale(1.0)
+	if made.size() == 2:
+		await _move3_scene("two hordes produced in a row, no rally point", c4 + Vector2(0.0, -150.0), made[0], made[1])
+	else:
+		print("MOVE3 production: %d hordes made, %s" % [made.size(), _world.get_production(_local_index, barracks)])
+	# the scenes fit the retail camera's view (its height is at most 300): the hordes start 200 from the meeting point
+	# scene 1: crossing at right angles (ours from the west, theirs from the south); scene 2: head on, 600 to the south; scene 3: two of ours each ordered to one point
+	var a1: int = _world.create_object(_m3_a, _local_index, c.x - 200.0, c.y, 0.0)
+	var b1: int = _world.create_object(_m3_b, _enemy_index, c.x, c.y - 200.0, PI * 0.5)
+	var c2 := c - Vector2(0.0, 600.0)
+	var a2: int = _world.create_object(_m3_a, _local_index, c2.x - 220.0, c2.y, 0.0)
+	var b2: int = _world.create_object(_m3_b, _enemy_index, c2.x + 220.0, c2.y, PI)
+	var c3 := c + Vector2(600.0, 300.0)
+	var s1: int = _world.create_object(_m3_same, _local_index, c3.x - 200.0, c3.y - 75.0, 0.0)
+	var s2: int = _world.create_object(_m3_same, _local_index, c3.x - 200.0, c3.y + 75.0, 0.0)
+	if a1 <= 0 or b1 <= 0 or a2 <= 0 or b2 <= 0 or s1 <= 0 or s2 <= 0:
+		_fail("move3: cannot create the hordes (%s, %s, %s)" % [_m3_a, _m3_b, _m3_same])
+		return
+	_cam_target = c
+	_cam_height = _s2_height
+	_place_camera()
+	await _frames(30)
+	_world.order_move([a1], c.x + 220.0, c.y, {})
+	_world.order_move([b1], c.x, c.y + 220.0, {})
+	await _move3_scene("hostile hordes crossing (move orders)", c, a1, b1)
+	_world.order_move([a2], c2.x + 200.0, c2.y, {})
+	_world.order_move([b2], c2.x - 200.0, c2.y, {})
+	await _move3_scene("hostile hordes head on (move orders)", c2, a2, b2)
+	_world.order_move([s1], c3.x + 150.0, c3.y, {})
+	_world.order_move([s2], c3.x + 150.0, c3.y, {})
+	await _move3_scene("two hordes, each ordered to one point", c3, s1, s2)
 
 
 func _smooth_churn() -> void:

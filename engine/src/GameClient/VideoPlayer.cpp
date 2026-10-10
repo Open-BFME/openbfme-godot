@@ -5,6 +5,7 @@
 
 #include "Common/AsciiString.h"
 #include "Common/INI.h"
+#include "GameClient/VP6Decoder.h"
 
 #include <cstddef>
 #include <filesystem>
@@ -172,17 +173,22 @@ VideoStreamInfo VideoPlayer::locate(const std::string &title, const std::string 
 			continue;
 		}
 		const std::string full = (stdfs::path(d.root) / found).string();
-		std::ifstream f(full, std::ios::binary);
-		std::vector<std::uint8_t> head(32);
-		f.read((char *)head.data(), (std::streamsize)head.size());
-		head.resize((size_t)f.gcount());
+		// lane CAMP-2: the container's chunk index (EAVP6Movie: the MVhd header wherever it is, every frame chunk present)
+		EAVP6Movie movie;
 		std::string err;
-		if (!readHeader(head.data(), head.size(), info, &err))
+		if (!EAVP6Movie::parseFile(full, movie, &err))
 		{
 			info.error = "Could not open VP6 video file for " + title + " - " + full + ": " + err; // RW 0xBDDF4C
 			return info;
 		}
+		info.width = movie.width;
+		info.height = movie.height;
+		info.frames = movie.frames;
+		info.rateNumerator = movie.rateNumerator;
+		info.rateDenominator = movie.rateDenominator;
+		info.durationMs = movie.durationMs();
 		info.path = found;
+		info.fullPath = full;
 		info.ok = true;
 		return info;
 	}
@@ -220,7 +226,7 @@ bool VideoPlayer::readHeader(const std::uint8_t *data, size_t size, VideoStreamI
 std::vector<std::string> VideoPlayer::stopLines()
 {
 	return {
-		"[S-1710] movies: the VP6 picture is not decoded (a movie shows black for its length, its audio events play as retail's stream does, RW "
-		"0x49112C); the movie subtitles (HasSubtitles) and TheGlobalData + 0x9AD are not ported",
+		"[S-1710] movies: the movie subtitles (HasSubtitles) and TheGlobalData + 0x9AD are not ported (lane CAMP-2: the VP6 picture is decoded, "
+		"GameClient/VP6Decoder.h; its audio events play as retail's stream does, RW 0x49112C)",
 	};
 }

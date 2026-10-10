@@ -13,6 +13,7 @@
 #include "GameClient/HudContext.h"
 #include "GameClient/MessageStream/CommandXlat.h"
 #include "GameClient/MessageStream/GUICommandTranslator.h"
+#include "GameClient/MessageStream/HotKey.h"
 #include "GameClient/MessageStream/LookAtXlat.h"
 #include "GameClient/MessageStream/MessageStream.h"
 #include "GameClient/MessageStream/MetaEvent.h"
@@ -43,7 +44,8 @@ public:
 	void mouseMove(int x, int y, int keyState = 0);
 	void mouseButton(Button button, bool down, int x, int y, int keyState, int timeMs, bool doubleClick = false, bool overGui = false);
 	// a key: `key` a KeyCode, `keyState` the KeyState flags including the modifier flags after this event (KEY_STATE_DOWN / UP, AUTOREPEAT)
-	void key(int key, int keyState);
+	// `character`: the keyboard layout's character of the key (lane INPUT-1: RotWK's hotkeys look the character up, RW 0x63F14D), 0 when unknown
+	void key(int key, int keyState, char32_t character = 0);
 	// the wheel: `spin` notches (positive = away from the player = zoom in; ZH MSG_RAW_MOUSE_WHEEL carries the pixel and the spin)
 	void mouseWheel(int spin, int x, int y);
 
@@ -65,8 +67,11 @@ public:
 	const InGameUI &ui() const { return m_ui; }
 	HudContext &context() { return m_ctx; }
 	CommandTranslator &commandTranslator() { return m_command; }
+	const MetaEventTranslator &metaTranslator() const { return m_meta; }
+	MetaEventTranslator &metaTranslator() { return m_meta; }
 	PlaceEventTranslator &placeTranslator() { return m_place; }
 	SelectionTranslator &selectionTranslator() { return m_selection; }
+	HotKeyTranslator &hotKeyTranslator() { return m_hotKey; }
 	MessageStream &stream() { return m_stream; }
 	// the logic messages that went to the command list so far (as text): two runs of the same input produce the same list
 	const std::vector<std::string> &messageLog() const { return m_stream.log(); }
@@ -77,6 +82,7 @@ public:
 	std::vector<std::string> stops() const;
 
 private:
+	void hintSpy(const ClientMessage &m); // lane PLAY-1: the move hints (ZH HintSpyTranslator)
 	GameLogic &m_logic;
 	CommandList &m_commands;
 	InGameUI m_ui;
@@ -87,6 +93,7 @@ private:
 	GUICommandTranslator m_guiCommand;
 	CommandTranslator m_command;
 	SelectionTranslator m_selection;
+	HotKeyTranslator m_hotKey; // lane INPUT-1
 	TacticalCamera *m_camera = nullptr;
 	std::unique_ptr<LookAtTranslator> m_lookAt;
 	bool m_ignoreLeftUp = false, m_ignoreRightUp = false, m_ignoreMiddleUp = false;

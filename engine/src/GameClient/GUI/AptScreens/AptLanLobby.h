@@ -62,6 +62,7 @@ protected:
 	void lobbyChanged() override;
 	bool lobbyEditable(int slot) const override;
 	void onReadyPress(const std::string &argument) override;
+	bool applySlotHero(int slot, const CreateAHeroHero *hero) override; // lane CAH-1: the local slot's hero goes to the host (LANAPI)
 	void onKickPlayer(const std::string &argument) override;
 	void onChatSend(const std::u16string &text) override;
 	bool showChat() const override;

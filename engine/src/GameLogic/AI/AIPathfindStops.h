@@ -18,6 +18,9 @@ const char *const kRivers =
 const char *const kLayers =
 	"S-161 only the ground layer exists: bridge, wall and ladder layers, portal / waypoint path nodes (RW 0x6F5547, 0x6F6286) and layer transitions are not modelled, "
 	"nor the bridge-layer classifiers' writes of cell types 5 / 6 (RW 0x7688ED, 0x768ACC, 0x93503A: the port never makes a CELL_IMPASSABLE cell)";
+// lane MOVE-3: the blocked unit's path patch (S-1830)
+const char *const kPatchLayers =
+	"S-1830 patchPath (RW 0x6F7938) expands no layer links or portals (RW 0x6F6286, S-161: only the ground layer exists)";
 // S-162 zones and the hierarchical search
 const char *const kZoneProfiles =
 	"S-162 the zone tables are built lazily per locomotor profile with the terrain variant read as obstacles-count-as-ground (INFERRED from the RW call sites); RW updates them incrementally and in a budgeted order";

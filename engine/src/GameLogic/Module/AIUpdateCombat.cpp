@@ -158,6 +158,10 @@ void AIUpdateInterface::readCombatSettings(const ModuleData *data)
 		{
 			m_combat.standGround = ieq(tok[0], "Yes") || ieq(tok[0], "True") || tok[0] == "1";
 		}
+		else if (ieq(name, "CanAttackWhileContained"))
+		{
+			m_combat.canAttackWhileContained = ieq(tok[0], "Yes") || ieq(tok[0], "True") || tok[0] == "1"; // lane IDLE-1: as StandGround (the same parseBool RW 0x42E558)
+		}
 		else if (ieq(name, "AttackPriority"))
 		{
 			m_combat.attackPriority = tok[0];
@@ -434,6 +438,25 @@ Object *AIUpdateInterface::nextMoodTarget()
 	if (moodCheckInterval() == 0)
 	{
 		return nullptr;
+	}
+	// lane IDLE-1 (community FB-0001), RW 0x66844A's gate before the scan (read with Ghidra, RW 0x6685B6 .. 0x6685F9): a contained object (+ 0x27C) looks for
+	// a target only when its AI module's CanAttackWhileContained (data + 0x25) is set, it is CONTESTING_BUILDING (status 0x25) or its own contain (+ 0x258, the
+	// ContainModuleInterface subobject) answers vslot 0xB8 true, and its container is not JUST_BUILT (+ 0x124 bit 26). vslot 0xB8 is RW 0x9188EB (false) in
+	// OpenContain's and HordeContain's contain vtables (HordeContain: the subobject at + 0x20, vtable 0xC5B480; RW 0x871A90 is in the vtable at + 0x11C, another
+	// interface) and RW 0x87EDA9 (CrewAllowedToFire) in SiegeEngineContain's. Before, a battering ram's crew (AutoAcquireEnemiesWhenIdle Yes, a sword, no
+	// CanAttackWhileContained) acquired a target from its bones, its attack state walked it away from the ram it still belonged to and it stood with MOVING
+	// where the ram's redeploy put it back: the QA matrix's IsengardRamCrew / MordorRamCrew treadmill. (ZH's Object::isAbleToAttack has the same container
+	// rule for passengers, isPassengerAllowedToFire.)
+	if (const Object *container = obj.getContainedBy())
+	{
+		static const int contesting = CombatNames::status("CONTESTING_BUILDING");
+		static const int justBuilt = CombatNames::modelCondition("JUST_BUILT");
+		const ContainModuleInterface *own = obj.getContain();
+		const bool allowed = m_combat.canAttackWhileContained || (contesting >= 0 && obj.testStatus((unsigned)contesting)) || (own && own->moodScanWhileContained());
+		if (!allowed || (justBuilt >= 0 && container->testModelCondition(justBuilt)))
+		{
+			return nullptr;
+		}
 	}
 	// lane STEALTH-1 (RW 0x66844A, the idle branch RW 0x6685F7 .. 0x668676): a CAMOUFLAGE object scans unless its StancesBehavior's stance class is 3 (RW 0x861D8E); any other
 	// object that is stealthed and undetected (RW 0x694C0D, no viewer) scans only with AutoAcquireEnemiesWhenIdle STEALTHED (flag 2); the container's slot 0xB0 exception

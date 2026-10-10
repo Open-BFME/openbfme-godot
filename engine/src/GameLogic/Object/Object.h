@@ -164,6 +164,9 @@ public:
 	void attemptDamage(DamageInfo &info);
 	// RW 0x697E50 (the immediate half of attemptDamage, also the pending list's)
 	void doAttemptDamage(DamageInfo &info);
+	// lane RADAR-1: the logic frame of the last hit the drawable's damage notice (RW 0x67B4B7, from RW 0x6968BC) would report to the radar as an attack (0xFFFFFFFF:
+	// none); client state the radar reads through the snapshot (Radar::noteAttacks), never hashed
+	UnsignedInt radarAttackFrame() const { return m_radarAttackFrame; }
 	// RW 0x690532 Object::attemptHealing: a HEALING hit from `source` (INVALID_ID: itself)
 	void attemptHealing(float amount, const Object *source);
 	// lane BUILD-2: RW 0x690584 Object::attemptHealingFromSoleBenefactor(amount, source, duration): only one healer at a time (RW + 0x3D4 its id, + 0x3D8 the frame its claim
@@ -253,6 +256,12 @@ public:
 	};
 	static constexpr int MAX_TRIGGERS_IN = 7;
 	void updateTriggerAreaFlags();
+	// lane HUD-5: GeometryInfo::setActive(name, flag) on the object's own geometry (Object + 0xA8, RW 0xAD3520): every shape of the template's list whose name
+	// equals `name` exactly takes `on` as its active flag; the pathfinder's view of the object (ObjectPathfindAdapter::getGeometry) uses the object's flags from
+	// then on. geometryActive() is empty until the first call; geometryVersion() counts the calls that changed a flag.
+	void setGeometryActive(const std::string &name, bool on);
+	const std::vector<std::uint8_t> &geometryActive() const { return m_geometryActive; }
+	std::uint32_t geometryVersion() const { return m_geometryVersion; }
 	int triggerCount() const { return m_triggerCount; }
 	const TriggerEntry &triggerEntry(int i) const { return m_triggers[i]; }
 	UnsignedInt enteredOrExitedFrame() const { return m_enteredOrExitedFrame; }
@@ -440,6 +449,8 @@ private:
 	bool m_scriptSelectable = true;  ///< lane SCRIPT-2: RW + 0x454 (hashed when cleared)
 	TriggerEntry m_triggers[MAX_TRIGGERS_IN];  ///< lane SCRIPT-2: RW + 0x3DC
 	int m_triggerCount = 0;                      ///< RW + 0x45A
+	std::vector<std::uint8_t> m_geometryActive; ///< lane HUD-5: the shapes' active flags of the object's own GeometryInfo (+ 0xA8), empty: the template's
+	std::uint32_t m_geometryVersion = 0;
 	UnsignedInt m_enteredOrExitedFrame = 0;      ///< RW + 0x414
 	std::int32_t m_triggerCellX = 0, m_triggerCellY = 0; ///< RW + 0x418 / + 0x41C (the integer position of the last check)
 
@@ -477,6 +488,7 @@ private:
 	ObjectID m_builderID = INVALID_ID;                ///< RW + 0x7C (BUILD-2)
 	ObjectID m_soleHealingBenefactorID = INVALID_ID;  ///< RW + 0x3D4 (BUILD-2)
 	UnsignedInt m_soleHealingBenefactorExpiry = 0;    ///< RW + 0x3D8 (BUILD-2)
+	UnsignedInt m_radarAttackFrame = 0xFFFFFFFFu;     ///< lane RADAR-1 (radarAttackFrame)
 	ObjectClientHooks *m_client = nullptr; ///< SMOOTH-1: set by friend_bindToClient (no Drawable pointer in the simulation)
 
 	ModelConditionBits m_modelCondition{};                   ///< RW + 0x10C

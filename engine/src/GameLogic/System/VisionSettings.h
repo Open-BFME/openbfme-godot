@@ -26,6 +26,9 @@ struct VisionSettings
 	unsigned clearAlpha = 255, fogAlpha = 127, shroudAlpha = 0;
 	float stealthFriendlyOpacity = 0.0f;
 	bool useShroud = false; ///< MultiplayerSettings UseShroud
+	// lane HUD-5: MultiplayerSettings ShowRandomPlayerTemplate / ShowRandomStartPos / ShowRandomColor (GameSlot::getApparent*: an enemy's random choice is shown
+	// as random). Default true: MultiplayerSettings' constructor (RW 0x7836C0, BFME2 decomp MultiplayerSettingsCtor.cpp, tier B same-shape); optional fields
+	bool showRandomPlayerTemplate = true, showRandomStartPos = true, showRandomColor = true;
 
 	static bool load(ArchiveFileSystem &fs, VisionSettings &out, std::string *error);
 	// the two files' texts (tests)

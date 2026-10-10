@@ -3,6 +3,7 @@
 #include "Common/Audio/GameAudio.h"
 
 #include "Common/AsciiString.h"
+#include "Common/Audio/MilesMix.h"
 
 #include <algorithm>
 #include <atomic>
@@ -97,13 +98,15 @@ std::vector<std::string> AudioManager::unverified()
 		"linear distance falloff, submix sliders); the RW routines for killLowestPriority / limits / stream pools and the first special handle value are not individually verified",
 		"S-241: AudioSettings constructor defaults of fields an INI omits are not read from the binary",
 		"S-242: the processing step is 33.33 ms off a caller clock; the exact rate retail calls the manager update at is not decoded",
-		"S-243: volume model: view state defaults, VolumeSliderMultiplier ducking ramp, owner dependent mute (RW 0x6DB221), microphone placement are inferred from the INI documentation",
+		"S-243: volume model: view state defaults, VolumeSliderMultiplier ducking ramp, owner dependent mute (RW 0x6DB221) are inferred from the INI documentation",
 		"S-244: the IMA ADPCM decoder uses the reference step arithmetic (inferred from Miles' encoder and the retail block predictors) and the MP3 decoder is not Miles' mssmp3.asi (within 2 LSB peak of mpg123 / ffmpeg)",
-		"S-245: Miles specifics (reverb / EAX, occlusion low pass, providers, speaker types) are not modelled; Godot's MP3 decoder plays the streams",
+		"S-245: Miles specifics (reverb / EAX, occlusion low pass) are not modelled; Godot's MP3 decoder plays the streams",
 		"S-246: Living World owners (OwnerType 3-5), the music script system (AR_PushMusic / AR_PopMusic ...) are not ported",
 		"S-247: the Eva announcer implements the rules EA documents in Eva.ini; the binary's queue code is not decoded",
 		"S-248: LargeGroupAudio, LivingWorldSound and CrowdResponse: the LargeGroupAudio INI and its members (lane AUDIO-4: the LargeGroupAudioUpdate modules' calls and the maps' qualification) are ported; the Sound blocks' per-cell runtime is the INI's documented rules (LiveGameAudio), the other two blocks are recording stubs",
 		"S-249: the decoded sound cache budget (a multiple of AudioFootprintInBytes) is inferred; retail caches compressed bytes",
+		"S-1930: the stereo image is Miles' Fast 2D provider (a stereo Windows speaker setup); RotWK's Dolby Surround provider (headphone / surround speaker setups on High audio LOD) and its FB pan filter are not modelled",
+		"S-1931: a panned stereo voice mixes its left channel into the right in the Godot device",
 	};
 }
 
@@ -209,50 +212,66 @@ void AudioManager::setListenerPosition(const Coord3D &position, const Coord3D &f
 	m_device.setListener(position, forward);
 }
 
-// ZH AudioManager::update (GameAudio.cpp 0x...): the microphone from the camera. The RW settings fields are named in the INI comments:
-// MicrophonePreferredFractionCameraToGround, MicrophoneMin/MaxDistanceToCamera, MicrophonePullTowardsTerrainLookAtPointPercent, ZoomMin/MaxDistance,
-// ZoomSoundVolumePercentageAmount.
-void AudioManager::updateMicrophone(const Coord3D &lookAt, const Coord3D &cameraPos, float angle, int view)
+// RW MilesAudioManager::recalculateMicrophone 0x45235B (BFME2 0x452B53, tier A; its decomp attempt is not byte-matching, this reads the
+// RotWK disassembly). The microphone group is the current view's (RW +0x678 x 0x48 into AudioSettings +0x12C). With d = camera - lookAt:
+//   fraction^2 |d|^2 >= max^2 -> s = max / |d|; else |d|^2 <= min^2 -> s = 1; else min^2 >= fraction^2 |d|^2 -> s = min / |d|; else s = fraction
+// (the squares are the post-processed *Sq fields), microphone = camera - d s, then, when the look-at is valid (RW +0x48), its x / y are
+// pulled towards the look-at by PullTowardsTerrainLookAtPointPercent (z kept). The face is the horizontal (-d.x, -d.y, 0) normalised, kept
+// from the last call when d has no horizontal part (RW 0x45255B). Then the zoom volume (RW 0x45264A -> 0x451946, BFME2 0x45213E tier A):
+// with e = camera - microphone and the current view's Zoom* fields, only when ZoomSoundVolumePercentageAmount > 0 (else it keeps its value):
+//   |e|^2 < ZoomMin^2 -> 1; |e|^2 < ZoomMax^2 -> 1 - (|e| - ZoomMin) / (ZoomMax - ZoomMin) x amount; else 1 - amount.
+// RW refreshPair 0x4516DE multiplies it into the slider volume of positional sounds (sliderFactor).
+void AudioManager::updateMicrophone(const Coord3D &cameraPos, const Coord3D &lookAt, bool lookAtValid)
 {
-	const MicrophoneSettings &mic = m_ini.settings.microphone[view == 1 ? 1 : 0];
-	Coord3D toGround{ lookAt.x - cameraPos.x, lookAt.y - cameraPos.y, lookAt.z - cameraPos.z };
-	const float full = std::sqrt(toGround.x * toGround.x + toGround.y * toGround.y + toGround.z * toGround.z);
-	Coord3D mike = cameraPos;
-	mike.x += toGround.x * mic.preferredFractionCameraToGround;
-	mike.y += toGround.y * mic.preferredFractionCameraToGround;
-	mike.z += toGround.z * mic.preferredFractionCameraToGround;
-	// keep the microphone between MinDistanceToCamera and MaxDistanceToCamera from the camera
-	float d = full * mic.preferredFractionCameraToGround;
-	if (full > 0.0f)
+	const MicrophoneSettings &mic = m_ini.settings.microphone[std::max(0, std::min(2, m_currentView))];
+	const float dx = cameraPos.x - lookAt.x, dy = cameraPos.y - lookAt.y, dz = cameraPos.z - lookAt.z;
+	const float lenSq = dz * dz + dy * dy + dx * dx;
+	float s;
+	if (mic.preferredFractionCameraToGroundSq * lenSq >= mic.maxDistanceToCameraSq)
 	{
-		const float want = std::max(mic.minDistanceToCamera, std::min(d, mic.maxDistanceToCamera));
-		if (want != d)
-		{
-			const float s = want / full;
-			mike.x = cameraPos.x + toGround.x * s;
-			mike.y = cameraPos.y + toGround.y * s;
-			mike.z = cameraPos.z + toGround.z * s;
-			d = want;
-		}
+		s = mic.maxDistanceToCamera / std::sqrt(lenSq);
 	}
-	// then pull it toward the look-at point in x / y, keeping the height
-	mike.x += (lookAt.x - mike.x) * mic.pullTowardsTerrainLookAtPointPercent;
-	mike.y += (lookAt.y - mike.y) * mic.pullTowardsTerrainLookAtPointPercent;
-	const Coord3D forward{ -std::sin(angle), std::cos(angle), 0.0f };
-	setListenerPosition(mike, forward);
-	// the zoom volume: ZH update(): the full volume when the camera is within ZoomMinDistance of the microphone, 1 - amount beyond ZoomMaxDistance
+	else if (mic.minDistanceToCameraSq >= lenSq)
+	{
+		s = 1.0f;
+	}
+	else if (mic.minDistanceToCameraSq >= mic.preferredFractionCameraToGroundSq * lenSq)
+	{
+		s = mic.minDistanceToCamera / std::sqrt(lenSq);
+	}
+	else
+	{
+		s = mic.preferredFractionCameraToGround;
+	}
+	Coord3D mike{ cameraPos.x - dx * s, cameraPos.y - dy * s, cameraPos.z - dz * s };
+	if (lookAtValid)
+	{
+		mike.x = (lookAt.x - mike.x) * mic.pullTowardsTerrainLookAtPointPercent + mike.x;
+		mike.y = (lookAt.y - mike.y) * mic.pullTowardsTerrainLookAtPointPercent + mike.y;
+	}
+	Coord3D face = m_listenerForward;
+	if (dx != 0.0f || dy != 0.0f)
+	{
+		const float len = std::sqrt(dx * dx + dy * dy);
+		face = Coord3D{ -dx / len, -dy / len, 0.0f };
+	}
+	setListenerPosition(mike, face);
 	const float amount = mic.zoomSoundVolumePercentageAmount;
-	m_zoomVolume = 1.0f - amount;
 	if (amount > 0.0f)
 	{
-		const float dist = length3(cameraPos, mike);
-		if (dist < mic.zoomMinDistance)
+		const float ex = cameraPos.x - mike.x, ey = cameraPos.y - mike.y, ez = cameraPos.z - mike.z;
+		const float eSq = ex * ex + ey * ey + ez * ez;
+		if (mic.zoomMinDistanceSq > eSq)
 		{
 			m_zoomVolume = 1.0f;
 		}
-		else if (dist < mic.zoomMaxDistance)
+		else if (mic.zoomMaxDistanceSq > eSq)
 		{
-			m_zoomVolume = 1.0f - (dist - mic.zoomMinDistance) / (mic.zoomMaxDistance - mic.zoomMinDistance) * amount;
+			m_zoomVolume = 1.0f - (std::sqrt(eSq) - mic.zoomMinDistance) / (mic.zoomMaxDistance - mic.zoomMinDistance) * amount;
+		}
+		else
+		{
+			m_zoomVolume = 1.0f - amount;
 		}
 	}
 }
@@ -1275,34 +1294,30 @@ void AudioManager::processRequest(Request &req)
 	}
 }
 
-float AudioManager::panFor(const Coord3D &pos) const
-{
-	// the unit vector to the sound projected on the listener's right: -1 hard left .. +1 hard right
-	const float dx = pos.x - m_listenerPosition.x, dy = pos.y - m_listenerPosition.y;
-	const float len = std::sqrt(dx * dx + dy * dy);
-	if (len < 1e-3f)
-	{
-		return 0.0f;
-	}
-	const float fx = m_listenerForward.x, fy = m_listenerForward.y;
-	const float rx = fy, ry = -fx; // right = forward rotated clockwise
-	return std::max(-1.0f, std::min(1.0f, (dx * rx + dy * ry) / len));
-}
-
 VoiceParams AudioManager::voiceParamsFor(AudioEventRTS &event, VoiceKind kind)
 {
 	VoiceParams p;
 	p.volume = clamp01(getEffectiveVolume(event));
 	p.pitch = event.getPitchShift();
-	p.pan = 0.0f;
+	// lane AUDIO-5: the channel gains Miles gives the voice (MilesMix.h): a 3D sample through the Fast 2D provider, anything else at the
+	// default pan
+	MilesChannelGains g = milesSampleGains(p.volume);
 	if (kind == VoiceKind::Sample3D)
 	{
 		Coord3D pos;
 		if (event.getCurrentPosition(m_env, &pos))
 		{
-			p.pan = panFor(pos);
+			g = milesFast2DGains(p.volume, m_listenerPosition, m_listenerForward, pos, milesMaxDistance(*event.getAudioEventInfo(), event.getMinVolume(), m_ini.settings));
+		}
+		else
+		{
+			// the owner is gone: Miles keeps the sample's last position; the port has none and plays it straight ahead (INFERENCE)
+			const Coord3D ahead{ m_listenerPosition.x + m_listenerForward.x, m_listenerPosition.y + m_listenerForward.y, m_listenerPosition.z };
+			g = milesFast2DGains(p.volume, m_listenerPosition, m_listenerForward, ahead, 2.0f);
 		}
 	}
+	p.gainLeft = g.left;
+	p.gainRight = g.right;
 	return p;
 }
 

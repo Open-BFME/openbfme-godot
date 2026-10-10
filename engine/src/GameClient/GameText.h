@@ -49,7 +49,7 @@ struct AptTextResolution
 	std::string text;        // what to draw (UTF-8)
 	std::string label;       // the table key when the text was a label, else empty
 	bool wasLabel = false;
-	bool found = true;       // false: a label with no table entry (`text` is then the label, never silently empty)
+	bool found = true;       // false: a label with no table entry (`text` is then retail's "MISSING: '<label>'", never silently empty)
 	bool dropShadow = false;
 };
 

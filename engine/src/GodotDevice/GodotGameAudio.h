@@ -144,8 +144,14 @@ public:
 	double get_audio_length_ms(const String &event_name);
 
 	void set_listener(const Vector3 &position, const Vector3 &forward);
+	// lane AUDIO-5: retail's microphone (RW 0x45235B) from the tactical camera's eye and the terrain point it looks at, SAGE space
+	void update_microphone(const Vector3 &camera_position, const Vector3 &look_at, bool look_at_valid);
+	Dictionary get_listener() const; // {position, forward}: where the core hears from (SAGE space)
 	void set_volume(const String &slider, double volume); // "sound" | "voice" | "music" | "ambient" (the options sliders, 0..1)
 	double get_volume(const String &slider) const;
+	// lane FB7-1: AudioSettings DefaultSoundVolume, DefaultVoiceVolume, DefaultMusicVolume, DefaultAmbientVolume, DefaultMovieVolume (0..1): the Options screen's
+	// defaults (RW 0x6E5FB3 reads TheAudio's settings + 0x1C ..); empty before boot
+	PackedFloat32Array get_default_volumes() const;
 	void set_enabled(const String &affect, bool on);
 	void set_current_view(int view);
 	void stop_all(const String &affect);

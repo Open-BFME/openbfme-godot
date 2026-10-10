@@ -77,6 +77,12 @@ public:
 	// Stop S-119 (lane MAPOBJ-1): with a housecolor.ini table set, a classic surface whose stage 0 texture has a house colour texture gets
 	// the HouseColor shader permutation and that texture as `w3d_hc_tex` (the table must outlive the factory). Off (nullptr) by default.
 	void Set_House_Colors(const HouseColorTable *table) { HouseColors = table; }
+	// lane CAH-2 (S-1408): the colour set of the model being built (W3DInstancer::add_model_colored; kind 0 = none): its house colour textures are
+	// recoloured texel by texel as RW 0x531C77 before any filtering, the mipmaps made from the recoloured level (Recolored_House_Texture)
+	void Set_House_Params(const HouseColorParams &params) { HouseParams = params; }
+	// RW 0x531C77 applied to the texture `name` (its A8R8G8B8 texels; another format stays as it is, as retail's switch leaves it), then mipmaps; cached
+	// by "#<path>#<kind>&<c0>&<c1>&<c2>" (retail names the new texture "#<texture>#<options>", RW 0x54BDE0). Invalid when the texture is missing.
+	Ref<Texture2D> Recolored_House_Texture(const std::string &name, const HouseColorParams &params, std::vector<std::string> &errors, std::vector<std::string> &notes);
 
 	// loadTextures = false builds the same shader and parameters with white placeholder textures (shader coverage probe).
 	W3DMaterialResult Create(const MeshRenderData &mesh, const MeshDrawSurface &surf, const MeshModelClass &source, bool hasUv2, bool loadTextures = true);
@@ -95,6 +101,7 @@ private:
 
 	ArchiveFileSystem &Fs;
 	const HouseColorTable *HouseColors = nullptr;
+	HouseColorParams HouseParams;
 	std::map<std::string, Ref<Shader>> Shaders;
 	std::map<std::string, Ref<Texture2D>> Textures; // by virtual path
 	std::vector<std::string> TextureErrors;
@@ -108,6 +115,8 @@ void W3D_Apply_Object_Lighting(const W3DObjectLighting &lighting);
 // lane RENDER-4 (S-1651): the map's hardware fog (Weather HardwareFogEnable / Color / Start / End) for the W3D models and the CPU particles (the
 // globals w3d_fog / w3d_fog_color, W3DHardwareFog.h); colour 0..1 in retail's gamma space
 void W3D_Apply_Fog(bool enabled, const float color[3], float start, float end);
+// lane PLAY-1: the free camera moves every fog range out by `shift` world units (the global w3d_fog_shift; 0 = retail)
+void W3D_Set_Fog_Shift(float shift);
 // The light of the model viewers that show no map (not retail data): ambient 0.3 (defaultw3d.fxo's own AmbientLightColor default),
 // one white light toward (-0.5, -0.5, 0.7) SAGE, for both sets.
 void W3D_Apply_Viewer_Lighting();

@@ -8,8 +8,18 @@
 // TARGET FACTS (RotWK game.dat strings, caveat S-001): the meta name registry is the strings SAVE_VIEW1 .. ADD_TO_TEAM9 of the binary's table (MessageStream.h);
 // the key names KEY_NONE, KEY_A .. KEY_Z, KEY_0 .. KEY_9, KEY_F1 .. KEY_F12, KEY_KP0 .. KEY_KP9, KEY_KPSLASH and the punctuation, arrow and edit keys; the
 // transitions DOWN, UP and DOUBLEDOWN; the modifier names NONE, SHIFT, CTRL, ALT and their combinations; the useable-in names GAME, SHELL, PLANNING; the
-// categories CONTROL, INFORMATION, INTERFACE, SELECTION, TAUNT, TEAM, MISC, DEBUG. The block and field parse follows ZH's MetaMap table (Key, Transition,
-// Modifiers, UseableIn, Category, Description, DisplayName); the RotWK field table itself was not read (stop S-281).
+// categories CONTROL, INFORMATION, INTERFACE, SELECTION, TAUNT, TEAM, MISC, DEBUG.
+// TARGET FACTS (lane INPUT-1): the CommandMap block (MetaMap::parseMetaMap RW 0x5DAD46, BFME2 decomp MetaMapParseMetaMap.cpp tier A) fills a record with the
+// field table RW 0xBF0E70: Key (INI::parseLookupList RW 0x42E9B7 over the 86 {name, scan code} pairs RW 0xBF0B50, KEY_ESC .. KEY_KPSLASH, KEY_NONE last),
+// Transition (lookup RW 0xBF0E08: DOWN 0, UP 1, DOUBLEDOWN 2), Modifiers (lookup RW 0xBF0E28: NONE 0, CTRL 4, ALT 0x40, SHIFT 0x10, CTRL_ALT 0x44,
+// SHIFT_CTRL 0x14, SHIFT_ALT 0x50, SHIFT_ALT_CTRL 0x54), UseableIn (INI::parseBitString32 RW 0x42E840 with SHELL, GAME, PLANNING, RW 0xD9DCAC),
+// Category (lookup RW 0xBF0B08) and Description / DisplayName (RW 0x73B192: the label). GameClient's subsystem table loads one entry "CommandMap.ini"
+// (RW 0x63C4F6); which files that resolves to (here Data\INI\CommandMap.ini, then the language archive's CommandMap.ini) is the INI subsystem
+// loader's (RW 0x63874B, not compared: stop S-281).
+// The translator (RW 0x5DA83D, BFME2 decomp MetaEvent.cpp, tier B: the player field + 0x770 instead of + 0x750) is ZH's with three changes: with
+// OurLanguage 2 (German) the Y and Z scan codes swap; a record applies when its UseableIn bits meet SHELL while the shell is up, else GAME, plus PLANNING
+// while the local player's order mode (+ 0x770) is 2; an autorepeated key of a record is eaten unless a debug flag (the object at RW 0xDFEF18, + 0x18)
+// is set. The German swap follows the keyboard layout as RotWK's (lane INPUT-1 r2, setGermanKeyboard).
 // DONOR FACTS (ZH MetaEvent.cpp:380-615): a new map record is pushed at the HEAD of the list, so the translator tries the records in reverse order of first
 // appearance; a key down matches when key, modifier state and transition agree, autorepeat is eaten without a meta message; a modifier-only record
 // (KEY_NONE) fires when the modifier state changes to / from its state; a button up becomes a MOUSE_*_CLICK (or DOUBLE_CLICK when the
@@ -74,12 +84,13 @@ enum CommandUsableIn : unsigned
 	COMMANDUSABLE_GAME = 1u << 1,
 	COMMANDUSABLE_PLANNING = 1u << 2
 };
+// the values are RotWK's (the Modifiers lookup list RW 0xBF0E28: CTRL 0x04, SHIFT 0x10, ALT 0x40, the KEY_STATE bits of the left keys)
 enum MetaModifier : int
 {
 	MOD_NONE = 0,
-	MOD_CTRL = 1,
-	MOD_SHIFT = 2,
-	MOD_ALT = 4,
+	MOD_CTRL = 0x04,
+	MOD_SHIFT = 0x10,
+	MOD_ALT = 0x40,
 	MOD_SHIFT_CTRL = MOD_SHIFT | MOD_CTRL,
 	MOD_CTRL_ALT = MOD_CTRL | MOD_ALT,
 	MOD_SHIFT_ALT = MOD_SHIFT | MOD_ALT,
@@ -114,12 +125,37 @@ public:
 	// the records in the order the translator tries them (reverse of first appearance)
 	const std::vector<MetaMapRec> &records() const { return m_records; }
 	const MetaMapRec *find(int meta) const;
+	// a record of the map (any transition, any UseableIn) takes this key with exactly these modifiers (MOD_*): OpenBFME's own hotkeys stay off it
+	bool isBound(int key, int modState) const;
 	MetaMapRec &getMetaMapRec(int meta);
 	static int keyByName(const std::string &name);       // -1 when unknown (case insensitive)
 	static const char *keyName(int key);
 
 private:
 	std::vector<MetaMapRec> m_records; // front = the newest (ZH pushes at the head)
+};
+
+// lane INPUT-1 (review r1): the device's modifier keys, per side. DirectInput reports each Ctrl / Shift / Alt key separately (DIK_LCONTROL 0x1D,
+// DIK_RCONTROL 0x9D, ...); the key state carries a bit per side (ZH KeyDefs: KEY_STATE_LCONTROL / _RCONTROL ...), so letting go of one Ctrl while the
+// other is held keeps Ctrl down. The aggregate flags a device event carries (Godot's ctrl / shift / alt pressed, on keys, buttons and pointer motion)
+// repair a release or a press the window never saw: sync() names the side key transitions that bring the state in line with them.
+class ModifierTracker
+{
+public:
+	struct Transition
+	{
+		int key;   ///< KEY_LCTRL, KEY_RCTRL, KEY_LSHIFT, KEY_RSHIFT, KEY_LALT, KEY_RALT
+		bool down;
+	};
+	static bool isModifierKey(int key);
+	// a modifier key went down / up: the state's side bit follows (other keys change nothing)
+	void key(int key, bool down);
+	// the aggregate state a device event reports; the transitions to inject (each also applied to the state): a kind reported up releases every
+	// side still held, a kind reported down with no side held presses the left one
+	std::vector<Transition> sync(bool ctrl, bool shift, bool alt);
+	int state() const { return m_state; } ///< KEY_STATE_* side bits
+private:
+	int m_state = 0;
 };
 
 class MetaEventTranslator : public MessageTranslator
@@ -131,6 +167,15 @@ public:
 	void setShellActive(bool on) { m_shellActive = on; }
 	// ZH TheGameClient->getFrame() < 1: GAME-only commands are ignored until the client reached frame 1
 	void setClientFrame(unsigned frame) { m_clientFrame = frame; }
+	// lane INPUT-1 r2: RotWK's OurLanguage 2 (RW 0xDE789C), set by the keyboard setup RW 0x63F079 when the keyboard layout is German (LANGID 0x0407,
+	// 0x0807, 0x0C07, 0x1007, 0x1407): the translator swaps the Y and Z scan codes (RW 0x5DA86C), so a CommandMap's KEY_Z is the key labelled Z
+	void setGermanKeyboard(bool on) { m_german = on; }
+	bool germanKeyboard() const { return m_german; }
+	// lane INPUT-1: the raw keys seen and the meta messages they made (the HUD's key diagnosis)
+	unsigned rawKeys() const { return m_rawKeys; }
+	unsigned metasMade() const { return m_metasMade; }
+	const std::string &lastMeta() const { return m_lastMeta; }
+	const std::vector<std::string> &recentMetas() const { return m_recent; } ///< the last 32 meta messages made, oldest first
 
 private:
 	HudContext &m_ctx;
@@ -139,6 +184,11 @@ private:
 	unsigned m_clientFrame = 1;
 	int m_lastModState = 0;
 	int m_lastKeyDown = 0;
+	unsigned m_rawKeys = 0, m_metasMade = 0;
+	bool m_german = false;
+	std::string m_lastMeta;
+	std::vector<std::string> m_recent;
+	void noteMeta(int meta);
 	ICoord2D m_mouseDown[3]{};
 	bool m_nextUpDouble[3] = { false, false, false };
 };

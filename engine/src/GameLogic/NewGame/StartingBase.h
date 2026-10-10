@@ -9,8 +9,8 @@
 //   * the structure (game state +0x114 == 3, the state of a skirmish): the template's StartingBuilding, made by placeObjectAtPosition (RW 0x629DD9: newObject for the
 //     player's default team, setOrientation(the template's PlacementViewAngle, field +0x4E0), setPosition(pos), onBuildComplete on every create module,
 //     team activation, the pathfinder map, and for a mobile object with an AI the adjusted destination), the object's script name "BASE_FLAG_<start + 1>", then
-//     Player::onStructureCreated / onStructureConstructionComplete (RW 0x6AAF3B / 0x6AA72B; lane BUILD-1 calls Construction's versions of them).  A start waypoint with a non-zero field +0x60 gets no structure
-//     (the field is not read here, S-272).
+//     Player::onStructureCreated / onStructureConstructionComplete (RW 0x6AAF3B / 0x6AA72B; lane BUILD-1 calls Construction's versions of them).  A start waypoint with a non-zero field +0x60
+//     (the map object's waypointType, TerrainLogic::addWaypoint RW 0x682D4C) gets no structure (lane HUD-5: the fortress maps' Player_1_Start, type 5).
 //   * the starting units 0..9 (PlayerTemplate StartingUnit<i> and StartingUnitOffset<i>, an empty name is skipped), in order: with a NON-ZERO offset the unit is
 //     placed at  structure position + L * R  where L = |offset| (float32 sum z*z + y*y + x*x, CRT sqrt, stored as float32) and R = the reference vector
 //     (1/sqrt 2, -1/sqrt 2) rotated by the signed angle A of the offset: A = acos(offset.y / |offset|) (the normalised y, through the retail fast inverse square

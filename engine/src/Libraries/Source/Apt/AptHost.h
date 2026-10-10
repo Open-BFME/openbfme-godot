@@ -56,6 +56,9 @@ public:
 	// The instance reported by componentInstanceCreated() was destroyed (removed, replaced or its movie unloaded); the pointer is
 	// valid for this call only.
 	virtual void componentInstanceDestroyed(AptCharacterInst &inst) { (void)inst; }
+	// Lane WINCRASH-1: the movie of `level` was unloaded (after its instances were destroyed): the level's component windows go now
+	// (RW 0x814BA9, BFME2 decomp Rva00411E80: the window tables drop the records of the level).
+	virtual void levelUnloaded(int level) { (void)level; }
 	// ActionTrace output.
 	virtual void trace(const std::string &message) = 0;
 	// FSCommand:<command> with its argument string.

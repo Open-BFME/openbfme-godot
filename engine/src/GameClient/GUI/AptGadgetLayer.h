@@ -39,6 +39,8 @@ struct GadgetSkinData
 // headertemplate.ini; a missing file or a parse error is an error that reaches the caller.
 bool loadGadgetSkinData(ArchiveFileSystem &fs, GadgetSkinData &out, std::string *error);
 
+class AptColorPickers;
+
 class AptGadgetLayer
 {
 public:
@@ -51,6 +53,7 @@ public:
 	AptGadgetLayer &operator=(const AptGadgetLayer &) = delete;
 
 	GameWindowManager &gadgets() { return m_gwm; }
+	AptColorPickers *colorPickers() { return m_pickers.get(); } // lane CAH-2
 
 	// Registers the component factories for the nine gadget symbol names of the binary (View3D, BinkMovie are device components: noted).
 	void registerComponents();
@@ -103,6 +106,7 @@ private:
 	WindowManager &m_windows;
 	AptFileSource &m_source;
 	GadgetSkinData &m_skins;
+	std::unique_ptr<AptColorPickers> m_pickers; // lane CAH-2: the "ColorPicker" render components (GUI/AptColorPicker.h)
 	GameWindowManager m_gwm;
 	WindowFunctionLexicon m_lexicon;
 	std::map<int, GameWindow *> m_levelOwners;

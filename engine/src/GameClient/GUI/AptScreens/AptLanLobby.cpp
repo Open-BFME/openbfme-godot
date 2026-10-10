@@ -3,6 +3,7 @@
 // See GameClient/GUI/AptScreens/AptLanLobby.h (lane MP-2).
 
 #include "GameClient/GUI/AptScreens/AptLanLobby.h"
+#include "GameClient/GUI/AptScreens/AptSimpleScreens.h"
 
 #include "GameClient/GUI/AptGadgetLayer.h"
 #include "GameClient/GUI/AptMessageBox.h"
@@ -210,6 +211,7 @@ int AptLanLobby::countdownTick()
 AptLanLobby::AptLanLobby(WindowManager &windows, Shell &shell, ShellEnvironment &environment)
 	: AptSkirmish(windows, shell, environment, "LanLobby.apt", "AptLanLobby", true), m_lan(environment.lan)
 {
+	windows.setBackground(1); // lane FB7-1: RotWK's opener shows the front-end background after its push (RW 0x847180 .. 0x847182)
 	if (!m_lan)
 	{
 		windows.note("provider-unwired", "LanLobby.apt: the host gave no LAN lobby (LANAPI) [S-724]");
@@ -258,11 +260,11 @@ AptLanLobby::AptLanLobby(WindowManager &windows, Shell &shell, ShellEnvironment 
 	registerCommand("AptLanLobby::OnLoadGameBttn", unportedCommand("AptLanLobby::OnLoadGameBttn"));
 	registerCommand("AptLanLobby::OnOptionsBttn", [this](const std::string &) {
 		// RW 0x846F53: RW 0x846F25 (the list gadget forgotten, the state 0; + 0x6C0 = 1, + 0x6BB = 0 and the interface + 0x6AC's slot 4(0) are not
-		// identified), then Options.apt pushed (RW 0x91ED91; its mode bytes + 0x280 .. + 0x284 = 1, 0, 0, 0: the Options screen's handlers are S-175's)
+		// identified), then Options.apt opened (lane FB7-1: RW 0x846F58 .. 0x846F5F pass RW 0x91ED91(0, 0, 1, 0): advanced options only allowed)
 		m_gamesList = nullptr;
 		m_listCandidates.clear();
 		m_state = 0;
-		this->shell().push("Options.apt", false);
+		AptOptionsScreen::open(this->shell(), false, false, true, false);
 	});
 	registerCommand("AptLanLobby::OnLoadScreen", [](const std::string &) {});
 	registerScreenRef("AptLanLobby::InitGadgets", [this](const std::string &name, GameWindow *w) {
@@ -685,6 +687,24 @@ bool AptLanLobby::lobbyEditable(int slot) const
 		return true;
 	}
 	return m_lan->amIHost() && !m_lan->currentGame()->info.slots[slot].isHuman(); // the host sets the other slots that are not players
+}
+
+bool AptLanLobby::applySlotHero(int slot, const CreateAHeroHero *hero)
+{
+	// lane CAH-1: the owner's applySlotHero in a LAN game (BFME2 owner vslot 6): only the local slot's hero, and through the host
+	// (LANAPI::requestSlotCreateAHero: the host checks it, Options::validateCreateAHero, and sends the options to every player)
+	pruneLan();
+	if (!m_lan || !setupModel() || slot != setupModel()->localSlot())
+	{
+		return false;
+	}
+	std::string error;
+	if (!m_lan->requestSlotCreateAHero(hero, &error))
+	{
+		windows().note("create-a-hero-lobby", "the hero request was refused: " + error);
+		return false;
+	}
+	return true;
 }
 
 void AptLanLobby::onReadyPress(const std::string &argument)

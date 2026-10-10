@@ -167,10 +167,12 @@ def test_scene_clip_rate_plays_the_recording_at_game_speed():
 
 def test_motion_section_lists_runs_and_the_ai_states():
     run = {"tag": "m", "faction": "FactionMen", "map": "maps/x/x.map", "ai": 3, "opponents": 1, "minutes": 10}
-    a = {"run": run, "summary": {"counts": {"motion_probes": 450, "treadmill_units": 12, "stuck_units": 3, "treadmill_ai_state_7": 9,
+    a = {"run": run, "summary": {"counts": {"motion_probes": 450, "treadmill_units": 12, "stuck_units": 3, "treadmill_melee_units": 5, "treadmill_ai_state_7": 9,
                                            "treadmill_ai_state_0": 3, "stuck_ai_state_7": 3}}}
     b = {"run": dict(run, tag="n"), "summary": {"counts": {}}}
     md = qa.motion_section([a, b])
-    assert "| m | 450 | 12 | 3 |" in md and not [l for l in md if l.startswith("| n |")]
+    assert "| m | 450 | 12 | 5 | 3 |" in md and not [l for l in md if l.startswith("| n |")]
     assert md.index("| treadmill_ai_state_7 | 9 |") < md.index("| treadmill_ai_state_0 | 3 |")
     assert qa.motion_section([b]) == []
+    # lane IDLE-1: the treadmill units of a horde in a melee are their own column, and the select verdicts that are not failures weigh nothing
+    assert qa.SEVERITY["select_occluded"] == 0 and qa.SEVERITY["select_missed"] < qa.SEVERITY["select_failed"]

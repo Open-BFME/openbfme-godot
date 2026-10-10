@@ -56,6 +56,7 @@ HOW TO REPORT
   named openbfme-<date>-<time>.log. If the game shows an error or crashed
   last time, it tells you which file to attach. Logs do not contain your
   user name or your home folder.
+- {find_logs}
 {console}
 KNOWN ISSUES
 {issues}
@@ -74,6 +75,7 @@ PLATFORMS = {
         start="Unpack the archive and run ./OpenBFME.x86_64 (keep the files together).",
         wine=", also inside Wine, Proton (Steam), Lutris, Heroic and Bottles prefixes",
         logs="~/.local/share/godot/app_userdata/OpenBFME/logs/",
+        find_logs="To open that folder: \"Logs\" next to the version in the menus, \"Open log\n  folder\" in the error / crash message, or ./OpenBFME.x86_64 --open-logs",
         console="- Please attach the log file rather than a copy of the terminal output.\n",
     ),
     "windows": dict(
@@ -82,6 +84,7 @@ PLATFORMS = {
         start="Unpack the archive and run OpenBFME.exe (keep the files together).",
         wine="",
         logs="%APPDATA%\\Godot\\app_userdata\\OpenBFME\\logs\\",
+        find_logs="To open that folder: \"Logs\" next to the version in the menus, \"Open log\n  folder\" in the error / crash message, or OpenBFME.exe --open-logs",
         # the console filter (Common/ConsoleFilter.h) does not exist on Windows: the console wrapper prints unfiltered text (review r2)
         console=("- Attach the log file, NOT a copy of the console window: the console\n"
                  "  (OpenBFME.console.exe) is not filtered and can show your Windows\n"

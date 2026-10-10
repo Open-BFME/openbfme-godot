@@ -136,6 +136,10 @@ WindowMsgHandledType GadgetTextEntrySystem(GameWindow *window, std::uint32_t msg
 void W3DGadgetTextEntryDraw(GameWindow *window, WinInstanceData *instData);
 void W3DGadgetTextEntryImageDraw(GameWindow *window, WinInstanceData *instData);
 UnicodeString GadgetTextEntryGetText(GameWindow *textentry);
+// lane CAH-2 r2: RotWK's character validator (RW 0x75E4DF) and insert (RW 0x72260B: refused at maxTextLen characters); typing goes through the insert
+bool GadgetTextEntryValidateCharacter(char16_t character, std::uint32_t flags);
+std::uint32_t GadgetTextEntryValidationFlags(const EntryData &entry);
+bool GadgetTextEntryInsertCharacter(GameWindow *textentry, char16_t character);
 void GadgetTextEntrySetText(GameWindow *textentry, const UnicodeString &text);
 void GadgetTextEntrySetTextColor(GameWindow *textentry, Color color);
 

@@ -2,6 +2,7 @@
 // See GameLogic/Object/Object.h for the creation order and its sources.
 
 #include "GameLogic/Object/Object.h"
+#include "GameLogic/Object/ObjectGeometry.h"
 #include "GameLogic/Module/PhysicsBehavior.h"
 #include "GameLogic/ScriptEngine/ScriptEngine.h"
 #include "GameLogic/ScriptEngine/ScriptConditions.h"
@@ -338,7 +339,7 @@ void Object::reactToTransformChange(const Coord3D *oldPos, float)
 
 // lane SCRIPT-2: RW 0x69264D. The exit test uses the PREVIOUS integer position (+ 0x418 is written after the exit loop): an object that leaves a
 // trigger is reported exited at its next integer-cell move outside, as retail does. Not ported here: the Lua OnUnitEntered / OnUnitExited events
-// (RW 0x7379CB, LUA-1's stop), the trigger's own counters (RW 0x6E4B21 / 0x6E4B3E), the team's entered flag (RW 0x79FE5A: team + 0x5C and the
+// (RW 0x7379CB, LUA-1's stop) (lane HUD-5: the trigger's callback, RW 0x6E4B21 / 0x6E4B3E, runs), the team's entered flag (RW 0x79FE5A: team + 0x5C and the
 // script engine's + 0x1A260 frame) and the terrain decal call for IMMOBILE-less infantry / cavalry / monsters / machines (RW 0x6858BE)
 void Object::updateTriggerAreaFlags()
 {
@@ -372,34 +373,33 @@ void Object::updateTriggerAreaFlags()
 		}
 		m_triggerCount = kept;
 	}
-	const std::vector<TriggerArea> *areas = m_logic.scriptEngine().triggerAreas();
+	// lane HUD-5: the map's triggers and the run-time ones (AIGateUpdate) in one list; a trigger's callback runs right after its entry changed (RW 0x6928B4 / 0x6929D7)
+	ScriptEngine &engine = m_logic.scriptEngine();
+	const size_t areaCount = engine.triggerAreaCount();
 	const auto inArea = [](const TriggerArea &t, std::int32_t px, std::int32_t py) { // RW 0x6E4DC7 -> 0x68628B: the integers as floats
 		return ScriptConditions::pointInTrigger(t, SimMath::sseFromInt32(px), SimMath::sseFromInt32(py));
 	};
 	for (int i = 0; i < m_triggerCount; ++i)
 	{
 		TriggerEntry &e = m_triggers[i];
-		if (e.trigger >= 0 && areas && !inArea((*areas)[(size_t)e.trigger], m_triggerCellX, m_triggerCellY))
+		if (e.trigger >= 0 && (size_t)e.trigger < areaCount && !inArea(engine.triggerAreaAt((size_t)e.trigger), m_triggerCellX, m_triggerCellY))
 		{
 			e.inside = false;
 			e.exited = true;
 			m_enteredOrExitedFrame = frame;
+			engine.triggerCallback((size_t)e.trigger, *this, false);
 		}
 	}
 	m_triggerCellX = x;
 	m_triggerCellY = y;
-	if (!areas)
-	{
-		return;
-	}
-	for (size_t t = 0; t < areas->size(); ++t)
+	for (size_t t = 0; t < areaCount; ++t)
 	{
 		bool known = false;
 		for (int i = 0; i < m_triggerCount; ++i)
 		{
 			known = known || m_triggers[i].trigger == (int)t;
 		}
-		if (known || !inArea((*areas)[t], x, y))
+		if (known || !inArea(engine.triggerAreaAt(t), x, y))
 		{
 			continue;
 		}
@@ -411,11 +411,39 @@ void Object::updateTriggerAreaFlags()
 			e.entered = true;
 			e.exited = false;
 			m_enteredOrExitedFrame = frame;
+			engine.triggerCallback(t, *this, true);
 		}
 		else
 		{
-			m_logic.scriptEngine().note("***WARNING: Too many nested triggers"); // RW 0x6929EA, once per game run (RW 0xDE478C)
+			engine.note("***WARNING: Too many nested triggers"); // RW 0x6929EA, once per game run (RW 0xDE478C)
 		}
+	}
+}
+
+// lane HUD-5: RW 0xAD3520 (see Object.h)
+void Object::setGeometryActive(const std::string &name, bool on)
+{
+	const std::vector<ObjectGeometry::Shape> shapes = ObjectGeometry::shapesOf(*getTemplate());
+	if (m_geometryActive.size() != shapes.size())
+	{
+		m_geometryActive.clear();
+		for (const ObjectGeometry::Shape &sh : shapes)
+		{
+			m_geometryActive.push_back(sh.active ? 1 : 0);
+		}
+	}
+	bool changed = false;
+	for (size_t i = 0; i < shapes.size(); ++i)
+	{
+		if (shapes[i].name == name && m_geometryActive[i] != (on ? 1 : 0))
+		{
+			m_geometryActive[i] = on ? 1 : 0;
+			changed = true;
+		}
+	}
+	if (changed)
+	{
+		++m_geometryVersion;
 	}
 }
 
@@ -1252,6 +1280,20 @@ void Object::doAttemptDamage(DamageInfo &info)
 	if (!m_effectivelyDead || info.m_input.m_shockWaveAmount > 0.0f)
 	{
 		ObjectKnockback::shockWave(*this, info);
+		// lane RADAR-1: the tail of RW 0x6968BC hands the hit to the drawable (RW 0x696E4D -> RW 0x67B4B7), whose radar half is: not for a template both
+		// UNATTACKABLE (+ 0x10E & 0x40) and MOVE_ONLY (+ 0x118 & 0x40); the damage dealt (D + 0x70) above 0.0f (RW 0xC1B594); not a PENALTY (10) or HEALING (7)
+		// hit, not the death type FADED (0x16), not the sub type 2; the controlling player's bit not in the source mask; ShouldPlayUnderAttackEva (D + 0x25).
+		// The local player and the radar list (Object + 0x268) are the client's tests (Radar::noteAttacks); INFERENCE (stop S-2457): the notice is reached
+		// whenever the handler runs
+		static const int kUnattackable = ObjectTemplateInfoBuilder::kindOfIndex("UNATTACKABLE"), kMoveOnly = ObjectTemplateInfoBuilder::kindOfIndex("MOVE_ONLY");
+		const Player *owner = getControllingPlayer();
+		const bool exempt = kUnattackable >= 0 && kMoveOnly >= 0 && isKindOf((unsigned)kUnattackable) && isKindOf((unsigned)kMoveOnly);
+		if (!exempt && owner && info.m_output.m_actualDamageDealt > 0.0f && info.m_input.m_damageType != DAMAGE_PENALTY && info.m_input.m_damageType != DAMAGE_HEALING &&
+		    info.m_input.m_deathType != DEATH_FADED && info.m_input.m_damageSubType != 2 && (info.m_input.m_sourcePlayerMask & (1u << (owner->getPlayerIndex() & 31))) == 0 &&
+		    info.m_input.m_shouldPlayUnderAttackEva)
+		{
+			m_radarAttackFrame = m_logic.getFrame();
+		}
 	}
 }
 
@@ -1636,6 +1678,14 @@ void Object::crc(StateHasher &h) const
 	if (!m_scriptSelectable)
 	{
 		h.addU32(0x5E1Eu);
+	}
+	if (!m_geometryActive.empty()) // lane HUD-5: the object's own shape flags (a gate's open / closed geometry), hashed once changed
+	{
+		h.addU32(0x6E000000u | (std::uint32_t)m_geometryActive.size());
+		for (std::uint8_t a : m_geometryActive)
+		{
+			h.addU32(a);
+		}
 	}
 	if (m_triggerCount != 0 || m_enteredOrExitedFrame != 0) // lane SCRIPT-2: the trigger tracking, once the object met a trigger
 	{

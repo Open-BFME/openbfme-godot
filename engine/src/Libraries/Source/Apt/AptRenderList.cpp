@@ -90,7 +90,7 @@ void Apt::buildRenderList(AptRenderList &out)
 				{
 					cmd.renderObject = obj.toString();
 				}
-				for (const char *name : { "_imageMap", "_mode", "_timerId" })
+				for (const char *name : { "_imageMap", "_mode", "_timerId", "_imageName" }) // lane CAH-2: a ColorPicker's mapped image
 				{
 					AptValue v;
 					if (inst->getOwn(name, v) && v.isString())

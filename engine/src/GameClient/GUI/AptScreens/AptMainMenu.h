@@ -19,13 +19,17 @@
 #include "GameClient/GUI/AptScreen.h"
 #include "GameClient/GUI/ShellServices.h"
 
+#include <memory>
 #include <string>
 #include <vector>
+
+class AptMessageBox;
 
 class AptMainMenu : public AptScreen
 {
 public:
 	AptMainMenu(WindowManager &windows, Shell &shell, ShellServices &services);
+	~AptMainMenu() override;
 
 	// The RotWK names in binary order, for the registry test (commands and the render component).
 	static const std::vector<std::string> &retailNames();
@@ -33,11 +37,25 @@ public:
 	// The provider state (what the retail providers answer from preferences and campaign progress; not wired: reported).
 	bool optionsAdvanced() const { return m_optionsAdvanced; }
 
+	// lane CAH-2 (stop S-1914): the host has no screen for the request `action` (a ShellAction name, e.g. "CreateAHero"). Not retail: retail always
+	// has the screen. The movie already ran DisableAllButtons, so the player would be left with a dead menu; instead the gap reaches the player as an
+	// Ok message box ("<screen> is not available in this build yet", AptMessageBox, RW 0x953861) and the report (note "unported-screen"), and the box's
+	// Ok gives the menu what a sub-screen's return gives it: OnFocus("1") (WindowManager::refreshFocus RW 0x46E170 after the pop), whose
+	// ShowMainMenu reveals the buttons again. Returns the stop line ("" for a request that opens no screen: nothing shown).
+	std::string screenUnavailable(const std::string &action);
+	// the screen name the box names for `action` ("" for a request that opens no screen)
+	static std::string unavailableScreenName(const std::string &action);
+	AptMessageBox *unavailableBox() { return m_box.get(); }
+
 private:
 	void registerAll();
 	void showSkirmish();
 	void request(ShellAction action, const std::string &argument);
 
+	void update();
+
 	ShellServices &m_services;
 	bool m_optionsAdvanced = false;
+	std::unique_ptr<AptMessageBox> m_box; // lane CAH-2: made on demand, released after its Ok (GuiFX.apt can be loaded once: the lobbies own their own)
+	bool m_boxClosed = false;
 };

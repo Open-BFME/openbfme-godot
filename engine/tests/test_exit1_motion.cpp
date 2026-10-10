@@ -13,6 +13,7 @@
 #include "doctest.h"
 
 #include "StartTestUtil.h"
+#include "Idle1TurnProbe.h"
 
 #include "GameEngineDevice/Win32Device/Common/Win32BIGFileSystem.h"
 
@@ -25,6 +26,8 @@
 #include "GameClient/GUI/Skirmish/IniSkirmishSetupSource.h"
 #include "GameClient/LiveGame.h"
 #include "GameLogic/AI/AIMove.h"
+#include "GameLogic/AI/AIWorld.h"
+#include "GameLogic/GameLogic.h"
 #include "GameLogic/Module/AIUpdate.h"
 #include "GameLogic/NewGame/NewGame.h"
 #include "GameLogic/Object/Contain/HordeContainRuntime.h"
@@ -102,6 +105,10 @@ struct MotionProbe
 	std::map<ObjectID, Track> tracks;
 	std::map<unsigned, std::set<ObjectID>> treadmill, stuck; ///< AI state -> units
 	std::set<ObjectID> treadmillInMelee;                     ///< treadmill units whose horde fights a melee (its Amoeba steps: lane MOVE-2 r3, S-1502)
+	std::map<ObjectID, Track> riderTracks;                  ///< lane IDLE-1: riders, by their container's position
+	std::set<ObjectID> riderApart;                           ///< riders whose own position is not their container's
+	std::set<ObjectID> riderTreadmill;                       ///< riders with MOVING for 3 samples while their container stood
+	int riderLines = 0;
 	std::set<ObjectID> seen, exited;                         ///< every unit; the units sampled in the exit path state
 	int longestExit = 0;                                     ///< the longest a unit stayed in the exit path state (frames, by sample)
 	std::string longestExitName;
@@ -118,9 +125,32 @@ struct MotionProbe
 		for (Object *x = logic.getFirstObject(); x; x = x->getNextObject())
 		{
 			AIUpdateInterface *ai = x->getAIUpdateInterface();
-			if (!ai || x->isEffectivelyDead() || x->isKindOfName("STRUCTURE") || x->isKindOfName("HORDE") ||
-				(x->getContainedBy() && !x->getContainedBy()->isKindOfName("HORDE")))
+			if (!ai || x->isEffectivelyDead() || x->isKindOfName("STRUCTURE") || x->isKindOfName("HORDE"))
 			{
+				continue;
+			}
+			if (x->getContainedBy() && !x->getContainedBy()->isKindOfName("HORDE"))
+			{
+				// lane IDLE-1: a rider (a ram's crew) moves with its container: MOVING on a rider whose container stands is counted apart
+				const Object *c = x->getContainedBy();
+				Track &t = riderTracks[x->getID()];
+				const float dx = c->getPosition()->x - t.x, dy = c->getPosition()->y - t.y;
+				t.x = c->getPosition()->x;
+				t.y = c->getPosition()->y;
+				t.movingStill = dx * dx + dy * dy < 0.25f && x->testModelCondition(moving) ? t.movingStill + 1 : 0;
+				// the rider's own position against its container's (QA-2 samples the rider's own: a rider left behind reads as standing still)
+				const float ox = x->getPosition()->x - c->getPosition()->x, oy = x->getPosition()->y - c->getPosition()->y;
+				if (ox * ox + oy * oy > 1.0f && riderApart.insert(x->getID()).second && riderApart.size() <= 2)
+				{
+					samples << "  rider apart f" << logic.getFrame() << " " << x->getTemplate()->getName() << " #" << x->getID() << " from " << c->getTemplate()->getName()
+							<< " by " << (int)ox << "," << (int)oy << " MOVING " << x->testModelCondition(moving) << "\n";
+				}
+				if (t.movingStill >= 3 && riderTreadmill.insert(x->getID()).second && riderLines < 6)
+				{
+					++riderLines;
+					samples << "  rider treadmill f" << logic.getFrame() << " " << x->getTemplate()->getName() << " #" << x->getID() << " in " << c->getTemplate()->getName() << " #" << c->getID()
+							<< " state " << ai->currentStateId() << " aiMoving " << ai->isMoving() << " goal " << (int)ai->mover().goalType() << "\n";
+				}
 				continue;
 			}
 			seen.insert(x->getID());
@@ -197,6 +227,7 @@ struct MotionProbe
 	std::string report() const
 	{
 		std::ostringstream os;
+		os << "rider treadmill " << riderTreadmill.size() << ", riders apart from their container " << riderApart.size() << "; ";
 		os << "treadmill in a melee " << treadmillInMelee.size() << ", idle outside a melee " << treadmillOutsideMelee(AI_IDLE) << "; units " << seen.size() << ", through the exit path " << exited.size() << ", longest in it " << longestExit << " frames (" << longestExitName << ")\n";
 		for (const auto &e : treadmill)
 		{
@@ -303,9 +334,39 @@ TEST_CASE("exit1 retail: a Udun 2v2 Hard computer game: produced members leave t
 	CHECK(probe.stuckCount(AI_FOLLOW_EXITPRODUCTION_PATH) == 0);
 	// a produced member is made busy by its horde's hub in its first frames (RW 0x87479C); a single unit (a siege engine) walks its exit path out: 12 game seconds
 	CHECK(probe.longestExit <= 60);
-	// no idle unit keeps MOVING outside a melee. A member of a horde fighting an Amoeba melee still can: the port orders its melee steps directly where RW walks
-	// them through the member pass and the hub (whose near arm clears MOVING): lane MOVE-2 r3's S-1502, not merged here
+	// no idle unit keeps MOVING, in a melee or not (lane IDLE-1 r2: the member pass runs after the members' AI updates, as RW's updates[1] after updates[0])
 	CHECK(probe.treadmillOutsideMelee(AI_IDLE) == 0);
+	CHECK(probe.treadmillInMelee.empty());
+}
+
+// lane IDLE-1 r2 (community FB-0001): the horde members that turn where they stand end the frame without MOVING. RW's scheduler (RW 0x62E982) runs updates[0]
+// in phases 3 / 4 and updates[1] in phase 5: every AI update (vslot 0x30 RW 0x851E97: 0) runs before every HordeContain (RW 0x490AC4: 1). The member update (RW
+// 0x66C960) sets MOVING while it takes an angle goal; the member pass that follows in the same frame clears it again (the hub's turn RW 0x8750B8, the active
+// member's hold RW 0x877BB8), so a turning member is never drawn running. The port filed both in updates[2] in object order: a member created after its horde
+// ran after the pass and kept MOVING (r1 took that for retail: wrong). Sampled every frame over a Udun 2v2 Hard game with melees, sieges and cavalry.
+TEST_CASE("idle1 retail: horde members turning where they stand end the frame without MOVING (updates[0] before updates[1]: RW 0x851E97, RW 0x490AC4)")
+{
+	OPENBFME_REQUIRE_START(s);
+	ExitGame g;
+	loadExitGame(*s, exitUdun(*s, 2, 1), -1, g);
+	TurnProbe probe;
+	for (int i = 0; i < 2600; ++i)
+	{
+		g.game->advance(0.2);
+		probe.sample(g.game->logic());
+	}
+	MESSAGE("member-frames turning on the spot " << probe.turned << " (with MOVING " << probe.turnedMoving << ", still the frame after outside the attack state " << probe.turnedMovingOutsideAttack << "); attacking " << probe.turnedAttacking << " ("
+										   << probe.turnedAttackingMoving << "); cavalry " << probe.turnedCavalry << " (" << probe.turnedCavalryMoving
+										   << "); members standing with MOVING for 5 frames " << probe.stillMovingStreaks << "\n"
+										   << probe.samples.str());
+	// not vacuous: the game turns members on the spot, attacking ones (melee and the buildings' attackers) among them (the riders: test_idle1_turns.cpp)
+	CHECK(probe.turned >= 1000);
+	CHECK(probe.turnedAttacking >= 100);
+	// a turn's MOVING is gone the frame after (the hub's turn clears it, RW 0x8750B8, and the member update ends the angle goal without it, RW 0x66C9A7), except
+	// the attack's own aim turn (RW 0x75232F's vslot 0x21C, cleared by the aim's exit RW 0x74BEE7 with vslot 0x220 before the member update clears MOVING: it goes
+	// with the member's next update or its horde's pass, within the 5 frame rule below)
+	CHECK(probe.turnedMovingOutsideAttack == 0);
+	CHECK(probe.stillMovingStreaks == 0);
 }
 
 TEST_CASE("exit1 diagnostic: the motion probe over a Udun 2v2 Hard game (OPENBFME_EXIT1_PROBE=<seed>,<frames>, OPENBFME_EXIT1_TRACE=<id>,...)" * doctest::skip())

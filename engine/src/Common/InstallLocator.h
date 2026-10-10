@@ -73,6 +73,7 @@ struct DiscoveryEnvironment
 	std::map<std::string, std::string> env; // WINEPREFIX, XDG_DATA_HOME, ProgramFiles(x86), ProgramFiles, ProgramW6432
 	std::vector<std::string> drives;        // Windows: the fixed drive roots ("C:\", "D:\")
 	RegistryReader registry;                // Windows only (empty elsewhere)
+	std::string downloadedMarker;           // lane AIO-1: the launcher's record of the folders it downloaded ("" = none; see readDownloaded)
 
 	// The machine this runs on.
 	static DiscoveryEnvironment host();
@@ -87,6 +88,24 @@ struct Candidate
 
 // Every existing folder found for either game, de-duplicated, most trustworthy first (registry before folder hints).
 std::vector<Candidate> discover(const DiscoveryEnvironment &environment);
+
+// ---- the launcher's download (lane AIO-1) ----
+
+// The file the OpenBFME launcher writes into the game's user data folder after it downloaded and checked both games from the All In One
+// BFME Launcher's service (launcher/scripts/core/aio_install.gd). discover() offers its folders first, as found installs: the player
+// still confirms them and the check and the mount still verify every archive (PLAN rule 10). Lines "KEY=value": SOURCE (shown to the
+// player), ROTWK_INSTALL, BFME2_INSTALL; '#' starts a comment.
+extern const char *const kDownloadedMarkerName; // "downloaded-installs.cfg"
+
+struct Downloaded
+{
+	std::string source;
+	std::string rotwk;
+	std::string bfme2;
+};
+
+// Reads the marker. False with `error` when it cannot be read or lacks a key (an unknown key is an error too: a newer launcher's file).
+bool readDownloaded(const std::string &markerPath, Downloaded &out, std::string *error);
 
 // ---- Wine helpers (exposed for tests) ----
 

@@ -2,6 +2,8 @@
 
 #include "GodotDevice/GodotW3DMaterial.h"
 
+#include <cstdio>
+
 #include "Common/ArchiveFileSystem.h"
 #include "Common/AsciiString.h"
 #include "GameEngineDevice/W3DDevice/GameClient/W3DObjectLighting.h"
@@ -105,6 +107,17 @@ void W3D_Ensure_Light_Globals()
 	// lane RENDER-4 (S-1651): the map's hardware fog (W3DHardwareFog.h), off until a map sets it
 	rs->global_shader_parameter_add(StringName("w3d_fog"), RenderingServer::GLOBAL_VAR_TYPE_VEC3, Vector3(0.0f, 0.0f, 1.0f));
 	rs->global_shader_parameter_add(StringName("w3d_fog_color"), RenderingServer::GLOBAL_VAR_TYPE_VEC3, Vector3(0.5f, 0.5f, 0.5f));
+	// lane PLAY-1: the free camera's fog shift (TacticalCamera::fogShift): the distance every fog range is measured from; 0 = retail
+	rs->global_shader_parameter_add(StringName("w3d_fog_shift"), RenderingServer::GLOBAL_VAR_TYPE_FLOAT, 0.0f);
+}
+
+void W3D_Set_Fog_Shift(float shift)
+{
+	W3D_Ensure_Light_Globals();
+	if (RenderingServer *rs = RenderingServer::get_singleton())
+	{
+		rs->global_shader_parameter_set(StringName("w3d_fog_shift"), shift);
+	}
 }
 
 void W3D_Apply_Fog(bool enabled, const float color[3], float start, float end)
@@ -212,6 +225,65 @@ Ref<Texture2D> W3DMaterialFactory::Load_Texture(const std::string &name, std::ve
 	Ref<ImageTexture> tex = ImageTexture::create_from_image(image);
 	Textures[res.Path] = tex;
 	found = true;
+	return tex;
+}
+
+Ref<Texture2D> W3DMaterialFactory::Recolored_House_Texture(const std::string &name, const HouseColorParams &params, std::vector<std::string> &errors, std::vector<std::string> &notes)
+{
+	TextureResolution res = Resolve_W3D_Texture(name, [&](const std::string &p) { return Fs.doesFileExist(p); });
+	if (!res.Found)
+	{
+		return Ref<Texture2D>(); // as Load_Texture's quiet case: a missing house texture only means no tint
+	}
+	char opt[96];
+	std::snprintf(opt, sizeof(opt), "%d&%d&%d&%d", params.kind, (int)params.colors[0], (int)params.colors[1], (int)params.colors[2]); // RW 0x535BCF's "%d&%d&%d&%d"
+	const std::string cacheKey = "#" + res.Path + "#" + opt;
+	auto it = Textures.find(cacheKey);
+	if (it != Textures.end())
+	{
+		return it->second;
+	}
+	std::vector<std::uint8_t> bytes;
+	std::string error;
+	if (!Fs.readFile(res.Path, bytes, &error))
+	{
+		errors.push_back("texture " + name + ": " + error);
+		TextureErrors.push_back(errors.back());
+		return Ref<Texture2D>();
+	}
+	PackedByteArray buffer;
+	buffer.resize((int64_t)bytes.size());
+	if (!bytes.empty()) std::memcpy(buffer.ptrw(), bytes.data(), bytes.size());
+	Ref<Image> image;
+	image.instantiate();
+	Error err = res.IsDDS ? image->load_dds_from_buffer(buffer) : image->load_tga_from_buffer(buffer);
+	if (err != OK || image->is_empty())
+	{
+		errors.push_back("could not decode texture " + res.Path);
+		TextureErrors.push_back(errors.back());
+		return Ref<Texture2D>();
+	}
+	// RW 0x531C77 recolours an A8R8G8B8 surface (0x15) texel by texel; any other format (a DXT DDS, a 24-bit TGA) is left as it is. Level 0 is recoloured,
+	// then the mipmaps are made from it (INFERENCE, S-1408: retail's loader filtered the mip chain before the recolour, RW 0x531BF9 -> 0x53193E; the
+	// recolour's single surface lock suggests the lower levels stay unrecoloured there)
+	if (!image->is_compressed() && image->get_format() == Image::FORMAT_RGBA8)
+	{
+		image->clear_mipmaps();
+		PackedByteArray px = image->get_data();
+		Recolor_House_Pixels(params, px.ptrw(), (std::size_t)(px.size() / 4));
+		image->set_data(image->get_width(), image->get_height(), false, Image::FORMAT_RGBA8, px);
+		image->generate_mipmaps();
+	}
+	else
+	{
+		notes.push_back("house colour texture " + name + " is not A8R8G8B8: not recoloured (RW 0x531C77 leaves other formats)");
+		if (!image->has_mipmaps() && !image->is_compressed())
+		{
+			image->generate_mipmaps();
+		}
+	}
+	Ref<ImageTexture> tex = ImageTexture::create_from_image(image);
+	Textures[cacheKey] = tex;
 	return tex;
 }
 
@@ -399,7 +471,16 @@ W3DMaterialResult W3DMaterialFactory::Create(const MeshRenderData &mesh, const M
 		{
 			bool hcFound = false;
 			std::vector<std::string> hcErrors; // 313 housecolor.ini textures, 204 shipped as files: a missing one only means no tint
-			hcTex = loadTextures ? Load_Texture(*hc, hcErrors, hcFound, true) : Placeholder_Texture(false);
+			if (loadTextures && HouseParams.kind > 0)
+			{
+				// lane CAH-2: a colour set (a Create-a-Hero's kind 3): the texture recoloured per texel before filtering
+				hcTex = Recolored_House_Texture(*hc, HouseParams, hcErrors, out.Notes);
+				key.HouseColorBaked = hcTex.is_valid();
+			}
+			else
+			{
+				hcTex = loadTextures ? Load_Texture(*hc, hcErrors, hcFound, true) : Placeholder_Texture(false);
+			}
 			if (hcTex.is_valid())
 			{
 				key.HouseColor = true;

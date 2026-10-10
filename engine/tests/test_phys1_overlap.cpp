@@ -169,7 +169,8 @@ TEST_CASE("phys1 retail: the overlap statistic of hordes against a structure")
 }
 
 // stop S-781: the peak overlap of two members of one horde attacking a structure (a maximum over the run; it does not say why or for how long). Round 2 measured 16.00
-// (two members on one point); with the attack path (S-784), allied clearing (S-785) and the Amoeba's goal reservation following its steps the peak is 13.50
+// (two members on one point); with the attack path (S-784), allied clearing (S-785) and the Amoeba's goal reservation following its steps the peak is 13.50.
+// Lane IDLE-1 r2 (retail's update order: the members' AI in updates[0] before the horde's member pass in updates[1], RW 0x851E97 / 0x490AC4): 9.66
 TEST_CASE("phys1 retail: stop S-781: a horde attacking a structure still reaches a large member-circle overlap")
 {
 	if (!hudtest::haveWorld("phys1 retail"))
@@ -177,7 +178,7 @@ TEST_CASE("phys1 retail: stop S-781: a horde attacking a structure still reaches
 		return;
 	}
 	const phystest::OverlapStats st = structureRun("GondorFighterHorde", true, 120);
-	CHECK(st.worst.sameHordeOverlap > 10.0f);
+	CHECK(st.worst.sameHordeOverlap > 8.0f);
 	CHECK(st.worst.sameHordeOverlap < 15.9f); // no longer two members on one point
 	CHECK(st.worst.unitsInsideStructures == 0);
 }
@@ -383,7 +384,8 @@ TEST_CASE("phys1 retail: stop S-784 / S-785: attack paths and allied clearing re
 		st.add(phystest::measure(a.logic));
 		for (Object *m = a.logic.getFirstObject(); m; m = m->getNextObject())
 		{
-			if (m->getContainedBy() == horde && m->getAIUpdateInterface() &&
+			// lane MOVE-3 r2: a member hands the request to its horde (RW 0x66DADB), so the horde itself steps aside
+			if ((m->getContainedBy() == horde || m == horde) && m->getAIUpdateInterface() &&
 				(m->getAIUpdateInterface()->currentStateId() == AI_MOVE_OUT_OF_THE_WAY || m->getAIUpdateInterface()->stateMachine().temporaryStateId() == AI_MOVE_OUT_OF_THE_WAY))
 			{
 				++movedAway;
@@ -391,14 +393,14 @@ TEST_CASE("phys1 retail: stop S-784 / S-785: attack paths and allied clearing re
 		}
 	}
 	print((std::string(hero) + " walks through a parked allied horde").c_str(), st);
-	std::printf("  info: member-frames in AI_MOVE_OUT_OF_THE_WAY: %d\n", movedAway);
+	std::printf("  info: member / horde frames in AI_MOVE_OUT_OF_THE_WAY: %d\n", movedAway);
 	size_t s785 = 0;
 	for (const std::string &line : a.logic.report().stops)
 	{
 		s785 += line.rfind("[S-785] ", 0) == 0 ? 1u : 0u;
 	}
 	CHECK(s785 == 1);
-	// RW 0x66DA5F: a member steps aside (state 26), or an idle member IN_FORMATION_TEMPLATE lets the requester path through units (the requester's AI + 0x3BA)
+	// RW 0x66DA5F: the horde steps aside (state 26) for its member, or an idle member IN_FORMATION_TEMPLATE lets the requester path through units (the requester's AI + 0x3BA)
 	std::printf("  info: %s may path through units: %d\n", hero, (int)h->getAIUpdateInterface()->canPathThroughUnits());
 	CHECK((movedAway > 0 || h->getAIUpdateInterface()->canPathThroughUnits()));
 }

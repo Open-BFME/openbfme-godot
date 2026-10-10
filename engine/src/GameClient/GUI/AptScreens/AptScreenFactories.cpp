@@ -11,6 +11,7 @@
 #include "GameClient/GUI/AptScreens/AptTimeLine.h"
 #include "GameClient/GUI/AptScreens/AptSaveLoad.h"
 #include "GameClient/GUI/AptScreens/AptLanLobby.h"
+#include "GameClient/GUI/AptScreens/AptCreateAHero.h"
 
 void registerAptScreenFactories(AptScreenFactoryTable &table)
 {
@@ -52,6 +53,14 @@ void registerAptScreenFactories(AptScreenFactoryTable &table)
 	// lane END-2: the in-game menu (RW 0x6D2D18 makes an AptQuitMenu, RW 0x921B0F pushes QuitMenu.apt)
 	table.registerFactory("QuitMenu.apt", [](AptScreenContext &c) -> std::unique_ptr<AptScreen> {
 		return std::make_unique<AptQuitMenu>(c.windows, c.shell, c.environment);
+	});
+	// lane PLAY-1: the Palantir's flag in a skirmish / multiplayer game (RW 0x914EF0 pushes PlayerTribute.apt)
+	table.registerFactory("PlayerTribute.apt", [](AptScreenContext &c) -> std::unique_ptr<AptScreen> {
+		return std::make_unique<AptPlayerTribute>(c.windows, c.shell, c.services, c.environment);
+	});
+	// lane CAH-1: the Create-a-Hero builder (the main menu's CreateAHero, RW 0x91A018)
+	table.registerFactory("CreateAHero.apt", [](AptScreenContext &c) -> std::unique_ptr<AptScreen> {
+		return std::make_unique<AptCreateAHero>(c.windows, c.shell, c.environment);
 	});
 	table.registerFactory("AptLevel0.apt", [](AptScreenContext &c) -> std::unique_ptr<AptScreen> {
 		return std::make_unique<AptLevel0Screen>(c.windows, c.shell);

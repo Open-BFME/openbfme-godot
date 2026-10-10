@@ -2,6 +2,10 @@
 // See GameClient/GUI/AptScreens/AptSkirmish.h.
 
 #include "GameClient/GUI/AptScreens/AptSkirmish.h"
+#include "Common/AsciiString.h"
+#include "GameLogic/CreateAHeroSystem.h"
+#include "GameClient/GUI/AptScreens/AptCreateAHero.h"
+#include "GameClient/CreateAHeroHeroList.h"
 
 #include "GameClient/GUI/Gadgets.h"
 #include "GameClient/GUI/Shell/Shell.h"
@@ -215,7 +219,7 @@ AptSkirmish::AptSkirmish(WindowManager &windows, Shell &shell, ShellEnvironment 
 		}
 	}
 	// lane UI-2: the map window's inferences (GadgetMapPreview.cpp, AptSkirmish::updateCurrentMapWindow)
-	windows.note("map-preview-inferences", "[S-1480] map window: the preview file is read where it is mounted (retail copies it to MapPreviews first), its image name is the path with '\\' and ':' as '_', start spots are shown in the skirmish lobby only (TheGameLogic + 0x114 == 3 taken as the screen kind) and enabled, an APT gadget's parent is its owner, the start-spot click is forwarded but not acted on");
+	windows.note("map-preview-inferences", "[S-1480] map window: the preview file is read where it is mounted (retail copies it to MapPreviews first), its image name is the path with '\\' and ':' as '_', start spots are shown in the skirmish lobby only (TheGameLogic + 0x114 == 3 taken as the screen kind) and enabled, an APT gadget's parent is its owner; a start-spot click is handled as RW 0x845830 (FB7-1, S-1915)");
 	if (m_lan)
 	{
 		registerLobby(); // lane MP-2: AptLanLobby registers its own commands and update
@@ -224,7 +228,7 @@ AptSkirmish::AptSkirmish(WindowManager &windows, Shell &shell, ShellEnvironment 
 	registerAll();
 	if (m_setup)
 	{
-		windows.note("skirmish-inferences", "[S-178] lobby contents inferred: faction rule, AI on every map, no honors stars, Hero / Handicap empty, no rule rows, ImageComboBox behaviour, `_global.InGame` set by the manager");
+		windows.note("skirmish-inferences", "[S-178] lobby contents inferred: faction rule, AI on every map, no honors stars, Handicap empty, the Hero combo's inferences (S-1406), no rule rows, ImageComboBox behaviour, `_global.InGame` set by the manager");
 	}
 	windows.note("skirmish-profile-unverified", "[S-179] profile-first, profile storage and StartGame without a profile are not verified against retail");
 }
@@ -243,15 +247,14 @@ std::u16string AptSkirmish::playerName() const
 void AptSkirmish::registerAll()
 {
 	// commands: Back, StartGame, the profile commands and the notified ones; InitGadgets is the screen reference (below)
+	// lane FB7-1: Back and Exit are one handler in RotWK (RW 0x929920 / 0x9298CB both register RW 0x9280E8 -> 0x927FDA): with the screen alive
+	// (RW 0xDEA398) it sets the window manager's pop request (RW 0x62215B: WindowManager + 0x310); the lobby's MAIN MENU button sends Exit
 	registerCommand("AptSkirmish::Back", [this](const std::string &) { windows().requestShellPop(); });
 	registerCommand("AptSkirmish::StartGame", [this](const std::string &) {
 		// RotWK 0x9280F0: only the state is set; the next screen update validates and posts the game
 		m_profileState = kStateStart;
 	});
-	registerCommand("AptSkirmish::Exit", [this](const std::string &) {
-		// BFME1 SkirmishScreenExit.cpp (0x005791C0): the exit animation is finished and the published game info released; nothing is shown
-		windows().note("unported-command", "AptSkirmish::Exit: animation / game-info release only [S-175]");
-	});
+	registerCommand("AptSkirmish::Exit", [this](const std::string &) { windows().requestShellPop(); });
 	registerCommand("AptSkirmish::OnInitialized", [this](const std::string &) {
 		++m_initializedCount;
 		m_profileState = kStateInitialized; // RotWK 0x9280DB; the update does the rest [S-179]
@@ -884,8 +887,10 @@ void AptSkirmish::populateSlotGadget(int slot, Leaf leaf, GameWindow *combo)
 			fillImageCombo(combo, m_setup->colorEntries(slot));
 			break;
 		case Leaf::Handicap:
+			// RotWK fills this from sources the engine does not have [S-178]
+			break;
 		case Leaf::Hero:
-			// RotWK fills these from sources the engine does not have [S-178]
+			fillHeroCombo(slot, combo); // lane CAH-1
 			break;
 	}
 	m_refreshing = false;
@@ -1114,6 +1119,21 @@ void AptSkirmish::refreshSlot(int slot)
 		selectByItemData(combo, s.teamNumber);
 	}
 	refreshColors(slot);
+	if (GameWindow *combo = m_slots[slot][(int)Leaf::Hero]) // lane CAH-1: the slot's choice (RW 0x72437D)
+	{
+		if (slot == m_setup->localSlot())
+		{
+			selectByItemData(combo, m_slotHero[(size_t)slot]);
+		}
+		else if (m_setup->network())
+		{
+			fillHeroCombo(slot, combo); // another player's choice, as text (RW 0x841A9E)
+			if (GadgetComboBoxGetLength(combo) > 0)
+			{
+				GadgetComboBoxSetSelectedPos(combo, 0, true);
+			}
+		}
+	}
 	m_refreshing = outer;
 }
 
@@ -1182,6 +1202,7 @@ void AptSkirmish::updateMapPreview()
 		windows().setAptText("APT:LobbyGameType", map ? std::string("Free For All") : std::string());
 	}
 	updateCurrentMapWindow(map);
+	updateMapStartSpots(); // lane FB7-1: the spots' labels for the slots' positions (RW 0x7052BE)
 	if (m_mapInfo)
 	{
 		GadgetListBoxReset(m_mapInfo);
@@ -1350,6 +1371,10 @@ WindowMsgHandledType AptSkirmish::gadgetMessage(GameWindow *, std::uint32_t msg,
 		case GCM_SELECTED:
 			onComboSelected(gadget);
 			return MSG_HANDLED;
+		case GBM_SELECTED:
+		case GBM_SELECTED_RIGHT:
+			// lane FB7-1: the map window's start spots forward their clicks to the screen (PassSelectedButtonsToParentSystem, RW 0x6C1501)
+			return onStartSpotSelected(gadget, msg == GBM_SELECTED) ? MSG_HANDLED : MSG_IGNORED;
 		case GEM_UPDATE_TEXT:
 			// RotWK 0x929589: the persona entry's text decides whether the popup's accept button is enabled (raw text, not trimmed, not a duplicate test)
 			if (gadget == m_profileEntry && gadget)
@@ -1407,6 +1432,157 @@ WindowMsgHandledType AptSkirmish::gadgetMessage(GameWindow *, std::uint32_t msg,
 	}
 }
 
+int AptSkirmish::nextSelectableStartSlot(int from) const
+{
+	// RW 0x975C3A (ZH getNextSelectablePlayer): the host takes the first slot from `from` with no start position, not an observer (+0x18 != -2), that
+	// is the local slot or an AI; a joiner only its own slot, when it has no position
+	const SkirmishGameInfo &info = m_setup->info();
+	const int local = m_setup->localSlot();
+	if (!lobbyEditable(-1))
+	{
+		return info.slots[local].startPos == -1 ? local : -1;
+	}
+	for (int i = from; i < MAX_SLOTS; ++i)
+	{
+		const SkirmishGameSlot &s = info.slots[i];
+		if (s.startPos == -1 && s.playerTemplate != PLAYERTEMPLATE_OBSERVER && (i == local || s.isAI()))
+		{
+			return i;
+		}
+	}
+	return -1;
+}
+
+bool AptSkirmish::onStartSpotSelected(GameWindow *button, bool left)
+{
+	// RW 0x845830 (messages 0x4008 / 0x4009; ZH SkirmishGameOptionsMenu's buttonMapStartPosition branch)
+	if (!m_setup || !button)
+	{
+		return false;
+	}
+	int position = -1; // RW 0x975782: the button's index among the map window's eight
+	for (std::size_t i = 0; i < m_currentMapChildren.size() && i < 8; ++i)
+	{
+		if (m_currentMapChildren[i] == button)
+		{
+			position = (int)i;
+		}
+	}
+	if (position < 0)
+	{
+		return false;
+	}
+	const SkirmishGameInfo &info = m_setup->info();
+	const int local = m_setup->localSlot();
+	bool changed = false;
+	int holder = -1;
+	for (int i = 0; i < MAX_SLOTS; ++i)
+	{
+		if (info.slots[i].startPos == position)
+		{
+			holder = i;
+			break;
+		}
+	}
+	if (holder >= 0)
+	{
+		// a taken spot: only its own player, or the host for an AI, moves it: a left click passes it to the next selectable slot after the holder,
+		// a right click frees it
+		if (holder != local && (!lobbyEditable(-1) || !info.slots[holder].isAI()))
+		{
+			return true;
+		}
+		const int next = left ? nextSelectableStartSlot(holder + 1) : -1;
+		changed |= m_setup->setSlotStartPos(holder, -1); // RW 0x8404F2(holder, -1)
+		if (next >= 0)
+		{
+			changed |= m_setup->setSlotStartPos(next, position);
+		}
+	}
+	else
+	{
+		// a free spot (either button): the first selectable slot takes it
+		const int next = nextSelectableStartSlot(0);
+		if (next >= 0)
+		{
+			changed |= m_setup->setSlotStartPos(next, position);
+		}
+	}
+	if (changed)
+	{
+		updateMapStartSpots(); // RW 0x8404F2 sets +0x2BE; the update (RW 0x846BA4 .. 0x846BB9) redraws the spots
+	}
+	return true;
+}
+
+void AptSkirmish::updateMapStartSpots()
+{
+	// RW 0x7052BE (ZH updateMapStartSpots, onLoadScreen false): every spot blank with the tooltip TOOLTIP:StartPosition; then each slot whose start
+	// position is below the map's player count and that is not an observer labels its spot NUMBER:<slot + 1> with TOOLTIP:StartPositionN; a position
+	// at or past the player count is reset to -1. Without the map in the cache every spot is GUI:Blank (RW 0x7052F5).
+	if (!m_setup)
+	{
+		return;
+	}
+	const MapCacheEntry *map = nullptr;
+	for (const MapCacheEntry &m : m_setup->source().maps())
+	{
+		if (m.name == m_setup->info().mapName)
+		{
+			map = &m;
+			break;
+		}
+	}
+	GameWindow *buttons[8] = {};
+	for (std::size_t i = 0; i < m_currentMapChildren.size() && i < 8; ++i)
+	{
+		buttons[i] = m_currentMapChildren[i];
+	}
+	if (!map)
+	{
+		for (GameWindow *b : buttons)
+		{
+			if (b)
+			{
+				GadgetButtonSetText(b, fetchOrMissing(m_env.gameText, "GUI:Blank"));
+			}
+		}
+		return;
+	}
+	for (GameWindow *b : buttons)
+	{
+		if (b)
+		{
+			GadgetButtonSetText(b, std::u16string());
+			b->winSetTooltip(fetchOrMissing(m_env.gameText, "TOOLTIP:StartPosition"));
+		}
+	}
+	for (int i = 0; i < MAX_SLOTS; ++i)
+	{
+		const SkirmishGameSlot &s = m_setup->info().slots[i];
+		const int pos = s.startPos;
+		if (pos >= map->numPlayers)
+		{
+			m_setup->setSlotStartPos(i, -1);
+			continue;
+		}
+		if (pos < 0 || s.playerTemplate <= PLAYERTEMPLATE_OBSERVER || pos >= 8 || !buttons[pos])
+		{
+			continue;
+		}
+		GadgetButtonSetText(buttons[pos], fetchOrMissing(m_env.gameText, "NUMBER:" + std::to_string(i + 1)));
+		// TOOLTIP:StartPositionN is a format with the slot's number (RW 0x7054B0: fetch with the number as the argument)
+		std::u16string tip = fetchOrMissing(m_env.gameText, "TOOLTIP:StartPositionN");
+		const std::size_t at = tip.find(u"%d");
+		if (at != std::u16string::npos)
+		{
+			const std::string n = std::to_string(i + 1);
+			tip.replace(at, 2, std::u16string(n.begin(), n.end()));
+		}
+		buttons[pos]->winSetTooltip(tip);
+	}
+}
+
 void AptSkirmish::onComboSelected(GameWindow *combo)
 {
 	if (m_refreshing || !m_setup)
@@ -1458,11 +1634,167 @@ void AptSkirmish::onComboSelected(GameWindow *combo)
 			m_setup->setSlotColor(slot, value);
 			break;
 		case Leaf::Handicap:
-		case Leaf::Hero:
 			break;
+		case Leaf::Hero:
+			onHeroSelected(slot, value); // lane CAH-1
+			break;
+	}
+	if (it->second.leaf == Leaf::PlayerTemplate && m_slotHero[(size_t)slot] >= 0 && m_env.createAHero && m_env.createAHero->heroes)
+	{
+		// lane CAH-1 (BFME2 0x44149C after a faction change): a hero the new side cannot use is dropped (INFERENCE, S-1406: retail puts the side's
+		// default hero in, RW's GetDefaultHero was not read)
+		const CreateAHeroListEntry *e = m_env.createAHero->heroes->at(m_slotHero[(size_t)slot]);
+		if (!e || !heroUsable(slot, e->hero))
+		{
+			onHeroSelected(slot, -1);
+		}
+	}
+	if (GameWindow *heroCombo = m_slots[slot][(int)Leaf::Hero]) // the entries follow the side (RW 0x842C93 greys the heroes the side cannot use)
+	{
+		if (it->second.leaf == Leaf::PlayerTemplate)
+		{
+			m_refreshing = true;
+			fillHeroCombo(slot, heroCombo);
+			m_refreshing = false;
+		}
 	}
 	refreshAll();
 	lobbyChanged();
+}
+
+// ---- lane CAH-1: the Hero combo ------------------------------------------------------------------------------------------------------------------------------
+// RW 0x842C93 (MpGameSetup's hero combo of a slot, + 0x374): "-" (item data -1), GUI:Random (-2), then for the local slot (or an AI this host runs) every hero of
+// the list from the last to the first (item data = its index), a system hero's name followed by VALUE:Default, greyed when the slot's side is not one of the
+// hero subclass's UsableFactions (RW 0x619CE6); the slot's choice (+ 0x5C) is selected. Another player's slot shows its choice's text (RW 0x841A9E): "-",
+// GUI:Random, a system hero's name + VALUE:Default, or the subclass's name (RW 0x61AE43).
+// INFERENCE (S-1406): AI slots get no hero choice here (the host-run AI test of RW 0x842D... was not followed); the disabled entry is a grey text.
+
+const char *const AptSkirmish::kHeroComboStop =
+	"[S-1406] lobby Hero combo: the side of a faction is its Side name among the Create-a-Hero faction names, AI slots get no hero, a hero the new faction "
+	"cannot use is dropped (retail's default hero of the side, GetDefaultHero, not read), a disabled entry is grey text, and GUI:Random is not resolved at the "
+	"game start";
+
+int AptSkirmish::heroSide(int slot) const
+{
+	if (!m_setup || slot < 0 || slot >= MAX_SLOTS)
+	{
+		return -1;
+	}
+	const SkirmishFaction *f = m_setup->faction(m_setup->info().slots[slot].playerTemplate); // RW 0x5FCAD9 / 0x5FC95B
+	if (!f)
+	{
+		return -1;
+	}
+	for (int i = 0; i < 9; ++i) // TheCreateAHeroFactionNames (RW 0xD9EDD0): Men .. Neutral; INFERENCE (S-1406): the template's Side name picks the index
+	{
+		if (AsciiStringUtil::compareNoCase(f->side, TheCreateAHeroFactionNames[i]) == 0)
+		{
+			return i;
+		}
+	}
+	return 8;
+}
+
+bool AptSkirmish::heroUsable(int slot, const CreateAHeroHero &hero) const
+{
+	const int side = heroSide(slot);
+	if (side < 0)
+	{
+		return true;
+	}
+	const CreateAHeroSystem *sys = m_env.createAHero ? m_env.createAHero->system : nullptr;
+	const CreateAHeroSubClass *sub = sys ? sys->subClass(hero.classIndex, hero.subClassIndex) : nullptr;
+	return sub && std::find(sub->usableFactions.begin(), sub->usableFactions.end(), side) != sub->usableFactions.end();
+}
+
+void AptSkirmish::fillHeroCombo(int slot, GameWindow *combo)
+{
+	GadgetComboBoxReset(combo);
+	const Color white = 0xFFFFFFFFu;
+	const Color grey = 0xFF808080u;
+	const CreateAHeroHeroList *list = m_env.createAHero ? m_env.createAHero->heroes : nullptr;
+	if (!list || !m_setup)
+	{
+		return; // without TheCreateAHeroSystem RW 0x842C93 leaves the combo empty
+	}
+	if (!m_heroStopReported)
+	{
+		m_heroStopReported = true;
+		windows().note("create-a-hero-stop", kHeroComboStop);
+	}
+	const SkirmishGameSlot &s = m_setup->info().slots[slot];
+	const bool local = slot == m_setup->localSlot();
+	auto add = [&](const std::u16string &text, int data, Color c) {
+		const int at = GadgetComboBoxAddEntry(combo, text, c);
+		GadgetComboBoxSetItemData(combo, at, itemData(data));
+	};
+	if (!local)
+	{
+		// RW 0x841A9E: the slot's choice as text
+		std::u16string text = u"-";
+		if (m_slotHero[(size_t)slot] == -2)
+		{
+			text = fetchOrMissing(m_env.gameText, "GUI:Random");
+		}
+		else if (s.hasCreateAHero)
+		{
+			if (s.createAHero.isSystemHero)
+			{
+				text = s.createAHero.name + fetchOrMissing(m_env.gameText, "VALUE:Default");
+			}
+			else
+			{
+				const CreateAHeroSubClass *sub = m_env.createAHero->system ? m_env.createAHero->system->subClass(s.createAHero.classIndex, s.createAHero.subClassIndex) : nullptr;
+				text = sub ? fetchOrMissing(m_env.gameText, sub->nameTag) : s.createAHero.name;
+			}
+		}
+		add(text, m_slotHero[(size_t)slot], white);
+		return;
+	}
+	add(u"-", -1, white);
+	add(fetchOrMissing(m_env.gameText, "GUI:Random"), -2, white);
+	for (int i = (int)list->size() - 1; i >= 0; --i)
+	{
+		const CreateAHeroHero &h = list->at(i)->hero;
+		std::u16string text = h.name;
+		if (h.isSystemHero)
+		{
+			text += fetchOrMissing(m_env.gameText, "VALUE:Default");
+		}
+		add(text, i, heroUsable(slot, h) ? white : grey);
+	}
+}
+
+void AptSkirmish::onHeroSelected(int slot, int value)
+{
+	// BFME2 0x43DD34: a listed hero, random (-2) or nothing (-1); a hero the side cannot use is refused (its entry is disabled in retail)
+	const CreateAHeroHeroList *list = m_env.createAHero ? m_env.createAHero->heroes : nullptr;
+	const CreateAHeroListEntry *e = list ? list->at(value) : nullptr;
+	if (e && !heroUsable(slot, e->hero))
+	{
+		return;
+	}
+	if (!e && value != -2)
+	{
+		value = -1;
+	}
+	if (value == -2)
+	{
+		windows().note("create-a-hero-lobby", "slot " + std::to_string(slot) + ": GUI:Random hero chosen; the game start does not resolve a random hero [S-1406]");
+	}
+	m_slotHero[(size_t)slot] = value;
+	applySlotHero(slot, e ? &e->hero : nullptr);
+}
+
+bool AptSkirmish::applySlotHero(int slot, const CreateAHeroHero *hero)
+{
+	std::string error;
+	if (!m_setup || !m_setup->setSlotCreateAHero(slot, hero, &error))
+	{
+		windows().note("create-a-hero-lobby", "slot " + std::to_string(slot) + ": the hero was refused: " + error);
+		return false;
+	}
+	return true;
 }
 
 void AptSkirmish::onMapListSelected(int row)

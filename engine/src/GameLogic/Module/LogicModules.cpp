@@ -16,6 +16,7 @@
 #include "GameLogic/Module/SquishCollide.h"
 #include "GameLogic/Module/BannerCarrierUpdate.h"
 #include "GameLogic/Module/ExtraModules.h"
+#include "GameLogic/Module/GateModules.h"
 #include "GameLogic/Module/AreaScanModules.h"
 #include "GameLogic/Module/NotifyCrushModules.h"
 #include "GameLogic/Module/EmotionModules.h"
@@ -86,6 +87,7 @@ void LogicModules::registerAll(ModuleFactory &modules)
 	HeroModules::registerAll(modules); // lane HERO-1: RespawnUpdate, BuildableHeroListUpgrade
 	SpecialAbilityModules::registerAll(modules); // lane HERO-1: the SpecialAbilityUpdate family
 	ExtraModules::registerAll(modules); // lane MODULES-1: the remaining behaviour modules the base game uses
+	GateModules::registerAll(modules); // lane HUD-5: GateOpenAndCloseBehavior, AIGateUpdate
 	EmotionModules::registerAll(modules); // lane MODULES-2: EmotionTrackerUpdate, RadiateFearUpdate
 	AreaScanModules::registerAll(modules); // lane MODULES-2: LargeGroupBonusUpdate, PassiveAreaEffectBehavior
 	NotifyCrushModules::registerAll(modules); // lane MODULES-3: (Horde)NotifyTargetsOfImminentProbableCrushingUpdate

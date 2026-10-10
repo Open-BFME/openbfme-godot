@@ -80,6 +80,7 @@ class EmotionTrackerUpdate : public UpdateModule
 public:
 	EmotionTrackerUpdate(Thing *thing, const EmotionTrackerUpdateModuleData *data); ///< RW 0x8B62BE
 	UpdateSleepTime update() override;                                               ///< RW 0x8B5738
+	SleepyUpdatePhase getUpdatePhase() const override { return PHASE_INITIAL; }     ///< lane IDLE-1 r2: vslot 0x30 = RW 0x851E97 (updates[0])
 	void crc(StateHasher &h) const override;
 
 	// RW 0x8B4E75

@@ -529,7 +529,9 @@ TEST_CASE("Shell: the A4 factory table holds MainMenu, Skirmish, LoadScreen, Opt
 	}
 	CHECK(have == std::set<std::string>{ "MainMenu.apt", "Skirmish.apt", "LoadScreen.apt", "Options.apt", "GuiFX.apt", "Background.apt", "AptLevel0.apt", "Palantir.apt",
 		"TimeLine.apt", "QuitMenu.apt", // lane END-1: the score screen; lane END-2: the quit menu
-		"SaveLoad.apt", "LanLobby.apt" }); // lane MP-2: the replay page, the LAN lobby
+		"SaveLoad.apt", "LanLobby.apt", // lane MP-2: the replay page, the LAN lobby
+		"PlayerTribute.apt", // lane PLAY-1: the Palantir flag's screen
+		"CreateAHero.apt" }); // lane CAH-1: the Create-a-Hero builder
 	CHECK(fx.factories.has("mainmenu.APT"));
 	fx.wm->init();
 	fx.shell->push("AptLevel0.apt");
@@ -905,14 +907,14 @@ TEST_CASE("stops S-175: handlers with no decompiled body report 'unported-comman
 	fx.shell->push("MainMenu.apt");
 	fx.tick(1);
 	const char *requests[] = { "LoadGame", "LoadReplay", "LAN", "OnlineButtonPressed", "BattleSchool", "LevelSelect", "LoadCampaign",
-		"ContinueCampaign", "Expansion1Campaign", "BonusCampaign", "WarOfTheRing", "CreateAHero", "OnTutorial", "Credits",
+		"ContinueCampaign", "Expansion1Campaign", "BonusCampaign", "WarOfTheRing", "OnTutorial", "Credits",
 		"CreditsExit", "StopGameMovie", "ResetResolution" };
 	for (const char *r : requests)
 	{
 		CHECK_MESSAGE(fx.wm->invokeCallback(std::string("AptMainMenu::") + r, "arg"), r);
 	}
-	CHECK(fx.services.requests.size() == 17);
-	CHECK(fx.wm->noteCount("unported-command") == 17);
+	CHECK(fx.services.requests.size() == 16);
+	CHECK(fx.wm->noteCount("unported-command") == 16);
 	CHECK(fx.services.requests[0].action == ShellAction::LoadGame);
 	CHECK(fx.services.requests[0].argument == "arg");
 	// ExitGame is complete: a request, and the shell pops on the next update

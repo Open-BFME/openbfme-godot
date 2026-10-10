@@ -43,7 +43,10 @@ func _run() -> int:
 			_check(text.contains("GAME END hide_end_game on leaving: {\"error\":\"\",\"level\":11,\"ok\":true}"), "--end-esc: HideEndGame ran when the game was left")
 			_check(text.contains("GAME END after Esc: end screen still showing: false"), "--end-esc: no end screen is left over the score screen")
 		else:
-			_check(text.contains("\"kind\":\"hide_end_game\"") and text.contains("MPorSkirmishFadeToScoreScreen"), "%s: the end screen hid and the sound faded" % variant[0])
+			# lane PLAY-1: 25 logic frames after the VICTORY / DEFEAT the end-game timer leaves the game (RW 0x602FFE / 0x603533), before the 7 s of the end
+			# screen: leaving hides it
+			_check(text.contains("\"kind\":\"clear_game_data\"") and text.contains("GAME END left by the end-game timer: true"), "%s: the end-game timer left the game to the score screen" % variant[0])
+			_check(text.contains("GAME END hide_end_game on leaving: {\"error\":\"\",\"level\":11,\"ok\":true}"), "%s: the end screen was hidden when the game was left" % variant[0])
 		_check(text.contains("GAME screen: TimeLine.apt"), "%s: the score screen TimeLine.apt was shown" % variant[0])
 		_check(text.contains("GAME shell request: ScoreScreenContinue"), "%s: its Continue button asked for the menu" % variant[0])
 		_check(text.contains("GAME END RESULT: end screen true, score screen true, continue true, second game true"), "%s: back at the main menu a second game started and ran" % variant[0])
@@ -66,6 +69,9 @@ func _run() -> int:
 	_check(code2 == 0, "--quit: game.tscn exits 0 (got %d)" % code2)
 	_check(t2.contains("\"popup_type\":\"Restart\"") and t2.contains("\"disabled\":[]"), "--quit: a skirmish's quit menu offers Restart and disables nothing (RW 0x921D5B)")
 	_check(t2.contains("paused true"), "--quit: the skirmish pauses while the menu is open")
+	# lane CAMP-2 (review r1): leaving through the quit menu brings the shell's backdrop back, read from the canvas (and the game had none)
+	_check(t2.contains("GAME SHELL PICTURES in game (skirmish): backdrop '', background mode 0 ") and t2.contains("GAME SHELL PICTURES back in the shell: backdrop 'ShellMapLowLOD'"),
+		"--quit: the game had no shell backdrop and the way back through Exit draws it again")
 	_check(t2.contains("GAME QUIT action: QuitMenuReturn") and t2.contains("GAME QUIT resumed: true"), "--quit: Resume closed the menu and the game went on")
 	_check(t2.contains("GAME QUIT action: QuitMenuExit") and t2.contains("GAME QUIT RESULT exit: ok"), "--quit: Exit and its confirmation left to the score screen")
 	_check(t2.contains("GAME END Continue showed: [\"MainMenu.apt\", \"Skirmish.apt\"]") and t2.contains("second game true"), "--quit: Continue returned to the Skirmish lobby and a second game ran")
@@ -73,4 +79,7 @@ func _run() -> int:
 	var code3 := OS.execute(godot_path, ["--headless", "--path", project, "--", "--auto", "--quit-restart", "--faction=FactionMordor", "--advance=2", "--seed=42"], out3, true)
 	var t3: String = "".join(out3)
 	_check(code3 == 0 and t3.contains("GAME QUIT RESULT: ok"), "--quit-restart: Restart and its confirmation started the same game again (same seed)")
+	# lane CAMP-2: the restarted game shows no shell backdrop / front-end background (read from the canvas) and no developer text
+	_check(t3.contains("GAME SHELL PICTURES in game (restart): backdrop '', background mode 0 ") and not t3.contains("developer text [\""),
+		"--quit-restart: the restarted game has no shell pictures and no developer text on screen")
 	return 0 if _failures == 0 else 1

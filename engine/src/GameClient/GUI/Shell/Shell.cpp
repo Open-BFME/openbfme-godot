@@ -152,6 +152,127 @@ void Shell::popImmediate()
 	}
 }
 
+void Shell::showShellMap(bool use)
+{
+	// RW 0x75DE01 (the shell map branch is not ported: S-1912)
+	m_lowLodBackdrop = use && !m_environment.shellMapOn;
+	m_lowLodShown = false;
+	m_backdropImage.clear(); // RW 0x65CFF6
+	if (use && m_environment.shellMapOn)
+	{
+		m_windows.note("shell-map", "[S-1912] GameData ShellMapOn = Yes: the shell map is not ported, nothing is drawn behind the shell");
+	}
+}
+
+void Shell::update()
+{
+	// RW 0x75E1D3 (the low-LOD branch; the movie flag + 0x5D is never set by the port)
+	if (!m_lowLodShown && m_lowLodBackdrop)
+	{
+		m_lowLodShown = true;
+		m_backdropImage = "ShellMapLowLOD";
+		m_windows.note("shell-map", "[S-1912] the backdrop ShellMapLowLOD is shown without its window transition FadeInGameMovie_NoAudio");
+	}
+}
+
+bool Shell::readShellMapOn(const std::string &text, bool &on, std::string *error)
+{
+	bool found = false;
+	if (!readGameDataBool(text, "ShellMapOn", on, found, error))
+	{
+		return false;
+	}
+	if (!found && error)
+	{
+		*error = "GameData has no ShellMapOn";
+	}
+	return found;
+}
+
+bool Shell::readGameDataBool(const std::string &text, const std::string &field, bool &value, bool &found, std::string *error)
+{
+	// the GameData block's "<field> = Yes|No" (INI::parseBool: yes / no, case-insensitive); the last one in the block wins
+	bool inBlock = false;
+	found = false;
+	std::string key = field;
+	for (char &c : key)
+	{
+		c = (char)std::tolower((unsigned char)c);
+	}
+	std::size_t pos = 0;
+	while (pos <= text.size())
+	{
+		std::size_t end = text.find('\n', pos);
+		if (end == std::string::npos)
+		{
+			end = text.size();
+		}
+		std::string line = text.substr(pos, end - pos);
+		pos = end + 1;
+		const std::size_t comment = line.find_first_of(";");
+		if (comment != std::string::npos)
+		{
+			line.erase(comment);
+		}
+		std::string tokens[3];
+		int n = 0;
+		std::size_t i = 0;
+		while (n < 3 && i < line.size())
+		{
+			while (i < line.size() && (std::isspace((unsigned char)line[i]) || line[i] == '='))
+			{
+				++i;
+			}
+			const std::size_t start = i;
+			while (i < line.size() && !std::isspace((unsigned char)line[i]) && line[i] != '=')
+			{
+				++i;
+			}
+			if (i > start)
+			{
+				tokens[n++] = line.substr(start, i - start);
+			}
+		}
+		auto lower = [](std::string v) {
+			for (char &c : v)
+			{
+				c = (char)std::tolower((unsigned char)c);
+			}
+			return v;
+		};
+		if (n == 0)
+		{
+			continue;
+		}
+		const std::string t0 = lower(tokens[0]);
+		if (!inBlock)
+		{
+			inBlock = t0 == "gamedata";
+			continue;
+		}
+		if (t0 == "end")
+		{
+			inBlock = false;
+			continue;
+		}
+		if (t0 == key)
+		{
+			const std::string v = n > 1 ? lower(tokens[1]) : std::string();
+			if (v != "yes" && v != "no")
+			{
+				if (error)
+				{
+					*error = "GameData " + field + ": '" + (n > 1 ? tokens[1] : std::string()) + "' is not Yes / No";
+				}
+				return false;
+			}
+			value = v == "yes";
+			found = true;
+		}
+	}
+	return true;
+}
+
 void Shell::showShell(bool runInit)
 {
 	if (runInit && top())
