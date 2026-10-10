@@ -1,7 +1,8 @@
 ## Lane RELEASE-1: what a public tester needs, as the autoload `Release` (project.godot [autoload]), so every scene has it.
 ##
 ##  * the session log: one file per run, user://logs/openbfme-<date>-<time>.log (the user data folder: Linux ~/.local/share/godot/app_userdata/OpenBFME,
-##    Windows %APPDATA%\Godot\app_userdata\OpenBFME). Written by the SessionLogger class (GodotDevice/GodotRelease.h): every print, warning and error of
+##    Windows %APPDATA%\Godot\app_userdata\OpenBFME, macOS ~/Library/Application Support/Godot/app_userdata/OpenBFME). Written by the SessionLogger
+##    class (GodotDevice/GodotRelease.h): every print, warning and error of
 ##    the session, the version line first, each line without the home folder or the user name (Common/LogPrivacy.h), flushed at once. Godot's own
 ##    file log is off in project.godot (it would hold the same text unfiltered). The console (stdout / stderr) goes through the same filter
 ##    (SessionLogger.filter_console, POSIX). The 20 newest logs are kept.
