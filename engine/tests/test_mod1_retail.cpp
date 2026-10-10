@@ -321,7 +321,7 @@ TEST_CASE("modules retail: FireWeaponWhenDeadBehavior fires its DeathWeapon at t
 				CHECK(fw->shots() == 1);
 				CHECK(frames == (int)data->m_delayTime);
 			}
-			CHECK(reportHas(g, "[S-980] FireWeaponWhenDeadBehavior"));
+			CHECK_FALSE(reportHas(g, "[S-980] FireWeaponWhenDeadBehavior")); // lane DECOMP-1: the DeathWeapon is the full temporary weapon (RW 0x6CF530), nothing to report
 			g.run(3);
 			hashes[run] = g.hash();
 		}

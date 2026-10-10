@@ -2,6 +2,8 @@
 // See GameClient/LiveGame.h.
 
 #include "GameClient/LiveGame.h"
+
+#include "GameClient/FrameCensus.h"
 #include "GameClient/ScriptAudioLength.h"
 #include "GameLogic/AI/GarrisonCommands.h"
 #include "GameLogic/Object/PartitionManager.h"
@@ -855,7 +857,7 @@ void LiveGame::installBatch(const FrameBatch &batch)
 	}
 }
 
-std::shared_ptr<const FrameCompletion> LiveGame::captureCompletion(const WorkItem &item)
+std::shared_ptr<const FrameCompletion> LiveGame::captureCompletion(const WorkItem &item, std::int64_t simUs)
 {
 	// on the simulation owner, after the frame: what the protocol owner will need of the completed state (batch N -> frame N + 1)
 	auto c = std::make_shared<FrameCompletion>();
@@ -879,6 +881,16 @@ std::shared_ptr<const FrameCompletion> LiveGame::captureCompletion(const WorkIte
 		rng = (rng ^ w) * 0x01000193u;
 	}
 	c->rng = rng;
+	if (item.capture.census)
+	{
+		// lane MP-3: diagnostics for the measurements (never read back by the logic)
+		const FrameCensus::Counts n = FrameCensus::count(*m_logic);
+		c->census = true;
+		c->simUs = simUs;
+		c->battalions = n.battalions;
+		c->troops = n.troops;
+		c->censusObjects = n.objects;
+	}
 	return c;
 }
 
@@ -888,12 +900,14 @@ void LiveGame::runFrameOwned(const WorkItem &item)
 	{
 		installBatch(*item.batch);
 	}
+	const auto frameStart = std::chrono::steady_clock::now(); // lane MP-3: the frame's wall time for Capture::census (integer microseconds)
 	m_logic->runLogicFrame();
+	const std::int64_t simUs = (std::int64_t)std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - frameStart).count();
 	std::shared_ptr<const FrameCompletion> completion;
 	if (item.driver)
 	{
 		item.driver->simulationAfterFrame(*m_logic);
-		completion = captureCompletion(item);
+		completion = captureCompletion(item, simUs);
 	}
 	if (m_options.hashEveryFrame)
 	{

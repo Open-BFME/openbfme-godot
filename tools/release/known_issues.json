@@ -13,8 +13,7 @@
   {"stops": ["S-1710"], "text": "Movies have no subtitles."},
   {"stops": ["S-130", "S-455"], "text": "Menus are laid out for 1024x768 and scaled: at other window sizes text and click targets can be slightly off. Widescreen camera framing may differ from the original."},
   {"stops": ["S-108"], "text": "Menus cannot be used with the keyboard or a gamepad, only with the mouse."},
-  {"stops": ["S-1913", "S-1914"], "text": "The Options screen's advanced page is not done, and some lists and boxes of a menu show through pop-ups placed over them."},
-  {"stops": ["S-1675"], "text": "Ctrl+click on a unit or building force-attacks it, but Ctrl+click on the ground does not attack the spot yet."},
+  {"stops": ["S-1914"], "text": "Some lists and boxes of a menu show through pop-ups placed over them."},
   {"stops": ["S-2451", "S-2452"], "text": "Radar: attacks raise pings, but scripted pings, the Ring and beacon markers, and the \"under attack\" voice lines are missing."},
   {"stops": ["S-1125", "S-1063"], "text": "Every game is recorded as a replay and can be watched from Load Replay, but replays cannot be saved under a name, there are no replay controls, and the score screen's graphs are simplified."},
   {"stops": ["S-1123"], "text": "LAN: the disconnect screen has no chat."}

@@ -98,6 +98,7 @@ include(cmake/Render4.cmake)    # OPENBFME_RENDER4_SOURCES / _TESTS / _GODOT_SOU
 include(cmake/Path2.cmake)      # OPENBFME_PATH2_SOURCES / OPENBFME_PATH2_TESTS (lane PATH-2)
 include(cmake/Net.cmake)        # OPENBFME_NET_SOURCES / OPENBFME_NET_TESTS, openbfme_peer (lane MP-1)
 include(cmake/Experience.cmake) # OPENBFME_XP_SOURCES / OPENBFME_XP_TESTS (lane XP-1)
+include(cmake/Play2.cmake) # OPENBFME_PLAY2_TESTS (lane PLAY-2)
 include(cmake/Horde2.cmake)     # OPENBFME_HORDE2_SOURCES / OPENBFME_HORDE2_TESTS (lane HORDE-2)
 include(cmake/Integ1.cmake)     # INTEG-1: StancesBehavior (appends to OPENBFME_SIM_SOURCES; OPENBFME_INTEG1_TESTS)
 include(cmake/Fx2.cmake)        # FX-2: effects in the live game (appends to OPENBFME_SIM_SOURCES; OPENBFME_FX2_SOURCES / OPENBFME_FX2_TESTS)
@@ -123,6 +124,7 @@ include(cmake/Audio4.cmake)     # AUDIO-4: QA-1's sound follow-ups (OPENBFME_AUD
 include(cmake/End1.cmake)       # END-1: the score keeper, the end sequence and the score screen (appends to OPENBFME_SIM_SOURCES; OPENBFME_END1_SOURCES / _TESTS)
 include(cmake/Qa1.cmake)       # OPENBFME_QA1_SOURCES / OPENBFME_QA1_TESTS (lane QA-1: the drawn-model pick)
 include(cmake/Mp2.cmake)        # MP-2: the disconnect path, a dropped player's assets (appends to OPENBFME_SIM_SOURCES; OPENBFME_MP2_TESTS)
+include(cmake/Mp3.cmake)        # MP-3: the network test harness (client only; OPENBFME_MP3_CLIENT_SOURCES / OPENBFME_MP3_TESTS)
 include(cmake/Script1.cmake)    # SCRIPT-1: the map script engine (appends to OPENBFME_SIM_SOURCES; OPENBFME_SCRIPT1_TESTS)
 include(cmake/Camp1.cmake)      # CAMP-1: the campaigns (OPENBFME_CAMP1_SOURCES / OPENBFME_CAMP1_TESTS)
 include(cmake/Camp2.cmake)      # CAMP-2: the movies' VP6 picture (OPENBFME_CAMP2_SOURCES / _GODOT_SOURCES / _TESTS)
@@ -139,10 +141,12 @@ include(cmake/Hud4.cmake)       # HUD-4: every command reachable, every hotkey (
 include(cmake/Qa2fix.cmake)     # QA2-FIX: a player's wall span through the HUD, the lobby after a game (OPENBFME_QA2FIX_TESTS)
 include(cmake/Hud5.cmake)       # HUD-5: the owner's first Windows session (OPENBFME_HUD5_CLIENT_SOURCES / OPENBFME_HUD5_TESTS)
 include(cmake/Exit1.cmake)      # EXIT-1: the horde member update, stale MOVING (appends to OPENBFME_SIM_SOURCES; OPENBFME_EXIT1_TESTS)
+include(cmake/Decomp1.cmake)    # DECOMP-1: stops closed with the decompilation's progress (appends to OPENBFME_SIM_SOURCES; OPENBFME_DECOMP1_TESTS)
 include(cmake/Cah1.cmake)       # CAH-1: the Create-a-Hero screens (client only; OPENBFME_CAH1_SOURCES / _GODOT_SOURCES / _TESTS)
 include(cmake/Move3.cmake)      # MOVE-3: horde spacing, the blocked path patch (appends to OPENBFME_SIM_SOURCES; OPENBFME_MOVE3_TESTS)
 include(cmake/Input1.cmake)     # INPUT-1: RotWK's input layer (OPENBFME_INPUT1_TESTS)
 add_library(openbfme_core STATIC
+    ${OPENBFME_PLAY2_SOURCES}
     ${OPENBFME_APT_SOURCES}
     ${OPENBFME_AUDIO4_CLIENT_SOURCES}
     ${OPENBFME_FX_SOURCES}
@@ -165,6 +169,7 @@ add_library(openbfme_core STATIC
     ${OPENBFME_STEALTH_SOURCES}
     ${OPENBFME_END1_SOURCES}
     ${OPENBFME_MP2_CLIENT_SOURCES}
+    ${OPENBFME_MP3_CLIENT_SOURCES}
     ${OPENBFME_UI1_CLIENT_SOURCES}
     ${OPENBFME_RELEASE1_SOURCES}
     ${OPENBFME_UI2_CLIENT_SOURCES}
@@ -473,6 +478,7 @@ add_executable(openbfme_tests
     ${OPENBFME_NET_TESTS}
     ${OPENBFME_PATH2_TESTS}
     ${OPENBFME_XP_TESTS}
+    ${OPENBFME_PLAY2_TESTS}
     ${OPENBFME_APT_TESTS}
     ${OPENBFME_FX_TESTS}
     ${OPENBFME_PROD_TESTS}
@@ -514,6 +520,7 @@ add_executable(openbfme_tests
     ${OPENBFME_CASTLE1_TESTS}
     ${OPENBFME_END1_TESTS}
     ${OPENBFME_MP2_TESTS}
+    ${OPENBFME_MP3_TESTS}
     ${OPENBFME_SCRIPT1_TESTS}
     ${OPENBFME_CAMP1_TESTS}
     ${OPENBFME_CAMP2_TESTS}
@@ -527,6 +534,7 @@ add_executable(openbfme_tests
     ${OPENBFME_HUD4_TESTS}
     ${OPENBFME_QA2FIX_TESTS}
     ${OPENBFME_EXIT1_TESTS}
+    ${OPENBFME_DECOMP1_TESTS}
     ${OPENBFME_HUD5_TESTS}
     ${OPENBFME_CAH1_TESTS}
     ${OPENBFME_MOVE3_TESTS}

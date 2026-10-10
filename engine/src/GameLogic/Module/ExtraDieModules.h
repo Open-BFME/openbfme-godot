@@ -42,8 +42,7 @@
 //   * the OCL is created through ObjectCreationList::create(logic, object, object position), the position variant (RW slot 3) of SPELL-1's port, not RW's
 //     object-pair variant (slot 2: the primary object and the killer); the nugget kinds and fields that port does not run are its own stop S-530;
 //   * names (CreationList, DeathWeapon) are resolved at the death, not at parse time like RW (the same lists, unless a later INI replaces one);
-//   * the death weapon fires through DeliverNuggets (the temporary weapon's damage nuggets at the position, as GettingBuiltBehavior's HealWeapon, S-651): the
-//     temporary Weapon's own steps (fire FX / sound, projectile nuggets) are not delivered;
+//   * (lane DECOMP-1) the death weapon is RotWK's temporary weapon (RW 0x88611D -> createAndFireTempWeapon RW 0x6CF530: the full fire path);
 //   * the DieMux killer angle window is not ported (reported when consulted, as RefundDie).
 
 #pragma once

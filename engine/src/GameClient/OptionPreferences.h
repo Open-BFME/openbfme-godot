@@ -35,6 +35,7 @@ public:
 	bool has(const std::string &key) const { return m_values.count(key) != 0; }
 	std::string get(const std::string &key) const;
 	void set(const std::string &key, const std::string &value) { m_values[key] = value; }
+	void erase(const std::string &key) { m_values.erase(key); } // lane PLAY-2: RW 0x6E6357 (the map's erase)
 	const std::map<std::string, std::string> &values() const { return m_values; }
 
 	// "yes" (any case) is true, another value false, an absent key `defaultValue`

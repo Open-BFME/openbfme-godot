@@ -763,8 +763,8 @@ void SpecialPowerModule::triggerSpecialPower(const Coord3D *loc, const Object *)
 // SpecialPowerViewObject name and a template of that name (RW 0x6D1305): the object is made on the caster's player's default team (Player + 0x30C, RW
 // 0x6D165E: its constructor and sendObjectCreated draw), put at the location (RW 0x70C201), its shroud clearing range set to ViewObjectRange (RW 0x68C234,
 // Object + 0x1B4) and its look forced (RW 0x68C7E9); then its DeletionUpdate's lifetime becomes [duration, duration] (RW 0x88B830: one more draw). The retail
-// SuperweaponPing (DeletionUpdate) draws three logic random numbers here. NOT PORTED (S-920): the per-object clearing range and the forced look (the
-// shroud reads the template's range: VIS-1 keeps no per-object override)
+// SuperweaponPing (DeletionUpdate) draws three logic random numbers here. The clearing range and the forced look run since lane DECOMP-1 (BFME2 decomp
+// SpecialPowerModuleCreateViewObject.cpp, tier B same-shape for RW 0x896FD9)
 void SpecialPowerModule::createViewObject(const Coord3D *loc)
 {
 	const SpecialPowerTemplate *t = getSpecialPowerTemplate();
@@ -792,7 +792,8 @@ void SpecialPowerModule::createViewObject(const Coord3D *loc)
 		return;
 	}
 	view->setPosition(loc);
-	++m_unported; // RW 0x68C234 / 0x68C7E9: the clearing range override and the forced look (S-920)
+	view->setShroudClearingRange(t->m_viewObjectRange); // RW 0x68C234 (lane DECOMP-1)
+	view->updateShroudNow();                            // RW 0x68C7E9
 	if (DeletionUpdate *del = dynamic_cast<DeletionUpdate *>(view->findModule("DeletionUpdate")))
 	{
 		del->setLifetimeRange(t->m_viewObjectDuration, t->m_viewObjectDuration); // RW 0x896F95 .. (0x88B830)
@@ -819,10 +820,15 @@ void SpecialPowerModule::applyToVictims(const std::vector<Object *> &victims)
 	unsigned until = 0;
 	if (d->m_antiCategory != 0)
 	{
-		// RW 0x897859 .. 0x8978BB: frame + the ModifierList's Duration (999999 for an unknown list or a Duration < 1)
-		const ModifierListTemplate *list = TheAttributeModifierStore ? TheAttributeModifierStore->find(d->m_attributeModifier) : nullptr;
-		const int duration = list ? (int)list->m_duration : 0;
-		until = logic.getFrame() + (duration >= 1 ? (unsigned)duration : 999999u);
+		// RW 0x897859 .. 0x8978BB: frame + the ModifierList's Duration (999999 for an unknown list or a Duration < 1); with no AttributeModifier name the frame
+		// itself (lane DECOMP-1: BFME2 decomp SpecialPowerModuleRva0049402B.cpp, tier A for RW 0x8977BF: the duration is added only for a non-empty name)
+		until = logic.getFrame();
+		if (!d->m_attributeModifier.empty())
+		{
+			const ModifierListTemplate *list = TheAttributeModifierStore ? TheAttributeModifierStore->find(d->m_attributeModifier) : nullptr;
+			const int duration = list ? (int)list->m_duration : 0;
+			until += duration >= 1 ? (unsigned)duration : 999999u;
+		}
 	}
 	static const int kIgnoredInGui = CombatNames::kindOf("IGNORED_IN_GUI"); // template + 0x10D bit 7
 	const Player *casterPlayer = obj->getControllingPlayer();

@@ -5,10 +5,14 @@ import os
 import struct
 import sys
 
-os.environ.setdefault("ROTWK_INSTALL", "unused")
-os.environ.setdefault("BFME2_INSTALL", "unused")
+from unittest import mock
+
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import census  # noqa: E402
+# census.py refuses to import without the install variables; placeholders only for the import, restored at once (a process-wide value would make the
+# later retail tests of the run fail on "unused" instead of skipping)
+with mock.patch.dict(os.environ, {"ROTWK_INSTALL": os.environ.get("ROTWK_INSTALL") or "unused",
+                                  "BFME2_INSTALL": os.environ.get("BFME2_INSTALL") or "unused"}):
+    import census  # noqa: E402
 import pytest  # noqa: E402
 
 # header 10fb + 3-byte length 4; E0 = 4 literal bytes; FC = end, no trailing literals

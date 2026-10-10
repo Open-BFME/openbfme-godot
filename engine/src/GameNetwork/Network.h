@@ -214,6 +214,8 @@ public:
 	bool gameDecidedForLocalPlayer() const { return m_gameDecided && m_gameDecided(); }
 	std::u16string playerName(int slot) const { return slot >= 0 && slot < MAX_SLOTS ? m_config.slotNames[(size_t)slot] : std::u16string(); }
 	int packetRouterSlot() const { return m_packetRouter; }
+	// lane MP-3 (review r1): the packet router of a frame (the role passes on at a drop or leave frame)
+	int packetRouterAt(UnsignedInt frame) const { return routerAt(frame); }
 	int nextPacketRouterSlot(int slot) const; ///< RW 0x8D3ECD (8 or more: none)
 	// lane MP-2 (review): who decides that `target` leaves the game. The decider is the first slot of the agreed fallback order (the lobby's, never edited)
 	// whose predecessors are all the target or gone; it names the predecessors it holds gone (a mask of slots) in its DISCONNECTPLAYER. dropClaims: may
@@ -309,7 +311,10 @@ private:
 	std::map<UnsignedInt, int> m_runAheadHistory;
 	int m_baseRunAhead = 2;
 	int runAheadAt(UnsignedInt logicFrame) const;
-	// lane MP-2 (review): the packet router of each frame (a drop of the router hands the role on at the drop frame): only its RUNAHEAD is taken
-	std::vector<std::pair<UnsignedInt, int>> m_routerHistory;
+	// lane MP-2 (review): the packet router of each frame (a drop of the router hands the role on at the drop frame): only its RUNAHEAD is taken. Lane MP-3
+	// (review r3): derived from every slot's departure frame (leave or drop; none = 0xFFFFFFFF) and the agreed fallback order, never from arrival order
+	std::array<UnsignedInt, MAX_SLOTS> m_departureFrame{ { 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu } };
 	int routerAt(UnsignedInt frame) const;
+	// RW 0x8D57D8's membership step for a slot that is gone from `frame` on (dropped, or lane MP-3: left): the next router, the fallback order
+	void passRouterRole(int slot, UnsignedInt frame);
 };

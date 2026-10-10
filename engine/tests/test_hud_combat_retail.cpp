@@ -651,6 +651,12 @@ void checkFight(const FactionFight &f, const char *label)
 	{
 		MESSAGE(std::string(label) << ": a DualWeaponBehavior side (lane HERO-2): the hit count is not checked");
 	}
+	else if ((ra.ranged && ra.hitPercent < 1.0f) || (rb.ranged && rb.hitPercent < 1.0f))
+	{
+		// lane DECOMP-1 r4: a missed projectile lands at its scatter point and its Radius 0 warhead goes through slot 6 there (RW 0x90DEF0, max(Radius, 1.0)): it
+		// can hit any object with a body standing there (another member, the horde object), so the applications are no longer one per tracked hit
+		MESSAGE(std::string(label) << ": a ranged side misses some shots, the missed shots land and hit what stands there: the hit count is not checked");
+	}
 	else if (f.side[0].veteranFrame < 0 && f.side[1].veteranFrame < 0)
 	{
 		CHECK(f.applications == hits);

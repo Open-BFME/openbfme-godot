@@ -9,7 +9,7 @@
 [![Godot 4.7](https://img.shields.io/badge/Godot-4.7-478cbf?logo=godotengine&logoColor=white)](https://godotengine.org)
 [![Platforms](https://img.shields.io/badge/platforms-Windows%20%7C%20Linux-555)](#play-it)
 
-[Play it](#play-it) · [Status](#status) · [What's new](#whats-new-in-v030-preview1) · [Build from source](#build-from-source) · [Player guide](docs/PLAYING.md) · [Roadmap](docs/ROADMAP.md)
+[Play it](#play-it) · [Status](#status) · [What's new](#whats-new-in-v030-preview2) · [Build from source](#build-from-source) · [Player guide](docs/PLAYING.md) · [Roadmap](docs/ROADMAP.md)
 
 </div>
 
@@ -101,7 +101,7 @@ the original are still missing.
 | Building, economy, upgrades | ✅ Works | builders, walls, castles, resources, upgrades and experience |
 | Computer opponent | 🟡 Partial | builds a base, trains armies, attacks and finishes games; defending, expanding and hero use are not yet like the original |
 | In-game interface | ✅ Works | Palantir, command bar, RotWK's radar and pings, health bars and levels, control groups, camera bookmarks, hotkeys, right-click orders as in the original |
-| Main menu and options | 🟡 Partial | real menus with the original layout; the advanced options page, save/load pages and credits are not done |
+| Main menu and options | 🟡 Partial | real menus with the original layout; the advanced options are saved but don't change the graphics yet; save/load pages and credits are not done |
 | Sound and music | 🟡 Partial | voices, effects, music and the original stereo image; some sounds (damage sounds, scripted music, parts of the big-battle ambience) are missing |
 | Movies | ✅ Works | the start-up logos and intro, and the campaign movies (no subtitles) |
 | Campaign | 🟡 Partial | missions start from the menu with their movies and narration; no saving and no campaign menu between missions yet |
@@ -121,7 +121,21 @@ pinned by a test. There are **541 open stops** today. Some are big
 (save/load), most are small details waiting for better evidence. The plan to
 get to a 1:1 game is in [docs/ROADMAP.md](docs/ROADMAP.md).
 
-## What's new in v0.3.0-preview.1
+## What's new in v0.3.0-preview.2
+
+- **Force-attack on the ground.** Hold Ctrl and click a spot on the ground:
+  the selected units fire at it until you give another order. As in the
+  original, a unit only fires at your own side with a weapon that can hurt
+  it: archers and trebuchets won't shoot at your own buildings.
+- **The Options Advanced page shows its settings.** It lists the nine detail
+  settings with their values and saves your custom choice; the detail levels
+  don't change the graphics yet (S-2481).
+- **Combat details from the original.** Disabled and paralysed units,
+  temporary weapons, turrets that aim before they fire, and the original's
+  splash damage rules.
+- **Multiplayer games stay in sync when players leave.**
+
+### v0.3.0-preview.1
 
 This is the first preview built for automatic updates through the launcher.
 It fixes what came up in the first hands-on play sessions:

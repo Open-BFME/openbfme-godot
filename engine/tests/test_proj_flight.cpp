@@ -195,7 +195,9 @@ TEST_CASE("proj flight: the logic random draws of a shot at a victim - the fire 
 		}
 	}
 	r.w.frames(n + 1);
-	CHECK(countLine(log, 1749) == 2 + n); // every update with a victim and FlightPathAdjustDistPerSecond draws once before it moves the arrow (n updates, two of them in the launch); the detonating update draws none
+	// every update with a victim and FlightPathAdjustDistPerSecond draws once before it moves the arrow (n updates, two of them in the launch); the detonating
+	// update's HitStoredTarget warhead is RW 0x6CF590's temporary weapon at the victim (lane DECOMP-1): its fireWeaponTemplate draws the fire FX aim once more
+	CHECK(countLine(log, 1749) == 3 + n);
 }
 
 TEST_CASE("proj flight: a missed shot (HitPercentage 0) scatters, flies to the scattered position, hurts nobody and draws only the fire FX block's aim value")

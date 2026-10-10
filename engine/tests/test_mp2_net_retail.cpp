@@ -222,7 +222,10 @@ TEST_CASE("mp2 net retail: a desync writes RW 0x6290C7's dump on both peers: DES
 #else
 	runCommand("mkdir -p " + dir);
 #endif
-	const std::string common = "--map \"maps/map mp evendim/map mp evendim.map\" --seed 5 --script --crc-interval 100 --run-ahead 2 --frames 300 --desync-dir " + dir;
+	// --fixed-run-ahead: the dump's name carries the frame the CRCs are compared on (200 + the run-ahead); the adaptive run-ahead would raise it on a loaded
+	// machine (a localhost round trip of 400+ ms: Frame203 .., the flake of every loaded gate) and this test is about the dump, not the adaptation
+	const std::string common = "--map \"maps/map mp evendim/map mp evendim.map\" --seed 5 --script --crc-interval 100 --run-ahead 2 --fixed-run-ahead --frames 300 "
+							   "--desync-dir " + dir;
 	Run r = runPeers("desync", 3, common, { "--slot human,FactionMen,0,0 --slot human,FactionMordor,1,1 --record " + dir + "/host.replay", "--inject-divergence 150" });
 	for (size_t i = 0; i < r.reports.size(); ++i)
 	{

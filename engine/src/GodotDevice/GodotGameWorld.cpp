@@ -87,6 +87,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <fstream>
 #include <chrono>
 #include <cmath>
 
@@ -298,6 +299,7 @@ void GameWorld::_bind_methods()
 	ClassDB::bind_method(D_METHOD("net_begin", "options"), &GameWorld::net_begin, DEFVAL(Dictionary()));
 	ClassDB::bind_method(D_METHOD("net_status"), &GameWorld::net_status);
 	ClassDB::bind_method(D_METHOD("net_finish"), &GameWorld::net_finish);
+	ClassDB::bind_method(D_METHOD("net_write_census", "path"), &GameWorld::net_write_census); // lane MP-3
 	ClassDB::bind_method(D_METHOD("net_disconnect_kick", "row"), &GameWorld::net_disconnect_kick); // lane MP-2
 	ClassDB::bind_method(D_METHOD("net_disconnect_quit"), &GameWorld::net_disconnect_quit);
 	ClassDB::bind_method(D_METHOD("lan_open", "options"), &GameWorld::lan_open); // lane MP-2
@@ -3191,6 +3193,7 @@ Dictionary GameWorld::net_begin(const Dictionary &options)
 	{
 		so.replayPath = std::string(String(options["record"]).utf8().get_data());
 	}
+	so.census = optBool(options, "census", false); // lane MP-3: the per-frame census (net_write_census)
 	m_netSession = std::make_unique<NetGameSession>(*m_netSocket, m_netStart, so);
 	std::string error;
 	if (!m_netSession->begin(*m_game, &error))
@@ -3323,6 +3326,32 @@ ProfileIdentity GameWorld::net_profile() const
 {
 	// the profile identity of this peer: the mounted archives in mount order with their verified md5, the build, the RNG prepare_new_game uses
 	return ProfileIdentity::compute(m_fs.is_valid() ? m_fs->mountedArchives() : std::vector<MountedArchive>(), RandomAlgorithm::ZH_CarryChain);
+}
+
+Dictionary GameWorld::net_write_census(const String &path) const
+{
+	Dictionary r;
+	r["ok"] = false;
+	if (!m_netSession)
+	{
+		r["error"] = "no network game";
+		return r;
+	}
+	std::ofstream c(std::string(path.utf8().get_data()), std::ios::binary | std::ios::trunc);
+	if (!c)
+	{
+		r["error"] = "cannot write " + path;
+		return r;
+	}
+	c << "frame,sim_us,battalions,troops,objects\n";
+	const auto &log = m_netSession->driver().censusLog();
+	for (const LockstepDriver::CensusRow &row : log)
+	{
+		c << row.frame << "," << row.simUs << "," << row.battalions << "," << row.troops << "," << row.objects << "\n";
+	}
+	r["ok"] = true;
+	r["rows"] = (int64_t)log.size();
+	return r;
 }
 
 void GameWorld::net_finish()

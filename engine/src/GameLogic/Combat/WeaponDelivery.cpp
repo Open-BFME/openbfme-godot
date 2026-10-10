@@ -28,6 +28,9 @@
 #include "GameLogic/Weapon.h"
 #include "GameLogic/WeaponNugget.h"
 #include "GameLogic/WeaponStores.h"
+#include "GameLogic/System/DOTManager.h"
+#include "GameLogic/AttributeModifiers.h"
+#include "GameLogic/Object/AttributeModifierPool.h"
 
 #include <cmath>
 
@@ -159,9 +162,103 @@ const char *const kNestedHordeStop =
 	"projectile type (client); FlipDirection is read by no 2.01 nugget code found; INFERENCE: a horde's member list is its contain list (horde interface slot 0x108 not read), the "
 	"clear-radius landing height is the ground (layer heights S-161), the AI state of RW 0x662D70 is the port's current state";
 
-// RW 0x90E683 applyToVictim: true when the hit took health (actualDamageClipped > 0)
+// RW 0x68D91A Object::estimateDamage: a TREE (template + 0x113 bit 6) answers 1.0 for FLAME (6) and 0 for anything else; else the body's estimate (body vslot 2);
+// no body: 0 (lane DECOMP-1)
+float objectEstimateDamage(const Object &victim, const DamageInfoInput &in)
+{
+	static const int kTree = ObjectTemplateInfoBuilder::kindOfIndex("TREE");
+	if (kTree >= 0 && victim.isKindOf((unsigned)kTree))
+	{
+		return in.m_damageType == DAMAGE_FLAME ? 1.0f : 0.0f;
+	}
+	const BodyModuleInterface *body = victim.getBodyModule();
+	return body ? body->estimateDamage(in) : 0.0f;
+}
+
+// RW 0x90E855, DamageNugget's (and DOTNugget's) slot 1, isApplicable(weapon, victim) (lane DECOMP-1; BFME2 decomp tier B same-shape): the base test RW 0x90D77C
+// (shouldDeliver above); the nugget's DamageInfo filled with noFlank (RW 0x90E28C(.., 1, 0)), its answer unread; false without a victim or when the weapon's
+// owner (Weapon + 8) is not in the logic; false when LostLeadershipUselessAgainst (+ 0x198) is not empty, the victim has all of its KindOf bits (RW 0x70C4FE)
+// and the owner's pool has LEADERSHIP (category 1) disabled at this frame (RW 0x804D94: frame < + 0x30 + 4); then the victim's estimate of the hit (RW 0x68D91A),
+// scaled for PassengerProportionalAttack like the fill (x87 count / MaxAttackPassengers, capped at 1.0, mulss): applicable when it is above 0 or the hit kills
+bool damageApplicable(GameLogic &logic, ObjectID ownerId, const DamageNugget &n, const WeaponTemplate &w, Object &victim)
+{
+	Object *owner = ownerId != INVALID_ID ? logic.findObjectByID(ownerId) : nullptr;
+	if (!shouldDeliver(n, w, owner, victim, logic))
+	{
+		return false;
+	}
+	DamageHost host(logic, ownerId, &victim);
+	DamageInfo info;
+	(void)FillDamageInfo(n, w, host, true, nullptr, info);
+	if (!owner)
+	{
+		return false;
+	}
+	bool anyUseless = false;
+	for (std::uint32_t word : n.m_lostLeadershipUselessAgainst)
+	{
+		anyUseless = anyUseless || word != 0;
+	}
+	if (anyUseless)
+	{
+		bool all = true;
+		const KindOfMaskType &k = victim.getKindOf();
+		for (size_t i = 0; i < k.size(); ++i)
+		{
+			all = all && (k[i] & n.m_lostLeadershipUselessAgainst[i]) == n.m_lostLeadershipUselessAgainst[i];
+		}
+		if (all)
+		{
+			const AttributeModifierPool *pool = static_cast<const AttributeModifierPool *>(owner->findModule("AttributeModifierPoolUpdate"));
+			if (pool && logic.getFrame() < pool->categoryDisabledUntil(1))
+			{
+				return false;
+			}
+		}
+	}
+	float estimate = objectEstimateDamage(victim, info.m_input);
+	if (w.m_passengerProportionalAttack && owner->getContain())
+	{
+		const int maxPassengers = (int)w.m_maxAttackPassengers;
+		if (maxPassengers > 0)
+		{
+			const std::uint32_t count = (std::uint32_t)owner->getContain()->getContainCount();
+			float q = SimMath::fstpDword(SimMath::pc24DivW(SimMath::fildU32(count), (double)maxPassengers));
+			if (q > 1.0f)
+			{
+				q = 1.0f;
+			}
+			estimate = SimMath::sseMul(estimate, q);
+		}
+	}
+	return 0.0f < estimate || info.m_input.m_kill;
+}
+
+// RW 0x911407, DOTNugget's slot 14 before the plain hit (lane DECOMP-1): with a victim, a record filled by the same fillDamageInfo (RW 0x90E28C) goes to
+// TheGameLogic + 0x174 (RW 0x821073) with interval + 0x1C4, end = frame + DamageDuration (+ 0x1C8), next = frame + DamageInterval
+void registerDamageOverTime(GameLogic &logic, ObjectID sourceId, const DOTNugget &nugget, const WeaponTemplate &weapon, Object &victim, const Coord3D *center)
+{
+	DamageHost host(logic, sourceId, &victim);
+	DOTManager::Record r;
+	if (!FillDamageInfo(nugget, weapon, host, false, center, r.info))
+	{
+		return;
+	}
+	const std::uint32_t now = logic.getFrame();
+	r.interval = nugget.m_damageInterval;
+	r.nextFrame = nugget.m_damageInterval + now;
+	r.endFrame = nugget.m_damageDuration + now;
+	logic.dot().add(victim.getID(), r);
+}
+
+// RW 0x90E683 applyToVictim (DamageNugget's slot 14): true when the hit took health (actualDamageClipped > 0). A DOTNugget (slot 14 RW 0x911407) registers its
+// damage over time first, then deals this plain hit and answers with it
 bool applyToVictim(GameLogic &logic, ObjectID sourceId, const DamageNugget &nugget, const WeaponTemplate &weapon, Object &victim, const Coord3D *center)
 {
+	if (nugget.kind() == NUGGET_DOT)
+	{
+		registerDamageOverTime(logic, sourceId, static_cast<const DOTNugget &>(nugget), weapon, victim, center);
+	}
 	DamageHost host(logic, sourceId, &victim);
 	DamageInfo info;
 	if (!FillDamageInfo(nugget, weapon, host, false, center, info))
@@ -257,7 +354,7 @@ void radiusDamage(GameLogic &logic, ObjectID sourceId, const DamageNugget &nugge
 				continue;
 			}
 		}
-		if (!shouldDeliver(nugget, weapon, source, *o, logic))
+		if (!damageApplicable(logic, sourceId, nugget, weapon, *o)) // slot 1 (RW 0x90E1A1 -> 0x90E855; lane DECOMP-1)
 		{
 			continue;
 		}
@@ -569,7 +666,423 @@ void deliver(GameLogic &logic, const MetaImpactNugget &n, const WeaponTemplate &
 	}
 }
 } // namespace MetaImpact
+
+// RW 0x90EB69 .. 0x90ECC4 (AttributeModifierNugget) and RW 0x90F1E7 .. 0x90F348 (ParalyzeNugget), the same code (lane DECOMP-1): an arc below pi (RW 0xBDD388) with
+// a source keeps the victim whose direction from the source lies within the arc around the source's x axis (matrix + 8 / + 0x18 / + 0x28): the offset (SSE) and
+// the axis each normalised by RW 0x441C56 on the x87 when their squared length ((z*z + y*y) + x*x for the axis, (x*x + y*y) + z*z for the offset, SSE) is not
+// 0; the dot (uz*az + uy*ay) + ux*ax on the x87, stored; fcos(arc) (RW 0x42F4E0) kept wide; `ja`: outside when the cosine is above the dot
+bool outsideSourceArc(float arc, const Object *source, const Object &victim)
+{
+	if (!(3.14159274f > arc) || !source)
+	{
+		return false;
+	}
+	const Coord3D &vp = *victim.getPosition();
+	const Coord3D &sp = *source->getPosition();
+	const float dx = SimMath::subf32(vp.x, sp.x), dy = SimMath::subf32(vp.y, sp.y), dz = SimMath::subf32(vp.z, sp.z);
+	const float *b = source->getBasis();
+	float ax = b[0], ay = b[3], az = b[6];
+	const float aa = SimMath::addf32(SimMath::addf32(SimMath::mulf32(az, az), SimMath::mulf32(ay, ay)), SimMath::mulf32(ax, ax));
+	if (aa != 0.0f)
+	{
+		const float inv = ProjectileInvSqrt(aa);
+		ax = SimMath::pc24Mul(ax, inv);
+		ay = SimMath::pc24Mul(ay, inv);
+		az = SimMath::pc24Mul(az, inv);
+	}
+	float ux = dx, uy = dy, uz = dz;
+	const float dd = SimMath::addf32(SimMath::addf32(SimMath::mulf32(dx, dx), SimMath::mulf32(dy, dy)), SimMath::mulf32(dz, dz));
+	if (dd != 0.0f)
+	{
+		const float inv = ProjectileInvSqrt(dd);
+		ux = SimMath::pc24Mul(dx, inv);
+		uy = SimMath::pc24Mul(dy, inv);
+		uz = SimMath::pc24Mul(inv, dz);
+	}
+	const double dotW = SimMath::pc24AddW(SimMath::pc24AddW(SimMath::pc24MulW((double)uz, (double)az), SimMath::pc24MulW((double)uy, (double)ay)),
+		SimMath::pc24MulW((double)ux, (double)ax));
+	const float dot = SimMath::fstpDword(dotW);
+	return SimMath::cosd(arc) > (double)dot;
+}
+
+// ---- AttributeModifierNugget (lane DECOMP-1; RW vtable 0xC7B1C8: slot 1 RW 0x9114B4 (the base test RW 0x90D77C), slot 2 RW 0x911BFD, slot 5 RW 0x90ED61,
+// slot 6 RW 0x90EE10, the apply RW 0x90EAF9). `sourceId` stands for RW's source argument (its + 8 is all the nugget reads of it). ----
+namespace AttributeModifier
+{
+// RW 0x90EAF9 (source, victim): with AffectHordeMembers (+ 0x160) a HORDE (template + 0x115 bit 5) with a contain first passes every member (its contain's list,
+// slot 0x118) through this same function; then DamageArc (+ 0x154) below pi (RW 0xBDD388) with a source keeps a victim whose direction from the source lies
+// within the arc around the source's x axis (matrix + 8 / + 0x18 / + 0x28); then a named list (+ 0x148) is added for its own duration (RW 0x68F1A8(name, -1)) and,
+// when the victim has its AttributeModifierPoolUpdate (RW 0x68C4A6) and the list a positive Duration (TheAttributeModifierStore RW 0x614470 / 0x614495),
+// AntiCategories (+ 0x158) are disabled until frame + Duration (RW 0x804FCC) and AntiFX (+ 0x15C) plays on the victim (RW 0x4B1B5A)
+void apply(GameLogic &logic, const AttributeModifierNugget &n, ObjectID sourceId, Object &victim)
+{
+	static const int kHorde = MetaImpact::kindIndex("HORDE");
+	Object *source = sourceId != INVALID_ID ? logic.findObjectByID(sourceId) : nullptr;
+	if (n.m_affectHordeMembers && victim.isKindOf((unsigned)kHorde) && victim.getContain())
+	{
+		std::vector<ObjectID> members;
+		for (Object *m : *victim.getContain()->getContainedItemsList())
+		{
+			members.push_back(m->getID());
+		}
+		for (ObjectID mid : members)
+		{
+			if (Object *m = logic.findObjectByID(mid))
+			{
+				apply(logic, n, sourceId, *m);
+			}
+		}
+	}
+	if (outsideSourceArc(n.m_damageArc, source, victim)) // RW 0x90EB69 .. 0x90ECC4
+	{
+		return;
+	}
+	if (n.m_attributeModifier.empty())
+	{
+		return;
+	}
+	victim.addAttributeModifier(n.m_attributeModifier, -1); // RW 0x68F1A8
+	AttributeModifierPool *pool = static_cast<AttributeModifierPool *>(victim.findModule("AttributeModifierPoolUpdate")); // RW 0x68C4A6
+	if (!pool)
+	{
+		return;
+	}
+	const ModifierListTemplate *list = TheAttributeModifierStore ? TheAttributeModifierStore->find(n.m_attributeModifier) : nullptr;
+	const int duration = list ? (int)list->m_duration : 0; // RW 0x614495: 0 for an unknown list; `jle`: a signed test
+	if (duration <= 0)
+	{
+		return;
+	}
+	pool->disableCategories(n.m_antiCategories, logic.getFrame() + (UnsignedInt)duration); // RW 0x804FCC
+	if (FXEventLog::isFXName(n.m_antiFX))
+	{
+		logic.fxEvents().emit(FXEventLog::objectEvent(FXEvent::OBJECT_FX, "AttributeModifierNugget AntiFX", logic.getFrame(), n.m_antiFX, victim)); // RW 0x4B1B5A
+	}
+}
+
+// RW 0x90EE10 (slot 6): the objects within max(Radius, 1.0) of `pos` (ThePartitionManager RW 0xA39300: FROM_BOUNDINGSPHERE_3D, no filter, ITER_FASTEST), each
+// through slot 1 then the apply
+void deliverAt(GameLogic &logic, const AttributeModifierNugget &n, const WeaponTemplate &w, ObjectID sourceId, const Coord3D &pos)
+{
+	const float radius = n.m_radius > 1.0f ? n.m_radius : 1.0f;
+	std::vector<ObjectID> ids;
+	for (const PartitionHit &hit : logic.partition().iterateObjectsInRange(pos, radius, FROM_BOUNDINGSPHERE_3D, {}, ITER_FASTEST))
+	{
+		ids.push_back(hit.object->getID());
+	}
+	for (ObjectID id : ids)
+	{
+		Object *o = logic.findObjectByID(id);
+		if (o && shouldDeliver(n, w, sourceId != INVALID_ID ? logic.findObjectByID(sourceId) : nullptr, *o, logic))
+		{
+			apply(logic, n, sourceId, *o);
+		}
+	}
+}
+
+// RW 0x90ED61 (slot 5): the victim through slot 1 then the apply; a positive Radius then works around the victim's position (slot 6)
+void deliverTo(GameLogic &logic, const AttributeModifierNugget &n, const WeaponTemplate &w, ObjectID sourceId, Object &victim)
+{
+	if (shouldDeliver(n, w, sourceId != INVALID_ID ? logic.findObjectByID(sourceId) : nullptr, victim, logic))
+	{
+		apply(logic, n, sourceId, victim);
+	}
+	if (n.m_radius > 0.0f)
+	{
+		const Coord3D at = *victim.getPosition();
+		deliverAt(logic, n, w, sourceId, at);
+	}
+}
+
+// fireWeaponTemplate's dispatch (RW 0x6CCECC .. 0x6CCF17, slot 12 false): a victim through slot 1 then slot 5, no victim the upgrade test (slot 2) then slot 6
+void deliver(GameLogic &logic, const AttributeModifierNugget &n, const WeaponTemplate &w, ObjectID sourceId, Object *victim, const Coord3D &pos)
+{
+	Object *source = sourceId != INVALID_ID ? logic.findObjectByID(sourceId) : nullptr;
+	if (victim)
+	{
+		if (shouldDeliver(n, w, source, *victim, logic))
+		{
+			deliverTo(logic, n, w, sourceId, *victim);
+		}
+	}
+	else if (upgradeTest(n, source))
+	{
+		deliverAt(logic, n, w, sourceId, pos);
+	}
+}
+} // namespace AttributeModifier
+
+// ---- ParalyzeNugget (lane DECOMP-1; RW vtable 0xC7B328: slot 1 RW 0x90F0E8, slot 5 RW 0x90F403, slot 6 RW 0x90F44A, the apply RW 0x90F177; the same frame as
+// AttributeModifierNugget's, read in RotWK) ----
+namespace Paralyze
+{
+// RW 0x90F0E8: a victim with status IGNORE_PARALYZE_NUGGET (101, RW 0x44DDEC) no; the base test RW 0x90D77C; a victim with model condition BURNINGDEATH
+// (544, RW 0x46E918) no
+bool applicable(GameLogic &logic, const ParalyzeNugget &n, const WeaponTemplate &w, const Object *source, Object &victim)
+{
+	static const int kIgnore = CombatNames::status("IGNORE_PARALYZE_NUGGET");
+	static const int kBurningDeath = CombatNames::modelCondition("BURNINGDEATH");
+	if (kIgnore >= 0 && victim.testStatus((unsigned)kIgnore))
+	{
+		return false;
+	}
+	if (!shouldDeliver(n, w, source, victim, logic))
+	{
+		return false;
+	}
+	return !victim.testModelCondition(kBurningDeath);
+}
+
+// RW 0x90F177 (source, victim): with AffectHordeMembers (+ 0x159) a HORDE with a contain first passes every member here; the source-axis arc (+ 0x150); then
+// setDisabledUntil(FreezeAnimation (+ 0x158) ? USER_FROZEN : USER_PARALYZED, now + Duration (+ 0x14C)) (RW 0x6907F1), ParalyzeFX (+ 0x154) on the victim
+// (RW 0x4B1B5A); a garrisonable contain (slot 0x10) orders every occupant with an AI out: a HORDE aiHordeExit(victim, 0) (RW 0x775AFB), anything not held in
+// a horde (RW 0x6939DF) aiExit(victim, 0) (RW 0x7716C1)
+void apply(GameLogic &logic, const ParalyzeNugget &n, ObjectID sourceId, Object &victim)
+{
+	static const int kHorde = MetaImpact::kindIndex("HORDE");
+	Object *source = sourceId != INVALID_ID ? logic.findObjectByID(sourceId) : nullptr;
+	if (n.m_affectHordeMembers && victim.isKindOf((unsigned)kHorde) && victim.getContain())
+	{
+		std::vector<ObjectID> members;
+		for (Object *m : *victim.getContain()->getContainedItemsList())
+		{
+			members.push_back(m->getID());
+		}
+		for (ObjectID mid : members)
+		{
+			if (Object *m = logic.findObjectByID(mid))
+			{
+				apply(logic, n, sourceId, *m);
+			}
+		}
+	}
+	if (outsideSourceArc(n.m_damageArc, source, victim))
+	{
+		return;
+	}
+	victim.setDisabled(n.m_freezeAnimation ? DISABLED_USER_FROZEN : DISABLED_USER_PARALYZED, logic.getFrame() + n.m_duration);
+	if (FXEventLog::isFXName(n.m_paralyzeFX))
+	{
+		logic.fxEvents().emit(FXEventLog::objectEvent(FXEvent::OBJECT_FX, "ParalyzeNugget ParalyzeFX", logic.getFrame(), n.m_paralyzeFX, victim));
+	}
+	ContainModuleInterface *c = victim.getContain();
+	if (!c || !c->isGarrisonable())
+	{
+		return;
+	}
+	std::vector<ObjectID> occupants;
+	if (const ContainModuleInterface::ContainedItemsList *items = c->getContainedItemsList())
+	{
+		for (Object *o : *items)
+		{
+			occupants.push_back(o->getID());
+		}
+	}
+	for (ObjectID id : occupants)
+	{
+		Object *o = logic.findObjectByID(id);
+		AIUpdateInterface *ai = o ? o->getAIUpdateInterface() : nullptr;
+		if (!ai)
+		{
+			continue;
+		}
+		if (o->isKindOf((unsigned)kHorde))
+		{
+			ai->aiHordeExit(&victim, CMD_FROM_PLAYER);
+		}
+		else if (!ai->isContained())
+		{
+			ai->aiExit(&victim, CMD_FROM_PLAYER);
+		}
+	}
+}
+
+// RW 0x90F44A (slot 6): max(Radius, 1.0) around `pos` (RW 0xA39300: FROM_BOUNDINGSPHERE_3D, no filter), each through slot 1 then the apply
+void deliverAt(GameLogic &logic, const ParalyzeNugget &n, const WeaponTemplate &w, ObjectID sourceId, const Coord3D &pos)
+{
+	const float radius = n.m_radius > 1.0f ? n.m_radius : 1.0f;
+	std::vector<ObjectID> ids;
+	for (const PartitionHit &hit : logic.partition().iterateObjectsInRange(pos, radius, FROM_BOUNDINGSPHERE_3D, {}, ITER_FASTEST))
+	{
+		ids.push_back(hit.object->getID());
+	}
+	for (ObjectID id : ids)
+	{
+		Object *o = logic.findObjectByID(id);
+		if (o && applicable(logic, n, w, sourceId != INVALID_ID ? logic.findObjectByID(sourceId) : nullptr, *o))
+		{
+			apply(logic, n, sourceId, *o);
+		}
+	}
+}
+
+// RW 0x90F403 (slot 5): the victim through slot 1 then the apply; a positive Radius then works around the victim (slot 6)
+void deliverTo(GameLogic &logic, const ParalyzeNugget &n, const WeaponTemplate &w, ObjectID sourceId, Object &victim)
+{
+	if (applicable(logic, n, w, sourceId != INVALID_ID ? logic.findObjectByID(sourceId) : nullptr, victim))
+	{
+		apply(logic, n, sourceId, victim);
+	}
+	if (n.m_radius > 0.0f)
+	{
+		const Coord3D at = *victim.getPosition();
+		deliverAt(logic, n, w, sourceId, at);
+	}
+}
+
+// fireWeaponTemplate's dispatch (RW 0x6CCECC .. 0x6CCF17): a victim through slot 1 then slot 5, no victim the upgrade test (slot 2) then slot 6
+void deliver(GameLogic &logic, const ParalyzeNugget &n, const WeaponTemplate &w, ObjectID sourceId, Object *victim, const Coord3D &pos)
+{
+	Object *source = sourceId != INVALID_ID ? logic.findObjectByID(sourceId) : nullptr;
+	if (victim)
+	{
+		if (applicable(logic, n, w, source, *victim))
+		{
+			deliverTo(logic, n, w, sourceId, *victim);
+		}
+	}
+	else if (upgradeTest(n, source))
+	{
+		deliverAt(logic, n, w, sourceId, pos);
+	}
+}
+} // namespace Paralyze
 } // namespace
+
+// RW 0x6CB779 (lane DECOMP-1): any nugget of the template whose slot 1 (isApplicable(weapon, victim)) answers true; false without a victim. The slot 1 bodies
+// (RotWK vtables, read with capstone): DamageNugget / DOTNugget RW 0x90E855 (damageApplicable); ProjectileNugget RW 0x90F954 (the base test RW 0x90D77C, a
+// warhead (+ 0x148) and RW 0x6CB779 on the warhead); MetaImpactNugget RW 0x910070; AttributeModifier / WeaponOCL / OpenGate / SpecialModelCondition RW 0x9114B4
+// and EmotionWeapon / StealMoney RW 0x90D77C (the base test); LuaEventNugget RW 0x8470FA (true); FireLogicNugget RW 0x8F8014 (false); HordeAttackNugget
+// RW 0x9119CB (the base test, then with an owner that has a horde interface: a member's current weapon RW 0x6CDBF3 against the victim, else true; the member the
+// interface slots 0x50 / 0x114(0xA4) pick is INFERENCE: the first living member); Paralyze RW 0x90F0E8, DamageField RW 0x90F501, Grab RW 0x910C27, DamageContained
+// RW 0x911086 and SpawnAndFade RW 0x911BCF are ported (lane DECOMP-1 r2). SlaveAttack RW 0x910DCF asks the owner's SlaveWatcherBehavior for its master's current
+// weapon (RW 0x6CDBF3): that module is not ported, so the base test stands in (S-1582)
+bool WeaponTemplateAnyNuggetApplicable(GameLogic &logic, const WeaponTemplate &t, ObjectID ownerId, Object *victim, int depth)
+{
+	if (!victim || depth > 4)
+	{
+		return false;
+	}
+	Object *owner = ownerId != INVALID_ID ? logic.findObjectByID(ownerId) : nullptr;
+	for (const std::shared_ptr<WeaponNugget> &np : t.m_nuggets)
+	{
+		const WeaponNugget &n = *np;
+		bool ok = false;
+		switch (n.kind())
+		{
+		case NUGGET_DAMAGE:
+		case NUGGET_DOT:
+			ok = damageApplicable(logic, ownerId, static_cast<const DamageNugget &>(n), t, *victim);
+			break;
+		case NUGGET_PROJECTILE:
+		{
+			const ProjectileNugget &pn = static_cast<const ProjectileNugget &>(n);
+			const WeaponTemplate *warhead = TheWeaponStore ? TheWeaponStore->findWeaponTemplate(pn.m_warheadTemplateName) : nullptr;
+			ok = shouldDeliver(n, t, owner, *victim, logic) && warhead && WeaponTemplateAnyNuggetApplicable(logic, *warhead, ownerId, victim, depth + 1);
+			break;
+		}
+		case NUGGET_META_IMPACT:
+			ok = MetaImpact::shouldDeliver(logic, static_cast<const MetaImpactNugget &>(n), t, owner, victim);
+			break;
+		case NUGGET_PARALYZE:
+			ok = Paralyze::applicable(logic, static_cast<const ParalyzeNugget &>(n), t, owner, *victim); // RW 0x90F0E8
+			break;
+		case NUGGET_DAMAGE_FIELD:
+		{
+			// RW 0x90F501: the base test, a resolved WeaponTemplateName (+ 0x148) and RW 0x6CB779 on that weapon
+			const DamageFieldNugget &dn = static_cast<const DamageFieldNugget &>(n);
+			const WeaponTemplate *wt = TheWeaponStore ? TheWeaponStore->findWeaponTemplate(dn.m_weaponTemplateName) : nullptr;
+			ok = shouldDeliver(n, t, owner, *victim, logic) && wt && WeaponTemplateAnyNuggetApplicable(logic, *wt, ownerId, victim, depth + 1);
+			break;
+		}
+		case NUGGET_GRAB:
+			// RW 0x910C27: the weapon's owner, the base test, and the owner's contain accepting the victim (slot 0x98(victim, 1, 0) == 1); no contain: false
+			ok = owner && shouldDeliver(n, t, owner, *victim, logic) && owner->getContain() && owner->getContain()->isValidContainerFor(*victim, true, false);
+			break;
+		case NUGGET_SPAWN_AND_FADE:
+			// RW 0x911BCF: the base test and ObjectTargetFilter (+ 0x148) for the victim with no player (RW 0x7640C1(victim, 0))
+			ok = shouldDeliver(n, t, owner, *victim, logic) &&
+			     ObjectFilterMatch::allows(logic, static_cast<const SpawnAndFadeNugget &>(n).m_objectTargetFilter, *victim, nullptr);
+			break;
+		case NUGGET_DAMAGE_CONTAINED:
+		{
+			// RW 0x911086: the base test, the owner present, a victim contain holding something (slot 0x114), garrisonable (slot 0x10) and not slot 0x1C (INFERENCE:
+			// unidentified, false for every ported contain), and a contained object not effectively dead (+ 0x458 bit 0) with every KillKindof bit (+ 0x14C)
+			// and none of KillKindofNot (+ 0x168) (RW 0x70C4FE)
+			const DamageContainedNugget &dc = static_cast<const DamageContainedNugget &>(n);
+			ok = false;
+			ContainModuleInterface *c = victim->getContain();
+			if (shouldDeliver(n, t, owner, *victim, logic) && owner && c && c->getContainCount() > 0 && c->isGarrisonable())
+			{
+				if (const ContainModuleInterface::ContainedItemsList *items = c->getContainedItemsList())
+				{
+					for (const Object *o : *items)
+					{
+						if (o->isEffectivelyDead())
+						{
+							continue;
+						}
+						bool all = true, none = true;
+						const KindOfMaskType &k = o->getKindOf();
+						for (size_t i = 0; i < k.size(); ++i)
+						{
+							all = all && (k[i] & dc.m_killKindof[i]) == dc.m_killKindof[i];
+							none = none && (k[i] & dc.m_killKindofNot[i]) == 0;
+						}
+						if (all && none)
+						{
+							ok = true;
+							break;
+						}
+					}
+				}
+			}
+			break;
+		}
+		case NUGGET_LUA_EVENT:
+			ok = true;
+			break;
+		case NUGGET_FIRE_LOGIC:
+			ok = false;
+			break;
+		case NUGGET_HORDE_ATTACK:
+		{
+			ok = shouldDeliver(n, t, owner, *victim, logic);
+			static const int kHorde = ObjectTemplateInfoBuilder::kindOfIndex("HORDE");
+			if (ok && owner && owner->getContain() && owner->isKindOf((unsigned)kHorde))
+			{
+				const Object *member = nullptr;
+				if (const ContainModuleInterface::ContainedItemsList *items = owner->getContain()->getContainedItemsList())
+				{
+					for (const Object *m : *items)
+					{
+						if (m && !m->isEffectivelyDead())
+						{
+							member = m;
+							break;
+						}
+					}
+				}
+				const ObjectWeapons *mw = member ? const_cast<Object *>(member)->getWeapons() : nullptr;
+				const Weapon *cw = mw ? mw->currentWeapon() : nullptr;
+				if (cw && cw->getTemplate())
+				{
+					ok = WeaponTemplateAnyNuggetApplicable(logic, *cw->getTemplate(), member->getID(), victim, depth + 1);
+				}
+			}
+			break;
+		}
+		default:
+			ok = shouldDeliver(n, t, owner, *victim, logic);
+			break;
+		}
+		if (ok)
+		{
+			return true;
+		}
+	}
+	return false;
+}
 
 unsigned DeliverNuggets(GameLogic &logic, ObjectID sourceId, const WeaponTemplate &weapon, const WeaponBonus &, Object *victim, const Coord3D *pos, bool, unsigned long long *unported)
 {
@@ -585,7 +1098,20 @@ unsigned DeliverNuggets(GameLogic &logic, ObjectID sourceId, const WeaponTemplat
 			MetaImpact::deliver(logic, static_cast<const MetaImpactNugget &>(n), weapon, sourceId, victim, at);
 			continue;
 		}
-		if (n.kind() != NUGGET_DAMAGE)
+		if (n.kind() == NUGGET_PARALYZE)
+		{
+			const Coord3D at = victim ? *victim->getPosition() : (pos ? *pos : Coord3D{ 0.0f, 0.0f, 0.0f });
+			Paralyze::deliver(logic, static_cast<const ParalyzeNugget &>(n), weapon, sourceId, victim, at); // lane DECOMP-1
+			continue;
+		}
+		if (n.kind() == NUGGET_ATTRIBUTE_MODIFIER)
+		{
+			// lane DECOMP-1: the warhead path dispatches it as fireWeaponTemplate does
+			const Coord3D at = victim ? *victim->getPosition() : (pos ? *pos : Coord3D{ 0.0f, 0.0f, 0.0f });
+			AttributeModifier::deliver(logic, static_cast<const AttributeModifierNugget &>(n), weapon, sourceId, victim, at);
+			continue;
+		}
+		if (n.kind() != NUGGET_DAMAGE && n.kind() != NUGGET_DOT) // DOTNugget: DamageNugget's vtable but slot 14 (lane DECOMP-1)
 		{
 			if (unported)
 			{
@@ -594,27 +1120,39 @@ unsigned DeliverNuggets(GameLogic &logic, ObjectID sourceId, const WeaponTemplat
 			continue;
 		}
 		const DamageNugget &dn = static_cast<const DamageNugget &>(n);
-		if (dn.m_radius == 0.0f)
+		if (victim)
 		{
-			// RW 0x90DAFD: Radius == 0 delivers to the victim when shouldDeliver allows
-			if (victim && CombatQueries::isAlive(*victim) && shouldDeliver(n, weapon, source, *victim, logic))
+			// RW 0x6CB7DD .. 0x6CB806 (the victim form, lane DECOMP-1 r3): slot 1 (RW 0x90E855) gates the whole nugget, then slot 5 (RW 0x90DAFD): Radius == 0 the
+			// victim (slot 1 again, then slot 14), a positive Radius the radius damage around the victim (slot 6); an immune victim protects its neighbours
+			if (!CombatQueries::isAlive(*victim) || !damageApplicable(logic, sourceId, dn, weapon, *victim))
+			{
+				continue;
+			}
+			if (dn.m_radius == 0.0f)
 			{
 				applied += applyToVictim(logic, sourceId, dn, weapon, *victim, nullptr) ? 1u : 0u;
 			}
+			else if (dn.m_radius > 0.0f)
+			{
+				radiusDamage(logic, sourceId, dn, weapon, *victim->getPosition(), unported);
+			}
 		}
-		else
+		else if (upgradeTest(n, source))
 		{
-			const Coord3D center = victim ? *victim->getPosition() : (pos ? *pos : Coord3D{ 0.0f, 0.0f, 0.0f });
+			// no victim (lane DECOMP-1 r4): the upgrade test, then slot 6 at the position (RW 0x90DEF0: max(Radius, 1.0)), so a Radius 0 warhead that lands
+			// (a projectile without HitStoredTarget) still hurts what stands where it lands
+			const Coord3D center = pos ? *pos : Coord3D{ 0.0f, 0.0f, 0.0f };
 			radiusDamage(logic, sourceId, dn, weapon, center, unported);
 		}
 	}
 	return applied;
 }
 
-ObjectWeaponDelivery::ObjectWeaponDelivery(Object &source, ObjectWeapons &weapons, const WeaponTemplate &weapon)
+ObjectWeaponDelivery::ObjectWeaponDelivery(Object &source, ObjectWeapons &weapons, const WeaponTemplate &weapon, const Weapon &firing)
 	: m_source(&source)
 	, m_weapons(&weapons)
 	, m_weapon(&weapon)
+	, m_firing(&firing)
 {
 }
 
@@ -722,19 +1260,31 @@ void ObjectWeaponDelivery::fireWeaponTemplate(const WeaponBonus &bonus, int curB
 		switch (n.kind())
 		{
 		case NUGGET_DAMAGE:
+		case NUGGET_DOT: // lane DECOMP-1: DamageNugget's vtable except slot 14 (applyToVictim registers the damage over time)
 		{
 			const DamageNugget &dn = static_cast<const DamageNugget &>(n);
-			if (dn.m_radius == 0.0f)
+			if (victim)
 			{
-				if (victim && shouldDeliver(n, t, m_source, *victim, logic))
+				// RW 0x6CCED3 .. 0x6CCEF5 (lane DECOMP-1 r3): slot 1 (RW 0x90E855) gates the whole nugget before slot 5 (RW 0x90DAFD): Radius == 0 the victim, a
+				// positive Radius the radius damage around the victim (slot 6); an immune victim protects its neighbours
+				if (!damageApplicable(logic, m_source->getID(), dn, t, *victim))
+				{
+					break;
+				}
+				if (dn.m_radius == 0.0f)
 				{
 					applyToVictim(logic, m_source->getID(), dn, t, *victim, nullptr);
 				}
+				else if (dn.m_radius > 0.0f)
+				{
+					radiusDamage(logic, m_source->getID(), dn, t, *victim->getPosition(), &logic.combat().counters().unportedNuggets);
+				}
 			}
-			else
+			else if (upgradeTest(n, m_source))
 			{
-				const Coord3D center = victim ? *victim->getPosition() : pos;
-				radiusDamage(logic, m_source->getID(), dn, t, center, &logic.combat().counters().unportedNuggets);
+				// RW 0x6CCEFA .. 0x6CCF17: no victim: slot 2 (RW 0x911BFD -> the upgrade test RW 0x90D8F0) then slot 6 at the position (RW 0x90DEF0: max(Radius, 1.0),
+				// so a Radius 0 nugget of a shot with no victim (a miss, a position shot) still reaches what stands at the point)
+				radiusDamage(logic, m_source->getID(), dn, t, pos, &logic.combat().counters().unportedNuggets);
 			}
 			break;
 		}
@@ -754,7 +1304,7 @@ void ObjectWeaponDelivery::fireWeaponTemplate(const WeaponBonus &bonus, int curB
 			shot.warhead = TheWeaponStore ? TheWeaponStore->findWeaponTemplate(pn.m_warheadTemplateName) : nullptr;
 			shot.bonus = bonus;
 			shot.barrel = curBarrel;
-			shot.slot = m_weapons->curSlot();
+			shot.slot = m_firing->getSlot(); // the firing weapon's slot (lane DECOMP-1 r3); the nugget's WeaponLaunchBoneSlotOverride still wins in the launcher
 			shot.nugget = &pn;
 			if (pn.m_useAlwaysAttackOffset)
 			{
@@ -779,6 +1329,12 @@ void ObjectWeaponDelivery::fireWeaponTemplate(const WeaponBonus &bonus, int curB
 		}
 		case NUGGET_META_IMPACT:
 			MetaImpact::deliver(logic, static_cast<const MetaImpactNugget &>(n), t, m_source->getID(), victim, pos); // lane COMBAT-4
+			break;
+		case NUGGET_PARALYZE:
+			Paralyze::deliver(logic, static_cast<const ParalyzeNugget &>(n), t, m_source->getID(), victim, pos); // lane DECOMP-1
+			break;
+		case NUGGET_ATTRIBUTE_MODIFIER:
+			AttributeModifier::deliver(logic, static_cast<const AttributeModifierNugget &>(n), t, m_source->getID(), victim, pos); // lane DECOMP-1
 			break;
 		case NUGGET_HORDE_ATTACK:
 		{
@@ -850,7 +1406,7 @@ void ObjectWeaponDelivery::emitFireFX(int curBarrel, const Object *victim, const
 	GameLogic &logic = m_source->logic();
 	const Coord3D aim = victim ? fireFXAimPosition(*victim) : victimPos;
 	const WeaponTemplate &t = *m_weapon;
-	const Weapon *w = m_weapons->weaponInSlot(m_weapons->curSlot());
+	const Weapon *w = m_firing; // the firing weapon's own suspend-FX frame (+ 0x30)
 	if (w && w->getTemplate() == &t && logic.getFrame() < w->suspendFXFrame())
 	{
 		return;
@@ -862,7 +1418,7 @@ void ObjectWeaponDelivery::emitFireFX(int curBarrel, const Object *victim, const
 	FXEvent e = FXEventLog::objectEvent(FXEvent::WEAPON_FIRE_FX, "FireFX", logic.getFrame(), t.m_fireFXs[0], *m_source);
 	e.secondary = victim ? victim->getID() : (ObjectID)INVALID_ID;
 	e.secondaryPosition = aim;
-	e.weaponSlot = m_weapons->curSlot();
+	e.weaponSlot = m_firing->getSlot();
 	e.barrel = curBarrel;
 	e.weaponSpeed = t.m_weaponSpeed;
 	e.playWhenStealthed = t.m_playFXWhenStealthed;

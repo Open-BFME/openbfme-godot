@@ -380,6 +380,7 @@ std::unique_ptr<AIStateMachine> AIUpdateInterface::makeStateMachine()
 	// COMBAT-1 (B1 AIStateMachineConstructor.cpp:563-567, 579): attack object 50, force attack object 51, dead 13; an attack ends in idle, which looks for the next target
 	m->defineState(AI_ATTACK_OBJECT, std::make_unique<AIAttackState>(*m, false, true, false), AI_IDLE, AI_IDLE);
 	m->defineState(AI_FORCE_ATTACK_OBJECT, std::make_unique<AIAttackState>(*m, false, true, true), AI_IDLE, AI_IDLE);
+	m->defineState(AI_ATTACK_POSITION, std::make_unique<AIAttackState>(*m, false, false, false), AI_IDLE, AI_IDLE); // lane PLAY-2: ZH AIStates.cpp:710
 	m->defineState(AI_DEAD, std::make_unique<AIDeadState>(*m), AI_DEAD, AI_DEAD);
 	// lane GARRISON-1: RotWK's ids (RW 0x753755): enter 15, exit 38, horde enter 52, horde exit 53, move to position and enter 56; each ends in idle
 	m->defineState(AI_ENTER, makeEnterState(*m), AI_IDLE, AI_IDLE);

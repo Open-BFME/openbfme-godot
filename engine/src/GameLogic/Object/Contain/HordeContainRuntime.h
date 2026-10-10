@@ -9,8 +9,8 @@
 //   * the slot table is built when the contain is created (HORDE-1 buildSlots RW 0x877751; with RandomOffset it draws from the logic RNG, x
 //     before y, lines 1575 / 1579); a member takes the first free slot whose rank's UnitType matches its template (RW 0x873F30, 0x73D5C2);
 //   * HordeContain::createPayload is a virtual of TransportContain that HordeContain overrides (B1 HordeContainCreatePayload.cpp, retail
-//     0x0023C000): the base creates the InitialPayload members, then members are destroyed down to (100 - DamagePercentToUnits)% (a horde
-//     produced damaged), and only when the object has no producer;
+//     0x0023C000; RotWK RW 0x871B9B): the base creates the InitialPayload members, then (no producer) (int)((100 - H) * 0.01 * count) members are
+//     destroyed, H = HordeContain + 0x2A8, which only the constructor writes (100, RW 0x872972): none ever is (lane DECOMP-1);
 //   * HordeContain::onDelete destroys every contained object (B1 HordeContainOnDelete.cpp: its own owned vector, then OpenContain::onDelete =
 //     ZH OpenContain.cpp:843-852: destroyObject on each rider);
 //   * a member's world position is the slot offset rotated by the horde's angle plus the horde's position (RW 0x875847, HordeContainCore).
@@ -18,7 +18,7 @@
 // WHAT IS INFERENCE (stop S-149): WHEN the payload is created (here: in the CreateModule::onCreate step, after registerObject; retail's call
 // site is not located: RW TransportContain::update, 0x86B86D, does not create it; B1 `createPayload` is reached through a virtual slot), that
 // the members belong to the horde's own team (ZH TransportContain uses the controlling player's DEFAULT team), that a member faces its
-// horde's angle and takes the HORDE_MEMBER status, that the DamagePercentToUnits trimming is done here at creation, and that a member that
+// horde's angle and takes the HORDE_MEMBER status, and that a member that
 // finds no free slot of a matching rank stands at the horde's position without a slot.
 // MOVEMENT (lane MOVE-1, GameLogic/Object/Contain/HordeMemberPass.cpp): in a game with an AIWorld update() is the movement part of HordeContain::update: the
 // TRANSPORT_MOVING mirror, the dirty flag, the member pass (snap, turn, walk to the slot, wait when ahead of it), the reform of the HORDE mover (greedy slot

@@ -60,6 +60,13 @@ const char kObjects[] =
 	"    InitialPayload = Fighter 1\n"
 	"  End\n"
 	"End\n"
+	"Object DamagedHorde\n"
+	"  Behavior = HordeContain ModuleTag_Horde\n"
+	"    DamagePercentToUnits = 50%\n"
+	"    RankInfo = RankNumber:1 UnitType:Fighter Position:X:50 Y:0 Position:X:50 Y:20 Position:X:50 Y:-20 Position:X:50 Y:40\n"
+	"    InitialPayload = Fighter 4\n"
+	"  End\n"
+	"End\n"
 	"Object JitteredHorde\n"
 	"  Behavior = HordeContain ModuleTag_Horde\n"
 	"    RandomOffset = X:5 Y:5\n"
@@ -227,6 +234,17 @@ TEST_CASE("HordeContain: a horde creates its InitialPayload members, each in its
 	// the horde sleeps (its member pass is not ported, S-149): its update module is in the sleeping vector
 	CHECK(hc->friend_getPhaseInLogic() == -1);
 	CHECK(hc->friend_getNextCallFrame() == (UnsignedInt)UPDATE_SLEEP_FOREVER);
+}
+
+// lane DECOMP-1 (S-149 narrowed): RW 0x871B9B (BFME2 decomp HordeContainRva0046E8EE.cpp, tier B) destroys (int)((100 - H) * 0.01 * count) members of an unproduced
+// horde, H the int at HordeContain + 0x2A8; its only writer is the constructor (RW 0x872972: 100), so nothing is ever destroyed: DamagePercentToUnits (an OpenContain
+// data field) does not reach it. The port reported a template that sets it as an error
+TEST_CASE("HordeContain: DamagePercentToUnits does not trim the payload (the runtime percentage of RW 0x871B9B is always 100) and is no error")
+{
+	Fx f;
+	Object *horde = f.make("DamagedHorde", f.teamOf("Alice"));
+	CHECK(f.membersOf(horde).size() == 4u);
+	CHECK(f.logic->report().errors.empty());
 }
 
 TEST_CASE("HordeContain: members stand at the slot offset rotated by the horde's angle and follow it when it moves (RW 0x875847)")

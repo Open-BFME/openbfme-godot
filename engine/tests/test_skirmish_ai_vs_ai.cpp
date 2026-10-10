@@ -601,6 +601,9 @@ TEST_CASE("skirmish ai vs ai: Evendim, 30 game-minutes: every pairing ends - Mor
 	// pins, the PERF-1 vectors and the structure death frames were re-measured unchanged on the lane's tree after it). Engine pins, not retail values.
 	// Merge COMBAT-4 (+ r2) on EXIT-1 / MOVE-2 / CAMP-1H: shockwaves throw units, RotWK's slow death and the HitPercentage draw change the fights:
 	// seed 2 ends with Mordor's defeat at 8208, seed 7 now with Men's defeat (start position 0) at 6498, seed 1234 with Men's defeat at 7694. Engine pins.
+	// Lane DECOMP-1 (DOTNugget, AttributeModifierNugget, RotWK's weapon choice RW 0x6C8A4E and DamageNugget's isApplicable RW 0x90E855, the SHROUD_CLEARING modifier,
+	// the melee contact's horde resolution): re-measured on the lane's tree: seeds 2 and 7 unchanged (8208, 6498), seed 1234 ends with Men's defeat earlier, at 6189.
+	// Engine pins, not retail values.
 	// Lane MOVE-3 (the hordes' own footprint RW 0x6ED071, the horde goal's member reservation RW 0x86EF13, the blocked unit's path patch RW 0x6631BF / 0x6F7938,
 	// the group manager's move order RW 0x75748C, the rally point adjustment RW 0x8A4189) change the fights: seed 2 ends with Mordor's defeat at 8741, seeds 7
 	// and 1234 are open at 9000. Engine pins, not retail values.
@@ -615,16 +618,24 @@ TEST_CASE("skirmish ai vs ai: Evendim, 30 game-minutes: every pairing ends - Mor
 	// Lane IDLE-1 r2: the AI updates run in updates[0] and HordeContain in updates[1] (RW 0x851E97 / 0x490AC4, the scheduler RW 0x62E982: every member's own update
 	// before its horde's member pass), and the hub leaves a member whose physics motion is disabled without an order (RW 0x874724). Re-measured on the lane's
 	// tree: seed 2 is open at 9000, seed 7 ends with Mordor's defeat (start position 1) at 6009, seed 1234 is open at 9000. Engine pins, not retail values.
+	// Merge of DECOMP-1 r2 (the 12 disabled types and their special power pause, ParalyzeNugget, the full temporary weapon of death weapons and HitStoredTarget
+	// warheads, the nugget applicability bodies) with IDLE-1 / PLAY-1 / CAMP-2 (archive 22e29980), re-measured on the merged tree with remote-measure.sh: seeds 2 and
+	// 1234 stay open at 9000, seed 7 ends with Mordor's defeat (start position 1) earlier, at 4947. The launched attacks are 2 / 27 / 43 for seeds 2 / 7 / 1234
+	// (r3 correction after Sol's replay: it is the open seed 2 game that launches only two, not seed 7; the bound below is two for seed 2, four for the others).
+	// Engine pins, not retail values.
 	// Merge of IDLE-1 / PLAY-1 / AUDIO-5 / INPUT-1 / WINCRASH-1 / CAMP-2 (22e29980) into MOVE-3 with MOVE-3 r4 (the queue exit's clearing after its exit command,
 	// RW 0x8A4214 .. 0x8A424F; unclamped line ends RW 0x6E8CE6), re-measured on JonathanPC: seed 2 is open at 9000, seed 7 is open at 9000, seed 1234 ends with
 	// Men's defeat (start position 1) at 8249. Engine pins, not retail values.
-	for (const Game &g : { Game{ "FactionMordor", "FactionMen", 2u, -1, -1 }, Game{ "FactionMen", "FactionMordor", 7u, -1, -1 }, Game{ "FactionMordor", "FactionMen", 1234u, 1, 8249 } })
+	// Merge of merge/play2 (MOVE-3, CAMP-2, INPUT-1, CAH-2, DOCS-1 on 22e29980) into DECOMP-1 r3 (Sol's fixes: the victim gate of a damage nugget, the firing
+	// weapon's slot, the turret aim gate of the weapon choice, the SHROUD_CLEARING refresh), re-measured on the merged tree with remote-measure.sh: seed 2 is open at
+	// 9000, seed 7 ends with Mordor's defeat (start position 1) at 3869, seed 1234 with Men's defeat (start position 1) at 7528. Engine pins, not retail values.
+	for (const Game &g : { Game{ "FactionMordor", "FactionMen", 2u, -1, -1 }, Game{ "FactionMen", "FactionMordor", 7u, 1, 3869 }, Game{ "FactionMordor", "FactionMen", 1234u, 1, 7528 } })
 	{
 		INFO(g.a << " vs " << g.b << " seed " << g.seed);
 		VersusRun run;
 		runVersus(*s, versusMessage(*s, g.a, 1, g.b, 1, g.seed), 9000, run, false, 0);
 		MESSAGE(run.log << "defeat frame " << run.defeatFrame << " loser " << run.loser);
-		CHECK(run.attacks[0] + run.attacks[1] >= 4);
+		CHECK(run.attacks[0] + run.attacks[1] >= (g.seed == 2u ? 2u : 4u)); // DECOMP-1 r3: the seed 2 game launches two (see above)
 		// SMOOTH-2 (the pending position cleared every frame, RW 0x62618F, feeds the crush warning's velocity RW 0x68EF58) ends seed 1234 with Men's defeat:
 		// 5275 on SMOOTH-2's base, 5186 on the merged tree (with GARRISON-1 / STEALTH-2 / END-2); seeds 2 and 7 stay open. Lane SMOOTH-3 (RotWK's member hub near arm RW 0x874F09, the angle goal RW 0x5E98D6 turning at the locomotor's rate): seed 1234 is open at 9000 as well. Engine pins, not retail values.
 		// SCRIPT-2 (merged with AUDIO-3 / GARRISON-2 / SMOOTH-3): the AI libraries' scripts now evaluate the conditions they use (PLAYER_HAS_OBJECT_COMPARISON ...

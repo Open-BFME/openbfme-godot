@@ -5,6 +5,7 @@
 #pragma GCC diagnostic ignored "-Winvalid-offsetof"
 #endif
 
+#include "GameLogic/Combat/ObjectWeapons.h"
 #include "GameLogic/Module/ExtraDieModules.h"
 
 #include "Common/AsciiString.h"
@@ -262,11 +263,9 @@ void FireWeaponWhenDeadBehavior::fire()
 		return; // RW: an unknown DeathWeapon parsed to NULL (RW 0x8860EE)
 	}
 	const Coord3D at = transformPoint(*obj, m_data->m_weaponOffset); // RW 0x70BFD1
-	unsigned long long unported = 0;
-	DeliverNuggets(logic, obj->getID(), *wt, WeaponBonus{}, nullptr, &at, false, &unported); // RW 0x6CF530 (see the header: S-980)
+	ObjectWeapons::createAndFireTempWeapon(wt, obj, at); // RW 0x88611D: TheWeaponStore->createAndFireTempWeapon (RW 0x6CF530; lane DECOMP-1)
 	++m_shots;
-	logic.noteStop("[S-980] FireWeaponWhenDeadBehavior: the DeathWeapon fires as its damage nuggets at the offset position (DeliverNuggets); the temporary weapon's "
-		"fire FX / sound and projectile nuggets are not delivered");
+	(void)logic;
 }
 
 // RW 0x885E25

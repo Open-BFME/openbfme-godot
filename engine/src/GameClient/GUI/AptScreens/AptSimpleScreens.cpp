@@ -8,12 +8,15 @@
 #include "GameClient/GUI/LoadScreenInfo.h"
 #include "GameClient/GUI/PlayerStatusInfo.h"
 #include "GameClient/GUI/ShellServices.h"
+#include "GameClient/GameLODManager.h"
 #include "GameClient/OptionPreferences.h"
 #include "GameClient/GUI/Shell/Shell.h"
 #include "GameClient/GUI/ShellEnvironment.h"
 
 #include "GameClient/GUI/GameTextSource.h"
 
+#include <array>
+#include <cstdint>
 #include <cctype>
 #include <cstdio>
 #include <cstdlib>
@@ -470,6 +473,31 @@ const char *const kAudioLOD[2] = { "Low", "High" };
 // the build's version (RW 0x644CC2 parses "VERSION=2.1.2614.37001" of the build string RW 0x644D8A with "%d.%d.%d.%d"; major + 0, minor + 4)
 constexpr int kVersionMajor = 2, kVersionMinor = 1;
 
+// the text setAptText takes (UTF-8) of a game text
+std::string toUtf8(const std::u16string &text)
+{
+	std::string utf8;
+	for (char16_t c : text)
+	{
+		if (c < 0x80)
+		{
+			utf8 += (char)c;
+		}
+		else if (c < 0x800)
+		{
+			utf8 += (char)(0xC0 | (c >> 6));
+			utf8 += (char)(0x80 | (c & 0x3F));
+		}
+		else
+		{
+			utf8 += (char)(0xE0 | (c >> 12));
+			utf8 += (char)(0x80 | ((c >> 6) & 0x3F));
+			utf8 += (char)(0x80 | (c & 0x3F));
+		}
+	}
+	return utf8;
+}
+
 bool equalsNoCase(const std::string &a, const char *b)
 {
 	std::size_t i = 0;
@@ -544,37 +572,46 @@ AptOptionsScreen::AptOptionsScreen(WindowManager &windows, Shell &shell, ShellEn
 	registerCommand("AptOptions::Save", [this](const std::string &) { save(); });
 	registerCommand("AptOptions::Reset", [this](const std::string &) { reset(); });
 	registerCommand("AptOptions::RefreshNat", unportedCommand("AptOptions::RefreshNat"));
-	registerCommand("AptOptions::EnterAdvancedSettings", unportedCommand("AptOptions::EnterAdvancedSettings"));
+	registerCommand("AptOptions::EnterAdvancedSettings", [this](const std::string &) { enterAdvancedSettings(); });
 	registerScreenRef("AptOptions::InitGadgets", [this](const std::string &name, GameWindow *w) { initGadget(name, w); });
 	for (int i = 0; i < 7; ++i)
 	{
 		registerProvider(kOptionsExterns[i], [this, i](const std::string &, std::string &value, bool setting) { return provide(i, value, setting); });
 	}
-	// RW 0x921586 .. 0x9215A6: APT:VersionNum is the version text
-	const std::u16string version = versionText(m_env.gameText);
-	std::string utf8;
-	for (char16_t c : version)
+	// lane PLAY-2: RW 0x921325 .. 0x9213F2: the preset templates (0 .. 4, Custom 5) and the advanced options' choice counts
+	for (int i = 0; i <= GameLODManager::kCustomLevel; ++i)
 	{
-		if (c < 0x80)
+		const std::string name = i == GameLODManager::kCustomLevel ? std::string("MasterOption0TemplateCustom") : "MasterOption0Template" + std::to_string(i);
+		registerProvider(name, [this, i](const std::string &, std::string &value, bool setting) { return provideTemplate(i, value, setting); });
+	}
+	for (int i = 0; i < GameLODManager::kAdvancedOptionCount; ++i)
+	{
+		// RW 0x91EA4E (decomp AptOptions::AdvancedOptionNum): a read answers the count; a write changes nothing
+		registerProvider("AdvancedOption" + std::to_string(i) + "Num", [i](const std::string &, std::string &value, bool setting) {
+			if (!setting)
+			{
+				value = std::to_string(GameLODManager::advancedOption(i).count);
+			}
+			return true;
+		});
+	}
+	bindAdvancedLabels();
+	// RW 0x9215E7: + 0x310 is the LOD manager's level, which its init takes from Options.ini's StaticGameLOD (OptionPreferences::getStaticGameDetail,
+	// GetEnumValue over the six level names); without one the benchmark's level (not ported, S-2481) is replaced by Custom
+	if (m_env.options && m_env.options->has("StaticGameLOD"))
+	{
+		const int level = GameLODManager::findLevel(m_env.options->get("StaticGameLOD"));
+		if (level != -1)
 		{
-			utf8 += (char)c;
-		}
-		else if (c < 0x800)
-		{
-			utf8 += (char)(0xC0 | (c >> 6));
-			utf8 += (char)(0x80 | (c & 0x3F));
-		}
-		else
-		{
-			utf8 += (char)(0xE0 | (c >> 12));
-			utf8 += (char)(0x80 | ((c >> 6) & 0x3F));
-			utf8 += (char)(0x80 | (c & 0x3F));
+			m_masterOption = level;
 		}
 	}
-	windows.setAptText("APT:VersionNum", utf8);
+	// RW 0x921586 .. 0x9215A6: APT:VersionNum is the version text
+	windows.setAptText("APT:VersionNum", toUtf8(versionText(m_env.gameText)));
 	windows.note("options-soft-particles", "[S-1484] Options: the OpenBFME Soft particles box (not a retail control) at stage (" + std::to_string(kSoftBoxX) + ", " +
 		std::to_string(kSoftBoxY) + "), saved as Options.ini's SoftParticles");
-	windows.note("options-unported", "[S-1913] Options: the advanced page, resolution / brightness apply, the LOD manager's master option, RefreshNat and live slider tracking are not ported");
+	windows.note("options-unported", "[S-1913] Options: resolution / brightness apply, the LOD manager's ideal level (MasterOption0ResetDefault), RefreshNat and live slider tracking are not ported");
+	windows.note("options-advanced", "[S-2481] Options: the advanced page's level and custom settings are saved to Options.ini but not applied to the renderer; the high-detail warnings and the '(level)' labels are not ported");
 	ensureSoftBox();
 }
 
@@ -609,7 +646,7 @@ bool AptOptionsScreen::provide(int index, std::string &value, bool setting)
 		if (index == 1)
 		{
 			m_masterOption = equalsNoCase(value, "Custom") ? 5 : std::atoi(value.c_str());
-			windows().note("options-unported", "MasterOption0Current = " + value + ": the LOD template is not applied [S-1913]");
+			selectDetail(); // RW 0x91F8A3 -> RW 0x91EB30 (the numeric level's warning, RW 0x91F790, is not ported: S-2481)
 		}
 		return true;
 	}
@@ -774,6 +811,7 @@ void AptOptionsScreen::initGadget(const std::string &fullName, GameWindow *w)
 			const int index = GadgetComboBoxAddEntry(w, text, GameMakeColor(255, 255, 255, 255));
 			GadgetComboBoxSetItemData(w, index, reinterpret_cast<void *>((std::uintptr_t)kDetail[i].second));
 		}
+		m_detailRefreshing = true; // RW 0x91EB30
 		for (int i = 0; i < 6; ++i)
 		{
 			if ((int)(std::uintptr_t)GadgetComboBoxGetItemData(w, i) == m_masterOption)
@@ -782,6 +820,7 @@ void AptOptionsScreen::initGadget(const std::string &fullName, GameWindow *w)
 				break;
 			}
 		}
+		m_detailRefreshing = false;
 		if (!m_allowAdvanced)
 		{
 			w->winEnable(false);
@@ -1024,7 +1063,131 @@ WindowMsgHandledType AptOptionsScreen::gadgetMessage(GameWindow *from, std::uint
 		m_pendingSoft = GadgetCheckBoxIsChecked(m_softBox);
 		return MSG_HANDLED;
 	}
+	GameWindow *detail = gadget("Detail");
+	if (msg == GCM_SELECTED && detail && !m_detailRefreshing && reinterpret_cast<GameWindow *>(data1) == detail)
+	{
+		// lane PLAY-2, RotWK's twin of BFME2 0x519167 (decomp AptOptionsRva00519167.cpp): Custom (item data 5) opens the advanced page through the
+		// movie's ShowAdvancedSettings; another level becomes + 0x310 (its warning, RW 0x91F790, is not ported: S-2481) and the page refreshes (RW 0x91EBD1)
+		int index = -1;
+		GadgetComboBoxGetSelectedPos(detail, &index);
+		const int chosen = index >= 0 ? (int)(std::uintptr_t)GadgetComboBoxGetItemData(detail, index) : -1;
+		if (chosen == GameLODManager::kCustomLevel)
+		{
+			std::string error;
+			if (!windows().invokeAS(level(), "ShowAdvancedSettings", {}, nullptr, &error))
+			{
+				windows().note("options-advanced", "ShowAdvancedSettings: " + error);
+			}
+		}
+		else if (chosen >= 0)
+		{
+			m_masterOption = chosen;
+		}
+		AptScreen::gadgetMessage(from, msg, data1, data2);
+		return MSG_HANDLED;
+	}
 	return AptScreen::gadgetMessage(from, msg, data1, data2);
+}
+
+// lane PLAY-2: RW 0x9213F4 .. 0x921580 (TheGameText vslot 0x38 fetch, then the Apt text record RW 0x624FFD)
+void AptOptionsScreen::bindAdvancedLabels()
+{
+	for (int i = 0; i <= GameLODManager::kCustomLevel; ++i)
+	{
+		const std::string name = i == GameLODManager::kCustomLevel ? std::string("APT:MasterOption0_Custom") : "APT:MasterOption0_" + std::to_string(i);
+		windows().setAptText(name, toUtf8(fetchOrMissing(m_env.gameText, std::string("APT:MasterOption_") + GameLODManager::levelName(i))));
+	}
+	for (int i = 0; i < GameLODManager::kAdvancedOptionCount; ++i)
+	{
+		const AdvancedOptionInfo &o = GameLODManager::advancedOption(i);
+		windows().setAptText("APT:AdvancedOption" + std::to_string(i), toUtf8(fetchOrMissing(m_env.gameText, std::string("APT:AdvancedOption_") + o.key)));
+		for (int j = 0; j < o.count; ++j)
+		{
+			std::string label = std::string("APT:AdvancedOption_") + o.key + "_" + o.choices[j];
+			if (label == "APT:AdvancedOption_ShadowLOD_UltraHigh")
+			{
+				label = "APT:AdvancedOption_ShaderLOD_UltraHigh"; // RW 0x921515 .. 0x92152E
+			}
+			windows().setAptText("APT:AdvancedOption" + std::to_string(i) + "_" + std::to_string(j), toUtf8(fetchOrMissing(m_env.gameText, label)));
+		}
+	}
+}
+
+std::string AptOptionsScreen::presetTemplate(int preset)
+{
+	if (preset == GameLODManager::kCustomLevel)
+	{
+		// INFERENCE (S-2481): the LOD manager's Custom record is the player's saved custom settings (RW 0x6019D1 fills it from Options.ini)
+		return m_env.options ? AdvancedOptionPrefs::format(*m_env.options) : AdvancedOptionPrefs::format(std::array<int, GameLODManager::kAdvancedOptionCount>{});
+	}
+	if (!m_env.gameLOD)
+	{
+		windows().note("options-advanced", "[S-2481] Options: no GameLOD.ini presets: the level templates are the zeroed records");
+		return AdvancedOptionPrefs::format(GameLODManager().presetSettings(preset));
+	}
+	return AdvancedOptionPrefs::format(m_env.gameLOD->presetSettings(preset)); // RW 0x601BBD into a fresh OptionPreferences, then RW 0x91EE9A
+}
+
+bool AptOptionsScreen::provideTemplate(int preset, std::string &value, bool setting)
+{
+	// RW 0x91F3B3
+	if (setting)
+	{
+		if (preset == GameLODManager::kCustomLevel)
+		{
+			m_customTemplate = value; // the warning against + 0x308 (RW 0x91F2AB, APT:WarnHighGraphicDetail) is not ported: S-2481
+		}
+		return true;
+	}
+	value = preset == GameLODManager::kCustomLevel ? m_customTemplate : presetTemplate(preset);
+	return true;
+}
+
+void AptOptionsScreen::enterAdvancedSettings()
+{
+	// RW 0x91F043
+	m_state = 2;
+	if (m_masterOption == -1)
+	{
+		return;
+	}
+	m_customTemplate = presetTemplate(m_masterOption);
+}
+
+void AptOptionsScreen::selectDetail()
+{
+	// RW 0x91EB30 (decomp Rva00518359Combo.cpp, tier A): the combo pointer (+ 0x2B0) is cleared while the item whose data is + 0x310 is selected, so the
+	// selection message does not reach the Detail handler
+	GameWindow *w = gadget("Detail");
+	if (!w)
+	{
+		return;
+	}
+	m_detailRefreshing = true;
+	for (int i = 0; i < 6; ++i)
+	{
+		if ((int)(std::uintptr_t)GadgetComboBoxGetItemData(w, i) == m_masterOption)
+		{
+			GadgetComboBoxSetSelectedPos(w, i, false);
+			break;
+		}
+	}
+	m_detailRefreshing = false;
+}
+
+void AptOptionsScreen::saveAdvanced(OptionPreferences &prefs)
+{
+	// RW 0x920500 .. 0x92058E: a level in [0, 6); Custom: + 0x314 into the nine keys (RW 0x91EE11), else they go (RW 0x6E6986); the LOD manager takes the
+	// level (RW 0x6020B4, not ported: INFERENCE accepted) and StaticGameLOD is written (RW 0x6E6798)
+	if (m_masterOption == GameLODManager::kCustomLevel)
+	{
+		AdvancedOptionPrefs::parseInto(m_customTemplate, prefs);
+	}
+	else
+	{
+		AdvancedOptionPrefs::clearSettings(prefs);
+	}
+	prefs.set("StaticGameLOD", GameLODManager::levelName(m_masterOption));
 }
 
 void AptOptionsScreen::save()
@@ -1113,19 +1276,51 @@ void AptOptionsScreen::save()
 			prefs->set("FirewallPortOverride", std::to_string(value & 0xFFFF));
 		}
 	}
-	else if (m_state != 1)
+	// RW 0x9204D9 .. 0x9204E1: the basic page's entries are written and the screen closes (RW 0x91EA39)
+	bool closed = false;
+	if (m_state == 1)
+	{
+		if (prefs)
+		{
+			prefs->setSoftParticles(m_pendingSoft);
+			writeOptions();
+			m_services.applyOption(OptionPreferences::kSoftParticles, prefs->get(OptionPreferences::kSoftParticles));
+		}
+		windows().requestShellPop();
+		closed = true;
+	}
+	else if (m_state != 2)
 	{
 		windows().note("options-save", "Save before OnInitialized: the basic page is not written (RW 0x91FCB2)");
 	}
-	if (prefs)
+	// lane PLAY-2: RW 0x9204F3 .. 0x9205AA, whatever the page: with AllowAdvancedOptions the level and the custom settings are written, then the screen
+	// closes with AdvancedOnly (RW 0x9205A3; once here: the basic page's close above already asked for the pop) or goes back to its basic page
+	if (m_allowAdvanced)
 	{
-		prefs->setSoftParticles(m_pendingSoft);
-		std::string error;
-		if (m_env.optionsFile.empty() || !prefs->save(m_env.optionsFile, &error))
+		if (prefs && m_masterOption > -1 && m_masterOption < GameLODManager::kLevelCount)
 		{
-			windows().note("options-save-failed", m_env.optionsFile.empty() ? std::string("Options.ini: no file name") : error);
+			saveAdvanced(*prefs);
+			writeOptions(); // RW 0x920582 (RW 0x7B274C)
 		}
-		m_services.applyOption(OptionPreferences::kSoftParticles, prefs->get(OptionPreferences::kSoftParticles));
+		if (m_advancedOnly)
+		{
+			if (!closed)
+			{
+				windows().requestShellPop();
+			}
+		}
+		else
+		{
+			m_state = 1;
+		}
 	}
-	windows().requestShellPop();
+}
+
+void AptOptionsScreen::writeOptions()
+{
+	std::string error;
+	if (m_env.optionsFile.empty() || !m_env.options->save(m_env.optionsFile, &error))
+	{
+		windows().note("options-save-failed", m_env.optionsFile.empty() ? std::string("Options.ini: no file name") : error);
+	}
 }

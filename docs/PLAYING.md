@@ -174,7 +174,7 @@ the keys are the original game's. In particular:
 | Shift+1 ... 9 | add the group to the selection | same |
 | Ctrl+F1 ... F8, then F1 ... F8 | store a camera position, jump back to it | same |
 | Command bar letters | the underlined letter of a button presses it (A is Attack Move) | same |
-| Ctrl held + click | force-attack a unit or building (also your own); the ground comes in the next preview | see [below](#force-attack) |
+| Ctrl held + click | force-attack a unit, building or the ground (also your own) | see [below](#force-attack) |
 | S | stop | same |
 | D / F / G | stances | same |
 | Space | jump to the last radar event | same key, but radar events are not created yet, so it does nothing for now (S-1674) |
@@ -191,10 +191,15 @@ On a German keyboard layout, Y and Z swap as in the original.
 Holding Ctrl for force-attack comes from Command & Conquer Generals: Zero
 Hour, the engine BFME was built on. How RotWK 2.01 itself turns force-attack
 on could not be found in the program, so this one is an informed guess
-(recorded as stop S-1675). The attack it gives once it is on is RotWK's own.
+(recorded as stop S-1675). The attack it gives once it is on is RotWK's own:
+Ctrl+click on the ground makes the selected units fire at that spot until you
+give another order; Ctrl+click on a unit or building attacks it, your own
+included.
 
-In this preview Ctrl+click on the ground does not attack the spot yet; the
-next preview adds it.
+Whether your own units and buildings can be attacked is decided by the weapon,
+as in the original: a unit only fires at your own side with a weapon that can
+hurt it. Arrows and a trebuchet's rocks never hurt your own side, so archers
+and trebuchets ordered onto your own building don't fire.
 
 Alt sends the original's order-mode message, but no order reacts to it yet.
 
@@ -233,7 +238,8 @@ recorded stop in [STOPS.md](STOPS.md); the ID is given for reference.
 
 **Menus**
 - Menus work with the mouse only, not the keyboard or a gamepad (S-108).
-- The Options screen's advanced page is not done (S-1913).
+- The Options screen's advanced page saves your detail choices, but they don't
+  change the graphics yet (S-2481).
 - Some lists and boxes of a menu show through pop-ups placed over them
   (S-1914).
 - Replays are recorded for every game and can be watched from *Load Replay*,

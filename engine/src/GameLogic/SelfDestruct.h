@@ -31,6 +31,10 @@
 
 #pragma once
 
+#include "GameLogic/ObjectTypes.h"
+
+#include <vector>
+
 class GameLogic;
 class GameLogicDispatch;
 class Player;
@@ -48,6 +52,14 @@ void transferAssetsFromThat(GameLogic &logic, Player &ally, Player &that, bool i
 struct Stats
 {
 	unsigned long long executed = 0, transfers = 0, kills = 0, objectsTransferred = 0, upgradesTransferred = 0;
+	// lane MP-3 (review r1): every transfer, in execution order: the leaver's and the ally's player index and the objects that changed hands (diagnostics:
+	// a test checks right after the frame that they belong to the ally; never read by the logic)
+	struct Transfer
+	{
+		int leaver = -1, ally = -1;
+		std::vector<ObjectID> objects;
+	};
+	std::vector<Transfer> transferLog;
 };
 const Stats &stats();
 } // namespace SelfDestruct

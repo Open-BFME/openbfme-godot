@@ -2163,18 +2163,12 @@ void TeleportSpecialAbilityUpdate::fireTempWeapon(const std::string &name, const
 	}
 	Object *obj = getObject();
 	const WeaponTemplate *wt = TheWeaponStore ? TheWeaponStore->findWeaponTemplate(name) : nullptr;
-	ObjectWeapons *weapons = obj->getWeapons();
-	if (!wt || !weapons)
+	if (!wt)
 	{
-		if (!wt)
-		{
-			obj->logic().reportError("TeleportSpecialAbilityUpdate: no weapon '" + name + "' (RW 0x6CC5DF)");
-		}
+		obj->logic().reportError("TeleportSpecialAbilityUpdate: no weapon '" + name + "' (RW 0x6CC5DF)");
 		return;
 	}
-	std::unique_ptr<Weapon> temp = weapons->makeExtraWeapon(wt);
-	temp->setOwnerID(obj->getID());
-	weapons->fireExtraWeaponAt(*temp, at);
+	ObjectWeapons::createAndFireTempWeapon(wt, obj, at); // lane DECOMP-1: RW 0x6CF530 itself
 }
 
 // RW 0x89653A

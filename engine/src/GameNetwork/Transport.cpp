@@ -247,7 +247,7 @@ Transport::Transport(UDP &socket, int localSlot, const Options &options)
 	: m_socket(socket)
 	, m_localSlot(localSlot)
 	, m_options(options)
-	, m_dropState(options.dropSeed ? options.dropSeed : 1)
+	, m_impairment(options.impairment)
 {
 	if (m_options.packetBytes < 64 || m_options.packetBytes > kMaxDatagram)
 	{
@@ -391,23 +391,8 @@ bool Transport::receive(int &fromSlot, std::vector<std::uint8_t> &bytes)
 	return true;
 }
 
-void Transport::sendDatagram(const NetAddress &to, std::vector<std::uint8_t> datagram, std::uint64_t now)
+void Transport::sendNow(const NetAddress &to, const std::vector<std::uint8_t> &datagram)
 {
-	if (m_options.dropPerMille > 0 || m_options.jitterMs > 0)
-	{
-		m_dropState = m_dropState * 1664525u + 1013904223u; // Numerical Recipes LCG: reproducible loss / jitter for the harness
-	}
-	if (m_options.dropPerMille > 0 && (int)((m_dropState >> 16) % 1000u) < m_options.dropPerMille)
-	{
-		++m_stats.dropped;
-		return;
-	}
-	if (m_options.delayMs > 0 || m_options.jitterMs > 0)
-	{
-		const std::uint64_t jitter = m_options.jitterMs > 0 ? (std::uint64_t)((m_dropState >> 8) % (std::uint32_t)(m_options.jitterMs + 1)) : 0;
-		m_delayed.insert({ now + (std::uint64_t)m_options.delayMs + jitter, { to, std::move(datagram) } });
-		return;
-	}
 	if (!m_socket.sendTo(to, datagram.data(), datagram.size()))
 	{
 		++m_stats.sendErrors;
@@ -415,6 +400,33 @@ void Transport::sendDatagram(const NetAddress &to, std::vector<std::uint8_t> dat
 		return;
 	}
 	++m_stats.packetsSent;
+}
+
+void Transport::sendDatagram(int slot, const NetAddress &to, std::vector<std::uint8_t> datagram, std::uint64_t now)
+{
+	if (!m_impairment.active())
+	{
+		sendNow(to, datagram);
+		return;
+	}
+	// lane MP-3 (NET-4): the harness decides the datagram's fate on its link: lost, delayed (reordered), duplicated, or swallowed by a blackout
+	m_impairment.schedule(slot, now, m_sendTimes);
+	if (m_sendTimes.empty())
+	{
+		++m_stats.dropped;
+		return;
+	}
+	for (size_t i = 0; i < m_sendTimes.size(); ++i)
+	{
+		if (m_sendTimes[i] <= now && m_delayed.empty())
+		{
+			sendNow(to, datagram);
+		}
+		else
+		{
+			m_delayed.insert({ m_sendTimes[i], { to, i + 1 < m_sendTimes.size() ? datagram : std::move(datagram) } });
+		}
+	}
 }
 
 void Transport::flush(int slot, std::uint64_t now)
@@ -447,7 +459,7 @@ void Transport::flush(int slot, std::uint64_t now)
 		for (; i < inFlight && count < 0xFFFF; ++i)
 		{
 			Outgoing &o = p.unacked[i];
-			if (o.sent && now - o.lastSent < p.rto)
+			if (o.sent && now - o.lastSent < p.rto && !o.fastDue)
 			{
 				continue;
 			}
@@ -465,8 +477,16 @@ void Transport::flush(int slot, std::uint64_t now)
 				++m_stats.commandsResent;
 				o.resent = true; // lane MP-2: no round-trip sample from it (Karn's rule)
 				++o.resends;
-				timedOut = true;
+				if (o.fastDue)
+				{
+					++m_stats.fastResends; // lane MP-3: a fast resend is not a timeout: no backoff
+				}
+				else
+				{
+					timedOut = true;
+				}
 			}
+			o.fastDue = false;
 			o.sent = true;
 			o.lastSent = now;
 			++count;
@@ -483,7 +503,7 @@ void Transport::flush(int slot, std::uint64_t now)
 		d[1] = (std::uint8_t)((crc >> 8) & 0xFF);
 		d[2] = (std::uint8_t)((crc >> 16) & 0xFF);
 		d[3] = (std::uint8_t)(crc >> 24);
-		sendDatagram(p.address, std::move(d), now);
+		sendDatagram(slot, p.address, std::move(d), now);
 		sentAny = true;
 		p.lastSent = now;
 		p.ackOwed = false;
@@ -494,7 +514,11 @@ void Transport::flush(int slot, std::uint64_t now)
 	}
 	if (timedOut)
 	{
-		p.rto = std::min<std::uint64_t>(2000, p.rto * 2); // lane MP-2: Karn's backoff
+		// lane MP-2: Karn's backoff. Lane MP-3: on a link with a measured round trip, at most twice its RFC 6298 timeout (a lockstep game sends a few
+		// hundred bytes a second: the backoff guards against a timeout below the round trip, not against congestion; doubling up to 2 s after two losses
+		// in a row stalled every peer for seconds)
+		const std::uint64_t cap = p.rttSamples && m_options.fastResend ? std::max<std::uint64_t>((std::uint64_t)m_options.resendMs, std::min<std::uint64_t>(2000, 2 * (p.srtt + 4 * p.rttvar))) : 2000;
+		p.rto = std::min<std::uint64_t>(cap, std::max<std::uint64_t>(p.rto, std::min<std::uint64_t>(cap, p.rto * 2)));
 	}
 }
 
@@ -678,6 +702,30 @@ void Transport::handleDatagram(const NetAddress &from, const std::vector<std::ui
 				p.rto = std::max<std::uint64_t>((std::uint64_t)m_options.resendMs, std::min<std::uint64_t>(2000, p.srtt + 4 * p.rttvar));
 			}
 		}
+		// lane MP-3: fast resend (TCP's fast retransmit by time, the wire unchanged): this packet's cumulative ack left the peer at most a one-way trip
+		// ago, so a record that went out more than a smoothed round trip plus its variation before now and is still not covered was most likely lost: it
+		// goes again with the next flush instead of after the full timeout (each record once; later losses wait for the timeout)
+		if (p.rttSamples > 0 && m_options.fastResend)
+		{
+			const std::uint64_t threshold = p.srtt + std::max<std::uint64_t>(p.rttvar, 20);
+			size_t marked = 0, scanned = 0;
+			for (Outgoing &o : p.unacked)
+			{
+				if (!o.sent || marked >= 64 || ++scanned > 256)
+				{
+					break; // the unsent ones come last; a bounded scan per packet
+				}
+				if (now < o.lastSent + threshold)
+				{
+					continue; // sent (or resent) too recently to be judged
+				}
+				if (!o.fastDone)
+				{
+					o.fastDue = o.fastDone = true;
+					++marked;
+				}
+			}
+		}
 	}
 	for (const Parsed &r : records)
 	{
@@ -710,6 +758,11 @@ void Transport::service()
 	std::vector<std::uint8_t> d;
 	while (m_socket.receiveFrom(from, d))
 	{
+		if (!m_impairment.acceptIncoming(now))
+		{
+			++m_stats.dropped; // lane MP-3: the cable is pulled
+			continue;
+		}
 		handleDatagram(from, d, now);
 	}
 	for (int s = 0; s < MAX_SLOTS; ++s)
@@ -721,15 +774,13 @@ void Transport::service()
 	}
 	while (!m_delayed.empty() && m_delayed.begin()->first <= now)
 	{
-		const auto &e = m_delayed.begin()->second;
-		if (m_socket.sendTo(e.first, e.second.data(), e.second.size()))
+		if (m_impairment.releaseDue(now))
 		{
-			++m_stats.packetsSent;
+			sendNow(m_delayed.begin()->second.first, m_delayed.begin()->second.second);
 		}
 		else
 		{
-			++m_stats.sendErrors;
-			error("sending " + std::to_string(e.second.size()) + " bytes to " + e.first.text() + " failed (the records are resent)");
+			++m_stats.dropped; // in flight when the blackout began
 		}
 		m_delayed.erase(m_delayed.begin());
 	}

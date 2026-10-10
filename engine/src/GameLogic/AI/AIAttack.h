@@ -13,7 +13,8 @@
 // DONOR: ZH AIStates.cpp AIAttackState (5358-5700), AIAttackApproachTargetState (2555-2790), AIAttackAimAtTargetState (4904-5133), AIAttackFireWeaponState (5161-5330).
 //
 // WHAT IS INFERENCE / NOT PORTED (stop S-325): the Pursue state (a fleeing victim is chased by the Approach state's re-path), turrets, stealth, view blocking, garrison fire points,
-// guard / hunt / retaliation, attack position, attack area and attack squad.
+// guard / hunt / retaliation, attack area and attack squad. The attack on a position
+// (state 9, lane PLAY-2) is ZH's AIAttackState(follow false, object false, force false) (AIStates.cpp:710; the BFME2 constructor row is not read).
 
 #pragma once
 
@@ -26,6 +27,8 @@ class Object;
 // parent machine ids (B1)
 enum
 {
+	// lane PLAY-2: privateAttackPosition RW 0x66DE02 enters state 9 (RW 0x66E02D) and tests it (RW 0x66DFB7); ZH AI_ATTACK_POSITION
+	AI_ATTACK_POSITION = 9,
 	AI_DEAD = 13,
 	AI_ATTACK_OBJECT = 50,
 	AI_FORCE_ATTACK_OBJECT = 51

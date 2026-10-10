@@ -716,7 +716,7 @@ TEST_CASE("shroud stops: S-560 .. S-567 are the exact stop lines and reach GameL
 		"shape; TheTerrainLogic::getExtent is boundary 0 (BFME2 donor, present-unmatched)",
 		"[S-563] shroud numerics: the look polygon's x87 extended-precision vertices are computed in binary64 with SimMath's sin / cos (RW fsin / fcos); "
 		"a horizontal first left edge (uninitialised slope in RW 0xB501A0) starts at the top vertex with slope 0",
-		"[S-564] object look: the vision attribute modifiers (RW 0x804F39 types 0x10 / 0x14), the spied mask (player + 0x3C8), object + 0x30 / + 0x3F4 (radii "
+		"[S-564] object look: the SHROUD_CLEARING modifier (RW 0x804F39 type 0x14) and the object's own range (Object + 0x1B4) are read since lane DECOMP-1; the spied mask (player + 0x3C8), object + 0x30 / + 0x3F4 (radii "
 		"0.1), DynamicShroudClearingRangeUpdate and the HordeContain VisionSide / VisionRearOverride are not read; object + 0x480 (hide when fogged) is taken as set",
 		"[S-565] fogged targets: a human player's units cannot attack an object FOGGED or SHROUDED for that player unless the order comes from a script (RW "
 		"0x82C167, the action helper: human and not script, as ZH ActionManager isObjectShroudedForAction); its other callers and the other action types were not read",
@@ -898,4 +898,76 @@ TEST_CASE("shroud refresh: an unseen structure in fog becomes SHROUDED after its
 	CHECK(hashes[0] == hashes[4]);
 	CHECK(hashes[1] == hashes[3]);
 	CHECK(hashes[1] == hashes[5]);
+}
+
+// ---- lane DECOMP-1: the object's own clearing range (RW 0x68C234), the forced look (RW 0x68C7E9) and the SHROUD_CLEARING modifier (RW 0x68E500) ----
+#include "GameLogic/AttributeModifiers.h"
+#include "GameLogic/Object/AttributeModifierPool.h"
+
+namespace
+{
+const char kDecomp1Objects[] =
+	"ModifierList TestFarSight\n"
+	"  Category = BUFF\n"
+	"  Duration = 0\n"
+	"  Modifier = SHROUD_CLEARING 100%\n"
+	"End\n"
+	"Object PooledScout\n"
+	"  KindOf = INFANTRY\n"
+	"  ShroudClearingRange = 100\n"
+	"  Behavior = AttributeModifierPoolUpdate ModuleTag_Pool\n"
+	"  End\n"
+	"  Geometry = CYLINDER\n"
+	"  GeometryMajorRadius = 5\n"
+	"End\n";
+
+struct Decomp1Fx : Fx
+{
+	AttributeModifierStore modifiers;
+	AttributeModifierStore *saved = TheAttributeModifierStore;
+	Decomp1Fx()
+	{
+		modifiers.registerBlock(w.fx.env.blocks);
+		TheAttributeModifierStore = &modifiers;
+		AttributeModifierPool::registerClass(w.modules); // the real pool (the base fixture binds no runtime class to the name)
+		const std::string err = w.load(kDecomp1Objects);
+		REQUIRE_MESSAGE(err.empty(), err);
+	}
+	~Decomp1Fx() { TheAttributeModifierStore = saved; }
+};
+} // namespace
+
+// RW 0x68C234: + 0x1B4 = range when it differs, the record marked dirty (forced); RW 0x68C7E9 -> 0xB4F410: the record leaves the dirty list and looks now, before
+// any shroud update (the SpecialPowerViewObject of RW 0x896FD9 reveals at once). Before lane DECOMP-1 the object kept the template's range
+TEST_CASE("shroud objects (DECOMP-1): setShroudClearingRange gives an object its own range and updateShroudNow looks at once")
+{
+	Fx f;
+	const int bob = f.idx("Bob");
+	Object *blind = f.place("Blind", "Bob", 420.0f, 420.0f);
+	f.shroud.update();
+	CHECK(f.shroud.getCellStatus(bob, 10, 10) == CELLSHROUD_SHROUDED); // no ShroudClearingRange: no look
+	blind->setShroudClearingRange(100.0f);
+	CHECK(blind->hasShroudClearingRange());
+	blind->updateShroudNow();
+	CHECK(f.shroud.getCellStatus(bob, 10, 10) == CELLSHROUD_CLEAR);
+	CHECK(f.shroud.getCellStatus(bob, 13, 10) == CELLSHROUD_CLEAR); // ceil(100 / 40) = 3 cells
+	CHECK(f.shroud.getCellStatus(bob, 14, 10) == CELLSHROUD_SHROUDED);
+	CHECK(f.shroud.dirtyCount() == 0u);
+}
+
+// RW 0x68E500 .. 0x68E52E: the pool's SHROUD_CLEARING sum scales the range by (1 + sum): 100% doubles 100 to 200, ceil(200 / 40) = 5 cells
+TEST_CASE("shroud objects (DECOMP-1): a SHROUD_CLEARING modifier widens the look by its percentage")
+{
+	Decomp1Fx f;
+	const int alice = f.idx("Alice");
+	Object *scout = f.place("PooledScout", "Alice", 420.0f, 420.0f);
+	f.shroud.update();
+	CHECK(f.shroud.getCellStatus(alice, 13, 10) == CELLSHROUD_CLEAR);
+	CHECK(f.shroud.getCellStatus(alice, 15, 10) == CELLSHROUD_SHROUDED);
+	REQUIRE(scout->addAttributeModifier("TestFarSight", -1));
+	f.logic->runLogicFrame(); // the pool answers from the next frame (an entry is suppressed at its own frame 0)
+	// no manual markDirty: the add itself marked the stationary scout's record dirty (RW 0x805E59 -> 0x68C213, lane DECOMP-1 r3)
+	f.shroud.update();
+	CHECK(f.shroud.getCellStatus(alice, 15, 10) == CELLSHROUD_CLEAR);
+	CHECK(f.shroud.getCellStatus(alice, 16, 10) == CELLSHROUD_SHROUDED);
 }

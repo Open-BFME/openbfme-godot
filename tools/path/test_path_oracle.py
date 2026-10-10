@@ -3,10 +3,14 @@ in path_oracle.classify, not computed by it: run  python -m pytest tools/path -q
 import os
 import sys
 
-os.environ.setdefault("ROTWK_INSTALL", "unused")
-os.environ.setdefault("BFME2_INSTALL", "unused")
+from unittest import mock
+
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import path_oracle as po  # noqa: E402
+# the oracle's install variables are only placeholders for the import here, restored at once (a process-wide value would make the later retail tests of
+# the run fail on "unused" instead of skipping)
+with mock.patch.dict(os.environ, {"ROTWK_INSTALL": os.environ.get("ROTWK_INSTALL") or "unused",
+                                  "BFME2_INSTALL": os.environ.get("BFME2_INSTALL") or "unused"}):
+    import path_oracle as po  # noqa: E402
 
 WADE, DEEP = 5.0, 6.0
 

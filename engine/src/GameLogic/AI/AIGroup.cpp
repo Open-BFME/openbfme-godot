@@ -5,6 +5,7 @@
 
 #include "GameLogic/AI/AIWorld.h"
 #include "GameLogic/GameLogic.h"
+#include "GameLogic/Locomotor.h"
 #include "GameLogic/Module/PhysicsBehavior.h"
 #include "GameLogic/Module/AIUpdate.h"
 #include "GameLogic/Object/Object.h"
@@ -253,6 +254,96 @@ void AIGroup::groupIdle(CommandSourceType source)
 		if (AIUpdateInterface *ai = o->getAIUpdateInterface())
 		{
 			ai->aiIdle(source);
+		}
+	}
+}
+
+// ---- lane PLAY-2 -------------------------------------------------------------------------------------------------------------------------
+
+const char *AIGroup::forceAttackStopLine()
+{
+	return "[S-2480] force attack (lane PLAY-2): MSG_DO_FORCE_ATTACK_GROUND (RW 0x77AF93) and MSG_DO_FORCE_ATTACK_OBJECT (RW 0x77AED3) run with the group's "
+		"weapon locks, groupAttackPosition and aiAttackPosition (state 9); not ported: the passengers of a container that lets them fire and the slaves of a "
+		"spawner in groupAttackPosition (RW 0x77229A: the container's allowed-to-fire test, its passenger list and SpawnBehaviorInterface slot 4 have no port), the contain module's "
+		"weapon lock pass-through (Object::setWeaponLock / releaseWeaponLock, contain slots 0x168 / 0x16C) and the AI hook of the lock, the object form's "
+		"reserved-id branch (victim id 99999999 with the GameData flag + 0xBC: TerrainLogic RW 0x68449B makes a real object of the terrain prop at the click "
+		"and attacks it), the outside-the-playable-area refusal (Object + 0x458 bit 3 is never set); INFERENCE: PartitionFilterPossibleToAttack of the "
+		"ContinueAttackRange search is the non-forced canAttackObject";
+}
+
+bool AIGroup::isIdle() const
+{
+	for (Object *o : m_members)
+	{
+		const AIUpdateInterface *ai = o->getAIUpdateInterface();
+		if (ai && !ai->isIdle() && !o->isEffectivelyDead())
+		{
+			return false;
+		}
+	}
+	return true;
+}
+
+bool AIGroup::setWeaponLockForGroup(int slot, WeaponLockType type)
+{
+	static const int kSwitchedWeapons = ObjectTemplateInfoBuilder::objectStatusIndex("SWITCHED_WEAPONS"); // RW status 0x51
+	bool any = false;
+	for (Object *o : m_members)
+	{
+		ObjectWeapons *w = o->getWeapons();
+		Weapon *before = w ? w->currentWeapon() : nullptr;
+		// RW 0x69121A: the object status SWITCHED_WEAPONS = (permanent and slot != PRIMARY), then the weapon set's lock (RW 0x6C97F9); no weapon set: false
+		if (kSwitchedWeapons >= 0)
+		{
+			o->setStatus((unsigned)kSwitchedWeapons, type == LOCKED_PERMANENTLY && slot != 0);
+		}
+		if (w && w->setWeaponLock(slot, type))
+		{
+			any = true;
+		}
+		if (w && before && before->getTemplate() && before->getTemplate()->m_shareTimers && w->weaponStatus(*before) != WEAPON_READY_TO_FIRE)
+		{
+			if (Weapon *now = w->currentWeapon())
+			{
+				now->setWhenWeCanFireAgain(before->whenWeCanFireAgain());
+				now->setStatus(WEAPON_OUT_OF_AMMO);
+			}
+		}
+	}
+	return any;
+}
+
+void AIGroup::releaseWeaponLockForGroup(WeaponLockType type)
+{
+	for (Object *o : m_members)
+	{
+		if (ObjectWeapons *w = o->getWeapons())
+		{
+			w->releaseWeaponLock(type); // RW 0x68DF11 -> RW 0x6C98E6 (a destroyed object, status + 0x94 bit 0, is not a member)
+		}
+	}
+}
+
+void AIGroup::groupAttackPosition(const Coord3D &pos, int maxShotsToFire, CommandSourceType source)
+{
+	m_logic.noteStop(forceAttackStopLine());
+	for (Object *o : m_members)
+	{
+		if (AIUpdateInterface *ai = o->getAIUpdateInterface())
+		{
+			ai->aiAttackPosition(pos, maxShotsToFire, source);
+		}
+	}
+}
+
+void AIGroup::clearTemporarySpeedCaps()
+{
+	for (Object *o : m_members)
+	{
+		AIUpdateInterface *ai = o->getAIUpdateInterface();
+		if (Locomotor *loco = ai ? ai->curLocomotor() : nullptr)
+		{
+			loco->setTemporarySpeedCap(-1.0f);
 		}
 	}
 }

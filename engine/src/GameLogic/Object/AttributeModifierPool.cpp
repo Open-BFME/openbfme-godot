@@ -2,6 +2,7 @@
 // See GameLogic/Object/AttributeModifierPool.h.
 
 #include "GameLogic/Object/AttributeModifierPool.h"
+#include "GameLogic/System/ShroudManager.h"
 
 #include "Common/StateHash.h"
 #include "Common/Thing/ModuleFactory.h"
@@ -34,8 +35,8 @@ std::vector<std::string> AttributeModifierPool::stopLines()
 	return { "[S-633] AttributeModifierPoolUpdate (RW 0x8057B0): add / sum / product run; not ported: the expiry update that removes entries (HEALTH / "
 		"ClearModelCondition reversal, EndFX, category counts; the queries skip an expired entry themselves) with " + std::to_string(s.expiringAdds) +
 		" expiring adds, the delayed Upgrade grant (" + std::to_string(s.delayedUpgrades) + " not granted), the client FX (" + std::to_string(s.fxNotShown) +
-		" not shown), the auto heal refresh RW 0x68C213 (" + std::to_string(s.autoHealRefreshes) + " not run), the AttributeModifierNugget anti-category "
-		"disabling (RW 0x804FCC) and the xfer" };
+		" not shown) and the xfer (lane DECOMP-1: a SHROUD_CLEARING list marks the shroud record dirty, RW 0x68C213; AttributeModifierNugget's anti-category "
+		"disabling RW 0x804FCC runs)" };
 }
 
 bool AttributeModifierPool::suppressed(unsigned frame, const Entry &e, bool innate) const
@@ -243,10 +244,15 @@ bool AttributeModifierPool::add(const std::string &listName, int duration)
 	{
 		++m_categoryCount[(size_t)cat];
 	}
-	float autoHeal = 0.0f;
-	if (list->value(ATTRIBUTE_AUTO_HEAL, nullptr, autoHeal) && autoHeal > 0.0f)
+	// RW 0x805E2A .. 0x805E59 (lane DECOMP-1 r3): a list with a SHROUD_CLEARING value above 0 (type 0x14) marks the object's shroud record dirty, forced
+	// (RW 0x68C213 -> 0xB4E2A0), so the wider look is taken at the next shroud update even for an object that does not move
+	float shroudClearing = 0.0f;
+	if (list->value(ATTRIBUTE_SHROUD_CLEARING, nullptr, shroudClearing) && shroudClearing > 0.0f)
 	{
-		++stats().autoHealRefreshes;
+		if (ShroudManager *sm = obj.logic().shroud())
+		{
+			sm->markDirty(obj, true);
+		}
 	}
 	return true;
 }

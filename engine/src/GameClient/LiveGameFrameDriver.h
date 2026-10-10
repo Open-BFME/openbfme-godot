@@ -30,6 +30,10 @@ struct FrameCompletion
 	std::vector<GameLogic::StateHashSection> sections;
 	std::vector<GameLogic::ObjectStateHash> objects;
 	std::uint32_t rng = 0;        ///< diagnostic: a fold of the logic RNG's seed array in that state
+	// lane MP-3 (diagnostics, Capture::census): the frame's wall time on the simulation owner (microseconds, -1 unknown) and GameClient/FrameCensus's counts
+	bool census = false;
+	std::int64_t simUs = -1;
+	int battalions = 0, troops = 0, censusObjects = 0;
 };
 
 // lane MP-1: what decides which commands a logic frame runs with, when a driver is installed (LiveGame::setFrameDriver): the lockstep network
@@ -48,6 +52,7 @@ public:
 	{
 		bool hashEveryFrame = false; ///< the state hash after every frame (replay recording / playback)
 		int breakdownInterval = 0;   ///< > 0: the hash breakdown on every frame whose number after the batch is a multiple of it (the CRC frames)
+		bool census = false;         ///< lane MP-3: the frame's wall time and FrameCensus counts in every completion (measurements)
 	};
 	virtual Capture capture() const = 0;
 

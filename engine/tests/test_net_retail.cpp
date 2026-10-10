@@ -627,7 +627,8 @@ TEST_CASE("net retail perf2: two peer processes with different logic thread coun
 TEST_CASE("net retail: a divergence injected on one peer is caught at the next CRC frame; both peers report the frame, both hashes and the diverging subsystem")
 {
 	OPENBFME_REQUIRE_START(s);
-	const std::string common = "--map \"maps/map mp evendim/map mp evendim.map\" --seed 5 --script --crc-interval 100 --run-ahead 2";
+	// lane MP-3: --fixed-run-ahead: the CRCs of frame 200 are compared on frame 200 + the run-ahead; the adaptive run-ahead raises it on a loaded machine
+	const std::string common = "--map \"maps/map mp evendim/map mp evendim.map\" --seed 5 --script --crc-interval 100 --run-ahead 2 --fixed-run-ahead";
 	const std::string slots = "--slot human,FactionMen,0,0 --slot human,FactionMordor,1,1";
 	PeerRun r = runPair("desync", 400, common, slots, "--inject-divergence 150");
 	// lane MP-2: both peers wrote RW 0x6290C7's desync dumps into the current directory (the peer's --desync-dir default)

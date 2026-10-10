@@ -5,6 +5,7 @@
 #pragma GCC diagnostic ignored "-Winvalid-offsetof"
 #endif
 
+#include "GameLogic/Combat/ObjectWeapons.h"
 #include "GameLogic/Module/ProjectileModules.h"
 #include "GameLogic/Module/StructureModules.h"
 
@@ -737,8 +738,8 @@ bool BezierProjectileBehavior::projectileHandleCollision(Object *other)
 	{
 		if (const WeaponTemplate *w = TheWeaponStore->findWeaponTemplate(weaponName))
 		{
-			Coord3D pos = *obj->getPosition();
-			DeliverNuggets(logic, obj->getID(), *w, WeaponBonus(), nullptr, &pos, true, &counters.unportedNuggets);
+			// RW 0x85FE49 .. 0x85FE63: TheWeaponStore->createAndFireTempWeapon(weapon, projectile, projectile position) (RW 0x6CF530; lane DECOMP-1)
+			ObjectWeapons::createAndFireTempWeapon(w, obj, *obj->getPosition());
 		}
 	}
 	if (m_altCurve < d->m_bounceCount)
@@ -840,8 +841,8 @@ void BezierProjectileBehavior::detonate()
 		const ObjectID source = producer ? producer->getID() : obj->getID();
 		if (victim && m_warhead->m_hitStoredTarget)
 		{
-			// RW 0x6CF590 createAndFireTempWeapon(warhead, source, victim)
-			DeliverNuggets(logic, source, *m_warhead, WeaponBonus(), victim, nullptr, true, &counters.unportedNuggets);
+			// RW 0x85F1E0 .. 0x85F1F7: RW 0x6CF590 createAndFireTempWeapon(warhead, source, victim): the full temporary weapon at the victim (lane DECOMP-1)
+			ObjectWeapons::createAndFireTempWeaponAt(m_warhead, producer ? producer : obj, *victim);
 		}
 		else
 		{

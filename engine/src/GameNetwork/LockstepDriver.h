@@ -16,6 +16,7 @@
 #include "GameNetwork/Network.h"
 
 #include <cstdint>
+#include <deque>
 #include <string>
 #include <vector>
 
@@ -62,6 +63,29 @@ public:
 	void setInputSource(std::function<void(UnsignedInt protocolFrame, CommandList &out)> f) { m_inputSource = std::move(f); }
 	// no batch for this frame or a later one is handed out (a peer that plays a fixed number of frames); default none
 	void setStopFrame(UnsignedInt frame) { m_stopFrame = frame; }
+	// lane MP-3 (smoothness, protocol owner, wall clock only: never simulation state): input-to-action latency, the time from a local command's issue (its
+	// pump / input source, before the network stamps its execution frame) to the acquire of the batch that runs it, matched in issue order with the local
+	// player's commands of each relayed batch (MSG_LOGIC_CRC excluded); and network stalls, every wait of acquire() for a frame (missing commands or the
+	// disconnect gate) from its first refusal to the batch handed out
+	struct SmoothStats
+	{
+		std::vector<std::uint32_t> inputLatencyMs; ///< one sample per local command
+		std::vector<std::uint32_t> stallMs;        ///< one sample per wait episode (a refused acquire until the batch is handed out)
+		unsigned long long unmatchedCommands = 0;  ///< relayed local commands without an issue record (should stay 0)
+	};
+	const SmoothStats &smoothStats() const { return m_smooth; }
+	// lane MP-3 (the owner's measurements): every completion's census (Capture::census: the frame's wall time on the simulation owner, living battalions,
+	// troops, objects), in frame order. Set it before the driver is installed (LiveGame reads capture() then)
+	struct CensusRow
+	{
+		UnsignedInt frame = 0;
+		std::int64_t simUs = -1;
+		int battalions = 0, troops = 0, objects = 0;
+	};
+	void setCensus(bool on) { m_census = on; }
+	const std::vector<CensusRow> &censusLog() const { return m_censusLog; }
+	// "count N p50 X p95 Y max Z" of samples (ms); "count 0" when empty
+	static std::string percentiles(std::vector<std::uint32_t> samples);
 	// protocol violations seen by the driver (a batch asked out of order, a completion out of order): never silent
 	const std::vector<std::string> &errors() const { return m_errors; }
 
@@ -88,4 +112,13 @@ private:
 	bool m_inputStarted = false;
 	UnsignedInt m_inputFrame = 0; ///< the last protocol frame the input source was called for
 	void sourceInput(UnsignedInt protocolFrame);
+	// lane MP-3
+	SmoothStats m_smooth;
+	std::deque<std::pair<std::uint64_t, size_t>> m_issued; ///< (issue time, local commands) per network update that sent any, in order
+	int m_localPlayer = -1;
+	bool m_waitAfterLoad = false;
+	bool m_census = false;
+	std::vector<CensusRow> m_censusLog;
+	void noteIssued();
+	void noteRelayed(const CommandList &commands);
 };

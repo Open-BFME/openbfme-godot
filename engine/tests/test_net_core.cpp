@@ -429,7 +429,7 @@ TEST_CASE("net core: the UDP transport delivers every command once and in order 
 	REQUIRE_MESSAGE(sa.bind(0x7F000001u, 0, &error), error);
 	REQUIRE_MESSAGE(sb.bind(0x7F000001u, 0, &error), error);
 	Transport::Options o;
-	o.dropPerMille = 300;
+	o.impairment.all.lossPerMille = 300;
 	o.resendMs = 5;
 	Transport ta(sa, 0, o), tb(sb, 1, o);
 	ta.setPeer(1, sb.localAddress());
@@ -655,8 +655,9 @@ TEST_CASE("net core r1 (fix 2): a 104,035-byte command and a small one after it 
 	REQUIRE(sb.bind(0x7F000001u, 0, &error));
 	REQUIRE(spy.bind(0x7F000001u, 0, &error)); // forwards both ways and measures every datagram
 	Transport::Options o;
-	o.dropPerMille = 200;
-	o.jitterMs = 15; // reorders
+	o.impairment.all.lossPerMille = 200;
+	o.impairment.all.latencyMs = 8;
+	o.impairment.all.jitterMs = 7; // reorders
 	o.resendMs = 10;
 	o.maxCommandBytes = 1u << 20;
 	Transport ta(sa, 0, o), tb(sb, 1, o);

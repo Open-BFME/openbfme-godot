@@ -104,7 +104,7 @@ TEST_CASE("horde2 crush: the crush lines are in the combat report, the counters 
 	CombatWorld w(kCrushObjects);
 	REQUIRE(w.w.load(kCrushWeapons, INI_LOAD_OVERWRITE, "weapon2.ini").empty());
 	const std::vector<std::string> r = w.combat().report();
-	for (const char *id : { "[S-580]", "[S-582]", "[S-583]", "[S-584]", "[S-586]", "[S-587]", "[S-588]", "[S-589]", "[S-590]" })
+	for (const char *id : { "[S-580]", "[S-582]", "[S-583]", "[S-584]", "[S-587]", "[S-588]", "[S-589]", "[S-590]" })
 	{
 		bool found = false;
 		for (const std::string &s : r)

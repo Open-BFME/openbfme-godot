@@ -8,6 +8,9 @@
 #include "doctest.h"
 #include "AptRetail.h"
 
+#include "Common/INI.h"
+#include "Common/INI/INIBlockStubs.h"
+#include "GameClient/GameLODManager.h"
 #include "GameClient/GameTextTableSource.h"
 #include "GameClient/GUI/AptGadgetLayer.h"
 #include "GameClient/GUI/AptScreens/AptScreenFactories.h"
@@ -23,6 +26,7 @@
 #include "GameClient/OptionPreferences.h"
 #include "Libraries/Source/Apt/Apt.h"
 #include "Libraries/Source/Apt/AptButtonInst.h"
+#include "Libraries/Source/Apt/AptCharacterInst.h"
 #include "Libraries/Source/Apt/AptRenderList.h"
 
 #include <cstdio>
@@ -42,6 +46,7 @@ struct ShellFx
 	RecordingShellServices services;
 	ShellEnvironment environment;
 	OptionPreferences prefs;
+	GameLODManager gameLOD; // lane PLAY-2: GameLOD.ini's presets (GodotAptPlayer's boot reads them the same way)
 	GameTextTableSource text;
 	AptScreenFactoryTable factories;
 	GadgetSkinData skins;
@@ -65,6 +70,19 @@ struct ShellFx
 		environment.options = &prefs;
 		environment.optionsFile = file;
 		environment.gameText = &text;
+		{
+			INIEnvironment env;
+			env.fileSystem = &mount.fs;
+			INIBlockRecorder recorder;
+			RegisterRecordingBlockStubs(env.blocks, recorder, { "StaticGameLOD" }, StubExtent::Lenient);
+			gameLOD.registerBlocks(env.blocks);
+			INI ini(env);
+			for (const std::string &f : GameLODManager::loadOrder())
+			{
+				ini.load(f, INI_LOAD_OVERWRITE);
+			}
+			environment.gameLOD = &gameLOD;
+		}
 		// the inputs the device gives (GodotAptPlayer boot_shell): AudioSettings-like defaults, two addresses, one mode
 		const float defaults[5] = { 0.70f, 0.75f, 0.55f, 0.60f, 0.80f };
 		for (int i = 0; i < 5; ++i)
@@ -718,16 +736,30 @@ TEST_CASE("wincrash1 options retail: mouse on every control (slider drags, box c
 			check();
 		}
 	}
-	// the advanced page's Done (CloseOptions -> GameCode('Save')) or the basic page's Accept
-	const bool advanced = firstButtonUnder(findClip(fx.wm->apt().level(fx.shell->top()->level()), "Done")) != nullptr;
-	step = advanced ? "Done" : "Accept";
+	// the advanced page's Done (CloseAdvancedSettings + GameCode('Save'): back on the basic page, lane PLAY-2), then the basic page's Accept
+	if (AptButtonInst *done = firstButtonUnder(findClip(fx.wm->apt().level(fx.shell->top()->level()), "Done")))
+	{
+		step = "Done";
+		float x0, y0, x1, y1, x, y;
+		REQUIRE(done->contentBounds(x0, y0, x1, y1));
+		done->globalMatrix().apply((x0 + x1) / 2, (y0 + y1) / 2, x, y);
+		fx.wm->postMouseMove(x, y);
+		tick(2);
+		fx.wm->postMouseButton(true);
+		tick(2);
+		fx.wm->postMouseButton(false);
+		tick(90);
+		REQUIRE(fx.shell->top()->filename() == "Options.apt");
+	}
+	step = "Accept";
 	clickOptionsButton(fx, step);
 }
 
 // the owner's crash path (e204772c, 2026-10-09): Options from the main menu, Advanced (Main plays its advanced page: the basic page's placeholder clips
-// are removed), Done (CloseOptions, then AptOptions::Save reads the basic page's sliders). The gadget windows stay with the screen as RotWK's window
-// table keeps them (RW 0x8142D2 / 0x814BA9): Save writes the values the player set on the basic page.
-TEST_CASE("wincrash1 options retail: Advanced then Done saves the basic page's values (the owner's crash path)")
+// are removed), Done. The gadget windows stay with the screen as RotWK's window table keeps them (RW 0x8142D2 / 0x814BA9). Lane PLAY-2: with
+// EnterAdvancedSettings ported (state 2) Done saves the advanced page only and returns to the basic page (RW 0x91FCB2 / 0x9205AA); Accept there
+// writes the values the player set.
+TEST_CASE("wincrash1 options retail: Advanced, Done (back on the basic page), then Accept saves the basic page's values (the owner's crash path)")
 {
 	OPENBFME_REQUIRE_RETAIL(mount);
 	ShellFx fx(mount, "Brightness = 60\nScrollFactor = 25\n");
@@ -751,7 +783,29 @@ TEST_CASE("wincrash1 options retail: Advanced then Done saves the basic page's v
 	// the advanced page is up: the basic page's clips are gone, their gadget windows are not
 	CHECK(findClip(fx.wm->apt().level(fx.shell->top()->level()), "Done"));
 	CHECK(fx.layer->gadgets().winIsAlive(options->gadget("Brightness")));
-	clickOptionsButton(fx, "Done");
+	// lane PLAY-2: RotWK's Done saves the advanced page (state 2: the basic page's entries are not written, RW 0x91FCB2) and goes back to the basic
+	// page (RW 0x9205AA); the basic values are written by Accept there. Every gadget window lives on through both pages
+	AptButtonInst *done = firstButtonUnder(findClip(fx.wm->apt().level(fx.shell->top()->level()), "Done"));
+	REQUIRE(done);
+	REQUIRE(done->contentBounds(x0, y0, x1, y1));
+	done->globalMatrix().apply((x0 + x1) / 2, (y0 + y1) / 2, x, y);
+	fx.wm->postMouseMove(x, y);
+	fx.tick(2);
+	fx.wm->postMouseButton(true);
+	fx.tick(2);
+	fx.wm->postMouseButton(false);
+	fx.tick(90);
+	REQUIRE(fx.shell->top()->filename() == "Options.apt");
+	CHECK(options->pageState() == 1);
+	CHECK(fx.fileText().find("Brightness = 41\n") == std::string::npos);
+	// the basic page's placeholders are placed again: new gadget windows (a new placement under the same name replaces the record, RW 0x8142D2) that
+	// InitGadgets fills from Options.ini, as RotWK's does
+	REQUIRE(options->gadget("Brightness"));
+	CHECK(fx.layer->gadgets().winIsAlive(options->gadget("Brightness")));
+	checkThumb(options->gadget("Brightness"), 60);
+	GadgetSliderSetPosition(options->gadget("Brightness"), 41);
+	GadgetSliderSetPosition(options->gadget("MusicVolume"), 12);
+	clickOptionsButton(fx, "Accept");
 	const std::string text = fx.fileText();
 	CHECK(text.find("Brightness = 41\n") != std::string::npos);
 	CHECK(text.find("MusicVolume = 12.000000\n") != std::string::npos);
@@ -818,4 +872,150 @@ TEST_CASE("wincrash1 options retail: a detached slider gets no mouse input, a dr
 	CHECK_MESSAGE(messages == 0, "messages:" << received);
 	slider->winSetInputFunc(sliderInput);
 	thumb->winSetInputFunc(thumbInput);
+}
+
+// lane PLAY-2: the advanced page (AptSimpleScreens.h, GameLODManager.h). The movie's rows read the templates and the option labels the screen gives it;
+// Done writes the custom settings and StaticGameLOD = Custom.
+
+TEST_CASE("play2 options retail: GameLOD.ini's presets give the nine settings of each level (RW 0x601BBD) and the advanced labels are bound")
+{
+	OPENBFME_REQUIRE_RETAIL(mount);
+	ShellFx fx(mount, "");
+	for (int level = 0; level < 5; ++level)
+	{
+		CHECK(fx.gameLOD.hasLevel(level));
+	}
+	CHECK_FALSE(fx.gameLOD.hasLevel(GameLODManager::kCustomLevel)); // retail defines no Custom block
+	// GameLOD.ini: VeryLow = ModelLOD Low, AnimationDetail VeryLow, EffectsLOD VeryLow, ShadowLOD Off, no normal map / distance textures, WaterLOD Low,
+	// TextureReductionFactor 2, ShaderLOD Low, DecalLOD Off
+	CHECK(AdvancedOptionPrefs::format(fx.gameLOD.presetSettings(0)) == "0,0,0,0,0,0,0,0,0");
+	// High: High, High, High, High, normal map (2), High, factor 0 (2), High, High
+	CHECK(AdvancedOptionPrefs::format(fx.gameLOD.presetSettings(3)) == "2,3,3,3,2,2,2,2,2");
+	AptOptionsScreen *options = fx.openOptionsFromMainMenu();
+	REQUIRE(options);
+	for (int i = 0; i < 9; ++i)
+	{
+		CHECK(fx.wm->hasProvider("AdvancedOption" + std::to_string(i) + "Num"));
+	}
+	CHECK_FALSE(fx.wm->hasProvider("AdvancedOption9Num")); // the movie asks for ten, RotWK registers nine (RW 0x9213EE)
+	const std::string *model = fx.wm->aptText("APT:AdvancedOption0");
+	REQUIRE(model);
+	CHECK(*model == "Model Detail");
+	const std::string *ultra = fx.wm->aptText("APT:AdvancedOption0_3");
+	REQUIRE(ultra);
+	CHECK(*ultra == "Ultra High");
+	const std::string *custom = fx.wm->aptText("APT:MasterOption0_Custom");
+	REQUIRE(custom);
+	CHECK(custom->find("MISSING") == std::string::npos);
+	bool stop = false;
+	for (const auto &n : fx.wm->notes())
+	{
+		stop = stop || (n.kind == "options-advanced" && n.detail.rfind("[S-2481]", 0) == 0);
+	}
+	CHECK(stop); // the stop the advanced page reports
+}
+
+namespace
+{
+void clickButton(ShellFx &fx, AptButtonInst *b)
+{
+	REQUIRE(b);
+	float x0, y0, x1, y1, x, y;
+	REQUIRE(b->contentBounds(x0, y0, x1, y1));
+	b->globalMatrix().apply((x0 + x1) / 2, (y0 + y1) / 2, x, y);
+	fx.wm->postMouseMove(x, y);
+	fx.tick(2);
+	fx.wm->postMouseButton(true);
+	fx.tick(2);
+	fx.wm->postMouseButton(false);
+}
+
+// the advanced rows as drawn: OptionNameText / CurrentOptionText of each row (`<row>.DescreetSliderContent3`), their labels resolved as the device does
+std::map<std::string, std::pair<std::string, std::string>> advancedRows(ShellFx &fx)
+{
+	std::map<std::string, std::pair<std::string, std::string>> rows; // label -> (name text, value text)
+	AptRenderList rl;
+	fx.wm->apt().buildRenderList(rl);
+	for (const AptRenderCommand &c : rl.commands)
+	{
+		if (c.kind != AptRenderCommand::Kind::Text || c.path.find("DescreetSliderContent3") == std::string::npos || c.text.size() < 2 || c.text[0] != '$')
+		{
+			continue;
+		}
+		std::string shown;
+		REQUIRE_MESSAGE(fx.wm->aptTextShown("APT:" + c.text.substr(1), shown), c.text);
+		if (c.variable == "OptionNameText")
+		{
+			rows[c.text.substr(1)].first = shown;
+		}
+		else if (c.variable == "CurrentOptionText")
+		{
+			rows[c.text.substr(1, c.text.find('_') - 1)].second = c.text.substr(c.text.find('_') + 1) + " " + shown;
+		}
+	}
+	return rows;
+}
+} // namespace
+
+TEST_CASE("play2 options retail: Advanced shows the nine option rows with their names and values; a choice makes the level Custom and Done saves it")
+{
+	OPENBFME_REQUIRE_RETAIL(mount);
+	ShellFx fx(mount, "StaticGameLOD = High\n");
+	AptOptionsScreen *options = fx.openOptionsFromMainMenu();
+	REQUIRE(options);
+	CHECK(options->masterOption() == 3);
+	fx.tick(3);
+	clickButton(fx, firstButtonUnder(findClip(fx.wm->apt().level(fx.shell->top()->level()), "Advanced")));
+	fx.tick(90);
+	CHECK(options->pageState() == 2);
+	CHECK(options->customTemplate() == "2,3,3,3,2,2,2,2,2"); // EnterAdvancedSettings: High's settings
+	// the placeholders "Option Name" / "Current Option" are gone: every row names its option and shows High's value
+	const auto rows = advancedRows(fx);
+	const std::map<std::string, std::pair<std::string, std::string>> want = {
+		{ "AdvancedOption0", { "Model Detail", "2 High" } }, { "AdvancedOption1", { "Animation Detail", "3 High" } },
+		{ "AdvancedOption2", { "VFX Detail", "3 High" } },   { "AdvancedOption3", { "Shadows", "3 High" } },
+		{ "AdvancedOption4", { "Terrain Detail", "2 High" } }, { "AdvancedOption5", { "Water Detail", "2 High" } },
+		{ "AdvancedOption6", { "Texture Quality", "2 High" } }, { "AdvancedOption7", { "Shader Detail", "2 High" } },
+		{ "AdvancedOption8", { "Decal Detail", "2 High" } },
+	};
+	CHECK(rows == want);
+	// Model Detail's first choice (Low): the movie's SetCustom writes the template and the level Custom through the externs
+	AptCharacterInst *level = fx.wm->apt().level(fx.shell->top()->level());
+	AptCharacterInst *modelRow = findClip(level, "Main.instance8"); // the ModelLOD row (MyOption AdvancedOption0)
+	REQUIRE(modelRow);
+	clickButton(fx, firstButtonUnder(findClip(modelRow, "DescreetSliderButton30")));
+	fx.tick(30);
+	CHECK(options->masterOption() == GameLODManager::kCustomLevel);
+	CHECK(options->customTemplate() == "0,3,3,3,2,2,2,2,2");
+	// Done: the movie's CloseAdvancedSettings and GameCode('Save') on the advanced page (state 2): RW 0x9204F3 writes the level and the custom
+	// settings and, without AdvancedOnly, the screen stays up on its basic page (state 1, RW 0x9205AA)
+	clickButton(fx, firstButtonUnder(findClip(level, "Done")));
+	fx.tick(60);
+	REQUIRE(fx.shell->top());
+	CHECK(fx.shell->top()->filename() == "Options.apt");
+	CHECK(options->pageState() == 1);
+	const std::string text = fx.fileText();
+	CHECK(text.find("StaticGameLOD = Custom\n") != std::string::npos);
+	CHECK(text.find("ModelLOD = Low\n") != std::string::npos);
+	CHECK(text.find("AnimationLOD = High\n") != std::string::npos);
+	CHECK(text.find("TerrainLOD = High\n") != std::string::npos);
+	CHECK(text.find("DecalLOD = High\n") != std::string::npos);
+}
+
+TEST_CASE("play2 options retail: a level chosen in the Detail list is saved as StaticGameLOD and clears the custom settings; Custom opens the advanced page")
+{
+	OPENBFME_REQUIRE_RETAIL(mount);
+	ShellFx fx(mount, "StaticGameLOD = Custom\nModelLOD = Low\n");
+	AptOptionsScreen *options = fx.openOptionsFromMainMenu();
+	REQUIRE(options);
+	CHECK(options->masterOption() == GameLODManager::kCustomLevel);
+	GameWindow *detail = options->gadget("Detail");
+	REQUIRE(detail);
+	// item 3 is GUI:Low (data 1): the level becomes Low
+	GadgetComboBoxSetSelectedPos(detail, 3); // the list's selection reaches the screen as GCM_SELECTED (GadgetComboBox.cpp)
+	CHECK(options->masterOption() == 1);
+	clickOptionsButton(fx, "Accept");
+	const std::string text = fx.fileText();
+	CHECK(text.find("StaticGameLOD = Low\n") != std::string::npos);
+	CHECK(text.find("ModelLOD") == std::string::npos);
 }

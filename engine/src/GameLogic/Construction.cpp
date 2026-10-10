@@ -343,8 +343,6 @@ std::vector<std::string> Construction::stopLines()
 		"unfinished structure is not sent back to it (RW 0x857DEA); the player notification that counts a self-built structure's command points is inferred (BUILD-1's completion); RotWK's "
 		"dozer queues its structure and places it on arrival with 1 hit point (RW 0x88D44F, lane BUILD-3: the port makes it at the order and sets the health at the arrival, S-304); "
 		"BUILD-1's dozer completion sets CONSTRUCTION_COMPLETE, which RW 0x88DEE0 does not",
-		"[S-651] GettingBuiltBehavior: the HealWeapon at 75 % (RW 0x857F82 -> createAndFireTempWeapon RW 0x6CF530) delivers the weapon's damage nuggets at the structure's position "
-		"(BUILD-2); the temporary Weapon's other steps (ammo, fire FX and sound, projectile nuggets) are not ported: noted at runtime when such a nugget is skipped (no retail template has one)",
 		"[S-652] Object::attemptHealingFromSoleBenefactor (RW 0x690584): the tail behind the template byte + 0x642 (RUBBLE cleared, a dead object revived) is not ported: the field is not identified",
 		"[S-653] GettingBuiltBehavior: calls not identified and not ported: RW 0x79F0E1(object, 1) / Object + 0x456 / BuildAssistant RW 0x797465 (a rebuild's start, a wall segment crossing 20 % "
 		"health), the body's slot 0x94 after a heal (RW 0x8C1D53), the production update's slot 0x60 and RW 0x68C3A3's slot 0x28 at a self build's end (RW 0x8569B1): noted at runtime where reached",

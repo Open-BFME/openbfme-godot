@@ -30,6 +30,8 @@ class ShellServices;
 #include <string>
 #include <vector>
 
+class OptionPreferences;
+
 class GameTextSource;
 
 class AptLevel0Screen : public AptScreen
@@ -167,9 +169,21 @@ private:
 //   (the selected address, "%d.%d.%d.%d"), FirewallPortOverride (the entry when 8088 .. 65534, else 0), then the screen closes (RW 0x91EA39);
 // - Reset (RW 0x91F4D1) puts the sliders to the defaults above (brightness the middle of its range), the boxes unchecked, HighAudioQuality as
 //   AudioLOD's default, the port entry empty; Cancel (RW 0x91EC52) re-applies the saved volumes and closes.
-// NOT PORTED (stop S-1913): the advanced page (EnterAdvancedSettings, the MasterOption / AdvancedOption templates and their save, RW 0x91F043 /
-// 0x91EE11), applying a resolution change and the brightness (TheDisplay), the LOD manager behind MasterOption0Current / ResetDefault and the health bars
-// box's enable (RW 0x91EB77), RefreshNat, the live tracking of the sliders (the volumes take effect when saved).
+// Lane PLAY-2: the advanced page (TARGET FACTS, RotWK game.dat, caveat S-001; GameClient/GameLODManager.h for the presets and the option table):
+// - the constructor (RW 0x921325 .. 0x921580) registers MasterOption0Template0 .. 4 and MasterOption0TemplateCustom (provider RW 0x91F3B3) and
+//   AdvancedOption0Num .. 8Num (provider RW 0x91EA4E: the option's choice count, "%d") and binds the labels the movie shows: APT:MasterOption0_<n> /
+//   APT:MasterOption0_Custom = the game text APT:MasterOption_<level name>, APT:AdvancedOption<i> = APT:AdvancedOption_<key>, APT:AdvancedOption<i>_<j> =
+//   APT:AdvancedOption_<key>_<choice> (ShadowLOD_UltraHigh reads ShaderLOD_UltraHigh's text, RW 0x921515); + 0x310 is the LOD manager's level (+ 0x1768);
+// - MasterOption0Template<n> (RW 0x91F3B3; BFME2 decomp AptOptionsCallbacks.cpp:ExternsLODTemplate, tier A) answers preset n's nine settings ("%d"
+//   joined by ",", RW 0x91EE9A), Custom the text kept at + 0x314; a write to Custom replaces + 0x314;
+// - EnterAdvancedSettings (RW 0x91F043, tier A): the state becomes 2; with a level chosen (+ 0x310 != -1) + 0x314 = that preset's settings;
+// - the Detail combo (RW 0x919167's twin in RotWK): Custom (item data 5) calls the movie's ShowAdvancedSettings, another level becomes + 0x310;
+// - Save (RW 0x9204F3 ..), with AllowAdvancedOptions and + 0x310 in 0 .. 5: Custom writes + 0x314's nine values into Options.ini (RW 0x91EE11), another
+//   level removes the nine keys (RW 0x6E6986); then StaticGameLOD = the level's name (RW 0x6E6798).
+// NOT PORTED (stop S-1913, S-2481): applying a resolution change and the brightness (TheDisplay), the LOD manager behind MasterOption0ResetDefault and the
+// health bars box's enable (RW 0x91EB77), applying a level or the custom settings to the renderer (RW 0x6020B4 / 0x6019D1: INFERENCE, the level is
+// taken as accepted), the warnings (RW 0x91F2AB: APT:WarnHighGraphicSettings / Detail / Resolution), the "(level)" labels of RW 0x91F175 / 0x920E0F,
+// RefreshNat, the live tracking of the sliders (the volumes take effect when saved).
 class AptOptionsScreen : public AptScreen
 {
 public:
@@ -191,6 +205,10 @@ public:
 	int initialVolume(int type) const;
 	int initialBrightness() const;
 	int initialScrollSpeed() const;
+	// lane PLAY-2 (tests): + 0x314, + 0x310, + 0x27C
+	const std::string &customTemplate() const { return m_customTemplate; }
+	int masterOption() const { return m_masterOption; }
+	int pageState() const { return m_state; }
 	// RW 0x6446A1's text: Version:Format2 with the build's 2 and 1
 	static std::u16string versionText(const GameTextSource *text);
 
@@ -204,6 +222,14 @@ private:
 	void cancel();
 	void initGadget(const std::string &name, GameWindow *w);
 	bool provide(int index, std::string &value, bool setting);
+	// lane PLAY-2: the advanced page
+	void bindAdvancedLabels();
+	bool provideTemplate(int preset, std::string &value, bool setting); // RW 0x91F3B3
+	void enterAdvancedSettings();                                       // RW 0x91F043
+	std::string presetTemplate(int preset);                            // RW 0x601BBD + RW 0x91EE9A
+	void selectDetail();                                                 // RW 0x91EB30: the Detail combo shows + 0x310
+	void saveAdvanced(OptionPreferences &prefs);                         // RW 0x920500 .. 0x92057A (a level in 0 .. 5)
+	void writeOptions();                                                 // RW 0x7B274C: Options.ini written
 	bool checked(const std::string &name) const; // -1 / not created: false
 	int sliderValue(const std::string &name) const; // -1 when the gadget does not exist (RW 0x91EA1D)
 	ShellEnvironment &m_env;
@@ -216,7 +242,9 @@ private:
 	bool m_allowAdvanced = false;   // + 0x281
 	bool m_networkEnabled = false;  // + 0x283
 	bool m_advancedOnly = false;    // + 0x284
-	int m_masterOption = 5;         // + 0x310 (the LOD manager's current static LOD is not ported: S-1913)
+	int m_masterOption = 5;         // + 0x310: Options.ini's StaticGameLOD, else Custom (the LOD manager's own level: S-2481)
+	std::string m_customTemplate;   // + 0x314 (lane PLAY-2)
+	bool m_detailRefreshing = false; // RW 0x91EB30's cleared + 0x2B0
 };
 
 // Palantir.apt (CodePrefix AptPalantir) is lane HUD-1's AptPalantir (AptPalantir.h); the factory below creates it.

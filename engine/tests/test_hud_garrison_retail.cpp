@@ -495,7 +495,8 @@ TEST_CASE("garrison retail: a rider out of the world is no target, takes no spla
 	nugget->m_damageType = 0;
 	splash.m_nuggets.push_back(nugget);
 	const float riderBefore = rider->getBodyModule()->getHealth(), outsideBefore = outside->getBodyModule()->getHealth();
-	DeliverNuggets(a.logic, INVALID_ID, splash, WeaponBonus{}, nullptr, tower->getPosition(), true, nullptr);
+	// fired by the tower: a DamageNugget applies only for a weapon whose owner is in the logic (slot 1 RW 0x90E855, lane DECOMP-1); a sourceless splash hurts nobody
+	DeliverNuggets(a.logic, tower->getID(), splash, WeaponBonus{}, nullptr, tower->getPosition(), true, nullptr);
 	CHECK(outside->getBodyModule()->getHealth() < outsideBefore);
 	CHECK(rider->getBodyModule()->getHealth() == riderBefore);
 	// it still shoots from the tower: a Mordor horde in range loses health while the rider stays inside

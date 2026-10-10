@@ -82,6 +82,7 @@ class CreateAHeroGame;
 class GlobalWeatherSystem;
 class VictoryConditions;
 class InvisibilityManager;
+class DOTManager;
 class SkirmishAIManager;
 class ShroudManager;
 class PartitionManager;
@@ -290,6 +291,9 @@ public:
 	// lane STEALTH-1: TheGameLogic + 0x178, the InvisibilityManager (update in phase 1 before the command list, RW 0x62E8DA)
 	InvisibilityManager &invisibility() { return *m_invisibility; }
 	const InvisibilityManager &invisibility() const { return *m_invisibility; }
+	// lane DECOMP-1: TheGameLogic + 0x174, the DOTManager (DOTNugget's damage over time; update in phase 1 after the weather, RW 0x62E8CF)
+	DOTManager &dot() { return *m_dot; }
+	const DOTManager &dot() const { return *m_dot; }
 	const CombatState &combat() const { return *m_combat; }
 	const GameLogicSettings &settings() const { return m_settings; }
 	void setClientHooks(ObjectClientHooks *hooks) { m_clientHooks = hooks; }
@@ -618,6 +622,7 @@ private:
 	std::unique_ptr<CreateAHeroGame> m_createAHeroes; // lane HERO-2
 	std::unique_ptr<GlobalWeatherSystem> m_weather; // lane SPELL-2
 	std::unique_ptr<InvisibilityManager> m_invisibility; // lane STEALTH-1
+	std::unique_ptr<DOTManager> m_dot;                   // lane DECOMP-1
 	std::unique_ptr<ScriptEngine> m_scriptEngine;        // lane SCRIPT-1
 	CastleTemplateStore m_castleTemplates;
 	std::set<std::string> m_notedStops;

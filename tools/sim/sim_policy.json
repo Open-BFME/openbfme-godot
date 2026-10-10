@@ -449,6 +449,14 @@
    "reason": "lane SMOOTH-1 (S-810): LiveGame's render-side presentation (presented frame and alpha, client events applied in order, poses from one snapshot) and the logic worker's thread management; the frames themselves run in LiveGame::runFrameOwned (LiveGame.cpp, audited)"
   },
   {
+   "glob": "src/GameClient/FrameCensus.cpp",
+   "reason": "lane MP-3: the measurements' per-frame census (living battalions, troops, objects) counted on the simulation owner between frames when a frame driver asks for it; reads the logic, writes nothing, never read back by the game"
+  },
+  {
+   "glob": "src/GameNetwork/NetImpairment.cpp",
+   "reason": "lane MP-3 (NET-4): the network test harness's fault injector inside the transport (latency, jitter, loss, duplication, reordering, blackouts by wall clock and a seeded per-link RNG): it decides WHEN and WHETHER a datagram arrives, never what a logic frame contains"
+  },
+  {
    "glob": "src/GameNetwork/Transport.cpp",
    "reason": "lane MP-1: the UDP socket and the reliable per-peer delivery (resends, acks, the test harness's loss and delay): it decides WHEN a peer's bytes arrive, never what a logic frame contains (GameNetwork/Network.h decides that from the received data alone)"
   },
@@ -531,6 +539,10 @@
   {
    "glob": "src/GodotDevice/GodotRelease.cpp",
    "reason": "lane RELEASE-1: the Godot view of the install finder, the version and the session log file; client only, never simulation state"
+  },
+  {
+   "glob": "src/GameClient/GameLODManager.cpp",
+   "reason": "PLAY-2: the StaticGameLOD presets and the Options screen's advanced settings (render detail levels written to Options.ini); client-side user interface, never read by the logic"
   }
  ]
 }

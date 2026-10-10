@@ -19,6 +19,7 @@
 #pragma once
 
 #include "GameLogic/AI/AIStateMachine.h"
+#include "GameLogic/Combat/ObjectWeapons.h"
 #include "GameLogic/ObjectTypes.h"
 
 #include "Common/INIDataTypes.h"
@@ -52,6 +53,24 @@ public:
 	static const char *planningStopLine();
 	// ZH AIGroup::groupIdle
 	void groupIdle(CommandSourceType source);
+
+	// ---- lane PLAY-2: the force-attack commands (RW 0x77AED3 / 0x77AF93 in GameLogicDispatch RW 0x779A3D) ----
+	// RW 0x76FCBF (BFME2 decomp AIGroupIsIdle.cpp:AIGroup::isIdle, tier B same-shape): every member's AI is idle or the member is effectively dead
+	bool isIdle() const;
+	// RW 0x76FAB7 (BFME2 decomp AIGroupAttackTeam.cpp:AIGroup::setWeaponLockForGroup, tier A): Object::setWeaponLock (RW 0x69121A) on every member; a
+	// member whose weapon before the lock had ShareTimers (template + 0x16A) and was not ready to fire (RW 0x6CD142 != 0) passes that weapon's next fire frame
+	// (+ 0x18) to its new current weapon and marks it OUT_OF_AMMO (RW 0x6CA232(1)). True when any member locked
+	bool setWeaponLockForGroup(int slot, WeaponLockType type);
+	// RW 0x76FB64 (decomp AIGroup::releaseWeaponLockForGroup, tier A): Object::releaseWeaponLock (RW 0x68DF11) on every member
+	void releaseWeaponLockForGroup(WeaponLockType type);
+	// RW 0x77229A (decomp AIGroupAttackTeam.cpp:AIGroup::groupAttackPosition, tier B same-shape; ZH AIGroup.cpp:2223): every member attacks the position
+	// (aiAttackPosition RW 0x6961F1)
+	void groupAttackPosition(const Coord3D &pos, int maxShotsToFire, CommandSourceType source);
+	// RW 0x76FD04 (RotWK only): every member's current locomotor (AI + 0x1F0) loses its temporary speed cap (+ 0x2C = -1.0, RW 0xBD19DC). The attack
+	// commands end with it (RW 0x77B00A -> 0x77A342)
+	void clearTemporarySpeedCaps();
+	// the stop line of the force-attack commands (S-2480)
+	static const char *forceAttackStopLine();
 	// the stop line S-223 (raised by every group move)
 	static const char *stopLine();
 

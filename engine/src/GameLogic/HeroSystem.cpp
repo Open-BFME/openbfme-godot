@@ -184,8 +184,6 @@ std::vector<std::string> HeroSystem::stopLines()
 		"retail order of equal distances), the special power trigger and LevelGrant scans still sort the object list by distance (equal distances keep the "
 		"list's order: as an applied modifier can grant an upgrade at once (a CostModifierUpgrade appends to the player's ordered list), that order can change "
 		"shared player state)",
-		"[S-857] SpecialPowerModule trigger: the AttributeModifierWeatherBased branch (RW 0x71A13D / 0x71A04F) and ChangeWeather (RW 0x71A024) run through lane "
-		"SPELL-2's TheGlobalWeatherSystem; what stays open there is S-922's",
 		"[S-858] AutoHealBehavior: not ported: NonStackable (the body's last heal frame, body vslot 0x48: the heal stacks), AffectsWholePlayer (no retail use), "
 		"RespawnNearbyHordeMembers, Object + 0x458 bit 3 "
 		"in the eligibility, the contain's FX flag, a horde healer's damage frame reader (RW 0x68C866 -> vslot 0x26C: its body's is read); the combat and recent "

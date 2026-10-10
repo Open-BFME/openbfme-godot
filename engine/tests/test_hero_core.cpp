@@ -494,7 +494,11 @@ TEST_CASE("hero determinism: the same recruit / death / revive script gives the 
 	CHECK(std::adjacent_find(a.begin(), a.end(), std::not_equal_to<std::uint32_t>()) != a.end());
 }
 
-TEST_CASE("hero stops: S-850 .. S-863 are reported and have a row in docs/STOPS.md")
+// S-857 is closed (lane DECOMP-1): the weather-based trigger branch RW 0x71A13D / 0x71A04F / 0x71A024 / 0x71A09E / 0x719C69 is tier A to the BFME2 decomp's
+// byte-matched GlobalWeatherSystem bodies (Rva00318333.cpp) and the port follows them; what stays open is S-922's. S-862 is closed too: the emotion request
+// RW 0x68F37F is tier A to the decomp's Object::rva0028EC68 (the outermost container's tracker), as EmotionTrackerUpdate::requestEmotion does; what the emotion
+// does is S-1021 / S-1022 / S-1027's
+TEST_CASE("hero stops: S-850 .. S-863 (but S-857 and S-862, closed) are reported and have a row in docs/STOPS.md")
 {
 	const std::vector<std::string> lines = HeroSystem::stopLines();
 	std::ifstream in(std::string(OPENBFME_DOCS_DIR) + "/STOPS.md");
@@ -502,11 +506,17 @@ TEST_CASE("hero stops: S-850 .. S-863 are reported and have a row in docs/STOPS.
 	std::stringstream ss;
 	ss << in.rdbuf();
 	const std::string docs = ss.str();
-	REQUIRE(lines.size() == 14);
+	REQUIRE(lines.size() == 12);
+	size_t k = 0;
 	for (int i = 0; i < 14; ++i)
 	{
 		const std::string id = "S-8" + std::to_string(50 + i);
-		CHECK(lines[(size_t)i].rfind("[" + id + "]", 0) == 0);
+		if (id == "S-857" || id == "S-862")
+		{
+			CHECK(docs.find("| " + id + " |") == std::string::npos);
+			continue;
+		}
+		CHECK(lines[k++].rfind("[" + id + "]", 0) == 0);
 		CHECK_MESSAGE(docs.find("| " + id + " |") != std::string::npos, id << " has no row in docs/STOPS.md");
 	}
 }

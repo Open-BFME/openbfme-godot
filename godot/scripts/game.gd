@@ -153,6 +153,10 @@ var _show_fps := false
 var _perf_times: Array = []
 var _perf_cpu0 := -1.0       # lane PERF-1: the main thread's CPU time at the start of the GAME PERF window
 var _perf_stat := ""          # lane PERF-3: --perf-stat=<prefix>
+var _perf_log_path := ""      # lane MP-3: --perf-log=<file>: every rendered frame of the game, "<logic frame> <frame time us>" (tools/net/mp3_perf_table.py)
+var _perf_log: FileAccess = null
+var _perf_log_prev_us := 0
+var _net_census := ""         # lane MP-3: --net-census=<file>: the network game's per-logic-frame census CSV, written when the game ends
 var _perf_stat_pid := -1      # the perf stat of the current window
 var _perf_stat_index := 0
 var _perf_stat_done := {}     # the finished window's { file, frames }, read at the next window's end
@@ -335,6 +339,10 @@ func _ready() -> void:
 			_auto = true
 		elif arg.begins_with("--perf-stat="):
 			_perf_stat = arg.substr(12)
+		elif arg.begins_with("--perf-log="):
+			_perf_log_path = arg.substr(11)
+		elif arg.begins_with("--net-census="):
+			_net_census = arg.substr(13)
 		elif arg == "--perf":
 			_perf = true
 		elif arg == "--fps":
@@ -675,6 +683,8 @@ func _process(delta: float) -> void:
 			_replay_tick()
 		if _perf or _show_fps:
 			_perf_frame(delta)
+		if not _perf_log_path.is_empty():
+			_perf_log_frame()
 	elif _state == State.SCORE:
 		_score_tick()
 
@@ -2708,6 +2718,32 @@ func _wait_seconds(sec: float) -> void:
 
 # ---- lane SMOOTH-1: the render frame rate of the live game ------------------------------------------------------------------------------------------------
 
+## lane MP-3: one line per rendered frame of the game (the logic frame shown, the frame's wall time in microseconds): the whole game's frame times for the
+## average fps and the 1% / 0.1% lows (tools/net/mp3_perf_table.py)
+func _perf_log_frame() -> void:
+	var now := Time.get_ticks_usec()
+	if _perf_log == null:
+		_perf_log = FileAccess.open(_perf_log_path, FileAccess.WRITE)
+		if _perf_log == null:
+			printerr("GAME PERF LOG: cannot write ", _perf_log_path)
+			_perf_log_path = ""
+			return
+		_perf_log_prev_us = now
+		return
+	_perf_log.store_line("%d %d" % [_world.get_frame(), now - _perf_log_prev_us])
+	_perf_log_prev_us = now
+
+
+func _write_measurements() -> void:
+	if _perf_log != null:
+		_perf_log.close()
+		_perf_log = null
+		_perf_log_path = ""
+	if not _net_census.is_empty():
+		print("GAME NET census: ", _world.net_write_census(_net_census))
+		_net_census = ""
+
+
 func _perf_frame(delta: float) -> void:
 	var now := Time.get_ticks_usec()
 	if _perf_prev_us == 0:
@@ -2829,7 +2865,7 @@ func _net_poll_lobby() -> void:
 
 
 func _net_begin() -> void:
-	var opts := {"script": _net_script, "desync_dir": OS.get_user_data_dir()}
+	var opts := {"script": _net_script, "desync_dir": OS.get_user_data_dir(), "census": not _net_census.is_empty()}
 	if not _net_record.is_empty():
 		opts["record"] = _net_record
 	elif _record:
@@ -2889,6 +2925,7 @@ func _net_tick() -> void:
 		return
 	if _net_frames > 0 and st.frame >= _net_frames:
 		print("GAME NET status: ", JSON.stringify(st))
+		_write_measurements()
 		if _net_end:
 			if not _net_end_started and _games_started == 1:
 				_net_end_started = true
