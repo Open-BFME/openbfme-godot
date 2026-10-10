@@ -134,6 +134,7 @@ TEST_CASE("camp1h difficulty: the game difficulty and the bonus flag are hashed;
 
 // ---- TheVideoPlayer (GameClient/VideoPlayer.h) -----------------------------------------------------------------------------------------------------
 
+#include "Common/AsciiString.h"
 #include "Common/Audio/AudioIni.h"
 #include "Common/INI.h"
 #include "Common/INIException.h"
@@ -142,6 +143,9 @@ TEST_CASE("camp1h difficulty: the game difficulty and the bonus flag are hashed;
 #include "GameLogic/Object/RetailObjectWorld.h"
 
 #include <cstdlib>
+#include <filesystem>
+
+namespace stdfs = std::filesystem;
 
 TEST_CASE("camp1h VideoPlayer: the Video block (RW 0xCFD2E8), a redefinition replaces, the lookup ignores case; the EA VP6 header")
 {
@@ -237,6 +241,108 @@ TEST_CASE("camp1h VideoPlayer: retail - every Angmar campaign movie is found in 
 	CHECK(m4.frames == 1600);
 	CHECK(m4.durationMs == doctest::Approx(53333.333));
 	CHECK(m4.audioEvents == std::vector<std::string>{ "BAM4O" });
+}
+
+namespace
+{
+bool sameNoCase(const std::string &a, const std::string &b)
+{
+	return AsciiStringUtil::compareNoCase(a, b) == 0;
+}
+
+// whether `parts` below `root` exist, each component matched without regard to case (the test's own walk, independent of VideoPlayer's)
+bool installHasNoCase(const stdfs::path &root, const std::vector<std::string> &parts)
+{
+	stdfs::path at = root;
+	for (const std::string &part : parts)
+	{
+		std::error_code ec;
+		bool found = false;
+		for (stdfs::directory_iterator it(at, ec), end; !ec && it != end; it.increment(ec))
+		{
+			if (sameNoCase(it->path().filename().string(), part))
+			{
+				at = it->path();
+				found = true;
+				break;
+			}
+		}
+		if (!found)
+		{
+			return false;
+		}
+	}
+	return true;
+}
+} // namespace
+
+TEST_CASE("play3 VideoPlayer: retail - the start-up movies resolve without regard to case, the localized directory first (RW 0x490D08 / 0x490EE6)")
+{
+	if (!haveWorld("play3 start-up movies"))
+	{
+		return;
+	}
+	const char *root = std::getenv("ROTWK_INSTALL");
+	REQUIRE(root != nullptr);
+	SharedWorld &s = shared();
+	VideoPlayer vp;
+	INIEnvironment env;
+	env.fileSystem = s.mount->fs.get();
+	vp.registerBlock(env.blocks);
+	INI ini(env);
+	for (const std::string &f : VideoPlayer::loadOrder())
+	{
+		ini.load(f, INI_LOAD_OVERWRITE);
+	}
+	// lane PLAY-3 (the owner's install lacks them; the reference install has them): the four movies of RW 0x645B8D / 0x64838D. Retail's Video.ini
+	// names them in mixed case ("EALogo", "NLC_LOGO", ...); the install's directory is data/movies: every component is matched without case
+	int present = 0;
+	for (const char *title : { "EALogoMovie", "NewLineLogo", "TolkienLogo", "Overall_Game_Intro" })
+	{
+		const Video *v = vp.getVideo(title);
+		REQUIRE(v != nullptr);
+		const VideoStreamInfo info = vp.locate(title, root, "", "English");
+		INFO(title << ": " << info.error);
+		CHECK(info.ok == installHasNoCase(root, { "data", "movies", v->filename + ".vp6" }));
+		if (info.ok)
+		{
+			++present;
+			CHECK(info.frames > 0);
+			CHECK(info.width > 0);
+			CHECK(info.durationMs > 1000.0);
+		}
+		else
+		{
+			CHECK(info.error.find("Could not open VP6 video file") != std::string::npos); // RW 0xBDDF4C: a debug-log line in retail, no picture
+		}
+	}
+	MESSAGE("start-up movies present in this install: " << present << " of 4");
+
+	// the directory order (RW 0x490D08: the mod's Data\Movies\, "Lang\%s\Data\Movies\", Data\Movies\), case-insensitive in every component,
+	// on a scratch install holding one real movie file of the install (copied at test time, never committed)
+	const VideoStreamInfo ea = vp.locate("EALogoMovie", root, "", "English");
+	if (!ea.ok)
+	{
+		MESSAGE("SKIP the directory order check: this install has no EALogoMovie file");
+		return;
+	}
+	const stdfs::path scratch = stdfs::temp_directory_path() / "openbfme-play3-movies";
+	stdfs::remove_all(scratch);
+	stdfs::create_directories(scratch / "LANG" / "english" / "data" / "Movies");
+	stdfs::create_directories(scratch / "DATA" / "movies");
+	stdfs::create_directories(scratch / "mod" / "Data" / "MOVIES");
+	stdfs::copy_file(ea.fullPath, scratch / "DATA" / "movies" / "ealogo.VP6");
+	VideoStreamInfo got = vp.locate("EALogoMovie", scratch.string(), "", "English");
+	CHECK(got.ok);
+	CHECK(sameNoCase(got.path, "DATA/movies/ealogo.VP6")); // a case-sensitive file system finds the files as named; Windows' as asked
+	stdfs::copy_file(ea.fullPath, scratch / "LANG" / "english" / "data" / "Movies" / "EALOGO.vp6");
+	got = vp.locate("EALogoMovie", scratch.string(), "", "English");
+	CHECK(sameNoCase(got.path, "LANG/english/data/Movies/EALOGO.vp6"));
+	stdfs::copy_file(ea.fullPath, scratch / "mod" / "Data" / "MOVIES" / "EALogo.vp6");
+	got = vp.locate("EALogoMovie", scratch.string(), (scratch / "mod").string(), "English");
+	CHECK(sameNoCase(got.path, "Data/MOVIES/EALogo.vp6"));
+	CHECK(got.fullPath.find("mod") != std::string::npos);
+	stdfs::remove_all(scratch);
 }
 
 // ---- the ModifierList value through a macro (RW 0x806264) -----------------------------------------------------------------------------------------

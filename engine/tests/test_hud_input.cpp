@@ -200,6 +200,10 @@ TEST_CASE("hud input: the orders of the selection go through the command list an
 	const Coord3D target{ c0.x + 150.0f, c0.y + 100.0f, 0.0f };
 	const ICoord2D pg = r.screenOf(target);
 	const Coord3D start = *unit->getPosition();
+	for (int i = 0; i < 41; ++i)
+	{
+		r.input->ui().advanceClientFrame(); // RW 0x48EDED draws no hint while the client frame is below 41
+	}
 	r.rightClick(pg.x, pg.y);
 	CHECK(logCount(*r.input, "MSG_DO_MOVETO") == 1);
 	CHECK(selectionOf(r).size() == 1); // the right click ordered, it did not deselect
@@ -208,6 +212,7 @@ TEST_CASE("hud input: the orders of the selection go through the command list an
 		const InGameUI &ui = r.input->ui();
 		REQUIRE(ui.liveMoveHintCount() == 1);
 		CHECK(ui.moveHintsMade() == 1);
+		REQUIRE(ui.moveHintDrawn(0));
 		const InGameUI::MoveHint &h = ui.moveHints()[0];
 		CHECK(std::hypot(h.pos.x - target.x, h.pos.y - target.y) < 8.0f);
 		for (unsigned i = 0; i < InGameUI::MOVE_HINT_FRAMES; ++i)
@@ -356,7 +361,7 @@ TEST_CASE("hud input: a batch of raw events gives the messages the same events d
 TEST_CASE("stops S-280 .. S-288: the HUD input reports what it does not port, and an unported meta command is counted, never dropped")
 {
 	const std::vector<std::string> stops = HudInput::acceptanceStops();
-	REQUIRE(stops.size() == 12);
+	REQUIRE(stops.size() == 13);
 	// the control bar, radar and Palantir report S-289 .. S-294 (their own test: test_hud_palantir.cpp)
 	for (size_t i = 0; i < 9; ++i)
 	{
@@ -365,6 +370,7 @@ TEST_CASE("stops S-280 .. S-288: the HUD input reports what it does not port, an
 	CHECK(stops[9].compare(0, 8, "[S-1770]") == 0); // lane QA2-FIX: the wall line build (PlaceEventTranslator::stopLines)
 	CHECK(stops[10].compare(0, 8, "[S-1920]") == 0); // lane PLAY-1: the move hint
 	CHECK(stops[11].compare(0, 8, "[S-1954]") == 0); // lane HUD-5: RotWK's pick types
+	CHECK(stops[12].compare(0, 8, "[S-3302]") == 0); // lane PLAY-1: the placement ghost (renumbered by PLAY-3)
 	if (!haveWorld("hud stops"))
 	{
 		return;

@@ -49,7 +49,18 @@ func _init() -> void:
 		print("RELEASE the previous run did not end normally; its log: ", info.redact(ProjectSettings.globalize_path(previous_crash_log)))
 
 
+func _set_window_title() -> void:
+	await get_tree().process_frame
+	if DisplayServer.get_name() != "headless":
+		DisplayServer.window_set_title(String(ProjectSettings.get_setting("application/config/name", "OpenBFME")))
+
+
 func _ready() -> void:
+	# lane UI-4: the packages run Godot's DEBUG export template on purpose (tools/release/package.sh: its crash handler writes the native backtrace
+	# into the session log; stop S-1923), and that template titles the window "<name> (DEBUG)". The title is the project's name, "OpenBFME", in every
+	# package. (Retail RotWK titles its window with gi.dat's GameName or the installer's registry DisplayName, RW 0x640ED0 / CreateWindowExW at
+	# RW 0x40243D; OpenBFME is not that program, so it keeps its own name.)
+	_set_window_title.call_deferred() # after the engine's own start-up titling
 	if info == null:
 		return
 	_add_watermark()

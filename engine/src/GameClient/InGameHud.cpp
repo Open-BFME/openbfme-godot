@@ -328,6 +328,32 @@ void InGameHud::update(double seconds)
 	updateRadarEvents();
 }
 
+// lane PLAY-3 (owner's play session: no box while dragging the left button). TARGET FACTS, W3DInGameUI::drawSelectionRegion RW 0x48ECF4 (W3DInGameUI
+// vtable RW 0xBDD9B0 slot +0x1E0, the class W3DGameClient's createInGameUI RW 0x44BD28 builds): without InGameUI + 0x924 it calls the
+// display's RW 0x48E83A (beginImageDraw, slot +0xE0 drawOpenRect, endImageDraw) with x = region.lo.x, y = region.lo.y, width = hi.x - lo.x,
+// height = hi.y - lo.y (each converted with cvtsi2ss), the line width float RW 0xBD889C = 2.0 and the colour 0xBBFFBB33. The region is InGameUI's
+// m_dragSelectRegion (+0x2C, BFME2 decomp InGameUIInputModes.cpp beginAreaSelectHint), which SelectionTranslator RW 0x83C29E feeds through the area
+// select hint message (0xB0) once the pointer moved more than Mouse.ini DragTolerance from the press (RW 0x83CB57-0x83CB7A). NOT PORTED (stop
+// S-3301): the branch with InGameUI + 0x924 set (Ctrl held at the press, RW 0x83CA72: TheKeyboard's modifiers & 0xC), which collects pointer points
+// (RW 0x6A091A) and draws them as a polyline (RW 0x48ED1B-0x48ED90) and selects through RW 0x6A0A5E
+bool InGameHud::selectionRegionOp(const InGameUI &ui, IconUIOp &out)
+{
+	if (!ui.hasAreaSelectHint())
+	{
+		return false;
+	}
+	const IRegion2D &r = ui.areaSelectHint();
+	out = IconUIOp();
+	out.kind = IconUIOp::OPEN_RECT;
+	out.x = (float)r.lo.x;
+	out.y = (float)r.lo.y;
+	out.w = (float)(r.hi.x - r.lo.x);
+	out.h = (float)(r.hi.y - r.lo.y);
+	out.width = 2.0f;         // RW 0xBD889C
+	out.color = 0xBBFFBB33u;  // RW 0x48EDAD
+	return true;
+}
+
 // lane RADAR-1: the radar's events (Radar.h): the local player's attacked objects (RW 0x67B4B7), the events' end (RW 0x6D8E2B), then
 // W3DRadar::drawEvents (RW 0x44DE58) for the picture the device drew last (the events end in the radar's update, Radar::advanceClock) and the Palantir's pings; the window pixels go to the movie's stage units
 // (RW 0x6D5AD9: the Apt player's scale)
@@ -685,6 +711,8 @@ std::vector<std::string> InGameHud::stops() const
 				  "screen, then map; the donor ZH selectUnitsMatchingCurrentSelection supplies the bodies); H (VIEW_HOME_BASE) looks at the local player's best structure by RW 0x81FD5B -> "
 				  "0x6AC722 (a command centre, the lowest id, else the costliest); not identified: the status bits 0 and 3 of + 0x458 the walk skips (bit 0 taken as destroyed) and "
 				  "the look-at argument");
+	out.push_back("[S-3301] drag selection (lane PLAY-3): a left drag with Ctrl held at the press is RotWK's point-list selection (InGameUI + 0x924, RW 0x83CA72; "
+				  "points RW 0x6A091A, polyline RW 0x48ED1B, selection RW 0x6A0A5E), not ported: it draws and selects the plain box");
 	for (const std::string &l : ControlBar::acceptanceStops())
 	{
 		out.push_back(l);

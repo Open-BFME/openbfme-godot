@@ -364,6 +364,16 @@ std::vector<std::string> AudioManager::playingEventNames() const
 	return names;
 }
 
+std::vector<std::string> AudioManager::fadingEventNames() const
+{
+	std::vector<std::string> names;
+	for (const auto &p : m_fading)
+	{
+		names.push_back(p->event->getEventName());
+	}
+	return names;
+}
+
 bool AudioManager::isValidAudioEvent(const std::string &eventName) const
 {
 	return !eventName.empty() && m_ini.infos.contains(eventName);

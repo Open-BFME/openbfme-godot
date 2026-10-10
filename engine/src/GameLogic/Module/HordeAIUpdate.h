@@ -21,7 +21,7 @@ class GameLogic;
 
 // COMBAT-1 (horde spec 2.7 / 2.8): the horde object's attack. The horde object fights through the horde attack machine (B1 Rva001812B0AIHordeMachineCtor.cpp, ids 0xC8..0xCC): a
 // MELEE_HORDE with a MeleeWeapon approaches until the Amoeba readiness rule holds, then its members fight (the per-member Amoeba behaviour below); any other horde approaches to the
-// range of its rangefinder weapon, whose HordeAttackNugget releases the ranks of RanksToReleaseWhenAttacking to shoot (RW 0x241F10).
+// range of its rangefinder weapon, whose HordeAttackNugget releases the ranks of RanksToReleaseWhenAttacking to shoot (RW 0x875221, HordeContain::attackTargetNow).
 //
 // WHAT IS INFERENCE (stop S-327): see CombatState::stops().
 class HordeAIUpdate : public AIUpdateInterface
@@ -83,15 +83,15 @@ public:
 	static const char *squishStopLine();
 	static const char *amoebaStopLine();        // S-588
 	static const char *approachStopLine();      // S-590
-	// RW 0x241F10: the ranks of RanksToReleaseWhenAttacking attack `target` (a HordeAttackNugget fire)
-	void releaseMembersToAttack(Object &target);
+	// lane ARCHER-1: RW 0x69675C(member, 0), the touch attack of a member holding a melee weapon when its horde's HordeAttackNugget fires (RW 0x875350); the same
+	// INFERENCE as HoldGround's (S-588): the enemy of `target` in the member's reach (RW 0x6F2956 rules) is attacked. true: an order was given
+	bool touchAttack(Object &member, Object &target);
 
 	struct MeleeStats
 	{
 		unsigned long long orders = 0;      ///< attack orders given to members
 		unsigned long long steps = 0;       ///< one-cell steps ordered
 		unsigned long long idleCycles = 0;  ///< members that went idle
-		unsigned long long releases = 0;    ///< HordeAttackNugget releases
 	};
 	const MeleeStats &meleeStats() const { return m_stats; }
 

@@ -161,11 +161,14 @@ Node3D *W3DModelBuilder::build_model(const Ref<RetailFileSystem> &fsRef, const S
 		return fail(modelPath + ": " + error);
 	}
 	const HLodDefClass *hlod = contents.Find_HLod(model);
-	if (hlod == nullptr)
+	// lane PLAY-3: a model without an HLod is a bare mesh of that name on the one pivot default hierarchy, as the asset manager makes it (assetmgr.cpp:
+	// ZH / BFME2 Create_Render_Obj, HTreeClass::Init_Default RVA 0x001666D0); e.g. GondorStatue's GPHealstue, which its placement ghost draws
+	const MeshModelClass *bareMesh = hlod == nullptr ? contents.Find_Mesh(model) : nullptr;
+	if (hlod == nullptr && bareMesh == nullptr)
 	{
-		return fail(modelPath + " has no HLod named " + model + " (bare-mesh models are not supported yet)");
+		return fail(modelPath + " has no HLod or mesh named " + model);
 	}
-	if (hlod->Lod.empty())
+	if (hlod != nullptr && hlod->Lod.empty())
 	{
 		return fail("HLod " + model + " has no LOD arrays");
 	}
@@ -173,7 +176,13 @@ Node3D *W3DModelBuilder::build_model(const Ref<RetailFileSystem> &fsRef, const S
 	// Hierarchy: same file, or its own file named after the hierarchy (the _SKL convention).
 	HTreeClass tree;
 	bool haveTree = false;
-	if (!hlod->HierarchyName.empty())
+	if (bareMesh != nullptr)
+	{
+		tree = HTreeClass::Make_Default();
+		haveTree = true;
+		m_report["bare_mesh"] = true;
+	}
+	else if (!hlod->HierarchyName.empty())
 	{
 		if (const HTreeClass *local = contents.Find_HTree(hlod->HierarchyName))
 		{
@@ -218,17 +227,23 @@ Node3D *W3DModelBuilder::build_model(const Ref<RetailFileSystem> &fsRef, const S
 	space->set_basis(Basis(godot::Vector3(1, 0, 0), godot::Vector3(0, 0, -1), godot::Vector3(0, 1, 0)));
 	root->add_child(space);
 
-	const int lodIndex = (int)hlod->Lod.size() - 1; // highest detail (ZH: top = LodCount-1)
-	m_report["lod_index"] = lodIndex;
-
 	std::vector<std::pair<std::string, int>> subObjects;
-	for (size_t i = 0; i < hlod->Lod[lodIndex].ModelName.size(); ++i)
+	if (bareMesh != nullptr)
 	{
-		subObjects.push_back({ hlod->Lod[lodIndex].ModelName[i], hlod->Lod[lodIndex].BoneIndex[i] });
+		subObjects.push_back({ model, 0 });
 	}
-	for (size_t i = 0; i < hlod->Aggregates.ModelName.size(); ++i)
+	else
 	{
-		subObjects.push_back({ hlod->Aggregates.ModelName[i], hlod->Aggregates.BoneIndex[i] });
+		const int lodIndex = (int)hlod->Lod.size() - 1; // highest detail (ZH: top = LodCount-1)
+		m_report["lod_index"] = lodIndex;
+		for (size_t i = 0; i < hlod->Lod[lodIndex].ModelName.size(); ++i)
+		{
+			subObjects.push_back({ hlod->Lod[lodIndex].ModelName[i], hlod->Lod[lodIndex].BoneIndex[i] });
+		}
+		for (size_t i = 0; i < hlod->Aggregates.ModelName.size(); ++i)
+		{
+			subObjects.push_back({ hlod->Aggregates.ModelName[i], hlod->Aggregates.BoneIndex[i] });
+		}
 	}
 
 	for (const auto &sub : subObjects)

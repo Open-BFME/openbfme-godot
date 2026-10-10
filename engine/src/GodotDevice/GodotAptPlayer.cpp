@@ -12,6 +12,9 @@
 #include "Common/INIException.h"
 #include "GameClient/GameLODManager.h"
 #include "GameClient/OptionPreferences.h"
+#include "GameClient/GlobalLanguage.h"
+#include "Common/INI.h"
+#include "Common/INIException.h"
 
 #include "GameClient/AptCanvas.h"
 #include "GameClient/FontSubstitution.h"
@@ -565,6 +568,7 @@ struct ShellMode
 	ShellEnvironment environment;
 	PlayerStatusInfo playerStatus; // lane HUD-5: the players screen's Status rows
 	OptionPreferences options; // lane UI-2: the user data folder's Options.ini
+	GlobalLanguage language;   // lane UI-4: language.ini's Language block (the credits roll's fonts)
 	GameLODManager gameLOD;    // lane PLAY-2: GameLOD.ini's StaticGameLOD presets (the Options screen's advanced page)
 	AptScreenFactoryTable factories;
 	GadgetSkinData skins;
@@ -645,6 +649,7 @@ struct AptMenuPlayer::Impl
 		RID parent;
 	};
 	std::vector<NativeSlot> nativeSlots;
+	std::vector<NativeSlot> callbackSlots; // lane UI-4: the clips an engine render callback draws (WindowManager::renderCallback)
 	std::uint64_t unchangedFrames = 0;
 	AptStageMapping mapping;
 	Vector2 lastWindow;
@@ -794,6 +799,7 @@ void AptMenuPlayer::_bind_methods()
 	ClassDB::bind_method(D_METHOD("dump_tree", "level", "max_depth"), &AptMenuPlayer::dump_tree);
 	ClassDB::bind_method(D_METHOD("find_button", "level", "path"), &AptMenuPlayer::find_button);
 	ClassDB::bind_method(D_METHOD("instance_info", "level", "path"), &AptMenuPlayer::instance_info);
+	ClassDB::bind_method(D_METHOD("component_rect", "instance_path"), &AptMenuPlayer::component_rect);
 	ClassDB::bind_method(D_METHOD("window_to_stage", "window_position"), &AptMenuPlayer::window_to_stage);
 	ClassDB::bind_method(D_METHOD("stage_to_window", "stage_position"), &AptMenuPlayer::stage_to_window);
 	ClassDB::bind_method(D_METHOD("post_mouse_move_stage", "stage"), &AptMenuPlayer::post_mouse_move_stage);
@@ -813,6 +819,7 @@ void AptMenuPlayer::_bind_methods()
 	ClassDB::bind_method(D_METHOD("get_movies"), &AptMenuPlayer::get_movies);                 // lane CAMP-2
 	ClassDB::bind_method(D_METHOD("shell_stack"), &AptMenuPlayer::shell_stack);
 	ClassDB::bind_method(D_METHOD("get_option", "key"), &AptMenuPlayer::get_option);
+	ClassDB::bind_method(D_METHOD("set_tribute_world", "world"), &AptMenuPlayer::set_tribute_world);
 	ClassDB::bind_method(D_METHOD("set_player_status", "state"), &AptMenuPlayer::set_player_status); // lane HUD-5
 	ClassDB::bind_method(D_METHOD("shell_top_level"), &AptMenuPlayer::shell_top_level);
 	ClassDB::bind_method(D_METHOD("shell_invoke", "level", "function", "args"), &AptMenuPlayer::shell_invoke, DEFVAL(PackedStringArray()));
@@ -1103,6 +1110,24 @@ Dictionary AptMenuPlayer::boot_shell(const Ref<RetailFileSystem> &fs, Object *wo
 		}
 	}
 	sm->services.applyOption(OptionPreferences::kSoftParticles, sm->options.softParticles() ? "yes" : "no");
+	// lane UI-4: the main menu's credits roll reads Data\INI\Credits.ini from the archives and its fonts from language.ini (GlobalLanguage::init,
+	// RW 0x5E9D3C); a language.ini that does not parse is a boot error
+	sm->environment.fileSystem = fs->archive_fs();
+	{
+		INIEnvironment env;
+		env.fileSystem = fs->archive_fs();
+		sm->language.registerBlocks(env.blocks);
+		try
+		{
+			INI ini(env);
+			ini.load(GlobalLanguage::fileName(), INI_LOAD_OVERWRITE);
+			sm->environment.language = &sm->language;
+		}
+		catch (const INIException &e)
+		{
+			errors.push_back(toGodot(std::string(GlobalLanguage::fileName()) + ": " + e.what()));
+		}
+	}
 	registerAptScreenFactories(sm->factories);
 	Impl *impl = m.get();
 	sm->metrics = std::make_unique<ShellFontMetrics>([impl](const std::string &name, float size, float *drawSize) { return impl->fontFor(name, size, drawSize); });
@@ -1291,6 +1316,16 @@ PackedStringArray AptMenuPlayer::shell_stack() const
 		}
 	}
 	return out;
+}
+
+void AptMenuPlayer::set_tribute_world(Object *world)
+{
+	if (!m->shell)
+	{
+		return;
+	}
+	GameWorld *w = Object::cast_to<GameWorld>(world);
+	m->shell->environment.tribute = w ? w->tribute_source() : nullptr;
 }
 
 Variant AptMenuPlayer::get_option(const String &key) const
@@ -1935,6 +1970,7 @@ void AptMenuPlayer::clearCanvas()
 	m->items.clear();
 	m->drawnValid = false;
 	m->nativeSlots.clear();
+	m->callbackSlots.clear();
 	m->drawnBackdrop.clear(); // lane CAMP-2
 }
 
@@ -2016,6 +2052,7 @@ void AptMenuPlayer::render(bool force)
 		// lane PERF-1 r2: the HUD's canvas list (and in shell mode its gadget list) is the same as the one on screen in most render frames; its items
 		// stay, only the native components are drawn again, each into a new item at its place (what a full redraw does for them)
 		redrawNativePlaceholders();
+		redrawCallbackPlaceholders(); // lane UI-4
 		m->unchangedFrames += 1;
 	}
 	else
@@ -2060,6 +2097,71 @@ bool AptMenuPlayer::sameCanvas(const AptCanvasList &a, const AptCanvasList &b)
 		}
 	}
 	return true;
+}
+
+void AptMenuPlayer::drawRenderCallback(const AptCanvasOp &op, const RID &item)
+{
+	// lane UI-4: the callback (AptMainMenu::RenderCredits, RW 0x91B1B8 -> the credits roll's draw RW 0x9C6765) is given the clip's rectangle in stage
+	// units; its texts are drawn with the canvas fonts at the stage-to-window mapping of the op, each with its drop colour one unit down-right
+	const WindowManager::RenderCallback *callback = m->shell ? m->shell->wm->renderCallback(op.symbolName) : nullptr;
+	if (!callback)
+	{
+		return;
+	}
+	float minx = 1e9f, miny = 1e9f, maxx = -1e9f, maxy = -1e9f;
+	const float xs[4] = { op.bounds[0], op.bounds[2], op.bounds[2], op.bounds[0] };
+	const float ys[4] = { op.bounds[1], op.bounds[1], op.bounds[3], op.bounds[3] };
+	for (int i = 0; i < 4; ++i)
+	{
+		const float sx = op.matrix.a * xs[i] + op.matrix.c * ys[i] + op.matrix.tx;
+		const float sy = op.matrix.b * xs[i] + op.matrix.d * ys[i] + op.matrix.ty;
+		minx = std::min(minx, sx);
+		maxx = std::max(maxx, sx);
+		miny = std::min(miny, sy);
+		maxy = std::max(maxy, sy);
+	}
+	GadgetDrawList texts;
+	(*callback)(minx, miny, maxx - minx, maxy - miny, texts);
+	const float k = std::min(op.scaleX, op.scaleY);
+	auto colourOf = [](std::uint32_t v) { return Color(((v >> 16) & 0xFF) / 255.0f, ((v >> 8) & 0xFF) / 255.0f, (v & 0xFF) / 255.0f, ((v >> 24) & 0xFF) / 255.0f); };
+	for (const GadgetDrawCommand &c : texts.commands)
+	{
+		if (c.kind != GadgetDrawCommand::Kind::Text || c.text.empty() || (c.color >> 24) == 0)
+		{
+			continue;
+		}
+		float drawSize = 0;
+		Ref<Font> font = m->fontFor(c.font.name, (float)c.font.pointSize, &drawSize);
+		if (font.is_null())
+		{
+			continue;
+		}
+		const int px = std::max(1, (int)std::lround(drawSize * k));
+		const Vector2 at((float)c.x0 * op.scaleX + op.offsetX, (float)c.y0 * op.scaleY + op.offsetY);
+		const Vector2 base = at + Vector2(0, font->get_ascent(px));
+		const String text = toGodot(u16ToUtf8(c.text));
+		if ((c.dropColor >> 24) != 0)
+		{
+			font->draw_string(item, base + Vector2(1, 1) * k, text, HORIZONTAL_ALIGNMENT_LEFT, -1, px, colourOf(c.dropColor));
+		}
+		font->draw_string(item, base, text, HORIZONTAL_ALIGNMENT_LEFT, -1, px, colourOf(c.color));
+	}
+}
+
+void AptMenuPlayer::redrawCallbackPlaceholders()
+{
+	RenderingServer *rs = RenderingServer::get_singleton();
+	for (const Impl::NativeSlot &slot : m->callbackSlots)
+	{
+		RID &item = m->items[slot.item];
+		rs->free_rid(item);
+		item = rs->canvas_item_create();
+		rs->canvas_item_set_parent(item, slot.parent);
+		rs->canvas_item_set_draw_index(item, static_cast<int>(slot.item));
+		rs->canvas_item_set_default_texture_filter(item, RenderingServer::CANVAS_ITEM_TEXTURE_FILTER_LINEAR);
+		rs->canvas_item_set_default_texture_repeat(item, RenderingServer::CANVAS_ITEM_TEXTURE_REPEAT_DISABLED);
+		drawRenderCallback(m->drawnList.ops[slot.op], item);
+	}
 }
 
 void AptMenuPlayer::redrawNativePlaceholders()
@@ -2188,6 +2290,7 @@ void AptMenuPlayer::drawCanvas(const AptCanvasList &list)
 	}();
 
 	m->nativeSlots.clear();
+	m->callbackSlots.clear();
 	m->view3d.beginBuild(); // lane UI-2
 	for (size_t opIndex = 0; opIndex < list.ops.size(); ++opIndex)
 	{
@@ -2289,6 +2392,16 @@ void AptMenuPlayer::drawCanvas(const AptCanvasList &list)
 					RID item = newItem(parents.back());
 					current = RID();
 					m->view3d.draw(item, Rect2(minx, miny, maxx - minx, maxy - miny), op);
+					break;
+				}
+				if (m->shell && op.nativeTag && m->shell->wm->renderCallback(op.symbolName))
+				{
+					// lane UI-4: an engine render callback that draws text (AptMainMenu::RenderCredits): drawn in the clip's place, and again in every
+					// render frame whose canvas list is unchanged (its text moves without the list changing)
+					m->callbackSlots.push_back(Impl::NativeSlot{ opIndex, m->items.size(), parents.back() });
+					RID item = newItem(parents.back());
+					current = RID();
+					drawRenderCallback(op, item);
 					break;
 				}
 				if (op.nativeTag && op.symbolName == "BinkMovie")
@@ -3163,6 +3276,24 @@ Dictionary AptMenuPlayer::instance_info(int level, const String &path)
 	return r;
 }
 
+// lane PLAY-1: the window of a component placeholder ("_level1.<path>": a slider, a text entry) in stage space, for scripted input
+Rect2 AptMenuPlayer::component_rect(const String &instance_path) const
+{
+	if (!m->shell)
+	{
+		return Rect2();
+	}
+	GameWindow *w = m->shell->wm->componentWindow(toNative(instance_path));
+	if (!w)
+	{
+		return Rect2();
+	}
+	int x = 0, y = 0, cw = 0, ch = 0;
+	w->winGetScreenPosition(&x, &y);
+	w->winGetSize(&cw, &ch);
+	return Rect2((real_t)x, (real_t)y, (real_t)cw, (real_t)ch);
+}
+
 // ---------------------------------------------------------------------------------------------------------------------------------
 // input
 // ---------------------------------------------------------------------------------------------------------------------------------
@@ -3473,6 +3604,7 @@ void AptMenuPlayer::set_native_hook(AptNativeHook *hook)
 		// next frame draws the canvas again (else leaving a game freed the material under live items: "Parameter material is null")
 		clearCanvas();
 		m->nativeSlots.clear();
+		m->callbackSlots.clear();
 	}
 	m->nativeHook = hook;
 	m->drawnValid = false; // lane PERF-1 r2: the native placeholders are drawn by another owner

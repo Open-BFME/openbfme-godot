@@ -163,27 +163,31 @@ public:
 	int placeLegalCode() const { return m_placeLegal; }
 
 	// ---- the move hints (lane PLAY-1): the marker drawn where a move order was given ----
-	// DONOR FACTS (ZH InGameUI::createMoveHint InGameUI.cpp:2066, HintSpy.cpp:114 .. 119, W3DInGameUI::drawMoveHints W3DInGameUI.cpp:468): HintSpy (translator
-	// priority 100) passes every MSG_DO_MOVETO, MSG_DO_ATTACKMOVETO, MSG_DO_FORCEMOVETO and MSG_ADD_WAYPOINT that reaches the end of the stream to createMoveHint,
-	// which takes the next of 256 slots (round robin) with the client frame and the message's location, unless the selection is one IMMOBILE object; the device
-	// draws GlobalData's MoveHintName model (its "%s.%s" animation once) at every hint whose age is <= 40 client frames, aligned on the terrain.
-	// TARGET FACTS: RotWK keeps MoveHintName (GlobalData + 0x10, parseAsciiString RW 0x42EE5E, field row RW 0xBFF5C0; the retail GameData says SCMoveHint).
-	// INFERENCE (stop S-1920): RotWK's own hint translator and draw were not read (the binary has no "MoveHint" / "AttackHint" string use beyond the field);
-	// MSG_DO_MOVETO_FORMATION (RotWK's formation move) is taken as a move for the hint; ZH's "same source" expiry compares an object id with the location
-	// argument and never matches, so it is left out.
+	// TARGET FACTS (RotWK game.dat, caveat S-001; lane PLAY-1 r2 read them, BFME2's W3DInGameUI ctor is the decomp's Rva0008EF3FProduct, tier B for RW 0x48E889):
+	//   * HintSpy's case table (RW 0x838225 .. 0x83825E): MSG_DO_MOVETO / ATTACKMOVETO / FORCEMOVETO (0x42F .. 0x431) -> InGameUI vslot 0x70 = createMoveHint;
+	//     MSG_ADD_WAYPOINT and the formation move are NOT hinted;
+	//   * createMoveHint RW 0x69F54F: a single selected object that cannot move (RW 0x690E97: IMMOBILE, KINDOF bit 2 at template + 0x108) gets no hint; the
+	//     location must pass RW 0x69E8D0 (see HudInput::hintSpy); then EVERY hint is expired (RW 0x69B76C -> RW 0x69B745: frame 0, flag 1: one marker at a
+	//     time) and the next of 25 slots (+ 0x40, 0x14 bytes: location, the client frame (TheGameClient vslot 0x7C), the expired flag) takes the new one;
+	//   * drawMoveHints RW 0x48EDED: GlobalData's MoveHintName (+ 0x10) model with its "%s.%s" animation once (mode 2) for a hint not expired whose age is
+	//     below 41 client frames (nothing while the client frame itself is below 41), placed by TerrainLogic's alignOnTerrain / water height (vslots 0x48 / 0x4C).
+	// MoveHintName: GlobalData + 0x10, parseAsciiString RW 0x42EE5E, field row RW 0xBFF5C0 (retail GameData: SCMoveHint).
 	struct MoveHint
 	{
 		Coord3D pos{};
-		unsigned frame = 0; ///< the client frame it was made in; 0 = unused
+		unsigned frame = 0;   ///< the client frame it was made in; 0 = unused / expired
+		bool expired = true;  ///< + 0x10 (RW 0x69B745 sets it)
 	};
-	static constexpr int MAX_MOVE_HINTS = 256;
-	static constexpr unsigned MOVE_HINT_FRAMES = 40;
+	static constexpr int MAX_MOVE_HINTS = 25;              // RW 0x69F5D6 (cmp 0x19) / RW 0x48E8AD
+	static constexpr unsigned MOVE_HINT_FRAMES = 40;       // RW 0x48EE1A: drawn while the age is below 0x29
 	void createMoveHint(const Coord3D &pos);
+	void expireMoveHints();                                // RW 0x69B76C(0)
 	const MoveHint *moveHints() const { return m_moveHints; }
 	// the client frame (ZH TheGameClient->getFrame(): one per 30 Hz client frame; the HUD's camera frame advances it)
 	unsigned clientFrame() const { return m_clientFrame; }
 	void advanceClientFrame() { ++m_clientFrame; }
-	// the hints to draw now: age (client frames) <= MOVE_HINT_FRAMES
+	// RW 0x48EDED's draw test for slot i
+	bool moveHintDrawn(int i) const;
 	int liveMoveHintCount() const;
 	unsigned moveHintsMade() const { return m_moveHintsMade; }
 

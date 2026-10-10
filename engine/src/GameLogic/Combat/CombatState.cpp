@@ -159,6 +159,7 @@ std::vector<std::string> CombatState::report() const
 	{
 		out.push_back(s); // lane HORDE-2 (S-580 ..)
 	}
+	out.push_back(HordeContain::attackStopLine()); // lane ARCHER-1 (S-2610)
 	out.push_back("[S-320..S-328 counters] damage applications " + std::to_string(m_counters.damageApplications) + ", kills " + std::to_string(m_counters.kills) + ", bounty paid " +
 		std::to_string(m_counters.bountyPaid) + ", projectiles launched " + std::to_string(m_counters.projectilesLaunched) + " detonated " + std::to_string(m_counters.projectilesDetonated) + " landed " +
 		std::to_string(m_counters.projectilesLanded) + " ground hits " + std::to_string(m_counters.projectileGroundHits) + " bounces " + std::to_string(m_counters.projectileBounces) +

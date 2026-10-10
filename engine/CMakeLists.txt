@@ -132,6 +132,7 @@ include(cmake/Ui1.cmake)        # UI-1: interface gaps (client only; OPENBFME_UI
 include(cmake/Release1.cmake)   # RELEASE-1: install discovery, version, session log (client only; OPENBFME_RELEASE1_SOURCES / _GODOT_SOURCES / _TESTS)
 include(cmake/Mod4.cmake)       # MOD-4: AISpecialPowerUpdate, RepairSpecialPower, ... (appends to OPENBFME_SIM_SOURCES; OPENBFME_MOD4_TESTS)
 include(cmake/Ui2.cmake)        # UI-2: owner menu feedback (client only; OPENBFME_UI2_CLIENT_SOURCES / OPENBFME_UI2_TESTS)
+include(cmake/Ui4.cmake)        # UI-4: owner menu / HUD findings on v0.3.0-preview.1 (client only)
 include(cmake/Anim1.cmake)      # OPENBFME_ANIM1_TESTS (lane ANIM-1: combat animation)
 include(cmake/Win1.cmake)       # WIN-1: the MSVCR71 real parser (appends to OPENBFME_SIM_SOURCES; OPENBFME_WIN1_TESTS: cross-OS lockstep)
 include(cmake/Garrison3.cmake)  # GARRISON-3: the garrison exit (OPENBFME_GARRISON3_TESTS)
@@ -142,9 +143,11 @@ include(cmake/Qa2fix.cmake)     # QA2-FIX: a player's wall span through the HUD,
 include(cmake/Hud5.cmake)       # HUD-5: the owner's first Windows session (OPENBFME_HUD5_CLIENT_SOURCES / OPENBFME_HUD5_TESTS)
 include(cmake/Exit1.cmake)      # EXIT-1: the horde member update, stale MOVING (appends to OPENBFME_SIM_SOURCES; OPENBFME_EXIT1_TESTS)
 include(cmake/Decomp1.cmake)    # DECOMP-1: stops closed with the decompilation's progress (appends to OPENBFME_SIM_SOURCES; OPENBFME_DECOMP1_TESTS)
+include(cmake/Play1.cmake)      # PLAY-1: the tribute, the placement ghost (appends to OPENBFME_SIM_SOURCES; OPENBFME_PLAY1_SOURCES / _TESTS)
 include(cmake/Cah1.cmake)       # CAH-1: the Create-a-Hero screens (client only; OPENBFME_CAH1_SOURCES / _GODOT_SOURCES / _TESTS)
 include(cmake/Move3.cmake)      # MOVE-3: horde spacing, the blocked path patch (appends to OPENBFME_SIM_SOURCES; OPENBFME_MOVE3_TESTS)
 include(cmake/Input1.cmake)     # INPUT-1: RotWK's input layer (OPENBFME_INPUT1_TESTS)
+include(cmake/Play1.cmake)      # PLAY-1: the tribute, the placement ghost (appends to OPENBFME_SIM_SOURCES; OPENBFME_PLAY1_SOURCES / _TESTS)
 add_library(openbfme_core STATIC
     ${OPENBFME_PLAY2_SOURCES}
     ${OPENBFME_APT_SOURCES}
@@ -168,11 +171,13 @@ add_library(openbfme_core STATIC
     ${OPENBFME_PROJ2_SOURCES}
     ${OPENBFME_STEALTH_SOURCES}
     ${OPENBFME_END1_SOURCES}
+    ${OPENBFME_PLAY1_SOURCES}
     ${OPENBFME_MP2_CLIENT_SOURCES}
     ${OPENBFME_MP3_CLIENT_SOURCES}
     ${OPENBFME_UI1_CLIENT_SOURCES}
     ${OPENBFME_RELEASE1_SOURCES}
     ${OPENBFME_UI2_CLIENT_SOURCES}
+    ${OPENBFME_UI4_CLIENT_SOURCES}
     ${OPENBFME_SCRIPT1_SOURCES}
     ${OPENBFME_CAMP1_SOURCES}
     ${OPENBFME_HUD5_CLIENT_SOURCES}
@@ -437,6 +442,7 @@ add_library(openbfme SHARED
     ${OPENBFME_CAMP2_GODOT_SOURCES}
     ${OPENBFME_RELEASE1_GODOT_SOURCES}
     ${OPENBFME_UI2_GODOT_SOURCES}
+    ${OPENBFME_UI4_GODOT_SOURCES}
     ${OPENBFME_HUD4_GODOT_SOURCES}
     ${OPENBFME_CAH1_GODOT_SOURCES})
 target_sources(openbfme PRIVATE ${OPENBFME_SIM_SOURCES_GODOT}) # the simulation sources of the extension (listed in the manifest)
@@ -528,6 +534,7 @@ add_executable(openbfme_tests
     ${OPENBFME_RELEASE1_TESTS}
     ${OPENBFME_MOD4_TESTS}
     ${OPENBFME_UI2_TESTS}
+    ${OPENBFME_UI4_TESTS}
     ${OPENBFME_GARRISON3_TESTS}
     ${OPENBFME_COMBAT3_TESTS}
     ${OPENBFME_COMBAT4_TESTS}
@@ -535,10 +542,12 @@ add_executable(openbfme_tests
     ${OPENBFME_QA2FIX_TESTS}
     ${OPENBFME_EXIT1_TESTS}
     ${OPENBFME_DECOMP1_TESTS}
+    ${OPENBFME_PLAY1_TESTS}
     ${OPENBFME_HUD5_TESTS}
     ${OPENBFME_CAH1_TESTS}
     ${OPENBFME_MOVE3_TESTS}
     ${OPENBFME_INPUT1_TESTS}
+    ${OPENBFME_PLAY1_TESTS}
     tests/test_main.cpp
     tests/test_big_archive.cpp
     tests/test_archive_order.cpp

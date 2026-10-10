@@ -117,6 +117,11 @@ public:
 	void setIconUISettings(const IconUISettings &s) { m_iconSettings = s; }
 	const IconUISettings &iconSettings() const { return m_iconSettings; }
 	const std::vector<IconUIOp> &iconOps() const { return m_iconOps; }
+	// lane PLAY-3: the drag selection box of this render frame (W3DInGameUI::drawSelectionRegion, RW 0x48ECF4): an OPEN_RECT over the region the
+	// SelectionTranslator's drag holds (InGameUI's area select hint), drawn while the drag lasts; false when there is none. Computed from the client
+	// state on every call (no logic frame needed: the box follows the pointer even while the logic worker runs)
+	bool selectionRegionOp(IconUIOp &out) const { return selectionRegionOp(m_input->ui(), out); }
+	static bool selectionRegionOp(const InGameUI &ui, IconUIOp &out);
 	const DrawableIconUI &iconUI() const { return m_iconUI; }
 	// lane PLAY-1: the Palantir's powers button presses (OnBttnSpellStore) and why the last one opened no store ("" when it did); never silent
 	unsigned spellStoreRequests() const { return m_storeRequests; }

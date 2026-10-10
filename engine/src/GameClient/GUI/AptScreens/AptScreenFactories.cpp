@@ -16,7 +16,7 @@
 void registerAptScreenFactories(AptScreenFactoryTable &table)
 {
 	table.registerFactory("MainMenu.apt", [](AptScreenContext &c) -> std::unique_ptr<AptScreen> {
-		return std::make_unique<AptMainMenu>(c.windows, c.shell, c.services);
+		return std::make_unique<AptMainMenu>(c.windows, c.shell, c.services, &c.environment);
 	});
 	table.registerFactory("Skirmish.apt", [](AptScreenContext &c) -> std::unique_ptr<AptScreen> {
 		return std::make_unique<AptSkirmish>(c.windows, c.shell, c.environment);

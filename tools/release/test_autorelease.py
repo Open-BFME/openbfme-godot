@@ -191,6 +191,9 @@ def test_real_release_end_to_end(world):
     # the publish steps: a draft, the uploads, the read-back, then published; gh never asked to create with assets
     log = world.gh_log.read_text()
     assert "release create" not in log and "-F draft=true" in log and "-F draft=false" in log and "release upload v0.3.0-preview.1" in log
+    # RELTEST-1: the About link points at the new release (read back)
+    assert gh["repo"]["homepage"] == f"https://github.com/{TARGET}/releases/tag/v0.3.0-preview.1", gh.get("repo")
+    assert "AUTORELEASE homepage: the About link is" in r.stdout
     # forward only: the same sha, and an older one, are refused whatever --since says
     r = world.release(sha, "--since", world.first)
     assert r.returncode != 0 and "is the last released archive sha" in r.stdout
@@ -209,6 +212,18 @@ def test_real_release_end_to_end(world):
     assert r.returncode == 0 and "AUTORELEASE OK v0.3.0-preview.2" in r.stdout, r.stdout + r.stderr
     body = world.gh_data()["releases"][1]["body"]
     assert "Archers no longer shoot through walls" in body and "Units walk around trees" not in body
+    assert world.gh_data()["repo"]["homepage"] == f"https://github.com/{TARGET}/releases/tag/v0.3.0-preview.2"
+
+
+def test_a_failed_homepage_update_is_a_warning(world):
+    """RELTEST-1: the release is out when the About link cannot be set: the run passes and the summary says to set it by hand"""
+    sha = world.change({"engine/a.cpp": "2\n"}, "X-1: something new for players to see")
+    world.gate(sha)
+    r = world.release(sha, "--since", world.first, FAKE_GH_FAULT="homepage-fail")
+    assert r.returncode == 0 and "AUTORELEASE OK v0.3.0-preview.1" in r.stdout, r.stdout + r.stderr
+    assert "AUTORELEASE WARNING: the repository's About link could not be set" in r.stdout
+    gh = world.gh_data()
+    assert gh["releases"][0]["draft"] is False and gh.get("repo", {}).get("homepage", "") == ""
 
 
 def test_gate_record_is_required(world):
@@ -548,6 +563,10 @@ def test_an_open_intent_is_resumed_before_any_other_sha(world):
     world.gate(a)
     r = world.release(a, "--since", world.first, STANDIN_TAMPERED="1")
     assert r.returncode != 0 and (world.state / "intent").exists()
+    # RELTEST-1: the pushed tag cannot be deleted (GH013); the stop message says the next run resumes the same version from it
+    assert world.remote_refs("refs/tags/v0.3.0-preview.1")
+    assert "run autorelease.sh again (for this sha or a later one) and it resumes v0.3.0-preview.1" in r.stdout, r.stdout
+    assert "next number" not in r.stdout and "--delete refs/tags" not in r.stdout
     b = world.change({"engine/a.cpp": "3\n"}, "X-2: second change")
     world.gate(b)
     for extra in (["--plan"], ["--dry-run"]):
@@ -671,6 +690,7 @@ def test_the_key_path_is_never_printed(world):
     assert r.returncode == 0 and "AUTORELEASE DRY RUN OK" in r.stdout, r.stdout + r.stderr
     assert "sign_manifest.py --key \\<release\\ key\\>" in r.stdout, "the WOULD RUN line names the key only as <release key>"
     assert world.remote_refs("refs/heads/sync/*") == "" and not world.gh_state.exists(), "the dry run writes nothing to GitHub"
+    assert "WOULD RUN: " in r.stdout and "PATCH repos/" in r.stdout and "homepage=https://github.com/" in r.stdout  # RELTEST-1
     world.key.chmod(0o644)
     r2 = world.release(sha, "--since", world.first)
     assert r2.returncode != 0 and "is not mode 600" in r2.stdout

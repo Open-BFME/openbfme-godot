@@ -292,12 +292,14 @@ TEST_CASE("qa1 context: a click with the Porter on our abandoned site resumes it
 	h.frames(300);
 	CHECK(body->getHealth() > hurt);
 	// the stop the HUD reports
-	bool reported = false;
+	bool reported = false, ctrlDrag = false;
 	for (const std::string &l : h.hud->stops())
 	{
 		reported = reported || l.rfind("[S-1201] context commands (lane QA-1)", 0) == 0;
+		ctrlDrag = ctrlDrag || l.rfind("[S-3301] drag selection (lane PLAY-3)", 0) == 0; // lane PLAY-3: the Ctrl drag selection is not ported
 	}
 	CHECK(reported);
+	CHECK(ctrlDrag);
 }
 
 TEST_CASE("qa1 hotkeys: E selects the units of the selection's kind, H looks at the home base (S-1202)")

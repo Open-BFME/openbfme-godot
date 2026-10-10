@@ -4,6 +4,7 @@
 #include "GameClient/LiveGame.h"
 
 #include "GameClient/FrameCensus.h"
+#include "GameLogic/TributeCommands.h"
 #include "GameClient/ScriptAudioLength.h"
 #include "GameLogic/AI/GarrisonCommands.h"
 #include "GameLogic/Object/PartitionManager.h"
@@ -323,6 +324,7 @@ bool LiveGame::load(const Options &options, std::string *error)
 	InvisibilityModules::registerHandlers(*m_dispatch); // STEALTH-2: MSG_ONE_RING (RW 0x7729A6)
 	HeroAbilityModules::registerHandlers(*m_dispatch); // HERO-2: MSG_DO_AUTO_ABILITY (RW 0x77B9BA)
 	m_spellCommands.registerHandlers(*m_dispatch); // SPELL-1: the spell book messages
+	TributeCommands::registerHandlers(*m_dispatch); // PLAY-1: MSG_GIVE_MONEY, the tribute (RW 0x6264E1)
 	SpecialPowerModules::installScienceHooks(*m_logic);
 	m_drawables = std::make_unique<DrawableManager>(m_assets, *m_logic);
 	// SMOOTH-1: the logic talks to its client through ordered events (ClientEvents.h); the render side applies them (DrawableManager::applyEvents)

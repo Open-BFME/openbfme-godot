@@ -328,8 +328,8 @@ TEST_CASE("exit1 retail: a Udun 2v2 Hard computer game: produced members leave t
 	}
 	MESSAGE(probe.report());
 	// the game produced its armies (else the test proves nothing): ca05ef35 had 101 units standing in the exit state with MOVING, 59 stuck there, and 40 idle
-	// ones keeping MOVING
-	CHECK(probe.seen.size() >= 500);
+	// ones keeping MOVING. Lane ARCHER-1 (the ranged hordes' spread fire changes the fights): 457 units, 74 through the exit path (engine measurement)
+	CHECK(probe.seen.size() >= 400);
 	CHECK(probe.treadmillCount(AI_FOLLOW_EXITPRODUCTION_PATH) == 0);
 	CHECK(probe.stuckCount(AI_FOLLOW_EXITPRODUCTION_PATH) == 0);
 	// a produced member is made busy by its horde's hub in its first frames (RW 0x87479C); a single unit (a siege engine) walks its exit path out: 12 game seconds

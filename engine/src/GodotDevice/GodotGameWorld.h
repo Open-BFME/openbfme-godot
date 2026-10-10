@@ -56,6 +56,7 @@ class InGameSpellBookModel;
 class LiveFX;
 class MapObjectRuntime;
 struct MapObjectOptions;
+class TributeSource;
 
 namespace godot
 {
@@ -66,6 +67,7 @@ class W3DInstancer;
 
 class GameWorld : public Node3D
 {
+	friend class GameWorldTribute; // lane PLAY-1: the tribute screen's source reads the live game
 	GDCLASS(GameWorld, Node3D)
 
 public:
@@ -171,6 +173,12 @@ public:
 	int64_t find_object_by_template(const String &template_name) const;
 	// lane BUILD-1: the first real model of the template's draw modules (its default model condition state), "" when it has none: what the placement ghost shows
 	String get_template_model(const String &template_name) const;
+	// lane PLAY-1: what PlayerTribute.apt reads of this game and its Send (GameClient/GUI/TributeInfo.h); valid while the world lives (null-safe without a game)
+	TributeSource *tribute_source();
+
+	// lane PLAY-1: { model, state, hidden: [sub object names], shown: [...], unread: [script lines] } of the template's BUILD_PLACEMENT_CURSOR look (the ghost);
+	// lane PLAY-3: a castle also gives castle = true, base, castle_error and pieces: [{ template, model, hidden, x, y, z, angle }] (PlacementGhost::castleLookOf)
+	Dictionary get_placement_ghost(const String &template_name) const;
 
 	// ---- lane PROD-1: production by player command ----
 	// makes an object of `template_name` for the player with index `player` (PlayerList order) at map position (x, y), ground height from the terrain;
@@ -504,6 +512,8 @@ private:
 
 	Ref<RetailFileSystem> m_fs;
 	std::unique_ptr<RetailObjectWorld> m_world;
+	// lane PLAY-3: the castle layouts the placement ghost reads (its own store over the archives: the client never touches the logic's)
+	mutable std::unique_ptr<class CastleTemplateStore> m_ghostCastles;
 	std::unique_ptr<VideoPlayer> m_videos; // lane CAMP-1H: TheVideoPlayer's Video blocks (get_movie)
 	std::string m_videosError;             // lane CAMP-1H: why the Video INIs did not load
 	std::unique_ptr<GameLogicSettings> m_settings;   ///< GameData / AIData / MultiplayerSettings (and the lobby colours), read once by setup()
@@ -511,6 +521,7 @@ private:
 	std::unique_ptr<ArchiveW3DFileSource> m_source;
 	std::unique_ptr<WW3DAssetManager> m_assets;
 	std::unique_ptr<LiveGame> m_game;
+	std::unique_ptr<TributeSource> m_tribute; ///< lane PLAY-1 (tribute_source)
 	std::unique_ptr<SpellStoreModel> m_spellStore;     // lane SPELL-2
 	void waitSpellIdle();
 	std::unique_ptr<InGameSpellBookModel> m_spellBar;  // lane SPELL-2

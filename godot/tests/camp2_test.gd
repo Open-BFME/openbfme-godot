@@ -154,7 +154,8 @@ func _run() -> int:
 	_check(not t6.contains("MOVIE ERROR"), "6: no movie error")
 	_in_game_clean(t6, "campaign ANGMAR_CAMPAIGN 0")
 	# 7. the start-up movies (EALogoMovie, NewLineLogo, TolkienLogo, Overall_Game_Intro), each skipped after 1 s. A movie whose file the install lacks
-	# (some copies of the game have no logo movies) must be reported (MOVIE ERROR, the player's message), never skipped silently
+	# (some copies of the game have no logo movies) is reported (MOVIE ERROR) and skipped without a picture, as retail's display skips a stream that
+	# does not open (lane PLAY-3: RW 0x65C67E / 0x65D3F5, scripts/movie_player.gd); the player sees no error
 	var t7 := _game(["--intro-check", "--movie-skip-after=1000"], -1)
 	var missing := 0
 	for title in ["EALogoMovie", "NewLineLogo", "TolkienLogo", "Overall_Game_Intro"]:
@@ -166,13 +167,16 @@ func _run() -> int:
 			var file := err.get_slice(" - ", 1).get_slice(" (tried", 0)
 			var absent := not file.is_empty() and not _install_has_movie(file + ".vp6")
 			_check(absent, "7: the start-up movie %s is reported missing only when the install lacks %s.vp6 (%s)" % [title, file, err])
+			_check(t7.contains("MOVIE %s not played:" % title), "7: the missing movie %s is skipped as retail (no picture)" % title)
 			missing += 1
 	if missing > 0:
 		print("    NOTE: this install lacks %d of the start-up movies; each was reported (MOVIE ERROR)" % missing)
 	else:
 		_check(t7.contains("GAME intro movies done: 0 errors"), "7: the start-up movies played without errors")
+	_check(not t7.contains("MOVIE ERROR shown to the player"), "7: no movie error is shown to the player")
 	# 8. a movie that cannot be played never stops the game (review r1): the bonus mission's intro opens a file whose header has the picture size 0 x 400
-	# (never reaching Godot's Image), then a file that does not exist; each is a MOVIE ERROR, shown to the player, and the mission starts
+	# (never reaching Godot's Image), then a file that does not exist; each is a MOVIE ERROR in the report, skipped without a picture as retail skips a
+	# stream that does not open (lane PLAY-3: RW 0x65C67E), and the mission starts
 	var bad := ProjectSettings.globalize_path("user://camp2-bad-size.vp6")
 	var f := FileAccess.open(bad, FileAccess.WRITE)
 	var head := PackedByteArray([0x4D, 0x56, 0x68, 0x64, 32, 0, 0, 0, 0x76, 0x70, 0x36, 0x30, 0, 0, 144, 1, 1, 0, 0, 0, 0, 0, 0, 0, 30, 0, 0, 0, 1, 0, 0, 0,
@@ -183,8 +187,8 @@ func _run() -> int:
 		var t8 := _game(["--campaign-menu=BonusCampaign:N", "--movie-file=Angmar_Campaign_BonusOpen=" + spec[0], "--shell-pictures-quit=2"])
 		var err := _movie_error(t8, "Angmar_Campaign_BonusOpen")
 		_check(err.contains(spec[1]), "8: the broken movie is a MOVIE ERROR naming the problem (%s)" % err)
-		_check(t8.contains("MOVIE ERROR shown to the player: The movie Angmar_Campaign_BonusOpen could not be played:") and t8.contains("(visible true)"),
-			"8: the player sees the movie's error")
+		_check(t8.contains("MOVIE Angmar_Campaign_BonusOpen not played:") and not t8.contains("MOVIE ERROR shown to the player"),
+			"8: the movie is skipped without a picture or a message, as retail")
 		_in_game_clean(t8, "campaign ANGMAR_BONUS_CAMPAIGN 0")
 	DirAccess.remove_absolute(bad)
 	# 4. a skirmish, the way back, a replay

@@ -164,6 +164,7 @@ public:
 	PackedStringArray get_event_names(int sound_type) const; // AudioType 0..5, -1 = all
 	Dictionary get_event_info(const String &event_name) const;
 	PackedStringArray get_playing() const;
+	PackedStringArray get_fading() const; // lane PLAY-3: the voices fading out
 	PackedStringArray get_unverified() const;
 
 	void _process(double delta) override;

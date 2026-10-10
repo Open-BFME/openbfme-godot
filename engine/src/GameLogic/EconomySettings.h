@@ -49,6 +49,10 @@ struct EconomySettings
 	// the same constructor inference, S-255)
 	float multiPlayUnitXPMult[20];
 	float multiPlayBuildingXPMult[20];
+	// lane PLAY-1: NumMinutesBeforePlayersCanTransferMoney (row RW 0xC011E0, parseInt RW 0x42EC5E, GlobalData + 0x122C; the constructor's value 5, RW 0x6439B7):
+	// the tribute (MSG_GIVE_MONEY, RW 0x6264E1) is refused before minutes * LOGICFRAMES_PER_SECOND * 60 logic frames (RW 0x626087). Not required (the constructor
+	// value when absent); in crc() (Sol review: a peer whose gate differs must not hash equal; the tribute's effects, cash and ScoreKeeper, are hashed too)
+	int numMinutesBeforePlayersCanTransferMoney = 5;
 	EconomySettings()
 	{
 		for (float &f : multiPlayMoneyMult)

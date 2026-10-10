@@ -27,6 +27,10 @@
 #include "GameLogic/Combat/CombatQueries.h"
 #include "GameLogic/AI/AIStateMachine.h"
 #include "GameLogic/AI/AIWorld.h"
+#include "GameLogic/Combat/ObjectWeapons.h"
+#include "GameLogic/Module/EmotionModules.h"
+#include "GameLogic/Weapon.h"
+#include "GameLogic/WeaponSet.h"
 #include "GameLogic/GameLogic.h"
 #include "GameLogic/Module/AIUpdate.h"
 #include "GameLogic/Module/HordeAIUpdate.h"
@@ -45,6 +49,7 @@ const float kPi = 3.14159274f;
 const float kTwoPi = 6.28318548f;
 const float kTurnThreshold = 0.17453294f; // RW 0xC5B69C
 const float kSpeedFraction = 0.2f;         // RW 0xBDAD78
+const float kNearestMemberSearch = 99999.0f; // RW 0xBDF350 (RW 0x86FA87: the reach without a range and the start of the search)
 
 // |a| of a binary32 (the sign bit cleared: no rounding, no libm)
 float absF32(float a)
@@ -167,6 +172,343 @@ void HordeContain::prepareMembersForCommand(Object *target)
 		ai->aiBusy(CMD_FROM_AI);
 		++m_stats.handoffBusy;
 	}
+}
+
+// ---- lane ARCHER-1: the HordeAttackNugget's fire -------------------------------------------------------------------------------------------------------------------
+// TARGET FACTS (RotWK game.dat, caveat S-001; read with Ghidra and capstone). The nugget (RW ctor 0x911B39) fires through its slots 5 / 6 (RW 0x911A58 at an object,
+// RW 0x911AC9 at a position: tier B same-shape to the BFME2 decomp's Made002CCBCASlots.cpp): the source's contain (Object + 0x258) gives its horde interface (slot 0x7C);
+// unless LockWeaponSlot is 5 (unlocked) the source's slot is locked temporarily (RW 0x69121A), then the interface's slot 4 (RW 0x875221) gets (victim, ClosestMemberOnly)
+// or its slot 0 (RW 0x875550) the position. RW 0x875221 is BFME1's HordeContain::attackTargetNow (Open-BFME-1 Rva00241F10MemberAttackTarget.cpp, the donor) with
+// RotWK's changes: the ClosestMemberOnly argument, the member walking test, the melee-weapon branch and a pick that is no longer the plain nearest member.
+// The spread of the fire over the target horde is RW 0x86FA87 (contain slot 0x48, the victim horde's): every member of the victim horde within the attacker's
+// range has its distance multiplied by GameLogicRandomValueReal(0.66, 1.33) (RW 0xC0F1C4 / 0xC5B138; HordeContain.cpp line 0x1544), and the attacker takes the
+// smallest product: a randomised nearest, so the archers' shots land on different men. No retail weapon sets ClosestMemberOnly (RotWK 2.01 INI.big).
+
+// RW 0x86C6EB: a MELEE_HORDE (template + 0x116 bit 7) whose current weapon is a MeleeWeapon, or that has none, does not release its members (its Amoeba fights)
+static bool meleeHordeRefusesRelease(Object &horde)
+{
+	static const int kMeleeHorde = ObjectTemplateInfoBuilder::kindOfIndex("MELEE_HORDE");
+	if (!hasKind(horde, kMeleeHorde))
+	{
+		return false;
+	}
+	ObjectWeapons *w = horde.getWeapons();
+	Weapon *cur = w ? w->currentWeapon() : nullptr;
+	return !cur || !cur->getTemplate() || cur->getTemplate()->m_meleeWeapon; // RW 0x441B59
+}
+
+// RW 0x744AAA(attacker, candidate, weapon) (tier A: the BFME2 decomp's rva003430A3): a ranged weapon (not a MeleeWeapon RW 0x441B59, not a contact weapon: RotWK's
+// RW 0x9188EB answers false) of an ATTACK_NEEDS_LINE_OF_SIGHT (template + 0x10F bit 3) or CAN_SHOOT_OVER_WALLS (+ 0x122 bit 6) attacker needs the line of sight
+// filter RW 0x6616AC (the terrain line and the pathfinder's view block). INFERENCE (S-859, as ApproachRequiresLOS): the line of sight is taken as clear
+static bool weaponFilterAllows(Object &attacker, Object &candidate, Weapon *weapon, unsigned long long &losAssumedClear)
+{
+	(void)candidate;
+	static const int kNeedsLos = ObjectTemplateInfoBuilder::kindOfIndex("ATTACK_NEEDS_LINE_OF_SIGHT");
+	static const int kOverWalls = ObjectTemplateInfoBuilder::kindOfIndex("CAN_SHOOT_OVER_WALLS");
+	if (!weapon || !weapon->getTemplate() || weapon->getTemplate()->m_meleeWeapon)
+	{
+		return true;
+	}
+	if (hasKind(attacker, kNeedsLos) || hasKind(attacker, kOverWalls))
+	{
+		++losAssumedClear; // RW 0x6616AC (S-859)
+	}
+	return true;
+}
+
+// RW 0x6FF7FA(source, victim) (BFME2 0x6FE193, tier B, no decomp code yet): the source can hit the victim from where it stands. For a source that is not a HORDE, each
+// of the six weapon slots (RW 0x6C81B0) that holds a weapon: within its attack range (RW 0x6CC653(source, victim, 0, 1)) -> true; a MeleeWeapon then, unless the source
+// stands its ground (STAND_GROUND, status 0x44, or the AI byte + 0x3CC, which the port does not have: S-583), counts when both stand on the same layer (RW 0x68BBE0:
+// every object is on the ground layer in the port, as ObjectWeapons' range host has it) and the source sees the victim (RW 0x68FA3D with the vision range RW 0x68E43B).
+// The HORDE branch (RW 0x6FF8A7, the SiegeDeploySpecialPower exception) is never reached here: the sources are horde members.
+static bool canReachFromHere(Object &source, Object *victim)
+{
+	if (!victim || !source.getAIUpdateInterface())
+	{
+		return false;
+	}
+	ObjectWeapons *w = source.getWeapons();
+	if (!w)
+	{
+		return false;
+	}
+	static const int kStandGround = ObjectTemplateInfoBuilder::objectStatusIndex("STAND_GROUND");
+	const bool standing = kStandGround >= 0 && source.testStatus((unsigned)kStandGround);
+	for (int slot = 0; slot < (int)WEAPONSLOT_COUNT; ++slot)
+	{
+		Weapon *weapon = w->weaponInSlot(slot);
+		if (!weapon)
+		{
+			continue;
+		}
+		if (w->isSlotWithinAttackRange(slot, *victim, 0.0f, true))
+		{
+			return true;
+		}
+		if (weapon->getTemplate() && weapon->getTemplate()->m_meleeWeapon)
+		{
+			if (standing)
+			{
+				break;
+			}
+			if (EmotionModules::canSeeObject(source, *victim, AIUpdateInterface::objectVisionRangeOf(source)))
+			{
+				return true;
+			}
+		}
+	}
+	return false;
+}
+
+// a member's slot record is in the member map (RW 0x6B4E57 on interface + 0x60) and its rank is one of RanksToReleaseWhenAttacking (module data + 0x1B8; the rank is the
+// first field of the slot record, interface + 0x6C, 0x1C bytes each)
+static bool memberRankReleased(const HordeContainCore &core, const HordeContainModuleData &data, const Object &member, bool &hasSlot)
+{
+	const int slot = core.slotOf(member.getID());
+	const std::vector<HordeContainCore::Slot> &slots = core.slots();
+	hasSlot = slot >= 0 && (size_t)slot < slots.size();
+	return hasSlot && data.m_ranksToReleaseWhenAttacking.count(slots[(size_t)slot].rank) != 0;
+}
+
+// RW 0x870C29
+Object *HordeContain::closestMemberTo(const Object &victim) const
+{
+	GameLogic &logic = getObject()->logic();
+	Object *best = nullptr;
+	float bestD = 1000000.0f; // RW 0xBDCDC0
+	auto consider = [&](Object *m) {
+		if (!m || m == &victim)
+		{
+			return;
+		}
+		const float dx = SimMath::subf32(m->getPosition()->x, victim.getPosition()->x);
+		const float dy = SimMath::subf32(m->getPosition()->y, victim.getPosition()->y);
+		const float d = SimMath::addf32(SimMath::mulf32(dy, dy), SimMath::mulf32(dx, dx)); // RW 0x870CA8 .. 0x870CAC
+		if (d < bestD)
+		{
+			best = m;
+			bestD = d;
+		}
+	};
+	for (Object *m : m_members)
+	{
+		consider(m);
+	}
+	for (ObjectID id : m_garrisonEntering) // interface + 0x54 (contain + 0x170), by id
+	{
+		consider(logic.findObjectByID(id));
+	}
+	return best;
+}
+
+// contain slot 0x110 (RW 0x87055D)
+Object *HordeContain::firstMember() const
+{
+	if (!m_members.empty())
+	{
+		return m_members.front();
+	}
+	return m_garrisonEntering.empty() ? nullptr : getObject()->logic().findObjectByID(*m_garrisonEntering.begin());
+}
+
+// contain slot 0x48 (RW 0x86FA87, read in full; the last argument, 0 from every caller ported, picks the logic generator RW 0x6D332C over the client's RW 0x6D33AB).
+// The reach is `range` when it is above 0 (RW 0xC1B594), else 99999 (RW 0xBDF350). Over the contain list (slot 0x118) in its order: a member (with the status 0x3F
+// only when `skipTagged` is false) whose 3D distance to `pos` (RW 0x403111, compared unrounded) is below the reach; with a range its distance (stored as a float) is
+// multiplied (SSE) by GameLogicRandomValueReal(0.66, 1.33, line 0x1544), drawn for every member within the reach; the smallest product strictly below the best so far
+// wins when the attacker's current weapon (none: every member) passes RW 0x744AAA. With an empty contain list the members on their way into a garrison (the map at
+// interface + 0x54, by id; effectively dead ones skipped: Object + 0x458 bit 0) are measured the same way (line 0x1501) without the weapon filter.
+Object *HordeContain::pickMemberNear(bool skipTagged, const Coord3D &pos, float range, Object *attacker)
+{
+	GameLogic &logic = getObject()->logic();
+	static const int kTagged = ObjectTemplateInfoBuilder::objectStatusIndex("TAGGED"); // status 0x3F
+	const float reach = range > 0.0f ? range : kNearestMemberSearch;
+	Weapon *weapon = nullptr;
+	if (attacker)
+	{
+		ObjectWeapons *w = attacker->getWeapons();
+		weapon = w ? w->currentWeapon() : nullptr; // RW 0x68B58C(0)
+	}
+	auto score = [&](Object &m, int line, float &out) {
+		const double d = SimMath::length3d(SimMath::subf32(pos.x, m.getPosition()->x), SimMath::subf32(pos.y, m.getPosition()->y),
+			SimMath::subf32(pos.z, m.getPosition()->z));
+		if (!((double)reach > d))
+		{
+			return false;
+		}
+		out = (float)d; // RW 0x86FD10 fst dword
+		if (range > 0.0f)
+		{
+			const float f = logic.random().getValueReal(0.66f, 1.33f, "HordeContain.cpp", line);
+			out = SimMath::mulf32(f, out);
+		}
+		return true;
+	};
+	Object *best = nullptr;
+	float bestD = kNearestMemberSearch;
+	if (!m_members.empty())
+	{
+		const ContainedItemsList members = m_members; // the slot 0x118 copy
+		for (Object *m : members)
+		{
+			if (!m || (kTagged >= 0 && m->testStatus((unsigned)kTagged) && skipTagged))
+			{
+				continue;
+			}
+			float d = 0.0f;
+			if (!score(*m, 0x1544, d))
+			{
+				continue;
+			}
+			if (d < bestD && (!attacker || !weapon || weaponFilterAllows(*attacker, *m, weapon, m_attackStats.losAssumedClear)))
+			{
+				best = m;
+				bestD = d;
+			}
+		}
+		return best;
+	}
+	const std::vector<ObjectID> entering(m_garrisonEntering.begin(), m_garrisonEntering.end());
+	for (ObjectID id : entering)
+	{
+		Object *m = logic.findObjectByID(id);
+		if (!m || m->isEffectivelyDead() || (kTagged >= 0 && m->testStatus((unsigned)kTagged) && skipTagged))
+		{
+			continue;
+		}
+		float d = 0.0f;
+		if (score(*m, 0x1501, d) && d < bestD)
+		{
+			best = m;
+			bestD = d;
+		}
+	}
+	return best;
+}
+
+// HordeContainInterface slot 4 (RW 0x875221)
+void HordeContain::attackTargetNow(Object *victim, bool closestMemberOnly)
+{
+	Object *horde = getObject();
+	if (!victim || meleeHordeRefusesRelease(*horde))
+	{
+		return;
+	}
+	++m_attackStats.fires;
+	// interface + 0x58: the members on their way into a garrison come back first (slot 0x10, RW 0x8759FF(0))
+	if (!m_garrisonEntering.empty())
+	{
+		returnToFormation(false);
+	}
+	const ContainedItemsList members = m_members; // RW 0x865598
+	// the victim's horde: the victim itself when it is a HORDE (template + 0x115 bit 5), else whatever contains it (Object + 0x27C)
+	Object *victimHorde = hasKind(*victim, bits().horde) ? victim : victim->getContainedBy();
+	Object *only = closestMemberOnly ? closestMemberTo(*victim) : nullptr; // RW 0x870C29: none found -> every member acts
+	static const int kMeleeAttacking = ObjectTemplateInfoBuilder::objectStatusIndex("IS_MELEE_ATTACKING"); // status 0x1C
+	const HordeContainModuleData &data = hordeData();
+	for (Object *m : members)
+	{
+		if (!m || (only && m != only))
+		{
+			continue;
+		}
+		bool hasSlot = false;
+		const bool released = memberRankReleased(*m_core, data, *m, hasSlot);
+		AIUpdateInterface *ai = m->getAIUpdateInterface();
+		if (!hasSlot || !ai || ai->isMoving()) // RW 0x8752D3 / + 0x260 / RW 0x664485
+		{
+			continue;
+		}
+		ObjectWeapons *w = m->getWeapons();
+		Weapon *weapon = w ? w->currentWeapon() : nullptr;
+		if (weapon && weapon->getTemplate() && weapon->getTemplate()->m_meleeWeapon)
+		{
+			// RW 0x875320: a busy member (AI slot 0x1C4) goes idle (RW 0x5E821A, CMD_FROM_AI); one that is not IS_MELEE_ATTACKING attacks what it touches (RW 0x69675C(0))
+			++m_attackStats.meleeMembers;
+			if (ai->isBusy())
+			{
+				ai->aiIdle(CMD_FROM_AI);
+			}
+			if (!(kMeleeAttacking >= 0 && m->testStatus((unsigned)kMeleeAttacking)))
+			{
+				if (HordeAIUpdate *h = dynamic_cast<HordeAIUpdate *>(horde->getAIUpdateInterface()))
+				{
+					h->touchAttack(*m, *victim);
+				}
+			}
+			continue;
+		}
+		if (!released || attacksTarget(*ai, *m, victim)) // RW 0x87535A .. 0x8753A3 (RW 0x86BDD3)
+		{
+			continue;
+		}
+		Object *candidate = victim;
+		if (victimHorde)
+		{
+			if (ContainModuleInterface *vc = victimHorde->getContain())
+			{
+				if (HordeContain *vh = dynamic_cast<HordeContain *>(vc))
+				{
+					// the reach: the current weapon's attack range (RW 0x6CA935, stored as a float) unless it is a MeleeWeapon or there is none: 0
+					const float range = weapon ? w->currentAttackRangeNoTarget() : 0.0f;
+					candidate = vh->pickMemberNear(false, *m->getPosition(), range, m);
+					if (!candidate)
+					{
+						candidate = vh->firstMember(); // slot 0x110
+					}
+				}
+				else
+				{
+					++m_attackStats.otherContainer; // the slot 0x48 of other contains is not ported: the victim stays the pick
+				}
+			}
+		}
+		if (canReachFromHere(*m, candidate))
+		{
+			if (ai->aiAttackObject(candidate, CMD_FROM_AI)) // RW 0x66C536(candidate, 0x7FFFFFFF shots, 2)
+			{
+				++m_attackStats.orders;
+			}
+		}
+		else
+		{
+			++m_attackStats.outOfReach;
+			markDirty(); // interface + 4 = 1
+		}
+	}
+}
+
+// HordeContainInterface slot 0 (RW 0x875550): the same guard; every member in the member map with an AI and a released rank gets aiAttackPosition(pos, 0x7FFFFFFF, 2)
+// (RW 0x6961F1, tier A to the BFME2 decomp's AICommandInterface::aiAttackPosition). The port has no attack-position command (S-325): the orders are counted only.
+void HordeContain::attackPositionNow(const Coord3D &pos)
+{
+	(void)pos;
+	if (meleeHordeRefusesRelease(*getObject()))
+	{
+		return;
+	}
+	const HordeContainModuleData &data = hordeData();
+	const ContainedItemsList members = m_members;
+	for (Object *m : members)
+	{
+		bool hasSlot = false;
+		if (m && memberRankReleased(*m_core, data, *m, hasSlot) && m->getAIUpdateInterface())
+		{
+			++m_attackStats.positionOrders;
+		}
+	}
+	if (AIUpdateInterface *ai = getObject()->getAIUpdateInterface())
+	{
+		ai->world().noteStop("S-325 attack commands: aiAttackObject / aiForceAttackObject; guard, hunt, attack position / area / squad and the weapon fire commands are not executed");
+	}
+}
+
+const char *HordeContain::attackStopLine()
+{
+	return "[S-2610] HordeAttackNugget fire (lane ARCHER-1): HordeContain::attackTargetNow is RotWK's RW 0x875221 and the member pick RW 0x86FA87 (a randomised nearest: "
+	       "every enemy member in reach has its distance times GameLogicRandomValueReal(0.66, 1.33), the smallest product wins), read in full; INFERENCE / not ported: the "
+	       "line of sight filter RW 0x6616AC of ATTACK_NEEDS_LINE_OF_SIGHT / CAN_SHOOT_OVER_WALLS attackers is taken as clear (as S-859), RW 0x6FF7FA's AI byte + 0x3CC is "
+	       "taken as unset and its layers as equal, the melee member's touch attack RW 0x69675C uses the Amoeba reach rule (S-588), a victim held by a container that is "
+	       "not a HordeContain stays the pick (that contain's slot 0x48 is not read), and the position fire RW 0x875550 orders nothing (aiAttackPosition, S-325)";
 }
 
 // TransportContain::update, the part BFME added (B1 TransportContainUpdate.cpp): the owner's MOVING (condition 60 in BFME1, 61 in RotWK's registry) is

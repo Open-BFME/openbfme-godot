@@ -7,6 +7,8 @@ config_version=5
 [application]
 
 config/name="OpenBFME Launcher"
+boot_splash/bg_color=Color(0.0627, 0.0706, 0.0863, 1)
+boot_splash/show_image=false
 run/main_scene="res://scenes/main.tscn"
 config/features=PackedStringArray("4.7", "Compatibility")
 config/use_custom_user_dir=true
@@ -20,8 +22,12 @@ file_logging/enable_file_logging.pc=false
 
 [display]
 
-window/size/viewport_width=900
-window/size/viewport_height=600
+; lane UI-3: laid out for 1280x720; canvas_items stretch with an expanding aspect scales it with the window (DPI: main.gd _fit_window)
+; and gives the Deck's 1280x800 the extra height
+window/size/viewport_width=1280
+window/size/viewport_height=720
+window/stretch/mode="canvas_items"
+window/stretch/aspect="expand"
 
 [rendering]
 

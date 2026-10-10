@@ -24,11 +24,14 @@
 #include <vector>
 
 class AptMessageBox;
+class CreditsManager;
+struct ShellEnvironment;
 
 class AptMainMenu : public AptScreen
 {
 public:
-	AptMainMenu(WindowManager &windows, Shell &shell, ShellServices &services);
+	// `environment` (lane UI-4): the archives and language.ini's fonts the credits roll reads; null: Credits reports that it cannot roll
+	AptMainMenu(WindowManager &windows, Shell &shell, ShellServices &services, const ShellEnvironment *environment = nullptr);
 	~AptMainMenu() override;
 
 	// The RotWK names in binary order, for the registry test (commands and the render component).
@@ -47,15 +50,39 @@ public:
 	static std::string unavailableScreenName(const std::string &action);
 	AptMessageBox *unavailableBox() { return m_box.get(); }
 
+	// lane UI-4: the credits page (TARGET FACTS, RotWK game.dat, caveat S-001; BFME2 decomp AptMainMenuCallbacks.cpp, tier A for both):
+	// - AptMainMenu::Credits (RW 0x91B5E9): the old roll deleted, a new CreditsManager (GameClient/Credits.h) loaded (vslot 2) and started (vslot 1)
+	//   into the global RW 0xDEBF50; the transition group MainMenuToCreditsScreen; the shell's music nudged (RW 0x35BD3F's twin) and the misc audio's
+	//   CreditsMusic played; the menu state + 0x288 = 4; Shell + 0x5D set; the engine's frame rate limit 100;
+	// - the menu's update (RW 0x91C2FC) in state 4: the roll's update (vslot 10); once it is finished the movie is asked for "HideCredits" (RW 0xC7CDBC
+	//   through RW 0x62279C; MainMenu.apt defines no such function, so nothing happens and the page stays until Exit);
+	// - AptMainMenu::CreditsExit (RW 0x91B6FD, the tail of the same tier-A run as Credits; BFME2 0x915231): the roll reset (vslot 9) and deleted, the shell's music restored, the
+	//   transition reversed, state 0, Shell + 0x5D cleared, the frame rate limit back to GlobalData's;
+	// - the render callback AptMainMenu::RenderCredits (RW 0x91B1B8): with a roll, its draw (RW 0x9C6765) with the clip's position and size.
+	// DEVICE / INFERENCE (stop S-2520): the roll steps once per 10 ms of the shell's clock (the 100 frames a second the engine is limited to while
+	// it rolls), at most 25 steps per update; the window transition MainMenuToCreditsScreen and Shell + 0x5D are not ported; the
+	// music is the host's (the ShellRequests Credits / CreditsExit).
+	const CreditsManager *credits() const { return m_credits.get(); }
+	int menuState() const { return m_state; }
+	// one roll step per call, as the menu's update in state 4 runs it (tests)
+	void stepCredits();
+
 private:
 	void registerAll();
 	void showSkirmish();
 	void request(ShellAction action, const std::string &argument);
 
 	void update();
+	void startCredits();
+	void exitCredits();
 
 	ShellServices &m_services;
 	bool m_optionsAdvanced = false;
 	std::unique_ptr<AptMessageBox> m_box; // lane CAH-2: made on demand, released after its Ok (GuiFX.apt can be loaded once: the lobbies own their own)
 	bool m_boxClosed = false;
+	const ShellEnvironment *m_env = nullptr;   // lane UI-4
+	std::unique_ptr<CreditsManager> m_credits; // RW 0xDEBF50
+	int m_state = 0;                           // + 0x288 (4: the credits roll)
+	int m_creditsClockMs = 0;                  // the roll's 10 ms steps not yet run
+	bool m_hideCreditsAsked = false;
 };

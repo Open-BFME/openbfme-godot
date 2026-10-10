@@ -197,6 +197,7 @@ void WindowManager::update(int elapsedMs)
 		m_focusDirty = true;
 	}
 	refreshFocus();
+	m_lastElapsedMs = elapsedMs; // lane UI-4
 	int elapsed = elapsedMs;
 	if (elapsed > 60)
 	{
@@ -209,6 +210,7 @@ void WindowManager::update(int elapsedMs)
 	m_inAptUpdate = true;
 	m_apt->update(elapsed);
 	m_inAptUpdate = false;
+	runComponentInits();
 	if (m_gadgetLayer)
 	{
 		m_gadgetLayer->update(elapsed);
@@ -898,16 +900,51 @@ void WindowManager::componentInstanceCreated(AptCharacterInst &inst, const std::
 		note("component-no-init", req.instancePath + " (" + req.symbol + "): the placeholder script set no `_Init`; no screen reference is called");
 		return;
 	}
-	std::vector<std::pair<std::string, ScreenRefFn>> refs = m_screenRefs;
-	for (const auto &ref : refs)
+	// RotWK reads `_Init` in the component's render callback (RW 0x814BEC: GetVariable "_Init", the screen reference map RW 0x6C033A, the call, the
+	// name kept at window + 0x28; an unresolved name is read again at the next render), so the clip's Load event runs first: PlayerTribute.apt's
+	// slider placeholders set `_Init = "HorzSlider"` in Initialize and `String(_parent._parent) + "_InitSlider"` in Load. The port calls it after
+	// the movie's update of the frame (runComponentInits).
+	m_componentRecords.back().initPending = true;
+}
+
+void WindowManager::runComponentInits()
+{
+	for (std::size_t i = 0; i < m_componentRecords.size(); ++i)
 	{
-		if (ref.first == req.init)
+		if (!m_componentRecords[i].initPending || !m_componentRecords[i].window || !m_componentRecords[i].instance)
 		{
-			ref.second(req.instanceName, rec.window.get());
-			return;
+			continue;
 		}
+		AptValue v;
+		std::string init = m_componentRecords[i].init;
+		if (m_componentRecords[i].instance->getMember("_Init", v) && v.isString())
+		{
+			init = v.asString();
+		}
+		m_componentRecords[i].init = init;
+		ScreenRefFn fn;
+		for (const auto &ref : m_screenRefs)
+		{
+			if (ref.first == init)
+			{
+				fn = ref.second;
+			}
+		}
+		if (!fn)
+		{
+			if (!m_componentRecords[i].initNoted)
+			{
+				m_componentRecords[i].initNoted = true;
+				note("unknown-screen-ref", m_componentRecords[i].instancePath + ": `_Init` names '" + init + "', which no screen registered");
+			}
+			continue;
+		}
+		m_componentRecords[i].initPending = false;
+		// the call may create or destroy components: hold the window, re-read the record list by index afterwards
+		std::shared_ptr<GameWindow> window = m_componentRecords[i].window;
+		const std::string name = m_componentRecords[i].instanceName;
+		fn(name, window.get());
 	}
-	note("unknown-screen-ref", req.instancePath + ": `_Init` names '" + req.init + "', which no screen registered");
 }
 
 void WindowManager::componentInstanceDestroyed(AptCharacterInst &inst)
@@ -934,6 +971,18 @@ void WindowManager::componentInstanceDestroyed(AptCharacterInst &inst)
 			return;
 		}
 	}
+}
+
+bool WindowManager::isComponentWindow(const GameWindow *window) const
+{
+	for (const ComponentRecord &r : m_componentRecords)
+	{
+		if (r.window.get() == window)
+		{
+			return true;
+		}
+	}
+	return false;
 }
 
 void WindowManager::levelUnloaded(int level)

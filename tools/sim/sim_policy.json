@@ -45,6 +45,10 @@
    "reason": "the EA Apt menu / UI player: client-side user interface, never part of the simulation state"
   },
   {
+   "glob": "src/GameClient/PlacementGhost.cpp",
+   "reason": "lane PLAY-1: the building placement ghost's look (the BUILD_PLACEMENT_CURSOR model state and the sub objects its draw script hides, RW 0x69C5E6 / 0x4B4379 / 0x4B4443): reads a ThingTemplate's draw module data for the device, never the logic"
+  },
+  {
    "glob": "src/GameClient/LiveFX.cpp",
    "reason": "lane FX-2: the live game's client effect player (FXList / particle playback of the logic's effect events, EnteringStateFX, ParticleSysBone systems, effect sounds): reads the logic and the drawables, draws only the CLIENT random stream, never writes simulation state"
   },
@@ -467,6 +471,14 @@
   {
    "glob": "src/GameClient/OptionPreferences.cpp",
    "reason": "lane UI-2: the player's Options.ini (ZH UserPreferences as RotWK's OptionPreferences); client settings only, never read by the simulation"
+  },
+  {
+   "glob": "src/GameClient/GlobalLanguage.cpp",
+   "reason": "lane UI-4: language.ini's Language block (fonts for the engine's own text); client presentation only, never read by the simulation"
+  },
+  {
+   "glob": "src/GameClient/Credits.cpp",
+   "reason": "lane UI-4: the main menu's credits roll (CreditsManager); shell UI only, never read by the simulation"
   },
   {
    "glob": "src/GameClient/AptView3D.cpp",

@@ -109,6 +109,7 @@ public:
 	Dictionary find_button(int level, const String &path);
 	// { found, type, depth, x, y (stage, of the instance origin), visible, frame, total_frames }
 	Dictionary instance_info(int level, const String &path);
+	Rect2 component_rect(const String &instance_path) const; // lane PLAY-1: a gadget's window in stage space (empty: none)
 
 	// ---- input (stage coordinates are the movie's pixels) -----------------------------------------------------------------------------------
 	Vector2 window_to_stage(const Vector2 &window_position) const;
@@ -150,6 +151,8 @@ public:
 	// lane PLAY-1: an entry of the user's Options.ini (the shell's OptionPreferences, as loaded at boot and saved by the Options screen); null when the
 	// file has no such key (the caller applies the retail default, e.g. GlobalData's for AlternateMouseSetup)
 	Variant get_option(const String &key) const;
+	// lane PLAY-1: the live game PlayerTribute.apt shows and sends tribute in (a GameWorld; null when the game ends)
+	void set_tribute_world(Object *world);
 	// lane HUD-5: the players screen's Status rows (GUI/PlayerStatusInfo.h) from GameWorld.get_player_status_state(), built with the shell's factions, colours
 	// and game text; PlayerTribute.apt reads them when it loads its Status page. Returns { ok, rows: [[name, army, team, status, colour]], error }
 	Dictionary set_player_status(const Dictionary &state);
@@ -273,6 +276,8 @@ private:
 	// lane PERF-1 r2: whether two canvas lists draw the same (every op field drawCanvas reads); the native components of the drawn list redrawn alone
 	static bool sameCanvas(const AptCanvasList &a, const AptCanvasList &b);
 	void redrawNativePlaceholders();
+	void redrawCallbackPlaceholders();                                  // lane UI-4
+	void drawRenderCallback(const AptCanvasOp &op, const RID &item);   // lane UI-4
 	void drawCanvas(const AptCanvasList &list);
 	// lane PERF-1 r2: the gadget layer's commands (false: not in shell mode), whether two lists draw the same, and the drawing
 	bool buildGadgets(GadgetDrawList &commands);

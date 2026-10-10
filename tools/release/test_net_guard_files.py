@@ -74,3 +74,17 @@ def test_the_game_tree_passes_and_release_gd_keeps_its_guard():
     owner = owner[:owner.index("\nfunc ") if "\nfunc " in owner else len(owner)]
     assert "OS.get_user_data_dir()" in owner and "simplify_path()" in owner and 'begins_with(root + "/")' in owner and '"://"' in owner
     assert "enum UserFolder { LOGS }" in release and "if not _is_session_log_name(name):" in release
+
+
+def test_ui3_the_launcher_has_one_file_manager_owner_too():
+    """lane UI-3: the launcher's "Show folder" / "Open log folder" go through paths.gd's static show_in_file_manager alone"""
+    paths = "launcher/scripts/ui/paths.gd"
+    owner = "static func show_in_file_manager(path: String) -> String:\n\tOS.shell_show_in_file_manager(path, true)\n\treturn \"\"\n"
+    assert calls(owner, paths) == []
+    assert calls(owner.replace("static func", "func"), paths) == []
+    assert calls(owner, "launcher/scripts/main.gd") == ["line 2: OS.shell_show_in_file_manager"]
+    assert calls(owner.replace("show_in_file_manager(path: String)", "open_logs(path: String)"), paths) == ["line 2: OS.shell_show_in_file_manager"]
+    assert calls(owner + "static func other():\n\tOS.shell_open(\"https://example.com\")\n", paths) == ["line 5: OS.shell_open"]
+    assert calls("static var x := 1\n" + "func f():\n\tOS.shell_open(\"x\")\n", paths) == ["line 3: OS.shell_open"]
+    found = net_guard.scan_launcher()
+    assert [f for f in found.get(paths, []) if "shell_" in f] == [] and not [p for p, fs in found.items() for f in fs if "shell_" in f]

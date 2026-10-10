@@ -59,11 +59,14 @@ void InGameUI::setGUICommand(const CommandButton *command)
 	m_guiCommand = command;
 }
 
-// ZH InGameUI::createMoveHint (InGameUI.cpp:2066); the immobile check needs the logic and is the caller's (HudInput::update)
+// RW 0x69F54F (its selection and location tests need the logic: HudInput::hintSpy)
 void InGameUI::createMoveHint(const Coord3D &pos)
 {
-	m_moveHints[m_nextMoveHint].frame = m_clientFrame;
-	m_moveHints[m_nextMoveHint].pos = pos;
+	expireMoveHints();
+	MoveHint &h = m_moveHints[m_nextMoveHint];
+	h.frame = m_clientFrame;
+	h.pos = pos;
+	h.expired = false;
 	++m_moveHintsMade;
 	if (++m_nextMoveHint == MAX_MOVE_HINTS)
 	{
@@ -71,12 +74,34 @@ void InGameUI::createMoveHint(const Coord3D &pos)
 	}
 }
 
+// RW 0x69B76C(0) -> RW 0x69B745 for each slot
+void InGameUI::expireMoveHints()
+{
+	for (MoveHint &h : m_moveHints)
+	{
+		h.frame = 0;
+		h.expired = true;
+	}
+}
+
+bool InGameUI::moveHintDrawn(int i) const
+{
+	if (i < 0 || i >= MAX_MOVE_HINTS)
+	{
+		return false;
+	}
+	const MoveHint &h = m_moveHints[i];
+	// RW 0x48EDFF .. 0x48EE24: elapsed = frame - hint frame, taken as 41 while the client frame is below 41; drawn when not expired and elapsed < 41
+	const unsigned elapsed = m_clientFrame < MOVE_HINT_FRAMES + 1 ? MOVE_HINT_FRAMES + 1 : m_clientFrame - h.frame;
+	return !h.expired && elapsed <= MOVE_HINT_FRAMES;
+}
+
 int InGameUI::liveMoveHintCount() const
 {
 	int n = 0;
-	for (const MoveHint &h : m_moveHints)
+	for (int i = 0; i < MAX_MOVE_HINTS; ++i)
 	{
-		n += h.frame != 0 && m_clientFrame - h.frame <= MOVE_HINT_FRAMES ? 1 : 0;
+		n += moveHintDrawn(i) ? 1 : 0;
 	}
 	return n;
 }
