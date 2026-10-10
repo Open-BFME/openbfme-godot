@@ -11,6 +11,7 @@
 
 #include <godot_cpp/classes/camera3d.hpp>
 #include <godot_cpp/classes/input_event.hpp>
+#include <godot_cpp/classes/input_event_with_modifiers.hpp>
 #include <godot_cpp/classes/node2d.hpp>
 #include <godot_cpp/classes/ref.hpp>
 #include <godot_cpp/variant/array.hpp>
@@ -56,12 +57,16 @@ public:
 	PackedStringArray get_message_log() const;
 	// { cursor, selecting, gui_command, over_gui, messages: [...], stops: [...], palantir: { initialized, loaded: {...} } }
 	Dictionary get_state() const;
+	Array get_command_map() const; ///< lane INPUT-1: the CommandMap records in the order the MetaEventTranslator tries them
 	// the HUD movie's own report (unverified rules, errors) and the stops
 	Dictionary get_report() const;
 	// lane SMOOTH-1: the parts of the last _process in ms { hud_update_ms (the HUD: APT movie, control bar, radar, input), hud_camera_ms, hud_cursor_ms }
 	Dictionary get_frame_timings() const;
 	// lane BUILD-1: { placing, template, source, has_ghost, x, y, angle, legal (LegalBuildCode, 0 = may be placed) } of the building waiting for its site
 	Dictionary get_placement() const;
+	// lane PLAY-1: the move hints to draw now (InGameUI::createMoveHint): { model (GameData MoveHintName), frame (client frame), made, hints: [{ slot, frame,
+	// age (client frames, <= 40), position (Godot axes), x, y, z (SAGE) }] }
+	Dictionary get_move_hints() const;
 	// presses the command bar button that builds / constructs `template_name` (opening the pages of the set when it is on a later one): what a click on the Palantir does
 	bool press_command_button(const String &template_name);
 	// lane QA-1: the command bar of the current selection, one entry per shown button: { slot, in_palantir, position (the Palantir position that shows it), name,
@@ -79,14 +84,22 @@ public:
 	Dictionary get_camera() const;
 	// edge scrolling is on in fullscreen (retail: GlobalData Windowed = No); a test or a windowed run can force it
 	void set_edge_scroll(bool on);
+	// lane PLAY-1: the free camera (the owner's presentation option, not retail: TacticalCamera::setFreeCamera); also the attach option free_camera
+	void set_free_camera(bool on);
 	// scripted camera moves for the viewers (the same View::lookAt / setHeightAboveGround the radar click and the wheel call)
 	void camera_look_at(const Vector2 &sage_xy);
 	void camera_set_height(float height_above_ground);
 	Vector2 pixel_to_world(const Vector2 &pixel) const;
 	Vector2 world_to_pixel(const Vector2 &world_xy) const;
+	// lane IDLE-1: { ok, picked (the id the HUD's pick answers at `pixel`, 0 for none), target ("hit" / "miss" / "not_drawn" / "unknown" / "gone": the pick ray
+	// against object `id`'s drawn model alone), target_t, selectable (HudObjects::isSelectable of `id`) } (the QA harness's failed-click verdict)
+	Dictionary pick_probe(const Vector2 &pixel, int64_t id) const;
 	// engine -> movie: calls `function` on the clip at `path` below the HUD movie's root ("" = the root) with string arguments; { ok, result, error }
 	Dictionary invoke_at(const String &path, const String &function, const PackedStringArray &args);
 	// the radar picture's square in window pixels (Rect2; size 0 before the movie shows it)
+	// lane PLAY-1: the window pixel of the radar that shows the SAGE point (x, y); (-1, -1) without a radar
+	Vector2 world_to_radar_pixel(const Vector2 &world) const;
+	bool create_radar_event(const Vector2 &world_xy, int type); ///< lane RADAR-1 (QA): Radar::createEvent at SAGE (x, y), 4 seconds
 	Rect2 get_radar_square() const;
 	// the HUD movie's instance tree (a harness / log aid)
 	String dump_tree(int max_depth) const;
@@ -99,6 +112,10 @@ public:
 	// layout, points, set, states: [20 SetSpellButtonState names], sciences, level } }; the store's open / close (the purchases are sent at the close), a
 	// click on store button `index`, and the movie's spell slot press
 	Dictionary get_spellbook_state();
+	// lane HUD-5: the drawable decorations of the last frame: { ops, health_bars, texts: [..], images: [..], drawn, notes }
+	Dictionary get_icon_ui() const;
+	// lane HUD-5 (a test hook, logged): the client selection becomes the one object (InGameUI::deselectAll + selectObject), as a click on it selects it
+	bool select_object(int64_t id);
 	bool open_spell_store();
 	void close_spell_store();
 	bool spell_store_click(int64_t index);
@@ -111,6 +128,8 @@ protected:
 	static void _bind_methods();
 
 private:
+	void syncModifiers(const InputEventWithModifiers *event);
+	void keyEvent(int dik, bool down, char32_t character); ///< lane INPUT-1: inject_key with the layout's character ///< lane INPUT-1: Ctrl / Shift / Alt as the event reports them
 	void handleInput(const Ref<InputEvent> &event); ///< SMOOTH-1: _input's work (replayed for input that waited for the logic worker)
 	std::unique_ptr<HudDevice> d;
 };

@@ -145,6 +145,20 @@ public:
 	// 0xAARRGGBB of the owner's colour, 0 when the owner has none
 	std::uint32_t getHouseColor() const { return m_houseColor; }
 	void setHouseColor(std::uint32_t argb) { m_houseColor = argb; }
+	// lane CAH-2 (RW 0x6727B0): the house colour set the draw modules recolour with (kind 0 none, 1 .. 3 colours, HouseColor.h); the revision moves on
+	// every set so the device layer re-applies it
+	void setCustomColors(int kind, const std::uint32_t colors[3])
+	{
+		m_customKind = kind;
+		for (int i = 0; i < 3; ++i)
+		{
+			m_customColors[i] = colors[i];
+		}
+		++m_customRevision;
+	}
+	int customColorKind() const { return m_customKind; }
+	const std::uint32_t *customColors() const { return m_customColors; }
+	std::uint32_t customColorRevision() const { return m_customRevision; }
 	bool drawsInMirror() const { return m_drawsInMirror; }
 	void setDrawsInMirror(bool v) { m_drawsInMirror = v; }
 
@@ -246,6 +260,9 @@ private:
 	ModelConditionFlags m_flags;
 	float m_scale = 1.0f;
 	std::uint32_t m_houseColor = 0;
+	int m_customKind = 0;                              // lane CAH-2
+	std::uint32_t m_customColors[3] = { 0u, 0u, 0u };
+	std::uint32_t m_customRevision = 0;
 	unsigned m_changeCount = 0;
 	bool m_drawsInMirror = false;
 	unsigned m_constructionLogicFrame = ~0u; ///< RENDER-2: the logic frame the cached construction percents were refreshed in

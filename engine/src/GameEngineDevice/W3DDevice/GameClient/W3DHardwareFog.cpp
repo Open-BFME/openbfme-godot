@@ -46,8 +46,9 @@ std::string GlslFor(FogMode mode)
 {
 	std::string s = "global uniform vec3 w3d_fog;\n"         // x: HardwareFogEnable (0 / 1), y: HardwareFogStart, z: HardwareFogEnd
 					"global uniform vec3 w3d_fog_color;\n"   // HardwareFogColor / 255 (gamma space)
+					"global uniform float w3d_fog_shift;\n"  // lane PLAY-1: the free camera's extra eye distance (0 = retail)
 					"vec3 w3d_apply_fog(vec3 c, float range) {\n"
-					"\tfloat f = 1.0 - w3d_fog.x * clamp((range - w3d_fog.y) / max(w3d_fog.z - w3d_fog.y, 0.0001), 0.0, 1.0);\n";
+					"\tfloat f = 1.0 - w3d_fog.x * clamp((range - w3d_fog_shift - w3d_fog.y) / max(w3d_fog.z - w3d_fog.y, 0.0001), 0.0, 1.0);\n";
 	switch (mode)
 	{
 	case FOG_ENABLE: s += "\treturn mix(w3d_fog_color, c, f);\n"; break;

@@ -43,6 +43,7 @@ public:
 	bool isValidContainerFor(const Object &obj, bool checkCapacity, bool checkPath) const override;
 	void exitObjectViaDoor(Object *obj, int door) override;
 	float getCrewPowerMultiplier() const override;
+	bool moodScanWhileContained() const override; // RW 0x87EDA9 (contain vslot 0xB8): CrewAllowedToFire
 	void removeAllContained() override;
 	const ContainModuleInterface::ContainedItemsList *crewList() const override { return &m_crew; }
 	bool isSpecificRiderFreeToExit(const Object &rider) const override;

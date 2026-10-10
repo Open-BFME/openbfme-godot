@@ -17,6 +17,7 @@
 //     type 2: KeyboardScrollSpeedFactor * ScrollSpeedFactor * 100 per frame; type 3: KeyboardScrollSpeedFactor * ScreenEdgeScrollSpeedFactor * ScrollSpeedFactor * the ramp percent
 //     (elapsed / ScreenEdgeScrollRampTime, 0 .. 100); then View::scrollBy(offset); a type 1 scroll that hits a map edge moves the anchor to the pointer on that axis; the
 //     numpad rotate keys add KeyboardCameraRotateSpeed per frame, the zoom keys zoom once per frame.
+//   * lane INPUT-1: SAVE_VIEW1..8 / VIEW_VIEW1..8 (the cases 0x24 .. 0x33) store and restore the camera bookmarks; OPTIONS (0x70) stops a scroll.
 // Not ported: stop S-454 (TacticalCamera::acceptanceStops()).
 
 #pragma once
@@ -85,5 +86,13 @@ private:
 	bool m_rotateLeft = false, m_rotateRight = false, m_zoomIn = false, m_zoomOut = false;
 	bool m_scrollKey[4] = { false, false, false, false }; // up, down, left, right (RW 0xDE8CB4 ..)
 	bool m_edgeScrollEnabled = true;
+	// lane INPUT-1: the eight camera bookmarks (BFME2 decomp BfmeOwnVVD + 0x48, ViewLocation m_viewLocation[8])
+	struct ViewLocation
+	{
+		bool valid = false;
+		Coord3D pos;
+		float angle = 0.0f, pitch = 0.0f, height = 0.0f;
+	};
+	ViewLocation m_viewLocation[8];
 	float m_offsetX = 0.0f, m_offsetY = 0.0f;
 };

@@ -6,7 +6,8 @@ unmodified, and can eventually play against retail clients. `docs/PLAN.md` holds
 the standing rules and gates; `docs/STOPS.md` holds every open evidence gap.
 This file orders the work.
 
-Status as of 2026-10-01. Lane names in brackets are merged (M) or running (R).
+Status as of 2026-10-10 (the first automatic preview, v0.3.0-preview.1). Lane
+names in brackets are merged (M) or running (R).
 
 ## What "done" means
 
@@ -36,20 +37,31 @@ A milestone is done only when its gates pass, not when the code exists.
 | INI system: lexer, macros, includes, field parsers, checksum inputs | done [INI-1 M] |
 | Oracle harness for real retail functions (Windows) | done [ORACLE-1, FOLLOW-1 M] |
 | W3D models, hierarchies, animations, pose evaluation, GPU instancing | done [W3D-1, W3D-2 M] |
-| Maps: every chunk of 181 maps, terrain renderer, water, rivers, roads | done [MAP-1 M]; post effects stopped (S-031) |
-| Object model: 4,657 templates, 329 module classes, inheritance, map.ini overrides | done [OBJ-1 M]; module data mostly raw (S-070) |
-| Horde/locomotor data, RNG, movement maths, slot logic | done [HORDE-1 M]; not yet driving live units |
-| Model condition states and animation selection | done [DRAW-1 M] |
-| Map objects drawn on every map (trees, buildings, units, hordes) | done [MAPOBJ-1 M] |
-| APT menus: parser, VM, timeline, input, Godot renderer | done [APT-1, APT-2, APT-3 M] |
-| Lua 4.0.1 runtime, 62 bindings, event dispatch | built, in review [LUA-1 R] |
-| Live objects, scheduler, players, factions, money | [LOGIC-1 R] |
-| Pathfinding and the AI move path | [PATH-1 R] |
-| Shell, window manager, gadgets, skirmish setup | [APT-4 R] |
-| Starting a skirmish from the real menu: new-game consumer, load screen, game scene | [START-1 R] |
+| Maps: every chunk of 181 maps, terrain renderer, water, rivers, roads | done [MAP-1 M]; colour grade and map fog [RENDER-4 M] |
+| Shroud, fog of war, stealth | done [VIS-1, STEALTH-1, STEALTH-2 M]; ghost buildings in the fog (S-561) |
+| Object model: 4,657 templates, 329 module classes, inheritance, map.ini overrides | done [OBJ-1 M]; module coverage in `docs/module-coverage.md` |
+| Live objects, scheduler, players, production, movement, pathfinding | done [LOGIC-1, PATH-1, PROD-1, MOVE-1, MOVE-2, SMOOTH-1..3, EXIT-1, IDLE-1 M]; horde spacing and hostile hordes passing through each other [MOVE-3 R] |
+| Combat: weapons, damage, death, horde melee, crush and knockback, projectiles, FX | done [WEAPON-1, HORDE-2, COMBAT-1..4, ANIM-1, FX-3 M] |
+| Building, economy, upgrades, experience, garrisons and transports | done [BUILD-1..4, CASTLE-1, ECON-1, UPGRADE-1, XP-1, GARRISON-1..3, MODULES-1..3 M] |
+| Spell book, powers, heroes, Create-a-Hero records in the game | done [SPELL-1, SPELL-2, HERO-1, HERO-2 M]; the hero builder screen not ported (S-1226) |
+| Skirmish AI | plays and finishes games [AI-1..3 M]; base, unit and tactical layers carry inferences (S-413, S-415, S-417) |
+| APT menus, shell, skirmish setup, options, score screen | [APT-1..4, UI-1, UI-2, END-1, END-2, FB7-1 M]; the advanced options page and save / load pages open |
+| In-game HUD, input, hotkeys, control groups, camera | [HUD-1..4, QA-1, PLAY-1, INPUT-1 M]; health bars and other HUD items [HUD-5 R] |
+| Audio: events, voices, music, footsteps, stereo image | [AUDIO-1..5 M]; damage sounds and scripted music open (S-1242, S-246) |
+| Map scripts, campaign flow, movies | [SCRIPT-1..3, CAMP-1H, CAMP-2 M]; no save game or campaign menu (S-1360) |
+| Lua 4.0.1 runtime, bindings, event dispatch | [LUA-1 M] |
+| LAN multiplayer: lockstep, disconnects, replays, cross-OS determinism | [MP-1, MP-2, WIN-1 M]; online play not started |
+| Performance: job pool, parallel loading, presentation culling | [PERF-1..3 M] |
+| Release: tester packages, logs, crash reports, launcher with signed updates | [RELEASE-1, WINCRASH-1, LAUNCH-1 M]; automatic preview releases [AUTOREL-1 R] |
 
-Nothing is playable yet: objects do not act, there is no combat, no AI and no
-in-game UI. The foundation (reading and drawing everything retail ships) is in.
+Skirmish is playable from the real menu with all 7 factions, against the
+skirmish AI or over LAN between Windows and Linux. The QA lanes played 71
+scripted games through the real input paths with no crash or stall, and every
+replay matched bit for bit. The campaign plays mission by mission with its
+movies and narration. Not there yet: save / load, War of the Ring, the
+Create-a-Hero builder, online play and mods; team colours are drawn with an
+inferred blend (S-119). The README's
+status table is the player-facing summary of this one.
 
 ## Milestones
 
@@ -58,7 +70,10 @@ Priority order set by the owner: a complete, fully working game, not demos.
 War of the Ring and everything else.** Each lane is roughly one Sonnet
 implementation pass plus Sol review; big systems take several.
 
-### M1 - Live units, production and movement (current)
+### M1 - Live units, production and movement
+
+State (2026-10-10): done. Units train, leave by their exits and walk in all 7
+factions' games; MOVE-3 is still working on horde spacing (FB-0006, FB-0012).
 
 Gate (tests, not a video): for every faction, every unit and horde trains at
 each building whose CommandSet offers it, with retail build time and cost,
@@ -77,6 +92,9 @@ retail test over all 7 factions.
   reform-vs-wheel).
 
 ### M2 - Combat
+
+State: done (WEAPON-1, PROJ-2, HORDE-2, AI-1, PHYS-1, FX-2 / FX-3, AUDIO-1..5,
+COMBAT-1..4, ANIM-1); details are matched to community reports as they come.
 
 Gate: two armies fight on a retail map; damage, death and horde melee look and
 time like retail captures.
@@ -97,6 +115,9 @@ time like retail captures.
 
 ### M3 - Economy, construction and upgrades
 
+State: done for what skirmish uses (BUILD-1..4, CASTLE-1, ECON-1, UPGRADE-1,
+XP-1, MODULES-1..3); module coverage is tracked in `docs/module-coverage.md`.
+
 Gate: a human-controlled base builds, earns and upgrades exactly as retail
 (build times, costs, command points, income rates).
 
@@ -116,6 +137,11 @@ Gate: a human-controlled base builds, earns and upgrades exactly as retail
 
 ### M4 - In-game interface and a playable skirmish
 
+State: done. A skirmish starts from the real menu and is played with the real
+HUD to the score screen (QA-1, QA-2, PLAY-1, INPUT-1); HUD-5 is running.
+Team colours are drawn with an inferred blend (S-119); the retail combine
+is not recovered (S-022).
+
 Gate: start a skirmish from the real menu, play it with the real HUD, and win
 or lose.
 
@@ -132,6 +158,10 @@ or lose.
 
 ### M5 - Full skirmish 1:1, all base-game factions
 
+State: in progress. All 7 factions play whole games against the skirmish AI;
+the AI's base, unit and tactical layers still carry inferences (S-413, S-415,
+S-417).
+
 Gate: full skirmishes against the skirmish AI on every map type, with every one
 of the 7 factions, play like retail; every unit, hero, power and upgrade works.
 
@@ -146,6 +176,10 @@ of the 7 factions, play like retail; every unit, hero, power and upgrade works.
 - GAMEMODES-1: King of the Hill, capture the flag and the other RotWK modes.
 
 ### M6 - Multiplayer that is really good
+
+State: LAN works. MP-1 / MP-2 lockstep with disconnects, drops and replays;
+WIN-1's Windows / Linux lockstep games stay in sync. Online play (the relay
+service below) is not started.
 
 Gate: automated 2-8 player games (AI-driven clients) across Windows and Linux
 run for hours with zero desyncs; human games over LAN and the internet are
@@ -174,6 +208,8 @@ smooth at realistic latency and packet loss.
 
 ### M7 - Retail parity and cross-play with retail clients
 
+State: not started (needs a clean `game.dat` and retail replays).
+
 Gate: retail 2.01 LAN replays play back with CRC parity; then PLAN's eight
 cross-play gates in order.
 
@@ -189,6 +225,9 @@ cross-play gates in order.
 - SAVE-1: save/load (xfer).
 
 ### M8 - Extreme performance
+
+State: started early (PERF-1..3: the benchmark harness, a job pool on every
+core, parallel loading, presentation culling).
 
 Starts once skirmish and multiplayer work; performance hygiene applies from day
 one (no lane may regress the measured budgets below).
@@ -211,6 +250,11 @@ fast map loads.
 
 ### M9 - Campaigns, War of the Ring and the rest
 
+State: the campaign plays mission by mission (SCRIPT-1..3, CAMP-1H, CAMP-2:
+scripts, narration, VP6 movies); no save game or campaign menu (S-1360).
+Create-a-Hero records play in a game (HERO-2), the builder screen does not
+exist yet. War of the Ring not started.
+
 Gate: every campaign mission and the tutorials complete as in retail; War of
 the Ring and Create-a-Hero work.
 
@@ -223,6 +267,8 @@ the Ring and Create-a-Hero work.
 - MOVIE-1: Bink playback for campaign movies.
 
 ### M10 - Mods (designed in from the start)
+
+State: not started as a lane; every lane follows PLAN rule 6.
 
 Gate: Edain runs unmodified with its own assets; then further mods.
 
@@ -244,10 +290,13 @@ hard-coded retail content), and reviewers check it.
 
 ## Cross-cutting work
 
-- **Stop burn-down.** About 100 registered stops today. Each lane closes the
+- **Stop burn-down.** 541 open stops on 2026-10-10 (rows of `docs/STOPS.md` not
+  marked closed). Each lane closes the
   stops it owns; M7 closes the ones that need a clean binary or recordings.
-- **Windows parity.** MSVC build, `run_tests.bat` and the Windows-only retail
-  oracles run on a Windows machine for every merge (the Deck runs Linux/GCC).
+- **Windows parity.** The Windows build is cross-compiled with llvm-mingw
+  (`tools/release/build_windows.sh`, `docs/WINDOWS.md`); its suite and the
+  launcher tests run natively on a Windows machine. The MSVC `build.bat` path
+  is still to be confirmed (S-1541).
 - **Performance.** Keep the current budget: 1,000 animated soldiers at more
   than 300 fps on the Deck GPU, the largest map with all objects at more than
   200 fps; add simulation budgets (logic frame under 10 ms with 2,000 units).
@@ -264,7 +313,8 @@ These unblock gates that no amount of code can pass on its own:
 2. **Retail 2.01 LAN replays and recordings:** multiplayer replays with CRC
    messages, plus a few frame-counted video captures of known states, for M7
    and the visual gates.
-3. **A Windows machine** for MSVC builds and the retail-function oracles.
+3. **A Windows machine** for MSVC builds and the retail-function oracles
+   (available since 2026-10-09 for the native suite).
 4. **Mod files** (Edain first) for M10.
 
 ## Rough size
@@ -274,7 +324,7 @@ about 10-15 for multiplayer (M6), then about 25-35 for M7-M10. Lanes run in para
 (three to five at a time has worked). The order above is fixed by dependencies;
 the pace is set by parallelism and review capacity.
 
-## Community feedback intake (FB items, updated 2026-10-09)
+## Community feedback intake (FB items, updated 2026-10-10)
 
 Reports from the project's Discord feedback channel are evidence to reproduce, not
 diagnoses: each one is checked against retail data and the binary before work, and
@@ -284,13 +334,13 @@ is kept in the community service (`bfme-community feedback-status`).
 
 | Item | Report (short) | State | Where |
 |---|---|---|---|
-| FB-0001 | units run in place | mostly fixed (2.3-2.8 per game left, from 5.8-8.8): idle units keeping MOVING | ANIM-1, EXIT-1 (merged), follow-up lane |
+| FB-0001 | units run in place | fixed: RotWK's update phase order (melee treadmill 770 -> 0 frames in a 2v2), ram crews | ANIM-1, EXIT-1, IDLE-1 (merged) |
 | FB-0002 | Grond moves without its trolls, wheels locked | fixed: crew pushes, wheels turn | COMBAT-3, COMBAT-4 (merged) |
 | FB-0003 | cavalry charges don't throw infantry | fixed: crush throw measured against retail, RamPower hit ported | COMBAT-3, COMBAT-4 (merged) |
 | FB-0004 | troll hit timing, troll clubs don't launch units | fixed: shockwaves / MetaImpactNugget | ANIM-1, COMBAT-4 (merged) |
 | FB-0005 | units stuck around buildings | fixed (the barracks exit); reopen if seen elsewhere | EXIT-1 (merged) |
 | FB-0006 | two hordes on identical coordinates | in progress | MOVE-3 |
-| FB-0007 | main-menu button text not vertically centred | to investigate | next UI lane |
+| FB-0007 | main-menu button text not vertically centred | fixed: APT text placed as RotWK's display string | FB7-1 (merged) |
 | FB-0008 | no ring animation on victory / defeat | fixed | UI-2 (merged) |
 | FB-0009 | jerky archer firing cycle | fixed | ANIM-1 (merged) |
 | FB-0010 | menu / spell book opacity | fixed (binary-derived) | UI-2 (merged) |

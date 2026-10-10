@@ -209,11 +209,15 @@ public:
 	// ---- per-frame --------------------------------------------------------------------------------------------------------------------------
 	// Advances the manager to `nowMs` (a monotonic client clock) in fixed 33.33 ms steps (at most 8 per call; more are dropped and counted).
 	void update(double nowMs);
-	// ZH AudioManager::update: the microphone from the camera. groundPos: where the camera looks at the terrain; cameraPos; angle: the
-	// camera heading in radians; groundHeight at the look-at point. INFERENCE from the INI comments of the Microphone* fields (stop S-243).
-	void updateMicrophone(const Coord3D &lookAtGround, const Coord3D &cameraPos, float cameraAngleRadians, int view = 0);
+	// RW MilesAudioManager::recalculateMicrophone 0x45235B (lane AUDIO-5): the listener (Miles' microphone) from the tactical camera's
+	// position and the terrain point under the screen centre (lookAtValid false: no terrain under it, the pull towards it is skipped),
+	// with the Microphone* fields of the current view; it faces the camera's horizontal heading. Also sets the zoom volume (RW 0x451946).
+	void updateMicrophone(const Coord3D &cameraPos, const Coord3D &lookAt, bool lookAtValid = true);
+	// the listener directly (viewers, cinematics): `forward` is the horizontal unit heading
 	void setListenerPosition(const Coord3D &position, const Coord3D &forward);
 	const Coord3D &getListenerPosition() const { return m_listenerPosition; }
+	const Coord3D &getListenerForward() const { return m_listenerForward; }
+	float getZoomVolume() const { return m_zoomVolume; } ///< RW 0x451946's multiplier of positional volume (updateMicrophone)
 
 	// ---- state and volumes ---------------------------------------------------------------------------------------------------------------------
 	void setOn(bool on, unsigned affect);
@@ -314,7 +318,6 @@ private:
 	bool startVoice(PlayingAudio &p, const std::string &file, bool firstPortion);
 	void completeVoice(PlayingAudio &p);
 	VoiceParams voiceParamsFor(AudioEventRTS &event, VoiceKind kind);
-	float panFor(const Coord3D &pos) const;
 	void releasePlaying(PlayingAudio &p);
 	void reportFailure(const AudioEventRTS &event, const std::string &file, const std::string &reason);
 	void noteMissingHook(const char *name);

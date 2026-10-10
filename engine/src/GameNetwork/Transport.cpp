@@ -9,9 +9,13 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
+#include <cstring>
 #include <thread>
 
 #ifdef _WIN32
+#ifndef _WINSOCK_DEPRECATED_NO_WARNINGS
+#define _WINSOCK_DEPRECATED_NO_WARNINGS // lane FB7-1: gethostbyname, as ZH IPEnumeration uses it
+#endif
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
@@ -24,6 +28,7 @@
 typedef int socklen_type;
 #else
 #include <arpa/inet.h>
+#include <netdb.h>
 #include <cerrno>
 #include <fcntl.h>
 #include <netinet/in.h>
@@ -728,4 +733,30 @@ void Transport::service()
 		}
 		m_delayed.erase(m_delayed.begin());
 	}
+}
+
+std::vector<std::uint32_t> LocalIPv4Addresses()
+{
+	// ZH IPEnumeration::getAddresses: gethostname, gethostbyname, every h_addr_list entry (network order -> host order)
+	std::vector<std::uint32_t> out;
+#ifdef _WIN32
+	ensureWinsock();
+#endif
+	char host[256] = {};
+	if (gethostname(host, sizeof host - 1) != 0)
+	{
+		return out;
+	}
+	const hostent *he = gethostbyname(host);
+	if (!he || he->h_addrtype != AF_INET || he->h_length != 4)
+	{
+		return out;
+	}
+	for (int i = 0; he->h_addr_list[i]; ++i)
+	{
+		std::uint32_t a = 0;
+		std::memcpy(&a, he->h_addr_list[i], 4);
+		out.push_back(ntohl(a));
+	}
+	return out;
 }

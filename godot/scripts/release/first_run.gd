@@ -33,6 +33,11 @@ func run(fs: RefCounted, setup: RefCounted, problem: String, test_pick: Dictiona
 	_setup = setup
 	layer = 90
 	_found = setup.discover()
+	# lane AIO-1: a launcher record of downloaded folders that cannot be read is said on the screen, not only in the log
+	var marker: String = setup.downloaded_problem()
+	if not marker.is_empty():
+		print(Release.info.redact("FIRST RUN " + marker))
+		problem = marker if problem.is_empty() else problem + "\n" + marker
 	for c in _found:
 		print(Release.info.redact("FIRST RUN found %s: %s (%s) %s" % [c.game, c.path, c.source, "ok" if c.ok else "rejected: " + "; ".join(c.errors)]))
 	if DisplayServer.get_name() != "headless":

@@ -718,6 +718,27 @@ void CreateAHeroGame::onCreated(Object &obj)
 	}
 }
 
+void CreateAHeroGame::applyBuilder(Player &player, const CreateAHeroHero &hero, Object &obj)
+{
+	if (!TheCreateAHeroSystem)
+	{
+		throw std::logic_error("CreateAHeroGame::applyBuilder: TheCreateAHeroSystem is not installed");
+	}
+	const int key = playerKey(player);
+	const bool fresh = m_heroes.find(key) == m_heroes.end() || m_heroes[key].objectID != obj.getID() || m_heroes[key].classIndex != hero.classIndex ||
+		m_heroes[key].subClassIndex != hero.subClassIndex;
+	CreateAHeroHero &stored = m_heroes[key];
+	stored = hero;
+	std::vector<std::pair<std::string, std::vector<int>>> &choices = m_choices[key];
+	choices.clear();
+	if (const CreateAHeroSubClass *s = TheCreateAHeroSystem->subClass(stored.classIndex, stored.subClassIndex)) // RW 0x80C3AB
+	{
+		choices = s->blingGroups;
+	}
+	stored.objectID = obj.getID(); // RW 0x80967A
+	apply(stored, obj, fresh ? (std::uint32_t)CreateAHeroHero::LOAD_FLAGS : hero.flags);
+}
+
 // RW 0x692ACC: the TriggeredBy upgrade of the object's UnpauseSpecialPowerUpgrade for the power (compareNoCase on the name), "" when none
 static std::string unpauseUpgradeOf(const Object &obj, const std::string &power)
 {
@@ -807,7 +828,7 @@ void CreateAHeroGame::apply(CreateAHeroHero &hero, Object &obj, std::uint32_t fl
 	// RW 0x80AD1F .. 0x80AD6E: the game mode upgrade on, the map mode one off (outside the builder screen, + 0x18C)
 	const UpgradeTemplate *mapMode = findUpgrade(sys.mapModeUpgradeName);
 	const UpgradeTemplate *gameMode = findUpgrade(sys.gameModeUpgradeName);
-	if (mapMode && gameMode)
+	if (mapMode && gameMode && !sys.inBuilder)
 	{
 		obj.giveUpgrade(gameMode);
 		obj.removeUpgrade(mapMode); // RW 0x691438
@@ -848,7 +869,17 @@ void CreateAHeroGame::apply(CreateAHeroHero &hero, Object &obj, std::uint32_t fl
 		}
 		hero.flags = (hero.flags & ~3u) | 0x80u;
 	}
-	// RW 0x80AF0B: flag 8 colours the drawable (RW 0x80959A, client: S-1226) and clears; RW 0x80AF60: 0x200 is RW 0x80A77C (the stats, S-1226)
+	// RW 0x80AF0B: flag 8 colours the drawable (RW 0x80959A: kind 3 with +0x2C / +0x30 / +0x34 pushed as its three colours, then RW 0x6727B0) and clears;
+	// lane CAH-2: the colours go to the client through its hooks (never logic state). INFERENCE: retail clears flag 8 only when the object has a drawable
+	// (RW 0x80AF6F inside that branch); the port clears it always so a run without a client hashes the same flags. RW 0x80AF60: 0x200 is RW 0x80A77C
+	// (the stats, S-1226)
+	if (hero.flags & 8u)
+	{
+		if (ObjectClientHooks *client = m_logic.clientHooks())
+		{
+			client->setCustomColors(obj, 3, hero.primaryColor, hero.secondaryColor, hero.tertiaryColor);
+		}
+	}
 	hero.flags &= ~(8u | 0x200u);
 }
 
@@ -928,6 +959,11 @@ static int powerButtonCost(const CommandButton &b, int level, int discountPerLev
 }
 
 int CreateAHeroGame::powerCost(const CreateAHeroHero &hero) const
+{
+	return powerCostOf(hero);
+}
+
+int CreateAHeroGame::powerCostOf(const CreateAHeroHero &hero)
 {
 	int total = 0;
 	for (int i = 0; i < CreateAHeroHero::POWER_COUNT; ++i) // RW 0x809CA6

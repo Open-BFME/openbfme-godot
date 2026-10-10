@@ -19,8 +19,8 @@
 // DONOR FACTS (Open-BFME-2 VideoPlayerAddVideo.cpp RW 0x689FD0 / VideoPlayerGetVideo.cpp RW 0x689B10, BFME2 1.06): addVideo replaces a video of the
 // same internal name (exact compare) else appends; getVideo compares the internal names case-insensitively. ZH VideoPlayer::init loads
 // Data\INI\Default\Video.ini then Data\INI\Video.ini (INI_LOAD_OVERWRITE); RotWK's loader was not located (INFERENCE: the same two files).
-// NOT PORTED (stop S-1710): the VP6 picture (no decoder: the movie shows black for its length), the movie subtitles (HasSubtitles: no Angmar movie
-// sets it), TheGlobalData + 0x9AD.
+// NOT PORTED (stop S-1710): the movie subtitles (HasSubtitles: no Angmar movie sets it), TheGlobalData + 0x9AD. Lane CAMP-2: the picture is decoded
+// (GameClient/VP6Decoder.h); the header comes from the container's chunk index (the "_with_alpha" movies start with an "AVP6" chunk, not "MVhd").
 #pragma once
 
 #include <cstddef>
@@ -48,6 +48,7 @@ struct VideoStreamInfo
 	std::string error;
 	std::string title;    ///< the Video's internal name
 	std::string path;     ///< the file found (a path below the install root, the search directory's spelling)
+	std::string fullPath; ///< lane CAMP-2: the same with the root (what the movie stream opens)
 	std::uint32_t width = 0, height = 0, frames = 0;
 	std::uint32_t rateNumerator = 0, rateDenominator = 0;
 	double durationMs = 0.0; ///< frames / (numerator / denominator)

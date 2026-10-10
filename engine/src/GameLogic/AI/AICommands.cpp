@@ -6,6 +6,7 @@
 #include "Common/PlayerList.h"
 #include "Common/Player.h"
 #include "GameLogic/AI/AIGroup.h"
+#include "GameLogic/AI/AIWorld.h"
 #include "GameLogic/GameLogic.h"
 #include "GameLogic/Module/AIUpdate.h"
 #include "GameLogic/Combat/CombatNames.h"
@@ -82,6 +83,13 @@ bool AICommands::move(GameLogic &logic, const GameMessage &m)
 	else
 	{
 		(type == MSG_DO_FORCEMOVETO ? m_stats.forceMoves : type == MSG_DO_ATTACKMOVETO ? m_stats.attackMoves : m_stats.moves) += 1;
+		if (type != MSG_DO_FORCEMOVETO && logic.aiWorld() && logic.aiWorld()->config().pathfind.planningModeEnabled)
+		{
+			// lane MOVE-3: RW 0x77BAAA (MSG_DO_MOVETO) and RW 0x77AA7A (MSG_DO_ATTACKMOVETO) hand the group to the group manager's move order (RW 0x75748C) while
+			// GameData + 0x11CA (PlanningModeEnabled) is set, which retail always is; MSG_DO_FORCEMOVETO (RW 0x77AAF8) takes the generic group command (RW 0x774897)
+			group.planningMoveToPosition(dest->location, type == MSG_DO_ATTACKMOVETO, CMD_FROM_PLAYER);
+			return true;
+		}
 		group.groupMoveToPosition(dest->location, false, CMD_FROM_PLAYER);
 		if (type == MSG_DO_ATTACKMOVETO)
 		{

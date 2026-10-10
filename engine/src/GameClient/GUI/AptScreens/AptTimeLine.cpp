@@ -62,6 +62,7 @@ const char *const kProviders[6] = { "TimeLine:ScreenMode", "TimeLine:ShowSaveRep
 AptTimeLine::AptTimeLine(WindowManager &windows, Shell &shell, ShellEnvironment &environment)
 	: AptScreen(windows, shell, "TimeLine.apt", "AptTimeLine"), m_env(environment)
 {
+	windows.setBackground(1); // lane FB7-1: the constructor shows the front-end background (RW 0x926DE5 .. 0x926DE7)
 	registerCommand("AptTimeLine::OnInitialized", [this](const std::string &) { populate(); });
 	registerCommand("AptTimeLine::OnButtonContinue", [this](const std::string &argument) {
 		++m_continue;

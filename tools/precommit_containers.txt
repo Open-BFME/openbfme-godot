@@ -1,0 +1,3 @@
+# Containers and compressed streams the commit gate lets into the public tree (tools/precommit.py rule 4). One per line:
+#   <sha256 of the exact staged bytes>  <repository path>  # why it must be committed (not generated at test time)
+# The gate never unpacks a container, so each entry is a human decision about its contents. Empty on purpose.

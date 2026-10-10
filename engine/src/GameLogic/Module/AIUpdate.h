@@ -82,6 +82,9 @@ public:
 	void onDelete() override;
 	void crc(StateHasher &hasher) const override;
 	UpdateSleepTime update() override;
+	// lane IDLE-1 r2: every AI update class's vslot 0x30 is RW 0x851E97 (`xor eax, eax; ret`): the scheduler files it in updates[0] (phases 3 / 4), so the
+	// AI (and the horde member update RW 0x66C748) runs before the horde contains of updates[1] (tools/rw_object_model/update_phases.py)
+	SleepyUpdatePhase getUpdatePhase() const override { return PHASE_INITIAL; }
 
 	// ---- the command interface (ZH AICommandInterface) ----
 	void aiMoveToPosition(const Coord3D &pos, CommandSourceType source);
@@ -127,6 +130,7 @@ public:
 		unsigned autoAcquire = 0;          ///< ZH AutoAcquireEnemiesWhenIdle flags: 1 Yes, 2 STEALTHED, 4 No, 8 NOTWHILEATTACKING, 16 ATTACK_BUILDINGS
 		float stopChaseDistance = 0.0f;
 		bool standGround = false;
+		bool canAttackWhileContained = false; ///< lane IDLE-1: CanAttackWhileContained (RW field table 0xC0F530, + 0x25, parseBool RW 0x42E558)
 		std::string attackPriority;
 		std::vector<std::string> specialContactPoints; ///< lane BUILD-3: SpecialContactPoints (RW field table 0xC0F640, + 0x58, RW 0x42E59E: every token appended)
 	};
@@ -291,6 +295,10 @@ public:
 	void aiMoveAwayFromUnit(Object *unit, const Coord3D &requesterPos, CommandSourceType source);
 	// the two requesters remembered by RW 0x66DA5F (AI +0x198 / +0x19C), the retry flag (+0x3BA)
 	ObjectID moveAwayRequester(int i) const { return m_moveAwayRequesters[i]; }
+	// RW 0x662B80 (lane MOVE-3 r2): the unit is moving out of the way (its current or temporary state is AI_MOVE_OUT_OF_THE_WAY, 26) for `requester` (one of the
+	// two remembered requesters, AI + 0x198 / + 0x19C)
+	bool isMovingAwayFrom(ObjectID requester) const;
+	ObjectID lastMoveAwayRequester() const { return m_moveAwayRequesters[0]; } ///< lane MOVE-3 r4: the newest of the two requester slots aiMoveAwayFromUnit records (diagnostics)
 
 	// ---- lane MODULES-3: the emotion AI (AIUpdateEmotion.cpp, AIEmotionStates.cpp) ----
 	// RW 0x662FC8 (the nugget start, RW 0x8E0F98): EmotionAIState BACK_AWAY / IDLE / RUN_AWAY_PANIC run the temporary state 48 / 42 / 20 LOCKED (-1), FACE_OBJECT /

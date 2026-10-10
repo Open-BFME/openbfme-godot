@@ -45,7 +45,7 @@ MessageDisposition GUICommandTranslator::translate(const ClientMessage &msg)
 					Object *target = nullptr;
 					if (command->hasOption(COMMAND_OPTION_NEED_TARGET_ENEMY_OBJECT | COMMAND_OPTION_NEED_TARGET_NEUTRAL_OBJECT | COMMAND_OPTION_NEED_TARGET_ALLY_OBJECT))
 					{
-						target = HudObjects::pickObject(m_ctx, mouse);
+						target = HudObjects::pickForGuiCommand(m_ctx, mouse, *command); // RW 0x83D41A
 						// ZH validUnderCursor: CommandButton::isValidObjectTarget by the relationship options
 						if (target)
 						{
@@ -132,7 +132,7 @@ MessageDisposition GUICommandTranslator::translate(const ClientMessage &msg)
 					Object *target = nullptr;
 					if (command->hasOption(COMMAND_OPTION_NEED_TARGET_ENEMY_OBJECT | COMMAND_OPTION_NEED_TARGET_NEUTRAL_OBJECT | COMMAND_OPTION_NEED_TARGET_ALLY_OBJECT))
 					{
-						target = HudObjects::pickObject(m_ctx, mouse);
+						target = HudObjects::pickForGuiCommand(m_ctx, mouse, *command); // RW 0x83D41A
 						if (target)
 						{
 							const Relationship rel = HudObjects::relationshipToLocal(m_ctx, *target);

@@ -229,6 +229,7 @@ TEST_CASE("hud2 palantir: a selected unit and a selected building show their Sel
 TEST_CASE("stop S-760: the Palantir portrait reports the branches it does not port")
 {
 	const std::vector<std::string> stops = PalantirCommandUI::acceptanceStops();
-	REQUIRE(stops.size() == 1);
+	REQUIRE(stops.size() == 2);
 	CHECK(stops[0].rfind("[S-760]", 0) == 0);
+	CHECK(stops[1].rfind("[S-1955]", 0) == 0); // lane HUD-5: the rank interface's unported time bars
 }

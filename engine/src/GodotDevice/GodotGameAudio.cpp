@@ -237,15 +237,19 @@ int GodotAudioDevice::startVoice(const VoiceStart &start, std::string *error)
 
 void GodotAudioDevice::applyParams(Slot &slot, const VoiceParams &p, double nowMs)
 {
-	float volume = p.volume;
+	// lane AUDIO-5: the core's Miles channel gains (gL, gR). Godot's panner at pan x >= 0 plays a mono source (both channels s) at
+	// L = (1 - x) s, R = (1 + x) s (mirrored for x < 0), so the bus volume (gL + gR) / 2 with x = (gR - gL) / (gR + gL) gives exactly
+	// (gL, gR); a stereo source is exact at the centre (2D voices, Miles' default pan) and mixes its left into its right when panned
+	const float sum = p.gainLeft + p.gainRight;
+	float volume = 0.5f * sum;
+	slot.volume = volume;
 	if (slot.fadeInMs > 0.0)
 	{
 		volume *= (float)std::min(1.0, (nowMs - slot.startedMs) / slot.fadeInMs);
 	}
-	slot.volume = p.volume;
 	slot.player->set_volume_db(toDb(volume));
 	slot.player->set_pitch_scale(std::max(0.01f, std::min(4.0f, p.pitch)));
-	slot.panner->set_pan(std::max(-1.0f, std::min(1.0f, p.pan)));
+	slot.panner->set_pan(sum > 0.0f ? std::max(-1.0f, std::min(1.0f, (p.gainRight - p.gainLeft) / sum)) : 0.0f);
 }
 
 void GodotAudioDevice::updateVoice(int voice, const VoiceParams &params)
@@ -388,8 +392,11 @@ void GameAudio::_bind_methods()
 	ClassDB::bind_method(D_METHOD("get_music_track"), &GameAudio::get_music_track);
 	ClassDB::bind_method(D_METHOD("get_audio_length_ms", "event_name"), &GameAudio::get_audio_length_ms);
 	ClassDB::bind_method(D_METHOD("set_listener", "position", "forward"), &GameAudio::set_listener);
+	ClassDB::bind_method(D_METHOD("update_microphone", "camera_position", "look_at", "look_at_valid"), &GameAudio::update_microphone, DEFVAL(true));
+	ClassDB::bind_method(D_METHOD("get_listener"), &GameAudio::get_listener);
 	ClassDB::bind_method(D_METHOD("set_volume", "slider", "volume"), &GameAudio::set_volume);
 	ClassDB::bind_method(D_METHOD("get_volume", "slider"), &GameAudio::get_volume);
+	ClassDB::bind_method(D_METHOD("get_default_volumes"), &GameAudio::get_default_volumes);
 	ClassDB::bind_method(D_METHOD("set_enabled", "affect", "on"), &GameAudio::set_enabled);
 	ClassDB::bind_method(D_METHOD("set_current_view", "view"), &GameAudio::set_current_view);
 	ClassDB::bind_method(D_METHOD("stop_all", "affect"), &GameAudio::stop_all);
@@ -612,6 +619,25 @@ void GameAudio::set_listener(const Vector3 &p, const Vector3 &f)
 	m_manager->setListenerPosition(Coord3D{ p.x, p.y, p.z }, Coord3D{ f.x, f.y, f.z });
 }
 
+void GameAudio::update_microphone(const Vector3 &c, const Vector3 &l, bool valid)
+{
+	REQUIRE_BOOTED()
+	m_manager->updateMicrophone(Coord3D{ c.x, c.y, c.z }, Coord3D{ l.x, l.y, l.z }, valid);
+}
+
+Dictionary GameAudio::get_listener() const
+{
+	Dictionary d;
+	if (m_manager)
+	{
+		const Coord3D &p = m_manager->getListenerPosition();
+		const Coord3D &f = m_manager->getListenerForward();
+		d["position"] = Vector3(p.x, p.y, p.z);
+		d["forward"] = Vector3(f.x, f.y, f.z);
+	}
+	return d;
+}
+
 static unsigned affectFor(const String &slider)
 {
 	const String s = slider.to_lower();
@@ -644,6 +670,21 @@ void GameAudio::set_volume(const String &slider, double v)
 		return;
 	}
 	m_manager->setVolume((float)v, affect | AudioAffect_SystemSetting);
+}
+
+PackedFloat32Array GameAudio::get_default_volumes() const
+{
+	PackedFloat32Array out;
+	if (!m_ini)
+	{
+		return out;
+	}
+	const AudioSettings &s = m_ini->settings;
+	for (float v : { s.defaultSoundVolume, s.defaultVoiceVolume, s.defaultMusicVolume, s.defaultAmbientVolume, s.defaultMovieVolume })
+	{
+		out.push_back(v);
+	}
+	return out;
 }
 
 double GameAudio::get_volume(const String &slider) const

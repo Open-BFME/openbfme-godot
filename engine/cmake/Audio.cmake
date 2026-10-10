@@ -19,6 +19,8 @@ set(OPENBFME_AUDIO_SOURCES
     src/Common/Audio/GameAudio.cpp
     src/Common/Audio/AudioEntryPoints.cpp
     src/Common/Audio/SimulatedAudioDevice.cpp
+    # AUDIO-5: the channel gains of Miles 6.6g (its volume law, the Fast 2D 3D provider)
+    src/Common/Audio/MilesMix.cpp
     # EVA (the announcer)
     src/GameClient/Eva.cpp
     # AUDIO-2: the unit voice picker (RW 0x8DEDBB), the in-game audio of a live game
@@ -32,6 +34,7 @@ set(OPENBFME_AUDIO_TESTS
     tests/test_audio_manager.cpp
     tests/test_audio_retail.cpp
     tests/test_audio_eva.cpp
+    tests/test_audio5.cpp
     tests/test_world_context.cpp
     tests/test_unit_voice.cpp
     tests/test_music_scripts.cpp)

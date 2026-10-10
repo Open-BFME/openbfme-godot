@@ -24,8 +24,10 @@
 #include "Common/Thing/ModuleFactory.h"
 #include "Common/Thing/ThingFactory.h"
 #include "Common/Thing/ThingTemplate.h"
+#include "GameLogic/AI/AIWorld.h"
 #include "GameLogic/GameLogic.h"
 #include "GameLogic/HeroSystem.h"
+#include "GameLogic/Module/AIUpdate.h"
 #include "GameLogic/Module/HeroModules.h"
 #include "GameLogic/Object/ExperienceTracker.h"
 #include "GameLogic/Map/TerrainLogic.h"
@@ -1116,6 +1118,27 @@ void ProductionUpdate::completeUnit(ProductionEntry *entry, Player *player, Unsi
 				newObj->setPosition(&pos);
 			}
 			newObj->setStatus(kLeavingFactory, true); // RW 0x8A28D8: IS_LEAVING_FACTORY
+			float fade = 0.0f; // BuildFadeInOnCreateTime, tt + 0x354
+			if (const FieldValue *v = newObj->getTemplate()->findField("BuildFadeInOnCreateTime"))
+			{
+				if (const float *f = std::get_if<float>(v))
+				{
+					fade = *f;
+				}
+			}
+			// lane MOVE-3 r3 (S-202): RW 0x8A28E0 .. 0x8A291D: a unit that fades in (BuildFadeInOnCreateTime > 0, COMISS against 0 RW 0xC1B594) and an exit with a
+			// natural rally point (exit slot 0x24, getNaturalRallyPoint(out, true)) ask the allies on the cell line from the producer's position to that point to
+			// move away (RW 0x6F85A6, the queue exit's call, RW 0x8A41D9; the ignored obstacle is the new unit's own, RW 0x662DA5)
+			if (fade > 0.0f)
+			{
+				Coord3D natural;
+				AIWorld *world = logic.aiWorld();
+				AIUpdateInterface *nai = newObj->getAIUpdateInterface();
+				if (exit->getNaturalRallyPoint(&natural, true) && world && nai)
+				{
+					world->moveAlliesAwayFromDestination(*newObj, *us->getPosition(), natural, (ObjectID)nai->mover().ignoredObstacleID());
+				}
+			}
 			// RW 0x8A2944 .. 0x8A29EC: the player's upgrades are applied to the new unit (UPGRADE-1), voice / EVA events (audio), the player's unit created
 			// hook, then CreateModule::onBuildComplete on every create module
 			for (const std::unique_ptr<BehaviorModule> &m : newObj->modules())
@@ -1131,15 +1154,7 @@ void ProductionUpdate::completeUnit(ProductionEntry *entry, Player *player, Unsi
 			{
 				AudioApi::postUnitVoice(0x7DA, newObj->getID(), getObject()->getID());
 			}
-			// RW 0x8A2A8C: BuildFadeInOnCreateTime (tt + 0x354) times 5 frames delays the exit and holds the unit disabled
-			float fade = 0.0f;
-			if (const FieldValue *v = newObj->getTemplate()->findField("BuildFadeInOnCreateTime"))
-			{
-				if (const float *f = std::get_if<float>(v))
-				{
-					fade = *f;
-				}
-			}
+			// RW 0x8A2A8C: BuildFadeInOnCreateTime (tt + 0x354, read above) times 5 frames delays the exit and holds the unit disabled
 			m_postExitDelay = (unsigned)SimMath::truncToInt32(SimMath::mulf32(fade, (float)LOGICFRAMES_PER_SECOND));
 			newObj->setSpecialModelConditionState(kJustBuilt, m_postExitDelay);
 			newObj->setSpecialModelConditionState(kComingOut, 5);

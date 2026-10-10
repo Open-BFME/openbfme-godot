@@ -155,7 +155,20 @@ public:
 	void snapInterpolation();
 	void commitFrame();
 	float nearPlane() const { return 10.0f; }
-	float farPlane() const { return 1800.0f; }
+	// retail's 1800 (RW 0x48B7B1); with the free camera, plus twice fogShift() so the far map stays drawn when zoomed out beyond retail's limit
+	float farPlane() const;
+
+	// ---- lane PLAY-1: the free camera (the owner's presentation option, NOT retail; client state only, never seen by the logic) ----
+	// Off (the default): retail's limits. On: the camera may zoom out up to freeMaxHeight() above the ground (the larger map extent, at least the map's
+	// maximum height); the default view, the start of a map and a reset still use the map's maximum height. The far plane and the fog range move out by
+	// the distance the eye is beyond retail's maximum (fogShift), so the zoomed-out picture is not cut off or fogged over; at retail heights nothing changes.
+	void setFreeCamera(bool on);
+	bool freeCamera() const { return m_free; }
+	float freeMaxHeight() const;
+	// the zoom-out limit setHeightAboveGround and the scroll's EnforceMaxCameraHeight use: the map's max height, or freeMaxHeight() with the free camera
+	float zoomOutLimit() const { return m_free ? freeMaxHeight() : m_maxHeight; }
+	// how much farther the eye is from its target than at retail's maximum height (0 at retail heights and with the free camera off)
+	float fogShift() const;
 	// the horizontal field of view of the 3D camera (radians; View + 0x6C, RW 0xBDD410 = 50 degrees)
 	float horizontalFov() const { return m_fov; }
 	// the vertical field of view for the current viewport (the W3D view plane: height = width / aspect)
@@ -211,6 +224,7 @@ private:
 	bool m_snapImmediate = false;
 	float m_followFactor = -1.0f;
 	bool m_okToAdjustHeight = true;
+	bool m_free = false; ///< lane PLAY-1
 	Coord3D m_eye{ 0, -400, 300 }, m_target{ 0, 0, 0 }, m_prevEye{ 0, -400, 300 }, m_prevTarget{ 0, 0, 0 }, m_committedEye{ 0, -400, 300 }, m_committedTarget{ 0, 0, 0 };
 	unsigned long long m_frame = 0;
 };

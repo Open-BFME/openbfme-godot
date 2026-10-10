@@ -45,6 +45,8 @@
 #include "GameClient/MapObjectDrawables.h"
 #include "GameEngineDevice/Win32Device/Common/Win32BIGFileSystem.h"
 #include "GameLogic/CreateAHeroSystem.h"
+#include "GameLogic/GameMessage.h"
+#include "GameLogic/Module/GateModules.h"
 #include "Common/Thing/ThingTemplate.h"
 #include "GameLogic/Map/TerrainLogic.h"
 #include "GameLogic/NewGame/NewGame.h"
@@ -106,6 +108,7 @@ struct Args
 	std::string lanFaction, lanTargets;
 	int lanPortBase = -1;
 	int logicThreads = 0;          ///< PERF-2: --logic-threads N, the logic job pool's threads (0: OPENBFME_LOGIC_THREADS or the hardware's)
+	int toggleGates = 0;                ///< lane HUD-5: --toggle-gates N (every N frames the local player toggles each settled gate it controls)
 	long long recruitCreateAHeroAt = -1; ///< lane HERO-2: --recruit-create-a-hero FRAME (the local player recruits its Create-a-Hero from then on until made)
 	std::vector<std::string> createAHeroes; ///< lane HERO-2: --create-a-hero SLOT:FILE.cah (host) / --create-a-hero FILE.cah (--lan-join: the own slot)
 };
@@ -177,6 +180,7 @@ bool parseArgs(int argc, char **argv, Args &a, std::string &error)
 		else if (k == "--lan-join") a.lanJoin = true;
 		else if (k == "--create-a-hero" && next(v)) a.createAHeroes.push_back(v);
 		else if (k == "--recruit-create-a-hero" && next(v)) a.recruitCreateAHeroAt = std::atoll(v.c_str());
+		else if (k == "--toggle-gates" && next(v)) a.toggleGates = std::max(1, std::atoi(v.c_str()));
 		else if (k == "--lan-faction" && next(a.lanFaction)) {}
 		else if (k == "--lan-targets" && next(a.lanTargets)) {}
 		else if (k == "--lan-port-base" && next(v)) a.lanPortBase = std::atoi(v.c_str());
@@ -715,6 +719,8 @@ int main(int argc, char **argv)
 	unsigned long long scripted = 0;
 	std::map<std::string, unsigned long long> scriptedTypes; // the scripted commands by type
 	UnsignedInt lastScripted = 0xFFFFFFFFu;
+	UnsignedInt lastGateFrame = 0xFFFFFFFFu; // lane HUD-5: --toggle-gates
+	unsigned long long gateMessages = 0;
 	const std::uint64_t runStart = NetMilliseconds();
 	std::uint64_t lastProgress = runStart;
 	int exitCode = 0;
@@ -784,6 +790,23 @@ int main(int argc, char **argv)
 			for (size_t i = before; i < game.commands().messages().size(); ++i)
 			{
 				++scriptedTypes[GameMessageTypeName(game.commands().messages()[i].getType())];
+			}
+		}
+		if (a.toggleGates > 0 && game.frame() != lastGateFrame && game.frame() % (UnsignedInt)a.toggleGates == 0)
+		{
+			// lane HUD-5: the gate buttons' messages (TOGGLE_GATE, RW 0x9410D7) through the lockstep command list, for every settled gate the local player controls
+			lastGateFrame = game.frame();
+			Player *me = game.logic().players().getNthPlayer(myPlayer);
+			for (Object *o = game.logic().getFirstObject(); o && me; o = o->getNextObject())
+			{
+				GateOpenAndCloseBehavior *gate = o->getControllingPlayer() == me ? GateOpenAndCloseBehavior::findGate(*o) : nullptr;
+				if (gate && gate->isSettled())
+				{
+					GameMessage m(gate->isOpen() ? MSG_CLOSE_GATE : MSG_OPEN_GATE, myPlayer);
+					m.appendObjectIDArgument(o->getID());
+					game.commands().append(m);
+					++gateMessages;
+				}
 			}
 		}
 		const UnsignedInt pf = game.protocolFrame();
@@ -865,6 +888,19 @@ int main(int argc, char **argv)
 	r << "desyncs " << net.desyncs().size() << "\n";
 	r << "commands_relayed " << net.commandsRelayed() << "\n";
 	r << "scripted_commands " << scripted << "\n";
+	r << "gate_messages " << gateMessages << "\n";
+	{
+		// lane HUD-5: every gate's state at the end (id:state, GateOpenAndCloseBehavior's 0 opening, 1 open, 2 closing, 3 closed)
+		r << "gates";
+		for (Object *o = game.logic().getFirstObject(); o; o = o->getNextObject())
+		{
+			if (const GateOpenAndCloseBehavior *gate = GateOpenAndCloseBehavior::findGate(*o))
+			{
+				r << " " << o->getID() << ":" << (int)gate->state();
+			}
+		}
+		r << "\n";
+	}
 	r << "stalled_frames " << game.stalledFrames() << "\n";
 	r << "seconds " << (double)(NetMilliseconds() - runStart) / 1000.0 << "\n";
 	const Transport::Stats &ts = session.transport().stats();

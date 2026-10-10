@@ -9,6 +9,7 @@
 
 #include <cmath>
 #include <cstdlib>
+#include <unordered_map>
 
 namespace
 {
@@ -18,7 +19,7 @@ const char *const kStopSpecialLayer =
 const char *const kStopUpdate =
 	"S-166 the movement-complete block of AIUpdateInterface::update (RW 0x6695EF) skips the object goal refresh (0x68B411, 0x6EF225, 0x68B3BD), the status bit clears and the turret update; the state machine's sleep comes from the host";
 const char *const kStopPatch =
-	"S-166 the blocked repath (RW 0x6631BF) splices a patch segment into the path (0x767A66); a whole repath to the last node replaces it";
+	"S-166 computePath of a blocked unit (RW 0x665C33 with blocked frames) runs a full search; the blocked repath itself is RotWK's patch (RW 0x6631BF / 0x6F7938, lane MOVE-3)";
 const char *const kStopExplicit =
 	"S-166 doLocomotor goal types 2 and 4 (RW 0x669A01-0x669B95): the validation of a straight move (RW 0x6F1B3E) is approximated by the PATH-1 line test or a passable "
 	"target cell, and the fallback path of a blocked straight move (RW 0x6F74D0) by a pathfinder search (the two bodies were not fully read)";
@@ -1147,46 +1148,46 @@ bool AIMover::blockedBy(PathfindObject &other)
 
 void AIMover::blockedRepath()
 {
-	// RW 0x6631BF (approximated: S-166): a new path to the end of the current one, then the blocker is remembered
-	if (m_blockerId == PATHFIND_INVALID_ID || m_path == nullptr || m_path->getLastNode() == nullptr)
+	// RW 0x6631BF (lane MOVE-3; the port ran a whole findPath to the path's last node here and remembered the blocker whatever came of it, S-166). With a
+	// blocker (AI + 0x3DC) and a path (AI + 0x140): the point 10, 20, ... ahead of the unit along the path (RW 0x765F31) is taken until the path has no
+	// node after the point's node (node + 8) or the unit's footprint at the point is free (RW 0x6EDFD7); with a node after it, the pathfinder's patch
+	// (vtable slot 0x18, RW 0x6F7938) from the unit's cell to that point or to a cell of one of the following raw nodes is spliced into the path
+	// (RW 0x767A66), the blocked frames (AI + 0x16C) and the blocked flag (+ 0x3B8) are cleared and the blocker is remembered as a collider (RW 0x66266A).
+	// Without a patch nothing changes: the unit stays blocked and blockedBy gives up after 2N + 1 frames (RW 0x66D16E). The blocker is forgotten either way
+	if (m_blockerId == PATHFIND_INVALID_ID)
 	{
 		return;
 	}
-	note(kStopPatch);
-	PathfindObject &obj = m_host.pathfindObject();
-	const Coord3D pos = obj.getPosition();
-	const Coord3D target = *m_path->getLastNode()->getPosition();
-	bool partial = false;
-	Path *np = m_pf.findPath(&obj, m_host.locomotorInfo(), &pos, &target, &partial);
-	if (np)
+	if (m_path != nullptr)
 	{
-		// the retail patch only exists when the pathfinder found a way round the blocker; a path identical to the old one is no way
-		// round, so the unit stays blocked (and eventually gives up, blockedBy)
-		bool same = true;
-		const PathNode *x = m_path->getFirstNode(), *y = np->getFirstNode();
-		for (; x && y; x = x->getNextOptimized(), y = y->getNextOptimized())
+		PathfindObject &obj = m_host.pathfindObject();
+		const PathfindLocomotorInfo loco = m_host.locomotorInfo();
+		float ahead = 0.0f;
+		const PathNode *node = nullptr;
+		Coord3D point;
+		for (;;)
 		{
-			if (x->getPosition()->x != y->getPosition()->x || x->getPosition()->y != y->getPosition()->y)
+			ahead = SimMath::addf32(ahead, 10.0f); // RW 0xBD83D8
+			const LocomotorPathPoint pt = m_path->computePointAhead(ahead);
+			node = m_path->lastAheadNode();
+			point = pt.position;
+			if (node == nullptr || node->getNextOptimized() == nullptr || m_pf.patchPointIsFree(obj, loco, point))
 			{
-				same = false;
 				break;
 			}
 		}
-		same = same && x == nullptr && y == nullptr;
-		if (same)
+		if (node != nullptr && node->getNextOptimized() != nullptr)
 		{
-			delete np;
-		}
-		else
-		{
-			delete m_path;
-			m_path = np;
-			setGoalOnPath();
-			m_blockedFrames = 0;
-			m_isBlocked = false;
+			Path *patch = m_pf.patchPath(obj, loco, point, node);
+			if (patch)
+			{
+				m_path->splicePatch(patch);
+				m_blockedFrames = 0;
+				m_isBlocked = false;
+				recordCollider(m_blockerId);
+			}
 		}
 	}
-	recordCollider(m_blockerId);
 	m_blockerId = PATHFIND_INVALID_ID;
 }
 
@@ -1535,22 +1536,33 @@ void AIMover::crc(StateHasher &h) const
 		h.addBool(m_path->isOptimized());
 		h.addBool(m_path->getBlockedByAlly());
 		h.addFloat(m_path->currentT());
-		// the nodes of the optimised chain and the position of the segment the follower is on (the whole list is the path)
-		for (const PathNode *n = m_path->getFirstNode(); n; n = n->getNextOptimized())
+		// every raw node (lane MOVE-3 review r1: the blocked patch RW 0x6F7938 / 0x767A66 reads and splices raw nodes off the optimised chain), each optimised
+		// link as the raw index of its target and the raw index of the segment the follower is on (-1: none, -2: not in the raw chain)
+		std::unordered_map<const PathNode *, int> rawIndex;
+		int count = 0;
+		for (const PathNode *n = m_path->getFirstNode(); n; n = n->getNext())
+		{
+			rawIndex.emplace(n, count++);
+		}
+		const auto indexOf = [&rawIndex](const PathNode *n) -> int {
+			if (!n)
+			{
+				return -1;
+			}
+			const auto it = rawIndex.find(n);
+			return it == rawIndex.end() ? -2 : it->second;
+		};
+		h.addI32(count);
+		for (const PathNode *n = m_path->getFirstNode(); n; n = n->getNext())
 		{
 			h.addFloat(n->getPosition()->x);
 			h.addFloat(n->getPosition()->y);
 			h.addFloat(n->getPosition()->z);
 			h.addU32((std::uint32_t)n->getLayer());
 			h.addI32(n->getWaypointID());
+			h.addI32(indexOf(n->getNextOptimized()));
 		}
-		const PathNode *cur = m_path->currentNode();
-		h.addBool(cur != nullptr);
-		if (cur)
-		{
-			h.addFloat(cur->getPosition()->x);
-			h.addFloat(cur->getPosition()->y);
-		}
+		h.addI32(indexOf(m_path->currentNode()));
 	}
 }
 

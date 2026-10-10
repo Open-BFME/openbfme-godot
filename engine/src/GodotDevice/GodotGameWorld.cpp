@@ -9,9 +9,11 @@
 #include "GodotDevice/GodotGameWorld.h"
 
 #include "Common/Prefetch.h"
+#include "GameLogic/Object/Contain/HordeContainRuntime.h"
 #include "GameLogic/CreateAHeroSystem.h"
 #include "GameLogic/SkirmishAI/SkirmishAIManager.h"
 
+#include "GameClient/HudObjects.h"
 #include "GameClient/SpellBookUI.h"
 #include "GameLogic/GlobalWeatherSystem.h"
 
@@ -60,6 +62,7 @@
 #include "GameEngineDevice/W3DDevice/GameClient/Drawable/Draw/W3DModelDraw.h"
 #include "GameClient/GUI/Skirmish/IniSkirmishSetupSource.h"
 #include "GodotDevice/GodotGameStart.h"
+#include "GameLogic/Object/ExperienceTracker.h"
 #include "GodotDevice/GodotMapTerrain.h"
 #include "GodotDevice/GodotTiming.h"
 #include "GodotDevice/GodotRetailFileSystem.h"
@@ -83,6 +86,7 @@
 #include <godot_cpp/variant/vector3.hpp>
 
 #include <algorithm>
+#include <cstdio>
 #include <chrono>
 #include <cmath>
 
@@ -202,6 +206,7 @@ void GameWorld::_bind_methods()
 {
 	bindHeroMethods(); // lane HERO-1 (GodotGameWorldHeroes.cpp)
 	bindStealthMethods(); // lane STEALTH-1 (GodotGameWorldStealth.cpp)
+	bindCreateAHeroMethods(); // lane CAH-1 (GodotGameWorldCah.cpp)
 	bindScriptMethods();  // lane SCRIPT-1 (GodotGameWorldScripts.cpp)
 	bindCampaignMethods(); // lane CAMP-1 (GodotGameWorldCampaign.cpp)
 	bindGarrisonMethods(); // lane GARRISON-1 (GodotGameWorldGarrison.cpp)
@@ -236,6 +241,7 @@ void GameWorld::_bind_methods()
 	ClassDB::bind_method(D_METHOD("take_end_game_requests"), &GameWorld::take_end_game_requests);
 	ClassDB::bind_method(D_METHOD("clear_game_data", "show_score_screen"), &GameWorld::clear_game_data);
 	ClassDB::bind_method(D_METHOD("get_quit_menu_context"), &GameWorld::get_quit_menu_context); // lane END-2
+	ClassDB::bind_method(D_METHOD("get_player_status_state"), &GameWorld::get_player_status_state); // lane HUD-5
 	ClassDB::bind_method(D_METHOD("self_destruct", "transfer"), &GameWorld::self_destruct);
 	ClassDB::bind_method(D_METHOD("debug_kill_player_objects", "player", "keep"), &GameWorld::debug_kill_player_objects);
 	ClassDB::bind_method(D_METHOD("debug_damage_object", "id", "amount", "source_id"), &GameWorld::debug_damage_object);
@@ -264,6 +270,7 @@ void GameWorld::_bind_methods()
 	ClassDB::bind_method(D_METHOD("spell_bar_click_world", "player", "x", "y"), &GameWorld::spell_bar_click_world);
 	ClassDB::bind_method(D_METHOD("spell_bar_cancel"), &GameWorld::spell_bar_cancel);
 	ClassDB::bind_method(D_METHOD("debug_add_science_points", "player", "points"), &GameWorld::debug_add_science_points);
+	ClassDB::bind_method(D_METHOD("debug_set_object_rank", "id", "rank"), &GameWorld::debug_set_object_rank); // lane HUD-5
 	ClassDB::bind_method(D_METHOD("debug_grant_upgrade", "player", "upgrade"), &GameWorld::debug_grant_upgrade);
 	ClassDB::bind_method(D_METHOD("order_move", "ids", "x", "y", "options"), &GameWorld::order_move, DEFVAL(Dictionary()));
 	ClassDB::bind_method(D_METHOD("order_stop", "ids"), &GameWorld::order_stop);
@@ -680,7 +687,8 @@ Dictionary GameWorld::load_map(const String &map_name, const Dictionary &options
 			lo.slots.players.push_back(sp);
 		}
 	}
-	return load_internal(lo, map_name, options, Callable(), false);
+	// lane CAH-1: `terrain` (default false) builds the map's terrain under this node too, as start_new_game does (the Create-a-Hero builder's map mode)
+	return load_internal(lo, map_name, options, Callable(), optBool(options, "terrain", false));
 }
 
 Dictionary GameWorld::prepare_new_game(const Dictionary &message)
@@ -1344,7 +1352,9 @@ void GameWorld::refresh_views(double deltaMs)
 				};
 				const bool animatedNow = e.animated && m_animations;
 				animated += animatedNow ? 1 : 0;
-				if (!flagsChanged && !animatedNow && ev.posed)
+				// lane CAH-2: a new colour set (Drawable::setCustomColors, RW 0x6727B0) chooses another model below
+				const bool colorsChanged = d->customColorRevision() != ev.colorsRevision;
+				if (!flagsChanged && !animatedNow && !colorsChanged && ev.posed)
 				{
 					if (entryXfChanged && ev.instance >= 0)
 					{
@@ -1371,7 +1381,17 @@ void GameWorld::refresh_views(double deltaMs)
 					ev.rawLowered = AsciiStringUtil::lowered(*f.modelName);
 				}
 				static const std::string kNoModel;
-				const std::string &model = shown ? ev.rawLowered : kNoModel;
+				// lane CAH-2 (S-1408): a drawable with a colour set shows the model "#<model>#<kind>&<c0>&<c1>&<c2>" (RW 0x54BDE0 / 0x535BCF's name) whose
+				// house colour textures are recoloured per texel (W3DInstancer::add_model_colored)
+				ev.colorsRevision = d->customColorRevision();
+				std::string coloredModel;
+				if (shown && m_houseColors && d->customColorKind() > 0)
+				{
+					char opt[96];
+					std::snprintf(opt, sizeof(opt), "#%d&%d&%d&%d", d->customColorKind(), (int)d->customColors()[0], (int)d->customColors()[1], (int)d->customColors()[2]);
+					coloredModel = "#" + ev.rawLowered + opt;
+				}
+				const std::string &model = !coloredModel.empty() ? coloredModel : shown ? ev.rawLowered : kNoModel;
 				if (model != ev.model)
 				{
 					if (ev.instance >= 0)
@@ -1391,7 +1411,19 @@ void GameWorld::refresh_views(double deltaMs)
 						if (it == m_dynamicModels.end())
 						{
 							const double tm = nowMs();
-							mid = dyn->add_model(toGodot(*f.modelName));
+							if (!coloredModel.empty())
+							{
+								PackedInt64Array colors;
+								for (int i = 0; i < 3; ++i)
+								{
+									colors.push_back((int64_t)d->customColors()[i]);
+								}
+								mid = dyn->add_model_colored(toGodot(*f.modelName), d->customColorKind(), colors);
+							}
+							else
+							{
+								mid = dyn->add_model(toGodot(*f.modelName));
+							}
 							m_dynamicModels[model] = mid;
 							m_lastNewModelMs = timing::sumMs(m_lastNewModelMs, timing::elapsedMs(tm));
 							++m_lastNewModels;
@@ -1403,7 +1435,7 @@ void GameWorld::refresh_views(double deltaMs)
 						if (mid >= 0)
 						{
 							ev.instance = dyn->add_instance(mid, entryXf, String(), 0.0, 1.0);
-							if (ev.instance >= 0 && m_houseColors && d->getHouseColor() != 0)
+							if (ev.instance >= 0 && m_houseColors && d->getHouseColor() != 0 && coloredModel.empty())
 							{
 								dyn->set_instance_house_color(ev.instance, houseColorOf(d->getHouseColor()));
 							}
@@ -2107,8 +2139,14 @@ Dictionary GameWorld::get_object(int64_t id) const
 		}
 	}
 	d["members"] = members;
+	// lane IDLE-1: a horde in a melee (HordeContain + 0x2A0, its melee target; the QA harness counts its members' treadmill apart)
+	if (const HordeContain *hc = dynamic_cast<const HordeContain *>(o->getContain()))
+	{
+		d["horde_melee"] = hc->meleeEngaged();
+	}
 	d["destroyed"] = o->isDestroyed();
 	d["structure"] = o->isKindOfName("STRUCTURE");
+	d["selectable"] = HudObjects::isSelectable(*o); // lane IDLE-1: the HUD's rule (a projectile, an AI marker, a ping, a NoSelect worker: a player cannot select it)
 	// MOVE-1: what the movement code says about the object, and the model conditions the logic has set on it
 	if (const AIUpdateInterface *ai = o->getAIUpdateInterface())
 	{
@@ -3486,6 +3524,22 @@ void GameWorld::spell_bar_cancel()
 	}
 }
 
+int64_t GameWorld::debug_set_object_rank(int64_t id, int64_t rank)
+{
+	::Object *o = m_game ? m_game->logic().findObjectByID((::ObjectID)id) : nullptr;
+	::ExperienceTracker *xp = o ? o->getExperienceTracker() : nullptr;
+	if (!xp)
+	{
+		return -1;
+	}
+	UtilityFunctions::print("GAME TEST HOOK: object ", id, " gains levels to rank ", rank);
+	if (rank > xp->getRank())
+	{
+		xp->gainLevels((int)(rank - xp->getRank()), true);
+	}
+	return xp->getRank();
+}
+
 int64_t GameWorld::debug_add_science_points(int64_t player, int64_t points)
 {
 	::Player *p = m_game ? m_game->logic().players().getNthPlayer((int)player) : nullptr;
@@ -4046,6 +4100,48 @@ Dictionary GameWorld::get_quit_menu_context()
 	return d;
 }
 
+// lane HUD-5: the live facts of the Status page's rows (GUI/PlayerStatusInfo.h: RW 0x9151C3 / 0x915BF6). defeated: the const victory query (retail's vslot 0x40
+// counts its true answers, a hashed counter: the client asks the query that changes nothing); connected: a network game's peers are taken as connected (the
+// disconnect state of a peer, TheNetwork vslot 0xCC, is not read here: S-1953)
+Dictionary GameWorld::get_player_status_state()
+{
+	Dictionary d;
+	d["ok"] = false;
+	if (!m_game || !m_start)
+	{
+		return d;
+	}
+	GameLogic &logic = m_game->logic();
+	const SkirmishGameInfo &game = m_start->message.game;
+	d["game"] = newGameToDictionary(m_start->message);
+	Array orig, slots;
+	const LiveGame::Report report = m_game->report();
+	for (int i = 0; i < MAX_SLOTS; ++i)
+	{
+		Dictionary o;
+		o["template"] = game.slots[i].origPlayerTemplate;
+		o["color"] = game.slots[i].origColor;
+		orig.push_back(o);
+		Dictionary sl;
+		const ::Player *p = (size_t)i < report.startSlotPlayers.size() && !report.startSlotPlayers[(size_t)i].empty()
+			? logic.players().findPlayerWithName(report.startSlotPlayers[(size_t)i]) : nullptr;
+		sl["has_player"] = p != nullptr;
+		sl["defeated"] = p ? logic.victory().wouldBeDefeated(p) : false;
+		sl["observer"] = p ? p->isObserver() : false;
+		sl["connected"] = true;
+		slots.push_back(sl);
+	}
+	d["orig"] = orig;
+	d["slots"] = slots;
+	d["local_slot"] = m_start->localSlot;
+	d["network"] = m_netSession != nullptr;
+	d["mode"] = m_netSession ? 1 : logic.economy().context().gameMode;
+	d["show_random_template"] = m_game->visionSettings().showRandomPlayerTemplate;
+	d["show_random_color"] = m_game->visionSettings().showRandomColor;
+	d["ok"] = true;
+	return d;
+}
+
 Dictionary GameWorld::self_destruct(bool transfer)
 {
 	Dictionary r;
@@ -4168,7 +4264,7 @@ Dictionary GameWorld::get_end_game_state() const
 
 Array GameWorld::take_end_game_requests()
 {
-	static const char *const kinds[] = { "show_end_game", "hide_end_game", "message", "eva", "transition" };
+	static const char *const kinds[] = { "show_end_game", "hide_end_game", "message", "eva", "transition", "clear_game_data" };
 	Array out;
 	for (const EndGameRequest &r : m_endGameRequests)
 	{

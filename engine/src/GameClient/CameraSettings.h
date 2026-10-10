@@ -20,6 +20,8 @@
 
 #pragma once
 
+#include "GameLogic/ObjectFilter.h"
+
 #include <string>
 #include <vector>
 
@@ -41,6 +43,15 @@ struct CameraSettings
 	float keyboardScrollSpeedFactor = 0.0f, keyboardDefaultScrollSpeedFactor = 1.0f, keyboardCameraRotateSpeed = 0.0f;
 	// GlobalData +0xDE4 (RW constructor, RW 0x6436DA: 1.0f; no INI field)
 	float mapHeightSmoothness = 1.0f;
+	// lane PLAY-1: the in-game UI's move hint model (MoveHintName, GlobalData + 0x10, row RW 0xBFF5C0, parseAsciiString RW 0x42EE5E; retail "SCMoveHint").
+	// Optional: a GameData without it leaves it empty and the HUD reports that no hint is drawn (the constructor's value was not read)
+	std::string moveHintName;
+	// lane HUD-5: what the drawable decorations read (GameClient/DrawableIconUI.h): ShowObjectHealth (GlobalData + 0x9BD, parseBool, row RW 0xC00120) and
+	// VeterancyPipDrawObjectFilter (GlobalData + 0xEB8, ParseObjectFilter RW 0x76392F, row RW 0xC00C40). Optional (not every GameData has them): absent, the
+	// health bars and the veterancy marks are off and the HUD reports it
+	bool showObjectHealth = false;
+	bool haveVeterancyPipFilter = false;
+	ObjectFilter veterancyPipFilter;
 
 	// reads data\ini\gamedata.ini through the shared INI pipeline (macros, retail parsers, later blocks override); a missing file or key is an error
 	static bool load(ArchiveFileSystem &fs, CameraSettings &out, std::string *error);

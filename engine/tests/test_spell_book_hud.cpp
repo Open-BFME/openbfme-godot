@@ -17,6 +17,12 @@
 #include "GameClient/ControlBarCommands.h"
 #include "GameClient/InGameHud.h"
 #include "GameLogic/Object/Object.h"
+#include "GameClient/GUI/AptScreens/AptPalantir.h"
+#include "GameClient/GUI/AptScreens/AptSpellStore.h"
+#include "Libraries/Source/Apt/AptButtonInst.h"
+#include "Libraries/Source/Apt/AptCharacterInst.h"
+#include "Libraries/Source/Apt/AptInput.h"
+#include "Libraries/Source/Apt/AptRenderList.h"
 
 #include <string>
 
@@ -234,4 +240,194 @@ TEST_CASE("SPELL-2 retail (review r2): the store's help records on hover (name, 
 	b.hud.reset();
 	b.rig.game->advance(0.2);
 	CHECK(b.rig.local->science().sciences().size() == scienceCount);
+}
+
+// ---- lane PLAY-1: the store by the player's mouse ------------------------------------------------------------------------------------------------
+
+namespace
+{
+AptButtonInst *firstButtonUnder(AptCharacterInst *c)
+{
+	if (!c)
+	{
+		return nullptr;
+	}
+	if (AptButtonInst *b = c->asButton())
+	{
+		return b;
+	}
+	if (AptSpriteInst *sp = c->asSprite())
+	{
+		for (AptCharacterInst *k : sp->children())
+		{
+			if (AptButtonInst *b = firstButtonUnder(k))
+			{
+				return b;
+			}
+		}
+	}
+	return nullptr;
+}
+
+// a point the input routes to the button at `path` of `level`: the centre of its Hit records' area when that hits, else the hit point nearest it
+bool hitPoint(InGameHud &hud, int level, const std::string &path, int &x, int &y)
+{
+	AptButtonInst *b = firstButtonUnder(hud.apt().resolvePath(hud.apt().level(level), path));
+	float x0, y0, x1, y1;
+	if (!b || !b->contentBounds(x0, y0, x1, y1) || !b->info())
+	{
+		return false;
+	}
+	bool any = false;
+	float hx0 = 0, hy0 = 0, hx1 = 0, hy1 = 0;
+	for (const AptButtonRecord &rec : b->info()->records)
+	{
+		if (!(rec.stateMask & 8))
+		{
+			continue;
+		}
+		const float cxs[4] = { x0, x1, x1, x0 }, cys[4] = { y0, y0, y1, y1 };
+		for (int k = 0; k < 4; ++k)
+		{
+			const float px = rec.matrix[0] * cxs[k] + rec.matrix[2] * cys[k] + rec.translation[0];
+			const float py = rec.matrix[1] * cxs[k] + rec.matrix[3] * cys[k] + rec.translation[1];
+			hx0 = any ? std::min(hx0, px) : px;
+			hy0 = any ? std::min(hy0, py) : py;
+			hx1 = any ? std::max(hx1, px) : px;
+			hy1 = any ? std::max(hy1, py) : py;
+			any = true;
+		}
+	}
+	if (any)
+	{
+		x0 = hx0, y0 = hy0, x1 = hx1, y1 = hy1;
+	}
+	float cx, cy, best = 0.0f;
+	bool found = false;
+	b->globalMatrix().apply((x0 + x1) / 2, (y0 + y1) / 2, cx, cy);
+	for (int gy = 0; gy <= 16; ++gy)
+	{
+		for (int gx = 0; gx <= 16; ++gx)
+		{
+			float px, py;
+			b->globalMatrix().apply(x0 + (x1 - x0) * (float)gx / 16.0f, y0 + (y1 - y0) * (float)gy / 16.0f, px, py);
+			const float d = (px - cx) * (px - cx) + (py - cy) * (py - cy);
+			if ((!found || d < best) && b->hitTest((float)(int)px, (float)(int)py) && hud.apt().input().hitTestButtons((float)(int)px, (float)(int)py) == b)
+			{
+				x = (int)px;
+				y = (int)py;
+				best = d;
+				found = true;
+			}
+		}
+	}
+	return found;
+}
+
+void clickAt(BookRig &b, int x, int y)
+{
+	b.hud->mouseMove(x, y);
+	b.frames(2);
+	b.hud->mouseButton(HudInput::Button::Left, true, x, y, 0, 3000);
+	b.frames(2);
+	b.hud->mouseButton(HudInput::Button::Left, false, x, y, 0, 3040);
+	b.frames(4);
+}
+} // namespace
+
+TEST_CASE("play1 spell store by the mouse: the Palantir's button opens it, a power is bought, RESET undoes it, ACCEPT buys and closes, the locked powers are drawn grey")
+{
+	if (!haveWorld("play1 spell store mouse"))
+	{
+		return;
+	}
+	SharedWorld &s = shared();
+	BookRig b(s, "FactionMen");
+	b.hud->setWindowSize(1024, 768);
+	b.rig.view.setScreen(1024, 768);
+	{
+		auto ctx = b.hud->enterContext();
+		const ThingTemplate *cit = s.world->things().findTemplate("MenFortressCitadel");
+		REQUIRE(cit);
+		Object *c = b.rig.logic().newObject(cit, b.rig.local->getDefaultTeam(), ObjectStatusMaskType{});
+		REQUIRE(c);
+		Coord3D at{ 600.0f, 600.0f, 0.0f };
+		c->setPosition(&at);
+		c->friend_onBuildComplete();
+	}
+	b.frames(40);
+	const int pal = b.hud->palantir()->level();
+	int x = 0, y = 0;
+	REQUIRE(hitPoint(*b.hud, pal, "PalantirButtons.Buttons.PlayerMagic", x, y));
+	clickAt(b, x, y);
+	b.frames(40);
+	AptSpellStore *st = b.hud->spellStore();
+	REQUIRE_MESSAGE(st, b.hud->spellStoreError());
+	CHECK(b.hud->spellStoreRequests() == 1);
+	const int lvl = st->level();
+	// the locked powers are drawn grey: the movie's _disabled frame shows the RenderImageDisabled component (RW 0x8229B5 sets the states)
+	{
+		AptRenderList rl;
+		b.hud->apt().buildRenderList(rl);
+		std::map<std::string, std::string> symbolOf;
+		for (const AptRenderCommand &c : rl.commands)
+		{
+			if (c.kind == AptRenderCommand::Kind::Placeholder && c.level == lvl && c.path.find(".Buttons.Spell") != std::string::npos)
+			{
+				const size_t at = c.path.find(".Buttons.Spell") + 14;
+				symbolOf["Spell" + c.path.substr(at, c.path.find('.', at) - at)] = c.symbolName;
+			}
+		}
+		for (int i = 0; i < 12; ++i)
+		{
+			const std::string state = b.storeState(i);
+			const std::string sym = symbolOf["Spell" + std::to_string(i + 1)];
+			INFO("Spell" << i + 1 << " " << state << " draws " << sym);
+			AptCharacterInst *en = b.hud->apt().resolvePath(b.hud->apt().level(lvl), "SpellStore.Buttons.Spell" + std::to_string(i + 1) + ".~Enabled");
+			REQUIRE(en);
+			// the _disabled frame places the power's image at alpha 0.396 (dimmed); the device multiplies the clip's colour into the image (GodotInGameHud)
+			if (state == "_active")
+			{
+				CHECK(en->globalColor().mul[3] == doctest::Approx(1.0f));
+			}
+			else if (state == "_disabled")
+			{
+				CHECK(en->globalColor().mul[3] < 0.5f);
+			}
+			CHECK(sym == "RenderImage");
+		}
+	}
+	int first = -1;
+	for (int i = 0; i < 12 && first < 0; ++i)
+	{
+		first = b.storeState(i) == "_active" ? i : -1;
+	}
+	REQUIRE(first >= 0);
+	const std::string spellPath = "SpellStore.Buttons.Spell" + std::to_string(first + 1);
+	REQUIRE(hitPoint(*b.hud, lvl, spellPath, x, y));
+	clickAt(b, x, y);
+	b.frames(3);
+	CHECK(b.storeState(first) == "_already_purchased");
+	CHECK(*b.hud->windows().aptText("APT:SpellStoreSpellPoints") == "0");
+	REQUIRE(hitPoint(*b.hud, lvl, "SpellStore.Buttons.ButtonsMain.Reset", x, y));
+	const size_t errs0 = b.hud->apt().vm().errors().size();
+	clickAt(b, x, y);
+	b.frames(30); // the generic button's callback runs when its _down animation ends
+	for (size_t i = errs0; i < b.hud->apt().vm().errors().size(); ++i)
+	{
+		MESSAGE("vm error after Reset: " << b.hud->apt().vm().errors()[i]);
+	}
+	CHECK(b.hud->apt().vm().errors().size() == errs0);
+	CHECK(b.storeState(first) == "_active");
+	CHECK(*b.hud->windows().aptText("APT:SpellStoreSpellPoints") == "5");
+	REQUIRE(hitPoint(*b.hud, lvl, spellPath, x, y));
+	clickAt(b, x, y);
+	b.frames(3);
+	CHECK(b.storeState(first) == "_already_purchased");
+	const ScienceType sci = st->model().buttons()[(size_t)first].science;
+	REQUIRE(hitPoint(*b.hud, lvl, "SpellStore.Buttons.ButtonsMain.Accept", x, y));
+	clickAt(b, x, y);
+	b.frames(40);
+	CHECK(b.hud->spellStore() == nullptr);
+	CHECK(b.rig.local->science().hasScience(sci));
 }

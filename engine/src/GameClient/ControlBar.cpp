@@ -21,6 +21,7 @@
 #include "GameLogic/Object/Contain/TransportContainRuntime.h"
 #include "Common/Team.h"
 #include "GameLogic/WeaponSetToggle.h"
+#include "GameLogic/Module/GateModules.h"
 
 #include <algorithm>
 
@@ -93,6 +94,23 @@ ButtonState ControlBar::evaluate(const CommandButton &b, Object &obj)
 		case GUI_COMMAND_TOGGLE_WEAPONSET:
 			// lane HUD-4: RW 0x942FC6: restricted while a non-horde contain of the object holds someone, else available
 			return WeaponSetToggle::isRestrictedByContain(obj) ? ButtonState::Restricted : ButtonState::Enabled;
+		case GUI_COMMAND_TOGGLE_GATE:
+		case GUI_COMMAND_OPEN_GATE:
+		case GUI_COMMAND_CLOSE_GATE:
+		{
+			// lane HUD-5: RW 0x9436E9: restricted (0) under construction, dead, without a gate or while it moves; TOGGLE_GATE active (2), OPEN_GATE when closed,
+			// CLOSE_GATE when open
+			GateOpenAndCloseBehavior *gate = GateOpenAndCloseBehavior::findGate(obj);
+			if (obj.isUnderConstruction() || obj.isEffectivelyDead() || !gate || !gate->isSettled())
+			{
+				return ButtonState::Restricted;
+			}
+			if (b.m_command == GUI_COMMAND_TOGGLE_GATE || (b.m_command == GUI_COMMAND_OPEN_GATE && !gate->isOpen()) || (b.m_command == GUI_COMMAND_CLOSE_GATE && gate->isOpen()))
+			{
+				return ButtonState::Active;
+			}
+			return ButtonState::Restricted;
+		}
 		case GUI_COMMAND_EVACUATE:
 		{
 			// lane UI-1: RW 0x942733 case 0x11: available when the contain holds someone (contain slot 0x114 getContainCount), else restricted
@@ -593,6 +611,14 @@ const ControlBarButton *ControlBar::find(int slot, bool inPalantir) const
 	for (const ControlBarButton &b : inPalantir ? m_palantir : m_side)
 	{
 		if (b.slot == slot)
+		{
+			return &b;
+		}
+	}
+	// lane INPUT-1 r2: a button off the bar (a horde's Attack Move / Stop) is pressed by its hotkey (RotWK registers every command window: ControlBar::setControlCommand RW 0x71CF3E -> RW 0x71D139)
+	for (const ControlBarButton &b : m_offBar)
+	{
+		if (b.slot == slot && !inPalantir)
 		{
 			return &b;
 		}

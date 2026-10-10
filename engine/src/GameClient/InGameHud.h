@@ -22,6 +22,7 @@
 #include "GameClient/GUI/ShellServices.h"
 #include "GameClient/GUI/WindowManager.h"
 #include "GameClient/ControlBar.h"
+#include "GameClient/DrawableIconUI.h"
 #include "GameClient/HudInput.h"
 #include "GameClient/Radar.h"
 #include "GameClient/UnitVoiceResponse.h"
@@ -74,13 +75,15 @@ public:
 
 	// the window size in pixels the stage (1024 x 768) is stretched to
 	void setWindowSize(int width, int height);
+	void updateRadarEvents(); ///< lane RADAR-1
+	int windowWidth() const { return m_windowW; } ///< lane RADAR-1: TheDisplay's width (the view box band, RW 0x503CDA)
 
 	// ---- raw input in window pixels; the HUD decides whether the pointer is over its own movie (then the movie gets the event) or over the world ----
 	void mouseMove(int x, int y, int keyState = 0);
 	void mouseButton(HudInput::Button button, bool down, int x, int y, int keyState, int timeMs, bool doubleClick = false);
 	// the wheel at a window pixel: over the Palantir it belongs to the movie, over the world it zooms the tactical camera (the LookAt translator)
 	void mouseWheel(int delta, int x, int y);
-	void key(int keyCode, int keyState);
+	void key(int keyCode, int keyState, char32_t character = 0); // lane INPUT-1: the layout's character (the command button hotkeys)
 	// true when the pointer is over the Palantir (a button of the movie, the radar or the frame): the world does not get that click
 	bool isOverGui(int x, int y);
 	// the radar picture's square in window pixels (the largest square inside the movie's RenderRadar clip, centred); false before the movie shows it
@@ -109,6 +112,15 @@ public:
 	bool openSpellStore(std::string *error = nullptr);
 	void closeSpellStore();
 	AptSpellStore *spellStore() { return m_store.get(); }
+	// lane HUD-5: the drawable decorations (health bars, construction text, veterancy marks, GameClient/DrawableIconUI.h): the device gives the settings (GameData,
+	// Options.ini, its mapped images, the camera's zoom) and draws the ops of the last update under the Palantir
+	void setIconUISettings(const IconUISettings &s) { m_iconSettings = s; }
+	const IconUISettings &iconSettings() const { return m_iconSettings; }
+	const std::vector<IconUIOp> &iconOps() const { return m_iconOps; }
+	const DrawableIconUI &iconUI() const { return m_iconUI; }
+	// lane PLAY-1: the Palantir's powers button presses (OnBttnSpellStore) and why the last one opened no store ("" when it did); never silent
+	unsigned spellStoreRequests() const { return m_storeRequests; }
+	const std::string &spellStoreError() const { return m_storeError; }
 	// the native image of a RenderImage clip of the store ("" none), for the device's draw hook
 	std::string storeImageForClip(const std::string &clipPath) const { return m_store ? m_store->imageForClip(clipPath) : std::string(); }
 	// SMOOTH-1: render frames whose update was skipped because the logic worker was busy
@@ -135,6 +147,15 @@ private:
 	std::vector<std::string> m_errors;
 	InGameSpellBookModel m_spellBar;          // lane SPELL-2
 	std::unique_ptr<AptSpellStore> m_store;   // lane SPELL-2
+	DrawableIconUI m_iconUI;                  // lane HUD-5
+	IconUISettings m_iconSettings;
+	std::vector<IconUIOp> m_iconOps;
+	unsigned m_spellToggleSeen = 0;           // lane INPUT-1: the SPELL_STORE metas done
+	unsigned m_diplomacySeen = 0;             // lane INPUT-1: the DIPLOMACY metas done
+	unsigned m_hotkeyVersion = ~0u;           // lane INPUT-1: the control bar version the hotkeys were registered for
+	void registerHotkeys();
+	unsigned m_storeRequests = 0;             // lane PLAY-1
+	std::string m_storeError;
 	void syncSpellBook();
 	void send(const std::vector<GameMessage> &msgs);
 	int m_windowW = 1024, m_windowH = 768;

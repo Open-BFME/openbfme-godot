@@ -515,6 +515,108 @@ void Path::updateClosestSegment(const Coord3D &pos)
 	m_t = bestT;
 }
 
+bool Path::updateClosestRawSegment(const Coord3D &pos)
+{
+	// RW 0x765598 with `opt` 0 (lane MOVE-3: the splice RW 0x767A66): the segment ends are the raw next nodes; the walk goes on while the next node has a next
+	// optimised node (the tail has none), keeps the closest segment (a later one only when strictly closer) and stops once the closest is below 0.1
+	if (!m_path)
+	{
+		return false;
+	}
+	if (!m_closest)
+	{
+		m_closest = m_path;
+	}
+	PathNode *cur = m_closest;
+	if (!cur->m_nextOpti)
+	{
+		return false;
+	}
+	float best = 1e10f; // RW 0xBF7328
+	float bestT = 0.0f;
+	PathNode *bestN = nullptr;
+	for (;;)
+	{
+		PathNode *end = cur->m_next;
+		if (end == nullptr)
+		{
+			break; // RW reads the raw next of every node it reaches; a node with a next optimised node always has one
+		}
+		const float sx = SimMath::subf32(end->m_pos.x, cur->m_pos.x);
+		const float sy = SimMath::subf32(end->m_pos.y, cur->m_pos.y);
+		float t = SimMath::divf32(SimMath::addf32(SimMath::mulf32(SimMath::subf32(pos.y, cur->m_pos.y), sy), SimMath::mulf32(SimMath::subf32(pos.x, cur->m_pos.x), sx)),
+			SimMath::addf32(SimMath::mulf32(sy, sy), SimMath::mulf32(sx, sx)));
+		// RW 0x76563D..0x76564C: COMISS clamps only ordered values, so a zero-length segment's NaN `t` stays NaN
+		if (0.0f > t)
+		{
+			t = 0.0f;
+		}
+		else if (t > 1.0f)
+		{
+			t = 1.0f;
+		}
+		const float ex = SimMath::subf32(SimMath::addf32(SimMath::mulf32(t, sx), cur->m_pos.x), pos.x);
+		const float ey = SimMath::subf32(SimMath::addf32(SimMath::mulf32(t, sy), cur->m_pos.y), pos.y);
+		const float d = SimMath::addf32(SimMath::mulf32(ey, ey), SimMath::mulf32(ex, ex));
+		// RW 0x76567F: the segment replaces the best only when best > d (a NaN distance never does); otherwise the walk stops once the best is below 0.1
+		if (best > d)
+		{
+			best = d;
+			bestN = cur;
+			bestT = t;
+		}
+		else if (best < 0.1f)
+		{
+			break;
+		}
+		cur = end;
+		if (cur->m_nextOpti == nullptr)
+		{
+			break;
+		}
+	}
+	if (bestN == nullptr)
+	{
+		return false;
+	}
+	m_closest = bestN;
+	m_t = bestT;
+	return true;
+}
+
+void Path::splicePatch(Path *patch)
+{
+	// RW 0x767A66
+	if (patch == nullptr)
+	{
+		return;
+	}
+	if (patch->m_pathTail == nullptr || !updateClosestRawSegment(patch->m_pathTail->m_pos))
+	{
+		delete patch;
+		return;
+	}
+	while (m_path != m_closest)
+	{
+		PathNode *n = m_path;
+		m_path = n->m_next;
+		delete n;
+	}
+	PathNode *join = m_closest->m_next;
+	patch->m_pathTail->setNextOptimized(join);
+	patch->m_pathTail->m_next = join;
+	join->m_prev = patch->m_pathTail;
+	delete m_path; // the closest segment's start
+	m_path = patch->m_path;
+	m_path->m_prev = nullptr;
+	patch->m_path = nullptr;
+	patch->m_pathTail = nullptr;
+	delete patch;
+	m_closest = m_path;
+	m_t = 0.0f;
+	m_lastAheadNode = nullptr;
+}
+
 bool Path::isNearPathEnd() const
 {
 	// RW 0x5E2DBA: a current node with a next optimised node and a 2D segment length below 10

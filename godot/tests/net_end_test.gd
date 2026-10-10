@@ -1,6 +1,6 @@
 ## Headless test of the end of a LAN game (lanes END-1 / END-2): a host and a joiner play 40 logic frames (scripted players), then the joiner surrenders
 ## through the quit menu (Esc, Forfeit, the confirmation: MSG_SELF_DESTRUCT on the lockstep); the joiner sees the defeat, the host the victory; both leave
-## through the quit menu's Exit to the score screen (type 3, GameWorld.clear_game_data releases the session), and Continue opens the LAN lobby again, where
+## by the end-game timer (lane PLAY-1: RW 0x602FFE, 25 logic frames after the VICTORY / DEFEAT) to the score screen (type 3, GameWorld.clear_game_data releases the session), and Continue opens the LAN lobby again, where
 ## a second LAN game starts and runs 20 frames without a desync.
 ##
 ##   godot --headless --path godot --script res://tests/net_end_test.gd
@@ -61,10 +61,13 @@ func _run() -> int:
 			_check(log.contains("\"popup_type\":\"Forfeit\""), "join: the quit menu offers Forfeit in a LAN game (RW 0x9216EC) with Save and Load disabled (RW 0x921D5B)")
 			_check(log.contains("GAME QUIT action: QuitMenuForfeit") and log.contains("GAME QUIT surrender: {\"ok\":true"), "join: Forfeit sent MSG_SELF_DESTRUCT(false) on the lockstep")
 		_check(log.contains("GAME NET END end screen: shown true, victory %s" % ("false" if surrendered else "true")), "%s: the %s screen" % [who, "defeat" if surrendered else "victory"])
-		_check(log.contains("GAME QUIT action: QuitMenuExit"), "%s: left through the quit menu's Exit" % who)
+		# lane PLAY-1: 25 logic frames after the VICTORY / DEFEAT the end-game timer leaves the game (RW 0x602FFE / 0x603533)
+		_check(log.contains("GAME END left by the end-game timer: true"), "%s: the end-game timer left the game to the score screen" % who)
 		_check(log.contains("GAME NET END score screen type 3") and log.contains("local result %d" % (1 if surrendered else 0)), "%s: the score screen is type 3 with the local result %s" % [who, "defeated" if surrendered else "victorious"])
 		_check(log.contains("games started 2") and log.contains("net active true"), "%s: Continue opened the LAN lobby again and a second LAN game runs" % who)
 		_check(log.contains("GAME NET END RESULT: ok"), "%s: the whole flow" % who)
+		# lane CAMP-2: a LAN game shows no shell backdrop / front-end background (read from the canvas)
+		_check(log.contains("GAME SHELL PICTURES in game (lan): backdrop '', background mode 0 "), "%s: no shell pictures over the LAN game" % who)
 		if rc != "0":
 			for line in log.split("\n"):
 				if line.begins_with("GAME FAIL") or line.contains("handle_crash") or line.contains("NET END"):

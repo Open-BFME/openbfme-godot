@@ -18,6 +18,7 @@
 #include "GameLogic/GameLogicDispatch.h"
 #include "GameLogic/GameMessage.h"
 #include "GameLogic/Locomotor.h"
+#include "GameLogic/AI/AIMove.h"
 #include "GameLogic/Module/AIUpdate.h"
 #include "GameLogic/Module/TransportContainBehavior.h"
 #include "GameLogic/Object/Contain/HordeContainRuntime.h"
@@ -473,4 +474,52 @@ TEST_CASE("siege retail: Grond's crew speed is 50% per troll (SpeedPercentPerCre
 	CHECK(st->crewCount() == 1);
 	CHECK_FALSE(troll->testStatus((unsigned)CombatNames::status("UNATTACKABLE")));
 	CHECK(st->crewCount() == 1);
+}
+
+// lane IDLE-1 (community FB-0001): RW 0x66844A, the idle mood scan's container gate. A contained object looks for a target only with CanAttackWhileContained
+// (AI data + 0x25), CONTESTING_BUILDING or its own contain's vslot 0xB8; a battering ram's crew (AutoAcquireEnemiesWhenIdle = Yes ATTACK_BUILDINGS, a sword, no
+// CanAttackWhileContained) therefore stays on its bones beside an enemy building. Before, each crew member acquired the building, its attack state walked it
+// off the ram it still belonged to and it stood running with MOVING where the ram's redeploy put it back (the QA matrix's ram crew treadmill).
+TEST_CASE("idle1 retail: a battering ram's crew does not acquire targets from its bones (RW 0x66844A's container gate; CanAttackWhileContained)")
+{
+	if (!haveWorld("idle1 ram crew"))
+	{
+		return;
+	}
+	SharedWorld &s = shared();
+	Rig r(s, "map mp fall back 4p", "FactionIsengard");
+	const Coord3D c0 = centre(r, 400.0f);
+	// the ram is the computer player's (its scan is not limited by a human player's shroud, S-565); the building is the local player's
+	Player *computer = r.game->players().findPlayerWithName("Player_2");
+	REQUIRE(computer != nullptr);
+	Object *ram = r.make("MordorBatteringRam", c0.x, c0.y, computer);
+	r.make("GondorBarracks", c0.x + 90.0f, c0.y);
+	r.frame(5);
+	SiegeEngineContain *se = dynamic_cast<SiegeEngineContain *>(ram->getContain());
+	REQUIRE(se != nullptr);
+	REQUIRE(se->crewList()->size() == 6u);
+	const int moving = AIUpdateInterface::modelConditionBit("MOVING");
+	int attacking = 0, walking = 0;
+	float farthest = 0.0f;
+	for (int f = 0; f < 150; ++f)
+	{
+		r.frame(1);
+		for (Object *c : *se->crewList())
+		{
+			AIUpdateInterface *ai = c->getAIUpdateInterface();
+			REQUIRE(ai != nullptr);
+			attacking += ai->currentVictim() ? 1 : 0;
+			walking += c->testModelCondition(moving) ? 1 : 0;
+			const float d = dist2D(*c, *ram);
+			farthest = d > farthest ? d : farthest;
+		}
+	}
+	std::printf("  info: crew frames with a victim %d, with MOVING %d; farthest from the ram %.1f\n", attacking, walking, farthest);
+	CHECK(attacking == 0);
+	CHECK(walking == 0);
+	CHECK(farthest < 30.0f); // the crew bones lie within about 20 of the ram's centre
+	// the AI module field is read: the crew has none, a horde that fights from its container (MordorArcherHorde: CanAttackWhileContained = Yes) has it
+	CHECK_FALSE(se->crewList()->front()->getAIUpdateInterface()->combatSettings().canAttackWhileContained);
+	Object *archers = r.make("MordorArcherHorde", c0.x - 300.0f, c0.y, computer);
+	CHECK(archers->getAIUpdateInterface()->combatSettings().canAttackWhileContained);
 }

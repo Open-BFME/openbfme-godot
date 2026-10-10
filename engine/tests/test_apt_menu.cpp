@@ -10,6 +10,7 @@
 #include "AptPlayerTestUtil.h"
 #include "AptRetail.h"
 
+#include "GameClient/AptCanvas.h"
 #include "Libraries/Source/Apt/AptRenderList.h"
 
 #include <cstdlib>
@@ -557,4 +558,40 @@ TEST_CASE("retail corpus: every movie runs 100 frames in the player without a VM
 		}
 	}
 	CHECK_MESSAGE(differenceCount == 0, differenceCount << " occurrence differences from the reviewed baseline:" << differences);
+}
+
+// Lane FB7-1 (community FB-0007, stop S-1910): the main menu's button labels are multiline edit texts WITHOUT word wrap. RotWK's Apt display
+// string (ctor RW 0x4AA369: wrap only when the word-wrap flag +0x24 is set; vertical flag +0x2E = !multiline || !wordWrap; draw RW 0x4A8F95) centres
+// such a field vertically in its box. The port's device treated "multiline" as "wraps" and put the text at the top of the box.
+TEST_CASE("fb7 main menu: a button label (multiline, no word wrap, alignment 2) is centred vertically in its box as RW 0x4A8F95 places it")
+{
+	OPENBFME_REQUIRE_RETAIL(mount);
+	MenuFx fx(mount);
+	fx.tick(10);
+	std::string error;
+	REQUIRE_MESSAGE(fx.apt->invoke(fx.apt->level(1), "ShowMainMenu", {}, nullptr, &error), error);
+	fx.tick(60);
+	AptRenderList rl;
+	fx.apt->buildRenderList(rl);
+	std::vector<const AptRenderCommand *> quit = rl.forPath("_level1.QuitMainMenu.instance3.Text");
+	REQUIRE(quit.size() == 1);
+	const AptRenderCommand &t = *quit[0];
+	REQUIRE(t.kind == AptRenderCommand::Kind::Text);
+	// the field as MainMenu.apt defines it: bounds (-2 -2 158 39), alignment 2, multiline, no word wrap
+	CHECK(t.bounds[0] == -2.0f);
+	CHECK(t.bounds[1] == -2.0f);
+	CHECK(t.bounds[2] == 158.0f);
+	CHECK(t.bounds[3] == doctest::Approx(39.2f));
+	CHECK(t.alignment == 2);
+	CHECK(t.multiline);
+	CHECK_FALSE(t.wordWrap);
+	// retail's placement in a 1:1 window (box 160 x 41.2 at the instance, a 17 pixel high string 60 wide): centred both ways, whole pixels
+	const float x0 = t.matrix.a * t.bounds[0] + t.matrix.c * t.bounds[1] + t.matrix.tx, y0 = t.matrix.b * t.bounds[0] + t.matrix.d * t.bounds[1] + t.matrix.ty;
+	const float x1 = t.matrix.a * t.bounds[2] + t.matrix.c * t.bounds[3] + t.matrix.tx, y1 = t.matrix.b * t.bounds[2] + t.matrix.d * t.bounds[3] + t.matrix.ty;
+	const AptTextPlacement p = PlaceAptText(x0, y0, x1, y1, 60.0f, 17.0f, t.alignment, t.multiline, t.wordWrap);
+	CHECK(p.centredVertically);
+	CHECK(p.y == (float)(int)((y1 - y0 - 17.0f) * 0.5f + y0));
+	CHECK(p.y - y0 >= 11.0f); // about 12 below the top (0.5 * (41.2 - 17) = 12.1, truncated to a pixel), not on it
+	CHECK(p.y - y0 <= 13.0f);
+	CHECK(p.x == (float)(int)((x1 - x0 - 60.0f) * 0.5f + x0));
 }

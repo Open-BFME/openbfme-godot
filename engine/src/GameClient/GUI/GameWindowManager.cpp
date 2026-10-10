@@ -228,6 +228,15 @@ void GameWindowManager::processDestroyList()
 	m_destroyList.clear();
 }
 
+bool GameWindowManager::winIsAlive(const GameWindow *window) const
+{
+	if (std::find(m_destroyList.begin(), m_destroyList.end(), window) != m_destroyList.end())
+	{
+		return false;
+	}
+	return std::any_of(m_owned.begin(), m_owned.end(), [window](const std::unique_ptr<GameWindow> &p) { return p.get() == window; });
+}
+
 GameWindow *GameWindowManager::winGetWindowFromId(GameWindow *window, int id)
 {
 	if (window == nullptr)
@@ -472,9 +481,21 @@ void GameWindowManager::windowHiding(GameWindow *window)
 	{
 		winUnsetModal(window);
 	}
+	// ZH calls winCapture(NULL) here, which refuses while a captor exists (WIN_ERR_MOUSE_CAPTURED): a hidden captor kept the mouse. Lane
+	// WINCRASH-1: a gadget whose APT placeholder was removed is hidden, not destroyed (RotWK keeps it until the level unloads), and kept
+	// receiving the mouse through its capture or a drag in progress (Sol r1 probe): the capture, the grab and the mouse region (a later
+	// GWM_MOUSE_LEAVING) go with the window.
 	if (m_mouseCaptor == window)
 	{
-		winCapture(nullptr);
+		winRelease(window);
+	}
+	if (m_grabWindow == window)
+	{
+		m_grabWindow = nullptr;
+	}
+	if (m_currMouseRgn == window)
+	{
+		m_currMouseRgn = nullptr;
 	}
 	for (GameWindow *child = window->winGetChild(); child; child = child->winGetNext())
 	{
@@ -1434,7 +1455,8 @@ GameWindow *GameWindowManager::gogoGadgetSlider(GameWindow *parent, std::uint32_
 	}
 	if (BitTest(instData->getStyle(), GWS_HORZ_SLIDER))
 	{
-		gogoGadgetPushButton(slider, statusFlags, 0, HORIZONTAL_SLIDER_THUMB_POSITION, HORIZONTAL_SLIDER_THUMB_WIDTH, HORIZONTAL_SLIDER_THUMB_HEIGHT, &buttonInstData, nullptr, true);
+		// lane FB7-1: RotWK keeps the thumb at y 0 (RW 0x7234EC / 0x7237F8; the first resize makes it 13 x the slider height)
+		gogoGadgetPushButton(slider, statusFlags, 0, 0, HORIZONTAL_SLIDER_THUMB_WIDTH, height, &buttonInstData, nullptr, true);
 	}
 	else
 	{

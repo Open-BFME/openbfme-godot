@@ -145,6 +145,7 @@ struct AptCanvasOp
 	bool nativeTag = false;    // a clip tagged by its own script (`_type`), not an exported symbol
 	std::string renderObject;  // its `_RenderObj`
 	std::vector<std::pair<std::string, std::string>> nativeVars; // lane HUD-1: `_imageMap`, `_mode`, `_timerId` of the tagged clip
+	float placeholderColor[4] = { 1, 1, 1, 1 }; // lane PLAY-1: the clip's cumulative colour multiply (r g b a)
 };
 
 // RotWK RW 0x4A8AD5 (the Apt vertex colour): `rgba` are the colour's bytes (r g b a, 0..255), `c` the cumulative colour transform

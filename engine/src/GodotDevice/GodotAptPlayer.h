@@ -22,9 +22,11 @@
 #include <godot_cpp/classes/image_texture.hpp>
 #include <godot_cpp/classes/input_event.hpp>
 #include <godot_cpp/classes/node2d.hpp>
+#include <godot_cpp/classes/texture2d.hpp>
 #include <godot_cpp/classes/ref.hpp>
 #include <godot_cpp/variant/array.hpp>
 #include <godot_cpp/variant/dictionary.hpp>
+#include <godot_cpp/variant/packed_int32_array.hpp>
 #include <godot_cpp/variant/packed_string_array.hpp>
 #include <godot_cpp/variant/rid.hpp>
 #include <godot_cpp/variant/string.hpp>
@@ -60,6 +62,12 @@ class AptNativeHook
 public:
 	virtual ~AptNativeHook() = default;
 	virtual void drawPlaceholder(const AptCanvasOp &op, RID canvasItem) = 0;
+	// lane CAH-1: whether the hook draws this placeholder; a placeholder it leaves goes the player's own way (a RenderImage's mapped image)
+	virtual bool handlesPlaceholder(const AptCanvasOp &op) const
+	{
+		(void)op;
+		return true;
+	}
 };
 
 class AptMenuPlayer : public Node2D
@@ -120,6 +128,18 @@ public:
 	// store (a GameWorld that setup() ran on the same file system) so a slot's faction index is the logic's.  config: { seed: int (the lobby's game
 	// seed; 0 = from the clock), profile: String (optional: the Skirmish profile name to start with) }.  Returns { ok, errors, load_ms, strings, fonts }.
 	Dictionary boot_shell(const Ref<RetailFileSystem> &fs, Object *world, const Dictionary &config);
+	void shell_show_shell_map(bool use); // lane FB7-1: Shell::showShellMap
+	void shell_hide_background();        // lane FB7-1: WindowManager hide of the front-end background (RW 0x622C88(0))
+	// lane CAH-2 (S-1914): the host has no screen for the main menu's request `action`: AptMainMenu::screenUnavailable (a message box tells the player,
+	// its Ok makes the main menu usable again). Returns the stop line ("" when the main menu is not up).
+	String shell_screen_unavailable(const String &action);
+	// lane CAMP-2: { backdrop_image: the shell backdrop the canvas drew ("" none), background_level, background_commands: the visible commands of the
+	// front-end background's level in the last list, background_mode: the window manager's }
+	Dictionary get_backdrop_state() const;
+	PackedInt32Array shell_levels() const; // lane CAMP-2: the Apt level of each screen of the stack, bottom first
+	bool level_drawn(int level) const;     // lane CAMP-2: the last render list drew something visible of the level
+	// lane CAMP-2: the BinkMovie components on screen: [{ path, title, frame, frames, error }]
+	Array get_movies() const;
 	bool is_shell_mode() const;
 	// Shell::push / pop of a screen file ("MainMenu.apt"); false + the shell's errors in the report when the shell refused.
 	bool shell_push(const String &filename);
@@ -127,6 +147,12 @@ public:
 	// the screens of the Shell stack, bottom first ("AptLevel0.apt", "MainMenu.apt" ...); the top one's `_level` slot
 	PackedStringArray shell_stack() const;
 	int shell_top_level() const;
+	// lane PLAY-1: an entry of the user's Options.ini (the shell's OptionPreferences, as loaded at boot and saved by the Options screen); null when the
+	// file has no such key (the caller applies the retail default, e.g. GlobalData's for AlternateMouseSetup)
+	Variant get_option(const String &key) const;
+	// lane HUD-5: the players screen's Status rows (GUI/PlayerStatusInfo.h) from GameWorld.get_player_status_state(), built with the shell's factions, colours
+	// and game text; PlayerTribute.apt reads them when it loads its Status page. Returns { ok, rows: [[name, army, team, status, colour]], error }
+	Dictionary set_player_status(const Dictionary &state);
 	// lane MP-2: a movie -> engine command as the movie's fscommand runs it (WindowManager::invokeCallback: "AptLanLobby::OnCreateGameBttn",
 	// "MpGameSetup::OnReadyPress" ...): scripted lobbies. false: no screen registered the name
 	bool shell_fscommand(const String &command, const String &argument);
@@ -155,6 +181,21 @@ public:
 	// lane MP-2: hands the world's LAN lobby (GameWorld.lan_open) to LanLobby.apt, set before it is pushed (null / no lobby: the screen says so). The screen keeps
 	// the pointer: pop it before GameWorld.lan_close
 	bool set_lan(Object *world);
+	// lane CAH-1, the Create-a-Hero builder (CreateAHero.apt, GameClient/GUI/AptScreens/AptCreateAHero.h): set_create_a_hero gives the shell the world's
+	// TheCreateAHeroSystem and the hero list (the system heroes of the archives and the profile's MyHero*.cah files in `profile_dir`; the lobby's Hero combo
+	// lists the same heroes): { ok, heroes, errors }. get_create_a_hero_view: what the builder's 3D view shows { up, page ("M", "C", "A", "P" or ""),
+	// revision (moves when the hero changes), record (the shown hero's .cah bytes; empty when none), class, subclass, rotate_left, rotate_right, zoom_in,
+	// zoom_out }. get_create_a_hero_heroes: [{ name, unique_id, system, class, subclass, record }]. set_create_a_hero_view_texture: the texture drawn into
+	// the movie's CreateAHero::DrawMapComponent clip (RW 0x91A3A9: the tactical view in the clip's rectangle); null removes it
+	Dictionary set_create_a_hero(Object *world, const String &profile_dir);
+	Dictionary get_create_a_hero_view() const;
+	Array get_create_a_hero_heroes() const;
+	void set_create_a_hero_view_texture(const Ref<Texture2D> &texture);
+	// lane CAH-2: retail's Create-a-Hero save folder (GameClient/UserDataFolder.h): the application data folder (OS::get_data_dir: %APPDATA% on Windows,
+	// CSIDL_APPDATA) + the install's gi.dat UserDataLeafName + "Save" (RW 0x644148 / 0x6DD398). { ok, folder, user_data, leaf, error }
+	Dictionary create_a_hero_save_folder(const String &rotwk_install) const;
+	// automation (scripted runs and videos, like lobby_apply): the builder's name entry gets `name` as if typed; false when the Appearance page is not up
+	bool create_a_hero_type_name(const String &name);
 	// copies the score screen data of the world's last clear_game_data into TimeLine.apt's environment
 	bool set_score_screen_from_world(Object *world);
 	// the graph of the TimeLine.apt on the shell stack for the graph mode `mode` ("Units", "Structures", "Resources", "FinalScore"; "" reads the movie's _graphMode
@@ -177,6 +218,9 @@ public:
 	// (SlotState item data of the Player combo: 2..5 AI levels, 1 closed), faction: String (a PlayerTemplate name), color: int (colour list index), team: int
 	// (-1 none, else 0-based) }] }; on LanLobby.apt (lane MP-2) the same slots, or { join_row: int } selects a row of the game list and presses Join.  Returns { ok, errors, game: the lobby's current GameInfo as the new-game Dictionary }.
 	Dictionary lobby_apply(const Dictionary &spec);
+	// lane FB7-1 (scripted input runs): the stage rectangle of a lobby gadget: "<slot>/<Leaf>" (a slot combo), "list/<slot>/<Leaf>" (its drop-down list),
+	// "spot/<n>" (a start spot of the map window): { found, x, y, w, h }
+	Dictionary lobby_gadget_rect(const String &name);
 	// Everything the shell reported (notes of the window manager, shell errors, gadget layer errors and notes, unported commands): the unverified list
 	Dictionary get_shell_report() const;
 	// Signals (the hooks of other lanes): `shell_service(kind, a, b)` for every ShellServices call (kind "sound" a = the sound name: the AUDIO-1 hook for
@@ -225,6 +269,7 @@ private:
 	bool m_showPlaceholders = false;
 
 	void clearCanvas();
+	void advanceMovies(double deltaMs); // lane CAMP-2: the BinkMovie components' frames
 	// lane PERF-1 r2: whether two canvas lists draw the same (every op field drawCanvas reads); the native components of the drawn list redrawn alone
 	static bool sameCanvas(const AptCanvasList &a, const AptCanvasList &b);
 	void redrawNativePlaceholders();

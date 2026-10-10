@@ -43,7 +43,12 @@ enum class ShellAction
 	QuitMenuRestart,     // AptQuitMenu::RestartMission in a non-multiplayer game of kind 3 (RW 0x9226AA -> 0x9220DE): the same game again
 	QuitMenuForfeit,     // AptQuitMenu::RestartMission otherwise (RW 0x9226AA -> 0x921841): close, MSG_SELF_DESTRUCT(false) unless the alliance won
 	QuitMenuOptions,     // AptQuitMenu::OptionsScreen (RW 0x921783 -> 0x91ED91: the options screen over the game)
-	ToggleQuitMenu       // AptPalantir::OnBttnOptions (RW 0x6D40C1 -> 0x9220BD -> ToggleQuitMenu RW 0x921C9D)
+	ToggleQuitMenu,      // AptPalantir::OnBttnOptions (RW 0x6D40C1 -> 0x9220BD -> ToggleQuitMenu RW 0x921C9D)
+	// lane PLAY-1: the Palantir's flag button AptPalantir::OnBttnObjectives (RW 0x6D40C9): in a skirmish or multiplayer game (RW 0x625456) RW 0x914EF0 pushes
+	// PlayerTribute.apt over the game, otherwise RW 0x8E8843 opens the objectives screen; the host decides by the game's mode
+	PalantirObjectives,
+	TributeReturnToGame, // lane PLAY-1: PlayerTribute.apt's "<path>_ReturnToGame" (RW 0x914E89 -> RW 0x914C51: the screen closes, TheShell pops it)
+	CreateAHeroExit      // lane CAH-1: AptCreateAHero::Class::Exit (the builder is left; the device ends the map mode)
 };
 
 struct ShellRequest

@@ -7,7 +7,7 @@
 
 using namespace movetest;
 
-TEST_CASE("commands: a selection and a move message move the selected units, keeping their offsets from the nearest one (ZH AIGroup::groupMoveToPosition)")
+TEST_CASE("commands: a selection and a move message move the selected units to the one point, each adjusted beside the others (RW 0x75748C, MoveToGroupOrder)")
 {
 	MoveWorld mw;
 	mw.buildMap();
@@ -34,11 +34,16 @@ TEST_CASE("commands: a selection and a move message move the selected units, kee
 	CHECK(a->getAIUpdateInterface()->isIdle());
 	CHECK(b->getAIUpdateInterface()->isIdle());
 	CHECK(c->getAIUpdateInterface()->isIdle());
-	// the units arrive around the goal with the offsets they had from the unit nearest to the goal (a: 305,305 is the farthest..., c is nearest to 705,705)
+	// lane MOVE-3: RotWK's MSG_DO_MOVETO hands the group to the group manager's MoveToGroupOrder (RW 0x77BAAA -> 0x75748C): every unit, in group order, gets
+	// the point adjusted by adjustDestination against the goals reserved before it (RW 0x94DF97): a takes the point, b and c the nearest free cells (the ZH
+	// group move kept each unit's offset from the nearest one; that is now MSG_DO_FORCEMOVETO's)
 	const Coord3D goal{ 705.0f, 705.0f, 0.0f };
-	CHECK(dist2d(*c->getPosition(), goal) < 25.0f);
-	CHECK(dist2d(*a->getPosition(), *c->getPosition()) > 50.0f);   // not stacked on one cell
-	CHECK(dist2d(*b->getPosition(), *c->getPosition()) > 15.0f);
+	CHECK(dist2d(*a->getPosition(), goal) < 25.0f);
+	CHECK(dist2d(*b->getPosition(), goal) < 40.0f);
+	CHECK(dist2d(*c->getPosition(), goal) < 40.0f);
+	CHECK(dist2d(*a->getPosition(), *b->getPosition()) > 5.0f); // not stacked on one cell
+	CHECK(dist2d(*a->getPosition(), *c->getPosition()) > 5.0f);
+	CHECK(dist2d(*b->getPosition(), *c->getPosition()) > 5.0f);
 	CHECK(other->getPosition()->x == otherX);
 }
 

@@ -322,9 +322,9 @@ TEST_CASE("pathfind footprint radius: diameter 2 * bounding radius, 10 < d < 20 
 	w.pf->getRadiusAndCenter(&o, r, c);
 	CHECK(r == 2);
 	CHECK(c);
-	o.kinds.insert(PK_HORDE); // RW 0x6ED071: a horde (or ship) searches with radius 1, centred
-	w.pf->getRadiusAndCenter(&o, r, c);
-	CHECK(r == 1);
+	o.kinds.insert(PK_HORDE); // RW 0x6EAF79: a horde (or ship, monster) is capped at 4; RW 0x6ED071 has no horde branch (lane MOVE-3: only the A* expansion
+	w.pf->getRadiusAndCenter(&o, r, c); // RW 0x6F9850 narrows a horde to radius 1): d 90 -> 9 -> radius 4, centred
+	CHECK(r == 4);
 	CHECK(c);
 	w.pf->getRadiusAndCenter(nullptr, r, c);
 	CHECK(r == 0);

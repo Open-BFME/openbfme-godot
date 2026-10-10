@@ -113,8 +113,8 @@ std::vector<std::string> LinearCampaignManager::stopLines()
 		"[S-1360] the campaign progress: retail auto-saves a won mission as \"00000000.sav\" (\"__AUTO_SAVE__\", RW 0x6DE8F1) and shows CampaignMenu.apt (RW 0x75E3B7: "
 		"next / last mission, save, load, main menu); the port keeps CampaignProgress in a sidecar text file of its own and loads the next mission at once",
 		"[S-1364] the campaign presentation: LoadScreen.apt does not show the mission's LoadScreenImage, the bonus unlock writes no preference file (\"BCU\", "
-		"RW 0x927F08), MillisecondsAfterStartToStartFadeUp is not applied (its reader is not decoded); the movies (OverallCampaignIntroMovie, IntroMovie, "
-		"PLAY_MOVIE_IN_GAME) play their narration over black (lane CAMP-1H: S-1710)",
+		"RW 0x927F08), MillisecondsAfterStartToStartFadeUp is not applied (its reader is not decoded); lane CAMP-2: the movies (OverallCampaignIntroMovie, "
+		"IntroMovie, PLAY_MOVIE_IN_GAME) show their VP6 picture with their narration (S-2340)",
 		"[S-1711] the military caption (SHOW_MILITARY_CAPTION, the campaign's subtitles) is drawn whole in the client's own style: retail types it (RW "
 		"0x69CE5F: a character per InGameUI MilitaryCaptionDelayMS on the real-time clock, MiscAudio MissionBriefingCharacterClick per character, up to 4 "
 		"lines, held 2 s after the last character, then faded) with InGameUI.ini's MilitaryCaption* colour / position / font, which the port does not parse",

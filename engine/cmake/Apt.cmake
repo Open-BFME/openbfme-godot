@@ -29,6 +29,7 @@ set(OPENBFME_APT_TESTS
     tests/test_apt_player_review.cpp
     tests/test_apt_input.cpp
     tests/test_apt_menu.cpp
+    tests/test_fb7_menus.cpp # lane FB7-1 round 2
     tests/test_apt_canvas.cpp)
 
 # Shell, WindowManager, native gadgets, skirmish setup (lane APT-4)

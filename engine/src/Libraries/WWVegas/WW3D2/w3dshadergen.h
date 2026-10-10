@@ -53,6 +53,9 @@ struct W3DShaderKey
 	// INSTANCE_CUSTOM.z (W3D_HOUSE_COLOR_PACK). The combine is a HYPOTHESIS: base.rgb = mix(base.rgb, base.rgb * team, mask.a); the
 	// defaultw3d.fxo permutations have no sampler for HouseColorTexture, so the real combine is not recoverable from the effect (S-022).
 	bool HouseColor = false;
+	// lane CAH-2 (S-1408): w3d_hc_tex is a house colour texture already recoloured texel by texel (RotWK RW 0x531C77, a colour set such as a
+	// Create-a-Hero's kind 3: W3DInstancer::add_model_colored): it replaces the base where its alpha is set (INFERENCE: the combine is unrecovered, S-022)
+	bool HouseColorBaked = false;
 	// lane RENDER-4 (S-1651): the map's hardware fog, W3DHardwareFog::FogMode (0 = none): ShaderClass::Enable_Fog's choice for the surface's blend
 	int Fog = 0;
 

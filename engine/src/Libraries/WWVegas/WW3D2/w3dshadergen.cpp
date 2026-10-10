@@ -87,6 +87,7 @@ std::string W3DShaderKey::Id() const
 		ClampU[1], ClampV[1], NoLod[0], NoLod[1], Tangents);
 	std::string id = buf;
 	if (HouseColor) id += "_hc1"; // appended only when set: every existing id stays what it was
+	if (HouseColorBaked) id += "_hcb"; // lane CAH-2
 	if (SimpleFx) id += "_sfx1";
 	if (Fog) id += "_fog" + std::to_string(Fog); // lane RENDER-4
 	return id;
@@ -410,7 +411,16 @@ std::string Generate_W3D_Shader_Code(const W3DShaderKey &k)
 	line("\tvec4 t0 = vec4(1.0);");
 	line("\tvec4 t1 = vec4(1.0);");
 	if (k.Tex[0]) line("\tt0 = texture(w3d_tex0, uvs0);");
-	if (k.HouseColor && k.Tex[0])
+	if (k.HouseColor && k.HouseColorBaked && k.Tex[0])
+	{
+		// lane CAH-2 (S-1408): the texture was recoloured per texel before filtering (RW 0x531C77 on the CPU, mipmaps made from the recoloured level);
+		// INFERENCE: it replaces the base where its alpha is set (the combine is unrecovered, S-022 / S-119); the instance's team colour is not used
+		line("\t{");
+		line("\t\tvec4 hcb = texture(w3d_hc_tex, uvs0);");
+		line("\t\tt0.rgb = mix(t0.rgb, hcb.rgb, hcb.a);");
+		line("\t}");
+	}
+	else if (k.HouseColor && k.Tex[0])
 	{
 		// S-119 hypothesis: team colour (8 bit sRGB packed by W3D_Pack_House_Color) tints the base where the housecolor mask is set
 		line("\tif (v_house > 0.5) {");

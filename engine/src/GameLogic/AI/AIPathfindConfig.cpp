@@ -183,6 +183,8 @@ bool PathfindConfigLoader::load(ArchiveFileSystem &fs, PathfindConfig &out, std:
 	if (!getInt(gd, "MaxCellsFindMeleeEngagementLocation", c.findMeleeEngagementLimit, "gamedata.ini", error)) return false;
 	if (!getInt(gd, "MaxCellsAdjustToPossibleDestination", c.adjustToPossibleLimit, "gamedata.ini", error)) return false;
 	if (!getInt(gd, "MaxCellsToExamineTowardsGoal", c.examineTowardsGoalLimit, "gamedata.ini", error)) return false;
+	// lane MOVE-3: PlanningModeEnabled keeps the constructor's Yes (RW 0x643982) unless GameData names it
+	if (gd.kv.count(AsciiStringUtil::lowered("PlanningModeEnabled")) && !getBool(gd, "PlanningModeEnabled", c.planningModeEnabled, "gamedata.ini", error)) return false;
 	// Pathfinder.ini SlopeLimits: the RW field row's parse proc is a lone `ret` (RW 0x63F3BF), so retail never loads
 	// them and the slope grade stays off (S-160)
 	c.slopeLimits[0] = c.slopeLimits[1] = 0.0f;

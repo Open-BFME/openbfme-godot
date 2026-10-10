@@ -1,0 +1,7 @@
+# Lane AUTOREL-1 r6: the binary files the public tree may hold (tools/release/autorelease.py audit-tree). The public tree is text only:
+# every file synced to the public repository must be UTF-8 text with no NUL byte. Any other file (an image, a font, prebuilt data, a
+# container or a compressed file of any kind) stops the sync before anything is pushed, unless it is listed here. A listed file must
+# have exactly this sha256; a listed container must also decode completely and pass the audit, its metadata included (no comments,
+# extra fields, links, PAX headers or owner names; member names without private paths).
+# Format: <sha256>  <path>  <reason>     (two spaces between the fields). Generate test fixtures at test time instead of listing them.
+# Empty: today's public tree has no binary file.

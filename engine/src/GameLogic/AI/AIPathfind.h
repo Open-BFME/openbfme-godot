@@ -59,6 +59,9 @@ struct PathfindConfig
 	int findAttackPathLimit = 0;       // GameData MaxCellsFindAttackPath (+0x1214, row RW 0xC01190): the cells findAttackPath RW 0x6FC18E expands (lane PHYS-1)
 	int adjustToPossibleLimit = 0;     // GameData MaxCellsAdjustToPossibleDestination
 	int examineTowardsGoalLimit = 0;   // GameData MaxCellsToExamineTowardsGoal (+0x121C): the cells the straight-line shortcut may visit per search
+	// GameData PlanningModeEnabled (RW GameData + 0x11CA, field row RW 0xBFF710, parseBool RW 0x42E558; lane MOVE-3): MSG_DO_MOVETO / MSG_DO_ATTACKMOVETO go to the
+	// group manager's move order while set. The GameData constructor sets it (RW 0x643982), so it is Yes unless the INI says otherwise (retail never names it)
+	bool planningModeEnabled = true;
 	int cellInfoPoolSize = 0;          // PathfindCellInfo pool (ZH CELL_INFOS_TO_ALLOCATE)
 	int zoneBlockSize = 0;             // PathfindZoneManager::ZONE_BLOCK_SIZE
 };
@@ -158,6 +161,14 @@ public:
 	// the node the follower is on (RW Path+0x10) and the fraction along its segment (RW Path+0x14)
 	const PathNode *currentNode() const { return m_closest; }
 	float currentT() const { return m_t; }
+	// lane MOVE-3: RW 0x765598 with `opt` 0: the segment of the raw chain (node + 0) closest to `pos`, searched from the current one, becomes the current one;
+	// false (nothing changed) when none was found
+	bool updateClosestRawSegment(const Coord3D &pos);
+	// lane MOVE-3: RW 0x767A66, the blocked repath's splice: the patch replaces the path up to the raw segment closest to the patch's end, which it joins;
+	// the patch is consumed (deleted) either way
+	void splicePatch(Path *patch);
+	// the node of the last computePointAhead (RW PathPoint.node)
+	const PathNode *lastAheadNode() const { return m_lastAheadNode; }
 	// RW 0x765A4B (the HORDE mover): the position of the node two ahead of the current one
 	Coord3D positionTwoAhead() const;
 	// lane EXIT-1: the node of the last computePointAhead (RW PathPoint.node) has a next optimised node (RW node + 8): the horde member update RW 0x66CDC9
@@ -651,9 +662,12 @@ public:
 	// ---- footprints and reservations of mobile units ----
 	// RW 0x6EAF79: the footprint diameter in cells (odd = centred on a cell)
 	int footprintSize(const PathfindObject *obj) const;
-	// RW 0x6ED071: radius and centre of the search footprint (horde and ship: 1, centred)
+	// RW 0x6ED071: radius and centre of the footprint (the footprint size RW 0x6EAF79 halved, centred when odd; examineNeighboringCells narrows hordes and ships)
 	void getRadiusAndCenter(const PathfindObject *obj, int &iRadius, bool &center) const;
 	void updateGoal(PathfindObject &obj, const Coord3D *newGoalPos, PathfindLayerEnum layer);
+	// RW 0x8E24D3 with the goal's angle (RW 0x68B3CF, lane MOVE-3: the planning order's heading): a LARGE_RECTANGLE_PATHFIND unit's slot takes the angle's code, or its
+	// orientation's when the goal is in the cell it stands in
+	void updateGoalAngle(PathfindObject &obj, const Coord3D *newGoalPos, float angle, PathfindLayerEnum layer);
 	void removeGoal(PathfindObject &obj);
 	void updatePos(PathfindObject &obj);
 	void removePos(PathfindObject &obj);
@@ -679,6 +693,16 @@ public:
 	void snapPosition(PathfindObject &obj, Coord3D *pos);
 	void snapClosestGoalPosition(PathfindObject &obj, Coord3D *pos);
 	bool goalPosition(PathfindObject &obj, Coord3D *pos);
+	// lane MOVE-3 (AIPathfindPatch.cpp): pathfinder vtable 0xC1B8D8 slot 0x18 (RW 0x6F7938): a blocked unit's patch from its cell to `point` or to the cell of
+	// one of the raw nodes after `node` (null: none found); the patch keeps every cell
+	Path *patchPath(PathfindObject &obj, const PathfindLocomotorInfo &loco, const Coord3D &point, const PathNode *node);
+	// RW 0x6EDFD7: the unit's footprint at `point` is passable, checkForMovement accepts it and no goal, position or horde position of a unit of at least its
+	// priority lies in it
+	bool patchPointIsFree(PathfindObject &obj, const PathfindLocomotorInfo &loco, const Coord3D &point);
+	// RW 0x68B425 (lane MOVE-3): the angle of the unit's goal slot (its angle code times pi / 6; 0 without a goal)
+	float goalAngle(PathfindObjectID id) const;
+	// RW 0x68B43B (lane MOVE-3): the layer of the unit's goal slot (ground without a goal)
+	PathfindLayerEnum goalLayer(PathfindObjectID id) const;
 	// RW 0x6FE456 (ring search 0x6FA2A4, checkForAdjust 0x6F66D9)
 	bool adjustDestination(PathfindObject &obj, const PathfindLocomotorInfo &loco, Coord3D *dest, const Coord3D *groupDest = nullptr);
 	bool adjustToPossibleDestination(PathfindObject &obj, const PathfindLocomotorInfo &loco, Coord3D *dest);
@@ -750,6 +774,10 @@ private:
 	bool blockerCallback(const PathfindObject *obj, const PathfindCell *cell, int *count, bool countAllies, PathfindObjectID ignoreId, bool ignoreUnits,
 		const PathfindMovement *rectMovement);
 	int occupantCost(const PathfindObject *obj, const PathfindCell *parent, int x, int y, int r, int n, bool skipEnemies);
+	// lane MOVE-3: RW 0x6ED46C, the footprint cost of a patch step (-1: blocked); `parent` null counts every footprint cell
+	int patchCellCost(const PathfindObject &obj, const ICoord2D *parent, const ICoord2D &cell, PathfindLayerEnum layer, int r, int n, bool skipHordePositions);
+	// RW 0x6ECFC5: the footprint of RW 0x6ED071 is centred on a cell (its size is odd)
+	bool cellCentred(const PathfindObject &obj) const;
 	bool checkForAdjust(PathfindObject &obj, const PathfindLocomotorInfo &loco, bool isHuman, int cellX, int cellY, PathfindLayerEnum layer, Coord3D *dest, bool &candidate);
 	bool checkForPossible(const PathfindMovement &mv, int fromZone, bool center, const PathfindLocomotorInfo &loco, int cellX, int cellY, PathfindLayerEnum layer, Coord3D *dest, bool startingInObstacle);
 	void markClosed(PathfindCell *cell);

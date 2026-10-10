@@ -36,5 +36,27 @@ namespace PalantirCommandUI
 std::string portraitFor(const HudContext &ctx, ObjectID contextObject, const std::vector<ObjectID> &selected);
 // the portrait of one object (its template's SelectPortrait, "" none)
 std::string objectPortrait(const Object &obj);
+
+// lane HUD-5: the rank interface of the selection (RW 0x92F778 per object, RW 0x9305CE over the selection): type 0 the rank (APT:HeroRank = APT:RankLabel with
+// `rank`, the bar = the progress into the next level, -1 at the last level), type 1 a time left (LifetimeUpdate: the bar = the part of the lifetime left), 2 none.
+// TARGET FACTS (RotWK game.dat, caveat S-001):
+//   * RW 0x92F778(object): a LifetimeUpdate not waiting for its wake-up (module + 0x28 clear, RW 0x7A7E79) is type 1 from its start (+0x24) and death frames (+0x20): when death > start,
+//     progress = (death - now) / (death - start), 0 once past death, at most 1; else none. (A TEMPORARILY_DEFECTED object's TemporarilyDefectUpdate and a status 16
+//     object's ToggleHiddenSpecialAbilityUpdate are type 1 the same way: not ported, S-1955.) Otherwise the rank: none unless the template IsTrainable (+0x5F7;
+//     a disguised enemy's shown template, RW 0x69194E, and its rank 1: not ported) and RW 0x9D2437 answers;
+//   * RW 0x9D2437 (RotWK only): the tracker's current level (+0x26C -> RW 0x79D12A) must exist; rank = its rank (RW 0x688EEC); with a next level (RW 0x6891A4)
+//     and the experience below the last level's (RW 0x6893E2), progress = (experience - required(current)) / (required(next) - required(current)) in [0, 1] when
+//     required(next) > required(current), else -1; -1 without a next level. Nothing for rank <= 1 with progress < 0;
+//   * RW 0x9305CE: the context object's, else the selected objects' (TheInGameUI vslot 0x124, in order): the first one's, none when another differs (RW 0x92F5D5).
+struct RankInfo
+{
+	int type = 2;
+	int rank = 0;
+	float progress = 0.0f;
+	bool operator==(const RankInfo &o) const { return type == o.type && rank == o.rank && progress == o.progress; }
+};
+RankInfo rankInfo(const HudContext &ctx, const Object &obj);
+RankInfo rankInfoFor(const HudContext &ctx, ObjectID contextObject, const std::vector<ObjectID> &selected);
+
 std::vector<std::string> acceptanceStops();
 } // namespace PalantirCommandUI

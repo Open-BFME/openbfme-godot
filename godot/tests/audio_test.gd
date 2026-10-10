@@ -99,6 +99,19 @@ func _run() -> int:
 	_check(near >= FIRST_HANDLE, "the same sound 50 units away plays (%d)" % near)
 	await _wait(0.3)
 	_check(audio.get_report().culled_distance == 1, "the report counts one distance cull")
+	# lane AUDIO-5: the near sound is due right of the listener at its height: Miles Fast 2D puts it entirely in the right channel, which
+	# the device reaches with its voice bus panner at +1
+	var hard_right := false
+	for b in AudioServer.bus_count:
+		if AudioServer.get_bus_name(b).begins_with("OBFME_Voice_") and AudioServer.get_bus_effect_count(b) > 0:
+			var panner := AudioServer.get_bus_effect(b, 0) as AudioEffectPanner
+			hard_right = hard_right or (panner != null and absf(panner.pan - 1.0) < 0.001)
+	_check(hard_right, "a voice bus pans the sound due right of the listener fully right")
+	# retail's microphone (RW 0x45235B) for the default tactical camera looking north at (1000, 1000)
+	audio.update_microphone(Vector3(1000, 609.032388, 300), Vector3(1000, 1000, 0), true)
+	var mic: Dictionary = audio.get_listener()
+	_check(mic.position.distance_to(Vector3(1000, 938.815356, 117.371571)) < 0.01 and mic.forward.distance_to(Vector3(0, 1, 0)) < 0.0001,
+			"update_microphone puts the listener at retail's microphone (%s, facing %s)" % [mic.position, mic.forward])
 
 	# the options sliders
 	audio.set_volume("music", 0.25)

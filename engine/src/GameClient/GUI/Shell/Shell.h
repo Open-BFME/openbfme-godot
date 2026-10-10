@@ -75,6 +75,21 @@ public:
 	// Runs the init of the top as if it had just been pushed (Shell::showShell).
 	void showShell(bool runInit);
 
+	// Lane FB7-1: the backdrop behind the shell when no shell map runs. TARGET FACTS (RotWK game.dat, caveat S-001): Shell::showShellMap(use) (RW 0x75DE01)
+	// sets + 0x52 = use && !GameData ShellMapOn (GlobalData + 0xAF0) and clears + 0x53, and the display's backdrop image goes (RW 0x65CFF6); with the shell
+	// map on it loads the map (not ported: RotWK's GameData has ShellMapOn = No; a mod that turns it on is reported, S-1912). Shell::update (RW 0x75E1D3)
+	// then, once (+ 0x53) while + 0x52 is set and no movie runs (+ 0x5D), looks up the mapped image "ShellMapLowLOD" (RW 0x6DA34C) and gives it to the
+	// display's backdrop slot 0 (RW 0x65C42C(image, 0, 0, 0, 1.0)), with the window transition FadeInGameMovie_NoAudio (not ported: S-1912). Callers:
+	// the engine start (RW 0x5EAB8F: showShellMap(1)), a game's start (RW 0x601C62: 0) and the return to the shell (RW 0x7792BC / 0x779A3D: 1).
+	void showShellMap(bool use);
+	void update();
+	// the mapped image the display draws behind everything now ("" none)
+	const std::string &backdropImage() const { return m_backdropImage; }
+	// GameData's ShellMapOn of `gameDataText` (data\ini\gamedata.ini); false + *error when the GameData block has no such key or a bad value
+	static bool readShellMapOn(const std::string &gameDataText, bool &on, std::string *error);
+	// lane CAMP-2: any Bool field of the GameData block (the last one wins); false + *error when it is there but not Yes / No; `found` false when absent
+	static bool readGameDataBool(const std::string &gameDataText, const std::string &field, bool &value, bool &found, std::string *error);
+
 	AptScreen *top() const { return m_stack.empty() ? nullptr : m_stack.back().get(); }
 	int screenCount() const { return (int)m_stack.size(); }
 	AptScreen *screenAt(int index) const { return m_stack[(std::size_t)index].get(); }
@@ -96,6 +111,9 @@ private:
 	ShellServices &m_services;
 	ShellEnvironment &m_environment;
 	std::vector<std::unique_ptr<AptScreen>> m_stack;
+	bool m_lowLodBackdrop = false; // + 0x52
+	bool m_lowLodShown = false;    // + 0x53
+	std::string m_backdropImage;
 	bool m_pendingPush = false;
 	bool m_pendingPop = false;
 	std::string m_pendingPushName;

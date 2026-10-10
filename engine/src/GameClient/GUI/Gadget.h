@@ -16,7 +16,8 @@ enum
 	GADGET_SIZE = 16,
 	HORIZONTAL_SLIDER_THUMB_WIDTH = 13,
 	HORIZONTAL_SLIDER_THUMB_HEIGHT = 16,
-	HORIZONTAL_SLIDER_THUMB_POSITION = HORIZONTAL_SLIDER_THUMB_HEIGHT * 2 / 3, // GadgetSlider.h
+	HORIZONTAL_SLIDER_THUMB_POSITION = HORIZONTAL_SLIDER_THUMB_HEIGHT * 2 / 3, // GadgetSlider.h (ZH)
+	HORIZONTAL_SLIDER_THUMB_Y = 0, // lane FB7-1: RotWK's thumb row (every winSetPosition of RW 0x7234EC / 0x7237F8 passes y 0)
 	ENTRY_TEXT_LEN = 256,
 	STATIC_TEXT_LEN = 256
 };
@@ -243,6 +244,12 @@ struct ListboxData
 	short displayHeight = 0;
 	std::uint32_t doubleClickTime = 0;
 	short displayPos = 0;
+	// lane FB7-1: RotWK's pointer-following highlight of a drop-down list (ListboxData +0x12 / +0x13 / +0x30): the combo boxes set both flags and
+	// start the row at the selection when they open the list (RW 0x72454E, RW 0x725439 / 0x72525B); GWM_MOUSE_POS moves it to the row under the
+	// pointer, -1 past the last (RW 0x727081 case 0x18 -> RW 0x7258E1); the draw highlights it instead of the selection (RW 0x4A22D6)
+	bool trackHover = false;  // +0x12
+	bool hoverActive = false; // +0x13
+	int hoverPos = -1;        // +0x30
 };
 
 // the payload of GLM_ADD_ENTRY (Gadget.h AddMessageStruct)

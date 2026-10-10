@@ -11,7 +11,10 @@ separators) yields tokens; a finding is
   * an #include of a socket / network header.
 GDScript (godot/, not godot/tests): the same lexing for "..." / '...' / triple-quoted strings and # comments; a finding is any
 networking class, `OS.execute` / `create_process` / `shell_open` / `request_permission` (except the developer profiler's literal
-`OS.create_process("perf", ...)` / `OS.execute("kill", ...)`, PERF-3's --perf-stat), or a string literal naming a networking class
+`OS.create_process("perf", ...)` / `OS.execute("kill", ...)`, PERF-3's --perf-stat, and WINCRASH-1's log folder
+`OS.shell_show_in_file_manager` / `shell_open` of exactly `ProjectSettings.globalize_path(<"user://..." literal or const, no "..">)` or of
+a variable its file validates (FILE_MANAGER_CALL): a URL, a UNC path, a conditional, a concatenation or any other argument is a finding,
+Godot's globalize_path passes those through: Sol r1 / r2), or a string literal naming a networking class
 (`ClassDB.instantiate("HTTPRequest")`).
 Only engine/src/GameNetwork/Transport.cpp (the LAN transport, UDP) may have C / C++ findings.
 The launcher (launcher/, not launcher/tests; lane LAUNCH-1) is checked the same way with its own allow list, finding by finding:
@@ -237,14 +240,17 @@ def native_findings(text: str) -> list[str]:
     return found
 
 
-def lex_gd(text: str) -> tuple[list[tuple[str, int]], list[tuple[str, int]]]:
-    tokens, strings = [], []
-    i, n, line = 0, len(text), 1
+def lex_gd_stream(text: str) -> list[tuple[str, str, int, int]]:
+    """The GDScript source as one ordered stream of (kind, value, line, column): kind "ident", "punct" or "string" (the literal's content);
+    comments dropped. The column of a token is where it starts on its line (a function at column 0 is a top-level function)."""
+    out: list[tuple[str, str, int, int]] = []
+    i, n, line, line_start = 0, len(text), 1, 0
     while i < n:
         c = text[i]
         if c == "\n":
             line += 1
             i += 1
+            line_start = i
             continue
         if c == "#":
             while i < n and text[i] != "\n":
@@ -263,42 +269,66 @@ def lex_gd(text: str) -> tuple[list[tuple[str, int]], list[tuple[str, int]]]:
                 buf.append(text[j])
                 j += 1
             content = "".join(buf)
-            strings.append((content, line))
-            line += content.count("\n")
+            out.append(("string", content, line, i - line_start))
+            if "\n" in content:
+                line += content.count("\n")
+                line_start = text.rfind("\n", 0, j) + 1
             i = j + len(quote)
             continue
         m = _IDENT.match(text, i)
         if m:
-            tokens.append((m.group(0), line))
+            out.append(("ident", m.group(0), line, i - line_start))
             i = m.end()
             continue
-        tokens.append((c, line))
+        if not c.isspace():
+            out.append(("punct", c, line, i - line_start))
         i += 1
+    return out
+
+
+def lex_gd(text: str) -> tuple[list[tuple[str, int]], list[tuple[str, int]]]:
+    tokens, strings = [], []
+    for kind, value, line, _column in lex_gd_stream(text):
+        (strings if kind == "string" else tokens).append((value, line))
     return tokens, strings
 
 
-# the developer profiler (lane PERF-3, --perf-stat): Linux `perf stat` on the game's own process and `kill -INT` of that perf. Allowed only as a
-# literal first argument, and only when every process call on the line is one of these (a call naming anything else stays a finding)
-PROFILER_CALL = re.compile(r'OS\.(create_process|execute)\(\s*"(perf|kill)"\s*,')
-PROCESS_CALL = re.compile(r'OS\.(\w+)\s*\(')
+# the developer profiler (lane PERF-3, --perf-stat): Linux `perf stat` on the game's own process and `kill -INT` of that perf: allowed only as
+# the token sequence OS . create_process|execute ( "perf"|"kill" , (by tokens: no comment or whitespace changes what is matched)
+PROFILER_COMMANDS = {"create_process": {"perf"}, "execute": {"kill"}}
+# lane WINCRASH-1 r4: the file manager is opened by exactly one function of the game, release.gd's _show_in_file_manager(path), which
+# accepts only a path inside OS.get_user_data_dir() after normalising; its callers open_user_folder(kind) (a fixed set of folder kinds,
+# their user:// paths built inside it) and open_log_file(name) (a validated session log file name) build the path. Any other reference to
+# these OS methods, anywhere (another file, another function, a string naming one for call() / Callable()), is a finding.
+FILE_MANAGER_METHODS = {"shell_open", "shell_show_in_file_manager"}
+FILE_MANAGER_OWNER = ("godot/scripts/release/release.gd", "_show_in_file_manager")
 
 
-def gdscript_findings(text: str) -> list[str]:
-    tokens, strings = lex_gd(text)
-    lines = text.splitlines()
+def gdscript_findings(text: str, path: str | None = None) -> list[str]:
+    stream = lex_gd_stream(text)
     found = []
-    for k, (tok, line) in enumerate(tokens):
-        if GODOT_NET.match(tok) and not (k and tokens[k - 1][0] == "."):
-            found.append(f"line {line}: {tok}")
-        if tok in GODOT_OS_CALLS and k >= 2 and tokens[k - 1][0] == "." and tokens[k - 2][0] == "OS":
-            src = lines[line - 1] if 0 < line <= len(lines) else ""
-            calls = [m for m in PROCESS_CALL.finditer(src) if m.group(1) in GODOT_OS_CALLS]
-            if calls and len(calls) == len(PROFILER_CALL.findall(src)):
+    function = None  # the top-level function the token is in
+    for k, (kind, value, line, column) in enumerate(stream):
+        if kind == "ident" and column == 0:
+            function = stream[k + 1][1] if value == "func" and k + 1 < len(stream) and stream[k + 1][0] == "ident" else None
+        if kind == "string":
+            if GODOT_NET.match(value):
+                found.append(f"line {line}: string \"{value}\"")
+            if value in FILE_MANAGER_METHODS or value in GODOT_OS_CALLS:
+                found.append(f"line {line}: string \"{value}\" names an OS process / file-manager method")
+            continue
+        if kind != "ident":
+            continue
+        if GODOT_NET.match(value) and not (k and stream[k - 1][1] == "."):
+            found.append(f"line {line}: {value}")
+        if value in GODOT_OS_CALLS and k >= 2 and stream[k - 1][1] == "." and stream[k - 2][1] == "OS":
+            if value in FILE_MANAGER_METHODS and (path, function) == FILE_MANAGER_OWNER:
                 continue
-            found.append(f"line {line}: OS.{tok}")
-    for s, line in strings:
-        if GODOT_NET.match(s):
-            found.append(f"line {line}: string \"{s}\"")
+            nxt = stream[k + 1:k + 4]
+            if (value in PROFILER_COMMANDS and len(nxt) == 3 and nxt[0][1] == "(" and nxt[1][0] == "string" and nxt[1][1] in PROFILER_COMMANDS[value]
+                    and nxt[2][1] == ","):
+                continue
+            found.append(f"line {line}: OS.{value}")
     return found
 
 
@@ -316,9 +346,10 @@ def scan() -> dict[str, list[str]]:
     for gd in sorted((REPO / "godot").rglob("*.gd")):
         if "tests" in gd.relative_to(REPO / "godot").parts:
             continue
-        f = gdscript_findings(gd.read_text(encoding="utf-8", errors="replace"))
+        rel = str(gd.relative_to(REPO))
+        f = gdscript_findings(gd.read_text(encoding="utf-8", errors="replace"), rel)
         if f:
-            out[str(gd.relative_to(REPO))] = f
+            out[rel] = f
     return out
 
 

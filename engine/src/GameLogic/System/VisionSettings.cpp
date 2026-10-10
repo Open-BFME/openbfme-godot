@@ -34,6 +34,7 @@ struct State
 	std::uint8_t clearAlpha = 255, fogAlpha = 127, shroudAlpha = 0;
 	float stealth = 0.0f;
 	bool useShroud = false;
+	bool showRandomPlayerTemplate = true, showRandomStartPos = true, showRandomColor = true; // lane HUD-5 (RW 0x7836C0 defaults)
 	unsigned seen = 0;
 	bool gameData = false, multiplayer = false;
 };
@@ -117,6 +118,9 @@ FieldParse kGameData[] = {
 
 FieldParse kMultiplayer[] = {
 	{ "UseShroud", parseNoting<INI::parseBool>, SEEN_DATA(SEEN_USESHROUD), VS_OFF(useShroud) },
+	{ "ShowRandomPlayerTemplate", INI::parseBool, nullptr, VS_OFF(showRandomPlayerTemplate) }, // lane HUD-5
+	{ "ShowRandomStartPos", INI::parseBool, nullptr, VS_OFF(showRandomStartPos) },
+	{ "ShowRandomColor", INI::parseBool, nullptr, VS_OFF(showRandomColor) },
 	{ nullptr, skipField, nullptr, 0 }
 };
 
@@ -205,6 +209,9 @@ bool finish(const State &s, VisionSettings &out, std::string *error)
 	out.shroudAlpha = s.shroudAlpha;
 	out.stealthFriendlyOpacity = s.stealth;
 	out.useShroud = s.useShroud;
+	out.showRandomPlayerTemplate = s.showRandomPlayerTemplate;
+	out.showRandomStartPos = s.showRandomStartPos;
+	out.showRandomColor = s.showRandomColor;
 	out.loaded = true;
 	return true;
 }

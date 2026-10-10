@@ -2,6 +2,9 @@
 // See GodotAptPlayer.h.
 
 #include "GodotDevice/GodotAptPlayer.h"
+#include "GodotDevice/GodotVideoStream.h"
+#include "GameClient/CameraSettings.h"
+#include "GameNetwork/Transport.h"
 #include "GodotDevice/GodotPackedTexture.h"
 #include "GodotDevice/GodotAptView3D.h"
 #include "GameClient/OptionPreferences.h"
@@ -15,6 +18,8 @@
 #include "GameClient/GUI/AptScreens/AptDisconnectScreen.h"
 #include "GameClient/GUI/SaveLoadInfo.h"
 #include "GameClient/GUI/AptScreens/AptLanLobby.h"
+#include "GameClient/GUI/AptScreens/AptMainMenu.h"
+#include "GameClient/UserDataFolder.h"
 #include "GameClient/GUI/AptScreens/AptQuitMenu.h"
 #include "GameClient/GUI/AptScreens/AptSkirmish.h"
 #include "GameClient/GUI/Gadget.h"
@@ -22,6 +27,7 @@
 #include "GameClient/GUI/GadgetDrawList.h"
 #include "GameClient/GUI/GameTextSource.h"
 #include "GameClient/GUI/LoadScreenInfo.h"
+#include "GameClient/GUI/PlayerStatusInfo.h"
 #include "GameClient/GUI/Shell/Shell.h"
 #include "GameClient/GUI/ShellEnvironment.h"
 #include "GameClient/EndGame.h"
@@ -35,6 +41,9 @@
 #include "GodotDevice/GodotGameWorld.h"
 #include "GodotDevice/GodotRetailFileSystem.h"
 #include "Common/ArchiveFileSystem.h"
+#include "GameClient/CreateAHeroHeroList.h"
+#include "GameClient/GUI/AptScreens/AptCreateAHero.h"
+#include "GameLogic/CreateAHeroSystem.h"
 #include "Libraries/Source/Apt/Apt.h"
 #include "Libraries/Source/Apt/AptButtonInst.h"
 #include "Libraries/Source/Apt/AptInput.h"
@@ -62,11 +71,16 @@
 #include <godot_cpp/variant/utility_functions.hpp>
 
 #include <algorithm>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <cctype>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <functional>
+#include <map>
+#include <random>
 
 namespace godot
 {
@@ -454,6 +468,9 @@ const char *shellActionName(ShellAction a)
 		case ShellAction::QuitMenuForfeit: return "QuitMenuForfeit";
 		case ShellAction::QuitMenuOptions: return "QuitMenuOptions";
 		case ShellAction::ToggleQuitMenu: return "ToggleQuitMenu";
+		case ShellAction::PalantirObjectives: return "PalantirObjectives"; // lane PLAY-1
+		case ShellAction::TributeReturnToGame: return "TributeReturnToGame";
+		case ShellAction::CreateAHeroExit: return "CreateAHeroExit";
 	}
 	return "Unknown";
 }
@@ -542,6 +559,7 @@ struct ShellMode
 	QuitMenuContext quitMenuContext;    // lane END-2: the game QuitMenu.apt is opened over
 	std::unique_ptr<AptQuitMenu> quitMenu; // lane END-2: QuitMenu.apt, an in-game overlay (RW 0x75E3B7), not on the shell stack
 	ShellEnvironment environment;
+	PlayerStatusInfo playerStatus; // lane HUD-5: the players screen's Status rows
 	OptionPreferences options; // lane UI-2: the user data folder's Options.ini
 	AptScreenFactoryTable factories;
 	GadgetSkinData skins;
@@ -553,6 +571,9 @@ struct ShellMode
 	std::vector<NewGameMessage> pendingNewGames;
 	std::set<std::string> gadgetErrors; // textures a gadget image needed and could not load, unresolved image names
 	std::set<std::string> deviceUnverified; // lane UI-2: inferences of the device the report lists (S-1482)
+	CreateAHeroHeroList cahHeroes;      // lane CAH-1: the builder's and the lobby's heroes
+	CreateAHeroScreenContext cahContext;
+	std::mt19937 cahRandom{ 0x43414831u }; // lane CAH-1: the builder's client random (AppearanceRandom, RW 0x6D32E4): never logic state
 	~ShellMode()
 	{
 		disconnect.reset();
@@ -592,6 +613,26 @@ struct AptMenuPlayer::Impl
 	AptCanvasList drawnList;
 	GadgetDrawList gadgets, drawnGadgets; // shell mode: this frame's gadget commands and the ones on screen
 	bool drawnValid = false;
+	// lane CAMP-2: what the canvas shows behind and under the movies (get_backdrop_state): the shell backdrop image drawCanvas put on screen ("" none) and
+	// the visible commands of each level in the last list built (level_drawn; the front-end background's level is Background.apt)
+	std::string drawnBackdrop;
+	std::map<int, int64_t> levelCommands;
+	std::vector<std::string> backgroundPaths; // the front-end background's visible commands (paths, alpha), for the reports
+	// lane CAMP-2: the BinkMovie components on screen (the clip's path -> its movie stream), started when first drawn, advanced on the render clock
+	struct MovieSlot
+	{
+		Ref<VP6MovieStream> stream;
+		std::string title;
+		double elapsedMs = 0.0;
+		double durationMs = 0.0;
+		double fps = 30.0;
+		bool loop = false;
+		bool drawn = false;
+		std::string error;
+	};
+	std::map<std::string, MovieSlot> movies;
+	uint64_t worldId = 0; // the GameWorld of boot_shell (its get_movie finds a Video's file)
+	std::set<std::string> movieErrors;
 	struct NativeSlot
 	{
 		size_t op;   ///< index in drawnList.ops
@@ -722,6 +763,8 @@ AptMenuPlayer::AptMenuPlayer() : m(std::make_unique<Impl>()) {}
 
 AptMenuPlayer::~AptMenuPlayer()
 {
+	// lane CAH-2: the builder's view hook is static; its texture reference must not outlive the player (a quit with the builder up crashed at exit)
+	set_create_a_hero_view_texture(Ref<Texture2D>());
 	clearCanvas();
 }
 
@@ -756,7 +799,16 @@ void AptMenuPlayer::_bind_methods()
 	ClassDB::bind_method(D_METHOD("is_shell_mode"), &AptMenuPlayer::is_shell_mode);
 	ClassDB::bind_method(D_METHOD("shell_push", "filename"), &AptMenuPlayer::shell_push);
 	ClassDB::bind_method(D_METHOD("shell_pop"), &AptMenuPlayer::shell_pop);
+	ClassDB::bind_method(D_METHOD("shell_show_shell_map", "use"), &AptMenuPlayer::shell_show_shell_map); // lane FB7-1
+	ClassDB::bind_method(D_METHOD("shell_hide_background"), &AptMenuPlayer::shell_hide_background); // lane FB7-1
+	ClassDB::bind_method(D_METHOD("shell_screen_unavailable", "action"), &AptMenuPlayer::shell_screen_unavailable); // lane CAH-2
+	ClassDB::bind_method(D_METHOD("get_backdrop_state"), &AptMenuPlayer::get_backdrop_state); // lane CAMP-2
+	ClassDB::bind_method(D_METHOD("shell_levels"), &AptMenuPlayer::shell_levels);             // lane CAMP-2
+	ClassDB::bind_method(D_METHOD("level_drawn", "level"), &AptMenuPlayer::level_drawn);      // lane CAMP-2
+	ClassDB::bind_method(D_METHOD("get_movies"), &AptMenuPlayer::get_movies);                 // lane CAMP-2
 	ClassDB::bind_method(D_METHOD("shell_stack"), &AptMenuPlayer::shell_stack);
+	ClassDB::bind_method(D_METHOD("get_option", "key"), &AptMenuPlayer::get_option);
+	ClassDB::bind_method(D_METHOD("set_player_status", "state"), &AptMenuPlayer::set_player_status); // lane HUD-5
 	ClassDB::bind_method(D_METHOD("shell_top_level"), &AptMenuPlayer::shell_top_level);
 	ClassDB::bind_method(D_METHOD("shell_invoke", "level", "function", "args"), &AptMenuPlayer::shell_invoke, DEFVAL(PackedStringArray()));
 	ClassDB::bind_method(D_METHOD("take_new_game"), &AptMenuPlayer::take_new_game);
@@ -769,6 +821,12 @@ void AptMenuPlayer::_bind_methods()
 	ClassDB::bind_method(D_METHOD("set_save_load", "info"), &AptMenuPlayer::set_save_load);
 	ClassDB::bind_method(D_METHOD("set_score_screen_from_world", "world"), &AptMenuPlayer::set_score_screen_from_world);
 	ClassDB::bind_method(D_METHOD("set_lan", "world"), &AptMenuPlayer::set_lan); // lane MP-2
+	ClassDB::bind_method(D_METHOD("set_create_a_hero", "world", "profile_dir"), &AptMenuPlayer::set_create_a_hero); // lane CAH-1
+	ClassDB::bind_method(D_METHOD("get_create_a_hero_view"), &AptMenuPlayer::get_create_a_hero_view);
+	ClassDB::bind_method(D_METHOD("get_create_a_hero_heroes"), &AptMenuPlayer::get_create_a_hero_heroes);
+	ClassDB::bind_method(D_METHOD("set_create_a_hero_view_texture", "texture"), &AptMenuPlayer::set_create_a_hero_view_texture);
+	ClassDB::bind_method(D_METHOD("create_a_hero_save_folder", "rotwk_install"), &AptMenuPlayer::create_a_hero_save_folder); // lane CAH-2
+	ClassDB::bind_method(D_METHOD("create_a_hero_type_name", "name"), &AptMenuPlayer::create_a_hero_type_name);
 	ClassDB::bind_method(D_METHOD("shell_fscommand", "command", "argument"), &AptMenuPlayer::shell_fscommand);
 	ClassDB::bind_method(D_METHOD("get_timeline_graph", "mode", "path"), &AptMenuPlayer::get_timeline_graph);
 	ClassDB::bind_method(D_METHOD("get_member", "level", "path", "name"), &AptMenuPlayer::get_member);
@@ -778,6 +836,7 @@ void AptMenuPlayer::_bind_methods()
 	ClassDB::bind_method(D_METHOD("fetch_text", "label"), &AptMenuPlayer::fetch_text);
 	ClassDB::bind_method(D_METHOD("take_load_progress_calls"), &AptMenuPlayer::take_load_progress_calls);
 	ClassDB::bind_method(D_METHOD("lobby_apply", "spec"), &AptMenuPlayer::lobby_apply);
+	ClassDB::bind_method(D_METHOD("lobby_gadget_rect", "name"), &AptMenuPlayer::lobby_gadget_rect);
 	ClassDB::bind_method(D_METHOD("get_shell_report"), &AptMenuPlayer::get_shell_report);
 	ADD_SIGNAL(MethodInfo("shell_service", PropertyInfo(Variant::STRING, "kind"), PropertyInfo(Variant::STRING, "a"), PropertyInfo(Variant::STRING, "b")));
 	ADD_SIGNAL(MethodInfo("shell_request", PropertyInfo(Variant::STRING, "action"), PropertyInfo(Variant::STRING, "argument")));
@@ -828,6 +887,39 @@ void AptMenuPlayer::_process(double delta)
 	tick(delta);
 	render(false);
 	m->view3d.advance(); // lane UI-2
+	advanceMovies(delta * 1000.0); // lane CAMP-2
+}
+
+void AptMenuPlayer::advanceMovies(double deltaMs)
+{
+	// lane CAMP-2: each BinkMovie on screen shows the frame of its time (at the movie's rate); a looping one starts again at its end (a new stream: VP6
+	// starts over at a key frame); one that left the screen is closed
+	for (auto it = m->movies.begin(); it != m->movies.end();)
+	{
+		Impl::MovieSlot &s = it->second;
+		if (!s.drawn)
+		{
+			it = m->movies.erase(it);
+			continue;
+		}
+		if (s.stream.is_valid() && s.error.empty())
+		{
+			s.elapsedMs += deltaMs;
+			if (s.elapsedMs >= s.durationMs && s.loop)
+			{
+				s.elapsedMs = std::fmod(s.elapsedMs, std::max(1.0, s.durationMs));
+				s.stream->restart(); // the same texture: the canvas item keeps showing it
+			}
+			const int64_t target = std::min<int64_t>((int64_t)(s.elapsedMs * s.fps / 1000.0), s.stream->get_frame_count() - 1);
+			if (target > s.stream->get_frame() && !s.stream->advance_to(target))
+			{
+				s.error = toNative(s.stream->get_error());
+				m->movieErrors.insert("BinkMovie " + s.title + ": " + s.error);
+				UtilityFunctions::printerr(toGodot("MOVIE ERROR BinkMovie " + s.title + ": " + s.error));
+			}
+		}
+		++it;
+	}
 }
 
 // ---------------------------------------------------------------------------------------------------------------------------------
@@ -939,6 +1031,7 @@ Dictionary AptMenuPlayer::boot_shell(const Ref<RetailFileSystem> &fs, Object *wo
 	}
 	clearCanvas(); // review r2: a reboot recreates textures / fonts, so the retained canvas is stale
 	m->fs = fs;
+	m->worldId = world->get_instance_id(); // lane CAMP-2: the BinkMovie component's movies
 	m->view3d.setOwner(this, fs); // lane UI-2
 	m->shell.reset();
 	m->apt.reset();
@@ -999,8 +1092,68 @@ Dictionary AptMenuPlayer::boot_shell(const Ref<RetailFileSystem> &fs, Object *wo
 		sm->layer->registerComponents();
 		sm->shell = std::make_unique<Shell>(*sm->wm, sm->factories, sm->services, sm->environment);
 		sm->wm->setShell(sm->shell.get());
+		// lane FB7-1: what the Options screen's InitGadgets reads besides Options.ini (AptSimpleScreens.h): the AudioSettings default volumes and the
+		// machine's addresses and display modes (the device's, from the config), GameData's KeyboardDefaultScrollSpeedFactor (CameraSettings)
+		{
+			PackedFloat32Array volumes = config.get("default_volumes", PackedFloat32Array());
+			if (volumes.size() == 5)
+			{
+				for (int i = 0; i < 5; ++i)
+				{
+					sm->environment.defaultVolumes[i] = volumes[i];
+				}
+				sm->environment.haveDefaultVolumes = true;
+			}
+			// else: the Options screen reports that it has no defaults when it needs them (viewers and tests boot without an audio manager)
+			// this machine's addresses through the LAN transport (the one place that touches the network)
+			for (std::uint32_t a : LocalIPv4Addresses())
+			{
+				sm->environment.localAddresses.emplace_back(std::to_string(a >> 24) + "." + std::to_string((a >> 16) & 0xFF) + "." + std::to_string((a >> 8) & 0xFF) + "." +
+						std::to_string(a & 0xFF), a);
+			}
+			Array modes = config.get("display_modes", Array());
+			for (int i = 0; i < modes.size(); ++i)
+			{
+				const Vector2i m = modes[i];
+				sm->environment.displayModes.emplace_back(m.x, m.y);
+			}
+			const Vector2i current = config.get("current_resolution", Vector2i(0, 0));
+			sm->environment.currentResolution = { current.x, current.y };
+			CameraSettings camera;
+			std::string cameraError;
+			if (CameraSettings::load(*fs->archive_fs(), camera, &cameraError))
+			{
+				sm->environment.keyboardDefaultScrollSpeedFactor = camera.keyboardDefaultScrollSpeedFactor;
+				sm->environment.haveScrollDefault = true;
+			}
+			else
+			{
+				errors.push_back("boot_shell: GameData KeyboardDefaultScrollSpeedFactor: " + toGodot(cameraError));
+			}
+		}
 		sm->wm->init();
 		sm->wm->seedRandom((std::uint32_t)seed);
+		// lane FB7-1: GameData ShellMapOn, then the engine start's showShellMap(1) (RW 0x5EAB8F)
+		{
+			std::vector<std::uint8_t> bytes;
+			std::string readError, parseError;
+			bool on = false;
+			if (!fs->archive_fs()->readFile("data\\ini\\gamedata.ini", bytes, &readError))
+			{
+				errors.push_back(toGodot("boot_shell: data\\ini\\gamedata.ini: " + readError));
+			}
+			else if (!Shell::readShellMapOn(std::string(bytes.begin(), bytes.end()), on, &parseError))
+			{
+				errors.push_back(toGodot("boot_shell: " + parseError));
+			}
+			sm->environment.shellMapOn = on;
+			sm->shell->showShellMap(true);
+		}
+		// lane FB7-1: GameClient::init ends by loading the background movie (RW 0x646771 -> RW 0x6224C5), the main menu's FadeInBackground shows it
+		if (!sm->wm->loadBackground())
+		{
+			errors.push_back("Background.apt did not load (the front-end background)");
+		}
 	}
 	m->shell = std::move(sm);
 	m_booted = errors.is_empty();
@@ -1018,6 +1171,61 @@ Dictionary AptMenuPlayer::boot_shell(const Ref<RetailFileSystem> &fs, Object *wo
 	}
 	result["fonts"] = fontNames;
 	return result;
+}
+
+String AptMenuPlayer::shell_screen_unavailable(const String &action)
+{
+	if (!m->shell || !m->shell->shell)
+	{
+		return String();
+	}
+	AptMainMenu *menu = dynamic_cast<AptMainMenu *>(m->shell->shell->findScreenByFilename("MainMenu.apt"));
+	if (!menu)
+	{
+		return String();
+	}
+	m->dirty = true;
+	return toGodot(menu->screenUnavailable(toNative(action)));
+}
+
+void AptMenuPlayer::shell_hide_background()
+{
+	// lane FB7-1: a game's start hides the front-end background with its animation (Skirmish's start RW 0x9286D7, the main menu's RW 0x91B1D2:
+	// RW 0x622C88(0))
+	if (m->shell && m->shell->wm)
+	{
+		m->shell->wm->hideBackground(false);
+	}
+}
+
+void AptMenuPlayer::shell_show_shell_map(bool use)
+{
+	// lane FB7-1: Shell::showShellMap (RW 0x75DE01): a game's start passes false (RW 0x601C62), the return to the shell true (RW 0x7792BC)
+	if (m->shell && m->shell->shell)
+	{
+		m->shell->shell->showShellMap(use);
+		m->dirty = true;
+		m->drawnValid = false; // lane CAMP-2: the backdrop is not in the canvas list: an unchanged list must still be drawn again without it
+	}
+}
+
+Dictionary AptMenuPlayer::get_backdrop_state() const
+{
+	// lane CAMP-2: what is on screen behind the shell's movies, read from the canvas as drawn (not from the shell's flags)
+	Dictionary d;
+	d["backdrop_image"] = toGodot(m->drawnBackdrop);
+	const int background = m->shell && m->shell->wm ? m->shell->wm->backgroundLevel() : -1;
+	d["background_level"] = (int64_t)background;
+	const auto it = m->levelCommands.find(background);
+	d["background_commands"] = it == m->levelCommands.end() ? (int64_t)0 : it->second;
+	d["background_mode"] = (int64_t)(m->shell && m->shell->wm ? m->shell->wm->backgroundMode() : 0);
+	PackedStringArray paths;
+	for (const std::string &p : m->backgroundPaths)
+	{
+		paths.push_back(toGodot(p));
+	}
+	d["background_paths"] = paths;
+	return d;
 }
 
 bool AptMenuPlayer::is_shell_mode() const
@@ -1057,6 +1265,99 @@ PackedStringArray AptMenuPlayer::shell_stack() const
 		}
 	}
 	return out;
+}
+
+Variant AptMenuPlayer::get_option(const String &key) const
+{
+	const std::string k = key.utf8().get_data();
+	if (!m->shell || !m->shell->options.has(k))
+	{
+		return Variant();
+	}
+	return toGodot(m->shell->options.get(k));
+}
+
+Dictionary AptMenuPlayer::set_player_status(const Dictionary &state)
+{
+	Dictionary r;
+	r["ok"] = false;
+	if (!m->shell)
+	{
+		r["error"] = "not in shell mode";
+		return r;
+	}
+	if (!(bool)state.get("ok", false))
+	{
+		r["error"] = "no game";
+		return r;
+	}
+	NewGameMessage message;
+	std::string error;
+	if (!newGameFromDictionary(state.get("game", Dictionary()), message, &error))
+	{
+		r["error"] = toGodot(error);
+		return r;
+	}
+	const Array orig = state.get("orig", Array());
+	const Array slots = state.get("slots", Array());
+	PlayerStatusInput in;
+	in.game = &message.game;
+	for (int i = 0; i < MAX_SLOTS && i < (int)orig.size(); ++i)
+	{
+		const Dictionary o = orig[i];
+		message.game.slots[i].origPlayerTemplate = (int)(int64_t)o.get("template", (int64_t)-1);
+		message.game.slots[i].origColor = (int)(int64_t)o.get("color", (int64_t)-1);
+	}
+	for (int i = 0; i < MAX_SLOTS && i < (int)slots.size(); ++i)
+	{
+		const Dictionary sd = slots[i];
+		in.slots[i].hasPlayer = (bool)sd.get("has_player", false);
+		in.slots[i].defeated = (bool)sd.get("defeated", false);
+		in.slots[i].observer = (bool)sd.get("observer", false);
+		in.slots[i].connected = (bool)sd.get("connected", true);
+	}
+	in.localSlot = (int)(int64_t)state.get("local_slot", (int64_t)-1);
+	in.network = (bool)state.get("network", false);
+	in.gameMode = (int)(int64_t)state.get("mode", (int64_t)2);
+	in.showRandomPlayerTemplate = (bool)state.get("show_random_template", true);
+	in.showRandomColor = (bool)state.get("show_random_color", true);
+	m->shell->playerStatus = makePlayerStatusInfo(in, m->shell->setup, m->shell->text.get());
+	m->shell->environment.playerStatus = &m->shell->playerStatus;
+	Array rows;
+	for (const PlayerStatusRow &row : m->shell->playerStatus.rows)
+	{
+		Array a;
+		for (const std::string &f : row.fields)
+		{
+			a.push_back(toGodot(f));
+		}
+		a.push_back((int64_t)row.color);
+		rows.push_back(a);
+	}
+	r["rows"] = rows;
+	r["ok"] = true;
+	return r;
+}
+
+PackedInt32Array AptMenuPlayer::shell_levels() const
+{
+	// lane CAMP-2: the Apt level of each screen of the shell's stack, bottom first (-1: not loaded yet)
+	PackedInt32Array out;
+	if (m->shell && m->shell->shell)
+	{
+		for (int i = 0; i < m->shell->shell->screenCount(); ++i)
+		{
+			out.push_back(m->shell->shell->screenAt(i)->level());
+		}
+	}
+	return out;
+}
+
+bool AptMenuPlayer::level_drawn(int level) const
+{
+	// lane CAMP-2: the last render list drew something visible of `level`
+	const auto it = m->levelCommands.find(level);
+	return it != m->levelCommands.end() && it->second > 0;
 }
 
 int AptMenuPlayer::shell_top_level() const
@@ -1148,6 +1449,60 @@ Dictionary AptMenuPlayer::set_load_screen_from_game(const Dictionary &resolved)
 	out["cards"] = cards;
 	out["local_card"] = info.localCard;
 	out["loading_type"] = info.gameLoadingType;
+	return out;
+}
+
+Dictionary AptMenuPlayer::lobby_gadget_rect(const String &name)
+{
+	Dictionary out;
+	out["found"] = false;
+	if (!m->shell || !m->shell->shell)
+	{
+		return out;
+	}
+	AptSkirmish *screen = dynamic_cast<AptSkirmish *>(m->shell->shell->findScreenByFilename("Skirmish.apt"));
+	if (!screen)
+	{
+		screen = dynamic_cast<AptLanLobby *>(m->shell->shell->findScreenByFilename("LanLobby.apt"));
+	}
+	if (!screen)
+	{
+		return out;
+	}
+	const std::string n = toNative(name);
+	GameWindow *w = nullptr;
+	if (n.rfind("spot/", 0) == 0)
+	{
+		const int i = std::atoi(n.c_str() + 5);
+		const std::vector<GameWindow *> &spots = screen->mapStartSpotWindows();
+		w = i >= 0 && i < (int)spots.size() ? spots[(std::size_t)i] : nullptr;
+	}
+	else
+	{
+		const bool list = n.rfind("list/", 0) == 0;
+		const std::string rest = list ? n.substr(5) : n;
+		const std::size_t slash = rest.find('/');
+		if (slash != std::string::npos)
+		{
+			w = screen->slotGadget(std::atoi(rest.c_str()), rest.substr(slash + 1));
+			if (w && list)
+			{
+				w = BitTest(w->winGetStyle(), GWS_COMBO_BOX) ? GadgetComboBoxGetListBox(w) : GadgetImageComboBoxGetListBox(w);
+			}
+		}
+	}
+	if (!w)
+	{
+		return out;
+	}
+	int x = 0, y = 0, ww = 0, hh = 0;
+	w->winGetScreenPosition(&x, &y);
+	w->winGetSize(&ww, &hh);
+	out["found"] = true;
+	out["x"] = x;
+	out["y"] = y;
+	out["w"] = ww;
+	out["h"] = hh;
 	return out;
 }
 
@@ -1302,6 +1657,24 @@ Dictionary AptMenuPlayer::lobby_apply(const Dictionary &spec)
 				GadgetComboBoxSetSelectedPos(combo, row, false);
 			}
 		}
+		if (sd.has("hero"))
+		{
+			// lane CAH-1: the Hero combo (RW 0x842C93): a hero's unique id, "-" (none) or "random"
+			const std::string want = toNative(String(sd["hero"]));
+			const int index = sm.cahHeroes.findByUniqueID(want);
+			const bool known = want == "-" || want == "random" || index >= 0;
+			const std::intptr_t data = want == "-" ? -1 : want == "random" ? -2 : (std::intptr_t)index;
+			GameWindow *combo = screen->slotGadget(slot, "Hero");
+			const int row = (combo && known) ? itemRow(combo, data) : -1;
+			if (row < 0)
+			{
+				errors.push_back(toGodot("slot " + std::to_string(slot) + ": no hero entry for " + want));
+			}
+			else
+			{
+				GadgetComboBoxSetSelectedPos(combo, row, false);
+			}
+		}
 	}
 	NewGameMessage current;
 	current.game = screen->setup()->info();
@@ -1440,7 +1813,11 @@ void AptMenuPlayer::pumpShellEvents()
 		return;
 	}
 	ShellMode &sm = *m->shell;
-	for (const ShellDeviceServices::Event &e : sm.services.events)
+	// lane PLAY-1: the events are taken out before they are emitted: a handler that drives the shell (game.gd opens the quit menu on ToggleQuitMenu) pumps
+	// again, and the list still held the event being handled, so one press of the Palantir's options button reached the game twice (the owner's log)
+	std::vector<ShellDeviceServices::Event> events;
+	events.swap(sm.services.events);
+	for (const ShellDeviceServices::Event &e : events)
 	{
 		if (e.kind == "request")
 		{
@@ -1451,7 +1828,6 @@ void AptMenuPlayer::pumpShellEvents()
 			emit_signal("shell_service", toGodot(e.kind), toGodot(e.a), toGodot(e.b));
 		}
 	}
-	sm.services.events.clear();
 	std::string top = sm.shell && sm.shell->top() ? sm.shell->top()->filename() : std::string();
 	if (top != sm.lastTop)
 	{
@@ -1533,6 +1909,7 @@ void AptMenuPlayer::clearCanvas()
 	m->items.clear();
 	m->drawnValid = false;
 	m->nativeSlots.clear();
+	m->drawnBackdrop.clear(); // lane CAMP-2
 }
 
 void AptMenuPlayer::render(bool force)
@@ -1577,6 +1954,22 @@ void AptMenuPlayer::render(bool force)
 	AptRenderList rl;
 	m->A()->buildRenderList(rl);
 	std::uint64_t t1 = time->get_ticks_usec();
+	// lane CAMP-2: each level's visible commands (a shape, text or native component whose cumulative alpha is not zero)
+	m->levelCommands.clear();
+	m->backgroundPaths.clear();
+	const int backgroundLevel = m->shell && m->shell->wm ? m->shell->wm->backgroundLevel() : -1;
+	for (const AptRenderCommand &c : rl.commands)
+	{
+		if ((c.kind == AptRenderCommand::Kind::Shape || c.kind == AptRenderCommand::Kind::Text || c.kind == AptRenderCommand::Kind::Placeholder)
+			&& c.color.mul[3] > 0.0f)
+		{
+			m->levelCommands[c.level] += 1;
+			if (c.level == backgroundLevel && m->backgroundPaths.size() < 8)
+			{
+				m->backgroundPaths.push_back(c.path + " alpha " + std::to_string(c.color.mul[3]));
+			}
+		}
+	}
 	AptCanvasInputs in;
 	in.mapping = m->mapping;
 	in.textures = m->textures.get();
@@ -1667,6 +2060,10 @@ void AptMenuPlayer::drawCanvas(const AptCanvasList &list)
 {
 	RenderingServer *rs = RenderingServer::get_singleton();
 	clearCanvas();
+	for (auto &kv : m->movies)
+	{
+		kv.second.drawn = false; // lane CAMP-2: a BinkMovie this list does not draw is closed (advanceMovies)
+	}
 	const RID root = get_canvas_item();
 	std::vector<RID> parents{ root };
 	RID current;
@@ -1690,6 +2087,66 @@ void AptMenuPlayer::drawCanvas(const AptCanvasList &list)
 		}
 		return current;
 	};
+	// lane FB7-1: the display's backdrop behind every Apt level (Shell::update RW 0x75E1D3 -> RW 0x65C42C slot 0): the mapped image ShellMapLowLOD
+	// (HandCreatedMappedImages.ini: InstallLoad.tga, 1024 x 768 of a 1024 x 1024 texture). INFERENCE (S-1912): it covers the stage as the movies do
+	// (the display's draw of the slot was not read)
+	m->drawnBackdrop.clear(); // lane CAMP-2
+	if (m->shell && m->shell->shell && !m->shell->shell->backdropImage().empty())
+	{
+		ShellMode &sm = *m->shell;
+		const std::string &name = sm.shell->backdropImage();
+		const ::Image *img = sm.skins.images.findImageByName(name);
+		if (!img)
+		{
+			sm.gadgetErrors.insert("backdrop image '" + name + "' is not in the mapped image collection");
+		}
+		else
+		{
+			auto it = m->godotTextures.find(img->filename);
+			if (it == m->godotTextures.end())
+			{
+				const AptTextureStore::Entry &entry = m->textures->get(img->filename);
+				if (entry.ok && !entry.rgba.empty())
+				{
+					PackedByteArray px;
+					px.resize((int64_t)entry.rgba.size());
+					memcpy(px.ptrw(), entry.rgba.data(), entry.rgba.size());
+					Ref<godot::Image> image = godot::Image::create_from_data(entry.width, entry.height, false, godot::Image::FORMAT_RGBA8, px);
+					it = m->godotTextures.emplace(img->filename, ImageTexture::create_from_image(image)).first;
+					m->textures->releasePixels(img->filename);
+					m->textureLoads += 1;
+				}
+				else
+				{
+					// the W3D loader's packed file for the requested name (as the gadget images, drawGadgets)
+					std::string stem = img->filename.substr(0, img->filename.find_last_of('.'));
+					for (char &ch : stem)
+					{
+						ch = (char)std::tolower((unsigned char)ch);
+					}
+					bool paired = false;
+					Ref<godot::Image> packed = stem.size() > 2 ? loadPackedTexture(*m->source, "art/compiledtextures/" + stem.substr(0, 2) + "/" + stem, &paired) : Ref<godot::Image>();
+					if (packed.is_valid())
+					{
+						it = m->godotTextures.emplace(img->filename, ImageTexture::create_from_image(packed)).first;
+						m->textureLoads += 1;
+					}
+					else
+					{
+						sm.gadgetErrors.insert("backdrop texture '" + img->filename + "': " + entry.error);
+					}
+				}
+			}
+			if (it != m->godotTextures.end())
+			{
+				float x0, y0, x1, y1;
+				m->mapping.stageToWindow(0.0f, 0.0f, x0, y0);
+				m->mapping.stageToWindow((float)img->imageSize.x, (float)img->imageSize.y, x1, y1);
+				addTextureUV(rs, newItem(root), Rect2(Vector2(x0, y0), Vector2(x1 - x0, y1 - y0)), it->second, img->uvLo, img->uvHi, Color(1, 1, 1, 1));
+				m->drawnBackdrop = name; // lane CAMP-2
+			}
+		}
+	}
 	// a diagnostic for artifact hunts (lane HUD-3): OPENBFME_APT_SKIP=<substring>[,<substring>...] leaves out the mesh ops whose instance path contains one
 	static const std::vector<std::string> skipPaths = [] {
 		std::vector<std::string> v;
@@ -1808,7 +2265,85 @@ void AptMenuPlayer::drawCanvas(const AptCanvasList &list)
 					m->view3d.draw(item, Rect2(minx, miny, maxx - minx, maxy - miny), op);
 					break;
 				}
-				if (m->nativeHook && op.nativeTag)
+				if (op.nativeTag && op.symbolName == "BinkMovie")
+				{
+					// lane CAMP-2: the BinkMovie render component (registered with the other gadget components, BFME2 decomp Rva00411B52 for RW
+					// 0x81487B; RotWK's registration RW 0x814EFA was not read): the clip's script names the Video (`_MovieName`, e.g. MainMenu's
+					// movieCredits), `_Loop` and `_UseAlpha`; its picture fills the clip's bounds. INFERENCE (stop S-2342, unverified: the credits page is not ported): the movie starts when the clip is
+					// first drawn and loops when `_Loop` is true; `_UseAlpha` = false draws the alpha stream opaque; `_Init` / BinkMovieInit and the
+					// movie-complete callback (OnlineHome's MovieComplete) are not ported
+					std::string title, loop, useAlpha;
+					for (const auto &kv : op.nativeVars)
+					{
+						if (kv.first == "_MovieName")
+						{
+							title = kv.second;
+						}
+						else if (kv.first == "_Loop")
+						{
+							loop = kv.second;
+						}
+						else if (kv.first == "_UseAlpha")
+						{
+							useAlpha = kv.second;
+						}
+					}
+					Impl::MovieSlot &slot = m->movies[op.path];
+					slot.drawn = true;
+					if (slot.stream.is_null() && slot.error.empty())
+					{
+						slot.title = title;
+						slot.loop = loop == "true" || loop == "1";
+						GameWorld *world = Object::cast_to<GameWorld>(ObjectDB::get_instance(m->worldId));
+						Dictionary info = world && !title.empty() ? world->get_movie(toGodot(title)) : Dictionary();
+						if (!(bool)info.get("ok", false))
+						{
+							slot.error = title.empty() ? std::string("the clip names no _MovieName") : toNative(String(info.get("error", "no GameWorld")));
+						}
+						else
+						{
+							slot.stream.instantiate();
+							Dictionary opened = slot.stream->open(String(info.get("full_path", "")));
+							if (!(bool)opened.get("ok", false))
+							{
+								slot.error = toNative(String(opened.get("error", "?")));
+								slot.stream.unref();
+							}
+							else
+							{
+								slot.durationMs = (double)opened.get("duration_ms", 0.0);
+								slot.fps = (double)opened.get("fps", 30.0);
+								slot.stream->set_opaque(!(useAlpha == "true" || useAlpha == "1"));
+								slot.stream->advance_to(0);
+							}
+						}
+						if (!slot.error.empty())
+						{
+							m->movieErrors.insert("BinkMovie " + title + ": " + slot.error);
+							UtilityFunctions::printerr(toGodot("MOVIE ERROR BinkMovie " + title + ": " + slot.error));
+						}
+					}
+					if (slot.stream.is_valid())
+					{
+						float minx = 1e9f, miny = 1e9f, maxx = -1e9f, maxy = -1e9f;
+						const float xs[4] = { op.bounds[0], op.bounds[2], op.bounds[2], op.bounds[0] };
+						const float ys[4] = { op.bounds[1], op.bounds[1], op.bounds[3], op.bounds[3] };
+						for (int i = 0; i < 4; ++i)
+						{
+							const float sx = (op.matrix.a * xs[i] + op.matrix.c * ys[i] + op.matrix.tx) * op.scaleX + op.offsetX;
+							const float sy = (op.matrix.b * xs[i] + op.matrix.d * ys[i] + op.matrix.ty) * op.scaleY + op.offsetY;
+							minx = std::min(minx, sx);
+							maxx = std::max(maxx, sx);
+							miny = std::min(miny, sy);
+							maxy = std::max(maxy, sy);
+						}
+						RID item = newItem(parents.back());
+						current = RID();
+						rs->canvas_item_add_texture_rect(item, Rect2(minx, miny, maxx - minx, maxy - miny), slot.stream->get_texture()->get_rid());
+					}
+					break;
+				}
+				if (m->nativeHook && op.nativeTag && m->nativeHook->handlesPlaceholder(op))
 				{
 					// lane HUD-1: the clip is a native render component (the radar, a command button image, a timer): its owner draws into a canvas item of its own
 					m->nativeSlots.push_back(Impl::NativeSlot{ opIndex, m->items.size(), parents.back() });
@@ -1822,12 +2357,33 @@ void AptMenuPlayer::drawCanvas(const AptCanvasList &list)
 					// lane END-2: a RenderImage clip whose `_imageMap` names an image record of the window manager (the score screen's faction icons,
 					// RW 0x92632E): the mapped image fills the clip's bounds
 					const std::string *record = nullptr;
+					bool mapped = false;
 					for (const auto &kv : op.nativeVars)
 					{
 						if (kv.first == "_imageMap")
 						{
 							record = m->shell->wm->aptImage(kv.second);
+							mapped = true;
 						}
+					}
+					if (!mapped && op.symbolName == "ColorPicker")
+					{
+						// lane CAH-2: the ColorPicker component draws the mapped image its `_imageName` names over the clip (RW 0xB552BF -> RW 0x44CF58)
+						for (const auto &kv : op.nativeVars)
+						{
+							if (kv.first == "_imageName")
+							{
+								record = &kv.second;
+								mapped = true;
+							}
+						}
+					}
+					if (!mapped && op.symbolName == "RenderImage")
+					{
+						// lane FB7-1: a RenderImage clip without `_imageMap` takes the record of its instance name (AptMainMenu's ctor binds "Image" to
+						// LogoWithShadow, RW 0x91CA5C, and MainMenu's `Image` clip has no `_imageMap`)
+						const size_t dot = op.path.find_last_of('.');
+						record = m->shell->wm->aptImage(dot == std::string::npos ? op.path : op.path.substr(dot + 1));
 					}
 					// lane UI-2: an engine render callback named by the clip's tag (AptMapPreview::Picture, RW 0x9757C0) draws its picture over the clip's
 					// rectangle in opaque white (RW 0x44CF58 with 0xFFFFFFFF): a mapped image, or an image the engine made from a texture file (UV 0..1)
@@ -1900,7 +2456,37 @@ void AptMenuPlayer::drawCanvas(const AptCanvasList &list)
 							}
 							else
 							{
-								m->shell->gadgetErrors.insert("texture '" + img->filename + "' of image '" + *record + "': " + entry.error);
+								// lane CAH-1: the packed DDS of the mapped image's texture (art\compiledtextures\<first two letters>\<stem>.dds, as the HUD's
+								// button images: the Create-a-Hero class / type / power icons)
+								std::string stem = img->filename.substr(0, img->filename.find_last_of('.'));
+								for (char &ch : stem)
+								{
+									ch = (char)std::tolower((unsigned char)ch);
+								}
+								std::vector<std::uint8_t> dds;
+								std::string ddsError;
+								Ref<godot::Image> image;
+								if (stem.size() > 2 && m->fs.is_valid() && m->fs->archive_fs() &&
+									m->fs->archive_fs()->readFile("art/compiledtextures/" + stem.substr(0, 2) + "/" + stem + ".dds", dds, &ddsError))
+								{
+									PackedByteArray data;
+									data.resize((int64_t)dds.size());
+									memcpy(data.ptrw(), dds.data(), dds.size());
+									image.instantiate();
+									if (image->load_dds_from_buffer(data) != OK)
+									{
+										image.unref();
+									}
+								}
+								if (image.is_valid())
+								{
+									it = m->godotTextures.emplace(img->filename, ImageTexture::create_from_image(image)).first;
+									m->textureLoads += 1;
+								}
+								else
+								{
+									m->shell->gadgetErrors.insert("texture '" + img->filename + "' of image '" + *record + "': " + entry.error);
+								}
 							}
 						}
 						if (it != m->godotTextures.end())
@@ -1984,12 +2570,6 @@ void AptMenuPlayer::drawCanvas(const AptCanvasList &list)
 				{
 					break;
 				}
-				const float x0 = op.bounds[0], y0 = op.bounds[1];
-				const float sx = op.matrix.a * x0 + op.matrix.c * y0 + op.matrix.tx;
-				const float sy = op.matrix.b * x0 + op.matrix.d * y0 + op.matrix.ty;
-				const Vector2 origin(sx * op.scaleX + op.offsetX, sy * op.scaleY + op.offsetY);
-				const Transform2D t(Vector2(op.matrix.a / sdet, op.matrix.b / sdet), Vector2(op.matrix.c / sdet, op.matrix.d / sdet), origin);
-				const float width = (op.bounds[2] - op.bounds[0]) * sdet * op.scaleX;
 				HorizontalAlignment align = HORIZONTAL_ALIGNMENT_LEFT;
 				switch (op.alignment)
 				{
@@ -2003,44 +2583,38 @@ void AptMenuPlayer::drawCanvas(const AptCanvasList &list)
 				const Color colour(op.textColor[0], op.textColor[1], op.textColor[2], op.textColor[3]);
 				const Color shadow(op.shadowColor[0], op.shadowColor[1], op.shadowColor[2], op.shadowColor[3]);
 				const String text = toGodot(op.text);
-				const bool wrap = op.wordWrap || op.multiline || op.text.find('\n') != std::string::npos;
-				if (op.readOnly && !wrap)
-				{
-					// lane HUD-3: a read-only single-line field (an input field keeps the edit layout) is placed as RotWK's Apt display string draws it (AptCanvas.h PlaceAptText, RW 0x4A8F95): the box from
-					// the two corners through the matrix, the string aligned in it, centred vertically, squeezed when wider, at whole pixels, unrotated
-					auto toWindow = [&](float lx, float ly) {
-						const float px2 = op.matrix.a * lx + op.matrix.c * ly + op.matrix.tx;
-						const float py2 = op.matrix.b * lx + op.matrix.d * ly + op.matrix.ty;
-						return Vector2(px2 * op.scaleX + op.offsetX, py2 * op.scaleY + op.offsetY);
-					};
-					const Vector2 c0 = toWindow(op.bounds[0], op.bounds[1]), c1 = toWindow(op.bounds[2], op.bounds[3]);
-					const Vector2 size = font->get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, px);
-					const AptTextPlacement place = PlaceAptText(c0.x, c0.y, c1.x, c1.y, size.x, font->get_height(px), op.alignment, op.multiline, op.wordWrap);
-					rs->canvas_item_add_set_transform(item, Transform2D(Vector2(place.squeezeX, 0), Vector2(0, 1), Vector2(place.x, place.y)));
-					const Vector2 at(0, font->get_ascent(px));
-					if (op.dropShadow)
-					{
-						font->draw_string(item, at + Vector2(1, 1) * k, text, HORIZONTAL_ALIGNMENT_LEFT, -1, px, shadow); // offset: S-133
-					}
-					font->draw_string(item, at, text, HORIZONTAL_ALIGNMENT_LEFT, -1, px, colour);
-					rs->canvas_item_add_set_transform(item, Transform2D());
-					break;
-				}
+				// RW 0x4A8F95 (lane FB7-1): every field is placed as RotWK's Apt display string draws it (AptCanvas.h PlaceAptText): the box from the two
+				// corners through the matrix, the string aligned in it, centred vertically unless the field is multiline AND word-wrapping, squeezed when
+				// wider, at whole pixels, unrotated. The ctor (RW 0x4AA369) does not look at the read-only flag: a multiline field without word wrap (the
+				// main menu's buttons) is one centred line, not a top-aligned block (S-1910)
+				auto toWindow = [&](float lx, float ly) {
+					const float px2 = op.matrix.a * lx + op.matrix.c * ly + op.matrix.tx;
+					const float py2 = op.matrix.b * lx + op.matrix.d * ly + op.matrix.ty;
+					return Vector2(px2 * op.scaleX + op.offsetX, py2 * op.scaleY + op.offsetY);
+				};
+				const Vector2 c0 = toWindow(op.bounds[0], op.bounds[1]), c1 = toWindow(op.bounds[2], op.bounds[3]);
+				// RW 0x4AA4F0 ..: only the word-wrap flag makes the display string wrap (to the box width, centred lines for alignment 2); a '\n' in the
+				// text still breaks the line
+				const bool wrapped = op.wordWrap;
+				const bool lines = wrapped || op.text.find('\n') != std::string::npos;
+				const float boxWidth = std::fabs(c1.x - c0.x);
+				const Vector2 size = lines ? font->get_multiline_string_size(text, align, wrapped ? boxWidth : -1.0f, px) : font->get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, px);
+				const AptTextPlacement place = PlaceAptText(c0.x, c0.y, c1.x, c1.y, wrapped ? boxWidth : size.x, size.y, op.alignment, op.multiline, op.wordWrap);
+				rs->canvas_item_add_set_transform(item, Transform2D(Vector2(place.squeezeX, 0), Vector2(0, 1), Vector2(place.x, place.y)));
 				const Vector2 base(0, font->get_ascent(px));
-				rs->canvas_item_add_set_transform(item, t);
 				auto drawText = [&](const Vector2 &at, const Color &c) {
-					if (wrap)
+					if (lines)
 					{
-						font->draw_multiline_string(item, at, text, align, width, px, -1, c);
+						font->draw_multiline_string(item, at, text, wrapped ? align : HORIZONTAL_ALIGNMENT_LEFT, wrapped ? boxWidth : -1.0f, px, -1, c);
 					}
 					else
 					{
-						font->draw_string(item, at, text, align, width, px, c);
+						font->draw_string(item, at, text, HORIZONTAL_ALIGNMENT_LEFT, -1, px, c);
 					}
 				};
 				if (op.dropShadow)
 				{
-					drawText(base + Vector2(1, 1) * k, shadow); // shadow offset: S-133
+					drawText(base + Vector2(1, 1) * k, shadow); // offset: S-133
 				}
 				drawText(base, colour);
 				rs->canvas_item_add_set_transform(item, Transform2D());
@@ -2197,7 +2771,10 @@ void AptMenuPlayer::drawGadgets(const GadgetDrawList &commands)
 			}
 			case GadgetDrawCommand::Kind::OpenRect:
 			{
-				const Vector2 a = toWindow((float)c.x0, (float)c.y0), b = toWindow((float)c.x1, (float)c.y1);
+				// lane PLAY-1: corners in either order (a negative rectangle made Godot's canvas cull report "Rect2 size is negative" when it merged the
+				// item's bounds: 124 errors in the owner's session)
+				const Vector2 p0 = toWindow((float)c.x0, (float)c.y0), p1 = toWindow((float)c.x1, (float)c.y1);
+				const Vector2 a(std::min(p0.x, p1.x), std::min(p0.y, p1.y)), b(std::max(p0.x, p1.x), std::max(p0.y, p1.y));
 				const float w = std::max(1.0f, (float)c.lineWidth * k);
 				const Color col = colour(c.color);
 				RID it = item();
@@ -2252,7 +2829,9 @@ void AptMenuPlayer::drawGadgets(const GadgetDrawList &commands)
 				clipOpen = true;
 				const Vector2 a = toWindow((float)c.x0, (float)c.y0), b = toWindow((float)c.x1, (float)c.y1);
 				RID clip = newItem(parents.back());
-				rs->canvas_item_set_custom_rect(clip, true, Rect2(a, b - a));
+				// lane PLAY-1: a region whose far corner lies before its near one clips everything (an empty scissor; INFERENCE: retail's clip of an inverted
+				// region was not read); a negative custom rect made Godot's canvas cull report "Rect2 size is negative" on every merge
+				rs->canvas_item_set_custom_rect(clip, true, Rect2(a, Vector2(std::max(0.0f, b.x - a.x), std::max(0.0f, b.y - a.y))));
 				rs->canvas_item_set_clip(clip, true);
 				parents.push_back(clip);
 				current = RID();
@@ -2382,8 +2961,65 @@ Dictionary AptMenuPlayer::find_button(int level, const String &path)
 	{
 		return r;
 	}
+	// lane PLAY-1: the button's hit area is its mesh placed by each Hit record's matrix (AptButtonInst::hitTest); the file's button bounds are the mesh's own
+	// (the Palantir's PlayerMagic / Objectives buttons place a -20..20 mesh at 0..100): aim at the centre of the Hit records' area
+	if (const AptButtonInfo *info = b->info())
+	{
+		bool any = false;
+		float hx0 = 0, hy0 = 0, hx1 = 0, hy1 = 0;
+		for (const AptButtonRecord &rec : info->records)
+		{
+			if (!(rec.stateMask & 8))
+			{
+				continue;
+			}
+			const float cxs[4] = { x0, x1, x1, x0 }, cys[4] = { y0, y0, y1, y1 };
+			for (int k = 0; k < 4; ++k)
+			{
+				const float px = rec.matrix[0] * cxs[k] + rec.matrix[2] * cys[k] + rec.translation[0];
+				const float py = rec.matrix[1] * cxs[k] + rec.matrix[3] * cys[k] + rec.translation[1];
+				hx0 = any ? std::min(hx0, px) : px;
+				hy0 = any ? std::min(hy0, py) : py;
+				hx1 = any ? std::max(hx1, px) : px;
+				hy1 = any ? std::max(hy1, py) : py;
+				any = true;
+			}
+		}
+		if (any)
+		{
+			x0 = hx0;
+			y0 = hy0;
+			x1 = hx1;
+			y1 = hy1;
+		}
+	}
 	float x, y;
 	b->globalMatrix().apply((x0 + x1) / 2, (y0 + y1) / 2, x, y);
+	// lane PLAY-1: the centre of the content bounds need not be inside the button's hit shape (the Palantir's PlayerMagic: its centre lies on PalantirBack); then
+	// the first point of a grid over the bounds that the input routes to this button is the one to press (a harness clicks there, as a player would)
+	if (!b->hitTest(x, y) || m->A()->input().hitTestButtons(x, y) != b)
+	{
+		// the hit point nearest the centre (a rollover may scale the clip: a point at the shape's edge would leave it again)
+		bool found = false;
+		float best = 0.0f, cx = x, cy = y;
+		for (int gy = 1; gy < 16; ++gy)
+		{
+			for (int gx = 1; gx < 16; ++gx)
+			{
+				float px, py;
+				b->globalMatrix().apply(x0 + (x1 - x0) * (float)gx / 16.0f, y0 + (y1 - y0) * (float)gy / 16.0f, px, py);
+				const float d = (px - cx) * (px - cx) + (py - cy) * (py - cy);
+				if ((!found || d < best) && b->hitTest(px, py) && m->A()->input().hitTestButtons(px, py) == b)
+				{
+					x = px;
+					y = py;
+					best = d;
+					found = true;
+				}
+			}
+		}
+		r["moved_to_hit"] = found;
+	}
 	r["found"] = true;
 	r["x"] = x;
 	r["y"] = y;
@@ -2768,6 +3404,9 @@ PackedStringArray AptMenuPlayer::describe_ops() const
 			char buf[120];
 			snprintf(buf, sizeof buf, " rgba=(%.2f %.2f %.2f %.2f)", op.textColor[0], op.textColor[1], op.textColor[2], op.textColor[3]);
 			line += " '" + op.text + "' " + op.drawFont + " " + std::to_string((int)op.drawSize) + buf;
+			line += std::string(" readOnly=") + (op.readOnly ? "1" : "0") + " multiline=" + (op.multiline ? "1" : "0") + " wordWrap=" + (op.wordWrap ? "1" : "0") +
+				" align=" + std::to_string(op.alignment) + " bounds=(" + std::to_string((int)op.bounds[0]) + " " + std::to_string((int)op.bounds[1]) + " " +
+				std::to_string((int)op.bounds[2]) + " " + std::to_string((int)op.bounds[3]) + ")";
 		}
 		else if (op.kind == AptCanvasOp::Kind::Placeholder)
 		{
@@ -2814,6 +3453,23 @@ void AptMenuPlayer::set_native_hook(AptNativeHook *hook)
 	m->dirty = true;
 }
 
+Array AptMenuPlayer::get_movies() const
+{
+	Array out;
+	for (const auto &kv : m->movies)
+	{
+		Dictionary d;
+		d["path"] = toGodot(kv.first);
+		d["title"] = toGodot(kv.second.title);
+		d["frame"] = kv.second.stream.is_valid() ? kv.second.stream->get_frame() : (int64_t)-1;
+		d["frames"] = kv.second.stream.is_valid() ? kv.second.stream->get_frame_count() : (int64_t)0;
+		d["loop"] = kv.second.loop;
+		d["error"] = toGodot(kv.second.error);
+		out.push_back(d);
+	}
+	return out;
+}
+
 Dictionary AptMenuPlayer::get_report() const
 {
 	Dictionary r;
@@ -2834,6 +3490,7 @@ Dictionary AptMenuPlayer::get_report() const
 	r["view3d_errors"] = toArray(m->view3d.errors()); // lane UI-2
 	r["view3d_viewers"] = (int64_t)m->view3d.viewerCount();
 	r["view3d_notes"] = toArray(m->view3d.notes());
+	r["movie_errors"] = toArray(m->movieErrors); // lane CAMP-2: BinkMovie components that could not play
 	Dictionary notes;
 	std::map<std::string, int> counts;
 	if (m->A())
@@ -3038,6 +3695,206 @@ bool AptMenuPlayer::set_score_screen_from_world(Object *worldObject)
 	}
 	m->shell->scoreScreen = world->scoreScreenData();
 	return m->shell->scoreScreen.valid;
+}
+
+// ---- lane CAH-1: the Create-a-Hero builder --------------------------------------------------------------------------------------------------------------
+namespace
+{
+// draws the builder's 3D view (a texture: the device's viewport of the map mode) into the CreateAHero::DrawMapComponent clip (RW 0x91A3A9)
+class CreateAHeroViewHook : public AptNativeHook
+{
+public:
+	Ref<Texture2D> texture;
+	bool handlesPlaceholder(const AptCanvasOp &op) const override { return op.symbolName == "CreateAHero::DrawMapComponent"; }
+	void drawPlaceholder(const AptCanvasOp &op, RID item) override
+	{
+		if (texture.is_null())
+		{
+			return;
+		}
+		const float xs[4] = { op.bounds[0], op.bounds[2], op.bounds[2], op.bounds[0] };
+		const float ys[4] = { op.bounds[1], op.bounds[1], op.bounds[3], op.bounds[3] };
+		float minx = 1e9f, miny = 1e9f, maxx = -1e9f, maxy = -1e9f;
+		for (int i = 0; i < 4; ++i)
+		{
+			const float sx = (op.matrix.a * xs[i] + op.matrix.c * ys[i] + op.matrix.tx) * op.scaleX + op.offsetX;
+			const float sy = (op.matrix.b * xs[i] + op.matrix.d * ys[i] + op.matrix.ty) * op.scaleY + op.offsetY;
+			minx = std::min(minx, sx);
+			maxx = std::max(maxx, sx);
+			miny = std::min(miny, sy);
+			maxy = std::max(maxy, sy);
+		}
+		lastRect = Rect2(minx, miny, maxx - minx, maxy - miny);
+		if (lastRect.size.x >= 1.0f && lastRect.size.y >= 1.0f)
+		{
+			RenderingServer::get_singleton()->canvas_item_add_texture_rect(item, lastRect, texture->get_rid());
+			++draws;
+		}
+	}
+	Rect2 lastRect;
+	std::uint64_t draws = 0;
+};
+CreateAHeroViewHook g_cahViewHook; // one per process: the shell player is the only one that shows the builder
+} // namespace
+
+Dictionary AptMenuPlayer::set_create_a_hero(Object *worldObject, const String &profileDir)
+{
+	Dictionary out;
+	Array errors;
+	GameWorld *world = Object::cast_to<GameWorld>(worldObject);
+	if (!m->shell || !world || !world->object_world() || m->fs.is_null() || !m->fs->archive_fs())
+	{
+		errors.append(String("set_create_a_hero needs the shell mode and a GameWorld whose setup ran on the same file system"));
+		out["ok"] = false;
+		out["errors"] = errors;
+		return out;
+	}
+	ShellMode &sm = *m->shell;
+	std::vector<std::string> listErrors;
+	sm.cahHeroes.load(m->fs->archive_fs(), profileDir.utf8().get_data(), &listErrors);
+	for (const std::string &e : listErrors)
+	{
+		errors.append(toGodot(e));
+	}
+	sm.cahContext.system = &world->object_world()->createAHeroSystem();
+	sm.cahContext.heroes = &sm.cahHeroes;
+	ShellMode *smp = &sm;
+	sm.cahContext.random = [smp](int lo, int hi) { return hi <= lo ? lo : lo + (int)(smp->cahRandom() % (std::uint32_t)(hi - lo + 1)); };
+	sm.environment.createAHero = &sm.cahContext;
+	out["ok"] = errors.is_empty();
+	out["heroes"] = (int64_t)sm.cahHeroes.size();
+	out["errors"] = errors;
+	return out;
+}
+
+Dictionary AptMenuPlayer::get_create_a_hero_view() const
+{
+	Dictionary out;
+	out["up"] = false;
+	AptCreateAHero *screen = m->shell && m->shell->shell ? dynamic_cast<AptCreateAHero *>(m->shell->shell->findScreenByFilename("CreateAHero.apt")) : nullptr;
+	if (!screen)
+	{
+		return out;
+	}
+	out["up"] = true;
+	const char page = screen->currentPage();
+	out["page"] = page ? String(std::string(1, page).c_str()) : String();
+	out["revision"] = (int64_t)screen->displayRevision();
+	PackedByteArray record;
+	if (const CreateAHeroHero *h = screen->displayedHero())
+	{
+		const std::vector<std::uint8_t> bytes = h->save();
+		record.resize((int64_t)bytes.size());
+		if (!bytes.empty())
+		{
+			memcpy(record.ptrw(), bytes.data(), bytes.size());
+		}
+		out["class"] = (int64_t)h->classIndex;
+		out["subclass"] = (int64_t)h->subClassIndex;
+	}
+	out["record"] = record;
+	out["rotate_left"] = screen->rotateLeft();
+	out["rotate_right"] = screen->rotateRight();
+	out["zoom_in"] = screen->zoomIn();
+	out["zoom_out"] = screen->zoomOut();
+	out["available_power"] = toGodot(screen->firstAvailablePower());
+	out["powers_chosen"] = (int64_t)screen->powers().chosenCount();
+	out["selected_hero"] = (int64_t)screen->selectedHero();
+	out["last_message"] = toGodot(screen->lastMessage());
+		out["view_draws"] = (int64_t)g_cahViewHook.draws;
+	out["view_rect"] = g_cahViewHook.lastRect;
+	return out;
+}
+
+Array AptMenuPlayer::get_create_a_hero_heroes() const
+{
+	Array out;
+	if (!m->shell)
+	{
+		return out;
+	}
+	for (const CreateAHeroListEntry &e : m->shell->cahHeroes.entries())
+	{
+		Dictionary d;
+		d["name"] = toGodot(u16ToUtf8(e.hero.name));
+		d["unique_id"] = toGodot(e.hero.uniqueID);
+		d["system"] = e.system;
+		d["class"] = (int64_t)e.hero.classIndex;
+		d["subclass"] = (int64_t)e.hero.subClassIndex;
+		const std::vector<std::uint8_t> bytes = e.hero.save();
+		PackedByteArray record;
+		record.resize((int64_t)bytes.size());
+		if (!bytes.empty())
+		{
+			memcpy(record.ptrw(), bytes.data(), bytes.size());
+		}
+		d["record"] = record;
+		out.append(d);
+	}
+	return out;
+}
+
+bool AptMenuPlayer::create_a_hero_type_name(const String &name)
+{
+	AptCreateAHero *screen = m->shell && m->shell->shell ? dynamic_cast<AptCreateAHero *>(m->shell->shell->findScreenByFilename("CreateAHero.apt")) : nullptr;
+	if (!screen)
+	{
+		return false;
+	}
+	std::u16string u;
+	const CharString utf = name.utf8();
+	for (const char *p = utf.get_data(); *p; ++p) // ASCII names (the automation's)
+	{
+		u.push_back((char16_t)(unsigned char)*p);
+	}
+	m->dirty = true;
+	return screen->typeName(u);
+}
+
+void AptMenuPlayer::set_create_a_hero_view_texture(const Ref<Texture2D> &texture)
+{
+	g_cahViewHook.texture = texture;
+	if (texture.is_valid())
+	{
+		if (!m->nativeHook)
+		{
+			m->nativeHook = &g_cahViewHook;
+		}
+	}
+	else if (m->nativeHook == &g_cahViewHook)
+	{
+		m->nativeHook = nullptr;
+	}
+}
+
+Dictionary AptMenuPlayer::create_a_hero_save_folder(const String &rotwkInstall) const
+{
+	Dictionary out;
+	out["ok"] = false;
+	std::vector<std::uint8_t> bytes;
+	const std::string path = toNative(rotwkInstall) + "/gi.dat";
+	{
+		std::ifstream in(std::filesystem::u8path(path), std::ios::binary);
+		if (!in)
+		{
+			out["error"] = toGodot("cannot read " + path + " (RW 0xAAA6C0 reads the install's gi.dat for the user data folder's name)");
+			return out;
+		}
+		bytes.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+	}
+	std::string error;
+	const std::string leaf = UserDataFolder::leafName(bytes, &error);
+	if (leaf.empty())
+	{
+		out["error"] = toGodot(error);
+		return out;
+	}
+	const std::string userData = UserDataFolder::userDataFolder(toNative(OS::get_singleton()->get_data_dir()), leaf, '/');
+	out["ok"] = true;
+	out["leaf"] = toGodot(leaf);
+	out["user_data"] = toGodot(userData);
+	out["folder"] = toGodot(UserDataFolder::heroSaveFolder(userData, '/'));
+	return out;
 }
 
 bool AptMenuPlayer::set_lan(Object *worldObject)

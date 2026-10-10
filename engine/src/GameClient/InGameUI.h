@@ -8,7 +8,7 @@
 //
 // What is not ported (stop S-283): the radius cursor decals, the military subtitles, floating text, superweapon timers, the popup messages, the
 // beacon / replay controls, the "can selected objects do X" queries beyond what the translators call and
-// the alternate mouse mode (GlobalData m_useAlternateMouse is false in the retail data this lane reads).
+// the alternate mouse bookkeeping (RotWK's default setup is the alternate one, RW 0x642A4B: CommandTranslator::setUseAlternateMouse, lane PLAY-1).
 
 #pragma once
 
@@ -20,6 +20,7 @@
 #include <vector>
 
 class CommandButton;
+class GameLogic;
 class MessageStream;
 
 // ZH Mouse::MouseCursor, as the NAMES of the `MouseCursor <Name>` blocks of Data\INI\Mouse.ini (the table the engine picks from)
@@ -62,6 +63,10 @@ public:
 	void deselectAll(bool postMessage = true);
 	// the logic dropped the object (it died): the mirror forgets it without a message
 	void forgetObject(ObjectID id) { deselectObject(id); }
+	// ZH / RotWK InGameUI::getFrameSelectionChanged (vtable + 0x120, the field + 0x570): the logic frame of the last select / deselect of a drawable
+	// (InGameUI::selectDrawable, BFME2 decomp InGameUISelectDrawable.cpp; deselectDrawable); setLogic gives it the logic whose frame it records
+	unsigned getFrameSelectionChanged() const { return m_frameSelectionChanged; }
+	void setLogic(const GameLogic *logic) { m_logic = logic; }
 	int getMaxSelectCount() const { return m_maxSelect; }
 	void setMaxSelectCount(int n) { m_maxSelect = n; }
 
@@ -106,6 +111,16 @@ public:
 	void setMouseover(ObjectID id) { m_mouseoverObject = id; m_hasMouseoverLocation = false; }
 	void setMouseoverLocation(const Coord3D &c) { m_mouseoverObject = INVALID_ID; m_mouseoverLocation = c; m_hasMouseoverLocation = true; }
 
+	// ---- lane INPUT-1: what a meta command asks of the screen outside the stream (the HUD / the device takes the counts) ----
+	// SPELL_STORE (RW 0x820638 -> RW 0x71C6AF: the spell store opens, or closes when it is open), TAKE_SCREENSHOT (RW 0x82019D: Display vslot 0x14C)
+	void requestSpellStoreToggle() { ++m_spellStoreToggles; }
+	unsigned spellStoreToggles() const { return m_spellStoreToggles; }
+	void requestScreenshot() { ++m_screenshots; }
+	// DIPLOMACY (Tab, RW 0x81FFAA): the Palantir flag's screen (the players / tribute screen in a skirmish, the objectives in a campaign)
+	void requestDiplomacy() { ++m_diplomacy; }
+	unsigned diplomacyRequests() const { return m_diplomacy; }
+	unsigned screenshotRequests() const { return m_screenshots; }
+
 	// ---- messages for the player (ZH InGameUI::message(label)): game text labels, drained by the HUD ----
 	void message(const std::string &label) { m_messages.push_back(label); }
 	std::vector<std::string> takeMessages();
@@ -147,8 +162,41 @@ public:
 	// LegalBuildCode (GameLogic/BuildPlacement.h): 0 = the ghost may be placed
 	int placeLegalCode() const { return m_placeLegal; }
 
+	// ---- the move hints (lane PLAY-1): the marker drawn where a move order was given ----
+	// DONOR FACTS (ZH InGameUI::createMoveHint InGameUI.cpp:2066, HintSpy.cpp:114 .. 119, W3DInGameUI::drawMoveHints W3DInGameUI.cpp:468): HintSpy (translator
+	// priority 100) passes every MSG_DO_MOVETO, MSG_DO_ATTACKMOVETO, MSG_DO_FORCEMOVETO and MSG_ADD_WAYPOINT that reaches the end of the stream to createMoveHint,
+	// which takes the next of 256 slots (round robin) with the client frame and the message's location, unless the selection is one IMMOBILE object; the device
+	// draws GlobalData's MoveHintName model (its "%s.%s" animation once) at every hint whose age is <= 40 client frames, aligned on the terrain.
+	// TARGET FACTS: RotWK keeps MoveHintName (GlobalData + 0x10, parseAsciiString RW 0x42EE5E, field row RW 0xBFF5C0; the retail GameData says SCMoveHint).
+	// INFERENCE (stop S-1920): RotWK's own hint translator and draw were not read (the binary has no "MoveHint" / "AttackHint" string use beyond the field);
+	// MSG_DO_MOVETO_FORMATION (RotWK's formation move) is taken as a move for the hint; ZH's "same source" expiry compares an object id with the location
+	// argument and never matches, so it is left out.
+	struct MoveHint
+	{
+		Coord3D pos{};
+		unsigned frame = 0; ///< the client frame it was made in; 0 = unused
+	};
+	static constexpr int MAX_MOVE_HINTS = 256;
+	static constexpr unsigned MOVE_HINT_FRAMES = 40;
+	void createMoveHint(const Coord3D &pos);
+	const MoveHint *moveHints() const { return m_moveHints; }
+	// the client frame (ZH TheGameClient->getFrame(): one per 30 Hz client frame; the HUD's camera frame advances it)
+	unsigned clientFrame() const { return m_clientFrame; }
+	void advanceClientFrame() { ++m_clientFrame; }
+	// the hints to draw now: age (client frames) <= MOVE_HINT_FRAMES
+	int liveMoveHintCount() const;
+	unsigned moveHintsMade() const { return m_moveHintsMade; }
+
 private:
+	void markSelectionChanged();
+	MoveHint m_moveHints[MAX_MOVE_HINTS];
+	int m_nextMoveHint = 0;
+	unsigned m_clientFrame = 1; ///< ZH's client frame starts above 0 (a hint's frame 0 means unused)
+	unsigned m_moveHintsMade = 0;
 	MessageStream *m_stream = nullptr;
+	unsigned m_frameSelectionChanged = 0;
+	unsigned m_spellStoreToggles = 0, m_screenshots = 0, m_diplomacy = 0;
+	const GameLogic *m_logic = nullptr;
 	std::vector<ObjectID> m_selected;
 	const CommandButton *m_guiCommand = nullptr;
 	bool m_forceAttack = false, m_forceMove = false, m_waypoint = false, m_attackMoveTo = false, m_preferSelection = false;

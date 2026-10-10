@@ -8,7 +8,9 @@
 
 #include "GameClient/GUI/Gadgets.h"
 
+#include <algorithm>
 #include <cctype>
+#include <cstddef>
 
 namespace
 {
@@ -18,6 +20,82 @@ bool winIsDigit(char16_t c) { return c < 0x80 && std::isdigit((int)c); }
 bool winIsAlNum(char16_t c) { return c < 0x80 && std::isalnum((int)c); }
 bool winIsAscii(char16_t c) { return c < 0x80; }
 } // namespace
+
+std::uint32_t GadgetTextEntryValidationFlags(const EntryData &e)
+{
+	// the EntryData flags as the validator's bits (RW 0x75E4DF: 0x10 ASCII, 0x20 digits, 0x40 letters and digits). INFERENCE (stop S-1409): the
+	// other bits (0x01 no space, 0x02 no '%', 0x04 printable ASCII without '\\', 0x08 no file-name characters, 0x80 space allowed) have no setter
+	// ported here, so they are never set
+	return (e.aSCIIOnly ? 0x10u : 0u) | (e.numericalOnly ? 0x20u : 0u) | (e.alphaNumericalOnly ? 0x40u : 0u);
+}
+
+bool GadgetTextEntryValidateCharacter(char16_t character, std::uint32_t flags)
+{
+	// RW 0x75E4DF (BFME2 decomp GadgetTextEntryValidateCharacter.cpp, tier A byte-matched): the Thai blocks U+0E01..U+0E3A and U+0E3F..U+0E5B are
+	// refused whatever the flags, then the flag tests in retail order (the low byte of the flags only)
+	const std::uint32_t c = character;
+	const std::uint8_t f = (std::uint8_t)flags;
+	if ((c >= 0xE01 && c <= 0xE3A) || (c >= 0xE3F && c <= 0xE5B))
+	{
+		return false;
+	}
+	if ((f & 0x80) && c == 0x20)
+	{
+		return true;
+	}
+	if ((f & 0x01) && c == 0x20)
+	{
+		return false;
+	}
+	if ((f & 0x02) && c == 0x25)
+	{
+		return false;
+	}
+	if ((f & 0x04) && (c < 0x22 || c > 0x7E || c == 0x5C))
+	{
+		return false;
+	}
+	if ((f & 0x08) && (c == 0x2A || c == 0x3F || c == 0x3A || c == 0x5C || c == 0x2F || c == 0x22 || c == 0x3C || c == 0x3E || c == 0x7C))
+	{
+		return false;
+	}
+	// iswascii / iswdigit / iswalnum of MSVCRT: INFERENCE (S-1409) for characters above 0x7F, which the port treats as neither digit nor letter
+	if ((f & 0x10) && !winIsAscii(character))
+	{
+		return false;
+	}
+	if ((f & 0x20) && !winIsDigit(character))
+	{
+		return false;
+	}
+	if ((f & 0x40) && !winIsAlNum(character))
+	{
+		return false;
+	}
+	return true;
+}
+
+bool GadgetTextEntryInsertCharacter(GameWindow *window, char16_t character)
+{
+	// RW 0x72260B (BFME2 decomp GadgetTextEntryInsertCharacter.cpp, tier A byte-matched): validated, refused when the text already holds maxTextLen
+	// characters, else inserted at the cursor, the cursor one further, a '*' appended to the secret text and the entry drawn from its start
+	EntryData *e = entryOf(window);
+	if (!e || !GadgetTextEntryValidateCharacter(character, GadgetTextEntryValidationFlags(*e)))
+	{
+		return false;
+	}
+	if ((int)e->text.size() >= (int)e->maxTextLen)
+	{
+		return false;
+	}
+	const std::size_t at = std::min<std::size_t>((std::size_t)std::max<int>(0, e->charPos), e->text.size());
+	e->text.insert(e->text.begin() + (std::ptrdiff_t)at, character);
+	e->charPos = (short)(at + 1);
+	// RotWK's conCharPos follows the cursor here; this port's conCharPos is the IME composition's length (never driven, S-177): left at 0
+	e->sText.push_back(u'*');
+	e->drawTextFromStart = true;
+	return true;
+}
 
 WindowMsgHandledType GadgetTextEntryInput(GameWindow *window, std::uint32_t msg, WindowMsgData mData1, WindowMsgData mData2)
 {
@@ -36,23 +114,10 @@ WindowMsgHandledType GadgetTextEntryInput(GameWindow *window, std::uint32_t msg,
 			}
 			if (ch)
 			{
-				if (e->numericalOnly && !winIsDigit(ch))
+				// lane CAH-2 r2: RotWK's insert (RW 0x72260B) and validator (RW 0x75E4DF) instead of ZH's "charPos < maxTextLen - 1", which kept an
+				// entry one character short of its limit (the Create-a-Hero name: 21 of RW 0x9C3F2A's 22)
+				if (GadgetTextEntryInsertCharacter(window, ch))
 				{
-					return MSG_HANDLED;
-				}
-				if (e->alphaNumericalOnly && !winIsAlNum(ch))
-				{
-					return MSG_HANDLED;
-				}
-				if (e->aSCIIOnly && !winIsAscii(ch))
-				{
-					return MSG_HANDLED;
-				}
-				if (e->charPos < e->maxTextLen - 1)
-				{
-					e->text.push_back(ch);
-					e->sText.push_back(u'*');
-					e->charPos++;
 					mgr.winSendSystemMsg(window->winGetOwner(), GEM_UPDATE_TEXT, msgData(window), 0);
 				}
 			}

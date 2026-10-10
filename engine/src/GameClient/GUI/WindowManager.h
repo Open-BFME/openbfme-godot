@@ -118,6 +118,16 @@ public:
 
 	// WindowManager::init (WindowManagerInit.cpp): the global callbacks, AptLevel0 into its slot, the focus vector [12].
 	void init();
+	// lane FB7-1: the front-end / in-game background movie (RotWK GameClient::init RW 0x646771 -> RW 0x6224C5: loadAptWindow("Apt\\",
+	// "Background.apt", 1, 0) into the first free slot, the level kept at WindowManager + 0x324). False when it did not load (reported).
+	bool loadBackground();
+	int backgroundLevel() const { return m_backgroundLevel; }
+	int backgroundMode() const { return m_backgroundMode; }
+	// RW 0x6230B6: mode 1 calls the background movie's ShowFrontEndBackground, 2 ShowInGameBackground, 0 hides (RW 0x622C88 with false)
+	void setBackground(int mode);
+	// RW 0x622C88: HideFrontEndBackground / HideInGameBackground ("1" when `instant`) for the mode shown, which is remembered; with nothing shown
+	// an instant hide re-applies the remembered mode first
+	void hideBackground(bool instant);
 	// WindowManager::update with the elapsed time already measured (the caller owns the clock).
 	void update(int elapsedMs);
 
@@ -248,10 +258,12 @@ public:
 	}
 
 	// ---- components -------------------------------------------------------------------------------------------
-	// The windows created for the component instances that are alive, in creation order.
+	// The windows created for the component instances of the loaded levels, in creation order. Lane WINCRASH-1: a record outlives its
+	// placeholder clip (instance null, the window hidden) until the clip is placed again or its level is unloaded, as RotWK's window
+	// table keeps a screen's gadgets (RW 0x8142D2 / 0x814BA9).
 	struct ComponentRecord
 	{
-		const AptCharacterInst *instance = nullptr;
+		const AptCharacterInst *instance = nullptr; // null: the placeholder clip was removed (the window stays, hidden)
 		int level = -1;
 		std::string instancePath;
 		std::string instanceName;
@@ -306,6 +318,7 @@ public:
 	bool isComponentSymbol(const std::string &movieName, const std::string &symbolName) override;
 	void componentInstanceCreated(AptCharacterInst &inst, const std::string &movieName, const std::string &symbolName) override;
 	void componentInstanceDestroyed(AptCharacterInst &inst) override;
+	void levelUnloaded(int level) override;
 	void trace(const std::string &message) override;
 	void fscommand(const std::string &command, const std::string &argument) override;
 	void loadMovie(const std::string &movieName, const std::string &target) override;
@@ -351,6 +364,10 @@ private:
 	AptWindowRecord m_windows[kAptWindowCount];
 	std::map<std::string, int> m_fileToWindow;
 	std::vector<int> m_focus;
+	static bool strcmpiAscii(const std::string &a, const char *b);
+	int m_backgroundMode = 0;      // +0x31C (lane FB7-1)
+	int m_backgroundHidden = 0;    // +0x320: the mode the last hide hid
+	int m_backgroundLevel = -1;    // +0x324
 	bool m_windowsDirty = false;   // +0x1AD
 	bool m_focusDirty = false;     // +0x1A4
 	bool m_pendingShellPop = false; // +0x1AC

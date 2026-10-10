@@ -76,6 +76,10 @@ private:
 	long long m_socket;
 };
 
+// lane FB7-1: the machine's IPv4 addresses as ZH IPEnumeration::getAddresses finds them (gethostname, then gethostbyname's address list, in its order;
+// RotWK's Options address list RW 0x719C53 / 0x9122FC is that enumeration): host-order values; empty when the host name does not resolve
+std::vector<std::uint32_t> LocalIPv4Addresses();
+
 // monotonic milliseconds (transport pacing only)
 std::uint64_t NetMilliseconds();
 void NetSleepMilliseconds(int ms);

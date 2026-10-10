@@ -86,6 +86,9 @@ public:
 	void setLevelTargetName(const std::string &name) { m_templateName = name; }
 	const std::string &levelTargetName() const { return m_templateName; }
 	int getRank() const { return m_rank; }
+	// lane HUD-5 (the Palantir's rank interface, RW 0x9D2437): the level after the current one (RW 0x6891A4), and whether the game is a multiplayer one for it
+	const ExperienceLevelTemplate *upcomingLevel() const { return nextLevel(); }
+	bool levelsForMultiplayer() const { return multiplayerGame(); }
 	int getLevelCap() const { return m_levelCap; }
 	float getExperienceScalar() const { return m_scalar; }
 	const std::string &getLevelName() const { return m_levelName; }

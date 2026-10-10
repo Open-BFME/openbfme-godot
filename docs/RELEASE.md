@@ -32,12 +32,34 @@ What a tester gets, and how to make it. Lane RELEASE-1.
   completed becomes `…`), and a line over 8 MiB is written in parts cut where no name can
   be split (`LogPrivacy::safeCut`). Godot's own file log is
   off. Windows has no console filter: the testers' README asks for the log file, not a
-  copy of the console.
+  copy of the console. The log folder is one click away (lane WINCRASH-1): a "Logs" link
+  under the version in the menus, an "Open log folder" button in the crash and error
+  messages (the file manager opens with that log selected), and `--open-logs` on the
+  command line (opens the folder, starts no game). The logs are not written next to the
+  executable: the launcher accepts a version folder only with exactly its signed files,
+  and Program Files is not writable.
 - **Crashes and fatal errors.** Packages use Godot's debug export template: the release
   template writes no native backtrace on a crash, the debug one does, into the session
-  log. A run that ends without quitting leaves a marker; the next start names that run's
-  log in a message box. An error the game cannot continue
-  from shows a message box with the error, the version and the log file, then quits.
+  log. Godot's Windows handler symbolizes its own executable only (an extension frame is
+  "openbfme.windows.template_debug.x86_64.dll+<offset>") and covers the main thread only (a
+  crash on another thread writes no dump): stop S-1923, named in every Windows log. Every
+  Windows build writes the DLL's PDB (CodeView line tables, build paths remapped, the home
+  folder prefixes lld records blanked: `tools/release/pdb_tools.py`). The PDB is PRIVATE:
+  `tools/release/archive_symbols.sh` keeps it (Linux: the `.so` and, built with
+  `-DOPENBFME_LINUX_DEBUG_FILE=ON`, its `.so.debug`) only in the builder's local symbol
+  store, never in a git tree or a release folder, and the package audit and the commit
+  gate refuse a `.pdb` or MSF bytes anywhere (the commit gate also refuses any container or
+  compressed stream, which it never unpacks, unless `tools/precommit_containers.txt` lists
+  its path and sha256); a report's offsets are mapped there
+  (`llvm-symbolizer --obj=<dll> --relative-address 0x<offset>`).
+  An in-game symbolized report was tried and removed (WINCRASH-1 round 3): code that runs
+  inside the fault could not be shown safe (faults while it unwinds, raised versus real
+  signals, bounded writes), and a reporter that can swallow or invent a crash is worse
+  than none. A run that ends without quitting leaves a marker; the next start names
+  that run's log in a message box with "Open log folder" and OK. An error the game cannot
+  continue from shows a message box with the error, the version and the log file (and
+  "Open log folder"), then quits when it is closed. `--crash-test` (debug builds) crashes
+  on purpose two seconds after the start, in native code, for the release checks.
 - **Network.** Only the LAN transport (`GameNetwork/Transport.cpp`, UDP) opens sockets;
   `tools/release/net_guard.py` (run by `tools/release/test_release_tools.py`) lexes every
   engine source and shipped script, comments and strings aware, and fails on any other
@@ -127,7 +149,9 @@ Not reproduced by `package.sh`, recorded instead:
 5. Keep `known_issues.json` current: a stop that is resolved and removed from
    `STOPS.md` makes the README generator fail until the item is updated.
 
-Publishing (Discord, GitHub releases) needs the owner's OK.
+Publishing (Discord, GitHub releases) needs the owner's OK, except preview releases: the owner gave a standing approval
+(2026-10-09) to publish `v<major>.<minor>.<patch>-preview.<n>` releases automatically, without asking each time (see "Automatic
+preview releases" below). A stable (non-preview) release still needs the owner.
 
 ## The launcher (LAUNCH-1)
 
@@ -266,6 +290,10 @@ The repository is a build-time setting (`package.sh --repo`, default `Open-BFME/
    - `tools/release/net_guard.py` allows `HTTPClient` only in `http_fetch.gd`, and `OS.create_process`
      only for the game and the self-update. `test_launcher_tools.py` checks that the policy runs before
      every connection.
+   - Lane AIO-1 (`docs/AIO.md`): only while the player's opt-in download of
+     the game files runs, `bfmeladder.com` and `workshop-files.bfmeladder.com` (HTTPS, no port) are
+     allowed as well (`NetPolicy.extra_hosts`). The requests to them are the file lists of the two
+     Vanilla packages, sent with the two headers the AIO launcher's own client sends, and the listed files.
 
 **Ed25519 in GDScript.** Godot's `Crypto` has no Ed25519 (mbedTLS lacks it). A GDExtension only for the
 launcher would need its own cross build per platform and a second toolchain in the update path. So
@@ -282,7 +310,8 @@ with SHA-512 written over 32-bit halves.
   non-canonical keys.
 - One verification takes about 60 ms. Verification handles only public data, so it is variable-time.
 
-**Making a release** (after "Making a package"; publishing needs the owner's OK):
+**Making a release** (after "Making a package"; publishing needs the owner's OK, preview releases excepted: "Automatic preview
+releases"):
 1. Done (96075fb6, the coordinator's key). Once, on the offline machine: run
    `python3 tools/release/sign_manifest.py --generate-key <path outside every repository>`. It prints
    the public key; commit it as `launcher/release_key.pub` (64 hex digits).
@@ -297,8 +326,9 @@ with SHA-512 written over 32-bit halves.
 4. On the offline machine: `python3 tools/release/sign_manifest.py --key <key> <dir>/manifest.json`.
 5. `tools/release/publish_release.sh <dir>` is a dry run. It checks the manifest against the archives,
    the signature against `launcher/release_key.pub`, the tag and the checksum file, then prints the
-   `gh release create` command (`--prerelease` for preview). `--execute` runs it after the tag is typed
-   again.
+   commands it would run (a draft through the API, the uploads, the read-back, publishing; pre-release for preview). `--execute` runs
+   them after the tag is typed again; `--confirm-tag <tag>` replaces the prompt for a preview release without a terminal and must
+   equal the manifest's version (see "Automatic preview releases").
 
 **Tests.**
 - `tools/release/test_launcher.py` runs the launcher's command line (`--update`, `--install=`,
@@ -330,6 +360,204 @@ with SHA-512 written over 32-bit halves.
   `files/lib/vkd3d/x86_64-windows/libvkd3d-*.dll` in the prefix's `system32`. Natively, it takes
   prebuilt launchers (`--launchers`, `--key`) and points `APPDATA` into its work folder, which Godot
   follows on native Windows. Under Wine Godot does not follow it, so the prefix's own folder is cleared.
+
+### Automatic preview releases (AUTOREL-1)
+
+The owner gave a **standing approval** (2026-10-09) to publish preview releases automatically, so testers' launchers pick up new
+builds as they become available. It covers the preview channel only; a stable release still needs the owner.
+
+`tools/release/autorelease.sh <archive sha>` runs on the Deck and needs no prompt. The coordinator starts it with an
+`archive-legacy-codebase` commit that passed the full gate, after recording that gate:
+`tools/release/record_gate.sh <sha> <remote-verify name>`. That script reads the run's RESULT lines (`remote-verify.sh --result`) and
+appends `<sha>\t<gate name>\t<date>\tALL PASS` to `~/.local/state/openbfme-release/gated.tsv` only when the run was RESULT ALL PASS
+and DONE 0. The run must also be of exactly that commit: verify.sh's `RESULT sha` line, or, in a log from before that line, an
+abbreviation that is the prefix of exactly one object of the repository, that commit. It is resolved as an object prefix, never as a
+ref, so a tag or branch named like the abbreviation cannot stand in for it.
+
+1. **Checks.**
+   - One release at a time (a lock in `~/.local/state/openbfme-release/`).
+   - The sha must have a gate record of its own. The record of an ancestor never counts, and neither does ancestry.
+   - The sha must be on `archive-legacy-codebase`.
+   - Releases only move forward: the sha must descend from the last released archive sha
+     (`~/.local/state/openbfme-release/last-released`) and differ from it, whatever `--since` says.
+   - If nothing under `engine/`, `godot/`, `launcher/` or `tools/release/` changed since the last released sha, there is no release:
+     it prints `AUTORELEASE SKIP` and stops.
+   - `--since <archive sha>` only sets where the notes start. The first release has no state and needs it.
+   - The release key must be the one `launcher/release_key.pub` names.
+   - The sha must contain `MIN_CONTROL`, the commit of the round-3 release scripts. An older sha carries an older
+     `publish_release.sh` and older package checks, so it is never released automatically.
+   - An open release intent (below) is reconciled first, and while one is open no other sha is accepted.
+2. **Sync.** The public `main` gets the sha's tree without `archive/`, with main's `PRIVACY.md` and the README line about the legacy
+   code (the sync recipe). Before anything is pushed, that tree passes the privacy audit (`autorelease.py audit-tree`):
+   - only the public top-level entries (`PUBLIC_TOP`);
+   - no `workspace`, `archive` or `reference` folder anywhere;
+   - no file that one of the tree's `.gitignore` rules ignores, even a tracked one;
+   - every file passes the commit gate's rules (`tools/precommit.py` `check_file`: retail suffixes, retail-format bytes, developer
+     paths);
+   - **text only** (round 6): every file synced to the public repository must be UTF-8 text with no NUL byte. Any binary file stops
+     the sync: an image, a font, prebuilt data, or a container or compressed file of any kind, wherever its bytes start. That also
+     covers a gzip after a prefix, a self-extracting shell stub and a PNG with an archive appended. The only exceptions are listed in
+     `tools/release/public_binaries.txt`, each with its path, sha256 and a reason; the list is empty, and today's public tree has no
+     binary file. A listed container must also decode completely and pass the audit with its metadata (no ZIP comments, extra fields
+     or encrypted members; no gzip file name, comment or extra field; tar members only files and folders, without links, PAX headers
+     or owner names; member names through the path rule). Text files with a container suffix (`.zip`, `.gz`, `.tar` ...) are refused
+     too. Test fixtures are generated at test time;
+   - **file names**: no tracked path (or member name) holds a private path (an absolute home or Windows user folder path, a `home/` or `Users/`
+     component) or the user's name as a component.
+
+   It is then one commit on top of `main`, pushed as `sync/<date>-<sha>`, a PR titled `Sync the rebuild: <date> (<summary>)`, merged
+   with a merge commit; then the branch is deleted. A merge whose answer was lost is read back. The merge commit must have exactly the
+   audited tree. If `main` already has it, there is no PR and `main` is released as it is.
+3. **Version and tag.** `v0.3.0-preview.<n>`, n = 1 + the highest `v0.3.0-preview.<n>` tag on origin (the launcher's grammar; other
+   tags are ignored). An annotated tag on the merged public commit, pushed (a push whose answer was lost is checked on the remote).
+   A commit carries one release tag at most: a second one would make `git describe`, the build's version, pick either. If a failed run
+   left a tag on the commit with no release published, the run stops and says to delete that tag by hand first.
+4. **Build and test** on JonathanPC's WSL through the jpc scripts (their machine-wide slots, niced; JonathanPC lane `autorel-src`),
+   from a clean checkout of the tag:
+   - the Linux GDExtension and the Windows DLL (`build_windows.sh --no-export`);
+   - `package.sh --platforms linux,windows --windows-dll ...`: game and launchers, the provenance check of both libraries, the
+     audits, the self-verification;
+   - `test_export.sh` on the Linux package;
+   - a native Windows start of the Windows package: `OpenBFME.console.exe --headless --quit-after 400` from WSL interop, in a
+     temporary folder under the Windows `%TEMP%`, with the retail folders from the registry values `InstallLocator` reads and a
+     private `APPDATA`. It must exit 0, print `GAME screen: MainMenu.apt` and load 4657 templates (`windows_start_check.sh`); the
+     folder is removed.
+
+   The packages are copied back to the Deck.
+5. **The Deck's checks of what came back.** Everything from here on runs the scripts of a trusted checkout: a fresh worktree of the
+   tag made on the Deck. JonathanPC never writes to it. Its tree must be the audited sync tree of the archive sha, so every entry but
+   README.md / PRIVACY.md is the archive sha's own object. Every file of its `tools/release/` and `tools/precommit.py` must also be
+   byte for byte the running autorelease's own copy, so run autorelease.sh from a checkout whose tools are the released sha's. The
+   checks:
+   - the returned folder holds exactly the package files;
+   - every archive passes the release allowlist;
+   - each library (taken out of the returned archives) has one build record naming the tag, the public commit, a clean tree and the
+     engine id of the tag's committed `engine/`;
+   - `package.sh --verify` rebuilds every archive from the trusted checkout with those libraries and compares them byte for byte
+     (the Deck's zlib 1.3.1 and JonathanPC's 1.3 deflate the packages to the same bytes).
+
+   Nothing is signed before all of this has passed.
+6. **Manifest and signature** on the Deck: the trusted checkout's `make_manifest.py` and `sign_manifest.py --key
+   ~/.config/openbfme-release/release-ed25519.pem`. The key never leaves the Deck: no GitHub Actions, no secret, no JonathanPC.
+   GitHub only hosts the source and the assets.
+7. **Public metadata** (round 6): the sync commit's message, the PR title and body, the merge subject, the tag message, the release
+   title and the release notes go to the public repository too. They are written before anything is pushed, and they must pass the
+   privacy rules (`autorelease.py audit-text`). A hit stops the run: nothing is redacted into them. The rules, checked on the text as
+   written, without Markdown escapes and NFKC-normalised:
+   - no home or Users path, and not the release key's path or folder;
+   - no user name (the local account's, the ssh config's users) where it names an account: as a path component (`/deck`, `\deck`,
+     `~deck`) or as `user@host`. An ordinary word is fine: "Steam Deck controls now work" passes;
+   - no host name (this machine's, the ssh config's hosts);
+   - no e-mail address but the noreply ones (`<id>+<login>@users.noreply.github.com`, `noreply@anthropic.com`).
+
+   The fixed attribution lines are not checked.
+8. **Notes** (`tools/release/autorelease.py notes`) come from the first-parent commit subjects since the notes baseline, written for
+   players: "What's new", "What's fixed" and the known issues of `known_issues.json`. A subject is cut down to plain words (no lane
+   ids, binary addresses, stop ids or review verdicts). Commits that change nothing a player runs are left out. A
+   `Release-note: <text>` line in a commit message is used as written (`Release-note: Fix: ...` for a fix, `Release-note: none` to
+   leave a commit out). A merge whose subject is not plain enough should carry one. Every line is neutralised, `Release-note:`
+   text and known issues included:
+   - URLs are removed;
+   - `@` and `#` are written full-width (GitHub links neither), and `GH-<n>` gets a non-breaking hyphen;
+   - the Markdown (the notes, the PR body) escapes every special character, with `& < >` as HTML entities.
+9. **Publish**: the trusted checkout's `publish_release.sh <dir> --notes-file <notes> --execute --confirm-tag <tag>`. `--confirm-tag`
+   works for preview tags only; a stable release still waits for the typed tag. After every check of the dry run:
+   1. The tag on GitHub must be the manifest's commit, and no release may exist for it.
+   2. A draft is created through the API, the seven assets are uploaded, and the draft is read back: exactly those assets, uploaded,
+      each with the size and SHA-256 of the signed manifest (the checksum file, `manifest.json` and its signature hashed locally;
+      `release_assets.py`).
+   3. The draft is published and read back again.
+
+   `gh release create` is never used: when publishing fails, it deletes the release it presumes a draft, even one whose publication
+   succeeded but whose answer was lost. Any failure or uncertain answer is resolved by reading the release back. **The tool never
+   deletes a release** (round 4: a draft can be published between any read and a delete). A draft that cannot be finished is left as
+   it is and reported. `--resume-id <id>` finishes a draft an earlier run created: it uploads the missing assets, checks every asset,
+   publishes and reads back. A wrong or foreign asset already on the draft stops it for the operator. autorelease.sh then reads the
+   published release back once more before it records the state.
+10. **Discord**: `bfme-community` has no release announcement command yet; the run logs that and posts nothing.
+11. **Report.** A one-line summary (`AUTORELEASE OK|SKIP|FAIL ...`), also appended to
+    `~/.cache/openbfme-recover/logs/autorelease-summary.log`, and the log `~/.cache/openbfme-recover/logs/autorelease-<version>.log`.
+    The state records the released archive sha.
+
+On a failure it stops at that step and publishes nothing further:
+- no release is ever deleted: a draft stays for the next run to resume, or for the operator;
+- a pushed tag stays when no release was created for it;
+- nothing is retried.
+
+**The release intent.** A run that has started to change GitHub leaves a record of it:
+- Before `main` moves or a tag is pushed, `~/.local/state/openbfme-release/intent` records the sha, the version, the audited tree,
+  the work folder, the public commit once it is known, and the step (`sync`, `tag`, `tagged`, `publishing`).
+- `intent.rid` next to it holds the id of the draft `publish_release.sh` created (`--id-file`).
+- A successful run closes the intent when it records the release in `last-released`.
+
+Every real run first reconciles an open intent through GitHub API reads. If a read fails, it stops (fail closed). The intent file
+is untrusted: before it records a completion or resumes, every field is checked, and a mismatch stops the run with nothing changed.
+- the sha is a commit on the archive branch, has its own gate record, contains `MIN_CONTROL`, and descends from the last released
+  sha;
+- the version is a `v0.3.0-preview.<n>` above the last released one;
+- the tree has exactly the sha's entries (README.md and PRIVACY.md aside);
+- the public commit has that tree and is on `main`, and the remote tag is on the public commit;
+- for a published release: its `manifest.json` and signature are the package folder's, the manifest names the version, the public
+  commit and the repository, the signature verifies under the sha's `launcher/release_key.pub`, and the Linux library's build record
+  names the version, the public commit and the engine id of the public commit's `engine/` (stand-in tests skip the library check).
+
+The cases:
+- **A published release for the intent's version**, with the assets of the intent's package folder (`release_assets.py`), is
+  recorded as released and the intent closes. The run then goes on with the requested sha. This is the case where an earlier run's
+  last read-back was lost, and it is what stops a later run from giving older source a newer version.
+- **A draft** that is the intent's own (`intent.rid`) is resumed: the packages are rebuilt and checked again, then
+  `publish_release.sh --resume-id` finishes the draft. Another draft stops the run.
+- **A tag without a release**, or no tag yet, resumes that same sha and version. The tag already on the remote is used, never a
+  second one.
+
+While an intent is open, the run resumes the intent's sha whatever sha was asked for. If it was asked for another sha, it exits 3
+(`AUTORELEASE RESUMED ONLY`), and the next run takes the requested one. `--dry-run` and `--plan` refuse to start while an intent is
+open.
+
+**Operator steps** for what a run cannot repair by itself. In each case it stops with a message naming the case:
+- *A published release that cannot be verified* (its package folder was deleted, or the assets differ): compare it with
+  `SHA256SUMS-<v>.txt` by hand. If it is right, write `<archive sha> <version> <public commit> <date>` to `last-released` and delete
+  `intent` and `intent.rid`. If it is wrong, mark it as a draft or delete it on GitHub, then delete the intent files.
+- *A draft the intent did not create* (the answer to its creation was lost), or *a draft with a wrong asset*: check it on GitHub.
+  Either delete the draft by hand and run again (the run resumes the release), or finish it by hand.
+- *An intent that does not hold* (a field does not match): find out how it changed. Correct the file, or remove `intent` and
+  `intent.rid` once the release's real state is known (and record a published release in `last-released` by hand).
+- *An earlier run's sync branch on the remote, not merged*: close its PR, delete the branch, and run again. The run makes a new one.
+- *Two or more releases for one version*, or *a release tag on the public commit that no intent explains*: remove the extra ones on
+  GitHub (`git push origin --delete refs/tags/<tag>` for a tag with no release), then run again.
+
+**The release key.** autorelease.sh signs only with the configured key, `~/.config/openbfme-release/release-ed25519.pem`.
+`OPENBFME_RELEASE_KEY` is accepted only when it resolves to exactly that path; any other value is refused with a message that does not
+repeat it. So no normalised form of another path can appear in a diagnostic.
+
+**Redaction.** One redactor at the top of autorelease.sh takes every line the script and the helpers it runs print, stdout and
+stderr, and every line of its logs. It writes the release key's path as `<release key>`, its folder as `<release key folder>` and
+the home folder as `~`. It catches each as given and resolved, Markdown-escaped and URL-encoded. So no echo can leak them,
+whatever it prints (intent fields included). No production script writes to the terminal or a log of its own past it.
+
+**What the audits defend against (a stated limitation).** The sync audit, the metadata audit and the redaction defend against
+*accidental* inclusion by our own lanes, tools and builds: retail bytes, private data or the key path. They do not defend against a
+committer who encodes data on purpose, for example as base64 or hex text, or by steganography. Anyone with commit access could do
+that, and the commit gate (`tools/precommit.py`) and review cover the committers. A deliberate leak through text is out of scope.
+
+`--dry-run` runs everything without publishing, and since round 3 it writes nothing to GitHub:
+- the sync branch push, the PR, the merge and the tag push are printed as `WOULD RUN: ...`;
+- the tag stays local and is deleted at the end;
+- the manifest is signed with a throwaway key;
+- `publish_release.sh` runs as a dry run.
+
+Every command a real run adds is printed as `WOULD RUN: ...`. It still reads GitHub (the remote's tags and `main`, `gh api user`).
+
+The tests (`tools/release/test_autorelease.py`) run real mode end to end and each failure case against a stand-in:
+- a throwaway archive repository holding copies of the scripts;
+- a local bare repository as the public remote;
+- `gh_stand_in.py` as `gh`, which can lose answers, fail publishing or corrupt an upload;
+- a throwaway key;
+- `OPENBFME_RELEASE_STANDIN` in place of JonathanPC and the Deck's package rebuild. It is refused with the real repository or a
+  remote that is not a local folder.
+
+JonathanPC's gate (`verify.sh`, run by `remote-verify.sh`) also cross-builds Windows (`build_windows.sh --no-export`: the tests, the
+peer and the DLL). A change that breaks the Windows build fails the gate.
 
 ### The updater's threat model
 
@@ -412,7 +640,7 @@ package goes to testers, check on a real Windows 10 / 11 machine (and note the r
 8. **The launcher (LAUNCH-1).** `tools/release/launcher_windows_test.py` covers fresh install and play,
    a tampered asset, an update with a staged launcher, the self-update swap through the helper and the
    removal of the previous launcher, plus the swap killed at each of its 8 steps. Results:
-   - natively on JonathanPC, round 1: 5/5;
+   - natively on a Windows machine, round 1: 5/5, and round 3 (the merged launcher): 13/13;
    - under Wine (Proton 11.0, windowed), round 2: 13/13.
    Natively, run the same script with prebuilt launchers (see "The launcher": Tests) from a test
    account. Then also check by hand:

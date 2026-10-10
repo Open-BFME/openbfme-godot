@@ -101,6 +101,10 @@ public:
 	void set_house_colors_enabled(bool enabled);
 	bool get_house_colors_enabled() const { return HouseColorEnabled; }
 	void set_instance_house_color(int64_t instance, const Color &color);
+	// lane CAH-2 (stop S-1408): a model whose house colour textures are recoloured for a colour set (RotWK's house colour options, HouseColor.h: kind
+	// 1 .. 3 and up to three ARGB colours; a Create-a-Hero is kind 3 with its record's three colours) texel by texel BEFORE filtering (RW 0x531C77), as
+	// retail builds the render object "#<model>#<options>" with its own recoloured textures (RW 0x54BDE0). Its instances take no team colour.
+	int64_t add_model_colored(const String &model_name, int64_t kind, const PackedInt64Array &colors);
 	// RENDER-1 (stop S-390): the instance is lit by the map's infantry light set (KINDOF_INFANTRY drawables) instead of the objects set;
 	// the buffer stores the palette base as -(base + 1) for it.
 	void set_instance_infantry_light(int64_t instance, bool infantry);
@@ -265,6 +269,7 @@ private:
 	std::unique_ptr<WW3DAssetManager> Assets;
 	std::unique_ptr<W3DMaterialFactory> Materials;
 	std::map<std::string, std::shared_ptr<MeshGpu>> MeshCache;
+	std::string BuildSuffix; // lane CAH-2: the colour set of the model being built (add_model_colored), part of the mesh cache key
 	std::vector<std::unique_ptr<Model>> Models;
 	std::vector<Instance> Instances;
 	std::vector<Ref<ShaderMaterial>> AllMaterials;

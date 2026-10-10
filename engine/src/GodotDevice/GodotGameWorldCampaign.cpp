@@ -15,6 +15,7 @@
 #include "Common/RetailArchivePolicy.h"
 #include "GameClient/LinearCampaign.h"
 #include "GameClient/VideoPlayer.h"
+#include "GameClient/GUI/Shell/Shell.h"
 #include "GameClient/LiveGame.h"
 #include "GameLogic/GameLogic.h"
 #include "GameLogic/Map/TerrainLogic.h"
@@ -84,6 +85,7 @@ void GameWorld::bindCampaignMethods()
 	ClassDB::bind_method(D_METHOD("campaign_progress_load", "path"), &GameWorld::campaign_progress_load);
 	ClassDB::bind_method(D_METHOD("campaign_progress_save", "path", "progress"), &GameWorld::campaign_progress_save);
 	ClassDB::bind_method(D_METHOD("get_movie", "title"), &GameWorld::get_movie);
+	ClassDB::bind_method(D_METHOD("get_play_intro"), &GameWorld::get_play_intro); // lane CAMP-2
 }
 
 Array GameWorld::get_campaigns() const
@@ -264,6 +266,39 @@ Dictionary GameWorld::campaign_progress_save(const String &path, const Dictionar
 	return d;
 }
 
+// lane CAMP-2: whether the start-up movies play. TARGET FACTS: GlobalData + 0xAF2 is GameData's "PlayIntro" (parseBool, field table RW 0xC00540); the
+// GlobalData init sets it (RW 0x64309B: 1); GameEngine::init clears it for a start with a .map file (RW 0x63C9BB) and under _EA_RTS_HEADLESS (RW
+// 0x63CC07); the start-up callbacks play the movies only when it is set (RW 0x645BAC, RW 0x6483BA). RotWK's gamedata.ini has no PlayIntro (default)
+Dictionary GameWorld::get_play_intro()
+{
+	Dictionary d;
+	d["ok"] = false;
+	d["play_intro"] = true;
+	d["from_ini"] = false;
+	if (!m_fs.is_valid() || !m_fs->archive_fs())
+	{
+		d["error"] = "GameWorld.setup has not run";
+		return d;
+	}
+	std::vector<std::uint8_t> bytes;
+	std::string error;
+	if (!m_fs->archive_fs()->readFile("data\\ini\\gamedata.ini", bytes, &error))
+	{
+		d["error"] = g("data\\ini\\gamedata.ini: " + error);
+		return d;
+	}
+	bool value = true, found = false;
+	if (!Shell::readGameDataBool(std::string(bytes.begin(), bytes.end()), "PlayIntro", value, found, &error))
+	{
+		d["error"] = g(error);
+		return d;
+	}
+	d["ok"] = true;
+	d["play_intro"] = found ? value : true;
+	d["from_ini"] = found;
+	return d;
+}
+
 // lane CAMP-1H: TheVideoPlayer (GameClient/VideoPlayer.h)
 Dictionary GameWorld::get_movie(const String &title)
 {
@@ -326,6 +361,7 @@ Dictionary GameWorld::get_movie(const String &title)
 	d["ok"] = info.ok;
 	d["error"] = g(info.error);
 	d["path"] = g(info.path);
+	d["full_path"] = g(info.fullPath); // lane CAMP-2: what VP6MovieStream opens
 	d["width"] = (int64_t)info.width;
 	d["height"] = (int64_t)info.height;
 	d["frames"] = (int64_t)info.frames;

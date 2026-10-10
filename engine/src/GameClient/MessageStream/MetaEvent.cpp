@@ -37,8 +37,9 @@ const KeyName kKeyNames[] = {
 };
 
 const LookupListRec kTransitionNames[] = { { "DOWN", TRANSITION_DOWN }, { "UP", TRANSITION_UP }, { "DOUBLEDOWN", TRANSITION_DOUBLEDOWN }, { nullptr, 0 } };
-const LookupListRec kModifierNames[] = { { "NONE", MOD_NONE }, { "CTRL", MOD_CTRL }, { "SHIFT", MOD_SHIFT }, { "ALT", MOD_ALT }, { "SHIFT_CTRL", MOD_SHIFT_CTRL },
-	{ "CTRL_ALT", MOD_CTRL_ALT }, { "SHIFT_ALT", MOD_SHIFT_ALT }, { "SHIFT_ALT_CTRL", MOD_SHIFT_ALT_CTRL }, { nullptr, 0 } };
+// RW 0xBF0E28, in the binary's order
+const LookupListRec kModifierNames[] = { { "NONE", MOD_NONE }, { "CTRL", MOD_CTRL }, { "ALT", MOD_ALT }, { "SHIFT", MOD_SHIFT }, { "CTRL_ALT", MOD_CTRL_ALT },
+	{ "SHIFT_CTRL", MOD_SHIFT_CTRL }, { "SHIFT_ALT", MOD_SHIFT_ALT }, { "SHIFT_ALT_CTRL", MOD_SHIFT_ALT_CTRL }, { nullptr, 0 } };
 const LookupListRec kCategoryNames[] = { { "CONTROL", 0 }, { "INFORMATION", 1 }, { "INTERFACE", 2 }, { "SELECTION", 3 }, { "TAUNT", 4 }, { "TEAM", 5 }, { "MISC", 6 }, { "DEBUG", 7 }, { nullptr, 0 } };
 
 bool equalsNoCase(const char *a, const char *b)
@@ -64,42 +65,8 @@ void parseKey(INI *ini, void *, void *store, const void *)
 	*static_cast<int *>(store) = key;
 }
 
-void parseUsableIn(INI *ini, void *, void *store, const void *)
-{
-	// ZH parseBitString32 with the CommandUsableInNames list (GAME, SHELL, PLANNING): a name per token until the line ends; the first token clears
-	unsigned mask = 0;
-	bool first = true;
-	for (const char *token = ini->getNextTokenOrNull(); token; token = ini->getNextTokenOrNull())
-	{
-		unsigned bit;
-		if (equalsNoCase(token, "SHELL"))
-		{
-			bit = COMMANDUSABLE_SHELL;
-		}
-		else if (equalsNoCase(token, "GAME"))
-		{
-			bit = COMMANDUSABLE_GAME;
-		}
-		else if (equalsNoCase(token, "PLANNING"))
-		{
-			bit = COMMANDUSABLE_PLANNING;
-		}
-		else if (equalsNoCase(token, "NONE"))
-		{
-			mask = 0;
-			first = false;
-			continue;
-		}
-		else
-		{
-			throw INIException(3, "Invalid UseableIn name '%s'", token);
-		}
-		(void)first;
-		mask |= bit;
-		first = false;
-	}
-	*static_cast<unsigned *>(store) = mask;
-}
+// RW 0xD9DCAC: the UseableIn names of the field table's INI::parseBitString32 (RW 0x42E840): bit 0 SHELL, bit 1 GAME, bit 2 PLANNING
+const char *const kUsableInNames[] = { "SHELL", "GAME", "PLANNING", nullptr };
 
 void parseLabel(INI *ini, void *, void *store, const void *)
 {
@@ -112,7 +79,7 @@ const FieldParse kMetaMapFields[] = {
 	{ "Key", parseKey, nullptr, MM_OFF(key) },
 	{ "Transition", INI::parseLookupList, kTransitionNames, MM_OFF(transition) },
 	{ "Modifiers", INI::parseLookupList, kModifierNames, MM_OFF(modState) },
-	{ "UseableIn", parseUsableIn, nullptr, MM_OFF(usableIn) },
+	{ "UseableIn", INI::parseBitString32, kUsableInNames, MM_OFF(usableIn) },
 	{ "Category", INI::parseLookupList, kCategoryNames, MM_OFF(category) },
 	{ "Description", parseLabel, nullptr, MM_OFF(description) },
 	{ "DisplayName", parseLabel, nullptr, MM_OFF(displayName) },
@@ -172,6 +139,18 @@ const MetaMapRec *MetaMap::find(int meta) const
 	return nullptr;
 }
 
+bool MetaMap::isBound(int key, int modState) const
+{
+	for (const MetaMapRec &r : m_records)
+	{
+		if (r.key == key && r.modState == modState)
+		{
+			return true;
+		}
+	}
+	return false;
+}
+
 void MetaMap::registerBlocks(INIEnvironment &env)
 {
 	env.blocks.registerBlock("CommandMap", [this](INI *ini) {
@@ -205,14 +184,95 @@ bool MetaMap::load(INIEnvironment &env, const std::string &file, std::string *er
 	return true;
 }
 
+namespace
+{
+int sideFlag(int key)
+{
+	switch (key)
+	{
+		case KEY_LCTRL: return KEY_STATE_LCONTROL;
+		case KEY_RCTRL: return KEY_STATE_RCONTROL;
+		case KEY_LSHIFT: return KEY_STATE_LSHIFT;
+		case KEY_RSHIFT: return KEY_STATE_RSHIFT;
+		case KEY_LALT: return KEY_STATE_LALT;
+		case KEY_RALT: return KEY_STATE_RALT;
+		default: return 0;
+	}
+}
+} // namespace
+
+bool ModifierTracker::isModifierKey(int key)
+{
+	return sideFlag(key) != 0;
+}
+
+void ModifierTracker::key(int key, bool down)
+{
+	const int flag = sideFlag(key);
+	if (flag)
+	{
+		m_state = down ? (m_state | flag) : (m_state & ~flag);
+	}
+}
+
+std::vector<ModifierTracker::Transition> ModifierTracker::sync(bool ctrl, bool shift, bool alt)
+{
+	std::vector<Transition> out;
+	const struct
+	{
+		bool down;
+		int left, right;
+	} kinds[] = { { ctrl, KEY_LCTRL, KEY_RCTRL }, { shift, KEY_LSHIFT, KEY_RSHIFT }, { alt, KEY_LALT, KEY_RALT } };
+	for (const auto &k : kinds)
+	{
+		const bool leftHeld = (m_state & sideFlag(k.left)) != 0, rightHeld = (m_state & sideFlag(k.right)) != 0;
+		if (!k.down)
+		{
+			if (leftHeld)
+			{
+				out.push_back({ k.left, false });
+			}
+			if (rightHeld)
+			{
+				out.push_back({ k.right, false });
+			}
+		}
+		else if (!leftHeld && !rightHeld)
+		{
+			out.push_back({ k.left, true });
+		}
+	}
+	for (const Transition &t : out)
+	{
+		key(t.key, t.down);
+	}
+	return out;
+}
+
+void MetaEventTranslator::noteMeta(int meta)
+{
+	++m_metasMade;
+	m_lastMeta = ClientMessageMetaName(meta);
+	m_recent.push_back(m_lastMeta);
+	if (m_recent.size() > 32)
+	{
+		m_recent.erase(m_recent.begin());
+	}
+}
+
 MessageDisposition MetaEventTranslator::translate(const ClientMessage &msg)
 {
 	MessageDisposition disp = MessageDisposition::Keep;
 	const int t = msg.type();
 	if (t == CMSG_RAW_KEY_DOWN || t == CMSG_RAW_KEY_UP)
 	{
-		const int key = msg.arg(0).integer;
+		int key = msg.arg(0).integer;
+		if (m_german)
+		{
+			key = key == KEY_Z ? KEY_Y : key == KEY_Y ? KEY_Z : key; // RW 0x5DA86C
+		}
 		const int keyState = msg.arg(1).integer;
+		++m_rawKeys;
 		int newModState = 0;
 		if (keyState & KEY_STATE_CONTROL)
 		{
@@ -245,6 +305,7 @@ MessageDisposition MetaEventTranslator::translate(const ClientMessage &msg)
 				&& ((map.transition == TRANSITION_UP && map.modState == m_lastModState) || (map.transition == TRANSITION_DOWN && map.modState == newModState)))
 			{
 				m_ctx.stream.append(map.meta);
+				noteMeta(map.meta);
 				disp = MessageDisposition::Destroy;
 				break;
 			}
@@ -254,6 +315,7 @@ MessageDisposition MetaEventTranslator::translate(const ClientMessage &msg)
 				if (!(keyState & KEY_STATE_AUTOREPEAT))
 				{
 					m_ctx.stream.append(map.meta); // an autorepeat of a known key is eaten without a meta message
+					noteMeta(map.meta);
 				}
 				disp = MessageDisposition::Destroy;
 				break;

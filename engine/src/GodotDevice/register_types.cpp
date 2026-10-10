@@ -16,6 +16,7 @@
 #include "Common/ConsoleFilter.h"
 #include "GodotDevice/GodotRetailFileSystem.h"
 #include "GodotDevice/GodotW3DInstancer.h"
+#include "GodotDevice/GodotVideoStream.h"
 #include "GodotDevice/GodotW3DModelBuilder.h"
 
 #include <gdextension_interface.h>
@@ -50,6 +51,7 @@ static void initialize_openbfme(ModuleInitializationLevel p_level)
 	GDREGISTER_CLASS(ReleaseInfo); // RELEASE-1
 	GDREGISTER_CLASS(SessionLogger);
 	GDREGISTER_CLASS(InstallSetup);
+	GDREGISTER_CLASS(VP6MovieStream); // CAMP-2
 }
 
 static void uninitialize_openbfme(ModuleInitializationLevel p_level)

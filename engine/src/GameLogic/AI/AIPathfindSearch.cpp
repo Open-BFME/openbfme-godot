@@ -312,7 +312,16 @@ bool Pathfinder::isLinePassable(const PathfindObject *obj, unsigned acceptableSu
 	LineInfo li;
 	li.obj = obj;
 	li.allowPinched = allowPinched;
-	getRadiusAndCenter(obj, li.move.radius, li.move.center);
+	// RW 0x6EE12D (the line info's constructor): a HORDE or SHIP tests radius 1, centred, like the A* expansion; other units the footprint of RW 0x6ED071
+	if (obj && (obj->isKindOf(PK_HORDE) || obj->isKindOf(PK_SHIP)))
+	{
+		li.move.radius = 1;
+		li.move.center = true;
+	}
+	else
+	{
+		getRadiusAndCenter(obj, li.move.radius, li.move.center);
+	}
 	li.move.transient = blocked;
 	// RW mask: (HERO ? 0x0D : 0x1C), plus 2 unless the template is a MACHINE
 	li.move.flags = (obj && obj->isKindOf(PK_HERO)) ? 0x0Du : 0x1Cu;

@@ -116,8 +116,9 @@ def test_publish_dry_run(tmp_path):
     pub.write_text(ed25519.public_key(sk).hex() + "\n")
     tool = HERE / "publish_release.sh"
     r = run("bash", tool, d, "--repo", "Test/repo", "--key-file", pub, "--allow-untagged")
-    assert r.returncode == 0 and "DRY RUN" in r.stdout and "gh release create v0.3.0" in r.stdout, r.stdout + r.stderr
-    assert "--prerelease" not in r.stdout and "manifest.json.sig" in r.stdout
+    assert r.returncode == 0 and "DRY RUN" in r.stdout and "repos/Test/repo/releases" in r.stdout, r.stdout + r.stderr
+    assert "tag_name=v0.3.0 " in r.stdout and "-F draft=true" in r.stdout and "prerelease=false" in r.stdout and "manifest.json.sig" in r.stdout
+    assert "release create" not in r.stdout, "never gh release create (its failure path deletes the release, Sol r1)"
     r = run("bash", tool, d, "--repo", "Other/repo", "--key-file", pub, "--allow-untagged")
     assert r.returncode != 0 and "the manifest is for Test/repo" in r.stderr
     r = run("bash", tool, d, "--repo", "Test/repo", "--key-file", pub, "--allow-untagged", "--execute")

@@ -3,7 +3,8 @@ OpenBFME Launcher @VERSION@
 
 The launcher installs, updates and starts OpenBFME, a rebuild of The Battle for Middle-earth II: The Rise of the
 Witch-king 2.01. OpenBFME runs on YOUR OWN copies of The Rise of the Witch-king 2.01 and The Battle for Middle-earth II
-1.06; the launcher does not download or need any game files. When OpenBFME starts the first time, it asks where they are.
+1.06; the launcher does not need any game files and downloads none unless you ask it to (see below). When OpenBFME starts
+the first time, it asks where they are.
 
 Start it: @START@
 Press Play to start the newest installed version. At every start the launcher looks for a newer version of your
@@ -15,7 +16,12 @@ Only GitHub, over HTTPS with certificate checks:
   * api.github.com - the list of releases of @REPO@ (about one request per start;
     unchanged answers are cached and do not count against GitHub's limit of 60 requests per hour);
   * github.com and *.githubusercontent.com - the release files (the manifest, its signature, the packages).
-It sends a User-Agent naming the launcher and its version. Nothing else: no telemetry, no account, no game data.
+It sends a User-Agent naming the launcher, its version and the project's GitHub page. Nothing else: no telemetry, no account, no game data.
+Only when you press "Download the game files..." and agree on the consent screen that you own the games:
+bfmeladder.com and workshop-files.bfmeladder.com, the servers of the All In One BFME Launcher (the BFME Foundation
+Project and the Patch 2.22 team), for The Rise of the Witch-king 2.01 and The Battle for Middle-earth II 1.06. Every
+file is checked against OpenBFME's own list before it is kept. Untick "Install game files with the All In One BFME
+Launcher" to hide the option.
 Offline, or when GitHub refuses (for example its hourly limit), it says so and plays the newest installed version.
 
 How it checks a download

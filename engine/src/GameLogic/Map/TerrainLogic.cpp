@@ -183,6 +183,10 @@ void TerrainLogic::init(const WorldHeightMap &heightMap, const MapChunks &chunks
 		w.label2 = o.m_properties.getAsciiString("waypointPathLabel2");
 		w.label3 = o.m_properties.getAsciiString("waypointPathLabel3");
 		w.biDirectional = o.m_properties.getBool("waypointPathBiDirectional");
+		// lane HUD-5: TerrainLogic::addWaypoint (RW 0x682D4C, BFME2 decomp TerrainLogicLoadMap.cpp, tier A) passes the map object's waypointType (Int) and
+		// waypointTypeOption (AsciiString) to the Waypoint constructor (RW 0x682B6F: + 0x60 / + 0x64); 0 / empty when the map object has none
+		w.type = o.m_properties.getInt("waypointType");
+		w.typeOption = o.m_properties.getAsciiString("waypointTypeOption");
 		if (m_waypointById.count(w.id) && problems)
 		{
 			problems->push_back("duplicate waypoint id " + std::to_string(w.id));

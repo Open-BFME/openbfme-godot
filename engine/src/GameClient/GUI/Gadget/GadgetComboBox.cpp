@@ -120,6 +120,9 @@ WindowMsgHandledType GadgetComboBoxInput(GameWindow *window, std::uint32_t msg, 
 					window->winGetSize(&winSize.x, &winSize.y);
 					WinInstanceData *listInstData = listBox->winGetInstanceData();
 					ListboxData *listData = static_cast<ListboxData *>(listBox->winGetUserData());
+					// lane FB7-1: RW 0x72454E: the open list follows the pointer from the selected row
+					listData->trackHover = listData->hoverActive = true;
+					listData->hoverPos = listData->selectPos;
 					int listX, multiplier;
 					layoutDropDown(window, comboData, listData, listBox, winSize.x, listX, multiplier);
 					if (comboData->entryCount > comboData->maxDisplay)
@@ -357,6 +360,9 @@ WindowMsgHandledType GadgetComboBoxSystem(GameWindow *window, std::uint32_t msg,
 						window->winGetSize(&winSize.x, &winSize.y);
 						WinInstanceData *listInstData = listBox->winGetInstanceData();
 						ListboxData *listData = static_cast<ListboxData *>(listBox->winGetUserData());
+						// lane FB7-1: RW 0x72454E: the open list follows the pointer from the selected row
+						listData->trackHover = listData->hoverActive = true;
+						listData->hoverPos = listData->selectPos;
 						int listX, multiplier;
 						layoutDropDown(window, comboData, listData, listBox, winSize.x, listX, multiplier);
 						if (comboData->entryCount > comboData->maxDisplay)

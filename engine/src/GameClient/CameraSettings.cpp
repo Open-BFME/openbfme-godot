@@ -43,7 +43,8 @@ enum : unsigned long long
 	SEEN_KBSCROLL = 1ull << 16,
 	SEEN_KBDEFAULT = 1ull << 17,
 	SEEN_KBROTATE = 1ull << 18,
-	SEEN_PARTITION = 1ull << 19
+	SEEN_PARTITION = 1ull << 19,
+	SEEN_MOVEHINT = 1ull << 20
 };
 
 template <INIFieldParseProc Proc>
@@ -60,6 +61,28 @@ void parseSecondsToMilliseconds(INI *ini, void *instance, void *store, const voi
 	const float ms = seconds * 1000.0f;
 	*static_cast<int *>(store) = (int)ms;
 	static_cast<State *>(instance)->seen |= (unsigned long long)(std::uintptr_t)userData;
+}
+
+// lane PLAY-1: MoveHintName (GlobalData + 0x10, parseAsciiString RW 0x42EE5E): written through the instance (the settings hold a std::string)
+void parseMoveHintName(INI *ini, void *instance, void *, const void *)
+{
+	State *st = static_cast<State *>(instance);
+	st->values.moveHintName = ini->getNextAsciiString();
+	st->seen |= SEEN_MOVEHINT;
+}
+
+// lane HUD-5: ShowObjectHealth / VeterancyPipDrawObjectFilter, written through the instance (see CameraSettings.h)
+void parseShowObjectHealth(INI *ini, void *instance, void *, const void *)
+{
+	State *st = static_cast<State *>(instance);
+	INI::parseBool(ini, nullptr, &st->values.showObjectHealth, nullptr);
+}
+void parseVeterancyPipFilter(INI *ini, void *instance, void *, const void *)
+{
+	State *st = static_cast<State *>(instance);
+	st->values.veterancyPipFilter = ObjectFilter::parserDefault();
+	ParseObjectFilter(ini, nullptr, &st->values.veterancyPipFilter, nullptr);
+	st->values.haveVeterancyPipFilter = true;
 }
 
 size_t indentOf(const std::string &line)
@@ -143,6 +166,9 @@ FieldParse kFields[] = {
 	{ "KeyboardDefaultScrollSpeedFactor", parseNoting<INI::parseReal>, SEEN_DATA(SEEN_KBDEFAULT), CS_OFF(keyboardDefaultScrollSpeedFactor) },
 	{ "KeyboardCameraRotateSpeed", parseNoting<INI::parseReal>, SEEN_DATA(SEEN_KBROTATE), CS_OFF(keyboardCameraRotateSpeed) },
 	{ "PartitionCellSize", parseNoting<INI::parseReal>, SEEN_DATA(SEEN_PARTITION), CS_OFF(partitionCellSize) },
+	{ "MoveHintName", parseMoveHintName, nullptr, 0 },
+	{ "ShowObjectHealth", parseShowObjectHealth, nullptr, 0 },
+	{ "VeterancyPipDrawObjectFilter", parseVeterancyPipFilter, nullptr, 0 },
 	{ nullptr, skipField, nullptr, 0 }
 };
 

@@ -128,6 +128,10 @@ TEST_CASE("audio manager: a UI sound plays the file Data\\Audio\\Sounds\\<name>.
 	CHECK(r.device->log()[0].file == "Data\\Audio\\Sounds\\click.wav");
 	CHECK(r.mgr->isCurrentlyPlaying(h));
 	CHECK(r.mgr->playingCount(VoiceKind::Sample2D) == 1);
+	// lane AUDIO-5: a 2D voice plays at Miles' default pan: volume ^ (5/3) x 2^-0.3 in both channels
+	REQUIRE(r.device->voices().size() == 1);
+	CHECK(r.device->voices().begin()->second.params.gainLeft == doctest::Approx(0.8122522f));
+	CHECK(r.device->voices().begin()->second.params.gainRight == doctest::Approx(0.8122522f));
 	r.run(400.0);
 	CHECK_FALSE(r.mgr->isCurrentlyPlaying(h));
 	CHECK(r.mgr->playingCount(VoiceKind::Sample2D) == 0);
@@ -336,13 +340,19 @@ TEST_CASE("audio manager: positional distance falloff is linear between MinRange
 	CHECK(near >= AHSV_FirstHandle);
 	r.run(100.0);
 	CHECK(r.mgr->playingCount(VoiceKind::Sample3D) == 2);
-	// the pan: a sound to the listener's right is panned right
-	bool foundRight = false;
+	// lane AUDIO-5: both sounds are due right of the listener at its height: Miles Fast 2D puts them entirely in the right channel at
+	// volume ^ (5/3) (Boom 0.5 by distance, Faint its MinVolume 0.2: above MinSampleVolume, so Miles' maximum distance is twice
+	// GlobalMaxRange and it is not muted at 600)
+	int checked = 0;
 	for (const auto &kv : r.device->voices())
 	{
-		foundRight |= kv.second.params.pan > 0.9f;
+		const VoiceParams &p = kv.second.params;
+		CHECK(p.gainLeft == doctest::Approx(0.0f));
+		CHECK(p.gainRight == doctest::Approx(std::pow(p.volume, 5.0f / 3.0f)).epsilon(1e-4));
+		CHECK((p.volume == doctest::Approx(0.5f) || p.volume == doctest::Approx(0.2f)));
+		++checked;
 	}
-	CHECK(foundRight);
+	CHECK(checked == 2);
 }
 
 TEST_CASE("audio manager: SHROUDED events are culled by a shroud query; a missing query is counted, never assumed")
@@ -732,7 +742,7 @@ TEST_CASE("audio manager: stopAudio(AmbientStream) removes the ambient markers s
 	CHECK(r.device->heldVoices() == 0);
 }
 
-TEST_CASE("audio manager: unverified stops S-240 .. S-249 are all reported by the manager and registered in docs/STOPS.md")
+TEST_CASE("audio manager: unverified stops S-240 .. S-249, S-1930 and S-1931 are all reported by the manager and registered in docs/STOPS.md")
 {
 	std::ifstream in(std::string(OPENBFME_DOCS_DIR) + "/STOPS.md");
 	REQUIRE_MESSAGE(static_cast<bool>(in), "cannot read docs/STOPS.md");
@@ -744,7 +754,7 @@ TEST_CASE("audio manager: unverified stops S-240 .. S-249 are all reported by th
 	{
 		REQUIRE(line.size() > 6);
 		REQUIRE(line.compare(0, 2, "S-") == 0);
-		const std::string id = line.substr(0, 5);
+		const std::string id = line.substr(0, line.find(':'));
 		ids.insert(id);
 		CHECK_MESSAGE(doc.find("| " + id + " |") != std::string::npos, "docs/STOPS.md has no row for " << id);
 	}
@@ -752,4 +762,6 @@ TEST_CASE("audio manager: unverified stops S-240 .. S-249 are all reported by th
 	{
 		CHECK_MESSAGE(ids.count("S-" + std::to_string(n)) == 1, "S-" << n << " is not reported by AudioManager::unverified()");
 	}
+	CHECK(ids.count("S-1930") == 1); // lane AUDIO-5: the Miles provider / stereo image
+	CHECK(ids.count("S-1931") == 1);
 }

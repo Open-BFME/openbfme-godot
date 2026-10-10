@@ -80,6 +80,9 @@ public:
 	bool setSlotColor(int slot, int color);
 	bool setSlotTemplate(int slot, int playerTemplate);
 	bool setSlotTeam(int slot, int team);
+	// lane CAH-1: the slot's Create-a-Hero from the lobby's Hero combo (BFME2 0x43DD34 stores the choice on the GameSlot; the record travels whole,
+	// SkirmishGameSlot::setCreateAHero); null clears it. False + *error when the record does not fit the setup
+	bool setSlotCreateAHero(int slot, const CreateAHeroHero *hero, std::string *error);
 	// handleStartPositionSelection: refused when another slot has the position.
 	bool setSlotStartPos(int slot, int position);
 	bool setStartingCash(int cash);

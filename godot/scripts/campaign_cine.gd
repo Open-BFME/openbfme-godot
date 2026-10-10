@@ -26,6 +26,8 @@ var _base_distance := 520.0
 var _base_pitch := deg_to_rad(-40.0)
 var hud_mode := false      # lane CAMP-1: in the game (scripts/campaign_flow.gd) the HUD's camera rules outside the cinematics (letterbox, a script move, input off)
 var movie_hook := Callable() # lane CAMP-1H: PLAY_MOVIE_IN_GAME's title goes there (scripts/campaign_flow.gd plays it with scripts/movie_player.gd)
+var dev_overlay := true      # lane CAMP-2: the developer text (logic frame, camera / input state, the objective list): the viewers' only; the game sets it from --dev-overlay
+var control_bar_hook := Callable() # lane CAMP-2: HideControlBar / ShowControlBar (bool hidden) for CAMERA_LETTERBOX_BEGIN / END and HIDE_UI / SHOW_UI (game.gd)
 
 
 func setup(w: Node3D, cam: Camera3D, start: Vector3, ui_parent: Node, audio: Node = null) -> void:
@@ -43,6 +45,7 @@ func setup(w: Node3D, cam: Camera3D, start: Vector3, ui_parent: Node, audio: Nod
 	_fade.color = Color(0, 0, 0, 0)
 	_fade.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_caption = Label.new()
+	_caption.set_meta("game_text", true) # lane CAMP-2: SHOW_MILITARY_CAPTION's game text (game.gd _dev_text_on_screen)
 	_caption.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_caption.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_caption.add_theme_font_size_override("font_size", 22)
@@ -58,6 +61,7 @@ func setup(w: Node3D, cam: Camera3D, start: Vector3, ui_parent: Node, audio: Nod
 	ui.add_child(_caption)
 	ui.add_child(_status)
 	_note = Label.new()
+	_note.set_meta("game_text", true) # lane CAMP-2: DISPLAY_NOTIFICATION_BOX's game text
 	_note.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_note.add_theme_font_size_override("font_size", 18)
@@ -85,6 +89,13 @@ func _process(delta: float) -> void:
 		print("SCRIPTREQ frame %d %s(%s) [%s]" % [r.frame, r.action, ", ".join(ps), r.script])
 		if r.action == "PLAY_MOVIE_IN_GAME" and movie_hook.is_valid() and r.params.size() > 0:
 			movie_hook.call(String(r.params[0].string))
+		# lane CAMP-2: ScriptActions::executeAction (RW 0x7CAFA5): cases 118 / 119 doLetterBoxMode (RW 0x7BC8B7: HideControlBar(true) or ShowControlBar(false),
+		# then the display's letterbox), cases 347 / 348 HIDE_UI / SHOW_UI (HideControlBar(true) / ShowControlBar(false)); in the requests' order
+		if control_bar_hook.is_valid():
+			if r.action == "CAMERA_LETTERBOX_BEGIN" or r.action == "HIDE_UI":
+				control_bar_hook.call(true)
+			elif r.action == "CAMERA_LETTERBOX_END" or r.action == "SHOW_UI":
+				control_bar_hook.call(false)
 	var st: Dictionary = world.update_script_view(delta * 1000.0, {"x": target.x, "y": target.y, "z": target.z, "angle": angle})
 	if st.has_target and (_look.is_empty() or st.moving): # a drive's follow (lane SCRIPT-3) holds the camera between the script's moves
 		target = Vector3(st.x, st.y, world.get_ground_height(st.x, st.y))
@@ -113,7 +124,9 @@ func _process(delta: float) -> void:
 	_caption.text = st.caption_text
 	_caption.position = Vector2(size.x * 0.1, size.y - bar - 120.0)
 	_caption.size = Vector2(size.x * 0.8, 100.0)
-	_status.text = "frame %d   %s%s" % [world.get_frame(), "camera moving   " if st.moving else "", "input disabled" if st.input_disabled else ""]
+	_status.visible = dev_overlay # lane CAMP-2: developer text never shows in the real game (the owner saw "frame 90   input disabled")
+	_objectives.visible = dev_overlay
+	_status.text = "frame %d   %s%s" % [world.get_frame(), "camera moving   " if st.moving else "", "input disabled" if st.input_disabled else ""] if dev_overlay else ""
 	_status.position = Vector2(12, bar + 8.0)
 	_note.text = st.get("notification_text", "")
 	_note.position = Vector2(size.x * 0.15, bar + 40.0)
@@ -121,7 +134,7 @@ func _process(delta: float) -> void:
 	var lines: PackedStringArray = []
 	for o in st.get("objectives", []):
 		lines.append(("[x] " if o.completed else "[ ] ") + "objective %d" % o.index)
-	_objectives.text = "\n".join(lines)
+	_objectives.text = "\n".join(lines) if dev_overlay else ""
 	_objectives.position = Vector2(size.x - 220.0, bar + 40.0)
 
 

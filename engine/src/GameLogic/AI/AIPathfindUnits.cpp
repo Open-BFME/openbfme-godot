@@ -121,17 +121,14 @@ int Pathfinder::footprintSize(const PathfindObject *obj) const
 
 void Pathfinder::getRadiusAndCenter(const PathfindObject *obj, int &iRadius, bool &center) const
 {
-	// TARGET RW 0x6ED071 (and the prologue of examine 0x6F9850): horde and ship templates always use radius 1, centred
+	// TARGET RW 0x6ED071: the footprint size (RW 0x6EAF79) halved, centred when it is odd. Lane MOVE-3: it has no horde / ship branch; only the A* neighbour
+	// expansion (RW 0x6F9850's prologue, examineNeighboringCells) and the line test (RW 0x6EE12D, isLinePassable) narrow a HORDE or SHIP to radius 1, centred. The port took the narrow footprint for every caller,
+	// so a horde's destination adjustment (RW 0x6EE84E -> 0x6ED071), its goal and position reservation and the blocked repath tested a 3 x 3 footprint where
+	// RotWK tests the horde's own (9 x 9 cells for a bounding circle of 54: GondorFighterHorde's 30 x 45 box)
 	if (!obj)
 	{
 		center = true;
 		iRadius = 0;
-		return;
-	}
-	if (obj->isKindOf(PK_HORDE) || obj->isKindOf(PK_SHIP))
-	{
-		iRadius = 1;
-		center = true;
 		return;
 	}
 	const int r = footprintSize(obj);
@@ -530,8 +527,17 @@ bool Pathfinder::checkDestination(const PathfindObject *obj, int cellX, int cell
 		// the rotated rectangle of the unit (RW 0x6F0195, the polygon fill 0x6ECC06 is not decoded: the footprint is the box of
 		// the same size around the cell, S-164)
 		const PathfindGeometry &g = obj->getGeometry();
-		const int w = (int)((g.majorRadius * 2.0f + 4.0f) * 0.1f);
-		const int h = (int)((g.minorRadius * 2.0f + 4.0f) * 0.1f);
+		int w = (int)((g.majorRadius * 2.0f + 4.0f) * 0.1f);
+		int h = (int)((g.minorRadius * 2.0f + 4.0f) * 0.1f);
+		int count = 0, slots = 0;
+		if (obj->hordeFill(count, slots))
+		{
+			// lane MOVE-3: RW 0x6F18A0 .. 0x6F1902: a horde's box shrinks with its fill, (size - 2) * count / slots + 2 (fild / fidiv / fsub / fmul / fadd under
+			// the game's 24-bit precision control: float results for these small integers; _ftol2 truncates)
+			const float ratio = SimMath::divf32((float)count, (float)slots);
+			w = SimMath::truncToInt32(SimMath::addf32(SimMath::mulf32(SimMath::subf32((float)w, 2.0f), ratio), 2.0f));
+			h = SimMath::truncToInt32(SimMath::addf32(SimMath::mulf32(SimMath::subf32((float)h, 2.0f), ratio), 2.0f));
+		}
 		note(pathstops::kLargeRectFootprint);
 		const int x0 = cellX - w / 2, y0 = cellY - h / 2;
 		for (int i = x0; i < x0 + (w > 0 ? w : 1); i++)
@@ -665,16 +671,27 @@ void Pathfinder::registerSlot(PathfindObject &obj, Slot &slot)
 
 void Pathfinder::updateGoal(PathfindObject &obj, const Coord3D *newGoalPos, PathfindLayerEnum layer)
 {
-	// TARGET RW 0x8E24D3 (wrappers 0x68B3BD / 0x68B3AB)
+	// the wrappers RW 0x68B3BD / 0x68B3AB (-> 0x8E28DB / 0x8E28AC) pass the goal slot's own angle (RW 0x8E1AEC on the unit record's goal slot + 0x24), so a
+	// heading reserved by RW 0x68B3CF survives a plain update; the orientation only replaces it in RW 0x8E24D3's same-cell rule
+	updateGoalAngle(obj, newGoalPos, goalAngle(obj.getID()), layer);
+}
+
+void Pathfinder::updateGoalAngle(PathfindObject &obj, const Coord3D *newGoalPos, float angle, PathfindLayerEnum layer)
+{
+	// TARGET RW 0x8E24D3 (lane MOVE-3: the angle argument, RW 0x68B3CF passes one)
 	if (!m_isMapReady)
 	{
 		return;
+	}
+	if (obj.isEffectivelyDead())
+	{
+		return; // RW 0x8E24D3: nothing when the object's + 0x458 bit 0 is set (lane MOVE-3)
 	}
 	UnitRecord &u = unit(obj.getID());
 	int angleCode = 0;
 	if (obj.isKindOf(PK_LARGE_RECTANGLE_PATHFIND))
 	{
-		angleCode = angleToCode(obj.getOrientation());
+		angleCode = angleToCode(angle);
 	}
 	const ICoord2D c = cellOfPosition(obj, *newGoalPos);
 	if (obj.isKindOf(PK_LARGE_RECTANGLE_PATHFIND) && u.pos.occupied && c.x == u.pos.cell.x && c.y == u.pos.cell.y)
@@ -693,6 +710,9 @@ void Pathfinder::updateGoal(PathfindObject &obj, const Coord3D *newGoalPos, Path
 		u.goal.cell = c;
 		u.goal.angleCode = angleCode;
 		u.goal.layer = layer;
+		// lane MOVE-3: then the horde contain interface's slot 0xC8 (RW 0x86EF13) reserves the members' goals at their slots around this goal: what a second horde's
+		// destination adjustment meets (the port skipped it: two hordes sent to one point stood on it together, community feedback FB-0006)
+		obj.onHordeGoalChanged();
 		return;
 	}
 	PathfindOccupantKind kind = OCC_GROUND_GOAL;
@@ -1059,6 +1079,24 @@ void Pathfinder::snapClosestGoalPosition(PathfindObject &obj, Coord3D *pos)
 			}
 		}
 	}
+}
+
+float Pathfinder::goalAngle(PathfindObjectID id) const
+{
+	// RW 0x68B425 -> 0x8E1C0D -> 0x8E1AEC (lane MOVE-3): the goal slot's angle code times pi / 6 (RW 0xBDE914, fild / fmul), 0 (RW 0xC1B594) for code 0 or no goal
+	auto it = m_units.find(id);
+	if (it == m_units.end() || it->second.goal.angleCode == 0)
+	{
+		return 0.0f;
+	}
+	return SimMath::mulf32((float)it->second.goal.angleCode, 0.5235988f);
+}
+
+PathfindLayerEnum Pathfinder::goalLayer(PathfindObjectID id) const
+{
+	// RW 0x68B43B: the slot record's layer (+ 0x28); ground (1) for an object without a pathfind record
+	auto it = m_units.find(id);
+	return it == m_units.end() ? LAYER_GROUND : it->second.goal.layer;
 }
 
 bool Pathfinder::goalPosition(PathfindObject &obj, Coord3D *pos)

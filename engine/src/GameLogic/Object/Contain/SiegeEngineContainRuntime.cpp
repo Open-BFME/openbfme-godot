@@ -202,6 +202,13 @@ float SiegeEngineContainT<Base, Horde>::getCrewPowerMultiplier() const
 	return (float)SimMath::mulD((double)m_crewCount, (double)m_siege->m_speedPercentPerCrew);
 }
 
+// RW 0x87EDA9 (contain vslot 0xB8, both classes' vtables): the module data's byte + 0x1A0, CrewAllowedToFire (lane IDLE-1)
+template <class Base, bool Horde>
+bool SiegeEngineContainT<Base, Horde>::moodScanWhileContained() const
+{
+	return m_siege->m_crewAllowedToFire;
+}
+
 // RW 0x87F099 / 0x87FEA4
 template <class Base, bool Horde>
 void SiegeEngineContainT<Base, Horde>::removeAllContained()

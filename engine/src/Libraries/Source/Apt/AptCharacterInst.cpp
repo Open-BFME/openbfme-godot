@@ -988,6 +988,12 @@ void AptSpriteInst::gotoFrame(int target)
 					if (m_apt.resolveCharacter(timelineFile, (std::uint32_t)cmd.base.characterId, ref, &error))
 					{
 						sameCharacter = existing->m_char.character == ref.character && existing->m_char.file == ref.file;
+						// lane FB7-1: and the same placement: BFME2 0x00AF9564 .. 0x00AF9597 also compares the command's ratio word (place record +0x18)
+						// with the one the instance was placed with (instance +0x58, bits 17..29) and replaces the instance when they differ (0x00AF9607 ->
+						// 0x00AF9350). The Flash tools write the placing frame there (MenuExport.apt's button: frame 9's d3 has ratio 9 / 65536, frame
+						// 59's 59 / 65536), so a seek back to frame 18 recreates the clip frame 59 placed at 50% alpha instead of keeping its colour
+						// transform (the main menu's dimmed nav buttons after a return from Options, FB-0007 r2, S-1911)
+						sameCharacter = sameCharacter && existing->placeRatio == cmd.base.ratio;
 						// lane MP-2: a clip a movie was loaded into keeps that movie while the timeline still places the clip there (Flash keeps an
 						// instance whose depth and character match on a backward seek; LanLobby.apt's CancelGame goes back to "_lobby" with the
 						// LanOpenPlay movie loaded into the clip that frame 1 places. S-105: EA's handling not traced)
@@ -1200,6 +1206,10 @@ void AptSpriteInst::applyPlaceFields(AptCharacterInst &inst, const AptPlaceObjec
 	if (place.flags & APT_PLACE_HASRATIO)
 	{
 		inst.ratio = place.ratio;
+	}
+	if (isNew)
+	{
+		inst.placeRatio = place.ratio; // the record's ratio field, read whether or not the flag is set
 	}
 	if (place.flags & APT_PLACE_HASCLIPDEPTH)
 	{
@@ -1572,6 +1582,16 @@ void AptSpriteInst::becomeMovie(const std::shared_ptr<const AptFile> &movie)
 	playing = true;
 	needsLoad = true;
 	m_defined = true;
+	eventFlags = 0;
+	clipEvents.clear();
+}
+
+void AptSpriteInst::unloadContent()
+{
+	removeAllChildren(true);
+	frames = nullptr;
+	frame = -1;
+	playing = false;
 	eventFlags = 0;
 	clipEvents.clear();
 }

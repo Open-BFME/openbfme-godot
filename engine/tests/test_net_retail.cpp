@@ -570,6 +570,33 @@ TEST_CASE("net retail: two peer processes on localhost play 5 minutes of a 4-pla
 	std::remove(replay.c_str());
 }
 
+// lane HUD-5 (Sol's review): two peer processes on Helm's Deep; the host holds the fortress (start 1) and toggles its gates every 60 frames through the lockstep
+// command list (MSG_CLOSE_GATE / MSG_OPEN_GATE, as the TOGGLE_GATE button sends them), the joiner plays from start 2; every frame's full state hash agrees
+TEST_CASE("net retail hud5: two peer processes on Helm's Deep, the fortress' gates toggled by the host, stay in lockstep with every frame's full hash equal")
+{
+	OPENBFME_REQUIRE_START(s);
+	const int kFrames = 900;
+	const std::string common = "--map \"maps/map wor helms deep/map wor helms deep.map\" --seed 31 --crc-interval 50 --run-ahead 2 --cash 2000";
+	const std::string slots = "--slot human,FactionMen,0,0 --slot human,FactionMordor,1,1 --slot medium,FactionIsengard,2,1";
+	PeerRun r = runPair("hud5gates", kFrames, common, slots + " --toggle-gates 60", "--toggle-gates 60");
+	MESSAGE("host:\n" << r.hostReport);
+	MESSAGE("joiner:\n" << r.joinReport);
+	CHECK(r.hostRc == 0);
+	CHECK(r.joinRc == 0);
+	CHECK(field(r.hostReport, "frames") == std::to_string(kFrames));
+	CHECK(field(r.hostReport, "desyncs") == "0");
+	CHECK(field(r.joinReport, "desyncs") == "0");
+	CHECK(field(r.hostReport, "crc_checks_passed") == field(r.joinReport, "crc_checks_passed"));
+	CHECK(std::atoi(field(r.hostReport, "crc_checks_passed").c_str()) >= 15);
+	CHECK(std::atoi(field(r.hostReport, "gate_messages").c_str()) >= 10); // the fortress' gates, toggled repeatedly
+	CHECK(field(r.joinReport, "gate_messages") == "0");                  // start 2 holds no gate
+	CHECK(!field(r.hostReport, "gates").empty());
+	CHECK(field(r.hostReport, "gates") == field(r.joinReport, "gates"));
+	CHECK(field(r.hostReport, "final_hash") == field(r.joinReport, "final_hash"));
+	CHECK(!r.hostHashes.empty());
+	CHECK(r.hostHashes == r.joinHashes); // every frame
+}
+
 // lane PERF-2: the logic job pool's thread count is a local choice, never part of the game: a host on 1 logic thread and a joiner on every hardware
 // thread (the parallel collision pass in a battle of four armies) stay in lockstep in every frame
 TEST_CASE("net retail perf2: two peer processes with different logic thread counts (1 and N) play a 4-player skirmish in lockstep, every frame's hash equal")

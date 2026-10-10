@@ -13,6 +13,7 @@
 #include "Common/Player.h"
 #include "GameLogic/GameLogic.h"
 #include "GameClient/HudObjects.h"
+#include "GameClient/Radar.h"
 #include "GameLogic/Locomotor.h"
 #include "GameLogic/Module/AIUpdate.h"
 #include "GameLogic/ObjectTemplateInfo.h"
@@ -225,6 +226,7 @@ std::shared_ptr<const LogicSnapshot> LogicSnapshot::build(GameLogic &logic, cons
 		}
 		static const int kStructure = ObjectTemplateInfoBuilder::kindOfIndex("STRUCTURE");
 		s.structure = kStructure >= 0 && o->isKindOf((unsigned)kStructure);
+		Radar::captureObject(logic, *o, local, s.radar); // lane RADAR-1
 		if (shroudLocal >= 0)
 		{
 			const ObjectShroudStatus os = sm->clientObjectStatus(*o, shroudLocal);

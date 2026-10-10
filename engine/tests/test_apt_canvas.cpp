@@ -100,7 +100,7 @@ TEST_CASE("GameText: a duplicate label keeps the first string and is reported; a
 	CHECK(error.find("no END") != std::string::npos);
 }
 
-TEST_CASE("Apt text: $LABEL becomes APT:LABEL unless it holds a colon; &dropShadow is cut and flagged; other text is shown as it is; a missing label is the label")
+TEST_CASE("Apt text: $LABEL becomes APT:LABEL unless it holds a colon; &dropShadow is cut and flagged; other text is shown as it is; a missing label shows retail's MISSING text")
 {
 	GameTextTable t;
 	std::string error;
@@ -127,7 +127,8 @@ TEST_CASE("Apt text: $LABEL becomes APT:LABEL unless it holds a colon; &dropShad
 	r = ResolveAptText("$Missing", t);
 	CHECK(r.wasLabel);
 	CHECK_FALSE(r.found);
-	CHECK(r.text == "APT:Missing"); // visible, and reported by the canvas builder
+	CHECK(r.label == "APT:Missing");
+	CHECK(r.text == "MISSING: 'APT:Missing'"); // lane HUD-5: retail's GameTextManager::fetchPtr text; reported by the canvas builder
 }
 
 TEST_CASE("retail data/lotr.str: parses, APT:Quit is QUIT, 36 labels are defined twice (stop S-131)")
@@ -534,7 +535,7 @@ TEST_CASE("canvas: text is resolved through the string table and fontsubstitutio
 	CHECK(list.ops[0].alignment == 2);
 	CHECK(list.ops[0].scaleX == doctest::Approx(2.0f));
 	CHECK(list.ops[0].scaleY == doctest::Approx(1.0f));
-	CHECK(list.ops[1].text == "APT:Gone");
+	CHECK(list.ops[1].text == "MISSING: 'APT:Gone'"); // lane HUD-5: retail's fetchPtr text
 	CHECK(list.ops[1].dropShadow);
 	CHECK(list.missingLabels == std::vector<std::string>{ "APT:Gone" });
 	REQUIRE(list.fontSubstitutions.size() == 2);

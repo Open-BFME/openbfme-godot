@@ -89,6 +89,7 @@ public:
 	//   logic_thread: bool (SMOOTH-1's logic worker; default false here, true for start_new_game: set_logic_thread changes that default)
 	//   presentation_delay: float seconds (0.03 threaded, 0)
 	//   hash_every_frame: bool (false; get_frame_hashes)
+	//   terrain: bool (false; lane CAH-1: the map's terrain under this node, as start_new_game builds it)
 	// Returns the report ({ ok, errors, stops, map, objects, drawables, players, loop, instancing, timings_ms, lighting, focus, ... }).
 	Dictionary load_map(const String &map_name, const Dictionary &options);
 
@@ -154,6 +155,9 @@ public:
 	// lane END-2, the quit menu: what QuitMenu.apt asks of the game ({in_game, mode, kind, replay, local_defeated, allied_victory}), and the surrender /
 	// exit message (MSG_SELF_DESTRUCT with `transfer`, the local player's, on the lockstep command path)
 	Dictionary get_quit_menu_context();
+	// lane HUD-5: what the players screen's Status page needs from the live game (AptMenuPlayer::set_player_status): { ok, game (the resolved new game message),
+	// orig: [{ template, color }] per slot, local_slot, network, mode, show_random_template, show_random_color, slots: [{ has_player, defeated, observer, connected }] }
+	Dictionary get_player_status_state();
 	Dictionary self_destruct(bool transfer);
 	// the score screen data of the last clear_game_data (AptMenuPlayer.set_score_screen_from_world copies it)
 	const ScoreScreenData &scoreScreenData() const { return m_scoreScreen; }
@@ -210,6 +214,8 @@ public:
 	// a viewer harness only (hud_viewer's spellbook scenario, like --spawn): adds purchase points to the player's science record directly, outside the
 	// command path (a real game earns them by rank); returns the new total
 	int64_t debug_add_science_points(int64_t player, int64_t points);
+	// lane HUD-5 (a test hook, logged): the object's experience tracker gains levels up to `rank` (ExperienceTracker::gainLevels, feedback on); its rank after
+	int64_t debug_set_object_rank(int64_t id, int64_t rank);
 	// lane PROJ-2 (scenario helper, outside the command path like create_object): the player's upgrade completes at once (Player::addUpgrade COMPLETE, RW 0x6AEE22:
 	// the player's objects' upgrade modules run); false for an unknown player or upgrade name
 	bool debug_grant_upgrade(int64_t player, const String &upgrade);
@@ -280,6 +286,18 @@ public:
 	Dictionary debug_ai_move(int64_t id, double x, double y);
 	// lane COMBAT-3: MSG_HORDE_TOGGLE_FORMATION for a horde (the pikemen's porcupine formation) through the command path
 	Dictionary order_toggle_formation(int64_t horde);
+	// ---- lane CAH-1 (GodotDevice/GodotGameWorldCah.cpp): the Create-a-Hero builder's map mode ----
+	// TheCreateAHeroSystem + 0x18C (the builder is up: RW 0x80ACE3 leaves the map mode upgrades alone); false without a world
+	bool cah_builder(bool on);
+	// the builder's hero (a .cah record) on the loaded map's preview object (RW 0x9C0E03 then RW 0x80ACE3 through CreateAHeroGame::applyBuilder): { ok, error };
+	// refused in a started skirmish, a network game or under the logic worker, and while cah_builder is off
+	Dictionary cah_preview_apply(int64_t object_id, const PackedByteArray &record);
+	// the builder's map locations (AptMyHero + 0x164, RW 0x9C09FC: an object whose map name holds '_' is the location atoi(after the '_')), indexed by
+	// MapLocation: [{ id (0: none), name, template, x, y, z, angle }]
+	Array cah_preview_locations() const;
+	// a subclass's ViewInfo (RW 0xD9EE08): { ok, near: [pitch, zoom, floor, dist, shift], far, close_up, portrait, normal_cam, camera_angle, map_location }
+	Dictionary cah_view_info(int64_t cls, int64_t sub) const;
+	static void bindCreateAHeroMethods();
 	static void bindGarrisonMethods();
 	static void bindHeroMethods();
 	static void bindStealthMethods();
@@ -323,6 +341,7 @@ public:
 	// frames, duration_ms, audio_events: [ "<file>_Music"?, "<file>"? ] (the ones the audio INIs define, RW 0x49112C), stops: [..] }. The Video INIs are read
 	// on the first call; the movie files are the install's loose Data\Movies (ROTWK_INSTALL / user://install-paths.cfg)
 	Dictionary get_movie(const String &title);
+	Dictionary get_play_intro(); // lane CAMP-2: GameData PlayIntro (GlobalData + 0xAF2): { ok, play_intro, from_ini, error }
 	static void bindCampaignMethods();
 	// ---- player commands (lane MOVE-1): everything goes through the lockstep command path (LiveGame::commands(), executed by the logic's command list row of the
 	// next logic frame), never by touching the AI directly ----
@@ -458,6 +477,7 @@ private:
 		float opacity = 1.0f;           ///< PROJ-2: the drawable's fade the instance shows (Drawable::drawOpacity)
 		unsigned tireChanges = 0xFFFFFFFFu; ///< lane COMBAT-4: DrawEntry::tireChanges the instance's bone spins show
 		int64_t tireInstance = -1;          ///< the instance they were handed to
+		std::uint32_t colorsRevision = 0;   ///< lane CAH-2: Drawable::customColorRevision the model choice saw
 	};
 	struct DrawableView
 	{

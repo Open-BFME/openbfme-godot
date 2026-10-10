@@ -4,9 +4,9 @@
 // makes sound (the Godot device) or only simulates it (SimulatedAudioDevice, the tests and the headless checks).
 //
 // It replaces the Miles calls of ZH MilesAudioManager.cpp (AIL_open_stream / AIL_start_sample / AIL_set_3D_position ...): the core owns the
-// decisions, the device owns the channel and the sample data. The core computes the final volume and the pan of every voice (RW
-// getEffectiveVolume 0x4591D4, including the linear distance attenuation), so a backend only has to play a stream at a volume, a pan and a
-// pitch.
+// decisions, the device owns the channel and the sample data. The core computes the final volume of every voice (RW getEffectiveVolume
+// 0x4591D4, including the linear distance attenuation) and the left / right gains Miles turns it into (MilesMix.h, lane AUDIO-5), so a
+// backend only has to play a stream at two channel gains and a pitch.
 
 #pragma once
 
@@ -23,8 +23,9 @@ enum class VoiceKind
 
 struct VoiceParams
 {
-	float volume = 1.0f; ///< final linear volume 0..1 (sliders, distance and shifts applied)
-	float pan = 0.0f;    ///< -1 (left) .. +1 (right); 0 for 2D sounds
+	float volume = 1.0f;    ///< final linear volume 0..1 (sliders, distance and shifts applied): what RotWK hands Miles
+	float gainLeft = 1.0f;  ///< the linear channel gains Miles mixes the voice at (MilesMix: its volume law, its pan / 3D provider)
+	float gainRight = 1.0f;
 	float pitch = 1.0f;  ///< playback rate multiplier
 };
 

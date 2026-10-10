@@ -24,7 +24,7 @@ import zipfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from precommit import MACHINE_PATH, RETAIL_SUFFIXES, retail_content  # noqa: E402
+from precommit import MACHINE_PATH, MSF_MAGICS, PRIVATE_SUFFIXES, RETAIL_SUFFIXES, private_symbols, retail_content  # noqa: E402
 
 PCK_MAGIC = b"GDPC"
 MAX_DEPTH = 16                 # containers inside containers
@@ -251,6 +251,13 @@ class Audit:
         if Path(low.rsplit(":", 1)[-1]).suffix in RETAIL_SUFFIXES:
             self.problems.append(f"retail-format file name: {name}")
             return
+        # lane WINCRASH-1 (stop S-1923): debug symbols never ship; the PDB stays in the builder's symbol store
+        if Path(low.rsplit(":", 1)[-1]).suffix in PRIVATE_SUFFIXES:
+            self.problems.append(f"debug symbols (PDB) in the package: {name}")
+            return
+        if private_symbols(data):
+            self.problems.append(f"debug symbols (MSF / PDB bytes) in the package: {name}")
+            return
         kind = retail_content(data)
         if kind:
             self.problems.append(f"retail-format bytes ({kind}): {name}")
@@ -413,7 +420,7 @@ EMBEDDED_SIGNATURES = {b"BIGF": "BIG archive", b"BIG4": "BIG archive", b"DDS |":
                        b"\x1f\x8b\x08": "gzip stream", b"BZh91AY&SY": "bzip2 stream", b"\xfd7zXZ\x00": "xz stream",
                        b"7z\xbc\xaf\x27\x1c": "7-Zip archive", b"\x28\xb5\x2f\xfd": "Zstandard stream", b"Rar!\x1a\x07": "RAR archive",
                        b"MSCF": "CAB archive", b"\x04\x22\x4d\x18": "LZ4 stream", b"GDPC": "Godot pack", b"RSCC": "compressed Godot resource",
-                       b"ustar": "tar archive"}
+                       b"ustar": "tar archive", **{m: "PDB / MSF debug symbols" for m in MSF_MAGICS}}
 
 
 def embedded_signatures(data: bytes, text: bool = False) -> list[str]:

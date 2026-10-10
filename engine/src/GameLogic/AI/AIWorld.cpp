@@ -460,7 +460,22 @@ const ObjectMovementInfo &ObjectPathfindAdapter::info() const
 
 const PathfindGeometry &ObjectPathfindAdapter::getGeometry() const
 {
-	return info().geometry;
+	// lane HUD-5: an object whose own GeometryInfo changed (Object + 0xA8, RW 0xAD3520) answers with its own shape flags
+	const std::vector<std::uint8_t> &active = m_object->geometryActive();
+	if (active.empty())
+	{
+		return info().geometry;
+	}
+	if (m_ownGeometryVersion != m_object->geometryVersion())
+	{
+		m_ownGeometry = info().geometry;
+		for (size_t i = 0; i < m_ownGeometry.shapes.size() && i < active.size(); ++i)
+		{
+			m_ownGeometry.shapes[i].active = active[i] != 0;
+		}
+		m_ownGeometryVersion = m_object->geometryVersion();
+	}
+	return m_ownGeometry;
 }
 
 float ObjectPathfindAdapter::getFenceWidth() const { return info().fenceWidth; }
@@ -624,6 +639,34 @@ int ObjectPathfindAdapter::aiBlockedFrames() const
 	return a ? a->mover().blockedFrames() : 0;
 }
 
+// lane MOVE-3: RW 0x8E24D3's horde branch -> Object's contain (+ 0x258) slot 0x7C (the horde contain interface) -> its slot 0xC8 (RW 0x86EF13)
+void ObjectPathfindAdapter::onHordeGoalChanged()
+{
+	ContainModuleInterface *contain = m_object->getContain();
+	if (HordeContainInterface *h = contain ? contain->getHordeContainInterface() : nullptr)
+	{
+		h->reserveMemberGoals();
+	}
+}
+
+bool ObjectPathfindAdapter::isEffectivelyDead() const
+{
+	return m_object->isEffectivelyDead();
+}
+
+bool ObjectPathfindAdapter::hordeFill(int &count, int &slots) const
+{
+	ContainModuleInterface *contain = m_object->getContain();
+	HordeContainInterface *h = contain ? contain->getHordeContainInterface() : nullptr;
+	if (h == nullptr || h->getSlotCapacity() <= 0)
+	{
+		return false;
+	}
+	count = (int)contain->getContainCount();
+	slots = h->getSlotCapacity();
+	return true;
+}
+
 // ---------------------------------------------------------------------------------------------------------------------------------
 // AIWorld
 // ---------------------------------------------------------------------------------------------------------------------------------
@@ -747,13 +790,15 @@ void AIWorld::noteStop(const char *stop)
 
 std::vector<std::string> AIWorld::allStops()
 {
-	// every stop line of the movement lane: the world's own (S-220), the AI module's (S-221, S-222), the group commands' (S-223) and the horde's (S-224)
+	// every stop line of the movement lane: the world's own (S-220), the AI module's (S-221, S-222), the group commands' (S-223; lane MOVE-3: the group manager's
+	// move order S-1831) and the horde's (S-224)
 	std::vector<std::string> out{ kStopAI };
 	for (const std::string &s : AIUpdateInterface::allStops())
 	{
 		out.push_back(s);
 	}
 	out.push_back(AIGroup::stopLine());
+	out.push_back(AIGroup::planningStopLine());
 	out.push_back(HordeContain::movementStop());
 	return out;
 }

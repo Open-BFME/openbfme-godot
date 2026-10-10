@@ -109,18 +109,16 @@ void CommandTranslator::hint(const char *cursor)
 
 int CommandTranslator::issueMove(Object *target, const Coord3D *pos, EvaluateType type)
 {
-	// ZH issueMoveToLocationCommand (CommandXlat.cpp:865)
+	// ZH issueMoveToLocationCommand (CommandXlat.cpp:865) as RotWK's RW 0x81DB0C
 	int msgType = 0;
 	if (m_teamExists)
 	{
 		const bool forceAttackable = target && target->isKindOfName("FORCEATTACKABLE");
+		// RW 0x81DB0C (issueMoveToLocationCommand): waypoint mode (InGameUI + 0x8B0) 0x432, force move (+ 0x8B9) 0x431, force attack (+ 0x8B8) on a
+		// FORCEATTACKABLE target 0x425, else 0x42F; RotWK has no attack-move branch here (lane INPUT-1 r2)
 		if (m_ctx.ui.isInWaypointMode())
 		{
 			msgType = MSG_ADD_WAYPOINT;
-		}
-		else if (m_ctx.ui.isInAttackMoveToMode())
-		{
-			msgType = MSG_DO_ATTACKMOVETO;
 		}
 		else if (m_ctx.ui.isInForceMoveToMode())
 		{
@@ -152,20 +150,30 @@ int CommandTranslator::issueMove(Object *target, const Coord3D *pos, EvaluateTyp
 
 int CommandTranslator::evaluateForceAttack(Object *target, const Coord3D *pos, EvaluateType type)
 {
-	// ZH evaluateForceAttack (CommandXlat.cpp:1339): a selection that can fire may force attack an object or the ground
+	// RW 0x81E4B5 (lane INPUT-1 r2; reached in the force-attack mode, Ctrl held: see the BEGIN_FORCEATTACK case). The FIRST
+	// selected object with an object decides (RW 0x81DFB5 -> RW 0x81D9DE: Object::isAbleToAttack RW 0x691269, then getAbleToAttackSpecificObject RW
+	// 0x68D6A6 (forced) for an object, getAbleToUseWeaponAgainstTarget RW 0x68B5FA for the ground: POSSIBLE / POSSIBLE_AFTER_MOVING give the command).
+	// MSG_DO_FORCE_ATTACK_OBJECT (0x426) carries the object and the position, MSG_DO_FORCE_ATTACK_GROUND (0x427) the position.
+	// INFERENCE: the attack tests are canPossiblyHaveAnyWeapon of the object or a member of its horde (objectCanAttack), as elsewhere here (S-286).
 	if (!target && !pos)
 	{
 		return 0;
 	}
-	if (!selectionCanAttack())
+	Object *first = nullptr;
+	for (ObjectID id : m_ctx.ui.selected())
 	{
-		if (type == EvaluateType::DoHint)
+		if ((first = m_ctx.logic.findObjectByID(id)) != nullptr)
 		{
-			hint(MouseCursorName::GenericInvalid);
+			break;
 		}
+	}
+	if (!first || !objectCanAttack(*first))
+	{
+		// RW 0x81E594 .. 0x81E5A3: the invalid hint (0xB2, GenericInvalid) is only for the eligibility result 1; result 0 (no attacker) gives no hint.
+		// The boolean test here stands for result 0 (S-286), so no hint (lane INPUT-1 r4)
 		return 0;
 	}
-	int msgType = target ? MSG_DO_FORCE_ATTACK_OBJECT : MSG_DO_FORCE_ATTACK_GROUND;
+	const int msgType = target ? MSG_DO_FORCE_ATTACK_OBJECT : MSG_DO_FORCE_ATTACK_GROUND;
 	if (type == EvaluateType::DoCommand)
 	{
 		ClientMessage &m = m_ctx.stream.append(msgType);
@@ -173,7 +181,7 @@ int CommandTranslator::evaluateForceAttack(Object *target, const Coord3D *pos, E
 		{
 			m.appendObjectID(target->getID());
 		}
-		else
+		if (pos)
 		{
 			m.appendLocation(*pos);
 		}
@@ -462,7 +470,7 @@ void CommandTranslator::selectHero()
 	{
 		hero = c;
 	}
-	m_ctx.ui.deselectAll(); // vslot 0x110 (INFERENCE: posting MSG_DESTROY_SELECTED_GROUP as the port's other deselect-all callers do)
+	m_ctx.ui.deselectAll(false); // vslot 0x110 RW 0x81FE24: RotWK's InGameUI::deselectAllDrawables(void) posts no message (BFME2 decomp InGameUISelection.cpp)
 	ClientMessage &group = m_ctx.stream.append(MSG_CREATE_SELECTED_GROUP);
 	group.appendBoolean(true);
 	group.appendObjectID(hero->getID());
@@ -524,7 +532,26 @@ MessageDisposition CommandTranslator::translate(const ClientMessage &msg)
 	{
 		switch (t)
 		{
-			case CMSG_META_STOP:
+			// lane INPUT-1: RotWK's CommandTranslator::translateGameMessage (RW 0x81F8D8; the meta jump tables RW 0x820780, 0x8207A0, 0x8207F8)
+			case CMSG_META_DEPLOY:        // RW 0x820680: eaten, nothing done
+			case CMSG_META_AUTO_SAVE:     // RW 0x820680
+			case CMSG_META_FOLLOW:        // RW 0x81FD50 (case 0x6A)
+			case CMSG_META_DELETE_BEACON: // RW 0x820680
+				m_retailNoOp[metaNameOf(t)]++;
+				return MessageDisposition::Destroy;
+			case CMSG_META_SELL: // RW 0x820460: MSG_SELL (1052) without arguments, the meta is kept
+				m_ctx.stream.append(MSG_SELL);
+				return MessageDisposition::Keep;
+			case CMSG_META_SPELL_STORE: // RW 0x820638: the spell store toggles (RW 0x71C6AF); the HUD opens or closes it
+				m_ctx.ui.requestSpellStoreToggle();
+				return MessageDisposition::Destroy;
+			case CMSG_META_DIPLOMACY: // RW 0x81FFAA: in a game the Palantir flag's screen opens (RW 0x8E8843 / 0x914EF0); the HUD asks the shell
+				m_ctx.ui.requestDiplomacy();
+				return MessageDisposition::Destroy;
+			case CMSG_META_TAKE_SCREENSHOT: // RW 0x82019D: TheDisplay->takeScreenShot (vslot 0x14C); the device saves the picture
+				m_ctx.ui.requestScreenshot();
+				return MessageDisposition::Destroy;
+			case CMSG_META_STOP: // RW 0x81FEBF: MSG_DO_STOP (0x435)
 				m_ctx.stream.append(MSG_DO_STOP);
 				return MessageDisposition::Destroy;
 			case CMSG_META_SCATTER:
@@ -533,19 +560,36 @@ MessageDisposition CommandTranslator::translate(const ClientMessage &msg)
 			case CMSG_META_CREATE_FORMATION:
 				m_ctx.stream.append(MSG_CREATE_FORMATION);
 				return MessageDisposition::Destroy;
+			// lane INPUT-1 r2: RotWK's CommandTranslator has no case for TOGGLE_ATTACKMOVE (0x7E): the meta passes (jump table RW 0x8207A0 -> RW 0x82076C,
+			// keep). Attack-move is the horde's Attack Move button ("&Attack Move"): ControlBar::setControlCommand (RW 0x71CF3E) registers each command
+			// window's hotkey (RW 0x71D139 -> RW 0x75AE14), the HotKeyTranslator presses it (RW 0x75B068), a GUI command whose click sends MSG_DO_ATTACKMOVETO
 			case CMSG_META_TOGGLE_ATTACKMOVE:
-				m_ctx.ui.setAttackMoveToMode(!m_ctx.ui.isInAttackMoveToMode());
+				m_retailNoOp[metaNameOf(t)]++;
 				return MessageDisposition::Keep;
-			case CMSG_META_BEGIN_FORCEMOVE: m_ctx.ui.setForceMoveToMode(true); return MessageDisposition::Keep;
-			case CMSG_META_END_FORCEMOVE: m_ctx.ui.setForceMoveToMode(false); return MessageDisposition::Keep;
-			case CMSG_META_BEGIN_WAYPOINTS:
-			case CMSG_META_ORDERMODE_WAYPOINT: m_ctx.ui.setWaypointMode(true); return MessageDisposition::Keep;
-			case CMSG_META_END_WAYPOINTS:
-			case CMSG_META_ORDERMODE_IMMEDIATE: m_ctx.ui.setWaypointMode(false); return MessageDisposition::Keep;
-			case CMSG_META_BEGIN_PREFER_SELECTION: m_ctx.ui.setPreferSelectionMode(true); return MessageDisposition::Keep;
-			case CMSG_META_END_PREFER_SELECTION: m_ctx.ui.setPreferSelectionMode(false); return MessageDisposition::Keep;
+			// lane INPUT-1 r3: Ctrl (BEGIN_ / END_FORCEATTACK) sets the force-attack mode as ZH does (CommandXlat.cpp:3483 / 3488). INFERENCE (stop
+			// S-1675): RotWK's activation path was not recovered: its jump table sends 0x74 / 0x75 to the default RW 0x82076C (BFME2 1.06's table RW
+			// 0x82BF9F too), the setter RW 0x69AD1F has no reference and no other code writes InGameUI + 0x8B8 but to clear it; the mode is read by the
+			// click branch RW 0x81FBBC (-> evaluateForceAttack RW 0x81E4B5) and issueMoveToLocationCommand RW 0x81DB0C
 			case CMSG_META_BEGIN_FORCEATTACK: m_ctx.ui.setForceAttackMode(true); return MessageDisposition::Keep;
 			case CMSG_META_END_FORCEATTACK: m_ctx.ui.setForceAttackMode(false); return MessageDisposition::Keep;
+			case CMSG_META_BEGIN_FORCEMOVE: m_ctx.ui.setForceMoveToMode(true); return MessageDisposition::Keep;   // RW 0x8200E3: InGameUI + 0x8B9
+			case CMSG_META_END_FORCEMOVE: m_ctx.ui.setForceMoveToMode(false); return MessageDisposition::Keep;
+			case CMSG_META_BEGIN_WAYPOINTS: m_ctx.ui.setWaypointMode(true); return MessageDisposition::Keep;     // RW 0x8200FA: InGameUI + 0x8B0
+			case CMSG_META_END_WAYPOINTS: m_ctx.ui.setWaypointMode(false); return MessageDisposition::Keep;
+			case CMSG_META_ORDERMODE_WAYPOINT:
+			case CMSG_META_ORDERMODE_IMMEDIATE:
+			{
+				// lane INPUT-1 r2: RW 0x820249 / 0x820265 (Alt down / up): MSG_CHANGE_ORDERMODE (1129) with the new order mode and the mode it
+				// replaces: (1, 0) for queued orders, (0, 1) back to immediate; the logic stores the player's order mode (RW 0x77BCA4). RotWK's
+				// AiOrdersManager queue that reads the mode is not ported (stop S-281, lane INPUT-1 r3): the orders ignore it
+				const bool queued = t == CMSG_META_ORDERMODE_WAYPOINT;
+				ClientMessage &m = m_ctx.stream.append(MSG_CHANGE_ORDERMODE);
+				m.appendInteger(queued ? 1 : 0);
+				m.appendInteger(queued ? 0 : 1);
+				return MessageDisposition::Destroy;
+			}
+			case CMSG_META_BEGIN_PREFER_SELECTION: m_ctx.ui.setPreferSelectionMode(true); return MessageDisposition::Keep;
+			case CMSG_META_END_PREFER_SELECTION: m_ctx.ui.setPreferSelectionMode(false); return MessageDisposition::Keep;
 			case CMSG_META_SELECT_ALL:
 				selectAllUnits();
 				return MessageDisposition::Destroy;
@@ -574,6 +618,43 @@ MessageDisposition CommandTranslator::translate(const ClientMessage &msg)
 			case CMSG_META_VIEW_HOME_BASE:
 				viewHomeBase();
 				return MessageDisposition::Destroy;
+			// lane INPUT-1: cases RotWK's handler executes whose effect is not ported (stop S-287): counted, never dropped silently. CHAT_BUDDIES
+			// RW 0x81FF84, CHAT_ALLIES / CHAT_EVERYONE RW 0x81FEE0 / 0x81FF34 (the chat box), TOGGLE_CONTROL_BAR
+			// RW 0x82001B (hides the Palantir), ALL_CHEER RW 0x820128 (MSG_DO_CHEER 1080 and its text), PLACE_BEACON RW 0x820298, ORDER_SYNCHRONIZE RW
+			// 0x82028E (MSG_ORDER_SYNCHRONIZE 1136), TOGGLE_PLANNING_MODE RW 0x82065C (the War of the Ring planning), TOGGLE_FAST_FORWARD_MODE RW 0x820542
+			// (replays only), the camera key flags BEGIN_ / END_CAMERA_* RW 0x8200C0 .. 0x820455 (InGameUI + 0x8BB .. 0x8C2; no retail binding)
+			case CMSG_META_CHAT_BUDDIES:
+			case CMSG_META_CHAT_ALLIES:
+			case CMSG_META_CHAT_EVERYONE:
+			case CMSG_META_TOGGLE_CONTROL_BAR:
+			case CMSG_META_ALL_CHEER:
+			case CMSG_META_PLACE_BEACON:
+			case CMSG_META_ORDER_SYNCHRONIZE:
+			case CMSG_META_TOGGLE_PLANNING_MODE:
+			case CMSG_META_TOGGLE_FAST_FORWARD_MODE:
+			case CMSG_META_BEGIN_CAMERA_ROTATE_LEFT:
+			case CMSG_META_END_CAMERA_ROTATE_LEFT:
+			case CMSG_META_BEGIN_CAMERA_ROTATE_RIGHT:
+			case CMSG_META_END_CAMERA_ROTATE_RIGHT:
+			case CMSG_META_BEGIN_CAMERA_ZOOM_IN:
+			case CMSG_META_END_CAMERA_ZOOM_IN:
+			case CMSG_META_BEGIN_CAMERA_ZOOM_OUT:
+			case CMSG_META_END_CAMERA_ZOOM_OUT:
+			case CMSG_META_BEGIN_CAMERA_SCROLL_LEFT:
+			case CMSG_META_END_CAMERA_SCROLL_LEFT:
+			case CMSG_META_BEGIN_CAMERA_SCROLL_RIGHT:
+			case CMSG_META_END_CAMERA_SCROLL_RIGHT:
+			case CMSG_META_BEGIN_CAMERA_SCROLL_UP:
+			case CMSG_META_END_CAMERA_SCROLL_UP:
+			case CMSG_META_BEGIN_CAMERA_SCROLL_DOWN:
+			case CMSG_META_END_CAMERA_SCROLL_DOWN:
+				m_unportedMeta[metaNameOf(t)]++;
+				return MessageDisposition::Keep;
+			// RW 0x82037A / 0x8203A3: only with GlobalData + 0x11C9 (a development switch, off in retail): nothing in a retail game
+			case CMSG_META_RELOAD_RAPID_ITERATION_FEATURE:
+			case CMSG_META_REFRESH_RAPID_ITERATION_FEATURE:
+				m_retailNoOp[metaNameOf(t)]++;
+				return MessageDisposition::Keep;
 			default:
 				break;
 		}
@@ -648,10 +729,12 @@ MessageDisposition CommandTranslator::translate(const ClientMessage &msg)
 			// the standard setup orders with the left click, the alternate setup with the right one (CommandXlat.cpp:3678, 3741)
 			if (left == m_alternateMouse)
 			{
+				++m_clickOutcomes["other-button"];
 				break;
 			}
 			if (!left && !isClick(m_rightAnchor, m_rightLift, m_rightDown, m_rightUp))
 			{
+				++m_clickOutcomes["right-not-a-click"];
 				break;
 			}
 			const IRegion2D &region = msg.arg(0).region;
@@ -659,19 +742,30 @@ MessageDisposition CommandTranslator::translate(const ClientMessage &msg)
 			Coord3D pos;
 			if (!m_ctx.view.screenToTerrain(region.lo, m_ctx.logic, pos))
 			{
+				++m_clickOutcomes["off-terrain"];
 				break;
+			}
+			if (!isPoint)
+			{
+				++m_clickOutcomes["region"];
+			}
+			else if (!areSelectedObjectsControllable())
+			{
+				++m_clickOutcomes["not-controllable"];
 			}
 			if (isPoint && areSelectedObjectsControllable())
 			{
 				Object *draw = HudObjects::pickObject(m_ctx, region.lo);
+				int issued = 0;
 				if (m_ctx.ui.isInForceAttackMode())
 				{
-					evaluateForceAttack(draw, &pos, EvaluateType::DoCommand);
+					issued = evaluateForceAttack(draw, &pos, EvaluateType::DoCommand);
 				}
 				else
 				{
-					evaluateContextCommand(draw, &pos, EvaluateType::DoCommand);
+					issued = evaluateContextCommand(draw, &pos, EvaluateType::DoCommand);
 				}
+				++m_clickOutcomes[std::string(issued ? "command" : "no command") + (draw ? " on an object" : " on the ground")];
 				disp = MessageDisposition::Destroy;
 				m_ctx.ui.clearAttackMoveToMode();
 			}

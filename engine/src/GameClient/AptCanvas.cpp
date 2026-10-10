@@ -348,6 +348,10 @@ void BuildAptCanvas(const AptRenderList &list, const AptCanvasInputs &in, AptCan
 				op.nativeTag = cmd.nativeTag;
 				op.renderObject = cmd.renderObject;
 				op.nativeVars = cmd.nativeVars;
+				for (int k = 0; k < 4; ++k)
+				{
+					op.placeholderColor[k] = cmd.color.mul[k]; // lane PLAY-1: the clip's cumulative colour (the device multiplies it into a native image)
+				}
 				op.matrix = cmd.matrix;
 				std::copy(cmd.bounds, cmd.bounds + 4, op.bounds);
 				op.scaleX = in.mapping.scaleX();

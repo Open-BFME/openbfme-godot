@@ -20,9 +20,35 @@
 
 #pragma once
 
+#include <cstddef>
+#include <cstdint>
 #include <map>
 #include <string>
 #include <vector>
+
+// Lane CAH-2: RotWK's house colour recolour of a texture (target facts, RotWK game.dat, caveat S-001):
+//   * the options (BFME2 decomp Rva0013101E, RenderAssetParseBFME2.cpp): a kind in the low 3 bits (0 none, 1 .. 3 = the number of colours) and three
+//     ARGB colours; a Create-a-Hero gets kind 3 with its record's PrimaryColor / SecondaryColor / TertiaryColor (+0x2C / +0x30 / +0x34: RW 0x80AF0B ->
+//     RW 0x80959A, then RW 0x6727B0 hands them to every draw module's object-draw interface, W3DModelDraw vslot 0x7C RW 0x4B877D -> the render object's
+//     Set_House_Color_Params vslot 0x1F8; a player's team colour is kind 1 with the player's colour, BFME2 0x4B8FA1);
+//   * MeshClass::RecolorHouseColor (RW 0x54BDE0 = BFME2 0x54C470) recolours the mesh's house colour texture into a new texture "#<texture>#<options>";
+//   * the texel recolour RW 0x531C77 (BFME2 0x5321A7, tier A, no decomp source; read from the disassembly) on an A8R8G8B8 surface: each colour unpacked
+//     as (R, G, B) by RW 0x53184D, then per texel with the source channels R, G, B (alpha kept):
+//       kind 0: the texel unchanged; kind 1: out = (R * c0) >> 8;
+//       kind 2: out = min(255, ((R * c0) >> 8) + ((G * c1) >> 8)); kind 3: out = min(255, ((R * c0) >> 8) + ((G * c1) >> 8) + ((B * c2) >> 8)),
+//     per output channel with that channel of each colour. An A4R4G4B4 surface takes a different single colour path (not ported: the house textures are
+//     32-bit TGA files), other formats (DXT) are left as they are.
+struct HouseColorParams
+{
+	int kind = 0;                                 ///< 0 .. 3 (the options' low 3 bits)
+	std::uint32_t colors[3] = { 0u, 0u, 0u };     ///< ARGB; only R, G, B are used
+};
+
+// RW 0x531C77's A8R8G8B8 texel: `rgba` in and out as R, G, B, A bytes
+void Recolor_House_Texel(const HouseColorParams &params, const std::uint8_t in[4], std::uint8_t out[4]);
+// lane CAH-2 r3: every texel of an R, G, B, A image recoloured in place (the device bakes the texture with it BEFORE any filtering or mipmap, as
+// retail recolours the surface's texels: filtering first and recolouring the filtered value differs where >> 8 truncates or the sum clamps)
+void Recolor_House_Pixels(const HouseColorParams &params, std::uint8_t *rgba, std::size_t texels);
 
 class HouseColorTable
 {

@@ -39,6 +39,8 @@ struct Waypoint
 	Coord3D location; // z snapped to the ground, ZH TerrainLogic::addWaypoint
 	std::string label1, label2, label3;
 	bool biDirectional = false;
+	int type = 0;             // lane HUD-5: waypointType (Waypoint + 0x60, RW 0x682B6F); a start waypoint with a non-zero type gets no StartingBuilding (RW 0x62AD24)
+	std::string typeOption;   // waypointTypeOption (Waypoint + 0x64)
 	std::vector<int> linksTo; // ids, directed as stored in WaypointsList
 };
 

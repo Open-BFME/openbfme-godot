@@ -106,7 +106,10 @@ TEST_CASE("ui2 retail: Options.apt shows the Soft particles box; Save writes Opt
 	std::ifstream in(file, std::ios::binary);
 	std::stringstream text;
 	text << in.rdbuf();
-	CHECK(text.str() == "Resolution = 1024 768\nSoftParticles = no\n");
+	// lane FB7-1: Save also writes the retail controls' entries (RW 0x91FC9C: Brightness, ScrollFactor, the volumes ...; test_fb7_menus.cpp pins them)
+	CHECK(text.str().find("Resolution = 1024 768\n") != std::string::npos);
+	CHECK(text.str().find("SoftParticles = no\n") != std::string::npos);
+	CHECK(text.str().find("Brightness = ") != std::string::npos);
 	REQUIRE_FALSE(services.appliedOptions.empty());
 	CHECK(services.appliedOptions.back() == std::make_pair(std::string("SoftParticles"), std::string("no")));
 	REQUIRE(shell->top());

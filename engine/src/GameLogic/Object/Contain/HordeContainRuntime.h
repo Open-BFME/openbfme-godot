@@ -62,6 +62,9 @@ public:
 	virtual bool acceptCreatedMember(Object *member) = 0;
 	// slot 7 (RW 0x877D89): the world position of the member's slot for the horde's current transform
 	virtual Coord3D getMemberFormationPosition(const Object *member) const = 0;
+	// slot 0xC8 (RW 0x86EF13, lane MOVE-3): called by the pathfinder's updateGoal (RW 0x8E24D3) once the horde's goal changed: unless the horde melees (+ 0x184),
+	// every living member's goal is reserved at its slot turned by the goal's angle around the goal's position
+	virtual void reserveMemberGoals() = 0;
 	// ---- MOVE-1 (the member pass, HordeMemberPass.cpp; horde spec 2.2 / 2.3 / 2.5) ----
 	// the horde's own locomotor is writing its transform: the members are not teleported with it (they walk to their slots)
 	virtual void setLocomoting(bool on) = 0;
@@ -150,6 +153,9 @@ public:
 	void crc(StateHasher &hasher) const override;
 	// UpdateModule
 	UpdateSleepTime update() override;
+	// lane IDLE-1 r2: HordeContain's / HorseHordeContain's / AODHordeContain's vslot 0x30 is RW 0x490AC4 (`xor eax, eax; inc eax; ret`): updates[1], run in
+	// phase 5 after every AI update of updates[0], so the member pass and its hub (which clear MOVING, RW 0x8750B8 / 0x877BB8) have the last word in the frame
+	SleepyUpdatePhase getUpdatePhase() const override { return PHASE_PHYSICS; }
 	// ContainModuleInterface
 	const ContainedItemsList *getContainedItemsList() const override { return &m_members; }
 	void onDefect(Object *newOwner, bool permanent) override; // lane HERO-2: RW 0x86ED25
@@ -268,6 +274,7 @@ public:
 	bool acceptCreatedMember(Object *member) override;
 	// the world position of the member's slot for the horde's current transform (RW 0x877D89); the horde's own position when it has no slot
 	Coord3D getMemberFormationPosition(const Object *member) const override;
+	void reserveMemberGoals() override;
 	std::string getPayloadMemberTemplateName() const override;
 	int getSlotCapacity() const override;
 	// horde interface slot 0x264 (RW 0x86EA09, lane MOD-4: AISpecialPowerUpdate's health ratio): each contained member's body slot 0x14 (health / max

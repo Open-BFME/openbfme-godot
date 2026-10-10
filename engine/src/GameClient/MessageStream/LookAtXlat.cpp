@@ -233,8 +233,50 @@ MessageDisposition LookAtTranslator::translate(const ClientMessage &msg)
 			}
 			break;
 		}
+		case CMSG_META_OPTIONS:
+			// RW 0x83B1E8 (case 0x70): the options menu stops a scroll
+			stopScrolling();
+			break;
+		case CMSG_META_CAMERA_RESET:
+			// lane INPUT-1: CAMERA_RESET (numpad 5) is the CommandTranslator's in RotWK (RW 0x8203FA -> RW 0x69BF39: View::resetCamera (vslot 0xC8) at the
+			// view's own position, the meta is kept); the camera is this translator's here (both run every message; the order changes nothing)
+			m_camera.resetCamera();
+			break;
 		default:
 			break;
+	}
+	// lane INPUT-1: the camera bookmarks (RW 0x83AC4A cases 0x24 .. 0x2B SAVE_VIEW1..8, 0x2C .. 0x33 VIEW_VIEW1..8; BFME2 decomp
+	// BfmeOwnVVDTranslateGameMessage.cpp, tier A): Ctrl+F1..F8 store the view (View::getLocation) and show GUI:BookmarkXSet, F1..F8 restore it
+	// (View::setLocation, only a stored one) while the UI takes input; both destroy the message
+	const int t = msg.type();
+	if (t >= CMSG_META_SAVE_VIEW1 && t <= CMSG_META_SAVE_VIEW8)
+	{
+		ViewLocation &v = m_viewLocation[t - CMSG_META_SAVE_VIEW1];
+		v.valid = true;
+		v.pos = m_camera.position();
+		v.angle = m_camera.getAngle();
+		v.pitch = m_camera.getPitch();
+		v.height = m_camera.getHeightAboveGround();
+		m_ctx.ui.message("GUI:BookmarkXSet"); // retail formats the slot number (1 .. 8) into the text
+		return MessageDisposition::Destroy;
+	}
+	if (t >= CMSG_META_VIEW_VIEW1 && t <= CMSG_META_VIEW_VIEW8)
+	{
+		if (!m_ctx.ui.getInputEnabled())
+		{
+			return MessageDisposition::Keep;
+		}
+		const ViewLocation &v = m_viewLocation[t - CMSG_META_VIEW_VIEW1];
+		if (v.valid)
+		{
+			// ZH View::setLocation: setPosition, setAngle, setPitch, setZoom (RotWK's ViewLocation keeps seven floats, RW View slots 0xFC / 0x104 /
+			// 0x10C / 0x128: INFERENCE: the position, the angle, the pitch and the zoom, here the height above the ground)
+			m_camera.lookAt(v.pos);
+			m_camera.setAngle(v.angle);
+			m_camera.setPitch(v.pitch);
+			m_camera.setHeightAboveGround(v.height);
+		}
+		return MessageDisposition::Destroy;
 	}
 	return MessageDisposition::Keep;
 }

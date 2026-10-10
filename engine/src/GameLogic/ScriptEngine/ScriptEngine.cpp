@@ -107,6 +107,7 @@ void ScriptEngine::reset()
 	m_namedObjects.clear();
 	m_objectLists.clear();
 	m_triggers = nullptr;
+	m_runtimeTriggers.clear(); // lane HUD-5
 	m_cameras = nullptr;
 	m_currentPlayer = nullptr;
 	m_currentSide.clear();
@@ -303,6 +304,36 @@ const TriggerArea *ScriptEngine::findTrigger(const std::string &name) const
 		}
 	}
 	return nullptr;
+}
+
+// lane HUD-5 (see ScriptEngine.h)
+int ScriptEngine::addPolygonTrigger(const TriggerArea &area, TriggerCallback callback)
+{
+	RuntimeTrigger t;
+	t.area = std::make_shared<TriggerArea>(area);
+	t.callback = std::move(callback);
+	m_runtimeTriggers.push_back(std::move(t));
+	return (int)triggerAreaCount() - 1;
+}
+
+size_t ScriptEngine::triggerAreaCount() const
+{
+	return (m_triggers ? m_triggers->size() : 0) + m_runtimeTriggers.size();
+}
+
+const TriggerArea &ScriptEngine::triggerAreaAt(size_t i) const
+{
+	const size_t mapCount = m_triggers ? m_triggers->size() : 0;
+	return i < mapCount ? (*m_triggers)[i] : *m_runtimeTriggers[i - mapCount].area;
+}
+
+void ScriptEngine::triggerCallback(size_t i, Object &obj, bool entered) const
+{
+	const size_t mapCount = m_triggers ? m_triggers->size() : 0;
+	if (i >= mapCount && i - mapCount < m_runtimeTriggers.size() && m_runtimeTriggers[i - mapCount].callback)
+	{
+		m_runtimeTriggers[i - mapCount].callback(obj, entered); // RW 0x6E4B21 / 0x6E4B3E (the map's triggers carry no callback)
+	}
 }
 
 int ScriptEngine::triggerIndex(const TriggerArea *t) const

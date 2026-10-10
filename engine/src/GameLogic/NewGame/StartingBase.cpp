@@ -124,7 +124,10 @@ void StartingBase::placeForPlayer(GameLogic &logic, int slotNum, const SkirmishG
 	Coord3D pos = wp->location;
 	pos.z = logic.getGroundHeight(pos.x, pos.y);
 	Object *conYard = nullptr;
-	if (!pt.m_startingBuilding.empty() && pt.hasStartingBuilding())
+	// RW 0x62AD24: `cmp [waypoint + 0x60], 0; jne` skips the structure: the start waypoints of the fortress maps (waypointType 5 on Player_1_Start of every
+	// "map wor" fortress map and of Amon Sul Fortress) get none, the map's own fortress (owned by the side Player_<start>, SkirmishSides) is the base; the starting
+	// units are placed around the start waypoint (RW 0x62AE37: the base point is the waypoint's location when no structure was made)
+	if (!pt.m_startingBuilding.empty() && pt.hasStartingBuilding() && wp->type == 0)
 	{
 		conYard = placeObjectAtPosition(logic, player, pt.m_startingBuilding, pos, result);
 		if (conYard)
@@ -168,7 +171,7 @@ std::vector<std::string> StartingBase::stopLines()
 {
 	return {
 		"[S-272] starting base: ported from the RotWK 2.01 disassembly (RW 0x62AC17; S-001 caveat). Not ported: Player::onStructureCreated / onStructureConstructionComplete / "
-		"onUnitCreated, the team activation, the pathfinder registration and the adjusted destination of mobile units, the start waypoint flag (+0x60), the partition search of a "
+		"onUnitCreated, the team activation, the pathfinder registration and the adjusted destination of mobile units, the partition search of a "
 		"zero-offset starting unit (an error), and the CRT acos / sin / cos parity (S-081 / S-167)",
 	};
 }

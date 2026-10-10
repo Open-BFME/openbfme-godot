@@ -16,16 +16,19 @@
 #include "Libraries/Source/Apt/AptLoad.h"
 #include "GameClient/Radar.h"
 #include "GameClient/CursorFile.h"
+#include "GameClient/HudObjects.h"
 #include "GameClient/InGameHud.h"
 #include "GameClient/LiveGame.h"
 #include "GameClient/MessageStream/MetaEvent.h"
 #include "GameClient/TacticalCamera.h"
 #include "GameClient/TacticalView.h"
+#include "GameLogic/Object/Object.h"
 #include "GameLogic/Object/RetailObjectWorld.h"
 #include "GodotDevice/GodotAptPlayer.h"
 #include "GodotDevice/GodotGameWorld.h"
 #include "GodotDevice/GodotRetailFileSystem.h"
 #include "GodotDevice/GodotW3DInstancer.h"
+#include "GodotDevice/GodotW3DMaterial.h"
 
 #include <godot_cpp/classes/camera3d.hpp>
 #include <godot_cpp/classes/shader.hpp>
@@ -46,10 +49,15 @@
 #include <godot_cpp/classes/os.hpp>
 #include <godot_cpp/classes/time.hpp>
 #include <godot_cpp/classes/viewport.hpp>
+#include <godot_cpp/classes/font.hpp>
+#include <godot_cpp/classes/theme_db.hpp>
 #include <godot_cpp/core/class_db.hpp>
+#include <godot_cpp/variant/utility_functions.hpp>
 #include <godot_cpp/variant/packed_string_array.hpp>
+#include <godot_cpp/variant/utility_functions.hpp>
 
 #include <algorithm>
+#include <cstdio>
 #include <cctype>
 #include <cmath>
 #include <cstring>
@@ -67,12 +75,15 @@ String toGodot(const std::string &s)
 	return String::utf8(s.c_str(), (int64_t)s.size());
 }
 
-// Godot key -> the DirectInput scan code of ZH KeyDefs (MetaEvent.h KeyCode); 0 for a key the CommandMap cannot name
+// Godot key -> the DirectInput scan code of ZH KeyDefs (MetaEvent.h KeyCode); 0 for a key the CommandMap cannot name.
+// lane INPUT-1: the scan codes are written ::KEY_*: inside namespace godot an unqualified KEY_A / KEY_1 / KEY_F1 / KEY_UP / KEY_SPACE is godot::Key's
+// keycode (65, 49, ...), which no CommandMap record carries. That made every letter, digit, F, arrow, Space, Tab and Enter key reach the HUD with Godot's
+// code: the control groups (Ctrl+1 / 1), S (STOP), X (SELECT_ALL), the camera keys and the rest never matched; only the modifier keys worked.
 int dikOf(Key key)
 {
 	const int k = (int)key;
-	static const int letters[26] = { KEY_A, KEY_B, KEY_C, KEY_D, KEY_E, KEY_F, KEY_G, KEY_H, KEY_I, KEY_J, KEY_K, KEY_L, KEY_M, KEY_N, KEY_O, KEY_P, KEY_Q, KEY_R, KEY_S, KEY_T, KEY_U, KEY_V, KEY_W, KEY_X, KEY_Y, KEY_Z };
-	static const int digits[10] = { KEY_0, KEY_1, KEY_2, KEY_3, KEY_4, KEY_5, KEY_6, KEY_7, KEY_8, KEY_9 };
+	static const int letters[26] = { ::KEY_A, ::KEY_B, ::KEY_C, ::KEY_D, ::KEY_E, ::KEY_F, ::KEY_G, ::KEY_H, ::KEY_I, ::KEY_J, ::KEY_K, ::KEY_L, ::KEY_M, ::KEY_N, ::KEY_O, ::KEY_P, ::KEY_Q, ::KEY_R, ::KEY_S, ::KEY_T, ::KEY_U, ::KEY_V, ::KEY_W, ::KEY_X, ::KEY_Y, ::KEY_Z };
+	static const int digits[10] = { ::KEY_0, ::KEY_1, ::KEY_2, ::KEY_3, ::KEY_4, ::KEY_5, ::KEY_6, ::KEY_7, ::KEY_8, ::KEY_9 };
 	if (k >= (int)Key::KEY_A && k <= (int)Key::KEY_Z)
 	{
 		return letters[k - (int)Key::KEY_A];
@@ -83,47 +94,52 @@ int dikOf(Key key)
 	}
 	if (k >= (int)Key::KEY_F1 && k <= (int)Key::KEY_F10)
 	{
-		return KEY_F1 + (k - (int)Key::KEY_F1);
+		return ::KEY_F1 + (k - (int)Key::KEY_F1);
 	}
 	switch (key)
 	{
-		case Key::KEY_F11: return KEY_F11;
-		case Key::KEY_F12: return KEY_F12;
-		case Key::KEY_ESCAPE: return KEY_ESC;
-		case Key::KEY_BACKSPACE: return KEY_BACKSPACE;
-		case Key::KEY_ENTER:
-		case Key::KEY_KP_ENTER: return KEY_ENTER;
-		case Key::KEY_SPACE: return KEY_SPACE;
-		case Key::KEY_TAB: return KEY_TAB;
-		case Key::KEY_UP: return KEY_UP;
-		case Key::KEY_DOWN: return KEY_DOWN;
-		case Key::KEY_LEFT: return KEY_LEFT;
-		case Key::KEY_RIGHT: return KEY_RIGHT;
-		case Key::KEY_HOME: return KEY_HOME;
-		case Key::KEY_END: return KEY_END;
-		case Key::KEY_PAGEUP: return KEY_PGUP;
-		case Key::KEY_PAGEDOWN: return KEY_PGDN;
-		case Key::KEY_INSERT: return KEY_INS;
-		case Key::KEY_DELETE: return KEY_DEL;
-		case Key::KEY_MINUS: return KEY_MINUS;
-		case Key::KEY_EQUAL: return KEY_EQUAL;
-		case Key::KEY_BRACKETLEFT: return KEY_LBRACKET;
-		case Key::KEY_BRACKETRIGHT: return KEY_RBRACKET;
-		case Key::KEY_SEMICOLON: return KEY_SEMICOLON;
-		case Key::KEY_APOSTROPHE: return KEY_APOSTROPHE;
-		case Key::KEY_QUOTELEFT: return KEY_TICK;
-		case Key::KEY_BACKSLASH: return KEY_BACKSLASH;
-		case Key::KEY_COMMA: return KEY_COMMA;
-		case Key::KEY_PERIOD: return KEY_PERIOD;
-		case Key::KEY_SLASH: return KEY_SLASH;
-		case Key::KEY_SHIFT: return KEY_LSHIFT;
-		case Key::KEY_CTRL: return KEY_LCTRL;
-		case Key::KEY_ALT: return KEY_LALT;
+		case Key::KEY_F11: return ::KEY_F11;
+		case Key::KEY_F12: return ::KEY_F12;
+		case Key::KEY_ESCAPE: return ::KEY_ESC;
+		case Key::KEY_BACKSPACE: return ::KEY_BACKSPACE;
+		case Key::KEY_ENTER: return ::KEY_ENTER;
+		case Key::KEY_KP_ENTER: return ::KEY_KPENTER; // DIK_NUMPADENTER: its own scan code (RotWK's CommandMap names no KEY_KPENTER)
+		case Key::KEY_KP_DIVIDE: return ::KEY_KPSLASH;
+		case Key::KEY_KP_MULTIPLY: return ::KEY_KPSTAR;
+		case Key::KEY_KP_SUBTRACT: return ::KEY_KPMINUS;
+		case Key::KEY_KP_ADD: return ::KEY_KPPLUS;
+		case Key::KEY_KP_PERIOD: return ::KEY_KPDOT;
+		case Key::KEY_SPACE: return ::KEY_SPACE;
+		case Key::KEY_TAB: return ::KEY_TAB;
+		case Key::KEY_UP: return ::KEY_UP;
+		case Key::KEY_DOWN: return ::KEY_DOWN;
+		case Key::KEY_LEFT: return ::KEY_LEFT;
+		case Key::KEY_RIGHT: return ::KEY_RIGHT;
+		case Key::KEY_HOME: return ::KEY_HOME;
+		case Key::KEY_END: return ::KEY_END;
+		case Key::KEY_PAGEUP: return ::KEY_PGUP;
+		case Key::KEY_PAGEDOWN: return ::KEY_PGDN;
+		case Key::KEY_INSERT: return ::KEY_INS;
+		case Key::KEY_DELETE: return ::KEY_DEL;
+		case Key::KEY_MINUS: return ::KEY_MINUS;
+		case Key::KEY_EQUAL: return ::KEY_EQUAL;
+		case Key::KEY_BRACKETLEFT: return ::KEY_LBRACKET;
+		case Key::KEY_BRACKETRIGHT: return ::KEY_RBRACKET;
+		case Key::KEY_SEMICOLON: return ::KEY_SEMICOLON;
+		case Key::KEY_APOSTROPHE: return ::KEY_APOSTROPHE;
+		case Key::KEY_QUOTELEFT: return ::KEY_TICK;
+		case Key::KEY_BACKSLASH: return ::KEY_BACKSLASH;
+		case Key::KEY_COMMA: return ::KEY_COMMA;
+		case Key::KEY_PERIOD: return ::KEY_PERIOD;
+		case Key::KEY_SLASH: return ::KEY_SLASH;
+		case Key::KEY_SHIFT: return ::KEY_LSHIFT;
+		case Key::KEY_CTRL: return ::KEY_LCTRL;
+		case Key::KEY_ALT: return ::KEY_LALT;
 		default: break;
 	}
 	if (k >= (int)Key::KEY_KP_0 && k <= (int)Key::KEY_KP_9)
 	{
-		static const int kp[10] = { KEY_KP0, KEY_KP1, KEY_KP2, KEY_KP3, KEY_KP4, KEY_KP5, KEY_KP6, KEY_KP7, KEY_KP8, KEY_KP9 };
+		static const int kp[10] = { ::KEY_KP0, ::KEY_KP1, ::KEY_KP2, ::KEY_KP3, ::KEY_KP4, ::KEY_KP5, ::KEY_KP6, ::KEY_KP7, ::KEY_KP8, ::KEY_KP9 };
 		return kp[k - (int)Key::KEY_KP_0];
 	}
 	return 0;
@@ -156,10 +172,17 @@ struct HudDevice : public AptNativeHook
 	double clientClock = 0.0;
 	double updateMs = 0.0, cameraMs = 0.0, cursorMs = 0.0; ///< SMOOTH-1: the parts of the last _process
 	bool edgeScroll = false;
+	float fogShift = 0.0f; ///< lane PLAY-1: the last w3d_fog_shift sent
 	// lane SPELL-2 (review r2): the game text of a standalone HUD (data/lotr.str); an attached HUD uses its shell's. Before the HUD: it outlives it
 	std::unique_ptr<GameTextSource> ownedText;
 	std::unique_ptr<InGameHud> hud;
 	int keyState = 0;
+	ModifierTracker mods; // lane INPUT-1 r2: Ctrl / Shift / Alt per side
+	int freeCameraToggles = 0; // lane INPUT-1: Ctrl+Z presses that toggled the free camera
+	unsigned screenshotsDone = 0; // lane INPUT-1: TAKE_SCREENSHOT requests saved
+	unsigned keyEvents = 0;       // lane INPUT-1: InputEventKey events handleInput saw
+	int screenshotNumber = 0;
+	String lastScreenshot;
 	bool ready = false;
 	bool ownsPlayer = false;
 	std::uint64_t playerId = 0;
@@ -179,6 +202,10 @@ struct HudDevice : public AptNativeHook
 	unsigned long long radarShroudVersion = ~0ull; ///< VIS-1: the shroud edges the picture was made with
 	std::uint64_t radarVersion = 0;
 	int radarSize = 128;
+	Ref<ImageTexture> radarOverlay;                ///< lane RADAR-1: W3DRadar's object overlay (+ 0x147C)
+	std::vector<std::uint32_t> radarOverlayTexels;
+	unsigned radarOverlayFrame = ~0u;
+	Rect2 radarPicture;                            ///< lane RADAR-1: the picture rectangle RenderRadar drew (the view box's frame)
 	std::vector<std::string> drawErrors;
 	std::set<std::string> drawNotes; ///< lane HUD-4: the device's inference notes (S-1482: a .jpg + .png texture)
 	unsigned drawnImages = 0, drawnTimers = 0, skippedImages = 0;
@@ -218,6 +245,12 @@ struct HudDevice : public AptNativeHook
 
 	void drawPlaceholder(const AptCanvasOp &op, RID item) override;
 	Ref<ImageTexture> textureFor(const std::string &file);
+	// lane HUD-5: the drawable decorations (InGameHud::iconOps) drawn under the Palantir each frame
+	RID iconItem;
+	ObjectFilter veterancyFilter;
+	bool haveVeterancyFilter = false;
+	unsigned iconOpsDrawn = 0;
+	void drawIconOps(RID parent);
 	void applyCamera(const Vector2 &window, double alpha);
 };
 
@@ -476,7 +509,7 @@ void HudDevice::drawPlaceholder(const AptCanvasOp &op, RID item)
 	if (op.symbolName == "AptPalantir::RenderRadar")
 	{
 		Radar &radar = hud->radar();
-		if (!radar.ready())
+		if (!radar.ready() || !radar.drawn(false)) // lane RADAR-1: RW 0x44FE0B (Player::hasRadar not ported, S-2453)
 		{
 			return;
 		}
@@ -511,19 +544,46 @@ void HudDevice::drawPlaceholder(const AptCanvasOp &op, RID item)
 			}
 		}
 		rs->canvas_item_add_texture_rect(item, sq, radarTexture->get_rid());
-		const float kx = sq.size.x / (float)radarSize, ky = sq.size.y / (float)radarSize;
-		const float k = std::min(kx, ky);
-		// SMOOTH-1 (S-810): this draw callback runs whenever the canvas draws, also while the logic worker runs a frame: the blips come from the
+		// SMOOTH-1 (S-810): this draw callback runs whenever the canvas draws, also while the logic worker runs a frame: the objects come from the
 		// presented snapshot (the completed frame the drawables show), never from the live objects
 		const std::shared_ptr<const LogicSnapshot> snap = world && world->hud_game() ? world->hud_game()->presentedSnapshot() : nullptr;
-		const std::vector<Radar::Blip> blips = snap ? radar.blips(*snap, radarSize, localPlayerIndex) : std::vector<Radar::Blip>();
-		for (const Radar::Blip &b : blips)
+		// lane RADAR-1: the object overlay (W3DRadar::draw RW 0x450108 .. 0x4501FA): rebuilt when the client frame % 6 == 0 (and once at the start, + 0x1464),
+		// a 128 x 128 texture drawn over the picture's rectangle with UV (0,1)-(1,0) (texture row 0 at the bottom); RenderRadar's tint is -1 (RW 0x6D427C)
+		radarPicture = sq;
+		radar.setPicture(ul[0], ul[1], lr[0] - ul[0], lr[1] - ul[1]); // the events' pings (RW 0x44DE58, InGameHud::updateRadarEvents)
+		const unsigned cf = radar.clientFrame();
+		if (snap && (radarOverlay.is_null() || Radar::overlayDue(cf, radarOverlayFrame)))
 		{
-			const Color c(((b.color >> 16) & 255) / 255.0f, ((b.color >> 8) & 255) / 255.0f, (b.color & 255) / 255.0f, 1.0f);
-			const float rad = (float)b.radius * std::max(k, 1.0f);
-			const float bx = sq.position.x + b.x * kx, by = sq.position.y + b.y * ky;
-			rs->canvas_item_add_rect(item, Rect2(bx - rad, by - rad, rad * 2.0f, rad * 2.0f), b.mine ? Color(1, 1, 1, 1) : c);
-			rs->canvas_item_add_rect(item, Rect2(bx - rad + 1, by - rad + 1, rad * 2.0f - 2, rad * 2.0f - 2), c);
+			radarOverlayFrame = cf;
+			radar.renderOverlay(*snap, cf, 0xFFFFFFFFu, radarOverlayTexels);
+			const int n = Radar::kCells;
+			PackedByteArray px;
+			px.resize((int64_t)n * n * 4);
+			uint8_t *w = px.ptrw();
+			for (int y = 0; y < n; ++y)
+			{
+				const std::uint32_t *row = &radarOverlayTexels[(size_t)(n - 1 - y) * (size_t)n];
+				for (int x = 0; x < n; ++x, w += 4)
+				{
+					w[0] = (uint8_t)(row[x] >> 16);
+					w[1] = (uint8_t)(row[x] >> 8);
+					w[2] = (uint8_t)row[x];
+					w[3] = (uint8_t)(row[x] >> 24);
+				}
+			}
+			Ref<::godot::Image> img = ::godot::Image::create_from_data(n, n, false, ::godot::Image::FORMAT_RGBA8, px);
+			if (radarOverlay.is_null())
+			{
+				radarOverlay = ImageTexture::create_from_image(img);
+			}
+			else
+			{
+				radarOverlay->update(img);
+			}
+		}
+		if (radarOverlay.is_valid())
+		{
+			rs->canvas_item_add_texture_rect(item, sq, radarOverlay->get_rid());
 		}
 		// the shroud: ScrollShroud's colours, the alpha the shroud cells wrote (Radar::shroudAlpha), rebuilt when the shroud's edges moved
 		// SMOOTH-1: the shroud from the presented snapshot's view (no live ShroudManager read beside the worker)
@@ -568,18 +628,51 @@ void HudDevice::drawPlaceholder(const AptCanvasOp &op, RID item)
 		{
 			rs->canvas_item_add_texture_rect(item, r, radarShroud->get_rid());
 		}
-		float box[8];
-		if (radar.viewBox(radarSize, box))
+		return;
+	}
+	if (op.symbolName == "AptPalantir::RenderRadarViewBox")
+	{
+		// lane RADAR-1: the view box (RW 0x6D429D -> RW 0x50434F) inside the movie's mask (RadarPings.instance1): the corners (Radar::viewBoxCorners) of the picture
+		// RenderRadar drew this frame, the band (RW 0x503C33) as two triangles per edge textured with the mapped image RadarViewBoxEdge, white (RW 0x50431F)
+		Radar &radar = hud->radar();
+		float corners[8];
+		if (!radar.ready() || !radar.drawn(false) || radarPicture.size.x <= 0.0f ||
+		    !radar.viewBoxCorners(radarPicture.position.x, radarPicture.position.y, (int)radarPicture.size.x, (int)radarPicture.size.y, corners))
 		{
-			PackedVector2Array poly;
-			for (int i = 0; i < 5; ++i)
-			{
-				poly.push_back(Vector2(sq.position.x + box[(i % 4) * 2] * kx, sq.position.y + box[(i % 4) * 2 + 1] * ky));
-			}
-			PackedColorArray cols;
-			cols.push_back(Color(1, 1, 1, 0.9f));
-			rs->canvas_item_add_polyline(item, poly, cols, 1.5f);
+			return;
 		}
+		const ::Image *edge = images.findImageByName("RadarViewBoxEdge");
+		Ref<ImageTexture> tex = edge ? textureFor(edge->filename) : Ref<ImageTexture>();
+		if (tex.is_null())
+		{
+			if (drawErrors.size() < 100)
+			{
+				drawErrors.push_back("radar: the mapped image RadarViewBoxEdge or its texture is unknown");
+			}
+			return;
+		}
+		const float thickness = Radar::viewBoxThickness(edge->getImageWidth(), (unsigned)hud->windowWidth(), corners);
+		float outer[8], inner[8];
+		Radar::viewBoxBand(corners, thickness, outer, inner);
+		const Vector2 uvLL(edge->uvLo[0], edge->uvLo[1]), uvHL(edge->uvHi[0], edge->uvLo[1]), uvHH(edge->uvHi[0], edge->uvHi[1]), uvLH(edge->uvLo[0], edge->uvHi[1]);
+		PackedVector2Array pts, uvs;
+		PackedColorArray cols;
+		PackedInt32Array idx;
+		for (int i = 0; i < 4; ++i)
+		{
+			const int n = (i + 1) % 4;
+			const Vector2 a(inner[i * 2], inner[i * 2 + 1]), b(outer[i * 2], outer[i * 2 + 1]), c(outer[n * 2], outer[n * 2 + 1]), d(inner[n * 2], inner[n * 2 + 1]);
+			const Vector2 tri[6] = { a, b, c, a, c, d };
+			const Vector2 tuv[6] = { uvLL, uvHL, uvHH, uvLL, uvHH, uvLH };
+			for (int k = 0; k < 6; ++k)
+			{
+				idx.push_back((int32_t)pts.size());
+				pts.push_back(tri[k]);
+				uvs.push_back(tuv[k]);
+				cols.push_back(Color(1, 1, 1, 1));
+			}
+		}
+		rs->canvas_item_add_triangle_array(item, idx, pts, cols, uvs, PackedInt32Array(), PackedFloat32Array(), tex->get_rid());
 		return;
 	}
 	if (op.symbolName == "RenderImage" || op.symbolName == "RenderImageDisabled")
@@ -621,7 +714,10 @@ void HudDevice::drawPlaceholder(const AptCanvasOp &op, RID item)
 		}
 		const float tw = (float)tex->get_width(), th = (float)tex->get_height();
 		const Rect2 src(mapped->uvLo[0] * tw, mapped->uvLo[1] * th, (mapped->uvHi[0] - mapped->uvLo[0]) * tw, (mapped->uvHi[1] - mapped->uvLo[1]) * th);
-		const Color mod = img->grayscale ? Color(0.45f, 0.45f, 0.45f, 1.0f) : Color(1, 1, 1, 1);
+		Color mod = img->grayscale ? Color(0.45f, 0.45f, 0.45f, 1.0f) : Color(1, 1, 1, 1);
+		// lane PLAY-1: the clip's cumulative colour multiplies the image (SpellStore.apt's _disabled frame places the image at alpha 0.396: a locked power is
+		// dimmed; drawn at full alpha every power looked buyable). INFERENCE: retail's RenderImage draw was not read; the add terms are not applied
+		mod = Color(mod.r * op.placeholderColor[0], mod.g * op.placeholderColor[1], mod.b * op.placeholderColor[2], mod.a * op.placeholderColor[3]);
 		rs->canvas_item_add_texture_rect_region(item, r, tex->get_rid(), src, mod);
 		++drawnImages;
 		return;
@@ -651,6 +747,75 @@ void HudDevice::drawPlaceholder(const AptCanvasOp &op, RID item)
 		}
 		rs->canvas_item_add_polygon(item, poly, cols);
 		return;
+	}
+}
+
+// lane HUD-5: the ops of InGameHud::iconOps (GameClient/DrawableIconUI.h) into one canvas item under the Apt player's (drawn first among the node's children).
+// INFERENCE (S-1951): the construction text uses Godot's fallback font at 13 pixels (the in-game UI's drawable caption font is not read)
+void HudDevice::drawIconOps(RID parent)
+{
+	RenderingServer *rs = RenderingServer::get_singleton();
+	if (!rs || !hud)
+	{
+		return;
+	}
+	if (!iconItem.is_valid())
+	{
+		iconItem = rs->canvas_item_create();
+		rs->canvas_item_set_parent(iconItem, parent);
+		rs->canvas_item_set_draw_index(iconItem, -1000);
+	}
+	rs->canvas_item_clear(iconItem);
+	{
+		IconUISettings is = hud->iconSettings();
+		is.zoom = cam ? cam->getZoom() : 1.0f;
+		hud->setIconUISettings(is);
+	}
+	auto col = [](std::uint32_t argb) { return Color(((argb >> 16) & 0xFF) / 255.0f, ((argb >> 8) & 0xFF) / 255.0f, (argb & 0xFF) / 255.0f, ((argb >> 24) & 0xFF) / 255.0f); };
+	Ref<Font> font = ThemeDB::get_singleton() ? ThemeDB::get_singleton()->get_fallback_font() : Ref<Font>();
+	const int fontSize = 13;
+	iconOpsDrawn = 0;
+	for (const IconUIOp &op : hud->iconOps())
+	{
+		switch (op.kind)
+		{
+			case IconUIOp::FILL_RECT:
+				rs->canvas_item_add_rect(iconItem, Rect2(op.x, op.y, op.w, op.h), col(op.color));
+				break;
+			case IconUIOp::OPEN_RECT: // Display +0xE0 (width 1): the four edges
+				rs->canvas_item_add_rect(iconItem, Rect2(op.x, op.y, op.w, 1), col(op.color));
+				rs->canvas_item_add_rect(iconItem, Rect2(op.x, op.y + op.h - 1, op.w, 1), col(op.color));
+				rs->canvas_item_add_rect(iconItem, Rect2(op.x, op.y + 1, 1, op.h - 2), col(op.color));
+				rs->canvas_item_add_rect(iconItem, Rect2(op.x + op.w - 1, op.y + 1, 1, op.h - 2), col(op.color));
+				break;
+			case IconUIOp::IMAGE:
+			{
+				const ::Image *mapped = images.findImageByName(op.image);
+				Ref<ImageTexture> tex = mapped ? textureFor(mapped->filename) : Ref<ImageTexture>();
+				if (tex.is_null())
+				{
+					continue;
+				}
+				const float tw = (float)tex->get_width(), th = (float)tex->get_height();
+				const Rect2 src(mapped->uvLo[0] * tw, mapped->uvLo[1] * th, (mapped->uvHi[0] - mapped->uvLo[0]) * tw, (mapped->uvHi[1] - mapped->uvLo[1]) * th);
+				rs->canvas_item_add_texture_rect_region(iconItem, Rect2(op.x, op.y, op.w, op.h), tex->get_rid(), src, col(op.color));
+				break;
+			}
+			case IconUIOp::TEXT:
+			{
+				if (font.is_null())
+				{
+					continue;
+				}
+				const String text = String::utf8(op.text.c_str());
+				const Vector2 size = font->get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, fontSize);
+				const Vector2 at(op.x - std::floor(size.x / 2.0f), op.y + font->get_ascent(fontSize)); // RW 0x677F1B: x - width / 2, the string's top at y
+				font->draw_string(iconItem, at + Vector2(1, 1), text, HORIZONTAL_ALIGNMENT_LEFT, -1, fontSize, col(op.dropColor));
+				font->draw_string(iconItem, at, text, HORIZONTAL_ALIGNMENT_LEFT, -1, fontSize, col(op.color));
+				break;
+			}
+		}
+		++iconOpsDrawn;
 	}
 }
 
@@ -796,6 +961,13 @@ void HudDevice::applyCamera(const Vector2 &window, double alpha)
 	camera->set_fov((real_t)(cam->horizontalFov() * 180.0f / 3.14159265f));
 	camera->set_near((real_t)cam->nearPlane());
 	camera->set_far((real_t)cam->farPlane());
+	// lane PLAY-1: the free camera's fog shift (0 at retail heights), sent only when it changes
+	const float shift = cam->fogShift();
+	if (shift != fogShift)
+	{
+		fogShift = shift;
+		W3D_Set_Fog_Shift(shift);
+	}
 	Transform3D t;
 	t.origin = eye;
 	t.basis = Basis::looking_at((target - eye).normalized(), Vector3(0, 1, 0));
@@ -819,15 +991,19 @@ void InGameHudNode::_bind_methods()
 	ClassDB::bind_method(D_METHOD("get_logic_selection"), &InGameHudNode::get_logic_selection);
 	ClassDB::bind_method(D_METHOD("get_message_log"), &InGameHudNode::get_message_log);
 	ClassDB::bind_method(D_METHOD("get_state"), &InGameHudNode::get_state);
+	ClassDB::bind_method(D_METHOD("get_command_map"), &InGameHudNode::get_command_map);
 	ClassDB::bind_method(D_METHOD("get_report"), &InGameHudNode::get_report);
 	ClassDB::bind_method(D_METHOD("get_mapped_image", "name"), &InGameHudNode::get_mapped_image);
 	ClassDB::bind_method(D_METHOD("get_spellbook_state"), &InGameHudNode::get_spellbook_state);
+	ClassDB::bind_method(D_METHOD("get_icon_ui"), &InGameHudNode::get_icon_ui); // lane HUD-5
+	ClassDB::bind_method(D_METHOD("select_object", "id"), &InGameHudNode::select_object); // lane HUD-5
 	ClassDB::bind_method(D_METHOD("open_spell_store"), &InGameHudNode::open_spell_store);
 	ClassDB::bind_method(D_METHOD("close_spell_store"), &InGameHudNode::close_spell_store);
 	ClassDB::bind_method(D_METHOD("spell_store_click", "index"), &InGameHudNode::spell_store_click);
 	ClassDB::bind_method(D_METHOD("press_spell_slot", "slot"), &InGameHudNode::press_spell_slot);
 	ClassDB::bind_method(D_METHOD("get_frame_timings"), &InGameHudNode::get_frame_timings);
 	ClassDB::bind_method(D_METHOD("get_placement"), &InGameHudNode::get_placement);
+	ClassDB::bind_method(D_METHOD("get_move_hints"), &InGameHudNode::get_move_hints);
 	ClassDB::bind_method(D_METHOD("press_command_button", "template_name"), &InGameHudNode::press_command_button);
 	ClassDB::bind_method(D_METHOD("get_command_buttons"), &InGameHudNode::get_command_buttons);
 	ClassDB::bind_method(D_METHOD("inject_mouse_move", "position"), &InGameHudNode::inject_mouse_move);
@@ -836,12 +1012,16 @@ void InGameHudNode::_bind_methods()
 	ClassDB::bind_method(D_METHOD("inject_mouse_wheel", "notches", "position"), &InGameHudNode::inject_mouse_wheel);
 	ClassDB::bind_method(D_METHOD("get_camera"), &InGameHudNode::get_camera);
 	ClassDB::bind_method(D_METHOD("set_edge_scroll", "on"), &InGameHudNode::set_edge_scroll);
+	ClassDB::bind_method(D_METHOD("set_free_camera", "on"), &InGameHudNode::set_free_camera);
 	ClassDB::bind_method(D_METHOD("camera_look_at", "sage_xy"), &InGameHudNode::camera_look_at);
 	ClassDB::bind_method(D_METHOD("camera_set_height", "height_above_ground"), &InGameHudNode::camera_set_height);
 	ClassDB::bind_method(D_METHOD("pixel_to_world", "pixel"), &InGameHudNode::pixel_to_world);
 	ClassDB::bind_method(D_METHOD("world_to_pixel", "world_xy"), &InGameHudNode::world_to_pixel);
+	ClassDB::bind_method(D_METHOD("pick_probe", "pixel", "id"), &InGameHudNode::pick_probe);
 	ClassDB::bind_method(D_METHOD("find_button_window", "path"), &InGameHudNode::find_button_window);
 	ClassDB::bind_method(D_METHOD("get_radar_square"), &InGameHudNode::get_radar_square);
+	ClassDB::bind_method(D_METHOD("world_to_radar_pixel", "world_xy"), &InGameHudNode::world_to_radar_pixel);
+	ClassDB::bind_method(D_METHOD("create_radar_event", "world_xy", "type"), &InGameHudNode::create_radar_event);
 	ClassDB::bind_method(D_METHOD("dump_tree", "max_depth"), &InGameHudNode::dump_tree, DEFVAL(4));
 	ClassDB::bind_method(D_METHOD("invoke_at", "path", "function", "args"), &InGameHudNode::invoke_at, DEFVAL(PackedStringArray()));
 }
@@ -850,6 +1030,10 @@ InGameHudNode::InGameHudNode() : d(std::make_unique<HudDevice>()) {}
 
 InGameHudNode::~InGameHudNode()
 {
+	if (d->fogShift != 0.0f)
+	{
+		W3D_Set_Fog_Shift(0.0f); // lane PLAY-1: the free camera's fog shift goes with the game
+	}
 	// the player may be gone before this node (the game scene frees its nodes in tree order)
 	const bool playerAlive = d->playerId != 0 && ObjectDB::get_instance(ObjectID(d->playerId)) != nullptr;
 	if (RenderingServer *rs = RenderingServer::get_singleton())
@@ -857,6 +1041,11 @@ InGameHudNode::~InGameHudNode()
 		for (const RID &item : d->probeItems)
 		{
 			rs->free_rid(item); // lane QA-1: the globe probe's items go before the globe material
+		}
+		if (d->iconItem.is_valid())
+		{
+			rs->free_rid(d->iconItem); // lane HUD-5
+			d->iconItem = RID();
 		}
 	}
 	d->probeItems.clear();
@@ -939,6 +1128,7 @@ Dictionary InGameHudNode::attach(const Ref<RetailFileSystem> &fs, GameWorld *wor
 		result["errors"] = errors;
 		return result;
 	}
+	bool showObjectHealth = false; // lane HUD-5
 	// lane CAM-1: the retail tactical camera over the map's terrain, looking at the start position (options.camera_start, Godot axes)
 	Viewport *vp = get_viewport();
 	const Vector2 window = vp ? vp->get_visible_rect().get_size() : Vector2(1024, 768);
@@ -967,7 +1157,12 @@ Dictionary InGameHudNode::attach(const Ref<RetailFileSystem> &fs, GameWorld *wor
 			LiveGame *g = &game;
 			d->cam->setObjectSource([g](::ObjectID id, Coord3D &pos) { return g->presentedObjectPosition(id, pos); });
 			d->edgeScroll = (bool)options.get("edge_scroll", false);
+			d->cam->setFreeCamera((bool)options.get("free_camera", false)); // lane PLAY-1: the owner's option (not retail)
 		}
+		// lane HUD-5: GameData's ShowObjectHealth / VeterancyPipDrawObjectFilter for the drawable decorations
+		d->veterancyFilter = gd.veterancyPipFilter;
+		d->haveVeterancyFilter = gd.haveVeterancyPipFilter;
+		showObjectHealth = gd.showObjectHealth;
 		if (!errors.is_empty())
 		{
 			result["ok"] = false;
@@ -1002,6 +1197,20 @@ Dictionary InGameHudNode::attach(const Ref<RetailFileSystem> &fs, GameWorld *wor
 	d->hud->input().attachCamera(*d->cam);
 	d->hud->setWindowSize((int)window.x, (int)window.y);
 	d->hud->input().commandTranslator().setUseAlternateMouse((bool)options.get("alternate_mouse", false));
+	{
+		// lane INPUT-1 r2: RotWK's keyboard setup (RW 0x63F024) sets OurLanguage 2 for a German keyboard layout (de-DE / CH / AT / LU / LI): the CommandMap's
+		// Y and Z follow the keys' labels. options.german_keyboard (true / false) overrides the layout the display server reports
+		bool german = false;
+		if (options.has("german_keyboard"))
+		{
+			german = (bool)options["german_keyboard"];
+		}
+		else if (DisplayServer *ds = DisplayServer::get_singleton())
+		{
+			german = ds->keyboard_get_layout_language(ds->keyboard_get_current_layout()).to_lower().begins_with("de");
+		}
+		d->hud->input().metaTranslator().setGermanKeyboard(german);
+	}
 	if (!d->hud->boot(&error))
 	{
 		errors.push_back(toGodot(error));
@@ -1055,6 +1264,17 @@ Dictionary InGameHudNode::attach(const Ref<RetailFileSystem> &fs, GameWorld *wor
 		d->player->attach_window_manager(&d->hud->windows());
 	}
 	d->player->set_native_hook(d.get());
+	// lane HUD-5: the drawable decorations' settings (the zoom follows the camera every frame)
+	{
+		IconUISettings is;
+		is.showObjectHealth = showObjectHealth;
+		is.allHealthBars = (bool)options.get("all_health_bars", false);
+		is.veterancyFilter = d->haveVeterancyFilter ? &d->veterancyFilter : nullptr;
+		is.images = &d->images;
+		is.text = gameText;
+		is.zoom = d->cam ? d->cam->getZoom() : 1.0f;
+		d->hud->setIconUISettings(is);
+	}
 	d->ready = errors.is_empty();
 	set_process(true);
 	// the camera is set before the world's own _process (the streak ribbons face the camera transform of the same frame)
@@ -1110,6 +1330,24 @@ PackedStringArray InGameHudNode::get_message_log() const
 	return out;
 }
 
+Array InGameHudNode::get_command_map() const
+{
+	Array out;
+	for (const MetaMapRec &r : d->meta.records())
+	{
+		Dictionary rec;
+		rec["name"] = toGodot(ClientMessageMetaName(r.meta));
+		rec["key"] = toGodot(MetaMap::keyName(r.key));
+		rec["transition"] = r.transition;
+		rec["ctrl"] = (r.modState & MOD_CTRL) != 0;
+		rec["shift"] = (r.modState & MOD_SHIFT) != 0;
+		rec["alt"] = (r.modState & MOD_ALT) != 0;
+		rec["game"] = (r.usableIn & COMMANDUSABLE_GAME) != 0;
+		out.push_back(rec);
+	}
+	return out;
+}
+
 Dictionary InGameHudNode::get_state() const
 {
 	waitLogic(d.get());
@@ -1120,8 +1358,57 @@ Dictionary InGameHudNode::get_state() const
 	}
 	const InGameUI &ui = d->hud->input().ui();
 	s["cursor"] = toGodot(ui.cursor());
+	s["screenshot"] = d->lastScreenshot; // lane INPUT-1: the last TAKE_SCREENSHOT file
+	s["spell_store_open"] = d->hud->spellStore() != nullptr; // lane INPUT-1: the SPELL_STORE key
+	s["frame_selection_changed"] = (int64_t)ui.getFrameSelectionChanged();
+	{
+		// lane INPUT-1: the keyboard path, for a diagnosis (raw keys reaching the MetaEventTranslator, the meta messages they made, the modifier state)
+		const MetaEventTranslator &mt = d->hud->input().metaTranslator();
+		Dictionary keys;
+		keys["raw"] = (int64_t)mt.rawKeys();
+		keys["metas"] = (int64_t)mt.metasMade();
+		keys["last_meta"] = toGodot(mt.lastMeta());
+		keys["key_state"] = d->keyState;
+		keys["key_events"] = (int64_t)d->keyEvents;
+		keys["deferred"] = (int64_t)d->deferredInput;
+		keys["map_records"] = (int64_t)d->meta.records().size();
+		keys["german"] = mt.germanKeyboard();
+		PackedStringArray recent;
+		for (const std::string &m : mt.recentMetas())
+		{
+			recent.push_back(toGodot(m));
+		}
+		keys["recent"] = recent;
+		s["keys"] = keys;
+		// the command bar hotkeys the HotKeyTranslator holds (ControlBar::setControlCommand RW 0x71CF3E -> RW 0x71D139) and what its presses did
+		Array hotkeys;
+		for (const HotKeyTranslator::Entry &e : d->hud->input().hotKeyTranslator().entries())
+		{
+			Dictionary h;
+			h["key"] = String::chr((char32_t)e.key);
+			h["slot"] = e.slot;
+			h["palantir"] = e.inPalantir;
+			h["enabled"] = e.availability == HotKeyTranslator::Availability::Enabled;
+			hotkeys.push_back(h);
+		}
+		s["hotkeys"] = hotkeys;
+		Dictionary outcomes;
+		for (const auto &kv : d->hud->input().hotKeyTranslator().outcomes())
+		{
+			outcomes[toGodot(kv.first)] = (int64_t)kv.second;
+		}
+		s["hotkey_outcomes"] = outcomes;
+	}
 	s["selecting"] = ui.isSelecting();
 	s["gui_command"] = ui.getGUICommand() != nullptr;
+	s["over_gui"] = d->hud->isOverGui((int)d->lastPointer.x, (int)d->lastPointer.y); // lane PLAY-1: the pointer is over the HUD movie / the radar
+	s["pointer"] = d->lastPointer;
+	Dictionary outcomes;
+	for (const auto &kv : d->hud->input().commandTranslator().clickOutcomes())
+	{
+		outcomes[toGodot(kv.first)] = (int64_t)kv.second;
+	}
+	s["click_outcomes"] = outcomes;
 	s["selected"] = get_selection();
 	s["logic_selected"] = get_logic_selection();
 	Array msgs;
@@ -1165,12 +1452,69 @@ Dictionary InGameHudNode::get_state() const
 			frames.push_back(toGodot(f.index + " " + f.path));
 		}
 		pal["button_frames"] = frames;
+		// lane PLAY-1: the movie's last commands (which of the Palantir's buttons reached the engine)
+		Array cmds;
+		const std::vector<std::string> &log = p->commandLog();
+		for (size_t i = log.size() > 12 ? log.size() - 12 : 0; i < log.size(); ++i)
+		{
+			cmds.push_back(toGodot(log[i]));
+		}
+		pal["last_commands"] = cmds;
 		s["palantir"] = pal;
 	}
 	return s;
 }
 
 // ---- lane SPELL-2: the spell book's state for harnesses and the targeting ring --------------------------------------------------------------
+bool InGameHudNode::select_object(int64_t id)
+{
+	waitLogic(d.get());
+	if (!d->hud)
+	{
+		return false;
+	}
+	UtilityFunctions::print("GAME TEST HOOK: select object ", id);
+	InGameUI &ui = d->hud->input().ui();
+	ui.deselectAll(true);
+	ui.selectObject((::ObjectID)id);
+	return ui.isSelected((::ObjectID)id);
+}
+
+Dictionary InGameHudNode::get_icon_ui() const
+{
+	Dictionary r;
+	r["ops"] = 0;
+	if (!d->hud)
+	{
+		return r;
+	}
+	int bars = 0;
+	Array texts, images, notes;
+	for (const IconUIOp &op : d->hud->iconOps())
+	{
+		bars += op.kind == IconUIOp::OPEN_RECT && op.color == 0x7F000000u ? 1 : 0; // the outer frame of a health bar
+		if (op.kind == IconUIOp::TEXT)
+		{
+			texts.push_back(String::utf8(op.text.c_str()));
+		}
+		else if (op.kind == IconUIOp::IMAGE)
+		{
+			images.push_back(String(op.image.c_str()));
+		}
+	}
+	for (const std::string &n : d->hud->iconUI().notes())
+	{
+		notes.push_back(String::utf8(n.c_str()));
+	}
+	r["ops"] = (int64_t)d->hud->iconOps().size();
+	r["health_bars"] = bars;
+	r["texts"] = texts;
+	r["images"] = images;
+	r["drawn"] = (int64_t)d->iconOpsDrawn;
+	r["notes"] = notes;
+	return r;
+}
+
 Dictionary InGameHudNode::get_spellbook_state()
 {
 	Dictionary r;
@@ -1197,6 +1541,8 @@ Dictionary InGameHudNode::get_spellbook_state()
 	Dictionary store;
 	AptSpellStore *st = d->hud->spellStore();
 	store["open"] = st != nullptr;
+	store["requests"] = (int64_t)d->hud->spellStoreRequests(); // lane PLAY-1
+	store["error"] = toGodot(d->hud->spellStoreError());
 	if (st)
 	{
 		store["initialized"] = st->initialized();
@@ -1336,6 +1682,26 @@ Dictionary InGameHudNode::get_report() const
 		r["cursor"] = toGodot(d->cursorName);
 	}
 	r["draw_counts"] = toGodot("images " + std::to_string(d->drawnImages) + " skipped " + std::to_string(d->skippedImages));
+	if (d->hud)
+	{
+		// lane RADAR-1: the radar's events and the Palantir's ping calls (Radar.h)
+		int events = 0;
+		for (int i = 0; i < Radar::kMaxEvents; ++i)
+		{
+			events += d->hud->radar().radarEvent(i).type != Radar::RADAR_EVENT_INVALID;
+		}
+		const unsigned calls = d->hud->palantir() ? d->hud->palantir()->radarPingCalls() : 0u;
+		r["radar"] = toGodot("events " + std::to_string(events) + " pings " + std::to_string(d->hud->radar().pings().size()) + " ping calls " + std::to_string(calls) + " attack checks " +
+		                     std::to_string(d->hud->radar().attackStats()[0]) + " hit objects " + std::to_string(d->hud->radar().attackStats()[1]) + " ours " +
+		                     std::to_string(d->hud->radar().attackStats()[2]));
+		if (d->hud->palantir())
+		{
+			for (const std::string &e : d->hud->palantir()->callErrors())
+			{
+				errors.push_back(toGodot("palantir call: " + e));
+			}
+		}
+	}
 	r["stops"] = stops;
 	r["errors"] = errors;
 	r["notes"] = notes;
@@ -1374,8 +1740,26 @@ void InGameHudNode::_process(double delta)
 			handleInput(e); // the input that waited for the worker, in arrival order
 		}
 	}
+	// lane INPUT-1: TAKE_SCREENSHOT (F12). RotWK's W3DDisplay::takeScreenShot (RW 0x4474A0) writes sshot%.4d.bmp into the user data folder, the first number
+	// whose file does not exist (a counter from 0 per run); here the same name as PNG (a presentation format choice) in the user data folder
+	while (d->screenshotsDone < d->hud->input().ui().screenshotRequests() && vp)
+	{
+		++d->screenshotsDone;
+		const bool headless = DisplayServer::get_singleton() && DisplayServer::get_singleton()->get_name() == String("headless");
+		Ref<Image> image = (!headless && vp->get_texture().is_valid()) ? vp->get_texture()->get_image() : Ref<Image>(); // a headless run draws nothing
+		const String dir = OS::get_singleton()->get_user_data_dir();
+		String path;
+		do
+		{
+			path = dir.path_join(vformat("sshot%04d.png", d->screenshotNumber++));
+		} while (FileAccess::file_exists(path));
+		const Error err = image.is_valid() ? image->save_png(path) : ERR_UNAVAILABLE;
+		d->lastScreenshot = err == OK ? path : String("failed: ") + path;
+		UtilityFunctions::print("HUD screenshot ", d->lastScreenshot);
+	}
 	const uint64_t t0 = Time::get_singleton()->get_ticks_usec();
 	d->hud->update(delta);
+	d->drawIconOps(get_canvas_item()); // lane HUD-5
 	const uint64_t t1 = Time::get_singleton()->get_ticks_usec();
 	// the camera runs 30 client frames a second (retail FramesPerSecondLimit 30, S-456) and is drawn interpolated between two of them
 	if (LookAtTranslator *la = d->hud->input().lookAt())
@@ -1413,6 +1797,41 @@ Dictionary InGameHudNode::get_frame_timings() const
 	t["hud_camera_ms"] = d->cameraMs;
 	t["hud_cursor_ms"] = d->cursorMs;
 	return t;
+}
+
+Dictionary InGameHudNode::get_move_hints() const
+{
+	// client state the HUD changes on the main thread only (HudInput::update, cameraFrame): no wait for the logic worker (game.gd asks every render frame)
+	Dictionary out;
+	Array hints;
+	out["model"] = String();
+	out["hints"] = hints;
+	if (!d->hud || !d->cam)
+	{
+		return out;
+	}
+	const InGameUI &ui = d->hud->input().ui();
+	out["model"] = toGodot(d->cam->gameData().moveHintName);
+	out["frame"] = (int64_t)ui.clientFrame();
+	out["made"] = (int64_t)ui.moveHintsMade();
+	for (int i = 0; i < InGameUI::MAX_MOVE_HINTS; ++i)
+	{
+		const InGameUI::MoveHint &h = ui.moveHints()[i];
+		if (h.frame == 0 || ui.clientFrame() - h.frame > InGameUI::MOVE_HINT_FRAMES)
+		{
+			continue;
+		}
+		Dictionary e;
+		e["slot"] = i;
+		e["frame"] = (int64_t)h.frame;
+		e["age"] = (int64_t)(ui.clientFrame() - h.frame);
+		e["position"] = toGodotAxes(h.pos);
+		e["x"] = h.pos.x;
+		e["y"] = h.pos.y;
+		e["z"] = h.pos.z;
+		hints.push_back(e);
+	}
+	return out;
 }
 
 Dictionary InGameHudNode::get_placement() const
@@ -1560,20 +1979,31 @@ void InGameHudNode::inject_mouse_wheel(int notches, const Vector2 &p)
 
 void InGameHudNode::inject_key(int dik, bool down)
 {
+	keyEvent(dik, down, 0);
+}
+
+void InGameHudNode::keyEvent(int dik, bool down, char32_t character)
+{
 	waitLogic(d.get());
 	if (!d->ready)
 	{
 		return;
 	}
-	int flag = 0;
-	if (dik == KEY_LCTRL) flag = KEY_STATE_LCONTROL;
-	else if (dik == KEY_LSHIFT) flag = KEY_STATE_LSHIFT;
-	else if (dik == KEY_LALT) flag = KEY_STATE_LALT;
-	if (flag)
+	d->mods.key(dik, down); // lane INPUT-1 r2: a bit per side (KEY_STATE_LCONTROL / _RCONTROL ...)
+	d->keyState = d->mods.state();
+	d->hud->key(dik, (down ? KEY_STATE_DOWN : KEY_STATE_UP) | d->keyState, character);
+}
+
+void InGameHudNode::syncModifiers(const InputEventWithModifiers *e)
+{
+	// lane INPUT-1: the modifier state follows the event's own flags (keys, buttons and pointer motion). Tracked from the modifier keys' presses alone, a
+	// release the window never saw (Alt+Tab, a modifier let go over another window) left Ctrl / Shift / Alt held for good: every digit then made or added
+	// a control group instead of selecting it. The sides are tracked apart (review r1: letting go of left Ctrl with right Ctrl held keeps Ctrl down);
+	// the HUD sees each correction as the side key's transition, the change retail's MetaEventTranslator works on (KEY_NONE records)
+	for (const ModifierTracker::Transition &t : d->mods.sync(e->is_ctrl_pressed(), e->is_shift_pressed(), e->is_alt_pressed()))
 	{
-		d->keyState = down ? (d->keyState | flag) : (d->keyState & ~flag);
+		keyEvent(t.key, t.down, 0);
 	}
-	d->hud->key(dik, (down ? KEY_STATE_DOWN : KEY_STATE_UP) | d->keyState);
 }
 
 void InGameHudNode::_input(const Ref<InputEvent> &event)
@@ -1602,10 +2032,12 @@ void InGameHudNode::handleInput(const Ref<InputEvent> &event)
 	}
 	if (const InputEventMouseMotion *mm = Object::cast_to<InputEventMouseMotion>(event.ptr()))
 	{
+		syncModifiers(mm); // lane INPUT-1 r2: the pointer's events carry the modifier flags too
 		inject_mouse_move(mm->get_position());
 	}
 	else if (const InputEventMouseButton *mb = Object::cast_to<InputEventMouseButton>(event.ptr()))
 	{
+		syncModifiers(mb);
 		const int idx = (int)mb->get_button_index();
 		if (idx == 1 || idx == 2 || idx == 3)
 		{
@@ -1618,10 +2050,34 @@ void InGameHudNode::handleInput(const Ref<InputEvent> &event)
 	}
 	else if (const InputEventKey *k = Object::cast_to<InputEventKey>(event.ptr()))
 	{
-		const int dik = dikOf(k->get_keycode());
+		++d->keyEvents;
+		// lane INPUT-1: RotWK reads DirectInput scan codes, the key's position (the CommandMap's KEY_1 is the key left of 2 on any layout): the
+		// physical key decides, the layout's keycode only when the event has none (a synthetic event)
+		const Key code = k->get_physical_keycode() != Key::KEY_NONE ? k->get_physical_keycode() : k->get_keycode();
+		int dik = dikOf(code);
+		if (k->get_location() == KeyLocation::KEY_LOCATION_RIGHT)
+		{
+			// lane INPUT-1 r2: the right modifier keys have their own scan codes (DIK_RCONTROL 0x9D, DIK_RSHIFT 0x36, DIK_RMENU 0xB8)
+			dik = dik == ::KEY_LCTRL ? ::KEY_RCTRL : dik == ::KEY_LSHIFT ? ::KEY_RSHIFT : dik == ::KEY_LALT ? ::KEY_RALT : dik;
+		}
+		if (!ModifierTracker::isModifierKey(dik))
+		{
+			syncModifiers(k);
+		}
 		if (dik != 0 && !k->is_echo())
 		{
-			inject_key(dik, k->is_pressed());
+			if (dik == ::KEY_Z && k->is_pressed() && (d->keyState & KEY_STATE_CONTROL) && !(d->keyState & ~KEY_STATE_CONTROL) && !d->meta.isBound(::KEY_Z, MOD_CTRL) && d->cam)
+			{
+				// lane INPUT-1: Ctrl+Z toggles the free camera (OpenBFME's presentation option, not retail; the owner's request). No RotWK CommandMap
+				// record takes Ctrl+Z (Z alone is TOGGLE_PLANNING_MODE); a CommandMap that binds it (a mod's) keeps it and the toggle is off
+				d->cam->setFreeCamera(!d->cam->freeCamera());
+				++d->freeCameraToggles;
+			}
+			// lane INPUT-1: the layout's character of the key (its unshifted label) for the command button hotkeys (RotWK RW 0x63F14D translates the scan
+			// code with the keyboard layout); none for the special keys
+			const int64_t label = (int64_t)k->get_key_label();
+			const char32_t character = (label > 0x20 && label < 0x10000) ? (char32_t)label : 0;
+			keyEvent(dik, k->is_pressed(), character);
 		}
 		else if (dik != 0 && k->is_echo())
 		{
@@ -1656,6 +2112,14 @@ void InGameHudNode::set_edge_scroll(bool on)
 	d->edgeScroll = on;
 }
 
+void InGameHudNode::set_free_camera(bool on)
+{
+	if (d->cam)
+	{
+		d->cam->setFreeCamera(on);
+	}
+}
+
 Dictionary InGameHudNode::get_camera() const
 {
 	// the camera is client state (its terrain heights are the immutable terrain): no wait for the logic worker (game.gd's listener asks every frame)
@@ -1674,6 +2138,11 @@ Dictionary InGameHudNode::get_camera() const
 	out["terrain_height"] = c.terrainHeightUnderCamera();
 	out["min_height"] = c.minHeight();
 	out["max_height"] = c.maxHeight();
+	out["free_camera"] = c.freeCamera(); // lane PLAY-1
+	out["free_camera_toggles"] = d->freeCameraToggles; // lane INPUT-1: Ctrl+Z
+	out["zoom_out_limit"] = c.zoomOutLimit();
+	out["fog_shift"] = c.fogShift();
+	out["far"] = c.farPlane();
 	out["eye"] = toGodotAxes(c.eye());
 	out["target"] = toGodotAxes(c.target());
 	out["offset"] = Vector3(c.cameraOffset().x, c.cameraOffset().y, c.cameraOffset().z);
@@ -1720,6 +2189,52 @@ Vector2 InGameHudNode::world_to_pixel(const Vector2 &w) const
 	return Vector2(-1e9f, -1e9f);
 }
 
+// lane IDLE-1: what the pointer meets at a pixel, for the QA harness's verdict on a failed click (qa_player.gd _select). The HUD's own pick
+// (HudObjects::pickObject, the nearest drawn model on the ray) and the same ray against object `id` alone: a click whose ray meets the object's model while the
+// pick answers another object met that one nearer (the object is drawn behind it); a ray that misses the object's model aimed beside it.
+// Client state only: nothing reaches the simulation.
+Dictionary InGameHudNode::pick_probe(const Vector2 &pixel, int64_t id) const
+{
+	waitLogic(d.get());
+	Dictionary r;
+	r["ok"] = false;
+	if (!d->hud || !d->world || !d->world->hud_game())
+	{
+		return r;
+	}
+	const HudContext &ctx = d->hud->input().context();
+	const ICoord2D px{ (int)pixel.x, (int)pixel.y };
+	Coord3D origin, dir;
+	if (!ctx.view.screenToRay(px, origin, dir))
+	{
+		return r;
+	}
+	r["ok"] = true;
+	const ::Object *picked = HudObjects::pickForSelection(ctx, px); // lane HUD-5: what a selection click takes (RW 0x485CB8)
+	r["picked"] = picked ? (int64_t)picked->getID() : (int64_t)0;
+	const ::Object *target = d->world->hud_game()->logic().findObjectByID((::ObjectID)id);
+	String verdict = "gone";
+	float t = 0.0f;
+	if (target)
+	{
+		const DrawablePick::Result res = ctx.pickRay ? ctx.pickRay(*target, origin, dir, &t) : DrawablePick::Result::Unknown;
+		verdict = res == DrawablePick::Result::Hit ? "hit" : res == DrawablePick::Result::Miss ? "miss" : res == DrawablePick::Result::NotDrawn ? "not_drawn" : "unknown";
+		r["selectable"] = HudObjects::isSelectable(*target);
+	}
+	r["target"] = verdict;
+	r["target_t"] = t;
+	// lane HUD-5: every hit of the pick's cast, near to far: "<id> <template> t=<t> type=0x<collision type>"
+	Array hits;
+	for (const HudObjects::PickHit &h : HudObjects::pickHits(ctx, px, HudObjects::pickTypesForContext(ctx)))
+	{
+		char b[64];
+		std::snprintf(b, sizeof(b), " t=%.1f type=0x%X", h.t, h.type);
+		hits.push_back(String::num_int64((int64_t)h.obj->getID()) + " " + String(h.obj->getTemplate()->getName().c_str()) + String(b));
+	}
+	r["hits"] = hits;
+	return r;
+}
+
 Dictionary InGameHudNode::invoke_at(const String &path, const String &function, const PackedStringArray &args)
 {
 	waitLogic(d.get());
@@ -1741,6 +2256,31 @@ Dictionary InGameHudNode::invoke_at(const String &path, const String &function, 
 	r["result"] = toGodot(result);
 	r["error"] = toGodot(error);
 	return r;
+}
+
+Vector2 InGameHudNode::world_to_radar_pixel(const Vector2 &world) const
+{
+	// lane PLAY-1: the window pixel of the radar that shows SAGE (x, y) (the inverse of InGameHud::radarClick's mapping, size 128); (-1, -1) without a radar
+	waitLogic(d.get());
+	float sq[4];
+	if (!d->hud || !d->hud->radarSquare(sq) || !d->hud->radar().ready())
+	{
+		return Vector2(-1, -1);
+	}
+	float rx = 0.0f, ry = 0.0f;
+	d->hud->radar().worldToRadar(world.x, world.y, 128, rx, ry);
+	return Vector2(sq[0] + rx * (sq[2] - sq[0]) / 128.0f, sq[1] + ry * (sq[3] - sq[1]) / 128.0f);
+}
+
+bool InGameHudNode::create_radar_event(const Vector2 &world_xy, int type)
+{
+	// lane RADAR-1 (QA): an event the way a script's radar event action makes one (createEvent, 4 s); false without a radar
+	if (!d->hud || !d->hud->radar().ready())
+	{
+		return false;
+	}
+	d->hud->radar().createEvent(Coord3D{ (float)world_xy.x, (float)world_xy.y, 0.0f }, type, 4.0f);
+	return true;
 }
 
 Rect2 InGameHudNode::get_radar_square() const

@@ -103,7 +103,7 @@ WindowMsgHandledType GadgetHorizontalSliderInput(GameWindow *window, std::uint32
 			{
 				clickPos = childSize.x / 2;
 			}
-			child->winSetPosition(clickPos - childSize.x / 2, HORIZONTAL_SLIDER_THUMB_POSITION);
+			child->winSetPosition(clickPos - childSize.x / 2, HORIZONTAL_SLIDER_THUMB_Y);
 			mgr.winSendSystemMsg(window, GGM_LEFT_DRAG, 0, mData1);
 			break;
 		}
@@ -116,7 +116,7 @@ WindowMsgHandledType GadgetHorizontalSliderInput(GameWindow *window, std::uint32
 						GameWindow *child = window->winGetChild();
 						s->position -= 2;
 						mgr.winSendSystemMsg(window->winGetOwner(), GSM_SLIDER_TRACK, msgData(window), (WindowMsgData)s->position);
-						child->winSetPosition((int)((s->position - s->minVal) * s->numTicks), HORIZONTAL_SLIDER_THUMB_POSITION);
+						child->winSetPosition((int)((s->position - s->minVal) * s->numTicks), HORIZONTAL_SLIDER_THUMB_Y);
 					}
 					break;
 				case KEY_LEFT:
@@ -125,7 +125,7 @@ WindowMsgHandledType GadgetHorizontalSliderInput(GameWindow *window, std::uint32
 						GameWindow *child = window->winGetChild();
 						s->position += 2;
 						mgr.winSendSystemMsg(window->winGetOwner(), GSM_SLIDER_TRACK, msgData(window), (WindowMsgData)s->position);
-						child->winSetPosition((int)((s->position - s->minVal) * s->numTicks), HORIZONTAL_SLIDER_THUMB_POSITION);
+						child->winSetPosition((int)((s->position - s->minVal) * s->numTicks), HORIZONTAL_SLIDER_THUMB_Y);
 					}
 					break;
 				case KEY_DOWN:
@@ -185,12 +185,12 @@ WindowMsgHandledType GadgetHorizontalSliderSystem(GameWindow *window, std::uint3
 			}
 			if (childCenter.x < x + childSize.x / 2)
 			{
-				child->winSetPosition(0, HORIZONTAL_SLIDER_THUMB_POSITION);
+				child->winSetPosition(0, HORIZONTAL_SLIDER_THUMB_Y);
 				s->position = s->minVal;
 			}
 			else if (childCenter.x >= x + size.x - childSize.x / 2)
 			{
-				child->winSetPosition((int)((s->maxVal - s->minVal) * s->numTicks) - HORIZONTAL_SLIDER_THUMB_WIDTH / 2, HORIZONTAL_SLIDER_THUMB_POSITION);
+				child->winSetPosition((int)((s->maxVal - s->minVal) * s->numTicks) - HORIZONTAL_SLIDER_THUMB_WIDTH / 2, HORIZONTAL_SLIDER_THUMB_Y);
 				s->position = s->maxVal;
 			}
 			else
@@ -205,7 +205,7 @@ WindowMsgHandledType GadgetHorizontalSliderSystem(GameWindow *window, std::uint3
 				{
 					s->position = s->minVal;
 				}
-				child->winSetPosition(childRelativePos.x, HORIZONTAL_SLIDER_THUMB_POSITION);
+				child->winSetPosition(childRelativePos.x, HORIZONTAL_SLIDER_THUMB_Y);
 			}
 			mgr.winSendSystemMsg(window->winGetOwner(), GSM_SLIDER_TRACK, msgData(window), (WindowMsgData)s->position);
 			break;
@@ -220,7 +220,7 @@ WindowMsgHandledType GadgetHorizontalSliderSystem(GameWindow *window, std::uint3
 			}
 			s->position = newPos;
 			newPos = (int)((newPos - s->minVal) * s->numTicks);
-			child->winSetPosition(newPos, HORIZONTAL_SLIDER_THUMB_POSITION);
+			child->winSetPosition(newPos, HORIZONTAL_SLIDER_THUMB_Y);
 			break;
 		}
 		case GSM_SET_MIN_MAX:
@@ -230,7 +230,7 @@ WindowMsgHandledType GadgetHorizontalSliderSystem(GameWindow *window, std::uint3
 			s->maxVal = (int)mData2;
 			s->numTicks = (float)(size.x - HORIZONTAL_SLIDER_THUMB_WIDTH) / (float)(s->maxVal - s->minVal);
 			s->position = s->minVal;
-			child->winSetPosition(0, HORIZONTAL_SLIDER_THUMB_POSITION);
+			child->winSetPosition(0, HORIZONTAL_SLIDER_THUMB_Y);
 			break;
 		}
 		case GWM_CREATE:
@@ -253,10 +253,12 @@ WindowMsgHandledType GadgetHorizontalSliderSystem(GameWindow *window, std::uint3
 			break;
 		case GGM_RESIZED:
 		{
-			const int height = (int)mData2;
+			// lane FB7-1, RotWK RW 0x7237F8 (message 0x4004): the ticks follow the new width and the thumb is 13 wide and the full height
+			const int width = (int)mData1, height = (int)mData2;
+			s->numTicks = (float)(width - HORIZONTAL_SLIDER_THUMB_WIDTH) / (float)(s->maxVal - s->minVal);
 			if (GameWindow *thumb = window->winGetChild())
 			{
-				thumb->winSetSize(GADGET_SIZE, height);
+				thumb->winSetSize(HORIZONTAL_SLIDER_THUMB_WIDTH, height);
 			}
 			break;
 		}
@@ -533,11 +535,18 @@ static void drawSliderBackground(GameWindow *window, WinInstanceData *instData)
 void W3DGadgetHorizontalSliderDraw(GameWindow *window, WinInstanceData *instData) { drawSliderBackground(window, instData); }
 void W3DGadgetVerticalSliderDraw(GameWindow *window, WinInstanceData *instData) { drawSliderBackground(window, instData); }
 
-// W3DHorizontalSlider.cpp W3DGadgetHorizontalSliderImageDraw: the box meter
+// W3DGadgetHorizontalSliderImageDraw: the box meter. Lane FB7-1: RotWK's body (RW 0x4A1130, the function lexicon entry RW 0xD98E78), which is BFME2's
+// (Open-BFME-2 W3DHorizontalSlider.cpp 0x000A1747) and not ZH's. TARGET FACTS: unless status bit 0x08000000 is set the multipliers are the display's
+// width / 800 and height / 600 (RW 0xBDED74 = 1/800, RW 0xBDED70 = 1/600); a box is ftol(fill image width * xMulti * 0.6) wide (x87, 0.6 a double at
+// RW 0xBDED68) and (int)(window height * yMulti) tall, boxes 1 pixel apart; a box is selected while its left edge is at or before origin +
+// (int)((position - min) / (max - min) * width) and the position is not the minimum; the row is centred by half the blank width; a hilited slider
+// draws numBoxes + 1 squares (bw + 1) wide and tall, (int)(box height * 0.8) below the top (0.8 a double at RW 0xBDED60), shifted left by
+// (bw + 1) / 2; then the selected boxes with disabled image 0, the rest with disabled image 1 (HorzSlider.wnd: AptHSliderOnBar / NoImage).
+// The port's gadget coordinates are stage pixels, so `displayWidth / 800` is the multiplier retail has at a 1024 x 768 screen (INFERENCE, S-1911).
 void W3DGadgetHorizontalSliderImageDraw(GameWindow *window, WinInstanceData *instData)
 {
 	GameWindowManager &mgr = window->manager();
-	ICoord2D origin, size, start, end, highlightOffset;
+	ICoord2D origin, size;
 	window->winGetScreenPosition(&origin.x, &origin.y);
 	window->winGetSize(&size.x, &size.y);
 	const std::string &highlightSquare = window->winGetHiliteImage(0);
@@ -547,62 +556,59 @@ void W3DGadgetHorizontalSliderImageDraw(GameWindow *window, WinInstanceData *ins
 	int fillW = 0, fillH = 0;
 	if (fillSquare.empty() || !mgr.imageSize(fillSquare, fillW, fillH))
 	{
-		return; // ZH dereferences the image; an unknown or missing image draws nothing (the unresolved name is reported by the list)
+		return; // retail dereferences the image; an unknown or missing image draws nothing (the unresolved name is reported by the list)
 	}
-	const float xMulti = (float)mgr.displayWidth() / 800.0f;
-	int numBoxes = 0;
-	int numSelectedBoxes = 0;
-	const int boxWidth = (int)(fillW * xMulti);
-	const int boxPadding = 2;
+	float xMulti = 1.0f, yMulti = 1.0f;
+	if (!BitTest(window->winGetStatus(), 0x08000000u))
+	{
+		xMulti = (float)mgr.displayWidth() * (1.0f / 800.0f);
+		yMulti = (float)mgr.displayHeight() * (1.0f / 600.0f);
+	}
+	const int boxWidth = (int)((double)fillW * (double)xMulti * 0.6);
+	const int boxHeight = (int)((float)size.y * yMulti);
 	if (boxWidth <= 0)
 	{
 		return;
 	}
-	start.x = origin.x;
-	end.x = start.x + boxWidth;
-	const float selectedPercent = (float)(s->position - s->minVal) / (float)(s->maxVal - s->minVal);
-	const int maxSelectedX = origin.x + (int)(selectedPercent * size.x);
-	while (end.x < origin.x + size.x)
+	const int maxSelectedX = origin.x + (int)((float)(s->position - s->minVal) / (float)(s->maxVal - s->minVal) * (float)size.x);
+	int numBoxes = 0, numSelectedBoxes = 0;
+	int start = origin.x;
+	int end = start + boxWidth;
+	while (end < origin.x + size.x)
 	{
-		if (start.x <= maxSelectedX && end.x < origin.x + size.x && s->position != s->minVal)
+		if (start <= maxSelectedX && end < origin.x + size.x && s->position != s->minVal)
 		{
 			++numSelectedBoxes;
 		}
-		start.x = end.x + boxPadding;
-		end.x = start.x + boxWidth;
+		start = end + 1;
+		end = start + boxWidth;
 		++numBoxes;
 	}
-	const int numHighlightBoxes = numBoxes + 1;
-	const int distanceCovered = end.x - origin.x - boxWidth;
-	highlightOffset.x = -(boxWidth + boxPadding) / 2;
-	highlightOffset.y = boxWidth / 3;
-	const int blankness = size.x - distanceCovered;
-	origin.x += blankness / 2;
+	const int step = boxWidth + 1;
+	const int highlightX = step / -2;
+	const int highlightY = (int)((double)boxHeight * 0.8);
+	origin.x += (boxWidth - end + size.x + origin.x) / 2;
 	if (BitTest(instData->getState(), WIN_STATE_HILITED) && !highlightSquare.empty())
 	{
-		ICoord2D backgroundStart, backgroundEnd;
-		backgroundStart.y = origin.y + highlightOffset.y;
-		backgroundEnd.y = backgroundStart.y + boxWidth + boxPadding;
-		for (int i = 0; i < numHighlightBoxes; ++i)
+		const int y0 = origin.y + highlightY;
+		for (int i = 0; i < numBoxes + 1; ++i)
 		{
-			backgroundStart.x = origin.x + highlightOffset.x + i * (boxWidth + boxPadding);
-			backgroundEnd.x = backgroundStart.x + boxWidth + boxPadding;
-			mgr.winDrawImage(highlightSquare, backgroundStart.x, backgroundStart.y, backgroundEnd.x, backgroundEnd.y);
+			const int x0 = origin.x + highlightX + i * step;
+			mgr.winDrawImage(highlightSquare, x0, y0, x0 + step, y0 + boxWidth + 1);
 		}
 	}
-	start.y = origin.y;
-	end.y = start.y + boxWidth;
 	for (int i = 0; i < numSelectedBoxes; ++i)
 	{
-		start.x = origin.x + i * (boxWidth + boxPadding);
-		end.x = start.x + boxWidth;
-		mgr.winDrawImage(fillSquare, start.x, start.y, end.x, end.y);
+		const int x0 = origin.x + i * step;
+		mgr.winDrawImage(fillSquare, x0, origin.y, x0 + boxWidth, origin.y + boxHeight);
 	}
-	for (int i = numSelectedBoxes; i < numBoxes; ++i)
+	if (!blankSquare.empty())
 	{
-		start.x = origin.x + i * (boxWidth + boxPadding);
-		end.x = start.x + boxWidth;
-		mgr.winDrawImage(blankSquare, start.x, start.y, end.x, end.y);
+		for (int i = numSelectedBoxes; i < numBoxes; ++i)
+		{
+			const int x0 = origin.x + i * step;
+			mgr.winDrawImage(blankSquare, x0, origin.y, x0 + boxWidth, origin.y + boxHeight);
+		}
 	}
 }
 

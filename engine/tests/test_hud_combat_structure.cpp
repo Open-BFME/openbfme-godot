@@ -76,13 +76,21 @@ const StructRow kRows[] = {
 	// RW's straight member steps: 432 -> 356, 326 unchanged, 742 -> 590, 482 -> 420, 58 -> 62, 112 -> 118, 432 -> 356. Engine pins
 	// Merge EXIT-1 + MOVE-2 (EXIT-1's straight member steps with MOVE-2's melee member pass and the hand-off of the attack order): 356 -> 436, 326 -> 324,
 	// 590 -> 664, 420 -> 384, 62 -> 52, 118 -> 110, 356 -> 436; the hit counts are unchanged. Engine pins
-	{ "FactionMen", "GondorBarracks", "ActiveBody", 3000.0f, 20.0f, 75, 155.0f, true, 436 },
-	{ "FactionElves", "ElvenBarracks", "StructureBody", 3000.0f, 20.0f, 0, 100.0f, true, 324 }, // no BountyValue line
-	{ "FactionDwarves", "DwarfBarracks", "ActiveBody", 5000.0f, 20.0f, 125, 155.0f, true, 664 },
-	{ "FactionIsengard", "IsengardUrukPit", "StructureBody", 3000.0f, 20.0f, 88, 89.0f, true, 384 },
-	{ "FactionMordor", "MordorBarracks", "StructureBody", 1500.0f, 100.0f, 0, 0.0f, false, 52 },
-	{ "FactionWild", "GoblinCave", "ActiveBody", 1500.0f, 50.0f, 100, 25.0f, true, 110 },
-	{ "FactionAngmar", "AngmarBarracks", "ActiveBody", 3000.0f, 20.0f, 75, 155.0f, true, 436 },
+	// Lane MOVE-3 (the horde's own footprint RW 0x6ED071 in its attack path and destination checks, the member goal reservation RW 0x86EF13): 436, 324 -> 314,
+	// 664 -> 684, 384 -> 444, 52, 110, 436; the hit counts are unchanged. Engine pins
+	// MOVE-3 r2 and r3 (the exit's moveAlliesAwayFromDestination; the review fixes: a horde's line test radius 1 RW 0x6EE12D, the goal slot's angle, the patch
+	// cost's candidate cell, the raw segment's NaN rule): re-measured unchanged. Engine pins
+	// Lane IDLE-1 r2 (the AI updates in updates[0] and HordeContain in updates[1], RW 0x851E97 / 0x490AC4: every member's update now runs before its horde's member
+	// pass, and the hub leaves a member whose physics motion is disabled alone, RW 0x874724): 436 -> 438, 324 -> 344, 664 -> 604, 384 -> 344, 52 -> 54, 110 -> 112,
+	// 436 -> 438. Engine pins, not retail values.
+	// Merge of IDLE-1 r2 (22e29980) into MOVE-3 with MOVE-3 r4: re-measured on JonathanPC, the IDLE-1 values above unchanged. Engine pins
+	{ "FactionMen", "GondorBarracks", "ActiveBody", 3000.0f, 20.0f, 75, 155.0f, true, 438 },
+	{ "FactionElves", "ElvenBarracks", "StructureBody", 3000.0f, 20.0f, 0, 100.0f, true, 344 }, // no BountyValue line
+	{ "FactionDwarves", "DwarfBarracks", "ActiveBody", 5000.0f, 20.0f, 125, 155.0f, true, 604 },
+	{ "FactionIsengard", "IsengardUrukPit", "StructureBody", 3000.0f, 20.0f, 88, 89.0f, true, 344 },
+	{ "FactionMordor", "MordorBarracks", "StructureBody", 1500.0f, 100.0f, 0, 0.0f, false, 54 },
+	{ "FactionWild", "GoblinCave", "ActiveBody", 1500.0f, 50.0f, 100, 25.0f, true, 112 },
+	{ "FactionAngmar", "AngmarBarracks", "ActiveBody", 3000.0f, 20.0f, 75, 155.0f, true, 438 },
 };
 
 // n * (n - 1) / 2 * 1.28 >= H, the first n

@@ -12,7 +12,11 @@
 # Linux Godot 4.7.2 binary as $GODOT (default: godot on PATH) for the export.
 #
 # Outputs: $OPENBFME_WIN_DIR/build/openbfme_tests.exe (run it with tools/release/wine_suite.sh), $OPENBFME_WIN_DIR/export/OpenBFME.exe
-# (+ OpenBFME.console.exe, OpenBFME.pck, openbfme.windows.template_debug.x86_64.dll).
+# (+ OpenBFME.console.exe, OpenBFME.pck, openbfme.windows.template_debug.x86_64.dll); the DLL's PDB stays in godot/bin (not exported).
+#
+# Lane WINCRASH-1: every build writes the PDB of the DLL (engine/CMakeLists.txt: CodeView line tables, prefix maps); the home folder
+# prefixes lld records are blanked (tools/release/pdb_tools.py scrub) and the pair is checked (the PDB is the DLL's, no home folder path).
+# It is not exported (round 2: no in-game reader yet); tools/release/archive_symbols.sh keeps it per version for mapping crash offsets.
 set -euo pipefail
 
 LLVM_MINGW_TAG=20261006
@@ -56,7 +60,12 @@ echo "BUILT: $W/build/openbfme_tests.exe"
 [ $TESTS_ONLY = 1 ] && exit 0
 DLL="$ROOT/godot/bin/openbfme.windows.template_debug.x86_64.dll"
 [ -f "$DLL" ] || { echo "the GDExtension was not written to $DLL" >&2; exit 1; }
+PDB="${DLL%.dll}.pdb"
+[ -f "$PDB" ] || { echo "the GDExtension's PDB was not written to $PDB" >&2; exit 1; }
+python3 "$ROOT/tools/release/pdb_tools.py" scrub "$PDB"
+python3 "$ROOT/tools/release/pdb_tools.py" check "$DLL" "$PDB" || exit 1
 echo "BUILT: $DLL"
+echo "BUILT: $PDB"
 [ $EXPORT = 1 ] || exit 0
 
 # ---- 3. the export ---------------------------------------------------------------------------------------------------------------------

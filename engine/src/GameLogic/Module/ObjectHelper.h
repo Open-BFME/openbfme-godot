@@ -38,6 +38,9 @@ public:
 	const std::string &helperName() const { return m_name; }
 	const std::string &tag() const { return m_tag; }
 	UpdateSleepTime update() override;
+	// lane IDLE-1 r2: the helpers' vslot 0x30 (tools/rw_object_model/update_phases.py): FiringTrackerHelper RW 0x8311B1 (3, as the WeaponStatusHelper), the other
+	// five the default 2
+	SleepyUpdatePhase getUpdatePhase() const override { return m_name == "FiringTrackerHelper" ? PHASE_FINAL : PHASE_NORMAL; }
 	unsigned calls() const { return m_calls; }
 
 private:

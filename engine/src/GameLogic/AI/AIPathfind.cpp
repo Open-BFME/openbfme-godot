@@ -512,6 +512,7 @@ void Pathfinder::crc(StateHasher &h) const
 		h.addI32(v);
 	}
 	h.addBool(m_config.hordesWaitForHordes); // lane PHYS-1 (review r3)
+	h.addBool(m_config.planningModeEnabled); // lane MOVE-3 (review r1): GameData + 0x11CA routes move orders through the group manager
 	h.addFloat(m_config.meleeApproachDist);
 	h.addFloat(m_config.meleeApproachTolerance);
 	h.addFloat(m_config.castleSiegeStandBackDistance);

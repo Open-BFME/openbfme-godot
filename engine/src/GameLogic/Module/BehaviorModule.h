@@ -147,6 +147,9 @@ public:
 	// lane GARRISON-2: slot 0xD4, read by RW 0x68BF11 for the locomotor's speed (OpenContain RW 0x867A75: 1.0; SiegeEngineContain RW 0x87ED45: the crew count x
 	// SpeedPercentPerCrew, x87)
 	virtual float getCrewPowerMultiplier() const { return 1.0f; }
+	// lane IDLE-1: contain vslot 0xB8, asked by the idle mood scan (RW 0x66844A) of the object that owns this contain when that object is itself contained:
+	// false for OpenContain, its plain heirs and HordeContain (RW 0x9188EB), SiegeEngineContain's CrewAllowedToFire (RW 0x87EDA9: data + 0x1A0)
+	virtual bool moodScanWhileContained() const { return false; }
 };
 
 // ZH CreateModuleInterface: onCreate runs for every create module, in list order, after the object's constructor (spec 5.3 step 3;

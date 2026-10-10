@@ -14,7 +14,9 @@
 #include "Common/Thing/ThingTemplate.h"
 #include "Common/Player.h"
 #include "Common/Team.h"
+#include "GameLogic/AI/AIWorld.h"
 #include "GameLogic/GameLogic.h"
+#include "GameLogic/Module/AIUpdate.h"
 #include "GameLogic/Map/TerrainLogic.h"
 #include "GameLogic/Object/Contain/HordeContainRuntime.h"
 #include "GameLogic/Object/Object.h"
@@ -23,6 +25,7 @@
 
 #include <cstddef>
 #include <stdexcept>
+#include <string>
 #include <vector>
 
 namespace
@@ -218,6 +221,7 @@ void QueueProductionExitUpdate::exitObjectViaDoor(Object *newObj, ExitDoorType)
 	if (ai)
 	{
 		std::vector<Coord3D> path;
+		Coord3D tmp{}; // RW [ebp-0x44]: the last point written (the member's slot, the natural rally point or the rally point), the clearing's destination
 		if (hci)
 		{
 			Coord3D nrp;
@@ -230,17 +234,33 @@ void QueueProductionExitUpdate::exitObjectViaDoor(Object *newObj, ExitDoorType)
 			const Coord3D member = hci->getMemberFormationPosition(newObj);
 			path.push_back(member);
 			path.push_back(member); // pushed twice (RW 0x8A412D, 0x8A413E)
+			tmp = member;
 		}
 		else
 		{
 			Coord3D t;
 			getNaturalRallyPoint(&t, true);
 			path.push_back(t); // snapPosition (RW 0x6EF225) is the pathfinder's: not applied (S-202)
+			tmp = t;
 		}
 		const bool useRally = !isHordeKind && host == nullptr;
 		if (m_rallyPointExists && useRally)
 		{
-			path.push_back(m_rallyPoint); // RW 0x6FE456 adjustDestination (pathfinder) not applied (S-202)
+			// lane MOVE-3: RW 0x8A4189 .. 0x8A41C4: the rally point is adjusted for the new object (adjustDestination RW 0x6FE456 with its AI's locomotor set,
+			// no group destination) unless it was created in the air (the GIANT_BIRD lift); a rally point the pathfinder cannot adjust is not appended
+			Coord3D rally = m_rallyPoint;
+			bool append = true;
+			AIWorld *world = logic.aiWorld();
+			AIUpdateInterface *nai = newObj->getAIUpdateInterface();
+			if (!isGiantBird && world && world->mapReady() && nai)
+			{
+				append = world->pathfinder().adjustDestination(world->adapterFor(*newObj), nai->locomotorInfo(), &rally, nullptr);
+			}
+			if (append)
+			{
+				path.push_back(rally);
+			}
+			tmp = rally; // RW 0x8A4193: the rally point is copied to [ebp-0x44] before the adjustment; a failed adjustment leaves it there, not appended
 		}
 		if (m_data->m_noExitPath && !(m_rallyPointExists && useRally))
 		{
@@ -255,7 +275,24 @@ void QueueProductionExitUpdate::exitObjectViaDoor(Object *newObj, ExitDoorType)
 			AICommand c;
 			c.type = AICMD_FOLLOW_EXIT_PRODUCTION_PATH;
 			c.path = std::move(path);
-			logic.aiCommands().issue(*newObj, std::move(c));
+			logic.aiCommands().issue(*newObj, std::move(c)); // RW 0x8A4214
+			// lane MOVE-3 r2 / r4: RW 0x8A4219 .. 0x8A424F: after the exit command the AI's ignored obstacle (RW 0x662DA5) is saved, replaced by the horde the new
+			// object joins (when it joins one, RW 0x662D98 with the horde's id), the allies on the cell line from where the new object stands to [ebp-0x44] are
+			// asked to move away (RW 0x6F85A6, which reads the ignored obstacle from the AI) and the saved id is put back. A member of the previous horde standing
+			// at the natural rally point hands the request to its horde (RW 0x6F53AF / 0x66DA5F), which steps aside
+			AIWorld *world = logic.aiWorld();
+			AIUpdateInterface *nai = newObj->getAIUpdateInterface();
+			if (world && nai)
+			{
+				AIMover &mover = nai->mover();
+				const PathfindObjectID saved = mover.ignoredObstacleID();
+				if (host)
+				{
+					mover.ignoreObstacle((PathfindObjectID)host->getID());
+				}
+				world->moveAlliesAwayFromDestination(*newObj, *newObj->getPosition(), tmp, (ObjectID)mover.ignoredObstacleID());
+				mover.ignoreObstacle(saved);
+			}
 		}
 	}
 	// (6) the produced object is a horde: it goes to the natural rally point and its members are produced next from the same queue entry

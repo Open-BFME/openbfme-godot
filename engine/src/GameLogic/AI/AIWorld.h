@@ -106,6 +106,9 @@ public:
 	bool ignoresAsTarget(const PathfindObject &other) const override;
 	bool pathsThroughEachOther() const override;
 	int aiBlockedFrames() const override;
+	void onHordeGoalChanged() override;    // lane MOVE-3: RW 0x86EF13 through the horde contain
+	bool isEffectivelyDead() const override; // lane MOVE-3: Object + 0x458 bit 0
+	bool hordeFill(int &count, int &slots) const override; // lane MOVE-3: RW 0x6F1584's contain slots 0x7C / 0x70 / 0x114
 
 private:
 	// AIWorld::movementInfo of the object's template, remembered with the template it was looked up for (lane PERF-1: the pathfinder and the
@@ -118,6 +121,9 @@ private:
 	PathfindLayerEnum m_layer = LAYER_GROUND;
 	mutable const ThingTemplate *m_infoTemplate = nullptr;
 	mutable const ObjectMovementInfo *m_info = nullptr;
+	// lane HUD-5: the template's geometry with the object's own shape flags (Object::setGeometryActive, RW 0xAD3520: a gate's open / closed shapes)
+	mutable PathfindGeometry m_ownGeometry;
+	mutable std::uint32_t m_ownGeometryVersion = 0xFFFFFFFFu;
 };
 
 // Values read from GameData / AIData (never defaulted).
@@ -185,6 +191,10 @@ public:
 	void processCollisions();
 	// lane PHYS-1: RW moveAllies 0x6F503B (AIUpdateAllies.cpp): every stationary ally on the cells along `path` is asked to step away; false when not done
 	bool moveAllies(AIUpdateInterface &mover, Path &path, bool force);
+	// lane MOVE-3 r2: RW 0x6F85A6 moveAlliesAwayFromDestination (RW 0x6F7F3E -> the Bresenham line RW 0x6F57C3 -> each cell RW 0x6F53AF): every cell of the line
+	// from `from`'s cell to `dest`'s cell asks its first eligible stationary ally (a horde member's horde in its place) to move away from `obj`. `ignoreId` is
+	// the requester's ignored obstacle (the queue exit sets it to the horde a produced member joins, RW 0x8A41E3)
+	void moveAlliesAwayFromDestination(Object &obj, const Coord3D &from, const Coord3D &dest, ObjectID ignoreId);
 	// diagnostics of the queue pass (RW 0x6F2364, one call per engine tick): the most cells any tick allocated, the longest queue a tick started with
 	int peakTickCells() const { return m_peakTickCells; }
 	size_t peakQueued() const { return m_peakQueued; }

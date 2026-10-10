@@ -216,7 +216,7 @@ TEST_CASE("camp1 stops: the lane's stops are reported with their ids (S-1360 .. 
 		CHECK(lines[i].rfind(ids[i], 0) == 0);
 	}
 	CHECK(lines[0].find("00000000.sav") != std::string::npos);
-	CHECK(lines[1].find("S-1710") != std::string::npos);
+	CHECK(lines[1].find("S-2340") != std::string::npos); // lane CAMP-2: the movies show their VP6 picture (S-1710 no longer lists it)
 	CHECK(lines[2].find("MilitaryCaptionDelayMS") != std::string::npos);
 	CHECK(lines[3].find("HordeContain + 0x54") != std::string::npos);
 	CHECK(lines[4].find("PLAYER_SET_MAX_SPELLPOINTS") != std::string::npos);

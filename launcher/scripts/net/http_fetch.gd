@@ -2,7 +2,7 @@
 ##
 ##   * every URL, and every redirect target before it is followed, passes NetPolicy.check (HTTPS to GitHub's release hosts only; a test
 ##     build may add its loopback test server); TLS uses Godot's bundled CA list with host name verification (TLSOptions.client());
-##   * a User-Agent naming the launcher and its version, nothing else about the machine or the user; no cookies, no credentials;
+##   * a User-Agent naming the launcher, its version and the project's page, nothing else about the machine or the user; no cookies, no credentials;
 ##   * timeouts: CONNECT_TIMEOUT to connect, IDLE_TIMEOUT without a byte while reading;
 ##   * get(): a small body into memory (a size cap), with If-None-Match (ETag) support;
 ##   * download(): an asset to a file, resuming a partial file with a Range request; never more than the expected size is written.
@@ -14,6 +14,7 @@ const NetPolicy := preload("res://scripts/net/net_policy.gd")
 const CONNECT_TIMEOUT_MS := 20000
 const IDLE_TIMEOUT_MS := 30000
 const MAX_REDIRECTS := 5
+const PROJECT_URL := "https://github.com/Open-BFME/openbfme-godot"  # in the User-Agent, so a server operator can find us (lane AIO-1)
 
 var policy: NetPolicy
 var user_agent := "OpenBFME-Launcher"
@@ -22,7 +23,7 @@ var cancelled := false  # set from the UI thread to abort a transfer
 
 func _init(p: NetPolicy, version: String) -> void:
 	policy = p
-	user_agent = "OpenBFME-Launcher/%s" % version
+	user_agent = "OpenBFME-Launcher/%s (+%s)" % [version, PROJECT_URL]
 
 
 func _wait(client: HTTPClient, busy: Array, timeout_ms: int) -> String:
@@ -115,9 +116,10 @@ func _read_all(client: HTTPClient, cap: int) -> Dictionary:
 	return {"ok": true, "error": "", "body": body}
 
 
-## GET a small resource. {ok, error, code, headers, body}. `etag` != "" sends If-None-Match (a 304 has an empty body).
-func get_small(url: String, cap: int, accept := "", etag := "") -> Dictionary:
-	var hs := PackedStringArray()
+## GET a small resource. {ok, error, code, headers, body}. `etag` != "" sends If-None-Match (a 304 has an empty body). `extra`: more
+## request headers ("Name: value"; lane AIO-1 sends the two its service's own client sends).
+func get_small(url: String, cap: int, accept := "", etag := "", extra := PackedStringArray()) -> Dictionary:
+	var hs := extra.duplicate()
 	if accept != "":
 		hs.append("Accept: " + accept)
 	if etag != "":

@@ -3,8 +3,14 @@
 
 #include "GameClient/GUI/AptScreens/AptPalantir.h"
 
+#include <cstdio>
+#include "GameClient/GUI/AptScreens/AptSimpleScreens.h"
+
 #include "GameClient/GUI/ShellServices.h"
 
+#include <algorithm>
+#include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 
 namespace
@@ -113,6 +119,18 @@ void AptPalantir::hook(const std::string &name)
 		{
 			m_spellStoreOpen();
 		}
+		else if (name == "AptPalantir::OnBttnObjectives")
+		{
+			// lane PLAY-1: RW 0x6D40C9 (the flag above the radar): PlayerTribute.apt in a skirmish / multiplayer game (RW 0x914EF0), the objectives otherwise
+			if (m_services)
+			{
+				m_services->request(ShellRequest{ ShellAction::PalantirObjectives, arg });
+			}
+			else
+			{
+				windows().note("command-unwired", "AptPalantir::OnBttnObjectives: no shell services [S-1922]");
+			}
+		}
 		else if (name == "AptPalantir::OnBttnOptions")
 		{
 			if (m_services)
@@ -209,21 +227,24 @@ float AptPalantir::timerFor(const std::string &key) const
 	return it == m_timers.end() ? -1.0f : it->second;
 }
 
-namespace
-{
-const char *stateLabel(ButtonState s)
+// lane HUD-5: the clip state of a command button (RW 0x9D2BEE, from its window's status; the populate RW 0x943C04 sets the status from the availability):
+// status 0x400000 (not ready) -> _notReady; an enabled window -> _up, or _static for a NONPRESSABLE button (RW 0x9D2BFA: (options >> 27) bit 1, option index 28,
+// names RW 0xDA4C88); a disabled window: 0x40000000 -> _visuallyEnabled, RW 0x729854 -> _extraDisabled, 0x1000000 (can't afford) -> _cantAfford, else _disabled.
+// The populate enables the window for an available (1) and an active (2) button alike (jump table RW 0x943D47 -> RW 0x943C7C), so an active button (the
+// gate's TOGGLE_GATE) is _up, not _visuallyEnabled, whose clip takes no press. Restricted (0) -> winEnable(FALSE) (RW 0x943C1F); can't afford / not ready set
+// 0x1000000 / 0x400000 on a disabled window (RW 0x943C51 / 0x943C4D)
+const char *AptPalantir::commandStateName(ButtonState s, std::uint32_t options)
 {
 	switch (s)
 	{
-		case ButtonState::Enabled: return "_up";
+		case ButtonState::Enabled:
+		case ButtonState::Active: return (options & COMMAND_OPTION_NONPRESSABLE) ? "_static" : "_up";
 		case ButtonState::Restricted: return "_disabled";
 		case ButtonState::CantAfford: return "_cantAfford";
 		case ButtonState::NotReady: return "_notReady";
-		case ButtonState::Active: return "_visuallyEnabled";
 		default: return "_unused";
 	}
 }
-} // namespace
 
 // lane HUD-4 (QA-1 U19): TARGET FACTS (RotWK game.dat, caveat S-001): the engine keeps a button frame only after the movie reported it:
 // PalantirCommandUI::OnButtonFrameLoaded (RW 0x9300F8) takes atoi(index) in [0, 6) (RW 0x930088) and the clip from `name` (level prefix removed, RW 0x815563)
@@ -353,7 +374,7 @@ void AptPalantir::syncFrames(const std::vector<ControlBarButton> &buttons, bool 
 		{
 			continue; // retried at the next sync, after the content's _OnInitialized
 		}
-		if (!call(frame + ".content", "SetState", { stateLabel(b.state) }))
+		if (!call(frame + ".content", "SetState", { commandStateName(b.state, b.button ? b.button->m_options : 0u) }))
 		{
 			continue;
 		}
@@ -399,6 +420,10 @@ void AptPalantir::syncLocal()
 		}
 	}
 	const bool magicEnabled = true;
+	if (buttonsSentNow)
+	{
+		m_magicHighlightedSent = false; // RW 0x6D5DC4: SetPlayerButtonsState clears the cached enabled / highlighted bits
+	}
 	if (!buttonsSentNow && m_buttonsStateSent && magicEnabled != m_magicEnabledSent)
 	{
 		if (call("", "EnablePlayerMagicButton", { magicEnabled ? "1" : "0" }))
@@ -406,6 +431,7 @@ void AptPalantir::syncLocal()
 			m_magicEnabledSent = magicEnabled;
 		}
 	}
+	syncPlayerStats();
 	if (m_local.faction != m_factionSent)
 	{
 		call("", "SetPlayerFaction", { m_local.faction });
@@ -414,6 +440,7 @@ void AptPalantir::syncLocal()
 	// PalantirCommandUI (PalantirCommandUI.h): a context switch to another drawable or CommandSet resets the interface, the next update shows it and its portrait
 	if (m_local.context && (!m_commandContext || m_local.contextObject != m_contextObject || m_local.commandSet != m_contextSet))
 	{
+		hideRank(); // RW 0x92F990: HideRankInterface when shown
 		if (m_commandShown)
 		{
 			call("", "HideCommandInterface", {});
@@ -443,6 +470,186 @@ void AptPalantir::syncLocal()
 			m_images[portraitKey()] = NativeImage{ m_local.portrait, false };
 		}
 		m_portraitShown = m_local.portrait;
+	}
+	if (m_commandShown)
+	{
+		syncRank(); // RW 0x930963: each update while the command interface is up
+	}
+}
+
+void AptPalantir::rankCall(const std::string &fn, const std::vector<std::string> &args)
+{
+	call("", fn, args);
+	std::string line = fn + "(";
+	for (size_t i = 0; i < args.size(); ++i)
+	{
+		line += (i ? "," : "") + args[i];
+	}
+	m_rankCalls.push_back(line + ")");
+	if (m_rankCalls.size() > 64)
+	{
+		m_rankCalls.erase(m_rankCalls.begin());
+	}
+}
+
+void AptPalantir::hideRank()
+{
+	if (m_rankShown)
+	{
+		rankCall("HideRankInterface", {});
+		m_rankShown = false;
+	}
+}
+
+// lane HUD-5: RW 0x9305CE's second half (PalantirCommandUI.h): the type changed -> hidden; none -> hidden; else shown once (ShowRankInterface, the bar's cache -1),
+// the rank text (type 0, when it changed: APT:HeroRank = APT:RankLabel formatted with the rank, RW 0x92FB90 -> 0x92FACB) or the time text (type 1, when just shown:
+// APT:PalantirTimeRemaining, RW 0x930729 .. 0x9307C1), then the bar when its value changed (RW 0x9304DB: ShowRankProgress / SetRankProgressBar(clamp(1 +
+// trunc(100 v), 1, 100)) for v >= 0, HideRankProgress for v < 0)
+void AptPalantir::syncRank()
+{
+	if (m_local.rankType != m_rankType)
+	{
+		hideRank();
+		m_rankType = m_local.rankType;
+	}
+	if (m_rankType == 2)
+	{
+		hideRank();
+		return;
+	}
+	const bool wasShown = m_rankShown;
+	if (!m_rankShown)
+	{
+		rankCall("ShowRankInterface", {});
+		m_rankShown = true;
+		m_rankSet = false;
+		m_rankProgress = -1.0f;
+	}
+	if (m_rankType == 0)
+	{
+		if (!m_rankSet || m_local.rank != m_rankValue)
+		{
+			char buf[256];
+			std::snprintf(buf, sizeof(buf), m_local.rankLabelFormat.c_str(), m_local.rank);
+			windows().setAptText("APT:HeroRank", buf);
+			m_rankValue = m_local.rank;
+			m_rankSet = true;
+		}
+	}
+	else if (m_rankType == 1 && !wasShown)
+	{
+		windows().setAptText("APT:HeroRank", m_local.timeRemainingText);
+	}
+	const float v = m_local.rankProgress;
+	if (v != m_rankProgress)
+	{
+		if (v >= 0.0f)
+		{
+			if (m_rankProgress < 0.0f)
+			{
+				rankCall("ShowRankProgress", {});
+			}
+			int iv = 1 - (int)(v * -100.0f);
+			iv = iv < 1 ? 1 : (iv > 100 ? 100 : iv);
+			rankCall("SetRankProgressBar", { std::to_string(iv) });
+		}
+		else if (m_rankProgress >= 0.0f)
+		{
+			rankCall("HideRankProgress", {});
+		}
+		m_rankProgress = v;
+	}
+}
+
+void AptPalantir::statsCall(const std::string &fn, const std::vector<std::string> &args)
+{
+	call("", fn, args);
+	std::string line = fn + "(";
+	for (size_t i = 0; i < args.size(); ++i)
+	{
+		line += (i ? "," : "") + args[i];
+	}
+	m_statsCalls.push_back(line + ")");
+	if (m_statsCalls.size() > 64)
+	{
+		m_statsCalls.erase(m_statsCalls.begin());
+	}
+}
+
+// lane HUD-5: Palantir::Impl::UpdatePlayerStats (RW 0x6D5C0F; BFME2 0x6D4BDB tier A, decomp Palantir.cpp byte-matched). TARGET FACTS (RotWK game.dat, caveat S-001):
+// - the level (Player + 0x1C = the rank level): a change to a higher level than a known one (the cache starts at -1) calls PlayPlayerLevelUpEffect (RW 0x8002BD);
+// - APT:PlayerRank (RW 0x800707, the record name RW 0xC4E584) gets "%d" of Player + 0x24 = PlayerScience + 0x1C, the SCIENCE PURCHASE POINTS (the badge on the
+//   Palantir's PlayerMagic button: the owner's "1" was lotr.str's default text of APT:PlayerRank, never replaced), on the first update and on every change;
+// - SetPlayerMagicProgress (RW 0x800218, the argument "%d") with the progress into the next rank: (int)(skill points - this rank's need) * 100 / (next rank's need
+//   - this rank's need), clamped to 1..100, 1 when the two needs are equal; sent when it changes (the cache starts at 1). RW 0x800218's own guard (`cmp 1; jge
+//   send; cmp 0x64; jg skip`) passes every clamped value;
+// - the highlight: the 20 buttons of the purchase set that could be bought now (ControlBar RW 0x71FA12); a button that became purchasable since the last update
+//   lights HighlightPlayerMagicButton("1") (RW 0x80017F); it goes out when the powers screen is open (RW 0x822A35), the player-magic switch is off (RW 0x822D6C)
+//   or nothing is purchasable; sent on a change.
+void AptPalantir::syncPlayerStats()
+{
+	if (!m_local.havePlayer)
+	{
+		return;
+	}
+	if (m_local.rankLevel != m_lastLevel)
+	{
+		if (m_lastLevel >= 0 && m_local.rankLevel > m_lastLevel)
+		{
+			statsCall("PlayPlayerLevelUpEffect", {});
+		}
+		m_lastLevel = m_local.rankLevel;
+	}
+	if (!m_rankSent || m_local.purchasePoints != m_lastRank)
+	{
+		windows().setAptText("APT:PlayerRank", std::to_string(m_local.purchasePoints)); // RW 0x800707: UnicodeString::format(L"%d")
+		m_rankSent = true;
+		m_lastRank = m_local.purchasePoints;
+	}
+	int percent = 1;
+	const int range = m_local.skillPointsNext - m_local.skillPointsThis;
+	if (range != 0) // RW 0x6D5C76 .. 0x6D5CB2 (subss, cvttss2si, imul 100, idiv)
+	{
+		const float diff = m_local.skillPoints - (float)m_local.skillPointsThis;
+		// cvttss2si: out of range (or NaN) is the integer indefinite 0x80000000; imul wraps at 32 bits
+		const std::int32_t whole = (diff >= -2147483648.0f && diff < 2147483648.0f) ? (std::int32_t)diff : INT32_MIN;
+		percent = (std::int32_t)((std::uint32_t)whole * 100u) / range;
+		percent = percent < 1 ? 1 : (percent > 100 ? 100 : percent);
+	}
+	if (percent != m_lastProgress)
+	{
+		statsCall("SetPlayerMagicProgress", { std::to_string(percent) });
+		m_lastProgress = percent;
+	}
+	const bool magicEnabled = true; // RW 0x822D6C (see syncLocal)
+	bool any = false;
+	if (!m_highlighted)
+	{
+		for (int i = 0; i < 20; ++i)
+		{
+			if (m_local.purchasable[i] && !m_previousPurchasable[i])
+			{
+				m_highlighted = true;
+				break;
+			}
+		}
+	}
+	else
+	{
+		for (bool b : m_local.purchasable)
+		{
+			any = any || b;
+		}
+		if (m_local.storeOpen || !magicEnabled || !any)
+		{
+			m_highlighted = false;
+		}
+	}
+	std::copy(m_local.purchasable, m_local.purchasable + 20, m_previousPurchasable);
+	if (m_magicHighlightedSent != m_highlighted)
+	{
+		statsCall("HighlightPlayerMagicButton", { m_highlighted ? "1" : "0" });
+		m_magicHighlightedSent = m_highlighted;
 	}
 }
 
@@ -504,7 +711,7 @@ std::vector<std::string> AptPalantir::acceptanceStops()
 		"their timing follows RotWK (HUD-4: a frame only after the movie reported it, RW 0x930088 / 0x92EE8B; the side bar's fades after its movie loaded; SetState only after the "
 		"content's _OnInitialized, RW 0x9D6E4D / 0x9D6ED8); the rest of the engine's sequence (the frame controllers RW 0x9D2900 .. 0x9D3550, the side bar update RW 0x92F082's SetButtonState) "
 		"was not read, so the order of the calls within a frame may differ",
-		"[S-294] Palantir features not driven: the rank interface of CommandUI (the portrait: S-760), hero select, spell book and power points, help box, planning mode, observer buttons, the movie and messenger "
+		"[S-294] Palantir features not driven: the rank interface of CommandUI (the portrait: S-760), hero select, help box (the power points badge, its progress and highlight: lane HUD-5), planning mode, observer buttons, the movie and messenger "
 		"buttons, objectives / options buttons (their commands are registered and logged), radar pings, button flash / auto-ability overlays, tooltips and hotkeys of the buttons, the territory resource "
 		"multiplier (shown as x1); the movie / faction icon render components are not drawn (the globe: S-762)",
 		"[S-763] Apt text layout and the PlayerMagic switch (HUD-3): a single-line edit text is placed as RotWK's display string draw does (RW 0x4A8F95: aligned, centred "
@@ -519,6 +726,7 @@ std::vector<std::string> AptPalantir::acceptanceStops()
 		"device's W3D renderer, each dome alone in a viewport of its own (SPHERE01 over black, SPHERE02 over white; the model at the identity; the camera, set every draw, at "
 		"(0, 160, 0) turned -pi/2 about X, 50 degrees, aspect 1), composited in gamma space as retail's frame buffer blends them (SPHERE01 adds, then SPHERE02 multiplies: "
 		"clamp(D + A) * M, RW 0x518000 / 0x576240); INFERENCE: the UV scroll clock is the renderer's, not WW3D's sync time; the pictures are 256 x 256 stretched to the clip",
+		AptPlayerTribute::stopLine(), // lane PLAY-1: the flag's screen
 	};
 }
 
@@ -588,5 +796,38 @@ bool AptPalantir::pressSpellSlot(int slot)
 		return false;
 	}
 	m_spellPress(m_spellButton[slot]);
+	return true;
+}
+
+// lane RADAR-1 (see AptPalantir.h)
+bool AptPalantir::createRadarPing(int id, const std::string &name)
+{
+	++m_radarPingCalls;
+	return call("", "CreateRadarPing", { std::to_string(id), name });
+}
+
+bool AptPalantir::moveRadarPing(int id, float stageX, float stageY)
+{
+	++m_radarPingCalls;
+	char x[64], y[64];
+	std::snprintf(x, sizeof(x), "%f", (double)stageX);
+	std::snprintf(y, sizeof(y), "%f", (double)stageY);
+	return call("", "MoveRadarPing", { std::to_string(id), x, y });
+}
+
+bool AptPalantir::fadeOutRadarPing(int id)
+{
+	++m_radarPingCalls;
+	return call("", "FadeOutRadarPing", { std::to_string(id) });
+}
+
+bool AptPalantir::requestObjectives()
+{
+	if (!m_services)
+	{
+		windows().note("command-unwired", "DIPLOMACY: no shell services [S-1922]");
+		return false;
+	}
+	m_services->request(ShellRequest{ ShellAction::PalantirObjectives, std::string() });
 	return true;
 }

@@ -27,6 +27,7 @@
 #include "GameLogic/Module/InvisibilityModules.h"
 #include "GameLogic/Object/Contain/GarrisonContainRuntime.h"
 #include "GameLogic/Object/Contain/HordeContainRuntime.h"
+#include "GameLogic/PlayerCommands.h"
 #include "GameLogic/Object/Object.h"
 #include "GameLogic/Object/RetailObjectWorld.h"
 #include "GameLogic/ObjectTemplateInfo.h"
@@ -530,6 +531,8 @@ TEST_CASE("garrison retail: a horde's members stay in the world inside a tower (
 	REQUIRE(garrisonAndFight(a, tower, archers, orcs, 0).framesToEnter > 0);
 	CHECK_FALSE(archers->isInWorld());
 	CHECK_FALSE(CombatQueries::isAttackable(*archers));
+	// lane INPUT-1 r2: a garrisoned horde is not handed out by a control group's recall (Squad::getLiveObjects RW 0x8DB103 -> Object::isSelectable RW 0x68DE58)
+	CHECK_FALSE(PlayerCommands::isSelectable(*archers));
 	for (Object *m : membersOf(*archers))
 	{
 		CHECK(m->isInWorld());

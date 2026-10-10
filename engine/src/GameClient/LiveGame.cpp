@@ -14,6 +14,7 @@
 #include "GameLogic/Module/HeroAbilityModules.h"
 #include "GameLogic/Module/InvisibilityModules.h"
 #include "GameLogic/WeaponSetToggle.h"
+#include "GameLogic/Module/GateModules.h"
 #include "GameLogic/Module/StancesBehavior.h"
 #include "GameLogic/SimMath.h"
 #include "GameLogic/SkirmishAI/SkirmishAIManager.h"
@@ -316,6 +317,7 @@ bool LiveGame::load(const Options &options, std::string *error)
 	GarrisonCommands::registerHandlers(*m_dispatch); // GARRISON-1: MSG_ENTER / MSG_EVACUATE / MSG_EXIT
 	StancesBehavior::registerHandlers(*m_dispatch); // INTEG-1: MSG_CHANGE_STANCE (RW 0x77BC59)
 	WeaponSetToggle::registerHandlers(*m_dispatch); // HUD-4: MSG_WEAPONSET_TOGGLE (RW 0x77B529)
+	GateModules::registerHandlers(*m_dispatch); // HUD-5: MSG_OPEN_GATE / MSG_CLOSE_GATE (RW 0x77BF7B / 0x77C037)
 	InvisibilityModules::registerHandlers(*m_dispatch); // STEALTH-2: MSG_ONE_RING (RW 0x7729A6)
 	HeroAbilityModules::registerHandlers(*m_dispatch); // HERO-2: MSG_DO_AUTO_ABILITY (RW 0x77B9BA)
 	m_spellCommands.registerHandlers(*m_dispatch); // SPELL-1: the spell book messages

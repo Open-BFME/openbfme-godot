@@ -58,6 +58,7 @@
 #include "GameLogic/ScriptEngine/Scripts.h"
 
 #include <array>
+#include <functional>
 #include <cstdint>
 #include <map>
 #include <memory>
@@ -197,6 +198,14 @@ public:
 	// the map's trigger list (null before newGame): Object::updateTriggerAreaFlags walks it in order (RW 0x69264D, the list at RW 0xDA21FC)
 	const std::vector<TriggerArea> *triggerAreas() const { return m_triggers; }
 	int triggerIndex(const TriggerArea *t) const;
+	// lane HUD-5: PolygonTrigger::addPolygonTrigger at run time (AIGateUpdate::loadTrigger RW 0x8B4BB7 adds "AIGateUpdateTrigger_%d"): the trigger joins the global
+	// list after the map's ones, with its callback (the polygon's + 0x54 / + 0x58 pair, called with entered 1 / 0 by RW 0x6E4B21 / 0x6E4B3E from the object's
+	// trigger update RW 0x69264D). The index of a run-time trigger in the combined list is the map's count + its own index.
+	typedef std::function<void(Object &obj, bool entered)> TriggerCallback;
+	int addPolygonTrigger(const TriggerArea &area, TriggerCallback callback);
+	size_t triggerAreaCount() const;
+	const TriggerArea &triggerAreaAt(size_t i) const;
+	void triggerCallback(size_t i, Object &obj, bool entered) const;
 	const NamedCamera *findNamedCamera(const std::string &name) const;
 
 	// ---- the acquired sciences (lane AUDIO-4, QA-1 U20) -------------------------------------------------------------------------------------------
@@ -376,6 +385,12 @@ private:
 	std::vector<std::pair<std::string, ObjectID>> m_namedObjects; ///< insertion order
 	std::vector<std::pair<std::string, std::vector<std::string>>> m_objectLists; ///< creation order
 	const std::vector<TriggerArea> *m_triggers = nullptr;
+	struct RuntimeTrigger
+	{
+		std::shared_ptr<TriggerArea> area; ///< shared: the type is incomplete here (the deleter is made in ScriptEngine.cpp)
+		TriggerCallback callback;
+	};
+	std::vector<RuntimeTrigger> m_runtimeTriggers; ///< lane HUD-5 (see addPolygonTrigger)
 	const std::vector<NamedCamera> *m_cameras = nullptr;
 	Player *m_currentPlayer = nullptr;
 	std::string m_currentSide;
