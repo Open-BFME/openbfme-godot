@@ -2,6 +2,7 @@
 // See GameLogic/Object/Object.h for the creation order and its sources.
 
 #include "GameLogic/Object/Object.h"
+#include "GameLogic/Module/SpecialPowerModules.h"
 #include "GameLogic/Object/ObjectGeometry.h"
 #include "GameLogic/Module/PhysicsBehavior.h"
 #include "GameLogic/ScriptEngine/ScriptEngine.h"
@@ -790,23 +791,65 @@ Player *Object::getControllingPlayer() const
 	return m_team ? m_team->getControllingPlayer() : nullptr;
 }
 
+// RW 0x68B961 (see Object.h)
+void Object::pauseAllSpecialPowers(bool pause)
+{
+	for (const std::unique_ptr<BehaviorModule> &m : m_modules)
+	{
+		if (SpecialPowerModuleInterface *sp = m->getSpecialPower())
+		{
+			sp->pauseCountdown(pause);
+		}
+	}
+}
+
+// RW 0x6907F1 (see Object.h)
 void Object::setDisabled(unsigned type, UnsignedInt untilFrame)
 {
 	if (type >= DISABLED_TYPE_COUNT)
 	{
-		throw std::logic_error("Object::setDisabled: type out of range");
+		throw std::logic_error("Object::setDisabled: type out of range"); // RW returns: every caller here passes one of the 12 constants
 	}
-	m_disabled |= (1u << type);
+	if (untilFrame <= m_logic.getFrame())
+	{
+		return;
+	}
+	if (m_disabledExpire[type] == untilFrame)
+	{
+		return;
+	}
+	if (type != DISABLED_HELD && !isDisabledByType(type))
+	{
+		pauseAllSpecialPowers(true);
+	}
 	m_disabledExpire[type] = untilFrame;
+	m_disabled |= (1u << type); // RW 0x68CC09(type, untilFrame > now): always set here
+	static const int kParalyzedCondition = 529; // + 0x14C bit 17 (RW 0x6908A0 .. 0x6908B6)
+	if ((type == DISABLED_USER_PARALYZED || type == DISABLED_USER_FROZEN) && !testModelCondition(kParalyzedCondition))
+	{
+		setModelConditionState(kParalyzedCondition, true);
+	}
 }
 
+// RW 0x692443 (see Object.h)
 void Object::clearDisabled(unsigned type)
 {
-	if (type < DISABLED_TYPE_COUNT)
+	if (!isDisabledByType(type))
 	{
-		m_disabled &= ~(1u << type);
-		m_disabledExpire[type] = 0;
+		return;
 	}
+	if (type != DISABLED_HELD)
+	{
+		pauseAllSpecialPowers(false);
+	}
+	m_disabledExpire[type] = 0;
+	m_disabled &= ~(1u << type);
+	static const int kParalyzedCondition = 529;
+	if ((type == DISABLED_USER_PARALYZED || type == DISABLED_USER_FROZEN) && testModelCondition(kParalyzedCondition))
+	{
+		setModelConditionState(kParalyzedCondition, false);
+	}
+	checkDisabledStatus(m_logic.getFrame()); // RW 0x69261D
 }
 
 BehaviorModule *Object::findModule(const std::string &className) const
@@ -893,11 +936,12 @@ void Object::recordTransform(UnsignedInt frame)
 
 // B1 Object::checkDisabledStatus (RVA 0x1C5780, matched): "tests all 11 DisabledType bits and clears each active type whose expiration
 // frame at Object+0x1A8+4*type is no later than the current simulation frame"; RW 0x690A42
+// RW 0x690A42: every set type whose expiry is not after the frame is cleared (RW 0x692443; the bit and PARALYZED again after it, already done)
 void Object::checkDisabledStatus(UnsignedInt frame)
 {
 	for (unsigned type = 0; type < DISABLED_TYPE_COUNT; ++type)
 	{
-		if ((m_disabled & (1u << type)) && m_disabledExpire[type] <= frame)
+		if (isDisabledByType(type) && frame >= m_disabledExpire[type])
 		{
 			clearDisabled(type);
 		}
@@ -1310,6 +1354,31 @@ void Object::attemptHealing(float amount, const Object *source)
 	}
 }
 
+// RW 0x68C234 / RW 0x68C7E9 (see Object.h; lane DECOMP-1)
+void Object::setShroudClearingRange(float range)
+{
+	ShroudManager *sm = m_logic.shroud();
+	const float current = m_hasShroudClearingRange ? m_shroudClearingRange : (sm ? ShroudManager::templateVision(*static_cast<const ThingTemplate *>(m_template)->getFinalOverride()).shroudClearingRange : 0.0f);
+	if (range == current) // `ucomiss; jnp`: an unordered compare stores too
+	{
+		return;
+	}
+	m_hasShroudClearingRange = true;
+	m_shroudClearingRange = range;
+	if (sm)
+	{
+		sm->markDirty(*this, true);
+	}
+}
+
+void Object::updateShroudNow()
+{
+	if (ShroudManager *sm = m_logic.shroud())
+	{
+		sm->updateNow(*this);
+	}
+}
+
 // RW 0x690584 (see Object.h). The tail of RW (template byte + 0x642: clear the RUBBLE model condition, and for a dead object set REALLYDAMAGED and revive it,
 // RW 0x6905F8 ff) is not ported: the field's name is not read (stop S-652); no retail template reaches it through this lane's callers while alive
 bool Object::attemptHealingFromSoleBenefactor(float amount, const Object *source, UnsignedInt duration)
@@ -1543,6 +1612,30 @@ bool Object::friend_allowUndeadKill(int damageSubType, unsigned now)
 	return true;
 }
 
+// RW 0x694569 (see Object.h; lane DECOMP-1)
+void Object::setStatusAcrossHorde(unsigned bit, bool set)
+{
+	Object *horde = getHordeObject(false);
+	if (!horde)
+	{
+		setStatus(bit, set);
+		return;
+	}
+	ContainModuleInterface *c = horde->getContain();
+	if (!c)
+	{
+		return;
+	}
+	if (const ContainModuleInterface::ContainedItemsList *items = c->getContainedItemsList())
+	{
+		for (Object *m : *items)
+		{
+			m->setStatus(bit, set);
+		}
+	}
+	horde->setStatus(bit, set);
+}
+
 Object *Object::getHordeObject(bool alsoProducer) const
 {
 	if (isKindOfName("HORDE"))
@@ -1722,6 +1815,11 @@ void Object::crc(StateHasher &h) const
 		{
 			h.addU32(w);
 		}
+	}
+	if (m_hasShroudClearingRange) // lane DECOMP-1: hashed only when set (a game whose objects keep their template's range keeps its hash)
+	{
+		h.addU32(0x1B400000u);
+		h.addFloat(m_shroudClearingRange);
 	}
 	h.addU32(m_noCollisionsExpire);
 	h.addU32(m_creationFrame);

@@ -140,7 +140,7 @@ TEST_CASE("anim1 retail G1: a Gondor horde that reaches an orc horde fights stan
 	std::printf("  info: G1 horde: %d attacking member frames, %d with MOVING standing still\n", c.attackingFrames, c.treadmillFrames);
 	CHECK(c.attackingFrames > 50);
 	CHECK(c.treadmillFrames == 0);
-	CHECK(c.meleeExitStop); // the inferred part of the 0xE2 onExit is reported
+	CHECK_FALSE(c.meleeExitStop); // S-1581 is closed (lane DECOMP-1): RW 0x748650 is ported as RW 0x694569
 }
 
 TEST_CASE("anim1 retail G5: the mountain troll strikes when its punch's wind-up ends, never switches to the bash against infantry and holds its follow-through")
@@ -205,7 +205,7 @@ TEST_CASE("anim1 retail G5: the mountain troll strikes when its punch's wind-up 
 	CHECK(bash->lastFireFrame() == 0u); // OnlyAgainst = SECONDARY STRUCTURE BLOCKING_GATE
 	CHECK(movedWhileSwinging == 0);
 	CHECK(slotChangesInSwing == 0);
-	CHECK(hasStopLine(a.logic.report().stops, "[S-1582]")); // the unported scoring of RW 0x6C8A4E is reported for a unit with several weapons
+	CHECK(hasStopLine(a.logic.report().stops, "[S-1582]")); // what stays unported of RW 0x6C8A4E is reported (lane DECOMP-1)
 }
 
 namespace

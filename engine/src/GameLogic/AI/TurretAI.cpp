@@ -477,8 +477,8 @@ TurretAI::~TurretAI()
 const char *TurretAI::stopLine()
 {
 	return "[S-1106] TurretAI (lane GARRISON-2): the turret's sounds and the client's reactToTurretChange, the enemy AI's targeter list (no aim prevention), the bridge attack "
-	       "points, the AI's mood timer (AI + 0x21C: the turret's idle sleeps use the AI's MoodAttackCheckRate) and mood matrix (RW 0x664E18), the idle target's weapon "
-	       "criteria 5 (PREFER_MOST_DAMAGE stands in), the pitch of AllowsPitch turrets and the turreted launch composition RW 0x6CAD3F .. 0x6CB43B (S-360) are not ported";
+	       "points, the AI's mood timer (AI + 0x21C: the turret's idle sleeps use the AI's MoodAttackCheckRate) and mood matrix (RW 0x664E18), "
+	       "the pitch of AllowsPitch turrets and the turreted launch composition RW 0x6CAD3F .. 0x6CB43B (S-360) are not ported";
 }
 
 Object &TurretAI::owner() const
@@ -651,7 +651,7 @@ void TurretAI::checkForIdleMoodTarget()
 	setTurretTargetObject(enemy, false);
 	if (ObjectWeapons *w = owner().getWeapons())
 	{
-		w->chooseBestWeaponForTarget(enemy, PREFER_MOST_DAMAGE, CMD_FROM_AI); // RW 0x68B619(enemy, 5, 2): criteria 5 is S-1106
+		w->chooseBestWeaponForTarget(enemy, PREFER_TEMPLATE_DEFAULT, CMD_FROM_AI); // RW 0x8DCBDC .. 0x8DCBE3: RW 0x68B619(enemy, 5, 2)
 	}
 	m_targetWasSetByIdleMood = true;
 	++m_stats.idleTargets;

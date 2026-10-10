@@ -35,6 +35,7 @@ void AICommands::registerHandlers(GameLogicDispatch &d)
 	{
 		d.registerHandler(t, "COMBAT-1", [this](GameLogic &l, const GameMessage &m) { return attackObject(l, m); });
 	}
+	d.registerHandler(MSG_DO_FORCE_ATTACK_GROUND, "PLAY-2", [this](GameLogic &l, const GameMessage &m) { return forceAttackGround(l, m); });
 	d.registerHandler(MSG_DO_STOP, kLane, [this](GameLogic &l, const GameMessage &m) { return stop(l, m); });
 	d.registerHandler(MSG_DO_MOVETO_FORMATION, kLane, [this](GameLogic &l, const GameMessage &m) { return formationMove(l, m); });
 	d.registerHandler(MSG_DO_MOVE_AND_ORIENTATE_OBJECTTO, kLane, [this](GameLogic &l, const GameMessage &m) { return moveAndOrientate(l, m); });
@@ -123,6 +124,10 @@ bool AICommands::attackObject(GameLogic &logic, const GameMessage &m)
 		return true; // the target is already gone: nothing happens
 	}
 	AIGroup group(logic, selection(logic, m.getPlayerIndex()));
+	if (force)
+	{
+		group.releaseWeaponLockForGroup(LOCKED_TEMPORARILY); // RW 0x77AF7C (lane PLAY-2)
+	}
 	for (Object *o : group.members())
 	{
 		AIUpdateInterface *ai = o->getAIUpdateInterface();
@@ -139,6 +144,39 @@ bool AICommands::attackObject(GameLogic &logic, const GameMessage &m)
 		const bool ok = force ? ai->aiForceAttackObject(target, CMD_FROM_PLAYER) : ai->aiAttackObject(target, CMD_FROM_PLAYER);
 		m_stats.attackOrdersAccepted += ok ? 1u : 0u;
 	}
+	if (force)
+	{
+		group.clearTemporarySpeedCaps(); // RW 0x77AF8E -> 0x77A3BF -> 0x77B00A -> RW 0x76FD04 (lane PLAY-2)
+	}
+	return true;
+}
+
+// lane PLAY-2: MSG_DO_FORCE_ATTACK_GROUND, RW 0x77AF93 (see AICommands.h)
+bool AICommands::forceAttackGround(GameLogic &logic, const GameMessage &m)
+{
+	const GameMessageArgument *where = arg(m, 0, ARGUMENTDATATYPE_LOCATION);
+	if (!where || !validPlayer(logic, m))
+	{
+		++m_stats.rejected;
+		return false;
+	}
+	++m_stats.forceAttackGrounds;
+	const int kNoMaxShotsLimit = 0x7FFFFFFF; // RW 0x77AFD9 / 0x77AFFA
+	AIGroup group(logic, selection(logic, m.getPlayerIndex()));
+	if (!group.isIdle())
+	{
+		// RW 0x77AFD2 .. 0x77AFF2 (ZH: "forceAttackRequiresPrimaryWeapon"): a busy group fires its PRIMARY weapon
+		group.setWeaponLockForGroup(PRIMARY_WEAPON, LOCKED_TEMPORARILY);
+		group.groupAttackPosition(where->location, kNoMaxShotsLimit, CMD_FROM_PLAYER);
+		group.releaseWeaponLockForGroup(LOCKED_TEMPORARILY);
+	}
+	else
+	{
+		// RW 0x77AFF4 .. 0x77B005
+		group.releaseWeaponLockForGroup(LOCKED_TEMPORARILY);
+		group.groupAttackPosition(where->location, kNoMaxShotsLimit, CMD_FROM_PLAYER);
+	}
+	group.clearTemporarySpeedCaps(); // RW 0x77B00A -> 0x77A342 -> RW 0x76FD04
 	return true;
 }
 

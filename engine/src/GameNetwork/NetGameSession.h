@@ -36,6 +36,7 @@ public:
 		std::string exeName = "openbfme";
 		std::string playerName;
 		bool adaptiveRunAhead = true; ///< lane MP-2: the local command delay follows the measured round trip (Network::updateRunAhead)
+		bool census = false;          ///< lane MP-3: LockstepDriver::setCensus (the per-frame census of the measurements)
 	};
 	NetGameSession(UDP &socket, const LobbyStart &start, const Options &options);
 	~NetGameSession();

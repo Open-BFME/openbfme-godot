@@ -60,11 +60,6 @@
 
 namespace
 {
-// lane ANIM-1: the part of the 0xE2 onExit (RW 0x74B716) that is not ported
-const char *const kStopMeleeExit =
-	"[S-1581] melee engage exit (lane ANIM-1): RW 0x74B716 runs AIMoveToState::onExit (RW 0x748D8A) whether or not a move was entered, resets the desired speed "
-	"(RW 0x6625DA, 999999) and clears RUNNING_DOWN_FROM_BEHIND (RW 0x62684D) for an owner that is not HORDE_MEMBER; its RW 0x748650(0x4B, 0) (RW 0x6267C7 -> "
-	"0x694569 on the same status bit) is taken as a second clear of that bit (INFERENCE), not ported separately";
 const char *const kStopMeleeMachine =
 	"[S-787] melee machine: the per-unit melee attack machine RW 0x744B71 (kind 2 of RW 0x74CED6) is ported: AIAttackMeleeApproachState 0xE1 (RW 0x74EF4B / 0x74B001, "
 	"computePath RW 0x746DB6 -> requestMeleeApproachPath), AIAttackMeleeSquishState 0xE9 (the horde 0xC8 class), AIAttackMeleeEngageState 0xE2 (RW 0x74F599 / 0x74B1D6, "
@@ -601,16 +596,17 @@ void AIAttackMeleeEngageState::onExit(StateExitType)
 {
 	// lane ANIM-1, RW 0x74B716 (the 0xE2 vtable's onExit, RW 0xC287C4): nothing for a destroyed owner (+ 0x94 bit 0); else the desired speed back to 999999
 	// (RW 0x6625DA, float RW 0xC27440) when there is an AI, then for an owner that is not HORDE_MEMBER (status 0x26) RW 0x748650(0x4B, 0) and
-	// setStatus(RUNNING_DOWN_FROM_BEHIND, false) (RW 0x62684D), and always AIMoveToState::onExit (RW 0x748D8A), entered move or not.
-	// INFERENCE (S-1581): RW 0x748650 (RW 0x6267C7 -> 0x694569 on the status bit) is taken as a second clear of the same status and not ported separately
+	// setStatus(RUNNING_DOWN_FROM_BEHIND, false) (RW 0x62684D), and always AIMoveToState::onExit (RW 0x748D8A), entered move or not. RW 0x748650(0x4B, 0) is
+	// RW 0x694569 on that one bit (lane DECOMP-1, BFME2 decomp Rva00346C53Mask.cpp tier A / ObjectConditionAndPassengerWeaponSet.cpp tier B): across the
+	// owner's horde, members first (S-1581 closed)
 	Object &self = owner();
 	if (!self.isDestroyed())
 	{
-		ai().noteLogicStop(kStopMeleeExit);
 		ai().mover().setDesiredSpeed(AI_FAST_SPEED);
 		if (!self.testStatus((unsigned)CombatNames::statuses().hordeMember))
 		{
-			self.setStatus((unsigned)CombatNames::statuses().runningDownFromBehind, false);
+			self.setStatusAcrossHorde((unsigned)CombatNames::statuses().runningDownFromBehind, false); // RW 0x748650(0x4B, 0)
+			self.setStatus((unsigned)CombatNames::statuses().runningDownFromBehind, false);            // RW 0x62684D
 		}
 		exitMove(ai().mover(), m_move, m_dest);
 	}

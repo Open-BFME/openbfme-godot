@@ -413,6 +413,8 @@ public:
 	Dictionary net_status() const;
 	// the local player leaves the game (PLAYERLEAVE after the frames it announced), the recording is closed; waits up to 2 s for the acks
 	void net_finish();
+	// lane MP-3: the per-frame census of a net_begin({"census": true}) game as CSV (frame, sim_us, battalions, troops, objects); {ok, rows | error}
+	Dictionary net_write_census(const String &path) const;
 	// lane MP-2: the disconnect screen's buttons (AptMenuPlayer.take_disconnect_actions): Kick of a row (a vote for its slot), Quit (votes, then the local
 	// player leaves: net_status().disconnect.quit_requested)
 	void net_disconnect_kick(int64_t row);

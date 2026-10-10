@@ -65,6 +65,9 @@ void SelfDestruct::transferAssetsFromThat(GameLogic &logic, Player &ally, Player
 	ScoreKeeper &score = ally.getScoreKeeper();
 	const bool counting = score.counting();
 	score.setCounting(false); // RW 0x79DC9E(0)
+	SelfDestruct::Stats::Transfer record; // lane MP-3 (review r1): diagnostics only
+	record.leaver = that.getPlayerIndex();
+	record.ally = ally.getPlayerIndex();
 	const int inheritedBit = ObjectTemplateInfoBuilder::objectStatusIndex("INHERITED_FROM_ALLY_TEAM");
 	for (Object *o : transfer)
 	{
@@ -87,7 +90,9 @@ void SelfDestruct::transferAssetsFromThat(GameLogic &logic, Player &ally, Player
 		}
 		score.addObjectBuilt(logic, *o, 1); // RW 0x6AF769
 		++g_stats.objectsTransferred;
+		record.objects.push_back(o->getID());
 	}
+	g_stats.transferLog.push_back(std::move(record));
 	score.setCounting(counting); // RW 0x6AF788
 	(void)defected;                // RW 0x69ABA7 for the defected non-horde-members: not ported (S-853, S-1122)
 	// the completed upgrades, lowest mask bit first (RW 0x6AF7B7 .. 0x6AF91F)

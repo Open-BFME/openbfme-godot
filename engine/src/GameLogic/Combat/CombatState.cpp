@@ -2,6 +2,7 @@
 // See GameLogic/Combat/CombatState.h.
 
 #include "GameLogic/Combat/CombatState.h"
+#include "GameLogic/Combat/ObjectWeapons.h"
 
 #include "GameLogic/Combat/ProjectileLauncher.h"
 #include "GameLogic/Module/StancesBehavior.h"
@@ -123,12 +124,12 @@ std::vector<std::string> CombatState::stops()
 		"target pitch test and the FiringTrackerHelper shell (the tracker runs from the AI update; the WeaponStatusHelper is ported, lane PROJ-2) are not available; a weapon that needs them answers as "
 		"if they were neutral",
 		"[S-321] delivery: DamageNugget is delivered (radius damage scans the object list in list order, RW's partition order is implementation defined); a weapon with a ProjectileNugget launches a projectile "
-		"object through ProjectileLauncher (lane PROJ-1, stops S-360..S-364); MetaImpactNugget throws through the shockwave handler (lane COMBAT-4, S-1600 / S-1790); every other nugget kind (FX, OCL, Paralyze, DOT, ...) and the passenger hit roll are counted and not executed",
+		"object through ProjectileLauncher (lane PROJ-1, stops S-360..S-364); MetaImpactNugget throws through the shockwave handler (lane COMBAT-4, S-1600 / S-1790); DOTNugget hits and registers its damage over time with the DOTManager (lane DECOMP-1, S-1959); AttributeModifierNugget adds its ModifierList, disables its AntiCategories and plays its AntiFX (lane DECOMP-1: RW 0x90EAF9, the arc's fcos is S-167's cosd); ParalyzeNugget disables its victims (lane DECOMP-1: RW 0x90F177); every other nugget kind (FireLogic, WeaponOCL, ...) and the passenger hit roll are counted and not executed",
 		"[S-322] ActiveBody: armour is the ArmorSet of the object's armor flags looked up per hit (RW 0x5D893C; the flank test RW 0x68FB63 is lane HORDE-2's, S-582); the ARMOR / INVULNERABLE attribute modifiers, the burning death "
 		"fire cap, doDamageFX and the damage modules' onDamage are not ported (the damage state model conditions are COMBAT-2's, S-342); ImmortalBody / HighlanderBody / ActiveBody share the data table 0xC71D68, "
 		"StructureBody (an extra EMPTY table 0xC84858), InactiveBody, RespawnBody, DelayedDeathBody and SymbioticStructuresBody run since COMBAT-2 (S-340, S-343)",
 		"[S-323] kill credit: Object::scoreTheKill (RW 0x6955BC) skips a victim with KindOf IGNORED_IN_GUI (0x695661), requires an enemy of another owner (0x6956E8..0x6956F7) and then pays the bounty through Economy::awardBounty (call 0x695743 -> 0x6AC06F); the victim's playable-side test (0x69574F) comes after the bounty in RW and only gates skill points, so it is not applied to the bounty; the score keeper, the skill points, the experience tracker, the academy statistics and the EVA of a lost unit are other lanes'",
-		"[S-324] death: SlowDeathBehavior is RotWK's (lane COMBAT-4): the roulette RW 0x861712 (GameLogicRandomValue(0, total - 1) at line 0x32F, the overkill probability RW 0x860608), beginSlowDeath RW 0x860E93 (DeathFlags' statuses and model conditions with DYING, the sink / destruction / midpoint draws at lines 0x1A5 / 0x1A6 / 0x1AB, DoNotRandomizeMidpoint, DecayBeginTime, the FadeDelay frame, FlingForce: the body thrown by RW 0x860664, EXPLODED_FLAILING, its timers held while it flies) and the update RW 0x860B39 (EXPLODED_BOUNCING on landing, the HIT_GROUND phase, SINKING, DISABLED_HELD, z - SinkRate and 5.7 more above the terrain, MIDPOINT, FINAL and the destruction, DECAY); the phase OCL runs (lane SPELL-2: RW 0x860A46, S-530); NOT ported: the Weapon phase effect (counted), the drawable's fade and shadow (client), the LOD death scale (1.0 at every 2.01 GameLOD level) and its rescale, the HULK quick death (needs the script hulk lifetime override, never set), a slaved update's notice on a fling; DestroyDie and KeepObjectDie act; FXListDie, CreateObjectDie and every other die module have no runtime",
+		"[S-324] death: SlowDeathBehavior is RotWK's (lane COMBAT-4): the roulette RW 0x861712 (GameLogicRandomValue(0, total - 1) at line 0x32F, the overkill probability RW 0x860608), beginSlowDeath RW 0x860E93 (DeathFlags' statuses and model conditions with DYING, the sink / destruction / midpoint draws at lines 0x1A5 / 0x1A6 / 0x1AB, DoNotRandomizeMidpoint, DecayBeginTime, the FadeDelay frame, FlingForce: the body thrown by RW 0x860664, EXPLODED_FLAILING, its timers held while it flies) and the update RW 0x860B39 (EXPLODED_BOUNCING on landing, the HIT_GROUND phase, SINKING, DISABLED_HELD, z - SinkRate and 5.7 more above the terrain, MIDPOINT, FINAL and the destruction, DECAY); the phase OCL runs (lane SPELL-2: RW 0x860A46, S-530); the Weapon phase effect fires the temporary weapon (lane DECOMP-1, RW 0x860A8C); NOT ported: the drawable's fade and shadow (client), the LOD death scale (1.0 at every 2.01 GameLOD level) and its rescale, the HULK quick death (needs the script hulk lifetime override, never set), a slaved update's notice on a fling; DestroyDie and KeepObjectDie act; FXListDie, CreateObjectDie and every other die module have no runtime",
 		"[S-325] attack machine: AIAttackState and its sub machine (Pursue 0x64, Approach 0x65, Aim 0x66, Fire 0x67, WaitUntilFinishedFiring 0x68) are the B1 ids and transitions (RW's own ids were not read); "
 		"the transition conditions (weapon range test, victim death) are inference; no turrets, a stealthed and undetected victim ends the attack state (lane STEALTH-1, inference of the RW sub-state), no garrison fire points, no combo locomotors, no attack position / area / squad, no retaliation",
 		"[S-326] acquisition: an idle unit scans for an enemy every MoodAttackCheckRate frames within its vision range (the template's VisionRange), nearest first, ties by object id; AttackPriority tables, "
@@ -142,13 +143,14 @@ std::vector<std::string> CombatState::stops()
 
 std::vector<std::string> CombatState::horde2Stops()
 {
-	return { ObjectCrush::stopLine(), HordeFlank::stopLine(), HordeAIUpdate::squishStopLine(), HordeContain::reformStopLine(), HordeAIUpdate::memberCollideStopLine(), BannerCarrierUpdate::stopLine(), HordeAIUpdate::amoebaStopLine(), HordeContain::formationStopLine(), HordeAIUpdate::approachStopLine(),
+	return { ObjectCrush::stopLine(), HordeFlank::stopLine(), HordeAIUpdate::squishStopLine(), HordeContain::reformStopLine(), BannerCarrierUpdate::stopLine(), HordeAIUpdate::amoebaStopLine(), HordeContain::formationStopLine(), HordeAIUpdate::approachStopLine(),
 		StancesBehavior::stopLines()[0], ObjectCrush::combat3StopLines()[0], ObjectCrush::combat3StopLines()[1] }; // lane INTEG-1: S-585; lane COMBAT-3: S-1600 / S-1601
 }
 
 std::vector<std::string> CombatState::report() const
 {
 	std::vector<std::string> out = stops();
+	out.push_back(ObjectWeapons::choiceStopLine()); // lane DECOMP-1 (S-1582)
 	for (const std::string &s : ProjectileModules::stops())
 	{
 		out.push_back(s); // lane PROJ-1 (S-360 ..)

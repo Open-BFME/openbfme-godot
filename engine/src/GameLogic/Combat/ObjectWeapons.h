@@ -34,10 +34,15 @@ class Object;
 class StateHasher;
 class WeaponTemplateSet;
 
+// RotWK's WeaponChoiceCriteria (the names WeaponNames.cpp lists for DefaultWeaponChoiceCritera, + 5 = the template set's default, RW 0x6C8A57)
 enum WeaponChoiceCriteria
 {
 	PREFER_MOST_DAMAGE = 0,
-	PREFER_LONGEST_RANGE
+	PREFER_LONGEST_RANGE = 1,
+	PREFER_GRAB_OVER_DAMAGE = 2,
+	PREFER_LEAST_MOVEMENT = 3,
+	SELECT_AT_RANDOM = 4,
+	PREFER_TEMPLATE_DEFAULT = 5
 };
 
 // ZH WeaponLockType
@@ -97,10 +102,13 @@ public:
 	void reloadAllAmmo(bool now);
 
 	// ---- choosing ------------------------------------------------------------------------------------------------------------------
-	// ZH WeaponSet::chooseBestWeaponForTarget (RW 0x6C8A4E): sets the current slot; false when no weapon can be used against the victim. A null victim picks PRIMARY.
+	// RotWK WeaponSet::chooseBestWeaponForTarget (RW 0x6C8A4E, lane DECOMP-1): sets the current slot; false when no weapon can be used against the victim
 	bool chooseBestWeaponForTarget(const Object *victim, WeaponChoiceCriteria criteria, CommandSourceType source);
 	// ZH Weapon::estimateWeaponDamage: what one shot of `weapon` does to the victim after its armour (the first damage nugget, the projectile's warhead included); 0 = none
 	float estimateWeaponDamage(const Weapon &weapon, const Object &victim) const;
+	// RW 0x6CDBF3 Weapon::canDamage(owner, victim): the weapon has a template, is not out of ammo with AutoReloadsClip, and one of its nuggets applies (RW 0x6CB779)
+	bool canDamage(const Weapon &weapon, Object &victim) const;
+	static const char *choiceStopLine(); // S-1582
 	// ZH WeaponSet::getVictimAntiMask: the WEAPON_ANTI_* class of a target (ground infantry / vehicle, structure, airborne, ...)
 	static unsigned victimAntiMask(const Object &victim);
 	// ZH Object::getAbleToAttackSpecificObject, the part that does not depend on the AI: the victim can be shot at by SOME weapon of this set
@@ -148,6 +156,13 @@ public:
 	void fireExtraWeaponAt(Weapon &w, const Coord3D &pos);
 	// lane HERO-1: a weapon of its own (WeaponFireSpecialAbilityUpdate RW 0x895E1A: RW 0x68B150(template, slot 0), owner 0, RW 0x6CEE0F loadAmmoNow)
 	std::unique_ptr<Weapon> makeExtraWeapon(const WeaponTemplate *t);
+	// lane DECOMP-1: RW 0x6CF530 WeaponStore::createAndFireTempWeapon(template, source, position) (BFME2 decomp WeaponStoreCreateAndFireTempWeapon.cpp, tier A):
+	// a new PRIMARY Weapon (RW 0x68AA81) owned by the source, loadAmmoNow (RW 0x6CE1AC), its leech-range deadline (+ 0x50) = frame + 1, then Weapon::fireWeapon
+	// (source, position) (RW 0x6CE6E8 -> privateFireWeapon RW 0x6CEF6D: the full fire path, FX, rolls, projectiles), then deleted. RW 0x6CF590 (the decomp's
+	// rva002CE964) is the same at a victim (RW 0x6CE6C5). A source without an ObjectWeapons fires through a temporary one (the weapon host of the shot: its
+	// bonus conditions and attribute modifiers are the source's). No template or no source: nothing (RW dereferences the source: no retail caller passes null)
+	static void createAndFireTempWeapon(const WeaponTemplate *t, Object *source, const Coord3D &pos);
+	static void createAndFireTempWeaponAt(const WeaponTemplate *t, Object *source, Object &victim);
 	// lane HERO-1: RW 0x6CDCE7 on an extra weapon (0 = READY_TO_FIRE); FireWeaponUpdate's too (lane SPELL-2)
 	int extraWeaponStatus(Weapon &w);
 	// lane SPELL-2: an extra weapon's immediate load (RW 0x6CEE0F)
@@ -156,6 +171,8 @@ public:
 	bool hasWeaponSetFor(int bit) const;
 	// the status of the current weapon (RW 0x6CD142), WEAPON_OUT_OF_AMMO when there is none
 	int currentStatus() const;
+	// lane PLAY-2: RW 0x6CD142 (Weapon::computeStatus, no write-back) of one weapon of this set
+	int weaponStatus(const Weapon &w) { return w.getStatus(host()); }
 	// lane ANIM-1, RW 0x4BEE31 .. 0x4BEE91 (the draw's UseWeaponTiming, W3DScriptedModelDraw::apply): the current weapon's cycle in logic frames, the number
 	// an animation's natural length is divided by. RELOADING_CLIP: whenWeCanFireAgain - the timer start (RW 0x6CA241); otherwise the pre-attack delay
 	// (RW 0x6CDD10 with no victim and no position) plus FiringDuration (RW 0x6CAA78, template + 0x144). False without a current weapon (RW 0x68B58C(0) null:
@@ -205,6 +222,7 @@ private:
 	void clearSlotConditions();
 	WeaponHost &host();
 	WeaponRangeHost &rangeHost();
+	static void fireTempWeapon(const WeaponTemplate *t, Object *source, const WeaponShotTarget &target); // lane DECOMP-1
 	RangeSubject subjectOf(const Object &obj) const;
 
 	Object *m_owner;

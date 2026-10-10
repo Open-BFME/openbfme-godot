@@ -215,7 +215,6 @@ Network::Network(const NetworkConfig &config, NetTransport &transport)
 	m_disconnect.init(config.settings);
 	m_minRunAhead = m_config.runAhead;
 	m_baseRunAhead = m_config.runAhead;
-	m_routerHistory.push_back({ 0u, m_packetRouter });
 }
 
 int Network::runAheadAt(UnsignedInt logicFrame) const
@@ -234,15 +233,17 @@ int Network::runAheadAt(UnsignedInt logicFrame) const
 
 int Network::routerAt(UnsignedInt frame) const
 {
-	int r = -1;
-	for (const auto &e : m_routerHistory)
+	// lane MP-3 (review r3): the first slot of the agreed fallback order still in the game at `frame` (its departure, a leave or a drop, is later). Every
+	// peer knows every departure at or before a frame before it can run that frame (the leaver's / the dropped slot's frame data is waited for until the
+	// leave or the drop arrives), so all peers agree whatever order the departures arrived in
+	for (int s : m_agreedRouterOrder)
 	{
-		if (e.first <= frame)
+		if (m_departureFrame[(size_t)s] > frame)
 		{
-			r = e.second;
+			return s;
 		}
 	}
-	return r;
+	return -1;
 }
 
 std::uint64_t Network::now() const
@@ -507,6 +508,10 @@ void Network::file(const NetCommandMsg &c, int fromSlot)
 		{
 			// the leaver announced every frame up to its leave before this (in-order delivery) and runs no later frame: its connection is retired
 			m_transport.retire(fromSlot);
+			// lane MP-3 (review r1): a graceful leave changes the membership like a drop does (disconnectPlayer below, RW 0x8D57D8: the next packet router
+			// when it was the router, the fallback order without it), at the frame it advertised; no self destruct is issued here (the leaver's own
+			// MSG_SELF_DESTRUCT, the quit menu's Exit, travels in its frame commands)
+			passRouterRole(fromSlot, sd.leaveFrame);
 		}
 		return;
 	case NETCOMMANDTYPE_LOADCOMPLETE:
@@ -846,9 +851,12 @@ void Network::updateRunAhead(std::uint64_t nowMs)
 		}
 	}
 	m_lastMaxRtt = (int)worst;
-	if (worst < 0 || m_config.localSlot != m_packetRouter)
+	// only the packet router decides (ZH: the router's RUNAHEAD); the others take its value when its frame runs. Lane MP-3 (review r1): the router of the
+	// frame the RUNAHEAD would execute on (a successor after a leave decides from the leave frame on: its earlier RUNAHEAD would be refused)
+	const UnsignedInt nextExecution = std::max<UnsignedInt>(m_lastExecutionFrame, m_logicFrame + (UnsignedInt)runAheadAt(m_logicFrame));
+	if (worst < 0 || m_config.localSlot != m_packetRouter || routerAt(nextExecution) != m_config.localSlot)
 	{
-		return; // only the packet router decides (ZH: the router's RUNAHEAD); the others take its value when its frame runs
+		return;
 	}
 	if (m_runAheadChangePending && (!m_relayedAny || m_lastRelayed < m_runAheadChangeFrame))
 	{
@@ -1087,14 +1095,21 @@ void Network::disconnectPlayer(int slot, UnsignedInt frame)
 	sd.leaveFrame = std::min(sd.leaveFrame, frame);
 	m_leftNotices.push_back(playerName(slot));
 	m_transport.retire(slot);
-	if (slot == m_packetRouter)
-	{
-		m_packetRouter = nextPacketRouterSlot(slot);
-		m_routerHistory.push_back({ frame, m_packetRouter }); // lane MP-2 (review): the role passes on at the drop frame (routerAt)
-	}
-	m_routerOrder.erase(std::remove(m_routerOrder.begin(), m_routerOrder.end(), slot), m_routerOrder.end());
+	passRouterRole(slot, frame);
 }
 
+void Network::passRouterRole(int slot, UnsignedInt frame)
+{
+	// lane MP-3 (review r3): the router of a frame is a function of the departure frames alone (routerAt), so it does not depend on the order in which
+	// the leaves and drops arrived; the departure keeps the earliest frame (a leave and a drop of one slot)
+	if (slot < 0 || slot >= MAX_SLOTS)
+	{
+		return;
+	}
+	m_departureFrame[(size_t)slot] = std::min(m_departureFrame[(size_t)slot], frame);
+	m_routerOrder.erase(std::remove(m_routerOrder.begin(), m_routerOrder.end(), slot), m_routerOrder.end());
+	m_packetRouter = m_routerOrder.empty() ? MAX_SLOTS : m_routerOrder.front(); // the next router of the fallback order (RW 0x8D3ECD: 8 or more = none)
+}
 void Network::sendFrameDataToPlayer(int slot, UnsignedInt startFrame, UnsignedInt endFrame)
 {
 	// RW 0x8D4761: the frames startFrame .. min(endFrame, the current frame) (at most FRAMES_TO_KEEP back), every slot's commands of each to `slot`. Only

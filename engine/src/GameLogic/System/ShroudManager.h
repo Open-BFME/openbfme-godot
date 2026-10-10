@@ -143,6 +143,7 @@ public:
 	void registerObject(Object &obj);   ///< RW 0xB515E0
 	void unregisterObject(Object &obj); ///< RW 0xB4F510
 	void markDirty(const Object &obj, bool force); ///< RW 0xB4E2A0 (force) / 0xB4E290
+	void updateNow(const Object &obj);            ///< RW 0xB4F410: the record leaves the dirty list, then RW 0xB4EF50 (lane DECOMP-1)
 	bool isRegistered(const Object &obj) const;
 
 	// ---- the frame ----
@@ -184,6 +185,7 @@ public:
 	float originY() const { return m_loY; }
 	unsigned unlookPersistFrames() const { return m_unlookPersist; }
 	size_t pendingUnlooks() const { return m_pending.size(); }
+	size_t dirtyCount() const { return m_dirty.size(); }
 	size_t recordCount() const;
 
 	// ---- low level (the hline drawers of the look, also used by tests) ----

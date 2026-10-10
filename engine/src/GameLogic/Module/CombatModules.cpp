@@ -5,6 +5,7 @@
 #pragma GCC diagnostic ignored "-Winvalid-offsetof"
 #endif
 
+#include "GameLogic/Combat/ObjectWeapons.h"
 #include "GameLogic/Module/CombatModules.h"
 #include "GameLogic/ObjectCreationList.h"
 
@@ -495,6 +496,15 @@ void SlowDeathBehavior::doPhase(SlowDeathPhase phase)
 				if (ocl)
 				{
 					ocl->create(logic, obj, *obj->getPosition());
+				}
+			}
+			else
+			{
+				// lane DECOMP-1: RW 0x860A6D .. 0x860A8C: the picked weapon (null: nothing) is TheWeaponStore->createAndFireTempWeapon(weapon, object, object position)
+				const WeaponTemplate *wt = TheWeaponStore ? TheWeaponStore->findWeaponTemplate((*list)[(size_t)pick]) : nullptr;
+				if (wt)
+				{
+					ObjectWeapons::createAndFireTempWeapon(wt, obj, *obj->getPosition());
 				}
 			}
 		}

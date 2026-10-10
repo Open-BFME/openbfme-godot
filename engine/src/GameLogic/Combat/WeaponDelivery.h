@@ -93,8 +93,11 @@ public:
 	virtual void launch(GameLogic &logic, const ProjectileShot &shot) = 0;
 };
 
-// the damage a nugget list does to `victim` (when it is not null) or around `pos`: DamageNugget only; every other kind is counted as unported by the caller's stats
-// (`unported`, may be null). `detonation` is true for a projectile warhead (the source may be gone: damage from a dead source still applies).
+// RW 0x6CB779 (lane DECOMP-1): any nugget of `t` applicable to `victim` for a weapon owned by `ownerId` (each kind's slot 1; see WeaponDelivery.cpp)
+bool WeaponTemplateAnyNuggetApplicable(GameLogic &logic, const WeaponTemplate &t, ObjectID ownerId, Object *victim, int depth = 0);
+
+// the damage a nugget list does to `victim` (when it is not null) or around `pos`: DamageNugget, DOTNugget (lane DECOMP-1) and MetaImpactNugget; every other kind is counted as unported by the caller's stats
+// (`unported`, may be null). `detonation` is true for a projectile warhead. A damage nugget needs its weapon's owner in the logic (slot 1 RW 0x90E855, lane DECOMP-1).
 // Returns the number of damage applications that changed a health.
 unsigned DeliverNuggets(GameLogic &logic, ObjectID sourceId, const WeaponTemplate &weapon, const WeaponBonus &bonus, Object *victim, const Coord3D *pos, bool detonation,
 	unsigned long long *unported);
@@ -102,7 +105,9 @@ unsigned DeliverNuggets(GameLogic &logic, ObjectID sourceId, const WeaponTemplat
 class ObjectWeaponDelivery : public WeaponDeliverer
 {
 public:
-	ObjectWeaponDelivery(Object &source, ObjectWeapons &weapons, const WeaponTemplate &weapon);
+	// `firing` is the Weapon instance that fires (privateFireWeapon RW 0x6CF126 / 0x6CF26F hands fireWeaponTemplate the Weapon itself and its slot, Weapon + 0xC): its slot, not the source's
+	// selected one, goes to the fire FX event and the projectile shot (lane DECOMP-1 r3: a temporary weapon is PRIMARY whatever the source has chosen)
+	ObjectWeaponDelivery(Object &source, ObjectWeapons &weapons, const WeaponTemplate &weapon, const Weapon &firing);
 	void fireWeaponTemplate(const WeaponBonus &bonus, int curBarrel, const WeaponShotTarget &target, bool scattered, const WeaponFireGate &gate) override;
 	void fireProjectileDetonation(const WeaponBonus &bonus, const WeaponShotTarget &target) override;
 	void requestAssistance(const WeaponShotTarget &target) override;
@@ -113,4 +118,5 @@ private:
 	Object *m_source;
 	ObjectWeapons *m_weapons;
 	const WeaponTemplate *m_weapon;
+	const Weapon *m_firing;
 };

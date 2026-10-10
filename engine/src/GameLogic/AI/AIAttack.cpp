@@ -97,7 +97,9 @@ AIAttackState::~AIAttackState() = default;
 
 bool AIAttackState::chooseWeapon()
 {
-	Object *victim = machine().goalObject();
+	// lane PLAY-2, INFERENCE: an attack on a position chooses with no victim (RW 0x66E037 clears the goal object only after setState(9), so the parent's
+	// goal object is stale at onEnter; ZH chooseWeapon asks the machine's goal object)
+	Object *victim = m_isAttackingObject ? machine().goalObject() : nullptr;
 	if (m_isAttackingObject && !victim)
 	{
 		return false;
@@ -107,7 +109,7 @@ bool AIAttackState::chooseWeapon()
 	{
 		return false;
 	}
-	const bool found = w->chooseBestWeaponForTarget(victim, PREFER_MOST_DAMAGE, ai().lastCommandSource());
+	const bool found = w->chooseBestWeaponForTarget(victim, PREFER_TEMPLATE_DEFAULT, ai().lastCommandSource()); // RW 0x742D95: criteria 5 (lane DECOMP-1)
 	w->updateWeaponStatusConditions(); // ZH Object::adjustModelConditionForWeaponStatus
 	return found;
 }
@@ -199,6 +201,12 @@ StateReturnType AIAttackState::onEnter()
 	{
 		m_attackMachine->setGoalPosition(machine().goalPosition());
 	}
+	// lane PLAY-2: RW 0x74D0FC (BFME2 decomp AIAttackStateOnEnter.cpp:AIAttackState::onEnter, tier B for RW 0x74CED6): the current weapon's shot limit is
+	// lifted (0x7FFFFFFF); privateAttackPosition sets its own limit after the state is entered (RW 0x66E04B)
+	if (Weapon *cur = w->currentWeapon())
+	{
+		cur->setMaxShotCount(0x7FFFFFFF);
+	}
 	m_lockedSlotOnEnter = w->isCurWeaponLocked() ? w->curSlot() : -1;
 	const StateReturnType ret = m_attackMachine->initDefaultState();
 	if (ret == STATE_CONTINUE)
@@ -277,6 +285,12 @@ StateReturnType AIAttackState::update()
 	if (m_lockedSlotOnEnter >= 0 && w->curSlot() != m_lockedSlotOnEnter)
 	{
 		return STATE_FAILURE; // the locked weapon changed: leave attack mode at once
+	}
+	// lane PLAY-2: RW 0x751488 .. 0x751494: no current weapon, or it fired its shot limit (an attack on a position with a limit): the attack ends (ZH
+	// AIStates.cpp:5677 "we've shot as many times as we are allowed to")
+	if (!w->currentWeapon() || w->currentWeapon()->maxShotCount() <= 0)
+	{
+		return STATE_FAILURE;
 	}
 	StateReturnType r = m_attackMachine->updateStateMachine();
 	if (IS_STATE_SLEEP(r))

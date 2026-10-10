@@ -1657,14 +1657,6 @@ void HordeAIUpdate::crc(StateHasher &h) const
 	h.addU64(m_swarmTicks);
 }
 
-const char *HordeAIUpdate::memberCollideStopLine()
-{
-	return "[S-586] HordeMemberCollide (RW 0x8C0518) refreshes the melee readiness on contact (the target, a member of the target's container, or a member of an ALLIED horde in melee "
-	       "with our target that has a melee-attacking member: RW 0x8C05FA compares the relationship with 2; the horde spec's 'enemy horde' is wrong); the melee target id and the "
-	       "readiness expiry are the port's HordeAIUpdate cache (RW keeps them in the contain, +0x16C / +0x170); 'in current melee' uses RW 0x66352C, the squared nonnegative "
-	       "footprint edge distance, against RW 0xBDE8B8 = 10000.0f (an edge gap below 100)";
-}
-
 const char *HordeAIUpdate::squishStopLine()
 {
 	return "[S-583] horde crush attack: AIAttackMeleeSquishState is the RotWK body (onEnter RW 0x74F21A, update RW 0x74F31F, computePath RW 0x742271, crushPolicy RW 0x69519A, onExit "
@@ -1684,7 +1676,10 @@ const char *HordeAIUpdate::approachStopLine()
 // RW 0x86BE9A
 void HordeAIUpdate::refreshMeleeReadiness(Object &obj)
 {
-	const ObjectID container = obj.getContainedBy() ? obj.getContainedBy()->getID() : obj.getID(); // RW 0x693A1A(0): the container, else the object itself
+	// RW 0x86BEA7 .. 0x86BEC1: the id of the object's horde (RW 0x693A1A(0): itself when HORDE, else its HORDE container), else the object's own (lane DECOMP-1:
+	// the port took any container)
+	const Object *horde = obj.getHordeObject(false);
+	const ObjectID container = horde ? horde->getID() : obj.getID();
 	if (obj.getID() == m_cacheTarget || container == m_cacheTarget)
 	{
 		m_cacheExpiry = frame() + 3u * (unsigned)LOGICFRAMES_PER_SECOND;
@@ -1707,9 +1702,9 @@ bool HordeAIUpdate::isInCurrentMelee(Object *t)
 	// RW 0x8701C5 .. 0x8701D4: RW 0x66352C(t, horde) = RW 0x6634BF, the squared nonnegative footprint edge distance (max(0, d - rA - rB))^2, compared with the float at
 	// RW 0xBDE8B8, which is 10000.0f: close means an edge gap below 100 units (review r1 asked for 100.0f, i.e. 10 units; the constant in the binary is 10000)
 	const bool close = CombatQueries::edgeDistanceSquared2D(*t, *t->getPosition(), *getObject(), *getObject()->getPosition()) < 10000.0f;
-	const Object *ct = target->getContainedBy() ? target->getContainedBy() : target;
-	const Object *cu = t->getContainedBy() ? t->getContainedBy() : t;
-	return cu == ct || close;
+	// RW 0x8701E0 .. 0x8701F4 (lane DECOMP-1; BFME2 decomp Rva0046CE9DFinish.cpp, tier A): both sides resolve to their horde (RW 0x693A1A(0), null outside a
+	// horde) and the same answer, two nulls included, is true
+	return t->getHordeObject(false) == target->getHordeObject(false) || close;
 }
 
 // RW 0x86D614

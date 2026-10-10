@@ -475,8 +475,13 @@ TEST_CASE("camp1 carn dum: MAP ANG Carn Dum plays from its intro to the victory 
 	Object *citadel = m.unit("The Citadel");
 	REQUIRE(citadel != nullptr);
 	const Coord3D keep = *citadel->getPosition();
-	// the elves' waves (every phase) break on the defence: what comes near the citadel is beaten; Rogash arrives once the tower is the player's, a wall piece
-	// fell and the ten-minute timer ran; Glorfindel's army ("Glori's Peeps") comes and is destroyed -> "Mission Won"
+	// a second-tier wall piece falls ("Wall Sections Destroyed" sets FLAG - Second Teir Wall Piece Destroyed, which Rogash's summoning needs), as the elves'
+	// siege does: since lane DECOMP-1 r4 a projectile that lands without a stored target hurts what stands there (RW 0x6CCECC: no victim -> the upgrade
+	// test, then slot 6), and in this drive the defence breaks the waves before one falls (the flag stayed unset to frame 12167)
+	REQUIRE(m.unit("Arrow Tower 01") != nullptr);
+	m.killNamed("Arrow Tower 01");
+	// the elves' waves (every phase) break on the defence: what comes near the citadel is beaten; Rogash arrives once the tower is the player's, the wall
+	// piece fell and the ten-minute timer ran; Glorfindel's army ("Glori's Peeps") comes and is destroyed -> "Mission Won"
 	int killed = 0;
 	bool glori = false;
 	const bool won = d.until(

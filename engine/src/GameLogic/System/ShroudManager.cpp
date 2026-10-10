@@ -1001,6 +1001,23 @@ void ShroudManager::markDirty(const Object &obj, bool force)
 	}
 }
 
+// RW 0xB4F410 (lane DECOMP-1): unlink the record from the dirty list when it is on it (+ 0x14 / + 0x18), then process it now
+void ShroudManager::updateNow(const Object &obj)
+{
+	Record *r = recordOf(obj);
+	if (!r)
+	{
+		return;
+	}
+	if (r->dirty)
+	{
+		const std::uint32_t slot = m_slotById[r->id] - 1;
+		m_dirty.erase(std::remove(m_dirty.begin(), m_dirty.end(), slot), m_dirty.end());
+		r->dirty = false;
+	}
+	processRecord(*r);
+}
+
 // RW 0xB4E100: the last look is queued off and the channels are taken off now
 void ShroudManager::removeLookOf(Record &r)
 {
@@ -1383,7 +1400,7 @@ std::vector<std::string> ShroudManager::stopLines()
 		"shape; TheTerrainLogic::getExtent is boundary 0 (BFME2 donor, present-unmatched)",
 		"[S-563] shroud numerics: the look polygon's x87 extended-precision vertices are computed in binary64 with SimMath's sin / cos (RW fsin / fcos); "
 		"a horizontal first left edge (uninitialised slope in RW 0xB501A0) starts at the top vertex with slope 0",
-		"[S-564] object look: the vision attribute modifiers (RW 0x804F39 types 0x10 / 0x14), the spied mask (player + 0x3C8), object + 0x30 / + 0x3F4 (radii "
+		"[S-564] object look: the SHROUD_CLEARING modifier (RW 0x804F39 type 0x14) and the object's own range (Object + 0x1B4) are read since lane DECOMP-1; the spied mask (player + 0x3C8), object + 0x30 / + 0x3F4 (radii "
 		"0.1), DynamicShroudClearingRangeUpdate and the HordeContain VisionSide / VisionRearOverride are not read; object + 0x480 (hide when fogged) is taken as set",
 		"[S-565] fogged targets: a human player's units cannot attack an object FOGGED or SHROUDED for that player unless the order comes from a script (RW "
 		"0x82C167, the action helper: human and not script, as ZH ActionManager isObjectShroudedForAction); its other callers and the other action types were not read",
@@ -1425,7 +1442,14 @@ float groundReference(const Object &obj, float radius, int segments)
 // RW 0x68E4E2
 float shroudClearingRange(const Object &obj, ShroudManager &sm, const ShroudManager::TemplateVision &tv)
 {
-	float range = tv.shroudClearingRange;
+	float range = obj.hasShroudClearingRange() ? obj.shroudClearingRangeOverride() : tv.shroudClearingRange; // Object + 0x1B4 (lane DECOMP-1)
+	// lane DECOMP-1: RW 0x68E500 .. 0x68E52E (BFME2 decomp ObjectGetShroudClearingRange.cpp, tier B same-shape): the pool's SHROUD_CLEARING (0x14) sum, when one
+	// answers, scales the range by (1 + sum) (SSE addss / mulss) BEFORE the under-construction override
+	float sum = 0.0f;
+	if (obj.attributeModifierSum(20, nullptr, sum)) // RW 0x804F39(0x14)
+	{
+		range = SimMath::sseMul(SimMath::sseAdd(sum, 1.0f), range);
+	}
 	if (obj.isUnderConstruction())
 	{
 		range = CombatQueries::boundingCircleRadius(obj); // RW + 0xB8

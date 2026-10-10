@@ -6,6 +6,7 @@
 #pragma GCC diagnostic ignored "-Winvalid-offsetof"
 #endif
 
+#include "GameLogic/Combat/ObjectWeapons.h"
 #include "GameLogic/Module/SpellBookPowers.h"
 #include "GameLogic/Module/SpellEffectModules.h"
 
@@ -516,7 +517,17 @@ void DevastateSpecialPower::doSpecialPowerAtLocation(const Coord3D &loc, unsigne
 		return;
 	}
 	baseDo(&loc, nullptr, options);
-	++m_unported; // RW 0x8CC753 ..: the trees within Radius fall with FX and pay money, RW 0x7B18B8, then FireWeapon at the location: S-921
+	++m_unported; // RW 0x8CC753 ..: the trees within Radius fall with FX and pay money, RW 0x7B18B8: S-921
+	// RW 0x8CC8BB .. 0x8CC8DD (lane DECOMP-1; BFME2 decomp attempt 0x004c82e5.cpp, tier B): a FireWeapon the store knows is TheWeaponStore->createAndFireTempWeapon
+	// (weapon, object, target) (RW 0x6CF530)
+	const DevastateSpecialPowerModuleData *d = static_cast<const DevastateSpecialPowerModuleData *>(getModuleData());
+	if (!d->m_fireWeapon.empty() && TheWeaponStore)
+	{
+		if (const WeaponTemplate *wt = TheWeaponStore->findWeaponTemplate(d->m_fireWeapon))
+		{
+			ObjectWeapons::createAndFireTempWeapon(wt, getObject(), loc);
+		}
+	}
 }
 
 // ---- registration and stops ----------------------------------------------------------------------------------------------------------------
@@ -542,10 +553,9 @@ std::vector<std::string> SpellBookPowers::stopLines()
 		"weather-based modifier, the disguise stop (type 0x85, lane HERO-2) and the SpecialPowerViewObject (RW 0x896FD9: with a target location, a template, ViewObjectRange != 0, ViewObjectDuration "
 		"!= 0, a GlobalData SpecialPowerViewObject name and its template, the object is made, placed and its DeletionUpdate lifetime set: THREE logic random "
 		"draws for the retail SuperweaponPing (DeletionUpdate's constructor delay, sendObjectCreated's seed, the [duration, duration] override; other "
-		"templates draw what their constructors draw)) run; not run: its per-object shroud clearing range and forced look (RW 0x68C234 / 0x68C7E9: the "
-		"template's range is used), the script / EVA notices (RW 0x89713F), AdjustVictim, and the "
-		"'outside the playable area' filter of non-spell-book casters (RW 0xC0F374, Object + 0x458 bit 3); the scan's distance is the 2D centre "
-		"distance; OCLSpecialPower's USE_SECONDARY_OBJECT_LOCATION search too",
+		"templates draw what their constructors draw)) run, with its own shroud clearing range and forced look (RW 0x68C234 / 0x68C7E9, lane DECOMP-1); not run: the script / EVA notices (RW 0x89713F), "
+		"AdjustVictim, and the 'outside the playable area' filter of non-spell-book casters (RW 0xC0F374, Object + 0x458 bit 3); the scan's distance is "
+		"retail's FROM_CENTER_2D; OCLSpecialPower's USE_SECONDARY_OBJECT_LOCATION search uses the 2D centre distance",
 		"[S-921] spell book power classes (lane SPELL-2): PlayerUpgrade, Darkness, FreezingRain, CloudBreak, Taint, ElvenWood, ProductionSpeedBonus, "
 		"Scavenger, UntamedAllegiance and Devastate run their logic do* paths, with the map-centre FX (TerrainLogic vslot 0x20 = RW 0x462637, the "
 		"active boundary taken as 0: only scripts change it) and CloudBreak's SunbeamObject grid (RW 0x8C8B57: every created sunbeam draws what its "
@@ -553,7 +563,7 @@ std::vector<std::string> SpellBookPowers::stopLines()
 		"2 * N per cast for N grid points); not ported (counted per cast): the fire grid burn rate (RW 0x687C4C), CloudBreak's fire put-out (RW 0x68F383) "
 		"and the sunbeams' Lua terror (their panic gameplay), the terrain taint / elven wood areas and decals (RW 0x67F6F0, 0x67D4CE, 0xAD4C10), RW "
 		"0x69954A on the area object, the production speed bonus consumer (RW 0x6AF3C8 is stored only), the defect side effects (RW 0x699368 / 0x6938BD), "
-		"Devastate's trees, money and FireWeapon",
+		"Devastate's trees and money (its FireWeapon fires since lane DECOMP-1)",
 	};
 	for (const std::string &s : GlobalWeatherSystem::stopLines())
 	{

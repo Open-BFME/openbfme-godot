@@ -73,8 +73,8 @@ std::vector<std::string> FXEventLog::stops()
 	return {
 		"[S-680] fire FX: the aim query of the fire FX block (RW 0x6CB85A flag 1: the PreferredTargetBone answer, else the logic draw of Weapon.cpp:1749 as "
 		"the seed of RW 0x690BD2) runs for every shot at a victim; the contact point is S-362's approximation (the geometry centre, the seed unused); FireFlankFX "
-		"is never chosen (the flank test RW 0x68FB63 is not ported, S-322); a warhead fired through createAndFireTempWeapon (RW 0x6CF590) runs no fire FX block "
-		"(DeliverNuggets skips fireWeaponTemplate, so neither its aim draw nor its FireFX)",
+		"is never chosen (the flank test RW 0x68FB63 is not ported, S-322); a HitStoredTarget warhead runs RotWK's temporary weapon at its victim, fire FX block and aim draw included (lane DECOMP-1: RW 0x85F1F7 -> RW 0x6CF590); "
+		"a detonation through fireProjectileDetonation (RW 0x6CB7BD) delivers its nuggets without a fire FX block, as RotWK's does",
 		"[S-681] damage FX: ActiveBody::doDamageFX (RW 0x8C2F02) plays the armour set's DamageFX; the per damage type ObjectCreationLists of the loop after it "
 		"(body + 0xE0, RW 0x5F0126) are not created (no OCL store); the throttle fields (+0x38 / +0x3C) are not in the state hash",
 		"[S-683] effects not played: the FXEvent entries of MODEL CONDITION states and the FXEvents routed to the timed particle list (FXList byte +8, "

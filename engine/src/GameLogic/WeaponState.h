@@ -123,6 +123,7 @@ public:
 	const WeaponTemplate *getTemplate() const { return m_template; }
 	unsigned getOwnerID() const { return m_ownerID; }
 	void setOwnerID(unsigned id) { m_ownerID = id; }
+	void setLeechRangeDeadline(std::uint32_t frame) { m_leechRangeDeadline = frame; } // + 0x50 (RW 0x6CF56F: createAndFireTempWeapon's frame + 1)
 	int getSlot() const { return m_slot; }
 
 	// ---- status ----
@@ -182,6 +183,10 @@ public:
 	std::uint32_t timerStart() const { return m_timerStart; }            // +0x28
 	std::uint32_t lastFireFrame() const { return m_lastFireFrame; }      // +0x2C
 	std::uint32_t suspendFXFrame() const { return m_suspendFXFrame; }    // +0x30
+	// lane PLAY-2: +0x34, written by AIAttackState::onEnter (RW 0x74D0FC: 0x7FFFFFFF) and privateAttackPosition (RW 0x66E04B), read by AIAttackState::update
+	// (RW 0x751490: <= 0 ends the attack)
+	int maxShotCount() const { return m_maxShotCount; }
+	void setMaxShotCount(int n) { m_maxShotCount = n; }
 	int curBarrel() const { return m_curBarrel; }                        // +0x38
 	int numShotsForCurBarrel() const { return m_numShotsForCurBarrel; }  // +0x3C
 	const std::vector<int> &scatterTargetIndices() const { return m_scatterTargets; } // +0x40

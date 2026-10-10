@@ -40,13 +40,26 @@ enum ObjectStatusBit
 	OBJECT_STATUS_IGNORE_AI_COMMAND = 74
 };
 
-// Retail checks 11 DisabledType bits (B1 Object::checkDisabledStatus, RW 0x690A42); their order and names are not recovered here
-// (stop S-148), so a mask is an opaque 32-bit set.
+// RotWK's 12 DisabledTypes (lane DECOMP-1): the name table RW 0xDAD904 (DEFAULT, DISABLED_USER_PARALYZED, ... DISABLED_USER_FROZEN, NULL-terminated, used by the
+// DisabledTypesToProcess parsers) and the bounds of setDisabledUntil RW 0x6907F1 (type <= 11), clearDisabled RW 0x692443 and checkDisabledStatus RW 0x690A42
+// (types 0 .. 11). BFME2 1.06 has 11 (the decomp's setDisabledUntil attempt); the order of the first eleven is RotWK's table, read here, not ZH's.
 typedef std::uint32_t DisabledMaskType;
 enum
 {
 	DISABLEDMASK_NONE = 0,
-	DISABLED_TYPE_COUNT = 11
+	DISABLED_DEFAULT = 0,
+	DISABLED_USER_PARALYZED = 1,
+	DISABLED_EMP = 2,
+	DISABLED_HELD = 3,
+	DISABLED_PARALYZED = 4,
+	DISABLED_UNMANNED = 5,
+	DISABLED_UNDERPOWERED = 6,
+	DISABLED_FREEFALL = 7,
+	DISABLED_TEMPORARILY_BUSY = 8,
+	DISABLED_SCRIPT_DISABLED = 9,
+	DISABLED_SCRIPT_UNDERPOWERED = 10,
+	DISABLED_USER_FROZEN = 11,
+	DISABLED_TYPE_COUNT = 12
 };
 
 // ZH UpdateModule.h

@@ -771,6 +771,9 @@ TEST_CASE("SPELL-2 retail (review r1): the reveal object and Cloud Break's sunbe
 	REQUIRE(made.size() == 1u);
 	CHECK(made[0]->getPosition()->x == where.x);
 	CHECK(made[0]->getControllingPlayer() == g.player(0));
+	// lane DECOMP-1: the reveal object's own clearing range is ViewObjectRange (RW 0x68C234, Object + 0x1B4), not its template's
+	CHECK(made[0]->hasShroudClearingRange());
+	CHECK(made[0]->shroudClearingRangeOverride() == volley->m_viewObjectRange);
 	int deletion = 0;
 	for (const auto &c : g.logic->random().callLog())
 	{

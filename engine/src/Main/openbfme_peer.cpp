@@ -25,6 +25,16 @@
 //     lane MP-2 (the LAN lobby, GameNetwork/LANAPI.h): --lan-join --name NAME [--lan-faction FactionName] [--lan-port-base N] [--lan-targets a.b.c.d,...]
 //     instead of --host / --join: joins the first game the LAN lobby lists (a game hosted from LanLobby.apt), asks for the faction, accepts (again after
 //     every options change) and plays the game the host starts
+//     lane MP-3 (NET-4, the network test harness, GameNetwork/NetImpairment.h): [--link [SLOT:]FAULTS] faults on the datagrams this peer sends (to every
+//     peer, or to one slot; repeated), FAULTS "latency=MS,jitter=MS,loss=PERMILLE,dup=PERMILLE,reorder=PERMILLE,reorder_ms=MS" (jitter is +- around the
+//     latency); --drop / --delay / --jitter are the older spelling (loss, and a delay uniform in delay .. delay + jitter); [--impair-seed N] (default 1 +
+//     the local slot); [--blackout-at FRAME:MS] at that protocol frame the peer is cut off (nothing in, nothing out) for MS ms (repeated);
+//     [--census FILE] every logic frame's wall time on the simulation owner and living battalions / troops / objects as CSV (GameClient/FrameCensus.h;
+//     tools/net/mp3_perf_table.py reads it); [--no-fast-resend] the transport's MP-2 resend timing (no fast resend, Karn's backoff up to 2 s), for A/B measurements;
+//     [--quit-at FRAME] at that protocol frame the local player exits the game as the quit menu's Exit does (MSG_SELF_DESTRUCT { TRUE } of its player,
+//     then the leave, GodotGameWorld self_destruct + net_finish); its report says quit_at;
+//     [--paced] the game advances by the real time elapsed (a client's render loop at about 200 Hz: the 5 Hz logic clock paces the frames) instead of
+//     --step-ms per loop; the report's input_latency / stall lines measure the smoothness (LockstepDriver::SmoothStats)
 //     lane HERO-2: [--create-a-hero SLOT:FILE.cah] (host, repeated) the slot's Create-a-Hero, read at the setup and carried by the START to every peer;
 //     with --lan-join [--create-a-hero FILE.cah] the own slot's, sent to the lobby's host (LANAPI::requestSlotCreateAHero); [--recruit-create-a-hero FRAME]
 //     with --script: from that frame the local player recruits its Create-a-Hero at its fortress until it exists
@@ -92,6 +102,13 @@ struct Args
 	std::string record, hashes, report, replay;
 	long long injectFrame = -1;
 	int dropPerMille = 0, delayMs = 0, jitterMs = 0;
+	std::vector<std::string> links;          ///< lane MP-3: --link [SLOT:]FAULTS
+	long long impairSeed = -1;
+	std::vector<std::pair<long long, int>> blackouts; ///< lane MP-3: --blackout-at FRAME:MS
+	bool paced = false;
+	long long quitAt = -1;                   ///< lane MP-3: --quit-at FRAME
+	bool noFastResend = false;               ///< lane MP-3: --no-fast-resend (MP-2's resend timing, for A/B measurements)
+	std::string census;                      ///< lane MP-3: --census FILE (the per-frame census CSV of the measurements)
 	int startingCash = 1500;
 	std::vector<std::string> features; ///< --feature NAME: an enabled engine feature (part of the profile identity)
 	int lobbyTimeoutSeconds = 120;
@@ -158,6 +175,22 @@ bool parseArgs(int argc, char **argv, Args &a, std::string &error)
 		else if (k == "--drop" && next(v)) a.dropPerMille = std::atoi(v.c_str());
 		else if (k == "--delay" && next(v)) a.delayMs = std::atoi(v.c_str());
 		else if (k == "--jitter" && next(v)) a.jitterMs = std::atoi(v.c_str());
+		else if (k == "--link" && next(v)) a.links.push_back(v);
+		else if (k == "--impair-seed" && next(v)) a.impairSeed = std::atoll(v.c_str());
+		else if (k == "--blackout-at" && next(v))
+		{
+			const size_t colon = v.find(':');
+			if (colon == std::string::npos)
+			{
+				error = "--blackout-at wants FRAME:MS";
+				return false;
+			}
+			a.blackouts.push_back({ std::atoll(v.c_str()), std::atoi(v.c_str() + colon + 1) });
+		}
+		else if (k == "--paced") a.paced = true;
+		else if (k == "--no-fast-resend") a.noFastResend = true;
+		else if (k == "--census" && next(a.census)) {}
+		else if (k == "--quit-at" && next(v)) a.quitAt = std::atoll(v.c_str());
 		else if (k == "--cash" && next(v)) a.startingCash = std::atoi(v.c_str());
 		else if (k == "--feature" && next(v)) a.features.push_back(v);
 		else if (k == "--lobby-timeout" && next(v)) a.lobbyTimeoutSeconds = std::atoi(v.c_str());
@@ -649,10 +682,36 @@ int main(int argc, char **argv)
 	NetGameSession::Options so;
 	so.replayPath = a.record;
 	so.profile = w.profile;
-	so.transport.dropPerMille = a.dropPerMille;
-	so.transport.delayMs = a.delayMs;
-	so.transport.jitterMs = a.jitterMs;
-	so.transport.dropSeed = 1u + (std::uint32_t)lobby.localSlot;
+	{
+		// lane MP-3: the harness's faults (the older --drop / --delay / --jitter first, then every --link)
+		so.transport.fastResend = !a.noFastResend;
+		so.census = !a.census.empty();
+		NetImpairment::Config &ic = so.transport.impairment;
+		ic.seed = a.impairSeed >= 0 ? (std::uint32_t)a.impairSeed : 1u + (std::uint32_t)lobby.localSlot;
+		ic.all.lossPerMille = a.dropPerMille;
+		ic.all.latencyMs = a.delayMs + a.jitterMs / 2;
+		ic.all.jitterMs = a.jitterMs / 2;
+		for (const std::string &l : a.links)
+		{
+			const size_t colon = l.find(':');
+			const int slot = colon == std::string::npos ? -1 : std::atoi(l.substr(0, colon).c_str());
+			NetLinkFaults f;
+			if ((colon != std::string::npos && (slot < 0 || slot >= MAX_SLOTS)) || !NetLinkFaults::parse(l.substr(colon == std::string::npos ? 0 : colon + 1), f, &error))
+			{
+				std::fprintf(stderr, "openbfme_peer: --link %s: %s\n", l.c_str(), error.empty() ? "the slot is not 0 .. 7" : error.c_str());
+				return 1;
+			}
+			if (slot < 0)
+			{
+				ic.all = f;
+			}
+			else
+			{
+				ic.link[(size_t)slot] = f;
+				ic.linkSet[(size_t)slot] = true;
+			}
+		}
+	}
 	so.network = w.network;
 	so.desyncDirectory = a.desyncDir;
 	so.adaptiveRunAhead = !a.fixedRunAhead;
@@ -690,11 +749,23 @@ int main(int argc, char **argv)
 		std::uint32_t hash, rng;
 	};
 	std::vector<FrameHash> hashes;
+	std::vector<std::string> checkpoints; // lane MP-3 (review r1): "self_destruct_checkpoint" lines (written on the simulation owner, read after the drain)
+	std::map<int, int> slotOfPlayer;
 	{
 		const int me = session.config().slotPlayerIndex[(size_t)lobby.localSlot];
 		const long long at = a.injectFrame;
 		const int delay = a.workerDelayMs;
-		session.driver().setAfterFrame([me, at, delay, &hashes](GameLogic &logic) {
+		// lane MP-3 (review r1): the game slot of every player index (a transfer checkpoint names slots)
+		const LiveGame::Report lr0 = game.report();
+		for (int sl = 0; sl < MAX_SLOTS && (size_t)sl < lr0.startSlotPlayers.size(); ++sl)
+		{
+			const Player *p = game.logic().players().findPlayerWithName(lr0.startSlotPlayers[(size_t)sl]);
+			if (p && lobby.game.game.slots[sl].isOccupied())
+			{
+				slotOfPlayer[p->getPlayerIndex()] = sl;
+			}
+		}
+		session.driver().setAfterFrame([me, at, delay, &hashes, &checkpoints, &slotOfPlayer](GameLogic &logic) {
 			if (at >= 0 && logic.getFrame() == (UnsignedInt)at)
 			{
 				// the injected divergence: one more unit of money on this peer only (as a desync bug would)
@@ -706,6 +777,25 @@ int main(int argc, char **argv)
 				rng = (rng ^ w) * 0x01000193u;
 			}
 			hashes.push_back({ logic.getFrame(), logic.computeStateHash(), rng });
+			// lane MP-3 (review r1): right after the frame that executed a MSG_SELF_DESTRUCT { TRUE }: who got the army, and whether every transferred object
+			// is the ally's now
+			const auto &log = SelfDestruct::stats().transferLog;
+			while (checkpoints.size() < log.size())
+			{
+				const SelfDestruct::Stats::Transfer &t = log[checkpoints.size()];
+				size_t owned = 0;
+				for (ObjectID id : t.objects)
+				{
+					const Object *o = logic.findObjectByID(id);
+					owned += o && o->getControllingPlayer() && o->getControllingPlayer()->getPlayerIndex() == t.ally ? 1 : 0;
+				}
+				auto slotOf = [&](int player) {
+					const auto it = slotOfPlayer.find(player);
+					return it == slotOfPlayer.end() ? -1 : it->second;
+				};
+				checkpoints.push_back("frame " + std::to_string(logic.getFrame()) + " leaver_slot " + std::to_string(slotOf(t.leaver)) + " ally_slot "
+					+ std::to_string(slotOf(t.ally)) + " transferred " + std::to_string(t.objects.size()) + " ally_owned " + std::to_string(owned));
+			}
 			if (delay > 0)
 			{
 				NetSleepMilliseconds((std::uint32_t)delay); // SMOOTH-1: a slow simulation owner (the protocol owner keeps pumping)
@@ -728,6 +818,9 @@ int main(int argc, char **argv)
 	// lane MP-2: a frame may wait for the disconnect path (the screen after NetworkDisconnectTime, the drop after NetworkPlayerTimeoutTime)
 	const std::uint64_t noProgressMs = 30000u + (std::uint64_t)so.network.disconnectTime + (std::uint64_t)so.network.playerTimeoutTime;
 	std::string disconnectQuit;
+	std::vector<std::string> blackoutLog; // lane MP-3
+	long long quitAtFrame = -1;
+	std::uint64_t lastAdvance = NetMilliseconds();
 	while ((int)game.protocolFrame() < a.frames)
 	{
 		session.service();
@@ -755,6 +848,16 @@ int main(int argc, char **argv)
 			}
 			std::fflush(stdout);
 			std::_Exit(0);
+		}
+		if (a.quitAt >= 0 && (long long)game.protocolFrame() >= a.quitAt)
+		{
+			// lane MP-3: the quit menu's Exit of a network game (RW 0x9218A4: MSG_SELF_DESTRUCT { TRUE } of the local player in the message stream); the
+			// leave follows in session.finish, after it
+			GameMessage m(MSG_SELF_DESTRUCT, myPlayer);
+			m.appendBooleanArgument(true);
+			game.commands().append(m);
+			quitAtFrame = (long long)game.protocolFrame();
+			break;
 		}
 		if (session.quitRequested())
 		{
@@ -810,6 +913,15 @@ int main(int argc, char **argv)
 			}
 		}
 		const UnsignedInt pf = game.protocolFrame();
+		for (auto &bo : a.blackouts)
+		{
+			if (bo.first >= 0 && pf >= (UnsignedInt)bo.first)
+			{
+				session.transport().impairment().blackout(NetMilliseconds(), (std::uint64_t)bo.second); // lane MP-3: the cable is pulled
+				blackoutLog.push_back("frame " + std::to_string(pf) + " for " + std::to_string(bo.second) + " ms");
+				bo.first = -1;
+			}
+		}
 		if (a.pauseAt >= 0 && pf >= (UnsignedInt)a.pauseAt)
 		{
 			// SMOOTH-1: a pause: presentation-only advances; the transport keeps being pumped and no batch is acquired
@@ -835,11 +947,23 @@ int main(int argc, char **argv)
 			game.setLogicThread(!game.logicThread());
 			a.toggleThreadAt = -1;
 		}
-		const int ran = game.advance((double)a.stepMs / 1000.0);
+		double step = (double)a.stepMs / 1000.0;
+		if (a.paced)
+		{
+			// lane MP-3: a client's render loop: the real time since the last advance (the logic's 5 Hz clock decides when a frame is due)
+			const std::uint64_t t = NetMilliseconds();
+			step = (double)(t - lastAdvance) / 1000.0;
+			lastAdvance = t;
+		}
+		const int ran = game.advance(step);
+		if (a.paced)
+		{
+			NetSleepMilliseconds(5);
+		}
 		if (ran > 0)
 		{
 			lastProgress = NetMilliseconds();
-			if (a.realtime)
+			if (a.realtime && !a.paced)
 			{
 				NetSleepMilliseconds((std::uint32_t)a.stepMs);
 			}
@@ -874,6 +998,16 @@ int main(int argc, char **argv)
 			NetSleepMilliseconds(2);
 		}
 	}
+	if (!a.census.empty())
+	{
+		// lane MP-3: the census CSV (frame = the logic frame after the batch ran)
+		std::ofstream c(a.census, std::ios::binary | std::ios::trunc);
+		c << "frame,sim_us,battalions,troops,objects\n";
+		for (const LockstepDriver::CensusRow &row : session.driver().censusLog())
+		{
+			c << row.frame << "," << row.simUs << "," << row.battalions << "," << row.troops << "," << row.objects << "\n";
+		}
+	}
 	// ---- report ----
 	const Network &net = session.network();
 	std::ostringstream r;
@@ -881,6 +1015,10 @@ int main(int argc, char **argv)
 	r << "slot " << lobby.localSlot << "\n";
 	r << "player " << myPlayer << "\n";
 	r << "frames " << game.frame() << "\n";
+	if (quitAtFrame >= 0)
+	{
+		r << "quit_at " << quitAtFrame << "\n"; // lane MP-3
+	}
 	r << "logic_threads " << JobSystem::logic().threadCount() << "\n";
 	std::snprintf(b, sizeof(b), "final_hash 0x%08X\n", game.logic().computeStateHash());
 	r << b;
@@ -905,8 +1043,37 @@ int main(int argc, char **argv)
 	r << "seconds " << (double)(NetMilliseconds() - runStart) / 1000.0 << "\n";
 	const Transport::Stats &ts = session.transport().stats();
 	r << "transport packets_sent " << ts.packetsSent << " received " << ts.packetsReceived << " resent " << ts.commandsResent << " dropped " << ts.dropped
-	  << " bad " << ts.badPackets << " duplicates " << ts.duplicates << " fragmented " << ts.fragmentedCommands << " send_errors " << ts.sendErrors << "\n";
+	  << " bad " << ts.badPackets << " duplicates " << ts.duplicates << " fragmented " << ts.fragmentedCommands << " send_errors " << ts.sendErrors << " fast_resends " << ts.fastResends << "\n";
 	r << "transport_unacked " << session.transport().unackedRecords() << "\n";
+	{
+		// lane MP-3: the harness's faults and what they did; the smoothness (wall clock, protocol owner)
+		const NetImpairment &im = session.transport().impairment();
+		r << "impairment_config faults " << im.config().all.text() << " seed " << im.config().seed << "\n";
+		for (int sl = 0; sl < MAX_SLOTS; ++sl)
+		{
+			if (im.config().linkSet[(size_t)sl])
+			{
+				r << "impairment_link " << sl << " " << im.config().link[(size_t)sl].text() << "\n";
+			}
+		}
+		r << "impairment " << im.statsText() << "\n";
+		for (const std::string &l : blackoutLog)
+		{
+			r << "blackout " << l << "\n";
+		}
+		const LockstepDriver::SmoothStats &sm = session.driver().smoothStats();
+		r << "input_latency_ms " << LockstepDriver::percentiles(sm.inputLatencyMs) << " unmatched " << sm.unmatchedCommands << "\n";
+		unsigned long long over100 = 0, over500 = 0, over1000 = 0, total = 0;
+		for (std::uint32_t v : sm.stallMs)
+		{
+			over100 += v >= 100 ? 1 : 0;
+			over500 += v >= 500 ? 1 : 0;
+			over1000 += v >= 1000 ? 1 : 0;
+			total += v;
+		}
+		r << "stall_ms " << LockstepDriver::percentiles(sm.stallMs) << " total " << total << " over100 " << over100 << " over500 " << over500 << " over1000 "
+		  << over1000 << "\n";
+	}
 	r << "peers_retired " << ts.peersRetired << "\n";
 	r << "profile " << w.profile.digest << "\n";
 	r << "engine_id " << ProfileIdentity::buildId() << " (provenance " << ProfileIdentity::gitProvenance() << ")\n";
@@ -996,8 +1163,16 @@ int main(int argc, char **argv)
 		}
 		r << "disconnected_slots " << (disc.empty() ? "none" : disc) << "\n";
 		r << "frames_resent " << net.framesResent() << " filled " << net.framesFilledFromResend() << "\n";
+		// lane MP-3 (review r1): the packet router of the last frame this peer ran (after a router's leave or drop, its successor), then the one now (the
+		// leaves at the end of the game may have passed the role on again)
+		r << "packet_router " << net.packetRouterAt(game.frame() > 0 ? game.frame() - 1 : 0) << " at_frame " << (game.frame() > 0 ? game.frame() - 1 : 0) << " now "
+		  << net.packetRouterSlot() << "\n";
 		r << "run_ahead " << net.currentRunAhead() << " changes " << net.runAheadChanges() << " worst_latency_ms " << net.maxRoundTripMs() << "\n";
 		const SelfDestruct::Stats &sd = SelfDestruct::stats();
+		for (const std::string &cp : checkpoints)
+		{
+			r << "self_destruct_checkpoint " << cp << "\n";
+		}
 		r << "self_destruct executed " << sd.executed << " transfers " << sd.transfers << " kills " << sd.kills << " objects " << sd.objectsTransferred
 		  << " upgrades " << sd.upgradesTransferred << "\n";
 		for (const std::string &l : dm.log())
@@ -1019,6 +1194,11 @@ int main(int argc, char **argv)
 				n += o->getControllingPlayer() == p && !o->isEffectivelyDead() ? 1 : 0;
 			}
 			r << "slot_objects " << sl << " " << n << " defeated " << (p->isDefeated() ? 1 : 0) << "\n";
+			// lane MP-3: what the score screen shows of the slot (ScoreKeeper, RW 0x79DFFA's score at this frame): equal on every peer
+			const ScoreKeeper &sk = p->getScoreKeeper();
+			r << "score " << sl << " " << sk.computeScore(w.settings, game.frame()) << " units_built " << sk.unitsBuilt() << " units_lost " << sk.unitsLost()
+			  << " units_destroyed " << sk.totalUnitsDestroyed() << " structures_built " << sk.structuresBuilt() << " structures_lost " << sk.structuresLost()
+			  << " units_alive " << sk.unitsAlive() << " structures_alive " << sk.structuresAlive() << " money_earned " << sk.moneyEarned() << "\n";
 		}
 	}
 	for (const std::string &st : Network::stopLines())
@@ -1028,6 +1208,10 @@ int main(int argc, char **argv)
 	for (const std::string &st : DisconnectManager::stopLines())
 	{
 		r << "stop " << st << "\n";
+	}
+	for (const std::string &st : NetImpairment::stopLines())
+	{
+		r << "stop " << st << "\n"; // lane MP-3
 	}
 	session.service(); // lane MP-2: the desync dumps with every half that arrived
 	for (const std::string &dump : session.desyncDumps())

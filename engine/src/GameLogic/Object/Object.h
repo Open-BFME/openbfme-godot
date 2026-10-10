@@ -175,6 +175,13 @@ public:
 	bool attemptHealingFromSoleBenefactor(float amount, const Object *source, UnsignedInt duration);
 	ObjectID soleHealingBenefactor() const { return m_soleHealingBenefactorID; }
 	UnsignedInt soleHealingBenefactorExpiry() const { return m_soleHealingBenefactorExpiry; }
+	// lane DECOMP-1: RW 0x68C234 setShroudClearingRange: Object + 0x1B4 (the template's ShroudClearingRange until set) takes the value when it differs and the
+	// shroud record is marked dirty, forced (RW 0x68C213 -> 0xB4E2A0); RW 0x68C7E9 updateShroudNow: the record leaves the dirty list and is processed at once
+	// (RW 0xB4F410 -> 0xB4EF50). BFME2 decomp ObjectSetShroudClearingRange.cpp / Object_bfmeRefreshPartitionCells.cpp, tier A for both
+	void setShroudClearingRange(float range);
+	void updateShroudNow();
+	bool hasShroudClearingRange() const { return m_hasShroudClearingRange; }
+	float shroudClearingRangeOverride() const { return m_shroudClearingRange; }
 	// RW 0x697EB6 Object::updatePendingDamage: the pending hits' delays count down one per frame, a hit whose delay went below 0 applies (list order)
 	void updatePendingDamage();
 	size_t pendingDamageCount() const;
@@ -223,6 +230,11 @@ public:
 			onConstructionStatusChanged();
 		}
 	}
+	// lane DECOMP-1: RW 0x694569 (BFME2 decomp ObjectConditionAndPassengerWeaponSet.cpp Object::rva00293D3B, tier B same-shape; RW 0x748650 wraps it for one
+	// bit): the object's horde (RW 0x693A1A(0)) changes the bit on every member of its horde interface's list (RW 0x68C866 slot 0x108, list order), then on
+	// itself; a horde without that interface changes nothing; an object outside a horde changes its own. Object + 0x475 (set by the destructor, RW 0x69A7B6)
+	// skips it all: an object being destroyed is never asked here
+	void setStatusAcrossHorde(unsigned bit, bool set);
 	// VIS-1: RW 0x68C18F (the shroud record is marked dirty, forced) when the construction status changes (the clearing range follows it, RW 0x68E4E2)
 	void onConstructionStatusChanged();
 	bool isDestroyed() const { return testStatus(OBJECT_STATUS_DESTROYED); }
@@ -231,9 +243,18 @@ public:
 	// the template's KindOf by the binary's own name table (-1 when the name is not in it); for callers that do not hold a bit number
 	bool isKindOfName(const char *name) const;
 	DisabledMaskType getDisabledMask() const { return m_disabled; }
-	// ZH Object::setDisabled / clearDisabled (the timed form: the type is cleared by checkDisabledStatus when `untilFrame` passes)
+	// RW 0x6907F1 setDisabledUntil (lane DECOMP-1; BFME2 decomp attempt 0x00290114.cpp, tier B edited, read in RotWK): nothing when untilFrame <= now; a new
+	// expiry: a type other than HELD that was not set pauses every special power countdown (RW 0x68B961(1): module slot 0x20 -> slot 0x24), the expiry and the bit
+	// are stored, USER_PARALYZED / USER_FROZEN set model condition PARALYZED (529, + 0x14C bit 17) when clear (and notify, RW 0x68B53C); the contain's rider
+	// (slot 0x120) gets the same. The audio of EMP / UNMANNED / UNDERPOWERED and the drawable's tint are the client's; the radar / energy edge RW 0x68BF75 has no
+	// ported consumer. RW 0x692432 (forever) is untilFrame UPDATE_SLEEP_FOREVER (0x3FFFFFFF).
 	void setDisabled(unsigned type, UnsignedInt untilFrame);
+	// RW 0x692443: a set type: other than HELD resumes the countdowns (RW 0x68B961(0)), a rider held forever by it is cleared too, the expiry and the bit go,
+	// USER_PARALYZED / USER_FROZEN clear PARALYZED (and notify), then checkDisabledStatus runs
 	void clearDisabled(unsigned type);
+	bool isDisabledByType(unsigned type) const { return type < DISABLED_TYPE_COUNT && (m_disabled & (1u << type)) != 0; }
+	// RW 0x68B961: every module's special power interface pauses (true) or resumes (false) its countdown
+	void pauseAllSpecialPowers(bool pause);
 	// lane SCRIPT-2: the script status byte (RW Object + 0x457, ZH ObjectScriptStatusBit: 1 SCRIPT_DISABLED, 2 SCRIPT_UNPOWERED, 4 SCRIPT_UNSELLABLE,
 	// 8 SCRIPT_UNSTEALTHED, 0x10 SCRIPT_TARGETABLE). RW 0x69317D: a change of bit 1 / bit 2 sets or clears the disabled type 9 (DISABLED_SCRIPT_DISABLED) /
 	// 10 (DISABLED_SCRIPT_UNDERPOWERED) forever
@@ -488,6 +509,8 @@ private:
 	ObjectID m_builderID = INVALID_ID;                ///< RW + 0x7C (BUILD-2)
 	ObjectID m_soleHealingBenefactorID = INVALID_ID;  ///< RW + 0x3D4 (BUILD-2)
 	UnsignedInt m_soleHealingBenefactorExpiry = 0;    ///< RW + 0x3D8 (BUILD-2)
+	bool m_hasShroudClearingRange = false;            ///< lane DECOMP-1: RW + 0x1B4 was set (else it holds the template's ShroudClearingRange)
+	float m_shroudClearingRange = 0.0f;               ///< RW + 0x1B4 once set
 	UnsignedInt m_radarAttackFrame = 0xFFFFFFFFu;     ///< lane RADAR-1 (radarAttackFrame)
 	ObjectClientHooks *m_client = nullptr; ///< SMOOTH-1: set by friend_bindToClient (no Drawable pointer in the simulation)
 

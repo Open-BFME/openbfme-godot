@@ -79,6 +79,7 @@ bool NetGameSession::begin(LiveGame &game, std::string *error)
 		}
 	}
 	m_driver = std::make_unique<LockstepDriver>(m_network.get(), m_writer.get());
+	m_driver->setCensus(m_options.census); // lane MP-3: before the driver is installed (its capture is read then)
 	RegisterLogicCRCHandler(game.dispatch());
 	game.setFrameDriver(m_driver.get());
 	m_game = &game;

@@ -321,13 +321,9 @@ void HordeContain::createPayload()
 			}
 		}
 	}
-	// B1: for an object with no producer the members are destroyed down to (100 - m_damagePercent)% (a horde produced damaged). The data field is
-	// OpenContain DamagePercentToUnits (a fraction after parsePercentToReal); how the runtime int at B1 +0x200 is derived from it is not
-	// recovered, so a template that sets it is reported instead of guessed (S-149)
-	if (m_data->horde.m_transport.m_open.m_damagePercentToUnits != 0.0f)
-	{
-		logic.reportError("HordeContain of " + horde->getTemplate()->getName() + ": DamagePercentToUnits is set; the member trimming of createPayload is not ported (S-149)");
-	}
+	// RW 0x871C10 .. 0x871CB4 (lane DECOMP-1; BFME2 decomp HordeContainRva0046E8EE.cpp, tier B same-shape): an unproduced horde destroys (int)((100 - H) * 0.01 *
+	// count) of its members that have a body, H being HordeContain + 0x2A8. Its only writer is the constructor (RW 0x872972: 100; a scan of every
+	// `mov [reg + 0x2A8]` in RotWK's .text finds no other HordeContain one), so the count is 0 and nothing is destroyed whatever DamagePercentToUnits says
 	applyFormationModifiers(); // lane COMBAT-3: RW 0x871D2C, the end of the payload (an unproduced horde only): interface slot 0x1E4
 }
 

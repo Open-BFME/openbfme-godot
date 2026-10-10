@@ -7,6 +7,10 @@
 #include "GameNetwork/Transport.h"
 #include "GodotDevice/GodotPackedTexture.h"
 #include "GodotDevice/GodotAptView3D.h"
+#include "Common/INI.h"
+#include "Common/INI/INIBlockStubs.h"
+#include "Common/INIException.h"
+#include "GameClient/GameLODManager.h"
 #include "GameClient/OptionPreferences.h"
 
 #include "GameClient/AptCanvas.h"
@@ -561,6 +565,7 @@ struct ShellMode
 	ShellEnvironment environment;
 	PlayerStatusInfo playerStatus; // lane HUD-5: the players screen's Status rows
 	OptionPreferences options; // lane UI-2: the user data folder's Options.ini
+	GameLODManager gameLOD;    // lane PLAY-2: GameLOD.ini's StaticGameLOD presets (the Options screen's advanced page)
 	AptScreenFactoryTable factories;
 	GadgetSkinData skins;
 	std::unique_ptr<WindowManager> wm;
@@ -1076,6 +1081,27 @@ Dictionary AptMenuPlayer::boot_shell(const Ref<RetailFileSystem> &fs, Object *wo
 	sm->environment.optionsFile = toNative(OS::get_singleton()->get_user_data_dir()) + "/Options.ini";
 	sm->options.load(sm->environment.optionsFile);
 	sm->environment.options = &sm->options;
+	// lane PLAY-2: Data\INI\GameLOD.ini (RW 0x7F995C): StaticGameLOD for the Options screen's advanced page; its other blocks are read past
+	{
+		INIEnvironment env;
+		env.fileSystem = fs->archive_fs();
+		INIBlockRecorder recorder;
+		RegisterRecordingBlockStubs(env.blocks, recorder, { "StaticGameLOD" }, StubExtent::Lenient);
+		sm->gameLOD.registerBlocks(env.blocks);
+		try
+		{
+			INI ini(env);
+			for (const std::string &file : GameLODManager::loadOrder())
+			{
+				ini.load(file, INI_LOAD_OVERWRITE);
+			}
+			sm->environment.gameLOD = &sm->gameLOD;
+		}
+		catch (const INIException &e)
+		{
+			errors.push_back(toGodot(std::string("GameLOD.ini: ") + e.what()));
+		}
+	}
 	sm->services.applyOption(OptionPreferences::kSoftParticles, sm->options.softParticles() ? "yes" : "no");
 	registerAptScreenFactories(sm->factories);
 	Impl *impl = m.get();

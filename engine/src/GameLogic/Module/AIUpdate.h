@@ -97,14 +97,20 @@ public:
 	void aiBusy(CommandSourceType source);
 	// ---- lane COMBAT-1: attack commands, the victim, the mood, death ----
 	// B1 aiAttackObject (AIUpdate.cpp privateAttackObject): clears the machine and enters AI_ATTACK_OBJECT with the victim as the goal; false when this object cannot attack it
-	bool aiAttackObject(Object *victim, CommandSourceType source);
+	// `maxShotsToFire`: the command's shot limit (AICommandParms m_intValue, RW 0x66C536), set on the current weapon once the state is entered
+	bool aiAttackObject(Object *victim, CommandSourceType source, int maxShotsToFire = 0x7FFFFFFF);
 	bool aiForceAttackObject(Object *victim, CommandSourceType source);
+	// lane PLAY-2: aiAttackPosition (RW 0x6961F1, AICommandType 0xE) -> privateAttackPosition (RW 0x66DE02; BFME2 decomp
+	// AIUpdateInterfacePrivateCommands.cpp:AIUpdateInterface::privateAttackPosition, tier B "edited": the RotWK differences are offsets and branch targets).
+	// The unit attacks the ground at `pos` (state AI_ATTACK_POSITION) firing at most `maxShotsToFire` shots; a weapon with a ContinueAttackRange first looks
+	// for an object it can attack near the spot and attacks it instead. False when the order is refused or skipped
+	bool aiAttackPosition(const Coord3D &pos, int maxShotsToFire, CommandSourceType source);
 	// ZH AIUpdateInterface::getCurrentVictim / setCurrentVictim / notifyVictimIsDead
 	Object *currentVictim() const;
 	ObjectID currentVictimId() const { return m_currentVictim; }
 	void setCurrentVictim(Object *victim);
 	void notifyVictimIsDead() { m_currentVictim = INVALID_ID; }
-	// the machine is in an attack state (AI_ATTACK_OBJECT / AI_FORCE_ATTACK_OBJECT)
+	// the machine is in an attack state (AI_ATTACK_OBJECT / AI_FORCE_ATTACK_OBJECT / AI_ATTACK_POSITION)
 	// the module is being destroyed: the machine's exits run on an object whose drawable the world hooks already removed (they must not touch its model condition)
 	bool isDestroying() const { return m_destroying; }
 	bool isAttacking() const;

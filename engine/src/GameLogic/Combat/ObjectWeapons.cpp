@@ -10,9 +10,11 @@
 #include "Common/PlayerList.h"
 #include "Common/StateHash.h"
 #include "Common/Thing/ThingTemplate.h"
+#include "GameLogic/AI/TurretAI.h"
 #include "GameLogic/Combat/CombatNames.h"
 #include "GameLogic/Combat/CombatQueries.h"
 #include "GameLogic/Combat/CombatState.h"
+#include "GameLogic/Combat/WeaponDelivery.h"
 #include "GameLogic/GameLogic.h"
 #include "GameLogic/Module/AIUpdate.h"
 #include "GameLogic/Module/InvisibilityModules.h"
@@ -262,7 +264,7 @@ void ObjectWeapons::fireExtraWeapon(Weapon &w, Object &victim)
 	args.target.hasVictim = true;
 	args.target.victimID = victim.getID();
 	args.target.victimPosition = *victim.getPosition();
-	ObjectWeaponDelivery delivery(*m_owner, *this, *w.getTemplate());
+	ObjectWeaponDelivery delivery(*m_owner, *this, *w.getTemplate(), w);
 	w.privateFireWeapon(host(), delivery, args);
 }
 
@@ -277,8 +279,50 @@ void ObjectWeapons::fireExtraWeaponAt(Weapon &w, const Coord3D &pos)
 	args.target.hasVictim = false;
 	args.target.victimPosition = pos;
 	args.ignoreRanges = true; // RW 0x6CF3D2 pushes argument 6 = 1
-	ObjectWeaponDelivery delivery(*m_owner, *this, *w.getTemplate());
+	ObjectWeaponDelivery delivery(*m_owner, *this, *w.getTemplate(), w);
 	w.privateFireWeapon(host(), delivery, args);
+}
+
+// RW 0x6CF530 / 0x6CF590 (see ObjectWeapons.h)
+void ObjectWeapons::fireTempWeapon(const WeaponTemplate *t, Object *source, const WeaponShotTarget &target)
+{
+	if (!t || !source)
+	{
+		return;
+	}
+	std::unique_ptr<ObjectWeapons> ownHost;
+	ObjectWeapons *host = source->getWeapons();
+	if (!host)
+	{
+		ownHost = std::make_unique<ObjectWeapons>(*source);
+		host = ownHost.get();
+	}
+	const std::uint32_t now = source->logic().getFrame();
+	Weapon w(t, PRIMARY_WEAPON, now); // RW 0x68AA81 allocateNewWeapon(t, PRIMARY)
+	w.setOwnerID(source->getID());
+	w.loadAmmoNow(host->host());      // RW 0x6CE1AC
+	w.setLeechRangeDeadline(now + 1u); // RW 0x6CF56F
+	Weapon::FireArgs args;
+	args.target = target;
+	ObjectWeaponDelivery delivery(*source, *host, *t, w); // the temporary weapon is PRIMARY
+	w.privateFireWeapon(host->host(), delivery, args); // RW 0x6CE6E8 / 0x6CE6C5 -> RW 0x6CEF6D
+}
+
+void ObjectWeapons::createAndFireTempWeapon(const WeaponTemplate *t, Object *source, const Coord3D &pos)
+{
+	WeaponShotTarget target;
+	target.hasVictim = false;
+	target.victimPosition = pos;
+	fireTempWeapon(t, source, target);
+}
+
+void ObjectWeapons::createAndFireTempWeaponAt(const WeaponTemplate *t, Object *source, Object &victim)
+{
+	WeaponShotTarget target;
+	target.hasVictim = true;
+	target.victimID = victim.getID();
+	target.victimPosition = *victim.getPosition();
+	fireTempWeapon(t, source, target);
 }
 
 std::unique_ptr<Weapon> ObjectWeapons::makeExtraWeapon(const WeaponTemplate *t)
@@ -505,7 +549,7 @@ bool ObjectWeapons::hasAnyDamageWeapon() const
 		}
 		for (const std::shared_ptr<WeaponNugget> &n : w->getTemplate()->m_nuggets)
 		{
-			if (n->kind() == NUGGET_DAMAGE || n->kind() == NUGGET_PROJECTILE)
+			if (n->kind() == NUGGET_DAMAGE || n->kind() == NUGGET_DOT || n->kind() == NUGGET_PROJECTILE) // DOT: asDamageNugget (slot 10 RW 0x8CEF91) answers `this` as for DamageNugget
 			{
 				return true;
 			}
@@ -592,26 +636,53 @@ void ObjectWeapons::reloadAllAmmo(bool now)
 // ---------------------------------------------------------------------------------------------------------------------------------
 // choosing
 // ---------------------------------------------------------------------------------------------------------------------------------
+// RW 0x6C85CA getVictimAntiMask (lane DECOMP-1; BFME2 decomp WeaponSetSetWeaponLock.cpp getVictimAntiMask, tier A): the victim template's KindOf words decide:
+// MINE 0x12, SMALL_MISSILE 8, BALLISTIC_MISSILE 0x40, PROJECTILE 4; an AIRBORNE_TARGET (status 6): CAVALRY 1, INFANTRY 0x20, MONSTER 0x200, PARACHUTE 0x80, else 0;
+// on the ground: STRUCTURE 0x102 (GROUND | STRUCTURE), else 2 (GROUND)
 unsigned ObjectWeapons::victimAntiMask(const Object &victim)
 {
-	const CombatNames::Kind &k = CombatNames::kinds();
-	if (victim.isKindOf((unsigned)k.aircraft))
+	static const int kMine = CombatNames::kindOf("MINE"), kSmallMissile = CombatNames::kindOf("SMALL_MISSILE"), kBallistic = CombatNames::kindOf("BALLISTIC_MISSILE"),
+	                 kProjectile = CombatNames::kindOf("PROJECTILE"), kCavalry = CombatNames::kindOf("CAVALRY"), kInfantry = CombatNames::kindOf("INFANTRY"),
+	                 kMonster = CombatNames::kindOf("MONSTER"), kParachute = CombatNames::kindOf("PARACHUTE"), kStructure = CombatNames::kindOf("STRUCTURE");
+	static const int kAirborne = CombatNames::status("AIRBORNE_TARGET");
+	auto is = [&](int k) { return k >= 0 && victim.isKindOf((unsigned)k); };
+	if (is(kMine))
 	{
-		return WEAPON_ANTI_AIRBORNE_VEHICLE;
+		return WEAPON_ANTI_MINE | WEAPON_ANTI_GROUND;
 	}
-	if (victim.isKindOf((unsigned)k.projectile))
+	if (is(kSmallMissile))
+	{
+		return WEAPON_ANTI_SMALL_MISSILE;
+	}
+	if (is(kBallistic))
+	{
+		return WEAPON_ANTI_BALLISTIC_MISSILE;
+	}
+	if (is(kProjectile))
 	{
 		return WEAPON_ANTI_PROJECTILE;
 	}
-	if (victim.isKindOf((unsigned)k.mine))
+	if (kAirborne >= 0 && victim.testStatus((unsigned)kAirborne))
 	{
-		return WEAPON_ANTI_MINE;
+		if (is(kCavalry))
+		{
+			return WEAPON_ANTI_AIRBORNE_VEHICLE;
+		}
+		if (is(kInfantry))
+		{
+			return WEAPON_ANTI_AIRBORNE_INFANTRY;
+		}
+		if (is(kMonster))
+		{
+			return WEAPON_ANTI_AIRBORNE_MONSTER;
+		}
+		if (is(kParachute))
+		{
+			return WEAPON_ANTI_PARACHUTE;
+		}
+		return 0;
 	}
-	if (victim.isKindOf((unsigned)k.structure))
-	{
-		return WEAPON_ANTI_GROUND | WEAPON_ANTI_STRUCTURE; // a weapon with either class can hit a building (inference: a sword with the default AntiGround hits one)
-	}
-	return WEAPON_ANTI_GROUND;
+	return is(kStructure) ? (WEAPON_ANTI_GROUND | WEAPON_ANTI_STRUCTURE) : WEAPON_ANTI_GROUND;
 }
 
 float ObjectWeapons::estimateWeaponDamage(const Weapon &weapon, const Object &victim) const
@@ -627,7 +698,7 @@ float ObjectWeapons::estimateWeaponDamage(const Weapon &weapon, const Object &vi
 	{
 		for (const std::shared_ptr<WeaponNugget> &n : source->m_nuggets)
 		{
-			if (n->kind() == NUGGET_DAMAGE)
+			if (n->kind() == NUGGET_DAMAGE || n->kind() == NUGGET_DOT) // DOTNugget is a DamageNugget (slot 10 RW 0x8CEF91 answers `this`; lane DECOMP-1)
 			{
 				dn = static_cast<const DamageNugget *>(n.get());
 				break;
@@ -661,36 +732,101 @@ float ObjectWeapons::estimateWeaponDamage(const Weapon &weapon, const Object &vi
 	return victim.getBodyModule()->estimateDamage(in);
 }
 
-// ZH WeaponSet::chooseBestWeaponForTarget, RotWK RW 0x6C8A4E (one real draw per candidate: WeaponSet.cpp:1478)
-bool ObjectWeapons::chooseBestWeaponForTarget(const Object *victim, WeaponChoiceCriteria criteria, CommandSourceType source)
+const char *ObjectWeapons::choiceStopLine()
 {
+	return "[S-1582] weapon choice: RW 0x6C8A4E is ported (lane DECOMP-1: criteria 0 .. 5, ReadyStatusSharedWithinSet, the victimless pick, the 1 / 0 score of canDamage RW 0x6CDBF3 "
+	       "through each nugget's isApplicable, the range error, OnlyAgainst / PreferredAgainst / OnlyInCondition, the turret aim gate RW 0x662398 on GARRISON-2's TurretAI); "
+	       "NOT ported: calcPitches RW 0xAD2620 for a pitch-limited weapon (taken as within; no retail weapon limits its pitch), CannotTargetCastleVictims' test (no retail weapon "
+	       "sets it), SlaveAttackNugget's isApplicable (RW 0x910DCF asks the unported SlaveWatcherBehavior: "
+	       "the base test RW 0x90D77C stands in), DamageContainedNugget's contain slot 0x1C (taken as false); INFERENCE: HordeAttackNugget's member (RW 0x9119CB, horde slots 0x50 / 0x114) is the first living one";
+}
+
+// RW 0x6CDBF3 Weapon::canDamage (lane DECOMP-1, tier A): no template, or OUT_OF_AMMO with AutoReloadsClip set: false; CannotTargetCastleVictims (+ 0x168: a victim
+// with 16 attackers or more, then a castle partition test) is not ported (no retail weapon sets it: noted); then RW 0x6CB779 on the template's nuggets
+bool ObjectWeapons::canDamage(const Weapon &w, Object &victim) const
+{
+	const WeaponTemplate *t = w.getTemplate();
+	if (!t)
+	{
+		return false;
+	}
+	if (w.getStatus(const_cast<ObjectWeapons *>(this)->host()) == WEAPON_OUT_OF_AMMO && t->m_autoReloadsClip != AUTO_RELOAD)
+	{
+		return false;
+	}
+	if (t->m_cannotTargetCastleVictims)
+	{
+		m_owner->logic().noteStop("[S-1582] weapon choice: CannotTargetCastleVictims (RW 0x6CDC28 .. 0x6CDCCA: the victim's attacker count and the castle partition test) is not ported");
+	}
+	return WeaponTemplateAnyNuggetApplicable(m_owner->logic(), *t, m_owner->getID(), &victim);
+}
+
+// RW 0x6C8A4E WeaponSet::chooseBestWeaponForTarget (lane DECOMP-1; BFME2 decomp reverse/attempts/0x002c7d03.cpp, tier B same-shape: the RotWK body is BFME2's with the AI
+// at Object + 0x260; every step below was read from RotWK). Criteria 5 takes the set's DefaultWeaponChoiceCritera (+ 0x360). A locked weapon stays. With
+// ReadyStatusSharedWithinSet (+ 0x364) any weapon not READY_TO_FIRE keeps the current one. No victim: the first slot (0 .. 5) whose weapon is not OUT_OF_AMMO with
+// AutoReloadsClip, is not a MeleeWeapon (+ 0x125) and has NoVictimNeeded (+ 0x16B), else PRIMARY and false. Else slots 5 .. 0: the slot's auto-choose test
+// (RW 0x6C831C: WeaponSet + 0x36 + slot, only ever 0, or the set's AutoChooseSources bit), not BombardType (+ 0x170), OUT_OF_AMMO only with AutoReloadsClip
+// AUTO and IdleAfterFiringDelay (+ 0x78) negative, the victim anti mask (RW 0x6C85CA), the target pitch (RW 0x6CA9BF), canDamage (RW 0x6CDBF3) or DamageType
+// UNRESISTABLE; the score is 1 / 0 (canDamage), the range RW 0x6CA921 (getAttackRange at the victim's height), the range error (the distance for a MeleeWeapon,
+// else how far the 3D centre distance (RW 0x403111) lies outside [MinimumAttackRange, range]), the logic draw WeaponSet.cpp:1478 (RW 0x6C8CE2); ready =
+// READY_TO_FIRE or PRE_ATTACK, not below the minimum range and not a turret slot aiming (RW 0x662398: no turrets are ported, S-325); OnlyAgainst (+ 0xEC),
+// PreferredAgainst (+ 0x44), OnlyInCondition (+ 0x194) override them (-1 / 1e5 / 1e10 RW 0xBD19DC / 0xBDCF20 / 0xBF7328, the draw +- 1); then per criterion
+// (0 most damage >=, 1 longest range >, 2 PREFER_GRAB_OVER_DAMAGE: RW 0x6CA3DA wins at once else 0, 3 least movement <=, 4 random >) the ready best, else the
+// best that is not ready; none: PRIMARY and false
+bool ObjectWeapons::chooseBestWeaponForTarget(const Object *victimIn, WeaponChoiceCriteria criteria, CommandSourceType source)
+{
+	if (criteria == PREFER_TEMPLATE_DEFAULT)
+	{
+		criteria = m_set ? (WeaponChoiceCriteria)m_set->m_defaultWeaponChoiceCriteria : PREFER_MOST_DAMAGE; // RW 0x6C8A63
+	}
 	if (isCurWeaponLocked())
 	{
-		return true;
-	}
-	if (!victim)
-	{
-		m_curSlot = PRIMARY_WEAPON;
 		return true;
 	}
 	if (!m_set)
 	{
 		return false;
 	}
-	if (m_set->m_template[1] || m_set->m_template[2] || m_set->m_template[3] || m_set->m_template[4])
+	WeaponHost &h = host();
+	if (m_set->m_isReadyStatusSharedWithinSet)
 	{
-		// lane ANIM-1: a choice between weapons depends on the scoring of RW 0x6C8A4E that this port does not reproduce
-		static const std::string kStopChoice =
-			"[S-1582] weapon choice (lane ANIM-1): RW 0x6C8A4E is ported for PRE_ATTACK counting as ready (RW 0x6C8C72), OnlyAgainst (RW 0x6C8D21) and "
-			"OnlyInCondition (RW 0x6C8E39); not ported: its score is 1 / 0 (the weapon can damage the victim, RW 0x6CDBF3) where this port estimates the damage "
-			"(ZH), the range and distance-outside-range compares of the criteria 1 .. 4, the minimum range tests of the ready flag, the "
-			"template byte + 0x170 and RW 0x662398 filters, ReadyStatusSharedWithinSet (set + 0x364), the victimless branch (RW 0x6C8AA7: the first slot that is not out of ammo)";
-		m_owner->logic().noteStop(kStopChoice);
+		for (int i = 0; i < WEAPONSLOT_COUNT; ++i)
+		{
+			Weapon *w = weaponInSlot(i);
+			if (w && w->getStatus(h) != WEAPON_READY_TO_FIRE)
+			{
+				return true;
+			}
+		}
 	}
-	bool found = false, foundBackup = false;
-	float longestRange = 0.0f, bestDamage = 0.0f, longestRangeBackup = 0.0f, bestDamageBackup = 0.0f;
-	int decision = PRIMARY_WEAPON, decisionBackup = PRIMARY_WEAPON;
-	const unsigned victimMask = victimAntiMask(*victim);
+	if (!victimIn)
+	{
+		for (int i = 0; i < WEAPONSLOT_COUNT; ++i)
+		{
+			Weapon *w = weaponInSlot(i);
+			if (!w || !w->getTemplate())
+			{
+				continue;
+			}
+			const WeaponTemplate &t = *w->getTemplate();
+			if ((w->getStatus(h) != WEAPON_OUT_OF_AMMO || t.m_autoReloadsClip == AUTO_RELOAD) && !t.m_meleeWeapon && t.m_noVictimNeeded)
+			{
+				m_curSlot = i;
+				return true;
+			}
+		}
+		m_curSlot = PRIMARY_WEAPON;
+		return false;
+	}
+	Object &victim = *const_cast<Object *>(victimIn);
+	GameLogic &logic = m_owner->logic();
+	const float kBig = 1.0e10f;
+	struct Best
+	{
+		float damage = 0.0f, range = 0.0f, error = 1.0e10f, random = 0.0f;
+		int slot = PRIMARY_WEAPON;
+		bool found = false;
+	} ready, backup;
 	for (int i = WEAPONSLOT_COUNT - 1; i >= PRIMARY_WEAPON; --i)
 	{
 		Weapon *w = weaponInSlot(i);
@@ -698,148 +834,183 @@ bool ObjectWeapons::chooseBestWeaponForTarget(const Object *victim, WeaponChoice
 		{
 			continue;
 		}
-		const std::uint32_t okSources = m_set->m_autoChooseMask[i];
-		if ((okSources & (1u << (unsigned)source)) == 0)
+		if ((m_set->m_autoChooseMask[i] & (1u << (unsigned)source)) == 0) // RW 0x6C831C (WeaponSet + 0x36 is never set: only the ctor writes it)
 		{
 			continue;
 		}
-		const int status = w->getStatus(host());
 		const WeaponTemplate &t = *w->getTemplate();
-		if (status == WEAPON_OUT_OF_AMMO && t.m_autoReloadsClip != AUTO_RELOAD)
+		if (t.m_bombardType)
 		{
 			continue;
 		}
-		if (!(t.m_antiMask & victimMask))
+		const int status = w->getStatus(h);
+		if (status == WEAPON_OUT_OF_AMMO && (t.m_autoReloadsClip != AUTO_RELOAD || (std::int32_t)t.m_idleAfterFiringDelay >= 0))
 		{
 			continue;
 		}
-		float damage = estimateWeaponDamage(*w, *victim);
-		BonusRange br = bonusRangeOf(*w, *victim);
-		float attackRange = br.range;
-		// lane ANIM-1, TARGET RW 0x6C8C72 .. 0x6C8C82 (`status == 0 || status == 4`): a weapon in its PRE_ATTACK counts as ready, so the unit keeps the weapon
-		// whose wind-up it started. The port took READY_TO_FIRE alone (the ZH rule): a mountain troll began its punch (slot 0), the punch was no longer "ready"
-		// and the next frame chose its ready shoulder bash and struck at once, before the swing (FEEDBACK-2 G5). The rest of RW 0x6C8A4E's scoring is not
-		// this port's (S-1582)
-		bool ready = status == WEAPON_READY_TO_FIRE || status == WEAPON_PRE_ATTACK;
-		bool hordeWeapon = t.m_meleeWeapon;
-		for (const std::shared_ptr<WeaponNugget> &n : t.m_nuggets)
+		if ((t.m_antiMask & victimAntiMask(victim)) == 0)
 		{
-			hordeWeapon = hordeWeapon || n->kind() == NUGGET_HORDE_ATTACK;
+			continue;
 		}
-		if (damage <= 0.0f && t.m_damageType != DAMAGE_UNRESISTABLE && !hordeWeapon)
+		if (w->pitchLimited() && !(SimMath::absD((double)SimMath::sseSub(victim.getPosition()->z, m_owner->getPosition()->z)) < 10.0))
 		{
-			continue; // a weapon that does no damage cannot be chosen; a horde's rangefinder (a HordeAttackNugget or a MeleeWeapon without nuggets) is chosen for the range it gives (S-327)
+			logic.noteStop("[S-1582] weapon choice: the target pitch of a pitch-limited weapon (RW 0x6CA9BF -> calcPitches RW 0xAD2620) is not ported: taken as within");
 		}
-		(void)m_owner->logic().random().getValueReal(0.0f, 1.0f, kWeaponSetCpp, 1478); // RW 0x6C8CE2: the tiebreak draw (its use is not read: inference S-320)
-		bool preferred = false;
-		const KindOfMaskType &pref = m_set->m_preferredAgainst[i];
-		bool anyPref = false;
-		for (std::uint32_t word : pref)
+		const bool affects = canDamage(*w, victim);
+		if (!affects && t.m_damageType != DAMAGE_UNRESISTABLE)
 		{
-			anyPref = anyPref || word != 0;
+			continue;
 		}
-		if (anyPref)
+		const Coord3D &sp = *m_owner->getPosition();
+		const Coord3D &vp = *victim.getPosition();
+		const float dist = SimMath::fstpDword(SimMath::length3d(SimMath::sseSub(sp.x, vp.x), SimMath::sseSub(sp.y, vp.y), SimMath::sseSub(sp.z, vp.z)));
+		float damage = affects ? 1.0f : 0.0f;
+		float range = bonusRangeOf(*w, victim).range;  // RW 0x6CA921 -> 0x6CA8BD
+		const float minRange = WeaponTemplateMinimumRange(t); // RW 0x6CA2BB -> 0x6CA03E
+		bool isReady = status == WEAPON_READY_TO_FIRE || status == WEAPON_PRE_ATTACK;
+		float error = 0.0f;
+		if (t.m_meleeWeapon)
 		{
-			for (size_t wd = 0; wd < pref.size(); ++wd)
+			error = dist;
+		}
+		else if (minRange > dist)
+		{
+			error = SimMath::sseSub(minRange, dist);
+		}
+		else if (dist > range)
+		{
+			error = SimMath::sseSub(dist, range);
+		}
+		float random = logic.random().getValueReal(0.0f, 1.0f, kWeaponSetCpp, 1478); // RW 0x6C8CE2
+		// RW 0x6C8CF7: a slot on the owner's turret that is aiming at this victim (RW 0x662398: the AI's one turret, AI + 0x20C, isWeaponSlotOnTurret RW 0x8DC4ED
+		// then isTryingToAimAtTarget RW 0x8DCA19; lane DECOMP-1 r3, the turrets run since GARRISON-2), or a victim inside the minimum range, is not ready
+		AIUpdateInterface *ownerAI = m_owner->getAIUpdateInterface();
+		TurretAI *turret = ownerAI ? ownerAI->turret() : nullptr;
+		if ((turret && turret->isWeaponSlotOnTurret(i) && turret->isTryingToAimAtTarget(&victim)) || dist < minRange)
+		{
+			isReady = false;
+		}
+		auto anyBits = [](const auto &mask) {
+			for (std::uint32_t word : mask)
 			{
-				if (pref[wd] & victim->getKindOf()[wd])
+				if (word != 0)
 				{
-					preferred = true;
+					return true;
 				}
 			}
-		}
-		// lane ANIM-1, TARGET RW 0x6C8D21 .. 0x6C8DC3: OnlyAgainst (set + 0xEC + slot * 0x1C; any bit set, RW 0x6C824C): a victim of none of its KindOf
-		// (RW 0x70C548) scores -1 and is not ready, so the slot is never chosen (both bests start at 0); a victim it names scores 100000 (RW 0xBDCF20).
-		// The mountain troll's shoulder bash (OnlyAgainst = SECONDARY STRUCTURE BLOCKING_GATE) used to be chosen against infantry
-		const KindOfMaskType &only = m_set->m_onlyAgainst[i];
-		bool anyOnly = false;
-		for (std::uint32_t word : only)
-		{
-			anyOnly = anyOnly || word != 0;
-		}
-		if (anyOnly)
-		{
-			bool match = false;
-			for (size_t wd = 0; wd < only.size(); ++wd)
+			return false;
+		};
+		auto victimHasAny = [&](const KindOfMaskType &mask) { // RW 0x70C548
+			for (size_t wd = 0; wd < mask.size(); ++wd)
 			{
-				match = match || (only[wd] & victim->getKindOf()[wd]) != 0;
+				if (mask[wd] & victim.getKindOf()[wd])
+				{
+					return true;
+				}
 			}
-			damage = match ? 100000.0f : -1.0f;
-			attackRange = damage;
-			ready = match && status != WEAPON_OUT_OF_AMMO;
-		}
-		if (preferred)
+			return false;
+		};
+		const auto win = [&](float score) {
+			damage = score;
+			range = score;
+			error = 0.0f;
+			random = SimMath::sseAdd(random, 1.0f);
+			isReady = w->getStatus(h) != WEAPON_OUT_OF_AMMO && !(dist < minRange);
+		};
+		const auto lose = [&]() {
+			damage = -1.0f;
+			range = -1.0f;
+			error = kBig;
+			random = SimMath::sseSub(random, 1.0f);
+			isReady = false;
+		};
+		if (anyBits(m_set->m_onlyAgainst[i])) // RW 0x6C8D21
 		{
-			damage = 1e10f;
-			attackRange = 1e10f;
-			ready = status != WEAPON_OUT_OF_AMMO;
+			if (victimHasAny(m_set->m_onlyAgainst[i]))
+			{
+				win(100000.0f);
+			}
+			else
+			{
+				lose();
+			}
 		}
-		// lane ANIM-1, TARGET RW 0x6C8E39 .. 0x6C8EB0: OnlyInCondition (set + 0x194 + slot * 0x4C; any bit set, RW 0x4B3783): the owner's model conditions
-		// must hold every bit of it (RW 0x4CE8CA); otherwise -1 and not ready, else 1e10 (RW 0xBF7328). The troll's tertiary punch is OnlyInCondition MOVING
+		if (anyBits(m_set->m_preferredAgainst[i]) && victimHasAny(m_set->m_preferredAgainst[i])) // RW 0x6C8DC3
+		{
+			win(kBig);
+		}
 		const ModelConditionMask &cond = m_set->m_onlyInCondition[i];
-		bool anyCond = false, allCond = true;
-		for (size_t wd = 0; wd < cond.size(); ++wd)
+		if (anyBits(cond)) // RW 0x6C8E39 .. 0x6C8EB0 (RW 0x4CE8CA: every bit held)
 		{
-			anyCond = anyCond || cond[wd] != 0;
-			allCond = allCond && (m_owner->getModelConditionBits()[wd] & cond[wd]) == cond[wd];
-		}
-		if (anyCond)
-		{
-			damage = allCond ? 1e10f : -1.0f;
-			attackRange = damage;
-			ready = allCond && status != WEAPON_OUT_OF_AMMO;
-		}
-		if (criteria == PREFER_MOST_DAMAGE)
-		{
-			if (!ready)
+			bool all = true;
+			for (size_t wd = 0; wd < cond.size(); ++wd)
 			{
-				if (damage >= bestDamageBackup)
-				{
-					bestDamageBackup = damage;
-					decisionBackup = i;
-					foundBackup = true;
-				}
+				all = all && (m_owner->getModelConditionBits()[wd] & cond[wd]) == cond[wd];
 			}
-			else if (damage >= bestDamage)
+			if (all)
 			{
-				bestDamage = damage;
-				decision = i;
-				found = true;
+				win(kBig);
+			}
+			else
+			{
+				lose();
 			}
 		}
-		else
+		Best &b = isReady ? ready : backup;
+		bool take = false;
+		switch (criteria)
 		{
-			if (!ready)
+		case PREFER_GRAB_OVER_DAMAGE:
+			// RW 0x6CA3DA (lane DECOMP-1 r2): a weapon with a GrabNugget (+ 0x157) whose owner's contain accepts the victim (contain slot 0x98(victim, 1, 0)) wins at once:
+			// it becomes the choice and the loop ends (RW 0x6C8F33 .. 0x6C8F45: local_24 = -1); else the slot scores as PREFER_MOST_DAMAGE
+			if (t.m_hasGrabNugget && m_owner->getContain() && m_owner->getContain()->isValidContainerFor(victim, true, false))
 			{
-				if (attackRange > longestRangeBackup)
-				{
-					longestRangeBackup = attackRange;
-					decisionBackup = i;
-					foundBackup = true;
-				}
+				ready.damage = damage; // RW 0x6C8FC7: the ready best, whatever the readiness
+				ready.slot = i;
+				ready.found = true;
+				i = PRIMARY_WEAPON - 1; // the loop ends
+				continue;
 			}
-			else if (attackRange > longestRange)
+			take = b.damage <= damage;
+			break;
+		case PREFER_LONGEST_RANGE:
+			take = b.range < range;
+			break;
+		case PREFER_LEAST_MOVEMENT:
+			take = error <= b.error;
+			break;
+		case SELECT_AT_RANDOM:
+			take = b.random < random;
+			break;
+		default:
+			take = b.damage <= damage;
+			break;
+		}
+		if (take)
+		{
+			switch (criteria)
 			{
-				longestRange = attackRange;
-				decision = i;
-				found = true;
+			case PREFER_LONGEST_RANGE: b.range = range; break;
+			case PREFER_LEAST_MOVEMENT: b.error = error; break;
+			case SELECT_AT_RANDOM: b.random = random; break;
+			default: b.damage = damage; break;
 			}
+			b.slot = i;
+			b.found = true;
 		}
 	}
-	if (found)
+	if (ready.found)
 	{
-		m_curSlot = decision;
+		m_curSlot = ready.slot;
+		return true;
 	}
-	else if (foundBackup)
+	if (backup.found)
 	{
-		m_curSlot = decisionBackup;
-		found = true;
+		m_curSlot = backup.slot;
+		return true;
 	}
-	else
-	{
-		m_curSlot = PRIMARY_WEAPON;
-	}
-	return found;
+	m_curSlot = PRIMARY_WEAPON;
+	return false;
 }
 
 bool ObjectWeapons::canAttackObject(const Object &victim, CommandSourceType source, bool forced) const
@@ -1208,7 +1379,7 @@ bool ObjectWeapons::fireCurrentWeapon(Object *victim, const Coord3D *pos)
 	{
 		args.target.victimPosition = *pos;
 	}
-	ObjectWeaponDelivery delivery(*m_owner, *this, t);
+	ObjectWeaponDelivery delivery(*m_owner, *this, t, *w);
 	const bool reloaded = w->privateFireWeapon(host(), delivery, args);
 	if (reloaded || t.m_idleAfterFiringDelay == 0xFFFFFFFFu)
 	{

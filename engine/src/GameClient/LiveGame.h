@@ -302,7 +302,7 @@ private:
 	int advanceWithDriver(int due);               ///< protocol owner: completions, pump, acquire up to `due` batches (queued or run inline)
 	void consumeCompletions();                    ///< protocol owner: the published completions to the driver, in order
 	void installBatch(const FrameBatch &batch);   ///< simulation owner: the batch's commands into the command list before phase 1
-	std::shared_ptr<const FrameCompletion> captureCompletion(const WorkItem &item); ///< simulation owner, after the frame
+	std::shared_ptr<const FrameCompletion> captureCompletion(const WorkItem &item, std::int64_t simUs = -1); ///< simulation owner, after the frame
 
 	// lane SCRIPT-1: the sides' lists and libraries into the logic's ScriptEngine (before the map's objects exist)
 	bool setupMapScripts(const Options &options, const SidesList &sidesUsed, const std::set<std::string> &slotSides, std::string *error);

@@ -22,6 +22,7 @@ class ShellServices;
 struct SaveLoadInfo;
 class LANAPI;
 class OptionPreferences;
+class GameLODManager;
 struct PlayerStatusInfo;
 struct CreateAHeroScreenContext;
 
@@ -51,6 +52,7 @@ struct ShellEnvironment
 	QuitMenuContext *quitMenu = nullptr;      // lane END-2: the game QuitMenu.apt is opened over; null: no game (TheGameLogic null)
 	OptionPreferences *options = nullptr;     // lane UI-2: the player's Options.ini (GameClient/OptionPreferences.h); null: the Options screen saves nothing and says so
 	std::string optionsFile;                  // lane UI-2: where `options` is written (the user data folder's Options.ini)
+	const GameLODManager *gameLOD = nullptr;  // lane PLAY-2: GameLOD.ini's StaticGameLOD presets (the Options screen's advanced page); null: it says so
 	// lane FB7-1: what the Options screen's InitGadgets reads besides Options.ini (RW 0x9205C4)
 	bool haveDefaultVolumes = false;          // AudioSettings DefaultSoundVolume .. DefaultMovieVolume (TheAudio's settings + 0x1C .., RW 0x6E5FB3)
 	float defaultVolumes[5] = { 0, 0, 0, 0, 0 }; // SFX, Voice, Music, Ambient, Movie (0..1)

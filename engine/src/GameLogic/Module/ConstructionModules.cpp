@@ -5,6 +5,7 @@
 #pragma GCC diagnostic ignored "-Winvalid-offsetof"
 #endif
 
+#include "GameLogic/Combat/ObjectWeapons.h"
 #include "GameLogic/Module/ConstructionModules.h"
 
 #include "Common/Audio/AudioRequests.h"
@@ -726,9 +727,8 @@ UpdateSleepTime GettingBuiltBehavior::update()
 		m_healWeaponFired = true;
 		if (!m_data->m_healWeapon.empty())
 		{
-			// RW 0x857FAA: TheWeaponStore->createAndFireTempWeapon(HealWeapon, object, object position) (RW 0x6CF530). The port delivers the weapon's damage nuggets
-			// (HEALING ones heal) at the position from this object (DeliverNuggets, no bonus); the temporary Weapon's own steps (ammo, fire FX / sound, projectile
-			// nuggets) are not ported: counted kinds are noted (stop S-651). No retail template has a HealWeapon. A name the store lacks is an error (PLAN rule 10).
+			// RW 0x857FAA: TheWeaponStore->createAndFireTempWeapon(HealWeapon, object, object position) (RW 0x6CF530, ObjectWeapons::createAndFireTempWeapon since
+			// lane DECOMP-1). No retail template has a HealWeapon. A name the store lacks is an error (PLAN rule 10).
 			const WeaponTemplate *wt = TheWeaponStore ? TheWeaponStore->findWeaponTemplate(m_data->m_healWeapon) : nullptr;
 			if (!wt)
 			{
@@ -736,14 +736,9 @@ UpdateSleepTime GettingBuiltBehavior::update()
 			}
 			else
 			{
-				unsigned long long unported = 0;
 				const Coord3D at = *obj->getPosition();
-				DeliverNuggets(logic, obj->getID(), *wt, WeaponBonus{}, nullptr, &at, false, &unported);
+				ObjectWeapons::createAndFireTempWeapon(wt, obj, at); // RW 0x857FAA -> RW 0x6CF530 (lane DECOMP-1: the full temporary weapon)
 				++m_healWeaponShots;
-				if (unported)
-				{
-					logic.noteStop("[S-651] GettingBuiltBehavior: the HealWeapon '" + m_data->m_healWeapon + "' has nugget kinds the temporary weapon path does not deliver");
-				}
 			}
 		}
 	}

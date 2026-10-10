@@ -18,6 +18,7 @@
 #include "GameLogic/GameLogic.h"
 #include "GameLogic/Object/Contain/HordeContainRuntime.h"
 #include "GameLogic/Object/Object.h"
+#include "GameLogic/Object/PartitionManager.h"
 #include "GameLogic/ObjectTemplateInfo.h"
 #include "GameLogic/Module/StancesBehavior.h"
 #include "GameLogic/System/InvisibilityManager.h"
@@ -197,7 +198,7 @@ void AIUpdateInterface::setCurrentVictim(Object *victim)
 bool AIUpdateInterface::isAttacking() const
 {
 	const unsigned id = currentStateId();
-	return id == (unsigned)AI_ATTACK_OBJECT || id == (unsigned)AI_FORCE_ATTACK_OBJECT;
+	return id == (unsigned)AI_ATTACK_OBJECT || id == (unsigned)AI_FORCE_ATTACK_OBJECT || id == (unsigned)AI_ATTACK_POSITION;
 }
 
 Object *AIUpdateInterface::currentVictim() const
@@ -244,7 +245,7 @@ Object *AIUpdateInterface::replacementVictim()
 }
 
 // B1 AIUpdate.cpp privateAttackObject: the unit must be able to attack, then the machine restarts in the attack state
-bool AIUpdateInterface::aiAttackObject(Object *victim, CommandSourceType source)
+bool AIUpdateInterface::aiAttackObject(Object *victim, CommandSourceType source, int maxShotsToFire)
 {
 	if (!acceptCommand(source, 0xB, victim))
 	{
@@ -273,6 +274,12 @@ bool AIUpdateInterface::aiAttackObject(Object *victim, CommandSourceType source)
 	setLastCommandSource(source);
 	m_currentVictim = victim->getID();
 	m_machine->setState(AI_ATTACK_OBJECT);
+	// lane PLAY-2 (Sol r1): the command's shot limit goes on the current weapon after the state's entry lifted it (RW 0x74D0FC; ZH privateAttackObject's
+	// setMaxShotCount); privateAttackPosition's ContinueAttackRange redirect passes its limit here (RW 0x66DF02 .. 0x66DF0C)
+	if (Weapon *cur = w->currentWeapon())
+	{
+		cur->setMaxShotCount(maxShotsToFire);
+	}
 	wakeUpNow();
 	return true;
 }
@@ -305,6 +312,78 @@ bool AIUpdateInterface::aiForceAttackObject(Object *victim, CommandSourceType so
 	setLastCommandSource(source);
 	m_currentVictim = victim->getID();
 	m_machine->setState(AI_FORCE_ATTACK_OBJECT);
+	wakeUpNow();
+	return true;
+}
+
+bool AIUpdateInterface::aiAttackPosition(const Coord3D &pos, int maxShotsToFire, CommandSourceType source)
+{
+	if (!acceptCommand(source, 0xE))
+	{
+		return false; // RW 0x667174, AICommandType 0xE (RW 0x6961F1 -> slot 40)
+	}
+	Object *obj = getObject();
+	// RW 0x66DE17 .. 0x66DE2C: a PLAYER order to a unit whose weapon set flags (Object + 0x38C, RW 0x68BE7D) hold bit 8 (RAMPAGE) is ignored
+	static const int kRampage = CombatNames::weaponSetBit("RAMPAGE");
+	if (source == CMD_FROM_PLAYER && BitFlagsTest(obj->getWeaponSetFlags(), (size_t)kRampage))
+	{
+		return false;
+	}
+	// RW 0x66DE32 .. 0x66DE3C: a unit outside the playable area (Object + 0x458 bit 3) ignores it; the port never sets that bit (S-920, S-2480)
+	if (m_mover->isAiDead() || !CombatQueries::isAlive(*obj))
+	{
+		return false;
+	}
+	ObjectWeapons *w = obj->getWeapons();
+	Coord3D localPos = pos;
+	// RW 0x66DE5D .. 0x66DF19: the current weapon (RW 0x68B58C(0)) has a ContinueAttackRange (template + 0x148, > 0.0 RW 0xC1B594): the source is IGNORING_STEALTH
+	// (status 0x1B) for a search of the closest object within that range of the spot (FROM_CENTER_2D) that is on the same side of the map edge (filter
+	// RW 0xC0F374) and that the unit could attack as a new target (filter RW 0xC0F368); found: the order becomes an attack on it (RW 0x66C536, AICommandType 0xB)
+	// with the same limit. Not found: the limit becomes ONE shot
+	Weapon *weapon = w ? w->currentWeapon() : nullptr;
+	const float continueRange = weapon && weapon->getTemplate() ? weapon->getTemplate()->m_continueAttackRange : 0.0f;
+	if (continueRange > 0.0f)
+	{
+		static const int kIgnoringStealth = CombatNames::status("IGNORING_STEALTH");
+		obj->setStatus((unsigned)kIgnoringStealth, true);
+		// INFERENCE (S-2480): PartitionFilterPossibleToAttack(ATTACK_NEW_TARGET) is the non-forced canAttackObject; the off-map filter keeps everything (the bit is never set)
+		PartitionFilterFn possible([&](Object &o) { return w->canAttackObject(o, source, false); });
+		Object *victim = obj->logic().partition().getClosestObject(localPos, continueRange, FROM_CENTER_2D, { &possible });
+		obj->setStatus((unsigned)kIgnoringStealth, false);
+		if (victim)
+		{
+			return aiAttackObject(victim, source, maxShotsToFire); // RW 0x66DF02: the limit is forwarded
+		}
+		maxShotsToFire = 1;
+	}
+	// RW 0x66DF20 .. 0x66DFA1: the contact weapon test (RW 0x9188EB) always answers false in RotWK, so the spot is never moved to a reachable one
+	// RW 0x66DFA3 .. 0x66E006: already attacking (state 9) a goal within 0.0001 (RW 0xBD19E0 / 0xBD19E4) on each axis: nothing changes
+	if (currentStateId() == (unsigned)AI_ATTACK_POSITION)
+	{
+		const Coord3D &g = m_machine->goalPosition();
+		const float dx = SimMath::subf32(g.x, localPos.x), dy = SimMath::subf32(g.y, localPos.y), dz = SimMath::subf32(g.z, localPos.z);
+		if (dx < 0.0001f && dx > -0.0001f && dy < 0.0001f && dy > -0.0001f && dz < 0.0001f && dz > -0.0001f)
+		{
+			return false;
+		}
+	}
+	// RW 0x66E00D .. 0x66E04E: clear, destroy the path (RW 0x66276B), the clipped goal (RW 0x6654AD), the source (+ 0x48), state 9, no goal object, then the
+	// current weapon's shot limit (+ 0x34) and its shot counter (+ 0x20, INFERENCE: the port's weapon keeps no such counter apart from the timing fields)
+	m_machine->clear();
+	m_mover->destroyPath();
+	Coord3D goal;
+	goalPositionClipped(localPos, source, goal);
+	m_machine->setGoalPosition(goal);
+	setLastCommandSource(source);
+	m_targetHorde = INVALID_ID;
+	m_currentVictim = INVALID_ID;
+	m_machine->setState(AI_ATTACK_POSITION);
+	m_machine->setGoalObject(INVALID_ID);
+	if (Weapon *cur = w ? w->currentWeapon() : nullptr)
+	{
+		cur->setMaxShotCount(maxShotsToFire);
+	}
+	// RW 0x66E051 .. 0x66E060: the attack voice for a PLAYER or SCRIPT order (RW 0x66B271) is the client's (UnitVoiceResponse on the message)
 	wakeUpNow();
 	return true;
 }

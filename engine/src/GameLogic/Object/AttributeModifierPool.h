@@ -18,11 +18,10 @@
 //     first (RW 0x8052FB); an entry of the same list only gets the new expiry (and its FX); a new entry: the list's ModelCondition flags are set and its
 //     ClearModelCondition flags cleared (RW 0x5E3BA5 / 0x5E3B79), the list's Upgrade is granted now when its delay is 0 (Object::giveUpgrade RW 0x69388B),
 //     HEALTH > 0: body.setMaxHealth(max + HEALTH_MULT product * HEALTH (when the pool has a HEALTH_MULT) or max + HEALTH, 1) (RW 0x805D3A), HEALTH_MULT > 0:
-//     body.setMaxHealth(max * HEALTH_MULT, 1) (RW 0x805DB5), then the entry is appended, the category count grows, and AUTO_HEAL > 0 refreshes the auto heal
-//     (RW 0x68C213).
+//     body.setMaxHealth(max * HEALTH_MULT, 1) (RW 0x805DB5), then the entry is appended, the category count grows, and SHROUD_CLEARING (type 0x14) > 0 marks
+//     the object's shroud record dirty (RW 0x68C213 -> 0xB4E2A0; lane DECOMP-1 r3, earlier read as an auto heal refresh).
 // NOT PORTED (stop S-633, counted): the expiry update that removes entries (their HEALTH / ClearModelCondition reversal, EndFX, the category counts; the
-// queries' own frame < expiry test already ignores an expired entry), the delayed Upgrade grant, the FX / EndFX of the client, the auto heal refresh, the
-// anti-category disabling of AttributeModifierNugget (RW 0x804FCC), and the xfer.
+// queries' own frame < expiry test already ignores an expired entry), the delayed Upgrade grant, the FX / EndFX of the client and the xfer.
 
 #pragma once
 
@@ -76,7 +75,6 @@ public:
 	{
 		unsigned long long delayedUpgrades = 0;   ///< Upgrade with a delay: not granted (S-633)
 		unsigned long long fxNotShown = 0;        ///< FX of an add or refresh (client)
-		unsigned long long autoHealRefreshes = 0; ///< RW 0x68C213 not run
 		unsigned long long expiringAdds = 0;      ///< entries that will expire without the removal side effects
 	};
 	static Stats &stats();

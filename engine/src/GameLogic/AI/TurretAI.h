@@ -33,8 +33,8 @@
 // deflection: the parse refuses AllowsPitch = Yes (the aim's pitch is not ported) rather than run it wrong.
 // INFERENCE / NOT PORTED (stop S-1106, TurretAI::stopLine()): the turret sounds and reactToTurretChange (client: RW 0x68B810); the targeters of the enemy's AI
 // (slots 0x204 / 0x208: no aim prevention); the bridge attack points of the aim (2.01 maps have no bridges); the AI's mood timer AI + 0x21C (RW 0x8DC693 / 0x662DD9:
-// the turret's idle sleeps use the AI's MoodAttackCheckRate from now) and its mood matrix (RW 0x664E18); the idle target's weapon criteria 5 (RW 0x68B619(target,
-// 5, 2): PREFER_MOST_DAMAGE stands in); isAbleToAttack / the continued-target test of the aim (RW 0x691269 / 0x68D6A6: ObjectWeapons::canAttackObject stands in);
+// the turret's idle sleeps use the AI's MoodAttackCheckRate from now) and its mood matrix (RW 0x664E18) (the idle target's weapon criteria 5 runs
+// since lane DECOMP-1: RW 0x68B619(target, 5, 2)); isAbleToAttack / the continued-target test of the aim (RW 0x691269 / 0x68D6A6: ObjectWeapons::canAttackObject stands in);
 // the AI slot 0x1C4 test of RW 0x6658D3 (taken as false); the pitch of AllowsPitch turrets; the turret's position in RW's update (after the path-request timer:
 // here before AIMover::update, which runs that timer); the launch composition of a turreted weapon (RW 0x6CAD3F .. 0x6CB43B: the projectile leaves from the
 // drawable's launch bone, S-360).

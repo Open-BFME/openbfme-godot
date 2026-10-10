@@ -32,6 +32,7 @@
 #include "GameLogic/Object/AttributeModifierPool.h"
 #include "GameLogic/Object/Object.h"
 #include "GameLogic/System/InvisibilityManager.h"
+#include "GameLogic/System/DOTManager.h"
 #include "GameLogic/ScriptEngine/ScriptEngine.h"
 
 #include "GameLogic/Object/PartitionManager.h"
@@ -56,6 +57,7 @@ GameLogic::GameLogic(ThingFactory &things, ModuleFactory &modules, PlayerList &p
 	, m_createAHeroes(std::make_unique<CreateAHeroGame>(*this))
 	, m_weather(std::make_unique<GlobalWeatherSystem>(*this))
 	, m_invisibility(std::make_unique<InvisibilityManager>(*this))
+	, m_dot(std::make_unique<DOTManager>(*this)) // lane DECOMP-1
 	, m_scriptEngine(std::make_unique<ScriptEngine>(*this)) // lane SCRIPT-1
 {
 	buildPhaseWorkTable();
@@ -437,7 +439,7 @@ void GameLogic::buildPhaseWorkTable()
 		{ 0, "pathfinderQueue", "RW 0x62E69F (-> 0x6F2364): Pathfinder::processPathfindQueue on TheAI + 0x10, then setFPMode (0x440809); every phase", false },
 		{ 1, "subsystemsPhase1", "RW 0x62E6AF .. 0x62E6DD: script engine, Lua script engine, terrain logic and victory system updates (vslot 0x28)", false },
 		{ 1, "logicCrc", "RW 0x62E6E2 .. 0x62E880: the MSG_LOGIC_CRC message every CRCInterval frames (not in game modes 4, 7, 9)", false },
-		{ 1, "recorderAndStats", "RW 0x62E885 .. 0x62E8CF: statistics collector, recorder, two more subsystems, and GameLogic + 0x174 (+ 0x178, the InvisibilityManager, runs after the row: lane STEALTH-1)", false },
+		{ 1, "recorderAndStats", "RW 0x62E885 .. 0x62E8CF: statistics collector, recorder, two more subsystems (GameLogic + 0x174, the DOTManager, lane DECOMP-1, and + 0x178, the InvisibilityManager, lane STEALTH-1, run after the row)", false },
 		{ 1, "commandList", "RW 0x62E8D4 .. 0x62E905: every pending command goes to the command dispatcher (RW 0x779A3D), then the list resets", false },
 		{ 1, "drawableCallback", "RW 0x62E908 .. 0x62E933: per object, getDrawable()->callback(0)", false },
 		{ 2, "partitionAndCollision", "RW 0x62E93B .. 0x62E94E: the partition manager and the collision manager update (vslot 0x28)", false },
@@ -550,6 +552,7 @@ void GameLogic::update(int phase)
 		runRow(ROW_LOGIC_CRC);
 		runRow(ROW_RECORDER_STATS);
 		m_weather->update(); // RW 0x62E8BE: TheGlobalWeatherSystem vslot 0x28 (RW 0x71A09E), one of that row's subsystems (lane SPELL-2)
+		m_dot->update(); // RW 0x62E8C9 .. 0x62E8CF: GameLogic + 0x174, the DOTManager (lane DECOMP-1)
 		m_invisibility->update(); // RW 0x62E8D4 .. 0x62E8DA: GameLogic + 0x178, the last of that row, before the command list (lane STEALTH-1)
 		runRow(ROW_COMMAND_LIST);
 		runRow(ROW_DRAWABLE_CALLBACK);
@@ -879,6 +882,7 @@ void GameLogic::reset()
 	m_emotions->reset();
 	m_weather->reset(); // lane SPELL-2 (the objects are gone: nothing to remove from them)
 	m_invisibility->reset();
+	m_dot->reset(); // lane DECOMP-1
 	m_scriptEngine->reset(); // lane SCRIPT-1
 }
 
@@ -1039,6 +1043,10 @@ std::uint32_t GameLogic::hashState(std::vector<StateHashSection> *sections, std:
 	}
 	section("weather", [&](StateHasher &x) { m_weather->crc(x); }); // lane SPELL-2
 	section("invisibility", [&](StateHasher &x) { m_invisibility->crc(x); }); // lane STEALTH-1
+	if (!m_dot->empty())
+	{
+		section("damage over time", [&](StateHasher &x) { m_dot->crc(x); }); // lane DECOMP-1: only while a record runs (a game without one keeps its hash)
+	}
 	section("large group audio", [&](StateHasher &x) { m_largeGroupAudio.crc(x); }); // lane AUDIO-4: TheLargeGroupAudio's gate (+ 0x38 / + 0x3C)
 	if (m_scriptEngine->loaded())
 	{
@@ -1112,7 +1120,7 @@ GameLogic::Report GameLogic::report() const
 	r.stops.push_back("[S-141] helper modules: " + std::to_string(helpers) + " live helper modules (SMC, Recovery, Repulsor, Defection, Guarding, WeaponStatus, FiringTracker) created in the retail order; the Recovery, Repulsor, Defection, Guarding and FiringTracker shells do nothing (the SMCHelper and the WeaponStatusHelper act: lanes PROD-1, PROJ-2)");
 	r.stops.push_back("[S-142] objects: no radar, partition registration, weapons, special power mask, upgrades, physics, stealth or AI update interface; initObject only creates the drawable");
 	r.stops.push_back("[S-146] players: a Player carries the index, name, faction template, type, colour, money, default team and relationships only; energy, sciences, upgrades, build list, AI, command points and the spell book belong to the lanes that port them");
-	r.stops.push_back("[S-149] ActiveBody / HordeContain: the damage side of the body, the horde's member pass and the payload creation site (here: onCreate) are not ported or are inference; FX / OCL names are stored unresolved");
+	r.stops.push_back("[S-149] ActiveBody / HordeContain: the payload creation site (here: onCreate; RW 0x871B9B, HordeContain vslot 0x70, has no located caller), the members' team and facing are inference; ActiveBody's FX / OCL names are stored unresolved (lane DECOMP-1: GlobalData + 0xB4 / + 0xB8 are UnitDamagedThreshold / UnitReallyDamagedThreshold, GameData table RW 0xBFF580 rows RW 0xBFF980 / 0xBFF990; the DamagePercentToUnits trimming never runs in retail)");
 	for (const std::string &u : unportedPhaseWork())
 	{
 		r.stops.push_back("[S-143] " + u);
@@ -1149,6 +1157,7 @@ GameLogic::Report GameLogic::report() const
 	{
 		r.stops.push_back(u);
 	}
+	r.stops.push_back(DOTManager::stopLine()); // lane DECOMP-1 (S-1959)
 	for (const std::string &u : m_victory->report()) // lane COMBAT-2 (S-344)
 	{
 		r.stops.push_back(u);

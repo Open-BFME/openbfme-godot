@@ -34,6 +34,7 @@
 
 #pragma once
 
+#include "GameNetwork/NetImpairment.h"
 #include "GameNetwork/Network.h"
 
 #include <array>
@@ -96,12 +97,11 @@ public:
 		size_t maxBufferedBytes = 16u << 20; ///< receive budget per peer: early records + the partial command (at least maxCommandBytes)
 		size_t maxCommandBytes = 8u << 20; ///< a bigger command is refused
 		std::uint32_t window = 16384;   ///< records in flight / accepted ahead of the next expected one, per peer
-		// test harness (ZH DelayedTransportMessage / NET-4): drop this per-mille of outgoing datagrams (seeded, reproducible), delay them by this much plus a
-		// seeded 0 .. jitterMs (the jitter reorders them)
-		int dropPerMille = 0;
-		int delayMs = 0;
-		int jitterMs = 0;
-		std::uint32_t dropSeed = 1;
+		// lane MP-3 (NET-4): the test harness's faults (GameNetwork/NetImpairment.h: per-link latency, jitter, loss, duplication, reordering; blackouts
+		// through impairment()); none by default
+		NetImpairment::Config impairment;
+		// lane MP-3: the fast resend and the bounded backoff (Transport.cpp, S-1891); false = MP-2's timing (A/B measurements)
+		bool fastResend = true;
 	};
 	Transport(UDP &socket, int localSlot, const Options &options);
 
@@ -123,6 +123,7 @@ public:
 	{
 		unsigned long long packetsSent = 0, packetsReceived = 0, commandsSent = 0, recordsSent = 0, commandsResent = 0, commandsDelivered = 0, duplicates = 0;
 		unsigned long long badPackets = 0, unknownSenders = 0, dropped = 0, sendErrors = 0, fragmentedCommands = 0, peersRetired = 0;
+		unsigned long long fastResends = 0; ///< lane MP-3: records resent on ack evidence before their timeout
 	};
 	const Stats &stats() const { return m_stats; }
 	// socket send failures and protocol violations of known peers (at most 100 kept), for the reports
@@ -137,6 +138,9 @@ public:
 	// the records waiting for an ack, every peer
 	size_t unackedRecords() const;
 	bool isPeer(int slot) const { return m_peers[(size_t)slot].known; }
+	// lane MP-3: the fault injector (a test or the peer's --blackout-at cuts the endpoint off with impairment().blackout(NetMilliseconds(), ms))
+	NetImpairment &impairment() { return m_impairment; }
+	const NetImpairment &impairment() const { return m_impairment; }
 
 	// the lobby's datagrams share the socket: a datagram that is not a transport packet is handed here (null: counted as bad)
 	std::vector<std::pair<NetAddress, std::vector<std::uint8_t>>> &foreignDatagrams() { return m_foreign; }
@@ -152,6 +156,8 @@ private:
 		bool sent = false;
 		bool resent = false; ///< lane MP-2: sent more than once (no round-trip sample)
 		int resends = 0;     ///< lane MP-2: how often
+		bool fastDue = false;  ///< lane MP-3: an ack arrived without it a round trip after it went out: resend at once (no backoff)
+		bool fastDone = false; ///< lane MP-3: at most one fast resend per record
 	};
 	struct Incoming
 	{
@@ -178,7 +184,8 @@ private:
 		unsigned long long rttSamples = 0;
 	};
 	void flush(int slot, std::uint64_t now);
-	void sendDatagram(const NetAddress &to, std::vector<std::uint8_t> datagram, std::uint64_t now);
+	void sendDatagram(int slot, const NetAddress &to, std::vector<std::uint8_t> datagram, std::uint64_t now);
+	void sendNow(const NetAddress &to, const std::vector<std::uint8_t> &datagram);
 	void handleDatagram(const NetAddress &from, const std::vector<std::uint8_t> &d, std::uint64_t now);
 	void deliver(int slot, Incoming &&record);
 	void error(const std::string &e);
@@ -190,7 +197,8 @@ private:
 	std::deque<std::pair<int, std::vector<std::uint8_t>>> m_delivered;
 	std::multimap<std::uint64_t, std::pair<NetAddress, std::vector<std::uint8_t>>> m_delayed;
 	std::vector<std::pair<NetAddress, std::vector<std::uint8_t>>> m_foreign;
-	std::uint32_t m_dropState;
+	NetImpairment m_impairment; ///< lane MP-3
+	std::vector<std::uint64_t> m_sendTimes;
 	Stats m_stats;
 	std::vector<std::string> m_errors;
 };

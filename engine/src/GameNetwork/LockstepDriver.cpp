@@ -7,6 +7,8 @@
 #include "GameLogic/SelfDestruct.h"
 #include "GameNetwork/Transport.h"
 
+#include <algorithm>
+
 void RegisterLogicCRCHandler(GameLogicDispatch &dispatch)
 {
 	RegisterSelfDestructHandler(dispatch); // lane MP-2: every network game and replay executes the disconnect path's MSG_SELF_DESTRUCT
@@ -30,6 +32,7 @@ LiveGameFrameDriver::Capture LockstepDriver::capture() const
 	Capture c;
 	c.hashEveryFrame = m_writer != nullptr; // the replay's hash record of every frame
 	c.breakdownInterval = m_network ? m_network->config().crcInterval : 0;
+	c.census = m_census;
 	return c;
 }
 
@@ -44,6 +47,7 @@ void LockstepDriver::pump(UnsignedInt protocolFrame, CommandList &pending)
 	sourceInput(protocolFrame);
 	if (m_network)
 	{
+		noteIssued();
 		// ZH Network::update: the local messages get their execution frame here, once (protocol frame + run-ahead); the transport is serviced
 		m_network->update(protocolFrame, m_local);
 	}
@@ -70,7 +74,8 @@ bool LockstepDriver::acquire(UnsignedInt frame, FrameBatch &out)
 			const std::uint64_t now = NetMilliseconds();
 			if (m_waitStart == 0)
 			{
-				m_waitStart = now;
+				m_waitStart = now == 0 ? 1 : now;
+				m_waitAfterLoad = m_network->allLoaded(); // lane MP-3: the load barrier is not a stall
 			}
 			m_waitingSlots = m_network->waitingFor(frame);
 			m_gated = m_waitingSlots.empty() && m_network->allLoaded();
@@ -86,11 +91,16 @@ bool LockstepDriver::acquire(UnsignedInt frame, FrameBatch &out)
 			}
 			return false;
 		}
+		if (m_waitStart != 0 && m_waitAfterLoad)
+		{
+			m_smooth.stallMs.push_back((std::uint32_t)(NetMilliseconds() - m_waitStart)); // lane MP-3
+		}
 		m_waitStart = 0;
 		m_stallReported = false;
 		m_waitingSlots.clear();
 		m_gated = false;
 		m_network->relayCommands(frame, commands);
+		noteRelayed(commands);
 	}
 	else
 	{
@@ -133,6 +143,10 @@ void LockstepDriver::completed(const FrameCompletion &c)
 	}
 	m_nextCompletion = c.frame + 1;
 	++m_completions;
+	if (c.census)
+	{
+		m_censusLog.push_back({ c.frame, c.simUs, c.battalions, c.troops, c.censusObjects }); // lane MP-3
+	}
 	if (m_writer)
 	{
 		if (c.hashed)
@@ -152,6 +166,7 @@ void LockstepDriver::completed(const FrameCompletion &c)
 	sourceInput(c.frame); // after the CRC: both are stamped against c.frame
 	if (m_network)
 	{
+		noteIssued();
 		m_network->update(c.frame, m_local); // ZH processCommand on the new frame: the CRC and the next frame infos go out at once
 	}
 	if (m_onCompleted)
@@ -174,4 +189,62 @@ void LockstepDriver::sourceInput(UnsignedInt protocolFrame)
 std::uint64_t LockstepDriver::waitingMs() const
 {
 	return m_waitStart == 0 ? 0 : NetMilliseconds() - m_waitStart;
+}
+
+// lane MP-3: the local player's commands about to get their execution frame (MSG_LOGIC_CRC is the protocol's, not the player's)
+void LockstepDriver::noteIssued()
+{
+	size_t n = 0;
+	for (const GameMessage &m : m_local.messages())
+	{
+		n += m.getType() != MSG_LOGIC_CRC ? 1 : 0;
+	}
+	if (n > 0)
+	{
+		m_issued.push_back({ NetMilliseconds(), n });
+	}
+}
+
+void LockstepDriver::noteRelayed(const CommandList &commands)
+{
+	if (m_localPlayer < 0)
+	{
+		const int slot = m_network->config().localSlot;
+		m_localPlayer = slot >= 0 && slot < MAX_SLOTS ? m_network->config().slotPlayerIndex[(size_t)slot] : -1;
+	}
+	const std::uint64_t now = NetMilliseconds();
+	for (const GameMessage &m : commands.messages())
+	{
+		if (m.getType() == MSG_LOGIC_CRC || m_localPlayer < 0 || m.getPlayerIndex() != m_localPlayer)
+		{
+			continue;
+		}
+		if (m_issued.empty())
+		{
+			++m_smooth.unmatchedCommands; // e.g. the disconnect path's MSG_SELF_DESTRUCT of the local player: no issue record
+			continue;
+		}
+		m_smooth.inputLatencyMs.push_back((std::uint32_t)(now - m_issued.front().first));
+		if (--m_issued.front().second == 0)
+		{
+			m_issued.pop_front();
+		}
+	}
+}
+
+std::string LockstepDriver::percentiles(std::vector<std::uint32_t> samples)
+{
+	if (samples.empty())
+	{
+		return "count 0";
+	}
+	std::sort(samples.begin(), samples.end());
+	auto at = [&](size_t pct) { return samples[std::min(samples.size() - 1, samples.size() * pct / 100)]; };
+	unsigned long long sum = 0;
+	for (std::uint32_t v : samples)
+	{
+		sum += v;
+	}
+	return "count " + std::to_string(samples.size()) + " mean " + std::to_string(sum / samples.size()) + " p50 " + std::to_string(at(50)) + " p95 "
+		+ std::to_string(at(95)) + " p99 " + std::to_string(at(99)) + " max " + std::to_string(samples.back());
 }

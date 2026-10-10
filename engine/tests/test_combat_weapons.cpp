@@ -7,6 +7,9 @@
 #include "GameLogic/Module/ProjectileModules.h"
 
 #include "GameLogic/Combat/CombatNames.h"
+#include "GameLogic/Combat/WeaponDelivery.h"
+#include "GameLogic/System/DOTManager.h"
+#include "Common/StateHash.h"
 
 using namespace combattest;
 
@@ -37,6 +40,56 @@ const char kUpgradable[] =
 	"    Locomotor = WalkerLoco\n"
 	"    Condition = SET_NORMAL\n"
 	"    Speed = 55\n"
+	"  End\n"
+	"End\n"
+	// lane DECOMP-1: two swords that both hurt, the stronger one SECONDARY; a victim whose armour stops every SLASH
+	"Object TwoSwords\n"
+	"  KindOf = INFANTRY SELECTABLE CAN_ATTACK\n"
+	"  Geometry = CYLINDER\n"
+	"  GeometryMajorRadius = 8\n"
+	"  GeometryMinorRadius = 8\n"
+	"  GeometryHeight = 20\n"
+	"  WeaponSet\n"
+	"    Conditions = None\n"
+	"    Weapon = PRIMARY SwordWeapon\n"
+	"    Weapon = SECONDARY SlowSword\n"
+	"  End\n"
+	"  Body = ActiveBody ModuleTag_Body\n"
+	"    MaxHealth = 100\n"
+	"  End\n"
+	"  Behavior = AIUpdateInterface ModuleTag_AI\n"
+	"  End\n"
+	"  LocomotorSet\n"
+	"    Locomotor = WalkerLoco\n"
+	"    Condition = SET_NORMAL\n"
+	"    Speed = 55\n"
+	"  End\n"
+	"End\n"
+	"Weapon SlashSplash\n"
+	"  AttackRange = 11.5\n"
+	"  DamageNugget\n"
+	"    Damage = 10\n"
+	"    Radius = 50.0\n"
+	"    DamageType = SLASH\n"
+	"    DeathType = NORMAL\n"
+	"  End\n"
+	"End\n"
+	"Armor SlashProofArmor\n"
+	"  Armor = DEFAULT 100%\n"
+	"  Armor = SLASH 0%\n"
+	"End\n"
+	"Object SlashProof\n"
+	"  KindOf = INFANTRY SELECTABLE SCORE\n"
+	"  Geometry = CYLINDER\n"
+	"  GeometryMajorRadius = 8\n"
+	"  GeometryMinorRadius = 8\n"
+	"  GeometryHeight = 20\n"
+	"  ArmorSet\n"
+	"    Conditions = None\n"
+	"    Armor = SlashProofArmor\n"
+	"  End\n"
+	"  Body = ActiveBody ModuleTag_Body\n"
+	"    MaxHealth = 100\n"
 	"  End\n"
 	"End\n";
 
@@ -296,4 +349,123 @@ TEST_CASE("combat weapons: the best weapon for a victim - a weapon that does no 
 	Duel d;
 	CHECK(d.ow->canAttackObject(*d.b, CMD_FROM_PLAYER, false));
 	CHECK(d.ow->estimateWeaponDamage(*d.ow->currentWeapon(), *d.b) == doctest::Approx(5.0f));
+}
+
+// lane DECOMP-1 (S-1582): RotWK's PREFER_MOST_DAMAGE scores a weapon 1 when it can damage the victim (RW 0x6CDBF3) and 0 otherwise, not by its damage; slots are tried 5 .. 0
+// with `<=`, so of two ready weapons that both hurt the lower slot wins. ZH's estimate picked the 30-damage SECONDARY over the 10-damage PRIMARY
+TEST_CASE("combat weapons (DECOMP-1): two ready weapons that both hurt the victim - the lower slot wins (RW 0x6C8A4E scores canDamage, not the damage)")
+{
+	Duel d("TwoSwords", "Dummy", 12.0f);
+	REQUIRE(d.ow->weaponInSlot(SECONDARY_WEAPON));
+	CHECK(d.ow->estimateWeaponDamage(*d.ow->weaponInSlot(SECONDARY_WEAPON), *d.b) > d.ow->estimateWeaponDamage(*d.ow->weaponInSlot(PRIMARY_WEAPON), *d.b));
+	CHECK(d.ow->chooseBestWeaponForTarget(d.b, PREFER_MOST_DAMAGE, CMD_FROM_AI));
+	CHECK(d.ow->curSlot() == PRIMARY_WEAPON);
+	// PREFER_LONGEST_RANGE: the same reach (11.5): `>` keeps the first one met, SECONDARY (slots run 5 .. 0)
+	CHECK(d.ow->chooseBestWeaponForTarget(d.b, PREFER_LONGEST_RANGE, CMD_FROM_AI));
+	CHECK(d.ow->curSlot() == SECONDARY_WEAPON);
+}
+
+// lane DECOMP-1: DamageNugget's isApplicable (RW 0x90E855) asks the victim's estimate of the hit; a hit the armour reduces to 0 is not delivered at all (no attemptDamage:
+// the body records no damage frame nor damager). The port delivered it as a 0-damage hit
+TEST_CASE("combat weapons (DECOMP-1): a hit that the victim's armour reduces to 0 is not delivered, and the weapon cannot be chosen against it")
+{
+	Duel d("Swordsman", "SlashProof", 12.0f);
+	ActiveBody *body = dynamic_cast<ActiveBody *>(d.b->getBodyModule());
+	REQUIRE(body);
+	const WeaponTemplate *sword = TheWeaponStore->findWeaponTemplate("SwordWeapon");
+	REQUIRE(sword);
+	DeliverNuggets(*d.w.logic, d.a->getID(), *sword, WeaponBonus{}, d.b, d.b->getPosition(), false, nullptr);
+	CHECK(body->lastDamageFrame() == 0xFFFFFFFFu);
+	CHECK(body->lastDamager() == INVALID_ID);
+	CHECK_FALSE(d.ow->chooseBestWeaponForTarget(d.b, PREFER_MOST_DAMAGE, CMD_FROM_AI));
+	// a hurting hit is delivered (the control)
+	Duel e("Swordsman", "Dummy", 12.0f);
+	ActiveBody *eb = dynamic_cast<ActiveBody *>(e.b->getBodyModule());
+	REQUIRE(eb);
+	DeliverNuggets(*e.w.logic, e.a->getID(), *sword, WeaponBonus{}, e.b, e.b->getPosition(), false, nullptr);
+	CHECK(eb->lastDamager() == e.a->getID());
+}
+
+// lane DECOMP-1: RW 0x6C85CA: an AIRBORNE_TARGET infantry is ANTI_AIRBORNE_INFANTRY (0x20), not ground; a structure is GROUND | STRUCTURE
+TEST_CASE("combat weapons (DECOMP-1): the victim anti mask of RW 0x6C85CA")
+{
+	Duel d;
+	CHECK(ObjectWeapons::victimAntiMask(*d.b) == (unsigned)WEAPON_ANTI_GROUND);
+	d.b->setStatus((unsigned)CombatNames::status("AIRBORNE_TARGET"), true);
+	CHECK(ObjectWeapons::victimAntiMask(*d.b) == (unsigned)WEAPON_ANTI_AIRBORNE_INFANTRY);
+}
+
+// lane DECOMP-1 r3 (Sol's review): the selected victim's isApplicable (slot 1 RW 0x90E855) gates the WHOLE damage nugget before its radius (RW 0x6CCED3 .. 0x6CCEF5,
+// RW 0x6CB7DD .. 0x6CB806): a Radius 50 SLASH hit aimed at a SLASH-proof victim hurts nobody, not even the soldier beside it. Before r3 the radius branch ran anyway
+TEST_CASE("combat weapons (DECOMP-1 r3): an immune selected victim stops the whole damage nugget, its radius included")
+{
+	Duel d("Swordsman", "SlashProof", 12.0f);
+	Object *neighbour = d.w.unit("Dummy", 'B', 312.0f, 320.0f);
+	d.w.frames(1);
+	const WeaponTemplate *splash = TheWeaponStore->findWeaponTemplate("SlashSplash");
+	REQUIRE(splash);
+	DeliverNuggets(*d.w.logic, d.a->getID(), *splash, WeaponBonus{}, d.b, d.b->getPosition(), false, nullptr);
+	CHECK(d.w.health(neighbour) == 100.0f);
+	ObjectWeapons::createAndFireTempWeaponAt(splash, d.a, *d.b); // the fireWeaponTemplate path
+	CHECK(d.w.health(neighbour) == 100.0f);
+	// the control: aimed at the hurtable neighbour, the radius reaches it
+	DeliverNuggets(*d.w.logic, d.a->getID(), *splash, WeaponBonus{}, neighbour, neighbour->getPosition(), false, nullptr);
+	CHECK(d.w.health(neighbour) < 100.0f);
+}
+
+// lane DECOMP-1 r3 (Sol's review): the delivery takes the FIRING weapon's slot (privateFireWeapon hands its Weapon + 0xC to fireWeaponTemplate, RW 0x6CF126): a
+// temporary weapon is PRIMARY even while its source has chosen SECONDARY. Before r3 the shot inherited the source's selected slot
+TEST_CASE("combat weapons (DECOMP-1 r3): a temporary weapon's shot carries PRIMARY, not the source's selected slot")
+{
+	struct Capture : ProjectileLauncher
+	{
+		std::vector<ProjectileShot> shots;
+		void launch(GameLogic &, const ProjectileShot &s) override { shots.push_back(s); }
+	};
+	Duel d("Upgradable", "Dummy", 100.0f);
+	d.ow->setWeaponSetFlag(CombatNames::weaponSetBit("PLAYER_UPGRADE"), true);
+	REQUIRE(d.ow->setWeaponLock(SECONDARY_WEAPON, LOCKED_TEMPORARILY));
+	REQUIRE(d.ow->curSlot() == SECONDARY_WEAPON);
+	Capture cap;
+	d.w.combat().setProjectileLauncher(&cap);
+	ObjectWeapons::createAndFireTempWeaponAt(TheWeaponStore->findWeaponTemplate("BowWeapon"), d.a, *d.b);
+	REQUIRE(cap.shots.size() == 1u);
+	CHECK(cap.shots[0].slot == PRIMARY_WEAPON);
+	d.w.combat().setProjectileLauncher(nullptr);
+}
+
+// lane DECOMP-1 r3 (Sol's review): every stored input of a damage-over-time record is state: ShouldPlayUnderAttackEva and FXTrigger change the hash
+TEST_CASE("combat weapons (DECOMP-1 r3): the DOT record's ShouldPlayUnderAttackEva and FXTrigger are in the state hash")
+{
+	Duel d;
+	auto hashWith = [&](bool eva, int fx) {
+		DOTManager m(*d.w.logic);
+		DOTManager::Record r;
+		r.info.m_input.m_amount = 5.0f;
+		r.info.m_input.m_shouldPlayUnderAttackEva = eva;
+		r.info.m_input.m_fxTrigger = fx;
+		r.endFrame = 100;
+		r.interval = 5;
+		r.nextFrame = 5;
+		m.add(d.b->getID(), r);
+		StateHasher h;
+		m.crc(h);
+		return h.value();
+	};
+	const std::uint32_t base = hashWith(true, 0);
+	CHECK(hashWith(false, 0) != base);
+	CHECK(hashWith(true, 1) != base);
+	CHECK(hashWith(true, 0) == base);
+}
+
+// lane DECOMP-1 r4 (Sol's review): with no victim a damage nugget goes through the upgrade test and slot 6 at the position (RW 0x90DEF0, max(Radius, 1.0)): a Radius 0
+// warhead that lands where its victim stands (a projectile without HitStoredTarget) hurts it. Before r4 the position path ran only for a non-zero Radius
+TEST_CASE("combat weapons (DECOMP-1 r4): a Radius 0 warhead delivered at a position hurts what stands there")
+{
+	Duel d("Swordsman", "Dummy", 12.0f);
+	const WeaponTemplate *sword = TheWeaponStore->findWeaponTemplate("SwordWeapon");
+	REQUIRE(sword);
+	const Coord3D at = *d.b->getPosition();
+	DeliverNuggets(*d.w.logic, d.a->getID(), *sword, WeaponBonus{}, nullptr, &at, true, nullptr);
+	CHECK(d.w.health(d.b) < 100.0f);
 }

@@ -204,7 +204,11 @@ smooth at realistic latency and packet loss.
 - NET-3: replays of OpenBFME games (enhanced profile format, PLAN), observer
   mode, game result reporting.
 - NET-4: network test harness: simulated latency, jitter, loss and
-  reordering; soak tests in CI.
+  reordering; soak tests in CI. Lane MP-3: the fault injector
+  (GameNetwork/NetImpairment.h, `openbfme_peer --link / --blackout-at`), the
+  2 / 4 player and blackout tests, the soak `tools/net/mp3_soak.sh`, the
+  smoothness metrics (`input_latency_ms`, `stall_ms`) and the transport's fast
+  resend (S-1890 .. S-1892).
 
 ### M7 - Retail parity and cross-play with retail clients
 

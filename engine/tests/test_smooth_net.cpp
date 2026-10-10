@@ -251,12 +251,13 @@ Result runScenario(starttest::Shared &s, const Scenario &sc, const std::string &
 	Transport::Options to;
 	to.resendMs = 5;
 	to.packetBytes = 160; // a selection of 40 objects travels in fragments
-	to.dropPerMille = sc.dropPerMille;
-	to.jitterMs = sc.jitterMs;
+	to.impairment.all.lossPerMille = sc.dropPerMille;
+	to.impairment.all.latencyMs = sc.jitterMs / 2;
+	to.impairment.all.jitterMs = sc.jitterMs / 2;
 	UDP socket;
 	REQUIRE_MESSAGE(socket.bind(0x7F000001u, 0, &error), error);
 	Transport transport(socket, 0, to);
-	to.dropSeed = 7;
+	to.impairment.seed = 7;
 	ProtocolPeer remote(cfg, to, res.startFrame);
 	transport.setPeer(1, remote.socket.localAddress());
 	remote.transport.setPeer(0, socket.localAddress());
