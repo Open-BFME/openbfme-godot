@@ -38,3 +38,9 @@ rendering/soft_particles=true
 ; lane RELEASE-1: scenes are exported as their committed text (.tscn); the binary conversion gives every export new random ids, which
 ; would make the packages unreproducible (docs/RELEASE.md)
 export/convert_text_resources_to_binary=false
+
+[rendering]
+
+; macOS arm64 exports refuse a project that imports no ETC2 / ASTC textures (Godot checks the setting, not the preset); the
+; project holds no image assets, every texture is read from the retail archives at runtime, so this costs nothing
+textures/vram_compression/import_etc2_astc=true
