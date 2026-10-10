@@ -17,6 +17,7 @@
 #include "GameLogic/Combat/WeaponDelivery.h"
 #include "GameLogic/GameLogic.h"
 #include "GameLogic/Module/AIUpdate.h"
+#include "GameLogic/Module/BehaviorModule.h"
 #include "GameLogic/Module/InvisibilityModules.h"
 #include "GameLogic/Object/Object.h"
 #include "GameLogic/System/InvisibilityManager.h"
@@ -595,6 +596,32 @@ bool ObjectWeapons::setWeaponLock(int slot, WeaponLockType type)
 		m_owner->setModelConditionState(slotConditions(slot).lockBit, true);
 	}
 	return true;
+}
+
+// RW 0x69121A (see the header)
+bool ObjectWeapons::setObjectWeaponLock(Object &obj, int slot, WeaponLockType type)
+{
+	if (ContainModuleInterface *c = obj.getContain())
+	{
+		if (const ContainModuleInterface::ContainedItemsList *items = c->getContainedItemsList())
+		{
+			const std::vector<Object *> riders(items->begin(), items->end());
+			for (Object *r : riders)
+			{
+				if (r)
+				{
+					setObjectWeaponLock(*r, slot, type); // RW 0x8656A7 (its result only reaches the slot's own answer, which RW 0x69121A ignores)
+				}
+			}
+		}
+	}
+	static const int kSwitchedWeapons = CombatNames::status("SWITCHED_WEAPONS");
+	if (kSwitchedWeapons >= 0)
+	{
+		obj.setStatus((unsigned)kSwitchedWeapons, type == LOCKED_PERMANENTLY && slot != 0);
+	}
+	ObjectWeapons *w = obj.getWeapons();
+	return w && w->setWeaponLock(slot, type);
 }
 
 // RW 0x6C98E6
@@ -1255,6 +1282,20 @@ float ObjectWeapons::currentAttackRange() const
 	w->computeBonus(*self->m_host, 0, bonus);
 	const RangeSubject src = subjectOf(*m_owner);
 	return WeaponGetAttackRange(*w->getTemplate(), bonus, *self->m_rangeHost, src, 0.0f);
+}
+
+float ObjectWeapons::currentAttackRangeNoTarget() const
+{
+	const Weapon *w = weaponInSlot(m_curSlot);
+	if (!w || !w->getTemplate())
+	{
+		return 0.0f;
+	}
+	ObjectWeapons *self = const_cast<ObjectWeapons *>(this);
+	WeaponBonus bonus;
+	w->computeBonus(*self->m_host, 0, bonus);
+	const RangeSubject src = subjectOf(*m_owner);
+	return WeaponGetAttackRangeNoTarget(*w->getTemplate(), bonus, *self->m_rangeHost, src);
 }
 
 bool ObjectWeapons::isTooClose(const Object &victim) const

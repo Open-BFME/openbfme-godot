@@ -5,6 +5,7 @@
 
 #include "Common/Player.h"
 #include "GameLogic/Object/Object.h"
+#include "GameLogic/System/ShroudManager.h"
 
 HudInput::HudInput(GameLogic &logic, AIWorld *ai, TacticalView &view, CommandList &commands, const MouseSettings &mouse, const MetaMap &metaMap)
 	: m_logic(logic)
@@ -142,7 +143,7 @@ size_t HudInput::update()
 	return n;
 }
 
-// ZH HintSpy.cpp:114 .. 119 (MSG_DO_MOVETO_FORMATION: RotWK's, stop S-1920) and createMoveHint's immobile check (InGameUI.cpp:2077)
+// RotWK HintSpy (RW 0x838225 .. 0x83825E): the move family only, then createMoveHint's tests (RW 0x69F54F)
 void HudInput::hintSpy(const ClientMessage &m)
 {
 	switch (m.type())
@@ -150,8 +151,6 @@ void HudInput::hintSpy(const ClientMessage &m)
 		case MSG_DO_MOVETO:
 		case MSG_DO_ATTACKMOVETO:
 		case MSG_DO_FORCEMOVETO:
-		case MSG_ADD_WAYPOINT:
-		case MSG_DO_MOVETO_FORMATION:
 			break;
 		default:
 			return;
@@ -160,15 +159,41 @@ void HudInput::hintSpy(const ClientMessage &m)
 	{
 		return;
 	}
+	const Coord3D pos = m.arg(0).location;
+	// RW 0x690E97 (stop S-1920: only its IMMOBILE test is ported; its held / disabled tests RW 0x9325B4, 0x46E918(0x81), 0x44DDEC(0x3B) are not)
+	auto canMove = [](const Object &o) { return !o.isKindOfName("IMMOBILE"); };
 	if (m_ui.getSelectCount() == 1)
 	{
 		const Object *o = m_logic.findObjectByID(m_ui.firstSelected());
-		if (o && o->isKindOfName("IMMOBILE"))
+		if (o && !canMove(*o))
 		{
 			return;
 		}
 	}
-	m_ui.createMoveHint(m.arg(0).location);
+	// RW 0x69E8D0: a point the local player does not see now (RW 0xB4FB20 over the local player's shroud index, Player + 0x54: a looker count of 0 or the
+	// never-seen -1, or outside the grid) is always hinted; a seen point when some selected object can move and is ARMY_OF_DEAD (template + 0x11A & 0x80,
+	// KINDOF bit 151) or has an AI (Object + 0x260) whose pathfinder accepts the spot (RW 0x66403D -> RW 0x6F5BB0; stop S-1920: taken as accepted)
+	bool hinted = true;
+	const Player *local = m_ctx.localPlayer();
+	const ShroudManager *shroud = m_logic.shroud();
+	int cx = 0, cy = 0;
+	if (local && shroud && shroud->worldToCell(pos.x, pos.y, cx, cy) && shroud->lookerCount(local->getPlayerIndex(), cx, cy) > 0)
+	{
+		hinted = false;
+		for (ObjectID id : m_ui.selected())
+		{
+			const Object *o = m_logic.findObjectByID(id);
+			if (o && canMove(*o) && (o->isKindOfName("ARMY_OF_DEAD") || o->getAIUpdateInterface() != nullptr))
+			{
+				hinted = true;
+				break;
+			}
+		}
+	}
+	if (hinted)
+	{
+		m_ui.createMoveHint(pos);
+	}
 }
 
 std::vector<std::string> HudInput::acceptanceStops()
@@ -208,14 +233,20 @@ std::vector<std::string> HudInput::acceptanceStops()
 		out.push_back(s);
 	}
 	// lane PLAY-1: the move hint (InGameUI::createMoveHint)
-	out.push_back("[S-1920] move hint: ZH's HintSpy / createMoveHint / drawMoveHints (256 slots, 40 client frames, GameData MoveHintName) stand for RotWK's, which were not read; "
-				  "MSG_DO_MOVETO_FORMATION is taken as a move; the model is drawn upright at the ground point (ZH aligns it with the terrain normal and lifts it to water)");
+	out.push_back("[S-1920] move hint (RotWK HintSpy RW 0x838225, createMoveHint RW 0x69F54F, drawMoveHints RW 0x48EDED: one marker at a time, 25 slots, 40 client frames): "
+				  "not ported: RW 0x690E97's held / disabled tests (only IMMOBILE), the pathfinder's acceptance of the spot (RW 0x66403D -> 0x6F5BB0: taken as accepted), "
+				  "the lift to the water surface (TerrainLogic vslot 0x4C)");
 	out.push_back("[S-1954] RotWK's pick (HUD-5): the cast's collision types (RW 0x4B583C), the hit order (RW 0x48AB28 / 0x489BE6) and each caller's pick types are ported: "
 				  "RW 0x71083F (SELECTABLE, FORCEATTACKABLE when forcing, SHRUBBERY / ROCK from the GUI command or the selection, RW 0x71077B), the point selection | OWN "
 				  "(RW 0x485CB8), the hover forced (RW 0x83CC13), the order click (RW 0x81FBB3), the double click SELECTABLE (RW 0x81F7C5), a GUI command's object target "
 				  "(RW 0x83D41A); not ported: the double click's own route (RotWK's CommandTranslator case RW 0x81F791 -> ControlBar RW 0x9403ED / InGameUI vslot 0x188; "
 				  "the port keeps ZH's select-matching in the SelectionTranslator), pickDrawable's forceAttack argument (the cast flag RW 0x48ABFF), the model draw's own "
 				  "override (W3DModelDraw + 0x214), the object status bits that clear the type (RW 0x4B5988 / 0x4B59CE, taken as effectively dead), the 0x40 type");
+	out.push_back("[S-3302] building placement ghost (PLAY-1 r2 as S-1923; renumbered by PLAY-3: S-1923 is WINCRASH-1's) (RotWK placeBuildAvailable RW 0x69C5E6, placement update RW 0x6A2AE5: the BUILD_PLACEMENT_CURSOR model at 0.45 "
+				  "opacity, red when illegal, a blue pulse for code 9): the draw script read only for its hide / show calls, the tint drawn as an additive overlay, "
+				  "not ported: the house colour, the animation (bind pose), the anchor / arrow models of a rotatable placement (W3DInGameUI + 0xAB8 / 0xABC); "
+				  "a castle's layout pieces (PLAY-3, RW 0x6A2AE5) all take the site's tint (RotWK's per-piece legality RW 0x6A39A0 .. 0x6A3B0F is not ported) and "
+				  "their angle is taken as the ghost's plus the entry's");
 	return out;
 }
 

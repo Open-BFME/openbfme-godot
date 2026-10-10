@@ -40,6 +40,7 @@
 
 class GameWindow;
 class AptGadgetLayer;
+class GadgetDrawList;
 class Shell;
 class ShellServices;
 
@@ -257,6 +258,20 @@ public:
 		return it == m_renderPictures.end() ? nullptr : &it->second;
 	}
 
+	// lane UI-4: an engine render callback that draws text into the clip the movie tags with its name (`_type`; RotWK registerAptCallback, e.g.
+	// AptMainMenu::RenderCredits RW 0x91B1B8): the device calls it with the clip's rectangle in stage units and draws the list it fills in the
+	// clip's place of the render list. clearRenderCallback removes it (the clip then draws nothing, as retail's callback with no object).
+	typedef std::function<void(float x, float y, float w, float h, GadgetDrawList &out)> RenderCallback;
+	void setRenderCallback(const std::string &renderName, RenderCallback callback) { m_renderCallbacks[renderName] = std::move(callback); }
+	void clearRenderCallback(const std::string &renderName) { m_renderCallbacks.erase(renderName); }
+	const RenderCallback *renderCallback(const std::string &renderName) const
+	{
+		auto it = m_renderCallbacks.find(renderName);
+		return it == m_renderCallbacks.end() ? nullptr : &it->second;
+	}
+	// lane UI-4: the elapsed time the last update was given (before its clamp), for screens that pace their own clocks
+	int lastElapsedMs() const { return m_lastElapsedMs; }
+
 	// ---- components -------------------------------------------------------------------------------------------
 	// The windows created for the component instances of the loaded levels, in creation order. Lane WINCRASH-1: a record outlives its
 	// placeholder clip (instance null, the window hidden) until the clip is placed again or its level is unloaded, as RotWK's window
@@ -271,9 +286,12 @@ public:
 		std::string movie;
 		std::string init;                   // the `_Init` screen reference that was called
 		std::shared_ptr<GameWindow> window; // may be null (a factory that creates no window)
+		bool initPending = false;           // `_Init` not called yet (RW 0x814BEC: read at the component's render, retried until it resolves)
+		bool initNoted = false;             // the unknown-screen-ref note was given
 	};
 	const std::vector<ComponentRecord> &components() const { return m_componentRecords; }
 	GameWindow *componentWindow(const std::string &instancePath) const;
+	bool isComponentWindow(const GameWindow *window) const; // a live component's window
 	// The name InitGadgets gets for an instance [S-170].
 	static std::string gadgetInstanceName(const AptCharacterInst &inst);
 
@@ -340,6 +358,8 @@ public:
 	void seedRandom(std::uint32_t seed) { m_randomState = seed; }
 
 private:
+	void runComponentInits(); // the components' `_Init` (RW 0x814BEC), after the movie's update
+
 	struct TextRecord
 	{
 		std::string text;
@@ -384,6 +404,8 @@ private:
 	std::map<std::string, TextRecord> m_texts;
 	std::map<std::string, std::string> m_images; // lane END-2
 	std::map<std::string, RenderPicture> m_renderPictures; // lane UI-2
+	std::map<std::string, RenderCallback> m_renderCallbacks; // lane UI-4
+	int m_lastElapsedMs = 0;                                  // lane UI-4
 
 	AptGadgetLayer *m_gadgetLayer = nullptr;
 	std::vector<ComponentRecord> m_componentRecords;

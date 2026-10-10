@@ -938,21 +938,27 @@ TEST_CASE("play1 move hint: GameData's MoveHintName is read (GlobalData + 0x10) 
 	CamRig r(shared());
 	CHECK(r.gd.moveHintName == "SCMoveHint");
 	InGameUI &ui = r.input->ui();
+	// RW 0x48EDED draws nothing while the client frame is below 41
+	ui.createMoveHint(Coord3D{ 100.0f, 200.0f, 5.0f });
+	CHECK(ui.liveMoveHintCount() == 0);
+	r.frame(41);
 	ui.createMoveHint(Coord3D{ 100.0f, 200.0f, 5.0f });
 	CHECK(ui.liveMoveHintCount() == 1);
 	r.frame(InGameUI::MOVE_HINT_FRAMES);
 	CHECK(ui.liveMoveHintCount() == 1);
 	r.frame(1);
 	CHECK(ui.liveMoveHintCount() == 0);
-	// 256 slots, round robin (ZH m_nextMoveHint)
+	// RotWK: 25 slots round robin, and every new hint expires the others (RW 0x69B76C): one marker at a time
+	CHECK(InGameUI::MAX_MOVE_HINTS == 25);
 	for (int i = 0; i < InGameUI::MAX_MOVE_HINTS + 3; ++i)
 	{
 		ui.createMoveHint(Coord3D{ (float)i, 0.0f, 0.0f });
 	}
-	CHECK(ui.liveMoveHintCount() == InGameUI::MAX_MOVE_HINTS);
-	// the first hint took slot 0, so these went to slots 1 .. 255, 0, 1, 2, 3
-	CHECK(ui.moveHints()[3].pos.x == (float)(InGameUI::MAX_MOVE_HINTS + 2));
-	CHECK(ui.moveHints()[4].pos.x == 3.0f);
+	CHECK(ui.liveMoveHintCount() == 1);
+	// two hints so far took slots 0 and 1, these went to slots 2 .. 24, 0 .. 4: the newest (28th) is in slot 4
+	CHECK(ui.moveHintDrawn(4));
+	CHECK(ui.moveHints()[4].pos.x == (float)(InGameUI::MAX_MOVE_HINTS + 2));
+	CHECK_FALSE(ui.moveHintDrawn(3));
 }
 
 TEST_CASE("play1 mouse setup: RotWK's GlobalData defaults to the alternate setup and Options.ini AlternateMouseSetup reads as RW 0x6E61D4 says")

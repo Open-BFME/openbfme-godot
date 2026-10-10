@@ -301,7 +301,9 @@ PROFILER_COMMANDS = {"create_process": {"perf"}, "execute": {"kill"}}
 # their user:// paths built inside it) and open_log_file(name) (a validated session log file name) build the path. Any other reference to
 # these OS methods, anywhere (another file, another function, a string naming one for call() / Callable()), is a finding.
 FILE_MANAGER_METHODS = {"shell_open", "shell_show_in_file_manager"}
-FILE_MANAGER_OWNER = ("godot/scripts/release/release.gd", "_show_in_file_manager")
+# lane UI-3: the launcher's "Show folder" / "Open log folder" likewise go through one function, paths.gd show_in_file_manager(path), which
+# opens only an existing local folder that is the launcher's data folder (or inside it) or one of the game folders it found
+FILE_MANAGER_OWNERS = {("godot/scripts/release/release.gd", "_show_in_file_manager"), ("launcher/scripts/ui/paths.gd", "show_in_file_manager")}
 
 
 def gdscript_findings(text: str, path: str | None = None) -> list[str]:
@@ -310,7 +312,8 @@ def gdscript_findings(text: str, path: str | None = None) -> list[str]:
     function = None  # the top-level function the token is in
     for k, (kind, value, line, column) in enumerate(stream):
         if kind == "ident" and column == 0:
-            function = stream[k + 1][1] if value == "func" and k + 1 < len(stream) and stream[k + 1][0] == "ident" else None
+            j = k + 1 if value == "static" and k + 1 < len(stream) and stream[k + 1][1] == "func" else k  # "static func name" too
+            function = stream[j + 1][1] if stream[j][1] == "func" and j + 1 < len(stream) and stream[j + 1][0] == "ident" else None
         if kind == "string":
             if GODOT_NET.match(value):
                 found.append(f"line {line}: string \"{value}\"")
@@ -322,7 +325,7 @@ def gdscript_findings(text: str, path: str | None = None) -> list[str]:
         if GODOT_NET.match(value) and not (k and stream[k - 1][1] == "."):
             found.append(f"line {line}: {value}")
         if value in GODOT_OS_CALLS and k >= 2 and stream[k - 1][1] == "." and stream[k - 2][1] == "OS":
-            if value in FILE_MANAGER_METHODS and (path, function) == FILE_MANAGER_OWNER:
+            if value in FILE_MANAGER_METHODS and (path, function) in FILE_MANAGER_OWNERS:
                 continue
             nxt = stream[k + 1:k + 4]
             if (value in PROFILER_COMMANDS and len(nxt) == 3 and nxt[0][1] == "(" and nxt[1][0] == "string" and nxt[1][1] in PROFILER_COMMANDS[value]
@@ -360,7 +363,7 @@ def scan_launcher() -> dict[str, list[str]]:
         rel = gd.relative_to(REPO / "launcher").parts
         if rel[0] in ("tests", ".godot"):
             continue
-        f = gdscript_findings(gd.read_text(encoding="utf-8", errors="replace"))
+        f = gdscript_findings(gd.read_text(encoding="utf-8", errors="replace"), str(gd.relative_to(REPO)).replace("\\", "/"))
         if f:
             out[str(gd.relative_to(REPO))] = f
     return out

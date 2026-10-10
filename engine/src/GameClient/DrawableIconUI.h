@@ -67,6 +67,7 @@ struct IconUIOp
 	std::string image;                 ///< IMAGE: a MappedImage name
 	std::string text;                  ///< TEXT: UTF-8
 	ObjectID object = 0;
+	float width = 1.0f;                ///< OPEN_RECT: the outline's line width (Display +0xE0's fifth argument; Render2D Add_Outline)
 };
 
 struct IconUISettings

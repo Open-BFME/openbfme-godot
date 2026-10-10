@@ -133,6 +133,13 @@ public:
 	// slot 0x14 (RW 0x87594C): members on their way into a garrison come back (slot 0x10, RW 0x8759FF(0)), a melee ends (slot 0x138, RW 0x86C0F9), then every member
 	// that is not busy and not attacking `target` (or a member of its horde: RW 0x86BDD3) gets AI command 0x31 from the AI (busy): its attack ends, its target goes
 	virtual void prepareMembersForCommand(Object *target) = 0;
+	// ---- lane ARCHER-1: the HordeAttackNugget's fire (the nugget's slots 5 / 6, RW 0x911A58 / 0x911AC9, call these two slots of the source's horde interface;
+	// GameLogic/Object/Contain/HordeMemberPass.cpp) ----
+	// slot 4 (RW 0x875221): the released ranks attack `victim`, each member its own pick among the victim horde's members (contain slot 0x48, RW 0x86FA87:
+	// the nearest within the member's range after a logic random factor 0.66 .. 1.33 on every distance, which spreads the shots over the horde)
+	virtual void attackTargetNow(Object *victim, bool closestMemberOnly) = 0;
+	// slot 0 (RW 0x875550): the released ranks attack the ground at `pos`
+	virtual void attackPositionNow(const Coord3D &pos) = 0;
 };
 
 class HordeContain : public UpdateModule, public ContainModuleInterface, public CreateModuleInterface, public HordeContainInterface
@@ -222,6 +229,28 @@ public:
 	void clearFacePoint() override { m_hasFacePoint = false; }
 	bool attackedWithin(unsigned frames, ObjectID &attacker) const override;
 	void prepareMembersForCommand(Object *target) override; // lane MOVE-2 (HordeMemberPass.cpp)
+	// lane ARCHER-1 (HordeMemberPass.cpp): the HordeAttackNugget's fire and the member choices it uses
+	void attackTargetNow(Object *victim, bool closestMemberOnly) override;
+	void attackPositionNow(const Coord3D &pos) override;
+	// contain slot 0x48 (RW 0x86FA87): the member of this horde an attacker at `pos` aims at (see HordeMemberPass.cpp); `skipTagged`: members with the status
+	// 0x3F are passed over; `attacker`: its current weapon filters the candidates (RW 0x744AAA)
+	Object *pickMemberNear(bool skipTagged, const Coord3D &pos, float range, Object *attacker);
+	// contain slot 0x110 (RW 0x87055D): the first member of the contain list, else the first member on its way into a garrison, else null
+	Object *firstMember() const;
+	// RW 0x870C29: the member (the contain list, then the members on the way) nearest to `victim` in the plane, within 1000 (1e6 squared, RW 0xBDCDC0)
+	Object *closestMemberTo(const Object &victim) const;
+	struct AttackStats
+	{
+		unsigned long long fires = 0;            // attackTargetNow calls that ran (the MELEE_HORDE guard RW 0x86C6EB passed)
+		unsigned long long orders = 0;           // members ordered to attack (RW 0x66C536)
+		unsigned long long outOfReach = 0;       // members whose pick was out of reach (RW 0x6FF7FA false): the horde is marked dirty
+		unsigned long long meleeMembers = 0;     // members holding a melee weapon (the branch RW 0x875320)
+		unsigned long long losAssumedClear = 0;  // RW 0x744AAA's line-of-sight filter (RW 0x6616AC) consulted: taken as clear (S-859)
+		unsigned long long otherContainer = 0;   // victims held by a container that is not a HordeContain (its slot 0x48 is not ported: the victim stays)
+		unsigned long long positionOrders = 0;   // members a position fire would order (RW 0x6961F1 aiAttackPosition is not executed, S-325)
+	};
+	const AttackStats &attackStats() const { return m_attackStats; }
+	static const char *attackStopLine(); // S-2610
 	// the emotion stop lines (S-1028)
 	static std::vector<std::string> emotionStops();
 	struct BackUpEntry
@@ -381,6 +410,7 @@ private:
 	unsigned m_lastMemberEnteredFrame = 0;
 	bool m_garrisoned = false;
 	ExitStats m_exitStats; // lane GARRISON-3 (counters, not state)
+	AttackStats m_attackStats; // lane ARCHER-1 (counters, not state)
 	std::shared_ptr<MeleeBehaviorModuleData> m_stanceMeleeBehavior; // lane INTEG-1: the stance's MeleeBehavior given through slot 0x260 (null: the module data's)
 	bool bannerMemberSlot(const Object &member, Coord3D &pos) const;
 	// lane MODULES-3: the emotion state (RW HordeContain offsets)

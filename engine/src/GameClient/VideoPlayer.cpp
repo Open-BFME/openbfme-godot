@@ -159,7 +159,7 @@ VideoStreamInfo VideoPlayer::locate(const std::string &title, const std::string 
 	}
 	if (!language.empty())
 	{
-		dirs.push_back({ installRoot, "Lang/" + language + "/Data/Movies/" });
+		dirs.push_back({ installRoot, "Lang\\" + language + "\\Data\\Movies\\" }); // RW 0xBDDEDC, the localized directory
 	}
 	dirs.push_back({ installRoot, "Data\\Movies\\" });
 	std::string tried;

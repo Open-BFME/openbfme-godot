@@ -629,7 +629,11 @@ TEST_CASE("skirmish ai vs ai: Evendim, 30 game-minutes: every pairing ends - Mor
 	// Merge of merge/play2 (MOVE-3, CAMP-2, INPUT-1, CAH-2, DOCS-1 on 22e29980) into DECOMP-1 r3 (Sol's fixes: the victim gate of a damage nugget, the firing
 	// weapon's slot, the turret aim gate of the weapon choice, the SHROUD_CLEARING refresh), re-measured on the merged tree with remote-measure.sh: seed 2 is open at
 	// 9000, seed 7 ends with Mordor's defeat (start position 1) at 3869, seed 1234 with Men's defeat (start position 1) at 7528. Engine pins, not retail values.
-	for (const Game &g : { Game{ "FactionMordor", "FactionMen", 2u, -1, -1 }, Game{ "FactionMen", "FactionMordor", 7u, 1, 3869 }, Game{ "FactionMordor", "FactionMen", 1234u, 1, 7528 } })
+	// Merge INTEG-3 (PLAY-1's tribute and settings hash, ARCHER-1's spread fire of a ranged horde RW 0x875221 / 0x86FA87 with LockWeaponSlot forwarded to the
+	// members, on DECOMP-1's weapon choice and delivery; UI-3 / UI-4 / RELTEST-1 / PLAY-3 change no logic), re-measured on the merged tree 22902969 with
+	// remote-measure.sh (pve): seed 2 ends with Men's defeat (start position 1) at 7205, seed 7 with Mordor's defeat (start position 1) at 4206, seed 1234 with
+	// Men's defeat (start position 1) at 5519. Engine pins, not retail values.
+	for (const Game &g : { Game{ "FactionMordor", "FactionMen", 2u, 1, 7205 }, Game{ "FactionMen", "FactionMordor", 7u, 1, 4206 }, Game{ "FactionMordor", "FactionMen", 1234u, 1, 5519 } })
 	{
 		INFO(g.a << " vs " << g.b << " seed " << g.seed);
 		VersusRun run;

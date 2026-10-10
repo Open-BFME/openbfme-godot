@@ -21,6 +21,7 @@ class ReleaseServer:
         self.redirect: dict[str, str] = {}     # path -> Location
         self.ignore_range = False
         self.status: dict[str, int] = {}       # path -> an HTTP error status to answer (lane AIO-1)
+        self.throttle: dict[str, float] = {}   # path part -> seconds between 16 KiB chunks (lane UI-3: Pause / Cancel mid-download)
         self.requests: list[tuple[str, dict]] = []
         self.stopped = False
         srv = self
@@ -62,6 +63,16 @@ class ReleaseServer:
                     self.wfile.write(body[:cut])
                     self.wfile.flush()
                     self.close_connection = True
+                    return
+                slow = next((v for k, v in srv.throttle.items() if k in self.path), None)
+                if slow is not None:
+                    try:
+                        for i in range(0, len(body), 16384):
+                            self.wfile.write(body[i:i + 16384])
+                            self.wfile.flush()
+                            time.sleep(slow)
+                    except (BrokenPipeError, ConnectionResetError):  # the launcher stopped the download
+                        self.close_connection = True
                     return
                 self.wfile.write(body)
 

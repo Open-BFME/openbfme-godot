@@ -59,6 +59,17 @@ func start(name: String, diff: int) -> void:
 	mission = 0
 	difficulty = diff
 	print("CAMPAIGN start %s (difficulty %d): %d missions" % [name, diff, missions_of(name).size()])
+	# lane PLAY-3 (owner: the menu music played on through the campaign's opening movie). TARGET FACTS: the main menu's campaign start (RW 0x91C262 ->
+	# RW 0x91C108) queues RW 0x91BCD2 first: the transition PreParchmentMapFade_StartNew and TheShell's music stop (RW 0x75D9B1: TheAudio RW 0xDE42FC
+	# vslot 0x8C(2, 1, 0), a type 2 request: the music of view 2 (the shell), music system 1); once the transition has ended it clears music system 1
+	# of the views 1, 2 and 0 (vslot 0x98, type 7 requests). Only then come Map_Roll (RW 0x91BC1E, not ported: S-3303) and the campaign (RW 0x91BE64).
+	# The menu itself leaves the music alone for the two campaign commands (RW 0x91B43C / 0x91B441 skip RW 0x75D9B1 for 0xD / 0xE). In retail the
+	# transition covers the stop before any movie opens; the port has no transition (S-3303), so the music stops at once (review r1: a fade left the
+	# shell voice playing under the narration for its two seconds)
+	var was := str(game._audio.get_music_track())
+	game._audio.stop_music(false)
+	print("CAMPAIGN shell music stopped (RW 0x91BCD2 -> RW 0x75D9B1): '%s' before, '%s' now" % [was, game._audio.get_music_track()])
+	print("CAMPAIGN STOP [S-3303] the main menu's campaign start: the transition PreParchmentMapFade_StartNew and the Map_Roll movie (RW 0x91BC1E) are not played")
 	for c in world.get_campaigns():
 		if String(c.name).to_upper() == name.to_upper():
 			await play_movie(String(c.intro_movie))
@@ -123,7 +134,7 @@ func begin_mission() -> void:
 	# lane CAMP-2: the mission's IntroMovie plays after its loading screen (LinearCampaignExpansion1.ini: "A special movie which is played when the
 	# campaign starts, BEFORE the first map is loaded (all the other movies are played AFTER the loading screen)"; CAMP-1H played it before the load)
 	if movies and not String(m.intro_movie).is_empty():
-		game._audio.stop_music(true) # INFERENCE: the loading screen's music ends for the movie (its own <file>_Music event plays)
+		game._audio.stop_music(false) # INFERENCE: the loading screen's music ends for the movie (its own <file>_Music event plays); at once, not under it (PLAY-3 r2)
 	await play_movie(String(m.intro_movie))
 	game._game_kind = "campaign %s %d" % [campaign, mission] # lane CAMP-2
 	game._enter_game(rep)

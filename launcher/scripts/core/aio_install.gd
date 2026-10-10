@@ -1,6 +1,6 @@
 ## Lane AIO-1: installing the game files from the All In One BFME Launcher's download service (the BFME Foundation Project's and the
 ## Patch 2.22 team's), with the player's consent. On by default since round 3 (DEFAULT_ENABLED); nothing downloads without the
-## player's click on the consent screen. The owner
+## player's click on Download (the window's Download the games screen). The owner
 ## approved using this service directly on 2026-10-10 (docs/AIO.md, "Decisions"). Today it installs the original versions only: the
 ## packages of scripts/core/aio_pins.gd ("original-RotWK" = Vanilla 2.01, "original-BFME2" = Vanilla 1.06). The code is package-generic
 ## (a guid, its file list, the checks); a mod would be one more row in that table.
@@ -100,16 +100,16 @@ func total_size() -> int:
 	return n
 
 
-## What the player agrees to before anything is downloaded (the window's consent screen and the command line's log).
+## What the player's Download press (the window) or --aio-consent (the command line) agrees to; logged with the consent. Lane UI-3: the
+## window shows one line naming the source and a link instead, and no ownership checkbox (the owner, 2026-10-10: "just let people
+## figure that out").
 func consent_text() -> String:
 	var lines := PackedStringArray()
 	lines.append("The game files are downloaded from the servers of %s, %s and %s. They do not come from EA or from OpenBFME." % [PROJECT, SERVICE.trim_prefix("https://"), FILES.trim_prefix("https://")])
 	for p in packages:
 		lines.append("  %s: their package \"%s\" (%s)" % [p.label, p.name, p.guid])
-	lines.append("About %.1f GB. The games belong to Electronic Arts. You should own The Battle for Middle-earth II and The Rise of the Witch-king; " % (total_size() / 1e9) +
-		"neither that service nor OpenBFME checks this.")
-	lines.append("OpenBFME sends those servers only its name and version (no account, nothing about you or this computer); their privacy " +
-		"policy (bfmeladder.com/privacy) applies to their servers. Every archive is checked against OpenBFME's own list before it is kept.")
+	lines.append("About %.1f GB. Every archive is checked against OpenBFME's own list before it is kept. OpenBFME sends those servers only " % (total_size() / 1e9) +
+		"its name and version; their privacy policy (bfmeladder.com/privacy) applies to their servers.")
 	return "\n".join(lines)
 
 
@@ -220,7 +220,7 @@ static func md5_of(path: String) -> String:
 ## it on its worker thread; pause / cancel through request_stop). {ok, kind, error, folders: {key: path}, downloaded, kept}
 func install(target: String, consented: bool) -> Dictionary:
 	if not enabled():
-		return _fail(REFUSED, "the setting \"Install game files with the All In One BFME Launcher\" is off")
+		return _fail(REFUSED, "the setting \"Offer to download the games\" (--aio) is off")
 	if not consented:
 		return _fail(REFUSED, "the player has not agreed to download the game files from %s" % PROJECT)
 	if target == "" or not target.is_absolute_path():

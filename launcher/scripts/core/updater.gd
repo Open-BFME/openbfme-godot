@@ -58,8 +58,14 @@ func set_test_api_base(origin: String) -> String:
 	return ""
 
 
+## the player's channel; until they pick one, the channel of this launcher's own version (lane RELTEST-1: a preview launcher defaulted to
+## Stable, so a new player's first start said "There is no stable release yet." with Play off while only previews exist)
 func channel() -> String:
-	return state.get_value("launcher", "channel", "stable")
+	return state.get_value("launcher", "channel", default_channel())
+
+
+func default_channel() -> String:
+	return Semver.channel_of(info.version) if Semver.is_valid(info.version) else "stable"
 
 
 func set_channel(c: String) -> void:
@@ -150,14 +156,39 @@ func fetch_releases() -> Dictionary:
 
 
 ## release notes as plain text: no control characters but newlines and tabs, at most MAX_NOTES characters (shown in a label with no
-## markup: nothing remote is ever rendered as HTML, BBCode or an image)
+## markup: nothing remote is ever rendered as HTML, BBCode or an image). The release body is Markdown whose note lines
+## tools/release/autorelease.py writes as literal text (markdown(): a backslash before every special character, &amp; &lt; &gt;); a
+## label shows those escapes as they are ("start\-up", lane RELTEST-1), so they are undone here: a backslash before ASCII punctuation
+## (CommonMark's backslash escape) and the three entities, in one pass (the result is never unescaped again).
 static func plain_text(s: String) -> String:
 	var out := ""
-	for c in s.left(MAX_NOTES):
+	var text := s.left(MAX_NOTES)
+	var i := 0
+	while i < text.length():
+		var c := text[i]
+		if c == "\\" and i + 1 < text.length() and _is_ascii_punct(text.unicode_at(i + 1)):
+			out += text[i + 1]
+			i += 2
+			continue
+		if c == "&":
+			var hit := false
+			for e in [["&amp;", "&"], ["&lt;", "<"], ["&gt;", ">"]]:
+				if text.substr(i, e[0].length()) == e[0]:
+					out += e[1]
+					i += e[0].length()
+					hit = true
+					break
+			if hit:
+				continue
 		var u := c.unicode_at(0)
 		if u >= 0x20 and u != 0x7f or c == "\n" or c == "\t":
 			out += c
+		i += 1
 	return out
+
+
+static func _is_ascii_punct(u: int) -> bool:
+	return (u >= 0x21 and u <= 0x2f) or (u >= 0x3a and u <= 0x40) or (u >= 0x5b and u <= 0x60) or (u >= 0x7b and u <= 0x7e)
 
 
 ## A freeze attack (someone serving an old but validly signed release list) cannot be told apart from a quiet project, so it is a plain

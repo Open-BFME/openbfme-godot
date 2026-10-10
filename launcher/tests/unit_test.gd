@@ -14,6 +14,12 @@ const Archive := preload("res://scripts/core/archive.gd")
 const GameOptions := preload("res://scripts/core/game_options.gd")
 const AioInstall := preload("res://scripts/core/aio_install.gd")
 const AioPins := preload("res://scripts/core/aio_pins.gd")
+const Paths := preload("res://scripts/ui/paths.gd")
+const ProgressMeter := preload("res://scripts/ui/progress_meter.gd")
+const SettingsPanel := preload("res://scripts/ui/settings_panel.gd")
+const DownloadPanel := preload("res://scripts/ui/download_panel.gd")
+const Updater := preload("res://scripts/core/updater.gd")
+const BuildInfo := preload("res://scripts/core/build_info.gd")
 
 var _checks := 0
 var _failed := 0
@@ -41,6 +47,21 @@ func _init() -> void:
 		_check(not Semver.is_valid(bad), "semver rejects '%s'" % bad.c_escape())
 	_check(Semver.channel_of("v1.0.0") == "stable" and Semver.channel_of("v1.0.0-preview.3") == "preview", "channels")
 	_check(Semver.channel_of("v1.0.0-preview.0") == "preview", "preview.0 is a preview")
+	# lane RELTEST-1: until the player picks a channel, a launcher follows its own version's channel (a v0.3.0-preview.1 launcher on Stable
+	# told a new player "There is no stable release yet." with Play off); a pick is kept; a development run (v0.0.0-dev) stays on stable
+	for v in [["v0.3.0-preview.1", "preview"], ["v1.0.0", "stable"], ["v0.0.0-dev", "stable"]]:
+		var bi = BuildInfo.new()
+		bi.version = v[0]
+		var u = Updater.new(bi)
+		u.state = ConfigFile.new()  # no remembered pick (the test's user folder may hold one)
+		_check(u.channel() == v[1], "a %s launcher starts on %s, not %s" % [v[0], v[1], u.channel()])
+		u.state.set_value("launcher", "channel", "stable" if v[1] == "preview" else "preview")
+		_check(u.channel() != v[1], "the player's channel pick wins over the %s launcher's default" % v[0])
+	# lane RELTEST-1: release notes as the launcher shows them: autorelease.py's Markdown escapes undone, once, nothing else rendered
+	for t in [["Movies play\\: the start\\-up movies\\.", "Movies play: the start-up movies."], ["Ctrl\\+number \\(off\\)", "Ctrl+number (off)"],
+			["a &lt;b&gt; &amp; c", "a <b> & c"], ["&amp;lt; stays", "&lt; stays"], ["\\\\\\- two", "\\- two"], ["C:\\Games é\\x", "C:\\Games é\\x"],
+			["## What's new\n\n- a\tb\u0007", "## What's new\n\n- a\tb"], ["end\\", "end\\"], ["&am", "&am"]]:
+		_check(Updater.plain_text(t[0]) == t[1], "notes '%s' shown as '%s', not '%s'" % [t[0].c_escape(), t[1].c_escape(), Updater.plain_text(t[0]).c_escape()])
 	# the network policy
 	var pol := NetPolicy.new()
 	for ok in ["https://api.github.com/repos/a/b/releases", "https://github.com/a/b/releases/download/v1/x.zip",
@@ -115,6 +136,8 @@ func _init() -> void:
 		_check(Manifest._schema(m.duplicate(true)) == "", "schema accepts the valid manifest")
 	_game_options()
 	_aio()
+	_ui()
+	_ui_dialogs()
 	if _failed == 0:
 		print("UNIT OK %d checks" % _checks)
 		quit(0)
@@ -163,3 +186,83 @@ func _aio() -> void:
 	_check(AioPins.PACKAGES.size() == 2 and AioPins.PACKAGES[0].guid == "original-RotWK" and AioPins.PACKAGES[1].guid == "original-BFME2", "AIO: two packages")
 	_check(AioPins.PACKAGES[0].files.size() == 315 and AioPins.PACKAGES[1].files.size() == 297, "AIO: 315 + 297 pinned files")
 	_check(AioInstall._whole(2.0) and not AioInstall._whole(2.5) and not AioInstall._whole("2") and not AioInstall._whole(null), "AIO: whole numbers only")
+
+
+## lane UI-3: what the window may show of this machine (scripts/ui/paths.gd), where it finds the game folders, the progress numbers
+func _ui() -> void:
+	var home := "/" + "home/zedtester" if not Paths.is_windows() else "C:\\Users\\zedtester"
+	var tilde := "%USERPROFILE%" if Paths.is_windows() else "~"
+	var sep := "\\" if Paths.is_windows() else "/"
+	_check(Paths.scrub(home + sep + "Games" + sep + "BFME", home, "zedtester") == tilde + sep + "Games" + sep + "BFME", "UI: the home folder becomes " + tilde)
+	_check(Paths.scrub("cannot create %s/x (busy)" % home.replace("\\", "/"), home, "zedtester") == "cannot create %s/x (busy)" % tilde, "UI: also with forward slashes")
+	_check(Paths.scrub("/run/media/zedtester/SD/RotWK", home, "zedtester") == "/run/media/…/SD/RotWK", "UI: the user name as a path component")
+	_check(Paths.scrub("D:\\zedtester\\Games", home, "zedtester") == "D:\\…\\Games", "UI: the user name between backslashes")
+	_check(Paths.scrub("zedtester likes /opt/zedtesters/x", home, "zedtester") == "zedtester likes /opt/zedtesters/x", "UI: only whole components")
+	_check(Paths.scrub("/srv/a.b/x", "/h", "a.b") == "/srv/…/x" and Paths.scrub("/srv/aXb/x", "/h", "a.b") == "/srv/aXb/x", "UI: the name is matched literally")
+	_check(Paths.scrub("/srv/zedtester2/x", "/srv/zedtester", "zedtester") == "/srv/zedtester2/x", "UI: a longer sibling name stays")
+	_check(Paths.scrub("in /srv/zedtester.", "/srv/zedtester", "zedtester") == "in " + tilde + ".", "UI: the home folder at the end of a sentence")
+	var dir := OS.get_user_data_dir().path_join("ui_paths_test")
+	Paths.forget_game_folders(dir)
+	DirAccess.remove_absolute(dir.path_join(Paths.MARKER))
+	DirAccess.make_dir_recursive_absolute(dir.path_join("R"))
+	DirAccess.make_dir_recursive_absolute(dir.path_join("B"))
+	var env_set := OS.get_environment("ROTWK_INSTALL") != "" and OS.get_environment("BFME2_INSTALL") != ""
+	if not env_set:
+		_check(not Paths.game_folders(dir).found and Paths.game_folders(dir).source == "", "UI: no folder files, no games")
+		var f := FileAccess.open(dir.path_join(Paths.MARKER), FileAccess.WRITE)
+		f.store_string("# x\nSOURCE=test\nROTWK_INSTALL=%s\nBFME2_INSTALL=%s\n" % [dir.path_join("R"), dir.path_join("B")])
+		f.close()
+		var g := Paths.game_folders(dir)
+		_check(g.found and g.source == "downloaded" and g.rotwk == dir.path_join("R"), "UI: the launcher's downloaded folders")
+		f = FileAccess.open(dir.path_join(Paths.CONFIG), FileAccess.WRITE)
+		f.store_string("# OpenBFME\r\nROTWK_INSTALL=%s\r\nBFME2_INSTALL=%s\r\n" % [dir.path_join("R"), dir.path_join("missing")])
+		f.close()
+		g = Paths.game_folders(dir)
+		_check(not g.found and g.source == "config", "UI: the confirmed folders come first; a missing one is not found")
+		_check(Paths.forget_game_folders(dir) == "" and not FileAccess.file_exists(dir.path_join(Paths.CONFIG)), "UI: choose again removes install-paths.cfg")
+		_check(Paths.game_folders(dir).source == "downloaded", "UI: then the downloaded folders again")
+	var m := ProgressMeter.new()
+	_check(m.text(0, 1048576 * 100) == "0.0 MB of 100.0 MB", "UI: no rate before the first sample")
+	m.feed(0, 1000)
+	m.feed(10 * 1048576, 2000)
+	_check(is_equal_approx(m.rate, 10 * 1048576.0), "UI: the rate of the first sample")
+	_check(m.text(10 * 1048576, 1048576 * 100) == "10.0 MB of 100.0 MB · 10.0 MB/s · 9 s left", "UI: MB, MB/s and time left (%s)" % m.text(10 * 1048576, 1048576 * 100))
+	m.feed(20 * 1048576, 2200)
+	_check(is_equal_approx(m.rate, 10 * 1048576.0), "UI: samples under half a second wait")
+	m.feed(5, 2600)
+	_check(is_equal_approx(m.rate, 10 * 1048576.0) and m._b == 5, "UI: a new file restarts the sample")
+	_check(ProgressMeter.time_left(59) == "59 s" and ProgressMeter.time_left(90) == "1 min 30 s" and ProgressMeter.time_left(1200) == "20 min" and ProgressMeter.time_left(3725) == "1 h 2 min", "UI: time left")
+	_check(ProgressMeter.mb(3 * 1073741824) == "3.00 GB", "UI: GB above 1 GB")
+
+
+## lane UI-3 round 2 (Sol r1): a dialog closed with its X opens again (the X hid the dialog's inner layer for good)
+func _ui_dialogs() -> void:
+	for panel in [SettingsPanel.new(), DownloadPanel.new()]:
+		var close: Button = _find_close(panel)
+		var card: Control = panel.find_children("*", "PanelContainer", true, false)[0]
+		var name := str(panel.get_script().resource_path.get_file())
+		for round in 3:
+			panel.visible = true
+			_check(_shown(card, panel), "UI: %s shows (opened %d times)" % [name, round + 1])
+			close.pressed.emit()
+			_check(not panel.visible and not _shown(card, panel), "UI: %s closes with its X" % name)
+		panel.free()
+
+
+static func _find_close(node: Node) -> Button:
+	for b in node.find_children("*", "Button", true, false):
+		if b.tooltip_text == "Close":
+			return b
+	return null
+
+
+## `node` and every parent up to `top` are visible (what is_visible_in_tree means, without a running tree)
+static func _shown(node: Control, top: Control) -> bool:
+	var n: Node = node
+	while n != null:
+		if n is CanvasItem and not n.visible:
+			return false
+		if n == top:
+			return true
+		n = n.get_parent()
+	return false

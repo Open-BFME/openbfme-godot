@@ -22,6 +22,7 @@
 #include "GameLogic/Module/HordeAIUpdate.h"
 #include "GameLogic/Module/ProjectileModules.h"
 #include "GameLogic/ObjectFilterMatch.h"
+#include "GameLogic/Object/Contain/HordeContainRuntime.h"
 #include "GameLogic/Object/Contain/HordeFlank.h"
 #include "GameLogic/Object/Object.h"
 #include "GameLogic/SimMath.h"
@@ -1338,16 +1339,30 @@ void ObjectWeaponDelivery::fireWeaponTemplate(const WeaponBonus &bonus, int curB
 			break;
 		case NUGGET_HORDE_ATTACK:
 		{
-			// RW 0x241F10 (the HordeAttackNugget's fire path, inferred): the ranks released when attacking shoot at the victim's horde
+			// lane ARCHER-1: the nugget's slots 5 / 6 (RW 0x911A58 at the victim, RW 0x911AC9 at the position): the source's contain (Object + 0x258) gives its horde
+			// interface (slot 0x7C); none: nothing. Unless LockWeaponSlot is 5 the source's slot is locked temporarily (RW 0x69121A), then the interface's slot 4
+			// (RW 0x875221: attackTargetNow(victim, ClosestMemberOnly)) or slot 0 (RW 0x875550: attackPositionNow) releases the ranks (HordeMemberPass.cpp)
 			if (!upgradeTest(n, m_source))
 			{
 				break;
 			}
-			if (HordeAIUpdate *h = dynamic_cast<HordeAIUpdate *>(m_source->getAIUpdateInterface()))
+			ContainModuleInterface *contain = m_source->getContain();
+			HordeContainInterface *hi = contain ? contain->getHordeContainInterface() : nullptr;
+			if (hi)
 			{
+				const HordeAttackNugget &hn = static_cast<const HordeAttackNugget &>(n);
+				if (hn.m_lockWeaponSlot != 5)
+				{
+					// RW 0x69121A: the members first (contain slot 0x168), then the horde (lane ARCHER-1 r2: the horde alone left its members free to choose)
+					ObjectWeapons::setObjectWeaponLock(*m_source, hn.m_lockWeaponSlot, LOCKED_TEMPORARILY);
+				}
 				if (victim)
 				{
-					h->releaseMembersToAttack(*victim);
+					hi->attackTargetNow(victim, hn.m_closestMemberOnly);
+				}
+				else
+				{
+					hi->attackPositionNow(pos);
 				}
 			}
 			break;

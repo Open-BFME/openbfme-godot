@@ -152,6 +152,7 @@ FieldParse kFields[] = {
 	{ "MultiPlayMoneyMult", parseMultiPlayMoneyMult, SEEN_DATA(SEEN_MONEYMULT), ES_OFF(multiPlayMoneyMult[0]) },
 	{ "MultiPlayUnitXPMult", parseMultiPlayMoneyMult, nullptr, ES_OFF(multiPlayUnitXPMult[0]) },         // lane XP-1 (RW 0x6422D2)
 	{ "MultiPlayBuildingXPMult", parseMultiPlayMoneyMult, nullptr, ES_OFF(multiPlayBuildingXPMult[0]) }, // lane XP-1 (RW 0x642408)
+	{ "NumMinutesBeforePlayersCanTransferMoney", INI::parseInt, nullptr, ES_OFF(numMinutesBeforePlayersCanTransferMoney) }, // lane PLAY-1 (RW 0xC011E0)
 	{ "GoodCommandPointsMP2", parsePair, SEEN_DATA(SEEN_MP0 << 0), ES_OFF(goodMP[0]) },
 	{ "GoodCommandPointsMP3", parsePair, SEEN_DATA(SEEN_MP0 << 1), ES_OFF(goodMP[1]) },
 	{ "GoodCommandPointsMP4", parsePair, SEEN_DATA(SEEN_MP0 << 2), ES_OFF(goodMP[2]) },
@@ -317,6 +318,7 @@ void EconomySettings::crc(StateHasher &h) const
 		h.addFloat(multiPlayUnitXPMult[i]);
 		h.addFloat(multiPlayBuildingXPMult[i]);
 	}
+	h.addI32(numMinutesBeforePlayersCanTransferMoney); // lane PLAY-1 (review): the tribute's gate (RW 0x626087) is part of the settings the peers must share
 }
 
 void EconomyContext::crc(StateHasher &h) const

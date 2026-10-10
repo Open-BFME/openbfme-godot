@@ -10,6 +10,7 @@
 #include "Common/Player.h"
 #include "Common/Thing/ThingFactory.h"
 #include "GameClient/HudObjects.h"
+#include "GameClient/InGameHud.h"
 #include "GameLogic/Object/Object.h"
 #include "GameLogic/ObjectTemplateInfo.h"
 
@@ -316,4 +317,48 @@ TEST_CASE("hud5 pick retail: order click, double click, selection click and drag
 	CHECK(r.input->ui().isSelected(blocker->getID()));
 	CHECK(r.input->ui().isSelected(twin->getID()));
 	CHECK_FALSE(r.input->ui().isSelected(foe->getID()));
+}
+
+// lane PLAY-3 (the owner's play session: no box while dragging): the drag box W3DInGameUI::drawSelectionRegion (RW 0x48ECF4) draws, through the same
+// mouse events: none for a press that has not moved beyond Mouse.ini DragTolerance, then the region between the press and the pointer in 0xBBFFBB33 with
+// lines of width 2 (RW 0xBD889C), following the pointer, gone at the release
+TEST_CASE("play3 drag box retail: the selection box follows the pointer while the left button drags, in RotWK's colour and width")
+{
+	if (!haveWorld("play3 drag box"))
+	{
+		return;
+	}
+	SharedWorld &s = shared();
+	Rig r(s);
+	const Coord3D c = r.freeSpot(2400, 1800, 300.0f);
+	r.lookAt({ c.x, c.y, r.logic().getGroundHeight(c.x, c.y) }, 300.0f, 40.0f);
+	r.frame(2);
+	const int tol = s.mouse.dragTolerance;
+	REQUIRE(tol > 0);
+	IconUIOp op;
+	r.input->ui().deselectAll(true);
+	r.move(400, 300);
+	r.button(HudInput::Button::Left, true, 400, 300);
+	CHECK_FALSE(InGameHud::selectionRegionOp(r.input->ui(), op));
+	r.move(400 + tol, 300 - tol); // not beyond the tolerance (RW 0x83CB7A: above it starts the drag)
+	CHECK_FALSE(InGameHud::selectionRegionOp(r.input->ui(), op));
+	r.move(520, 210);
+	REQUIRE(InGameHud::selectionRegionOp(r.input->ui(), op));
+	CHECK(op.kind == IconUIOp::OPEN_RECT);
+	CHECK(op.x == 400.0f);
+	CHECK(op.y == 210.0f);
+	CHECK(op.w == 120.0f);
+	CHECK(op.h == 90.0f);
+	CHECK(op.width == 2.0f);
+	CHECK(op.color == 0xBBFFBB33u);
+	CHECK(r.input->ui().isSelecting());
+	r.move(300, 380); // the other side of the press: the region is ordered (lo / hi)
+	REQUIRE(InGameHud::selectionRegionOp(r.input->ui(), op));
+	CHECK(op.x == 300.0f);
+	CHECK(op.y == 300.0f);
+	CHECK(op.w == 100.0f);
+	CHECK(op.h == 80.0f);
+	r.button(HudInput::Button::Left, false, 300, 380);
+	CHECK_FALSE(InGameHud::selectionRegionOp(r.input->ui(), op));
+	CHECK_FALSE(r.input->ui().isSelecting());
 }

@@ -189,6 +189,13 @@ bool ControlBar::pressButton(int slot, bool inPalantir)
 				++m_unported[b.m_command == GUI_COMMAND_OBJECT_UPGRADE ? "OBJECT_UPGRADE (no upgrade)" : "PLAYER_UPGRADE (no upgrade)"];
 				return false;
 			}
+			// lane PLAY-1: RotWK's processCommandUI asks canAffordUpgrade(player, upgrade, object, show the reason) first (RW 0x940E45 -> RW 0x66F492): short of
+			// the cost the UI says "GUI:NotEnoughMoneyToUpgrade" and nothing is sent
+			if (!UpgradeCenter::canAffordUpgrade(obj->getControllingPlayer(), u, obj))
+			{
+				m_ctx.ui.message("GUI:NotEnoughMoneyToUpgrade");
+				return false;
+			}
 			ClientMessage &m = m_ctx.stream.append(MSG_QUEUE_UPGRADE);
 			m.appendObjectID(obj->getID());
 			m.appendInteger(u->getMaskBit());

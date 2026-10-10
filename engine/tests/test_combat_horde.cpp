@@ -166,7 +166,8 @@ TEST_CASE("combat horde: an archer horde in range fires its rangefinder, the Hor
 	w.runUntil([&] { return w.byId(vid) == nullptr; }, 400);
 	CHECK(w.byId(vid) == nullptr); // 60 health at 12 per arrow (15 PIERCE through 80%) = 5 arrows
 	REQUIRE(hordeAi(a) != nullptr);
-	CHECK(hordeAi(a)->meleeStats().releases > 0);
+	CHECK(w.hordeOf(a)->attackStats().fires > 0); // the HordeAttackNugget released the ranks (RW 0x875221)
+	CHECK(w.hordeOf(a)->attackStats().orders > 0);
 	CHECK(w.combat().counters().projectilesLaunched >= 5);
 	CHECK(w.combat().counters().kills == 1);
 }

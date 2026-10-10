@@ -406,6 +406,7 @@ void GameAudio::_bind_methods()
 	ClassDB::bind_method(D_METHOD("get_event_names", "sound_type"), &GameAudio::get_event_names);
 	ClassDB::bind_method(D_METHOD("get_event_info", "event_name"), &GameAudio::get_event_info);
 	ClassDB::bind_method(D_METHOD("get_playing"), &GameAudio::get_playing);
+	ClassDB::bind_method(D_METHOD("get_fading"), &GameAudio::get_fading);
 	ClassDB::bind_method(D_METHOD("get_unverified"), &GameAudio::get_unverified);
 }
 
@@ -905,6 +906,19 @@ PackedStringArray GameAudio::get_playing() const
 	if (m_manager)
 	{
 		for (const std::string &n : m_manager->playingEventNames())
+		{
+			out.push_back(toGodot(n));
+		}
+	}
+	return out;
+}
+
+PackedStringArray GameAudio::get_fading() const
+{
+	PackedStringArray out;
+	if (m_manager)
+	{
+		for (const std::string &n : m_manager->fadingEventNames())
 		{
 			out.push_back(toGodot(n));
 		}

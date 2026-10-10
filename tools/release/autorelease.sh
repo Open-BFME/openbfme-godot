@@ -27,10 +27,14 @@
 #   7. release notes for players from the first-parent subjects since the notes baseline (autorelease.py notes: neutralised);
 #   8. the trusted checkout's publish_release.sh --execute --confirm-tag <tag> (a draft, its assets checked, then published, every
 #      outcome read back), then the release is read back once more;
+#  8b. (RELTEST-1) the repository's homepage (the About link) set to the new release's page, read back: every release is a pre-release,
+#      so GitHub shows no "Latest release" and releases/latest only redirects to the list; the About link is the one way to the newest
+#      build. A failure there is a warning in the summary (the release is out; set the link by hand), not a failed release;
 #   9. the Discord announcement, if bfme-community offers a release command (it does not yet: logged);
 #  10. a one-line summary on stdout, the log in $LOGS/autorelease-<version>.log, the state.
 # On a failure it stops and publishes nothing further; publish_release.sh deletes only a draft it created and read back as a draft; a
-# pushed tag stays when no release was created; the step and the error are named. Nothing is retried within a run.
+# pushed tag stays when no release was created (the repository's ruleset forbids deleting tags, GH013): the open intent makes the next real
+# run resume that same version from it (RELTEST-1); the step and the error are named. Nothing is retried within a run.
 # Release intent (r3, Sol r2: a failure after publishing left stale state and the next run released older source under a newer version):
 #   before main moves or a tag is pushed, $STATE/intent records the sha, the version, the audited tree, the public commit and the step
 #   (and $STATE/intent.rid the id of the draft publish_release.sh created). Every real run first reconciles an open intent through
@@ -156,7 +160,8 @@ cleanup() {  # always: the dry run's traces and the work trees. Releases are nev
     if [ -n "$TAG_LOCAL" ]; then echo "AUTORELEASE dry run: deleting the local tag $TAG_LOCAL"; git_ tag -d "$TAG_LOCAL" >/dev/null; fi
     if [ "$JPC_TAG" = 1 ]; then jpc_untag; fi
   elif [ $rc != 0 ] && [ "$TAG_PUSHED" = 1 ] && [ "$PUBLISHED" = 0 ]; then
-    echo "AUTORELEASE: the tag $VERSION stays on $REMOTE (no release was published for it; the next run takes the next number)"
+    # RELTEST-1: tags cannot be deleted on GitHub (a repository ruleset, GH013), and none needs to be: the intent stays open
+    echo "AUTORELEASE: the tag $VERSION stays on $REMOTE with no release yet; the release intent stays open: run autorelease.sh again (for this sha or a later one) and it resumes $VERSION of ${SHA:0:10} from this tag. Do not delete the tag (the repository's ruleset forbids it, GH013)"
   elif [ $rc != 0 ] && [ -n "$TAG_LOCAL" ]; then
     echo "AUTORELEASE: deleting the local tag $TAG_LOCAL (it was never pushed)"; git_ tag -d "$TAG_LOCAL" >/dev/null
   fi
@@ -474,7 +479,7 @@ else
                 printf '%s\n' "$RTAGS" | awk -v c="$PUBLIC" '$1 == c { sub("^refs/tags/", "", $2); sub("\\^\\{\\}$", "", $2); print $2 }'; } | sort -u); do
     if describe_tag "$t" && [ "$t" != "$VERSION" ]; then others="$others$t "; fi
   done
-  [ -z "$others" ] || fail "the public commit $PUBLIC already carries the release tag(s) $others(not from an open release intent). A second tag would make the build's version ambiguous: if no release was published for it, delete it by hand (git push $REMOTE --delete refs/tags/<tag>; git tag -d <tag>) and run again"
+  [ -z "$others" ] || fail "the public commit $PUBLIC already carries the release tag(s) $others(not from an open release intent). A second tag would make the build's version ambiguous. Tags cannot be deleted (the repository's ruleset, GH013): such a tag is left by a run whose release intent was lost; write the intent back by hand ($INTENT: sha, version, tree, public, work, step=tagged; docs/RELEASE.md, operator steps) and run again to resume that version"
   if git_ rev-parse -q --verify "refs/tags/$VERSION" >/dev/null; then
     # an earlier run of this intent made the tag but did not push it
     [ $RESUME = 1 ] && [ "$(git_ rev-parse "$VERSION^{commit}")" = "$PUBLIC" ] \
@@ -554,8 +559,8 @@ exec 9>$RL.lock; flock 9
 $slot_wait; slot_wait lanetest 3
 cd $RL || exit 1
 echo "AUTOREL: test_export.sh"
-run 16 16G tools/release/test_export.sh $RL.pkg/openbfme-$VERSION-linux-x64.tar.gz > $RL.test_export.log 2>&1; rc=\$?
-grep -E '^(RESULT|EXPORT TESTS)' $RL.test_export.log; [ \$rc = 0 ] || { tail -30 $RL.test_export.log; exit 1; }
+rm -rf $RL.test_export.d; run 16 16G env TEST_EXPORT_LOGS=$RL.test_export.d tools/release/test_export.sh $RL.pkg/openbfme-$VERSION-linux-x64.tar.gz > $RL.test_export.log 2>&1; rc=\$?
+grep -E '^(RESULT|EXPORT TESTS)' $RL.test_export.log; [ \$rc = 0 ] || { tail -30 $RL.test_export.log; echo "AUTOREL: the full start / smoke output is kept in $RL.test_export.d"; exit 1; }
 EOS
 STEP=windows-start
 jpc <<EOS || fail "the native Windows start of the Windows package failed (log above)"
@@ -684,6 +689,19 @@ else
 fi
 URL="https://github.com/$TARGET/releases/tag/$VERSION"
 
+# ---- 8b. the About link (RELTEST-1) ---------------------------------------------------------------------------------------------------
+STEP=homepage
+HOMEPAGE_NOTE=""
+if [ "$MODE" = dry ]; then
+  would "$GH" api --method PATCH "repos/$TARGET" -f "homepage=$URL"
+elif ! "$GH" api --method PATCH "repos/$TARGET" -f "homepage=$URL" --jq .homepage > /dev/null; then
+  HOMEPAGE_NOTE="the repository's About link could not be set to $URL (gh api PATCH failed): set it by hand"
+elif [ "$("$GH" api "repos/$TARGET" --jq .homepage)" != "$URL" ]; then
+  HOMEPAGE_NOTE="the repository's About link does not read back as $URL: set it by hand"
+else
+  echo "AUTORELEASE homepage: the About link is $URL"
+fi
+
 # ---- 9. Discord ----------------------------------------------------------------------------------------------------------------------
 STEP=announce
 cmds=""
@@ -700,6 +718,7 @@ if [ "$MODE" = dry ]; then
   summary "AUTORELEASE DRY RUN OK $VERSION from ${SHA:0:10} (public ${PUBLIC:0:10}; nothing published; packages in $PKG; log $LOG)"
 else
   summary "AUTORELEASE OK $VERSION $URL (archive ${SHA:0:10}, public ${PUBLIC:0:10}; log $LOG)"
+  if [ -n "$HOMEPAGE_NOTE" ]; then summary "AUTORELEASE WARNING: $HOMEPAGE_NOTE"; fi
 fi
 if [ -n "$REQUESTED" ]; then
   summary "AUTORELEASE RESUMED ONLY: the open release $VERSION of ${SHA:0:10} was finished; $REQUESTED was not released: run again for it"

@@ -181,6 +181,24 @@ void INI::load(const std::string &filename, INILoadType loadType)
 	loadPrepared(filename);
 }
 
+void INI::load(const std::string &filename, INILoadType loadType, const INIBlockParse &parse)
+{
+	// RW 0x42D753: setFPMode, prepFile, then every line's first token goes to `parse` (the error texts are parseLine's)
+	NumericState::setFPMode();
+	prepFile(filename, loadType, nullptr);
+	m_parseOverride = &parse;
+	try
+	{
+		loadPrepared(filename);
+	}
+	catch (...)
+	{
+		m_parseOverride = nullptr;
+		throw;
+	}
+	m_parseOverride = nullptr;
+}
+
 void INI::preprocessFile(const std::string &filename, INILoadType loadType)
 {
 	prepFile(filename, loadType, nullptr);
@@ -487,7 +505,7 @@ void INI::parseLine()
 		return;
 	}
 	const std::string keyword = token;
-	const INIBlockParse *parse = m_env.blocks.find(keyword.c_str());
+	const INIBlockParse *parse = m_parseOverride ? m_parseOverride : m_env.blocks.find(keyword.c_str());
 	if (parse)
 	{
 		std::strcpy(m_curBlockStart, m_buffer);

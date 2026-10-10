@@ -14,7 +14,8 @@ repository ($FAKE_GH_REMOTE: PR merges are merge commits there, tags are read th
   final-readback-fail  reading a published release by its tag fails (autorelease.sh's last read-back)
   upload-fail     uploading assets fails (nothing is stored)
   publish-after-read  someone publishes a draft right after it was read by its id (Sol r3: the race between a read and a delete)
-Commands: api (user, repos/R/commits/<ref>, repos/R/releases[?..], repos/R/releases/<id> GET / PATCH / DELETE, repos/R/releases/tags/<tag>,
+  homepage-fail   setting the repository's homepage fails (it stays)
+Commands: api (user, repos/R GET / PATCH (homepage), repos/R/commits/<ref>, repos/R/releases[?..], repos/R/releases/<id> GET / PATCH / DELETE, repos/R/releases/tags/<tag>,
 repos/R/releases/assets/<id>), pr create / merge / view, release upload. --jq supports the expressions these scripts use.
 """
 from __future__ import annotations
@@ -104,6 +105,13 @@ def api(args: list[str]) -> int:
         if r.returncode:
             print("gh: Not Found (HTTP 404)", file=sys.stderr); return 1
         out(jq({"sha": r.stdout.strip()}, expr)); return 0
+    if re.fullmatch(r"repos/[^/]+/[^/]+", path):  # RELTEST-1: the repository (its homepage, the About link)
+        repo = s.setdefault("repo", {"homepage": ""})
+        if method == "PATCH":
+            if "homepage-fail" in FAULTS:
+                print("gh: HTTP 502", file=sys.stderr); return 1
+            repo.update(fields); save(s)
+        out(jq(repo, expr)); return 0
     if re.fullmatch(r"repos/[^/]+/[^/]+/releases", path):
         if method == "GET":
             out(jq(s["releases"], expr)); return 0

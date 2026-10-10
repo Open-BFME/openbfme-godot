@@ -914,7 +914,10 @@ TEST_CASE("stops S-175: handlers with no decompiled body report 'unported-comman
 		CHECK_MESSAGE(fx.wm->invokeCallback(std::string("AptMainMenu::") + r, "arg"), r);
 	}
 	CHECK(fx.services.requests.size() == 16);
-	CHECK(fx.wm->noteCount("unported-command") == 16);
+	// lane UI-4: Credits and CreditsExit are ported (the credits roll, S-2520): still requests (the host's music), no longer unported commands; with no
+	// archives in this environment the roll reports that it cannot start
+	CHECK(fx.wm->noteCount("unported-command") == 14);
+	CHECK(fx.wm->noteCount("credits") == 1);
 	CHECK(fx.services.requests[0].action == ShellAction::LoadGame);
 	CHECK(fx.services.requests[0].argument == "arg");
 	// ExitGame is complete: a request, and the shell pops on the next update

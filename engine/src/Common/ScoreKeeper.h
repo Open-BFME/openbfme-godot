@@ -6,7 +6,7 @@
 //
 // TARGET FACTS (RotWK game.dat, caveat S-001; read by END-1 unless marked):
 //   * layout (xfer RW 0x79ECCB, version 12; vtable RW 0xC314F0, ctor RW 0x79EFF4, reset RW 0x79EB10):
-//       + 4 money earned, + 8 money spent (ECON-1), + 0xC / + 0x10 the money received from / given to allies (RW 0x79DCE9 / 0x79DD01, no caller ported),
+//       + 4 money earned, + 8 money spent (ECON-1), + 0xC / + 0x10 the money received from / given to allies (RW 0x79DCE9 / 0x79DD01: the tribute, RW 0x6264E1),
 //       + 0x14 / + 0x18 / + 0x1C the money spent on units / structures / heroes (RW 0x79DFC2, lane END-2), + 0x20 units destroyed [20] (by the VICTIM's player index), + 0x70 units built,
 //       + 0x74 units lost, + 0x78 structures destroyed [20], + 0xC8 structures built, + 0xCC structures lost, + 0xD0 / + 0xD4 heroes / units vetted
 //       (RW 0x79DB50 / 0x79DB6B, no caller ported), + 0xD8 science purchase points earned (SPELL-1), + 0xE0 / E4 / E8 Living World region terms,
@@ -115,6 +115,22 @@ public:
 		if (m_enabled)
 		{
 			m_moneySpent += (std::uint32_t)amount; // RW + 8
+		}
+	}
+	// lane PLAY-1: the tribute's counters (GameLogic::CallPlayerGiveMoney RW 0x6264E1): RW 0x79DCE9 (+ 0xC += the money received) and RW 0x79DD01 (+ 0x10 += the
+	// money given), both behind the keep-score switch
+	void addMoneyReceivedFromAllies(std::int32_t amount)
+	{
+		if (m_enabled)
+		{
+			m_moneyAdjust += (std::uint32_t)amount;
+		}
+	}
+	void addMoneyGivenToAllies(std::int32_t amount)
+	{
+		if (m_enabled)
+		{
+			m_moneyGiven += (std::uint32_t)amount;
 		}
 	}
 	// lane SPELL-1: RW 0x79DB86 (+ 0xD8 += the science purchase points a rank or a positive grant gave) and RW 0x79DBA1 (+ 0xF8 += the skill points of a
@@ -236,8 +252,8 @@ private:
 	std::uint32_t m_moneyEarned = 0;       // RW + 4
 	std::uint32_t m_moneySpent = 0;        // RW + 8
 	std::uint32_t m_moneyEarnedSecond = 0; // RW + 0x114
-	std::uint32_t m_moneyAdjust = 0;       // RW + 0xC (its adder RW 0x79DCE9 has no ported caller: S-1061)
-	std::uint32_t m_moneyGiven = 0;        // RW + 0x10 (its adder RW 0x79DD01 has no ported caller: S-1061)
+	std::uint32_t m_moneyAdjust = 0;       // RW + 0xC (its adder RW 0x79DCE9: the tribute, lane PLAY-1)
+	std::uint32_t m_moneyGiven = 0;        // RW + 0x10 (its adder RW 0x79DD01: the tribute, lane PLAY-1)
 	int m_spentUnits = 0;                  // RW + 0x14 (lane END-2)
 	int m_spentStructures = 0;             // RW + 0x18
 	int m_spentHeroes = 0;                 // RW + 0x1C

@@ -24,17 +24,15 @@ files.
 ## What you need
 
 - **The Rise of the Witch-king, patched to 2.01**, and **The Battle for
-  Middle-earth II, patched to 1.06**, both installed and both in **English**.
-  RotWK always needs BFME2 next to it, as in the original. Installs from the
-  original discs and from the All-in-One launcher are both fine.
-  If you don't have them installed and you own the games, the launcher can
-  download both for you through the BFME Foundation's All In One BFME
-  Launcher service (the BFME Foundation Project and the Patch 2.22 team):
-  press **Download the game files...**, pick a folder and confirm that you own
-  both games. It is about 8.6 GB; you can pause, resume or cancel. Every file
-  is checked against OpenBFME's own list of the 2.01 / 1.06 files, and the
-  game's first start offers the downloaded folders. To hide the option, untick
-  "Install game files with the All In One BFME Launcher".
+  Middle-earth II, patched to 1.06**, both in **English**. RotWK always needs
+  BFME2 next to it, as in the original. Disc installs and All In One launcher
+  installs both work.
+  No games installed? The launcher's **Download the games** gets both from the
+  All In One BFME Launcher service (BFME Foundation, Patch 2.22 team): about
+  8.6 GB, with Pause, Resume and Cancel. Every file is checked against
+  OpenBFME's list of the 2.01 / 1.06 files, and the game offers the folders on
+  its first start. To hide the button, untick *Offer to download the games* in
+  Settings.
 - **Windows 10 or 11** (64-bit) with a graphics card that supports Vulkan or
   Direct3D 12, or **64-bit Linux** with Vulkan graphics (Mesa or the
   proprietary drivers). On Linux the game folders can be inside a Wine or
@@ -50,14 +48,35 @@ launcher.
    [GitHub Releases](https://github.com/Open-BFME/openbfme-godot/releases):
    `openbfme-launcher-<version>-windows-x64.zip` or
    `openbfme-launcher-<version>-linux-x64.tar.gz`.
+   To check the download, compare its SHA-256 with the release's
+   `SHA256SUMS-<version>.txt` (Linux: `sha256sum -c --ignore-missing
+   SHA256SUMS-<version>.txt`; Windows PowerShell: `Get-FileHash <file>`).
+   The launcher checks everything it downloads after that by itself.
 2. Unpack it into a folder you can write to (not `Program Files`: the
-   launcher updates itself in its own folder).
-3. Start it. On Windows, SmartScreen may warn you: the executables are not
-   code-signed yet.
-4. Choose the channel: **Stable** for releases, **Preview** for test builds
-   such as v0.3.0-preview.1. The launcher downloads the newest build of your
-   channel and installs it.
-5. Press **Play**.
+   launcher updates itself in its own folder). On Linux use `tar -xzf`, which
+   keeps the launcher executable; if your archive tool lost that, run
+   `chmod +x OpenBFMELauncher.x86_64`.
+3. Start it: `OpenBFMELauncher.exe`, or `./OpenBFMELauncher.x86_64`. On
+   Windows, SmartScreen may say *Windows protected your PC* because the
+   executables are not code-signed yet: choose **More info**, then **Run
+   anyway**. Windows asks this once per new launcher file.
+4. The launcher starts on the channel of its own version: a preview launcher
+   such as v0.3.0-preview.1 on **Preview** (test builds), a release on
+   **Stable**. It downloads the newest build of that channel, checks it and
+   installs it by itself. You can switch the channel at the top right at any
+   time (there is no Stable release yet).
+5. Press **Play**. The first start asks for your game folders (next
+   section).
+
+The main screen shows the installed version and whether it is up to date,
+with one button when an update is waiting. Downloads show one progress bar
+with the speed and the time left, and **Pause** / **Cancel**. The gear opens
+**Settings**: the channel, the game folders (*Show folder* opens them; *Choose
+again* makes the game ask on its next start), the free camera, the installed
+versions (play an older one, or install an older release) and the log folder.
+Errors come with **Copy details** and **Open log folder**. The launcher never
+shows your user name or home folder: paths read `~/...` (Linux) or
+`%USERPROFILE%\...` (Windows).
 
 The launcher keeps its files here:
 
@@ -108,12 +127,13 @@ new build is downloaded (an interrupted download resumes next time) and
   again.
 
 A package that fails any check is deleted and nothing is installed. The
-launcher never installs an older version by itself; to go back, pick an
-installed version or use *Install this release*. Offline, or when GitHub's
+launcher never installs an older version by itself; to go back, use
+Settings > Versions (*Play this version*, or *Install* an older release). Offline, or when GitHub's
 hourly limit is reached, it says so and plays the newest installed version.
 
 The launcher only talks to `api.github.com`, `github.com` and
-`*.githubusercontent.com` over HTTPS. It sends no telemetry and needs no
+`*.githubusercontent.com` over HTTPS (and to `bfmeladder.com` only while a
+*Download the games* you started runs). It sends no telemetry and needs no
 account.
 
 The full design is in [RELEASE.md](RELEASE.md#the-launcher-launch-1).
@@ -154,7 +174,7 @@ optional **free camera** that lets you zoom out to the whole map. It is an
 OpenBFME addition, not part of the original game, and it is off by default.
 It changes only the camera; the game itself plays the same.
 
-- In the launcher: tick **Free camera (zoom out further, not retail)**. It
+- In the launcher: Settings (the gear), tick **Free camera**. It
   applies the next time the game starts.
 - In a game: **Ctrl+Z** turns it on and off.
 - On the command line: `-- --free-camera`.
@@ -213,10 +233,7 @@ recorded stop in [STOPS.md](STOPS.md); the ID is given for reference.
   save your progress the original way (S-1360). Missions load the next one
   directly.
 - War of the Ring.
-- The Create-a-Hero builder. **My Heroes** in the main menu opens nothing and
-  leaves the menu buttons disabled, so avoid it for now (S-1914). The built-in heroes can still be fielded (S-1226).
 - Online play (LAN only for now).
-- Tribute (sending resources to an ally) (S-1922).
 - Game languages other than English: other installs are refused on the first
   start (S-1561).
 
@@ -258,11 +275,13 @@ the BFME2 folder BFME2's. The screen says what is wrong with a folder. To
 pick again later, delete `install-paths.cfg` in the game data
 folder.
 
-**A movie doesn't play.** The game shows "The movie ... could not be played"
-with the reason for a few seconds, then carries on; the log has a
-`MOVIE ERROR` line. Movies are read from your install like everything else,
-so first check that your install passes the first-start check, then send us
-the log.
+**A movie doesn't play.** If your install lacks a movie file (some copies
+have the logo movies removed), the game skips that movie, as the original
+does, and the log has a `MOVIE ERROR` line naming the file and the folders
+searched (`Lang\<language>\Data\Movies`, then `Data\Movies`). If a movie
+starts but can't be decoded, the game shows "The movie ... could not be
+played" with the reason for a few seconds, then carries on. Either way,
+send us the log.
 
 **The game crashed.** Start it again: it tells you which log belongs to the
 crashed run and offers **Open log folder**. Send that log (see below). Crash

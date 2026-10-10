@@ -7,6 +7,7 @@
 #include <godot_cpp/classes/file_access.hpp>
 #include <godot_cpp/variant/packed_byte_array.hpp>
 #include "GodotDevice/GodotGameWorld.h"
+#include "GameClient/GUI/TributeInfo.h"
 
 #include "Common/Prefetch.h"
 #include "GameLogic/Object/Contain/HordeContainRuntime.h"
@@ -59,7 +60,10 @@
 #include "GameLogic/SimMath.h"
 #include "GameLogic/Object/RetailObjectWorld.h"
 #include "Common/Thing/ThingTemplate.h"
+#include "GameClient/PlacementGhost.h"
 #include "GameEngineDevice/W3DDevice/GameClient/Drawable/Draw/W3DModelDraw.h"
+#include "GameClient/PlacementGhost.h"
+#include "GameLogic/Map/CastleTemplates.h"
 #include "GameClient/GUI/Skirmish/IniSkirmishSetupSource.h"
 #include "GodotDevice/GodotGameStart.h"
 #include "GameLogic/Object/ExperienceTracker.h"
@@ -250,6 +254,7 @@ void GameWorld::_bind_methods()
 	ClassDB::bind_method(D_METHOD("destroy_object", "id"), &GameWorld::destroy_object);
 	ClassDB::bind_method(D_METHOD("find_object_by_template", "template_name"), &GameWorld::find_object_by_template);
 	ClassDB::bind_method(D_METHOD("get_template_model", "template_name"), &GameWorld::get_template_model);
+	ClassDB::bind_method(D_METHOD("get_placement_ghost", "template_name"), &GameWorld::get_placement_ghost);
 	ClassDB::bind_method(D_METHOD("create_object", "template_name", "player", "x", "y", "angle"), &GameWorld::create_object, DEFVAL(0.0));
 	ClassDB::bind_method(D_METHOD("get_ground_height", "x", "y"), &GameWorld::get_ground_height);
 	ClassDB::bind_method(D_METHOD("queue_unit", "player", "producer", "template_name", "secondary"), &GameWorld::queue_unit, DEFVAL(false));
@@ -2287,6 +2292,77 @@ int64_t GameWorld::find_object_by_template(const String &template_name) const
 	return -1;
 }
 
+// lane PLAY-1: the building placement ghost's look (GameClient/PlacementGhost.h, stop S-3302)
+Dictionary GameWorld::get_placement_ghost(const String &template_name) const
+{
+	Dictionary out;
+	out["model"] = String();
+	Array hidden, shown, unread;
+	out["hidden"] = hidden;
+	out["shown"] = shown;
+	out["unread"] = unread;
+	if (!m_world)
+	{
+		return out;
+	}
+	const auto worldContext = m_world->enterContext();
+	const ThingTemplate *tt = m_world->things().findTemplate(toNative(template_name));
+	if (!tt)
+	{
+		return out;
+	}
+	const PlacementGhost::Look look = PlacementGhost::lookOf(*tt);
+	out["model"] = toGodot(look.model);
+	out["state"] = toGodot(look.state);
+	for (const std::string &s : look.hidden)
+	{
+		hidden.push_back(toGodot(s));
+	}
+	for (const std::string &s : look.shown)
+	{
+		shown.push_back(toGodot(s));
+	}
+	for (const std::string &s : look.unread)
+	{
+		unread.push_back(toGodot(s));
+	}
+	// lane PLAY-3: a castle's ghost is its layout for the local player's faction (PlacementGhost::castleLookOf, RW 0x6A2AE5)
+	const ::Player *local = m_game ? m_game->players().getLocalPlayer() : nullptr;
+	if (!m_ghostCastles && m_fs.is_valid() && m_fs->archive_fs())
+	{
+		m_ghostCastles.reset(new CastleTemplateStore());
+		m_ghostCastles->setLoader(CastleTemplateStore::fileSystemLoader(*m_fs->archive_fs()));
+	}
+	if (m_ghostCastles && local)
+	{
+		const PlacementGhost::CastleLook castle = PlacementGhost::castleLookOf(*tt, local->getSide(), *m_ghostCastles,
+			[this](const std::string &name) { return m_world->things().findTemplate(name); });
+		out["castle"] = castle.castle;
+		out["base"] = toGodot(castle.base);
+		out["castle_error"] = toGodot(castle.error);
+		Array pieces;
+		for (const PlacementGhost::Piece &p : castle.pieces)
+		{
+			Dictionary e;
+			e["template"] = toGodot(p.templateName);
+			e["model"] = toGodot(p.look.model);
+			Array h;
+			for (const std::string &n : p.look.hidden)
+			{
+				h.push_back(toGodot(n));
+			}
+			e["hidden"] = h;
+			e["x"] = p.x;
+			e["y"] = p.y;
+			e["z"] = p.z;
+			e["angle"] = p.angle;
+			pieces.push_back(e);
+		}
+		out["pieces"] = pieces;
+	}
+	return out;
+}
+
 String GameWorld::get_template_model(const String &template_name) const
 {
 	if (!m_world)
@@ -4111,6 +4187,93 @@ Dictionary GameWorld::get_fx_report() const
 
 // lane END-2: TheGameLogic + 0x110 / + 0x114 as QuitMenu.apt reads them. A network game here starts through the skirmish path (the economy's mode may say 2);
 // retail starts a LAN game with MSG_NEW_GAME whose kind is 1 (RW 0x648EED) and so mode 1 (RW 0x779CC9): a network session answers mode 1, kind 1
+// lane PLAY-1: the live game PlayerTribute.apt's tribute page reads and sends to (GameClient/GUI/TributeInfo.h; the status rows are HUD-5's PlayerStatusInfo; the screen's facts are cited in AptSimpleScreens.h)
+class GameWorldTribute : public TributeSource
+{
+public:
+	explicit GameWorldTribute(GameWorld &w) : m_w(w) {}
+	bool localActive() const override
+	{
+		if (!m_w.m_game)
+		{
+			return false;
+		}
+		const ::Player *local = m_w.m_game->logic().players().getLocalPlayer();
+		return local && !local->isObserver() && !local->isDefeated(); // RW 0x6AAC52: + 0x35A and + 0x754 clear
+	}
+	bool transferAllowed() const override
+	{
+		if (!m_w.m_game)
+		{
+			return false;
+		}
+		GameLogic &logic = m_w.m_game->logic();
+		const unsigned minutes = (unsigned)logic.economy().settings().numMinutesBeforePlayersCanTransferMoney;
+		return logic.getFrame() >= minutes * (unsigned)LOGICFRAMES_PER_SECOND * 60u; // RW 0x626087
+	}
+	std::vector<TributePlayerRow> tributePlayers() override
+	{
+		// RW 0x914B54: the local player, then every other active player the local one counts as ALLIES (RW 0x6ACEAF == 2), at most 7 rows
+		std::vector<TributePlayerRow> out;
+		if (!m_w.m_game)
+		{
+			return out;
+		}
+		GameLogic &logic = m_w.m_game->logic();
+		const ::Player *local = logic.players().getLocalPlayer();
+		if (!local)
+		{
+			return out;
+		}
+		auto row = [](const ::Player &p, bool isLocal) {
+			TributePlayerRow r;
+			r.playerIndex = p.getPlayerIndex();
+			r.name = p.getPlayerDisplayName();
+			r.cash = p.getMoney()->countMoney();
+			r.local = isLocal;
+			r.active = !p.isObserver() && !p.isDefeated();
+			r.color = p.getPlayerColor();
+			return r;
+		};
+		out.push_back(row(*local, true));
+		for (int i = 0; i < logic.players().getPlayerCount() && out.size() < 7; ++i)
+		{
+			const ::Player *p = logic.players().getNthPlayer(i);
+			if (!p || p == local || p->isObserver() || p->isDefeated() || local->getRelationship(p) != ALLIES)
+			{
+				continue;
+			}
+			out.push_back(row(*p, false));
+		}
+		return out;
+	}
+	void send(int fromIndex, int toIndex, std::uint32_t amount) override
+	{
+		if (!m_w.m_game)
+		{
+			return;
+		}
+		// RW 0x914DD6: TheMessageStream -> the command list (the HUD's orders take the same path; a network game sends it on the lockstep)
+		GameMessage m(MSG_GIVE_MONEY, fromIndex);
+		m.appendIntegerArgument(fromIndex);
+		m.appendIntegerArgument(toIndex);
+		m.appendIntegerArgument((int)amount);
+		m_w.m_game->commands().append(m); // (waits for the logic worker: a completed frame)
+	}
+
+private:
+	GameWorld &m_w;
+};
+
+TributeSource *GameWorld::tribute_source()
+{
+	if (!m_tribute)
+	{
+		m_tribute = std::make_unique<GameWorldTribute>(*this);
+	}
+	return m_tribute.get();
+}
+
 Dictionary GameWorld::get_quit_menu_context()
 {
 	Dictionary d;

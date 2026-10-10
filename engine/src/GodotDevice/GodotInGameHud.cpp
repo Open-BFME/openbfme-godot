@@ -209,6 +209,8 @@ struct HudDevice : public AptNativeHook
 	std::vector<std::string> drawErrors;
 	std::set<std::string> drawNotes; ///< lane HUD-4: the device's inference notes (S-1482: a .jpg + .png texture)
 	unsigned drawnImages = 0, drawnTimers = 0, skippedImages = 0;
+	std::string portraitDrawn; // lane UI-4: the mapped image the CommandUI.Portrait clip drew last ("" none)
+	unsigned portraitDraws = 0;
 	// lane HUD-2: the Palantir globe (AptPalantir::RenderGlobe, see drawGlobe)
 	Node *owner = nullptr;
 	struct GlobeLayer
@@ -250,6 +252,10 @@ struct HudDevice : public AptNativeHook
 	ObjectFilter veterancyFilter;
 	bool haveVeterancyFilter = false;
 	unsigned iconOpsDrawn = 0;
+	// lane PLAY-3: the drag selection box drawn in the last frame, the box, the frames it was drawn in
+	bool dragBoxShown = false;
+	IconUIOp dragBox;
+	unsigned long long dragBoxFrames = 0;
 	void drawIconOps(RID parent);
 	void applyCamera(const Vector2 &window, double alpha);
 };
@@ -696,6 +702,10 @@ void HudDevice::drawPlaceholder(const AptCanvasOp &op, RID item)
 		if (!img || img->image.empty())
 		{
 			++skippedImages;
+			if (hud->palantir() && op.path == hud->palantir()->portraitKey())
+			{
+				portraitDrawn.clear(); // lane UI-4
+			}
 			return;
 		}
 		const ::Image *mapped = images.findImageByName(img->image);
@@ -720,6 +730,11 @@ void HudDevice::drawPlaceholder(const AptCanvasOp &op, RID item)
 		mod = Color(mod.r * op.placeholderColor[0], mod.g * op.placeholderColor[1], mod.b * op.placeholderColor[2], mod.a * op.placeholderColor[3]);
 		rs->canvas_item_add_texture_rect_region(item, r, tex->get_rid(), src, mod);
 		++drawnImages;
+		if (hud->palantir() && op.path == hud->palantir()->portraitKey())
+		{
+			portraitDrawn = img->image; // lane UI-4
+			++portraitDraws;
+		}
 		return;
 	}
 	if (op.symbolName == "TimerOverlay")
@@ -816,6 +831,23 @@ void HudDevice::drawIconOps(RID parent)
 			}
 		}
 		++iconOpsDrawn;
+	}
+	// lane PLAY-3: the drag selection box (InGameHud::selectionRegionOp, W3DInGameUI::drawSelectionRegion RW 0x48ECF4) over the decorations and under the
+	// Palantir (ZH W3DDisplay::draw: the in-game UI, then the windows). Display +0xE0 (BFME2 decomp W3DDisplayDrawOpenRect.cpp) hands RectClass(x, y,
+	// x + w, y + h) to Render2D Add_Outline; DONOR (WW3D render2d.cpp Add_Outline): four lines of the given width, (L + 1, B)-(L + 1, T + 1),
+	// (L, T + 1)-(R - 1, T + 1), (R, T)-(R, B - 1), (R, B)-(L + 1, B). INFERENCE: Godot's line of width 2 covers the same pixels as Add_Line's quad
+	IconUIOp box;
+	dragBoxShown = hud->selectionRegionOp(box);
+	if (dragBoxShown)
+	{
+		const float l = box.x, t = box.y, r = box.x + box.w, b = box.y + box.h;
+		const Color c = col(box.color);
+		rs->canvas_item_add_line(iconItem, Vector2(l + 1, b), Vector2(l + 1, t + 1), c, box.width);
+		rs->canvas_item_add_line(iconItem, Vector2(l, t + 1), Vector2(r - 1, t + 1), c, box.width);
+		rs->canvas_item_add_line(iconItem, Vector2(r, t), Vector2(r, b - 1), c, box.width);
+		rs->canvas_item_add_line(iconItem, Vector2(r, b), Vector2(l + 1, b), c, box.width);
+		dragBox = box;
+		++dragBoxFrames;
 	}
 }
 
@@ -1360,7 +1392,22 @@ Dictionary InGameHudNode::get_state() const
 	s["cursor"] = toGodot(ui.cursor());
 	s["screenshot"] = d->lastScreenshot; // lane INPUT-1: the last TAKE_SCREENSHOT file
 	s["spell_store_open"] = d->hud->spellStore() != nullptr; // lane INPUT-1: the SPELL_STORE key
+	// lane UI-4: the Palantir portrait: the image the selection asks for (PalantirCommandUI) and the one the CommandUI.Portrait clip drew
+	s["portrait"] = toGodot(d->hud->palantir() ? d->hud->palantir()->portraitShown() : std::string());
+	s["portrait_drawn"] = toGodot(d->portraitDrawn);
+	s["portrait_draws"] = (int64_t)d->portraitDraws;
 	s["frame_selection_changed"] = (int64_t)ui.getFrameSelectionChanged();
+	{
+		// lane PLAY-3: the drag selection box as the last render frame drew it (RW 0x48ECF4), the last box drawn and the frames it was drawn in
+		Dictionary box;
+		box["shown"] = d->dragBoxShown;
+		box["selecting"] = ui.isSelecting();
+		box["rect"] = Rect2(d->dragBox.x, d->dragBox.y, d->dragBox.w, d->dragBox.h);
+		box["width"] = d->dragBox.width;
+		box["color"] = (int64_t)d->dragBox.color;
+		box["frames"] = (int64_t)d->dragBoxFrames;
+		s["drag_box"] = box;
+	}
 	{
 		// lane INPUT-1: the keyboard path, for a diagnosis (raw keys reaching the MetaEventTranslator, the meta messages they made, the modifier state)
 		const MetaEventTranslator &mt = d->hud->input().metaTranslator();
@@ -1817,7 +1864,7 @@ Dictionary InGameHudNode::get_move_hints() const
 	for (int i = 0; i < InGameUI::MAX_MOVE_HINTS; ++i)
 	{
 		const InGameUI::MoveHint &h = ui.moveHints()[i];
-		if (h.frame == 0 || ui.clientFrame() - h.frame > InGameUI::MOVE_HINT_FRAMES)
+		if (!ui.moveHintDrawn(i)) // RW 0x48EDED's test
 		{
 			continue;
 		}

@@ -55,23 +55,34 @@ public:
 
 // lane PLAY-1: PlayerTribute.apt (CodePrefix AptPlayerTribute), the screen the Palantir's flag opens in a skirmish / multiplayer game (RW 0x914EF0 pushes it).
 // TARGET FACTS (RotWK game.dat, caveat S-001): the screen registers its commands under the movie's own path (the movie sets gameCodePrefix = String(this)):
-// "<path>_OnInitialized", "_ReturnToGame" (RW 0x9175AD -> RW 0x914E89 -> RW 0x914C51: + 0x278 closing, TheShell + 0x54 = 1, RW 0x62215B: the shell pops
-// the screen), "_OnPageLoaded" / "_OnPageUnloaded" / "_OnPageSelected" (RW 0x917615 / 0x91767D / 0x9176E5), "_Send" / "_Reset" (RW 0x916B12 / 0x916AB4), the
-// extern "<path>_TributeEnabled" (RW 0x91774D) and the pages "TributePage" / "StatusPage"; its key handler (RW 0x914E91) closes it on Escape.
-// NOT PORTED (stop S-1922): the tribute itself (MSG_GIVE_MONEY 1126 has no logic port: the extern answers false, so the movie shows its status page only), the
-// pause / input calls of the opening (RW 0x914FA2 .. 0x914FE2).
+//   * "<path>_ReturnToGame" (RW 0x9175AD -> RW 0x914E89 -> RW 0x914C51: + 0x278 closing, TheShell + 0x54 = 1, RW 0x62215B: the shell pops the screen); the key
+//     handler (RW 0x914E91) closes on Escape; "<path>_OnInitialized" (empty in retail, BFME2 decomp: the folded empty method 0x0047A69C);
+//   * "<path>_TributeEnabled" (RW 0x914C08): "1" when the local player is active (RW 0x6AAC52), else "0";
+//   * "<path>_OnPageLoaded" (RW 0x91741F, "name=<page>&type=StatusPage|TributePage" -> RW 0x9170AF) / "_OnPageUnloaded" (RW 0x9171E3) / "_OnPageSelected"
+//     (RW 0x917258); the command parameters are "key=value" pairs joined by '&' (RW 0x81560E).
 // lane HUD-5: the Status page (the owner's report: every cell showed its text record's name). TARGET FACTS (RotWK game.dat, caveat S-001; BFME2 decomp map tier A):
-//   * "_OnPageLoaded" (RW 0x91741F, bound at RW 0x917615; the decomp's AptTributePageCallbacks.cpp OnPageLoaded): the parameters "name" (the page clip's path) and "type"; a page on
-//     the screen's own level (AptUtils::LevelIndexFromTarget RW 0x8155D9) of type "StatusPage" is a row list page (RW 0x9166AC = BFME2 0x9103A3), of type
-//     "TributePage" the tribute page (play1d's, not here); "_OnPageUnloaded" (RW 0x9171E3) / "_OnPageSelected" (RW 0x917258) drop / switch
-//     the page by its path.
+//   * a page on the screen's own level (AptUtils::LevelIndexFromTarget RW 0x8155D9) of type "StatusPage" is a row list page (RW 0x9166AC = BFME2 0x9103A3);
+//     "_OnPageUnloaded" / "_OnPageSelected" drop / switch the page by its path.
 //   * the row list page registers "_level<n>." + <path without "_level<n>."> (AptUtils::SkipLevelN RW 0x815563) + "_OnRowShown" / "_OnRowHidden" and the externs
 //     "_NumOfPlayers" (the row count) / "_InSkirmish" (RW 0x914AA1); its rows are GUI/PlayerStatusInfo.h's.
 //   * "_OnRowShown" (RW 0x915E00 = AptRowListCallbacks.cpp OnRowShown): "index" in [0, count] and "name" on the page's level: the row object (RW 0x915BF6) sets
 //     the records "APT:_level%u.%s_field%d" (RW 0x915159, format RW 0xC7C3E4) of the row's path to the four texts and registers the extern
 //     "_level%u.%s_color" (RW 0x915B4A, format RW 0xC7C430; RW 0x914A69 prints the colour); "_OnRowHidden" (RW 0x915269) drops the row object.
-//   * the command parameters are "key=value" pairs joined by '&' (RW 0x81560E).
-// INFERENCE: retail accepts index == count (one past the rows; the slot then holds no player): the port refuses it and reports it.
+// lane PLAY-1 r2: the tribute page (RW 0x916E8F): "<page>_OnEnabledContentLoaded" (RW 0x916BF4, the content clip) makes the content (RW 0x916973):
+//   "<content>_OnRowShown" (RW 0x9162F5) / "_OnRowHidden" (RW 0x9153F2) / "_Reset" (RW 0x915862, string RW 0xC7C4E4) / "_Send" (RW 0x914DD6, string RW 0xC7C4DC)
+//   and the extern "<content>_NumOfPlayers"; its players (RW 0x914B54) are the local player then the active allies (at most 7); a row (RW 0x915F5D) registers
+//   the gadget inits "_level%u.<row>_InitSlider" (RW 0x914B07: range 0 .. 99999, position = the amount) and "_InitTextEntry" (RW 0x91565C), writes field 0
+//   (the name) and field 1 (RW 0x9155C2: "%d" of the amount plus the player's cash; the local row's amount is minus the sum of the others', RW 0x914D8D);
+//   slider tracks (RW 0x9156DC) and edits (RW 0x91570C) set the amount, capped by the row's maximum, which RW 0x91578C keeps at what the local cash leaves;
+//   Reset zeroes every row (RW 0x91554C); Send (RW 0x914DD6) sends MSG_GIVE_MONEY(local, row player, amount) for every active non-local row with an amount;
+//   the TributePage's update (RW 0x9164EB): once NumMinutesBeforePlayersCanTransferMoney have passed (RW 0x626087) the page's SetState("_enabled") is called
+//   once (before, the movie shows its "disabled at the start of the game" text); with the content up, RW 0x91578C and every row's refresh (RW 0x916225).
+// INFERENCE: retail accepts a status row index == count (one past the rows; the slot then holds no player): the port refuses it and reports it.
+// NOT PORTED / INFERENCE (stop S-1922): the opening's pause / input calls (RW 0x914FA2 .. 0x914FE2); a skirmish AI ally's extra money term (RW 0x6A950B /
+// 0x6A9999 -> + 0xC -> + 0x14) in a tribute row's field 1; the text entry's 5-digit limit and its character filter (RW 0x81606D / 0x721FA9); when RW 0x91578C
+// runs (here: after every change); the campaign's objectives screen.
+class TributeSource;
+struct TributePlayerRow;
 class AptPlayerTribute : public AptScreen
 {
 public:
@@ -90,6 +101,22 @@ public:
 	static int levelIndexFromTarget(const std::string &path);
 	static std::string skipLevelN(const std::string &path);
 
+	// lane PLAY-1 r2, tests / the report: the tribute page's rows (player index, amount, maximum, has slider) and the sends made
+	struct RowState
+	{
+		int playerIndex = -1;
+		bool local = false;
+		std::uint32_t amount = 0, maximum = 99999;
+		bool slider = false, entry = false;
+	};
+	std::vector<RowState> tributeRows() const;
+	int sends() const { return m_sends; }
+	// the slider position of a tribute row, as a player's drag would leave it (tests: the gadget's own message path)
+	bool setRowAmountBySlider(int row, int position);
+
+protected:
+	WindowMsgHandledType gadgetMessage(GameWindow *from, std::uint32_t msg, WindowMsgData data1, WindowMsgData data2) override;
+
 private:
 	struct StatusPage
 	{
@@ -104,10 +131,43 @@ private:
 	void dropStatusPage();
 	std::string statusPrefix() const { return "_level" + std::to_string(level()) + "." + m_status->path; }
 
+	// lane PLAY-1 r2: the tribute page
+	struct TRow
+	{
+		int playerIndex = -1;
+		std::string name; ///< UTF-8
+		std::uint32_t cash = 0;
+		std::uint32_t color = 0;
+		bool local = false, active = true;
+		std::string path;             ///< the row clip's path without "_levelN." ("" until the row is shown)
+		std::uint32_t amount = 0;     ///< + 0x6C
+		std::uint32_t maximum = 99999; ///< + 0x68
+		GameWindow *slider = nullptr; ///< + 0x78
+		GameWindow *entry = nullptr;  ///< + 0x7C
+		long long shownValue = -1;    ///< + 0x70: the field 1 value last written
+	};
+	void contentLoaded(const std::string &argument);
+	void tributeRowShown(const std::string &argument);
+	void tributeRowHidden(const std::string &argument);
+	void dropDeadGadgets(TRow &row);
+	void setFieldUtf8(const std::string &row, int field, const std::string &text);
+	void registerRowColor(const std::string &row, std::uint32_t color); // RW 0x915B4A: the extern "_level%u.<row>_color" ("%d")
+	void refreshRow(TRow &row);
+	void rebalance(); // RW 0x91578C
+	void setAmount(TRow &row, std::uint32_t amount, bool moveSlider);
+	void reset();     // RW 0x915862
+	void send();      // RW 0x914DD6
+	void update();    // the TributePage's update RW 0x9164EB (a window manager update listener)
+
 	ShellServices &m_services;
 	ShellEnvironment &m_env;
 	std::unique_ptr<StatusPage> m_status;
 	std::string m_statusName; ///< the full path the movie loaded it under (the page map's key)
+	std::string m_content;           ///< the tribute content clip's path ("" until loaded)
+	std::string m_tributePage;       ///< the TributePage clip's path without "_levelN." ("" until its _OnPageLoaded)
+	bool m_enabledSet = false;       ///< + 0x20: SetState("_enabled") was called
+	std::vector<TRow> m_rows;        ///< the tribute rows (RW 0x914B54's players)
+	int m_sends = 0;
 };
 
 struct ShellEnvironment;

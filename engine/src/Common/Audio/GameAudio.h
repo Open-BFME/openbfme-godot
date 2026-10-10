@@ -238,6 +238,8 @@ public:
 	size_t playingCount(VoiceKind kind) const;
 	size_t pendingRequests() const;
 	std::vector<std::string> playingEventNames() const;
+	// lane PLAY-3: the voices still fading out (a fade keeps the voice audible until its last step)
+	std::vector<std::string> fadingEventNames() const;
 	const AudioReport &report() const { return m_report; }
 	const AudioEventEnv &env() const { return m_env; }
 	GameLogicRandom &audioRandom() { return m_random; }

@@ -17,8 +17,9 @@
 ##     --hud5=<a,b,...>      (lane HUD-5, with --auto) the owner's first Windows session's items, scripted (scripts/hud5_player.gd: fortress, players, powers,
 ##                           gate, construction, levels); "HUD5 <name>: ok / FAIL", screenshots hud5-<name>.png in --screens
 ##     --start-spot=<n>      (with --auto) slot 0 clicks the lobby's start spot n first (RW 0x845830): e.g. 0 = Player_1_Start, a fortress map's fortress
-##     --play1=<a,b,...>     (lane PLAY-1, with --auto) the input-driven scenarios of scripts/play1_player.gd (orders, palantir, powers, camera, explore): every
-##                           action is an InputEvent pushed into the viewport; prints PLAY1 lines; with --end the end of the game follows
+##     --play1=<a,b,...>     (lane PLAY-1, with --auto) the input-driven scenarios of scripts/play1_player.gd (orders, palantir, powers, camera, explore, dragbox, ghosts,
+##                           skirmish, tour, tribute): every action is an InputEvent pushed into the viewport; prints PLAY1 lines; with --end the end of the game
+##                           follows, with --quit the quit menu's Exit to the score screen and its Continue back to the menu
 ##     --input1=<a,b,...>    (lane INPUT-1, with --auto) the keyboard scenarios of scripts/input1_player.gd (groups, ...): every key is an InputEventKey
 ##                           given to Input.parse_input_event; prints INPUT1 lines
 ##     --classic-mouse / --alternate-mouse  (lane PLAY-1) force the left / right click to order (default: Options.ini AlternateMouseSetup, else retail's right click)
@@ -32,6 +33,8 @@
 ##                           game starts and runs 3 s; exit 0 when every step happened. --end-lose destroys the local player instead (the defeat screen).
 ##                           With --screens=<dir> it writes end1-<faction>-victory.png / -defeat.png, end1-<faction>-score.png and end1-menu.png
 ##     --options-shot=FILE   (lane UI-2) open Options from the main menu, save the window to FILE after 2 s and quit (the soft particles box)
+##     --resize-check[=DIR]  (lane UI-4) resize / maximise the window over the main menu (nav closed and open) and send stray input around the nav
+##                           entries; exit 0 when no widget state changed (tests/ui4_resize_test.gd; DIR: windowed screenshots)
 ##     --end-capture=DIR     (lane UI-2, with --end) save every rendered frame of the first 5 s of the end screen, half size, as DIR/fNNNN.png and the elapsed
 ##                           milliseconds of each in DIR/times.txt (the ring animation video)
 ##     In a live game Esc (or the Palantir's options button) toggles the quit menu QuitMenu.apt (lane END-2): Resume, Options, Restart / Forfeit, Exit
@@ -185,6 +188,7 @@ var _hud: Node
 ## lane PLAY-1: the mouse setup forced on the command line ("alternate": the right click orders, "classic": the left click orders, "": the player's setting)
 var _mouse_override := ""
 var _move_hints: Node3D
+var _placement_ghost: Node3D
 ## lane PLAY-1: the free camera (the owner's presentation option, not retail): --free-camera or Options.ini "OpenBFMEFreeCamera = yes"
 var _free_camera_flag := false
 ## lane PLAY-1: the input-driven scenarios of scripts/play1_player.gd (--play1=orders,palantir,powers,camera)
@@ -224,6 +228,8 @@ var _lan_port_base := -1
 var _lan_shot := ""
 var _end_capture := "" # lane UI-2: --end-capture=DIR
 var _options_shot := "" # lane UI-2: --options-shot=FILE
+var _resize_check := "" # lane UI-4: --resize-check[=DIR]: the screenshots' folder
+var _resize_check_on := false
 var _menu_walk := "" # lane FB7-1: --menu-walk=DIR
 var _menu_walk_only := "" # lane CAH-2 r2: --menu-walk-only=BUTTON (one button, the probe)
 var _menu_walk_drop := "" # lane CAH-2 r2: --menu-walk-drop=ACTION (TEST HOOK: the host ignores that shell request, so the walk must fail)
@@ -275,6 +281,7 @@ var _graph_node: Control
 var _score_report := {}
 var _continue_pressed := false
 var _local_name := ""
+var _local_index := -1 # lane UI-4: the local player's index (GameWorld.create_object's player)
 var _second_game_ok := false
 var _net_lobby_again := false
 var _continuing := false
@@ -502,6 +509,9 @@ func _ready() -> void:
 			_lan_port_base = int(arg.substr(16))
 		elif arg.begins_with("--menu-walk="):
 			_menu_walk = arg.substr(12)
+		elif arg == "--resize-check" or arg.begins_with("--resize-check="):
+			_resize_check = arg.substr(15) if arg.length() > 15 else ""
+			_resize_check_on = true
 		elif arg.begins_with("--menu-walk-only="):
 			_menu_walk_only = arg.substr(17)
 		elif arg.begins_with("--menu-walk-drop="):
@@ -633,6 +643,8 @@ func _boot() -> void:
 		_run_auto()
 	elif not _menu_walk.is_empty():
 		_run_menu_walk()
+	elif _resize_check_on:
+		_run_resize_check()
 	if _net_host > 0 or not _net_join.is_empty():
 		_net_open()
 	elif not _replay_file.is_empty():
@@ -749,6 +761,14 @@ func _on_shell_request(action: String, argument: String) -> void:
 		if not _campaign_flow.continue_saved():
 			print("GAME stop: ", _shell.shell_screen_unavailable("ContinueCampaignNone")) # lane CAH-2: no progress must not leave the menu disabled
 
+	elif action == "Credits":
+		# lane UI-4: AptMainMenu::Credits (RW 0x91B5E9): the shell's music gives way (RW 0x35BD3F's twin) to the misc audio's CreditsMusic
+		_audio.stop_music(false)
+		_audio.play_misc("CreditsMusic")
+	elif action == "CreditsExit":
+		# CreditsExit (RW 0x91B6FD): the music stopped (TheAudio vslot 0x8C (2, 1, 0)) and the shell's music back (RW 0x35C2B9's twin)
+		_audio.stop_music(false)
+		_audio.play_shell_music(false)
 	elif action == "CreateAHero":
 		_cah_begin()
 	elif action == "CreateAHeroExit":
@@ -1077,6 +1097,7 @@ func _install_hud(rep: Dictionary) -> void:
 	add_child(hud)
 	var local: String = str(rep.get("start", {}).get("local_player", ""))
 	_local_name = local
+	_local_index = int(rep.get("start", {}).get("local_player_index", -1)) # lane UI-4
 	var start: Dictionary = rep.get("start", {})
 	if not start.has("camera_start"):
 		_fail("the start report has no camera start (the retail camera has nothing to look at)")
@@ -1103,6 +1124,7 @@ func _install_hud(rep: Dictionary) -> void:
 		return
 	_hud = hud
 	_hud_installed = true
+	_shell.set_tribute_world(_world) # lane PLAY-1: PlayerTribute.apt's rows and Send (the Palantir's flag)
 	# lane SPELL-2: the spell book is the retail movies the HUD drives (the Palantir's InGameSpellBook, SpellStore.apt from its store button); this node only
 	# draws the targeting ring of a power waiting for its ground click
 	var ring = load("res://scripts/spell_target_ring.gd").new()
@@ -1113,7 +1135,12 @@ func _install_hud(rep: Dictionary) -> void:
 	_move_hints = load("res://scripts/move_hints.gd").new()
 	add_child(_move_hints)
 	_game_nodes.append(_move_hints)
-	var mh: Dictionary = _move_hints.setup(hud, _fs)
+	# lane PLAY-1: the building placement ghost (RotWK placeBuildAvailable RW 0x69C5E6, the placement update RW 0x6A2AE5)
+	_placement_ghost = load("res://scripts/placement_ghost.gd").new()
+	add_child(_placement_ghost)
+	_game_nodes.append(_placement_ghost)
+	_placement_ghost.setup(hud, _world, _fs)
+	var mh: Dictionary = _move_hints.setup(hud, _fs, _world)
 	print("GAME move hints: ", JSON.stringify(mh))
 	if not mh.ok:
 		printerr("GAME move hints: ", mh.errors)
@@ -1267,6 +1294,10 @@ func _run_auto() -> void:
 		await player.run(self, _play1)
 		if _end:
 			await _run_end()
+			return
+		if _quit_flow == "exit":
+			# lane PLAY-1: the player leaves as one does: Esc, the quit menu's Exit and its confirmation, the score screen, Continue back to the menu
+			await _run_quit()
 			return
 		get_tree().quit(0 if player.fail_count == 0 else 1)
 		return
@@ -1880,6 +1911,7 @@ func _restart_game() -> void:
 		_hud.free()
 		_hud = null
 	_hud_installed = false
+	_shell.set_tribute_world(null)
 	while _shell.shell_stack().size() > 0:
 		_shell.shell_pop()
 		_shell.tick(0.033)
@@ -1923,6 +1955,7 @@ func _exit_to_score_screen() -> void:
 		_hud.free()
 		_hud = null
 	_hud_installed = false
+	_shell.set_tribute_world(null)
 	while _shell.shell_stack().size() > 0:
 		_shell.shell_pop()
 		_shell.tick(0.033)
@@ -3512,3 +3545,133 @@ func _run_qa() -> void:
 	var complete: bool = flow.score_screen and flow.continue_to_lobby
 	print("QA RESULT: flow %s, %d issues" % ["complete" if complete else "INCOMPLETE", summary.get("issues", []).size()])
 	get_tree().quit(0 if complete else 1)
+
+
+
+## lane UI-4: --resize-check[=DIR]: the owner's report (2026-10-10: maximising the window greyed the main menu's buttons). The main menu settled, then:
+## 1. the window resized (windowed: maximised and restored; headless: the root viewport's size, 1280x720 -> 1920x1080 -> back), with the Options nav
+##    closed and open: every main-menu clip's frame, every button's hittability and the screen stack must be what they were;
+## 2. the stray input a window manager sends around a maximise (a button release with no press, a press outside the window released over a button,
+##    a pointer move): over every nav entry of the Options and Solo Play navs, none may press anything (no request, no screen, every button still
+##    hittable after the pointer left).
+## DIR (windowed) receives resize-*.png. Prints UI4 RESIZE lines; exit 0 when nothing changed.
+const RESIZE_CLIPS := ["SoloPlayNav", "MultiPlayNav", "OptionsNav", "MyHeroes", "QuitMainMenu", "SoloPlayNav.OpenButton", "MultiPlayNav.OpenButton",
+	"OptionsNav.OpenButton", "OptionsNav.Settings", "OptionsNav.AdvancedSettings", "OptionsNav.Credits"]
+var _resize_requests := 0
+
+func _resize_state(with_frames: bool) -> Dictionary:
+	var level: int = _shell.shell_top_level()
+	var out := {"stack": str(_shell.shell_stack())}
+	if with_frames:
+		for clip in RESIZE_CLIPS:
+			var info: Dictionary = _shell.instance_info(level, clip)
+			out[clip] = "frame %s playing %s visible %s" % [str(info.get("frame")), str(info.get("playing")), str(info.get("visible"))] if info.found else "absent"
+	for b in _shell.list_buttons(level):
+		out[String(b.path)] = "hittable=%s" % str(b.hittable)
+	return out
+
+
+func _resize_to(size: Vector2i, maximise: bool) -> void:
+	if DisplayServer.get_name() == "headless":
+		get_tree().root.size = size
+	elif maximise:
+		DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_MAXIMIZED)
+	else:
+		DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_WINDOWED)
+		DisplayServer.window_set_size(size)
+	await _step(90)
+	print("UI4 RESIZE window %s, viewport %s" % [str(DisplayServer.window_get_size()), str(get_viewport().get_visible_rect().size)])
+
+
+func _resize_shot(name: String) -> void:
+	if DisplayServer.get_name() == "headless" or _resize_check.is_empty():
+		return
+	await RenderingServer.frame_post_draw
+	DirAccess.make_dir_recursive_absolute(_resize_check)
+	var path := "%s/resize-%s.png" % [_resize_check, name]
+	var image := _capture_image(path)
+	if image != null:
+		print("UI4 RESIZE screenshot %s -> %s" % [path, error_string(image.save_png(path))])
+
+
+func _resize_compare(what: String, before: Dictionary, after: Dictionary) -> int:
+	var bad := 0
+	for key in before:
+		if after.get(key, "absent") != before[key]:
+			print("UI4 RESIZE FAIL %s: %s was %s, now %s" % [what, key, before[key], after.get(key, "absent")])
+			bad += 1
+	for key in after:
+		if not before.has(key):
+			print("UI4 RESIZE FAIL %s: %s appeared (%s)" % [what, key, after[key]])
+			bad += 1
+	print("UI4 RESIZE %s: %d checked, %d changed" % [what, before.size(), bad])
+	return bad
+
+
+# the main menu as the host shows it again after a probe: no sub-screen, its buttons revealed (ShowMainMenu), the pointer away
+func _resize_menu_back() -> void:
+	while _shell.shell_stack().size() > 1:
+		_shell.shell_pop()
+		await _step(60)
+	_mouse_event(Vector2(5, 5), false, false)
+	_shell.shell_invoke(_shell.shell_top_level(), "ShowMainMenu", PackedStringArray())
+	await _step(150)
+
+
+func _run_resize_check() -> void:
+	_shell.shell_request.connect(func(_a: String, _b: String) -> void: _resize_requests += 1)
+	await _step(LEVEL_MAIN_MENU_FRAMES + 90)
+	await _wait_main_ready()
+	await _step(120)
+	var start: Vector2i = DisplayServer.window_get_size()
+	if DisplayServer.get_name() == "headless":
+		start = Vector2i(1280, 720) # the headless server has no window: the root viewport stands for it
+		await _resize_to(start, false)
+	var bad := 0
+	for phase in ["closed", "options-open"]:
+		if phase == "options-open":
+			if not await _click_button(_shell.shell_top_level(), "OptionsNav"):
+				print("UI4 RESIZE FAIL cannot open the Options nav")
+				get_tree().quit(1)
+				return
+			await _step(120)
+		var before := _resize_state(true)
+		await _resize_shot(phase + "-before")
+		await _resize_to(Vector2i(start.x * 3 / 2, start.y * 3 / 2), true)
+		await _resize_shot(phase + "-maximised")
+		bad += _resize_compare(phase + " maximised", before, _resize_state(true))
+		await _resize_to(start, false)
+		await _resize_shot(phase + "-restored")
+		bad += _resize_compare(phase + " restored", before, _resize_state(true))
+	await _resize_menu_back()
+	var requests_before := _resize_requests
+	for sub in ["OptionsNav.Settings", "OptionsNav.AdvancedSettings", "OptionsNav.Credits", "SoloPlayNav.Skirmish", "SoloPlayNav.LoadGame"]:
+		for mode in ["release only", "press outside, release over it", "pointer move"]:
+			var nav: String = String(sub).get_slice(".", 0)
+			await _click_button(_shell.shell_top_level(), nav)
+			await _step(90)
+			var b: Dictionary = _shell.find_button(_shell.shell_top_level(), sub)
+			if not b.found:
+				print("UI4 RESIZE FAIL no %s" % sub)
+				bad += 1
+				continue
+			var t: Vector2 = Vector2(b.x, b.y)
+			var before := _resize_state(false)
+			if mode == "press outside, release over it":
+				_mouse_event(Vector2(-40, -40), false, false)
+				_mouse_event(Vector2(-40, -40), true, true)
+				await _step(3)
+			_mouse_event(t, false, false)
+			await _step(3)
+			if mode != "pointer move":
+				_mouse_event(t, false, true)
+			await _step(30)
+			_mouse_event(Vector2(5, 5), false, false) # the pointer leaves: hover states go back
+			await _step(90)
+			bad += _resize_compare("stray input (%s) over %s" % [mode, sub], before, _resize_state(false))
+			await _resize_menu_back()
+	if _resize_requests != requests_before:
+		print("UI4 RESIZE FAIL stray input pressed something: %d shell requests" % (_resize_requests - requests_before))
+		bad += 1
+	print("UI4 RESIZE %s (%d changes)" % ["PASS" if bad == 0 else "FAIL", bad])
+	get_tree().quit(0 if bad == 0 else 1)

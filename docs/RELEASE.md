@@ -42,7 +42,9 @@ What a tester gets, and how to make it. Lane RELEASE-1.
   template writes no native backtrace on a crash, the debug one does, into the session
   log. Godot's Windows handler symbolizes its own executable only (an extension frame is
   "openbfme.windows.template_debug.x86_64.dll+<offset>") and covers the main thread only (a
-  crash on another thread writes no dump): stop S-1923, named in every Windows log. Every
+  crash on another thread writes no dump): stop S-1923, named in every Windows log. The debug
+  template titles the window "OpenBFME (DEBUG)"; the `Release` autoload sets it back to the
+  project's name, "OpenBFME", once the engine has started (lane UI-4). Every
   Windows build writes the DLL's PDB (CodeView line tables, build paths remapped, the home
   folder prefixes lld records blanked: `tools/release/pdb_tools.py`). The PDB is PRIVATE:
   `tools/release/archive_symbols.sh` keeps it (Linux: the `.so` and, built with
@@ -410,8 +412,10 @@ ref, so a tag or branch named like the abbreviation cannot stand in for it.
    audited tree. If `main` already has it, there is no PR and `main` is released as it is.
 3. **Version and tag.** `v0.3.0-preview.<n>`, n = 1 + the highest `v0.3.0-preview.<n>` tag on origin (the launcher's grammar; other
    tags are ignored). An annotated tag on the merged public commit, pushed (a push whose answer was lost is checked on the remote).
-   A commit carries one release tag at most: a second one would make `git describe`, the build's version, pick either. If a failed run
-   left a tag on the commit with no release published, the run stops and says to delete that tag by hand first.
+   A commit carries one release tag at most: a second one would make `git describe`, the build's version, pick either. A failed run
+   leaves its pushed tag on origin with no release, and the tag cannot be deleted: the repository's ruleset forbids deleting tags
+   (GH013). It does not need to be: the run's release intent stays open, and the next real run (for the same sha or a later one)
+   reconciles it and resumes that same version from that tag (see *The release intent*). Never delete the tag.
 4. **Build and test** on JonathanPC's WSL through the jpc scripts (their machine-wide slots, niced; JonathanPC lane `autorel-src`),
    from a clean checkout of the tag:
    - the Linux GDExtension and the Windows DLL (`build_windows.sh --no-export`);
@@ -474,6 +478,12 @@ ref, so a tag or branch named like the abbreviation cannot stand in for it.
    it is and reported. `--resume-id <id>` finishes a draft an earlier run created: it uploads the missing assets, checks every asset,
    publishes and reads back. A wrong or foreign asset already on the draft stops it for the operator. autorelease.sh then reads the
    published release back once more before it records the state.
+   **The About link (RELTEST-1).** Every release is a pre-release (the launcher's channels depend on the flag: never flip it), so
+   GitHub shows no "Latest release" in the sidebar, and `releases/latest` only redirects to the releases list. autorelease.sh
+   therefore sets the repository's homepage (the About link) to the new release's page (`gh api --method PATCH repos/<repo> -f
+   homepage=<url>`) and reads it back. A failure there is an `AUTORELEASE WARNING` line in the summary, not a failed release: the
+   release is already out; set the link by hand. A release finished by reconciling an open intent does not move the link (the next
+   release does). The README's Download button links to the releases list, whose top entry is the newest preview.
 10. **Discord**: `bfme-community` has no release announcement command yet; the run logs that and posts nothing.
 11. **Report.** A one-line summary (`AUTORELEASE OK|SKIP|FAIL ...`), also appended to
     `~/.cache/openbfme-recover/logs/autorelease-summary.log`, and the log `~/.cache/openbfme-recover/logs/autorelease-<version>.log`.
@@ -481,7 +491,8 @@ ref, so a tag or branch named like the abbreviation cannot stand in for it.
 
 On a failure it stops at that step and publishes nothing further:
 - no release is ever deleted: a draft stays for the next run to resume, or for the operator;
-- a pushed tag stays when no release was created for it;
+- a pushed tag stays when no release was created for it (tags cannot be deleted, GH013); the run says so, and running autorelease.sh
+  again resumes the same version from that tag through the open intent;
 - nothing is retried.
 
 **The release intent.** A run that has started to change GitHub leaves a record of it:
@@ -523,8 +534,11 @@ open.
 - *An intent that does not hold* (a field does not match): find out how it changed. Correct the file, or remove `intent` and
   `intent.rid` once the release's real state is known (and record a published release in `last-released` by hand).
 - *An earlier run's sync branch on the remote, not merged*: close its PR, delete the branch, and run again. The run makes a new one.
-- *Two or more releases for one version*, or *a release tag on the public commit that no intent explains*: remove the extra ones on
-  GitHub (`git push origin --delete refs/tags/<tag>` for a tag with no release), then run again.
+- *Two or more releases for one version*: remove the extra releases on GitHub, then run again.
+- *A release tag on the public commit that no intent explains*: the intent of the run that pushed it was lost. Tags cannot be deleted
+  (the repository's ruleset, GH013), so write the intent back by hand: `sha=<archive sha>`, `version=<the tag>`, `tree=<the public
+  commit's tree>`, `public=<the public commit>`, `work=<a new work folder>`, `step=tagged`. The next run checks every field and
+  resumes that version from the tag.
 
 **The release key.** autorelease.sh signs only with the configured key, `~/.config/openbfme-release/release-ed25519.pem`.
 `OPENBFME_RELEASE_KEY` is accepted only when it resolves to exactly that path; any other value is refused with a message that does not

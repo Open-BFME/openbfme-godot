@@ -9,6 +9,7 @@
 #include "GameClient/GUI/PlayerStatusInfo.h"
 #include "GameClient/GUI/ShellServices.h"
 #include "GameClient/GameLODManager.h"
+#include "GameClient/GUI/TributeInfo.h"
 #include "GameClient/OptionPreferences.h"
 #include "GameClient/GUI/Shell/Shell.h"
 #include "GameClient/GUI/ShellEnvironment.h"
@@ -42,12 +43,17 @@ AptGuiFXScreen::AptGuiFXScreen(WindowManager &windows, Shell &shell) : AptScreen
 }
 
 // lane PLAY-1: PlayerTribute.apt (see the header)
+// lane PLAY-1: PlayerTribute.apt (see the header)
 AptPlayerTribute::AptPlayerTribute(WindowManager &windows, Shell &shell, ShellServices &services, ShellEnvironment &environment)
 	: AptScreen(windows, shell, "PlayerTribute.apt", "AptPlayerTribute"), m_services(services), m_env(environment)
 {
 	if (level() < 0)
 	{
 		return;
+	}
+	if (!m_env.tribute)
+	{
+		windows.note("tribute-unwired", "PlayerTribute.apt: no game to send tribute in (ShellEnvironment::tribute is null) [S-1922]");
 	}
 	const std::string p = pathPrefix();
 	registerCommand(p + "_ReturnToGame", [this](const std::string &argument) {
@@ -60,19 +66,15 @@ AptPlayerTribute::AptPlayerTribute(WindowManager &windows, Shell &shell, ShellSe
 	registerCommand(p + "_OnPageSelected", [](const std::string &) {
 		// RW 0x917258: the current page changes; the Status page's show / hide (its base's vslots 1 / 2) change no text
 	});
-	for (const char *name : { "_Send", "_Reset" })
-	{
-		registerCommand(p + name, unportedCommand(p + name + " [S-1922]"));
-	}
-	registerCommand("AptPlayerTribute::OnInitialized", unportedCommand("AptPlayerTribute::OnInitialized [S-1922]"));
-	// RW 0x91774D: the tribute page is offered when this extern is true; MSG_GIVE_MONEY has no logic port, so the movie keeps to its status page (S-1922)
-	registerProvider(p + "_TributeEnabled", [this](const std::string &name, std::string &value, bool setting) {
+	registerCommand("AptPlayerTribute::OnInitialized", [](const std::string &) {});
+	windows.addUpdateListener(this, [this]() { update(); }); // lane PLAY-1 r2: the TributePage's update (RW 0x9164EB)
+	// RW 0x914C08: "1" when the local player is active (lane PLAY-1 r2)
+	registerProvider(p + "_TributeEnabled", [this](const std::string &, std::string &value, bool setting) {
 		if (setting)
 		{
 			return true;
 		}
-		this->windows().note("provider-unported", name + ": false (the tribute is not ported) [S-1922]");
-		value.clear();
+		value = m_env.tribute && m_env.tribute->localActive() ? "1" : "0";
 		return true;
 	});
 }
@@ -190,7 +192,15 @@ void AptPlayerTribute::pageLoaded(const std::string &params)
 	}
 	if (type == "TributePage")
 	{
-		windows().note("unported-command", "TributePage " + name + " [S-1922]");
+		// lane PLAY-1 r2: RW 0x916E8F
+		m_tributePage = skipLevelN(name);
+		const std::string page = pathPrefix() + "." + m_tributePage;
+		registerCommand(page + "_OnEnabledContentLoaded", [this](const std::string &arg) { contentLoaded(arg); });
+		// RW 0x91653C -> RW 0x915946: the content and its rows are freed
+		registerCommand(page + "_OnEnabledContentUnloaded", [this](const std::string &) {
+			m_content.clear();
+			m_rows.clear();
+		});
 		return;
 	}
 	if (type != "StatusPage")
@@ -322,12 +332,383 @@ void AptPlayerTribute::rowHidden(const std::string &params)
 	m_status->rowShown[(size_t)index] = false;
 }
 
+// ---- lane PLAY-1 r2: the tribute page ----
+
+void AptPlayerTribute::setFieldUtf8(const std::string &row, int field, const std::string &text)
+{
+	// RW 0x915159: "APT:_level%u.%s_field%d"
+	windows().setAptText("APT:" + pathPrefix() + "." + row + "_field" + std::to_string(field), text);
+}
+
+void AptPlayerTribute::registerRowColor(const std::string &row, std::uint32_t color)
+{
+	registerProvider(pathPrefix() + "." + row + "_color", [color](const std::string &, std::string &value, bool setting) {
+		if (!setting)
+		{
+			value = std::to_string((std::int32_t)color); // RW 0x914A69: sprintf "%d" of row + 0x58
+		}
+		return true;
+	});
+}
+
+// RW 0x916BF4 -> RW 0x916973
+void AptPlayerTribute::contentLoaded(const std::string &argument)
+{
+	std::string name;
+	if (!commandParam(argument, "name", name) && argument.find('=') == std::string::npos)
+	{
+		name = argument;
+	}
+	if (name.empty() || !m_content.empty())
+	{
+		return;
+	}
+	m_content = pathPrefix() + "." + skipLevelN(name);
+	const std::string c = m_content;
+	registerCommand(c + "_OnRowShown", [this](const std::string &arg) { tributeRowShown(arg); });
+	registerCommand(c + "_OnRowHidden", [this](const std::string &arg) { tributeRowHidden(arg); });
+	registerCommand(c + "_Reset", [this](const std::string &) { reset(); });
+	registerCommand(c + "_Send", [this](const std::string &) { send(); });
+	registerProvider(c + "_NumOfPlayers", [this](const std::string &, std::string &value, bool setting) {
+		if (!setting)
+		{
+			value = std::to_string(m_rows.size());
+		}
+		return true;
+	});
+	// RW 0x914B54: the local player, then the active allies (at most 7)
+	m_rows.clear();
+	if (m_env.tribute)
+	{
+		for (const TributePlayerRow &p : m_env.tribute->tributePlayers())
+		{
+			if (m_rows.size() >= 7)
+			{
+				break;
+			}
+			TRow r;
+			r.playerIndex = p.playerIndex;
+			r.name = p.name;
+			r.cash = p.cash;
+			r.local = p.local;
+			r.active = p.active;
+			r.color = p.color;
+			m_rows.push_back(r);
+		}
+	}
+	rebalance();
+}
+
+// RW 0x9162F5 -> RW 0x915F5D
+// RW 0x9153F2: the row of "index" lets its clip and gadgets go
+void AptPlayerTribute::tributeRowHidden(const std::string &argument)
+{
+	std::string idx;
+	if (!commandParam(argument, "index", idx))
+	{
+		return;
+	}
+	const int index = std::atoi(idx.c_str());
+	if (index < 0 || (size_t)index >= m_rows.size())
+	{
+		return;
+	}
+	TRow &row = m_rows[(size_t)index];
+	row.path.clear();
+	row.slider = nullptr;
+	row.entry = nullptr;
+	row.shownValue = -1;
+}
+
+void AptPlayerTribute::tributeRowShown(const std::string &argument)
+{
+	std::string idx, name;
+	if (!commandParam(argument, "index", idx) || !commandParam(argument, "name", name))
+	{
+		return;
+	}
+	const int index = std::atoi(idx.c_str());
+	if (index < 0 || (size_t)index >= m_rows.size() || !m_rows[(size_t)index].path.empty())
+	{
+		return;
+	}
+	TRow &row = m_rows[(size_t)index];
+	row.path = skipLevelN(name);
+	const std::string root = pathPrefix() + "." + row.path;
+	registerScreenRef(root + "_InitSlider", [this, index](const std::string &, GameWindow *window) {
+		// RW 0x914B07: range 0 .. 99999, position = the amount
+		TRow &r = m_rows[(size_t)index];
+		r.slider = window;
+		window->manager().winSendSystemMsg(window, GSM_SET_MIN_MAX, 0, 99999);
+		GadgetSliderSetPosition(window, (int)r.amount);
+	});
+	registerScreenRef(root + "_InitTextEntry", [this, index](const std::string &, GameWindow *window) {
+		m_rows[(size_t)index].entry = window; // RW 0x91565C (its 5-digit limit and filter: S-1922)
+		refreshRow(m_rows[(size_t)index]);
+	});
+	setFieldUtf8(row.path, 0, row.name);
+	registerRowColor(row.path, row.color);
+	refreshRow(row);
+}
+
+// RW 0x9155C2 (field 1) and RW 0x915392 (the text entry)
+void AptPlayerTribute::refreshRow(TRow &row)
+{
+	dropDeadGadgets(row);
+	if (row.path.empty())
+	{
+		return;
+	}
+	long long amount = (long long)row.amount;
+	if (row.local)
+	{
+		amount = 0; // RW 0x914D8D: minus the amounts of the other rows
+		for (const TRow &o : m_rows)
+		{
+			if (!o.local)
+			{
+				amount -= (long long)o.amount;
+			}
+		}
+	}
+	const long long value = amount + (long long)row.cash;
+	if (value != row.shownValue)
+	{
+		setFieldUtf8(row.path, 1, std::to_string(value));
+		row.shownValue = value;
+	}
+	if (row.entry)
+	{
+		GadgetTextEntrySetText(row.entry, asciiToU16(std::to_string(row.amount)));
+	}
+}
+
+// RW 0x91578C: what the local cash leaves for each ally row
+void AptPlayerTribute::rebalance()
+{
+	std::uint32_t cash = 0;
+	for (const TRow &r : m_rows)
+	{
+		if (r.local)
+		{
+			cash = r.cash;
+		}
+	}
+	std::uint32_t left = cash;
+	for (const TRow &r : m_rows)
+	{
+		if (!r.local && r.active)
+		{
+			left -= std::min(r.amount, left);
+		}
+	}
+	std::uint32_t remaining = cash;
+	for (TRow &r : m_rows)
+	{
+		if (r.local)
+		{
+			continue;
+		}
+		const std::uint32_t max = r.active ? std::min(r.amount + left, remaining) : 0;
+		// RW 0x91556B: at most 99999; a lower maximum lowers the amount (and the slider)
+		const std::uint32_t capped = std::min<std::uint32_t>(max, 99999);
+		if (capped != r.maximum)
+		{
+			r.maximum = capped;
+			if (r.maximum < r.amount)
+			{
+				setAmount(r, r.maximum, true);
+			}
+		}
+		remaining -= std::min(r.amount, remaining);
+	}
+	for (TRow &r : m_rows)
+	{
+		refreshRow(r);
+	}
+}
+
+// the row's gadgets go with their placeholder clips (a closing movie unloads them before the screen is popped)
+void AptPlayerTribute::dropDeadGadgets(TRow &row)
+{
+	if (row.slider && !windows().isComponentWindow(row.slider))
+	{
+		row.slider = nullptr;
+	}
+	if (row.entry && !windows().isComponentWindow(row.entry))
+	{
+		row.entry = nullptr;
+	}
+}
+
+void AptPlayerTribute::setAmount(TRow &row, std::uint32_t amount, bool moveSlider)
+{
+	dropDeadGadgets(row);
+	row.amount = amount;
+	if (moveSlider && row.slider)
+	{
+		GadgetSliderSetPosition(row.slider, (int)amount);
+	}
+	refreshRow(row);
+}
+
+bool AptPlayerTribute::setRowAmountBySlider(int index, int position)
+{
+	if (index < 0 || (size_t)index >= m_rows.size() || !m_rows[(size_t)index].slider)
+	{
+		return false;
+	}
+	GameWindow *slider = m_rows[(size_t)index].slider;
+	return gadgetMessage(nullptr, GSM_SLIDER_TRACK, (WindowMsgData)(std::uintptr_t)slider, (WindowMsgData)position) == MSG_HANDLED;
+}
+
+// RW 0x9161DD: the slider's track (RW 0x9156DC) and the text entry's edits (RW 0x91570C) of a row
+WindowMsgHandledType AptPlayerTribute::gadgetMessage(GameWindow *owner, std::uint32_t msg, WindowMsgData data1, WindowMsgData data2)
+{
+	// the gadget that reports is the message's first datum (the owner window is the screen's own)
+	GameWindow *from = reinterpret_cast<GameWindow *>(data1);
+	for (TRow &r : m_rows)
+	{
+		if (msg == GSM_SLIDER_TRACK && from && from == r.slider)
+		{
+			std::uint32_t pos = (std::uint32_t)std::max<long long>(0, (long long)(std::intptr_t)data2);
+			if (pos != r.amount)
+			{
+				if (pos > r.maximum)
+				{
+					pos = r.maximum;
+					GadgetSliderSetPosition(r.slider, (int)pos);
+				}
+				setAmount(r, pos, false);
+				rebalance();
+			}
+			return MSG_HANDLED;
+		}
+		if ((msg == GEM_UPDATE_TEXT || msg == GEM_EDIT_DONE) && from && from == r.entry)
+		{
+			const std::u16string text = GadgetTextEntryGetText(r.entry);
+			long long v = 0;
+			for (char16_t ch : text)
+			{
+				if (ch < u'0' || ch > u'9')
+				{
+					break;
+				}
+				v = v * 10 + (ch - u'0');
+				if (v > 0x7FFFFFFF)
+				{
+					break;
+				}
+			}
+			setAmount(r, (std::uint32_t)std::min<long long>(v, r.maximum), true);
+			rebalance();
+			return MSG_HANDLED;
+		}
+	}
+	return AptScreen::gadgetMessage(owner, msg, data1, data2);
+}
+
+// RW 0x9164EB
+void AptPlayerTribute::update()
+{
+	if (!m_env.tribute)
+	{
+		return;
+	}
+	if (!m_enabledSet && !m_tributePage.empty() && m_env.tribute->transferAllowed())
+	{
+		std::string error;
+		if (!windows().invokeASAt(level(), m_tributePage, "SetState", { "_enabled" }, nullptr, &error))
+		{
+			windows().note("tribute-setstate-failed", m_tributePage + ".SetState(_enabled): " + error);
+		}
+		m_enabledSet = true;
+	}
+	if (m_content.empty())
+	{
+		return;
+	}
+	// the rows read their players' cash live (RW 0x9155C2: Player + 0x94)
+	const std::vector<TributePlayerRow> players = m_env.tribute->tributePlayers();
+	for (TRow &r : m_rows)
+	{
+		for (const TributePlayerRow &p : players)
+		{
+			if (p.playerIndex == r.playerIndex)
+			{
+				r.cash = p.cash;
+				r.active = p.active;
+			}
+		}
+	}
+	rebalance(); // RW 0x91578C, then each row's refresh (RW 0x916225)
+}
+
+// RW 0x915862 -> RW 0x91554C
+void AptPlayerTribute::reset()
+{
+	for (TRow &r : m_rows)
+	{
+		setAmount(r, 0, true);
+	}
+	rebalance();
+}
+
+// RW 0x914DD6
+void AptPlayerTribute::send()
+{
+	if (!m_env.tribute)
+	{
+		windows().note("tribute-unwired", "_Send: no game [S-1922]");
+		return;
+	}
+	if (!m_env.tribute->localActive())
+	{
+		return;
+	}
+	int local = -1;
+	for (const TRow &r : m_rows)
+	{
+		if (r.local)
+		{
+			local = r.playerIndex;
+		}
+	}
+	for (const TRow &r : m_rows)
+	{
+		if (!r.local && r.active && r.amount > 0)
+		{
+			m_env.tribute->send(local, r.playerIndex, r.amount);
+			++m_sends;
+		}
+	}
+}
+
+std::vector<AptPlayerTribute::RowState> AptPlayerTribute::tributeRows() const
+{
+	std::vector<RowState> out;
+	for (const TRow &r : m_rows)
+	{
+		RowState s;
+		s.playerIndex = r.playerIndex;
+		s.local = r.local;
+		s.amount = r.amount;
+		s.maximum = r.maximum;
+		s.slider = r.slider != nullptr;
+		s.entry = r.entry != nullptr;
+		out.push_back(s);
+	}
+	return out;
+}
+
 const char *AptPlayerTribute::stopLine()
 {
 	return "[S-1922] PlayerTribute.apt (the Palantir's flag in a skirmish / multiplayer game, RW 0x6D40C9 -> RW 0x914EF0): the screen opens over the game and closes "
-		   "(its Cancel / Escape: <path>_ReturnToGame, RW 0x914C51); not ported: the tribute (MSG_GIVE_MONEY has no logic port, so <path>_TributeEnabled answers "
-		   "false and the movie shows its status page), the opening's pause / input calls (RW 0x914FA2 .. 0x914FE2), the campaign's objectives screen "
-		   "(RW 0x8E8843, AptObjectivesMenu)";
+		   "(its Cancel / Escape: <path>_ReturnToGame, RW 0x914C51); the status rows are HUD-5's (S-1953); the tribute rows with their sliders and amounts "
+		   "(RW 0x915F5D .. 0x91578C) and Send (RW 0x914DD6 -> MSG_GIVE_MONEY, RW 0x6264E1) are ported (PLAY-1 r2); not ported: the opening's pause / input calls "
+		   "(RW 0x914FA2 .. 0x914FE2), a skirmish AI ally's extra money term in a tribute row's field 1 (RW 0x6A950B / 0x6A9999), the text entry's limit and filter "
+		   "(RW 0x81606D / 0x721FA9), RW 0x91578C's call points (here after every change), RW 0x6264E1's + 0x754 test taken as Player::isDefeated, and the campaign's "
+		   "objectives screen (RW 0x8E8843, AptObjectivesMenu)";
 }
 
 AptLoadScreen::AptLoadScreen(WindowManager &windows, Shell &shell, ShellEnvironment &environment)

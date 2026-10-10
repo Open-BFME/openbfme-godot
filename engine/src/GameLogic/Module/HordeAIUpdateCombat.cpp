@@ -12,8 +12,8 @@
 //     attacks an enemy within its weapon's reach, else runs the idle cycle (DelayUntilIdle / DelayRandomActivate), else takes the best of the 8 neighbouring 10-unit cells scored
 //     10000 - FacingBonus * |turn| / pi - edgeDist, rejecting cells in the angle limit, farther than OuterRange (OuterRangeBuildings for a structure) from the horde, in the
 //     history of the last 4 cells; the cell score loses the distance beyond InnerRange; a best score below 1 with an outside rejection steps to the valid cell nearest the horde;
-//   * ReleaseMembers RW 0x241F10 (B1 Rva00241F10MemberAttackTarget.cpp): every member of the released ranks that is not already fighting the target attacks the nearest member of the
-//     target's horde when it is in the member's weapon range.
+//   * the HordeAttackNugget's release of the ranks is HordeContain::attackTargetNow (RW 0x875221, lane ARCHER-1, HordeMemberPass.cpp): each member of the released ranks
+//     picks its own target among the target horde's members (RW 0x86FA87, a randomised nearest).
 // DONOR: B1 for the machine shape. INFERENCE: the nearest-member choices, the cell passability (every cell is assumed passable), the nearest-enemy distance (centres, minus radii),
 // the logic RNG call site of the idle cycle (its file / line is not read).
 
@@ -113,22 +113,6 @@ float edgeDistance2(const Coord3D &p, const Object &self, const Object &obj)
 	const float d = SimMath::length2d(SimMath::subf32(p.x, obj.getPosition()->x), SimMath::subf32(p.y, obj.getPosition()->y));
 	const float e = SimMath::subf32(SimMath::subf32(d, CombatQueries::boundingCircleRadius(self)), CombatQueries::boundingCircleRadius(obj));
 	return e >= 0.0f ? SimMath::mulf32(e, e) : 0.0f;
-}
-
-Object *nearestOf(const std::vector<Object *> &list, const Coord3D &from)
-{
-	Object *best = nullptr;
-	float bestD = 0.0f;
-	for (Object *o : list)
-	{
-		const float d = CombatQueries::centerDistanceSquared2D(*o->getPosition(), from);
-		if (!best || d < bestD || (d == bestD && o->getID() < best->getID()))
-		{
-			best = o;
-			bestD = d;
-		}
-	}
-	return best;
 }
 
 float absF(float a)
@@ -1573,55 +1557,18 @@ void HordeAIUpdate::pushHistory(MemberRecord &rec, int x, int y)
 	rec.history[rec.historyCount - 1][1] = y;
 }
 
-// RW 0x241F10 (B1 Rva00241F10MemberAttackTarget.cpp): the released ranks attack the nearest member of the target's horde within their weapon's reach
-void HordeAIUpdate::releaseMembersToAttack(Object &targetIn)
+// lane ARCHER-1: RW 0x69675C(member, 0) as the HordeAttackNugget's melee branch calls it (RW 0x875350); see HordeAIUpdate.h
+bool HordeAIUpdate::touchAttack(Object &member, Object &target)
 {
-	Object *horde = getObject();
-	HordeContain *hc = hordeContainOf(*horde);
-	if (!hc)
+	if (Object *e = amoebaReach(member, target))
 	{
-		return;
-	}
-	++m_stats.releases;
-	Object *targetHorde = hordeOfTarget(targetIn);
-	const std::vector<Object *> enemies = targetHorde ? aliveMembers(*targetHorde) : std::vector<Object *>{ &targetIn };
-	if (enemies.empty())
-	{
-		return;
-	}
-	const std::set<int> &released = hc->hordeData().m_ranksToReleaseWhenAttacking;
-	const CombatNames::Status &st = CombatNames::statuses();
-	for (Object *m : membersOf())
-	{
-		const int slot = hc->core().slotOf(m->getID());
-		const std::vector<HordeContainCore::Slot> &slots = hc->core().slots();
-		const int rank = slot >= 0 && (size_t)slot < slots.size() ? slots[(size_t)slot].rank : 0;
-		if (!released.count(rank))
+		if (amoebaAttack(member, *e))
 		{
-			continue;
-		}
-		AIUpdateInterface *ai = m->getAIUpdateInterface();
-		ObjectWeapons *w = m->getWeapons();
-		if (!ai || !w || m->testStatus((unsigned)st.uncontrollablyScared))
-		{
-			continue;
-		}
-		if (Object *cur = ai->currentVictim())
-		{
-			if (CombatQueries::isAlive(*cur) && ai->isAttacking() && (hordeOfTarget(*cur) == targetHorde || cur == &targetIn))
-			{
-				continue; // it is already fighting this target
-			}
-		}
-		Object *candidate = nearestOf(enemies, *m->getPosition());
-		if (candidate && w->chooseBestWeaponForTarget(candidate, PREFER_MOST_DAMAGE, CMD_FROM_AI) && w->isWithinAttackRange(*candidate))
-		{
-			if (ai->aiAttackObject(candidate, CMD_FROM_AI))
-			{
-				++m_stats.orders;
-			}
+			++m_stats.orders;
+			return true;
 		}
 	}
+	return false;
 }
 
 void HordeAIUpdate::crc(StateHasher &h) const
@@ -1651,7 +1598,6 @@ void HordeAIUpdate::crc(StateHasher &h) const
 	h.addU64(m_stats.orders);
 	h.addU64(m_stats.steps);
 	h.addU64(m_stats.idleCycles);
-	h.addU64(m_stats.releases);
 	h.addU64(m_contactRefreshes);
 	h.addBool(m_newTarget);
 	h.addU64(m_swarmTicks);

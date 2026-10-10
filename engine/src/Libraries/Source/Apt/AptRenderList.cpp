@@ -100,7 +100,9 @@ void Apt::buildRenderList(AptRenderList &out)
 				}
 				// lane UI-2: a View3D's viewer settings (RW 0x8145DD reads `_KeepAspectRatio` and `_AnimMode` with `_RenderObj`; the frame the clip asks
 				// for is `_Frame`, RW 0x813514's "_frame=" command); booleans and numbers as their string form
-				for (const char *name : { "_AnimMode", "_KeepAspectRatio", "_Frame" })
+				// lane UI-4: a script-tagged BinkMovie's `_MovieName` / `_Loop` / `_UseAlpha` (MainMenu's credits page sets them in the clip's Initialize
+				// event at APT offset 0x1328C; without them the device had no title: "the clip names no _MovieName")
+				for (const char *name : { "_AnimMode", "_KeepAspectRatio", "_Frame", "_MovieName", "_Loop", "_UseAlpha" })
 				{
 					AptValue v;
 					if (inst->getOwn(name, v) && (v.isString() || v.isNumber() || v.isBoolean()))

@@ -9,7 +9,11 @@
 [![Godot 4.7](https://img.shields.io/badge/Godot-4.7-478cbf?logo=godotengine&logoColor=white)](https://godotengine.org)
 [![Platforms](https://img.shields.io/badge/platforms-Windows%20%7C%20Linux-555)](#play-it)
 
-[Play it](#play-it) · [Status](#status) · [What's new](#whats-new-in-v030-preview2) · [Build from source](#build-from-source) · [Player guide](docs/PLAYING.md) · [Roadmap](docs/ROADMAP.md)
+<a href="https://github.com/Open-BFME/openbfme-godot/releases"><img alt="Download the launcher (Windows / Linux)" src="https://img.shields.io/badge/Download-the%20launcher%20for%20Windows%20%2F%20Linux-2ea44f?style=for-the-badge&logo=github"></a>
+
+<sub>The newest preview is at the top of the releases page: get the <code>openbfme-launcher-…</code> file for your system.</sub>
+
+[Play it](#play-it) · [Status](#status) · [What's new](#whats-new-in-v030-preview3) · [Build from source](#build-from-source) · [Player guide](docs/PLAYING.md) · [Roadmap](docs/ROADMAP.md)
 
 </div>
 
@@ -18,7 +22,7 @@
 OpenBFME is a faithful, fan-made recreation of **The Rise of the Witch-king
 2.01** that runs on the original game files from your own install. This
 repository contains no game assets: you bring your own copy of the game, or
-let the launcher download it for you if you own it (see [Play it](#play-it)).
+let the launcher download it (see [Play it](#play-it)).
 
 The game logic is C++ in a GDExtension (`engine/`). It is translated from
 EA's Command & Conquer Generals: Zero Hour source and the BFME decompiles,
@@ -41,31 +45,31 @@ OpenBFME is unofficial. It is not made or endorsed by EA.
 > rough edges; see [Status](#status) and the known issues in the
 > [player guide](docs/PLAYING.md#known-issues).
 
-**You need** your own installs of **The Rise of the Witch-king patched to 2.01**
-*and* **The Battle for Middle-earth II patched to 1.06**, both in English.
-RotWK always needs BFME2 next to it, as in the original. Windows 10/11 or
-64-bit Linux, with a graphics card that supports Vulkan (or Direct3D 12 on
-Windows).
-
-**No install yet?** If you own the games, the launcher can download them for
-you through the BFME Foundation's All In One BFME Launcher service (the BFME
-Foundation Project and the Patch 2.22 team): press *Download the game files...*,
-pick a folder and confirm that you own both games. About 8.6 GB; every file is
-checked, and the game offers the downloaded folders on its first start.
+**You need** **The Rise of the Witch-king 2.01** and **The Battle for
+Middle-earth II 1.06**, both in English, and Windows 10/11 or 64-bit Linux
+with Vulkan graphics (or Direct3D 12 on Windows).
 
 1. **Download the launcher** from
    [GitHub Releases](https://github.com/Open-BFME/openbfme-godot/releases):
    `openbfme-launcher-<version>-windows-x64.zip` or
    `openbfme-launcher-<version>-linux-x64.tar.gz`. Unpack it into a folder you
    can write to.
-2. **Start the launcher.** It downloads the newest game build, checks its
-   signature and every file, installs it, and keeps itself up to date. Pick
-   the *Preview* channel to get test builds.
+2. **Start the launcher** (`OpenBFMELauncher.exe`, or
+   `./OpenBFMELauncher.x86_64` on Linux). On Windows, SmartScreen may say
+   *Windows protected your PC*, because the files are not code-signed yet:
+   choose *More info*, then *Run anyway*. The launcher downloads the newest
+   game build of its channel (a preview launcher starts on *Preview*),
+   checks its signature and every file, installs it, and keeps itself up to
+   date.
 3. **Press Play.** On the first start the game looks for your RotWK and BFME2
    folders (the registry entries the original installers write, and on Linux
    also Wine, Proton, Lutris, Heroic and Bottles prefixes). Confirm them or
    choose them with *Browse...*. It checks every game file once (this can
    take a minute) and remembers the folders.
+
+**No games installed?** The launcher shows *Download the games*: files from the
+All In One BFME Launcher service (BFME Foundation, Patch 2.22 team), about
+8.6 GB, every file checked.
 
 **Logs.** Every run writes a session log, with your user name and home folder
 removed:
@@ -79,8 +83,8 @@ You never have to find it by hand: click **Logs** next to the version number
 in the menus, or **Open log folder** in any error or crash message. After a
 crash, the next start tells you which log to send.
 
-**Free camera.** The launcher's *Free camera (zoom out further, not retail)*
-box lets the camera zoom out to the whole map. This is an OpenBFME option,
+**Free camera.** The launcher's *Free camera* setting (behind the gear) lets
+the camera zoom out to the whole map. This is an OpenBFME option,
 not part of the original game; in a game, Ctrl+Z switches it on and off. From
 the command line it is `-- --free-camera`.
 
@@ -101,7 +105,7 @@ the original are still missing.
 | Building, economy, upgrades | ✅ Works | builders, walls, castles, resources, upgrades and experience |
 | Computer opponent | 🟡 Partial | builds a base, trains armies, attacks and finishes games; defending, expanding and hero use are not yet like the original |
 | In-game interface | ✅ Works | Palantir, command bar, RotWK's radar and pings, health bars and levels, control groups, camera bookmarks, hotkeys, right-click orders as in the original |
-| Main menu and options | 🟡 Partial | real menus with the original layout; the advanced options are saved but don't change the graphics yet; save/load pages and credits are not done |
+| Main menu and options | 🟡 Partial | real menus with the original layout; the credits roll; Custom Settings opens the advanced options, which are saved but don't change the graphics yet; save/load pages are not done |
 | Sound and music | 🟡 Partial | voices, effects, music and the original stereo image; some sounds (damage sounds, scripted music, parts of the big-battle ambience) are missing |
 | Movies | ✅ Works | the start-up logos and intro, and the campaign movies (no subtitles) |
 | Campaign | 🟡 Partial | missions start from the menu with their movies and narration; no saving and no campaign menu between missions yet |
@@ -121,7 +125,33 @@ pinned by a test. There are **541 open stops** today. Some are big
 (save/load), most are small details waiting for better evidence. The plan to
 get to a 1:1 game is in [docs/ROADMAP.md](docs/ROADMAP.md).
 
-## What's new in v0.3.0-preview.2
+## What's new in v0.3.0-preview.3
+
+- **Building placement previews.** Choosing a building to build shows it
+  under the pointer, tinted red where you can't build, for every faction,
+  fortresses included.
+- **The selection box.** Dragging with the left mouse button draws the
+  original's selection box, and letting go selects your units inside it.
+- **Archers spread their fire.** A battalion of archers shoots at the whole
+  enemy battalion, as in the original, instead of every archer aiming at the
+  nearest soldier.
+- **Tribute.** Send resources to an ally from the flag above the radar, once
+  the game's waiting time has passed.
+- **Move markers on the ground.** A move order shows the original's marker
+  where your units are going.
+- **"Not enough money" for upgrades.** An upgrade you can't afford says so
+  and is not bought.
+- **The credits screen.** *Credits* in the main menu rolls the original
+  credits.
+- **Custom Settings opens the advanced options** in the Options screen.
+- **The menu music stops when a campaign starts**, before the opening movie.
+- **Missing intro movies are skipped quietly**, as in the original, instead
+  of showing an error.
+- **The window title** reads "OpenBFME".
+- **A redesigned launcher** that starts on the right channel: a preview
+  launcher installs the newest preview, and release notes read as plain text.
+
+### v0.3.0-preview.2
 
 - **Force-attack on the ground.** Hold Ctrl and click a spot on the ground:
   the selected units fire at it until you give another order. As in the

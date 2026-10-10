@@ -97,6 +97,10 @@ public:
 	bool isCurWeaponLocked() const { return m_lockType != NOT_LOCKED; }
 	// RW 0x6C97F9 / 0x6C98E6
 	bool setWeaponLock(int slot, WeaponLockType type);
+	// lane ARCHER-1 r2: RW 0x69121A Object::setWeaponLock(slot, type): the object's contain first forwards the lock (contain slot 0x168; OpenContain's RW 0x8656D6,
+	// HordeContain's too: RW 0x69121A on every contained object, contain list order, through slot 0x110), then SWITCHED_WEAPONS (status 0x51) = (type is
+	// LOCKED_PERMANENTLY and slot is not PRIMARY) (RW 0x62684D), then the object's own set (RW 0x6C97F9). Its result; false without an ObjectWeapons
+	static bool setObjectWeaponLock(Object &obj, int slot, WeaponLockType type);
 	void releaseWeaponLock(WeaponLockType type);
 	// RW 0x6C80E5 (reloadAmmo on every weapon of the set, instantly when `now`)
 	void reloadAllAmmo(bool now);
@@ -131,6 +135,8 @@ public:
 	float attackDistance(const Object &victim) const;
 	// lane PHYS-1: RW 0x6CA8BD(source, 0): the current weapon's attack range (0 without a weapon)
 	float currentAttackRange() const;
+	// lane ARCHER-1: RW 0x6CA935(source): the current weapon's attack range with no target (the scale applied twice, WeaponGetAttackRangeNoTarget); 0 without one
+	float currentAttackRangeNoTarget() const;
 	// RW 0x6CA83B
 	bool isTooClose(const Object &victim) const;
 	// the weapon's AcceptableAimDelta (radians) of the current weapon

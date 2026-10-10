@@ -707,3 +707,147 @@ def test_the_freeze_warning_stays_visible_in_the_window(tmp_path, server, keys):
     server.publish("v0.3.0", release_files(tmp_path, "v0.3.0", keys["release"]))
     r = launch(tmp_path, server, keys["release"], f"--screenshot={tmp_path / 'shot.png'}")
     assert r.has("ui status: Installed v0.3.0.") and any(ln.rstrip().endswith("ui warning:") for ln in r.lines), r
+
+
+# ---- lane UI-3: the window shows no home folder and no user name ------------------------------------------------------------------------
+
+USER_NAME = "zedtester"
+
+
+def screen_texts(tmp: Path, server: ReleaseServer | None, key: bytes, *args: str) -> tuple[Run, list[str]]:
+    """the launcher's window under a home folder named after USER_NAME (its data and the game's folder files inside it), every text of
+    every screen dumped (--ui-dump: unscrubbed, hidden screens included)"""
+    home = tmp / "home" / USER_NAME
+    env = {k: v for k, v in os.environ.items() if k not in ("ROTWK_INSTALL", "BFME2_INSTALL", "OPENBFME_GAME_USER_DIR")}
+    env.update(HOME=str(home), USER=USER_NAME, LOGNAME=USER_NAME, XDG_DATA_HOME=str(home / ".local/share"),
+               XDG_CONFIG_HOME=str(home / ".config"), XDG_CACHE_HOME=str(home / ".cache"), OPENBFME_TEST_PLAYED=str(tmp / "played.txt"))
+    test = [f"--api-base={server.origin}"] if server else []
+    test += [f"--trust-key={ed25519.public_key(key).hex()}", f"--repo={TEST_REPO}"]
+    cmd = [GODOT, "--headless", "--path", str(LAUNCHER), "--", *test, *args, "--ui-dump", f"--screenshot={tmp / 'shot.png'}"]
+    r = subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=180, stdin=subprocess.DEVNULL)
+    run = Run(r.returncode, r.stdout + r.stderr)
+    return run, [ln.split("LAUNCHER ui text: ", 1)[1] for ln in run.lines if "LAUNCHER ui text: " in ln]
+
+
+def game_user_dir(tmp: Path) -> Path:
+    return tmp / "home" / USER_NAME / ".local/share/godot/app_userdata/OpenBFME"
+
+
+@pytest.mark.parametrize("screen", ["", "main", "update", "downloading", "settings", "games", "error"])
+def test_no_screen_shows_the_home_folder_or_user_name(tmp_path, server, keys, screen):
+    """the owner's devlog footage showed the Deck's home folder: by default no text of any screen (the folders of the games, the logs,
+    an error naming a file) shows the home folder or the user's name; the folders are shown as ~/..."""
+    home = tmp_path / "home" / USER_NAME
+    games = home / "Games" / "BFME"
+    for g in ("RotWK", "BFME2"):
+        (games / g).mkdir(parents=True)
+    gdir = game_user_dir(tmp_path)
+    gdir.mkdir(parents=True)
+    (gdir / "install-paths.cfg").write_text(f"# OpenBFME\nROTWK_INSTALL={games / 'RotWK'}\nBFME2_INSTALL={games / 'BFME2'}\n")
+    if screen:
+        r, texts = screen_texts(tmp_path, None, keys["release"], f"--ui-demo={screen}")
+    else:
+        # the real start: an update is installed and the launcher's own data folder is inside the home folder
+        server.publish("v0.2.0", release_files(tmp_path, "v0.2.0", keys["release"]))
+        r, texts = screen_texts(tmp_path, server, keys["release"])
+        assert r.has("ui status: Installed v0.2.0."), r
+        assert any(t == "In ~/Games/BFME" for t in texts), texts
+    assert r.code == 0 and len(texts) > 40, r
+    leaks = [t for t in texts if str(home) in t or USER_NAME in t]
+    assert not leaks, leaks
+    if screen != "games":  # that screen is the one without game folders
+        assert any(t.startswith("~/Games/BFME/") for t in texts), texts  # Settings shows the folders, shortened
+
+
+def test_no_screen_shows_a_user_name_outside_the_home_folder(tmp_path, keys):
+    """a game folder on a removable drive (/run/media/<name>/...) and an error naming the launcher's data folder: the name is taken out
+    as a path component, and the games card shows when the folders are missing"""
+    media = tmp_path / "media" / USER_NAME / "SD"
+    for g in ("RotWK", "BFME2"):
+        (media / g).mkdir(parents=True)
+    gdir = game_user_dir(tmp_path)
+    gdir.mkdir(parents=True)
+    (gdir / "downloaded-installs.cfg").write_text(f"SOURCE=test\nROTWK_INSTALL={media / 'RotWK'}\nBFME2_INSTALL={media / 'BFME2'}\n")
+    r, texts = screen_texts(tmp_path, None, keys["release"], "--offline")
+    assert r.code == 0 and len(texts) > 40, r
+    assert not [t for t in texts if USER_NAME in t], texts
+    assert any("/…/SD/RotWK" in t for t in texts), texts
+    assert r.has("ui games card: hidden"), r
+    (gdir / "downloaded-installs.cfg").unlink()
+    r, texts = screen_texts(tmp_path, None, keys["release"], "--offline")
+    assert r.code == 0 and r.has("ui games card: shown") and not [t for t in texts if USER_NAME in t], r
+
+
+# ---- lane UI-3 round 2 (Sol r1): Pause / Cancel in the window --------------------------------------------------------------------------
+
+def window(tmp: Path, server: ReleaseServer, key: bytes, *args: str, exe: Path | None = None) -> Run:
+    """the launcher's window (headless) through its start-up check, with --ui-stop / --ui-then pressing Pause, Resume or Cancel"""
+    return launch(tmp, server, key, *args, f"--screenshot={tmp / 'shot.png'}", exe=exe, timeout=300)
+
+
+def big_game_release(tmp: Path, server: ReleaseServer, key: bytes, version: str = "v0.2.0") -> str:
+    """a release whose game package is large (incompressible) and served slowly, so a press lands mid-download; its asset name"""
+    name = make_manifest.asset_name("game", version, "linux-x64")
+    server.publish(version, release_files(tmp, version, key, game=game_tar(tmp, version, os.urandom(600_000))))
+    server.throttle[name] = 0.02
+    return name
+
+
+def other_partials(tmp: Path) -> list[Path]:
+    """resumable downloads in downloads/ that are not the running job's: another version's game package, an unrelated file"""
+    dl = data(tmp) / "downloads"
+    dl.mkdir(parents=True, exist_ok=True)
+    out = [dl / "openbfme-v0.1.0-linux-x64.tar.gz.part", dl / "openbfme-v0.1.0-linux-x64.tar.gz.part.json", dl / "notes.part"]
+    for p in out:
+        p.write_bytes(b"not this job's")
+    return out
+
+
+@pytest.mark.parametrize("then", ["", "cancel"])
+def test_cancel_removes_only_the_cancelled_jobs_partial_download(tmp_path, server, keys, then):
+    """Sol r1: Cancel removed every .part / .part.json in downloads/; only the cancelled job's own asset goes (Cancel while
+    downloading, and Cancel after a Pause)"""
+    name = big_game_release(tmp_path, server, keys["release"])
+    others = other_partials(tmp_path)
+    stop = "pause" if then else "cancel"
+    r = window(tmp_path, server, keys["release"], f"--ui-stop={stop}@{name}", *([f"--ui-then={then}"] if then else []))
+    assert r.has(f"ui test: {stop} pressed during Downloading {name}"), r
+    if then:
+        assert r.has("ui paused: game") and r.has("ui test: cancel pressed"), r
+    assert r.has("ui status: The update was cancelled.") and r.has("ui paused: ") and not r.has("rejected"), r
+    dl = data(tmp_path) / "downloads"
+    assert not (dl / f"{name}.part").exists() and not (dl / f"{name}.part.json").exists()
+    assert all(p.read_bytes() == b"not this job's" for p in others), "other downloads stay"
+    assert installed(tmp_path) == []
+
+
+def test_pause_and_resume_a_game_download(tmp_path, server, keys):
+    name = big_game_release(tmp_path, server, keys["release"])
+    r = window(tmp_path, server, keys["release"], f"--ui-stop=pause@{name}", "--ui-then=resume")
+    assert r.has("ui paused: game") and r.has(f"resumed {name} at"), r
+    assert r.has("ui status: Installed v0.2.0.") and installed(tmp_path) == ["v0.2.0"], r
+
+
+@pytest.mark.parametrize("then", ["resume", "cancel", ""])
+def test_a_stopped_launcher_download_can_be_resumed_or_cancelled(tmp_path, server, keys, launcher_builds, then):
+    """Sol r1: stopping the launcher's own download was reported as "Launcher update rejected", Pause offered no Resume and Cancel left
+    its partial file behind"""
+    inst = unpack_launcher(tmp_path / "inst", launcher_builds["v0.2.0"])
+    exe = inst / "OpenBFMELauncher.x86_64"
+    server.publish("v0.3.0", release_files(tmp_path, "v0.3.0", keys["release"], launcher=launcher_builds["v0.3.0"]))
+    name = make_manifest.asset_name("launcher", "v0.3.0", "linux-x64")
+    server.throttle[name] = 0.002
+    stop = "pause" if then else "cancel"
+    r = window(tmp_path, server, keys["release"], f"--ui-stop={stop}@{name}", *([f"--ui-then={then}"] if then else []), exe=exe)
+    assert r.has(f"ui test: {stop} pressed during Downloading {name}") and not r.has("rejected"), r
+    part = data(tmp_path) / "downloads" / f"{name}.part"
+    if then == "resume":
+        assert r.has("ui paused: launcher") and r.has(f"resumed {name} at"), r
+        assert r.has("ui status: The launcher v0.3.0 is ready and replaces this one on the next start."), r
+        assert (inst / "update" / "VERSION.launcher").read_text().strip() == "v0.3.0"
+    else:
+        if then == "cancel":
+            assert r.has("ui paused: launcher"), r
+        assert r.has("ui status: The launcher update was cancelled."), r
+        assert not part.exists() and not part.with_name(part.name + ".json").exists() and not (inst / "update").exists()
+    assert installed(tmp_path) == ["v0.3.0"], "the game update before it was installed"

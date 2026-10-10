@@ -5,8 +5,9 @@ effectively bootstrap it so it downloads the launcher and headlessly downloads t
 user. I have permission from that mod project to use it."
 
 Status: option (b) is approved, built in the launcher and **on by default** since round 3
-(`AioInstall.DEFAULT_ENABLED` in `launcher/scripts/core/aio_install.gd`). Nothing downloads without the
-player's consent and click. Research date: 2026-10-10.
+(`AioInstall.DEFAULT_ENABLED` in `launcher/scripts/core/aio_install.gd`). Nothing downloads until the
+player presses Download. Since lane UI-3 the window shows the option only while no game folders are
+found (see "Lane UI-3" at the end). Research date: 2026-10-10.
 
 ## Decisions (the owner, 2026-10-10)
 
@@ -314,21 +315,16 @@ Parts:
 
 ### Consent (shown before anything is downloaded)
 
-- The setting is off by default: "Install game files with the All In One BFME Launcher service".
-- The screen, before the download, states:
-  - the files come from the **BFME Foundation Project / All In One BFME Launcher** servers
-    (`bfmeladder.com`, files at `workshop-files.bfmeladder.com`), not from EA and not from OpenBFME;
-  - which packages ("Vanilla (2.01)" and "Vanilla (1.06)"), the size (about 8.6 GB), and the
-    target folder;
-  - that the games are EA's, and that **you should own The Battle for Middle-earth II and The Rise
-    of the Witch-king**; neither service checks this;
-  - that OpenBFME sends only a User-Agent, no account and no machine data, and that their privacy
-    policy applies to their servers (link).
-- The player ticks "I own the games and want to download them from this service" before Download
-  is enabled.
-- This changes the launcher README's promise ("the launcher does not download or need any game
-  files" and "Only GitHub"). The README and `docs/RELEASE.md` must say the new host is contacted
-  **only** when this option is used.
+Lane UI-3 (the owner, 2026-10-10: "just let people figure that out") replaced the long consent
+screen and its ownership checkbox with one screen, *Download the games*:
+
+- one line naming the source: "Files from the All In One BFME Launcher service (BFME Foundation,
+  Patch 2.22 team)", a link to bfmeladder.com/download, the two games and the size, the target folder
+  (*Change...*), and **Download**. Nothing downloads before that press;
+- the setting *Offer to download the games* (Settings, or `--aio=on|off`) hides the button;
+- the launcher log records the consent text (`AioInstall.consent_text`: the servers, the packages,
+  the size, the checks, the privacy note);
+- the launcher README says the extra hosts are contacted **only** during that download.
 
 ### Questions for the AIO team (for the owner to paste into Discord)
 
@@ -413,8 +409,7 @@ text. In the window that is a dialog after the folder pick; on the command line 
     and the marker contents in `tools/release/test_aio.py`.
 - **UX.**
   - **Consent screen:** the source and a link to the project's page, the packages, the size and the
-    folders. A box "I own The Battle for Middle-earth II and The Rise of the Witch-king..." has to be
-    ticked before Download is enabled.
+    folders (replaced by lane UI-3's one-line screen, below).
   - **Progress:** overall MB, per file "File i of n, RotWK/<file>: p%", and MB/s.
   - **Pause / Resume** (the partial file is kept and resumed with Range) and **Cancel** (the partial
     files are removed; checked files stay).
@@ -441,5 +436,20 @@ text. In the window that is a dialog after the folder pick; on the command line 
 - **First-run screen.** An unreadable `downloaded-installs.cfg` is shown on the screen
   (`InstallSetup.downloaded_problem`) and printed as a `FIRST RUN` line.
 - **On by default:** `AioInstall.DEFAULT_ENABLED := true`. The consent screen and the ownership box
-  are unchanged. The round-2 download (`workspace/aio-install/`) was deleted after the pins were
+  were unchanged then (lane UI-3 later replaced both). The round-2 download (`workspace/aio-install/`) was deleted after the pins were
   captured.
+
+## Lane UI-3 (2026-10-10): the launcher redesign
+
+- *Download the games* appears on the main screen only while no game folders are found: none of the
+  game's `install-paths.cfg`, the launcher's `downloaded-installs.cfg` or `ROTWK_INSTALL` /
+  `BFME2_INSTALL` names two existing folders (`launcher/scripts/ui/paths.gd`). The game's own search
+  (registry, Wine prefixes) still runs at its first start, so the card says "Installed already? The
+  game finds them when it starts."
+- The screen: one source line, the link, the size, the folder (default `~/Games/BFME`), **Download**.
+  No ownership text or checkbox. The download runs in the main screen's one progress bar (MB, MB/s,
+  time left) with **Pause** / **Resume** and **Cancel**; failures open the error dialog (*Copy
+  details*, *Open log folder*).
+- `--aio-install=<folder> --aio-consent` is unchanged; the refusal for a switched-off setting now names
+  it "Offer to download the games".
+
