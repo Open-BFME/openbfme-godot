@@ -39,8 +39,10 @@
 #include <vector>
 
 #ifndef _WIN32
+#include <spawn.h>
 #include <sys/wait.h>
 #include <unistd.h>
+extern char **environ;
 #endif
 
 namespace
@@ -272,7 +274,19 @@ int runCommand(const std::string &cmdIn)
 	cmd = "\"" + cmd + "\"";
 	return std::system(cmd.c_str());
 #else
-	const int rc = std::system(cmd.c_str());
+	// not std::system: on macOS two std::system calls from two threads run one after the other (two `sleep 3` take 6 s), so the host
+	// would sit out its whole lobby timeout before the first joiner even starts; the shell is spawned directly and waited for here
+	pid_t pid = 0;
+	const char *argv[] = { "/bin/sh", "-c", cmd.c_str(), nullptr };
+	if (posix_spawn(&pid, "/bin/sh", nullptr, nullptr, const_cast<char *const *>(argv), environ) != 0)
+	{
+		return -1;
+	}
+	int rc = 0;
+	if (waitpid(pid, &rc, 0) != pid)
+	{
+		return -1;
+	}
 	return WIFEXITED(rc) ? WEXITSTATUS(rc) : -1;
 #endif
 }
