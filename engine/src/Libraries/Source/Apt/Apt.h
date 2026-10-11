@@ -257,6 +257,9 @@ private:
 	};
 	std::map<std::pair<std::string, std::uint32_t>, CachedGeometry> m_geometry;
 	std::map<std::string, std::shared_ptr<const AptImageMap>> m_imageMaps;
+	// lane HUD-6: the .dat entry of an image character an import fills (the exporting movie's), its movie in `movie`; null when the slot is no import
+	const AptImageMapEntry *importedImage(const AptFile &importer, std::uint32_t slot, std::string &movie);
+	const AptImageMap *imageMapOf(const std::string &movie);
 	std::size_t m_gcAfter = 4096;
 	// Component notifications: the export names of a character (static movie data) and the instances the host was told about.
 	std::map<std::pair<const AptFile *, std::uint32_t>, std::vector<std::string>> m_exportNames;

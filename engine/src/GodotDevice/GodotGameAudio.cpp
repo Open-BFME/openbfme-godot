@@ -74,6 +74,9 @@ GodotAudioDevice::GodotAudioDevice(Node *owner, AudioAssetCache *cache, int pool
 		server->add_bus();
 		server->set_bus_name(slot.bus, String("OBFME_Voice_") + String::num_int64(i));
 		server->set_bus_send(slot.bus, "Master");
+		slot.amplify.instantiate();
+		slot.amplify->set_volume_db(-80.0f); // before the bus instantiates it: an instance starts its ramp at its effect's volume (unity by default)
+		server->add_bus_effect(slot.bus, slot.amplify);
 		slot.panner.instantiate();
 		server->add_bus_effect(slot.bus, slot.panner);
 		slot.player = memnew(AudioStreamPlayer);
@@ -229,10 +232,34 @@ int GodotAudioDevice::startVoice(const VoiceStart &start, std::string *error)
 	slot.startedMs = m_nowMs;
 	slot.player->set_stream(stream);
 	applyParams(slot, start.params, m_nowMs);
+	startAtVolume(slot);
 	slot.player->play((float)(start.startFraction * lengthSeconds));
 	m_voiceSlot[slot.voice] = slotIndex;
 	++m_started;
 	return slot.voice;
+}
+
+// QACRASH-1: the voice's volume is the slot bus's AudioEffectAmplify, never AudioStreamPlayer::volume_db. On Godot 4.7.2 every
+// volume_db write on a playing player replaces the playback's AudioStreamPlaybackBusDetails (AudioServer::set_playback_bus_volumes_linear) and
+// frees the old one two main-loop AudioServer::update() calls later (bus_details_graveyard -> _frame_old), whether or not the mix thread
+// (AudioServer::_mix_step) is still between loading that pointer and copying it. The core updates every playing voice every audio tick, so with
+// the mix thread descheduled for two frames the copy reads freed memory: the QA farm's SIGSEGV on the audio thread (godot+0x371947c, the bus
+// lookup in _mix_step) and the main-thread crash in the graveyard's delete. The amplify volume is a float the mix thread reads at its next
+// buffer and ramps to across that buffer (AudioEffectAmplifyInstance::process), so no Godot object is replaced while the voice plays.
+// Godot starts a new playback at its target gain; an amplify instance ramps each buffer from the volume of its previous buffer, which on a
+// reused slot is the last voice's (and on a new one the effect's volume when the bus instantiated it), so startAtVolume re-instantiates it.
+void GodotAudioDevice::setVolume(Slot &slot, float linear)
+{
+	slot.amplify->set_volume_db(toDb(linear));
+}
+
+// A voice's first buffer at its own volume: the bus re-instantiates the amplify effect (AudioServer::add_bus_effect -> _update_bus_effects,
+// under the server lock), and AudioEffectAmplify::instantiate starts the instance's ramp at the effect's current volume.
+void GodotAudioDevice::startAtVolume(Slot &slot)
+{
+	AudioServer *server = AudioServer::get_singleton();
+	server->remove_bus_effect(slot.bus, 0);
+	server->add_bus_effect(slot.bus, slot.amplify, 0);
 }
 
 void GodotAudioDevice::applyParams(Slot &slot, const VoiceParams &p, double nowMs)
@@ -247,7 +274,7 @@ void GodotAudioDevice::applyParams(Slot &slot, const VoiceParams &p, double nowM
 	{
 		volume *= (float)std::min(1.0, (nowMs - slot.startedMs) / slot.fadeInMs);
 	}
-	slot.player->set_volume_db(toDb(volume));
+	setVolume(slot, volume);
 	slot.player->set_pitch_scale(std::max(0.01f, std::min(4.0f, p.pitch)));
 	slot.panner->set_pan(sum > 0.0f ? std::max(-1.0f, std::min(1.0f, (p.gainRight - p.gainLeft) / sum)) : 0.0f);
 }
@@ -297,7 +324,7 @@ void GodotAudioDevice::process(double nowMs)
 	{
 		if (s.voice && s.fadeInMs > 0.0 && nowMs - s.startedMs <= s.fadeInMs + 100.0)
 		{
-			s.player->set_volume_db(toDb(s.volume * (float)std::min(1.0, (nowMs - s.startedMs) / s.fadeInMs)));
+			setVolume(s, s.volume * (float)std::min(1.0, (nowMs - s.startedMs) / s.fadeInMs));
 		}
 	}
 }

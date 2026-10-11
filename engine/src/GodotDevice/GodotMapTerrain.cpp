@@ -863,6 +863,9 @@ Node3D *MapTerrainBuilder::build_map(const Ref<RetailFileSystem> &fsRef, const S
 			mi->set_name(String("Chunk_") + String::num_int64(ch.cellX0 / VERTEX_BUFFER_TILE_LENGTH) + "_" + String::num_int64(ch.cellY0 / VERTEX_BUFFER_TILE_LENGTH));
 			mi->set_mesh(mesh);
 			mi->set_cast_shadows_setting(GeometryInstance3D::SHADOW_CASTING_SETTING_OFF);
+			// lane UI-4: the terrain also sits on visual layer 20, the only layer the selection markers' decals project onto (RotWK's projected shadow decals
+			// are drawn on the terrain, not on the units: W3DProjectedShadowManager)
+			mi->set_layer_mask(1u | (1u << 19));
 			terrainRoot->add_child(mi);
 		}
 		timings["godot_nodes"] = nowMs() - t3;

@@ -72,10 +72,15 @@ void AptPalantir::hook(const std::string &name)
 		{
 			++m_loaded[name];
 		}
+		if ((name == "AptPalantir::OnHelpBoxLoaded" || name == "AptPalantir::OnHelpBoxUnloaded") && m_helpBoxHandler)
+		{
+			m_helpBoxHandler(arg, name == "AptPalantir::OnHelpBoxLoaded"); // lane HUD-6: RW 0x6D4F28 / its unload twin
+		}
 		// lane HUD-4: the side command bar's movie (RW 0x92EE5C / 0x92F07A: its clip kept at + 0x14; its frames and fades wait for it)
 		if (name == "OnAptInGameSideCommandBarLoaded")
 		{
 			m_sideBarLoaded = true;
+			sideBarLoaded(arg); // lane HUD-6: RW 0x92EE5C keeps the argument as the movie's prefix
 		}
 		else if (name == "OnAptInGameSideCommandBarUnloaded")
 		{
@@ -89,6 +94,17 @@ void AptPalantir::hook(const std::string &name)
 			for (Slot &s : m_side)
 			{
 				s = Slot();
+			}
+			sideBarLoaded(std::string()); // lane HUD-6: RW 0x92EE76 -> 0x92ED9C
+		}
+		// lane UI-4: the hero bar's movie (AptPalantir::OnHeroSelectLoaded makes InGameHeroSelectInterface, ctor RW 0x92DDE7, with the clip path)
+		if (name == "AptPalantir::OnHeroSelectLoaded" || name == "AptPalantir::OnHeroSelectUnloaded")
+		{
+			const bool loaded = name == "AptPalantir::OnHeroSelectLoaded";
+			m_heroSelectPath = loaded ? arg : std::string();
+			if (m_heroSelect)
+			{
+				m_heroSelect(arg, loaded);
 			}
 		}
 		// lane SPELL-2: the spell book's callbacks (RW 0x931698 / 0x9310B5 / 0x930DE5) and the spell store button
@@ -691,13 +707,7 @@ void AptPalantir::sync(const ControlBar &bar)
 	{
 		syncFrames({}, true);
 	}
-	const bool wantSide = !bar.sideButtons().empty();
-	if (wantSide != m_sideShown && m_sideBarLoaded) // lane HUD-4: the side bar's fades wait for its movie (OnAptInGameSideCommandBarLoaded)
-	{
-		m_sideShown = wantSide;
-		call("SideCommandBar", wantSide ? "FadeIn" : "FadeOut", {});
-	}
-	syncFrames(bar.sideButtons(), false);
+	syncSideBar(bar);
 }
 
 std::vector<std::string> AptPalantir::acceptanceStops()
@@ -728,6 +738,28 @@ std::vector<std::string> AptPalantir::acceptanceStops()
 		"clamp(D + A) * M, RW 0x518000 / 0x576240); INFERENCE: the UV scroll clock is the renderer's, not WW3D's sync time; the pictures are 256 x 256 stretched to the clip",
 		AptPlayerTribute::stopLine(), // lane PLAY-1: the flag's screen
 	};
+}
+
+// ---- lane UI-4: the hero bar ----
+void AptPalantir::setHeroSelectHandler(std::function<void(const std::string &, bool)> handler)
+{
+	m_heroSelect = std::move(handler);
+	if (m_heroSelect && !m_heroSelectPath.empty())
+	{
+		m_heroSelect(m_heroSelectPath, true);
+	}
+}
+
+void AptPalantir::setNativeImage(const std::string &key, const std::string &image)
+{
+	if (image.empty())
+	{
+		m_images.erase(key);
+	}
+	else
+	{
+		m_images[key] = NativeImage{ image, false };
+	}
 }
 
 // ---- lane SPELL-2: the spell book ----------------------------------------------------------------------------------------------------------

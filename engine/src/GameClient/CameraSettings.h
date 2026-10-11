@@ -50,6 +50,10 @@ struct CameraSettings
 	// VeterancyPipDrawObjectFilter (GlobalData + 0xEB8, ParseObjectFilter RW 0x76392F, row RW 0xC00C40). Optional (not every GameData has them): absent, the
 	// health bars and the veterancy marks are off and the HUD reports it
 	bool showObjectHealth = false;
+	// lane UI-4: the selection marker (GameClient/SelectionDecals.h): ShowSelectedUnitMarker, UseSimpleHordeDecals, UseSimpleMergeDecals (GlobalData + 0x9A5 ..
+	// + 0x9A7, parseBool) and OpacityOfSimpleMergeDecals (+ 0x9A8, parsePercentToReal). Optional: absent, no marker is drawn (the ctor's values were not read)
+	bool showSelectedUnitMarker = false, useSimpleHordeDecals = false, useSimpleMergeDecals = false;
+	float opacityOfSimpleMergeDecals = 0.0f;
 	bool haveVeterancyPipFilter = false;
 	ObjectFilter veterancyPipFilter;
 

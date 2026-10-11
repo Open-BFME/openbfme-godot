@@ -52,6 +52,54 @@ std::string textureName(const std::string &movie, std::uint32_t n)
 
 } // namespace
 
+const AptImageMap *Apt::imageMapOf(const std::string &movie)
+{
+	auto it = m_imageMaps.find(movie);
+	if (it == m_imageMaps.end())
+	{
+		auto map = std::make_shared<AptImageMap>();
+		std::string error;
+		if (!m_loader.loadImageMap(movie, *map, &error))
+		{
+			map.reset();
+		}
+		it = m_imageMaps.emplace(movie, map).first;
+	}
+	return it->second.get();
+}
+
+const AptImageMapEntry *Apt::importedImage(const AptFile &importer, std::uint32_t slot, std::string &movie)
+{
+	for (const AptImport &im : importer.imports)
+	{
+		if (im.characterId != slot)
+		{
+			continue;
+		}
+		AptResolvedImport r;
+		std::string error;
+		if (!m_loader.resolveImport(importer, im, r, &error) || !r.movie)
+		{
+			return nullptr;
+		}
+		const AptImageMap *map = imageMapOf(r.movie->name);
+		if (!map)
+		{
+			return nullptr;
+		}
+		for (const AptImageMapEntry &e : map->entries)
+		{
+			if (e.imageId == r.characterId)
+			{
+				movie = r.movie->name;
+				return &e;
+			}
+		}
+		return nullptr;
+	}
+	return nullptr;
+}
+
 void Apt::buildRenderList(AptRenderList &out)
 {
 	out.commands.clear();
@@ -218,6 +266,15 @@ void Apt::buildRenderList(AptRenderList &out)
 									}
 								}
 							}
+							std::string imageMovie = movie;
+							if (!entry)
+							{
+								// lane HUD-6: an image character that an import fills (InGameHelpBox.apt's frame: "PalantirExport|helpBoxTop.tga" ...) is the
+								// exporting movie's image, its texture that movie's (`apt_palantirexport_<n>.tga`). DONOR (BFME1 decomp AptLoad.cpp): the import
+								// puts the exporter's character into the importer's slot, and a fill of that slot draws it. INFERENCE (S-2704): the fill's image
+								// id is the importer's slot, looked up in the exporter's .dat under the exported character's id
+								entry = importedImage(*inst->charRef().file, (std::uint32_t)style.imageId, imageMovie);
+							}
 							if (!entry)
 							{
 								out.errors.push_back(movie + " shape " + std::to_string(ch.id) + ": image " + std::to_string(style.imageId) + " has no .dat entry");
@@ -232,12 +289,12 @@ void Apt::buildRenderList(AptRenderList &out)
 								}
 								if (entry->isRect)
 								{
-									fill.textureName = textureName(movie, entry->imageId);
+									fill.textureName = textureName(imageMovie, entry->imageId);
 									std::copy(entry->rect, entry->rect + 4, fill.imageRect);
 								}
 								else
 								{
-									fill.textureName = textureName(movie, entry->textureId);
+									fill.textureName = textureName(imageMovie, entry->textureId);
 								}
 							}
 						}

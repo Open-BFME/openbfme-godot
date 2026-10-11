@@ -459,6 +459,9 @@ def test_player_lines():
                 "orientation, the melee nearest member in 3D)") == "Horde movement as RotWK does it."
     assert line("Merge fix/stack8 (batch stack8: COMBAT-4 on EXIT-1 / MOVE-2 with pins re-measured)") is None
     assert line("Roadmap: the community feedback table") is None
+    assert line("Merge lane/play1 (ce7997fd) into integ/p3: tribute, move hints, upgrade affordability, tours") is None, \
+        "an integration merge: the round's Release-note commit speaks for it"
+    assert line("Merge lane/reltest1 (7d1da4d2) into integ/p3") is None
     assert line("MOVE-2 r5 (stack6): FB-0001 measured by blockedBy") is None, "jargon only"
     assert autorelease.note_of("X-1: internal", "Body.\nRelease-note: Fix: Trolls no longer one-punch whole hordes.\n", []) == \
         ("fixed", "Trolls no longer one-punch whole hordes.")

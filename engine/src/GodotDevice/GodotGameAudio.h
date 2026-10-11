@@ -2,7 +2,8 @@
 //
 // Device layer: TheAudio on Godot. GameAudio is a Node that owns the audio manager core (Common/Audio/GameAudio.h), the audio INI state read
 // from the mounted retail archives, the decoded sound cache and a POOLED voice backend: every voice the core starts is one AudioStreamPlayer
-// on its own bus (an AudioEffectPanner carries the pan the core computed). The core decides what plays and how loud (retail volume sliders,
+// on its own bus (an AudioEffectAmplify carries the volume and an AudioEffectPanner the pan the core computed; the player itself stays at 0 dB,
+// QACRASH-1, see GodotAudioDevice::applyParams). The core decides what plays and how loud (retail volume sliders,
 // distance falloff, priorities, limits); this class only makes the voices audible.
 //
 // Sounds (WAV, IMA ADPCM) are decoded by the core's own decoders into AudioStreamWAV; MP3 streams (music, dialog, ambient) are given to Godot's
@@ -14,6 +15,7 @@
 
 #pragma once
 
+#include <godot_cpp/classes/audio_effect_amplify.hpp>
 #include <godot_cpp/classes/audio_effect_panner.hpp>
 #include <godot_cpp/classes/audio_stream_player.hpp>
 #include <godot_cpp/classes/audio_stream_wav.hpp>
@@ -72,7 +74,8 @@ private:
 	{
 		AudioStreamPlayer *player = nullptr;
 		int bus = -1;
-		Ref<AudioEffectPanner> panner;
+		Ref<AudioEffectAmplify> amplify; ///< the voice's volume (bus effect 0)
+		Ref<AudioEffectPanner> panner;   ///< the voice's pan (bus effect 1)
 		int voice = 0; ///< 0 = free
 		bool loop = false;
 		double fadeInMs = 0.0;
@@ -81,6 +84,8 @@ private:
 	};
 	Ref<AudioStreamWAV> wavFor(const std::string &file, std::string *error);
 	void applyParams(Slot &slot, const VoiceParams &p, double nowMs);
+	static void setVolume(Slot &slot, float linear);
+	static void startAtVolume(Slot &slot);
 
 	Node *m_owner;
 	AudioAssetCache *m_cache;

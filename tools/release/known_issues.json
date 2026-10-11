@@ -15,6 +15,10 @@
   {"stops": ["S-1914"], "text": "Some lists and boxes of a menu show through pop-ups placed over them."},
   {"stops": ["S-2451", "S-2452"], "text": "Radar: attacks raise pings, but scripted pings, the Ring and beacon markers, and the \"under attack\" voice lines are missing."},
   {"stops": ["S-1125", "S-1063"], "text": "Every game is recorded as a replay and can be watched from Load Replay, but replays cannot be saved under a name, there are no replay controls, and the score screen's graphs are simplified."},
-  {"stops": ["S-1123"], "text": "LAN: the disconnect screen has no chat."}
+  {"stops": ["S-1123"], "text": "LAN: the disconnect screen has no chat."},
+  {"stops": ["S-2521", "S-2703"], "text": "Hero bar: pointing at a hero's portrait shows no help box, the portrait does not flash when the hero is attacked, and a Create-a-Hero hero does not show its own picture."},
+  {"stops": ["S-2702", "S-2703"], "text": "Help boxes: hero ability, spell, repair and revive buttons do not show their cost yet, and the spell book has no help box."},
+  {"stops": ["S-2701"], "text": "Build bubbles around a building do not flash and do not show how many units are queued."},
+  {"stops": ["S-2522"], "text": "Selection rings always use the highest-detail look, whatever the detail setting."}
  ]
 }

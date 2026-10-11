@@ -102,7 +102,7 @@ MessageDisposition HotKeyTranslator::translate(const ClientMessage &msg)
 		++m_outcomes[disabled ? "disabled" : "none"]; // RW 0x75A5BC: DisabledHotKeyPressed (not played)
 		return MessageDisposition::Keep;
 	}
-	if (m_press && m_press(e->slot, e->inPalantir))
+	if (e->run ? e->run() : (m_press && m_press(e->slot, e->inPalantir)))
 	{
 		++m_outcomes["enabled"]; // RW 0x75A544: EnabledHotKeyPressed (not played)
 	}

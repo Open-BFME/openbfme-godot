@@ -13,7 +13,7 @@
 
 <sub>The newest preview is at the top of the releases page: get the <code>openbfme-launcher-…</code> file for your system.</sub>
 
-[Play it](#play-it) · [Status](#status) · [What's new](#whats-new-in-v030-preview3) · [Build from source](#build-from-source) · [Player guide](docs/PLAYING.md) · [Roadmap](docs/ROADMAP.md)
+[Play it](#play-it) · [Status](#status) · [What's new](#whats-new-in-v030-preview4) · [Build from source](#build-from-source) · [Player guide](docs/PLAYING.md) · [Roadmap](docs/ROADMAP.md)
 
 </div>
 
@@ -125,7 +125,31 @@ pinned by a test. There are **541 open stops** today. Some are big
 (save/load), most are small details waiting for better evidence. The plan to
 get to a 1:1 game is in [docs/ROADMAP.md](docs/ROADMAP.md).
 
-## What's new in v0.3.0-preview.3
+## What's new in v0.3.0-preview.4
+
+- **Display options.** A new **OPENBFME** button in Options opens OpenBFME's
+  own display settings: windowed, borderless window or fullscreen, the
+  resolution, vertical sync, a frame rate limit, a frame rate counter and a
+  render scale with AMD FSR 1 or FSR 2 upscaling. **F11** shows the frame
+  rate, **Alt+Enter** switches between a window and full screen.
+- **The hero bar.** The bar at the bottom of the screen shows your heroes'
+  portraits with their health and rank, and a builder button with the number
+  of idle builders. Click a portrait to select the hero, click it again to
+  look at them; a button selects all your heroes.
+- **Selection rings.** Selected units stand on the original's rings in your
+  colour; a selected battalion gets one outline around all its soldiers and a
+  hero gets the rune ring.
+- **Build bubbles.** Selecting a building shows its buttons as round bubbles
+  around it, as in the original (the fortress's heroes and upgrades among
+  them).
+- **The builder's side panel** has the original's carved frame.
+- **Help boxes.** Holding the pointer over a button shows its help box: the
+  name, key, cost and description.
+- **Options text in RotWK's colours** instead of green.
+- **Bold credits titles**, as in the original.
+- **Fix:** a crash on the sound thread when the game was busy is gone.
+
+### v0.3.0-preview.3
 
 - **Building placement previews.** Choosing a building to build shows it
   under the pointer, tinted red where you can't build, for every faction,

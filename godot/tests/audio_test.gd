@@ -35,6 +35,29 @@ func _wait(seconds: float) -> void:
 		await process_frame
 
 
+# plays the shell button sound at the given sound volume; returns [peak of the first 512 captured frames from its onset, peak of the rest]
+func _onset_peaks(audio: Node, capture: AudioEffectCapture, volume: float) -> Array:
+	audio.set_volume("sound", volume)
+	await _wait(1.0)
+	capture.clear_buffer()
+	audio.play_shell_sound("Gui_ShellMapMouseOver")
+	await _wait(0.5)
+	var buf: PackedVector2Array = capture.get_buffer(capture.get_frames_available())
+	var onset := -1
+	var first := 0.0
+	var rest := 0.0
+	for i in buf.size():
+		var a := maxf(absf(buf[i].x), absf(buf[i].y))
+		if onset < 0 and a > 0.0:
+			onset = i
+		if onset >= 0:
+			if i < onset + 512:
+				first = maxf(first, a)
+			else:
+				rest = maxf(rest, a)
+	return [first, rest]
+
+
 func _run() -> int:
 	if OS.get_environment("ROTWK_INSTALL").is_empty() or OS.get_environment("BFME2_INSTALL").is_empty():
 		print("SKIP: set ROTWK_INSTALL and BFME2_INSTALL to run the retail audio test")
@@ -59,6 +82,24 @@ func _run() -> int:
 	_check(audio.get_event_names(5).size() == 608, "608 Multisound names")
 	_check(audio.is_valid_event("Gui_ShellMapMouseOver"), "the shell button sound exists")
 	_check(not audio.is_valid_event("NoSuchEvent"), "an unknown event is invalid")
+
+	# QACRASH-1: a voice's first mix buffer plays at the voice's own volume (Godot starts a playback at its target gain), on a fresh slot
+	# and on a slot whose last voice was loud: captured at the master bus, the first buffer after the onset stays under the quiet volume
+	var capture := AudioEffectCapture.new()
+	capture.buffer_length = 2.0
+	AudioServer.add_bus_effect(0, capture)
+	var quiet: Array = await _onset_peaks(audio, capture, 0.01)  # a fresh slot
+	var loud: Array = await _onset_peaks(audio, capture, 1.0)    # the same slot, after the quiet voice
+	var reused: Array = await _onset_peaks(audio, capture, 0.01) # the same slot, after the loud voice
+	audio.set_volume("sound", 1.0)
+	AudioServer.remove_bus_effect(0, AudioServer.get_bus_effect_count(0) - 1)
+	print("  onset peaks [first buffer, rest]: quiet %s, loud %s, quiet after loud %s" % [quiet, loud, reused])
+	var ok: bool = quiet[1] > 0.0 and loud[1] > 0.0 and reused[1] > 0.0
+	_check(ok, "the button sound is captured at the master bus at both volumes")
+	# the quiet voice's gain relative to the loud one, from the steady part; its first buffer may exceed that by a factor 2 at most
+	var bound: float = 2.0 * loud[0] * quiet[1] / maxf(loud[1], 1e-12)
+	_check(ok and quiet[0] <= bound, "a quiet voice on a fresh slot starts quiet (first-buffer peak %s, bound %s)" % [quiet[0], bound])
+	_check(ok and reused[0] <= bound, "a quiet voice after a loud one on the same slot starts quiet (first-buffer peak %s, bound %s)" % [reused[0], bound])
 
 	# the main menu music: MiscAudio LowLODShellMusic is a looping PLAY_ONE multisound of MusicTracks
 	var music: int = audio.play_shell_music(false)
@@ -103,9 +144,10 @@ func _run() -> int:
 	# the device reaches with its voice bus panner at +1
 	var hard_right := false
 	for b in AudioServer.bus_count:
-		if AudioServer.get_bus_name(b).begins_with("OBFME_Voice_") and AudioServer.get_bus_effect_count(b) > 0:
-			var panner := AudioServer.get_bus_effect(b, 0) as AudioEffectPanner
-			hard_right = hard_right or (panner != null and absf(panner.pan - 1.0) < 0.001)
+		if AudioServer.get_bus_name(b).begins_with("OBFME_Voice_"):
+			for e in AudioServer.get_bus_effect_count(b): # QACRASH-1: [AudioEffectAmplify, AudioEffectPanner]
+				var panner := AudioServer.get_bus_effect(b, e) as AudioEffectPanner
+				hard_right = hard_right or (panner != null and absf(panner.pan - 1.0) < 0.001)
 	_check(hard_right, "a voice bus pans the sound due right of the listener fully right")
 	# retail's microphone (RW 0x45235B) for the default tactical camera looking north at (1000, 1000)
 	audio.update_microphone(Vector3(1000, 609.032388, 300), Vector3(1000, 1000, 0), true)

@@ -41,6 +41,7 @@ public:
 		int slot = -1;
 		bool inPalantir = false;
 		Availability availability = Availability::Hidden;
+		std::function<bool()> run; ///< lane UI-4: an action of its own (the hero bar's NonCommand_* keys) instead of a command bar button
 	};
 
 	explicit HotKeyTranslator(HudContext &ctx) : m_ctx(ctx) {}

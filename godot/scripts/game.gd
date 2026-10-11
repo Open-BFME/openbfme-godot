@@ -16,6 +16,8 @@
 ##     --free-camera         (lane PLAY-1) lift the camera's zoom-out limit to the map's extent (not retail; Options.ini OpenBFMEFreeCamera = yes does the same)
 ##     --hud5=<a,b,...>      (lane HUD-5, with --auto) the owner's first Windows session's items, scripted (scripts/hud5_player.gd: fortress, players, powers,
 ##                           gate, construction, levels); "HUD5 <name>: ok / FAIL", screenshots hud5-<name>.png in --screens
+##     --hud6=<a,b,...>      (lane HUD-6, with --auto) scripts/hud6_player.gd: radial (the fortress's bubbles), heroes (its hero ring), help (the
+##                           help box over a bubble and over an arc button), sidebar (a builder's framed side bar); hud6-<name>.png in --screens
 ##     --start-spot=<n>      (with --auto) slot 0 clicks the lobby's start spot n first (RW 0x845830): e.g. 0 = Player_1_Start, a fortress map's fortress
 ##     --play1=<a,b,...>     (lane PLAY-1, with --auto) the input-driven scenarios of scripts/play1_player.gd (orders, palantir, powers, camera, explore, dragbox, ghosts,
 ##                           skirmish, tour, tribute): every action is an InputEvent pushed into the viewport; prints PLAY1 lines; with --end the end of the game
@@ -35,6 +37,10 @@
 ##     --options-shot=FILE   (lane UI-2) open Options from the main menu, save the window to FILE after 2 s and quit (the soft particles box)
 ##     --resize-check[=DIR]  (lane UI-4) resize / maximise the window over the main menu (nav closed and open) and send stray input around the nav
 ##                           entries; exit 0 when no widget state changed (tests/ui4_resize_test.gd; DIR: windowed screenshots)
+##     --menu-colours=DIR    (lane UI-4) the owner's "don't use the green text" (2026-10-10): every front-end screen the main menu's nav entries open
+##                           (the boxes some open, Skirmish's profile box and lobby, Create-a-Hero's introduction and builder), each text drawn (the canvas's,
+##                           the gadgets', the credits roll's) with its colour and a heuristic ink sample of its rectangle (DIR/colours-<screen>.png);
+##                           exit 0 when no text is green-dominant and nothing was left unproven (a capture, a press, a screen without text)
 ##     --end-capture=DIR     (lane UI-2, with --end) save every rendered frame of the first 5 s of the end screen, half size, as DIR/fNNNN.png and the elapsed
 ##                           milliseconds of each in DIR/times.txt (the ring animation video)
 ##     In a live game Esc (or the Palantir's options button) toggles the quit menu QuitMenu.apt (lane END-2): Resume, Options, Restart / Forfeit, Exit
@@ -46,7 +52,15 @@
 ##     --perf-stat=<prefix>  (lane PERF-3, with --perf; Linux with perf) `perf stat` counts the main thread's user instructions and cycles in each GAME PERF window
 ##                           (<prefix>-<n>.txt) and GAME PERF STAT prints them per render frame one window later: the work per frame, which other load on the
 ##                           machine does not change (unlike the frame time)
-##     --fps                 (lane SMOOTH-1) show the render frame rate and frame time in a corner
+##     --fps                 (lane SMOOTH-1) show the render frame rate and frame time in a corner (lane OPTS-1: the counter of scripts/fps_overlay.gd, for the run)
+##   lane OPTS-1, the OpenBFME display options (not retail; scripts/display_settings.gd, openbfme-display.cfg in the user data folder): Options.apt shows an
+##   OPENBFME button that opens scripts/openbfme_options_screen.gd (window mode, resolution, vsync, frame cap, frame-rate counter, render scale, FSR);
+##   F11 toggles the counter, Alt+Enter full screen (scripts/fps_overlay.gd)
+##     --display-check       the scripted check of tests/opts1_test.gd: every window mode, resolution and scaler through the screen, with the main menu's
+##                           and Options.apt's widget states compared before and after; F11 and Alt+Enter as key events; exit 0 when all held
+##     --display-shots=DIR   (with --display-check / --display-game) opts1-entry.png, opts1-screen.png, opts1-fps.png, opts1-game-*.png (the proof screenshots)
+##     --display-game        (with --auto) after --advance seconds: Esc, the quit menu's Options, the OPENBFME screen over the live game (the HUD takes no
+##                           input while it is up; a resolution change keeps the menus' 1024 x 768 stage on the whole window), Esc back to the game; exit 0 when all held
 ##     --opponents=<n>       (lane PERF-1, with --auto) slots 1..n are computers of level --ai (default 1; a 4-player map takes 3)
 ##     --warp=<seconds>      (lane PERF-1, with --auto) run the game at --warp-scale (default 8) times speed until this much game time has passed, then at normal speed
 ##                           for --advance seconds (the frame rate of a late game: GAME PERF restarts when the warp ends)
@@ -152,7 +166,6 @@ var _perf := false           # lane SMOOTH-1: --perf / --fps
 var _opponents := 1          # lane PERF-1: --opponents / --warp / --warp-scale
 var _warp := 0.0
 var _warp_scale := 8.0
-var _show_fps := false
 var _perf_times: Array = []
 var _perf_cpu0 := -1.0       # lane PERF-1: the main thread's CPU time at the start of the GAME PERF window
 var _perf_stat := ""          # lane PERF-3: --perf-stat=<prefix>
@@ -167,7 +180,14 @@ var _perf_deltas: Array = []
 var _perf_parts := {}
 var _perf_last := 0
 var _perf_prev_us := 0
-var _fps_label: Label
+const DisplaySettings := preload("res://scripts/display_settings.gd") # lane OPTS-1
+var _display: RefCounted                 # lane OPTS-1: the display settings in effect (openbfme-display.cfg)
+var _display_path := ""
+var _display_overlay: CanvasLayer        # scripts/fps_overlay.gd: the counter and the F11 / Alt+Enter keys
+var _display_screen: CanvasLayer         # scripts/openbfme_options_screen.gd
+var _display_check := false              # --display-check
+var _display_shots := ""                 # --display-shots=DIR
+var _display_game := false               # --display-game
 
 var _fs: RefCounted
 var _audio: Node
@@ -194,6 +214,7 @@ var _free_camera_flag := false
 ## lane PLAY-1: the input-driven scenarios of scripts/play1_player.gd (--play1=orders,palantir,powers,camera)
 var _play1 := PackedStringArray()
 var _hud5 := PackedStringArray() # lane HUD-5
+var _hud6 := PackedStringArray() # lane HUD-6 (scripts/hud6_player.gd: radial, heroes, sidebar, help)
 var _start_spot := -1            # lane HUD-5
 ## lane INPUT-1: the keyboard scenarios of scripts/input1_player.gd (--input1=groups,...)
 var _input1 := PackedStringArray()
@@ -230,6 +251,8 @@ var _end_capture := "" # lane UI-2: --end-capture=DIR
 var _options_shot := "" # lane UI-2: --options-shot=FILE
 var _resize_check := "" # lane UI-4: --resize-check[=DIR]: the screenshots' folder
 var _resize_check_on := false
+var _menu_colours := "" # lane UI-4: --menu-colours=DIR
+var _menu_colours_problems: PackedStringArray = [] # what the walk could not prove (a capture, a press, a screen without text)
 var _menu_walk := "" # lane FB7-1: --menu-walk=DIR
 var _menu_walk_only := "" # lane CAH-2 r2: --menu-walk-only=BUTTON (one button, the probe)
 var _menu_walk_drop := "" # lane CAH-2 r2: --menu-walk-drop=ACTION (TEST HOOK: the host ignores that shell request, so the walk must fail)
@@ -326,6 +349,7 @@ var _cah_hero_id := ""          # lane CAH-1: the unique id of the hero the --ca
 
 
 func _ready() -> void:
+	_display_setup() # lane OPTS-1: the player's display settings first; the command line below wins for the run
 	print("FRAME PACING ", preload("res://scripts/frame_pacing.gd").apply_from_args(OS.get_cmdline_user_args())) # lane SMOOTH-1
 	for arg in OS.get_cmdline_user_args():
 		if arg.begins_with("--res="):
@@ -353,7 +377,13 @@ func _ready() -> void:
 		elif arg == "--perf":
 			_perf = true
 		elif arg == "--fps":
-			_show_fps = true
+			_display_overlay.session_fps = true
+		elif arg == "--display-check":
+			_display_check = true
+		elif arg == "--display-game":
+			_display_game = true
+		elif arg.begins_with("--display-shots="):
+			_display_shots = arg.substr(16)
 		elif arg == "--check":
 			_check = true
 		elif arg == "--alternate-mouse":
@@ -366,6 +396,8 @@ func _ready() -> void:
 			_play1 = arg.substr(8).split(",", false)
 		elif arg.begins_with("--hud5="):
 			_hud5 = arg.substr(7).split(",", false)
+		elif arg.begins_with("--hud6="):
+			_hud6 = arg.substr(7).split(",", false)
 		elif arg.begins_with("--start-spot="):
 			_start_spot = int(arg.substr(13))
 		elif arg.begins_with("--input1="):
@@ -509,6 +541,8 @@ func _ready() -> void:
 			_lan_port_base = int(arg.substr(16))
 		elif arg.begins_with("--menu-walk="):
 			_menu_walk = arg.substr(12)
+		elif arg.begins_with("--menu-colours="):
+			_menu_colours = arg.substr(15)
 		elif arg == "--resize-check" or arg.begins_with("--resize-check="):
 			_resize_check = arg.substr(15) if arg.length() > 15 else ""
 			_resize_check_on = true
@@ -540,6 +574,47 @@ func _ready() -> void:
 	_build_stage()
 	await get_tree().process_frame
 	_boot()
+
+
+## lane OPTS-1: the display settings (scripts/display_settings.gd) read from the user data folder and applied before anything is drawn; the counter and
+## its keys (scripts/fps_overlay.gd) go under the scene root after this node, so they see a key before the shell and the HUD. --display-check works on a
+## file of its own (removed at its end) and starts from the defaults, so a test never reads or changes the player's settings.
+func _display_setup() -> void:
+	_display = DisplaySettings.new()
+	_display_path = DisplaySettings.default_path()
+	if OS.get_cmdline_user_args().has("--display-check") or OS.get_cmdline_user_args().has("--display-game"):
+		_display_path = OS.get_user_data_dir().path_join("opts1-check-" + DisplaySettings.FILE_NAME)
+		DirAccess.remove_absolute(_display_path)
+	if not _display.load_file(_display_path):
+		for e in _display.errors:
+			printerr("GAME DISPLAY settings: ", e)
+	var r: Dictionary = _display.apply(get_tree().root, null)
+	print("GAME DISPLAY settings %s: %s%s" % [_display_path.get_file(), ", ".join(r.applied), "" if r.problems.is_empty() else " PROBLEMS " + str(r.problems)])
+	_display_overlay = load("res://scripts/fps_overlay.gd").new()
+	_display_overlay.name = "OpenBFMEDisplay"
+	_display_overlay.settings = _display
+	_display_overlay.settings_path = _display_path
+	get_tree().root.add_child.call_deferred(_display_overlay)
+
+
+## lane OPTS-1: the OPENBFME button over Options.apt and the screen it opens (scripts/openbfme_options_screen.gd)
+func _display_screen_setup() -> void:
+	_display_screen = load("res://scripts/openbfme_options_screen.gd").new()
+	_display_screen.name = "OpenBFMEOptions"
+	_display_screen.shell = _shell
+	_display_screen.hud_getter = func() -> Node: return _hud
+	_display_screen.settings = _display
+	_display_screen.settings_path = _display_path
+	_display_screen.overlay = _display_overlay
+	add_child(_display_screen)
+
+
+## lane OPTS-1: --display-check (scripts/opts1_check.gd)
+func _run_display_check() -> void:
+	var check: Object = load("res://scripts/opts1_check.gd").new()
+	var failed: int = await check.run(self, _display_shots)
+	DirAccess.remove_absolute(_display_path)
+	get_tree().quit(0 if failed == 0 else 1)
 
 
 func _build_stage() -> void:
@@ -618,6 +693,7 @@ func _boot() -> void:
 	_shell.shell_request.connect(_on_shell_request)
 	_shell.shell_service.connect(_on_shell_service)
 	_shell.shell_screen.connect(_on_shell_screen)
+	_display_screen_setup() # lane OPTS-1: the OPENBFME button over Options.apt and its screen
 	if not _shell.shell_push("MainMenu.apt"):
 		_fail("the shell refused MainMenu.apt: " + str(_shell.get_shell_report().errors))
 		return
@@ -638,13 +714,17 @@ func _boot() -> void:
 		_campaign_flow.difficulty = _cli_difficulty
 		_campaign_flow.begin_mission()
 		return
-	if _auto and not _auto_task_started:
+	if _display_check:
+		_run_display_check() # lane OPTS-1
+	elif _auto and not _auto_task_started:
 		_auto_task_started = true
 		_run_auto()
 	elif not _menu_walk.is_empty():
 		_run_menu_walk()
 	elif _resize_check_on:
 		_run_resize_check()
+	elif not _menu_colours.is_empty():
+		_run_menu_colours()
 	if _net_host > 0 or not _net_join.is_empty():
 		_net_open()
 	elif not _replay_file.is_empty():
@@ -693,7 +773,7 @@ func _process(delta: float) -> void:
 			_campaign_flow.tick() # lane CAMP-1
 		if _replay_active:
 			_replay_tick()
-		if _perf or _show_fps:
+		if _perf:
 			_perf_frame(delta)
 		if not _perf_log_path.is_empty():
 			_perf_log_frame()
@@ -1276,6 +1356,15 @@ func _run_auto() -> void:
 		await p5.run(self, _hud5)
 		get_tree().quit(0 if p5.fail_count == 0 else 1)
 		return
+	if not _hud6.is_empty():
+		var h6: GDScript = load("res://scripts/hud6_player.gd")
+		if h6 == null or not h6.can_instantiate():
+			_fail("scripts/hud6_player.gd does not load")
+			return
+		var p6 = h6.new()
+		await p6.run(self, _hud6)
+		get_tree().quit(0 if p6.fail_count == 0 else 1)
+		return
 	if not _input1.is_empty():
 		var iscript: GDScript = load("res://scripts/input1_player.gd")
 		if iscript == null or not iscript.can_instantiate():
@@ -1319,6 +1408,12 @@ func _run_auto() -> void:
 		await get_tree().process_frame
 	if not _quit_flow.is_empty():
 		await _run_quit()
+		return
+	if _display_game:
+		var check: Object = load("res://scripts/opts1_check.gd").new()
+		var failed: int = await check.run_game(self, _display_shots) # lane OPTS-1
+		DirAccess.remove_absolute(_display_path)
+		get_tree().quit(0 if failed == 0 else 1)
 		return
 	if _end:
 		await _run_end()
@@ -2343,6 +2438,16 @@ func _walk_options_accept() -> int:
 			_walk_fail("options-save: no %s button" % leave)
 			return failures + 1
 		await _step(240)
+		if leave == "Done":
+			# lane UI-4: since PLAY-2 the advanced page's Done saves and goes back to the basic page when Options was opened on it (RW 0x9205A3 closes
+			# the screen only with AdvancedOnly): the basic page's Accept then closes it (the owner's crash path: Save after the advanced page)
+			var st: PackedStringArray = _shell.shell_stack()
+			if st.size() > 0 and st[-1] == "Options.apt":
+				if not await _click_named_button("Accept"):
+					_walk_fail("options-save: the basic page after Done has no Accept button")
+					return failures + 1
+				leave = "Done, Accept"
+				await _step(240)
 		await _wait_main_ready()
 		print("MENUWALK options-save %d (%s): stack %s" % [visit, leave, str(_shell.shell_stack())])
 		failures += await _walk_main_ok("options-save-%d" % visit)
@@ -2796,17 +2901,6 @@ func _perf_frame(delta: float) -> void:
 	if _hud != null and _hud.has_method("get_frame_timings"):
 		var h: Dictionary = _hud.get_frame_timings()
 		_perf_parts["hud_update_ms"] = _perf_parts.get("hud_update_ms", 0.0) + h.get("hud_update_ms", 0.0)
-	if _show_fps:
-		if _fps_label == null:
-			var layer := CanvasLayer.new()
-			layer.layer = 100
-			add_child(layer)
-			_fps_label = Label.new()
-			_fps_label.position = Vector2(8, 4)
-			_fps_label.add_theme_color_override("font_outline_color", Color.BLACK)
-			_fps_label.add_theme_constant_override("outline_size", 4)
-			layer.add_child(_fps_label)
-		_fps_label.text = "%d fps  %.1f ms" % [Engine.get_frames_per_second(), _perf_times.back()]
 	if _perf_cpu0 < 0.0:
 		_perf_cpu0 = _main_thread_cpu_ms()
 	if _perf and not _perf_stat.is_empty() and _perf_stat_pid < 0:
@@ -3675,3 +3769,199 @@ func _run_resize_check() -> void:
 		bad += 1
 	print("UI4 RESIZE %s (%d changes)" % ["PASS" if bad == 0 else "FAIL", bad])
 	get_tree().quit(0 if bad == 0 else 1)
+
+
+# ---- lane UI-4: --menu-colours=DIR ---------------------------------------------------------------------------------------------------------------------
+
+## a colour is green-dominant when green is its strongest channel by more than 0.05 (C0EEFF, RotWK's light blue, has blue on top; 8AC14D is green)
+func _green_dominant(c: Color) -> bool:
+	return c.g > c.r + 0.05 and c.g > c.b + 0.05 and c.g > 0.2
+
+
+## HEURISTIC: the label's ink inside its window rectangle: the fifth of its pixels farthest from the rectangle's median colour, averaged (glyph edges and
+## anything else that differs from the background mix in)
+func _ink_colour(image: Image, r: Rect2i) -> Color:
+	r = r.intersection(Rect2i(Vector2i.ZERO, image.get_size()))
+	if r.size.x < 2 or r.size.y < 2:
+		return Color(0, 0, 0, 0)
+	var px: Array[Color] = []
+	for y in range(r.position.y, r.end.y):
+		for x in range(r.position.x, r.end.x):
+			px.append(image.get_pixel(x, y))
+	var lum: Array = px.map(func(c: Color) -> float: return c.get_luminance())
+	var sorted_lum: Array = lum.duplicate()
+	sorted_lum.sort()
+	var median: float = sorted_lum[sorted_lum.size() / 2]
+	var order: Array = range(px.size())
+	order.sort_custom(func(a: int, b: int) -> bool: return absf(lum[a] - median) > absf(lum[b] - median))
+	var n := maxi(1, px.size() / 5)
+	var sum := Color(0, 0, 0, 0)
+	for i in n:
+		sum += px[order[i]]
+	return Color(sum.r / n, sum.g / n, sum.b / n, 1.0)
+
+
+## the texts of the screen: the canvas's text ops (describe_ops) and the texts the gadgets and render callbacks drew (drawn_texts), each with its colour
+## and a HEURISTIC ink sample of its window rectangle in a screenshot (the fifth of the rectangle's pixels farthest from its median: glyph pixels mixed
+## with whatever else differs from the background, not isolated glyphs). Problems (no capture, no text matched) go to _menu_colours_problems.
+func _menu_colours_screen(name: String) -> int:
+	_shell.drawn_texts(true)
+	await _step(30)
+	await RenderingServer.frame_post_draw
+	var image := _capture_image(name)
+	if image == null:
+		_menu_colours_problems.append("%s: no capture" % name)
+	else:
+		image.save_png("%s/colours-%s.png" % [_menu_colours, name])
+	var entries: Array = [] # [source, text, colour, window rect]
+	var rx := RegEx.create_from_string("^text (\\S+) '(.*)' .* rgba=\\(([0-9.]+) ([0-9.]+) ([0-9.]+) ([0-9.]+)\\).* win=\\((-?[0-9]+) (-?[0-9]+) (-?[0-9]+) (-?[0-9]+)\\)")
+	for line in _shell.describe_ops():
+		var m := rx.search(line)
+		if m != null:
+			entries.append(["apt " + m.get_string(1), m.get_string(2), Color(float(m.get_string(3)), float(m.get_string(4)), float(m.get_string(5)), float(m.get_string(6))),
+				Rect2i(int(m.get_string(7)), int(m.get_string(8)), int(m.get_string(9)) - int(m.get_string(7)), int(m.get_string(10)) - int(m.get_string(8)))])
+	var others := 0
+	for e in _shell.drawn_texts(true):
+		entries.append([String(e.source), String(e.text), e.color, Rect2i(e.window)])
+		others += 1
+	var green := 0
+	var texts := 0
+	var seen := {}
+	var inks := {}
+	for e in entries:
+		var c: Color = e[2]
+		if String(e[1]).strip_edges().is_empty() or c.a < 0.05:
+			continue
+		texts += 1
+		var ink := _ink_colour(image, e[3]) if image != null else Color(0, 0, 0, 0)
+		if _green_dominant(c) or (image != null and _green_dominant(ink)):
+			green += 1
+			print("UI4 COLOURS GREEN %s: '%s' (%s) drawn %s, heuristic ink %s" % [name, e[1], e[0], c.to_html(false), ink.to_html(false)])
+		elif not seen.has(c.to_html(false)):
+			seen[c.to_html(false)] = e[1]
+		if image != null:
+			inks[ink.to_html(false)] = true
+	if texts == 0:
+		_menu_colours_problems.append("%s: no text matched" % name)
+	print("UI4 COLOURS %s: %d texts (%d from gadgets / callbacks), %d green-dominant; drawn colours %s; heuristic ink samples %s" % [name, texts, others, green, seen,
+		inks.keys()])
+	return green
+
+
+## presses the hittable button of any level whose path holds `fragment` (any case); a miss is a problem of the walk
+func _menu_colours_press(what: String, fragment: String) -> bool:
+	for level in 16:
+		for b in _shell.list_buttons(level):
+			var path := String(b.path)
+			if b.hittable and path.to_lower().contains(fragment.to_lower()):
+				print("UI4 COLOURS %s: pressing %s" % [what, path])
+				_mouse_event(Vector2(b.x, b.y), false, false)
+				await _step(2)
+				_mouse_event(Vector2(b.x, b.y), true, true)
+				await _step(2)
+				_mouse_event(Vector2(b.x, b.y), false, true)
+				await _step(150)
+				return true
+	_menu_colours_problems.append("%s: no button '%s'" % [what, fragment])
+	return false
+
+
+## back to the main menu: a pushed screen popped, a box closed by its own Cancel / Back / OK / Close
+func _menu_colours_dismiss(depth: int) -> void:
+	if _shell.shell_stack().size() <= depth:
+		# the "not available" box (AptMessageBox, its own level): its Ok, as the menu walk presses it
+		var ok := _walk_find_box_ok()
+		if not ok.is_empty():
+			print("UI4 COLOURS closing the box with ", ok.path)
+			_mouse_event(Vector2(ok.x, ok.y), false, false)
+			await _step(2)
+			_mouse_event(Vector2(ok.x, ok.y), true, true)
+			await _step(2)
+			_mouse_event(Vector2(ok.x, ok.y), false, true)
+			await _step(120)
+		# a box on the top screen's level (the campaign's difficulty): its Cancel / Back / Ok
+		var names: Array = []
+		for level in 16:
+			if ok.is_empty():
+				for b in _shell.list_buttons(level):
+					if b.hittable:
+						names.append([level, String(b.path)])
+		var done := false
+		for name in ["cancel", "back", "ok", "close", "exit", "done"]:
+			for e in names:
+				# Cancel, cancelButton, OK, okButton ...: a path element that starts with the name, any case
+				var path: String = e[1]
+				if not done and path.to_lower().contains("." + name) and not path.contains("Nav."):
+					print("UI4 COLOURS closing the box with ", path)
+					await _click_button(e[0], path.substr(path.find(".") + 1).trim_suffix(".bttn"))
+					await _step(120)
+					done = true
+	await _resize_menu_back()
+
+
+func _run_menu_colours() -> void:
+	DirAccess.make_dir_recursive_absolute(_menu_colours)
+	await _step(LEVEL_MAIN_MENU_FRAMES + 90)
+	await _wait_main_ready()
+	await _step(120)
+	var green := await _menu_colours_screen("main")
+	var screens := 1
+	for nav in ["SoloPlayNav", "MultiPlayNav", "OptionsNav", "MyHeroes"]:
+		if not await _click_button(_shell.shell_top_level(), nav):
+			_menu_colours_problems.append("cannot press %s" % nav)
+			continue
+		await _step(90)
+		green += await _menu_colours_screen("main-" + nav)
+		screens += 1
+		if nav == "MyHeroes":
+			# Create-a-Hero opens on its introduction ("NEW FEATURES"); Continue goes on to the builder
+			if await _menu_colours_press("Create-a-Hero introduction", "continue"):
+				await _step(240)
+				green += await _menu_colours_screen("MyHeroes-builder")
+				screens += 1
+			await _resize_menu_back()
+			continue
+		var subs: Array = []
+		for b in _shell.list_buttons(_shell.shell_top_level()):
+			var p := String(b.path)
+			var at := p.find("." + nav + ".")
+			if b.hittable and at >= 0:
+				var sub := p.substr(at + 1).trim_suffix(".bttn")
+				if sub.get_slice_count(".") == 2 and not subs.has(sub):
+					subs.append(sub)
+		print("UI4 COLOURS %s entries %s" % [nav, subs])
+		if subs.is_empty():
+			_menu_colours_problems.append("%s: no entries" % nav)
+		for sub in subs:
+			await _click_button(_shell.shell_top_level(), nav)
+			await _step(60)
+			var depth: int = _shell.shell_stack().size()
+			if not await _click_button(_shell.shell_top_level(), sub):
+				_menu_colours_problems.append("cannot press %s" % sub)
+				continue
+			await _step(240)
+			var stack: PackedStringArray = _shell.shell_stack()
+			print("UI4 COLOURS %s -> %s" % [sub, stack])
+			# a pushed screen, or a box over the main menu (the campaign's difficulty, the "not available" notes): both are front-end screens
+			green += await _menu_colours_screen(sub.replace(".", "-"))
+			screens += 1
+			if sub.ends_with("Skirmish"):
+				# the first visit asks for a profile name over the lobby (its Cancel leaves Skirmish): a profile is given as --auto gives it
+				var applied: Dictionary = {}
+				for attempt in 30:
+					applied = _shell.lobby_apply({"profile": "Gimli"})
+					if applied.ok:
+						break
+					await _step(10)
+				await _step(120)
+				if not applied.ok or not _shell.shell_stack().has("Skirmish.apt"):
+					_menu_colours_problems.append("Skirmish: the profile box was not closed into the lobby (%s, %s)" % [applied.get("errors", []), _shell.shell_stack()])
+				else:
+					green += await _menu_colours_screen(sub.replace(".", "-") + "-lobby")
+					screens += 1
+			await _menu_colours_dismiss(depth)
+	for p in _menu_colours_problems:
+		print("UI4 COLOURS PROBLEM ", p)
+	var ok := green == 0 and _menu_colours_problems.is_empty()
+	print("UI4 COLOURS %s: %d screens, %d green-dominant texts, %d problems" % ["PASS" if ok else "FAIL", screens, green, _menu_colours_problems.size()])
+	get_tree().quit(0 if ok else 1)

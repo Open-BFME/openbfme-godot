@@ -77,6 +77,23 @@ void parseShowObjectHealth(INI *ini, void *instance, void *, const void *)
 	State *st = static_cast<State *>(instance);
 	INI::parseBool(ini, nullptr, &st->values.showObjectHealth, nullptr);
 }
+// lane UI-4: the selection marker's GameData fields (CameraSettings.h), written through the instance
+void parseShowSelectedUnitMarker(INI *ini, void *instance, void *, const void *)
+{
+	INI::parseBool(ini, nullptr, &static_cast<State *>(instance)->values.showSelectedUnitMarker, nullptr);
+}
+void parseUseSimpleHordeDecals(INI *ini, void *instance, void *, const void *)
+{
+	INI::parseBool(ini, nullptr, &static_cast<State *>(instance)->values.useSimpleHordeDecals, nullptr);
+}
+void parseUseSimpleMergeDecals(INI *ini, void *instance, void *, const void *)
+{
+	INI::parseBool(ini, nullptr, &static_cast<State *>(instance)->values.useSimpleMergeDecals, nullptr);
+}
+void parseOpacityOfSimpleMergeDecals(INI *ini, void *instance, void *, const void *)
+{
+	INI::parsePercentToReal(ini, nullptr, &static_cast<State *>(instance)->values.opacityOfSimpleMergeDecals, nullptr);
+}
 void parseVeterancyPipFilter(INI *ini, void *instance, void *, const void *)
 {
 	State *st = static_cast<State *>(instance);
@@ -168,6 +185,10 @@ FieldParse kFields[] = {
 	{ "PartitionCellSize", parseNoting<INI::parseReal>, SEEN_DATA(SEEN_PARTITION), CS_OFF(partitionCellSize) },
 	{ "MoveHintName", parseMoveHintName, nullptr, 0 },
 	{ "ShowObjectHealth", parseShowObjectHealth, nullptr, 0 },
+	{ "ShowSelectedUnitMarker", parseShowSelectedUnitMarker, nullptr, 0 },         // RW + 0x9A5
+	{ "UseSimpleHordeDecals", parseUseSimpleHordeDecals, nullptr, 0 },             // RW + 0x9A6
+	{ "UseSimpleMergeDecals", parseUseSimpleMergeDecals, nullptr, 0 },             // RW + 0x9A7
+	{ "OpacityOfSimpleMergeDecals", parseOpacityOfSimpleMergeDecals, nullptr, 0 }, // RW + 0x9A8
 	{ "VeterancyPipDrawObjectFilter", parseVeterancyPipFilter, nullptr, 0 },
 	{ nullptr, skipField, nullptr, 0 }
 };

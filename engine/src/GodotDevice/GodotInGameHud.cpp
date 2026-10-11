@@ -18,6 +18,7 @@
 #include "GameClient/CursorFile.h"
 #include "GameClient/HudObjects.h"
 #include "GameClient/InGameHud.h"
+#include "GameClient/GameLODManager.h"
 #include "GameClient/LiveGame.h"
 #include "GameClient/MessageStream/MetaEvent.h"
 #include "GameClient/TacticalCamera.h"
@@ -26,6 +27,7 @@
 #include "GameLogic/Object/RetailObjectWorld.h"
 #include "GodotDevice/GodotAptPlayer.h"
 #include "GodotDevice/GodotGameWorld.h"
+#include "GodotDevice/GodotHud6Draw.h"
 #include "GodotDevice/GodotRetailFileSystem.h"
 #include "GodotDevice/GodotW3DInstancer.h"
 #include "GodotDevice/GodotW3DMaterial.h"
@@ -49,6 +51,8 @@
 #include <godot_cpp/classes/os.hpp>
 #include <godot_cpp/classes/time.hpp>
 #include <godot_cpp/classes/viewport.hpp>
+#include <godot_cpp/classes/decal.hpp>
+#include <godot_cpp/classes/node3d.hpp>
 #include <godot_cpp/classes/font.hpp>
 #include <godot_cpp/classes/theme_db.hpp>
 #include <godot_cpp/core/class_db.hpp>
@@ -176,6 +180,7 @@ struct HudDevice : public AptNativeHook
 	// lane SPELL-2 (review r2): the game text of a standalone HUD (data/lotr.str); an attached HUD uses its shell's. Before the HUD: it outlives it
 	std::unique_ptr<GameTextSource> ownedText;
 	std::unique_ptr<InGameHud> hud;
+	std::unique_ptr<Hud6Draw> hud6; ///< lane HUD-6: the radial bubbles and the help box's content (destroyed before the HUD)
 	int keyState = 0;
 	ModifierTracker mods; // lane INPUT-1 r2: Ctrl / Shift / Alt per side
 	int freeCameraToggles = 0; // lane INPUT-1: Ctrl+Z presses that toggled the free camera
@@ -257,6 +262,27 @@ struct HudDevice : public AptNativeHook
 	IconUIOp dragBox;
 	unsigned long long dragBoxFrames = 0;
 	void drawIconOps(RID parent);
+	// lane UI-4: the selection markers (GameClient/SelectionDecals.h) as Godot Decal nodes under a Node3D beside the camera, one per decal, reused
+	uint64_t decalRootId = 0;
+	std::vector<uint64_t> decalIds;
+	unsigned decalsDrawn = 0;
+	// the SHADOW_MERGE_DECAL decals composed as RotWK's stencil passes (ComposeMergeDecals) into one texture on one Decal, recomposed when its input changes
+	uint64_t mergeDecalId = 0;
+	Ref<ImageTexture> mergeTexture;
+	// a decal texture in a colour: the texel colour times the colour, the texel alpha (the colour's alpha is the decal's modulate)
+	struct DecalTextures
+	{
+		Ref<ImageTexture> albedo;
+	};
+	std::map<std::string, DecalTextures> unlitDecals;
+	const DecalTextures *unlitDecalFor(const std::string &file, uint32_t rgb);
+	std::string mergeKey;
+	MergedSelectionDecals merged;
+	std::map<std::string, PackedByteArray> decalPixels; // RGBA8 of the decal textures, by name
+	std::map<std::string, Vector2i> decalPixelSizes;
+	DecalImage decalImageFor(const std::string &file);
+	void drawSelectionDecals();
+	void freeSelectionDecals();
 	void applyCamera(const Vector2 &window, double alpha);
 };
 
@@ -489,6 +515,11 @@ void HudDevice::drawPlaceholder(const AptCanvasOp &op, RID item)
 	RenderingServer *rs = RenderingServer::get_singleton();
 	Vector2 pts[4];
 	const Rect2 r = windowRect(op, pts);
+	if (hud6 && hud6->handles(op.symbolName))
+	{
+		hud6->drawHelp(r, item); // lane HUD-6: the help box's content clip (`_type` = "<clip>_Content", RW 0x92E2AC)
+		return;
+	}
 	if (op.symbolName == "AptPalantir::RenderGlobe")
 	{
 		// lane HUD-2 (see ensureGlobe): the clip's rectangle, the colour transform of the clip is not applied (retail draws the scene directly)
@@ -1025,6 +1056,7 @@ void InGameHudNode::_bind_methods()
 	ClassDB::bind_method(D_METHOD("get_state"), &InGameHudNode::get_state);
 	ClassDB::bind_method(D_METHOD("get_command_map"), &InGameHudNode::get_command_map);
 	ClassDB::bind_method(D_METHOD("get_report"), &InGameHudNode::get_report);
+	ClassDB::bind_method(D_METHOD("get_hud6_state"), &InGameHudNode::get_hud6_state); // lane HUD-6
 	ClassDB::bind_method(D_METHOD("get_mapped_image", "name"), &InGameHudNode::get_mapped_image);
 	ClassDB::bind_method(D_METHOD("get_spellbook_state"), &InGameHudNode::get_spellbook_state);
 	ClassDB::bind_method(D_METHOD("get_icon_ui"), &InGameHudNode::get_icon_ui); // lane HUD-5
@@ -1058,10 +1090,233 @@ void InGameHudNode::_bind_methods()
 	ClassDB::bind_method(D_METHOD("invoke_at", "path", "function", "args"), &InGameHudNode::invoke_at, DEFVAL(PackedStringArray()));
 }
 
+void HudDevice::drawSelectionDecals()
+{
+	Node3D *root = decalRootId ? Object::cast_to<Node3D>(ObjectDB::get_instance(godot::ObjectID(decalRootId))) : nullptr;
+	if (!root)
+	{
+		Node *parent = camera ? camera->get_parent() : nullptr;
+		if (!parent)
+		{
+			return;
+		}
+		root = memnew(Node3D);
+		root->set_name("SelectionDecals");
+		parent->add_child(root);
+		decalRootId = root->get_instance_id();
+		decalIds.clear();
+	}
+	const std::vector<SelectionDecal> &list = hud->selectionDecals();
+	decalsDrawn = 0;
+	for (size_t i = 0; i < list.size(); ++i)
+	{
+		const SelectionDecal &sd = list[i];
+		if (sd.style & 0x1000u)
+		{
+			continue; // composed below
+		}
+		const DecalTextures *dt = unlitDecalFor(sd.texture, sd.color & 0xFFFFFFu);
+		if (!dt)
+		{
+			continue; // the texture's error is in drawErrors (textureFor)
+		}
+		Decal *decal = nullptr;
+		if (decalsDrawn < decalIds.size())
+		{
+			decal = Object::cast_to<Decal>(ObjectDB::get_instance(godot::ObjectID(decalIds[decalsDrawn])));
+		}
+		if (!decal)
+		{
+			decal = memnew(Decal);
+			root->add_child(decal);
+			if (decalsDrawn < decalIds.size())
+			{
+				decalIds[decalsDrawn] = decal->get_instance_id();
+			}
+			else
+			{
+				decalIds.push_back(decal->get_instance_id());
+			}
+		}
+		++decalsDrawn;
+		// SAGE (x, y, z up) -> Godot (x, z, -y); the decal projects down its -Y over a box as wide as the decal and 60 units deep around the drawable
+		decal->set_position(Vector3(sd.position.x, sd.position.z, -sd.position.y));
+		decal->set_rotation(Vector3(0.0f, sd.angle, 0.0f));
+		decal->set_size(Vector3(sd.size, 60.0f, sd.size));
+		// RotWK's alpha shader (terrain * (1 - a) + texel * colour * a, a = texel alpha * the colour's alpha); the terrain is unshaded (terrain.gdshader), so the
+		// decal's albedo reaches the screen as it is
+		decal->set_texture(Decal::TEXTURE_ALBEDO, dt->albedo);
+		decal->set_modulate(Color(1, 1, 1, ((sd.color >> 24) & 0xFF) / 255.0f));
+		decal->set_albedo_mix(1.0f);
+		decal->set_cull_mask(1u << 19); // the terrain's layer (GodotMapTerrain): the units stand on the marker, it is not painted on them
+		decal->set_upper_fade(0.0f);
+		decal->set_lower_fade(0.0f);
+		decal->set_visible(true);
+	}
+	for (size_t i = decalsDrawn; i < decalIds.size(); ++i)
+	{
+		if (Decal *decal = Object::cast_to<Decal>(ObjectDB::get_instance(godot::ObjectID(decalIds[i]))))
+		{
+			decal->set_visible(false);
+		}
+	}
+
+	// the merge decals: what decides the composed image is each decal's place, size, textures, colour and whether its alpha passes the alpha test
+	const SelectionDecalSettings &ds = hud->selectionDecalSettings();
+	std::string key = ds.useSimpleMergeDecals ? "s" : "m";
+	for (const SelectionDecal &sd : list)
+	{
+		if (sd.style & 0x1000u)
+		{
+			char buf[160];
+			const unsigned alpha = ds.useSimpleMergeDecals ? (sd.color >> 24) : ((sd.color >> 24) >= 0x60 ? 1u : 0u);
+			snprintf(buf, sizeof(buf), "|%.1f,%.1f,%.1f,%.1f,%06x,%u,", sd.position.x, sd.position.y, sd.position.z, sd.size, sd.color & 0xFFFFFFu, alpha);
+			key += buf + sd.texture + "," + sd.texture2;
+		}
+	}
+	if (key != mergeKey)
+	{
+		mergeKey = key;
+		std::string error;
+		// at most 4 texels a world unit (a 50-unit decal is 200 texels; RotWK draws it at the screen's resolution)
+		if (!ComposeMergeDecals(list, [this](const std::string &f) { return decalImageFor(f); }, ds, merged, &error, 2048, 4.0f))
+		{
+			if (drawErrors.size() < 100)
+			{
+				drawErrors.push_back(error);
+			}
+			merged = MergedSelectionDecals();
+		}
+		else if (merged.decals > 0)
+		{
+			PackedByteArray px;
+			px.resize((int64_t)merged.rgba.size());
+			memcpy(px.ptrw(), merged.rgba.data(), merged.rgba.size());
+			Ref<Image> img = Image::create_from_data(merged.width, merged.height, false, Image::FORMAT_RGBA8, px);
+			if (mergeTexture.is_valid() && mergeTexture->get_width() == merged.width && mergeTexture->get_height() == merged.height)
+			{
+				mergeTexture->update(img);
+			}
+			else
+			{
+				mergeTexture = ImageTexture::create_from_image(img);
+			}
+		}
+	}
+	Decal *md = mergeDecalId ? Object::cast_to<Decal>(ObjectDB::get_instance(godot::ObjectID(mergeDecalId))) : nullptr;
+	if (merged.decals == 0 || mergeTexture.is_null())
+	{
+		if (md)
+		{
+			md->set_visible(false);
+		}
+		return;
+	}
+	if (!md)
+	{
+		md = memnew(Decal);
+		md->set_name("MergedSelection");
+		root->add_child(md);
+		mergeDecalId = md->get_instance_id();
+	}
+	// row 0 of the image is the extent's +Y edge: Godot's -Z, the decal texture's top
+	md->set_position(Vector3((merged.minX + merged.maxX) * 0.5f, merged.z, -(merged.minY + merged.maxY) * 0.5f));
+	md->set_rotation(Vector3(0.0f, 0.0f, 0.0f));
+	md->set_size(Vector3(merged.maxX - merged.minX, 120.0f, merged.maxY - merged.minY));
+	md->set_texture(Decal::TEXTURE_ALBEDO, mergeTexture);
+	md->set_modulate(Color(1, 1, 1, 1));
+	md->set_albedo_mix(1.0f);
+	md->set_cull_mask(1u << 19);
+	md->set_upper_fade(0.0f);
+	md->set_lower_fade(0.0f);
+	md->set_visible(true);
+	++decalsDrawn;
+}
+
+const HudDevice::DecalTextures *HudDevice::unlitDecalFor(const std::string &file, uint32_t rgb)
+{
+	char key[16];
+	snprintf(key, sizeof(key), "|%06x", rgb);
+	auto it = unlitDecals.find(file + key);
+	if (it != unlitDecals.end())
+	{
+		return &it->second;
+	}
+	const DecalImage img = decalImageFor(file);
+	if (img.width <= 0 || !img.rgba)
+	{
+		return nullptr;
+	}
+	const size_t n = (size_t)img.width * (size_t)img.height * 4;
+	PackedByteArray albedo;
+	albedo.resize((int64_t)n);
+	uint8_t *pa = albedo.ptrw();
+	const unsigned col[3] = { (rgb >> 16) & 0xFFu, (rgb >> 8) & 0xFFu, rgb & 0xFFu };
+	for (size_t i = 0; i < n; i += 4)
+	{
+		for (int c = 0; c < 3; ++c)
+		{
+			pa[i + c] = (uint8_t)((img.rgba[i + c] * col[c] + 127) / 255u);
+		}
+		pa[i + 3] = img.rgba[i + 3];
+	}
+	DecalTextures t;
+	t.albedo = ImageTexture::create_from_image(Image::create_from_data(img.width, img.height, false, Image::FORMAT_RGBA8, albedo));
+	return &unlitDecals.emplace(file + key, t).first->second;
+}
+
+DecalImage HudDevice::decalImageFor(const std::string &file)
+{
+	auto it = decalPixels.find(file);
+	if (it == decalPixels.end())
+	{
+		PackedByteArray px;
+		Vector2i size(0, 0);
+		Ref<ImageTexture> tex = textureFor(file);
+		Ref<Image> img = tex.is_valid() ? tex->get_image() : Ref<Image>();
+		if (img.is_valid())
+		{
+			img = img->duplicate();
+			if (img->is_compressed())
+			{
+				img->decompress();
+			}
+			img->clear_mipmaps();
+			img->convert(Image::FORMAT_RGBA8);
+			px = img->get_data();
+			size = Vector2i(img->get_width(), img->get_height());
+		}
+		it = decalPixels.emplace(file, px).first;
+		decalPixelSizes[file] = size;
+	}
+	const Vector2i size = decalPixelSizes[file];
+	DecalImage out;
+	if (size.x > 0 && it->second.size() == (int64_t)size.x * size.y * 4)
+	{
+		out.width = size.x;
+		out.height = size.y;
+		out.rgba = it->second.ptr();
+	}
+	return out;
+}
+
+void HudDevice::freeSelectionDecals()
+{
+	if (Node3D *root = decalRootId ? Object::cast_to<Node3D>(ObjectDB::get_instance(godot::ObjectID(decalRootId))) : nullptr)
+	{
+		root->queue_free();
+	}
+	decalRootId = 0;
+	decalIds.clear();
+	mergeDecalId = 0;
+	mergeKey.clear();
+}
+
 InGameHudNode::InGameHudNode() : d(std::make_unique<HudDevice>()) {}
 
 InGameHudNode::~InGameHudNode()
 {
+	d->freeSelectionDecals(); // lane UI-4
 	if (d->fogShift != 0.0f)
 	{
 		W3D_Set_Fog_Shift(0.0f); // lane PLAY-1: the free camera's fog shift goes with the game
@@ -1161,6 +1416,7 @@ Dictionary InGameHudNode::attach(const Ref<RetailFileSystem> &fs, GameWorld *wor
 		return result;
 	}
 	bool showObjectHealth = false; // lane HUD-5
+	SelectionDecalSettings decalSettings; // lane UI-4
 	// lane CAM-1: the retail tactical camera over the map's terrain, looking at the start position (options.camera_start, Godot axes)
 	Viewport *vp = get_viewport();
 	const Vector2 window = vp ? vp->get_visible_rect().get_size() : Vector2(1024, 768);
@@ -1195,6 +1451,23 @@ Dictionary InGameHudNode::attach(const Ref<RetailFileSystem> &fs, GameWorld *wor
 		d->veterancyFilter = gd.veterancyPipFilter;
 		d->haveVeterancyFilter = gd.haveVeterancyPipFilter;
 		showObjectHealth = gd.showObjectHealth;
+		// lane UI-4: the selection marker's GameData fields (SelectionDecals.h)
+		decalSettings.showSelectedUnitMarker = gd.showSelectedUnitMarker;
+		decalSettings.useSimpleHordeDecals = gd.useSimpleHordeDecals;
+		decalSettings.useSimpleMergeDecals = gd.useSimpleMergeDecals;
+		decalSettings.opacityOfSimpleMergeDecals = gd.opacityOfSimpleMergeDecals;
+		// RW 0x601C62: the static LOD level overrides ShowSelectedUnitMarker / UseSimpleMergeDecals with its DecalLOD. INFERENCE (S-2522): the level is the
+		// one the renderer draws at, UltraHigh (no level is applied to the renderer, S-2481); GameLOD.ini comes with the shell
+		const GameLODManager *lod = shellPlayer && shellPlayer->shell_object() ? shellPlayer->shell_object()->environment().gameLOD : nullptr;
+		const int ultraHigh = GameLODManager::findLevel("UltraHigh");
+		if (!lod || !lod->hasLevel(ultraHigh))
+		{
+			d->drawNotes.insert("[S-2522] selection markers: no GameLOD.ini StaticGameLOD UltraHigh (no shell): GameData's ShowSelectedUnitMarker / UseSimpleMergeDecals");
+		}
+		else
+		{
+			ApplyDecalLOD(decalSettings, lod->level(ultraHigh).decalLOD);
+		}
 		if (!errors.is_empty())
 		{
 			result["ok"] = false;
@@ -1296,6 +1569,13 @@ Dictionary InGameHudNode::attach(const Ref<RetailFileSystem> &fs, GameWorld *wor
 		d->player->attach_window_manager(&d->hud->windows());
 	}
 	d->player->set_native_hook(d.get());
+	{
+		// lane HUD-6: the bubbles' images and the help's fonts
+		HudDevice *dev = d.get();
+		d->hud6 = std::make_unique<Hud6Draw>(*d->hud, d->images, [dev](const std::string &file) { return dev->textureFor(file); }, d->player);
+		d->hud->setMappedImages(&d->images);
+		d->hud->setFontMetrics(d->hud6->metrics());
+	}
 	// lane HUD-5: the drawable decorations' settings (the zoom follows the camera every frame)
 	{
 		IconUISettings is;
@@ -1307,6 +1587,7 @@ Dictionary InGameHudNode::attach(const Ref<RetailFileSystem> &fs, GameWorld *wor
 		is.zoom = d->cam ? d->cam->getZoom() : 1.0f;
 		d->hud->setIconUISettings(is);
 	}
+	d->hud->setSelectionDecalSettings(decalSettings); // lane UI-4
 	d->ready = errors.is_empty();
 	set_process(true);
 	// the camera is set before the world's own _process (the streak ribbons face the camera transform of the same frame)
@@ -1396,6 +1677,82 @@ Dictionary InGameHudNode::get_state() const
 	s["portrait"] = toGodot(d->hud->palantir() ? d->hud->palantir()->portraitShown() : std::string());
 	s["portrait_drawn"] = toGodot(d->portraitDrawn);
 	s["portrait_draws"] = (int64_t)d->portraitDraws;
+	{
+		// lane UI-4: the selection markers of the last update and how many decals the device showed
+		Array decals;
+		for (const SelectionDecal &sd : d->hud->selectionDecals())
+		{
+			Dictionary e;
+			e["object"] = (int64_t)sd.object;
+			e["size"] = sd.size;
+			e["texture"] = toGodot(sd.texture);
+			e["color"] = (int64_t)sd.color;
+			e["x"] = sd.position.x;
+			e["y"] = sd.position.y;
+			decals.push_back(e);
+		}
+		s["selection_decals"] = decals;
+		s["selection_decals_drawn"] = (int64_t)d->decalsDrawn;
+		Dictionary m;
+		m["decals"] = (int64_t)d->merged.decals;
+		m["width"] = (int64_t)d->merged.width;
+		m["height"] = (int64_t)d->merged.height;
+		m["simple"] = d->hud->selectionDecalSettings().useSimpleMergeDecals;
+		m["show"] = d->hud->selectionDecalSettings().showSelectedUnitMarker;
+		int64_t opaque = 0;
+		for (size_t i = 3; i < d->merged.rgba.size(); i += 4)
+		{
+			opaque += d->merged.rgba[i] != 0 ? 1 : 0;
+		}
+		m["opaque_texels"] = opaque;
+		Array errs;
+		for (const std::string &e : d->drawErrors)
+		{
+			if (e.find("selection decal") != std::string::npos)
+			{
+				errs.push_back(toGodot(e));
+			}
+		}
+		m["errors"] = errs;
+		s["selection_merge"] = m;
+	}
+	// lane UI-4: the hero bar (InGameHeroSelect): its movie path, shown, the select-all button and the slots as the movie was last told
+	if (InGameHeroSelect *hs = d->hud->heroSelect())
+	{
+		Dictionary h;
+		h["attached"] = hs->attached();
+		h["name"] = toGodot(hs->name());
+		h["shown"] = hs->shown();
+		h["select_all"] = hs->selectAllShown();
+		Array slots;
+		for (int i = 0; i < InGameHeroSelect::kSlots; ++i)
+		{
+			const InGameHeroSelect::Slot &sl = hs->slot(i);
+			Dictionary e;
+			e["hero"] = (int64_t)sl.hero;
+			e["builder"] = sl.builder;
+			e["image"] = toGodot(sl.image);
+			e["rank"] = (int64_t)sl.rank;
+			e["rank_progress"] = (int64_t)sl.rankProgress;
+			e["health"] = (int64_t)sl.health;
+			e["selected"] = sl.selected;
+			slots.push_back(e);
+		}
+		h["slots"] = slots;
+		Array heroes;
+		for (const InGameHeroSelect::Hero &e : hs->heroes())
+		{
+			heroes.push_back((int64_t)e.id);
+		}
+		h["heroes"] = heroes;
+		Array builders;
+		for (const InGameHeroSelect::Builder &e : hs->builders())
+		{
+			builders.push_back((int64_t)e.id);
+		}
+		h["builders"] = builders;
+		s["hero_select"] = h;
+	}
 	s["frame_selection_changed"] = (int64_t)ui.getFrameSelectionChanged();
 	{
 		// lane PLAY-3: the drag selection box as the last render frame drew it (RW 0x48ECF4), the last box drawn and the frames it was drawn in
@@ -1674,6 +2031,12 @@ Dictionary InGameHudNode::get_mapped_image(const String &name)
 	return r;
 }
 
+Dictionary InGameHudNode::get_hud6_state() const
+{
+	waitLogic(d.get());
+	return d->hud6 ? d->hud6->state() : Dictionary();
+}
+
 Dictionary InGameHudNode::get_report() const
 {
 	waitLogic(d.get());
@@ -1807,6 +2170,11 @@ void InGameHudNode::_process(double delta)
 	const uint64_t t0 = Time::get_singleton()->get_ticks_usec();
 	d->hud->update(delta);
 	d->drawIconOps(get_canvas_item()); // lane HUD-5
+	d->drawSelectionDecals();          // lane UI-4
+	if (d->hud6)
+	{
+		d->hud6->drawRadial(get_canvas_item()); // lane HUD-6
+	}
 	const uint64_t t1 = Time::get_singleton()->get_ticks_usec();
 	// the camera runs 30 client frames a second (retail FramesPerSecondLimit 30, S-456) and is drawn interpolated between two of them
 	if (LookAtTranslator *la = d->hud->input().lookAt())

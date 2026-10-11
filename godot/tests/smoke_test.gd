@@ -719,6 +719,12 @@ func _menu_player(fs: RefCounted) -> void:
 	_check(boot.strings > 10000 and boot.duplicate_labels == 36, "the string table has %d strings, 36 repeated labels (S-131): %d" % [boot.strings, boot.duplicate_labels])
 	var font_names := " ".join(boot.fonts)
 	_check(font_names.contains("= Albertus MT") and font_names.contains("= Omnia LT Std"), "the corpus fonts loaded: %s" % [boot.fonts])
+	# lane UI-4 (Sol r1): a bold GameFont (language.ini's CreditsMinorTitleFont "Albertus MT" 16 Yes) is measured and drawn bold: RotWK's GDI synthesises
+	# the bold of the regular-only AlbertusMT.otf (S-2520)
+	var regular: Dictionary = player.font_metrics("Albertus MT", 16, false, "Executive Producer")
+	var bold: Dictionary = player.font_metrics("Albertus MT", 16, true, "Executive Producer")
+	_check(regular.embolden == 0.0 and bold.embolden > 0.0 and bold.glyph_spacing == 1, "a bold GameFont is emboldened with one pixel more a glyph (%s / %s)" % [regular, bold])
+	_check(bold.width >= regular.width + "Executive Producer".length(), "the bold text measures wider by at least a pixel a glyph (%d vs %d)" % [bold.width, regular.width])
 	var steps := 0
 	for i in 10:
 		steps += player.tick(0.033)

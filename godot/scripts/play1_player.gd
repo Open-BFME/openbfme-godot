@@ -8,6 +8,9 @@
 ##   powers    the Palantir's powers button opens SpellStore.apt; a click on a power that can be bought, RESET, a buy and ACCEPT; a click beside the
 ##             store closes it
 ##   camera    (with --free-camera) the wheel zooms out beyond retail's limit
+##   herobar   (lane UI-4) the Palantir's hero bar (InGameHeroSelect): the idle builder's button and, after a hero and a second hero are created, their buttons
+##             with portrait, health and rank; a click on a hero button selects that hero, a second click moves the camera to it, a click on the builder button
+##             selects the idle builder, select-all selects both heroes; play1-herobar-<step>.png
 ##   skirmish  a worker builds a barracks (the placement ghost is drawn, red on an illegal spot), the barracks trains, a drag box and a radar right click
 ##             send the soldiers to the enemy
 ##   tour      the rest of a player's first hour, each by input and judged by its effect: the minimap moves the view, the fortress recruits a hero
@@ -21,6 +24,8 @@
 ##   dragbox   (lane PLAY-3) a left drag around the local units on the screen: while the button is held the drag box is drawn (RotWK's
 ##             W3DInGameUI::drawSelectionRegion RW 0x48ECF4: the region from the press to the pointer, 0xBBFFBB33, lines of width 2) and follows the pointer;
 ##             the release selects the own units inside and no structure, and the box is gone
+##   selection (lane UI-4) two hordes and a hero drag-selected together: one merged jagged outline around the hordes' members and the hero's rune ring
+##             (SelectionDecals.h, the owner's retail shot owner-shots/ui4/3); the hero alone; a hovered unit gets no marker; play1-selection-<step>.png
 ##   portraits (lane UI-4) a builder, a building, a hero and a horde of the local player, each selected with a left click: the Palantir's portrait
 ##             clip (CommandUI.Portrait) must draw the selection's SelectPortrait (PalantirCommandUI, RW 0x92FE33); play1-portrait-<kind>.png
 extends RefCounted
@@ -399,6 +404,94 @@ func _create_first(names: Array, at: Vector2) -> Dictionary:
 	return {}
 
 
+func _hero_bar() -> Dictionary:
+	return hud.get_state().get("hero_select", {})
+
+
+func _hero_button(index: int) -> Vector2:
+	var hs := _hero_bar()
+	return palantir_button(String(hs.get("name", "HeroSelectUI")) + ".Hero%d" % index)
+
+
+func _scenario_herobar() -> String:
+	if game._local_index < 0:
+		return "no local player index"
+	await game._step(60)
+	var hs := _hero_bar()
+	print("PLAY1 herobar: at the start ", JSON.stringify({"attached": hs.get("attached"), "name": hs.get("name"), "shown": hs.get("shown"),
+		"builders": hs.get("builders"), "heroes": hs.get("heroes"), "slot1": hs.get("slots", [{}])[0]}))
+	if not hs.get("attached", false):
+		return "the hero bar's movie never loaded (AptPalantir::OnHeroSelectLoaded)"
+	if not hs.get("shown", false) or not hs.slots[0].builder:
+		return "the idle builder has no button at the start: " + str(hs.get("slots", [{}])[0])
+	shot("herobar-builder")
+	var spot := Vector2()
+	for o in world.get_player_objects(game._local_name):
+		if not o.structure:
+			spot = Vector2(o.x, o.y)
+			break
+	var hero1 := _create_first(["GondorBoromir", "GondorFaramir", "RohanTheoden", "MordorWitchKing", "IsengardSaruman"], spot + Vector2(300, -150))
+	var hero2 := _create_first(["GondorFaramir", "RohanEowyn", "MordorMouthOfSauron", "IsengardLurtz"], spot + Vector2(-300, -150))
+	if hero1.is_empty() or hero2.is_empty():
+		return "could not create two heroes"
+	await game._step(60)
+	hs = _hero_bar()
+	var s2: Dictionary = hs.slots[1]
+	var s3: Dictionary = hs.slots[2]
+	print("PLAY1 herobar: after two heroes ", JSON.stringify({"heroes": hs.heroes, "slot2": s2, "slot3": s3, "select_all": hs.select_all}))
+	if s2.hero != hero1.id and s2.hero != hero2.id:
+		return "slot 2 shows no created hero: " + str(s2)
+	if String(s2.image).is_empty() or s2.health < 1:
+		return "slot 2 has no portrait or health: " + str(s2)
+	if not hs.select_all:
+		return "the select-all button did not show"
+	shot("herobar-heroes")
+	var b2 := _hero_button(2)
+	if b2.x < 0:
+		return "no button HeroSelectUI.Hero2 on the screen"
+	var cam0: Dictionary = hud.get_camera()
+	await click(b2)
+	await game._step(20)
+	var sel: Array = hud.get_selection()
+	print("PLAY1 herobar: a click on Hero2 at %s selected %s (slot hero %d)" % [b2, sel, s2.hero])
+	if sel != [s2.hero]:
+		return "the click on Hero2 selected %s, not hero %d" % [sel, s2.hero]
+	shot("herobar-hero-selected")
+	hud.camera_look_at(spot + Vector2(-2000, -2000))
+	await game._step(20)
+	await click(b2)
+	await game._step(20)
+	var cam1: Dictionary = hud.get_camera()
+	var target: Vector3 = cam1.target
+	var hero_pos := Vector2()
+	for o in world.get_player_objects(game._local_name):
+		if o.id == s2.hero:
+			hero_pos = Vector2(o.x, o.y)
+	var dist := Vector2(target.x, -target.z).distance_to(hero_pos)
+	print("PLAY1 herobar: the second click moved the camera to %s, the hero is at %s (%.0f away)" % [target, hero_pos, dist])
+	if dist > 150.0:
+		return "the second click did not move the camera to the hero (%.0f away)" % dist
+	shot("herobar-camera")
+	await click(_hero_button(1))
+	await game._step(20)
+	sel = hud.get_selection()
+	print("PLAY1 herobar: a click on Hero1 (the builder) selected ", sel)
+	if sel.size() != 1 or not hs.builders.has(sel[0]):
+		return "the builder button selected %s, not one of the builders %s" % [sel, hs.builders]
+	var all_btn := palantir_button(String(hs.name) + ".SelectAllHeroesBttn")
+	if all_btn.x >= 0:
+		await click(all_btn)
+		await game._step(20)
+		sel = hud.get_selection()
+		print("PLAY1 herobar: select all heroes selected ", sel)
+		if not (sel.has(hero1.id) and sel.has(hero2.id)):
+			return "select all heroes selected %s" % [sel]
+		shot("herobar-select-all")
+	else:
+		return "no SelectAllHeroesBttn on the screen"
+	return ""
+
+
 func _scenario_portraits() -> String:
 	if game._local_index < 0:
 		return "no local player index"
@@ -448,6 +541,8 @@ func _scenario_portraits() -> String:
 		var sel: Array = hud.get_selection()
 		print("PLAY1 portraits: %s %s (%d): selection %s, portrait '%s', drawn '%s' (%d draws)" % [c.kind, c.template, c.id, str(sel), st.get("portrait", "?"),
 			st.get("portrait_drawn", "?"), st.get("portrait_draws", 0)])
+		print("PLAY1 selection markers: %s: %s (%d drawn)" % [c.kind, JSON.stringify(st.get("selection_decals", [])), st.get("selection_decals_drawn", 0)])
+		print("PLAY1 selection merge: %s: %s" % [c.kind, JSON.stringify(st.get("selection_merge", {}))])
 		shot("portrait-" + c.kind)
 		var others: Array = cases.filter(func(o): return o.kind != c.kind).map(func(o): return o.id)
 		if sel.is_empty() or sel.any(func(i): return others.has(i)):
@@ -457,6 +552,86 @@ func _scenario_portraits() -> String:
 		elif st.get("portrait_drawn", "") != st.get("portrait", ""):
 			failures.append("%s: the portrait %s was not drawn (drew '%s')" % [c.kind, st.get("portrait"), st.get("portrait_drawn")])
 	return "; ".join(failures)
+
+
+# lane UI-4: the selection markers as the owner's retail shot shows them (owner-shots/ui4/3-retail-selection-indicators.png): two hordes and a hero selected
+# together by a drag box (one merged outline around both hordes' members, the hero's rune ring), then the hero alone, then a unit only hovered (no marker)
+func _scenario_selection() -> String:
+	if game._local_index < 0:
+		return "no local player index"
+	var spot := Vector2()
+	for o in world.get_player_objects(game._local_name):
+		if not o.structure:
+			spot = Vector2(o.x, o.y)
+			break
+	var centre := spot + Vector2(-60, 260)
+	var horde1 := _create_first(["GondorFighterHorde", "RohanPeasantHorde", "MordorOrcFighterHorde"], centre + Vector2(-70, 0))
+	var horde2 := _create_first(["GondorArcherHorde", "GondorFighterHorde", "RohanPeasantHorde"], centre + Vector2(40, -30))
+	var hero := _create_first(["GondorBoromir", "GondorFaramir", "RohanTheoden", "MordorWitchKing"], centre + Vector2(170, 20))
+	if horde1.is_empty() or horde2.is_empty() or hero.is_empty():
+		return "could not create the hordes (%s, %s) or the hero (%s)" % [str(horde1), str(horde2), str(hero)]
+	await game._step(60)
+	hud.camera_look_at(centre + Vector2(40, 0))
+	await game._step(20)
+	await wheel(to_pixel(centre.x + 40, centre.y), 6)
+	await game._step(20)
+	# the drag box around all three
+	var ids := [horde1.id, horde2.id, hero.id]
+	var lo := Vector2(1e9, 1e9)
+	var hi := Vector2(-1e9, -1e9)
+	for o in world.get_player_objects(game._local_name):
+		if o.structure:
+			continue
+		var p := Vector2(o.x, o.y)
+		if p.distance_to(centre) < 320.0:
+			var px := to_pixel(o.x, o.y)
+			lo = Vector2(min(lo.x, px.x), min(lo.y, px.y))
+			hi = Vector2(max(hi.x, px.x), max(hi.y, px.y))
+	lo -= Vector2(30, 40)
+	hi += Vector2(30, 30)
+	await move_to(lo)
+	press(lo, MOUSE_BUTTON_LEFT, true)
+	for i in 8:
+		await move_to(lo.lerp(hi, (i + 1) / 8.0))
+	press(hi, MOUSE_BUTTON_LEFT, false)
+	await game._step(30)
+	var sel: Array = hud.get_selection()
+	var st: Dictionary = hud.get_state()
+	print("PLAY1 selection: box selected %s (wanted %s)" % [str(sel), str(ids)])
+	print("PLAY1 selection merge: all: %s" % JSON.stringify(st.get("selection_merge", {})))
+	shot("selection-all")
+	for i in ids:
+		if not sel.has(i):
+			return "the box did not select %s: %s" % [str(i), str(sel)]
+	var merge: Dictionary = st.get("selection_merge", {})
+	if int(merge.get("decals", 0)) < 2 or int(merge.get("opaque_texels", 0)) == 0 or bool(merge.get("simple", true)):
+		return "no merged outline: %s" % JSON.stringify(merge)
+	# the hero alone: the rune ring, no outline
+	var hp := Vector2()
+	for o in world.get_player_objects(game._local_name):
+		if o.id == hero.id:
+			hp = Vector2(o.x, o.y)
+	await click(to_pixel(hp.x, hp.y))
+	await game._step(30)
+	st = hud.get_state()
+	print("PLAY1 selection: hero alone %s: %s" % [str(hud.get_selection()), JSON.stringify(st.get("selection_decals", []))])
+	shot("selection-hero")
+	# hover a horde member without clicking: retail draws no marker for a hovered unit
+	var mp := Vector2()
+	for o in world.get_player_objects(game._local_name):
+		if not o.structure and o.id != hero.id and Vector2(o.x, o.y).distance_to(centre) < 150.0 and o.id != horde1.id and o.id != horde2.id:
+			mp = Vector2(o.x, o.y)
+			break
+	await move_to(to_pixel(mp.x, mp.y))
+	await game._step(20)
+	st = hud.get_state()
+	var hov: Array = st.get("selection_decals", [])
+	print("PLAY1 selection: hovering a horde member, the markers are %s" % JSON.stringify(hov))
+	shot("selection-hover")
+	for e in hov:
+		if int(e.get("object", 0)) != hero.id:
+			return "a hovered unit got a marker: %s" % JSON.stringify(hov)
+	return ""
 
 
 func _scenario_explore() -> String:

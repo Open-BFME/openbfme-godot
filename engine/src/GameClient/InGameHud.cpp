@@ -122,6 +122,11 @@ InGameHud::~InGameHud()
 {
 	// lane SPELL-2 (review r2): an open spell store is a screen of the window manager below: it goes first, without sending its pending purchases
 	m_store.reset();
+	if (m_palantirRef)
+	{
+		m_palantirRef->setHeroSelectHandler(nullptr); // lane UI-4
+	}
+	m_heroSelect.reset();
 	// the screen before the window manager it registered on
 	m_ownedPalantir.reset();
 	m_palantirRef = nullptr;
@@ -176,6 +181,43 @@ bool InGameHud::boot(std::string *error)
 			m_storeError = "the spell store did not open (no local player or no command store)";
 		}
 	});
+	// lane UI-4: the hero bar (InGameHeroSelect.h): AptPalantir::OnHeroSelectLoaded hands the movie's clip path (InGameHeroSelectInterface ctor RW 0x92DDE7)
+	m_heroSelect = std::make_unique<InGameHeroSelect>(m_input->context());
+	m_palantirRef->setHeroSelectHandler([this](const std::string &clipPath, bool loaded) {
+		if (!loaded)
+		{
+			m_heroSelect->detach();
+			return;
+		}
+		AptPalantir *pal = m_palantirRef;
+		const std::string prefix = "_level" + std::to_string(pal->level()) + ".";
+		const std::string relative = clipPath.compare(0, prefix.size(), prefix) == 0 ? clipPath.substr(prefix.size()) : clipPath;
+		InGameHeroSelect::Movie movie;
+		movie.call = [pal, relative](const std::string &fn, const std::vector<std::string> &args) { return pal->callMovie(relative, fn, args); };
+		movie.setImage = [pal](const std::string &key, const std::string &image) { pal->setNativeImage(key, image); }; // RW 0x6236DE / 0x623790
+		movie.setText = [this](const std::string &record, const std::string &text) { m_wm->setAptText(record, text); };
+		std::string faction;
+		if (Player *p = m_config.game.players().getLocalPlayer())
+		{
+			const PlayerTemplate *pt = p->getPlayerTemplate();
+			faction = !p->getSide().empty() ? p->getSide() : (pt && pt->m_playableSide ? pt->m_side : std::string());
+		}
+		m_heroSelect->attach(pal->level(), clipPath, std::move(movie), faction);
+		// the commands "_level%d.<path>_OnBttnHeroSelect" / "_OnBttnSelectAllHeroes" (RW 0xC7EFB0 / 0xC7EF98), registered once per path
+		const std::string commands = m_heroSelect->commandPrefix();
+		if (m_heroCommands.insert(commands).second)
+		{
+			pal->registerCommand(commands + "_OnBttnHeroSelect", [this](const std::string &arg) {
+				const auto worldContext = enterContext();
+				m_heroSelect->onButtonPressed(arg);
+			});
+			pal->registerCommand(commands + "_OnBttnSelectAllHeroes", [this](const std::string &) {
+				const auto worldContext = enterContext();
+				m_heroSelect->selectAllHeroes();
+			});
+		}
+	});
+	bootHud6(); // lane HUD-6: the help box's settings and the Palantir's help box movie (InGameHudHud6.cpp)
 	m_radar->setupFromTerrain();
 	{
 		// lane HUD-2: the map's <stem>_art.tga is the radar picture when the archives have it (W3DRadar::buildTerrainTexture RW 0x44F3AB)
@@ -316,8 +358,24 @@ void InGameHud::update(double seconds)
 		local.timeRemainingText = loadScreenU16ToUtf8(fetchOrMissing(m_config.gameText, "APT:PalantirTimeRemaining"));
 	}
 	m_palantirRef->setLocalState(local);
+	updateHud6(local.contextObject, local.faction, seconds); // lane HUD-6: the side bar's gate, the radial bubbles, the help box (InGameHudHud6.cpp)
 	m_palantirRef->sync(*m_bar);
 	syncSpellBook();
+	// lane UI-4: the hero bar (RW 0x92CF64 in the Palantir's update); its object list follows the logic once per logic frame (INFERENCE, S-2521)
+	if (m_heroSelect)
+	{
+		const unsigned frame = m_config.game.logic().getFrame();
+		if (frame != m_heroTrackFrame)
+		{
+			m_heroTrackFrame = frame;
+			m_heroSelect->trackObjects();
+		}
+		m_heroSelect->update();
+		if (m_heroSelect->selectAllShown() != m_heroHotkeysSelectAll)
+		{
+			registerHotkeys();
+		}
+	}
 	// lane HUD-5: the drawable decorations of this frame (RW 0x679129 and the lists it fills), from the live game (the logic is idle here)
 	if (!m_iconSettings.text)
 	{
@@ -325,6 +383,9 @@ void InGameHud::update(double seconds)
 	}
 	const std::set<ObjectID> selectedSet(selected.begin(), selected.end());
 	m_iconUI.build(m_config.game.logic(), m_config.game.drawables(), m_config.view, m_iconSettings, selectedSet, m_input->ui().mouseoverObject(), m_iconOps);
+	// lane UI-4: the selection markers (RW 0x67580E / 0x86F4EE / 0x4B2A9B, GameClient/SelectionDecals.h) on the client clock
+	m_selectionDecals = BuildSelectionDecals(m_config.game.logic(), &m_config.game.drawables(), m_config.game.players().getLocalPlayer(), selected, m_decalSettings,
+		m_clientFrames);
 	updateRadarEvents();
 }
 
@@ -477,6 +538,40 @@ void InGameHud::registerHotkeys()
 	add(m_bar->palantirButtons(), true);
 	add(m_bar->sideButtons(), false);
 	add(m_bar->offBarButtons(), false); // lane INPUT-1 r2: every command window registers (the horde's Attack Move: "&Attack Move", the A key)
+	// lane UI-4: the hero bar's keys (InGameHeroSelectInterface: NonCommand_SelectNearestBuilder from its ctor, NonCommand_SelectAllHeroes while the select-all
+	// button shows, RW 0x92C0A2 / 0x92C1F2): the character after '&' of the command button's TextLabel (RW 0x75A7CB)
+	if (m_heroSelect && m_heroSelect->attached() && TheCommandStore && m_config.gameText)
+	{
+		m_heroHotkeysSelectAll = m_heroSelect->selectAllShown();
+		auto addAction = [&](const char *button, std::function<bool()> run) {
+			const CommandButton *b = TheCommandStore->findCommandButton(button);
+			std::u16string text;
+			if (!b || b->m_textLabel.empty() || !m_config.gameText->fetch(b->m_textLabel.front(), text))
+			{
+				return;
+			}
+			HotKeyTranslator::Entry e;
+			e.key = HotKeyTranslator::hotkeyOf(text);
+			if (e.key == 0)
+			{
+				return;
+			}
+			e.availability = HotKeyTranslator::Availability::Enabled;
+			e.run = std::move(run);
+			entries.push_back(e);
+		};
+		addAction("NonCommand_SelectNearestBuilder", [this]() {
+			m_heroSelect->selectNearestBuilder(false);
+			return true;
+		});
+		if (m_heroHotkeysSelectAll)
+		{
+			addAction("NonCommand_SelectAllHeroes", [this]() {
+				m_heroSelect->selectAllHeroes();
+				return true;
+			});
+		}
+	}
 	m_input->hotKeyTranslator().setEntries(std::move(entries));
 }
 
@@ -614,6 +709,10 @@ bool InGameHud::radarClick(HudInput::Button button, int x, int y, int timeMs)
 
 bool InGameHud::isOverGui(int x, int y)
 {
+	if (hud6OverGui(x, y)) // lane HUD-6: the radial bubbles
+	{
+		return true;
+	}
 	float sq[4];
 	if (radarSquare(sq) && (float)x >= sq[0] && (float)x <= sq[2] && (float)y >= sq[1] && (float)y <= sq[3])
 	{
@@ -639,6 +738,7 @@ void InGameHud::mouseMove(int x, int y, int keyState)
 	{
 		m_wm->postMouseMove(sx, sy);
 	}
+	hud6MouseMove(x, y); // lane HUD-6
 	m_input->mouseMove(x, y, keyState);
 }
 
@@ -646,6 +746,11 @@ void InGameHud::mouseButton(HudInput::Button button, bool down, int x, int y, in
 {
 	const auto worldContext = enterContext(); // this world's stores for the whole call (see InGameHud.h)
 	const bool over = isOverGui(x, y);
+	if (hud6MouseButton(button, down, x, y)) // lane HUD-6: a radial bubble took the press (the world sees neither it nor its release)
+	{
+		m_input->mouseButton(button, down, x, y, keyState, timeMs, doubleClick, true);
+		return;
+	}
 	// lane SPELL-2: a spell book power waiting for its target takes the next click on the ground (left: cast there, right: cancel)
 	if (m_spellBar.targeting() && down && !over && !m_store)
 	{
@@ -741,5 +846,6 @@ std::vector<std::string> InGameHud::stops() const
 	{
 		out.push_back(l);
 	}
+	hud6Stops(out); // lane HUD-6
 	return out;
 }

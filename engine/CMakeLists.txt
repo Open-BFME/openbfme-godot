@@ -141,6 +141,7 @@ include(cmake/Combat4.cmake)    # COMBAT-4: shockwaves, siege crews in motion, c
 include(cmake/Hud4.cmake)       # HUD-4: every command reachable, every hotkey (appends to OPENBFME_SIM_SOURCES; OPENBFME_HUD4_TESTS)
 include(cmake/Qa2fix.cmake)     # QA2-FIX: a player's wall span through the HUD, the lobby after a game (OPENBFME_QA2FIX_TESTS)
 include(cmake/Hud5.cmake)       # HUD-5: the owner's first Windows session (OPENBFME_HUD5_CLIENT_SOURCES / OPENBFME_HUD5_TESTS)
+include(cmake/Hud6.cmake)       # HUD-6: radial bubbles, side bar frame, help box (OPENBFME_HUD6_CLIENT_SOURCES / OPENBFME_HUD6_TESTS)
 include(cmake/Exit1.cmake)      # EXIT-1: the horde member update, stale MOVING (appends to OPENBFME_SIM_SOURCES; OPENBFME_EXIT1_TESTS)
 include(cmake/Decomp1.cmake)    # DECOMP-1: stops closed with the decompilation's progress (appends to OPENBFME_SIM_SOURCES; OPENBFME_DECOMP1_TESTS)
 include(cmake/Play1.cmake)      # PLAY-1: the tribute, the placement ghost (appends to OPENBFME_SIM_SOURCES; OPENBFME_PLAY1_SOURCES / _TESTS)
@@ -181,6 +182,7 @@ add_library(openbfme_core STATIC
     ${OPENBFME_SCRIPT1_SOURCES}
     ${OPENBFME_CAMP1_SOURCES}
     ${OPENBFME_HUD5_CLIENT_SOURCES}
+    ${OPENBFME_HUD6_CLIENT_SOURCES}
     ${OPENBFME_CAH1_SOURCES}
     ${OPENBFME_CAMP2_SOURCES}
     src/Common/AsciiString.cpp
@@ -444,6 +446,7 @@ add_library(openbfme SHARED
     ${OPENBFME_UI2_GODOT_SOURCES}
     ${OPENBFME_UI4_GODOT_SOURCES}
     ${OPENBFME_HUD4_GODOT_SOURCES}
+    ${OPENBFME_HUD6_GODOT_SOURCES}
     ${OPENBFME_CAH1_GODOT_SOURCES})
 target_sources(openbfme PRIVATE ${OPENBFME_SIM_SOURCES_GODOT}) # the simulation sources of the extension (listed in the manifest)
 target_link_libraries(openbfme PRIVATE openbfme_core godot-cpp)
@@ -544,6 +547,7 @@ add_executable(openbfme_tests
     ${OPENBFME_DECOMP1_TESTS}
     ${OPENBFME_PLAY1_TESTS}
     ${OPENBFME_HUD5_TESTS}
+    ${OPENBFME_HUD6_TESTS}
     ${OPENBFME_CAH1_TESTS}
     ${OPENBFME_MOVE3_TESTS}
     ${OPENBFME_INPUT1_TESTS}

@@ -103,13 +103,12 @@ TEST_CASE("ui4 retail: every template's SelectPortrait names a mapped image whos
 		}
 	}
 	MESSAGE(withPortrait << " templates with a SelectPortrait, " << missing.size() << " unresolved");
-	for (const std::string &m : missing)
+	if (missing.size() != 212)
 	{
-		MESSAGE(m);
-	}
-	for (const std::string &k : keyMissing)
-	{
-		MESSAGE("hero / builder without a portrait: " << k);
+		for (const std::string &m : missing)
+		{
+			MESSAGE(m);
+		}
 	}
 	CHECK(withPortrait == 1346);
 	// the retail data's own gaps (RotWK's lookup RW 0x73CF31 finds no image for them either and logs "is looking for Portrait ... but can't find

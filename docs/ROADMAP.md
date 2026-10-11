@@ -168,6 +168,14 @@ of the 7 factions, play like retail; every unit, hero, power and upgrade works.
 - SPELL-1: sciences, the spellbook, power points, special powers and their
   modules (SpecialPowerModule, SpecialAbilityUpdate, OCLSpecialPower, ...).
 - HERO-1: heroes, revive, hero abilities, level-ups.
+- Ability autocast (owner 2026-10-10): right-click a hero's ability button to
+  toggle autocast (retail BFME2 / RotWK; the button gets a green glowing ring,
+  e.g. the Witch-king's Morgul Blade; reference
+  owner-shots/hud6/retail-6-autocast.png). Needs the autocast flag per special
+  power (RotWK's AutoAbility / autocast logic in the binary), the AI casting it
+  when the conditions hold (deterministic, hashed), the right-click toggle and
+  the glow art. It changes the simulation, so it needs pins and review. Not
+  started.
 - AIP-1: the skirmish AI player (AIData.ini, build lists, attack waves,
   difficulty levels), Wild and Angmar AI included.
 - FACTION-1..7: per-faction exhaustive tests (every unit trains, fights,
@@ -251,6 +259,10 @@ fast map loads.
   frame pacing and smooth interpolation between logic frames.
 - PERF-4: loading and memory: archive caching, parallel asset decode, startup
   and map-load times.
+- FSR 3 / DLSS through plugins (later). The OpenBFME display options (OPTS-1)
+  offer Godot 4.7's own scalers: bilinear, FSR 1 and FSR 2 (Forward+). FSR 3
+  frame generation, DLSS and XeSS are not part of Godot 4.7; they come later
+  through GDExtension plugins, as further choices of the same Upscaling option.
 
 ### M9 - Campaigns, War of the Ring and the rest
 

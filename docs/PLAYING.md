@@ -16,6 +16,8 @@ files.
 - [Updates](#updates)
 - [Logs](#logs)
 - [The free camera](#the-free-camera)
+- [Display options](#display-options)
+- [The hero bar and selection](#the-hero-bar-and-selection)
 - [Controls](#controls)
 - [Known issues](#known-issues)
 - [Troubleshooting](#troubleshooting)
@@ -180,6 +182,61 @@ It changes only the camera; the game itself plays the same.
 - On the command line: `-- --free-camera`.
 - In `Options.ini`: `OpenBFMEFreeCamera = yes`.
 
+## Display options
+
+The original **Options** screen stays as it was. OpenBFME's own display
+options are an addition: in **Options** (from the main menu, or from the game
+menu during a game) press **OPENBFME** under the Audio Controls panel. Every
+change shows at once; **Accept** keeps it, **Cancel** or **Esc** puts back what
+you had, **Reset to defaults** sets the defaults below.
+
+| Option | Choices | Default |
+|---|---|---|
+| Window mode | Windowed, Borderless window, Fullscreen | Windowed |
+| Resolution | the window's size: common sizes that fit your monitor, and the monitor's own size | the size the window has |
+| Vertical sync | On, Off, Adaptive | On |
+| Frame rate limit | Off, 30, 60, 120, 144, 240 fps or a custom number | Off |
+| Show the frame rate | frames per second and the frame time in the top-left corner | off |
+| Render scale | 50% to 100% of the window's pixels for the 3D view (menus and the HUD stay sharp) | 100% |
+| Upscaling | Bilinear, AMD FSR 1, AMD FSR 2 | Bilinear |
+
+- **Fullscreen** is exclusive full screen on Windows; on Linux it is the same
+  as **Borderless window**. Both cover the monitor at its own resolution, so
+  *Resolution* only applies to a window; lower the *Render scale* instead.
+- **FSR 1** sharpens a lower render scale; **FSR 2** also smooths edges, even
+  at 100%. The game uses Godot's Forward+ renderer, which has both. (With
+  Godot's Mobile renderer only FSR 1 would be offered, with Compatibility
+  only Bilinear.) FSR 3 and DLSS are not available yet.
+- **Keys** (OpenBFME only; no original key uses them): **F11** shows or hides
+  the frame rate, **Alt+Enter** switches between a window and full screen.
+- The settings are kept in `openbfme-display.cfg` next to `Options.ini` in
+  the game's user folder (see [Logs](#logs) for where that is). For one run,
+  `-- --res=1280x720`, `-- --vsync=off`, `-- --max-fps=60` and `-- --fps`
+  override them without changing the file.
+
+## The hero bar and selection
+
+- **The hero bar** runs along the bottom of the screen, beside the Palantir.
+  Its first button is your builders: it shows how many are idle, and a click
+  selects the nearest idle one. Each of your heroes follows with their
+  portrait, health and rank. Click a portrait to select that hero; click it
+  again while the hero is the only one selected to move the camera to them.
+  The last button selects all your heroes. The original's keys for "select
+  nearest builder" and "select all heroes" (from your CommandMap.ini) do the
+  same. A hero who dies leaves the bar and is revived from the fortress, as
+  in the original.
+- **Selection rings.** Selected units show the original's ring under them in
+  your colour; a battalion gets one outline around all its soldiers, a hero
+  the rune ring. Pointing at a unit without clicking shows no ring, and
+  buildings get none, as in the original.
+- **Build bubbles.** A selected building shows its buttons (units to train,
+  upgrades, the fortress's heroes) as round bubbles around it. Right-click a
+  bubble to cancel what it queued.
+- **The builder's side panel.** With a builder selected, the buildings it can
+  build are listed in the carved side panel.
+- **Help boxes.** Hold the pointer over a bubble or a Palantir button to see
+  its name, key, cost and description.
+
 ## Controls
 
 OpenBFME reads the key bindings from **your install's own CommandMap.ini**, so
@@ -203,6 +260,8 @@ the keys are the original game's. In particular:
 | Esc | the game menu (Resume, Options, Restart; LAN: Forfeit, Exit) | same |
 | Shift+Up / Shift+Down | nothing | same: 2.01 has no action for them |
 | Ctrl+Z | free camera on / off | **OpenBFME only** (no original key uses Ctrl+Z) |
+| F11 | frame rate counter on / off | **OpenBFME only** (no original key uses F11) |
+| Alt+Enter | window / full screen | **OpenBFME only** (no original key uses Alt+Enter) |
 
 On a German keyboard layout, Y and Z swap as in the original.
 
@@ -263,6 +322,17 @@ recorded stop in [STOPS.md](STOPS.md); the ID is given for reference.
   but can't be saved under a name, and there are no replay controls (S-1125,
   S-1126). The score screen's graphs are simplified (S-1063).
 - LAN: the disconnect screen has no chat (S-1123).
+
+**In-game interface**
+- Hero bar: pointing at a hero's portrait shows no help box, the portrait does
+  not flash when the hero is attacked, and a Create-a-Hero hero does not show
+  its own picture (S-2521, S-2703).
+- Help boxes: hero ability, spell, repair and revive buttons don't show their
+  cost yet, and the spell book has no help box (S-2702, S-2703).
+- Build bubbles don't flash and don't show how many units are queued
+  (S-2701).
+- Selection rings always use the highest-detail look, whatever the detail
+  setting (S-2522).
 
 There are many more, smaller stops; the README gives the current count.
 
