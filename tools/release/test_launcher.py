@@ -18,6 +18,7 @@ import shutil
 import subprocess
 import sys
 import tarfile
+import tempfile
 import time
 from pathlib import Path
 
@@ -582,6 +583,58 @@ def exe_sha(archive: bytes) -> str:
     with tarfile.open(fileobj=io.BytesIO(archive), mode="r:gz") as t:
         m = next(m for m in t.getmembers() if m.name.endswith("/OpenBFMELauncher.x86_64"))
         return hashlib.sha256(t.extractfile(m).read()).hexdigest()
+
+
+# ---- REPRO-1: the launcher package is the same bytes whatever order the host's file system lists the project in --------------------------
+
+def _creation_order_dir() -> Path | None:
+    """A folder on a file system that lists a directory in creation order (tmpfs: newest first), where two stagings created in opposite
+    orders are listed differently; None if there is none. On ext4 (both CI hosts, the Deck) the order is a hash seeded per file system,
+    the cause of v0.3.0-preview.5's unreproducible launchers, which one host alone never shows."""
+    for base in (os.environ.get("OPENBFME_TMPFS", ""), "/dev/shm"):
+        if not base or not os.path.isdir(base) or not os.access(base, os.W_OK):
+            continue
+        listed = []
+        for order in (("a", "b", "c"), ("c", "b", "a")):
+            d = Path(tempfile.mkdtemp(dir=base, prefix="openbfme-order."))
+            for n in order:
+                (d / n).touch()
+            listed.append(os.listdir(d))
+            shutil.rmtree(d)
+        if listed[0] != listed[1]:
+            return Path(base)
+    return None
+
+
+def test_the_launcher_package_does_not_depend_on_the_directory_order():
+    """REPRO-1: the package build_launcher.sh makes for a release (the committed key, no test options) is byte for byte the same when
+    every directory of the staged project lists its files in the opposite order (--stage-reverse on a creation-order file system).
+    Godot applies a preset's include_filter / exclude_filter in directory order, so launcher/export_presets.cfg keeps both empty and
+    addons/pack_files picks the files; with the old filters the two packages differed (build_info.json and the OFL licences moved)."""
+    if not _templates_ok():
+        pytest.skip("SKIP the reproducibility test: the Godot 4.7.2 Linux export templates are not installed")
+    base = _creation_order_dir()
+    if base is None:
+        pytest.skip("SKIP the reproducibility test: no file system here lists a directory in creation order (set OPENBFME_TMPFS to a tmpfs)")
+    d = Path(tempfile.mkdtemp(dir=base, prefix="openbfme-repro."))
+    try:
+        built = []
+        for extra in ([], ["--stage-reverse"]):
+            out = d / f"out{len(built)}"
+            r = subprocess.run([str(HERE / "build_launcher.sh"), "--out", str(out), "--version", "v1.2.3", "--commit", COMMIT, "--repo",
+                                TEST_REPO, "--key-file", str(LAUNCHER / "release_key.pub"), "--mtime", "1700000000", "--platforms", "linux",
+                                "--worktree", "--godot", GODOT, *extra], capture_output=True, text=True, timeout=900)
+            assert r.returncode == 0, r.stdout[-3000:] + r.stderr[-3000:]
+            built.append((out / "openbfme-launcher-v1.2.3-linux-x64.tar.gz").read_bytes())
+        if built[0] != built[1]:
+            for i, b in enumerate(built):
+                (d / f"out{i}.tar.gz").write_bytes(b)
+            r = subprocess.run([sys.executable, str(HERE / "make_archive.py"), "--diff", str(d / "out0.tar.gz"), str(d / "out1.tar.gz")],
+                               capture_output=True, text=True)
+            pytest.fail("the launcher package depends on the order the file system lists the project in:\n" + r.stdout[-3000:])
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
 
 
 def leftovers(inst: Path, tmp: Path) -> list[str]:

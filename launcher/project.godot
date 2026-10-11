@@ -29,6 +29,11 @@ window/size/viewport_height=720
 window/stretch/mode="canvas_items"
 window/stretch/aspect="expand"
 
+[editor_plugins]
+
+; lane REPRO-1: adds the launcher's non-resource files to the pack in a fixed order (addons/pack_files/export_plugin.gd)
+enabled=PackedStringArray("res://addons/pack_files/plugin.cfg")
+
 [rendering]
 
 renderer/rendering_method="gl_compatibility"
