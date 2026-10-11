@@ -230,7 +230,7 @@ TEST_CASE("smooth1 r4: StancesBehavior statistics of two logic owners (two indep
 	REQUIRE(ma);
 	REQUIRE(mb);
 	const unsigned long long before = StancesBehavior::stats().listenerNotices.load(std::memory_order_relaxed);
-	constexpr int kSets = 10000;
+	static constexpr int kSets = 10000; // static: the capture-less lambda below reads it (MSVC C3493 for a non-static local)
 	auto run = [](StanceTemplateStore *store, StancesBehavior *module) {
 		setStanceStore(store); // this thread's slot (thread_local)
 		for (int i = 0; i < kSets; ++i)

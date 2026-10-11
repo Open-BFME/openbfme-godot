@@ -85,7 +85,7 @@ std::vector<std::string> corpus()
 		const std::uint32_t u = (std::uint32_t)(rng() % 0x7E000000u) + 0x00800000u; // normal floats
 		float lo;
 		std::memcpy(&lo, &u, sizeof lo);
-		const double mid = ((double)lo + (double)std::nextafter(lo, 3.5e38f)) / 2.0; // exact in binary64
+		const double mid = ((double)lo + (double)std::nextafter(lo, HUGE_VALF)) / 2.0; // exact in binary64 (3.5e38f, the old target, is out of float range: MSVC C2177)
 		char buf[64];
 		std::snprintf(buf, sizeof buf, "%.40g", mid);
 		out.push_back(buf);
