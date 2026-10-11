@@ -1679,7 +1679,10 @@ bool AptTextInst::getOwn(const std::string &name, AptValue &out) const
 	}
 	if (n == "textcolor")
 	{
-		out = AptValue::number((float)(colorArgb & 0xFFFFFFu)); // 0x00AEFE89: the low 24 bits as a number
+		// 0x00AEFE89 (RotWK RW 0xB040C9): the low 24 bits through AptInteger::Create (BFME2 0x00AD8520, RW 0xAEC6D0), an INTEGER. Lane UI-4: it was a
+		// float, so Options.apt's ChangeTextColor(clip, colorTextDark, "0x8AC14D") never matched (a float against a hex string compares with atof,
+		// which reads 0) and the authored green labels kept their colour; an integer compares with the string's strtol value, as in RotWK
+		out = AptValue::integer((std::int32_t)(colorArgb & 0xFFFFFFu));
 		return true;
 	}
 	return AptCharacterInst::getOwn(name, out);

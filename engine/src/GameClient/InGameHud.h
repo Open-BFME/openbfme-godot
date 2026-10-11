@@ -22,8 +22,15 @@
 #include "GameClient/GUI/ShellServices.h"
 #include "GameClient/GUI/WindowManager.h"
 #include "GameClient/ControlBar.h"
+#include "GameClient/ControlBarRadialMenu.h"
+#include "GameClient/CommandButtonHelp.h"
+#include "GameClient/InGameHelpBox.h"
+#include "GameClient/GUI/GameWindowManager.h"
+#include "GameClient/GUI/Image.h"
 #include "GameClient/DrawableIconUI.h"
 #include "GameClient/HudInput.h"
+#include "GameClient/InGameHeroSelect.h"
+#include "GameClient/SelectionDecals.h"
 #include "GameClient/Radar.h"
 #include "GameClient/UnitVoiceResponse.h"
 #include "GameLogic/Object/RetailObjectWorld.h"
@@ -31,6 +38,7 @@
 #include "Libraries/Source/Apt/AptLoad.h"
 
 #include <memory>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -112,6 +120,12 @@ public:
 	bool openSpellStore(std::string *error = nullptr);
 	void closeSpellStore();
 	AptSpellStore *spellStore() { return m_store.get(); }
+	// lane UI-4: the selection markers of this frame (SelectionDecals.h); the device gives GameData's settings and draws them
+	void setSelectionDecalSettings(const SelectionDecalSettings &s) { m_decalSettings = s; }
+	const std::vector<SelectionDecal> &selectionDecals() const { return m_selectionDecals; }
+	const SelectionDecalSettings &selectionDecalSettings() const { return m_decalSettings; }
+	// lane UI-4: the Palantir's hero bar (InGameHeroSelect.h)
+	InGameHeroSelect *heroSelect() { return m_heroSelect.get(); }
 	// lane HUD-5: the drawable decorations (health bars, construction text, veterancy marks, GameClient/DrawableIconUI.h): the device gives the settings (GameData,
 	// Options.ini, its mapped images, the camera's zoom) and draws the ops of the last update under the Palantir
 	void setIconUISettings(const IconUISettings &s) { m_iconSettings = s; }
@@ -131,7 +145,35 @@ public:
 	// SMOOTH-1: render frames whose update was skipped because the logic worker was busy
 	unsigned long long skippedUpdates() const { return m_skippedUpdates; }
 
+	// ---- lane HUD-6 (InGameHudHud6.cpp): the radial command bubbles, the help box ----
+	ControlBarRadialMenu &radialMenu() { return m_radial; }
+	InGameHelpBox &helpBox() { return m_helpBox; }
+	const HelpBoxSettings &helpBoxSettings() const { return m_helpSettings; }
+	// the device's mapped images (the overlays' and icons' sizes) and font metrics (the help's text); without metrics the help measures with the
+	// headless stand-in (S-176)
+	void setMappedImages(const MappedImageCollection *images) { m_hud6Images = images; }
+	void setFontMetrics(FontMetricsSource *metrics) { m_hud6Metrics = metrics; }
+	// the device draws the help box's content clip (its `_type` is helpBox().renderName()) at (x, y, w, h) window pixels: RW 0x92E2AC
+	void helpBoxRender(float x, float y, float w, float h, std::vector<HelpDrawOp> &out);
+	int tooltipDelayMs() const { return m_tooltipDelayMs; }
+
 private:
+	void bootHud6();
+	void updateHud6(ObjectID context, const std::string &faction, double seconds);
+	bool hud6OverGui(int x, int y) const;
+	void hud6MouseMove(int x, int y);
+	bool hud6MouseButton(HudInput::Button button, bool down, int x, int y);
+	void hud6Stops(std::vector<std::string> &out) const;
+	bool hoveredAptButton(InGameHelpBox::Provider &p, ControlBarButton &b);
+	ControlBarRadialMenu m_radial;
+	InGameHelpBox m_helpBox;
+	HelpBoxSettings m_helpSettings;
+	const MappedImageCollection *m_hud6Images = nullptr;
+	FontMetricsSource *m_hud6Metrics = nullptr;
+	DefaultFontMetrics m_hud6DefaultMetrics;
+	std::uint32_t m_hud6ClockMs = 0;
+	int m_tooltipDelayMs = 0;
+	std::vector<std::string> m_hud6Errors;
 	unsigned long long m_skippedUpdates = 0;
 	Config m_config;
 	AptArchiveFileSource m_source;
@@ -152,6 +194,12 @@ private:
 	std::vector<std::string> m_errors;
 	InGameSpellBookModel m_spellBar;          // lane SPELL-2
 	std::unique_ptr<AptSpellStore> m_store;   // lane SPELL-2
+	std::unique_ptr<InGameHeroSelect> m_heroSelect; // lane UI-4: the Palantir's hero bar
+	unsigned m_heroTrackFrame = ~0u;               // lane UI-4: the logic frame the hero bar's object list was taken at
+	bool m_heroHotkeysSelectAll = false;           // lane UI-4: the select-all key is registered
+	std::set<std::string> m_heroCommands;          // lane UI-4: the hero bar command prefixes registered
+	SelectionDecalSettings m_decalSettings;        // lane UI-4
+	std::vector<SelectionDecal> m_selectionDecals; // lane UI-4
 	DrawableIconUI m_iconUI;                  // lane HUD-5
 	IconUISettings m_iconSettings;
 	std::vector<IconUIOp> m_iconOps;

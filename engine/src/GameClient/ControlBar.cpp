@@ -300,6 +300,14 @@ void ControlBar::update()
 					continue;
 				}
 				cb.state = evaluate(*b, *obj);
+				// lane HUD-6: RW 0x943B39 .. 0x943B4C: a disabled button (availability 0) with the option HIDE_WHILE_DISABLED (CommandButton + 0x1E & 0x40,
+				// option bit 22 of RW 0xDA4C88) is hidden (3), unless the object is another player's while the local player is active (bl, RW 0x943B18):
+				// the Mordor fortress's spire fireball before its upgrade
+				const bool otherPlayers = obj->getControllingPlayer() != local;
+				if (cb.state == ButtonState::Restricted && b->hasOption(0x400000u) && !otherPlayers)
+				{
+					continue;
+				}
 				if (cb.state == ButtonState::Hidden)
 				{
 					continue;

@@ -872,6 +872,12 @@ TEST_CASE("TextField.textColor: the instance starts with the file colour; the se
 	AptValue v;
 	REQUIRE(a->getOwn("textColor", v));
 	CHECK(v.toInteger() == 0x0000FF);
+	// lane UI-4: an INTEGER (AptInteger::Create, RW 0xB040C9 -> RW 0xAEC6D0), so it equals the hex string a movie compares it with
+	// (Options.apt: ChangeTextColor(clip, colorTextDark, "0x8AC14D"), Equals2's integer branch takes the string's strtol value)
+	CHECK(v.isInteger());
+	CHECK(AptOps::equals2(AptValue::string("0x0000FF"), v, 7).asBool());
+	CHECK(AptOps::equals2(v, AptValue::string("0x0000FF"), 7).asBool());
+	CHECK_FALSE(AptOps::equals2(AptValue::string("0x0000FE"), v, 7).asBool());
 	a->setOwn("TEXTCOLOR", AptValue::number((float)0x7FAABB));
 	REQUIRE(a->getOwn("textColor", v));
 	CHECK(v.toInteger() == 0x7FAABB);
@@ -1065,20 +1071,9 @@ TEST_CASE("retail corpus canvas: every movie translates; textures load; the rend
 	}
 	CHECK(movies == 86);
 	CHECK(withContent > 60);
-	const std::set<std::string> expected = {
-		"cahpowers shape 134: image 35 has no .dat entry",
-		"cahpowers shape 36: image 35 has no .dat entry",
-		"mpgamesetup shape 373: image 372 has no .dat entry",
-		"onlinequickmatch shape 2: image 1 has no .dat entry",
-		"options shape 133: image 86 has no .dat entry",
-		"options shape 87: image 86 has no .dat entry",
-		"playertribute shape 45: image 18 has no .dat entry",
-		"scorescreen shape 162: image 161 has no .dat entry",
-		"scorescreen shape 34: image 33 has no .dat entry",
-		"scorescreen shape 37: image 36 has no .dat entry",
-		"skirmish shape 40: image 39 has no .dat entry",
-		"timeline shape 71: image 70 has no .dat entry",
-	};
+	// lane HUD-6 (S-139 closed): the 12 ids S-139 listed are image characters an import fills (MenuExport's NickHeaderGradient.tga, Ready_PictureFrame.tga,
+	// FadeIn_Top / _Bottom.tga, ButtonlogIn_up.tga); the renderer finds them in the exporting movie's .dat now, so no shape names an unmapped image
+	const std::set<std::string> expected = {};
 	std::string got;
 	for (const std::string &e : errors)
 	{
@@ -1127,7 +1122,7 @@ TEST_CASE("stops S-130..S-139 are registered in docs/STOPS.md with the identitie
 		{ "S-136", { "placeholders", "static-text-not-drawn", "RenderImage", "LogoWithShadow" } },
 		{ "S-137", { "key-codes", "mouse-wheel", "click-through" } },
 		{ "S-138", { "SHELL push" } },
-		{ "S-139", { "has no .dat entry" } },
+		{ "S-2704", { "has no .dat entry" } }, // lane HUD-6: S-139 is closed (imported images), its report is S-2704's
 	};
 	for (const Row &row : rows)
 	{

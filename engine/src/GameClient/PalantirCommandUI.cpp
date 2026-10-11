@@ -142,6 +142,11 @@ bool rankAndProgress(const Object &obj, int &rank, float &progress)
 }
 } // namespace
 
+bool objectRankAndProgress(const Object &obj, int &rank, float &progress)
+{
+	return rankAndProgress(obj, rank, progress);
+}
+
 RankInfo rankInfo(const HudContext &ctx, const Object &obj)
 {
 	RankInfo r;

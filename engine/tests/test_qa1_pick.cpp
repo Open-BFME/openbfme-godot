@@ -60,10 +60,14 @@ struct PickRig
 	}
 	void deselect(int timeMs)
 	{
-		const ICoord2D px = rig.screenOf(Coord3D{ rig.view.position().x, rig.view.position().y, 0.0f });
+		// lane HUD-6: off the centre (a selected structure's radial bubbles ring over it there and take a right press, as retail's command windows do)
+		ICoord2D px = rig.screenOf(Coord3D{ rig.view.position().x, rig.view.position().y, 0.0f });
+		px.x += 300;
+		px.y -= 150;
 		hud->mouseButton(HudInput::Button::Right, true, px.x, px.y, 0, timeMs);
 		hud->mouseButton(HudInput::Button::Right, false, px.x, px.y, 0, timeMs + 40);
 		frames(4);
+		CHECK_MESSAGE(hud->input().ui().selected().empty(), "the right press at (", px.x, ", ", px.y, ") did not empty the selection"); // HUD-6 review: the deselect is real
 	}
 };
 } // namespace

@@ -31,7 +31,9 @@
 #include <algorithm>
 #include <cmath>
 
+#include <map>
 #include <memory>
+#include <set>
 #include <string>
 
 namespace
@@ -435,4 +437,87 @@ TEST_CASE("ui4 retail: the nav entries' dim look is authored: MenuExport's menu1
 	}
 	CHECK(upLabel);
 	CHECK(overLabel);
+}
+
+TEST_CASE("ui4 retail: Options.apt recolours its green labels (authored 0x8AC14D) to _root.colorTextDark through ChangeTextColor; none stays green")
+{
+	// the owner saw green labels (Music, Sound FX, Voice, Ambient, Movie, EAX3, High Audio Quality, Online IP, Send Delay, Port Number). The green is
+	// RotWK's own: the text characters carry 0x8AC14D in Options.apt, and each panel's frame script calls _root.ChangeTextColor(this,
+	// _root.colorTextDark, "0x8AC14D"), which gives every text field whose textColor equals that string the colour "0xC0EEFF". The compare needs the
+	// textColor getter's INTEGER (RW 0xB040C9).
+	OPENBFME_REQUIRE_RETAIL(mount);
+	MenuShell fx(mount);
+	std::string error;
+	REQUIRE_MESSAGE(fx.wm->invokeAS(fx.menu()->level(), "SettingsButton", {}, nullptr, &error), error);
+	fx.tick(120);
+	REQUIRE(fx.shell->top()->filename() == "Options.apt");
+	AptRenderList list;
+	fx.wm->apt().buildRenderList(list);
+	int texts = 0, green = 0, recoloured = 0;
+	for (const AptRenderCommand &c : list.commands)
+	{
+		if (c.kind != AptRenderCommand::Kind::Text)
+		{
+			continue;
+		}
+		++texts;
+		if (c.textColor[0] == 0x8A && c.textColor[1] == 0xC1 && c.textColor[2] == 0x4D)
+		{
+			++green;
+			MESSAGE("still green: " << c.path);
+		}
+		if (c.textColor[0] == 0xC0 && c.textColor[1] == 0xEE && c.textColor[2] == 0xFF)
+		{
+			++recoloured;
+		}
+	}
+	CHECK(texts > 20);
+	CHECK(green == 0);
+	CHECK(recoloured >= 13); // the 15 authored-green labels of the basic page, less the two of the Display panel's Graphics / Resolution rows it may hide
+}
+
+TEST_CASE("ui4 retail: the credits' minor titles (CreditsMinorTitleFont, bold) are measured and drawn with the bold font, the others not (Sol r1)")
+{
+	OPENBFME_REQUIRE_RETAIL(mount);
+	const GlobalLanguage language = loadLanguage(mount.fs);
+	// FixedMetrics that remembers the bold flag of every font it measured, by point size
+	struct BoldMetrics : FixedMetrics
+	{
+		std::map<int, std::set<bool>> seen;
+		int fontHeight(const GameFont &font) override
+		{
+			seen[font.pointSize].insert(font.bold);
+			return FixedMetrics::fontHeight(font);
+		}
+		int textWidth(const GameFont &font, const UnicodeString &text) override
+		{
+			seen[font.pointSize].insert(font.bold);
+			return FixedMetrics::textWidth(font, text);
+		}
+	} metrics;
+	CreditsManager credits;
+	REQUIRE_NOTHROW(credits.load(mount.fs, nullptr, language, metrics, 1024));
+	credits.init();
+	GadgetDrawList out;
+	credits.draw(0, 0, 1024, 768, out);
+	std::map<int, std::set<bool>> drawn; // point size -> the bold flags of the texts drawn in it
+	for (int frame = 0; frame < 4000 && drawn[16].empty(); ++frame)
+	{
+		credits.update();
+		out.commands.clear();
+		credits.draw(0, 0, 1024, 768, out);
+		for (const GadgetDrawCommand &c : out.commands)
+		{
+			if (c.kind == GadgetDrawCommand::Kind::Text)
+			{
+				drawn[c.font.pointSize].insert(c.font.bold);
+			}
+		}
+	}
+	// CreditsMinorTitleFont "Albertus MT" 16 Yes: the POSITION lines; CreditsTitleFont 24 No; CreditsNormalFont 14 No
+	CHECK(drawn[16] == std::set<bool>{ true });
+	CHECK(metrics.seen[16] == std::set<bool>{ true });
+	CHECK(drawn[24] == std::set<bool>{ false });
+	CHECK(metrics.seen[24] == std::set<bool>{ false });
+	CHECK(metrics.seen[14] == std::set<bool>{ false });
 }

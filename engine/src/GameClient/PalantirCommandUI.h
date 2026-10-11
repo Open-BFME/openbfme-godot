@@ -56,6 +56,8 @@ struct RankInfo
 	bool operator==(const RankInfo &o) const { return type == o.type && rank == o.rank && progress == o.progress; }
 };
 RankInfo rankInfo(const HudContext &ctx, const Object &obj);
+// lane UI-4: RW 0x9D2437 on its own (the hero bar's rank and rank bar, InGameHeroSelect): false when the object has no rank; `progress` -1 at the last level
+bool objectRankAndProgress(const Object &obj, int &rank, float &progress);
 RankInfo rankInfoFor(const HudContext &ctx, ObjectID contextObject, const std::vector<ObjectID> &selected);
 
 std::vector<std::string> acceptanceStops();

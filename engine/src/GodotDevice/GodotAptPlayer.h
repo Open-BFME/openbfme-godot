@@ -151,6 +151,8 @@ public:
 	// lane PLAY-1: an entry of the user's Options.ini (the shell's OptionPreferences, as loaded at boot and saved by the Options screen); null when the
 	// file has no such key (the caller applies the retail default, e.g. GlobalData's for AlternateMouseSetup)
 	Variant get_option(const String &key) const;
+	Dictionary font_metrics(const String &name, int point_size, bool bold, const String &text) const; // lane UI-4
+	Array drawn_texts(bool clear); // lane UI-4: the gadgets' and render callbacks' texts drawn since the last clear
 	// lane PLAY-1: the live game PlayerTribute.apt shows and sends tribute in (a GameWorld; null when the game ends)
 	void set_tribute_world(Object *world);
 	// lane HUD-5: the players screen's Status rows (GUI/PlayerStatusInfo.h) from GameWorld.get_player_status_state(), built with the shell's factions, colours
@@ -209,6 +211,11 @@ public:
 	Dictionary get_member(int level, const String &path, const String &name);
 	// the game text of `label` ({ found, text }; a missing label is the retail "MISSING: 'label'" text and found false)
 	Dictionary fetch_text(const String &label);
+	// lane OPTS-1: the shell's skin for the OpenBFME options screen (a Godot UI drawn over the shell, not a retail screen): a mapped image as the gadget
+	// layer draws it ({ok, texture, region (texture pixels), size (the image's own size)}, or {ok false, error}) and the font a request (family name,
+	// stage pixel size) draws with ({font, size, fallback: the engine default because neither fontsubstitution.ini nor the corpus fonts have it})
+	Dictionary shell_mapped_image(const String &name);
+	Dictionary shell_font(const String &name, float size);
 	Dictionary get_timeline_stats(); // lane END-2
 	Dictionary quit_menu(const Dictionary &request);
 	Array list_buttons(int level);
@@ -235,6 +242,8 @@ public:
 	// The native hook draws the clips the movie tags for the engine.
 	void attach_window_manager(WindowManager *wm);
 	void set_native_hook(AptNativeHook *hook);
+	// lane HUD-6: the font the movie's texts draw with for (name, point size): fontsubstitution.ini, the corpus fonts (C++ only; the HUD's help box)
+	Ref<Font> font_for(const std::string &name, float size, float *drawSize);
 	// the shell mode's window manager and shell (null in the other modes) and a switch that hands the mouse and keys to the HUD node instead of this player (C++ only)
 	WindowManager *window_manager() const;
 	Shell *shell_object() const;

@@ -40,6 +40,8 @@ step "2 unpack"
 unzip -q "$LZIP" || die "unzip failed"
 LDIR=$D/openbfme-launcher-$TAG-windows-x64
 [ -f "$LDIR/OpenBFMELauncher.exe" ] || die "the zip has no OpenBFMELauncher.exe"
+# an unzip that does not restore the zip's modes (JonathanPC's ~/tools/bin/unzip) leaves the exe without x; under %TEMP% (drvfs) a no-op
+chmod +x "$LDIR/OpenBFMELauncher.exe"
 ls "$LDIR"
 mkdir appdata
 LOG=$D/appdata/OpenBFMELauncher/launcher.log

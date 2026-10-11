@@ -110,6 +110,20 @@ public:
 	std::string portraitKey() const { return levelPrefix() + "CommandUI.Portrait"; }
 	static std::vector<std::string> acceptanceStops();
 	static constexpr int kArcPositions = 6, kSidePositions = 12;
+	// lane HUD-6: the side command bar shows only for the control bar's context object when it is a DOZER the local player controls (RW 0x92F27D: template
+	// KindOf + 0x109 bit 0x40, its controlling player the local one); the HUD sets it every update
+	void setSideBarObject(bool localDozer) { m_sideBarGate = localDozer; }
+	// lane HUD-6: the side bar's SetButtonState calls made ("2 _show", "5 _hide"; the last 64) and the frames shown (+ 0xD8)
+	const std::vector<std::string> &sideBarCalls() const { return m_sideBarCalls; }
+	int sideBarCount() const { return m_sideCount; }
+	bool sideBarShown() const { return m_sideShown; }
+	// lane HUD-6: the help box movie (OnHelpBoxLoaded / OnHelpBoxUnloaded, RW 0x6D4F28: the argument is the clip) and the engine's calls into it and the
+	// other clips of the Palantir's level
+	void setHelpBoxHandler(std::function<void(const std::string &clip, bool loaded)> h) { m_helpBoxHandler = std::move(h); }
+	bool invoke(const std::string &path, const std::string &fn, const std::vector<std::string> &args) { return call(path, fn, args); }
+	int movieLevel() const { return level(); }
+	// lane HUD-6: the command button whose content holds the clip at `path` (a "_level<N>." target path): the arc's or the side bar's slot; false none
+	bool contentSlotAt(const std::string &path, bool &arc, int &slot) const;
 
 	// ---- lane SPELL-2: the spell book inside the Palantir (InGameSpellBook.apt; RotWK controller RW 0x93178C) ----
 	// TARGET FACTS (RotWK game.dat, caveat S-001): the controller registers OnAptInGameSpellBookLoaded (RW 0x931698: the movie's clip path, e.g. "SpellBookUI",
@@ -160,6 +174,12 @@ public:
 	// the clip state a command button of `state` with the CommandButton `options` shows (SetState); lane HUD-5: RW 0x9D2BEE (an active button is _up, a
 	// NONPRESSABLE one _static)
 	static const char *commandStateName(ButtonState state, std::uint32_t options);
+	// lane UI-4: the hero bar (InGameHeroSelect.h): AptPalantir::OnHeroSelectLoaded / Unloaded with the movie's clip path (the handler gets the last one when it is
+	// set later), a function of a clip of the Palantir's level, and a RenderImage key's image ("" removes it, RW 0x623790)
+	void setHeroSelectHandler(std::function<void(const std::string &clipPath, bool loaded)> handler);
+	const std::string &heroSelectPath() const { return m_heroSelectPath; }
+	bool callMovie(const std::string &path, const std::string &fn, const std::vector<std::string> &args) { return call(path, fn, args); }
+	void setNativeImage(const std::string &key, const std::string &image);
 	unsigned long long moviesCalls() const { return m_calls; }
 	const std::vector<std::string> &callErrors() const { return m_callErrors; }
 
@@ -179,12 +199,25 @@ private:
 	bool call(const std::string &path, const std::string &fn, const std::vector<std::string> &args);
 	unsigned m_radarPingCalls = 0; ///< lane RADAR-1
 	void syncFrames(const std::vector<ControlBarButton> &buttons, bool arc);
+	// lane HUD-6 (AptPalantirSideBar.cpp): the side command bar's update (AptInGameSideCommandBar::Impl, RW 0x92F27D / 0x92F082 / 0x92F015)
+	void syncSideBar(const ControlBar &bar);
+	void sideBarLoaded(const std::string &arg);
+	bool updateSideButtonVisibility(const std::vector<ControlBarButton> &buttons);
+	void hideSideButtons(int from);
+	std::string m_sidePrefix;            ///< + 0x18: the argument of OnAptInGameSideCommandBarLoaded (the movie's clip)
+	int m_sideCount = 0;                 ///< + 0xD8: the frames shown (SetButtonState "_show")
+	int m_sideKey[16] = {};              ///< slot + 8: the control bar window each shown frame belongs to (-1 none)
+	bool m_sideBarGate = false;
+	std::vector<std::string> m_sideBarCalls;
+	std::function<void(const std::string &, bool)> m_helpBoxHandler;
 	void syncLocal();
 	void syncPlayerStats(); // lane HUD-5: RW 0x6D5C0F
 	std::string levelPrefix() const;
 
 	std::function<void(int, bool)> m_press;
 	std::function<void(int)> m_spellPress;     // lane SPELL-2
+	std::function<void(const std::string &, bool)> m_heroSelect; // lane UI-4
+	std::string m_heroSelectPath;                                // lane UI-4: "" while the hero bar's movie is not loaded
 	std::function<void()> m_spellStoreOpen;    // lane SPELL-2: AptPalantir::OnBttnSpellStore
 	class ShellServices *m_services = nullptr; // lane END-2
 	std::string m_spellPath;

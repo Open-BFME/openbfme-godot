@@ -14,6 +14,8 @@ releases").
 Release notes. Every first-parent commit of A..B is one candidate (on the rebuild's branch a lane lands as one merge commit):
   * a `Release-note: <text>` line in its message is used as written (`Release-note: none` drops the commit; a text starting with
     `Fix:` goes under "What's fixed");
+  * an integration round's lane merge ("Merge lane/x (<sha>) into integ/pN: ...") gives no note: the round's release-notes commit
+    carries the player lines;
   * otherwise a commit that changes nothing a player runs (PLAYER_PATHS minus tests) is dropped, and the subject is reduced to plain
     words: the lane id, parenthesised details (binary addresses, stop ids, review verdicts) and everything after the first ';' are cut;
     a long first clause keeps only its head before ':'. Subjects that still read as lane jargon after that are dropped.
@@ -64,6 +66,9 @@ LANE_ID = re.compile(r"^(?:[A-Z][A-Z0-9]*(?:-[A-Z0-9]+)+|[A-Z][a-z]+\d+)(?: r\d+
 JARGON = re.compile(r"\bRW\b|0x[0-9A-Fa-f]{3,}|\bS-\d+|\bFB-\d+|\bSol\b|\b[A-Z]{2,}[0-9]*-[0-9A-Z]+\b|#\d|\br\d+\b|\bstack\d+\b|"
                     r"\bpins?\b|\bgate\b|\.(?:cpp|h|py|sh|gd|md)\b|\b[a-z]+[A-Z][A-Za-z]*(?:'s)?\b")
 FIXED = re.compile(r"\b(?:fix(?:es|ed)?|regression|crash(?:es|ed)?|no longer|stops?\b|instead of|bugs?|broken|wrong)\b", re.I)
+# an integration round's lane merge, "Merge lane/x (<sha>) into integ/p3: ...": its words are the integrator's summary for
+# reviewers; the round's player notes are its release-notes commit's `Release-note:` lines (preview.3 printed "Ce7997fd into integ/p3: ...")
+INTEG_MERGE = re.compile(r"^Merge \S+ \([0-9a-f]{7,40}\) into \S+", re.I)
 SKIP_START = re.compile(r"^(?:batch\b|roadmap\b|docs?\b|merge\b)", re.I)
 MAX_ITEM = 140
 # the public main's top level (the sync recipe: the archive sha's tree without archive/, plus PRIVACY.md); anything else is refused
@@ -146,6 +151,8 @@ def _unwrap(s: str) -> str:
 def player_line(subject: str) -> str | None:
     """a commit subject in plain words, or None when nothing a player would understand is left"""
     s = subject.strip()
+    if INTEG_MERGE.match(s):
+        return None
     if s.startswith("Merge "):
         i = s.find("(")
         if i < 0:

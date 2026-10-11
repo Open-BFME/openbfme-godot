@@ -309,7 +309,11 @@ TEST_CASE("retail: _patch201.big in two spellings shares the handle the pure mou
 	std::string base = install;
 	if (!base.empty() && base.back() != '\\' && base.back() != '/')
 	{
+#ifdef _WIN32
 		base += '\\';
+#else
+		base += '/'; // a backslash is a file-name character on Linux: "RotWK\\_patch201.big" is no file (the CI hosts' only suite failure)
+#endif
 	}
 	const size_t before = ArchiveHandle::liveHandles();
 	std::string error;

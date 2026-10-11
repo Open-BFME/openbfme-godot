@@ -3,10 +3,14 @@
 set(OPENBFME_UI4_CLIENT_SOURCES
     src/GameClient/GlobalLanguage.cpp
     src/GameClient/Credits.cpp
+    src/GameClient/InGameHeroSelect.cpp
+    src/GameClient/SelectionDecals.cpp
 )
 set(OPENBFME_UI4_GODOT_SOURCES
 )
 set(OPENBFME_UI4_TESTS
     tests/test_ui4_credits.cpp
     tests/test_ui4_portraits.cpp
+    tests/test_ui4_herobar.cpp
+    tests/test_ui4_selection.cpp
 )

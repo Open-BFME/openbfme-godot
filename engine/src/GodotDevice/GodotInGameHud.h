@@ -60,6 +60,9 @@ public:
 	Array get_command_map() const; ///< lane INPUT-1: the CommandMap records in the order the MetaEventTranslator tries them
 	// the HUD movie's own report (unverified rules, errors) and the stops
 	Dictionary get_report() const;
+	// lane HUD-6: { radial: { object, count, radius, centre, size, hilited, presses, buttons: [{ slot, rect, state, image, name }], errors }, help: { loaded,
+	// render_name, state, shown, width, helps_shown, draws, name, calls } }
+	Dictionary get_hud6_state() const;
 	// lane SMOOTH-1: the parts of the last _process in ms { hud_update_ms (the HUD: APT movie, control bar, radar, input), hud_camera_ms, hud_cursor_ms }
 	Dictionary get_frame_timings() const;
 	// lane BUILD-1: { placing, template, source, has_ghost, x, y, angle, legal (LegalBuildCode, 0 = may be placed) } of the building waiting for its site

@@ -17,6 +17,30 @@
  ],
  "excluded": [
   {
+   "glob": "src/GodotDevice/GodotHud6Draw.cpp",
+   "reason": "lane HUD-6: the device draw of the radial command bubbles and the help box (Godot canvas items): user interface, never read by the logic"
+  },
+  {
+   "glob": "src/GameClient/GUI/AptScreens/AptPalantirSideBar.cpp",
+   "reason": "lane HUD-6: the side command bar's frame calls into the Palantir movie (SetButtonState, FadeIn / FadeOut): user interface, reads the control bar, never changes the logic"
+  },
+  {
+   "glob": "src/GameClient/ControlBarRadialMenu.cpp",
+   "reason": "lane HUD-6: the radial command bubbles' layout and look in window pixels: user interface, reads the logic and the drawables; its presses go through ControlBar::pressButton"
+  },
+  {
+   "glob": "src/GameClient/CommandButtonHelp.cpp",
+   "reason": "lane HUD-6: the help box's text and layout of a command button: user interface, reads the logic (costs, upgrades), never changes it"
+  },
+  {
+   "glob": "src/GameClient/InGameHelpBox.cpp",
+   "reason": "lane HUD-6: the help box movie's state machine and the hover provider: user interface on the render clock"
+  },
+  {
+   "glob": "src/GameClient/InGameHudHud6.cpp",
+   "reason": "lane HUD-6: the HUD's side bar gate, radial bubbles and help box wiring: user interface, never changes the logic"
+  },
+  {
    "glob": "src/GameClient/DrawableIconUI.cpp",
    "reason": "lane HUD-5: the drawable decorations (health bars, construction text, veterancy marks) as 2D draw operations: user interface, reads the logic and the drawables, never changes them"
   },
@@ -479,6 +503,14 @@
   {
    "glob": "src/GameClient/Credits.cpp",
    "reason": "lane UI-4: the main menu's credits roll (CreditsManager); shell UI only, never read by the simulation"
+  },
+  {
+   "glob": "src/GameClient/InGameHeroSelect.cpp",
+   "reason": "lane UI-4: the Palantir's hero bar (InGameHeroSelectInterface); HUD presentation and the selection messages it sends, never read by the simulation"
+  },
+  {
+   "glob": "src/GameClient/SelectionDecals.cpp",
+   "reason": "lane UI-4: the selection markers under selected objects (RadiusDecal); client presentation only, never read by the simulation"
   },
   {
    "glob": "src/GameClient/AptView3D.cpp",

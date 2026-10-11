@@ -60,6 +60,8 @@
 #include <godot_cpp/classes/project_settings.hpp>
 #include <godot_cpp/classes/os.hpp>
 #include <godot_cpp/classes/font.hpp>
+#include <godot_cpp/classes/font_variation.hpp>
+#include <godot_cpp/classes/text_server.hpp>
 #include <godot_cpp/classes/image.hpp>
 #include <godot_cpp/classes/input_event_key.hpp>
 #include <godot_cpp/classes/input_event_mouse_button.hpp>
@@ -512,18 +514,18 @@ int dikOf(Key key)
 class ShellFontMetrics : public FontMetricsSource
 {
 public:
-	typedef std::function<Ref<Font>(const std::string &, float, float *)> FontFn;
+	typedef std::function<Ref<Font>(const std::string &, float, bool, float *)> FontFn; // name, point size, bold (GameFont::bold), the draw size
 	explicit ShellFontMetrics(FontFn fn) : m_fn(std::move(fn)) {}
 	int fontHeight(const GameFont &font) override
 	{
 		float size = 0;
-		Ref<Font> f = m_fn(font.name, (float)font.pointSize, &size);
+		Ref<Font> f = m_fn(font.name, (float)font.pointSize, font.bold, &size);
 		return f.is_valid() ? (int)std::ceil(f->get_height((int)std::lround(size))) : font.pointSize + 4;
 	}
 	int textWidth(const GameFont &font, const UnicodeString &text) override
 	{
 		float size = 0;
-		Ref<Font> f = m_fn(font.name, (float)font.pointSize, &size);
+		Ref<Font> f = m_fn(font.name, (float)font.pointSize, font.bold, &size);
 		if (f.is_null())
 		{
 			return (int)text.size() * (font.pointSize * 6 / 10 + 1);
@@ -533,7 +535,7 @@ public:
 	int wrappedHeight(const GameFont &font, const UnicodeString &text, int wrapWidth) override
 	{
 		float size = 0;
-		Ref<Font> f = m_fn(font.name, (float)font.pointSize, &size);
+		Ref<Font> f = m_fn(font.name, (float)font.pointSize, font.bold, &size);
 		if (f.is_null())
 		{
 			return font.pointSize + 4;
@@ -663,8 +665,63 @@ struct AptMenuPlayer::Impl
 	std::set<std::string> unverified, errors, missingLabels, fontSubstitutions, placeholders;
 	std::unique_ptr<ShellMode> shell;  // shell mode (boot_shell): the Apt player is the window manager's
 	Apt *A() const { return external ? &external->apt() : shell ? &shell->wm->apt() : apt.get(); }
+	// the Godot texture of a gadget mapped image's file, loaded as the gadget layer draws it (drawGadgets); null when it cannot be loaded (the reason goes to
+	// gadgetErrors). Lane OPTS-1: also the OpenBFME options screen's skin (shell_mapped_image)
+	Ref<ImageTexture> imageTexture(ShellMode &sm, const ::Image *img, const std::string &imageName)
+	{
+		// lane UI-2: an image the engine made from a file (IMAGE_STATUS_RAW_TEXTURE: the lobby's map preview, RW 0x70292F) names the file's path
+		const bool rawFile = (img->status & IMAGE_STATUS_RAW_TEXTURE) != 0;
+		const std::string key = rawFile ? "file:" + img->filename : img->filename;
+		auto it = godotTextures.find(key);
+		if (it == godotTextures.end())
+		{
+			const AptTextureStore::Entry &entry = rawFile ? textures->getFile(img->filename) : textures->get(img->filename);
+			if ((!entry.ok || entry.rgba.empty()) && !rawFile)
+			{
+				// lane UI-2: a mapped image naming a .tga that the install packs as DDS (ScrollShroud.tga -> art\compiledtextures\sc\scrollshroud.dds),
+				// as the HUD device loads it (GodotInGameHud.cpp textureFor): the W3D loader takes the packed file for the requested name
+				std::string stem = img->filename.substr(0, img->filename.find_last_of('.'));
+				for (char &ch : stem)
+				{
+					ch = (char)std::tolower((unsigned char)ch);
+				}
+				bool paired = false;
+				Ref<godot::Image> packed = stem.size() > 2 ? loadPackedTexture(*source, "art/compiledtextures/" + stem.substr(0, 2) + "/" + stem, &paired) : Ref<godot::Image>();
+				if (paired)
+				{
+					sm.deviceUnverified.insert("[S-1482] texture " + img->filename + ": the packed .jpg's colour with its .png as the alpha (the loader's merge of the two streams was not read)");
+				}
+				if (packed.is_valid())
+				{
+					it = godotTextures.emplace(key, ImageTexture::create_from_image(packed)).first;
+					textureLoads += 1;
+				}
+			}
+			if (it == godotTextures.end() && (!entry.ok || entry.rgba.empty()))
+			{
+				sm.gadgetErrors.insert("texture '" + img->filename + "' of image '" + imageName + "': " + entry.error);
+				return Ref<ImageTexture>();
+			}
+			if (it == godotTextures.end())
+			{
+				PackedByteArray px;
+				px.resize((int64_t)entry.rgba.size());
+				memcpy(px.ptrw(), entry.rgba.data(), entry.rgba.size());
+				Ref<godot::Image> image = godot::Image::create_from_data(entry.width, entry.height, false, godot::Image::FORMAT_RGBA8, px);
+				Ref<ImageTexture> texture = ImageTexture::create_from_image(image);
+				it = godotTextures.emplace(key, texture).first;
+				if (!rawFile)
+				{
+					textures->releasePixels(img->filename);
+				}
+				textureLoads += 1;
+			}
+		}
+		return it->second;
+	}
+
 	// the font a request (name, stage pixel size) draws with: fontsubstitution.ini, then the corpus fonts, else the engine default (reported)
-	Ref<Font> fontFor(const std::string &name, float size, float *drawSize)
+	Ref<Font> fontFor(const std::string &name, float size, float *drawSize, bool bold = false)
 	{
 		const FontRequestResult r = fonts.resolve(name, size);
 		*drawSize = r.size;
@@ -675,10 +732,51 @@ struct AptMenuPlayer::Impl
 		}
 		if (fit != fontByName.end())
 		{
-			return fit->second;
+			return styled(fit->second, bold);
 		}
 		fontFallbacks.insert(r.name);
-		return ThemeDB::get_singleton()->get_fallback_font();
+		return styled(ThemeDB::get_singleton()->get_fallback_font(), bold);
+	}
+
+	// lane UI-4 (Sol r1): a GameFont's bold. RotWK makes its fonts with GDI (the W3D font library's CreateFont, FW_BOLD for a bold GameFont); the archives
+	// carry only the regular faces (AlbertusMT.otf, OmniaLTStd.ttf), so GDI synthesises the bold: thicker strokes and one pixel more a glyph.
+	// INFERENCE (S-2520): Godot's embolden 1.0 for the strokes, glyph spacing + 1 for the advance (GDI's simulated-bold overhang)
+	static constexpr float kSyntheticBoldEmbolden = 1.0f;
+	std::map<const Font *, Ref<FontVariation>> boldFonts;
+	std::uint64_t callbackTextDraws[2] = { 0, 0 }; // the render callbacks' texts drawn regular / bold (font_metrics reports them)
+	// lane UI-4: the texts drawn outside the canvas ops (the gadgets' and the render callbacks'), by source and text, for checks (drawn_texts)
+	struct DrawnText
+	{
+		std::string source;
+		String text;
+		Color color;
+		Rect2 window;
+	};
+	std::map<std::string, DrawnText> drawnTexts;
+	void noteDrawnText(const char *source, const String &text, const Color &color, const Rect2 &window)
+	{
+		if (drawnTexts.size() < 4000)
+		{
+			drawnTexts[std::string(source) + "|" + toNative(text)] = DrawnText{ source, text, color, window };
+		}
+	}
+	Ref<Font> styled(const Ref<Font> &base, bool bold)
+	{
+		if (!bold || base.is_null())
+		{
+			return base;
+		}
+		auto it = boldFonts.find(base.ptr());
+		if (it == boldFonts.end())
+		{
+			Ref<FontVariation> v;
+			v.instantiate();
+			v->set_base_font(base);
+			v->set_variation_embolden(kSyntheticBoldEmbolden);
+			v->set_spacing(TextServer::SPACING_GLYPH, 1);
+			it = boldFonts.emplace(base.ptr(), v).first;
+		}
+		return it->second;
 	}
 
 	// string table, font substitution, the corpus fonts (boot and boot_shell); appends to `errors`
@@ -819,6 +917,8 @@ void AptMenuPlayer::_bind_methods()
 	ClassDB::bind_method(D_METHOD("get_movies"), &AptMenuPlayer::get_movies);                 // lane CAMP-2
 	ClassDB::bind_method(D_METHOD("shell_stack"), &AptMenuPlayer::shell_stack);
 	ClassDB::bind_method(D_METHOD("get_option", "key"), &AptMenuPlayer::get_option);
+	ClassDB::bind_method(D_METHOD("font_metrics", "name", "point_size", "bold", "text"), &AptMenuPlayer::font_metrics); // lane UI-4
+	ClassDB::bind_method(D_METHOD("drawn_texts", "clear"), &AptMenuPlayer::drawn_texts); // lane UI-4
 	ClassDB::bind_method(D_METHOD("set_tribute_world", "world"), &AptMenuPlayer::set_tribute_world);
 	ClassDB::bind_method(D_METHOD("set_player_status", "state"), &AptMenuPlayer::set_player_status); // lane HUD-5
 	ClassDB::bind_method(D_METHOD("shell_top_level"), &AptMenuPlayer::shell_top_level);
@@ -846,6 +946,8 @@ void AptMenuPlayer::_bind_methods()
 	ClassDB::bind_method(D_METHOD("quit_menu", "request"), &AptMenuPlayer::quit_menu);
 	ClassDB::bind_method(D_METHOD("list_buttons", "level"), &AptMenuPlayer::list_buttons);
 	ClassDB::bind_method(D_METHOD("fetch_text", "label"), &AptMenuPlayer::fetch_text);
+	ClassDB::bind_method(D_METHOD("shell_mapped_image", "name"), &AptMenuPlayer::shell_mapped_image);
+	ClassDB::bind_method(D_METHOD("shell_font", "name", "size"), &AptMenuPlayer::shell_font);
 	ClassDB::bind_method(D_METHOD("take_load_progress_calls"), &AptMenuPlayer::take_load_progress_calls);
 	ClassDB::bind_method(D_METHOD("lobby_apply", "spec"), &AptMenuPlayer::lobby_apply);
 	ClassDB::bind_method(D_METHOD("lobby_gadget_rect", "name"), &AptMenuPlayer::lobby_gadget_rect);
@@ -1130,7 +1232,9 @@ Dictionary AptMenuPlayer::boot_shell(const Ref<RetailFileSystem> &fs, Object *wo
 	}
 	registerAptScreenFactories(sm->factories);
 	Impl *impl = m.get();
-	sm->metrics = std::make_unique<ShellFontMetrics>([impl](const std::string &name, float size, float *drawSize) { return impl->fontFor(name, size, drawSize); });
+	sm->metrics = std::make_unique<ShellFontMetrics>([impl](const std::string &name, float size, bool bold, float *drawSize) {
+		return impl->fontFor(name, size, drawSize, bold);
+	});
 	if (errors.is_empty())
 	{
 		sm->wm = std::make_unique<WindowManager>(*m->source, sm->services);
@@ -1336,6 +1440,49 @@ Variant AptMenuPlayer::get_option(const String &key) const
 		return Variant();
 	}
 	return toGodot(m->shell->options.get(k));
+}
+
+// lane UI-4: the texts the gadgets and the render callbacks drew since the last clear: [{ source, text, color, window }]
+Array AptMenuPlayer::drawn_texts(bool clear)
+{
+	Array out;
+	for (const auto &kv : m->drawnTexts)
+	{
+		Dictionary e;
+		e["source"] = toGodot(kv.second.source);
+		e["text"] = kv.second.text;
+		e["color"] = kv.second.color;
+		e["window"] = kv.second.window;
+		out.push_back(e);
+	}
+	if (clear)
+	{
+		m->drawnTexts.clear();
+	}
+	return out;
+}
+
+// lane UI-4: a GameFont's metrics as the shell's gadgets and render callbacks see them (ShellFontMetrics), and whether its bold is applied
+Dictionary AptMenuPlayer::font_metrics(const String &name, int point_size, bool bold, const String &text) const
+{
+	Impl *impl = m.get();
+	ShellFontMetrics metrics([impl](const std::string &n, float size, bool b, float *drawSize) { return impl->fontFor(n, size, drawSize, b); });
+	GameFont font;
+	font.name = toNative(name);
+	font.pointSize = point_size;
+	font.bold = bold;
+	const std::string utf8 = toNative(text);
+	Dictionary r;
+	r["height"] = metrics.fontHeight(font);
+	r["width"] = metrics.textWidth(font, utf8ToU16(utf8));
+	float drawSize = 0;
+	Ref<Font> f = impl->fontFor(font.name, (float)point_size, &drawSize, bold);
+	Ref<FontVariation> v = f;
+	r["embolden"] = v.is_valid() ? v->get_variation_embolden() : 0.0;
+	r["glyph_spacing"] = v.is_valid() ? v->get_spacing(TextServer::SPACING_GLYPH) : 0;
+	r["callback_texts_regular"] = (int64_t)impl->callbackTextDraws[0];
+	r["callback_texts_bold"] = (int64_t)impl->callbackTextDraws[1];
+	return r;
 }
 
 Dictionary AptMenuPlayer::set_player_status(const Dictionary &state)
@@ -2131,11 +2278,12 @@ void AptMenuPlayer::drawRenderCallback(const AptCanvasOp &op, const RID &item)
 			continue;
 		}
 		float drawSize = 0;
-		Ref<Font> font = m->fontFor(c.font.name, (float)c.font.pointSize, &drawSize);
+		Ref<Font> font = m->fontFor(c.font.name, (float)c.font.pointSize, &drawSize, c.font.bold); // CreditsMinorTitleFont is bold
 		if (font.is_null())
 		{
 			continue;
 		}
+		++m->callbackTextDraws[c.font.bold ? 1 : 0];
 		const int px = std::max(1, (int)std::lround(drawSize * k));
 		const Vector2 at((float)c.x0 * op.scaleX + op.offsetX, (float)c.y0 * op.scaleY + op.offsetY);
 		const Vector2 base = at + Vector2(0, font->get_ascent(px));
@@ -2145,6 +2293,7 @@ void AptMenuPlayer::drawRenderCallback(const AptCanvasOp &op, const RID &item)
 			font->draw_string(item, base + Vector2(1, 1) * k, text, HORIZONTAL_ALIGNMENT_LEFT, -1, px, colourOf(c.dropColor));
 		}
 		font->draw_string(item, base, text, HORIZONTAL_ALIGNMENT_LEFT, -1, px, colourOf(c.color));
+		m->noteDrawnText("callback", text, colourOf(c.color), Rect2(at, Vector2(font->get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, px).x, font->get_height(px))));
 	}
 }
 
@@ -2848,56 +2997,13 @@ void AptMenuPlayer::drawGadgets(const GadgetDrawList &commands)
 				{
 					break; // reported through unresolvedImages
 				}
-				// lane UI-2: an image the engine made from a file (IMAGE_STATUS_RAW_TEXTURE: the lobby's map preview, RW 0x70292F) names the file's path
-				const bool rawFile = (img->status & IMAGE_STATUS_RAW_TEXTURE) != 0;
-				const std::string key = rawFile ? "file:" + img->filename : img->filename;
-				auto it = m->godotTextures.find(key);
-				if (it == m->godotTextures.end())
+				Ref<ImageTexture> texture = m->imageTexture(sm, img, c.image);
+				if (texture.is_null())
 				{
-					const AptTextureStore::Entry &entry = rawFile ? m->textures->getFile(img->filename) : m->textures->get(img->filename);
-					if ((!entry.ok || entry.rgba.empty()) && !rawFile)
-					{
-						// lane UI-2: a mapped image naming a .tga that the install packs as DDS (ScrollShroud.tga -> art\compiledtextures\sc\scrollshroud.dds),
-						// as the HUD device loads it (GodotInGameHud.cpp textureFor): the W3D loader takes the packed file for the requested name
-						std::string stem = img->filename.substr(0, img->filename.find_last_of('.'));
-						for (char &ch : stem)
-						{
-							ch = (char)std::tolower((unsigned char)ch);
-						}
-						bool paired = false;
-						Ref<godot::Image> packed = stem.size() > 2 ? loadPackedTexture(*m->source, "art/compiledtextures/" + stem.substr(0, 2) + "/" + stem, &paired) : Ref<godot::Image>();
-						if (paired)
-						{
-							sm.deviceUnverified.insert("[S-1482] texture " + img->filename + ": the packed .jpg's colour with its .png as the alpha (the loader's merge of the two streams was not read)");
-						}
-						if (packed.is_valid())
-						{
-							it = m->godotTextures.emplace(key, ImageTexture::create_from_image(packed)).first;
-							m->textureLoads += 1;
-						}
-					}
-					if (it == m->godotTextures.end() && (!entry.ok || entry.rgba.empty()))
-					{
-						sm.gadgetErrors.insert("texture '" + img->filename + "' of image '" + c.image + "': " + entry.error);
-						break;
-					}
-					if (it == m->godotTextures.end())
-					{
-						PackedByteArray px;
-						px.resize((int64_t)entry.rgba.size());
-						memcpy(px.ptrw(), entry.rgba.data(), entry.rgba.size());
-						Ref<godot::Image> image = godot::Image::create_from_data(entry.width, entry.height, false, godot::Image::FORMAT_RGBA8, px);
-						Ref<ImageTexture> texture = ImageTexture::create_from_image(image);
-						it = m->godotTextures.emplace(key, texture).first;
-						if (!rawFile)
-						{
-							m->textures->releasePixels(img->filename);
-						}
-						m->textureLoads += 1;
-					}
+					break; // reported through gadgetErrors
 				}
 				const Vector2 a = toWindow((float)c.x0, (float)c.y0), b = toWindow((float)c.x1, (float)c.y1);
-				addTextureUV(rs, item(), Rect2(a, b - a), it->second, img->uvLo, img->uvHi, colour(c.color));
+				addTextureUV(rs, item(), Rect2(a, b - a), texture, img->uvLo, img->uvHi, colour(c.color));
 				break;
 			}
 			case GadgetDrawCommand::Kind::FillRect:
@@ -2929,7 +3035,7 @@ void AptMenuPlayer::drawGadgets(const GadgetDrawList &commands)
 			case GadgetDrawCommand::Kind::Text:
 			{
 				float drawSize = 0;
-				Ref<Font> font = m->fontFor(c.font.name, (float)c.font.pointSize, &drawSize);
+				Ref<Font> font = m->fontFor(c.font.name, (float)c.font.pointSize, &drawSize, c.font.bold);
 				if (font.is_null() || c.text.empty())
 				{
 					break;
@@ -2955,6 +3061,8 @@ void AptMenuPlayer::drawGadgets(const GadgetDrawList &commands)
 					drawText(base + Vector2(1, 1) * k, colour(c.dropColor));
 				}
 				drawText(base, colour(c.color));
+				const Vector2 size = c.wrapWidth > 0 ? font->get_multiline_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, width, px) : font->get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, px);
+				m->noteDrawnText("gadget", text, colour(c.color), Rect2(at, Vector2(size.x, font->get_height(px))));
 				break;
 			}
 			case GadgetDrawCommand::Kind::ClipBegin:
@@ -3564,6 +3672,22 @@ PackedStringArray AptMenuPlayer::describe_ops() const
 			line += std::string(" readOnly=") + (op.readOnly ? "1" : "0") + " multiline=" + (op.multiline ? "1" : "0") + " wordWrap=" + (op.wordWrap ? "1" : "0") +
 				" align=" + std::to_string(op.alignment) + " bounds=(" + std::to_string((int)op.bounds[0]) + " " + std::to_string((int)op.bounds[1]) + " " +
 				std::to_string((int)op.bounds[2]) + " " + std::to_string((int)op.bounds[3]) + ")";
+			// lane UI-4: the field's rectangle in window pixels (the instance matrix, then the stage mapping), for checks that sample the drawn label
+			float wx0 = 1e9f, wy0 = 1e9f, wx1 = -1e9f, wy1 = -1e9f;
+			const float xs[4] = { op.bounds[0], op.bounds[2], op.bounds[2], op.bounds[0] };
+			const float ys[4] = { op.bounds[1], op.bounds[1], op.bounds[3], op.bounds[3] };
+			for (int i = 0; i < 4; ++i)
+			{
+				const float sx = (op.matrix.a * xs[i] + op.matrix.c * ys[i] + op.matrix.tx) * op.scaleX + op.offsetX;
+				const float sy = (op.matrix.b * xs[i] + op.matrix.d * ys[i] + op.matrix.ty) * op.scaleY + op.offsetY;
+				wx0 = std::min(wx0, sx);
+				wx1 = std::max(wx1, sx);
+				wy0 = std::min(wy0, sy);
+				wy1 = std::max(wy1, sy);
+			}
+			char win[96];
+			snprintf(win, sizeof win, " win=(%.0f %.0f %.0f %.0f)", wx0, wy0, wx1, wy1);
+			line += win;
 		}
 		else if (op.kind == AptCanvasOp::Kind::Placeholder)
 		{
@@ -3594,6 +3718,11 @@ Shell *AptMenuPlayer::shell_object() const
 void AptMenuPlayer::set_input_forwarded(bool forwarded)
 {
 	m->inputForwarded = forwarded;
+}
+
+Ref<Font> AptMenuPlayer::font_for(const std::string &name, float size, float *drawSize)
+{
+	return m->fontFor(name, size, drawSize);
 }
 
 void AptMenuPlayer::set_native_hook(AptNativeHook *hook)
@@ -4323,6 +4452,51 @@ Dictionary AptMenuPlayer::fetch_text(const String &label)
 	const std::u16string text = fetchOrMissing(m->shell ? static_cast<const GameTextSource *>(m->shell->text.get()) : nullptr, toNative(label), &exists);
 	r["found"] = exists;
 	r["text"] = toGodot(loadScreenU16ToUtf8(text));
+	return r;
+}
+
+Dictionary AptMenuPlayer::shell_mapped_image(const String &name)
+{
+	Dictionary r;
+	r["ok"] = false;
+	if (!m->shell)
+	{
+		r["error"] = "the shell is not booted";
+		return r;
+	}
+	ShellMode &sm = *m->shell;
+	const std::string imageName = toNative(name);
+	const ::Image *img = sm.skins.images.findImageByName(imageName);
+	if (!img)
+	{
+		r["error"] = toGodot("image '" + imageName + "' is not in the mapped image collection");
+		return r;
+	}
+	Ref<ImageTexture> texture = m->imageTexture(sm, img, imageName);
+	if (texture.is_null())
+	{
+		r["error"] = toGodot("texture '" + img->filename + "' of image '" + imageName + "' cannot be loaded");
+		return r;
+	}
+	const float w = (float)texture->get_width(), h = (float)texture->get_height();
+	r["ok"] = true;
+	r["texture"] = texture;
+	r["region"] = Rect2(img->uvLo[0] * w, img->uvLo[1] * h, (img->uvHi[0] - img->uvLo[0]) * w, (img->uvHi[1] - img->uvLo[1]) * h);
+	r["size"] = Vector2((float)img->imageSize.x, (float)img->imageSize.y);
+	return r;
+}
+
+Dictionary AptMenuPlayer::shell_font(const String &name, float size)
+{
+	Dictionary r;
+	float drawSize = size;
+	const std::string request = toNative(name);
+	Ref<Font> font = m->fontFor(request, size, &drawSize);
+	const FontRequestResult resolved = m->fonts.resolve(request, size);
+	r["font"] = font;
+	r["size"] = drawSize;
+	r["name"] = toGodot(resolved.name);
+	r["fallback"] = m->fontFallbacks.count(resolved.name) != 0; // fontFor records a request it answers with the engine default
 	return r;
 }
 
