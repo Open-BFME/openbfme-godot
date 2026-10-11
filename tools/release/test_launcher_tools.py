@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -250,3 +251,15 @@ def test_the_manifest_lists_every_file_of_every_package(tmp_path):
         make_manifest.package_files("openbfme-v1.0.0-linux-x64.tar.gz", b"not an archive")
     with pytest.raises(SystemExit):  # a member outside the package folder
         make_manifest.package_files("openbfme-v1.0.0-linux-x64.tar.gz", tiny_package("openbfme-v9.9.9-linux-x64.tar.gz", {"x": b"1"}))
+
+
+def test_the_launcher_presets_have_no_include_or_exclude_filter():
+    """REPRO-1: Godot 4.7.2 applies these filters in the file system's directory order (_edit_files_with_filter), which decides the order
+    of the pack: a file the pack needs or must not hold goes to addons/pack_files/export_plugin.gd (ADD / SKIP), never to a filter."""
+    text = (REPO / "launcher" / "export_presets.cfg").read_text(encoding="utf-8")
+    presets = len(re.findall(r"^\[preset\.\d+\]$", text, re.M))
+    assert presets == 2, "the launcher has a Linux and a Windows preset"
+    for key in ("include_filter", "exclude_filter"):
+        assert text.count(f'\n{key}=""\n') == presets, f"every preset's {key} must be empty"
+    project = (REPO / "launcher" / "project.godot").read_text(encoding="utf-8")
+    assert 'enabled=PackedStringArray("res://addons/pack_files/plugin.cfg")' in project, "the plugin that picks the pack's files is on"

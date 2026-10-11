@@ -104,6 +104,15 @@ Byte for byte the same for the same commit, the same GDExtension library and the
   exported as their committed text (`script_export_mode=0`,
   `editor/export/convert_text_resources_to_binary=false`; the binary scene conversion
   gives every export new random ids);
+- the order of the files in a pack does not depend on the host's file system (REPRO-1):
+  Godot 4.7.2 applies a preset's `include_filter` / `exclude_filter` in the raw directory
+  order, which on ext4 is a hash seeded per file system, and that order becomes the pack's.
+  The launcher's presets keep both filters empty; its editor plugin
+  `launcher/addons/pack_files` skips the tests, itself and `release_key.pub`, and adds the
+  font licences in sorted order. The game's presets include one file
+  (`tests/object_sweep_baseline.txt`) and exclude none; `test_release_tools.py` and
+  `test_launcher_tools.py` hold both to that, and `test_launcher.py` builds the launcher
+  package from two stagings listed in opposite orders (tmpfs) and compares the bytes;
 - `README_TESTERS.txt` is generated from committed files only.
 
 Not reproduced by `package.sh`, recorded instead:

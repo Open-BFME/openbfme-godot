@@ -780,3 +780,24 @@ def test_a_tampered_package_is_not_the_rebuild(tmp_path, capsys):
         assert make_archive.diff(bad, good) == 1, why
     assert "DIFFERENT" in capsys.readouterr().out
     assert make_archive.diff(good, good) == 0
+
+
+def test_the_game_presets_filters_cannot_reorder_the_pack():
+    """REPRO-1: Godot 4.7.2 applies a preset's include_filter / exclude_filter in the file system's directory order (ext4: a hash seeded per
+    file system), on the set of paths whose order is the pack's. One included file and no exclusions keep godot/'s packages the same on
+    every host; a second match (another tests/*.txt) or an exclusion would make them differ the way v0.3.0-preview.5's launchers did:
+    pick such files in an export plugin in sorted order instead (launcher/addons/pack_files/export_plugin.gd)."""
+    import fnmatch  # noqa: PLC0415
+    import subprocess  # noqa: PLC0415
+    text = (REPO / "godot" / "export_presets.cfg").read_text(encoding="utf-8")
+    files = subprocess.run(["git", "-C", str(REPO / "godot"), "ls-files", "-z", "."], capture_output=True, text=True, check=True).stdout
+    files = [f for f in files.split("\0") if f]
+    assert files, "git ls-files lists the game project"
+    for value in re.findall(r'^exclude_filter="(.*)"$', text, re.M):
+        assert value == "", f"exclude_filter={value!r}: its erases follow the directory order"
+    includes = re.findall(r'^include_filter="(.*)"$', text, re.M)
+    assert len(includes) == 2, "a Linux and a Windows preset"
+    for value in includes:
+        patterns = [p.strip().lower() for p in value.split(",") if p.strip()] + ["*.ico", "*.icns"]  # Godot adds the icons the same way
+        matched = [f for f in files if any(fnmatch.fnmatchcase(f.lower(), p) for p in patterns)]  # Godot's matchn: * spans folders
+        assert len(matched) <= 1, f"include_filter={value!r} matches {matched}: their order in the pack would follow the host"

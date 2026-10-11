@@ -2,7 +2,7 @@
 # Lane LAUNCH-1: the OpenBFME Launcher packages (package.sh runs this; the launcher tests run it with --test-build).
 #
 #   tools/release/build_launcher.sh --out DIR --version TAG --commit SHA --repo OWNER/NAME --key-file FILE [--mtime UNIX] [--platforms linux,windows]
-#                                   [--godot BIN] [--worktree | --source COMMIT] [--test-build]
+#                                   [--godot BIN] [--worktree | --source COMMIT] [--test-build] [--stage-reverse]
 #
 # Writes DIR/openbfme-launcher-<TAG>-linux-x64.tar.gz and/or DIR/openbfme-launcher-<TAG>-windows-x64.zip, each holding
 #   OpenBFMELauncher.x86_64 | OpenBFMELauncher.exe (the pack embedded: one file, so a self-update replaces it in one rename), README.txt,
@@ -13,10 +13,12 @@
 # Ed25519 public key it trusts, read from --key-file: launcher/release_key.pub for a release) and test_build (true only with --test-build,
 # which enables the launcher's test options; never for a tester package). Godot's release template with the pack embedded, scripts as text.
 # Every file is checked by audit_package.py (content, then the launcher allowlist); archives are make_archive.py's, reproducible.
+# --stage-reverse (REPRO-1's test, test_launcher.py): the staged project's directories and files are created in reverse path order, so a
+# file system that lists a directory in creation order (tmpfs) lists each directory differently; the package must not change.
 set -euo pipefail
 REPO=$(cd "$(dirname "$0")/../.." && pwd)
 OUT=""; VERSION=""; COMMIT=""; TARGET=""; KEYFILE=""; MTIME="${SOURCE_DATE_EPOCH:-}"; PLATFORMS="linux"; GODOT_BIN="${GODOT:-godot}"
-WORKTREE=0; TEST_BUILD=false; SOURCE=HEAD
+WORKTREE=0; TEST_BUILD=false; SOURCE=HEAD; STAGE_REVERSE=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --out) OUT=$2; shift 2 ;;
@@ -30,7 +32,8 @@ while [ $# -gt 0 ]; do
     --worktree) WORKTREE=1; shift ;;
     --source) SOURCE=$2; shift 2 ;;
     --test-build) TEST_BUILD=true; shift ;;
-    -h|--help) sed -n '2,16p' "$0"; exit 0 ;;
+    --stage-reverse) STAGE_REVERSE=1; shift ;;
+    -h|--help) sed -n '2,18p' "$0"; exit 0 ;;
     *) echo "build_launcher.sh: unknown argument $1" >&2; exit 2 ;;
   esac
 done
@@ -51,6 +54,22 @@ if [ $WORKTREE = 1 ]; then
   (cd "$REPO" && git ls-files -z --cached --others --exclude-standard launcher LICENSE NOTICE | tar --null -T - -cf -) | tar -x -C "$WORK/stage"
 else
   git -C "$REPO" archive --format=tar "$SOURCE" launcher LICENSE NOTICE | tar -x -C "$WORK/stage"
+fi
+if [ $STAGE_REVERSE = 1 ]; then
+  mv "$WORK/stage" "$WORK/stage.sorted"
+  python3 - "$WORK/stage.sorted" "$WORK/stage" <<'EOF'
+import os, shutil, sys
+src, dst = sys.argv[1:]
+rel = sorted((os.path.relpath(os.path.join(r, n), src), n in ds) for r, ds, fs in os.walk(src) for n in ds + fs)
+os.mkdir(dst)
+for p, is_dir in reversed(rel):  # makedirs creates a directory's parents first, in this same reverse order
+    if is_dir:
+        os.makedirs(os.path.join(dst, p), exist_ok=True)
+for p, is_dir in reversed(rel):
+    if not is_dir:
+        shutil.copy2(os.path.join(src, p), os.path.join(dst, p))
+EOF
+  rm -rf "$WORK/stage.sorted"
 fi
 P="$WORK/stage/launcher"
 DATE=$(date -u -d "@$MTIME" +%Y-%m-%d)
@@ -75,6 +94,30 @@ for p in ${PLATFORMS//,/ }; do
   "$GODOT_BIN" --headless --path "$P" --export-release "$preset" "$dir/$exe" >"$WORK/export-$p.log" 2>&1 \
     || { tail -30 "$WORK/export-$p.log"; fail "export $preset"; }
   [ -f "$dir/$exe" ] && [ ! -e "$dir/OpenBFMELauncher.pck" ] || { tail -30 "$WORK/export-$p.log"; fail "export $preset did not produce $exe with its pack embedded"; }
+  # lane REPRO-1: the editor plugin addons/pack_files picks the pack's files instead of the preset's include / exclude filters (those
+  # follow the host's directory order): its errors fail the export, and the pack must hold the staged build_info.json and font licences
+  # once each
+  ! grep -q "PACK FILES FAIL" "$WORK/export-$p.log" || { grep "PACK FILES FAIL" "$WORK/export-$p.log"; fail "export $preset: addons/pack_files"; }
+  python3 - "$REPO/tools/release" "$dir/$exe" "$P" <<'EOF' || fail "export $preset: the pack does not hold the staged build_info.json and font licences"
+import sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+import audit_package as ap
+data = Path(sys.argv[2]).read_bytes()
+base = ap.embedded_pck_base(data)
+if base is None:
+    sys.exit(f"{sys.argv[2]}: no embedded pack")
+listed = ap.pck_entries(data, base, len(data) - 12)  # the pack, then <u64 size> "GDPC"
+entries = dict(listed)
+if len(entries) != len(listed):
+    sys.exit(f"the pack lists a file twice: {sorted(k for k, _ in listed if [n for n, _ in listed].count(k) > 1)}")
+proj = Path(sys.argv[3])
+want = {"build_info.json": (proj / "build_info.json").read_bytes(),
+        **{f"fonts/{f.name}": f.read_bytes() for f in sorted((proj / "fonts").glob("OFL-*.txt"))}}
+got = {k: v for k, v in entries.items() if k == "build_info.json" or (k.startswith("fonts/") and k.endswith(".txt"))}
+if got != want:
+    sys.exit(f"pack holds {sorted(got)}, staged {sorted(want)} (or different bytes)")
+EOF
   sed -e "s|@VERSION@|$VERSION|g" -e "s|@REPO@|$TARGET|g" -e "s|@START@|$start|g" "$P/README_LAUNCHER.txt" > "$dir/README.txt"
   cp "$WORK/stage/LICENSE" "$WORK/stage/NOTICE" "$dir/"
   printf 'OpenBFME Launcher %s\ncommit %s\ncommitted %s\nupdates from %s\n' "$VERSION" "$COMMIT" "$DATE" "$TARGET" > "$dir/VERSION"
