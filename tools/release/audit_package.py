@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import bz2
 import gzip
+import hashlib
 import io
 import lzma
 import re
@@ -413,7 +414,22 @@ LAUNCHER_PCK_RULES = [
     (re.compile(r"^\.godot/uid_cache\.bin$"), "uidcache"),
     (re.compile(r"^project\.binary$"), "ecfg"),
     (re.compile(r"^build_info\.json$"), "text"),
+    # lane UI-5: the launcher's OFL fonts, exported as their own bytes (importer "keep"), each exactly a file public_binaries.txt pins
+    # under launcher/fonts/, and their licences
+    (re.compile(r"^fonts/[\w-]+\.ttf$"), "font"),
+    (re.compile(r"^fonts/OFL-[\w-]+\.txt$"), "text"),
 ]
+PUBLIC_BINARIES = Path(__file__).resolve().parent / "public_binaries.txt"
+
+
+def pinned_fonts() -> dict[str, str]:
+    """{file name: sha256} of the launcher's fonts that tools/release/public_binaries.txt lists (launcher/fonts/<name>.ttf)"""
+    out = {}
+    for line in PUBLIC_BINARIES.read_text(encoding="utf-8").splitlines():
+        m = re.fullmatch(r"([0-9a-f]{64})  launcher/fonts/([\w-]+\.ttf)  \S.*", line)
+        if m:
+            out[m.group(2)] = m.group(1)
+    return out
 # signatures that may not appear ANYWHERE inside a pack entry or a text file: retail formats and containers / compressed streams of any kind
 EMBEDDED_SIGNATURES = {b"BIGF": "BIG archive", b"BIG4": "BIG archive", b"DDS |": "DDS texture", b"WAVEfmt": "RIFF/WAVE audio",
                        b"ID3\x03": "ID3 audio", b"ID3\x04": "ID3 audio", b"PK\x03\x04": "ZIP entry", b"PK\x05\x06": "ZIP directory",
@@ -585,6 +601,13 @@ def pck_release_problems(name: str, data: bytes, rules: list | None = None) -> l
                 problems.append(f"{where}: not a remap file")
             elif rule == "scene" and not content.startswith(b"[gd_scene "):
                 problems.append(f"{where}: not a text scene ([gd_scene ...] header)")
+        elif rule == "font":
+            # lane UI-5: an OpenType/TrueType font (sfnt 1.0), byte for byte the pinned file of that name
+            want = pinned_fonts().get(path.split("/")[-1])
+            if not content.startswith(b"\x00\x01\x00\x00"):
+                problems.append(f"{where}: not a TrueType font")
+            elif want is None or hashlib.sha256(content).hexdigest() != want:
+                problems.append(f"{where}: not a font tools/release/public_binaries.txt pins")
         elif rule == "uidcache":
             t = uid_cache_problem(content)
             if t:

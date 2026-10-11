@@ -10,7 +10,7 @@
 namespace
 {
 const char kMagic[8] = { 'O', 'B', 'F', 'M', 'E', 'R', 'E', 'P' };
-constexpr std::uint32_t kVersion = 3; // 2: the profile identity, GameMessage format 2 (u32 argument counts), lost-command records; 3 (lane HERO-2): the GameInfo slots' Create-a-Hero records
+constexpr std::uint32_t kVersion = 4; // 2: the profile identity, GameMessage format 2 (u32 argument counts), lost-command records; 3 (lane HERO-2): the GameInfo slots' Create-a-Hero records; 4 (lane RULES-1): the GameInfo's game rules and Legendary Heroes factor
 enum : std::uint8_t
 {
 	RECORD_FRAME = 1,

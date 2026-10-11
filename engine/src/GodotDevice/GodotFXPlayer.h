@@ -74,6 +74,9 @@ public:
 	bool get_soft_particles() const { return m_soft; }
 	bool is_paused() const { return m_paused; }
 	void set_max_particles(int64_t count);
+	// lane OPTS-2: the static detail level's particle limits (GameLODManager's state: GlobalData + 0xAC8 MaxParticleCount, the manager's + 0x17A0
+	// MinParticlePriority and + 0x17A4 MinParticleSkipPriority, which ParticleSystem::createParticle reads, RW 0x5FA2CE)
+	void set_particle_lod(int64_t max_count, int64_t min_priority, int64_t min_skip_priority);
 
 	// { frame, systems, particles, batches, sprites, gpu_instances, mesh_vertices, step_us, build_us, upload_us, missing_textures }
 	Dictionary get_stats() const;

@@ -1,21 +1,23 @@
 ## Lane LAUNCH-1: the OpenBFME Launcher's window and command line.
 ##
-## The window (lane UI-3's redesign, see the window section below): the version Play starts and its update state with one button, the
-## channel (Stable / Preview), the release notes, one progress bar (MB, MB/s, time left, Pause / Cancel) and Play; Settings behind the
-## gear (game folders, free camera, the installed versions and older releases, the log folder); Download the games only while no game
-## folders are found. At start it checks for updates, installs a newer game build of the channel (verified, see scripts/core/updater.gd)
-## and stages a newer launcher. Offline or on an API error it says why the update was skipped and Play starts the newest verified
-## installed version. The window shows no home folder or user name (scripts/ui/paths.gd).
+## The window (lane UI-5's "Parchment & Steel", see the window section below): a left rail with Play, News, Multiplayer, Mods, Game files
+## and Settings; the Play screen with the update state, the channel and version, the games and What's New; a bottom bar with the status
+## or the one progress bar (MB, MB/s, time left, Pause / Cancel), Check for updates and PLAY. At start (and every hour while it stays
+## open) it checks for updates and, with "Update automatically" on (the default), installs a newer game build of the channel in the
+## background (verified, see scripts/core/updater.gd) and stages a newer launcher; Play keeps starting the installed version meanwhile
+## and the new one from the next Play on. Offline or on an API error it says why the update was skipped and Play starts the newest
+## verified installed version. The window shows no home folder or user name (scripts/ui/paths.gd).
 ##
 ## Command line (after `--`; with any of these the launcher runs without a window and exits, for tests and scripted use):
 ##   --update                 check and install the channel's newest version when it is newer than every installed one
 ##   --install=<version>      install that release (the user's pick: an older version is allowed)
 ##   --select=<version>       play that installed version from now on (--select= clears the pick)
 ##   --self-update            stage a newer launcher (replaced on the next start)
-##   --channel=stable|preview remember the channel
+##   --channel=stable|preview remember the channel (--channel=alpha is the same as preview, the channel's shown name)
 ##   --list                   print the installed versions
 ##   --play                   start the version Play starts
 ##   --version                print the launcher's version
+##   --auto-update=on|off     (lane UI-5) the setting "Update automatically in the background" (on by default)
 ##   --free-camera=on|off     (lane INPUT-1) the game's free camera (Options.ini OpenBFMEFreeCamera, see scripts/core/game_options.gd)
 ##   --aio=on|off             (lane AIO-1, on by default: AioInstall.DEFAULT_ENABLED) the setting "Offer to download the games"
 ##                            (Settings; the All In One BFME Launcher's service)
@@ -30,9 +32,10 @@
 ##   --api-base=http://127.0.0.1:<port>   the API origin (a local test server); --trust-key=<64 hex>   the release key of a development run;
 ##   --repo=<owner>/<name>   the repository; --aio-base=http://127.0.0.1:<port>   the AIO service's stand-in (both of its hosts);
 ##   --aio-pins=<file>   made-up pinned tables (JSON) for that stand-in; --aio-stop-after=<folder>/<file>:<pause|cancel>   a stop right
-##   after that file was kept (the pause / cancel paths); --ui-demo=main|update|downloading|settings|games|error   made-up state for the
-##   screenshots of each screen (no network; tools/release/launcher_screens.py); --ui-stop=<pause|cancel>@<text>   press Pause / Cancel
-##   once while a download whose progress names <text> runs, --ui-then=resume|cancel   then press Resume / Cancel once (with --screenshot)
+##   after that file was kept (the pause / cancel paths); --ui-demo=<screen>   made-up state for the screenshots of each screen (no
+##   network; tools/release/launcher_screens.py; the screens are listed at _show_demo); --ui-stop=<pause|cancel|play>@<text>   press
+##   Pause / Cancel / Play once while a download whose progress names <text> runs, --ui-then=resume|cancel   then press Resume / Cancel
+##   once (with --screenshot)
 ## Exit status: 0 done; 1 an install / play / select failed (or the AIO download was refused: setting off, no consent, a bad folder); 2
 ## updates skipped (offline, API error; an AIO download that broke or was stopped: it resumes next time); 3 an update was rejected (signature, size,
 ## digest, archive or rollback check; the AIO service's data failed a check). Every step prints a LAUNCHER line (also in user://launcher.log).
@@ -45,21 +48,30 @@ const Semver := preload("res://scripts/core/semver.gd")
 const Log := preload("res://scripts/core/launcher_log.gd")
 const GameOptions := preload("res://scripts/core/game_options.gd")
 const AioInstall := preload("res://scripts/core/aio_install.gd")
+const ReleaseNotes := preload("res://scripts/core/release_notes.gd")
 const Style := preload("res://scripts/ui/style.gd")
 const W := preload("res://scripts/ui/widgets.gd")
 const Paths := preload("res://scripts/ui/paths.gd")
 const VectorIcon := preload("res://scripts/ui/vector_icon.gd")
 const ProgressMeter := preload("res://scripts/ui/progress_meter.gd")
-const Backdrop := preload("res://scripts/ui/backdrop.gd")
-const SettingsPanel := preload("res://scripts/ui/settings_panel.gd")
-const DownloadPanel := preload("res://scripts/ui/download_panel.gd")
+const Textures := preload("res://scripts/ui/textures.gd")
+const GoldButton := preload("res://scripts/ui/gold_button.gd")
+const PlayScreen := preload("res://scripts/ui/play_screen.gd")
+const NewsScreen := preload("res://scripts/ui/news_screen.gd")
+const MultiplayerScreen := preload("res://scripts/ui/multiplayer_screen.gd")
+const ModsScreen := preload("res://scripts/ui/mods_screen.gd")
+const GamesScreen := preload("res://scripts/ui/games_screen.gd")
+const SettingsScreen := preload("res://scripts/ui/settings_screen.gd")
 const MessagePanel := preload("res://scripts/ui/message_panel.gd")
+const InstanceLock := preload("res://scripts/core/instance_lock.gd")
 
 const CLI_ACTIONS := ["--update", "--install=", "--select=", "--self-update", "--channel=", "--list", "--play", "--version", "--free-camera=",
-	"--aio=", "--aio-install="]
+	"--aio=", "--aio-install=", "--auto-update="]
+const RECHECK_SECONDS := 3600.0  # lane UI-5: while the launcher stays open, it looks for updates again every hour
 
 var info: RefCounted
 var updater: Updater
+var _instance: InstanceLock  # lane UI-5 (Sol r2): one launcher at a time
 var aio: AioInstall
 var _thread: Thread
 var _releases: Array = []
@@ -68,44 +80,46 @@ var _latest: Dictionary = {}  # the newer release the Update button installs ({}
 var _games: Dictionary = {}   # Paths.game_folders()
 var _meter := ProgressMeter.new()
 var _job_kind := ""           # the running job: "check", "install" or "aio"
+var _job_target := ""         # the version the running install job replaces or adds ("" when not known yet)
 var _stop := ""               # "pause" / "cancel" asked of the running game download
 var _paused := ""             # "game" / "launcher" / "aio": a download stopped by Pause (Resume continues it)
 var _paused_release: Dictionary = {}
 var _paused_pick := false
 var _job_assets: Array = []   # the release assets the running game / launcher job downloads (its downloads/<name>.part files)
 var _paused_assets: Array = []
-var _ui_stop := ""            # tests: --ui-stop=<pause|cancel>@<text>, pressed once when a download whose progress names <text> runs
+var _ui_stop := ""            # tests: --ui-stop=<pause|cancel|play>@<text>, pressed once when a download whose progress names <text> runs
 var _ui_then := ""            # tests: --ui-then=resume|cancel, pressed once after that stop
 var _aio_target := ""         # the folder of the AIO download that runs or is paused
 var _demo := ""
+var _problem := ""            # why updates are off ("" when they work)
+var _pv := ""                 # the version Play starts (refreshed with the installed versions)
+var _update_state := "idle"
+var _update_tag := ""
+var _launcher_only := false   # the update offered is only the launcher's (the game is up to date)
+var _quit_when_done := false  # Play was pressed while an update downloaded: close once it is done (unless the window came back)
 
-var _installed_label: Label
-var _pill: PanelContainer
-var _pill_icon: TextureRect
-var _pill_text: Label
-var _update: Button
-var _stable: Button
-var _preview: Button
-var _check: Button
-var _gear: Button
+var _screen := "play"
+var _nav := {}
+var _screens := {}
+var _play_screen: PlayScreen
+var _news: NewsScreen
+var _mods: ModsScreen
+var _games_screen: GamesScreen
+var _settings: SettingsScreen
 var _banner: PanelContainer
 var _warning: Label
-var _games_card: PanelContainer
-var _games_button: Button
-var _games_found: PanelContainer
-var _games_where: Label
-var _notes_title: Label
-var _notes: RichTextLabel
+var _status_head: Label
+var _status_tail: Label
+var _status: Label
 var _progress: VBoxContainer
 var _bar: ProgressBar
 var _bar_title: Label
 var _bar_label: Label
+var _update: Button
+var _check: Button
 var _pause: Button
 var _cancel: Button
-var _status: Label
 var _play: Button
-var _settings: SettingsPanel
-var _download: DownloadPanel
 var _message: MessagePanel
 
 
@@ -179,20 +193,39 @@ func _ready() -> void:
 		for c in CLI_ACTIONS:
 			if a == c or (c.ends_with("=") and a.begins_with(c)):
 				cli = true
+	# one launcher at a time (after the self-update swap above: its helper never holds the lock); --version alone needs none
+	if not (cli and Array(args).all(func(x): return x == "--version" or not CLI_ACTIONS.any(func(c): return x == c or (c.ends_with("=") and x.begins_with(c))))):
+		_instance = InstanceLock.new(OS.get_user_data_dir(), info.version)
+		if not _instance.acquire():
+			# Sol r4: "already open" only when the port's holder answered as a launcher; another program on the port is said as such
+			var why := ("Another OpenBFME Launcher (%s) is already open. Use that one, or close it and start this one again." % _instance.other_launcher) \
+				if _instance.other_launcher != "" else ("The OpenBFME Launcher cannot start: %s. The launcher uses that port only to make sure one " +
+				"launcher runs at a time; close the other program, or start the launcher again later.") % _instance.error
+			Log.line("LAUNCHER " + why)
+			if not cli and DisplayServer.get_name() != "headless":
+				OS.alert(why, "OpenBFME Launcher")
+			_instance = null
+			get_tree().quit(1)
+			return
 	if cli:
 		get_tree().quit(_run_cli(args, problem))
 		return
+	_problem = problem
 	_build_ui()
 	if start.message != "":
 		_set_status(start.message)
 	_refresh_installed()
+	var unseen := str(updater.get_state("launcher", "unseen_error", ""))
+	if unseen != "" and _demo == "":
+		Log.line("LAUNCHER showing an update failure from while the game ran: " + unseen)
+		_message.show_error("An update failed while you played", unseen, _about())
 	if _demo != "":
 		_show_demo(_demo)
 	elif problem != "":
 		_set_status("Updates are off: " + problem)
 		_set_update_state("failed")
 	elif not "--offline" in args:
-		_start_job(_job_check.bind(true), "check")
+		_start_job(_job_check.bind(updater.auto_update()), "check")
 	for a in args:
 		if a.begins_with("--screenshot="):
 			_screenshot(a.substr(13))
@@ -218,7 +251,10 @@ func _screenshot(path: String) -> void:
 	Log.line("LAUNCHER ui paused: " + _paused)
 	Log.line("LAUNCHER ui status: " + _status.text)
 	Log.line("LAUNCHER ui warning: " + (_warning.text if _banner.visible else ""))
-	Log.line("LAUNCHER ui games card: " + ("shown" if _games_card.visible else "hidden"))
+	Log.line("LAUNCHER ui games card: " + ("shown" if _play_screen.games_card.visible else "hidden"))
+	Log.line("LAUNCHER ui dialog: " + (_message.shown_text() if _message.visible else ""))
+	Log.line("LAUNCHER ui update button: " + (_update.text if _update.visible else ""))
+	Log.line("LAUNCHER ui screen: %s%s" % [_screen, " (%s)" % _settings.tab if _screen == "settings" else ""])
 	if "--ui-dump" in OS.get_cmdline_user_args():
 		for t in _texts(self):
 			print("LAUNCHER ui text: " + t)  # not Log.line: the test checks what the window shows, before any scrubbing
@@ -254,7 +290,7 @@ static func _texts(node: Node) -> PackedStringArray:
 	if node is Label or node is Button or node is LineEdit:
 		out.append(node.text)
 	if node is RichTextLabel:
-		out.append(node.text)
+		out.append(node.get_parsed_text())
 	if node is Window:
 		out.append(node.title)
 	if node is Control and node.tooltip_text != "":
@@ -262,6 +298,9 @@ static func _texts(node: Node) -> PackedStringArray:
 	if node is ItemList:
 		for i in node.item_count:
 			out.append(node.get_item_text(i))
+	if node is LinkButton:
+		out.append(node.text)
+		out.append(node.uri)
 	if node is OptionButton:
 		for i in node.item_count:
 			out.append(node.get_item_text(i))
@@ -271,51 +310,77 @@ static func _texts(node: Node) -> PackedStringArray:
 
 
 ## --ui-demo: made-up state for the screenshots of each screen (development runs and test packages only); nothing is downloaded or
-## written. The folders are under the home folder, so the screenshots show how they are shortened.
+## written. The folders are under the home folder, so the screenshots show how they are shortened. The notes are the releases of the
+## launcher's cached release list when there is one (real notes), else text marked as demo text (the owner: never invent release facts
+## in screenshots).
+## Screens: main (Play), news, multiplayer, mods, games (no games found: the download), games-downloading, settings (General), display,
+## about, update (a newer version, updating by itself off), downloading (an update downloading), error.
 func _show_demo(screen: String) -> void:
 	var home := Paths.home()
-	var games := {"found": screen != "games", "rotwk": home.path_join("Games/BFME/RotWK"), "bfme2": home.path_join("Games/BFME/BFME2"), "source": "config"}
-	if screen == "games":
+	var no_games := screen in ["games", "games-downloading"]
+	var games := {"found": true, "rotwk": home.path_join("Games/BFME/RotWK"), "bfme2": home.path_join("Games/BFME/BFME2"), "source": "config"}
+	if no_games:
 		games = {"found": false, "rotwk": "", "bfme2": "", "source": ""}
-	_show_games(games)
-	_games_card.visible = not games.found
-	_settings.set_folders(games, true)
-	var installed := "v0.3.0-preview.1"
-	_installed_label.text = installed
+	_show_games(games, true)
+	var rels := updater.cached_releases()
+	if rels.is_empty():
+		var sample := "DEMO TEXT for the launcher screenshots, not real release notes.\n\n## What's new\n\n- Sample note: what changed in this build.\n" + \
+			"- Sample note: another change.\n\n## What's fixed\n\n- Sample note: a fix.\n\n## Known issues\n\n- Sample note: a known issue.\n"
+		rels = [{"tag": "v0.4.0-alpha.1", "prerelease": true, "notes": sample, "published": "", "assets": {}},
+			{"tag": "v0.3.0-preview.4", "prerelease": true, "notes": sample, "published": "", "assets": {}}]
+	_releases = rels
+	var chan := updater.in_channel(rels, updater.channel())
+	if chan.is_empty():
+		updater.set_channel("preview")  # the screenshots' launcher is a development run (Stable); the demo is a preview player's
+		_show_channel()
+		chan = rels
+	var installed: String = chan[1].tag if screen in ["update", "downloading", "error"] and chan.size() > 1 else chan[0].tag
+	_pv = installed
+	_older = chan.map(func(r): return r.tag)
+	_settings.set_versions([{"version": installed}], installed, _older)
+	_settings.set_options(true, screen != "update", true, _about())
 	_play.disabled = false
-	_older = ["v0.3.0-preview.2", "v0.3.0-preview.1", "v0.2.0-preview.4"]
-	_settings.set_versions([{"version": "v0.3.0-preview.1"}, {"version": "v0.2.0-preview.4"}], installed, _older)
-	_settings.set_options(true, true, _about())
-	_notes_title.text = "WHAT'S NEW IN V0.3.0-PREVIEW.1"
-	# clearly demo text (the owner: never invent release facts in screenshots)
-	_notes.text = "DEMO TEXT for the launcher screenshots, not real release notes.\n\n- Sample note: what changed in this build.\n- Sample note: a fix.\n- Sample note: a known issue.\n\nThe real notes of the newest release appear here."
+	_show_notes()
+	_set_update_state("current")
+	_set_status("Up to date.")
 	match screen:
-		"main", "settings", "games":
-			_set_update_state("current")
-			_set_status("Up to date.")
-			if screen == "settings":
-				_settings.visible = true
-			if screen == "games":
-				_open_download()
+		"news", "multiplayer", "mods":
+			_show_screen(screen)
+		"settings", "display", "about":
+			_show_screen("settings")
+			_settings.show_tab({"settings": "general", "display": "display", "about": "about"}[screen])
+		"games", "games-downloading":
+			_show_screen("games")
+			_games_screen.setup(Paths.default_games_dir(), aio.total_size() / 1e9, aio.packages)
+			if screen == "games-downloading":
+				_job_kind = "aio"
+				_demo_progress("RotWK: game files 412 of 1 830", 3328599654, 9234179686)
+				_games_screen.set_download_state(true, false, true, true)
+				_set_status("Downloading the games. Play is back when they are checked.")
 		"update", "downloading", "error":
-			_latest = {"tag": "v0.3.0-preview.2"}
-			_set_update_state("update", "v0.3.0-preview.2")
-			_notes_title.text = "WHAT'S NEW IN V0.3.0-PREVIEW.2"
-			_set_status("v0.3.0-preview.2 is available.")
+			_latest = {"tag": chan[0].tag}
+			_set_update_state("update", chan[0].tag)
+			_set_status("%s is available." % chan[0].tag)
 			if screen == "downloading":
-				_update.disabled = true
-				_play.disabled = true
-				var total := 1073741824
-				var done := 327155712
-				_meter.rate = 8.2 * 1048576.0
-				_bar.max_value = total
-				_bar.value = done
-				_bar_title.text = "Downloading openbfme-v0.3.0-preview.2-%s.%s" % [info.platform(), "zip" if OS.get_name() == "Windows" else "tar.gz"]
-				_bar_label.text = _meter.text(done, total)
-				_show_progress(true)
-				_set_status("Downloading the update. Play is back when it is installed.")
+				_latest = {}
+				_set_update_state("updating", chan[0].tag)
+				_demo_progress("Downloading openbfme-%s-%s.%s" % [chan[0].tag, info.platform(), "zip" if OS.get_name() == "Windows" else "tar.gz"],
+					327155712, 1073741824)
+				_set_status("Downloading %s in the background. Play starts %s until it is installed." % [chan[0].tag, installed])
 			if screen == "error":
-				_show_error("Update not installed", "Update rejected: openbfme-v0.3.0-preview.2-%s.tar.gz does not match the signed manifest: deleted, nothing was installed. The download folder was %s." % [info.platform(), home.path_join(".local/share/OpenBFMELauncher/downloads")])
+				_show_error("Update not installed", "Update rejected: openbfme-%s-%s.tar.gz does not match the signed manifest: deleted, nothing was installed. The download folder was %s." % [chan[0].tag, info.platform(), home.path_join(".local/share/OpenBFMELauncher/downloads")])
+	_refresh_head()
+	_set_buttons()
+
+
+func _demo_progress(title: String, done: int, total: int) -> void:
+	_meter.rate = 8.2 * 1048576.0
+	_bar.max_value = total
+	_bar.value = done
+	_bar_title.text = title
+	_bar_label.text = _meter.text(done, total)
+	_games_screen.set_progress(title + "  ·  " + _bar_label.text, done, total)
+	_show_progress(true)
 
 
 # ---- command line ------------------------------------------------------------------------------------------------------------------------
@@ -328,6 +393,8 @@ func _run_cli(args: PackedStringArray, problem: String) -> int:
 	for a in args:
 		if a.begins_with("--channel="):
 			var ch := a.substr(10)
+			if ch == "alpha":
+				ch = "preview"  # lane RELNAME-1: the pre-release channel's shown name
 			if not ch in ["stable", "preview"]:
 				Log.line("LAUNCHER unknown channel '%s' (stable, preview)" % ch)
 				return 1
@@ -345,6 +412,14 @@ func _run_cli(args: PackedStringArray, problem: String) -> int:
 			Log.line("LAUNCHER free camera %s" % (v if why == "" else "not changed: " + why))
 			if why != "":
 				code = 1
+	for a in args:
+		if a.begins_with("--auto-update="):
+			var v := a.substr(14)
+			if not v in ["on", "off"]:
+				Log.line("LAUNCHER --auto-update takes on or off, not '%s'" % v)
+				return 1
+			updater.set_auto_update(v == "on")
+			Log.line("LAUNCHER updating by itself %s" % v)
 	for a in args:
 		if a.begins_with("--aio="):
 			var v := a.substr(6)
@@ -446,13 +521,19 @@ func _run_cli(args: PackedStringArray, problem: String) -> int:
 
 
 # ---- the window --------------------------------------------------------------------------------------------------------------------------
-# Lane UI-3: one main screen (the version Play starts and its update state with one button, the channel switch, the release notes, the
-# one progress bar with Pause / Cancel, a big Play), Settings behind the gear (scripts/ui/settings_panel.gd), Download the games only
-# while no game folders are found (scripts/ui/download_panel.gd), errors and questions in one dialog (scripts/ui/message_panel.gd). Every
-# text the window shows goes through Paths.scrub (no home folder, no user name: scripts/ui/paths.gd).
+# Lane UI-5: "Parchment & Steel", the owner's pick of ten launcher concepts (2026-10-10; the prototype's design 1): a misty backdrop, the
+# left rail on dark steel (Play, News, Multiplayer, Mods, Game files, Settings), the screens beside it, and the bottom bar (the status or
+# the one progress bar with Pause / Cancel, Check for updates, the gold PLAY). Errors and questions in one dialog
+# (scripts/ui/message_panel.gd). Every text the window shows goes through Paths.scrub (no home folder, no user name: scripts/ui/paths.gd).
+# Updates download in the background (Updater.auto_update): Play stays usable while they do and starts the installed version; a newer
+# version is used from the next Play on. Play pressed during a download minimises the window, which closes once the download is done.
 
 ## the window's size before DPI scaling (project.godot's viewport; canvas_items stretch scales everything with the window)
 const BASE_SIZE := Vector2(1280, 720)
+const RAIL_W := 214.0
+const BAR_H := 96.0
+const SCREENS := [["play", "swords", "Play"], ["news", "star", "News"], ["multiplayer", "rings", "Multiplayer"], ["mods", "hammer", "Mods"],
+	["games", "drive", "Game files"], ["settings", "gear", "Settings"]]
 
 
 ## A DPI-scaled window: on a screen with a scale above 1 (Windows: its DPI / 96) the window grows by that factor, within 92% of the
@@ -481,46 +562,67 @@ func _fit_window() -> void:
 func _build_ui() -> void:
 	_fit_window()
 	theme = Style.make_theme()
-	var back := Backdrop.new()
-	back.set_anchors_preset(Control.PRESET_FULL_RECT)
-	add_child(back)
-	var margin := MarginContainer.new()
-	margin.set_anchors_preset(Control.PRESET_FULL_RECT)
-	margin.add_theme_constant_override("margin_left", 44)
-	margin.add_theme_constant_override("margin_right", 44)
-	margin.add_theme_constant_override("margin_top", 22)
-	margin.add_theme_constant_override("margin_bottom", 0)
-	add_child(margin)
-	var page := W.vbox(16)
-	margin.add_child(page)
+	add_child(Textures.surface("mist"))
 
-	# the header: the launcher's version, the channel switch, check, the gear
-	var head := W.hbox(10)
-	page.add_child(head)
-	var sub := W.label("Launcher %s" % info.version, "Muted", 15)
-	sub.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	head.add_child(sub)
-	head.add_child(W.spacer())
-	var seg := PanelContainer.new()
-	seg.theme_type_variation = "Inset"
-	seg.add_theme_stylebox_override("panel", Style.box(Color("121418"), Style.EDGE, 1, Style.RADIUS, Vector2(3, 3)))
-	var seg_row := W.hbox(2)
-	seg.add_child(seg_row)
+	# the left rail
+	var rail := Control.new()
+	rail.anchor_bottom = 1.0
+	rail.offset_right = RAIL_W
+	add_child(rail)
+	rail.add_child(Textures.surface("steel"))
+	var edge := ColorRect.new()
+	edge.color = Style.LINE
+	edge.anchor_left = 1.0
+	edge.anchor_right = 1.0
+	edge.anchor_bottom = 1.0
+	edge.offset_left = -1
+	rail.add_child(edge)
+	var rm := MarginContainer.new()
+	rm.set_anchors_preset(Control.PRESET_FULL_RECT)
+	for side in ["left", "right"]:
+		rm.add_theme_constant_override("margin_" + side, 13)
+	rm.add_theme_constant_override("margin_top", 22)
+	rm.add_theme_constant_override("margin_bottom", 16)
+	rail.add_child(rm)
+	var rv := W.vbox(6)
+	rm.add_child(rv)
+	var logo := W.label("OPENBFME")
+	Style.text(logo, "Cinzel", 700, 25, Style.ACCENT, 2)
+	var lm := MarginContainer.new()
+	lm.add_theme_constant_override("margin_left", 9)
+	lm.add_theme_constant_override("margin_bottom", 16)
+	lm.add_child(logo)
+	rv.add_child(lm)
 	var group := ButtonGroup.new()
-	_stable = _seg_button("Stable", group)
-	_preview = _seg_button("Preview", group)
-	seg_row.add_child(_stable)
-	seg_row.add_child(_preview)
-	_stable.pressed.connect(_on_channel.bind("stable"))
-	_preview.pressed.connect(_on_channel.bind("preview"))
-	head.add_child(seg)
-	_check = W.icon_button("refresh", "Check for updates")
-	_check.pressed.connect(func() -> void: _start_job(_job_check.bind(false), "check"))
-	head.add_child(_check)
-	_gear = W.icon_button("gear", "Settings")
-	_gear.pressed.connect(_open_settings)
-	head.add_child(_gear)
+	for s in SCREENS:
+		var b := W.button(s[2], s[1], "NavButton", 18)
+		b.toggle_mode = true
+		b.button_group = group
+		b.alignment = HORIZONTAL_ALIGNMENT_LEFT
+		b.pressed.connect(_show_screen.bind(s[0]))
+		rv.add_child(b)
+		_nav[s[0]] = b
+	rv.add_child(W.spacer())
+	rv.get_child(rv.get_child_count() - 1).size_flags_vertical = Control.SIZE_EXPAND_FILL
+	var foot := W.label("Launcher %s" % info.version, "Muted")
+	foot.add_theme_font_size_override("font_size", 12)
+	var fm := MarginContainer.new()
+	fm.add_theme_constant_override("margin_left", 10)
+	fm.add_child(foot)
+	rv.add_child(fm)
 
+	# the screens
+	var content := MarginContainer.new()
+	content.set_anchors_preset(Control.PRESET_FULL_RECT)
+	content.offset_left = RAIL_W
+	content.offset_bottom = -BAR_H
+	content.add_theme_constant_override("margin_left", 34)
+	content.add_theme_constant_override("margin_right", 34)
+	content.add_theme_constant_override("margin_top", 28)
+	content.add_theme_constant_override("margin_bottom", 4)
+	add_child(content)
+	var cv := W.vbox(12)
+	content.add_child(cv)
 	# the freeze warning (its own line: round 3, Sol r2)
 	_banner = PanelContainer.new()
 	_banner.theme_type_variation = "Banner"
@@ -535,113 +637,86 @@ func _build_ui() -> void:
 	_warning.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	brow.add_child(_warning)
 	_banner.add_child(brow)
-	page.add_child(_banner)
+	cv.add_child(_banner)
+	var stack := Control.new()
+	stack.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	cv.add_child(stack)
+	_play_screen = PlayScreen.new()
+	_play_screen.download_games.connect(_open_download)
+	_play_screen.show_news.connect(_show_screen.bind("news"))
+	_news = NewsScreen.new()
+	var mp := MultiplayerScreen.new()
+	mp.build(info.repo)
+	_mods = ModsScreen.new()
+	_games_screen = GamesScreen.new()
+	_games_screen.download.connect(_start_aio)
+	_games_screen.forget_folders.connect(_on_forget_folders)
+	_games_screen.show_folder.connect(_show_folder)
+	_games_screen.pause_pressed.connect(_on_pause)
+	_games_screen.cancel_pressed.connect(_on_cancel)
+	_settings = SettingsScreen.new()
+	_settings.channel_picked.connect(_on_channel)
+	_settings.free_camera_toggled.connect(_on_free_camera)
+	_settings.auto_update_toggled.connect(_on_auto_update)
+	_settings.aio_toggled.connect(_on_aio_toggled)
+	_settings.use_version.connect(_on_use)
+	_settings.install_release.connect(_on_install_pick)
+	_settings.open_logs.connect(_open_logs)
+	_screens = {"play": _play_screen, "news": _news, "multiplayer": mp, "mods": _mods, "games": _games_screen, "settings": _settings}
+	for k in _screens:
+		stack.add_child(_screens[k])
 
-	# the body: the title, the version card and (no games found) the games card on the left; the release notes on the right
-	var body := W.hbox(28)
-	body.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	page.add_child(body)
-	var left := W.vbox(16)
-	left.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	left.size_flags_stretch_ratio = 1.0
-	body.add_child(left)
-	var hero := W.vbox(0)
-	var big := W.label("OpenBFME", "Heading", 58)
-	hero.add_child(big)
-	hero.add_child(W.label("The Rise of the Witch-king 2.01, rebuilt.", "Muted", 17))
-	left.add_child(hero)
-
-	var vcard := PanelContainer.new()
-	left.add_child(vcard)
-	var vbox := W.vbox(10)
-	vcard.add_child(vbox)
-	vbox.add_child(W.label("INSTALLED", "Section"))
-	_installed_label = W.label("", "Heading", 30)
-	vbox.add_child(_installed_label)
-	var srow := W.hbox(12)
-	_pill = PanelContainer.new()
-	_pill.theme_type_variation = "Pill"
-	var prow := W.hbox(6)
-	_pill_icon = TextureRect.new()
-	_pill_icon.stretch_mode = TextureRect.STRETCH_KEEP_CENTERED
-	prow.add_child(_pill_icon)
-	_pill_text = W.label("")
-	prow.add_child(_pill_text)
-	_pill.add_child(prow)
-	_pill.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	srow.add_child(_pill)
-	_update = W.button("Update", "download", "GoldButton")
-	_update.visible = false
-	_update.pressed.connect(func() -> void: _start_job(_job_install.bind(_latest, false), "install"))
-	srow.add_child(_update)
-	vbox.add_child(srow)
-
-	_games_card = PanelContainer.new()
-	_games_card.visible = false
-	left.add_child(_games_card)
-	var gbox := W.vbox(10)
-	_games_card.add_child(gbox)
-	gbox.add_child(W.label("GAMES", "Section"))
-	gbox.add_child(W.wrap("The Rise of the Witch-king 2.01 and Battle for Middle-earth II 1.06 were not found."))
-	var grow := W.hbox(14)
-	_games_button = W.button("Download the games", "download", "GoldButton")
-	_games_button.pressed.connect(_open_download)
-	grow.add_child(_games_button)
-	var already := W.wrap("Installed already? The game finds them when it starts.", "Muted")
-	already.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	grow.add_child(already)
-	gbox.add_child(grow)
-
-	# the games found: where they are, shortened (Settings has "Show folder")
-	_games_found = PanelContainer.new()
-	_games_found.visible = false
-	left.add_child(_games_found)
-	var fbox := W.vbox(8)
-	_games_found.add_child(fbox)
-	fbox.add_child(W.label("GAMES", "Section"))
-	var frow := W.hbox(8)
-	var ficon := TextureRect.new()
-	ficon.texture = VectorIcon.make("check", 16)
-	ficon.modulate = Style.GOOD
-	ficon.stretch_mode = TextureRect.STRETCH_KEEP_CENTERED
-	frow.add_child(ficon)
-	frow.add_child(W.label("The Rise of the Witch-king and Battle for Middle-earth II found"))
-	fbox.add_child(frow)
-	_games_where = W.label("", "Muted")
-	_games_where.clip_text = true
-	_games_where.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-	fbox.add_child(_games_where)
-
-	var ncard := PanelContainer.new()
-	ncard.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	ncard.size_flags_stretch_ratio = 1.15
-	ncard.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	body.add_child(ncard)
-	var nbox := W.vbox(10)
-	ncard.add_child(nbox)
-	_notes_title = W.label("RELEASE NOTES", "Section")
-	nbox.add_child(_notes_title)
-	_notes = RichTextLabel.new()
-	_notes.bbcode_enabled = false
-	_notes.scroll_active = true
-	_notes.selection_enabled = true
-	_notes.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	_notes.text = "The notes of the newest release appear here after the update check."
-	nbox.add_child(_notes)
-
-	# the action bar: status, the one progress bar with Pause / Cancel, Play
-	var bar := W.hbox(28)
-	bar.custom_minimum_size.y = 112
-	page.add_child(bar)
-	var info_box := W.vbox(6)
+	# the bottom bar: status or progress, Update, Check for updates (Pause / Cancel while downloading), PLAY
+	var bar_root := Control.new()
+	bar_root.anchor_top = 1.0
+	bar_root.anchor_right = 1.0
+	bar_root.anchor_bottom = 1.0
+	bar_root.offset_left = RAIL_W
+	bar_root.offset_top = -BAR_H
+	add_child(bar_root)
+	var shade := TextureRect.new()
+	shade.set_anchors_preset(Control.PRESET_FULL_RECT)
+	shade.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	shade.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	shade.stretch_mode = TextureRect.STRETCH_SCALE
+	var g := GradientTexture2D.new()
+	g.gradient = Gradient.new()
+	g.gradient.offsets = PackedFloat32Array([0.0, 0.45, 1.0])
+	g.gradient.colors = PackedColorArray([Color(0, 0, 0, 0), Color(0, 0, 0, 0.85), Color(0, 0, 0, 0.85)])
+	g.fill_from = Vector2(0, 0)
+	g.fill_to = Vector2(0, 1)
+	g.width = 4
+	g.height = 64
+	shade.texture = g
+	bar_root.add_child(shade)
+	var bm := MarginContainer.new()
+	bm.set_anchors_preset(Control.PRESET_FULL_RECT)
+	bm.add_theme_constant_override("margin_left", 34)
+	bm.add_theme_constant_override("margin_right", 30)
+	bm.add_theme_constant_override("margin_top", 10)
+	bm.add_theme_constant_override("margin_bottom", 10)
+	bar_root.add_child(bm)
+	var bar := W.hbox(14)
+	bm.add_child(bar)
+	var info_box := W.vbox(4)
 	info_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	info_box.alignment = BoxContainer.ALIGNMENT_CENTER
 	bar.add_child(info_box)
-	_progress = W.vbox(6)
+	var head := W.hbox(0)
+	_status_head = W.label("")
+	Style.text(_status_head, "Inter", 600, 14, Style.TEXT)
+	head.add_child(_status_head)
+	_status_tail = W.label("")
+	Style.text(_status_tail, "Inter", 500, 14, Style.TEXT2)
+	_status_tail.clip_text = true
+	_status_tail.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	_status_tail.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	head.add_child(_status_tail)
+	info_box.add_child(head)
+	_progress = W.vbox(5)
 	_progress.visible = false
-	info_box.add_child(_progress)
 	var trow := W.hbox(10)
-	_bar_title = W.label("")
+	_bar_title = W.label("", "Muted")
 	_bar_title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_bar_title.clip_text = true
 	_bar_title.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
@@ -649,120 +724,118 @@ func _build_ui() -> void:
 	_bar_label = W.label("", "Muted")
 	trow.add_child(_bar_label)
 	_progress.add_child(trow)
-	var brow2 := W.hbox(10)
-	_bar = ProgressBar.new()
-	_bar.show_percentage = false
-	_bar.custom_minimum_size.y = 12
-	_bar.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_bar.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	brow2.add_child(_bar)
-	_pause = W.button("Pause", "pause", "", 14)
-	_pause.pressed.connect(_on_pause)
-	brow2.add_child(_pause)
-	_cancel = W.button("Cancel", "stop", "", 14)
-	_cancel.pressed.connect(_on_cancel)
-	brow2.add_child(_cancel)
-	_progress.add_child(brow2)
-	_status = W.wrap("", "Muted")
-	_status.max_lines_visible = 2
+	_bar = W.progress_bar()
+	_progress.add_child(_bar)
+	info_box.add_child(_progress)
+	_status = W.label("", "Muted")  # one line (the whole message: its tooltip, the log, the error dialog)
+	_status.clip_text = true
+	_status.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	_status.mouse_filter = Control.MOUSE_FILTER_PASS
 	info_box.add_child(_status)
-	# Play: the icon beside the word, both centred (a Button's icon sits at its edge), dimmed with the button when disabled
-	_play = W.button("", "", "GoldButton")
-	_play.custom_minimum_size = Vector2(250, 66)
+	_update = W.button("Update", "download", "GoldButton", 16)
+	_update.visible = false
+	_update.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	_update.pressed.connect(func() -> void: _start_job(_job_update.bind(_latest), "install", String(_latest.get("tag", ""))))
+	bar.add_child(_update)
+	_check = W.button("Check for updates", "refresh", "", 15)
+	_check.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	_check.pressed.connect(func() -> void: _start_job(_job_check.bind(updater.auto_update()), "check"))
+	bar.add_child(_check)
+	_pause = W.button("Pause", "pause", "", 14)
+	_pause.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	_pause.pressed.connect(_on_pause)
+	bar.add_child(_pause)
+	_cancel = W.button("Cancel", "stop", "", 14)
+	_cancel.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	_cancel.pressed.connect(_on_cancel)
+	bar.add_child(_cancel)
+	_play = GoldButton.make("PLAY", Vector2(236, 60))
 	_play.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	_play.pressed.connect(_on_play)
-	var pc := CenterContainer.new()
-	pc.set_anchors_preset(Control.PRESET_FULL_RECT)
-	pc.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	var pr := W.hbox(12)
-	pr.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	var picon := TextureRect.new()
-	picon.texture = VectorIcon.make("play", 24)
-	picon.stretch_mode = TextureRect.STRETCH_KEEP_CENTERED
-	picon.modulate = Style.INK
-	pr.add_child(picon)
-	var pl := W.label("Play", "", 30)
-	pl.add_theme_font_override("font", Style.title_font(700))
-	pl.add_theme_color_override("font_color", Style.INK)
-	pr.add_child(pl)
-	pc.add_child(pr)
-	_play.add_child(pc)
-	_play.draw.connect(func() -> void: pc.modulate.a = 0.5 if _play.disabled else 1.0)
 	bar.add_child(_play)
 
-	# the overlays
-	_settings = SettingsPanel.new()
-	_settings.channel_picked.connect(_on_channel)
-	_settings.free_camera_toggled.connect(_on_free_camera)
-	_settings.aio_toggled.connect(_on_aio_toggled)
-	_settings.forget_folders.connect(_on_forget_folders)
-	_settings.use_version.connect(_on_use)
-	_settings.install_release.connect(_on_install_pick)
-	_settings.open_logs.connect(_open_logs)
-	_settings.show_folder.connect(_show_folder)
-	add_child(_settings)
-	_download = DownloadPanel.new()
-	_download.download.connect(_start_aio)
-	add_child(_download)
 	_message = MessagePanel.new()
 	_message.open_logs.connect(_open_logs)
+	_message.closed.connect(func() -> void: updater.set_state("launcher", "unseen_error", ""))
 	add_child(_message)
 
+	var recheck := Timer.new()
+	recheck.wait_time = RECHECK_SECONDS
+	recheck.timeout.connect(_on_recheck)
+	add_child(recheck)
+	recheck.start()
+
 	_show_channel()
+	_show_progress(false)
 	_set_update_state("idle")
 	_refresh_games()
+	_show_screen("play")
 	_play.grab_focus.call_deferred()
 
 
-func _seg_button(text: String, group: ButtonGroup) -> Button:
-	var b := Button.new()
-	b.text = text
-	b.toggle_mode = true
-	b.button_group = group
-	b.theme_type_variation = "SegButton"
-	return b
+func _show_screen(key: String) -> void:
+	_screen = key
+	for k in _screens:
+		_screens[k].visible = k == key
+		_nav[k].set_pressed_no_signal(k == key)
+	if key == "games" and _games_screen.folder == "":
+		_games_screen.setup(Paths.default_games_dir(), aio.total_size() / 1e9, aio.packages)
+	if key == "settings":
+		_settings.set_options(GameOptions.free_camera(), updater.auto_update(), aio.enabled(), _about())
 
 
 func _show_channel() -> void:
-	var ch := updater.channel()
-	_stable.set_pressed_no_signal(ch == "stable")
-	_preview.set_pressed_no_signal(ch == "preview")
-	_settings.set_channel(ch)
+	_settings.set_channel(updater.channel())
+	_refresh_head()
 
 
-## the update state beside the installed version: "idle" (no check yet), "checking", "current" (up to date), "update" (`tag` is newer:
-## the gold button), "failed" (the check did not finish: `why` says it), "none" (no release of the channel)
+## the update state: "idle" (no check yet), "checking", "updating" (an update downloads), "current" (up to date), "update" (`tag` is
+## newer: the gold Update button), "failed" (the check did not finish: the status says why), "none" (no release of the channel)
 func _set_update_state(state: String, tag := "") -> void:
-	var looks := {
-		"idle": ["", "", Style.MUTED],
-		"checking": ["refresh", "Checking for updates…", Style.MUTED],
-		"current": ["check", "Up to date", Style.GOOD],
-		"update": ["", "", Style.GOLD],
-		"failed": ["warning", "Could not check for updates", Style.WARN],
-		"none": ["", "No %s release yet" % updater.channel(), Style.MUTED],
-	}
-	var l: Array = looks[state]
-	_pill.visible = l[1] != ""
-	_pill_text.text = l[1]
-	_pill_text.add_theme_color_override("font_color", l[2])
-	_pill_icon.texture = VectorIcon.make(l[0], 16) if l[0] != "" else null
-	_pill_icon.visible = l[0] != ""
-	_pill_icon.modulate = l[2]
-	var edge: Color = l[2]
-	_pill.add_theme_stylebox_override("panel", Style.box(Color(edge, 0.1), Color(edge, 0.45), 1, 12, Vector2(12, 4)))
+	_update_state = state
+	_update_tag = tag
 	_update.visible = state == "update"
 	if state == "update":
-		_update.text = ("Update to " if updater.newest_installed() != "" or _demo != "" else "Install ") + tag
+		_update.text = ("Update launcher to " if _launcher_only else "Update to " if _pv != "" else "Install ") + tag
+	_refresh_head()
+
+
+## the bottom bar's first line and the Play screen's chips: the update state, the version Play starts, the channel
+func _refresh_head() -> void:
+	if _status_head == null:
+		return
+	var ch := Semver.channel_name(updater.channel())  # lane RELNAME-1: the pre-release channel is shown as "Alpha"
+	var head: String = {"idle": "Ready", "checking": "Checking for updates", "updating": "Updating", "current": "Up to date",
+		"update": "Update available", "failed": "Could not check for updates", "none": "No %s release yet" % ch.to_lower()}[_update_state]
+	var colour: Color = {"idle": Style.TEXT2, "checking": Style.TEXT2, "updating": Style.ACCENT, "current": Style.GOOD, "update": Style.ACCENT,
+		"failed": Style.WARN, "none": Style.TEXT2}[_update_state]
+	if _update_state == "update":
+		head = ("Launcher %s is available" if _launcher_only else "%s is available") % _update_tag
+	if _update_state == "updating" and _update_tag != "":
+		head = "Updating to %s" % _update_tag
+	if _quit_when_done:
+		head = "Playing %s" % _pv
+	_status_head.text = head
+	_status_tail.text = "  ·  %s  ·  %s channel" % [_pv if _pv != "" else "nothing installed yet", ch]
+	W.set_chip(_play_screen.state_chip, "●  " + head, colour)
+	W.set_chip(_play_screen.channel_chip, "Channel: " + ch)
+	W.set_chip(_play_screen.version_chip, _pv if _pv != "" else "Not installed")
+	_status.visible = _status.text.trim_suffix(".") != head
 
 
 func _on_free_camera(on: bool) -> void:
 	var why := GameOptions.set_free_camera(on)
 	if why != "":
 		_show_error("The setting was not saved", "The free camera setting was not saved: " + why)
-		_settings.set_options(GameOptions.free_camera(), aio.enabled(), _about())
+		_settings.set_options(GameOptions.free_camera(), updater.auto_update(), aio.enabled(), _about())
 		return
 	Log.line("LAUNCHER free camera %s (%s)" % ["on" if on else "off", GameOptions.options_path()])
 	_set_status("Free camera %s: it applies the next time the game starts." % ["on" if on else "off"])
+
+
+func _on_auto_update(on: bool) -> void:
+	updater.set_auto_update(on)
+	_set_status("Updates install by themselves in the background." if on else "Updates are only checked: press Update to install one.")
 
 
 func _on_aio_toggled(on: bool) -> void:
@@ -780,16 +853,8 @@ func _on_forget_folders() -> void:
 	_refresh_games()
 
 
-func _open_settings() -> void:
-	_refresh_games()
-	_settings.set_options(GameOptions.free_camera(), aio.enabled(), _about())
-	_settings.visible = true
-
-
 func _open_download() -> void:
-	if _download.folder == "":
-		_download.setup(Paths.default_games_dir(), aio.total_size() / 1e9, aio.packages)
-	_download.visible = true
+	_show_screen("games")
 
 
 func _open_logs() -> void:
@@ -830,7 +895,7 @@ func _on_pause() -> void:
 	elif _paused == "aio":
 		_start_aio(_aio_target)
 	elif _paused == "game":
-		_start_job(_job_install.bind(_paused_release, _paused_pick), "install")
+		_start_job(_job_install.bind(_paused_release, _paused_pick), "install", String(_paused_release.get("tag", "")))
 	elif _paused == "launcher":
 		_start_job(_job_stage.bind(_paused_release), "install")
 
@@ -852,6 +917,7 @@ func _on_cancel() -> void:
 		_set_status("The launcher update was cancelled." if _paused == "launcher" else "The update was cancelled.")
 	_paused = ""
 	_show_progress(false)
+	_set_buttons()
 
 
 ## After a Cancel: the partial downloads of the cancelled job's own assets (downloads/<asset>.part and its .part.json, written by
@@ -892,52 +958,90 @@ func _set_status(text: String) -> void:
 	Log.line("LAUNCHER " + text)
 	if _status != null:
 		_status.text = Paths.scrub(text)
+		_status.tooltip_text = _status.text
+		_refresh_head()
 
 
 func _refresh_installed() -> void:
-	var pv := updater.play_version()
-	_installed_label.text = pv if pv != "" else "Nothing installed yet"
-	_play.disabled = pv == "" or _busy()
-	_settings.set_versions(updater.installed(), pv, _older)
+	if _demo != "":
+		return
+	_pv = updater.play_version()
+	_settings.set_versions(updater.installed(), _pv, _older)
+	_set_buttons()
+	_show_notes()
+	_refresh_head()
+
+
+## the notes cards: What's New of the version Play starts (else of the channel's newest release), and News (every release of the
+## channel); from the last check's release list, else the cached one
+func _show_notes() -> void:
+	var rels := _releases if not _releases.is_empty() else updater.cached_releases()
+	var chan := updater.in_channel(rels, updater.channel())
+	_news.set_releases(chan)
+	var mine := rels.filter(func(r): return r.tag == _pv)
+	if _pv != "" and not mine.is_empty():
+		var when := ReleaseNotes.date_text(str(mine[0].published))
+		_play_screen.set_notes(ReleaseNotes.title_of(_pv) + (" · " + when if when != "" else ""), mine[0].notes, "(no release notes)")
+	elif not chan.is_empty():
+		_play_screen.set_notes("Newest: " + ReleaseNotes.title_of(chan[0].tag), chan[0].notes, "(no release notes)")
+	else:
+		_play_screen.set_notes("", "", "The notes of your version appear here after the first update check.")
 
 
 func _refresh_games() -> void:
 	_show_games(Paths.game_folders())
 
 
-func _show_games(g: Dictionary) -> void:
+func _show_games(g: Dictionary, demo := false) -> void:
 	_games = g
-	_games_card.visible = not g.found and aio.enabled()
-	_games_found.visible = g.found
+	var where := ""
 	if g.found:
 		var r := Paths.short(g.rotwk)
 		var b := Paths.short(g.bfme2)
 		var common := r.get_base_dir()
-		_games_where.text = ("In " + common) if common == b.get_base_dir() and common != "" else "%s and %s" % [r, b]
-	_settings.set_folders(g)
+		where = ("In " + common) if common == b.get_base_dir() and common != "" else "%s and %s" % [r, b]
+	_play_screen.set_games(g.found, aio.enabled(), where)
+	_mods.set_games(g.found)
+	_games_screen.set_folders(g, demo)
+	_set_buttons()
 
 
 func _busy() -> bool:
 	return _thread != null and _thread.is_alive()
 
 
+## Play waits only for a job that changes the version it starts (a reinstall of it) or downloads the games; a background update of a
+## newer version does not stop it (that version is used from the next Play on)
+func _play_blocked() -> bool:
+	if not _busy():
+		return false
+	return _job_kind == "aio" or (_job_target != "" and _job_target == _pv)
+
+
 func _set_buttons() -> void:
+	if _play == null:
+		return
 	var busy := _busy()
+	var downloading := _progress.visible
+	_check.visible = not downloading
 	_check.disabled = busy
+	_pause.visible = downloading
+	_cancel.visible = downloading
 	_update.disabled = busy or _latest.is_empty()
-	_stable.disabled = busy
-	_preview.disabled = busy
-	_play.disabled = busy or updater.play_version() == ""
-	_games_button.disabled = busy or _paused != ""
+	_play.disabled = _pv == "" or _play_blocked()
+	_play_screen.games_button.disabled = busy or _paused != ""
 	_settings.set_busy(busy)
+	var aio_running := busy and _job_kind == "aio"
+	_games_screen.set_download_state(aio_running, _paused == "aio", busy and not aio_running, aio.enabled())
 
 
-func _start_job(job: Callable, kind: String) -> void:
+func _start_job(job: Callable, kind: String, target := "") -> void:
 	if _busy():
 		return
 	if _thread != null:
 		_thread.wait_to_finish()
 	_job_kind = kind
+	_job_target = target
 	_stop = ""
 	_paused = ""
 	updater.http.cancelled = false
@@ -951,15 +1055,42 @@ func _start_job(job: Callable, kind: String) -> void:
 	_set_buttons()
 
 
-func _finish(text: String) -> void:
+## `err`: the job failed (its message is shown in the dialog by the caller)
+func _finish(text: String, err := "") -> void:
 	if _thread != null:
 		_thread.wait_to_finish()
 		_thread = null
 	_set_status(text)
 	_job_kind = ""
+	_job_target = ""
 	_show_progress(_paused != "")
 	_refresh_installed()
 	_set_buttons()
+	if _quit_when_done:
+		# Play was pressed while this ran: close now, unless the player brought the window back
+		var mode := get_window().mode if DisplayServer.get_name() != "headless" else Window.MODE_MINIMIZED
+		_quit_when_done = mode == Window.MODE_MINIMIZED
+		if _quit_when_done and err != "":
+			# lane UI-5 (Sol r1): a failure is never swallowed by the close: the window comes back with the dialog, and the failure is kept
+			# in state.cfg until the dialog is closed (a launcher closed without reading it shows it at the next start)
+			_quit_when_done = false
+			updater.set_state("launcher", "unseen_error", err)
+			Log.line("LAUNCHER the background update failed while the game runs: the launcher stays open to show it (%s)" % err)
+			if DisplayServer.get_name() != "headless":
+				get_window().mode = Window.MODE_WINDOWED
+				get_window().grab_focus()
+			_refresh_head()
+		elif _quit_when_done:
+			Log.line("LAUNCHER the background update finished while the game runs: the launcher closes (%s)" % text)
+			get_tree().quit(0)
+
+
+## the hourly check while the launcher stays open (installs in the background when updating by itself is on)
+func _on_recheck() -> void:
+	if _busy() or _paused != "" or _problem != "" or _demo != "":
+		return
+	Log.line("LAUNCHER the hourly update check")
+	_start_job(_job_check.bind(updater.auto_update()), "check")
 
 
 func _show_progress(on: bool) -> void:
@@ -969,6 +1100,7 @@ func _show_progress(on: bool) -> void:
 	if not on:
 		_bar_title.text = ""
 		_bar_label.text = ""
+	_set_buttons()
 
 
 func _on_progress(text: String, done: int, total: int) -> void:
@@ -976,17 +1108,29 @@ func _on_progress(text: String, done: int, total: int) -> void:
 		var how := _ui_stop.get_slice("@", 0)
 		_ui_stop = ""
 		Log.line("LAUNCHER ui test: %s pressed during %s" % [how, text])
-		_on_pause() if how == "pause" else _on_cancel()
+		match how:
+			"pause":
+				_on_pause()
+			"play":
+				_on_play()
+			_:
+				_on_cancel()
 	if total > 0:
 		_meter.feed(done, Time.get_ticks_msec())
 		_bar.max_value = total
 		_bar.value = done
 		_bar_title.text = Paths.scrub(text)
 		_bar_label.text = _meter.text(done, total)
+		if _job_kind == "aio":
+			_games_screen.set_progress(_bar_title.text + "  ·  " + _bar_label.text, done, total)
+		elif _job_kind in ["check", "install"] and text.begins_with("Downloading") and _update_state != "updating":
+			var m := RegEx.create_from_string("-(v\\d+\\.\\d+\\.\\d+(?:-(?:alpha|preview)\\.\\d+)?)-").search(text)
+			_set_update_state("updating", m.get_string(1) if m != null else _update_tag)
 		_show_progress(true)
 	else:
 		_bar_title.text = Paths.scrub(text)
 		_status.text = Paths.scrub(text)
+		_refresh_head()
 
 
 # ---- jobs (worker thread) ----------------------------------------------------------------------------------------------------------------
@@ -999,7 +1143,7 @@ func _job_check(auto_install: bool) -> void:
 	_releases = r.releases
 	var chan := updater.in_channel(r.releases, updater.channel())
 	if chan.is_empty():
-		_after_check.call_deferred({}, chan, "There is no %s release yet." % updater.channel(), "none", "")
+		_after_check.call_deferred({}, chan, "There is no %s release yet." % Semver.channel_name(updater.channel()).to_lower(), "none", "")
 		return
 	var mm := updater.release_manifest(chan[0])
 	if not mm.ok:
@@ -1026,7 +1170,7 @@ func _job_check(auto_install: bool) -> void:
 			err = msg
 		newer = not i.ok
 	var s := {"ok": true, "staged": ""}
-	if _stop == "":
+	if _stop == "" and auto_install:  # lane UI-5: the launcher's own update follows the "update automatically" setting too
 		_job_assets = _assets_of(chan[0], ["launcher"])
 		s = updater.stage_self_update(chan[0])
 	if not s.ok and _stop != "":
@@ -1036,7 +1180,13 @@ func _job_check(auto_install: bool) -> void:
 		err = (err + " " if err != "" else "") + "Launcher update rejected: " + s.error
 	elif s.staged != "":
 		msg += " The launcher %s is ready and replaces this one on the next start." % s.staged
-	_after_check.call_deferred(chan[0] if newer else {}, chan, msg, "update" if newer else "current", err)
+	# lane UI-5 (Sol r1): updating by itself off, the launcher's own update is offered on its own too (a launcher older than the
+	# channel's newest release while the game is up to date said "Up to date" with no Update button)
+	var launcher_only := not newer and not auto_install and _stop == "" and updater.launcher_update_available(chan[0])
+	if launcher_only:
+		msg = "The launcher %s is available." % chan[0].tag
+	_after_check.call_deferred(chan[0] if newer or launcher_only else {}, chan, msg, "update" if newer or launcher_only else "current", err,
+		launcher_only)
 
 
 ## a game ("game") or launcher ("launcher") download the player paused or cancelled (worker thread): the message, and what Resume
@@ -1052,18 +1202,18 @@ func _stopped(kind: String, release: Dictionary, user_pick: bool) -> String:
 	return "The launcher update was cancelled." if kind == "launcher" else "The update was cancelled."
 
 
-func _after_check(latest: Dictionary, chan: Array, msg: String, state: String, err: String) -> void:
+func _after_check(latest: Dictionary, chan: Array, msg: String, state: String, err: String, launcher_only := false) -> void:
 	_latest = latest
+	_launcher_only = launcher_only
 	_older = []
 	for r in chan:
 		_older.append(r.tag)
-	if not chan.is_empty():
-		_notes_title.text = "WHAT'S NEW IN " + String(chan[0].tag).to_upper()
-		_notes.text = Paths.scrub(chan[0].notes) if chan[0].notes != "" else "(no release notes)"
 	_set_update_state(state, chan[0].tag if not chan.is_empty() else "")
-	_finish(msg)
-	if err != "":
-		_message.show_error("Update not installed", err, _about())
+	# a check that did not finish is a failure too while the game runs (the player would otherwise never see it)
+	var problem := err if err != "" else (msg if state == "failed" and _quit_when_done else "")
+	_finish(msg, problem)
+	if problem != "":
+		_message.show_error("Update not installed", problem, _about())
 
 
 func _job_install(release: Dictionary, user_pick: bool) -> void:
@@ -1075,6 +1225,32 @@ func _job_install(release: Dictionary, user_pick: bool) -> void:
 		_after_install.call_deferred(_stopped("game", release, user_pick), "")
 	else:
 		_after_install.call_deferred("Not installed: " + i.error, i.error)
+
+
+## lane UI-5: the Update button (updating by itself is off, or it failed): the newer game version, then the launcher's own update
+func _job_update(release: Dictionary) -> void:
+	_job_assets = _assets_of(release, ["game"])
+	var newest := updater.newest_installed()
+	var msg := ""
+	if newest == "" or Semver.compare(release.tag, newest) > 0:
+		var i := updater.install(release, false)
+		if not i.ok:
+			if _stop != "":
+				_after_install.call_deferred(_stopped("game", release, false), "")
+			else:
+				_after_install.call_deferred("Not installed: " + i.error, i.error)
+			return
+		msg = "Installed %s." % i.version
+	_job_assets = _assets_of(release, ["launcher"])
+	var s := updater.stage_self_update(release)
+	if not s.ok and _stop != "":
+		_after_install.call_deferred(_stopped("launcher", release, false), "")
+	elif not s.ok:
+		_after_install.call_deferred((msg + " " if msg != "" else "") + "Launcher update rejected: " + s.error, "Launcher update rejected: " + s.error)
+	else:
+		if s.staged != "":
+			msg += (" " if msg != "" else "") + "The launcher %s is ready and replaces this one on the next start." % s.staged
+		_after_install.call_deferred(msg if msg != "" else "Up to date.", "")
 
 
 ## Resume of a paused launcher download: stage the launcher of `release` (Updater.stage_self_update resumes its partial file)
@@ -1091,10 +1267,11 @@ func _job_stage(release: Dictionary) -> void:
 
 
 func _after_install(msg: String, err: String) -> void:
-	if err == "" and _paused == "" and msg.begins_with("Installed"):
+	if err == "" and _paused == "" and (msg.begins_with("Installed") or msg == "Up to date." or msg.begins_with("The launcher")):
 		_latest = {}
+		_launcher_only = false
 		_set_update_state("current")
-	_finish(msg)
+	_finish(msg, err)
 	if err != "":
 		_message.show_error("Not installed", err, _about())
 
@@ -1125,7 +1302,8 @@ func _after_aio(r: Dictionary) -> void:
 func _on_channel(ch: String) -> void:
 	updater.set_channel(ch)
 	_show_channel()
-	_start_job(_job_check.bind(false), "check")
+	_show_notes()
+	_start_job(_job_check.bind(updater.auto_update()), "check")
 
 
 func _on_use(v: String) -> void:
@@ -1140,20 +1318,26 @@ func _on_install_pick(tag: String) -> void:
 		return
 	var newest := updater.newest_installed()
 	if newest != "" and Semver.compare(tag, newest) < 0:
-		_settings.visible = false
 		_message.ask("Install an older version?", "%s is older than the installed %s. Install it and play it from now on?" % [tag, newest],
-			"Install", func() -> void: _start_job(_job_install.bind(rel[0], true), "install"))
+			"Install", func() -> void: _start_job(_job_install.bind(rel[0], true), "install", tag))
 	else:
-		_settings.visible = false
-		_start_job(_job_install.bind(rel[0], true), "install")
+		_start_job(_job_install.bind(rel[0], true), "install", tag)
 
 
+## Play: the version Play starts. While an update downloads in the background, the game starts anyway; the window is minimised and
+## closes once the download is done (the new version is used from the next Play on).
 func _on_play() -> void:
 	var v := updater.play_version()
-	if v == "":
+	if v == "" or _play_blocked():
 		return
 	var p := updater.play(v)
 	if p.ok:
+		if _busy():
+			_quit_when_done = true
+			_set_status("Playing %s. The update keeps downloading in the background; your next Play starts the new version." % v)
+			if DisplayServer.get_name() != "headless":
+				get_window().mode = Window.MODE_MINIMIZED
+			return
 		get_tree().quit(0)
 		return
 	_set_status(p.error)
@@ -1164,7 +1348,7 @@ func _on_play() -> void:
 			_show_error("The game did not start", p.error + " It cannot be downloaded now: the release list is not available.")
 			return
 		_message.ask("Download it again?", "%s was changed after it was installed and is not started. Download it again?" % v, "Download",
-			func() -> void: _start_job(_job_install.bind(rel[0], true), "install"))
+			func() -> void: _start_job(_job_install.bind(rel[0], true), "install", v))
 		return
 	_show_error("The game did not start", p.error)
 
@@ -1175,3 +1359,5 @@ func _exit_tree() -> void:
 			aio.request_stop("pause")
 		updater.http.cancelled = true
 		_thread.wait_to_finish()
+	if _instance != null:
+		_instance.release()

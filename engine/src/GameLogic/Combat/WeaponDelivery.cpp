@@ -2,6 +2,7 @@
 // See GameLogic/Combat/WeaponDelivery.h for the target facts.
 
 #include "GameLogic/Combat/WeaponDelivery.h"
+#include "GameLogic/LegendaryHeroesGame.h"
 
 #include "Common/Player.h"
 #include "Common/Thing/ThingTemplate.h"
@@ -74,6 +75,7 @@ public:
 		return p && p->getPlayerIndex() >= 0 && p->getPlayerIndex() < 32 ? (1u << p->getPlayerIndex()) : 0u;
 	}
 	unsigned weaponSourceID() override { return m_sourceId; }
+	float sourceOpenBfmeDamageScalar() override { return m_source ? LegendaryHeroesGame::damageDealtScalar(*m_source) : 1.0f; } // lane RULES-1
 
 private:
 	GameLogic &m_logic;

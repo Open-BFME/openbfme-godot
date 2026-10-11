@@ -91,6 +91,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <cstring>
 #include <fstream>
 #include <chrono>
 #include <cmath>
@@ -321,6 +322,8 @@ void GameWorld::_bind_methods()
 	ClassDB::bind_method(D_METHOD("get_audio_report"), &GameWorld::get_audio_report);
 	ClassDB::bind_method(D_METHOD("get_fx_report"), &GameWorld::get_fx_report);
 	ClassDB::bind_method(D_METHOD("get_fx_player"), &GameWorld::get_fx_player);
+	ClassDB::bind_static_method("GameWorld", D_METHOD("set_texture_reduction", "reduction"), &GameWorld::set_texture_reduction); // lane OPTS-2
+	ClassDB::bind_static_method("GameWorld", D_METHOD("get_texture_reduction"), &GameWorld::get_texture_reduction);
 	ClassDB::bind_method(D_METHOD("order_attack", "ids", "target"), &GameWorld::order_attack);
 }
 
@@ -3791,7 +3794,14 @@ Dictionary GameWorld::get_spellbook(int64_t player) const
 // TARGET FACTS: the local player's cell edges reach the display and the radar through the shroud manager's callback (RW + 0x6C, RW 0xB52E10); GameData ClearAlpha
 // (255, the constructor), FogAlpha 127 and ShroudAlpha 0 are the cell's level ("0 is opaque, 255 is clear", gamedata.ini) and ShroudColor 255 255 255.
 // INFERENCE (stop S-567): one texel per cell, bilinear filtering, the terrain colour multiplied by level / 255 (maps-and-terrain spec 3.9: `out.rgb = col * shroud.r`);
-// retail's W3DShroud texture layout, border and filtering were not read; objects in fog are not darkened (hidden or drawn).
+// retail's W3DShroud filtering was not read; objects in fog are not darkened (hidden or drawn).
+// lane ZOOM-1, the border. TARGET FACTS (tier A, identical to BFME2 1.06 per tools/re/rw2decomp.py): the shroud's render body RW 0x472EF4 (BFME2 0x473628)
+// fills the whole texture once with the border level (W3DShroud + 0x36, the constructor's GlobalData ShroudAlpha) through RW 0x472792 (BFME2 0x472E84, ZH
+// fillBorderShroudData: the level raised to at least ShroudAlpha, the texel of RW 0x47266B / BFME2 0x472D5D) and copies the cells at texel (1, 1); W3DShroud::init
+// (RW 0x472480, BFME2 0x472B72) sizes the texture numCells + 2. DONOR (ZH W3DShaderManager ST_SHROUD_TEXTURE): world (0, 0) maps to texel 1's corner, the
+// texture clamps. So everything outside the playable area fades to the border level (ShroudAlpha 0: black) over one cell and stays there: the map's border
+// region and the ground beyond it are dark, as the far camera (the Max zoom-out) shows them. The texture's power-of-two padding (Validate_Texture_Size)
+// holds the same border level, which the clamp already gives.
 void GameWorld::refresh_shroud(bool force)
 {
 	if (!m_game)
@@ -3820,22 +3830,26 @@ void GameWorld::refresh_shroud(bool force)
 		return;
 	}
 	const VisionSettings &vs = m_game->visionSettings();
+	// lane ZOOM-1: the texture is the cells plus a one-texel border at the border level (see above)
+	const int tw = nx + 2, th = ny + 2;
+	const uint8_t border = (uint8_t)sm.displayLevel(CELLSHROUD_SHROUDED); // GlobalData ShroudAlpha
 	PackedByteArray bytes;
-	bytes.resize((int64_t)nx * ny);
+	bytes.resize((int64_t)tw * th);
 	uint8_t *w = bytes.ptrw();
+	std::memset(w, border, (size_t)tw * (size_t)th);
 	// lane PERF-2: rows of 16 on the client job pool (each job writes only its rows of the texture; the view is the snapshot's, read only)
-	JobSystem::client().parallelFor((size_t)ny, 16, [&sm, w, nx](size_t, size_t y0, size_t y1) {
+	JobSystem::client().parallelFor((size_t)ny, 16, [&sm, w, nx, tw](size_t, size_t y0, size_t y1) {
 		for (size_t y = y0; y < y1; ++y)
 		{
 			for (int x = 0; x < nx; ++x)
 			{
 				const CellShroudStatus s = sm.localPlayer >= 0 ? sm.cellStatus(x, (int)y) : CELLSHROUD_CLEAR;
-				w[y * (size_t)nx + (size_t)x] = (uint8_t)sm.displayLevel(s);
+				w[(y + 1) * (size_t)tw + (size_t)x + 1] = (uint8_t)sm.displayLevel(s);
 			}
 		}
 	});
-	Ref<Image> img = Image::create_from_data(nx, ny, false, Image::FORMAT_L8, bytes);
-	if (m_shroudTexture.is_null() || m_shroudTexture->get_width() != nx || m_shroudTexture->get_height() != ny)
+	Ref<Image> img = Image::create_from_data(tw, th, false, Image::FORMAT_L8, bytes);
+	if (m_shroudTexture.is_null() || m_shroudTexture->get_width() != tw || m_shroudTexture->get_height() != th)
 	{
 		m_shroudTexture = ImageTexture::create_from_image(img);
 	}
@@ -3848,8 +3862,10 @@ void GameWorld::refresh_shroud(bool force)
 	{
 		return;
 	}
-	const Vector2 origin(sm.originX, sm.originY);
-	const Vector2 extent(SimMath::mulf32(sm.cellSize, (float)nx), SimMath::mulf32(sm.cellSize, (float)ny)); // the audited file's float rule (client values)
+	// (lane ZOOM-1: "Terrain" is the map's root: the standing water, the rivers and the roads under it take the same parameters; their shaders use them)
+	// lane ZOOM-1: texel 0 is the border, one cell before the grid's origin
+	const Vector2 origin(SimMath::subf32(sm.originX, sm.cellSize), SimMath::subf32(sm.originY, sm.cellSize));
+	const Vector2 extent(SimMath::mulf32(sm.cellSize, (float)tw), SimMath::mulf32(sm.cellSize, (float)th)); // the audited file's float rule (client values)
 	const Color color(vs.shroudRed, vs.shroudGreen, vs.shroudBlue);
 	std::vector<Node *> stack{ terrain };
 	while (!stack.empty())
@@ -4102,6 +4118,16 @@ Dictionary GameWorld::order_attack(const Array &ids, int64_t target)
 }
 
 // lane FX-2
+void GameWorld::set_texture_reduction(int64_t reduction)
+{
+	W3DMaterialFactory::Set_Texture_Reduction((int)reduction);
+}
+
+int64_t GameWorld::get_texture_reduction()
+{
+	return W3DMaterialFactory::Get_Texture_Reduction();
+}
+
 Node3D *GameWorld::get_fx_player() const
 {
 	return m_fxPlayer;

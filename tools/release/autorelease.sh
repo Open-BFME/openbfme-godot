@@ -14,7 +14,11 @@
 #      PRIVACY.md and README line. Before anything is pushed, the tree passes the privacy audit (autorelease.py audit-tree: the public
 #      top-level allowlist, no workspace / archive / reference folder, nothing a .gitignore rule ignores, the commit gate's file rules).
 #      Pushed as sync/<date>-<sha>, a PR, merged with a merge commit whose tree must be the audited one (nothing to sync: main is tagged);
-#   3. tags the merged public commit v0.3.0-preview.<n> (annotated; n = 1 + the highest such tag on the remote) and pushes the tag;
+#   3. tags the merged public commit with the release's version (annotated) and pushes the tag. Lane RELNAME-1 (owner, 2026-10-10): the
+#      builds after v0.3.0-preview.4 are alpha builds, v0.4.0-alpha.<n> (n = 1 + the highest such tag on the remote, above every release
+#      tag there), released as "OpenBFME v0.4.0 Alpha <n>" (autorelease.py title); but while the first page of releases the launchers up
+#      to v0.3.0-preview.4 read holds no verified bridge with room to spare, the release is the next bridge v0.3.0-preview.<n>, which
+#      those launchers install and update themselves from (autorelease.py release-version: GitHub reads, fail closed);
 #   4. builds at the tag on JonathanPC's WSL from a clean checkout (the jpc scripts' machine-wide slots, niced): the Linux GDExtension,
 #      the Windows DLL (build_windows.sh --no-export), package.sh (game + launchers, both platforms), test_export.sh on the Linux
 #      package, and a native Windows start of the Windows package (OpenBFME.console.exe --headless --quit-after 400 must exit 0 and print
@@ -120,7 +124,6 @@ for line in iter(sys.stdin.buffer.readline, b""):
 redact() { python3 -u -c "$REDACT_PY"; }
 exec > >(redact) 2> >(redact >&2)
 REAL_REPO="Open-BFME/openbfme-godot"
-BASE_VERSION=v0.3.0
 # Sol r1: `X=...$([ "$MODE" = dry ] && echo -dryrun)` returned 1 outside dry runs and stopped every real run under set -e
 SUFFIX=""; if [ "$MODE" = dry ]; then SUFFIX=-dryrun; fi
 
@@ -196,16 +199,14 @@ fi
 RESUME_RID=""
 intent_bad() { fail "the release intent $INTENT does not hold: $*. Nothing was changed; repair it by hand (docs/RELEASE.md, operator steps)"; }
 validate_intent() {  # $1 = published: the release of the intent's version is published (its manifest is checked too)
-  local e lv lastver
+  local e lv lastver=""
   [[ "$I_SHA" =~ ^[0-9a-f]{40}$ ]] && git_ cat-file -e "$I_SHA^{commit}" 2>/dev/null || intent_bad "its sha '$I_SHA' is not a commit of this repository"
-  [[ "$I_VER" =~ ^${BASE_VERSION//./\\.}-preview\.[1-9][0-9]{0,8}$ ]] || intent_bad "its version '$I_VER' is not a $BASE_VERSION-preview.<n> version"
   git_ merge-base --is-ancestor "$I_SHA" "refs/heads/$ARCHIVE" || intent_bad "$I_SHA is not on $ARCHIVE"
   awk -F'\t' -v s="$I_SHA" '$1 == s && $4 == "ALL PASS" { f = 1 } END { exit !f }' "$STATE/gated.tsv" 2>/dev/null || intent_bad "$I_SHA has no gate record"
   git_ merge-base --is-ancestor "$MIN_CONTROL" "$I_SHA" || intent_bad "$I_SHA predates the release scripts ($MIN_CONTROL)"
   if [ -f "$STATE/last-released" ]; then
     read -r lv lastver _ < "$STATE/last-released"
     [ "$I_SHA" != "$lv" ] && git_ merge-base --is-ancestor "$lv" "$I_SHA" || intent_bad "$I_SHA does not descend from the last released archive sha $lv"
-    [ "${I_VER##*.}" -gt "${lastver##*.}" ] 2>/dev/null || intent_bad "its version $I_VER is not above the last released $lastver"
   fi
   # the tree: the archive sha's own entries (all but archive/, README.md, PRIVACY.md), nothing else
   [[ "$I_TREE" =~ ^[0-9a-f]{40}$ ]] && [ "$(git_ cat-file -t "$I_TREE" 2>/dev/null)" = tree ] || intent_bad "its tree '$I_TREE' is not a tree here"
@@ -216,6 +217,10 @@ validate_intent() {  # $1 = published: the release of the intent's version is pu
   done
   git_ fetch -q "$REMOTE" main || fail "cannot fetch $REMOTE/main to reconcile (fail closed)"
   RTAGS=$(git_ ls-remote --tags "$REMOTE") || fail "cannot list the tags of $REMOTE to reconcile (fail closed)"
+  # RELNAME-1: an alpha build v0.4.0-alpha.<n> or a bridge v0.3.0-preview.<n>, above every version of its own line released or tagged
+  # (Sol r2: with only the last released one compared, an intent edited from alpha.2 to alpha.0 after alpha.1 and a bridge published)
+  printf '%s\n' "$RTAGS" | python3 "$HERE/autorelease.py" intent-version "$I_VER" "$lastver" >/dev/null 2>&1 \
+    || intent_bad "its version '$I_VER' is not a v0.4.0-alpha.<n> or v0.3.0-preview.<n> above every released or tagged version of its line"
   local tagc; tagc=$(printf '%s\n' "$RTAGS" | awk -v t="refs/tags/$I_VER" '$2 == t "^{}" { p = $1 } $2 == t && !p { l = $1 } END { print (p ? p : l) }')
   if [ -n "$I_PUBLIC" ]; then
     git_ cat-file -e "$I_PUBLIC^{commit}" 2>/dev/null || intent_bad "its public commit $I_PUBLIC is not known here"
@@ -337,7 +342,8 @@ if [ -n "$LAST" ] && [ $RESUME = 0 ]; then
   echo "AUTORELEASE $changed since $LAST"
 fi
 if [ $RESUME = 1 ]; then VERSION=$I_VER
-else VERSION=$(python3 "$HERE/autorelease.py" --git-dir "$REPO" next-version --remote "$REMOTE" --base "$BASE_VERSION"); fi
+else VERSION=$(python3 "$HERE/autorelease.py" --git-dir "$REPO" release-version --remote "$REMOTE" --repo "$TARGET" --sha "$SHA" --gh "$GH") \
+  || fail "no version for this release (autorelease.py release-version)"; fi
 DATE=$(date -u +%Y-%m-%d)
 if [ "$MODE" = plan ]; then
   summary "AUTORELEASE PLAN $VERSION from $SHA (notes since $BASE)"
@@ -375,7 +381,7 @@ python3 "$HERE/autorelease.py" --git-dir "$REPO" notes --from "$BASE" --to "$SHA
 STEP=metadata
 TITLE="Sync the rebuild: $DATE ($(cat "$WORK/title.txt"))"
 printf '%s\n' "$TITLE" > "$WORK/pr-title.txt"
-{ echo "$TITLE (#0)"; echo; echo "Automatic preview release $VERSION."; } > "$WORK/merge-msg.txt"
+{ echo "$TITLE (#0)"; echo; echo "Automatic release $VERSION."; } > "$WORK/merge-msg.txt"
 { echo "$TITLE"; echo
   echo "The rebuild's working branch at ${SHA:0:10} (changes since ${BASE:0:10}), without the archived legacy code."
   if [ -s "$WORK/items.txt" ]; then echo; cat "$WORK/items.txt"; fi; echo
@@ -386,7 +392,7 @@ printf '%s\n' "$TITLE" > "$WORK/pr-title.txt"
   echo "**Verification:** ${SHA:0:10} passed the full gate (build, the C++ suite, smoke / start / end / LAN / audio runs, the Windows cross build, pytest and the simulation audit) before this sync. The release $VERSION is built from the merge commit."
   echo; echo "🤖 Generated with [Claude Code](https://claude.com/claude-code)"; } > "$WORK/pr-body.md"
 echo "OpenBFME $VERSION" > "$WORK/tag-msg.txt"
-echo "OpenBFME $VERSION" > "$WORK/release-title.txt"   # publish_release.sh's release name
+python3 "$HERE/autorelease.py" title "$VERSION" > "$WORK/release-title.txt"   # publish_release.sh's release name ("OpenBFME v0.4.0 Alpha 1")
 python3 "$HERE/autorelease.py" audit-text "$WORK/pr-title.txt" "$WORK/merge-msg.txt" "$WORK/commit-msg.txt" "$WORK/pr-body.md" \
   "$WORK/notes-draft.md" "$WORK/tag-msg.txt" "$WORK/release-title.txt" || fail "the public metadata failed the privacy audit: nothing pushed"
 
@@ -446,7 +452,7 @@ else
     url=$("$GH" pr create --repo "$TARGET" --base main --head "$BRANCH" --title "$TITLE" --body-file "$WORK/pr-body.md") || fail "gh pr create failed"
     PR=${url##*/}; echo "AUTORELEASE sync: PR $url"
     [[ "$PR" =~ ^[0-9]+$ ]] || fail "gh pr create did not answer a PR URL ($url)"
-    if ! "$GH" pr merge "$PR" --repo "$TARGET" --merge --subject "$TITLE (#$PR)" --body "Automatic preview release $VERSION."; then
+    if ! "$GH" pr merge "$PR" --repo "$TARGET" --merge --subject "$TITLE (#$PR)" --body "Automatic release $VERSION."; then
       echo "AUTORELEASE sync: gh pr merge failed or its answer was lost: reading the PR back"
     fi
     PUBLIC=$("$GH" pr view "$PR" --repo "$TARGET" --json mergeCommit -q .mergeCommit.oid) || fail "cannot read PR $PR back"
@@ -674,6 +680,13 @@ python3 "$HERE/autorelease.py" audit-text "$WORK/notes.md" || fail "the release 
 
 # ---- 8. publish (the trusted checkout's publish_release.sh: draft, assets checked, published, read back) -------------------------------
 STEP=publish
+# RELNAME-1 (Sol r2): an alpha build, also one resumed from an open intent (its version is kept), is published only while the launchers
+# up to v0.3.0-preview.4 still have their verified bridge on the page they read, with room for this release; otherwise the run stops
+# here, nothing published, the intent open (docs/RELEASE.md, "The alpha builds": publish the bridge again by hand, then run again)
+case $VERSION in
+  *-alpha.*) python3 "$HERE/autorelease.py" --git-dir "$REPO" bridge-ok --remote "$REMOTE" --repo "$TARGET" --sha "$SHA" --gh "$GH" \
+               || fail "the bridge for the launchers up to v0.3.0-preview.4 is gone: $VERSION is not published (the intent stays open)" ;;
+esac
 if [ "$MODE" = dry ]; then
   "$T/publish_release.sh" "$PKG" --repo "$TARGET" --notes-file "$WORK/notes.md" "${PUBOPT[@]}"
   would "$T/publish_release.sh" "$PKG" --repo "$TARGET" --notes-file "$WORK/notes.md" --execute --confirm-tag "$VERSION"

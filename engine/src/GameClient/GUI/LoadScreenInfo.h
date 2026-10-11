@@ -43,6 +43,8 @@ struct LoadScreenInfo
 	int localCard = 0;        ///< the card of the local slot (it receives the progress)
 	int gameLoadingType = 0;  ///< 1 LAN, 2 skirmish, 5 internet
 	std::string mapName;
+	// lane RULES-1, OpenBFME (no retail field): the OpenBFME rules in force, one line ("Legendary Heroes (OpenBFME rule): 4x"); empty when none
+	std::u16string rulesSummary;
 };
 
 // UTF-16 to UTF-8 and back for the texts (no surrogate checks beyond pairs)

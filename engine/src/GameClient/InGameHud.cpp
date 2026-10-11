@@ -27,6 +27,7 @@
 #include "GameEngineDevice/W3DDevice/GameClient/Drawable/Draw/W3DScriptedModelDraw.h"
 #include "GameClient/ControlBarCommands.h"
 #include "GameLogic/GameMessage.h"
+#include "Libraries/Source/Apt/AptButtonInst.h"
 #include "Libraries/Source/Apt/AptInput.h"
 #include "Libraries/Source/Apt/AptRenderList.h"
 
@@ -169,6 +170,10 @@ bool InGameHud::boot(std::string *error)
 	m_palantirRef->setButtonHandler([this](int slot, bool inPalantir) {
 		const auto worldContext = enterContext(); // the movie's own update and invoke_at reach this outside the scoped entry points (BuildAssistant reads TheCommandStore)
 		m_bar->pressButton(slot, inPalantir);
+	});
+	m_palantirRef->setRightButtonHandler([this](int slot, bool inPalantir) { // lane AUTOCAST-1
+		const auto worldContext = enterContext();
+		m_bar->rightPressButton(slot, inPalantir);
 	});
 	// lane SPELL-2: the spell book's press and the store button of the Palantir
 	m_palantirRef->setSpellPressHandler([this](int buttonIndex) { pressSpell(buttonIndex); });
@@ -382,7 +387,12 @@ void InGameHud::update(double seconds)
 		m_iconSettings.text = m_config.gameText;
 	}
 	const std::set<ObjectID> selectedSet(selected.begin(), selected.end());
+	// lane ZOOM-1: the shroud test of the icons reads the presented snapshot (what the device draws)
+	const std::shared_ptr<const LogicSnapshot> iconSnap = m_config.game.presentedSnapshot();
+	m_iconSettings.snapshot = iconSnap.get();
+	m_iconSettings.shroudDrawn = iconSnap && iconSnap->shroud && iconSnap->shroud->displayed;
 	m_iconUI.build(m_config.game.logic(), m_config.game.drawables(), m_config.view, m_iconSettings, selectedSet, m_input->ui().mouseoverObject(), m_iconOps);
+	m_iconSettings.snapshot = nullptr; // the frame's snapshot goes with this frame
 	// lane UI-4: the selection markers (RW 0x67580E / 0x86F4EE / 0x4B2A9B, GameClient/SelectionDecals.h) on the client clock
 	m_selectionDecals = BuildSelectionDecals(m_config.game.logic(), &m_config.game.drawables(), m_config.game.players().getLocalPlayer(), selected, m_decalSettings,
 		m_clientFrames);
@@ -707,6 +717,19 @@ bool InGameHud::radarClick(HudInput::Button button, int x, int y, int timeMs)
 	return true;
 }
 
+bool InGameHud::commandContentAt(int x, int y)
+{
+	AptStageMapping m;
+	m.windowW = (float)m_windowW;
+	m.windowH = (float)m_windowH;
+	float sx, sy;
+	m.windowToStage((float)x, (float)y, sx, sy);
+	AptButtonInst *b = m_wm ? m_wm->apt().input().hitTestButtons(sx, sy) : nullptr;
+	bool arc = false;
+	int slot = -1;
+	return b && m_palantirRef && m_palantirRef->contentSlotAt(b->targetPath(), arc, slot);
+}
+
 bool InGameHud::isOverGui(int x, int y)
 {
 	if (hud6OverGui(x, y)) // lane HUD-6: the radial bubbles
@@ -780,7 +803,16 @@ void InGameHud::mouseButton(HudInput::Button button, bool down, int x, int y, in
 	}
 	if (m_booted && button == HudInput::Button::Left && (over || !down))
 	{
+		m_wm->setPressButton(0); // lane AUTOCAST-1: RW 0x83EE14 writes TheAptWindowManager + 0x318 before it posts
 		m_wm->postMouseButton(down);
+	}
+	// lane AUTOCAST-1: RW 0x83EE14 posts a right press into the Apt as well (+ 0x318 = 2); INFERENCE (S-3460): only over a command button content of the
+	// Palantir, the one press handler here that tells the buttons apart (retail's other handlers test + 0x318 themselves)
+	if (m_booted && button == HudInput::Button::Right && ((down && over && commandContentAt(x, y)) || (!down && m_rightPosted)))
+	{
+		m_wm->setPressButton(2);
+		m_wm->postMouseButton(down);
+		m_rightPosted = down;
 	}
 	m_input->mouseButton(button, down, x, y, keyState, timeMs, doubleClick, over);
 }

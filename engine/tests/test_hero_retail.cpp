@@ -49,6 +49,10 @@
 #include "GameLogic/ObjectFilterMatch.h"
 #include "GameLogic/Object/AttributeModifierPool.h"
 #include "GameLogic/Module/UpgradeModule.h"
+#include "GameLogic/ScriptEngine/ScriptEngine.h"
+#include "GameNetwork/NetPacket.h"
+#include "GameLogic/ScriptEngine/ScriptTemplates.h"
+#include "GameLogic/ScriptEngine/Scripts.h"
 #include "PathfindTestUtil.h"
 #include "RetailTestMount.h"
 #include "GameLogic/AI/AIWorld.h"
@@ -1576,6 +1580,350 @@ TEST_CASE("hero retail: MSG_DO_AUTO_ABILITY makes Eowyn cast Smite by herself at
 	g.list.append(off);
 	g.logic->runLogicFrame();
 	CHECK(aa->autoButton().empty());
+}
+
+// lane AUTOCAST-1: the Witch-king's Morgul Blade (Command_WitchkingMorgulBlade, AutoAbility = Yes; ModuleTag_MorgulBladeAutoAbility: Query 1
+// MORGULBLADE_OBJECT_FILTER, AllowSelf No). The hero, his blade unlocked and recharged; the toggle through MSG_DO_AUTO_ABILITY (RW 0x77B9BA)
+namespace
+{
+struct WitchKing
+{
+	Object *hero = nullptr;
+	const SpecialPowerTemplate *blade = nullptr;
+	AutoAbilityBehavior *aa = nullptr;
+};
+
+WitchKing makeWitchKing(Game &g, Shared &sh)
+{
+	WitchKing w;
+	const ThingTemplate *t = sh.world->things().findTemplate("AngmarWitchking");
+	REQUIRE(t);
+	w.hero = g.make(t, g.me, 1000.0f, 1000.0f);
+	for (int i = 0; i < 20; ++i)
+	{
+		g.logic->runLogicFrame();
+	}
+	w.blade = TheSpecialPowerStore->findSpecialPowerTemplate("SpecialAbilityWitchkingMorgulBlade");
+	REQUIRE(w.blade);
+	SpecialPowerModuleInterface *sp = SpecialPowerModules::findModule(*w.hero, w.blade);
+	REQUIRE(sp);
+	if (dynamic_cast<SpecialPowerModule *>(sp)->pauseCount() != 0)
+	{
+		unlockByUpgrade(*w.hero, w.blade); // Upgrade_WitchkingMorgulBlade (UnpauseSpecialPowerUpgrade)
+	}
+	for (int i = 0; i < 400 && sp->getPercentReady() != 1.0f; ++i) // ReloadTime 45 s
+	{
+		g.logic->runLogicFrame();
+	}
+	REQUIRE(sp->getPercentReady() == 1.0f);
+	// RW 0x85D6AD: the module whose SpecialAbility is the blade (the generic ModuleTag_AutoAbilityBehavior comes after it)
+	w.aa = AutoAbilityBehavior::forPower(*w.hero, w.blade->getName());
+	REQUIRE(w.aa);
+	REQUIRE(w.aa->data()->m_specialAbility == "SpecialAbilityWitchkingMorgulBlade");
+	return w;
+}
+
+// `viaWire`: the message is written and read back by the replay / network encoder first (NetPacket::writeGameMessage, Recorder.h's frame records)
+void toggleAuto(Game &g, const WitchKing &w, bool viaWire = false)
+{
+	GameMessage m(MSG_DO_AUTO_ABILITY, g.me->getPlayerIndex());
+	m.appendIntegerArgument((int)w.blade->getID());
+	m.appendObjectIDArgument(w.hero->getID());
+	if (!viaWire)
+	{
+		g.list.append(m);
+		g.logic->runLogicFrame();
+		return;
+	}
+	NetByteWriter bytes;
+	std::string error;
+	REQUIRE_MESSAGE(NetPacket::writeGameMessage(bytes, m, &error), error);
+	const std::vector<std::uint8_t> wire = bytes.take();
+	NetByteReader r(wire);
+	std::unique_ptr<GameMessage> back = NetPacket::readGameMessage(r, &error);
+	REQUIRE_MESSAGE(back, error);
+	REQUIRE(back->getType() == MSG_DO_AUTO_ABILITY);
+	g.list.append(*back);
+	g.logic->runLogicFrame();
+}
+
+// frames until the auto cast count grows (at most `limit`); -1 none
+int framesToCast(Game &g, int limit)
+{
+	const unsigned long long casts = AutoAbilityBehavior::stats().casts;
+	for (int i = 1; i <= limit; ++i)
+	{
+		g.logic->runLogicFrame();
+		if (AutoAbilityBehavior::stats().casts > casts)
+		{
+			return i;
+		}
+	}
+	return -1;
+}
+} // namespace
+
+// the Witch-king's scan range: his VisionRange (RW 0x68E43B; the module has no MaxScanRange and the button no PresetRange)
+float witchKingScanRange(const WitchKing &w)
+{
+	const FieldValue *v = w.hero->getTemplate()->getFinalOverride()->findField("VisionRange");
+	REQUIRE(v);
+	const float *f = std::get_if<float>(v);
+	REQUIRE(f);
+	return *f;
+}
+
+void placeAt(Object *o, float x, float y)
+{
+	const Coord3D at = { x, y, 0.0f };
+	o->setPosition(&at);
+}
+
+TEST_CASE("autocast retail: the Witch-king's Morgul Blade casts by itself only while on, at an enemy hero in range, not at what the filter rejects, once per recharge")
+{
+	REQUIRE_RETAIL_WORLD(sh);
+	Game g(sh, "FactionAngmar", "FactionMen", true);
+	HeroAbilityModules::registerHandlers(*g.dispatch);
+	WitchKing w = makeWitchKing(g, sh);
+	SpecialPowerModuleInterface *blade = SpecialPowerModules::findModule(*w.hero, w.blade);
+	REQUIRE(blade);
+	const float range = witchKingScanRange(w);
+	REQUIRE(range > 100.0f);
+	const ThingTemplate *boromirT = sh.world->things().findTemplate("GondorBoromir");
+	const ThingTemplate *trebuchetT = sh.world->things().findTemplate("GondorTrebuchet");
+	REQUIRE(boromirT);
+	REQUIRE(trebuchetT);
+	const AutoAbilityBehavior::CastRecord &rec = w.aa->castRecord();
+
+	// off (no StartsActive): an enemy hero beside him is left alone
+	CHECK(w.aa->autoButton().empty());
+	Object *first = g.make(boromirT, g.enemy, 1060.0f, 1000.0f);
+	CHECK(framesToCast(g, 60) == -1);
+	CHECK(rec.casts == 0);
+	g.logic->destroyObject(first);
+	g.logic->runLogicFrame();
+
+	toggleAuto(g, w);
+	CHECK(w.aa->autoButton() == "Command_WitchkingMorgulBlade");
+	CHECK(w.aa->isAutoButton(*TheCommandStore->findCommandButton("Command_WitchkingMorgulBlade")));
+
+	// the filter (Query 1 MORGULBLADE_OBJECT_FILTER: HERO / INFANTRY / CAVALRY ENEMIES, -MACHINE -STRUCTURE ...): an enemy MACHINE beside him, and a hero of
+	// his own side, are not targets
+	Object *machine = g.make(trebuchetT, g.enemy, 1050.0f, 1060.0f);
+	Object *friendHero = g.make(boromirT, g.me, 960.0f, 1000.0f);
+	CHECK(framesToCast(g, 30) == -1);
+	CHECK(rec.casts == 0);
+	CHECK(blade->getPercentReady() == 1.0f);
+	g.logic->destroyObject(machine);
+	g.logic->destroyObject(friendHero);
+	g.logic->runLogicFrame();
+
+	// the range (the scan circle is his vision range): an enemy hero 300 beyond it is not a target; moved inside, he is
+	Object *boromir = g.make(boromirT, g.enemy, 1000.0f + range + 300.0f, 1000.0f);
+	const ObjectID boromirId = boromir->getID();
+	CHECK(framesToCast(g, 12) == -1);
+	placeAt(boromir, 1080.0f, 1000.0f);
+	const float hp0 = boromir->getBodyModule()->getHealth();
+	const int at = framesToCast(g, 30);
+	REQUIRE(at > 0);
+	// the cast is the Witch-king's blade at Boromir: his module's record, and the blade's own power recharging
+	CHECK(rec.casts == 1);
+	CHECK(rec.power == "SpecialAbilityWitchkingMorgulBlade");
+	CHECK(rec.target == boromirId);
+	const UnsignedInt firstCast = rec.frame;
+	// the blade's own power recharges once the ability fires (WeaponFireSpecialAbilityUpdate: UnpackTime 250 ms, then the special weapon)
+	bool recharging = false;
+	for (int i = 0; i < 20 && !recharging; ++i)
+	{
+		recharging = blade->getPercentReady() < 1.0f;
+		if (!recharging)
+		{
+			g.logic->runLogicFrame();
+		}
+	}
+	CHECK(recharging);
+	// the blade lands (WeaponFireSpecialAbilityUpdate's special weapon AngmarWitchkingMorgulBlade): Boromir loses health
+	bool hurt = false;
+	for (int i = 0; i < 60 && !hurt; ++i)
+	{
+		g.logic->runLogicFrame();
+		Object *b = g.logic->findObjectByID(boromirId);
+		hurt = !b || b->getBodyModule()->getHealth() < hp0;
+	}
+	CHECK(hurt);
+
+	// the recharge (ReloadTime 45 s): no second cast before the blade is ready again, then one at the next enemy hero
+	const UnsignedInt reload = w.blade->getReloadTime();
+	CHECK(reload == 225u);
+	UnsignedInt second = 0;
+	for (int i = 0; i < 400 && second == 0; ++i)
+	{
+		Object *any = nullptr;
+		for (Object *o = g.logic->getFirstObject(); o && !any; o = o->getNextObject())
+		{
+			any = o->getControllingPlayer() == g.enemy && o->isKindOfName("HERO") && !o->isEffectivelyDead() ? o : nullptr;
+		}
+		if (!any)
+		{
+			g.make(boromirT, g.enemy, w.hero->getPosition()->x + 80.0f, w.hero->getPosition()->y); // a fresh enemy hero beside him
+		}
+		const unsigned long long before = rec.casts;
+		g.logic->runLogicFrame();
+		if (rec.casts > before)
+		{
+			second = rec.frame;
+		}
+		else if (blade->getPercentReady() < 1.0f)
+		{
+			CHECK(rec.casts == 1);
+		}
+	}
+	REQUIRE(second > 0);
+	MESSAGE("Morgul Blade auto casts at frames " << firstCast << " and " << second << " (reload " << reload << ")");
+	CHECK(second - firstCast >= reload);
+
+	// off again: the same message toggles (RW 0x85D76C); the blade recharges and nothing casts it, an enemy hero beside him or not
+	toggleAuto(g, w);
+	CHECK(w.aa->autoButton().empty());
+	const unsigned long long offCasts = rec.casts;
+	for (int i = 0; i < 300; ++i)
+	{
+		Object *any = nullptr;
+		for (Object *o = g.logic->getFirstObject(); o && !any; o = o->getNextObject())
+		{
+			any = o->getControllingPlayer() == g.enemy && o->isKindOfName("HERO") && !o->isEffectivelyDead() ? o : nullptr;
+		}
+		if (!any)
+		{
+			g.make(boromirT, g.enemy, w.hero->getPosition()->x + 80.0f, w.hero->getPosition()->y);
+		}
+		g.logic->runLogicFrame();
+	}
+	CHECK(blade->getPercentReady() == 1.0f);
+	CHECK(rec.casts == offCasts);
+}
+
+TEST_CASE("autocast retail: NAME_SET_AUTO_ABILITY / TEAM_SET_AUTO_ABILITY set the button on and off (RW 0x7C3C88 / 0x7C3D61 -> RW 0x85D7B6)")
+{
+	REQUIRE_RETAIL_WORLD(sh);
+	Game g(sh, "FactionAngmar", "FactionMen", true);
+	HeroAbilityModules::registerHandlers(*g.dispatch);
+	WitchKing w = makeWitchKing(g, sh);
+	w.hero->setName("AUTOCAST Witchking");
+	ScriptEngine &e = g.logic->scriptEngine();
+	auto action = [](const char *name, int targetType, const std::string &target, const char *button, int on) {
+		ScriptActionRec a;
+		a.internalName = name;
+		a.type = a.resolved = ScriptTemplates::findAction(name);
+		ScriptParameter p0, p1, p2;
+		p0.type = targetType;
+		p0.stringValue = target;
+		p1.type = 39;
+		p1.stringValue = button;
+		p2.type = 8;
+		p2.intValue = on;
+		a.params = { p0, p1, p2 };
+		return a;
+	};
+	// RW 0x85D7B6: "on" sets, twice stays set (no toggle), "off" of the set button clears
+	e.executeAction(action("NAME_SET_AUTO_ABILITY", 14, "AUTOCAST Witchking", "Command_WitchkingMorgulBlade", 1));
+	CHECK(w.aa->autoButton() == "Command_WitchkingMorgulBlade");
+	e.executeAction(action("NAME_SET_AUTO_ABILITY", 14, "AUTOCAST Witchking", "Command_WitchkingMorgulBlade", 1));
+	CHECK(w.aa->autoButton() == "Command_WitchkingMorgulBlade");
+	e.executeAction(action("NAME_SET_AUTO_ABILITY", 14, "AUTOCAST Witchking", "Command_WitchkingMorgulBlade", 0));
+	CHECK(w.aa->autoButton().empty());
+	// a button without AutoAbility (+ 0x10C) does nothing
+	e.executeAction(action("NAME_SET_AUTO_ABILITY", 14, "AUTOCAST Witchking", "Command_AngmarWitchKingDreadWrath", 1));
+	CHECK(w.aa->autoButton().empty());
+	// the team form (the skirmish AI's lib_hero_behaviors): every member holding the button in its command set
+	Team *team = w.hero->getTeam();
+	REQUIRE(team);
+	REQUIRE(team->getPrototype());
+	const std::string teamName = g.me->getPlayerName() + "/" + team->getPrototype()->getName(); // RW 0x759FDA: "<owner>/<prototype>"
+	e.executeAction(action("TEAM_SET_AUTO_ABILITY", 3, teamName, "Command_WitchkingMorgulBlade", 1));
+	CHECK(w.aa->autoButton() == "Command_WitchkingMorgulBlade");
+	CHECK(e.stats().unportedActions.count("TEAM_SET_AUTO_ABILITY") == 0);
+	CHECK(e.stats().unportedActions.count("NAME_SET_AUTO_ABILITY") == 0);
+}
+
+TEST_CASE("autocast retail: MSG_DO_AUTO_ABILITY_WEAPON toggles Gimli's Axe Throw (FIRE_WEAPON by WeaponSlot, RW 0x77B8EE)")
+{
+	REQUIRE_RETAIL_WORLD(sh);
+	Game g(sh, "FactionDwarves", "FactionMordor", true);
+	HeroAbilityModules::registerHandlers(*g.dispatch);
+	const CommandButton *axe = TheCommandStore->findCommandButton("Command_GimliAxeThrow");
+	REQUIRE(axe);
+	REQUIRE(axe->m_command == GUI_COMMAND_FIRE_WEAPON);
+	// the template whose command set holds the button and that has an AutoAbilityBehavior
+	Object *gimli = nullptr;
+	for (const char *name : { "RohanGimli" }) // RohanGimliCommandSet slot 2
+	{
+		if (gimli)
+		{
+			break;
+		}
+		if (const ThingTemplate *t = sh.world->things().findTemplate(name))
+		{
+			Object *o = g.make(t, g.me, 1000.0f, 1000.0f);
+			const CommandSet *set = TheCommandStore->findCommandSet(o->getCommandSetName());
+			bool has = false;
+			for (int i = 0; set && i < CommandSet::MAX_BUTTONS; ++i)
+			{
+				has = has || set->getCommandButton(i) == axe;
+			}
+			gimli = has && AutoAbilityBehavior::first(*o) ? o : nullptr;
+		}
+	}
+	REQUIRE_MESSAGE(gimli, "no Gimli template with Command_GimliAxeThrow and an AutoAbilityBehavior");
+	g.logic->runLogicFrame();
+	AutoAbilityBehavior *aa = AutoAbilityBehavior::first(*gimli);
+	CHECK(aa->autoButton().empty());
+	auto send = [&](int slot) {
+		GameMessage m(MSG_DO_AUTO_ABILITY_WEAPON, g.me->getPlayerIndex());
+		m.appendIntegerArgument(slot);
+		m.appendObjectIDArgument(gimli->getID());
+		g.list.append(m);
+		g.logic->runLogicFrame();
+	};
+	send(axe->m_weaponSlot + 1); // another slot: no FIRE_WEAPON button of it, nothing
+	CHECK(aa->autoButton().empty());
+	send(axe->m_weaponSlot);
+	CHECK(aa->autoButton() == "Command_GimliAxeThrow");
+	send(axe->m_weaponSlot);
+	CHECK(aa->autoButton().empty());
+}
+
+TEST_CASE("autocast retail: the toggle gives the same logic state hash twice (once through the replay / network encoding), and the auto button is in it")
+{
+	REQUIRE_RETAIL_WORLD(sh);
+	auto run = [&sh](bool on, std::uint32_t &afterToggle, bool viaWire) {
+		Game g(sh, "FactionAngmar", "FactionMen", true);
+		HeroAbilityModules::registerHandlers(*g.dispatch);
+		WitchKing w = makeWitchKing(g, sh);
+		g.make(sh.world->things().findTemplate("GondorBoromir"), g.enemy, 1060.0f, 1000.0f);
+		if (on)
+		{
+			toggleAuto(g, w, viaWire);
+		}
+		else
+		{
+			g.logic->runLogicFrame();
+		}
+		afterToggle = g.logic->computeStateHash();
+		for (int i = 0; i < 120; ++i)
+		{
+			g.logic->runLogicFrame();
+		}
+		return g.logic->computeStateHash();
+	};
+	std::uint32_t a0 = 0, b0 = 0, c0 = 0;
+	const std::uint32_t a = run(true, a0, false);
+	const std::uint32_t b = run(true, b0, true); // the toggle through the replay / network encoding
+	const std::uint32_t c = run(false, c0, false);
+	CHECK(a0 == b0);
+	CHECK(a == b);
+	CHECK(a0 != c0); // the toggle itself changes the hash (AutoAbilityBehavior::crc: the auto button's name)
+	CHECK(a != c);
 }
 
 // lane HERO-2: WeaponModeSpecialPowerUpdate (RW 0x89841E / 0x8983B5): Legolas's Knife Fighter locks his SECONDARY weapon (LOCKED_PERMANENTLY) with the

@@ -168,6 +168,16 @@ bool FillDamageInfo(const DamageNugget &nugget, const WeaponTemplate &weapon, Nu
 			amount = sseMul(amount, mult);
 		}
 	}
+	// lane RULES-1, OpenBFME (not retail): Legendary Heroes multiplies a hero's damage (not its healing) after the attribute modifiers; at 1.0 (Off, and
+	// every retail game) the step is skipped, so the arithmetic is retail's
+	if (nugget.m_damageType != DAMAGE_HEALING)
+	{
+		const float legendary = host.sourceOpenBfmeDamageScalar();
+		if (legendary != 1.0f)
+		{
+			amount = sseMul(amount, legendary);
+		}
+	}
 
 	// 6. the delay (RW 0x90E4F8-0x90E571): fild DelayTime (+2^32 when negative) stored as a float; then, with DamageSpeed > 0, the 3D length
 	// (RW 0x403111: float32 sum of squares, CRT sqrt under PC24) / DamageSpeed + delay in the register, stored once

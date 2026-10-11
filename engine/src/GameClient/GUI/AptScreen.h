@@ -40,6 +40,8 @@ public:
 	// WindowLayout: runInit runs when the screen is pushed or becomes the top again, runShutdown when it is covered or popped.
 	virtual void runInit();
 	virtual void runShutdown(bool *immediate);
+	// lane OPTS-2: once a window manager frame while the screen is the shell's top (Shell::update); nothing by default
+	virtual void frameUpdate() {}
 
 	// Registers `name` (and remembers it for the close).  Returns false when the registry already holds the name (reported).
 	bool registerCommand(const std::string &name, WindowManager::CommandFn fn);

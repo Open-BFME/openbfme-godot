@@ -89,6 +89,16 @@ void AptLanLobby::showError(const std::string &title, const std::string &body)
 	box().show(AptMessageBox::TYPE_OK, text(title), text(body));
 }
 
+void AptLanLobby::ruleNotice(const std::u16string &line)
+{
+	systemChat(line);
+}
+
+void AptLanLobby::showRuleWarning(const std::u16string &title, const std::u16string &text)
+{
+	box().show(AptMessageBox::TYPE_OK, title, text);
+}
+
 void AptLanLobby::systemChat(const std::u16string &line)
 {
 	// RW 0x847508 kind 2: TheLAN's RequestChat with the SYSTEM type (slot 0x54 with 3): every player of the game gets the line, this one included

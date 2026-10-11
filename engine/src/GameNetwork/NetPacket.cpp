@@ -330,6 +330,12 @@ void NetPacket::writeGameInfo(NetByteWriter &w, const SkirmishGameInfo &g)
 	w.i32(g.startingCash);
 	w.i32(g.superweaponRestriction);
 	w.u8(g.inProgress ? 1 : 0);
+	// lane RULES-1: the ten game rules (RotWK's LAN game buffer RW 0x84A976 writes them as ten u32 after the seed) and OpenBFME's Legendary Heroes factor
+	for (std::int32_t v : g.rules)
+	{
+		w.i32(v);
+	}
+	w.i32(g.legendaryHeroes);
 }
 
 bool NetPacket::readGameInfo(NetByteReader &r, SkirmishGameInfo &g, std::string *error)
@@ -381,6 +387,11 @@ bool NetPacket::readGameInfo(NetByteReader &r, SkirmishGameInfo &g, std::string 
 	g.startingCash = r.i32();
 	g.superweaponRestriction = r.i32();
 	g.inProgress = r.flag();
+	for (std::int32_t &v : g.rules)
+	{
+		v = r.i32();
+	}
+	g.legendaryHeroes = r.i32();
 	if (r.failed())
 	{
 		return failWith(error, r.badFlag() ? "GameInfo with a flag that is not 0 / 1" : "truncated GameInfo");
@@ -397,9 +408,27 @@ bool NetPacket::readGameInfo(NetByteReader &r, SkirmishGameInfo &g, std::string 
 			}
 		}
 	}
-	if (g.startingCash < 0)
+	// lane RULES-1: -1 is "not set" (RotWK GameInfo::m_54 = -1 after reset, RW 0x801AAF; the starting money then comes from the InitialResources rule)
+	if (g.startingCash < -1)
 	{
 		return failWith(error, "GameInfo starting cash " + std::to_string(g.startingCash));
+	}
+	// lane RULES-1: the rules are retail ints (retail accepts any value); the Legendary Heroes factor is OpenBFME's and must be one it knows: a peer that
+	// sees another refuses the game options (a refused game, never a desync)
+	if (!LegendaryHeroes::valid(g.legendaryHeroes))
+	{
+		return failWith(error, "GameInfo Legendary Heroes factor " + std::to_string(g.legendaryHeroes));
+	}
+	// lane RULES-1: AllowCustomHeroes off and a slot with a Create-a-Hero is a setup no host makes: refused
+	if (!g.customHeroesAllowed())
+	{
+		for (int i = 0; i < MAX_SLOTS; ++i)
+		{
+			if (g.slots[i].hasCreateAHero)
+			{
+				return failWith(error, "GameInfo slot " + std::to_string(i) + " has a Create-a-Hero while AllowCustomHeroes is off");
+			}
+		}
 	}
 	return true;
 }

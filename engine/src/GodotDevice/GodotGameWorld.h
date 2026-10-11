@@ -404,6 +404,9 @@ public:
 	Dictionary get_fx_report() const;
 	// the FXPlayer that draws the live effects (null before setup() succeeded)
 	Node3D *get_fx_player() const;
+	// lane OPTS-2: the texture reduction of the static detail level for the W3D textures loaded from now on (W3DMaterialFactory::Set_Texture_Reduction)
+	static void set_texture_reduction(int64_t reduction);
+	static int64_t get_texture_reduction();
 	// a select message and an attack-object message (MSG_DO_ATTACK_OBJECT) for the objects `ids` on `target`, through the lockstep command path. { ok, error, player, objects }
 	Dictionary order_attack(const Array &ids, int64_t target);
 

@@ -166,6 +166,10 @@ void Shell::showShellMap(bool use)
 
 void Shell::update()
 {
+	if (AptScreen *t = top())
+	{
+		t->frameUpdate(); // lane OPTS-2
+	}
 	// RW 0x75E1D3 (the low-LOD branch; the movie flag + 0x5D is never set by the port)
 	if (!m_lowLodShown && m_lowLodBackdrop)
 	{

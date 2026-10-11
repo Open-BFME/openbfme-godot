@@ -511,6 +511,7 @@ void FXPlayer::_bind_methods()
 	ClassDB::bind_method(D_METHOD("set_paused", "paused"), &FXPlayer::set_paused);
 	ClassDB::bind_method(D_METHOD("is_paused"), &FXPlayer::is_paused);
 	ClassDB::bind_method(D_METHOD("set_max_particles", "count"), &FXPlayer::set_max_particles);
+	ClassDB::bind_method(D_METHOD("set_particle_lod", "max_count", "min_priority", "min_skip_priority"), &FXPlayer::set_particle_lod); // lane OPTS-2
 	ClassDB::bind_method(D_METHOD("get_stats"), &FXPlayer::get_stats);
 	ClassDB::bind_method(D_METHOD("get_unverified"), &FXPlayer::get_unverified);
 	ClassDB::bind_method(D_METHOD("get_events"), &FXPlayer::get_events);
@@ -676,6 +677,17 @@ void FXPlayer::set_max_particles(int64_t count)
 	if (m_playback)
 	{
 		m_playback->particles().settings().maxParticleCount = (std::uint32_t)count;
+	}
+}
+
+void FXPlayer::set_particle_lod(int64_t max_count, int64_t min_priority, int64_t min_skip_priority)
+{
+	if (m_playback)
+	{
+		ParticleSettings &set = m_playback->particles().settings();
+		set.maxParticleCount = (std::uint32_t)(max_count < 0 ? 0 : max_count);
+		set.minDynamicParticlePriority = (int)min_priority;
+		set.minDynamicParticleSkipPriority = (int)min_skip_priority;
 	}
 }
 
@@ -1322,6 +1334,8 @@ Dictionary FXPlayer::get_stats() const
 		d["systems"] = (int64_t)m_playback->particles().systemCount();
 		d["particles"] = (int64_t)m_playback->particles().particleCount();
 		d["emitters"] = (int64_t)m_playback->emitters().emitters().size();
+		d["max_particles"] = (int64_t)m_playback->particles().settings().maxParticleCount; // lane OPTS-2: the detail level's limits
+		d["min_particle_priority"] = (int64_t)m_playback->particles().settings().minDynamicParticlePriority;
 	}
 	d["batches"] = (int64_t)m_batchCount;
 	d["textures_preload_queue"] = (int64_t)m_preloadQueue.size(); // lane PERF-1 r2: particle textures to preload, decoded ahead and not used yet

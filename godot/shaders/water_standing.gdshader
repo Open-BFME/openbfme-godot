@@ -18,9 +18,19 @@ uniform float tile_world_units = 160.0;
 uniform float output_gamma = 2.2;
 
 varying vec2 v_world;
+// lane ZOOM-1: the local player's shroud (GameWorld::refresh_shroud sets these on the terrain and on this layer): ZH WaterRenderObjClass modulates its
+// water with the shroud texture in a second pass / stage (W3DWater.cpp, the ST_SHROUD_TEXTURE passes); the border level outside the map is black
+uniform sampler2D shroud_tex : filter_linear, repeat_disable, hint_default_white;
+uniform vec2 shroud_origin = vec2(0.0);
+uniform vec2 shroud_extent = vec2(1.0);
+uniform vec3 shroud_color = vec3(1.0);
+uniform bool shroud_enabled = false;
+varying vec2 v_shroud_uv;
 
 void vertex() {
 	v_world = vec2(VERTEX.x, -VERTEX.z);
+	vec3 shroud_world = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
+	v_shroud_uv = (vec2(shroud_world.x, -shroud_world.z) - shroud_origin) / shroud_extent;
 }
 
 // lane RENDER-4: the hand-over to Godot. output_gamma 1.0: the gamma-space value itself (the transparent pass composites in gamma space,
@@ -41,6 +51,9 @@ void fragment() {
 	vec3 sky = texture(sky_tex, v_world / (tile_world_units * 3.0) + bump.xy * 0.04).rgb;
 	vec3 tint = texture(tint_lut, vec2(0.5, 0.5)).rgb;
 	vec3 col = water_color * tint * (1.0 + ripple) + sky * 0.22;
+	if (shroud_enabled) {
+		col = col * shroud_color * texture(shroud_tex, v_shroud_uv).r; // lane ZOOM-1
+	}
 	ALBEDO = retail_output(col);
 	ALPHA = opacity;
 }

@@ -137,7 +137,15 @@ bool LiveGame::load(const Options &options, std::string *error)
 	{
 		return false;
 	}
-	const std::uint32_t defaultCash = options.defaultStartingCash ? options.defaultStartingCash : settings.defaultStartingCash;
+	std::uint32_t defaultCash = options.defaultStartingCash ? options.defaultStartingCash : settings.defaultStartingCash;
+	// lane RULES-1: RW Player::init 0x6B0578: with TheGameInfo (a started game) a player whose template has no money gets the InitialResources rule
+	// (TheGameInfo + 0x70), not GameData's DefaultStartingCash (GlobalData + 0xBB8, the branch without a game). A game with no rule block (-1: tests and
+	// tools that build the message themselves) keeps the GameData amount
+	const GameRules gameRules = options.start ? options.start->message.game.rules : MpGameRules::none();
+	if (gameRules[RULE_INITIAL_RESOURCES] >= 0)
+	{
+		defaultCash = (std::uint32_t)gameRules[RULE_INITIAL_RESOURCES];
+	}
 
 	EconomySettings economySettings;
 	if (!EconomySettings::load(m_fs, economySettings, error))
@@ -228,6 +236,15 @@ bool LiveGame::load(const Options &options, std::string *error)
 	// add their usage as they are created), then the TerrainResourceManager's grid over the map (RW 0x62FDCF: after the pathfinder made its map, before the
 	// map's structures claim their ground)
 	m_logic->economy().settings() = economySettings;
+	// lane RULES-1: RW 0x6A7DE2 scales every player's command point cap by TheGameInfo + 0x6C (CommandPointFactor) / 100; no rule block: 100
+	if (gameRules[RULE_COMMAND_POINT_FACTOR] != -1)
+	{
+		m_logic->economy().context().lobbyCommandPointPercent = gameRules[RULE_COMMAND_POINT_FACTOR];
+	}
+	// lane RULES-1: the rules the logic reads later (the "ringheroes" game mode, RW 0x7E9E83) and OpenBFME's Legendary Heroes factor (Object::friend_initObject
+	// scales every hero made from here on, the map's own heroes and the starting bases' included)
+	m_logic->setGameRules(gameRules);
+	m_logic->setLegendaryHeroes(options.start ? options.start->message.game.legendaryHeroes : LegendaryHeroes::kOff);
 	m_logic->economy().initAllCommandPoints();
 	{
 		PathfinderResourceTerrain resourceTerrain;
@@ -407,6 +424,15 @@ bool LiveGame::load(const Options &options, std::string *error)
 			const SkirmishGameInfo &game = options.start->message.game;
 			for (int i = 0; i < MAX_SLOTS; ++i)
 			{
+				if (game.slots[i].hasCreateAHero && !game.customHeroesAllowed())
+				{
+					// lane RULES-1: AllowCustomHeroes off: a setup carrying a hero is refused (no lobby makes one), never silently played without it
+					if (error)
+					{
+						*error = "slot " + std::to_string(i) + " has a Create-a-Hero while AllowCustomHeroes is off";
+					}
+					return false;
+				}
 				if (game.slots[i].hasCreateAHero)
 				{
 					Player *p = (size_t)i < m_report.startSlotPlayers.size() ? m_players->findPlayerWithName(m_report.startSlotPlayers[(size_t)i]) : nullptr;

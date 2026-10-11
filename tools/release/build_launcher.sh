@@ -2,12 +2,13 @@
 # Lane LAUNCH-1: the OpenBFME Launcher packages (package.sh runs this; the launcher tests run it with --test-build).
 #
 #   tools/release/build_launcher.sh --out DIR --version TAG --commit SHA --repo OWNER/NAME --key-file FILE [--mtime UNIX] [--platforms linux,windows]
-#                                   [--godot BIN] [--worktree] [--test-build]
+#                                   [--godot BIN] [--worktree | --source COMMIT] [--test-build]
 #
 # Writes DIR/openbfme-launcher-<TAG>-linux-x64.tar.gz and/or DIR/openbfme-launcher-<TAG>-windows-x64.zip, each holding
 #   OpenBFMELauncher.x86_64 | OpenBFMELauncher.exe (the pack embedded: one file, so a self-update replaces it in one rename), README.txt,
 #   LICENSE, NOTICE, VERSION
-# The project is exported from `git archive HEAD launcher` (--worktree: the working tree's launcher/, for the tests) with a generated
+# The project is exported from `git archive HEAD launcher` (--worktree: the working tree's launcher/, for the tests; --source COMMIT: that
+# commit's, for the tests of the launchers already published, RELNAME-1) with a generated
 # res://build_info.json: version, commit, date, repo (the GitHub repository it updates from: a build-time setting), release_key (the
 # Ed25519 public key it trusts, read from --key-file: launcher/release_key.pub for a release) and test_build (true only with --test-build,
 # which enables the launcher's test options; never for a tester package). Godot's release template with the pack embedded, scripts as text.
@@ -15,7 +16,7 @@
 set -euo pipefail
 REPO=$(cd "$(dirname "$0")/../.." && pwd)
 OUT=""; VERSION=""; COMMIT=""; TARGET=""; KEYFILE=""; MTIME="${SOURCE_DATE_EPOCH:-}"; PLATFORMS="linux"; GODOT_BIN="${GODOT:-godot}"
-WORKTREE=0; TEST_BUILD=false
+WORKTREE=0; TEST_BUILD=false; SOURCE=HEAD
 while [ $# -gt 0 ]; do
   case "$1" in
     --out) OUT=$2; shift 2 ;;
@@ -27,6 +28,7 @@ while [ $# -gt 0 ]; do
     --platforms) PLATFORMS=$2; shift 2 ;;
     --godot) GODOT_BIN=$2; shift 2 ;;
     --worktree) WORKTREE=1; shift ;;
+    --source) SOURCE=$2; shift 2 ;;
     --test-build) TEST_BUILD=true; shift ;;
     -h|--help) sed -n '2,16p' "$0"; exit 0 ;;
     *) echo "build_launcher.sh: unknown argument $1" >&2; exit 2 ;;
@@ -48,7 +50,7 @@ mkdir -p "$WORK/stage"
 if [ $WORKTREE = 1 ]; then
   (cd "$REPO" && git ls-files -z --cached --others --exclude-standard launcher LICENSE NOTICE | tar --null -T - -cf -) | tar -x -C "$WORK/stage"
 else
-  git -C "$REPO" archive --format=tar HEAD launcher LICENSE NOTICE | tar -x -C "$WORK/stage"
+  git -C "$REPO" archive --format=tar "$SOURCE" launcher LICENSE NOTICE | tar -x -C "$WORK/stage"
 fi
 P="$WORK/stage/launcher"
 DATE=$(date -u -d "@$MTIME" +%Y-%m-%d)

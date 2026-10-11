@@ -5,7 +5,7 @@ issues and troubleshooting. For what OpenBFME is and what works, see the
 [README](../README.md).
 
 OpenBFME is an unofficial, fan-made rebuild of The Rise of the Witch-king
-2.01. It plays on **your own copy** of the game and never changes your game
+2.01. It plays on the game you have installed (or the launcher downloads it) and never changes your game
 files.
 
 ## Contents
@@ -16,8 +16,9 @@ files.
 - [Updates](#updates)
 - [Logs](#logs)
 - [The free camera](#the-free-camera)
-- [Display options](#display-options)
+- [Options](#options)
 - [The hero bar and selection](#the-hero-bar-and-selection)
+- [Skirmish rules](#skirmish-rules)
 - [Controls](#controls)
 - [Known issues](#known-issues)
 - [Troubleshooting](#troubleshooting)
@@ -33,8 +34,8 @@ files.
   All In One BFME Launcher service (BFME Foundation, Patch 2.22 team): about
   8.6 GB, with Pause, Resume and Cancel. Every file is checked against
   OpenBFME's list of the 2.01 / 1.06 files, and the game offers the folders on
-  its first start. To hide the button, untick *Offer to download the games* in
-  Settings.
+  its first start. It is on the launcher's **Game files** page; to hide it,
+  turn off *Offer to download the games* in Settings.
 - **Windows 10 or 11** (64-bit) with a graphics card that supports Vulkan or
   Direct3D 12, or **64-bit Linux** with Vulkan graphics (Mesa or the
   proprietary drivers). On Linux the game folders can be inside a Wine or
@@ -62,20 +63,31 @@ launcher.
    Windows, SmartScreen may say *Windows protected your PC* because the
    executables are not code-signed yet: choose **More info**, then **Run
    anyway**. Windows asks this once per new launcher file.
-4. The launcher starts on the channel of its own version: a preview launcher
-   such as v0.3.0-preview.1 on **Preview** (test builds), a release on
+4. The launcher starts on the channel of its own version: an alpha launcher
+   such as v0.4.0-alpha.1 (or an earlier preview such as v0.3.0-preview.4) on
+   **Alpha** (the test builds; it was called Preview before), a release on
    **Stable**. It downloads the newest build of that channel, checks it and
-   installs it by itself. You can switch the channel at the top right at any
+   installs it by itself. You can switch the channel in Settings at any
    time (there is no Stable release yet).
 5. Press **Play**. The first start asks for your game folders (next
    section).
 
-The main screen shows the installed version and whether it is up to date,
-with one button when an update is waiting. Downloads show one progress bar
-with the speed and the time left, and **Pause** / **Cancel**. The gear opens
-**Settings**: the channel, the game folders (*Show folder* opens them; *Choose
-again* makes the game ask on its next start), the free camera, the installed
-versions (play an older one, or install an older release) and the log folder.
+The menu on the left has **Play** (the installed version, whether it is up to
+date, your games and What's New from the version's release notes), **News**
+(the notes of every release), **Multiplayer** (online play is coming; LAN
+games are in the game), **Mods**, **Game files** (where your games are: *Show
+folder*, *Choose again* makes the game ask on its next start, and the games
+download) and **Settings** (General: the channel, the free camera, updating
+by itself, the games download; About & logs: the versions, the log folder,
+older releases).
+
+Updates download in the background, while the launcher is open (it looks
+again every hour) or while you play: **Play** keeps working during a download
+and starts the installed version, and the new version is used from your next
+Play on. Turn off *Update automatically in the background* to update only when
+you press **Update**. Downloads show one progress bar with the speed and the
+time left, and **Pause** / **Cancel**. A version that is being played is never
+removed by an update.
 Errors come with **Copy details** and **Open log folder**. The launcher never
 shows your user name or home folder: paths read `~/...` (Linux) or
 `%USERPROFILE%\...` (Windows).
@@ -128,9 +140,16 @@ new build is downloaded (an interrupted download resumes next time) and
   changed version is never started, and the launcher offers to download it
   again.
 
+While the launcher stays open it checks again every hour. An update downloads
+in the background: **Play** keeps working and starts the version you have
+until the new one is installed, and a version that is being played is never
+replaced. To update only when you press **Update**, turn off *Update
+automatically in the background* in Settings > General. Only one launcher
+runs at a time; starting a second one says the first is already open.
+
 A package that fails any check is deleted and nothing is installed. The
 launcher never installs an older version by itself; to go back, use
-Settings > Versions (*Play this version*, or *Install* an older release). Offline, or when GitHub's
+Settings > About & logs (*Play this version*, or *Install* an older release). Offline, or when GitHub's
 hourly limit is reached, it says so and plays the newest installed version.
 
 The launcher only talks to `api.github.com`, `github.com` and
@@ -171,24 +190,57 @@ copy of the console.
 
 ## The free camera
 
-The original game limits how far the camera zooms out. OpenBFME has an
-optional **free camera** that lets you zoom out to the whole map. It is an
-OpenBFME addition, not part of the original game, and it is off by default.
-It changes only the camera; the game itself plays the same.
+The original game limits how far the camera zooms out. OpenBFME lets you zoom
+out **2.5 times as far** by default: OPENBFME, Camera tab, **Max zoom-out**
+(Original, 1.5x, 2x, 2.5x, 3x; `OpenBFMEMaxZoomOut` in `Options.ini`,
+`-- --zoom-out=1` for the original limit). A game still starts at the
+original height; the mouse wheel takes you higher. Past the map's edge the
+ground fades to black, as the original game draws it.
 
-- In the launcher: Settings (the gear), tick **Free camera**. It
+The optional **free camera** goes further: it lets you zoom out to the whole
+map. Both are OpenBFME additions, not part of the original game; the free
+camera is off by default. They change only the camera; the game itself plays
+the same.
+
+- In the launcher: Settings > General, turn on **Free camera**. It
   applies the next time the game starts.
 - In a game: **Ctrl+Z** turns it on and off.
 - On the command line: `-- --free-camera`.
 - In `Options.ini`: `OpenBFMEFreeCamera = yes`.
 
-## Display options
+## Options
 
-The original **Options** screen stays as it was. OpenBFME's own display
-options are an addition: in **Options** (from the main menu, or from the game
-menu during a game) press **OPENBFME** under the Audio Controls panel. Every
-change shows at once; **Accept** keeps it, **Cancel** or **Esc** puts back what
-you had, **Reset to defaults** sets the defaults below.
+The original **Options** screen is the game's own, and its settings now take
+effect: **Graphics** (the detail level and **Custom Settings**) sets the particle
+limit, the texture quality (for models loaded after the change, so from the
+next game) and whether every health bar shows; **Brightness** brightens or
+darkens the picture; **Scroll Speed** sets the camera's scroll speed. The
+detail rows OpenBFME cannot draw yet (model, animation, shadows, terrain,
+water, shader detail) are greyed out on the Custom Settings page, and so are
+**Movie**, **EAX3** and **High Audio Quality**. A texture quality change shows
+from the next game you load. The **Resolution** row says where the window size
+is set: OPENBFME, Display tab.
+
+OpenBFME's own options are an addition: in **Options** (from the main menu, or
+from the game menu during a game) press **OPENBFME** in the bottom left
+corner, above Cancel. The OpenBFME settings take the place of the three
+panels; the tabs are on the left: **Display**, **Graphics+** (anti-aliasing,
+anisotropic filtering, original or enhanced look, interface scale for large
+screens, soft particle edges), **Camera** (scroll speed, edge scrolling,
+rotation speed, max zoom-out, the free camera, inverted drag scrolling, keeping
+the mouse in the window), **Interface** (when health bars show: **Always (all
+players)** shows every unit's and building's bar, yours and the enemy's; the
+original health-bar and mouse options, a game clock), **Audio** (master volume, mute in
+the background, output device) and **Controls** (the game's hot keys). The
+defaults behave like the original game, except the max zoom-out (2.5x). Every
+change shows at once;
+**Accept** keeps it and **Cancel** or **Esc** puts back what you had (both
+return to the Options screen), **Reset to defaults** sets the defaults. Point
+at a setting to read what it does. They are kept in `Options.ini` as keys starting
+with `OpenBFME`; the original game ignores them. The full list is in
+`docs/OPTIONS.md`.
+
+### Display tab
 
 | Option | Choices | Default |
 |---|---|---|
@@ -236,6 +288,24 @@ you had, **Reset to defaults** sets the defaults below.
   build are listed in the carved side panel.
 - **Help boxes.** Hold the pointer over a bubble or a Palantir button to see
   its name, key, cost and description.
+- **Autocast.** Right-click a hero's ability button on the Palantir to let the
+  hero use that ability by themselves: the button glows while autocast is on,
+  and the hero casts it when a target comes in range and the ability is
+  ready. Right-click it again to turn it off. A left click still casts it
+  once, as before.
+
+## Skirmish rules
+
+The skirmish lobby's **Rules** tab is the original's: the starting
+**resources** (500 to 4000, 1000 by default), the **command point** limit
+(from a third of the normal limit up to 100 times), and whether **custom heroes** (Create-a-Hero) and **ring heroes** are
+allowed. The rules travel with a LAN game and are kept in its replay.
+
+**Legendary Heroes** is an OpenBFME addition on the same tab, off by default
+and not part of the original game: every player's heroes get 2, 3 or 4 times
+their health, take less damage and hit harder. The loading screen names the
+rule when it is on. A game with it on plays differently from the original;
+with it off nothing changes.
 
 ## Controls
 
@@ -314,8 +384,12 @@ recorded stop in [STOPS.md](STOPS.md); the ID is given for reference.
 
 **Menus**
 - Menus work with the mouse only, not the keyboard or a gamepad (S-108).
-- The Options screen's advanced page saves your detail choices, but they don't
-  change the graphics yet (S-2481).
+- The graphics detail settings set the particle limit, texture quality and
+  health bars, but OpenBFME doesn't draw shadows yet, and the model,
+  animation, terrain, water and shader detail rows are greyed out (S-3402).
+  A texture quality change shows from the next game.
+- The skirmish lobby doesn't remember your last rules: every lobby starts
+  from the default rules (S-3602).
 - Some lists and boxes of a menu show through pop-ups placed over them
   (S-1914).
 - Replays are recorded for every game and can be watched from *Load Replay*,
@@ -333,6 +407,8 @@ recorded stop in [STOPS.md](STOPS.md); the ID is given for reference.
   (S-2701).
 - Selection rings always use the highest-detail look, whatever the detail
   setting (S-2522).
+- Turning a hero's autocast on or off doesn't play the hero's voice line
+  (S-3460).
 
 There are many more, smaller stops; the README gives the current count.
 

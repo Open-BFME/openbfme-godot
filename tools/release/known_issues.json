@@ -19,6 +19,9 @@
   {"stops": ["S-2521", "S-2703"], "text": "Hero bar: pointing at a hero's portrait shows no help box, the portrait does not flash when the hero is attacked, and a Create-a-Hero hero does not show its own picture."},
   {"stops": ["S-2702", "S-2703"], "text": "Help boxes: hero ability, spell, repair and revive buttons do not show their cost yet, and the spell book has no help box."},
   {"stops": ["S-2701"], "text": "Build bubbles around a building do not flash and do not show how many units are queued."},
-  {"stops": ["S-2522"], "text": "Selection rings always use the highest-detail look, whatever the detail setting."}
+  {"stops": ["S-2522"], "text": "Selection rings always use the highest-detail look, whatever the detail setting."},
+  {"stops": ["S-3402"], "text": "Graphics detail: the detail level sets the particle limit, texture quality and health bars, but shadows are not drawn yet and the model, animation, terrain, water and shader detail settings are greyed out."},
+  {"stops": ["S-3602"], "text": "The skirmish lobby does not remember your last rules: every lobby starts from the default rules."},
+  {"stops": ["S-3460"], "text": "Turning a hero's autocast on or off does not play the hero's voice line."}
  ]
 }

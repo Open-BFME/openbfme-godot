@@ -4,14 +4,14 @@
 
 **The Battle for Middle-earth II: The Rise of the Witch-king 2.01, rebuilt in Godot.**
 
-[![Latest preview](https://img.shields.io/github/v/release/Open-BFME/openbfme-godot?include_prereleases&label=preview)](https://github.com/Open-BFME/openbfme-godot/releases)
+[![Latest alpha build](https://img.shields.io/github/v/release/Open-BFME/openbfme-godot?include_prereleases&label=alpha)](https://github.com/Open-BFME/openbfme-godot/releases)
 [![Licence: GPL-3.0](https://img.shields.io/github/license/Open-BFME/openbfme-godot)](LICENSE)
 [![Godot 4.7](https://img.shields.io/badge/Godot-4.7-478cbf?logo=godotengine&logoColor=white)](https://godotengine.org)
 [![Platforms](https://img.shields.io/badge/platforms-Windows%20%7C%20Linux-555)](#play-it)
 
-<a href="https://github.com/Open-BFME/openbfme-godot/releases"><img alt="Download the launcher (Windows / Linux)" src="https://img.shields.io/badge/Download-the%20launcher%20for%20Windows%20%2F%20Linux-2ea44f?style=for-the-badge&logo=github"></a>
+<a href="https://github.com/Open-BFME/openbfme-godot/releases"><img alt="Download the alpha build launcher (Windows / Linux)" src="https://img.shields.io/badge/Download-the%20alpha%20build%20launcher%20for%20Windows%20%2F%20Linux-2ea44f?style=for-the-badge&logo=github"></a>
 
-<sub>The newest preview is at the top of the releases page: get the <code>openbfme-launcher-…</code> file for your system.</sub>
+<sub>The newest alpha build is at the top of the releases page: get the <code>openbfme-launcher-…</code> file for your system.</sub>
 
 [Play it](#play-it) · [Status](#status) · [What's new](#whats-new-in-v030-preview4) · [Build from source](#build-from-source) · [Player guide](docs/PLAYING.md) · [Roadmap](docs/ROADMAP.md)
 
@@ -41,9 +41,11 @@ OpenBFME is unofficial. It is not made or endorsed by EA.
 
 ## Play it
 
-> **Preview builds.** These are early test builds. Expect missing features and
-> rough edges; see [Status](#status) and the known issues in the
-> [player guide](docs/PLAYING.md#known-issues).
+> **Alpha builds.** These are early alpha builds for testers. Expect missing
+> features and rough edges; see [Status](#status) and the known issues in the
+> [player guide](docs/PLAYING.md#known-issues). The builds up to
+> v0.3.0-preview.4 were called previews; from v0.4.0-alpha.1 on they are alpha
+> builds, on the same launcher channel (now shown as *Alpha*).
 
 **You need** **The Rise of the Witch-king 2.01** and **The Battle for
 Middle-earth II 1.06**, both in English, and Windows 10/11 or 64-bit Linux
@@ -58,7 +60,7 @@ with Vulkan graphics (or Direct3D 12 on Windows).
    `./OpenBFMELauncher.x86_64` on Linux). On Windows, SmartScreen may say
    *Windows protected your PC*, because the files are not code-signed yet:
    choose *More info*, then *Run anyway*. The launcher downloads the newest
-   game build of its channel (a preview launcher starts on *Preview*),
+   game build of its channel (an alpha or preview launcher starts on *Alpha*),
    checks its signature and every file, installs it, and keeps itself up to
    date.
 3. **Press Play.** On the first start the game looks for your RotWK and BFME2
@@ -83,7 +85,7 @@ You never have to find it by hand: click **Logs** next to the version number
 in the menus, or **Open log folder** in any error or crash message. After a
 crash, the next start tells you which log to send.
 
-**Free camera.** The launcher's *Free camera* setting (behind the gear) lets
+**Free camera.** The launcher's *Free camera* setting (Settings > General) lets
 the camera zoom out to the whole map. This is an OpenBFME option,
 not part of the original game; in a game, Ctrl+Z switches it on and off. From
 the command line it is `-- --free-camera`.
@@ -105,7 +107,7 @@ the original are still missing.
 | Building, economy, upgrades | ✅ Works | builders, walls, castles, resources, upgrades and experience |
 | Computer opponent | 🟡 Partial | builds a base, trains armies, attacks and finishes games; defending, expanding and hero use are not yet like the original |
 | In-game interface | ✅ Works | Palantir, command bar, RotWK's radar and pings, health bars and levels, control groups, camera bookmarks, hotkeys, right-click orders as in the original |
-| Main menu and options | 🟡 Partial | real menus with the original layout; the credits roll; Custom Settings opens the advanced options, which are saved but don't change the graphics yet; save/load pages are not done |
+| Main menu and options | 🟡 Partial | real menus with the original layout; the credits roll; the graphics detail level sets particles, texture quality and health bars, but shadows and the other detail rows are not drawn yet; OpenBFME's own settings inside Options; save/load pages are not done |
 | Sound and music | 🟡 Partial | voices, effects, music and the original stereo image; some sounds (damage sounds, scripted music, parts of the big-battle ambience) are missing |
 | Movies | ✅ Works | the start-up logos and intro, and the campaign movies (no subtitles) |
 | Campaign | 🟡 Partial | missions start from the menu with their movies and narration; no saving and no campaign menu between missions yet |
@@ -125,7 +127,44 @@ pinned by a test. There are **541 open stops** today. Some are big
 (save/load), most are small details waiting for better evidence. The plan to
 get to a 1:1 game is in [docs/ROADMAP.md](docs/ROADMAP.md).
 
-## What's new in v0.3.0-preview.4
+## What's new in v0.3.0-preview.5
+
+This preview carries the launcher that moves everyone to the alpha builds:
+once your launcher has updated itself to this version, it offers the alpha
+builds (v0.4.0-alpha.1 and later) on the same channel, now called *Alpha*.
+You don't need to do anything.
+
+- **A new launcher look.** A menu on the left (Play, News, Multiplayer, Mods,
+  Game files, Settings), the release notes on parchment, and updates that
+  download in the background while you play: Play keeps starting the
+  version you have until the new one is installed. Only one launcher runs at
+  a time.
+- **The graphics detail settings take effect.** The detail level and Custom
+  Settings in Options now set the particle limit, the texture quality and
+  the health bars, and **Brightness** and **Scroll Speed** work. Detail
+  rows OpenBFME can't draw yet (shadows, models, terrain, water ...) are
+  greyed out.
+- **OpenBFME's settings inside the Options screen.** The **OPENBFME** button
+  opens them as a page of the original Options screen, drawn sharp at any
+  window size.
+- **Zoom out 2.5 times farther.** The mouse wheel takes the camera up to 2.5
+  times the original height; change it in OPENBFME, Camera tab, **Max
+  zoom-out** (from the original limit to 3x). Past the map's edge the ground
+  fades to black, as in the original.
+- **Health bars for every unit you can see.** The Interface tab's **Always
+  (all players)** shows the bar of every unit and building in sight, yours
+  and the enemy's, without selecting them.
+- **Autocast hero abilities.** Right-click a hero's ability button: it glows
+  and the hero uses the ability by themselves; right-click again to stop.
+- **The Skirmish Rules tab.** The lobby's Rules tab sets the starting
+  resources, the command point limit, custom heroes and ring heroes, as in
+  the original.
+- **Legendary Heroes.** A new OpenBFME rule on the Rules tab (off by
+  default): heroes get 2, 3 or 4 times their health and hit harder.
+- **"Alpha build" naming.** The launcher shows the test channel as *Alpha*,
+  and the version text in the menus reads "unofficial alpha build".
+
+### v0.3.0-preview.4
 
 - **Display options.** A new **OPENBFME** button in Options opens OpenBFME's
   own display settings: windowed, borderless window or fullscreen, the
@@ -228,7 +267,7 @@ It fixes what came up in the first hands-on play sessions:
 - **Create-a-Hero.** *My Heroes* opens the hero builder: pick a class,
   powers and colours, name your hero and save. Your heroes can be fielded in
   skirmish and LAN games.
-- **The launcher can download the games for you**, if you own them, through
+- **The launcher can download the games for you** through
   the BFME Foundation's All In One service (original 2.01 / 1.06 only, every
   file checked).
 - **Clicks pick like the original.** Your own units win a click over enemies

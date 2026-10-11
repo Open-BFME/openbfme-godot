@@ -58,6 +58,13 @@ public:
 
 	// RW GlobalData Windowed (+0x2C): edge scrolling is off while windowed
 	void setEdgeScrollEnabled(bool on) { m_edgeScrollEnabled = on; }
+	// ---- lane OPTS-2: the OpenBFME camera options (not retail; client only, the logic never sees the camera). Defaults are retail's (off / 1) ----
+	// the right button drag scrolls the other way (the offset of the tick's type 1 scroll is negated)
+	void setInvertDragScroll(bool on) { m_invertDrag = on; }
+	bool invertDragScroll() const { return m_invertDrag; }
+	// the rotation speed: the numpad keys' KeyboardCameraRotateSpeed and the middle button's radians per pixel times `scale`
+	void setRotateSpeedScale(float scale) { m_rotateScale = scale; }
+	float rotateSpeedScale() const { return m_rotateScale; }
 
 	// ---- state, for tests and the report ----
 	bool isScrolling() const { return m_scrolling; }
@@ -86,6 +93,8 @@ private:
 	bool m_rotateLeft = false, m_rotateRight = false, m_zoomIn = false, m_zoomOut = false;
 	bool m_scrollKey[4] = { false, false, false, false }; // up, down, left, right (RW 0xDE8CB4 ..)
 	bool m_edgeScrollEnabled = true;
+	bool m_invertDrag = false;    // lane OPTS-2
+	float m_rotateScale = 1.0f;   // lane OPTS-2
 	// lane INPUT-1: the eight camera bookmarks (BFME2 decomp BfmeOwnVVD + 0x48, ViewLocation m_viewLocation[8])
 	struct ViewLocation
 	{

@@ -1,33 +1,77 @@
-## Lane UI-3: the launcher's look, made here from flat colours (no image, logo or font from the games). Dark steel panels, parchment text,
-## a muted gold accent. The title uses a serif the system has (SystemFont: Georgia / Cambria on Windows, DejaVu or Noto Serif on Linux;
-## Godot's own font when none is there); the body uses Godot's built-in font.
+## Lane UI-5: the launcher's look, "Parchment & Steel" (the owner's pick of ten launcher concepts, 2026-10-10; the clickable prototype's
+## design 1, whose CSS gives these colours, sizes and fonts). Dark steel and mist, parchment cards, a muted gold accent.
+## Fonts: Cinzel (titles), Cormorant Garamond (the subtitle, parchment text) and Inter (everything else), free fonts under the SIL Open
+## Font License 1.1, bundled in res://fonts with their licences (OFL-*.txt) and loaded from their own bytes (importer "keep": the pack
+## carries the exact files tools/release/public_binaries.txt pins). Textures are made in shaders (scripts/ui/textures.gd): no image.
 extends RefCounted
 
-const BG := Color("101216")          # the window behind everything
-const BG_TOP := Color("1b1f26")      # the backdrop's gradient, top
-const PANEL := Color("181b21")       # cards
-const PANEL_HI := Color("21252d")    # inputs, hovered rows
-const EDGE := Color("343a44")        # steel borders
-const EDGE_HI := Color("566070")
-const TEXT := Color("e9e3d5")        # parchment white
-const MUTED := Color("9c978c")
-const PARCHMENT := Color("d8c7a0")   # titles
-const GOLD := Color("c9a24a")        # the accent: Play, links, the progress bar
-const GOLD_HI := Color("dfba62")
-const GOLD_LO := Color("a3812f")
-const INK := Color("17140e")         # text on gold
-const GOOD := Color("86b273")
-const BAD := Color("d4664c")
+# the prototype's CSS variables (design "1 · Parchment & Steel")
+const ACCENT := Color("f0d891")      # --ac: titles, icons, links
+const ACCENT2 := Color("c9a54e")     # --ac2: section captions, table heads
+const LINE := Color("4d3d1f")        # --ln: every border
+const LINE2 := Color(1, 1, 1, 0.06)  # --ln2: the rules between rows
+const TEXT := Color("ece2c9")        # --tx
+const TEXT2 := Color("cdbf9f")       # --tx2
+const TEXT3 := Color("9c917a")       # --tx3: muted
+const PANEL := Color(12 / 255.0, 12 / 255.0, 14 / 255.0, 0.72)  # --pnl
+const SELECTED := Color(201 / 255.0, 165 / 255.0, 78 / 255.0, 0.18)  # --sel
+const HOVER := Color(1, 1, 1, 0.05)  # --hov
+const BG := Color("0b0b0d")
+const INK := Color("2a1b05")         # text on gold (the Play button)
+const GOLD_TOP := Color("e9be56")    # the Play button's gradient
+const GOLD_BOTTOM := Color("a77a22")
+const FILL_LEFT := Color("8a6420")   # the progress bar's gradient
+const FILL_RIGHT := Color("f0c45a")
+const PARCH_INK := Color("2c2113")   # text on parchment
+const PARCH_TITLE := Color("3a2810")
+const PARCH_MUTED := Color("5b4422")
+const GOOD := Color("8fd08a")
+const GOOD_EDGE := Color("3e6b3a")
 const WARN := Color("e0a84a")
+const BAD := Color("d4664c")
 
-const RADIUS := 6
+# names kept from UI-3 (message_panel.gd and the icons use them)
+const MUTED := TEXT3
+const GOLD := ACCENT2
+const PARCHMENT := ACCENT
+const EDGE := LINE
+
+const RADIUS := 10
+
+static var _files := {}
+static var _fonts := {}
 
 
-static func title_font(weight: int = 600) -> Font:
-	var f := SystemFont.new()
-	f.font_names = PackedStringArray(["Georgia", "Cambria", "Constantia", "Noto Serif", "DejaVu Serif", "Liberation Serif", "serif"])
-	f.font_weight = weight
-	return f
+## a bundled font file (res://fonts/<name>.ttf), read once
+static func _file(name: String) -> FontFile:
+	if not _files.has(name):
+		var f := FontFile.new()
+		var err := f.load_dynamic_font("res://fonts/%s.ttf" % name)
+		if err != OK:
+			push_error("launcher font %s did not load (%s)" % [name, error_string(err)])
+		_files[name] = f
+	return _files[name]
+
+
+## `family` ("Cinzel", "CormorantGaramond", "CormorantGaramond-Italic", "Inter") at a weight (the variable fonts' wght axis), with extra
+## space between letters (the CSS letter-spacing in pixels)
+static func font(family: String, weight := 400, spacing := 0) -> Font:
+	var key := "%s/%d/%d" % [family, weight, spacing]
+	if not _fonts.has(key):
+		var v := FontVariation.new()
+		v.base_font = _file(family)
+		v.variation_opentype = {TextServerManager.get_primary_interface().name_to_tag("wght"): weight}
+		v.spacing_glyph = spacing
+		_fonts[key] = v
+	return _fonts[key]
+
+
+static func title_font(weight := 700, spacing := 0) -> Font:
+	return font("Cinzel", weight, spacing)
+
+
+static func body_font(weight := 500) -> Font:
+	return font("Inter", weight)
 
 
 static func box(bg: Color, edge: Color = Color(0, 0, 0, 0), border := 0, radius := RADIUS, pad := Vector2(0, 0)) -> StyleBoxFlat:
@@ -44,128 +88,167 @@ static func box(bg: Color, edge: Color = Color(0, 0, 0, 0), border := 0, radius 
 	return s
 
 
-static func card() -> StyleBoxFlat:
-	var s := box(PANEL, EDGE, 1, RADIUS + 2, Vector2(22, 18))
-	s.shadow_color = Color(0, 0, 0, 0.35)
-	s.shadow_size = 10
-	s.shadow_offset = Vector2(0, 3)
-	return s
+## .panel: the dark glass card with a gold-brown line
+static func panel() -> StyleBoxFlat:
+	return box(PANEL, LINE, 1, RADIUS, Vector2(20, 17))
+
+
+## a label's font, size and colour in one call
+static func text(l: Control, family: String, weight: int, size: int, color: Color, spacing := 0) -> void:
+	l.add_theme_font_override("font", font(family, weight, spacing))
+	l.add_theme_font_size_override("font_size", size)
+	l.add_theme_color_override("font_color", color)
 
 
 ## the window's theme: every Control below the launcher's root inherits it
 static func make_theme() -> Theme:
 	var t := Theme.new()
-	t.default_font_size = 16
+	t.default_font = body_font(500)
+	t.default_font_size = 15
 	t.set_color("font_color", "Label", TEXT)
 	for k in ["Button", "OptionButton", "CheckBox", "CheckButton", "MenuButton"]:
-		t.set_color("font_color", k, TEXT)
-		t.set_color("font_hover_color", k, Color.WHITE)
-		t.set_color("font_pressed_color", k, Color.WHITE)
-		t.set_color("font_focus_color", k, TEXT)
-		t.set_color("font_disabled_color", k, Color(TEXT, 0.35))
-		t.set_color("icon_normal_color", k, TEXT)
-		t.set_color("icon_hover_color", k, Color.WHITE)
-		t.set_color("icon_disabled_color", k, Color(TEXT, 0.35))
-		t.set_constant("h_separation", k, 8)
-	_button(t, "Button", PANEL_HI, EDGE, Color("2a2f38"), EDGE_HI)
-	_button(t, "OptionButton", PANEL_HI, EDGE, Color("2a2f38"), EDGE_HI)
-	# the gold variant (Play, Update, Download): Button.theme_type_variation = "GoldButton"
+		t.set_font("font", k, body_font(600))
+		t.set_font_size("font_size", k, 14)
+		t.set_color("font_color", k, TEXT2)
+		t.set_color("font_hover_color", k, TEXT)
+		t.set_color("font_pressed_color", k, TEXT)
+		t.set_color("font_hover_pressed_color", k, TEXT)
+		t.set_color("font_focus_color", k, TEXT2)
+		t.set_color("font_disabled_color", k, Color(TEXT2, 0.4))
+		t.set_color("icon_normal_color", k, ACCENT)
+		t.set_color("icon_hover_color", k, ACCENT)
+		t.set_color("icon_pressed_color", k, ACCENT)
+		t.set_color("icon_focus_color", k, ACCENT)
+		t.set_color("icon_disabled_color", k, Color(ACCENT, 0.35))
+		t.set_constant("h_separation", k, 10)
+	# .btn: a dark button with a gold-brown line that lights up on hover
+	_button(t, "Button", Color(0, 0, 0, 0.3), LINE, Color(0, 0, 0, 0.42), ACCENT, 8, Vector2(16, 9))
+	_button(t, "OptionButton", Color(0, 0, 0, 0.35), LINE, Color(0, 0, 0, 0.45), ACCENT, 6, Vector2(10, 5))
+	t.set_font_size("font_size", "OptionButton", 13)
+	t.set_color("font_color", "OptionButton", TEXT)
+	# the small gold button (Update to ..., Download): the Play button's gradient is drawn by scripts/ui/gold_button.gd
 	t.add_type("GoldButton")
 	t.set_type_variation("GoldButton", "Button")
-	_button(t, "GoldButton", GOLD, GOLD_LO, GOLD_HI, GOLD_HI)
-	for c in ["font_color", "font_hover_color", "font_pressed_color", "font_focus_color", "icon_normal_color", "icon_hover_color", "icon_pressed_color", "icon_focus_color"]:
+	_button(t, "GoldButton", GOLD_TOP.darkened(0.08), GOLD_BOTTOM, GOLD_TOP, ACCENT, 8, Vector2(16, 9))
+	for c in ["font_color", "font_hover_color", "font_pressed_color", "font_focus_color", "font_hover_pressed_color", "icon_normal_color",
+			"icon_hover_color", "icon_pressed_color", "icon_focus_color"]:
 		t.set_color(c, "GoldButton", INK)
 	t.set_color("font_disabled_color", "GoldButton", Color(INK, 0.5))
 	t.set_color("icon_disabled_color", "GoldButton", Color(INK, 0.5))
-	# flat icon buttons (the gear, close)
+	# the left rail's entries (.nav button): icon in gold, the selected one on a gold tint
+	t.add_type("NavButton")
+	t.set_type_variation("NavButton", "Button")
+	for st in ["normal", "disabled"]:
+		t.set_stylebox(st, "NavButton", box(Color(0, 0, 0, 0), Color(0, 0, 0, 0), 0, 8, Vector2(12, 9)))
+	t.set_stylebox("hover", "NavButton", box(HOVER, Color(0, 0, 0, 0), 0, 8, Vector2(12, 9)))
+	t.set_stylebox("pressed", "NavButton", box(SELECTED, Color(0, 0, 0, 0), 0, 8, Vector2(12, 9)))
+	t.set_stylebox("hover_pressed", "NavButton", box(SELECTED, Color(0, 0, 0, 0), 0, 8, Vector2(12, 9)))
+	t.set_stylebox("focus", "NavButton", box(Color(0, 0, 0, 0), Color(ACCENT2, 0.6), 1, 8, Vector2(12, 9)))
+	t.set_color("font_color", "NavButton", TEXT2)
+	t.set_color("font_pressed_color", "NavButton", TEXT)
+	t.set_color("font_hover_pressed_color", "NavButton", TEXT)
+	t.set_font_size("font_size", "NavButton", 15)
+	t.set_constant("h_separation", "NavButton", 12)
+	# the Settings tabs (.stabs button) and other toggles in a ButtonGroup
+	t.add_type("TabButton")
+	t.set_type_variation("TabButton", "Button")
+	for st in ["normal", "disabled"]:
+		t.set_stylebox(st, "TabButton", box(Color(0, 0, 0, 0), Color(0, 0, 0, 0), 0, 7, Vector2(12, 7)))
+	t.set_stylebox("hover", "TabButton", box(HOVER, Color(0, 0, 0, 0), 0, 7, Vector2(12, 7)))
+	t.set_stylebox("pressed", "TabButton", box(SELECTED, Color(0, 0, 0, 0), 0, 7, Vector2(12, 7)))
+	t.set_stylebox("hover_pressed", "TabButton", box(SELECTED, Color(0, 0, 0, 0), 0, 7, Vector2(12, 7)))
+	t.set_stylebox("focus", "TabButton", box(Color(0, 0, 0, 0), Color(ACCENT2, 0.6), 1, 7, Vector2(12, 7)))
+	t.set_color("font_pressed_color", "TabButton", TEXT)
+	t.set_color("font_hover_pressed_color", "TabButton", TEXT)
+	t.set_font_size("font_size", "TabButton", 14)
+	# flat icon buttons (close)
 	t.add_type("FlatButton")
 	t.set_type_variation("FlatButton", "Button")
-	t.set_stylebox("normal", "FlatButton", box(Color(0, 0, 0, 0), Color(0, 0, 0, 0), 0, RADIUS, Vector2(8, 6)))
-	t.set_stylebox("hover", "FlatButton", box(Color(1, 1, 1, 0.06), Color(0, 0, 0, 0), 0, RADIUS, Vector2(8, 6)))
-	t.set_stylebox("pressed", "FlatButton", box(Color(1, 1, 1, 0.1), Color(0, 0, 0, 0), 0, RADIUS, Vector2(8, 6)))
-	t.set_stylebox("disabled", "FlatButton", box(Color(0, 0, 0, 0), Color(0, 0, 0, 0), 0, RADIUS, Vector2(8, 6)))
-	t.set_stylebox("focus", "FlatButton", box(Color(0, 0, 0, 0), GOLD_LO, 1, RADIUS, Vector2(8, 6)))
-	# the channel switch: two toggle buttons in a ButtonGroup
-	t.add_type("SegButton")
-	t.set_type_variation("SegButton", "Button")
-	t.set_stylebox("normal", "SegButton", box(Color(0, 0, 0, 0), Color(0, 0, 0, 0), 0, RADIUS - 2, Vector2(14, 5)))
-	t.set_stylebox("hover", "SegButton", box(Color(1, 1, 1, 0.05), Color(0, 0, 0, 0), 0, RADIUS - 2, Vector2(14, 5)))
-	t.set_stylebox("pressed", "SegButton", box(Color("3a3424"), GOLD_LO, 1, RADIUS - 2, Vector2(14, 5)))
-	t.set_stylebox("hover_pressed", "SegButton", box(Color("3a3424"), GOLD, 1, RADIUS - 2, Vector2(14, 5)))
-	t.set_stylebox("disabled", "SegButton", box(Color(0, 0, 0, 0), Color(0, 0, 0, 0), 0, RADIUS - 2, Vector2(14, 5)))
-	t.set_stylebox("focus", "SegButton", box(Color(0, 0, 0, 0), GOLD_LO, 1, RADIUS - 2, Vector2(14, 5)))
-	t.set_color("font_pressed_color", "SegButton", PARCHMENT)
-	t.set_color("font_color", "SegButton", MUTED)
-	t.set_color("font_hover_pressed_color", "SegButton", PARCHMENT)
-	t.set_stylebox("panel", "PanelContainer", card())
-	t.add_type("Inset")
-	t.set_type_variation("Inset", "PanelContainer")
-	t.set_stylebox("panel", "Inset", box(Color("121418"), EDGE, 1, RADIUS, Vector2(14, 12)))
-	t.add_type("Pill")
-	t.set_type_variation("Pill", "PanelContainer")
-	t.set_stylebox("panel", "Pill", box(Color("22281f"), Color("3f5636"), 1, 12, Vector2(12, 3)))
+	t.set_stylebox("normal", "FlatButton", box(Color(0, 0, 0, 0), Color(0, 0, 0, 0), 0, 8, Vector2(8, 6)))
+	t.set_stylebox("hover", "FlatButton", box(HOVER, Color(0, 0, 0, 0), 0, 8, Vector2(8, 6)))
+	t.set_stylebox("pressed", "FlatButton", box(SELECTED, Color(0, 0, 0, 0), 0, 8, Vector2(8, 6)))
+	t.set_stylebox("disabled", "FlatButton", box(Color(0, 0, 0, 0), Color(0, 0, 0, 0), 0, 8, Vector2(8, 6)))
+	t.set_stylebox("focus", "FlatButton", box(Color(0, 0, 0, 0), Color(ACCENT2, 0.6), 1, 8, Vector2(8, 6)))
+	t.set_stylebox("panel", "PanelContainer", panel())
+	# .chip: a small rounded tag (status, channel, version); the "ok" one is green
+	t.add_type("Chip")
+	t.set_type_variation("Chip", "PanelContainer")
+	t.set_stylebox("panel", "Chip", box(Color(0, 0, 0, 0.25), LINE, 1, 99, Vector2(11, 4)))
 	t.add_type("Banner")
 	t.set_type_variation("Banner", "PanelContainer")
-	t.set_stylebox("panel", "Banner", box(Color("2c2414"), Color("6b5426"), 1, RADIUS, Vector2(14, 8)))
-	# labels
+	t.set_stylebox("panel", "Banner", box(Color("2c2414e6"), Color("6b5426"), 1, 8, Vector2(14, 8)))
+	# labels: muted text, h1 / h2 (Cinzel in gold), h3 (the small spaced caption)
 	t.add_type("Muted")
 	t.set_type_variation("Muted", "Label")
-	t.set_color("font_color", "Muted", MUTED)
+	t.set_color("font_color", "Muted", TEXT3)
+	t.set_font_size("font_size", "Muted", 13)
+	t.set_font("font", "Muted", body_font(400))
 	t.add_type("Heading")
 	t.set_type_variation("Heading", "Label")
-	t.set_color("font_color", "Heading", PARCHMENT)
-	t.set_font("font", "Heading", title_font())
-	t.set_font_size("font_size", "Heading", 24)
+	t.set_color("font_color", "Heading", ACCENT)
+	t.set_font("font", "Heading", title_font(700, 1))
+	t.set_font_size("font_size", "Heading", 28)
 	t.add_type("Section")
 	t.set_type_variation("Section", "Label")
-	t.set_color("font_color", "Section", GOLD)
-	t.set_font_size("font_size", "Section", 13)
-	# progress
-	t.set_stylebox("background", "ProgressBar", box(Color("0d0f12"), EDGE, 1, 4))
-	t.set_stylebox("fill", "ProgressBar", box(GOLD, Color(0, 0, 0, 0), 0, 4))
+	t.set_color("font_color", "Section", ACCENT2)
+	t.set_font("font", "Section", font("Inter", 600, 2))
+	t.set_font_size("font_size", "Section", 12)
+	# progress: the dark track with a gold gradient fill (scripts/ui/widgets.gd gold_fill)
+	t.set_stylebox("background", "ProgressBar", box(Color(0, 0, 0, 0.45), LINE, 1, 6))
+	t.set_stylebox("fill", "ProgressBar", box(FILL_RIGHT, Color(0, 0, 0, 0), 0, 6))
 	t.set_color("font_color", "ProgressBar", TEXT)
-	# checkboxes (their own flat boxes: a theme's Button styles would otherwise frame them), lists, text
-	for st in ["normal", "hover", "pressed", "disabled", "hover_pressed"]:
-		t.set_stylebox(st, "CheckBox", box(Color(1, 1, 1, 0.04) if st.begins_with("hover") else Color(0, 0, 0, 0), Color(0, 0, 0, 0), 0, RADIUS, Vector2(6, 4)))
-	t.set_stylebox("focus", "CheckBox", box(Color(0, 0, 0, 0), GOLD_LO, 1, RADIUS, Vector2(6, 4)))
-	t.set_color("font_color", "CheckBox", TEXT)
-	t.set_color("font_color", "LinkButton", GOLD)
-	t.set_color("font_hover_color", "LinkButton", GOLD_HI)
-	t.set_color("font_pressed_color", "LinkButton", GOLD_HI)
-	t.set_color("font_focus_color", "LinkButton", GOLD)
-	t.set_stylebox("panel", "ItemList", box(Color("121418"), EDGE, 1, RADIUS, Vector2(6, 6)))
-	t.set_stylebox("selected", "ItemList", box(Color("3a3424"), Color(0, 0, 0, 0), 0, 4))
-	t.set_stylebox("selected_focus", "ItemList", box(Color("3a3424"), GOLD_LO, 1, 4))
-	t.set_stylebox("hovered", "ItemList", box(Color(1, 1, 1, 0.05), Color(0, 0, 0, 0), 0, 4))
+	# toggles (.tog) and check boxes
+	for k in ["CheckButton", "CheckBox"]:
+		for st in ["normal", "hover", "pressed", "disabled", "hover_pressed"]:
+			t.set_stylebox(st, k, box(HOVER if st.begins_with("hover") else Color(0, 0, 0, 0), Color(0, 0, 0, 0), 0, 6, Vector2(4, 4)))
+		t.set_stylebox("focus", k, box(Color(0, 0, 0, 0), Color(ACCENT2, 0.6), 1, 6, Vector2(4, 4)))
+		t.set_color("font_color", k, TEXT)
+		t.set_font("font", k, body_font(500))
+	var VectorIcon = load("res://scripts/ui/vector_icon.gd")
+	t.set_icon("checked", "CheckButton", VectorIcon.make("toggle_on", 20))
+	t.set_icon("unchecked", "CheckButton", VectorIcon.make("toggle_off", 20))
+	t.set_icon("checked_disabled", "CheckButton", VectorIcon.make("toggle_on", 20))
+	t.set_icon("unchecked_disabled", "CheckButton", VectorIcon.make("toggle_off", 20))
+	t.set_color("font_color", "LinkButton", ACCENT)
+	t.set_color("font_hover_color", "LinkButton", Color.WHITE)
+	t.set_color("font_pressed_color", "LinkButton", Color.WHITE)
+	t.set_color("font_focus_color", "LinkButton", ACCENT)
+	t.set_font("font", "LinkButton", body_font(500))
+	t.set_font_size("font_size", "LinkButton", 13)
+	t.set_stylebox("panel", "ItemList", box(Color(0, 0, 0, 0.3), LINE, 1, 6, Vector2(6, 6)))
+	t.set_stylebox("selected", "ItemList", box(SELECTED, Color(0, 0, 0, 0), 0, 4))
+	t.set_stylebox("selected_focus", "ItemList", box(SELECTED, Color(ACCENT2, 0.6), 1, 4))
+	t.set_stylebox("hovered", "ItemList", box(HOVER, Color(0, 0, 0, 0), 0, 4))
+	t.set_stylebox("focus", "ItemList", box(Color(0, 0, 0, 0), Color(0, 0, 0, 0), 0, 4))
 	t.set_color("font_color", "ItemList", TEXT)
-	t.set_color("font_selected_color", "ItemList", PARCHMENT)
-	t.set_stylebox("normal", "RichTextLabel", box(Color(0, 0, 0, 0)))
-	t.set_color("default_color", "RichTextLabel", TEXT)
-	t.set_stylebox("panel", "PopupMenu", box(PANEL_HI, EDGE, 1, RADIUS, Vector2(6, 6)))
-	t.set_stylebox("hover", "PopupMenu", box(Color("3a3424"), Color(0, 0, 0, 0), 0, 4))
+	t.set_color("font_selected_color", "ItemList", ACCENT)
+	t.set_font_size("font_size", "ItemList", 14)
+	t.set_stylebox("panel", "PopupMenu", box(Color("16151a"), LINE, 1, 6, Vector2(6, 6)))
+	t.set_stylebox("hover", "PopupMenu", box(SELECTED, Color(0, 0, 0, 0), 0, 4))
 	t.set_color("font_color", "PopupMenu", TEXT)
-	t.set_color("font_hover_color", "PopupMenu", PARCHMENT)
-	t.set_stylebox("panel", "TooltipPanel", box(PANEL_HI, EDGE, 1, 4, Vector2(8, 5)))
+	t.set_color("font_hover_color", "PopupMenu", ACCENT)
+	t.set_stylebox("panel", "TooltipPanel", box(Color("16151a"), LINE, 1, 4, Vector2(8, 5)))
 	t.set_color("font_color", "TooltipLabel", TEXT)
-	t.set_stylebox("normal", "LineEdit", box(Color("121418"), EDGE, 1, RADIUS, Vector2(10, 6)))
-	t.set_stylebox("focus", "LineEdit", box(Color(0, 0, 0, 0), GOLD_LO, 1, RADIUS))
-	t.set_stylebox("read_only", "LineEdit", box(Color("121418"), EDGE, 1, RADIUS, Vector2(10, 6)))
+	t.set_stylebox("normal", "LineEdit", box(Color(0, 0, 0, 0.35), LINE, 1, 6, Vector2(10, 6)))
+	t.set_stylebox("focus", "LineEdit", box(Color(0, 0, 0, 0), ACCENT2, 1, 6))
+	t.set_stylebox("read_only", "LineEdit", box(Color(0, 0, 0, 0.35), LINE, 1, 6, Vector2(10, 6)))
 	t.set_color("font_color", "LineEdit", TEXT)
 	t.set_color("font_uneditable_color", "LineEdit", TEXT)
-	t.set_stylebox("h_grabber", "HScrollBar", box(EDGE, Color(0, 0, 0, 0), 0, 3))
-	t.set_stylebox("grabber", "VScrollBar", box(EDGE, Color(0, 0, 0, 0), 0, 3))
-	t.set_stylebox("grabber_highlight", "VScrollBar", box(EDGE_HI, Color(0, 0, 0, 0), 0, 3))
-	t.set_stylebox("grabber_pressed", "VScrollBar", box(EDGE_HI, Color(0, 0, 0, 0), 0, 3))
-	t.set_stylebox("scroll", "VScrollBar", box(Color(0, 0, 0, 0.2), Color(0, 0, 0, 0), 0, 3))
-	t.set_stylebox("separator", "HSeparator", box(EDGE, Color(0, 0, 0, 0), 0, 0))
+	t.set_stylebox("h_grabber", "HScrollBar", box(LINE, Color(0, 0, 0, 0), 0, 3))
+	for k in ["grabber", "grabber_highlight", "grabber_pressed"]:
+		t.set_stylebox(k, "VScrollBar", box(LINE if k == "grabber" else ACCENT2, Color(0, 0, 0, 0), 0, 3))
+	t.set_stylebox("scroll", "VScrollBar", box(Color(0, 0, 0, 0.15), Color(0, 0, 0, 0), 0, 3))
+	var rule := StyleBoxLine.new()
+	rule.color = LINE2
+	rule.thickness = 1
+	t.set_stylebox("separator", "HSeparator", rule)
 	t.set_constant("separation", "HSeparator", 1)
 	return t
 
 
-static func _button(t: Theme, type: String, bg: Color, edge: Color, hover: Color, hover_edge: Color) -> void:
-	var pad := Vector2(16, 8)
-	t.set_stylebox("normal", type, box(bg, edge, 1, RADIUS, pad))
-	t.set_stylebox("hover", type, box(hover, hover_edge, 1, RADIUS, pad))
-	t.set_stylebox("pressed", type, box(bg.darkened(0.15), hover_edge, 1, RADIUS, pad))
-	t.set_stylebox("disabled", type, box(Color(bg, 0.45), Color(edge, 0.45), 1, RADIUS, pad))
-	t.set_stylebox("focus", type, box(Color(0, 0, 0, 0), GOLD_HI if type == "GoldButton" else GOLD_LO, 1, RADIUS, pad))
+static func _button(t: Theme, type: String, bg: Color, edge: Color, hover: Color, hover_edge: Color, radius: int, pad: Vector2) -> void:
+	t.set_stylebox("normal", type, box(bg, edge, 1, radius, pad))
+	t.set_stylebox("hover", type, box(hover, hover_edge, 1, radius, pad))
+	t.set_stylebox("pressed", type, box(hover, hover_edge, 1, radius, pad))
+	t.set_stylebox("disabled", type, box(Color(bg, bg.a * 0.5), Color(edge, 0.45), 1, radius, pad))
+	t.set_stylebox("focus", type, box(Color(0, 0, 0, 0), ACCENT if type == "GoldButton" else Color(ACCENT2, 0.7), 1, radius, pad))

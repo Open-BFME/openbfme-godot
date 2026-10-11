@@ -7,7 +7,7 @@
 ##   palantir  the three buttons above the minimap (the Palantir's options row) are clicked one after the other; what each opened is reported
 ##   powers    the Palantir's powers button opens SpellStore.apt; a click on a power that can be bought, RESET, a buy and ACCEPT; a click beside the
 ##             store closes it
-##   camera    (with --free-camera) the wheel zooms out beyond retail's limit
+##   camera    the wheel zooms out to the limit: retail's max height times the Max zoom-out (lane ZOOM-1), beyond it with --free-camera
 ##   herobar   (lane UI-4) the Palantir's hero bar (InGameHeroSelect): the idle builder's button and, after a hero and a second hero are created, their buttons
 ##             with portrait, health and rank; a click on a hero button selects that hero, a second click moves the camera to it, a click on the builder button
 ##             selects the idle builder, select-all selects both heroes; play1-herobar-<step>.png
@@ -653,8 +653,8 @@ func _scenario_camera() -> String:
 	if c1.free_camera:
 		if c1.height_above_ground <= c1.max_height * 1.5:
 			return "the free camera did not zoom out beyond retail's limit"
-	elif c1.height_above_ground > c1.max_height + 0.01:
-		return "the retail camera zoomed out beyond its limit"
+	elif c1.height_above_ground > c1.zoom_out_limit + 0.01:
+		return "the camera zoomed out beyond its limit (lane ZOOM-1: the map's max height times the Max zoom-out, %.2f)" % float(c1.get("zoom_out_factor", 1.0))
 	await wheel(centre, 80)
 	await game._step(60)
 	return ""

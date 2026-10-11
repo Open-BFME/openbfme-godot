@@ -227,7 +227,7 @@ MessageDisposition LookAtTranslator::translate(const ClientMessage &msg)
 			}
 			if (m_rotating)
 			{
-				const float angle = (float)(m_midCur.x - m_rotAnchor.x) * kRotatePerPixel;
+				const float angle = (float)(m_midCur.x - m_rotAnchor.x) * kRotatePerPixel * m_rotateScale; // lane OPTS-2: the option's scale (1 = retail)
 				m_camera.setAngle(m_camera.getAngle() + angle);
 				m_rotAnchor = p;
 			}
@@ -367,6 +367,12 @@ void LookAtTranslator::tick(unsigned nowMs)
 				break;
 		}
 	}
+	if (m_invertDrag && m_scrolling && m_scrollType == SCROLL_RMB)
+	{
+		// lane OPTS-2 (not retail): the drag scroll's direction reversed
+		offX = -offX;
+		offY = -offY;
+	}
 	m_offsetX = offX;
 	m_offsetY = offY;
 	const int mask = m_camera.scrollBy(offX, offY);
@@ -403,11 +409,11 @@ void LookAtTranslator::tick(unsigned nowMs)
 	{
 		if (m_rotateLeft)
 		{
-			m_camera.setAngle(m_camera.getAngle() - gd.keyboardCameraRotateSpeed);
+			m_camera.setAngle(m_camera.getAngle() - gd.keyboardCameraRotateSpeed * m_rotateScale);
 		}
 		if (m_rotateRight)
 		{
-			m_camera.setAngle(m_camera.getAngle() + gd.keyboardCameraRotateSpeed);
+			m_camera.setAngle(m_camera.getAngle() + gd.keyboardCameraRotateSpeed * m_rotateScale);
 		}
 		if (m_zoomIn)
 		{

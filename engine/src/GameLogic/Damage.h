@@ -194,6 +194,8 @@ public:
 	virtual bool weaponSourceIsVictim() = 0;
 	virtual std::uint32_t sourcePlayerMask() = 0;
 	virtual unsigned weaponSourceID() = 0;
+	// lane RULES-1, OpenBFME (not retail): the source's Legendary Heroes damage dealt factor (GameLogic/LegendaryHeroesGame.h); 1.0 for every retail game
+	virtual float sourceOpenBfmeDamageScalar() { return 1.0f; }
 };
 
 // Returns false when the hit is dropped (FlankedScalar * amount < 1.0). `center` is the radius-damage centre or nullptr for a direct hit.

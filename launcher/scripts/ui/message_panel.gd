@@ -3,6 +3,7 @@
 extends Control
 
 signal open_logs
+signal closed  # lane UI-5: the player closed the dialog (an error was seen)
 
 const W := preload("res://scripts/ui/widgets.gd")
 const VectorIcon := preload("res://scripts/ui/vector_icon.gd")
@@ -54,6 +55,7 @@ func _init() -> void:
 	_ok.custom_minimum_size.x = 120
 	_ok.pressed.connect(func() -> void:
 		visible = false
+		closed.emit()
 		if _on_ok.is_valid():
 			_on_ok.call())
 	row.add_child(_ok)
@@ -86,3 +88,8 @@ func ask(title: String, text: String, ok_text: String, on_ok: Callable) -> void:
 	_ok.text = ok_text
 	_on_ok = on_ok
 	visible = true
+
+
+## "<title>: <text>" of the dialog (the tests' check of what the window shows)
+func shown_text() -> String:
+	return "%s: %s" % [_title.text, _text.text]

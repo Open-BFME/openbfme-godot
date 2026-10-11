@@ -105,6 +105,14 @@ bool LANAPI::gameInfoValid(const SkirmishGameInfo &info, std::string *why) const
 			}
 			return false;
 		}
+		if (s.hasCreateAHero && !info.customHeroesAllowed())
+		{
+			if (why)
+			{
+				*why = "slot " + std::to_string(i) + ": a Create-a-Hero while AllowCustomHeroes is off";
+			}
+			return false;
+		}
 		if (s.hasCreateAHero && !createAHeroValid(s, &w))
 		{
 			if (why)
@@ -470,6 +478,15 @@ bool LANAPI::requestSlotCreateAHero(const CreateAHeroHero *hero, std::string *er
 		}
 		return false;
 	}
+	if (hero && !m_current.info.customHeroesAllowed())
+	{
+		// lane RULES-1: AllowCustomHeroes is off (the slot's hero combo is disabled, RW 0x842A85): no hero to send
+		if (error)
+		{
+			*error = "AllowCustomHeroes is off";
+		}
+		return false;
+	}
 	SkirmishGameSlot slot = m_current.info.slots[m_localSlot];
 	slot.clearCreateAHero();
 	if (hero && (!slot.setCreateAHero(*hero, error) || !createAHeroValid(slot, error)))
@@ -529,6 +546,11 @@ bool LANAPI::handleSlotCreateAHero(NetByteReader &r, const NetAddress &from)
 	SkirmishGameSlot slot = m_current.info.slots[s];
 	slot.clearCreateAHero();
 	std::string why;
+	if (has && !m_current.info.customHeroesAllowed())
+	{
+		m_errors.push_back("a Create-a-Hero request from " + from.text() + " while AllowCustomHeroes is off: refused"); // lane RULES-1
+		return false;
+	}
 	if (has && (!slot.setCreateAHeroBytes(bytes, &why) || !createAHeroValid(slot, &why)))
 	{
 		m_errors.push_back("a Create-a-Hero request from " + from.text() + ": " + why + ": refused");
@@ -565,6 +587,8 @@ bool LANAPI::hostSetOptions(const SkirmishGameInfo &info)
 			next.slots[s].clearCreateAHero(); // only a human slot has one
 		}
 	}
+	// lane RULES-1: with AllowCustomHeroes off the players' records go too (RW 0x842A85 drops every slot's hero choice); the authoritative setup has none
+	next.clearCreateAHeroesIfNotAllowed();
 	const bool changed = !(next == m_current.info);
 	m_current.info = next;
 	if (changed)

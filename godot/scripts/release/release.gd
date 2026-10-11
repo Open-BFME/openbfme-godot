@@ -344,7 +344,8 @@ func _add_watermark() -> void:
 	_watermark = CanvasLayer.new()
 	_watermark.layer = 100
 	var label := Label.new()
-	label.text = version_line() + "  -  unofficial test build"
+	# lane RELNAME-1 (owner, 2026-10-10): an alpha build, no longer "test build"; "unofficial" stays (not made or endorsed by EA)
+	label.text = version_line() + "  -  unofficial alpha build"
 	label.add_theme_font_size_override("font_size", 13)
 	label.add_theme_color_override("font_color", Color(1, 1, 1, 0.75))
 	label.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.9))

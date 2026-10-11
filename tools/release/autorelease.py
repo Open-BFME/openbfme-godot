@@ -2,9 +2,18 @@
 """Lane AUTOREL-1: the decisions of tools/release/autorelease.sh that are worth testing on their own (docs/RELEASE.md, "Automatic preview
 releases").
 
-    python3 tools/release/autorelease.py next-version [--remote origin] [--base v0.3.0] [--git-dir DIR]
-        prints v0.3.0-preview.<n>, n = 1 + the highest v0.3.0-preview.<n> tag on the remote (git ls-remote); 1 when there is none.
-        Tags outside the launcher's release grammar (make_manifest.TAG: no leading zeros, digits only) are ignored.
+    python3 tools/release/autorelease.py next-version [--remote origin] [--base v0.4.0] [--kind alpha] [--git-dir DIR]
+        prints v0.4.0-alpha.<n>, n = 1 + the highest v0.4.0-alpha.<n> tag on the remote (git ls-remote); 1 when there is none. Tags
+        outside the launcher's release grammar (make_manifest.TAG: no leading zeros, digits only) are ignored. Lane RELNAME-1 (owner,
+        2026-10-10): the builds after v0.3.0-preview.4 are alpha builds; the line is v0.4.0 because SemVer orders "alpha" before
+        "preview" (v0.3.0-alpha.1 would be older than v0.3.0-preview.4 and no launcher would offer it), so a version that is not above
+        every release tag on the remote is refused.
+    python3 tools/release/autorelease.py release-version --repo OWNER/NAME --sha SHA [--remote origin] [--gh gh] [--git-dir DIR]
+        the version autorelease.sh releases: the next alpha build, or the next bridge v0.3.0-preview.<n> while the launchers up to
+        v0.3.0-preview.4 have no verified bridge on the page they read (RELNAME-1 r2, release_version()).
+    python3 tools/release/autorelease.py intent-version V [LAST]   exit 0 when an open intent's V is an alpha build or a bridge above LAST
+    python3 tools/release/autorelease.py title V       the GitHub release's name ("OpenBFME v0.4.0 Alpha 1", release_title())
+    python3 tools/release/autorelease.py newer A B     exit 0 when release version A is above B in the launcher's order, else 1
     python3 tools/release/autorelease.py changed --from A --to B [--git-dir DIR]
         exit 0 when something under RELEASE_PATHS changed between the two commits, 1 when nothing did (the release is skipped).
     python3 tools/release/autorelease.py notes --from A --to B --version V [--known-issues FILE] [--commit SHA] [--git-dir DIR]
@@ -50,7 +59,8 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
-from make_manifest import TAG  # noqa: E402  (the launcher's release grammar)
+from make_manifest import KINDS, PLATFORMS, TAG, _N, asset_name, channel_of, version_key  # noqa: E402  (the launcher's grammar)
+import ed25519  # noqa: E402
 sys.path.insert(0, str(HERE.parent))
 from precommit import check_file  # noqa: E402  (the commit gate's per-file rules)
 import audit_package  # noqa: E402  (the package audit: containers opened recursively, fail closed)
@@ -67,8 +77,10 @@ JARGON = re.compile(r"\bRW\b|0x[0-9A-Fa-f]{3,}|\bS-\d+|\bFB-\d+|\bSol\b|\b[A-Z]{
                     r"\bpins?\b|\bgate\b|\.(?:cpp|h|py|sh|gd|md)\b|\b[a-z]+[A-Z][A-Za-z]*(?:'s)?\b")
 FIXED = re.compile(r"\b(?:fix(?:es|ed)?|regression|crash(?:es|ed)?|no longer|stops?\b|instead of|bugs?|broken|wrong)\b", re.I)
 # an integration round's lane merge, "Merge lane/x (<sha>) into integ/p3: ...": its words are the integrator's summary for
-# reviewers; the round's player notes are its release-notes commit's `Release-note:` lines (preview.3 printed "Ce7997fd into integ/p3: ...")
-INTEG_MERGE = re.compile(r"^Merge \S+ \([0-9a-f]{7,40}\) into \S+", re.I)
+# reviewers; the round's player notes are its release-notes commit's `Release-note:` lines (preview.3 printed "Ce7997fd into integ/p3: ...").
+# INTEG-5: any merge into an integ/ branch is one too, also "Merge lane/x (LANE-1: ...) into integ/p5" and git's own "Merge branch 'lane/x' into
+# integ/p5" (they would have printed "Max zoom-out, ... into integ/p5.")
+INTEG_MERGE = re.compile(r"^Merge \S+ \([0-9a-f]{7,40}\) into \S+|^Merge .* into integ/\S+", re.I)
 SKIP_START = re.compile(r"^(?:batch\b|roadmap\b|docs?\b|merge\b)", re.I)
 MAX_ITEM = 140
 # the public main's top level (the sync recipe: the archive sha's tree without archive/, plus PRIVACY.md); anything else is refused
@@ -85,22 +97,278 @@ def git(git_dir: str | None, *args: str) -> str:
 
 
 # ---- version --------------------------------------------------------------------------------------------------------------------------
-def next_version(tag_names: list[str], base: str = "v0.3.0") -> str:
-    """1 + the highest <base>-preview.<n> among tag_names (ls-remote names, refs/tags/ and ^{} allowed); <base>-preview.1 when none."""
+BASE_VERSION = "v0.4.0"
+KIND = "alpha"
+
+
+def next_version(tag_names: list[str], base: str = BASE_VERSION, kind: str = KIND) -> str:
+    """1 + the highest <base>-<kind>.<n> among tag_names (ls-remote names, refs/tags/ and ^{} allowed); <base>-<kind>.1 when none.
+    Refused when the result is not above every release tag in tag_names (the launcher installs only a newer version automatically)."""
     if not TAG.fullmatch(base) or "-" in base:
         raise SystemExit(f"autorelease: base {base!r} is not v<major>.<minor>.<patch>")
-    high = 0
+    if kind not in ("alpha", "preview"):
+        raise SystemExit(f"autorelease: kind {kind!r} is not alpha or preview")
+    high, tags = 0, []
     for name in tag_names:
         name = name.removeprefix("refs/tags/").removesuffix("^{}")
         m = TAG.fullmatch(name)
-        if m and m.group(4) is not None and name.startswith(base + "-preview."):
-            high = max(high, int(m.group(4)))
-    return f"{base}-preview.{high + 1}"
+        if not m:
+            continue
+        tags.append(name)
+        if m.group(4) == kind and name.startswith(f"{base}-{kind}."):
+            high = max(high, int(m.group(5)))
+    version = f"{base}-{kind}.{high + 1}"
+    newer = sorted({t for t in tags if version_key(t) >= version_key(version)}, key=version_key)
+    if newer:
+        raise SystemExit(f"autorelease: {version} would not be above the release tag {newer[-1]} (the launcher's order: a pre-release "
+                         f"below its release, alpha below preview): installed launchers would never offer it; raise the base version")
+    return version
 
 
-def remote_tags(git_dir: str | None, remote: str, base: str) -> list[str]:
-    out = git(git_dir, "ls-remote", "--tags", remote, f"refs/tags/{base}-preview.*")
+def remote_tags(git_dir: str | None, remote: str) -> list[str]:
+    """every tag on the remote (next_version compares the new version with all of them)"""
+    out = git(git_dir, "ls-remote", "--tags", remote, "refs/tags/v*")
     return [line.split("\t", 1)[1] for line in out.splitlines() if "\t" in line]
+
+
+def release_title(version: str) -> str:
+    """the GitHub release's name: "OpenBFME v0.4.0 Alpha 1" for an alpha build (the owner, RELNAME-1); a preview or stable release
+    keeps the plain tag, as the earlier previews were named"""
+    m = TAG.fullmatch(version)
+    if not m:
+        raise SystemExit(f"autorelease: {version!r} is not a release version")
+    if m.group(4) == "alpha":
+        return f"OpenBFME v{m.group(1)}.{m.group(2)}.{m.group(3)} Alpha {m.group(5)}"
+    return f"OpenBFME {version}"
+
+
+# ---- the bridge for the launchers up to v0.3.0-preview.4 (RELNAME-1 r2) ---------------------------------------------------------------
+# Every launcher published before the alpha builds (v0.3.0-preview.1 to .4: two launcher codebases, the archive's 42f8a8d2 for preview.1
+# and .2, 2a422ce6 for .3 and .4) reads the release list the same way (updater.gd fetch_releases): ONE request,
+# repos/<repo>/releases?per_page=30, no further page; tags outside `v<x>.<y>.<z>[-preview.<n>]` are skipped (so every -alpha release);
+# the newest remaining tag of the channel (preview: all of them) is installed and its launcher staged (stage_self_update, applied at
+# the next start). Such a launcher reaches the alpha builds only through a release it can parse whose launcher knows -alpha: a bridge,
+# v0.3.0-preview.<n>, from a sha whose launcher/scripts/core/semver.gd takes -alpha. A bridge works only while it is on that first page
+# (the API's order, whatever GitHub sorts by: this check reads the same list), so every automatic release first looks at the page:
+# when the newest tag an old launcher can parse there is not a verified bridge, or it is within BRIDGE_MARGIN entries of the page's end,
+# this release IS the next bridge; otherwise it is the next alpha build. A bridge sorts below every alpha build, so an alpha-aware
+# launcher never installs it; an old one installs its game and updates itself, then offers the newest alpha build.
+BRIDGE_BASE = "v0.3.0"
+OLD_TAG = re.compile(rf"v({_N})\.({_N})\.({_N})(?:-preview\.({_N}))?")   # the release grammar of the launchers up to v0.3.0-preview.4
+OLD_PAGE = 30
+BRIDGE_MARGIN = 5
+
+
+def _tag_names(tag_names: list[str]) -> list[str]:
+    return [n.removeprefix("refs/tags/").removesuffix("^{}") for n in tag_names]
+
+
+# Sol r2: a word in the source proves nothing ("# alpha" after the old pattern passed); the launcher's semver.gd itself is run in Godot
+# on sample tags: it must take the alpha builds, refuse what the grammar refuses, order them after v0.3.0-preview.4 and put them on the
+# pre-release channel "preview"
+_ALPHA_PROBE = """extends SceneTree
+func _init() -> void:
+	quit.call_deferred(0)  # also when a check below stops on a script error (no verdict then: NO ALPHA)
+	print("SEMVER PROBE START")
+	var S = load("res://semver.gd")
+	var ok: bool = S != null and S.can_instantiate()  # a script that does not parse loads, but cannot be used
+	for t in ["v0.4.0-alpha.1", "v0.4.0-alpha.10", "v0.3.0-preview.5", "v0.3.0-preview.4", "v0.4.0", "v1.2.3"]:
+		ok = ok and S.is_valid(t)
+	for t in ["v0.4.0-alpha.01", "v0.4.0-beta.1", "v0.4.0-alpha", "v0.4.0-ALPHA.1", "v0.4.0-alpha.1 ", "v0.4.0-alpha.1.2", "v0.4.0-alphaa.1"]:
+		ok = ok and not S.is_valid(t)
+	ok = ok and S.compare("v0.3.0-preview.4", "v0.4.0-alpha.1") < 0 and S.compare("v0.4.0-alpha.1", "v0.4.0-alpha.2") < 0
+	ok = ok and S.compare("v0.4.0-alpha.2", "v0.4.0-alpha.10") < 0 and S.compare("v0.4.0-alpha.9", "v0.4.0") < 0
+	ok = ok and S.compare("v0.4.0-alpha.3", "v0.3.0-preview.9") > 0 and S.compare("v0.4.0-alpha.1", "v0.4.0-alpha.1") == 0
+	ok = ok and S.channel_of("v0.4.0-alpha.1") == "preview" and S.channel_of("v0.3.0-preview.5") == "preview"
+	print("SEMVER PROBE ", "ALPHA" if ok else "NO ALPHA")
+"""
+
+
+def knows_alpha(semver_gd: str) -> bool:
+    """the launcher's release grammar (launcher/scripts/core/semver.gd), run in Godot ($GODOT, 4.7.2) on sample tags, takes and orders
+    the alpha builds (_ALPHA_PROBE). A Godot that does not run is an error (fail closed), never a "yes"."""
+    with tempfile.TemporaryDirectory() as d:
+        Path(d, "project.godot").write_text('config_version=5\n\n[application]\n\nconfig/name="semver probe"\n')
+        Path(d, "semver.gd").write_text(semver_gd)
+        Path(d, "probe.gd").write_text(_ALPHA_PROBE)
+        env = dict(os.environ, XDG_DATA_HOME=str(Path(d, "data")), XDG_CONFIG_HOME=str(Path(d, "config")), XDG_CACHE_HOME=str(Path(d, "cache")))
+        try:
+            r = subprocess.run([os.environ.get("GODOT", "godot"), "--headless", "--path", d, "--script", "res://probe.gd"],
+                               capture_output=True, text=True, timeout=180, env=env, stdin=subprocess.DEVNULL)
+        except (OSError, subprocess.TimeoutExpired) as e:
+            raise SystemExit(f"autorelease: Godot ($GODOT) could not run the launcher's semver.gd ({e}): the alpha check fails closed")
+        # a semver.gd that does not parse or stops on an error gives no "ALPHA" verdict; no START at all: Godot did not run the probe
+        if "SEMVER PROBE START" not in r.stdout:
+            raise SystemExit(f"autorelease: Godot ($GODOT) did not run the semver probe (fail closed): {(r.stdout + r.stderr)[-500:]}")
+        return "SEMVER PROBE ALPHA" in r.stdout
+
+
+def next_bridge(tag_names: list[str]) -> str:
+    """v0.3.0-preview.<1 + the highest such tag>; refused unless it is above every tag the old launchers can parse"""
+    names = _tag_names(tag_names)
+    high = max((int(TAG.fullmatch(n).group(5)) for n in names if TAG.fullmatch(n) and n.startswith(BRIDGE_BASE + "-preview.")), default=0)
+    version = f"{BRIDGE_BASE}-preview.{high + 1}"
+    above = sorted((n for n in names if OLD_TAG.fullmatch(n) and version_key(n) >= version_key(version)), key=version_key)
+    if above:
+        raise SystemExit(f"autorelease: the bridge {version} would not be above {above[-1]}: the launchers up to v0.3.0-preview.4 would "
+                         f"not install it")
+    return version
+
+
+def bridge_check(releases: list[dict], verify, margin: int = BRIDGE_MARGIN) -> tuple[str, str]:
+    """('', tag) when the release list (the API's order, newest first, drafts included as the API gives them to the owner) shows the
+    launchers up to v0.3.0-preview.4 a verified bridge with room for BRIDGE_MARGIN more releases; else (why a bridge is needed, tag).
+    verify(release) -> '' or why the release is not a working bridge."""
+    page = [r for r in releases if not r.get("draft")][:OLD_PAGE]   # what an anonymous ?per_page=30 request gets
+    old = [(i, r) for i, r in enumerate(page) if OLD_TAG.fullmatch(str(r.get("tag_name", "")))]
+    if not old:
+        return f"no release on the first {OLD_PAGE} an old launcher can read", ""
+    i, top = max(old, key=lambda x: version_key(x[1]["tag_name"]))
+    tag = top["tag_name"]
+    why = verify(top)
+    if why:
+        return f"the newest release an old launcher installs, {tag}, is not a bridge: {why}", tag
+    if i >= OLD_PAGE - margin:
+        return f"the bridge {tag} is entry {i + 1} of the {OLD_PAGE} an old launcher reads: a new bridge keeps it on the page", tag
+    return "", tag
+
+
+def line_of(version: str) -> str:
+    """'alpha' (v0.4.0-alpha.<n>), 'bridge' (v0.3.0-preview.<n>) or '' for a version automatic releases never make"""
+    m = TAG.fullmatch(version)
+    if m and m.group(4) == "alpha" and version.startswith(BASE_VERSION + "-alpha."):
+        return "alpha"
+    if m and m.group(4) == "preview" and version.startswith(BRIDGE_BASE + "-preview."):
+        return "bridge"
+    return ""
+
+
+def intent_version_ok(version: str, last: str, tag_names: list[str] = ()) -> bool:
+    """an open intent's version: of one of the two lines, and above every version of its line already released or tagged (the last
+    released one and every tag on the remote but its own: Sol r2, after alpha.1 and a bridge an intent edited to alpha.0 was published;
+    an alpha build and a bridge are on separate lines, so alpha.3 then the bridge preview.6 is forward)"""
+    line = line_of(version)
+    if not line:
+        return False
+    older = [n for n in _tag_names(list(tag_names)) if n != version and line_of(n) == line] + ([last] if line_of(last) == line else [])
+    return all(version_key(version) > version_key(n) for n in older)
+
+
+EXE = {"game": {"linux-x64": "OpenBFME.x86_64", "windows-x64": "OpenBFME.exe"},
+       "launcher": {"linux-x64": "OpenBFMELauncher.x86_64", "windows-x64": "OpenBFMELauncher.exe"}}
+
+
+def manifest_problems(m, tag: str, repo: str, prerelease) -> list[str]:
+    """the signed manifest of a bridge, checked as the launchers check it (launcher/scripts/core/manifest.gd _schema and verify): the
+    keys, format 2, this tag and repository, the channel of the tag and the release's pre-release flag (Sol r2: a release flagged
+    stable is refused by every launcher), every kind and platform with its asset name, size, SHA-256 and file list naming the exe"""
+    if not isinstance(m, dict):
+        return ["the manifest is not a JSON object"]
+    p = []
+    if sorted(m) != sorted(["format", "product", "repo", "version", "channel", "date", "commit", "assets"]):
+        return [f"the manifest's keys are {sorted(m)}"]
+    if m["format"] != 2 or m["product"] != "OpenBFME":
+        p.append(f"format {m['format']!r} / product {m['product']!r}")
+    if m["version"] != tag or m["repo"] != repo:
+        p.append(f"it names {m['version']!r} of {m['repo']!r}, not {tag} of {repo}")
+    if not TAG.fullmatch(str(m["version"])) or m["channel"] != channel_of(str(m["version"])):
+        p.append(f"channel {m['channel']!r} for {m['version']!r}")
+    if prerelease is not (m["channel"] == "preview"):
+        p.append(f"the release's pre-release flag {prerelease!r} does not match the channel {m['channel']!r}")
+    if not re.fullmatch(r"20\d\d-\d\d-\d\d", str(m["date"])) or not re.fullmatch(r"[0-9a-f]{40}", str(m["commit"])):
+        p.append(f"date {m['date']!r} / commit {m['commit']!r}")
+    a = m["assets"]
+    if not isinstance(a, dict) or sorted(a) != sorted(KINDS):
+        return p + ["its assets are not the game and the launcher"]
+    for kind in KINDS:
+        if not isinstance(a[kind], dict) or sorted(a[kind]) != sorted(PLATFORMS):
+            p.append(f"assets.{kind} are not {list(PLATFORMS)}")
+            continue
+        for platform in PLATFORMS:
+            x = a[kind][platform]
+            w = f"assets.{kind}.{platform}"
+            if not isinstance(x, dict) or sorted(x) != ["files", "name", "sha256", "size"]:
+                p.append(f"{w} is not {{name, size, sha256, files}}")
+                continue
+            if x["name"] != asset_name(kind, tag, platform):
+                p.append(f"{w} is named {x['name']!r}")
+            if not isinstance(x["size"], int) or isinstance(x["size"], bool) or x["size"] <= 0 or not re.fullmatch(r"[0-9a-f]{64}", str(x["sha256"])):
+                p.append(f"{w} has no size and SHA-256")
+            f = x["files"]
+            if not isinstance(f, dict) or EXE[kind][platform] not in f or not all(
+                    isinstance(v, dict) and isinstance(v.get("size"), int) and re.fullmatch(r"[0-9a-f]{64}", str(v.get("sha256", "")))
+                    for v in f.values()):
+                p.append(f"{w} lists no {EXE[kind][platform]} with its size and SHA-256")
+    return p
+
+
+class Live:
+    """the reads the release-line decision makes: GitHub through `gh api` (fail closed), the public main through git"""
+
+    def __init__(self, gh: str, target: str, git_dir: str | None, remote: str, key: bytes):
+        self.gh, self.target, self.git_dir, self.remote, self.key = gh, target, git_dir, remote, key
+
+    def api(self, *args: str) -> bytes:
+        r = subprocess.run([self.gh, "api", *args], capture_output=True)
+        if r.returncode:
+            raise SystemExit(f"autorelease: gh api {' '.join(args)} failed (fail closed): {r.stderr.decode(errors='replace').strip()}")
+        return r.stdout
+
+    def releases(self) -> list[dict]:
+        rel = json.loads(self.api(f"repos/{self.target}/releases?per_page=100"))
+        if not isinstance(rel, list) or (len(rel) == 100 and sum(not r.get("draft") for r in rel) < OLD_PAGE):
+            raise SystemExit("autorelease: the release list does not show the first page an old launcher reads (fail closed)")
+        return rel
+
+    def verify(self, release: dict) -> str:
+        assets = {a.get("name"): a for a in release.get("assets") or []}
+        if release.get("draft") or not all(n in assets for n in ("manifest.json", "manifest.json.sig")):
+            return "it has no signed manifest"
+        data = {n: self.api("-H", "Accept: application/octet-stream", f"repos/{self.target}/releases/assets/{assets[n]['id']}")
+                for n in ("manifest.json", "manifest.json.sig")}
+        if not ed25519.verify(self.key, data["manifest.json"], data["manifest.json.sig"]):
+            return "its manifest's signature does not verify under launcher/release_key.pub"
+        try:
+            m = json.loads(data["manifest.json"])
+        except ValueError:
+            return "its manifest is not JSON"
+        why = manifest_problems(m, release["tag_name"], self.target, release.get("prerelease"))
+        if why:
+            return "its manifest: " + "; ".join(why)
+        # Sol r2: the downloads the old launchers make must be there: both platforms' game and launcher archives, uploaded, with the
+        # signed size; the launcher archives (what the bridge is for) also with the signed SHA-256, from GitHub's digest or downloaded
+        for kind in KINDS:
+            for platform in PLATFORMS:
+                x = m["assets"][kind][platform]
+                got = assets.get(x["name"])
+                if not got or got.get("state", "uploaded") != "uploaded" or got.get("size") != x["size"]:
+                    return f"its {x['name']} is missing or not the signed size"
+                digest = got.get("digest") or ""
+                if digest and digest != "sha256:" + x["sha256"]:
+                    return f"its {x['name']} is not the signed one (digest {digest})"
+                if kind == "launcher" and not digest and \
+                        hashlib.sha256(self.api("-H", "Accept: application/octet-stream",
+                                                f"repos/{self.target}/releases/assets/{got['id']}")).hexdigest() != x["sha256"]:
+                    return f"its {x['name']} is not the signed one"
+        c = m["commit"]
+        main = f"refs/remotes/{self.remote}/main"
+        if subprocess.run(["git", *(["-C", self.git_dir] if self.git_dir else []), "merge-base", "--is-ancestor", c, main],
+                          capture_output=True).returncode:
+            return f"its commit {c[:10]} is not on {self.remote}/main"
+        if not knows_alpha(git(self.git_dir, "show", f"{c}:launcher/scripts/core/semver.gd")):
+            return f"the launcher of its commit {c[:10]} does not take the alpha builds (its semver.gd, run on sample tags)"
+        return ""
+
+
+def release_version(tags: list[str], releases: list[dict], verify, sha_semver: str) -> tuple[str, str]:
+    """(the version of this automatic release, why): the next alpha build when the old launchers have their bridge, else the next
+    bridge, which needs this sha's launcher to know -alpha"""
+    why, tag = bridge_check(releases, verify)
+    if not why:
+        return next_version(tags), f"the bridge {tag} is in place"
+    if not knows_alpha(sha_semver):
+        raise SystemExit(f"autorelease: a bridge is needed ({why}) but this sha's launcher does not know -alpha tags")
+    return next_bridge(tags), why
 
 
 # ---- skip-when-unchanged --------------------------------------------------------------------------------------------------------------
@@ -205,7 +473,9 @@ def notes_of(subject: str, body: str, files: list[str]) -> list[tuple[str, str]]
         return [n] if n else []
     if any(not t or t.lower() == "none" for t in texts):
         return []
-    return [("fixed", t[4:].strip()) if t.lower().startswith("fix:") else (("fixed" if FIXED.search(t) else "new"), t) for t in texts]
+    cap = lambda t: t[:1].upper() + t[1:]              # "Fix: a crash ..." printed "a crash ..." (preview.4)
+    return [("fixed", cap(t[4:].strip())) if t.lower().startswith("fix:") else (("fixed" if FIXED.search(t) else "new"), cap(t))
+            for t in texts]
 
 
 def note_of(subject: str, body: str, files: list[str]) -> tuple[str, str] | None:
@@ -249,8 +519,12 @@ def release_notes(version: str, commits: list[dict], known_issues: list[str], co
             if line and line not in seen:
                 seen.add(line)
                 (fixed if n[0] == "fixed" else new).append(line)
-    channel = "preview" if TAG.fullmatch(version) and TAG.fullmatch(version).group(4) else "stable"
-    out = [f"OpenBFME {version}" + (" is a preview build for testers." if channel == "preview" else "."),
+    m = TAG.fullmatch(version)
+    kind = m.group(4) if m else None
+    # RELNAME-1 r2: an automatic preview is a bridge for the launchers up to v0.3.0-preview.4 (release_version())
+    out = [f"OpenBFME {version}" + {"alpha": " is an alpha build for testers.", "preview": " is an alpha build for testers, numbered "
+           "as a preview so that launchers of v0.3.0-preview.4 and older can update themselves: after it, they offer the alpha builds."
+           }.get(kind, "."),
            "Install or update it with the OpenBFME Launcher. You need your own installs of The Rise of the Witch-king 2.01 and "
            "The Battle for Middle-earth II 1.06: the game loads its files from them.", ""]
     if new:
@@ -627,7 +901,26 @@ def main(argv: list[str]) -> int:
     sub = ap.add_subparsers(dest="cmd", required=True)
     v = sub.add_parser("next-version")
     v.add_argument("--remote", default="origin")
-    v.add_argument("--base", default="v0.3.0")
+    v.add_argument("--base", default=BASE_VERSION)
+    v.add_argument("--kind", default=KIND, choices=("alpha", "preview"))
+    rv = sub.add_parser("release-version", help="the version of this automatic release: the next alpha build or the next bridge")
+    rv.add_argument("--remote", default="origin")
+    rv.add_argument("--repo", required=True)
+    rv.add_argument("--sha", required=True)
+    rv.add_argument("--gh", default=os.environ.get("GH", "gh"))
+    bo = sub.add_parser("bridge-ok", help="exit 0 when the old launchers' page still holds a verified bridge (before an alpha is published)")
+    bo.add_argument("--remote", default="origin")
+    bo.add_argument("--repo", required=True)
+    bo.add_argument("--sha", required=True)
+    bo.add_argument("--gh", default=os.environ.get("GH", "gh"))
+    iv = sub.add_parser("intent-version", help="the remote's tags (git ls-remote lines) on stdin")
+    iv.add_argument("version")
+    iv.add_argument("last", nargs="?", default="")
+    tt = sub.add_parser("title")
+    tt.add_argument("version")
+    nw = sub.add_parser("newer")
+    nw.add_argument("a")
+    nw.add_argument("b")
     c = sub.add_parser("changed")
     c.add_argument("--from", dest="a", required=True)
     c.add_argument("--to", dest="b", required=True)
@@ -660,8 +953,34 @@ def main(argv: list[str]) -> int:
         print(f"SYNC AUDIT {'FAILED' if problems else 'ok'}: {a.tree}")
         return 1 if problems else 0
     if a.cmd == "next-version":
-        print(next_version(remote_tags(a.git_dir, a.remote, a.base), a.base))
+        print(next_version(remote_tags(a.git_dir, a.remote), a.base, a.kind))
         return 0
+    if a.cmd == "release-version":
+        key = bytes.fromhex(git(a.git_dir, "show", f"{a.sha}:launcher/release_key.pub").strip())
+        git(a.git_dir, "fetch", "-q", a.remote, "main")
+        live = Live(a.gh, a.repo, a.git_dir, a.remote, key)
+        version, why = release_version(remote_tags(a.git_dir, a.remote), live.releases(), live.verify,
+                                       git(a.git_dir, "show", f"{a.sha}:launcher/scripts/core/semver.gd"))
+        print(f"AUTORELEASE line: {version} ({'an alpha build' if line_of(version) == 'alpha' else 'a bridge'}: {why})", file=sys.stderr)
+        print(version)
+        return 0
+    if a.cmd == "bridge-ok":
+        # Sol r2: right before an alpha build is published (also one resumed from an open intent, its version kept): the bridge is
+        # still there and verified, and still on the page once this release is added (margin 1: at most this one release came since)
+        key = bytes.fromhex(git(a.git_dir, "show", f"{a.sha}:launcher/release_key.pub").strip())
+        git(a.git_dir, "fetch", "-q", a.remote, "main")
+        live = Live(a.gh, a.repo, a.git_dir, a.remote, key)
+        why, tag = bridge_check(live.releases(), live.verify, margin=1)
+        print(f"AUTORELEASE bridge: {why or f'{tag} is in place'}")
+        return 1 if why else 0
+    if a.cmd == "intent-version":
+        tags = [line.split("\t", 1)[1] for line in sys.stdin.read().splitlines() if "\t" in line]
+        return 0 if intent_version_ok(a.version, a.last, tags) else 1
+    if a.cmd == "title":
+        print(release_title(a.version))
+        return 0
+    if a.cmd == "newer":
+        return 0 if version_key(a.a) > version_key(a.b) else 1
     if a.cmd == "changed":
         files = release_changed(a.git_dir, a.a, a.b)
         print(f"{len(files)} release files changed" + (f" (first: {files[0]})" if files else ""))

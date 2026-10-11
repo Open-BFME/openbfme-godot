@@ -42,6 +42,9 @@ ALLOWED_NATIVE = {"engine/src/GameNetwork/Transport.cpp"}
 # launcher file -> the findings it may have (the text after "line <n>: ")
 ALLOWED_LAUNCHER = {"launcher/scripts/net/http_fetch.gd": {"HTTPClient"},
                     "launcher/scripts/core/updater.gd": {"OS.create_process"},
+                    # lane UI-5 (Sol r3): the one-launcher-at-a-time lock, a socket listening on 127.0.0.1 that never sends or accepts
+                    # (it answers a one-line hello, and a refused launcher reads that hello with StreamPeerTCP: Sol r4)
+                    "launcher/scripts/core/instance_lock.gd": {"TCPServer", "StreamPeerTCP"},
                     # OS.execute: `cmd /c move /y` on Windows, the one atomic replace of the launcher's executable (MoveFileEx)
                     "launcher/scripts/core/self_update.gd": {"OS.create_process", "OS.execute"}}
 

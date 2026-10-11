@@ -644,6 +644,52 @@ void AutoAbilityBehavior::setAutoButton(const CommandButton *button)
 	setWakeFrame(getObject(), UPDATE_SLEEP_FOREVER);
 }
 
+void AutoAbilityBehavior::setAutoAbility(const CommandButton *button, bool on)
+{
+	if (button && button->m_name == m_button && !on)
+	{
+		clearButton(); // RW 0x85D481
+		friend_setNextCallFrame((UnsignedInt)UPDATE_SLEEP_FOREVER);
+		setWakeFrame(getObject(), UPDATE_SLEEP_FOREVER); // RW 0x850C32(object, 0x3FFFFFFF)
+		return;
+	}
+	if (!button)
+	{
+		return; // INFERENCE: RW 0x85D48F reads button + 0x10 without a test; no retail caller passes null (RW 0x7C3D45 / 0x7C3E33 test it first)
+	}
+	m_button = button->m_name; // RW 0x85D48F: the name, then RW 0x850C32(object, 1)
+	wakeFromInterface(UPDATE_SLEEP_NONE);
+}
+
+bool AutoAbilityBehavior::isAutoButton(const CommandButton &button) const
+{
+	return !m_button.empty() && m_button == button.m_name; // RW 0x85D741: StringBase::isEmpty, then compare(+ 0x20, button + 0x10)
+}
+
+AutoAbilityBehavior *AutoAbilityBehavior::first(Object &obj)
+{
+	for (const std::unique_ptr<BehaviorModule> &m : obj.modules())
+	{
+		if (AutoAbilityBehavior *a = dynamic_cast<AutoAbilityBehavior *>(m.get()))
+		{
+			return a;
+		}
+	}
+	return nullptr;
+}
+
+AutoAbilityBehavior *AutoAbilityBehavior::forButton(Object &obj, const CommandButton &button)
+{
+	if (!button.m_specialPowerName.empty())
+	{
+		if (AutoAbilityBehavior *a = forPower(obj, button.m_specialPowerName)) // RW 0x9D2CA7 (the power's name, RW 0x688D3C + 0x10)
+		{
+			return a;
+		}
+	}
+	return first(obj); // RW 0x9D2CE4
+}
+
 AutoAbilityBehavior *AutoAbilityBehavior::forPower(Object &obj, const std::string &power)
 {
 	for (const std::unique_ptr<BehaviorModule> &m : obj.modules())
@@ -795,6 +841,13 @@ void AutoAbilityBehavior::doCommand(const CommandButton &b, Object *target, cons
 	if (done)
 	{
 		++stats().casts;
+		if (fromAuto)
+		{
+			++m_castRecord.casts;
+			m_castRecord.power = t->getName();
+			m_castRecord.target = target ? target->getID() : INVALID_ID;
+			m_castRecord.frame = obj->logic().getFrame();
+		}
 	}
 }
 
@@ -2277,6 +2330,36 @@ void HeroAbilityModules::registerHandlers(GameLogicDispatch &d)
 		}
 		return true;
 	});
+	// lane AUTOCAST-1: RW 0x77B8EE (the client sends it for a FIRE_WEAPON button, processCommandUI RW 0x941391): argument 0 the weapon slot, argument 1 the
+	// object (RW 0x449681); the object's command set (RW 0x69156B / 0x71EFA2), its first of 33 buttons (RW 0x80C837, bound 0x21) that is FIRE_WEAPON (0x17)
+	// with WeaponSlot (+ 0x80) the slot; the object's first AutoAbilityBehavior (RW 0x68BDA5, the key cached at RW 0x77B910) toggles it (RW 0x85D76C)
+	d.registerHandler(MSG_DO_AUTO_ABILITY_WEAPON, "AUTOCAST-1", [](GameLogic &logic, const GameMessage &m) {
+		const GameMessageArgument *a0 = m.getArgument(0), *a1 = m.getArgument(1);
+		if (!a0 || !a1 || a0->type != ARGUMENTDATATYPE_INTEGER || a1->type != ARGUMENTDATATYPE_OBJECTID)
+		{
+			return false;
+		}
+		Object *obj = logic.findObjectByID(a1->objectID);
+		const CommandSet *set = obj && TheCommandStore ? TheCommandStore->findCommandSet(obj->getCommandSetName()) : nullptr;
+		if (!set)
+		{
+			return true;
+		}
+		for (int i = 0; i < CommandSet::MAX_BUTTONS; ++i)
+		{
+			const CommandButton *b = set->getCommandButton(i);
+			if (!b || b->m_command != GUI_COMMAND_FIRE_WEAPON || b->m_weaponSlot != a0->integer)
+			{
+				continue;
+			}
+			if (AutoAbilityBehavior *aa = AutoAbilityBehavior::first(*obj))
+			{
+				aa->setAutoButton(b);
+			}
+			return true;
+		}
+		return true;
+	});
 }
 
 std::vector<std::string> HeroAbilityModules::stopLines()
@@ -2293,8 +2376,9 @@ std::vector<std::string> HeroAbilityModules::stopLines()
 		"[S-1227] AutoAbilityBehavior (lane HERO-2): the auto cast runs (RW 0x85D9D1 with RW 0x85D5EA / 0x85D4B5, MSG_DO_AUTO_ABILITY RW 0x77B9BA, StartsActive); "
 		"INFERENCE / not ported: the closest enemy of a module without Query (RW 0x701443 flags 0x4A read as the closest alive enemy it can see), the AI + 0x34 / "
 		"+ 0x48 fields (+ 0x34 read as 0, + 0x48 := 2 not written), the melee position offset (AdjustAttackMeleePosition, RW 0x6EEBC1), the command types other than "
-		"SPECIAL_POWER / SPELL_BOOK (FIRE_WEAPON's MSG_DO_AUTO_ABILITY_WEAPON, RW 0x77B9xx), the vision range modifiers (RW 0x68E43B), the auto sound (client), a "
-		"disabled object's auto cast exception (RW 0x68E5A3 with 0x20000000); the control bar's auto toggle (right click) is the HUD's",
+		"SPECIAL_POWER / SPELL_BOOK (a FIRE_WEAPON auto button is toggled by MSG_DO_AUTO_ABILITY_WEAPON, RW 0x77B8EE, lane AUTOCAST-1, but not fired), the vision "
+		"range modifiers (RW 0x68E43B), the auto sound (client), a disabled object's auto cast exception (RW 0x68E5A3 with 0x20000000); the control bar's "
+		"right press toggle and glow are lane AUTOCAST-1's (ControlBar::rightPressButton, S-3460)",
 		"[S-1228] WeaponModeSpecialPowerUpdate and DualWeaponBehavior (lane HERO-2): the mode runs (RW 0x89841E / 0x8983B5 over the base timer RW 0x991660 / "
 		"0x991500 / 0x9913BC) and the close range switch runs (RW 0x85DF88); not ported: the firing tracker reset at the start (RW 0x8E302A, COMBAT-1's), the "
 		"RECHARGE attribute modifier of the recharge (1.0, as S-529), the initiate sound (client); INFERENCE: DualWeaponBehavior's victim without "

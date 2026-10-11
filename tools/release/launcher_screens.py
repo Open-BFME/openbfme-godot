@@ -5,7 +5,9 @@
 Runs the launcher project (a development run on the Godot 4.7.2 editor binary, $GODOT or `godot`) once per screen and size with
 --ui-demo=<screen> (made-up state, no network) and --screenshot-size, under a neutral home folder (/tmp/openbfme-demo by default), so no
 real user name or home folder can appear in a shot. Needs a display (Godot's headless mode renders nothing). Writes
-launcher-<screen>-<W>x<H>.png and prints one line per file.
+launcher-<screen>-<W>x<H>.png and prints one line per file. --releases=<file>: a GitHub release list (the API's JSON, e.g.
+`gh api repos/<owner>/<name>/releases`) put in the launcher's cache, so the notes cards show real release notes instead of demo text
+(lane UI-5).
 """
 from __future__ import annotations
 
@@ -18,7 +20,8 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
 LAUNCHER = REPO / "launcher"
-SCREENS = ("main", "update", "downloading", "settings", "games", "error")
+SCREENS = ("main", "news", "multiplayer", "mods", "games", "games-downloading", "settings", "display", "about", "update", "downloading",
+           "error")
 SIZES = ((1280, 720), (1280, 800))
 
 
@@ -27,6 +30,7 @@ def main() -> int:
     ap.add_argument("--out", required=True, type=Path)
     ap.add_argument("--home", default="/tmp/openbfme-demo", help="the neutral home folder the launcher sees")
     ap.add_argument("--screens", default=",".join(SCREENS))
+    ap.add_argument("--releases", type=Path, help="a GitHub release list (JSON) for the notes cards")
     args = ap.parse_args()
     if not os.environ.get("DISPLAY") and not os.environ.get("WAYLAND_DISPLAY"):
         print("launcher_screens: no display (set DISPLAY): Godot's headless mode renders nothing", file=sys.stderr)
@@ -35,6 +39,10 @@ def main() -> int:
     home = Path(args.home)
     shutil.rmtree(home, ignore_errors=True)
     home.mkdir(parents=True)
+    if args.releases:
+        cache = home / ".local/share/OpenBFMELauncher/cache"
+        cache.mkdir(parents=True)
+        shutil.copyfile(args.releases, cache / "releases.json")
     args.out.mkdir(parents=True, exist_ok=True)
     env = {k: v for k, v in os.environ.items() if k not in ("ROTWK_INSTALL", "BFME2_INSTALL", "OPENBFME_GAME_USER_DIR")}
     env.update(HOME=str(home), USER="player", LOGNAME="player", XDG_DATA_HOME=str(home / ".local/share"),

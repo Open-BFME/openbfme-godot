@@ -2,6 +2,8 @@
 // See GameClient/GUI/AptScreens/AptSkirmish.h.
 
 #include "GameClient/GUI/AptScreens/AptSkirmish.h"
+
+#include "GameClient/GUI/AptMessageBox.h"
 #include "Common/AsciiString.h"
 #include "GameLogic/CreateAHeroSystem.h"
 #include "GameClient/GUI/AptScreens/AptCreateAHero.h"
@@ -228,7 +230,7 @@ AptSkirmish::AptSkirmish(WindowManager &windows, Shell &shell, ShellEnvironment 
 	registerAll();
 	if (m_setup)
 	{
-		windows.note("skirmish-inferences", "[S-178] lobby contents inferred: faction rule, AI on every map, no honors stars, Handicap empty, the Hero combo's inferences (S-1406), no rule rows, ImageComboBox behaviour, `_global.InGame` set by the manager");
+		windows.note("skirmish-inferences", "[S-178] lobby contents inferred: faction rule, AI on every map, no honors stars, Handicap empty, the Hero combo's inferences (S-1406), the rule rows' row generation and drop-down disable (S-3600), ImageComboBox behaviour, `_global.InGame` set by the manager");
 	}
 	windows.note("skirmish-profile-unverified", "[S-179] profile-first, profile storage and StartGame without a profile are not verified against retail");
 }
@@ -441,6 +443,10 @@ void AptSkirmish::closePopupState()
 void AptSkirmish::update()
 {
 	// RotWK 0x928CDB
+	if (m_ruleBox)
+	{
+		m_ruleBox->update(); // lane RULES-1: the rule warning box reaches its clip once GuiFX.apt is loaded (RW 0x9532F3)
+	}
 	switch (m_profileState)
 	{
 		case kStateInitialized:
@@ -478,13 +484,11 @@ void AptSkirmish::registerLobby()
 	registerScreenRef("AptMapPreview::MapGadgetInit", [this](const std::string &name, GameWindow *w) { initMapPreviewGadget(name, w); });
 	// lane UI-1: AptMpChat::InitGadgets (RW 0x987E4B): "Chat", "ChatPlayers", "ChatEntry"
 	registerScreenRef("AptMpChat::InitGadgets", [this](const std::string &name, GameWindow *w) { initChatGadget(name, w); });
-	for (const char *ref : { "AptMpGameRules::InitGadgets", "AptMpClans::InitGadgets" })
-	{
-		const std::string refName = ref;
-		registerScreenRef(refName, [this, refName](const std::string &name, GameWindow *) {
-			windows().note("unported-gadget-init", refName + "(" + name + ") [S-178]");
-		});
-	}
+	// lane RULES-1: AptMpGameRules::InitGadgets (RW 0x987092): "RuleComboBox_<n>" / "RuleCheckBox_<n>"
+	registerScreenRef("AptMpGameRules::InitGadgets", [this](const std::string &name, GameWindow *w) { initRuleGadget(name, w); });
+	registerScreenRef("AptMpClans::InitGadgets", [this](const std::string &name, GameWindow *) {
+		windows().note("unported-gadget-init", "AptMpClans::InitGadgets(" + name + ") [S-178]");
+	});
 	// ---- providers ----
 	registerProvider("AptMapPreview::GameMapType", [this](const std::string &, std::string &value, bool setting) {
 		if (setting)
@@ -523,18 +527,38 @@ void AptSkirmish::registerLobby()
 		}
 		return true;
 	});
-	for (const char *name : { "AptMpGameRules::ShowClans", "MpGameRules::NumCheckBoxes", "MpGameRules::NumComboBoxes" })
-	{
-		registerProvider(name, [](const std::string &, std::string &value, bool setting) {
-			if (!setting)
-			{
-				value = "0";
-			}
-			return true;
-		});
-	}
+	registerProvider("AptMpGameRules::ShowClans", [](const std::string &, std::string &value, bool setting) {
+		if (!setting)
+		{
+			value = "0";
+		}
+		return true;
+	});
+	// lane RULES-1: AptMpGameRules::ExternFunc (RW 0x9865C9): query 0 "MpGameRules::NumComboBoxes" = RW 0x960A46(mode) (+ 1: OpenBFME's Legendary Heroes row
+	// in mode 0), query 1 "MpGameRules::NumCheckBoxes" = RW 0x960A5D(mode), as "%d"
+	registerProvider("MpGameRules::NumComboBoxes", [this](const std::string &, std::string &value, bool setting) {
+		if (!setting)
+		{
+			value = std::to_string(ruleComboCount());
+		}
+		return true;
+	});
+	registerProvider("MpGameRules::NumCheckBoxes", [this](const std::string &, std::string &value, bool setting) {
+		if (!setting)
+		{
+			value = std::to_string(m_setup ? MpGameRules::numCheckBoxes(m_setup->rulesMode()) : 0);
+		}
+		return true;
+	});
 	// ---- commands ----
-	registerCommand("MpGameSetup::OnTabSelect", [this](const std::string &argument) { m_activeTab = argument; });
+	// RW 0x84xxxx (BFME2 0x43DC93, tier A): "RulesTab" refreshes the rule gadgets (the panel's 0x57E6D8 -> every rule's UpdateRuleGadget)
+	registerCommand("MpGameSetup::OnTabSelect", [this](const std::string &argument) {
+		m_activeTab = argument;
+		if (argument == "RulesTab")
+		{
+			refreshRuleGadgets();
+		}
+	});
 	registerCommand("MpGameSetup::OnReadyPress", [this](const std::string &argument) { onReadyPress(argument); });
 	registerCommand("MpGameSetup::OnKickPlayer", [this](const std::string &argument) { onKickPlayer(argument); });
 	registerCommand("AptMpChat::Send", [this](const std::string &) { sendChat(); }); // RW 0x987E3C: the argument is not read
@@ -542,7 +566,8 @@ void AptSkirmish::registerLobby()
 	registerCommand("MpGameSetup::OnSortIcons", [this](const std::string &) { setMapSort(4); });
 	registerCommand("MpGameSetup::OnSortName", [this](const std::string &) { setMapSort(0); });
 	registerCommand("MpGameSetup::OnSortPlayers", [this](const std::string &) { setMapSort(2); });
-	for (const char *name : { "AptMpGameRules::Reset", "AptMpClans::WebSite", "AptMpClans::Delete" })
+	registerCommand("AptMpGameRules::Reset", [this](const std::string &) { resetRules(); }); // lane RULES-1, RW 0x98674C
+	for (const char *name : { "AptMpClans::WebSite", "AptMpClans::Delete" })
 	{
 		registerCommand(name, unportedCommand(name));
 	}
@@ -734,6 +759,7 @@ void AptSkirmish::pruneDeadGadgets()
 		it = alive.count(it->first) ? std::next(it) : m_slotGadgets.erase(it);
 	}
 	m_currentMapChildren.erase(std::remove_if(m_currentMapChildren.begin(), m_currentMapChildren.end(), [&](GameWindow *w) { return !alive.count(w); }), m_currentMapChildren.end());
+	pruneRuleGadgets(alive); // lane RULES-1
 }
 
 // ---- gadget initialisation ------------------------------------------------------------------------------------------------------------------
@@ -1121,6 +1147,17 @@ void AptSkirmish::refreshSlot(int slot)
 	refreshColors(slot);
 	if (GameWindow *combo = m_slots[slot][(int)Leaf::Hero]) // lane CAH-1: the slot's choice (RW 0x72437D)
 	{
+		// lane RULES-1: RW 0x842A85: the hero combo is enabled only while AllowCustomHeroes (rule 0) is 1; otherwise disabled with its choice dropped
+		// (SkirmishGameSetup::setRule cleared the slots' records; the combo's own choice goes back to "-")
+		if (m_setup->info().rules[RULE_ALLOW_CUSTOM_HEROES] != 1 && !MpGameRules::isNone(m_setup->info().rules))
+		{
+			m_slotHero[(size_t)slot] = -1;
+			combo->winEnable(false);
+		}
+		else if (!m_setup->network() || lobbyEditable(slot))
+		{
+			combo->winEnable(true);
+		}
 		if (slot == m_setup->localSlot())
 		{
 			selectByItemData(combo, m_slotHero[(size_t)slot]);
@@ -1150,6 +1187,7 @@ void AptSkirmish::refreshAll()
 	{
 		refreshSlot(slot);
 	}
+	refreshRuleGadgets(); // lane RULES-1: a network game's rules come with the host's options
 	m_refreshing = outer;
 }
 
@@ -1369,9 +1407,18 @@ WindowMsgHandledType AptSkirmish::gadgetMessage(GameWindow *, std::uint32_t msg,
 	switch (msg)
 	{
 		case GCM_SELECTED:
+			if (onRuleGadget(gadget)) // lane RULES-1, RW 0x986776
+			{
+				return MSG_HANDLED;
+			}
 			onComboSelected(gadget);
 			return MSG_HANDLED;
 		case GBM_SELECTED:
+			if (onRuleGadget(gadget)) // lane RULES-1: a rule check box
+			{
+				return MSG_HANDLED;
+			}
+			[[fallthrough]];
 		case GBM_SELECTED_RIGHT:
 			// lane FB7-1: the map window's start spots forward their clicks to the screen (PassSelectedButtonsToParentSystem, RW 0x6C1501)
 			return onStartSpotSelected(gadget, msg == GBM_SELECTED) ? MSG_HANDLED : MSG_IGNORED;

@@ -212,7 +212,9 @@ TEST_CASE("retail start: from the main menu through Skirmish and Start to the li
 	std::string error;
 	// the lobby: Evendim, slot 0 Elves with the second colour (Red), slot 1 the Brutal AI with a random faction and colour; the seed 4242 is the lobby's
 	const NewGameMessage message = lobbyMessage(*s, kEvendimKey, "FactionElves", 5, 2, 4242, &error);
-	CHECK(message.game.startingCash == 1500);
+	// lane RULES-1: the lobby leaves the starting money unset (RotWK GameInfo + 0x54 = -1) and starts from the default rules
+	CHECK(message.game.startingCash == -1);
+	CHECK(message.game.rules == MpGameRules::defaults(RULES_MODE_SKIRMISH));
 	StartedGame g;
 	runStartedGame(*s, message, 3, g, [&](LiveGame &game) {
 		const SkirmishGameInfo &r = g.start.message.game;
@@ -247,9 +249,9 @@ TEST_CASE("retail start: from the main menu through Skirmish and Start to the li
 		CHECK(p2->getPlayerColor() == 0xFF9E382Au);
 		CHECK(p7->getPlayerColor() == 0xFFCE8745u);
 		CHECK(p2->getPlayerNightColor() == 0xFF9E382Au);
-		// money: the game's starting cash for both (the templates' StartMoney is 0)
-		CHECK(p2->getMoney()->countMoney() == 1500u);
-		CHECK(p7->getMoney()->countMoney() == 1500u);
+		// money: the InitialResources rule for both (the templates' StartMoney is 0; RW 0x6B0578, lane RULES-1: the default 1000, not GameData's 1500)
+		CHECK(p2->getMoney()->countMoney() == 1000u);
+		CHECK(p7->getMoney()->countMoney() == 1000u);
 		// no teams chosen: enemies
 		CHECK(p2->getRelationship(p7) == ENEMIES);
 		CHECK(p7->getRelationship(p2) == ENEMIES);

@@ -3,6 +3,7 @@
 
 #include "GodotDevice/GodotInGameHud.h"
 #include "GodotDevice/GodotPackedTexture.h"
+#include "GameLogic/Module/HeroAbilityModules.h"
 #include "Common/SpecialPower.h"
 #include "GameClient/GameText.h"
 #include "GameClient/GUI/GameTextSource.h"
@@ -18,6 +19,7 @@
 #include "GameClient/CursorFile.h"
 #include "GameClient/HudObjects.h"
 #include "GameClient/InGameHud.h"
+#include "GameClient/OptionPreferences.h"
 #include "GameClient/GameLODManager.h"
 #include "GameClient/LiveGame.h"
 #include "GameClient/MessageStream/MetaEvent.h"
@@ -176,6 +178,8 @@ struct HudDevice : public AptNativeHook
 	double clientClock = 0.0;
 	double updateMs = 0.0, cameraMs = 0.0, cursorMs = 0.0; ///< SMOOTH-1: the parts of the last _process
 	bool edgeScroll = false;
+	int edgeScrollMode = 0;   // lane OPTS-2: 0 retail (full screen only, or edge_scroll), 1 always, 2 never
+	float uiScale = 1.0f;     // lane OPTS-2: the decorations' scale (health bars, veterancy marks, texts) about each object's ops
 	float fogShift = 0.0f; ///< lane PLAY-1: the last w3d_fog_shift sent
 	// lane SPELL-2 (review r2): the game text of a standalone HUD (data/lotr.str); an attached HUD uses its shell's. Before the HUD: it outlives it
 	std::unique_ptr<GameTextSource> ownedText;
@@ -819,20 +823,50 @@ void HudDevice::drawIconOps(RID parent)
 	}
 	auto col = [](std::uint32_t argb) { return Color(((argb >> 16) & 0xFF) / 255.0f, ((argb >> 8) & 0xFF) / 255.0f, (argb & 0xFF) / 255.0f, ((argb >> 24) & 0xFF) / 255.0f); };
 	Ref<Font> font = ThemeDB::get_singleton() ? ThemeDB::get_singleton()->get_fallback_font() : Ref<Font>();
-	const int fontSize = 13;
-	iconOpsDrawn = 0;
-	for (const IconUIOp &op : hud->iconOps())
+	// lane OPTS-2 (not retail): the UI scale enlarges each object's decorations about the centre of their ops (retail draws them in screen pixels: at
+	// 1.0 nothing moves)
+	const float k = uiScale;
+	std::map<::ObjectID, Rect2> groups;
+	if (k != 1.0f)
 	{
+		for (const IconUIOp &op : hud->iconOps())
+		{
+			const Rect2 r(op.x, op.y, op.w, op.h);
+			auto it = groups.find(op.object);
+			if (it == groups.end())
+			{
+				groups.emplace(op.object, r);
+			}
+			else
+			{
+				it->second = it->second.merge(r);
+			}
+		}
+	}
+	const int fontSize = (int)std::lround(13.0f * k);
+	const float line = k;
+	iconOpsDrawn = 0;
+	for (const IconUIOp &raw : hud->iconOps())
+	{
+		IconUIOp op = raw;
+		if (k != 1.0f)
+		{
+			const Vector2 c = groups[raw.object].get_center();
+			op.x = c.x + (raw.x - c.x) * k;
+			op.y = c.y + (raw.y - c.y) * k;
+			op.w = raw.w * k;
+			op.h = raw.h * k;
+		}
 		switch (op.kind)
 		{
 			case IconUIOp::FILL_RECT:
 				rs->canvas_item_add_rect(iconItem, Rect2(op.x, op.y, op.w, op.h), col(op.color));
 				break;
-			case IconUIOp::OPEN_RECT: // Display +0xE0 (width 1): the four edges
-				rs->canvas_item_add_rect(iconItem, Rect2(op.x, op.y, op.w, 1), col(op.color));
-				rs->canvas_item_add_rect(iconItem, Rect2(op.x, op.y + op.h - 1, op.w, 1), col(op.color));
-				rs->canvas_item_add_rect(iconItem, Rect2(op.x, op.y + 1, 1, op.h - 2), col(op.color));
-				rs->canvas_item_add_rect(iconItem, Rect2(op.x + op.w - 1, op.y + 1, 1, op.h - 2), col(op.color));
+			case IconUIOp::OPEN_RECT: // Display +0xE0 (width 1): the four edges (lane OPTS-2: the UI scale's width)
+				rs->canvas_item_add_rect(iconItem, Rect2(op.x, op.y, op.w, line), col(op.color));
+				rs->canvas_item_add_rect(iconItem, Rect2(op.x, op.y + op.h - line, op.w, line), col(op.color));
+				rs->canvas_item_add_rect(iconItem, Rect2(op.x, op.y + line, line, op.h - 2 * line), col(op.color));
+				rs->canvas_item_add_rect(iconItem, Rect2(op.x + op.w - line, op.y + line, line, op.h - 2 * line), col(op.color));
 				break;
 			case IconUIOp::IMAGE:
 			{
@@ -1077,6 +1111,7 @@ void InGameHudNode::_bind_methods()
 	ClassDB::bind_method(D_METHOD("get_camera"), &InGameHudNode::get_camera);
 	ClassDB::bind_method(D_METHOD("set_edge_scroll", "on"), &InGameHudNode::set_edge_scroll);
 	ClassDB::bind_method(D_METHOD("set_free_camera", "on"), &InGameHudNode::set_free_camera);
+	ClassDB::bind_method(D_METHOD("set_view_options", "options"), &InGameHudNode::set_view_options); // lane OPTS-2
 	ClassDB::bind_method(D_METHOD("camera_look_at", "sage_xy"), &InGameHudNode::camera_look_at);
 	ClassDB::bind_method(D_METHOD("camera_set_height", "height_above_ground"), &InGameHudNode::camera_set_height);
 	ClassDB::bind_method(D_METHOD("pixel_to_world", "pixel"), &InGameHudNode::pixel_to_world);
@@ -1445,7 +1480,18 @@ Dictionary InGameHudNode::attach(const Ref<RetailFileSystem> &fs, GameWorld *wor
 			LiveGame *g = &game;
 			d->cam->setObjectSource([g](::ObjectID id, Coord3D &pos) { return g->presentedObjectPosition(id, pos); });
 			d->edgeScroll = (bool)options.get("edge_scroll", false);
+			// lane OPTS-2: Options.ini ScrollFactor over GameData's RMB scroll factors (RW 0x641E0C; the text, or null for the default)
+			{
+				OptionPreferences scroll;
+				const Variant sf = options.get("scroll_factor_option", Variant());
+				if (sf.get_type() != Variant::NIL)
+				{
+					scroll.set("ScrollFactor", std::string(String(sf).utf8().get_data()));
+				}
+				d->cam->setScrollFactor(scroll.getScrollFactor(gd.keyboardDefaultScrollSpeedFactor));
+			}
 			d->cam->setFreeCamera((bool)options.get("free_camera", false)); // lane PLAY-1: the owner's option (not retail)
+			d->cam->setZoomOutFactor((float)(double)options.get("zoom_out_factor", 1.0)); // lane ZOOM-1: the owner's Max zoom-out (not retail; 1 = retail)
 		}
 		// lane HUD-5: GameData's ShowObjectHealth / VeterancyPipDrawObjectFilter for the drawable decorations
 		d->veterancyFilter = gd.veterancyPipFilter;
@@ -1677,6 +1723,10 @@ Dictionary InGameHudNode::get_state() const
 	s["portrait"] = toGodot(d->hud->palantir() ? d->hud->palantir()->portraitShown() : std::string());
 	s["portrait_drawn"] = toGodot(d->portraitDrawn);
 	s["portrait_draws"] = (int64_t)d->portraitDraws;
+	// lane AUTOCAST-1: the auto casts so far (AutoAbilityBehavior::stats, process-wide) and the right presses that toggled one
+	s["auto_ability_casts"] = (int64_t)AutoAbilityBehavior::stats().casts;
+	s["auto_ability_toggles"] = (int64_t)d->hud->controlBar().autoAbilityToggles();
+	s["auto_ability_overlay_errors"] = (int64_t)(d->hud->palantir() ? d->hud->palantir()->autoAbilityOverlayErrors() : 0u); // r2: the proof fails on any
 	{
 		// lane UI-4: the selection markers of the last update and how many decals the device showed
 		Array decals;
@@ -1893,10 +1943,14 @@ Dictionary InGameHudNode::get_icon_ui() const
 		return r;
 	}
 	int bars = 0;
-	Array texts, images, notes;
+	Array texts, images, notes, barObjects;
 	for (const IconUIOp &op : d->hud->iconOps())
 	{
-		bars += op.kind == IconUIOp::OPEN_RECT && op.color == 0x7F000000u ? 1 : 0; // the outer frame of a health bar
+		if (op.kind == IconUIOp::OPEN_RECT && op.color == 0x7F000000u) // the outer frame of a health bar
+		{
+			++bars;
+			barObjects.push_back((int64_t)op.object); // lane ZOOM-1: whose bars
+		}
 		if (op.kind == IconUIOp::TEXT)
 		{
 			texts.push_back(String::utf8(op.text.c_str()));
@@ -1912,6 +1966,7 @@ Dictionary InGameHudNode::get_icon_ui() const
 	}
 	r["ops"] = (int64_t)d->hud->iconOps().size();
 	r["health_bars"] = bars;
+	r["bar_objects"] = barObjects;
 	r["texts"] = texts;
 	r["images"] = images;
 	r["drawn"] = (int64_t)d->iconOpsDrawn;
@@ -2181,7 +2236,8 @@ void InGameHudNode::_process(double delta)
 	{
 		DisplayServer *ds = DisplayServer::get_singleton();
 		const DisplayServer::WindowMode wm = ds ? ds->window_get_mode() : DisplayServer::WINDOW_MODE_WINDOWED;
-		la->setEdgeScrollEnabled(d->edgeScroll || wm == DisplayServer::WINDOW_MODE_FULLSCREEN || wm == DisplayServer::WINDOW_MODE_EXCLUSIVE_FULLSCREEN);
+		const bool retail = d->edgeScroll || wm == DisplayServer::WINDOW_MODE_FULLSCREEN || wm == DisplayServer::WINDOW_MODE_EXCLUSIVE_FULLSCREEN;
+		la->setEdgeScrollEnabled(d->edgeScrollMode == 1 ? true : (d->edgeScrollMode == 2 ? false : retail)); // lane OPTS-2: the option
 	}
 	const double step = 1.0 / 30.0;
 	d->clientClock += delta;
@@ -2352,6 +2408,14 @@ Array InGameHudNode::get_command_buttons() const
 			e["state"] = (int64_t)b.state;
 			e["cost"] = b.cost;
 			e["queued"] = b.queued;
+			e["auto_ability"] = b.autoAbility; // lane AUTOCAST-1: the logic's auto button is this one
+			e["glow"] = d->hud->palantir() && d->hud->palantir()->autoAbilityOverlayShown(b.slot, arc); // the content's SetAutoAbilityOverlayState("_show") went out
+			// r2: the casts of the button's AutoAbilityBehavior (its power's, else the first: the glow's module), the last one's power and target
+			::Object *source = d->hud->controlBar().sourceObject() != INVALID_ID && d->world && d->world->hud_game() ? d->world->hud_game()->logic().findObjectByID(d->hud->controlBar().sourceObject()) : nullptr;
+			const AutoAbilityBehavior *aa = source ? AutoAbilityBehavior::forButton(*source, *b.button) : nullptr;
+			e["auto_casts"] = (int64_t)(aa ? aa->castRecord().casts : 0ull);
+			e["auto_cast_power"] = aa ? toGodot(aa->castRecord().power) : String();
+			e["auto_cast_target"] = (int64_t)(aa ? aa->castRecord().target : INVALID_ID);
 			// AptPalantir::syncFrames: the arc's position i is the clip CommandButtons.<i>, the side bar's SideCommandBar.ButtonSet.Button<i>.Button
 			const int64_t pos = b.position >= 0 ? b.position : (int64_t)i;
 			e["frame"] = arc ? String("CommandButtons.") + String::num_int64(pos) : String("SideCommandBar.ButtonSet.Button") + String::num_int64(pos) + String(".Button");
@@ -2527,6 +2591,74 @@ void InGameHudNode::set_edge_scroll(bool on)
 	d->edgeScroll = on;
 }
 
+Dictionary InGameHudNode::set_view_options(const Dictionary &o)
+{
+	// lane OPTS-2: the options screen's camera and interface settings, applied live (client only)
+	Dictionary r;
+	if (o.has("scroll_factor_option") && d->cam)
+	{
+		OptionPreferences scroll;
+		const Variant sf = o["scroll_factor_option"];
+		if (sf.get_type() != Variant::NIL)
+		{
+			scroll.set("ScrollFactor", std::string(String(sf).utf8().get_data()));
+		}
+		d->cam->setScrollFactor(scroll.getScrollFactor(d->cam->gameData().keyboardDefaultScrollSpeedFactor));
+	}
+	if (o.has("edge_scroll_mode"))
+	{
+		const String m = o["edge_scroll_mode"];
+		d->edgeScrollMode = m == "always" ? 1 : (m == "off" ? 2 : 0);
+	}
+	if (d->hud)
+	{
+		if (LookAtTranslator *la = d->hud->input().lookAt())
+		{
+			if (o.has("invert_drag_scroll"))
+			{
+				la->setInvertDragScroll((bool)o["invert_drag_scroll"]);
+			}
+			if (o.has("rotate_speed_scale"))
+			{
+				la->setRotateSpeedScale((float)(double)o["rotate_speed_scale"]);
+			}
+		}
+		if (o.has("alternate_mouse"))
+		{
+			d->hud->input().commandTranslator().setUseAlternateMouse((bool)o["alternate_mouse"]);
+		}
+		IconUISettings is = d->hud->iconSettings();
+		if (o.has("all_health_bars"))
+		{
+			is.allHealthBars = (bool)o["all_health_bars"];
+		}
+		if (o.has("health_bar_mode"))
+		{
+			const String m = o["health_bar_mode"];
+			is.healthBarMode = m == "always" ? IconUISettings::HEALTH_BARS_ALWAYS : (m == "damaged" ? IconUISettings::HEALTH_BARS_DAMAGED : IconUISettings::HEALTH_BARS_RETAIL);
+		}
+		d->hud->setIconUISettings(is);
+	}
+	if (o.has("ui_scale"))
+	{
+		const double k = o["ui_scale"];
+		d->uiScale = k >= 0.5 && k <= 4.0 ? (float)k : 1.0f;
+	}
+	if (o.has("free_camera") && d->cam)
+	{
+		d->cam->setFreeCamera((bool)o["free_camera"]);
+	}
+	if (o.has("zoom_out_factor") && d->cam)
+	{
+		d->cam->setZoomOutFactor((float)(double)o["zoom_out_factor"]); // lane ZOOM-1
+	}
+	r["ok"] = d->hud != nullptr;
+	r["edge_scroll_mode"] = d->edgeScrollMode;
+	r["scroll_factor"] = d->cam ? d->cam->gameData().horizontalScrollSpeedFactor : 0.0f;
+	r["ui_scale"] = d->uiScale;
+	return r;
+}
+
 void InGameHudNode::set_free_camera(bool on)
 {
 	if (d->cam)
@@ -2556,6 +2688,7 @@ Dictionary InGameHudNode::get_camera() const
 	out["free_camera"] = c.freeCamera(); // lane PLAY-1
 	out["free_camera_toggles"] = d->freeCameraToggles; // lane INPUT-1: Ctrl+Z
 	out["zoom_out_limit"] = c.zoomOutLimit();
+	out["zoom_out_factor"] = c.zoomOutFactor(); // lane ZOOM-1
 	out["fog_shift"] = c.fogShift();
 	out["far"] = c.farPlane();
 	out["eye"] = toGodotAxes(c.eye());

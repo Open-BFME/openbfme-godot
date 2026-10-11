@@ -120,6 +120,10 @@ public:
 	// engine's + 0x1A5D5 says so) and OBJECT_ALLOW_BONUSES (RW 0x7BD730)
 	void setReceivingDifficultyBonus(bool receive);
 	bool isReceivingDifficultyBonus() const { return m_receivingDifficultyBonus; }
+	// lane RULES-1, OpenBFME: the Legendary Heroes factor the object was made with (1: none); set once at the creation (LegendaryHeroesGame::applyAtCreation)
+	// and kept through ownership changes: health, armour and damage dealt all follow it
+	int legendaryFactor() const { return m_legendaryFactor; }
+	void setLegendaryFactor(int factor) { m_legendaryFactor = (std::int8_t)factor; }
 
 	// ---- lane ECON-1: command points, the price paid, build completion, death ------------------------------------------------------
 	// RW 0x68E0C2 / 0x68E114: the object's command points join / leave its player's pool once (the `counted` byte, RW + 0x4A0); nothing counts while the object is
@@ -493,6 +497,7 @@ private:
 	Team *m_originalTeam = nullptr;       ///< lane HERO-2: + 0x320 (the team setTeam last recorded, RW 0x69959D)
 	ObjectID m_speechLeader = INVALID_ID; ///< lane HERO-2: + 0x46C
 	bool m_receivingDifficultyBonus = false; ///< lane CAMP-1H: + 0x45C (hashed)
+	std::int8_t m_legendaryFactor = 1;       ///< lane RULES-1 (OpenBFME; hashed when not 1). One byte in the padding after + 0x45C: sizeof(Object) stays as it was (a larger Object changed the move3 crossing games: some code depends on the allocation layout, reported)
 	ObjectID m_capturerID = INVALID_ID;   ///< lane HERO-2: + 0x80
 	unsigned m_undeadKillFrame = 0;       ///< lane HERO-2: + 0x450
 	bool m_constructed = false;           ///< the constructor has finished: setTeam may run the owner change

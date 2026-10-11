@@ -34,6 +34,11 @@
 //   * TEAM_UPGRADE (team, upgrade) RW 0x7C2BB6 -> RW 0x7A03E8: every member: no contain -> giveUpgrade (RW 0x69388B); else the contain's vslot 0xB8.
 //   * COUNTER_MATH_COUNTER RW 0x7C33E5 / COUNTER_MATH_VALUE RW 0x7C3465: counter (get or create) = counter op (the other counter found, else 0 / the
 //     value), op 0 +, 1 -, 2 *, 3 / (anything else: unchanged).
+//   * lane AUTOCAST-1: NAME_SET_AUTO_ABILITY (unit, button, on) RW 0x7C3C88 and TEAM_SET_AUTO_ABILITY (team, button, on) RW 0x7C3D61 (every member, RW
+//     0x66362D / 0x6632C9): the object's first AutoAbilityBehavior (RW 0x68BDA5, key cached at RW 0x7C3CD3 / 0x7C3DAD), the button by name (RW 0x71D6EA) with
+//     AutoAbility (+ 0x10C), the object's command set (RW 0x69156B / 0x71EFA2): for each of its 33 slots holding that button (RW 0x80C837, bound 0x21),
+//     AutoAbilityBehavior::setAutoAbility(button, on) (RW 0x85D7B6). The campaign maps use them; the skirmish AI's hero library (lib_hero_behaviors) asks it only for
+//     buttons with AutoAbility No (Captain of Gondor, King's Favor), which this ignores: retail's skirmish AI never switches autocast on.
 //
 // INFERENCE / NOT PORTED (stops): the AI states without a port (hunt, attitude, attack-team, the waypoint path states with their per-waypoint link
 // choice, face-object) -> S-1186 (docs/STOPS.md); the noted stand-ins below each report themselves.
@@ -54,6 +59,8 @@
 #include "GameLogic/Module/AIUpdate.h"
 #include "GameLogic/Module/DozerAIUpdate.h"
 #include "GameLogic/Module/EmotionModules.h"
+#include "GameLogic/Module/HeroAbilityModules.h"
+#include "GameClient/ControlBarCommands.h"
 #include "Common/CommandPoints.h"
 #include "GameLogic/Object/PartitionManager.h"
 #include "GameLogic/Module/BehaviorModule.h"
@@ -967,6 +974,41 @@ bool ScriptActions::executeUnitAction(ScriptEngine &engine, const ScriptActionRe
 		if (found)
 		{
 			engine.nameInCache(param(a, 3).stringValue, *found);
+		}
+		return true;
+	}
+	if (name == "NAME_SET_AUTO_ABILITY" || name == "TEAM_SET_AUTO_ABILITY") // lane AUTOCAST-1: RW 0x7C3C88 / RW 0x7C3D61
+	{
+		const bool team = name == "TEAM_SET_AUTO_ABILITY";
+		std::vector<Object *> objects;
+		if (team)
+		{
+			if (Team *t = ScriptConditions::team(engine, param(a, 0).stringValue)) // RW 0x759FDA
+			{
+				objects = ScriptConditions::members(*t);
+			}
+		}
+		else if (Object *o = engine.getUnitNamed(param(a, 0).stringValue)) // RW 0x75A243
+		{
+			objects.push_back(o);
+		}
+		const CommandButton *button = TheCommandStore ? TheCommandStore->findCommandButton(param(a, 1).stringValue) : nullptr;
+		if (!button || !button->m_autoAbility)
+		{
+			return true;
+		}
+		const bool on = param(a, 2).intValue != 0;
+		for (Object *o : objects)
+		{
+			AutoAbilityBehavior *aa = AutoAbilityBehavior::first(*o);
+			const CommandSet *set = aa ? TheCommandStore->findCommandSet(o->getCommandSetName()) : nullptr;
+			for (int i = 0; set && i < CommandSet::MAX_BUTTONS; ++i)
+			{
+				if (set->getCommandButton(i) == button)
+				{
+					aa->setAutoAbility(button, on);
+				}
+			}
 		}
 		return true;
 	}

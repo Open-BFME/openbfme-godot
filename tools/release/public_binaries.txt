@@ -4,4 +4,10 @@
 # have exactly this sha256; a listed container must also decode completely and pass the audit, its metadata included (no comments,
 # extra fields, links, PAX headers or owner names; member names without private paths).
 # Format: <sha256>  <path>  <reason>     (two spaces between the fields). Generate test fixtures at test time instead of listing them.
-# Empty: today's public tree has no binary file.
+# Lane UI-5: the launcher's fonts (the owner's "Parchment & Steel" design): Cinzel, Cormorant Garamond and Inter from the Google Fonts
+# repository (github.com/google/fonts, ofl/), under the SIL Open Font License 1.1 (launcher/fonts/OFL-*.txt, NOTICE). The launcher's
+# pack carries exactly these files (tools/release/audit_package.py, LAUNCHER_PCK_RULES "font").
+f4d83d34d1f6c741193e4acf4b3dff9531e5a67b6aa65228d00a7db72a4e0f34  launcher/fonts/Cinzel.ttf  Cinzel variable font (titles), SIL OFL 1.1, launcher/fonts/OFL-Cinzel.txt
+b20b7d9626dd956b2c5e558692ad328b1f19e3275e2782db4fa07670d83f35e0  launcher/fonts/CormorantGaramond.ttf  Cormorant Garamond variable font (parchment text), SIL OFL 1.1, launcher/fonts/OFL-CormorantGaramond.txt
+0f48ea6abb2084537854f7174c470991a463b13036309e3b50a81511611c530d  launcher/fonts/CormorantGaramond-Italic.ttf  Cormorant Garamond Italic variable font (the subtitle), SIL OFL 1.1, launcher/fonts/OFL-CormorantGaramond.txt
+29160a80ff49ddcab2c97711247e08b1fab27a484a329ce8b813d820dc559031  launcher/fonts/Inter.ttf  Inter variable font (the launcher's text), SIL OFL 1.1, launcher/fonts/OFL-Inter.txt

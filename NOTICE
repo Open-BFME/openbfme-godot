@@ -34,6 +34,12 @@ Copyright (C) 1994-2000 TeCGraf, PUC-Rio, under Lua's own permissive licence rep
 engine/thirdparty/lua-4.0.1/COPYRIGHT; engine/src/Libraries/Lua is the altered source
 version that reproduces EA's fork, plainly marked, see its README.md).
 
+launcher/fonts (lane UI-5, the launcher's look): Cinzel (Copyright 2020 The Cinzel Project
+Authors), Cormorant Garamond (Copyright 2015 the Cormorant Project Authors) and Inter (Copyright
+2020 The Inter Project Authors), unmodified, from the Google Fonts repository, licensed under the
+SIL Open Font License 1.1; the licence texts are launcher/fonts/OFL-*.txt and travel inside the
+launcher.
+
 engine/src/GameClient/VP6Decoder.cpp and VP6Tables.inc (lane CAMP-2, the movies' picture) are a
 C++ port of FFmpeg's On2 VP6 decoder (libavcodec: vp6.c, vp56.c, vp56data.c, vp6data.h, vp3dsp.c,
 vp6dsp.c, vpx_rac.c, h264chroma_template.c, videodsp_template.c, huffman.c, mathtables.c),

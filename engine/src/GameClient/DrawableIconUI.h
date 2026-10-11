@@ -45,6 +45,7 @@
 class DrawableManager;
 class GameLogic;
 class GameTextSource;
+struct LogicSnapshot;
 class MappedImageCollection;
 class Player;
 class TacticalView;
@@ -78,6 +79,21 @@ struct IconUISettings
 	const MappedImageCollection *images = nullptr;
 	const GameTextSource *text = nullptr;
 	float zoom = 1.0f;                   ///< View::getZoom (+0x124)
+	// lane OPTS-2 (the OpenBFME Interface option, NOT retail; client only): which objects show a health bar besides retail's selected / moused-over
+	// ones: RETAIL none, DAMAGED those below their maximum health, ALWAYS every one (the kind and visibility rules of RW 0x676346 still apply; lane ZOOM-1:
+	// ALWAYS also takes infantry and cavalry, as AllHealthBars does, so every unit and building of every player shows its bar)
+	enum HealthBarMode
+	{
+		HEALTH_BARS_RETAIL = 0,
+		HEALTH_BARS_DAMAGED = 1,
+		HEALTH_BARS_ALWAYS = 2
+	};
+	int healthBarMode = HEALTH_BARS_RETAIL;
+	// lane ZOOM-1: the presented snapshot's records (the drawn picture's): RW 0x4853EB queues no icons for an object whose status for the local player is
+	// above PARTIAL_CLEAR (FOGGED or SHROUDED, RW 0x68D8F7), the test applied while the shroud is drawn (`shroudDrawn`, ShroudView::displayed). Null: no
+	// shroud test (the unit tests' rigs, a map viewer without a shroud)
+	const LogicSnapshot *snapshot = nullptr;
+	bool shroudDrawn = false;
 };
 
 class DrawableIconUI

@@ -46,6 +46,7 @@
 
 #pragma once
 
+#include "Common/MpGameRules.h"
 #include "Common/PlayerList.h"
 #include "Common/RandomValue.h"
 #include "Common/Team.h"
@@ -345,6 +346,12 @@ public:
 	// player's objects outside a multiplayer game (Player::applyDifficultyBonusesForObject RW 0x6AC3E3) and the mission restart (RW 0x9221B6). Hashed.
 	void setGameDifficulty(int d) { m_gameDifficulty = d; }
 	int getGameDifficulty() const { return m_gameDifficulty; }
+	// lane RULES-1: the game setup's rules (RotWK TheGameInfo RW 0xDE892C + 0x60; all -1 when the game has no rule block, Common/MpGameRules.h) and
+	// OpenBFME's Legendary Heroes factor (1 = off). Both are part of the state hash only when set, so a game without them keeps its hashes
+	void setGameRules(const GameRules &rules) { m_gameRules = rules; }
+	const GameRules &gameRules() const { return m_gameRules; }
+	void setLegendaryHeroes(int factor) { m_legendaryHeroes = factor; }
+	int legendaryHeroes() const { return m_legendaryHeroes; }
 
 	// ---- frame ------------------------------------------------------------------------------------------------------------
 	UnsignedInt getFrame() const { return m_frame; }
@@ -660,6 +667,8 @@ private:
 
 	UnsignedInt m_frame = 0;
 	int m_gameDifficulty = 1;     ///< lane CAMP-1H: RW GameLogic + 0xA4
+	GameRules m_gameRules = MpGameRules::none(); ///< lane RULES-1
+	int m_legendaryHeroes = LegendaryHeroes::kOff; ///< lane RULES-1 (OpenBFME)
 	bool m_frameAdvance = true;   ///< RW GameLogic + 0x44
 	bool m_inUpdate = false;      ///< RW + 0x70
 	int m_lastPhase = 0;          ///< RW + 0x17C

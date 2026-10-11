@@ -6,6 +6,7 @@ import hashlib
 import json
 import threading
 import time
+import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 TEST_REPO = "Test/repo"
@@ -86,7 +87,10 @@ class ReleaseServer:
                     self.end_headers()
                     self.wfile.write(body)
                     return
-                body = json.dumps(srv.releases).encode()
+                # one page, as GitHub's API serves it (RELNAME-1: the launchers read only ?per_page=30)
+                q = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
+                n, page = int(q.get("per_page", ["30"])[0]), int(q.get("page", ["1"])[0])
+                body = json.dumps(srv.releases[(page - 1) * n:page * n]).encode()
                 etag = '"%s"' % hashlib.sha256(body).hexdigest()[:20]
                 if self.headers.get("If-None-Match") == etag:
                     self.send_response(304)

@@ -151,9 +151,10 @@ Not reproduced by `package.sh`, recorded instead:
 5. Keep `known_issues.json` current: a stop that is resolved and removed from
    `STOPS.md` makes the README generator fail until the item is updated.
 
-Publishing (Discord, GitHub releases) needs the owner's OK, except preview releases: the owner gave a standing approval
+Publishing (Discord, GitHub releases) needs the owner's OK, except pre-releases: the owner gave a standing approval
 (2026-10-09) to publish `v<major>.<minor>.<patch>-preview.<n>` releases automatically, without asking each time (see "Automatic
-preview releases" below). A stable (non-preview) release still needs the owner.
+preview releases" below), and on 2026-10-10 renamed the next builds alpha builds (`v0.4.0-alpha.<n>`, "The alpha builds" below), which
+the automatic releases now publish. A stable (non-pre-release) release still needs the owner.
 
 ## The launcher (LAUNCH-1)
 
@@ -181,7 +182,7 @@ The repository is a build-time setting (`package.sh --repo`, default `Open-BFME/
 
 **A release** carries, besides the four archives and `SHA256SUMS-<v>.txt`:
 - `manifest.json` (`tools/release/make_manifest.py`). It holds format 2, the product, the repo, the
-  version (the tag), the channel (`preview` exactly when the tag is `-preview.<n>`), the date, the
+  version (the tag), the channel (`preview` exactly when the tag is `-alpha.<n>` or `-preview.<n>`), the date, the
   commit, and per kind (`game`, `launcher`) and platform (`linux-x64`, `windows-x64`) the asset name,
   size and SHA-256.
   - Round 3 adds `files`: every file inside the package, with its size and SHA-256. The signature
@@ -222,14 +223,18 @@ The repository is a build-time setting (`package.sh --repo`, default `Open-BFME/
      and so are ZIP symlinks, encrypted members and other compression methods.
    - Limits: at most 10000 members and 2 GiB.
 3. **Rollback protection.** An automatic update installs only a version newer than every installed
-   version. Only two tag forms are release versions: `v<major>.<minor>.<patch>` and
-   `v<major>.<minor>.<patch>-preview.<n>` (digits only, no leading zeros, matched as a whole). Any other
+   version. Only three tag forms are release versions: `v<major>.<minor>.<patch>`,
+   `v<major>.<minor>.<patch>-alpha.<n>` and `v<major>.<minor>.<patch>-preview.<n>` (digits only, no leading zeros, matched as a
+   whole; `-alpha` since RELNAME-1, launchers up to v0.3.0-preview.4 know only `-preview`). Any other
    tag is skipped with a log line: under general SemVer, Sol r1 had `v1.0.0-1` installed automatically
-   over `v1.0.0--1`. A release is above its previews, and previews are ordered by number. An older one needs the user's pick (*Install this release*, with a
+   over `v1.0.0--1`. A release is above its pre-releases; within one release an alpha is below a preview (SemVer's ASCII order), then
+   they are ordered by number: v0.3.0-preview.4 < v0.4.0-alpha.1 < v0.4.0-alpha.2 < v0.4.0. An older one needs the user's pick (*Install this release*, with a
    confirmation, or `--install=<v>`), and Play then starts the pick. The next new build replaces the
    pick.
-4. **Channels.** *Stable* offers non-prerelease releases. *Preview* offers all releases (non-draft,
-   release-version tags). The two newest installed versions are kept, plus the user's pick.
+4. **Channels.** *Stable* offers non-prerelease releases. The pre-release channel offers all releases (non-draft,
+   release-version tags); its id is `preview` (state.cfg, `--channel=preview`, the manifests), and since RELNAME-1 the launcher shows
+   it as *Alpha* (`--channel=alpha` is accepted as the same channel). The id was kept so a player's remembered pick and every
+   launcher's default stay on it: a preview player gets the alpha builds with nothing to do. The two newest installed versions are kept, plus the user's pick.
    *Freeze warning:* when the newest manifest the launcher can get is signed with a date more than 60
    days ago, it shows a plain warning (an old list may be being served). It is not a block: a quiet
    project looks the same. The warning has its own line in the window. In round 2 it was folded into
@@ -363,6 +368,50 @@ releases"):
   prebuilt launchers (`--launchers`, `--key`) and points `APPDATA` into its work folder, which Godot
   follows on native Windows. Under Wine Godot does not follow it, so the prefix's own folder is cleared.
 
+### The alpha builds (RELNAME-1)
+
+The owner (2026-10-10): "instead of preview, make it say alpha build on the next one." The builds after v0.3.0-preview.4 are
+**v0.4.0-alpha.1**, alpha.2, ... It is the 0.4.0 line because SemVer orders `alpha` before `preview`: a v0.3.0-alpha.1 would be older
+than v0.3.0-preview.4, and no launcher would install it. The GitHub release is named "OpenBFME v0.4.0 Alpha 1", the notes say "an
+alpha build for testers", the game's corner text says "unofficial alpha build", README_TESTERS.txt "alpha build", and the launcher
+shows the pre-release channel as *Alpha* (its id stays `preview`, see *Channels*). The published previews keep their names.
+
+**The launchers already out there (Sol r1).** Two launcher codebases shipped: the archive's 42f8a8d2 (the launcher of v0.3.0-preview.1
+and .2) and 2a422ce6 (.3 and .4). Both take only `v<x>.<y>.<z>[-preview.<n>]`: a `v0.4.0-alpha.<n>` release is skipped with a log
+line, so it neither installs the game nor updates the launcher. Both read ONE page of the release list (`releases?per_page=30`, no
+further page), install the newest tag of the channel there and stage that release's launcher, swapped in at the next start. So they
+reach the alpha builds only through a **bridge**: a `v0.3.0-preview.<n>` whose launcher knows `-alpha`, on that first page.
+
+Every automatic release decides this itself (`autorelease.py release-version`, GitHub reads, fail closed). It reads the release list
+as an anonymous launcher gets it (the API's own order, drafts left out, the first 30) and takes the newest tag an old launcher parses.
+That release must be a verified bridge (Sol r2: everything an old launcher relies on):
+- its `manifest.json` signed under the sha's `launcher/release_key.pub`, passing the launchers' manifest schema (format 2, keys,
+  this tag and repository, the tag's channel, every kind and platform with its asset name, size, SHA-256 and a file list naming the
+  executable), and the release's pre-release flag matching that channel (a launcher refuses a mismatch);
+- all four archives uploaded with their signed sizes, the two launcher archives also with their signed SHA-256 (GitHub's digest,
+  or downloaded and hashed when GitHub gives none);
+- its commit on `main`, and that commit's `launcher/scripts/core/semver.gd` **run** in Godot ($GODOT) on sample tags: it must take
+  `v0.4.0-alpha.1` / `.10` and the previews, refuse `-alpha.01`, `-beta.1`, `-ALPHA.1` and the like, order v0.3.0-preview.4 <
+  v0.4.0-alpha.1 < .2 < .10 < v0.4.0 and put the alpha builds on the `preview` channel (a word "alpha" in the source proves nothing). It must also lie above the
+last 5 entries of the page. Then this release is the next alpha build. Otherwise this release is the next bridge, `v0.3.0-preview.<n>`
+(refused when the sha's own launcher does not know `-alpha`). So:
+- the first release after v0.3.0-preview.4 is the bridge v0.3.0-preview.5; the next one is v0.4.0-alpha.1. No alpha build is ever
+  published while the old launchers have no bridge on their page;
+- **late players**: about every 25 releases a new bridge (preview.6, .7, ...) follows, so a launcher left at preview.1 to .4 for any
+  time still finds one among the newest 30;
+- right before an alpha build is published, also one resumed from an open intent with its version kept, the bridge is checked again
+  (still verified, still on the page with this release added); if it is gone the run stops with nothing published and the intent
+  open: put the bridge release back (or publish it again by hand from its package), then run again;
+- an open intent's version must be above every version of its line released or tagged on the remote, not only the last released
+  one (an alpha build and a bridge are separate lines);
+- a bridge sorts below every alpha build, so an alpha-aware launcher never installs it. Its notes say what it is; its game is that
+  sha's build (an alpha build numbered as a preview).
+
+`test_launcher.py` builds both shipped launchers from their commits (tree ids pinned) and checks the whole path: alpha.1 skipped, the
+bridge installed and its launcher swapped in, alpha.1 then offered and its launcher staged; and the late player (bridge pushed off
+the page: nothing found; the rule asks for a new bridge 5 releases earlier; the new bridge is installed). A launcher of preview.1 or
+.2 whose player never picked Preview sits on Stable (their default) and saw no build before either.
+
 ### Automatic preview releases (AUTOREL-1)
 
 The owner gave a **standing approval** (2026-10-09) to publish preview releases automatically, so testers' launchers pick up new
@@ -410,8 +459,10 @@ ref, so a tag or branch named like the abbreviation cannot stand in for it.
    It is then one commit on top of `main`, pushed as `sync/<date>-<sha>`, a PR titled `Sync the rebuild: <date> (<summary>)`, merged
    with a merge commit; then the branch is deleted. A merge whose answer was lost is read back. The merge commit must have exactly the
    audited tree. If `main` already has it, there is no PR and `main` is released as it is.
-3. **Version and tag.** `v0.3.0-preview.<n>`, n = 1 + the highest `v0.3.0-preview.<n>` tag on origin (the launcher's grammar; other
-   tags are ignored). An annotated tag on the merged public commit, pushed (a push whose answer was lost is checked on the remote).
+3. **Version and tag.** `v0.4.0-alpha.<n>`, n = 1 + the highest `v0.4.0-alpha.<n>` tag on origin (the launcher's grammar; other
+   tags are ignored), and it must be above every release tag on origin in the launcher's order, or the run stops (RELNAME-1; until
+   v0.3.0-preview.4 it was `v0.3.0-preview.<n>`). When the old launchers' page has no verified bridge with room to spare, the
+   release is the next bridge `v0.3.0-preview.<n>` instead ("The alpha builds"). The release is named "OpenBFME v0.4.0 Alpha <n>" (`autorelease.py title`). An annotated tag on the merged public commit, pushed (a push whose answer was lost is checked on the remote).
    A commit carries one release tag at most: a second one would make `git describe`, the build's version, pick either. A failed run
    leaves its pushed tag on origin with no release, and the tag cannot be deleted: the repository's ruleset forbids deleting tags
    (GH013). It does not need to be: the run's release intent stays open, and the next real run (for the same sha or a later one)
@@ -505,7 +556,8 @@ Every real run first reconciles an open intent through GitHub API reads. If a re
 is untrusted: before it records a completion or resumes, every field is checked, and a mismatch stops the run with nothing changed.
 - the sha is a commit on the archive branch, has its own gate record, contains `MIN_CONTROL`, and descends from the last released
   sha;
-- the version is a `v0.3.0-preview.<n>` above the last released one;
+- the version is an alpha build `v0.4.0-alpha.<n>` or a bridge `v0.3.0-preview.<n>`, above the last released version when that is
+  of the same line (`autorelease.py intent-version`);
 - the tree has exactly the sha's entries (README.md and PRIVACY.md aside);
 - the public commit has that tree and is on `main`, and the remote tag is on the public commit;
 - for a published release: its `manifest.json` and signature are the package folder's, the manifest names the version, the public

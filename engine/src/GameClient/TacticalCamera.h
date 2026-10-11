@@ -24,7 +24,7 @@
 //   height field            RW 0x710107 (build) / 0x70FE22 (sample), see CameraHeightField
 //   init / initHeightForMap RW 0x48B6A4.. (position (870, 770)), BFME1 initHeightForMap (max ground level 700)
 //
-// What is not ported (stops S-450 .. S-459, TacticalCamera::acceptanceStops()): see there.
+// What is not ported (stops S-450 .. S-459, TacticalCamera::acceptanceStops()): see there. Lane ZOOM-1's Max zoom-out: stop S-3501.
 
 #pragma once
 
@@ -155,7 +155,7 @@ public:
 	void snapInterpolation();
 	void commitFrame();
 	float nearPlane() const { return 10.0f; }
-	// retail's 1800 (RW 0x48B7B1); with the free camera, plus twice fogShift() so the far map stays drawn when zoomed out beyond retail's limit
+	// retail's 1800 (RW 0x48B7B1); with the free camera or a zoom-out factor, plus twice fogShift() so the far map stays drawn when zoomed out beyond retail's limit
 	float farPlane() const;
 
 	// ---- lane PLAY-1: the free camera (the owner's presentation option, NOT retail; client state only, never seen by the logic) ----
@@ -163,11 +163,24 @@ public:
 	// maximum height); the default view, the start of a map and a reset still use the map's maximum height. The far plane and the fog range move out by
 	// the distance the eye is beyond retail's maximum (fogShift), so the zoomed-out picture is not cut off or fogged over; at retail heights nothing changes.
 	void setFreeCamera(bool on);
+	// lane OPTS-2: GlobalData::applyOptionPreferences (RW 0x641E0C .. 0x641E1F) replaces GameData's HorizontalScrollSpeedFactor and
+	// VerticalScrollSpeedFactor (+ 0xA9C / + 0xAA0) with OptionPreferences::getScrollFactor (Options.ini ScrollFactor * 0.02, missing: GlobalData + 0xAFC
+	// KeyboardDefaultScrollSpeedFactor) right after GameData.ini is parsed (RW 0x6441DE, GlobalData::parseGameDataDefinition RW 0x644148), and the Options
+	// screen's Save sets them again. The device calls this with that value.
+	void setScrollFactor(float factor);
 	bool freeCamera() const { return m_free; }
 	float freeMaxHeight() const;
-	// the zoom-out limit setHeightAboveGround and the scroll's EnforceMaxCameraHeight use: the map's max height, or freeMaxHeight() with the free camera
-	float zoomOutLimit() const { return m_free ? freeMaxHeight() : m_maxHeight; }
-	// how much farther the eye is from its target than at retail's maximum height (0 at retail heights and with the free camera off)
+	// lane ZOOM-1: the Max zoom-out option (the owner's presentation option, NOT retail; client state only). The player's zoom-out limit is `factor` times
+	// the map's maximum height (retail: 1, RW 0x48CBFE clamps setHeightAboveGround to the settings object's max height, GameData DefaultCameraMaxHeight or
+	// the map's cameraMaxHeight). The default view, the start of a map, a reset, the lock and the scripted / AI cameras keep retail's heights; only the
+	// player's zoom (the wheel, the keys: zoomOut / setHeightAboveGround) may go beyond. Values below 1 are taken as 1.
+	void setZoomOutFactor(float factor);
+	float zoomOutFactor() const { return m_zoomOutFactor; }
+	// the zoom-out limit setHeightAboveGround and the scroll's EnforceMaxCameraHeight use: the map's max height times zoomOutFactor(), or freeMaxHeight() with the
+	// free camera when that is higher
+	float zoomOutLimit() const;
+	// how much farther the eye is from its target than at retail's maximum height (0 at retail heights, and always 0 when neither the free camera nor a
+	// zoom-out factor above 1 is on: retail's fog and far plane are untouched)
 	float fogShift() const;
 	// the horizontal field of view of the 3D camera (radians; View + 0x6C, RW 0xBDD410 = 50 degrees)
 	float horizontalFov() const { return m_fov; }
@@ -225,6 +238,7 @@ private:
 	float m_followFactor = -1.0f;
 	bool m_okToAdjustHeight = true;
 	bool m_free = false; ///< lane PLAY-1
+	float m_zoomOutFactor = 1.0f; ///< lane ZOOM-1 (retail: 1)
 	Coord3D m_eye{ 0, -400, 300 }, m_target{ 0, 0, 0 }, m_prevEye{ 0, -400, 300 }, m_prevTarget{ 0, 0, 0 }, m_committedEye{ 0, -400, 300 }, m_committedTarget{ 0, 0, 0 };
 	unsigned long long m_frame = 0;
 };

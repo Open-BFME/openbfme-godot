@@ -15,6 +15,10 @@
 #include "GameClient/GUI/ShellEnvironment.h"
 
 #include "GameClient/GUI/GameTextSource.h"
+#include "Libraries/Source/Apt/Apt.h"
+#include "Libraries/Source/Apt/AptButtonInst.h"
+#include "Libraries/Source/Apt/AptCharacterInst.h"
+#include "Libraries/Source/Apt/AptValue.h"
 
 #include <array>
 #include <cstdint>
@@ -939,19 +943,62 @@ std::u16string AptOptionsScreen::versionText(const GameTextSource *text)
 	return formatInts(format, { kVersionMajor, kVersionMinor });
 }
 
+namespace
+{
+// lane OPTS-2: APT:CannotChangeResolution where the main menu opened the screen and the device cannot change the display mode [S-3401]
+const char *const kResolutionElsewhere = "Use OpenBFME \xE2\x86\x92 Display.";
+} // namespace
+
+namespace
+{
+// the basic page's three settings frames (Options.apt: Main.FrameLeft / FrameMiddle / FrameRight, dump_tree of the 2.01 movie) the page takes the
+// place of, the subtitle it renames, the button it copies and the copy's name
+const char *const kBasicFrames[3] = { "Main.FrameLeft", "Main.FrameMiddle", "Main.FrameRight" };
+const char *const kSubtitlePath = "Main.SubTitle";
+const char *const kEntrySourcePath = "Main.FrameLeft.Advanced";
+const char *const kEntryName = "OpenBFMEEntry";
+const char *const kEntryCaption = "OPENBFME";
+const char *const kMirroredKeys[3] = { "ScrollFactor", "AllHealthBars", "AlternateMouseSetup" }; // the retail keys the page shows too
+const char *const kBarButtons[3] = { "Buttons.Cancel", "Buttons.Default", "Buttons.Accept" }; // the basic page's bottom bar
+const char *const kTooltipPrefix = "tooltips"; // the movie's invisible tooltip areas (tooltipsEAX3 ...): hidden with the frames
+constexpr int kEntryScriptDepth = 9000;         // an ActionScript depth above every placed child of FrameLeft
+} // namespace
+
 AptOptionsScreen::AptOptionsScreen(WindowManager &windows, Shell &shell, ShellEnvironment &environment, ShellServices &services)
 	: AptScreen(windows, shell, "Options.apt", "AptOptions"), m_env(environment), m_services(services)
 {
-	m_pendingSoft = m_env.options ? m_env.options->softParticles() : true;
 	if (!m_env.options)
 	{
 		windows.note("options-unwired", "Options: no OptionPreferences: Save writes nothing [S-1484]");
 	}
 	// RW 0x816157 (the shared OnInitialized): the screen's state + 0x27C becomes 1, the basic page
 	registerCommand("AptOptions::OnInitialized", [this](const std::string &) { m_state = 1; });
-	registerCommand("AptOptions::Cancel", [this](const std::string &) { cancel(); });
-	registerCommand("AptOptions::Save", [this](const std::string &) { save(); });
-	registerCommand("AptOptions::Reset", [this](const std::string &) { reset(); });
+	// lane OPTS-3: while the OpenBFME page is up the bottom bar's commands are the page's (not retail: RotWK has no such page)
+	registerCommand("AptOptions::Cancel", [this](const std::string &) {
+		if (extensionOpen())
+		{
+			m_extensionEvents.push_back({ OpenBFMEPageEvent::Kind::Cancel, std::string(), 0 });
+			return;
+		}
+		cancel();
+	});
+	registerCommand("AptOptions::Save", [this](const std::string &) {
+		if (extensionOpen())
+		{
+			m_extensionEvents.push_back({ OpenBFMEPageEvent::Kind::Accept, std::string(), 0 });
+			return;
+		}
+		save();
+	});
+	registerCommand("AptOptions::Reset", [this](const std::string &) {
+		if (extensionOpen())
+		{
+			m_extensionEvents.push_back({ OpenBFMEPageEvent::Kind::Reset, std::string(), 0 });
+			return;
+		}
+		reset();
+	});
+	windows.setMouseFilter([this](int kind, float x, float y) { return mouseFilter(kind, x, y); });
 	registerCommand("AptOptions::RefreshNat", unportedCommand("AptOptions::RefreshNat"));
 	registerCommand("AptOptions::EnterAdvancedSettings", [this](const std::string &) { enterAdvancedSettings(); });
 	registerScreenRef("AptOptions::InitGadgets", [this](const std::string &name, GameWindow *w) { initGadget(name, w); });
@@ -979,7 +1026,11 @@ AptOptionsScreen::AptOptionsScreen(WindowManager &windows, Shell &shell, ShellEn
 	bindAdvancedLabels();
 	// RW 0x9215E7: + 0x310 is the LOD manager's level, which its init takes from Options.ini's StaticGameLOD (OptionPreferences::getStaticGameDetail,
 	// GetEnumValue over the six level names); without one the benchmark's level (not ported, S-2481) is replaced by Custom
-	if (m_env.options && m_env.options->has("StaticGameLOD"))
+	if (m_env.gameLOD && m_env.gameLOD->staticLevel() != -1)
+	{
+		m_masterOption = m_env.gameLOD->staticLevel(); // lane OPTS-2: the manager's level (its init ran at boot: GameLODManager::init)
+	}
+	else if (m_env.options && m_env.options->has("StaticGameLOD"))
 	{
 		const int level = GameLODManager::findLevel(m_env.options->get("StaticGameLOD"));
 		if (level != -1)
@@ -989,11 +1040,12 @@ AptOptionsScreen::AptOptionsScreen(WindowManager &windows, Shell &shell, ShellEn
 	}
 	// RW 0x921586 .. 0x9215A6: APT:VersionNum is the version text
 	windows.setAptText("APT:VersionNum", toUtf8(versionText(m_env.gameText)));
-	windows.note("options-soft-particles", "[S-1484] Options: the OpenBFME Soft particles box (not a retail control) at stage (" + std::to_string(kSoftBoxX) + ", " +
-		std::to_string(kSoftBoxY) + "), saved as Options.ini's SoftParticles");
-	windows.note("options-unported", "[S-1913] Options: resolution / brightness apply, the LOD manager's ideal level (MasterOption0ResetDefault), RefreshNat and live slider tracking are not ported");
-	windows.note("options-advanced", "[S-2481] Options: the advanced page's level and custom settings are saved to Options.ini but not applied to the renderer; the high-detail warnings and the '(level)' labels are not ported");
-	ensureSoftBox();
+	// lane OPTS-2: the screen is retail's alone; the OpenBFME soft particle setting (UI-2) is the OpenBFME screen's (Graphics+, OpenBFMESoftParticles)
+	windows.note("options-soft-particles", "[S-1484] Options: the OpenBFME soft particle setting is on the OpenBFME screen (Graphics+), saved as Options.ini's "
+		+ std::string(OptionPreferences::kSoftParticles));
+	windows.note("options-unported", "[S-1913] Options: the display mode list, the LOD manager's ideal level (MasterOption0ResetDefault), RefreshNat and live slider tracking are not ported");
+	windows.note("options-advanced", m_env.gameLOD ? std::string("[S-2481] Options: the hardware detection behind the ideal level, the high-detail warnings and the '(level)' labels are not ported")
+												  : std::string("[S-2481] Options: no GameLODManager: the level and custom settings are saved but not applied"));
 }
 
 void AptOptionsScreen::open(Shell &shell, bool networkEnabled, bool allowResolutionChange, bool allowAdvanced, bool advancedOnly)
@@ -1014,7 +1066,26 @@ void AptOptionsScreen::open(Shell &shell, bool networkEnabled, bool allowResolut
 void AptOptionsScreen::setMode(bool networkEnabled, bool allowResolutionChange, bool allowAdvanced, bool advancedOnly)
 {
 	m_networkEnabled = networkEnabled;
-	m_allowResolution = allowResolutionChange;
+	m_allowResolution = allowResolutionChange && m_env.resolutionChangeApplies; // lane OPTS-2 [S-3401]
+	if (allowResolutionChange && !m_env.resolutionChangeApplies)
+	{
+		windows().note("options-resolution", "[S-3401] Options: the Resolution list is disabled (AllowResolutionChange 0): the device does not change the display mode; "
+			"the OpenBFME screen's Display tab sets the window");
+	}
+	// lane OPTS-2 (coordinator review): the movie shows APT:CannotChangeResolution in place of the list; retail's text ("only from the Main Menu Settings")
+	// is wrong where the main menu opened the screen, so there it names the OpenBFME screen; another opening shows the game text
+	if (allowResolutionChange && !m_env.resolutionChangeApplies)
+	{
+		windows().setAptText("APT:CannotChangeResolution", kResolutionElsewhere);
+	}
+	else if (m_env.gameText)
+	{
+		std::u16string text;
+		if (m_env.gameText->fetch("APT:CannotChangeResolution", text))
+		{
+			windows().setAptText("APT:CannotChangeResolution", toUtf8(text));
+		}
+	}
 	m_allowAdvanced = allowAdvanced;
 	m_advancedOnly = advancedOnly;
 }
@@ -1213,6 +1284,10 @@ void AptOptionsScreen::initGadget(const std::string &fullName, GameWindow *w)
 		if (name == kVolumeGadgets[t])
 		{
 			GadgetSliderSetPosition(w, initialVolume(t));
+			if (t == 4)
+			{
+				w->winEnable(false); // lane OPTS-2 [S-1913]: the movies' sound is audio events, no movie volume to set: greyed, as retail greys what does not apply
+			}
 			return;
 		}
 	}
@@ -1228,9 +1303,8 @@ void AptOptionsScreen::initGadget(const std::string &fullName, GameWindow *w)
 	}
 	if (name == "HealthBars")
 	{
-		// RW 0x91EBD1: checked from AllHealthBars (RW 0x6E6179: "yes", missing false) while the detail allows the box (RW 0x91EB77, the LOD
-		// manager: S-1913, taken as allowed)
-		GadgetCheckBoxSetChecked(w, yes("AllHealthBars", false));
+		// RW 0x920A4A -> RW 0x91EBD1 (lane OPTS-2): checked from AllHealthBars while the detail allows the box, else checked and disabled
+		refreshHealthBarsBox(w);
 		return;
 	}
 	if (name == "AlternateMouseSetUp")
@@ -1311,6 +1385,7 @@ void AptOptionsScreen::initGadget(const std::string &fullName, GameWindow *w)
 	if (name == "EAX3")
 	{
 		GadgetCheckBoxSetChecked(w, yes("UseEAX3", false));
+		w->winEnable(false); // lane OPTS-2 [S-1913]: no EAX 3 device
 		return;
 	}
 	if (name == "HighAudioQuality")
@@ -1318,6 +1393,7 @@ void AptOptionsScreen::initGadget(const std::string &fullName, GameWindow *w)
 		// AudioLOD's index (RW 0x6025F1, case-insensitive: Low 0, High 1; missing -1): checked when 1
 		const bool high = prefs && prefs->has("AudioLOD") && equalsNoCase(prefs->get("AudioLOD"), kAudioLOD[1]);
 		GadgetCheckBoxSetChecked(w, high);
+		w->winEnable(false); // lane OPTS-2 [S-2481]: GameLOD.ini's AudioLOD is not ported
 		return;
 	}
 	windows().note("unported-gadget-init", "AptOptions::InitGadgets(" + fullName + ")");
@@ -1360,16 +1436,7 @@ void AptOptionsScreen::reset()
 				GadgetSliderSetPosition(w, (int)(m_env.defaultVolumes[t] * 100.0f));
 			}
 		}
-		if (GameWindow *hb = gadget("HealthBars"))
-		{
-			GadgetCheckBoxSetChecked(hb, m_env.options && m_env.options->getYesNo("AllHealthBars", false)); // RW 0x91EBD1
-		}
-	}
-	// the OpenBFME box goes back to its default (soft)
-	m_pendingSoft = true;
-	if (m_softBox)
-	{
-		GadgetCheckBoxSetChecked(m_softBox, true);
+		refreshHealthBarsBox(gadget("HealthBars")); // RW 0x91F754 -> RW 0x91EBD1
 	}
 }
 
@@ -1392,57 +1459,34 @@ void AptOptionsScreen::cancel()
 
 AptOptionsScreen::~AptOptionsScreen()
 {
-	if (m_softBox && windows().gadgetLayer())
+	// lane OPTS-3: nothing of this screen may run after it is gone
+	windows().setMouseFilter(nullptr);
+	if (AptGadgetLayer *layer = windows().gadgetLayer())
 	{
-		windows().gadgetLayer()->destroyEngineGadget(m_softBox);
+		layer->setDecorator(nullptr);
 	}
-	m_softBox = nullptr;
-}
-
-void AptOptionsScreen::ensureSoftBox()
-{
-	AptGadgetLayer *layer = windows().gadgetLayer();
-	if (m_softBox || !layer || !ownerWindow())
+	else if (m_page)
 	{
-		return;
+		m_page->abandon(); // the layer (and every gadget it made) is gone already
 	}
-	std::string error;
-	m_softBox = layer->createEngineGadget("window/apt/checkbox.wnd", kSoftBoxX, kSoftBoxY, kSoftBoxW, kSoftBoxH, ownerWindow(), &error);
-	if (!m_softBox)
-	{
-		windows().note("options-soft-particles-failed", "[S-1484] the Soft particles box: " + error);
-		return;
-	}
-	// the port's own label (not a retail string: no lotr.str label exists for it)
-	GadgetCheckBoxSetText(m_softBox, u"Soft particles");
-	GadgetCheckBoxSetChecked(m_softBox, m_pendingSoft);
+	m_page.reset();
 }
 
 void AptOptionsScreen::runInit()
 {
 	AptScreen::runInit();
-	ensureSoftBox();
-	if (m_softBox)
-	{
-		m_softBox->winHide(false);
-	}
 }
 
 void AptOptionsScreen::runShutdown(bool *immediate)
 {
-	if (m_softBox)
-	{
-		m_softBox->winHide(true);
-	}
 	AptScreen::runShutdown(immediate);
 }
 
 WindowMsgHandledType AptOptionsScreen::gadgetMessage(GameWindow *from, std::uint32_t msg, WindowMsgData data1, WindowMsgData data2)
 {
-	if (msg == GBM_SELECTED && m_softBox && reinterpret_cast<GameWindow *>(data1) == m_softBox)
+	if (m_page && m_page->message(msg, data1, data2))
 	{
-		m_pendingSoft = GadgetCheckBoxIsChecked(m_softBox);
-		return MSG_HANDLED;
+		return MSG_HANDLED; // lane OPTS-3: one of the OpenBFME page's gadgets
 	}
 	GameWindow *detail = gadget("Detail");
 	if (msg == GCM_SELECTED && detail && !m_detailRefreshing && reinterpret_cast<GameWindow *>(data1) == detail)
@@ -1463,6 +1507,7 @@ WindowMsgHandledType AptOptionsScreen::gadgetMessage(GameWindow *from, std::uint
 		else if (chosen >= 0)
 		{
 			m_masterOption = chosen;
+			refreshHealthBarsBox(gadget("HealthBars")); // RW 0x91F9CE .. 0x91F9D4
 		}
 		AptScreen::gadgetMessage(from, msg, data1, data2);
 		return MSG_HANDLED;
@@ -1558,17 +1603,32 @@ void AptOptionsScreen::selectDetail()
 
 void AptOptionsScreen::saveAdvanced(OptionPreferences &prefs)
 {
-	// RW 0x920500 .. 0x92058E: a level in [0, 6); Custom: + 0x314 into the nine keys (RW 0x91EE11), else they go (RW 0x6E6986); the LOD manager takes the
-	// level (RW 0x6020B4, not ported: INFERENCE accepted) and StaticGameLOD is written (RW 0x6E6798)
+	// RW 0x920500 .. 0x92058E: a level in [0, 6); Custom: + 0x314 into the nine keys (RW 0x91EE11) and the Custom record from them (RW 0x6019D1),
+	// else the keys go (RW 0x6E6986); the LOD manager takes the level (RW 0x6020B4, lane OPTS-2: GameLODManager::setStaticLODLevel) and, when that
+	// applied it, StaticGameLOD is written (RW 0x92056A .. 0x92057A, RW 0x6E6798); the device then draws with the new state ("StaticGameLOD" option)
+	GameLODManager *lod = m_env.gameLOD;
 	if (m_masterOption == GameLODManager::kCustomLevel)
 	{
 		AdvancedOptionPrefs::parseInto(m_customTemplate, prefs);
+		if (lod)
+		{
+			lod->setCustomFromPreferences(prefs);
+		}
 	}
 	else
 	{
 		AdvancedOptionPrefs::clearSettings(prefs);
 	}
-	prefs.set("StaticGameLOD", GameLODManager::levelName(m_masterOption));
+	if (!lod)
+	{
+		prefs.set("StaticGameLOD", GameLODManager::levelName(m_masterOption)); // no manager (it says so: options-advanced)
+		return;
+	}
+	if (lod->setStaticLODLevel(m_masterOption, prefs))
+	{
+		prefs.set("StaticGameLOD", GameLODManager::levelName(lod->staticLevel()));
+		m_services.applyOption("StaticGameLOD", prefs.get("StaticGameLOD"));
+	}
 }
 
 void AptOptionsScreen::save()
@@ -1608,9 +1668,9 @@ void AptOptionsScreen::save()
 				m_services.applyOption(kVolumeKeys[t], buf);
 			}
 		}
-		if (gadget("HealthBars"))
+		if (gadget("HealthBars") && healthBarsAllowed())
 		{
-			prefs->setYesNo("AllHealthBars", checked("HealthBars")); // while the detail allows the box (RW 0x91EB77: S-1913)
+			prefs->setYesNo("AllHealthBars", checked("HealthBars")); // while the detail allows the box (RW 0x91EB77, lane OPTS-2)
 			m_services.applyOption("AllHealthBars", prefs->get("AllHealthBars"));
 		}
 		if (gadget("AlternateMouseSetUp"))
@@ -1663,9 +1723,7 @@ void AptOptionsScreen::save()
 	{
 		if (prefs)
 		{
-			prefs->setSoftParticles(m_pendingSoft);
 			writeOptions();
-			m_services.applyOption(OptionPreferences::kSoftParticles, prefs->get(OptionPreferences::kSoftParticles));
 		}
 		windows().requestShellPop();
 		closed = true;
@@ -1683,6 +1741,7 @@ void AptOptionsScreen::save()
 			saveAdvanced(*prefs);
 			writeOptions(); // RW 0x920582 (RW 0x7B274C)
 		}
+		refreshHealthBarsBox(gadget("HealthBars")); // RW 0x920595
 		if (m_advancedOnly)
 		{
 			if (!closed)
@@ -1697,6 +1756,122 @@ void AptOptionsScreen::save()
 	}
 }
 
+void AptOptionsScreen::frameUpdate()
+{
+	// lane OPTS-2 [S-3402]: on the advanced page the rows of the options the device does not draw yet are greyed and take no input (retail greys what
+	// does not apply). A row is found by the label the screen binds to it (APT:AdvancedOption<i>, RW 0x9213F4): the text field showing "$AdvancedOption<i>"
+	// (its bound variable read on its parent timeline); the clip holding that field is the row: _alpha 40 and every button / clip under it disabled
+	updateEntry(); // lane OPTS-3
+	if (m_state == kExtensionState && m_page)
+	{
+		// lane OPTS-3: the subtitle names the page (every text field of Main.SubTitle: the movie keeps one per page; a frame of the movie must not
+		// bring "SETTINGS" back)
+		const std::string wanted = toUtf8(m_page->spec().subtitle);
+		for (AptTextInst *subtitle : subtitleTexts())
+		{
+			if (!wanted.empty())
+			{
+				setFieldText(subtitle, wanted);
+			}
+		}
+	}
+	if (m_state != 2 || level() < 0)
+	{
+		return;
+	}
+	AptSpriteInst *root = windows().apt().level(level());
+	if (!root)
+	{
+		return;
+	}
+	std::vector<AptCharacterInst *> stack{ root };
+	while (!stack.empty())
+	{
+		AptCharacterInst *inst = stack.back();
+		stack.pop_back();
+		if (AptSpriteInst *sprite = inst->asSprite())
+		{
+			for (AptCharacterInst *c : sprite->children())
+			{
+				stack.push_back(c);
+			}
+			continue;
+		}
+		if (inst->type() != AptCharacterInst::Type::EditText || !inst->parent())
+		{
+			continue;
+		}
+		AptTextInst *text = static_cast<AptTextInst *>(inst);
+		std::string shown = text->text;
+		AptValue v;
+		if (!text->variable.empty() && text->variable.find_first_of("./") == std::string::npos && text->parent()->getMember(text->variable, v) && !v.isUndefined())
+		{
+			shown = v.toString();
+		}
+		static const std::string prefix = "$AdvancedOption";
+		if (shown.size() != prefix.size() + 1 || shown.compare(0, prefix.size(), prefix) != 0 || !std::isdigit((unsigned char)shown.back()))
+		{
+			continue;
+		}
+		const int index = shown.back() - '0';
+		if (index >= GameLODManager::kAdvancedOptionCount || GameLODManager::advancedOptionDrawn(index))
+		{
+			continue;
+		}
+		AptCharacterInst *row = text->parent();
+		row->setProperty("_alpha", AptValue::number(40.0));
+		std::vector<AptCharacterInst *> below{ row };
+		while (!below.empty())
+		{
+			AptCharacterInst *b = below.back();
+			below.pop_back();
+			b->enabled = false;
+			if (AptSpriteInst *s = b->asSprite())
+			{
+				for (AptCharacterInst *c : s->children())
+				{
+					below.push_back(c);
+				}
+			}
+		}
+		m_greyedRows.insert(index);
+	}
+}
+
+bool AptOptionsScreen::healthBarsAllowed() const
+{
+	// RW 0x91EB77 (BFME2 decomp Rva005183A0Finish.cpp, tier A): level 0 (VeryLow) no; Custom: the saved DecalLOD (RW 0x6E56EB, GetEnumValue row 8)
+	// is not Off; another level yes
+	if (m_masterOption == 0)
+	{
+		return false;
+	}
+	if (m_masterOption == GameLODManager::kCustomLevel)
+	{
+		return m_env.options && AdvancedOptionPrefs::getSetting(*m_env.options, 8) != 0;
+	}
+	return true;
+}
+
+void AptOptionsScreen::refreshHealthBarsBox(GameWindow *box)
+{
+	// RW 0x91EBD1: + 0x2BC is the box
+	if (!box)
+	{
+		return;
+	}
+	if (!healthBarsAllowed())
+	{
+		GadgetCheckBoxSetChecked(box, true); // RW 0x91EBF3 .. 0x91EC04
+		box->winEnable(false);
+	}
+	else
+	{
+		GadgetCheckBoxSetChecked(box, m_env.options && m_env.options->get("AllHealthBars") == "yes"); // RW 0x6E6179: strcmp with "yes"
+		box->winEnable(true);
+	}
+}
+
 void AptOptionsScreen::writeOptions()
 {
 	std::string error;
@@ -1704,4 +1879,370 @@ void AptOptionsScreen::writeOptions()
 	{
 		windows().note("options-save-failed", m_env.optionsFile.empty() ? std::string("Options.ini: no file name") : error);
 	}
+}
+
+// ---- lane OPTS-3: the OpenBFME page (NOT RETAIL; see AptSimpleScreens.h and GUI/AptScreens/OpenBFMEOptionsPage.h) -------------------------------------
+
+
+AptCharacterInst *AptOptionsScreen::find(const std::string &path) const
+{
+	if (level() < 0)
+	{
+		return nullptr;
+	}
+	Apt &apt = const_cast<AptOptionsScreen *>(this)->windows().apt();
+	AptSpriteInst *root = apt.level(level());
+	return root ? apt.resolvePath(root, path) : nullptr;
+}
+
+AptTextInst *AptOptionsScreen::firstText(AptCharacterInst *under, const std::string &name)
+{
+	std::vector<AptCharacterInst *> stack{ under };
+	while (!stack.empty())
+	{
+		AptCharacterInst *inst = stack.back();
+		stack.pop_back();
+		if (!inst)
+		{
+			continue;
+		}
+		if (inst->type() == AptCharacterInst::Type::EditText && (name.empty() || inst->instName() == name))
+		{
+			return static_cast<AptTextInst *>(inst);
+		}
+		if (AptSpriteInst *s = inst->asSprite())
+		{
+			const auto &children = s->children();
+			for (auto it = children.rbegin(); it != children.rend(); ++it)
+			{
+				stack.push_back(*it);
+			}
+		}
+	}
+	return nullptr;
+}
+
+void AptOptionsScreen::setFieldText(AptTextInst *field, const std::string &text)
+{
+	// a field bound to a variable shows the variable (AptRenderList: the parent timeline's member); else its own text
+	if (field->text != text)
+	{
+		field->text = text;
+		field->textAssigned = true;
+	}
+	if (!field->variable.empty() && field->variable.find_first_of("./") == std::string::npos && field->parent())
+	{
+		AptValue v;
+		if (!field->parent()->getMember(field->variable, v) || v.toString() != text)
+		{
+			field->parent()->setMember(field->variable, AptValue::string(text));
+		}
+	}
+}
+
+std::vector<AptTextInst *> AptOptionsScreen::subtitleTexts() const
+{
+	std::vector<AptTextInst *> out;
+	std::vector<AptCharacterInst *> stack{ find(kSubtitlePath) };
+	while (!stack.empty())
+	{
+		AptCharacterInst *inst = stack.back();
+		stack.pop_back();
+		if (!inst)
+		{
+			continue;
+		}
+		if (inst->type() == AptCharacterInst::Type::EditText)
+		{
+			out.push_back(static_cast<AptTextInst *>(inst));
+		}
+		if (AptSpriteInst *sp = inst->asSprite())
+		{
+			const auto &children = sp->children();
+			for (auto it = children.rbegin(); it != children.rend(); ++it)
+			{
+				stack.push_back(*it);
+			}
+		}
+	}
+	return out;
+}
+
+AptCharacterInst *AptOptionsScreen::entryClip() const
+{
+	return find(std::string("Main.FrameLeft.") + kEntryName);
+}
+
+bool AptOptionsScreen::entryBox(float out[4]) const
+{
+	AptCharacterInst *entry = entryClip();
+	return entry && m_state == 1 && m_extensionAvailable && entry->globallyVisible() && WindowManager::stageBounds(*entry, out);
+}
+
+void AptOptionsScreen::updateEntry()
+{
+	// the OPENBFME button on the basic page: made once the movie's CUSTOM SETTINGS button exists, placed, captioned every frame (its text field is
+	// the copied button's; a frame of its own timeline must not bring the copied caption back)
+	if (!m_extensionAvailable || m_state != 1 || level() < 0)
+	{
+		return;
+	}
+	AptCharacterInst *entry = entryClip();
+	if (!entry)
+	{
+		AptCharacterInst *source = find(kEntrySourcePath);
+		AptCharacterInst *frame = find("Main.FrameLeft");
+		AptSpriteInst *frameSprite = frame ? frame->asSprite() : nullptr;
+		if (!source || !frameSprite)
+		{
+			windows().note("options-openbfme-entry", std::string("[S-3403] Options: no ") + kEntrySourcePath + " to copy the OPENBFME button from");
+			return;
+		}
+		if (!windows().apt().duplicateClip(frameSprite, AptValue::object(source), AptValue::string(kEntryName), AptValue::integer(kEntryScriptDepth), &entry) || !entry)
+		{
+			windows().note("options-openbfme-entry", "[S-3403] Options: the OPENBFME button could not be made (duplicateMovieClip of " + std::string(kEntrySourcePath) + ")");
+			return;
+		}
+		// the stage point kEntryCentre in FrameLeft's space: the copy keeps the source's scale, only its place moves
+		bool ok = false;
+		const AptMatrix inverse = frameSprite->globalMatrix().inverse(&ok);
+		if (ok)
+		{
+			float bounds[4];
+			float cx = 0, cy = 0;
+			if (WindowManager::stageBounds(*source, bounds))
+			{
+				// the source's art centre relative to its origin, kept for the copy
+				float ox, oy;
+				source->globalMatrix().apply(0, 0, ox, oy);
+				cx = (bounds[0] + bounds[2]) * 0.5f - ox;
+				cy = (bounds[1] + bounds[3]) * 0.5f - oy;
+			}
+			float lx, ly;
+			inverse.apply(kEntryCentreX - cx, kEntryCentreY - cy, lx, ly);
+			entry->matrix.tx = lx;
+			entry->matrix.ty = ly;
+		}
+	}
+	if (AptTextInst *caption = firstText(entry, std::string()))
+	{
+		setFieldText(caption, kEntryCaption);
+	}
+}
+
+void AptOptionsScreen::setExtensionHidden(bool hidden)
+{
+	for (const char *path : kBasicFrames)
+	{
+		if (AptCharacterInst *f = find(path))
+		{
+			f->visible = !hidden;
+		}
+	}
+	if (AptCharacterInst *root = level() >= 0 ? windows().apt().level(level()) : nullptr)
+	{
+		for (AptCharacterInst *c : root->asSprite()->children())
+		{
+			if (c->instName().compare(0, std::strlen(kTooltipPrefix), kTooltipPrefix) == 0)
+			{
+				c->visible = !hidden;
+			}
+		}
+	}
+	const std::vector<AptTextInst *> subtitles = subtitleTexts();
+	if (!hidden && subtitles.size() == m_savedSubtitles.size())
+	{
+		for (std::size_t i = 0; i < subtitles.size(); ++i)
+		{
+			// the movie's own text (a "$label" the text records resolve) and the variable the field shows
+			const SavedField &f = m_savedSubtitles[i];
+			subtitles[i]->text = f.text;
+			subtitles[i]->textAssigned = f.assigned;
+			if (AptCharacterInst *holder = f.hasVariable ? subtitles[i]->parent() : nullptr)
+			{
+				holder->setMember(subtitles[i]->variable, f.variableValue);
+			}
+		}
+	}
+}
+
+bool AptOptionsScreen::openExtension(std::string *error)
+{
+	if (m_state == kExtensionState)
+	{
+		return true;
+	}
+	AptGadgetLayer *layer = windows().gadgetLayer();
+	std::string missing;
+	for (const char *path : kBasicFrames)
+	{
+		if (!find(path))
+		{
+			missing += std::string(missing.empty() ? "" : ", ") + path;
+		}
+	}
+	if (m_state != 1 || !layer || !ownerWindow() || !missing.empty())
+	{
+		if (error)
+		{
+			*error = m_state != 1 ? "the OpenBFME page opens from Options' basic page (the page is " + std::to_string(m_state) + ")"
+				: !missing.empty() ? "[S-3403] Options.apt has no " + missing + " (the OpenBFME page takes their place)"
+								   : std::string("no gadget layer");
+		}
+		return false;
+	}
+	if (!m_page)
+	{
+		m_page = std::make_unique<OpenBFMEOptionsPage>(*layer, ownerWindow());
+		m_page->setSink([this](const OpenBFMEPageEvent &e) { m_extensionEvents.push_back(e); }); // one FIFO with the bottom bar's events
+	}
+	layer->setDecorator([this](GadgetDrawList &out) {
+		if (m_page && m_state == kExtensionState)
+		{
+			m_page->decorate(out);
+		}
+	});
+	m_savedSubtitles.clear();
+	for (AptTextInst *subtitle : subtitleTexts())
+	{
+		SavedField f;
+		f.text = subtitle->text;
+		f.assigned = subtitle->textAssigned;
+		if (!subtitle->variable.empty() && subtitle->variable.find_first_of("./") == std::string::npos && subtitle->parent())
+		{
+			f.hasVariable = subtitle->parent()->getMember(subtitle->variable, f.variableValue);
+		}
+		m_savedSubtitles.push_back(f);
+	}
+	// the mirrored retail keys as Options.ini holds them now: closeExtension refreshes a retail gadget only when the page changed its key
+	m_mirroredAtOpen.clear();
+	for (const char *key : kMirroredKeys)
+	{
+		m_mirroredAtOpen.push_back(m_env.options && m_env.options->has(key) ? m_env.options->get(key) : std::string("\x01(none)"));
+	}
+	m_state = kExtensionState;
+	m_entryPressed = false;
+	m_barPressed = -1;
+	setExtensionHidden(true);
+	return true;
+}
+
+void AptOptionsScreen::closeExtension()
+{
+	if (m_state != kExtensionState)
+	{
+		return;
+	}
+	m_state = 1;
+	if (m_page)
+	{
+		m_page->hide();
+	}
+	if (AptGadgetLayer *layer = windows().gadgetLayer())
+	{
+		layer->setDecorator(nullptr);
+	}
+	setExtensionHidden(false);
+	// the retail gadgets the page mirrors (Options.ini ScrollFactor, AllHealthBars, AlternateMouseSetup) take the file's value only when the page
+	// wrote a new one (its ACCEPT): the basic page's own pending edits (a box ticked, not yet saved) stay otherwise, CANCEL included (Sol review r1)
+	for (std::size_t i = 0; i < m_mirroredAtOpen.size() && i < std::size(kMirroredKeys); ++i)
+	{
+		const char *key = kMirroredKeys[i];
+		const std::string now = m_env.options && m_env.options->has(key) ? m_env.options->get(key) : std::string("\x01(none)");
+		if (now == m_mirroredAtOpen[i])
+		{
+			continue;
+		}
+		if (std::strcmp(key, "ScrollFactor") == 0)
+		{
+			if (GameWindow *sc = gadget("ScrollSpeed"))
+			{
+				GadgetSliderSetPosition(sc, initialScrollSpeed());
+			}
+		}
+		else if (std::strcmp(key, "AllHealthBars") == 0)
+		{
+			refreshHealthBarsBox(gadget("HealthBars"));
+		}
+		else if (GameWindow *mouse = gadget("AlternateMouseSetUp"))
+		{
+			GadgetCheckBoxSetChecked(mouse, now == "yes");
+		}
+	}
+	m_mirroredAtOpen.clear();
+}
+
+std::vector<OpenBFMEPageEvent> AptOptionsScreen::takeExtensionEvents()
+{
+	// one FIFO: the page's changes and the bottom bar's / the button's clicks in the order they happened (Sol review r1)
+	std::vector<OpenBFMEPageEvent> out;
+	out.swap(m_extensionEvents);
+	return out;
+}
+
+bool AptOptionsScreen::mouseFilter(int kind, float x, float y)
+{
+	if (m_state == kExtensionState)
+	{
+		if (m_page && m_page->mouse(kind, x, y))
+		{
+			return true;
+		}
+		// the bottom bar: Options.apt plays its closing animation before it sends AptOptions::Save / Cancel (the movie's buttons; see
+		// test_fb7_menus.cpp clickOptionsButton), so while the page is up a click on CANCEL / RESET TO DEFAULTS / ACCEPT is the page's and never
+		// reaches the movie (its hover animation still plays: the moves go on)
+		if (kind == 0)
+		{
+			return false;
+		}
+		int hit = -1;
+		for (int i = 0; i < 3 && hit < 0; ++i)
+		{
+			// the button's own hit area (the clip's bounds hold the hidden frames of its animation)
+			AptCharacterInst *b = find(std::string(kBarButtons[i]) + ".bttn");
+			AptButtonInst *button = b ? b->asButton() : nullptr;
+			if (button && button->globallyVisible() && button->hitTest(x, y))
+			{
+				hit = i;
+			}
+		}
+		if (kind == 1)
+		{
+			m_barPressed = hit;
+			return hit >= 0;
+		}
+		const int pressed = m_barPressed;
+		m_barPressed = -1;
+		if (pressed < 0)
+		{
+			return false;
+		}
+		if (pressed == hit)
+		{
+			static const OpenBFMEPageEvent::Kind kinds[3] = { OpenBFMEPageEvent::Kind::Cancel, OpenBFMEPageEvent::Kind::Reset, OpenBFMEPageEvent::Kind::Accept };
+			m_extensionEvents.push_back({ kinds[pressed], std::string(), 0 });
+		}
+		return true;
+	}
+	if (kind == 0)
+	{
+		return false;
+	}
+	float box[4];
+	const bool inside = entryBox(box) && x >= box[0] && x < box[2] && y >= box[1] && y < box[3];
+	if (kind == 1)
+	{
+		m_entryPressed = inside;
+		return inside; // the copied button's own press action (EnterAdvancedSettings) must not run
+	}
+	if (m_entryPressed)
+	{
+		m_entryPressed = false;
+		if (inside)
+		{
+			m_extensionEvents.push_back({ OpenBFMEPageEvent::Kind::Entry, std::string(), 0 });
+		}
+		return true;
+	}
+	return false;
 }

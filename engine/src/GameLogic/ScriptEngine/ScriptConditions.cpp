@@ -5,6 +5,7 @@
 #include "GameLogic/ScriptEngine/ScriptConditions.h"
 #include "GameLogic/Module/EmotionModules.h"
 
+#include "Common/AsciiString.h"
 #include "Common/Player.h"
 #include "Common/PlayerList.h"
 #include "Common/Science.h"
@@ -1169,10 +1170,22 @@ bool ScriptConditions::evaluate(ScriptEngine &engine, const ScriptCondition &c)
 		engine.note("[S-1180] HAS_DELAYED_CARRYOVER_UNIT_OF_TYPE: no campaign carry-over store (a mission started on its own: false)");
 		return false;
 	case IS_GAME_MODE_ACTIVE:
-		// RW 0x7E9E83: "ringheroes" (any case) and (no game options object RW 0xDE892C, or its + 0x68 == 1): the option is not part of this game's
-		// setup here (S-1180)
-		engine.note("[S-1180] IS_GAME_MODE_ACTIVE: the ring heroes option (RW 0xDE892C + 0x68) is not part of the game setup (false)");
-		return false;
+	{
+		// RW 0x7E9E83: "ringheroes" (any case, RW 0x4372C0) and (no game options object RW 0xDE892C, or its + 0x68 == 1). lane RULES-1: the game setup's
+		// AllowRingHeroes rule (GameLogic::gameRules); a game with no rule block (a map or script test without a lobby, where retail's "no game options
+		// object" answer is not reproduced) stays false and reported (S-1180)
+		if (AsciiStringUtil::compareNoCase(param(c, 0).stringValue, "ringheroes") != 0)
+		{
+			return false;
+		}
+		const GameRules &rules = logic.gameRules();
+		if (MpGameRules::isNone(rules))
+		{
+			engine.note("[S-1180] IS_GAME_MODE_ACTIVE: the game has no rule block (RW 0xDE892C + 0x68): false");
+			return false;
+		}
+		return rules[RULE_ALLOW_RING_HEROES] == 1;
+	}
 	case NAMED_ATTACKED_BY_PLAYER: // RW 0x7EA513: the body's last damage record (vslot 0x40), its source object (+ 8) in the world, controlled by a player of the mask
 	{
 		const Object *o = engine.getUnitNamed(param(c, 0).stringValue);

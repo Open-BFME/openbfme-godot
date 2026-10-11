@@ -29,12 +29,15 @@
 #include "Libraries/Source/Apt/AptCharacterInst.h"
 #include "Libraries/Source/Apt/AptRenderList.h"
 
+#include <array>
+#include <cmath>
 #include <cstdio>
 #include <filesystem>
 #include <functional>
 #include <map>
 #include <fstream>
 #include <memory>
+#include <set>
 #include <sstream>
 #include <string>
 
@@ -82,6 +85,7 @@ struct ShellFx
 				ini.load(f, INI_LOAD_OVERWRITE);
 			}
 			environment.gameLOD = &gameLOD;
+			gameLOD.init(prefs); // lane OPTS-2: the level in effect at boot (GodotAptPlayer: RW 0x602165 / RW 0x4465D8)
 		}
 		// the inputs the device gives (GodotAptPlayer boot_shell): AudioSettings-like defaults, two addresses, one mode
 		const float defaults[5] = { 0.70f, 0.75f, 0.55f, 0.60f, 0.80f };
@@ -979,14 +983,15 @@ TEST_CASE("play2 options retail: Advanced shows the nine option rows with their 
 		{ "AdvancedOption8", { "Decal Detail", "2 High" } },
 	};
 	CHECK(rows == want);
-	// Model Detail's first choice (Low): the movie's SetCustom writes the template and the level Custom through the externs
+	// VFX Detail's first choice (VeryLow): the movie's SetCustom writes the template and the level Custom through the externs (lane OPTS-2: Model
+	// Detail's row, which the device does not draw yet, is greyed and takes no click: S-3402)
 	AptCharacterInst *level = fx.wm->apt().level(fx.shell->top()->level());
-	AptCharacterInst *modelRow = findClip(level, "Main.instance8"); // the ModelLOD row (MyOption AdvancedOption0)
-	REQUIRE(modelRow);
-	clickButton(fx, firstButtonUnder(findClip(modelRow, "DescreetSliderButton30")));
+	AptCharacterInst *effectsRow = findClip(level, "Main.instance12"); // the EffectsLOD row (MyOption AdvancedOption2)
+	REQUIRE(effectsRow);
+	clickButton(fx, firstButtonUnder(findClip(effectsRow, "DescreetSliderButton30")));
 	fx.tick(30);
 	CHECK(options->masterOption() == GameLODManager::kCustomLevel);
-	CHECK(options->customTemplate() == "0,3,3,3,2,2,2,2,2");
+	CHECK(options->customTemplate() == "2,3,0,3,2,2,2,2,2");
 	// Done: the movie's CloseAdvancedSettings and GameCode('Save') on the advanced page (state 2): RW 0x9204F3 writes the level and the custom
 	// settings and, without AdvancedOnly, the screen stays up on its basic page (state 1, RW 0x9205AA)
 	clickButton(fx, firstButtonUnder(findClip(level, "Done")));
@@ -996,7 +1001,8 @@ TEST_CASE("play2 options retail: Advanced shows the nine option rows with their 
 	CHECK(options->pageState() == 1);
 	const std::string text = fx.fileText();
 	CHECK(text.find("StaticGameLOD = Custom\n") != std::string::npos);
-	CHECK(text.find("ModelLOD = Low\n") != std::string::npos);
+	CHECK(text.find("EffectsLOD = VeryLow\n") != std::string::npos);
+	CHECK(text.find("ModelLOD = High\n") != std::string::npos);
 	CHECK(text.find("AnimationLOD = High\n") != std::string::npos);
 	CHECK(text.find("TerrainLOD = High\n") != std::string::npos);
 	CHECK(text.find("DecalLOD = High\n") != std::string::npos);
@@ -1018,4 +1024,539 @@ TEST_CASE("play2 options retail: a level chosen in the Detail list is saved as S
 	const std::string text = fx.fileText();
 	CHECK(text.find("StaticGameLOD = Low\n") != std::string::npos);
 	CHECK(text.find("ModelLOD") == std::string::npos);
+}
+
+// lane OPTS-2: the level chosen is applied (RW 0x6020B4 / 0x601C62) and the device told; the health bars box follows the detail (RW 0x91EB77 /
+// 0x91EBD1)
+TEST_CASE("opts2 options retail: Save applies the level the Detail list chose; VeryLow checks and disables the health bars box")
+{
+	OPENBFME_REQUIRE_RETAIL(mount);
+	ShellFx fx(mount, "AllHealthBars = no\nStaticGameLOD = High\n");
+	REQUIRE(fx.gameLOD.staticLevel() == 3); // the fixture's boot (GameLODManager::init)
+	AptOptionsScreen *options = fx.openOptionsFromMainMenu();
+	REQUIRE(options);
+	CHECK(options->masterOption() == 3); // + 0x310: the manager's level
+	GameWindow *bars = options->gadget("HealthBars");
+	REQUIRE(bars);
+	CHECK_FALSE(GadgetCheckBoxIsChecked(bars));
+	CHECK(bars->winGetEnabled());
+	GameWindow *detail = options->gadget("Detail");
+	REQUIRE(detail);
+	// the list is GUI:UltraHigh .. GUI:VeryLow, GUI:Custom (item data 4 .. 0, 5): item 4 is VeryLow
+	GadgetComboBoxSetSelectedPos(detail, 4);
+	REQUIRE(options->masterOption() == 0);
+	CHECK(GadgetCheckBoxIsChecked(bars)); // RW 0x91EBF3: checked and disabled
+	CHECK_FALSE(bars->winGetEnabled());
+	fx.services.appliedOptions.clear();
+	clickOptionsButton(fx, "Accept");
+	CHECK(fx.gameLOD.staticLevel() == 0);
+	CHECK(fx.gameLOD.state().maxParticleCount == 500);
+	CHECK(fx.gameLOD.state().allHealthBars);
+	const std::string text = fx.fileText();
+	CHECK(text.find("StaticGameLOD = VeryLow\n") != std::string::npos);
+	CHECK(text.find("AllHealthBars = no\n") != std::string::npos); // the disabled box is not saved (the file keeps its value)
+	bool told = false;
+	for (const auto &o : fx.services.appliedOptions)
+	{
+		told = told || (o.first == "StaticGameLOD" && o.second == "VeryLow");
+	}
+	CHECK(told);
+}
+
+// lane OPTS-2 (S-3401): a device that cannot change the display mode opens the screen with AllowResolutionChange off: the list is disabled, as retail's
+// lobby / in-game openings leave it, and the stop is noted
+TEST_CASE("opts2 options retail: without a display mode change the Resolution list is disabled and S-3401 noted")
+{
+	OPENBFME_REQUIRE_RETAIL(mount);
+	ShellFx fx(mount, "");
+	fx.environment.resolutionChangeApplies = false;
+	AptOptionsScreen *options = fx.openOptionsFromMainMenu();
+	REQUIRE(options);
+	GameWindow *res = options->gadget("Resolution");
+	CHECK((!res || !res->winGetEnabled())); // the movie shows its "only from the main menu" text instead of the list (AllowResolutionChange "0")
+	bool noted = false;
+	for (const auto &n : fx.wm->notes())
+	{
+		noted = noted || (n.kind == "options-resolution" && n.detail.rfind("[S-3401]", 0) == 0);
+	}
+	CHECK(noted);
+}
+
+// lane OPTS-2 (S-3402, coordinator review): the advanced page greys the rows of the options the device does not draw (the text field showing
+// "$AdvancedOption<i>" finds the row); EffectsLOD, TextureQualityLOD and DecalLOD stay usable; the movie / EAX / audio quality controls are disabled
+TEST_CASE("opts2 options retail: the advanced rows the device cannot show are greyed; Movie, EAX3 and High Audio Quality are disabled")
+{
+	OPENBFME_REQUIRE_RETAIL(mount);
+	ShellFx fx(mount, "StaticGameLOD = High\n");
+	AptOptionsScreen *options = fx.openOptionsFromMainMenu();
+	REQUIRE(options);
+	for (const char *name : { "MovieVolume", "EAX3", "HighAudioQuality" })
+	{
+		GameWindow *w = options->gadget(name);
+		REQUIRE_MESSAGE(w, name);
+		CHECK_FALSE_MESSAGE(w->winGetEnabled(), name);
+	}
+	CHECK(options->gadget("MusicVolume")->winGetEnabled());
+	REQUIRE(fx.wm->invokeCallback("AptOptions::EnterAdvancedSettings", ""));
+	std::string error;
+	REQUIRE_MESSAGE(fx.wm->invokeAS(options->level(), "ShowAdvancedSettings", {}, nullptr, &error), error);
+	fx.tick(150);
+	const std::set<int> want = { 0, 1, 3, 4, 5, 7 };
+	CHECK(options->greyedRows() == want);
+	// a greyed row takes no click: its buttons are disabled; an EffectsLOD button still is enabled
+	int disabled = 0;
+	std::vector<AptCharacterInst *> stack{ fx.wm->apt().level(options->level()) };
+	while (!stack.empty())
+	{
+		AptCharacterInst *i = stack.back();
+		stack.pop_back();
+		if (i->asButton())
+		{
+			if (!i->enabled)
+			{
+				++disabled;
+			}
+		}
+		if (AptSpriteInst *s = i->asSprite())
+		{
+			for (AptCharacterInst *c : s->children())
+			{
+				stack.push_back(c);
+			}
+		}
+	}
+	CHECK(disabled >= 6);
+}
+
+// ---- lane OPTS-3: the OpenBFME page of Options.apt (not retail: GUI/AptScreens/OpenBFMEOptionsPage.h) ----------------------------------------------------
+namespace
+{
+void clickStage(ShellFx &fx, float x, float y)
+{
+	fx.wm->postMouseMove(x, y);
+	fx.tick(2);
+	fx.wm->postMouseButton(true);
+	fx.tick(2);
+	fx.wm->postMouseButton(false);
+	fx.tick(2);
+}
+
+bool overlaps(const float a[4], const float b[4])
+{
+	return a[0] < b[2] && b[0] < a[2] && a[1] < b[3] && b[1] < a[3];
+}
+
+// every visible edit text of the level but the ones under `skip`, with its stage box
+std::vector<std::pair<std::string, std::array<float, 4>>> visibleTexts(ShellFx &fx, int level, AptCharacterInst *skip)
+{
+	std::vector<std::pair<std::string, std::array<float, 4>>> out;
+	std::vector<AptCharacterInst *> stack{ fx.wm->apt().level(level) };
+	while (!stack.empty())
+	{
+		AptCharacterInst *i = stack.back();
+		stack.pop_back();
+		if (!i || i == skip || !i->globallyVisible())
+		{
+			continue;
+		}
+		float b[4];
+		if (i->type() == AptCharacterInst::Type::EditText && !static_cast<AptTextInst *>(i)->text.empty() && WindowManager::stageBounds(*i, b))
+		{
+			out.push_back({ i->targetPath(), { b[0], b[1], b[2], b[3] } });
+		}
+		if (AptSpriteInst *s = i->asSprite())
+		{
+			for (AptCharacterInst *c : s->children())
+			{
+				stack.push_back(c);
+			}
+		}
+	}
+	return out;
+}
+
+std::string subtitleText(ShellFx &fx, int level)
+{
+	std::vector<AptCharacterInst *> stack{ fx.wm->apt().resolvePath(fx.wm->apt().level(level), "Main.SubTitle") };
+	while (!stack.empty())
+	{
+		AptCharacterInst *i = stack.back();
+		stack.pop_back();
+		if (!i)
+		{
+			continue;
+		}
+		if (i->type() == AptCharacterInst::Type::EditText)
+		{
+			return static_cast<AptTextInst *>(i)->text;
+		}
+		if (AptSpriteInst *sp = i->asSprite())
+		{
+			for (AptCharacterInst *c : sp->children())
+			{
+				stack.push_back(c);
+			}
+		}
+	}
+	return "(no subtitle)";
+}
+
+OpenBFMEPageSpec samplePage()
+{
+	OpenBFMEPageSpec spec;
+	spec.subtitle = u"OPENBFME SETTINGS";
+	spec.tabsHeader = u"OpenBFME";
+	spec.tabs = { u"Display", u"Graphics+", u"Camera" };
+	spec.tab = 0;
+	spec.panelHeader = u"Display";
+	OpenBFMEPageRow mode;
+	mode.kind = OpenBFMEPageRow::Kind::Choice;
+	mode.key = "window_mode";
+	mode.label = u"Window mode";
+	mode.items = { { u"Windowed", true }, { u"Borderless window", true }, { u"Fullscreen", false } };
+	mode.value = 0;
+	OpenBFMEPageRow fps;
+	fps.kind = OpenBFMEPageRow::Kind::Check;
+	fps.key = "show_fps";
+	fps.label = u"Show the frame rate (F11)";
+	fps.help = u"The frame counter in the corner.";
+	OpenBFMEPageRow scale;
+	scale.kind = OpenBFMEPageRow::Kind::Slider;
+	scale.key = "render_scale";
+	scale.label = u"Render scale";
+	scale.minValue = 50;
+	scale.maxValue = 100;
+	scale.value = 100;
+	scale.valueText = u"100%";
+	spec.rows = { mode, fps, scale };
+	spec.note = u"Options of this rebuild.";
+	return spec;
+}
+} // namespace
+
+TEST_CASE("opts3 options retail: the OPENBFME button is a copy of the movie's CUSTOM SETTINGS button in the free corner above CANCEL, over no retail text")
+{
+	OPENBFME_REQUIRE_RETAIL(mount);
+	ShellFx fx(mount, "StaticGameLOD = High\n");
+	AptOptionsScreen *options = fx.openOptionsFromMainMenu();
+	REQUIRE(options);
+	float box[4];
+	CHECK_FALSE(options->entryBox(box)); // only once the device offers the page
+	options->setExtensionAvailable(true);
+	fx.tick(40);
+	REQUIRE(options->entryBox(box));
+	AptCharacterInst *entry = fx.wm->apt().resolvePath(fx.wm->apt().level(options->level()), "Main.FrameLeft.OpenBFMEEntry");
+	REQUIRE(entry);
+	CHECK(std::abs((box[0] + box[2]) / 2 - AptOptionsScreen::kEntryCentreX) < 2.0f);
+	CHECK(std::abs((box[1] + box[3]) / 2 - AptOptionsScreen::kEntryCentreY) < 2.0f);
+	CHECK((box[0] >= 0 && box[2] <= 1024 && box[1] >= 0 && box[3] <= 768));
+	// its caption is OPENBFME, drawn by the copied button's own text field
+	bool captioned = false;
+	for (const auto &t : visibleTexts(fx, options->level(), nullptr))
+	{
+		captioned = captioned || t.first.find("OpenBFMEEntry") != std::string::npos;
+	}
+	CHECK(captioned);
+	// no retail text, frame or bottom bar button under it
+	for (const auto &t : visibleTexts(fx, options->level(), entry))
+	{
+		CHECK_FALSE_MESSAGE(overlaps(box, t.second.data()), "the OPENBFME button covers " << t.first);
+	}
+	for (const char *path : { "Main.FrameLeft", "Main.FrameMiddle", "Main.FrameRight", "Buttons.Cancel", "Buttons.Default", "Buttons.Accept" })
+	{
+		AptCharacterInst *c = fx.wm->apt().resolvePath(fx.wm->apt().level(options->level()), path);
+		REQUIRE_MESSAGE(c, path);
+		float b[4];
+		REQUIRE(WindowManager::stageBounds(*c, b));
+		if (std::string(path) == "Main.FrameLeft")
+		{
+			// FrameLeft's own frame art (the button is its child: the frame shapes are its other children)
+			for (AptCharacterInst *k : c->asSprite()->children())
+			{
+				float kb[4];
+				if (k != entry && k->globallyVisible() && WindowManager::stageBounds(*k, kb))
+				{
+					CHECK_FALSE_MESSAGE(overlaps(box, kb), "the OPENBFME button covers " << k->targetPath());
+				}
+			}
+			continue;
+		}
+		CHECK_FALSE_MESSAGE(overlaps(box, b), "the OPENBFME button covers " << path);
+	}
+	// a click on it is the engine's: the page's Entry event, not the copied button's EnterAdvancedSettings
+	clickStage(fx, (box[0] + box[2]) / 2, (box[1] + box[3]) / 2);
+	fx.tick(30);
+	std::vector<OpenBFMEPageEvent> events = options->takeExtensionEvents();
+	REQUIRE(events.size() == 1);
+	CHECK(events[0].kind == OpenBFMEPageEvent::Kind::Entry);
+	CHECK(options->pageState() == 1);
+	CHECK(fx.shell->top()->filename() == "Options.apt");
+	// not on the advanced page
+	REQUIRE(fx.wm->invokeCallback("AptOptions::EnterAdvancedSettings", ""));
+	std::string error;
+	REQUIRE_MESSAGE(fx.wm->invokeAS(options->level(), "ShowAdvancedSettings", {}, nullptr, &error), error);
+	fx.tick(150);
+	CHECK_FALSE(options->entryBox(box));
+}
+
+TEST_CASE("opts3 options retail: the OpenBFME page takes the frames' place with retail gadgets; its tabs, rows and the bottom bar are its own; back to the basic page")
+{
+	OPENBFME_REQUIRE_RETAIL(mount);
+	ShellFx fx(mount, "StaticGameLOD = High\nScrollFactor = 50\n");
+	AptOptionsScreen *options = fx.openOptionsFromMainMenu();
+	REQUIRE(options);
+	options->setExtensionAvailable(true);
+	fx.tick(40);
+	const std::string subtitleBefore = subtitleText(fx, options->level());
+	std::string error;
+	REQUIRE_MESSAGE(options->openExtension(&error), error);
+	OpenBFMEOptionsPage *page = options->extensionPage();
+	REQUIRE(page);
+	REQUIRE_MESSAGE(page->show(samplePage(), &error), error);
+	fx.tick(10);
+	Apt &apt = fx.wm->apt();
+	AptSpriteInst *root = apt.level(options->level());
+	for (const char *path : { "Main.FrameLeft", "Main.FrameMiddle", "Main.FrameRight" })
+	{
+		CHECK_FALSE_MESSAGE(apt.resolvePath(root, path)->globallyVisible(), path);
+	}
+	CHECK(options->gadget("MusicVolume")->winIsHidden()); // the frames' gadgets go with them
+	CHECK(subtitleText(fx, options->level()) == "OPENBFME SETTINGS");
+	// the rows are retail gadgets at the page's places, the draw list has the frames, the labels and the help line in Options.apt's fonts
+	GameWindow *combo = page->gadget("window_mode");
+	GameWindow *box = page->gadget("show_fps");
+	GameWindow *slider = page->gadget("render_scale");
+	REQUIRE(combo);
+	REQUIRE(box);
+	REQUIRE(slider);
+	CHECK(BitTest(combo->winGetStyle(), GWS_COMBO_BOX));
+	CHECK(BitTest(box->winGetStyle(), GWS_CHECK_BOX));
+	CHECK(BitTest(slider->winGetStyle(), GWS_HORZ_SLIDER));
+	CHECK(GadgetSliderGetPosition(slider) == 100);
+	GadgetDrawList list;
+	fx.layer->buildDrawList(list);
+	int labels = 0, frames = 0;
+	for (const GadgetDrawCommand &c : list.commands)
+	{
+		if (c.window != "OpenBFMEPage")
+		{
+			continue;
+		}
+		if (c.kind == GadgetDrawCommand::Kind::Text)
+		{
+			CHECK(c.font.name == "Albertus MT");
+			labels += c.text == u"Window mode" || c.text == u"Render scale" ? 1 : 0;
+		}
+		frames += c.kind == GadgetDrawCommand::Kind::OpenRect ? 1 : 0;
+	}
+	CHECK(labels == 2);
+	CHECK(frames == 6); // the two frames (two rectangles each), the boxes under the combo and the slider
+	// a choice and a box through the gadgets' messages; a greyed choice is refused
+	REQUIRE_MESSAGE(page->choose("window_mode", 1, &error), error);
+	REQUIRE_MESSAGE(page->choose("window_mode", 2, &error), error);
+	REQUIRE_MESSAGE(page->choose("show_fps", 1, &error), error);
+	REQUIRE_MESSAGE(page->choose("render_scale", 70, &error), error);
+	std::vector<OpenBFMEPageEvent> events = options->takeExtensionEvents();
+	REQUIRE(events.size() == 3);
+	CHECK((events[0].key == "window_mode" && events[0].value == 1));
+	CHECK((events[1].key == "show_fps" && events[1].value == 1));
+	CHECK((events[2].key == "render_scale" && events[2].value == 70));
+	int sel = -1;
+	GadgetComboBoxGetSelectedPos(combo, &sel);
+	CHECK(sel == 1);
+	// the check box by a real click
+	std::array<int, 4> r{};
+	REQUIRE(page->rect("show_fps", r));
+	clickStage(fx, (r[0] + r[2]) / 2.0f, (r[1] + r[3]) / 2.0f);
+	events = options->takeExtensionEvents();
+	REQUIRE(events.size() == 1);
+	CHECK((events[0].key == "show_fps" && events[0].value == 0));
+	// a tab by a click; the help line follows the pointed row
+	REQUIRE(page->rect("tab:2", r));
+	clickStage(fx, (r[0] + r[2]) / 2.0f, (r[1] + r[3]) / 2.0f);
+	events = options->takeExtensionEvents();
+	REQUIRE(events.size() == 1);
+	CHECK((events[0].kind == OpenBFMEPageEvent::Kind::Tab && events[0].value == 2));
+	REQUIRE(page->rect("show_fps", r));
+	fx.wm->postMouseMove(r[2] + 40.0f, (r[1] + r[3]) / 2.0f);
+	CHECK(page->helpText() == u"The frame counter in the corner.");
+	fx.wm->postMouseMove(10, 10);
+	CHECK(page->helpText() == u"Options of this rebuild.");
+	// the bottom bar: a click is the page's (the movie's closing animation does not start), Options stays up on the page
+	for (const char *name : { "Accept", "Default", "Cancel" })
+	{
+		AptButtonInst *b = firstButtonUnder(findClip(root, name));
+		REQUIRE_MESSAGE(b, name);
+		float x0, y0, x1, y1;
+		REQUIRE(b->contentBounds(x0, y0, x1, y1));
+		float x, y;
+		b->globalMatrix().apply((x0 + x1) / 2, (y0 + y1) / 2, x, y);
+		clickStage(fx, x, y);
+		fx.tick(60);
+		events = options->takeExtensionEvents();
+		REQUIRE_MESSAGE(events.size() == 1, name);
+		const OpenBFMEPageEvent::Kind want = std::string(name) == "Accept" ? OpenBFMEPageEvent::Kind::Accept
+			: std::string(name) == "Default"                              ? OpenBFMEPageEvent::Kind::Reset
+																		   : OpenBFMEPageEvent::Kind::Cancel;
+		CHECK_MESSAGE(events[0].kind == want, name);
+		REQUIRE(fx.shell->top());
+		CHECK(fx.shell->top()->filename() == "Options.apt");
+		CHECK(options->extensionOpen());
+	}
+	CHECK(options->commandCalls("AptOptions::Save") == 0);
+	// back: the frames, the gadgets and the subtitle return; Options.ini's ScrollFactor (written by the page meanwhile) shows on the retail slider
+	fx.prefs.set("ScrollFactor", "80");
+	options->closeExtension();
+	fx.tick(10);
+	for (const char *path : { "Main.FrameLeft", "Main.FrameMiddle", "Main.FrameRight" })
+	{
+		CHECK_MESSAGE(apt.resolvePath(root, path)->globallyVisible(), path);
+	}
+	CHECK_FALSE(options->gadget("MusicVolume")->winIsHidden());
+	CHECK(page->gadget("window_mode") == nullptr);
+	CHECK(GadgetSliderGetPosition(options->gadget("ScrollSpeed")) == options->initialScrollSpeed()); // RW 0x920A0B's ftol: 79 for 80
+	CHECK(options->initialScrollSpeed() >= 79);
+	CHECK(subtitleText(fx, options->level()) == subtitleBefore);
+	// the retail Accept closes Options again
+	clickOptionsButton(fx, "Accept");
+}
+
+// lane OPTS-3, stop S-3403: the page and its button lean on Options.apt's clip names (Main.FrameLeft.Advanced, Main.FrameLeft / FrameMiddle /
+// FrameRight); a movie without them (a mod's) gets no button and no page, and says why
+TEST_CASE("opts3 stop S-3403: without the movie's CUSTOM SETTINGS button or a settings frame the OpenBFME button and page are refused and reported")
+{
+	OPENBFME_REQUIRE_RETAIL(mount);
+	ShellFx fx(mount, "StaticGameLOD = High\n");
+	AptOptionsScreen *options = fx.openOptionsFromMainMenu();
+	REQUIRE(options);
+	Apt &apt = fx.wm->apt();
+	AptSpriteInst *root = apt.level(options->level());
+	AptCharacterInst *advanced = apt.resolvePath(root, "Main.FrameLeft.Advanced");
+	REQUIRE(advanced);
+	REQUIRE(apt.removeClipByTarget(root, AptValue::object(advanced)));
+	options->setExtensionAvailable(true);
+	fx.tick(10);
+	float box[4];
+	CHECK_FALSE(options->entryBox(box));
+	bool noted = false;
+	for (const auto &n : fx.wm->notes())
+	{
+		noted = noted || (n.kind == "options-openbfme-entry" && n.detail.rfind("[S-3403]", 0) == 0);
+	}
+	CHECK(noted);
+	AptCharacterInst *right = apt.resolvePath(root, "Main.FrameRight");
+	REQUIRE(right);
+	REQUIRE(apt.removeClipByTarget(root, AptValue::object(right)));
+	std::string error;
+	CHECK_FALSE(options->openExtension(&error));
+	CHECK(error.find("[S-3403]") == 0);
+	CHECK(error.find("Main.FrameRight") != std::string::npos);
+	CHECK_FALSE(options->extensionOpen());
+}
+
+// Sol review r1 (1): a retail edit not yet saved survives a visit of the OpenBFME page that changes nothing (CANCEL): Options' ACCEPT saves it
+TEST_CASE("opts3 options retail: a pending retail edit survives the OpenBFME page's CANCEL and Options' ACCEPT saves it")
+{
+	OPENBFME_REQUIRE_RETAIL(mount);
+	ShellFx fx(mount, "StaticGameLOD = High\nAllHealthBars = no\n");
+	AptOptionsScreen *options = fx.openOptionsFromMainMenu();
+	REQUIRE(options);
+	options->setExtensionAvailable(true);
+	fx.tick(40);
+	GameWindow *bars = options->gadget("HealthBars");
+	REQUIRE(bars);
+	REQUIRE(bars->winGetEnabled());
+	REQUIRE_FALSE(GadgetCheckBoxIsChecked(bars));
+	GadgetCheckBoxToggle(bars); // the player ticks Show All Health Bars (not saved yet)
+	REQUIRE(GadgetCheckBoxIsChecked(bars));
+	std::string error;
+	REQUIRE_MESSAGE(options->openExtension(&error), error);
+	REQUIRE_MESSAGE(options->extensionPage()->show(samplePage(), &error), error);
+	fx.tick(10);
+	options->closeExtension(); // CANCEL: the page wrote nothing
+	fx.tick(10);
+	CHECK(GadgetCheckBoxIsChecked(bars));
+	clickOptionsButton(fx, "Accept");
+	CHECK(fx.fileText().find("AllHealthBars = yes") != std::string::npos);
+}
+
+// Sol review r1 (2): the page's changes and the bottom bar's clicks come out in the order they happened (one FIFO), both ways round
+TEST_CASE("opts3 options retail: a change and a bottom bar click in one interval keep their order")
+{
+	OPENBFME_REQUIRE_RETAIL(mount);
+	ShellFx fx(mount, "StaticGameLOD = High\n");
+	AptOptionsScreen *options = fx.openOptionsFromMainMenu();
+	REQUIRE(options);
+	options->setExtensionAvailable(true);
+	fx.tick(40);
+	std::string error;
+	REQUIRE_MESSAGE(options->openExtension(&error), error);
+	OpenBFMEOptionsPage *page = options->extensionPage();
+	REQUIRE_MESSAGE(page->show(samplePage(), &error), error);
+	fx.tick(10);
+	AptSpriteInst *root = fx.wm->apt().level(options->level());
+	auto clickBar = [&](const char *name) {
+		AptButtonInst *b = firstButtonUnder(findClip(root, name));
+		REQUIRE_MESSAGE(b, name);
+		float x0, y0, x1, y1;
+		REQUIRE(b->contentBounds(x0, y0, x1, y1));
+		float x, y;
+		b->globalMatrix().apply((x0 + x1) / 2, (y0 + y1) / 2, x, y);
+		clickStage(fx, x, y);
+	};
+	// a change, then ACCEPT
+	REQUIRE_MESSAGE(page->choose("show_fps", 1, &error), error);
+	clickBar("Accept");
+	std::vector<OpenBFMEPageEvent> events = options->takeExtensionEvents();
+	REQUIRE(events.size() == 2);
+	CHECK((events[0].kind == OpenBFMEPageEvent::Kind::Value && events[0].key == "show_fps"));
+	CHECK(events[1].kind == OpenBFMEPageEvent::Kind::Accept);
+	// RESET TO DEFAULTS, then a change
+	clickBar("Default");
+	REQUIRE_MESSAGE(page->choose("render_scale", 60, &error), error);
+	events = options->takeExtensionEvents();
+	REQUIRE(events.size() == 2);
+	CHECK(events[0].kind == OpenBFMEPageEvent::Kind::Reset);
+	CHECK((events[1].kind == OpenBFMEPageEvent::Kind::Value && events[1].key == "render_scale" && events[1].value == 60));
+}
+
+// Sol review r1 (3): the page's art is checked like the gadgets' own: an image the mapped image collection lacks is reported, not drawn as nothing
+TEST_CASE("opts3 gadget layer retail: a decoration image the mapped images lack is reported; the page's tab highlight resolves")
+{
+	OPENBFME_REQUIRE_RETAIL(mount);
+	ShellFx fx(mount, "StaticGameLOD = High\n");
+	AptOptionsScreen *options = fx.openOptionsFromMainMenu();
+	REQUIRE(options);
+	options->setExtensionAvailable(true);
+	fx.tick(40);
+	std::string error;
+	REQUIRE_MESSAGE(options->openExtension(&error), error);
+	REQUIRE_MESSAGE(options->extensionPage()->show(samplePage(), &error), error);
+	GadgetDrawList list;
+	fx.layer->buildDrawList(list);
+	CHECK(list.unresolvedImages.empty());
+	bool highlight = false;
+	for (const GadgetDrawCommand &c : list.commands)
+	{
+		highlight = highlight || (c.window == "OpenBFMEPage" && c.kind == GadgetDrawCommand::Kind::Image && c.image == "AptListBoxHiliteSelectedItem");
+	}
+	CHECK(highlight);
+	// a decoration naming art that is not there (a mod without it)
+	fx.layer->setDecorator([](GadgetDrawList &out) {
+		GadgetDrawCommand c;
+		c.kind = GadgetDrawCommand::Kind::Image;
+		c.window = "OpenBFMEPage";
+		c.image = "NoSuchImageOpts3";
+		c.x1 = c.y1 = 10;
+		out.commands.push_back(c);
+	});
+	GadgetDrawList missing;
+	fx.layer->buildDrawList(missing);
+	REQUIRE(missing.unresolvedImages.size() == 1);
+	CHECK(missing.unresolvedImages[0] == "NoSuchImageOpts3");
+	for (const GadgetDrawCommand &c : missing.commands)
+	{
+		CHECK(c.image != "NoSuchImageOpts3");
+	}
+	options->closeExtension();
 }

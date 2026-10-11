@@ -127,7 +127,8 @@ public:
 	// extern reads reach their providers), the Shell holds the screen stack (AptScreenFactoryTable of the retail screens), the native gadget layer
 	// (list boxes, combo boxes, text entries ... of the lobby) is drawn after the movies, and the Skirmish lobby is fed from `world`'s PlayerTemplate
 	// store (a GameWorld that setup() ran on the same file system) so a slot's faction index is the logic's.  config: { seed: int (the lobby's game
-	// seed; 0 = from the clock), profile: String (optional: the Skirmish profile name to start with) }.  Returns { ok, errors, load_ms, strings, fonts }.
+	// seed; 0 = from the clock), profile: String (optional: the Skirmish profile name to start with), options_file: String (optional, lane OPTS-2: the
+	// Options.ini to use instead of the user data folder's; the checks) }.  Returns { ok, errors, load_ms, strings, fonts }.
 	Dictionary boot_shell(const Ref<RetailFileSystem> &fs, Object *world, const Dictionary &config);
 	void shell_show_shell_map(bool use); // lane FB7-1: Shell::showShellMap
 	void shell_hide_background();        // lane FB7-1: WindowManager hide of the front-end background (RW 0x622C88(0))
@@ -151,6 +152,19 @@ public:
 	// lane PLAY-1: an entry of the user's Options.ini (the shell's OptionPreferences, as loaded at boot and saved by the Options screen); null when the
 	// file has no such key (the caller applies the retail default, e.g. GlobalData's for AlternateMouseSetup)
 	Variant get_option(const String &key) const;
+	// lane OPTS-2: every entry of Options.ini; set_option replaces one (an empty / null value removes it; false for a key or value Options.ini cannot
+	// hold); save_options writes the file ({ ok, error, path }). The retail keys keep their retail text, the OpenBFME extras use the "OpenBFME" prefix.
+	Dictionary get_options() const;
+	bool set_option(const String &key, const Variant &value);
+	Dictionary save_options();
+	// lane OPTS-2: the static detail in effect (GameLODManager::state, RW 0x601C62's targets) and the display gamma of Brightness (RW 0x641E8B):
+	// { ok, level, level_name, stop, model_lod, ..., texture_reduction, use_shadow_mapping, max_particle_count, display_gamma }
+	Dictionary get_detail_state() const;
+	// lane OPTS-2: the page Options.apt shows when it is the shell's top screen (AptOptions + 0x27C: 1 basic, 2 advanced), else 0
+	int options_page() const;
+	// lane OPTS-2: the CommandMap's hot keys for the Controls tab: { ok, error, rows: [{ name, key, transition, ctrl, shift, alt, game, shell, category,
+	// display_name, description }] } in file order
+	Dictionary get_command_map();
 	Dictionary font_metrics(const String &name, int point_size, bool bold, const String &text) const; // lane UI-4
 	Array drawn_texts(bool clear); // lane UI-4: the gadgets' and render callbacks' texts drawn since the last clear
 	// lane PLAY-1: the live game PlayerTribute.apt shows and sends tribute in (a GameWorld; null when the game ends)
@@ -216,6 +230,22 @@ public:
 	// stage pixel size) draws with ({font, size, fallback: the engine default because neither fontsubstitution.ini nor the corpus fonts have it})
 	Dictionary shell_mapped_image(const String &name);
 	Dictionary shell_font(const String &name, float size);
+	// lane OPTS-3: the OpenBFME page of Options.apt (GUI/AptScreens/OpenBFMEOptionsPage.h; not retail). set_openbfme_available: the device has the
+	// page's settings (the basic page shows the OPENBFME button). openbfme_page_open / close: Options.apt's page 3 on / off ({ ok, error }).
+	// openbfme_page_show(spec) (re)builds it: { subtitle, tabs_header, tabs: [String], tab, panel_header, note, rows: [{ kind: "section" | "choice" |
+	// "check" | "slider" | "text", key, label, help, items: [String | { text, enabled }], value, min, max, value_text, enabled }], list: [[a, b], ...]
+	// (optional: a two-column list instead of rows) }. openbfme_page_set_row(row) updates one row in place. openbfme_page_events: [{ kind: "value" |
+	// "tab" | "cancel" | "reset" | "accept" | "entry", key, value }]. openbfme_page_state: { available, open, entry: Rect2 (stage; absent when not
+	// shown), tab, tabs: [Rect2], rows: { key: { rect, value, enabled } }, buttons: { cancel, reset, accept: Rect2 }, help }. openbfme_page_choose: a
+	// value through the gadget as a click gives it (scripted checks; { ok, error }).
+	void set_openbfme_available(bool available);
+	Dictionary openbfme_page_open();
+	void openbfme_page_close();
+	Dictionary openbfme_page_show(const Dictionary &spec);
+	bool openbfme_page_set_row(const Dictionary &row);
+	Array openbfme_page_events();
+	Dictionary openbfme_page_state() const;
+	Dictionary openbfme_page_choose(const String &key, int value);
 	Dictionary get_timeline_stats(); // lane END-2
 	Dictionary quit_menu(const Dictionary &request);
 	Array list_buttons(int level);
