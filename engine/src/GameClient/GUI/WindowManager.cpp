@@ -940,6 +940,21 @@ void WindowManager::runComponentInits()
 			continue;
 		}
 		m_componentRecords[i].initPending = false;
+		// lane RULES-1: RW 0x814BEC takes the name at the render that calls `_Init`: the clip variable `_WindowId` when it is set (RW 0x81560E), else the
+		// leaf of the instance's path at that moment (RW 0x8155A7). A placeholder its movie renamed after the placement is seen under the new name:
+		// MpGameSetup.apt's rule rows set `_name` to "RuleComboBox_" / "RuleCheckBox_" + the row (constants of MpGameSetup.const), the names
+		// AptMpGameRules::InitGadgets (RW 0x987092) parses
+		{
+			AptValue id;
+			if (m_componentRecords[i].instance->getMember("_WindowId", id) && id.isString())
+			{
+				m_componentRecords[i].instanceName = id.asString();
+			}
+			else
+			{
+				m_componentRecords[i].instanceName = gadgetInstanceName(*m_componentRecords[i].instance);
+			}
+		}
 		// the call may create or destroy components: hold the window, re-read the record list by index afterwards
 		std::shared_ptr<GameWindow> window = m_componentRecords[i].window;
 		const std::string name = m_componentRecords[i].instanceName;
@@ -1196,6 +1211,12 @@ void WindowManager::releaseComponentWindows()
 
 bool WindowManager::postMouseMove(float x, float y)
 {
+	m_mouseX = x;
+	m_mouseY = y;
+	if (m_mouseFilter)
+	{
+		m_mouseFilter(0, x, y); // lane OPTS-3
+	}
 	const bool used = m_gadgetLayer ? m_gadgetLayer->mouseMove(x, y) : false;
 	m_apt->input().postMouseMove(x, y);
 	return used;
@@ -1203,6 +1224,10 @@ bool WindowManager::postMouseMove(float x, float y)
 
 bool WindowManager::postMouseButton(bool down)
 {
+	if (m_mouseFilter && m_mouseFilter(down ? 1 : 2, m_mouseX, m_mouseY))
+	{
+		return true; // lane OPTS-3: the engine screen's
+	}
 	const bool used = m_gadgetLayer ? m_gadgetLayer->mouseButton(down) : false;
 	m_apt->input().postMouseButton(down);
 	return used;

@@ -139,7 +139,12 @@ bool SkirmishGameSetup::init(const std::u16string &userName, std::uint32_t seed,
 	{
 		s = SkirmishGameSlot();
 	}
-	m_info.startingCash = m_source.defaultStartingCash();
+	// lane RULES-1: RotWK's GameInfo::reset leaves the starting money unset (m_54 = -1, RW 0x801AAF): Player::init gives every player the InitialResources
+	// rule instead (RW 0x6B0578); AptSkirmish::InitTheGame (RW 0x9288D0) copies the mode's default rules into the game (no saved skirmish preferences:
+	// OpenBFME keeps none, S-3602)
+	m_info.startingCash = -1;
+	m_info.rules = MpGameRules::defaults(rulesMode());
+	m_info.legendaryHeroes = LegendaryHeroes::kOff;
 	m_info.seed = seed;
 	setSlotStateInternal(m_info.slots[0], SLOT_PLAYER, userName);
 	m_info.slots[0].accepted = true; // GameInfo::setSlot(0): setAccept() + setMapAvailability(true)
@@ -508,6 +513,14 @@ bool SkirmishGameSetup::setSlotCreateAHero(int slot, const CreateAHeroHero *hero
 		m_info.slots[slot].clearCreateAHero();
 		return true;
 	}
+	if (!m_info.customHeroesAllowed())
+	{
+		if (error)
+		{
+			*error = "AllowCustomHeroes is off"; // lane RULES-1: the hero combo is disabled (RW 0x842A85)
+		}
+		return false;
+	}
 	return m_info.slots[slot].setCreateAHero(*hero, error);
 }
 
@@ -542,6 +555,83 @@ bool SkirmishGameSetup::setStartingCash(int cash)
 {
 	m_info.startingCash = cash;
 	return true;
+}
+
+void SkirmishGameSetup::setStrategicMode(bool strategic)
+{
+	if (strategic == m_strategic)
+	{
+		return;
+	}
+	m_strategic = strategic;
+	m_info.rules = MpGameRules::defaults(rulesMode());
+}
+
+std::u16string SkirmishGameSetup::ruleName(int rule) const
+{
+	const char *tag = MpGameRules::ruleLabel(rule);
+	return tag ? label(tag) : std::u16string(u"Invalid Rule"); // RW 0xC8292C
+}
+
+std::vector<SkirmishComboEntry> SkirmishGameSetup::ruleComboEntries(const MpRuleCombo &combo) const
+{
+	// RW 0x986B1C: text.format(fetchFormat(choice.label), choice.value); the default index appends fetch("VALUE:Default"); item data = the value
+	std::vector<SkirmishComboEntry> out;
+	for (int j = 0; j < combo.count; ++j)
+	{
+		const MpRuleChoice &choice = combo.choices[j];
+		std::u16string text = formatInt(label(choice.label), choice.value);
+		if (j == combo.defaultIndex)
+		{
+			text += label("VALUE:Default");
+		}
+		out.push_back({ text, 0xFFFFFFFFu, choice.value });
+	}
+	return out;
+}
+
+bool SkirmishGameSetup::setRule(int rule, int value)
+{
+	if ((unsigned)rule >= (unsigned)NUM_GAME_RULES)
+	{
+		return false;
+	}
+	m_info.rules[(size_t)rule] = value;
+	// RW 0x842A85: the hero combo of a slot is enabled only while rule 0 == 1; otherwise it is disabled and, when it had a choice, set to its first entry and
+	// the hero handler runs (no hero)
+	m_info.clearCreateAHeroesIfNotAllowed();
+	return true;
+}
+
+void SkirmishGameSetup::resetRules()
+{
+	m_info.rules = MpGameRules::defaults(rulesMode());
+	m_info.legendaryHeroes = LegendaryHeroes::kOff;
+}
+
+bool SkirmishGameSetup::setLegendaryHeroes(int factor)
+{
+	if (!LegendaryHeroes::valid(factor))
+	{
+		return false;
+	}
+	m_info.legendaryHeroes = factor;
+	return true;
+}
+
+std::vector<SkirmishComboEntry> SkirmishGameSetup::legendaryHeroesEntries() const
+{
+	std::vector<SkirmishComboEntry> out;
+	for (int factor : LegendaryHeroes::kChoices)
+	{
+		std::u16string text = LegendaryHeroes::choiceText(factor);
+		if (factor == LegendaryHeroes::kOff)
+		{
+			text += label("VALUE:Default");
+		}
+		out.push_back({ text, 0xFFFFFFFFu, factor });
+	}
+	return out;
 }
 
 bool SkirmishGameSetup::validateStart(std::u16string &title, std::u16string &text) const

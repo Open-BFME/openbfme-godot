@@ -89,6 +89,10 @@ public:
 	void set_edge_scroll(bool on);
 	// lane PLAY-1: the free camera (the owner's presentation option, not retail: TacticalCamera::setFreeCamera); also the attach option free_camera
 	void set_free_camera(bool on);
+	// lane OPTS-2: the OpenBFME screen's camera / interface settings, live: { scroll_factor_option (Options.ini ScrollFactor text or null), edge_scroll_mode
+	// ("retail" | "always" | "off"), invert_drag_scroll, rotate_speed_scale, alternate_mouse, all_health_bars, health_bar_mode ("retail" | "damaged" |
+	// "always"), ui_scale, free_camera, zoom_out_factor (lane ZOOM-1: the Max zoom-out, 1 = retail) }; every key optional
+	Dictionary set_view_options(const Dictionary &options);
 	// scripted camera moves for the viewers (the same View::lookAt / setHeightAboveGround the radar click and the wheel call)
 	void camera_look_at(const Vector2 &sage_xy);
 	void camera_set_height(float height_above_ground);

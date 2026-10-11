@@ -178,6 +178,56 @@ Ref<Texture2D> W3DMaterialFactory::Placeholder_Texture(bool flatNormal)
 	return ImageTexture::create_from_image(img);
 }
 
+namespace
+{
+int g_textureReduction = 0; // lane OPTS-2: the static detail level's (W3DMaterialFactory::Set_Texture_Reduction)
+}
+
+void W3DMaterialFactory::Set_Texture_Reduction(int reduction)
+{
+	g_textureReduction = reduction < 0 ? 0 : reduction;
+}
+
+int W3DMaterialFactory::Get_Texture_Reduction()
+{
+	return g_textureReduction;
+}
+
+bool W3DMaterialFactory::Reduce_Image(Ref<Image> &image, int reduction)
+{
+	if (image.is_null() || reduction <= 0 || !image->has_mipmaps())
+	{
+		return false;
+	}
+	const int levels = (int)image->get_mipmap_count(); // the levels below level 0
+	const int drop = reduction < levels ? reduction : levels;
+	if (drop <= 0)
+	{
+		return false;
+	}
+	const Image::Format format = image->get_format();
+	int w = image->get_width(), h = image->get_height();
+	for (int i = 0; i < drop; ++i)
+	{
+		w = w > 1 ? w / 2 : 1;
+		h = h > 1 ? h / 2 : 1;
+	}
+	// a Godot image with mipmaps holds the whole chain down to its last level: the levels from `drop` on are the chain of a (w, h) image
+	const int64_t offset = image->get_mipmap_offset(drop);
+	const PackedByteArray data = image->get_data();
+	if (offset <= 0 || offset >= data.size())
+	{
+		return false;
+	}
+	Ref<Image> reduced = Image::create_from_data(w, h, true, format, data.slice(offset));
+	if (reduced.is_null() || reduced->is_empty() || reduced->get_width() != w)
+	{
+		return false;
+	}
+	image = reduced;
+	return true;
+}
+
 Ref<Texture2D> W3DMaterialFactory::Load_Texture(const std::string &name, std::vector<std::string> &errors, bool &found, bool quietWhenMissing)
 {
 	found = false;
@@ -192,7 +242,9 @@ Ref<Texture2D> W3DMaterialFactory::Load_Texture(const std::string &name, std::ve
 		}
 		return Ref<Texture2D>();
 	}
-	auto it = Textures.find(res.Path);
+	const int reduction = g_textureReduction;
+	const std::string cacheKey = reduction > 0 ? res.Path + "#reduction" + std::to_string(reduction) : res.Path;
+	auto it = Textures.find(cacheKey);
 	if (it != Textures.end())
 	{
 		found = true;
@@ -222,8 +274,9 @@ Ref<Texture2D> W3DMaterialFactory::Load_Texture(const std::string &name, std::ve
 	{
 		image->generate_mipmaps();
 	}
+	Reduce_Image(image, reduction); // lane OPTS-2
 	Ref<ImageTexture> tex = ImageTexture::create_from_image(image);
-	Textures[res.Path] = tex;
+	Textures[cacheKey] = tex;
 	found = true;
 	return tex;
 }
@@ -237,7 +290,8 @@ Ref<Texture2D> W3DMaterialFactory::Recolored_House_Texture(const std::string &na
 	}
 	char opt[96];
 	std::snprintf(opt, sizeof(opt), "%d&%d&%d&%d", params.kind, (int)params.colors[0], (int)params.colors[1], (int)params.colors[2]); // RW 0x535BCF's "%d&%d&%d&%d"
-	const std::string cacheKey = "#" + res.Path + "#" + opt;
+	const int reduction = g_textureReduction; // lane OPTS-2
+	const std::string cacheKey = "#" + res.Path + "#" + opt + (reduction > 0 ? "#reduction" + std::to_string(reduction) : std::string());
 	auto it = Textures.find(cacheKey);
 	if (it != Textures.end())
 	{
@@ -282,6 +336,7 @@ Ref<Texture2D> W3DMaterialFactory::Recolored_House_Texture(const std::string &na
 			image->generate_mipmaps();
 		}
 	}
+	Reduce_Image(image, reduction); // lane OPTS-2
 	Ref<ImageTexture> tex = ImageTexture::create_from_image(image);
 	Textures[cacheKey] = tex;
 	return tex;

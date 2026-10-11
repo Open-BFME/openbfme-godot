@@ -20,6 +20,7 @@
 #include "GameClient/GUI/Image.h"
 #include "GameClient/GUI/WindowManager.h"
 
+#include <functional>
 #include <map>
 #include <memory>
 #include <set>
@@ -79,6 +80,8 @@ public:
 	void update(int elapsedMs);
 	// The draw commands of every visible gadget in this frame.
 	void buildDrawList(GadgetDrawList &out);
+	// lane OPTS-3: an engine page's own frames and texts (the Options screen's OpenBFME page, not retail), drawn before the gadgets; empty: none
+	void setDecorator(std::function<void(GadgetDrawList &)> decorator) { m_decorator = std::move(decorator); }
 
 	// ---- input (stage coordinates) --------------------------------------------------------------------------------------------------------
 	// Each returns true when a gadget took the event (the Apt movie must not see it).
@@ -114,6 +117,7 @@ private:
 	std::vector<std::string> m_errors;
 	std::vector<std::string> m_notes;
 	std::map<const GameWindow *, Placed> m_placed;
+	std::function<void(GadgetDrawList &)> m_decorator; // lane OPTS-3
 	std::uint32_t m_timeMs = 0;
 	float m_mouseX = 0, m_mouseY = 0;
 	bool m_leftDown = false;

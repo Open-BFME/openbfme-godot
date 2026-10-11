@@ -79,10 +79,10 @@ def imported():
 GAME_SCRIPT = b'#!/bin/sh\necho "played $(basename "$(dirname "$0")") $*" >> "$OPENBFME_TEST_PLAYED"\n'
 
 
-def game_tar(tmp: Path, version: str, extra: bytes = b"") -> bytes:
+def game_tar(tmp: Path, version: str, extra: bytes = b"", script: bytes = GAME_SCRIPT) -> bytes:
     top = tmp / f"build-{version}" / f"openbfme-{version}-linux-x64"
     top.mkdir(parents=True, exist_ok=True)
-    (top / "OpenBFME.x86_64").write_bytes(GAME_SCRIPT)
+    (top / "OpenBFME.x86_64").write_bytes(script)
     (top / "OpenBFME.x86_64").chmod(0o755)
     (top / "OpenBFME.pck").write_bytes(b"pack of " + version.encode() + extra)
     (top / "VERSION").write_text(f"OpenBFME {version}\n")
@@ -296,6 +296,28 @@ def test_channels(tmp_path, server, keys):
     assert r.code == 3 and r.has("does not match the release's pre-release flag"), r
 
 
+def test_preview_channel_gets_the_alpha_builds(tmp_path, server, keys):
+    """RELNAME-1 (owner, 2026-10-10): the builds after v0.3.0-preview.4 are v0.4.0-alpha.<n>; a player on the preview channel gets them
+    with nothing to do (the channel id stays "preview", shown as Alpha), a stable player does not"""
+    server.publish("v0.2.0", release_files(tmp_path, "v0.2.0", keys["release"]))
+    server.publish("v0.3.0-preview.4", release_files(tmp_path, "v0.3.0-preview.4", keys["release"]))
+    r = launch(tmp_path, server, keys["release"], "--channel=preview", "--update")
+    assert r.code == 0 and r.has("update installed v0.3.0-preview.4"), r
+    server.publish("v0.4.0-alpha.1", release_files(tmp_path, "v0.4.0-alpha.1", keys["release"]))
+    r = launch(tmp_path, server, keys["release"], "--update")
+    assert r.code == 0 and r.has("update installed v0.4.0-alpha.1") and not r.has("skipped release"), r
+    assert installed(tmp_path) == ["v0.3.0-preview.4", "v0.4.0-alpha.1"]
+    server.publish("v0.4.0-alpha.2", release_files(tmp_path, "v0.4.0-alpha.2", keys["release"]))
+    r = launch(tmp_path, server, keys["release"], "--channel=alpha", "--update")  # the shown name works as well
+    assert r.code == 0 and r.has("channel preview") and r.has("update installed v0.4.0-alpha.2"), r
+    r = launch(tmp_path, server, keys["release"], "--update")
+    assert r.code == 0 and r.has("up to date: v0.4.0-alpha.2 installed"), r
+    other = tmp_path / "stable"
+    other.mkdir()
+    r = launch(other, server, keys["release"], "--channel=stable", "--update")
+    assert r.code == 0 and r.has("update installed v0.2.0"), r
+
+
 def test_offline_launch(tmp_path, server, keys):
     server.publish("v0.2.0", release_files(tmp_path, "v0.2.0", keys["release"]))
     assert launch(tmp_path, server, keys["release"], "--update").code == 0
@@ -474,6 +496,79 @@ def launcher_builds(tmp_path_factory, keys):
         {"release": build_launcher(d / "release", "v0.2.0", keys["release"], test_build=False)}
     shutil.rmtree(d, ignore_errors=True)  # the archives are kept in memory
     yield builds
+
+
+# RELNAME-1 r2: the launchers already published, built from their own code. Two codebases shipped: the launcher/ tree of the tags
+# v0.3.0-preview.1 and .2 is the archive's 42f8a8d2, that of .3 and .4 is 2a422ce6 (the tree ids pin it: a different tree is not the
+# shipped launcher). Both take only v<x>.<y>.<z>[-preview.<n>] and read one page of 30 releases.
+SHIPPED = {"v0.3.0-preview.2": ("42f8a8d2c6f96f55e0fa4d597f54d97ac6a772ff", "4bc620603c6824421b967bb174f9ed42bea91b9e"),
+           "v0.3.0-preview.4": ("2a422ce615dd60950a879bcd87a10da53d5b54b0", "b10f453de143a794ce9dd4e02baacc9fa9fd57ce")}
+
+
+def build_shipped_launcher(out: Path, version: str, key: bytes) -> bytes:
+    commit, tree = SHIPPED[version]
+    r = subprocess.run(["git", "-C", str(REPO), "rev-parse", f"{commit}:launcher"], capture_output=True, text=True)
+    assert r.returncode == 0 and r.stdout.strip() == tree, f"the launcher of {version} ({commit}) is not in this clone: {r.stderr}"
+    (out / "key.pub").parent.mkdir(parents=True, exist_ok=True)
+    (out / "key.pub").write_text(ed25519.public_key(key).hex() + "\n")
+    r = subprocess.run([str(HERE / "build_launcher.sh"), "--out", str(out), "--version", version, "--commit", COMMIT, "--repo", TEST_REPO,
+                        "--key-file", str(out / "key.pub"), "--mtime", "1700000000", "--platforms", "linux", "--source", commit,
+                        "--godot", GODOT, "--test-build"], capture_output=True, text=True, timeout=900)
+    assert r.returncode == 0, r.stdout[-3000:] + r.stderr[-3000:]
+    return (out / f"openbfme-launcher-{version}-linux-x64.tar.gz").read_bytes()
+
+
+@pytest.fixture(scope="module")
+def shipped_launchers(tmp_path_factory, keys):
+    if not _templates_ok():
+        pytest.skip("SKIP the published launchers' tests: the Godot 4.7.2 Linux export templates are not installed")
+    d = tmp_path_factory.mktemp("shipped")
+    builds = {v: build_shipped_launcher(d / v, v, keys["release"]) for v in SHIPPED}
+    builds["v0.3.0-preview.5"] = build_launcher(d / "bridge", "v0.3.0-preview.5", keys["release"])  # this tree: knows -alpha
+    shutil.rmtree(d, ignore_errors=True)
+    yield builds
+
+
+@pytest.mark.parametrize("old", list(SHIPPED))
+def test_a_published_launcher_reaches_the_alpha_builds_through_the_bridge(tmp_path, server, keys, shipped_launchers, old):
+    """Sol r1: the launchers of v0.3.0-preview.1 to .4 skip -alpha tags; the bridge v0.3.0-preview.5 (a launcher that knows them) is
+    installed and swapped in by the old launcher itself, which then offers v0.4.0-alpha.1"""
+    inst = unpack_launcher(tmp_path / "inst", shipped_launchers[old])
+    exe = inst / "OpenBFMELauncher.x86_64"
+    server.publish("v0.3.0-preview.5", release_files(tmp_path, "v0.3.0-preview.5", keys["release"], launcher=shipped_launchers["v0.3.0-preview.5"]))
+    server.publish("v0.4.0-alpha.1", release_files(tmp_path, "v0.4.0-alpha.1", keys["release"]))
+    # preview.1 and .2 start on Stable until the player picks Preview (RELTEST-1 changed that in .3): a player who never did saw no
+    # build at all and still does not; every other one is on the preview channel
+    r = launch(tmp_path, server, keys["release"], "--channel=preview", "--update", "--self-update", exe=exe)
+    assert r.code == 0 and r.has("skipped release 'v0.4.0-alpha.1'"), r
+    assert r.has("update installed v0.3.0-preview.5") and r.has("launcher update v0.3.0-preview.5 staged"), r
+    r = launch(tmp_path, server, keys["release"], "--version", exe=exe)   # the old launcher swaps in the bridge's launcher
+    assert r.has(f"replaced {old} by v0.3.0-preview.5") and r.has("the new launcher v0.3.0-preview.5 confirmed its start"), r
+    assert hashlib.sha256(exe.read_bytes()).hexdigest() == exe_sha(shipped_launchers["v0.3.0-preview.5"])
+    r = launch(tmp_path, server, keys["release"], "--update", "--self-update", exe=exe)
+    assert r.code == 0 and not r.has("skipped release"), r
+    assert r.has("update installed v0.4.0-alpha.1") and r.has("launcher update v0.4.0-alpha.1 staged"), r
+
+
+def test_a_late_player_finds_the_newest_bridge(tmp_path, server, keys, shipped_launchers):
+    """Sol r1: an old launcher reads 30 releases; a bridge that fell off that page is invisible to it. autorelease.py's bridge rule,
+    run on the same list, asks for a new bridge before that happens; the new bridge is what the old launcher then installs."""
+    sys.path.insert(0, str(HERE))
+    import autorelease
+    inst = unpack_launcher(tmp_path / "inst", shipped_launchers["v0.3.0-preview.4"])
+    exe = inst / "OpenBFMELauncher.x86_64"
+    server.publish("v0.3.0-preview.5", release_files(tmp_path, "v0.3.0-preview.5", keys["release"]))
+    for n in range(1, 31):
+        server.publish(f"v0.4.0-alpha.{n}", release_files(tmp_path, f"v0.4.0-alpha.{n}", keys["release"]))
+    r = launch(tmp_path, server, keys["release"], "--channel=preview", "--update", "--self-update", exe=exe)
+    assert r.code == 0 and not r.has("update installed") and not r.has("staged") and r.has("no preview release"), r
+    assert autorelease.bridge_check(server.releases, lambda rel: "")[0].startswith("no release on the first 30")
+    # the rule already asked for a new bridge 5 releases earlier
+    assert autorelease.bridge_check(server.releases[5:], lambda rel: "")[0].startswith("the bridge v0.3.0-preview.5 is entry 26")
+    server.publish("v0.3.0-preview.6", release_files(tmp_path, "v0.3.0-preview.6", keys["release"]))
+    assert autorelease.bridge_check(server.releases, lambda rel: "") == ("", "v0.3.0-preview.6")
+    r = launch(tmp_path, server, keys["release"], "--update", "--self-update", exe=exe)
+    assert r.code == 0 and r.has("update installed v0.3.0-preview.6") and r.has("launcher update v0.3.0-preview.6 staged"), r
 
 
 def unpack_launcher(tmp: Path, archive: bytes) -> Path:
@@ -851,3 +946,287 @@ def test_a_stopped_launcher_download_can_be_resumed_or_cancelled(tmp_path, serve
         assert r.has("ui status: The launcher update was cancelled."), r
         assert not part.exists() and not part.with_name(part.name + ".json").exists() and not (inst / "update").exists()
     assert installed(tmp_path) == ["v0.3.0"], "the game update before it was installed"
+
+
+# ---- lane UI-5: updates in the background, the notes cards ------------------------------------------------------------------------------
+
+# a game that keeps running (the version being played while an update installs). It lets go of the launcher's output (inherited: the
+# test's capture would wait for it), the shell stays (a last command would be exec'd in its place, and its command line would no longer
+# name the game) and takes its sleep with it when it is stopped.
+SLOW_GAME = GAME_SCRIPT + b"exec >/dev/null 2>&1 </dev/null\ntrap 'kill $!; exit' TERM\nsleep 60 &\nwait\n"
+
+
+def test_with_updating_by_itself_off_the_window_only_offers_the_update(tmp_path, server, keys):
+    server.publish("v0.1.0", release_files(tmp_path, "v0.1.0", keys["release"]))
+    r = launch(tmp_path, server, keys["release"], "--update", "--auto-update=off")
+    assert r.code == 0 and r.has("updating by itself off") and installed(tmp_path) == ["v0.1.0"], r
+    server.publish("v0.2.0", release_files(tmp_path, "v0.2.0", keys["release"]))
+    r = window(tmp_path, server, keys["release"])
+    assert r.has("ui status: v0.2.0 is available.") and installed(tmp_path) == ["v0.1.0"], r
+    r = launch(tmp_path, server, keys["release"], "--auto-update=on")
+    assert r.code == 0 and r.has("updating by itself on"), r
+    r = window(tmp_path, server, keys["release"])
+    assert r.has("ui status: Installed v0.2.0.") and installed(tmp_path) == ["v0.1.0", "v0.2.0"], r
+
+
+def test_play_during_a_background_update_starts_the_installed_version(tmp_path, server, keys):
+    """the owner: updates download in the background, also while the installed version is played, and the new version is used from the
+    next Play on. Play pressed while v0.2.0 downloads starts v0.1.0; the launcher finishes the download, then closes by itself."""
+    server.publish("v0.1.0", release_files(tmp_path, "v0.1.0", keys["release"]))
+    assert launch(tmp_path, server, keys["release"], "--update").code == 0 and installed(tmp_path) == ["v0.1.0"]
+    name = big_game_release(tmp_path, server, keys["release"], "v0.2.0")
+    r = window(tmp_path, server, keys["release"], f"--ui-stop=play@{name}")
+    assert r.has(f"ui test: play pressed during Downloading {name}") and r.has("started v0.1.0 (pid"), r
+    assert r.has("installed v0.2.0") and r.has("the background update finished while the game runs: the launcher closes"), r
+    assert r.code == 0 and not r.has("ui status:"), "it closed by itself, before the screenshot step"
+    assert installed(tmp_path) == ["v0.1.0", "v0.2.0"]
+    r = launch(tmp_path, None, keys["release"], "--play")
+    assert r.code == 0 and r.has("play v0.2.0"), r
+
+
+def test_an_update_never_removes_the_version_being_played(tmp_path, server, keys):
+    """two versions are kept; an update installed while the player's older pick runs keeps that one until its game has ended"""
+    for v in ("v0.1.0", "v0.2.0"):
+        script = SLOW_GAME if v == "v0.1.0" else GAME_SCRIPT
+        server.publish(v, release_files(tmp_path, v, keys["release"], game=game_tar(tmp_path, v, script=script)))
+        assert launch(tmp_path, server, keys["release"], "--update").code == 0
+    r = launch(tmp_path, None, keys["release"], "--select=v0.1.0", "--play")
+    assert r.code == 0 and r.has("play v0.1.0"), r
+    pid = int(next(ln for ln in r.lines if "started v0.1.0 (pid" in ln).split("(pid ")[1].rstrip(")"))
+    try:
+        server.publish("v0.3.0", release_files(tmp_path, "v0.3.0", keys["release"]))
+        r = launch(tmp_path, server, keys["release"], "--update")
+        assert r.code == 0 and r.has("update installed v0.3.0"), r
+        assert installed(tmp_path) == ["v0.1.0", "v0.2.0", "v0.3.0"], "the running v0.1.0 stays"
+    finally:
+        os.kill(pid, 15)  # the game outlived the launcher that started it (init reaps it)
+    for _ in range(50):
+        if not Path(f"/proc/{pid}").exists() or "Z" in Path(f"/proc/{pid}/stat").read_text().split()[2]:
+            break
+        time.sleep(0.1)
+    server.publish("v0.4.0", release_files(tmp_path, "v0.4.0", keys["release"]))
+    r = launch(tmp_path, server, keys["release"], "--update")
+    assert r.code == 0 and r.has("removed the old version v0.1.0") and installed(tmp_path) == ["v0.3.0", "v0.4.0"], r
+
+
+def test_the_notes_cards_show_the_releases_own_notes(tmp_path, server, keys):
+    """What's New shows the "What's new" lines of the version Play starts; News every release of the channel; also offline, from the
+    cached release list; markup in the notes stays text"""
+    body = ("OpenBFME v0.2.0 is a test build.\n\n## What's new\n\n- Ground force\\-attack with Ctrl\\+click\\.\n- [b]not bold[/b] "
+            "&lt;i&gt;\n\n## Known issues\n\n- Tribute does not work yet\\.\n")
+    server.publish("v0.1.0", release_files(tmp_path, "v0.1.0", keys["release"]), notes="## What's new\n\n- The first build.\n")
+    server.publish("v0.2.0", release_files(tmp_path, "v0.2.0", keys["release"]), notes=body)
+    r, texts = screen_texts(tmp_path, server, keys["release"])
+    assert r.has("ui status: Installed v0.2.0."), r
+    assert texts.count("Ground force-attack with Ctrl+click.") == 2, "What's New and News"
+    assert texts.count("[b]not bold[/b] <i>") == 2 and "Tribute does not work yet." in texts and "The first build." in texts, texts
+    assert any(t.startswith("Version 0.2.0") for t in texts) and "What's new" in texts, texts
+    r, texts = screen_texts(tmp_path, None, keys["release"], "--offline")
+    assert r.code == 0 and texts.count("Ground force-attack with Ctrl+click.") == 2, texts
+
+
+# ---- lane UI-5 round 2 (Sol r1): every instance protects its version, failures stay visible, launcher-only updates --------------------
+
+def _pid_of(r: Run, version: str) -> int:
+    return int(next(ln for ln in r.lines if f"started {version} (pid" in ln).split("(pid ")[1].rstrip(")"))
+
+
+def _stop_game(pid: int) -> None:
+    os.kill(pid, 15)
+    for _ in range(50):
+        if not Path(f"/proc/{pid}").exists() or Path(f"/proc/{pid}/stat").read_text().split()[2] == "Z":
+            return
+        time.sleep(0.1)
+
+
+def test_every_running_instance_keeps_its_version(tmp_path, server, keys):
+    """Sol r1: one pid was kept per version, so a second instance of the same version that closed unprotected the first one, still
+    running, and the next update pruned it; a running version is also never replaced by an install of itself"""
+    for v in ("v0.1.0", "v0.2.0"):
+        script = SLOW_GAME if v == "v0.1.0" else GAME_SCRIPT
+        server.publish(v, release_files(tmp_path, v, keys["release"], game=game_tar(tmp_path, v, script=script)))
+        assert launch(tmp_path, server, keys["release"], "--update").code == 0
+    first = _pid_of(launch(tmp_path, None, keys["release"], "--select=v0.1.0", "--play"), "v0.1.0")
+    second = _pid_of(launch(tmp_path, None, keys["release"], "--play"), "v0.1.0")
+    try:
+        state = (data(tmp_path) / "state.cfg").read_text()
+        assert str(first) in state and str(second) in state, state
+        _stop_game(second)
+        r = launch(tmp_path, server, keys["release"], "--install=v0.1.0")
+        assert r.code == 3 and r.has("v0.1.0 is being played: close the game"), r
+        server.publish("v0.3.0", release_files(tmp_path, "v0.3.0", keys["release"]))
+        r = launch(tmp_path, server, keys["release"], "--update")
+        assert r.code == 0 and r.has("update installed v0.3.0"), r
+        assert installed(tmp_path) == ["v0.1.0", "v0.2.0", "v0.3.0"], "the first instance still runs v0.1.0"
+        assert not (data(tmp_path) / "versions.lock").exists(), "the versions lock is released"
+    finally:
+        _stop_game(first)
+    server.publish("v0.4.0", release_files(tmp_path, "v0.4.0", keys["release"]))
+    r = launch(tmp_path, server, keys["release"], "--update")
+    assert r.code == 0 and r.has("removed the old version v0.1.0") and installed(tmp_path) == ["v0.3.0", "v0.4.0"], r
+
+
+def test_a_background_update_that_fails_while_playing_stays_visible(tmp_path, server, keys):
+    """Sol r1: Play pressed during a download, then the package failed its check: the launcher closed by itself and the rejection was
+    never shown. It stays open with the dialog, and a launcher closed without reading it shows it at the next start."""
+    server.publish("v0.1.0", release_files(tmp_path, "v0.1.0", keys["release"]))
+    assert launch(tmp_path, server, keys["release"], "--update").code == 0
+    files = release_files(tmp_path, "v0.2.0", keys["release"], game=game_tar(tmp_path, "v0.2.0", os.urandom(600_000)))
+    name = make_manifest.asset_name("game", "v0.2.0", "linux-x64")
+    files[name] = files[name][:-1] + bytes([files[name][-1] ^ 1])  # same size, other bytes
+    server.publish("v0.2.0", files)
+    server.throttle[name] = 0.02
+    r = window(tmp_path, server, keys["release"], f"--ui-stop=play@{name}")
+    assert r.has(f"ui test: play pressed during Downloading {name}") and r.has("started v0.1.0 (pid"), r
+    assert r.has("does not match the signed manifest") and r.has("the launcher stays open to show it"), r
+    assert not r.has("the launcher closes") and r.has("ui dialog: Update not installed: Update rejected:"), r
+    r = window(tmp_path, None, keys["release"], "--offline")
+    assert r.has("showing an update failure from while the game ran") and r.has("ui dialog: An update failed while you played"), r
+    assert installed(tmp_path) == ["v0.1.0"]
+
+
+def test_with_updating_by_itself_off_a_launcher_only_update_is_offered(tmp_path, server, keys, launcher_builds):
+    """Sol r1: launcher v0.2.0 with the game already at v0.3.0 said "Up to date" and offered no Update button"""
+    inst = unpack_launcher(tmp_path / "inst", launcher_builds["v0.2.0"])
+    exe = inst / "OpenBFMELauncher.x86_64"
+    server.publish("v0.3.0", release_files(tmp_path, "v0.3.0", keys["release"], launcher=launcher_builds["v0.3.0"]))
+    r = launch(tmp_path, server, keys["release"], "--auto-update=off", "--install=v0.3.0", exe=exe)
+    assert r.code == 0 and installed(tmp_path) == ["v0.3.0"], r
+    r = window(tmp_path, server, keys["release"], exe=exe)
+    assert r.has("ui status: The launcher v0.3.0 is available.") and r.has("ui update button: Update launcher to v0.3.0"), r
+    assert not (inst / "update").exists(), "nothing staged until the player presses Update"
+
+
+# ---- lane UI-5 round 3 (Sol r2): one launcher at a time ----------------------------------------------------------------------------------
+
+def _window_process(tmp: Path, key: bytes) -> subprocess.Popen:
+    """a launcher window (headless, offline) that stays open until it is stopped; its output in tmp/<pid>.log"""
+    env = dict(os.environ, XDG_DATA_HOME=str(tmp / "data"), OPENBFME_TEST_PLAYED=str(tmp / "played.txt"))
+    test = [f"--trust-key={ed25519.public_key(key).hex()}", f"--repo={TEST_REPO}"]
+    log = open(tmp / f"window-{time.monotonic_ns()}.log", "w")
+    p = subprocess.Popen([GODOT, "--headless", "--path", str(LAUNCHER), "--", *test, "--offline"], env=env, stdout=log,
+                         stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL)
+    p.log_path = Path(log.name)  # type: ignore[attr-defined]
+    return p
+
+
+def _wait_started(p: subprocess.Popen) -> bool:
+    """True once the window has started (its first LAUNCHER line, then two seconds for it to take the lock and build the window),
+    False when it exited"""
+    for _ in range(300):
+        if p.poll() is not None:
+            return False
+        if "OpenBFME Launcher v" in p.log_path.read_text():  # type: ignore[attr-defined]
+            time.sleep(2.0)
+            return p.poll() is None
+        time.sleep(0.1)
+    return False
+
+
+def test_a_second_launcher_says_so_and_exits(tmp_path, server, keys):
+    """Sol r2: two launchers opened together each kept their own state.cfg, and a stale list of running games written by one let the
+    other prune a version still being played. Now the second launcher (window or command line) says the first is open and exits; the
+    lock (a socket on 127.0.0.1) is freed by the system when a launcher is killed."""
+    server.publish("v0.1.0", release_files(tmp_path, "v0.1.0", keys["release"]))
+    assert launch(tmp_path, server, keys["release"], "--update").code == 0
+    first = _window_process(tmp_path, keys["release"])
+    try:
+        assert _wait_started(first), first.log_path.read_text()
+        r = launch(tmp_path, None, keys["release"], "--offline")
+        assert r.code == 1 and r.has("Another OpenBFME Launcher (v0.0.0-dev) is already open"), r
+        r = launch(tmp_path, server, keys["release"], "--play")
+        assert r.code == 1 and r.has("Another OpenBFME Launcher (v0.0.0-dev) is already open") and not r.has("started v0.1.0"), r
+        r = launch(tmp_path, None, keys["release"], "--version")
+        assert r.code == 0, "--version alone needs no lock"
+        assert first.poll() is None, "the first launcher keeps running"
+        # Sol r4 follow-up: the refused launchers' probes closed first, so the lock's port is left in no TIME_WAIT (Godot listens without
+        # SO_REUSEADDR: the next launcher could not bind it for a minute)
+        time.sleep(0.5)
+        port = _lock_port(tmp_path)
+        waits = [ln for ln in Path("/proc/net/tcp").read_text().splitlines()[1:]
+                 if ln.split()[1].endswith(f":{port:04X}") and ln.split()[3] == "06"]
+        assert waits == [], waits
+    finally:
+        first.kill()  # a crash: the system frees the lock
+        first.wait()
+    r = launch(tmp_path, None, keys["release"], "--list")
+    assert r.code == 0 and r.has("installed v0.1.0"), r
+
+
+def test_two_launchers_started_at_the_same_moment_get_one_lock(tmp_path, keys):
+    """Sol r3: the lock file was not atomic: two launchers started together both took it, and the one that exited deleted the other's.
+    Started at the same moment (five times), exactly one stays; a third is refused while it runs, also after the loser exited."""
+    for round_ in range(5):
+        pair = [_window_process(tmp_path, keys["release"]) for _ in range(2)]
+        try:
+            for p in pair:
+                for _ in range(300):
+                    if p.poll() is not None or "OpenBFME Launcher v" in p.log_path.read_text():
+                        break
+                    time.sleep(0.1)
+            time.sleep(3.0)  # the loser says so and exits; the winner stays
+            alive = [p for p in pair if p.poll() is None]
+            gone = [p for p in pair if p.poll() is not None]
+            assert len(alive) == 1 and len(gone) == 1, f"round {round_}: " + "\n".join(p.log_path.read_text()[-800:] for p in pair)
+            assert gone[0].returncode == 1 and "Another OpenBFME Launcher (v0.0.0-dev) is already open" in gone[0].log_path.read_text()
+            r = launch(tmp_path, None, keys["release"], "--list")
+            assert r.code == 1 and r.has("Another OpenBFME Launcher (v0.0.0-dev) is already open"), "the loser's exit did not free the winner's lock"
+        finally:
+            for p in pair:
+                if p.poll() is None:
+                    p.terminate()
+                    try:
+                        p.wait(timeout=20)
+                    except subprocess.TimeoutExpired:
+                        p.kill()
+                        p.wait()
+    r = launch(tmp_path, None, keys["release"], "--list")
+    assert r.code == 0, r
+
+
+def _lock_port(tmp: Path) -> int:
+    """the port of the one-launcher lock of tmp's data folder (instance_lock.gd: md5 of the data folder)"""
+    d = str(tmp / "data" / "OpenBFMELauncher")
+    return 49200 + int(hashlib.md5(d.encode()).hexdigest()[:8], 16) % 16000
+
+
+@pytest.mark.parametrize("answer", [b"", b"HTTP/1.0 200 OK\r\n\r\nnot a launcher\n"])
+def test_another_program_on_the_lock_port_is_not_called_a_launcher(tmp_path, keys, answer):
+    """Sol r4: any program listening on the lock's port gave "Another OpenBFME Launcher (v0.0.0-dev) is already open". The launcher reads the holder's
+    hello: a silent program or one answering something else is named as such, with the port"""
+    import socket
+    import threading
+    port = _lock_port(tmp_path)
+    srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    srv.bind(("127.0.0.1", port))
+    srv.listen(4)
+    stop = threading.Event()
+
+    def serve() -> None:
+        srv.settimeout(0.2)
+        while not stop.is_set():
+            try:
+                c, _ = srv.accept()
+            except OSError:
+                continue
+            if answer:
+                c.sendall(answer)
+            c.settimeout(5)
+            try:
+                c.recv(1)  # the launcher closes first (no TIME_WAIT left on the port)
+            except OSError:
+                pass
+            c.close()
+    t = threading.Thread(target=serve, daemon=True)
+    t.start()
+    try:
+        r = launch(tmp_path, None, keys["release"], "--list")
+        assert r.code == 1 and r.has(f"local port {port} is in use by another program") and not r.has("already open"), r
+        r = launch(tmp_path, None, keys["release"], "--offline")
+        assert r.code == 1 and r.has(f"local port {port} is in use by another program") and not r.has("already open"), r
+    finally:
+        stop.set()
+        t.join()
+        srv.close()
+    r = launch(tmp_path, None, keys["release"], "--list")
+    assert r.code == 0, r

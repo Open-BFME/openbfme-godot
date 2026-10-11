@@ -12,10 +12,12 @@
 #include "GameClient/GUI/GameTextSource.h"
 #include "GameClient/GUI/Image.h"
 #include "GameClient/GUI/LoadScreenInfo.h"
+#include "GameClient/LogicSnapshot.h"
 #include "GameClient/TacticalView.h"
 #include "GameLogic/ExperienceLevels.h"
 #include "GameLogic/GameLogic.h"
 #include "GameLogic/System/InvisibilityManager.h"
+#include "GameLogic/System/ShroudManager.h"
 #include "Common/Team.h"
 #include "GameLogic/Module/BehaviorModule.h"
 #include "GameLogic/Object/Contain/HordeContainCore.h"
@@ -233,7 +235,13 @@ bool wantsHealthBar(const Object &obj, const IconUISettings &s, const std::set<O
 	}
 	if (!sel && mousedOver != obj.getID())
 	{
-		return false;
+		// lane OPTS-2: the OpenBFME health bar mode (retail: none here)
+		const BodyModuleInterface *body = s.healthBarMode == IconUISettings::HEALTH_BARS_DAMAGED ? obj.getBodyModule() : nullptr;
+		const bool extra = s.healthBarMode == IconUISettings::HEALTH_BARS_ALWAYS || (body && body->getHealth() < body->getMaxHealth());
+		if (!extra)
+		{
+			return false;
+		}
 	}
 	// RW 0x6763DA: an invisible object (RW 0x68FC2F) gets no bar from an active local player that is not its ally (its team's relationship to the local player's
 	// default team; RW 0x6AAC52: the local player is not defeated)
@@ -247,7 +255,10 @@ bool wantsHealthBar(const Object &obj, const IconUISettings &s, const std::set<O
 	}
 	if (!kindOf(obj, HERO) && !kindOf(obj, MACHINE) && !kindOf(obj, MONSTER) && !kindOf(obj, MINE) && !kindOf(obj, STRUCTURE) && !kindOf(obj, HAS_HEALTH_BAR))
 	{
-		if (!s.allHealthBars || (!kindOf(obj, INFANTRY) && !kindOf(obj, CAVALRY)))
+		// lane ZOOM-1: the OpenBFME "Always (all players)" mode shows the infantry and cavalry bars as AllHealthBars does (the owner, 2026-10-10: "see all my
+		// troops' health bars all the time, and the enemies' too"); retail's AllHealthBars alone only widens the kinds of the selected / moused-over objects
+		const bool allKinds = s.allHealthBars || s.healthBarMode == IconUISettings::HEALTH_BARS_ALWAYS;
+		if (!allKinds || (!kindOf(obj, INFANTRY) && !kindOf(obj, CAVALRY)))
 		{
 			return false;
 		}
@@ -314,10 +325,23 @@ void DrawableIconUI::build(GameLogic &logic, const DrawableManager &drawables, c
 		}
 		// RW 0x4853EB: only a drawn drawable queues its icons (not hidden, RW 0x67055A; the shroud of the object for the local player at most 2, RW 0x68D8F7):
 		// an enemy's invisible object is not drawn (InvisibilityManager::clientLook 5, the drawable's hidden state RW 0x6760F9) and shows no bar, text or mark.
-		// INFERENCE (S-1951): the fog / shroud part is the device's (a fogged object's drawable is the device's ghost here)
 		if (InvisibilityManager::clientLook(*obj, logic.players().getLocalPlayer()) == 5)
 		{
 			continue;
+		}
+		// lane ZOOM-1: the drawable's hidden state (RW 0x67055A: a rider of an ENCLOSED container, a horde member gone into a garrison: Object's
+		// drawable-hidden flag, RW 0x6718FB) and the shroud test (the presented snapshot's status, as the device draws it: FOGGED or SHROUDED, no icons)
+		if (obj->isDrawableHidden())
+		{
+			continue;
+		}
+		if (s.snapshot && s.shroudDrawn)
+		{
+			const ObjectSnapshot *rec = s.snapshot->find(obj->getID());
+			if (!rec || rec->shroudedForLocal || rec->objectShroud > (int)OBJECTSHROUD_PARTIAL_CLEAR)
+			{
+				continue; // not presented yet, or out of the local player's sight
+			}
 		}
 		// RW 0x68DF5B: the health box width
 		if (kindOf(*obj, IGNORED_IN_GUI))
@@ -551,7 +575,7 @@ std::vector<std::string> DrawableIconUI::acceptanceStops()
 		"the veterancy marks (a horde's on its banner carrier or first member, RW 0x67939F) run as RW 0x679129 / 0x676346 / 0x677CF9 / 0x6780DF, with the stealth tests "
 		"(RW 0x4853EB, 0x6763DA); not ported: the wall upgrade's \"upgrade active\" test, the other decoration lists (the group number, the caption, lists 1, 3, 5)",
 		"[S-1951] the drawable decorations' inference: the in-game UI's drawable caption font of the construction text (InGameUI + 0x7A0 / + 0x7A4), the icon toggle "
-		"(TheGameLogic + 0x9A) and the script letterbox (TheScriptEngine + 0x1A238) of the queue, the queue's fog / shroud test (RW 0x68D8F7 <= 2) left to the device, the "
+		"(TheGameLogic + 0x9A) and the script letterbox (TheScriptEngine + 0x1A238) of the queue, the queue's fog / shroud test (RW 0x68D8F7 <= 2) read from the presented snapshot (one client frame behind the live logic the icons read), the "
 		"horde anchor's H+0x170 set taken as HordeContainCore's registered members (the members on their way into a garrison are kept apart)",
 	};
 }

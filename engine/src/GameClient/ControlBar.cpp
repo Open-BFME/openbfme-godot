@@ -22,6 +22,7 @@
 #include "Common/Team.h"
 #include "GameLogic/WeaponSetToggle.h"
 #include "GameLogic/Module/GateModules.h"
+#include "GameLogic/Module/HeroAbilityModules.h"
 
 #include <algorithm>
 
@@ -355,6 +356,12 @@ void ControlBar::update()
 						}
 					}
 				}
+				// lane AUTOCAST-1: RW 0x9D2C8C .. 0x9D2D13 (the command button clip's update): the glow shows when the clip's state is not _unused and the
+				// object's AutoAbilityBehavior for the button (its power's, else the first) auto casts this button (RW 0x85D741)
+				if (const AutoAbilityBehavior *aa = AutoAbilityBehavior::forButton(*obj, *b))
+				{
+					cb.autoAbility = aa->isAutoButton(*b);
+				}
 				place(cb, start);
 			}
 			// RW 0x943D6F: a contain that shows its riders on the control bar (contain slot 0xC8) fills the set's EXIT_CONTAINER buttons
@@ -568,7 +575,7 @@ void ControlBar::emitStateKey()
 		for (const ControlBarButton &b : *v)
 		{
 			key += std::string(v == &m_palantir ? "a" : (v == &m_side ? "s" : "o")) + std::to_string(b.position) + "|" + std::to_string(b.slot) + ":" + std::to_string((int)b.state) + ":" + std::to_string(b.queued) + ":" + std::to_string((int)(b.timer * 100.0f)) + ":" +
-				std::to_string(b.rider) + ":" + b.image;
+				std::to_string(b.rider) + ":" + b.image + (b.autoAbility ? ":auto" : "");
 		}
 	}
 	if (key != m_lastKey)
@@ -647,5 +654,12 @@ std::vector<std::string> ControlBar::acceptanceStops()
 		"someone is inside (RW 0x942733) and the garrison inventory of context 2 (RW 0x94518D) are ported; not reproduced: the hide on Object + 0x1C8 bit 5 (unidentified), "
 		"retail's overrun of a rider's slots past the last EXIT_CONTAINER button, context 3 (contested garrisons, MSG_EVACUATE_CONTESTERS), the radial menu, the "
 		"Create-A-Hero rider image",
+		"[S-3460] ability autocast on the control bar (lane AUTOCAST-1): the right press (RW 0x9D28D4 -> processCommandUI RW 0x940435: MSG_DO_AUTO_ABILITY / "
+		"MSG_DO_AUTO_ABILITY_WEAPON) and the glow (RW 0x9D2B49: SetAutoAbilityOverlayState) are ported for the Palantir arc; not ported: the toggle voice "
+		"(processCommandUI RW 0x940805: voice 0x7E4 / 0x7E5, the button's Set / UnsetAutoAbilityUnitSound, through RW 0x8DEDBB: S-703), the multi-selection "
+		"source (RW 0x94057A: the first selected object without + 0x10D bit 7; here the control bar's source object), the click sounds of the clip "
+		"(Gui_PalantirCommandButtonClick / DisabledClick, RW 0x9D2941); INFERENCE: only the command button clips of the Palantir see right presses (retail "
+		"posts every right press into the Apt, RW 0x83EE14, and its other handlers test TheAptWindowManager + 0x318 themselves; ours do not); the radial "
+		"menu's right press keeps only its build cancel (HUD-6)",
 	};
 }

@@ -263,6 +263,22 @@ fast map loads.
   offer Godot 4.7's own scalers: bilinear, FSR 1 and FSR 2 (Forward+). FSR 3
   frame generation, DLSS and XeSS are not part of Godot 4.7; they come later
   through GDExtension plugins, as further choices of the same Upscaling option.
+- Options left out of the OpenBFME screen (OPTS-2, `docs/OPTIONS.md`), each
+  with its reason:
+  - shadow map resolution: the renderer draws no shadows yet (S-3402); it
+    comes with shadows, next to RotWK's ShadowLOD;
+  - tooltip delay: the HUD's tooltips (GuiFX ToolTipText) are not ported yet;
+  - double-click guard: RotWK 2.01 never reads `DoubleClickGuard` (its getter
+    RW 0x6E6115 has no caller), so there is no retail behaviour to offer;
+  - colour-blind-safe player colours: player colours are part of the game
+    setup the lobby sends, so changing them could touch the game's identity;
+    a draw-only remap of every coloured surface (models, radar, HUD) is needed
+    first;
+  - hotkey rebinding: the Controls tab lists the CommandMap read only; a
+    rebinding writes the user's CommandMap.ini (retail reads it after the
+    archive's) and needs the clash rules of the translator;
+  - the retail detail rows the renderer cannot show yet (S-3402) and the
+    Resolution list (S-3401).
 
 ### M9 - Campaigns, War of the Ring and the rest
 

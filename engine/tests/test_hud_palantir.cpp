@@ -471,7 +471,7 @@ TEST_CASE("stops S-289 .. S-295: the control bar, the radar and the Palantir rep
 	{
 		ids.insert(l.substr(0, 7));
 	}
-	CHECK(ids == std::set<std::string>{ "[S-289]", "[S-290]", "[S-291]", "[S-292]", "[S-293]", "[S-294]", "[S-295]", "[S-761]", "[S-762]", "[S-763]", "[S-764]", "[S-1260", "[S-1674", "[S-1922", "[S-2450", "[S-2451", "[S-2452", "[S-2453", "[S-2454", "[S-2455", "[S-2456", "[S-2457" }); // lane HUD-4: S-1674 (the radar events) // lane UI-1: S-1260 (the id is eight characters) // lane RADAR-1: S-2450 .. S-2457
+	CHECK(ids == std::set<std::string>{ "[S-289]", "[S-290]", "[S-291]", "[S-292]", "[S-293]", "[S-294]", "[S-295]", "[S-761]", "[S-762]", "[S-763]", "[S-764]", "[S-1260", "[S-1674", "[S-1922", "[S-2450", "[S-2451", "[S-2452", "[S-2453", "[S-2454", "[S-2455", "[S-2456", "[S-2457", "[S-3460" }); // lane HUD-4: S-1674 (the radar events) // lane UI-1: S-1260 (the id is eight characters) // lane RADAR-1: S-2450 .. S-2457 // lane AUTOCAST-1: S-3460
 }
 
 TEST_CASE("hud radar: the map picture, the object blips in the owners' colours, the view box and a click on the radar are world points")

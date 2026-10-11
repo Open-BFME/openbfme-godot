@@ -11,6 +11,7 @@
 #include "Common/INI/INIBlockStubs.h"
 #include "Common/INIException.h"
 #include "GameClient/GameLODManager.h"
+#include "GameClient/MessageStream/CommandMapList.h"
 #include "GameClient/OptionPreferences.h"
 #include "GameClient/GlobalLanguage.h"
 #include "Common/INI.h"
@@ -571,7 +572,8 @@ struct ShellMode
 	PlayerStatusInfo playerStatus; // lane HUD-5: the players screen's Status rows
 	OptionPreferences options; // lane UI-2: the user data folder's Options.ini
 	GlobalLanguage language;   // lane UI-4: language.ini's Language block (the credits roll's fonts)
-	GameLODManager gameLOD;    // lane PLAY-2: GameLOD.ini's StaticGameLOD presets (the Options screen's advanced page)
+	GameLODManager gameLOD;    // lane PLAY-2: GameLOD.ini's StaticGameLOD presets (the Options screen's advanced page); lane OPTS-2: the level in effect
+	std::string detailStop;    // lane OPTS-2: GameLODManager::init's stop (S-2481), empty when Options.ini named the level
 	AptScreenFactoryTable factories;
 	GadgetSkinData skins;
 	std::unique_ptr<WindowManager> wm;
@@ -610,6 +612,7 @@ struct AptMenuPlayer::Impl
 	WindowManager *external = nullptr;
 	AptNativeHook *nativeHook = nullptr;
 	bool inputForwarded = false;
+	bool openbfmeAvailable = false; // lane OPTS-3: set_openbfme_available
 	std::unique_ptr<AptTextureStore> textures;
 	GameTextTable strings;
 	FontSubstitution fonts;
@@ -917,6 +920,20 @@ void AptMenuPlayer::_bind_methods()
 	ClassDB::bind_method(D_METHOD("get_movies"), &AptMenuPlayer::get_movies);                 // lane CAMP-2
 	ClassDB::bind_method(D_METHOD("shell_stack"), &AptMenuPlayer::shell_stack);
 	ClassDB::bind_method(D_METHOD("get_option", "key"), &AptMenuPlayer::get_option);
+	ClassDB::bind_method(D_METHOD("get_options"), &AptMenuPlayer::get_options);                  // lane OPTS-2
+	ClassDB::bind_method(D_METHOD("set_option", "key", "value"), &AptMenuPlayer::set_option);    // lane OPTS-2
+	ClassDB::bind_method(D_METHOD("save_options"), &AptMenuPlayer::save_options);               // lane OPTS-2
+	ClassDB::bind_method(D_METHOD("get_detail_state"), &AptMenuPlayer::get_detail_state);       // lane OPTS-2
+	ClassDB::bind_method(D_METHOD("get_command_map"), &AptMenuPlayer::get_command_map);         // lane OPTS-2
+	ClassDB::bind_method(D_METHOD("options_page"), &AptMenuPlayer::options_page);               // lane OPTS-2
+	ClassDB::bind_method(D_METHOD("set_openbfme_available", "available"), &AptMenuPlayer::set_openbfme_available); // lane OPTS-3
+	ClassDB::bind_method(D_METHOD("openbfme_page_open"), &AptMenuPlayer::openbfme_page_open);
+	ClassDB::bind_method(D_METHOD("openbfme_page_close"), &AptMenuPlayer::openbfme_page_close);
+	ClassDB::bind_method(D_METHOD("openbfme_page_show", "spec"), &AptMenuPlayer::openbfme_page_show);
+	ClassDB::bind_method(D_METHOD("openbfme_page_set_row", "row"), &AptMenuPlayer::openbfme_page_set_row);
+	ClassDB::bind_method(D_METHOD("openbfme_page_events"), &AptMenuPlayer::openbfme_page_events);
+	ClassDB::bind_method(D_METHOD("openbfme_page_state"), &AptMenuPlayer::openbfme_page_state);
+	ClassDB::bind_method(D_METHOD("openbfme_page_choose", "key", "value"), &AptMenuPlayer::openbfme_page_choose);
 	ClassDB::bind_method(D_METHOD("font_metrics", "name", "point_size", "bold", "text"), &AptMenuPlayer::font_metrics); // lane UI-4
 	ClassDB::bind_method(D_METHOD("drawn_texts", "clear"), &AptMenuPlayer::drawn_texts); // lane UI-4
 	ClassDB::bind_method(D_METHOD("set_tribute_world", "world"), &AptMenuPlayer::set_tribute_world);
@@ -997,6 +1014,14 @@ void AptMenuPlayer::_process(double delta)
 	if (!m_booted)
 	{
 		return;
+	}
+	if (m->shell && m->shell->shell)
+	{
+		// lane OPTS-3: the Options screen on top shows the OPENBFME button while the device offers the page
+		if (AptOptionsScreen *o = dynamic_cast<AptOptionsScreen *>(m->shell->shell->top()))
+		{
+			o->setExtensionAvailable(m->openbfmeAvailable);
+		}
 	}
 	tick(delta);
 	render(false);
@@ -1188,7 +1213,15 @@ Dictionary AptMenuPlayer::boot_shell(const Ref<RetailFileSystem> &fs, Object *wo
 	// lane UI-2: Options.ini in the user data folder (OptionPreferences); a missing file is no entries (the first run). The soft particle setting
 	// takes effect at once (FX-3's project setting).
 	sm->environment.optionsFile = toNative(OS::get_singleton()->get_user_data_dir()) + "/Options.ini";
+	if (config.has("options_file"))
+	{
+		sm->environment.optionsFile = toNative(String(config["options_file"])); // lane OPTS-2: a check's own file (game.gd --options-file), never the player's
+	}
 	sm->options.load(sm->environment.optionsFile);
+	for (const std::string &key : sm->options.migrateLegacyKeys())
+	{
+		UtilityFunctions::print("SHELL Options.ini: ", toGodot(key), " is now ", toGodot(std::string(OptionPreferences::kSoftParticles)), " (lane OPTS-2: OpenBFME keys carry the prefix)");
+	}
 	sm->environment.options = &sm->options;
 	// lane PLAY-2: Data\INI\GameLOD.ini (RW 0x7F995C): StaticGameLOD for the Options screen's advanced page; its other blocks are read past
 	{
@@ -1205,6 +1238,13 @@ Dictionary AptMenuPlayer::boot_shell(const Ref<RetailFileSystem> &fs, Object *wo
 				ini.load(file, INI_LOAD_OVERWRITE);
 			}
 			sm->environment.gameLOD = &sm->gameLOD;
+			// lane OPTS-2: RW 0x602165 / RW 0x4465D8: the level of Options.ini (or the detection's, S-2481) is applied at start; the device reads the
+			// state through get_detail_state
+			sm->gameLOD.init(sm->options, &sm->detailStop);
+			if (!sm->detailStop.empty())
+			{
+				UtilityFunctions::print("SHELL detail: ", toGodot(sm->detailStop));
+			}
 		}
 		catch (const INIException &e)
 		{
@@ -1274,6 +1314,7 @@ Dictionary AptMenuPlayer::boot_shell(const Ref<RetailFileSystem> &fs, Object *wo
 			}
 			const Vector2i current = config.get("current_resolution", Vector2i(0, 0));
 			sm->environment.currentResolution = { current.x, current.y };
+			sm->environment.resolutionChangeApplies = false; // lane OPTS-2 [S-3401]
 			CameraSettings camera;
 			std::string cameraError;
 			if (CameraSettings::load(*fs->archive_fs(), camera, &cameraError))
@@ -1442,6 +1483,19 @@ Variant AptMenuPlayer::get_option(const String &key) const
 	return toGodot(m->shell->options.get(k));
 }
 
+Dictionary AptMenuPlayer::get_options() const
+{
+	Dictionary out;
+	if (m->shell)
+	{
+		for (const auto &kv : m->shell->options.values())
+		{
+			out[toGodot(kv.first)] = toGodot(kv.second);
+		}
+	}
+	return out;
+}
+
 // lane UI-4: the texts the gadgets and the render callbacks drew since the last clear: [{ source, text, color, window }]
 Array AptMenuPlayer::drawn_texts(bool clear)
 {
@@ -1460,6 +1514,329 @@ Array AptMenuPlayer::drawn_texts(bool clear)
 		m->drawnTexts.clear();
 	}
 	return out;
+}
+
+bool AptMenuPlayer::set_option(const String &key, const Variant &value)
+{
+	if (!m->shell)
+	{
+		return false;
+	}
+	const std::string k = key.utf8().get_data();
+	const std::string v = value.get_type() == Variant::NIL ? std::string() : std::string(String(value).utf8().get_data());
+	// ZH UserPreferences::load keeps no key or value that is empty or holds a line break: such an entry would not read back
+	if (k.empty() || k.find_first_of("=\r\n") != std::string::npos || v.find_first_of("\r\n") != std::string::npos)
+	{
+		return false;
+	}
+	if (v.empty())
+	{
+		m->shell->options.erase(k);
+	}
+	else
+	{
+		m->shell->options.set(k, v);
+	}
+	return true;
+}
+
+Dictionary AptMenuPlayer::save_options()
+{
+	Dictionary r;
+	std::string error;
+	const bool ok = m->shell && !m->shell->environment.optionsFile.empty() && m->shell->options.save(m->shell->environment.optionsFile, &error);
+	r["ok"] = ok;
+	r["error"] = toGodot(ok ? std::string() : (m->shell ? (error.empty() ? std::string("Options.ini: no file name") : error) : std::string("no shell")));
+	r["path"] = m->shell ? toGodot(m->shell->environment.optionsFile) : String();
+	return r;
+}
+
+// ---- lane OPTS-3: the OpenBFME page ----------------------------------------------------------------------------------------------------------------
+namespace
+{
+AptOptionsScreen *optionsTop(Shell *shell)
+{
+	return shell ? dynamic_cast<AptOptionsScreen *>(shell->top()) : nullptr;
+}
+
+std::u16string u16Of(const Variant &v)
+{
+	return utf8ToU16(toNative(String(v)));
+}
+
+OpenBFMEPageRow pageRowOf(const Dictionary &d)
+{
+	OpenBFMEPageRow r;
+	const String kind = d.get("kind", "text");
+	r.kind = kind == "section" ? OpenBFMEPageRow::Kind::Section
+		: kind == "choice"     ? OpenBFMEPageRow::Kind::Choice
+		: kind == "check"      ? OpenBFMEPageRow::Kind::Check
+		: kind == "slider"     ? OpenBFMEPageRow::Kind::Slider
+							   : OpenBFMEPageRow::Kind::Text;
+	r.key = toNative(String(d.get("key", "")));
+	r.label = u16Of(d.get("label", ""));
+	r.help = u16Of(d.get("help", ""));
+	const Array items = d.get("items", Array());
+	for (int64_t i = 0; i < items.size(); ++i)
+	{
+		const Variant it = items[i];
+		if (it.get_type() == Variant::DICTIONARY)
+		{
+			const Dictionary id = it;
+			r.items.push_back({ u16Of(id.get("text", "")), (bool)id.get("enabled", true) });
+		}
+		else
+		{
+			r.items.push_back({ u16Of(it), true });
+		}
+	}
+	r.value = (int)d.get("value", 0);
+	r.minValue = (int)d.get("min", 0);
+	r.maxValue = (int)d.get("max", 100);
+	r.valueText = u16Of(d.get("value_text", ""));
+	r.enabled = (bool)d.get("enabled", true);
+	return r;
+}
+
+Rect2 stageRect(const std::array<int, 4> &r)
+{
+	return Rect2((real_t)r[0], (real_t)r[1], (real_t)(r[2] - r[0]), (real_t)(r[3] - r[1]));
+}
+} // namespace
+
+void AptMenuPlayer::set_openbfme_available(bool available)
+{
+	m->openbfmeAvailable = available;
+	if (AptOptionsScreen *o = optionsTop(m->shell ? m->shell->shell.get() : nullptr))
+	{
+		o->setExtensionAvailable(available);
+	}
+}
+
+Dictionary AptMenuPlayer::openbfme_page_open()
+{
+	Dictionary r;
+	AptOptionsScreen *o = optionsTop(m->shell ? m->shell->shell.get() : nullptr);
+	std::string error;
+	const bool ok = o && o->openExtension(&error);
+	r["ok"] = ok;
+	r["error"] = toGodot(o ? error : std::string("Options.apt is not the top screen"));
+	return r;
+}
+
+void AptMenuPlayer::openbfme_page_close()
+{
+	if (AptOptionsScreen *o = optionsTop(m->shell ? m->shell->shell.get() : nullptr))
+	{
+		o->closeExtension();
+	}
+}
+
+Dictionary AptMenuPlayer::openbfme_page_show(const Dictionary &spec)
+{
+	Dictionary r;
+	r["ok"] = false;
+	AptOptionsScreen *o = optionsTop(m->shell ? m->shell->shell.get() : nullptr);
+	if (!o || !o->extensionOpen() || !o->extensionPage())
+	{
+		r["error"] = "the OpenBFME page is not open";
+		return r;
+	}
+	OpenBFMEPageSpec s;
+	s.subtitle = u16Of(spec.get("subtitle", ""));
+	s.tabsHeader = u16Of(spec.get("tabs_header", ""));
+	const Array tabs = spec.get("tabs", Array());
+	for (int64_t i = 0; i < tabs.size(); ++i)
+	{
+		s.tabs.push_back(u16Of(tabs[i]));
+	}
+	s.tab = (int)spec.get("tab", 0);
+	s.panelHeader = u16Of(spec.get("panel_header", ""));
+	s.note = u16Of(spec.get("note", ""));
+	const Array rows = spec.get("rows", Array());
+	for (int64_t i = 0; i < rows.size(); ++i)
+	{
+		s.rows.push_back(pageRowOf(rows[i]));
+	}
+	if (spec.has("list"))
+	{
+		s.hasList = true;
+		const Array list = spec["list"];
+		for (int64_t i = 0; i < list.size(); ++i)
+		{
+			const Array pair = list[i];
+			s.list.emplace_back(u16Of(pair.size() > 0 ? pair[0] : Variant("")), u16Of(pair.size() > 1 ? pair[1] : Variant("")));
+		}
+	}
+	std::string error;
+	const bool ok = o->extensionPage()->show(s, &error);
+	r["ok"] = ok;
+	r["error"] = toGodot(error);
+	if (!ok)
+	{
+		UtilityFunctions::printerr(toGodot("SHELL OpenBFME page: " + error));
+	}
+	return r;
+}
+
+bool AptMenuPlayer::openbfme_page_set_row(const Dictionary &row)
+{
+	AptOptionsScreen *o = optionsTop(m->shell ? m->shell->shell.get() : nullptr);
+	return o && o->extensionOpen() && o->extensionPage() && o->extensionPage()->setRow(pageRowOf(row));
+}
+
+Array AptMenuPlayer::openbfme_page_events()
+{
+	Array out;
+	AptOptionsScreen *o = optionsTop(m->shell ? m->shell->shell.get() : nullptr);
+	if (!o)
+	{
+		return out;
+	}
+	static const char *kinds[] = { "value", "tab", "cancel", "reset", "accept", "entry" };
+	for (const OpenBFMEPageEvent &e : o->takeExtensionEvents())
+	{
+		Dictionary d;
+		d["kind"] = kinds[(int)e.kind];
+		d["key"] = toGodot(e.key);
+		d["value"] = e.value;
+		out.push_back(d);
+	}
+	return out;
+}
+
+Dictionary AptMenuPlayer::openbfme_page_state() const
+{
+	Dictionary d;
+	d["available"] = m->openbfmeAvailable;
+	AptOptionsScreen *o = optionsTop(m->shell ? m->shell->shell.get() : nullptr);
+	d["open"] = o && o->extensionOpen();
+	if (!o)
+	{
+		return d;
+	}
+	float box[4];
+	if (o->entryBox(box))
+	{
+		d["entry"] = Rect2(box[0], box[1], box[2] - box[0], box[3] - box[1]);
+	}
+	Dictionary buttons;
+	AptSpriteInst *root = o->level() >= 0 ? m->shell->wm->apt().level(o->level()) : nullptr;
+	static const char *names[3][2] = { { "cancel", "Buttons.Cancel.bttn" }, { "reset", "Buttons.Default.bttn" }, { "accept", "Buttons.Accept.bttn" } };
+	for (const auto &n : names)
+	{
+		AptCharacterInst *b = root ? m->shell->wm->apt().resolvePath(root, n[1]) : nullptr;
+		if (b && b->globallyVisible() && WindowManager::stageBounds(*b, box))
+		{
+			buttons[n[0]] = Rect2(box[0], box[1], box[2] - box[0], box[3] - box[1]);
+		}
+	}
+	d["buttons"] = buttons;
+	OpenBFMEOptionsPage *page = o->extensionPage();
+	if (!o->extensionOpen() || !page || !page->shown())
+	{
+		return d;
+	}
+	d["tab"] = page->spec().tab;
+	Array tabs;
+	for (std::size_t i = 0; i < page->spec().tabs.size(); ++i)
+	{
+		std::array<int, 4> r{};
+		page->rect("tab:" + std::to_string(i), r);
+		tabs.push_back(stageRect(r));
+	}
+	d["tabs"] = tabs;
+	Dictionary rows;
+	for (const OpenBFMEPageRow &row : page->spec().rows)
+	{
+		if (row.key.empty())
+		{
+			continue;
+		}
+		Dictionary rd;
+		std::array<int, 4> r{};
+		if (page->rect(row.key, r))
+		{
+			rd["rect"] = stageRect(r);
+		}
+		rd["value"] = row.value;
+		rd["enabled"] = row.enabled;
+		rd["items"] = (int)row.items.size();
+		rows[toGodot(row.key)] = rd;
+	}
+	d["rows"] = rows;
+	std::array<int, 4> lr{};
+	if (page->rect("list", lr))
+	{
+		d["list"] = stageRect(lr);
+	}
+	d["help"] = toGodot(u16ToUtf8(page->helpText()));
+	return d;
+}
+
+Dictionary AptMenuPlayer::openbfme_page_choose(const String &key, int value)
+{
+	Dictionary r;
+	AptOptionsScreen *o = optionsTop(m->shell ? m->shell->shell.get() : nullptr);
+	std::string error = "the OpenBFME page is not open";
+	const bool ok = o && o->extensionOpen() && o->extensionPage() && o->extensionPage()->choose(toNative(key), value, &error);
+	r["ok"] = ok;
+	r["error"] = ok ? String() : toGodot(error);
+	return r;
+}
+
+int AptMenuPlayer::options_page() const
+{
+	const AptOptionsScreen *o = m->shell && m->shell->shell ? dynamic_cast<const AptOptionsScreen *>(m->shell->shell->top()) : nullptr;
+	return o ? o->pageState() : 0;
+}
+
+Dictionary AptMenuPlayer::get_detail_state() const
+{
+	Dictionary d;
+	if (!m->shell || !m->shell->environment.gameLOD)
+	{
+		d["ok"] = false;
+		d["error"] = "no GameLOD.ini (the shell did not boot or the file did not parse)";
+		return d;
+	}
+	const StaticLODState &s = m->shell->gameLOD.state();
+	d["ok"] = s.level != -1;
+	d["level"] = s.level;
+	d["level_name"] = s.level >= 0 ? String(GameLODManager::levelName(s.level)) : String();
+	d["stop"] = toGodot(m->shell->detailStop);
+	d["unapplied"] = toGodot(GameLODManager::unappliedEffects()); // [S-3402]
+	d["model_lod"] = s.modelLOD;
+	d["effects_lod"] = s.effectsLOD;
+	d["shadow_lod"] = s.shadowLOD;
+	d["terrain_lod"] = s.terrainLOD;
+	d["water_lod"] = s.waterLOD;
+	d["animation_detail"] = s.animationDetail;
+	d["min_particle_priority"] = s.minParticlePriority;
+	d["min_particle_skip_priority"] = s.minParticleSkipPriority;
+	d["decals"] = s.decals;
+	d["decals_reduced"] = s.decalsReduced;
+	d["all_health_bars"] = s.allHealthBars;
+	d["use_heat_effects"] = s.useHeatEffects;
+	d["max_particle_count"] = s.maxParticleCount;
+	d["use_shadow_volumes"] = s.useShadowVolumes;
+	d["use_shadow_decals"] = s.useShadowDecals;
+	d["use_shadow_mapping"] = s.useShadowMapping;
+	d["texture_reduction"] = s.textureReduction;
+	d["shader_lod"] = s.shaderLOD;
+	d["shader_material_replacement"] = s.shaderMaterialReplacement;
+	d["use_terrain_normal_map"] = s.useTerrainNormalMap;
+	d["use_distance_dependant_terrain_textures"] = s.useDistanceDependantTerrainTextures;
+	d["high_water"] = s.highWater;
+	d["show_soft_water_edge"] = s.showSoftWaterEdge;
+	d["max_tank_track_edges"] = s.maxTankTrackEdges;
+	d["lowest_model_lod"] = s.lowestModelLOD;
+	d["show_props"] = s.showProps;
+	// RW 0x641E8B: the display gamma of Brightness; RW 0x6E59A9: the scroll factor (missing: the caller's GameData default, so only the text here)
+	d["display_gamma"] = OptionPreferences::displayGamma((int)m->shell->options.getBrightness(), 1.0f);
+	// the Scroll Speed slider's position as InitGadgets sets it (RW 0x9209D8: getScrollFactor * 50, truncated), the missing key's default included
+	d["scroll_slider"] = (int64_t)(m->shell->options.getScrollFactor(m->shell->environment.keyboardDefaultScrollSpeedFactor) * 50.0f);
+	return d;
 }
 
 // lane UI-4: a GameFont's metrics as the shell's gadgets and render callbacks see them (ShellFontMetrics), and whether its bold is applied
@@ -1657,6 +2034,7 @@ Dictionary AptMenuPlayer::set_load_screen_from_game(const Dictionary &resolved)
 	out["cards"] = cards;
 	out["local_card"] = info.localCard;
 	out["loading_type"] = info.gameLoadingType;
+	out["rules_summary"] = toGodot(loadScreenU16ToUtf8(info.rulesSummary)); // lane RULES-1
 	return out;
 }
 
@@ -1776,6 +2154,20 @@ Dictionary AptMenuPlayer::lobby_apply(const Dictionary &spec)
 		}
 		return -1;
 	};
+	if (spec.has("legendary_heroes"))
+	{
+		// lane RULES-1: the Rules tab's Legendary Heroes combo (placed once the movie shows the tab): its entry, so the screen's own handler runs
+		GameWindow *combo = screen->legendaryHeroesWindow();
+		const int row = combo ? itemRow(combo, (std::intptr_t)(int64_t)spec["legendary_heroes"]) : -1;
+		if (row < 0)
+		{
+			errors.push_back(combo ? "the Legendary Heroes combo has no such factor" : "the Rules tab's Legendary Heroes row is not placed (open the tab first)");
+		}
+		else
+		{
+			GadgetComboBoxSetSelectedPos(combo, row, false);
+		}
+	}
 	if (spec.has("map"))
 	{
 		const std::string key = toNative(String(spec["map"]));
@@ -3511,6 +3903,19 @@ void AptMenuPlayer::_input(const Ref<InputEvent> &event)
 		{
 			return;
 		}
+		// lane OPTS-3: Esc on the OpenBFME page is its CANCEL; the movie never sees the key (its own Esc would play Options' closing animation)
+		if (key->get_keycode() == Key::KEY_ESCAPE && m->shell && m->shell->shell)
+		{
+			if (AptOptionsScreen *o = optionsTop(m->shell->shell.get()); o && o->extensionOpen())
+			{
+				if (key->is_pressed())
+				{
+					o->extensionCancel();
+				}
+				get_viewport()->set_input_as_handled();
+				return;
+			}
+		}
 		const int vk = virtualKeyOf(key->get_keycode());
 		if (vk != 0)
 		{
@@ -4452,6 +4857,59 @@ Dictionary AptMenuPlayer::fetch_text(const String &label)
 	const std::u16string text = fetchOrMissing(m->shell ? static_cast<const GameTextSource *>(m->shell->text.get()) : nullptr, toNative(label), &exists);
 	r["found"] = exists;
 	r["text"] = toGodot(loadScreenU16ToUtf8(text));
+	return r;
+}
+
+Dictionary AptMenuPlayer::get_command_map()
+{
+	// lane OPTS-2: the hot keys of the CommandMap (MetaMap::parseMetaMap RW 0x5DAD46; the files the HUD loads, GodotInGameHud: Data\INI\CommandMap.ini then
+	// CommandMap.ini) for the OpenBFME screen's read-only Controls tab, with the game text of each record's DisplayName / Description
+	Dictionary r;
+	Array rows;
+	if (!m->shell || !m->shell->environment.fileSystem)
+	{
+		r["ok"] = false;
+		r["error"] = "the shell is not booted (no archives)";
+		r["rows"] = rows;
+		return r;
+	}
+	std::vector<CommandMapEntry> entries;
+	std::string error;
+	if (!ListCommandMap(*m->shell->environment.fileSystem, entries, &error))
+	{
+		r["ok"] = false;
+		r["error"] = toGodot(error);
+		r["rows"] = rows;
+		return r;
+	}
+	const GameTextSource *text = m->shell->text.get();
+	auto label = [text](const std::string &l) -> String {
+		if (l.empty())
+		{
+			return String();
+		}
+		bool exists = false;
+		const std::u16string t = fetchOrMissing(text, l, &exists);
+		return exists ? toGodot(loadScreenU16ToUtf8(t)) : String();
+	};
+	for (const CommandMapEntry &e : entries)
+	{
+		Dictionary d;
+		d["name"] = toGodot(e.name);
+		d["key"] = toGodot(e.key);
+		d["transition"] = e.transition;
+		d["ctrl"] = e.ctrl;
+		d["shift"] = e.shift;
+		d["alt"] = e.alt;
+		d["game"] = e.game;
+		d["shell"] = e.shell;
+		d["category"] = e.category;
+		d["display_name"] = label(e.displayName);
+		d["description"] = label(e.description);
+		rows.push_back(d);
+	}
+	r["ok"] = true;
+	r["rows"] = rows;
 	return r;
 }
 

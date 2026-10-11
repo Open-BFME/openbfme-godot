@@ -65,12 +65,11 @@ func _init(u) -> void:
 
 
 func enabled() -> bool:
-	return updater.state.get_value("aio", "enabled", DEFAULT_ENABLED) == true
+	return updater.get_state("aio", "enabled", DEFAULT_ENABLED) == true
 
 
 func set_enabled(on: bool) -> void:
-	updater.state.set_value("aio", "enabled", on)
-	updater._save_state()
+	updater.set_state("aio", "enabled", on)
 
 
 ## Tests: one loopback server plays both of the service's hosts. "" or why not.

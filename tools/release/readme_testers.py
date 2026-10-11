@@ -17,7 +17,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[2]
 
 TEMPLATE = """\
-OpenBFME {version} - closed test build for {platform_name}
+OpenBFME {version} - alpha build for {platform_name}
 {rule}
 
 Thank you for testing! OpenBFME is an unofficial, fan-made rebuild of

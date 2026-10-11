@@ -12,8 +12,9 @@
      "files": {<path in the package>: {"size", "sha256"}}}}}}      (format 2: every file of every package, round 3)
 
 with sorted keys, two-space indents and a final newline, so the same packages give the same bytes. The version is the folder's (the
-SHA256SUMS name); it must be a release tag (v<major>.<minor>.<patch> or v<major>.<minor>.<patch>-preview.<n>) on the checked-out commit (--allow-untagged: tests);
-a -preview.<n> tag is the preview channel. Every archive's size and SHA-256 are computed here and must match SHA256SUMS. Sign the result
+SHA256SUMS name); it must be a release tag (v<major>.<minor>.<patch>, v<major>.<minor>.<patch>-alpha.<n> or
+v<major>.<minor>.<patch>-preview.<n>) on the checked-out commit (--allow-untagged: tests); an -alpha.<n> or -preview.<n> tag is the
+pre-release channel, whose id is "preview" (lane RELNAME-1: the alpha builds keep the channel id, the launcher shows it as "Alpha"). Every archive's size and SHA-256 are computed here and must match SHA256SUMS. Sign the result
 with tools/release/sign_manifest.py on the offline machine.
 """
 from __future__ import annotations
@@ -35,8 +36,19 @@ DEFAULT_REPO = "Open-BFME/openbfme-godot"
 PLATFORMS = ("linux-x64", "windows-x64")
 KINDS = {"game": "openbfme", "launcher": "openbfme-launcher"}
 _N = r"(?:0|[1-9][0-9]{0,8})"
-# the launcher's release grammar (launcher/scripts/core/semver.gd): v<major>.<minor>.<patch>[-preview.<n>], matched as a whole
-TAG = re.compile(rf"v({_N})\.({_N})\.({_N})(?:-preview\.({_N}))?")
+# the launcher's release grammar (launcher/scripts/core/semver.gd): v<major>.<minor>.<patch>[-(alpha|preview).<n>], matched as a whole;
+# groups 1-3 the core, 4 the pre-release word, 5 its number
+TAG = re.compile(rf"v({_N})\.({_N})\.({_N})(?:-(alpha|preview)\.({_N}))?")
+
+
+def version_key(version: str) -> tuple:
+    """the launcher's order (semver.gd compare, SemVer 2.0.0 section 11): a pre-release below its release, "alpha" < "preview", then
+    the number; v0.3.0-preview.4 < v0.4.0-alpha.1 < v0.4.0-alpha.2 < v0.4.0"""
+    m = TAG.fullmatch(version)
+    if not m or len(version) > 40:
+        raise SystemExit(f"make_manifest: {version!r} is not a release version")
+    core = (int(m.group(1)), int(m.group(2)), int(m.group(3)))
+    return core + ((1, "", 0) if m.group(4) is None else (0, m.group(4), int(m.group(5))))
 
 
 def asset_name(kind: str, version: str, platform: str) -> str:
@@ -46,7 +58,8 @@ def asset_name(kind: str, version: str, platform: str) -> str:
 def channel_of(version: str) -> str:
     m = TAG.fullmatch(version)
     if not m or len(version) > 40:
-        raise SystemExit(f"make_manifest: {version!r} is not a release version (v<major>.<minor>.<patch> or v<major>.<minor>.<patch>-preview.<n>)")
+        raise SystemExit(f"make_manifest: {version!r} is not a release version (v<major>.<minor>.<patch>, v<major>.<minor>.<patch>-alpha.<n> or "
+                         f"v<major>.<minor>.<patch>-preview.<n>)")
     return "preview" if m.group(4) else "stable"
 
 

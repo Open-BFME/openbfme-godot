@@ -27,7 +27,8 @@
 //     the description's first line, the picture is `<map>_pic.tga` or the image "MissingMap".
 //   * Profile list: BFME1 SkirmishScreenRefreshProfile.cpp (the list of names, the current one selected); the RotWK movie uses a list box
 //     (Skirmish::SelectProfile) and a text entry (Skirmish::CreatePersonaEntry).
-// INFERENCE (stops S-178, S-179): which rule rows exist, what Hero and Handicap contain, how profiles are stored, whether Skirmish forces a profile
+// lane RULES-1: the rule rows are RotWK's AptMpGameRules (AptSkirmishRules.cpp, Common/MpGameRules.h) plus OpenBFME's Legendary Heroes row.
+// INFERENCE (stops S-178, S-179): what Hero and Handicap contain, how profiles are stored, whether Skirmish forces a profile
 // first (the movie has the hook `vShowAddProfile`; the engine sets it when no profile exists), and everything under S-175 (stats screens).
 
 #pragma once
@@ -37,10 +38,12 @@
 #include "GameClient/GUI/Skirmish/SkirmishGameSetup.h"
 
 struct CreateAHeroHero;
+class AptMessageBox;
 
 #include <array>
 #include <map>
 #include <memory>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -97,6 +100,15 @@ public:
 	int slotHero(int slot) const { return slot >= 0 && slot < MAX_SLOTS ? m_slotHero[(size_t)slot] : -1; }
 	// The map cache keys in the order of the MapList rows.
 	const std::vector<std::string> &mapListKeys() const { return m_mapKeys; }
+	// lane RULES-1: the Rules tab's gadgets (AptMpGameRules::InitGadgets files "RuleComboBox_<n>" / "RuleCheckBox_<n>" under n); null when not placed
+	GameWindow *ruleComboWindow(int n) const { return n >= 0 && n < (int)m_ruleCombos.size() ? m_ruleCombos[(size_t)n] : nullptr; }
+	GameWindow *ruleCheckWindow(int n) const { return n >= 0 && n < (int)m_ruleChecks.size() ? m_ruleChecks[(size_t)n] : nullptr; }
+	// the gadget that shows a rule (AptMpGameRules + 0x7C), and OpenBFME's Legendary Heroes combo
+	GameWindow *ruleWindow(int rule) const { return (unsigned)rule < (unsigned)NUM_GAME_RULES ? m_ruleWindows[(size_t)rule] : nullptr; }
+	GameWindow *legendaryHeroesWindow() const { return m_legendaryCombo; }
+	bool rulesPopulated() const { return m_rulesPopulated; }
+	// the rule warning boxes shown (title, text), for tests
+	const std::vector<std::pair<std::u16string, std::u16string>> &ruleWarnings() const { return m_ruleWarnings; }
 
 protected:
 	WindowMsgHandledType gadgetMessage(GameWindow *from, std::uint32_t msg, WindowMsgData data1, WindowMsgData data2) override;
@@ -122,6 +134,13 @@ protected:
 	virtual void onChatSend(const std::u16string &text);
 	// lane UI-1: AptMpGameRules::ShowChat (RW 0x845AE2 id 0): the host interface's answer; the skirmish lobby has no chat
 	virtual bool showChat() const { return false; }
+	// lane RULES-1: the panel's ruleChanged (RW 0x8421E0) on the host posts "GUI:RuleChangeWarning" + the rule's name (kind 10 with a reset:
+	// "GUI:RuleResetWarning") through the owner's slot 17: the LAN lobby's system chat; the skirmish lobby has no chat (nothing)
+	virtual void ruleNotice(const std::u16string &line) { (void)line; }
+	// lane RULES-1: RW 0x8421E0 kind 3 above 100: MessageBoxOk("RULE:CommandPointFactor", "APT:CommandPointsTooHigh"); the LAN lobby uses its own box
+	virtual void showRuleWarning(const std::u16string &title, const std::u16string &text);
+	// lane RULES-1: the rule gadgets follow the model (RW 0x986630 for every rule, AptMpGameRules::rva0057E6C1)
+	void refreshRuleGadgets();
 	// lane UI-1: a line of the lobby chat (RW 0x78419D: the history and the Chat list)
 	void addChatLine(const std::u16string &line, Color color);
 	SkirmishGameSetup *setupModel() { return m_setup.get(); }
@@ -176,6 +195,21 @@ private:
 	void updateCurrentMapWindow(const MapCacheEntry *map); // lane UI-2: RW 0x9772E6 / 0x976F59
 	std::string mapPreviewImage(const MapCacheEntry &map);  // lane UI-2: RW 0x702689
 	void onComboSelected(GameWindow *combo);
+	// ---- lane RULES-1: AptMpGameRules (AptSkirmishRules.cpp) ----
+	void initRuleGadget(const std::string &name, GameWindow *window); ///< RW 0x987092
+	bool tryPopulateRules();                                          ///< RW 0x57ED2B's RotWK twin: once every row of the mode is filed
+	void refileRules();                                               ///< RW 0x57EF18's RotWK twin: forget the rule windows and populate again
+	void populateRuleCombos();                                        ///< RW 0x986B1C
+	void populateRuleChecks();                                        ///< RW 0x986810
+	void enableRuleGadgets();                                         ///< RW 0x57E97A's RotWK twin: enabled = host and shown
+	void updateRuleGadget(int rule);                                  ///< RW 0x986624
+	void updateLegendaryGadget();
+	bool onRuleGadget(GameWindow *gadget);                            ///< RW 0x986776: true when `gadget` is a rule gadget
+	void ruleChanged(int kind, bool reset);                           ///< RW 0x8421E0
+	void resetRules();                                                ///< AptMpGameRules::Reset RW 0x98674C
+	void pruneRuleGadgets(const std::set<const GameWindow *> &alive);
+	int ruleComboCount() const;                                       ///< MpGameRules::NumComboBoxes: the mode's rows, + 1 for Legendary Heroes in mode 0
+	bool amIHost() const { return m_hostMode; }
 	// lane FB7-1: a click on a start spot of the map window (RW 0x845830, messages 0x4008 / 0x4009 = GBM_SELECTED / GBM_SELECTED_RIGHT); true when
 	// `button` is one of the spots
 	bool onStartSpotSelected(GameWindow *button, bool left);
@@ -261,7 +295,20 @@ private:
 	std::array<int, MAX_SLOTS> m_playerComboKind{ { -1, -1, -1, -1, -1, -1, -1, -1 } }; // lane MP-2: 1 the name entry, 0 the slot states
 	std::array<int, MAX_SLOTS> m_slotHero{ { -1, -1, -1, -1, -1, -1, -1, -1 } };        // lane CAH-1: GameSlot + 0x5C
 	bool m_heroStopReported = false;
+	// lane RULES-1: AptMpGameRules + 0x64 / + 0x70 (the combo and check widgets by row), + 0x7C (the widget of each rule), + 0x88 (input gate), + 0x89
+	// (populated), and the per-rule states of the RotWK panel (1 shown, 2 disabled by GlobalData, 3 hidden: ClanGame outside online play)
+	std::vector<GameWindow *> m_ruleCombos, m_ruleChecks;
+	std::array<GameWindow *, NUM_GAME_RULES> m_ruleWindows{};
+	std::array<int, NUM_GAME_RULES> m_ruleStates{};
+	GameWindow *m_legendaryCombo = nullptr;
+	bool m_ruleInput = true;
+	bool m_rulesPopulated = false;
+	std::unique_ptr<AptMessageBox> m_ruleBox;
+	std::vector<std::pair<std::u16string, std::u16string>> m_ruleWarnings;
+
+	bool m_rulesStopReported = false; // lane RULES-1
 
 public:
-	static const char *const kHeroComboStop; ///< lane CAH-1: "[S-1406] ...", a "create-a-hero-stop" note when a Hero combo is first filled
+	static const char *const kHeroComboStop;
+	static const char *const kRulesStop; ///< lane RULES-1: "[S-3600] .. [S-3602] ...", a "rules-unverified" note when the rule rows are first populated ///< lane CAH-1: "[S-1406] ...", a "create-a-hero-stop" note when a Hero combo is first filled
 };

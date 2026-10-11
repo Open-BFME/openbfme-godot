@@ -89,10 +89,30 @@ public:
 	// SkirmishMapSelectMenu OK: GameInfo::setMap + setMapCRC + setMapSize + the start positions reset.  False when the cache has no such map.
 	bool setMap(const std::string &mapName);
 	// MpGameSetup+0x7C: strategic (War of the Ring) mode.  Filters the colours to AvailableInWotR; slots 6 and 7 are hidden by the screen.
-	void setStrategicMode(bool strategic) { m_strategic = strategic; }
+	// lane RULES-1: a change of mode resets the rules to the new mode's defaults (AptSkirmish::InitTheGame RW 0x9288D0 takes the mode's defaults)
+	void setStrategicMode(bool strategic);
 	bool strategicMode() const { return m_strategic; }
 	// Slot 0's name (the profile name).
 	void setPlayerName(const std::u16string &name);
+
+	// ---- lane RULES-1: the Rules tab (AptMpGameRules, Common/MpGameRules.h) ----
+	// the rule tables' mode: RULES_MODE_WOTR in strategic mode, else RULES_MODE_SKIRMISH
+	int rulesMode() const { return m_strategic ? RULES_MODE_WOTR : RULES_MODE_SKIRMISH; }
+	// a combo row's entries (AptMpGameRules::PopulateComboBoxes RW 0x986B1C): the choice label's text formatted with the value (UnicodeString::format,
+	// one %d), the default choice followed by the text of "VALUE:Default"; item data = the value
+	std::vector<SkirmishComboEntry> ruleComboEntries(const MpRuleCombo &combo) const;
+	// the rule's display name (RW 0x960B14: the game text of its tag; "Invalid Rule" for a rule >= 10)
+	std::u16string ruleName(int rule) const;
+	// the host's change of one rule (AptMpGameRules message handler RW 0x986776 stores the gadget's value; the panel's ruleChanged RW 0x8421E0 copies the
+	// block into the game). AllowCustomHeroes 0 also clears every slot's Create-a-Hero: RW 0x842A85 disables each hero combo and selects its first entry
+	// ("-", no hero) through the hero handler. False for a rule >= 10
+	bool setRule(int rule, int value);
+	// AptMpGameRules::Reset (RW 0x98674C): the mode's defaults (RW 0x960A74); OpenBFME's Legendary Heroes goes back to Off with them
+	void resetRules();
+	// OpenBFME's Legendary Heroes factor (1 off .. 4); false for a factor the rule does not offer
+	bool setLegendaryHeroes(int factor);
+	// the Legendary Heroes combo's entries: Off, 2x, 3x, 4x (item data = the factor; Off carries the " *" default mark like a retail row)
+	std::vector<SkirmishComboEntry> legendaryHeroesEntries() const;
 
 	// ---- lane MP-2: the LAN game setup (AptLanLobby) ----
 	// a network game: the local player is `localSlot` and every human slot is a player (its combo shows the name, never the slot states)

@@ -336,6 +336,7 @@ void AptPalantir::syncFrames(const std::vector<ControlBarButton> &buttons, bool 
 			if (s.created)
 			{
 				const std::string key = levelPrefix() + frame + ".content";
+				setOverlay(s, frame, false); // lane AUTOCAST-1: the content's destructor hides the glow first (RW 0x9D6EC7 -> 0x9D6F07)
 				call(frame, "DeleteContent", {});
 				m_images.erase(key + "_Image");
 				m_timers.erase(key + "_Timer");
@@ -346,7 +347,7 @@ void AptPalantir::syncFrames(const std::vector<ControlBarButton> &buttons, bool 
 		}
 		const ControlBarButton &b = *at[i];
 		const std::string key = levelPrefix() + frame + ".content";
-		const std::string sig = std::to_string(b.slot) + "|" + std::to_string((int)b.state) + "|" + std::to_string(b.queued) + "|" + b.image + "|" + std::to_string((int)(b.timer * 100.0f));
+		const std::string sig = std::to_string(b.slot) + "|" + std::to_string((int)b.state) + "|" + std::to_string(b.queued) + "|" + b.image + "|" + std::to_string((int)(b.timer * 100.0f)) + (b.autoAbility ? "|auto" : "");
 		if (s.created && s.sig == sig)
 		{
 			continue;
@@ -365,9 +366,20 @@ void AptPalantir::syncFrames(const std::vector<ControlBarButton> &buttons, bool 
 			{
 				registerCommand(key + "_OnPress", [this, position, inArc](const std::string &) {
 					const Slot &shown = (inArc ? m_arc : m_side)[position];
-					if (m_press && shown.created && shown.slot >= 0)
+					if (!shown.created || shown.slot < 0)
+					{
+						return;
+					}
+					// lane AUTOCAST-1: RW 0x9D6E54 reads TheAptWindowManager + 0x318: 0 the left press (owner slots 0xC / 0x10), 2 the right press
+					// (slots 0x14 / 0x18 -> RW 0x9D288A / 0x9D28D4), anything else nothing
+					const int button = windows().pressButton();
+					if (button == 0 && m_press)
 					{
 						m_press(shown.slot, inArc);
+					}
+					else if (button == 2 && m_rightPress)
+					{
+						m_rightPress(shown.slot, inArc);
 					}
 				});
 			}
@@ -394,6 +406,7 @@ void AptPalantir::syncFrames(const std::vector<ControlBarButton> &buttons, bool 
 		{
 			continue;
 		}
+		setOverlay(s, frame, b.autoAbility); // lane AUTOCAST-1: RW 0x9D2D0E, right after SetState (RW 0x9D2CC5)
 		s.sig = sig;
 		NativeImage &img = m_images[key + "_Image"];
 		img.image = b.image;
@@ -408,6 +421,45 @@ void AptPalantir::syncFrames(const std::vector<ControlBarButton> &buttons, bool 
 		}
 		windows().setAptText("APT:" + key + "_ProductionCount", b.queued > 0 ? "x" + std::to_string(b.queued) : std::string(" ")); // a space: an empty record would show the label (ResolveAptText)
 	}
+}
+
+// lane AUTOCAST-1: InGameCommandButtonMovieClip::Impl::SetAutoAbilityOverlayVisibility (RW 0x9D6F9C; BFME2 decomp Rva005C7A29Overlay.cpp, tier A): only an
+// initialized content (+ 0x4C) and only a change of + 0x54: the content's SetAutoAbilityOverlayState("_show" / "_hide") (the movie's AutoAbilityOverlays clip)
+void AptPalantir::setOverlay(Slot &s, const std::string &frame, bool show)
+{
+	if (!s.initialized || show == s.overlay)
+	{
+		return;
+	}
+	const char *which = show ? "_show" : "_hide";
+	// RW 0x9D6FD9 ignores the call's result and keeps + 0x54 either way (the next change is the next call); a refused call is counted and reported
+	// (callErrors), and the glow is reported drawn only when the call went through (review AUTOCAST-1 r1 #1)
+	const bool ok = call(frame + ".content", "SetAutoAbilityOverlayState", { which });
+	s.overlay = show;
+	s.overlayDrawn = ok && show;
+	if (!ok)
+	{
+		++m_overlayErrors;
+	}
+	if (m_overlayCalls.size() >= 64)
+	{
+		m_overlayCalls.erase(m_overlayCalls.begin());
+	}
+	m_overlayCalls.push_back(frame + ".content " + which + (ok ? "" : " FAILED"));
+}
+
+bool AptPalantir::autoAbilityOverlayShown(int slot, bool arc) const
+{
+	const Slot *slots = arc ? m_arc : m_side;
+	const int n = arc ? kArcPositions : kSidePositions;
+	for (int i = 0; i < n; ++i)
+	{
+		if (slots[i].created && slots[i].slot == slot)
+		{
+			return slots[i].overlay && slots[i].overlayDrawn;
+		}
+	}
+	return false;
 }
 
 void AptPalantir::syncLocal()

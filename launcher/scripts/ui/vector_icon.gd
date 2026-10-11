@@ -1,7 +1,9 @@
 ## Lane UI-3: the launcher's icons, drawn as vectors (no image files, nothing from the games). A Texture2D, so a Button shows it as its icon
 ## and tints it with the theme's icon colours; it draws at any size (DPI scaling stays sharp).
 ##   VectorIcon.make("gear", 20)
-## Kinds: play, gear, folder, copy, pause, resume, stop, download, refresh, check, warning, close, back, link.
+## Kinds: play, gear, folder, copy, pause, resume, stop, download, refresh, check, warning, close, back, link; lane UI-5: the left rail's
+## swords (Play), star (News), rings (Multiplayer), hammer (Mods), drive (Game files), and the settings switch toggle_on / toggle_off
+## (twice as wide as high, .tog of the prototype).
 extends Texture2D
 
 var kind := ""
@@ -16,7 +18,7 @@ static func make(k: String, size_px: int = 20) -> Texture2D:
 
 
 func _get_width() -> int:
-	return px
+	return px * 2 if kind.begins_with("toggle") else px
 
 
 func _get_height() -> int:
@@ -28,10 +30,13 @@ func _has_alpha() -> bool:
 
 
 func _draw(ci: RID, pos: Vector2, modulate: Color, _transpose: bool) -> void:
-	_draw_rect(ci, Rect2(pos, Vector2(px, px)), false, modulate, false)
+	_draw_rect(ci, Rect2(pos, Vector2(_get_width(), px)), false, modulate, false)
 
 
 func _draw_rect(ci: RID, rect: Rect2, _tile: bool, modulate: Color, _transpose: bool) -> void:
+	if kind.begins_with("toggle"):
+		_toggle(ci, rect, kind == "toggle_on")
+		return
 	var s := minf(rect.size.x, rect.size.y)
 	var o := rect.position + (rect.size - Vector2(s, s)) / 2.0
 	draw_into(ci, o, s, modulate)
@@ -109,3 +114,38 @@ func draw_into(ci: RID, o: Vector2, s: float, c: Color) -> void:
 			line.call([[0.42, 0.18], [0.18, 0.18], [0.18, 0.82], [0.82, 0.82], [0.82, 0.58]], false)
 			line.call([[0.5, 0.5], [0.86, 0.14]], false)
 			line.call([[0.6, 0.14], [0.86, 0.14], [0.86, 0.4]], false)
+		"swords":
+			line.call([[0.16, 0.16], [0.78, 0.78]], false)
+			line.call([[0.84, 0.16], [0.22, 0.78]], false)
+			line.call([[0.62, 0.84], [0.86, 0.6]], false)
+			line.call([[0.38, 0.84], [0.14, 0.6]], false)
+		"star":
+			var pts := []
+			for i in 8:
+				var a := -PI / 2 + TAU * i / 8.0
+				var r := 0.46 if i % 2 == 0 else 0.17
+				pts.append([0.5 + cos(a) * r, 0.5 + sin(a) * r])
+			fill.call(pts)
+		"rings":
+			arc.call(0.5, 0.5, 0.38, 0.0, TAU)
+			arc.call(0.5, 0.5, 0.16, 0.0, TAU)
+		"hammer":
+			fill.call([[0.22, 0.14], [0.66, 0.14], [0.78, 0.26], [0.66, 0.38], [0.22, 0.38]])
+			line.call([[0.44, 0.38], [0.44, 0.9]], false)
+		"drive":
+			for y in [0.2, 0.44, 0.68]:
+				line.call([[0.16, y], [0.84, y], [0.84, y + 0.16], [0.16, y + 0.16]], true)
+
+
+## the settings switch: a pill with a knob (gold and right when on)
+func _toggle(ci: RID, rect: Rect2, on: bool) -> void:
+	var rs := RenderingServer
+	var h := minf(rect.size.y, rect.size.x / 2.0)
+	var w := h * 1.9
+	var o := rect.position + Vector2((rect.size.x - w) / 2.0, (rect.size.y - h) / 2.0)
+	var track := Color("f0d891") if on else Color("444444")
+	var r := h / 2.0
+	rs.canvas_item_add_circle(ci, o + Vector2(r, r), r, track)
+	rs.canvas_item_add_circle(ci, o + Vector2(w - r, r), r, track)
+	rs.canvas_item_add_rect(ci, Rect2(o + Vector2(r, 0), Vector2(w - 2 * r, h)), track)
+	rs.canvas_item_add_circle(ci, o + Vector2(w - r if on else r, r), r * 0.7, Color("dddddd"))

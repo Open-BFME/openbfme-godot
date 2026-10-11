@@ -16,8 +16,10 @@ const AioInstall := preload("res://scripts/core/aio_install.gd")
 const AioPins := preload("res://scripts/core/aio_pins.gd")
 const Paths := preload("res://scripts/ui/paths.gd")
 const ProgressMeter := preload("res://scripts/ui/progress_meter.gd")
-const SettingsPanel := preload("res://scripts/ui/settings_panel.gd")
-const DownloadPanel := preload("res://scripts/ui/download_panel.gd")
+const SettingsScreen := preload("res://scripts/ui/settings_screen.gd")
+const MessagePanel := preload("res://scripts/ui/message_panel.gd")
+const ReleaseNotes := preload("res://scripts/core/release_notes.gd")
+const InstanceLock := preload("res://scripts/core/instance_lock.gd")
 const Updater := preload("res://scripts/core/updater.gd")
 const BuildInfo := preload("res://scripts/core/build_info.gd")
 
@@ -40,10 +42,37 @@ func _init() -> void:
 		for j in order.size():
 			var want := 0 if i == j else (-1 if i < j else 1)
 			_check(Semver.compare(order[i], order[j]) == want, "semver %s vs %s" % [order[i], order[j]])
+	# lane RELNAME-1: the alpha builds follow the last preview (SemVer: "alpha" < "preview" within one release, so the alpha line is
+	# v0.4.0): v0.3.0-preview.4 < v0.4.0-alpha.1 < v0.4.0-alpha.2 < v0.4.0; an alpha below a preview of the same release
+	var alpha := ["v0.3.0-preview.3", "v0.3.0-preview.4", "v0.3.0", "v0.4.0-alpha.0", "v0.4.0-alpha.1", "v0.4.0-alpha.2", "v0.4.0-alpha.10",
+		"v0.4.0-preview.1", "v0.4.0", "v0.4.1-alpha.1"]
+	for i in alpha.size():
+		for j in alpha.size():
+			var want := 0 if i == j else (-1 if i < j else 1)
+			_check(Semver.compare(alpha[i], alpha[j]) == want, "semver %s vs %s" % [alpha[i], alpha[j]])
+	_check(Semver.channel_of("v0.4.0-alpha.1") == "preview", "an alpha build is in the pre-release channel (id preview)")
+	_check(Semver.channel_name("preview") == "Alpha" and Semver.channel_name("stable") == "Stable", "the pre-release channel is shown as Alpha")
+	# a launcher on the pre-release channel at v0.3.0-preview.4 offers v0.4.0-alpha.1 (its release list keeps the alpha tag, the channel
+	# filter keeps it, and it sorts first)
+	var rels := [{"tag": "v0.3.0-preview.4", "prerelease": true}, {"tag": "v0.4.0-alpha.1", "prerelease": true}, {"tag": "v0.2.0", "prerelease": false}]
+	rels.sort_custom(func(a, b): return Semver.compare(a.tag, b.tag) > 0)
+	var bi4 = BuildInfo.new()
+	bi4.version = "v0.3.0-preview.4"
+	var u4 = Updater.new(bi4)
+	u4.state = ConfigFile.new()
+	var offered: Array = u4.in_channel(rels, u4.channel())
+	_check(u4.channel() == "preview" and offered[0].tag == "v0.4.0-alpha.1" and Semver.compare(offered[0].tag, bi4.version) > 0,
+		"a preview launcher at v0.3.0-preview.4 offers v0.4.0-alpha.1, not %s" % offered[0].tag)
+	var bia = BuildInfo.new()
+	bia.version = "v0.4.0-alpha.1"
+	var ua = Updater.new(bia)
+	ua.state = ConfigFile.new()
+	_check(ua.channel() == "preview", "an alpha launcher starts on the pre-release channel")
 	# Sol r1: v1.0.0-1 was ordered above v1.0.0--1 (is_valid_int("-1")) and installed automatically; a trailing newline matched '$'
 	for bad in ["0.1.0", "v1.0", "v01.0.0", "v1.0.0+build", "v1.0.0-", "v1.0.0-01", "v1.0.0-a..b", "vx.y.z", "v1.0.0 ", "", "v1.0.0-é",
 			"v1.0.0-1", "v1.0.0--1", "v1.0.0-+1", "v1.0.0\n", "\nv1.0.0", "v1.0.0-preview", "v1.0.0-preview.01", "v1.0.0-preview.-1",
-			"v1.0.0-preview.1.2", "v1.0.0-rc.1", "v1.0.0-alpha", "v1.0.0-PREVIEW.1", "V1.0.0", "v1.0.0-preview.1\n", "v1234567890.0.0"]:
+			"v1.0.0-preview.1.2", "v1.0.0-rc.1", "v1.0.0-alpha", "v1.0.0-PREVIEW.1", "v1.0.0-ALPHA.1", "v1.0.0-alpha.01",
+			"v1.0.0-alpha.1.2", "v1.0.0-alpha-1", "v1.0.0-beta.1", "v1.0.0-alphapreview.1", "v1.0.0-alpha.1\n", "V1.0.0", "v1.0.0-preview.1\n", "v1234567890.0.0"]:
 		_check(not Semver.is_valid(bad), "semver rejects '%s'" % bad.c_escape())
 	_check(Semver.channel_of("v1.0.0") == "stable" and Semver.channel_of("v1.0.0-preview.3") == "preview", "channels")
 	_check(Semver.channel_of("v1.0.0-preview.0") == "preview", "preview.0 is a preview")
@@ -235,25 +264,115 @@ func _ui() -> void:
 	_check(ProgressMeter.mb(3 * 1073741824) == "3.00 GB", "UI: GB above 1 GB")
 
 
-## lane UI-3 round 2 (Sol r1): a dialog closed with its X opens again (the X hid the dialog's inner layer for good)
+## lane UI-5: the Settings tabs show one page at a time; the message dialog closed with its X (Close) opens again (lane UI-3 round 2,
+## Sol r1: a dialog's X hid its inner layer for good); the release notes as the cards read them; the Update button's toggles
 func _ui_dialogs() -> void:
-	for panel in [SettingsPanel.new(), DownloadPanel.new()]:
-		var close: Button = _find_close(panel)
-		var card: Control = panel.find_children("*", "PanelContainer", true, false)[0]
-		var name := str(panel.get_script().resource_path.get_file())
-		for round in 3:
-			panel.visible = true
-			_check(_shown(card, panel), "UI: %s shows (opened %d times)" % [name, round + 1])
-			close.pressed.emit()
-			_check(not panel.visible and not _shown(card, panel), "UI: %s closes with its X" % name)
-		panel.free()
-
-
-static func _find_close(node: Node) -> Button:
-	for b in node.find_children("*", "Button", true, false):
-		if b.tooltip_text == "Close":
-			return b
-	return null
+	var st := SettingsScreen.new()
+	for key in ["display", "about", "general"]:
+		st.show_tab(key)
+		var shown := st._pages.keys().filter(func(k): return _shown(st._pages[k], st))
+		_check(shown == [key] and st.tab == key, "UI: the Settings tab %s shows alone (%s)" % [key, shown])
+	st.free()
+	var mp := MessagePanel.new()
+	var card: Control = mp.find_children("*", "PanelContainer", true, false)[0]
+	for round in 3:
+		mp.show_error("t", "x", "about")
+		_check(_shown(card, mp), "UI: the message dialog shows (opened %d times)" % (round + 1))
+		var close: Button = mp.find_children("*", "Button", true, false).filter(func(b): return b.text == "Close")[0]
+		close.pressed.emit()
+		_check(not mp.visible, "UI: the message dialog closes")
+	mp.free()
+	var body := "OpenBFME v0.3.0-preview.2 is a preview build.\nInstall it.\n\n## What's new\n\n- Force-attack on the ground: hold Ctrl.\n" + \
+		"- Multiplayer games stay in sync.\n\n## What's fixed\n\n- A fix.\n\n## Known issues\n\n- One.\n- Two.\n\nBuilt from commit a5c0211ba1 (2026-10-10)."
+	var parsed := ReleaseNotes.parse(body)
+	_check(parsed.intro == "OpenBFME v0.3.0-preview.2 is a preview build. Install it.", "notes: the intro (%s)" % parsed.intro)
+	_check(parsed.sections.map(func(x): return x.title) == ["What's new", "What's fixed", "Known issues"], "notes: the sections")
+	_check(ReleaseNotes.items(body, "what's new") == ["Force-attack on the ground: hold Ctrl.", "Multiplayer games stay in sync."], "notes: What's new")
+	_check(ReleaseNotes.items(body, "Known issues", 1) == ["One."], "notes: at most `limit` items")
+	_check(ReleaseNotes.items("no structure at all", "What's new").is_empty() and ReleaseNotes.parse("").sections.is_empty(), "notes: none")
+	_check(ReleaseNotes.parse("[b]x[/b]\n## What's new\n- <img src=x> [url]y[/url]").sections[0].items[0] == "<img src=x> [url]y[/url]", "notes: text stays text")
+	_check(ReleaseNotes.date_text("2026-10-10T18:03:11Z") == "10 October 2026" and ReleaseNotes.date_text("") == "" and ReleaseNotes.date_text("soon") == "", "notes: dates")
+	_check(ReleaseNotes.title_of("v0.3.0-preview.2") == "Preview 2 of 0.3.0" and ReleaseNotes.title_of("v1.0.0") == "Version 1.0.0", "notes: titles")
+	var bi = BuildInfo.new()
+	var u = Updater.new(bi)
+	u.state = ConfigFile.new()
+	_check(u.auto_update(), "updates install by themselves by default")
+	u.data_dir = OS.get_user_data_dir().path_join("unit-auto")
+	DirAccess.make_dir_recursive_absolute(u.data_dir)
+	u.set_auto_update(false)
+	_check(not u.auto_update(), "updating by itself can be turned off")
+	_check(u.cached_releases().is_empty(), "no cached release list: no notes")
+	_check(u.running().is_empty(), "nothing runs")
+	u.set_state("launcher", "running", {"v0.1.0": OS.get_process_id(), "v0.0.9": 2147483000})
+	_check(u.running().is_empty(), "a process that is not that version's game does not count (%s)" % [u.running()])
+	# Sol r3: the one-launcher lock is atomic, held by one owner, and released only by it
+	var la := InstanceLock.new(u.data_dir.path_join("lock-test"), "v9.9.9")
+	var lb := InstanceLock.new(u.data_dir.path_join("lock-test"))
+	_check(la.port == lb.port and la.port >= InstanceLock.FIRST_PORT and la.port < InstanceLock.FIRST_PORT + InstanceLock.PORTS, "lock: one port per data folder")
+	_check(la.acquire() and la.held(), "lock: the first launcher takes it")
+	_check(not lb.acquire() and lb.other_launcher == "v9.9.9" and lb.error.contains(str(la.port)), "lock: a second one is refused and hears the holder's hello (%s)" % lb.error)
+	lb.release()
+	_check(la.held() and not InstanceLock.new(u.data_dir.path_join("lock-test")).acquire(), "lock: a refused launcher's release frees nothing")
+	la.release()
+	_check(lb.acquire(), "lock: free again once its holder releases it")
+	lb.release()
+	# Sol r2: a stale copy of state.cfg never writes back over newer values (the file is read again under the lock before a write)
+	var u2 = Updater.new(bi)
+	u2.data_dir = u.data_dir
+	u2.state = ConfigFile.new()
+	u.set_state("launcher", "running", {"v0.1.0": [111, 222]})
+	u2.set_state("launcher", "selected", "v0.1.0")
+	var back := ConfigFile.new()
+	back.load(u.data_dir.path_join("state.cfg"))
+	_check(back.get_value("launcher", "running", {}) == {"v0.1.0": [111, 222]} and back.get_value("launcher", "selected", "") == "v0.1.0",
+		"a second writer keeps the first one's running games")
+	u.set_state("launcher", "selected", "")
+	# Sol r1: the Windows check, simulated (a running image cannot be opened for writing: here a read-only file plays the lock)
+	u.test_windows_lock = true
+	var gdir: String = u.data_dir.path_join("versions/v0.1.0/game")
+	DirAccess.make_dir_recursive_absolute(gdir)
+	var exe: String = gdir.path_join(Updater.GAME_EXE[bi.platform()])
+	_check(not u._game_runs(4242, "v0.1.0"), "Windows check: no executable, not running")
+	var fx := FileAccess.open(exe, FileAccess.WRITE)
+	fx.store_string("game")
+	fx.close()
+	_check(not u._game_runs(4242, "v0.1.0"), "Windows check: an executable that can be opened for writing is not running")
+	FileAccess.set_unix_permissions(exe, FileAccess.UNIX_READ_OWNER)
+	_check(u._game_runs(4242, "v0.1.0"), "Windows check: a locked executable is running")
+	u.set_state("launcher", "running", {"v0.1.0": [4242, 4343]})
+	_check(u.running() == ["v0.1.0"], "Windows check: running() follows the lock")
+	FileAccess.set_unix_permissions(exe, FileAccess.UNIX_READ_OWNER | FileAccess.UNIX_WRITE_OWNER)
+	_check(u.running().is_empty(), "Windows check: unlocked, not running")
+	u.set_state("launcher", "running", {"v0.1.0": 4242})
+	FileAccess.set_unix_permissions(exe, FileAccess.UNIX_READ_OWNER)
+	_check(u.running() == ["v0.1.0"], "an older state.cfg's single pid still counts")
+	FileAccess.set_unix_permissions(exe, FileAccess.UNIX_READ_OWNER | FileAccess.UNIX_WRITE_OWNER)
+	u.test_windows_lock = false
+	DirAccess.remove_absolute(exe)
+	for d in ["versions/v0.1.0/game", "versions/v0.1.0", "versions"]:
+		DirAccess.remove_absolute(u.data_dir.path_join(d))
+	# the versions lock: held, refused to a second holder while fresh, taken over when its owner is gone
+	_check(u.lock_versions(100), "versions lock: taken")
+	var owner: String = u.data_dir.path_join(Updater.LOCK).path_join("owner")
+	var fo := FileAccess.open(owner, FileAccess.WRITE)
+	fo.store_string("%d %d\n" % [1, int(Time.get_unix_time_from_system())])  # pid 1 (init) lives: another launcher holds it
+	fo.close()
+	_check(not u.lock_versions(200), "versions lock: a live holder's fresh lock is waited for")
+	fo = FileAccess.open(owner, FileAccess.WRITE)
+	fo.store_string("%d %d\n" % [1, int(Time.get_unix_time_from_system()) - 600])
+	fo.close()
+	_check(u.lock_versions(200), "versions lock: a lock older than a minute is taken over")
+	u.unlock_versions()
+	if DirAccess.dir_exists_absolute("/proc"):
+		_check(u.lock_versions(100), "versions lock: taken again")
+		fo = FileAccess.open(owner, FileAccess.WRITE)
+		fo.store_string("%d %d\n" % [2147483000, int(Time.get_unix_time_from_system())])
+		fo.close()
+		_check(u.lock_versions(200), "versions lock: a lock whose launcher is gone is taken over")
+		u.unlock_versions()
+	_check(not DirAccess.dir_exists_absolute(u.data_dir.path_join(Updater.LOCK)), "versions lock: released")
+	DirAccess.remove_absolute(u.data_dir.path_join("state.cfg"))
+	DirAccess.remove_absolute(u.data_dir)
 
 
 ## `node` and every parent up to `top` are visible (what is_visible_in_tree means, without a running tree)

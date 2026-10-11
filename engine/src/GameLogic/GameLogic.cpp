@@ -976,6 +976,18 @@ std::uint32_t GameLogic::hashState(std::vector<StateHashSection> *sections, std:
 		x.addU32(m_frame);
 		x.addBool(m_frameAdvance); // RW GameLogic + 0x44: when false the frame counter does not advance
 		x.addI32(m_gameDifficulty); // lane CAMP-1H: RW GameLogic + 0xA4
+		// lane RULES-1: the game rules and the Legendary Heroes factor, only when the game has them (a game without keeps its hash)
+		if (!MpGameRules::isNone(m_gameRules))
+		{
+			for (std::int32_t v : m_gameRules)
+			{
+				x.addI32(v);
+			}
+		}
+		if (m_legendaryHeroes != LegendaryHeroes::kOff)
+		{
+			x.addI32(m_legendaryHeroes);
+		}
 		x.addU32(m_nextObjectID);
 		x.addU32((std::uint32_t)m_objectCount);
 		for (std::uint32_t w : m_random.seedArray())

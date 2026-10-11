@@ -59,6 +59,7 @@ struct ControlBarButton
 	int reviveIndex = -1;                   ///< lane HERO-1: a REVIVE button's hero record index
 	ObjectID rider = INVALID_ID;            ///< lane UI-1: an EXIT_CONTAINER button's rider (MSG_EXIT's argument 0); a rider's extra slots carry it too, disabled
 	int position = -1;                      ///< lane HUD-4: the arc's window (slot - range start, 0 .. 5) or the side bar's packed position (0 ..)
+	bool autoAbility = false;               ///< lane AUTOCAST-1: the glow (RW 0x9D2D0E -> SetAutoAbilityOverlayState): the source object's AutoAbilityBehavior auto casts this button
 };
 
 struct ControlBarQueueEntry
@@ -114,6 +115,13 @@ public:
 	bool pressButton(int slot, bool inPalantir);
 	// right press on a build button: cancels one queued unit of that template (MSG_CANCEL_UNIT_CREATE by type)
 	bool cancelQueued(int slot, bool inPalantir);
+	// lane AUTOCAST-1: the right press of a command button: the clip's gate (RW 0x9D28D4: a _disabled / _cantAfford button only when CANCELABLE) and
+	// processCommandUI's right press (RW 0x940435 with its second argument 0): an AutoAbility (+ 0x10C) or CANCELABLE button of the source object sends
+	// MSG_DO_AUTO_ABILITY { power id, object } (SPECIAL_POWER / SPECIAL_POWER_TOGGLE, RW 0x941511 / 0x9418F7) or MSG_DO_AUTO_ABILITY_WEAPON { weapon slot,
+	// object } (FIRE_WEAPON, RW 0x941391); a CANCELABLE build button cancels (cancelQueued); a target-needing button without either cancels the GUI command mode
+	// (RW 0x94089C with null). true when a message went out
+	bool rightPressButton(int slot, bool inPalantir);
+	unsigned autoAbilityToggles() const { return m_autoToggles; }
 	const std::map<std::string, unsigned> &unportedPresses() const { return m_unported; }
 
 	static std::vector<std::string> acceptanceStops();
@@ -146,4 +154,5 @@ private:
 	std::string m_lastKey;
 	unsigned m_version = 0;
 	std::map<std::string, unsigned> m_unported;
+	unsigned m_autoToggles = 0;
 };

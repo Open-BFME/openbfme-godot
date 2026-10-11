@@ -213,4 +213,6 @@ private:
 	void send(const std::vector<GameMessage> &msgs);
 	int m_windowW = 1024, m_windowH = 768;
 	bool m_booted = false;
+	bool m_rightPosted = false;                    // lane AUTOCAST-1: a right press went into the Apt (its release follows it)
+	bool commandContentAt(int x, int y);           // lane AUTOCAST-1: a Palantir command button content is under the window point
 };

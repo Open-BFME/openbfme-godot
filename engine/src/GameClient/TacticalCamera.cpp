@@ -460,7 +460,7 @@ void TacticalCamera::setHeightAboveGround(float h)
 		{
 			m_heightAboveGround = m_minHeight;
 		}
-		if (m_heightAboveGround > zoomOutLimit()) // lane PLAY-1: m_maxHeight unless the free camera is on
+		if (m_heightAboveGround > zoomOutLimit()) // lane PLAY-1 / ZOOM-1: m_maxHeight unless the free camera or a zoom-out factor is on
 		{
 			m_heightAboveGround = zoomOutLimit();
 		}
@@ -477,11 +477,39 @@ void TacticalCamera::setFreeCamera(bool on)
 		return;
 	}
 	m_free = on;
-	if (!on && m_heightAboveGround > m_maxHeight)
+	if (!on && m_heightAboveGround > zoomOutLimit())
 	{
-		setHeightAboveGround(m_maxHeight);
+		setHeightAboveGround(zoomOutLimit());
 	}
 	m_constraintValid = false;
+}
+
+// lane ZOOM-1 (presentation option, not retail)
+void TacticalCamera::setZoomOutFactor(float factor)
+{
+	const float f = factor > 1.0f ? factor : 1.0f;
+	if (f == m_zoomOutFactor)
+	{
+		return;
+	}
+	m_zoomOutFactor = f;
+	if (m_zoomLimited && m_heightAboveGround > zoomOutLimit())
+	{
+		setHeightAboveGround(zoomOutLimit());
+	}
+	m_constraintValid = false;
+}
+
+float TacticalCamera::zoomOutLimit() const
+{
+	const float limit = m_maxHeight * m_zoomOutFactor;
+	return m_free ? std::max(limit, freeMaxHeight()) : limit;
+}
+
+void TacticalCamera::setScrollFactor(float factor)
+{
+	m_gd.horizontalScrollSpeedFactor = factor;
+	m_gd.verticalScrollSpeedFactor = factor;
 }
 
 float TacticalCamera::freeMaxHeight() const
@@ -496,12 +524,12 @@ float TacticalCamera::freeMaxHeight() const
 
 float TacticalCamera::farPlane() const
 {
-	return 1800.0f + 2.0f * fogShift(); // RW 0x48B7B1: 1800 (GlobalData + 0x950 = 1.0 times 1800); lane PLAY-1: the free camera's extra distance
+	return 1800.0f + 2.0f * fogShift(); // RW 0x48B7B1: 1800 (GlobalData + 0x950 = 1.0 times 1800); lane PLAY-1 / ZOOM-1: the extra eye distance
 }
 
 float TacticalCamera::fogShift() const
 {
-	if (!m_free || m_cameraOffset.z <= 0.0f)
+	if ((!m_free && m_zoomOutFactor <= 1.0f) || m_cameraOffset.z <= 0.0f)
 	{
 		return 0.0f;
 	}
@@ -749,7 +777,7 @@ void TacticalCamera::update(bool uiScrolling, bool gamePaused)
 			{
 				const float scrollLen = std::sqrt(m_scrollX * m_scrollX + m_scrollY * m_scrollY);
 				if (m_gd.scrollAmountCutoff > scrollLen || m_minHeight > m_currentHeightAboveGround
-					|| (m_gd.enforceMaxCameraHeight && zoomOutLimit() < m_currentHeightAboveGround)) // lane PLAY-1: m_maxHeight without the free camera
+					|| (m_gd.enforceMaxCameraHeight && zoomOutLimit() < m_currentHeightAboveGround)) // lane PLAY-1 / ZOOM-1: m_maxHeight at retail settings
 				{
 					const float adj = (desiredZoom - m_zoom) * m_gd.cameraAdjustSpeed;
 					if (std::fabs((double)adj) >= 0.0001)
@@ -814,5 +842,8 @@ std::vector<std::string> TacticalCamera::acceptanceStops()
 		"from the viewport: assumed equal to the window's)",
 		"[S-456] timing: the camera and the scroll translator advance once per client frame at 30 frames a second (retail: UseFPSLimit Yes, FramesPerSecondLimit 30; the translator reads "
 		"timeGetTime for the edge scroll ramp); the render interpolates between two client frames, retail does not",
+		"[S-3501] Max zoom-out (lane ZOOM-1, an OpenBFME option, not retail): the player's zoom-out limit is the map's max height times OpenBFMEMaxZoomOut (default 2.5; "
+		"retail is 1: RW 0x48CBFE); beyond 1x the far plane and the fog ranges move out by the extra eye distance, and the map's whole terrain is drawn (retail "
+		"draws a window of it around the camera: GameData DrawEntireTerrain No) without model LOD switching (S-3402): RotWK has no picture from that height to compare with",
 	};
 }

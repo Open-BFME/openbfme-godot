@@ -255,15 +255,35 @@ public:
 	void onObjectCreated() override;                                              // the StartsActive part of the constructor (needs the command set)
 	void crc(StateHasher &h) const override;
 	void setAutoButton(const CommandButton *button);                             // RW 0x85D76C
+	// lane AUTOCAST-1: RW 0x85D7B6 (the scripts' NAME_ / TEAM_SET_AUTO_ABILITY): `button` is the auto button and `on` is false: cleared, the update sleeps
+	// forever (RW 0x85D481 + RW 0x850C32(object, 0x3FFFFFFF)); anything else: RW 0x85D48F sets it (no AutoAbility test there) and wakes the update
+	void setAutoAbility(const CommandButton *button, bool on);
+	// lane AUTOCAST-1: RW 0x85D741: the auto button is set and is `button` (the control bar's glow, RW 0x9D2CFC, and the toggle voice, RW 0x940843)
+	bool isAutoButton(const CommandButton &button) const;
 	const std::string &autoButton() const { return m_button; }
 	const AutoAbilityBehaviorModuleData *data() const { return m_data; }
 	// RW 0x85D6AD: the module of `obj` whose SpecialAbility is empty or `power`
 	static AutoAbilityBehavior *forPower(Object &obj, const std::string &power);
+	// lane AUTOCAST-1: RW 0x68BDA5 with the name key "AutoAbilityBehavior" (cached at RW 0x77B8EE / 0x7C3CD3 / 0x940805 / 0x9D2CC3): the object's first module
+	static AutoAbilityBehavior *first(Object &obj);
+	// lane AUTOCAST-1: the module the command button clip asks for its glow (RW 0x9D2C8C .. 0x9D2CE9): a button with a power (+ 0x44) asks forPower(power);
+	// none found, or no power: first(obj) (processCommandUI's toggle voice, RW 0x940805, asks first(obj) only)
+	static AutoAbilityBehavior *forButton(Object &obj, const CommandButton &button);
 	struct Stats
 	{
 		unsigned long long casts = 0, unportedCommands = 0, closestEnemyQueries = 0, meleeAdjust = 0;
 	};
 	static Stats &stats();
+	// lane AUTOCAST-1 r2 (diagnostics, never hashed or read by the logic): this module's auto casts that went out, the last one's power, target
+	// (INVALID_ID for a cast without one) and frame
+	struct CastRecord
+	{
+		unsigned long long casts = 0;
+		std::string power;
+		ObjectID target = INVALID_ID;
+		UnsignedInt frame = 0;
+	};
+	const CastRecord &castRecord() const { return m_castRecord; }
 
 private:
 	void clearButton(); // RW 0x85D481
@@ -274,6 +294,7 @@ private:
 	std::string m_button;           // + 0x20
 	Coord3D m_startPos{};           // + 0x24
 	bool m_haveStartPos = false;    // + 0x30
+	CastRecord m_castRecord;        // lane AUTOCAST-1 r2: diagnostics
 };
 
 // WeaponModeSpecialPowerUpdate (create RW 0x64D9C2, constructor RW 0x8982D5 over the update + special power base RW 0x991660; vtables RW 0xC65188, update
@@ -633,7 +654,9 @@ class GameLogicDispatch;
 namespace HeroAbilityModules
 {
 void registerAll(ModuleFactory &modules);
-// MSG_DO_AUTO_ABILITY (1112, RW 0x77B9BA) { int power id, object id }: the object's SPECIAL_POWER button of that power toggles its AutoAbilityBehavior
+// MSG_DO_AUTO_ABILITY (1112, RW 0x77B9BA) { int power id, object id }: the object's SPECIAL_POWER button of that power toggles its AutoAbilityBehavior;
+// lane AUTOCAST-1: MSG_DO_AUTO_ABILITY_WEAPON (1113, RW 0x77B8EE) { int weapon slot, object id }: the first FIRE_WEAPON button of the object's command set
+// whose WeaponSlot is that slot toggles the object's first AutoAbilityBehavior
 void registerHandlers(GameLogicDispatch &d);
 std::vector<std::string> stopLines();
 }

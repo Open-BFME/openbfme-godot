@@ -11,7 +11,9 @@
 ##   downloads/<asset>.part (+ .json)  a download in progress, resumed with an HTTP Range request (the .json names the asset's digest)
 ##   cache/releases.json + .etag     the last releases list from the API (If-None-Match: a 304 does not count against the rate limit)
 ##   cache/manifests/<tag>/          verified manifests, so a check costs one API request
-##   state.cfg                       the channel, the version picked by the user, launcher versions that failed to start
+##   state.cfg                       the channel, the version picked by the user, launcher versions that failed to start, whether updates
+##                                   install by themselves (lane UI-5), the versions started and their process ids (never removed while
+##                                   they run)
 ## See docs/RELEASE.md, "The launcher", for the rules (verify before use, rollback protection, keep two, offline start).
 extends RefCounted
 
@@ -36,6 +38,7 @@ var api_base := API_BASE
 var policy := NetPolicy.new()
 var http: HttpFetch
 var state := ConfigFile.new()
+var _state_lock := Mutex.new()  # lane UI-5: Play (the main thread) writes state.cfg while a worker thread installs an update
 var progress := Callable()  # progress.call(text, done_bytes, total_bytes)
 var launcher_dir := ""  # the folder of the running launcher's executable ("" in a development run: no self-update)
 
@@ -61,7 +64,7 @@ func set_test_api_base(origin: String) -> String:
 ## the player's channel; until they pick one, the channel of this launcher's own version (lane RELTEST-1: a preview launcher defaulted to
 ## Stable, so a new player's first start said "There is no stable release yet." with Play off while only previews exist)
 func channel() -> String:
-	return state.get_value("launcher", "channel", default_channel())
+	return get_state("launcher", "channel", default_channel())
 
 
 func default_channel() -> String:
@@ -69,21 +72,58 @@ func default_channel() -> String:
 
 
 func set_channel(c: String) -> void:
-	state.set_value("launcher", "channel", c)
-	_save_state()
+	set_state("launcher", "channel", c)
 
 
 func selected() -> String:
-	return state.get_value("launcher", "selected", "")
+	return get_state("launcher", "selected", "")
 
 
 func set_selected(v: String) -> void:
-	state.set_value("launcher", "selected", v)
-	_save_state()
+	set_state("launcher", "selected", v)
+
+
+## lane UI-5 (the owner): updates download and install in the background by themselves (on by default); off, the check only says that a
+## newer version is there and the player presses Update. The launcher's own update follows the same setting.
+func auto_update() -> bool:
+	return bool(get_state("launcher", "auto_update", true))
+
+
+func set_auto_update(on: bool) -> void:
+	set_state("launcher", "auto_update", on)
 
 
 func _save_state() -> void:
+	_state_lock.lock()
 	state.save(data_dir.path_join("state.cfg"))
+	_state_lock.unlock()
+
+
+## a value of state.cfg (read and written under a lock: the window's Play and a worker thread's install both use it); `fresh`: read the
+## file again first (the list of running games: Sol r2)
+func get_state(section: String, key: String, default: Variant = null, fresh := false) -> Variant:
+	_state_lock.lock()
+	if fresh:
+		_reload_state()
+	var v = state.get_value(section, key, default)
+	_state_lock.unlock()
+	return v
+
+
+## sets a value of state.cfg and saves the file; the file is read again first under the lock (Sol r2: a stale copy in memory must never
+## write back over newer values)
+func set_state(section: String, key: String, value: Variant) -> void:
+	_state_lock.lock()
+	_reload_state()
+	state.set_value(section, key, value)
+	state.save(data_dir.path_join("state.cfg"))
+	_state_lock.unlock()
+
+
+func _reload_state() -> void:
+	var fresh := ConfigFile.new()
+	if fresh.load(data_dir.path_join("state.cfg")) == OK:
+		state = fresh
 
 
 func _report(text: String, done := -1, total := -1) -> void:
@@ -124,8 +164,8 @@ func fetch_releases() -> Dictionary:
 		return {"ok": false, "error": "the repository %s has no releases page (HTTP 404)" % info.repo}
 	elif r.code != 200:
 		return {"ok": false, "error": "the release list request failed (HTTP %d)" % r.code}
-	var parsed = JSON.parse_string(body.get_string_from_utf8())
-	if typeof(parsed) != TYPE_ARRAY:
+	var out = parse_releases(body)
+	if typeof(out) != TYPE_ARRAY:
 		return {"ok": false, "error": "the release list is not a JSON array"}
 	if r.code == 200:
 		_write(cache.path_join("releases.json"), body)
@@ -134,6 +174,21 @@ func fetch_releases() -> Dictionary:
 			_write(cache.path_join("releases.etag"), new_etag.to_utf8_buffer())
 		elif FileAccess.file_exists(cache.path_join("releases.etag")):
 			DirAccess.remove_absolute(cache.path_join("releases.etag"))
+	return {"ok": true, "error": "", "releases": out, "from_cache": from_cache}
+
+
+## lane UI-5: the release list of the last check (cache/releases.json), for the notes cards before a check has answered or offline; []
+## when there is none. Never trusted for an install: an install reads the release's signed manifest.
+func cached_releases() -> Array:
+	var out = parse_releases(FileAccess.get_file_as_bytes(data_dir.path_join("cache/releases.json")), true)
+	return out if typeof(out) == TYPE_ARRAY else []
+
+
+## the API's release list as [{tag, prerelease, notes, published, assets}] newest first, or null when it is not a JSON array
+func parse_releases(body: PackedByteArray, quiet := false):
+	var parsed = JSON.parse_string(body.get_string_from_utf8()) if not body.is_empty() else null
+	if typeof(parsed) != TYPE_ARRAY:
+		return null
 	var out := []
 	for rel in parsed:
 		if typeof(rel) != TYPE_DICTIONARY or typeof(rel.get("tag_name")) != TYPE_STRING:
@@ -142,7 +197,8 @@ func fetch_releases() -> Dictionary:
 			continue
 		var tag: String = rel.tag_name
 		if not Semver.is_valid(tag):
-			Log.line("LAUNCHER skipped release '%s': %s" % [tag.left(80).c_escape(), Semver.parse(tag).error])
+			if not quiet:
+				Log.line("LAUNCHER skipped release '%s': %s" % [tag.left(80).c_escape(), Semver.parse(tag).error])
 			continue
 		var assets := {}
 		for a in rel.get("assets", []):
@@ -152,7 +208,7 @@ func fetch_releases() -> Dictionary:
 		out.append({"tag": tag, "prerelease": bool(rel.get("prerelease", false)), "notes": plain_text(notes),
 			"published": str(rel.get("published_at", "")), "assets": assets})
 	out.sort_custom(func(a, b): return Semver.compare(a.tag, b.tag) > 0)
-	return {"ok": true, "error": "", "releases": out, "from_cache": from_cache}
+	return out
 
 
 ## release notes as plain text: no control characters but newlines and tabs, at most MAX_NOTES characters (shown in a label with no
@@ -346,17 +402,28 @@ func install(release: Dictionary, user_pick: bool) -> Dictionary:
 	# replacing an installed folder (Sol r1: the old code deleted it before its replacement was in place): the installed folder is set
 	# aside as <v>.old, the new one renamed into place, and only then the old one removed; recover() completes or undoes this after a
 	# crash at any point
+	# lane UI-5 (Sol r1): the versions lock keeps Play (any launcher) from starting a version while it is replaced or pruned, and a
+	# version whose game runs is never replaced
+	if not lock_versions():
+		remove_tree(partial)
+		return {"ok": false, "error": "%s was not installed: another launcher holds the versions folder (%s)" % [m.version, LOCK], "version": ""}
+	if m.version in running():
+		unlock_versions()
+		remove_tree(partial)
+		return {"ok": false, "error": "%s is being played: close the game, then install it again" % m.version, "version": ""}
 	var final := root.path_join(m.version)
 	var aside := root.path_join(m.version + ".old")
 	var had := DirAccess.dir_exists_absolute(final)
 	if had:
 		if DirAccess.rename_absolute(final, aside) != OK:
+			unlock_versions()
 			remove_tree(partial)
 			return {"ok": false, "error": "%s is installed and could not be replaced (is the game running?)" % m.version, "version": ""}
 		test_point("install-aside")
 	if DirAccess.rename_absolute(partial, final) != OK:
 		if had:
 			DirAccess.rename_absolute(aside, final)
+		unlock_versions()
 		remove_tree(partial)
 		return {"ok": false, "error": "%s could not be moved into place" % m.version, "version": ""}
 	test_point("install-placed")
@@ -368,7 +435,8 @@ func install(release: Dictionary, user_pick: bool) -> Dictionary:
 		set_selected(m.version)
 	else:
 		set_selected("")  # a new build replaces an earlier rollback pick
-	prune()
+	_prune_locked()
+	unlock_versions()
 	return {"ok": true, "error": "", "version": m.version}
 
 
@@ -425,6 +493,14 @@ func recover() -> void:
 	var root := data_dir.path_join("versions")
 	if not DirAccess.dir_exists_absolute(root):
 		return
+	if not lock_versions(5000):
+		Log.line("LAUNCHER another launcher holds %s: the interrupted-install check waits for the next start" % LOCK)
+		return
+	_recover_locked(root)
+	unlock_versions()
+
+
+func _recover_locked(root: String) -> void:
 	for name in DirAccess.get_directories_at(root):
 		if name.ends_with(".partial"):
 			Log.line("LAUNCHER removed an unfinished install (%s)" % name)
@@ -450,8 +526,14 @@ static func test_point(name: String) -> void:
 		OS.delay_msec(10000)
 
 
-## keep the KEEP_VERSIONS newest versions and the user's pick; remove the others and stale partial folders
+## keep the KEEP_VERSIONS newest versions, the user's pick and every version whose game runs; remove the others
 func prune() -> void:
+	if lock_versions():
+		_prune_locked()
+		unlock_versions()
+
+
+func _prune_locked() -> void:
 	var root := data_dir.path_join("versions")
 	var keep := {}
 	var inst := installed()
@@ -459,6 +541,8 @@ func prune() -> void:
 		keep[inst[i].version] = true
 	if selected() != "":
 		keep[selected()] = true
+	for v in running():
+		keep[v] = true  # lane UI-5: an update installed while a version is played never removes that version
 	for name in DirAccess.get_directories_at(root):
 		if Semver.is_valid(name) and not keep.has(name) and inst.any(func(i): return i.version == name):
 			Log.line("LAUNCHER removed the old version %s (the two newest are kept)" % name)
@@ -480,17 +564,138 @@ func play(version: String) -> Dictionary:
 			why = "%s was changed after it was installed (%s): it is not started; download it again (--install=%s, or Play to confirm)" % [version, v.error, version]
 		return {"ok": false, "error": why, "pid": -1, "modified": v.get("modified", false)}
 	var exe := data_dir.path_join("versions").path_join(version).path_join("game").path_join(GAME_EXE[info.platform()])
+	# lane UI-5 (Sol r1): started and recorded under the versions lock, so no install or prune (of this or another launcher) removes or
+	# replaces the version between the check and the record; the full check above stays outside (it reads every file)
+	if not lock_versions():
+		return {"ok": false, "error": "%s was not started: another launcher holds the versions folder (%s)" % [version, LOCK], "pid": -1}
+	if not verify_installed(version).ok:
+		unlock_versions()
+		return {"ok": false, "error": "%s was removed or replaced while it was checked: press Play again" % version, "pid": -1}
 	var pid := OS.create_process(exe, [])
 	if pid <= 0:
+		unlock_versions()
 		return {"ok": false, "error": "%s could not be started" % exe, "pid": -1}
 	Log.line("LAUNCHER started %s (pid %d)" % [version, pid])
+	var runs := _live_runs()
+	var pids: Array = runs.get(version, [])
+	pids.append(pid)
+	runs[version] = pids
+	set_state("launcher", "running", runs)
+	unlock_versions()
 	return {"ok": true, "error": "", "pid": pid}
+
+
+## {version: [pid...]} of the games started (every instance: Sol r1, a second instance closing must not unprotect the first) that
+## still run; state.cfg of an older launcher kept one pid per version (an int)
+func _live_runs() -> Dictionary:
+	var runs: Dictionary = get_state("launcher", "running", {}, true)
+	var out := {}
+	for v in runs:
+		var pids: Array = runs[v] if typeof(runs[v]) == TYPE_ARRAY else [runs[v]]
+		var live := pids.filter(func(p): return _game_runs(int(p), String(v)))
+		if not live.is_empty():
+			out[String(v)] = live
+	return out
+
+
+## The versions lock (versions.lock, a folder: making one is atomic on every system) between installing / pruning and Play, across
+## threads and launcher processes; its "owner" file names the process and the time. Waits up to `wait_ms`. A lock whose owner is gone
+## (Linux: no /proc/<pid>) or older than STALE_LOCK_SECONDS (a launcher that died, e.g. killed mid-install) is taken over. true when held.
+const LOCK := "versions.lock"
+const STALE_LOCK_SECONDS := 60
+
+
+func lock_versions(wait_ms := 30000) -> bool:
+	DirAccess.make_dir_recursive_absolute(data_dir)
+	var path := data_dir.path_join(LOCK)
+	var start := Time.get_ticks_msec()
+	while DirAccess.make_dir_absolute(path) != OK:
+		var why := _stale_lock(path, Time.get_ticks_msec() - start)
+		if why != "":
+			Log.line("LAUNCHER took over %s: %s" % [LOCK, why])
+			DirAccess.remove_absolute(path.path_join("owner"))
+			DirAccess.remove_absolute(path)
+			continue
+		if Time.get_ticks_msec() - start > wait_ms:
+			return false
+		OS.delay_msec(50)
+	var f := FileAccess.open(path.path_join("owner"), FileAccess.WRITE)
+	if f != null:
+		f.store_string("%d %d\n" % [OS.get_process_id(), int(Time.get_unix_time_from_system())])
+		f.close()
+	return true
+
+
+## "" while the lock's owner may still hold it, else why it is stale
+static func _stale_lock(path: String, waited_ms: int) -> String:
+	var owner := FileAccess.get_file_as_string(path.path_join("owner")).split(" ")
+	if owner.size() < 2 or not owner[0].is_valid_int():
+		# just being made (the owner file comes right after the folder), or left by a launcher killed in between
+		return "no owner after %d s" % (waited_ms / 1000) if waited_ms > 5000 else ""
+	var pid := int(owner[0])
+	if pid == OS.get_process_id():
+		return ""  # this launcher's other thread holds it
+	if OS.get_name() != "Windows" and DirAccess.dir_exists_absolute("/proc") and not DirAccess.dir_exists_absolute("/proc/%d" % pid):
+		return "its launcher (pid %d) is gone" % pid
+	var age := int(Time.get_unix_time_from_system()) - int(owner[1].strip_edges())
+	return "%d s old" % age if age > STALE_LOCK_SECONDS else ""
+
+
+func unlock_versions() -> void:
+	DirAccess.remove_absolute(data_dir.path_join(LOCK).path_join("owner"))
+	DirAccess.remove_absolute(data_dir.path_join(LOCK))
+
+
+## lane UI-5: the installed versions whose game this launcher started and that still run (state.cfg remembers their process ids, also
+## across launcher starts); prune() keeps them, so a background update never deletes the version being played
+func running() -> Array:
+	return _live_runs().keys()
+
+
+## tests: use the Windows check (the executable's write lock) on any system
+var test_windows_lock := false
+
+
+## whether process `pid` is the game of `version` (OS.is_process_running only knows this launcher's own children, and a process id is
+## reused): Linux reads its command line in /proc (the executable's path names versions/<version>/); Windows starts no helper process
+## (tools/release/net_guard.py): a running executable cannot be opened for writing (Windows locks the image), so the game's executable
+## of that version being locked counts as running (a virus scanner holding it only keeps that version a little longer)
+func _game_runs(pid: int, version: String) -> bool:
+	if pid <= 0:
+		return false
+	if OS.get_name() == "Windows" or test_windows_lock:
+		var exe := data_dir.path_join("versions").path_join(version).path_join("game").path_join(GAME_EXE[info.platform()])
+		if not FileAccess.file_exists(exe):
+			return false
+		var w := FileAccess.open(exe, FileAccess.READ_WRITE)
+		if w == null:
+			return true
+		w.close()
+		return false
+	var f := FileAccess.open("/proc/%d/cmdline" % pid, FileAccess.READ)
+	if f == null:
+		return false
+	var cmd := f.get_buffer(65536)  # a /proc file reports no length: read what is there
+	for i in cmd.size():
+		if cmd[i] == 0:
+			cmd[i] = 32
+	return cmd.get_string_from_utf8().contains("/versions/%s/game/" % version)
 
 
 # ---- launcher self-update ----------------------------------------------------------------------------------------------------------------
 
 func launcher_files() -> Array:
 	return [LAUNCHER_EXE[info.platform()]]  # one file: the pack is embedded (self_update.gd)
+
+
+## lane UI-5: whether stage_self_update(release) would stage a launcher (a packaged launcher older than `release`, not refused before,
+## not staged already), without downloading anything
+func launcher_update_available(release: Dictionary) -> bool:
+	if launcher_dir == "" or not Semver.is_valid(info.version) or Semver.compare(release.tag, info.version) <= 0:
+		return false
+	if release.tag in get_state("launcher", "rejected_launcher", []):
+		return false
+	return FileAccess.get_file_as_string(launcher_dir.path_join("update").path_join("VERSION.launcher")).strip_edges() != release.tag
 
 
 ## Stage the launcher of `release` in <launcher folder>/update/ when it is newer than this launcher and did not fail before. The swap
@@ -502,7 +707,7 @@ func stage_self_update(release: Dictionary) -> Dictionary:
 		return {"ok": true, "error": "", "staged": "", "why": "this launcher's version %s is not a release version: it does not update itself" % info.version}
 	if Semver.compare(release.tag, info.version) <= 0:
 		return {"ok": true, "error": "", "staged": "", "why": "the launcher is up to date (%s)" % info.version}
-	if release.tag in state.get_value("launcher", "rejected_launcher", []):
+	if release.tag in get_state("launcher", "rejected_launcher", []):
 		return {"ok": true, "error": "", "staged": "", "why": "the launcher %s failed to start before and is not installed again automatically" % release.tag}
 	var staged := launcher_dir.path_join("update")
 	if FileAccess.get_file_as_string(staged.path_join("VERSION.launcher")).strip_edges() == release.tag:

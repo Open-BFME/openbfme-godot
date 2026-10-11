@@ -18,6 +18,8 @@
 #pragma once
 
 #include "GameClient/GUI/AptScreen.h"
+#include "GameClient/GUI/AptScreens/OpenBFMEOptionsPage.h"
+#include "Libraries/Source/Apt/AptValue.h"
 
 #include <memory>
 #include <string>
@@ -25,8 +27,11 @@
 
 struct ShellEnvironment;
 class ShellServices;
+class AptCharacterInst;
+class AptTextInst;
 
 #include <map>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -203,9 +208,8 @@ private:
 };
 
 // lane UI-2: Options.apt's Save / Cancel close the screen as RotWK's do (RW 0x91FC9C / 0x91EC52 end in RW 0x91EA39 -> 0x62215B, the window manager's
-// pop request), Save writes Options.ini (GameClient/OptionPreferences.h). OpenBFME addition (owner decision 2026-10-07, not a retail control): a
-// "Soft particles" check box (BFME2's window\Apt\CheckBox.wnd) in the band below the Controls panel, saved as Options.ini's "SoftParticles" and applied
-// through ShellServices::applyOption [S-1484].
+// pop request), Save writes Options.ini (GameClient/OptionPreferences.h). Lane OPTS-2: UI-2's OpenBFME "Soft particles" box left this screen for the
+// OpenBFME screen's Graphics+ tab (Options.ini "OpenBFMESoftParticles"): Options.apt shows retail's controls only [S-1484].
 // Lane FB7-1 (FB-0007 r2): the retail controls. TARGET FACTS (RotWK game.dat, caveat S-001):
 // - opening (RW 0x91ED91(a, b, c, d)): Options.apt is pushed, then + 0x283 = a (the extern NetworkEnabled), + 0x280 = + 0x282 = b (AllowResolutionChange),
 //   + 0x281 = c (AllowAdvancedOptions), + 0x284 = d (AdvancedOnly). The main menu passes (0, 1, 1, advanced) (RW 0x91C37E .. 0x91C38A), the LAN lobby
@@ -240,10 +244,12 @@ private:
 // - the Detail combo (RW 0x919167's twin in RotWK): Custom (item data 5) calls the movie's ShowAdvancedSettings, another level becomes + 0x310;
 // - Save (RW 0x9204F3 ..), with AllowAdvancedOptions and + 0x310 in 0 .. 5: Custom writes + 0x314's nine values into Options.ini (RW 0x91EE11), another
 //   level removes the nine keys (RW 0x6E6986); then StaticGameLOD = the level's name (RW 0x6E6798).
-// NOT PORTED (stop S-1913, S-2481): applying a resolution change and the brightness (TheDisplay), the LOD manager behind MasterOption0ResetDefault and the
-// health bars box's enable (RW 0x91EB77), applying a level or the custom settings to the renderer (RW 0x6020B4 / 0x6019D1: INFERENCE, the level is
-// taken as accepted), the warnings (RW 0x91F2AB: APT:WarnHighGraphicSettings / Detail / Resolution), the "(level)" labels of RW 0x91F175 / 0x920E0F,
-// RefreshNat, the live tracking of the sliders (the volumes take effect when saved).
+// Lane OPTS-2: Save applies the level (RW 0x6020B4 through GameLODManager::setStaticLODLevel, the Custom record from RW 0x6019D1 first) and the
+// device draws with it (ShellServices::applyOption "StaticGameLOD"); the health bars box follows the detail (RW 0x91EB77 / 0x91EBD1: VeryLow and a
+// Custom DecalLOD Off check and disable it; Save writes AllHealthBars only while it is allowed); Brightness / ScrollFactor reach the device as options.
+// NOT PORTED (stop S-1913, S-2481): the display mode list (the device offers the window's and the screen's size), the LOD manager's ideal level behind
+// MasterOption0ResetDefault, the warnings (RW 0x91F2AB: APT:WarnHighGraphicSettings / Detail / Resolution), the "(level)" labels of RW 0x91F175 /
+// 0x920E0F, RefreshNat, the live tracking of the sliders (the volumes take effect when saved).
 class AptOptionsScreen : public AptScreen
 {
 public:
@@ -251,10 +257,9 @@ public:
 	~AptOptionsScreen() override;
 	void runInit() override;
 	void runShutdown(bool *immediate) override;
-	GameWindow *softParticlesBox() const { return m_softBox; }
-	bool pendingSoftParticles() const { return m_pendingSoft; }
-	// the box's stage rectangle (x, y, width, height): the band under the Controls panel of Options.apt's 1024 x 768 stage [S-1484]
-	static constexpr int kSoftBoxX = 116, kSoftBoxY = 618, kSoftBoxW = 240, kSoftBoxH = 28;
+	// lane OPTS-2 [S-3402]: the advanced page's rows of the options the device does not draw are greyed and take no input
+	void frameUpdate() override;
+	const std::set<int> &greyedRows() const { return m_greyedRows; }
 
 	// RW 0x91ED91: push Options.apt (unless it is up) and set its mode bytes
 	static void open(Shell &shell, bool networkEnabled, bool allowResolutionChange, bool allowAdvanced, bool advancedOnly);
@@ -272,11 +277,37 @@ public:
 	// RW 0x6446A1's text: Version:Format2 with the build's 2 and 1
 	static std::u16string versionText(const GameTextSource *text);
 
+	// ---- lane OPTS-3: the OpenBFME page (NOT RETAIL: GUI/AptScreens/OpenBFMEOptionsPage.h) -------------------------------------------------------
+	// RotWK's page state + 0x27C takes 1 (basic) and 2 (advanced); 3 is the port's OpenBFME page. While it is up the basic page's three settings frames
+	// (Main.FrameLeft / FrameMiddle / FrameRight) and the movie's tooltip areas are hidden, the subtitle names the page, and the bottom bar's commands
+	// become the page's: a click on CANCEL / RESET TO DEFAULTS / ACCEPT is taken before the movie sees it (Options.apt plays its closing animation
+	// before it sends AptOptions::Save / Cancel), the commands themselves are redirected too; the buttons' art and hover animation are unchanged.
+	static constexpr int kExtensionState = 3;
+	// The device has the page's settings: the basic page shows the OPENBFME button. The button is a copy of the movie's own CUSTOM SETTINGS button
+	// (Main.FrameLeft.Advanced, duplicated as Main.FrameLeft.OpenBFMEEntry: the same art, font and hover animation) captioned OPENBFME, in the free corner
+	// above CANCEL that mirrors the "Version 2.1" text above ACCEPT (stage centre kEntryCentreX / Y); its click is the engine's (a mouse filter), never the
+	// copied button's own action.
+	static constexpr float kEntryCentreX = 151.0f;
+	static constexpr float kEntryCentreY = 676.0f;
+	void setExtensionAvailable(bool available) { m_extensionAvailable = available; }
+	bool extensionAvailable() const { return m_extensionAvailable; }
+	// From the basic page: the page goes up (empty until the device shows a spec through extensionPage()). False and `*error` when it cannot.
+	bool openExtension(std::string *error);
+	// Back to the basic page (the frames, the subtitle and the retail commands back; the retail gadgets the page mirrors re-read Options.ini).
+	void closeExtension();
+	bool extensionOpen() const { return m_state == kExtensionState; }
+	OpenBFMEOptionsPage *extensionPage() const { return m_page.get(); }
+	// The OPENBFME button's stage box (x0 y0 x1 y1); false when it is not on screen.
+	bool entryBox(float out[4]) const;
+	// The page's events and the button's (Entry), oldest first.
+	std::vector<OpenBFMEPageEvent> takeExtensionEvents();
+	// Esc while the page is up: the page's CANCEL (the movie never sees the key)
+	void extensionCancel() { m_extensionEvents.push_back({ OpenBFMEPageEvent::Kind::Cancel, std::string(), 0 }); }
+
 protected:
 	WindowMsgHandledType gadgetMessage(GameWindow *from, std::uint32_t msg, WindowMsgData data1, WindowMsgData data2) override;
 
 private:
-	void ensureSoftBox();
 	void save();
 	void reset();
 	void cancel();
@@ -290,12 +321,12 @@ private:
 	void selectDetail();                                                 // RW 0x91EB30: the Detail combo shows + 0x310
 	void saveAdvanced(OptionPreferences &prefs);                         // RW 0x920500 .. 0x92057A (a level in 0 .. 5)
 	void writeOptions();                                                 // RW 0x7B274C: Options.ini written
+	bool healthBarsAllowed() const;                                      // RW 0x91EB77 (lane OPTS-2)
+	void refreshHealthBarsBox(GameWindow *box);                          // RW 0x91EBD1 (lane OPTS-2)
 	bool checked(const std::string &name) const; // -1 / not created: false
 	int sliderValue(const std::string &name) const; // -1 when the gadget does not exist (RW 0x91EA1D)
 	ShellEnvironment &m_env;
 	ShellServices &m_services;
-	GameWindow *m_softBox = nullptr;
-	bool m_pendingSoft = true;
 	std::map<std::string, GameWindow *> m_gadgets; // "MusicVolume" ... (the name after "Options::")
 	int m_state = 0;               // + 0x27C
 	bool m_allowResolution = false; // + 0x280 / + 0x282
@@ -305,6 +336,30 @@ private:
 	int m_masterOption = 5;         // + 0x310: Options.ini's StaticGameLOD, else Custom (the LOD manager's own level: S-2481)
 	std::string m_customTemplate;   // + 0x314 (lane PLAY-2)
 	bool m_detailRefreshing = false; // RW 0x91EB30's cleared + 0x2B0
+	std::set<int> m_greyedRows;      // lane OPTS-2: the advanced options whose rows frameUpdate greyed
+	// lane OPTS-3
+	bool mouseFilter(int kind, float x, float y);
+	void updateEntry();
+	void setExtensionHidden(bool hidden);
+	AptCharacterInst *find(const std::string &path) const;
+	AptCharacterInst *entryClip() const;
+	std::vector<AptTextInst *> subtitleTexts() const;
+	static AptTextInst *firstText(AptCharacterInst *under, const std::string &name);
+	bool m_extensionAvailable = false;
+	bool m_entryPressed = false;
+	int m_barPressed = -1; // the bottom bar button a press on the page went to (0 Cancel, 1 Reset, 2 Accept)
+	std::unique_ptr<OpenBFMEOptionsPage> m_page;
+	std::vector<OpenBFMEPageEvent> m_extensionEvents;
+	struct SavedField
+	{
+		std::string text;
+		bool assigned = false;
+		bool hasVariable = false;
+		AptValue variableValue;
+	};
+	std::vector<SavedField> m_savedSubtitles;
+	std::vector<std::string> m_mirroredAtOpen; // Options.ini's ScrollFactor, AllHealthBars, AlternateMouseSetup when the page opened // Main.SubTitle's text fields when the page opened
+	static void setFieldText(AptTextInst *field, const std::string &text);
 };
 
 // Palantir.apt (CodePrefix AptPalantir) is lane HUD-1's AptPalantir (AptPalantir.h); the factory below creates it.

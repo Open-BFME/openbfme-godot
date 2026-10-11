@@ -809,12 +809,12 @@ TEST_CASE("camera: the stops are reported when the camera is attached")
 	for (const std::string &s : stops)
 	{
 		if (s.compare(0, 7, "[S-450]") == 0 || s.compare(0, 7, "[S-451]") == 0 || s.compare(0, 7, "[S-452]") == 0 || s.compare(0, 7, "[S-453]") == 0 || s.compare(0, 7, "[S-454]") == 0
-			|| s.compare(0, 7, "[S-455]") == 0 || s.compare(0, 7, "[S-456]") == 0)
+			|| s.compare(0, 7, "[S-455]") == 0 || s.compare(0, 7, "[S-456]") == 0 || s.compare(0, 8, "[S-3501]") == 0)
 		{
 			mine.push_back(s);
 		}
 	}
-	REQUIRE(mine.size() == 7);
+	REQUIRE(mine.size() == 8);
 	CHECK(mine == TacticalCamera::acceptanceStops());
 }
 
@@ -923,6 +923,74 @@ TEST_CASE("play1 camera: the free camera lifts the zoom-out limit to the map's e
 		c.zoomOut();
 	}
 	c.setFreeCamera(false);
+	CHECK(c.getHeightAboveGround() == c.maxHeight());
+	r.frame(120);
+	CHECK(c.fogShift() == 0.0f);
+	CHECK(c.farPlane() == 1800.0f);
+}
+
+// ---- lane ZOOM-1 ----------------------------------------------------------------------------------------------------------------------------------
+
+TEST_CASE("zoom1 camera: the Max zoom-out factor lifts the player's limit to factor times the map's max height; the default view, a reset and 1x stay retail")
+{
+	if (!haveWorld("zoom1 max zoom-out"))
+	{
+		return;
+	}
+	CamRig r(shared());
+	TacticalCamera &c = *r.cam;
+	// retail (RW 0x48CBFE): the factor starts at 1, the limit is the settings object's max height (GameData DefaultCameraMaxHeight 300 on Evendim)
+	CHECK(c.zoomOutFactor() == 1.0f);
+	CHECK(c.zoomOutLimit() == c.maxHeight());
+	CHECK(c.maxHeight() == 300.0f);
+	for (const float factor : { 1.5f, 2.0f, 2.5f, 3.0f })
+	{
+		CAPTURE(factor);
+		c.setZoomOutFactor(factor);
+		CHECK(c.zoomOutLimit() == c.maxHeight() * factor);
+		for (int i = 0; i < 200; ++i)
+		{
+			c.zoomOut(); // RW 0x65E82A: height * 1.05 + 1, clamped
+		}
+		CHECK(c.getHeightAboveGround() == c.maxHeight() * factor);
+		r.frame(90);
+		CHECK(c.fogShift() > 0.0f);
+		CHECK(c.farPlane() == 1800.0f + 2.0f * c.fogShift());
+		// the far plane reaches past the ground point at the top of the screen (the whole view is drawn)
+		Coord3D o, d;
+		REQUIRE(c.screenToRay(ICoord2D{ c.size().x / 2, 0 }, o, d));
+		REQUIRE(d.z < 0.0f);
+		const float t = (c.getGroundLevel() - o.z) / d.z;
+		CHECK(t * std::sqrt(d.x * d.x + d.y * d.y + d.z * d.z) < c.farPlane());
+	}
+	// scrolling does not pull the camera back to retail's height
+	const float high = c.getHeightAboveGround();
+	r.key(kKeyRight, true);
+	r.frame(10);
+	r.key(kKeyRight, false);
+	CHECK(c.getHeightAboveGround() == high);
+	// the default view and a reset are retail's maximum height
+	c.setZoomToDefault();
+	CHECK(c.getHeightAboveGround() == c.maxHeight());
+	for (int i = 0; i < 200; ++i)
+	{
+		c.zoomOut();
+	}
+	c.resetCamera();
+	CHECK(c.getHeightAboveGround() == c.maxHeight());
+	// the free camera on top: the larger of the two limits
+	c.setFreeCamera(true);
+	CHECK(c.zoomOutLimit() == std::max(c.freeMaxHeight(), c.maxHeight() * 3.0f));
+	c.setFreeCamera(false);
+	// lowering the factor brings a higher camera down to the new limit; 1 (and anything below it) is retail again
+	for (int i = 0; i < 200; ++i)
+	{
+		c.zoomOut();
+	}
+	c.setZoomOutFactor(2.0f);
+	CHECK(c.getHeightAboveGround() == c.maxHeight() * 2.0f);
+	c.setZoomOutFactor(0.5f);
+	CHECK(c.zoomOutFactor() == 1.0f);
 	CHECK(c.getHeightAboveGround() == c.maxHeight());
 	r.frame(120);
 	CHECK(c.fogShift() == 0.0f);

@@ -9,6 +9,7 @@
 #pragma once
 
 #include "Common/CreateAHeroRecord.h"
+#include "Common/MpGameRules.h"
 
 #include <cstdint>
 #include <string>
@@ -138,6 +139,26 @@ struct SkirmishGameInfo
 	int startingCash = 0;
 	int superweaponRestriction = 0;
 	bool inProgress = false; // GameInfo::startGame
+	// lane RULES-1: RotWK GameInfo + 0x60, the ten game rules (Common/MpGameRules.h); all -1 = no rule block (GameInfo::reset, RW 0x801AAF). The lobby fills
+	// the mode's defaults (AptSkirmish::InitTheGame RW 0x9288D0) and the Rules tab changes them; a game started without a lobby (tests, tools) keeps -1 and
+	// every rule's consumer then behaves as it did before the rules existed (LiveGame: GameData's DefaultStartingCash, a lobby percentage of 100, no ring
+	// heroes game mode)
+	GameRules rules = MpGameRules::none();
+	// lane RULES-1, OpenBFME (not retail): the Legendary Heroes factor, 1 (off) .. 4 (LegendaryHeroes in Common/MpGameRules.h)
+	int legendaryHeroes = LegendaryHeroes::kOff;
+	// lane RULES-1: AllowCustomHeroes (rule 0): a game with no rule block keeps every slot's Create-a-Hero; with the block only rule 0 == 1 allows them (RW 0x842A85
+	// enables a slot's hero combo only then). The host, the wire reader and the game start all hold a setup to it
+	bool customHeroesAllowed() const { return MpGameRules::isNone(rules) || rules[RULE_ALLOW_CUSTOM_HEROES] == 1; }
+	void clearCreateAHeroesIfNotAllowed()
+	{
+		if (!customHeroesAllowed())
+		{
+			for (SkirmishGameSlot &s : slots)
+			{
+				s.clearCreateAHero();
+			}
+		}
+	}
 
 	// The random choices still in the info: "slot N colour" / "slot N faction" / "slot N start position" for every OCCUPIED slot that has -1 (ZH: observers
 	// carry PLAYERTEMPLATE_OBSERVER, never random).  Empty when nothing is left to resolve.
@@ -211,7 +232,7 @@ struct SkirmishGameInfo
 			}
 		}
 		return mapName == o.mapName && mapCRC == o.mapCRC && mapSize == o.mapSize && mapMask == o.mapMask && seed == o.seed && startingCash == o.startingCash
-			&& superweaponRestriction == o.superweaponRestriction && inProgress == o.inProgress;
+			&& superweaponRestriction == o.superweaponRestriction && inProgress == o.inProgress && rules == o.rules && legendaryHeroes == o.legendaryHeroes;
 	}
 };
 

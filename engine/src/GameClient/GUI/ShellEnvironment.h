@@ -55,7 +55,8 @@ struct ShellEnvironment
 	QuitMenuContext *quitMenu = nullptr;      // lane END-2: the game QuitMenu.apt is opened over; null: no game (TheGameLogic null)
 	OptionPreferences *options = nullptr;     // lane UI-2: the player's Options.ini (GameClient/OptionPreferences.h); null: the Options screen saves nothing and says so
 	std::string optionsFile;                  // lane UI-2: where `options` is written (the user data folder's Options.ini)
-	const GameLODManager *gameLOD = nullptr;  // lane PLAY-2: GameLOD.ini's StaticGameLOD presets (the Options screen's advanced page); null: it says so
+	GameLODManager *gameLOD = nullptr;  // lane PLAY-2: GameLOD.ini's StaticGameLOD presets (the Options screen's advanced page); null: it says so. Lane
+	                                    // OPTS-2: the level in effect too (Save applies it)
 	TributeSource *tribute = nullptr;         // lane PLAY-1: the live game PlayerTribute.apt shows and sends tribute in (GUI/TributeInfo.h); null: no game, said so
 	// lane FB7-1: what the Options screen's InitGadgets reads besides Options.ini (RW 0x9205C4)
 	bool haveDefaultVolumes = false;          // AudioSettings DefaultSoundVolume .. DefaultMovieVolume (TheAudio's settings + 0x1C .., RW 0x6E5FB3)
@@ -65,6 +66,10 @@ struct ShellEnvironment
 	std::vector<std::pair<std::string, std::uint32_t>> localAddresses; // the machine's IPv4 addresses (dotted text, host order value): RW 0x719C53's list
 	std::vector<std::pair<int, int>> displayModes; // the resolutions the device offers (RW TheDisplay vslot 0x5C / 0x60)
 	std::pair<int, int> currentResolution{ 0, 0 }; // the window's size now
+	// lane OPTS-2: false when the device cannot apply the Resolution list (Godot does not change the monitor's display mode; the window size is the
+	// OpenBFME screen's): the Options screen then opens with AllowResolutionChange off, the list disabled as retail's lobby / in-game openings leave it
+	// (stop S-3401)
+	bool resolutionChangeApplies = true;
 	bool shellMapOn = false;                  // lane FB7-1: GameData ShellMapOn (GlobalData + 0xAF0; Shell::showShellMap)
 	PlayerStatusInfo *playerStatus = nullptr; // lane HUD-5: the players screen's Status rows (GUI/PlayerStatusInfo.h); null: the page shows no rows and says so
 	CreateAHeroScreenContext *createAHero = nullptr; // lane CAH-1: what CreateAHero.apt edits (GUI/AptScreens/AptCreateAHero.h); null: it says so

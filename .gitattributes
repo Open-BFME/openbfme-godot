@@ -38,3 +38,6 @@ engine/tests/data/** text eol=lf
 engine/thirdparty/lua-4.0.1/** -text
 # The Lua patch layer is diffed against the pristine tree (engine/src/Libraries/Lua/ea-fork.patch): LF everywhere.
 engine/src/Libraries/Lua/** text eol=lf
+
+# lane UI-5: the launcher's fonts (tools/release/public_binaries.txt pins their bytes)
+*.ttf binary

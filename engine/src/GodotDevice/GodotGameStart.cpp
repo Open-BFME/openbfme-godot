@@ -64,6 +64,14 @@ Dictionary newGameToDictionary(const NewGameMessage &m)
 	d["starting_cash"] = m.game.startingCash;
 	d["superweapon_restriction"] = m.game.superweaponRestriction;
 	d["in_progress"] = m.game.inProgress;
+	// lane RULES-1: the ten game rules (GameInfo + 0x60; all -1 = no rule block) and OpenBFME's Legendary Heroes factor
+	Array rules;
+	for (std::int32_t v : m.game.rules)
+	{
+		rules.push_back((int64_t)v);
+	}
+	d["rules"] = rules;
+	d["legendary_heroes"] = m.game.legendaryHeroes;
 	Array slots;
 	for (int i = 0; i < MAX_SLOTS; ++i)
 	{
@@ -134,6 +142,25 @@ bool newGameFromDictionary(const Dictionary &d, NewGameMessage &out, std::string
 	m.game.startingCash = (int)(int64_t)d["starting_cash"];
 	m.game.superweaponRestriction = (int)(int64_t)d.get("superweapon_restriction", (int64_t)0);
 	m.game.inProgress = (bool)d.get("in_progress", false);
+	// lane RULES-1: "rules" (ten ints) and "legendary_heroes" (1 .. 4); a dictionary without them (a script's own game) is a game with no rule block and the
+	// rule off, the same meaning as a NewGameMessage built without the lobby
+	if (d.has("rules"))
+	{
+		const Array rules = d["rules"];
+		if (rules.size() != NUM_GAME_RULES)
+		{
+			return fail("rules has " + std::to_string((int)rules.size()) + " entries, expected " + std::to_string(NUM_GAME_RULES));
+		}
+		for (int i = 0; i < NUM_GAME_RULES; ++i)
+		{
+			m.game.rules[(size_t)i] = (std::int32_t)(int64_t)rules[i];
+		}
+	}
+	m.game.legendaryHeroes = (int)(int64_t)d.get("legendary_heroes", (int64_t)LegendaryHeroes::kOff);
+	if (!LegendaryHeroes::valid(m.game.legendaryHeroes))
+	{
+		return fail("legendary_heroes " + std::to_string(m.game.legendaryHeroes) + " (1 .. 4)");
+	}
 	const Array slots = d["slots"];
 	if (slots.size() != MAX_SLOTS)
 	{

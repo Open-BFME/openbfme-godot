@@ -14,10 +14,19 @@
 ##     --faction=<Name>      (with --auto) slot 0's PlayerTemplate (default FactionMen); --ai=<2..5> slot 1's AI level; --color=<index> slot 0's colour (default random)
 ##     --advance=<seconds>   (with --auto) game time to run after the first frame, then quit
 ##     --free-camera         (lane PLAY-1) lift the camera's zoom-out limit to the map's extent (not retail; Options.ini OpenBFMEFreeCamera = yes does the same)
+##     --zoom-out=<f>        (lane ZOOM-1) the Max zoom-out for the run: f times retail's highest camera, one of 1 (retail), 1.5, 2, 2.5, 3 (any other
+##                           value: GAME FAIL, exit 2); without it Options.ini OpenBFMEMaxZoomOut (default 2.5)
+##     --zoom1=<a,b,...>     (lane ZOOM-1, with --auto) the scenarios of scripts/zoom1_player.gd (zoom: the same spot at 1x / 1.5x / 2x / 2.5x / 3x, the
+##                           frame rate at 1x and 2.5x; bars: both armies with every health bar on); prints ZOOM1 lines; --screens writes zoom1-*.png
+##     --rules-shot=<n>      (lane RULES-1, with --auto --screens) the lobby's Rules tab is opened (rules1-rules-tab.png), Legendary Heroes n x is chosen
+##                           (rules1-rules-tab-legendary.png), the game starts (the loading screen names the rule) and scripts/rules1_player.gd places a
+##                           legendary and a plain hero side by side, damaged alike (rules1-heroes.png); "RULES1 RESULT" ends the run
 ##     --hud5=<a,b,...>      (lane HUD-5, with --auto) the owner's first Windows session's items, scripted (scripts/hud5_player.gd: fortress, players, powers,
 ##                           gate, construction, levels); "HUD5 <name>: ok / FAIL", screenshots hud5-<name>.png in --screens
 ##     --hud6=<a,b,...>      (lane HUD-6, with --auto) scripts/hud6_player.gd: radial (the fortress's bubbles), heroes (its hero ring), help (the
 ##                           help box over a bubble and over an arc button), sidebar (a builder's framed side bar); hud6-<name>.png in --screens
+##     --autocast1=<a,...>   (lane AUTOCAST-1, with --auto) scripts/autocast1_player.gd: witchking (a right click on the Witch-king's Morgul Blade
+##                           button turns its autocast on, the button glows, he casts it at an enemy hero by himself; off again); autocast1-<name>.png
 ##     --start-spot=<n>      (with --auto) slot 0 clicks the lobby's start spot n first (RW 0x845830): e.g. 0 = Player_1_Start, a fortress map's fortress
 ##     --play1=<a,b,...>     (lane PLAY-1, with --auto) the input-driven scenarios of scripts/play1_player.gd (orders, palantir, powers, camera, explore, dragbox, ghosts,
 ##                           skirmish, tour, tribute): every action is an InputEvent pushed into the viewport; prints PLAY1 lines; with --end the end of the game
@@ -61,6 +70,14 @@
 ##     --display-shots=DIR   (with --display-check / --display-game) opts1-entry.png, opts1-screen.png, opts1-fps.png, opts1-game-*.png (the proof screenshots)
 ##     --display-game        (with --auto) after --advance seconds: Esc, the quit menu's Options, the OPENBFME screen over the live game (the HUD takes no
 ##                           input while it is up; a resolution change keeps the menus' 1024 x 768 stage on the whole window), Esc back to the game; exit 0 when all held
+##   lane OPTS-2, the Options menu: RotWK's detail level / brightness / scroll speed take effect, and the OpenBFME screen's tabs (scripts/game_options.gd)
+##     --options-file=PATH   the Options.ini of the run (default: the user data folder's); the checks use one of their own
+##     --opts2-check         the scripted check of tests/opts2_test.gd (scripts/opts2_check.gd): Options.apt's pages, every tab of the OpenBFME screen, the
+##                           extras applied / written with the OpenBFME prefix / cancelled, no green label text; exit 0 when all held
+##     --opts2-game          (with --auto and --options-file) after --advance seconds: the game clock, the camera's scroll factor, the detail's particle limits on
+##                           the live FX player, the health bars' mode and Brightness's gamma pass in the live game; exit 0 when all held
+##     --opts2-size=WxH      (with --opts2-check / --opts2-game) the window's size for the screenshots (1280x720, 2560x1440)
+##     --opts2-shots=DIR     (with --opts2-check) opts2-<tab>-<w>x<h>.png and the Options.apt pages (the proof screenshots; a window, not --headless)
 ##     --opponents=<n>       (lane PERF-1, with --auto) slots 1..n are computers of level --ai (default 1; a 4-player map takes 3)
 ##     --warp=<seconds>      (lane PERF-1, with --auto) run the game at --warp-scale (default 8) times speed until this much game time has passed, then at normal speed
 ##                           for --advance seconds (the frame rate of a late game: GAME PERF restarts when the warp ends)
@@ -185,8 +202,14 @@ var _display: RefCounted                 # lane OPTS-1: the display settings in 
 var _display_path := ""
 var _display_overlay: CanvasLayer        # scripts/fps_overlay.gd: the counter and the F11 / Alt+Enter keys
 var _display_screen: CanvasLayer         # scripts/openbfme_options_screen.gd
+var _game_options: Node                  # lane OPTS-2: scripts/game_options.gd, the retail detail / brightness / scroll and the OpenBFME extras in effect
 var _display_check := false              # --display-check
 var _display_shots := ""                 # --display-shots=DIR
+var _options_file := ""                  # lane OPTS-2: --options-file=PATH
+var _opts2_check := false                # lane OPTS-2: --opts2-check
+var _opts2_game := false                 # lane OPTS-2: --opts2-game
+var _opts2_shots := ""                   # lane OPTS-2: --opts2-shots=DIR
+var _opts2_size := Vector2i.ZERO         # lane OPTS-2: --opts2-size=WxH (the screenshots' window size)
 var _display_game := false               # --display-game
 
 var _fs: RefCounted
@@ -211,10 +234,16 @@ var _move_hints: Node3D
 var _placement_ghost: Node3D
 ## lane PLAY-1: the free camera (the owner's presentation option, not retail): --free-camera or Options.ini "OpenBFMEFreeCamera = yes"
 var _free_camera_flag := false
+## lane ZOOM-1: --zoom-out=<f> (0 = Options.ini's OpenBFMEMaxZoomOut)
+var _zoom_out_flag := 0.0
+var _zoom_out_error := "" # lane ZOOM-1 r2: a --zoom-out value the option does not take
 ## lane PLAY-1: the input-driven scenarios of scripts/play1_player.gd (--play1=orders,palantir,powers,camera)
 var _play1 := PackedStringArray()
+var _zoom1 := PackedStringArray() # lane ZOOM-1
 var _hud5 := PackedStringArray() # lane HUD-5
+var _rules_shot := 0 # lane RULES-1: --rules-shot=<factor>
 var _hud6 := PackedStringArray() # lane HUD-6 (scripts/hud6_player.gd: radial, heroes, sidebar, help)
+var _autocast1 := PackedStringArray() # lane AUTOCAST-1 (scripts/autocast1_player.gd: witchking)
 var _start_spot := -1            # lane HUD-5
 ## lane INPUT-1: the keyboard scenarios of scripts/input1_player.gd (--input1=groups,...)
 var _input1 := PackedStringArray()
@@ -299,6 +328,7 @@ var _end_log: Array = []
 var _end_message_layer: CanvasLayer
 var _end_message_label: Label
 var _end_message_until := 0
+var _rules_layer: CanvasLayer # lane RULES-1: the OpenBFME rules line over the loading screen
 var _graph_layer: CanvasLayer
 var _graph_node: Control
 var _score_report := {}
@@ -384,6 +414,16 @@ func _ready() -> void:
 			_display_game = true
 		elif arg.begins_with("--display-shots="):
 			_display_shots = arg.substr(16)
+		elif arg.begins_with("--options-file="):
+			_options_file = arg.substr(15)
+		elif arg == "--opts2-check":
+			_opts2_check = true
+		elif arg == "--opts2-game":
+			_opts2_game = true
+		elif arg.begins_with("--opts2-shots="):
+			_opts2_shots = arg.substr(14)
+		elif arg.begins_with("--opts2-size="):
+			_opts2_size = Vector2i(arg.substr(13).get_slice("x", 0).to_int(), arg.substr(13).get_slice("x", 1).to_int())
 		elif arg == "--check":
 			_check = true
 		elif arg == "--alternate-mouse":
@@ -392,12 +432,25 @@ func _ready() -> void:
 			_mouse_override = "classic"
 		elif arg == "--free-camera":
 			_free_camera_flag = true
+		elif arg.begins_with("--zoom-out="):
+			# lane ZOOM-1 r2: one of the option's values (OpenBFMEMaxZoomOut's choices), anything else is refused below (no silent 1x)
+			var z := arg.substr(11)
+			if Array(["1", "1.5", "2", "2.5", "3"]).has(z):
+				_zoom_out_flag = z.to_float()
+			else:
+				_zoom_out_error = "--zoom-out=%s: not a Max zoom-out value (1, 1.5, 2, 2.5 or 3)" % z
 		elif arg.begins_with("--play1="):
 			_play1 = arg.substr(8).split(",", false)
+		elif arg.begins_with("--zoom1="):
+			_zoom1 = arg.substr(8).split(",", false)
+		elif arg.begins_with("--rules-shot="):
+			_rules_shot = int(arg.substr(13))
 		elif arg.begins_with("--hud5="):
 			_hud5 = arg.substr(7).split(",", false)
 		elif arg.begins_with("--hud6="):
 			_hud6 = arg.substr(7).split(",", false)
+		elif arg.begins_with("--autocast1="):
+			_autocast1 = arg.substr(12).split(",", false)
 		elif arg.begins_with("--start-spot="):
 			_start_spot = int(arg.substr(13))
 		elif arg.begins_with("--input1="):
@@ -562,6 +615,10 @@ func _ready() -> void:
 			var spec := arg.substr(11)
 			_net_shot = spec.substr(0, spec.rfind(":"))
 			_net_shot_frame = int(spec.substr(spec.rfind(":") + 1))
+	if not _zoom_out_error.is_empty():
+		printerr("GAME FAIL: ", _zoom_out_error)
+		get_tree().quit(2)
+		return
 	# lane QA-1 (review r1): the scripted player is a single-player run; a network flag would start both tasks (the scripted skirmish and the LAN session)
 	if _qa and (_net_host > 0 or not _net_join.is_empty() or _net_script or _net_end or not _net_record.is_empty() or _net_frames >= 0 or not _lan_mode.is_empty()
 			or not _replay_file.is_empty() or _replay_menu_test):
@@ -597,6 +654,23 @@ func _display_setup() -> void:
 	get_tree().root.add_child.call_deferred(_display_overlay)
 
 
+## lane OPTS-2: the settings of Options.ini the device applies (scripts/game_options.gd): RotWK's detail level, brightness, scroll speed and the OpenBFME
+## extras
+func _game_options_setup() -> void:
+	_game_options = load("res://scripts/game_options.gd").new()
+	_game_options.name = "OpenBFMEGameOptions"
+	_game_options.shell = _shell
+	_game_options.game = self
+	add_child(_game_options)
+	var values: Dictionary = _game_options.current()
+	var done: PackedStringArray = _game_options.apply_global(values)
+	var detail: Dictionary = _shell.get_detail_state()
+	print("GAME OPTIONS %s; detail %s (texture reduction %d, %d particles)%s" % [", ".join(done), detail.get("level_name", "?"), detail.get("texture_reduction", -1),
+		detail.get("max_particle_count", -1), "" if _game_options.problems.is_empty() else " PROBLEMS " + str(_game_options.problems)])
+	if not str(detail.get("stop", "")).is_empty():
+		print("GAME OPTIONS stop: ", detail.stop)
+
+
 ## lane OPTS-1: the OPENBFME button over Options.apt and the screen it opens (scripts/openbfme_options_screen.gd)
 func _display_screen_setup() -> void:
 	_display_screen = load("res://scripts/openbfme_options_screen.gd").new()
@@ -606,7 +680,15 @@ func _display_screen_setup() -> void:
 	_display_screen.settings = _display
 	_display_screen.settings_path = _display_path
 	_display_screen.overlay = _display_overlay
+	_display_screen.game_options = _game_options # lane OPTS-2: the other tabs
 	add_child(_display_screen)
+
+
+## lane OPTS-2: --opts2-check (scripts/opts2_check.gd)
+func _run_opts2_check() -> void:
+	var check: Object = load("res://scripts/opts2_check.gd").new()
+	var failed: int = await check.run(self, _opts2_shots)
+	get_tree().quit(0 if failed == 0 else 1)
 
 
 ## lane OPTS-1: --display-check (scripts/opts1_check.gd)
@@ -681,8 +763,10 @@ func _boot() -> void:
 	var modes: Array = [window_size]
 	if screen_size != window_size:
 		modes.append(screen_size)
-	var boot: Dictionary = _shell.boot_shell(_fs, _world, {"seed": _seed, "default_volumes": _audio.get_default_volumes(),
-		"display_modes": modes, "current_resolution": window_size})
+	var shell_config := {"seed": _seed, "default_volumes": _audio.get_default_volumes(), "display_modes": modes, "current_resolution": window_size}
+	if not _options_file.is_empty():
+		shell_config["options_file"] = _options_file # lane OPTS-2
+	var boot: Dictionary = _shell.boot_shell(_fs, _world, shell_config)
 	if not boot.ok:
 		_fail("shell: " + "\n".join(boot.errors))
 		return
@@ -693,6 +777,7 @@ func _boot() -> void:
 	_shell.shell_request.connect(_on_shell_request)
 	_shell.shell_service.connect(_on_shell_service)
 	_shell.shell_screen.connect(_on_shell_screen)
+	_game_options_setup() # lane OPTS-2: Options.ini's settings in effect (before any game loads its textures)
 	_display_screen_setup() # lane OPTS-1: the OPENBFME button over Options.apt and its screen
 	if not _shell.shell_push("MainMenu.apt"):
 		_fail("the shell refused MainMenu.apt: " + str(_shell.get_shell_report().errors))
@@ -716,6 +801,8 @@ func _boot() -> void:
 		return
 	if _display_check:
 		_run_display_check() # lane OPTS-1
+	elif _opts2_check:
+		_run_opts2_check() # lane OPTS-2
 	elif _auto and not _auto_task_started:
 		_auto_task_started = true
 		_run_auto()
@@ -809,11 +896,17 @@ func _on_shell_service(kind: String, a: String, b: String) -> void:
 
 
 # lane FB7-1: an Options.ini entry the Options screen saved takes effect: the volumes (RW 0x91EC52 / 0x91FC9C: TheAudio vslot 0xE8(type, value * 0.01));
-# the movie volume has no slider in the audio device (S-1913), the brightness and the rest are not applied here (S-1913)
+# the movie volume has no slider in the audio device (S-1913). Lane OPTS-2: the detail level (StaticGameLOD, applied by GameLODManager), the brightness
+# (the display gamma), the scroll speed, the health bars and the mouse setup (scripts/game_options.gd)
 const OPTION_VOLUME_SLIDERS := {"SFXVolume": "sound", "VoiceVolume": "voice", "MusicVolume": "music", "AmbientVolume": "ambient"}
 func _apply_option(key: String, value: String) -> void:
 	if OPTION_VOLUME_SLIDERS.has(key) and _audio != null:
 		_audio.set_volume(OPTION_VOLUME_SLIDERS[key], clampf(value.to_float() * 0.01, 0.0, 1.0))
+	elif _game_options == null:
+		return
+	elif key == "StaticGameLOD" or key == "Brightness" or key == "ScrollFactor" or key == "AllHealthBars" or key == "AlternateMouseSetup":
+		var done: PackedStringArray = _game_options.apply_global(_game_options.current())
+		print("GAME OPTIONS %s = %s: %s" % [key, value, ", ".join(done)])
 
 
 func _on_shell_request(action: String, argument: String) -> void:
@@ -966,6 +1059,7 @@ func _begin_game(message: Dictionary) -> void:
 	if cards.has("error"):
 		_fail("load screen: " + cards.error)
 		return
+	_show_rules_summary(str(cards.get("rules_summary", "")))
 	var local_card: int = cards.get("local_card", -1)
 	if local_card >= 0 and local_card < cards.cards.size():
 		var music: String = cards.cards[local_card].get("load_music", "")
@@ -978,7 +1072,7 @@ func _begin_game(message: Dictionary) -> void:
 	_shell.auto_process = false
 	var started := Time.get_ticks_msec()
 	_load_log.clear()
-	var opts := {"progress": Callable(self, "_on_load_progress"), "test_hooks": _end}
+	var opts := {"progress": Callable(self, "_on_load_progress"), "test_hooks": _end or not _zoom1.is_empty() or _rules_shot > 0} # lane ZOOM-1: the bars scenario hurts some units (logged)
 	if _record and _net_state.is_empty():
 		opts["record"] = _last_replay_path() # lane MP-2: every skirmish is recorded
 	var rep: Dictionary = _world.start_new_game(opts)
@@ -1111,6 +1205,34 @@ func _play_intro_movies() -> void:
 		get_tree().quit(0 if player.errors.is_empty() else 1)
 
 
+## lane RULES-1: an OpenBFME rule in force (Legendary Heroes) is written over the loading screen, which has no field for it; gone when the game starts.
+func _show_rules_summary(text: String) -> void:
+	_hide_rules_summary()
+	if text.is_empty():
+		return
+	print("GAME rules: ", text)
+	_rules_layer = CanvasLayer.new()
+	_rules_layer.layer = 91
+	add_child(_rules_layer)
+	var label := Label.new()
+	label.set_meta("game_text", true)
+	label.text = text
+	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	label.anchor_right = 1.0
+	label.anchor_top = 0.13 # below the movie's title, above its map panel
+	label.add_theme_font_size_override("font_size", 24)
+	label.add_theme_color_override("font_color", Color(1.0, 0.84, 0.35))
+	label.add_theme_color_override("font_outline_color", Color.BLACK)
+	label.add_theme_constant_override("outline_size", 6)
+	_rules_layer.add_child(label)
+
+
+func _hide_rules_summary() -> void:
+	if _rules_layer != null:
+		_rules_layer.queue_free()
+		_rules_layer = null
+
+
 func _shell_load_screen_push() -> void:
 	if not _shell.shell_push("LoadScreen.apt"):
 		_fail("the shell refused LoadScreen.apt: " + str(_shell.get_shell_report().errors))
@@ -1129,6 +1251,7 @@ func _on_load_progress(percent: int) -> void:
 
 
 func _enter_game(rep: Dictionary) -> void:
+	_hide_rules_summary() # lane RULES-1
 	# retail: the shell is popped, the HUD movie (Palantir) is the only movie left
 	while _shell.shell_stack().size() > 0:
 		_shell.shell_pop()
@@ -1196,14 +1319,18 @@ func _install_hud(rep: Dictionary) -> void:
 		print("GAME free camera: on (the zoom-out limit is the map's extent; not retail)")
 	# lane HUD-5: Options.ini AllHealthBars (RW 0x6E6179: "yes" -> true, absent -> false) gates the infantry / cavalry health bars (GlobalData + 0x9BE)
 	var all_bars = _shell.get_option("AllHealthBars") if _shell != null and _shell.has_method("get_option") else null
+	var zoom_out := _zoom_out_setting()
+	print("GAME max zoom-out: %sx%s" % [str(zoom_out), " (retail)" if zoom_out <= 1.0 else " (OpenBFME option, not retail)"])
 	var r: Dictionary = hud.attach(_fs, _world, _camera, _shell, local, {"alternate_mouse": alternate, "camera_start": camera_start, "free_camera": free_camera,
-		"all_health_bars": all_bars != null and str(all_bars) == "yes"})
+		"all_health_bars": all_bars != null and str(all_bars) == "yes", "zoom_out_factor": zoom_out})
 	print("GAME HUD installed: ok=%s errors=%s" % [r.ok, r.errors])
 	if not r.ok:
 		hud.queue_free()
 		return
 	_hud = hud
 	_hud_installed = true
+	if _game_options != null:
+		_game_options.game_started(_world, hud) # lane OPTS-2: the detail's particle limits, the camera and interface options
 	_shell.set_tribute_world(_world) # lane PLAY-1: PlayerTribute.apt's rows and Send (the Palantir's flag)
 	# lane SPELL-2: the spell book is the retail movies the HUD drives (the Palantir's InGameSpellBook, SpellStore.apt from its store button); this node only
 	# draws the targeting ring of a power waiting for its ground click
@@ -1249,6 +1376,21 @@ func _free_camera_setting() -> bool:
 		return true
 	var v = _shell.get_option("OpenBFMEFreeCamera") if _shell != null and _shell.has_method("get_option") else null
 	return v != null and str(v).to_lower() == "yes"
+
+
+## lane ZOOM-1: the Max zoom-out (TacticalCamera::setZoomOutFactor; camera only): --zoom-out, else Options.ini OpenBFMEMaxZoomOut (scripts/game_options.gd)
+func _zoom_out_setting() -> float:
+	if _zoom_out_flag > 0.0:
+		return _zoom_out_flag
+	if _game_options != null:
+		return _game_options._zoom_out_factor(_game_options.current())
+	# no options node: the key's value through the same check (a value the key does not take is reported, its default used, as for every extra)
+	var opts: Dictionary = _shell.get_options() if _shell != null and _shell.has_method("get_options") else {}
+	var problems := []
+	var v: String = load("res://scripts/game_options.gd").value_of(opts, "OpenBFMEMaxZoomOut", problems)
+	for p in problems:
+		printerr("GAME OPTIONS problem: ", p)
+	return v.to_float()
 
 
 func _apply_lighting(rep: Dictionary) -> void:
@@ -1347,6 +1489,15 @@ func _run_auto() -> void:
 	if _qa:
 		await _run_qa()
 		return
+	if _rules_shot > 0:
+		var r1: GDScript = load("res://scripts/rules1_player.gd")
+		if r1 == null or not r1.can_instantiate():
+			_fail("scripts/rules1_player.gd does not load")
+			return
+		var pr = r1.new()
+		await pr.run(self, "GondorBoromir")
+		get_tree().quit(0 if pr.fail_count == 0 else 1)
+		return
 	if not _hud5.is_empty():
 		var h5: GDScript = load("res://scripts/hud5_player.gd")
 		if h5 == null or not h5.can_instantiate():
@@ -1365,6 +1516,15 @@ func _run_auto() -> void:
 		await p6.run(self, _hud6)
 		get_tree().quit(0 if p6.fail_count == 0 else 1)
 		return
+	if not _autocast1.is_empty():
+		var ac: GDScript = load("res://scripts/autocast1_player.gd")
+		if ac == null or not ac.can_instantiate():
+			_fail("scripts/autocast1_player.gd does not load")
+			return
+		var pac = ac.new()
+		await pac.run(self, _autocast1)
+		get_tree().quit(0 if pac.fail_count == 0 else 1)
+		return
 	if not _input1.is_empty():
 		var iscript: GDScript = load("res://scripts/input1_player.gd")
 		if iscript == null or not iscript.can_instantiate():
@@ -1373,6 +1533,15 @@ func _run_auto() -> void:
 		var iplayer = iscript.new()
 		await iplayer.run(self, _input1)
 		get_tree().quit(0 if iplayer.fail_count == 0 else 1)
+		return
+	if not _zoom1.is_empty():
+		var zscript: GDScript = load("res://scripts/zoom1_player.gd")
+		if zscript == null or not zscript.can_instantiate():
+			_fail("scripts/zoom1_player.gd does not load")
+			return
+		var zplayer = zscript.new()
+		await zplayer.run(self, _zoom1)
+		get_tree().quit(0 if zplayer.fail_count == 0 else 1)
 		return
 	if not _play1.is_empty():
 		var script: GDScript = load("res://scripts/play1_player.gd")
@@ -1408,6 +1577,11 @@ func _run_auto() -> void:
 		await get_tree().process_frame
 	if not _quit_flow.is_empty():
 		await _run_quit()
+		return
+	if _opts2_game:
+		var check2: Object = load("res://scripts/opts2_check.gd").new()
+		var failed2: int = await check2.run_game(self, _opts2_shots) # lane OPTS-2
+		get_tree().quit(0 if failed2 == 0 else 1)
 		return
 	if _display_game:
 		var check: Object = load("res://scripts/opts1_check.gd").new()
@@ -1740,6 +1914,19 @@ func _auto_lobby_and_start() -> bool:
 		print("GAME lobby: slot 0 took start spot %d" % _start_spot)
 	if _cah_demo:
 		await _step(150) # lane CAH-1: the Hero combo with the new hero, on screen for the video
+	if _rules_shot > 0:
+		# lane RULES-1: the Rules tab as the player opens it, then the Legendary Heroes factor chosen through its combo
+		if not await _click_button(_shell.shell_top_level(), "OpenPlay.MpMapAndSettings.TabButtons.RulesTab"):
+			_fail("no Rules tab button")
+			return false
+		await _step(60)
+		_save_named("rules1-rules-tab")
+		var chosen: Dictionary = _shell.lobby_apply({"legendary_heroes": _rules_shot})
+		if not chosen.ok:
+			_fail("lobby: " + str(chosen.errors))
+			return false
+		await _step(30)
+		_save_named("rules1-rules-tab-legendary")
 	_save_screenshot("lobby")
 	var skirmish_level: int = _shell.shell_top_level()
 	if not await _click_button(skirmish_level, "lobby.StartGame"):
@@ -1813,6 +2000,10 @@ func _input(event: InputEvent) -> void:
 		get_viewport().set_input_as_handled()
 		# review r1: Esc in the Options screen opened from the quit menu closes Options only (the quit menu and the pause stay)
 		var stack: PackedStringArray = _shell.shell_stack()
+		# lane OPTS-3: Esc on Options' OpenBFME page is the page's CANCEL (back to Options' basic page), as AptMenuPlayer does in the menus
+		if _display_screen != null and _display_screen.is_open():
+			_display_screen.close(false)
+			return
 		if _quit_open and not stack.is_empty() and stack[-1] == "Options.apt":
 			_shell.shell_pop()
 			return
@@ -2001,6 +2192,8 @@ func _restart_game() -> void:
 			remove_child(n)
 			n.free()
 	_game_nodes.clear()
+	if _game_options != null:
+		_game_options.game_ended() # lane OPTS-2
 	if _hud != null:
 		remove_child(_hud)
 		_hud.free()
@@ -2045,6 +2238,8 @@ func _exit_to_score_screen() -> void:
 			remove_child(n)
 			n.free()
 	_game_nodes.clear()
+	if _game_options != null:
+		_game_options.game_ended() # lane OPTS-2
 	if _hud != null:
 		remove_child(_hud)
 		_hud.free()

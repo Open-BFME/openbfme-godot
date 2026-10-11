@@ -18,6 +18,8 @@
 #include "GameClient/DrawableManager.h"
 #include "GameClient/GameTextTableSource.h"
 #include "GameClient/GUI/Image.h"
+#include "GameClient/LogicSnapshot.h"
+#include "GameLogic/System/ShroudManager.h"
 #include "GameLogic/Combat/CombatNames.h"
 #include "GameLogic/Damage.h"
 #include "GameLogic/Module/BehaviorModule.h"
@@ -272,6 +274,174 @@ TEST_CASE("hud5 icons retail: health bars only on selection or hover; AllHealthB
 		CHECK(bars({ h->getID() }, 0) == (all ? (int)soldiers.size() : 0)); // the selected horde's soldiers (INFANTRY) only with AllHealthBars
 		CHECK(bars({}, soldiers[0]) == (all ? 1 : 0));
 	}
+}
+
+TEST_CASE("zoom1 health bars: the OpenBFME Always mode shows every unit's and building's bar, own and enemy, infantry, cavalry, heroes, without selection")
+{
+	if (!haveWorld("zoom1 health bars always"))
+	{
+		return;
+	}
+	IconRig r(shared());
+	Object *own = r.place("GondorFighterHorde", r.rig.local, 900.0f, 900.0f);
+	Object *cav = r.place("RohanRohirrimHorde", r.rig.local, 900.0f, 1000.0f);
+	Object *hero = r.place("GondorBoromir", r.rig.local, 980.0f, 900.0f);
+	Player *other = r.rig.game->players().findPlayerWithName("Player_2");
+	REQUIRE(other != nullptr);
+	Object *enemy = r.place("MordorFighterHorde", other, 1100.0f, 900.0f);
+	Object *troll = r.place("MordorAttackTroll", other, 1100.0f, 1000.0f);
+	Object *barracks = r.place("GondorBarracks", r.rig.local, 800.0f, 1100.0f);
+	Object *pit = r.place("MordorOrcPit", other, 1200.0f, 1100.0f);
+	for (int i = 0; i < 5; ++i)
+	{
+		r.rig.game->advance(0.2);
+	}
+	// a view from high up over the middle of both armies (every object on the screen)
+	const float gz = r.rig.game->logic().getGroundHeight(1000.0f, 1000.0f);
+	r.rig.view.set(Coord3D{ 1000.0f, 400.0f, gz + 1400.0f }, Coord3D{ 1000.0f, 1000.0f, gz });
+	std::set<ObjectID> want;
+	for (Object *h : { own, cav, enemy })
+	{
+		REQUIRE(h->getContain());
+		for (const Object *m : *h->getContain()->getContainedItemsList())
+		{
+			want.insert(m->getID());
+		}
+	}
+	want.insert(hero->getID());
+	want.insert(troll->getID());
+	want.insert(barracks->getID());
+	want.insert(pit->getID());
+	auto barred = [&]() {
+		std::set<ObjectID> got;
+		for (const IconUIOp &op : r.build({}, 0))
+		{
+			if (op.kind == IconUIOp::OPEN_RECT && op.color == 0x7F000000u)
+			{
+				got.insert(op.object);
+			}
+		}
+		return got;
+	};
+	r.settings.healthBarMode = IconUISettings::HEALTH_BARS_RETAIL;
+	CHECK(barred().empty()); // retail: nothing selected, nothing under the mouse, no bar
+	r.settings.healthBarMode = IconUISettings::HEALTH_BARS_ALWAYS;
+	for (bool all : { false, true })
+	{
+		r.settings.allHealthBars = all;
+		CAPTURE(all);
+		const std::set<ObjectID> got = barred();
+		for (ObjectID id : want)
+		{
+			CAPTURE(r.rig.game->logic().findObjectByID(id)->getTemplate()->getName());
+			CHECK(got.count(id) == 1);
+		}
+		// the horde objects themselves never get one (RW 0x676346: KindOf HORDE), their members do
+		CHECK(got.count(own->getID()) == 0);
+		CHECK(got.count(enemy->getID()) == 0);
+	}
+}
+
+TEST_CASE("zoom1 health bars: Always shows no bar over what the local player does not see: fogged or shrouded objects, a hidden (garrisoned) unit")
+{
+	if (!haveWorld("zoom1 health bars hidden"))
+	{
+		return;
+	}
+	IconRig r(shared());
+	Player *other = r.rig.game->players().findPlayerWithName("Player_2");
+	REQUIRE(other != nullptr);
+	Object *own = r.place("GondorFighterHorde", r.rig.local, 950.0f, 950.0f);
+	Object *fogged = r.place("MordorFighterHorde", other, 1050.0f, 950.0f);
+	Object *shrouded = r.place("MordorAttackTroll", other, 1050.0f, 1050.0f);
+	Object *pit = r.place("MordorOrcPit", other, 1150.0f, 1100.0f);
+	for (int i = 0; i < 5; ++i)
+	{
+		r.rig.game->advance(0.2);
+	}
+	const float gz = r.rig.game->logic().getGroundHeight(1000.0f, 1000.0f);
+	r.rig.view.set(Coord3D{ 1000.0f, 400.0f, gz + 1400.0f }, Coord3D{ 1000.0f, 1000.0f, gz });
+	auto membersOf = [](Object *h) {
+		std::vector<ObjectID> out;
+		REQUIRE(h->getContain());
+		for (const Object *m : *h->getContain()->getContainedItemsList())
+		{
+			out.push_back(m->getID());
+		}
+		return out;
+	};
+	const std::vector<ObjectID> ownMembers = membersOf(own), foggedMembers = membersOf(fogged);
+	REQUIRE(ownMembers.size() >= 2);
+	// the presented picture's records (RW 0x68D8F7's status for the local player): the own horde clear, the orcs FOGGED, the troll SHROUDED, the pit
+	// PARTIAL_CLEAR (still drawn: <= 2)
+	LogicSnapshot snap = *LogicSnapshot::build(r.rig.game->logic(), nullptr, false, 0);
+	auto setStatus = [&](ObjectID id, ObjectShroudStatus st) {
+		for (ObjectSnapshot &o : snap.objects)
+		{
+			if (o.id == id)
+			{
+				o.objectShroud = (int)st;
+				o.shroudedForLocal = st == OBJECTSHROUD_SHROUDED;
+			}
+		}
+	};
+	for (ObjectID id : ownMembers)
+	{
+		setStatus(id, OBJECTSHROUD_CLEAR);
+	}
+	for (ObjectID id : foggedMembers)
+	{
+		setStatus(id, OBJECTSHROUD_FOGGED);
+	}
+	setStatus(shrouded->getID(), OBJECTSHROUD_SHROUDED);
+	setStatus(pit->getID(), OBJECTSHROUD_PARTIAL_CLEAR);
+	// a member gone into a garrison: the contain hides its drawable (RW 0x6718FB; test_hud_garrison_retail pins that the garrison sets the flag)
+	Object *inside = r.rig.game->logic().findObjectByID(ownMembers[0]);
+	inside->setDrawableHidden(true);
+	r.settings.healthBarMode = IconUISettings::HEALTH_BARS_ALWAYS;
+	r.settings.snapshot = &snap;
+	r.settings.shroudDrawn = true;
+	std::set<ObjectID> got;
+	for (const IconUIOp &op : r.build({}, 0))
+	{
+		if (op.kind == IconUIOp::OPEN_RECT && op.color == 0x7F000000u)
+		{
+			got.insert(op.object);
+		}
+	}
+	CHECK(got.count(ownMembers[0]) == 0); // hidden in the garrison
+	CHECK(got.count(ownMembers[1]) == 1);
+	for (ObjectID id : foggedMembers)
+	{
+		CHECK(got.count(id) == 0);
+	}
+	CHECK(got.count(shrouded->getID()) == 0);
+	CHECK(got.count(pit->getID()) == 1);
+	// not even under the mouse or selected (retail's queue test comes before the bar's own)
+	got.clear();
+	for (const IconUIOp &op : r.build({ shrouded->getID() }, foggedMembers[0]))
+	{
+		if (op.kind == IconUIOp::OPEN_RECT && op.color == 0x7F000000u)
+		{
+			got.insert(op.object);
+		}
+	}
+	CHECK(got.count(shrouded->getID()) == 0);
+	CHECK(got.count(foggedMembers[0]) == 0);
+	// without the shroud drawn (a map viewer), only the hidden flag counts
+	r.settings.shroudDrawn = false;
+	got.clear();
+	for (const IconUIOp &op : r.build({}, 0))
+	{
+		if (op.kind == IconUIOp::OPEN_RECT && op.color == 0x7F000000u)
+		{
+			got.insert(op.object);
+		}
+	}
+	CHECK(got.count(shrouded->getID()) == 1);
+	CHECK(got.count(ownMembers[0]) == 0);
+	inside->setDrawableHidden(false);
+	r.settings.snapshot = nullptr;
 }
 
 TEST_CASE("hud5 icons retail: veterancy marks: a horde of rank 3 shows three Good_Vet_Dot, rank 6 one Good_Vet over one dot; an evil player's are Evil_Vet")

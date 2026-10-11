@@ -113,8 +113,10 @@ def api(args: list[str]) -> int:
             repo.update(fields); save(s)
         out(jq(repo, expr)); return 0
     if re.fullmatch(r"repos/[^/]+/[^/]+/releases", path):
-        if method == "GET":
-            out(jq(s["releases"], expr)); return 0
+        if method == "GET":  # RELNAME-1: GitHub's order, the newest first, one page (?per_page=, default 30; ?page=)
+            q = dict(kv.partition("=")[::2] for kv in endpoint.partition("?")[2].split("&") if kv)
+            n, page = int(q.get("per_page", 30)), int(q.get("page", 1))
+            out(jq(s["releases"][::-1][(page - 1) * n:page * n], expr)); return 0
         rel = {"id": s["next"], "tag_name": fields["tag_name"], "name": fields.get("name"), "draft": bool(fields.get("draft")),
                "prerelease": bool(fields.get("prerelease")), "body": fields.get("body", ""), "assets": []}
         s["next"] += 1

@@ -106,11 +106,10 @@ static func _replace_atomically(from: String, to: String) -> bool:
 
 
 static func _reject(updater: RefCounted, tag: String) -> void:
-	var rejected: Array = updater.state.get_value("launcher", "rejected_launcher", [])
+	var rejected: Array = updater.get_state("launcher", "rejected_launcher", [], true)
 	if not tag in rejected:
 		rejected.append(tag)
-	updater.state.set_value("launcher", "rejected_launcher", rejected)
-	updater._save_state()
+	updater.set_state("launcher", "rejected_launcher", rejected)
 
 
 static func _arg(user_args: PackedStringArray, prefix: String) -> String:

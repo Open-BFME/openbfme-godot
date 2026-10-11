@@ -71,6 +71,8 @@ if grep -l -- "PRIVATE KEY" "$DIR"/* >/dev/null 2>&1; then fail "a private key i
 ASSETS=("openbfme-$VERSION-linux-x64.tar.gz" "openbfme-$VERSION-windows-x64.zip" "openbfme-launcher-$VERSION-linux-x64.tar.gz"
         "openbfme-launcher-$VERSION-windows-x64.zip" "SHA256SUMS-$VERSION.txt" "manifest.json" "manifest.json.sig")
 PRE=false; [ "$CHANNEL" = preview ] && PRE=true
+# the release's name: "OpenBFME v0.4.0 Alpha 1" for an alpha build (lane RELNAME-1), "OpenBFME <tag>" otherwise
+NAME=$(python3 "$REPO/tools/release/autorelease.py" title "$VERSION") || fail "no release name for $VERSION"
 NOTES_ARG=$NOTES
 if [ -z "$NOTES_ARG" ]; then NOTES_ARG=$(mktemp); trap 'rm -f "$NOTES_ARG"' EXIT
   echo "OpenBFME $VERSION ($CHANNEL). Install or update with the OpenBFME Launcher." > "$NOTES_ARG"; fi
@@ -78,7 +80,7 @@ echo "PUBLISH checks passed for $VERSION ($CHANNEL) -> $TARGET"
 if [ $EXECUTE = 0 ]; then
   echo "DRY RUN (nothing uploaded); with --execute this runs:"
   printf ' %q' "$GH" api "repos/$TARGET/commits/$VERSION" --jq .sha; echo "   (must be $COMMIT)"
-  printf ' %q' "$GH" api --method POST "repos/$TARGET/releases" -f "tag_name=$VERSION" -f "name=OpenBFME $VERSION" -F draft=true \
+  printf ' %q' "$GH" api --method POST "repos/$TARGET/releases" -f "tag_name=$VERSION" -f "name=$NAME" -F draft=true \
     -F "prerelease=$PRE" -F "body=@$NOTES_ARG" --jq .id; echo "   (-> <id>)"
   printf ' %q' "$GH" release upload "$VERSION" --repo "$TARGET"; for a in "${ASSETS[@]}"; do printf ' %q' "$DIR/$a"; done; echo
   printf ' %q' "$GH" api "repos/$TARGET/releases/<id>"; echo "   (read back: a draft with exactly these assets, sizes and SHA-256)"
@@ -143,7 +145,7 @@ if [ -n "$RESUME_ID" ]; then
 fi
 [ -z "$existing" ] || fail "a release for $VERSION already exists on $TARGET (id $(echo $existing)): nothing created"
 # 2. the draft, the assets, the check
-if ! RID=$("$GH" api --method POST "repos/$TARGET/releases" -f "tag_name=$VERSION" -f "name=OpenBFME $VERSION" -F draft=true \
+if ! RID=$("$GH" api --method POST "repos/$TARGET/releases" -f "tag_name=$VERSION" -f "name=$NAME" -F draft=true \
       -F "prerelease=$PRE" -F "body=@$NOTES_ARG" --jq .id) || ! [[ "$RID" =~ ^[0-9]+$ ]]; then
   RID=""
   after=$("$GH" api --paginate "repos/$TARGET/releases?per_page=100" --jq ".[] | select(.tag_name == \"$VERSION\") | .id" 2>/dev/null) || after="?"

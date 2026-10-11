@@ -66,6 +66,10 @@ protected:
 	void onKickPlayer(const std::string &argument) override;
 	void onChatSend(const std::u16string &text) override;
 	bool showChat() const override;
+	// lane RULES-1: the host's rule notice is a system chat line every player gets (the owner's vslot 17 with 2, RW 0x8421E0 -> RW 0x847508); the CP
+	// warning uses the lobby's message box
+	void ruleNotice(const std::u16string &line) override;
+	void showRuleWarning(const std::u16string &title, const std::u16string &text) override;
 
 private:
 	void update();

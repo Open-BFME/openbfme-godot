@@ -127,6 +127,143 @@ std::array<int, GameLODManager::kAdvancedOptionCount> GameLODManager::presetSett
 	return { p.modelLOD, p.animationDetail, p.effectsLOD, p.shadowLOD, terrain, p.waterLOD, texture, p.shaderLOD, p.decalLOD };
 }
 
+void GameLODManager::setCustomFromPreferences(const OptionPreferences &prefs)
+{
+	// RW 0x6019D1 (BFME2 0x602058, tier A): the nine forwarders RW 0x6E56CB .. (GetEnumValue of the RW 0xDA2228 rows, default 0)
+	auto setting = [&prefs](int index) { return AdvancedOptionPrefs::getSetting(prefs, index); };
+	StaticGameLODInfo &c = m_levels[(size_t)kCustomLevel];
+	c.modelLOD = setting(0);
+	c.animationDetail = setting(1);
+	const int effects = setting(2);
+	c.effectsLOD = effects;
+	c.useHeatEffects = effects >= 2;
+	const int particles = effects <= 0 ? 0 : (effects == 1 ? 1 : (effects == 2 ? 2 : (effects == 3 ? 3 : 4)));
+	c.maxParticleCount = m_levels[(size_t)particles].maxParticleCount;
+	c.minParticlePriority = m_levels[(size_t)particles].minParticlePriority;
+	c.minParticleSkipPriority = m_levels[(size_t)particles].minParticleSkipPriority;
+	const int shadow = setting(3);
+	c.useShadowDecals = shadow >= 1 && shadow <= 2;
+	c.useShadowVolumes = shadow == 2;
+	c.useShadowMapping = shadow >= 3;
+	c.shadowLOD = shadow;
+	const int terrain = setting(4);
+	c.useTerrainNormalMap = terrain >= 2;
+	c.useDistanceDependantTerrainTextures = terrain >= 1;
+	const int water = setting(5);
+	c.waterLOD = water;
+	c.showSoftWaterEdge = water >= 1;
+	const StaticGameLODInfo &tracks = m_levels[(size_t)(terrain <= 0 ? 1 : (terrain > 1 ? 3 : 2))];
+	c.maxTankTrackEdges = tracks.maxTankTrackEdges;
+	c.maxTankTrackOpaqueEdges = tracks.maxTankTrackOpaqueEdges;
+	c.maxTankTrackFadeDelay = tracks.maxTankTrackFadeDelay;
+	const int texture = setting(6);
+	c.textureReductionFactor = texture <= 0 ? 2 : (texture <= 1 ? 1 : 0);
+	c.showProps = terrain >= 1;
+	const int shader = setting(7);
+	c.shaderLOD = shader;
+	c.shaderMaterialReplacement = shader >= 2;
+	c.decalLOD = setting(8);
+}
+
+bool GameLODManager::setStaticLODLevel(int level, const OptionPreferences &prefs)
+{
+	// RW 0x6020B4: the apply (RW 0x601C62) runs before the level is stored at + 0x1768
+	if (level < 0 || level >= kLevelCount) // -1 (RW 0x6020B9); the port also refuses what no record has
+	{
+		return false;
+	}
+	if (level != kCustomLevel && m_state.level == level)
+	{
+		return false;
+	}
+	applyStaticLODLevel(level, prefs);
+	m_state.level = level;
+	return true;
+}
+
+void GameLODManager::applyStaticLODLevel(int level, const OptionPreferences &prefs)
+{
+	// RW 0x601C62 (see StaticLODState for the targets)
+	const StaticGameLODInfo &info = m_levels[(size_t)level];
+	StaticLODState &s = m_state;
+	s.modelLOD = info.modelLOD;
+	s.effectsLOD = info.effectsLOD;
+	s.waterLOD = info.waterLOD;
+	s.animationDetail = info.animationDetail;
+	s.decals = info.decalLOD > 0;
+	s.decalsReduced = info.decalLOD < 2;
+	s.allHealthBars = !s.decals || prefs.get("AllHealthBars") == "yes"; // RW 0x6E6179: strcmp with "yes", missing false
+	s.useHeatEffects = info.useHeatEffects;
+	s.maxParticleCount = info.maxParticleCount;
+	s.shadowLOD = info.shadowLOD;
+	s.useShadowVolumes = info.useShadowVolumes;
+	s.useShadowDecals = info.useShadowDecals;
+	s.useShadowMapping = info.useShadowMapping;
+	if (s.useShadowMapping)
+	{
+		s.useShadowVolumes = false;
+		s.useShadowDecals = false;
+	}
+	s.textureReduction = m_memPassed ? info.textureReductionFactor : m_levels[0].textureReductionFactor; // RW 0x601D64 .. 0x601D73
+	s.shaderLOD = info.shaderLOD;
+	s.shaderMaterialReplacement = info.shaderMaterialReplacement;
+	s.useTerrainNormalMap = info.useTerrainNormalMap;
+	s.useDistanceDependantTerrainTextures = info.useDistanceDependantTerrainTextures;
+	s.terrainLOD = s.useTerrainNormalMap ? 2 : (s.useDistanceDependantTerrainTextures ? 1 : 0);
+	s.highWater = info.waterLOD >= 2;
+	s.showSoftWaterEdge = info.showSoftWaterEdge;
+	s.maxTankTrackEdges = info.maxTankTrackEdges;
+	s.maxTankTrackOpaqueEdges = info.maxTankTrackOpaqueEdges;
+	s.maxTankTrackFadeDelay = info.maxTankTrackFadeDelay;
+	s.lowestModelLOD = info.modelLOD <= 0;
+	s.showProps = info.showProps;
+	s.minParticlePriority = info.minParticlePriority;
+	s.minParticleSkipPriority = info.minParticleSkipPriority;
+}
+
+std::string GameLODManager::unappliedEffects()
+{
+	return "[S-3402] the detail level drives the particle cap and priorities, the texture reduction (models loaded afterwards) and the health bars; not "
+		   "drawn: shadows (volumes, decals, mapping), heat effects, model / animation / terrain / water / shader detail, props, tank tracks, the decal style";
+}
+
+bool GameLODManager::advancedOptionDrawn(int index)
+{
+	return index == 2 || index == 6 || index == 8;
+}
+
+int GameLODManager::init(const OptionPreferences &prefs, std::string *stop)
+{
+	// RW 0x602165: getStaticGameDetail (GetEnumValue over the six level names, default the current level)
+	auto enumValue = [&prefs](const char *key, int defaultValue) {
+		const std::string v = prefs.get(key);
+		const int level = v.empty() ? -1 : findLevel(v);
+		return level == -1 ? defaultValue : level;
+	};
+	const int userSet = enumValue("StaticGameLOD", m_state.level);
+	if (userSet == kCustomLevel)
+	{
+		setCustomFromPreferences(prefs); // RW 0x6021F7
+	}
+	setStaticLODLevel(userSet, prefs); // RW 0x60245F (init's staticLevel argument is -1)
+	if (m_state.level == -1)
+	{
+		// RW 0x4465C3 .. 0x4465D8: findStaticLODLevel (RW 0x602C03): the ideal level of IdealStaticGameLOD (RW 0x6E5663, default -1)
+		int ideal = enumValue("IdealStaticGameLOD", -1);
+		if (ideal == -1)
+		{
+			ideal = kDetectedLevel;
+			if (stop)
+			{
+				*stop = "[S-2481] Options.ini has neither StaticGameLOD nor IdealStaticGameLOD: retail detects the hardware and benchmarks it (RW 0x602C03, "
+						"GameLODPresets.ini), which is not ported; the port takes " + std::string(levelName(ideal));
+			}
+		}
+		setStaticLODLevel(ideal, prefs);
+	}
+	return m_state.level;
+}
+
 namespace AdvancedOptionPrefs
 {
 void setSetting(OptionPreferences &prefs, int index, int value)

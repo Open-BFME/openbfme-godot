@@ -259,3 +259,72 @@ bool ControlBar::cancelQueued(int slot, bool inPalantir)
 	return true;
 }
 
+
+bool ControlBar::rightPressButton(int slot, bool inPalantir)
+{
+	const ControlBarButton *cb = find(slot, inPalantir);
+	Object *obj = m_ctx.logic.findObjectByID(m_source);
+	if (!cb || !cb->button || !obj)
+	{
+		return false;
+	}
+	const CommandButton &b = *cb->button;
+	// lane AUTOCAST-1, the command button clip's right press (RW 0x9D6E54: TheAptWindowManager + 0x318 == 2; the state _up goes to RW 0x9D288A, any other
+	// to RW 0x9D28D4): _disabled (1) and _cantAfford (3) reach the control bar only for a CANCELABLE button (CommandButton + 0x1F & 0x80); every other state
+	// (_notReady included) sends GWM_RIGHT_UP (0x4009) to the window's owner, ControlBar's system callback, i.e. processCommandUI(button, 0)
+	const bool cancelable = b.hasOption(COMMAND_OPTION_CANCELABLE);
+	if ((cb->state == ButtonState::Restricted || cb->state == ButtonState::CantAfford) && !cancelable)
+	{
+		return false;
+	}
+	// processCommandUI (RW 0x940435), the right press: nothing for a button that is not clickable (+ 0x105); "autoable" (the byte at ebp + 0xB) is
+	// AutoAbility (+ 0x10C) or CANCELABLE. A FIRE_WEAPON / SPECIAL_POWER button whose command is not available (RW 0x75CC3E) stops there unless autoable;
+	// the other commands' availability (RW 0x942733) is asked only when not autoable, and a right press stops after it either way
+	if (!b.m_isClickable)
+	{
+		return false;
+	}
+	const bool autoable = b.m_autoAbility || cancelable;
+	if (!autoable)
+	{
+		// RW 0x940877 .. 0x94089C: a button that needs a target (Options & 0x227) leaves the GUI command mode (setGUICommand(null)); INFERENCE: the
+		// availability tests before it (RW 0x75CC3E / 0x942733) are not repeated here: leaving the mode on a press of an unavailable button is harmless
+		if (b.m_options & 0x227u)
+		{
+			m_ctx.ui.setGUICommand(nullptr);
+		}
+		return false;
+	}
+	switch (b.m_command)
+	{
+		case GUI_COMMAND_SPECIAL_POWER:
+		case GUI_COMMAND_SPECIAL_POWER_TOGGLE:
+		{
+			// RW 0x941511 (case 0x18) / RW 0x9418F7 (case 0x25): MSG_DO_AUTO_ABILITY { int the power's id (RW 0x688D3C + 0x14), objectID the object (+ 0x74) }
+			const SpecialPowerTemplate *t = specialPowerOf(b);
+			if (!t)
+			{
+				++m_unported["AUTO_ABILITY (no template)"];
+				return false;
+			}
+			ClientMessage &m = m_ctx.stream.append(MSG_DO_AUTO_ABILITY);
+			m.appendInteger((int)t->getID());
+			m.appendObjectID(obj->getID());
+			++m_autoToggles;
+			return true;
+		}
+		case GUI_COMMAND_FIRE_WEAPON:
+		{
+			// RW 0x941391 (case 0x17): MSG_DO_AUTO_ABILITY_WEAPON { int WeaponSlot (+ 0x80), objectID the object }
+			ClientMessage &m = m_ctx.stream.append(MSG_DO_AUTO_ABILITY_WEAPON);
+			m.appendInteger(b.m_weaponSlot);
+			m.appendObjectID(obj->getID());
+			++m_autoToggles;
+			return true;
+		}
+		case GUI_COMMAND_UNIT_BUILD:
+			return cancelable && cancelQueued(slot, inPalantir); // RW 0x940C59 .. 0x940C70 (the production cancel, lane HUD-6)
+		default:
+			return false; // INFERENCE / not ported here: the other right press cases (upgrade cancel RW 0x940FB3, ...) stay the left press handlers' (S-3460)
+	}
+}

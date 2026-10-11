@@ -2,6 +2,7 @@
 // See GameLogic/Object/Object.h for the creation order and its sources.
 
 #include "GameLogic/Object/Object.h"
+#include "GameLogic/LegendaryHeroesGame.h"
 #include "GameLogic/Module/SpecialPowerModules.h"
 #include "GameLogic/Object/ObjectGeometry.h"
 #include "GameLogic/Module/PhysicsBehavior.h"
@@ -1012,6 +1013,8 @@ void Object::friend_initObject()
 	}
 	// lane SPELL-2: RW 0x694065 .. 0x694073: TheGlobalWeatherSystem gives a new object the active weather-based modifier (RW 0x719C69)
 	m_logic.weather().apply(*this, false);
+	// lane RULES-1, OpenBFME (not retail): the Legendary Heroes rule scales a player's hero once its record, level and modifiers are in (nothing at Off)
+	LegendaryHeroesGame::applyAtCreation(*this);
 	// lane END-1: RW 0x694130 .. 0x694140: the controlling player's ScoreKeeper::addObjectBuilt(this, 1) (RW 0x79F0E1), last in initObject
 	if (Player *p = getControllingPlayer())
 	{
@@ -1757,6 +1760,10 @@ void Object::crc(StateHasher &h) const
 	h.addU32(m_originalTeam ? m_originalTeam->getID() : 0u); // lane HERO-2
 	h.addU32(m_speechLeader);                                 // lane HERO-2
 	h.addBool(m_receivingDifficultyBonus);                    // lane CAMP-1H
+	if (m_legendaryFactor != 1)
+	{
+		h.addI32(m_legendaryFactor); // lane RULES-1: only a legendary hero adds it (every other object keeps its hash)
+	}
 	h.addU32(m_capturerID);                                   // lane HERO-2
 	h.addU32(m_undeadKillFrame);                              // lane HERO-2
 	for (std::uint32_t w : m_status)

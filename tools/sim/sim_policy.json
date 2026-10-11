@@ -17,6 +17,10 @@
  ],
  "excluded": [
   {
+   "glob": "src/GameClient/GUI/AptScreens/AptSkirmishRules.cpp",
+   "reason": "lane RULES-1: the lobby Rules tab's gadgets (AptMpGameRules: rule rows, check boxes, the warning box): user interface, writes only the lobby's game setup"
+  },
+  {
    "glob": "src/GodotDevice/GodotHud6Draw.cpp",
    "reason": "lane HUD-6: the device draw of the radial command bubbles and the help box (Godot canvas items): user interface, never read by the logic"
   },

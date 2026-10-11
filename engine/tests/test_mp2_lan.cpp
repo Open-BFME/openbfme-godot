@@ -905,3 +905,78 @@ TEST_CASE("mp2 lan (HERO-2): the host reads a Create-a-Hero request whole and ch
 	CHECK(noValidator.errors().back().find("no Create-a-Hero validator") != std::string::npos);
 	CHECK_FALSE(noValidator.currentGame()->info.slots[1].hasCreateAHero);
 }
+
+TEST_CASE("rules1 lan: AllowCustomHeroes off clears every player's Create-a-Hero in the host's setup, refuses new ones (on the player and on the host) and "
+		  "the start carries none; a setup with a hero while the rule is off is refused by the reader")
+{
+	Lan lan({ { u"Host", "" }, { u"Alice", "" } });
+	LANAPI &host = *lan.peers[0];
+	LANAPI &alice = *lan.peers[1];
+	SkirmishGameInfo game = hostedGame();
+	game.rules = MpGameRules::defaults(RULES_MODE_SKIRMISH);
+	host.requestGameCreate(game);
+	alice.requestLocations();
+	lan.run(10);
+	REQUIRE(alice.games().size() == 1);
+	alice.requestGameJoin(0);
+	lan.run(15);
+	REQUIRE(alice.currentGame());
+	const CreateAHeroHero hero = testHero("RULES1LANTEST001");
+	std::string error;
+	REQUIRE_MESSAGE(alice.requestSlotCreateAHero(&hero, &error), error);
+	lan.run(10);
+	REQUIRE(host.currentGame()->info.slots[1].hasCreateAHero);
+
+	// the host turns the rule off: the authoritative setup drops Alice's hero and every player sees it
+	SkirmishGameInfo info = host.currentGame()->info;
+	info.rules[RULE_ALLOW_CUSTOM_HEROES] = 0;
+	REQUIRE(host.hostSetOptions(info));
+	CHECK_FALSE(host.currentGame()->info.slots[1].hasCreateAHero);
+	lan.run(10);
+	CHECK(alice.currentGame()->info.rules[RULE_ALLOW_CUSTOM_HEROES] == 0);
+	CHECK_FALSE(alice.currentGame()->info.slots[1].hasCreateAHero);
+
+	// Alice may not choose one now
+	CHECK_FALSE(alice.requestSlotCreateAHero(&hero, &error));
+	CHECK(error.find("AllowCustomHeroes is off") != std::string::npos);
+	// a request that crossed the change (Alice still saw the rule on) is refused by the host
+	info.rules[RULE_ALLOW_CUSTOM_HEROES] = 1;
+	REQUIRE(host.hostSetOptions(info));
+	lan.run(10);
+	info.rules[RULE_ALLOW_CUSTOM_HEROES] = 0;
+	REQUIRE(host.hostSetOptions(info)); // not yet heard by Alice
+	REQUIRE(alice.requestSlotCreateAHero(&hero, &error));
+	lan.run(10);
+	CHECK_FALSE(host.currentGame()->info.slots[1].hasCreateAHero);
+	CHECK_FALSE(alice.currentGame()->info.slots[1].hasCreateAHero);
+	bool refused = false;
+	for (const std::string &e : host.errors())
+	{
+		refused = refused || e.find("while AllowCustomHeroes is off: refused") != std::string::npos;
+	}
+	CHECK(refused);
+
+	// the start: the same setup everywhere, no hero, the rule off
+	alice.requestAccept(true);
+	lan.run(10);
+	std::string reason;
+	REQUIRE_MESSAGE(host.hostStartGame(&reason), reason);
+	lan.run(20);
+	REQUIRE(alice.started());
+	CHECK(alice.start().game.game == host.start().game.game);
+	CHECK(alice.start().game.game.rules[RULE_ALLOW_CUSTOM_HEROES] == 0);
+	for (int s = 0; s < MAX_SLOTS; ++s)
+	{
+		CHECK_FALSE(alice.start().game.game.slots[s].hasCreateAHero);
+	}
+
+	// the reader refuses a setup that carries a hero with the rule off (no host makes one)
+	SkirmishGameInfo forged = alice.start().game.game;
+	REQUIRE(forged.slots[1].setCreateAHero(hero, &error));
+	NetByteWriter w;
+	NetPacket::writeGameInfo(w, forged);
+	NetByteReader r(w.data());
+	SkirmishGameInfo back;
+	CHECK_FALSE(NetPacket::readGameInfo(r, back, &error));
+	CHECK(error.find("AllowCustomHeroes is off") != std::string::npos);
+}

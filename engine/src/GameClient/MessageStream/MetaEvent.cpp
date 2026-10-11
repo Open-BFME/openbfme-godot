@@ -2,6 +2,7 @@
 // See MetaEvent.h.
 
 #include "GameClient/MessageStream/MetaEvent.h"
+#include "GameClient/MessageStream/CommandMapList.h"
 
 #include "Common/ArchiveFileSystem.h"
 #include "Common/INI.h"
@@ -385,4 +386,36 @@ MessageDisposition MetaEventTranslator::translate(const ClientMessage &msg)
 		}
 	}
 	return disp;
+}
+
+// lane OPTS-2 (GameClient/MessageStream/CommandMapList.h)
+bool ListCommandMap(ArchiveFileSystem &fs, std::vector<CommandMapEntry> &out, std::string *error)
+{
+	INIEnvironment env;
+	env.fileSystem = &fs;
+	MetaMap map;
+	map.registerBlocks(env);
+	if (!map.load(env, "Data\\INI\\CommandMap.ini", error) || !map.load(env, "CommandMap.ini", error))
+	{
+		return false;
+	}
+	out.clear();
+	const std::vector<MetaMapRec> &records = map.records(); // the translator's order: the reverse of the files'
+	for (auto it = records.rbegin(); it != records.rend(); ++it)
+	{
+		CommandMapEntry e;
+		e.name = ClientMessageMetaName(it->meta);
+		e.key = MetaMap::keyName(it->key);
+		e.transition = it->transition;
+		e.ctrl = (it->modState & MOD_CTRL) != 0;
+		e.shift = (it->modState & MOD_SHIFT) != 0;
+		e.alt = (it->modState & MOD_ALT) != 0;
+		e.game = (it->usableIn & COMMANDUSABLE_GAME) != 0;
+		e.shell = (it->usableIn & COMMANDUSABLE_SHELL) != 0;
+		e.category = it->category;
+		e.displayName = it->displayName;
+		e.description = it->description;
+		out.push_back(e);
+	}
+	return true;
 }

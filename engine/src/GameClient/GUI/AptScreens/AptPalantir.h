@@ -52,6 +52,15 @@ public:
 	// ---- the engine's side of the movie (lane HUD-1) ----
 	// What a press of a command button does: ControlBar::pressButton / cancelQueued (set by the HUD)
 	void setButtonHandler(std::function<void(int slot, bool inPalantir)> press) { m_press = std::move(press); }
+	// lane AUTOCAST-1: what a right press of a command button does (ControlBar::rightPressButton): the content's _OnPress (RW 0x9D6E54) with
+	// TheAptWindowManager + 0x318 == 2
+	void setRightButtonHandler(std::function<void(int slot, bool inPalantir)> press) { m_rightPress = std::move(press); }
+	// lane AUTOCAST-1: the SetAutoAbilityOverlayState calls made on the command button contents ("<content> _show" / "_hide"; the last 64)
+	const std::vector<std::string> &autoAbilityOverlayCalls() const { return m_overlayCalls; }
+	// lane AUTOCAST-1: whether the content showing `slot` (arc or side bar) has its glow shown: + 0x54 set AND the movie call succeeded (r2)
+	bool autoAbilityOverlayShown(int slot, bool arc) const;
+	// lane AUTOCAST-1 r2: the SetAutoAbilityOverlayState calls the movie refused (each also in callErrors()); a proof run fails on any
+	unsigned autoAbilityOverlayErrors() const { return m_overlayErrors; }
 	// Pushes the control bar's state into the movie: the text records (money, command points), the command buttons of the Palantir arc (six positions) and of the side command bar
 	// (twelve): content, state, production count, timer, image. Idempotent: only what changed since the last call is sent.
 	void sync(const ControlBar &bar);
@@ -193,7 +202,12 @@ private:
 		bool initialized = false; ///< lane HUD-4: the content reported <content>_OnInitialized (RW 0x9D6E4D)
 		int slot = -1;
 		std::string sig;
+		bool overlay = false;      ///< lane AUTOCAST-1: InGameCommandButtonMovieClip::Impl + 0x54 (the state retail last asked for; set even when the call fails)
+		bool overlayDrawn = false; ///< lane AUTOCAST-1 r2: the last SetAutoAbilityOverlayState("_show") reached the movie (the glow is reported only then)
 	};
+	void setOverlay(Slot &s, const std::string &frame, bool show); // lane AUTOCAST-1: RW 0x9D6F9C
+	std::vector<std::string> m_overlayCalls;
+	unsigned m_overlayErrors = 0;
 	std::set<std::string> m_pressRegistered; // the press callbacks registered, once per position
 	std::set<std::string> m_initRegistered;  // lane HUD-4: the _OnInitialized callbacks, once per position
 	bool call(const std::string &path, const std::string &fn, const std::vector<std::string> &args);
@@ -215,6 +229,7 @@ private:
 	std::string levelPrefix() const;
 
 	std::function<void(int, bool)> m_press;
+	std::function<void(int, bool)> m_rightPress; // lane AUTOCAST-1
 	std::function<void(int)> m_spellPress;     // lane SPELL-2
 	std::function<void(const std::string &, bool)> m_heroSelect; // lane UI-4
 	std::string m_heroSelectPath;                                // lane UI-4: "" while the hero bar's movie is not loaded

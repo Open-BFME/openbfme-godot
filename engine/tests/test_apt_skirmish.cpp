@@ -192,7 +192,10 @@ TEST_CASE("skirmish setup: init follows SkirmishGameOptionsMenuInit (player in s
 		CHECK(g.slots[i] == SkirmishGameSlot()); // GameSlot::reset(): closed, no name, not accepted
 	}
 	CHECK(g.seed == 77);
-	CHECK(g.startingCash == 1500);
+	// lane RULES-1: RotWK leaves the starting money unset (GameInfo + 0x54 = -1) and takes the mode's default rules (InitialResources 1000, RW 0x9288D0)
+	CHECK(g.startingCash == -1);
+	CHECK(g.rules == MpGameRules::defaults(RULES_MODE_SKIRMISH));
+	CHECK(g.legendaryHeroes == LegendaryHeroes::kOff);
 	// getDefaultMap(TRUE): the first multiplayer key of the cache's std::map (maps\alpha\alpha.map)
 	CHECK(g.mapName == "maps/alpha/alpha.map");
 	CHECK(g.mapCRC == 0xA0);
@@ -894,7 +897,8 @@ TEST_CASE("retail lobby API: handler and setter level: profile commands, map lis
 	expected.mapSize = map->fileSize;
 	expected.mapMask = fx.setup.mapContentsMask(*map);
 	expected.seed = 4242;
-	expected.startingCash = 1500;
+	expected.startingCash = -1; // lane RULES-1: unset; the InitialResources rule gives the money
+	expected.rules = MpGameRules::defaults(RULES_MODE_SKIRMISH);
 	expected.inProgress = true;
 	expected.slots[0].state = SLOT_PLAYER;
 	expected.slots[0].name = u"Gimli";
@@ -1089,9 +1093,13 @@ TEST_CASE("stops S-178 / S-179: the lobby reports its inferences, the profile ga
 	REQUIRE(hero);
 	CHECK(GadgetComboBoxGetLength(hero) == 0);
 	CHECK(GadgetComboBoxGetLength(fx.screen->slotGadget(0, "Handicap")) == 0);
-	// the rule rows and the chat / clan tabs answer 0
+	// lane RULES-1: the rule rows of mode 0 (RW 0x960A46 / 0x960A5D: 2 combos + OpenBFME's Legendary Heroes row, 3 check boxes); the clan tab answers 0
 	std::string value;
 	REQUIRE(fx.wm->getExtern("MpGameRules::NumCheckBoxes", value) == AptExternResult::Value);
+	CHECK(value == "3");
+	REQUIRE(fx.wm->getExtern("MpGameRules::NumComboBoxes", value) == AptExternResult::Value);
+	CHECK(value == "3");
+	REQUIRE(fx.wm->getExtern("AptMpGameRules::ShowClans", value) == AptExternResult::Value);
 	CHECK(value == "0");
 	// SuppressStrategicPromo is remembered nowhere ([S-179])
 	fx.wm->invokeCallback("AptSkirmish::SuppressStrategicPromo", "");
@@ -1300,7 +1308,8 @@ TEST_CASE("retail lobby input: the acceptance click-through: type a profile, acc
 	expected.mapSize = map->fileSize;
 	expected.mapMask = fx.setup.mapContentsMask(*map);
 	expected.seed = 4242;
-	expected.startingCash = 1500;
+	expected.startingCash = -1; // lane RULES-1: unset; the InitialResources rule gives the money
+	expected.rules = MpGameRules::defaults(RULES_MODE_SKIRMISH);
 	expected.inProgress = true;
 	expected.slots[0].state = SLOT_PLAYER;
 	expected.slots[0].name = u"Gimli";
@@ -1591,4 +1600,202 @@ TEST_CASE("fb7 retail lobby input: MAIN MENU leaves the lobby after a profile wa
 	fx.tick(120);
 	// RW 0x9280E8 -> 0x927FDA: the movie's Exit pops the screen as Back does
 	CHECK(fx.shell->findScreenByFilename("Skirmish.apt") == nullptr);
+}
+
+// ============================================================================================================================
+// lane RULES-1: the Rules tab (RotWK's AptMpGameRules, Common/MpGameRules.h) and OpenBFME's Legendary Heroes row
+// ============================================================================================================================
+
+namespace
+{
+void ruleLabels(MapGameText &t)
+{
+	t.set("RULE:InitialResources", "Initial Resources");
+	t.set("RULE:CommandPointFactor", "Command Point Factor");
+	t.set("RULE:AllowCustomHeroes", "Allow Custom Heroes");
+	t.set("VALUE:Value", "%d");
+	t.set("VALUE:Default", " *");
+	t.set("VALUE:ThirdX", "1/3X");
+	t.set("VALUE:1X", "1X");
+	t.set("VALUE:2X", "2X");
+	t.set("APT:CommandPointsTooHigh", "Warning: too slow");
+}
+
+// the profile Gimli, the popup closed, the Rules tab clicked (the movie places the rule rows on its TabRules frame)
+void openRulesTab(LobbyFx &fx)
+{
+	fx.tick(60);
+	fx.wm->invokeCallback("AptSkirmish::OnNewProfileMenu", "");
+	REQUIRE(fx.screen->profileEntryWindow());
+	GadgetTextEntrySetText(fx.screen->profileEntryWindow(), u"Gimli");
+	fx.wm->invokeCallback("AptSkirmish::OnAddProfileAccept", "");
+	REQUIRE(fx.wm->invokeASAt(1, "ProfilePopup", "ClosePop", {}));
+	fx.tick(30);
+	AptButtonInst *rulesTab = firstButtonIn(fx.wm->apt().resolvePath(fx.wm->apt().level(1), "OpenPlay.MpMapAndSettings.TabButtons.RulesTab"));
+	REQUIRE_MESSAGE(rulesTab, "_level1.OpenPlay.MpMapAndSettings.TabButtons.RulesTab");
+	clickButton(fx, *rulesTab);
+	fx.tick(30);
+}
+
+int selectedValue(GameWindow *combo)
+{
+	int pos = -1;
+	GadgetComboBoxGetSelectedPos(combo, &pos);
+	return pos < 0 ? -9999 : (int)reinterpret_cast<std::intptr_t>(GadgetComboBoxGetItemData(combo, pos));
+}
+} // namespace
+
+TEST_CASE("rules1 setup: the Rules tab model: the mode's defaults, the rows' texts, a rule change, AllowCustomHeroes off drops the heroes, Reset, Legendary Heroes")
+{
+	FakeSetup src;
+	MapGameText text;
+	SkirmishGameSetup setup = makeSetup(src, text);
+	ruleLabels(text);
+	std::string error;
+	REQUIRE_MESSAGE(setup.init(u"Gimli", 77, std::string(), &error), error);
+	CHECK(setup.rulesMode() == RULES_MODE_SKIRMISH);
+	CHECK(setup.info().rules == MpGameRules::defaults(RULES_MODE_SKIRMISH));
+	// RW 0x986B1C: the label's text formatted with the value, " *" on the default
+	const std::vector<SkirmishComboEntry> cash = setup.ruleComboEntries(*MpGameRules::findCombo(RULES_MODE_SKIRMISH, RULE_INITIAL_RESOURCES));
+	REQUIRE(cash.size() == 11);
+	CHECK(cash[0].text == u"500");
+	CHECK(cash[0].itemData == 500);
+	CHECK(cash[2].text == u"1000 *");
+	CHECK(cash[10].itemData == 4000);
+	const std::vector<SkirmishComboEntry> cp = setup.ruleComboEntries(*MpGameRules::findCombo(RULES_MODE_SKIRMISH, RULE_COMMAND_POINT_FACTOR));
+	CHECK(cp[0].text == u"1/3X");
+	CHECK(cp[2].text == u"1X *");
+	CHECK(cp[2].itemData == 100);
+	CHECK(setup.ruleName(RULE_INITIAL_RESOURCES) == u"Initial Resources");
+	CHECK(setup.ruleName(10) == u"Invalid Rule");
+	CHECK(setup.setRule(RULE_INITIAL_RESOURCES, 2500));
+	CHECK(setup.info().rules[RULE_INITIAL_RESOURCES] == 2500);
+	CHECK_FALSE(setup.setRule(10, 1));
+	// AllowCustomHeroes off: every slot's hero is dropped (RW 0x842A85)
+	SkirmishGameInfo info = setup.info();
+	info.slots[0].hasCreateAHero = true;
+	setup.replaceInfo(info);
+	CHECK(setup.setRule(RULE_ALLOW_CUSTOM_HEROES, 0));
+	CHECK_FALSE(setup.info().slots[0].hasCreateAHero);
+	// Legendary Heroes
+	CHECK(setup.setLegendaryHeroes(4));
+	CHECK_FALSE(setup.setLegendaryHeroes(5));
+	CHECK(setup.info().legendaryHeroes == 4);
+	const std::vector<SkirmishComboEntry> legendary = setup.legendaryHeroesEntries();
+	REQUIRE(legendary.size() == 4);
+	CHECK(legendary[0].text == u"Off *");
+	CHECK(legendary[3].text == u"4x");
+	CHECK(legendary[3].itemData == 4);
+	// Reset: the mode's defaults and Legendary Heroes off
+	setup.resetRules();
+	CHECK(setup.info().rules == MpGameRules::defaults(RULES_MODE_SKIRMISH));
+	CHECK(setup.info().legendaryHeroes == LegendaryHeroes::kOff);
+	// strategic mode takes the War of the Ring defaults
+	setup.setStrategicMode(true);
+	CHECK(setup.rulesMode() == RULES_MODE_WOTR);
+	CHECK(setup.info().rules == MpGameRules::defaults(RULES_MODE_WOTR));
+	// the new game message carries them
+	setup.setStrategicMode(false);
+	setup.setLegendaryHeroes(3);
+	const NewGameMessage m = setup.makeNewGameMessage();
+	CHECK(m.game.rules == MpGameRules::defaults(RULES_MODE_SKIRMISH));
+	CHECK(m.game.legendaryHeroes == 3);
+	CHECK(m.game.startingCash == -1);
+}
+
+TEST_CASE("rules1 retail lobby: the Rules tab shows RotWK's rows (Initial Resources, Command Point Factor, Allow Custom Heroes, Allow Ring Heroes) and the "
+	  "Legendary Heroes row; the controls change the game setup, warn above 1X, Reset restores; the game starts with them")
+{
+	OPENBFME_REQUIRE_RETAIL(mount);
+	LobbyFx fx(mount);
+	ruleLabels(fx.text);
+	openRulesTab(fx);
+	REQUIRE(fx.screen->setup());
+	REQUIRE(fx.screen->rulesPopulated());
+	// the stops of the tab, reported once (S-3600 .. S-3602)
+	CHECK(fx.wm->noteCount("rules-unverified") == 1);
+	CHECK(std::string(AptSkirmish::kRulesStop).find("[S-3600]") == 0);
+	CHECK(std::string(AptSkirmish::kRulesStop).find("[S-3601]") == std::string::npos); // resolved: the demo mode, 0 in 2.01
+	CHECK(std::string(AptSkirmish::kRulesStop).find("[S-3602]") != std::string::npos);
+	// MpGameSetup.apt places six combo rows and four check rows (renamed "RuleComboBox_<n>" / "RuleCheckBox_<n>", read at RW 0x814BEC); the first
+	// NumComboBoxes / NumCheckBoxes are shown
+	for (int i = 0; i < 6; ++i)
+	{
+		REQUIRE_MESSAGE(fx.screen->ruleComboWindow(i), i);
+	}
+	for (int i = 0; i < 4; ++i)
+	{
+		REQUIRE_MESSAGE(fx.screen->ruleCheckWindow(i), i);
+	}
+	GameWindow *cash = fx.screen->ruleWindow(RULE_INITIAL_RESOURCES);
+	GameWindow *cp = fx.screen->ruleWindow(RULE_COMMAND_POINT_FACTOR);
+	GameWindow *legendary = fx.screen->legendaryHeroesWindow();
+	CHECK(cash == fx.screen->ruleComboWindow(0));
+	CHECK(cp == fx.screen->ruleComboWindow(1));
+	CHECK(legendary == fx.screen->ruleComboWindow(2));
+	for (int i = 3; i < 6; ++i)
+	{
+		CHECK(fx.screen->ruleComboWindow(i)->winIsHidden());
+	}
+	CHECK(GadgetComboBoxGetLength(cash) == 11);
+	CHECK(GadgetComboBoxGetLength(cp) == 7);
+	CHECK(GadgetComboBoxGetLength(legendary) == 4);
+	CHECK(selectedValue(cash) == 1000);
+	CHECK(selectedValue(cp) == 100);
+	CHECK(selectedValue(legendary) == 1);
+	CHECK(cash->winGetEnabled()); // the skirmish player is the host
+	// the check rows: AllowCustomHeroes, AllowRingHeroes (both on); ClanGame is state 3 outside online play: its row stays hidden
+	CHECK(fx.screen->ruleWindow(RULE_ALLOW_CUSTOM_HEROES) == fx.screen->ruleCheckWindow(0));
+	CHECK(fx.screen->ruleWindow(RULE_ALLOW_RING_HEROES) == fx.screen->ruleCheckWindow(1));
+	CHECK(fx.screen->ruleWindow(RULE_CLAN_GAME) == nullptr);
+	CHECK(GadgetCheckBoxIsChecked(fx.screen->ruleCheckWindow(0)));
+	CHECK(GadgetCheckBoxIsChecked(fx.screen->ruleCheckWindow(1)));
+	CHECK(fx.screen->ruleCheckWindow(2)->winIsHidden());
+	CHECK(fx.screen->ruleCheckWindow(3)->winIsHidden());
+	// the row texts (RW 0x986B1C / 0x986810)
+	const std::string *t0 = fx.wm->aptText("APT:RuleComboBox_0");
+	REQUIRE(t0);
+	CHECK(*t0 == "Initial Resources");
+	const std::string *t2 = fx.wm->aptText("APT:RuleComboBox_2");
+	REQUIRE(t2);
+	CHECK(t2->find("Legendary Heroes") != std::string::npos);
+	const std::string *c0 = fx.wm->aptText("APT:RuleCheckBox_0");
+	REQUIRE(c0);
+	CHECK(*c0 == "Allow Custom Heroes");
+
+	// the controls (RW 0x986776): 2500, 2X (above 1X: the warning box), Allow Custom Heroes off, Legendary Heroes 4x
+	GadgetComboBoxSetSelectedPos(cash, 8, false);
+	CHECK(fx.screen->setup()->info().rules[RULE_INITIAL_RESOURCES] == 2500);
+	CHECK(fx.screen->ruleWarnings().empty());
+	GadgetComboBoxSetSelectedPos(cp, 3, false);
+	CHECK(fx.screen->setup()->info().rules[RULE_COMMAND_POINT_FACTOR] == 200);
+	REQUIRE(fx.screen->ruleWarnings().size() == 1);
+	CHECK(fx.screen->ruleWarnings()[0].second == u"Warning: too slow");
+	GadgetCheckBoxToggle(fx.screen->ruleCheckWindow(0));
+	CHECK(fx.screen->setup()->info().rules[RULE_ALLOW_CUSTOM_HEROES] == 0);
+	REQUIRE(fx.screen->slotGadget(0, "Hero"));
+	CHECK_FALSE(fx.screen->slotGadget(0, "Hero")->winGetEnabled()); // RW 0x842A85
+	GadgetComboBoxSetSelectedPos(legendary, 3, false);
+	CHECK(fx.screen->setup()->info().legendaryHeroes == 4);
+
+	// Reset (RW 0x98674C): the defaults, the widgets follow
+	fx.wm->invokeCallback("AptMpGameRules::Reset", "");
+	CHECK(fx.screen->setup()->info().rules == MpGameRules::defaults(RULES_MODE_SKIRMISH));
+	CHECK(fx.screen->setup()->info().legendaryHeroes == LegendaryHeroes::kOff);
+	CHECK(selectedValue(cash) == 1000);
+	CHECK(selectedValue(legendary) == 1);
+	CHECK(GadgetCheckBoxIsChecked(fx.screen->ruleCheckWindow(0)));
+	CHECK(fx.screen->slotGadget(0, "Hero")->winGetEnabled());
+
+	// the game starts with the rules of the tab
+	GadgetComboBoxSetSelectedPos(cash, 4, false);
+	GadgetComboBoxSetSelectedPos(legendary, 3, false);
+	fx.wm->invokeCallback("AptSkirmish::StartGame", "");
+	fx.tick(2);
+	REQUIRE(fx.sink.messages.size() == 1);
+	const NewGameMessage &msg = fx.sink.messages[0];
+	CHECK(msg.game.rules[RULE_INITIAL_RESOURCES] == 1400);
+	CHECK(msg.game.rules[RULE_COMMAND_POINT_FACTOR] == 100);
+	CHECK(msg.game.legendaryHeroes == 4);
+	CHECK(msg.game.startingCash == -1);
 }

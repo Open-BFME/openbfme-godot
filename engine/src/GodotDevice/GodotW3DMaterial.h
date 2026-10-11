@@ -95,6 +95,17 @@ public:
 	size_t Texture_Count() const { return Textures.size(); }
 	const std::vector<std::string> &Texture_Errors() const { return TextureErrors; }
 
+	// lane OPTS-2: the texture reduction of the static detail level (GameLODManager's state, RW 0x601D73 -> RW 0x517540, WW3D's texture reduction),
+	// for every factory (one setting, as retail's): a texture with mip levels loses its `reduction` largest levels (each halves its size), at most all but
+	// its last (DONOR ZH TextureLoader: the reduction is clamped to the mip count; INFERENCE for RotWK: the loader RW 0x517540 changes was not read past
+	// the setter). A texture without mip levels (filter_linear surfaces, the menus' images) keeps its size. Textures loaded afterwards take it: the cache
+	// keys carry the reduction, so a change reaches the models built after it (the next game; retail reloads the live textures at once, RW 0x516AB0:
+	// stop S-3402).
+	static void Set_Texture_Reduction(int reduction);
+	static int Get_Texture_Reduction();
+	// the reduction applied to one decoded image (true when it lost levels)
+	static bool Reduce_Image(Ref<Image> &image, int reduction);
+
 private:
 	Ref<Texture2D> Load_Texture(const std::string &name, std::vector<std::string> &errors, bool &found, bool quietWhenMissing = false);
 	static Ref<Texture2D> Placeholder_Texture(bool flatNormal);

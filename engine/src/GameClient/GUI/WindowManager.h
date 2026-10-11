@@ -309,7 +309,19 @@ public:
 	// get the event.  Returns true when a gadget used it.
 	bool postMouseMove(float x, float y);
 	bool postMouseButton(bool down);
+	// lane AUTOCAST-1: TheAptWindowManager + 0x318, the mouse button of the press the game posted last (0 left, 2 right): RW 0x83EE14 (the Apt input
+	// translator) writes it before it posts a press into the Apt (RW 0xAE0B10); the press handlers read it when the queue drains (the command button
+	// clip RW 0x9D6E54: 0 the left press, 2 the right press, anything else nothing)
+	void setPressButton(int button) { m_pressButton = button; }
+	int pressButton() const { return m_pressButton; }
 	bool postMouseWheel(int delta);
+	// lane OPTS-3: an engine screen's own hit areas (the Options screen's OpenBFME page and button, not retail) see the mouse first: kind 0 move,
+	// 1 left button down, 2 up, stage coordinates. A button event the filter returns true for reaches neither the gadgets nor the movie (a move
+	// always goes on). Empty: none.
+	using MouseFilterFn = std::function<bool(int kind, float x, float y)>;
+	void setMouseFilter(MouseFilterFn filter) { m_mouseFilter = std::move(filter); }
+	float mouseX() const { return m_mouseX; }
+	float mouseY() const { return m_mouseY; }
 	// A key for the Apt movie (Apt key code) and, separately, for the gadgets (DirectInput code + state, ZH KeyDefs.h).
 	void postAptKey(int aptKeyCode, bool down);
 	bool postGadgetKey(int dikCode, bool down, int modifiers = 0);
@@ -380,6 +392,9 @@ private:
 	ShellServices &m_services;
 	Shell *m_shell = nullptr;
 	std::unique_ptr<Apt> m_apt;
+	MouseFilterFn m_mouseFilter; // lane OPTS-3
+	float m_mouseX = 0, m_mouseY = 0;
+	int m_pressButton = 0; ///< lane AUTOCAST-1: + 0x318
 
 	AptWindowRecord m_windows[kAptWindowCount];
 	std::map<std::string, int> m_fileToWindow;

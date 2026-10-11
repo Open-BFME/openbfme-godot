@@ -15,7 +15,7 @@ TAG=${1:?usage: windows_player_walk.sh <tag> [<owner>/<repo>]}; REPO=${2:-Open-B
 HERE=$(cd "$(dirname "$0")" && pwd)
 TEMPLATES=${OPENBFME_RELEASE_TEMPLATES:-4657}
 export PATH=$PATH:/mnt/c/Windows/System32   # the CI env's PATH leaves out Windows' (reg.exe, cmd.exe)
-case $TAG in *-preview.*) CHANNEL=preview ;; *) CHANNEL=stable ;; esac
+case $TAG in *-preview.*|*-alpha.*) CHANNEL=preview ;; *) CHANNEL=stable ;; esac
 BASE=${WALK_RELEASE_BASE:-https://github.com/$REPO/releases/download}/$TAG   # WALK_RELEASE_BASE: tests only (test_windows_player_walk.py)
 step() { echo "WALK $*"; }
 die() { echo "WALK FAIL: $*"; exit 1; }

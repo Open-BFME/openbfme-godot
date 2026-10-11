@@ -141,13 +141,17 @@ include(cmake/Combat4.cmake)    # COMBAT-4: shockwaves, siege crews in motion, c
 include(cmake/Hud4.cmake)       # HUD-4: every command reachable, every hotkey (appends to OPENBFME_SIM_SOURCES; OPENBFME_HUD4_TESTS)
 include(cmake/Qa2fix.cmake)     # QA2-FIX: a player's wall span through the HUD, the lobby after a game (OPENBFME_QA2FIX_TESTS)
 include(cmake/Hud5.cmake)       # HUD-5: the owner's first Windows session (OPENBFME_HUD5_CLIENT_SOURCES / OPENBFME_HUD5_TESTS)
+include(cmake/Autocast1.cmake)  # AUTOCAST-1: the ability autocast toggle and glow (OPENBFME_AUTOCAST1_TESTS)
 include(cmake/Hud6.cmake)       # HUD-6: radial bubbles, side bar frame, help box (OPENBFME_HUD6_CLIENT_SOURCES / OPENBFME_HUD6_TESTS)
 include(cmake/Exit1.cmake)      # EXIT-1: the horde member update, stale MOVING (appends to OPENBFME_SIM_SOURCES; OPENBFME_EXIT1_TESTS)
 include(cmake/Decomp1.cmake)    # DECOMP-1: stops closed with the decompilation's progress (appends to OPENBFME_SIM_SOURCES; OPENBFME_DECOMP1_TESTS)
 include(cmake/Play1.cmake)      # PLAY-1: the tribute, the placement ghost (appends to OPENBFME_SIM_SOURCES; OPENBFME_PLAY1_SOURCES / _TESTS)
 include(cmake/Cah1.cmake)       # CAH-1: the Create-a-Hero screens (client only; OPENBFME_CAH1_SOURCES / _GODOT_SOURCES / _TESTS)
+include(cmake/Rules1.cmake)     # RULES-1: the Rules tab, the game rules, Legendary Heroes (appends to OPENBFME_SIM_SOURCES; OPENBFME_RULES1_SOURCES / _TESTS)
 include(cmake/Move3.cmake)      # MOVE-3: horde spacing, the blocked path patch (appends to OPENBFME_SIM_SOURCES; OPENBFME_MOVE3_TESTS)
 include(cmake/Input1.cmake)     # INPUT-1: RotWK's input layer (OPENBFME_INPUT1_TESTS)
+include(cmake/Opts2.cmake)      # OPTS-2: the Options menu (OPENBFME_OPTS2_TESTS)
+include(cmake/Opts3.cmake)      # OPTS-3: the OpenBFME page of the Options screen (appends to OPENBFME_APT_SOURCES)
 include(cmake/Play1.cmake)      # PLAY-1: the tribute, the placement ghost (appends to OPENBFME_SIM_SOURCES; OPENBFME_PLAY1_SOURCES / _TESTS)
 add_library(openbfme_core STATIC
     ${OPENBFME_PLAY2_SOURCES}
@@ -184,6 +188,7 @@ add_library(openbfme_core STATIC
     ${OPENBFME_HUD5_CLIENT_SOURCES}
     ${OPENBFME_HUD6_CLIENT_SOURCES}
     ${OPENBFME_CAH1_SOURCES}
+    ${OPENBFME_RULES1_SOURCES}
     ${OPENBFME_CAMP2_SOURCES}
     src/Common/AsciiString.cpp
     src/Common/LogicFrameClock.cpp
@@ -547,10 +552,13 @@ add_executable(openbfme_tests
     ${OPENBFME_DECOMP1_TESTS}
     ${OPENBFME_PLAY1_TESTS}
     ${OPENBFME_HUD5_TESTS}
+    ${OPENBFME_AUTOCAST1_TESTS}
     ${OPENBFME_HUD6_TESTS}
     ${OPENBFME_CAH1_TESTS}
+    ${OPENBFME_RULES1_TESTS}
     ${OPENBFME_MOVE3_TESTS}
     ${OPENBFME_INPUT1_TESTS}
+    ${OPENBFME_OPTS2_TESTS}
     ${OPENBFME_PLAY1_TESTS}
     tests/test_main.cpp
     tests/test_big_archive.cpp

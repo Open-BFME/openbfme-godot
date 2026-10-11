@@ -1,90 +1,90 @@
-## Lane OPTS-1: the OpenBFME options screen (owner, 2026-10-10: "the game also needs like modern options"). NOT A RETAIL SCREEN: RotWK's Options.apt
-## stays as retail's; this screen is an OpenBFME extra reached from it. While Options.apt is the top screen of the shell (from the main menu, or from the
-## quit menu in a game) an "OPENBFME" button sits in the free band under its Audio Controls panel; it opens this screen over Options.apt.
+## Lane OPTS-1: the OpenBFME options (owner, 2026-10-10: "the game also needs like modern options"). NOT RETAIL: RotWK's Options.apt stays as
+## retail's; these are this rebuild's own settings, reached from it.
 ##
-## The screen is Godot UI laid out on Options.apt's 1024 x 768 stage and mapped to the window the way the shell maps the movie (AptMenuPlayer
-## stage_to_window), so it scales with the menus. Its skin is the retail menu art loaded at run time through the shell, never committed: the gadget
-## images of the APT gadgets (MappedImage AptCheckbox*, AptComboBoxButton*, AptHSlider*, AptListBoxHilite* of aptcomponents.ini, as the gadget layer
-## draws them: AptMenuPlayer.shell_mapped_image) and the fonts the movies' requests resolve to (fontsubstitution.ini and the archives' fonts:
-## AptMenuPlayer.shell_font, "SachaWynter" for the title, "Albertus MT" for the text, the font of window\apt\*.wnd). The panel frames and the buttons
-## are drawn in the style of Options.apt's (thin double lines over a dark fill); they are Godot style boxes, not the movie's shapes.
+## Lane OPTS-3 (owner, preview.4 at 2560 x 1440: the former screen "looks low resolution vs the rest of the menus"): the settings are a page of
+## Options.apt drawn by the shell itself (AptMenuPlayer openbfme_page_*, engine GameClient/GUI/AptScreens/OpenBFMEOptionsPage.h): RotWK's own APT
+## gadgets (window\apt\combobox.wnd, checkbox.wnd, horzslider.wnd, listbox.wnd) and Options.apt's frame, fonts, title and bottom bar, rasterised at
+## the window's pixels like every menu. The former screen was Godot Controls laid out on the 1024 x 768 stage and scaled up as a whole (a Control
+## scale draws the 16 px fonts at 16 px and stretches the result: the blur the owner saw); nothing of it remains. The OPENBFME button is a copy of
+## Options.apt's CUSTOM SETTINGS button in the free corner above CANCEL (it never covers retail content); this script only describes the rows of the
+## chosen tab (_spec) and acts on the page's events (_process).
 ##
-## The settings are scripts/display_settings.gd's (openbfme-display.cfg). Every change applies at once (window mode, resolution, vsync, frame cap,
-## counter, render scale, scaler); ACCEPT keeps them and writes the file, CANCEL and Esc put back what was in effect when the screen opened, RESET TO
-## DEFAULTS sets the defaults (applied, kept on ACCEPT).
-## While the screen is up the shell's and the HUD's input is off (AptMenuPlayer / InGameHud set_process_input(false), restored on close), so a click
-## on the screen never reaches Options.apt under it. The screen never calls into the shell's screens: a window change made through it cannot change a
-## widget's state (the owner's "maximising greys out the main menu"; tests/opts1_test.gd checks the main menu's and Options.apt's buttons across
-## every mode change).
+## Lane OPTS-2: the tabs Display (OPTS-1's settings, scripts/display_settings.gd, openbfme-display.cfg), Graphics+, Camera, Interface, Audio
+## (scripts/game_options.gd: Options.ini's OpenBFME* keys, plus the retail keys ScrollFactor, AllHealthBars and AlternateMouseSetup, which RotWK's own
+## Options screen shows too) and Controls (the CommandMap's hot keys, read only). Every change applies at once; ACCEPT keeps them and writes both
+## files, CANCEL and Esc put back what was in effect when the page opened, RESET TO DEFAULTS sets the defaults (retail behaviour; applied, kept on
+## ACCEPT). ACCEPT and CANCEL go back to Options' basic page (the page is part of the Options screen, like its CUSTOM SETTINGS page).
+## The page never calls into the shell's other screens: a window change made through it cannot change a widget's state (the owner's "maximising
+## greys out the main menu"; tests/opts1_test.gd checks the main menu's and Options.apt's buttons across every mode change).
 extends CanvasLayer
 
 const DisplaySettings := preload("res://scripts/display_settings.gd")
-const STAGE := Vector2(1024, 768)
-const ENTRY_RECT := Rect2(412, 616, 200, 30)      # the band under Options.apt's Audio Controls panel (free on both of its pages)
-const PANEL_RECT := Rect2(197, 104, 630, 560)
-const LABEL_COLOR := Color(0.76, 0.87, 0.95)       # the pale blue of Options.apt's headings (the owner wants no green label text)
-const TEXT_COLOR := Color(0.88, 0.92, 0.96)
-const TITLE_COLOR := Color(0.62, 0.84, 0.90)
-const FRAME_COLOR := Color(0.70, 0.77, 0.84, 0.85)
+const TABS := ["Display", "Graphics+", "Camera", "Interface", "Audio", "Controls"]
+const SUBTITLE := "OPENBFME SETTINGS"
 const WINDOW_MODE_LABELS := {"windowed": "Windowed", "borderless": "Borderless window", "fullscreen": "Fullscreen"}
-const VSYNC_LABELS := {"on": "On", "off": "Off", "adaptive": "Adaptive", "mailbox": "Mailbox"}
+const VSYNC_ITEMS := [["on", "On"], ["off", "Off"], ["adaptive", "Adaptive"]]
 const SCALER_LABELS := {"bilinear": "Bilinear", "fsr": "AMD FSR 1", "fsr2": "AMD FSR 2"}
 const RENDERER_LABELS := {"forward_plus": "Forward+", "mobile": "Mobile", "gl_compatibility": "Compatibility"}
+const SCALE_STEP := 5
+
+const AA_ITEMS := [["off", "Off"], ["fxaa", "FXAA"], ["msaa2", "MSAA 2x"], ["msaa4", "MSAA 4x"], ["taa", "TAA (temporal)"]]
+const ANISO_ITEMS := [["off", "Off"], ["2x", "2x"], ["4x", "4x"], ["8x", "8x"], ["16x", "16x"]]
+const LOOK_ITEMS := [["original", "Original"], ["enhanced", "Enhanced"]]
+const UI_SCALE_ITEMS := [["100", "100%"], ["125", "125%"], ["150", "150%"], ["200", "200%"]]
+const EDGE_ITEMS := [["retail", "Full screen only (original)"], ["always", "Always"], ["off", "Off"]]
+const ROTATE_ITEMS := [["50", "50%"], ["75", "75%"], ["100", "100% (original)"], ["150", "150%"], ["200", "200%"]]
+const ZOOM_ITEMS := [["no", "Off"], ["yes", "On: up to the map's size"]]
+## lane ZOOM-1: the Max zoom-out (OpenBFMEMaxZoomOut): times the original game's highest camera
+const MAX_ZOOM_ITEMS := [["1", "Original (1x)"], ["1.5", "1.5x"], ["2", "2x"], ["2.5", "2.5x"], ["3", "3x"]]
+const BARS_ITEMS := [["retail", "Selected (original)"], ["damaged", "Selected and damaged"], ["always", "Always (all players)"]]
 
 var shell: Node2D                  # the AptMenuPlayer
-var hud_getter: Callable           # () -> the InGameHud node or null
+var hud_getter: Callable           # () -> the InGameHud node or null (unused since OPTS-3: the page is the shell's own, its input is the shell's)
 var settings: RefCounted           # the settings in effect (display_settings.gd), shared with game.gd and the counter
 var settings_path := ""
 var overlay: CanvasLayer           # scripts/fps_overlay.gd
 var skin_errors := PackedStringArray()
+var game_options: Node             # lane OPTS-2: scripts/game_options.gd (Options.ini's settings in effect)
 
-var _stage: Control                # the 1024 x 768 stage, scaled to the window
-var _entry: Button
-var _screen: Control
-var _theme: Theme
 var _open := false
-var _original: RefCounted          # the settings when the screen opened (CANCEL)
-var _runtime := {}                 # what the game ran with when the screen opened (DisplaySettings.snapshot: CLI caps, the window's mode and place)
-var _pending: RefCounted           # what the screen shows and has applied
+var _original: RefCounted          # the settings when the page opened (CANCEL)
+var _runtime := {}                 # what the game ran with when the page opened (DisplaySettings.snapshot: CLI caps, the window's mode and place)
+var _pending: RefCounted           # what the page shows and has applied
 var _applied: RefCounted
-var _blocked: Array = []           # [node, was processing input] while the shell's / HUD's input is off
-var _entry_hover := false
-var _syncing := false
-var _controls := {}
-var _last_window := Vector2.ZERO
+var _tab := "Display"
+var _extras_original := {}         # lane OPTS-2: Options.ini's values when the page opened (CANCEL)
+var _extras := {}                  # what the extra tabs show and have applied
+var _rows := {}                    # key -> the row (Dictionary) the page shows now
+var _hotkeys := []                 # [[action, keys]] of the CommandMap (read once)
+var _options_top := false
 
 
 func _ready() -> void:
 	layer = 80
 	process_mode = Node.PROCESS_MODE_ALWAYS
-	_theme = _build_theme()
-	_stage = Control.new()
-	_stage.name = "Stage"
-	_stage.size = STAGE
-	_stage.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_stage.theme = _theme
-	add_child(_stage)
-	_entry = _make_button("OPENBFME", ENTRY_RECT)
-	_entry.name = "OpenBFMEEntry"
-	_entry.tooltip_text = ""
-	_entry.visible = false
-	_entry.pressed.connect(open)
-	_entry.mouse_entered.connect(_on_entry_hover.bind(true))
-	_entry.mouse_exited.connect(_on_entry_hover.bind(false))
-	_stage.add_child(_entry)
-	_build_screen()
 	if overlay != null:
 		overlay.screen = self
+	if shell != null and shell.has_method("set_openbfme_available"):
+		shell.set_openbfme_available(true)
+	else:
+		skin_errors.append("the shell has no OpenBFME page (AptMenuPlayer.set_openbfme_available)")
 	for e in skin_errors:
-		printerr("GAME DISPLAY skin: ", e)
+		printerr("GAME DISPLAY page: ", e)
 
 
 func is_open() -> bool:
 	return _open
 
 
+## the OPENBFME button is on screen (Options.apt's basic page)
 func entry_visible() -> bool:
-	return _entry.visible
+	return shell != null and shell.openbfme_page_state().has("entry")
+
+
+## the OPENBFME button's stage rectangle (Rect2() when it is not shown)
+func entry_rect() -> Rect2:
+	var s: Dictionary = shell.openbfme_page_state()
+	return s.get("entry", Rect2())
 
 
 ## the window rectangle of a stage rectangle (tests click through it)
@@ -94,56 +94,49 @@ func stage_rect_to_window(r: Rect2) -> Rect2:
 	return Rect2(a, b - a)
 
 
-func control(name: String) -> Control:
-	return _controls.get(name)
-
-
 func _process(_delta: float) -> void:
 	if shell == null:
 		return
-	var window := Vector2(get_viewport().get_visible_rect().size)
-	if window != _last_window:
-		_last_window = window
-		var a: Vector2 = shell.stage_to_window(Vector2.ZERO)
-		var b: Vector2 = shell.stage_to_window(STAGE)
-		_stage.position = a
-		_stage.scale = (b - a) / STAGE
 	var stack: PackedStringArray = shell.shell_stack()
-	var options_top := not stack.is_empty() and stack[-1] == "Options.apt"
-	if _open and not options_top:
-		close(false) # the shell left Options.apt under the screen (a game ended, the quit menu closed): the screen goes with it
-	var show_entry := options_top and not _open
-	if _entry.visible != show_entry:
-		_entry.visible = show_entry
-		if not show_entry and _entry_hover:
-			_entry_hover = false
-			if not _open:
-				_block_input(false)
-
-
-func _input(event: InputEvent) -> void:
-	if not _open:
+	_options_top = not stack.is_empty() and stack[-1] == "Options.apt"
+	if _open and not _options_top:
+		close(false) # the shell left Options.apt (a game ended, the quit menu closed): the page goes with it
 		return
-	var key := event as InputEventKey
-	if key != null and key.pressed and not key.echo and key.keycode == KEY_ESCAPE:
-		get_viewport().set_input_as_handled()
-		close(false)
+	for e in shell.openbfme_page_events():
+		match String(e.kind):
+			"entry":
+				open()
+			"value":
+				_on_value(String(e.key), int(e.value))
+			"tab":
+				if int(e.value) >= 0 and int(e.value) < TABS.size():
+					_show_tab(TABS[int(e.value)])
+			"cancel":
+				close(false)
+			"reset":
+				reset_defaults()
+			"accept":
+				close(true)
 
 
 func open() -> void:
 	if _open:
 		return
+	var r: Dictionary = shell.openbfme_page_open()
+	if not r.get("ok", false):
+		printerr("GAME DISPLAY the OpenBFME page cannot open: ", r.get("error", "?"))
+		return
 	_open = true
 	var root := get_tree().root
 	_original = settings.copy()
 	_runtime = DisplaySettings.snapshot(root)
-	# the screen shows what is in effect (a --max-fps cap, a window the player maximised or Alt+Enter made full screen), not only the file
+	# the page shows what is in effect (a --max-fps cap, a window the player maximised or Alt+Enter made full screen), not only the file
 	_pending = DisplaySettings.effective(settings, root, overlay.shown() if overlay != null else settings.show_fps)
 	_applied = _pending.copy()
-	_block_input(true)
-	_entry.visible = false
-	_sync_controls()
-	_screen.visible = true
+	if game_options != null:
+		_extras_original = game_options.current()
+		_extras = _extras_original.duplicate()
+	_show_tab("Display")
 	print("GAME DISPLAY options screen open: ", JSON.stringify(_pending.to_dict()))
 
 
@@ -156,27 +149,36 @@ func close(keep: bool) -> void:
 		if not settings_path.is_empty() and not settings.save_file(settings_path):
 			printerr("GAME DISPLAY ", settings.errors[-1])
 		print("GAME DISPLAY accepted and saved: ", JSON.stringify(settings.to_dict()))
+		if game_options != null:
+			var w: Dictionary = game_options.commit(_extras)
+			if not w.get("ok", false):
+				printerr("GAME OPTIONS Options.ini: ", w.get("error", "?"))
+			print("GAME OPTIONS accepted and saved: ", JSON.stringify(_extras))
+			game_options.apply_global(game_options.current())
 	else:
 		# everything the game ran with at the opening comes back (not the file's values: a --max-fps cap or a maximised window stays as it was);
-		# the file is untouched (the hotkeys pressed while the screen was up changed only the screen's settings)
+		# the file is untouched (the hotkeys pressed while the page was up changed only the page's settings)
 		DisplaySettings.restore(get_tree().root, _runtime)
 		settings.from_dict(_original.to_dict())
 		print("GAME DISPLAY cancelled: %s" % JSON.stringify(DisplaySettings.snapshot(get_tree().root)))
+		if game_options != null:
+			game_options.apply_global(_extras_original)
 	if overlay != null:
 		overlay.preview = null
 		overlay.refresh()
 	_open = false
-	_screen.visible = false
-	_block_input(false)
+	_rows.clear()
+	if _options_top:
+		shell.openbfme_page_close() # back to Options' basic page (the retail Options.ini values it mirrors are read again)
 
 
-## A setting changed on the screen: applied at once
+## A display setting changed on the page: applied at once
 func set_value(key: String, value) -> void:
 	if not _open:
 		return
 	_pending.from_dict({key: value})
 	_apply_pending()
-	_sync_controls()
+	_sync()
 
 
 func reset_defaults() -> void:
@@ -184,7 +186,50 @@ func reset_defaults() -> void:
 		return
 	_pending = DisplaySettings.new()
 	_apply_pending()
-	_sync_controls()
+	if game_options != null:
+		_extras = game_options.defaults()
+		_apply_extras()
+	_sync()
+
+
+## lane OPTS-2: an extra (or mirrored retail) setting changed on the page: applied at once, written by ACCEPT
+func set_extra(key: String, value: String) -> void:
+	if not _open or game_options == null:
+		return
+	if not game_options.valid(key, value):
+		printerr("GAME OPTIONS %s = '%s' is not a value it takes" % [key, value])
+		return
+	_extras[key] = value
+	_apply_extras()
+	_sync()
+
+
+func extra_value(key: String):
+	return _extras.get(key) if _open else null
+
+
+func current_tab() -> String:
+	return _tab
+
+
+## F11 / Alt+Enter while the page is up (fps_overlay.gd hands them here): a change of the page's settings like a click on its controls, applied at
+## once, written only by ACCEPT
+func hotkey(key: String, value) -> void:
+	set_value(key, value)
+
+
+func pending_value(key: String):
+	return _pending.to_dict()[key] if _open else null
+
+
+## the row the page shows for `key` (null when the tab does not have it)
+func row(key: String):
+	return _rows.get(key)
+
+
+func _apply_extras() -> void:
+	var done: PackedStringArray = game_options.apply_global(_extras)
+	print("GAME OPTIONS applied: %s%s" % [", ".join(done), "" if game_options.problems.is_empty() else " PROBLEMS " + str(game_options.problems)])
 
 
 func _apply_pending() -> void:
@@ -196,341 +241,86 @@ func _apply_pending() -> void:
 	print("GAME DISPLAY applied: %s%s" % [", ".join(r.applied), "" if r.problems.is_empty() else " PROBLEMS " + str(r.problems)])
 
 
-func _on_entry_hover(inside: bool) -> void:
-	# the entry is drawn over Options.apt: a click on it must not also reach the movie
-	_entry_hover = inside
-	if inside:
-		_block_input(true)
-	elif not _open:
-		_block_input(false)
-
-
-func _changed(key: String, value) -> void:
-	if not _syncing:
-		set_value(key, value)
-
-
-## F11 / Alt+Enter while the screen is up (fps_overlay.gd hands them here): a change of the screen's settings like a click on its controls, applied
-## at once, written only by ACCEPT
-func hotkey(key: String, value) -> void:
-	set_value(key, value)
-
-
-func pending_value(key: String):
-	return _pending.to_dict()[key] if _open else null
-
-
-func _block_input(block: bool) -> void:
-	if block:
-		if not _blocked.is_empty():
-			return
-		var nodes: Array = [shell]
-		var hud: Node = hud_getter.call() if hud_getter.is_valid() else null
-		if hud != null:
-			nodes.append(hud)
-		for n in nodes:
-			_blocked.append([n, n.is_processing_input()])
-			n.set_process_input(false)
-	else:
-		for pair in _blocked:
-			if is_instance_valid(pair[0]):
-				pair[0].set_process_input(pair[1])
-		_blocked.clear()
-
-
 # ---------------------------------------------------------------------------------------------------------------------------------
-# the skin
+# the page's rows
 # ---------------------------------------------------------------------------------------------------------------------------------
-func _image(name: String) -> Texture2D:
-	if shell == null:
-		skin_errors.append("no shell for image %s" % name)
-		return null
-	var r: Dictionary = shell.shell_mapped_image(name)
-	if not r.get("ok", false):
-		skin_errors.append(str(r.get("error", name)))
-		return null
-	var t := AtlasTexture.new()
-	t.atlas = r.texture
-	t.region = r.region
-	return t
+func _show_tab(name: String) -> void:
+	_tab = name
+	if not _open:
+		return
+	var spec := _spec()
+	_rows.clear()
+	for r in spec.rows:
+		if not String(r.get("key", "")).is_empty():
+			_rows[r.key] = r
+	var res: Dictionary = shell.openbfme_page_show(spec)
+	if not res.get("ok", false):
+		printerr("GAME DISPLAY the OpenBFME page: ", res.get("error", "?"))
 
 
-func _font(name: String) -> Font:
-	var r: Dictionary = shell.shell_font(name, 16.0) if shell != null else {}
-	if r.is_empty() or r.get("font") == null:
-		skin_errors.append("font %s: not resolved" % name)
-		return null
-	if r.get("fallback", false):
-		skin_errors.append("font %s: neither fontsubstitution.ini nor the archives' fonts have it (the engine's default font draws it)" % name)
-	return r.font
+## The rows of the shown tab again (after a change: a row may change its value, its items or whether it is enabled)
+func _sync() -> void:
+	if not _open:
+		return
+	var spec := _spec()
+	for r in spec.rows:
+		if String(r.get("key", "")).is_empty():
+			continue
+		var old = _rows.get(r.key)
+		if old != null and old.hash() == r.hash():
+			continue
+		_rows[r.key] = r
+		shell.openbfme_page_set_row(r)
 
 
-func _frame_box(fill: Color, border: Color, width: int) -> StyleBoxFlat:
-	var s := StyleBoxFlat.new()
-	s.bg_color = fill
-	s.border_color = border
-	s.set_border_width_all(width)
-	s.set_content_margin_all(6)
-	return s
+func _spec() -> Dictionary:
+	var rows: Array
+	var note := ""
+	match _tab:
+		"Display":
+			rows = _display_rows()
+			var method := DisplaySettings.renderer()
+			note = "Renderer: %s (%s). FSR 3 and DLSS: later. Point at a setting for what it does." % [RENDERER_LABELS.get(method, method),
+				", ".join(DisplaySettings.scalers_for(method).map(func(x): return SCALER_LABELS[x]))]
+		"Graphics+":
+			rows = _graphics_rows()
+			note = "The original game's graphics settings (the detail level, custom settings, brightness) are on the Options screen."
+		"Camera":
+			rows = _camera_rows()
+			note = "None of these changes the game itself: the camera and the mouse only."
+		"Interface":
+			rows = _interface_rows()
+			note = "\"Selected and damaged\" and \"Always\" health bars are this rebuild's; the other two settings are the original game's."
+		"Audio":
+			rows = _audio_rows()
+			note = "The music, sound, voice and ambient volumes are the original game's, on the Options screen; the master volume scales them all."
+		"Controls":
+			rows = []
+			note = "The original game's hot keys (CommandMap.ini) as the game reads them. Changing them here comes later."
+	var spec := {
+		"subtitle": SUBTITLE,
+		"tabs_header": "OpenBFME",
+		"tabs": TABS,
+		"tab": TABS.find(_tab),
+		"panel_header": _tab,
+		"rows": rows,
+		"note": note,
+	}
+	if _tab == "Controls":
+		spec["list"] = _hotkey_list()
+	return spec
 
 
-func _texture_box(texture: Texture2D, margins: int) -> StyleBox:
-	if texture == null:
-		return null
-	var s := StyleBoxTexture.new()
-	s.texture = texture
-	s.set_texture_margin_all(margins)
-	s.set_content_margin_all(4)
-	return s
+static func _choice(key: String, label: String, items: Array, value: int, help: String, enabled := true) -> Dictionary:
+	return {"kind": "choice", "key": key, "label": label, "items": items, "value": value, "help": help, "enabled": enabled}
 
 
-func _build_theme() -> Theme:
-	var t := Theme.new()
-	var text_font := _font("Albertus MT")
-	if text_font != null:
-		t.default_font = text_font
-	t.default_font_size = 16
-	t.set_color("font_color", "Label", TEXT_COLOR)
-	# buttons in the manner of Options.apt's CANCEL / ACCEPT: a steel frame over a dark blue fill, capitals
-	var normal := _frame_box(Color(0.04, 0.08, 0.13, 0.92), Color(0.52, 0.64, 0.74), 2)
-	normal.shadow_color = Color(0, 0, 0, 0.6)
-	normal.shadow_size = 3
-	var hover := _frame_box(Color(0.08, 0.15, 0.22, 0.95), Color(0.80, 0.90, 0.98), 2)
-	var pressed := _frame_box(Color(0.02, 0.05, 0.09, 0.95), Color(0.80, 0.90, 0.98), 2)
-	var disabled := _frame_box(Color(0.04, 0.07, 0.10, 0.6), Color(0.30, 0.36, 0.42), 2)
-	for cls in ["Button", "OptionButton"]:
-		t.set_stylebox("normal", cls, normal)
-		t.set_stylebox("hover", cls, hover)
-		t.set_stylebox("pressed", cls, pressed)
-		t.set_stylebox("hover_pressed", cls, pressed)
-		t.set_stylebox("disabled", cls, disabled)
-		t.set_stylebox("focus", cls, StyleBoxEmpty.new())
-		t.set_color("font_color", cls, TEXT_COLOR)
-		t.set_color("font_hover_color", cls, Color(1, 1, 1))
-		t.set_color("font_pressed_color", cls, Color(1, 0.92, 0.6))
-		t.set_color("font_disabled_color", cls, Color(0.5, 0.55, 0.6))
-	# the combo boxes: window\apt\combobox.wnd's drop-down button image as the arrow, the list box's highlight in the list
-	var arrow := _image("AptComboBoxButtonEnabled")
-	if arrow != null:
-		t.set_icon("arrow", "OptionButton", arrow)
-	t.set_constant("arrow_margin", "OptionButton", 2)
-	var popup_panel := _frame_box(Color(0.02, 0.04, 0.07, 0.96), FRAME_COLOR, 1)
-	t.set_stylebox("panel", "PopupMenu", popup_panel)
-	var hilite := _texture_box(_image("AptListBoxHiliteItem"), 4)
-	if hilite != null:
-		t.set_stylebox("hover", "PopupMenu", hilite)
-	t.set_color("font_color", "PopupMenu", TEXT_COLOR)
-	t.set_color("font_hover_color", "PopupMenu", Color(1, 1, 1))
-	t.set_color("font_disabled_color", "PopupMenu", Color(0.45, 0.5, 0.55))
-	# the check boxes: window\apt\checkbox.wnd's images
-	var checked := _image("AptCheckboxCheckedEnabled")
-	var unchecked := _image("AptCheckboxUncheckedEnabled")
-	var checked_off := _image("AptCheckboxCheckedDisabled")
-	var unchecked_off := _image("AptCheckboxUncheckedDisabled")
-	for pair in [["checked", checked], ["unchecked", unchecked], ["checked_disabled", checked_off], ["unchecked_disabled", unchecked_off]]:
-		if pair[1] != null:
-			t.set_icon(pair[0], "CheckBox", _scaled_icon(pair[1], 26))
-	for state in ["normal", "hover", "pressed", "hover_pressed", "focus", "disabled"]:
-		t.set_stylebox(state, "CheckBox", StyleBoxEmpty.new())
-	t.set_color("font_color", "CheckBox", LABEL_COLOR)
-	t.set_color("font_hover_color", "CheckBox", Color(1, 1, 1))
-	t.set_color("font_pressed_color", "CheckBox", LABEL_COLOR)
-	t.set_color("font_hover_pressed_color", "CheckBox", Color(1, 1, 1))
-	t.set_color("font_focus_color", "CheckBox", LABEL_COLOR)
-	# the sliders: window\apt\horzslider.wnd's ribbed bar (AptHSliderOnBar, tiled) in a dark track
-	t.set_stylebox("slider", "HSlider", _frame_box(Color(0.0, 0.0, 0.0, 0.55), FRAME_COLOR, 1))
-	var bar := _image("AptHSliderOnBar")
-	if bar != null:
-		var fill := StyleBoxTexture.new()
-		fill.texture = bar
-		fill.axis_stretch_horizontal = StyleBoxTexture.AXIS_STRETCH_MODE_TILE
-		fill.set_content_margin_all(0)
-		fill.expand_margin_top = 8
-		fill.expand_margin_bottom = 8
-		t.set_stylebox("grabber_area", "HSlider", fill)
-		t.set_stylebox("grabber_area_highlight", "HSlider", fill)
-	var end := _image("AptHSliderOnBarEnd")
-	if end != null:
-		t.set_icon("grabber", "HSlider", end)
-		t.set_icon("grabber_highlight", "HSlider", end)
-	t.set_stylebox("normal", "SpinBox", _frame_box(Color(0.0, 0.0, 0.0, 0.55), FRAME_COLOR, 1))
-	t.set_stylebox("normal", "LineEdit", _frame_box(Color(0.0, 0.0, 0.0, 0.55), FRAME_COLOR, 1))
-	t.set_stylebox("focus", "LineEdit", _frame_box(Color(0.0, 0.0, 0.0, 0.55), Color(0.80, 0.90, 0.98), 1))
-	t.set_color("font_color", "LineEdit", TEXT_COLOR)
-	t.set_stylebox("panel", "TooltipPanel", popup_panel)
-	return t
+static func _check(key: String, label: String, on: bool, help: String) -> Dictionary:
+	return {"kind": "check", "key": key, "label": label, "value": 1 if on else 0, "help": help}
 
 
-func _scaled_icon(texture: Texture2D, size: int) -> Texture2D:
-	# a 34 x 34 image at the screen's box size; drawn by the stage's scale like the rest
-	var img := texture.get_image()
-	if img == null:
-		return texture
-	img.resize(size, size, Image.INTERPOLATE_BILINEAR)
-	return ImageTexture.create_from_image(img)
-
-
-# ---------------------------------------------------------------------------------------------------------------------------------
-# the screen
-# ---------------------------------------------------------------------------------------------------------------------------------
-func _make_button(text: String, rect: Rect2) -> Button:
-	var b := Button.new()
-	b.text = text
-	b.position = rect.position
-	b.size = rect.size
-	b.focus_mode = Control.FOCUS_NONE
-	b.add_theme_font_size_override("font_size", 15)
-	return b
-
-
-func _label(text: String, pos: Vector2, size: Vector2, color: Color, font_size: int, align := HORIZONTAL_ALIGNMENT_LEFT) -> Label:
-	var l := Label.new()
-	l.text = text
-	l.set_meta("game_text", true) # the screen's text (game.gd _dev_text_on_screen)
-	l.position = pos
-	l.size = size
-	l.horizontal_alignment = align
-	l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	l.add_theme_color_override("font_color", color)
-	l.add_theme_font_size_override("font_size", font_size)
-	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	return l
-
-
-func _panel(rect: Rect2, parent: Control) -> Control:
-	# Options.apt's panel frame: an outer and an inner thin line over a dark fill
-	var outer := Panel.new()
-	outer.position = rect.position
-	outer.size = rect.size
-	outer.add_theme_stylebox_override("panel", _frame_box(Color(0.01, 0.03, 0.06, 0.86), FRAME_COLOR, 1))
-	outer.mouse_filter = Control.MOUSE_FILTER_STOP
-	parent.add_child(outer)
-	var inner := Panel.new()
-	inner.position = Vector2(4, 4)
-	inner.size = rect.size - Vector2(8, 8)
-	inner.add_theme_stylebox_override("panel", _frame_box(Color(0, 0, 0, 0), Color(FRAME_COLOR, 0.55), 1))
-	inner.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	outer.add_child(inner)
-	return outer
-
-
-func _section(title: String, y: float, parent: Control) -> void:
-	parent.add_child(_label(title, Vector2(0, y), Vector2(PANEL_RECT.size.x, 28), TEXT_COLOR, 20, HORIZONTAL_ALIGNMENT_CENTER))
-	var rule := ColorRect.new()
-	rule.color = Color(FRAME_COLOR, 0.7)
-	rule.position = Vector2(40, y + 29)
-	rule.size = Vector2(PANEL_RECT.size.x - 80, 1)
-	rule.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	parent.add_child(rule)
-
-
-func _row(caption: String, y: float, parent: Control, widget: Control, key: String) -> void:
-	parent.add_child(_label(caption, Vector2(48, y), Vector2(250, 30), LABEL_COLOR, 17))
-	widget.position = Vector2(318, y)
-	if widget.size.x < 1:
-		widget.size = Vector2(264, 30)
-	parent.add_child(widget)
-	_controls[key] = widget
-
-
-func _option_button(items: Array, key: String) -> OptionButton:
-	var o := OptionButton.new()
-	o.focus_mode = Control.FOCUS_NONE
-	o.size = Vector2(264, 30)
-	o.add_theme_font_size_override("font_size", 16)
-	for it in items:
-		o.add_item(it)
-	o.get_popup().add_theme_font_size_override("font_size", 16)
-	o.get_popup().about_to_popup.connect(func() -> void: o.get_popup().content_scale_factor = minf(_stage.scale.x, _stage.scale.y))
-	o.item_selected.connect(_on_option.bind(key))
-	return o
-
-
-func _build_screen() -> void:
-	_screen = Control.new()
-	_screen.name = "OpenBFMEOptions"
-	_screen.size = STAGE
-	_screen.visible = false
-	_screen.mouse_filter = Control.MOUSE_FILTER_STOP # nothing under the screen takes a click
-	_stage.add_child(_screen)
-	var dim := ColorRect.new()
-	dim.color = Color(0, 0, 0, 0.55)
-	dim.size = STAGE
-	dim.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_screen.add_child(dim)
-	var panel := _panel(PANEL_RECT, _screen)
-	var title := _label("OPENBFME", Vector2(0, 10), Vector2(PANEL_RECT.size.x, 44), TITLE_COLOR, 34, HORIZONTAL_ALIGNMENT_CENTER)
-	var title_font := _font("SachaWynter")
-	if title_font != null:
-		title.add_theme_font_override("font", title_font)
-	panel.add_child(title)
-	panel.add_child(_label("Display options of this rebuild (not in the original game)", Vector2(0, 50), Vector2(PANEL_RECT.size.x, 22), Color(TEXT_COLOR, 0.75), 13,
-		HORIZONTAL_ALIGNMENT_CENTER))
-
-	_section("Display", 78, panel)
-	_row("Window mode", 116, panel, _option_button(DisplaySettings.WINDOW_MODES.map(func(m): return WINDOW_MODE_LABELS[m]), "window_mode"), "window_mode")
-	_row("Resolution", 152, panel, _option_button([], "resolution"), "resolution")
-	_row("Vertical sync", 188, panel, _option_button(["On", "Off", "Adaptive"], "vsync"), "vsync")
-	var limits: Array = ["Off"]
-	for f in DisplaySettings.FRAME_LIMITS.slice(1):
-		limits.append("%d fps" % f)
-	limits.append("Custom")
-	_row("Frame rate limit", 224, panel, _option_button(limits, "max_fps"), "max_fps")
-	var custom := SpinBox.new()
-	custom.min_value = 10
-	custom.max_value = DisplaySettings.MAX_FPS_LIMIT
-	custom.step = 1
-	custom.suffix = "fps"
-	custom.value = 75 # what Custom starts at
-	custom.size = Vector2(110, 30)
-	custom.value_changed.connect(func(v: float) -> void: _changed("max_fps", int(v)))
-	custom.position = Vector2(590, 224)
-	custom.visible = false
-	panel.add_child(custom)
-	_controls["max_fps_custom"] = custom
-	var counter := CheckBox.new()
-	counter.text = "Show the frame rate (F11)"
-	counter.focus_mode = Control.FOCUS_NONE
-	counter.add_theme_font_size_override("font_size", 17)
-	counter.position = Vector2(312, 262)
-	counter.size = Vector2(300, 32)
-	counter.toggled.connect(func(on: bool) -> void: _changed("show_fps", on))
-	panel.add_child(counter)
-	_controls["show_fps"] = counter
-
-	_section("Rendering", 300, panel)
-	var scale := HSlider.new()
-	scale.min_value = DisplaySettings.SCALE_MIN * 100.0
-	scale.max_value = DisplaySettings.SCALE_MAX * 100.0
-	scale.step = 5
-	scale.focus_mode = Control.FOCUS_NONE
-	scale.size = Vector2(200, 30)
-	scale.value_changed.connect(func(v: float) -> void: _changed("render_scale", v / 100.0))
-	_row("Render scale", 338, panel, scale, "render_scale")
-	var scale_text := _label("100%", Vector2(530, 338), Vector2(60, 30), TEXT_COLOR, 16, HORIZONTAL_ALIGNMENT_RIGHT)
-	panel.add_child(scale_text)
-	_controls["render_scale_text"] = scale_text
-	_row("Upscaling", 374, panel, _option_button(DisplaySettings.SCALERS.map(func(s): return SCALER_LABELS[s]), "scaler"), "scaler")
-	var note := _label("", Vector2(30, 410), Vector2(PANEL_RECT.size.x - 60, 60), Color(TEXT_COLOR, 0.8), 13, HORIZONTAL_ALIGNMENT_CENTER)
-	note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	panel.add_child(note)
-	_controls["note"] = note
-
-	var cancel := _make_button("CANCEL", Rect2(28, 492, 160, 40))
-	cancel.name = "Cancel"
-	cancel.pressed.connect(func() -> void: close(false))
-	panel.add_child(cancel)
-	_controls["cancel"] = cancel
-	var defaults := _make_button("RESET TO DEFAULTS", Rect2(215, 492, 200, 40))
-	defaults.name = "Defaults"
-	defaults.pressed.connect(reset_defaults)
-	panel.add_child(defaults)
-	_controls["defaults"] = defaults
-	var accept := _make_button("ACCEPT", Rect2(442, 492, 160, 40))
-	accept.name = "Accept"
-	accept.pressed.connect(func() -> void: close(true))
-	panel.add_child(accept)
-	_controls["accept"] = accept
+static func _slider(key: String, label: String, lo: int, hi: int, value: int, text: String, help: String) -> Dictionary:
+	return {"kind": "slider", "key": key, "label": label, "min": lo, "max": hi, "value": value, "value_text": text, "help": help}
 
 
 func _resolution_list() -> Array:
@@ -538,70 +328,194 @@ func _resolution_list() -> Array:
 	return DisplaySettings.resolutions(DisplayServer.screen_get_size(screen), get_tree().root.size)
 
 
-func _on_option(index: int, key: String) -> void:
-	if _syncing:
+func _resolution_choices() -> Array:
+	var list := _resolution_list()
+	var current: Vector2i = _pending.resolution if _pending.resolution != Vector2i.ZERO else get_tree().root.size
+	if not list.has(current):
+		list.append(current)
+	return list
+
+
+func _frame_limits() -> Array:
+	# the presets, and the cap in effect when it is none of them (a --max-fps or a file value: "custom")
+	var limits: Array = DisplaySettings.FRAME_LIMITS.duplicate()
+	if not limits.has(_pending.max_fps):
+		limits.append(_pending.max_fps)
+	return limits
+
+
+func _display_rows() -> Array:
+	var p = _pending
+	var rows := []
+	rows.append(_choice("window_mode", "Window mode", DisplaySettings.WINDOW_MODES.map(func(m): return WINDOW_MODE_LABELS[m]),
+		DisplaySettings.WINDOW_MODES.find(p.window_mode), "Windowed, a borderless window over the whole screen, or exclusive full screen (Alt+Enter)."))
+	var res := _resolution_choices()
+	var current: Vector2i = p.resolution if p.resolution != Vector2i.ZERO else get_tree().root.size
+	rows.append(_choice("resolution", "Resolution", res.map(func(r): return "%d x %d" % [r.x, r.y]), res.find(current),
+		"The window's size. Full screen and the borderless window use the monitor's own resolution; lower the render scale for fewer pixels."
+		if p.window_mode != "windowed" else "The window's size (in a window). The menus and the game scale with it.", p.window_mode == "windowed"))
+	var vsync := VSYNC_ITEMS.map(func(v): return v[1])
+	if p.vsync == "mailbox":
+		vsync.append("Mailbox")
+	rows.append(_choice("vsync", "Vertical sync", vsync, ["on", "off", "adaptive", "mailbox"].find(p.vsync),
+		"Waits for the monitor's refresh: no tearing, a little more input delay."))
+	var limits := _frame_limits()
+	rows.append(_choice("max_fps", "Frame rate limit", limits.map(func(f): return "Off" if f == 0 else ("%d fps" % f if DisplaySettings.FRAME_LIMITS.has(f) else "%d fps (custom)" % f)),
+		limits.find(p.max_fps), "The most frames drawn a second. The game itself always runs at its own pace."))
+	rows.append(_check("show_fps", "Show the frame rate (F11)", p.show_fps, "The frame counter in the top left corner."))
+	rows.append({"kind": "section", "label": "Rendering"})
+	var pct := roundi(p.render_scale * 100.0)
+	# the slider's positions are the 5% steps (10 .. 20): the gadget's thumb lands on what is applied
+	rows.append(_slider("render_scale", "Render scale", roundi(DisplaySettings.SCALE_MIN * 100.0) / SCALE_STEP, roundi(DisplaySettings.SCALE_MAX * 100.0) / SCALE_STEP,
+		roundi(float(pct) / SCALE_STEP), "%d%%" % pct,
+		"The 3D view is drawn at this share of the window's pixels, then scaled up; the menus and the interface stay sharp."))
+	var available: Array = DisplaySettings.scalers_for(DisplaySettings.renderer())
+	var scalers := []
+	for s in DisplaySettings.SCALERS:
+		scalers.append({"text": SCALER_LABELS[s], "enabled": available.has(s)})
+	var scaler_help := "How a render scale below 100% is scaled up. "
+	scaler_help += "At 100% the scaler does nothing (FSR 2 still smooths edges)." if p.render_scale >= 0.999 else "FSR keeps more detail than bilinear."
+	rows.append(_choice("scaler", "Upscaling", scalers, DisplaySettings.SCALERS.find(p.scaler), scaler_help))
+	return rows
+
+
+static func _index_of(items: Array, value: String) -> int:
+	for i in items.size():
+		if items[i][0] == value:
+			return i
+	return 0
+
+
+func _extra_choice(key: String, label: String, items: Array, help: String, disabled := []) -> Dictionary:
+	var shown := []
+	for it in items:
+		shown.append({"text": it[1], "enabled": not disabled.has(it[0])})
+	var r := _choice(key, label, shown, _index_of(items, str(_extras.get(key, ""))), help)
+	r["values"] = items.map(func(it): return it[0])
+	return r
+
+
+func _extra_check(key: String, label: String, help: String) -> Dictionary:
+	return _check(key, label, str(_extras.get(key, "no")) == "yes", help)
+
+
+func _graphics_rows() -> Array:
+	var method := DisplaySettings.renderer()
+	var no_aa := []
+	if method == "gl_compatibility":
+		no_aa.append("fxaa")
+	if method != "forward_plus":
+		no_aa.append("taa")
+	return [
+		_extra_choice("OpenBFMEAntiAliasing", "Anti-aliasing", AA_ITEMS, "Smooths the edges of the 3D view. MSAA: models; FXAA and TAA: the whole picture.", no_aa),
+		_extra_choice("OpenBFMEAnisotropic", "Anisotropic filtering", ANISO_ITEMS, "Keeps the models' textures sharp at a slant."),
+		_extra_choice("OpenBFMELook", "Look", LOOK_ITEMS, "Enhanced: AgX tone mapping and a glow on the brightest effects. Original: the game's own picture."),
+		_extra_choice("OpenBFMEUIScale", "Interface scale", UI_SCALE_ITEMS, "Enlarges the health bars, the frame counter and the game clock for large screens; the menus already scale with the window."),
+		_extra_check("OpenBFMESoftParticles", "Soft particle edges", "Smoke, fire and dust fade where they meet the ground instead of a hard cut. Off: the original look."),
+	]
+
+
+func _camera_rows() -> Array:
+	var scroll: int = game_options.scroll_slider(str(_extras.get("ScrollFactor", ""))) if game_options != null else 50
+	return [
+		_slider("ScrollFactor", "Scroll speed", 0, 100, scroll, str(scroll), "The original game's scroll speed (Options.ini ScrollFactor), the same as the Options screen's slider."),
+		_extra_choice("OpenBFMEEdgeScroll", "Edge scrolling", EDGE_ITEMS, "Scrolling with the mouse at the screen's edge. The original game does it in full screen only."),
+		_extra_choice("OpenBFMERotateSpeed", "Rotation speed", ROTATE_ITEMS, "How fast the camera turns."),
+		_extra_choice("OpenBFMEMaxZoomOut", "Max zoom-out", MAX_ZOOM_ITEMS, "How many times higher than the original game the camera can rise (a game starts at the original height)."),
+		_extra_choice("OpenBFMEFreeCamera", "Free camera", ZOOM_ITEMS, "Lets the camera rise up to the size of the map; Ctrl+Z turns it on and off in a game."),
+		_extra_check("OpenBFMEInvertDragScroll", "Invert drag scrolling", "Dragging with the right button moves the view the other way."),
+		_extra_check("OpenBFMEConfineMouse", "Keep the mouse in the window", "In a game, in a window or a borderless window (exclusive full screen keeps it there anyway)."),
+	]
+
+
+func _interface_rows() -> Array:
+	return [
+		_extra_choice("OpenBFMEHealthBars", "Health bars", BARS_ITEMS, "Original: on the units you select or point at. Always: every unit's and building's bar, yours and the other players'."),
+		_extra_check("AllHealthBars", "Infantry and cavalry bars", "The original game's Show All Health Bars: bars on infantry and cavalry too (the lowest detail level turns it on)."),
+		_extra_check("AlternateMouseSetup", "Alternate mouse setup", "The original game's option: the left button gives orders."),
+		_extra_check("OpenBFMEGameClock", "Show the game clock", "The game's own time, in the top right corner."),
+	]
+
+
+func _audio_rows() -> Array:
+	var master := str(_extras.get("OpenBFMEMasterVolume", "100")).to_int()
+	var devices := Array(AudioServer.get_output_device_list())
+	var dev := str(_extras.get("OpenBFMEAudioDevice", "Default"))
+	if not devices.has(dev):
+		devices.append(dev)
+	var r := _choice("OpenBFMEAudioDevice", "Output device", devices, devices.find(dev), "The speakers or headphones the game plays through.")
+	r["values"] = devices
+	return [
+		_slider("OpenBFMEMasterVolume", "Master volume", 0, 100, master, "%d%%" % master, "Scales every sound of the game."),
+		_extra_check("OpenBFMEMuteUnfocused", "Mute in the background", "No sound while another window has the focus."),
+		r,
+	]
+
+
+func _hotkey_list() -> Array:
+	if _hotkeys.is_empty() and shell != null and shell.has_method("get_command_map"):
+		var r: Dictionary = shell.get_command_map()
+		if not r.get("ok", false):
+			return [["The hot keys could not be read: " + str(r.get("error", "?")), ""]]
+		for row in r.rows:
+			if not row.game or row.key == "KEY_NONE" or row.category == 7:
+				continue # the shell's, the modifier-only and the DEBUG category's records (CommandMap Category, lookup RW 0xBF0B08: ... MISC 6, DEBUG 7)
+			var name: String = row.display_name if not str(row.display_name).is_empty() else String(row.name).trim_prefix("META_").capitalize()
+			var keys := PackedStringArray()
+			if row.ctrl:
+				keys.append("Ctrl")
+			if row.alt:
+				keys.append("Alt")
+			if row.shift:
+				keys.append("Shift")
+			keys.append(String(row.key).trim_prefix("KEY_").capitalize())
+			_hotkeys.append([name, " + ".join(keys) + (" (double)" if row.transition == 2 else "")])
+	return _hotkeys
+
+
+func hotkey_count() -> int:
+	return _hotkey_list().size()
+
+
+# ---------------------------------------------------------------------------------------------------------------------------------
+# the page's events
+# ---------------------------------------------------------------------------------------------------------------------------------
+func _on_value(key: String, value: int) -> void:
+	if not _open:
 		return
 	match key:
 		"window_mode":
-			set_value("window_mode", DisplaySettings.WINDOW_MODES[index])
+			if value >= 0 and value < DisplaySettings.WINDOW_MODES.size():
+				set_value("window_mode", DisplaySettings.WINDOW_MODES[value])
 		"resolution":
-			var list := _resolution_list()
-			if index >= 0 and index < list.size():
-				set_value("resolution", DisplaySettings.resolution_text(list[index]))
+			var list := _resolution_choices()
+			if value >= 0 and value < list.size():
+				set_value("resolution", DisplaySettings.resolution_text(list[value]))
 		"vsync":
-			set_value("vsync", ["on", "off", "adaptive"][index])
+			var modes := ["on", "off", "adaptive", "mailbox"]
+			if value >= 0 and value < modes.size():
+				set_value("vsync", modes[value])
 		"max_fps":
-			var limits: Array = DisplaySettings.FRAME_LIMITS
-			if index < limits.size():
-				set_value("max_fps", limits[index])
-			else:
-				set_value("max_fps", int((_controls["max_fps_custom"] as SpinBox).value))
+			var limits := _frame_limits()
+			if value >= 0 and value < limits.size():
+				set_value("max_fps", limits[value])
+		"show_fps":
+			set_value("show_fps", value != 0)
+		"render_scale":
+			set_value("render_scale", float(value * SCALE_STEP) / 100.0)
 		"scaler":
-			set_value("scaler", DisplaySettings.SCALERS[index])
-
-
-## The controls show _pending (no signals while they are set)
-func _sync_controls() -> void:
-	if _pending == null:
-		return
-	_syncing = true
-	var p = _pending
-	(_controls["window_mode"] as OptionButton).select(DisplaySettings.WINDOW_MODES.find(p.window_mode))
-	var res: OptionButton = _controls["resolution"]
-	res.clear()
-	var list := _resolution_list()
-	var current: Vector2i = p.resolution if p.resolution != Vector2i.ZERO else get_tree().root.size
-	if not list.has(current):
-		list.append(current)
-	for r in list:
-		res.add_item("%d x %d" % [r.x, r.y])
-	res.select(list.find(current))
-	res.disabled = p.window_mode != "windowed"
-	var vs: OptionButton = _controls["vsync"]
-	if p.vsync == "mailbox" and vs.item_count == 3:
-		vs.add_item("Mailbox")
-	vs.select(["on", "off", "adaptive", "mailbox"].find(p.vsync))
-	var limit: OptionButton = _controls["max_fps"]
-	var custom: SpinBox = _controls["max_fps_custom"]
-	var li: int = DisplaySettings.FRAME_LIMITS.find(p.max_fps)
-	limit.select(li if li >= 0 else limit.item_count - 1)
-	custom.visible = li < 0
-	if li < 0:
-		custom.value = p.max_fps
-	(_controls["show_fps"] as CheckBox).button_pressed = p.show_fps
-	(_controls["render_scale"] as HSlider).value = p.render_scale * 100.0
-	(_controls["render_scale_text"] as Label).text = "%d%%" % roundi(p.render_scale * 100.0)
-	var method := DisplaySettings.renderer()
-	var available: Array = DisplaySettings.scalers_for(method)
-	var sc: OptionButton = _controls["scaler"]
-	for i in DisplaySettings.SCALERS.size():
-		sc.set_item_disabled(i, not available.has(DisplaySettings.SCALERS[i]))
-	sc.select(DisplaySettings.SCALERS.find(p.scaler))
-	var lines := PackedStringArray()
-	lines.append("Renderer: %s (%s). FSR 3 and DLSS: later." % [RENDERER_LABELS.get(method, method), ", ".join(available.map(func(x): return SCALER_LABELS[x]))])
-	if p.window_mode != "windowed":
-		lines.append("Full screen uses the monitor's own resolution; lower the render scale for fewer pixels.")
-	elif p.render_scale >= 0.999 and p.scaler != "fsr2":
-		lines.append("At 100% the scaler does nothing (FSR 2 still smooths edges).")
-	(_controls["note"] as Label).text = "\n".join(lines)
-	_syncing = false
+			if value >= 0 and value < DisplaySettings.SCALERS.size():
+				set_value("scaler", DisplaySettings.SCALERS[value])
+		"ScrollFactor":
+			set_extra(key, str(maxi(value, 1))) # retail's Save writes the slider, at least 1 (RW 0x91FE9E)
+		"OpenBFMEMasterVolume":
+			set_extra(key, str(value))
+		_:
+			var r = _rows.get(key)
+			if r == null:
+				printerr("GAME OPTIONS the page sent a value for '%s', which the %s tab does not show" % [key, _tab])
+				return
+			if r.kind == "check":
+				set_extra(key, "yes" if value != 0 else "no")
+			elif r.has("values") and value >= 0 and value < r.values.size():
+				set_extra(key, str(r.values[value]))

@@ -58,89 +58,92 @@ func run(p_game: Node, p_shots: String) -> int:
 	await game._step(120)
 	var options_level: int = shell.shell_top_level()
 	var options0 := widget_state(options_level)
-	check("the OPENBFME button is shown over Options.apt", screen.entry_visible(), "hidden")
+	check("the OPENBFME button is shown on Options.apt", screen.entry_visible(), "hidden")
 	await shot("opts1-entry")
-	await click_stage(screen.ENTRY_RECT.get_center())
-	check("the OPENBFME button opens the screen", screen.is_open(), "not open")
-	check("the shell takes no input while the screen is up", not shell.is_processing_input(), "the shell still processes input")
+	await click_stage(screen.entry_rect().get_center())
+	check("the OPENBFME button opens the page", screen.is_open(), "not open")
+	check("the page is Options.apt's (its page 3: the shell draws it and takes its clicks)", shell.options_page() == 3, "page %d" % shell.options_page())
 	if not screen.is_open():
 		return finish()
+	await game._step(20)
+	var page0 := widget_state(options_level) # Options.apt's buttons while the page is up (its frames hidden)
 
 	# review r1 (Sol): the screen opens on what the game runs with (tests/opts1_test.gd starts this run with --max-fps=77, a command-line cap the
 	# file does not hold); F11 / Alt+Enter while it is up change the screen's settings only; CANCEL puts back the run's state, not the file's
 	var runtime_cap := Engine.max_fps
 	var file_before := FileAccess.get_file_as_string(game._display_path) if FileAccess.file_exists(game._display_path) else "(none)"
-	check("the screen opens on the cap in effect (%d)" % runtime_cap, screen.pending_value("max_fps") == runtime_cap and (runtime_cap == 0 or (screen.control("max_fps_custom") as SpinBox).visible),
-		"shows %s" % str(screen.pending_value("max_fps")))
-	select("max_fps", DisplaySettings.FRAME_LIMITS.find(120))
-	(screen.control("render_scale") as HSlider).value = 70
+	var limit_row: Dictionary = screen.row("max_fps")
+	var shown_limit: String = str(limit_row.items[limit_row.value]) if limit_row != null else "?"
+	check("the page opens on the cap in effect (%d: '%s')" % [runtime_cap, shown_limit], screen.pending_value("max_fps") == runtime_cap
+		and (runtime_cap == 0 or DisplaySettings.FRAME_LIMITS.has(runtime_cap) or shown_limit.contains("custom")), "shows %s" % str(screen.pending_value("max_fps")))
+	await select("max_fps", DisplaySettings.FRAME_LIMITS.find(120))
+	await select("render_scale", 14) # 70%: the slider's positions are the 5% steps
 	var shown_before: bool = overlay.shown()
 	await key(KEY_F11)
 	await key(KEY_ENTER, true)
 	check("F11 and Alt+Enter over the screen keep its other settings (cap 120, scale 70%)", screen.pending_value("max_fps") == 120 and is_equal_approx(screen.pending_value("render_scale"), 0.7)
 		and Engine.max_fps == 120 and is_equal_approx(root.scaling_3d_scale, 0.7), "pending %s, runtime cap %d scale %.2f" % [JSON.stringify(screen.pending_value("max_fps")), Engine.max_fps, root.scaling_3d_scale])
 	check("F11 and Alt+Enter over the screen change its settings", screen.pending_value("show_fps") == (not shown_before) and screen.pending_value("window_mode") == "borderless"
-		and (screen.control("show_fps") as CheckBox).button_pressed == (not shown_before), "show_fps %s, window_mode %s" % [screen.pending_value("show_fps"), screen.pending_value("window_mode")])
+		and int(screen.row("show_fps").value) == (1 if not shown_before else 0), "show_fps %s, window_mode %s" % [screen.pending_value("show_fps"), screen.pending_value("window_mode")])
 	var file_mid := FileAccess.get_file_as_string(game._display_path) if FileAccess.file_exists(game._display_path) else "(none)"
 	check("the keys over the screen write nothing", file_mid == file_before, file_mid)
-	await click_panel(screen.control("cancel"))
+	await click_bar("cancel")
 	var file_after := FileAccess.get_file_as_string(game._display_path) if FileAccess.file_exists(game._display_path) else "(none)"
 	check("CANCEL puts back the run's cap %d (not the file's), the scale, the mode and the counter" % runtime_cap, Engine.max_fps == runtime_cap and is_equal_approx(root.scaling_3d_scale, 1.0)
 		and overlay.shown() == shown_before and game._display.window_mode == "windowed" and (DisplayServer.get_name() == "headless" or root.mode == Window.MODE_WINDOWED),
 		"cap %d, scale %.2f, counter %s, mode %s / %d" % [Engine.max_fps, root.scaling_3d_scale, overlay.shown(), game._display.window_mode, root.mode])
 	check("CANCEL leaves the file as it was", file_after == file_before, file_after)
-	await click_stage(screen.ENTRY_RECT.get_center())
-	check("the screen opens again", screen.is_open(), "not open")
+	check("CANCEL goes back to Options' basic page", top() == "Options.apt" and shell.options_page() == 1 and screen.entry_visible(), "page %d" % shell.options_page())
+	await click_stage(screen.entry_rect().get_center())
+	check("the page opens again", screen.is_open(), "not open")
 
 	# 3. every setting through the screen's controls (applied at once)
 	var modes: Array = DisplaySettings.WINDOW_MODES
 	for i in modes.size():
-		select("window_mode", i)
+		await select("window_mode", i)
 		await game._step(30)
 		check("window mode %s applied" % modes[i], game._display_screen._pending.window_mode == modes[i] and (DisplayServer.get_name() == "headless" or root.mode == DisplaySettings.window_mode_of(modes[i])),
 			"mode %d" % root.mode)
-		compare("Options.apt after window mode %s" % modes[i], options0, widget_state(options_level))
-	select("window_mode", 0)
+		compare("Options.apt after window mode %s" % modes[i], page0, widget_state(options_level))
+	await select("window_mode", 0)
 	await game._step(20)
-	var res: OptionButton = screen.control("resolution")
-	check("resolution list", res.item_count >= 2 and not res.disabled, "%d items, disabled %s" % [res.item_count, res.disabled])
-	for i in [0, res.item_count - 1]:
-		var text := res.get_item_text(i).replace(" ", "")
-		select("resolution", i)
+	var res: Dictionary = screen.row("resolution")
+	check("resolution list", res.items.size() >= 2 and res.enabled, "%d items, enabled %s" % [res.items.size(), res.enabled])
+	for i in [0, res.items.size() - 1]:
+		var text := String(screen.row("resolution").items[i]).replace(" ", "")
+		await select("resolution", i)
 		await game._step(30)
 		check("resolution %s applied" % text, DisplaySettings.resolution_text(root.size) == text, "the window is %s" % DisplaySettings.resolution_text(root.size))
-		compare("Options.apt after resolution %s" % text, options0, widget_state(options_level))
-	select("resolution", 1)
+		compare("Options.apt after resolution %s" % text, page0, widget_state(options_level))
+	await select("resolution", 1)
 	await game._step(30)
-	select("max_fps", DisplaySettings.FRAME_LIMITS.find(60))
+	await select("max_fps", DisplaySettings.FRAME_LIMITS.find(60))
 	check("frame limit 60", Engine.max_fps == 60, "max_fps %d" % Engine.max_fps)
-	select("max_fps", (screen.control("max_fps") as OptionButton).item_count - 1)
-	(screen.control("max_fps_custom") as SpinBox).value = 90
-	check("custom frame limit 90", Engine.max_fps == 90 and (screen.control("max_fps_custom") as SpinBox).visible, "max_fps %d" % Engine.max_fps)
-	select("vsync", 1)
+	await select("max_fps", DisplaySettings.FRAME_LIMITS.find(144))
+	check("frame limit 144", Engine.max_fps == 144, "max_fps %d" % Engine.max_fps)
+	await select("vsync", 1)
 	check("vsync off chosen", game._display_screen._pending.vsync == "off", game._display_screen._pending.vsync)
-	(screen.control("render_scale") as HSlider).value = 75
+	await select("render_scale", 15)
 	check("render scale 75%", is_equal_approx(root.scaling_3d_scale, 0.75), "scale %.2f" % root.scaling_3d_scale)
 	var method := DisplaySettings.renderer()
 	for i in DisplaySettings.SCALERS.size():
 		var name: String = DisplaySettings.SCALERS[i]
 		if not DisplaySettings.scalers_for(method).has(name):
-			check("scaler %s is disabled on %s" % [name, method], (screen.control("scaler") as OptionButton).is_item_disabled(i), "enabled")
+			check("scaler %s is greyed on %s" % [name, method], not screen.row("scaler").items[i].enabled, "enabled")
 			continue
-		select("scaler", i)
+		await select("scaler", i)
 		await game._step(10)
 		check("scaler %s applied" % name, root.scaling_3d_mode == DisplaySettings.scaling_mode_of(name), "mode %d" % root.scaling_3d_mode)
-	var box: CheckBox = screen.control("show_fps")
-	box.button_pressed = true
+	if int(screen.row("show_fps").value) == 0:
+		await click_row("show_fps") # the retail check box, clicked
 	await game._step(40)
 	check("the counter shows while its box is ticked", overlay.shown() and not overlay.counter_text().is_empty(), overlay.counter_text())
 	await shot("opts1-screen")
-	await click_panel(screen.control("accept"))
-	check("ACCEPT closes the screen", not screen.is_open(), "still open")
-	check("the shell's input is back", shell.is_processing_input(), "still off")
+	await click_bar("accept")
+	check("ACCEPT closes the page, back on Options' basic page", not screen.is_open() and top() == "Options.apt" and shell.options_page() == 1, "open %s page %d" % [screen.is_open(), shell.options_page()])
 	var saved = DisplaySettings.new()
 	saved.load_file(game._display_path)
-	var want := {"window_mode": "windowed", "vsync": "off", "max_fps": 90, "show_fps": true, "render_scale": 0.75,
+	var want := {"window_mode": "windowed", "vsync": "off", "max_fps": 144, "show_fps": true, "render_scale": 0.75,
 		"scaler": DisplaySettings.SCALERS[DisplaySettings.scalers_for(method).size() - 1]}
 	var got: Dictionary = saved.to_dict()
 	var diff := PackedStringArray()
@@ -152,20 +155,22 @@ func run(p_game: Node, p_shots: String) -> int:
 	compare("Options.apt after the screen closed", options0, widget_state(options_level))
 
 	# 4. CANCEL puts back what was in effect
-	await click_stage(screen.ENTRY_RECT.get_center())
-	check("the screen opens again", screen.is_open(), "not open")
-	(screen.control("render_scale") as HSlider).value = 50
-	select("max_fps", 0)
-	await click_panel(screen.control("cancel"))
-	check("CANCEL restores the render scale and the frame limit", not screen.is_open() and is_equal_approx(root.scaling_3d_scale, 0.75) and Engine.max_fps == 90,
+	await click_stage(screen.entry_rect().get_center())
+	check("the page opens again", screen.is_open(), "not open")
+	await select("render_scale", 10)
+	await select("max_fps", 0)
+	await click_bar("cancel")
+	check("CANCEL restores the render scale and the frame limit", not screen.is_open() and is_equal_approx(root.scaling_3d_scale, 0.75) and Engine.max_fps == 144,
 		"scale %.2f, max_fps %d" % [root.scaling_3d_scale, Engine.max_fps])
 	# RESET TO DEFAULTS, then Esc: nothing kept
-	await click_stage(screen.ENTRY_RECT.get_center())
-	await click_panel(screen.control("defaults"))
-	check("RESET TO DEFAULTS applies the defaults", is_equal_approx(root.scaling_3d_scale, 1.0) and Engine.max_fps == 0, "scale %.2f, max_fps %d" % [root.scaling_3d_scale, Engine.max_fps])
+	await click_stage(screen.entry_rect().get_center())
+	await click_bar("reset")
+	check("RESET TO DEFAULTS applies the defaults (the page stays up)", is_equal_approx(root.scaling_3d_scale, 1.0) and Engine.max_fps == 0 and screen.is_open(),
+		"scale %.2f, max_fps %d" % [root.scaling_3d_scale, Engine.max_fps])
 	await key(KEY_ESCAPE)
-	check("Esc closes the screen and restores", not screen.is_open() and Engine.max_fps == 90, "open %s, max_fps %d" % [screen.is_open(), Engine.max_fps])
-	check("Esc stayed with the screen (Options.apt is still up)", top() == "Options.apt", str(shell.shell_stack()))
+	await game._step(10)
+	check("Esc closes the page and restores", not screen.is_open() and Engine.max_fps == 144, "open %s, max_fps %d" % [screen.is_open(), Engine.max_fps])
+	check("Esc stayed with the page (Options.apt is still up, on its basic page)", top() == "Options.apt" and shell.options_page() == 1, str(shell.shell_stack()))
 
 	# 5. the keys (not retail; free in RotWK's CommandMap): F11 the counter, Alt+Enter full screen. Outside the screen a key writes its own key only:
 	# a value another program (the launcher) wrote meanwhile stays, and the run's cap is not touched
@@ -186,8 +191,8 @@ func run(p_game: Node, p_shots: String) -> int:
 	check("Alt+Enter comes back to a window", game._display.window_mode == "windowed", game._display.window_mode)
 	var after_keys = DisplaySettings.new()
 	after_keys.load_file(game._display_path)
-	check("the keys wrote show_fps and window_mode only (render_scale 0.55 of another writer kept, cap 90 kept)", after_keys.errors.is_empty()
-		and is_equal_approx(after_keys.render_scale, 0.55) and after_keys.show_fps and after_keys.window_mode == "windowed" and after_keys.max_fps == 90 and Engine.max_fps == 90
+	check("the keys wrote show_fps and window_mode only (render_scale 0.55 of another writer kept, cap 144 kept)", after_keys.errors.is_empty()
+		and is_equal_approx(after_keys.render_scale, 0.55) and after_keys.show_fps and after_keys.window_mode == "windowed" and after_keys.max_fps == 144 and Engine.max_fps == 144
 		and is_equal_approx(root.scaling_3d_scale, 0.75), "%s, cap %d, scale %.2f" % [JSON.stringify(after_keys.to_dict()), Engine.max_fps, root.scaling_3d_scale])
 
 	# 6. back to the main menu: the same buttons as before any of this
@@ -233,36 +238,40 @@ func run_game(p_game: Node, p_shots: String) -> int:
 			break
 		await game._step(10)
 	check("Options.apt over the game shows the OPENBFME button", top() == "Options.apt" and screen.entry_visible(), str(shell.shell_stack()))
+	# the free corner above CANCEL: under the settings frames (they end at stage y 610), over the bottom bar (from y 708), left of the middle
+	var e: Rect2 = screen.entry_rect()
+	check("the button sits in the free corner above CANCEL (stage %s)" % e, e.position.x >= 40 and e.end.x <= 260 and e.position.y >= 612 and e.end.y <= 708, str(e))
 	await game._step(90)
 	var options_level: int = shell.shell_top_level()
 	var options0 := widget_state(options_level)
-	await click_stage(screen.ENTRY_RECT.get_center())
-	check("the screen opens over the game", screen.is_open(), "not open")
-	check("the HUD and the shell take no input while it is up", not hud.is_processing_input() and not shell.is_processing_input(),
-		"hud %s, shell %s" % [hud.is_processing_input(), shell.is_processing_input()])
+	await click_stage(screen.entry_rect().get_center())
+	check("the page opens over the game", screen.is_open() and shell.options_page() == 3, "not open")
+	await game._step(20)
+	var page0 := widget_state(options_level)
 	await shot("opts1-game-screen")
-	var res: OptionButton = screen.control("resolution")
+	var res: Dictionary = screen.row("resolution")
 	var target := -1
-	for i in res.item_count:
-		if res.get_item_text(i).replace(" ", "") == "1024x768":
+	for i in res.items.size():
+		if String(res.items[i]).replace(" ", "") == "1024x768":
 			target = i
 	if target >= 0:
-		select("resolution", target)
+		await select("resolution", target)
 		await game._step(40)
 		var a: Vector2 = shell.stage_to_window(Vector2.ZERO)
-		var b: Vector2 = shell.stage_to_window(screen.STAGE)
+		var b: Vector2 = shell.stage_to_window(Vector2(1024, 768))
 		var w := Vector2(root.size)
 		check("a resolution change keeps the menus' 1024 x 768 stage on the window", a.distance_to(Vector2.ZERO) < 1.5 and b.distance_to(w) < 1.5,
 			"stage %s .. %s on a %s window" % [a, b, w])
 		check("the 3D view follows the window", Vector2(game.get_viewport().get_visible_rect().size) == w, str(game.get_viewport().get_visible_rect().size))
-	select("window_mode", 1)
+	await select("window_mode", 1)
 	await game._step(30)
-	select("window_mode", 0)
+	await select("window_mode", 0)
 	await game._step(30)
-	compare("Options.apt over the game after the window changes", options0, widget_state(options_level))
+	compare("Options.apt over the game after the window changes", page0, widget_state(options_level))
 	await key(KEY_ESCAPE)
-	check("Esc closes the screen only", not screen.is_open() and top() == "Options.apt", "open %s, stack %s" % [screen.is_open(), shell.shell_stack()])
-	check("the HUD's input is back (as it was)", hud.is_processing_input() and shell.is_processing_input(), "hud %s, shell %s" % [hud.is_processing_input(), shell.is_processing_input()])
+	await game._step(10)
+	check("Esc closes the page only", not screen.is_open() and top() == "Options.apt", "open %s, stack %s" % [screen.is_open(), shell.shell_stack()])
+	compare("Options.apt's basic page again", options0, widget_state(options_level))
 	await key(KEY_ESCAPE)
 	await game._wait_seconds(2.0)
 	check("Esc then closes Options (the quit menu stays)", top() != "Options.apt" and not screen.entry_visible(), str(shell.shell_stack()))
@@ -320,10 +329,12 @@ func compare(name: String, before: Dictionary, after: Dictionary) -> void:
 	check(name + " (%d buttons the same)" % before.size(), diff.is_empty(), "; ".join(diff.slice(0, 6)))
 
 
-func select(key: String, index: int) -> void:
-	var o: OptionButton = screen.control(key)
-	o.select(index)
-	o.item_selected.emit(index)
+## lane OPTS-3: a value through the page's gadget, the messages a click on it sends (scripts/opts2_check.gd select)
+func select(key: String, value: int) -> void:
+	var r: Dictionary = shell.openbfme_page_choose(key, value)
+	if not r.get("ok", false):
+		check("choose %s = %d" % [key, value], false, str(r.get("error", "?")))
+	await game._step(4)
 
 
 func click_stage(p: Vector2) -> void:
@@ -333,10 +344,28 @@ func click_stage(p: Vector2) -> void:
 	await game._step(2)
 	game._mouse_event(p, false, true)
 	await game._step(6)
+	# lane OPTS-3: the pointer leaves for a free spot under the title (Options.apt's own buttons play their hover animation while it is over them:
+	# the button states compared below are the ones without a pointer)
+	game._mouse_event(Vector2(512, 100), false, false)
+	await game._step(40)
 
 
-func click_panel(c: Control) -> void:
-	await click_stage(screen.PANEL_RECT.position + c.position + c.size / 2)
+func click_row(key: String) -> void:
+	var rows: Dictionary = shell.openbfme_page_state().get("rows", {})
+	if not rows.has(key) or not rows[key].has("rect"):
+		check("the row %s is on the page" % key, false, str(rows.keys()))
+		return
+	await click_stage((rows[key].rect as Rect2).get_center())
+
+
+## Options.apt's own bottom bar (cancel, reset, accept), the page's while it is up
+func click_bar(which: String) -> void:
+	var buttons: Dictionary = shell.openbfme_page_state().get("buttons", {})
+	if not buttons.has(which):
+		check("the bottom bar's %s is on screen" % which, false, str(buttons.keys()))
+		return
+	await click_stage((buttons[which] as Rect2).get_center())
+	await game._step(10)
 
 
 func key(code: Key, alt := false) -> void:

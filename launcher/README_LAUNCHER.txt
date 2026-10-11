@@ -7,11 +7,14 @@ Witch-king 2.01. OpenBFME runs on YOUR OWN copies of The Rise of the Witch-king 
 the first time, it asks where they are.
 
 Start it: @START@
-Press Play to start the newest installed version. At every start the launcher looks for a newer version of your
-channel (Stable, or Preview for test builds; until you pick one, a preview launcher uses Preview), downloads it, checks it and
-installs it. Windows SmartScreen may warn that the launcher is unrecognised: it is not code-signed yet; choose "More info", then
-"Run anyway". The gear opens Settings: the channel, the game folders, the free camera, the installed versions and older
-releases, the log folder.
+Press Play to start the newest installed version. At every start (and every hour while it stays open) the launcher looks
+for a newer version of your channel (Stable, or Alpha for the alpha test builds; until you pick one, an alpha or preview
+launcher uses Alpha), downloads it in the background, checks it and installs it; Play keeps working meanwhile and the new
+version starts from your next Play on (turn off "Update automatically in the background" in Settings to update only when you press Update). Windows
+SmartScreen may warn that the launcher is unrecognised: it is not code-signed yet; choose "More info", then "Run anyway".
+The menu on the left: Play, News (release notes), Multiplayer, Mods, Game files (your game folders, the games download) and
+Settings (the channel, the free camera, updating by itself; About & logs: the installed versions and older releases, the log
+folder). The launcher's fonts (Cinzel, Cormorant Garamond, Inter) are under the SIL Open Font License 1.1.
 
 What it contacts
 ----------------
@@ -20,6 +23,7 @@ Only GitHub, over HTTPS with certificate checks:
     unchanged answers are cached and do not count against GitHub's limit of 60 requests per hour);
   * github.com and *.githubusercontent.com - the release files (the manifest, its signature, the packages).
 It sends a User-Agent naming the launcher, its version and the project's GitHub page. Nothing else: no telemetry, no account, no game data.
+On your own computer it holds a socket on 127.0.0.1 (never used to send anything) so that only one launcher runs at a time.
 Only while a "Download the games" you started runs (the button shows when no game folders are found):
 bfmeladder.com and workshop-files.bfmeladder.com, the servers of the All In One BFME Launcher (the BFME Foundation
 Project and the Patch 2.22 team), for The Rise of the Witch-king 2.01 and The Battle for Middle-earth II 1.06. Every

@@ -319,6 +319,24 @@ void AptGadgetLayer::update(int elapsedMs)
 
 void AptGadgetLayer::buildDrawList(GadgetDrawList &out)
 {
+	if (m_decorator)
+	{
+		// lane OPTS-3: under the gadgets. An image the mapped image collection lacks is reported (unresolvedImages: the renderer's gadget errors)
+		// and not drawn, as the gadgets' own images are (GameWindowManager::winDrawImage)
+		const std::size_t first = out.commands.size();
+		m_decorator(out);
+		for (std::size_t i = first; i < out.commands.size();)
+		{
+			GadgetDrawCommand &c = out.commands[i];
+			if (c.kind == GadgetDrawCommand::Kind::Image && !m_skins.images.findImageByName(c.image))
+			{
+				out.noteUnresolved(c.image);
+				out.commands.erase(out.commands.begin() + (std::ptrdiff_t)i);
+				continue;
+			}
+			++i;
+		}
+	}
 	m_gwm.winRepaint(out);
 }
 
