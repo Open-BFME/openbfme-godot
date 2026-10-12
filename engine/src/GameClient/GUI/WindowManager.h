@@ -288,6 +288,8 @@ public:
 		std::shared_ptr<GameWindow> window; // may be null (a factory that creates no window)
 		bool initPending = false;           // `_Init` not called yet (RW 0x814BEC: read at the component's render, retried until it resolves)
 		bool initNoted = false;             // the unknown-screen-ref note was given
+		std::string windowId;               // lane MENU-1: the record's name (RW 0x814BEC: the clip's `_WindowId`, else its path), what
+		                                    // Enable/DisableComponents match their path against
 	};
 	const std::vector<ComponentRecord> &components() const { return m_componentRecords; }
 	GameWindow *componentWindow(const std::string &instancePath) const;
@@ -326,6 +328,14 @@ public:
 	void postAptKey(int aptKeyCode, bool down);
 	bool postGadgetKey(int dikCode, bool down, int modifiers = 0);
 	bool postTextInput(char16_t ch);
+	// Lane MENU-1: the movies' EnableComponents / DisableComponents (TARGET FACTS, RotWK game.dat, caveat S-001; donor BFME2 decomp
+	// Rva00462710ModeCheckForEach.cpp EnableComponents / DisableComponents, tier A for RW 0x814511 / 0x81456F). With a path every component
+	// record whose window id begins with it (strncmp over the path's length, RW 0x813395) has its window enabled / disabled (winEnable, RW 0x7154B3,
+	// when the state differs); without one the bit 0 of RW 0xDE8A04 is cleared / set, and DisableComponents also takes the focus away
+	// (TheWindowManager slot 0xC4, winSetFocus(NULL)). While the bit is set the window translator gives no input to the windows (RW 0x812C89,
+	// BFME2 decomp WindowXlat.cpp: `if (g_rva00E02FC0Bits ...) return KEEP_MESSAGE`); the movie still sees the pointer.
+	void enableComponents(const std::string &path, bool enable);
+	bool componentInputBlocked() const { return (m_componentBits & 1u) != 0; }
 
 	// ---- tooltips ---------------------------------------------------------------------------------------------
 	// The APT hover path the tooltip logic works on: "<file without .apt>/<clip path below the root>" of the hovered clip, "" if
@@ -424,6 +434,7 @@ private:
 
 	AptGadgetLayer *m_gadgetLayer = nullptr;
 	std::vector<ComponentRecord> m_componentRecords;
+	std::uint32_t m_componentBits = 0; // lane MENU-1: RW 0xDE8A04 (bit 0: DisableComponents() without a path)
 	std::vector<WindowManagerNote> m_notes;
 	std::vector<std::string> m_errors;
 	std::vector<std::string> m_traces;

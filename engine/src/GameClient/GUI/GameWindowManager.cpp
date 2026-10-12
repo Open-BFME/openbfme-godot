@@ -112,7 +112,9 @@ UnicodeString GameWindowManager::winTextLabelToText(const std::string &label)
 
 GameWindow *GameWindowManager::winCreate(GameWindow *parent, std::uint32_t status, int x, int y, int width, int height, GameWinSystemFunc system, WinInstanceData *instData)
 {
-	if ((int)m_owned.size() >= WIN_MAX_WINDOWS)
+	// lane MENU-1: a window waiting in the destroy list is gone already (ZH winDestroy unlinks it; processDestroyList only frees it): it does not take a
+	// place. Skirmish.apt's game setup placed again in one frame (back from the profile page) made its ~400 windows while the old ones waited there
+	if ((int)(m_owned.size() - m_destroyList.size()) >= WIN_MAX_WINDOWS)
 	{
 		note("winCreate: the window pool is full (WIN_MAX_WINDOWS)");
 		return nullptr;
@@ -1048,6 +1050,7 @@ void GameWindowManager::winRepaint(GadgetDrawList &out)
 		next = window->m_prev;
 		if (BitTest(window->m_status, WIN_STATUS_BELOW))
 		{
+			m_drawRoot = window;
 			drawWindow(window);
 		}
 	}
@@ -1056,6 +1059,7 @@ void GameWindowManager::winRepaint(GadgetDrawList &out)
 		next = window->m_prev;
 		if (!BitTest(window->m_status, WIN_STATUS_ABOVE | WIN_STATUS_BELOW))
 		{
+			m_drawRoot = window;
 			drawWindow(window);
 		}
 	}
@@ -1064,10 +1068,12 @@ void GameWindowManager::winRepaint(GadgetDrawList &out)
 		next = window->m_prev;
 		if (BitTest(window->m_status, WIN_STATUS_ABOVE))
 		{
+			m_drawRoot = window;
 			drawWindow(window);
 		}
 	}
 	m_drawList = nullptr;
+	m_drawRoot = nullptr;
 }
 
 namespace
@@ -1118,6 +1124,7 @@ void GameWindowManager::winDrawImage(const std::string &image, int startX, int s
 	GadgetDrawCommand c;
 	c.kind = GadgetDrawCommand::Kind::Image;
 	c.window = drawerName(m_drawWindow);
+	c.root = m_drawRoot;
 	c.x0 = startX;
 	c.y0 = startY;
 	c.x1 = endX;
@@ -1136,6 +1143,7 @@ void GameWindowManager::winFillRect(Color color, float width, int startX, int st
 	GadgetDrawCommand c;
 	c.kind = GadgetDrawCommand::Kind::FillRect;
 	c.window = drawerName(m_drawWindow);
+	c.root = m_drawRoot;
 	c.x0 = startX;
 	c.y0 = startY;
 	c.x1 = endX;
@@ -1154,6 +1162,7 @@ void GameWindowManager::winOpenRect(Color color, float width, int startX, int st
 	GadgetDrawCommand c;
 	c.kind = GadgetDrawCommand::Kind::OpenRect;
 	c.window = drawerName(m_drawWindow);
+	c.root = m_drawRoot;
 	c.x0 = startX;
 	c.y0 = startY;
 	c.x1 = endX;
@@ -1172,6 +1181,7 @@ void GameWindowManager::winDrawLine(Color color, float width, int startX, int st
 	GadgetDrawCommand c;
 	c.kind = GadgetDrawCommand::Kind::Line;
 	c.window = drawerName(m_drawWindow);
+	c.root = m_drawRoot;
 	c.x0 = startX;
 	c.y0 = startY;
 	c.x1 = endX;
@@ -1190,6 +1200,7 @@ void GameWindowManager::winDrawText(const UnicodeString &text, GameFont *font, i
 	GadgetDrawCommand c;
 	c.kind = GadgetDrawCommand::Kind::Text;
 	c.window = drawerName(m_drawWindow);
+	c.root = m_drawRoot;
 	c.x0 = x;
 	c.y0 = y;
 	c.color = color;
@@ -1213,6 +1224,7 @@ void GameWindowManager::setClipRegion(const IRegion2D &region)
 	GadgetDrawCommand c;
 	c.kind = GadgetDrawCommand::Kind::ClipBegin;
 	c.window = drawerName(m_drawWindow);
+	c.root = m_drawRoot;
 	c.x0 = region.lo.x;
 	c.y0 = region.lo.y;
 	c.x1 = region.hi.x;
@@ -1229,6 +1241,7 @@ void GameWindowManager::enableClipping(bool on)
 	GadgetDrawCommand c;
 	c.kind = GadgetDrawCommand::Kind::ClipEnd;
 	c.window = drawerName(m_drawWindow);
+	c.root = m_drawRoot;
 	m_drawList->commands.push_back(std::move(c));
 }
 
@@ -1522,6 +1535,13 @@ GameWindow *GameWindowManager::gogoGadgetComboBox(GameWindow *parent, std::uint3
 		BitSet(winInstData.m_style, GWS_MOUSE_TRACK);
 	}
 	comboBoxData->dropDownButton = gogoGadgetPushButton(comboBox, status | WIN_STATUS_ACTIVE | WIN_STATUS_ENABLED, width - buttonWidth, 0, buttonWidth, height, &winInstData, nullptr, true);
+	if (comboBoxData->dropDownButton == nullptr)
+	{
+		// lane MENU-1: a child the pool could not make (WIN_MAX_WINDOWS) is an error, not a crash
+		note("gogoGadgetComboBox: the combo box's dropDownButton could not be created");
+		winDestroy(comboBox);
+		return nullptr;
+	}
 	comboBoxData->dropDownButton->winSetTooltipFunc(comboBox->winGetTooltipFunc());
 	comboBoxData->dropDownButton->winSetTooltip(instData->getTooltipText());
 	comboBoxData->dropDownButton->setTooltipDelay(comboBox->getTooltipDelay());
@@ -1546,6 +1566,13 @@ GameWindow *GameWindowManager::gogoGadgetComboBox(GameWindow *parent, std::uint3
 		entryData.drawTextFromStart = true;
 	}
 	comboBoxData->editBox = gogoGadgetTextEntry(comboBox, statusTextEntry, 0, 0, width - buttonWidth, height, &winInstData, &entryData, winInstData.m_font, false);
+	if (comboBoxData->editBox == nullptr)
+	{
+		// lane MENU-1: a child the pool could not make (WIN_MAX_WINDOWS) is an error, not a crash
+		note("gogoGadgetComboBox: the combo box's editBox could not be created");
+		winDestroy(comboBox);
+		return nullptr;
+	}
 	comboBoxData->editBox->winSetTooltipFunc(comboBox->winGetTooltipFunc());
 	comboBoxData->editBox->winSetTooltip(instData->getTooltipText());
 	comboBoxData->editBox->setTooltipDelay(comboBox->getTooltipDelay());
@@ -1563,6 +1590,13 @@ GameWindow *GameWindowManager::gogoGadgetComboBox(GameWindow *parent, std::uint3
 	status &= ~(WIN_STATUS_IMAGE);
 	ListboxData listTemplate = comboBoxData->listboxTemplate;
 	comboBoxData->listBox = gogoGadgetListBox(comboBox, status | WIN_STATUS_ABOVE | WIN_STATUS_ONE_LINE, 0, height, width, height, &winInstData, &listTemplate, winInstData.m_font, false);
+	if (comboBoxData->listBox == nullptr)
+	{
+		// lane MENU-1: a child the pool could not make (WIN_MAX_WINDOWS) is an error, not a crash
+		note("gogoGadgetComboBox: the combo box's listBox could not be created");
+		winDestroy(comboBox);
+		return nullptr;
+	}
 	comboBoxData->listBox->winHide(true);
 	comboBoxData->listBox->winSetTooltipFunc(comboBox->winGetTooltipFunc());
 	comboBoxData->listBox->winSetTooltip(instData->getTooltipText());

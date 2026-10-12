@@ -575,3 +575,33 @@ TEST_CASE("script3 r2 TEAM_ATTACK_NAMED (RW 0x7C4668): the player-command pass i
 	CHECK_FALSE(ScriptActions::teamAttackNamedAsPlayerFirst(act("TEAM_ATTACK_NAMED", { sp(3, "Some Team"), sp(14, "Aragorn 2") })));
 	CHECK_FALSE(ScriptActions::teamAttackNamedAsPlayerFirst(act("TEAM_ATTACK_NAMED", { sp(3, "aragorn 2"), sp(14, "x") }))); // strcmp: case matters
 }
+
+TEST_CASE("decomp2 PLAYER_HUNT (RW 0x7BBCF9 -> Player::setUnitsShouldHunt RW 0x6AF4B1): the player's flag (+ 0x35D) is set and every unit of the player hunts; "
+		  "with the flag the hunt does not end when nothing is left (RW 0x74820A)")
+{
+	combattest::CombatWorld w;
+	startEngine(*w.logic);
+	Object *h1 = w.unit("Swordsman", 'A', 150.0f, 150.0f);
+	Object *h2 = w.unit("Swordsman", 'A', 170.0f, 150.0f);
+	Object *far1 = w.unit("Dummy", 'B', 700.0f, 700.0f);
+	w.frames(3);
+	Player *alice = w.playerOf('A');
+	REQUIRE(alice);
+	CHECK_FALSE(alice->unitsShouldHunt());
+	const std::uint32_t before = w.logic->computeStateHash();
+	run(w.logic->scriptEngine(), act("PLAYER_HUNT", { sp(11, "Alice") }));
+	CHECK(alice->unitsShouldHunt());
+	CHECK_FALSE(w.playerOf('B')->unitsShouldHunt());
+	CHECK(w.logic->computeStateHash() != before);
+	CHECK(h1->getAIUpdateInterface()->currentStateId() == (unsigned)AI_HUNT);
+	CHECK(h2->getAIUpdateInterface()->currentStateId() == (unsigned)AI_HUNT);
+	const bool targetHunts = far1->getAIUpdateInterface() && far1->getAIUpdateInterface()->currentStateId() == (unsigned)AI_HUNT;
+	CHECK_FALSE(targetHunts);
+	const ObjectID id1 = far1->getID();
+	const int ran = w.runUntil([&] { return !w.byId(id1); }, 3000);
+	CHECK(ran < 3000);
+	w.frames(60);
+	// the flag keeps the hunt alive with nothing to hunt (the NAMED_HUNT case above ends in idle)
+	CHECK(h1->getAIUpdateInterface()->currentStateId() == (unsigned)AI_HUNT);
+	CHECK(w.logic->scriptEngine().stats().unportedActions.empty());
+}

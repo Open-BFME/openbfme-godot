@@ -242,3 +242,17 @@ private:
 	Coord3D m_eye{ 0, -400, 300 }, m_target{ 0, 0, 0 }, m_prevEye{ 0, -400, 300 }, m_prevTarget{ 0, 0, 0 }, m_committedEye{ 0, -400, 300 }, m_committedTarget{ 0, 0, 0 };
 	unsigned long long m_frame = 0;
 };
+
+// lane BUILD-5 r3 (moved here from GodotInGameHud.cpp so the tests project through it too): the view the HUD picks, projects and places the placement ghost
+// with: the pose the player SEES, the eye and target mixed between the camera's previous and current client frames by the render frame's fraction, with the
+// displayed viewport and field of view; the camera's own movement (lookAt, the translator) stays on the current client pose.
+class DisplayedCameraView : public PinholeView
+{
+public:
+	TacticalCamera *cam = nullptr;
+	// the displayed pose of a render frame: `alpha` = the fraction of the client frame elapsed (InGameHudNode: clientClock / step)
+	void present(int width, int height, double alpha);
+	Coord3D position() const override { return cam->position(); }
+	void lookAt(const Coord3D &world) override { cam->lookAt(world); }
+};
+

@@ -275,8 +275,19 @@ void AptSkirmish::registerProfileCommands()
 		m_suppressStrategicPromo = true;
 		windows().note("unported-command", "AptSkirmish::SuppressStrategicPromo: remembered for this screen only, no preference is written [S-179]");
 	});
-	registerCommand("AptSkirmish::OnStatsMenu", [this](const std::string &) { windows().note("unported-command", "AptSkirmish::OnStatsMenu: the stats screen (SkirmishBattleHonors) is not ported [S-175]"); });
-	registerCommand("AptSkirmish::OnExitStatsScreen", [this](const std::string &) { windows().note("unported-command", "AptSkirmish::OnExitStatsScreen [S-175]"); });
+	// lane MENU-1: RW 0x9280FD (state 8; the update makes it 9) and RW 0x9281C0 (8 or 9 -> 7). The profile page itself is Skirmish.apt's: its
+	// _open_profile loads Stats.swf into SkirmishStats once _close has closed the game setup (_root[vScreenName]); the page's contents (AptStats'
+	// registrations) are not ported [S-175]
+	registerCommand("AptSkirmish::OnStatsMenu", [this](const std::string &) {
+		m_profileState = kStateStats;
+		windows().note("unported-command", "AptSkirmish::OnStatsMenu: the profile page's statistics (AptStats) are not ported [S-175]");
+	});
+	registerCommand("AptSkirmish::OnExitStatsScreen", [this](const std::string &) {
+		if (m_profileState == kStateStats || m_profileState == kStateStats + 1)
+		{
+			m_profileState = kStateClosed;
+		}
+	});
 	registerCommand("AptSkirmish::OnNewProfileMenu", [this](const std::string &) {
 		++m_newProfileMenuCount;
 		pruneDeadGadgets();
@@ -457,6 +468,9 @@ void AptSkirmish::update()
 			{
 				invokeRoot("ShowAddProfile");
 			}
+			break;
+		case kStateStats:
+			m_profileState = kStateStats + 1; // RotWK 0x928CDB: 8 -> 9
 			break;
 		case kStateStart:
 			// RotWK 0x928D1A: MpGameSetup validation (0x8431B8): ok -> the movie's CloseMain and state 11; refused -> the movie's ButtonReset (the start
@@ -1886,11 +1900,28 @@ bool AptSkirmish::startGame()
 	}
 	// startPressed -> reallyDoStart (ZH SkirmishGameOptionsMenu.cpp:506 / 418).  [S-179] Whether a missing profile blocks the start is not known; it
 	// does not here.
-	std::u16string title, text;
-	if (!m_setup->validateStart(title, text))
+	// lane GAMEMODES-1: RotWK's start check (RW 0x8431B8, SkirmishGameSetup::checkStart). The skirmish owner's vslot 0x44 (RW 0x928482) shows only the lines of
+	// kind 1, as MessageBoxOk(L"", text) (RW 0x84ED5D); "Entering sandbox mode..." (kind 0) and the lines of kind 2 show nothing in a skirmish
+	const SkirmishGameSetup::StartCheck check = m_setup->checkStart();
+	for (const std::string &stop : check.stops)
 	{
-		m_env.newGame->startRefused(title, text);
+		windows().note("unported", stop);
+	}
+	for (const SkirmishGameSetup::StartCheck::Line &line : check.lines)
+	{
+		if (line.kind == 1)
+		{
+			m_env.newGame->startRefused(std::u16string(), line.text);
+		}
+	}
+	if (!check.ok)
+	{
+		windows().note("start-refused", "AptSkirmish::StartGame: " + (check.refusalLabel.empty() ? std::string("the map gives no player count (RW 0x843263)") : check.refusalLabel));
 		return false;
+	}
+	if (check.sandbox)
+	{
+		windows().note("sandbox", "AptSkirmish::StartGame: one team: a sandbox game (GUI:SandboxMode, RW 0x8436D8; the skirmish owner shows no kind 0 line)");
 	}
 	const NewGameMessage message = m_setup->makeNewGameMessage();
 	const std::vector<std::string> unresolved = message.game.unresolvedRandomChoices();

@@ -74,7 +74,6 @@ private:
 	bool objectCanAttack(Object &obj);
 	int issueMove(Object *target, const Coord3D *pos, EvaluateType type);
 	void hint(const char *cursor);
-	bool isClick(const ICoord2D &anchor, const ICoord2D &lift, int downMs, int upMs) const;
 	void viewHomeBase();
 	void selectAllUnits();
 	// lane HUD-4 (RotWK's meta handler RW 0x81F8D8): Ctrl+H (SELECT_HERO 0x63), the stance keys (STANCE_AGGRESSIVE / HOLDGROUND / BATTLE 0x93 .. 0x95) and Space
@@ -88,6 +87,7 @@ private:
 	bool m_alternateMouse = false;
 	ICoord2D m_rightAnchor{}, m_rightLift{};
 	int m_rightDown = 0, m_rightUp = 0;
+	bool m_rightDragged = false; // lane BUILD-5: RotWK CommandTranslator + 0x2C
 	std::map<const ThingTemplate *, bool> m_weaponCache;
 	std::map<std::string, unsigned> m_unportedMeta;
 	std::map<std::string, unsigned> m_clickOutcomes;

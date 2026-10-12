@@ -847,3 +847,14 @@ std::vector<std::string> TacticalCamera::acceptanceStops()
 		"draws a window of it around the camera: GameData DrawEntireTerrain No) without model LOD switching (S-3402): RotWK has no picture from that height to compare with",
 	};
 }
+
+void DisplayedCameraView::present(int width, int height, double alpha)
+{
+	// the device's applyCamera (lane SMOOTH-1): the eye and target each mixed in float by alpha
+	const float a = (float)alpha;
+	auto mix = [a](const Coord3D &p, const Coord3D &q) { return Coord3D{ p.x + (q.x - p.x) * a, p.y + (q.y - p.y) * a, p.z + (q.z - p.z) * a }; };
+	setScreen(width, height);
+	setFov(cam->verticalFov());
+	set(mix(cam->previousEye(), cam->eye()), mix(cam->previousTarget(), cam->target()));
+}
+

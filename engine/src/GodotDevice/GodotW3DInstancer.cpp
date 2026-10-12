@@ -130,6 +130,15 @@ void W3DInstancer::_ready()
 	set_process(AutoUpdate);
 }
 
+void W3DInstancer::set_alpha_override(bool enabled)
+{
+	AlphaOverride = enabled;
+	if (Materials)
+	{
+		Materials->Set_Alpha_Override(enabled);
+	}
+}
+
 void W3DInstancer::set_house_colors_enabled(bool enabled)
 {
 	HouseColorEnabled = enabled;
@@ -213,6 +222,7 @@ Dictionary W3DInstancer::setup(const Ref<RetailFileSystem> &fs)
 		Source.reset(new ArchiveW3DFileSource(*fs->archive_fs()));
 		Assets.reset(new WW3DAssetManager(*Source));
 		Materials.reset(new W3DMaterialFactory(*fs->archive_fs()));
+		Materials->Set_Alpha_Override(AlphaOverride); // lane BUILD-5 r3
 		// housecolor.ini: the table only names which textures have a house texture; applying it is stop S-022 (reported per surface).
 		// A missing or malformed file is an error, not an empty table.
 		std::vector<std::uint8_t> hcBytes;

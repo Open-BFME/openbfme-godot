@@ -243,6 +243,12 @@ bool LiveGame::load(const Options &options, std::string *error)
 	}
 	// lane RULES-1: the rules the logic reads later (the "ringheroes" game mode, RW 0x7E9E83) and OpenBFME's Legendary Heroes factor (Object::friend_initObject
 	// scales every hero made from here on, the map's own heroes and the starting bases' included)
+	// lane GAMEMODES-1: TheGameInfo->isSandbox() (vslot 0x50, RW 0x800C8F) for the logic's readers (VictoryConditions RW 0x808C5B / 0x809034): the lobby's
+	// "Entering sandbox mode..." game, every occupied slot on the local slot's team
+	if (options.start)
+	{
+		m_logic->economy().context().sandbox = options.start->message.game.isSandbox(options.start->localSlot);
+	}
 	m_logic->setGameRules(gameRules);
 	m_logic->setLegendaryHeroes(options.start ? options.start->message.game.legendaryHeroes : LegendaryHeroes::kOff);
 	m_logic->economy().initAllCommandPoints();

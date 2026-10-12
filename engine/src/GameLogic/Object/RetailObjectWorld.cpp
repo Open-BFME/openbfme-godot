@@ -9,6 +9,7 @@
 #include "GameLogic/HeroSystem.h"
 #include "GameLogic/Module/AISpecialPowerUpdate.h"
 #include "GameLogic/Module/Mod4Stops.h"
+#include "GameLogic/ActionManager.h"
 #include "GameLogic/Module/SlavedUpdate.h"
 #include "GameLogic/Module/SpawnBehavior.h"
 #include "GameLogic/Module/SpecialAbilityModules.h"
@@ -420,7 +421,11 @@ std::vector<std::string> RetailObjectWorld::acceptanceStops() const
 	{
 		out.push_back(l);
 	}
-	for (const std::string &l : AISpecialPowerUpdate::stopLines()) // MOD-4
+	for (const std::string &l : AISpecialPowerUpdate::stopLines()) // MOD-4, AIPOW-1
+	{
+		out.push_back(l);
+	}
+	for (const std::string &l : ActionManager::stopLines()) // AIPOW-1
 	{
 		out.push_back(l);
 	}

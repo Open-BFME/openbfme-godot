@@ -226,6 +226,11 @@ public:
 	void setOccupantId(ObjectID id) { m_occupantId = id; }
 	// RW 0x79A09D (the plot is taken): an occupant is recorded and it is alive
 	bool plotIsTaken() const;
+	// lane DECOMP-2: RW module + 0x14 as retail writes it: 0 from the constructor (RW 0x797FDD), the castle's keep (castle + 0x38) on every object of the castle's
+	// lists + 0x50 / + 0x5C / + 0x74 at the unpack (RW 0x7990D9 from RW 0x79BF42 .. 0x79BF5A, again with + 0x18 for + 0x50 / + 0x74 at RW 0x79BFC9 / 0x79C040), no other
+	// writer found (S-952: the port's occupantId reads the same field as BUILD-1's plot occupant). Object::updateUpgradeModules adds this keep's upgrades (RW 0x693724)
+	ObjectID keepId() const { return m_keepId; }
+	void setKeepId(ObjectID id) { m_keepId = id; }
 	// lane COMBAT-2: the DAMAGE interface (RW vtable 0xC308BC: onDamage RW 0x79B757, onBodyDamageStateChange RW 0x79A0ED). onDamage (the amount dealt > 0) tells the castle behaviour of the
 	// member the frame it was hit (RW 0x79B374: the castle's alert / crew bookkeeping, a map of frames at castle + 0xA0: not ported, counted); a member that reaches RUBBLE (state 3) sets
 	// its breached flag (module + 0x15) and, when CountsForEvaCastleBreached, records a breach event (CombatState::castleBreaches: the client plays the EVA when the owner is its local player); a state
@@ -240,6 +245,7 @@ private:
 	const CastleMemberBehaviorModuleData *m_data;
 	ObjectID m_castleId = INVALID_ID;
 	ObjectID m_occupantId = INVALID_ID;
+	ObjectID m_keepId = INVALID_ID;
 };
 
 namespace CastleModules

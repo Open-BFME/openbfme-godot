@@ -210,6 +210,10 @@ public:
 	// and +0x5C: the first map plane after the cliff plane, "ImpassabilityToPlayers", and the extra-passability plane).
 	virtual bool impassableToPlayers(float x, float y) const = 0;
 	virtual bool extraPass(float x, float y) const = 0;
+	// lane AIPOW-1: RW W3DTerrainLogic vtable +0x54 (RW 0x4624C3 -> 0x46A992 -> 0x46A3A3): the bit plane at WorldHeightMap + 0x74, the THIRD plane the
+	// blend tile parser (RW 0x4B0A98, the heightmap vtable RW 0xBDF5D0 slot 2) reads after the cliff plane (chunk version 13 and above): MAP-1's
+	// m_planeTaint (OpenSAGE's "Taintability"; the meaning is not identified). Read by the ActionManager's summon and grid tests (RW 0x82E7C4 / 0x82ECBC)
+	virtual bool thirdPlane(float x, float y) const = 0;
 	// TerrainLogic::isUnderwater(x, y, &waterZ, &terrainZ)
 	virtual bool isUnderwater(float x, float y, float *waterZ, float *terrainZ) const = 0;
 	virtual float getGroundHeight(float x, float y) const = 0;

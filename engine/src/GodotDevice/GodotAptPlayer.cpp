@@ -37,9 +37,12 @@
 #include "GameClient/GUI/LoadScreenInfo.h"
 #include "GameClient/GUI/PlayerStatusInfo.h"
 #include "GameClient/GUI/Shell/Shell.h"
+#include "GameClient/GUI/Shell/ShellLayering.h"
+#include "GameClient/GUI/StillImageLoadScreen.h"
 #include "GameClient/GUI/ShellEnvironment.h"
 #include "GameClient/EndGame.h"
 #include "GameClient/GUI/ShellServices.h"
+#include "GameClient/GUI/Skirmish/SkirmishPreferences.h"
 #include "GameClient/GUI/Skirmish/WorldSkirmishSetupSource.h"
 #include "GameClient/GUI/WindowManager.h"
 #include "GameClient/GameText.h"
@@ -58,6 +61,7 @@
 #include "Libraries/Source/Apt/AptLoad.h"
 #include "Libraries/Source/Apt/AptRenderList.h"
 
+#include <godot_cpp/classes/random_number_generator.hpp>
 #include <godot_cpp/classes/project_settings.hpp>
 #include <godot_cpp/classes/os.hpp>
 #include <godot_cpp/classes/font.hpp>
@@ -561,7 +565,7 @@ struct ShellMode
 	ShellNewGameSink sink;
 	LoadScreenInfo loadScreen;
 	ScoreScreenData scoreScreen; // lane END-1
-	MemorySkirmishProfiles profiles; // lane END-1: the profiles of the shell session (a second visit of Skirmish.apt finds them, as retail's saved profiles)
+	std::unique_ptr<SkirmishPreferences> profiles; // lane MENU-1: Skirmish.ini, the profiles a player made (GUI/Skirmish/SkirmishPreferences.h)
 	std::unique_ptr<AptScreen> guiFX; // lane END-1: GuiFX.apt, loaded for the end screen (not on the shell stack)
 	std::unique_ptr<AptDisconnectScreen> disconnect; // lane MP-2: DisconnectScreen.apt while the disconnect screen is shown
 	Array disconnectActions;                         // lane MP-2: the buttons pressed, for take_disconnect_actions
@@ -655,6 +659,14 @@ struct AptMenuPlayer::Impl
 	};
 	std::vector<NativeSlot> nativeSlots;
 	std::vector<NativeSlot> callbackSlots; // lane UI-4: the clips an engine render callback draws (WindowManager::renderCallback)
+	// lane MENU-1: the canvas item at each gadget component's placeholder depth (drawCanvas): drawGadgets puts the window's commands under it, so the
+	// movie's later content (a popup box) covers the gadget as in retail, which draws the window inside the movie's render (RW 0x814BEC -> 0x6C1B52)
+	std::map<const GameWindow *, RID> gadgetAnchors;
+	int unanchoredGadgets = 0; // top-level gadget windows drawn after the movies (no placeholder this frame, an open drop-down list, engine gadgets)
+	// lane MENU-1: the picture loading screen (GameClient/GUI/StillImageLoadScreen.h) while it is up
+	bool stillLoadOn = false;
+	StillImageLoadScreenLayout stillLoad;
+	std::uint64_t stillLoadStartUs = 0;
 	std::uint64_t unchangedFrames = 0;
 	AptStageMapping mapping;
 	Vector2 lastWindow;
@@ -915,6 +927,11 @@ void AptMenuPlayer::_bind_methods()
 	ClassDB::bind_method(D_METHOD("shell_hide_background"), &AptMenuPlayer::shell_hide_background); // lane FB7-1
 	ClassDB::bind_method(D_METHOD("shell_screen_unavailable", "action"), &AptMenuPlayer::shell_screen_unavailable); // lane CAH-2
 	ClassDB::bind_method(D_METHOD("get_backdrop_state"), &AptMenuPlayer::get_backdrop_state); // lane CAMP-2
+	ClassDB::bind_method(D_METHOD("get_layering_report"), &AptMenuPlayer::get_layering_report); // lane MENU-1
+	ClassDB::bind_method(D_METHOD("choose_load_screen", "spec"), &AptMenuPlayer::choose_load_screen); // lane MENU-1
+	ClassDB::bind_method(D_METHOD("show_still_load_screen", "picture"), &AptMenuPlayer::show_still_load_screen); // lane MENU-1
+	ClassDB::bind_method(D_METHOD("hide_still_load_screen"), &AptMenuPlayer::hide_still_load_screen); // lane MENU-1
+	ClassDB::bind_method(D_METHOD("get_still_load_screen"), &AptMenuPlayer::get_still_load_screen); // lane MENU-1
 	ClassDB::bind_method(D_METHOD("shell_levels"), &AptMenuPlayer::shell_levels);             // lane CAMP-2
 	ClassDB::bind_method(D_METHOD("level_drawn", "level"), &AptMenuPlayer::level_drawn);      // lane CAMP-2
 	ClassDB::bind_method(D_METHOD("get_movies"), &AptMenuPlayer::get_movies);                 // lane CAMP-2
@@ -1039,6 +1056,11 @@ void AptMenuPlayer::advanceMovies(double deltaMs)
 		if (!s.drawn)
 		{
 			it = m->movies.erase(it);
+			continue;
+		}
+		if (it->first.rfind("loadscreen:", 0) == 0)
+		{
+			++it; // lane MENU-1: the loading screen's ring follows the wall clock (drawStillLoadScreen): the load runs synchronously
 			continue;
 		}
 		if (s.stream.is_valid() && s.error.empty())
@@ -1208,7 +1230,21 @@ Dictionary AptMenuPlayer::boot_shell(const Ref<RetailFileSystem> &fs, Object *wo
 	sm->environment.loadScreen = &sm->loadScreen;
 	sm->environment.scoreScreen = &sm->scoreScreen; // lane END-1: TimeLine.apt
 	sm->environment.saveLoad = &sm->saveLoad;       // lane MP-2: SaveLoad.apt
-	sm->environment.profiles = &sm->profiles;
+	// lane MENU-1: Skirmish.ini beside Options.ini (config "skirmish_ini" overrides the file: the scripted runs use a file of their own)
+	{
+		std::string skirmishIni = toNative(OS::get_singleton()->get_user_data_dir()) + "/Skirmish.ini";
+		if (config.has("skirmish_ini") && !String(config["skirmish_ini"]).is_empty())
+		{
+			skirmishIni = toNative(String(config["skirmish_ini"]));
+		}
+		sm->profiles = std::make_unique<SkirmishPreferences>(skirmishIni);
+		for (const std::string &e : sm->profiles->errors())
+		{
+			errors.push_back(toGodot(e));
+		}
+		sm->environment.profiles = sm->profiles.get();
+		sm->deviceUnverified.insert(SkirmishPreferences::unverified());
+	}
 	sm->environment.services = &sm->services;
 	// lane UI-2: Options.ini in the user data folder (OptionPreferences); a missing file is no entries (the first run). The soft particle setting
 	// takes effect at once (FX-3's project setting).
@@ -1403,6 +1439,114 @@ void AptMenuPlayer::shell_show_shell_map(bool use)
 		m->dirty = true;
 		m->drawnValid = false; // lane CAMP-2: the backdrop is not in the canvas list: an unchanged list must still be drawn again without it
 	}
+}
+
+Dictionary AptMenuPlayer::get_layering_report()
+{
+	Dictionary d;
+	if (!m_booted || !m->shell || !m->shell->shell)
+	{
+		return d;
+	}
+	AptRenderList rl;
+	m->A()->buildRenderList(rl);
+	const ShellLayeringReport r = checkShellLayering(*m->shell->wm, *m->shell->shell, rl);
+	auto strings = [](const std::vector<std::string> &v) {
+		PackedStringArray a;
+		for (const std::string &s : v)
+		{
+			a.push_back(toGodot(s));
+		}
+		return a;
+	};
+	d["top"] = toGodot(r.topScreen);
+	d["screens"] = strings(r.visibleScreens);
+	d["movies"] = strings(r.visibleMovies);
+	d["overprints"] = strings(r.overprints);
+	d["shown_gadgets"] = r.shownGadgets;
+	d["enabled_gadgets"] = r.enabledGadgets;
+	d["input_blocked"] = r.componentInputBlocked;
+	d["unanchored_gadgets"] = m->unanchoredGadgets;
+	d["problems"] = strings(r.problems);
+	return d;
+}
+
+Dictionary AptMenuPlayer::choose_load_screen(const Dictionary &spec)
+{
+	// lane MENU-1: RW 0x626A87 (GameClient/GUI/StillImageLoadScreen.h); the film still's draw is the client's (Godot's generator, S-3505)
+	Ref<RandomNumberGenerator> rng;
+	rng.instantiate();
+	rng->randomize();
+	const LoadScreenChoice c = chooseLoadScreen((int)(int64_t)spec.get("game_mode", 2), (int)(int64_t)spec.get("screen_kind", 3), (bool)spec.get("loading_save", false),
+		toNative(String(spec.get("picture", ""))), [&](int lo, int hi) { return (int)rng->randi_range(lo, hi); });
+	Dictionary d;
+	d["kind"] = c.kind == LoadScreenKind::StillImage ? "still" : (c.kind == LoadScreenKind::Players ? "players" : "other");
+	d["picture"] = toGodot(c.picture);
+	d["error"] = toGodot(c.error);
+	return d;
+}
+
+Dictionary AptMenuPlayer::show_still_load_screen(const String &picture)
+{
+	Dictionary d;
+	d["ok"] = false;
+	if (!m->shell)
+	{
+		d["error"] = "the shell is not booted";
+		return d;
+	}
+	std::string error;
+	if (!layoutStillImageLoadScreen(m->shell->skins.images, toNative(picture), m->stillLoad, &error))
+	{
+		d["error"] = toGodot(error);
+		m->stillLoadOn = false;
+		return d;
+	}
+	m->shell->deviceUnverified.insert(m->stillLoad.unverified);
+	m->stillLoadOn = true;
+	m->stillLoadStartUs = Time::get_singleton()->get_ticks_usec();
+	m->dirty = true;
+	m->drawnValid = false;
+	d["ok"] = true;
+	return d;
+}
+
+void AptMenuPlayer::hide_still_load_screen()
+{
+	if (m->stillLoadOn)
+	{
+		m->stillLoadOn = false;
+		m->dirty = true;
+		m->drawnValid = false;
+	}
+}
+
+Dictionary AptMenuPlayer::get_still_load_screen() const
+{
+	Dictionary d;
+	d["on"] = m->stillLoadOn;
+	if (m->stillLoadOn)
+	{
+		Array slots;
+		for (const StillImageSlot &sl : m->stillLoad.slots)
+		{
+			if (!sl.on)
+			{
+				continue;
+			}
+			Dictionary e;
+			e["image"] = toGodot(sl.image);
+			e["rect"] = Rect2(sl.x0, sl.y0, sl.x1 - sl.x0, sl.y1 - sl.y0);
+			slots.push_back(e);
+		}
+		d["slots"] = slots;
+		d["movie"] = toGodot(m->stillLoad.movie);
+		d["text_label"] = toGodot(m->stillLoad.textLabel);
+		auto it = m->movies.find("loadscreen:" + m->stillLoad.movie);
+		d["movie_playing"] = it != m->movies.end() && it->second.stream.is_valid() && it->second.error.empty();
+		d["movie_error"] = it != m->movies.end() ? toGodot(it->second.error) : String();
+	}
+	return d;
 }
 
 Dictionary AptMenuPlayer::get_backdrop_state() const
@@ -2015,7 +2159,9 @@ Dictionary AptMenuPlayer::set_load_screen_from_game(const Dictionary &resolved)
 		out["error"] = toGodot(error);
 		return out;
 	}
-	m->shell->loadScreen = makeLoadScreenInfo(message.game, m->shell->setup, m->shell->text.get());
+	ShellMode *sm = m->shell.get();
+	m->shell->loadScreen = makeLoadScreenInfo(message.game, m->shell->setup, m->shell->text.get(),
+		[sm](const std::string &name) { return sm->skins.images.findImageByName(name) != nullptr; });
 	const LoadScreenInfo &info = m->shell->loadScreen;
 	Array cards;
 	for (int i = 0; i < MAX_LOAD_SLOTS; ++i)
@@ -2057,7 +2203,11 @@ Dictionary AptMenuPlayer::lobby_gadget_rect(const String &name)
 	}
 	const std::string n = toNative(name);
 	GameWindow *w = nullptr;
-	if (n.rfind("spot/", 0) == 0)
+	if (n == "profile-entry")
+	{
+		w = screen->profileEntryWindow(); // lane MENU-1: the add-profile box's name entry (Skirmish::CreatePersonaEntry)
+	}
+	else if (n.rfind("spot/", 0) == 0)
 	{
 		const int i = std::atoi(n.c_str() + 5);
 		const std::vector<GameWindow *> &spots = screen->mapStartSpotWindows();
@@ -2377,6 +2527,13 @@ Dictionary AptMenuPlayer::get_shell_report() const
 	{
 		errors.push_back(toGodot("gadget draw: " + e));
 	}
+	if (sm.profiles)
+	{
+		for (const std::string &e : sm.profiles->errors())
+		{
+			errors.push_back(toGodot("profiles: " + e)); // lane MENU-1: Skirmish.ini that could not be read or written
+		}
+	}
 	r["errors"] = errors;
 	PackedStringArray traces; // the movies' ActionTrace output, the last 60 lines (diagnostics)
 	const std::vector<std::string> &all = sm.wm->traces();
@@ -2510,6 +2667,7 @@ void AptMenuPlayer::clearCanvas()
 	m->drawnValid = false;
 	m->nativeSlots.clear();
 	m->callbackSlots.clear();
+	m->gadgetAnchors.clear(); // lane MENU-1
 	m->drawnBackdrop.clear(); // lane CAMP-2
 }
 
@@ -2586,7 +2744,7 @@ void AptMenuPlayer::render(bool force)
 	BuildAptCanvas(rl, in, m->list);
 	std::uint64_t t2 = time->get_ticks_usec();
 	const bool haveGadgets = buildGadgets(m->gadgets);
-	if (m->drawnValid && sameCanvas(m->list, m->drawnList) && (!haveGadgets || sameGadgets(m->gadgets, m->drawnGadgets)))
+	if (!m->stillLoadOn && m->drawnValid && sameCanvas(m->list, m->drawnList) && (!haveGadgets || sameGadgets(m->gadgets, m->drawnGadgets)))
 	{
 		// lane PERF-1 r2: the HUD's canvas list (and in shell mode its gadget list) is the same as the one on screen in most render frames; its items
 		// stay, only the native components are drawn again, each into a new item at its place (what a full redraw does for them)
@@ -2598,6 +2756,7 @@ void AptMenuPlayer::render(bool force)
 	{
 		drawCanvas(m->list);
 		drawGadgets(m->gadgets);
+		drawStillLoadScreen(); // lane MENU-1
 		m->drawnList = m->list;
 		m->drawnGadgets = m->gadgets;
 		m->drawnValid = true;
@@ -2832,6 +2991,19 @@ void AptMenuPlayer::drawCanvas(const AptCanvasList &list)
 
 	m->nativeSlots.clear();
 	m->callbackSlots.clear();
+	m->gadgetAnchors.clear();
+	// lane MENU-1: the gadget window of each component placeholder path (WindowManager's component records)
+	std::map<std::string, const GameWindow *> gadgetOfPath;
+	if (m->shell)
+	{
+		for (const WindowManager::ComponentRecord &rec : m->shell->wm->components())
+		{
+			if (rec.instance && rec.window)
+			{
+				gadgetOfPath[rec.instancePath] = rec.window.get();
+			}
+		}
+	}
 	m->view3d.beginBuild(); // lane UI-2
 	for (size_t opIndex = 0; opIndex < list.ops.size(); ++opIndex)
 	{
@@ -2915,6 +3087,17 @@ void AptMenuPlayer::drawCanvas(const AptCanvasList &list)
 			}
 			case AptCanvasOp::Kind::Placeholder:
 			{
+				if (!gadgetOfPath.empty())
+				{
+					// lane MENU-1: RW 0x814BEC draws a component's window when the movie's render reaches its clip (GameWindowManager::drawWindow,
+					// RW 0x6C1B52): an empty item here, at the clip's depth, is the parent of the window's draw items (drawGadgets)
+					auto g = gadgetOfPath.find(op.path);
+					if (g != gadgetOfPath.end())
+					{
+						m->gadgetAnchors[g->second] = newItem(parents.back());
+						current = RID();
+					}
+				}
 				if (op.nativeTag && op.symbolName == "View3D" && !op.renderObject.empty())
 				{
 					// lane UI-2: RotWK's View3D render component (RW 0x814DDC): the `_RenderObj` W3D model through its CAMERA bone over the clip
@@ -3061,9 +3244,18 @@ void AptMenuPlayer::drawCanvas(const AptCanvasList &list)
 					if (!mapped && op.symbolName == "RenderImage")
 					{
 						// lane FB7-1: a RenderImage clip without `_imageMap` takes the record of its instance name (AptMainMenu's ctor binds "Image" to
-						// LogoWithShadow, RW 0x91CA5C, and MainMenu's `Image` clip has no `_imageMap`)
-						const size_t dot = op.path.find_last_of('.');
-						record = m->shell->wm->aptImage(dot == std::string::npos ? op.path : op.path.substr(dot + 1));
+						// LogoWithShadow, RW 0x91CA5C, and MainMenu's `Image` clip has no `_imageMap`). Lane MENU-1: first the record of its path below
+						// the level's root with '/' (LoadScreen's init names "UIClip/Level/<card>" for the clip UIClip.Level.<card>, RW 0x81CFFA; for
+						// MainMenu's root-level `Image` both are "Image"). INFERENCE (S-3506): the RenderImage callback's name rule was not read
+						const size_t first = op.path.find('.');
+						std::string below = first == std::string::npos ? std::string() : op.path.substr(first + 1);
+						std::replace(below.begin(), below.end(), '.', '/');
+						record = below.empty() ? nullptr : m->shell->wm->aptImage(below);
+						if (!record)
+						{
+							const size_t dot = op.path.find_last_of('.');
+							record = m->shell->wm->aptImage(dot == std::string::npos ? op.path : op.path.substr(dot + 1));
+						}
 					}
 					// lane UI-2: an engine render callback named by the clip's tag (AptMapPreview::Picture, RW 0x9757C0) draws its picture over the clip's
 					// rectangle in opaque white (RW 0x44CF58 with 0xFFFFFFFF): a mapped image, or an image the engine made from a texture file (UV 0..1)
@@ -3328,7 +3520,7 @@ bool AptMenuPlayer::sameGadgets(const GadgetDrawList &a, const GadgetDrawList &b
 	for (size_t i = 0; i < a.commands.size(); ++i)
 	{
 		const GadgetDrawCommand &x = a.commands[i], &y = b.commands[i];
-		if (x.kind != y.kind || x.x0 != y.x0 || x.y0 != y.y0 || x.x1 != y.x1 || x.y1 != y.y1 || x.color != y.color || x.dropColor != y.dropColor ||
+		if (x.kind != y.kind || x.root != y.root || x.x0 != y.x0 || x.y0 != y.y0 || x.x1 != y.x1 || x.y1 != y.y1 || x.color != y.color || x.dropColor != y.dropColor ||
 			x.lineWidth != y.lineWidth || x.wrapWidth != y.wrapWidth || x.wrapCentered != y.wrapCentered || x.image != y.image || x.text != y.text ||
 			x.window != y.window || x.font.name != y.font.name || x.font.pointSize != y.font.pointSize || x.font.bold != y.font.bold || x.font.height != y.font.height)
 		{
@@ -3336,6 +3528,132 @@ bool AptMenuPlayer::sameGadgets(const GadgetDrawList &a, const GadgetDrawList &b
 		}
 	}
 	return true;
+}
+
+// lane MENU-1: the picture loading screen of a campaign mission (RW 0x7583CC, GameClient/GUI/StillImageLoadScreen.h) over everything the shell draws
+// (retail's shell is gone at a game's start): black, the display's image slots in slot order, the "Loading" text and the SmallRing Video
+void AptMenuPlayer::drawStillLoadScreen()
+{
+	if (!m->stillLoadOn || !m->shell)
+	{
+		return;
+	}
+	ShellMode &sm = *m->shell;
+	RenderingServer *rs = RenderingServer::get_singleton();
+	const AptStageMapping &map = m->mapping;
+	auto newItem = [&]() {
+		RID r = rs->canvas_item_create();
+		rs->canvas_item_set_parent(r, get_canvas_item());
+		rs->canvas_item_set_draw_index(r, static_cast<int>(m->items.size()));
+		rs->canvas_item_set_default_texture_filter(r, RenderingServer::CANVAS_ITEM_TEXTURE_FILTER_LINEAR);
+		rs->canvas_item_set_default_texture_repeat(r, RenderingServer::CANVAS_ITEM_TEXTURE_REPEAT_DISABLED);
+		m->items.push_back(r);
+		return r;
+	};
+	// screen fractions over the 1024 x 768 stage (S-3505)
+	auto toWindow = [&](float fx, float fy) {
+		float wx, wy;
+		map.stageToWindow(fx * map.stageW, fy * map.stageH, wx, wy);
+		return Vector2(wx, wy);
+	};
+	RID item = newItem();
+	rs->canvas_item_add_rect(item, Rect2(Vector2(0, 0), Vector2(map.windowW, map.windowH)), Color(0, 0, 0, 1));
+	for (const StillImageSlot &slot : m->stillLoad.slots)
+	{
+		if (!slot.on)
+		{
+			continue;
+		}
+		const ::Image *img = sm.skins.images.findImageByName(slot.image);
+		if (!img)
+		{
+			sm.gadgetErrors.insert("load screen image '" + slot.image + "' is not in the mapped image collection");
+			continue;
+		}
+		Ref<ImageTexture> texture = m->imageTexture(sm, img, slot.image);
+		if (texture.is_null())
+		{
+			continue;
+		}
+		const Vector2 a = toWindow(slot.x0, slot.y0), b = toWindow(slot.x1, slot.y1);
+		addTextureUV(rs, item, Rect2(a, b - a), texture, img->uvLo, img->uvHi, Color(1, 1, 1, 1));
+	}
+	// the ring: the Video SmallRing, looping (advanceMovies keeps a drawn slot going)
+	Impl::MovieSlot &ring = m->movies["loadscreen:" + m->stillLoad.movie];
+	ring.drawn = true;
+	if (ring.stream.is_null() && ring.error.empty())
+	{
+		ring.title = m->stillLoad.movie;
+		ring.loop = true;
+		GameWorld *world = Object::cast_to<GameWorld>(ObjectDB::get_instance(m->worldId));
+		Dictionary info = world ? world->get_movie(toGodot(ring.title)) : Dictionary();
+		if (!(bool)info.get("ok", false))
+		{
+			ring.error = toNative(String(info.get("error", "no GameWorld")));
+		}
+		else
+		{
+			ring.stream.instantiate();
+			Dictionary opened = ring.stream->open(String(info.get("full_path", "")));
+			if (!(bool)opened.get("ok", false))
+			{
+				ring.error = toNative(String(opened.get("error", "?")));
+				ring.stream.unref();
+			}
+			else
+			{
+				ring.durationMs = (double)opened.get("duration_ms", 0.0);
+				ring.fps = (double)opened.get("fps", 30.0);
+				ring.stream->advance_to(0);
+			}
+		}
+		if (!ring.error.empty())
+		{
+			m->movieErrors.insert("load screen " + ring.title + ": " + ring.error);
+		}
+	}
+	if (ring.stream.is_valid() && ring.error.empty())
+	{
+		// the frame of the time since the screen came up, looping
+		const double ms = (double)(Time::get_singleton()->get_ticks_usec() - m->stillLoadStartUs) / 1000.0;
+		const double inLoop = ring.durationMs > 1.0 ? std::fmod(ms, ring.durationMs) : 0.0;
+		const int64_t target = std::min<int64_t>((int64_t)(inLoop * ring.fps / 1000.0), ring.stream->get_frame_count() - 1);
+		if (target < ring.stream->get_frame())
+		{
+			ring.stream->restart();
+		}
+		if (target > ring.stream->get_frame() && !ring.stream->advance_to(target))
+		{
+			ring.error = toNative(ring.stream->get_error());
+			m->movieErrors.insert("load screen " + ring.title + ": " + ring.error);
+		}
+	}
+	if (ring.stream.is_valid())
+	{
+		const float *r = m->stillLoad.movieRect;
+		const Vector2 a = toWindow(r[0], r[1]), b = toWindow(r[2], r[3]);
+		rs->canvas_item_add_texture_rect(newItem(), Rect2(a, b - a), ring.stream->get_texture()->get_rid());
+	}
+	// "Loading": GUI:Loading in SachaWynter 18, centred on 0.5, 0.03125 (INFERENCE S-3505: centred on x, the top at y)
+	std::u16string label;
+	if (!sm.text || !sm.text->fetch(m->stillLoad.textLabel, label))
+	{
+		sm.gadgetErrors.insert("load screen text: no game text " + m->stillLoad.textLabel);
+		return;
+	}
+	float drawSize = 0;
+	Ref<Font> font = m->fontFor(m->stillLoad.textFont, (float)m->stillLoad.textSize, &drawSize);
+	if (font.is_null())
+	{
+		return;
+	}
+	const int px = std::max(1, (int)std::lround(drawSize * map.uniformScale()));
+	const String text = toGodot(u16ToUtf8(label));
+	const Vector2 size = font->get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, px);
+	const Vector2 at = toWindow(m->stillLoad.textX, m->stillLoad.textY);
+	const unsigned int c = m->stillLoad.textColor;
+	font->draw_string(newItem(), Vector2(at.x - size.x * 0.5f, at.y + font->get_ascent(px)), text, HORIZONTAL_ALIGNMENT_LEFT, -1, px,
+		Color(((c >> 16) & 0xFF) / 255.0f, ((c >> 8) & 0xFF) / 255.0f, (c & 0xFF) / 255.0f, ((c >> 24) & 0xFF) / 255.0f));
 }
 
 void AptMenuPlayer::drawGadgets(const GadgetDrawList &commands)
@@ -3355,6 +3673,13 @@ void AptMenuPlayer::drawGadgets(const GadgetDrawList &commands)
 	std::vector<RID> parents{ get_canvas_item() };
 	bool clipOpen = false; // a ClipBegin without its ClipEnd yet
 	RID current;
+	// lane MENU-1: each top-level window's commands go under its placeholder's anchor (drawCanvas); the open drop-down list (the lone window, ZH
+	// GadgetComboBox) and windows without a placeholder this frame are drawn after the movies. INFERENCE (S-3503): retail's drop-down list of a lobby
+	// combo over the rows below it was not read; it is kept on top so the rows drawn later do not cover it
+	const GameWindow *lone = sm.layer->gadgets().winGetLoneWindow();
+	const GameWindow *currentRoot = nullptr;
+	bool firstCommand = true;
+	m->unanchoredGadgets = 0;
 	auto newItem = [&](RID parent) {
 		RID r = rs->canvas_item_create();
 		rs->canvas_item_set_parent(r, parent);
@@ -3380,6 +3705,23 @@ void AptMenuPlayer::drawGadgets(const GadgetDrawList &commands)
 
 	for (const GadgetDrawCommand &c : commands.commands)
 	{
+		if (firstCommand || c.root != currentRoot)
+		{
+			firstCommand = false;
+			currentRoot = c.root;
+			auto anchor = c.root && c.root != lone ? m->gadgetAnchors.find(c.root) : m->gadgetAnchors.end();
+			if (c.root && c.root == lone)
+			{
+				sm.deviceUnverified.insert("[S-3503] an open drop-down list is drawn over the movies, not at its combo box's depth (retail's draw of the open list was not read)");
+			}
+			parents.assign(1, anchor != m->gadgetAnchors.end() ? anchor->second : get_canvas_item());
+			if (anchor == m->gadgetAnchors.end())
+			{
+				m->unanchoredGadgets += 1;
+			}
+			clipOpen = false;
+			current = RID();
+		}
 		switch (c.kind)
 		{
 			case GadgetDrawCommand::Kind::Image:

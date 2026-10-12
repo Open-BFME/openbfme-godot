@@ -16,6 +16,7 @@
 #include "Libraries/Source/Apt/AptButtonInst.h"
 #include "Libraries/Source/Apt/AptInput.h"
 
+#include <climits>
 #include <cstdlib>
 
 namespace
@@ -192,8 +193,30 @@ bool InGameHud::hud6OverGui(int x, int y) const
 	return m_radial.hit(x, y) >= 0;
 }
 
+// lane INTEG-6 (S-3507): an Apt button under the pointer (the quit menu's, Options', the Palantir's) takes the pointer before the radial bubbles under it,
+// as it takes it before the world (isOverGui). DONOR: ZH's message stream runs TheWindowManager's WindowTranslator ahead of the in-game UI's translators;
+// MENU-1 draws the bubbles under the menus by the same donor order. INFERENCE: RotWK's radial input order was not read
+bool InGameHud::aptButtonAt(int x, int y)
+{
+	if (!m_booted)
+	{
+		return false;
+	}
+	AptStageMapping m;
+	m.windowW = (float)m_windowW;
+	m.windowH = (float)m_windowH;
+	float sx, sy;
+	m.windowToStage((float)x, (float)y, sx, sy);
+	return m_wm->apt().input().hitTestButtons(sx, sy) != nullptr;
+}
+
 void InGameHud::hud6MouseMove(int x, int y)
 {
+	if (aptButtonAt(x, y))
+	{
+		m_radial.mouseMove(INT_MIN / 2, INT_MIN / 2); // lane INTEG-6: no bubble is hovered under a menu's button (no help box over the pause menu)
+		return;
+	}
 	m_radial.mouseMove(x, y);
 }
 
@@ -203,7 +226,7 @@ bool InGameHud::hud6MouseButton(HudInput::Button button, bool down, int x, int y
 	{
 		return false;
 	}
-	if (down && !hud6OverGui(x, y))
+	if (down && (!hud6OverGui(x, y) || aptButtonAt(x, y))) // lane INTEG-6: a menu's button over a bubble takes the press
 	{
 		return false;
 	}

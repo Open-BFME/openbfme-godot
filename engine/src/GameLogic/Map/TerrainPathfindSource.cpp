@@ -139,6 +139,14 @@ bool TerrainPathfindSource::extraPass(float x, float y) const
 	return m_map.planeBit(m_map.m_planeExtraPass, c.x, c.y);
 }
 
+// RW 0x4624C3 -> 0x46A992 -> 0x46A3A3: the same cell index, the plane at WorldHeightMap + 0x74 (the parser's third plane: MAP-1's m_planeTaint; for the
+// 2.01 maps the parser RW 0x4B0A98 and MAP-1's read the same planes in the same order); false outside the plane (an absent plane is empty)
+bool TerrainPathfindSource::thirdPlane(float x, float y) const
+{
+	const PlaneCell c = planeCell(m_map, x, y);
+	return m_map.planeBit(m_map.m_planeTaint, c.x, c.y);
+}
+
 bool TerrainPathfindSource::isUnderwater(float x, float y, float *waterZ, float *terrainZ) const
 {
 	const float tz = m_terrain.getGroundHeight(x, y);

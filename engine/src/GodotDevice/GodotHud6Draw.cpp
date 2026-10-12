@@ -192,6 +192,12 @@ void Hud6Draw::drawRadial(RID parent)
 		m_radialItem = rs->canvas_item_create();
 		rs->canvas_item_set_parent(m_radialItem, parent);
 		rs->canvas_item_set_draw_index(m_radialItem, -998);
+		// lane MENU-1 (the tester's report: the bubbles over the pause menu): the radial menu is in-game UI, which is drawn before the menus (ZH
+		// W3DDisplay::draw: TheInGameUI->draw(), then TheWindowManager->winRepaint(); RotWK's Apt is the window manager's). The HUD node comes after
+		// the shell in the scene, so its bubbles go one z step below the shell's items: under the quit menu, Options and the Palantir.
+		// INFERENCE (S-3507): RotWK's own order of the radial draw and the Apt render was not read
+		rs->canvas_item_set_z_index(m_grayItem, -1);
+		rs->canvas_item_set_z_index(m_radialItem, -1);
 	}
 	rs->canvas_item_clear(m_grayItem);
 	rs->canvas_item_clear(m_radialItem);
@@ -262,6 +268,7 @@ Dictionary Hud6Draw::state() const
 	radial["centre"] = Vector2((float)r.layout().centerX(), (float)r.layout().centerY());
 	radial["size"] = Vector2((float)r.layout().buttonW(), (float)r.layout().buttonH());
 	radial["hilited"] = r.hilitedSlot();
+	radial["unverified"] = "[S-3507] the bubbles are drawn under the menus (ZH's in-game UI before the window manager); RotWK's own order was not read"; // lane MENU-1
 	radial["presses"] = (int64_t)r.presses();
 	radial["draws"] = (int64_t)m_radialDraws;
 	Array buttons;

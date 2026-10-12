@@ -134,22 +134,27 @@ TEST_CASE("retail shell walk: MainMenu, Skirmish lobby, Options, LoadScreen and 
 	// The receivers the movie's Start route names but Skirmish.apt does not have (retail skips the four calls too):
 	//  - DoButtonNav (run by the StartGame button, `this` = lobby.StartGame) disables `StartGame` and `Back` by bare names: they resolve on
 	//    Skirmish's _root, where neither exists (both buttons live under `lobby`, and `lobby` has no `Back` at all);
-	//  - the _close frame plays `_root[vScreenName]` and `lobby.Back`: vScreenName is undefined on the root timeline, and lobby.Back does not exist.
+	//  - the _close frame plays `lobby.Back`, which does not exist.
 	CHECK(fx.at(lobbyLevel, "StartGame") == nullptr);
 	CHECK(fx.at(lobbyLevel, "Back") == nullptr);
 	CHECK(fx.at(lobbyLevel, "lobby.Back") == nullptr);
 	CHECK(fx.at(lobbyLevel, "lobby.StartGame") != nullptr);
 	{
-		// the _close frame (root frame 14) plays _root[vScreenName]: vScreenName is a local of OpenMainMovie (EA_CallNamedMethod defines it in
-		// the function's scope), so on the root timeline it is undefined and so is the receiver
+		// lane MENU-1: the _close frame (root frame 14) plays _root[vScreenName]: OpenMainMovie sets vScreenName on the root timeline (EA's
+		// CallMethodSetVar runs SetVariable, RW 0xB1D440), so the game setup (OpenPlay) closes with the screen; its last frame calls
+		// _root.OnMainMovieComplete, which unloads it and sets vScreenName to undefined again
 		AptValue screenName;
-		CHECK_FALSE(fx.wm->apt().level(lobbyLevel)->getMember("vScreenName", screenName));
+		CHECK(fx.wm->apt().level(lobbyLevel)->getMember("vScreenName", screenName));
 	}
+	// SkirmishOpenPlay.apt's _close plays bottomNav.StartGame and bottomNav.Back (twice each), which that movie never places
 	expectScreen("Skirmish Start", walk.take(),
 		{ "method 'gotoAndStop' is not a function on a value of type undefined [in _level2.lobby.StartGame]",
 			"method 'gotoAndStop' is not a function on a value of type undefined [in _level2.lobby.StartGame]",
 			"method 'gotoAndPlay' is not a function on a value of type undefined [in _level2]",
-			"method 'gotoAndPlay' is not a function on a value of type undefined [in _level2]" });
+			"method 'gotoAndPlay' is not a function on a value of type undefined [in _level2.OpenPlay]",
+			"method 'gotoAndPlay' is not a function on a value of type undefined [in _level2.OpenPlay]",
+			"method 'gotoAndPlay' is not a function on a value of type undefined [in _level2.OpenPlay]",
+			"method 'gotoAndPlay' is not a function on a value of type undefined [in _level2.OpenPlay]" });
 
 	// ---- back to the menu, Options ----
 	fx.shell->pop();

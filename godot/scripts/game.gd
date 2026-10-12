@@ -21,6 +21,10 @@
 ##     --rules-shot=<n>      (lane RULES-1, with --auto --screens) the lobby's Rules tab is opened (rules1-rules-tab.png), Legendary Heroes n x is chosen
 ##                           (rules1-rules-tab-legendary.png), the game starts (the loading screen names the rule) and scripts/rules1_player.gd places a
 ##                           legendary and a plain hero side by side, damaged alike (rules1-heroes.png); "RULES1 RESULT" ends the run
+##     --gamemodes=<mode>    (lane GAMEMODES-1, with --auto --screens; mode battle or sandbox, with --teams=0,0 for the sandbox) scripts/gamemodes1_player.gd:
+##                           battle: the enemy's structures fall while its builders live, the victory screen follows (gamemodes1-battle-*.png); sandbox: the lobby
+##                           as Start is pressed (gamemodes1-sandbox-lobby.png), the ally loses everything, no victory screen (gamemodes1-sandbox-*.png);
+##                           "GAMEMODES1 RESULT" ends the run
 ##     --hud5=<a,b,...>      (lane HUD-5, with --auto) the owner's first Windows session's items, scripted (scripts/hud5_player.gd: fortress, players, powers,
 ##                           gate, construction, levels); "HUD5 <name>: ok / FAIL", screenshots hud5-<name>.png in --screens
 ##     --hud6=<a,b,...>      (lane HUD-6, with --auto) scripts/hud6_player.gd: radial (the fortress's bubbles), heroes (its hero ring), help (the
@@ -46,6 +50,9 @@
 ##     --options-shot=FILE   (lane UI-2) open Options from the main menu, save the window to FILE after 2 s and quit (the soft particles box)
 ##     --resize-check[=DIR]  (lane UI-4) resize / maximise the window over the main menu (nav closed and open) and send stray input around the nav
 ##                           entries; exit 0 when no widget state changed (tests/ui4_resize_test.gd; DIR: windowed screenshots)
+##     --menu1-walk[=DIR]    (lane MENU-1, scripts/menu1_walk.gd) the front-end paths with real input (Skirmish's profile prompt, the lobby, its Profile
+##                           page, Options, LAN, Replays, Create-a-Hero ...): after each step at most one screen's widgets may be visible (the top one),
+##                           the titles never overprint; DIR: windowed screenshots walk1-<step>.png; exit 0 when every step held
 ##     --menu-colours=DIR    (lane UI-4) the owner's "don't use the green text" (2026-10-10): every front-end screen the main menu's nav entries open
 ##                           (the boxes some open, Skirmish's profile box and lobby, Create-a-Hero's introduction and builder), each text drawn (the canvas's,
 ##                           the gadgets', the credits roll's) with its colour and a heuristic ink sample of its rectangle (DIR/colours-<screen>.png);
@@ -231,7 +238,6 @@ var _hud: Node
 ## lane PLAY-1: the mouse setup forced on the command line ("alternate": the right click orders, "classic": the left click orders, "": the player's setting)
 var _mouse_override := ""
 var _move_hints: Node3D
-var _placement_ghost: Node3D
 ## lane PLAY-1: the free camera (the owner's presentation option, not retail): --free-camera or Options.ini "OpenBFMEFreeCamera = yes"
 var _free_camera_flag := false
 ## lane ZOOM-1: --zoom-out=<f> (0 = Options.ini's OpenBFMEMaxZoomOut)
@@ -242,6 +248,7 @@ var _play1 := PackedStringArray()
 var _zoom1 := PackedStringArray() # lane ZOOM-1
 var _hud5 := PackedStringArray() # lane HUD-5
 var _rules_shot := 0 # lane RULES-1: --rules-shot=<factor>
+var _gamemodes := "" # lane GAMEMODES-1: --gamemodes=battle|sandbox
 var _hud6 := PackedStringArray() # lane HUD-6 (scripts/hud6_player.gd: radial, heroes, sidebar, help)
 var _autocast1 := PackedStringArray() # lane AUTOCAST-1 (scripts/autocast1_player.gd: witchking)
 var _start_spot := -1            # lane HUD-5
@@ -283,6 +290,9 @@ var _resize_check_on := false
 var _menu_colours := "" # lane UI-4: --menu-colours=DIR
 var _menu_colours_problems: PackedStringArray = [] # what the walk could not prove (a capture, a press, a screen without text)
 var _menu_walk := "" # lane FB7-1: --menu-walk=DIR
+var _menu1_walk := "" # lane MENU-1: --menu1-walk=DIR (scripts/menu1_walk.gd)
+var _menu1_walk_on := false
+var _menu1_runner: RefCounted = null
 var _menu_walk_only := "" # lane CAH-2 r2: --menu-walk-only=BUTTON (one button, the probe)
 var _menu_walk_drop := "" # lane CAH-2 r2: --menu-walk-drop=ACTION (TEST HOOK: the host ignores that shell request, so the walk must fail)
 var _walk_failures := 0
@@ -356,6 +366,27 @@ var _movie_files := {}          # lane CAMP-2: --movie-file=TITLE=PATH (tests: t
 var _movie_skip_after := -1     # lane CAMP-2: --movie-skip-after=MS (tests: every movie is skipped MS after its start, as by Esc)
 var _intro := "auto"            # lane CAMP-2: --intro (on) / --no-intro (off)
 var _intro_check := false       # lane CAMP-2: --intro-check (tests): the start-up movies, then quit
+## lane MENU-1: the options a player's own start may carry (the launcher's, the display options); any other option makes a scripted run
+const PLAYER_ARG_PREFIXES := ["--fps", "--dev-overlay", "--intro", "--no-intro", "--alternate-mouse", "--classic-mouse", "--free-camera", "--res=",
+	"--vsync=", "--max-fps=", "--movies=", "--zoom-out="] # --zoom-out: ZOOM-1, a player option (PLAYING.md)
+var _scripted_skirmish_ini := ""
+
+
+func _exit_tree() -> void:
+	if not _scripted_skirmish_ini.is_empty():
+		DirAccess.remove_absolute(_scripted_skirmish_ini) # lane MENU-1: the scripted run's own Skirmish.ini
+
+
+func _scripted_run() -> bool:
+	for arg in OS.get_cmdline_user_args():
+		var player := false
+		for p in PLAYER_ARG_PREFIXES:
+			player = player or String(arg).begins_with(p)
+		if not player:
+			return true
+	return false
+
+
 const INTRO_QUIET_ARGS := ["--fps", "--dev-overlay", "--intro", "--alternate-mouse", "--free-camera"] # options that are not automation
 var _dev_overlay := false       # lane CAMP-2: --dev-overlay (developer text on screen; never in the real game)
 var _control_bar_hidden := false # lane CAMP-2: HideControlBar / ShowControlBar (RW 0x804576 / 0x8046A1) of the script's letterbox and HIDE_UI / SHOW_UI
@@ -445,6 +476,8 @@ func _ready() -> void:
 			_zoom1 = arg.substr(8).split(",", false)
 		elif arg.begins_with("--rules-shot="):
 			_rules_shot = int(arg.substr(13))
+		elif arg.begins_with("--gamemodes="):
+			_gamemodes = arg.substr(12)
 		elif arg.begins_with("--hud5="):
 			_hud5 = arg.substr(7).split(",", false)
 		elif arg.begins_with("--hud6="):
@@ -594,6 +627,9 @@ func _ready() -> void:
 			_lan_port_base = int(arg.substr(16))
 		elif arg.begins_with("--menu-walk="):
 			_menu_walk = arg.substr(12)
+		elif arg == "--menu1-walk" or arg.begins_with("--menu1-walk="):
+			_menu1_walk = arg.substr(13) if arg.length() > 13 else ""
+			_menu1_walk_on = true
 		elif arg.begins_with("--menu-colours="):
 			_menu_colours = arg.substr(15)
 		elif arg == "--resize-check" or arg.begins_with("--resize-check="):
@@ -766,6 +802,13 @@ func _boot() -> void:
 	var shell_config := {"seed": _seed, "default_volumes": _audio.get_default_volumes(), "display_modes": modes, "current_resolution": window_size}
 	if not _options_file.is_empty():
 		shell_config["options_file"] = _options_file # lane OPTS-2
+	if _scripted_run():
+		# lane MENU-1: a scripted run never reads or writes the player's Skirmish.ini (the profiles): a fresh file of its own, so the first visit of
+		# Skirmish always asks for a profile as the scripts expect
+		var ini := OS.get_temp_dir().path_join("openbfme-skirmish-%d-%d.ini" % [OS.get_process_id(), Time.get_ticks_usec()])
+		DirAccess.remove_absolute(ini)
+		shell_config["skirmish_ini"] = ini
+		_scripted_skirmish_ini = ini
 	var boot: Dictionary = _shell.boot_shell(_fs, _world, shell_config)
 	if not boot.ok:
 		_fail("shell: " + "\n".join(boot.errors))
@@ -808,6 +851,9 @@ func _boot() -> void:
 		_run_auto()
 	elif not _menu_walk.is_empty():
 		_run_menu_walk()
+	elif _menu1_walk_on:
+		_menu1_runner = load("res://scripts/menu1_walk.gd").new() # lane MENU-1
+		_menu1_runner.run(self, _menu1_walk)
 	elif _resize_check_on:
 		_run_resize_check()
 	elif not _menu_colours.is_empty():
@@ -879,6 +925,10 @@ func _update_listener() -> void:
 	var e: Vector3 = cam.eye
 	var t: Vector3 = cam.target
 	_audio.update_microphone(Vector3(e.x, -e.z, e.y), Vector3(t.x, -t.z, t.y), true)
+	# lane BUILD-5: the MiscAudio sounds the input asked for (BadBuildingPlacementSound of a refused building site, RW 0x83EAC5)
+	if _hud.has_method("take_misc_sounds"):
+		for field in _hud.take_misc_sounds():
+			_audio.play_misc(str(field))
 
 
 # ---- the shell's hooks -----------------------------------------------------------------------------------------------------------------------
@@ -1065,6 +1115,12 @@ func _begin_game(message: Dictionary) -> void:
 		var music: String = cards.cards[local_card].get("load_music", "")
 		if not music.is_empty():
 			_audio.play_music(music) # the local player's faction LoadScreenMusic
+	# lane MENU-1: a skirmish / LAN game (modes 2 / 1) from the lobby (GameLogic + 0x114 = 3) loads behind the players' screen LoadScreen.apt
+	# (GameLogic::getLoadScreen RW 0x626A87 -> AptLoadScreen RW 0x81D356)
+	var choice: Dictionary = _shell.choose_load_screen({"game_mode": 1 if _game_kind == "lan" else 2, "screen_kind": 3})
+	if choice.kind != "players":
+		_fail("load screen: %s instead of the players' screen" % str(choice))
+		return
 	_shell_load_screen_push()
 	# a few frames so the loading screen is on screen before the synchronous load starts
 	for i in 4:
@@ -1072,7 +1128,7 @@ func _begin_game(message: Dictionary) -> void:
 	_shell.auto_process = false
 	var started := Time.get_ticks_msec()
 	_load_log.clear()
-	var opts := {"progress": Callable(self, "_on_load_progress"), "test_hooks": _end or not _zoom1.is_empty() or _rules_shot > 0} # lane ZOOM-1: the bars scenario hurts some units (logged)
+	var opts := {"progress": Callable(self, "_on_load_progress"), "test_hooks": _end or not _zoom1.is_empty() or _rules_shot > 0 or not _gamemodes.is_empty()} # lane ZOOM-1: the bars scenario hurts some units (logged)
 	if _record and _net_state.is_empty():
 		opts["record"] = _last_replay_path() # lane MP-2: every skirmish is recorded
 	var rep: Dictionary = _world.start_new_game(opts)
@@ -1245,6 +1301,8 @@ func _on_load_progress(percent: int) -> void:
 	_shell.tick(0.033)
 	_shell.render(true)
 	RenderingServer.force_draw(false, 0.0)
+	if _menu1_runner != null and percent >= 40:
+		_menu1_runner.loading_check(percent) # lane MENU-1: the loading screen's layering and picture
 	if not _loading_shot_done and percent >= 40 and not _screens.is_empty():
 		_loading_shot_done = true
 		_save_screenshot("loading")
@@ -1252,6 +1310,7 @@ func _on_load_progress(percent: int) -> void:
 
 func _enter_game(rep: Dictionary) -> void:
 	_hide_rules_summary() # lane RULES-1
+	_shell.hide_still_load_screen() # lane MENU-1: a campaign mission's picture loading screen
 	# retail: the shell is popped, the HUD movie (Palantir) is the only movie left
 	while _shell.shell_stack().size() > 0:
 		_shell.shell_pop()
@@ -1343,10 +1402,7 @@ func _install_hud(rep: Dictionary) -> void:
 	add_child(_move_hints)
 	_game_nodes.append(_move_hints)
 	# lane PLAY-1: the building placement ghost (RotWK placeBuildAvailable RW 0x69C5E6, the placement update RW 0x6A2AE5)
-	_placement_ghost = load("res://scripts/placement_ghost.gd").new()
-	add_child(_placement_ghost)
-	_game_nodes.append(_placement_ghost)
-	_placement_ghost.setup(hud, _world, _fs)
+	# lane BUILD-5 r2: the placement ghost is the HUD's own (InGameHudNode: GodotPlacementGhost, drawn after the displayed camera)
 	var mh: Dictionary = _move_hints.setup(hud, _fs, _world)
 	print("GAME move hints: ", JSON.stringify(mh))
 	if not mh.ok:
@@ -1488,6 +1544,15 @@ func _run_auto() -> void:
 	_save_screenshot("game")
 	if _qa:
 		await _run_qa()
+		return
+	if not _gamemodes.is_empty():
+		var g1: GDScript = load("res://scripts/gamemodes1_player.gd")
+		if g1 == null or not g1.can_instantiate():
+			_fail("scripts/gamemodes1_player.gd does not load")
+			return
+		var pg = g1.new()
+		await pg.run(self, _gamemodes)
+		get_tree().quit(0 if pg.fail_count == 0 else 1)
 		return
 	if _rules_shot > 0:
 		var r1: GDScript = load("res://scripts/rules1_player.gd")
@@ -1932,6 +1997,10 @@ func _auto_lobby_and_start() -> bool:
 	if not await _click_button(skirmish_level, "lobby.StartGame"):
 		_fail("no StartGame button")
 		return false
+	if _gamemodes == "sandbox":
+		# lane GAMEMODES-1: the one-team lobby as Start is pressed (RotWK's start check RW 0x8431B8 takes it as a sandbox; the skirmish owner shows no line for it)
+		await _step(4)
+		_save_named("gamemodes1-sandbox-lobby")
 	# the game starts from _process (take_new_game); wait for it, play, report
 	var waited := 0
 	while _state != State.PLAYING and _state != State.FAILED and waited < 900:
@@ -1961,6 +2030,17 @@ func _auto_report() -> void:
 	print("GAME shell calls without a function (S-380, retail skips them): %d" % shell_report.get("calls_without_function", []).size())
 	for c in shell_report.get("calls_without_function", []):
 		print("  call without a function: ", c)
+	# lane BUILD-5 r2: the placement ghost's and the cursors' problems are reported, never hidden
+	if _hud != null and _hud.has_method("get_placement_ghost_state"):
+		var gs2: Dictionary = _hud.get_placement_ghost_state()
+		print("GAME placement ghost errors: %d" % gs2.get("errors", []).size())
+		for e in gs2.get("errors", []):
+			print("  placement ghost error: ", e)
+		print("GAME placement ghost notes (hide misses): ", JSON.stringify(gs2.get("notes", [])))
+		var hr: Dictionary = _hud.get_report()
+		print("GAME cursor errors: %d" % hr.get("cursor_errors", []).size())
+		for e in hr.get("cursor_errors", []):
+			print("  cursor error: ", e)
 	if _check or _auto:
 		get_tree().quit(1 if errors.size() > 0 else 0)
 
@@ -2165,13 +2245,13 @@ func _quit_menu_action(action: String) -> void:
 			printerr("GAME QUIT Options.apt: ", str(_shell.get_shell_report().errors))
 
 
-## Exit (RW 0x921904 -> RW 0x625E36(1)): a multiplayer game sends MSG_SELF_DESTRUCT(true) (TheGameInfo vslot 0x50 answers no for a LAN game: S-1062), then
+## Exit (RW 0x921904 -> RW 0x625E36(1)): a multiplayer game that is not a sandbox (TheGameInfo vslot 0x50, isSandbox RW 0x800C8F) sends MSG_SELF_DESTRUCT(true), then
 ## MSG_CLEAR_GAME_DATA leaves the game to the score screen (RW 0x779E28: clearGameData(true) for a skirmish or a multiplayer game)
 func _quit_menu_exit() -> void:
 	var ctx: Dictionary = _world.get_quit_menu_context()
 	_close_quit_menu()
 	var multiplayer: bool = ctx.get("mode", 2) == 1 or ctx.get("mode", 2) == 5
-	if multiplayer:
+	if multiplayer and not ctx.get("sandbox", false):
 		# the network session sends it with the leave (NetGameSession::finish); this peer's logic is cleared before it would run it (retail runs it in the
 		# frame that also clears the game: the score screen is built before the victory rules look again)
 		print("GAME QUIT exit self-destruct: ", JSON.stringify(_world.self_destruct(true)))
@@ -3350,7 +3430,16 @@ func _begin_replay(path: String) -> void:
 	if cards.has("error"):
 		_fail("load screen: " + cards.error)
 		return
-	_shell_load_screen_push()
+	# lane MENU-1: a replay is game mode 3: GameLogic::getLoadScreen (RW 0x626A87) shows the picture screen with a random film still
+	# (StillImage_Film01 .. 21, RW 0x626362), not the players' LoadScreen.apt
+	var choice: Dictionary = _shell.choose_load_screen({"game_mode": 3})
+	if not String(choice.get("error", "")).is_empty():
+		_fail("load screen: " + String(choice.error))
+		return
+	var shown: Dictionary = _shell.show_still_load_screen(String(choice.picture))
+	if not shown.ok:
+		_fail("load screen: " + str(shown.error))
+		return
 	for i in 4:
 		await get_tree().process_frame
 	_shell.auto_process = false

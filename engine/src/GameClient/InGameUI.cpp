@@ -59,6 +59,31 @@ void InGameUI::setGUICommand(const CommandButton *command)
 	m_guiCommand = command;
 }
 
+void InGameUI::setScrolling(bool on)
+{
+	// lane BUILD-5: RW 0x69B28F (InGameUIInputModes.cpp:330)
+	if (m_scrolling == on)
+	{
+		return;
+	}
+	setCursor(on ? MouseCursorName::Scroll : MouseCursorName::Arrow);
+	m_scrolling = on;
+}
+
+void InGameUI::placeBuildAvailable(const std::string &templateName, ObjectID sourceObject, const CommandButton *command)
+{
+	m_placeTemplate = templateName;
+	m_placeSource = sourceObject;
+	m_placeCommand = templateName.empty() ? nullptr : command;
+	m_placeHasGhost = false;
+	m_placeAngle = 0.0f; // the first placement update turns the ghost to the template's PlacementViewAngle (template + 0x4E0, RW 0x69C755; PlaceEventTranslator)
+	m_placeSlotAngle = 0.0f;
+	m_placeLegal = 0;
+	m_placeAnchored = false; // RW 0x69C7C3 / the end path: setPlacementStart(null)
+	// lane BUILD-5: RW 0x69C69B setMouseCursor(Target) with a template, RW 0x69C7B0 / 0x69C7EE setMouseCursor(Arrow) without one
+	setCursor(templateName.empty() ? MouseCursorName::Arrow : MouseCursorName::Target);
+}
+
 // RW 0x69F54F (its selection and location tests need the logic: HudInput::hintSpy)
 void InGameUI::createMoveHint(const Coord3D &pos)
 {

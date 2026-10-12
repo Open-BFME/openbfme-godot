@@ -105,7 +105,7 @@ TEST_CASE("victory: both players are cached, nobody is judged before frame 25, a
 	CHECK(v.cachedPlayers() == 2);
 	CHECK(v.localSlot() == 0); // the fixture's local player is the first one (Alice)
 	CHECK_FALSE(v.isObserver());
-	CHECK(v.rule() == VictoryConditions::RULE_BASE_OR_BUILDERS);
+	CHECK(v.rule() == VictoryConditions::RULE_BASE_OR_ARMY); // lane GAMEMODES-1: the game kind 3 (a skirmish) selects rule 3 (RW 0x808A93)
 	Object *a = w.unit("VKeep", 'A', 300, 300);
 	Object *b = w.unit("VKeep", 'B', 600, 300);
 	w.kill(b, a);
@@ -163,10 +163,30 @@ TEST_CASE("victory: a player without a structure of the filter and without a bui
 	CHECK(v.events().size() == 2);
 }
 
-TEST_CASE("victory: a living builder keeps a player in the game; the loss comes with the last builder")
+TEST_CASE("victory: a skirmish (rule 3): a living builder keeps no one in the game (lane GAMEMODES-1)")
 {
 	VictoryWorld w;
 	VictoryConditions &v = w.logic->victory();
+	Object *a = w.unit("VKeep", 'A', 300, 300);
+	Object *bk = w.unit("VKeep", 'B', 600, 300);
+	const ObjectID builderId = w.unit("VBuilder", 'B', 620, 300)->getID();
+	w.frames(30);
+	const unsigned diedAt = w.logic->getFrame();
+	w.kill(bk, a);
+	w.frames(1);
+	CHECK(v.isDefeated(1)); // no structure; the DOZER does not count, the unit filter ("ANY -DOZER") accepts nothing
+	CHECK(v.singleAllianceRemaining());
+	CHECK(v.endFrame() == diedAt + 1);
+	CHECK((w.byId(builderId) == nullptr || w.byId(builderId)->isEffectivelyDead()));
+}
+
+TEST_CASE("victory: rule 2 (a game of another kind: a War of the Ring battle): a living builder keeps a player in the game; the loss comes with the last builder")
+{
+	VictoryWorld w;
+	w.logic->economy().context().gameKind = 1; // RW 0x779CB4
+	w.logic->victory().init();
+	VictoryConditions &v = w.logic->victory();
+	REQUIRE(v.rule() == VictoryConditions::RULE_BASE_OR_BUILDERS);
 	Object *a = w.unit("VKeep", 'A', 300, 300);
 	Object *bk = w.unit("VKeep", 'B', 600, 300);
 	Object *builder = w.unit("VBuilder", 'B', 620, 300);
@@ -210,9 +230,9 @@ TEST_CASE("victory: the state is hashed and every field of it changes the hash (
 	v.setScriptFlag91(true);
 	CHECK(w.hash() != base);
 	v.setScriptFlag91(false);
-	v.setRule(VictoryConditions::RULE_BASE_OR_ARMY);
-	CHECK(w.hash() != base);
 	v.setRule(VictoryConditions::RULE_BASE_OR_BUILDERS);
+	CHECK(w.hash() != base);
+	v.setRule(VictoryConditions::RULE_BASE_OR_ARMY);
 	CHECK(w.hash() == base);
 	// the elimination moves the hash (flags, counter, end frame, events, the player's defeat frame and flag)
 	w.frames(30);

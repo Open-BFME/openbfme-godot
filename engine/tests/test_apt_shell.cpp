@@ -927,12 +927,19 @@ TEST_CASE("stops S-175: handlers with no decompiled body report 'unported-comman
 	fx.tick(1);
 	CHECK(fx.shell->screenCount() == 0);
 	// global commands the binary registers whose bodies were not read
-	for (const char *c : { "CloseWindow", "OnClickThroughPress", "OnClickThroughRelease", "EnableComponents", "DisableComponents" })
+	for (const char *c : { "CloseWindow", "OnClickThroughPress", "OnClickThroughRelease" })
 	{
 		const std::size_t before = fx.wm->noteCount("unported-command");
 		fx.wm->invokeCallback(c, "");
 		CHECK_MESSAGE(fx.wm->noteCount("unported-command") == before + 1, c);
 	}
+	// lane MENU-1: Enable/DisableComponents are ported (RW 0x814511 / 0x81456F): without a path they set / clear the input block
+	const std::size_t blockedNotes = fx.wm->noteCount("components-blocked");
+	fx.wm->invokeCallback("DisableComponents", "");
+	CHECK(fx.wm->componentInputBlocked());
+	CHECK(fx.wm->noteCount("components-blocked") == blockedNotes + 1); // S-3502
+	fx.wm->invokeCallback("EnableComponents", "");
+	CHECK_FALSE(fx.wm->componentInputBlocked());
 	// the Options command pushes Options.apt; the advanced flag is the argument
 	fx.addMovie("Options", {});
 	fx.shell->push("MainMenu.apt");

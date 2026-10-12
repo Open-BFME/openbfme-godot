@@ -687,14 +687,14 @@ std::vector<std::string> UpgradeModuleClasses::stopLines()
 		"(Player::upgradeEvaEventsNotPlayed), not played",
 		"[S-482] upgrade walks: onUpgradeCompleted / onUpgradeRemoved (RW 0x6AE483 / 0x6AE546) walk the player's teams' members; here the logic object list in list order "
 		"(the order an upgrade reaches the objects in is inferred)",
-		"[S-483] upgrade queries not ported: Object::hasUpgrade's first query of the module at Object + 0x258 (slots 0x7C / 0xB0, RW 0x68E040) and the castle's mask in "
-		"Object::updateUpgradeModules (RW 0x797BEF: a castle member's castle object)",
+		"[S-483] closed (lane DECOMP-2): Object::hasUpgrade asks a horde's members first (RW 0x68E040 -> contain slot 0x7C -> RW 0x86EC2D) and "
+		"Object::updateUpgradeModules adds the upgrades of a castle member's keep (RW 0x797BEF, member + 0x14 written at the unpack by RW 0x7990D9)",
 		"[S-484] SubObjectsUpgrade: the fade (FadeTimeInSeconds / WaitBeforeFadeInSeconds, RW 0x8B8F40), the UpgradeTexture swap (RW 0x8B911E) and the house recolour "
 		"(RW 0x67273A) are not drawn: " + std::to_string(s.subObjectFadesNotPorted) + " fades shown instantly, " + std::to_string(s.textureSwapsNotPorted) +
 		" texture swaps and " + std::to_string(s.houseRecolorsNotPorted) + " recolours not applied",
 		"[S-486] upgrade research details not ported: the sub upgrade cost skip of UpgradeTemplate::calcCostToBuild (RW 0x694BF8 / slot 0xAC), the castle cost "
 		"records of queueUpgrade (RW 0x8A10A0) and of the completion (RW 0x79D322 / 0x79D833), the first and third clauses of Object::affectedByUpgrade (RW 0x6939DF / "
-		"0x693A1A, RW 0x6ABDC2), HordeContain's second member list (+0x150) in the upgrade hand-down (RW 0x87566B), the research sound, Eva event, UpgradeFX and UI "
+		"0x693A1A, RW 0x6ABDC2), HordeContain's second member list (+0x150) in the upgrade hand-down (RW 0x87566B) and in Object::hasUpgrade (RW 0x86EC2D: module + 0x170), the research sound, Eva event, UpgradeFX and UI "
 		"messages of the completion",
 		"[S-485] closed: ModelConditionUpgrade RemoveConditionFlagsInRange (RW 0x8BA71A) is ported (the Create-A-Hero model condition upgrades use it)",
 	};

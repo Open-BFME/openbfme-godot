@@ -129,8 +129,38 @@ public:
 	bool slotShowsName(int slot) const { return slot == m_localSlot || (m_network && slot >= 0 && slot < MAX_SLOTS && m_info.slots[slot].isHuman()); }
 
 	// ---- start (startPressed, reallyDoStart) -----------------------------------------------------------------------------------------------
-	// startPressed: true when the game may start; otherwise false and `title` / `text` hold the message box (GUI:ErrorStartingGame with
-	// GUI:CantFindMap or GUI:TooManyPlayers formatted with the map's player count).
+	// lane GAMEMODES-1: RotWK's start check, AptMpGameSetup RW 0x8431B8 (BFME2 0x840BDF, decomp attempt reverse/attempts/0x00440bdf.cpp and
+	// GUI/AptMpGameSetupRva00440BDF.cpp: recovered, not byte-matching; RotWK added LAN:TooFewPlayers and GUI:DisabledFaction). The owner's lines go out through
+	// its vslot 0x44 with a kind (0 / 1 / 2); a refusal is RW 0x8406DB's (vslot 0x44 kind 1). In order:
+	//   no map in the cache -> LAN:NoMapSelected; the map's player limits (RW 0x9758E3: MapCache + 0x20 clamped to 8 (RW 0xC53F2C); RW 0x97597F: 0 outside the
+	//   War of the Ring) with no maximum -> refused silently; per slot: a human without the map (no transfer) -> GUI:PlayerNoMap (kind 2), a human not accepted,
+	//   a non-observer human's clan tag (none here: counted missing); an occupied non-observer slot counts as a user (a human one also as a human), its team
+	//   (-1: a random team), its start position (-1: none); then the (flags 0x10 or War of the Ring enemy) gate on humans <= 1 -> GUI:NeedHumanPlayers (kind 0),
+	//   a missing map -> GUI:CouldNotTransferMap, users > maximum -> LAN:TooManyPlayers, users < minimum -> LAN:TooFewPlayers, GlobalData + 0xA44 (the
+	//   command line's minimum players, RW 0x7BA380; 0) with no human -> GUI:NeedHumanPlayers, War of the Ring: GUI:DisabledFaction / GUI:NeedStartSpots,
+	//   users < + 0xA44 -> GUI:NeedHumanPlayers, teams + random teams < + 0xA44 -> LAN:NeedMoreTeams, teams + random teams < 2 -> the War of the Ring
+	//   enemy flag: GUI:NeedWOTREnemy, else GUI:SandboxMode (kind 0) and the game goes on as a SANDBOX; the clan game rule (rule 1 == 1): the clan errors;
+	//   flags 0x20 with a human not accepted -> GUI:NotifiedStartIntent; the NAT check (the owner's vslot 0x5C: a skirmish / LAN owner is ready).
+	struct StartCheck
+	{
+		bool ok = false;
+		std::u16string refusal;              ///< the refusal's text (empty when ok, or for the silent refusal of a map without players)
+		std::string refusalLabel;            ///< its game text label
+		struct Line
+		{
+			std::u16string text;
+			int kind = 0; ///< the owner's vslot 0x44 kind: 0 a local line, 1 the refusal (RW 0x8406DB), 2 a line to every player
+		};
+		std::vector<Line> lines; ///< every vslot 0x44 call in order: GUI:PlayerNoMap (2), GUI:SandboxMode (0), the refusal's (1 and / or 2, or 0)
+		bool sandbox = false;                ///< GUI:SandboxMode was shown: one team (GameInfo::isSandbox decides in the game)
+		int numHumans = 0;                   ///< + 0x3A8 for the countdown
+		std::vector<std::string> stops;      ///< "[S-3610] ..." when the check met what it does not port (a War of the Ring setup)
+	};
+	// `flags` is the setup's + 0x3A4 (0x10 needs two humans, 0x20 notifies the start intent, 0x100 the War of the Ring needs an enemy: none of them in a
+	// skirmish); `willTransfer` RW 0x702617 (the map can be sent to a player without it)
+	StartCheck checkStart(int flags = 0, bool willTransfer = false) const;
+	// the skirmish lobby's form: true when the game may start; otherwise false and `title` / `text` hold the message box of the skirmish owner's vslot 0x44
+	// (RW 0x928482: only kind 1 shows, MessageBoxOk(L"", text) RW 0x84ED5D: an empty title); `text` is empty for a refusal without a kind 1 line
 	bool validateStart(std::u16string &title, std::u16string &text) const;
 	// reallyDoStart: GameInfo::startGame -> closeOpenSlots; the message ZH appends (MSG_NEW_GAME).
 	NewGameMessage makeNewGameMessage();

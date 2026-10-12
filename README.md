@@ -13,7 +13,7 @@
 
 <sub>The newest alpha build is at the top of the releases page: get the <code>openbfme-launcher-…</code> file for your system.</sub>
 
-[Play it](#play-it) · [Status](#status) · [What's new](#whats-new-in-v030-preview4) · [Build from source](#build-from-source) · [Player guide](docs/PLAYING.md) · [Roadmap](docs/ROADMAP.md)
+[Play it](#play-it) · [Status](#status) · [What's new](#whats-new-in-v040-alpha1) · [Build from source](#build-from-source) · [Player guide](docs/PLAYING.md) · [Roadmap](docs/ROADMAP.md)
 
 </div>
 
@@ -105,7 +105,7 @@ the original are still missing.
 | Combat, hordes, heroes, spell book | ✅ Works | horde formations, cavalry charges, sieges, powers; details are still being matched to the original |
 | Team colours | 🟡 Partial | units and buildings show their player's colour, but how the colour is blended in is an educated guess, not yet checked against the original |
 | Building, economy, upgrades | ✅ Works | builders, walls, castles, resources, upgrades and experience |
-| Computer opponent | 🟡 Partial | builds a base, trains armies, attacks and finishes games; defending, expanding and hero use are not yet like the original |
+| Computer opponent | 🟡 Partial | builds a base, trains armies and heroes, uses its spell book and most of its powers, attacks and finishes games; defending and expanding are not yet like the original |
 | In-game interface | ✅ Works | Palantir, command bar, RotWK's radar and pings, health bars and levels, control groups, camera bookmarks, hotkeys, right-click orders as in the original |
 | Main menu and options | 🟡 Partial | real menus with the original layout; the credits roll; the graphics detail level sets particles, texture quality and health bars, but shadows and the other detail rows are not drawn yet; OpenBFME's own settings inside Options; save/load pages are not done |
 | Sound and music | 🟡 Partial | voices, effects, music and the original stereo image; some sounds (damage sounds, scripted music, parts of the big-battle ambience) are missing |
@@ -123,11 +123,36 @@ the original are still missing.
 not reinvent it. Where the evidence runs out and the team has to make an
 educated guess, that guess is not hidden: it is recorded as an *acceptance
 stop* in [docs/STOPS.md](docs/STOPS.md), reported by the game at runtime and
-pinned by a test. There are **541 open stops** today. Some are big
+pinned by a test. There are **603 open stops** today. Some are big
 (save/load), most are small details waiting for better evidence. The plan to
 get to a 1:1 game is in [docs/ROADMAP.md](docs/ROADMAP.md).
 
-## What's new in v0.3.0-preview.5
+## What's new in v0.4.0-alpha.1
+
+The first alpha build. Launchers on v0.3.0-preview.5 or later offer it on
+the *Alpha* channel.
+
+- **Defeat as in the original.** You're out when your last building falls;
+  builders and armies left in the field no longer keep a player in the game.
+- **Sandbox mode.** Put every player on one team, or play alone, and nobody
+  wins: build and try things for as long as you like.
+- **The computer opponent uses its spell book and hero powers.** It also
+  builds heroes, and its heroes and units use their abilities in battle.
+- **Menus no longer overlap.** Only one screen is drawn at a time, a pop-up
+  covers the menu under it, and the pause menu covers the build bubbles.
+- **The profile prompt works.** The first visit to Skirmish asks for your
+  profile name, as the original does, and keeps it.
+- **Loading screens as in the original.** A skirmish shows every player's
+  name, team, army and rank icon; a campaign mission loads behind its own
+  picture.
+- **The building preview looks like the original.** It's in your colour and
+  see-through, plays the building's animation, turns red with a red base
+  where it can't go, and a harbour snaps to the shore.
+- **Scroll while placing a building.** Hold the right button and drag to
+  move the map without losing the placement; a quick right click still
+  cancels it. The pointer shows the scroll arrow.
+
+### v0.3.0-preview.5
 
 This preview carries the launcher that moves everyone to the alpha builds:
 once your launcher has updated itself to this version, it offers the alpha

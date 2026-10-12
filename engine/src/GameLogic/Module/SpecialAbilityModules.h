@@ -191,6 +191,9 @@ public:
 	virtual bool drivesSpecialPower(const SpecialPowerTemplate *t) const = 0;
 	virtual void initiateIntentToDoSpecialPower(const SpecialPowerTemplate *t, Object *target, const Coord3D *loc, unsigned options, int extra) = 0;
 	virtual bool isActive() const = 0;
+	// slot 0x20 (lane AIPOW-1, asked by the module's location requirements RW 0x897E01): may the power be used now (the location is not read by
+	// SpecialAbilityUpdate's RW 0x851B6E)
+	virtual bool allowsSpecialPowerUse() const = 0;
 };
 
 class SpecialAbilityUpdate : public UpdateModule, public SpecialPowerUpdateInterface
@@ -204,6 +207,9 @@ public:
 	// RW 0x852E8F
 	void initiateIntentToDoSpecialPower(const SpecialPowerTemplate *t, Object *target, const Coord3D *loc, unsigned options, int extra) override;
 	bool isActive() const override { return m_active; }
+	// RW 0x851B6E: the RequiredConditions / RejectedConditions (RW 0x851551); a power of the garrison types 0x27 / 0x28 also needs room in the object's
+	// contain (contain slots 0x114 / 0x70)
+	bool allowsSpecialPowerUse() const override;
 	void crc(StateHasher &h) const override;
 
 	const SpecialAbilityUpdateModuleData *abilityData() const { return m_data; }

@@ -18,11 +18,14 @@
 #include "GameLogic/Module/ProductionUpdate.h"
 #include "GameLogic/Object/Object.h"
 #include "GameLogic/SimMath.h"
+#include "Common/Upgrade.h"
+#include "GameLogic/SkirmishAI/AITacticalAI.h"
 #include "GameLogic/SkirmishAI/SkirmishAIData.h"
 #include "GameLogic/SkirmishAI/SkirmishAIManager.h"
 #include "Libraries/WWVegas/WWMath/quat.h"
 
 #include <algorithm>
+#include <stdexcept>
 
 namespace
 {
@@ -184,6 +187,12 @@ void AIBaseBuilder::init(GameLogic &logic, AISkirmishPlayer &ai, const std::stri
 		return;
 	}
 	s.baseBuilderInitialised = true; // RW 0x90D6DF
+	// lane DECOMP-2: the unit builder's init RW 0x9A10D8 copies the army's HeroBuildOrder (+ 0x4C); its "CreateAHero" entry for a slot with a Create-a-Hero
+	// (RW 0x90CE35: TheGameInfo's slot of the player, + 0x50) is not ported (S-415)
+	if (ai.army)
+	{
+		s.units.heroNames = ai.army->heroBuildOrder;
+	}
 	Player *player = logic.players().getNthPlayer(ai.playerIndex);
 	const TerrainLogic *terrain = logic.terrain();
 	if (!player || !terrain || !ai.store)
@@ -361,10 +370,12 @@ void updateSlot(GameLogic &logic, AISkirmishPlayer &ai, AIBaseSlot &slot, int di
 	}
 }
 
+// the relationship filter of RW 0x97DFCD and RW 0x8EEC71 (vtable RW 0xC1676C, allow RW 0x66110A, flags 4, match true): the player's relationship to the OBJECT'S TEAM
+// (Object + 0x31C -> Player::getRelationship(const Team *) RW 0x6ADBEB: a team override first, then the team's controlling player; no team: NEUTRAL); 0 (ENEMIES)
+// is accepted by flag 4 (RW 0x66113B), 1 by flag 8, 2 by flag 2 (lane DECOMP-2: RW asks the team, the port asked the controlling player, S-414)
 bool isEnemyOf(const Player &me, const Object &o)
 {
-	const Player *p = o.getControllingPlayer();
-	return p && p != &me && me.getRelationship(p) == ENEMIES;
+	return me.getRelationship(o.getTeam()) == ENEMIES;
 }
 
 // RW 0x9A1D31: the nearest free dozer to `pos` (squared 2D distance; a strictly nearer one replaces)
@@ -405,7 +416,7 @@ int enemiesNear(GameLogic &logic, const Player &player, const Coord3D &site)
 	for (Object *o = logic.getFirstObject(); o; o = o->getNextObject())
 	{
 		// the four partition filters of RW 0x97DFCD: accept KindOf any of CAN_ATTACK | STRUCTURE | HERO | SUPPORT (RW 0xC309B4 -> 0x661359), reject
-		// NEUTRALGOLLUM (RW 0xC110A4), the AI's player ENEMIES with the object (RW 0xC1676C, mask 4; RW asks the object's team, S-414), alive
+		// NEUTRALGOLLUM (RW 0xC110A4), the AI's player ENEMIES with the object's team (RW 0xC1676C, mask 4), alive
 		// (object + 0x458 bit 0 clear, RW 0xC10E20); range 300 from the centre in 2D (partition vslot 0x34, mode 0)
 		if (o->isEffectivelyDead() || !o->isInWorld() || !isEnemyOf(player, *o) || o->isKindOfName("NEUTRALGOLLUM") ||
 			!(o->isKindOfName("CAN_ATTACK") || o->isKindOfName("STRUCTURE") || o->isKindOfName("HERO") || o->isKindOfName("SUPPORT")))
@@ -446,7 +457,10 @@ int checkRequest(GameLogic &logic, const AIBuildRequest &req, Player &player)
 	{
 		return (int)can;
 	}
-	// RW 0x97DAFC (a pathfinder cell scan around the site): not ported, S-414
+	// RW 0x97DAFC -> 9 (lane DECOMP-2; BFME2 decomp AIBuildableStructure.cpp AIBuildableStructure::rva00573B5E, tier A): a burning terrain cell near the site. The
+	// site +- 150 in steps of 15 (21 x 21 points from the slot 13 position), each point's cell floor((v + 0.5) * 0.1) of TheFireLogicSystem's grid (RW 0xDE46A8: + 0x70
+	// the columns, + 0x78 / + 0x7C the bounds, 20-byte cells whose word + 6 > 0 burns). That grid is the terrain fire system (FireLogicNugget, the weather's burn decay
+	// at + 0x98, the GPU_TERRAINFIRE particles: S-191), which this port does not have: no cell can burn, so the scan finds nothing (S-414)
 	if (BuildPlacement::isLocationLegalToBuild(logic, site, *tt->getFinalOverride(), req.siteAngle(), kCheckLegalOptions, dozer, &player) != LBC_OK)
 	{
 		return 10;
@@ -564,7 +578,16 @@ void registerFactories(GameLogic &logic, AISkirmishPlayer &ai, const Player &pla
 				u.factories.insert(std::make_pair(ai.store->keyOf(m.unit), o->getID())); // RW 0x6B7DDE (multimap insert)
 			}
 		}
-		u.recompute = true; // RW 0x9A08F7
+		// lane DECOMP-2, RW 0x9A08E8 .. 0x9A0975: then every hero name with its index in the player's hero list (Player + 0x758, RW 0x78131E(template, -1, 0))
+		for (const std::string &name : u.heroNames)
+		{
+			const ThingTemplate *tt = logic.things().findTemplate(name);
+			if (tt && BuildAssistant::isInProducersCommandSet(*o, tt, player.heroes().findIndex(*tt, (std::uint32_t)-1, 0)))
+			{
+				u.factories.insert(std::make_pair(ai.store->keyOf(name), o->getID()));
+			}
+		}
+		u.recompute = true; // RW 0x9A097F
 	}
 }
 
@@ -698,6 +721,113 @@ std::shared_ptr<AIBuildRequest> chooseUnit(GameLogic &logic, AISkirmishPlayer &a
 	return req;
 }
 
+int kindIndex(const char *name);
+int economyStructureCount(GameLogic &logic, const Player &player);
+
+// RW 0x9A0566: the unit requests of the template
+int requestsOf(const AIUnitBuilderState &u, const std::string &name)
+{
+	int n = 0;
+	for (const auto &r : u.requests)
+	{
+		n += r->templateName == name ? 1 : 0;
+	}
+	return n;
+}
+
+// RW 0x9A03A1 (RotWK-only, lane DECOMP-2): no hero request out (+ 0x34), past the Rush phase (AI + 0x16C), more than 2 economy structures (the player info
+// record's + 0xC list, S-419: recounted) and more than 6 army units (its army list, S-418: rebuilt)
+bool shouldBuildHero(GameLogic &logic, const AISkirmishPlayer &ai, const Player &player)
+{
+	if (ai.build.units.heroInProgress || ai.build.phase == 0)
+	{
+		return false;
+	}
+	return economyStructureCount(logic, player) > 2 && AITacticalAI::listsOf(logic, player).army.size() > 6;
+}
+
+// RW 0x9A05DB (RotWK-only): a built hero (+ 0x3C, in order) that is neither owned (RW 0x8E3FD6) nor requested is taken again (and leaves the list); without
+// a choice GetGameLogicRandomValue(1, names - 1) (AIUnitBuilder.cpp line 0xE8); a player with the Upgrade_RingHero upgrade complete (RW 0x9A0677, the literal
+// RW 0xC795B0, TheUpgradeCenter RW 0x66F5E5, Player RW 0x6AC2AF) takes index 0
+int heroIndexFor(GameLogic &logic, AISkirmishPlayer &ai, const Player &player)
+{
+	AIUnitBuilderState &u = ai.build.units;
+	for (auto it = u.removedHeroes.begin(); it != u.removedHeroes.end(); ++it)
+	{
+		const std::string &name = u.heroNames[(size_t)*it];
+		if (ownedCount(logic, player, name) != 0 || requestsOf(u, name) != 0)
+		{
+			continue;
+		}
+		u.heroIndex = *it;
+		u.removedHeroes.erase(it);
+		break;
+	}
+	if (u.heroIndex == -1)
+	{
+		u.heroIndex = logic.random().getValue(1, (int)u.heroNames.size() - 1, "AIUnitBuilder.cpp", 0xE8);
+	}
+	const UpgradeTemplate *ring = TheUpgradeCenter ? TheUpgradeCenter->findUpgrade("Upgrade_RingHero") : nullptr;
+	if (ring && player.hasUpgradeComplete(ring))
+	{
+		u.heroIndex = 0;
+	}
+	return u.heroIndex;
+}
+
+// RW 0x9A0993 (createBestHeroToBuild; BFME2 decomp attempt 0x0059858c.cpp, tier B edited: RotWK drops BFME2's queued-quantity term): the hero of
+// heroIndexFor, its factory (RW 0x9A0705, busy ones too); when it is neither owned nor requested and has a factory: its cost (+ 0x48, RW 0x73C25F with the
+// factory) and, when the player's money (the player info record's RW 0x99E766: money + its reserve adjustment, taken as 0: S-413) reaches it and its
+// CommandPoints are below the remaining command points (limit - used, RW 0x6A7F6A; signed), a unit request with priority -1.0 (RW 0xBD19DC), + 0x21 set,
+// its CommandPoints, the index recorded as built (+ 0x3C) and + 0x38 / + 0x48 reset; else (owned, requested or no factory) + 0x38 = -1. A request marks
+// a hero out (+ 0x34)
+std::shared_ptr<AIBuildRequest> createBestHero(GameLogic &logic, AISkirmishPlayer &ai, const Player &player)
+{
+	AIUnitBuilderState &u = ai.build.units;
+	const int remaining = player.commandPointLimit() - player.commandPoints().getUsage();
+	if (u.heroNames.empty())
+	{
+		return nullptr;
+	}
+	const int index = heroIndexFor(logic, ai, player);
+	if (index < 0 || index >= (int)u.heroNames.size())
+	{
+		throw std::logic_error("AIUnitBuilder: hero index " + std::to_string(index) + " outside HeroBuildOrder");
+	}
+	const std::string name = u.heroNames[(size_t)index];
+	const ThingTemplate *tt = logic.things().findTemplate(name);
+	if (!tt)
+	{
+		throw std::logic_error("AIUnitBuilder: HeroBuildOrder names '" + name + "', which is no template"); // RW reads a null template (+ 0x628)
+	}
+	Object *factory = findFactory(logic, ai, name, nullptr, true);
+	const bool fits = BuildAssistant::commandPoints(*tt) < remaining;
+	const bool existing = ownedCount(logic, player, name) != 0 || requestsOf(u, name) != 0;
+	if (existing || !factory)
+	{
+		u.heroIndex = -1; // RW 0x9A0AE1
+		return nullptr;
+	}
+	u.heroCost = BuildAssistant::calcCostToBuild(*tt->getFinalOverride(), &player, factory, -1);
+	if (!((std::uint32_t)player.getMoney()->countMoney() >= (std::uint32_t)u.heroCost) || !fits)
+	{
+		return nullptr;
+	}
+	auto req = std::make_shared<AIBuildRequest>();
+	req->serial = ai.build.nextSerial++;
+	req->unit = true;
+	req->templateName = name;
+	req->priority = -1.0f;      // RW 0x9A0ABA
+	req->reserveMoney = true;   // RW 0x9A0ACA: + 0x21
+	req->commandPoints = BuildAssistant::commandPoints(*tt); // RW 0x9A0AFB: + 0x38
+	u.heroIndex = -1;
+	u.heroCost = -1;
+	u.removedHeroes.push_back(index);
+	u.heroInProgress = true;    // RW 0x9A0B0D
+	++u.heroesMade;
+	return req;
+}
+
 // RW 0x9A1196 (AIUnitBuilder update; the living world part RW 0x9A0426 is skipped in a skirmish)
 void updateUnitBuilder(GameLogic &logic, AISkirmishPlayer &ai, const Player &player)
 {
@@ -730,11 +860,23 @@ void updateUnitBuilder(GameLogic &logic, AISkirmishPlayer &ai, const Player &pla
 		}
 		else
 		{
+			// RW 0x9A0D93: a finished HERO request frees the hero path (+ 0x34)
+			const ThingTemplate *tt = logic.things().findTemplate(r.templateName);
+			static const int heroKind = kindIndex("HERO");
+			if (tt && MaskTest(logic.templateInfo(tt->getFinalOverride()).kindOf, (unsigned)heroKind)) // template + 0x113 bit 2
+			{
+				u.heroInProgress = false;
+			}
 			u.requests.erase(u.requests.begin() + (long)i); // RW 0x9618E3 removes it from the AIPlayer queues too
 		}
 	}
-	// RW 0x9A1051: one new request per frame (the hero path RW 0x9A03A1 / 0x9A0993 is S-416)
-	if (std::shared_ptr<AIBuildRequest> req = chooseUnit(logic, ai, player))
+	// RW 0x9A1051: one new request per frame: a hero (RW 0x9A03A1 -> 0x9A0993, lane DECOMP-2), else a unit (RW 0x9A0F66)
+	std::shared_ptr<AIBuildRequest> req = shouldBuildHero(logic, ai, player) ? createBestHero(logic, ai, player) : nullptr;
+	if (!req)
+	{
+		req = chooseUnit(logic, ai, player);
+	}
+	if (req)
 	{
 		u.requests.push_back(req);
 		startRequest(ai.build, req, false);
@@ -756,7 +898,14 @@ int checkUnitRequest(GameLogic &logic, const AIBuildRequest &req)
 		return 4;
 	}
 	const ThingTemplate *tt = logic.things().findTemplate(req.templateName);
-	return tt ? (int)BuildAssistant::canMakeUnit(*factory, tt->getFinalOverride(), -1) : 3;
+	if (!tt)
+	{
+		return 3;
+	}
+	// RW 0x9EDC0F: the template's index in the owner's hero list (Player + 0x758, RW 0x78131E(template, -1, 0); -1 for a template that is no hero)
+	const Player *owner = factory->getControllingPlayer();
+	const int index = owner ? owner->heroes().findIndex(*tt, (std::uint32_t)-1, 0) : -1;
+	return (int)BuildAssistant::canMakeUnit(*factory, tt->getFinalOverride(), index);
 }
 
 // RW 0x9EDB44
@@ -770,7 +919,9 @@ bool executeUnitRequest(GameLogic &logic, AIBuildRequest &req)
 		return false;
 	}
 	const ProductionID id = pu->requestUniqueUnitID();
-	if (!pu->queueCreateUnit(tt->getFinalOverride(), -1, id, -1, false, std::string(), false))
+	const Player *owner = factory->getControllingPlayer();
+	const int index = owner ? owner->heroes().findIndex(*tt, (std::uint32_t)-1, 0) : -1; // RW 0x9EDB96: the hero list index (a hero's revival)
+	if (!pu->queueCreateUnit(tt->getFinalOverride(), index, id, -1, false, std::string(), false))
 	{
 		return false;
 	}
@@ -1790,6 +1941,20 @@ void AIBaseBuilder::crc(const AIBuildState &s, StateHasher &h)
 	h.addU64(u.made);
 	h.addU64(u.queued);
 	h.addU64(u.executed);
+	h.addU32((std::uint32_t)u.heroNames.size());
+	for (const std::string &n : u.heroNames)
+	{
+		h.addString(n);
+	}
+	h.addI32(u.heroIndex);
+	h.addU32((std::uint32_t)u.removedHeroes.size());
+	for (int i : u.removedHeroes)
+	{
+		h.addI32(i);
+	}
+	h.addI32(u.heroCost);
+	h.addBool(u.heroInProgress);
+	h.addU64(u.heroesMade);
 	const AIEconomyState &e = s.economy;
 	h.addBool(e.disabled);
 	h.addI32(e.built);

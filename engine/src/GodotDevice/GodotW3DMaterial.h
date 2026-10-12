@@ -80,6 +80,8 @@ public:
 	// lane CAH-2 (S-1408): the colour set of the model being built (W3DInstancer::add_model_colored; kind 0 = none): its house colour textures are
 	// recoloured texel by texel as RW 0x531C77 before any filtering, the mipmaps made from the recoloured level (Recolored_House_Texture)
 	void Set_House_Params(const HouseColorParams &params) { HouseParams = params; }
+	// lane BUILD-5 r3: the surfaces this factory builds belong to a translucent drawable (W3DShaderKey::AlphaOverride); off by default
+	void Set_Alpha_Override(bool on) { AlphaOverride = on; }
 	// RW 0x531C77 applied to the texture `name` (its A8R8G8B8 texels; another format stays as it is, as retail's switch leaves it), then mipmaps; cached
 	// by "#<path>#<kind>&<c0>&<c1>&<c2>" (retail names the new texture "#<texture>#<options>", RW 0x54BDE0). Invalid when the texture is missing.
 	Ref<Texture2D> Recolored_House_Texture(const std::string &name, const HouseColorParams &params, std::vector<std::string> &errors, std::vector<std::string> &notes);
@@ -113,6 +115,7 @@ private:
 	ArchiveFileSystem &Fs;
 	const HouseColorTable *HouseColors = nullptr;
 	HouseColorParams HouseParams;
+	bool AlphaOverride = false;
 	std::map<std::string, Ref<Shader>> Shaders;
 	std::map<std::string, Ref<Texture2D>> Textures; // by virtual path
 	std::vector<std::string> TextureErrors;

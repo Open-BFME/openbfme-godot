@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <set>
 
 namespace
 {
@@ -634,24 +635,190 @@ std::vector<SkirmishComboEntry> SkirmishGameSetup::legendaryHeroesEntries() cons
 	return out;
 }
 
-bool SkirmishGameSetup::validateStart(std::u16string &title, std::u16string &text) const
+SkirmishGameSetup::StartCheck SkirmishGameSetup::checkStart(int flags, bool willTransfer) const
 {
-	// startPressed (ZH SkirmishGameOptionsMenu.cpp:506): the donor falls through to a dereference of the end iterator after the unknown-map
-	// message box; here the refusal ends the check.
+	// RW 0x8431B8 (see the header). The order of the tests and the texts are RotWK's; the owner's ready test (vslot 4) and the NAT test (vslot 0x5C) pass
+	StartCheck r;
+	// a refusal: its text goes to the owner's vslot 0x44 with each kind in order (RW 0x8406DB is kind 1; the jumps to RW 0x84382B add kind 2)
+	auto refuse = [&](const char *labelName, const std::u16string &text, std::initializer_list<int> kinds) {
+		r.ok = false;
+		r.refusalLabel = labelName;
+		r.refusal = text;
+		for (int kind : kinds)
+		{
+			r.lines.push_back({ text, kind });
+		}
+		return r;
+	};
+	const bool wotr = m_strategic; // MpGameSetup + 0x7C == 1
 	const MapCacheEntry *md = findMap(m_info.mapName);
+	// RW 0x843245 .. 0x843276: the maximum (RW 0x9758E3: the map's player count, 0 without the map; above 8 the constant 8 at RW 0xC53F2C) and the minimum
+	// (RW 0x97597F: 0 outside the War of the Ring; its scenario's minimum is not ported, stop S-3610)
+	int maxPlayers = md ? (int)md->numPlayers : 0;
+	if (maxPlayers >= 9)
+	{
+		maxPlayers = MAX_SLOTS;
+	}
+	const int minPlayers = 0;
+	if (wotr)
+	{
+		r.stops.push_back("[S-3610] start check: the War of the Ring scenario's player limits (RW 0x9758E3 / 0x97597F) and faction test (GUI:DisabledFaction, RW 0x843447) are not "
+						  "ported: the map's player count stands in and every faction passes");
+	}
+	if (maxPlayers < 1 || maxPlayers < minPlayers)
+	{
+		return refuse("", std::u16string(), {}); // RW 0x843263: no text, the start simply does not happen
+	}
 	if (!md)
 	{
-		title = label("GUI:ErrorStartingGame");
-		text = label("GUI:CantFindMap");
-		return false;
+		return refuse("LAN:NoMapSelected", label("LAN:NoMapSelected"), { 1 }); // RW 0x8438D3 (unreachable: no map gives no maximum)
 	}
-	if (m_info.numPlayers() > md->numPlayers)
+	bool allHaveMap = true, allAccepted = true, allSpots = true;
+	int numUsers = 0, numHumans = 0, numRandom = 0, numMissingClan = 0;
+	std::set<int> teams;
+	for (int i = 0; i < MAX_SLOTS; ++i)
 	{
-		title = label("GUI:ErrorStartingGame");
-		text = formatInt(label("GUI:TooManyPlayers"), (int)md->numPlayers);
-		return false;
+		const SkirmishGameSlot &slot = m_info.slots[i];
+		if (slot.state == SLOT_OPEN)
+		{
+			continue; // RW 0x843305 .. 0x843315: outside the War of the Ring the slot's selection is refreshed (RW 0x840C59): the screen's
+		}
+		const bool observer = slot.playerTemplate == PLAYERTEMPLATE_OBSERVER; // RW 0x800A1B
+		if (slot.isHuman())
+		{
+			if (!slot.hasMap && !willTransfer)
+			{
+				std::u16string line = label("GUI:PlayerNoMap"); // "%ls does not have the map %ls." (kind 2)
+				const std::size_t a = line.find(u"%ls");
+				if (a != std::u16string::npos)
+				{
+					line.replace(a, 3, slot.name);
+				}
+				const std::size_t b = line.find(u"%ls");
+				if (b != std::u16string::npos)
+				{
+					line.replace(b, 3, mapDisplayName(*md, true));
+				}
+				r.lines.push_back({ line, 2 }); // RW 0x84338A: kind 2
+				allHaveMap = false;
+			}
+			if (!slot.accepted && i != 0)
+			{
+				allAccepted = false; // slot 0's accepted flag is set before the loop (RW 0x843280 region; decomp: getSlot(0)->m_accepted = true)
+			}
+			if (!observer)
+			{
+				++numMissingClan; // RW 0x7846EE: the player's clan tag; OpenBFME players carry none (only the clan game rule reads it)
+			}
+		}
+		if (slot.isOccupied() && !observer)
+		{
+			++numUsers;
+			numHumans += slot.isHuman() ? 1 : 0;
+			if (slot.teamNumber < 0)
+			{
+				++numRandom;
+			}
+			else
+			{
+				teams.insert(slot.teamNumber);
+			}
+			// RW 0x843447 .. 0x843495: the War of the Ring scenario's faction test (GUI:DisabledFaction) is not ported (S-3610)
+			if (slot.startPos == -1)
+			{
+				allSpots = false;
+			}
+		}
 	}
-	return true;
+	r.numHumans = numHumans;
+	const bool wotrEnemy = wotr && (flags & 0x100) != 0; // RW 0x8434B3: + 0x3A5 & 1
+	if (((flags & 0x10) != 0 || wotrEnemy) && numHumans <= 1)
+	{
+		return refuse("GUI:NeedHumanPlayers", label("GUI:NeedHumanPlayers"), { 0 }); // RW 0x8434DE (kind 0)
+	}
+	if (!allHaveMap)
+	{
+		return refuse("GUI:CouldNotTransferMap", label("GUI:CouldNotTransferMap"), { 1 });
+	}
+	if (maxPlayers < numUsers)
+	{
+		return refuse("LAN:TooManyPlayers", formatInt(label("LAN:TooManyPlayers"), maxPlayers), { 1 });
+	}
+	if (numUsers < minPlayers)
+	{
+		return refuse("LAN:TooFewPlayers", formatInt(label("LAN:TooFewPlayers"), minPlayers), { 1 }); // RotWK's addition (RW 0x843575)
+	}
+	const int globalMinPlayers = 0; // GlobalData + 0xA44 (read RW 0x84359C): the command line's value (RW 0x7BA380), 0 by default (RW 0x642F14); OpenBFME has no such switch
+	if (globalMinPlayers != 0 && numHumans == 0)
+	{
+		return refuse("GUI:NeedHumanPlayers", label("GUI:NeedHumanPlayers"), { 1 });
+	}
+	if (wotr && !allSpots)
+	{
+		return refuse("GUI:NeedStartSpots", label("GUI:NeedStartSpots"), { 1, 2 }); // RW 0x8435F9 (GUI:DisabledFaction before it, RW 0x8435D9: S-3610)
+	}
+	if (numUsers < globalMinPlayers)
+	{
+		return refuse("GUI:NeedHumanPlayers", label("GUI:NeedHumanPlayers"), { 1 });
+	}
+	const unsigned numTeams = (unsigned)teams.size() + (unsigned)numRandom; // RW 0x843658 / 0x8436A3: unsigned compares
+	if (numTeams < (unsigned)globalMinPlayers)
+	{
+		return refuse("LAN:NeedMoreTeams", label("LAN:NeedMoreTeams"), { 1, 2 });
+	}
+	if (numTeams < 2)
+	{
+		if (wotrEnemy)
+		{
+			return refuse("GUI:NeedWOTREnemy", label("GUI:NeedWOTREnemy"), { 1, 2 });
+		}
+		r.lines.push_back({ label("GUI:SandboxMode"), 0 }); // RW 0x8436D8 (kind 0): "Entering sandbox mode..." and the start goes on
+		r.sandbox = true;
+	}
+	if (m_info.rules[RULE_CLAN_GAME] == 1) // RW 0x84370A: the setup's + 0x160 (its rule block + 0x15C, + 4: rule 1, ClanGame)
+	{
+		if (numMissingClan >= 1)
+		{
+			return refuse("CLAN:ErrorMissingClanAffiliation", label("CLAN:ErrorMissingClanAffiliation"), { 1, 2 });
+		}
+		if (numRandom != 0 || teams.size() != 2)
+		{
+			return refuse("CLAN:ErrorOnlyTwoClans", label("CLAN:ErrorOnlyTwoClans"), { 1, 2 });
+		}
+		if ((unsigned)numUsers >= 5)
+		{
+			return refuse("CLAN:ErrorClanMaxFourPlayers", label("CLAN:ErrorClanMaxFourPlayers"), { 1, 2 });
+		}
+		if ((unsigned)numUsers <= 1)
+		{
+			return refuse("CLAN:ErrorClanMinTwoPlayers", label("CLAN:ErrorClanMinTwoPlayers"), { 1, 2 });
+		}
+	}
+	if (!allAccepted && (flags & 0x20) != 0)
+	{
+		return refuse("GUI:NotifiedStartIntent", label("GUI:NotifiedStartIntent"), { 2 });
+	}
+	r.ok = true;
+	return r;
+}
+
+bool SkirmishGameSetup::validateStart(std::u16string &title, std::u16string &text) const
+{
+	const StartCheck c = checkStart();
+	if (c.ok)
+	{
+		return true;
+	}
+	title.clear();
+	text.clear();
+	for (const StartCheck::Line &line : c.lines)
+	{
+		if (line.kind == 1)
+		{
+			text = line.text;
+		}
+	}
+	return false;
 }
 
 NewGameMessage SkirmishGameSetup::makeNewGameMessage()

@@ -93,7 +93,7 @@ int SkirmishAIManager::newGame(bool skirmishOrMultiplayer, bool loadingSave, con
 			ai.build.baseBuilderDisabled = m_store->data().disableBaseBuilding;
 			ai.build.units.disabled = m_store->data().disableUnitBuilding; // RW 0x8F033F -> + 0x3C
 			ai.build.economy.disabled = m_store->data().disableEconomyBuilding; // RW 0x8F02CC -> + 0xC4
-			// RW 0x9A10D8 (unit builder init): copies the army's HeroBuildOrder (heroes are S-416)
+			// RW 0x9A10D8 (unit builder init): copies the army's HeroBuildOrder (AIBaseBuilder::init, lane DECOMP-2)
 		}
 	}
 	// RW 0x6A9E48: every playable player's objects pass through the object event RW 0x6A9D9C (lane AI-2; RW walks the player's own object list (RW 0x66362D
@@ -412,6 +412,7 @@ void SkirmishAIManager::reset()
 	m_errors.clear();
 	m_counters = Counters();
 	m_attackedAtIds = 0; // RW 0x6A922D
+	m_assistTimers.clear();
 }
 
 const AISkirmishPlayer *SkirmishAIManager::findAI(int playerIndex) const
@@ -445,6 +446,12 @@ void SkirmishAIManager::crc(StateHasher &h) const
 	h.addU32(0x534B4149u); // "SKAI"
 	h.addBool(m_started);
 	h.addU32(m_attackedAtIds);
+	h.addU32((std::uint32_t)m_assistTimers.size());
+	for (const std::pair<int, unsigned> &t : m_assistTimers)
+	{
+		h.addI32(t.first);
+		h.addU32(t.second);
+	}
 	// the data the AI decides from (SkirmishAIData, armies, bases and their layouts, dozers, PlayerAITypes): a peer with other data diverges here
 	h.addBool(m_store != nullptr);
 	if (m_store)
@@ -517,16 +524,19 @@ std::vector<std::string> SkirmishAIManager::stopLines()
 		"difficulty gate (RW 0x99327C), the farm priority growth (RW 0x99F313) and the unit request's effective priority (RW 0x9EDA17) are ported; inference: the "
 		"farm site pool is made at newGame in object list order, the economy structure count is recounted from the living objects",
 		"[S-420] skirmish ai vs ai: games end through the fortress fall, the spawned worker's fade on its structure's delete (RW 0x85750D -> 0x85730B) and "
-		"unfinished structures as targets; INFERENCE: RW's AI target scan filter is not traced (the construction rule is ZH's AI::findClosestEnemy), the "
-		"worker kill runs at the port's delete point, the defeat frames are engine pins",
-		"[S-418] skirmish ai tactical layer inference: the player info lists are rebuilt each frame in id order; a team recruits every eligible unit with no "
-		"maximum and is handed over at its minimum; RW 0x9EF9AF's path check is taken as reachable; the enemy score root is the double root of the float sum",
+		"unfinished structures as targets (lane DECOMP-2: RW's AI::findClosestEnemy RW 0x701443 -> 0x7006D7 and its attack test RW 0x68D6A6 / 0x6C9147 / "
+		"0x6C8652 never test UNDER_CONSTRUCTION); INFERENCE: the worker kill runs at the port's delete point, the defeat frames are engine pins",
+		"[S-418] skirmish ai tactical layer inference: the player info lists are rebuilt each frame in id order; (lane DECOMP-2: the team builder's recruit test "
+		"RW 0x9A24FC, the SUPPORT rule, the hand-over at the minimum when DEFENSIVE, full or meeting the target's threat RW 0x9A26A1, the pooled defaults and the "
+		"idle dispatch RW 0x9A3040 are ported; its unit list is taken as the army list) a unit in another team is never taken (RW's priority and DEFENSIVE-target branches), a member counts until it is destroyed, the threat sum runs "
+		"newest member first; RW 0x9EF9AF's path check is taken as reachable; the enemy score root is the double root of the float sum",
 		"[S-415] skirmish ai unit builder (+ 0x38, RW 0x9A1196): the factories by unit (RW 0x9A0838, BuildAssistant slot 0x68), the composition from the "
 		"ArmyDefinition percentages blended by the phase fraction (RW 0x9A0E2B / 0x82FCAB), the request list (RW 0x9A0D4F), one new request per frame among "
 		"the members below their share of the command point limit with a free factory (RW 0x9A0BC0 / 0x9A0B26, one logic random draw), priority 500 in Rush "
-		"else DefaultUnitPriority, and the unit request's check / queue through PROD-1 (RW 0x9EDBC6 / 0x9EDB44) are ported; not ported: heroes (HeroBuildOrder, "
-		"RW 0x9A03A1 / 0x9A0993), the money reserve (+ 0x21, "
-		"cost >= 1000), the living world part (RW 0x9A0426)",
+		"else DefaultUnitPriority, and the unit request's check / queue through PROD-1 (RW 0x9EDBC6 / 0x9EDB44) and (lane DECOMP-2) the heroes "
+		"(HeroBuildOrder: RW 0x9A03A1 / 0x9A0993 / 0x9A05DB, the hero factories RW 0x9A08E8, the hero list index of the check / queue) are ported; not "
+		"ported: the HeroBuildOrder's CreateAHero entry of a slot with a Create-a-Hero (RW 0x90CE35), the money reserve (+ 0x21, cost >= 1000; a hero's "
+		"money test reads the player's money alone), the living world part (RW 0x9A0426)",
 		"[S-416] skirmish ai unit builder inference: a structure enters the factory map when it is first seen complete (RW: its completion event), the owned "
 		"count of a unit is the player's living objects of the template (RW: the player info record's map, RW 0x8E3FD6), a unit request is complete when its "
 		"factory no longer holds its queue entry (RW: the production event), the phase blend of RW 0x82FCAB is computed in double for the x87 chain",
@@ -536,14 +546,12 @@ std::vector<std::string> SkirmishAIManager::stopLines()
 		"at the DOZER_FACTORY structures), the object events (RW 0x8F069A / 0x8F0C47 / 0x8F0BBC / 0x8F0660 / 0x8F06FF) and the rebuild of a lost structure "
 		"(RW 0x90D16A); not ported: the fortress rebuild task (AIBase + 0x28, RW 0x9BC882), the money reserve (+ 0x21, PercentToSave, RW 0x8F0502 / 0x99E79A), "
 		"expansions (bases after the first)",
-		"[S-414] skirmish ai base builder inference: RW 0x97DAFC (a pathfinder cell scan of the site) is taken as no objection; the enemy filter asks the "
-		"controlling player (RW: the object's team); the CRT acos / sin / cos of the angle and the rotation are SimMath's deterministic versions (S-167)",
+		"[S-414] skirmish ai base builder inference: RW 0x97DAFC (TheFireLogicSystem's burning cells within 150 of the site -> 9) never objects: the terrain fire "
+		"system is not ported (S-191); the CRT acos / sin / cos of the angle and the rotation are SimMath's deterministic versions (S-167)",
 		"[S-890] skirmish ai dozer manager inference (lane AI-2): a dozer is free again whenever its task ends (RW 0x88BF4E's notification is found only on the "
 		"repair-complete branch RW 0x88DBCE); the starting objects are registered in object list order (RW 0x6A9E48 walks each player's own list); the object "
 		"+ 0x4D0 byte that RW 0x6A9D9C / 0x6A99CB test is taken as clear; the created-structure call (RW 0x6AA688 -> RW 0x8F06FF(0)) is not made because the "
 		"port creates a dozer's structure at the order (RW: PENDING_CONSTRUCTION, which that call skips)",
-		"[S-891] skirmish ai tactic idle check inference (lane AI-2): a team member is engaged when its AI has a current victim (RW 0x7A03AB reads "
-		"AIUpdate + 0x40 through RW 0x668303); (lane AI-3) the bit 0x70 at + 0x10C that RW 0x8F135E also tests is the model condition CAPTURING",
 		"[S-892] horde member hub busy rule (lane AI-2; lane MOVE-2 r2 applied it in full): RW's move hub (RW 0x87468B) makes a member busy (AI command 0x31) "
 		"unless both it and its horde are active, when its HORDE moves or it is idle (RW 0x874749: the isMoving is the horde's), unless it is busy; the member "
 		"order's leash (RW 0x877B4F, edge distance RW 0x66352C) and active-member rule (RW 0x877B69) are applied with their prerequisite, the horde command "

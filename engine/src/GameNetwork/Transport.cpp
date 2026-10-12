@@ -400,6 +400,7 @@ void Transport::sendNow(const NetAddress &to, const std::vector<std::uint8_t> &d
 		return;
 	}
 	++m_stats.packetsSent;
+	m_stats.bytesSent += datagram.size();
 }
 
 void Transport::sendDatagram(int slot, const NetAddress &to, std::vector<std::uint8_t> datagram, std::uint64_t now)
@@ -503,6 +504,10 @@ void Transport::flush(int slot, std::uint64_t now)
 		d[1] = (std::uint8_t)((crc >> 8) & 0xFF);
 		d[2] = (std::uint8_t)((crc >> 16) & 0xFF);
 		d[3] = (std::uint8_t)(crc >> 24);
+		if (count == 0)
+		{
+			++m_stats.ackOnlyPacketsSent;
+		}
 		sendDatagram(slot, p.address, std::move(d), now);
 		sentAny = true;
 		p.lastSent = now;
@@ -758,6 +763,7 @@ void Transport::service()
 	std::vector<std::uint8_t> d;
 	while (m_socket.receiveFrom(from, d))
 	{
+		m_stats.bytesReceived += d.size();
 		if (!m_impairment.acceptIncoming(now))
 		{
 			++m_stats.dropped; // lane MP-3: the cable is pulled

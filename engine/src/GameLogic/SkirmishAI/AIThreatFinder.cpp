@@ -321,6 +321,11 @@ float AIThreatFinder::relativeThreat(GameLogic &logic, const Coord3D &position, 
 	return 0.0f < allies ? SimMath::subf32(allies, enemies) : 0.0f; // RW 0x6C6600 .. 0x6C6608
 }
 
+double AIThreatFinder::counterValue(ThreatRecord &a, int category, float v)
+{
+	return counterOne(a, category, v);
+}
+
 double AIThreatFinder::counterDifference(ThreatRecord &a, const ThreatRecord &b, float *aTotal, float *sumOut)
 {
 	// RW 0x7EDC2F(this = a, b): for each category c of 17 with a positive value in b, sum = fstp(RW 0x7ED963(c, value) + sum) (a's categories are consumed);

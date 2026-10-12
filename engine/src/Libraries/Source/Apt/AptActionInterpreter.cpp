@@ -1587,7 +1587,12 @@ bool AptActionInterpreter::run(Frame &f, const AptCodeBlock &block)
 					AptValue varName = pop();
 					if (!f.fault)
 					{
-						defineLocal(f, varName.toString(), result);
+						// lane MENU-1: the *SetVar call forms run the call, then SetVariable, not DefineLocal. TARGET FACT (RotWK handler table RW 0xDC2B70):
+						// opcode 94 RW 0xB1D280 = CallMethod RW 0xB1C220 + SetVariable RW 0xB15B60, 177 RW 0xB1D350 = CallFunction RW 0xB1BAC0 + SetVariable,
+						// 179 RW 0xB1D440 = CallMethod + SetVariable (donor: BFME2 decomp _FunctionAptActionCallMethodSetVar / DictCall*SetVar).
+						// Skirmish.apt's OpenMainMovie sets `vScreenName` on the root timeline this way, which its `_close` frame and the profile box's
+						// OpenPop / ClosePop then read (`_root[vScreenName]`)
+						assignVariable(f, varName.toString(), result);
 					}
 				}
 				break;
@@ -1628,7 +1633,12 @@ bool AptActionInterpreter::run(Frame &f, const AptCodeBlock &block)
 					AptValue varName = pop();
 					if (!f.fault)
 					{
-						defineLocal(f, varName.toString(), result);
+						// lane MENU-1: the *SetVar call forms run the call, then SetVariable, not DefineLocal. TARGET FACT (RotWK handler table RW 0xDC2B70):
+						// opcode 94 RW 0xB1D280 = CallMethod RW 0xB1C220 + SetVariable RW 0xB15B60, 177 RW 0xB1D350 = CallFunction RW 0xB1BAC0 + SetVariable,
+						// 179 RW 0xB1D440 = CallMethod + SetVariable (donor: BFME2 decomp _FunctionAptActionCallMethodSetVar / DictCall*SetVar).
+						// Skirmish.apt's OpenMainMovie sets `vScreenName` on the root timeline this way, which its `_close` frame and the profile box's
+						// OpenPop / ClosePop then read (`_root[vScreenName]`)
+						assignVariable(f, varName.toString(), result);
 					}
 				}
 				break;
@@ -1653,7 +1663,12 @@ bool AptActionInterpreter::run(Frame &f, const AptCodeBlock &block)
 					AptValue varName = pop();
 					if (!f.fault)
 					{
-						defineLocal(f, varName.toString(), result);
+						// lane MENU-1: the *SetVar call forms run the call, then SetVariable, not DefineLocal. TARGET FACT (RotWK handler table RW 0xDC2B70):
+						// opcode 94 RW 0xB1D280 = CallMethod RW 0xB1C220 + SetVariable RW 0xB15B60, 177 RW 0xB1D350 = CallFunction RW 0xB1BAC0 + SetVariable,
+						// 179 RW 0xB1D440 = CallMethod + SetVariable (donor: BFME2 decomp _FunctionAptActionCallMethodSetVar / DictCall*SetVar).
+						// Skirmish.apt's OpenMainMovie sets `vScreenName` on the root timeline this way, which its `_close` frame and the profile box's
+						// OpenPop / ClosePop then read (`_root[vScreenName]`)
+						assignVariable(f, varName.toString(), result);
 					}
 				}
 				break;

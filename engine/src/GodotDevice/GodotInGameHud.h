@@ -67,6 +67,12 @@ public:
 	Dictionary get_frame_timings() const;
 	// lane BUILD-1: { placing, template, source, has_ghost, x, y, angle, legal (LegalBuildCode, 0 = may be placed) } of the building waiting for its site
 	Dictionary get_placement() const;
+	// lane BUILD-5: the MiscAudio field names the input asked to play since the last call (InGameUI::takeMiscSounds), e.g. BadBuildingPlacementSound
+	PackedStringArray take_misc_sounds();
+	// lane BUILD-5: the pointer as drawn now { name, direction, hidden, texture (null: none), hot } (proof screenshots draw it: a capture omits the OS pointer)
+	Dictionary get_cursor_image() const;
+	// lane BUILD-5 r2: the placement ghost as drawn (PlacementGhostRenderer::state): { template, castle, anchored, arrow, icons: [...], errors: [...] }
+	Dictionary get_placement_ghost_state() const;
 	// lane PLAY-1: the move hints to draw now (InGameUI::createMoveHint): { model (GameData MoveHintName), frame (client frame), made, hints: [{ slot, frame,
 	// age (client frames, <= 40), position (Godot axes), x, y, z (SAGE) }] }
 	Dictionary get_move_hints() const;

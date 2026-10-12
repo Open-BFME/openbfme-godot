@@ -89,5 +89,9 @@ struct EconomyContext
 	bool gameInfoPresent = true;
 	int lobbyCommandPointPercent = 100;
 	bool scoring = true;
+	// lane GAMEMODES-1: TheGameInfo vslot 0x50, GameInfo::isSandbox (RW 0x800C8F; SkirmishGameInfo::isSandbox): a game whose occupied slots are all on the
+	// local slot's team (the lobby's "Entering sandbox mode..."). VictoryConditions reads it (RW 0x808C5B: no allied victory; RW 0x809034: the keep-score
+	// switch stays on). Set by the game start from the setup; false without a game info (tests, tools)
+	bool sandbox = false;
 	void crc(StateHasher &h) const;
 };

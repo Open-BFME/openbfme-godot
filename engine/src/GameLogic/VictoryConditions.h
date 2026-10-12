@@ -5,7 +5,7 @@
 //
 // TARGET FACTS (RotWK game.dat, caveat S-001): the class has the vtable RW 0xC4F108 (constructor RW 0x808D3C, init RW 0x808A43, update RW 0x808F53 = slot 10 (vslot 0x28), hasAchievedVictory RW
 //   0x808AA8, hasBeenDefeated RW 0x808B2B, hasSinglePlayerBeenDefeated RW 0x80953C = vslot 0x40, cachePlayerPtrs RW 0x808B6A with the per-player test RW 0x808BD4). Layout: + 0x0C the victory
-//   rule (init: 2, or 3 when the game mode is 3), + 0x18 the players (20 pointers), + 0x68 the local slot (-1), + 0x6C the end frame, + 0x70 the defeated flags (20 bytes), + 0x84 the local player
+//   rule (init: 2, or 3 when the game KIND TheGameLogic + 0x114 is 3: every skirmish / LAN game, lane GAMEMODES-1), + 0x18 the players (20 pointers), + 0x68 the local slot (-1), + 0x6C the end frame, + 0x70 the defeated flags (20 bytes), + 0x84 the local player
 //   is defeated, + 0x85 a single alliance remains, + 0x86 observer, + 0x88 the defeat counter, + 0x8C the number of cached players, + 0x90 / + 0x91 two script flags.
 //   * cachePlayerPtrs: every player of the list except the neutral player, a player without a template, the "FactionCivilian" template's player and an observer is cached in list order; the
 //     local player's index becomes the local slot; with no local slot the game is observed (+ 0x84 and + 0x86 set).
@@ -17,12 +17,12 @@
 //     frame, for frame > 1 the player's map is revealed for good and the "GUI:PlayerHasBeenDefeated" message goes out (client), the rule for allied computer players of a defeated human
 //     (RW 0x809271 .. 0x80936E, see below), then killPlayer (RW 0x6ABE7C).
 //   * hasSinglePlayerBeenDefeated (RW 0x80953C): false for no player or an observer; true when the flag + 0x90 is set; else RW 0x809404 decides and a true answer increments the counter (+ 0x88):
-//     a player already killed (Player + 0x754) is defeated; the game modes 3 and 9 and a script engine veto (RW 0x441E4A) answer "not defeated"; the rule + 0xC picks the test:
-//       2 (the default): not defeated while the player has any object matching GameData VictoryConditionStructureObjectFilter (RW 0x6ABD0B: the player's teams' live, not destroyed, not
+//     a player already killed (Player + 0x754) is defeated; the game mode 9 (+ 0x110) and, outside the game kind 3, a Living World veto (RW 0x441E4A) answer "not defeated"; the rule + 0xC picks the test:
+//       2 (a War of the Ring battle): not defeated while the player has any object matching GameData VictoryConditionStructureObjectFilter (RW 0x6ABD0B: the player's teams' live, not destroyed, not
 //          MINE objects the filter accepts), else defeated unless the player has a live non-structure, non-projectile, non-IGNORE_FOR_VICTORY object of KindOf DOZER (RW 0x6ABD73 /
 //          0x7A0830);
-//       3: not defeated while a structure matches the structure filter, else only while some object matches GameData VictoryConditionUnitObjectFilter (RW 0x6ABDC2 -> 0x7A1A81 -> 0x7A089B: that scan skips the effectively dead, the destroyed, STRUCTURE, PROJECTILE and IGNORE_FOR_VICTORY objects before the filter applies);
-//       0 and 1: other kind-mask / team tests (RW 0x809508, 0x8094F8) that no rule value of a skirmish selects: not ported (stop S-344).
+//       3 (every skirmish / LAN game): not defeated while a structure matches the structure filter, else only while some object matches GameData VictoryConditionUnitObjectFilter (RW 0x6ABDC2 -> 0x7A1A81 -> 0x7A089B: that scan skips the effectively dead, the destroyed, STRUCTURE, PROJECTILE and IGNORE_FOR_VICTORY objects before the filter applies);
+//       0 and 1: other kind-mask / team tests (RW 0x809508, 0x8094F8) that nothing selects (init writes 2 or 3; no setter): not ported (stop S-344).
 //   * hasAchievedVictory (RW 0x808AA8): false for no player or an observer; true for a player that has not been defeated (or allies of one) when a single alliance remains AND the defeat counter is
 //     above 0 (so a game of one player is not won at the start); hasBeenDefeated (RW 0x808B2B): the player is no observer, a single alliance remains, the counter is above 0 and the player has not
 //     achieved victory.
@@ -43,6 +43,7 @@
 
 class GameLogic;
 class Player;
+struct EconomyContext;
 struct ObjectFilter;
 
 class VictoryConditions
@@ -72,6 +73,8 @@ public:
 	};
 
 	explicit VictoryConditions(GameLogic &logic);
+	// lane GAMEMODES-1: the rule init (RW 0x808A43) gives a game of this context: RULE_BASE_OR_ARMY for the game kind 3 (skirmish / LAN), else RULE_BASE_OR_BUILDERS
+	static int initialRule(const EconomyContext &context);
 	// RW 0x808A43 + cachePlayerPtrs RW 0x808B6A: forget everything, cache the players of the list
 	void init();
 	// the same with exactly these players cached (a scenario or a map test whose list holds placeholder players that are not part of the game): the local slot is the local player's

@@ -4,6 +4,7 @@
 #include "GameClient/CursorFile.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cctype>
 #include <cstdlib>
 #include <cstring>
@@ -332,10 +333,48 @@ std::string FindFileNoCase(const std::string &dir, const std::string &name)
 	return std::string();
 }
 
+std::string CursorFileName(const std::string &image, int directions, int direction)
+{
+	std::string base = image;
+	const char *ext = "ani";
+	if (base.size() >= 4)
+	{
+		std::string tail = base.substr(base.size() - 4);
+		for (char &c : tail)
+		{
+			c = (char)std::tolower((unsigned char)c);
+		}
+		if (tail == ".cur")
+		{
+			ext = "cur";
+			base.resize(base.size() - 4);
+		}
+	}
+	return directions > 1 ? base + std::to_string(direction) + "." + ext : base + "." + ext;
+}
+
+int ScrollCursorDirection(float amountX, float amountY, int directions, bool scrolling)
+{
+	if (directions <= 1 || !scrolling || (amountX == 0.0f && amountY == 0.0f))
+	{
+		return 0;
+	}
+	// offset.normalize(); theta = atan2f(y, x); theta = fmod(theta + 2 pi, 2 pi); frame = (Int)(theta / (2 pi / n) + 0.5f); a frame of n is 0
+	const float len = std::sqrt(amountX * amountX + amountY * amountY);
+	const float x = amountX / len, y = amountY / len;
+	const double twoPi = 6.283185307179586;
+	float theta = std::atan2(y, x);
+	theta = (float)std::fmod((double)theta + twoPi, twoPi);
+	int frame = (int)((double)theta / (twoPi / (double)(float)directions) + 0.5);
+	return frame >= directions ? 0 : frame;
+}
+
 std::vector<std::string> CursorAcceptanceStops()
 {
 	return {
-		"[S-295] cursors: the pointer images are the loose files of data/cursors named by Mouse.ini (ANI / CUR decoded to RGBA, case-insensitive lookup); a Mouse.ini block whose file the install does not ship "
-		"shows the engine's own pointer (reported, not hidden); retail's Win32 cursor loading (hotspot scaling, the 3D W3D cursors, the cursor animation timing) is not ported",
+		"[S-295] cursors: the pointer images are the loose files of data/cursors named by Mouse.ini as Win32Mouse::initCursorResources names them (RW 0x441506: "
+		"\".cur\" stripped, else .ani; <stem><n> per direction, BUILD-5), decoded to RGBA (case-insensitive lookup); the directional Scroll cursor faces the "
+		"scroll amount (RW 0x498B1A); a cursor without a Mouse.ini block (Build, InvalidBuild) shows no pointer, as SetCursor(null) does; a block whose file "
+		"the install does not ship shows the engine's own pointer (reported, not hidden); not ported: the hotspot scaling, the 3D W3D cursors, the animation timing",
 	};
 }

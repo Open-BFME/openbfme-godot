@@ -8,6 +8,7 @@ list(APPEND OPENBFME_SIM_SOURCES
 # client-only sources (excluded from the simulation audit in tools/sim/sim_policy.json)
 set(OPENBFME_PLAY1_SOURCES
     src/GameClient/PlacementGhost.cpp
+    src/GameClient/PlacementIcons.cpp # lane BUILD-5
 )
 set(OPENBFME_PLAY1_TESTS
     tests/test_play1_tribute.cpp

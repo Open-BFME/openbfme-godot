@@ -23,6 +23,7 @@
 #include "GameLogic/SkirmishAI/SkirmishAIManager.h"
 
 #include <algorithm>
+#include <stdexcept>
 #include <map>
 
 namespace
@@ -539,6 +540,24 @@ void updateAttackedAt(GameLogic &logic, AISkirmishPlayer &ai)
 	}
 }
 
+// RW 0x6C6743 (this = the target): the owner's attacked-at record with the largest enemies' total (strictly above the running maximum from 0) when that total is
+// above the target's threat (+ 0x28), else the target finder's scan of the owner's ENEMIES (RW 0x6C67AB; S-1302: a scan the finder already made this frame is
+// taken as equal to a new one)
+AIThreatFinder::ThreatRecord enemyRecord(GameLogic &logic, const AISkirmishPlayer &chooser, const Player &owner, const AITarget &t)
+{
+	float most = 0.0f;
+	const AIAttackedAt *pick = nullptr;
+	for (const AIAttackedAt &e : chooser.brain.attackedAt)
+	{
+		if (e.enemies.v[0] > most)
+		{
+			most = e.enemies.v[0];
+			pick = &e;
+		}
+	}
+	return pick && most > t.threat ? pick->enemies : AIThreatFinder::scanSum(logic, t.finderPosition, t.radius, true, owner, 0);
+}
+
 // RW 0x90B2A0 (lane AI-3): dropped or inactive refuses; DEFENSIVE accepts; else the enemy record RW 0x6C6743 (the chooser's attacked-at record with the largest
 // enemies' total (strictly above the running maximum from 0) when that total is above the target's threat (+ 0x28), else the target finder's scan of the owner's
 // ENEMIES) against the chooser player's idle army record (RW 0x99E63B): RW 0x7EDC2F(this = the enemy record, the army record); a value not above 1000
@@ -559,18 +578,7 @@ bool targetAcceptable(GameLogic &logic, AISkirmishPlayer &chooser, const AITarge
 	{
 		return false;
 	}
-	float most = 0.0f;
-	const AIAttackedAt *pick = nullptr;
-	for (const AIAttackedAt &e : b.attackedAt)
-	{
-		if (e.enemies.v[0] > most)
-		{
-			most = e.enemies.v[0];
-			pick = &e;
-		}
-	}
-	// RW 0x6C67AB: the scan at the finder (S-1302: a scan the finder already made this frame is taken as equal to a new one)
-	AIThreatFinder::ThreatRecord enemy = pick && most > t.threat ? pick->enemies : AIThreatFinder::scanSum(logic, t.finderPosition, t.radius, true, *owner, 0);
+	AIThreatFinder::ThreatRecord enemy = enemyRecord(logic, chooser, *owner, t);
 	const double value = AIThreatFinder::counterDifference(enemy, b.idleArmy, nullptr, nullptr);
 	if (1000.0 >= value)
 	{
@@ -754,8 +762,19 @@ int teamCountOf(OffensiveKind kind)
 	return kind == PINCER_ATTACK || kind == FEINT_ATTACK || kind == SIMPLE_SIEGE ? 2 : 1;
 }
 
-// vslot 3: a team's sizes (+ 0x2D4 minimum, + 0x2D0 maximum, -1 = the prototype's own, not identified) and its KindOf mask (+ 0x2FC; S-418: its meaning in
-// RW 0x9A24FC is not read and it is not applied)
+// a KindOf bit by its binary name (TheKindOfNames RW 0xDA0E68); the setups below cite the byte and bit RW sets
+int kindBit(const char *name)
+{
+	const int bit = KindOfTokens::indexOf(name);
+	if (bit < 0)
+	{
+		throw std::logic_error(std::string("AITacticalAI: no KindOf named ") + name);
+	}
+	return bit;
+}
+
+// vslot 3: a team's sizes (+ 0x2D4 minimum, + 0x2D0 maximum, -1 = no maximum) and its KindOf masks (lane DECOMP-2: + 0x2E0 required, + 0x2FC forbidden, the
+// masks the recruit test RW 0x9A24FC applies)
 void setupTeam(GameLogic &logic, OffensiveKind kind, int index, const AITarget &t, AITacticTeam &team)
 {
 	switch (kind)
@@ -778,11 +797,13 @@ void setupTeam(GameLogic &logic, OffensiveKind kind, int index, const AITarget &
 	case FEINT_ATTACK: // RW 0x9B38DB
 		if (index == 0)
 		{
+			team.forbiddenKinds = { kindBit("CAVALRY"), kindBit("DOZER") }; // RW 0x9B38EF: + 0x2FD |= 0x42 (bits 9, 14)
 			team.minimum = 3;
 			team.maximum = 6;
 		}
 		else
 		{
+			team.forbiddenKinds = { kindBit("MACHINE"), kindBit("HERO"), kindBit("DOZER") }; // RW 0x9B3919 .. 0x9B3921: + 0x2FD |= 8, + 0x307 |= 4, + 0x2FD |= 0x40
 			team.minimum = 1;
 			team.maximum = 2;
 		}
@@ -794,6 +815,7 @@ void setupTeam(GameLogic &logic, OffensiveKind kind, int index, const AITarget &
 	case SIMPLE_SIEGE: // RW 0x9B35EF
 		if (index == 0)
 		{
+			team.requiredKinds = { kindBit("SIEGEENGINE") }; // RW 0x9B35FA: + 0x2FB |= 0x10 (bit 220)
 			team.minimum = 1;
 			team.maximum = 2;
 		}
@@ -804,6 +826,7 @@ void setupTeam(GameLogic &logic, OffensiveKind kind, int index, const AITarget &
 		}
 		break;
 	case SIEGE_GATES: // RW 0x9B3307
+		team.forbiddenKinds = { kindBit("DOZER"), kindBit("ARCHER") }; // RW 0x9B3311 / 0x9B3315: + 0x30C |= 0x20 (bit 133), + 0x2FD |= 0x40 (bit 14)
 		team.minimum = 5;
 		team.maximum = 8;
 		break;
@@ -1017,7 +1040,10 @@ bool teamCentre(GameLogic &logic, const AITacticTeam &team, Coord3D &out)
 	return true;
 }
 
-// RW 0x7A03AB: a member whose AI has a goal object (AIUpdate + 0x40, RW 0x668303; S-891: taken as the AI's current victim)
+// RW 0x7A03AB: a member whose AI has a current victim (AIUpdate + 0x40 through getCurrentVictim RW 0x668303). TARGET (lane DECOMP-2, closes S-891): + 0x40 is written only
+// by setCurrentVictim RW 0x6682B1 (the victim's id, Object + 0x74; null clears it after the old victim's AI drops this object as a targeter, AI vslot 0x204), called by the
+// attack states (RW 0x74CED6 onEnter, 0x74D25D onExit, 0x74AD8E pursue, 0x749D46 approach, 0x7520D5 fire during approach, ...) and AIIdleState (RW 0x745A64); donor: BFME2
+// decomp AIUpdateInterface_setCurrentVictim.cpp / _getCurrentVictim.cpp (tier B same-shape / tier A for RW 0x6682B1 / 0x668303), ZH AIUpdate.cpp setCurrentVictim
 bool teamEngaged(GameLogic &logic, const AITacticTeam &team)
 {
 	for (ObjectID id : team.members)
@@ -2062,8 +2088,11 @@ void startTargetless(GameLogic &logic, AISkirmishPlayer &ai, AITactic &tac)
 		team.index = i;
 		if (tac.kindIndex == kTargetlessBase + TL_FARM_KILL)
 		{
-			// RW 0x9BB479: RW 0x8F121F (no draw for a TARGETLESS team); the team KindOf masks (+ 0x2FD / + 0x307 / + 0x30C, S-418: not applied), + 0x21C = 500,
-			// the minimum 1 in the Rush phase else 2, the maximum GetGameLogicRandomValue(minimum, 3) (AIFarmKillSquad.cpp line 0x267), the squad marked running
+			// RW 0x9BB479: RW 0x8F121F (no draw for a TARGETLESS team); the forbidden KindOf mask (RW 0x9BB491 .. 0x9BB499: + 0x307 |= 4, + 0x30C |= 0x20,
+			// + 0x2FD |= 0x48), + 0x21C = 500, the minimum 1 in the Rush phase else 2, the maximum GetGameLogicRandomValue(minimum, 3) (AIFarmKillSquad.cpp line
+			// 0x267), the squad marked running
+			team.forbiddenKinds = { kindBit("HERO"), kindBit("ARCHER"), kindBit("MACHINE"), kindBit("DOZER") };
+			team.priority = 500;
 			team.minimum = ai.build.phase == 0 ? 1 : 2;
 			team.maximum = logic.random().getValue(team.minimum, 3, kFarmKillFile, 0x267);
 			ai.brain.namedCounters[kFarmKillRunning] = 1;
@@ -2109,10 +2138,124 @@ void pickTargetless(GameLogic &logic, AISkirmishPlayer &ai)
 	}
 }
 
-// RW 0x9A24FC (S-418: a living, finished unit with an AI that is not inside a container and not in another team of the AI)
-bool eligible(const AIBrainState &b, const Object &o)
+bool anyKind(const Object &o, const std::vector<int> &bits)
 {
-	return alive(&o) && !o.isUnderConstruction() && o.getAIUpdateInterface() && !o.getContainedBy() && !inAnyTeamOf(b, o.getID());
+	for (int bit : bits)
+	{
+		if (is(o, bit))
+		{
+			return true;
+		}
+	}
+	return false;
+}
+
+// RW 0x9A24FC (lane DECOMP-2, BFME2 decomp AITeamBuilder.cpp AITeamBuilder::rva0059A01C, tier B same-shape): not effectively dead (+ 0x458 bit 0), not
+// IGNORES_SELECT_ALL (template + 0x113 bit 3), in the player's default team (+ 0x31C == player + 0x30C), one of the required KindOf bits when there are any (+ 0x2E0),
+// none of the forbidden ones (+ 0x2FC), at least LOGICFRAMES_PER_SECOND * 10 frames old (RW 0xDEBE5C, set at RW 0xBC9849; frame - creation frame + 0x4E0,
+// unsigned) and no current victim (AI + 0x260 -> RW 0x668303). INFERENCE (S-418): "in the default team" is "in no team of the AI's tactics"; RW's two ways to
+// take a unit from another team (that team active with a lower priority than this team's + 0x21C, or a DEFENSIVE target within 1000) are not ported; the port
+// also refuses a unit without an AI, under construction or inside a container (the army list's readings)
+bool recruitable(GameLogic &logic, const AIBrainState &b, const AITacticTeam &team, const Object &o)
+{
+	const Kinds &k = kinds();
+	if (!alive(&o) || is(o, k.ignoresSelectAll) || inAnyTeamOf(b, o.getID()))
+	{
+		return false;
+	}
+	if (!team.requiredKinds.empty() && !anyKind(o, team.requiredKinds))
+	{
+		return false;
+	}
+	if (!team.forbiddenKinds.empty() && anyKind(o, team.forbiddenKinds))
+	{
+		return false;
+	}
+	if (logic.getFrame() - o.getCreationFrame() < (std::uint32_t)(kLogicFramesPerSecond * 10))
+	{
+		return false;
+	}
+	const AIUpdateInterface *u = o.getAIUpdateInterface();
+	if (!u || u->currentVictim())
+	{
+		return false;
+	}
+	return !o.isUnderConstruction() && !o.getContainedBy();
+}
+
+// RW 0x9A24A6 (AITeamBuilder::getCurNumUnits): the team's members with any of CAN_ATTACK, HERO, SUPPORT (template + 0x108 bit 3, + 0x110 bit 26, + 0x120 bit 26).
+// INFERENCE: RW's team list keeps a member until it is destroyed, so a dying member still counts
+std::uint32_t teamUnitCount(GameLogic &logic, const AITacticTeam &team)
+{
+	const Kinds &k = kinds();
+	std::uint32_t n = 0;
+	for (ObjectID id : team.members)
+	{
+		const Object *o = logic.findObjectByID(id);
+		if (o && !o->isDestroyed() && (is(*o, k.canAttack) || is(*o, k.hero) || is(*o, k.support)))
+		{
+			++n;
+		}
+	}
+	return n;
+}
+
+// RW 0x7A0555 (Team::rva0039DC9E, tier A): the members whose KindOf has all of `set` and none of `clear`
+int teamMembersWith(GameLogic &logic, const AITacticTeam &team, const std::vector<int> &set, const std::vector<int> &clear)
+{
+	int n = 0;
+	for (ObjectID id : team.members)
+	{
+		const Object *o = logic.findObjectByID(id);
+		if (!o || o->isDestroyed() || !o->getTemplate())
+		{
+			continue;
+		}
+		bool ok = true;
+		for (int bit : set)
+		{
+			ok = ok && is(*o, bit);
+		}
+		for (int bit : clear)
+		{
+			ok = ok && !is(*o, bit);
+		}
+		n += ok ? 1 : 0;
+	}
+	return n;
+}
+
+// RW 0x9A26A1 (RotWK-only, the team builder's threat test): the allied group's target of the team's prototype (+ 0x2C4: the target id the start wrote, RW 0x8F22A0;
+// -1 for a targetless team; RW 0x6A95CD -> 0x8EDC45) answers true when there is none; else the enemy record of the target (RW 0x6C6743) against the members with
+// any of CAN_ATTACK, HERO, SUPPORT: sum = fstp(RW 0x7ED963(the record, the member's ThreatBreakdown category, its threat value RW 0x68F0EC stored) + sum)
+// (x87 at PC24), true when sum >= the record's total (comiss / jb: NaN fails). The members in the team list's order (ZH Object.cpp: setTeam prepends, so the
+// newest first: INFERENCE for RotWK's RW 0x69954A)
+bool teamMeetsThreat(GameLogic &logic, const AITactic &tac, const AITacticTeam &team)
+{
+	if (tac.targetless || tac.targetIndex < 0)
+	{
+		return true;
+	}
+	const AISkirmishPlayer *chooser = logic.skirmishAI().findAI(tac.targetOwner);
+	const Player *owner = playerOf(logic, tac.targetOwner);
+	if (!chooser || !owner || tac.targetIndex >= (int)chooser->brain.targets.size())
+	{
+		return true;
+	}
+	AIThreatFinder::ThreatRecord enemy = enemyRecord(logic, *chooser, *owner, chooser->brain.targets[(size_t)tac.targetIndex]);
+	const Kinds &k = kinds();
+	float sum = 0.0f;
+	for (auto it = team.members.rbegin(); it != team.members.rend(); ++it)
+	{
+		const Object *o = logic.findObjectByID(*it);
+		if (!o || o->isDestroyed() || !o->getTemplate() || !(is(*o, k.canAttack) || is(*o, k.hero) || is(*o, k.support)))
+		{
+			continue;
+		}
+		const double c = AIThreatFinder::counterValue(enemy, AIThreatFinder::threatCategory(*o->getTemplate()), AIThreatFinder::threatValue(*o));
+		sum = SimMath::fstpDword(SimMath::pc24AddW(c, (double)sum)); // RW 0x9A2731: fadd dword; fstp dword
+	}
+	return sum >= enemy.v[0];
 }
 } // namespace
 
@@ -2171,6 +2314,93 @@ AIPlayerInfoLists AITacticalAI::listsOf(GameLogic &logic, const Player &player)
 	return out;
 }
 
+namespace
+{
+// RW 0x9A3040 (RotWK-only, the team builder's last step; lane DECOMP-2): the units of the player info record's army list (INFERENCE: the list RW 0x6A9999 ->
+// record + 0 -> + 4 is the army list, S-418) in order that are in the default team (+ 0x31C == player + 0x30C; INFERENCE: in no team of the tactics), have any
+// of CAN_ATTACK, HERO, SUPPORT and not STRUCTURE (template + 0x108 bit 7), are not IS_LEAVING_FACTORY (status 0x5A), were never sent (+ 0x18) and are 10 s old
+// (RW 0xDEBE5C) are each sent once (+ 0x18 keeps them until they are gone) to an attacked-at record of the brain (+ 0x164 -> + 0x20; none: nothing): the
+// last record whose enemies hold the category the unit's ThreatBreakdown category counters (0: PIKEMAN + 0x28; 1: INFANTRY + 0x20 or PIKEMAN; 2: CAVALRY + 0x2C;
+// 3: INFANTRY or category 1 + 0x24; 7: categories 6 / 9 / 11, + 0x38 / + 0x44 / + 0x4C), else the nearest record (squared 2D distance RW 0x66137C, x87; the first
+// of equal ones); the unit attack-moves to its position with INT_MAX shots from the PLAYER (RW 0x9A328E: RW 0x696266(pos, 0x7FFFFFFF, 0), AI command 0xF)
+void dispatchIdleUnits(GameLogic &logic, AISkirmishPlayer &ai, const AIPlayerInfoLists &lists)
+{
+	AIBrainState &b = ai.brain;
+	const Kinds &k = kinds();
+	static const int leavingFactory = CombatNames::status("IS_LEAVING_FACTORY");
+	std::vector<Object *> units;
+	for (ObjectID id : lists.army)
+	{
+		Object *o = logic.findObjectByID(id);
+		if (!o || inAnyTeamOf(b, id) || !(is(*o, k.canAttack) || is(*o, k.hero) || is(*o, k.support)) || is(*o, k.structure))
+		{
+			continue;
+		}
+		if ((leavingFactory >= 0 && o->testStatus((unsigned)leavingFactory)) || b.dispatched.count(id) != 0)
+		{
+			continue;
+		}
+		if (logic.getFrame() - o->getCreationFrame() < (std::uint32_t)(kLogicFramesPerSecond * 10))
+		{
+			continue;
+		}
+		units.push_back(o);
+	}
+	if (units.empty() || b.attackedAt.empty())
+	{
+		return;
+	}
+	for (Object *o : units)
+	{
+		b.dispatched.insert(o->getID()); // RW 0x9A318D
+		const int cat = o->getTemplate() ? AIThreatFinder::threatCategory(*o->getTemplate()) : -1;
+		const AIAttackedAt *nearest = nullptr, *match = nullptr;
+		float best = -1.0f; // RW 0xBD19DC
+		for (const AIAttackedAt &r : b.attackedAt)
+		{
+			// RW 0x66137C: (o.y - p.y)^2 + (o.x - p.x)^2 at PC24, compared in the register, stored with fst
+			const double dx = SimMath::pc24SubW((double)o->getPosition()->x, (double)r.position.x);
+			const double dy = SimMath::pc24SubW((double)o->getPosition()->y, (double)r.position.y);
+			const double d = SimMath::pc24AddW(SimMath::pc24MulW(dy, dy), SimMath::pc24MulW(dx, dx));
+			if ((double)best > d || 0.0f > best) // RW 0x9A31E4 (fcompi, ja) / 0x9A31EA (comiss 0, best; jbe)
+			{
+				best = SimMath::fstpDword(d);
+				nearest = &r;
+			}
+			const float *v = r.enemies.v;
+			bool counters = false;
+			switch (cat)
+			{
+			case 0:
+				counters = v[3] > 0.0f;
+				break;
+			case 1:
+				counters = v[1] > 0.0f || v[3] > 0.0f;
+				break;
+			case 2:
+				counters = v[4] > 0.0f;
+				break;
+			case 3:
+				counters = v[1] > 0.0f || v[2] > 0.0f;
+				break;
+			case 7:
+				counters = v[7] > 0.0f || v[10] > 0.0f || v[12] > 0.0f;
+				break;
+			default:
+				break;
+			}
+			if (counters)
+			{
+				match = &r;
+			}
+		}
+		const AIAttackedAt *goal = match ? match : nearest;
+		attackMove(logic, std::vector<ObjectID>{ o->getID() }, goal->position, CMD_FROM_PLAYER);
+		++b.idleDispatches;
+	}
+}
+} // namespace
+
 void AITacticalAI::updateTeamBuilder(GameLogic &logic, AISkirmishPlayer &ai)
 {
 	AIBrainState &b = ai.brain;
@@ -2181,6 +2411,7 @@ void AITacticalAI::updateTeamBuilder(GameLogic &logic, AISkirmishPlayer &ai)
 	}
 	const AIPlayerInfoLists lists = listsOf(logic, *player);
 	const Kinds &k = kinds();
+	static const std::vector<int> supportHorde = { k.support, kindBit("HORDE") };
 	for (AITactic &tac : b.tactics)
 	{
 		for (AITacticTeam &team : tac.teams)
@@ -2189,25 +2420,44 @@ void AITacticalAI::updateTeamBuilder(GameLogic &logic, AISkirmishPlayer &ai)
 			{
 				continue;
 			}
-			// RW 0x9A2E06: the army list in order while the team is below its maximum (+ 0x2D0; S-418: none where the prototype's own value applies)
+			// RW 0x9A3373 .. 0x9A3392: an OPPORTUNITY team (+ 0x2CC == 2) first clamps its maximum to 2 (RW 0x9A3345, unsigned), then RW 0x9A32C1 -> RW 0x9A2E06
+			if (team.type == kOpportunity && (std::uint32_t)team.maximum > 2u)
+			{
+				team.maximum = 2;
+			}
+			const std::uint32_t maximum = (std::uint32_t)team.maximum;
+			std::uint32_t count = teamUnitCount(logic, team); // RW 0x9A32C1 -> RW 0x9A24A6
+			// RW 0x9A2E06: the army list in order while count < maximum (unsigned; -1: no maximum): a CAN_ATTACK or SUPPORT unit that RW 0x9A24FC accepts joins
+			// (Object::setTeam RW 0x69954A); a SUPPORT unit only when the team holds a member that is neither SUPPORT nor HORDE, its maximum is above 1 and it holds
+			// no SUPPORT HORDE (RW 0x9A2F0A .. 0x9A2FA4, RW 0x7A0555 twice)
 			for (ObjectID id : lists.army)
 			{
-				if (team.maximum >= 0 && (int)team.members.size() >= team.maximum)
+				if (!(count < maximum))
 				{
 					break;
 				}
 				const Object *o = logic.findObjectByID(id);
-				if (o && (is(*o, k.canAttack) || is(*o, k.support)) && eligible(b, *o))
+				if (!o || !(is(*o, k.canAttack) || is(*o, k.support)) || !recruitable(logic, b, team, *o))
 				{
-					team.members.push_back(id);
+					continue;
 				}
+				if (is(*o, k.support))
+				{
+					if (teamMembersWith(logic, team, {}, supportHorde) == 0 || !(maximum > 1u) || teamMembersWith(logic, team, supportHorde, {}) >= 1)
+					{
+						continue;
+					}
+				}
+				team.members.push_back(id);
+				++count;
 			}
+			// RW 0x9A2FC0: an ENEMY_STRUCTURE or DEFENSIVE team (+ 0x2CC 0 / 1) takes every HERO (template + 0x113 bit 2) RW 0x9A24FC accepts, with no maximum
 			if (team.type == kEnemyStructure || team.type == kDefensive)
 			{
 				for (ObjectID id : lists.army)
 				{
 					const Object *o = logic.findObjectByID(id);
-					if (o && is(*o, k.hero) && eligible(b, *o))
+					if (o && is(*o, k.hero) && recruitable(logic, b, team, *o))
 					{
 						team.members.push_back(id);
 					}
@@ -2215,23 +2465,32 @@ void AITacticalAI::updateTeamBuilder(GameLogic &logic, AISkirmishPlayer &ai)
 			}
 		}
 	}
-	// RW 0x9A33A7 ..: hand-over at the minimum (S-418: the maximum and RW 0x9A26A1 are not read)
+	// RW 0x9A33A7 .. 0x9A3447: a team that wants members is handed over (RW 0x6C779B) when its count (RW 0x9A24A6) is at least its minimum (unsigned) and it is
+	// DEFENSIVE (+ 0x2CC == 1), or has reached its maximum, or meets its target's threat (RW 0x9A26A1); RW 0x79FB50 (the unit-info counts of a scripted team) is
+	// 0 for every tactical team (no info)
 	for (AITactic &tac : b.tactics)
 	{
 		for (AITacticTeam &team : tac.teams)
 		{
-			int count = 0;
-			for (ObjectID id : team.members)
+			if (!team.wantsMembers)
 			{
-				count += alive(logic.findObjectByID(id)) ? 1 : 0;
+				continue;
 			}
-			if (team.wantsMembers && count >= team.minimum)
+			const std::uint32_t count = teamUnitCount(logic, team);
+			if (count >= (std::uint32_t)team.minimum &&
+				(team.type == kDefensive || count >= (std::uint32_t)team.maximum || teamMeetsThreat(logic, tac, team)))
 			{
 				team.wantsMembers = false;
 				team.handedOver = true; // RW 0x6C779B
 			}
 		}
 	}
+	// RW 0x9A3462 .. 0x9A34A3: the sent units whose object is gone leave the set; then RW 0x9A3040 (RW 0x9A34AC)
+	for (auto it = b.dispatched.begin(); it != b.dispatched.end();)
+	{
+		it = logic.findObjectByID(*it) ? std::next(it) : b.dispatched.erase(it);
+	}
+	dispatchIdleUnits(logic, ai, lists);
 }
 
 void AITacticalAI::updateBrain(GameLogic &logic, AISkirmishPlayer &ai, AISkirmishPlayer *first)
@@ -2411,6 +2670,17 @@ void AITacticalAI::crc(const AIBrainState &b, StateHasher &h)
 			h.addI32(team.type);
 			h.addI32(team.minimum);
 			h.addI32(team.maximum);
+			h.addU32((std::uint32_t)team.requiredKinds.size());
+			for (int bit : team.requiredKinds)
+			{
+				h.addI32(bit);
+			}
+			h.addU32((std::uint32_t)team.forbiddenKinds.size());
+			for (int bit : team.forbiddenKinds)
+			{
+				h.addI32(bit);
+			}
+			h.addI32(team.priority);
 			h.addBool(team.wantsMembers);
 			h.addBool(team.handedOver);
 			h.addFloat(team.lastPosition.x);
@@ -2455,6 +2725,12 @@ void AITacticalAI::crc(const AIBrainState &b, StateHasher &h)
 		h.addI32(kv.second);
 	}
 	h.addU64(b.retreats);
+	h.addU32((std::uint32_t)b.dispatched.size());
+	for (ObjectID id : b.dispatched)
+	{
+		h.addU32(id);
+	}
+	h.addU64(b.idleDispatches);
 	h.addU32((std::uint32_t)b.attackedAt.size());
 	for (const AIAttackedAt &e : b.attackedAt)
 	{

@@ -64,6 +64,25 @@ void W3DModelBuilder::_bind_methods()
 {
 	ClassDB::bind_method(D_METHOD("build_model", "fs", "model_name"), &W3DModelBuilder::build_model);
 	ClassDB::bind_method(D_METHOD("get_report"), &W3DModelBuilder::get_report);
+	ClassDB::bind_method(D_METHOD("load_texture", "fs", "texture_name"), &W3DModelBuilder::load_texture);
+}
+
+Ref<Texture2D> W3DModelBuilder::load_texture(const Ref<RetailFileSystem> &fs, const String &texture_name)
+{
+	m_report = Dictionary();
+	m_report["errors"] = Array();
+	if (fs.is_null())
+	{
+		((Array)m_report["errors"]).push_back("load_texture: no file system");
+		return Ref<Texture2D>();
+	}
+	Dictionary info;
+	Ref<Texture2D> t = loadTexture(*fs.ptr(), toNative(texture_name), info);
+	if (t.is_null() && ((Array)m_report["errors"]).is_empty())
+	{
+		((Array)m_report["errors"]).push_back(toGodot("load_texture: no texture " + toNative(texture_name)));
+	}
+	return t;
 }
 
 Ref<Texture2D> W3DModelBuilder::loadTexture(RetailFileSystem &fs, const std::string &name, Dictionary &meshInfo)

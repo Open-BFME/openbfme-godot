@@ -20,6 +20,7 @@ public:
 	bool isCliffCell(float x, float y) const override;
 	bool impassableToPlayers(float x, float y) const override;
 	bool extraPass(float x, float y) const override;
+	bool thirdPlane(float x, float y) const override;
 	bool isUnderwater(float x, float y, float *waterZ, float *terrainZ) const override;
 	float getGroundHeight(float x, float y) const override { return m_terrain.getGroundHeight(x, y); }
 

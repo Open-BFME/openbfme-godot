@@ -90,6 +90,7 @@ std::string W3DShaderKey::Id() const
 	if (HouseColorBaked) id += "_hcb"; // lane CAH-2
 	if (SimpleFx) id += "_sfx1";
 	if (Fog) id += "_fog" + std::to_string(Fog); // lane RENDER-4
+	if (AlphaOverride) id += "_ao"; // lane BUILD-5 r3
 	return id;
 }
 
@@ -102,9 +103,17 @@ std::string Generate_W3D_Shader_Code(const W3DShaderKey &k)
 	// ---- render modes ----
 	std::string modes;
 	auto mode = [&](const char *m) { modes += modes.empty() ? "" : ", "; modes += m; };
+	// lane BUILD-5 r3: an opaque surface of a translucent drawable (AlphaOverride): ZH's theAlphaShader, SRC_ALPHA / ONE_MINUS_SRC_ALPHA with depth writes kept
+	const bool alphaOverride = k.AlphaOverride && k.Blend == W3D_GODOT_BLEND_OPAQUE;
 	switch ((W3DGodotBlend)k.Blend)
 	{
-	case W3D_GODOT_BLEND_OPAQUE: break;
+	case W3D_GODOT_BLEND_OPAQUE:
+		if (alphaOverride)
+		{
+			mode("blend_mix");
+			mode(k.DepthWrite ? "depth_draw_always" : "depth_draw_never");
+		}
+		break;
 	case W3D_GODOT_BLEND_MIX: case W3D_GODOT_BLEND_NONE: mode("blend_mix"); break;
 	case W3D_GODOT_BLEND_ADD: case W3D_GODOT_BLEND_ADD_ALPHA: case W3D_GODOT_BLEND_APPROX_ADD: mode("blend_add"); break;
 	case W3D_GODOT_BLEND_MUL: mode("blend_mul"); break;
@@ -140,6 +149,9 @@ std::string Generate_W3D_Shader_Code(const W3DShaderKey &k)
 	line("uniform float w3d_bump = 1.0;");
 	// the light environment (W3DObjectLighting: Sas.AmbientLight[0].Color, Sas.DirectionalLight[0..2] Color / Direction, already
 	// doubled when the map asks for it); columns of the matrices = lights 0..2, directions toward the light in Godot world space
+	// lane BUILD-5 r2: Drawable::colorTint (RW 0x6757BB; DONOR ZH W3DScene.cpp:662-698, RTS3DScene::Customized_Render): the drawable's tint colour is added to every
+	// global light's diffuse and to the equivalent ambient while it is lit. Per node (a W3DInstancer per tinted drawable: the placement ghost), 0 elsewhere
+	line("instance uniform vec3 w3d_tint = vec3(0.0);");
 	line("global uniform vec3 w3d_amb_obj;");
 	line("global uniform mat3 w3d_lcol_obj;");
 	line("global uniform mat3 w3d_ldir_obj;");
@@ -348,6 +360,7 @@ std::string Generate_W3D_Shader_Code(const W3DShaderKey &k)
 		line("\t\tmat3 lc = inf ? w3d_lcol_inf : w3d_lcol_obj;");
 		line("\t\tmat3 ld = inf ? w3d_ldir_inf : w3d_ldir_obj;");
 		line("\t\tvec3 amb = inf ? w3d_amb_inf : w3d_amb_obj;");
+		line("\t\tlc[0] += w3d_tint; lc[1] += w3d_tint; lc[2] += w3d_tint; amb += w3d_tint;");
 		line("\t\tvec3 dsum = vec3(0.0);");
 		line("\t\tvec3 ssum = vec3(0.0);");
 		line("\t\tfor (int i = 0; i < 3; i++) {");
@@ -453,6 +466,7 @@ std::string Generate_W3D_Shader_Code(const W3DShaderKey &k)
 		line("\tbool inf = v_inf > 0.5;");
 		line("\tmat3 lc = inf ? w3d_lcol_inf : w3d_lcol_obj;");
 		line("\tvec3 amb = inf ? w3d_amb_inf : w3d_amb_obj;");
+		line("\tlc[0] += w3d_tint; lc[1] += w3d_tint; lc[2] += w3d_tint; amb += w3d_tint;");
 		line("\tvec3 base = t0.rgb * w3d_diffuse.rgb;");
 		line("\tvec3 col = t0.rgb * clamp(amb * w3d_ambient_mat * 0.5, 0.0, 1.0) * 2.0;");
 		line("\tfor (int i = 0; i < 3; i++) {");
@@ -491,7 +505,7 @@ std::string Generate_W3D_Shader_Code(const W3DShaderKey &k)
 	{
 		line(std::string("\tif (") + (k.AlphaTestLessEqual ? "a > w3d_alpha_ref" : "a < w3d_alpha_ref") + ") { discard; }");
 	}
-	if (k.Blend == W3D_GODOT_BLEND_OPAQUE)
+	if (k.Blend == W3D_GODOT_BLEND_OPAQUE && !alphaOverride)
 	{
 		// retail fades opaque meshes through the pivot fade; stay in the opaque pass with a dither
 		line("\tif (v_fade < 0.999) {");
@@ -508,7 +522,7 @@ std::string Generate_W3D_Shader_Code(const W3DShaderKey &k)
 	// the D3D9 frame buffer saturates; the gamma space result is handed to Godot as linear (sRGB-encoded again on output)
 	// RENDER-3 (S-831): a blended surface draws in the transparent pass, which composites in retail's gamma space (GodotGammaComposite.h): it
 	// hands over the gamma value itself; an opaque one is converted once here
-	if (k.Blend == W3D_GODOT_BLEND_OPAQUE)
+	if (k.Blend == W3D_GODOT_BLEND_OPAQUE && !alphaOverride)
 	{
 		line("\tALBEDO = w3d_to_linear(clamp(cur.rgb, 0.0, 1.0));");
 	}
@@ -518,7 +532,12 @@ std::string Generate_W3D_Shader_Code(const W3DShaderKey &k)
 	}
 	switch ((W3DGodotBlend)k.Blend)
 	{
-	case W3D_GODOT_BLEND_OPAQUE: break;
+	case W3D_GODOT_BLEND_OPAQUE:
+		if (alphaOverride)
+		{
+			line("\tALPHA = a * v_fade;"); // the material opacity times the texture alpha (DX8: Set_Opacity(override) on the vertex material)
+		}
+		break;
 	case W3D_GODOT_BLEND_MIX: line("\tALPHA = a * v_fade;"); break;
 	case W3D_GODOT_BLEND_ADD: case W3D_GODOT_BLEND_APPROX_ADD: line("\tALPHA = v_fade;"); break;
 	case W3D_GODOT_BLEND_ADD_ALPHA: line("\tALPHA = a * v_fade;"); break;

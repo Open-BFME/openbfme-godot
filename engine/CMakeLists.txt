@@ -131,6 +131,7 @@ include(cmake/Camp2.cmake)      # CAMP-2: the movies' VP6 picture (OPENBFME_CAMP
 include(cmake/Ui1.cmake)        # UI-1: interface gaps (client only; OPENBFME_UI1_CLIENT_SOURCES / OPENBFME_UI1_TESTS)
 include(cmake/Release1.cmake)   # RELEASE-1: install discovery, version, session log (client only; OPENBFME_RELEASE1_SOURCES / _GODOT_SOURCES / _TESTS)
 include(cmake/Mod4.cmake)       # MOD-4: AISpecialPowerUpdate, RepairSpecialPower, ... (appends to OPENBFME_SIM_SOURCES; OPENBFME_MOD4_TESTS)
+include(cmake/Aipow1.cmake)     # AIPOW-1: the AISpecialPowerUpdate decisions and the ActionManager tests (appends to OPENBFME_SIM_SOURCES; OPENBFME_AIPOW1_TESTS)
 include(cmake/Ui2.cmake)        # UI-2: owner menu feedback (client only; OPENBFME_UI2_CLIENT_SOURCES / OPENBFME_UI2_TESTS)
 include(cmake/Ui4.cmake)        # UI-4: owner menu / HUD findings on v0.3.0-preview.1 (client only)
 include(cmake/Anim1.cmake)      # OPENBFME_ANIM1_TESTS (lane ANIM-1: combat animation)
@@ -144,10 +145,12 @@ include(cmake/Hud5.cmake)       # HUD-5: the owner's first Windows session (OPEN
 include(cmake/Autocast1.cmake)  # AUTOCAST-1: the ability autocast toggle and glow (OPENBFME_AUTOCAST1_TESTS)
 include(cmake/Hud6.cmake)       # HUD-6: radial bubbles, side bar frame, help box (OPENBFME_HUD6_CLIENT_SOURCES / OPENBFME_HUD6_TESTS)
 include(cmake/Exit1.cmake)      # EXIT-1: the horde member update, stale MOVING (appends to OPENBFME_SIM_SOURCES; OPENBFME_EXIT1_TESTS)
+include(cmake/Decomp2.cmake)    # DECOMP-2: stops closed with the BFME2 decomp map (OPENBFME_DECOMP2_TESTS)
 include(cmake/Decomp1.cmake)    # DECOMP-1: stops closed with the decompilation's progress (appends to OPENBFME_SIM_SOURCES; OPENBFME_DECOMP1_TESTS)
 include(cmake/Play1.cmake)      # PLAY-1: the tribute, the placement ghost (appends to OPENBFME_SIM_SOURCES; OPENBFME_PLAY1_SOURCES / _TESTS)
 include(cmake/Cah1.cmake)       # CAH-1: the Create-a-Hero screens (client only; OPENBFME_CAH1_SOURCES / _GODOT_SOURCES / _TESTS)
 include(cmake/Rules1.cmake)     # RULES-1: the Rules tab, the game rules, Legendary Heroes (appends to OPENBFME_SIM_SOURCES; OPENBFME_RULES1_SOURCES / _TESTS)
+include(cmake/Gamemodes1.cmake) # GAMEMODES-1: the game modes' tests (OPENBFME_GAMEMODES1_TESTS)
 include(cmake/Move3.cmake)      # MOVE-3: horde spacing, the blocked path patch (appends to OPENBFME_SIM_SOURCES; OPENBFME_MOVE3_TESTS)
 include(cmake/Input1.cmake)     # INPUT-1: RotWK's input layer (OPENBFME_INPUT1_TESTS)
 include(cmake/Opts2.cmake)      # OPTS-2: the Options menu (OPENBFME_OPTS2_TESTS)
@@ -157,6 +160,7 @@ add_library(openbfme_core STATIC
     ${OPENBFME_PLAY2_SOURCES}
     ${OPENBFME_APT_SOURCES}
     ${OPENBFME_AUDIO4_CLIENT_SOURCES}
+    ${OPENBFME_DECOMP2_CLIENT_SOURCES}
     ${OPENBFME_FX_SOURCES}
     ${OPENBFME_PROD_SOURCES}
     ${OPENBFME_AUDIO_SOURCES}
@@ -436,6 +440,7 @@ add_library(openbfme SHARED
     # APT-3: the retail menus on screen
     src/GodotDevice/GodotAptPlayer.cpp
     src/GodotDevice/GodotInGameHud.cpp
+    src/GodotDevice/GodotPlacementGhost.cpp # BUILD-5
     src/GodotDevice/GodotPathfindView.cpp
     # FX-1: FXLists and particle systems
     src/GodotDevice/GodotFXPlayer.cpp
@@ -541,6 +546,7 @@ add_executable(openbfme_tests
     ${OPENBFME_UI1_TESTS}
     ${OPENBFME_RELEASE1_TESTS}
     ${OPENBFME_MOD4_TESTS}
+    ${OPENBFME_AIPOW1_TESTS}
     ${OPENBFME_UI2_TESTS}
     ${OPENBFME_UI4_TESTS}
     ${OPENBFME_GARRISON3_TESTS}
@@ -549,6 +555,7 @@ add_executable(openbfme_tests
     ${OPENBFME_HUD4_TESTS}
     ${OPENBFME_QA2FIX_TESTS}
     ${OPENBFME_EXIT1_TESTS}
+    ${OPENBFME_DECOMP2_TESTS}
     ${OPENBFME_DECOMP1_TESTS}
     ${OPENBFME_PLAY1_TESTS}
     ${OPENBFME_HUD5_TESTS}
@@ -556,6 +563,7 @@ add_executable(openbfme_tests
     ${OPENBFME_HUD6_TESTS}
     ${OPENBFME_CAH1_TESTS}
     ${OPENBFME_RULES1_TESTS}
+    ${OPENBFME_GAMEMODES1_TESTS}
     ${OPENBFME_MOVE3_TESTS}
     ${OPENBFME_INPUT1_TESTS}
     ${OPENBFME_OPTS2_TESTS}

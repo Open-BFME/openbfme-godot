@@ -34,6 +34,8 @@ public:
 
 	// { model, file, hierarchy, lod_index, meshes: [..], skipped: [..], errors: [..] }
 	Dictionary get_report() const { return m_report; }
+	// lane BUILD-5: a texture by its W3D name (e.g. "TBRedBib.tga"), looked up as the models' textures are; null on failure (the reason in get_report().errors)
+	Ref<Texture2D> load_texture(const Ref<RetailFileSystem> &fs, const String &texture_name);
 
 protected:
 	static void _bind_methods();

@@ -66,6 +66,8 @@
 #include <array>
 #include <memory>
 #include <string>
+#include <set>
+#include <vector>
 
 class CommandButton;
 class ModuleFactory;
@@ -114,6 +116,12 @@ struct AISpecialPowerDecision
 	bool makesStructure = false;          ///< + 0x1E
 	ObjectID target = INVALID_ID;         ///< + 0x20 (KIND_OBJECT)
 	Coord3D location{};                   ///< + 0x20 (KIND_LOCATION)
+	std::vector<int> waypointIds;         ///< SPELLBOOK_SHROUD_REVEAL + 0x2C / + 0x30: the ids of "Player_1_Start" .. (RW 0x9E7B8E at construction)
+	int variant = 0;                      ///< the constructor's argument: + 0x24 of DOMINATE_TROLL (2), + 0x2C of DOMINATE_ENEMY (0) / TAME_THE_BEAST (1),
+	                                      ///< + 0x2C of SPELLBOOK_ASSIST_BATTLE_BUFF (0) / _DEBUFF (1)
+	ObjectID assistUnit = INVALID_ID;     ///< SPELLBOOK_ASSIST_BATTLE_*: + 0x38 the army unit the decision chose
+	ObjectID assistTarget = INVALID_ID;   ///< .. + 0x3C the unit (BUFF) or its victim (DEBUFF)
+	std::set<ObjectID> buffedIds;         ///< SPELLBOOK_BUFFECONOMYBUILDING + 0x28: the economy structures already chosen (RW 0x9E7671, never cleared)
 	// the kind of each type (its base class), -1 for an invalid type
 	static int kindOf(int type);
 	// the types whose decision (slot 0x1C) is ported
@@ -122,6 +130,8 @@ struct AISpecialPowerDecision
 
 class AISpecialPowerUpdate : public UpdateModule
 {
+	static inline const Coord3D kNoLocation{};
+
 public:
 	AISpecialPowerUpdate(Thing *thing, const AISpecialPowerUpdateModuleData *data); // RW 0x8B703A
 	UpdateSleepTime update() override;                                               // RW 0x8B73B7
@@ -134,6 +144,14 @@ public:
 	const AISpecialPowerDecision *decision() const { return m_decision.get(); }
 	const AISpecialPowerUpdateModuleData *data() const { return m_data; }
 
+	// tests (never called by the game): the decision slot 0x1C now, after the initialisation (RW 0x8B714F) when it has not run; false without a decision
+	bool decideNow();
+	// tests: the initialisation (RW 0x8B714F) as if the object's command set held the module's button (found by name in the command store), for decisions no
+	// retail command set reaches (CALLTHEHORDE); a no-op once initialised
+	void initAsIfInCommandSetForTest();
+	// tests: the location the last location decision chose (+ 0x20)
+	const Coord3D &decidedLocation() const { return m_decision ? m_decision->location : kNoLocation; }
+
 	// RW 0x9E94DB's ratio: a HORDE's member average (RW 0x86EA09), else the body's health / max health (RW 0x8C1D75), stored as a float
 	static float healthRatio(const Object &obj);
 
@@ -142,8 +160,11 @@ public:
 	{
 		unsigned long long asked = 0, yes = 0, executed = 0, unportedDecisions = 0, unportedCommands = 0;
 		std::array<unsigned long long, AI_SPECIAL_POWER_TYPE_COUNT> executedByType{};
+		std::array<unsigned long long, AI_SPECIAL_POWER_TYPE_COUNT> unportedByType{}; ///< lane AIPOW-1: the unported decisions met, per type
 	};
 	static Stats &stats();
+	// diagnostics (tests only, not state): answer every decision lane AIPOW-1 ported with no, as before the lane (the "before" power counts of the AI games)
+	static bool &mod4DecisionsOnlyForTest();
 
 private:
 	void init();                                                // RW 0x8B714F
@@ -155,9 +176,40 @@ private:
 	bool decideSelfBuff(Object &obj);                           // RW 0x9E9488
 	bool decideSelfDebuff(Object &obj);                         // RW 0x9EAF26
 	bool decideToggleMounted(Object &obj);                      // RW 0x9EBE42
+	// lane AIPOW-1 (AISpecialPowerDecisions.cpp)
+	bool decideElendil(Object &obj);                            // RW 0x9EC22C
+	bool decideSelfAoeHealHeros(Object &obj);                   // RW 0x9EBCBB
+	bool decideToggleWeaponSet(Object &obj, bool siege);        // RW 0x9EA2E1 (slots 0x20 / 0x24: RW 0x9EA347 / 0x9EA3BA, RW 0x9EA201 / 0x9EA280)
+	bool decideCharge(Object &obj);                             // RW 0x9EA0A1
+	bool decideDominate(Object &obj, bool atLocation);          // RW 0x9E9633 (object) / RW 0x9E9880 (location)
+	bool decideRangedAoe(Object &obj, float range, bool unitsOnly); // RW 0x9EB53B / 0x9EADC8 (twice the range) / 0x9EB36E (the unit filters)
+	bool decideAoeAndBuff(Object &obj);                         // RW 0x9EB0B8
+	bool decideCaptureCreep(Object &obj);                       // RW 0x9E86BE
+	bool decideShroudReveal(Object &obj);                       // RW 0x9E7CA3
+	bool decideAssistBattle(Object &obj);                       // RW 0x9E896E
+	bool decideBuffTerrain(Object &obj);                        // RW 0x9E77EE
+	bool decideRebuild(Object &obj);                            // RW 0x9E7744
+	bool decideEnshroudingMist(Object &obj);                    // RW 0x9E7869
+	bool decideCallTheHorde(Object &obj);                       // RW 0x9E71B0
+	bool decideBuffEconomy(Object &obj);                        // RW 0x9E7671
+	// the location base (RW 0xA01C6B): RW 0xA021D8 (the ActionManager's test and SpellMakesAStructure), RW 0xA0229F (that test at the location, else with
+	// RandomizeTargetLocation at 15, 30, .. 150 along one random direction, RW 0xA01C9C); the first that passes becomes the location (+ 0x20)
+	bool locationValid(Object &obj, const Coord3D &loc);
+	bool setLocationIfValid(Object &obj, const Coord3D &loc);
+	// the four-quadrant cluster scans: the points at `offset` along (1, 1), (-1, 1), (-1, -1), (1, -1) (normalised, RW 0x403175) from the object; at each the
+	// `mask` objects within `offset` (alive, near to far) are counted by `what`; a count above the best so far wins (validate: only when RW 0xA0229F accepts
+	// the point, which then is the location; else the point is the location as it is). Returns the best count; hitsTotal (RW 0xA01F99) the hits of all four
+	enum ClusterCount
+	{
+		COUNT_ALL,            ///< RW 0xA01D72 / 0xA01F99
+		COUNT_ARCHERS,        ///< RW 0x9EAB29: template KindOf ARCHER (+ 0x118 bit 5)
+		COUNT_HORDES_OR_LOOSE ///< RW 0x9EA866 / 0x9EA5A3 / 0x9EB706: a HORDE (RW 0x693A1A(0) is the object itself) or an object nobody contains (+ 0x27C)
+	};
+	unsigned clusterScan(Object &obj, float offset, unsigned mask, ClusterCount what, bool validate, size_t *hitsTotal = nullptr);
 
 	const AISpecialPowerUpdateModuleData *m_data;
 	bool m_active = false;                                      // + 0x20
+	bool m_assumeButtonForTest = false;                         // tests only (initAsIfInCommandSetForTest), never set by the game
 	bool m_initialized = false;                                 // + 0x21
 	std::unique_ptr<AISpecialPowerDecision> m_decision;         // + 0x24
 };

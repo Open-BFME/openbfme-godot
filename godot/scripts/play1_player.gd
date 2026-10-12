@@ -19,13 +19,18 @@
 ##   tribute   (with an ally: --opponents=2 --teams=1,1,2) after NumMinutesBeforePlayersCanTransferMoney the flag's PlayerTribute.apt, its tribute tab, a drag
 ##             on the ally's slider and Send move the local player's money to the ally (MSG_GIVE_MONEY)
 ##   ghosts    (lane PLAY-3) the builder is selected by a click; for every DOZER_CONSTRUCT button of its command set (every structure it builds freely) the
-##             button is clicked, the pointer moves over the ground around the citadel: the placement ghost (placement_ghost.gd, RotWK RW 0x69C5E6 /
+##             button is clicked, the pointer moves over the ground around the citadel: the placement ghost (the HUD's PlacementGhostRenderer, RotWK RW 0x69C5E6 /
 ##             RW 0x6A2AE5) shows that structure under the pointer; a right click ends the placement. Run per faction with --faction
 ##   dragbox   (lane PLAY-3) a left drag around the local units on the screen: while the button is held the drag box is drawn (RotWK's
 ##             W3DInGameUI::drawSelectionRegion RW 0x48ECF4: the region from the press to the pointer, 0xBBFFBB33, lines of width 2) and follows the pointer;
 ##             the release selects the own units inside and no structure, and the box is gone
 ##   selection (lane UI-4) two hordes and a hero drag-selected together: one merged jagged outline around the hordes' members and the hero's rune ring
 ##             (SelectionDecals.h, the owner's retail shot owner-shots/ui4/3); the hero alone; a hovered unit gets no marker; play1-selection-<step>.png
+##   build5    (lane BUILD-5) RotWK's placement by input: the builder is selected, the barracks button clicked; the ghost on a legal site (no tint, no bib, no
+##             pointer: the Build cursor has no Mouse.ini block), on an illegal one (red, the TBRedBib bib), anchored and turned by a left drag (W_Arrow);
+##             a right drag held past DragToleranceMS scrolls the view during the placement with the directional Scroll cursor (frames
+##             play1-build5-scroll-<n>.png) and the placement stays; a quick right click then cancels it (the screen edge does not scroll in a window: GlobalData Windowed, as retail).
+##             The pointer is drawn into the shots from the HUD's own cursor image (a capture omits the OS pointer)
 ##   portraits (lane UI-4) a builder, a building, a hero and a horde of the local player, each selected with a left click: the Palantir's portrait
 ##             clip (CommandUI.Portrait) must draw the selection's SelectPortrait (PalantirCommandUI, RW 0x92FE33); play1-portrait-<kind>.png
 extends RefCounted
@@ -234,6 +239,296 @@ func _headless_window() -> void:
 		await game._step(4)
 
 
+## lane BUILD-5 r2: the placement ghost as the HUD draws it (InGameHudNode.get_placement_ghost_state)
+func ghost_state() -> Dictionary:
+	return hud.get_placement_ghost_state()
+
+
+func ghost_icon0() -> Dictionary:
+	var icons: Array = ghost_state().get("icons", [])
+	return icons[0] if not icons.is_empty() else {}
+
+
+## the first icon's tint (a 0: none), the template drawn ("" none: no icon has a drawn instance), the castle pieces drawn
+func ghost_tint() -> Color:
+	return ghost_icon0().get("tint", Color(0, 0, 0, 0))
+
+
+func ghost_template() -> String:
+	var gs: Dictionary = ghost_state()
+	for ic in gs.get("icons", []):
+		if int(ic.get("instances", 0)) > 0:
+			return str(gs.get("template", ""))
+	return ""
+
+
+func ghost_pieces() -> int:
+	var n := 0
+	for ic in ghost_state().get("icons", []):
+		if ic.get("piece", false) and int(ic.get("instances", 0)) > 0:
+			n += 1
+	return n
+
+
+## lane BUILD-5: a screenshot with the pointer the HUD shows drawn at `p` (its hot spot there)
+func shot_with_cursor(name: String, p: Vector2) -> void:
+	var c: Dictionary = hud.get_cursor_image()
+	var layer := CanvasLayer.new()
+	layer.layer = 128
+	var tr: TextureRect = null
+	if c.get("texture") != null:
+		tr = TextureRect.new()
+		tr.texture = c.texture
+		tr.position = p - Vector2(c.hot)
+		layer.add_child(tr)
+	game.add_child(layer)
+	await game.get_tree().process_frame
+	await game.get_tree().process_frame
+	print("BUILD5 shot %s: cursor %s direction %d hidden %s" % [name, str(c.get("name", "")), int(c.get("direction", 0)), str(c.get("hidden", false))])
+	shot(name)
+	layer.queue_free()
+
+
+func _scenario_build5() -> String:
+	var fails: Array = []
+	await _headless_window()
+	var base := Vector2()
+	for o in own_objects():
+		if o.commandcenter:
+			base = Vector2(o.x, o.y)
+	# the builder and its barracks button
+	var builder: Dictionary = {}
+	var button: Dictionary = {}
+	for o in own_objects():
+		if o.structure:
+			continue
+		await look_by_radar(Vector2(o.x, o.y))
+		if not await select_object(o):
+			continue
+		await game._step(4)
+		var bs: Array = hud.get_command_buttons().filter(func(b): return b.command == "DOZER_CONSTRUCT" and not str(b.template).is_empty())
+		for b in bs:
+			if button.is_empty() or str(b.template).to_lower().contains("barracks"):
+				button = b
+		if not button.is_empty():
+			builder = o
+			break
+	if builder.is_empty():
+		return "no own unit offers a DOZER_CONSTRUCT button"
+	var start_placing := func() -> bool:
+		if not hud.get_selection().has(builder.id):
+			await look_by_radar(Vector2(world.get_object(builder.id).x, world.get_object(builder.id).y))
+			await select_object(builder)
+		await look_by_radar(base + Vector2(250, -150))
+		var bp := palantir_button(button.frame)
+		if bp.x < 0:
+			return false
+		await click(bp)
+		await game._step(6)
+		return bool(hud.get_placement().get("placing", false))
+	if not await start_placing.call():
+		return "the %s button started no placement" % button.template
+	print("BUILD5: builder %s places %s" % [builder.template, button.template])
+	# 1. a legal site near the middle of the screen, and an illegal one: against the fortress (objects in the way), the view looking at it
+	var legal_px := Vector2(-1, -1)
+	var illegal_px := Vector2(-1, -1)
+	var mid := window_size() * Vector2(0.6, 0.5)
+	var offsets: Array = []
+	for k in 30:
+		offsets.append(Vector2((k % 6) - 2.5, int(k / 6) - 2.0) * Vector2(70, 45))
+	offsets.sort_custom(func(a, b): return a.length() < b.length())
+	for off in offsets:
+		var px: Vector2 = mid + off
+		await move_to(px)
+		await game._step(4)
+		if int(hud.get_placement().get("legal", -1)) == 0:
+			legal_px = px
+			break
+	if legal_px.x < 0:
+		return "no legal site near the middle of the screen"
+	await move_to(legal_px)
+	await game._step(6)
+	await shot_with_cursor("build5-ghost-legal", legal_px)
+	print("BUILD5 legal: tint %s bib '%s' cursor %s" % [ghost_tint(), str(ghost_icon0().get("bib", "")), str(hud.get_cursor_image().name)])
+	if ghost_tint().a != 0.0 or str(ghost_icon0().get("bib", "")) != "":
+		fails.append("the legal ghost is tinted or has a bib")
+	# 2. anchored and turned: the left press, a drag of 70 pixels
+	await move_to(legal_px)
+	await game._step(4)
+	press(legal_px, MOUSE_BUTTON_LEFT, true)
+	await game._step(3)
+	for t in 6:
+		await move_to(legal_px + Vector2(-10 * (t + 1), 10 * (t + 1)))
+	await game._step(4)
+	var pl: Dictionary = hud.get_placement()
+	await shot_with_cursor("build5-ghost-rotating", legal_px + Vector2(-60, 60))
+	print("BUILD5 rotating: anchored %s angle %.3f arrow %s" % [str(pl.get("anchored", false)), float(pl.angle), str(bool(ghost_state().get("arrow", false)))])
+	if not pl.get("anchored", false) or not bool(ghost_state().get("arrow", false)):
+		fails.append("the anchored ghost shows no W_Arrow (placement %s)" % str(pl))
+	press(legal_px + Vector2(-60, 60), MOUSE_BUTTON_LEFT, false)
+	await game._step(6)
+	if hud.get_placement().get("placing", false):
+		fails.append("the click on the turned site did not place the building (messages %s)" % str(hud.get_report().get("messages", [])))
+	# 3. an illegal site: against the fortress (objects in the way), with the view looking at it
+	if not await start_placing.call():
+		return "the placement for the illegal site did not start; " + "; ".join(fails)
+	await look_by_radar(base + Vector2(0, -120))
+	for k in 8:
+		var w := base + Vector2(cos(TAU * k / 8.0), sin(TAU * k / 8.0)) * 110.0
+		var px := to_pixel(w.x, w.y)
+		if not on_screen(px):
+			continue
+		await move_to(px)
+		await game._step(4)
+		if int(hud.get_placement().get("legal", 0)) != 0:
+			illegal_px = px
+			break
+	if illegal_px.x < 0:
+		return "no illegal site beside the fortress; " + "; ".join(fails)
+	await move_to(illegal_px)
+	await game._step(6)
+	await shot_with_cursor("build5-ghost-illegal", illegal_px)
+	print("BUILD5 illegal: legal %d tint %s bib '%s'" % [int(hud.get_placement().legal), ghost_tint(), str(ghost_icon0().get("bib", ""))])
+	if ghost_tint().a == 0.0 or str(ghost_icon0().get("bib", "")) != "TBRedBib.tga":
+		fails.append("the illegal ghost is not red with the TBRedBib bib (tint %s, bib '%s')" % [ghost_tint(), str(ghost_icon0().get("bib", ""))])
+	await click(window_size() * 0.5, MOUSE_BUTTON_RIGHT)
+	await game._step(4)
+	# 4. a right drag during a new placement: the view scrolls, the Scroll cursor faces the drag, the placement stays
+	if not await start_placing.call():
+		return "the second placement did not start; " + "; ".join(fails)
+	var c0 := window_size() * 0.5
+	await move_to(c0)
+	await game._step(4)
+	var cam0: Dictionary = hud.get_camera()
+	var t0 := Time.get_ticks_msec()
+	press(c0, MOUSE_BUTTON_RIGHT, true)
+	await game._step(2)
+	var dirs: Array = []
+	for n in 12:
+		var p := c0 + Vector2(10.0 * (n + 1), 4.0 * (n + 1))
+		var m := InputEventMouseMotion.new()
+		m.position = p
+		m.global_position = p
+		m.button_mask = MOUSE_BUTTON_MASK_RIGHT
+		Input.warp_mouse(p)
+		_vp().push_input(m)
+		await game._step(2)
+		dirs.append(int(hud.get_cursor_image().direction))
+		if n % 3 == 2:
+			await shot_with_cursor("build5-scroll-%02d" % n, p)
+	await game._wait_seconds(0.3)
+	var held := Time.get_ticks_msec() - t0
+	var c_end := c0 + Vector2(120, 48)
+	var cur_name := str(hud.get_cursor_image().name)
+	press(c_end, MOUSE_BUTTON_RIGHT, false)
+	await game._step(6)
+	var cam1: Dictionary = hud.get_camera()
+	var placing_after: bool = hud.get_placement().get("placing", false)
+	print("BUILD5 scroll: held %d ms, cursor %s, directions %s, camera %s -> %s, still placing %s" % [held, cur_name, str(dirs), str(cam0.get("target")), str(cam1.get("target")), str(placing_after)])
+	await shot_with_cursor("build5-scroll-after", c_end)
+	if cur_name != "Scroll":
+		fails.append("the cursor during the right drag was %s" % cur_name)
+	if not placing_after:
+		fails.append("the right drag ended the placement")
+	if cam0.get("target") == cam1.get("target"):
+		fails.append("the right drag did not scroll the view")
+	# 5. a quick right click cancels the placement
+	await click(c0, MOUSE_BUTTON_RIGHT)
+	await game._step(4)
+	if hud.get_placement().get("placing", false):
+		fails.append("a right click did not cancel the placement")
+	return "; ".join(fails)
+
+
+## lane BUILD-5 r3: the retail capture of r2 replayed on the same terms: the camera stays where the game starts it (no radar click, no scroll), the window is the
+## retail client's 16:9 (--res=1280x720 on the Deck: its screen is 1280x800), and the pointer goes to the very pixels the retail run used, scaled by
+## window width / 1600, (/tmp/b5 scripts of r2): the legal site (340, 310), the turn
+## from there through (360, 330), (390, 360), (420, 390) and back to (340, 395), the release; then a second barracks against the fortress at (1110, 570).
+## Shots play1-match-*.png; crops at the retail references' rectangles are made outside (the retail frames are not committed)
+func _scenario_build5match() -> String:
+	var fails: Array = []
+	# the retail client was 1600 x 900; the camera keeps its horizontal field of view (KEEP_WIDTH, RW 0x48B7B1's 50 degrees), so a retail pixel maps about
+	# the screen centre scaled by the width ratio, whatever the window's aspect (the Deck's screen is 1280 x 800)
+	var k := window_size().x / 1600.0
+	var rp := func(p: Vector2) -> Vector2: return window_size() * 0.5 + (p - Vector2(800, 450)) * k
+	await game._step(30)
+	await game._wait_seconds(10.0) # the retail run clicked well into the game (the map's start scripts may hold the input)
+	shot("match-start")
+	var builder: Dictionary = {}
+	var best := 1e9
+	for o in own_objects():
+		if not o.structure and str(o.template).to_lower().contains("porter"):
+			var d := to_pixel(o.x, o.y).distance_to(rp.call(Vector2(1190, 735))) # the porter the retail run clicked
+			if d < best:
+				best = d
+				builder = o
+	if builder.is_empty():
+		return "no porter"
+	var press_barracks := func() -> bool:
+		# the hero bar's builder button selects an idle builder without moving the view (InGameHeroSelect; the click on the drawn porter does not pick
+		# it on this map: picking is not this lane's)
+		var hb := _hero_button(0)
+		if hb.x >= 0:
+			await click(hb)
+			await game._step(6)
+		if hud.get_selection().is_empty() and not await select_object(builder):
+			# on Harad no click selects a unit in OpenBFME (a picking defect outside this lane, reported): the HUD's test hook selects the porter; the
+			# placement that is compared stays driven by pointer input
+			hud.select_object(int(builder.id))
+			await game._step(6)
+			print("BUILD5 match: the porter was selected by the HUD hook (selection %s)" % str(hud.get_selection()))
+			if hud.get_selection().is_empty():
+				return false
+		await game._step(4)
+		var b: Dictionary = {}
+		for x in hud.get_command_buttons():
+			if x.command == "DOZER_CONSTRUCT" and str(x.template) == "GondorBarracks":
+				b = x
+		if b.is_empty():
+			print("BUILD5 match: no barracks button among %s" % str(hud.get_command_buttons().map(func(x): return [x.command, x.template])))
+			return false
+		var bp := palantir_button(b.frame)
+		if bp.x < 0:
+			print("BUILD5 match: the barracks button %s is not on the screen" % b.frame)
+			return false
+		await click(bp)
+		await game._step(4)
+		if not hud.get_placement().get("placing", false):
+			hud.press_command_button("GondorBarracks") # the same hook path for a button click the map's input does not take
+			print("BUILD5 match: the barracks button was pressed by the HUD hook")
+		await game._step(6)
+		return bool(hud.get_placement().get("placing", false))
+	if not await press_barracks.call():
+		return "the barracks placement did not start"
+	await move_to(rp.call(Vector2(330, 300)))
+	await move_to(rp.call(Vector2(340, 310)))
+	await game._step(12)
+	shot("match-legal")
+	press(rp.call(Vector2(340, 310)), MOUSE_BUTTON_LEFT, true)
+	await game._step(4)
+	for p in [rp.call(Vector2(360, 330)), rp.call(Vector2(390, 360)), rp.call(Vector2(420, 390))]:
+		await move_to(p)
+	await game._step(12)
+	shot("match-rotating")
+	await move_to(rp.call(Vector2(340, 395)))
+	await game._step(12)
+	shot("match-rotating2")
+	press(rp.call(Vector2(340, 395)), MOUSE_BUTTON_LEFT, false)
+	await game._step(8)
+	if hud.get_placement().get("placing", false):
+		fails.append("the turned barracks was not placed")
+	if not await press_barracks.call():
+		return "the second placement did not start; " + "; ".join(fails)
+	await move_to(rp.call(Vector2(1100, 560)))
+	await move_to(rp.call(Vector2(1110, 570)))
+	await game._step(12)
+	shot("match-illegal")
+	var gs: Dictionary = ghost_state()
+	print("BUILD5 match: illegal ghost %s, errors %s" % [str(gs.get("icons", [])), str(gs.get("errors", []))])
+	await click(rp.call(Vector2(1110, 570)), MOUSE_BUTTON_RIGHT)
+	return "; ".join(fails)
+
+
 func _scenario_ghosts() -> String:
 	var fails: Array = []
 	await _headless_window()
@@ -284,7 +579,6 @@ func _scenario_ghosts() -> String:
 		if not pl.get("placing", false):
 			fails.append("%s: the button (state %d, cost %d) started no placement" % [b.template, int(b.state), int(b.cost)])
 			continue
-		var ghost: Node = game._placement_ghost
 		var seen := ""
 		var legal_seen := false
 		var illegal_seen := false
@@ -297,22 +591,22 @@ func _scenario_ghosts() -> String:
 			await move_to(px)
 			await game._step(3)
 			pl = hud.get_placement()
-			if pl.get("has_ghost", false) and ghost.shown_template == b.template:
-				seen = ghost.shown_template
+			if pl.get("has_ghost", false) and ghost_template() == b.template:
+				seen = ghost_template()
 				if int(pl.legal) == 0:
-					legal_seen = legal_seen or ghost.shown_tint.a == 0.0
+					legal_seen = legal_seen or ghost_tint().a == 0.0
 				else:
-					illegal_seen = illegal_seen or ghost.shown_tint.a > 0.0
+					illegal_seen = illegal_seen or ghost_tint().a > 0.0
 		print("PLAY3 ghosts: %s %s: ghost %s, legal (untinted) %s, illegal (tinted) %s" % [game._faction, b.template, seen if seen != "" else "NONE", legal_seen, illegal_seen])
 		if seen == "":
-			fails.append("%s: no ghost under the pointer (ghost node '%s', errors %s, placement %s)" % [b.template, ghost.shown_template, str(ghost.errors), str(pl)])
+			fails.append("%s: no ghost under the pointer (ghost node '%s', errors %s, placement %s)" % [b.template, ghost_template(), str(ghost_state().get("errors", [])), str(pl)])
 		else:
 			shown += 1
 			if shown == 1:
 				shot("ghost-" + game._faction.to_lower())
-			if ghost.shown_pieces > 0:
+			if ghost_pieces() > 0:
 				shot("ghost-castle-" + game._faction.to_lower())
-				print("PLAY3 ghosts: %s %s: a castle, %d layout pieces drawn" % [game._faction, b.template, ghost.shown_pieces])
+				print("PLAY3 ghosts: %s %s: a castle, %d layout pieces drawn" % [game._faction, b.template, ghost_pieces()])
 		await click(window_size() * 0.5, MOUSE_BUTTON_RIGHT)
 		await game._step(4)
 		if hud.get_placement().get("placing", false):
@@ -1483,7 +1777,6 @@ func _scenario_skirmish() -> String:
 	if not hud.get_placement().get("placing", false):
 		return "the build button did not start the placement"
 	var site := Vector2(-1, -1)
-	var ghost: Node = game._placement_ghost
 	var red_seen := false
 	for ring in range(2, 8):
 		for k in 12:
@@ -1496,7 +1789,7 @@ func _scenario_skirmish() -> String:
 			await game._step(2)
 			var pl: Dictionary = hud.get_placement()
 			# the ghost (RW 0x69C5E6 / RW 0x6A2AE5): the structure under the cursor, red where the site is illegal
-			if pl.get("placing", false) and int(pl.legal) != 0 and int(pl.legal) != 9 and ghost.shown_tint.r > 0.5 and not red_seen:
+			if pl.get("placing", false) and int(pl.legal) != 0 and int(pl.legal) != 9 and ghost_tint().r > 0.5 and not red_seen:
 				red_seen = true
 				shot("skirmish-ghost-illegal")
 			if pl.get("placing", false) and int(pl.legal) == 0:
@@ -1504,11 +1797,11 @@ func _scenario_skirmish() -> String:
 				break
 		if site.x >= 0:
 			break
-	print("PLAY1 skirmish: the placement ghost %s (tint %s), red on an illegal spot: %s, errors %s" % [ghost.shown_template, ghost.shown_tint, red_seen, ghost.errors])
-	if ghost.shown_template != build.template:
-		fails.append("the placement ghost shows '%s', not %s" % [ghost.shown_template, build.template])
-	elif ghost.shown_tint.a > 0:
-		fails.append("the ghost is tinted %s on a legal site" % ghost.shown_tint)
+	print("PLAY1 skirmish: the placement ghost %s (tint %s), red on an illegal spot: %s, errors %s" % [ghost_template(), ghost_tint(), red_seen, ghost_state().get("errors", [])])
+	if ghost_template() != build.template:
+		fails.append("the placement ghost shows '%s', not %s" % [ghost_template(), build.template])
+	elif ghost_tint().a > 0:
+		fails.append("the ghost is tinted %s on a legal site" % ghost_tint())
 	shot("skirmish-ghost")
 	if site.x < 0:
 		await click(window_size() * 0.5, MOUSE_BUTTON_RIGHT)

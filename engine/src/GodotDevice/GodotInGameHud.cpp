@@ -17,6 +17,7 @@
 #include "Libraries/Source/Apt/AptLoad.h"
 #include "GameClient/Radar.h"
 #include "GameClient/CursorFile.h"
+#include "GodotDevice/GodotPlacementGhost.h"
 #include "GameClient/HudObjects.h"
 #include "GameClient/InGameHud.h"
 #include "GameClient/OptionPreferences.h"
@@ -48,6 +49,7 @@
 #include <godot_cpp/classes/input.hpp>
 #include <godot_cpp/classes/input_event_key.hpp>
 #include <godot_cpp/classes/rendering_server.hpp>
+#include <godot_cpp/classes/input_event_mouse.hpp>
 #include <godot_cpp/classes/input_event_mouse_button.hpp>
 #include <godot_cpp/classes/input_event_mouse_motion.hpp>
 #include <godot_cpp/classes/os.hpp>
@@ -151,15 +153,6 @@ int dikOf(Key key)
 	return 0;
 }
 
-// The view the HUD picks, projects and draws the radar box with: the pose the player SEES (the interpolated eye / target, the viewport and the field of view of the displayed
-// camera); the camera's own movement (lookAt, the translator) stays on the current client pose.
-class DisplayedView : public PinholeView
-{
-public:
-	TacticalCamera *cam = nullptr;
-	Coord3D position() const override { return cam->position(); }
-	void lookAt(const Coord3D &world) override { cam->lookAt(world); }
-};
 } // namespace
 
 struct HudDevice : public AptNativeHook
@@ -174,7 +167,7 @@ struct HudDevice : public AptNativeHook
 	RecordingShellServices services;
 	// lane CAM-1: the retail tactical camera; the Godot camera is set from it every frame (applyCamera)
 	std::unique_ptr<TacticalCamera> cam;
-	DisplayedView shown; // picking and projection follow the displayed (interpolated) pose
+	DisplayedCameraView shown; // picking and projection follow the displayed (interpolated) pose (TacticalCamera.h, lane BUILD-5 r3)
 	double clientClock = 0.0;
 	double updateMs = 0.0, cameraMs = 0.0, cursorMs = 0.0; ///< SMOOTH-1: the parts of the last _process
 	bool edgeScroll = false;
@@ -196,6 +189,8 @@ struct HudDevice : public AptNativeHook
 	bool ownsPlayer = false;
 	std::uint64_t playerId = 0;
 	Vector2 lastPointer;
+	bool livePointerSeen = false;
+	Vector2 livePointer; ///< lane BUILD-5 r3: the pointer as the OS reports it, also while the HUD's input waits for the logic worker (the ghost's pose: RotWK Mouse + 0x4F0C)
 	int localPlayerIndex = -1;                   ///< SMOOTH-1: the local player's index (the radar's own blips, from the snapshot)
 	std::vector<Ref<InputEvent>> pendingInput;   ///< SMOOTH-1: input that arrived while the logic worker ran a frame, replayed in order when it is idle
 	unsigned long long deferredInput = 0;
@@ -246,12 +241,17 @@ struct HudDevice : public AptNativeHook
 		CursorImage image;
 		std::vector<Ref<ImageTexture>> frames;
 	};
-	std::map<std::string, CursorSet> cursors;
+	std::map<std::string, CursorSet> cursors; ///< by "<name>#<direction>"
 	std::string cursorDir, cursorName;
-	int cursorStep = 0;
+	int cursorStep = 0, cursorDirection = 0;
 	double cursorClock = 0.0;
+	bool cursorHidden = false;
+	Ref<ImageTexture> blankCursor; ///< lane BUILD-5: the pointer of a cursor without a Mouse.ini block (retail SetCursor(null): none)
+	Ref<ImageTexture> cursorShown; ///< lane BUILD-5: the image the pointer shows now (null: none), for proof screenshots (a capture omits the OS pointer)
+	Vector2 cursorHot;
 	std::vector<std::string> cursorErrors;
-	void updateCursor(double delta, const std::string &wanted);
+	std::unique_ptr<PlacementGhostRenderer> ghost; ///< lane BUILD-5 r2: the placement ghost, drawn after the displayed camera (GodotPlacementGhost.h)
+	void updateCursor(double delta, const std::string &wanted, float scrollX = 0.0f, float scrollY = 0.0f, bool scrolling = false);
 	void loadCursorTable(ArchiveFileSystem &fs);
 
 	void drawPlaceholder(const AptCanvasOp &op, RID item) override;
@@ -947,7 +947,7 @@ void HudDevice::loadCursorTable(ArchiveFileSystem &fs)
 	}
 }
 
-void HudDevice::updateCursor(double delta, const std::string &wanted)
+void HudDevice::updateCursor(double delta, const std::string &wanted, float scrollX, float scrollY, bool scrolling)
 {
 	if (cursorDir.empty())
 	{
@@ -956,26 +956,39 @@ void HudDevice::updateCursor(double delta, const std::string &wanted)
 	auto it = cursorTable.find(wanted);
 	if (it == cursorTable.end() || it->second.image.empty())
 	{
+		// lane BUILD-5: a cursor without a Mouse.ini block (retail: Build / InvalidBuild while placing) has no resource; Win32Mouse::setCursor (BFME2 decomp
+		// Win32Mouse.cpp:352, RW 0x441A83 row) then calls SetCursor(null): no pointer at all
+		if (!cursorHidden)
+		{
+			if (blankCursor.is_null())
+			{
+				Ref<Image> img = Image::create_empty(1, 1, false, Image::FORMAT_RGBA8);
+				img->fill(Color(0, 0, 0, 0));
+				blankCursor = ImageTexture::create_from_image(img);
+			}
+			Input::get_singleton()->set_custom_mouse_cursor(blankCursor, Input::CURSOR_ARROW, Vector2());
+			cursorHidden = true;
+			cursorShown.unref();
+		}
+		cursorName = wanted;
 		return;
 	}
-	CursorSet &set = cursors[wanted];
+	// lane BUILD-5: the frame of a directional cursor (W3DMouse::setCursorDirection RW 0x498B1A, refreshed every drawn frame)
+	const int dirs = it->second.directions > 1 ? it->second.directions : 1;
+	const int direction = ScrollCursorDirection(scrollX, scrollY, dirs, scrolling);
+	CursorSet &set = cursors[wanted + "#" + std::to_string(direction)];
 	if (!set.loaded)
 	{
 		set.loaded = true;
-		std::string path;
-		for (const char *ext : { "", ".ani", ".cur" })
-		{
-			path = FindFileNoCase(cursorDir, it->second.image + ext);
-			if (!path.empty())
-			{
-				break;
-			}
-		}
+		// Win32Mouse::initCursorResources (RW 0x441506): "<stem>.cur" for an image ending in .cur, else "<image>.ani"; "<stem><direction>.<ext>" per direction
+		const std::string file = CursorFileName(it->second.image, dirs, direction);
+		const std::string path = FindFileNoCase(cursorDir, file);
 		std::string error;
 		std::vector<std::uint8_t> bytes;
 		if (path.empty())
 		{
-			cursorErrors.push_back("cursor " + wanted + ": no file " + it->second.image);
+			cursorErrors.push_back("cursor " + wanted + ": no file " + file);
+			UtilityFunctions::push_error(toGodot(cursorErrors.back()));
 		}
 		else
 		{
@@ -983,6 +996,7 @@ void HudDevice::updateCursor(double delta, const std::string &wanted)
 			if (f.is_null())
 			{
 				cursorErrors.push_back("cursor " + wanted + ": cannot read " + path);
+			UtilityFunctions::push_error(toGodot(cursorErrors.back()));
 			}
 			else
 			{
@@ -991,6 +1005,7 @@ void HudDevice::updateCursor(double delta, const std::string &wanted)
 				if (!DecodeCursorFile(bytes, set.image, &error))
 				{
 					cursorErrors.push_back("cursor " + wanted + ": " + error);
+			UtilityFunctions::push_error(toGodot(cursorErrors.back()));
 				}
 				else
 				{
@@ -1007,11 +1022,23 @@ void HudDevice::updateCursor(double delta, const std::string &wanted)
 	}
 	if (set.frames.empty())
 	{
+		// lane BUILD-5 r2 (S-295): a cursor whose file is missing or does not decode shows the engine's own pointer (reported once in cursorErrors and
+		// push_error), never the previous cursor
+		if (wanted != cursorName || direction != cursorDirection || cursorHidden || cursorShown.is_valid())
+		{
+			Input::get_singleton()->set_custom_mouse_cursor(Ref<Resource>(), Input::CURSOR_ARROW, Vector2());
+			cursorName = wanted;
+			cursorDirection = direction;
+			cursorHidden = false;
+			cursorShown.unref();
+		}
 		return;
 	}
-	if (wanted != cursorName)
+	if (wanted != cursorName || direction != cursorDirection || cursorHidden)
 	{
 		cursorName = wanted;
+		cursorDirection = direction;
+		cursorHidden = false;
 		cursorStep = 0;
 		cursorClock = 0.0;
 	}
@@ -1029,6 +1056,8 @@ void HudDevice::updateCursor(double delta, const std::string &wanted)
 	const int frame = set.image.sequence[(size_t)cursorStep % set.image.sequence.size()];
 	const int hx = it->second.hotX >= 0 ? it->second.hotX : set.image.hotX, hy = it->second.hotY >= 0 ? it->second.hotY : set.image.hotY;
 	Input::get_singleton()->set_custom_mouse_cursor(set.frames[(size_t)frame], Input::CURSOR_ARROW, Vector2((float)hx, (float)hy));
+	cursorShown = set.frames[(size_t)frame];
+	cursorHot = Vector2((float)hx, (float)hy);
 }
 
 // SAGE (x east, y north, z up) -> Godot (x, z, -y)
@@ -1044,13 +1073,9 @@ void HudDevice::applyCamera(const Vector2 &window, double alpha)
 		return;
 	}
 	cam->setViewport((int)window.x, (int)window.y);
-	const float a = (float)alpha;
-	auto mix = [a](const Coord3D &p, const Coord3D &q) { return Coord3D{ p.x + (q.x - p.x) * a, p.y + (q.y - p.y) * a, p.z + (q.z - p.z) * a }; };
-	const Coord3D eyeS = mix(cam->previousEye(), cam->eye()), targetS = mix(cam->previousTarget(), cam->target());
 	shown.cam = cam.get();
-	shown.setScreen((int)window.x, (int)window.y);
-	shown.setFov(cam->verticalFov());
-	shown.set(eyeS, targetS);
+	shown.present((int)window.x, (int)window.y, alpha);
+	const Coord3D eyeS = shown.eye(), targetS = shown.PinholeView::position();
 	const Vector3 eye = toGodotAxes(eyeS);
 	const Vector3 target = toGodotAxes(targetS);
 	// retail: horizontal field of view 50 degrees (View + 0x6C), near 10, far 1800 (RW 0x48B7B1); the view plane's height follows the viewport aspect
@@ -1101,6 +1126,9 @@ void InGameHudNode::_bind_methods()
 	ClassDB::bind_method(D_METHOD("press_spell_slot", "slot"), &InGameHudNode::press_spell_slot);
 	ClassDB::bind_method(D_METHOD("get_frame_timings"), &InGameHudNode::get_frame_timings);
 	ClassDB::bind_method(D_METHOD("get_placement"), &InGameHudNode::get_placement);
+	ClassDB::bind_method(D_METHOD("take_misc_sounds"), &InGameHudNode::take_misc_sounds);
+	ClassDB::bind_method(D_METHOD("get_cursor_image"), &InGameHudNode::get_cursor_image);
+	ClassDB::bind_method(D_METHOD("get_placement_ghost_state"), &InGameHudNode::get_placement_ghost_state);
 	ClassDB::bind_method(D_METHOD("get_move_hints"), &InGameHudNode::get_move_hints);
 	ClassDB::bind_method(D_METHOD("press_command_button", "template_name"), &InGameHudNode::press_command_button);
 	ClassDB::bind_method(D_METHOD("get_command_buttons"), &InGameHudNode::get_command_buttons);
@@ -1380,6 +1408,7 @@ InGameHudNode::~InGameHudNode()
 			d->player->attach_window_manager(nullptr);
 		}
 	}
+	d->ghost.reset(); // lane BUILD-5 r2: its drawables use the game's draw services: before the HUD and the game
 	d->hud.reset();
 }
 
@@ -1548,6 +1577,9 @@ Dictionary InGameHudNode::attach(const Ref<RetailFileSystem> &fs, GameWorld *wor
 	d->hud->input().attachCamera(*d->cam);
 	d->hud->setWindowSize((int)window.x, (int)window.y);
 	d->hud->input().commandTranslator().setUseAlternateMouse((bool)options.get("alternate_mouse", false));
+	// lane BUILD-5 r2: the ghost's step runs after the displayed camera (InGameHudNode::_process), drawn by the HUD's own renderer
+	d->hud->input().setPlacementDeferred(true);
+	d->ghost = std::make_unique<PlacementGhostRenderer>(world, fs);
 	{
 		// lane INPUT-1 r2: RotWK's keyboard setup (RW 0x63F024) sets OurLanguage 2 for a German keyboard layout (de-DE / CH / AT / LU / LI): the CommandMap's
 		// Y and Z follow the keys' labels. options.german_keyboard (true / false) overrides the layout the display server reports
@@ -2145,6 +2177,8 @@ Dictionary InGameHudNode::get_report() const
 		}
 		r["cursor_errors"] = ce;
 		r["cursor"] = toGodot(d->cursorName);
+		r["cursor_direction"] = d->cursorDirection; // lane BUILD-5
+		r["cursor_hidden"] = d->cursorHidden;
 	}
 	r["draw_counts"] = toGodot("images " + std::to_string(d->drawnImages) + " skipped " + std::to_string(d->skippedImages));
 	if (d->hud)
@@ -2253,8 +2287,28 @@ void InGameHudNode::_process(double delta)
 		d->clientClock = 0.0; // a stall: no catching up
 	}
 	d->applyCamera(window, d->clientClock / step);
+	// lane BUILD-5 r2: the placement update (RW 0x6A2AE5) projects the pointer through the camera of the frame drawn, then the ghost's drawables are drawn
+	// (behind the same logic gate as the HUD's update: a frame the logic still runs keeps last frame's ghost)
+	// lane BUILD-5 r3: every render frame (review r2 #2): the pose follows the live pointer through the displayed camera also while the logic worker runs; the
+	// builder lookup, the legality and new drawables wait for an idle frame (they read the live logic)
+	if (d->ghost && d->world && d->world->hud_game())
+	{
+		const bool idle = d->world->hud_game()->logicIdle();
+		if (d->livePointerSeen)
+		{
+			d->hud->input().placeTranslator().setLivePointer({ (int)d->livePointer.x, (int)d->livePointer.y });
+		}
+		d->hud->input().placementUpdate(idle);
+		d->ghost->sync(*d->world->hud_game(), d->hud->input().ui(), delta, PlaceEventTranslator::ghostOptions(), idle);
+	}
 	const uint64_t t2 = Time::get_singleton()->get_ticks_usec();
-	d->updateCursor(delta, d->hud->isOverGui((int)d->lastPointer.x, (int)d->lastPointer.y) ? std::string(MouseCursorName::Arrow) : d->hud->input().ui().cursor());
+	{
+		// lane BUILD-5: while scrolling the cursor is InGameUI's Scroll whatever is under the pointer (createMouseoverHint's window test RW 0x69F637 is skipped
+		// while scrolling); its direction follows the scroll amount
+		const InGameUI &ui = d->hud->input().ui();
+		const bool overGui = !ui.isScrolling() && d->hud->isOverGui((int)d->lastPointer.x, (int)d->lastPointer.y);
+		d->updateCursor(delta, overGui ? std::string(MouseCursorName::Arrow) : ui.cursor(), ui.scrollAmountX(), ui.scrollAmountY(), ui.isScrolling());
+	}
 	const uint64_t t3 = Time::get_singleton()->get_ticks_usec();
 	d->updateMs = (double)(t1 - t0) / 1000.0;
 	d->cameraMs = (double)(t2 - t1) / 1000.0;
@@ -2324,7 +2378,40 @@ Dictionary InGameHudNode::get_placement() const
 	p["z"] = ui.placeLocation().z;
 	p["angle"] = ui.placeAngle();
 	p["legal"] = ui.placeLegalCode();
+	// lane BUILD-5: the rotation anchor (W3DInGameUI::drawPlaceAngle RW 0x48EAD8 draws W_Arrow on the ghost while anchored) and the client frame (the code 9 pulse)
+	p["anchored"] = ui.isPlacementAnchored();
+	p["client_frame"] = (int64_t)ui.clientFrame();
 	return p;
+}
+
+Dictionary InGameHudNode::get_placement_ghost_state() const
+{
+	return d->ghost ? d->ghost->state() : Dictionary();
+}
+
+Dictionary InGameHudNode::get_cursor_image() const
+{
+	Dictionary c;
+	c["name"] = toGodot(d->cursorName);
+	c["direction"] = d->cursorDirection;
+	c["hidden"] = d->cursorHidden;
+	c["texture"] = d->cursorShown;
+	c["hot"] = d->cursorHot;
+	return c;
+}
+
+PackedStringArray InGameHudNode::take_misc_sounds()
+{
+	PackedStringArray out;
+	if (!d->hud)
+	{
+		return out;
+	}
+	for (const std::string &f : d->hud->input().ui().takeMiscSounds())
+	{
+		out.push_back(toGodot(f));
+	}
+	return out;
 }
 
 bool InGameHudNode::press_command_button(const String &template_name)
@@ -2431,6 +2518,8 @@ void InGameHudNode::inject_mouse_move(const Vector2 &p)
 	if (d->ready)
 	{
 		d->lastPointer = p;
+		d->livePointer = p;
+		d->livePointerSeen = true;
 		d->hud->mouseMove((int)p.x, (int)p.y, d->keyState);
 	}
 }
@@ -2493,6 +2582,11 @@ void InGameHudNode::_input(const Ref<InputEvent> &event)
 	}
 	// SMOOTH-1 (S-810): the HUD's input reads the live game (picking, selection, the control bar). While the logic worker runs a frame the event waits,
 	// in order, for the next render frame the worker is idle in (InGameHudNode::_process replays it), instead of blocking the render on the frame
+	if (const InputEventMouse *m = Object::cast_to<InputEventMouse>(event.ptr()))
+	{
+		d->livePointerSeen = true;
+		d->livePointer = m->get_position(); // lane BUILD-5 r3: presentation only (the placement ghost's pose); the event itself may still wait
+	}
 	LiveGame *game = d->world ? d->world->hud_game() : nullptr;
 	if (game && (!game->logicIdle() || !d->pendingInput.empty()))
 	{

@@ -23,10 +23,16 @@ class CommandButton;
 class GameLogic;
 class MessageStream;
 
-// ZH Mouse::MouseCursor, as the NAMES of the `MouseCursor <Name>` blocks of Data\INI\Mouse.ini (the table the engine picks from)
+// ZH Mouse::MouseCursor, as the NAMES of the `MouseCursor <Name>` blocks of Data\INI\Mouse.ini (the table the engine picks from). Lane BUILD-5: RotWK's name table
+// RW 0xD9E108 numbers them None 0, Normal 1, Arrow 2, Scroll 3, Target 4 (ZH's CROSS slot), Move 5, AttackMove 6, AttackObj 7, ..., Build 10, InvalidBuild 11,
+// GenericInvalid 12, ...; the code passes the numbers (InGameUI::setMouseCursor RW 0x69B06D -> TheMouse vslot 0x4C), the port the names.
 namespace MouseCursorName
 {
+inline constexpr const char *None = "None";
 inline constexpr const char *Arrow = "Arrow";
+inline constexpr const char *Target = "Target";             // 4: the building placement's mode cursor (placeBuildAvailable RW 0x69C69B)
+inline constexpr const char *Build = "Build";               // 10: a move hint while placing (createCommandHint RW 0x6A3E2A); retail Mouse.ini has no such block
+inline constexpr const char *InvalidBuild = "InvalidBuild"; // 11: an attack hint while placing (RW 0x6A3E25); no retail Mouse.ini block either
 inline constexpr const char *Select = "Select";
 inline constexpr const char *Move = "Move";
 inline constexpr const char *AttackMove = "AttackMove";
@@ -90,7 +96,14 @@ public:
 	bool getInputEnabled() const { return m_inputEnabled; }
 	void setInputEnabled(bool on) { m_inputEnabled = on; }
 	bool isScrolling() const { return m_scrolling; }
-	void setScrolling(bool on) { m_scrolling = on; }
+	// lane BUILD-5: RotWK InGameUI::setScrolling (vslot 0xA4, RW 0x69B28F; BFME2 decomp InGameUIInputModes.cpp:330, tier A): a change only; on: TheMouse's capture
+	// (vslot 0x50) and the Scroll cursor (3), off: the Arrow cursor (2) and the release (vslot 0x54)
+	void setScrolling(bool on);
+	// lane BUILD-5: the offset the LookAt translator scrolled the view by this client frame (InGameUI::setScrollAmount, vslot 0xB4; BfmeOwnVVDScrollUpdate.cpp:249 ..
+	// 365, RW 0x83B471 tier A): zero while not scrolling. The directional Scroll cursor faces it (W3DMouse::setCursorDirection RW 0x498B1A)
+	void setScrollAmount(float x, float y) { m_scrollAmountX = x; m_scrollAmountY = y; }
+	float scrollAmountX() const { return m_scrollAmountX; }
+	float scrollAmountY() const { return m_scrollAmountY; }
 	bool isSelecting() const { return m_selecting; }
 	void setSelecting(bool on) { m_selecting = on; }
 	bool isQuitMenuVisible() const { return m_quitMenuVisible; }
@@ -104,7 +117,21 @@ public:
 	// ---- the pointer ----
 	// the cursor the translators chose this frame (a name of Mouse.ini)
 	const std::string &cursor() const { return m_cursor; }
+	// RotWK InGameUI::setMouseCursor (RW 0x69B06D, tier A: TheMouse->setCursor; in the GUI command mode a cursor other than Arrow / Scroll is the mode's own)
 	void setCursor(const std::string &name) { m_cursor = name; }
+	// lane BUILD-5: RW 0x69BD53 (BFME2 decomp Rva0029B313.cpp, tier A), what createCommandHint calls: the cursor changes only while neither selecting nor scrolling
+	void hintCursor(const std::string &name)
+	{
+		if (!m_selecting && !m_scrolling)
+		{
+			m_cursor = name;
+		}
+	}
+	// lane BUILD-5: InGameUI + 0x7FC / + 0x800, the mouse mode and its cursor: 1 / Target while a building waits for its site (placeBuildAvailable RW 0x69C6A6),
+	// 0 / Arrow otherwise (the GUI command mode 2 is not ported here: S-283). createMouseoverHint (RW 0x69F637, BFME2 decomp InGameUICreateMouseoverHint.cpp:511) sets
+	// the mode's cursor when the mode is not 0
+	int mouseMode() const { return isPlacing() ? 1 : 0; }
+	const char *mouseModeCursor() const { return isPlacing() ? MouseCursorName::Target : MouseCursorName::Arrow; }
 	ObjectID mouseoverObject() const { return m_mouseoverObject; }
 	bool hasMouseoverLocation() const { return m_hasMouseoverLocation; }
 	const Coord3D &mouseoverLocation() const { return m_mouseoverLocation; }
@@ -132,15 +159,9 @@ public:
 	// jumps to RW 0x94089B: setGUICommand(button); the wall span message takes its Options from getGUICommand (RW 0x83E999). The port keeps the button with the placement
 	// instead of making it the GUI command, so the translators that wait for a GUI command target are not entered (inference: RotWK's placement end RW 0x83E6A4 clears
 	// both together, vslots 0xBC(0) and 0xDC(0, 0))
-	void placeBuildAvailable(const std::string &templateName, ObjectID sourceObject, const CommandButton *command = nullptr)
-	{
-		m_placeTemplate = templateName;
-		m_placeSource = sourceObject;
-		m_placeCommand = templateName.empty() ? nullptr : command;
-		m_placeHasGhost = false;
-		m_placeAngle = 0.0f;
-		m_placeLegal = 0;
-	}
+	// lane BUILD-5 (RW 0x69C5E6): a new template shows the mode cursor Target (RW 0x69C69B), no template the Arrow (RW 0x69C7B0 / 0x69C7EE) and drops the anchor
+	// (vslot 0xE8(null))
+	void placeBuildAvailable(const std::string &templateName, ObjectID sourceObject, const CommandButton *command = nullptr);
 	const std::string &placeBuildTemplate() const { return m_placeTemplate; }
 	ObjectID placeBuildSource() const { return m_placeSource; }
 	const CommandButton *placeBuildCommand() const { return m_placeCommand; }
@@ -157,6 +178,46 @@ public:
 		m_placeHasGhost = true;
 	}
 	bool placeHasGhost() const { return m_placeHasGhost; }
+	// lane BUILD-5: the ghost's location and angle (RW 0x6A3847 / 0x6A385B, every client frame) apart from its legality (RW 0x6A3939: odd client frames only)
+	// lane BUILD-5 r2: `slotAngle` is the angle the place icon's slot keeps (RW 0x6A3847: the angle before a PORT's snap), `angle` the drawable's (after it)
+	void setPlaceGhostPose(const Coord3D &location, float angle, float slotAngle)
+	{
+		m_placeLocation = location;
+		m_placeAngle = angle;
+		m_placeSlotAngle = slotAngle;
+		m_placeHasGhost = true;
+	}
+	float placeSlotAngle() const { return m_placeSlotAngle; }
+	void setPlaceLegalCode(int legalCode) { m_placeLegal = legalCode; }
+	// lane BUILD-5: the rotation anchor of the placement (InGameUI + 0x554 .. 0x564; setPlacementStart vslot 0xE8, setPlacementEnd 0xEC, isPlacementAnchored 0xF0,
+	// getPlacementPoints 0xF4: BFME2 decomp InGameUIPlacement.cpp, tier B). A start sets the end to it too; null drops the anchor
+	void setPlacementStart(const ICoord2D *start)
+	{
+		if (start)
+		{
+			m_placeAnchorStart = *start;
+			m_placeAnchorEnd = *start;
+			m_placeAnchored = true;
+		}
+		else
+		{
+			m_placeAnchored = false;
+		}
+	}
+	void setPlacementEnd(const ICoord2D &end) { m_placeAnchorEnd = end; }
+	bool isPlacementAnchored() const { return m_placeAnchored; }
+	const ICoord2D &placementStart() const { return m_placeAnchorStart; }
+	const ICoord2D &placementEnd() const { return m_placeAnchorEnd; }
+
+	// ---- lane BUILD-5: MiscAudio sounds the translators ask for (by MiscAudio field name, e.g. BadBuildingPlacementSound), drained by the device ----
+	void requestMiscSound(const std::string &field) { m_miscSounds.push_back(field); }
+	std::vector<std::string> takeMiscSounds()
+	{
+		std::vector<std::string> out;
+		out.swap(m_miscSounds);
+		return out;
+	}
+	const std::vector<std::string> &miscSounds() const { return m_miscSounds; }
 	const Coord3D &placeLocation() const { return m_placeLocation; }
 	float placeAngle() const { return m_placeAngle; }
 	// LegalBuildCode (GameLogic/BuildPlacement.h): 0 = the ghost may be placed
@@ -218,7 +279,12 @@ private:
 	bool m_lineBuildStarted = false;
 	Coord3D m_placeLocation;
 	float m_placeAngle = 0.0f;
+	float m_placeSlotAngle = 0.0f;
 	int m_placeLegal = 0;
 	bool m_placeHasGhost = false;
+	bool m_placeAnchored = false;
+	ICoord2D m_placeAnchorStart{}, m_placeAnchorEnd{};
+	float m_scrollAmountX = 0.0f, m_scrollAmountY = 0.0f;
+	std::vector<std::string> m_miscSounds;
 	int m_maxSelect = 0;
 };

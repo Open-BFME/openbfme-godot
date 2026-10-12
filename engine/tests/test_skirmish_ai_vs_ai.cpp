@@ -4,6 +4,8 @@
 
 #include "doctest.h"
 
+#include "GameLogic/Module/AISpecialPowerUpdate.h"
+
 #include "StartTestUtil.h"
 
 #include "GameEngineDevice/Win32Device/Common/Win32BIGFileSystem.h"
@@ -196,6 +198,31 @@ std::string summary(GameLogic &logic, const Player *p)
 		}
 	}
 	return os.str();
+}
+
+
+// lane AIPOW-1: the computer players' power use of a run (AISpecialPowerUpdate's diagnostics: the buttons run per SpecialPowerAIType)
+std::string powerUseLine()
+{
+	const AISpecialPowerUpdate::Stats &st = AISpecialPowerUpdate::stats();
+	std::ostringstream o;
+	o << "AI powers: asked " << st.asked << ", yes " << st.yes << ", run " << st.executed << ", unported decisions " << st.unportedDecisions << ";";
+	for (int t = 0; t < AI_SPECIAL_POWER_TYPE_COUNT; ++t)
+	{
+		if (st.executedByType[(size_t)t] != 0)
+		{
+			o << " " << (TheAISpecialPowerTypeNames[t] + 3) << " " << st.executedByType[(size_t)t];
+		}
+	}
+	o << "; unported asked:";
+	for (int t = 0; t < AI_SPECIAL_POWER_TYPE_COUNT; ++t)
+	{
+		if (st.unportedByType[(size_t)t] != 0)
+		{
+			o << " " << (TheAISpecialPowerTypeNames[t] + 3) << " " << st.unportedByType[(size_t)t];
+		}
+	}
+	return o.str();
 }
 
 void runVersus(starttest::Shared &s, const NewGameMessage &message, int frames, VersusRun &out, bool hashEveryFrame, int logEvery)
@@ -392,8 +419,13 @@ TEST_CASE("skirmish ai vs ai: diagnostic run (OPENBFME_AI2_DIAG=<factionA>,<fact
 		}
 	}
 	VersusRun run;
+	AISpecialPowerUpdate::stats() = AISpecialPowerUpdate::Stats{};
+	// lane AIPOW-1: OPENBFME_AIPOW1_MOD4_ONLY=1 answers the decisions AIPOW-1 ported with no (the power use before the lane)
+	AISpecialPowerUpdate::mod4DecisionsOnlyForTest() = std::getenv("OPENBFME_AIPOW1_MOD4_ONLY") != nullptr;
 	runVersus(*s, versusMessage(*s, a, 1, b, 1, seed), frames, run, false, 300);
+	AISpecialPowerUpdate::mod4DecisionsOnlyForTest() = false;
 	MESSAGE(run.log << "defeat frame " << run.defeatFrame << " loser " << run.loser);
+	MESSAGE(powerUseLine());
 }
 
 TEST_CASE("skirmish ai dozers: an AI that loses its dozers queues a new one at its fortress (RW 0x9A23A4 / 0x9A221E / 0x9A19E0, lost flag RW 0x9A1BC0)")
@@ -632,13 +664,32 @@ TEST_CASE("skirmish ai vs ai: Evendim, 30 game-minutes: every pairing ends - Mor
 	// Merge INTEG-3 (PLAY-1's tribute and settings hash, ARCHER-1's spread fire of a ranged horde RW 0x875221 / 0x86FA87 with LockWeaponSlot forwarded to the
 	// members, on DECOMP-1's weapon choice and delivery; UI-3 / UI-4 / RELTEST-1 / PLAY-3 change no logic), re-measured on the merged tree 22902969 with
 	// remote-measure.sh (pve): seed 2 ends with Men's defeat (start position 1) at 7205, seed 7 with Mordor's defeat (start position 1) at 4206, seed 1234 with
-	// Men's defeat (start position 1) at 5519. Engine pins, not retail values.
-	for (const Game &g : { Game{ "FactionMordor", "FactionMen", 2u, 1, 7205 }, Game{ "FactionMen", "FactionMordor", 7u, 1, 4206 }, Game{ "FactionMordor", "FactionMen", 1234u, 1, 5519 } })
+	// Men's defeat (start position 1) at 5519. Engine pins, not retail values. Lane GAMEMODES-1: a skirmish is judged by rule 3 (RW 0x808A93: TheGameLogic + 0x114
+	// == 3), under which a side's last structure decides and its builders no longer keep it alive: seed 7 ended at 3831, seed 1234 at 5443 (same losers) on its own tree.
+	// Lane DECOMP-2 (the team builder's recruit test RW 0x9A24FC and threat hand-over RW 0x9A26A1, RotWK's idle dispatch RW 0x9A3040, the AI's heroes RW 0x9A0993,
+	// PLAYER_HUNT), merged with archive ce2fa4e8 and re-measured with remote-measure.sh (nas) on 30db6133: seed 2 ends with Men's defeat (start position 1) at
+	// 8853, seed 7 with Mordor's defeat (start position 1) at 5670, seed 1234 is open at 9000. Engine pins, not retail values.
+	// Lane AIPOW-1 (the computer's heroes, units and spell book use 35 of the 53 AISpecialPowerUpdate decisions, with the ActionManager's location test): seed 2
+	// is open at 9000, seed 7 ends with Mordor's defeat (start position 1) at 6155, seed 1234 with Men's defeat at 5419. With the lane's decisions answering no
+	// (OPENBFME_AIPOW1_MOD4_ONLY, the diagnostic run) seed 2 ends at 8208 again. AIPOW-1 r2 (SHROUD_REVEAL waits until after logic frame 50, RW
+	// 0xDEC148): seed 7 now ends at 8660 (6155 before), the other two are unchanged. AIPOW-1 r2 part 2 (the spell book's ASSIST_BATTLE, BUFFTERRAIN, REBUILD,
+	// ENSHROUDINGMIST, CALLTHEHORDE and BUFFECONOMYBUILDING decisions, on the archive 78ee4874 merged in): seed 2 still open, seed 7 Mordor at 6949, seed
+	// 1234 Men at 8319. Engine pins, not retail values.
+	// Merge of the archive 27f57575 (v0.3.0-preview.1) into AIPOW-1 r2 part 2, re-measured on JonathanPC: seed 2 is open at 9000, seed 7 is open at 9000,
+	// seed 1234 ends with Men's defeat (start position 1) at 7399. Engine pins, not retail values.
+	// Merge of the archive ce2fa4e8 into AIPOW-1 r2 part 2, re-measured on the merged tree with remote-measure.sh (jpc): seeds 2, 7 and 1234 are all open at
+	// 9000. Engine pins, not retail values.
+	// Merge INTEG-6 (v0.4.0-alpha.1: DECOMP-2's team builder, heroes and PLAYER_HUNT, GAMEMODES-1's victory rule 3, AIPOW-1's 42 of 53 decisions; MENU-1, BUILD-5
+	// and ONLINE-1 change no logic), re-measured on the merged tree 2185a023 with remote-measure.sh (nas): seed 2 is open at 9000, seed 7 ends with Men's defeat
+	// (start position 0) at 4511, seed 1234 is open at 9000. Engine pins, not retail values.
+	for (const Game &g : { Game{ "FactionMordor", "FactionMen", 2u, -1, -1 }, Game{ "FactionMen", "FactionMordor", 7u, 0, 4511 }, Game{ "FactionMordor", "FactionMen", 1234u, -1, -1 } })
 	{
 		INFO(g.a << " vs " << g.b << " seed " << g.seed);
 		VersusRun run;
+		AISpecialPowerUpdate::stats() = AISpecialPowerUpdate::Stats{};
 		runVersus(*s, versusMessage(*s, g.a, 1, g.b, 1, g.seed), 9000, run, false, 0);
 		MESSAGE(run.log << "defeat frame " << run.defeatFrame << " loser " << run.loser);
+		MESSAGE(powerUseLine());
 		CHECK(run.attacks[0] + run.attacks[1] >= (g.seed == 2u ? 2u : 4u)); // DECOMP-1 r3: the seed 2 game launches two (see above)
 		// SMOOTH-2 (the pending position cleared every frame, RW 0x62618F, feeds the crush warning's velocity RW 0x68EF58) ends seed 1234 with Men's defeat:
 		// 5275 on SMOOTH-2's base, 5186 on the merged tree (with GARRISON-1 / STEALTH-2 / END-2); seeds 2 and 7 stay open. Lane SMOOTH-3 (RotWK's member hub near arm RW 0x874F09, the angle goal RW 0x5E98D6 turning at the locomotor's rate): seed 1234 is open at 9000 as well. Engine pins, not retail values.

@@ -161,6 +161,7 @@ private:
 	void bootHud6();
 	void updateHud6(ObjectID context, const std::string &faction, double seconds);
 	bool hud6OverGui(int x, int y) const;
+	bool aptButtonAt(int x, int y); // lane INTEG-6: an Apt button (the window manager's) under the pointer
 	void hud6MouseMove(int x, int y);
 	bool hud6MouseButton(HudInput::Button button, bool down, int x, int y);
 	void hud6Stops(std::vector<std::string> &out) const;

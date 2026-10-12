@@ -78,11 +78,21 @@ bool VictoryConditions::cachePlayer(Player *p)
 	return true;
 }
 
-// RW 0x808A43 (reset, the rule: 2, or 3 in the game mode 3) then cachePlayerPtrs RW 0x808B6A
+// lane GAMEMODES-1: RW 0x808A8B .. 0x808AA0: + 0xC = (TheGameLogic + 0x114 == 3) + 2. + 0x114 is the game KIND, not the game mode (+ 0x110): the
+// constructor sets 3 (RW 0x6301D3), MSG_CLEAR_GAME_DATA sets 3 again (RW 0x779F20), only the War of the Ring battle start (the dispatcher's case 0x1F,
+// RW 0x779CB4 / 0x779D23) stores another value from its message (1 LAN -> game mode 1, 2 online -> game mode 5). So every skirmish and LAN game is judged by
+// rule 3 (base or army), a War of the Ring battle by rule 2 (base or builders). COMBAT-2 had read + 0x114 as the game mode (3 = replay) and judged every
+// skirmish by rule 2. No virtual function writes + 0xC (vtable RW 0xC4F108 has no setter): rules 0 and 1 are never selected
+int VictoryConditions::initialRule(const EconomyContext &context)
+{
+	return context.gameKind == 3 ? RULE_BASE_OR_ARMY : RULE_BASE_OR_BUILDERS;
+}
+
+// RW 0x808A43 (reset, the rule above) then cachePlayerPtrs RW 0x808B6A
 void VictoryConditions::init()
 {
 	reset();
-	m_rule = m_logic.economy().context().gameMode == EconomyContext::MODE_REPLAY ? RULE_BASE_OR_ARMY : RULE_BASE_OR_BUILDERS;
+	m_rule = initialRule(m_logic.economy().context());
 	if (!m_logic.economy().isMultiplayerGame())
 	{
 		return; // RW 0x808B6D: the recorder says the game is not a multiplayer one: no players are cached
@@ -102,7 +112,7 @@ void VictoryConditions::init()
 void VictoryConditions::initWithPlayers(const std::vector<Player *> &players)
 {
 	reset();
-	m_rule = m_logic.economy().context().gameMode == EconomyContext::MODE_REPLAY ? RULE_BASE_OR_ARMY : RULE_BASE_OR_BUILDERS;
+	m_rule = initialRule(m_logic.economy().context());
 	for (Player *p : players)
 	{
 		cachePlayer(p);
@@ -174,7 +184,21 @@ bool VictoryConditions::defeatedByRule(const Player *player, bool *ruleUnported)
 	{
 		throw std::logic_error("VictoryConditions: GameLogicSettings has no VictoryConditionStructureObjectFilter / VictoryConditionUnitObjectFilter (GameData not loaded)");
 	}
-	// RW 0x80942A..0x809457: the script engine veto (RW 0x441E4A, skipped in the game mode 3) and the game type 9 answer "not defeated": neither is modelled (stop S-344)
+	// RW 0x809422 .. 0x809451 (lane GAMEMODES-1): in a game of kind other than 3 with the Living World (RW 0xDE4950) its veto RW 0x441E4A may answer "not
+	// defeated" (a War of the Ring battle: not ported, stop S-344; never reached in a skirmish / LAN game, kind 3); the game mode 9 (TheGameLogic + 0x110) answers
+	// "not defeated"
+	const EconomyContext &context = m_logic.economy().context();
+	if (context.gameKind != 3 && context.livingWorld)
+	{
+		if (ruleUnported)
+		{
+			*ruleUnported = true;
+		}
+	}
+	if (context.gameMode == 9)
+	{
+		return false;
+	}
 	const Player &p = *player;
 	switch (m_rule)
 	{
@@ -268,7 +292,11 @@ bool VictoryConditions::localAlliedVictory() const
 	{
 		return false;
 	}
-	// RW 0x808C5B: TheGameInfo vslot 0x50 answers "no" for a skirmish / LAN game (INFERENCE, S-1062)
+	// RW 0x808C58 .. 0x808C69: TheGameInfo vslot 0x50 is GameInfo::isSandbox (RW 0x800C8F, lane GAMEMODES-1): a sandbox game is never won
+	if (m_logic.economy().context().sandbox)
+	{
+		return false;
+	}
 	if (m_localSlot < 0 || m_localSlot >= MAX_PLAYER_COUNT)
 	{
 		return false;
@@ -424,9 +452,12 @@ void VictoryConditions::update()
 		{
 			m_singleAllianceRemaining = true;
 			m_endFrame = frame;
-			// RW 0x809032 .. 0x80903F: TheGameLogic + 0x98 (the keep-score switch) clears unless TheGameInfo's vslot 0x50 says so (not identified; a skirmish or
-			// LAN game takes the clearing branch: INFERENCE, the same vslot would also veto MULTIPLAYER_ALLIED_VICTORY, S-1062)
-			m_logic.economy().setScoring(false);
+			// RW 0x80902C .. 0x809040: TheGameLogic + 0x98 (the keep-score switch) clears unless TheGameInfo->isSandbox() (vslot 0x50, RW 0x800C8F, lane
+			// GAMEMODES-1): a sandbox game keeps scoring after its single alliance is found
+			if (!m_logic.economy().context().sandbox)
+			{
+				m_logic.economy().setScoring(false);
+			}
 			if (m_defeatCount > 0)
 			{
 				m_events.push_back(Event{ frame, Event::ALLIANCE_VICTORY, first ? first->getPlayerIndex() : -1 });
@@ -477,8 +508,8 @@ void VictoryConditions::crc(StateHasher &h) const
 std::vector<std::string> VictoryConditions::stops()
 {
 	return {
-		"[S-344] victory: the rules 2 (base or builders: the skirmish default) and 3 are ported from RW 0x809404; the rules 0 and 1, the game mode 9 and the script engine veto (RW 0x441E4A) are not "
-		"(a mode other than 2 / 3 counts as not defeated); the order killPlayer kills a loser's objects in is the logic object list's (retail: the team lists)",
+		"[S-344] victory: the rules 2 (base or builders: a War of the Ring battle) and 3 (base or army: every skirmish / LAN game, TheGameLogic + 0x114 == 3, RW 0x808A93) and the "
+		"game mode 9 answer are ported from RW 0x809404; not ported: the rules 0 and 1 (no writer selects them) and the Living World's veto RW 0x441E4A outside kind 3; the order killPlayer kills a loser's objects in is the logic object list's (retail: the team lists)",
 		"[S-1061] score keeper: the RotWK ScoreKeeper (layout RW 0x79ECCB, calculateScore RW 0x79DFFA, built / destroyed / lost RW 0x79F0E1 / 0x79F303 / 0x79F486, per-frame stats RW 0x79F704; "
 		"END-2: the spend by kind RW 0x79DFC2 from the unit queue / cancel, the plot and dozer builds and the wall span, the HORDE map + 0x1E4, the favourite unit RW 0x79E2A8 and the hero "
 		"counts RW 0x79E404) is ported; not ported: eight of the ten addObjectBuilt callers (the sell refund RW 0x88D077, a structure building itself RW 0x85677A, the object replacements "
@@ -488,8 +519,8 @@ std::vector<std::string> VictoryConditions::stops()
 		"of the favourite unit may differ); the per-frame stats are recorded at the end of the logic frame (Player::update's caller, PlayerList::update RW 0x6A84DB, is a subsystem table "
 		"entry that was not located: INFERENCE); the GameData score multipliers start at RW 0x643D31 .. 0x643D48's defaults (1.0; PlayerEliminatedMultiplier 0.1)",
 		"[S-1062] victory (END-1): VictoryConditions::update runs at its binary place (phase 5 after the destroy list, RW 0x62EBCE); killPlayer withdraws the loser's money and gives its "
-		"last attacker the elimination bonus (RW 0x6ABF3C .. 0x6ABFEE); the keep-score switch clears with the single alliance (RW 0x80903F). Not ported: TheGameInfo's vslot 0x50 (taken "
-		"as false: a skirmish / LAN game clears the switch and allows MULTIPLAYER_ALLIED_VICTORY), ThePlayerList vslot 0x40 in killPlayer, the rule that kills the remaining computer "
+		"last attacker the elimination bonus (RW 0x6ABF3C .. 0x6ABFEE); the keep-score switch clears with the single alliance (RW 0x80903F). TheGameInfo's vslot 0x50 is "
+		"GameInfo::isSandbox (RW 0x800C8F, lane GAMEMODES-1: a sandbox game keeps the switch and has no MULTIPLAYER_ALLIED_VICTORY). Not ported: ThePlayerList vslot 0x40 in killPlayer, the rule that kills the remaining computer "
 		"players when no human is left (RW 0x809271 .. 0x80936E: its Living World record RW 0x6B5DE0 + 0x444 is not identified), the shared-AI branch of killPlayer (AISkirmishPlayer "
 		"+ 0x178, RW 0x6C7518), the game slot defeat frames (RW 0x809370 ..) and RW 0x625F7C, the map reveal of a defeated player (RW 0xB4D940). END-2: MSG_SELF_DESTRUCT "
 		"(RW 0x77CA3D, the quit menu's surrender / exit) kills the sender; the asset transfer to a living ally of the exit (RW 0x6AF598) is MP-2's port (S-1122), and the Living World "

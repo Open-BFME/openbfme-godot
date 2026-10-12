@@ -50,6 +50,9 @@ struct ThreatRecord
 
 // RW 0x7EDB72's add (SSE): + 0 and + 1 + category (the category -1 adds to + 0 twice)
 void accumulate(ThreatRecord &r, int category, float v);
+// RW 0x7ED963(this = a, category, v): what the value `v` of `category` counts against the record `a` (consuming a's matching categories), as the x87 register
+// holds it (lane DECOMP-2: the team builder's threat test RW 0x9A26A1 sums it per member)
+double counterValue(ThreatRecord &a, int category, float v);
 // RW 0x7EDC2F(this = a, b): a's total minus b's categories through the counter table RW 0x7ED963 (consumes a's categories), as the x87 register holds it
 double counterDifference(ThreatRecord &a, const ThreatRecord &b, float *aTotal, float *sumOut);
 // RW 0x7EE057 + 0x7EE166: the summed record of the players whose relationship from `owner` is ENEMIES (mode 0) or ALLIES (mode 1)

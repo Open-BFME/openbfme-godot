@@ -101,6 +101,9 @@ public:
 	void set_house_colors_enabled(bool enabled);
 	bool get_house_colors_enabled() const { return HouseColorEnabled; }
 	void set_instance_house_color(int64_t instance, const Color &color);
+	// lane BUILD-5 r3: every instance of this instancer is a translucent drawable (the placement ghost): set after setup() and BEFORE the first add_model, its
+	// opaque surfaces blend at the instance opacity (W3DShaderKey::AlphaOverride, ZH's translucent pass) instead of the dither
+	void set_alpha_override(bool enabled);
 	// lane CAH-2 (stop S-1408): a model whose house colour textures are recoloured for a colour set (RotWK's house colour options, HouseColor.h: kind
 	// 1 .. 3 and up to three ARGB colours; a Create-a-Hero is kind 3 with its record's three colours) texel by texel BEFORE filtering (RW 0x531C77), as
 	// retail builds the render object "#<model>#<options>" with its own recoloured textures (RW 0x54BDE0). Its instances take no team colour.
@@ -268,6 +271,7 @@ private:
 	std::unique_ptr<W3DFileSource> Source;
 	std::unique_ptr<WW3DAssetManager> Assets;
 	std::unique_ptr<W3DMaterialFactory> Materials;
+	bool AlphaOverride = false; // lane BUILD-5 r3
 	std::map<std::string, std::shared_ptr<MeshGpu>> MeshCache;
 	std::string BuildSuffix; // lane CAH-2: the colour set of the model being built (add_model_colored), part of the mesh cache key
 	std::vector<std::unique_ptr<Model>> Models;

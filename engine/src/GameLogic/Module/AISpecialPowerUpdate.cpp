@@ -15,6 +15,8 @@
 #include "GameLogic/AI/AIStateMachine.h"
 #include "GameLogic/Construction.h"
 #include "GameLogic/GameLogic.h"
+#include "GameLogic/Map/TerrainLogic.h"
+#include "GameLogic/Module/AISpecialPowerInternal.h"
 #include "GameLogic/Module/AIUpdate.h"
 #include "GameLogic/Module/SpecialAbilityModules.h"
 #include "GameLogic/Module/SpecialPowerModules.h"
@@ -27,6 +29,7 @@
 #include "GameLogic/SkirmishAI/AIThreatFinder.h"
 #include "GameLogic/SkirmishAI/SkirmishAIData.h"
 #include "GameLogic/SkirmishAI/SkirmishAIManager.h"
+#include "GameLogic/WeaponSetToggle.h"
 
 #include <cstddef>
 #include <cstring>
@@ -49,95 +52,33 @@ const char *const TheAISpecialPowerTypeNames[AI_SPECIAL_POWER_TYPE_COUNT + 1] = 
 	"AI_SPECIAL_POWER_MORGUL_BLADE", "AI_SPECIAL_POWER_GOBLIN_POISON", nullptr
 };
 
+using namespace AISpecialPowerDetail;
+
 namespace
 {
-enum Type
-{
-	BASIC_SELF_BUFF = 0,
-	CAPTURE_BUILDING = 1,
-	ENEMY_TYPE_KILLER = 3,
-	ENEMY_TYPE_KILLER_RANGED = 4,
-	ENEMY_TYPE_KILLER_STRUCTURES = 5,
-	TOGGLE_MOUNTED = 9,
-	STANCEBATTLE = 38,
-	STANCEAGGRESSIVE = 39,
-	STANCEHOLDGROUND = 40,
-	BASIC_SELF_DEBUFF = 48,
-	MORGUL_BLADE = 51,
-	GOBLIN_POISON = 52
-};
-
 const char *const kStop =
-	"[S-1421] AISpecialPowerUpdate (lane MOD-4): the module (RW 0x8B73B7 / 0x8B714F / 0x8B708B), the decision framework (RW 0x993055 / 0x993307 / 0x99302D) and "
-	"the decisions BASIC_SELF_BUFF, BASIC_SELF_DEBUFF, GOBLIN_POISON, ENEMY_TYPE_KILLER (+ _RANGED, _STRUCTURES, MORGUL_BLADE), TOGGLE_MOUNTED, the three "
-	"STANCE types and CAPTURE_BUILDING (never) run; the other 39 decisions (ELENDIL, GANDALF_WIZARD_BLAST, GIVEXP_AOE, RANGED_AOE_ATTACK(_UNITS), "
-	"SELFAOEHEALHEROS, TARGETAOE_SUMMON, the LEGOLAS / GOBLINKING types, HEAL_AOE, the TOGGLE_MELEE_AND_RANGE / _SIEGE, CHARGE, every AI_SPELLBOOK_* type, "
-	"AOE_AND_BUFF, SOUL_FREEZE, DOMINATE_*, TAME_THE_BEAST, ATTACK_HEAL_AOE) answer no (counted); the location decisions need the ActionManager's "
-	"canDoSpecialPowerAtLocation (RW 0x75CF21 -> 0x82D925 / 0x82C3D7 / 0x82D5DA), not ported; INFERENCE: an unset SpecialPowerAIType is -1, the map object "
-	"re-init (behaviour slot 0xB4, RW 0x8B7554) is the first update's, the AI's goal object (AIUpdate + 0x40) is the AI's current victim (ZH donor), only "
-	"SpecialAbilityUpdate answers RW 0x68C461's vslot 4, Object + 0xA0 bit 6 (the disabled exception of RW 0x696FD2) is clear";
+	"[S-1421] AISpecialPowerUpdate (lanes MOD-4, AIPOW-1): the module (RW 0x8B73B7 / 0x8B714F / 0x8B708B), the decision framework (RW 0x993055 / 0x993307 / "
+	"0x99302D), the location base (RW 0xA021D8 / 0xA0229F / 0xA01C9C with the ActionManager's test RW 0x75CF21) and 42 of the 53 decisions run; not ported "
+	"(they answer no, counted): SOUL_FREEZE (RW 0x9E9B37) and ATTACK_HEAL_AOE (RW 0x9E691D: the team's special power registry Team + 0x140 and its order "
+	"list Team + 0x13C, RW 0x7A3EF5 / 0x7A5582 / 0x7A1C5E, not ported); spell book HEAL (RW 0x9E85C6: the ZH AIPlayer's list, Player + 0x2FC -> + 0x4, "
+	"entries of type 0x1A); ARMY_BREAKER (RW 0x9E92CA: the brain's army trackers, AI + 0x164 -> + 0x20); STRUCTURE_BREAKER, its _PREF_WALLS and "
+	"_BASEKILL, CITADEL (RW 0x9E7A98 / 0x9E7942 / 0x9E6EF4 / 0x9E6CCB: the enemy record's structure cluster table, record + 0x10, RW 0x8E4042 / 0xA024DA); "
+	"DEBUFFECONOMYBUILDING / DEBUFFPRODUCTIONBUILDING (RW 0x9E74B7 / 0x9E726A: the ZH AISkirmishPlayer's enemy, Player + 0x2FC vslot 0x30 -> RW "
+	"0x8F47EB acquireEnemy); TREE_KILLER (RW 0x9E70B6: TheTerrainLogic + 0x584's list); the per-frame steering of a summoned helper (slot 1 of "
+	"TARGETAOE_SUMMON RW 0x9EB961, ASSIST_BATTLE_* RW 0x9E8A42, SHROUD_REVEAL RW 0x9E7F0F: the helper is found through the record's army and hero lists, "
+	"RW 0x99316A, and steered by Object + 0xA4's goal position, RW 0x68B411; the counters run); INFERENCE: an unset SpecialPowerAIType is -1, the map "
+	"object re-init (behaviour slot 0xB4, RW 0x8B7554) is the first update's, the AI's goal object (AIUpdate + 0x40) is the AI's current victim (ZH donor), "
+	"only SpecialAbilityUpdate answers RW 0x68C461's vslot 4, Object + 0xA0 bit 6 (the disabled exception of RW 0x696FD2) is clear, the player info "
+	"record lists are the live objects in id order (S-418), ASSIST_BATTLE's timer list (RW 0xDEC154) belongs to the game, the battle stats sum in the "
+	"partition's unsorted order";
+
+const char *const kStopSpellBook =
+	"[S-1875] AIPlayer's science upgrade builder (AIPlayer + 0x12C -> + 0xC, class RW 0x99FB84, vtables RW 0xC88208 / 0xC881FC, update RW 0x9A0023 -> RW "
+	"0x99FCC4 / 0x99FD0E / 0x99FE74 / 0x99FAEF / 0x99FA40, run by AIPlayer::update RW 0x8F0F39, S-412) is not ported: a computer player's sciences come "
+	"only from its AI scripts (PURCHASE_SCIENCE / GRANT_SCIENCE), so a spell book power whose science retail's builder buys may never become ready (the "
+	"science gates readiness, RW 0x8B708B; the command set's button activates the decision module, RW 0x8B714F)";
 
 const unsigned kExecuteFrames = 5u * LOGICFRAMES_PER_SECOND; // RW 0x993024: [0xD9F608] * 5
-
-int kind(const char *name)
-{
-	return ObjectTemplateInfoBuilder::kindOfIndex(name);
-}
-
-bool hasKind(const Object &o, int bit)
-{
-	return bit >= 0 && o.isKindOf((unsigned)bit);
-}
-
-int statusBit(const char *name)
-{
-	return ObjectTemplateInfoBuilder::objectStatusIndex(name);
-}
-
-// body slot 0x14 (RW 0x8C1D75): health / max health in the FPU (PC24), 0 without a positive max health
-double bodyRatioWide(const Object &o)
-{
-	const BodyModuleInterface *body = o.getBodyModule();
-	if (!body)
-	{
-		return 0.0;
-	}
-	const float maxHealth = body->getMaxHealth();
-	return maxHealth > 0.0f ? SimMath::pc24DivW((double)body->getHealth(), (double)maxHealth) : 0.0;
-}
-
-// RW 0x668303 on the object's AI (+ 0x260): AIUpdate + 0x40 found by id. DONOR: ZH SlavedUpdate::update reads getCurrentVictim at the call site RotWK's
-// SlavedUpdate makes with RW 0x668303, so it is the AI's current victim (AI-3 reads it so too, S-891)
-Object *goalObject(Object &obj)
-{
-	AIUpdateInterface *ai = obj.getAIUpdateInterface();
-	return ai ? ai->currentVictim() : nullptr;
-}
-
-// RW 0xC1676C (the controlling player's relationship to the candidate's team in `mask`: ENEMIES 4, NEUTRAL 8, ALLIES 2) and RW 0xC10E20 (alive) around the
-// object within `radius`, distance type 0, near to far (RW 0xA39340 with order 1)
-PartitionHits scan(Object &obj, float radius, unsigned mask)
-{
-	const Player *player = obj.getControllingPlayer();
-	PartitionFilterFn relation([&](Object &o) {
-		if (!player)
-		{
-			return false;
-		}
-		switch (player->getRelationship(o.getTeam()))
-		{
-		case ENEMIES:
-			return (mask & 4u) != 0;
-		case NEUTRAL:
-			return (mask & 8u) != 0;
-		case ALLIES:
-			return (mask & 2u) != 0;
-		}
-		return false;
-	});
-	PartitionFilterFn alive([](Object &o) { return !o.isEffectivelyDead(); });
-	return obj.logic().partition().iterateObjectsInRange(*obj.getPosition(), radius, FROM_CENTER_2D, { &relation, &alive }, ITER_SORTED_NEAR_TO_FAR);
-}
 
 #if defined(__GNUC__)
 #pragma GCC diagnostic push
@@ -198,12 +139,24 @@ bool AISpecialPowerDecision::decisionPorted(int type)
 {
 	switch (type)
 	{
-	case BASIC_SELF_BUFF: case CAPTURE_BUILDING: case ENEMY_TYPE_KILLER: case ENEMY_TYPE_KILLER_RANGED: case ENEMY_TYPE_KILLER_STRUCTURES: case TOGGLE_MOUNTED:
-	case STANCEBATTLE: case STANCEAGGRESSIVE: case STANCEHOLDGROUND: case BASIC_SELF_DEBUFF: case MORGUL_BLADE: case GOBLIN_POISON:
+	case AISP_ELENDIL: case AISP_SELFAOEHEALHEROS: case AISP_GOBLINKING_MOUNTED: case AISP_TOGGLE_MELEE_AND_RANGE: case AISP_TOGGLE_SIEGE: case AISP_CHARGE:
+	case AISP_DOMINATE_TROLL: case AISP_DOMINATE_ENEMY: case AISP_TAME_THE_BEAST: case AISP_GANDALF_WIZARD_BLAST: case AISP_GIVEXP_AOE: case AISP_RANGED_AOE_ATTACK:
+	case AISP_LEGOLAS_ARROWWIND: case AISP_RANGED_AOE_ATTACK_UNITS: case AISP_AOE_AND_BUFF: case AISP_LEGOLAS_TRAINARCHERS: case AISP_GOBLINKING_BATTLEFRENZY:
+	case AISP_GOBLINKING_CALLOFTHEDEEP: case AISP_TARGETAOE_SUMMON: case AISP_HEAL_AOE: case AISP_SPELLBOOK_ALWAYS_FIRE: case AISP_SPELLBOOK_CAPTURE_CREEP:
+	case AISP_SPELLBOOK_SHROUD_REVEAL: case AISP_SPELLBOOK_ASSIST_BATTLE_BUFF: case AISP_SPELLBOOK_ASSIST_BATTLE_DEBUFF: case AISP_SPELLBOOK_BUFFTERRAIN:
+	case AISP_SPELLBOOK_REBUILD: case AISP_SPELLBOOK_ENSHROUDINGMIST: case AISP_SPELLBOOK_CALLTHEHORDE: case AISP_SPELLBOOK_BUFFECONOMYBUILDING:
+	case AISP_BASIC_SELF_BUFF: case AISP_CAPTURE_BUILDING: case AISP_ENEMY_TYPE_KILLER: case AISP_ENEMY_TYPE_KILLER_RANGED: case AISP_ENEMY_TYPE_KILLER_STRUCTURES: case AISP_TOGGLE_MOUNTED:
+	case AISP_STANCEBATTLE: case AISP_STANCEAGGRESSIVE: case AISP_STANCEHOLDGROUND: case AISP_BASIC_SELF_DEBUFF: case AISP_MORGUL_BLADE: case AISP_GOBLIN_POISON:
 		return true;
 	default:
 		return false;
 	}
+}
+
+bool &AISpecialPowerUpdate::mod4DecisionsOnlyForTest()
+{
+	static thread_local bool on = false;
+	return on;
 }
 
 AISpecialPowerUpdate::Stats &AISpecialPowerUpdate::stats()
@@ -251,6 +204,10 @@ void AISpecialPowerUpdate::init()
 			}
 		}
 	}
+	if (!found && m_assumeButtonForTest && TheCommandStore)
+	{
+		found = TheCommandStore->findCommandButton(m_data->m_commandButtonName); // tests only: the button by name, as if the set held it
+	}
 	int powerType = 0;
 	float range = 0.0f;
 	if (found)
@@ -283,6 +240,22 @@ void AISpecialPowerUpdate::init()
 				m_decision = std::make_unique<AISpecialPowerDecision>();
 				m_decision->type = m_data->m_specialPowerAIType;
 				m_decision->kind = k;
+				// the constructor's argument (RW 0x992724: 0x9E95F1(2) for DOMINATE_TROLL, 0x9E983E(0 / 1) for DOMINATE_ENEMY / TAME_THE_BEAST)
+				m_decision->variant = m_decision->type == AISP_DOMINATE_TROLL ? 2 : ((m_decision->type == AISP_TAME_THE_BEAST || m_decision->type == AISP_SPELLBOOK_ASSIST_BATTLE_DEBUFF) ? 1 : 0); // RW 0x9E88B3(0 / 1) for ASSIST_BATTLE_BUFF / _DEBUFF
+				if (m_decision->type == AISP_SPELLBOOK_SHROUD_REVEAL && obj->logic().terrain())
+				{
+					// RW 0x9E7B8E: "Player_%d_Start" (RW 0xBFDA18) for d = 1 .. 8 in TheTerrainLogic's waypoint list (vslot 0x84, compared by name); the
+					// first name the map lacks ends the list
+					for (int d = 1; d <= 8; ++d)
+					{
+						const Waypoint *w = obj->logic().terrain()->findWaypointByName("Player_" + std::to_string(d) + "_Start");
+						if (!w)
+						{
+							break;
+						}
+						m_decision->waypointIds.push_back(w->id);
+					}
+				}
 			}
 		}
 		if (!m_decision)
@@ -410,15 +383,53 @@ UpdateSleepTime AISpecialPowerUpdate::update()
 	return UPDATE_SLEEP_NONE; // slot 0x10, RW 0x490AC4
 }
 
+void AISpecialPowerUpdate::initAsIfInCommandSetForTest()
+{
+	if (!m_initialized)
+	{
+		m_assumeButtonForTest = true;
+		init();
+		m_assumeButtonForTest = false;
+	}
+}
+
+bool AISpecialPowerUpdate::decideNow()
+{
+	if (!m_initialized)
+	{
+		init();
+	}
+	if (!m_decision)
+	{
+		return false;
+	}
+	m_decision->randomize = m_data->m_randomizeTargetLocation;
+	m_decision->makesStructure = m_data->m_spellMakesAStructure;
+	return decide(*getObject());
+}
+
 bool AISpecialPowerUpdate::decide(Object &obj)
 {
+	if (mod4DecisionsOnlyForTest())
+	{
+		switch (m_decision->type)
+		{
+		case AISP_BASIC_SELF_BUFF: case AISP_CAPTURE_BUILDING: case AISP_ENEMY_TYPE_KILLER: case AISP_ENEMY_TYPE_KILLER_RANGED: case AISP_ENEMY_TYPE_KILLER_STRUCTURES:
+		case AISP_TOGGLE_MOUNTED: case AISP_STANCEBATTLE: case AISP_STANCEAGGRESSIVE: case AISP_STANCEHOLDGROUND: case AISP_BASIC_SELF_DEBUFF: case AISP_MORGUL_BLADE:
+		case AISP_GOBLIN_POISON:
+			break;
+		default:
+			++stats().unportedDecisions;
+			return false;
+		}
+	}
 	switch (m_decision->type)
 	{
-	case BASIC_SELF_BUFF:
+	case AISP_BASIC_SELF_BUFF:
 		return decideSelfBuff(obj);
-	case BASIC_SELF_DEBUFF:
+	case AISP_BASIC_SELF_DEBUFF:
 		return decideSelfDebuff(obj);
-	case GOBLIN_POISON:
+	case AISP_GOBLIN_POISON:
 	{
 		// RW 0x9E9438
 		static const int kStructure = kind("STRUCTURE"), kMachine = kind("MACHINE"), kShip = kind("SHIP");
@@ -432,9 +443,9 @@ bool AISpecialPowerUpdate::decide(Object &obj)
 		const double dx = SimMath::pc24SubW((double)p->x, (double)q->x), dy = SimMath::pc24SubW((double)p->y, (double)q->y);
 		return SimMath::pc24AddW(SimMath::pc24MulW(dy, dy), SimMath::pc24MulW(dx, dx)) < 10000.0;
 	}
-	case STANCEBATTLE:
+	case AISP_STANCEBATTLE:
 		return healthRatio(obj) <= 0.35f; // RW 0x9E6C47, RW 0xC71EC8
-	case STANCEAGGRESSIVE:
+	case AISP_STANCEAGGRESSIVE:
 	{
 		// RW 0x9E6BA3
 		const StancesBehavior *s = StancesBehavior::of(obj); // RW 0x861E6E / 0x68BDA5
@@ -444,18 +455,112 @@ bool AISpecialPowerUpdate::decide(Object &obj)
 		}
 		return healthRatio(obj) > 0.35f;
 	}
-	case STANCEHOLDGROUND:
-	case CAPTURE_BUILDING:
+	case AISP_STANCEHOLDGROUND:
+	case AISP_CAPTURE_BUILDING:
 		return false; // RW 0x7FEAC1
-	case ENEMY_TYPE_KILLER:
-	case ENEMY_TYPE_KILLER_RANGED:
-	case ENEMY_TYPE_KILLER_STRUCTURES:
-	case MORGUL_BLADE:
+	case AISP_ENEMY_TYPE_KILLER:
+	case AISP_ENEMY_TYPE_KILLER_RANGED:
+	case AISP_ENEMY_TYPE_KILLER_STRUCTURES:
+	case AISP_MORGUL_BLADE:
 		return decideKiller(obj);
-	case TOGGLE_MOUNTED:
+	case AISP_TOGGLE_MOUNTED:
 		return decideToggleMounted(obj);
+	// ---- lane AIPOW-1 (AISpecialPowerDecisions.cpp) ----
+	case AISP_ELENDIL:
+		return decideElendil(obj);
+	case AISP_SELFAOEHEALHEROS:
+		return decideSelfAoeHealHeros(obj);
+	case AISP_GOBLINKING_MOUNTED:
+		return !obj.testModelCondition(Construction::modelConditionIndex("MOUNTED")); // RW 0x9EA553: not MOUNTED (model condition 0xD6)
+	case AISP_TOGGLE_MELEE_AND_RANGE:
+		return decideToggleWeaponSet(obj, false);
+	case AISP_TOGGLE_SIEGE:
+		return decideToggleWeaponSet(obj, true);
+	case AISP_CHARGE:
+		return decideCharge(obj);
+	case AISP_DOMINATE_TROLL:
+		return decideDominate(obj, false);
+	case AISP_DOMINATE_ENEMY:
+	case AISP_TAME_THE_BEAST:
+		return decideDominate(obj, true);
+	case AISP_GANDALF_WIZARD_BLAST:
+	{
+		// RW 0x9EBF56: a goal; the ENEMIES cluster (RW 0xA01D72(obj, 0)) above 20, or not empty while the body ratio (slot 0x14, x87) is below 0.3 (RW 0xC8E6E8)
+		if (!goalObject(obj))
+		{
+			return false;
+		}
+		const unsigned n = clusterScan(obj, m_decision->radius, 4u, COUNT_ALL, false);
+		return n > 20u || (n != 0u && bodyRatioWide(obj) < (double)0.3f);
+	}
+	case AISP_GIVEXP_AOE:
+		// RW 0x9EBEED: no goal and an ALLIES cluster (RW 0xA01D72(obj, 1)) that is not empty
+		return !goalObject(obj) && clusterScan(obj, m_decision->radius, 2u, COUNT_ALL, false) != 0u;
+	case AISP_RANGED_AOE_ATTACK:
+		return decideRangedAoe(obj, m_decision->range, false);
+	case AISP_LEGOLAS_ARROWWIND:
+		return decideRangedAoe(obj, SimMath::mulf32(m_decision->range, 2.0f), false); // RW 0x9EADDD: mulss by 2.0 (RW 0xBD889C)
+	case AISP_RANGED_AOE_ATTACK_UNITS:
+		return decideRangedAoe(obj, m_decision->range, true);
+	case AISP_AOE_AND_BUFF:
+		return decideAoeAndBuff(obj);
+	case AISP_LEGOLAS_TRAINARCHERS:
+		// RW 0x9EAD61: no goal and an ALLIES cluster counting ARCHERs that a location accepts (RW 0x9EAB29)
+		return !goalObject(obj) && clusterScan(obj, m_decision->radius, 2u, COUNT_ARCHERS, true) != 0u;
+	case AISP_GOBLINKING_BATTLEFRENZY:
+	case AISP_GOBLINKING_CALLOFTHEDEEP:
+	case AISP_TARGETAOE_SUMMON:
+	{
+		// RW 0x9EAAC1 / 0x9EA7FE / 0x9EBBF2: a goal and more than one HORDE-or-loose object in the cluster a location accepts (RW 0x9EA866: ALLIES, RW 0x9EA5A3 /
+		// 0x9EB706: ENEMIES), offset the range + 0x14, or 200 (RW 0xBE4170) / 149 (RW 0xC8E5B0) when it is not above 0
+		if (!goalObject(obj))
+		{
+			return false;
+		}
+		const unsigned mask = m_decision->type == AISP_GOBLINKING_BATTLEFRENZY ? 2u : 4u;
+		const float range = m_decision->range > 0.0f ? m_decision->range : (m_decision->type == AISP_TARGETAOE_SUMMON ? 149.0f : 200.0f);
+		return clusterScan(obj, range, mask, COUNT_HORDES_OR_LOOSE, true) > 1u;
+	}
+	case AISP_SPELLBOOK_ALWAYS_FIRE:
+		return true; // RW 0x9B501B (the location stays where it is)
+	case AISP_SPELLBOOK_CAPTURE_CREEP:
+		return decideCaptureCreep(obj);
+	case AISP_SPELLBOOK_SHROUD_REVEAL:
+		return decideShroudReveal(obj);
+	case AISP_SPELLBOOK_ASSIST_BATTLE_BUFF:
+	case AISP_SPELLBOOK_ASSIST_BATTLE_DEBUFF:
+		return decideAssistBattle(obj);
+	case AISP_SPELLBOOK_BUFFTERRAIN:
+		return decideBuffTerrain(obj);
+	case AISP_SPELLBOOK_REBUILD:
+		return decideRebuild(obj);
+	case AISP_SPELLBOOK_ENSHROUDINGMIST:
+		return decideEnshroudingMist(obj);
+	case AISP_SPELLBOOK_CALLTHEHORDE:
+		return decideCallTheHorde(obj);
+	case AISP_SPELLBOOK_BUFFECONOMYBUILDING:
+		return decideBuffEconomy(obj);
+	case AISP_HEAL_AOE:
+	{
+		// RW 0x9EA462: a goal and an ALLIES cluster (RW 0xA01F99(obj, 1)) of at least 10; then 0.0 / (the hits of the four points) <= 0.75 (RW 0xC1B594 /
+		// 0xBDC628: the numerator is the constant 0.0, so this holds whenever there were hits)
+		if (!goalObject(obj))
+		{
+			return false;
+		}
+		size_t hits = 0;
+		if (clusterScan(obj, m_decision->radius, 2u, COUNT_ALL, false, &hits) < 10u)
+		{
+			return false;
+		}
+		return SimMath::pc24DivW(0.0, (double)hits) <= (double)0.75f;
+	}
 	default:
 		++stats().unportedDecisions;
+		if (m_decision->type >= 0 && m_decision->type < AI_SPECIAL_POWER_TYPE_COUNT)
+		{
+			++stats().unportedByType[(size_t)m_decision->type];
+		}
 		obj.logic().noteStop(kStop);
 		return false;
 	}
@@ -528,25 +633,25 @@ bool AISpecialPowerUpdate::decideKiller(Object &obj)
 					 kStructure = kind("STRUCTURE"), kInfantry = kind("INFANTRY"), kIgnoreForVictory = kind("IGNORE_FOR_VICTORY");
 	const int type = m_decision->type;
 	auto inMask = [&](const Object &c) { // slot 0x20 (RW 0x9EC08A / 0x9EBC5A / 0x9EC09A) and RW 0x70C548
-		if (type == ENEMY_TYPE_KILLER_STRUCTURES)
+		if (type == AISP_ENEMY_TYPE_KILLER_STRUCTURES)
 		{
 			return hasKind(c, kStructure);
 		}
-		if (type == MORGUL_BLADE)
+		if (type == AISP_MORGUL_BLADE)
 		{
 			return hasKind(c, kHero) || hasKind(c, kInfantry) || hasKind(c, kCreateAHero);
 		}
 		return hasKind(c, kHero) || hasKind(c, kMonster) || hasKind(c, kBigMonster) || hasKind(c, kCreateAHero);
 	};
 	auto accepts = [&](const Object &c) { // slot 0x24
-		if (type == ENEMY_TYPE_KILLER_RANGED)
+		if (type == AISP_ENEMY_TYPE_KILLER_RANGED)
 		{
 			// RW 0x9EBFF7 (SSE): (c - obj) y^2 + x^2 above 10000.0 (RW 0xBDE8B8)
 			const Coord3D *p = obj.getPosition(), *q = c.getPosition();
 			const float dy = SimMath::subf32(q->y, p->y), dx = SimMath::subf32(q->x, p->x);
 			return SimMath::addf32(SimMath::mulf32(dy, dy), SimMath::mulf32(dx, dx)) > 10000.0f;
 		}
-		if (type == ENEMY_TYPE_KILLER_STRUCTURES)
+		if (type == AISP_ENEMY_TYPE_KILLER_STRUCTURES)
 		{
 			return !hasKind(c, kIgnoreForVictory) && c.getProductionUpdate() != nullptr; // RW 0x9EBC5F, RW 0x68C363
 		}
@@ -655,6 +760,11 @@ void AISpecialPowerUpdate::runButton(Object &obj, Object *target, const Coord3D 
 		}
 		return;
 	}
+	if (b->m_command == GUI_COMMAND_TOGGLE_WEAPONSET && !target && !loc)
+	{
+		WeaponSetToggle::toggleFromCommandButton(obj); // RW 0x696FD2 case 0x2D (lane AIPOW-1)
+		return;
+	}
 	if (b->m_command != GUI_COMMAND_SPECIAL_POWER && b->m_command != GUI_COMMAND_SPELL_BOOK)
 	{
 		++stats().unportedCommands;
@@ -704,6 +814,19 @@ void AISpecialPowerUpdate::crc(StateHasher &h) const
 		h.addFloat(d.location.x);
 		h.addFloat(d.location.y);
 		h.addFloat(d.location.z);
+		h.addI32(d.variant);
+		h.addU32((std::uint32_t)d.assistUnit);
+		h.addU32((std::uint32_t)d.assistTarget);
+		h.addU32((std::uint32_t)d.buffedIds.size());
+		for (ObjectID id : d.buffedIds)
+		{
+			h.addU32((std::uint32_t)id);
+		}
+		h.addU32((std::uint32_t)d.waypointIds.size());
+		for (int id : d.waypointIds)
+		{
+			h.addI32(id);
+		}
 	}
 }
 
@@ -723,5 +846,5 @@ void AISpecialPowerUpdate::registerClass(ModuleFactory &modules)
 
 std::vector<std::string> AISpecialPowerUpdate::stopLines()
 {
-	return { kStop };
+	return { kStop, kStopSpellBook };
 }

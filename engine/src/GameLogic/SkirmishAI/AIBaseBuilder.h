@@ -42,8 +42,8 @@
 //     (RW 0x8F0C47 with RW 0x8F0BBC and the rebuild RW 0x90D16A), onDozerIdle (RW 0x8F0660), onStructureBuilt (RW 0x8F06FF) and updateDozerManager (RW 0x9A23A4 /
 //     0x9A221E / 0x9A19E0) in AIBaseBuilder.cpp; the processor's code 8 waits only while the dozer manager lists a DOZER_FACTORY (RW 0x8F0F8F); stop S-890.
 // What is ported: all of the above. Not ported (stop S-413 / S-414): the other sub systems, the fortress rebuild task (AIBase + 0x28, RW 0x9BC882), the
-// money reserve of a request (+ 0x21), RW 0x97DAFC (a pathfinder cell scan, taken as "no objection"), the enemy relationship of RW 0x97DFCD's filter (RW asks the
-// object's team, the port its controlling player); since lane AI-2 the free list and the request completion follow RW's events (inferences: S-890).
+// money reserve of a request (+ 0x21), RW 0x97DAFC (the burning terrain cell scan: no terrain fire system, S-191, so it never objects); since lane AI-2 the
+// free list and the request completion follow RW's events (inferences: S-890).
 
 #pragma once
 
@@ -133,6 +133,13 @@ struct AIUnitBuilderState
 	std::vector<std::shared_ptr<AIBuildRequest>> requests; ///< + 0x14: the unit requests made (RW 0x9A1051 appends)
 	bool recompute = true;                               ///< + 0x2C
 	unsigned long long made = 0, queued = 0, executed = 0; ///< requests made, units out of the queue, requests queued at a factory
+	// lane DECOMP-2, the hero path (RW 0x9A1051 -> 0x9A03A1 / 0x9A0993 / 0x9A05DB)
+	std::vector<std::string> heroNames;                  ///< + 0x4C: the army's HeroBuildOrder (RW 0x9A10D8)
+	int heroIndex = -1;                                  ///< + 0x38: the hero chosen to build next (-1: none)
+	std::vector<int> removedHeroes;                      ///< + 0x3C: the indices of the heroes built (a lost one is built again)
+	int heroCost = -1;                                   ///< + 0x48: the chosen hero's cost (calcCostToBuild)
+	bool heroInProgress = false;                         ///< + 0x34: a hero request is out (cleared when a HERO request finishes, RW 0x9A0D9C)
+	unsigned long long heroesMade = 0;                   ///< hero requests made (report)
 };
 
 // the economy builder (AIPlayer + 0xB4, its sub system at + 0xC0, vtable RW 0xC79574, ctor RW 0x8EF287, update RW 0x8EEF8F)

@@ -104,7 +104,23 @@ bool CommandTranslator::selectionCanAttack()
 
 void CommandTranslator::hint(const char *cursor)
 {
-	m_ctx.ui.setCursor(cursor);
+	// lane BUILD-5: RotWK's createCommandHint (RW 0x6A3B77). In the default mouse mode the hint's cursor goes through RW 0x69BD53 (no change while selecting
+	// or scrolling); while a building waits for its site (mode 1, RW 0x6A3E0F) only the move hints (types 0xBD / 0xBE / 0x432: Move, AttackMove) show Build
+	// (10) and the attack hints (0xB1 / 0xCA) InvalidBuild (11); any other hint leaves the cursor
+	const std::string c = cursor;
+	if (m_ctx.ui.mouseMode() == 1)
+	{
+		if (c == MouseCursorName::Move || c == MouseCursorName::AttackMove)
+		{
+			m_ctx.ui.hintCursor(MouseCursorName::Build);
+		}
+		else if (c == MouseCursorName::AttackObj)
+		{
+			m_ctx.ui.hintCursor(MouseCursorName::InvalidBuild);
+		}
+		return;
+	}
+	m_ctx.ui.hintCursor(c);
 }
 
 int CommandTranslator::issueMove(Object *target, const Coord3D *pos, EvaluateType type)
@@ -339,13 +355,6 @@ int CommandTranslator::evaluateContextCommand(Object *obj, const Coord3D *pos, E
 		}
 	}
 	return msgType;
-}
-
-bool CommandTranslator::isClick(const ICoord2D &anchor, const ICoord2D &lift, int downMs, int upMs) const
-{
-	// ZH Mouse::isClick: within the drag tolerance in pixels and in time
-	return std::abs(anchor.x - lift.x) <= m_ctx.mouse.dragTolerance && std::abs(anchor.y - lift.y) <= m_ctx.mouse.dragTolerance
-		&& (upMs - downMs) <= m_ctx.mouse.dragToleranceMS;
 }
 
 void CommandTranslator::viewHomeBase()
@@ -708,17 +717,23 @@ MessageDisposition CommandTranslator::translate(const ClientMessage &msg)
 			}
 			break;
 		}
+		// lane BUILD-5: RotWK's CommandTranslator (RW 0x81F8D8) keeps the right press's pixel and time and clears its dragged flag (case 0xE, RW 0x81F9D6), sets the
+		// flag on a move that leaves the drag tolerance from that pixel (case 3, RW 0x81FA2C -> RW 0x5ED4B9) and keeps the release's pixel and time (case 0x10,
+		// RW 0x81FA5D). Unlike ZH's (CommandXlat.cpp:3640) its release does NOT end a placement: RotWK's PlaceEventTranslator does that on the right click
 		case CMSG_RAW_MOUSE_RIGHT_BUTTON_DOWN:
 			m_rightAnchor = msg.arg(0).pixel;
 			m_rightDown = msg.arg(2).integer;
+			m_rightDragged = false;
+			break;
+		case CMSG_RAW_MOUSE_POSITION:
+			if (m_ctx.mouse.isDragging(m_rightAnchor, msg.arg(0).pixel))
+			{
+				m_rightDragged = true;
+			}
 			break;
 		case CMSG_RAW_MOUSE_RIGHT_BUTTON_UP:
 			m_rightLift = msg.arg(0).pixel;
 			m_rightUp = msg.arg(2).integer;
-			if (isClick(m_rightAnchor, m_rightLift, m_rightDown, m_rightUp))
-			{
-				m_ctx.ui.placeBuildAvailable(std::string(), INVALID_ID);
-			}
 			break;
 		case CMSG_MOUSE_RIGHT_DOUBLE_CLICK:
 		case CMSG_MOUSE_RIGHT_CLICK:
@@ -732,7 +747,8 @@ MessageDisposition CommandTranslator::translate(const ClientMessage &msg)
 				++m_clickOutcomes["other-button"];
 				break;
 			}
-			if (!left && !isClick(m_rightAnchor, m_rightLift, m_rightDown, m_rightUp))
+			// lane BUILD-5: RotWK's right click test (RW 0x81FAE0 .. 0x81FB02): not dragged, or released within DragToleranceMS
+			if (!left && !m_ctx.mouse.isRightClick(m_rightDragged, (unsigned)m_rightDown, (unsigned)m_rightUp))
 			{
 				++m_clickOutcomes["right-not-a-click"];
 				break;

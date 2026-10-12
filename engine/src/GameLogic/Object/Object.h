@@ -316,9 +316,9 @@ public:
 	void setPlacementConditionBits(const ModelConditionBits &bits) { m_placementConditions = bits; }
 
 	// ---- upgrades (lane UPGRADE-1) and the command set (lane PROD-1) ---------------------------------------------------------------------
-	// RW 0x68E040 (through 0x691421): the bit of the upgrade in the object's mask (RW + 0x28C). RW first asks the module at +0x258 (slot 0x7C, then its slot
-	// 0xB0); that query is not ported (stop S-483)
-	bool hasUpgrade(const UpgradeTemplate *upgrade) const { return upgrade && m_upgradeMask.test((unsigned)upgrade->getMaskBit()); }
+	// RW 0x68E040 (through 0x691421): a horde answers for its members first (the contain at + 0x258, its slot 0x7C, then that interface's slot 0xB0, RW 0x86EC2D),
+	// then the bit of the upgrade in the object's own mask (RW + 0x28C)
+	bool hasUpgrade(const UpgradeTemplate *upgrade) const;
 	// RW 0x69388B: giveUpgradeSelf, then a horde contain passes the object's whole mask to its members (HordeContain slot 0x174, RW 0x87566B: for every upgrade
 	// of the mask and every member that is affectedByUpgrade, member->giveUpgrade). Production, Lua and the tests grant through this
 	void giveUpgrade(const UpgradeTemplate *upgrade);
@@ -330,7 +330,7 @@ public:
 	bool affectedByUpgrade(const UpgradeTemplate *upgrade) const;
 	// RW 0x691438: the upgrade's own bit clears; every upgrade module whose resetUpgrade(that bit) succeeds is removed (RW 0x8D2688)
 	void removeUpgrade(const UpgradeTemplate *upgrade);
-	// RW 0x6936FE: the controlling player's completed upgrades | the object's | its castle's (not ported: S-483); attemptUpgrade on every mux that did not
+	// RW 0x6936FE: the controlling player's completed upgrades | the object's | its castle keep's (a CastleMemberBehavior's keepId); attemptUpgrade on every mux that did not
 	// execute, then postUpgradeCheck on every mux
 	void updateUpgradeModules();
 	const UpgradeMaskType &getUpgradeMask() const { return m_upgradeMask; }

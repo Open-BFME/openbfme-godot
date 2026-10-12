@@ -1044,6 +1044,9 @@ int main(int argc, char **argv)
 	const Transport::Stats &ts = session.transport().stats();
 	r << "transport packets_sent " << ts.packetsSent << " received " << ts.packetsReceived << " resent " << ts.commandsResent << " dropped " << ts.dropped
 	  << " bad " << ts.badPackets << " duplicates " << ts.duplicates << " fragmented " << ts.fragmentedCommands << " send_errors " << ts.sendErrors << " fast_resends " << ts.fastResends << "\n";
+	// lane ONLINE-1: the bandwidth (docs/ONLINE.md): UDP payload bytes; the wire adds 28 bytes of IPv4 / UDP header per datagram
+	r << "transport_bytes sent " << ts.bytesSent << " received " << ts.bytesReceived << " ack_only_packets " << ts.ackOnlyPacketsSent << " commands_sent "
+	  << ts.commandsSent << "\n";
 	r << "transport_unacked " << session.transport().unackedRecords() << "\n";
 	{
 		// lane MP-3: the harness's faults and what they did; the smoothness (wall clock, protocol owner)

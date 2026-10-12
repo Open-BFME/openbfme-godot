@@ -134,6 +134,9 @@ public:
 
 	// the members, in insertion order
 	Object *getFirstMember() const { return m_head; }
+	// lane AIPOW-1: retail's member list (Team + 0x38, walked by RW 0x66362D / 0x6632C9) starts at the NEWEST member (Object::prependToTeamMemberList RW
+	// 0x68AD89 links each new member at the head), so retail's order is this list's reverse: walk from here with friend_teamPrev
+	Object *getLastMember() const { return m_tail; }
 	unsigned getMemberCount() const { return m_count; }
 	void friend_addMember(Object *obj);
 	void friend_removeMember(Object *obj);

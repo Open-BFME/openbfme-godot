@@ -58,6 +58,12 @@ struct W3DShaderKey
 	bool HouseColorBaked = false;
 	// lane RENDER-4 (S-1651): the map's hardware fog, W3DHardwareFog::FogMode (0 = none): ShaderClass::Enable_Fog's choice for the surface's blend
 	int Fog = 0;
+	// lane BUILD-5 r3: a drawable drawn at an opacity below 1 (the placement ghost's 0.45, RW 0xC12408): DONOR ZH dx8renderer.cpp:1884-1916 and
+	// RTS3DScene::flushTranslucentObjects (W3DScene.cpp:1606-1626): the translucent drawables render after the scene with their shader's blend switched to
+	// SRC_ALPHA / ONE_MINUS_SRC_ALPHA (depth writes kept, theAlphaShader), the material's opacity set to the override and the alpha test reference scaled by it;
+	// an additive surface keeps its blend with its diffuse scaled. Here an opaque surface becomes blend_mix with ALPHA = alpha * the instance fade (v_fade
+	// carries the opacity), no dither; the other blends already scale by v_fade. Only instancers that ask for it (W3DInstancer::set_alpha_override) use it
+	bool AlphaOverride = false;
 
 	std::string Id() const;
 };

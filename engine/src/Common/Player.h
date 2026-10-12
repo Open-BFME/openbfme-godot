@@ -137,6 +137,10 @@ public:
 	void setCanBuildUnits(bool v) { m_canBuildUnits = v; }
 	void setCanBuildBase(bool v) { m_canBuildBase = v; }
 	bool canBuildUnits() const { return m_canBuildUnits; }
+	// lane DECOMP-2: Player + 0x35D (m_unitsShouldHunt), set by Player::setUnitsShouldHunt RW 0x6AF4B1 (PLAYER_HUNT), cleared at init (RW 0x6B0401); the hunt
+	// state reads it (AIHunt.cpp)
+	bool unitsShouldHunt() const { return m_unitsShouldHunt; }
+	void setUnitsShouldHuntFlag(bool v) { m_unitsShouldHunt = v; }
 	bool canBuildBase() const { return m_canBuildBase; }
 	void setTemplateBuildable(unsigned short templateId, bool buildable)
 	{
@@ -345,6 +349,7 @@ private:
 	std::map<int, Relationship> m_playerRelations;
 	std::map<std::uint32_t, Relationship> m_teamRelations;
 	bool m_canBuildUnits = true, m_canBuildBase = true;
+	bool m_unitsShouldHunt = false; ///< + 0x35D
 	std::set<unsigned short> m_disabledTemplateIds;
 	std::vector<ScienceType> m_disabledSciences, m_hiddenSciences; ///< lane SCRIPT-3 (RW + 0x31C / + 0x328)
 	static const int kAttackedBySlots = 20; ///< RW + 0x360 .. + 0x373 (the frame follows at + 0x374)
