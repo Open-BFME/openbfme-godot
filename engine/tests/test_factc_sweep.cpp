@@ -720,7 +720,8 @@ UpgradeResult runUpgrade(HudRig &h, const Offer &offer, const Coord3D &spot)
 					++r.modulesRun;
 					if (!mux->isAlreadyUpgraded())
 					{
-						out << "an upgrade module (" << typeid(*m).name() << ") of " << x->getTemplate()->getName() << " did not run; ";
+						const auto &module = *m; // typeid() of a plain reference: Clang warns when the operand has side effects
+						out << "an upgrade module (" << typeid(module).name() << ") of " << x->getTemplate()->getName() << " did not run; ";
 					}
 				}
 			}

@@ -48,8 +48,10 @@ set(OPENBFME_AUDIO_GODOT_SOURCES
     src/GodotDevice/GodotGameAudio.cpp)
 
 # The MP3 fixture streams are generated, never committed (retail-format bytes, synthetic ones included, stay out of git). The target runs
-# tools/audio/gen_mp3_fixtures.py into <build>/audio_fixtures and checks the numbers it derives against tests/data/audio/mp3_golden.tsv.
-# It needs python3, lame and mpg123; without them the unit tests fail loudly naming the command (no silent skip).
+# tools/audio/gen_mp3_fixtures.py into <build>/audio_fixtures and checks the numbers it derives against the committed golden of the
+# installed lame release, tests/data/audio/mp3_golden-lame-<version>.tsv (3.100 on the Linux and Windows builders, 4.0 from Homebrew on
+# macOS), which it copies next to the streams as mp3_golden.tsv for the unit test. It needs python3, lame and mpg123; without them, or
+# with a lame release that has no committed golden yet, the unit tests fail loudly naming the command (no silent skip).
 set(OPENBFME_AUDIO_FIXTURE_DIR "${CMAKE_BINARY_DIR}/audio_fixtures")
 find_package(Python3 COMPONENTS Interpreter)
 find_program(OPENBFME_LAME lame)

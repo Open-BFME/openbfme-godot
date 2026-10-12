@@ -723,12 +723,22 @@ struct Mp3Golden
 	std::vector<int> points; // every 251st interleaved sample
 };
 
+// the generated fixture streams and, next to them, the golden numbers of the lame that made them (tools/audio/gen_mp3_fixtures.py
+// copies the committed mp3_golden-lame-<version>.tsv it checked the streams against to <dir>/mp3_golden.tsv)
+std::string fixtureDir()
+{
+	const char *env = std::getenv("OPENBFME_AUDIO_FIXTURES");
+	return env && *env ? env : OPENBFME_AUDIO_FIXTURE_DIR;
+}
+
 std::vector<Mp3Golden> loadGolden()
 {
 	std::vector<Mp3Golden> out;
 	std::vector<unsigned char> bytes;
 	std::string err;
-	REQUIRE_MESSAGE(retailtest::readLocalFile(retailtest::dataDir() + "/audio/mp3_golden.tsv", bytes, &err), err);
+	REQUIRE_MESSAGE(retailtest::readLocalFile(fixtureDir() + "/mp3_golden.tsv", bytes, &err),
+		err << " -- the golden numbers are written next to the generated fixtures: run `python3 tools/audio/gen_mp3_fixtures.py --out "
+			<< fixtureDir() << "` (the CMake target audio_mp3_fixtures does it at build time)");
 	std::istringstream in(std::string(bytes.begin(), bytes.end()));
 	std::string line;
 	while (std::getline(in, line))
@@ -757,8 +767,7 @@ Bytes loadFixture(const std::string &name)
 {
 	std::vector<unsigned char> bytes;
 	std::string err;
-	const char *env = std::getenv("OPENBFME_AUDIO_FIXTURES");
-	const std::string dir = env && *env ? env : OPENBFME_AUDIO_FIXTURE_DIR;
+	const std::string dir = fixtureDir();
 	const std::string path = dir + "/" + name + ".mp3.bin";
 	// the streams are generated (never committed): a missing one is a missing prerequisite, reported with the command that makes it
 	REQUIRE_MESSAGE(retailtest::readLocalFile(path, bytes, &err),

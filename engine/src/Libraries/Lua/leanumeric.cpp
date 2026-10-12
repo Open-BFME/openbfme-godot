@@ -76,9 +76,26 @@ double luaEA_round24(double r, int errsign)
 
 static int signOf(double v) { return (v > 0) - (v < 0); }
 
+namespace
+{
+// A NaN made by the operation itself (neither operand was one): x86 (the x87 and SSE units alike, retail's) produces the "real
+// indefinite", the quiet NaN with the sign bit set (0xFFF8000000000000, what MSVCR71 prints as -1.#IND); arm64 produces the positive
+// default NaN (0x7FF8000000000000). An operand that is already a NaN is passed on by both. Lockstep and the scripts' tostring need
+// retail's bits on every CPU (lane MAC-1: the macOS build is arm64).
+double freshNaN(double r, double a, double b)
+{
+	if (std::isnan(r) && !std::isnan(a) && !std::isnan(b))
+	{
+		const std::uint64_t indefinite = 0xFFF8000000000000ull;
+		std::memcpy(&r, &indefinite, sizeof r);
+	}
+	return r;
+}
+} // namespace
+
 double luaEA_add(int mode, double a, double b)
 {
-	const double r = a + b;
+	const double r = freshNaN(a + b, a, b);
 	if (mode != LUA_EA_NUM_PC24 || !std::isfinite(r) || r == 0.0)
 	{
 		return r;
@@ -96,7 +113,7 @@ double luaEA_sub(int mode, double a, double b)
 
 double luaEA_mul(int mode, double a, double b)
 {
-	const double r = a * b;
+	const double r = freshNaN(a * b, a, b);
 	if (mode != LUA_EA_NUM_PC24 || !std::isfinite(r) || r == 0.0)
 	{
 		return r;
@@ -107,7 +124,7 @@ double luaEA_mul(int mode, double a, double b)
 
 double luaEA_div(int mode, double a, double b)
 {
-	const double r = a / b;
+	const double r = freshNaN(a / b, a, b);
 	if (mode != LUA_EA_NUM_PC24 || !std::isfinite(r) || r == 0.0)
 	{
 		return r;

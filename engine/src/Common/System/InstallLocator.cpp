@@ -203,19 +203,21 @@ std::vector<fs::path> sortedSubdirs(const fs::path &dir)
 	return out;
 }
 
-// One component matched case-insensitively (a Windows path inside a Linux file system).
+// One component matched case-insensitively (a Windows path inside a Linux or macOS file system): the entry's own spelling is returned,
+// an exact match first. The directory is always listed: on a case-insensitive file system (APFS, macOS) fs::exists() says yes to any
+// spelling, and the path would otherwise carry the registry's case, not the folder's (lane MAC-1).
 fs::path childCaseInsensitive(const fs::path &dir, const std::string &name)
 {
 	fs::path exact = dir / fs::u8path(name);
 	std::error_code ec;
-	if (fs::exists(exact, ec))
-	{
-		return exact;
-	}
 	const std::string want = lower(name);
 	std::vector<fs::path> matches;
 	for (fs::directory_iterator it(dir, ec), end; !ec && it != end; it.increment(ec))
 	{
+		if (it->path().filename().u8string() == name)
+		{
+			return it->path();
+		}
 		if (lower(it->path().filename().u8string()) == want)
 		{
 			matches.push_back(it->path());
@@ -308,8 +310,15 @@ std::string queryTag(const RegistryQuery &q)
 
 std::string shortHome(const std::string &path, const std::string &home)
 {
-	if (!home.empty() && path.compare(0, home.size(), home) == 0)
+	if (home.empty())
+		return path;
+	if (path.compare(0, home.size(), home) == 0)
 		return "~" + path.substr(home.size());
+	// a canonical path (winePrefixes resolves links) against a home that is one: macOS' /var is /private/var (lane MAC-1)
+	std::error_code ec;
+	const std::string canon = fs::weakly_canonical(fs::u8path(home), ec).u8string();
+	if (!ec && !canon.empty() && path.compare(0, canon.size(), canon) == 0)
+		return "~" + path.substr(canon.size());
 	return path;
 }
 
@@ -559,6 +568,10 @@ std::vector<std::string> winePrefixes(const DiscoveryEnvironment &e)
 	eachChild((xdgData.empty() ? h + "/.local/share" : xdgData) + "/bottles/bottles"); // Bottles
 	eachChild(h + "/.var/app/com.usebottles.bottles/data/bottles/bottles");
 	eachChild(h + "/.PlayOnLinux/wineprefix");        // PlayOnLinux
+	// macOS (lane MAC-1): a CrossOver bottle is a Wine prefix (system.reg at its root) under the CrossOver data folder, PlayOnMac
+	// keeps its prefixes where PlayOnLinux does under ~/Library; the folders do not exist on Linux, so the lines cost nothing there
+	eachChild(h + "/Library/Application Support/CrossOver/Bottles"); // CrossOver
+	eachChild(h + "/Library/PlayOnMac/wineprefix");   // PlayOnMac
 	return found;
 }
 

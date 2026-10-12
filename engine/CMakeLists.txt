@@ -435,6 +435,12 @@ set_target_properties(openbfme_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
 if(MSVC)
     target_compile_options(openbfme_core PRIVATE /W4 /permissive- /utf-8)
     target_compile_definitions(openbfme_core PUBLIC _CRT_SECURE_NO_WARNINGS NOMINMAX)
+else()
+    # The SAGE field-parse tables take offsetof() of classes with virtual functions, exactly as the Zero Hour source does (its
+    # FieldParse tables: offsetof(ThingTemplate, ...)). C++17 calls that conditionally supported; GCC, Clang and MSVC all lay those
+    # members out at a fixed offset, so the tables work, and GCC and Clang warn on every row (267 -Winvalid-offsetof warnings on a
+    # macOS Clang build of WeaponNugget.cpp, HeroAbilityModules.cpp, ...). The warning is off: none of them is a finding.
+    target_compile_options(openbfme_core PRIVATE -Wno-invalid-offsetof)
 endif()
 
 # ---- GDExtension -------------------------------------------------------------------------
@@ -716,6 +722,9 @@ target_compile_definitions(openbfme_tests PRIVATE OPENBFME_TEST_DATA_DIR="${CMAK
     OPENBFME_DOCS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../docs")
 if(MSVC)
     target_compile_options(openbfme_tests PRIVATE /utf-8)
+else()
+    # the tests' own field-parse tables (test_object_model.cpp) take offsetof() of non-standard-layout types like the engine's (above)
+    target_compile_options(openbfme_tests PRIVATE -Wno-invalid-offsetof)
 endif()
 
 # the contract holds for every target that carries simulation code or links it: nothing added to a target after its registration may override it

@@ -192,15 +192,20 @@ TEST_CASE("release1: discovery in Wine, Proton and Lutris prefixes (Linux)")
 		"\"InstallPath\"=\"C:\\\\gone\"\n");
 	// 4. a folder without system.reg is no prefix
 	fs::create_directories(home / "Games/notaprefix/drive_c");
+	// 5. a CrossOver bottle (macOS, lane MAC-1): a Wine prefix under ~/Library/Application Support/CrossOver/Bottles/<name>, searched
+	// after the Linux locations; its registry names nothing here, so it adds no candidate
+	const fs::path bottle = home / "Library/Application Support/CrossOver/Bottles/BFME";
+	writeFile(bottle / "system.reg", "WINE REGISTRY Version 2\n");
 
 	DiscoveryEnvironment env;
 	env.windows = false;
 	env.home = home.u8string();
 	const std::vector<std::string> prefixes = winePrefixes(env);
-	REQUIRE(prefixes.size() == 3);
+	REQUIRE(prefixes.size() == 4);
 	CHECK(fs::path(prefixes[0]) == fs::canonical(wine));
 	CHECK(fs::path(prefixes[1]) == fs::canonical(proton));
 	CHECK(fs::path(prefixes[2]) == fs::canonical(home / "Games/bfme"));
+	CHECK(fs::path(prefixes[3]) == fs::canonical(bottle));
 
 	const std::vector<Candidate> found = discover(env);
 	REQUIRE(found.size() == 3);

@@ -23,6 +23,8 @@
 //  * Linux: the same registry values read from the text registry (system.reg = HKLM, user.reg = HKCU) of every Wine
 //    prefix found ($WINEPREFIX, ~/.wine, Steam / Proton compatdata of every Steam library, Lutris, Bottles, Heroic,
 //    PlayOnLinux), the Windows path mapped through the prefix's dosdevices.
+//  * macOS: the same, with CrossOver's bottles (~/Library/Application Support/CrossOver/Bottles/<name>) and PlayOnMac's
+//    prefixes among the Wine prefixes (lane MAC-1).
 //
 // Nothing found is not an error: the first-run screen then asks for the folders. Nothing is used silently either:
 // discovered folders are offered to the player, who confirms them (PLAN rule 10).
