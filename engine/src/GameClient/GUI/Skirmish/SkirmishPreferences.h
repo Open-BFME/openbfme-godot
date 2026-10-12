@@ -15,8 +15,11 @@
 //   * removing (BFME2 0x43C2EB) drops the exact name and writes; removing the current one makes the first name current (BFME2 0x522833 with 0x43BB88);
 //   * quoted-printable (RW 0x93BD82 / 0x93BF28): each UTF-16 unit as its low byte then its high byte; a byte that isalnum() accepts is kept, any
 //     other becomes '_' and two upper-case hex digits; decoding turns '_' and the next one or two hex digits back into a byte.
-// INFERENCE (stop S-3504): the per-profile keys (":%d:<name>:Map", GameInfo, HeroIndexes) and the two stats files are not written; isalnum is the
-// ASCII test (retail's CRT call on a byte above 0x7F was not read); the folder is the one Options.ini is in (S-1484).
+//   * lane UI-6: a profile's own entries are ":<mode>:<the quoted-printable current name>:<name>" (RW 0x821AB4 formats ":%d:%s:%s", RW 0x821B89 with the
+//     current name); the lobby keeps its game in "Map" (RW 0x821E55), "GameInfo" and "HeroIndexes" (RW 0x821D55, through RW 0x821EBD) and reads them back
+//     (RW 0x821C29); removing a profile erases every entry of it for both modes (BFME2 0x43C2EB: RW 0x8220A3 with modes 0 and 1).
+// INFERENCE (stop S-3504): the two stats files are not written; isalnum is the ASCII test (retail's CRT call on a byte above 0x7F was not read); the
+// folder is the one Options.ini is in (S-1484).
 
 #pragma once
 
@@ -37,6 +40,11 @@ public:
 	bool add(const std::u16string &name) override;
 	bool remove(const std::u16string &name) override;
 	bool setCurrent(const std::u16string &name) override;
+	std::string profileValue(int mode, const std::string &name) const override;
+	void setProfileValue(int mode, const std::string &name, const std::string &value) override;
+	void flush() override { write(); }
+	// RW 0x821AB4: ":%d:%s:%s" (mode, the quoted-printable profile name, the entry's name)
+	static std::string profileKey(int mode, const std::string &quotedName, const std::string &name);
 
 	// Everything that went wrong reading or writing the file (never silent).
 	const std::vector<std::string> &errors() const { return m_errors; }
@@ -45,7 +53,7 @@ public:
 	// what the port infers (reported in the shell report's unverified_device)
 	static const char *unverified()
 	{
-		return "[S-3504] Skirmish.ini: the per-profile keys (Map, GameInfo, HeroIndexes) and the stats files are not written; isalnum is the ASCII test; "
+		return "[S-3504] Skirmish.ini: the stats files are not written; isalnum is the ASCII test; "
 			   "the file is beside Options.ini";
 	}
 	static std::string unicodeToQuotedPrintable(const std::u16string &text);

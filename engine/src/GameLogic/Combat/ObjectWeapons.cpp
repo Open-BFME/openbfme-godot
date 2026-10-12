@@ -1324,6 +1324,12 @@ int ObjectWeapons::currentStatus() const
 	return w ? w->getStatus(*const_cast<ObjectWeapons *>(this)->m_host) : WEAPON_OUT_OF_AMMO;
 }
 
+int ObjectWeapons::slotStatus(int slot) const
+{
+	const Weapon *w = weaponInSlot(slot);
+	return w ? w->getStatus(*const_cast<ObjectWeapons *>(this)->m_host) : WEAPON_OUT_OF_AMMO;
+}
+
 // RW 0x4BEE31 .. 0x4BEE91 (lane ANIM-1)
 bool ObjectWeapons::drawWeaponTimingFrames(int &frames) const
 {

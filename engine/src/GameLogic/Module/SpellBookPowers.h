@@ -41,7 +41,7 @@
 //   * DevastateSpecialPower (RW 0x8CC60F; table RW 0xC75000: Radius + 0x7C, FX + 0x80, TreeValueMultiplier + 0x84 (percent), TreeValueTotalCap
 //     + 0x88, FireWeapon + 0x8C): AtLocation RW 0x8CC711: not disabled with a controlling player: the base, every tree within Radius (RW 0x67F52B,
 //     the terrain's tree list) is knocked down with FX and pays money (RW 0x6AA858), the player's ... (RW 0x7B18B8), then FireWeapon at the
-//     location (RW 0x6CF530). Only the base part is ported (S-921).
+//     location (RW 0x6CF530). Lane SPELL-3 ports the tree loop (GameLogic/Map/TerrainTrees.h, S-930).
 
 #pragma once
 

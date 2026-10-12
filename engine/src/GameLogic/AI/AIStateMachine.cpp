@@ -64,7 +64,7 @@ void AIStateMachine::halt()
 	}
 }
 
-void AIStateMachine::defineState(unsigned id, std::unique_ptr<AIState> state, unsigned successId, unsigned failureId)
+void AIStateMachine::defineState(unsigned id, std::unique_ptr<AIState> state, unsigned successId, unsigned failureId, std::vector<AIStateCondition> conditions)
 {
 	if (m_states.count(id))
 	{
@@ -73,6 +73,7 @@ void AIStateMachine::defineState(unsigned id, std::unique_ptr<AIState> state, un
 	state->m_id = id;
 	state->m_successId = successId;
 	state->m_failureId = failureId;
+	state->m_conditions = std::move(conditions);
 	if (m_defaultStateId == INVALID_STATE_ID)
 	{
 		m_defaultStateId = id;
@@ -317,8 +318,43 @@ StateReturnType AIStateMachine::checkForTransitions(AIState &state, StateReturnT
 	case STATE_FAILURE:
 		return internalSetState(state.failureId());
 	default:
-		return STATE_CONTINUE;
+	{
+		bool matched = false;
+		const StateReturnType r = testConditions(state, matched);
+		return matched ? r : STATE_CONTINUE;
 	}
+	}
+}
+
+StateReturnType AIStateMachine::testConditions(AIState &state, bool &matched)
+{
+	matched = false;
+	for (const AIStateCondition &c : state.conditions())
+	{
+		if (!c.test || !c.test(state, c.userData))
+		{
+			continue;
+		}
+		matched = true;
+		// ZH: an exit id answers the result without leaving the state (the caller's machine leaves the state that runs this machine)
+		if (c.toId == 0x270Eu)
+		{
+			return STATE_SUCCESS;
+		}
+		if (c.toId == 0x270Fu)
+		{
+			return STATE_FAILURE;
+		}
+		return internalSetState(c.toId);
+	}
+	return STATE_CONTINUE;
+}
+
+StateReturnType AIStateMachine::checkForSleepTransitions(AIState &state, StateReturnType status)
+{
+	bool matched = false;
+	const StateReturnType r = testConditions(state, matched);
+	return matched ? r : status;
 }
 
 // ZH StateMachine::updateStateMachine
@@ -363,7 +399,7 @@ StateReturnType AIStateMachine::updateStateMachine()
 		{
 			return STATE_FAILURE;
 		}
-		return STATE_SLEEP(m_sleepTill - now);
+		return checkForSleepTransitions(*m_currentState, STATE_SLEEP(m_sleepTill - now));
 	}
 	m_sleepTill = 0;
 	if (!m_currentState)
@@ -383,7 +419,7 @@ StateReturnType AIStateMachine::updateStateMachine()
 	if (IS_STATE_SLEEP(status))
 	{
 		m_sleepTill = now + GET_STATE_SLEEP_FRAMES(status);
-		return STATE_SLEEP(m_sleepTill - now);
+		return checkForSleepTransitions(*m_currentState, STATE_SLEEP(m_sleepTill - now));
 	}
 	return checkForTransitions(*m_currentState, status);
 }

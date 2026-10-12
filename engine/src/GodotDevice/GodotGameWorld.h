@@ -55,6 +55,7 @@ class SpellStoreModel;
 class InGameSpellBookModel;
 class LiveFX;
 class MapObjectRuntime;
+class TreeTopple;
 struct MapObjectOptions;
 class TributeSource;
 
@@ -167,8 +168,13 @@ public:
 	// template `keep` (empty: none), through Object::kill (the death path, no score credit)
 	Dictionary debug_kill_player_objects(const String &player, const String &keep);
 	Dictionary debug_damage_object(int64_t id, double amount, int64_t source_id);
+	Dictionary debug_set_object_status(int64_t id, const String &status, bool on); // lane SPELL-3: a test hook (start option test_hooks): an object status by name
+	// lane SPELL-3 (review r3): a test hook (start option test_hooks): the global weather back to none, its map attribute modifier removed from every object
+	// (GlobalWeatherSystem::clear, RW 0x71A04F) - the spell harness isolates the weather powers' casts with it
+	Dictionary debug_clear_weather();
 	// read-only: the live objects of `player` [{ id, template, structure, commandcenter, x, y, z }] (between logic frames)
 	Array get_player_objects(const String &player);
+	Array get_logic_trees(double x, double y, double radius) const; // lane SPELL-3: the logic's map trees within radius (2D): x, y, id, toppled, value
 	// the first object of a template name ("" never matches)
 	int64_t find_object_by_template(const String &template_name) const;
 	// lane BUILD-1: the first real model of the template's draw modules (its default model condition state), "" when it has none: what the placement ghost shows
@@ -205,6 +211,8 @@ public:
 	bool cast_special_power(int64_t player, const String &power, double x, double y);
 	// { ok, rank, points, skill_points, book: id, sciences: [names], powers: [ { name, science, owned, ready, percent } ] } of the player's spell book
 	Dictionary get_spellbook(int64_t player) const;
+	// lane SPELL-3 (review r1): what a spell book power's module did so far (its class and counters), for the harness's effect checks
+	Dictionary get_spell_power_effect(int64_t player, const String &power) const;
 	// ---- lane SPELL-2: the spell book screens (GameClient/SpellBookUI.h) ----
 	// the store (RotWK AptSpellStore): open for `player`; { open, set, points, pending: [science], buttons: [ { index, science, cost, image, label,
 	// state: "purchased" | "pending" | "available" | "locked" } ] }; a click (OnBttnSpell), Reset, and the close that sends the pending purchases
@@ -562,6 +570,19 @@ private:
 	void startEndGame();
 	void updateEndGame();
 	std::unique_ptr<MapObjectRuntime> m_clientRuntime;
+	// lane SPELL-3: the client-only trees that can fall (the logic's TerrainTrees events: Devastation): the animator, per tree its static instance and its
+	// SAGE placement, and how many logic tree events were applied
+	struct ToppleTreeView
+	{
+		int64_t instance = -1;
+		float basis[9] = { 1, 0, 0, 0, 1, 0, 0, 0, 1 };
+		Coord3D position{};
+		float scale = 1.0f;
+	};
+	std::unique_ptr<TreeTopple> m_treeTopple;
+	std::vector<ToppleTreeView> m_treeViews; ///< index = the animator's tree index
+	size_t m_treeEventsSeen = 0;
+	void updateTreeTopple(double dt);
 	uint64_t m_staticId = 0, m_dynamicId = 0;
 	std::vector<DrawableView> m_views;       ///< index = drawable id
 	std::map<std::string, int64_t> m_dynamicModels, m_staticModels;

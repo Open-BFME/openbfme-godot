@@ -675,6 +675,17 @@ TEST_CASE("logic retail: live drawables show the same models as MAPOBJ-1's stati
 			CHECK(e.created);
 		}
 	}
+	// lane FACT-A: the unpacked castles keep making objects for a few frames (the Mordor wall catapult pads' ObjectCreationUpgrade chain, RW 0x8B8464: the free
+	// MordorFortressCatapult two frames after the pad completes); run until a frame creates nothing, so the deletion below is measured alone
+	for (int settle = 0; settle < 30; ++settle)
+	{
+		logic.runLogicFrame();
+		drawables.applyEvents(recorder.take());
+		if (drawables.takeEvents().empty())
+		{
+			break;
+		}
+	}
 	const size_t liveBefore = drawables.liveCount();
 	Object *victim = logic.getLastObject();
 	const bool victimHoldsOthers = victim->getContain() != nullptr && victim->getContain()->getContainCount() > 0;
@@ -684,11 +695,25 @@ TEST_CASE("logic retail: live drawables show the same models as MAPOBJ-1's stati
 	drawables.applyEvents(recorder.take());
 	if (!victimHoldsOthers)
 	{
-		CHECK(drawables.liveCount() == liveBefore - 1);
+		// lane FACT-C: an ObjectCreationUpgrade of a castle piece (granted at creation, RW 0x8B8464) may make its object in this frame too (the creations
+		// are counted apart): exactly one deletion, the victim's
 		const std::vector<DrawableManager::Event> ev = drawables.takeEvents();
-		REQUIRE(ev.size() == 1);
-		CHECK_FALSE(ev[0].created);
-		CHECK(drawables.find(ev[0].id) == nullptr);
+		std::vector<DrawableManager::Event> deleted;
+		size_t created = 0;
+		for (const DrawableManager::Event &e : ev)
+		{
+			if (e.created)
+			{
+				++created;
+			}
+			else
+			{
+				deleted.push_back(e);
+			}
+		}
+		CHECK(drawables.liveCount() == liveBefore - 1 + created);
+		REQUIRE(deleted.size() == 1);
+		CHECK(drawables.find(deleted[0].id) == nullptr);
 	}
 	std::printf("  info: %zu live drawables, %zu model draws (%zu animated), %zu data defects, %zu hide misses\n", r0.live, r0.modelDraws, r0.animatedModelDraws, r0.dataDefects.size(), r0.hideMisses.size());
 	logic.reset();

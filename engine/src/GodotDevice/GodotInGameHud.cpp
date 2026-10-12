@@ -1078,9 +1078,11 @@ void HudDevice::applyCamera(const Vector2 &window, double alpha)
 	const Coord3D eyeS = shown.eye(), targetS = shown.PinholeView::position();
 	const Vector3 eye = toGodotAxes(eyeS);
 	const Vector3 target = toGodotAxes(targetS);
-	// retail: horizontal field of view 50 degrees (View + 0x6C), near 10, far 1800 (RW 0x48B7B1); the view plane's height follows the viewport aspect
+	// retail: horizontal field of view 50 degrees (View + 0x6C), near 10, far 1800 (RW 0x48B7B1); the view plane's height follows the viewport aspect.
+	// lane UI-6: the Widescreen view's Wider widens the horizontal angle beyond 4:3 (TacticalCamera::setWidescreenView; Original is retail's 50 degrees)
 	camera->set_keep_aspect_mode(Camera3D::KEEP_WIDTH);
-	camera->set_fov((real_t)(cam->horizontalFov() * 180.0f / 3.14159265f));
+	const float hfov = cam->widescreenView() ? cam->viewHorizontalFov() : cam->horizontalFov();
+	camera->set_fov((real_t)(hfov * 180.0f / 3.14159265f));
 	camera->set_near((real_t)cam->nearPlane());
 	camera->set_far((real_t)cam->farPlane());
 	// lane PLAY-1: the free camera's fog shift (0 at retail heights), sent only when it changes
@@ -1521,6 +1523,7 @@ Dictionary InGameHudNode::attach(const Ref<RetailFileSystem> &fs, GameWorld *wor
 			}
 			d->cam->setFreeCamera((bool)options.get("free_camera", false)); // lane PLAY-1: the owner's option (not retail)
 			d->cam->setZoomOutFactor((float)(double)options.get("zoom_out_factor", 1.0)); // lane ZOOM-1: the owner's Max zoom-out (not retail; 1 = retail)
+			d->cam->setWidescreenView((bool)options.get("widescreen_wider", false)); // lane UI-6: the Widescreen view (Wider: not retail; false = retail)
 		}
 		// lane HUD-5: GameData's ShowObjectHealth / VeterancyPipDrawObjectFilter for the drawable decorations
 		d->veterancyFilter = gd.veterancyPipFilter;
@@ -2025,6 +2028,12 @@ Dictionary InGameHudNode::get_spellbook_state()
 		slots.push_back(String(AptPalantir::spellStateName(p->spellSlotState(i))));
 	}
 	r["slots"] = slots;
+	Array slotButtons; // lane SPELL-3: the spell book command set index of each slot (a harness names the slot's power with it)
+	for (int i = 0; i < AptPalantir::kSpellSlots; ++i)
+	{
+		slotButtons.push_back((int64_t)p->spellSlotButton(i));
+	}
+	r["slot_buttons"] = slotButtons;
 	const InGameSpellBookModel &bar = d->hud->spellBar();
 	r["targeting"] = bar.targeting();
 	r["radius"] = bar.targetButton() ? bar.targetButton()->radius : 0.0f;
@@ -2052,6 +2061,16 @@ Dictionary InGameHudNode::get_spellbook_state()
 		store["states"] = states;
 		store["sciences"] = sciences;
 		store["level"] = st->level();
+		store["spell_clicks"] = (int64_t)st->commandCalls("AptSpellStore::OnBttnSpell"); // lane SPELL-3: the movie's OnBttnSpell calls
+		store["spell_arg"] = toGodot(st->lastSpellArgument());
+		// lane SPELL-3: the movies' trace lines since the store opened (SetSpellButtonState, the connector set-up), the last 80
+		Array traces;
+		const std::vector<std::string> &all = d->hud->windows().traces();
+		for (size_t i = all.size() > 80 ? all.size() - 80 : 0; i < all.size(); ++i)
+		{
+			traces.push_back(toGodot(all[i]));
+		}
+		store["traces"] = traces;
 	}
 	r["store"] = store;
 	return r;
@@ -2746,6 +2765,10 @@ Dictionary InGameHudNode::set_view_options(const Dictionary &o)
 	{
 		d->cam->setZoomOutFactor((float)(double)o["zoom_out_factor"]); // lane ZOOM-1
 	}
+	if (o.has("widescreen_wider") && d->cam)
+	{
+		d->cam->setWidescreenView((bool)o["widescreen_wider"]); // lane UI-6
+	}
 	r["ok"] = d->hud != nullptr;
 	r["edge_scroll_mode"] = d->edgeScrollMode;
 	r["scroll_factor"] = d->cam ? d->cam->gameData().horizontalScrollSpeedFactor : 0.0f;
@@ -2783,6 +2806,9 @@ Dictionary InGameHudNode::get_camera() const
 	out["free_camera_toggles"] = d->freeCameraToggles; // lane INPUT-1: Ctrl+Z
 	out["zoom_out_limit"] = c.zoomOutLimit();
 	out["zoom_out_factor"] = c.zoomOutFactor(); // lane ZOOM-1
+	out["widescreen_wider"] = c.widescreenView(); // lane UI-6: the Widescreen view
+	out["horizontal_fov"] = c.viewHorizontalFov(); // lane UI-6: the drawn view's angles (radians)
+	out["vertical_fov"] = c.verticalFov();
 	out["fog_shift"] = c.fogShift();
 	out["far"] = c.farPlane();
 	out["eye"] = toGodotAxes(c.eye());

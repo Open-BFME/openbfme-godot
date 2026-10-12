@@ -177,6 +177,12 @@ for p in ${PLATFORMS//,/ }; do
   python3 "$REPO/tools/release/readme_testers.py" --version "$VERSION" --platform "$p" --out "$dir/README_TESTERS.txt"
   cp "$STAGE/LICENSE" "$STAGE/NOTICE" "$dir/"
   printf 'OpenBFME %s\ncommit %s\ncommitted %s\n' "$VERSION" "$HEAD" "$(date -u -d "@$SOURCE_DATE_EPOCH" +%Y-%m-%d)" > "$dir/VERSION"
+  if [ "$p" = linux ]; then
+    # lane GLIBC-1: the GLIBC the package needs (its executable and the extension), read by the launcher before Play
+    need=$(python3 "$REPO/tools/release/elf_glibc.py" "$dir/$exe" "$dir/$(basename "$LINUX_LIB")") || fail "cannot read the GLIBC requirement of $name"
+    printf 'requires GLIBC %s\n' "$need" >> "$dir/VERSION"
+    echo "PACKAGE $name requires GLIBC $need"
+  fi
   python3 "$REPO/tools/release/audit_package.py" "$dir" || fail "$name failed the content audit"
   python3 "$REPO/tools/release/audit_package.py" --release "$p" "$dir" || fail "$name is not the release's file set"
   rm -f "$OUT/$name.$ext"

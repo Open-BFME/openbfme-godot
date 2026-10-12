@@ -63,6 +63,10 @@ public:
 	{
 		size = (float)f.pointSize;
 		Ref<Font> r = m_player ? m_player->font_for(f.name, (float)f.pointSize, &size) : Ref<Font>();
+		if (r.is_valid())
+		{
+			r = m_player->font_cell(r, (int)std::lround(size)); // lane UI-6: RotWK's GDI text cell
+		}
 		return r.is_valid() ? r : ThemeDB::get_singleton()->get_fallback_font();
 	}
 	int fontHeight(const GameFont &f) override
@@ -145,6 +149,7 @@ void Hud6Draw::drawHelp(const Rect2 &rect, RID item)
 	std::vector<HelpDrawOp> ops;
 	m_hud.helpBoxRender(rect.position.x, rect.position.y, rect.size.x, rect.size.y, ops); // RW 0x92E2AC
 	RenderingServer *rs = RenderingServer::get_singleton();
+	m_helpTextOps = 0;
 	for (const HelpDrawOp &op : ops)
 	{
 		if (op.kind == HelpDrawOp::IMAGE)
@@ -168,6 +173,7 @@ void Hud6Draw::drawHelp(const Rect2 &rect, RID item)
 		const float w = f->get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, (int)std::lround(size)).x;
 		const float x = std::floor(op.x + (op.w - w) * 0.5f + 0.5f);
 		f->draw_string(item, Vector2(x, op.y + f->get_ascent((int)std::lround(size))), text, HORIZONTAL_ALIGNMENT_LEFT, -1, (int)std::lround(size), argb(op.font.color));
+		++m_helpTextOps;
 	}
 	++m_helpDraws;
 }
@@ -300,6 +306,7 @@ Dictionary Hud6Draw::state() const
 	help["width"] = h.sampledWidth();
 	help["helps_shown"] = (int64_t)h.helpsShown();
 	help["draws"] = (int64_t)m_helpDraws;
+	help["text_ops"] = (int64_t)m_helpTextOps;
 	help["name"] = h.help() ? toGodot(u16ToUtf8(h.help()->name())) : String();
 	Array calls;
 	for (const std::string &c : h.calls())

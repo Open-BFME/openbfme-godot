@@ -968,3 +968,54 @@ TEST_CASE("cah2 retail shell: the Appearance page's ColorPicker reads the palett
 	MESSAGE("cursor for blue: " << after.cursor[0] << " " << after.cursor[1]);
 	CHECK(c.fx->wm->errors().empty());
 }
+
+TEST_CASE("ui6 cah1 retail lobby: the chosen Create-a-Hero is kept with the lobby (OpenBFME's profile key, by unique id) and chosen again on return")
+{
+	OPENBFME_REQUIRE_START(s);
+	TempDir dir;
+	CreateAHeroHeroList heroes;
+	heroes.load(s->mount->fs.get(), dir.path, nullptr);
+	REQUIRE(heroes.size() == 8);
+	CreateAHeroScreenContext ctx;
+	ctx.system = &s->world->createAHeroSystem();
+	ctx.heroes = &heroes;
+	MemorySkirmishProfiles store;
+	starttest::ShellFx fx(*s, 77u);
+	fx.text.set("GUI:Random", "Random");
+	fx.text.set("VALUE:Default", " (Default)");
+	fx.environment.createAHero = &ctx;
+	fx.environment.profiles = &store;
+	fx.shell->push("Skirmish.apt");
+	auto *screen = dynamic_cast<AptSkirmish *>(fx.shell->top());
+	REQUIRE(screen);
+	fx.tick(60);
+	REQUIRE(screen->profileEntryWindow());
+	fx.wm->invokeCallback("AptSkirmish::OnNewProfileMenu", "");
+	GadgetTextEntrySetText(screen->profileEntryWindow(), u"Gimli");
+	fx.wm->invokeCallback("AptSkirmish::OnAddProfileAccept", "");
+	fx.tick(40);
+	REQUIRE(store.current() == u"Gimli");
+	GameWindow *hero = screen->slotGadget(0, "Hero");
+	REQUIRE(hero);
+	REQUIRE(GadgetComboBoxGetLength(hero) == 2 + 8);
+	int chosenRow = -1;
+	for (int r = 2; r < GadgetComboBoxGetLength(hero) && chosenRow < 0; ++r)
+	{
+		starttest::chooseComboRow(fx, hero, r);
+		chosenRow = screen->slotHero(0) == itemOf(hero, r) ? r : -1;
+	}
+	REQUIRE(chosenRow >= 0);
+	const int chosen = itemOf(hero, chosenRow);
+	const std::string id = heroes.at(chosen)->hero.uniqueID;
+	REQUIRE(screen->setup()->info().slots[0].hasCreateAHero);
+	fx.shell->pop();
+	fx.tick(30);
+	CHECK(store.profileValue(0, "OpenBFMEHeroes").rfind(id + ",", 0) == 0);
+	fx.shell->push("Skirmish.apt");
+	screen = dynamic_cast<AptSkirmish *>(fx.shell->top());
+	REQUIRE(screen);
+	fx.tick(60);
+	CHECK(screen->slotHero(0) == chosen);
+	REQUIRE(screen->setup()->info().slots[0].hasCreateAHero);
+	CHECK(screen->setup()->info().slots[0].createAHero.uniqueID == id);
+}

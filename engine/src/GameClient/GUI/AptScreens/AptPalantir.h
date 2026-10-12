@@ -179,6 +179,7 @@ public:
 	const std::string &spellBookPath() const { return m_spellPath; }
 	bool spellBookShown() const { return m_spellShown; }
 	int spellSlotState(int slot) const { return slot >= 0 && slot < kSpellSlots ? m_spellState[slot] : SPELL_UNUSED; }
+	int spellSlotButton(int slot) const { return slot >= 0 && slot < kSpellSlots ? m_spellButton[slot] : -1; } ///< lane SPELL-3: the command set index a slot shows
 	static const char *spellStateName(int state);
 	// the clip state a command button of `state` with the CommandButton `options` shows (SetState); lane HUD-5: RW 0x9D2BEE (an active button is _up, a
 	// NONPRESSABLE one _static)

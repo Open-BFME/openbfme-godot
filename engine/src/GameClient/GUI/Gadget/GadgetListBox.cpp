@@ -1797,14 +1797,36 @@ void drawListBoxText(GameWindow *window, WinInstanceData *instData, int x, int y
 				{
 					mgr.setClipRegion(columnRegion);
 					const int wrap = BitTest(window->winGetStatus(), WIN_STATUS_ONE_LINE) ? 0 : list->columnWidth[(std::size_t)j] - TEXT_WIDTH_OFFSET;
-					int textX = columnX + TEXT_X_OFFSET;
-					if (cell.justification == 2 && window->winGetFont())
+					// lane UI-6: RotWK's cell text draw (RW 0x4A2226 at 0x4A25E5 .. 0x4A2642; BFME2 0x4A283D, tier A; donor BFME2 decomp
+					// W3DListBox.cpp drawListBoxText): the display string's size (+0x3C), then x by the cell's + 4 field (1: against the right edge,
+					// cell width - text width - 5; 2: (cell width - text width) / 2; either one below 0 becomes 5; anything else 5) and y centred in the
+					// row, (row height - text height + 1) / 2, 0 when negative. The cell width is the column's, or the list's width - 3 for one column
+					// with its slider hidden (RW 0x4A2504 .. 0x4A2537). Before UI-6 the text sat at the row's top (GitGut's report: the Game Setup map names)
+					int textWidth = 0, textHeight = 0;
+					if (window->winGetFont())
 					{
-						// the cell + 4 alignment (RW 0x725D96): centred in the column (inference, see ListEntryCell)
-						const int tw = mgr.fontMetrics().textWidth(*window->winGetFont(), cell.text);
-						textX = std::max(textX, columnX + (list->columnWidth[(std::size_t)j] - tw) / 2);
+						textWidth = mgr.fontMetrics().textWidth(*window->winGetFont(), cell.text);
+						textHeight = wrap > 0 ? mgr.fontMetrics().wrappedHeight(*window->winGetFont(), cell.text, wrap) : mgr.fontMetrics().fontHeight(*window->winGetFont());
+						if (wrap > 0 && textWidth > wrap)
+						{
+							textWidth = wrap; // a wrapped string is as wide as its wrap width (INFERENCE: the display string's wrapped extent, S-3700)
+						}
 					}
-					mgr.winDrawText(cell.text, window->winGetFont(), textX, drawY, cell.color, dropColor, wrap);
+					const int cellWidth = columnRegion.hi.x - columnX;
+					int textX = TEXT_X_OFFSET;
+					if (cell.justification == 1)
+					{
+						textX = cellWidth - textWidth - TEXT_X_OFFSET;
+						textX = textX < 0 ? TEXT_X_OFFSET : textX;
+					}
+					else if (cell.justification == 2)
+					{
+						textX = (cellWidth - textWidth) / 2;
+						textX = textX < 0 ? TEXT_X_OFFSET : textX;
+					}
+					int textY = (row.height - textHeight + 1) / 2;
+					textY = textY < 0 ? 0 : textY;
+					mgr.winDrawText(cell.text, window->winGetFont(), columnX + textX, drawY + textY, cell.color, dropColor, wrap);
 				}
 				else if (cell.cellType == LISTBOX_IMAGE && !cell.image.empty())
 				{

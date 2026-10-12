@@ -2,6 +2,7 @@
 // See HudInput.h.
 
 #include "GameClient/HudInput.h"
+#include "GameLogic/ObjectTemplateInfo.h"
 
 #include "Common/Player.h"
 #include "GameLogic/Object/Object.h"
@@ -107,12 +108,16 @@ void HudInput::cameraFrame(unsigned nowMs, bool gamePaused)
 
 size_t HudInput::update()
 {
-	// objects that died leave the selection mirror (ZH: the drawable's destructor deselects)
+	// objects that died leave the selection mirror (ZH: the drawable's destructor deselects); lane FACT-A: so does a structure being sold, which the logic marked
+	// SOLD and dropped from every player's selection (BuildAssistant::sellObject RW 0x7966BB -> GameLogic::deselectObject(obj, 0xFFFFF, affectClient = 1)
+	// RW 0x7967A7, whose client half is InGameUI::deselectDrawable RW 0x6257E5; INFERENCE: the mirror follows the SOLD status set in the same call. Not
+	// UNSELECTABLE alone: an unpacked castle is UNSELECTABLE and RW deselects nothing there)
+	static const int sold = ObjectTemplateInfoBuilder::objectStatusIndex("SOLD");
 	std::vector<ObjectID> gone;
 	for (ObjectID id : m_ui.selected())
 	{
 		Object *o = m_logic.findObjectByID(id);
-		if (!o || o->isDestroyed())
+		if (!o || o->isDestroyed() || (sold >= 0 && o->testStatus((unsigned)sold)))
 		{
 			gone.push_back(id);
 		}
@@ -265,6 +270,14 @@ std::vector<std::string> HudInput::acceptanceStops()
 std::vector<std::string> HudInput::stops() const
 {
 	std::vector<std::string> out = acceptanceStops();
+	// lane FACT-C (S-286 keeps the other context commands)
+	out.push_back("[S-2000] special power targets: a SPECIAL_POWER button waiting for its target sends RotWK's messages on the click (evaluateContextCommand RW 0x81E60B -> "
+				  "issueSpecialPowerCommand RW 0x81E147: AT_OBJECT for an object of a relationship the options allow, AT_LOCATION with the chained CommandTrigger buttons, "
+				  "source NONE); the action check RW 0x6A4260 (range, KindOf and the power's own target rules) and the kind-of / option 0x10 / 0x200000 target drops "
+				  "before it are not ported: the option's target kind alone makes a click valid");
+	out.push_back("[S-2002] capture context command: a click on a building the selection can capture issues the first selected object's capture button (power type 0x1A / 0x1D) "
+				  "at it (RW 0x81E60B, canCaptureBuilding RW 0x82D0A1); not ported: a capture power's ObjectFilter (none in retail data; counted), the status pair + 0x438 / "
+				  "+ 0x110, the + 0x80 word, the shroud test, CAPTURE_FORBIDDEN, the per-player refusal RW 0x6943B2, stealth riders and the vision test");
 	out.push_back("[S-1673] hotkeys (HUD-4): Ctrl+H walks the local player's objects for the next HERO after the selected one and selects it (RW 0x81FDA2 / 0x81DABC; "
 				  "INFERENCE: the player's team list is its prototypes in creation order, the gate RW 0x81FDA8 is a local player, no drawable test); D / F / G send "
 				  "MSG_CHANGE_STANCE 2 / 1 / 3 (RW 0x8201F5 .. 0x820247); Shift+Up / Shift+Down (and the unit cycle keys) have no handler in RotWK 2.01 and pass "

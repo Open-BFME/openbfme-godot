@@ -11,6 +11,8 @@
 #include "GameLogic/Object/Object.h"
 #include "GameLogic/ObjectTemplateInfo.h"
 #include "GameLogic/System/InvisibilityManager.h"
+#include "GameLogic/Map/TerrainLogic.h"
+#include "GameLogic/Map/TerrainTrees.h"
 #include "Common/Upgrade.h"
 
 namespace
@@ -251,6 +253,15 @@ MapObjectLoopResult MapObjectLoop::create(GameLogic &logic, const LoadedMap &map
 	// lane STEALTH-1: the terrain tree list (RW TheTerrainLogic + 0x578): the loop's KindOf TREE map objects that go to the tree buffer (RW 0x62E44F -> 0x683D89, the
 	// record made when the template has a tree draw module, RW 0x683DC2 .. 0x683E63) at their placed position; INFERENCE (S-1040): the list holds the positions only
 	logic.invisibility().clearTrees();
+	// lane SPELL-3: the same records in the logic's tree list (TerrainTrees, RW 0x683D89) on the bucket grid of the map including its border (RW 0x4622AC); the
+	// client id is the map object index + 1 (S-930)
+	logic.trees().reset();
+	if (const TerrainLogic *terrain = logic.terrain())
+	{
+		float lx = 0.0f, ly = 0.0f, hx = 0.0f, hy = 0.0f;
+		terrain->getMapExtentIncludingBorder(lx, ly, hx, hy);
+		logic.trees().setExtent(lx, ly, hx, hy);
+	}
 	for (const MapObjectDrawable &d : classified.drawables)
 	{
 		if (d.fate != MAPOBJ_CLIENT_TREE || !d.info)
@@ -262,6 +273,10 @@ MapObjectLoopResult MapObjectLoop::create(GameLogic &logic, const LoadedMap &map
 			if (m.kind == W3D_DRAWKIND_TREE)
 			{
 				logic.invisibility().addTree(d.position);
+				if (d.info->tmpl)
+				{
+					logic.trees().addTree(*d.info->tmpl, d.position, (std::uint32_t)d.objectIndex + 1u);
+				}
 				break;
 			}
 		}

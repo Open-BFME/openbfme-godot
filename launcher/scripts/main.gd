@@ -46,6 +46,7 @@ const Updater := preload("res://scripts/core/updater.gd")
 const SelfUpdate := preload("res://scripts/core/self_update.gd")
 const Semver := preload("res://scripts/core/semver.gd")
 const Log := preload("res://scripts/core/launcher_log.gd")
+const GlibcCheck := preload("res://scripts/core/glibc_check.gd")
 const GameOptions := preload("res://scripts/core/game_options.gd")
 const AioInstall := preload("res://scripts/core/aio_install.gd")
 const ReleaseNotes := preload("res://scripts/core/release_notes.gd")
@@ -314,7 +315,8 @@ static func _texts(node: Node) -> PackedStringArray:
 ## launcher's cached release list when there is one (real notes), else text marked as demo text (the owner: never invent release facts
 ## in screenshots).
 ## Screens: main (Play), news, multiplayer, mods, games (no games found: the download), games-downloading, settings (General), display,
-## about, update (a newer version, updating by itself off), downloading (an update downloading), error.
+## about, update (a newer version, updating by itself off), downloading (an update downloading), error, glibc (Play on a Linux system older
+## than the build's GLIBC, lane GLIBC-1).
 func _show_demo(screen: String) -> void:
 	var home := Paths.home()
 	var no_games := screen in ["games", "games-downloading"]
@@ -357,6 +359,8 @@ func _show_demo(screen: String) -> void:
 				_demo_progress("RotWK: game files 412 of 1 830", 3328599654, 9234179686)
 				_games_screen.set_download_state(true, false, true, true)
 				_set_status("Downloading the games. Play is back when they are checked.")
+		"glibc":
+			_show_error("The game did not start", "%s cannot be started: %s" % [installed, GlibcCheck.too_old("2.28", "2.27")])
 		"update", "downloading", "error":
 			_latest = {"tag": chan[0].tag}
 			_set_update_state("update", chan[0].tag)

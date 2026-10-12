@@ -158,6 +158,10 @@ public:
 	AptColorTransform color;
 	float ratio = 0;
 	float placeRatio = 0; // lane FB7-1: the ratio of the place object that created the instance (the seek's same-placement test, BFME2 0x00AF9589)
+	// lane BUGS-1: AptCIH + 0x5C bit 16 ("AS changed"): set by a script's _x / _y / _xscale / _yscale / _rotation / _alpha / _width / _height (AptCIH::
+	// factorySetProperty with its flag true; BFME2 decomp AptObject/AptFactoryConstructors.cpp); a seek that keeps the instance then leaves its matrix
+	// and colours alone (AptDisplayList::mergeState, RW 0xB0D610 = BFME2 0xAF9410, tier A)
+	bool asChanged = false;
 	std::int32_t clipDepth = -1; // -1 = not a clip layer (the file stores -1 when the flag is absent)
 	bool visible = true;
 	bool enabled = true;

@@ -4,6 +4,8 @@
 #include "GameLogic/Module/AttachUpdate.h"
 #include "GameLogic/Module/AISpecialPowerUpdate.h"
 #include "GameLogic/Module/RepairSpecialPower.h"
+#include "GameLogic/Module/HordeDispatchSpecialPower.h"
+#include "GameLogic/Module/ObjectCreationUpgrade.h"
 #include "GameLogic/Module/SlavedUpdate.h"
 #include "GameLogic/Module/SpawnBehavior.h"
 #include "GameLogic/Module/LogicModules.h"
@@ -34,6 +36,8 @@
 #include "GameLogic/Module/SpecialPowerModules.h"
 #include "GameLogic/Module/StancesBehavior.h"
 #include "GameLogic/Module/CastleModules.h"
+#include "GameLogic/Module/ObjectCreationUpgrade.h"
+#include "GameLogic/Module/ReplaceSelfUpgrade.h"
 #include "GameLogic/Module/ConstructionModules.h"
 #include "GameLogic/WallSpan.h"
 #include "GameLogic/Module/DozerAIUpdate.h"
@@ -77,6 +81,8 @@ void LogicModules::registerAll(ModuleFactory &modules)
 	ProjectileModules::registerAll(modules); // lane PROJ-1: BezierProjectileBehavior
 	StructureModules::registerAll(modules); // lane COMBAT-2: StructureBody, InactiveBody, StructureCollapseUpdate
 	UpgradeModuleClasses::registerAll(modules); // lane UPGRADE-1: the upgrade module classes
+	ObjectCreationUpgrade::registerClass(modules); // lane FACT-A: the object an upgrade makes (the Crystal Moat)
+	ReplaceSelfUpgrade::registerClass(modules);    // lane FACT-A: the wall segment's gates, towers and hubs
 	AttributeModifierPool::registerClass(modules); // lane XP-1: AttributeModifierPoolUpdate (every object's attribute modifier pool)
 	ExperienceUpgradeModules::registerAll(modules); // lane XP-1: LevelUpUpgrade, ExperienceScalarUpgrade
 	SquishCollide::registerClass(modules);  // lane HORDE-2: the crush
@@ -99,6 +105,8 @@ void LogicModules::registerAll(ModuleFactory &modules)
 	AttachUpdate::registerClass(modules); // lane CAMP-1: the carried objects (MAP ANG Dark Eye's palantir shards)
 	AISpecialPowerUpdate::registerClass(modules); // lane MOD-4: the units' own use of their powers (computer players)
 	RepairSpecialPower::registerClass(modules); // lane MOD-4: the builders' repair power
+	HordeDispatchSpecialPower::registerClass(modules); // lane FACT-C: a horde's power passed on to its members
+	ObjectCreationUpgrade::registerClass(modules); // lane FACT-C: the delayed spawn / grant upgrade (spike moats, wall catapults, the Sanctum's readiness)
 	SpawnBehavior::registerClass(modules); // lane MOD-4: the lairs' spawns
 	SlavedUpdate::registerClass(modules); // lane MOD-4: the spawns' guard
 	LargeGroupAudioUpdate::registerClass(modules); // lane AUDIO-4: the logic half of the large group battle sounds

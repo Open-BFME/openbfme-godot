@@ -19,6 +19,7 @@
 
 #include "GameClient/AptCanvas.h"
 #include "GameClient/FontSubstitution.h"
+#include "GameClient/GdiFontMetrics.h"
 #include "GameClient/GUI/AptGadgetLayer.h"
 #include "GameClient/GUI/AptScreens/AptScreenFactories.h"
 #include "GameClient/GUI/AptScreens/AptSimpleScreens.h"
@@ -94,6 +95,7 @@
 #include <cstring>
 #include <functional>
 #include <map>
+#include <tuple>
 #include <random>
 
 namespace godot
@@ -622,6 +624,9 @@ struct AptMenuPlayer::Impl
 	FontSubstitution fonts;
 	std::map<std::string, Ref<ImageTexture>> godotTextures;
 	std::map<std::string, Ref<FontFile>> fontByName; // lower-cased family name and file stem
+	std::map<const Font *, GdiFaceMetrics> gdiFaces;  // lane UI-6: each corpus font's GDI metrics (GameClient/GdiFontMetrics.h)
+	std::map<const Font *, const Font *> boldBase;    // lane UI-6: a synthetic bold variation -> its font file
+	std::map<std::tuple<const Font *, bool, int>, Ref<FontVariation>> cellFonts; // lane UI-6: (font file, bold, pixel size) -> the GDI cell variation
 	std::vector<std::string> fontNames;              // for the report
 	std::set<std::string> fontFallbacks;
 	std::vector<RID> items;
@@ -790,8 +795,58 @@ struct AptMenuPlayer::Impl
 			v->set_variation_embolden(kSyntheticBoldEmbolden);
 			v->set_spacing(TextServer::SPACING_GLYPH, 1);
 			it = boldFonts.emplace(base.ptr(), v).first;
+			boldBase[v.ptr()] = base.ptr();
 		}
 		return it->second;
+	}
+
+	// Lane UI-6 (GitGut's report on preview.6: the main menu's button texts sat a few % too high): `font` (a corpus font or its synthetic bold) at
+	// `px` pixels with RotWK's GDI text cell (GameClient/GdiFontMetrics.h, RW 0x553FD0 / 0x556579): the ascent is the cell's baseline (external
+	// leading / 2 + tmAscent, both reduced by the supersampling) and the height the char height, so every string placed by its ascent and height (the
+	// Apt fields, the gadgets, the HUD texts) and every line of a multi-line string sits where RotWK puts it. Godot's own ascent / descent are the
+	// hhea ones: for Omnia LT Std (hhea 580 / 420, win 648 / 176, line gap 200) the baseline was 0.156 em higher than RotWK's. A font without
+	// GDI metrics (the engine fallback font, already reported) is returned as it is.
+	Ref<Font> cellFont(const Ref<Font> &font, int px)
+	{
+		if (font.is_null() || px <= 0)
+		{
+			return font;
+		}
+		const Font *file = font.ptr();
+		bool bold = false;
+		auto b = boldBase.find(file);
+		if (b != boldBase.end())
+		{
+			file = b->second;
+			bold = true;
+		}
+		auto face = gdiFaces.find(file);
+		if (face == gdiFaces.end())
+		{
+			return font;
+		}
+		const auto key = std::make_tuple(file, bold, px);
+		auto it = cellFonts.find(key);
+		if (it != cellFonts.end())
+		{
+			return it->second;
+		}
+		const GdiTextCell cell = GdiTextCellAt(face->second, px); // the font library's default supersampling, 4 (RW 0x6186E0)
+		const int baseline = (int)std::lround(cell.baseline);
+		Ref<FontVariation> v;
+		v.instantiate();
+		v->set_base_font(Ref<Font>(const_cast<Font *>(file)));
+		if (bold)
+		{
+			v->set_variation_embolden(kSyntheticBoldEmbolden);
+			v->set_spacing(TextServer::SPACING_GLYPH, 1);
+		}
+		// Godot's ascent and descent at px are whole pixels (FreeType's scaled metrics); the spacing makes them the cell's
+		const int ascent = (int)std::lround(file->get_ascent(px)), descent = (int)std::lround(file->get_descent(px));
+		v->set_spacing(TextServer::SPACING_TOP, baseline - ascent);
+		v->set_spacing(TextServer::SPACING_BOTTOM, (cell.height - baseline) - descent);
+		cellFonts.emplace(key, v);
+		return v;
 	}
 
 	// string table, font substitution, the corpus fonts (boot and boot_shell); appends to `errors`
@@ -837,6 +892,16 @@ struct AptMenuPlayer::Impl
 			font->set_data(data);
 			font->get_ascent(16); // forces the face to load, which gives the family name
 			const std::string family = toNative(font->get_font_name());
+			GdiFaceMetrics gdi;
+			std::string gdiError;
+			if (ReadGdiFaceMetrics(bytes.data(), bytes.size(), gdi, &gdiError))
+			{
+				gdiFaces[font.ptr()] = gdi;
+			}
+			else
+			{
+				errorsOut.push_back(toGodot(file + ": no GDI text metrics (" + gdiError + "); its texts are placed by the font's own line metrics (S-3700)"));
+			}
 			const std::string stem = lowerAscii(file.substr(0, file.find_last_of('.')));
 			if (family.empty())
 			{
@@ -984,6 +1049,7 @@ void AptMenuPlayer::_bind_methods()
 	ClassDB::bind_method(D_METHOD("shell_font", "name", "size"), &AptMenuPlayer::shell_font);
 	ClassDB::bind_method(D_METHOD("take_load_progress_calls"), &AptMenuPlayer::take_load_progress_calls);
 	ClassDB::bind_method(D_METHOD("lobby_apply", "spec"), &AptMenuPlayer::lobby_apply);
+	ClassDB::bind_method(D_METHOD("lobby_state"), &AptMenuPlayer::lobby_state); // lane UI-6
 	ClassDB::bind_method(D_METHOD("lobby_gadget_rect", "name"), &AptMenuPlayer::lobby_gadget_rect);
 	ClassDB::bind_method(D_METHOD("get_shell_report"), &AptMenuPlayer::get_shell_report);
 	ADD_SIGNAL(MethodInfo("shell_service", PropertyInfo(Variant::STRING, "kind"), PropertyInfo(Variant::STRING, "a"), PropertyInfo(Variant::STRING, "b")));
@@ -1309,7 +1375,8 @@ Dictionary AptMenuPlayer::boot_shell(const Ref<RetailFileSystem> &fs, Object *wo
 	registerAptScreenFactories(sm->factories);
 	Impl *impl = m.get();
 	sm->metrics = std::make_unique<ShellFontMetrics>([impl](const std::string &name, float size, bool bold, float *drawSize) {
-		return impl->fontFor(name, size, drawSize, bold);
+		Ref<Font> f = impl->fontFor(name, size, drawSize, bold);
+		return impl->cellFont(f, std::max(1, (int)std::lround(*drawSize))); // lane UI-6: GDI cell heights, as the gadgets' draw
 	});
 	if (errors.is_empty())
 	{
@@ -2242,6 +2309,45 @@ Dictionary AptMenuPlayer::lobby_gadget_rect(const String &name)
 	return out;
 }
 
+Dictionary AptMenuPlayer::lobby_state()
+{
+	Dictionary out;
+	out["found"] = false;
+	if (!m->shell || !m->shell->shell)
+	{
+		return out;
+	}
+	AptSkirmish *screen = dynamic_cast<AptSkirmish *>(m->shell->shell->findScreenByFilename("Skirmish.apt"));
+	if (!screen || !screen->setup())
+	{
+		return out;
+	}
+	const SkirmishGameInfo &g = screen->setup()->info();
+	out["found"] = true;
+	out["map"] = toGodot(g.mapName);
+	Array rules;
+	for (std::int32_t r : g.rules)
+	{
+		rules.push_back((int64_t)r);
+	}
+	out["rules"] = rules;
+	Array slots;
+	for (const SkirmishGameSlot &s : g.slots)
+	{
+		Dictionary d;
+		d["state"] = (int64_t)s.state;
+		d["template"] = (int64_t)s.playerTemplate;
+		d["color"] = (int64_t)s.color;
+		d["team"] = (int64_t)s.teamNumber;
+		d["start"] = (int64_t)s.startPos;
+		d["name"] = s.isOccupied() ? toGodot(u16ToUtf8(s.name)) : String();
+		slots.push_back(d);
+	}
+	out["slots"] = slots;
+	out["restored"] = toGodot(screen->restoredGame());
+	return out;
+}
+
 Dictionary AptMenuPlayer::lobby_apply(const Dictionary &spec)
 {
 	Dictionary out;
@@ -2836,6 +2942,7 @@ void AptMenuPlayer::drawRenderCallback(const AptCanvasOp &op, const RID &item)
 		}
 		++m->callbackTextDraws[c.font.bold ? 1 : 0];
 		const int px = std::max(1, (int)std::lround(drawSize * k));
+		font = m->cellFont(font, px); // lane UI-6: the string's top at y, its baseline where RotWK's GDI cell has it
 		const Vector2 at((float)c.x0 * op.scaleX + op.offsetX, (float)c.y0 * op.scaleY + op.offsetY);
 		const Vector2 base = at + Vector2(0, font->get_ascent(px));
 		const String text = toGodot(u16ToUtf8(c.text));
@@ -3442,6 +3549,7 @@ void AptMenuPlayer::drawCanvas(const AptCanvasList &list)
 				{
 					break;
 				}
+				font = m->cellFont(font, px); // lane UI-6: RotWK's GDI cell (the string height PlaceAptText centres, the baseline in it)
 				HorizontalAlignment align = HORIZONTAL_ALIGNMENT_LEFT;
 				switch (op.alignment)
 				{
@@ -3648,6 +3756,7 @@ void AptMenuPlayer::drawStillLoadScreen()
 		return;
 	}
 	const int px = std::max(1, (int)std::lround(drawSize * map.uniformScale()));
+	font = m->cellFont(font, px); // lane UI-6: the top at y, the baseline in RotWK's GDI cell
 	const String text = toGodot(u16ToUtf8(label));
 	const Vector2 size = font->get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, px);
 	const Vector2 at = toWindow(m->stillLoad.textX, m->stillLoad.textY);
@@ -3775,6 +3884,7 @@ void AptMenuPlayer::drawGadgets(const GadgetDrawList &commands)
 					break;
 				}
 				const int px = std::max(1, (int)std::lround(drawSize * k));
+				font = m->cellFont(font, px); // lane UI-6: the gadgets measured the string with the same cell (ShellFontMetrics)
 				const Vector2 at = toWindow((float)c.x0, (float)c.y0);
 				const Vector2 base = at + Vector2(0, font->get_ascent(px));
 				const String text = toGodot(u16ToUtf8(c.text));
@@ -4019,6 +4129,14 @@ Dictionary AptMenuPlayer::find_button(int level, const String &path)
 		}
 	}
 	r["hidden_by"] = hidden;
+	// the input's own state (lane SPELL-3: a store click that never reaches its button): the current button, the pressed flag, the Apt's pointer
+	const AptButtonInst *cur = m->A()->input().currentButton();
+	r["current_button"] = cur ? toGodot(cur->targetPath()) : String();
+	r["mouse_down"] = m->A()->input().mouseDown();
+	float mx = 0.0f, my = 0.0f;
+	m->A()->mousePosition(mx, my);
+	r["apt_mouse_x"] = mx;
+	r["apt_mouse_y"] = my;
 	return r;
 }
 
@@ -4470,6 +4588,11 @@ void AptMenuPlayer::set_input_forwarded(bool forwarded)
 Ref<Font> AptMenuPlayer::font_for(const std::string &name, float size, float *drawSize)
 {
 	return m->fontFor(name, size, drawSize);
+}
+
+Ref<Font> AptMenuPlayer::font_cell(const Ref<Font> &font, int px)
+{
+	return m->cellFont(font, px);
 }
 
 void AptMenuPlayer::set_native_hook(AptNativeHook *hook)

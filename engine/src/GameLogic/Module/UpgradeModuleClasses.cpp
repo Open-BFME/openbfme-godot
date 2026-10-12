@@ -680,8 +680,8 @@ std::vector<std::string> UpgradeModuleClasses::stopLines()
 	return {
 		"[S-480] upgrade module classes: the UpgradeMux and StatusBits / ModelCondition / Armor / WeaponSet / CommandSet / SubObjects / RemoveUpgrade / CommandPoints / "
 		"CostModifier upgrades and GrantUpgradeCreate run; LevelUpUpgrade and ExperienceScalarUpgrade (lane XP-1) run; every other upgrade class the binary registers (AttributeModifierUpgrade, "
-		"UnpauseSpecialPowerUpgrade, GeometryUpgrade, ObjectCreationUpgrade, ReplaceSelfUpgrade, MaxHealthUpgrade, LocomotorSetUpgrade, "
-		"DoCommandUpgrade, CastleUpgrade, ...) and InheritUpgradeCreate / UpgradeDie are UnportedModules (S-140): a granted upgrade does nothing through them; " +
+		"UnpauseSpecialPowerUpgrade, GeometryUpgrade, MaxHealthUpgrade, LocomotorSetUpgrade, "
+		"DoCommandUpgrade, ...; CastleUpgrade, ObjectCreationUpgrade and ReplaceSelfUpgrade run since lane FACT-A) and InheritUpgradeCreate / UpgradeDie are UnportedModules (S-140): a granted upgrade does nothing through them; " +
 			std::to_string(unknownUpgradeNames().size()) + " unknown upgrade names met at run time (RW's debug messages)",
 		"[S-481] upgrade Eva events: the gain / lose events of Player::addUpgrade / removeUpgrade (RW 0x6AE483, 0x6AE546 -> TheEva RW 0x5DD9EE) are counted per player "
 		"(Player::upgradeEvaEventsNotPlayed), not played",

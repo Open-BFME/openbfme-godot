@@ -37,6 +37,7 @@
 #include "GameNetwork/GameInfo.h"
 
 #include <cstdint>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -118,6 +119,12 @@ public:
 	virtual bool add(const std::u16string &name) = 0;   // false: empty or a duplicate (compared without case)
 	virtual bool remove(const std::u16string &name) = 0;
 	virtual bool setCurrent(const std::u16string &name) = 0;
+	// lane UI-6: the current profile's own entries (SkirmishPreferences ":<mode>:<profile>:<name>", RW 0x821AB4 / 0x821B89): the lobby's kept game ("Map",
+	// "GameInfo", "HeroIndexes"). `mode` is the lobby's (AptSkirmish + 0x304: 0 skirmish, 1 War of the Ring); "" when there is no such entry or profile
+	virtual std::string profileValue(int mode, const std::string &name) const = 0;
+	virtual void setProfileValue(int mode, const std::string &name, const std::string &value) = 0;
+	// writes what changed (RW 0x927FEF: the preferences' write after the game is kept); nothing for a store without a file
+	virtual void flush() = 0;
 };
 
 class MemorySkirmishProfiles : public SkirmishProfileStore
@@ -128,9 +135,13 @@ public:
 	bool add(const std::u16string &name) override;
 	bool remove(const std::u16string &name) override;
 	bool setCurrent(const std::u16string &name) override;
+	std::string profileValue(int mode, const std::string &name) const override;
+	void setProfileValue(int mode, const std::string &name, const std::string &value) override;
+	void flush() override {}
 
 private:
 	int find(const std::u16string &name) const;
 	std::vector<std::u16string> m_names;
 	std::u16string m_current;
+	std::map<std::pair<std::u16string, std::string>, std::string> m_values; // (profile, ":<mode>:<name>") -> value
 };

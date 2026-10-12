@@ -5,6 +5,7 @@
 // recording of a network game plays back in a third process with matching hashes. SKIP loudly without ROTWK_INSTALL / BFME2_INSTALL.
 
 #include "doctest.h"
+#include "GameLogic/Map/TerrainTrees.h"
 
 #include "StartTestUtil.h"
 
@@ -521,6 +522,144 @@ TEST_CASE("net retail (SPELL-2): a recorded skirmish whose human buys and casts 
 		g.game->setFrameDriver(nullptr);
 	}
 	std::remove(path.c_str());
+}
+
+// lane SPELL-3 (review r1): the three powers whose state is new (Flood's members, Devastation's trees, the summoned citadel's timed unpack) cast through the command
+// path in a recorded skirmish; the recording plays back with every frame's hash equal. The skirmish AI's science purchases are not ported (lane AIPOW-1), so the
+// AI-vs-AI pins never cast them: this is their determinism coverage.
+void spell3CastRun(starttest::Shared &s, const char *faction, const char *power, std::uint32_t seed)
+{
+	const int kFrames = 300;
+	const std::string path = std::string("spell3_") + power + ".replay";
+	NewGameMessage message = gameMessage(s, seed);
+	message.game.slots[0].playerTemplate = templateIndex(s.world->playerTemplates(), faction);
+	const SpecialPowerTemplate *t = TheSpecialPowerStore->findSpecialPowerTemplate(power);
+	REQUIRE(t);
+	// the sciences, granted as a harness step before frame 1 in both runs (a game earns them by rank; the store's purchase is tested elsewhere)
+	auto grant = [t](LiveGame &game) {
+		Player *h = humanOf(game.logic());
+		REQUIRE(h);
+		for (ScienceType st : t->getRequiredSciences())
+		{
+			h->science().grantScience(st);
+		}
+	};
+	auto aimOf = [power](GameLogic &logic, Player &human) {
+		Coord3D base{ 0, 0, 0 };
+		for (Object *o = logic.getFirstObject(); o; o = o->getNextObject())
+		{
+			if (o->getControllingPlayer() == &human && o->isKindOfName("COMMANDCENTER"))
+			{
+				base = *o->getPosition();
+				break;
+			}
+		}
+		Coord3D aim{ base.x + 250.0f, base.y + 250.0f, 0.0f };
+		if (std::string(power) == "SpellBookDevastation")
+		{
+			// the harvestable map tree nearest the base
+			float best = 0.0f;
+			bool any = false;
+			for (const TerrainTrees::Record &r : logic.trees().records())
+			{
+				const float dx = r.position.x - base.x, dy = r.position.y - base.y, d = dx * dx + dy * dy;
+				if (r.clientId != 0 && r.harvestable && (!any || d < best))
+				{
+					best = d;
+					any = true;
+					aim = r.position;
+				}
+			}
+			REQUIRE(any);
+		}
+		aim.z = logic.getGroundHeight(aim.x, aim.y);
+		return aim;
+	};
+	auto cast = [&](LiveGame &game, CommandList &out) {
+		if (game.frame() != 10)
+		{
+			return;
+		}
+		Player *h = humanOf(game.logic());
+		Object *book = SpecialPowerModules::findSpellBookObject(game.logic(), *h);
+		REQUIRE(book);
+		GameMessage c(MSG_DO_SPECIAL_POWER_AT_LOCATION, h->getPlayerIndex());
+		c.appendIntegerArgument((int)t->getID());
+		c.appendLocationArgument(aimOf(game.logic(), *h));
+		c.appendObjectIDArgument(INVALID_ID);
+		c.appendIntegerArgument(0);
+		c.appendObjectIDArgument(book->getID());
+		out.append(c);
+	};
+	std::uint32_t recordedFinal = 0;
+	std::map<std::string, int> seen; // the effect's objects / tree changes during the recording
+	{
+		Loaded g;
+		load(s, message, g);
+		grant(*g.game);
+		ReplayWriter writer;
+		ReplayHeader h;
+		h.game = message;
+		h.recordingSlot = 0;
+		std::string error;
+		REQUIRE_MESSAGE(writer.open(path, h, &error), error);
+		LockstepDriver driver(nullptr, &writer);
+		g.game->setFrameDriver(&driver);
+		for (int i = 0; i < kFrames; ++i)
+		{
+			cast(*g.game, g.game->commands());
+			REQUIRE(g.game->advance(0.2) == 1);
+			GameLogic &logic = g.game->logic();
+			for (Object *o = logic.getFirstObject(); o; o = o->getNextObject())
+			{
+				const std::string &n = o->getTemplate()->getName();
+				if (n == "FloodHorse" || n == "DwarvenSummonedCitadelKeep")
+				{
+					seen[n] = 1;
+				}
+			}
+			if (logic.trees().anyChanged())
+			{
+				seen["trees changed"] = 1;
+			}
+		}
+		recordedFinal = g.game->logic().computeStateHash();
+		writer.close(g.game->frame(), recordedFinal);
+		CHECK(writer.errors().empty());
+		g.game->setFrameDriver(nullptr);
+	}
+	const std::string want = std::string(power) == "SpellBookFlood" ? "FloodHorse" : std::string(power) == "SpellBookCitadel" ? "DwarvenSummonedCitadelKeep" : "trees changed";
+	INFO(std::string(faction) << " " << std::string(power));
+	CHECK(seen.count(want) == 1u); // the power's own effect happened in the recorded game
+	ReplayFile replay;
+	std::string error;
+	REQUIRE_MESSAGE(ReplayFile::load(path, replay, &error), error);
+	{
+		Loaded g;
+		load(s, replay.header.game, g);
+		grant(*g.game);
+		ReplayPlayback playback(replay);
+		RegisterLogicCRCHandler(g.game->dispatch());
+		g.game->setFrameDriver(&playback);
+		while (!playback.finished(g.game->logic()))
+		{
+			g.game->advance(0.2);
+		}
+		CHECK(playback.hashesCompared() == (unsigned long long)kFrames);
+		CHECK_FALSE(playback.hasMismatch());
+		CHECK(g.game->logic().computeStateHash() == recordedFinal);
+		g.game->setFrameDriver(nullptr);
+	}
+	std::remove(path.c_str());
+	MESSAGE("SPELL-3 replay: " << std::string(faction) << " " << std::string(power) << ": " << want << " seen, " << kFrames << " frame hashes equal on playback");
+}
+
+TEST_CASE("net retail (SPELL-3): recorded skirmishes casting Flood, Devastation and the Citadel play back with every frame's hash equal")
+{
+	OPENBFME_REQUIRE_START(s);
+	spell3CastRun(*s, "FactionElves", "SpellBookFlood", 911u);
+	spell3CastRun(*s, "FactionIsengard", "SpellBookDevastation", 912u);
+	spell3CastRun(*s, "FactionDwarves", "SpellBookCitadel", 913u);
 }
 
 #ifdef OPENBFME_PEER_EXE

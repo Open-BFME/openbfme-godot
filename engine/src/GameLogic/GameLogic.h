@@ -82,8 +82,10 @@ class ExperienceWorld;
 class CreateAHeroGame;
 class GlobalWeatherSystem;
 class VictoryConditions;
+class BuildAssistantSell;
 class InvisibilityManager;
 class DOTManager;
+class TerrainTrees;
 class SkirmishAIManager;
 class ShroudManager;
 class PartitionManager;
@@ -151,6 +153,9 @@ struct GameLogicSettings
 	// lane BUILD-3 (GameData, RW GlobalData + 0x11E4): BuilderMoveFromNewStructureDistance, the walk of a porter out of the structure it built (RW 0x88D6AE); loaded when a block read it
 	bool builderMoveLoaded = false;
 	float builderMoveFromNewStructureDistance = 0.0f;
+	// lane FACT-A (GameData SellPercentage, RW GlobalData + 0xB94): a sold structure's refund share (BuildAssistant::update RW 0x79468B); loaded when a block read it
+	bool sellPercentageLoaded = false;
+	float sellPercentage = 0.0f;
 	// lane COMBAT-2 (GameData): Gravity (per frame^2, negative) for the structure collapse and DefaultStructureRubbleHeight for a structure that reaches the rubble state; structureRulesLoaded is true
 	// when the loader read both (a collapse or a rubble state without them is reported)
 	bool structureRulesLoaded = false;
@@ -273,6 +278,7 @@ public:
 	CombatState &combat() { return *m_combat; }
 	// lane COMBAT-2: the skirmish win / lose rules (init() after the players and their bases exist; update() runs in the logic frame's first phase)
 	VictoryConditions &victory() { return *m_victory; }
+	BuildAssistantSell &sellList() { return *m_sell; } // lane FACT-A: TheBuildAssistant's sell list (RW 0x7966BB / 0x79468B)
 	const VictoryConditions &victory() const { return *m_victory; }
 	// lane AI-1: TheSkirmishAIManager (newGame after the starting bases; update() runs in phase 5 after the destroy list)
 	SkirmishAIManager &skirmishAI() { return *m_skirmishAI; }
@@ -295,6 +301,9 @@ public:
 	// lane DECOMP-1: TheGameLogic + 0x174, the DOTManager (DOTNugget's damage over time; update in phase 1 after the weather, RW 0x62E8CF)
 	DOTManager &dot() { return *m_dot; }
 	const DOTManager &dot() const { return *m_dot; }
+	// lane SPELL-3: TheTerrainLogic + 0x578, the map's optimized trees (GameLogic/Map/TerrainTrees.h); filled by MapObjectLoop, hashed once a tree changed
+	TerrainTrees &trees() { return *m_trees; }
+	const TerrainTrees &trees() const { return *m_trees; }
 	const CombatState &combat() const { return *m_combat; }
 	const GameLogicSettings &settings() const { return m_settings; }
 	void setClientHooks(ObjectClientHooks *hooks) { m_clientHooks = hooks; }
@@ -624,12 +633,14 @@ private:
 	FXEventLog m_fxEvents; // lane FX-2 (not hashed)
 	LargeGroupAudioLink m_largeGroupAudio; // lane AUDIO-4
 	std::unique_ptr<VictoryConditions> m_victory;
+	std::unique_ptr<BuildAssistantSell> m_sell; // lane FACT-A
 	std::unique_ptr<SkirmishAIManager> m_skirmishAI;
 	std::unique_ptr<ExperienceWorld> m_experience; // lane XP-1
 	std::unique_ptr<CreateAHeroGame> m_createAHeroes; // lane HERO-2
 	std::unique_ptr<GlobalWeatherSystem> m_weather; // lane SPELL-2
 	std::unique_ptr<InvisibilityManager> m_invisibility; // lane STEALTH-1
 	std::unique_ptr<DOTManager> m_dot;                   // lane DECOMP-1
+	std::unique_ptr<TerrainTrees> m_trees;               // lane SPELL-3
 	std::unique_ptr<ScriptEngine> m_scriptEngine;        // lane SCRIPT-1
 	CastleTemplateStore m_castleTemplates;
 	std::set<std::string> m_notedStops;

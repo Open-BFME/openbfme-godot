@@ -129,6 +129,8 @@ public:
 private:
 	ButtonState evaluate(const CommandButton &b, Object &obj);
 	static const SpecialPowerTemplate *specialPowerOf(const CommandButton &b);
+	// lane FACT-C: the castle object of a castle member (its CastleMemberBehavior's castle id, module + 0x18; RW 0x943140 .. 0x94318E), or null
+	static Object *castleOfMember(Object &obj);
 	std::string heroRecordImage(const HeroRecord &r, const Player &player);
 	bool reviveButton(ControlBarButton &cb, int n, Player &player, Object &producer);
 	// lane UI-1: the riders on the EXIT_CONTAINER buttons of the object's command set (RW 0x94251F), and the inventory of a garrison without a command set

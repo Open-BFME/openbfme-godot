@@ -119,6 +119,31 @@ void Player::init(const PlayerTemplate *pt, std::uint32_t defaultStartingCash)
 			m_money = Money(defaultStartingCash);
 			m_money.setPlayerIndex(m_index);
 		}
+		// lane FACT-B: RW 0x6B0738 -> RW 0x6AFC92 Player::initPlayerUpgrades (tier A, BFME2 decomp PlayerRva002AF19B.cpp): every InitialUpgrades name
+		// (template + 0x180, in order) that TheUpgradeCenter knows (RW 0x66F5E5; an unknown name is skipped) is added COMPLETE, not silent
+		// (RW 0x6AEE22(upgrade, 2, 0)). Upgrade_IsengardFaction / Upgrade_MordorFaction / ... and the dual economy choices are what modules such
+		// as the ring hero's RemoveUpgradeUpgrade are triggered by. addUpgrade's steps are taken here without its object pass (RW 0x6AE483 visits the
+		// player's objects: a player being made has none, and the economy host that walks them is attached later in this port)
+		for (const std::string &name : pt->m_initialUpgrades)
+		{
+			const UpgradeTemplate *u = resolveUpgrade(name, false);
+			if (!u || u->getMaskBit() < 0)
+			{
+				continue;
+			}
+			bool listed = false; // RW 0x6AAA52: an upgrade named twice keeps its one record
+			for (UpgradeRecord &r : m_upgradeRecords)
+			{
+				listed = listed || r.upgrade == u;
+				r.status = r.upgrade == u ? UPGRADE_STATUS_COMPLETE : r.status;
+			}
+			if (!listed)
+			{
+				m_upgradeRecords.insert(m_upgradeRecords.begin(), UpgradeRecord{ u, UPGRADE_STATUS_COMPLETE }); // RW 0x6AEE6E: linked at the head
+			}
+			m_upgradesCompleted.set((unsigned)u->getMaskBit());
+			++m_upgradeEvaNotPlayed; // not silent (RW 0x6AE4CA)
+		}
 	}
 }
 

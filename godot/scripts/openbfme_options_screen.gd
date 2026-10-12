@@ -36,6 +36,8 @@ const ROTATE_ITEMS := [["50", "50%"], ["75", "75%"], ["100", "100% (original)"],
 const ZOOM_ITEMS := [["no", "Off"], ["yes", "On: up to the map's size"]]
 ## lane ZOOM-1: the Max zoom-out (OpenBFMEMaxZoomOut): times the original game's highest camera
 const MAX_ZOOM_ITEMS := [["1", "Original (1x)"], ["1.5", "1.5x"], ["2", "2x"], ["2.5", "2.5x"], ["3", "3x"]]
+## lane UI-6: the Widescreen view (OpenBFMEWidescreen)
+const WIDESCREEN_ITEMS := [["original", "Original"], ["wider", "Wider"]]
 const BARS_ITEMS := [["retail", "Selected (original)"], ["damaged", "Selected and damaged"], ["always", "Always (all players)"]]
 
 var shell: Node2D                  # the AptMenuPlayer
@@ -376,6 +378,9 @@ func _display_rows() -> Array:
 	var scaler_help := "How a render scale below 100% is scaled up. "
 	scaler_help += "At 100% the scaler does nothing (FSR 2 still smooths edges)." if p.render_scale >= 0.999 else "FSR keeps more detail than bilinear."
 	rows.append(_choice("scaler", "Upscaling", scalers, DisplaySettings.SCALERS.find(p.scaler), scaler_help))
+	# lane UI-6: the Widescreen view (Options.ini, applied to the game's camera at once)
+	rows.append(_extra_choice("OpenBFMEWidescreen", "Widescreen view", WIDESCREEN_ITEMS,
+		"Original: the original game's view, which shows less from top to bottom on screens wider than 4:3. Wider: the 4:3 view from top to bottom, more to the sides."))
 	return rows
 
 

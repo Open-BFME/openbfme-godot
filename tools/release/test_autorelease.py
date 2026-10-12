@@ -597,6 +597,27 @@ def test_windows_start_needs_exit_0(tmp_path, rc, ok):
     assert run("bash", HERE / "windows_start_check.sh", log, 0, 4657).returncode != 0
 
 
+# ---- the Windows help box run (lane BUGS-1: Devlog #4's help box over a barracks bubble drew no text) ------------------------------------
+HUD6_OK = ('HUD6 barracks (bubble Command_ConstructGondorFighterHorde): {"calls":["Show(69.688889)"],"draws":284,"name":"Gondor Soldiers",'
+           '"shown":true,"state":3,"text_ops":5,"width":481}\nHUD6 barracks: ok\nHUD6 RESULT: 2 ok, 0 failed\n')
+
+
+@pytest.mark.parametrize("rc,text,ok", [
+    (0, HUD6_OK, True),
+    (124, HUD6_OK, False),                                                     # a timeout
+    (0, HUD6_OK.replace('"text_ops":5', '"text_ops":0'), False),               # the frame without text
+    (0, HUD6_OK.replace('"name":"Gondor Soldiers"', '"name":""'), False),      # no help
+    (0, HUD6_OK.replace("2 ok, 0 failed", "1 ok, 1 failed"), False),
+    (0, HUD6_OK.replace("HUD6 barracks: ok", "HUD6 barracks: FAIL the help box drew no text"), False),
+    (0, "", False),
+])
+def test_windows_hud6_check(tmp_path, rc, text, ok):
+    log = tmp_path / "hud6.log"
+    log.write_text(text)
+    r = run("bash", HERE / "windows_hud6_check.sh", log, rc)
+    assert (r.returncode == 0) == ok, r.stdout
+
+
 # ---- record_gate.sh ---------------------------------------------------------------------------------------------------------------------
 def gate_log(logs: Path, name: str, lines: list[str]) -> None:
     logs.mkdir(exist_ok=True)

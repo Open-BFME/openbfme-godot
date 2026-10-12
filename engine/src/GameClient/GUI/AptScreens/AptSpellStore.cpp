@@ -61,7 +61,10 @@ AptSpellStore::AptSpellStore(WindowManager &windows, Shell &shell) : AptScreen(w
 		}
 	});
 	registerCommand("AptSpellStore::OnBttnReset", [this](const std::string &) { reset(); }); // RW 0x823484
-	registerCommand("AptSpellStore::OnBttnSpell", [this](const std::string &arg) { click(spellIndex(arg)); }); // RW 0x8235A5
+	registerCommand("AptSpellStore::OnBttnSpell", [this](const std::string &arg) { // RW 0x8235A5
+		m_lastSpellArg = arg;
+		click(spellIndex(arg));
+	});
 	registerCommand("AptSpellStore::OnRollOverBttnSpell", [this](const std::string &arg) { rollOver(spellIndex(arg)); }); // RW 0x82292E
 	registerCommand("AptSpellStore::OnRollOutBttnSpell", [this](const std::string &arg) { rollOut(spellIndex(arg)); });   // RW 0x822954
 	// RW 0x822974: the extern InputEnabled answers true outside a paused campaign (the game kind 6 / shell + 0x16 test: a skirmish answers true)

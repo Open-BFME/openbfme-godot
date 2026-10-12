@@ -2,6 +2,7 @@
 // See GameClient/GUI/AptScreens/AptSkirmish.h.
 
 #include "GameClient/GUI/AptScreens/AptSkirmish.h"
+#include "GameClient/GUI/Skirmish/SkirmishGameRecord.h"
 
 #include "GameClient/GUI/AptMessageBox.h"
 #include "Common/AsciiString.h"
@@ -16,6 +17,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <cstdlib>
 #include <iterator>
 #include <cctype>
 #include <set>
@@ -219,6 +221,10 @@ AptSkirmish::AptSkirmish(WindowManager &windows, Shell &shell, ShellEnvironment 
 			windows.note("skirmish-setup-failed", m_error);
 			m_setup.reset();
 		}
+		else if (!lan)
+		{
+			restoreGame(0); // lane UI-6: a skirmish lobby (mode 0) until the movie says Strategic (setGameMapType)
+		}
 	}
 	// lane UI-2: the map window's inferences (GadgetMapPreview.cpp, AptSkirmish::updateCurrentMapWindow)
 	windows.note("map-preview-inferences", "[S-1480] map window: the preview file is read where it is mounted (retail copies it to MapPreviews first), its image name is the path with '\\' and ':' as '_', start spots are shown in the skirmish lobby only (TheGameLogic + 0x114 == 3 taken as the screen kind) and enabled, an APT gadget's parent is its owner; a start-spot click is handled as RW 0x845830 (FB7-1, S-1915)");
@@ -358,12 +364,23 @@ bool AptSkirmish::addProfileFromEntry()
 	}
 	// the handler trims and rejects an empty or duplicate name on its own: the button's enabled state is only "the raw text is not empty"
 	const std::u16string name = trimU16(GadgetTextEntryGetText(m_profileEntry));
+	const std::u16string previous = m_profiles->current();
 	if (!m_profiles->add(name))
 	{
 		windows().note("profile-rejected", name.empty() ? "an empty profile name" : "a profile of that name exists: " + u16ToUtf8(name));
 		return false;
 	}
+	// lane UI-6 review: a new profile becomes the current one as a profile change does (RW 0x9293F5): the outgoing profile keeps its game first, and the
+	// lobby is set up again for the new one (it has no kept game: the defaults)
+	if (!previous.empty())
+	{
+		keepGame();
+	}
 	m_profiles->setCurrent(name);
+	if (!previous.empty())
+	{
+		reloadGameForProfile();
+	}
 	GadgetTextEntrySetText(m_profileEntry, std::u16string());
 	applyProfileName();
 	refreshProfileList();
@@ -384,10 +401,165 @@ bool AptSkirmish::changeProfileFromList()
 		windows().note("profile-rejected", "a profile change with no profile selected");
 		return false;
 	}
-	m_profiles->setCurrent(GadgetListBoxGetText(m_profileList, selected, 0));
+	const std::u16string name = GadgetListBoxGetText(m_profileList, selected, 0);
+	// lane UI-6: RW 0x9293F5 (BFME2 decomp AptSkirmishCallbacks.cpp OnChangeProfile): another profile keeps the current one's game first (RW 0x929440),
+	// and its own game is set up again (state 5: InitTheGame, RW 0x9288D0)
+	const bool other = name != m_profiles->current();
+	if (other)
+	{
+		keepGame();
+	}
+	m_profiles->setCurrent(name);
+	if (other)
+	{
+		reloadGameForProfile();
+	}
 	applyProfileName();
 	refreshProfileList();
 	return true;
+}
+
+void AptSkirmish::restoreGame(int mode)
+{
+	// RW 0x9288D0 at 0x9289AD: SkirmishPreferences' record (RW 0x821C29: HeroIndexes, then ParseAsciiStringToGameInfo of GameInfo); a record that does not
+	// parse leaves the defaults (the function's false), as does one this lobby cannot use (S-3701)
+	m_restoredGame.clear();
+	if (!m_setup || !m_env.skirmish || !m_env.newGame)
+	{
+		return;
+	}
+	const std::string record = m_profiles->profileValue(mode, "GameInfo");
+	if (record.empty())
+	{
+		return;
+	}
+	SkirmishGameRecordLimits limits;
+	limits.numColors = (int)m_env.skirmish->colors().size();
+	limits.numTemplates = (int)m_env.skirmish->factions().size();
+	SkirmishGameInfo saved;
+	int savedMode = 0;
+	std::string error;
+	if (!ParseSkirmishGameInfo(record, limits, saved, &savedMode, &error))
+	{
+		windows().note("skirmish-kept-game", "[S-3701] the profile's kept game does not parse (" + error + "): the lobby starts from the defaults");
+		return;
+	}
+	std::string map = m_profiles->profileValue(mode, "Map");
+	for (char &c : map)
+	{
+		c = c == '\\' ? '/' : (c >= 'A' && c <= 'Z' ? (char)(c - 'A' + 'a') : c);
+	}
+	if (!m_setup->restoreSaved(saved, map, m_env.newGame->newGameSeed(), &error))
+	{
+		windows().note("skirmish-kept-game", "[S-3701] " + error + ": the lobby starts from the defaults");
+		return;
+	}
+	m_restoredGame = record;
+	restoreExtensions(mode);
+	windows().note("skirmish-kept-game", "[S-3701] the lobby began from the profile's kept game; not kept: handicap and the War of the Ring scenario (written as "
+										 "retail's empty values); OpenBFME's Legendary Heroes and the Create-a-Hero choices are kept in keys of their own");
+}
+
+void AptSkirmish::reloadGameForProfile()
+{
+	// lane UI-6: AptSkirmish::InitTheGame again (state 5, RW 0x9288D0) for the profile now current: the defaults, then its kept game
+	m_slotHero.fill(-1);
+	if (m_lan || !m_setup || !m_env.newGame)
+	{
+		return;
+	}
+	std::string error;
+	if (!m_setup->init(playerName(), m_env.newGame->newGameSeed(), std::string(), &error))
+	{
+		windows().note("skirmish-setup-failed", error);
+		return;
+	}
+	restoreGame(m_strategic ? 1 : 0);
+	refreshLobby();
+}
+
+// OpenBFME's own entries beside RotWK's record (not retail: RotWK's GameInfo text stays as retail writes it)
+static const char *const kLegendaryKey = "OpenBFMELegendaryHeroes"; // the Legendary Heroes factor, 1 .. 4
+static const char *const kHeroesKey = "OpenBFMEHeroes";             // per slot: "-" none, "random", or the hero's unique id; ',' between slots
+
+void AptSkirmish::restoreExtensions(int mode)
+{
+	const std::string legendary = m_profiles->profileValue(mode, kLegendaryKey);
+	if (!legendary.empty() && !m_setup->setLegendaryHeroes(std::atoi(legendary.c_str())))
+	{
+		windows().note("skirmish-kept-game", "the kept Legendary Heroes factor '" + legendary + "' is not offered: Off");
+	}
+	const std::string heroes = m_profiles->profileValue(mode, kHeroesKey);
+	const CreateAHeroHeroList *list = m_env.createAHero ? m_env.createAHero->heroes : nullptr;
+	std::size_t at = 0;
+	for (int slot = 0; slot < MAX_SLOTS && at < heroes.size(); ++slot)
+	{
+		const std::size_t end = heroes.find(',', at);
+		const std::string id = heroes.substr(at, end == std::string::npos ? std::string::npos : end - at);
+		at = end == std::string::npos ? heroes.size() : end + 1;
+		if (id.empty() || id == "-" || !m_setup->info().customHeroesAllowed())
+		{
+			continue;
+		}
+		if (id == "random")
+		{
+			m_slotHero[(size_t)slot] = -2;
+			continue;
+		}
+		const int index = list ? list->findByUniqueID(id) : -1;
+		const CreateAHeroListEntry *e = list ? list->at(index) : nullptr;
+		if (!e || !heroUsable(slot, e->hero))
+		{
+			windows().note("skirmish-kept-game", "slot " + std::to_string(slot) + ": the kept hero '" + id + "' is not in the hero list or not usable: none");
+			continue;
+		}
+		if (applySlotHero(slot, &e->hero))
+		{
+			m_slotHero[(size_t)slot] = index;
+		}
+	}
+}
+
+std::string AptSkirmish::extensionHeroes() const
+{
+	const CreateAHeroHeroList *list = m_env.createAHero ? m_env.createAHero->heroes : nullptr;
+	std::string out;
+	for (int slot = 0; slot < MAX_SLOTS; ++slot)
+	{
+		const int v = m_slotHero[(size_t)slot];
+		const CreateAHeroListEntry *e = list ? list->at(v) : nullptr;
+		const std::string id = v == -2 ? "random" : (e && !e->hero.uniqueID.empty() && e->hero.uniqueID.find(',') == std::string::npos) ? e->hero.uniqueID : "-";
+		out += (slot ? "," : "") + id;
+	}
+	return out;
+}
+
+void AptSkirmish::keepGame()
+{
+	// RW 0x821EBD (through RW 0x927FEF / 0x929440): the map ("Map", RW 0x821E55), the game (GameInfoToAsciiString(game, true), RW 0x821D55) and the hero
+	// indexes, under the current profile, then the write
+	if (m_lan || !m_setup || m_profiles->current().empty())
+	{
+		return;
+	}
+	const int mode = m_strategic ? 1 : 0;
+	std::string map = m_setup->info().mapName;
+	for (char &c : map)
+	{
+		c = c == '/' ? '\\' : c;
+	}
+	m_profiles->setProfileValue(mode, "Map", map);
+	m_profiles->setProfileValue(mode, "GameInfo", SkirmishGameInfoToString(m_setup->info(), mode));
+	m_profiles->setProfileValue(mode, "HeroIndexes", SkirmishHeroIndexesString());
+	m_profiles->setProfileValue(mode, kLegendaryKey, std::to_string(m_setup->info().legendaryHeroes)); // lane UI-6 review: OpenBFME's own keys
+	m_profiles->setProfileValue(mode, kHeroesKey, extensionHeroes());
+	m_profiles->flush();
+}
+
+void AptSkirmish::runShutdown(bool *immediate)
+{
+	keepGame(); // lane UI-6: RW 0x927FEF, the screen's teardown slot
+	AptScreen::runShutdown(immediate);
 }
 
 bool AptSkirmish::deleteProfileFromList()
@@ -404,7 +576,15 @@ bool AptSkirmish::deleteProfileFromList()
 		windows().note("profile-rejected", "a profile delete with no profile selected");
 		return false;
 	}
-	m_profiles->remove(GadgetListBoxGetText(m_profileList, selected, 0));
+	const std::u16string name = GadgetListBoxGetText(m_profileList, selected, 0);
+	const bool wasCurrent = name == m_profiles->current();
+	m_profiles->remove(name);
+	// lane UI-6 review: deleting the current profile drops its game with it (BFME2 0x43C2EB) and makes the first remaining profile current: the lobby is
+	// set up again for that one (its kept game), so the screen's teardown keeps the survivor's own game, never the deleted one's
+	if (wasCurrent && !m_profiles->current().empty())
+	{
+		reloadGameForProfile();
+	}
 	applyProfileName();
 	refreshProfileList();
 	return true;
@@ -694,10 +874,15 @@ void AptSkirmish::refreshLobby()
 void AptSkirmish::setGameMapType(const std::string &type)
 {
 	m_gameMapType = type;
+	const bool wasStrategic = m_strategic;
 	m_strategic = type == "Strategic"; // MpGameSetup+0x7C == 1
 	if (m_setup)
 	{
 		m_setup->setStrategicMode(m_strategic);
+		if (m_strategic && !wasStrategic && !m_lan)
+		{
+			restoreGame(1); // lane UI-6: the War of the Ring lobby's kept game (mode 1)
+		}
 	}
 	for (int slot = 0; slot < MAX_SLOTS; ++slot)
 	{

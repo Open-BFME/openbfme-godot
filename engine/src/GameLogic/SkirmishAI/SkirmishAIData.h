@@ -252,8 +252,10 @@ public:
 	static const FieldParse *playerAITypeFields();
 
 	// RW 0x49F474 (TheNameKeyGenerator::nameToKey of an AsciiString): the AI keys its unit maps by name key (creates the key like RW)
-	// lane PERF-1 r2 (S-1080): lookup only; the army members' unit keys are created when their ArmyDefinition loads (NAMEKEY_INVALID for any other name)
-	NameKeyType keyOf(const std::string &name) const { return m_keys.findKey(name); }
+	// lane PERF-1 r2 (S-1080): lookup only; the army members' unit keys and (lane BUGS-1) the HeroBuildOrder names' keys are created when their
+	// ArmyDefinition loads. Any other name has no key: an error, never NAMEKEY_INVALID (all such names would share one key: DECOMP-2's hero factories
+	// all landed on it, so RohanFrodo, whom FactionMen cannot recruit, found the citadel the other heroes registered and the AI stalled on him)
+	NameKeyType keyOf(const std::string &name) const;
 
 	// the loaded data folded into a hash (the AI's decisions read it: two peers must have the same)
 	void crc(StateHasher &h) const;

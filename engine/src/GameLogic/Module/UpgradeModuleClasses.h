@@ -96,7 +96,7 @@ class ArmorUpgradeModuleData : public UpgradeModuleData
 public:
 	bool m_killArmorUpgrade = false;
 	bool m_ignoreArmorUpgrade = false;
-	int m_armorSetFlag = 0;
+	int m_armorSetFlag = 3; // lane FACT-A: the data constructor RW 0x6542BC sets + 0x13C = 3 (PLAYER_UPGRADE): an ArmorUpgrade without ArmorSetFlag (the archers' Heavy Armor) uses it
 	static void buildFieldParse(MultiIniFieldParse &p);
 };
 

@@ -141,8 +141,8 @@ bool SkirmishGameSetup::init(const std::u16string &userName, std::uint32_t seed,
 		s = SkirmishGameSlot();
 	}
 	// lane RULES-1: RotWK's GameInfo::reset leaves the starting money unset (m_54 = -1, RW 0x801AAF): Player::init gives every player the InitialResources
-	// rule instead (RW 0x6B0578); AptSkirmish::InitTheGame (RW 0x9288D0) copies the mode's default rules into the game (no saved skirmish preferences:
-	// OpenBFME keeps none, S-3602)
+	// rule instead (RW 0x6B0578); AptSkirmish::InitTheGame (RW 0x9288D0) copies the mode's default rules into the game when the profile has no kept game
+	// (lane UI-6: restoreSaved takes the kept one's)
 	m_info.startingCash = -1;
 	m_info.rules = MpGameRules::defaults(rulesMode());
 	m_info.legendaryHeroes = LegendaryHeroes::kOff;
@@ -161,6 +161,46 @@ bool SkirmishGameSetup::init(const std::u16string &userName, std::uint32_t seed,
 		}
 		return false;
 	}
+	return true;
+}
+
+bool SkirmishGameSetup::restoreSaved(const SkirmishGameInfo &saved, const std::string &preferredMap, std::uint32_t seed, std::string *error)
+{
+	// RW 0x9288D0 (see the header)
+	auto fail = [&](const std::string &why) {
+		if (error)
+		{
+			*error = why;
+		}
+		return false;
+	};
+	const std::string mapName = preferredMap.empty() ? saved.mapName : preferredMap;
+	const MapCacheEntry *md = findMap(mapName);
+	if (!md)
+	{
+		return fail("the kept game's map '" + mapName + "' is not in the map cache");
+	}
+	if (!saved.slots[0].isHuman())
+	{
+		return fail("the kept game's slot 0 is not a human");
+	}
+	SkirmishGameInfo info = m_info;
+	for (int i = 0; i < MAX_SLOTS; ++i)
+	{
+		SkirmishGameSlot slot = saved.slots[i];
+		if (!slot.isHuman())
+		{
+			slot.name = stateText(slot.state); // GameSlot::setState gives a computer, open or closed slot its state's text
+		}
+		info.slots[i] = slot;
+	}
+	info.rules = saved.rules;
+	info.seed = seed;
+	info.mapName = md->name;
+	info.mapCRC = md->fileCRC;
+	info.mapSize = md->fileSize;
+	info.mapMask = m_source.mapContentsMask(*md);
+	m_info = info;
 	return true;
 }
 

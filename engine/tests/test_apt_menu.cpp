@@ -595,3 +595,34 @@ TEST_CASE("fb7 main menu: a button label (multiline, no word wrap, alignment 2) 
 	CHECK(p.y - y0 <= 13.0f);
 	CHECK(p.x == (float)(int)((x1 - x0 - 60.0f) * 0.5f + x0));
 }
+
+TEST_CASE("ui6 retail MainMenu: a nav opens under the pointer and closes when the pointer leaves it (sprite 25: bttn -> _show, the alpha 0 surround -> _close)")
+{
+	// lane UI-6: the surround (frame 9, depth 1, button 22: IdleToOverUp -> GotoLabel _close) covers the stage at alpha 0; RotWK's button hit test
+	// (RW 0xB0E620) has no alpha test, so the pointer off the nav's panel and entries closes it
+	OPENBFME_REQUIRE_RETAIL(mount);
+	MenuFx fx(mount);
+	fx.tick(10);
+	AptCharacterInst *nav = fx.at("SoloPlayNav");
+	REQUIRE(nav);
+	AptButtonInst *open = nullptr;
+	for (AptCharacterInst *k : nav->asSprite()->children())
+	{
+		if (k->asButton())
+		{
+			open = k->asButton();
+			break;
+		}
+	}
+	REQUIRE(open);
+	float x, y;
+	MenuFx::centreOf(*open, x, y);
+	fx.apt->input().postMouseMove(x, y);
+	fx.tick(40);
+	REQUIRE(fx.at("SoloPlayNav.Skirmish") != nullptr); // open, and it stays open while the pointer is on SOLO PLAY
+	CHECK(fx.apt->input().hitTestButtons(512.0f, 200.0f) == MenuFx::firstButton(fx.at("SoloPlayNav"))); // the surround, alpha 0, over the stage
+	fx.apt->input().postMouseMove(512.0f, 200.0f);
+	fx.tick(60);
+	CHECK(fx.at("SoloPlayNav.Skirmish") == nullptr);
+	CHECK(nav->asSprite()->frame == 0); // back on _hide
+}

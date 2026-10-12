@@ -478,7 +478,10 @@ ref, so a tag or branch named like the abbreviation cannot stand in for it.
    reconciles it and resumes that same version from that tag (see *The release intent*). Never delete the tag.
 4. **Build and test** on JonathanPC's WSL through the jpc scripts (their machine-wide slots, niced; JonathanPC lane `autorel-src`),
    from a clean checkout of the tag:
-   - the Linux GDExtension and the Windows DLL (`build_windows.sh --no-export`);
+   - the Linux GDExtension (`build_linux.sh`: with Godot 4.7's own Linux SDK, buildroot `godot-2023.08.x-4`: GCC 13.2 on a glibc 2.28
+     sysroot, run on the host, so it needs GLIBC 2.28 at most and loads wherever Godot 4.7 runs, Ubuntu 20.04+ and Debian 10+: lane DEP-1;
+     package.sh writes the need into the Linux package's VERSION file, `requires GLIBC <x.y>`, and the launcher checks the system's GLIBC
+     against it before Play: lane GLIBC-1) and the Windows DLL (`build_windows.sh --no-export`);
    - `package.sh --platforms linux,windows --windows-dll ...`: game and launchers, the provenance check of both libraries, the
      audits, the self-verification;
    - `test_export.sh` on the Linux package;

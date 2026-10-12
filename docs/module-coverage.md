@@ -182,7 +182,7 @@ The live report's `unported_modules` (objects alive at the end of the run) of ei
 | 82 | SiegeDockingBehavior | Behavior | 33 | 33 | missing |
 | 83 | W3DStreakDraw | Draw | 33 | 41 | missing |
 | 84 | CitadelSlaughterHordeContain | Behavior | 30 | 28 | missing |
-| 85 | ObjectCreationUpgrade | Behavior | 29 | 65 | missing |
+| 85 | ObjectCreationUpgrade | Behavior | 29 | 65 | ported |
 | 86 | WorkerAIUpdate | Behavior | 29 | 19 | ported |
 | 87 | DeletionUpdate | Behavior | 28 | 28 | ported |
 | 88 | RadiateFearUpdate | Behavior | 28 | 14 | ported |
@@ -211,7 +211,7 @@ The live report's `unported_modules` (objects alive at the end of the run) of ei
 | 111 | LargeGroupBonusUpdate | Behavior | 17 | 7 | ported |
 | 112 | PassiveAreaEffectBehavior | Behavior | 17 | 15 | ported |
 | 113 | RebuildHoleBehavior | Behavior | 17 | 2 | missing |
-| 114 | ReplaceSelfUpgrade | Behavior | 17 | 69 | missing |
+| 114 | ReplaceSelfUpgrade | Behavior | 17 | 69 | ported |
 | 115 | RubbleRiseUpdate | Behavior | 17 | 13 | missing |
 | 116 | WallHubBehavior | Behavior | 17 | 23 | ported |
 | 117 | HeroModeSpecialAbilityUpdate | Behavior | 16 | 14 | ported |
@@ -226,7 +226,7 @@ The live report's `unported_modules` (objects alive at the end of the run) of ei
 | 126 | ShipSlowDeathBehavior | Behavior | 12 | 10 | missing |
 | 127 | W3DSailModelDraw | Draw | 12 | 11 | ported |
 | 128 | BloodthirstyUpdate | Behavior | 11 | 5 | missing |
-| 129 | CastleUpgrade | Behavior | 11 | 24 | missing |
+| 129 | CastleUpgrade | Behavior | 11 | 24 | ported |
 | 130 | ClickReactionBehavior | Behavior | 11 | 6 | missing |
 | 131 | GiantBirdAIUpdate | Behavior | 11 | 5 | base AI |
 | 132 | RunOffMapBehavior | Behavior | 11 | 11 | missing |
@@ -248,7 +248,7 @@ The live report's `unported_modules` (objects alive at the end of the run) of ei
 | 148 | UntamedAllegianceSpecialPower | Behavior | 7 | 2 | ported |
 | 149 | W3DQuadrupedDraw | Draw | 7 | 3 | ported |
 | 150 | FellBeastSwoopPower | Behavior | 6 | 2 | ported |
-| 151 | FloodUpdate | Behavior | 6 | 6 | missing |
+| 151 | FloodUpdate | Behavior | 6 | 6 | ported |
 | 152 | HeroDie | Behavior | 6 | 3 | ported |
 | 153 | OathbreakersFadeAwayBehavior | Behavior | 6 | 4 | missing |
 | 154 | RepairSpecialPower | Behavior | 6 | 3 | ported |
@@ -261,7 +261,7 @@ The live report's `unported_modules` (objects alive at the end of the run) of ei
 | 161 | ElvenWoodSpecialPower | Behavior | 5 | 1 | ported |
 | 162 | FlingPassengerSpecialAbilityUpdate | Behavior | 5 | 3 | missing |
 | 163 | FreezingRainSpecialPower | Behavior | 5 | 1 | ported |
-| 164 | HordeDispatchSpecialPower | Behavior | 5 | 2 | missing |
+| 164 | HordeDispatchSpecialPower | Behavior | 5 | 2 | ported |
 | 165 | HordeTransportContainDamage | Behavior | 5 | 1 | missing |
 | 166 | PlayerUpgradeSpecialPower | Behavior | 5 | 1 | ported |
 | 167 | ProductionSpeedBonus | Behavior | 5 | 2 | ported |
@@ -342,4 +342,4 @@ The live report's `unported_modules` (objects alive at the end of the run) of ei
 | 242 | TemporarilyDefectUpdate | Behavior | 1 | 1 | ported |
 | 243 | W3DDebrisDraw | Draw | 1 | 1 | missing |
 | 244 | W3DProjectileStreamDraw | Draw | 1 | 1 | missing |
-| 245 | WeaponChangeSpecialPowerModule | Behavior | 1 | 1 | missing |
+| 245 | WeaponChangeSpecialPowerModule | Behavior | 1 | 1 | ported |

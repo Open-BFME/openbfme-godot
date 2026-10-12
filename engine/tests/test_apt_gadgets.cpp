@@ -619,6 +619,47 @@ TEST_CASE("ListBox: entries, selection by click, force select, the wheel, reset 
 	CHECK(sel == -1);
 }
 
+TEST_CASE("ui6 ListBox: a cell's text is centred in its row and placed by the cell's alignment (RW 0x4A25E5 .. 0x4A2642)")
+{
+	// lane UI-6 (GitGut's report: the Game Setup's map names sat at the top of their rows): RotWK's cell draw centres the string in the row,
+	// (row height - text height + 1) / 2, and puts it 5 from the cell's left (alignment 0), 5 from its right (1) or centred (2)
+	GadgetFx fx;
+	GameWindow *lb = fx.load(listboxWnd(200, 200, "LENGTH: 20,\n AUTOSCROLL: 0,\n SCROLLIFATEND: 0,\n AUTOPURGE: 0,\n SCROLLBAR: 0,\n MULTISELECT: 0,\n COLUMNS: 2,\n COLUMNSWIDTH: 20,\n COLUMNSWIDTH: 80,\n FORCESELECT: 0"), 0, 0);
+	const int fontHeight = fx.gwm.winFontHeight(lb->winGetFont()); // the headless metrics: 14 + 4
+	REQUIRE(fontHeight == 18);
+	// row 0: a 30 high image in column 0 makes the row taller than the text; row 1: text only
+	CHECK(GadgetListBoxAddEntryImage(lb, "ListBg", 0, 0, 30, 30) == 0);
+	CHECK(GadgetListBoxAddEntryText(lb, u("Middle"), GameMakeColor(255, 255, 255, 255), 0, 1) == 0);
+	CHECK(GadgetListBoxAddEntryText(lb, u("Plain"), GameMakeColor(255, 255, 255, 255), 1, 1) == 1);
+	CHECK(GadgetListBoxAddEntryText(lb, u("Right"), GameMakeColor(255, 255, 255, 255), 2, 1) == 2);
+	GadgetListBoxSetCellJustification(lb, 2, 1, 1);
+	ListboxData *list = static_cast<ListboxData *>(lb->winGetUserData());
+	const int imageRow = list->listData[0].height; // the image's height and its margin
+	REQUIRE(imageRow > fontHeight + 1);
+	REQUIRE(list->listData[1].height == fontHeight);
+	GadgetDrawList draw;
+	fx.gwm.winRepaint(draw);
+	std::map<std::string, std::pair<int, int>> at;
+	for (const GadgetDrawCommand &c : draw.commands)
+	{
+		if (c.kind == GadgetDrawCommand::Kind::Text)
+		{
+			at[narrow(c.text)] = { c.x0, c.y0 };
+		}
+	}
+	REQUIRE(at.count("Middle") == 1);
+	REQUIRE(at.count("Plain") == 1);
+	REQUIRE(at.count("Right") == 1);
+	const int top1 = at["Plain"].second - (fontHeight - fontHeight + 1) / 2; // row 1's top: the text is at its top (same height)
+	const int top0 = top1 - (imageRow + 1);                                 // row 0 is one row and its separator above
+	CHECK(at["Middle"].second - top0 == (imageRow - fontHeight + 1) / 2);
+	CHECK(at["Middle"].second - top0 > 0);
+	const int column1 = GadgetListBoxGetColumnWidth(lb, 0);
+	CHECK(at["Plain"].first == column1 + TEXT_X_OFFSET);
+	const int width = fx.gwm.winTextWidth(lb->winGetFont(), u("Right"));
+	CHECK(at["Right"].first == column1 + GadgetListBoxGetColumnWidth(lb, 1) - width - TEXT_X_OFFSET);
+}
+
 TEST_CASE("ListBox: a full list with auto purge drops the oldest row; without it the add is refused; the keyboard walks the rows")
 {
 	GadgetFx fx;

@@ -211,6 +211,26 @@ AudioHandle playSoundForObject(const std::string &n, std::uint32_t id, int playe
 	return AHSV_Error;
 }
 
+AudioHandle playSoundAtPositionForPlayer(const std::string &n, const Coord3D &p, int player)
+{
+	AudioManager *mgr = nullptr;
+	switch (route(Binding::Manager, [n, p, player]() { playSoundAtPositionForPlayer(n, p, player); }, &mgr))
+	{
+	case Route::Run:
+	{
+		AudioEventRTS e(n, p);
+		e.setPlayerIndex(player);
+		return mgr->addAudioEvent(e);
+	}
+	case Route::Deferred:
+		return AHSV_Error; // S-814: played on the audio owner at the next idle point
+	case Route::Unbound:
+		break;
+	}
+	g_without.fetch_add(1, std::memory_order_relaxed);
+	return AHSV_Error;
+}
+
 AudioHandle playSoundForDrawable(const std::string &n, std::uint32_t id, int player)
 {
 	AudioManager *mgr = nullptr;

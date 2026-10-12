@@ -34,7 +34,7 @@ func _ready() -> void:
 
 	_build_stage()
 	if not ClassDB.class_exists("RetailFileSystem"):
-		_fail("openbfme extension is not loaded; run build.bat")
+		_fail("openbfme extension is not loaded; " + Release.extension_hint())
 		return
 	_clock = ClassDB.instantiate("LogicClock")
 

@@ -28,10 +28,13 @@
 ##     --hud5=<a,b,...>      (lane HUD-5, with --auto) the owner's first Windows session's items, scripted (scripts/hud5_player.gd: fortress, players, powers,
 ##                           gate, construction, levels); "HUD5 <name>: ok / FAIL", screenshots hud5-<name>.png in --screens
 ##     --hud6=<a,b,...>      (lane HUD-6, with --auto) scripts/hud6_player.gd: radial (the fortress's bubbles), heroes (its hero ring), help (the
-##                           help box over a bubble and over an arc button), sidebar (a builder's framed side bar); hud6-<name>.png in --screens
+##                           help box over a bubble and over an arc button), sidebar (a builder's framed side bar), barracks (lane BUGS-1: the
+##                           help box over a Men barracks' unit bubble keeps its text); hud6-<name>.png in --screens
 ##     --autocast1=<a,...>   (lane AUTOCAST-1, with --auto) scripts/autocast1_player.gd: witchking (a right click on the Witch-king's Morgul Blade
 ##                           button turns its autocast on, the button glows, he casts it at an enemy hero by himself; off again); autocast1-<name>.png
 ##     --start-spot=<n>      (with --auto) slot 0 clicks the lobby's start spot n first (RW 0x845830): e.g. 0 = Player_1_Start, a fortress map's fortress
+##     --spell3=<a,b,...>    (lane SPELL-3, with --auto) scripts/spell3_player.gd: spellbook (buy every power in the store, cast every slot by input);
+##                           "SPELL3 <name>: ok / FAIL", spell3-<faction>-*.png in --screens
 ##     --play1=<a,b,...>     (lane PLAY-1, with --auto) the input-driven scenarios of scripts/play1_player.gd (orders, palantir, powers, camera, explore, dragbox, ghosts,
 ##                           skirmish, tour, tribute): every action is an InputEvent pushed into the viewport; prints PLAY1 lines; with --end the end of the game
 ##                           follows, with --quit the quit menu's Exit to the score screen and its Continue back to the menu
@@ -50,6 +53,11 @@
 ##     --options-shot=FILE   (lane UI-2) open Options from the main menu, save the window to FILE after 2 s and quit (the soft particles box)
 ##     --resize-check[=DIR]  (lane UI-4) resize / maximise the window over the main menu (nav closed and open) and send stray input around the nav
 ##                           entries; exit 0 when no widget state changed (tests/ui4_resize_test.gd; DIR: windowed screenshots)
+##     --ui6-walk[=DIR]      (lane UI-6, scripts/ui6_walk.gd) a tester's menu findings with real input: the main menu, the lobby's map list, the
+##                           Profile nav under the pointer, the lobby kept after the main menu, the power points in the game; DIR: windowed screenshots
+##                           ui6-<step>.png; exit 0 when every step held
+##     --widescreen=V        (lane UI-6) the Widescreen view for this run: original (RotWK's view) or wider (4:3's vertical view, wider to the
+##                           sides); without it Options.ini OpenBFMEWidescreen (default original)
 ##     --menu1-walk[=DIR]    (lane MENU-1, scripts/menu1_walk.gd) the front-end paths with real input (Skirmish's profile prompt, the lobby, its Profile
 ##                           page, Options, LAN, Replays, Create-a-Hero ...): after each step at most one screen's widgets may be visible (the top one),
 ##                           the titles never overprint; DIR: windowed screenshots walk1-<step>.png; exit 0 when every step held
@@ -243,9 +251,12 @@ var _free_camera_flag := false
 ## lane ZOOM-1: --zoom-out=<f> (0 = Options.ini's OpenBFMEMaxZoomOut)
 var _zoom_out_flag := 0.0
 var _zoom_out_error := "" # lane ZOOM-1 r2: a --zoom-out value the option does not take
+## lane UI-6: --widescreen=original|wider ("" = Options.ini's OpenBFMEWidescreen)
+var _widescreen_flag := ""
 ## lane PLAY-1: the input-driven scenarios of scripts/play1_player.gd (--play1=orders,palantir,powers,camera)
 var _play1 := PackedStringArray()
 var _zoom1 := PackedStringArray() # lane ZOOM-1
+var _play_script := "res://scripts/play1_player.gd" # lane SPELL-3: --spell3 runs its scenarios through scripts/spell3_player.gd (PLAY-1's input helpers)
 var _hud5 := PackedStringArray() # lane HUD-5
 var _rules_shot := 0 # lane RULES-1: --rules-shot=<factor>
 var _gamemodes := "" # lane GAMEMODES-1: --gamemodes=battle|sandbox
@@ -293,6 +304,9 @@ var _menu_walk := "" # lane FB7-1: --menu-walk=DIR
 var _menu1_walk := "" # lane MENU-1: --menu1-walk=DIR (scripts/menu1_walk.gd)
 var _menu1_walk_on := false
 var _menu1_runner: RefCounted = null
+var _ui6_walk := "" # lane UI-6: --ui6-walk=DIR (scripts/ui6_walk.gd)
+var _ui6_walk_on := false
+var _ui6_runner: RefCounted = null
 var _menu_walk_only := "" # lane CAH-2 r2: --menu-walk-only=BUTTON (one button, the probe)
 var _menu_walk_drop := "" # lane CAH-2 r2: --menu-walk-drop=ACTION (TEST HOOK: the host ignores that shell request, so the walk must fail)
 var _walk_failures := 0
@@ -368,7 +382,7 @@ var _intro := "auto"            # lane CAMP-2: --intro (on) / --no-intro (off)
 var _intro_check := false       # lane CAMP-2: --intro-check (tests): the start-up movies, then quit
 ## lane MENU-1: the options a player's own start may carry (the launcher's, the display options); any other option makes a scripted run
 const PLAYER_ARG_PREFIXES := ["--fps", "--dev-overlay", "--intro", "--no-intro", "--alternate-mouse", "--classic-mouse", "--free-camera", "--res=",
-	"--vsync=", "--max-fps=", "--movies=", "--zoom-out="] # --zoom-out: ZOOM-1, a player option (PLAYING.md)
+	"--vsync=", "--max-fps=", "--movies=", "--zoom-out=", "--widescreen="] # --zoom-out: ZOOM-1, --widescreen: UI-6, player options (PLAYING.md)
 var _scripted_skirmish_ini := ""
 
 
@@ -470,6 +484,11 @@ func _ready() -> void:
 				_zoom_out_flag = z.to_float()
 			else:
 				_zoom_out_error = "--zoom-out=%s: not a Max zoom-out value (1, 1.5, 2, 2.5 or 3)" % z
+		elif arg.begins_with("--widescreen="):
+			# lane UI-6: the Widescreen view for a run (the option's values only; anything else is refused below)
+			_widescreen_flag = arg.substr(13)
+			if not Array(["original", "wider"]).has(_widescreen_flag):
+				_zoom_out_error = "--widescreen=%s: not a Widescreen view value (original or wider)" % _widescreen_flag
 		elif arg.begins_with("--play1="):
 			_play1 = arg.substr(8).split(",", false)
 		elif arg.begins_with("--zoom1="):
@@ -478,6 +497,9 @@ func _ready() -> void:
 			_rules_shot = int(arg.substr(13))
 		elif arg.begins_with("--gamemodes="):
 			_gamemodes = arg.substr(12)
+		elif arg.begins_with("--spell3="):
+			_play1 = arg.substr(9).split(",", false)
+			_play_script = "res://scripts/spell3_player.gd"
 		elif arg.begins_with("--hud5="):
 			_hud5 = arg.substr(7).split(",", false)
 		elif arg.begins_with("--hud6="):
@@ -630,6 +652,9 @@ func _ready() -> void:
 		elif arg == "--menu1-walk" or arg.begins_with("--menu1-walk="):
 			_menu1_walk = arg.substr(13) if arg.length() > 13 else ""
 			_menu1_walk_on = true
+		elif arg == "--ui6-walk" or arg.begins_with("--ui6-walk="):
+			_ui6_walk = arg.substr(11) if arg.length() > 11 else ""
+			_ui6_walk_on = true
 		elif arg.begins_with("--menu-colours="):
 			_menu_colours = arg.substr(15)
 		elif arg == "--resize-check" or arg.begins_with("--resize-check="):
@@ -766,7 +791,7 @@ func _fail(message: String) -> void:
 
 func _boot() -> void:
 	if not ClassDB.class_exists("AptMenuPlayer") or not ClassDB.class_exists("GameWorld"):
-		_fail("the openbfme extension is not loaded (or too old); run build.bat")
+		_fail("the openbfme extension is not loaded (or too old); " + Release.extension_hint())
 		return
 	_fs = ClassDB.instantiate("RetailFileSystem")
 	# lane RELEASE-1: the environment, the remembered folders, or the first-run screen (scripts/release/release.gd)
@@ -854,6 +879,9 @@ func _boot() -> void:
 	elif _menu1_walk_on:
 		_menu1_runner = load("res://scripts/menu1_walk.gd").new() # lane MENU-1
 		_menu1_runner.run(self, _menu1_walk)
+	elif _ui6_walk_on:
+		_ui6_runner = load("res://scripts/ui6_walk.gd").new() # lane UI-6
+		_ui6_runner.run(self, _ui6_walk)
 	elif _resize_check_on:
 		_run_resize_check()
 	elif not _menu_colours.is_empty():
@@ -1071,7 +1099,7 @@ func _on_shell_screen(filename: String) -> void:
 # The retail audio manager (AUDIO-1): UI sounds, shell and load-screen music; the logic's and drawables' sounds go through AudioApi once it is booted.
 func _boot_audio() -> bool:
 	if not ClassDB.class_exists("GameAudio"):
-		_fail("the openbfme extension has no GameAudio class (too old); run build.bat")
+		_fail("the openbfme extension has no GameAudio class (too old); " + Release.extension_hint())
 		return false
 	_audio = ClassDB.instantiate("GameAudio")
 	_audio.name = "GameAudio"
@@ -1128,7 +1156,7 @@ func _begin_game(message: Dictionary) -> void:
 	_shell.auto_process = false
 	var started := Time.get_ticks_msec()
 	_load_log.clear()
-	var opts := {"progress": Callable(self, "_on_load_progress"), "test_hooks": _end or not _zoom1.is_empty() or _rules_shot > 0 or not _gamemodes.is_empty()} # lane ZOOM-1: the bars scenario hurts some units (logged)
+	var opts := {"progress": Callable(self, "_on_load_progress"), "test_hooks": _end or not _zoom1.is_empty() or _rules_shot > 0 or not _gamemodes.is_empty() or _play_script.ends_with("spell3_player.gd")} # lane ZOOM-1: the bars scenario hurts some units (logged)
 	if _record and _net_state.is_empty():
 		opts["record"] = _last_replay_path() # lane MP-2: every skirmish is recorded
 	var rep: Dictionary = _world.start_new_game(opts)
@@ -1380,8 +1408,10 @@ func _install_hud(rep: Dictionary) -> void:
 	var all_bars = _shell.get_option("AllHealthBars") if _shell != null and _shell.has_method("get_option") else null
 	var zoom_out := _zoom_out_setting()
 	print("GAME max zoom-out: %sx%s" % [str(zoom_out), " (retail)" if zoom_out <= 1.0 else " (OpenBFME option, not retail)"])
+	var wider := _widescreen_setting()
+	print("GAME widescreen view: %s" % ("wider (OpenBFME option, not retail)" if wider else "original"))
 	var r: Dictionary = hud.attach(_fs, _world, _camera, _shell, local, {"alternate_mouse": alternate, "camera_start": camera_start, "free_camera": free_camera,
-		"all_health_bars": all_bars != null and str(all_bars) == "yes", "zoom_out_factor": zoom_out})
+		"all_health_bars": all_bars != null and str(all_bars) == "yes", "zoom_out_factor": zoom_out, "widescreen_wider": wider})
 	print("GAME HUD installed: ok=%s errors=%s" % [r.ok, r.errors])
 	if not r.ok:
 		hud.queue_free()
@@ -1432,6 +1462,16 @@ func _free_camera_setting() -> bool:
 		return true
 	var v = _shell.get_option("OpenBFMEFreeCamera") if _shell != null and _shell.has_method("get_option") else null
 	return v != null and str(v).to_lower() == "yes"
+
+
+## lane UI-6: the Widescreen view (TacticalCamera::setWidescreenView; camera only): --widescreen, else Options.ini OpenBFMEWidescreen
+func _widescreen_setting() -> bool:
+	if not _widescreen_flag.is_empty():
+		return _widescreen_flag == "wider"
+	if _game_options != null:
+		return _game_options._widescreen_wider(_game_options.current())
+	var opts: Dictionary = _shell.get_options() if _shell != null and _shell.has_method("get_options") else {}
+	return str(opts.get("OpenBFMEWidescreen", "original")) == "wider"
 
 
 ## lane ZOOM-1: the Max zoom-out (TacticalCamera::setZoomOutFactor; camera only): --zoom-out, else Options.ini OpenBFMEMaxZoomOut (scripts/game_options.gd)
@@ -1609,9 +1649,9 @@ func _run_auto() -> void:
 		get_tree().quit(0 if zplayer.fail_count == 0 else 1)
 		return
 	if not _play1.is_empty():
-		var script: GDScript = load("res://scripts/play1_player.gd")
+		var script: GDScript = load(_play_script)
 		if script == null or not script.can_instantiate():
-			_fail("scripts/play1_player.gd does not load")
+			_fail("%s does not load" % _play_script)
 			return
 		var player = script.new()
 		await player.run(self, _play1)

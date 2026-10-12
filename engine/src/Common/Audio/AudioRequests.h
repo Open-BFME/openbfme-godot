@@ -19,6 +19,9 @@ namespace AudioApi
 bool reportEva(const std::string &eventName, const Coord3D *position);
 std::uint32_t playSoundForObject(const std::string &eventName, std::uint32_t objectId, int owningPlayerIndex = -1);
 std::uint32_t playSoundForDrawable(const std::string &eventName, std::uint32_t drawableId, int owningPlayerIndex = -1);
+// lane SPELL-3: an event at a world position with the player it belongs to (SpecialPowerModule::aboutToDoSpecialPower RW 0x89713F: the
+// InitiateAtLocationSound, RW 0x6DA67E position, RW 0x66ECE1 player index, TheAudio slot 25)
+std::uint32_t playSoundAtPositionForPlayer(const std::string &eventName, const Coord3D &position, int owningPlayerIndex);
 // true when the event exists (the "Invalid Sound" check of the INI field parsers and Lua's audio lookups)
 bool isValidEvent(const std::string &eventName);
 // the logic's unit voice events (see AudioEntryPoints.h installUnitVoiceHandler)

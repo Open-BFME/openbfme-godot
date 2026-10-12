@@ -14,12 +14,15 @@ set(OPENBFME_SPELL_SOURCES
     # lane SPELL-2
     src/GameLogic/GlobalWeatherSystem.cpp
     src/GameLogic/Module/SpellBookPowers.cpp
-    src/GameLogic/Module/SpellEffectModules.cpp)
+    src/GameLogic/Module/SpellEffectModules.cpp
+    # lane SPELL-3
+    src/GameLogic/Map/TerrainTrees.cpp)
 
 # lane SPELL-2: the spell book screens' engine side (client: sim_policy.json excludes it)
 set(OPENBFME_SPELL_CLIENT_SOURCES
     src/GameClient/SpellBookUI.cpp
-    src/GameClient/GUI/AptScreens/AptSpellStore.cpp)
+    src/GameClient/GUI/AptScreens/AptSpellStore.cpp
+    src/GameClient/TreeTopple.cpp) # lane SPELL-3: the falling trees (client)
 
 set(OPENBFME_SPELL_TESTS
     tests/test_spell_stores.cpp
@@ -29,4 +32,5 @@ set(OPENBFME_SPELL_TESTS
     tests/test_spell_cast.cpp
     tests/test_spell_book_powers.cpp
     tests/test_spell_book_ui.cpp
-    tests/test_spell_book_hud.cpp)
+    tests/test_spell_book_hud.cpp
+    tests/test_spell3_powers.cpp) # lane SPELL-3

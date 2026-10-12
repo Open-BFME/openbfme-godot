@@ -7,6 +7,8 @@
 #include "GameLogic/TributeCommands.h"
 #include "GameClient/ScriptAudioLength.h"
 #include "GameLogic/AI/GarrisonCommands.h"
+#include "GameLogic/AI/WeaponCommands.h"
+#include "GameLogic/BuildAssistantSell.h"
 #include "GameLogic/Object/PartitionManager.h"
 #include "GameLogic/HeroSystem.h"
 
@@ -281,6 +283,7 @@ bool LiveGame::load(const Options &options, std::string *error)
 	m_aiCommands.registerHandlers(*m_dispatch); // MOVE-1: the move / stop messages on the one dispatch path
 	m_playerCommands.registerHandlers(*m_dispatch); // HUD-1: the control group messages
 	m_buildCommands.registerHandlers(*m_dispatch); // BUILD-1: the construction messages
+	m_logic->sellList().registerHandlers(*m_dispatch); // FACT-A: MSG_SELL (RW 0x77B2C8)
 	VictoryConditions::registerHandlers(*m_dispatch); // END-2: MSG_SELF_DESTRUCT (the quit menu's surrender / exit)
 	// VIS-1: TheShroudManager (RW 0x62CE75 makes it, RW 0x62CFBB / 0x62CFD1 give it GameData's PartitionCellSize / UnlookPersistDuration; the new game sets its grid
 	// over TheTerrainLogic::getExtent at load progress 0x11, RW 0x62FCB3, and refreshes the local player's client, RW 0x62FCBE)
@@ -341,6 +344,7 @@ bool LiveGame::load(const Options &options, std::string *error)
 	UpgradeCommands::registerHandlers(*m_dispatch); // UPGRADE-1: MSG_QUEUE_UPGRADE / MSG_CANCEL_UPGRADE
 	HordeCommands::registerHandlers(*m_dispatch);   // HORDE-2: the formation swap
 	GarrisonCommands::registerHandlers(*m_dispatch); // GARRISON-1: MSG_ENTER / MSG_EVACUATE / MSG_EXIT
+	WeaponCommands::registerHandlers(*m_dispatch); // FACT-A: MSG_DO_WEAPON / _AT_LOCATION / _AT_OBJECT (RW 0x77A304 ..)
 	StancesBehavior::registerHandlers(*m_dispatch); // INTEG-1: MSG_CHANGE_STANCE (RW 0x77BC59)
 	WeaponSetToggle::registerHandlers(*m_dispatch); // HUD-4: MSG_WEAPONSET_TOGGLE (RW 0x77B529)
 	GateModules::registerHandlers(*m_dispatch); // HUD-5: MSG_OPEN_GATE / MSG_CLOSE_GATE (RW 0x77BF7B / 0x77C037)

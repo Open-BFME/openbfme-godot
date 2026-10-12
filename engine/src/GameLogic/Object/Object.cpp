@@ -497,6 +497,14 @@ void Object::setTeam(Team *team)
 		{
 			onOwnerChanged(oldOwner, newOwner);
 		}
+		// lane FACT-B (FACT-C's bdf99d54 finding): RW 0x69954A Object::setTeam (tier B, BFME2 decomp ObjectSetTeam.cpp) ends, for a non-null team,
+		// with updateUpgradeModules (RW 0x699658 -> RW 0x6936FE): the upgrade modules run against the new owner's upgrades, so a captured building takes
+		// its new owner's faction command set (CommandSetUpgrade TriggeredBy Upgrade_<Side>Faction). INFERENCE: RW makes the call for any object; an
+		// object still being created gets the same pass from the creation path's initObject (RW 0x693D38), so the port makes it once constructed
+		if (team)
+		{
+			updateUpgradeModules(); // RW 0x6936FE
+		}
 	}
 }
 

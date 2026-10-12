@@ -8,9 +8,11 @@
 #include "Common/Player.h"
 #include "Common/Thing/ThingTemplate.h"
 #include "GameClient/HudObjects.h"
+#include "GameLogic/GameLogic.h"
 #include "GameLogic/GameMessage.h"
 #include "GameLogic/Module/ProductionUpdate.h"
 #include "GameLogic/Object/Object.h"
+#include "GameLogic/ObjectTemplateInfo.h"
 #include "Common/PlayerHeroList.h"
 #include "Common/PlayerTemplate.h"
 #include "Common/Thing/ThingFactory.h"
@@ -21,8 +23,14 @@
 #include "GameLogic/Object/Contain/TransportContainRuntime.h"
 #include "Common/Team.h"
 #include "GameLogic/WeaponSetToggle.h"
+#include "GameLogic/Module/CastleModules.h"
 #include "GameLogic/Module/GateModules.h"
 #include "GameLogic/Module/HeroAbilityModules.h"
+#include "GameLogic/Module/CastleModules.h"
+#include "Common/ModelState.h"
+#include "GameLogic/Combat/ObjectWeapons.h"
+#include "GameLogic/Weapon.h"
+#include "GameLogic/WeaponState.h"
 
 #include <algorithm>
 
@@ -48,6 +56,61 @@ ButtonState ControlBar::evaluate(const CommandButton &b, Object &obj)
 	if (pu && pu->firstProduction() && b.hasOption(COMMAND_OPTION_NOT_QUEUEABLE))
 	{
 		return ButtonState::Restricted;
+	}
+	// lane FACT-A: RW 0x942733 (RotWK's getCommandAvailability), before its command switch: a MOUNTED_ONLY button is disabled (0) while the object lacks the
+	// model condition MOUNTED (object + 0x124 >> 22 & 1: model condition 214), an UNMOUNTED_ONLY one while it has it (Glorfindel's Wind Rider, the mounted heroes)
+	static const int mounted = ModelCondition::indexOf("MOUNTED");
+	if ((b.hasOption(COMMAND_OPTION_MOUNTED_ONLY) && !obj.testModelCondition(mounted)) || (b.hasOption(COMMAND_OPTION_UNMOUNTED_ONLY) && obj.testModelCondition(mounted)))
+	{
+		return ButtonState::Restricted;
+	}
+	// lane FACT-B, RW 0x9428A3 .. 0x942993 (before every command's own rule): a NEED_UPGRADE button (Options bit 0x40) needs its NeededUpgrade list (+0x28):
+	// every entry, or any one with NeededUpgradeAny (+0x34). A PLAYER entry asks Player::hasUpgradeComplete (RW 0x6AC2AF), an OBJECT entry Object::hasUpgrade
+	// (RW 0x691421). A missing entry restricts the button (RW 0x9438C8: 0), except that a missing OBJECT entry hides a build button whose template is
+	// Buildable = No, or Only_By_AI for a human (RW 0x942950 .. 0x942972: 3)
+	if (b.hasOption(COMMAND_OPTION_NEED_UPGRADE) && !b.m_neededUpgrade.empty())
+	{
+		bool restricted = b.m_neededUpgradeAny;
+		for (const std::string &name : b.m_neededUpgrade)
+		{
+			const UpgradeTemplate *u = TheUpgradeCenter ? TheUpgradeCenter->findUpgrade(name) : nullptr;
+			if (!u)
+			{
+				continue; // RW 0x9428E0: a null entry is skipped
+			}
+			const bool isPlayer = u->getUpgradeType() == UPGRADE_TYPE_PLAYER;
+			const bool have = isPlayer ? player->hasUpgradeComplete(u) : obj.hasUpgrade(u);
+			if (b.m_neededUpgradeAny)
+			{
+				if (have)
+				{
+					restricted = false;
+					break;
+				}
+				continue;
+			}
+			if (have)
+			{
+				continue;
+			}
+			if (isPlayer)
+			{
+				return ButtonState::Restricted;
+			}
+			if (const ThingTemplate *tt = b.getThingTemplate())
+			{
+				const int buildable = BuildAssistant::buildable(*tt);
+				if (buildable == 2 || (buildable == 3 && player->getPlayerType() != PLAYER_COMPUTER))
+				{
+					return ButtonState::Hidden;
+				}
+			}
+			restricted = true;
+		}
+		if (restricted)
+		{
+			return ButtonState::Restricted;
+		}
 	}
 	switch (b.m_command)
 	{
@@ -121,15 +184,110 @@ ButtonState ControlBar::evaluate(const CommandButton &b, Object &obj)
 		case GUI_COMMAND_EXIT_CONTAINER:
 			// lane UI-1: shown disabled; the transport inventory (doTransportInventoryUI, RW 0x94251F) enables the slots of the riders
 			return ButtonState::Restricted;
-		case GUI_COMMAND_OBJECT_UPGRADE:
 		case GUI_COMMAND_PLAYER_UPGRADE:
 		{
-			// shown, restricted once the object or player has it (the rest of the UI rules of RW 0x942733 is S-290's); a button whose Upgrade is not an upgrade
-			// holds no template in RW (S-200: resolved to NULL), so it is restricted
+			// lane FACT-A: RW 0x942733 case 6 (RW 0x942FF9): no upgrade template (button + 0x24) hides it (3); the player has it or is researching it: 8 (the
+			// purchased state, shown restricted); it cannot pay (UpgradeCenter::canAffordUpgrade RW 0x66F492) or the object's queue is full (RW 0x942A4F:
+			// 20 entries): 6 (cannot afford); else available
 			const UpgradeTemplate *u = TheUpgradeCenter && !b.m_upgradeName.empty() ? TheUpgradeCenter->findUpgrade(b.m_upgradeName) : nullptr;
-			if (!u || obj.hasUpgrade(u) || (player && player->hasUpgradeComplete(u)))
+			if (!u)
+			{
+				return ButtonState::Hidden;
+			}
+			if (player->hasUpgradeComplete(u) || player->hasUpgradeInProduction(u)) // RW 0x6AC2AF / 0x6AB2E1
 			{
 				return ButtonState::Restricted;
+			}
+			const bool queueFull = pu && pu->getProductionCount() == 20;
+			if (!UpgradeCenter::canAffordUpgrade(player, u, &obj) || queueFull)
+			{
+				return ButtonState::CantAfford;
+			}
+			return ButtonState::Enabled;
+		}
+		case GUI_COMMAND_OBJECT_UPGRADE:
+		{
+			// lane FACT-A: RW 0x942733 case 7 (RW 0x943050): no upgrade template hides it (3); a DEFENSIVE_WALL or CASTLE_KEEP under construction (status 2) or
+			// effectively dead (+ 0x458 bit 0) and not UNDERGOING_REPAIR (0x14) hides it (3); no production queue (RW 0x68C327): disabled (0); the object has
+			// it (RW 0x691421) or queues it (queue slot 0x18): 8 (shown restricted); a full queue (20 entries): 0; an object the upgrade would not affect
+			// (Object::affectedByUpgrade RW 0x694914: the RequiredObjectFilter's building, a module the upgrade triggers): 0; then canAffordUpgrade (RW
+			// 0x66F492): available (1), else 6 (cannot afford). Not ported: a BRIDGE whose body is RUBBLE (RW 0x94305D .. 0x943074, disabled)
+			const UpgradeTemplate *u = TheUpgradeCenter && !b.m_upgradeName.empty() ? TheUpgradeCenter->findUpgrade(b.m_upgradeName) : nullptr;
+			if (!u)
+			{
+				return ButtonState::Hidden;
+			}
+			static const int underConstruction = ObjectTemplateInfoBuilder::objectStatusIndex("UNDER_CONSTRUCTION"), repair = ObjectTemplateInfoBuilder::objectStatusIndex("UNDERGOING_REPAIR");
+			if ((obj.testStatus((unsigned)underConstruction) || obj.isEffectivelyDead()) && (obj.isKindOfName("DEFENSIVE_WALL") || obj.isKindOfName("CASTLE_KEEP"))
+				&& !obj.testStatus((unsigned)repair))
+			{
+				return ButtonState::Hidden;
+			}
+			if (!pu)
+			{
+				return ButtonState::Restricted;
+			}
+			if (obj.hasUpgrade(u) || pu->isUpgradeInQueue(u))
+			{
+				return ButtonState::Restricted;
+			}
+			if (pu->getProductionCount() == 20 || !obj.affectedByUpgrade(u))
+			{
+				return ButtonState::Restricted;
+			}
+			return UpgradeCenter::canAffordUpgrade(player, u, &obj) ? ButtonState::Enabled : ButtonState::CantAfford;
+		}
+		case GUI_COMMAND_CASTLE_UPGRADE:
+		{
+			// lane FACT-A: RW 0x942733 case 8 (RW 0x943123): the object's queue full (20 entries): 6 (cannot afford); no queue: disabled (0); the upgrade
+			// not in the queue (slot 0x18) and the object's castle (CastleMemberBehavior + 0x18) has it: 8 (shown restricted); otherwise canAffordUpgrade
+			// (RW 0x66F492): available (1), else 6. (An upgrade already queued shows available, as RW 0x94313E has it.) A button without an upgrade template
+			// is hidden here (RW passes the null template on)
+			const UpgradeTemplate *u = TheUpgradeCenter && !b.m_upgradeName.empty() ? TheUpgradeCenter->findUpgrade(b.m_upgradeName) : nullptr;
+			if (!u)
+			{
+				return ButtonState::Hidden;
+			}
+			if (pu && pu->getProductionCount() == 20)
+			{
+				return ButtonState::CantAfford;
+			}
+			if (!pu)
+			{
+				return ButtonState::Restricted;
+			}
+			if (!pu->isUpgradeInQueue(u))
+			{
+				const CastleMemberBehavior *member = dynamic_cast<const CastleMemberBehavior *>(obj.findModule("CastleMemberBehavior"));
+				const Object *castle = member && member->castleId() != INVALID_ID ? m_ctx.logic.findObjectByID(member->castleId()) : nullptr;
+				if (castle && castle->hasUpgrade(u))
+				{
+					return ButtonState::Restricted;
+				}
+			}
+			return UpgradeCenter::canAffordUpgrade(player, u, &obj) ? ButtonState::Enabled : ButtonState::CantAfford;
+		}
+		case GUI_COMMAND_TOGGLE_NO_AUTO_ACQUIRE:
+			return ButtonState::Enabled; // lane FACT-A: RW 0x942733 has no case for 0x30: available (1)
+		case GUI_COMMAND_FIRE_WEAPON:
+		{
+			// lane FACT-A: RW 0x942733 case 0x17: an object without an AI (object + 0x260) is disabled; a weapon in the button's slot (RW 0x6C81B0) whose template
+			// reloads a clip (+ 0xEC ClipReloadTime max), can fire while charging (+ 0x82) or always shows its readiness (+ 0x155, RW 0x6CA415) is not ready (5)
+			// while its status (RW 0x6CD142) is not READY_TO_FIRE or it may fire again this frame or the last (+ 0x18 == frame / frame - 1); otherwise available
+			if (!obj.getAIUpdateInterface())
+			{
+				return ButtonState::Restricted;
+			}
+			ObjectWeapons *weapons = obj.getWeapons();
+			const Weapon *weapon = weapons ? weapons->weaponInSlot(b.m_weaponSlot) : nullptr;
+			const WeaponTemplate *wt = weapon ? weapon->getTemplate() : nullptr;
+			if (wt && (wt->m_clipReloadMax != 0 || wt->m_canFireWhileCharging || wt->m_forceDisplayPercentReady))
+			{
+				const std::uint32_t now = m_ctx.logic.getFrame();
+				if (weapons->slotStatus(b.m_weaponSlot) != WEAPON_READY_TO_FIRE || weapon->whenWeCanFireAgain() == now || weapon->whenWeCanFireAgain() + 1 == now)
+				{
+					return ButtonState::NotReady;
+				}
 			}
 			return ButtonState::Enabled;
 		}
@@ -153,6 +311,18 @@ ButtonState ControlBar::evaluate(const CommandButton &b, Object &obj)
 		default:
 			return ButtonState::Restricted;
 	}
+}
+
+Object *ControlBar::castleOfMember(Object &obj)
+{
+	for (const std::unique_ptr<BehaviorModule> &m : obj.modules())
+	{
+		if (const CastleMemberBehavior *member = dynamic_cast<const CastleMemberBehavior *>(m.get())) // RW 0x68BDA5 by the name "CastleMemberBehavior"
+		{
+			return obj.logic().findObjectByID(member->castleId()); // RW 0x449681
+		}
+	}
+	return nullptr;
 }
 
 const SpecialPowerTemplate *ControlBar::specialPowerOf(const CommandButton &b)
@@ -650,6 +820,15 @@ std::vector<std::string> ControlBar::acceptanceStops()
 		"its stance presses RW 0x96F53C): the stance button's press is counted unported, the stances are reached by the STANCE_* hotkeys",
 		"[S-290] control bar availability: the rules that need other lanes' ports (special power cooldown, science, castle / gate commands, weapon toggles, stances, hero revive, spell book, "
 		"script status bits, disabled objects) are not ported: those buttons show as restricted and their presses are counted by ControlBar::unportedPresses()",
+		"[S-1990] FIRE_WEAPON buttons (lane FACT-B: the archers' and siege engines' Bombard, the explosive mine's Deploy, the Mumakil's Charge): RotWK's "
+		"availability (RW 0x942733 case 0x17: the weapon of WeaponSlot and its clip) and press (RW 0x940435 case 0x17: MSG_DO_WEAPON with WeaponSlot and "
+		"MaxShotsToFire, a targeted one through the GUI command's issueFireWeaponCommand) are not ported, nor the logic's MSG_DO_WEAPON / _AT_LOCATION / "
+		"_AT_OBJECT and the AI's attack-position state (S-325): the buttons show restricted",
+		"[S-1991] BLOODTHIRSTY buttons (lane FACT-B: the Uruk and orc hordes' Bloodthirsty Sacrifice, NEED_TARGET_ALLY_OBJECT CONTEXTMODE_COMMAND): no "
+		"availability rule (RW 0x942733 has no case 0x29: available), the target click's MSG_SACRIFICE (1056) and BloodthirstyUpdate are not ported: the "
+		"buttons show restricted",
+		"[S-1992] TOGGLE_NO_AUTO_ACQUIRE buttons (lane FACT-B: the catapult's and ballista's auto-acquire toggle): the press (RW 0x940435 case 0x30: "
+		"MSG_TOGGLE_NO_AUTO_ACQUIRE 1115 with the object, then the button image RW 0x75D366) and the logic's flag are not ported: the buttons show restricted",
 		"[S-1260] transport inventory (lane UI-1): the riders on a container's EXIT_CONTAINER buttons (RW 0x94251F), the press as MSG_EXIT (RW 0x940FEF), EVACUATE while "
 		"someone is inside (RW 0x942733) and the garrison inventory of context 2 (RW 0x94518D) are ported; not reproduced: the hide on Object + 0x1C8 bit 5 (unidentified), "
 		"retail's overrun of a rider's slots past the last EXIT_CONTAINER button, context 3 (contested garrisons, MSG_EVACUATE_CONTESTERS), the radial menu, the "

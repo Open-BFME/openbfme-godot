@@ -268,6 +268,9 @@ public:
 	// (SlotState item data of the Player combo: 2..5 AI levels, 1 closed), faction: String (a PlayerTemplate name), color: int (colour list index), team: int
 	// (-1 none, else 0-based) }] }; on LanLobby.apt (lane MP-2) the same slots, or { join_row: int } selects a row of the game list and presses Join.  Returns { ok, errors, game: the lobby's current GameInfo as the new-game Dictionary }.
 	Dictionary lobby_apply(const Dictionary &spec);
+	// lane UI-6 (checks): the Skirmish lobby's game { found, map, rules: [10], slots: [{ state, template, color, team, start, name }], restored (the kept game
+	// it began from, "" for the defaults) }; found false when no lobby is up
+	Dictionary lobby_state();
 	// lane FB7-1 (scripted input runs): the stage rectangle of a lobby gadget: "<slot>/<Leaf>" (a slot combo), "list/<slot>/<Leaf>" (its drop-down list),
 	// "spot/<n>" (a start spot of the map window): { found, x, y, w, h }
 	Dictionary lobby_gadget_rect(const String &name);
@@ -284,6 +287,8 @@ public:
 	void set_native_hook(AptNativeHook *hook);
 	// lane HUD-6: the font the movie's texts draw with for (name, point size): fontsubstitution.ini, the corpus fonts (C++ only; the HUD's help box)
 	Ref<Font> font_for(const std::string &name, float size, float *drawSize);
+	// lane UI-6: `font` (from font_for) at `px` pixels with RotWK's GDI text cell (ascent = the cell's baseline, height = the char height)
+	Ref<Font> font_cell(const Ref<Font> &font, int px);
 	// the shell mode's window manager and shell (null in the other modes) and a switch that hands the mouse and keys to the HUD node instead of this player (C++ only)
 	WindowManager *window_manager() const;
 	Shell *shell_object() const;

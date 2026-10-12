@@ -9,6 +9,7 @@
 
 #include "Common/INI.h"
 #include "GameClient/CommandButtonHelp.h"
+#include "GameClient/ControlBarCommands.h"
 #include "GameClient/ControlBarRadialMenu.h"
 #include "GameClient/GameTextTableSource.h"
 #include "GameClient/GUI/AptScreens/AptPalantir.h"
@@ -562,4 +563,65 @@ TEST_CASE("hud6 retail: the help's upgrade warnings follow RW 0x807D8F .. 0x807E
 	{
 		MESSAGE("the barracks' queue holds ", pu->getProductionCount(), " entries at most: the queue-full case is not reachable with it");
 	}
+}
+
+TEST_CASE("bugs1 retail: the help box over a barracks bubble keeps its content: a seek back keeps a clip a script moved (RW 0xB0D610 mergeState, GetASChanged)")
+{
+	// Devlog #4's empty help box: Gondor Soldiers' help is taller than the box's minimum, so InGameHelpBox.apt's box eases `top._y` toward its target in a
+	// frame 5 / 6 loop (gotoAndPlay("loop")) and places `content` (the native text) at frame 6 once it arrives. Re-applying frame 3's matrix on each seek
+	// back kept `top` short of the target, the loop never ended and the content never stayed
+	if (!haveWorld("bugs1 help box content"))
+	{
+		return;
+	}
+	SharedWorld &s = shared();
+	Hud6Rig h(s, "FactionMen");
+	h.frames(30);
+	const Coord3D c = h.rig.freeSpot(2400, 1400, 250.0f);
+	Object *barracks = h.rig.make("GondorBarracks", c.x, c.y);
+	h.rig.lookAt({ c.x, c.y, 0 });
+	h.frames(10);
+	h.select(barracks);
+	h.frames(40);
+	const ControlBarRadialMenu &radial = h.hud->radialMenu();
+	const ControlBarRadialMenu::Button *unit = nullptr;
+	for (const ControlBarRadialMenu::Button &b : radial.buttons())
+	{
+		if (!unit && b.source.button && b.source.button->m_command == GUI_COMMAND_UNIT_BUILD)
+		{
+			unit = &b;
+		}
+	}
+	REQUIRE(unit != nullptr);
+	h.hud->mouseMove(unit->rect.x + unit->rect.w / 2, unit->rect.y + unit->rect.h / 2, 0);
+	h.frames(2);
+	std::vector<HelpDrawOp> ops;
+	h.hud->helpBoxRender(400.0f, 500.0f, 360.0f, 40.0f, ops); // the content's sampled width (state 1)
+	auto contentShown = [&]() {
+		AptRenderList rl;
+		h.hud->apt().buildRenderList(rl);
+		for (const AptRenderCommand &cmd : rl.commands)
+		{
+			if (cmd.kind == AptRenderCommand::Kind::Placeholder && cmd.path.find("helpBox.box.content") != std::string::npos)
+			{
+				return true;
+			}
+		}
+		return false;
+	};
+	h.frames(60);
+	REQUIRE(h.hud->helpBox().isShown());
+	REQUIRE(h.hud->helpBox().help() != nullptr);
+	MESSAGE("help: " << std::string(h.hud->helpBox().help()->name().begin(), h.hud->helpBox().help()->name().end()));
+	// the box arrived (frame 6 placed `content` and the loop went on to loopFade) and stays: every one of the next frames draws the content
+	int shown = 0;
+	for (int i = 0; i < 20; ++i)
+	{
+		h.frames(1);
+		shown += contentShown() ? 1 : 0;
+	}
+	CHECK(shown == 20);
+	ops.clear();
+	h.hud->helpBoxRender(400.0f, 500.0f, 360.0f, 120.0f, ops);
+	CHECK(std::count_if(ops.begin(), ops.end(), [](const HelpDrawOp &o) { return o.kind == HelpDrawOp::TEXT; }) >= 3); // name, cost, description
 }

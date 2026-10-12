@@ -411,7 +411,7 @@ func _ready() -> void:
 ## the unit voices come from the HUD's command and selection path, VoiceCreated from production.
 func _boot_audio() -> void:
 	if not ClassDB.class_exists("GameAudio"):
-		_fail("the openbfme extension has no GameAudio class; run build.bat")
+		_fail("the openbfme extension has no GameAudio class; " + Release.extension_hint())
 		return
 	var b: Dictionary = {"ok": true, "events": -1}
 	if _audio == null: # FX-2's early boot (before the world) usually made it already

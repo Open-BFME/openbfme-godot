@@ -225,7 +225,10 @@ is set: OPENBFME, Display tab.
 OpenBFME's own options are an addition: in **Options** (from the main menu, or
 from the game menu during a game) press **OPENBFME** in the bottom left
 corner, above Cancel. The OpenBFME settings take the place of the three
-panels; the tabs are on the left: **Display**, **Graphics+** (anti-aliasing,
+panels; the tabs are on the left: **Display** (also **Widescreen view**:
+Original is the original game's view, which shows less from top to bottom on
+screens wider than 4:3; Wider shows the 4:3 view from top to bottom and more
+to the sides), **Graphics+** (anti-aliasing,
 anisotropic filtering, original or enhanced look, interface scale for large
 screens, soft particle edges), **Camera** (scroll speed, edge scrolling,
 rotation speed, max zoom-out, the free camera, inverted drag scrolling, keeping
@@ -402,8 +405,7 @@ recorded stop in [STOPS.md](STOPS.md); the ID is given for reference.
   the big-battle ambience (S-1242, S-246, S-248).
 - Movies have no subtitles (S-1710).
 - Menus are laid out for 1024x768 and scaled; at other window sizes text and
-  click targets can be slightly off, and widescreen camera framing may differ
-  (S-130, S-455).
+  click targets can be slightly off (S-130, S-455).
 
 **Menus**
 - Menus work with the mouse only, not the keyboard or a gamepad (S-108).
@@ -413,8 +415,6 @@ recorded stop in [STOPS.md](STOPS.md); the ID is given for reference.
   health bars, but OpenBFME doesn't draw shadows yet, and the model,
   animation, terrain, water and shader detail rows are greyed out (S-3402).
   A texture quality change shows from the next game.
-- The skirmish lobby doesn't remember your last rules: every lobby starts
-  from the default rules (S-3602).
 - Some lists and boxes of a menu show through pop-ups placed over them
   (S-1914).
 - Replays are recorded for every game and can be watched from *Load Replay*,

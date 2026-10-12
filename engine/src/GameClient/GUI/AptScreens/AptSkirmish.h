@@ -64,6 +64,13 @@ public:
 	// Null when the environment lacked the setup source or the new-game sink (reported) or the map cache had no multiplayer map.
 	const SkirmishGameSetup *setup() const { return m_setup.get(); }
 	SkirmishProfileStore &profiles() { return *m_profiles; }
+	// lane UI-6: the kept game (SkirmishGameRecord.h): what the lobby restored at its start ("" when it began from the defaults), and the stop of a kept
+	// game it could not use
+	const std::string &restoredGame() const { return m_restoredGame; }
+	// RW 0x927FEF (AptSkirmish's vtable slot at 0xC7E898, run when the screen goes): the lobby's game into the current profile's entries (RW 0x821EBD: the
+	// map, the game and the hero indexes), then the preferences' write. Also before a profile change (RW 0x9293F5 at 0x929440)
+	void keepGame();
+	void runShutdown(bool *immediate) override;
 	const std::string &lastError() const { return m_error; }
 	// How often the movie sent AptSkirmish::OnInitialized.
 	int initializedCount() const { return m_initializedCount; }
@@ -231,6 +238,13 @@ private:
 	bool deleteProfileFromList();
 	void closePopupState();
 	void setGameMapType(const std::string &type);
+	// lane UI-6: RW 0x9288D0 at 0x9289AD: the profile's kept game of `mode` (0 skirmish, 1 War of the Ring) instead of the defaults
+	void restoreGame(int mode);
+	// lane UI-6 review: InitTheGame again for the profile now current (a new, changed or surviving profile): the defaults, then its kept game
+	void reloadGameForProfile();
+	// OpenBFME's own profile keys beside RotWK's record: the Legendary Heroes factor and the slots' Create-a-Hero choices (by unique id)
+	void restoreExtensions(int mode);
+	std::string extensionHeroes() const;
 	// (invokeRoot / pruneDeadGadgets are protected: the placeholder clips, and so their gadgets, come and go with the movie's frames; every pointer the
 	// screen keeps is dropped when its window no longer exists)
 
@@ -240,6 +254,7 @@ private:
 	SkirmishProfileStore *m_profiles = nullptr;
 	std::string m_error;
 	std::string m_gameMapType = "OpenPlay"; // "OpenPlay" (skirmish) or "Strategic" (War of the Ring skirmish)
+	std::string m_restoredGame;             // lane UI-6: the record the lobby began from ("" = the defaults)
 
 	// MpGameSetup state
 	std::map<const GameWindow *, SlotGadget> m_slotGadgets;

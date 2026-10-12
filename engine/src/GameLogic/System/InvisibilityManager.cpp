@@ -3,6 +3,8 @@
 
 #include "GameLogic/System/InvisibilityManager.h"
 
+#include "GameLogic/Map/TerrainTrees.h"
+
 #include "Common/AsciiString.h"
 #include "Common/INIException.h"
 #include "Common/Player.h"
@@ -764,15 +766,11 @@ bool InvisibilityManager::treesNear(const Coord3D &p, const Object *self) const
 	{
 		return true;
 	}
-	// RW 0x67F52B -> 0x67E078: a terrain tree whose 3D squared distance is below 50^2 (strict, RW 0x67E2E3)
-	for (const Coord3D &t : m_trees)
-	{
-		if (r2 > distanceSquared3(t, p))
-		{
-			return true;
-		}
-	}
-	return false;
+	// RW 0x81AC7B .. 0x81AC91 (and StealthUpdate's RW 0x77654A .. 0x77655F): TheTerrainLogic RW 0x67F52B(position, 50.0, ignoreToppled 1, mode 0): the
+	// closest standing record of the logic's tree list (lane SPELL-3: TerrainTrees, whose query adds 7.0 to the radius, RW 0xBE4AD4); a tree Devastation
+	// felled or harvested no longer hides anything
+	(void)r2;
+	return m_logic.trees().findClosestTree(p, kTreeRange, true, 0) != nullptr;
 }
 
 // RW 0x81B64F

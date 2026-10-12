@@ -1723,11 +1723,11 @@ TEST_CASE("rules1 retail lobby: the Rules tab shows RotWK's rows (Initial Resour
 	openRulesTab(fx);
 	REQUIRE(fx.screen->setup());
 	REQUIRE(fx.screen->rulesPopulated());
-	// the stops of the tab, reported once (S-3600 .. S-3602)
+	// the stops of the tab, reported once (S-3600; S-3602 closed by lane UI-6: the kept game restores the rules)
 	CHECK(fx.wm->noteCount("rules-unverified") == 1);
 	CHECK(std::string(AptSkirmish::kRulesStop).find("[S-3600]") == 0);
 	CHECK(std::string(AptSkirmish::kRulesStop).find("[S-3601]") == std::string::npos); // resolved: the demo mode, 0 in 2.01
-	CHECK(std::string(AptSkirmish::kRulesStop).find("[S-3602]") != std::string::npos);
+	CHECK(std::string(AptSkirmish::kRulesStop).find("[S-3602]") == std::string::npos);
 	// MpGameSetup.apt places six combo rows and four check rows (renamed "RuleComboBox_<n>" / "RuleCheckBox_<n>", read at RW 0x814BEC); the first
 	// NumComboBoxes / NumCheckBoxes are shown
 	for (int i = 0; i < 6; ++i)
@@ -1809,4 +1809,191 @@ TEST_CASE("rules1 retail lobby: the Rules tab shows RotWK's rows (Initial Resour
 	CHECK(msg.game.rules[RULE_COMMAND_POINT_FACTOR] == 100);
 	CHECK(msg.game.legendaryHeroes == 4);
 	CHECK(msg.game.startingCash == -1);
+}
+
+// ============================================================================================================================
+// lane UI-6: a Discord tester's findings on preview.6 (GitGut, 2026-10-11)
+// ============================================================================================================================
+
+TEST_CASE("ui6 retail lobby: the map, the players and the rules are kept when the lobby is left and opened again (RW 0x927FEF -> 0x821EBD, RW 0x9288D0 -> 0x821C29)")
+{
+	OPENBFME_REQUIRE_RETAIL(mount);
+	MemorySkirmishProfiles store; // the profiles outlive the screen, as Skirmish.ini does
+	LobbyFx fx(mount, false);
+	fx.environment.profiles = &store;
+	ruleLabels(fx.text);
+	fx.shell->push("Skirmish.apt");
+	fx.screen = dynamic_cast<AptSkirmish *>(fx.shell->top());
+	REQUIRE(fx.screen);
+	openRulesTab(fx); // the profile Gimli, the Rules tab
+	CHECK(fx.screen->restoredGame().empty()); // a new profile has no kept game: the defaults
+	// the Rules tab: Initial Resources 2500
+	GameWindow *cash = fx.screen->ruleWindow(RULE_INITIAL_RESOURCES);
+	REQUIRE(cash);
+	GadgetComboBoxSetSelectedPos(cash, 8, false);
+	REQUIRE(fx.screen->setup()->info().rules[RULE_INITIAL_RESOURCES] == 2500);
+	// the third map, the Elves, a brutal and a medium computer
+	const std::vector<std::string> keys = fx.screen->mapListKeys();
+	REQUIRE(keys.size() >= 3);
+	GadgetListBoxSetSelected(fx.screen->mapListWindow(), 2);
+	REQUIRE(fx.screen->setup()->info().mapName == keys[2]);
+	GadgetComboBoxSetSelectedPos(fx.screen->slotGadget(0, "PlayerTemplate"), 2, false);
+	GadgetComboBoxSetSelectedPos(fx.screen->slotGadget(1, "Player"), 5, false);
+	GadgetComboBoxSetSelectedPos(fx.screen->slotGadget(2, "Player"), 3, false);
+	const SkirmishGameInfo before = fx.screen->setup()->info();
+	REQUIRE(before.slots[1].state == SLOT_BRUTAL_AI);
+	REQUIRE(before.slots[2].state == SLOT_MED_AI);
+	// MAIN MENU: the screen goes, its teardown keeps the game under the profile (":0:<Gimli>:Map", GameInfo, HeroIndexes)
+	AptButtonInst *back = popupButton(fx, "lobby.MainMenu");
+	REQUIRE(back);
+	clickButton(fx, *back);
+	fx.tick(120);
+	REQUIRE(fx.shell->findScreenByFilename("Skirmish.apt") == nullptr);
+	const std::string record = store.profileValue(0, "GameInfo");
+	CHECK(record.find("M=") == 0);
+	CHECK(record.find(";GR=") != std::string::npos);
+	CHECK(record.find(" 2500 ") != std::string::npos); // the Initial Resources rule among the ten
+	CHECK(record.find("S=HGimli,0,0,TT,") != std::string::npos);
+	CHECK(record.find(":CB,") != std::string::npos); // the brutal computer (state 5: 'B', RW 0x802620)
+	CHECK(record.find(":CM,") != std::string::npos);
+	std::string map = keys[2];
+	std::replace(map.begin(), map.end(), '/', '\\');
+	CHECK(store.profileValue(0, "Map") == map);
+	CHECK(store.profileValue(0, "HeroIndexes") == ":-1:-1:-1:-1:-1:-1:-1:-1:");
+	// Skirmish again: the kept game, a new seed
+	fx.sink.seed = 77;
+	fx.shell->push("Skirmish.apt");
+	fx.screen = dynamic_cast<AptSkirmish *>(fx.shell->top());
+	REQUIRE(fx.screen);
+	fx.tick(60);
+	CHECK(fx.screen->restoredGame() == record);
+	CHECK(fx.screen->newProfileMenuCount() == 0); // the profile is there: no add-profile box
+	const SkirmishGameInfo &after = fx.screen->setup()->info();
+	CHECK(after.mapName == before.mapName);
+	CHECK(after.mapCRC == before.mapCRC);
+	CHECK(after.rules == before.rules);
+	CHECK(after.seed == 77u);
+	for (int i = 0; i < MAX_SLOTS; ++i)
+	{
+		INFO("slot " << i);
+		CHECK(after.slots[i].state == before.slots[i].state);
+		if (before.slots[i].isOccupied())
+		{
+			CHECK(after.slots[i].name == before.slots[i].name); // a closed slot is named by GameSlot::setState now ("Closed"), not left empty
+		}
+		CHECK(after.slots[i].playerTemplate == before.slots[i].playerTemplate);
+		CHECK(after.slots[i].color == before.slots[i].color);
+		CHECK(after.slots[i].teamNumber == before.slots[i].teamNumber);
+		CHECK(after.slots[i].startPos == before.slots[i].startPos);
+	}
+	// the gadgets show it: the map list's selection, slot 1's Player combo
+	int row = -1;
+	GadgetListBoxGetSelected(fx.screen->mapListWindow(), &row);
+	CHECK(row == 2);
+	CHECK(itemValueOf(GadgetComboBoxGetItemData(fx.screen->slotGadget(1, "Player"), selectedPos(fx.screen->slotGadget(1, "Player")))) == SLOT_BRUTAL_AI);
+}
+
+TEST_CASE("ui6 retail lobby input: the Profile nav opens under the pointer and closes when the pointer leaves it (Skirmish.apt sprite 34: bttn -> _show, "
+		  "the surround's rollOver -> _close)")
+{
+	OPENBFME_REQUIRE_RETAIL(mount);
+	LobbyFx fx(mount);
+	fx.tick(60);
+	fx.wm->invokeCallback("AptSkirmish::OnNewProfileMenu", "");
+	GadgetTextEntrySetText(fx.screen->profileEntryWindow(), u"Gimli");
+	fx.wm->invokeCallback("AptSkirmish::OnAddProfileAccept", "");
+	REQUIRE(fx.wm->invokeASAt(1, "ProfilePopup", "ClosePop", {}));
+	fx.tick(60);
+	AptButtonInst *nav = popupButton(fx, "ProfileNav");
+	REQUIRE(nav);
+	float x0, y0, x1, y1, x, y;
+	REQUIRE(nav->contentBounds(x0, y0, x1, y1));
+	nav->globalMatrix().apply((x0 + x1) / 2, (y0 + y1) / 2, x, y);
+	// the pointer on PROFILE: the nav opens without a click
+	fx.wm->postMouseMove(x, y);
+	fx.tick(60);
+	AptButtonInst *change = popupButton(fx, "ProfileNav.ChangeProfile");
+	REQUIRE_MESSAGE(change, "the pointer on PROFILE opens the nav");
+	// along its entries, then off it to the middle of the game setup
+	float cx0, cy0, cx1, cy1, cx, cy;
+	REQUIRE(change->contentBounds(cx0, cy0, cx1, cy1));
+	change->globalMatrix().apply((cx0 + cx1) / 2, (cy0 + cy1) / 2, cx, cy);
+	fx.wm->postMouseMove(cx, cy);
+	fx.tick(10);
+	CHECK(popupButton(fx, "ProfileNav.ChangeProfile") != nullptr);
+	// the stage's middle is on the nav's alpha 0 surround (depth 1, the whole stage): its rollOver plays _close (RW 0xB0E620 hits it: no alpha test)
+	fx.wm->postMouseMove(512.0f, 300.0f);
+	fx.tick(90);
+	CHECK_MESSAGE(popupButton(fx, "ProfileNav.ChangeProfile") == nullptr, "the nav closes when the pointer leaves it");
+	CHECK(popupButton(fx, "ProfileNav") != nullptr); // PROFILE is back, ready to open it again
+}
+
+TEST_CASE("ui6 retail lobby: creating, changing and deleting profiles keep each profile's own game; Legendary Heroes is kept in OpenBFME's key (Sol's review)")
+{
+	OPENBFME_REQUIRE_RETAIL(mount);
+	MemorySkirmishProfiles store;
+	LobbyFx fx(mount, false);
+	fx.environment.profiles = &store;
+	ruleLabels(fx.text);
+	fx.shell->push("Skirmish.apt");
+	fx.screen = dynamic_cast<AptSkirmish *>(fx.shell->top());
+	REQUIRE(fx.screen);
+	openRulesTab(fx); // the profile Gimli
+	const std::vector<std::string> keys = fx.screen->mapListKeys();
+	REQUIRE(keys.size() >= 4);
+	// Gimli: Legendary Heroes 4x, the third map (not saved yet)
+	GameWindow *legendary = fx.screen->legendaryHeroesWindow();
+	REQUIRE(legendary);
+	GadgetComboBoxSetSelectedPos(legendary, 3, false);
+	REQUIRE(fx.screen->setup()->info().legendaryHeroes == 4);
+	GadgetListBoxSetSelected(fx.screen->mapListWindow(), 2);
+	REQUIRE(fx.screen->setup()->info().mapName == keys[2]);
+	// a new profile: Gimli's choices are kept first, Legolas starts from the defaults
+	fx.wm->invokeCallback("AptSkirmish::OnNewProfileMenu", "");
+	GadgetTextEntrySetText(fx.screen->profileEntryWindow(), u"Legolas");
+	fx.wm->invokeCallback("AptSkirmish::OnAddProfileAccept", "");
+	REQUIRE(store.current() == u"Legolas");
+	CHECK(fx.screen->setup()->info().legendaryHeroes == LegendaryHeroes::kOff);
+	CHECK(fx.screen->setup()->info().slots[0].name == u"Legolas");
+	GadgetListBoxSetSelected(fx.screen->mapListWindow(), 3);
+	REQUIRE(fx.screen->setup()->info().mapName == keys[3]);
+	// back to Gimli: his kept game, Legendary Heroes 4x included (Legolas's is kept on the way)
+	showProfilePage(fx, "_change");
+	REQUIRE(fx.screen->profileListWindow());
+	fx.wm->invokeCallback("AptSkirmish::OnChangeProfileMenu", "");
+	int gimliRow = -1;
+	for (int r = 0; r < GadgetListBoxGetNumEntries(fx.screen->profileListWindow()); ++r)
+	{
+		gimliRow = GadgetListBoxGetText(fx.screen->profileListWindow(), r, 0) == u"Gimli" ? r : gimliRow;
+	}
+	REQUIRE(gimliRow >= 0);
+	GadgetListBoxSetSelected(fx.screen->profileListWindow(), gimliRow);
+	fx.wm->invokeCallback("AptSkirmish::OnChangeProfile", "");
+	REQUIRE(store.current() == u"Gimli");
+	CHECK(fx.screen->setup()->info().mapName == keys[2]);
+	CHECK(fx.screen->setup()->info().legendaryHeroes == 4);
+	CHECK(store.profileValue(0, "OpenBFMELegendaryHeroes") == "4");
+	CHECK(store.profileValue(0, "GameInfo").find("OpenBFME") == std::string::npos); // RotWK's record stays retail's
+	// deleting the current profile (Gimli): Legolas becomes current with Legolas's own game, and the screen's teardown keeps that, not Gimli's
+	showProfilePage(fx, "_delete");
+	REQUIRE(fx.screen->profileListWindow());
+	fx.wm->invokeCallback("AptSkirmish::OnDeleteProfileMenu", "");
+	for (int r = 0; r < GadgetListBoxGetNumEntries(fx.screen->profileListWindow()); ++r)
+	{
+		if (GadgetListBoxGetText(fx.screen->profileListWindow(), r, 0) == u"Gimli")
+		{
+			GadgetListBoxSetSelected(fx.screen->profileListWindow(), r);
+		}
+	}
+	fx.wm->invokeCallback("AptSkirmish::OnDeleteProfile", "");
+	REQUIRE(store.current() == u"Legolas");
+	CHECK(fx.screen->setup()->info().mapName == keys[3]);
+	CHECK(fx.screen->setup()->info().legendaryHeroes == LegendaryHeroes::kOff);
+	CHECK(fx.screen->setup()->info().slots[0].name == u"Legolas");
+	fx.shell->pop();
+	fx.tick(30);
+	std::string map = keys[3];
+	std::replace(map.begin(), map.end(), '/', '\\');
+	CHECK(store.profileValue(0, "Map") == map);
+	CHECK(store.profileValue(0, "OpenBFMELegendaryHeroes") == "1");
 }

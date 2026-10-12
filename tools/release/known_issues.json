@@ -10,7 +10,7 @@
   {"stops": ["S-561"], "text": "Enemy buildings destroyed out of your sight disappear at once instead of staying in the fog until you look again."},
   {"stops": ["S-1242", "S-246", "S-248"], "text": "Some sounds are missing: units being damaged, scripted music and parts of the big-battle ambience."},
   {"stops": ["S-1710"], "text": "Movies have no subtitles."},
-  {"stops": ["S-130", "S-455"], "text": "Menus are laid out for 1024x768 and scaled: at other window sizes text and click targets can be slightly off. Widescreen camera framing may differ from the original."},
+  {"stops": ["S-130", "S-455"], "text": "Menus are laid out for 1024x768 and scaled: at other window sizes text and click targets can be slightly off."},
   {"stops": ["S-108"], "text": "Menus cannot be used with the keyboard or a gamepad, only with the mouse."},
   {"stops": ["S-175"], "text": "Skirmish's profile page opens, but its statistics are not filled in yet and show placeholder labels."},
   {"stops": ["S-1914"], "text": "Some lists and boxes of a menu show through pop-ups placed over them."},
@@ -23,7 +23,6 @@
   {"stops": ["S-2522"], "text": "Selection rings always use the highest-detail look, whatever the detail setting."},
   {"stops": ["S-3304"], "text": "Units and buildings cast no shadows yet, so the building preview has none either."},
   {"stops": ["S-3402"], "text": "Graphics detail: the detail level sets the particle limit, texture quality and health bars, but shadows are not drawn yet and the model, animation, terrain, water and shader detail settings are greyed out."},
-  {"stops": ["S-3602"], "text": "The skirmish lobby does not remember your last rules: every lobby starts from the default rules."},
   {"stops": ["S-3460"], "text": "Turning a hero's autocast on or off does not play the hero's voice line."}
  ]
 }

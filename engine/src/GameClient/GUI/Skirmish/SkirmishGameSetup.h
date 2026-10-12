@@ -38,6 +38,13 @@ public:
 	// False (and `error` set) when the cache has no such map.
 	bool init(const std::u16string &userName, std::uint32_t seed, const std::string &mapName, std::string *error);
 
+	// Lane UI-6: AptSkirmish::InitTheGame's kept game (RW 0x9288D0: SkirmishPreferences' record read at 0x9289AD, RW 0x821C29, skips the defaults): the
+	// record's slots and rules (ParseSkirmishGameInfo, SkirmishGameRecord.h), a new seed (RW 0x928B71: setSeed(GetTickCount())), and the map the "Map"
+	// entry names (setMap of getPreferredMap, RW 0x822451; empty: the record's) with the cache's CRC and size. The start positions are the record's (the
+	// lobby's map change resets them, InitTheGame's setMap does not). False, the setup unchanged and `error` set when the map is not in the cache or slot 0
+	// is not a human (INFERENCE S-3701: retail would keep a record with an unknown map, CRC and size 0)
+	bool restoreSaved(const SkirmishGameInfo &saved, const std::string &preferredMap, std::uint32_t seed, std::string *error);
+
 	const SkirmishGameInfo &info() const { return m_info; }
 	const SkirmishSetupSource &source() const { return m_source; }
 	const std::string &lastError() const { return m_error; }

@@ -300,7 +300,7 @@ TEST_CASE("#define under load type 5 overwrites silently (spec 2.2 item 1.7)")
 
 TEST_CASE("macros inside included files define before the including file is parsed (spec 2.2: pre-pass runs after include expansion)")
 {
-	Fixture fx({ { "data\\ini\\common.inc", "#define FROM_INC 7\n" } });
+	Fixture fx(initest::FileList{ { "data\\ini\\common.inc", "#define FROM_INC 7\n" } }); // GLIBC-1: GCC 12 found the braces ambiguous
 	REQUIRE(defineOnly(fx.env, "Data\\INI\\Main.ini", "#include \"Common.inc\"\n").empty());
 	CHECK(fx.env.macros.findByName("FROM_INC")->value == "7");
 }

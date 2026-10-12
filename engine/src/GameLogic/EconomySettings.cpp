@@ -153,6 +153,8 @@ FieldParse kFields[] = {
 	{ "MultiPlayUnitXPMult", parseMultiPlayMoneyMult, nullptr, ES_OFF(multiPlayUnitXPMult[0]) },         // lane XP-1 (RW 0x6422D2)
 	{ "MultiPlayBuildingXPMult", parseMultiPlayMoneyMult, nullptr, ES_OFF(multiPlayBuildingXPMult[0]) }, // lane XP-1 (RW 0x642408)
 	{ "NumMinutesBeforePlayersCanTransferMoney", INI::parseInt, nullptr, ES_OFF(numMinutesBeforePlayersCanTransferMoney) }, // lane PLAY-1 (RW 0xC011E0)
+	{ "ValuePerSupplyBox", INI::parseInt, nullptr, ES_OFF(valuePerSupplyBox) },   // lane SPELL-3 (GlobalData + 0xA5C)
+	{ "SupplyBoxesPerTree", INI::parseInt, nullptr, ES_OFF(supplyBoxesPerTree) }, // lane SPELL-3 (GlobalData + 0xA60)
 	{ "GoodCommandPointsMP2", parsePair, SEEN_DATA(SEEN_MP0 << 0), ES_OFF(goodMP[0]) },
 	{ "GoodCommandPointsMP3", parsePair, SEEN_DATA(SEEN_MP0 << 1), ES_OFF(goodMP[1]) },
 	{ "GoodCommandPointsMP4", parsePair, SEEN_DATA(SEEN_MP0 << 2), ES_OFF(goodMP[2]) },

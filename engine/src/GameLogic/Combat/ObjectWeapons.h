@@ -179,6 +179,8 @@ public:
 	int currentStatus() const;
 	// lane PLAY-2: RW 0x6CD142 (Weapon::computeStatus, no write-back) of one weapon of this set
 	int weaponStatus(const Weapon &w) { return w.getStatus(host()); }
+	// lane FACT-A: the status of the weapon in `slot` (RW 0x6CD142; the control bar's FIRE_WEAPON availability, RW 0x942733 case 0x17), WEAPON_OUT_OF_AMMO when none
+	int slotStatus(int slot) const;
 	// lane ANIM-1, RW 0x4BEE31 .. 0x4BEE91 (the draw's UseWeaponTiming, W3DScriptedModelDraw::apply): the current weapon's cycle in logic frames, the number
 	// an animation's natural length is divided by. RELOADING_CLIP: whenWeCanFireAgain - the timer start (RW 0x6CA241); otherwise the pre-attack delay
 	// (RW 0x6CDD10 with no victim and no position) plus FiringDuration (RW 0x6CAA78, template + 0x144). False without a current weapon (RW 0x68B58C(0) null:

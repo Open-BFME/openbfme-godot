@@ -33,6 +33,9 @@ const EXTRAS := {
 	# have the option to zoom out like 2.5x as far"), the one extra whose default is not retail's behaviour; "1" is the original game
 	"OpenBFMEMaxZoomOut": {"default": "2.5", "choices": ["1", "1.5", "2", "2.5", "3"]},
 	"OpenBFMEEdgeScroll": {"default": "retail", "choices": ["retail", "always", "off"]},
+	# lane UI-6 (FB-0021, the owner's decision 2026-10-11): the Widescreen view. "original" is RotWK's Vert- view (a 50 degree horizontal angle at every
+	# aspect, RW 0x4874A7 / 0x533630); "wider" keeps 4:3's vertical view and widens the horizontal one on wider screens (TacticalCamera::setWidescreenView)
+	"OpenBFMEWidescreen": {"default": "original", "choices": ["original", "wider"]},
 	"OpenBFMEConfineMouse": {"default": "no", "choices": ["yes", "no"]},
 	"OpenBFMEInvertDragScroll": {"default": "no", "choices": ["yes", "no"]},
 	"OpenBFMERotateSpeed": {"default": "100", "choices": ["50", "75", "100", "150", "200"]},
@@ -296,7 +299,15 @@ func view_options(values: Dictionary) -> Dictionary:
 		"ui_scale": values.OpenBFMEUIScale.to_int() / 100.0,
 		"free_camera": values.OpenBFMEFreeCamera == "yes" or (game != null and game.get("_free_camera_flag") == true),
 		"zoom_out_factor": _zoom_out_factor(values),
+		"widescreen_wider": _widescreen_wider(values),
 	}
+
+
+## lane UI-6: the Widescreen view in effect: game.gd's --widescreen=original|wider for a run, else Options.ini OpenBFMEWidescreen
+func _widescreen_wider(values: Dictionary) -> bool:
+	if game != null and game.get("_widescreen_flag") != null and not str(game.get("_widescreen_flag")).is_empty():
+		return str(game.get("_widescreen_flag")) == "wider"
+	return values.OpenBFMEWidescreen == "wider"
 
 
 ## lane ZOOM-1: the Max zoom-out factor in effect: game.gd's --zoom-out=<f> for a run, else Options.ini OpenBFMEMaxZoomOut

@@ -111,7 +111,7 @@ Scenario setUp(Arena &a, float gap, bool tree, int *settleFrames = nullptr)
 	Scenario s;
 	if (tree)
 	{
-		a.logic.invisibility().addTree(Coord3D{ kRangersX + 15.0f, kRangersY, 0.0f });
+		stealthtest::addTerrainTree(a.logic, Coord3D{ kRangersX + 15.0f, kRangersY, 0.0f });
 	}
 	s.rangers = a.place("GondorRangerHorde", 0, kRangersX, kRangersY);
 	if (StancesBehavior *sb = dynamic_cast<StancesBehavior *>(s.rangers->findModule("StancesBehavior")))
@@ -349,7 +349,7 @@ TEST_CASE("stealth retail: a Noldor warrior horde (StealthUpdate) stealths among
 	for (int part = 0; part < 2; ++part)
 	{
 		Arena a(shared());
-		a.logic.invisibility().addTree(Coord3D{ kRangersX + 15.0f, kRangersY, 0.0f });
+		stealthtest::addTerrainTree(a.logic, Coord3D{ kRangersX + 15.0f, kRangersY, 0.0f });
 		Object *warriors = a.place("NoldorWarriorHorde", 0, kRangersX, kRangersY);
 		REQUIRE(StealthUpdate::of(*warriors) != nullptr);
 		int frames = 0;

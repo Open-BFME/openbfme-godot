@@ -161,6 +161,10 @@
    "reason": "UI font substitution"
   },
   {
+   "glob": "src/GameClient/GdiFontMetrics.cpp",
+   "reason": "lane UI-6: the GDI text metrics (font file tables to tmAscent / tmExternalLeading) the menus and HUD place text with; UI drawing only"
+  },
+  {
    "glob": "src/GameClient/GameText.cpp",
    "reason": "localised UI text (the game's .str files)"
   },
@@ -287,6 +291,10 @@
   {
    "glob": "src/GameClient/GUI/Skirmish/SkirmishPreferences.cpp",
    "reason": "MENU-1 Skirmish.ini: the player's profile names read and written by the Skirmish screen, client-side user interface; nothing reaches the logic"
+  },
+  {
+   "glob": "src/GameClient/GUI/Skirmish/SkirmishGameRecord.cpp",
+   "reason": "lane UI-6: the lobby's kept game in Skirmish.ini (RotWK's GameInfoToAsciiString / ParseAsciiStringToGameInfo text): menu preferences, never simulation state"
   },
   {
    "glob": "src/GameClient/GUI/StillImageLoadScreen.cpp",
@@ -587,6 +595,10 @@
   {
    "glob": "src/GameClient/SpellBookUI.cpp",
    "reason": "the spell book screens' engine side (lane SPELL-2): display reads of the logic and GameMessages it builds; never simulation state"
+  },
+  {
+   "glob": "src/GameClient/TreeTopple.cpp",
+   "reason": "lane SPELL-3: the client animation of a toppling map tree (ZH W3DTreeBuffer's fall, bounce and sink) driven by the logic's tree events; never simulation state"
   },
   {
    "glob": "src/Common/System/InstallLocator.cpp",

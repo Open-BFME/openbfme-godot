@@ -682,7 +682,14 @@ TEST_CASE("skirmish ai vs ai: Evendim, 30 game-minutes: every pairing ends - Mor
 	// Merge INTEG-6 (v0.4.0-alpha.1: DECOMP-2's team builder, heroes and PLAYER_HUNT, GAMEMODES-1's victory rule 3, AIPOW-1's 42 of 53 decisions; MENU-1, BUILD-5
 	// and ONLINE-1 change no logic), re-measured on the merged tree 2185a023 with remote-measure.sh (nas): seed 2 is open at 9000, seed 7 ends with Men's defeat
 	// (start position 0) at 4511, seed 1234 is open at 9000. Engine pins, not retail values.
-	for (const Game &g : { Game{ "FactionMordor", "FactionMen", 2u, -1, -1 }, Game{ "FactionMen", "FactionMordor", 7u, 0, 4511 }, Game{ "FactionMordor", "FactionMen", 1234u, -1, -1 } })
+	// Merge queue q1 (SPELL-3's isAbleToAttack mood gate and Flood, FACT-B's upgrade-button / initial-upgrade rules and CastleUpgrade, FACT-A's FIRE_WEAPON /
+	// NO_AUTO_ACQUIRE / ObjectCreationUpgrade / ReplaceSelfUpgrade; CRASH-2, UI-6 and the Android roadmap change no logic), re-measured on the merged tree
+	// 0704c597 with remote-measure.sh (jpc): seed 7 ends with Men's defeat (start position 0) at 4792 (4511 before), seeds 2 and 1234 stay open at 9000; no stalls.
+	// Merge queue q2 (FACT-C: ObjectCreationUpgrade RW 0x8B8464 [the moats, the free wall catapults, the delayed grants], ArmorUpgrade's default ArmorSetFlag
+	// PLAYER_UPGRADE RW 0x6542D8, HordeDispatchSpecialPower; BUGS-1's production exit fix; GLIBC-1 / DEP-1 change no logic; PATHPERF-1 is not in this batch),
+	// re-measured on the merged tree 336b3e4e with remote-measure.sh (nas): seed 7 is now open at 9000 (Men's defeat at 4792 before), seeds 2 and 1234 stay
+	// open at 9000; no stalls. Engine pins, not retail values.
+	for (const Game &g : { Game{ "FactionMordor", "FactionMen", 2u, -1, -1 }, Game{ "FactionMen", "FactionMordor", 7u, -1, -1 }, Game{ "FactionMordor", "FactionMen", 1234u, -1, -1 } })
 	{
 		INFO(g.a << " vs " << g.b << " seed " << g.seed);
 		VersusRun run;

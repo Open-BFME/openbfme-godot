@@ -6,6 +6,7 @@
 #endif
 
 #include "GameLogic/Module/CastleModules.h"
+#include "GameLogic/Module/CastleUpgrade.h"
 #include "GameLogic/Object/PartitionManager.h"
 
 #include "Common/CommandPoints.h"
@@ -166,6 +167,7 @@ struct CastleNames
 	int partiallyConstructed = CombatNames::modelCondition("PARTIALLY_CONSTRUCTED");
 	int postCollapse = CombatNames::modelCondition("POST_COLLAPSE");
 	int justBuilt = CombatNames::modelCondition("JUST_BUILT");
+	int baseBuild = CombatNames::modelCondition("BASE_BUILD"); // lane SPELL-3 (the timed unpack)
 	int unpacking = CombatNames::modelCondition("UNPACKING");
 	int packing = CombatNames::modelCondition("PACKING");
 };
@@ -280,9 +282,88 @@ UpdateSleepTime CastleBehavior::update()
 			m_timer = m_data->m_unpackDelayTime; // RW 0x79CCCA
 		}
 		return UPDATE_SLEEP_NONE;
-	default:
-		getObject()->logic().noteStop("[S-951] castle: the timed unpack states 1 .. 3 (RW 0x79CF2A, 0x79BE6A(0), 0x79ADE9, 0x799F0F) are not ported");
+	case STATE_PACKED:
+		// lane SPELL-3: RW 0x79D09D: state 2, the unpack (RW 0x79BE6A(0)), the timer = FadeTime (data + 0x1C)
+		m_state = STATE_UNPACKING;
+		if (!unpack(false))
+		{
+			// review r1: the port's unpack can refuse (no base for the side, an unknown layout); retail's RW 0x79BE6A has no such outcome: the refusal goes to
+			// the game's report and the castle stays packed (state 0) instead of fading in and building nothing
+			Object *castle = getObject();
+			castle->logic().reportError("CastleBehavior of object " + std::to_string(castle->getID()) + " (" + (castle->getTemplate() ? castle->getTemplate()->getName() : std::string("?")) +
+										"): the timed unpack failed: " + m_lastError);
+			m_state = STATE_IDLE;
+			return UPDATE_SLEEP_NONE;
+		}
+		m_state = STATE_UNPACKING; // the port's unpack ends in state 4 (its instant callers' RW 0x79C1CE / 0x79D0C6); the timed path stays in 2
+		m_timer = m_data->m_fadeTime;
 		return UPDATE_SLEEP_NONE;
+	case STATE_UNPACKING:
+		// RW 0x79D035 .. 0x79D098: the first update after the unpack (1 / LOGICFRAMES_PER_SECOND + timer == FadeTime, SSE, an exact compare) would move the
+		// stragglers off the walls (RW 0x79ADE9: not ported, S-951); on expiry: state 3, the keep and the members (+ 0x5C) lose JUST_BUILT and get BASE_BUILD
+		// (RW 0x799F0F(clear, set)), the timer = BuildTime (data + 0x24)
+		if (SimMath::addf32(SimMath::divf32(1.0f, SimMath::sseFromInt32(5)), m_timer) == m_data->m_fadeTime)
+		{
+			getObject()->logic().noteStop("[S-951] castle: the timed unpack's straggler teleport off the walls (RW 0x79ADE9) is not ported");
+		}
+		if (expired)
+		{
+			m_state = STATE_BUILDING;
+			setMembersModelCondition(castleNames().justBuilt, castleNames().baseBuild);
+			m_timer = m_data->m_buildTime;
+		}
+		return UPDATE_SLEEP_NONE;
+	case STATE_BUILDING:
+		// RW 0x79CFE8 .. 0x79D02E: on expiry: state 4, BASE_BUILD cleared (RW 0x799F0F), NO_ATTACK cleared on the keep and the members (RW 0x79A017(5, 0))
+		if (expired)
+		{
+			m_state = STATE_UNPACKED;
+			setMembersModelCondition(castleNames().baseBuild, -1);
+			setMembersStatus(castleNames().noAttack, false);
+		}
+		return UPDATE_SLEEP_NONE;
+	default:
+		return UPDATE_SLEEP_NONE;
+	}
+}
+
+// lane SPELL-3: RW 0x79C761 (CreateModuleInterface slot 0, vtable RW 0xC30DD8): a Summoned castle (data + 0x3E) that can unpack (RW 0x7983E3(true): no instant build
+// pending, state 0, the timer run out; BFME2 decomp Rva00395F57CanUnpack.cpp, tier A) initiates its timed unpack (RW 0x79C17D(false, null); BFME2 decomp
+// CastleBehaviorRegisterOwnedObject.cpp CastleBehavior::initiateUnpack, tier A): + 0x4C = 0, state 1; the faction entry's payment (RW 0x799039: the optional
+// count of the CastleToUnpackForFaction line, which no retail summoned castle sets, deposited to the player: not ported, S-951) and the alert map's reset
+// (RW 0x7985AA on + 0xA0) are not ported
+void CastleBehavior::onCreate()
+{
+	if (!m_data->m_summoned || m_needInstantBuild || m_state != STATE_IDLE || m_timer > 0.0f)
+	{
+		return;
+	}
+	m_state = STATE_PACKED; // the constructor's wake (UPDATE_SLEEP_NONE) runs it on the next frame
+}
+
+// RW 0x799F0F: the keep (+ 0x38) and the members (+ 0x5C) clear one model condition and set another (Object RW 0x68D607); their CastleMemberBehavior's own
+// sub-object call (RW 0x798057) is not ported (S-951)
+void CastleBehavior::setMembersModelCondition(int clear, int set)
+{
+	GameLogic &logic = getObject()->logic();
+	auto apply = [&](Object *o) {
+		if (!o)
+		{
+			return;
+		}
+		if (clear >= 0)
+		{
+			o->setModelConditionState(clear, false);
+		}
+		if (set >= 0)
+		{
+			o->setModelConditionState(set, true);
+		}
+	};
+	apply(m_keepId != INVALID_ID ? logic.findObjectByID(m_keepId) : nullptr);
+	for (ObjectID id : m_members)
+	{
+		apply(logic.findObjectByID(id));
 	}
 }
 
@@ -398,7 +479,7 @@ Object *CastleBehavior::buildOnPad(ObjectID padId, const ThingTemplate &tt, bool
 	return Construction::constructOnPlot(*pad, tt, *pad->getPosition(), 0.0f, *pad->getControllingPlayer(), instant);
 }
 
-bool CastleBehavior::unpack()
+bool CastleBehavior::unpack(bool instant)
 {
 	// RW 0x79BE6A
 	Object *castle = getObject();
@@ -430,7 +511,7 @@ bool CastleBehavior::unpack()
 	}
 	for (const CastleTemplateEntry &entry : layout->entries)
 	{
-		if (Object *made = createOwnedObject(entry, *owner))
+		if (Object *made = createOwnedObject(entry, *owner, instant)) // RW 0x79B903(instant) -> 0x7987EE
 		{
 			m_owned.push_back(made->getID());
 			registerOwnedObject(*made); // RW 0x79B94E
@@ -473,7 +554,7 @@ bool CastleBehavior::unpack()
 	return true;
 }
 
-Object *CastleBehavior::createOwnedObject(const CastleTemplateEntry &entry, Player &owner)
+Object *CastleBehavior::createOwnedObject(const CastleTemplateEntry &entry, Player &owner, bool instant)
 {
 	// RW 0x7987EE
 	Object *castle = getObject();
@@ -538,6 +619,24 @@ Object *CastleBehavior::createOwnedObject(const CastleTemplateEntry &entry, Play
 	{
 		Construction::onStructureCreated(owner, castle, *obj);
 		Construction::onStructureConstructionComplete(owner, castle, *obj, false);
+	}
+	if (!instant)
+	{
+		// lane SPELL-3 (review r1): RW 0x798AE4 .. 0x798B33, the timed unpack's member only: frames = _ftol2(FadeTime * [RW 0xD9F60C] = 30) (x87: fld FadeTime,
+		// fild 30, fmul); the drawable fades in over them (RW 0x670AA2, client), the object keeps JUST_BUILT for them (setSpecialModelConditionState RW 0x68B581
+		// with 0xDA), gets the status NO_ATTACK (RW 0x62684D(5, 1)) and its drawable takes the flags at once (RW 0x67449C(0))
+		const UnsignedInt frames = SimMath::ftol2Low32(SimMath::pc24MulW((double)m_data->m_fadeTime, 30.0));
+		GameLogic &lg = obj->logic();
+		if (ObjectClientHooks *client = lg.clientHooks())
+		{
+			client->fadeIn(*obj, frames);
+		}
+		obj->setSpecialModelConditionState(castleNames().justBuilt, frames);
+		obj->setStatus((unsigned)castleNames().noAttack, true);
+		if (ObjectClientHooks *client = lg.clientHooks())
+		{
+			client->flushModelConditions(*obj);
+		}
 	}
 	return obj;
 }
@@ -1029,8 +1128,9 @@ std::vector<std::string> CastleBehavior::stopLines()
 		"a pre-built structure notes it at runtime",
 		"[S-951] castle: the castle after its unpack is ported (registerOwnedObject RW 0x79AC19, the keep check RW 0x799ACB, KeepDeathKillsEverything RW 0x7999E2, abandon RW 0x79CB47, the "
 		"fade, pack RW 0x79CCF2, the capture scan RW 0x79B3C4); not ported: the player's unpack / pack (the dispatcher cases MSG_CASTLE_UNPACK RW 0x77C2C1, MSG_CASTLE_PACK RW 0x77C265, "
-		"MSG_CASTLE_UNPACK_EXPLICIT_OBJECT RW 0x77C338; initiateUnpack RW 0x79C17D, the cost RW 0x79969F), the states 1 .. 3 of RW 0x79CF2A (RW 0x79BE6A(0) / 0x79ADE9 / 0x799F0F) and the "
-		"camps' unpack buttons), the crew (RW 0x79B0F1, 0x798397, 0x798344), the castle's alert map "
+		"MSG_CASTLE_UNPACK_EXPLICIT_OBJECT RW 0x77C338; the cost RW 0x79969F) and the camps' unpack buttons; lane SPELL-3 runs a Summoned castle's timed unpack (onCreate RW 0x79C761, "
+		"initiateUnpack RW 0x79C17D, the states 1 .. 3 of RW 0x79CF2A with RW 0x799F0F's model conditions; the unpack itself is the instant one's, the wall straggler "
+		"teleport RW 0x79ADE9, RW 0x799039's payment and the members' RW 0x798057 are not ported), the crew (RW 0x79B0F1, 0x798397, 0x798344), the castle's alert map "
 		"(+ 0xA0, RW 0x79B374), the stored price (+ 0x4C), RW 0x625E0A, the camp EVA (RW 0x799440) and the client fades / decals; reached at runtime they are noted",
 		"[S-952] castle: inference in the ported states: the capture scan and the push out run on ThePartitionManager (types 0 and 3, S-1020), the "
 		"push out's geometry overlap filter (RW 0x67C5F3 -> RW 0xAD2CE0) and the horde's slot 0x1C8 test (RW 0x79C88F) are not ported, a plot's occupant counts while the object exists (retail clears the "
@@ -1114,6 +1214,7 @@ void CastleMemberBehavior::onBodyDamageStateChange(BodyDamageType, BodyDamageTyp
 
 void CastleModules::registerAll(ModuleFactory &modules)
 {
+	CastleUpgrade::registerClass(modules); // lane FACT-B: the fortress improvements' upgrade module
 	modules.bindTypedData<CastleBehaviorModuleData>("CastleBehavior", MODULETYPE_BEHAVIOR);
 	modules.bindModuleProc("CastleBehavior", MODULETYPE_BEHAVIOR, [](Thing *thing, const ModuleData *data, const ModuleFactory::ModuleTemplate &) -> std::unique_ptr<Module> {
 		const CastleBehaviorModuleData *typed = dynamic_cast<const CastleBehaviorModuleData *>(data);

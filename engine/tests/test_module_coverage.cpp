@@ -109,11 +109,11 @@ TEST_CASE("module coverage: every registry class is ported, base AI, parsed only
 	// DualWeaponBehavior: +2 -> 121 / 186; GARRISON-2 (TransportContain, HordeTransportContain, SiegeEngineContain, HordeSiegeEngineContain,
 	// TunnelContain): +5 -> 126 / 181; MOD-4 (AISpecialPowerUpdate, RepairSpecialPower, SpawnBehavior, SlavedUpdate): +4 -> 130 / 177;
 	// AUDIO-4 (LargeGroupAudioUpdate, AnimationSoundClientBehavior): +2 -> 132 / 175; CAMP-1 (AttachUpdate): +1 -> 133 / 174;
-	// HUD-5 (GateOpenAndCloseBehavior, AIGateUpdate): +2 -> 135 / 172; DECOMP-2 (ModelCondition / Upgrade / RandomSoundSelectorClientBehavior): +3 -> 138 / 169
-	CHECK(c.ported == 138);
+	// HUD-5 (GateOpenAndCloseBehavior, AIGateUpdate): +2 -> 135 / 172; DECOMP-2 (ModelCondition / Upgrade / RandomSoundSelectorClientBehavior): +3 -> 138 / 169; SPELL-3 (FloodUpdate): +1 -> 139 / 168; FACT-B (WeaponChangeSpecialPowerModule, CastleUpgrade): +2 -> 141 / 166; FACT-A (ObjectCreationUpgrade, ReplaceSelfUpgrade; its CastleUpgrade is FACT-B's): +2 -> 143 / 164; FACT-C (HordeDispatchSpecialPower; its ObjectCreationUpgrade is FACT-A's, replaced by FACT-C's port): +1 -> 144 / 163
+	CHECK(c.ported == 144);
 	CHECK(c.baseAi == 9);
 	CHECK(c.parsedOnly == 13);
-	CHECK(c.missing == 169);
+	CHECK(c.missing == 163);
 
 	if (const char *out = std::getenv("OPENBFME_MODULE_COVERAGE_OUT"))
 	{

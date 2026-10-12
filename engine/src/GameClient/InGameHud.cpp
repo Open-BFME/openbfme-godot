@@ -506,7 +506,15 @@ void InGameHud::syncSpellBook()
 	m_palantirRef->syncSpellBook(slots);
 	if (m_store)
 	{
-		m_store->update();
+		// lane SPELL-3 (S-923 inference): the store's update (RW 0x822E43) runs only after the movie stepped a frame in this update. Its SetLayout swaps the
+		// SpellStore's Buttons clip when the movie next steps; SetSpellButtonState sent before that step reached the Spell<n> clips being replaced, the new
+		// ones started their fade-in without a targetState and fell through into _disabled (dead to clicks), and the state cache never sent them again. A
+		// render frame shorter than the movie's 33 ms made that happen (test_spell_book_hud.cpp, the uneven render rate case); retail's client frame steps
+		// the movie at each of its updates (INFERENCE)
+		if (m_wm->lastAptSteps() > 0)
+		{
+			m_store->update();
+		}
 		if (m_store->closing())
 		{
 			closeSpellStore();
