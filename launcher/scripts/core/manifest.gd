@@ -11,6 +11,9 @@
 ##            "files": {"<path in the package>": {"size": <bytes>, "sha256": "<64 hex>"}, ...}}
 ## Format 2 (round 3): "files" lists every file of the package, so the launcher checks unpacked files against signed data whenever it is
 ## about to run them (a staged launcher before the swap, an installed game before Play), not only the downloaded archive.
+## Lane MAC-1: manifest.json keeps exactly the two platforms above, because every launcher published before macOS existed refuses a
+## manifest with any other key; each later platform has its own file of the same format, manifest-<platform>.json (+ .sig) with that one
+## platform under "assets" (file_name / platforms_for). A launcher reads the file of its own platform only.
 extends RefCounted
 
 const Ed25519 := preload("res://scripts/crypto/ed25519.gd")
@@ -18,14 +21,25 @@ const Semver := preload("res://scripts/core/semver.gd")
 const Archive := preload("res://scripts/core/archive.gd")
 
 const FORMAT := 2
-const PLATFORMS := ["linux-x64", "windows-x64"]
+const PLATFORMS := ["linux-x64", "windows-x64"]  # the platforms of manifest.json (the launchers already published read only these)
+const ALL_PLATFORMS := ["linux-x64", "windows-x64", "macos-arm64"]
 const KINDS := {"game": "openbfme", "launcher": "openbfme-launcher"}
 const MAX_BYTES := 64 * 1024
 const MAX_ASSET := 4 * 1024 * 1024 * 1024
 
 
 static func asset_name(kind: String, version: String, platform: String) -> String:
-	return "%s-%s-%s.%s" % [KINDS[kind], version, platform, "zip" if platform.begins_with("windows") else "tar.gz"]
+	return "%s-%s-%s.%s" % [KINDS[kind], version, platform, "tar.gz" if platform.begins_with("linux") else "zip"]
+
+
+## the release asset that holds the signed manifest of `platform` (its signature is that name + ".sig")
+static func file_name(platform: String) -> String:
+	return "manifest.json" if platform in PLATFORMS else "manifest-%s.json" % platform
+
+
+## the platform keys the manifest file of `platform` holds under "assets", exactly
+static func platforms_for(platform: String) -> Array:
+	return PLATFORMS if platform in PLATFORMS else [platform]
 
 
 ## the archive's single top folder (the asset name without its extension)
@@ -34,7 +48,8 @@ static func top_folder(asset: String) -> String:
 
 
 ## {ok, error, manifest}. `expect`: {repo, tag, prerelease} of the release it was downloaded with ({} for a stored, already matched one
-## except `repo`, which is always checked).
+## except `repo`, which is always checked), and `platform`: the launcher's platform, whose manifest file this is (its "assets" must hold
+## exactly platforms_for(platform); without it, manifest.json's two platforms).
 static func verify(bytes: PackedByteArray, sig: PackedByteArray, release_key: PackedByteArray, expect: Dictionary) -> Dictionary:
 	var fail := func(why: String) -> Dictionary: return {"ok": false, "error": why, "manifest": {}}
 	if release_key.size() != 32:
@@ -50,9 +65,10 @@ static func verify(bytes: PackedByteArray, sig: PackedByteArray, release_key: Pa
 	if json.parse(text) != OK or typeof(json.data) != TYPE_DICTIONARY:
 		return fail.call("manifest.json is not a JSON object")
 	var m: Dictionary = json.data
-	var why := _schema(m)
+	var platforms: Array = platforms_for(expect.platform) if expect.has("platform") else PLATFORMS
+	var why := _schema(m, platforms)
 	if why != "":
-		return fail.call("manifest.json: " + why)
+		return fail.call("%s: %s" % [file_name(expect.platform) if expect.has("platform") else "manifest.json", why])
 	if expect.has("repo") and m.repo != expect.repo:
 		return fail.call("the manifest is for %s, this launcher updates from %s" % [m.repo, expect.repo])
 	if expect.has("tag") and m.version != expect.tag:
@@ -80,7 +96,7 @@ static func _int(v) -> int:
 	return int(f)
 
 
-static func _schema(m: Dictionary) -> String:
+static func _schema(m: Dictionary, platforms: Array = PLATFORMS) -> String:
 	var k := _keys(m, ["format", "product", "repo", "version", "channel", "date", "commit", "assets"])
 	if k != "":
 		return k
@@ -109,10 +125,10 @@ static func _schema(m: Dictionary) -> String:
 	for kind in KINDS:
 		if typeof(m.assets[kind]) != TYPE_DICTIONARY:
 			return "assets.%s is not an object" % kind
-		k = _keys(m.assets[kind], PLATFORMS)
+		k = _keys(m.assets[kind], platforms)
 		if k != "":
 			return "assets.%s: %s" % [kind, k]
-		for platform in PLATFORMS:
+		for platform in platforms:
 			var a = m.assets[kind][platform]
 			var where := "assets.%s.%s" % [kind, platform]
 			if typeof(a) != TYPE_DICTIONARY:

@@ -30,8 +30,15 @@ const KEEP_VERSIONS := 2
 const FREEZE_DAYS := 60
 const MAX_RELEASES_JSON := 4 * 1024 * 1024
 const MAX_NOTES := 20000
-const GAME_EXE := {"linux-x64": "OpenBFME.x86_64", "windows-x64": "OpenBFME.exe"}
-const LAUNCHER_EXE := {"linux-x64": "OpenBFMELauncher.x86_64", "windows-x64": "OpenBFMELauncher.exe"}
+const GAME_EXE := {"linux-x64": "OpenBFME.x86_64", "windows-x64": "OpenBFME.exe", "macos-arm64": "OpenBFME.app/Contents/MacOS/OpenBFME"}
+const LAUNCHER_EXE := {"linux-x64": "OpenBFMELauncher.x86_64", "windows-x64": "OpenBFMELauncher.exe",
+	"macos-arm64": "OpenBFMELauncher.app/Contents/MacOS/OpenBFME Launcher"}
+# lane MAC-1: the macOS launcher is a bundle whose pack is its own file (Godot's macOS export ignores embed_pck), so "the launcher" there
+# is the pack: it identifies the version and the self-update swaps it in one rename; the executable (Godot's arm64 template, the same
+# bytes for every launcher version built with the same Godot) and the signature's resource seal are copied over before that
+# (self_update.gd). Godot names both after the project (application/config/name "OpenBFME Launcher").
+const LAUNCHER_PCK := {"macos-arm64": "OpenBFMELauncher.app/Contents/Resources/OpenBFME Launcher.pck"}
+const LAUNCHER_SEAL := {"macos-arm64": "OpenBFMELauncher.app/Contents/_CodeSignature/CodeResources"}
 
 var info: RefCounted  # BuildInfo
 var data_dir := ""
@@ -46,11 +53,20 @@ var launcher_dir := ""  # the folder of the running launcher's executable ("" in
 
 func _init(build_info: RefCounted) -> void:
 	info = build_info
-	data_dir = OS.get_user_data_dir()
+	data_dir = info.data_dir()
 	http = HttpFetch.new(policy, info.version)
 	state.load(data_dir.path_join("state.cfg"))
 	if info.packaged:
-		launcher_dir = OS.get_executable_path().get_base_dir()
+		launcher_dir = launcher_root_of(OS.get_executable_path())
+
+
+## the folder a packaged launcher lives in: the executable's folder, or on macOS the folder holding the bundle
+## (<dir>/OpenBFMELauncher.app/Contents/MacOS/<exe>: three levels up)
+static func launcher_root_of(exe: String) -> String:
+	var dir := exe.get_base_dir()
+	if dir.get_file() == "MacOS" and dir.get_base_dir().get_file() == "Contents" and dir.get_base_dir().get_base_dir().get_extension() == "app":
+		return dir.get_base_dir().get_base_dir().get_base_dir()
+	return dir
 
 
 func set_test_api_base(origin: String) -> String:
@@ -267,20 +283,24 @@ func in_channel(releases: Array, ch: String) -> Array:
 ## The release's verified manifest (cached per tag). {ok, error, manifest, bytes, sig}
 func release_manifest(release: Dictionary) -> Dictionary:
 	var dir := data_dir.path_join("cache/manifests").path_join(release.tag)
-	var expect := {"repo": info.repo, "tag": release.tag, "prerelease": release.prerelease}
+	var expect := {"repo": info.repo, "tag": release.tag, "prerelease": release.prerelease, "platform": info.platform()}
+	# the cached copy and the installed copies keep the names manifest.json / manifest.json.sig whatever the platform; only the
+	# release asset is named per platform (Manifest.file_name: manifest.json, or manifest-<platform>.json for macOS)
 	var bytes := FileAccess.get_file_as_bytes(dir.path_join("manifest.json"))
 	var sig := FileAccess.get_file_as_bytes(dir.path_join("manifest.json.sig"))
 	if not bytes.is_empty() and sig.size() == 64:
 		var v := Manifest.verify(bytes, sig, info.release_key, expect)
 		if v.ok:
 			return {"ok": true, "error": "", "manifest": v.manifest, "bytes": bytes, "sig": sig}
-	for need in ["manifest.json", "manifest.json.sig"]:
+	var asset_name := Manifest.file_name(info.platform())
+	for need in [asset_name, asset_name + ".sig"]:
 		if not release.assets.has(need):
-			return {"ok": false, "error": "the release %s has no %s (not a launcher release)" % [release.tag, need]}
-	var m := http.get_small(release.assets["manifest.json"].url, Manifest.MAX_BYTES)
+			var why := "not a launcher release" if asset_name == "manifest.json" else "the release has no %s build" % info.platform()
+			return {"ok": false, "error": "the release %s has no %s (%s)" % [release.tag, need, why]}
+	var m := http.get_small(release.assets[asset_name].url, Manifest.MAX_BYTES)
 	if not m.ok or m.code != 200:
 		return {"ok": false, "error": "the manifest of %s could not be downloaded: %s" % [release.tag, m.error if not m.ok else "HTTP %d" % m.code]}
-	var s := http.get_small(release.assets["manifest.json.sig"].url, 64)
+	var s := http.get_small(release.assets[asset_name + ".sig"].url, 64)
 	if not s.ok or s.code != 200:
 		return {"ok": false, "error": "the manifest signature of %s could not be downloaded: %s" % [release.tag, s.error if not s.ok else "HTTP %d" % s.code]}
 	var v := Manifest.verify(m.body, s.body, info.release_key, expect)
@@ -319,7 +339,7 @@ func verify_installed(name: String, full := false) -> Dictionary:
 		return {"ok": false, "error": "not a version folder"}
 	var dir := data_dir.path_join("versions").path_join(name)
 	var v := Manifest.verify(FileAccess.get_file_as_bytes(dir.path_join("manifest.json")),
-		FileAccess.get_file_as_bytes(dir.path_join("manifest.json.sig")), info.release_key, {"repo": info.repo})
+		FileAccess.get_file_as_bytes(dir.path_join("manifest.json.sig")), info.release_key, {"repo": info.repo, "platform": info.platform()})
 	if not v.ok:
 		return {"ok": false, "error": v.error}
 	if v.manifest.version != name:
@@ -566,7 +586,8 @@ func play(version: String) -> Dictionary:
 		return {"ok": false, "error": why, "pid": -1, "modified": v.get("modified", false)}
 	var exe := data_dir.path_join("versions").path_join(version).path_join("game").path_join(GAME_EXE[info.platform()])
 	if info.os_name() == "Linux":
-		# DEP-1 (Sol r1): Linux only; platform() is "linux-x64" for every non-Windows OS, macOS included
+		# DEP-1 (Sol r1): Linux only (os_name(), so a test can play another OS on a Linux package); macOS has its own packages
+		# (platform() "macos-arm64", lane MAC-1) and no GLIBC
 		# lane GLIBC-1: a system older than the build's GLIBC gets a message, not a game that fails to load its library
 		# (OPENBFME_TEST_SYSTEM_GLIBC: the system's version as tools/release/test_launcher.py sets it; test builds only)
 		var glibc := GlibcCheck.check(exe.get_base_dir(), OS.get_environment("OPENBFME_TEST_SYSTEM_GLIBC") if info.tests_allowed() else "")
@@ -645,8 +666,19 @@ static func _stale_lock(path: String, waited_ms: int) -> String:
 		return ""  # this launcher's other thread holds it
 	if OS.get_name() != "Windows" and DirAccess.dir_exists_absolute("/proc") and not DirAccess.dir_exists_absolute("/proc/%d" % pid):
 		return "its launcher (pid %d) is gone" % pid
+	if OS.get_name() == "macOS" and _process_command(pid) == "":
+		return "its launcher (pid %d) is gone" % pid
 	var age := int(Time.get_unix_time_from_system()) - int(owner[1].strip_edges())
 	return "%d s old" % age if age > STALE_LOCK_SECONDS else ""
+
+
+## macOS (lane MAC-1, no /proc): the command line of process `pid` from `ps` (part of macOS; read-only), "" when there is no such
+## process. Linux reads /proc/<pid>/cmdline instead (_game_runs); Windows needs neither.
+static func _process_command(pid: int) -> String:
+	var out := []
+	if OS.execute("/bin/ps", ["-p", str(pid), "-o", "command="], out, true) != 0 or out.is_empty():
+		return ""
+	return String(out[0]).strip_edges()
 
 
 func unlock_versions() -> void:
@@ -680,6 +712,8 @@ func _game_runs(pid: int, version: String) -> bool:
 			return true
 		w.close()
 		return false
+	if OS.get_name() == "macOS":  # lane MAC-1: no /proc; ps reports the command line (the bundle's executable path names the version)
+		return _process_command(pid).contains("/versions/%s/game/" % version)
 	var f := FileAccess.open("/proc/%d/cmdline" % pid, FileAccess.READ)
 	if f == null:
 		return false
@@ -692,8 +726,19 @@ func _game_runs(pid: int, version: String) -> bool:
 
 # ---- launcher self-update ----------------------------------------------------------------------------------------------------------------
 
+## the files of this platform's launcher package that make up "the launcher"; [0] is the one whose SHA-256 identifies the version and
+## that the self-update replaces in one atomic rename (self_update.gd): the executable with its pack embedded on Linux and Windows,
+## the pack on macOS (then the executable and the signature's resource seal follow, copied over before the rename)
 func launcher_files() -> Array:
-	return [LAUNCHER_EXE[info.platform()]]  # one file: the pack is embedded (self_update.gd)
+	var platform: String = info.platform()
+	if LAUNCHER_PCK.has(platform):
+		return [LAUNCHER_PCK[platform], LAUNCHER_EXE[platform], LAUNCHER_SEAL[platform]]
+	return [LAUNCHER_EXE[platform]]  # one file: the pack is embedded (self_update.gd)
+
+
+## the launcher package's executable (what a process start runs), relative to the launcher's folder
+func launcher_exe() -> String:
+	return LAUNCHER_EXE[info.platform()]
 
 
 ## lane UI-5: whether stage_self_update(release) would stage a launcher (a packaged launcher older than `release`, not refused before,
@@ -760,7 +805,8 @@ func stage_self_update(release: Dictionary) -> Dictionary:
 func check_staged(dir: String, tag: String) -> Dictionary:
 	var cache := data_dir.path_join("cache/manifests").path_join(tag)
 	var v := Manifest.verify(FileAccess.get_file_as_bytes(cache.path_join("manifest.json")),
-		FileAccess.get_file_as_bytes(cache.path_join("manifest.json.sig")), info.release_key, {"repo": info.repo, "tag": tag})
+		FileAccess.get_file_as_bytes(cache.path_join("manifest.json.sig")), info.release_key,
+		{"repo": info.repo, "tag": tag, "platform": info.platform()})
 	if not v.ok:
 		return {"ok": false, "error": "no verified manifest for the staged launcher %s (%s)" % [tag, v.error]}
 	var files: Dictionary = v.manifest.assets.launcher[info.platform()].files

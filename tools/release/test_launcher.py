@@ -20,6 +20,8 @@ import sys
 import tarfile
 import tempfile
 import time
+import platform as host_platform
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -36,6 +38,26 @@ from launcher_test_server import COMMIT, TEST_REPO, ReleaseServer, tiny_package 
 
 GODOT = os.environ.get("GODOT", "godot")
 
+# The host's own launcher plays here (the game is a shell script, the launcher a Godot run or an export of this OS): Linux packages on
+# Linux, macOS packages (an application bundle, lane MAC-1) on macOS. The published launchers' tests (RELNAME-1) and the GLIBC test are
+# Linux-only. Every release the server publishes carries every platform's assets and both manifest files (manifest.json for Linux and
+# Windows, manifest-macos-arm64.json for macOS), as a real release does.
+HOST = {"Linux": "linux-x64", "Darwin": "macos-arm64"}.get(host_platform.system(), "")
+PLATFORMS = ("linux-x64", "windows-x64", "macos-arm64")
+GAME_EXE = {"linux-x64": "OpenBFME.x86_64", "windows-x64": "OpenBFME.exe", "macos-arm64": "OpenBFME.app/Contents/MacOS/OpenBFME"}
+GAME_PCK = {"linux-x64": "OpenBFME.pck", "windows-x64": "OpenBFME.pck", "macos-arm64": "OpenBFME.app/Contents/Resources/OpenBFME.pck"}
+LAUNCHER_EXE = {"linux-x64": "OpenBFMELauncher.x86_64", "windows-x64": "OpenBFMELauncher.exe",
+                "macos-arm64": "OpenBFMELauncher.app/Contents/MacOS/OpenBFME Launcher"}
+# the file whose SHA-256 identifies a launcher version and that a self-update swaps (updater.gd launcher_files()[0]): the executable with
+# its pack embedded, or on macOS the pack; the bundle's other files of launcher_files() come with it
+LAUNCHER_ID = {"linux-x64": "OpenBFMELauncher.x86_64", "windows-x64": "OpenBFMELauncher.exe",
+               "macos-arm64": "OpenBFMELauncher.app/Contents/Resources/OpenBFME Launcher.pck"}
+LAUNCHER_FILES = {"macos-arm64": [LAUNCHER_ID["macos-arm64"], LAUNCHER_EXE["macos-arm64"],
+                                  "OpenBFMELauncher.app/Contents/_CodeSignature/CodeResources"]}
+MANIFEST = "manifest.json" if HOST in make_manifest.PLATFORMS else f"manifest-{HOST}.json"
+BUILD_PLATFORM = {"linux-x64": "linux", "macos-arm64": "macos"}
+ARCHIVE_EXT = {"linux-x64": "tar.gz", "windows-x64": "zip", "macos-arm64": "zip"}
+
 
 def _godot_ok() -> bool:
     try:
@@ -44,7 +66,8 @@ def _godot_ok() -> bool:
         return False
 
 
-pytestmark = pytest.mark.skipif(not _godot_ok(), reason="SKIP launcher tests: Godot 4.7.2 not found (set GODOT)")
+pytestmark = [pytest.mark.skipif(not HOST, reason="SKIP launcher tests: they play the host's own launcher, on Linux or macOS only"),
+              pytest.mark.skipif(not _godot_ok(), reason="SKIP launcher tests: Godot 4.7.2 not found (set GODOT)")]
 
 
 @pytest.fixture(autouse=True)
@@ -77,19 +100,42 @@ def imported():
 
 # ---- packages ---------------------------------------------------------------------------------------------------------------------------
 
-GAME_SCRIPT = b'#!/bin/sh\necho "played $(basename "$(dirname "$0")") $*" >> "$OPENBFME_TEST_PLAYED"\n'
+GAME_SCRIPT = b'#!/bin/sh\necho "played game $*" >> "$OPENBFME_TEST_PLAYED"\n'
 
 
 def game_tar(tmp: Path, version: str, extra: bytes = b"", script: bytes = GAME_SCRIPT, version_extra: str = "") -> bytes:
-    top = tmp / f"build-{version}" / f"openbfme-{version}-linux-x64"
-    top.mkdir(parents=True, exist_ok=True)
-    (top / "OpenBFME.x86_64").write_bytes(script)
-    (top / "OpenBFME.x86_64").chmod(0o755)
-    (top / "OpenBFME.pck").write_bytes(b"pack of " + version.encode() + extra)
+    """the host platform's game package: a tar.gz on Linux, a zip holding the bundle's paths on macOS (the name is historical)"""
+    top = tmp / f"build-{version}" / f"openbfme-{version}-{HOST}"
+    exe = top / GAME_EXE[HOST]
+    exe.parent.mkdir(parents=True, exist_ok=True)
+    exe.write_bytes(script)
+    exe.chmod(0o755)
+    (top / GAME_PCK[HOST]).parent.mkdir(parents=True, exist_ok=True)
+    (top / GAME_PCK[HOST]).write_bytes(b"pack of " + version.encode() + extra)
     (top / "VERSION").write_text(f"OpenBFME {version}\n{version_extra}")
-    out = tmp / f"openbfme-{version}-linux-x64.tar.gz"
-    make_archive.tar_gz(top, out, 1700000000)
+    out = tmp / make_manifest.asset_name("game", version, HOST)
+    (make_archive.tar_gz if HOST == "linux-x64" else make_archive.zip_file)(top, out, 1700000000)
     return out.read_bytes()
+
+
+def evil_archive(version: str, name: str, kind: str = "file") -> bytes:
+    """the host's archive type with one bad member (zipfile directly on macOS: make_archive.py writes nothing like it)"""
+    if HOST == "linux-x64":
+        return evil_tar(version, name, kind)
+    top = f"openbfme-{version}-{HOST}"
+    raw = io.BytesIO()
+    with zipfile.ZipFile(raw, "w") as z:
+        info = zipfile.ZipInfo(f"{top}/{GAME_EXE[HOST]}", date_time=(2023, 11, 14, 22, 13, 20))
+        info.external_attr = 0o100755 << 16
+        z.writestr(info, GAME_SCRIPT)
+        bad = zipfile.ZipInfo(name, date_time=(2023, 11, 14, 22, 13, 20))
+        if kind == "symlink":
+            bad.external_attr = 0o120777 << 16
+            z.writestr(bad, b"/tmp")
+        else:
+            bad.external_attr = 0o100644 << 16
+            z.writestr(bad, b"escaped\n")
+    return raw.getvalue()
 
 
 def evil_tar(version: str, name: str, kind: str = "file") -> bytes:
@@ -124,15 +170,20 @@ def release_files(tmp: Path, version: str, secret: bytes, game: bytes | None = N
     malformed (bad member paths): its signed file list is taken from a good package, so the launcher's own path checks are tested"""
     d = tmp / f"release-{version}-{hashlib.sha256(os.urandom(8)).hexdigest()[:6]}"
     d.mkdir(parents=True)
-    arch = {
-        make_manifest.asset_name("game", version, "linux-x64"): game if game is not None else game_tar(tmp, version),
-        make_manifest.asset_name("game", version, "windows-x64"):
-            tiny_package(make_manifest.asset_name("game", version, "windows-x64"), {"OpenBFME.exe": b"windows game of " + version.encode()}),
-        make_manifest.asset_name("launcher", version, "linux-x64"): launcher if launcher is not None else
-            tiny_package(make_manifest.asset_name("launcher", version, "linux-x64"), {"OpenBFMELauncher.x86_64": b"launcher " + version.encode()}),
-        make_manifest.asset_name("launcher", version, "windows-x64"):
-            tiny_package(make_manifest.asset_name("launcher", version, "windows-x64"), {"OpenBFMELauncher.exe": b"launcher " + version.encode()}),
-    }
+    arch = {}
+    for platform in PLATFORMS:
+        for kind in ("game", "launcher"):
+            name = make_manifest.asset_name(kind, version, platform)
+            if platform == HOST and kind == "game":
+                arch[name] = game if game is not None else game_tar(tmp, version)
+            elif platform == HOST and kind == "launcher" and launcher is not None:
+                arch[name] = launcher
+            elif kind == "game":
+                arch[name] = tiny_package(name, {GAME_EXE[platform]: f"{platform} game of {version}".encode(),
+                                                 GAME_PCK[platform]: b"pack of " + version.encode()})
+            else:
+                arch[name] = tiny_package(name, {f: b"launcher " + version.encode()
+                                                 for f in LAUNCHER_FILES.get(platform, [LAUNCHER_EXE[platform]])})
     sums = ""
     for n, data in arch.items():
         (d / n).write_bytes(data)
@@ -140,17 +191,19 @@ def release_files(tmp: Path, version: str, secret: bytes, game: bytes | None = N
     (d / f"SHA256SUMS-{version}.txt").write_text(sums)
     date = date or time.strftime("%Y-%m-%d", time.gmtime())
     strict = make_manifest.package_files
+    host_game = make_manifest.asset_name("game", version, HOST)
     if lenient:
-        good = strict(make_manifest.asset_name("game", version, "linux-x64"), game_tar(tmp, version))
-        make_manifest.package_files = lambda name, data: good if name.startswith("openbfme-v") and "linux" in name else strict(name, data)
-    try:
-        manifest = make_manifest.dumps(make_manifest.build(d, version, repo, COMMIT, date))
-    finally:
-        make_manifest.package_files = strict
+        good = strict(host_game, game_tar(tmp, version))
+        make_manifest.package_files = lambda name, data: good if name == host_game else strict(name, data)
     files = dict(arch)
     files[f"SHA256SUMS-{version}.txt"] = sums.encode()
-    files["manifest.json"] = manifest
-    files["manifest.json.sig"] = ed25519.sign(secret, manifest)
+    try:
+        for mname, platforms in make_manifest.MANIFESTS.items():
+            manifest = make_manifest.dumps(make_manifest.build(d, version, repo, COMMIT, date, platforms))
+            files[mname] = manifest
+            files[mname + ".sig"] = ed25519.sign(secret, manifest)
+    finally:
+        make_manifest.package_files = strict
     return files
 
 
@@ -170,7 +223,9 @@ class Run:
 
 def launch(tmp: Path, server: ReleaseServer | None, key: bytes, *args: str, exe: Path | None = None, origin: str | None = None,
            timeout: int = 180, env_extra: dict | None = None) -> Run:
-    env = dict(os.environ, XDG_DATA_HOME=str(tmp / "data"), OPENBFME_TEST_PLAYED=str(tmp / "played.txt"), **(env_extra or {}))
+    # XDG_DATA_HOME places user:// on Linux; macOS ignores it, so a test build's OPENBFME_TEST_DATA_DIR names the same folder there
+    env = dict(os.environ, XDG_DATA_HOME=str(tmp / "data"), OPENBFME_TEST_DATA_DIR=str(tmp / "data" / "OpenBFMELauncher"),
+               OPENBFME_TEST_PLAYED=str(tmp / "played.txt"), **(env_extra or {}))
     test = []
     if origin or server:
         test.append(f"--api-base={origin or server.origin}")
@@ -262,17 +317,18 @@ def test_fresh_install_and_play(tmp_path, server, keys):
     assert r.code == 0 and r.has("update installed v0.2.0") and r.has("installed v0.2.0"), r
     assert installed(tmp_path) == ["v0.2.0"]
     game = data(tmp_path) / "versions/v0.2.0/game"
-    assert (game / "OpenBFME.pck").read_bytes() == b"pack of v0.2.0"
-    assert os.access(game / "OpenBFME.x86_64", os.X_OK), "the executable bit of the archive is kept"
+    assert (game / GAME_PCK[HOST]).read_bytes() == b"pack of v0.2.0"
+    assert os.access(game / GAME_EXE[HOST], os.X_OK), "the executable bit of the archive is kept"
     assert "played game" in played(tmp_path)
-    signed = json.loads((data(tmp_path) / "versions/v0.2.0/manifest.json").read_text())["assets"]["game"]["linux-x64"]["files"]
-    assert signed["OpenBFME.pck"] == {"size": 14, "sha256": hashlib.sha256(b"pack of v0.2.0").hexdigest()}
+    signed = json.loads((data(tmp_path) / "versions/v0.2.0/manifest.json").read_text())["assets"]["game"][HOST]["files"]
+    assert signed[GAME_PCK[HOST]] == {"size": 14, "sha256": hashlib.sha256(b"pack of v0.2.0").hexdigest()}
     assert not list((data(tmp_path) / "downloads").glob("*.part")), "the verified download is removed after the install"
     agents = {h.get("user-agent") for _, h in server.requests}
     assert agents == {"OpenBFME-Launcher/v0.0.0-dev (+https://github.com/Open-BFME/openbfme-godot)"}, agents
     assert any(p.startswith(f"/repos/{TEST_REPO}/releases") for p, _ in server.requests)
 
 
+@pytest.mark.skipif(HOST != "linux-x64", reason="GLIBC is Linux's")
 def test_play_checks_the_systems_glibc(tmp_path, server, keys):
     """GLIBC-1: a package whose VERSION says "requires GLIBC 2.35" is not started on an older system: the message names both versions"""
     game = game_tar(tmp_path, "v0.2.0", version_extra="requires GLIBC 2.35\n")
@@ -285,7 +341,8 @@ def test_play_checks_the_systems_glibc(tmp_path, server, keys):
 
 
 def test_play_skips_the_glibc_check_off_linux(tmp_path, server, keys):
-    """DEP-1 (Sol r1): the GLIBC check is for Linux only; platform() is "linux-x64" on macOS too, which has no GLIBC to compare"""
+    """DEP-1 (Sol r1): the GLIBC check is for Linux only: a Linux package played on a host that says it is macOS skips it (on a Mac,
+    whose own packages are macos-arm64, the check never runs)"""
     game = game_tar(tmp_path, "v0.2.0", version_extra="requires GLIBC 2.28\n")
     server.publish("v0.2.0", release_files(tmp_path, "v0.2.0", keys["release"], game=game))
     r = launch(tmp_path, server, keys["release"], "--update", "--play",
@@ -357,7 +414,7 @@ def test_no_network_and_nothing_installed(tmp_path, keys):
 
 def test_tampered_asset_is_rejected(tmp_path, server, keys):
     files = release_files(tmp_path, "v0.2.0", keys["release"])
-    name = make_manifest.asset_name("game", "v0.2.0", "linux-x64")
+    name = make_manifest.asset_name("game", "v0.2.0", HOST)
     good = files[name]
     files[name] = good[:-1] + bytes([good[-1] ^ 1])  # same size, other bytes
     server.publish("v0.2.0", files)
@@ -374,7 +431,7 @@ def test_tampered_asset_is_rejected(tmp_path, server, keys):
 
 def test_tampered_manifest_is_rejected(tmp_path, server, keys):
     files = release_files(tmp_path, "v0.2.0", keys["release"])
-    files["manifest.json"] = files["manifest.json"].replace(b'"commit": "0', b'"commit": "1')
+    files[MANIFEST] = files[MANIFEST].replace(b'"commit": "0', b'"commit": "1')
     server.publish("v0.2.0", files)
     r = launch(tmp_path, server, keys["release"], "--update")
     assert r.code == 3 and r.has("signature is not valid"), r
@@ -397,7 +454,7 @@ def test_manifest_for_another_repository_is_rejected(tmp_path, server, keys):
 
 def test_truncated_download_resumes(tmp_path, server, keys):
     files = release_files(tmp_path, "v0.2.0", keys["release"], game=game_tar(tmp_path, "v0.2.0", extra=os.urandom(300000)))
-    name = make_manifest.asset_name("game", "v0.2.0", "linux-x64")
+    name = make_manifest.asset_name("game", "v0.2.0", HOST)
     server.publish("v0.2.0", files)
     path = f"/dl/v0.2.0/{name}"
     server.truncate[path] = 100000
@@ -413,7 +470,7 @@ def test_truncated_download_resumes(tmp_path, server, keys):
     # a server that ignores Range: the download starts over and still verifies
     files2 = release_files(tmp_path, "v0.3.0", keys["release"], game=game_tar(tmp_path, "v0.3.0", extra=os.urandom(300000)))
     server.publish("v0.3.0", files2)
-    server.truncate[f"/dl/v0.3.0/{make_manifest.asset_name('game', 'v0.3.0', 'linux-x64')}"] = 50000
+    server.truncate[f"/dl/v0.3.0/{make_manifest.asset_name('game', 'v0.3.0', HOST)}"] = 50000
     assert launch(tmp_path, server, keys["release"], "--update").code == 3
     server.ignore_range = True
     r = launch(tmp_path, server, keys["release"], "--update")
@@ -421,14 +478,14 @@ def test_truncated_download_resumes(tmp_path, server, keys):
 
 
 @pytest.mark.parametrize("member,kind,why", [
-    ("openbfme-v0.2.0-linux-x64/../escaped.txt", "file", "a '..' component"),
+    (f"openbfme-v0.2.0-{HOST}/../escaped.txt", "file", "a '..' component"),
     ("/tmp/openbfme-launcher-escaped.txt", "file", "an absolute path"),
-    ("openbfme-v0.2.0-linux-x64/link", "symlink", "type '2'"),
-    ("openbfme-v0.2.0-linux-x64/a\\..\\..\\x", "file", "a backslash"),
+    (f"openbfme-v0.2.0-{HOST}/link", "symlink", "type '2'" if HOST == "linux-x64" else "is a symbolic link"),
+    (f"openbfme-v0.2.0-{HOST}/a\\..\\..\\x", "file", "a backslash"),
     ("elsewhere/x", "file", "not inside the package folder"),
 ])
 def test_archive_paths_are_checked(tmp_path, server, keys, member, kind, why):
-    server.publish("v0.2.0", release_files(tmp_path, "v0.2.0", keys["release"], game=evil_tar("v0.2.0", member, kind), lenient=True))
+    server.publish("v0.2.0", release_files(tmp_path, "v0.2.0", keys["release"], game=evil_archive("v0.2.0", member, kind), lenient=True))
     r = launch(tmp_path, server, keys["release"], "--update")
     assert r.code == 3 and r.has(why) and r.has("v0.2.0 was not installed"), r
     assert installed(tmp_path) == [], "the partial folder is removed"
@@ -473,7 +530,7 @@ def test_rate_limit_and_not_modified(tmp_path, server, keys):
 def test_redirects_only_to_allowed_hosts(tmp_path, server, keys):
     files = release_files(tmp_path, "v0.2.0", keys["release"])
     server.publish("v0.2.0", files)
-    name = make_manifest.asset_name("game", "v0.2.0", "linux-x64")
+    name = make_manifest.asset_name("game", "v0.2.0", HOST)
     port = server.httpd.server_address[1]
     server.redirect[f"/dl/v0.2.0/{name}"] = f"http://localhost:{port}/dl/v0.2.0/{name}"
     r = launch(tmp_path, server, keys["release"], "--update")
@@ -492,26 +549,32 @@ def test_test_origin_must_be_loopback(tmp_path, keys):
 # ---- the packaged launcher: self-update and the release build ---------------------------------------------------------------------------
 
 def _templates_ok() -> bool:
+    if HOST == "macos-arm64":
+        return (Path.home() / "Library/Application Support/Godot/export_templates/4.7.2.stable/macos.zip").is_file()
     base = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local/share")) / "godot/export_templates/4.7.2.stable"
     return (base / "linux_release.x86_64").is_file()
+
+
+def launcher_archive_name(version: str) -> str:
+    return f"openbfme-launcher-{version}-{HOST}.{ARCHIVE_EXT[HOST]}"
 
 
 def build_launcher(out: Path, version: str, key: bytes, test_build: bool = True) -> bytes:
     (out / "key.pub").parent.mkdir(parents=True, exist_ok=True)
     (out / "key.pub").write_text(ed25519.public_key(key).hex() + "\n")
     cmd = [str(HERE / "build_launcher.sh"), "--out", str(out), "--version", version, "--commit", COMMIT, "--repo", TEST_REPO,
-           "--key-file", str(out / "key.pub"), "--mtime", "1700000000", "--platforms", "linux", "--worktree", "--godot", GODOT]
+           "--key-file", str(out / "key.pub"), "--mtime", "1700000000", "--platforms", BUILD_PLATFORM[HOST], "--worktree", "--godot", GODOT]
     if test_build:
         cmd.append("--test-build")
     r = subprocess.run(cmd, capture_output=True, text=True, timeout=900)
     assert r.returncode == 0, r.stdout[-3000:] + r.stderr[-3000:]
-    return (out / f"openbfme-launcher-{version}-linux-x64.tar.gz").read_bytes()
+    return (out / launcher_archive_name(version)).read_bytes()
 
 
 @pytest.fixture(scope="module")
 def launcher_builds(tmp_path_factory, keys):
     if not _templates_ok():
-        pytest.skip("SKIP self-update tests: the Godot 4.7.2 Linux export templates are not installed")
+        pytest.skip("SKIP self-update tests: the Godot 4.7.2 export templates of this OS are not installed")
     d = tmp_path_factory.mktemp("launchers")
     builds = {v: build_launcher(d / v, v, keys["release"]) for v in ("v0.2.0", "v0.3.0")} | \
         {"release": build_launcher(d / "release", "v0.2.0", keys["release"], test_build=False)}
@@ -541,6 +604,8 @@ def build_shipped_launcher(out: Path, version: str, key: bytes) -> bytes:
 
 @pytest.fixture(scope="module")
 def shipped_launchers(tmp_path_factory, keys):
+    if HOST != "linux-x64":
+        pytest.skip("SKIP the published launchers' tests: they were Linux launchers (no macOS preset in those trees)")
     if not _templates_ok():
         pytest.skip("SKIP the published launchers' tests: the Godot 4.7.2 Linux export templates are not installed")
     d = tmp_path_factory.mktemp("shipped")
@@ -594,15 +659,31 @@ def test_a_late_player_finds_the_newest_bridge(tmp_path, server, keys, shipped_l
 
 def unpack_launcher(tmp: Path, archive: bytes) -> Path:
     tmp.mkdir(parents=True, exist_ok=True)
-    with tarfile.open(fileobj=io.BytesIO(archive), mode="r:gz") as t:
-        t.extractall(tmp, filter="tar")
-    return next(tmp.glob("openbfme-launcher-*-linux-x64"))
+    if HOST == "linux-x64":
+        with tarfile.open(fileobj=io.BytesIO(archive), mode="r:gz") as t:
+            t.extractall(tmp, filter="tar")
+    else:
+        with zipfile.ZipFile(io.BytesIO(archive)) as z:
+            for i in z.infolist():
+                z.extract(i, tmp)
+                (tmp / i.filename).chmod(((i.external_attr >> 16) & 0o7777) or 0o644)
+    return next(tmp.glob(f"openbfme-launcher-*-{HOST}"))
 
 
 def exe_sha(archive: bytes) -> str:
-    with tarfile.open(fileobj=io.BytesIO(archive), mode="r:gz") as t:
-        m = next(m for m in t.getmembers() if m.name.endswith("/OpenBFMELauncher.x86_64"))
-        return hashlib.sha256(t.extractfile(m).read()).hexdigest()
+    """the SHA-256 of the launcher's identifying file (LAUNCHER_ID) in a package archive"""
+    if HOST == "linux-x64":
+        with tarfile.open(fileobj=io.BytesIO(archive), mode="r:gz") as t:
+            m = next(m for m in t.getmembers() if m.name.endswith("/" + LAUNCHER_ID[HOST]))
+            return hashlib.sha256(t.extractfile(m).read()).hexdigest()
+    with zipfile.ZipFile(io.BytesIO(archive)) as z:
+        i = next(i for i in z.infolist() if i.filename.endswith("/" + LAUNCHER_ID[HOST]))
+        return hashlib.sha256(z.read(i)).hexdigest()
+
+
+def ident_sha(inst: Path) -> str:
+    """the SHA-256 of the installed launcher's identifying file"""
+    return hashlib.sha256((inst / LAUNCHER_ID[HOST]).read_bytes()).hexdigest()
 
 
 # ---- REPRO-1: the launcher package is the same bytes whatever order the host's file system lists the project in --------------------------
@@ -642,10 +723,10 @@ def test_the_launcher_package_does_not_depend_on_the_directory_order():
         for extra in ([], ["--stage-reverse"]):
             out = d / f"out{len(built)}"
             r = subprocess.run([str(HERE / "build_launcher.sh"), "--out", str(out), "--version", "v1.2.3", "--commit", COMMIT, "--repo",
-                                TEST_REPO, "--key-file", str(LAUNCHER / "release_key.pub"), "--mtime", "1700000000", "--platforms", "linux",
-                                "--worktree", "--godot", GODOT, *extra], capture_output=True, text=True, timeout=900)
+                                TEST_REPO, "--key-file", str(LAUNCHER / "release_key.pub"), "--mtime", "1700000000", "--platforms",
+                                BUILD_PLATFORM[HOST], "--worktree", "--godot", GODOT, *extra], capture_output=True, text=True, timeout=900)
             assert r.returncode == 0, r.stdout[-3000:] + r.stderr[-3000:]
-            built.append((out / "openbfme-launcher-v1.2.3-linux-x64.tar.gz").read_bytes())
+            built.append((out / launcher_archive_name("v1.2.3")).read_bytes())
         if built[0] != built[1]:
             for i, b in enumerate(built):
                 (d / f"out{i}.tar.gz").write_bytes(b)
@@ -658,7 +739,10 @@ def test_the_launcher_package_does_not_depend_on_the_directory_order():
 
 
 def leftovers(inst: Path, tmp: Path) -> list[str]:
-    out = sorted(p.name for p in inst.iterdir() if p.name not in ("OpenBFMELauncher.x86_64", "README.txt", "LICENSE", "NOTICE", "VERSION"))
+    keep = {LAUNCHER_EXE[HOST].split("/")[0], "README.txt", "LICENSE", "NOTICE", "VERSION"}
+    out = sorted(p.name for p in inst.iterdir() if p.name not in keep)
+    if HOST == "macos-arm64":  # the swap's .old / .new / .tmp files sit inside the bundle, next to the pack
+        out += sorted(str(p.relative_to(inst)) for p in inst.glob("OpenBFMELauncher.app/**/*") if p.name.endswith((".old", ".new", ".tmp")))
     if (data(tmp) / "launcher-update.json").exists():
         out.append("journal")
     return out
@@ -666,7 +750,7 @@ def leftovers(inst: Path, tmp: Path) -> list[str]:
 
 def staged_launcher(tmp_path, server, keys, launcher_builds, launcher=None):
     inst = unpack_launcher(tmp_path / "inst", launcher_builds["v0.2.0"])
-    exe = inst / "OpenBFMELauncher.x86_64"
+    exe = inst / LAUNCHER_EXE[HOST]
     server.publish("v0.3.0", release_files(tmp_path, "v0.3.0", keys["release"], launcher=launcher or launcher_builds["v0.3.0"]))
     r = launch(tmp_path, server, keys["release"], "--self-update", exe=exe)
     assert r.code == 0 and r.has("launcher update v0.3.0 staged"), r
@@ -680,8 +764,8 @@ def test_launcher_self_update_swap(tmp_path, server, keys, launcher_builds):
     assert r.has("started the update to v0.3.0") and r.has("replaced v0.2.0 by v0.3.0"), r
     assert r.has("v0.3.0 started after the update from v0.2.0") and r.has("the new launcher v0.3.0 confirmed its start"), r
     assert "OpenBFME Launcher v0.3.0" in r.out
-    assert hashlib.sha256(exe.read_bytes()).hexdigest() == exe_sha(launcher_builds["v0.3.0"])
-    assert (inst / "OpenBFMELauncher.x86_64.old").is_file(), "the previous launcher is kept until the new one has started once"
+    assert ident_sha(inst) == exe_sha(launcher_builds["v0.3.0"])
+    assert (inst / (LAUNCHER_ID[HOST] + ".old")).is_file(), "the previous launcher is kept until the new one has started once"
     r = launch(tmp_path, server, keys["release"], "--version", exe=exe)
     assert "OpenBFME Launcher v0.3.0" in r.out and r.has("removed the previous launcher (v0.2.0)"), r
     assert leftovers(inst, tmp_path) == []
@@ -705,20 +789,20 @@ def test_a_self_update_killed_at_every_step(tmp_path, server, keys, launcher_bui
         r = launch(tmp_path, server, keys["release"], "--version", exe=exe)
         assert "OpenBFME Launcher v0." in r.out, ("the launcher at the name did not start", r.out[-3000:])
         versions.append(r.out)
-        if leftovers(inst, tmp_path) == [] and hashlib.sha256(exe.read_bytes()).hexdigest() == exe_sha(launcher_builds["v0.3.0"]):
+        if leftovers(inst, tmp_path) == [] and ident_sha(inst) == exe_sha(launcher_builds["v0.3.0"]):
             break
-    assert hashlib.sha256(exe.read_bytes()).hexdigest() == exe_sha(launcher_builds["v0.3.0"]), versions[-1][-3000:]
+    assert ident_sha(inst) == exe_sha(launcher_builds["v0.3.0"]), versions[-1][-3000:]
     assert leftovers(inst, tmp_path) == [], (leftovers(inst, tmp_path), versions[-1][-3000:])
 
 
 def test_a_launcher_that_does_not_confirm_is_rolled_back(tmp_path, server, keys, launcher_builds):
     inst, exe = staged_launcher(tmp_path, server, keys, launcher_builds)
-    old = hashlib.sha256(exe.read_bytes()).hexdigest()
+    old = ident_sha(inst)
     r = launch(tmp_path, server, keys["release"], "--version", "--test-kill-at=no-confirm", exe=exe)
     assert r.has("quits without confirming its start") and r.has("update to v0.3.0 rolled back"), r
     # the helper starts the previous launcher again, which ends the transaction
     assert r.has("was rolled back; staying on v0.2.0"), r
-    assert hashlib.sha256(exe.read_bytes()).hexdigest() == old
+    assert ident_sha(inst) == old
     r = launch(tmp_path, server, keys["release"], "--version", exe=exe)
     assert "OpenBFME Launcher v0.2.0" in r.out, r
     assert leftovers(inst, tmp_path) == []
@@ -731,19 +815,20 @@ def test_a_launcher_that_cannot_start_is_given_up(tmp_path, server, keys, launch
     at most three times, then rejects the version"""
     work = tmp_path / "broken"
     top = unpack_launcher(work, launcher_builds["v0.3.0"])
-    b = bytearray((top / "OpenBFMELauncher.x86_64").read_bytes())
+    b = bytearray((top / LAUNCHER_ID[HOST]).read_bytes())
     sys.path.insert(0, str(HERE))
     import audit_package  # noqa: PLC0415
-    base = audit_package.embedded_pck_base(bytes(b))
+    base = 0 if HOST == "macos-arm64" else audit_package.embedded_pck_base(bytes(b))  # macOS: the pack is its own file
     b[base + 4:base + 8] = b"\xff\xff\xff\xff"  # an unknown pack format
-    (top / "OpenBFMELauncher.x86_64").write_bytes(bytes(b))
-    make_archive.tar_gz(top, work / "broken.tar.gz", 1700000000)
-    inst, exe = staged_launcher(tmp_path, server, keys, launcher_builds, launcher=(work / "broken.tar.gz").read_bytes())
-    old = hashlib.sha256(exe.read_bytes()).hexdigest()
+    (top / LAUNCHER_ID[HOST]).write_bytes(bytes(b))
+    broken = work / f"broken.{ARCHIVE_EXT[HOST]}"
+    (make_archive.tar_gz if HOST == "linux-x64" else make_archive.zip_file)(top, broken, 1700000000)
+    inst, exe = staged_launcher(tmp_path, server, keys, launcher_builds, launcher=broken.read_bytes())
+    old = ident_sha(inst)
     for _ in range(4):
         r = launch(tmp_path, server, keys["release"], "--version", exe=exe)
         assert "OpenBFME Launcher v0.2.0" in r.out, r
-        assert hashlib.sha256(exe.read_bytes()).hexdigest() == old
+        assert ident_sha(inst) == old
     assert r.has("did not complete after 3 attempts: given up"), r
     assert leftovers(inst, tmp_path) == []
 
@@ -752,7 +837,7 @@ def test_release_build_ignores_the_test_options(tmp_path, server, keys, launcher
     inst = unpack_launcher(tmp_path / "rel", launcher_builds["release"])
     server.publish("v0.3.0", release_files(tmp_path, "v0.3.0", keys["release"]))
     # --version only: with the test options ignored, --update would ask the real api.github.com
-    r = launch(tmp_path, server, keys["other"], "--version", exe=inst / "OpenBFMELauncher.x86_64", timeout=120)
+    r = launch(tmp_path, server, keys["other"], "--version", exe=inst / LAUNCHER_EXE[HOST], timeout=120)
     assert r.has("ignored --api-base: test options are off in a release build"), r
     assert r.has("ignored --trust-key"), r
     assert not server.requests, "the release build never contacts the test server"
@@ -764,11 +849,11 @@ def test_read_only_launcher_folder(tmp_path, server, keys, launcher_builds):
     server.publish("v0.3.0", release_files(tmp_path, "v0.3.0", keys["release"], launcher=launcher_builds["v0.3.0"]))
     inst.chmod(0o555)
     try:
-        r = launch(tmp_path, server, keys["release"], "--update", "--self-update", exe=inst / "OpenBFMELauncher.x86_64")
+        r = launch(tmp_path, server, keys["release"], "--update", "--self-update", exe=inst / LAUNCHER_EXE[HOST])
     finally:
         inst.chmod(0o755)
     assert r.code == 3 and r.has("update installed v0.3.0") and r.has("is not writable: the launcher cannot update itself there"), r
-    assert not any(p.endswith("openbfme-launcher-v0.3.0-linux-x64.tar.gz") for p, _ in server.requests), "nothing downloaded for it"
+    assert not any(p.endswith(launcher_archive_name("v0.3.0")) for p, _ in server.requests), "nothing downloaded for it"
 
 
 def test_freeze_warning(tmp_path, server, keys):
@@ -829,13 +914,13 @@ def test_a_swapped_staged_launcher_is_not_run(tmp_path, server, keys, launcher_b
     unchecked. Now every staged file is checked against the cached signed manifest before the journal is written; the journal's
     SHA-256 comes from the manifest."""
     inst, exe = staged_launcher(tmp_path, server, keys, launcher_builds)
-    old = hashlib.sha256(exe.read_bytes()).hexdigest()
-    other = unpack_launcher(tmp_path / "other", launcher_builds["release"]) / "OpenBFMELauncher.x86_64"  # runnable, but not v0.3.0
-    shutil.copy(other, inst / "update" / "OpenBFMELauncher.x86_64")
+    old = ident_sha(inst)
+    other = unpack_launcher(tmp_path / "other", launcher_builds["release"]) / LAUNCHER_ID[HOST]  # runnable, but not v0.3.0
+    shutil.copy(other, inst / "update" / LAUNCHER_ID[HOST])
     r = launch(tmp_path, server, keys["release"], "--version", exe=exe)
     assert r.has("removed the staged launcher update: the staged launcher v0.3.0 is not the signed one"), r
     assert not r.has("started the update to") and not r.has("replaced v0.2.0"), r
-    assert hashlib.sha256(exe.read_bytes()).hexdigest() == old and not (inst / "update").exists()
+    assert ident_sha(inst) == old and not (inst / "update").exists()
     assert leftovers(inst, tmp_path) == []
     # an extra file in update/ is refused the same way
     inst2, exe2 = staged_launcher(tmp_path / "b", server, keys, launcher_builds)
@@ -852,11 +937,11 @@ def test_a_modified_installed_game_is_not_started(tmp_path, server, keys, change
     assert launch(tmp_path, server, keys["release"], "--update").code == 0
     game = data(tmp_path) / "versions/v0.2.0/game"
     if change == "pck":
-        b = bytearray((game / "OpenBFME.pck").read_bytes())
+        b = bytearray((game / GAME_PCK[HOST]).read_bytes())
         b[0] ^= 1  # the same size: only the hash shows it
-        (game / "OpenBFME.pck").write_bytes(bytes(b))
+        (game / GAME_PCK[HOST]).write_bytes(bytes(b))
     elif change == "exe":
-        (game / "OpenBFME.x86_64").write_bytes(GAME_SCRIPT.replace(b"played", b"PWNED!"))
+        (game / GAME_EXE[HOST]).write_bytes(GAME_SCRIPT.replace(b"played", b"PWNED!"))
     else:
         (game / "evil.so").write_bytes(b"\x7fELF")
     r = launch(tmp_path, None, keys["release"], "--play")
@@ -888,7 +973,8 @@ def screen_texts(tmp: Path, server: ReleaseServer | None, key: bytes, *args: str
     home = tmp / "home" / USER_NAME
     env = {k: v for k, v in os.environ.items() if k not in ("ROTWK_INSTALL", "BFME2_INSTALL", "OPENBFME_GAME_USER_DIR")}
     env.update(HOME=str(home), USER=USER_NAME, LOGNAME=USER_NAME, XDG_DATA_HOME=str(home / ".local/share"),
-               XDG_CONFIG_HOME=str(home / ".config"), XDG_CACHE_HOME=str(home / ".cache"), OPENBFME_TEST_PLAYED=str(tmp / "played.txt"))
+               XDG_CONFIG_HOME=str(home / ".config"), XDG_CACHE_HOME=str(home / ".cache"), OPENBFME_TEST_PLAYED=str(tmp / "played.txt"),
+               OPENBFME_TEST_DATA_DIR=str(launcher_data_dir_under(home)))
     test = [f"--api-base={server.origin}"] if server else []
     test += [f"--trust-key={ed25519.public_key(key).hex()}", f"--repo={TEST_REPO}"]
     cmd = [GODOT, "--headless", "--path", str(LAUNCHER), "--", *test, *args, "--ui-dump", f"--screenshot={tmp / 'shot.png'}"]
@@ -898,7 +984,18 @@ def screen_texts(tmp: Path, server: ReleaseServer | None, key: bytes, *args: str
 
 
 def game_user_dir(tmp: Path) -> Path:
-    return tmp / "home" / USER_NAME / ".local/share/godot/app_userdata/OpenBFME"
+    """the game's user data folder under the test's home: Godot's XDG folder on Linux, Application Support on macOS"""
+    home = tmp / "home" / USER_NAME
+    if HOST == "macos-arm64":
+        return home / "Library/Application Support/Godot/app_userdata/OpenBFME"
+    return home / ".local/share/godot/app_userdata/OpenBFME"
+
+
+def launcher_data_dir_under(home: Path) -> Path:
+    """the launcher's data folder under a home folder (project.godot's custom user dir), as the OS places it"""
+    if HOST == "macos-arm64":
+        return home / "Library/Application Support/OpenBFMELauncher"
+    return home / ".local/share/OpenBFMELauncher"
 
 
 @pytest.mark.parametrize("screen", ["", "main", "update", "downloading", "settings", "games", "error"])
@@ -955,7 +1052,7 @@ def window(tmp: Path, server: ReleaseServer, key: bytes, *args: str, exe: Path |
 
 def big_game_release(tmp: Path, server: ReleaseServer, key: bytes, version: str = "v0.2.0") -> str:
     """a release whose game package is large (incompressible) and served slowly, so a press lands mid-download; its asset name"""
-    name = make_manifest.asset_name("game", version, "linux-x64")
+    name = make_manifest.asset_name("game", version, HOST)
     server.publish(version, release_files(tmp, version, key, game=game_tar(tmp, version, os.urandom(600_000))))
     server.throttle[name] = 0.02
     return name
@@ -965,7 +1062,8 @@ def other_partials(tmp: Path) -> list[Path]:
     """resumable downloads in downloads/ that are not the running job's: another version's game package, an unrelated file"""
     dl = data(tmp) / "downloads"
     dl.mkdir(parents=True, exist_ok=True)
-    out = [dl / "openbfme-v0.1.0-linux-x64.tar.gz.part", dl / "openbfme-v0.1.0-linux-x64.tar.gz.part.json", dl / "notes.part"]
+    older = make_manifest.asset_name("game", "v0.1.0", HOST)
+    out = [dl / f"{older}.part", dl / f"{older}.part.json", dl / "notes.part"]
     for p in out:
         p.write_bytes(b"not this job's")
     return out
@@ -1001,9 +1099,9 @@ def test_a_stopped_launcher_download_can_be_resumed_or_cancelled(tmp_path, serve
     """Sol r1: stopping the launcher's own download was reported as "Launcher update rejected", Pause offered no Resume and Cancel left
     its partial file behind"""
     inst = unpack_launcher(tmp_path / "inst", launcher_builds["v0.2.0"])
-    exe = inst / "OpenBFMELauncher.x86_64"
+    exe = inst / LAUNCHER_EXE[HOST]
     server.publish("v0.3.0", release_files(tmp_path, "v0.3.0", keys["release"], launcher=launcher_builds["v0.3.0"]))
-    name = make_manifest.asset_name("launcher", "v0.3.0", "linux-x64")
+    name = make_manifest.asset_name("launcher", "v0.3.0", HOST)
     server.throttle[name] = 0.002
     stop = "pause" if then else "cancel"
     r = window(tmp_path, server, keys["release"], f"--ui-stop={stop}@{name}", *([f"--ui-then={then}"] if then else []), exe=exe)
@@ -1145,7 +1243,7 @@ def test_a_background_update_that_fails_while_playing_stays_visible(tmp_path, se
     server.publish("v0.1.0", release_files(tmp_path, "v0.1.0", keys["release"]))
     assert launch(tmp_path, server, keys["release"], "--update").code == 0
     files = release_files(tmp_path, "v0.2.0", keys["release"], game=game_tar(tmp_path, "v0.2.0", os.urandom(600_000)))
-    name = make_manifest.asset_name("game", "v0.2.0", "linux-x64")
+    name = make_manifest.asset_name("game", "v0.2.0", HOST)
     files[name] = files[name][:-1] + bytes([files[name][-1] ^ 1])  # same size, other bytes
     server.publish("v0.2.0", files)
     server.throttle[name] = 0.02
@@ -1161,7 +1259,7 @@ def test_a_background_update_that_fails_while_playing_stays_visible(tmp_path, se
 def test_with_updating_by_itself_off_a_launcher_only_update_is_offered(tmp_path, server, keys, launcher_builds):
     """Sol r1: launcher v0.2.0 with the game already at v0.3.0 said "Up to date" and offered no Update button"""
     inst = unpack_launcher(tmp_path / "inst", launcher_builds["v0.2.0"])
-    exe = inst / "OpenBFMELauncher.x86_64"
+    exe = inst / LAUNCHER_EXE[HOST]
     server.publish("v0.3.0", release_files(tmp_path, "v0.3.0", keys["release"], launcher=launcher_builds["v0.3.0"]))
     r = launch(tmp_path, server, keys["release"], "--auto-update=off", "--install=v0.3.0", exe=exe)
     assert r.code == 0 and installed(tmp_path) == ["v0.3.0"], r
@@ -1174,7 +1272,8 @@ def test_with_updating_by_itself_off_a_launcher_only_update_is_offered(tmp_path,
 
 def _window_process(tmp: Path, key: bytes) -> subprocess.Popen:
     """a launcher window (headless, offline) that stays open until it is stopped; its output in tmp/<pid>.log"""
-    env = dict(os.environ, XDG_DATA_HOME=str(tmp / "data"), OPENBFME_TEST_PLAYED=str(tmp / "played.txt"))
+    env = dict(os.environ, XDG_DATA_HOME=str(tmp / "data"), OPENBFME_TEST_DATA_DIR=str(tmp / "data" / "OpenBFMELauncher"),
+               OPENBFME_TEST_PLAYED=str(tmp / "played.txt"))
     test = [f"--trust-key={ed25519.public_key(key).hex()}", f"--repo={TEST_REPO}"]
     log = open(tmp / f"window-{time.monotonic_ns()}.log", "w")
     p = subprocess.Popen([GODOT, "--headless", "--path", str(LAUNCHER), "--", *test, "--offline"], env=env, stdout=log,
@@ -1216,9 +1315,7 @@ def test_a_second_launcher_says_so_and_exits(tmp_path, server, keys):
         # SO_REUSEADDR: the next launcher could not bind it for a minute)
         time.sleep(0.5)
         port = _lock_port(tmp_path)
-        waits = [ln for ln in Path("/proc/net/tcp").read_text().splitlines()[1:]
-                 if ln.split()[1].endswith(f":{port:04X}") and ln.split()[3] == "06"]
-        assert waits == [], waits
+        assert _time_waits(port) == [], _time_waits(port)
     finally:
         first.kill()  # a crash: the system frees the lock
         first.wait()
@@ -1255,6 +1352,15 @@ def test_two_launchers_started_at_the_same_moment_get_one_lock(tmp_path, keys):
                         p.wait()
     r = launch(tmp_path, None, keys["release"], "--list")
     assert r.code == 0, r
+
+
+def _time_waits(port: int) -> list[str]:
+    """the TCP connections of `port` in TIME_WAIT: /proc/net/tcp on Linux (state 06), netstat on macOS"""
+    if HOST == "linux-x64":
+        return [ln for ln in Path("/proc/net/tcp").read_text().splitlines()[1:]
+                if ln.split()[1].endswith(f":{port:04X}") and ln.split()[3] == "06"]
+    out = subprocess.run(["netstat", "-an", "-p", "tcp"], capture_output=True, text=True, timeout=60).stdout
+    return [ln for ln in out.splitlines() if f".{port} " in ln and "TIME_WAIT" in ln]
 
 
 def _lock_port(tmp: Path) -> int:

@@ -8,8 +8,10 @@ static var _file: FileAccess
 static var _home := ""
 
 
-static func open() -> void:
-	var dir := OS.get_user_data_dir()
+## `dir`: the launcher's data folder (BuildInfo.data_dir(): user://, or a test's folder); "" means user://
+static func open(dir: String = "") -> void:
+	if dir == "":
+		dir = OS.get_user_data_dir()
 	DirAccess.make_dir_recursive_absolute(dir)
 	var path := dir.path_join("launcher.log")
 	if FileAccess.file_exists(path) and FileAccess.open(path, FileAccess.READ).get_length() > (1 << 20):

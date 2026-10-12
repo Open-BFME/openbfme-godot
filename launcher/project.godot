@@ -38,6 +38,9 @@ enabled=PackedStringArray("res://addons/pack_files/plugin.cfg")
 
 renderer/rendering_method="gl_compatibility"
 renderer/rendering_method.mobile="gl_compatibility"
+; macOS arm64 exports refuse a project that imports no ETC2 / ASTC textures (Godot checks this setting, not the preset); the launcher
+; has no image assets (its fonts are exported as their own bytes), so this costs nothing
+textures/vram_compression/import_etc2_astc=true
 
 [editor]
 

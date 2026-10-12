@@ -25,6 +25,16 @@
 ## helper died after its rename) counts as placed; "begin" with the old one retries the helper (at most MAX_ATTEMPTS, then the update is
 ## rejected); "placed" with the new one confirms (it started); "placed" or "rolled-back" with the old one ends the transaction as
 ## rejected. Each step is killed in turn by tools/release/test_launcher.py (--test-kill-at, test builds only).
+##
+## macOS (lane MAC-1): Godot's macOS export does not embed the pack, so the launcher is a bundle, OpenBFMELauncher.app, holding Godot's
+## arm64 template binary (the same bytes for every launcher version built with the same Godot) and the pack as its own file. "The
+## launcher" (<exe> above, Updater.launcher_files()[0]) is then the pack: it identifies the version and is swapped by the one-file
+## protocol above. Before that rename the helper copies the staged executable over the old one when its bytes differ (a Godot upgrade;
+## a verified copy and an atomic rename, no journal step: a kill between the two leaves the new executable with the old pack, which
+## starts and retries the update) and the staged signature seal (Contents/_CodeSignature/CodeResources, which names the pack's hash)
+## over the old one, so the bundle is byte for byte the staged one afterwards; Info.plist, PkgInfo, the icon and the privacy manifest
+## never change between versions. The quarantine attribute, if the bundle was downloaded by a browser, is removed from the files
+## the update touched (xattr -d). The replaced pack is kept as <pack>.old like the executable elsewhere. Stop S-3711.
 extends RefCounted
 
 const Log := preload("res://scripts/core/launcher_log.gd")
@@ -35,9 +45,11 @@ const START_TIMEOUT_MS := 60000
 const MAX_ATTEMPTS := 3
 const DOCS := ["README.txt", "LICENSE", "NOTICE", "VERSION"]
 
+static var data_root := ""  # the launcher's data folder (set by on_start from the updater: user://, or a test's folder)
+
 
 static func journal_path() -> String:
-	return OS.get_user_data_dir().path_join("launcher-update.json")
+	return (data_root if data_root != "" else OS.get_user_data_dir()).path_join("launcher-update.json")
 
 
 static func _read_journal() -> Dictionary:
@@ -139,6 +151,7 @@ static func _start(exe: String, extra: Array, user_args: PackedStringArray) -> i
 ## quit now; with `swap` the caller polls poll(swap) from its main loop, quits on "confirmed" and calls roll_back on a failure.
 static func on_start(updater: RefCounted, user_args: PackedStringArray) -> Dictionary:
 	var info: RefCounted = updater.info
+	data_root = updater.data_dir
 	var apply_dir := _arg(user_args, "--apply-update=")
 	if apply_dir != "":
 		return _helper(updater, apply_dir, user_args)
@@ -199,7 +212,7 @@ static func on_start(updater: RefCounted, user_args: PackedStringArray) -> Dicti
 	if OS.get_name() == "Windows" and DisplayServer.get_name() == "headless":
 		Log.line("LAUNCHER the launcher update %s is applied at the next start with a window" % tag)
 		return {"exit": false, "message": message}
-	var helper := staged.path_join(updater.launcher_files()[0])
+	var helper := staged.path_join(updater.launcher_exe())
 	# round 3: the staged files are checked against the signed manifest NOW, and the journal takes the executable's SHA-256 from it (a
 	# file swapped into update/ after staging used to be run unchecked: the helper only compared the file with itself)
 	var signed: Dictionary = updater.check_staged(dir, tag)
@@ -229,9 +242,12 @@ static func on_start(updater: RefCounted, user_args: PackedStringArray) -> Dicti
 static func _helper(updater: RefCounted, dir: String, user_args: PackedStringArray) -> Dictionary:
 	var info: RefCounted = updater.info
 	var own := OS.get_executable_path()
-	var exe := dir.path_join(updater.launcher_files()[0])
+	var files: Array = updater.launcher_files()
+	var exe := dir.path_join(files[0])
+	var staged_root := Updater.launcher_root_of(own)  # <dir>/update (on macOS: the folder holding the staged bundle)
+	var staged := staged_root.path_join(files[0])     # the staged counterpart of `exe` (on macOS the pack, not this process's binary)
 	var j := _read_journal()
-	if own.get_base_dir().simplify_path() != dir.path_join("update").simplify_path() or j.is_empty() or j.state != "begin":
+	if staged_root.simplify_path() != dir.path_join("update").simplify_path() or j.is_empty() or j.state != "begin":
 		Log.line("LAUNCHER --apply-update ignored: not the staged launcher of an update in progress")
 		return {"exit": true, "message": ""}
 	var old_pid := _arg(user_args, "--old-pid=").to_int()
@@ -239,7 +255,7 @@ static func _helper(updater: RefCounted, dir: String, user_args: PackedStringArr
 	while old_pid > 0 and OS.is_process_running(old_pid) and Time.get_ticks_msec() - t0 < 30000:
 		OS.delay_msec(50)
 	Updater.test_point("helper-start")
-	if sha256_of(own) != j.new_sha256:
+	if sha256_of(staged) != j.new_sha256:
 		Log.line("LAUNCHER the staged launcher changed after it was verified: the update is abandoned")
 		_reject(updater, j.tag)
 		_end_journal()
@@ -250,27 +266,41 @@ static func _helper(updater: RefCounted, dir: String, user_args: PackedStringArr
 			Log.line("LAUNCHER the previous launcher could not be backed up (is the folder full or read-only?): the update waits")
 			return {"exit": true, "message": ""}
 		Updater.test_point("helper-backup")
-		if not _copy_verified(own, exe + ".new", j.new_sha256):
+		if not _copy_verified(staged, exe + ".new", j.new_sha256):
 			Log.line("LAUNCHER the new launcher could not be copied next to the old one: the update waits")
 			return {"exit": true, "message": ""}
 		Updater.test_point("helper-copied")
+		# macOS: the bundle's other changing files (the executable when Godot changed, the signature's resource seal) go first, each a
+		# verified copy and an atomic rename, so the pack's rename below completes a bundle that is byte for byte the staged one
+		for rel in files.slice(1):
+			var from := staged_root.path_join(rel)
+			var to := dir.path_join(rel)
+			var want := sha256_of(from)
+			if want == "" or want == sha256_of(to):
+				continue
+			if not _copy_verified(from, to + ".new", want) or not _replace_atomically(to + ".new", to):
+				Log.line("LAUNCHER %s could not be replaced: the update waits" % rel.get_file())
+				return {"exit": true, "message": ""}
+			Log.line("LAUNCHER replaced %s (it differs in %s)" % [rel.get_file(), j.tag])
 		if not _replace_atomically(exe + ".new", exe) or sha256_of(exe) != j.new_sha256:
 			Log.line("LAUNCHER the launcher could not be replaced (is it running?): the update waits")
 			return {"exit": true, "message": ""}
 		Updater.test_point("helper-replaced")
+		_unquarantine(dir, files)
 	elif current != j.new_sha256:
 		Log.line("LAUNCHER the launcher at %s is neither the previous nor the new one: the update is abandoned" % exe)
 		_end_journal()
 		return {"exit": true, "message": ""}
 	for d in DOCS:
-		if FileAccess.file_exists(own.get_base_dir().path_join(d)):
-			DirAccess.copy_absolute(own.get_base_dir().path_join(d), dir.path_join(d))
+		if FileAccess.file_exists(staged_root.path_join(d)):
+			DirAccess.copy_absolute(staged_root.path_join(d), dir.path_join(d))
 	j.state = "placed"
 	_write_journal(j)
 	Updater.test_point("helper-placed")
-	var pid := _start(exe, ["--after-update=" + j.from], user_args)
+	var run := dir.path_join(updater.launcher_exe())  # what is started: the executable (on macOS not `exe`, which is the pack)
+	var pid := _start(run, ["--after-update=" + j.from], user_args)
 	Log.line("LAUNCHER replaced %s by %s; started it (pid %d)" % [j.from, j.tag, pid])
-	var swap := {"tag": j.tag, "pid": pid, "start": Time.get_ticks_msec(), "exe": exe, "user_args": user_args}
+	var swap := {"tag": j.tag, "pid": pid, "start": Time.get_ticks_msec(), "exe": exe, "run": run, "user_args": user_args}
 	if pid <= 0:
 		return roll_back(updater, swap, "the new launcher %s could not be started" % j.tag)
 	return {"exit": false, "message": "", "swap": swap}
@@ -303,7 +333,17 @@ static func roll_back(updater: RefCounted, swap: Dictionary, problem: String) ->
 		_write_journal(j)
 		_reject(updater, swap.tag)
 		Log.line("LAUNCHER update to %s rolled back: %s; the previous launcher (%s) is back" % [swap.tag, problem, j.from])
-		_start(exe, [], swap.user_args)
+		_start(swap.get("run", exe), [], swap.user_args)
 	else:
 		Log.line("LAUNCHER update to %s failed (%s) and the previous launcher could not be put back: restore %s.old by hand" % [swap.tag, problem, exe.get_file()])
 	return {"exit": true, "message": ""}
+
+
+## macOS: the quarantine attribute a browser download carries is removed from the files the update placed (xattr is part of macOS;
+## a launcher the user approved once keeps starting after its pack was swapped). Nothing on the other systems.
+static func _unquarantine(dir: String, files: Array) -> void:
+	if OS.get_name() != "macOS":
+		return
+	for rel in files:
+		var out := []
+		OS.execute("/usr/bin/xattr", ["-d", "com.apple.quarantine", dir.path_join(rel)], out, true)  # absent attribute: a harmless error

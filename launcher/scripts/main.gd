@@ -43,6 +43,7 @@ extends Control
 
 const BuildInfo := preload("res://scripts/core/build_info.gd")
 const Updater := preload("res://scripts/core/updater.gd")
+const Manifest := preload("res://scripts/core/manifest.gd")
 const SelfUpdate := preload("res://scripts/core/self_update.gd")
 const Semver := preload("res://scripts/core/semver.gd")
 const Log := preload("res://scripts/core/launcher_log.gd")
@@ -125,8 +126,8 @@ var _message: MessagePanel
 
 
 func _ready() -> void:
-	Log.open()
 	info = BuildInfo.load_info()
+	Log.open(info.data_dir())
 	updater = Updater.new(info)
 	aio = AioInstall.new(updater)
 	var args := OS.get_cmdline_user_args()
@@ -196,7 +197,7 @@ func _ready() -> void:
 				cli = true
 	# one launcher at a time (after the self-update swap above: its helper never holds the lock); --version alone needs none
 	if not (cli and Array(args).all(func(x): return x == "--version" or not CLI_ACTIONS.any(func(c): return x == c or (c.ends_with("=") and x.begins_with(c))))):
-		_instance = InstanceLock.new(OS.get_user_data_dir(), info.version)
+		_instance = InstanceLock.new(info.data_dir(), info.version)
 		if not _instance.acquire():
 			# Sol r4: "already open" only when the port's holder answered as a launcher; another program on the port is said as such
 			var why := ("Another OpenBFME Launcher (%s) is already open. Use that one, or close it and start this one again." % _instance.other_launcher) \
@@ -368,11 +369,10 @@ func _show_demo(screen: String) -> void:
 			if screen == "downloading":
 				_latest = {}
 				_set_update_state("updating", chan[0].tag)
-				_demo_progress("Downloading openbfme-%s-%s.%s" % [chan[0].tag, info.platform(), "zip" if OS.get_name() == "Windows" else "tar.gz"],
-					327155712, 1073741824)
+				_demo_progress("Downloading " + Manifest.asset_name("game", chan[0].tag, info.platform()), 327155712, 1073741824)
 				_set_status("Downloading %s in the background. Play starts %s until it is installed." % [chan[0].tag, installed])
 			if screen == "error":
-				_show_error("Update not installed", "Update rejected: openbfme-%s-%s.tar.gz does not match the signed manifest: deleted, nothing was installed. The download folder was %s." % [chan[0].tag, info.platform(), home.path_join(".local/share/OpenBFMELauncher/downloads")])
+				_show_error("Update not installed", "Update rejected: %s does not match the signed manifest: deleted, nothing was installed. The download folder was %s." % [Manifest.asset_name("game", chan[0].tag, info.platform()), home.path_join(".local/share/OpenBFMELauncher/downloads")])
 	_refresh_head()
 	_set_buttons()
 
@@ -862,7 +862,7 @@ func _open_download() -> void:
 
 
 func _open_logs() -> void:
-	_show_folder(OS.get_user_data_dir())
+	_show_folder(info.data_dir())
 
 
 func _show_folder(path: String) -> void:

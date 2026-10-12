@@ -48,11 +48,30 @@ func tests_allowed() -> bool:
 	return OS.has_feature("editor") or test_build
 
 
+## the launcher's data folder (user://: ~/.local/share/OpenBFMELauncher, %APPDATA%\OpenBFMELauncher, ~/Library/Application Support/
+## OpenBFMELauncher); OPENBFME_TEST_DATA_DIR replaces it in a development run or a test build, so tools/release/test_launcher.py gives
+## every test its own folder on macOS too, where Godot ignores XDG_DATA_HOME (lane MAC-1)
+func data_dir() -> String:
+	var forced := OS.get_environment("OPENBFME_TEST_DATA_DIR")
+	if forced != "" and tests_allowed():
+		DirAccess.make_dir_recursive_absolute(forced)
+		return forced
+	return OS.get_user_data_dir()
+
+
 ## the operating system's name (Godot's OS.get_name()); OPENBFME_TEST_OS_NAME replaces it in test builds, so a test can play another OS
 func os_name() -> String:
 	var forced := OS.get_environment("OPENBFME_TEST_OS_NAME")
 	return forced if forced != "" and tests_allowed() else OS.get_name()
 
 
+## the package platform of this launcher: the OS it runs on, not the test override (DEP-1's GLIBC test plays a macOS name on Linux
+## packages); macOS packages are arm64 only (lane MAC-1: the game's extension is built for Apple Silicon)
 func platform() -> String:
-	return "windows-x64" if OS.get_name() == "Windows" else "linux-x64"
+	match OS.get_name():
+		"Windows":
+			return "windows-x64"
+		"macOS":
+			return "macos-arm64"
+		_:
+			return "linux-x64"

@@ -43,6 +43,7 @@ Where it stores files
 ---------------------
   Linux:   ~/.local/share/OpenBFMELauncher
   Windows: %APPDATA%\OpenBFMELauncher
+  macOS:   ~/Library/Application Support/OpenBFMELauncher
     versions\<version>\   the installed versions (the two newest are kept, and the one you picked)
     downloads\            downloads in progress (resumed next time)
     cache\                the last release list and the checked manifests
@@ -52,5 +53,10 @@ Updates of the launcher itself are placed next to it (in update) and replace it 
 launcher is kept as OpenBFMELauncher(.exe).old until the new one has started once. If the launcher ever does not
 start after an update, rename that .old file back to the launcher's name. Keep the launcher in a folder you can
 write to.
+On macOS the launcher is OpenBFMELauncher.app, and the file an update replaces is the app's data inside it
+(Contents/Resources/OpenBFME Launcher.pck, kept as ...pck.old the same way). macOS blocks the first start of a
+downloaded app that is not notarized ("Apple could not verify ..."): close that message, open System Settings >
+Privacy & Security, scroll down to the note about the launcher and press "Open Anyway", then open it again. The
+game builds the launcher installs never need that.
 
 Remove everything: delete the launcher's folder and the data folder above.

@@ -332,6 +332,7 @@ func _ui_dialogs() -> void:
 	var gdir: String = u.data_dir.path_join("versions/v0.1.0/game")
 	DirAccess.make_dir_recursive_absolute(gdir)
 	var exe: String = gdir.path_join(Updater.GAME_EXE[bi.platform()])
+	DirAccess.make_dir_recursive_absolute(exe.get_base_dir())  # macOS: the executable sits inside the bundle
 	_check(not u._game_runs(4242, "v0.1.0"), "Windows check: no executable, not running")
 	var fx := FileAccess.open(exe, FileAccess.WRITE)
 	fx.store_string("game")
