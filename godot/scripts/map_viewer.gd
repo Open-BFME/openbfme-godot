@@ -231,7 +231,7 @@ func _ready() -> void:
 		_options["fog"] = false  # an overview sees far beyond the map.ini fog range; the retail camera does not
 	_build_stage()
 	if not ClassDB.class_exists("MapTerrainBuilder"):
-		_fail("openbfme extension is not loaded (or too old); run build.bat")
+		_fail("openbfme extension is not loaded (or too old); " + Release.extension_hint())
 		return
 	_fs = ClassDB.instantiate("RetailFileSystem")
 	var mount: Dictionary = _fs.mount_retail()
@@ -576,7 +576,7 @@ func _build_live() -> void:
 ## lane SCRIPT-2: the retail audio manager for a campaign mission (the scripts' sounds, speech and music reach it through GameWorld.attach_audio)
 func _boot_campaign_audio() -> void:
 	if not ClassDB.class_exists("GameAudio"):
-		_fail("the openbfme extension has no GameAudio class; run build.bat")
+		_fail("the openbfme extension has no GameAudio class; " + Release.extension_hint())
 		return
 	_audio = ClassDB.instantiate("GameAudio")
 	_audio.name = "GameAudio"

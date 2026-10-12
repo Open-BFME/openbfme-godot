@@ -44,7 +44,7 @@ func _ready() -> void:
 			_threads = int(arg.substr("--threads=".length()))
 	_build_stage()
 	if not ClassDB.class_exists("W3DInstancer"):
-		_fail("openbfme extension is not loaded; run build.bat")
+		_fail("openbfme extension is not loaded; " + Release.extension_hint())
 		return
 	_fs = ClassDB.instantiate("RetailFileSystem")
 	var mount: Dictionary = _fs.mount_retail()

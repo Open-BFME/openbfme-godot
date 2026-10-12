@@ -468,6 +468,13 @@ bool AptCharacterInst::setProperty(const std::string &n, const AptValue &value)
 	{
 		return false;
 	}
+	// lane BUGS-1: the transform and alpha setters go through factorySetProperty(index, value, true), which sets the AS changed flag (inference: the
+	// script property setter's flag argument is true; BFME2 decomp AptFactoryConstructors.cpp factorySetProperty, Rva006F9EF0Cluster.cpp passes true)
+	// (_width / _height set it below, only once the value is applied: an ignored assignment leaves the flag as it was)
+	if (n == "_x" || n == "_y" || n == "_xscale" || n == "_yscale" || n == "_rotation" || n == "_alpha")
+	{
+		asChanged = true;
+	}
 	if (n == "_x")
 	{
 		matrix.tx = value.toNumber();
@@ -587,6 +594,7 @@ bool AptCharacterInst::setProperty(const std::string &n, const AptValue &value)
 			scale = 1.132257342338562f;
 		}
 		(width ? xs : ys) = scale;
+		asChanged = true; // lane BUGS-1: the scale is stored (factorySetProperty(2 / 3, scale, true)); the early returns above change nothing
 		const float sx = xs * 0.01f, sy = ys * 0.01f;
 		if (rotated)
 		{
@@ -840,6 +848,17 @@ bool AptSpriteInst::fire(std::uint32_t mask, std::uint32_t arg, bool runMemberHa
 	return result;
 }
 
+namespace
+{
+// a place record without its matrix and colour transform (what mergeState leaves out for an instance a script changed)
+AptPlaceObject withoutTransform(const AptPlaceObject &p)
+{
+	AptPlaceObject q = p;
+	q.flags &= ~(std::uint32_t)(APT_PLACE_HASMATRIX | APT_PLACE_HASCOLORTRANSFORM);
+	return q;
+}
+} // namespace
+
 // AptCIH::gotoFrame 0x00AE2C10
 void AptSpriteInst::gotoFrame(int target)
 {
@@ -1003,7 +1022,11 @@ void AptSpriteInst::gotoFrame(int target)
 				}
 				if (existing && sameCharacter)
 				{
-					applyPlaceFields(*existing, cmd.base, false); // 0x00AF95A5: same character: update in place
+					// 0x00AF95A5: same character: update in place; lane BUGS-1: the colour transform (flag 8) and the matrix (flag 4) only when no script
+					// changed the instance (RW 0xB0D610 / BFME2 0xAF9410 AptDisplayList::mergeState tests GetASChanged first). InGameHelpBox.apt's box eases
+					// `top._y` toward its target in a frame 5 / 6 loop (gotoAndPlay("loop") from frame 6); re-applying frame 3's matrix each loop stopped it
+					// short of the target for ever and the help text (frame 6's `content`) never stayed
+					applyPlaceFields(*existing, existing->asChanged ? withoutTransform(cmd.base) : cmd.base, false);
 				}
 				else
 				{
@@ -1016,7 +1039,7 @@ void AptSpriteInst::gotoFrame(int target)
 			}
 			else if (cmd.anyOverlay && existing)
 			{
-				applyPlaceFields(*existing, cmd.overlay, false);
+				applyPlaceFields(*existing, existing->asChanged ? withoutTransform(cmd.overlay) : cmd.overlay, false); // the same rule (mergeState's character 0 branch)
 			}
 			else if (cmd.anyOverlay)
 			{

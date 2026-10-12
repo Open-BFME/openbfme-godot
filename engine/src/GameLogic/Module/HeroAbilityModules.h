@@ -328,11 +328,18 @@ public:
 	static void buildFieldParse(MultiIniFieldParse &p);
 };
 
-class WeaponModeSpecialPowerUpdate : public UpdateModule, public SpecialPowerModuleInterface
+// lane FACT-C: the special power update interface at + 0x20 (vtable RW 0xC65158; the behaviour interface's slot 0x64, RW 0x8A18E0, hands it out) is what
+// SpecialPowerModule's initiate (RW 0x897F25 .. 0x897F77) finds when another module of the object holds the same template: slot 0x1C (RW 0x89827C) answers
+// "the data's template is t", slot 0 (RW 0x89841E) is the initiate. A goblin warrior's SpecialPowerModule (listed before it) thus turns its Poisoned Blades on
+class WeaponModeSpecialPowerUpdate : public UpdateModule, public SpecialPowerModuleInterface, public SpecialPowerUpdateInterface
 {
 public:
 	WeaponModeSpecialPowerUpdate(Thing *thing, const WeaponModeSpecialPowerUpdateModuleData *data); // RW 0x8982D5
 	SpecialPowerModuleInterface *getSpecialPower() override { return this; }
+	bool drivesSpecialPower(const SpecialPowerTemplate *t) const override { return t && t == m_data->m_specialPowerTemplate; } // RW 0x89827C
+	void initiateIntentToDoSpecialPower(const SpecialPowerTemplate *, Object *, const Coord3D *, unsigned, int) override { initiate(); } // RW 0x89841E
+	bool isActive() const override { return m_active; }
+	bool allowsSpecialPowerUse() const override { return true; } // slot 0x20 of RW 0xC65158 is RW 0x9B501B: mov al, 1 (merge q2: AIPOW-1's slot on FACT-C's interface)
 	UpdateSleepTime update() override; // RW 0x8983B5
 	void crc(StateHasher &h) const override;
 	bool active() const { return m_active; }

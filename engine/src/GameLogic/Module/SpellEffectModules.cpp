@@ -1,7 +1,7 @@
 // OpenBFME. GPL-3.0.
 // Derived from Command & Conquer Generals Zero Hour, (c) 2001-2003 Electronic Arts Inc., GPL-3.0.
 //
-// FireWeaponUpdate. See GameLogic/Module/SpellEffectModules.h for the target facts. Lane SPELL-2.
+// FireWeaponUpdate (lane SPELL-2) and FloodUpdate (lane SPELL-3). See GameLogic/Module/SpellEffectModules.h for the target facts.
 
 #if defined(__GNUC__) || defined(__clang__)
 #pragma GCC diagnostic ignored "-Winvalid-offsetof"
@@ -11,9 +11,13 @@
 
 #include "Common/StateHash.h"
 #include "Common/Thing/ModuleFactory.h"
+#include "GameLogic/Combat/BezierSegment.h"
 #include "GameLogic/Combat/CombatNames.h"
 #include "GameLogic/Combat/ObjectWeapons.h"
 #include "GameLogic/GameLogic.h"
+#include "GameLogic/Module/PhysicsBehavior.h"
+#include "GameLogic/Module/ProjectileModules.h"
+#include "Common/Thing/ThingFactory.h"
 #include "GameLogic/Object/Object.h"
 #include "GameLogic/SimMath.h"
 #include "GameLogic/Weapon.h"
@@ -49,6 +53,49 @@ const FieldParse kFireWeaponUpdateFields[] = { // RW 0xC62A40
 	{ "AliveOnly", INI::parseBool, nullptr, (int)offsetof(FireWeaponUpdateModuleData, m_aliveOnly) },
 	{ nullptr, nullptr, nullptr, 0 }
 };
+
+const FieldParse kFloodMemberFields[] = { // RW 0xC63080
+	{ "MemberTemplateName", INI::parseAsciiString, nullptr, (int)offsetof(FloodMemberData, templateName) },
+	{ "ControlPointOffsetOne", INI::parseCoord3D, nullptr, (int)offsetof(FloodMemberData, controlPointOffset) },
+	{ "ControlPointOffsetTwo", INI::parseCoord3D, nullptr, (int)(offsetof(FloodMemberData, controlPointOffset) + sizeof(Coord3D)) },
+	{ "ControlPointOffsetThree", INI::parseCoord3D, nullptr, (int)(offsetof(FloodMemberData, controlPointOffset) + 2 * sizeof(Coord3D)) },
+	{ "ControlPointOffsetFour", INI::parseCoord3D, nullptr, (int)(offsetof(FloodMemberData, controlPointOffset) + 3 * sizeof(Coord3D)) },
+	{ "MemberSpeed", INI::parseReal, nullptr, (int)offsetof(FloodMemberData, speed) },
+	{ nullptr, nullptr, nullptr, 0 }
+};
+
+// RW 0x891696: a FloodMember sub-block, appended to the list (RW 0x60011F)
+void parseFloodMember(INI *ini, void *instance, void *, const void *)
+{
+	FloodMemberData m;
+	MultiIniFieldParse multi;
+	multi.add(kFloodMemberFields);
+	ini->initFromINIMulti(&m, multi);
+	static_cast<FloodUpdateModuleData *>(instance)->m_members.push_back(m);
+}
+
+const FieldParse kFloodUpdateFields[] = { // RW 0xC631D8
+	{ "FloodMember", parseFloodMember, nullptr, 0 },
+	{ "AngleOfFlow", INI::parseAngleReal, nullptr, (int)offsetof(FloodUpdateModuleData, m_angleOfFlow) },
+	{ "DirectionIsRelative", INI::parseBool, nullptr, (int)offsetof(FloodUpdateModuleData, m_directionIsRelative) },
+	{ nullptr, nullptr, nullptr, 0 }
+};
+
+// RW 0x644FD0: into (-PI, PI] (two SSE loops)
+float floodNormalizeAngle(float a)
+{
+	const float pi = 3.14159274f;
+	const float twoPi = 6.28318548f;
+	while (a > pi)
+	{
+		a = SimMath::subf32(a, twoPi);
+	}
+	while (-pi >= a)
+	{
+		a = SimMath::addf32(a, twoPi);
+	}
+	return a;
+}
 
 template <class Runtime, class Data>
 void bindUpdate(ModuleFactory &modules, const char *name)
@@ -187,9 +234,152 @@ void FireWeaponUpdate::crc(StateHasher &h) const
 	h.addU64(m_shots);
 }
 
+// ---- FloodUpdate (lane SPELL-3) ------------------------------------------------------------------------------------------------------------
+void FloodUpdateModuleData::buildFieldParse(MultiIniFieldParse &p)
+{
+	p.add(kFloodUpdateFields);
+}
+
+// RW 0x891713
+FloodUpdate::FloodUpdate(Thing *thing, const FloodUpdateModuleData *data)
+	: UpdateModule(thing, data)
+	, m_data(data)
+{
+}
+
+// RW 0x8912C5
+void FloodUpdate::buildPath(const FloodMemberData &member, Record &record) const
+{
+	const Object *obj = getObject();
+	float angle = m_data->m_angleOfFlow;
+	if (m_data->m_directionIsRelative)
+	{
+		angle = floodNormalizeAngle(SimMath::addf32(obj->getOrientation(), angle)); // RW 0x8912EE .. 0x891302 (SSE add, the result through ST0)
+	}
+	const Coord3D pos = *obj->getPosition();
+	Coord3D cp[4];
+	for (int i = 0; i < 4; ++i)
+	{
+		// RW 0x891340 .. 0x891548 (the same for each point): s / c the CRT sin / cos of the angle, stored as floats; scalar SSE
+		const float s = SimMath::fstpDword(SimMath::sind(angle));
+		const float c = SimMath::fstpDword(SimMath::cosd(angle));
+		const Coord3D &o = member.controlPointOffset[i];
+		cp[i].x = SimMath::addf32(SimMath::subf32(SimMath::mulf32(c, o.x), SimMath::mulf32(s, o.y)), pos.x);
+		cp[i].y = SimMath::addf32(SimMath::addf32(SimMath::mulf32(o.x, s), SimMath::mulf32(c, o.y)), pos.y);
+		cp[i].z = 0.0f;
+	}
+	const BezierSegment segment(cp); // RW 0x960E8D
+	// RW 0x891558 .. 0x891583: the length (x87, RW 0x9610EF) divided by the speed on the x87, MSVCR71 ceil, _ftol2
+	const double quotient = SimMath::pc24DivW(segment.getApproximateLength(1.0f), (double)member.speed);
+	int count = (int)SimMath::ftol2Low32(SimMath::ceilD(quotient));
+	count = count > 2 ? count : 2; // RW 0x891588 .. 0x89159B
+	segment.getSegmentPoints(count, &record.path); // RW 0x9612A3
+}
+
+// RW 0x8917FD
+void FloodUpdate::createMembers()
+{
+	Object *obj = getObject();
+	GameLogic &logic = obj->logic();
+	for (const FloodMemberData &member : m_data->m_members)
+	{
+		const ThingTemplate *tt = logic.things().findTemplate(member.templateName); // RW 0x6D1305
+		if (!tt)
+		{
+			// RW 0x891852: retail skips the member silently; the port reports it (no silent default, review r1)
+			logic.reportError("FloodUpdate of " + obj->getTemplate()->getName() + ": the FloodMember template '" + member.templateName + "' is unknown; the member is not made");
+			continue;
+		}
+		Object *m = logic.newObject(tt, obj->getTeam(), ObjectStatusMaskType{}); // RW 0x6D165E (the flood's team, an empty status mask)
+		if (!m)
+		{
+			continue;
+		}
+		Record r;
+		r.id = m->getID();
+		buildPath(member, r);
+		const Coord3D start = r.path[0];
+		const Coord3D next = r.path[1];
+		// RW 0x8918A4 .. 0x891952: the direction, normalised when its length is not 0 (SSE (z^2 + y^2) + x^2, Inv_Sqrt RW 0x441C56, x87 products)
+		Coord3D dir{ SimMath::subf32(next.x, start.x), SimMath::subf32(next.y, start.y), SimMath::subf32(next.z, start.z) };
+		const float lenSq = SimMath::addf32(SimMath::addf32(SimMath::mulf32(dir.z, dir.z), SimMath::mulf32(dir.y, dir.y)), SimMath::mulf32(dir.x, dir.x));
+		if (lenSq != 0.0f)
+		{
+			const float inv = ProjectileInvSqrt(lenSq);
+			dir.x = SimMath::pc24Mul(dir.x, inv);
+			dir.y = SimMath::pc24Mul(dir.y, inv);
+			dir.z = SimMath::pc24Mul(dir.z, inv);
+		}
+		// Matrix3D::buildTransformMatrix (RW 0xB26610; the same build as BezierProjectileBehavior's, ProjectileModules.cpp): yaw about Z by (dir.x, dir.y) / len2,
+		// then the pitch about Y; Object::setTransformMatrix (RW 0x68DA67)
+		const float len2 = SimMath::fstpDword(SimMath::sqrtPC24(SimMath::pc24AddW(SimMath::pc24MulW(dir.x, dir.x), SimMath::pc24MulW(dir.y, dir.y))));
+		float siny = 0.0f, cosy = 1.0f;
+		if (len2 != 0.0f)
+		{
+			const float inv2 = SimMath::divf32(1.0f, len2);
+			siny = SimMath::mulf32(inv2, dir.y);
+			cosy = SimMath::mulf32(inv2, dir.x);
+		}
+		const float sinp = dir.z, cosp = len2;
+		const float basis[9] = { SimMath::mulf32(cosy, cosp), SimMath::subf32(0.0f, siny), SimMath::subf32(0.0f, SimMath::mulf32(cosy, sinp)),
+			SimMath::mulf32(siny, cosp), cosy, SimMath::subf32(0.0f, SimMath::mulf32(siny, sinp)), sinp, 0.0f, cosp };
+		m->setTransform(&start, basis);
+		m_records.push_back(std::move(r)); // RW 0x891986
+	}
+	m_membersCreated = true;
+}
+
+// RW 0x8919BE
+UpdateSleepTime FloodUpdate::update()
+{
+	if (!m_membersCreated)
+	{
+		createMembers();
+	}
+	GameLogic &logic = getObject()->logic();
+	for (Record &r : m_records)
+	{
+		Object *m = logic.findObjectByID(r.id);
+		if (!m)
+		{
+			continue;
+		}
+		++r.index;
+		if ((unsigned)r.index >= r.path.size()) // RW 0x891A18: unsigned
+		{
+			m->kill(DEATH_NORMAL); // RW 0x698EC3(8 = UNRESISTABLE, 0)
+			continue;
+		}
+		Coord3D p = r.path[(size_t)r.index];
+		p.z = logic.getGroundHeight(p.x, p.y);
+		m->setPosition(&p); // RW 0x70C201
+		if ((unsigned)(r.index + 1) < r.path.size())
+		{
+			const Coord3D next = r.path[(size_t)r.index + 1];
+			const float orientation = m->getOrientation(); // read before the angle (RW 0x891AA6)
+			m->setOrientation(SimMath::pc24Add(ObjectKnockback::relativeAngle2D(*m, next), orientation)); // RW 0x891AB5 .. 0x891AC3
+		}
+	}
+	return UPDATE_SLEEP_NONE;
+}
+
+void FloodUpdate::crc(StateHasher &h) const
+{
+	UpdateModule::crc(h);
+	h.addBool(m_membersCreated);
+	h.addU32((std::uint32_t)m_records.size());
+	for (const Record &r : m_records)
+	{
+		h.addU32(r.id);
+		h.addI32(r.index);
+		h.addU32((std::uint32_t)r.path.size());
+	}
+}
+
 void SpellEffectModules::registerAll(ModuleFactory &modules)
 {
 	bindUpdate<FireWeaponUpdate, FireWeaponUpdateModuleData>(modules, "FireWeaponUpdate");
+	bindUpdate<FloodUpdate, FloodUpdateModuleData>(modules, "FloodUpdate"); // lane SPELL-3
 }
 
 std::string SpellEffectModules::stopLine()

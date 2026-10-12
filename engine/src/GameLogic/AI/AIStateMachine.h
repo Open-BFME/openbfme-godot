@@ -23,6 +23,7 @@
 #include "GameLogic/AI/AIMove.h"
 #include "GameLogic/ObjectTypes.h"
 
+#include <cstdint>
 #include <map>
 #include <memory>
 #include <string>
@@ -58,6 +59,15 @@ enum AIStateType
 };
 static const unsigned INVALID_STATE_ID = 0xFFFFFFFFu;
 
+// ZH StateConditionInfo (StateMachine.h): a test run on a continuing or sleeping state (ZH State::friend_checkForTransitions /
+// friend_checkForSleepTransitions); true moves the machine to toId, or, for the exit ids 0x270E / 0x270F, answers SUCCESS / FAILURE to the machine's caller
+struct AIStateCondition
+{
+	bool (*test)(const class AIState &state, std::uintptr_t userData) = nullptr;
+	unsigned toId = 0;
+	std::uintptr_t userData = 0;
+};
+
 class AIState
 {
 public:
@@ -86,10 +96,12 @@ public:
 	Object &owner() const;
 	unsigned successId() const { return m_successId; }
 	unsigned failureId() const { return m_failureId; }
+	const std::vector<AIStateCondition> &conditions() const { return m_conditions; }
 
 private:
 	friend class AIStateMachine;
 	unsigned m_id = INVALID_STATE_ID, m_successId = INVALID_STATE_ID, m_failureId = INVALID_STATE_ID;
+	std::vector<AIStateCondition> m_conditions;
 	AIStateMachine *m_machine;
 	std::string m_name;
 };
@@ -106,7 +118,7 @@ public:
 	const std::string &name() const { return m_name; }
 
 	// ZH StateMachine::defineState; the first state defined is the default state
-	void defineState(unsigned id, std::unique_ptr<AIState> state, unsigned successId, unsigned failureId);
+	void defineState(unsigned id, std::unique_ptr<AIState> state, unsigned successId, unsigned failureId, std::vector<AIStateCondition> conditions = {});
 	// ZH StateMachine::initDefaultState: enters the default state
 	StateReturnType initDefaultState();
 
@@ -166,6 +178,10 @@ public:
 private:
 	friend class AIState;
 	StateReturnType checkForTransitions(AIState &state, StateReturnType status);
+	// ZH State::friend_checkForSleepTransitions: the conditions of a sleeping state; `status` (the sleep) when none is true
+	StateReturnType checkForSleepTransitions(AIState &state, StateReturnType status);
+	// the conditions' part of both: `matched` false when none is true
+	StateReturnType testConditions(AIState &state, bool &matched);
 	void internalClear();
 
 	AIUpdateInterface *m_owner;

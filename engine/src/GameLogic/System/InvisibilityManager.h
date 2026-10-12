@@ -41,7 +41,8 @@
 //     status is not READY_TO_FIRE or the firing tracker's last shot is after frame 2 and less than 2 * LOGICFRAMES_PER_SECOND frames ago. FIRING_ANY (bit 7)
 //     passes then; FIRING_PRIMARY .. QUINARY (bits 2 .. 6) need that weapon slot's last fire frame >= now - 1.
 //   * RW 0x81ABDF (near trees): an IgnoreTreeCheckUpgrades bit on the object, or a live object of KindOf TREE within 50.0 (RW 0xBD88C4; partition distance type 0),
-//     or a terrain tree (TheTerrainLogic RW 0x67F52B -> 0x67E078: the tree list at + 0x578, records not toppled (+0x18) whose 3D squared distance is below 50^2).
+//     or a terrain tree (TheTerrainLogic RW 0x67F52B(position, 50.0, 1, 0) -> 0x67E078: the tree list at + 0x578, records not toppled (+0x18) whose 3D squared
+//     distance is below (50 + 7)^2; lane SPELL-3: the query runs on the logic's tree list, GameLogic/Map/TerrainTrees.h).
 //   * RW 0x81B64F (camouflage detectors): within (the candidate's template CamouflageDetectionMultiplier, ThingTemplate + 0x10) * DetectionRange, 3D squared
 //     distance below the square, every object other than the target that is alive, has an AI, passes GameData CamouflageDetectorObjectFilter (GlobalData + 0xEB4,
 //     with the target's controlling player) and that the target is ENEMIES to (ALLIES with DETECTED_BY_FRIENDLIES) from the candidate's side (RW 0x660B85).
@@ -56,8 +57,9 @@
 // WHAT IS INFERENCE / NOT PORTED (stop S-1040, reported):
 //   * the camouflage detector and TREE queries run on ThePartitionManager (lane MODULES-2 / STEALTH-2, with the largest multiplier of RW 0x81A6A1 as the range);
 //     the same-map filter (RW 0xC0F374) always passes (no off-map objects are ported);
-//   * the terrain tree list holds the map's KindOf TREE map objects that the map loop sends to the tree buffer (their positions; the toppled flag never sets: tree
-//     toppling is not ported); the TREE object query uses the 2D centre distance (partition distance type 0 as ZH FROM_CENTER_2D);
+//   * the terrain tree list here keeps the map's KindOf TREE positions for the hash and the report only (as loaded; lane SPELL-3): the tree query reads
+//     TerrainTrees' live records, where Devastation's toppled and harvested trees no longer count; the TREE object query uses the 2D centre distance (partition
+//     distance type 0 as ZH FROM_CENTER_2D);
 //   * the client notification (RW 0x81ACD7: radar event, EVA, "MESSAGE:StealthDiscovered"), the opacity pulse (RW 0x81AA85) and the reveal sounds are the
 //     client's; the FX play through the logic's FX events;
 //   * the reveal's waking of idle enemy AIs uses the AI's VisionRange (2D centre distance) for RW 0x68FA3D's vision test;

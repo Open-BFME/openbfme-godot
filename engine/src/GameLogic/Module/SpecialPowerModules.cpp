@@ -8,6 +8,7 @@
 #endif
 
 #include "GameLogic/Module/SpecialPowerModules.h"
+#include "GameLogic/Module/WeaponChangeSpecialPower.h"
 #include "GameLogic/Module/SpecialAbilityModules.h"
 #include "GameLogic/Module/ExtraUpdateModules.h"
 #include "GameLogic/Module/SpellBookPowers.h"
@@ -22,6 +23,7 @@
 #include "Common/GameCommon.h"
 #include "Common/PlayerTemplate.h"
 #include "GameLogic/AttributeModifiers.h"
+#include "Common/Audio/AudioRequests.h"
 #include "GameLogic/FXEvents.h"
 #include "GameLogic/ObjectFilterMatch.h"
 #include "GameLogic/ObjectTemplateInfo.h"
@@ -604,7 +606,22 @@ void SpecialPowerModule::triggerSpecialPower(const Coord3D *loc, const Object *)
 	GameLogic &logic = obj->logic();
 	const SpecialPowerModuleData *d = m_spData;
 	const SpecialPowerTemplate *t = getSpecialPowerTemplate();
-	++m_clientNotices; // RW 0x89713F: the script engine's power notices, the EVA / radar events (S-920)
+	++m_clientNotices; // RW 0x89713F: the script engine's power notice (RW 0x759986) is not ported (S-920)
+	// lane SPELL-3: RW 0x897183 .. 0x897226 (aboutToDoSpecialPower; BFME2 decomp SpecialPowerModuleTrigger.cpp, tier A): the template's InitiateSound on the
+	// caster (an event with its object id), then, with a location, InitiateAtLocationSound there with the caster's player index; fire-and-forget requests
+	// to TheAudio (the logic reads nothing back)
+	{
+		const Player *owner = obj->getControllingPlayer();
+		const int playerIndex = owner ? owner->getPlayerIndex() : -1;
+		if (t && !t->m_initiateSound.empty())
+		{
+			AudioApi::playSoundForObject(t->m_initiateSound, obj->getID(), playerIndex);
+		}
+		if (loc && t && !t->m_initiateAtLocationSound.empty())
+		{
+			AudioApi::playSoundAtPositionForPlayer(t->m_initiateAtLocationSound, *loc, playerIndex);
+		}
+	}
 	createViewObject(loc); // RW 0x896FD9
 	if (!d->m_updateModuleStartsAttack)
 	{
@@ -1087,6 +1104,15 @@ void OCLSpecialPower::doSpecialPowerAtLocation(const Coord3D &loc, unsigned opti
 	}
 	default: // 0, 1, 2, 6: the map edge points (TerrainLogic vslots 0x34 / 0x38, RW 0x6EF173); 7: the army spawn waypoints. Not ported (S-530)
 		++m_unported;
+		if (m_data->m_createLocation == 2)
+		{
+			// lane SPELL-3 (stop S-931): CREATE_AT_EDGE_NEAR_TARGET_AND_MOVE_TO_LOCATION (RW 0x8C7727: the edge point nearest the target, TerrainLogic vslot 0x34,
+			// adjusted by the pathfinder RW 0x6EF173; the OCL made there with the target as its secondary position, RW 0x5F00CA) is the spell book's Dragon Strike:
+			// its dragon's flight needs the OCL's IssueMoveAfterCreation / MoveUsesStrafeUpdate (RW 0x5F27F1 .. 0x5F28C3), StrafeAreaUpdate (RW 0x7A82AF / 0x7A8368)
+			// and GiantBirdAIUpdate's aircraft interface (AIUpdateInterface vslots 0x188 / 0x1B8 / 0x238), none of them ported
+			obj->logic().noteStop("[S-931] OCLSpecialPower CREATE_AT_EDGE_NEAR_TARGET_AND_MOVE_TO_LOCATION (Dragon Strike): the edge spawn, the OCL's strafe move, "
+								  "StrafeAreaUpdate and GiantBirdAIUpdate's aircraft interface are not ported: nothing is made");
+		}
 		break;
 	}
 	SpecialPowerModules::grantPlayerUpgrades(*obj, m_data->m_upgradeNames);
@@ -1342,5 +1368,6 @@ void SpecialPowerModules::registerAll(ModuleFactory &modules)
 		return std::make_unique<OCLSpecialPower>(thing, typed);
 	});
 	SpellBookPowers::registerAll(modules); // lane SPELL-2: the other spell book power classes
+	WeaponChangeSpecialPowerModule::registerClass(modules); // lane FACT-B: the Berserker's torch toggle
 	SpellEffectModules::registerAll(modules); // lane SPELL-2: DeletionUpdate, FireWeaponUpdate (the effect objects)
 }

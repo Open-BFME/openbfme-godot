@@ -410,7 +410,7 @@ TEST_CASE("stealth abilities: the One Ring (StealthUpdate ring mode) is a no-op 
 		return;
 	}
 	Arena a(shared());
-	a.logic.invisibility().addTree(Coord3D{ 615.0f, 600.0f, 0.0f }); // the Noldor's stealth is forbidden away from trees: the ring's STEALTHED needs it too
+	stealthtest::addTerrainTree(a.logic, Coord3D{ 615.0f, 600.0f, 0.0f }); // the Noldor's stealth is forbidden away from trees: the ring's STEALTHED needs it too
 	Object *cah = a.place("NoldorWarriorHorde", 0, 600.0f, 600.0f); // an enabled StealthUpdate (a DisguisesAsTeam one sleeps until disguised)
 	a.run(5);
 	StealthUpdate *st = StealthUpdate::of(*cah);

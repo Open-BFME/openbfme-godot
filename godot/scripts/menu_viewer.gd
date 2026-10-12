@@ -116,7 +116,7 @@ func _ready() -> void:
 		get_window().size = _res
 		get_window().content_scale_size = Vector2i(0, 0)
 	if not ClassDB.class_exists("AptMenuPlayer"):
-		_fail("the openbfme extension is not loaded (or too old); run build.bat")
+		_fail("the openbfme extension is not loaded (or too old); " + Release.extension_hint())
 		return
 	_fs = ClassDB.instantiate("RetailFileSystem")
 	var mount: Dictionary = _fs.mount_retail()
@@ -150,7 +150,7 @@ func _ready() -> void:
 # The shell's audio (AUDIO-1): the APT PlaySound fscommand and the main menu music go through GameAudio, the retail audio manager.
 func _boot_audio() -> bool:
 	if not ClassDB.class_exists("GameAudio"):
-		_fail("the openbfme extension has no GameAudio class (too old); run build.bat")
+		_fail("the openbfme extension has no GameAudio class (too old); " + Release.extension_hint())
 		return false
 	_audio = ClassDB.instantiate("GameAudio")
 	add_child(_audio)

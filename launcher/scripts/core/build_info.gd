@@ -48,5 +48,11 @@ func tests_allowed() -> bool:
 	return OS.has_feature("editor") or test_build
 
 
+## the operating system's name (Godot's OS.get_name()); OPENBFME_TEST_OS_NAME replaces it in test builds, so a test can play another OS
+func os_name() -> String:
+	var forced := OS.get_environment("OPENBFME_TEST_OS_NAME")
+	return forced if forced != "" and tests_allowed() else OS.get_name()
+
+
 func platform() -> String:
 	return "windows-x64" if OS.get_name() == "Windows" else "linux-x64"

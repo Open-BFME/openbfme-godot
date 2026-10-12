@@ -20,6 +20,24 @@
 //         becomes 0xFFFFFFFF;
 //       - the sleep (RW 0x88F0AA): the smallest max(fire frame, the weapon's whenWeCanFireAgain + 0x18) over the records; none (0xFFFFFFFF) sleeps
 //         forever, a frame already passed wakes next frame, else the difference.
+//   * FloodUpdate (lane SPELL-3; the spell book's Flood, Arwen's flood): module data table RW 0xC631D8 { FloodMember (RW 0x891696: a 0x38-byte member parsed
+//     with RW 0xC63080 { MemberTemplateName + 0 (parseAsciiString), ControlPointOffsetOne .. Four + 4 / + 0x10 / + 0x1C / + 0x28 (parseCoord3D RW 0x42F247),
+//     MemberSpeed + 0x34 (parseReal RW 0x42ED00) }, appended to the list at data + 8), AngleOfFlow + 0xC (parseAngleReal RW 0x42EE15), DirectionIsRelative
+//     + 0x10 (parseBool) }; constructor RW 0x891713; the module keeps a list of { member object id, its path (Coord3D vector), the path index } at + 0x20 and
+//     a members-made flag at + 0x24:
+//       - the path (RW 0x8912C5): angle = AngleOfFlow, plus the object's orientation through normalizeAngle (RW 0x644FD0) when DirectionIsRelative; each
+//         control point is (c * x - s * y) + pos.x, (x * s + c * y) + pos.y, z = 0 with s / c the MSVCR71 sin / cos of the angle (RW 0xA3CF90 / 0xA3CF84,
+//         stored as floats, scalar SSE); the BezierSegment of the four (RW 0x960E8D), its approximate length at tolerance 1 (RW 0x9610EF) divided by
+//         MemberSpeed on the x87, MSVCR71 ceil, _ftol2, at least 2 segments (`cmp count, 2; jg`), getSegmentPoints (RW 0x9612A3);
+//       - the members (RW 0x8917FD, first update): per FloodMember in order, the template by name (RW 0x6D1305; unknown: nothing), a new object on the
+//         flood's team (RW 0x6D165E), its path, then its transform: Matrix3D::buildTransformMatrix (RW 0xB26610) at the first path point along
+//         (second - first) normalised (SSE length (z^2 + y^2) + x^2, Inv_Sqrt RW 0x441C56, x87 products), Object::setTransformMatrix (RW 0x68DA67);
+//       - update (RW 0x8919BE, every frame: UPDATE_SLEEP_NONE): the members first when not made; then per record whose object exists: the index
+//         grows; at or past the path's end the object is killed (RW 0x698EC3, UNRESISTABLE, DEATH_NORMAL); else it stands on that point at the terrain
+//         height (TerrainLogic vslot 0x18) and, while a next point exists, turns by the relative angle to it (RW 0x4B3D8D, x87 fadd with the
+//         orientation, RW 0x70C31E).
+//     BFME2 decomp GameLogic/Object/Update/FloodUpdate.cpp (FloodUpdate::update, tier A for RW 0x8919BE; the member maker tier B same-shape for RW 0x8917FD)
+//     and reverse/attempts/0x0048dc51.cpp (not byte-matching; the path builder above is read from the RotWK disassembly).
 // INFERENCE (S-924): the weapon's firing path is WEAPON-1's privateFireWeapon at a position through the object's weapon host; ObjectWeapons made for an
 // object without a WeaponSet only to host this weapon (the object's own weapon state is not changed).
 
@@ -28,6 +46,7 @@
 #include "Common/INI.h"
 #include "Common/INIDataTypes.h"
 #include "GameLogic/Module/UpdateModule.h"
+#include "GameLogic/ObjectTypes.h"
 
 #include <memory>
 #include <string>
@@ -80,6 +99,45 @@ private:
 	std::unique_ptr<ObjectWeapons> m_ownHost; ///< the host of an object without a WeaponSet (S-924)
 	unsigned long long m_shots = 0;
 	unsigned long long m_unfired = 0;
+};
+
+struct FloodMemberData
+{
+	std::string templateName;       ///< + 0
+	Coord3D controlPointOffset[4]{}; ///< + 4 / + 0x10 / + 0x1C / + 0x28
+	float speed = 0.0f;              ///< + 0x34
+};
+
+class FloodUpdateModuleData : public ModuleData
+{
+public:
+	std::vector<FloodMemberData> m_members; ///< + 8
+	float m_angleOfFlow = 0.0f;             ///< + 0xC (radians)
+	bool m_directionIsRelative = false;     ///< + 0x10
+	static void buildFieldParse(MultiIniFieldParse &p);
+};
+
+class FloodUpdate : public UpdateModule
+{
+public:
+	FloodUpdate(Thing *thing, const FloodUpdateModuleData *data);
+	UpdateSleepTime update() override; ///< RW 0x8919BE
+	void crc(StateHasher &hasher) const override;
+	struct Record
+	{
+		ObjectID id = INVALID_ID;  ///< + 0
+		std::vector<Coord3D> path; ///< + 4
+		int index = 0;             ///< + 0x10
+	};
+	const std::vector<Record> &records() const { return m_records; }
+	bool membersCreated() const { return m_membersCreated; }
+
+private:
+	void buildPath(const FloodMemberData &member, Record &record) const; ///< RW 0x8912C5
+	void createMembers();                                               ///< RW 0x8917FD
+	const FloodUpdateModuleData *m_data;
+	std::vector<Record> m_records; ///< + 0x20 (a list in retail; only appended to)
+	bool m_membersCreated = false; ///< + 0x24
 };
 
 namespace SpellEffectModules

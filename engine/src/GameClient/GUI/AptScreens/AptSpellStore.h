@@ -59,6 +59,7 @@ public:
 	const SpellStoreModel &model() const { return m_model; }
 	int buttonState(int index) const { return index >= 0 && index < SpellStoreModel::MAX_BUTTONS ? m_state[index] : 0; }
 	int layout() const { return m_layout; }
+	const std::string &lastSpellArgument() const { return m_lastSpellArg; } ///< lane SPELL-3: the argument of the last OnBttnSpell (a harness diagnostic)
 	// the image of the RenderImage clip at `clipPath` ("_levelN.SpellStore.Buttons.SpellK..."), "" none
 	std::string imageForClip(const std::string &clipPath) const;
 	static const char *stateName(int state);
@@ -78,4 +79,5 @@ private:
 	bool m_helpSent = false;
 	int m_state[SpellStoreModel::MAX_BUTTONS];
 	std::vector<GameMessage> m_out;
+	std::string m_lastSpellArg;
 };

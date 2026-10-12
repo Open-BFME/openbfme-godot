@@ -99,4 +99,11 @@ bool isAttackable(const Object &obj)
 	return isAlive(obj) && obj.isInWorld() && !obj.isKindOf((unsigned)k.unattackable) && !obj.isKindOf((unsigned)k.inert) &&
 		!obj.testStatus((unsigned)st.unattackable);
 }
+
+bool isAbleToAttack(const Object &obj)
+{
+	static const int sold = CombatNames::status("SOLD");
+	return !(obj.testStatus((unsigned)CombatNames::statuses().noAttack) || obj.testModelCondition(0x81) || obj.isUnderConstruction() ||
+		obj.testStatus((unsigned)sold));
+}
 } // namespace CombatQueries

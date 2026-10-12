@@ -127,6 +127,7 @@ buses, camera, HUD decorations). Tabs:
 | Tab | Setting | Key | Default |
 |---|---|---|---|
 | Display | window mode, resolution, vsync, frame limit (a cap given another way shows as its own "custom" entry), counter, render scale (5% steps), upscaling (OPTS-1) | `openbfme-display.cfg` | windowed, 100%, bilinear |
+| | Widescreen view: Original / Wider (UI-6, stop S-3702) | `OpenBFMEWidescreen` | original |
 | Graphics+ | Anti-aliasing: Off / FXAA / MSAA 2x / 4x / TAA | `OpenBFMEAntiAliasing` | off |
 | | Anisotropic filtering (models): Off .. 16x | `OpenBFMEAnisotropic` | 4x (what the renderer used) |
 | | Look: original / enhanced (AgX tone mapping, glow on overbright effects) | `OpenBFMELook` | original |
@@ -188,12 +189,36 @@ buses, camera, HUD decorations). Tabs:
   needed. (JonathanPC's frame times were taken while another job rendered a
   video on the same PC.)
 
+### Widescreen view (lane UI-6, the owner's FB-0021)
+
+- **What RotWK does.** Its camera keeps a 50 degree horizontal field of view at
+  every aspect (W3DView::setWidth RW 0x4874A7: 50 degrees times the view's
+  share of the display width; CameraClass::Set_View_Plane RW 0x533590 and
+  Set_Aspect_Ratio RW 0x533630: the view plane's height is its width divided
+  by the aspect; tier A, byte-matched in the BFME2 decomp). A screen wider
+  than 4:3 therefore sees less from top to bottom ("Vert-"): 38.6 degrees
+  vertically at 4:3, 29.4 at 16:9, 22.6 at 21:9, 14.9 at 32:9. The HUD and the
+  menus are Apt movies stretched to the window as RotWK stretches them (an
+  x and a y scale of their own, the texts at the smaller one); the option does
+  not change them.
+- **Original** (the default) is exactly that. **Wider** keeps 4:3's vertical
+  view (38.6 degrees) on screens wider than 4:3 and widens the horizontal one
+  ("Hor+": 63.7 degrees across at 16:9); a 4:3 or narrower screen is retail's
+  in both. TacticalCamera::setWidescreenView drives the picture, the picking,
+  the radar's view box and the scroll constraints (all from one view). The
+  camera is client state: the simulation, replays and multiplayer never read
+  it (sim_audit). `--widescreen=original|wider` sets it for one run.
+
 Left out, with the reason, in `docs/ROADMAP.md`: shadow map resolution (no
 shadows drawn yet), tooltip delay (the HUD's tooltips are not ported),
 double-click guard (RotWK 2.01 never reads it), colour-blind player colours
 (player colours are part of the game setup), hotkey rebinding.
 
 ## Proof
+
+Lane UI-6: `workspace/rebuild/proof/UI-6/widescreen-<size>-<original|wider>.png`
+(1920 x 1080, 2560 x 1080, 3440 x 1440, 5120 x 1440), the radar's view box at
+2560 x 1080 in both, and the menus, the lobby and the game at 21:9 and 32:9.
 
 `workspace/rebuild/proof/OPTS-3/<size>/` at 1280 x 720, 1920 x 1080, 2560 x 1440
 and 3840 x 2160: `before-*` (the OPTS-2 tree, 709942a6) and `after-*` of every

@@ -98,6 +98,7 @@ include(cmake/Render4.cmake)    # OPENBFME_RENDER4_SOURCES / _TESTS / _GODOT_SOU
 include(cmake/Path2.cmake)      # OPENBFME_PATH2_SOURCES / OPENBFME_PATH2_TESTS (lane PATH-2)
 include(cmake/Net.cmake)        # OPENBFME_NET_SOURCES / OPENBFME_NET_TESTS, openbfme_peer (lane MP-1)
 include(cmake/Experience.cmake) # OPENBFME_XP_SOURCES / OPENBFME_XP_TESTS (lane XP-1)
+include(cmake/FactB.cmake)      # OPENBFME_FACTB_TESTS (lane FACT-B: Isengard and Mordor)
 include(cmake/Play2.cmake) # OPENBFME_PLAY2_TESTS (lane PLAY-2)
 include(cmake/Horde2.cmake)     # OPENBFME_HORDE2_SOURCES / OPENBFME_HORDE2_TESTS (lane HORDE-2)
 include(cmake/Integ1.cmake)     # INTEG-1: StancesBehavior (appends to OPENBFME_SIM_SOURCES; OPENBFME_INTEG1_TESTS)
@@ -134,6 +135,7 @@ include(cmake/Mod4.cmake)       # MOD-4: AISpecialPowerUpdate, RepairSpecialPowe
 include(cmake/Aipow1.cmake)     # AIPOW-1: the AISpecialPowerUpdate decisions and the ActionManager tests (appends to OPENBFME_SIM_SOURCES; OPENBFME_AIPOW1_TESTS)
 include(cmake/Ui2.cmake)        # UI-2: owner menu feedback (client only; OPENBFME_UI2_CLIENT_SOURCES / OPENBFME_UI2_TESTS)
 include(cmake/Ui4.cmake)        # UI-4: owner menu / HUD findings on v0.3.0-preview.1 (client only)
+include(cmake/Ui6.cmake)        # UI-6: a tester's menu findings on v0.3.0-preview.6, widescreen view (client only)
 include(cmake/Anim1.cmake)      # OPENBFME_ANIM1_TESTS (lane ANIM-1: combat animation)
 include(cmake/Win1.cmake)       # WIN-1: the MSVCR71 real parser (appends to OPENBFME_SIM_SOURCES; OPENBFME_WIN1_TESTS: cross-OS lockstep)
 include(cmake/Garrison3.cmake)  # GARRISON-3: the garrison exit (OPENBFME_GARRISON3_TESTS)
@@ -156,6 +158,9 @@ include(cmake/Input1.cmake)     # INPUT-1: RotWK's input layer (OPENBFME_INPUT1_
 include(cmake/Opts2.cmake)      # OPTS-2: the Options menu (OPENBFME_OPTS2_TESTS)
 include(cmake/Opts3.cmake)      # OPTS-3: the OpenBFME page of the Options screen (appends to OPENBFME_APT_SOURCES)
 include(cmake/Play1.cmake)      # PLAY-1: the tribute, the placement ghost (appends to OPENBFME_SIM_SOURCES; OPENBFME_PLAY1_SOURCES / _TESTS)
+include(cmake/FactA.cmake)      # FACT-A: Men / Elves / Dwarves content through the HUD, selling (appends to OPENBFME_SIM_SOURCES; OPENBFME_FACTA_TESTS)
+include(cmake/FactC.cmake)      # FACT-C: the Goblins / Angmar content through the HUD (OPENBFME_FACTC_TESTS)
+include(cmake/Bugs1.cmake)      # BUGS-1: backlog bugs (production exits, hero requests; OPENBFME_BUGS1_TESTS)
 add_library(openbfme_core STATIC
     ${OPENBFME_PLAY2_SOURCES}
     ${OPENBFME_APT_SOURCES}
@@ -187,6 +192,7 @@ add_library(openbfme_core STATIC
     ${OPENBFME_RELEASE1_SOURCES}
     ${OPENBFME_UI2_CLIENT_SOURCES}
     ${OPENBFME_UI4_CLIENT_SOURCES}
+    ${OPENBFME_UI6_CLIENT_SOURCES}
     ${OPENBFME_SCRIPT1_SOURCES}
     ${OPENBFME_CAMP1_SOURCES}
     ${OPENBFME_HUD5_CLIENT_SOURCES}
@@ -417,6 +423,12 @@ if(OPENBFME_PYTHON)
 endif()
 target_include_directories(openbfme_core PUBLIC src)
 target_link_libraries(openbfme_core PUBLIC openbfme_lua)
+# DEP-1: std::thread (LiveGameRunner) needs libpthread below glibc 2.34 (tools/release/build_linux.sh: Godot's Linux SDK, a glibc 2.28
+# sysroot); on a newer glibc FindThreads adds nothing (pthread is in libc). Link-only: no compile flag, so the sim flag audit is unchanged.
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    find_package(Threads REQUIRED)
+    target_link_libraries(openbfme_core PUBLIC Threads::Threads)
+endif()
 add_dependencies(openbfme_core openbfme_build_version) # RELEASE-1: the generated BuildVersion.gen.cpp
 openbfme_sim_register_target(openbfme_core)
 set_target_properties(openbfme_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
@@ -455,6 +467,7 @@ add_library(openbfme SHARED
     ${OPENBFME_RELEASE1_GODOT_SOURCES}
     ${OPENBFME_UI2_GODOT_SOURCES}
     ${OPENBFME_UI4_GODOT_SOURCES}
+    ${OPENBFME_UI6_GODOT_SOURCES}
     ${OPENBFME_HUD4_GODOT_SOURCES}
     ${OPENBFME_HUD6_GODOT_SOURCES}
     ${OPENBFME_CAH1_GODOT_SOURCES})
@@ -497,6 +510,7 @@ add_executable(openbfme_tests
     ${OPENBFME_NET_TESTS}
     ${OPENBFME_PATH2_TESTS}
     ${OPENBFME_XP_TESTS}
+    ${OPENBFME_FACTB_TESTS}
     ${OPENBFME_PLAY2_TESTS}
     ${OPENBFME_APT_TESTS}
     ${OPENBFME_FX_TESTS}
@@ -549,6 +563,7 @@ add_executable(openbfme_tests
     ${OPENBFME_AIPOW1_TESTS}
     ${OPENBFME_UI2_TESTS}
     ${OPENBFME_UI4_TESTS}
+    ${OPENBFME_UI6_TESTS}
     ${OPENBFME_GARRISON3_TESTS}
     ${OPENBFME_COMBAT3_TESTS}
     ${OPENBFME_COMBAT4_TESTS}
@@ -568,6 +583,9 @@ add_executable(openbfme_tests
     ${OPENBFME_INPUT1_TESTS}
     ${OPENBFME_OPTS2_TESTS}
     ${OPENBFME_PLAY1_TESTS}
+    ${OPENBFME_FACTA_TESTS}
+    ${OPENBFME_FACTC_TESTS}
+    ${OPENBFME_BUGS1_TESTS}
     tests/test_main.cpp
     tests/test_big_archive.cpp
     tests/test_archive_order.cpp

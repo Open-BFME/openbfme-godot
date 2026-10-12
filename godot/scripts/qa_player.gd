@@ -124,13 +124,22 @@ func _shot(label: String) -> void:
 
 # ---- waiting ---------------------------------------------------------------------------------------------------------------------------------------------
 
+## lane FACT-C: game.gd frees the HUD (and clears the game) when the end-game timer leaves to the score screen, which may happen while one of the bot's
+## coroutines waits; every await is followed by this test, and a coroutine that finds the game gone returns at once instead of resuming into freed
+## objects (the signal 11 in _look of QA runs 005-idle-Wild / 011-idle-Mordor at 7ac69bc0)
+func _gone() -> bool:
+	return not is_instance_valid(_hud) or not _hud.is_inside_tree() or not is_instance_valid(_world)
+
+
 ## at least n render frames and n / 60 s: the HUD's camera and input run on 30 client frames a second, a headless window renders hundreds a second
 func _frames(n: int) -> void:
 	var until := Time.get_ticks_msec() + int(n * 1000.0 / 60.0)
 	for i in n:
 		await get_tree().process_frame
+		if _gone(): return
 	while Time.get_ticks_msec() < until:
 		await get_tree().process_frame
+		if _gone(): return
 
 
 ## waits until the logic ran `n` more frames; a logic that does not move for 20 s of real time is a stall (reported once per stall)
@@ -140,6 +149,7 @@ func _wait_logic(n: int, stop_on_end := true) -> void:
 	var since := Time.get_ticks_msec()
 	while _world.get_frame() < target:
 		await get_tree().process_frame
+		if _gone(): return
 		if not is_instance_valid(_world) or (stop_on_end and _game_over()):
 			return
 		var f: int = _world.get_frame()
@@ -252,33 +262,42 @@ func _look(p: Vector2) -> void:
 	var centre: Vector2 = get_viewport().get_visible_rect().size * 0.5
 	var until := Time.get_ticks_msec() + 2000
 	await _frames(2)
+	if _gone(): return
 	while Time.get_ticks_msec() < until:
 		var px: Vector2 = _hud.world_to_pixel(p)
 		if px.distance_to(centre) < 40.0:
 			break
 		await get_tree().process_frame
+		if _gone(): return
 	await _frames(1)
+	if _gone(): return
 
 
 func _click_pixel(px: Vector2, button := 1) -> void:
 	_hud.inject_mouse_move(px)
 	await _frames(2)
+	if _gone(): return
 	# a quick click (Mouse.ini DragToleranceMS 150: a slow window must not turn it into a drag)
 	_hud.inject_mouse_button(button, true, px, false)
 	await get_tree().process_frame
+	if _gone(): return
 	_hud.inject_mouse_button(button, false, px, false)
 	await _frames(3)
+	if _gone(): return
 
 
 func _click_world(p: Vector2, button := 1) -> void:
 	await _click_pixel(_hud.world_to_pixel(p), button)
+	if _gone(): return
 
 
 func _key(dik: int) -> void:
 	_hud.inject_key(dik, true)
 	await _frames(2)
+	if _gone(): return
 	_hud.inject_key(dik, false)
 	await _frames(3)
+	if _gone(): return
 
 
 ## the player's click on an object: a right click on open ground first drops the selection (BFME's default mouse: with a builder selected a click on our
@@ -292,6 +311,7 @@ func _key(dik: int) -> void:
 func _select(o: Dictionary) -> bool:
 	if not _hud.get_selection().is_empty():
 		await _deselect()
+		if _gone(): return false
 	var now: Dictionary = _world.get_object(o.id)
 	if not now.get("ok", false) or now.get("destroyed", false):
 		count("select_target_gone") # it died or was removed before the click (a projectile that landed, a sold building): nothing to select
@@ -300,6 +320,7 @@ func _select(o: Dictionary) -> bool:
 		count("select_skipped_unselectable")
 		return false
 	await _look(Vector2(o.x, o.y))
+	if _gone(): return false
 	var first := ""
 	var verdicts := {}   # "hit_other" / "miss" / "not_drawn" / ... -> clicks
 	var cover := ""      # the object the pick answered where the ray met ours
@@ -319,7 +340,9 @@ func _select(o: Dictionary) -> bool:
 		at += offset
 		var px: Vector2 = _hud.world_to_pixel(at)
 		tried.append([px, target_id])
-		if await _click_selects(o, px):
+		var _awaited1: bool = await _click_selects(o, px)
+		if _gone(): return false
+		if _awaited1:
 			if not first.is_empty():
 				issue("select_needed_retry", o.template, first)
 			return true
@@ -340,6 +363,7 @@ func _select(o: Dictionary) -> bool:
 			first = "a left click on the middle of %s at (%.0f, %.0f) (pixel %s) selected %s" % [o.template, at.x, at.y, str(px), str(got)]
 		if not _hud.get_selection().is_empty():
 			await _deselect()
+			if _gone(): return false
 	# the part of it that shows: the pixels around where it is drawn whose pick answers it (what a player's eye finds), nearest first
 	var centre: Vector2 = tried[0][0]
 	var target0: int = tried[0][1]
@@ -355,12 +379,15 @@ func _select(o: Dictionary) -> bool:
 		if best.x > -1e8:
 			break
 	if best.x > -1e8:
-		if await _click_selects(o, best):
+		var _awaited2: bool = await _click_selects(o, best)
+		if _gone(): return false
+		if _awaited2:
 			issue("select_needed_retry", o.template, first + "; it showed at pixel %s (%s)" % [str(best), JSON.stringify(verdicts)])
 			return true
 		first += "; the pick answers it at pixel %s but the click there did not select it" % str(best)
 		if not _hud.get_selection().is_empty():
 			await _deselect()
+			if _gone(): return false
 	elif verdicts.has("hit_other") and not verdicts.has("hit"):
 		count("select_occluded")
 		issue("select_occluded", o.template, first + "; drawn behind %s at every tried pixel (%s)" % [cover, JSON.stringify(verdicts)])
@@ -377,9 +404,11 @@ func _select(o: Dictionary) -> bool:
 func _click_selects(o: Dictionary, px: Vector2) -> bool:
 	_hud.inject_mouse_move(px)
 	await _frames(1)
+	if _gone(): return false
 	_hud.inject_mouse_button(1, true, px, false)
 	_hud.inject_mouse_button(1, false, px, false)
 	await _frames(4)
+	if _gone(): return false
 	for s in _hud.get_selection():
 		if _picks_it(o, int(s)):
 			return true
@@ -401,6 +430,7 @@ func _deselect() -> void:
 	var p: Vector2 = _hud.world_to_pixel(_hud.get_camera().get("position", _base))
 	# a right click in the middle of the screen; if the selection holds on, that is a finding
 	await _click_pixel(p, 2)
+	if _gone(): return
 	if not _hud.get_selection().is_empty():
 		issue("deselect_failed", "right click", "a right click on the ground left %d objects selected" % _hud.get_selection().size())
 
@@ -413,10 +443,12 @@ func _press(b: Dictionary) -> bool:
 		if w.get("found", false):
 			break
 		await _frames(3) # the movie rebuilds its buttons after a selection change
+		if _gone(): return false
 	if not w.get("found", false):
 		issue("button_window_missing", b.name, "the Palantir has no clip %s for the button (command %s) after 30 frames" % [b.frame, b.command])
 		return false
 	await _click_pixel(Vector2(w.x, w.y))
+	if _gone(): return false
 	return true
 
 
@@ -452,25 +484,36 @@ func play() -> Dictionary:
 					break
 	print("QA play: %s at (%.0f, %.0f), %d enemy bases, until logic frame %d" % [_local, _base.x, _base.y, _enemy_bases.size(), _end_frame])
 	await _look(_base)
+	if _gone(): return summary()
 	_shot("start")
 	if OS.get_environment("QA_DEBUG") == "2":
 		await _probe_deselect()
+		if _gone(): return summary()
 	var round := 0
 	while _world.get_frame() < _end_frame and not _game_over():
 		round += 1
 		await _survey()
+		if _gone(): return summary()
 		await _economy()
+		if _gone(): return summary()
 		await _production()
+		if _gone(): return summary()
 		await _spells()
+		if _gone(): return summary()
 		await _abilities()
+		if _gone(): return summary()
 		await _army()
+		if _gone(): return summary()
 		await _check_production()
+		if _gone(): return summary()
 		_check_end()
 		if _world.get_frame() >= _next_shot_frame:
 			_next_shot_frame = _world.get_frame() + 5 * 90
 			await _look(_base)
+			if _gone(): return summary()
 			_shot("f%05d" % _world.get_frame())
 		await _wait_logic(15)
+		if _gone(): return summary()
 		if _stalls >= 3:
 			break
 	return summary()
@@ -500,10 +543,13 @@ func _survey() -> void:
 		var full: Dictionary = _world.get_object(o.id)
 		if full.get("under_construction", false) or int(full.get("contained_by", 0)) != 0 or not full.has("health"):
 			continue # a member inside its horde, a projectile (no body)
-		if not await _select(o):
+		var _awaited3: bool = await _select(o)
+		if _gone(): return
+		if not _awaited3:
 			_sets_seen[o.template] = ""
 			continue
 		await _frames(3)
+		if _gone(): return
 		var st: Dictionary = _hud.get_state()
 		var set_name: String = st.get("control_bar", {}).get("command_set", "")
 		_sets_seen[o.template] = set_name
@@ -577,11 +623,15 @@ func _resume_stalled() -> bool:
 			# a free builder, or the one this site was given (it stands idle beside it: it gets the same site again)
 			if not _builders.has(b.template) or (_builder_busy(b.id) and int(_builder_site.get(b.id, 0)) != int(id)):
 				continue
-			if not await _select(b):
+			var _awaited4: bool = await _select(b)
+			if _gone(): return false
+			if not _awaited4:
 				continue
 			await _look(Vector2(o.x, o.y))
+			if _gone(): return false
 			var before: int = _hud.get_message_log().size()
 			await _click_world(Vector2(o.x, o.y))
+			if _gone(): return false
 			var log: PackedStringArray = _hud.get_message_log()
 			var sent := false
 			for i in range(before, log.size()):
@@ -599,7 +649,9 @@ func _resume_stalled() -> bool:
 
 
 func _economy() -> void:
-	if await _resume_stalled():
+	var _awaited5: bool = await _resume_stalled()
+	if _gone(): return
+	if _awaited5:
 		return
 	var builder: Dictionary = {}
 	var tried := 0
@@ -609,7 +661,9 @@ func _economy() -> void:
 			# one hidden behind a building is skipped for the next
 			if full.get("ok", false) and int(full.get("contained_by", 0)) == 0:
 				tried += 1
-				if await _select(o):
+				var _awaited6: bool = await _select(o)
+				if _gone(): return
+				if _awaited6:
 					builder = o
 					break
 				if tried >= 3:
@@ -650,14 +704,18 @@ func _economy() -> void:
 		count("build_waiting_for_money")
 		return
 	await _place(choice, builder)
+	if _gone(): return
 
 
 func _place(b: Dictionary, builder: Dictionary) -> void:
 	var before_log: int = _hud.get_message_log().size()
-	if not await _press(b):
+	var _awaited7: bool = await _press(b)
+	if _gone(): return
+	if not _awaited7:
 		return
 	_buttons[b.name].presses += 1
 	await _frames(4)
+	if _gone(): return
 	var pl: Dictionary = _hud.get_placement()
 	if not pl.get("placing", false):
 		issue("build_button_no_placement", b.name, "pressing the %s button (state %d) did not start the placement of %s" % [b.command, b.state, b.template])
@@ -672,8 +730,10 @@ func _place(b: Dictionary, builder: Dictionary) -> void:
 			var a := TAU * float(k + n * 3) / 10.0
 			var p := _base + Vector2(cos(a), sin(a)) * 70.0 * ring
 			await _look(p)
+			if _gone(): return
 			_hud.inject_mouse_move(_hud.world_to_pixel(p))
 			await _frames(2)
+			if _gone(): return
 			pl = _hud.get_placement()
 			if pl.get("has_ghost", false):
 				ghost_seen = true
@@ -686,12 +746,16 @@ func _place(b: Dictionary, builder: Dictionary) -> void:
 	if not found:
 		issue("no_legal_site", b.template, "no legal site within 630 of the base for %s (last legal code %s)" % [b.template, str(pl.get("legal", "?"))])
 		await _click_pixel(_hud.world_to_pixel(_base), 2) # a right click leaves the placement
+		if _gone(): return
 		await _key(DIK_ESCAPE)
+		if _gone(): return
 		return
 	if not ghost_seen:
 		issue("placement_no_ghost", b.template, "the placement of %s never showed a ghost model over the terrain" % b.template)
 	await _click_pixel(_hud.world_to_pixel(site))
+	if _gone(): return
 	await _frames(4)
+	if _gone(): return
 	var log: PackedStringArray = _hud.get_message_log()
 	if log.size() <= before_log:
 		issue("placement_no_message", b.template, "a click on a legal site sent no construct message")
@@ -704,6 +768,7 @@ func _place(b: Dictionary, builder: Dictionary) -> void:
 	var appeared := false
 	for i in 30:
 		await _wait_logic(2)
+		if _gone(): return
 		for o in _own_objects():
 			if o.template == b.template and Vector2(o.x, o.y).distance_to(site) < 80.0:
 				appeared = true
@@ -732,13 +797,16 @@ func _production() -> void:
 		if _game_over():
 			return
 		var o: Dictionary = by_template[t]
-		if not await _select(o):
+		var _awaited8: bool = await _select(o)
+		if _gone(): return
+		if not _awaited8:
 			continue
 		var buttons: Array = _hud.get_command_buttons()
 		var set_name: String = _hud.get_state().get("control_bar", {}).get("command_set", "")
 		if not _sets_seen.has(o.template) or not _shot_sets.has(o.template):
 			_shot_sets[o.template] = true
 			await _frames(20) # the Palantir's buttons and their images settle
+			if _gone(): return
 			_shot("sel-" + o.template)
 		_sets_seen[o.template] = set_name
 		var pressed := 0
@@ -772,21 +840,26 @@ func _production() -> void:
 			if now_b.is_empty() or int(now_b.state) != 1:
 				continue
 			await _press_and_judge(now_b, o)
+			if _gone(): return
 			pressed += 1
 			if pressed >= 3:
 				break
 			# the bar may have changed (a press refreshes it)
 			await _frames(2)
+			if _gone(): return
 
 
 func _press_and_judge(b: Dictionary, source: Dictionary) -> void:
 	var before_log: int = _hud.get_message_log().size()
 	var before_unported: Dictionary = _hud.get_report().get("unported_presses", {}).duplicate()
-	if not await _press(b):
+	var _awaited9: bool = await _press(b)
+	if _gone(): return
+	if not _awaited9:
 		return
 	_buttons[b.name].presses += 1
 	count("presses")
 	await _frames(4)
+	if _gone(): return
 	var log: PackedStringArray = _hud.get_message_log()
 	var st: Dictionary = _hud.get_state()
 	var unported: Dictionary = _hud.get_report().get("unported_presses", {})
@@ -808,16 +881,22 @@ func _press_and_judge(b: Dictionary, source: Dictionary) -> void:
 		if not _enemy_bases.is_empty():
 			target = _base.lerp(_enemy_bases[0].pos, 0.35)
 		await _look(target)
+		if _gone(): return
 		await _click_world(target)
+		if _gone(): return
 		await _frames(4)
+		if _gone(): return
 		# lane QA-2: a power that wants an object (Capture Building: a structure of another player) gets a click on the nearest other structure next
 		var other := {}
 		if _hud.get_message_log().size() <= before_log and _hud.get_state().get("gui_command", false):
 			other = _nearest_other_structure(Vector2(source.x, source.y))
 			if not other.is_empty():
 				await _look(Vector2(other.x, other.y))
+				if _gone(): return
 				await _click_world(Vector2(other.x, other.y))
+				if _gone(): return
 				await _frames(4)
+				if _gone(): return
 		if _hud.get_message_log().size() > before_log:
 			_buttons[b.name].effects += 1
 			count("targeted_presses")
@@ -825,7 +904,9 @@ func _press_and_judge(b: Dictionary, source: Dictionary) -> void:
 			issue("target_click_no_message", b.name, "the %s button (%s) asked for a target; the click on the ground%s sent nothing" % [b.command, b.power,
 				(" and on the %s of %s" % [other.template, other.player]) if not other.is_empty() else ""])
 			await _key(DIK_ESCAPE)
+			if _gone(): return
 		await _look(Vector2(source.x, source.y))
+		if _gone(): return
 		return
 	if b.command == "SPECIAL_POWER" or b.command == "SPECIAL_POWER_FROM_COMMAND_CENTER":
 		issue("ability_no_effect", b.name, "a ready %s button of %s (%s) neither sent a message nor asked for a target (ui messages %s)" % [b.command, source.template,
@@ -910,7 +991,9 @@ func _abilities() -> void:
 			continue
 		seen[o.template] = true
 		_ability_due[o.template] = _world.get_frame() + 5 * 180
-		if not await _select(o):
+		var _awaited10: bool = await _select(o)
+		if _gone(): return
+		if not _awaited10:
 			continue
 		var set_name: String = _hud.get_state().get("control_bar", {}).get("command_set", "")
 		var pressed := 0
@@ -919,6 +1002,7 @@ func _abilities() -> void:
 			if not b.command in ABILITY_COMMANDS or int(b.state) != 1:
 				continue
 			await _press_and_judge(b, o)
+			if _gone(): return
 			count("abilities_pressed")
 			pressed += 1
 			if pressed >= 4:
@@ -936,6 +1020,7 @@ func _spells() -> void:
 	# the store: buy the first power the movie offers
 	if _hud.open_spell_store():
 		await _frames(6)
+		if _gone(): return
 		sb = _hud.get_spellbook_state()
 		var store: Dictionary = sb.get("store", {})
 		var states: Array = store.get("states", [])
@@ -947,6 +1032,7 @@ func _spells() -> void:
 				break
 		_hud.close_spell_store()
 		await _frames(4)
+		if _gone(): return
 	sb = _hud.get_spellbook_state()
 	var slots: Array = sb.get("slots", [])
 	for k in slots.size():
@@ -955,19 +1041,24 @@ func _spells() -> void:
 		var target := _base.lerp(_enemy_bases[0].pos, 0.5) if not _enemy_bases.is_empty() else _base + Vector2(100, 0)
 		# the army's position is a better target for buffs; the enemy base for damage: the power decides (both are legal clicks)
 		await _look(target)
+		if _gone(): return
 		var before: int = _hud.get_message_log().size()
 		_hud.press_spell_slot(k)
 		await _frames(3)
+		if _gone(): return
 		var st: Dictionary = _hud.get_spellbook_state()
 		if st.get("targeting", false):
 			await _click_world(target)
+			if _gone(): return
 			await _frames(3)
+			if _gone(): return
 		# the spell bar sends its messages to the command list itself (InGameHud::send, not the HUD's translators): a cast shows as the slot recharging
 		var ok: bool = _hud.get_message_log().size() > before
 		for w in 20:
 			if ok:
 				break
 			await _wait_logic(1)
+			if _gone(): return
 			var after: Array = _hud.get_spellbook_state().get("slots", [])
 			ok = k < after.size() and after[k] != "_up"
 		var power: String = st.get("target_power", "slot %d" % k)
@@ -978,6 +1069,7 @@ func _spells() -> void:
 		else:
 			issue("spell_no_message", power, "the ready spell book slot %d (%s) sent no message" % [k, power])
 			await _key(DIK_ESCAPE)
+			if _gone(): return
 		break
 
 
@@ -1013,18 +1105,25 @@ func _army() -> void:
 	if target.is_empty():
 		return
 	await _look(_base)
+	if _gone(): return
 	await _key(DIK_Q)
+	if _gone(): return
 	await _frames(3)
+	if _gone(): return
 	var sel: Array = _hud.get_selection()
 	if sel.is_empty():
 		issue("select_all_empty", "Q", "SELECT_ALL (Q) selected nothing while the player has %d units" % units)
 		return
 	await _look(Vector2(target.x, target.y))
+	if _gone(): return
 	var before: int = _hud.get_message_log().size()
 	# attack-move (CommandMap TOGGLE_ATTACKMOVE = A, then a click): the army fights its way to the target, also when the target is in the fog
 	await _key(DIK_A)
+	if _gone(): return
 	await _click_world(Vector2(target.x, target.y))
+	if _gone(): return
 	await _frames(3)
+	if _gone(): return
 	var log: PackedStringArray = _hud.get_message_log()
 	var attack_move := false
 	for i in range(before, log.size()):
@@ -1045,8 +1144,10 @@ func _army() -> void:
 			th.get("max_health", -1.0), enemy_structures, log[log.size() - 1]])
 		if _attack_waves <= 3 or _attack_waves % 5 == 0:
 			await _frames(30)
+			if _gone(): return
 			_shot("attack%d" % _attack_waves)
 	await _deselect()
+	if _gone(): return
 
 
 func _probe_deselect() -> void:
@@ -1055,7 +1156,9 @@ func _probe_deselect() -> void:
 		if x.commandcenter:
 			o = x
 	await _select(o)
+	if _gone(): return
 	await _frames(10)
+	if _gone(): return
 	print("QA probe buttons ", JSON.stringify(_hud.get_command_buttons()))
 	for path in ["CommandButtons.0", "_level1.CommandButtons.0", "CommandButtons.0.content", "CommandButtons.1", "SideCommandBar.ButtonSet.Button0.Button"]:
 		print("QA probe find ", path, " ", JSON.stringify(_hud.find_button_window(path)))
@@ -1064,15 +1167,20 @@ func _probe_deselect() -> void:
 	var px: Vector2 = _hud.world_to_pixel(_base + Vector2(150, -150))
 	_hud.inject_mouse_move(px)
 	await _frames(2)
+	if _gone(): return
 	_hud.inject_mouse_button(2, true, px, false)
 	_hud.inject_mouse_button(2, false, px, false)
 	await _frames(3)
+	if _gone(): return
 	print("QA probe after same-frame right click: ", _hud.get_selection(), " state ", JSON.stringify(_hud.get_state().get("cursor")), " log ", _hud.get_message_log().slice(-3))
 	await _select(o)
+	if _gone(): return
 	_hud.inject_mouse_button(2, true, px, false)
 	await _frames(1)
+	if _gone(): return
 	_hud.inject_mouse_button(2, false, px, false)
 	await _frames(3)
+	if _gone(): return
 	print("QA probe after one-frame right click: ", _hud.get_selection())
 
 
@@ -1100,6 +1208,7 @@ func watch() -> Dictionary:
 	var peak_objects := 0
 	while _world.get_frame() < _end_frame:
 		await _wait_logic(25, false)
+		if _gone(): return summary()
 		if _stalls >= 3:
 			break
 		var v: Dictionary = _world.get_victory_report()
@@ -1122,6 +1231,7 @@ func watch() -> Dictionary:
 		peak_objects = maxi(peak_objects, _world.get_object_count())
 		if far_d > 0.0:
 			await _look(far)
+			if _gone(): return summary()
 		if _world.get_frame() >= next_line:
 			next_line = _world.get_frame() + 5 * 60
 			print("QA watch frame %d: objects %d | %s | defeated %s" % [_world.get_frame(), _world.get_object_count(), ", ".join(parts), str(v.get("defeated", []))])
@@ -1155,11 +1265,16 @@ func watch() -> Dictionary:
 # ---- the summary ----------------------------------------------------------------------------------------------------------------------------------------
 
 func summary() -> Dictionary:
-	_check_end()
-	var live: Dictionary = _world.get_live_report() if _world.has_method("get_live_report") else {}
-	var hud_report: Dictionary = _hud.get_report()
-	var game_audio: Dictionary = _world.get_audio_report()
-	var fx: Dictionary = _world.get_fx_report()
+	# lane FACT-C: after the game left to the score screen (game.gd freed the HUD) the reports of what is gone are empty, the findings stay
+	var world_ok := is_instance_valid(_world)
+	if world_ok:
+		_check_end()
+	var live: Dictionary = _world.get_live_report() if world_ok and _world.has_method("get_live_report") else {}
+	var hud_report: Dictionary = _hud.get_report() if not _gone() else {}
+	var game_audio: Dictionary = _world.get_audio_report() if world_ok else {}
+	var fx: Dictionary = _world.get_fx_report() if world_ok else {}
+	if _gone():
+		count("game_left_before_the_bot")
 	var never := []
 	var dead := []
 	for name in _buttons.keys():
@@ -1173,7 +1288,7 @@ func summary() -> Dictionary:
 		ups[k] = _upgrades_ordered[k].upgrade
 	var s := {
 		"local": _local,
-		"frame": _world.get_frame(),
+		"frame": _world.get_frame() if world_ok else -1,
 		"victory": _victory,
 		"defeat": _defeat,
 		"counts": _counts,

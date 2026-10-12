@@ -25,9 +25,18 @@ MessageDisposition GUICommandTranslator::translate(const ClientMessage &msg)
 		case CMSG_MOUSE_LEFT_CLICK:
 		{
 			const ICoord2D mouse = msg.arg(0).region.hi;
-			if (command->hasOption(COMMAND_OPTION_CONTEXTMODE_COMMAND))
+			// a context command is the CommandTranslator's, except a special power: lane FACT-B, DONOR ZH CommandXlat.cpp evaluateContextCommand (1503-1620):
+			// a pending GUI command that is a context command OR a SPECIAL_POWER issues issueSpecialPowerCommand (RW 0x81E147, tier A, BFME2 decomp
+			// CommandTranslator::issueSpecialPowerCommand) with the clicked object or the ground, the same message this case builds. Without it a
+			// CONTEXTMODE_COMMAND ability (Saruman's Dominate Enemy and Speechcraft, Sharku's Tame the Beast, the Mouth of Sauron's Dissent / Doubt, a
+			// porter's Extinguish Fire) sent a move order. INFERENCE: RotWK's context evaluation (not in the decomp) does the same for powers
+			// a context command is the CommandTranslator's, except a SPECIAL_POWER: lane FACT-A: RotWK's GUI command translator (RW 0x83D7AD) keeps every
+			// SPECIAL_POWER click (case 0x18) for the CommandTranslator, whose special power issue (RW 0x81E147) sends the same 0x410 / 0x411 / 0x412 for a
+			// context-mode button (Arrow Storm, Train Archers, the Royal Guard, Gimli's Leap: NEED_TARGET_* with CONTEXTMODE_COMMAND) as for the others; the
+			// port issues them all here (HERO-1's branch below)
+			if (command->hasOption(COMMAND_OPTION_CONTEXTMODE_COMMAND) && command->m_command != GUI_COMMAND_SPECIAL_POWER)
 			{
-				break; // a context command is the CommandTranslator's
+				break;
 			}
 			bool complete = true;
 			switch (command->m_command)
@@ -115,6 +124,52 @@ MessageDisposition GUICommandTranslator::translate(const ClientMessage &msg)
 					if (m_ctx.view.screenToTerrain(mouse, m_ctx.logic, world))
 					{
 						m_ctx.stream.append(MSG_PLACE_BEACON).appendLocation(world);
+					}
+					break;
+				}
+				case GUI_COMMAND_FIRE_WEAPON:
+				{
+					// lane FACT-A: the target click of a FIRE_WEAPON button (Gimli's axe throw, the bombards). INFERENCE (the RotWK translator was not read; ZH
+					// CommandTranslator's fire-weapon branch): an object of a relationship the options name -> MSG_DO_WEAPON_AT_OBJECT { int WeaponSlot, objectID,
+					// int MaxShotsToFire }; else with NEED_TARGET_POS the ground -> MSG_DO_WEAPON_AT_LOCATION { int WeaponSlot, location, int MaxShotsToFire }. The
+					// argument layouts are the ones the RotWK dispatcher reads (RW 0x77A34C / 0x77A3CB)
+					if (m_ctx.ui.firstSelected() == INVALID_ID)
+					{
+						break;
+					}
+					Object *target = nullptr;
+					if (command->hasOption(COMMAND_OPTION_NEED_TARGET_ENEMY_OBJECT | COMMAND_OPTION_NEED_TARGET_NEUTRAL_OBJECT | COMMAND_OPTION_NEED_TARGET_ALLY_OBJECT))
+					{
+						target = HudObjects::pickObject(m_ctx, mouse);
+						if (target)
+						{
+							const Relationship rel = HudObjects::relationshipToLocal(m_ctx, *target);
+							const bool ok = (rel == ENEMIES && command->hasOption(COMMAND_OPTION_NEED_TARGET_ENEMY_OBJECT))
+								|| (rel == NEUTRAL && command->hasOption(COMMAND_OPTION_NEED_TARGET_NEUTRAL_OBJECT))
+								|| (rel == ALLIES && command->hasOption(COMMAND_OPTION_NEED_TARGET_ALLY_OBJECT));
+							if (!ok)
+							{
+								target = nullptr;
+							}
+						}
+					}
+					if (target)
+					{
+						ClientMessage &m = m_ctx.stream.append(MSG_DO_WEAPON_AT_OBJECT);
+						m.appendInteger(command->m_weaponSlot);
+						m.appendObjectID(target->getID());
+						m.appendInteger(command->m_maxShotsToFire);
+					}
+					else
+					{
+						Coord3D world;
+						if (command->hasOption(COMMAND_OPTION_NEED_TARGET_POS) && m_ctx.view.screenToTerrain(mouse, m_ctx.logic, world))
+						{
+							ClientMessage &m = m_ctx.stream.append(MSG_DO_WEAPON_AT_LOCATION);
+							m.appendInteger(command->m_weaponSlot);
+							m.appendLocation(world);
+							m.appendInteger(command->m_maxShotsToFire);
+						}
 					}
 					break;
 				}

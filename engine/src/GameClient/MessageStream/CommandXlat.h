@@ -73,6 +73,12 @@ private:
 	bool selectionCanSetRallyPoint();
 	bool objectCanAttack(Object &obj);
 	int issueMove(Object *target, const Coord3D *pos, EvaluateType type);
+	// lane FACT-C: RW 0x81E147 (issueSpecialPowerCommand) and the GUI command branch of RW 0x81E60B (evaluateContextCommand) that calls it
+	int issueSpecialPower(const CommandButton &command, Object *target, const Coord3D *pos, EvaluateType type);
+	int evaluateGUISpecialPower(const CommandButton &command, Object *obj, const Coord3D *pos, EvaluateType type);
+	// lane FACT-C: RW 0x81E60B's capture branch (ActionManager check 0xC, canCaptureBuilding RW 0x82D0A1): the capture button of the first selected object
+	int evaluateCapture(Object *obj, const Coord3D *pos, EvaluateType type);
+	bool canCaptureBuilding(const Object &capturer, const Object &target);
 	void hint(const char *cursor);
 	void viewHomeBase();
 	void selectAllUnits();

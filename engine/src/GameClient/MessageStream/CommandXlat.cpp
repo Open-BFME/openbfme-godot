@@ -8,12 +8,16 @@
 #include "GameLogic/AI/AIGarrisonStates.h"
 
 #include "Common/BuildAssistant.h"
+#include "Common/SpecialPower.h"
+#include "GameClient/ControlBarCommands.h"
 #include "Common/Player.h"
 #include "Common/Thing/ThingTemplate.h"
 #include "GameClient/HudObjects.h"
 #include "GameLogic/GameMessage.h"
 #include "GameLogic/ObjectTemplateInfo.h"
+#include "GameLogic/Module/SpecialPowerModules.h"
 #include "GameLogic/Object/Object.h"
+#include "GameLogic/SimMath.h"
 
 #include <cstdlib>
 
@@ -240,6 +244,14 @@ int CommandTranslator::evaluateContextCommand(Object *obj, const Coord3D *pos, E
 		}
 		return pos ? issueMove(obj, pos, type) : 0;
 	}
+	// lane FACT-C: a special power button waiting for its target (CONTEXTMODE_COMMAND: GUICommandTranslator leaves its click to this translator)
+	if (const CommandButton *command = m_ctx.ui.getGUICommand())
+	{
+		if (command->m_command == GUI_COMMAND_SPECIAL_POWER)
+		{
+			return evaluateGUISpecialPower(*command, obj, pos, type);
+		}
+	}
 	// lane GARRISON-1 (ZH evaluateContextCommand's ACTIONTYPE_ENTER_OBJECT): a click on a container some selected object may enter (ActionManager::canEnterObject,
 	// RW 0x82CBD5, mode 0) is MSG_ENTER (argument 0 the first selected object, argument 1 the container: the logic case RW 0x77AC26 reads argument 1); the cursor
 	// is EnterFriendly. INFERENCE (S-286): RotWK's order of the context checks is not read; the enter check comes before the attack check here (an enemy
@@ -284,6 +296,14 @@ int CommandTranslator::evaluateContextCommand(Object *obj, const Coord3D *pos, E
 			hint(MouseCursorName::AttackObj);
 		}
 		return msgType;
+	}
+	// lane FACT-C (S-2002): a building the selection can capture (an inn, an outpost, a signal fire): its capture button's power at the building
+	if (obj && !m_ctx.ui.isInForceAttackMode())
+	{
+		if (const int captureType = evaluateCapture(obj, pos, type))
+		{
+			return captureType;
+		}
 	}
 	// lane QA-1 (stop S-1201): ZH evaluateContextCommand's ACTIONTYPE_RESUME_CONSTRUCTION and ACTIONTYPE_REPAIR_OBJECT (CommandXlat.cpp:1712 / 1785, SELECTION_ANY): a
 	// click with a builder selected on our structure that is still rising resumes it (MSG_RESUME_CONSTRUCTION, the logic case RW 0x77AEB6: every selected dozer of
@@ -741,8 +761,13 @@ MessageDisposition CommandTranslator::translate(const ClientMessage &msg)
 		case CMSG_MOUSE_LEFT_CLICK:
 		{
 			const bool left = t == CMSG_MOUSE_LEFT_CLICK || t == CMSG_MOUSE_LEFT_DOUBLE_CLICK;
-			// the standard setup orders with the left click, the alternate setup with the right one (CommandXlat.cpp:3678, 3741)
-			if (left == m_alternateMouse)
+			// the standard setup orders with the left click, the alternate setup with the right one (CommandXlat.cpp:3678, 3741). lane FACT-C: RotWK's two
+			// cases read TheInGameUI's GUI command first (RW 0x81FAE2 / 0x81FC57): while one other than ATTACK_MOVE (0xA) waits for its target, the right click
+			// orders nothing (RW 0x81FAFE) and the left click carries it out in either setup (RW 0x81FC73 skips the alternate-mouse test); a special power's target
+			// is a left click with the default (alternate) mouse
+			const CommandButton *pending = m_ctx.ui.getGUICommand();
+			const bool guiTarget = pending && pending->m_command != GUI_COMMAND_ATTACK_MOVE;
+			if (left ? (m_alternateMouse && !guiTarget) : (!m_alternateMouse || guiTarget))
 			{
 				++m_clickOutcomes["other-button"];
 				break;
@@ -791,4 +816,218 @@ MessageDisposition CommandTranslator::translate(const ClientMessage &msg)
 			break;
 	}
 	return disp;
+}
+
+// Lane FACT-C. TARGET FACTS (RotWK game.dat, caveat S-001): evaluateContextCommand (RW 0x81E60B; tier B same-shape with BFME2 0x829E11, no decomp source) reads
+// TheInGameUI's GUI command (vslot 0xC0) after the waypoint mode test; a command of type SPECIAL_POWER (0x18) takes the click: the object under the cursor is
+// dropped unless its relationship to the local player (RW 0x6ADBEB: 0 enemies, 1 neutral, 2 allies) has its option bit (0x1 / 0x2 / 0x4), the action check
+// RW 0x6A4260 decides, and on success the DO_COMMAND evaluation calls issueSpecialPowerCommand (RW 0x81E147) and clears the GUI command (vslot 0xBC with 0).
+// issueSpecialPowerCommand (RW 0x81E147, tier A with BFME2 0x82994D, decomp Rva00428EEBIssueFireWeapon.cpp:427 CommandTranslator::issueSpecialPowerCommand):
+// options & 7 with a target: MSG_DO_SPECIAL_POWER_AT_OBJECT (0x412) { id, target, options, source NONE, location }; else options & 0x20 with a position:
+// MSG_DO_SPECIAL_POWER_AT_LOCATION (0x411) { id, location, target or NONE, options, source NONE } and one more 0x411 for every button the command's chained
+// list names (CommandTrigger, +0x188) that is a SPECIAL_POWER with a template; else MSG_DO_SPECIAL_POWER (0x410) { id, options, NONE, NONE }. Source NONE: the
+// logic casts with the issuer's selection.
+// NOT PORTED (stop S-2000): the action check RW 0x6A4260 (ActionManager's special power target rules: range, KindOf, the module's own target filter) and the
+// kind-of / option 0x10 / 0x200000 target drops before it; here a click is valid when the option's target kind is there (an object of an allowed
+// relationship, or a ground point for NEED_TARGET_POS). The radius cursor, the unit voice and the selection flash are client presentation, not ported.
+int CommandTranslator::issueSpecialPower(const CommandButton &command, Object *target, const Coord3D *pos, EvaluateType type)
+{
+	const SpecialPowerTemplate *t = TheSpecialPowerStore && !command.m_specialPowerName.empty() ? TheSpecialPowerStore->findSpecialPowerTemplate(command.m_specialPowerName) : nullptr;
+	if (!t)
+	{
+		return 0;
+	}
+	int msgType = 0;
+	if ((command.m_options & 7) && target)
+	{
+		msgType = MSG_DO_SPECIAL_POWER_AT_OBJECT;
+		if (type == EvaluateType::DoCommand)
+		{
+			ClientMessage &m = m_ctx.stream.append(msgType);
+			m.appendInteger((int)t->getID());
+			m.appendObjectID(target->getID());
+			m.appendInteger((int)command.m_options);
+			m.appendObjectID(INVALID_ID);
+			m.appendLocation(pos ? *pos : *target->getPosition());
+		}
+	}
+	else if ((command.m_options & COMMAND_OPTION_NEED_TARGET_POS) && pos)
+	{
+		msgType = MSG_DO_SPECIAL_POWER_AT_LOCATION;
+		if (type == EvaluateType::DoCommand)
+		{
+			const ObjectID targetId = target ? target->getID() : INVALID_ID;
+			auto emit = [&](const SpecialPowerTemplate &tt, std::uint32_t options) {
+				ClientMessage &m = m_ctx.stream.append(msgType);
+				m.appendInteger((int)tt.getID());
+				m.appendLocation(*pos);
+				m.appendObjectID(targetId);
+				m.appendInteger((int)options);
+				m.appendObjectID(INVALID_ID);
+			};
+			emit(*t, command.m_options);
+			for (const std::string &name : command.m_commandTrigger)
+			{
+				const CommandButton *cb = TheCommandStore ? TheCommandStore->findCommandButton(name) : nullptr;
+				const SpecialPowerTemplate *ct = cb && cb->m_command == GUI_COMMAND_SPECIAL_POWER && TheSpecialPowerStore && !cb->m_specialPowerName.empty()
+					? TheSpecialPowerStore->findSpecialPowerTemplate(cb->m_specialPowerName) : nullptr;
+				if (ct)
+				{
+					emit(*ct, cb->m_options);
+				}
+			}
+		}
+	}
+	else
+	{
+		msgType = MSG_DO_SPECIAL_POWER;
+		if (type == EvaluateType::DoCommand)
+		{
+			ClientMessage &m = m_ctx.stream.append(msgType);
+			m.appendInteger((int)t->getID());
+			m.appendInteger((int)command.m_options);
+			m.appendObjectID(INVALID_ID);
+			m.appendObjectID(INVALID_ID);
+		}
+	}
+	return msgType;
+}
+
+int CommandTranslator::evaluateGUISpecialPower(const CommandButton &command, Object *obj, const Coord3D *pos, EvaluateType type)
+{
+	if (obj && (command.m_options & 7))
+	{
+		const Relationship rel = HudObjects::relationshipToLocal(m_ctx, *obj);
+		const std::uint32_t bit = rel == ENEMIES ? COMMAND_OPTION_NEED_TARGET_ENEMY_OBJECT : rel == NEUTRAL ? COMMAND_OPTION_NEED_TARGET_NEUTRAL_OBJECT : COMMAND_OPTION_NEED_TARGET_ALLY_OBJECT;
+		if (!(command.m_options & bit))
+		{
+			obj = nullptr;
+		}
+	}
+	const bool valid = ((command.m_options & 7) && obj) || ((command.m_options & COMMAND_OPTION_NEED_TARGET_POS) && pos);
+	if (!valid)
+	{
+		if (type == EvaluateType::DoHint)
+		{
+			hint(MouseCursorName::GenericInvalid);
+		}
+		return 0;
+	}
+	const int msgType = issueSpecialPower(command, obj, pos, type);
+	if (type == EvaluateType::DoHint && !command.m_cursorName.empty())
+	{
+		hint(command.m_cursorName.c_str());
+	}
+	if (type == EvaluateType::DoCommand)
+	{
+		m_ctx.ui.setGUICommand(nullptr);
+	}
+	return msgType;
+}
+
+// Lane FACT-C. TARGET FACTS (caveat S-001): after its attack test, evaluateContextCommand (RW 0x81E60B) asks ActionManager check 0xC (RW 0x69D27E case 0xC: some
+// selected object passes canCaptureBuilding RW 0x82D0A1 with its module of power type 0x1D, Object::findSpecialPowerModuleInterface RW 0x691526); then it walks
+// the 33 buttons of the first selected object's command set (RW 0x71EFA2 on RW 0x69156B) for a SPECIAL_POWER button whose power's type (template + 0x1C) is
+// 0x1A or 0x1D (SPECIAL_BLACKLOTUS_CAPTURE_BUILDING / SPECIAL_INFANTRY_CAPTURE_BUILDING) and issues it at the building (issueSpecialPowerCommand RW 0x81E147); the
+// hint is the CaptureBuilding cursor (0xC3) for type 0x1D.
+// canCaptureBuilding (RW 0x82D0A1, tier B same-shape with BFME2 0x81C79C, decomp ActionManagerSpecialPowerChecks.cpp:660), the parts ported: the capturer
+// has the power module and it is fully ready; the target is a STRUCTURE (template + 0x108 bit 7), not IMMUNE_TO_CAPTURE (+ 0x110 bit 17); the power has no
+// ObjectFilter (none in retail data; a filter is S-2002) so the target must be CAPTURABLE (+ 0x10C bit 17) with a LINKED_TO_FLAG object (KindOf 50) within 150
+// of it (ThePartitionManager::getClosestObject, 3D distance); not UNDER_CONSTRUCTION or SOLD; not an ally of the capturer; no garrisoned riders.
+// NOT PORTED (S-2002): the + 0x438 / + 0x110 status pair, the + 0x80 word, the shroud test (isObjectShroudedForAction), CAPTURE_FORBIDDEN, the per-player
+// refusal RW 0x6943B2, the stealth riders and the vision test RW 0x41B80F (BFME2).
+bool CommandTranslator::canCaptureBuilding(const Object &capturer, const Object &target)
+{
+	const SpecialPowerModuleInterface *module = nullptr;
+	for (const std::unique_ptr<BehaviorModule> &m : capturer.modules())
+	{
+		SpecialPowerModuleInterface *sp = m->getSpecialPower();
+		if (!module && sp && sp->getSpecialPowerTemplate() && sp->getSpecialPowerTemplate()->getSpecialPowerType() == 0x1D)
+		{
+			module = sp;
+		}
+	}
+	if (!module || module->getPercentReadyForDisplay() < 1.0f)
+	{
+		return false;
+	}
+	if (!target.isKindOfName("STRUCTURE") || target.isKindOfName("IMMUNE_TO_CAPTURE"))
+	{
+		return false;
+	}
+	if (module->getSpecialPowerTemplate()->m_objectFilter)
+	{
+		++m_unportedMeta["capture with a power ObjectFilter (S-2002)"];
+		return false;
+	}
+	if (!target.isKindOfName("CAPTURABLE"))
+	{
+		return false;
+	}
+	bool flag = false;
+	for (Object *o = m_ctx.logic.getFirstObject(); o && !flag; o = o->getNextObject())
+	{
+		if (o->isKindOfName("LINKED_TO_FLAG"))
+		{
+			const float dx = SimMath::subf32(o->getPosition()->x, target.getPosition()->x), dy = SimMath::subf32(o->getPosition()->y, target.getPosition()->y),
+			            dz = SimMath::subf32(o->getPosition()->z, target.getPosition()->z);
+			flag = SimMath::addf32(SimMath::addf32(SimMath::mulf32(dx, dx), SimMath::mulf32(dy, dy)), SimMath::mulf32(dz, dz)) <= 22500.0f; // 150^2
+		}
+	}
+	if (!flag)
+	{
+		return false;
+	}
+	static const int kSold = ObjectTemplateInfoBuilder::objectStatusIndex("SOLD");
+	if (target.isUnderConstruction() || (kSold >= 0 && target.testStatus((unsigned)kSold)))
+	{
+		return false;
+	}
+	if (HudObjects::relationshipToLocal(m_ctx, target) == ALLIES)
+	{
+		return false;
+	}
+	if (const ContainModuleInterface *contain = target.getContain())
+	{
+		if (contain->getContainCount() > 0)
+		{
+			return false;
+		}
+	}
+	return true;
+}
+
+int CommandTranslator::evaluateCapture(Object *obj, const Coord3D *pos, EvaluateType type)
+{
+	bool any = false;
+	for (ObjectID id : m_ctx.ui.selected())
+	{
+		const Object *o = m_ctx.logic.findObjectByID(id);
+		any = any || (o && canCaptureBuilding(*o, *obj));
+	}
+	Object *first = any ? m_ctx.logic.findObjectByID(m_ctx.ui.firstSelected()) : nullptr;
+	const CommandSet *set = first && TheCommandStore ? TheCommandStore->findCommandSet(first->getCommandSetName()) : nullptr;
+	if (!set)
+	{
+		return 0;
+	}
+	for (int i = 0; i < CommandSet::MAX_BUTTONS; ++i)
+	{
+		const CommandButton *b = set->getCommandButton(i);
+		const SpecialPowerTemplate *t = b && b->m_command == GUI_COMMAND_SPECIAL_POWER && TheSpecialPowerStore && !b->m_specialPowerName.empty()
+			? TheSpecialPowerStore->findSpecialPowerTemplate(b->m_specialPowerName) : nullptr;
+		if (t && (t->getSpecialPowerType() == 0x1A || t->getSpecialPowerType() == 0x1D))
+		{
+			if (type == EvaluateType::DoHint)
+			{
+				if (t->getSpecialPowerType() == 0x1D)
+				{
+					hint("CaptureBuilding");
+				}
+				return MSG_DO_SPECIAL_POWER_AT_OBJECT;
+			}
+			return issueSpecialPower(*b, obj, pos, type);
+		}
+	}
+	return 0;
 }

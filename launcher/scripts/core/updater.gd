@@ -23,6 +23,7 @@ const Archive := preload("res://scripts/core/archive.gd")
 const NetPolicy := preload("res://scripts/net/net_policy.gd")
 const HttpFetch := preload("res://scripts/net/http_fetch.gd")
 const Log := preload("res://scripts/core/launcher_log.gd")
+const GlibcCheck := preload("res://scripts/core/glibc_check.gd")
 
 const API_BASE := "https://api.github.com"
 const KEEP_VERSIONS := 2
@@ -564,6 +565,13 @@ func play(version: String) -> Dictionary:
 			why = "%s was changed after it was installed (%s): it is not started; download it again (--install=%s, or Play to confirm)" % [version, v.error, version]
 		return {"ok": false, "error": why, "pid": -1, "modified": v.get("modified", false)}
 	var exe := data_dir.path_join("versions").path_join(version).path_join("game").path_join(GAME_EXE[info.platform()])
+	if info.os_name() == "Linux":
+		# DEP-1 (Sol r1): Linux only; platform() is "linux-x64" for every non-Windows OS, macOS included
+		# lane GLIBC-1: a system older than the build's GLIBC gets a message, not a game that fails to load its library
+		# (OPENBFME_TEST_SYSTEM_GLIBC: the system's version as tools/release/test_launcher.py sets it; test builds only)
+		var glibc := GlibcCheck.check(exe.get_base_dir(), OS.get_environment("OPENBFME_TEST_SYSTEM_GLIBC") if info.tests_allowed() else "")
+		if glibc != "":
+			return {"ok": false, "error": "%s cannot be started: %s" % [version, glibc], "pid": -1}
 	# lane UI-5 (Sol r1): started and recorded under the versions lock, so no install or prune (of this or another launcher) removes or
 	# replaces the version between the check and the record; the full check above stays outside (it reads every file)
 	if not lock_versions():

@@ -2,6 +2,7 @@
 // See HudObjects.h.
 
 #include "GameClient/HudObjects.h"
+#include "GameLogic/ObjectTemplateInfo.h"
 
 #include "Common/Player.h"
 #include "Common/Thing/ThingTemplate.h"
@@ -120,6 +121,15 @@ bool isEffectivelyDead(const Object &obj)
 
 bool isSelectable(const Object &obj)
 {
+	// lane FACT-B: RotWK's Object::isSelectable (RW 0x68DE58, tier B same-shape for BFME2's byte-matched Object::isSelectable) refuses an object with
+	// status 3, UNSELECTABLE (RW 0x68DE6C .. 0x68DE77), before the script flag: a siege engine's crew (SiegeEngineContain ObjectStatusOfCrew =
+	// UNSELECTABLE) then passes a click to its engine (selectionRepresentative) instead of swallowing it (Isengard's battering ram could not be
+	// selected with a click, its crew being the nearest pick hit). The other tests of RW 0x68DE58 are this function's own simplification
+	static const int unselectable = ObjectTemplateInfoBuilder::objectStatusIndex("UNSELECTABLE");
+	if (unselectable >= 0 && obj.testStatus((unsigned)unselectable))
+	{
+		return false;
+	}
 	return obj.isKindOfName("SELECTABLE") && !obj.isKindOfName("NO_SELECT") && obj.isScriptSelectable(); // lane SCRIPT-2: RW + 0x454
 }
 

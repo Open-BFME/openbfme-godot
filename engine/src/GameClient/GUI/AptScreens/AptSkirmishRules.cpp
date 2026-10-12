@@ -197,8 +197,7 @@ bool AptSkirmish::tryPopulateRules()
 
 const char *const AptSkirmish::kRulesStop =
 	"[S-3600] rule rows: a non-host's drop-down disable (GadgetComboBoxHideDropDown) is the widget's disable, the skirmish owner's rule notice (slot 17) "
-	"is not shown, the Legendary Heroes row is one more generated row; [S-3602] the skirmish preferences' saved game setup (AptSkirmish::InitTheGame RW "
-	"0x9288D0, GameModePreferences \"Rules\") is not kept: every lobby starts from the mode's default rules";
+	"is not shown, the Legendary Heroes row is one more generated row (lane UI-6: the last lobby's rules are kept with its game, S-3602 closed)";
 
 void AptSkirmish::populateRuleCombos()
 {

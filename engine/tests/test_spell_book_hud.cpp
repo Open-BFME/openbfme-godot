@@ -342,12 +342,28 @@ TEST_CASE("play1 spell store by the mouse: the Palantir's button opens it, a pow
 		return;
 	}
 	SharedWorld &s = shared();
-	BookRig b(s, "FactionMen");
+	// lane SPELL-3: every faction (the owner's Angmar store took no click)
+	const char *faction = "FactionMen";
+	const char *factions[7] = { "FactionMen", "FactionElves", "FactionDwarves", "FactionIsengard", "FactionMordor", "FactionWild", "FactionAngmar" };
+	const char *citadels[7] = { "MenFortressCitadel", "ElvenCitadel", "DwarvenFortressCitadel", "IsengardFortressCitadel", "MordorFortressCitadel", "WildFortressCitadel", "AngmarFortressCitadel" };
+	const char *citadel = citadels[0];
+	int fi = 0;
+	SUBCASE("FactionMen") { fi = 0; }
+	SUBCASE("FactionElves") { fi = 1; }
+	SUBCASE("FactionDwarves") { fi = 2; }
+	SUBCASE("FactionIsengard") { fi = 3; }
+	SUBCASE("FactionMordor") { fi = 4; }
+	SUBCASE("FactionWild") { fi = 5; }
+	SUBCASE("FactionAngmar") { fi = 6; }
+	faction = factions[fi];
+	citadel = citadels[fi];
+	INFO(faction);
+	BookRig b(s, faction);
 	b.hud->setWindowSize(1024, 768);
 	b.rig.view.setScreen(1024, 768);
 	{
 		auto ctx = b.hud->enterContext();
-		const ThingTemplate *cit = s.world->things().findTemplate("MenFortressCitadel");
+		const ThingTemplate *cit = s.world->things().findTemplate(citadel);
 		REQUIRE(cit);
 		Object *c = b.rig.logic().newObject(cit, b.rig.local->getDefaultTeam(), ObjectStatusMaskType{});
 		REQUIRE(c);
@@ -405,9 +421,15 @@ TEST_CASE("play1 spell store by the mouse: the Palantir's button opens it, a pow
 	REQUIRE(first >= 0);
 	const std::string spellPath = "SpellStore.Buttons.Spell" + std::to_string(first + 1);
 	REQUIRE(hitPoint(*b.hud, lvl, spellPath, x, y));
+	const size_t errsClick = b.hud->apt().vm().errors().size();
 	clickAt(b, x, y);
 	b.frames(3);
-	CHECK(b.storeState(first) == "_already_purchased");
+	for (size_t i = errsClick; i < b.hud->apt().vm().errors().size(); ++i)
+	{
+		MESSAGE("vm error after the power click: " << b.hud->apt().vm().errors()[i]);
+	}
+	MESSAGE(faction << ": OnBttnSpell calls " << st->commandCalls("AptSpellStore::OnBttnSpell") << ", arg '" << st->lastSpellArgument() << "'");
+	REQUIRE(b.storeState(first) == "_already_purchased");
 	CHECK(*b.hud->windows().aptText("APT:SpellStoreSpellPoints") == "0");
 	REQUIRE(hitPoint(*b.hud, lvl, "SpellStore.Buttons.ButtonsMain.Reset", x, y));
 	const size_t errs0 = b.hud->apt().vm().errors().size();
@@ -430,4 +452,73 @@ TEST_CASE("play1 spell store by the mouse: the Palantir's button opens it, a pow
 	b.frames(40);
 	CHECK(b.hud->spellStore() == nullptr);
 	CHECK(b.rig.local->science().hasScience(sci));
+}
+
+TEST_CASE("SPELL-3 store at an uneven render rate: every _active power shows its _active frame after the fade-in (the store opened 20 times)")
+{
+	if (!haveWorld("spell3 store uneven frames"))
+	{
+		return;
+	}
+	SharedWorld &s = shared();
+	BookRig b(s, "FactionIsengard");
+	b.hud->setWindowSize(1024, 768);
+	b.rig.view.setScreen(1024, 768);
+	{
+		auto ctx = b.hud->enterContext();
+		const ThingTemplate *cit = s.world->things().findTemplate("IsengardFortressCitadel");
+		REQUIRE(cit);
+		Object *c = b.rig.logic().newObject(cit, b.rig.local->getDefaultTeam(), ObjectStatusMaskType{});
+		REQUIRE(c);
+		Coord3D at{ 600.0f, 600.0f, 0.0f };
+		c->setPosition(&at);
+		c->friend_onBuildComplete();
+		b.rig.local->science().addSciencePurchasePoints(40);
+	}
+	std::uint32_t seed = 12345;
+	auto jitter = [&](int n) {
+		for (int i = 0; i < n; ++i)
+		{
+			seed = seed * 1103515245u + 12345u;
+			const double dt = 0.010 + (double)((seed >> 16) % 61) / 1000.0; // 10 .. 70 ms
+			b.hud->update(dt);
+			b.rig.game->advance(dt);
+		}
+	};
+	b.frames(40);
+	const int pal = b.hud->palantir()->level();
+	int bad = 0;
+	for (int trial = 0; trial < 20; ++trial)
+	{
+		int x = 0, y = 0;
+		REQUIRE(hitPoint(*b.hud, pal, "PalantirButtons.Buttons.PlayerMagic", x, y));
+		b.hud->mouseMove(x, y);
+		jitter(2 + trial % 3);
+		b.hud->mouseButton(HudInput::Button::Left, true, x, y, 0, 3000 + trial * 5000);
+		jitter(1 + trial % 2);
+		b.hud->mouseButton(HudInput::Button::Left, false, x, y, 0, 3020 + trial * 5000);
+		jitter(120);
+		AptSpellStore *st = b.hud->spellStore();
+		REQUIRE_MESSAGE(st, b.hud->spellStoreError());
+		const int lvl = st->level();
+		for (int i = 0; i < 12; ++i)
+		{
+			if (b.storeState(i) != "_active")
+			{
+				continue;
+			}
+			AptCharacterInst *clip = b.hud->apt().resolvePath(b.hud->apt().level(lvl), "SpellStore.Buttons.Spell" + std::to_string(i + 1));
+			REQUIRE(clip);
+			REQUIRE(clip->asSprite());
+			const AptSpriteInst &sp = *clip->asSprite();
+			if (sp.frame < sp.labelFrame("_active"))
+			{
+				++bad;
+				MESSAGE("trial " << trial << ": Spell" << i + 1 << " _active but at frame " << sp.frame);
+			}
+		}
+		b.hud->closeSpellStore();
+		jitter(30);
+	}
+	CHECK(bad == 0);
 }

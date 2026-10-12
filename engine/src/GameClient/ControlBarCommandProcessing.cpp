@@ -5,6 +5,8 @@
 // arguments only) or a GUI command mode. Kept apart from the view model (ControlBar.cpp) because it BUILDS GameMessages: this file is in the simulation audit manifest.
 
 #include "GameClient/ControlBar.h"
+#include "GameLogic/Module/ProductionUpdate.h"
+#include "GameLogic/Module/CastleModules.h"
 #include "GameLogic/Module/GateModules.h"
 #include "Common/SpecialPower.h"
 #include "Common/Upgrade.h"
@@ -34,7 +36,10 @@ bool ControlBar::pressButton(int slot, bool inPalantir)
 	{
 		m_ctx.ui.setLineBuildStarted(false); // lane QA2-FIX: RW 0x94078F: a wall hub's command first clears the line build flag (TheInGameUI vslot 0x100(0))
 	}
-	if (cb->state == ButtonState::CantAfford)
+	// an upgrade button's affordability is asked live by its own case (canAffordUpgrade, RW 0x940E45: "GUI:NotEnoughMoneyToUpgrade"); lane FACT-A: its
+	// CantAfford state (RW 0x942733 code 6) is the bar's last evaluation, not a refusal of its own
+	if (cb->state == ButtonState::CantAfford && b.m_command != GUI_COMMAND_OBJECT_UPGRADE && b.m_command != GUI_COMMAND_PLAYER_UPGRADE
+		&& b.m_command != GUI_COMMAND_CASTLE_UPGRADE)
 	{
 		m_ctx.ui.message("GUI:NotEnoughMoneyToBuild"); // processCommandUI: CANMAKE_NO_MONEY
 		return false;
@@ -201,6 +206,42 @@ bool ControlBar::pressButton(int slot, bool inPalantir)
 			m.appendInteger(u->getMaskBit());
 			return true;
 		}
+		case GUI_COMMAND_CASTLE_UPGRADE:
+		{
+			// lane FACT-A: RW 0x940435 case 8: canAffordUpgrade with the reason shown (RW 0x66F492: "GUI:NotEnoughMoneyToUpgrade"); a queue that refuses it
+			// (canQueueUpgrade slot 1 == 4): "GUI:ProductionQueueFull"; an object that has it: nothing; an object whose CastleMemberBehavior names a castle that
+			// exists: MSG_QUEUE_UPGRADE { the object, the upgrade's mask bit } (RW 0x940F88, as an OBJECT_UPGRADE); otherwise nothing
+			const UpgradeTemplate *u = TheUpgradeCenter && !b.m_upgradeName.empty() ? TheUpgradeCenter->findUpgrade(b.m_upgradeName) : nullptr;
+			if (!u)
+			{
+				++m_unported["CASTLE_UPGRADE (no upgrade)"];
+				return false;
+			}
+			if (!UpgradeCenter::canAffordUpgrade(obj->getControllingPlayer(), u, obj))
+			{
+				m_ctx.ui.message("GUI:NotEnoughMoneyToUpgrade");
+				return false;
+			}
+			ProductionUpdateInterface *pu = obj->getProductionUpdate();
+			if (pu && pu->canQueueUpgrade(u) == 4)
+			{
+				m_ctx.ui.message("GUI:ProductionQueueFull");
+				return false;
+			}
+			if (obj->hasUpgrade(u))
+			{
+				return true;
+			}
+			const CastleMemberBehavior *member = dynamic_cast<const CastleMemberBehavior *>(obj->findModule("CastleMemberBehavior"));
+			if (!member || member->castleId() == INVALID_ID || !m_ctx.logic.findObjectByID(member->castleId()))
+			{
+				return true;
+			}
+			ClientMessage &m = m_ctx.stream.append(MSG_QUEUE_UPGRADE);
+			m.appendObjectID(obj->getID());
+			m.appendInteger(u->getMaskBit());
+			return true;
+		}
 		case GUI_COMMAND_REVIVE:
 		{
 			// lane HERO-1 (S-850): the record's MSG_QUEUE_UNIT_CREATE with the build-index flag (RotWK layout { byte fromBuildIndex, int index, int value30, byte batch,
@@ -215,6 +256,29 @@ bool ControlBar::pressButton(int slot, bool inPalantir)
 			m.appendInteger(-1);
 			m.appendBoolean(false);
 			m.appendBoolean(false);
+			return true;
+		}
+		case GUI_COMMAND_TOGGLE_NO_AUTO_ACQUIRE:
+		{
+			// lane FACT-A: RW 0x940435 case 0x30: MSG_TOGGLE_NO_AUTO_ACQUIRE { objectID the context object } (the button's image toggle RW 0x75D366 is the client's)
+			ClientMessage &m = m_ctx.stream.append(MSG_TOGGLE_NO_AUTO_ACQUIRE);
+			m.appendObjectID(obj->getID());
+			return true;
+		}
+		case GUI_COMMAND_FIRE_WEAPON:
+		{
+			// lane FACT-A: RW 0x940435. A button with a target option (Options & 0x227: the three NEED_TARGET_*_OBJECT, NEED_TARGET_POS, CONTEXTMODE_COMMAND) waits
+			// for the target (setGUICommand, RW 0x94089C; the click is GUICommandTranslator's); otherwise case 0x17 sends MSG_DO_WEAPON (RW 0x941459)
+			// { int WeaponSlot (button + 0x80), int MaxShotsToFire (button + 0xA0) }
+			if (b.hasOption(COMMAND_OPTION_NEED_TARGET_ENEMY_OBJECT | COMMAND_OPTION_NEED_TARGET_NEUTRAL_OBJECT | COMMAND_OPTION_NEED_TARGET_ALLY_OBJECT | COMMAND_OPTION_NEED_TARGET_POS
+					| COMMAND_OPTION_CONTEXTMODE_COMMAND))
+			{
+				m_ctx.ui.setGUICommand(&b);
+				return true;
+			}
+			ClientMessage &m = m_ctx.stream.append(MSG_DO_WEAPON);
+			m.appendInteger(b.m_weaponSlot);
+			m.appendInteger(b.m_maxShotsToFire);
 			return true;
 		}
 		case GUI_COMMAND_SPECIAL_POWER:

@@ -186,6 +186,22 @@ public:
 	float horizontalFov() const { return m_fov; }
 	// the vertical field of view for the current viewport (the W3D view plane: height = width / aspect)
 	float verticalFov() const;
+	// Lane UI-6 (FB-0021, the owner's decision 2026-10-11: "we need to support widescreen for people, but we need backwards compatibility also"): the
+	// OpenBFME Display option "Widescreen view". TARGET FACT (RotWK, tier A byte-matched): W3DView::setWidth (RW 0x4874A7) gives the camera a horizontal
+	// field of view of 50 degrees times the view's share of the display width (Set_View_Plane(hfov, -1), RW 0x533590) and setWidth / setHeight
+	// (RW 0x4874A7 / 0x48741A) set the aspect, whose view plane height is its width / aspect (Set_Aspect_Ratio, RW 0x533630): the horizontal view is fixed,
+	// a screen wider than 4:3 sees LESS vertically (Vert-: 38.6 degrees at 4:3, 29.4 at 16:9, 22.6 at 21:9, 14.9 at 32:9). Original (false, the default)
+	// is exactly that. Wider (true, NOT RETAIL) keeps 4:3's vertical view (2 atan(tan(25 degrees) * 3 / 4)) on screens wider than 4:3 and widens the
+	// horizontal one (Hor+); 4:3 and narrower screens are retail in both. Client only: the picking, the radar's view box and the scroll constraints follow
+	// the view (PinholeView), the logic never reads the camera
+	void setWidescreenView(bool wider)
+	{
+		m_widescreenWider = wider;
+		rebuildPinhole();
+	}
+	bool widescreenView() const { return m_widescreenWider; }
+	// the horizontal field of view of the view as drawn (radians): horizontalFov() for Original or a screen up to 4:3, wider for Wider on a wider screen
+	float viewHorizontalFov() const;
 	unsigned long long frame() const { return m_frame; }
 
 	const CameraSettings &gameData() const { return m_gd; }
@@ -219,6 +235,7 @@ private:
 	bool m_zoomLimited = true;
 	float m_defaultAngle = 0.0f, m_defaultPitch = 0.0f;
 	float m_fov = 0.8726646f; // RW 0xBDD410: 50 degrees
+	bool m_widescreenWider = false; // lane UI-6: the Widescreen view option (Wider = Hor+; false = retail)
 	float m_terrainHeight = 0.0f, m_currentHeightAboveGround = 0.0f;
 	float m_groundLevel = 0.0f;
 	// the settings object (RW 0x501xxx)

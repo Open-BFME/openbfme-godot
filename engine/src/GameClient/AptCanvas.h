@@ -187,7 +187,8 @@ struct AptCanvasInputs
 //   is centred: top + (box height - string height) * 0.5; a wrapping multiline field starts at the top;
 // - the position is truncated to whole pixels (cvttss2si, RW 0x4A91AD / 0x4A91B8 / 0x4A91C3).
 // INFERENCE (stop S-763): the box and the string are both measured in window pixels (retail mixes the local box height with the unscaled string height,
-// equal under a uniform scale); the string height is the font's line height.
+// equal under a uniform scale). The string height is the GDI char height and the baseline sits in it as RotWK's font library rasterises (lane UI-6,
+// GameClient/GdiFontMetrics.h, stop S-3700): the device's fonts carry those metrics (AptMenuPlayer cellFont).
 struct AptTextPlacement
 {
 	float x = 0, y = 0;   ///< the string's top left, window pixels (truncated)

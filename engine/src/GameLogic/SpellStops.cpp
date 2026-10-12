@@ -29,7 +29,7 @@ std::vector<std::string> SpellStops::lines()
 		"0x896756, 0x8969E5), the shared timers (Player RW 0x6AD1B0 / 0x6AD22B / 0x6AD26F), the science notice (RW 0x896B56), PlayerHealSpecialPower's heal (RW 0x8CC4B4), "
 		"OCLSpecialPower (RW 0x8C75D8), the base do* gate and the initiate's SpecialPowerUpdate module call (RW 0x8980A3, 0x897E87, lane HERO-1), the trigger (RW 0x897987: "
 		"SetModelCondition and GiveLevels by lane HERO-1, the attribute modifiers, the weather branch and the view object by lane SPELL-2, S-920) and the other spell book "
-		"classes (S-921); not ported: the RECHARGE_TIME modifier scale and the initiate path's FX / sound / script parts (RW 0x897FDE, 0x89713F); the heal's FX / OCL counted (its "
+		"classes (S-921); not ported: the RECHARGE_TIME modifier scale and the initiate path's FX / sound / script parts (RW 0x897FDE) and the trigger's script notice (RW 0x89713F; its InitiateSound / InitiateAtLocationSound play since lane SPELL-3); the heal's FX / OCL counted (its "
 		"partition query RW 0x8CC532 runs on ThePartitionManager: lane MODULES-2)",
 		"[S-530] ObjectCreationList: the block (RW 0x5F0462) and its five nugget tables parse; only CreateObject's name pick (RW 0x5F11CD draw), template, command point "
 		"test and creation on the source's team at the position + Offset (RW 0x5F0EE6) are ported: dispositions, forces, containers, formations, fades, veterancy, health, "

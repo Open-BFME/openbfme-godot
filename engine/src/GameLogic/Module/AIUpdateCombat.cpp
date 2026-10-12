@@ -518,6 +518,24 @@ Object *AIUpdateInterface::nextMoodTarget()
 	{
 		return nullptr;
 	}
+	// lane SPELL-3 (review r2): RW 0x6684D0 .. 0x6684DB: an object with the model condition JUST_BUILT (+ 0x124 bit 26) looks for nothing (a castle member
+	// fading in, RW 0x7987EE); RW 0x668A41 .. 0x668A4A: nor one Object::isAbleToAttack (RW 0x691269; BFME2 decomp Object_isAbleToAttack.cpp, tier B
+	// same-shape) refuses. Ported of it: its status / condition tests (NO_ATTACK status 5, the model condition 0x81 (RW 0x46E918 reads Object + 0x10C),
+	// UNDER_CONSTRUCTION, SOLD); its contain, turret and CAN_ATTACK branches are not (S-1301, as AITacticalAI's canAttackAtAll), so they refuse nothing here
+	{
+		static const int justBuilt = CombatNames::modelCondition("JUST_BUILT");
+		if ((justBuilt >= 0 && obj.testModelCondition(justBuilt)) || !CombatQueries::isAbleToAttack(obj))
+		{
+			return nullptr;
+		}
+	}
+	// lane FACT-A: RW 0x66849D: an object with the status NO_AUTO_ACQUIRE (0x17: a trebuchet / catapult whose hold-fire toggle is on, MSG_TOGGLE_NO_AUTO_ACQUIRE)
+	// looks for no target (the other status gates of RW 0x66845E .. 0x6684C8, 0x46 / 0x26 / 0x4A and the AI + 0x34 test, are not read here)
+	static const int noAutoAcquire = CombatNames::status("NO_AUTO_ACQUIRE");
+	if (obj.testStatus((unsigned)noAutoAcquire))
+	{
+		return nullptr;
+	}
 	// lane IDLE-1 (community FB-0001), RW 0x66844A's gate before the scan (read with Ghidra, RW 0x6685B6 .. 0x6685F9): a contained object (+ 0x27C) looks for
 	// a target only when its AI module's CanAttackWhileContained (data + 0x25) is set, it is CONTESTING_BUILDING (status 0x25) or its own contain (+ 0x258, the
 	// ContainModuleInterface subobject) answers vslot 0xB8 true, and its container is not JUST_BUILT (+ 0x124 bit 26). vslot 0xB8 is RW 0x9188EB (false) in

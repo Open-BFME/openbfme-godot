@@ -46,7 +46,7 @@ func _ready() -> void:
 		elif arg == "--report":
 			_report = true
 	if not ClassDB.class_exists("GameAudio"):
-		_fail("the openbfme extension has no GameAudio class; run build.bat")
+		_fail("the openbfme extension has no GameAudio class; " + Release.extension_hint())
 		return
 	_fs = ClassDB.instantiate("RetailFileSystem")
 	var mount: Dictionary = _fs.mount_retail()

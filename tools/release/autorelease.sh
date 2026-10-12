@@ -19,10 +19,12 @@
 #      tag there), released as "OpenBFME v0.4.0 Alpha <n>" (autorelease.py title); but while the first page of releases the launchers up
 #      to v0.3.0-preview.4 read holds no verified bridge with room to spare, the release is the next bridge v0.3.0-preview.<n>, which
 #      those launchers install and update themselves from (autorelease.py release-version: GitHub reads, fail closed);
-#   4. builds at the tag on JonathanPC's WSL from a clean checkout (the jpc scripts' machine-wide slots, niced): the Linux GDExtension,
+#   4. builds at the tag on JonathanPC's WSL from a clean checkout (the jpc scripts' machine-wide slots, niced): the Linux GDExtension
+#      (build_linux.sh, with Godot's own Linux SDK: GLIBC 2.28 at most, GLIBC-1 / DEP-1),
 #      the Windows DLL (build_windows.sh --no-export), package.sh (game + launchers, both platforms), test_export.sh on the Linux
 #      package, and a native Windows start of the Windows package (OpenBFME.console.exe --headless --quit-after 400 must exit 0 and print
-#      "GAME screen: MainMenu.apt" and the template count); the packages come back to $WORK/pkg;
+#      "GAME screen: MainMenu.apt" and the template count; then, lane BUGS-1, a Men skirmish whose help box over a barracks bubble must draw
+#      its text: windows_hud6_check.sh); the packages come back to $WORK/pkg;
 #   5. checks the returned packages on the Deck, with the scripts of a trusted checkout ($WORK/trusted: a fresh worktree of the tag made
 #      here, never written by JonathanPC, whose tree must be the audited sync tree of the archive sha): exactly the package files, the
 #      release allowlist of every archive, each library's build record against the tag and the engine id of the tag's engine/, and
@@ -536,9 +538,10 @@ cd $RL || exit 1
 git fetch -q -f \$C/repo.git refs/tags/$VERSION:refs/tags/$VERSION || exit 1
 d=\$(git describe --tags --match 'v[0-9]*' --exclude '*-playtest.*' --always --dirty --abbrev=10)
 [ "\$d" = $VERSION ] || { echo "AUTOREL: the JonathanPC checkout describes as \$d, not $VERSION"; exit 1; }
-if [ ! -f $RB/build.ninja ]; then run 16 12G cmake -S $RL/engine -B $RB \$CI_CMAKE_FLAGS > $RB.configure.log 2>&1 || { tail -30 $RB.configure.log; exit 1; }; fi
-echo "AUTOREL: the Linux GDExtension"
-run 16 12G cmake --build $RB -j16 --target openbfme > $RL.build-linux.log 2>&1 || { grep -vE '$F' $RL.build-linux.log | tail -40; exit 1; }
+echo "AUTOREL: the Linux GDExtension (tools/release/build_linux.sh: Godot's own Linux SDK, so it needs GLIBC 2.28 at most: GLIBC-1 / DEP-1)"
+( export OPENBFME_LINUX_DIR=$RL.linux JOBS=16
+  run 16 12G bash tools/release/build_linux.sh ) > $RL.build-linux.log 2>&1 || { grep -vE '$F' $RL.build-linux.log | tail -40; exit 1; }
+grep '^BUILT:' $RL.build-linux.log
 echo "AUTOREL: the Windows DLL (build_windows.sh --no-export)"
 rm -f $DLL
 ( export OPENBFME_WIN_DIR=$RL.win JOBS=16 CMAKE_C_COMPILER_LAUNCHER=\$C/bin/ccache CMAKE_CXX_COMPILER_LAUNCHER=\$C/bin/ccache
@@ -588,12 +591,20 @@ cd openbfme-$VERSION-windows-x64
 ROTWK_INSTALL="\$RW" BFME2_INSTALL="\$B2" APPDATA="\$(wslpath -w "\$D")\\\\appdata" WSLENV=ROTWK_INSTALL:BFME2_INSTALL:APPDATA \
   timeout 900 nice -n 10 ./OpenBFME.console.exe --headless --quit-after 400 </dev/null > "\$D/run.log" 2>&1; rc=\$?
 tr -d '\r' < "\$D/run.log" > $RL.windows-start.log
+# lane BUGS-1: the help box over a barracks bubble shows its text (Devlog #4's empty box): the radial and barracks scenarios of hud6_player.gd
+echo "AUTOREL: OpenBFME.console.exe --headless -- --auto --faction=FactionMen --hud6=radial,barracks"
+ROTWK_INSTALL="\$RW" BFME2_INSTALL="\$B2" APPDATA="\$(wslpath -w "\$D")\\\\appdata" WSLENV=ROTWK_INSTALL:BFME2_INSTALL:APPDATA \
+  timeout 900 nice -n 10 ./OpenBFME.console.exe --headless -- --res=1920x1080 --auto --faction=FactionMen --seed=5 --hud6=radial,barracks </dev/null > "\$D/hud6.log" 2>&1; hrc=\$?
+tr -d '\r' < "\$D/hud6.log" > $RL.windows-hud6.log
 cd /; rm -rf "\$D" || echo "AUTOREL: could not remove \$D (a process still holds it?)"
 # the verdict: exit 0 and the lines (Sol r1: 124 / 139 passed); the Deck's windows_start_check.sh, sent along (the tag's tree may predate it)
 cat > $RL.windows_start_check.sh <<'WSC'
 $(cat "$HERE/windows_start_check.sh")
 WSC
-bash $RL.windows_start_check.sh $RL.windows-start.log \$rc $TEMPLATES
+cat > $RL.windows_hud6_check.sh <<'WSC'
+$(cat "$HERE/windows_hud6_check.sh")
+WSC
+bash $RL.windows_start_check.sh $RL.windows-start.log \$rc $TEMPLATES && bash $RL.windows_hud6_check.sh $RL.windows-hud6.log \$hrc
 EOS
 STEP=fetch
 rsync -a -e "ssh jonathan-windows" --rsync-path="$WSL rsync" --exclude='.*' ":$RL.pkg/" "$RETURNED/" || fail "copying the packages back failed"

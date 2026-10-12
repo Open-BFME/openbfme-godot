@@ -215,3 +215,52 @@ func _scenario_sidebar() -> String:
 	if not bool(side.get("shown", false)) or int(side.get("count", 0)) < 1:
 		return "the side bar shows no framed buttons"
 	return ""
+
+
+# lane BUGS-1: the devlog's case (Devlog #4 take 4: the help box over a GondorBarracks bubble drew its frame with no text): a Men barracks of the
+# player's (made with the world's create_object test hook), selected by a click, the pointer held on its first unit bubble for 120 frames
+func _scenario_barracks() -> String:
+	var f := fortress()
+	if f.is_empty():
+		return "no own fortress citadel"
+	var at := Vector2(f.x + 450.0, f.y)
+	var id: int = world.create_object("GondorBarracks", game._local_index, at.x, at.y, 0.0)
+	if id < 0:
+		return "create_object GondorBarracks failed"
+	await game._step(10)
+	var o := find_own(func(x): return int(x.id) == id)
+	if o.is_empty() or not await select_object(o):
+		return "the barracks could not be selected"
+	hud.camera_set_height(330.0)
+	await look(o.x, o.y)
+	hud.inject_mouse_move(Vector2(60, 60))
+	await game._step(30)
+	var target := {}
+	for b in radial().get("buttons", []):
+		if str(b.command) == "UNIT_BUILD":
+			target = b
+			break
+	if target.is_empty():
+		return "no unit bubble over the barracks: " + JSON.stringify(radial())
+	hud.inject_mouse_move(bubble_centre(target))
+	await game._step(4)
+	var ok := await wait_help_shown()
+	await game._step(6)
+	shot("barracks-help-early")
+	await game._step(120)
+	var h := help()
+	print("HUD6 barracks (bubble %s): %s" % [str(target.name), JSON.stringify(h)])
+	if OS.get_environment("HUD6_DUMP") != "":
+		var keep := false
+		for line in hud.dump_tree(40).split("\n"):
+			if line.find("helpBox") >= 0:
+				keep = true
+			if keep:
+				print("HUD6 TREE ", line)
+	shot("barracks-help")
+	if not ok:
+		return "the help box did not show over bubble " + str(target.name)
+	# the box keeps its text: drawn again in the last frames (draws grows) with at least the name line
+	if int(h.get("text_ops", 0)) < 1 or int(h.get("draws", 0)) < 30:
+		return "the help box drew no text (draws %d, text_ops %d)" % [int(h.get("draws", 0)), int(h.get("text_ops", 0))]
+	return ""

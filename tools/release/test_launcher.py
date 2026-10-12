@@ -80,13 +80,13 @@ def imported():
 GAME_SCRIPT = b'#!/bin/sh\necho "played $(basename "$(dirname "$0")") $*" >> "$OPENBFME_TEST_PLAYED"\n'
 
 
-def game_tar(tmp: Path, version: str, extra: bytes = b"", script: bytes = GAME_SCRIPT) -> bytes:
+def game_tar(tmp: Path, version: str, extra: bytes = b"", script: bytes = GAME_SCRIPT, version_extra: str = "") -> bytes:
     top = tmp / f"build-{version}" / f"openbfme-{version}-linux-x64"
     top.mkdir(parents=True, exist_ok=True)
     (top / "OpenBFME.x86_64").write_bytes(script)
     (top / "OpenBFME.x86_64").chmod(0o755)
     (top / "OpenBFME.pck").write_bytes(b"pack of " + version.encode() + extra)
-    (top / "VERSION").write_text(f"OpenBFME {version}\n")
+    (top / "VERSION").write_text(f"OpenBFME {version}\n{version_extra}")
     out = tmp / f"openbfme-{version}-linux-x64.tar.gz"
     make_archive.tar_gz(top, out, 1700000000)
     return out.read_bytes()
@@ -169,8 +169,8 @@ class Run:
 
 
 def launch(tmp: Path, server: ReleaseServer | None, key: bytes, *args: str, exe: Path | None = None, origin: str | None = None,
-           timeout: int = 180) -> Run:
-    env = dict(os.environ, XDG_DATA_HOME=str(tmp / "data"), OPENBFME_TEST_PLAYED=str(tmp / "played.txt"))
+           timeout: int = 180, env_extra: dict | None = None) -> Run:
+    env = dict(os.environ, XDG_DATA_HOME=str(tmp / "data"), OPENBFME_TEST_PLAYED=str(tmp / "played.txt"), **(env_extra or {}))
     test = []
     if origin or server:
         test.append(f"--api-base={origin or server.origin}")
@@ -271,6 +271,26 @@ def test_fresh_install_and_play(tmp_path, server, keys):
     agents = {h.get("user-agent") for _, h in server.requests}
     assert agents == {"OpenBFME-Launcher/v0.0.0-dev (+https://github.com/Open-BFME/openbfme-godot)"}, agents
     assert any(p.startswith(f"/repos/{TEST_REPO}/releases") for p, _ in server.requests)
+
+
+def test_play_checks_the_systems_glibc(tmp_path, server, keys):
+    """GLIBC-1: a package whose VERSION says "requires GLIBC 2.35" is not started on an older system: the message names both versions"""
+    game = game_tar(tmp_path, "v0.2.0", version_extra="requires GLIBC 2.35\n")
+    server.publish("v0.2.0", release_files(tmp_path, "v0.2.0", keys["release"], game=game))
+    r = launch(tmp_path, server, keys["release"], "--update", "--play", env_extra={"OPENBFME_TEST_SYSTEM_GLIBC": "2.31"})
+    assert r.code == 1 and r.has("it needs GLIBC 2.35 or newer, and this system has GLIBC 2.31"), r
+    assert played(tmp_path) == ""
+    r = launch(tmp_path, None, keys["release"], "--play", env_extra={"OPENBFME_TEST_SYSTEM_GLIBC": "2.35"})
+    assert r.code == 0 and "played game" in played(tmp_path), r
+
+
+def test_play_skips_the_glibc_check_off_linux(tmp_path, server, keys):
+    """DEP-1 (Sol r1): the GLIBC check is for Linux only; platform() is "linux-x64" on macOS too, which has no GLIBC to compare"""
+    game = game_tar(tmp_path, "v0.2.0", version_extra="requires GLIBC 2.28\n")
+    server.publish("v0.2.0", release_files(tmp_path, "v0.2.0", keys["release"], game=game))
+    r = launch(tmp_path, server, keys["release"], "--update", "--play",
+               env_extra={"OPENBFME_TEST_SYSTEM_GLIBC": "2.17", "OPENBFME_TEST_OS_NAME": "macOS"})
+    assert r.code == 0 and "GLIBC" not in r.out and "played game" in played(tmp_path), r
 
 
 def test_update_keeps_the_two_newest(tmp_path, server, keys):

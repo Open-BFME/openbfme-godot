@@ -53,6 +53,11 @@ struct EconomySettings
 	// the tribute (MSG_GIVE_MONEY, RW 0x6264E1) is refused before minutes * LOGICFRAMES_PER_SECOND * 60 logic frames (RW 0x626087). Not required (the constructor
 	// value when absent); in crc() (Sol review: a peer whose gate differs must not hash equal; the tribute's effects, cash and ScoreKeeper, are hashed too)
 	int numMinutesBeforePlayersCanTransferMoney = 5;
+	// lane SPELL-3: ValuePerSupplyBox (row RW 0xBFF580 + .., parseInt RW 0x42EC5E, GlobalData + 0xA5C, read by Player RW 0x6AA7CE) and SupplyBoxesPerTree
+	// (GlobalData + 0xA60, a tree record's value without a SupplyOverride, RW 0x683EA3). Not required (0 when absent: INFERENCE, the constructor's value is
+	// not read, S-930). Not in crc(): they reach the state only through the tree records and the money they pay, which are hashed
+	int valuePerSupplyBox = 0;
+	int supplyBoxesPerTree = 0;
 	EconomySettings()
 	{
 		for (float &f : multiPlayMoneyMult)

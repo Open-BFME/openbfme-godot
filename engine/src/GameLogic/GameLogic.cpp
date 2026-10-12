@@ -20,9 +20,11 @@
 #include "Common/Thing/ThingFactory.h"
 #include "Common/Thing/ThingTemplate.h"
 #include "GameLogic/Map/TerrainLogic.h"
+#include "GameLogic/Map/TerrainTrees.h"
 #include "GameLogic/Module/ObjectHelper.h"
 #include "GameLogic/Module/SquishCollide.h"
 #include "GameLogic/Module/UnportedModule.h"
+#include "GameLogic/BuildAssistantSell.h"
 #include "GameLogic/Module/UpdateModule.h"
 #include "GameLogic/Module/ConstructionModules.h"
 #include "GameLogic/Economy.h"
@@ -52,12 +54,14 @@ GameLogic::GameLogic(ThingFactory &things, ModuleFactory &modules, PlayerList &p
 	, m_economy(std::make_unique<Economy>(*this))
 	, m_combat(std::make_unique<CombatState>(*this))
 	, m_victory(std::make_unique<VictoryConditions>(*this))
+	, m_sell(std::make_unique<BuildAssistantSell>(*this)) // lane FACT-A
 	, m_skirmishAI(std::make_unique<SkirmishAIManager>(*this))
 	, m_experience(std::make_unique<ExperienceWorld>(*this))
 	, m_createAHeroes(std::make_unique<CreateAHeroGame>(*this))
 	, m_weather(std::make_unique<GlobalWeatherSystem>(*this))
 	, m_invisibility(std::make_unique<InvisibilityManager>(*this))
 	, m_dot(std::make_unique<DOTManager>(*this)) // lane DECOMP-1
+	, m_trees(std::make_unique<TerrainTrees>(*this)) // lane SPELL-3
 	, m_scriptEngine(std::make_unique<ScriptEngine>(*this)) // lane SCRIPT-1
 {
 	buildPhaseWorkTable();
@@ -582,6 +586,7 @@ void GameLogic::update(int phase)
 	if (phase == 5)
 	{
 		runRow(ROW_SUBSYSTEMS_BEFORE_DESTROY);
+		m_sell->update(); // lane FACT-A: RW 0x62EB9B, TheBuildAssistant vslot 0x28 (the third of the row's four; the second and fourth are not ported)
 		processDestroyList();
 		runRow(ROW_SUBSYSTEMS_AFTER_DESTROY);
 		// lane END-1: RW 0x62EBCE: TheVictoryConditions (RW 0xDE89AC) vslot 0x28 runs here, after the destroy list and the weapon / locomotor stores and before the
@@ -876,6 +881,7 @@ void GameLogic::reset()
 	m_economy->reset();
 	m_combat->reset();
 	m_victory->reset();
+	m_sell->reset(); // lane FACT-A
 	m_skirmishAI->reset();
 	m_experience->reset();
 	m_partition->reset();
@@ -883,6 +889,7 @@ void GameLogic::reset()
 	m_weather->reset(); // lane SPELL-2 (the objects are gone: nothing to remove from them)
 	m_invisibility->reset();
 	m_dot->reset(); // lane DECOMP-1
+	m_trees->reset(); // lane SPELL-3
 	m_scriptEngine->reset(); // lane SCRIPT-1
 }
 
@@ -1047,6 +1054,10 @@ std::uint32_t GameLogic::hashState(std::vector<StateHashSection> *sections, std:
 	section("economy", [&](StateHasher &x) { m_economy->crc(x); });
 	section("combat", [&](StateHasher &x) { m_combat->crc(x); });
 	section("victory", [&](StateHasher &x) { m_victory->crc(x); });
+	if (!m_sell->empty()) // lane FACT-A: only a frame with a structure being sold has the section
+	{
+		section("sell list", [&](StateHasher &x) { m_sell->crc(x); });
+	}
 	section("skirmish AI", [&](StateHasher &x) { m_skirmishAI->crc(x); }); // lane AI-1
 	section("experience", [&](StateHasher &x) { m_experience->crc(x); }); // lane XP-1
 	if (!m_createAHeroes->heroes().empty()) // lane HERO-2: only a game with a Create-a-Hero has the section
@@ -1058,6 +1069,10 @@ std::uint32_t GameLogic::hashState(std::vector<StateHashSection> *sections, std:
 	if (!m_dot->empty())
 	{
 		section("damage over time", [&](StateHasher &x) { m_dot->crc(x); }); // lane DECOMP-1: only while a record runs (a game without one keeps its hash)
+	}
+	if (m_trees->anyChanged())
+	{
+		section("terrain trees", [&](StateHasher &x) { m_trees->crc(x); }); // lane SPELL-3: only once a tree toppled or was harvested (a game without keeps its hash)
 	}
 	section("large group audio", [&](StateHasher &x) { m_largeGroupAudio.crc(x); }); // lane AUDIO-4: TheLargeGroupAudio's gate (+ 0x38 / + 0x3C)
 	if (m_scriptEngine->loaded())

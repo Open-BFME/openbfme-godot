@@ -101,13 +101,32 @@ func version_line() -> String:
 ## printed only, quits at once). The game is paused while the message is up.
 func fatal(message: String) -> void:
 	printerr("GAME FATAL: ", message)
-	if _headless() or info == null:
+	if _headless():
+		get_tree().quit(1)
+		return
+	if info == null:
+		# lane GLIBC-1: without the extension there is no session log and no message panel; the system's own dialog, then quit
+		OS.alert("%s\n\nOpenBFME cannot continue.\n\n%s" % [message, REPORT_HINT], "OpenBFME error")
 		get_tree().quit(1)
 		return
 	var where: String = _folder_and_file(log_path_for_user(log_path)) if not log_path.is_empty() else "(no log file)"
 	get_tree().paused = true
 	_message("%s\n\nOpenBFME cannot continue.\n\nVersion: %s\nLog file: %s\n\n%s" % [message, version_line(), where, REPORT_HINT], "OpenBFME error", log_path,
 		true)
+
+
+## lane GLIBC-1: what to do when the openbfme extension did not load. A package (Godot's export template): update it with the launcher or
+## report it; on Linux the usual cause is a system GLIBC older than the build's (v0.3.0-preview.6 on Pop!_OS 22.04: "version `GLIBC_2.38'
+## not found"). A developer's tree: build the extension (build.bat is Windows only).
+static func extension_hint() -> String:
+	if OS.has_feature("template"):
+		var hint := "update OpenBFME with the OpenBFME Launcher, or report it in the OpenBFME Discord, channel #feedback"
+		if OS.get_name() == "Linux":
+			return "on Linux this usually means the system's GLIBC is older than this build needs (the console names the missing version); " + hint
+		return hint
+	if OS.get_name() == "Windows":
+		return "run build.bat"
+	return "build it first (cmake -S engine -B engine/build -G Ninja -DCMAKE_BUILD_TYPE=Release && cmake --build engine/build --target openbfme, see README.md)"
 
 
 ## lane WINCRASH-1: a log path as the player finds it in the file manager: Windows separators, the %APPDATA% folder by its name (the dialog may

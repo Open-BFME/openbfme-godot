@@ -66,6 +66,21 @@ bool alphaVisible(const AptCharacterInst &inst)
 	return true;
 }
 
+// lane UI-6: the button hit list (0x00AFA420, RW 0xB0E620) has no alpha test; only the clip walk (0x00AFB120, RW 0xB0F320) calls the alpha test above
+// (RW 0xAF4DE0, its only caller RW 0xB0F3CD). INFERENCE (S-108): a button the tree hides (`_visible` false up its chain) is not in EA's render-time list;
+// one drawn at alpha 0 is (Skirmish.apt's Profile nav closes through an alpha 0 button that covers the stage, sprite 34 depth 1)
+bool treeVisible(const AptCharacterInst &inst)
+{
+	for (const AptCharacterInst *c = &inst; c; c = c->parent())
+	{
+		if (!c->visible)
+		{
+			return false;
+		}
+	}
+	return true;
+}
+
 void walk(AptCharacterInst *inst, const std::function<void(AptCharacterInst *)> &fn)
 {
 	fn(inst);
@@ -225,7 +240,7 @@ AptButtonInst *AptInput::hitTestButtons(float x, float y)
 	for (std::size_t i = buttons.size(); i-- > 0;)
 	{
 		AptButtonInst *b = buttons[i];
-		if (!b->enabled || !alphaVisible(*b))
+		if (!b->enabled || !treeVisible(*b))
 		{
 			continue;
 		}

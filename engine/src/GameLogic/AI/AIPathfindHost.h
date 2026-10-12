@@ -19,6 +19,7 @@
 
 #include "Common/INIDataTypes.h"
 
+#include <cstddef> // size_t (GLIBC-1: GCC 11 does not reach it through <vector>)
 #include <cstdint>
 #include <vector>
 

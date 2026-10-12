@@ -353,6 +353,8 @@ public:
 
 	// The frame-time clamp flag at +0x1C4 of retail's WindowManager (min 34 ms); its meaning is not read, the port exposes it.
 	void setMinimumFrameTime(bool on) { m_minFrameTime = on; }
+	// the movie frames the last update stepped (Apt::update's count; 0 when its time stayed below a frame)
+	int lastAptSteps() const { return m_lastAptSteps; }
 
 	// ---- AptHost ----------------------------------------------------------------------------------------------
 	bool isComponentSymbol(const std::string &movieName, const std::string &symbolName) override;
@@ -419,6 +421,7 @@ private:
 	std::vector<std::pair<const void *, std::function<void()>>> m_updateListeners;
 	bool m_minFrameTime = false;   // +0x1C4
 	bool m_inAptUpdate = false;    // +0x1AE
+	int m_lastAptSteps = 0;
 
 	std::map<std::string, CommandFn> m_commands;
 	std::map<std::string, ProviderFn> m_providers;

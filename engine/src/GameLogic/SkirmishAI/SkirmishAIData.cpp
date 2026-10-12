@@ -14,6 +14,8 @@
 
 #include <cstddef>
 #include <cstring>
+#include <stdexcept>
+#include <string>
 
 namespace SkirmishAI
 {
@@ -472,6 +474,22 @@ void SkirmishAIStore::parseArmyDefinition(INI *ini)
 	{
 		m_keys.nameToKey(m.unit);
 	}
+	// lane BUGS-1: the unit builder keys its factory map by the HeroBuildOrder names too (RW 0x9A08E8 .. 0x9A0975 after the members), so they get keys here,
+	// after the members, in list order (the same INFERENCE on when RW creates them)
+	for (const std::string &hero : stored.heroBuildOrder)
+	{
+		m_keys.nameToKey(hero);
+	}
+}
+
+NameKeyType SkirmishAIStore::keyOf(const std::string &name) const
+{
+	const NameKeyType key = m_keys.findKey(name);
+	if (key == NAMEKEY_INVALID)
+	{
+		throw std::logic_error("SkirmishAIStore::keyOf: '" + name + "' is no ArmyDefinition unit or HeroBuildOrder name (its key was never created)");
+	}
+	return key;
 }
 
 // RW 0x82F676: new AIBase, initFromINI; the side's list exists from here on (RW 0x82F6C8 .. 0x82F6F9); key = nameToKey(Map): a new map key stores

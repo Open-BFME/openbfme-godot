@@ -129,7 +129,7 @@ TEST_CASE("RetailObjectWorld: a refused second load and a load over an empty tre
 	WeaponStore *const weaponBefore = TheWeaponStore;
 	{
 		// a world over a file system without the INI tree: whatever load() answers, a failed one must leave nothing registered
-		initest::Fixture empty({ { "Data\\readme.txt", "x" } });
+		initest::Fixture empty(initest::FileList{ { "Data\\readme.txt", "x" } }); // GLIBC-1: GCC 12 found the braces ambiguous
 		RetailObjectWorld lonely(empty.fsys);
 		std::string err;
 		const bool ok = lonely.load(&err);

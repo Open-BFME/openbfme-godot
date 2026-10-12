@@ -58,12 +58,30 @@ bool MemorySkirmishProfiles::remove(const std::u16string &name)
 		return false;
 	}
 	const bool wasCurrent = equalNoCase(m_current, name);
+	for (auto it = m_values.begin(); it != m_values.end();)
+	{
+		it = it->first.first == m_names[(std::size_t)at] ? m_values.erase(it) : std::next(it); // lane UI-6: the profile's entries go with it
+	}
 	m_names.erase(m_names.begin() + at);
 	if (wasCurrent)
 	{
 		m_current = m_names.empty() ? std::u16string() : m_names.front();
 	}
 	return true;
+}
+
+std::string MemorySkirmishProfiles::profileValue(int mode, const std::string &name) const
+{
+	auto it = m_values.find({ m_current, ":" + std::to_string(mode) + ":" + name });
+	return m_current.empty() || it == m_values.end() ? std::string() : it->second;
+}
+
+void MemorySkirmishProfiles::setProfileValue(int mode, const std::string &name, const std::string &value)
+{
+	if (!m_current.empty())
+	{
+		m_values[{ m_current, ":" + std::to_string(mode) + ":" + name }] = value;
+	}
 }
 
 bool MemorySkirmishProfiles::setCurrent(const std::u16string &name)

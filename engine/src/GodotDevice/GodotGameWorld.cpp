@@ -35,6 +35,9 @@
 #include "Common/Science.h"
 #include "Common/SpecialPower.h"
 #include "GameLogic/Module/SpecialPowerModules.h"
+#include "GameLogic/Module/SpellBookPowers.h"
+#include "GameLogic/ObjectCreationList.h"
+#include "GameLogic/ObjectTemplateInfo.h"
 
 #include "Common/ArchiveFileSystem.h"
 #include "Common/AsciiString.h"
@@ -43,6 +46,9 @@
 #include "GameClient/DrawableManager.h"
 #include "GameClient/LiveGame.h"
 #include "GameClient/MapObjectRuntime.h"
+#include "GameClient/TreeTopple.h"
+#include "GameLogic/Map/TerrainTrees.h"
+#include "GameEngineDevice/W3DDevice/GameClient/Drawable/Draw/W3DTreeDraw.h"
 #include "GameLogic/AI/AICommandSink.h"
 #include "GameLogic/GameMessage.h"
 #include "GameLogic/Module/ProductionUpdate.h"
@@ -251,7 +257,10 @@ void GameWorld::_bind_methods()
 	ClassDB::bind_method(D_METHOD("self_destruct", "transfer"), &GameWorld::self_destruct);
 	ClassDB::bind_method(D_METHOD("debug_kill_player_objects", "player", "keep"), &GameWorld::debug_kill_player_objects);
 	ClassDB::bind_method(D_METHOD("debug_damage_object", "id", "amount", "source_id"), &GameWorld::debug_damage_object);
+	ClassDB::bind_method(D_METHOD("debug_set_object_status", "id", "status", "on"), &GameWorld::debug_set_object_status); // lane SPELL-3
+	ClassDB::bind_method(D_METHOD("debug_clear_weather"), &GameWorld::debug_clear_weather);                                // lane SPELL-3
 	ClassDB::bind_method(D_METHOD("get_player_objects", "player"), &GameWorld::get_player_objects);
+	ClassDB::bind_method(D_METHOD("get_logic_trees", "x", "y", "radius"), &GameWorld::get_logic_trees); // lane SPELL-3
 	ClassDB::bind_method(D_METHOD("destroy_object", "id"), &GameWorld::destroy_object);
 	ClassDB::bind_method(D_METHOD("find_object_by_template", "template_name"), &GameWorld::find_object_by_template);
 	ClassDB::bind_method(D_METHOD("get_template_model", "template_name"), &GameWorld::get_template_model);
@@ -267,6 +276,7 @@ void GameWorld::_bind_methods()
 	ClassDB::bind_method(D_METHOD("purchase_science", "player", "science"), &GameWorld::purchase_science);
 	ClassDB::bind_method(D_METHOD("cast_special_power", "player", "power", "x", "y"), &GameWorld::cast_special_power);
 	ClassDB::bind_method(D_METHOD("get_spellbook", "player"), &GameWorld::get_spellbook);
+	ClassDB::bind_method(D_METHOD("get_spell_power_effect", "player", "power"), &GameWorld::get_spell_power_effect); // lane SPELL-3
 	ClassDB::bind_method(D_METHOD("spell_store_open", "player"), &GameWorld::spell_store_open);
 	ClassDB::bind_method(D_METHOD("get_spell_store"), &GameWorld::get_spell_store);
 	ClassDB::bind_method(D_METHOD("spell_store_click", "index"), &GameWorld::spell_store_click);
@@ -434,6 +444,7 @@ GameWorld::~GameWorld()
 	m_spellBar.reset();
 	m_game.reset();
 	m_clientRuntime.reset();
+	m_treeTopple.reset(); // lane SPELL-3
 }
 
 void GameWorld::_notification(int what)
@@ -475,6 +486,7 @@ Dictionary GameWorld::setup(const Ref<RetailFileSystem> &fs)
 		m_spellBar.reset();
 		m_game.reset();
 		m_clientRuntime.reset();
+	m_treeTopple.reset(); // lane SPELL-3
 		reset_streaks(); // the streak texture factory references the previous archive file system
 		m_fs = fs;
 		m_world.reset(new RetailObjectWorld(*fs->archive_fs()));
@@ -552,6 +564,7 @@ void GameWorld::clear_scene()
 	m_spellBar.reset();
 	m_game.reset(); // the objects (and through them the drawables) first
 	m_clientRuntime.reset();
+	m_treeTopple.reset(); // lane SPELL-3
 	m_views.clear();
 	m_dynamicModels.clear();
 	m_staticModels.clear();
@@ -593,6 +606,9 @@ void GameWorld::build_static_layer(const Ref<RetailFileSystem> &fs, Dictionary &
 	staticInst->set_auto_update(false);
 	m_clientRuntime.reset(new MapObjectRuntime(*m_assets));
 	m_clientRuntime->build(m_game->clientOnly(), false);
+	m_treeTopple.reset(new TreeTopple()); // lane SPELL-3
+	m_treeViews.clear();
+	m_treeEventsSeen = 0;
 	size_t instances = 0, missing = 0;
 	for (MapPlacedModel &p : m_clientRuntime->models())
 	{
@@ -615,12 +631,27 @@ void GameWorld::build_static_layer(const Ref<RetailFileSystem> &fs, Dictionary &
 		{
 			model = it->second;
 		}
-		if (model < 0 || staticInst->add_instance(model, xf, String(), 0.0, 1.0) < 0)
+		const int64_t instance = model < 0 ? -1 : staticInst->add_instance(model, xf, String(), 0.0, 1.0);
+		if (instance < 0)
 		{
 			++missing;
 			continue;
 		}
 		++instances;
+		// lane SPELL-3: a tree the logic may topple (its TerrainTrees client id is the map object index + 1, S-930)
+		if (p.kind == W3D_DRAWKIND_TREE && p.module < d.draws.size())
+		{
+			if (const W3DTreeDrawModuleData *td = dynamic_cast<const W3DTreeDrawModuleData *>(d.draws[p.module].data))
+			{
+				m_treeTopple->add((std::uint32_t)d.objectIndex + 1u, d.position, td);
+				ToppleTreeView v;
+				v.instance = instance;
+				std::copy(d.basis, d.basis + 9, v.basis);
+				v.position = d.position;
+				v.scale = d.scale;
+				m_treeViews.push_back(v);
+			}
+		}
 	}
 	staticInst->update_now();
 	Dictionary d;
@@ -1648,6 +1679,7 @@ void GameWorld::advance(double delta)
 			m_fxPendingDt = 0.0;
 		}
 	}
+	updateTreeTopple(dt); // lane SPELL-3
 	const double t2 = nowMs();
 	m_lastFxMs = timing::spanMs(t2, tf);
 	if (m_textureAnimation)
@@ -1666,6 +1698,70 @@ void GameWorld::advance(double delta)
 	m_lastLogicMs = timing::spanMs(t1, t0);
 	m_lastSyncMs = timing::spanMs(t2, t1);
 	m_lastAdvanceMs = timing::elapsedMs(t0);
+}
+
+// lane SPELL-3: the logic's tree events (TerrainTrees: Devastation's topple and the lumber taken) drive the falling trees of the static layer (TreeTopple);
+// the events are read at a worker-idle point, the fall is drawn every frame
+void GameWorld::updateTreeTopple(double dt)
+{
+	if (!m_treeTopple || !m_game)
+	{
+		return;
+	}
+	if (m_game->logicIdle())
+	{
+		const std::vector<TerrainTrees::Event> &events = m_game->logic().trees().events();
+		for (; m_treeEventsSeen < events.size(); ++m_treeEventsSeen)
+		{
+			const TerrainTrees::Event &e = events[m_treeEventsSeen];
+			if (e.kind == TerrainTrees::Event::TOPPLE)
+			{
+				m_treeTopple->topple(e.clientId, e.direction, e.speed);
+			}
+			else
+			{
+				m_treeTopple->remove(e.clientId);
+			}
+		}
+	}
+	m_treeTopple->advance(dt);
+	if (m_fxPlayer && m_fxPlayer->playback())
+	{
+		for (const TreeTopple::FX &fx : m_treeTopple->takeFX())
+		{
+			m_fxPlayer->playback()->playFXList(fx.name, fx.position, false); // ToppleFX / BounceFX at the tree (ZH FXList::doFXPos)
+		}
+	}
+	W3DInstancer *st = instancerOf(m_staticId);
+	if (!st)
+	{
+		return;
+	}
+	bool any = false;
+	for (size_t i : m_treeTopple->takeChanged())
+	{
+		if (i >= m_treeViews.size())
+		{
+			continue;
+		}
+		const ToppleTreeView &v = m_treeViews[i];
+		float b[9];
+		Coord3D pos;
+		m_treeTopple->placement(i, v.basis, v.position, b, pos);
+		if (m_treeTopple->trees()[i].state == TreeTopple::GONE)
+		{
+			st->set_instance_transform(v.instance, toTransform(b, pos, 0.0f)); // sunk away: drawn at scale 0
+		}
+		else
+		{
+			st->set_instance_transform(v.instance, toTransform(b, pos, v.scale));
+		}
+		any = true;
+	}
+	if (any)
+	{
+		st->update_now();
+	}
 }
 
 int64_t GameWorld::get_frame() const
@@ -3739,6 +3835,112 @@ bool GameWorld::cast_special_power(int64_t player, const String &power, double x
 	return true;
 }
 
+Dictionary GameWorld::get_spell_power_effect(int64_t player, const String &power) const
+{
+	const auto worldContext = m_world ? m_world->enterContext() : nullptr;
+	Dictionary d;
+	d["ok"] = false;
+	::Player *p = m_game ? m_game->logic().players().getNthPlayer((int)player) : nullptr;
+	const SpecialPowerTemplate *t = TheSpecialPowerStore ? TheSpecialPowerStore->findSpecialPowerTemplate(toNative(power)) : nullptr;
+	::Object *book = p ? SpecialPowerModules::findSpellBookObject(m_game->logic(), *p) : nullptr;
+	SpecialPowerModuleInterface *sp = book && t ? SpecialPowerModules::findModule(*book, t) : nullptr;
+	SpecialPowerModule *m = dynamic_cast<SpecialPowerModule *>(sp);
+	if (!m)
+	{
+		return d;
+	}
+	d["ok"] = true;
+	std::string cls = "SpecialPowerModule";
+	if (const OCLSpecialPower *o = dynamic_cast<const OCLSpecialPower *>(m))
+	{
+		cls = "OCLSpecialPower";
+		d["created"] = (int64_t)o->created().size();
+		Array names;
+		for (::ObjectID id : o->created())
+		{
+			if (const ::Object *c = m_game->logic().findObjectByID(id))
+			{
+				names.push_back(toGodot(c->getTemplate()->getName()));
+			}
+		}
+		d["created_names"] = names;
+		// whether the power's OCL makes an object that fires weapons (FireWeaponUpdate: the volleys, the quake, Chill Wind ...): the harness then wants damage
+		bool firesWeapons = false;
+		const ObjectCreationList *list = TheObjectCreationListStore ? TheObjectCreationListStore->findObjectCreationList(o->data()->m_ocl) : nullptr;
+		for (const OCLNugget &n : list ? list->nuggets() : std::vector<OCLNugget>{})
+		{
+			for (const std::string &name : n.objectNames)
+			{
+				const ThingTemplate *tt = m_game->logic().things().findTemplate(name);
+				for (const ThingTemplate::Nugget &bn : tt ? tt->behaviorModules().nuggets() : std::vector<ThingTemplate::Nugget>{})
+				{
+					firesWeapons = firesWeapons || bn.name == "FireWeaponUpdate" || bn.name == "FloodUpdate";
+				}
+			}
+		}
+		d["fires_weapons"] = firesWeapons;
+	}
+	else if (const PlayerHealSpecialPower *h = dynamic_cast<const PlayerHealSpecialPower *>(m))
+	{
+		cls = "PlayerHealSpecialPower";
+		d["healed"] = (int64_t)h->lastHealed();
+	}
+	else if (dynamic_cast<const DevastateSpecialPower *>(m))
+	{
+		cls = "DevastateSpecialPower";
+	}
+	else if (dynamic_cast<const PlayerUpgradeSpecialPower *>(m))
+	{
+		cls = "PlayerUpgradeSpecialPower";
+	}
+	else if (const UntamedAllegianceSpecialPower *u = dynamic_cast<const UntamedAllegianceSpecialPower *>(m))
+	{
+		cls = "UntamedAllegianceSpecialPower";
+		d["defected"] = (int64_t)u->defected();
+	}
+	else if (const CloudBreakSpecialPower *c = dynamic_cast<const CloudBreakSpecialPower *>(m))
+	{
+		cls = "CloudBreakSpecialPower";
+		d["sunbeams"] = (int64_t)c->sunbeamsMade();
+	}
+	else if (dynamic_cast<const DarknessSpecialPower *>(m) || dynamic_cast<const FreezingRainSpecialPower *>(m))
+	{
+		cls = dynamic_cast<const DarknessSpecialPower *>(m) ? "DarknessSpecialPower" : "FreezingRainSpecialPower";
+	}
+	else if (const TaintSpecialPower *ta = dynamic_cast<const TaintSpecialPower *>(m))
+	{
+		cls = "TaintSpecialPower";
+		d["area_object"] = ta->lastAreaObject() != INVALID_ID;
+	}
+	else if (const ElvenWoodSpecialPower *e = dynamic_cast<const ElvenWoodSpecialPower *>(m))
+	{
+		cls = "ElvenWoodSpecialPower";
+		d["area_object"] = e->lastAreaObject() != INVALID_ID;
+	}
+	else if (const ProductionSpeedBonus *b = dynamic_cast<const ProductionSpeedBonus *>(m))
+	{
+		cls = "ProductionSpeedBonus";
+		d["bonuses"] = (int64_t)b->bonuses().size();
+	}
+	else if (const ScavengerSpecialPower *sc = dynamic_cast<const ScavengerSpecialPower *>(m))
+	{
+		cls = "ScavengerSpecialPower";
+		d["active"] = sc->active();
+	}
+	d["class"] = toGodot(cls);
+	d["initiate_sound"] = toGodot(t->m_initiateSound);
+	d["initiate_at_location_sound"] = toGodot(t->m_initiateAtLocationSound);
+	d["triggers"] = (int64_t)m->triggers();
+	d["victims"] = (int64_t)m->victimsAffected();
+	d["applied"] = (int64_t)m->applied();
+	d["unported"] = (int64_t)m->unportedEffects();
+	d["has_modifier"] = !m->spData()->m_attributeModifier.empty();
+	d["weather"] = (int64_t)m_game->logic().weather().weather();
+	d["weather_modifier"] = toGodot(m_game->logic().weather().modifierName());
+	d["trees_changed"] = m_game->logic().trees().anyChanged();
+	return d;
+}
+
 Dictionary GameWorld::get_spellbook(int64_t player) const
 {
 	const auto worldContext = m_world ? m_world->enterContext() : nullptr;
@@ -4659,6 +4861,74 @@ Dictionary GameWorld::debug_damage_object(int64_t id, double amount, int64_t sou
 	o->getBodyModule()->attemptDamage(info);
 	out["ok"] = true;
 	out["health"] = o->getBodyModule()->getHealth();
+	return out;
+}
+
+Array GameWorld::get_logic_trees(double x, double y, double radius) const
+{
+	Array out;
+	if (!m_game)
+	{
+		return out;
+	}
+	const auto worldContext = m_world ? m_world->enterContext() : nullptr;
+	for (const TerrainTrees::Record &r : m_game->logic().trees().records())
+	{
+		if (r.clientId == 0 || !TreeTopple::within2D(r.position, x, y, radius))
+		{
+			continue;
+		}
+		Dictionary d;
+		d["x"] = r.position.x;
+		d["y"] = r.position.y;
+		d["id"] = (int64_t)r.clientId;
+		d["toppled"] = r.toppled;
+		d["value"] = r.value;
+		d["harvestable"] = r.harvestable;
+		out.push_back(d);
+	}
+	return out;
+}
+
+Dictionary GameWorld::debug_set_object_status(int64_t id, const String &status, bool on)
+{
+	Dictionary out;
+	out["ok"] = false;
+	// a test hook: only with the start option test_hooks, never in a network game; it acts between logic frames (logic() waits for the worker)
+	if (!m_game || !m_testHooks || m_netHost || m_netClient || m_netStarted || m_netSession)
+	{
+		out["error"] = "refused (no game, test_hooks off or a network game)";
+		return out;
+	}
+	const auto worldContext = m_world ? m_world->enterContext() : nullptr;
+	::Object *o = m_game->logic().findObjectByID((::ObjectID)id);
+	const int bit = ObjectTemplateInfoBuilder::objectStatusIndex(toNative(status).c_str());
+	if (!o || bit < 0)
+	{
+		out["error"] = "no such object or status";
+		return out;
+	}
+	o->setStatus((unsigned)bit, on);
+	out["ok"] = true;
+	return out;
+}
+
+Dictionary GameWorld::debug_clear_weather()
+{
+	Dictionary out;
+	out["ok"] = false;
+	if (!m_game || !m_testHooks || m_netHost || m_netClient || m_netStarted || m_netSession)
+	{
+		out["error"] = "refused (no game, test_hooks off or a network game)";
+		return out;
+	}
+	const auto worldContext = m_world ? m_world->enterContext() : nullptr;
+	GlobalWeatherSystem &w = m_game->logic().weather();
+	out["weather_before"] = (int64_t)w.weather();
+	out["modifier_before"] = toGodot(w.modifierName());
+	w.clear();
+	w.setWeather(GlobalWeatherSystem::WEATHER_NONE, 0, 0);
+	out["ok"] = true;
 	return out;
 }
 

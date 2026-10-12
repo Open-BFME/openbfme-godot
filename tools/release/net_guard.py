@@ -20,7 +20,8 @@ Only engine/src/GameNetwork/Transport.cpp (the LAN transport, UDP) may have C / 
 The launcher (launcher/, not launcher/tests; lane LAUNCH-1) is checked the same way with its own allow list, finding by finding:
 HTTPClient only in launcher/scripts/net/http_fetch.gd (whose every request passes NetPolicy.check: GitHub's release hosts over HTTPS),
 OS.create_process only where the launcher starts the game (updater.gd) and its own updated executable (self_update.gd), OS.execute
-only for the self-update's atomic replace on Windows (self_update.gd: cmd /c move /y).
+only for the self-update's atomic replace on Windows (self_update.gd: cmd /c move /y) and the system's GLIBC version before Play
+(glibc_check.gd: getconf / ldd, lane GLIBC-1).
 """
 from __future__ import annotations
 
@@ -46,7 +47,9 @@ ALLOWED_LAUNCHER = {"launcher/scripts/net/http_fetch.gd": {"HTTPClient"},
                     # (it answers a one-line hello, and a refused launcher reads that hello with StreamPeerTCP: Sol r4)
                     "launcher/scripts/core/instance_lock.gd": {"TCPServer", "StreamPeerTCP"},
                     # OS.execute: `cmd /c move /y` on Windows, the one atomic replace of the launcher's executable (MoveFileEx)
-                    "launcher/scripts/core/self_update.gd": {"OS.create_process", "OS.execute"}}
+                    "launcher/scripts/core/self_update.gd": {"OS.create_process", "OS.execute"},
+                    # lane GLIBC-1: OS.execute `getconf GNU_LIBC_VERSION` / `ldd --version`, the system's GLIBC before Play (Linux)
+                    "launcher/scripts/core/glibc_check.gd": {"OS.execute"}}
 
 GODOT_NET = re.compile(r"(HTTPRequest|HTTPClient|WebSocketPeer|WebSocketMultiplayerPeer|StreamPeerTCP|StreamPeerTLS|TCPServer|PacketPeerUDP|"
                        r"PacketPeerDTLS|DTLSServer|UDPServer|ENetConnection|ENetMultiplayerPeer|ENetPacketPeer|WebRTC\w*|JavaScriptBridge|"

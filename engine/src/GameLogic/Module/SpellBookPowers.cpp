@@ -18,7 +18,9 @@
 #include "GameLogic/AI/AIPathfind.h"
 #include "GameLogic/AI/AIPathfindHost.h"
 #include "GameLogic/AI/AIWorld.h"
+#include "GameLogic/Economy.h"
 #include "GameLogic/Map/TerrainLogic.h"
+#include "GameLogic/Map/TerrainTrees.h"
 #include "GameLogic/GlobalWeatherSystem.h"
 #include "GameLogic/Object/Object.h"
 #include "GameLogic/ObjectCreationList.h"
@@ -512,15 +514,45 @@ void DevastateSpecialPower::doSpecialPowerAtObject(Object *target, unsigned opti
 
 void DevastateSpecialPower::doSpecialPowerAtLocation(const Coord3D &loc, unsigned options)
 {
-	if (getObject()->getDisabledMask() != 0 || !getObject()->getControllingPlayer())
+	Object *obj = getObject();
+	Player *player = obj->getControllingPlayer(); // RW 0x8CC73E
+	if (obj->getDisabledMask() != 0 || !player)
 	{
 		return;
 	}
 	baseDo(&loc, nullptr, options);
-	++m_unported; // RW 0x8CC753 ..: the trees within Radius fall with FX and pay money, RW 0x7B18B8: S-921
+	// RW 0x8CC75C .. 0x8CC8AC (lane SPELL-3): TerrainLogic + 0x1918 = 0.1 (RW 0xBD83D4) while the loop runs; every closest standing record within Radius
+	// that is harvestable (RW 0x67F52B(loc, Radius, 0, 2)) is toppled away from the location (RW 0x684BAA), gets the FX at its position (RW 0x494615),
+	// gives up all its lumber (RW 0x67D6E1(tree, 99999)); the boxes times ValuePerSupplyBox (Player RW 0x6AA7CE, an int imul, x87 fild with the unsigned
+	// fix-up) above 0 pass the multiplayer money multiplier and the handicap (RW 0x8CC7EF .. 0x8CC82B: Economy::applyIncomeMultipliers) and add
+	// TreeValueMultiplier times the result (SSE) to the total; the record's lumber gone, the next query no longer finds it
+	const DevastateSpecialPowerModuleData *d = m_data;
+	GameLogic &logic = obj->logic();
+	TerrainTrees &trees = logic.trees();
+	trees.setToppleSpeed(0.1f);
+	float total = 0.0f;
+	const int perBox = logic.economy().settings().valuePerSupplyBox;
+	for (TerrainTrees::Record *tree = trees.findClosestTree(loc, d->m_radius, false, 2); tree; tree = trees.findClosestTree(loc, d->m_radius, false, 2))
+	{
+		if (!tree->toppled)
+		{
+			trees.toppleTree(*tree, loc, nullptr);
+		}
+		emitPositionFX(logic, "DevastateSpecialPower", d->m_fx, *obj, tree->position);
+		const int boxes = trees.harvestTree(*tree, 99999);
+		const float amount = SimMath::fstpDword(SimMath::fildU32((std::uint32_t)(boxes * perBox)));
+		if (amount > 0.0f)
+		{
+			const int added = logic.economy().applyIncomeMultipliers(*player, amount);
+			total = SimMath::addf32(SimMath::mulf32(d->m_treeValueMultiplier, SimMath::sseFromInt32(added)), total);
+		}
+	}
+	trees.setToppleSpeed(0.0f); // RW 0x8CC86D
+	// RW 0x8CC87D .. 0x8CC8A7: min(TreeValueTotalCap, total) through _ftol2 is deposited with the player's ScoreKeeper (RW 0x7B18B8(amount, + 0x3DC, 1))
+	const float paid = d->m_treeValueTotalCap > total ? total : d->m_treeValueTotalCap;
+	player->depositMoney(SimMath::ftol2Low32((double)paid), true);
 	// RW 0x8CC8BB .. 0x8CC8DD (lane DECOMP-1; BFME2 decomp attempt 0x004c82e5.cpp, tier B): a FireWeapon the store knows is TheWeaponStore->createAndFireTempWeapon
 	// (weapon, object, target) (RW 0x6CF530)
-	const DevastateSpecialPowerModuleData *d = static_cast<const DevastateSpecialPowerModuleData *>(getModuleData());
 	if (!d->m_fireWeapon.empty() && TheWeaponStore)
 	{
 		if (const WeaponTemplate *wt = TheWeaponStore->findWeaponTemplate(d->m_fireWeapon))
@@ -563,7 +595,7 @@ std::vector<std::string> SpellBookPowers::stopLines()
 		"2 * N per cast for N grid points); not ported (counted per cast): the fire grid burn rate (RW 0x687C4C), CloudBreak's fire put-out (RW 0x68F383) "
 		"and the sunbeams' Lua terror (their panic gameplay), the terrain taint / elven wood areas and decals (RW 0x67F6F0, 0x67D4CE, 0xAD4C10), RW "
 		"0x69954A on the area object, the production speed bonus consumer (RW 0x6AF3C8 is stored only), the defect side effects (RW 0x699368 / 0x6938BD), "
-		"Devastate's trees and money (its FireWeapon fires since lane DECOMP-1)",
+		"Devastate's FireWeapon (lane DECOMP-1) and its trees, FX and money (lane SPELL-3, S-930) run",
 	};
 	for (const std::string &s : GlobalWeatherSystem::stopLines())
 	{
@@ -578,7 +610,11 @@ std::vector<std::string> SpellBookPowers::stopLines()
 				  "single-player pause of RW 0x822CF7, RW 0x8227BB's disabled / hidden sciences are never set (no _disabled_level), the store's command set is "
 				  "the local player's PlayerTemplate PurchaseScienceCommandSetMP (skirmish / multiplayer) or PurchaseScienceCommandSet (RW 0x822AB3 reads "
 				  "it through RW 0x71F933, not traced), and a pending purchase sent at the close (RW 0x940435, ControlBar::processCommandUI of the "
-				  "button) is taken as the player's MSG_PURCHASE_SCIENCE");
+				  "button) is taken as the player's MSG_PURCHASE_SCIENCE, and the store's update runs only in a HUD update that stepped the movie (lane SPELL-3: "
+				  "states sent before the movie stepped after SetLayout were lost, retail's client frame is taken to step the movie at each update)");
 	out.push_back(SpellEffectModules::stopLine());
+	out.push_back(TerrainTrees::stopLine()); // lane SPELL-3: S-930
+	out.push_back("[S-932] passive spell book powers (Scavenger, Fuel the Fires; NONPRESSABLE SPELL_BOOK buttons): no ported path starts them after the purchase "
+				  "(ScavengerSpecialPower's vtable RW 0xC73F20 overrides slots 9 / 10 only; the new-science notice RW 0x6AE1C9 calls slots 7, 8, 15): bought, they do nothing"); // lane SPELL-3
 	return out;
 }

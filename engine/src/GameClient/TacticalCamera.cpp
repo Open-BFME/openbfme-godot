@@ -274,7 +274,18 @@ float TacticalCamera::verticalFov() const
 	// RW 0x533590 Set_View_Plane(hfov, -1): half width = tan(hfov / 2), half height = half width / aspect
 	const ICoord2D s = m_pinhole.size();
 	const double aspect = (double)s.x / (double)s.y;
-	return (float)(2.0 * std::atan(std::tan((double)m_fov * 0.5) / aspect));
+	// lane UI-6: the Widescreen view's Wider keeps the view plane height a 4:3 screen has (half height = tan(hfov / 2) * 3 / 4) beyond 4:3
+	const double kFourThree = 4.0 / 3.0;
+	const double divisor = (m_widescreenWider && aspect > kFourThree) ? kFourThree : aspect;
+	return (float)(2.0 * std::atan(std::tan((double)m_fov * 0.5) / divisor));
+}
+
+float TacticalCamera::viewHorizontalFov() const
+{
+	// lane UI-6: the drawn view's horizontal angle from its vertical one and the aspect (the W3D view plane: half width = half height * aspect)
+	const ICoord2D s = m_pinhole.size();
+	const double aspect = (double)s.x / (double)s.y;
+	return (float)(2.0 * std::atan(std::tan((double)verticalFov() * 0.5) * aspect));
 }
 
 void TacticalCamera::rebuildPinhole()

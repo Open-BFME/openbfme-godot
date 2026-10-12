@@ -206,7 +206,7 @@ struct ListEntryCell
 	int width = 0;        // image cells
 	int height = 0;
 	// RotWK cell + 4 (the cell is 0x1C bytes; RW 0x725D96 writes it): set to 2 for the score screen's values (RW 0x9F0876). Taken as the text's horizontal
-	// alignment, 2 = centred in the column (INFERENCE: the drawing code that reads it was not located, stop S-1063)
+	// alignment: 1 right, 2 centred in the column, read by the cell text draw (lane UI-6: RW 0x4A25E8 .. 0x4A2611, see drawListBoxText)
 	int justification = 0;
 };
 

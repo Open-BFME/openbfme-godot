@@ -924,6 +924,12 @@ Dictionary GameAudio::get_event_info(const String &n) const
 		files.push_back(toGodot(f));
 	}
 	d["files"] = files;
+	Array subsounds; // lane SPELL-3: a Multisound's subsounds (they play under their own names)
+	for (const Subsound &sub : info->subsounds)
+	{
+		subsounds.push_back(toGodot(sub.name));
+	}
+	d["subsounds"] = subsounds;
 	return d;
 }
 

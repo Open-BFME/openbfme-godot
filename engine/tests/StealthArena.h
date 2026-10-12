@@ -13,6 +13,8 @@
 #include "GameLogic/Economy.h"
 #include "GameLogic/EconomySettings.h"
 #include "GameLogic/GameLogic.h"
+#include "GameLogic/Map/TerrainTrees.h"
+#include "GameLogic/System/InvisibilityManager.h"
 #include "GameLogic/Object/Object.h"
 #include "GameLogic/Object/RetailObjectWorld.h"
 
@@ -81,6 +83,20 @@ struct Arena
 		}
 	}
 };
+
+// lane SPELL-3 (review r1): a map tree beside a test unit. The stealth tree query reads the logic's tree list (TerrainTrees, RW 0x67F52B), so the tree goes
+// there (a retail optimized tree template on a grid covering the arena) and, as the map loop does, into the invisibility manager's hashed position list
+inline void addTerrainTree(GameLogic &logic, const Coord3D &pos)
+{
+	if (!logic.trees().hasExtent())
+	{
+		logic.trees().setExtent(-1000.0f, -1000.0f, 10000.0f, 10000.0f);
+	}
+	const ThingTemplate *t = hudtest::shared().world->things().findTemplate("GenericInteractableOptimizedTree");
+	REQUIRE(t != nullptr);
+	REQUIRE(logic.trees().addTree(*t, pos, (std::uint32_t)logic.trees().records().size() + 1u));
+	logic.invisibility().addTree(pos);
+}
 
 inline std::vector<Object *> membersOf(Object &horde)
 {

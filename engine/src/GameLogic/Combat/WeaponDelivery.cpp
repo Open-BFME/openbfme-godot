@@ -29,6 +29,7 @@
 #include "GameLogic/SimMath.h"
 #include "GameLogic/Weapon.h"
 #include "GameLogic/WeaponNugget.h"
+#include "GameLogic/ObjectCreationList.h"
 #include "GameLogic/WeaponStores.h"
 #include "GameLogic/System/DOTManager.h"
 #include "GameLogic/AttributeModifiers.h"
@@ -1114,6 +1115,17 @@ unsigned DeliverNuggets(GameLogic &logic, ObjectID sourceId, const WeaponTemplat
 			AttributeModifier::deliver(logic, static_cast<const AttributeModifierNugget &>(n), weapon, sourceId, victim, at);
 			continue;
 		}
+		if (n.kind() == NUGGET_WEAPON_OCL)
+		{
+			// lane FACT-A: the warhead path dispatches it as fireWeaponTemplate does (RW 0x90F858 / 0x90F887, after the upgrade test)
+			const WeaponOCLNugget &on = static_cast<const WeaponOCLNugget &>(n);
+			const ObjectCreationList *ocl = TheObjectCreationListStore && !on.m_weaponOCLName.empty() ? TheObjectCreationListStore->findObjectCreationList(on.m_weaponOCLName) : nullptr;
+			if (ocl && upgradeTest(n, source) && (victim || pos))
+			{
+				ocl->create(logic, source, victim ? *victim->getPosition() : *pos);
+			}
+			continue;
+		}
 		if (n.kind() != NUGGET_DAMAGE && n.kind() != NUGGET_DOT) // DOTNugget: DamageNugget's vtable but slot 14 (lane DECOMP-1)
 		{
 			if (unported)
@@ -1339,6 +1351,24 @@ void ObjectWeaponDelivery::fireWeaponTemplate(const WeaponBonus &bonus, int curB
 		case NUGGET_ATTRIBUTE_MODIFIER:
 			AttributeModifier::deliver(logic, static_cast<const AttributeModifierNugget &>(n), t, m_source->getID(), victim, pos); // lane DECOMP-1
 			break;
+		case NUGGET_WEAPON_OCL:
+		{
+			// lane FACT-A: WeaponOCLNugget (vtable RW 0xC7B410; the list resolved at postProcessLoad RW 0x90F828 into + 0x148): slot 5 (RW 0x90F858) runs
+			// ObjectCreationList::create(the source, the victim) (RW 0x5F0126), slot 6 (RW 0x90F887) create(the source, the position) (RW 0x5F00CA); no list:
+			// nothing. INFERENCE: the victim form is made at the victim's position (the port's create takes a position: S-530). Arwen's Flood, the Elven
+			// floodgate
+			if (!upgradeTest(n, m_source))
+			{
+				break;
+			}
+			const WeaponOCLNugget &on = static_cast<const WeaponOCLNugget &>(n);
+			const ObjectCreationList *ocl = TheObjectCreationListStore && !on.m_weaponOCLName.empty() ? TheObjectCreationListStore->findObjectCreationList(on.m_weaponOCLName) : nullptr;
+			if (ocl)
+			{
+				ocl->create(logic, m_source, victim ? *victim->getPosition() : pos);
+			}
+			break;
+		}
 		case NUGGET_HORDE_ATTACK:
 		{
 			// lane ARCHER-1: the nugget's slots 5 / 6 (RW 0x911A58 at the victim, RW 0x911AC9 at the position): the source's contain (Object + 0x258) gives its horde

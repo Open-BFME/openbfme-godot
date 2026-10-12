@@ -130,7 +130,7 @@ public:
 	CastleBehavior(Thing *thing, const CastleBehaviorModuleData *data);
 	UpdateSleepTime update() override;
 	CreateModuleInterface *getCreate() override { return this; }
-	void onCreate() override {}
+	void onCreate() override; // RW 0x79C761 (lane SPELL-3): a Summoned castle starts its timed unpack
 	void onBuildComplete() override; // RW 0x798238
 	// lane SCRIPT-2: RW 0x798F2B (module slot 0x24): the castle's new owner takes the keep (FoundationAIUpdate RW 0x858BCB: the occupant) and every object of the
 	// lists + 0x50, + 0x5C, + 0x68, + 0x74 (RW 0x798EAD each): setTeam(the new owner's default team). The skirmish AI's base notifications of both players
@@ -152,7 +152,7 @@ public:
 	bool keepGone() const { return m_keepGone; }
 	float timer() const { return m_timer; }
 	// RW 0x79BE6A: makes the layout's objects (see the file comment); false + the reason in lastError()
-	bool unpack();
+	bool unpack(bool instant = true); // lane SPELL-3: `instant` false for the timed unpack (RW 0x79BE6A(0): the members start JUST_BUILT / NO_ATTACK)
 	const std::string &lastError() const { return m_lastError; }
 	// the base name of the owner's faction (RW 0x798F70); empty when the data has none for it
 	std::string baseNameFor(const Player &owner) const;
@@ -165,7 +165,7 @@ public:
 
 private:
 	// RW 0x7987EE
-	Object *createOwnedObject(const struct CastleTemplateEntry &entry, Player &owner);
+	Object *createOwnedObject(const struct CastleTemplateEntry &entry, Player &owner, bool instant);
 	// RW 0x79C265
 	bool tryInstantUnpack();
 	// RW 0x79A5EC / 0x79A518: a PreBuiltList entry
@@ -185,6 +185,8 @@ private:
 	void scanForCapture();
 	// RW 0x79A017
 	void setMembersStatus(int status, bool on);
+	// RW 0x799F0F (lane SPELL-3): clear (-1: none) and set (-1: none) a model condition on the keep and the members
+	void setMembersModelCondition(int clear, int set);
 	// RW 0x79A237
 	void releaseCrew(bool kill);
 	// the occupant of a foundation (the castle's: the keep; a plot's: its member's occupant) that still exists, or null

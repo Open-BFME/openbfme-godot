@@ -21,7 +21,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[2]
 LAUNCHER = REPO / "launcher"
 SCREENS = ("main", "news", "multiplayer", "mods", "games", "games-downloading", "settings", "display", "about", "update", "downloading",
-           "error")
+           "error", "glibc")
 SIZES = ((1280, 720), (1280, 800))
 
 

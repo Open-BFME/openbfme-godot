@@ -57,6 +57,7 @@ private:
 	Ref<Shader> m_grayShader;
 	Ref<ShaderMaterial> m_grayMaterial;
 	unsigned m_helpDraws = 0, m_radialDraws = 0;
+	unsigned m_helpTextOps = 0; ///< lane BUGS-1: the text lines the last help draw drew (0: an empty box)
 };
 
 } // namespace godot

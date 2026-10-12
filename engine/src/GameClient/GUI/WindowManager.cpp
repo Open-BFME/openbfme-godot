@@ -208,7 +208,7 @@ void WindowManager::update(int elapsedMs)
 		elapsed = 34;
 	}
 	m_inAptUpdate = true;
-	m_apt->update(elapsed);
+	m_lastAptSteps = m_apt->update(elapsed);
 	m_inAptUpdate = false;
 	runComponentInits();
 	if (m_gadgetLayer)

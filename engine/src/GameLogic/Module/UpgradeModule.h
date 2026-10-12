@@ -67,7 +67,7 @@ public:
 	virtual ~UpgradeMux() = default;
 	bool isAlreadyUpgraded() const { return m_upgradeExecuted; }                     // slot 0
 	bool attemptUpgrade(const UpgradeMaskType &mask);                               // slot 1
-	bool wouldUpgrade(const UpgradeMaskType &mask) const;                           // slot 2
+	virtual bool wouldUpgrade(const UpgradeMaskType &mask) const;                   // slot 2 (lane FACT-A: virtual, ReplaceSelfUpgrade's RW 0x8BB23F overrides it)
 	bool resetUpgrade(const UpgradeMaskType &mask);                                 // slot 3
 	void forceRefreshUpgrade();                                                     // slot 5
 	virtual void postUpgradeCheck() {}                                              // slot 6

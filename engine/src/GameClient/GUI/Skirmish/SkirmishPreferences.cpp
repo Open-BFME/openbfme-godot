@@ -244,12 +244,53 @@ bool SkirmishPreferences::remove(const std::u16string &name)
 	{
 		return false;
 	}
+	// lane UI-6: BFME2 0x43C2EB erases the profile's entries of both modes (RW 0x8220A3: every key that starts with ":<mode>:<quoted name>:")
+	for (int mode = 0; mode < 2; ++mode)
+	{
+		const std::string prefix = profileKey(mode, unicodeToQuotedPrintable(name), std::string());
+		std::vector<std::string> doomed;
+		for (const auto &kv : m_file.values())
+		{
+			if (kv.first.compare(0, prefix.size(), prefix) == 0)
+			{
+				doomed.push_back(kv.first);
+			}
+		}
+		for (const std::string &k : doomed)
+		{
+			m_file.erase(k);
+		}
+	}
 	if (current() == name)
 	{
 		m_currentUserName = m_names.empty() ? std::string() : unicodeToQuotedPrintable(m_names.front());
 	}
 	write();
 	return true;
+}
+
+std::string SkirmishPreferences::profileKey(int mode, const std::string &quotedName, const std::string &name)
+{
+	return ":" + std::to_string(mode) + ":" + quotedName + ":" + name; // RW 0x821AB4
+}
+
+std::string SkirmishPreferences::profileValue(int mode, const std::string &name) const
+{
+	// RW 0x821B89 (the current name's key), then the preferences' getAsciiString ("" when absent)
+	if (m_currentUserName.empty())
+	{
+		return std::string();
+	}
+	const std::string key = profileKey(mode, m_currentUserName, name);
+	return m_file.has(key) ? m_file.get(key) : std::string();
+}
+
+void SkirmishPreferences::setProfileValue(int mode, const std::string &name, const std::string &value)
+{
+	if (!m_currentUserName.empty())
+	{
+		m_file.set(profileKey(mode, m_currentUserName, name), value); // RW 0x821E55 / 0x821D55: setAsciiString (written by flush)
+	}
 }
 
 bool SkirmishPreferences::setCurrent(const std::u16string &name)

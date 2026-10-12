@@ -51,7 +51,8 @@ enum Seen : unsigned
 	SEEN_OPMAX = 1u << 21,
 	SEEN_OPCYCLE = 1u << 22,
 	SEEN_REPULSED = 1u << 23, // lane MODULES-3: AIData RepulsedDistance
-	SEEN_BUILDERMOVE = 1u << 24 // lane BUILD-3: GameData BuilderMoveFromNewStructureDistance
+	SEEN_BUILDERMOVE = 1u << 24, // lane BUILD-3: GameData BuilderMoveFromNewStructureDistance
+	SEEN_SELL = 1u << 25 // lane FACT-A: GameData SellPercentage
 };
 
 struct BlockState
@@ -154,6 +155,8 @@ const FieldParse kGameDataFields[] = {
 	{ "MaxLineBuildObjects", parseNoting<INI::parseInt>, SEEN_DATA(SEEN_LINEBUILD), (int)offsetof(BlockState, values.maxLineBuildObjects) },
 	// lane BUILD-3: BuilderMoveFromNewStructureDistance (row RW 0xC010D0, parseReal, GlobalData + 0x11E4): the walk of a porter out of the structure it built (RW 0x88D6AE)
 	{ "BuilderMoveFromNewStructureDistance", parseNoting<INI::parseReal>, SEEN_DATA(SEEN_BUILDERMOVE), (int)offsetof(BlockState, values.builderMoveFromNewStructureDistance) },
+	// lane FACT-A: SellPercentage (row RW 0xC00690, parsePercentToReal RW 0x42EEFA, GlobalData + 0xB94): the share of the price a sold structure pays back (RW 0x794729)
+	{ "SellPercentage", parseNoting<INI::parsePercentToReal>, SEEN_DATA(SEEN_SELL), (int)offsetof(BlockState, values.sellPercentage) },
 	// lane COMBAT-2: Gravity (RW GlobalData + 0xC4, row RW 0xBFF9C0, parseAccelerationReal RW 0x73A4DC: value * k * k per frame^2) and DefaultStructureRubbleHeight (RW + 0xAE4,
 	// row RW 0xC004E0, parseReal): the structure collapse (StructureCollapseUpdate) and the rubble state of a structure body read them
 	{ "Gravity", parseNoting<INI::parseAccelerationReal>, SEEN_DATA(SEEN_GRAVITY), (int)offsetof(BlockState, values.gravity) },
@@ -372,6 +375,7 @@ bool finish(Load &l, unsigned blockBit, const char *blockName, const std::vector
 		out.buildRulesLoaded = true;
 	}
 	out.builderMoveLoaded = (l.state().seen & SEEN_BUILDERMOVE) != 0; // lane BUILD-3
+	out.sellPercentageLoaded = (l.state().seen & SEEN_SELL) != 0; // lane FACT-A
 	if ((l.state().seen & (SEEN_VSTRUCT | SEEN_VUNIT)) == (SEEN_VSTRUCT | SEEN_VUNIT))
 	{
 		out.victoryRulesLoaded = true;
@@ -469,6 +473,8 @@ void GameLogicSettings::crc(StateHasher &h) const
 	h.addI32(maxLineBuildObjects);
 	h.addBool(builderMoveLoaded);
 	h.addFloat(builderMoveFromNewStructureDistance);
+	h.addBool(sellPercentageLoaded); // lane FACT-A
+	h.addFloat(sellPercentage);
 	h.addBool(structureRulesLoaded);
 	h.addFloat(gravity);
 	h.addFloat(defaultStructureRubbleHeight);

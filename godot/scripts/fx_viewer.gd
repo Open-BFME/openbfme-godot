@@ -96,7 +96,7 @@ func _ready() -> void:
 		_shots = SHOTS
 	_build_stage()
 	if not ClassDB.class_exists("FXPlayer"):
-		_fail("openbfme extension is not loaded; run build.bat")
+		_fail("openbfme extension is not loaded; " + Release.extension_hint())
 		return
 	_fs = ClassDB.instantiate("RetailFileSystem")
 	var mount: Dictionary = _fs.mount_retail()

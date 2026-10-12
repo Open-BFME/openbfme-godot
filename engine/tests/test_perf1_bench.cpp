@@ -38,6 +38,7 @@
 
 #include <chrono>
 #include <cstdint>
+#include <stdexcept>
 #include <cstdio>
 #include <string>
 #include <vector>
@@ -441,7 +442,7 @@ TEST_CASE("perf1: the skirmish AI's unit name keys are created when the ArmyDefi
 	keys.init();
 	SkirmishAIStore store(keys);
 	const NameKeyType next = keys.nextId();
-	CHECK(store.keyOf("PerfOneProbeUnit") == NAMEKEY_INVALID); // a game never creates a key
+	CHECK_THROWS_AS(store.keyOf("PerfOneProbeUnit"), std::logic_error); // a game never creates a key (lane BUGS-1: a missing key is an error)
 	CHECK(keys.findKey("PerfOneProbeUnit") == NAMEKEY_INVALID);
 	CHECK(keys.nextId() == next);
 	const NameKeyType made = keys.nameToKey("PerfOneProbeUnit");
