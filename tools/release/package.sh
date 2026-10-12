@@ -283,7 +283,7 @@ if [ $LAUNCHER = 1 ]; then
       windows) ARCHIVES+=("openbfme-launcher-$VERSION-windows-x64.zip") ;;
       macos) ARCHIVES+=("openbfme-launcher-$VERSION-macos-arm64.zip") ;;
     esac
-    echo "PACKAGE $OUT/${ARCHIVES[-1]} ($(du -h "$OUT/${ARCHIVES[-1]}" | cut -f1))"
+    echo "PACKAGE $OUT/${ARCHIVES[${#ARCHIVES[@]}-1]} ($(du -h "$OUT/${ARCHIVES[${#ARCHIVES[@]}-1]}" | cut -f1))"
   done
 fi
 if [ -n "$MACOS_DIR" ]; then

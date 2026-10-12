@@ -71,6 +71,12 @@ fi
 cp -r "$PKG" "$WORK/smoke"
 # the editor binary in the packaged executable's place loads the pack and the extension next to it (on macOS: of the bundle)
 cp "$(command -v "$GODOT_BIN" | xargs readlink -f)" "$WORK/smoke/$EXE"
+if [ "$PLATFORM" = macos ]; then
+  # the editor binary's own signature names Godot.app's Info.plist: in our bundle macOS kills it (exit 137) until the bundle is signed
+  # again, ad hoc like package.sh does, with the extension's entitlement
+  codesign --force --sign - --options runtime --entitlements "$REPO/tools/release/macos_entitlements.plist" "$WORK/smoke/OpenBFME.app" \
+    > "$LOGS/smoke-codesign.log" 2>&1 || { echo "RESULT smoke: FAIL codesign of the smoke bundle"; cat "$LOGS/smoke-codesign.log"; ok=0; }
+fi
 (cd "$WORK/smoke" && with_timeout 900 "./$EXE" --headless --script res://tests/smoke_test.gd) > "$LOGS/smoke.log" 2>&1; code=$?
 if [ $code = 0 ] && grep -q "^SMOKE PASS" "$LOGS/smoke.log"; then
   echo "RESULT smoke: PASS ($(grep -c '' "$LOGS/smoke.log") lines of output)"
