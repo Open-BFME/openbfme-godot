@@ -38,9 +38,10 @@ files.
   its first start. It is on the launcher's **Game files** page; to hide it,
   turn off *Offer to download the games* in Settings.
 - **Windows 10 or 11** (64-bit) with a graphics card that supports Vulkan or
-  Direct3D 12, or **64-bit Linux** with Vulkan graphics (Mesa or the
-  proprietary drivers). On Linux the game folders can be inside a Wine or
-  Proton prefix.
+  Direct3D 12, **64-bit Linux** with Vulkan graphics (Mesa or the
+  proprietary drivers), or a **Mac with Apple Silicon** (M1 or later, macOS 11
+  or newer; Intel Macs are not supported). On Linux the game folders can be
+  inside a Wine or Proton prefix, on a Mac inside a CrossOver bottle.
 
 ## Installing with the launcher
 
@@ -50,20 +51,27 @@ launcher.
 
 1. Download the launcher for your system from
    [GitHub Releases](https://github.com/Open-BFME/openbfme-godot/releases):
-   `openbfme-launcher-<version>-windows-x64.zip` or
-   `openbfme-launcher-<version>-linux-x64.tar.gz`.
+   `openbfme-launcher-<version>-windows-x64.zip`,
+   `openbfme-launcher-<version>-linux-x64.tar.gz` or
+   `openbfme-launcher-<version>-macos-arm64.zip`.
    To check the download, compare its SHA-256 with the release's
    `SHA256SUMS-<version>.txt` (Linux: `sha256sum -c --ignore-missing
+   SHA256SUMS-<version>.txt`; macOS: `shasum -a 256 -c --ignore-missing
    SHA256SUMS-<version>.txt`; Windows PowerShell: `Get-FileHash <file>`).
    The launcher checks everything it downloads after that by itself.
-2. Unpack it into a folder you can write to (not `Program Files`: the
-   launcher updates itself in its own folder). On Linux use `tar -xzf`, which
-   keeps the launcher executable; if your archive tool lost that, run
-   `chmod +x OpenBFMELauncher.x86_64`.
-3. Start it: `OpenBFMELauncher.exe`, or `./OpenBFMELauncher.x86_64`. On
-   Windows, SmartScreen may say *Windows protected your PC* because the
-   executables are not code-signed yet: choose **More info**, then **Run
-   anyway**. Windows asks this once per new launcher file.
+2. Unpack it into a folder you can write to (not `Program Files` or
+   `/Applications`: the launcher updates itself in its own folder). On Linux
+   use `tar -xzf`, which keeps the launcher executable; if your archive tool
+   lost that, run `chmod +x OpenBFMELauncher.x86_64`.
+3. Start it: `OpenBFMELauncher.exe`, `./OpenBFMELauncher.x86_64`, or
+   `OpenBFMELauncher.app` on a Mac. On Windows, SmartScreen may say *Windows
+   protected your PC* because the executables are not code-signed yet: choose
+   **More info**, then **Run anyway**. Windows asks this once per new launcher
+   file. On a Mac the first open is blocked ("Apple could not verify ...")
+   because the app is not notarized: close that message, open System Settings
+   > Privacy & Security, scroll down to the note about the launcher and press
+   **Open Anyway**, then open it again. macOS asks this once per downloaded
+   archive; what the launcher downloads itself needs no such step.
 4. The launcher starts on the channel of its own version: an alpha launcher
    such as v0.4.0-alpha.1 (or an earlier preview such as v0.3.0-preview.4) on
    **Alpha** (the test builds; it was called Preview before), a release on
@@ -99,15 +107,17 @@ The launcher keeps its files here:
 |---|---|
 | Windows | `%APPDATA%\OpenBFMELauncher` |
 | Linux | `~/.local/share/OpenBFMELauncher` |
+| macOS | `~/Library/Application Support/OpenBFMELauncher` |
 
 Inside it, `versions/` holds the installed game versions (the two newest are
 kept, plus one you picked), and `launcher.log` records what the launcher did.
 To remove everything, delete the launcher's folder and this data folder.
 
 You can also download a game package (`openbfme-<version>-windows-x64.zip` /
-`-linux-x64.tar.gz`) directly, unpack it and run `OpenBFME.exe` /
-`./OpenBFME.x86_64`. The launcher is the recommended way: it checks every file
-for you.
+`-linux-x64.tar.gz` / `-macos-arm64.zip`) directly, unpack it and run
+`OpenBFME.exe` / `./OpenBFME.x86_64` / `OpenBFME.app` (on a Mac with the same
+**Open Anyway** step as the launcher). The launcher is the recommended way: it
+checks every file for you.
 
 ## The first start
 
@@ -170,6 +180,7 @@ line.
 |---|---|---|
 | Windows | `%APPDATA%\Godot\app_userdata\OpenBFME` | `...\logs\` |
 | Linux | `~/.local/share/godot/app_userdata/OpenBFME` | `.../logs/` |
+| macOS | `~/Library/Application Support/Godot/app_userdata/OpenBFME` | `.../logs/` |
 
 The same data folder holds `install-paths.cfg`, `Options.ini` and your
 replays.
@@ -183,7 +194,9 @@ You don't have to find the folder by hand:
 - after a crash, the next start tells you which log belongs to the crashed
   run;
 - from the command line, `OpenBFME.exe --open-logs` (or
-  `./OpenBFME.x86_64 --open-logs`) opens the folder without starting the game.
+  `./OpenBFME.x86_64 --open-logs`, or on a Mac
+  `OpenBFME.app/Contents/MacOS/OpenBFME --open-logs`) opens the folder without
+  starting the game.
 
 On Windows, `OpenBFME.console.exe` shows a console window. Its text is **not**
 filtered and can show your Windows user name: always send the log file, not a
@@ -463,8 +476,10 @@ cannot continue from (OpenBFME stops rather than guessing). The message
 names the error and the log; please send both.
 
 **The launcher doesn't start after an update.** It keeps the previous
-version as `OpenBFMELauncher.old` (Windows: `OpenBFMELauncher.exe.old`) until
-the new one has started once. Rename that file back to the launcher's name.
+version as `OpenBFMELauncher.old` (Windows: `OpenBFMELauncher.exe.old`; macOS:
+`OpenBFME Launcher.pck.old` inside `OpenBFMELauncher.app/Contents/Resources`)
+until the new one has started once. Rename that file back to the launcher's
+name.
 
 **The launcher can't update.** It shows why (offline, GitHub's hourly
 limit, a failed check). Play still starts the newest installed version.

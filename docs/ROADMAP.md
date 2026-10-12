@@ -330,6 +330,14 @@ hard-coded retail content), and reviewers check it.
   (`tools/release/build_windows.sh`, `docs/WINDOWS.md`); its suite and the
   launcher tests run natively on a Windows machine. The MSVC `build.bat` path
   is still to be confirmed (S-1541).
+- **macOS, Apple Silicon (MAC-1).** The game and the launcher build, package
+  and test natively on a Mac (`docs/MACOS.md`: the arm64 template, ad-hoc
+  signing, `package.sh --platforms macos`, `manifest-macos-arm64.json`); the
+  suite, the smoke test, the exported bundle and the launcher's self-update
+  tests ran on an M4. Not yet: a cross-OS lockstep game Mac vs PC, a
+  Developer ID and notarization (S-3710, S-3712), and the macOS packages in
+  the automatic releases, which take a Mac's archives with
+  `package.sh --macos-dir`.
 - **Performance.** Keep the current budget: 1,000 animated soldiers at more
   than 300 fps on the Deck GPU, the largest map with all objects at more than
   200 fps; add simulation budgets (logic frame under 10 ms with 2,000 units).

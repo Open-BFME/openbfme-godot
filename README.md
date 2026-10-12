@@ -7,7 +7,7 @@
 [![Latest alpha build](https://img.shields.io/github/v/release/Open-BFME/openbfme-godot?include_prereleases&label=alpha)](https://github.com/Open-BFME/openbfme-godot/releases)
 [![Licence: GPL-3.0](https://img.shields.io/github/license/Open-BFME/openbfme-godot)](LICENSE)
 [![Godot 4.7](https://img.shields.io/badge/Godot-4.7-478cbf?logo=godotengine&logoColor=white)](https://godotengine.org)
-[![Platforms](https://img.shields.io/badge/platforms-Windows%20%7C%20Linux%20%7C%20macOS%20(source)-555)](#play-it)
+[![Platforms](https://img.shields.io/badge/platforms-Windows%20%7C%20Linux%20%7C%20macOS%20(Apple%20Silicon)-555)](#play-it)
 
 <a href="https://github.com/Open-BFME/openbfme-godot/releases"><img alt="Download the alpha build launcher (Windows / Linux)" src="https://img.shields.io/badge/Download-the%20alpha%20build%20launcher%20for%20Windows%20%2F%20Linux-2ea44f?style=for-the-badge&logo=github"></a>
 
@@ -49,27 +49,31 @@ OpenBFME is unofficial. It is not made or endorsed by EA.
 
 **You need** **The Rise of the Witch-king 2.01** and **The Battle for
 Middle-earth II 1.06**, both in English, and Windows 10/11 or 64-bit Linux
-with Vulkan graphics (or Direct3D 12 on Windows). On an Apple Silicon Mac the
-game runs natively on Metal, but there is no packaged build or launcher yet:
-see [Build from source](#build-from-source).
+with Vulkan graphics (or Direct3D 12 on Windows), or a Mac with Apple Silicon
+(M1 or later, macOS 11 or newer; the game runs natively on Metal, Intel Macs
+are not supported).
 
 1. **Download the launcher** from
    [GitHub Releases](https://github.com/Open-BFME/openbfme-godot/releases):
-   `openbfme-launcher-<version>-windows-x64.zip` or
-   `openbfme-launcher-<version>-linux-x64.tar.gz`. Unpack it into a folder you
+   `openbfme-launcher-<version>-windows-x64.zip`,
+   `openbfme-launcher-<version>-linux-x64.tar.gz` or
+   `openbfme-launcher-<version>-macos-arm64.zip`. Unpack it into a folder you
    can write to.
-2. **Start the launcher** (`OpenBFMELauncher.exe`, or
-   `./OpenBFMELauncher.x86_64` on Linux). On Windows, SmartScreen may say
-   *Windows protected your PC*, because the files are not code-signed yet:
-   choose *More info*, then *Run anyway*. The launcher downloads the newest
-   game build of its channel (an alpha or preview launcher starts on *Alpha*),
-   checks its signature and every file, installs it, and keeps itself up to
-   date.
+2. **Start the launcher** (`OpenBFMELauncher.exe`,
+   `./OpenBFMELauncher.x86_64` on Linux, `OpenBFMELauncher.app` on a Mac). On
+   Windows, SmartScreen may say *Windows protected your PC*, because the files
+   are not code-signed yet: choose *More info*, then *Run anyway*. On a Mac the
+   first open is blocked because the app is not notarized: allow it once in
+   System Settings > Privacy & Security (*Open Anyway*), see the
+   [player guide](docs/PLAYING.md#installing-with-the-launcher). The launcher
+   downloads the newest game build of its channel (an alpha or preview
+   launcher starts on *Alpha*), checks its signature and every file, installs
+   it, and keeps itself up to date.
 3. **Press Play.** On the first start the game looks for your RotWK and BFME2
-   folders (the registry entries the original installers write, and on Linux
-   also Wine, Proton, Lutris, Heroic and Bottles prefixes). Confirm them or
-   choose them with *Browse...*. It checks every game file once (this can
-   take a minute) and remembers the folders.
+   folders (the registry entries the original installers write, on Linux also
+   Wine, Proton, Lutris, Heroic and Bottles prefixes, on a Mac CrossOver
+   bottles). Confirm them or choose them with *Browse...*. It checks every
+   game file once (this can take a minute) and remembers the folders.
 
 **No games installed?** The launcher shows *Download the games*: files from the
 All In One BFME Launcher service (BFME Foundation, Patch 2.22 team), about
@@ -126,7 +130,7 @@ the original are still missing.
 not reinvent it. Where the evidence runs out and the team has to make an
 educated guess, that guess is not hidden: it is recorded as an *acceptance
 stop* in [docs/STOPS.md](docs/STOPS.md), reported by the game at runtime and
-pinned by a test. There are **634 open stops** today. Some are big
+pinned by a test. There are **637 open stops** today. Some are big
 (save/load), most are small details waiting for better evidence. The plan to
 get to a 1:1 game is in [docs/ROADMAP.md](docs/ROADMAP.md).
 
@@ -344,35 +348,26 @@ can also be cross-compiled from Linux with `tools/release/build_windows.sh`;
 see [docs/WINDOWS.md](docs/WINDOWS.md). Packaging and releases are described
 in [docs/RELEASE.md](docs/RELEASE.md).
 
-**macOS, Apple Silicon** (Xcode command line tools; `brew install cmake ninja`;
-the Godot 4.7 app in `/Applications`). The same CMake build makes
-`godot/bin/openbfme.macos.template_debug.arm64.dylib`, which
-`godot/openbfme.gdextension` lists for macOS:
+**macOS, Apple Silicon** (Xcode command line tools; `brew install cmake ninja
+lame mpg123`; the Godot 4.7 app in `/Applications` with its export templates).
+The same CMake build makes `godot/bin/openbfme.macos.template_debug.arm64.dylib`,
+which `godot/openbfme.gdextension` lists for macOS, and the unit tests:
 
 ```sh
 GODOT=/Applications/Godot.app/Contents/MacOS/Godot
 cmake -S engine -B engine/build -G Ninja -DCMAKE_BUILD_TYPE=Release
-cmake --build engine/build --target openbfme                  # extension -> godot/bin/
+cmake --build engine/build --target openbfme openbfme_tests   # extension -> godot/bin/
 export ROTWK_INSTALL=/path/to/RotWK BFME2_INSTALL=/path/to/BFME2
+engine/build/openbfme_tests                                   # unit tests
 $GODOT --headless --path godot --import                       # once: registers the extension (.godot/extension_list.cfg)
 $GODOT --headless --path godot --script res://tests/smoke_test.gd
 $GODOT --path godot                                           # start the game (Metal)
 ```
 
-The `macOS arm64` export preset makes a self-contained, ad-hoc signed
-`OpenBFME.app` (Godot's official macOS template is a universal binary; the
-extension in it is arm64, so the app runs on Apple Silicon only):
-
-```sh
-$GODOT --headless --path godot --export-debug "macOS arm64" /path/to/OpenBFME.app
-```
-
-`openbfme_tests` needs the MP3 test fixtures, which `tools/audio/gen_mp3_fixtures.py`
-encodes with `lame`; the committed golden file was made with LAME 3.100 and
-Homebrew ships LAME 4.0, whose streams differ, so that target refuses to build
-until the golden file is regenerated and reviewed. The game and the smoke test
-do not depend on it. The release packages (`tools/release/package.sh`) and the
-launcher are still Windows and Linux only.
+`tools/release/package.sh --platforms macos --out <dir>` makes the arm64-only,
+ad-hoc signed `OpenBFME.app` package and the macOS launcher; the build,
+the tests, the package and what is not yet measured on a Mac are in
+[docs/MACOS.md](docs/MACOS.md).
 
 Instead of the environment variables, the install folders can live in
 `user://install-paths.cfg` as `KEY=VALUE` lines (the game's first-run screen

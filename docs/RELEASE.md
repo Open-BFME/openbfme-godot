@@ -160,6 +160,16 @@ Not reproduced by `package.sh`, recorded instead:
 5. Keep `known_issues.json` current: a stop that is resolved and removed from
    `STOPS.md` makes the README generator fail until the item is updated.
 
+**macOS (lane MAC-1).** The macOS archives are made on a Mac: `tools/release/package.sh
+--platforms macos --out <dir>` there exports `OpenBFME.app` through the arm64 template
+(`tools/release/macos_template.py`), signs it ad hoc with `codesign` (the same bytes every
+time), builds `OpenBFMELauncher.app` and writes `openbfme-<v>-macos-arm64.zip`,
+`openbfme-launcher-<v>-macos-arm64.zip` and that run's checksum file; `test_export.sh
+<the game zip>` runs the packaged bundle. A release's package folder on the Linux builder
+takes them with `package.sh ... --macos-dir <the Mac's out folder>`: the archives are
+audited again, listed in the one `SHA256SUMS-<v>.txt`, reused unchanged by `--verify`, and
+`make_manifest.py` then also writes `manifest-macos-arm64.json` (below). `docs/MACOS.md`.
+
 Publishing (Discord, GitHub releases) needs the owner's OK, except pre-releases: the owner gave a standing approval
 (2026-10-09) to publish `v<major>.<minor>.<patch>-preview.<n>` releases automatically, without asking each time (see "Automatic
 preview releases" below), and on 2026-10-10 renamed the next builds alpha builds (`v0.4.0-alpha.<n>`, "The alpha builds" below), which
@@ -168,14 +178,15 @@ the automatic releases now publish. A stable (non-pre-release) release still nee
 ## The launcher (LAUNCH-1)
 
 Testers download the **OpenBFME Launcher** first (`openbfme-launcher-<version>-linux-x64.tar.gz` /
-`-windows-x64.zip`, made by `package.sh` next to the game packages). It checks the project's GitHub
+`-windows-x64.zip` / `-macos-arm64.zip`, made by `package.sh` next to the game packages). It checks the project's GitHub
 Releases, installs a new game build after verifying it, and starts the game. It is a separate small Godot
 project, `launcher/`: no GDExtension, no game files, its own process. A broken game build cannot break
 updating: the launcher never loads game code, it only starts `OpenBFME.x86_64` / `OpenBFME.exe` of a
 verified version folder, with no arguments. The game's first-run screen still finds the game files.
 
-**Where things live.** Data folder: `~/.local/share/OpenBFMELauncher` (Linux) and
-`%APPDATA%\OpenBFMELauncher` (Windows) (`launcher/project.godot`). Inside it:
+**Where things live.** Data folder: `~/.local/share/OpenBFMELauncher` (Linux),
+`%APPDATA%\OpenBFMELauncher` (Windows) and `~/Library/Application Support/OpenBFMELauncher`
+(macOS) (`launcher/project.godot`). Inside it:
 - `versions/<version>/game/` holds the unpacked game package. Next to `game/` are the signed
   `manifest.json` and `manifest.json.sig` it was installed from. That manifest lists every file of the
   package with its size and SHA-256.
@@ -193,6 +204,11 @@ The repository is a build-time setting (`package.sh --repo`, default `Open-BFME/
 - `manifest.json` (`tools/release/make_manifest.py`). It holds format 2, the product, the repo, the
   version (the tag), the channel (`preview` exactly when the tag is `-alpha.<n>` or `-preview.<n>`), the date, the
   commit, and per kind (`game`, `launcher`) and platform (`linux-x64`, `windows-x64`) the asset name,
+  (Lane MAC-1: `manifest.json` keeps exactly these two platforms, because every launcher published
+  before macOS existed refuses a manifest with any other key; a release that carries the macOS
+  archives also carries `manifest-macos-arm64.json` and its `.sig`, the same format with
+  `macos-arm64` as its one platform, which the macOS launcher reads. `release_assets.py` and
+  `publish_release.sh` count those four assets when the file is in the package folder.)
   size and SHA-256.
   - Round 3 adds `files`: every file inside the package, with its size and SHA-256. The signature
     covers it, so the launcher checks unpacked files against signed data whenever it is about to run
