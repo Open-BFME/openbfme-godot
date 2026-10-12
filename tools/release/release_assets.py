@@ -26,22 +26,28 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
-from make_manifest import KINDS, PLATFORMS, asset_name  # noqa: E402
+from make_manifest import KINDS, MANIFESTS, PLATFORMS, asset_name  # noqa: E402
 
 
 def expected(d: Path, version: str) -> dict[str, tuple[int, str]]:
-    """{asset name: (size, sha256)} of the seven assets"""
-    manifest = json.loads((d / "manifest.json").read_bytes())
+    """{asset name: (size, sha256)} of the seven assets, plus the four of each further platform whose manifest is in the folder
+    (lane MAC-1: manifest-macos-arm64.json, its signature and the two macOS archives)"""
     out = {}
-    for kind in KINDS:
-        for platform in PLATFORMS:
-            a = manifest["assets"][kind][platform]
-            if a["name"] != asset_name(kind, version, platform):
-                raise SystemExit(f"release_assets: the manifest names {a['name']} for {kind} {platform}")
-            out[a["name"]] = (a["size"], a["sha256"])
-    for name in (f"SHA256SUMS-{version}.txt", "manifest.json", "manifest.json.sig"):
-        data = (d / name).read_bytes()
-        out[name] = (len(data), hashlib.sha256(data).hexdigest())
+    for name, platforms in MANIFESTS.items():
+        if platforms != PLATFORMS and not (d / name).is_file():
+            continue
+        manifest = json.loads((d / name).read_bytes())
+        for kind in KINDS:
+            for platform in platforms:
+                a = manifest["assets"][kind][platform]
+                if a["name"] != asset_name(kind, version, platform):
+                    raise SystemExit(f"release_assets: {name} names {a['name']} for {kind} {platform}")
+                out[a["name"]] = (a["size"], a["sha256"])
+        for n in (name, name + ".sig"):
+            data = (d / n).read_bytes()
+            out[n] = (len(data), hashlib.sha256(data).hexdigest())
+    data = (d / f"SHA256SUMS-{version}.txt").read_bytes()
+    out[f"SHA256SUMS-{version}.txt"] = (len(data), hashlib.sha256(data).hexdigest())
     return out
 
 

@@ -36,7 +36,9 @@ def main() -> int:
     home.mkdir()
     env = dict(os.environ, HOME=str(home), XDG_DATA_HOME=str(home / ".local/share"), XDG_CACHE_HOME=str(home / ".cache"),
                XDG_CONFIG_HOME=str(home / ".config"))
-    logs = home / ".local/share/godot/app_userdata/OpenBFME/logs"
+    # Godot's user data folder under the fresh HOME: the XDG one on Linux, Application Support on macOS (lane MAC-1)
+    logs = home / ("Library/Application Support/Godot/app_userdata/OpenBFME/logs" if sys.platform == "darwin"
+                   else ".local/share/godot/app_userdata/OpenBFME/logs")
     ok = True
 
     def result(name: str, good: bool, why: str = "") -> None:

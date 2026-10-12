@@ -64,12 +64,20 @@ python3 "$REPO/tools/release/sign_manifest.py" --verify "$PUB" "$DIR/manifest.js
 if [ $UNTAGGED = 0 ]; then
   git -C "$REPO" tag --points-at "$COMMIT" | grep -qx "$VERSION" || fail "$VERSION is not a tag on the manifest's commit $COMMIT"
 fi
-python3 "$REPO/tools/release/audit_package.py" --sums "$DIR/SHA256SUMS-$VERSION.txt" \
-  "openbfme-$VERSION-linux-x64.tar.gz" "openbfme-$VERSION-windows-x64.zip" \
-  "openbfme-launcher-$VERSION-linux-x64.tar.gz" "openbfme-launcher-$VERSION-windows-x64.zip" || fail "the checksum file does not list the four archives"
+ARCHIVES=("openbfme-$VERSION-linux-x64.tar.gz" "openbfme-$VERSION-windows-x64.zip"
+          "openbfme-launcher-$VERSION-linux-x64.tar.gz" "openbfme-launcher-$VERSION-windows-x64.zip")
+EXTRA=()
+if [ -f "$DIR/manifest-macos-arm64.json" ]; then
+  # lane MAC-1: the macOS archives and their own signed manifest (make_manifest.py --check above covered it) ride along
+  python3 "$REPO/tools/release/sign_manifest.py" --verify "$PUB" "$DIR/manifest-macos-arm64.json" || fail "the macOS manifest's signature does not verify under $PUB"
+  ARCHIVES+=("openbfme-$VERSION-macos-arm64.zip" "openbfme-launcher-$VERSION-macos-arm64.zip")
+  EXTRA=("openbfme-$VERSION-macos-arm64.zip" "openbfme-launcher-$VERSION-macos-arm64.zip" "manifest-macos-arm64.json" "manifest-macos-arm64.json.sig")
+fi
+python3 "$REPO/tools/release/audit_package.py" --sums "$DIR/SHA256SUMS-$VERSION.txt" "${ARCHIVES[@]}" || fail "the checksum file does not list the ${#ARCHIVES[@]} archives"
 if grep -l -- "PRIVATE KEY" "$DIR"/* >/dev/null 2>&1; then fail "a private key is among the files of $DIR"; fi
 ASSETS=("openbfme-$VERSION-linux-x64.tar.gz" "openbfme-$VERSION-windows-x64.zip" "openbfme-launcher-$VERSION-linux-x64.tar.gz"
-        "openbfme-launcher-$VERSION-windows-x64.zip" "SHA256SUMS-$VERSION.txt" "manifest.json" "manifest.json.sig")
+        "openbfme-launcher-$VERSION-windows-x64.zip" "SHA256SUMS-$VERSION.txt" "manifest.json" "manifest.json.sig"
+        ${EXTRA[@]+"${EXTRA[@]}"})  # an empty array under set -u on bash 3.2 (macOS)
 PRE=false; [ "$CHANNEL" = preview ] && PRE=true
 # the release's name: "OpenBFME v0.4.0 Alpha 1" for an alpha build (lane RELNAME-1), "OpenBFME <tag>" otherwise
 NAME=$(python3 "$REPO/tools/release/autorelease.py" title "$VERSION") || fail "no release name for $VERSION"

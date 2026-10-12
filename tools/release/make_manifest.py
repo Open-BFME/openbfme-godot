@@ -5,7 +5,10 @@
     python3 tools/release/make_manifest.py --check <package dir>     (manifest.json agrees with the archives next to it)
 
 <package dir> is tools/release/package.sh's output folder: the game and launcher archives of both platforms
-(openbfme-<v>-{linux-x64.tar.gz,windows-x64.zip}, openbfme-launcher-<v>-{...}) and SHA256SUMS-<v>.txt. Writes <package dir>/manifest.json:
+(openbfme-<v>-{linux-x64.tar.gz,windows-x64.zip}, openbfme-launcher-<v>-{...}) and SHA256SUMS-<v>.txt, and, when the folder holds
+the macOS archives too (openbfme[-launcher]-<v>-macos-arm64.zip, lane MAC-1), also <package dir>/manifest-macos-arm64.json of the same
+format with "macos-arm64" as its one platform (the launchers published before macOS existed refuse any other key in manifest.json).
+Writes <package dir>/manifest.json:
 
     {"format": 2, "product": "OpenBFME", "repo": ..., "version": <tag>, "channel": "stable" | "preview", "date": <commit date, UTC>,
      "commit": <40 hex>, "assets": {"game" | "launcher": {"linux-x64" | "windows-x64": {"name", "size", "sha256",
@@ -33,7 +36,10 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
 DEFAULT_REPO = "Open-BFME/openbfme-godot"
-PLATFORMS = ("linux-x64", "windows-x64")
+PLATFORMS = ("linux-x64", "windows-x64")  # the platforms of manifest.json: every launcher published so far refuses any other key
+# lane MAC-1: each later platform has its own manifest file of the same format (launcher/scripts/core/manifest.gd file_name /
+# platforms_for), written when that platform's archives are in the package folder; manifest.json is always written
+MANIFESTS = {"manifest.json": PLATFORMS, "manifest-macos-arm64.json": ("macos-arm64",)}
 KINDS = {"game": "openbfme", "launcher": "openbfme-launcher"}
 _N = r"(?:0|[1-9][0-9]{0,8})"
 # the launcher's release grammar (launcher/scripts/core/semver.gd): v<major>.<minor>.<patch>[-(alpha|preview).<n>], matched as a whole;
@@ -52,7 +58,14 @@ def version_key(version: str) -> tuple:
 
 
 def asset_name(kind: str, version: str, platform: str) -> str:
-    return f"{KINDS[kind]}-{version}-{platform}.{'zip' if platform.startswith('windows') else 'tar.gz'}"
+    return f"{KINDS[kind]}-{version}-{platform}.{'tar.gz' if platform.startswith('linux') else 'zip'}"
+
+
+def manifests_in(d: Path, version: str) -> dict[str, tuple[str, ...]]:
+    """{manifest file name: its platforms} of the manifests a package folder gets: manifest.json always; a later platform's file
+    when its game archive is there (its launcher archive must be there too, checked by build())."""
+    return {name: platforms for name, platforms in MANIFESTS.items()
+            if platforms == PLATFORMS or (d / asset_name("game", version, platforms[0])).is_file()}
 
 
 def channel_of(version: str) -> str:
@@ -74,7 +87,7 @@ def folder_version(d: Path) -> str:
     return sums[0].name[len("SHA256SUMS-"):-len(".txt")]
 
 
-def build(d: Path, version: str, repo: str, commit: str, date: str) -> dict:
+def build(d: Path, version: str, repo: str, commit: str, date: str, platforms: tuple[str, ...] = PLATFORMS) -> dict:
     channel = channel_of(version)
     if not re.match(r"^[A-Za-z0-9-]{1,39}/[A-Za-z0-9._-]{1,100}$", repo):
         raise SystemExit(f"make_manifest: '{repo}' is not <owner>/<name>")
@@ -86,11 +99,12 @@ def build(d: Path, version: str, repo: str, commit: str, date: str) -> dict:
     assets: dict = {}
     for kind in KINDS:
         assets[kind] = {}
-        for platform in PLATFORMS:
+        for platform in platforms:
             name = asset_name(kind, version, platform)
             path = d / name
             if not path.is_file():
-                raise SystemExit(f"make_manifest: {name} is missing in {d} (a launcher release carries the game and the launcher for both platforms)")
+                raise SystemExit(f"make_manifest: {name} is missing in {d} (a launcher release carries the game and the launcher of every "
+                                 f"platform of its manifest: {', '.join(platforms)})")
             data = path.read_bytes()
             digest = hashlib.sha256(data).hexdigest()
             if sums.get(name) != digest:
@@ -149,14 +163,17 @@ def main(argv: list[str]) -> int:
     ap.add_argument("--check", action="store_true", help="check <dir>/manifest.json against the archives")
     a = ap.parse_args(argv)
     version = a.version or folder_version(a.dir)
+    manifests = manifests_in(a.dir, version)
+    out_dir = a.out.parent if a.out else a.dir
     if a.check:
-        path = a.out or a.dir / "manifest.json"
-        m = json.loads(path.read_bytes())
-        want = build(a.dir, version, m.get("repo", ""), m.get("commit", ""), m.get("date", ""))
-        if dumps(want) != path.read_bytes():
-            print(f"MANIFEST MISMATCH: {path} is not the manifest of the archives in {a.dir}")
-            return 1
-        print(f"manifest ok: {path.name} matches {len(KINDS) * len(PLATFORMS)} archives of {version}")
+        for name, platforms in manifests.items():
+            path = a.out if a.out and name == "manifest.json" else out_dir / name
+            m = json.loads(path.read_bytes())
+            want = build(a.dir, version, m.get("repo", ""), m.get("commit", ""), m.get("date", ""), platforms)
+            if dumps(want) != path.read_bytes():
+                print(f"MANIFEST MISMATCH: {path} is not the manifest of the archives in {a.dir}")
+                return 1
+            print(f"manifest ok: {path.name} matches {len(KINDS) * len(platforms)} archives of {version}")
         return 0
     commit = a.commit or git("rev-parse", "HEAD")
     if not re.match(r"^[0-9a-f]{40}$", commit):
@@ -164,9 +181,10 @@ def main(argv: list[str]) -> int:
     if not a.allow_untagged and version not in git("tag", "--points-at", commit).split():
         raise SystemExit(f"make_manifest: {version} is not a tag on {commit[:10]} (tag the release commit first, docs/RELEASE.md)")
     date = a.date or datetime.fromtimestamp(int(git("log", "-1", "--format=%ct", commit)), timezone.utc).strftime("%Y-%m-%d")
-    out = a.out or a.dir / "manifest.json"
-    out.write_bytes(dumps(build(a.dir, version, a.repo, commit, date)))
-    print(f"MANIFEST {out} ({version}, {channel_of(version)})")
+    for name, platforms in manifests.items():
+        out = a.out if a.out and name == "manifest.json" else out_dir / name
+        out.write_bytes(dumps(build(a.dir, version, a.repo, commit, date, platforms)))
+        print(f"MANIFEST {out} ({version}, {channel_of(version)}, {', '.join(platforms)})")
     return 0
 
 

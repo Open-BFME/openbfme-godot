@@ -204,7 +204,9 @@ def test_launcher_network_rule():
     assert open_fn.count("connect_to_host(") == 1 and fetch.count("connect_to_host(") == 1
     assert "TLSOptions.client()" in open_fn and "TLSOptions.client_unsafe" not in fetch
     upd = (REPO / "launcher/scripts/core/self_update.gd").read_text()
-    assert upd.count("OS.execute(") == 1 and 'OS.execute("cmd.exe", ["/c", "move", "/y"' in upd
+    # the two system commands of the self-update: Windows' atomic move and macOS' quarantine removal (lane MAC-1), nothing else
+    assert upd.count("OS.execute(") == 2 and 'OS.execute("cmd.exe", ["/c", "move", "/y"' in upd \
+        and 'OS.execute("/usr/bin/xattr", ["-d", "com.apple.quarantine"' in upd
     policy = (REPO / "launcher/scripts/net/net_policy.gd").read_text()
     assert 'const GITHUB_HOSTS := ["api.github.com", "github.com"]' in policy
     assert 'const GITHUB_ASSET_SUFFIX := ".githubusercontent.com"' in policy
@@ -258,8 +260,71 @@ def test_the_launcher_presets_have_no_include_or_exclude_filter():
     of the pack: a file the pack needs or must not hold goes to addons/pack_files/export_plugin.gd (ADD / SKIP), never to a filter."""
     text = (REPO / "launcher" / "export_presets.cfg").read_text(encoding="utf-8")
     presets = len(re.findall(r"^\[preset\.\d+\]$", text, re.M))
-    assert presets == 2, "the launcher has a Linux and a Windows preset"
+    assert presets == 3, "the launcher has a Linux, a Windows and a macOS preset"
     for key in ("include_filter", "exclude_filter"):
         assert text.count(f'\n{key}=""\n') == presets, f"every preset's {key} must be empty"
     project = (REPO / "launcher" / "project.godot").read_text(encoding="utf-8")
     assert 'enabled=PackedStringArray("res://addons/pack_files/plugin.cfg")' in project, "the plugin that picks the pack's files is on"
+
+
+# ---- lane MAC-1: the macOS platform's own manifest file -------------------------------------------------------------------------------
+
+MACOS_LAUNCHER_FILES = ["OpenBFMELauncher.app/Contents/Resources/OpenBFME Launcher.pck",
+                        "OpenBFMELauncher.app/Contents/MacOS/OpenBFME Launcher",
+                        "OpenBFMELauncher.app/Contents/_CodeSignature/CodeResources"]
+
+
+def add_macos(d: Path, version: str) -> None:
+    """the two macOS archives next to a package_dir()'s, listed in its checksum file"""
+    sums = (d / f"SHA256SUMS-{version}.txt").read_text()
+    for kind, files in (("game", {"OpenBFME.app/Contents/MacOS/OpenBFME": b"game"}), ("launcher", {f: b"launcher" for f in MACOS_LAUNCHER_FILES})):
+        n = make_manifest.asset_name(kind, version, "macos-arm64")
+        data = tiny_package(n, files)
+        (d / n).write_bytes(data)
+        sums += f"{hashlib.sha256(data).hexdigest()}  {n}\n"
+    (d / f"SHA256SUMS-{version}.txt").write_text(sums)
+
+
+def test_the_macos_manifest_is_its_own_file(tmp_path):
+    """manifest.json keeps exactly linux-x64 and windows-x64 (the launchers already published refuse any other key); a folder with the
+    macOS archives gets manifest-macos-arm64.json too, with macos-arm64 as its one platform"""
+    d = package_dir(tmp_path / "out", "v0.4.0-alpha.3")
+    tool = HERE / "make_manifest.py"
+    assert make_manifest.manifests_in(d, "v0.4.0-alpha.3") == {"manifest.json": make_manifest.PLATFORMS}
+    r = run(sys.executable, tool, d, "--repo", "Test/repo", "--commit", COMMIT, "--date", "2026-10-12", "--allow-untagged")
+    assert r.returncode == 0 and not (d / "manifest-macos-arm64.json").exists(), r.stderr
+    add_macos(d, "v0.4.0-alpha.3")
+    assert list(make_manifest.manifests_in(d, "v0.4.0-alpha.3")) == ["manifest.json", "manifest-macos-arm64.json"]
+    r = run(sys.executable, tool, d, "--repo", "Test/repo", "--commit", COMMIT, "--date", "2026-10-12", "--allow-untagged")
+    assert r.returncode == 0, r.stderr
+    main = json.loads((d / "manifest.json").read_bytes())
+    mac = json.loads((d / "manifest-macos-arm64.json").read_bytes())
+    assert sorted(main["assets"]["game"]) == ["linux-x64", "windows-x64"], "manifest.json never grows a platform"
+    assert sorted(mac["assets"]["game"]) == ["macos-arm64"] and sorted(mac["assets"]["launcher"]) == ["macos-arm64"]
+    assert mac["format"] == 2 and mac["version"] == "v0.4.0-alpha.3" and mac["channel"] == "preview"
+    assert mac["assets"]["game"]["macos-arm64"]["name"] == "openbfme-v0.4.0-alpha.3-macos-arm64.zip"
+    assert sorted(mac["assets"]["launcher"]["macos-arm64"]["files"]) == sorted(MACOS_LAUNCHER_FILES), "the bundle's paths, nested"
+    assert run(sys.executable, tool, "--check", d).returncode == 0
+    (d / "openbfme-launcher-v0.4.0-alpha.3-macos-arm64.zip").write_bytes(b"other")
+    assert run(sys.executable, tool, "--check", d).returncode != 0, "the macOS manifest is checked too"
+    # the macOS launcher archive without the game's is a missing-archive error, not a silent manifest.json-only run
+    add_macos(d, "v0.4.0-alpha.3")
+    (d / "openbfme-launcher-v0.4.0-alpha.3-macos-arm64.zip").unlink()
+    r = run(sys.executable, tool, d, "--repo", "Test/repo", "--commit", COMMIT, "--date", "2026-10-12", "--allow-untagged")
+    assert r.returncode != 0 and "macos-arm64" in r.stderr + r.stdout
+
+
+def test_release_assets_count_the_macos_assets_when_present(tmp_path):
+    import release_assets  # noqa: PLC0415
+    d = package_dir(tmp_path / "out", "v0.4.0-alpha.3")
+    tool = HERE / "make_manifest.py"
+    assert run(sys.executable, tool, d, "--repo", "Test/repo", "--commit", COMMIT, "--date", "2026-10-12", "--allow-untagged").returncode == 0
+    (d / "manifest.json.sig").write_bytes(bytes(64))
+    assert len(release_assets.expected(d, "v0.4.0-alpha.3")) == 7
+    add_macos(d, "v0.4.0-alpha.3")
+    assert run(sys.executable, tool, d, "--repo", "Test/repo", "--commit", COMMIT, "--date", "2026-10-12", "--allow-untagged").returncode == 0
+    (d / "manifest-macos-arm64.json.sig").write_bytes(bytes(64))
+    want = release_assets.expected(d, "v0.4.0-alpha.3")
+    assert len(want) == 11
+    assert {"openbfme-v0.4.0-alpha.3-macos-arm64.zip", "openbfme-launcher-v0.4.0-alpha.3-macos-arm64.zip", "manifest-macos-arm64.json",
+            "manifest-macos-arm64.json.sig"} <= set(want)

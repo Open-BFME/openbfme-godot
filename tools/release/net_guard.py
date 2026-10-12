@@ -42,7 +42,9 @@ NATIVE_HEADER = re.compile(r"(?i)^(sys/socket\.h|netinet/.*|arpa/inet\.h|netdb\.
 ALLOWED_NATIVE = {"engine/src/GameNetwork/Transport.cpp"}
 # launcher file -> the findings it may have (the text after "line <n>: ")
 ALLOWED_LAUNCHER = {"launcher/scripts/net/http_fetch.gd": {"HTTPClient"},
-                    "launcher/scripts/core/updater.gd": {"OS.create_process"},
+                    # OS.execute (lane MAC-1): `ps -p <pid> -o command=` on macOS, which has no /proc: whether a game of a version still
+                    # runs and whether a versions.lock owner is alive (updater.gd _process_command)
+                    "launcher/scripts/core/updater.gd": {"OS.create_process", "OS.execute"},
                     # lane UI-5 (Sol r3): the one-launcher-at-a-time lock, a socket listening on 127.0.0.1 that never sends or accepts
                     # (it answers a one-line hello, and a refused launcher reads that hello with StreamPeerTCP: Sol r4)
                     "launcher/scripts/core/instance_lock.gd": {"TCPServer", "StreamPeerTCP"},

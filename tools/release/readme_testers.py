@@ -78,6 +78,19 @@ PLATFORMS = {
         find_logs="To open that folder: \"Logs\" next to the version in the menus, \"Open log\n  folder\" in the error / crash message, or ./OpenBFME.x86_64 --open-logs",
         console="- Please attach the log file rather than a copy of the terminal output.\n",
     ),
+    # lane MAC-1: the application bundle; the first open of a downloaded, unnotarized app needs the user's say-so (docs/STOPS.md S-3710)
+    "macos": dict(
+        platform_name="macOS (Apple Silicon)",
+        requirements="A Mac with Apple Silicon (M1 or later) and macOS 11 or newer. Intel Macs are not supported: the game's engine is built for arm64 only. The game folders can be anywhere, e.g. inside a CrossOver bottle.",
+        start=("Unpack the archive and open OpenBFME.app (keep the files together). macOS blocks the first start of a downloaded app\n"
+               "  that is not notarized (\"Apple could not verify ...\"): close that message, open System Settings > Privacy &\n"
+               "  Security, scroll down to the note about OpenBFME and press \"Open Anyway\", then open the app again. That is\n"
+               "  needed once per downloaded archive; what the launcher downloads never needs it."),
+        wine=", also inside CrossOver bottles and PlayOnMac prefixes",
+        logs="~/Library/Application Support/Godot/app_userdata/OpenBFME/logs/",
+        find_logs="To open that folder: \"Logs\" next to the version in the menus, \"Open log\n  folder\" in the error / crash message, or\n  OpenBFME.app/Contents/MacOS/OpenBFME --open-logs",
+        console="- Please attach the log file rather than a copy of the terminal output.\n",
+    ),
     "windows": dict(
         platform_name="Windows x86-64",
         requirements="64-bit Windows 10 or 11 with a graphics card that supports Vulkan or Direct3D 12.",

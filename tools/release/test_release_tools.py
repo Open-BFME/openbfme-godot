@@ -796,8 +796,185 @@ def test_the_game_presets_filters_cannot_reorder_the_pack():
     for value in re.findall(r'^exclude_filter="(.*)"$', text, re.M):
         assert value == "", f"exclude_filter={value!r}: its erases follow the directory order"
     includes = re.findall(r'^include_filter="(.*)"$', text, re.M)
-    assert len(includes) == 2, "a Linux and a Windows preset"
+    assert len(includes) == 3, "a Linux, a Windows and a macOS preset"
     for value in includes:
         patterns = [p.strip().lower() for p in value.split(",") if p.strip()] + ["*.ico", "*.icns"]  # Godot adds the icons the same way
         matched = [f for f in files if any(fnmatch.fnmatchcase(f.lower(), p) for p in patterns)]  # Godot's matchn: * spans folders
         assert len(matched) <= 1, f"include_filter={value!r} matches {matched}: their order in the pack would follow the host"
+
+
+# ---- lane MAC-1: the macOS package (an application bundle: nested paths, Mach-O binaries, Godot's icon) ---------------------------------
+
+def macho64(extra: bytes = b"") -> bytes:
+    """A minimal thin arm64 Mach-O: the header and one LC_SEGMENT_64 whose file extent is exactly the file (104 bytes)."""
+    size = 32 + 72
+    head = struct.pack("<IIIIIIII", 0xFEEDFACF, 0x0100000C, 0, 2, 1, 72, 0, 0)
+    seg = struct.pack("<II16sQQQQIIII", 0x19, 72, b"__TEXT", 0, size, 0, size, 7, 5, 0, 0)
+    return head + seg + extra
+
+
+def icns(payload: bytes = b"icon") -> bytes:
+    body = b"ic08" + struct.pack(">I", 8 + len(payload)) + payload
+    return b"icns" + struct.pack(">I", 8 + len(body)) + body
+
+
+def macos_files(**override) -> dict:
+    app = "OpenBFME.app/Contents"
+    files = {f"{app}/MacOS/OpenBFME": macho64(), f"{app}/Frameworks/openbfme.macos.template_debug.arm64.dylib": macho64(),
+             f"{app}/Resources/OpenBFME.pck": pck([("scripts/game.gd", b"extends Node\n"), ("project.binary", b"ECFG" + struct.pack("<I", 0))]),
+             f"{app}/Resources/icon.icns": icns(), f"{app}/Resources/PrivacyInfo.xcprivacy": b"<plist/>\n",
+             f"{app}/Info.plist": b"<plist/>\n", f"{app}/PkgInfo": b"APPL????", f"{app}/_CodeSignature/CodeResources": b"<plist/>\n",
+             "README_TESTERS.txt": b"read me\n", "LICENSE": b"GPL\n", "NOTICE": b"notice\n", "VERSION": b"OpenBFME v1\n"}
+    files.update(override)
+    return {k: v for k, v in files.items() if v is not None}
+
+
+@pytest.fixture
+def godot_icon(monkeypatch):
+    """the test's icns stands in for Godot's pinned template icon"""
+    import hashlib  # noqa: PLC0415
+    monkeypatch.setattr(audit_package, "GODOT_MACOS_ICON_SHA256", hashlib.sha256(icns()).hexdigest())
+
+
+def test_the_macos_release_set_passes_as_a_folder_and_as_a_zip(tmp_path, godot_icon):
+    import zipfile  # noqa: PLC0415
+    top = write_release(tmp_path, macos_files(), top="openbfme-v1-macos-arm64")
+    assert audit_package.check_release("macos", top) == []
+    out = tmp_path / "openbfme-v1-macos-arm64.zip"
+    make_archive.zip_file(top, out, 1700000000)
+    assert audit_package.check_release("macos", out) == []
+    with zipfile.ZipFile(out) as z:
+        names = [i.filename for i in z.infolist()]
+    assert not any(n.endswith("/") for n in names), "no directory entries: the bundle's folders exist through the file names"
+    assert "openbfme-v1-macos-arm64/OpenBFME.app/Contents/MacOS/OpenBFME" in names
+    # the archive is reproducible
+    again = tmp_path / "again.zip"
+    make_archive.zip_file(top, again, 1700000000)
+    assert again.read_bytes() == out.read_bytes()
+
+
+@pytest.mark.parametrize("override,why", [
+    ({"OpenBFME.app/Contents/Resources/extra.txt": b"x"}, "extra.txt is not a file of the release"),
+    ({"extra.txt": b"x"}, "extra.txt is not a file of the release"),
+    ({"OpenBFME.app/Contents/Info.plist": None}, "Info.plist is missing"),
+    ({"OpenBFME.app/Contents/MacOS/OpenBFME": macho64(b"tail")}, "4 bytes after the Mach-O image"),
+    ({"OpenBFME.app/Contents/MacOS/OpenBFME": struct.pack(">II", 0xCAFEBABE, 1) + macho64()}, "fat (universal)"),
+    ({"OpenBFME.app/Contents/MacOS/OpenBFME": elf64()}, "not a valid Mach-O file"),
+    ({"OpenBFME.app/Contents/Frameworks/openbfme.macos.template_debug.arm64.dylib": macho64() + pck([("a.gd", b"x")]) + struct.pack("<Q", 0) + b"GDPC"},
+     "after the Mach-O image"),
+    ({"OpenBFME.app/Contents/Resources/icon.icns": icns(b"other")}, "not Godot 4.7.2's macOS template icon"),
+    ({"OpenBFME.app/Contents/Resources/icon.icns": b"icns" + struct.pack(">I", 99) + b"x"}, "header length is the file length"),
+    ({"OpenBFME.app/Contents/Resources/PrivacyInfo.xcprivacy": b"\xff\xfe"}, "not UTF-8 text"),
+])
+def test_the_macos_bundle_holds_exactly_the_release(tmp_path, godot_icon, override, why):
+    top = write_release(tmp_path, macos_files(**override), top="openbfme-v1-macos-arm64")
+    problems = audit_package.check_release("macos", top)
+    assert any(why in p for p in problems), (why, problems)
+    out = tmp_path / "openbfme-v1-macos-arm64.zip"
+    make_archive.zip_file(top, out, 1700000000)
+    assert any(why in p for p in audit_package.check_release("macos", out)), why
+
+
+def test_the_macos_bundle_folders_and_name_are_checked(tmp_path, godot_icon):
+    top = write_release(tmp_path, macos_files(), top="openbfme-v1-macos-arm64")
+    (top / "OpenBFME.app/Contents/Empty").mkdir()
+    assert any("Contents/Empty is an empty folder" in p for p in audit_package.check_release("macos", top))
+    with pytest.raises(SystemExit, match="an empty folder"):
+        make_archive.zip_file(top, tmp_path / "empty.zip", 1700000000)
+    (top / "OpenBFME.app/Contents/Empty").rmdir()
+    wrong = write_release(tmp_path / "w", macos_files(), top="openbfme-v1-macos-x64")
+    assert any("is not openbfme-<version>-macos-arm64" in p for p in audit_package.check_release("macos", wrong))
+    # the Linux and Windows sets stay flat: a sub folder is a finding there
+    flat = write_release(tmp_path / "l", release_files(**{"sub/x": b"x"}))
+    assert any("not a file of the release" in p for p in audit_package.check_release("linux", flat))
+    # a macOS archive is a zip; the checksum file lists it like the others
+    import hashlib  # noqa: PLC0415
+    a = tmp_path / "openbfme-v1-macos-arm64.zip"
+    make_archive.zip_file(top, a, 1700000000)
+    sums = tmp_path / "SHA256SUMS-v1.txt"
+    sums.write_text(f"{hashlib.sha256(a.read_bytes()).hexdigest()}  {a.name}\n")
+    assert audit_package.check_release("macos", sums) == []
+    (tmp_path / "openbfme-v1-macos-arm64.tar.gz").write_bytes(b"x")
+    assert any("not a macos package archive" in p for p in audit_package.check_release("macos", tmp_path / "openbfme-v1-macos-arm64.tar.gz"))
+
+
+def test_macho_extent_reads_segments_and_the_signature():
+    """the __LINKEDIT segment or an LC_CODE_SIGNATURE past it, whichever ends last, is the image's end"""
+    head = struct.pack("<IIIIIIII", 0xFEEDFACF, 0x0100000C, 0, 2, 2, 72 + 16, 0, 0)
+    seg = struct.pack("<II16sQQQQIIII", 0x19, 72, b"__TEXT", 0, 200, 0, 200, 7, 5, 0, 0)
+    sig = struct.pack("<IIII", 0x1D, 16, 200, 24)
+    assert audit_package.macho_extent(head + seg + sig + bytes(224 - 32 - 88)) == 224
+    with pytest.raises(ValueError):
+        audit_package.macho_extent(struct.pack("<IIIIIIII", 0xFEEDFACF, 0x01000007, 0, 2, 0, 0, 0, 0))  # x86_64
+
+
+def test_the_macos_tester_readme_names_the_bundle_and_gatekeeper():
+    import readme_testers  # noqa: PLC0415
+    lines, errors = readme_testers.known_issues(REPO / "tools/release/known_issues.json", REPO / "docs/STOPS.md")
+    assert errors == []
+    text = readme_testers.render("v9", "macos", lines)
+    assert "OpenBFME.app" in text and "Open Anyway" in text and "~/Library/Application Support/Godot/app_userdata/OpenBFME/logs/" in text
+    assert "Apple Silicon" in text and "CrossOver" in text
+
+
+# ---- lane MAC-1: the arm64 export template -----------------------------------------------------------------------------------------------
+
+import macos_template  # noqa: E402
+
+
+def fat(slices: dict[int, bytes]) -> bytes:
+    """a fat Mach-O holding `slices` ({cputype: bytes}), each at a 4 KiB boundary like lipo writes them"""
+    import io as _io  # noqa: PLC0415
+    out = _io.BytesIO()
+    out.write(struct.pack(">II", 0xCAFEBABE, len(slices)))
+    offset = 4096
+    body = []
+    for cputype, data in slices.items():
+        out.write(struct.pack(">IIIII", cputype, 0, offset, len(data), 12))
+        body.append((offset, data))
+        offset += (len(data) + 4095) // 4096 * 4096
+    raw = bytearray(offset)
+    raw[:out.tell()] = out.getvalue()
+    for off, data in body:
+        raw[off:off + len(data)] = data
+    return bytes(raw)
+
+
+def test_the_arm64_slice_is_what_lipo_thin_writes():
+    arm = macho64(b"arm")
+    x86 = struct.pack("<IIIIIIII", 0xFEEDFACF, 0x01000007, 0, 2, 0, 0, 0, 0) + b"x86"
+    assert macos_template.arm64_slice(fat({0x01000007: x86, 0x0100000C: arm})) == arm
+    assert macos_template.arm64_slice(arm) == arm, "a thin arm64 file is itself"
+    with pytest.raises(ValueError, match="no arm64 slice"):
+        macos_template.arm64_slice(fat({0x01000007: x86}))
+    with pytest.raises(ValueError):
+        macos_template.arm64_slice(x86)  # a thin x86_64 file
+    with pytest.raises(ValueError, match="runs past the end"):
+        macos_template.arm64_slice(fat({0x0100000C: arm})[:4096 + 50])  # cut inside the slice
+
+
+def test_the_template_archive_adds_the_arm64_binaries_and_is_reproducible(tmp_path):
+    import zipfile  # noqa: PLC0415
+    templates = tmp_path / "4.7.2.stable"
+    templates.mkdir()
+    (templates / "version.txt").write_text("4.7.2.stable\n")
+    arm, x86 = macho64(b"arm"), struct.pack("<IIIIIIII", 0xFEEDFACF, 0x01000007, 0, 2, 0, 0, 0, 0) + b"x86"
+    with zipfile.ZipFile(templates / "macos.zip", "w") as z:
+        z.writestr("macos_template.app/Contents/Info.plist", "<plist/>")
+        for name in macos_template.BINARIES:
+            z.writestr(name, fat({0x01000007: x86, 0x0100000C: arm}))
+    outs = []
+    for i in range(2):
+        out = tmp_path / f"out{i}.zip"
+        assert macos_template.main(["--out", str(out), "--templates", str(templates)]) == 0
+        outs.append(out.read_bytes())
+    assert outs[0] == outs[1], "the same official archive gives the same bytes"
+    with zipfile.ZipFile(tmp_path / "out0.zip") as z:
+        names = z.namelist()
+        assert "macos_template.app/Contents/MacOS/godot_macos_debug.arm64" in names
+        assert "macos_template.app/Contents/MacOS/godot_macos_release.arm64" in names
+        assert "macos_template.app/Contents/MacOS/godot_macos_debug.universal" in names, "the official files stay"
+        assert z.read("macos_template.app/Contents/MacOS/godot_macos_debug.arm64") == arm
+    (templates / "version.txt").write_text("4.6.2.stable\n")
+    with pytest.raises(SystemExit, match="4.7.2.stable"):
+        macos_template.main(["--out", str(tmp_path / "x.zip"), "--templates", str(templates)])

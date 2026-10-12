@@ -14,7 +14,8 @@ XDG folders (Godot's user data is $XDG_DATA_HOME/godot/app_userdata/OpenBFME):
   empty      an empty folder picked for RotWK: rejected naming the expected archives, nothing remembered
 and for every case: one session log in user://logs starting with the version line, with neither the test HOME nor the user name in it
 (found / picked: nor in the console output, review r1).
-Linux only (the Windows equivalent needs APPDATA / registry fakes). Prints a RESULT line per case; exit 0 when all pass.
+Linux and macOS (the Wine prefix fakes under the case's HOME are read on both; the Windows equivalent needs APPDATA / registry fakes).
+Prints a RESULT line per case; exit 0 when all pass.
 """
 from __future__ import annotations
 
@@ -70,6 +71,9 @@ class Case:
         return e
 
     def userdata(self) -> Path:
+        # Godot's user data folder under the case's HOME: the XDG one on Linux, Application Support on macOS (lane MAC-1)
+        if sys.platform == "darwin":
+            return self.home / "Library/Application Support/Godot/app_userdata/OpenBFME"
         return self.home / ".local/share/godot/app_userdata/OpenBFME"
 
 

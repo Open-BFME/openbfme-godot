@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "https://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Lane MAC-1: the entitlements package.sh signs OpenBFME.app with (ad hoc, hardened runtime). The one entitlement is the one Godot's
+     own macOS export adds for a project with a GDExtension: the hardened runtime otherwise refuses to load a library that was not signed
+     with the same identity, and an ad-hoc signature has none. -->
+<plist version="1.0">
+<dict>
+	<key>com.apple.security.cs.disable-library-validation</key>
+	<true/>
+</dict>
+</plist>

@@ -387,9 +387,37 @@ RELEASE_FILES = {
     # the launcher's pack is embedded in its executable (one file: a self-update replaces it with one rename, Sol r1)
     "launcher-linux": {"OpenBFMELauncher.x86_64": "elf+pck", "README.txt": "text", "LICENSE": "text", "NOTICE": "text", "VERSION": "text"},
     "launcher-windows": {"OpenBFMELauncher.exe": "pe+pck", "README.txt": "text", "LICENSE": "text", "NOTICE": "text", "VERSION": "text"},
+    # lane MAC-1: the macOS package is an application bundle (godot/export_presets.cfg "macOS arm64", exported through the arm64 template
+    # of tools/release/macos_template.py and signed ad hoc by package.sh), so its files sit below OpenBFME.app/. The bundle holds exactly
+    # what Godot 4.7.2 writes (Info.plist, PkgInfo, the template's icon, the privacy manifest), the arm64 executable, the extension, the
+    # pack, and the signature's resource seal; every path is listed in full, so a stray file anywhere in the bundle is a finding.
+    "macos": {"OpenBFME.app/Contents/MacOS/OpenBFME": "macho",
+              "OpenBFME.app/Contents/Frameworks/openbfme.macos.template_debug.arm64.dylib": "macho",
+              "OpenBFME.app/Contents/Resources/OpenBFME.pck": "pck", "OpenBFME.app/Contents/Resources/icon.icns": "icns",
+              "OpenBFME.app/Contents/Resources/PrivacyInfo.xcprivacy": "text", "OpenBFME.app/Contents/Info.plist": "text",
+              "OpenBFME.app/Contents/PkgInfo": "text", "OpenBFME.app/Contents/_CodeSignature/CodeResources": "text",
+              "README_TESTERS.txt": "text", "LICENSE": "text", "NOTICE": "text", "VERSION": "text"},
+    # Godot's macOS export does not embed the pack (binary_format/embed_pck is ignored there): the launcher bundle holds Godot's template
+    # binary, the same bytes for every launcher version, and the pack as its own file, which is what the self-update swaps
+    # (launcher/scripts/core/self_update.gd). Godot names both after the project (application/config/name "OpenBFME Launcher").
+    "launcher-macos": {"OpenBFMELauncher.app/Contents/MacOS/OpenBFME Launcher": "macho",
+                       "OpenBFMELauncher.app/Contents/Resources/OpenBFME Launcher.pck": "pck",
+                       "OpenBFMELauncher.app/Contents/Resources/icon.icns": "icns",
+                       "OpenBFMELauncher.app/Contents/Resources/PrivacyInfo.xcprivacy": "text",
+                       "OpenBFMELauncher.app/Contents/Info.plist": "text", "OpenBFMELauncher.app/Contents/PkgInfo": "text",
+                       "OpenBFMELauncher.app/Contents/_CodeSignature/CodeResources": "text",
+                       "README.txt": "text", "LICENSE": "text", "NOTICE": "text", "VERSION": "text"},
 }
-TOP_DIR = re.compile(r"^openbfme-(?!launcher-)[0-9A-Za-z][0-9A-Za-z.+_-]*-(linux|windows)-x64$")
-LAUNCHER_TOP_DIR = re.compile(r"^openbfme-launcher-[0-9A-Za-z][0-9A-Za-z.+_-]*-(linux|windows)-x64$")
+# the platform part of a package's name, and its archive type (the launcher's archive.gd reads both kinds on every OS)
+PLATFORM_SUFFIX = {"linux": "linux-x64", "windows": "windows-x64", "macos": "macos-arm64"}
+ARCHIVE_EXT = {"linux": ".tar.gz", "windows": ".zip", "macos": ".zip"}
+_SUFFIXES = "|".join(PLATFORM_SUFFIX.values())
+TOP_DIR = re.compile(rf"^openbfme-(?!launcher-)[0-9A-Za-z][0-9A-Za-z.+_-]*-({_SUFFIXES})$")
+LAUNCHER_TOP_DIR = re.compile(rf"^openbfme-launcher-[0-9A-Za-z][0-9A-Za-z.+_-]*-({_SUFFIXES})$")
+ARCHIVE_NAME = re.compile(rf"^openbfme-[\w.+-]+-({_SUFFIXES})\.(tar\.gz|zip)$")
+# Godot 4.7.2's macOS export template icon (macos_template.app/Contents/Resources/icon.icns in Godot's macos.zip): the one binary file
+# of a bundle that is neither an executable nor the pack, carried byte for byte
+GODOT_MACOS_ICON_SHA256 = "779ff524928785811d6d4c61f47a26491160b1092db9b610e85fcdfd9b2d2b2a"
 
 # the Godot resource types of this project a pack may hold (godot/export_presets.cfg exports scripts as text), each with its format check
 PCK_RULES = [
@@ -478,6 +506,52 @@ def elf_extent(b: bytes) -> int:
     return end
 
 
+MH_MAGIC_64 = 0xFEEDFACF
+FAT_MAGIC = 0xCAFEBABE
+CPU_TYPE_ARM64 = 0x0100000C
+LC_SEGMENT_64 = 0x19
+LC_CODE_SIGNATURE = 0x1D
+
+
+def macho_extent(b: bytes) -> int:
+    """The bytes a thin, 64-bit, arm64 Mach-O file's load commands account for: the header and load commands, every LC_SEGMENT_64's file
+    extent (the __LINKEDIT segment holds the symbol tables and the code signature) and the LC_CODE_SIGNATURE blob. A fat (universal)
+    file is refused: the package is arm64 only (lane MAC-1, tools/release/macos_template.py)."""
+    if len(b) >= 4 and struct.unpack(">I", b[:4])[0] == FAT_MAGIC:
+        raise ValueError("a fat (universal) Mach-O file; the package is arm64 only")
+    if len(b) < 32 or struct.unpack("<I", b[:4])[0] != MH_MAGIC_64:
+        raise ValueError("not a 64-bit little-endian Mach-O file")
+    cputype, _subtype, _filetype, ncmds, sizeofcmds = struct.unpack_from("<IIIII", b, 4)
+    if cputype != CPU_TYPE_ARM64:
+        raise ValueError(f"cpu type {cputype:#x} is not arm64")
+    if 32 + sizeofcmds > len(b):
+        raise ValueError("the load commands run past the end of the file")
+    end = 32 + sizeofcmds
+    pos = 32
+    for _ in range(ncmds):
+        cmd, size = struct.unpack_from("<II", b, pos)
+        if size < 8 or pos + size > 32 + sizeofcmds:
+            raise ValueError("a load command runs past the load commands")
+        if cmd == LC_SEGMENT_64 and size >= 56:
+            fileoff, filesize = struct.unpack_from("<QQ", b, pos + 40)
+            end = max(end, fileoff + filesize)
+        elif cmd == LC_CODE_SIGNATURE and size >= 16:
+            dataoff, datasize = struct.unpack_from("<II", b, pos + 8)
+            end = max(end, dataoff + datasize)
+        pos += size
+    return end
+
+
+def icns_problems(name: str, b: bytes) -> list[str]:
+    """Godot's template icon: an icns container whose header length is the file's length, byte for byte Godot 4.7.2's icon."""
+    problems = []
+    if len(b) < 8 or b[:4] != b"icns" or struct.unpack(">I", b[4:8])[0] != len(b):
+        problems.append(f"{name}: not an icns file whose header length is the file length")
+    if hashlib.sha256(b).hexdigest() != GODOT_MACOS_ICON_SHA256:
+        problems.append(f"{name}: not Godot 4.7.2's macOS template icon")
+    return problems
+
+
 def binary_problems(name: str, kind: str, b: bytes) -> list[str]:
     """An executable or library: the right format, nothing appended after what its headers describe (no embedded pack, archive or payload),
     and the retail-content check on its first bytes."""
@@ -490,6 +564,10 @@ def binary_problems(name: str, kind: str, b: bytes) -> list[str]:
             end = elf_extent(b)
             if end != len(b):
                 problems.append(f"{name}: {len(b) - end} bytes after the ELF image (appended data)" if end < len(b) else f"{name}: truncated ELF")
+        elif kind == "macho":
+            end = macho_extent(b)
+            if end != len(b):
+                problems.append(f"{name}: {len(b) - end} bytes after the Mach-O image (appended data)" if end < len(b) else f"{name}: truncated Mach-O")
         else:
             import pefile  # noqa: PLC0415 (only for Windows packages)
             pe = pefile.PE(data=b, fast_load=True)
@@ -497,7 +575,7 @@ def binary_problems(name: str, kind: str, b: bytes) -> list[str]:
             if overlay is not None:
                 problems.append(f"{name}: {len(b) - overlay} bytes after the PE image (an overlay)")
     except (ValueError, struct.error, Exception) as e:  # pefile raises its own PEFormatError
-        problems.append(f"{name}: not a valid {kind.upper()} file ({e})")
+        problems.append(f"{name}: not a valid {dict(elf='ELF', pe='PE', macho='Mach-O')[kind]} file ({e})")
     if embedded_pck_base(b) is not None:
         problems.append(f"{name}: a Godot pack is embedded")
     return problems
@@ -626,10 +704,12 @@ def release_file_problems(platform: str, files: dict[str, bytes], where: str) ->
     problems += [f"{where}: {n} is missing" for n in sorted(set(allowed) - set(files))]
     for n in sorted(set(files) & set(allowed)):
         kind, data = allowed[n], files[n]
-        if kind in ("elf", "pe"):
+        if kind in ("elf", "pe", "macho"):
             problems += binary_problems(f"{where}/{n}", kind, data)
         elif kind in ("elf+pck", "pe+pck"):
             problems += embedded_pack_problems(f"{where}/{n}", kind, data)
+        elif kind == "icns":
+            problems += icns_problems(f"{where}/{n}", data)
         elif kind == "pck":
             problems += pck_release_problems(f"{where}/{n}", data, LAUNCHER_PCK_RULES if platform.startswith("launcher-") else PCK_RULES)
         else:
@@ -723,9 +803,10 @@ def read_release_tar_gz(data: bytes, where: str) -> tuple[str | None, dict[str, 
     return top, files, problems
 
 
-def read_release_zip(data: bytes, where: str) -> tuple[str | None, dict[str, bytes], list[str]]:
+def read_release_zip(data: bytes, where: str, nested: bool = False) -> tuple[str | None, dict[str, bytes], list[str]]:
     """A package .zip, strictly: no prefix, no comment, no directory entries, stored or deflated members whose compressed data decodes
-    exactly to the member (no unused tail), and nothing outside the entries and the central directory."""
+    exactly to the member (no unused tail), and nothing outside the entries and the central directory. `nested`: the files may sit in
+    folders below the package folder (a macOS application bundle); the folders exist only through their files' names."""
     try:
         z = zipfile.ZipFile(io.BytesIO(data))
         infos = z.infolist()
@@ -754,13 +835,15 @@ def read_release_zip(data: bytes, where: str) -> tuple[str | None, dict[str, byt
         n, m = struct.unpack_from("<HH", data, info.header_offset + 26)
         if info.extra or m or info.comment:  # make_archive.py writes none (review r4: payloads in extra fields and entry comments)
             problems.append(f"{where}:{info.filename}: extra fields or an entry comment (none are written)")
-        if len(parts) != 2 or (top is not None and parts[0] != top):
+        if len(parts) < 2 or (len(parts) != 2 and not nested) or (top is not None and parts[0] != top) \
+                or any(p in ("", ".", "..") for p in parts):
             problems.append(f"{where}: {info.filename} is not a file of the package folder")
             continue
         top = top or parts[0]
-        if parts[1] in files:
+        rel = "/".join(parts[1:])
+        if rel in files:
             problems.append(f"{where}: {info.filename} appears twice")
-        files[parts[1]] = content
+        files[rel] = content
     return top, files, problems
 
 
@@ -769,16 +852,22 @@ def check_release(platform: str, path: Path) -> list[str]:
     launcher-linux or launcher-windows."""
     where = path.name
     base = platform.removeprefix("launcher-")
+    nested = base == "macos"  # an application bundle: the release's files sit below OpenBFME*.app/ (RELEASE_FILES lists the full paths)
     if path.is_dir():
         files, problems = {}, []
         for f in sorted(path.rglob("*")):
             rel = f.relative_to(path)
-            if f.is_dir() or len(rel.parts) != 1:
+            if f.is_dir():
+                if not nested:
+                    problems.append(f"{where}: {rel} is not a file of the release")
+                elif not any(x.is_file() for x in f.rglob("*")):
+                    problems.append(f"{where}: {rel.as_posix()} is an empty folder")
+            elif len(rel.parts) != 1 and not nested:
                 problems.append(f"{where}: {rel} is not a file of the release")
             elif f.is_symlink() or not f.is_file():
                 problems.append(f"{where}: {rel} is not a regular file")
             else:
-                files[rel.name] = f.read_bytes()
+                files[rel.as_posix()] = f.read_bytes()
         top = path.name
     elif path.name.startswith("SHA256SUMS"):
         return sums_problems(platform, path)
@@ -786,16 +875,16 @@ def check_release(platform: str, path: Path) -> list[str]:
         data = path.read_bytes()
         if path.name.endswith(".tar.gz") and base == "linux":
             top, files, problems = read_release_tar_gz(data, where)
-        elif path.name.endswith(".zip") and base == "windows":
-            top, files, problems = read_release_zip(data, where)
+        elif path.name.endswith(".zip") and base in ("windows", "macos"):
+            top, files, problems = read_release_zip(data, where, nested=nested)
         else:
             return [f"{where}: not a {platform} package archive"]
-        if top and path.name != top + (".tar.gz" if base == "linux" else ".zip"):
+        if top and path.name != top + ARCHIVE_EXT[base]:
             problems.append(f"{where}: the folder inside is {top}")
     top_rx = LAUNCHER_TOP_DIR if platform.startswith("launcher-") else TOP_DIR
-    if not top or not top_rx.match(top) or not top.endswith(f"-{base}-x64"):
+    if not top or not top_rx.match(top) or not top.endswith(f"-{PLATFORM_SUFFIX[base]}"):
         kind = "openbfme-launcher" if platform.startswith("launcher-") else "openbfme"
-        problems.append(f"{where}: the package folder {top!r} is not {kind}-<version>-{base}-x64")
+        problems.append(f"{where}: the package folder {top!r} is not {kind}-<version>-{PLATFORM_SUFFIX[base]}")
     return problems + release_file_problems(platform, files, where)
 
 
@@ -810,7 +899,7 @@ def sums_problems(platform: str, path: Path, expected: list[str] | None = None) 
         return [f"{path.name}: {t}"]
     listed: list[str] = []
     for line in raw.decode("utf-8").splitlines():
-        m = re.match(r"^([0-9a-f]{64})  (openbfme-[\w.+-]+-(linux|windows)-x64\.(tar\.gz|zip))$", line)
+        m = re.match(rf"^([0-9a-f]{{64}})  (openbfme-[\w.+-]+-({_SUFFIXES})\.(tar\.gz|zip))$", line)
         if not m:
             problems.append(f"{path.name}: unexpected line {line[:80]!r}")
             continue
@@ -823,8 +912,7 @@ def sums_problems(platform: str, path: Path, expected: list[str] | None = None) 
     if not raw.endswith(b"\n") and raw:
         problems.append(f"{path.name}: the last line has no newline")
     if expected is None:
-        expected = sorted(p.name for p in path.parent.iterdir()
-                          if re.match(r"^openbfme-[\w.+-]+-(linux|windows)-x64\.(tar\.gz|zip)$", p.name))
+        expected = sorted(p.name for p in path.parent.iterdir() if ARCHIVE_NAME.match(p.name))
     for a in sorted(set(listed)):
         if listed.count(a) > 1:
             problems.append(f"{path.name}: {a} is listed {listed.count(a)} times")
@@ -852,7 +940,8 @@ def main(argv: list[str]) -> int:
         return 1 if problems else 0
     if argv[0] == "--release":
         if len(argv) < 3 or argv[1] not in RELEASE_FILES:
-            print("usage: audit_package.py --release linux|windows|launcher-linux|launcher-windows <package folder | archive | SHA256SUMS file> ...")
+            print("usage: audit_package.py --release linux|windows|macos|launcher-linux|launcher-windows|launcher-macos "
+                  "<package folder | archive | SHA256SUMS file> ...")
             return 2
         problems = []
         for a in argv[2:]:

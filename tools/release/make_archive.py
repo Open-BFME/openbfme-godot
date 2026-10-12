@@ -8,7 +8,8 @@ The same folder content and --mtime (package.sh passes the commit's time, SOURCE
   * members in sorted order, the top folder first; nothing but the folder and regular files (no links, no extra entries)
   * tar: GNU format, uid / gid 0, empty user / group names, every mtime = --mtime, mode 0755 for executables (the file's x bit) and the
     folder, 0644 otherwise; gzip: compression level 9, no file name, header mtime = --mtime
-  * zip: no directory entries, no comments, no extra fields, deflate level 9, every date = --mtime (UTC), Unix permissions as above
+  * zip: no directory entries (a sub folder, such as the macOS package's application bundle, exists only through its files' names),
+    no comments, no extra fields, deflate level 9, every date = --mtime (UTC), Unix permissions as above
 The bytes then depend only on Python's zlib, which package.sh records next to the archives (see docs/RELEASE.md, "Reproducibility").
 """
 from __future__ import annotations
@@ -63,7 +64,11 @@ def zip_file(folder: Path, out: Path, mtime: int) -> None:
     with zipfile.ZipFile(out, "w") as z:
         for p in members(folder):
             if p.is_dir():
-                raise SystemExit(f"make_archive: {p}: a package has no sub folders")
+                # no directory entries: a sub folder (the macOS package's application bundle, lane MAC-1) exists only through the
+                # names of its files, and an empty one is not written at all
+                if not any(x.is_file() for x in p.rglob("*")):
+                    raise SystemExit(f"make_archive: {p}: an empty folder")
+                continue
             info = zipfile.ZipInfo(f"{folder.name}/{p.relative_to(folder).as_posix()}", date_time=date)
             info.compress_type = zipfile.ZIP_DEFLATED
             info.create_system = 3
