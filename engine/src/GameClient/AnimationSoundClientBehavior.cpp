@@ -7,6 +7,7 @@
 
 #include "GameClient/AnimationSoundClientBehavior.h"
 #include "GameClient/ClientBehaviorModules.h"
+#include "GameClient/SoundSelectorClientBehavior.h"
 
 #include "Common/AsciiString.h"
 #include "Common/Audio/AudioEventRTS.h"
@@ -633,4 +634,5 @@ bool AnimationSoundModuleManager::isDirty(const AnimationSoundClientBehavior *m)
 void ClientBehaviorModules::registerAll(ModuleFactory &modules)
 {
 	AnimationSoundClientBehavior::registerClass(modules);
+	SoundSelectorClientBehavior::registerClasses(modules); // lane DECOMP-2: the three sound selectors (S-701)
 }

@@ -518,6 +518,23 @@ void SpecialAbilityUpdate::initiateIntentToDoSpecialPower(const SpecialPowerTemp
 	setWakeFrame(obj, (UpdateSleepTime)1); // RW 0x850C32(object, 1)
 }
 
+// RW 0x851B6E (the special power update interface's slot 0x20)
+bool SpecialAbilityUpdate::allowsSpecialPowerUse() const
+{
+	if (!m_data->m_specialPowerTemplate || !conditionsAllow())
+	{
+		return false; // RW 0x851B75: no power (+ 0x4 of the data) answers no
+	}
+	const int type = m_data->m_specialPowerTemplate->getSpecialPowerType();
+	if (type != 0x27 && type != 0x28)
+	{
+		return true;
+	}
+	// RW 0x851BA2: the object's contain (+ 0x258) slot 0x114(0) below its slot 0x70 (the room test: not ported, S-1043, as in ToggleHidden's canHide)
+	getObject()->logic().noteStop("[S-1043] SpecialAbilityUpdate: the garrison enum's room test (RW 0x851BA2) is not ported; the power is refused");
+	return false;
+}
+
 // RW 0x851551
 bool SpecialAbilityUpdate::conditionsAllow() const
 {

@@ -3,6 +3,7 @@
 
 #include "GameLogic/Object/Object.h"
 #include "GameLogic/LegendaryHeroesGame.h"
+#include "GameLogic/Module/CastleModules.h"
 #include "GameLogic/Module/SpecialPowerModules.h"
 #include "GameLogic/Object/ObjectGeometry.h"
 #include "GameLogic/Module/PhysicsBehavior.h"
@@ -1096,6 +1097,33 @@ void Object::giveUpgradeSelf(const UpgradeTemplate *upgrade)
 	updateUpgradeModules();
 }
 
+bool Object::hasUpgrade(const UpgradeTemplate *upgrade) const
+{
+	if (!upgrade)
+	{
+		return false;
+	}
+	// TARGET RW 0x68E040: RW 0x68C866 returns contain slot 0x7C of Object + 0x258 (null without a contain). Of the contain interface vtables only the HordeContain
+	// family answers (RW 0x872A6F: the module's HordeContainInterface at module + 0x11C; HordeContain RW 0xC5B480, its RotWK-only subclass RW 0xC5C110,
+	// AODHordeContain RW 0xC5D268); OpenContain and every other contain (TransportContain, HordeTransportContain, GarrisonContain, ...) return null (RW 0x851E97).
+	// Its slot 0xB0 (RW 0x86EC2D, BFME2 decomp HordeContainIface11CSlots.cpp HordeContain::rva0046B95E, tier A) is true when a contained member has the upgrade
+	// (this function, recursively), then when an object of the second member list (module + 0x170) has it: that list is not ported (S-486)
+	if (m_contain && m_contain->getHordeContainInterface())
+	{
+		if (const ContainModuleInterface::ContainedItemsList *items = m_contain->getContainedItemsList())
+		{
+			for (const Object *member : *items)
+			{
+				if (member->hasUpgrade(upgrade))
+				{
+					return true;
+				}
+			}
+		}
+	}
+	return m_upgradeMask.test((unsigned)upgrade->getMaskBit());
+}
+
 void Object::giveUpgrade(const UpgradeTemplate *upgrade)
 {
 	if (!upgrade)
@@ -1211,6 +1239,10 @@ void Object::updateUpgradeModules()
 	{
 		return;
 	}
+	// RW 0x693724 .. 0x69373C: the object's CastleMemberBehavior (RW 0x797BEF, BFME2 decomp CastleMemberBehaviorFind.cpp, tier A: findModule by the class name) names
+	// the castle's keep at module + 0x14; that object (looked up once, before the modules) adds its own upgrades to every attempt
+	const CastleMemberBehavior *castleMember = dynamic_cast<const CastleMemberBehavior *>(findModule("CastleMemberBehavior"));
+	const Object *keep = castleMember && castleMember->keepId() != INVALID_ID ? logic().findObjectByID(castleMember->keepId()) : nullptr;
 	for (size_t i = 0; i < m_modules.size(); ++i) // index loop: an implementation may not add modules, but stay safe against reallocation
 	{
 		UpgradeMux *mux = m_modules[i]->getUpgrade();
@@ -1222,6 +1254,10 @@ void Object::updateUpgradeModules()
 		{
 			UpgradeMaskType mask = player->getCompletedUpgradeMask(); // RW 0x6936FE: rebuilt for every module (an implementation may change the masks)
 			mask.orWith(m_upgradeMask);
+			if (keep)
+			{
+				mask.orWith(keep->getUpgradeMask()); // RW 0x69378C (keep + 0x28C)
+			}
 			mux->attemptUpgrade(mask);
 		}
 		mux->postUpgradeCheck();

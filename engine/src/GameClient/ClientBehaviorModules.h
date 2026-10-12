@@ -8,6 +8,7 @@ class ModuleFactory;
 
 namespace ClientBehaviorModules
 {
-// AnimationSoundClientBehavior (GameClient/AnimationSoundClientBehavior.h)
+// AnimationSoundClientBehavior (GameClient/AnimationSoundClientBehavior.h); lane DECOMP-2: the ModelCondition / Upgrade / Random sound selectors
+// (GameClient/SoundSelectorClientBehavior.h)
 void registerAll(ModuleFactory &modules);
 } // namespace ClientBehaviorModules

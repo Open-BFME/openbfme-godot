@@ -62,7 +62,7 @@ inline void lobbyLabels(MapGameText &t)
 	t.set("GUI:StartingMoneyFormat", "$%d");
 	t.set("GUI:ErrorStartingGame", "Error starting game");
 	t.set("GUI:CantFindMap", "Cannot find the map");
-	t.set("GUI:TooManyPlayers", "Too many players: the map has %d");
+	t.set("LAN:TooManyPlayers", "Too many players: the map has %d"); // lane GAMEMODES-1: RotWK's start check (RW 0x843564)
 	for (int i = 0; i <= 4; ++i)
 	{
 		t.set("Team:" + std::to_string(i), "Team " + std::to_string(i));

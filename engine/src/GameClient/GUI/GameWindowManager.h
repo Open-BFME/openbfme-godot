@@ -206,6 +206,7 @@ private:
 	GameWindow *m_loneWindow = nullptr;
 	std::vector<GameWindow *> m_modal; // the head is the last element
 	GameWindow *m_drawWindow = nullptr;
+	GameWindow *m_drawRoot = nullptr; // lane MENU-1: the top-level window winRepaint is drawing (GadgetDrawCommand::root)
 	GadgetDrawList *m_drawList = nullptr;
 	bool m_sendMousePosMessages = true; // lane FB7-1 (S-1916)
 	std::uint32_t m_timeMs = 0;

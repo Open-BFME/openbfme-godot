@@ -46,9 +46,11 @@
 //   * start RW 0x8F21F7: when the target has fewer teams than its max: target and player kept; per team a pooled AI team prototype (TheTeamFactory + 0x10, 80
 //     of them, RW 0x7A6295: "<TYPE>_<tactic>_<id>_<n>", wants members (+ 0x31C)); its type = the target's; vslot 3 (RW 0x8F121F: ENEMY_STRUCTURE ->
 //     minimum size = GetGameLogicRandomValue(3, 5), AITactic.cpp line 0x1C7); all made -> the target's team count + 1, else the tactic ends.
-//   * team builder (AIPlayer + 0x90, update RW 0x9A3366): every team that wants members recruits (RW 0x9A32C1 -> RW 0x9A2E06: the AI's army list in order, CAN_ATTACK
-//     or SUPPORT and eligible (RW 0x9A24FC), up to the maximum (+ 0x2D0); then HERO units for types 0 / 1); a team with >= minimum members (and at its maximum or
-//     RW 0x9A26A1) is handed over (RW 0x6C779B): it stops wanting members.
+//   * team builder (AIPlayer + 0x90, update RW 0x9A3366): every team that wants members recruits (an OPPORTUNITY team's maximum clamped to 2, RW 0x9A3345; RW 0x9A32C1
+//     -> RW 0x9A2E06: the AI's army list in order, CAN_ATTACK or SUPPORT accepted by RW 0x9A24FC (alive, not IGNORES_SELECT_ALL, in the default team, the team's
+//     required / forbidden KindOf masks, 10 s old, no current victim), up to the maximum (+ 0x2D0); a SUPPORT unit only beside a member that is neither SUPPORT nor
+//     HORDE; then HERO units for types 0 / 1); a team with >= minimum members (RW 0x9A24A6) that is DEFENSIVE, at its maximum or meeting its target's threat
+//     (RW 0x9A26A1) is handed over (RW 0x6C779B): it stops wanting members (lane DECOMP-2).
 //   * the tactic's update RW 0x8F28DD (teams without a living member are dropped; not started: a dropped target ends it; started without teams: ends) and
 //     RW 0x8F11DA (when every team is ready: not started -> the ready frame, then (RW 0xDE9F08 frames later, 0 in the image) started and vslot 0x18 =
 //     RW 0x9B4DDA: every team attack-moves to the target position (RW 0x8F17EE: AIGroup::groupAttackMoveToPosition(pos, 0x7FFFFFFF, CMD_FROM_PLAYER));
@@ -59,7 +61,7 @@
 //     + 0x38 = the average of the team centres), the origin + 0x44 (the first position), vslot 0x20, RW 0x8F144C, vslot 0x2C (RW 0x8F2784: the retreat on a
 //     negative threat); SimpleAttack's started update RW 0x9B4DE7 ends the tactic with success when every team is idle for TeamTimeUntilConsideredIdle seconds
 //     (RW 0x8F175A / 0x8F1725) or the target is inactive.
-// What is not ported (stops S-417 / S-418 / S-891, reported at runtime): the other 8 offensive tactics (the pick draws among the 2 SimpleAttack prototypes only), the
+// What is not ported (stops S-417 / S-418, reported at runtime): the other 8 offensive tactics (the pick draws among the 2 SimpleAttack prototypes only), the
 // DEFENSIVE / OPPORTUNITY / EXPANSION heuristics and tactics, the targetless tactics (RW 0x90C5E2: FarmBuilder, StructureCreep, ...), the AIThreatFinder (threat
 // taken as 0: no draw at RW 0x90B2A0), RW 0x6C7344, RW 0x90CCCB, RW 0x8F144C (the teams' AIGroup step) and RW 0x8F2784's retreat (no threat finder), the other tactics'
 // launch / update bodies, the end's merge of the teams, the AI team objects (members stay in the player's team), the pathfinder check of RW 0x9EF9AF (taken as reachable), the filters
@@ -73,6 +75,7 @@
 
 #include <cstdint>
 #include <map>
+#include <set>
 #include <memory>
 #include <string>
 #include <utility>
@@ -114,8 +117,13 @@ struct AITacticTeam
 {
 	std::string name;                ///< "<TYPE>_<tactic>_<id>_<n>"
 	int type = 0;                    ///< + 0x2CC
-	int minimum = 0;                 ///< + 0x2D4
-	int maximum = -1;                ///< + 0x2D0 (-1: the pooled prototype's own value, not identified)
+	// lane DECOMP-2: the pooled prototype's reset (RW 0x7A581D -> TeamTemplateInfo::loadFromDict(null) RW 0x7A2C96, BFME2 decomp TeamTemplateInfoLoadFromDict.cpp
+	// tier A) makes + 0x2D4 = 1, + 0x2D0 = -1 (unsigned: no maximum), + 0x2CC = -1 and clears the KindOf masks and the priority; the start writes + 0x2CC (type)
+	int minimum = 1;                 ///< + 0x2D4
+	int maximum = -1;                ///< + 0x2D0 (-1 = 0xFFFFFFFF: no maximum)
+	std::vector<int> requiredKinds;  ///< + 0x2E0: a recruit has one of these KindOf bits (RW 0x9A25C8; empty: any)
+	std::vector<int> forbiddenKinds; ///< + 0x2FC: a recruit has none of these (RW 0x9A25E5)
+	int priority = 0;                ///< + 0x21C (FarmKillSquad: 500)
 	bool wantsMembers = true;        ///< + 0x31C
 	bool handedOver = false;         ///< + 0x31D
 	std::vector<ObjectID> members;   ///< S-418: the recruited units (RW: the team's members)
@@ -184,6 +192,8 @@ struct AIBrainState
 	unsigned long long targetlessPicks = 0, targetlessStarted = 0, targetlessUnported = 0;
 	std::vector<AIAttackedAt> attackedAt;          ///< lane AI-3: + 0x20 (RW 0x6C7344 / 0x6C720A), at most 20
 	AIThreatFinder::ThreatRecord idleArmy;        ///< lane AI-3: the player info record's army list + 0x10 (RW 0x99E63B): the army in the default team
+	std::set<ObjectID> dispatched;                ///< lane DECOMP-2: the team builder's + 0x18, the default-team units RW 0x9A3040 has sent (until they are gone)
+	unsigned long long idleDispatches = 0;        ///< lane DECOMP-2: the units RW 0x9A3040 sent (report)
 	unsigned long long gateDraws = 0, gateRejects = 0; ///< lane AI-3: RW 0x90B2A0's draws (AITargetChooser.cpp 0xF7) and rejections
 	unsigned long long retreats = 0;                ///< lane AI-3: tactics ended by RW 0x8F243A
 	unsigned long long merges = 0;                  ///< lane AI-3: teams joined into another tactic's team at an end (RW 0x8F1D88 / 0x7A0F74)

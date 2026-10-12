@@ -1105,6 +1105,41 @@ bool ScriptActions::executeUnitAction(ScriptEngine &engine, const ScriptActionRe
 		}
 		return true;
 	}
+	if (name == "PLAYER_HUNT")
+	{
+		// RW 0x7BBCF9 (lane DECOMP-2, BFME2 decomp ScriptActionsRva003BB31D.cpp tier A): every player of the mask (RW 0x758F7C) -> Player::setUnitsShouldHunt(true,
+		// CMD_FROM_SCRIPT) RW 0x6AF4B1: + 0x35D = true, then each member of each team of the player's prototypes that has none of DOZER, HARVESTER,
+		// IGNORES_SELECT_ALL (RW 0x6AF50E / 0x6AF515) and is no HORDE_MEMBER (status 0x26) leaves its AI group (RW 0x68C6EE: the port keeps no group) and its AI
+		// hunts (RW 0x6AF150). INFERENCE: the members are the player's objects in object list order (RW: prototype, team, member order)
+		static const int dozer = ObjectTemplateInfoBuilder::kindOfIndex("DOZER"), harvester = ObjectTemplateInfoBuilder::kindOfIndex("HARVESTER"),
+						 ignoresSelectAll = ObjectTemplateInfoBuilder::kindOfIndex("IGNORES_SELECT_ALL"),
+						 hordeMember = ObjectTemplateInfoBuilder::objectStatusIndex("HORDE_MEMBER");
+		for (Player *p : ScriptConditions::players(engine, param(a, 0).stringValue))
+		{
+			p->setUnitsShouldHuntFlag(true);
+			std::vector<Object *> mine;
+			for (Object *o = engine.logic().getFirstObject(); o; o = o->getNextObject())
+			{
+				if (o->getControllingPlayer() == p)
+				{
+					mine.push_back(o);
+				}
+			}
+			for (Object *o : mine)
+			{
+				if ((dozer >= 0 && o->isKindOf((unsigned)dozer)) || (harvester >= 0 && o->isKindOf((unsigned)harvester)) ||
+					(ignoresSelectAll >= 0 && o->isKindOf((unsigned)ignoresSelectAll)) || (hordeMember >= 0 && o->testStatus((unsigned)hordeMember)))
+				{
+					continue;
+				}
+				if (AIUpdateInterface *ai = o->getAIUpdateInterface())
+				{
+					ai->aiHunt(CMD_FROM_SCRIPT);
+				}
+			}
+		}
+		return true;
+	}
 	if (name == "NAMED_SET_ATTITUDE")
 	{
 		// RW 0x7BBCD0 (unit, mood): the unit's AI (+ 0x260) -> RW 0x66E12A

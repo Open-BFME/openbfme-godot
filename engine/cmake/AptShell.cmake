@@ -5,9 +5,12 @@ list(APPEND OPENBFME_APT_SOURCES
     src/GameClient/GUI/WindowManager.cpp
     src/GameClient/GUI/AptScreen.cpp
     src/GameClient/GUI/Shell/Shell.cpp
+    src/GameClient/GUI/Shell/ShellLayering.cpp
+    src/GameClient/GUI/StillImageLoadScreen.cpp
     src/GameClient/GUI/AptScreens/AptMainMenu.cpp
     src/GameClient/GUI/AptScreens/AptSimpleScreens.cpp
     src/GameClient/GUI/AptScreens/AptSkirmish.cpp
+    src/GameClient/GUI/Skirmish/SkirmishPreferences.cpp
     src/GameClient/GUI/AptScreens/AptScreenFactories.cpp
     src/GameClient/GUI/Image.cpp
     src/GameClient/GUI/HeaderTemplate.cpp
@@ -34,4 +37,7 @@ list(APPEND OPENBFME_APT_TESTS
     tests/test_apt_shell.cpp
     tests/test_apt_gadgets.cpp
     tests/test_apt_skirmish.cpp
-    tests/test_apt_shell_walk.cpp)
+    tests/test_apt_shell_walk.cpp
+    tests/test_menu1_layering.cpp
+    tests/test_menu1_profiles.cpp
+    tests/test_menu1_loadscreen.cpp)

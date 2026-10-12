@@ -213,6 +213,43 @@ struct SkirmishGameInfo
 		return false;
 	}
 
+	// lane GAMEMODES-1: RotWK GameInfo::isSandbox (vslot 0x50, RW 0x800C8F; BFME2 decomp GameNetwork/GameInfoPlayerCounts.cpp GameInfo::isSandbox, BFME2
+	// 0x7FF3E3, the same body): the team of `localSlot` (getLocalSlotNum, vslot 0x34; without one, the team of the first occupied slot) and every OTHER
+	// occupied slot (RW 0x8009B1: human or AI, an observer included) on that team: no slot of team -1 (none) and no other team. A game alone is a sandbox
+	bool isSandbox(int localSlot) const
+	{
+		int localTeam = -1;
+		if (localSlot < 0 || localSlot >= MAX_SLOTS)
+		{
+			localSlot = -1;
+			for (const SkirmishGameSlot &s : slots)
+			{
+				if (s.isOccupied())
+				{
+					localTeam = s.teamNumber;
+					break;
+				}
+			}
+		}
+		else
+		{
+			localTeam = slots[localSlot].teamNumber;
+		}
+		for (int i = 0; i < MAX_SLOTS; ++i)
+		{
+			if (i == localSlot)
+			{
+				continue;
+			}
+			const SkirmishGameSlot &s = slots[i];
+			if (s.isOccupied() && (s.teamNumber < 0 || s.teamNumber != localTeam))
+			{
+				return false;
+			}
+		}
+		return true;
+	}
+
 	int numPlayers() const
 	{
 		int n = 0;

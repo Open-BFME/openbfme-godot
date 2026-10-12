@@ -19,6 +19,7 @@ files.
 - [Options](#options)
 - [The hero bar and selection](#the-hero-bar-and-selection)
 - [Skirmish rules](#skirmish-rules)
+- [Skirmish games](#skirmish-games)
 - [Controls](#controls)
 - [Known issues](#known-issues)
 - [Troubleshooting](#troubleshooting)
@@ -307,6 +308,26 @@ their health, take less damage and hit harder. The loading screen names the
 rule when it is on. A game with it on plays differently from the original;
 with it off nothing changes.
 
+## Skirmish games
+
+- **Your profile.** The first time you open Skirmish, the game asks for a
+  profile name, as the original does. The name is kept for your next games.
+- **The loading screen** shows every player's name, team, army and rank icon
+  while the map loads. A campaign mission loads behind its own picture.
+- **How a game is won.** As in the original, you are out when your last
+  building falls: builders and armies left in the field don't keep you in
+  the game. The last team standing wins.
+- **Sandbox.** Put every player on one team (or play alone) and the game
+  starts in sandbox mode: nobody wins, so you can build and try things for as
+  long as you like. A player who loses every building is still defeated.
+- **Placing a building.** The preview follows the pointer as in the original:
+  in your colour and see-through, playing the building's animation, red with
+  a red base where it can't go. A harbour snaps to the shore. Hold the right
+  button and drag to scroll the map while you place; a quick right click
+  cancels the placement.
+- **The computer opponent** builds heroes, uses its spell book, and lets its
+  heroes and units use their powers.
+
 ## Controls
 
 OpenBFME reads the key bindings from **your install's own CommandMap.ini**, so
@@ -315,6 +336,7 @@ the keys are the original game's. In particular:
 | Keys | What they do | Compared with the original |
 |---|---|---|
 | Right click | give an order (move, attack, ...) | same: the original's default |
+| Right drag while placing a building | scroll the map; the placement stays | same |
 | *Alternate mouse setup* option | left click orders instead | same setting (`AlternateMouseSetup` in `Options.ini`); `-- --classic-mouse` forces it for one run |
 | Ctrl+1 ... 9 | make a control group | same |
 | 1 ... 9 | select the group; press twice quickly to look at it | same (the double press is the original's 5 game frames) |
@@ -369,21 +391,24 @@ recorded stop in [STOPS.md](STOPS.md); the ID is given for reference.
 **Looks or sounds different**
 - Team colours on units and buildings are an educated guess at how the
   original blends them, and may look different (S-119).
-- The computer opponent builds, attacks and finishes games, but does not yet
-  defend, expand or use heroes the way the original does (S-413, S-415,
-  S-417).
+- The computer opponent builds, attacks and finishes games, and uses its
+  heroes, spell book and powers, but it does not yet defend or expand the way
+  the original does, and it skips some powers (S-413, S-415, S-417, S-1421).
+- Units and buildings cast no shadows yet, so the building preview has none
+  either (S-3304).
 - A destroyed enemy building out of your sight disappears at once instead of
   staying in the fog until you look again (S-561).
 - Some sounds are missing: units being damaged, scripted music and parts of
   the big-battle ambience (S-1242, S-246, S-248).
-- Movies have no subtitles (S-1710). Loading screens don't show the
-  mission picture (S-1364).
+- Movies have no subtitles (S-1710).
 - Menus are laid out for 1024x768 and scaled; at other window sizes text and
   click targets can be slightly off, and widescreen camera framing may differ
   (S-130, S-455).
 
 **Menus**
 - Menus work with the mouse only, not the keyboard or a gamepad (S-108).
+- Skirmish's profile page (PROFILE, then the statistics entry) opens, but its
+  statistics are not filled in yet and show placeholder labels (S-175).
 - The graphics detail settings set the particle limit, texture quality and
   health bars, but OpenBFME doesn't draw shadows yet, and the model,
   animation, terrain, water and shader detail rows are greyed out (S-3402).

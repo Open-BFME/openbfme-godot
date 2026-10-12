@@ -47,6 +47,11 @@ void setObjectWeaponSetFlag(Object &obj, int bit, bool on);
 int modelConditionForWeaponSetBit(int bit);
 // RW 0x942FC6: the toggle is restricted while a non-horde contain of the object holds someone
 bool isRestrictedByContain(const Object &obj);
+// lane AIPOW-1: Object::doCommandButton's TOGGLE_WEAPONSET case (RW 0x696FD2 case 0x2D, the AI's AISpecialPowerUpdate runs it with CMD_FROM_SCRIPT): the
+// object's own WEAPONSET_TOGGLE_1 flag (Object + 0x38F bit 0) decides; set (RW 0x691059 / horde RW 0x6945DA) when clear, else cleared (RW 0x691106 / RW
+// 0x694636); then, with an AI (+ 0x260): the object or its container ATTACKING (RW 0x694154(0x25)) -> aiIdle(CMD_FROM_AI) (RW 0x5E821A(2)), and the
+// FiringTracker's hard reset (RW 0x8E302A(1)). Unlike the message (RW 0x77B529) there is no moving test and no ignore-AI-commands window.
+void toggleFromCommandButton(Object &obj);
 // the dispatcher case RW 0x77B529
 void registerHandlers(GameLogicDispatch &dispatch);
 std::vector<std::string> acceptanceStops();

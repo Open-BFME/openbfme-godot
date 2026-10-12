@@ -9,6 +9,12 @@
 #include "GameLogic/Map/CastleTemplates.h"
 #include "GameLogic/Module/CastleModules.h"
 #include "GameEngineDevice/W3DDevice/GameClient/Drawable/Draw/W3DModelDraw.h"
+#include "GameLogic/Object/ObjectGeometry.h"
+
+#include <algorithm>
+#include <stdexcept>
+
+#include <variant>
 
 namespace PlacementGhost
 {
@@ -133,5 +139,68 @@ CastleLook castleLookOf(const ThingTemplate &tt, const std::string &side, Castle
 		out.pieces.push_back(p);
 	}
 	return out;
+}
+
+Bib bibOf(const ThingTemplate &tt)
+{
+	Bib out;
+	const ThingTemplate &t = *tt.getFinalOverride();
+	auto field = [&](const char *name) {
+		if (const FieldValue *v = t.findField(name))
+		{
+			if (const float *f = std::get_if<float>(v))
+			{
+				return *f;
+			}
+			if (const long long *i = std::get_if<long long>(v))
+			{
+				return (float)*i;
+			}
+		}
+		return 0.0f;
+	};
+	std::vector<ObjectGeometry::Shape> shapes;
+	try
+	{
+		shapes = ObjectGeometry::shapesOf(t);
+	}
+	catch (const std::exception &e)
+	{
+		out.error = t.getName() + ": " + e.what();
+		return out;
+	}
+	if (shapes.empty())
+	{
+		out.error = t.getName() + " has no Geometry";
+		return out;
+	}
+	// RW 0xAD2040 / 0xAD2860: the box around the active shapes (each its offset +- its extent: a box's major radius in x and minor in y, a sphere's or
+	// cylinder's major radius), starting at 0; GeometryInfo + 0x24 = max(-min x, max x) (RW 0xAD2957), + 0x28 = max(-min y, max y) (RW 0xAD2974)
+	float minX = 0.0f, maxX = 0.0f, minY = 0.0f, maxY = 0.0f;
+	for (const ObjectGeometry::Shape &s : shapes)
+	{
+		if (!s.active)
+		{
+			continue;
+		}
+		const float rx = s.majorRadius, ry = s.type == ObjectGeometry::SHAPE_BOX ? s.minorRadius : s.majorRadius;
+		minX = std::min(minX, s.offsetX - rx);
+		maxX = std::max(maxX, s.offsetX + rx);
+		minY = std::min(minY, s.offsetY - ry);
+		maxY = std::max(maxY, s.offsetY + ry);
+	}
+	const float sizeX = std::max(-minX, maxX), sizeY = std::max(-minY, maxY);
+	const float exitWidth = field("FactoryExitWidth"), extra = field("FactoryExtraBibWidth"); // template + 0x4E4 / + 0x4E8 (RW 0x4924CB / 0x4924D8)
+	out.x0 = -(sizeX + extra);
+	out.x1 = sizeX + exitWidth + extra;
+	out.y0 = -(sizeY + extra);
+	out.y1 = sizeY + extra;
+	out.valid = true;
+	return out;
+}
+
+const char *bibTextureFor(int legalCode)
+{
+	return legalCode == 0 ? "" : (legalCode == 9 ? "TBBib.tga" : "TBRedBib.tga");
 }
 } // namespace PlacementGhost

@@ -140,7 +140,18 @@ size_t HudInput::update()
 		}
 	}
 	m_sent += n;
+	// lane BUILD-5: the placement update's ghost step (RW 0x6A2AE5) runs in the client's draw, after this frame's input (it reads the live pointer); a device
+	// defers it until its displayed camera is set (setPlacementDeferred)
+	if (!m_placementDeferred)
+	{
+		m_place.handleBuildPlacements();
+	}
 	return n;
+}
+
+void HudInput::placementUpdate(bool judge)
+{
+	m_place.handleBuildPlacements(judge);
 }
 
 // RotWK HintSpy (RW 0x838225 .. 0x83825E): the move family only, then createMoveHint's tests (RW 0x69F54F)
@@ -242,11 +253,12 @@ std::vector<std::string> HudInput::acceptanceStops()
 				  "(RW 0x83D41A); not ported: the double click's own route (RotWK's CommandTranslator case RW 0x81F791 -> ControlBar RW 0x9403ED / InGameUI vslot 0x188; "
 				  "the port keeps ZH's select-matching in the SelectionTranslator), pickDrawable's forceAttack argument (the cast flag RW 0x48ABFF), the model draw's own "
 				  "override (W3DModelDraw + 0x214), the object status bits that clear the type (RW 0x4B5988 / 0x4B59CE, taken as effectively dead), the 0x40 type");
-	out.push_back("[S-3302] building placement ghost (PLAY-1 r2 as S-1923; renumbered by PLAY-3: S-1923 is WINCRASH-1's) (RotWK placeBuildAvailable RW 0x69C5E6, placement update RW 0x6A2AE5: the BUILD_PLACEMENT_CURSOR model at 0.45 "
-				  "opacity, red when illegal, a blue pulse for code 9): the draw script read only for its hide / show calls, the tint drawn as an additive overlay, "
-				  "not ported: the house colour, the animation (bind pose), the anchor / arrow models of a rotatable placement (W3DInGameUI + 0xAB8 / 0xABC); "
-				  "a castle's layout pieces (PLAY-3, RW 0x6A2AE5) all take the site's tint (RotWK's per-piece legality RW 0x6A39A0 .. 0x6A3B0F is not ported) and "
-				  "their angle is taken as the ghost's plus the entry's");
+	out.push_back("[S-3302] building placement ghost (PLAY-1, PLAY-3, BUILD-5): the ghost is drawables of the template (PlacementIcons: RW 0x69C5E6 / 0x6A2AE5) with "
+				  "BUILD_PLACEMENT_CURSOR, opacity 0.45, the builder's colour (RW 0x674504) and the draw module's own model, animation and BeginScript; a castle's layout "
+				  "pieces turned by the ghost's angle, its BASE_SITE slots judged one by one; the tint through the W3D lighting (ZH W3DScene's colorTint); the faction bib "
+				  "(RW 0x49249D extents, TBRedBib / TBBib); W_Arrow while anchored (RW 0x48EAD8); the alpha blend (ZH dx8renderer's translucent pass, W3DShaderKey::AlphaOverride); "
+				  "not ported: the restricted-area code 8 (RW 0x707141), its shadow (SHADOW_VOLUME; no drawable casts one yet, S-3304), RotWK's own "
+				  "tint lighting (the donor is ZH's), the bib quad's own buffer (ZH's W3DBibBuffer)");
 	return out;
 }
 

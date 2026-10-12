@@ -25,8 +25,7 @@ LookAtTranslator::LookAtTranslator(HudContext &context, TacticalCamera &camera)
 bool LookAtTranslator::isDragging(const ICoord2D &a, const ICoord2D &b) const
 {
 	// RW 0x5ED4B9: |dx| above the drag tolerance or |dy| above it (unsigned compares)
-	const unsigned tol = (unsigned)m_ctx.mouse.dragTolerance;
-	return (unsigned)std::abs(a.x - b.x) > tol || (unsigned)std::abs(a.y - b.y) > tol;
+	return m_ctx.mouse.isDragging(a, b);
 }
 
 bool LookAtTranslator::interior(const ICoord2D &p, const ICoord2D &size) const
@@ -375,6 +374,9 @@ void LookAtTranslator::tick(unsigned nowMs)
 	}
 	m_offsetX = offX;
 	m_offsetY = offY;
+	// lane BUILD-5: TheInGameUI->setScrollAmount(offset) before the scroll, zero while not scrolling (BfmeOwnVVDScrollUpdate.cpp:249 .. 365, tier A for RW 0x83B471):
+	// the directional Scroll cursor faces it
+	m_ctx.ui.setScrollAmount(offX, offY);
 	const int mask = m_camera.scrollBy(offX, offY);
 	if (mask != 0 && m_scrolling && m_scrollType == SCROLL_RMB)
 	{

@@ -133,6 +133,23 @@ bool isRestrictedByContain(const Object &obj)
 	return c && !c->getHordeContainInterface() && c->getContainCount() != 0; // slots 0x7C / 0x114
 }
 
+void toggleFromCommandButton(Object &obj)
+{
+	// RW 0x696FD2 case 0x2D
+	setOnSelfOrHorde(obj, !flagOf(obj, WEAPONSET_TOGGLE_1));
+	if (AIUpdateInterface *ai = obj.getAIUpdateInterface())
+	{
+		if (conditionOrContainer(obj, kModelConditionAttacking))
+		{
+			ai->aiIdle(CMD_FROM_AI); // RW 0x5E821A(2)
+		}
+		if (ObjectWeapons *w = obj.getWeapons()) // + 0x248
+		{
+			w->resetFiringTracker(true); // RW 0x8E302A(1)
+		}
+	}
+}
+
 void registerHandlers(GameLogicDispatch &dispatch)
 {
 	dispatch.registerHandler(MSG_WEAPONSET_TOGGLE, "HUD-4", [](GameLogic &logic, const GameMessage &m) {

@@ -47,6 +47,8 @@ public:
 	size_t slotCount() const { return m_slots.size(); }
 	// lane FX-2: the client effect player the draw modules call (null uninstalls)
 	void setFXHost(DrawableFXHost *host) { m_services.fx = host; }
+	// lane BUILD-5: the services the game's drawables share (the placement ghost's drawables are made with them, as RotWK's ThingFactory::newDrawable does)
+	DrawServices &services() { return m_services; }
 	// lane AUDIO-4: TheAnimationSoundModuleManager of these drawables (run at the end of syncTransforms, after the animations advanced)
 	AnimationSoundModuleManager &animationSounds() { return m_animationSounds; }
 	// lane PERF-3: syncTransforms runs each drawable's prepareSync on the client job pool (default); false: the loop of syncFromSnapshot in slot order, the

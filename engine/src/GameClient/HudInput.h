@@ -59,6 +59,11 @@ public:
 
 	// Runs the translators over the queued events. Returns the number of logic messages that were appended to the command list.
 	size_t update();
+	// lane BUILD-5 r2: the placement update's ghost step (PlaceEventTranslator::handleBuildPlacements, RW 0x6A2AE5) belongs to the client's draw, after the
+	// camera moved: with `deferred` set update() leaves it out and the device calls placementUpdate() once the displayed camera was applied (the ghost then
+	// stands under the pointer of the frame drawn, also while the view scrolls); unset (tests without a device) update() runs it after the stream
+	void setPlacementDeferred(bool deferred) { m_placementDeferred = deferred; }
+	void placementUpdate(bool judge = true); // lane BUILD-5 r3: judge false on the device's busy-worker frames (PlaceEventTranslator::handleBuildPlacements)
 	// AUDIO-2: called with every logic message as it goes to the command list, after the translators updated the client selection (the unit voice of ZH
 	// CommandXlat / SelectionXlat pickAndPlayUnitVoiceResponse is played from here; client presentation only)
 	void setLogicMessageObserver(std::function<void(const GameMessage &)> observer) { m_observer = std::move(observer); }
@@ -99,4 +104,5 @@ private:
 	bool m_ignoreLeftUp = false, m_ignoreRightUp = false, m_ignoreMiddleUp = false;
 	unsigned long long m_sent = 0;
 	std::function<void(const GameMessage &)> m_observer;
+	bool m_placementDeferred = false; // lane BUILD-5 r2
 };

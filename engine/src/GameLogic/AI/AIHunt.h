@@ -31,7 +31,7 @@
 // DONOR: ZH AIStates.cpp AIHuntState (7043-7240), AIAttackThenIdleStateMachine.
 //
 // INFERENCE / NOT PORTED (stop S-1188, docs/STOPS.md): the crate pick-up (no AI + 0x238 crate in the port); the attack priority info (AI + 0x70: none
-// here, so the priority comparison never runs); the player-wide hunt flag (+ 0x35D, PLAYER_HUNT) is false; TheAI's closest enemy is the port's
+// here, so the priority comparison never runs); (lane DECOMP-2: the player-wide hunt flag + 0x35D is PLAYER_HUNT's, RW 0x6AF4B1); TheAI's closest enemy is the port's
 // TargetFinder (S-326) with buildings allowed; GiantBirdAIUpdate is the GIANT_BIRD KindOf; a computer side's difficulty is its skirmish level, else
 // the script engine's.
 

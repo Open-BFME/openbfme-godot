@@ -22,10 +22,17 @@ std::vector<std::string> BuildStops::lines()
 		"RW 0x88C2FE, the primary machine RW 0x88C06B, PickActionPos / MoveToActionPos / DoAction RW 0x88D7D2 / 0x88C5C7 / 0x88D993); INFERENCE: the structure is "
 		"made at the order with every BUILD-1 effect (RW makes it PHANTOM and places it on arrival, RW 0x88D44F: the port keeps the placement's health of 1 and "
 		"removes the unplaced structure with a refund when the task is cancelled before arrival, but does not repeat its legality test, flags 0x15)",
-		"[S-306] placement mode: PlaceEventTranslator (priority 30) is ZH's: the rotation drag, shift to keep placing, the illegal-site cursor and message are inference (RotWK's translator body was read "
-		"only for the line build, S-1770); a plot's FOUNDATION_CONSTRUCT button builds at once on the plot (no ghost); the ghost is the template's first default model tinted by the legality code (the BUILD_PLACEMENT_CURSOR "
-		"animation state is not played); line building of walls is ported (lane QA2-FIX: the hub's Begin Wall Span click sends "
-		"MSG_WALL_HUB_CONSTRUCT_SPAN, RW 0x83E93A; its gaps are S-1770)",
+		"[S-306] placement mode (lane BUILD-5: RotWK's PlaceEventTranslator RW 0x83E486 and placement update RW 0x6A2AE5 are ported: the right button is tracked "
+		"and passed on (right-drag scrolls), a right click cancels unless it was a drag held DragToleranceMS, the left press anchors, a 5 pixel drag turns the ghost, "
+		"the left click places with the options 0x49F or shows the code's label and BadBuildingPlacementSound, no shift to keep placing, the ghost's legality "
+		"on odd client frames with 0x48F; r2: a PORT's site and angle snap to the shore (getPortTransform RW 0x794C63) and a PORT's footprint must straddle water "
+		"and land, ratio 6 at most (RW 0x796C0B)); not ported: the options' bits 0x80 and 0x400, the message 0x7EB of a refused click and the one RW 0x83EA10 appends "
+		"after the construct, the PlacementProjection start point of getPlacementPoints, Escape (kept from BUILD-1: RotWK's translator has no key case); FINDING "
+		"(BFME2 decomp BuildAssistant.cpp:1961, tier B for RW 0x796810): RotWK numbers the options 0x01 terrain restrictions, 0x02 clear path, 0x04 object "
+		"overlap, 0x08 quick path, 0x20 enemy overlap, where LocationLegalFlags keeps ZH's order (0x01 clear path, 0x02 terrain): the castle unpack's options 5 "
+		"(RW 0x7987EE) mean terrain + overlap in RotWK, clear path + overlap here (a simulation change, left to BUILD-1's S-301); a BASE_FOUNDATION builder sends "
+		"MSG_FOUNDATION_CONSTRUCT (BUILD-1) where RotWK's click sends 0x41A; a plot's FOUNDATION_CONSTRUCT button builds at once on the plot with no ghost, as "
+		"retail does (a retail 2.01 run on the owner's PC, BUILD-5 r2)",
 		"[S-307] walls: BUILD-2 ported WallHubBehavior and the span a hub builds (MSG_WALL_HUB_CONSTRUCT_SPAN); what is still open is S-657. Repair is ported (S-656)",
 	};
 	for (const std::string &s : CastleBehavior::stopLines()) // lane CASTLE-1

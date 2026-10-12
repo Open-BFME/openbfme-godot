@@ -249,6 +249,8 @@ public:
 	void fadeIn(double frames);
 	// what the device layer draws: 0 while hidden, else the fade's opacity (1 without a fade)
 	float drawOpacity() const { return m_fade.hidden ? 0.0f : m_fade.opacity; }
+	// lane BUILD-5: ZH Drawable::setDrawableOpacity, the opacity at Drawable + 0xB0 (the field the fade steps): the placement ghost's 0.45 (RW 0x69C714)
+	void setDrawableOpacity(float opacity) { m_fade.opacity = opacity; }
 
 private:
 	void addEntry(DrawServices &services, const ThingTemplate::Nugget &nugget, std::vector<std::string> &problems);

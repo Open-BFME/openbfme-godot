@@ -578,6 +578,7 @@ W3DMaterialResult W3DMaterialFactory::Create(const MeshRenderData &mesh, const M
 
 	Ref<ShaderMaterial> mat;
 	mat.instantiate();
+	key.AlphaOverride = AlphaOverride; // lane BUILD-5 r3
 	mat->set_shader(Get_Shader(key));
 	mat->set_shader_parameter("w3d_diffuse", Vector4(diffuse.r, diffuse.g, diffuse.b, diffuse.a));
 	mat->set_shader_parameter("w3d_ambient_mat", Vector3(ambientMat.r, ambientMat.g, ambientMat.b));

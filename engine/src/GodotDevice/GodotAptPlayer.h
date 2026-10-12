@@ -138,6 +138,16 @@ public:
 	// lane CAMP-2: { backdrop_image: the shell backdrop the canvas drew ("" none), background_level, background_commands: the visible commands of the
 	// front-end background's level in the last list, background_mode: the window manager's }
 	Dictionary get_backdrop_state() const;
+	// lane MENU-1: the front end's layering this frame (GameClient/GUI/Shell/ShellLayering.h): { top, screens, movies, overprints, shown_gadgets,
+	// enabled_gadgets, input_blocked, unanchored_gadgets, problems } (problems empty: one screen, one sub-screen, no overprinting titles)
+	Dictionary get_layering_report();
+	// lane MENU-1: the loading screen a game start shows (GameClient/GUI/StillImageLoadScreen.h, RW 0x626A87): spec { game_mode, screen_kind
+	// (GameLogic + 0x114), loading_save, picture } -> { kind: "still" | "players" | "other", picture }
+	Dictionary choose_load_screen(const Dictionary &spec);
+	// lane MENU-1: the picture loading screen of a campaign mission (RW 0x7583CC) over everything until hide_still_load_screen: { ok, error }
+	Dictionary show_still_load_screen(const String &picture);
+	void hide_still_load_screen();
+	Dictionary get_still_load_screen() const; // { on, slots: [{ image, rect }], movie, movie_playing, movie_error, text_label }
 	PackedInt32Array shell_levels() const; // lane CAMP-2: the Apt level of each screen of the stack, bottom first
 	bool level_drawn(int level) const;     // lane CAMP-2: the last render list drew something visible of the level
 	// lane CAMP-2: the BinkMovie components on screen: [{ path, title, frame, frames, error }]
@@ -322,6 +332,7 @@ private:
 	bool buildGadgets(GadgetDrawList &commands);
 	static bool sameGadgets(const GadgetDrawList &a, const GadgetDrawList &b);
 	void drawGadgets(const GadgetDrawList &commands);
+	void drawStillLoadScreen(); // lane MENU-1
 	void pumpShellEvents();
 	Vector2 windowSize() const;
 };

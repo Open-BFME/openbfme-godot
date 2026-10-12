@@ -578,10 +578,22 @@ MessageDisposition SelectionTranslator::translate(const ClientMessage &msg)
 						m_ctx.stream.append(CMSG_MOUSEOVER_LOCATION_HINT).appendLocation(position);
 					}
 				}
-				m_ctx.ui.setCursor(MouseCursorName::Arrow);
-				if (under && m_ctx.ui.getGUICommand() == nullptr && HudObjects::canSelect(m_ctx, *under, false) && !under->isKindOfName("SHRUBBERY"))
+				// lane BUILD-5: createMouseoverHint's cursor (RW 0x69F637, BFME2 decomp InGameUICreateMouseoverHint.cpp:511): nothing while scrolling or
+				// selecting; in a mouse mode (a placement) the mode's cursor (Target)
+				if (m_ctx.ui.isScrolling() || m_ctx.ui.isSelecting())
 				{
-					m_ctx.ui.setCursor(MouseCursorName::Select);
+				}
+				else if (m_ctx.ui.mouseMode() != 0)
+				{
+					m_ctx.ui.setCursor(m_ctx.ui.mouseModeCursor());
+				}
+				else
+				{
+					m_ctx.ui.setCursor(MouseCursorName::Arrow);
+					if (under && m_ctx.ui.getGUICommand() == nullptr && HudObjects::canSelect(m_ctx, *under, false) && !under->isKindOfName("SHRUBBERY"))
+					{
+						m_ctx.ui.setCursor(MouseCursorName::Select);
+					}
 				}
 			}
 			break;

@@ -243,7 +243,6 @@ note	loadscreen: movieclip-native-unread: Color	69
 note	loadscreen: movieclip-native-unread: Color.setRGB	69
 note	loadscreen: opaque-character: character type 10 id 20 in GameWindowGadgets	2
 note	mainmenu: call-without-function: method 'stop' is not a function on a value of type undefined [in _level1]	1
-note	mainmenu: clearInterval-unknown-id: 	1
 note	mainmenu: setInterval-id-and-first-call: 	1
 note	menuexport: movieclip-native-unread: Color	1
 note	menuexport: movieclip-native-unread: Color.setRGB	1

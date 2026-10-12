@@ -114,7 +114,91 @@ const char *UnitVoiceResponse::rowName(int row)
 UnitVoiceResponse::UnitVoiceResponse(GameLogic &logic, Sink &sink)
 	: m_logic(logic)
 	, m_sink(sink)
+	, m_clientRandom(logic.random().algorithm()) // the client stream of the same algorithm, its own state (W3DClientRandom's rule; S-093)
 {
+}
+
+namespace
+{
+// GameClientRandomValueReal(0, 1) (RW 0x6D33AB) on the picker's client generator
+class PickerRoll : public SoundSelectors::RandomRoll
+{
+public:
+	explicit PickerRoll(GameLogicRandom &r) : m_r(r) {}
+	float roll() override { return m_r.getValueReal(0.0f, 1.0f, nullptr, 0); }
+
+private:
+	GameLogicRandom &m_r;
+};
+} // namespace
+
+UnitVoiceResponse::Voice UnitVoiceResponse::objectVoice(const Object &obj, int row) const
+{
+	const ThingTemplate &tt = *obj.getTemplate();
+	const ThingTemplate &fin = *tt.getFinalOverride();
+	if (SoundSelectors::any(fin))
+	{
+		// RW 0x676A8A: the drawable's ClientBehavior selectors (the drawable's flags are the object's: S-701), then the template (RW 0x645A89)
+		SoundSelector::Query q;
+		q.object = &obj;
+		q.drawableFlags = &obj.getModelConditionBits();
+		q.clientFrame = m_logic.getFrame();
+		PickerRoll rnd(m_clientRandom);
+		SoundSelector::Record r;
+		if (SoundSelectors::row(fin, q, SoundSelector::rowIndex(rowName(row)), m_selectorRandom[obj.getID()], rnd, &r))
+		{
+			Voice v;
+			v.eva = r.eva;
+			v.sound = r.sound;
+			return v;
+		}
+	}
+	return templateVoice(tt, row);
+}
+
+UnitVoiceResponse::Voice UnitVoiceResponse::objectNameVoice(const Object &obj, const std::string &name) const
+{
+	const ThingTemplate &tt = *obj.getTemplate();
+	const ThingTemplate &fin = *tt.getFinalOverride();
+	if (!name.empty() && SoundSelectors::any(fin))
+	{
+		// RW 0x674FFE: the selectors' UnitSpecificSounds, then the template's map (RW 0x73EDD0)
+		SoundSelector::Query q;
+		q.object = &obj;
+		q.drawableFlags = &obj.getModelConditionBits();
+		q.clientFrame = m_logic.getFrame();
+		PickerRoll rnd(m_clientRandom);
+		SoundSelector::Record r;
+		if (SoundSelectors::name(fin, q, name, m_selectorRandom[obj.getID()], rnd, &r))
+		{
+			Voice v;
+			v.eva = r.eva;
+			v.sound = r.sound;
+			return v;
+		}
+	}
+	return unitSpecificVoice(tt, name);
+}
+
+int UnitVoiceResponse::objectVoicePriority(const Object &obj) const
+{
+	const ThingTemplate &tt = *obj.getTemplate();
+	const ThingTemplate &fin = *tt.getFinalOverride();
+	if (SoundSelectors::any(fin))
+	{
+		// RW 0x675095: the selectors' slot 2, else template + 0x570
+		SoundSelector::Query q;
+		q.object = &obj;
+		q.drawableFlags = &obj.getModelConditionBits();
+		q.clientFrame = m_logic.getFrame();
+		PickerRoll rnd(m_clientRandom);
+		int priority = 0;
+		if (SoundSelectors::voicePriority(fin, q, m_selectorRandom[obj.getID()], rnd, &priority))
+		{
+			return priority;
+		}
+	}
+	return (int)fieldInt(tt, "VoicePriority", 0);
 }
 
 UnitVoiceResponse::Voice UnitVoiceResponse::templateVoice(const ThingTemplate &tt, int row)
@@ -249,12 +333,13 @@ static UnitVoiceResponse::Voice crowdVoice(const UnitVoiceResponse::CrowdThresho
 	return it == entry->voices.end() ? UnitVoiceResponse::Voice() : parseVoiceValue(it->second, std::string());
 }
 
-bool UnitVoiceResponse::fillRow(Choice &c, const ThingTemplate &tt, int row) const
+bool UnitVoiceResponse::fillRow(Choice &c, const Object &obj, int row) const
 {
-	// RW 0x8DDA66 -> 0x8DDA33: slot 0 from the template row, slot 1 from the crowd entry's same row (RW 0x8DDA06: entry + row * 8)
+	// RW 0x8DDA66 -> 0x8DDA33: slot 0 from the drawable's row (RW 0x676A8A: the sound selectors, then the template), slot 1 from the crowd entry's same row
+	// (RW 0x8DDA06: entry + row * 8)
 	if (!c.voice.any())
 	{
-		c.voice = templateVoice(tt, row);
+		c.voice = objectVoice(obj, row);
 	}
 	if (c.crowdEntry && !c.crowd.any())
 	{
@@ -263,7 +348,7 @@ bool UnitVoiceResponse::fillRow(Choice &c, const ThingTemplate &tt, int row) con
 	return c.voice.any();
 }
 
-bool UnitVoiceResponse::fillName(Choice &c, const ThingTemplate &tt, const std::string &name) const
+bool UnitVoiceResponse::fillName(Choice &c, const Object &obj, const std::string &name) const
 {
 	// RW 0x8DDB2A: an empty name answers nothing; slot 1 from the crowd entry's UnitSpecificSounds (RW 0x825D3A: entry + 0x1C0)
 	if (name.empty())
@@ -272,7 +357,7 @@ bool UnitVoiceResponse::fillName(Choice &c, const ThingTemplate &tt, const std::
 	}
 	if (!c.voice.any())
 	{
-		c.voice = unitSpecificVoice(tt, name);
+		c.voice = objectNameVoice(obj, name); // RW 0x674FFE
 	}
 	if (c.crowdEntry && !c.crowd.any())
 	{
@@ -477,19 +562,19 @@ void UnitVoiceResponse::selectVoices(Object &obj, int msgType, const Info *, Cho
 	const ThingTemplate &tt = *obj.getTemplate();
 	if (msgType == MSG_CREATE_SELECTED_GROUP_IDLE_WORKER_VOICE)
 	{
-		fillName(c, tt, "VoiceSelectIdleWorker");
+		fillName(c, obj, "VoiceSelectIdleWorker");
 	}
 	if (!done(c) && inBattle(obj))
 	{
-		fillRow(c, tt, VOICE_SELECT_BATTLE);
+		fillRow(c, obj, VOICE_SELECT_BATTLE);
 	}
 	if (!done(c) && obj.testStatus(OBJECT_STATUS_UNDER_CONSTRUCTION))
 	{
-		fillRow(c, tt, VOICE_SELECT_UNDER_CONSTRUCTION);
+		fillRow(c, obj, VOICE_SELECT_UNDER_CONSTRUCTION);
 	}
 	if (!done(c))
 	{
-		fillRow(c, tt, VOICE_SELECT);
+		fillRow(c, obj, VOICE_SELECT);
 	}
 }
 
@@ -505,7 +590,7 @@ void UnitVoiceResponse::moveVoices(Object &obj, int msgType, const Info *info, C
 	// (GameData + 0x8B0), the castle / camp rules (RW 0x8DDBC4, 0x8DD6F3 campness) and VoiceMoveOverWalls (RW 0x8DE628) are not ported: stop S-704
 	if (!enterState && msgType == MSG_DO_SALVAGE)
 	{
-		if (fillName(c, tt, "VoiceSalvage"))
+		if (fillName(c, obj, "VoiceSalvage"))
 		{
 			rank.special = 2;
 		}
@@ -521,20 +606,20 @@ void UnitVoiceResponse::moveVoices(Object &obj, int msgType, const Info *info, C
 		const float minZ = fieldReal(tt, "MinZIncreaseForVoiceMoveToHigherGround");
 		if (minZ > 0.0f && minZ < info->position.z - obj.getPosition()->z)
 		{
-			fillRow(c, tt, higherGround);
+			fillRow(c, obj, higherGround);
 		}
 	}
 	// VoiceMoveWhileAttacking: when the row exists and the object is in battle (RW 0x8DEC2A)
 	if (!done(c))
 	{
-		if (templateVoice(tt, whileAttacking).any() && inBattle(obj))
+		if (objectVoice(obj, whileAttacking).any() && inBattle(obj)) // RW 0x8DEC2E: the drawable lookup RW 0x676A8A
 		{
-			fillRow(c, tt, whileAttacking);
+			fillRow(c, obj, whileAttacking);
 		}
 	}
 	if (!done(c))
 	{
-		fillRow(c, tt, base);
+		fillRow(c, obj, base);
 	}
 }
 
@@ -551,24 +636,24 @@ void UnitVoiceResponse::attackVoices(Object &obj, int msgType, const Info *info,
 	c.charge = true;
 	if (msgType == MSG_DO_FORCE_ATTACK_GROUND)
 	{
-		fillName(c, tt, "VoiceBombard");
+		fillName(c, obj, "VoiceBombard");
 	}
 	const Object *target = info && info->target != INVALID_ID ? m_logic.findObjectByID(info->target) : nullptr;
 	if (!done(c) && target && target->getTemplate())
 	{
 		const ThingTemplate &ttt = *target->getTemplate();
-		fillName(c, tt, std::string(enterState ? "VoiceEnterStateAttackUnit" : "VoiceAttackUnit") + ttt.getName());
+		fillName(c, obj, std::string(enterState ? "VoiceEnterStateAttackUnit" : "VoiceAttackUnit") + ttt.getName());
 		if (!done(c))
 		{
 			const int structureBit = ObjectTemplateInfoBuilder::kindOfIndex("STRUCTURE");
 			const int machineBit = ObjectTemplateInfoBuilder::kindOfIndex("MACHINE");
 			if (target->isKindOf((unsigned)structureBit))
 			{
-				fillRow(c, tt, structure);
+				fillRow(c, obj, structure);
 			}
 			else if (target->isKindOf((unsigned)machineBit))
 			{
-				fillRow(c, tt, machine);
+				fillRow(c, obj, machine);
 			}
 		}
 	}
@@ -589,16 +674,16 @@ void UnitVoiceResponse::attackVoices(Object &obj, int msgType, const Info *info,
 		const unsigned until = it == m_memory.end() ? 0u : it->second.chargeUntil;
 		if (!isAttacking && m_logic.getFrame() >= until)
 		{
-			fillRow(c, tt, charge);
+			fillRow(c, obj, charge);
 		}
 	}
 	if (!done(c) && info && info->air)
 	{
-		fillRow(c, tt, air);
+		fillRow(c, obj, air);
 	}
 	if (!done(c))
 	{
-		fillRow(c, tt, base);
+		fillRow(c, obj, base);
 	}
 }
 
@@ -722,7 +807,7 @@ bool UnitVoiceResponse::pickAndPlay(const std::vector<ObjectID> &selection, int 
 		c.crowdEntry = crowd;
 		Rank rank;
 		rank.ordinal = cand.second;
-		rank.priority = (int)fieldInt(tt, "VoicePriority", 0);
+		rank.priority = objectVoicePriority(obj); // RW 0x675095
 		const int heroBit = ObjectTemplateInfoBuilder::kindOfIndex("HERO");
 		rank.hero = heroBit >= 0 && obj.isKindOf((unsigned)heroBit);
 		// a hero's level (RW 0x79D12A experience tracker -> 0x689024 / 0x688EEC) stays at the minimum: the experience system is lane XP-1's (S-705)
@@ -778,27 +863,27 @@ bool UnitVoiceResponse::pickAndPlay(const std::vector<ObjectID> &selection, int 
 				break;
 			case MSG_DO_GUARD_POSITION:
 			case MSG_DO_GUARD_OBJECT:
-				fillRow(c, tt, VOICE_GUARD);
+				fillRow(c, obj, VOICE_GUARD);
 				break;
 			case MSG_FOUNDATION_CONSTRUCT:
 			case MSG_DOZER_CONSTRUCT:
 			case MSG_RESUME_CONSTRUCTION:
-				fillName(c, tt, "VoiceBuildResponse");
+				fillName(c, obj, "VoiceBuildResponse");
 				break;
 			case MSG_EVACUATE:
 			case MSG_EVACUATE_CONTESTERS:
-				fillName(c, tt, "VoiceUnload");
+				fillName(c, obj, "VoiceUnload");
 				break;
 			case MSG_COMBATDROP_AT_LOCATION:
 			case MSG_COMBATDROP_AT_OBJECT:
-				fillName(c, tt, "VoiceCombatDrop");
+				fillName(c, obj, "VoiceCombatDrop");
 				break;
 			case MSG_DO_REPAIR:
-				fillName(c, tt, "VoiceRepair");
+				fillName(c, obj, "VoiceRepair");
 				break;
 			case MSG_DOCK:
 			case MSG_HARVEST:
-				fillName(c, tt, "VoiceSupply");
+				fillName(c, obj, "VoiceSupply");
 				break;
 			case MSG_ENTER:
 			{
@@ -807,11 +892,11 @@ bool UnitVoiceResponse::pickAndPlay(const std::vector<ObjectID> &selection, int 
 				const Object *target = info && info->target != INVALID_ID ? m_logic.findObjectByID(info->target) : nullptr;
 				if (target && target->getTemplate())
 				{
-					fillName(c, tt, "VoiceEnterUnit" + target->getTemplate()->getName());
+					fillName(c, obj, "VoiceEnterUnit" + target->getTemplate()->getName());
 				}
 				if (!done(c))
 				{
-					fillName(c, tt, "VoiceEnter");
+					fillName(c, obj, "VoiceEnter");
 				}
 				break;
 			}
@@ -821,25 +906,25 @@ bool UnitVoiceResponse::pickAndPlay(const std::vector<ObjectID> &selection, int 
 				const Object *producer = info && info->producer != INVALID_ID ? m_logic.findObjectByID(info->producer) : nullptr;
 				if (producer && producer->getTemplate())
 				{
-					fillName(c, tt, std::string(msgType == VOICE_EVENT_CREATED ? "VoiceCreatedFrom" : "VoiceFullyCreatedFrom") + producer->getTemplate()->getName());
+					fillName(c, obj, std::string(msgType == VOICE_EVENT_CREATED ? "VoiceCreatedFrom" : "VoiceFullyCreatedFrom") + producer->getTemplate()->getName());
 				}
 				if (!done(c))
 				{
-					fillRow(c, tt, msgType == VOICE_EVENT_CREATED ? VOICE_CREATED : VOICE_FULLY_CREATED);
+					fillRow(c, obj, msgType == VOICE_EVENT_CREATED ? VOICE_CREATED : VOICE_FULLY_CREATED);
 				}
 				break;
 			}
 			case VOICE_EVENT_TASK_COMPLETE:
-				fillRow(c, tt, VOICE_TASK_COMPLETE);
+				fillRow(c, obj, VOICE_TASK_COMPLETE);
 				break;
 			case VOICE_EVENT_DEFECT:
-				fillRow(c, tt, VOICE_DEFECT);
+				fillRow(c, obj, VOICE_DEFECT);
 				break;
 			case VOICE_EVENT_FEAR:
-				fillRow(c, tt, VOICE_FEAR);
+				fillRow(c, obj, VOICE_FEAR);
 				break;
 			case VOICE_EVENT_ALERT:
-				fillRow(c, tt, VOICE_ALERT);
+				fillRow(c, obj, VOICE_ALERT);
 				break;
 			default:
 				break;
@@ -962,8 +1047,10 @@ std::vector<std::string> UnitVoiceResponse::acceptanceStops()
 		"vote of the candidates' CrowdResponseKey, the Threshold entry with the largest count <= the number of units with that key (INFERENCE: the count), "
 		"the INI read with the file's documented syntax (the binary's CrowdResponse parser was not read; Stats::crowdResponseSkipped counts keys naming no "
 		"loaded response)",
-		"[S-701] unit voice: a draw module may override a voice row or a UnitSpecificSounds name (RW 0x676A8A / 0x674FFE ask every draw module's interface, vtable + 0x34, "
-		"slot 0 / 1, before the template); which RotWK draw modules answer was not read, so the template's voice is used",
+		"[S-701] unit voice: the sound selectors (lane DECOMP-2: Model condition / Upgrade / RandomSoundSelectorClientBehavior, the only ClientBehavior classes whose vslot "
+		"0x34 answers RW 0x676A8A / 0x674FFE / 0x675095) override rows, names and VoicePriority; INFERENCE: the drawable's model condition flags are the object's, "
+		"a random selector rolls at the picker's first query of the object (retail: at the drawable's creation) from the picker's own client generator (S-093) and "
+		"rerolls per logic frame (retail: per client frame); the move and ambient sounds of the logic and the audio side do not ask the selectors (S-712)",
 		"[S-702] unit voice: the enemy-near query of the battle voices (RW 0x701443 -> 0x7006D7 with filter 0x6E and the object's vision range RW 0x68E43B, which "
 		"scales obj + 0x1B0 by a module bonus) is approximated by `a living object of an ENEMIES relationship within the template's VisionRange (2D)`",
 		"[S-703] unit voice: message types of RW 0x8DEDBB not answered here: special powers (0x410 .. 0x412, 0x456), combine hordes (0x423), weapon modes (0x43A), "

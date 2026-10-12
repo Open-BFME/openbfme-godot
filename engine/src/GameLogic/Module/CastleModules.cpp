@@ -437,7 +437,18 @@ bool CastleBehavior::unpack()
 		}
 	}
 	// lane CASTLE-1: RW 0x79BF76 .. 0x79BFF7: the unpack frame (+ 0x48, the crew's clock) and every member of the lists learns the keep (member + 0x14, RW 0x7990D9: the port
-	// keeps a pad's occupant in that field, see S-952, so only the frame is recorded here)
+	// keeps a pad's occupant in its occupantId, see S-952; lane DECOMP-2: the keep goes to the member's keepId, which Object::updateUpgradeModules reads)
+	for (const std::vector<ObjectID> *list : { &m_foundations, &m_members, &m_defenseFoundations }) // RW + 0x50, + 0x5C, + 0x74 (RW 0x79BF3B .. 0x79BF5A)
+	{
+		for (ObjectID id : *list)
+		{
+			Object *o = logic.findObjectByID(id);
+			if (CastleMemberBehavior *m = o ? dynamic_cast<CastleMemberBehavior *>(o->findModule("CastleMemberBehavior")) : nullptr)
+			{
+				m->setKeepId(m_keepId);
+			}
+		}
+	}
 	m_unpackFrame = logic.getFrame();
 	// RW 0x79C03A: the castle's model condition PACKING clears and UNPACKING is set
 	castle->setModelConditionState(castleNames().packing, false);
@@ -1070,6 +1081,7 @@ void CastleMemberBehavior::crc(StateHasher &h) const
 	BehaviorModule::crc(h);
 	h.addU32(m_castleId);
 	h.addU32(m_occupantId);
+	h.addU32(m_keepId);
 	h.addBool(m_breached);
 }
 

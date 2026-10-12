@@ -563,8 +563,6 @@ void AptLanLobby::update()
 	case 5:
 	{
 		// RW 0x849142: the setup's start check (RW 0x8431B8), then the start
-		std::u16string title, text;
-		std::string reason;
 		SkirmishGameSetup *model = setupModel();
 		if (!m_lan || !m_lan->amIHost())
 		{
@@ -573,12 +571,38 @@ void AptLanLobby::update()
 			m_state = 4;
 			break;
 		}
-		if (model && !model->validateStart(title, text))
+		if (model)
 		{
-			windows().note("lan-start-refused", narrow(title) + ": " + narrow(text));
-			invokeRoot("EnablePlayGame");
-			m_state = 4;
-			break;
+			// lane GAMEMODES-1: RotWK's start check (RW 0x8431B8); its lines go to every player as system chat (the owner's vslot 0x44, kinds 0 and 2)
+			const SkirmishGameSetup::StartCheck check = model->checkStart();
+			for (const std::string &stop : check.stops)
+			{
+				windows().note("unported", stop);
+			}
+			// the LAN owner's vslot 0x44 (RW 0x847508): kind 0 a local chat line (TheLAN vslot 0xA0), kind 1 MessageBoxOk(L"", text) (unless RW 0xDEA110 is set:
+			// not identified, taken as clear; the box is not shown by this port: a note) and the local line, kind 2 a system line to every player (vslot 0x54)
+			for (const SkirmishGameSetup::StartCheck::Line &line : check.lines)
+			{
+				if (line.kind == 2)
+				{
+					systemChat(line.text);
+				}
+				else
+				{
+					addChatLine(line.text, 0xFFFFFFFFu);
+					if (line.kind == 1)
+					{
+						windows().note("message-box", "MessageBoxOk(\"\", " + narrow(line.text) + ") (RW 0x84758C)");
+					}
+				}
+			}
+			if (!check.ok)
+			{
+				windows().note("lan-start-refused", check.refusalLabel + ": " + narrow(check.refusal));
+				invokeRoot("EnablePlayGame");
+				m_state = 4;
+				break;
+			}
 		}
 		// every player accepted (MP-2's check, LANAPI::hostStartGame; retail's start check RW 0x8431B8 was not read that far: INFERENCE)
 		bool allAccepted = true;

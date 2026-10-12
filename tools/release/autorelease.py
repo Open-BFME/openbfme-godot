@@ -525,8 +525,8 @@ def release_notes(version: str, commits: list[dict], known_issues: list[str], co
     out = [f"OpenBFME {version}" + {"alpha": " is an alpha build for testers.", "preview": " is an alpha build for testers, numbered "
            "as a preview so that launchers of v0.3.0-preview.4 and older can update themselves: after it, they offer the alpha builds."
            }.get(kind, "."),
-           "Install or update it with the OpenBFME Launcher. You need your own installs of The Rise of the Witch-king 2.01 and "
-           "The Battle for Middle-earth II 1.06: the game loads its files from them.", ""]
+           "Install or update it with the OpenBFME Launcher. It uses your installed The Rise of the Witch-king 2.01 and "
+           "The Battle for Middle-earth II 1.06, or downloads them for you.", ""]   # said once, not preachy (owner, 2026-10-10/11)
     if new:
         out += ["## What's new", ""] + [f"- {markdown(x)}" for x in new] + [""]
     if fixed:

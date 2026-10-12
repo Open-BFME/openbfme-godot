@@ -22,6 +22,7 @@
 
 #include "Common/INIDataTypes.h"
 #include "GameLogic/ObjectTypes.h"
+#include "GameLogic/AI/AIPathfindHost.h"
 
 #include <string>
 #include <vector>
@@ -74,4 +75,18 @@ bool footprintsCollide(const Footprint &a, const Footprint &b);
 bool footprintsOf(GameLogic &logic, const ThingTemplate &tt, const Coord3D &pos, float angle, std::vector<Footprint> &out);
 std::vector<std::string> stopLines();
 const char *codeName(LegalBuildCode code);
+// lane BUILD-5: RotWK BuildAssistant::getPortTransform (RW 0x794C63): a PORT's site snapped to the shore and turned to face the water; false when the
+// footprint does not straddle water and land (the caller keeps its site)
+bool getPortTransform(GameLogic &logic, const Coord3D &pos, const ThingTemplate &build, float angle, float &outAngle, Coord3D &outPos);
+// lane BUILD-5 r3: getPortTransform split for the render thread. portSnapView reads the logic's lazily filled caches (AIWorld::movementInfo), so it runs
+// with the logic idle; getPortTransform(view, ...) then reads only the view's shapes and the terrain view, whose height map, cliff plane and standing water
+// areas are fixed after the map load, so the ghost can snap on a frame the logic worker runs
+struct PortSnapView
+{
+	const PathfindTerrain *terrain = nullptr;
+	std::vector<PathfindShape> shapes;
+	bool hasGeometry = false;
+};
+bool portSnapView(GameLogic &logic, const ThingTemplate &build, PortSnapView &out);
+bool getPortTransform(const PortSnapView &view, const Coord3D &pos, float angle, float &outAngle, Coord3D &outPos);
 } // namespace BuildPlacement

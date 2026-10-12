@@ -13,8 +13,9 @@
 ## (INFERENCE: RotWK's caller of it was not located), a mission's IntroMovie and the maps' PLAY_MOVIE_IN_GAME (InGameUI RW 0x69B788 -> RW 0x6D5397).
 ## Lane CAMP-2: with their VP6 picture (S-2340); a mission's IntroMovie after its loading screen, as LinearCampaignExpansion1.ini's own comment says
 ## (CAMP-1H played it before the load). --movies=off (game.gd) leaves them out of scripted runs.
-## NOT PORTED (stops): CampaignMenu.apt / the auto-save (S-1360: the progress is this engine's sidecar text, CampaignProgress), the mission's
-## LoadScreenImage on LoadScreen.apt (S-1364), the carry-over heroes between missions (S-1180).
+## NOT PORTED (stops): CampaignMenu.apt / the auto-save (S-1360: the progress is this engine's sidecar text, CampaignProgress), the bonus unlock's
+## preference and the fade-up (S-1364), the carry-over heroes between missions (S-1180). Lane MENU-1: a mission loads behind its LoadScreenImage
+## on RotWK's picture screen (S-3505).
 extends Node
 
 const PROGRESS_PATH := "user://Campaign/progress.txt"
@@ -120,7 +121,17 @@ func begin_mission() -> void:
 	game._shell_leave_for_game() # lane CAMP-2: the shell backdrop and the front-end background go, as for every game (CAMP-2 bug 1)
 	if not String(m.load_screen_music).is_empty():
 		game._audio.play_music(m.load_screen_music)
-	game._shell_load_screen_push()
+	# lane MENU-1: a campaign mission (game mode 0) loads behind the picture screen with its LoadScreenImage (GameLogic::getLoadScreen RW 0x626A87 ->
+	# RW 0x757CA0, init RW 0x7583CC), never the players' LoadScreen.apt of a skirmish
+	var choice: Dictionary = game._shell.choose_load_screen({"game_mode": 0, "picture": String(m.load_screen_image)})
+	if not String(choice.get("error", "")).is_empty():
+		game._fail("CAMPAIGN load screen: " + String(choice.error))
+		return
+	var shown: Dictionary = game._shell.show_still_load_screen(String(choice.picture))
+	print("CAMPAIGN load screen: %s %s %s" % [choice.kind, choice.picture, "" if shown.ok else str(shown.error)])
+	if not shown.ok:
+		game._fail("CAMPAIGN load screen: " + str(shown.error))
+		return
 	for i in 4:
 		await get_tree().process_frame
 	game._shell.auto_process = false

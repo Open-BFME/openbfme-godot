@@ -359,7 +359,7 @@ TEST_CASE("skirmish ai attack: the tactical layer's stops are reported (S-417 no
 	CHECK(s893 == 1);
 	CHECK(s894 == 1);
 	CHECK(s895 == 1);
-	CHECK(s891 == 1);
+	CHECK(s891 == 0); // lane DECOMP-2: closed (AIUpdate + 0x40 is setCurrentVictim's field, RW 0x6682B1)
 	// lane AI-3: + S-1300 (threat finder), S-1301 (team group step), S-1302 (best target threat gate)
 	int s1300 = 0, s1301 = 0, s1302 = 0;
 	for (const std::string &l : SkirmishAIManager::stopLines())
@@ -371,7 +371,7 @@ TEST_CASE("skirmish ai attack: the tactical layer's stops are reported (S-417 no
 	CHECK(s1300 == 1);
 	CHECK(s1301 == 1);
 	CHECK(s1302 == 1);
-	CHECK(SkirmishAIManager::stopLines().size() == 22); // S-410 (with S-411), S-412, S-415, S-416, S-413, S-414, S-417, S-419, S-420, S-418, S-890, S-891, S-892, S-1500, S-1501, S-1502 (lane MOVE-2), S-893, S-894, S-895, S-1300, S-1301, S-1302
+	CHECK(SkirmishAIManager::stopLines().size() == 21); // S-410 (with S-411), S-412, S-415, S-416, S-413, S-414, S-417, S-419, S-420, S-418, S-890, S-892, S-1500, S-1501, S-1502 (lane MOVE-2), S-893, S-894, S-895, S-1300, S-1301, S-1302
 }
 
 TEST_CASE("skirmish ai economy: each of the 7 factions as the Medium computer on Evendim builds its farms from the map's FarmTemplate sites (RW 0x8EEF8F)")

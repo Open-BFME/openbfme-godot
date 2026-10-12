@@ -1023,7 +1023,8 @@ bool ScriptConditions::evaluate(ScriptEngine &engine, const ScriptCondition &c)
 		}
 		if (c.resolved == MULTIPLAYER_ALLIED_VICTORY)
 		{
-			return v.hasAchievedVictory(p);
+			// lane GAMEMODES-1: vslot 0x48 (RW 0x808C4C) answers false in a sandbox game (TheGameInfo->isSandbox(), RW 0x808C64): a sandbox is never won
+			return !logic.economy().context().sandbox && v.hasAchievedVictory(p);
 		}
 		if (c.resolved == MULTIPLAYER_ALLIED_DEFEAT)
 		{

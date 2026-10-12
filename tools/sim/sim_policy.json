@@ -73,6 +73,14 @@
    "reason": "the EA Apt menu / UI player: client-side user interface, never part of the simulation state"
   },
   {
+   "glob": "src/GodotDevice/GodotPlacementGhost.cpp",
+   "reason": "lane BUILD-5: draws the placement ghost's drawables (W3DInstancer per icon, tint overlay, faction bib, W_Arrow): presentation only, never read by the logic"
+  },
+  {
+   "glob": "src/GameClient/PlacementIcons.cpp",
+   "reason": "lane BUILD-5: the placement ghost's drawables (RotWK W3DInGameUI's place icons, RW 0x69C5E6 / 0x6A2AE5): render-side drawables posed at the ghost's site; the legality answers only colour them and never reach the logic"
+  },
+  {
    "glob": "src/GameClient/PlacementGhost.cpp",
    "reason": "lane PLAY-1: the building placement ghost's look (the BUILD_PLACEMENT_CURSOR model state and the sub objects its draw script hides, RW 0x69C5E6 / 0x4B4379 / 0x4B4443): reads a ThingTemplate's draw module data for the device, never the logic"
   },
@@ -277,6 +285,14 @@
    "reason": "APT-4 GUI shell: windows, gadgets and Apt screens, client-side user interface; the only values it hands to the logic are the skirmish GameInfo, built by the (simulation-classified) src/GameClient/GUI/Skirmish sources"
   },
   {
+   "glob": "src/GameClient/GUI/Skirmish/SkirmishPreferences.cpp",
+   "reason": "MENU-1 Skirmish.ini: the player's profile names read and written by the Skirmish screen, client-side user interface; nothing reaches the logic"
+  },
+  {
+   "glob": "src/GameClient/GUI/StillImageLoadScreen.cpp",
+   "reason": "MENU-1 the loading screen choice and the campaign's picture loading screen: client-side presentation, nothing reaches the logic"
+  },
+  {
    "glob": "src/GameClient/GUI/Shell/*",
    "reason": "APT-4 GUI shell: windows, gadgets and Apt screens, client-side user interface; the only values it hands to the logic are the skirmish GameInfo, built by the (simulation-classified) src/GameClient/GUI/Skirmish sources"
   },
@@ -391,6 +407,10 @@
   {
    "glob": "src/GameClient/AnimationSoundClientBehavior.cpp",
    "reason": "AUDIO-4, the footsteps (AnimationSoundClientBehavior and TheAnimationSoundModuleManager): a ClientBehavior module of the drawables; reads the drawables' animation frames and the listener, plays on the audio manager; never read by the logic"
+  },
+  {
+   "glob": "src/GameClient/SoundSelectorClientBehavior.cpp",
+   "reason": "DECOMP-2, the sound selector ClientBehavior modules (S-701): their module data and the voice picker's lookups; client presentation, reads the logic objects' model conditions and upgrades, writes no logic state, rolls only the voice picker's client random"
   },
   {
    "glob": "src/GameClient/LiveGameAudio.cpp",

@@ -42,6 +42,7 @@ public:
 	bool isCliffCell(float x, float y) const override { return cliff.count({ (int)(x / 10.0f), (int)(y / 10.0f) }) != 0; }
 	bool impassableToPlayers(float x, float y) const override { return bit18.count({ (int)(x / 10.0f), (int)(y / 10.0f) }) != 0; }
 	bool extraPass(float x, float y) const override { return bit21.count({ (int)(x / 10.0f), (int)(y / 10.0f) }) != 0; }
+	bool thirdPlane(float, float) const override { return false; }
 	float getGroundHeight(float x, float y) const override { return heightFn ? heightFn(x, y) : 0.0f; }
 	bool isUnderwater(float x, float y, float *waterZ, float *terrainZ) const override
 	{

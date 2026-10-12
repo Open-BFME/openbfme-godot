@@ -490,6 +490,58 @@ TEST_CASE("net core: the UDP transport delivers every command once and in order 
 	CHECK(tb.stats().badPackets == 1);
 }
 
+TEST_CASE("net core (ONLINE-1): the transport counts the datagram bytes it sends and reads and its ack-only packets")
+{
+	UDP sa, sb;
+	std::string error;
+	REQUIRE_MESSAGE(sa.bind(0x7F000001u, 0, &error), error);
+	REQUIRE_MESSAGE(sb.bind(0x7F000001u, 0, &error), error);
+	Transport::Options o;
+	o.resendMs = 1000; // no resend on localhost: every record goes once
+	Transport ta(sa, 0, o), tb(sb, 1, o);
+	ta.setPeer(1, sb.localAddress());
+	tb.setPeer(0, sa.localAddress());
+	size_t payload = 0;
+	for (int i = 0; i < 40; ++i)
+	{
+		std::vector<std::uint8_t> b(1 + (size_t)i, (std::uint8_t)i);
+		payload += b.size();
+		REQUIRE(ta.sendTo(1, b, nullptr));
+	}
+	int got = 0;
+	const std::uint64_t start = NetMilliseconds();
+	while ((got < 40 || !ta.allAcked(1)) && NetMilliseconds() - start < 5000)
+	{
+		ta.service();
+		tb.service();
+		int from;
+		std::vector<std::uint8_t> b;
+		while (tb.receive(from, b))
+		{
+			++got;
+		}
+		NetSleepMilliseconds(1);
+	}
+	REQUIRE(got == 40);
+	REQUIRE(ta.allAcked(1));
+	// ta stops sending; tb reads what is still in flight
+	for (int i = 0; i < 20; ++i)
+	{
+		tb.service();
+		NetSleepMilliseconds(1);
+	}
+	const Transport::Stats &a = ta.stats(), &b = tb.stats();
+	CHECK(a.commandsResent == 0);
+	CHECK(a.recordsSent == 40);
+	// a packet is a 14-byte header, a record a 12-byte header and its bytes
+	CHECK(a.bytesSent == 14 * a.packetsSent + 12 * a.recordsSent + payload);
+	CHECK(b.bytesReceived == a.bytesSent);
+	CHECK(b.recordsSent == 0);
+	CHECK(b.ackOnlyPacketsSent == b.packetsSent);
+	CHECK(b.bytesSent == 14 * b.packetsSent);
+	CHECK(b.ackOnlyPacketsSent > 0);
+}
+
 TEST_CASE("net core: the network layer's acceptance stops are reported (S-720 .. S-725)")
 {
 	const std::vector<std::string> lines = Network::stopLines();

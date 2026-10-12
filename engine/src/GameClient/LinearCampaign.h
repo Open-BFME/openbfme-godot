@@ -69,7 +69,7 @@ public:
 	void parseLinearCampaign(INI *ini); ///< RW 0x5ECCB9
 	const LinearCampaign *find(const std::string &name) const; ///< RW 0x5EB010 (case-insensitive)
 	const std::vector<LinearCampaign> &campaigns() const { return m_campaigns; }
-	// the campaign flow's stops (S-1360 progress / CampaignMenu, S-1364 movies and the load screen image)
+	// the campaign flow's stops (S-1360 progress / CampaignMenu, S-1364 the bonus unlock and the fade-up)
 	static std::vector<std::string> stopLines();
 
 private:

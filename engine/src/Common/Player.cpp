@@ -92,6 +92,7 @@ void Player::init(const PlayerTemplate *pt, std::uint32_t defaultStartingCash)
 	m_nightColor = 0;
 	m_skirmishDifficulty = -1;
 	m_colorExplicit = false;
+	m_unitsShouldHunt = false; // RW 0x6B0401: + 0x35D cleared by the init (lane DECOMP-2, Sol's review)
 	m_money.init();
 	m_money.setPlayerIndex(m_index);
 	// RW 0x6B06D4 .. 0x6B0707 (the player's reset): score, cost modifier lists, command points; the upgrades are the upgrade lane's reset
@@ -143,6 +144,10 @@ void Player::crc(StateHasher &h) const
 	h.addU32(m_nightColor);
 	h.addI32(m_skirmishDifficulty);
 	h.addBool(m_colorExplicit);
+	if (m_unitsShouldHunt)
+	{
+		h.addBool(m_unitsShouldHunt); // lane DECOMP-2: hashed only once set (PLAYER_HUNT), so games without it keep their hash
+	}
 	// lane CAMP-1: the attacked-by flags, hashed only when one is set (a game without player damage keeps its hash)
 	for (int i = 0; i < kAttackedBySlots; ++i)
 	{

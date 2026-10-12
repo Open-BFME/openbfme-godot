@@ -40,5 +40,15 @@ bool ParseMouseCursors(const std::string &iniText, std::map<std::string, MouseCu
 // A file of `dir` whose name equals `name` ignoring case (the install is a Windows tree; a Linux file system is case sensitive): the real path, "" when absent
 std::string FindFileNoCase(const std::string &dir, const std::string &name);
 
+// Lane BUILD-5: the file of direction `direction` of a Mouse.ini `Image` as Win32Mouse::initCursorResources loads it (RW 0x441506, BFME2 decomp Win32Mouse.cpp:369,
+// tier A): an image ending in ".cur" (any case) loses it and loads "<stem>.cur", any other loads "<image>.ani"; a cursor with Directions above 1 loads
+// "<stem><direction>.<ext>" for each direction (Scroll: SCCScroll.cur, 8 -> sccscroll0.cur .. sccscroll7.cur), else "<stem>.<ext>"
+std::string CursorFileName(const std::string &image, int directions, int direction);
+
+// Lane BUILD-5: W3DMouse::setCursorDirection (RW 0x498B1A, BFME2 decomp W3DMouseCursorDirection.cpp:88, tier A): the predrawn frame of a directional cursor that
+// faces the scroll amount (screen pixels, y down): 0 points right and the frames go clockwise; 0 for a cursor of one direction, while not scrolling or
+// for a zero amount. CLIENT only (the pointer image).
+int ScrollCursorDirection(float amountX, float amountY, int directions, bool scrolling);
+
 // Stops [S-295] of the cursor path (registered in docs/STOPS.md).
 std::vector<std::string> CursorAcceptanceStops();

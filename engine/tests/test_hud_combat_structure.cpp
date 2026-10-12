@@ -304,9 +304,10 @@ TEST_CASE("structure retail: the same structure fight twice gives the same state
 // ---- the skirmish victory rules on real data ---------------------------------------------------------------------------------------------------------
 // GameData (gamedata.ini, 2.01): VictoryConditionStructureObjectFilter = NONE +STRUCTURE -IGNORE_FOR_VICTORY -UNATTACKABLE -ECONOMY_STRUCTURE -WALL_UPGRADE -WALL_HUB -WALL_SEGMENT
 // -DEFENSIVE_WALL -Inn -ShipWright -Outpost -SignalFire -CaptureFlag -ShireGreenDragon; VictoryConditionUnitObjectFilter = ANY -DOZER -NOT_AUTOACQUIRABLE -MordorWorker; no
-// SecondsBeforeBaseCheckActive (the game's default 5.0 seconds = 25 frames). The rule of a skirmish (RW 0x8094A5): a player is defeated when no object of its own passes the structure
-// filter (a live GondorBarracks does) and no live object of KindOf DOZER that is not IGNORE_FOR_VICTORY remains (a GondorWorker is a DOZER; MordorWorker has IGNORE_FOR_VICTORY and does
-// not count). The victory update runs in phase 1 of every frame, so a structure or worker that dies in frame d is judged in frame d + 1.
+// SecondsBeforeBaseCheckActive (the game's default 5.0 seconds = 25 frames). Lane GAMEMODES-1: a skirmish / LAN game (TheGameLogic + 0x114 == 3) is judged by rule 3 (RW 0x809476):
+// defeated when no object passes the structure filter and none passes the unit filter, which (ANY with no + kind) accepts nothing, so the last structure decides. Rule 2 (RW
+// 0x8094A5, a game of another kind: a War of the Ring battle) keeps a player while a live object of KindOf DOZER that is not IGNORE_FOR_VICTORY remains (a GondorWorker is a DOZER;
+// MordorWorker has IGNORE_FOR_VICTORY and does not count). The victory update runs in phase 1 of every frame, so a structure or worker that dies in frame d is judged in frame d + 1.
 namespace
 {
 struct Victory
@@ -320,11 +321,12 @@ struct Victory
 	std::vector<std::uint32_t> hashes;
 };
 
-Victory playVictory(const char *attackerFaction, const char *attackerHorde, const char *attackerBase, const char *loserFaction, const char *barracks, const char *worker, bool killWorker, bool recordHashes)
+Victory playVictory(const char *attackerFaction, const char *attackerHorde, const char *attackerBase, const char *loserFaction, const char *barracks, const char *worker, bool killWorker, bool recordHashes, int gameKind = 3)
 {
 	SharedWorld &s = shared();
 	Victory out;
 	Arena a(s, attackerFaction, loserFaction);
+	a.logic.economy().context().gameKind = gameKind; // lane GAMEMODES-1: the victory rule follows TheGameLogic + 0x114 (RW 0x808A93)
 	a.logic.victory().init();
 	Object *base = a.place(attackerBase, 0, 200.0f, 200.0f); // the attacker needs a structure of its own to stay in the game
 	(void)base;
@@ -385,14 +387,31 @@ Victory playVictory(const char *attackerFaction, const char *attackerHorde, cons
 }
 } // namespace
 
-TEST_CASE("structure retail: a player whose barracks fell but who still has a builder stays in the game; the loss comes with the builder")
+TEST_CASE("structure retail: a skirmish player whose last barracks fell is out at once, his living builder notwithstanding (rule 3, lane GAMEMODES-1)")
 {
 	if (!hudtest::haveWorld("structure retail"))
 	{
 		return;
 	}
-	// Men against Mordor: GondorBarracks + a GondorWorker (KindOf DOZER, counts) for the loser
-	const Victory v = playVictory("FactionMordor", "MordorFighterHorde", "MordorBarracks", "FactionMen", "GondorBarracks", "GondorWorker", true, false);
+	const Victory v = playVictory("FactionMordor", "MordorFighterHorde", "MordorBarracks", "FactionMen", "GondorBarracks", "GondorWorker", false, false);
+	REQUIRE(v.barracksDied > 25);
+	CHECK(v.alliance);
+	CHECK(v.bobDefeated);
+	CHECK(v.endFrame <= (unsigned)v.barracksDied + 1);
+	CHECK(v.bobDefeatFrame == v.endFrame);
+	CHECK(v.aliceWon);
+	CHECK(v.bobSoldiersDead); // killPlayer took the worker
+	std::printf("  info: Mordor vs Men (skirmish): the barracks died at frame %d, Men were eliminated at frame %u\n", v.barracksDied, v.endFrame);
+}
+
+TEST_CASE("structure retail: rule 2 (a War of the Ring battle): a player whose barracks fell but who still has a builder stays in the game; the loss comes with the builder")
+{
+	if (!hudtest::haveWorld("structure retail"))
+	{
+		return;
+	}
+	// Men against Mordor: GondorBarracks + a GondorWorker (KindOf DOZER, counts) for the loser; game kind 1 (RW 0x779CB4: a War of the Ring battle) selects rule 2
+	const Victory v = playVictory("FactionMordor", "MordorFighterHorde", "MordorBarracks", "FactionMen", "GondorBarracks", "GondorWorker", true, false, 1);
 	REQUIRE(v.barracksDied > 25);
 	CHECK((!v.bobDefeatedAfterBarracks || v.workerDied >= 0));
 	REQUIRE(v.workerDied > v.barracksDied);
@@ -406,13 +425,13 @@ TEST_CASE("structure retail: a player whose barracks fell but who still has a bu
 	std::printf("  info: Mordor vs Men: barracks died at frame %d, the worker at %d, Men were eliminated at frame %u\n", v.barracksDied, v.workerDied, v.endFrame);
 }
 
-TEST_CASE("structure retail: nobody wins while the loser still has his barracks or a worker")
+TEST_CASE("structure retail: rule 2 (a War of the Ring battle): nobody wins while the loser still has his barracks or a worker")
 {
 	if (!hudtest::haveWorld("structure retail"))
 	{
 		return;
 	}
-	const Victory v = playVictory("FactionMordor", "MordorFighterHorde", "MordorBarracks", "FactionMen", "GondorBarracks", "GondorWorker", false, false);
+	const Victory v = playVictory("FactionMordor", "MordorFighterHorde", "MordorBarracks", "FactionMen", "GondorBarracks", "GondorWorker", false, false, 1);
 	REQUIRE(v.barracksDied > 25);
 	CHECK_FALSE(v.alliance);      // the worker (DOZER) keeps Men in the game 40 frames after their barracks fell
 	CHECK_FALSE(v.bobDefeated);

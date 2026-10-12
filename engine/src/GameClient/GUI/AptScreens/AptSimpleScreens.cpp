@@ -776,6 +776,19 @@ void AptLoadScreen::populate()
 		const std::string n = std::to_string(c);
 		const LoadScreenSlotInfo &card = m_env.loadScreen->cards[c];
 		windows().setAptText("LoadingScreen::Rank" + n, " ");
+		// lane MENU-1: the Level column's rank icon and an empty Fellowship icon (RW 0x81CFFA .. 0x81D046: the images of the records
+		// UIClip/Level/<card> and UIClip/Fellowship/<card>; the fellowship one only in an online fellowship game)
+		windows().setAptImage("UIClip/Level/" + n, card.occupied ? card.levelImage : std::string());
+		windows().setAptImage("UIClip/Fellowship/" + n, std::string());
+		if (card.occupied && card.levelImage.empty())
+		{
+			windows().note("loadscreen-level", "[S-3506] card " + n + ": no rank icon (no mapped image lookup, or none for its army and level)");
+		}
+		else if (card.occupied && card.human)
+		{
+			windows().note("loadscreen-level", "[S-3506] card " + n + ": the player's rank icon " + card.levelImage +
+				" is level 1: the profile's <army>Points are not read (the stats files are not ported)");
+		}
 		if (card.occupied)
 		{
 			++m_cards;
@@ -792,6 +805,9 @@ void AptLoadScreen::populate()
 			windows().setAptText("LoadingScreen::ArmyName" + n, " ");
 		}
 	}
+	// lane MENU-1: the Level icons are drawn by RenderImage clips without `_imageMap` named by their path below the root (an inference)
+	windows().note("loadscreen-level", "[S-3506] the Level icons' RenderImage clips (UIClip.Level.<c>) take the image record UIClip/Level/<c> by their path "
+									   "below the root: the RenderImage callback's name rule was not read");
 	// every card starts at 0 (processProgress(slot, 0) per card, RW 0x81D062)
 	for (int c = 0; c < MAX_LOAD_SLOTS; ++c)
 	{

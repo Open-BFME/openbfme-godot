@@ -187,7 +187,7 @@ The live report's `unported_modules` (objects alive at the end of the run) of ei
 | 87 | DeletionUpdate | Behavior | 28 | 28 | ported |
 | 88 | RadiateFearUpdate | Behavior | 28 | 14 | ported |
 | 89 | HordeNotifyTargetsOfImminentProbableCrushingUpdate | Behavior | 27 | 20 | ported |
-| 90 | ModelConditionSoundSelectorClientBehavior | ClientBehavior | 25 | 13 | missing |
+| 90 | ModelConditionSoundSelectorClientBehavior | ClientBehavior | 25 | 13 | ported |
 | 91 | SlaveWatcherBehavior | Behavior | 25 | 19 | missing |
 | 92 | SpawnBehavior | Behavior | 25 | 17 | ported |
 | 93 | StealthDetectorUpdate | Behavior | 25 | 18 | ported |
@@ -241,7 +241,7 @@ The live report's `unported_modules` (objects alive at the end of the run) of ei
 | 141 | ExperienceLevelCreate | Behavior | 8 | 6 | ported |
 | 142 | GrabPassengerSpecialPower | Behavior | 8 | 4 | missing |
 | 143 | TeleportSpecialAbilityUpdate | Behavior | 8 | 6 | ported |
-| 144 | UpgradeSoundSelectorClientBehavior | ClientBehavior | 8 | 4 | missing |
+| 144 | UpgradeSoundSelectorClientBehavior | ClientBehavior | 8 | 4 | ported |
 | 145 | AttachUpdate | Behavior | 7 | 7 | missing |
 | 146 | BoredUpdate | Behavior | 7 | 3 | missing |
 | 147 | CurseSpecialPower | Behavior | 7 | 6 | ported |
@@ -274,7 +274,7 @@ The live report's `unported_modules` (objects alive at the end of the run) of ei
 | 174 | AnnounceBirthAndDeathBehavior | Behavior | 4 | 2 | missing |
 | 175 | ClearanceTestingSlowDeathBehavior | Behavior | 4 | 12 | missing |
 | 176 | LockWeaponCreate | Behavior | 4 | 2 | ported |
-| 177 | RandomSoundSelectorClientBehavior | ClientBehavior | 4 | 2 | missing |
+| 177 | RandomSoundSelectorClientBehavior | ClientBehavior | 4 | 2 | ported |
 | 178 | RemoveUpgradeUpgrade | Behavior | 4 | 365 | ported |
 | 179 | RousingSpeechUpdate | Behavior | 4 | 3 | ported |
 | 180 | SiegeEngineContain | Behavior | 4 | 4 | ported |

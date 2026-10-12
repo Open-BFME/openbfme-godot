@@ -123,6 +123,9 @@ public:
 	{
 		unsigned long long packetsSent = 0, packetsReceived = 0, commandsSent = 0, recordsSent = 0, commandsResent = 0, commandsDelivered = 0, duplicates = 0;
 		unsigned long long badPackets = 0, unknownSenders = 0, dropped = 0, sendErrors = 0, fragmentedCommands = 0, peersRetired = 0;
+		// lane ONLINE-1 (the relay's bandwidth budget, docs/ONLINE.md): the transport datagrams' bytes (UDP payload, IP / UDP headers not included) handed to
+		// the socket and read from it, and the datagrams sent that carry no record (an ack or a keep-alive only)
+		unsigned long long bytesSent = 0, bytesReceived = 0, ackOnlyPacketsSent = 0;
 		unsigned long long fastResends = 0; ///< lane MP-3: records resent on ack evidence before their timeout
 	};
 	const Stats &stats() const { return m_stats; }

@@ -1,0 +1,70 @@
+// OpenBFME. GPL-3.0.
+// Derived from Command & Conquer Generals Zero Hour, (c) 2001-2003 Electronic Arts Inc., GPL-3.0.
+//
+// ActionManager (lane AIPOW-1): the "can this object use this power here" tests a computer player's AISpecialPowerUpdate asks before it casts at a
+// location (RW 0xA021D8 -> canDoSpecialPowerAtLocation). ZH ActionManager::canDoSpecialPowerAtLocation / canDoSpecialPower are the donors of the names;
+// RotWK's bodies differ (the SpecialPower flags, the per-power-type tests), so everything below is read from the RotWK binary (caveat S-001).
+//
+// TARGET FACTS:
+//   * canDoSpecialPowerAtLocation(button, obj, target, loc, source) RW 0x75CF21 (this = the CommandButton): a button with an Upgrade (+ 0x24) whose
+//     command is not FIRE_WEAPON (0x17) is about buying that upgrade (the production queue and RW 0x694914 / 0x691421, stop S-1871); else with options
+//     NEED_TARGET_* (+ 0x1C & 7) a target object is required (the AI's location runs pass none: no), NEED_TARGET_POS (0x20) a location; NEED_TARGET_*
+//     -> RW 0x82D925 / 0x82C3D7 (object tests), NEED_TARGET_POS -> RW 0x82DFB7(obj, loc, source, power + 0x44, 0, options, 0), FIRE_WEAPON -> RW 0x75CC3E,
+//     anything else -> RW 0x82D5DA(obj, power, source, options, 0).
+//   * RW 0x82D5DA (no target): a power; not RW 0x82C366 (stop S-1872); the UnitCost (power + 0x80) at most the object's horde member count (the horde
+//     interface, Object + 0x258 slot 0x7C, slot 0x188); the object's module for the power (RW 0x68C26D); then the power type (+ 0x1C of the final
+//     override, RW 0x688D3C) is one of the 47 targetless types of the switch at RW 0x82D6B1.
+//   * RW 0x82DFB7 (a location): a power; the unit cost as above; not RW 0x82C366; the module (RW 0x68C26D) and its slot 0x48 with the location
+//     (RW 0x897E01: requirementsMet RW 0x8969E5; UseDistanceFromCommandCenter (module data + 0x74) -> the location within DistanceFromCommandCenter
+//     (+ 0x78, Coord3D::length) of one of the controlling player's COMMANDCENTER objects (RW 0x897D2D / 0x6B00F3); RW 0x896DB4 (power type 0x20 only:
+//     stop S-1873); every special power update module of the object answering the power (slot 0x64 interface, slot 0x1C) decides with its slot 0x20:
+//     SpecialAbilityUpdate RW 0x851B6E = its RequiredConditions / RejectedConditions (RW 0x851551), the garrison types 0x27 / 0x28 aside (S-1873));
+//     RW 0x82D56A: strictly inside TheTerrainLogic vslot 0x30's extent shrunk by RadiusCursorRadius (+ 0x54, SSE); RW 0x82D3A3 (LIMIT_DISTANCE, flag
+//     bit 3): MaxCastRange (+ 0x74) squared above the object's squared 3D distance to the location (SSE: dz^2 + dy^2 + dx^2); RW 0x82D2C9
+//     (PATHABLE_ONLY, bit 6): the pathfinder's quick path test RW 0x6F5BB0 from the object; RW 0x82D415 (unless WATER_OK, bit 1): r = cvttss2si
+//     (RadiusCursorRadius); r < 1 -> the ground cell under the location is not water (cell types 1 / 7, RW 0x6EACDF); else every point (x, y) of the
+//     integer grid with step 2 over [cvttss2si(loc - r), cvttss2si(loc + r)] strictly inside the circle ((x - lx)^2 + (y - ly)^2 < r * r, SSE on
+//     cvtsi2ss values) has no water cell; RW 0x82DEA6 (NEEDS_OBJECT_FILTER, bit 2): some live object within RadiusCursorRadius (distance type 0) passes
+//     ObjectFilter (+ 0x60) for the controlling player (RW 0xBE4CC8); RW 0x82D2FD (NO_FORBIDDEN_OBJECTS, bit 4): no live object within
+//     ForbiddenObjectRange (+ 0x7C, distance type 1) passes ForbiddenObjectFilter (+ 0x78). Then the type tests of RW 0x82E135 .. 0x82E8F3 and the
+//     final switch RW 0x82E913 (types 10 .. 0x9E, table RW 0x82EE0D / 0x82EDE1): the shroud status of the location for the controlling player
+//     (ShroudManager RW 0xB4D9A0, player index + 0x54) CLEAR / not SHROUDED, always, or the type's own test; the other types answer no.
+// Each type test this file does not port answers no, counted and reported as stop S-1874 (stopLines()). TheTerrainLogic vslot 0x54 is the third bit plane
+// of the map (WorldHeightMap + 0x74, PathfindTerrain::thirdPlane).
+
+#pragma once
+
+#include "Common/INIDataTypes.h"
+#include "GameLogic/ObjectTypes.h"
+
+#include <array>
+#include <string>
+#include <vector>
+
+class CommandButton;
+class Object;
+class SpecialPowerTemplate;
+
+namespace ActionManager
+{
+// RW 0x75CF21 with no target object and source 0 (the AI's location run, RW 0xA021D8)
+bool canDoSpecialPowerAtLocation(Object &obj, const CommandButton &button, const Coord3D &loc);
+// RW 0x82DFB7(obj, loc, 0, power, 0, options, 0)
+bool canDoSpecialPowerAtLocation(Object &obj, const Coord3D &loc, const SpecialPowerTemplate *power, unsigned options);
+// RW 0x82D5DA(obj, power, 0, options, 0)
+bool canDoSpecialPower(Object &obj, const SpecialPowerTemplate *power);
+
+// tests: the final test of RW 0x82E913 for a power type (0 no, 1 shroud CLEAR, 2 yes, 3 not SHROUDED, 4 the cliff grid 0x48 .. 0x4A, 5 the range 0x92, 6 the
+// unported 0x27 / 0x57, 7 the plane grid 0x59 / 0x68, 8 the army test 0x63) and whether RW 0x82D6B1 accepts a targetless type
+int finalTestKind(int type);
+bool targetlessTypeAccepted(int type);
+
+// diagnostics (not state): the tests that ran into an unported part (S-1871 .. S-1874), by the power type of RW 0x82DFB7's per-type tests
+struct Stats
+{
+	unsigned long long upgradeButtons = 0, fireWeaponButtons = 0, movingOnLayer = 0, typeTests = 0;
+	std::array<unsigned long long, 0xA0> unportedTypeTests{};
+};
+Stats &stats();
+std::vector<std::string> stopLines();
+} // namespace ActionManager

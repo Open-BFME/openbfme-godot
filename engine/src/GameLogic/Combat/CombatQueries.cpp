@@ -91,7 +91,10 @@ bool isAttackable(const Object &obj)
 	// lane AI-2 r6: a structure under construction IS a target. ZH's AI::findClosestEnemy (AI.cpp:588) filters with PartitionFilterPossibleToAttack ->
 	// WeaponSet::getAbleToAttackSpecificObject (WeaponSet.cpp:458), which rejects MASKED, UNATTACKABLE and NO_ATTACK_FROM_AI but not UNDER_CONSTRUCTION, and this port's
 	// ObjectWeapons::canAttackObject agrees; the COMBAT-1 stand-in excluded it, so an unfinished structure whose builder died (83 % TrollCage) could never be acquired
-	// and kept its player alive for good (S-420). INFERENCE: RW's partition filter reader was not traced (S-420)
+	// and kept its player alive for good (S-420). TARGET (lane DECOMP-2): RW's AI::findClosestEnemy (RW 0x701443, BFME2 decomp AIClosestObjectQueries.cpp tier A) runs
+	// the worker RW 0x7006D7, whose status tests are 0x17 / 0x25 / 0x26 / 0x4F (never UNDER_CONSTRUCTION = 2), and its PossibleToAttack filter (RW 0x660CA4 tier A) ->
+	// Object::getAbleToAttackSpecificObject RW 0x68D6A6 -> WeaponSet RW 0x6C9147 (statuses 0x33 NOT_IN_WORLD, 0x25, 0x3C UNATTACKABLE, 0x1A NO_ATTACK_FROM_AI, 0x1B)
+	// -> RW 0x6C8652 (0x25 only): an unfinished structure is attackable there too
 	// lane GARRISON-1: and in the partition: a contain's rider out of the world (RW 0x68C18F) is found by no scan
 	return isAlive(obj) && obj.isInWorld() && !obj.isKindOf((unsigned)k.unattackable) && !obj.isKindOf((unsigned)k.inert) &&
 		!obj.testStatus((unsigned)st.unattackable);

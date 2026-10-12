@@ -1,0 +1,678 @@
+// OpenBFME. GPL-3.0.
+// See GameLogic/ActionManager.h for the sources and what is inference.
+
+#include "GameLogic/ActionManager.h"
+
+#include "Common/Player.h"
+#include "Common/SpecialPower.h"
+#include "GameClient/ControlBarCommands.h"
+#include "GameLogic/AI/AIPathfind.h"
+#include "GameLogic/AI/AIWorld.h"
+#include "GameLogic/GameLogic.h"
+#include "GameLogic/Module/AIUpdate.h"
+#include "GameLogic/Module/CastleModules.h"
+#include "GameLogic/Module/PhysicsBehavior.h"
+#include "GameLogic/Module/SpecialAbilityModules.h"
+#include "GameLogic/Module/SpecialPowerModules.h"
+#include "GameLogic/Object/Object.h"
+#include "GameLogic/Object/PartitionManager.h"
+#include "GameLogic/ObjectFilter.h"
+#include "GameLogic/ObjectFilterMatch.h"
+#include "GameLogic/ObjectTemplateInfo.h"
+#include "GameLogic/SimMath.h"
+#include "GameLogic/System/ShroudManager.h"
+
+#include <memory>
+#include <stdexcept>
+
+namespace
+{
+const char *const kStopUpgrade =
+	"[S-1871] ActionManager::canDoSpecialPowerAtLocation (RW 0x75CF21): a button with an Upgrade whose command is not FIRE_WEAPON (the production queue "
+	"test RW 0x68C327 and RW 0x694914 / 0x691421) and a FIRE_WEAPON button (RW 0x75CC3E: Object + 0x478, unidentified) are not ported: the AI's location "
+	"run answers no";
+const char *const kStopLayer =
+	"[S-1872] ActionManager RW 0x82C366 (an AI moving along its path, AIUpdate + 0x1FC in {1, 4} with a path whose node + 0x20 is set, on a pathfinder cell "
+	"whose bits 4 .. 9 exceed 0x10 refuses every power) is not ported: never refuses";
+const char *const kStopRequirements =
+	"[S-1873] the location requirements RW 0x897E01: RW 0x896DB4 (power type 0x20: the object's special ability state, RW 0x68C89B, and its AI's last "
+	"command frame) is not ported (answers no for that type); only SpecialAbilityUpdate answers the special power update interface (vslot 0x64)";
+const char *const kStopTypeTest =
+	"[S-1874] ActionManager RW 0x82DFB7: the per-power-type tests of the building powers (0x52, 0x61, 0x67, 0x6A: RW 0x82E2DE), 0x27 (RW 0x67F52B), 0x38 "
+	"(RW 0x76A247), 0x41 (RW 0x82E252), 0x49 (RW 0x680A75 layer) and 0x57 (the rebuild scan RW 0x82E93C) are not ported, and the summons' spot test (0x55, 0x56, "
+	"0x5B, 0x5D .. 0x5F, 0x73, 0x76, 0x78, 0x7B, 0x7C, 0x7E, 0x96, 0x9A: RW 0x82E586, ported) cannot run before the partition's geometry overlap query "
+	"(distance type 4, S-1020): they answer no (counted per type)";
+
+int kindBit(const char *name)
+{
+	return ObjectTemplateInfoBuilder::kindOfIndex(name);
+}
+
+const SpecialPowerTemplate *powerOf(const CommandButton &b)
+{
+	return TheSpecialPowerStore && !b.m_specialPowerName.empty() ? TheSpecialPowerStore->findSpecialPowerTemplate(b.m_specialPowerName) : nullptr;
+}
+
+// the UnitCost test (RW 0x82E000 / 0x82D605): with a cost, the object's horde interface (Object + 0x258 slot 0x7C) member count (slot 0x188) must reach it.
+// INFERENCE: slot 0x188 is the member count (the script condition RW 0x7E6195 reads it so); no contain or no horde interface: no test
+bool unitCostMet(const Object &obj, const SpecialPowerTemplate &t)
+{
+	if (t.m_unitCost == 0)
+	{
+		return true;
+	}
+	ContainModuleInterface *c = obj.getContain();
+	const HordeContainInterface *h = c ? c->getHordeContainInterface() : nullptr;
+	return !h || c->getContainCount() >= (unsigned)t.m_unitCost;
+}
+
+// RW 0x82C366: not ported (S-1872). Its first condition is an AI following a path (AIUpdate + 0x1FC in {1, 4} with a path); the port reports the stop when
+// the object's AI is moving and answers no refusal (the 2.01 maps have the ground layer only, S-161, so the layer test above 0x10 is not met there)
+bool movingOnUpperLayer(Object &obj)
+{
+	const AIUpdateInterface *ai = obj.getAIUpdateInterface();
+	if (ai && ai->isMoving())
+	{
+		++ActionManager::stats().movingOnLayer;
+		obj.logic().noteStop(kStopLayer);
+	}
+	return false;
+}
+
+const PathfindTerrain *terrainOf(GameLogic &logic)
+{
+	AIWorld *ai = logic.aiWorld();
+	return ai ? ai->pathfinder().terrainView() : nullptr;
+}
+
+// RW 0x6EACDF(pos, layer 1): the ground layer's cell under the position is WATER (1) or DEEP_WATER (7); no cell: no
+bool waterCellAt(GameLogic &logic, const Coord3D &pos)
+{
+	AIWorld *ai = logic.aiWorld();
+	if (!ai)
+	{
+		throw std::logic_error("ActionManager RW 0x6EACDF: the game has no pathfinder");
+	}
+	const PathfindCell *cell = ai->pathfinder().getCell(LAYER_GROUND, &pos);
+	return cell && (cell->getType() == PathfindCell::CELL_WATER || cell->getType() == PathfindCell::CELL_DEEP_WATER);
+}
+
+// RW 0x82D415 (WATER_OK clear): no water under the location or, with a cursor radius r >= 1 (cvttss2si), under any point of the step-2 integer grid strictly
+// inside the circle (SSE on the cvtsi2ss values)
+bool waterTestPasses(GameLogic &logic, const Coord3D &loc, const SpecialPowerTemplate &t)
+{
+	if (t.m_flags & SPF_WATER_OK)
+	{
+		return true;
+	}
+	const int r = SimMath::truncToInt32(t.m_radiusCursorRadius);
+	if (r <= 0)
+	{
+		return !waterCellAt(logic, loc);
+	}
+	const float rf = (float)r;
+	const int x0 = SimMath::truncToInt32(SimMath::subf32(loc.x, rf)), x1 = SimMath::truncToInt32(SimMath::addf32(rf, loc.x));
+	const int y0 = SimMath::truncToInt32(SimMath::subf32(loc.y, rf)), y1 = SimMath::truncToInt32(SimMath::addf32(rf, loc.y));
+	const float r2 = (float)(r * r);
+	for (int y = y0; y <= y1; y += 2)
+	{
+		const float fy = (float)y;
+		const float dy = SimMath::subf32(fy, loc.y);
+		const float dy2 = SimMath::mulf32(dy, dy);
+		for (int x = x0; x <= x1; x += 2)
+		{
+			const float fx = (float)x;
+			const float dx = SimMath::subf32(fx, loc.x);
+			if (r2 > SimMath::addf32(SimMath::mulf32(dx, dx), dy2))
+			{
+				const Coord3D p{ fx, fy, loc.z };
+				if (waterCellAt(logic, p))
+				{
+					return false;
+				}
+			}
+		}
+	}
+	return true;
+}
+
+// the default ObjectFilter of a SpecialPowerTemplate (RW 0x7B1F5B -> RW 0x763D11 with the empty KindOf mask RW 0xDE49E4: rule NONE, empty masks, as
+// CostModifierUpgrade's constructor builds it, RW 0x8B9E08)
+const ObjectFilter &filterOrDefault(const std::shared_ptr<const ObjectFilter> &f)
+{
+	static const ObjectFilter kDefault = ObjectFilter::none(KindOfMaskType{}, KindOfMaskType{});
+	return f ? *f : kDefault;
+}
+
+// the shroud status of the location for the controlling player (ShroudManager RW 0xB4D9A0 -> 0xB4FB20 with the player index, Player + 0x54)
+int shroudAt(Object &obj, const Coord3D &loc)
+{
+	GameLogic &logic = obj.logic();
+	const Player *p = obj.getControllingPlayer();
+	if (!logic.shroud() || !p)
+	{
+		throw std::logic_error("ActionManager RW 0xB4D9A0: no shroud manager or no controlling player");
+	}
+	return (int)logic.shroud()->getStatusAt(p->getPlayerIndex(), loc.x, loc.y);
+}
+
+// RW 0x897E01 with a location: the module's requirements (RW 0x8969E5), UseDistanceFromCommandCenter, RW 0x896DB4, the special power update modules
+bool moduleAllows(Object &obj, SpecialPowerModuleInterface &m, const SpecialPowerTemplate &t, const Coord3D &loc)
+{
+	GameLogic &logic = obj.logic();
+	if (!m.requirementsMet())
+	{
+		return false;
+	}
+	const SpecialPowerModule *spm = dynamic_cast<const SpecialPowerModule *>(&m);
+	if (spm && spm->spData()->m_useDistanceFromCommandCenter)
+	{
+		// RW 0x897D2D: no controlling player -> passes; else the player's COMMANDCENTER objects (RW 0x6B00F3: template + 0x10A bit 1) in the player's object
+		// walk; one whose position is within DistanceFromCommandCenter (Coord3D::length RW 0x403111 of loc - position) -> passes
+		const Player *player = obj.getControllingPlayer();
+		if (player)
+		{
+			static const int kCommandCenter = kindBit("COMMANDCENTER");
+			bool near = false;
+			for (Object *o = logic.getFirstObject(); o && !near; o = o->getNextObject())
+			{
+				if (o->getControllingPlayer() != player || kCommandCenter < 0 || !o->isKindOf((unsigned)kCommandCenter))
+				{
+					continue;
+				}
+				const Coord3D *p = o->getPosition();
+				const float len = (float)SimMath::length3d(SimMath::subf32(loc.x, p->x), SimMath::subf32(loc.y, p->y), SimMath::subf32(loc.z, p->z));
+				near = len <= spm->spData()->m_distanceFromCommandCenter;
+			}
+			if (!near)
+			{
+				return false;
+			}
+		}
+	}
+	if (t.getSpecialPowerType() == 0x20)
+	{
+		logic.noteStop(kStopRequirements); // RW 0x896DB4
+		return false;
+	}
+	for (const std::unique_ptr<BehaviorModule> &b : obj.modules())
+	{
+		const SpecialPowerUpdateInterface *u = dynamic_cast<const SpecialPowerUpdateInterface *>(b.get());
+		if (u && u->drivesSpecialPower(&t)) // slot 0x1C with the module's power (module data + 0x8)
+		{
+			return u->allowsSpecialPowerUse(); // slot 0x20
+		}
+	}
+	return true;
+}
+
+// TheTerrainLogic vslots 0x50 (isCliffCell) / 0x58 (ImpassabilityToPlayers plane, MAP-1's planeA) at the location (fld / fstp of the floats: exact)
+bool cliffOrImpassable(GameLogic &logic, const Coord3D &loc)
+{
+	const PathfindTerrain *terrain = terrainOf(logic);
+	if (!terrain)
+	{
+		throw std::logic_error("ActionManager RW 0x82E184: the game has no terrain");
+	}
+	return terrain->isCliffCell(loc.x, loc.y) || terrain->impassableToPlayers(loc.x, loc.y);
+}
+
+// RW 0x82E913's table (types 10 .. 0x9E)
+enum FinalTest
+{
+	FINAL_NO,
+	FINAL_CLEAR,       // RW 0x82E91A: the shroud status is CLEAR (0)
+	FINAL_YES,         // RW 0x82ED8E
+	FINAL_NOT_SHROUD,  // RW 0x82ED95: the status is not SHROUDED (2)
+	FINAL_GRID_CLIFF,  // RW 0x82EC27 (0x48 .. 0x4A)
+	FINAL_RANGE,       // RW 0x82ED67 (0x92)
+	FINAL_UNPORTED,    // 0x27, 0x57
+	FINAL_GRID_PLANE,  // RW 0x82EA58 (0x59, 0x68)
+	FINAL_ARMY         // RW 0x82EB27 (0x63)
+};
+
+FinalTest finalTestOf(int type)
+{
+	switch (type)
+	{
+	case 0x10: case 0x1C: case 0x23: case 0x2A: case 0x2F: case 0x32: case 0x3F: case 0x41: case 0x43: case 0x50: case 0x54: case 0x6B: case 0x70: case 0x71:
+	case 0x8C: case 0x8E: case 0x93: case 0x9B: case 0x9C: case 0x9D: case 0x9E:
+		return FINAL_CLEAR;
+	case 0x34: case 0x35: case 0x36: case 0x3C: case 0x3D: case 0x3E: case 0x42: case 0x46: case 0x4B: case 0x4C: case 0x4E: case 0x51: case 0x53: case 0x58:
+	case 0x5A: case 0x5C: case 0x62: case 0x64: case 0x65: case 0x66: case 0x69: case 0x6C: case 0x6D: case 0x6E: case 0x6F: case 0x72: case 0x75: case 0x77:
+	case 0x79: case 0x7A: case 0x7D: case 0x7F: case 0x80: case 0x85: case 0x8F: case 0x98:
+		return FINAL_YES;
+	case 0x38: case 0x4D: case 0x60: case 0x86: case 0x91: case 0x94: case 0x95: case 0x99:
+		return FINAL_NOT_SHROUD;
+	case 0x48: case 0x49: case 0x4A:
+		return FINAL_GRID_CLIFF;
+	case 0x92:
+		return FINAL_RANGE;
+	case 0x27: case 0x57:
+		return FINAL_UNPORTED;
+	case 0x59: case 0x68:
+		return FINAL_GRID_PLANE;
+	case 0x63:
+		return FINAL_ARMY;
+	default:
+		return FINAL_NO;
+	}
+}
+
+// the partition's FROM_GEOMETRY_OVERLAP range query (RW 0xA3C7D0 -> RW 0xAD2CE0) is stop S-1020
+constexpr bool kSummonOverlapPorted = false;
+
+// the integer grid walks of RW 0x82EC27 / 0x82EA58 / 0x82EB77 / 0x82E753: x and y from cvttss2si(l - h) to cvttss2si(l + h) (SSE) in steps; each point
+// (cvtsi2ss x, cvtsi2ss y) is refused by TheTerrainLogic vslot 0x54 (the third plane) or, with `cliffToo`, vslot 0x50 (cliff). A zero step would loop for
+// ever in retail (a radius below 5): reported as an error instead
+bool gridClear(GameLogic &logic, const Coord3D &loc, float half, int step, bool cliffToo)
+{
+	const PathfindTerrain *terrain = terrainOf(logic);
+	if (!terrain)
+	{
+		throw std::logic_error("ActionManager: the game has no terrain");
+	}
+	if (step <= 0)
+	{
+		throw std::logic_error("ActionManager RW 0x82EC27 / 0x82EA58: a grid step of 0 (RadiusCursorRadius below 5) never ends in retail");
+	}
+	const int x0 = SimMath::truncToInt32(SimMath::subf32(loc.x, half)), x1 = SimMath::truncToInt32(SimMath::addf32(half, loc.x));
+	const int y0 = SimMath::truncToInt32(SimMath::subf32(loc.y, half)), y1 = SimMath::truncToInt32(SimMath::addf32(half, loc.y));
+	for (int y = y0; y <= y1; y += step)
+	{
+		for (int x = x0; x <= x1; x += step)
+		{
+			if (terrain->thirdPlane((float)x, (float)y) || (cliffToo && terrain->isCliffCell((float)x, (float)y)))
+			{
+				return false;
+			}
+		}
+	}
+	return true;
+}
+
+// RW 0x444D39(0, bit) + 0x445139(mask, none): KindOf `bit` set (the partition KindOf filter RW 0xBD88B0)
+bool hasKindBit(const Object &o, int bit)
+{
+	return bit >= 0 && o.isKindOf((unsigned)bit);
+}
+
+// RW 0x82E586 (the summons): RadiusCursorRadius r; the objects overlapping the circle r (distance type 4, RW 0xA39340) that have none of INERT,
+// NO_COLLIDE, IGNORED_IN_GUI, ROCK_VENDOR, TAINTEFFECT (RW 0x6615E5(0, 0x59, 0x1E, 0x2F, 0x88, 0xAF) as the excluded mask of RW 0x445139) and are alive:
+// one that is IMMOBILE or STRUCTURE (RW 0x46E72F(0, 2, 7), any) but neither BASE_SITE nor CRATE, or whose template ShockwaveResistance (+ 0x620) is
+// above 100 (RW 0xBD88D8, SSE) -> no; the BASE_SITE objects within r + 500 (RW 0xBDD97C, distance type 0) with a CastleBehavior (RW 0x797AC1 key): the
+// location's 3D distance (Coord3D::length RW 0x403111) below MaxCastleRadius (+ 0x2C, RW 0x797ED7) + r (x87 fadd) -> no; the grid from loc - r to loc + r
+// with the step cvttss2si(r * 0.2 + (float)v) (SSE: mulss 0.2 RW 0xBDAD78, addss) refused by vslot 0x54 or 0x50 -> no; then the shroud status is CLEAR
+bool summonSpotClear(Object &obj, const Coord3D &loc, const SpecialPowerTemplate &t)
+{
+	GameLogic &logic = obj.logic();
+	const float r = t.m_radiusCursorRadius;
+	static const int kInert = kindBit("INERT"), kNoCollide = kindBit("NO_COLLIDE"), kIgnoredInGui = kindBit("IGNORED_IN_GUI"), kRockVendor = kindBit("ROCK_VENDOR"),
+					 kTaintEffect = kindBit("TAINTEFFECT"), kImmobile = kindBit("IMMOBILE"), kStructure = kindBit("STRUCTURE"), kBaseSite = kindBit("BASE_SITE"),
+					 kCrate = kindBit("CRATE");
+	PartitionFilterFn excluded([](Object &o) {
+		return !(hasKindBit(o, kInert) || hasKindBit(o, kNoCollide) || hasKindBit(o, kIgnoredInGui) || hasKindBit(o, kRockVendor) || hasKindBit(o, kTaintEffect));
+	});
+	PartitionFilterFn alive([](Object &o) { return !o.isEffectivelyDead(); });
+	for (const PartitionHit &h : logic.partition().iterateObjectsInRange(loc, r, FROM_GEOMETRY_OVERLAP, { &excluded, &alive }, ITER_FASTEST))
+	{
+		const Object &c = *h.object;
+		if ((hasKindBit(c, kImmobile) || hasKindBit(c, kStructure)) && !hasKindBit(c, kBaseSite) && !hasKindBit(c, kCrate))
+		{
+			return false;
+		}
+		if (ObjectKnockback::shockwaveResistance(c) > 100.0f)
+		{
+			return false;
+		}
+	}
+	PartitionFilterFn baseSite([](Object &o) { return hasKindBit(o, kBaseSite); });
+	for (const PartitionHit &h : logic.partition().iterateObjectsInRange(loc, SimMath::addf32(r, 500.0f), FROM_CENTER_2D, { &baseSite }, ITER_FASTEST))
+	{
+		const CastleBehavior *castle = nullptr; // RW 0x68BDA5 with the CastleBehavior key (RW 0x797AC1)
+		for (const std::unique_ptr<BehaviorModule> &m : h.object->modules())
+		{
+			if ((castle = dynamic_cast<const CastleBehavior *>(m.get())) != nullptr)
+			{
+				break;
+			}
+		}
+		if (!castle)
+		{
+			continue;
+		}
+		const float castleRadius = castle->data()->m_maxCastleRadius; // fstp dword
+		const Coord3D *p = h.object->getPosition();
+		// RW 0x82E72E: RW 0x403111's root under PC24 stays in ST0 for the compare (no fstp): the PC24 root of the float32 sum of squares
+		const double len = SimMath::sqrtPC24((double)SimMath::sumSquares3(SimMath::subf32(loc.x, p->x), SimMath::subf32(loc.y, p->y), SimMath::subf32(loc.z, p->z)));
+		if (SimMath::pc24AddW((double)castleRadius, (double)r) > len)
+		{
+			return false;
+		}
+	}
+	const PathfindTerrain *terrain = terrainOf(logic);
+	if (!terrain)
+	{
+		throw std::logic_error("ActionManager RW 0x82E753: the game has no terrain");
+	}
+	const float stepScale = SimMath::mulf32(r, 0.2f);
+	const int x1 = SimMath::truncToInt32(SimMath::addf32(loc.x, r)), y0 = SimMath::truncToInt32(SimMath::subf32(loc.y, r));
+	const int y1 = SimMath::truncToInt32(SimMath::addf32(loc.y, r)), x0 = SimMath::truncToInt32(SimMath::subf32(loc.x, r));
+	for (int y = y0; y <= y1;)
+	{
+		for (int x = x0; x <= x1;)
+		{
+			const float fx = (float)x, fy = (float)y;
+			if (terrain->thirdPlane(fx, fy) || terrain->isCliffCell(fx, fy))
+			{
+				return false;
+			}
+			const int nx = SimMath::truncToInt32(SimMath::addf32(stepScale, fx));
+			if (nx <= x)
+			{
+				throw std::logic_error("ActionManager RW 0x82E7F1: a summon grid step of 0 never ends in retail");
+			}
+			x = nx;
+		}
+		const int ny = SimMath::truncToInt32(SimMath::addf32(stepScale, (float)y));
+		if (ny <= y)
+		{
+			throw std::logic_error("ActionManager RW 0x82E80F: a summon grid step of 0 never ends in retail");
+		}
+		y = ny;
+	}
+	return shroudAt(obj, loc) == CELLSHROUD_CLEAR;
+}
+
+bool unportedTypeTest(GameLogic &logic, int type)
+{
+	ActionManager::Stats &s = ActionManager::stats();
+	++s.typeTests;
+	if (type >= 0 && type < (int)s.unportedTypeTests.size())
+	{
+		++s.unportedTypeTests[(size_t)type];
+	}
+	logic.noteStop(kStopTypeTest);
+	return false;
+}
+} // namespace
+
+namespace ActionManager
+{
+Stats &stats()
+{
+	static thread_local Stats s;
+	return s;
+}
+
+bool canDoSpecialPowerAtLocation(Object &obj, const CommandButton &button, const Coord3D &loc)
+{
+	// RW 0x75CF21(this = button, obj, target 0, loc, source 0)
+	GameLogic &logic = obj.logic();
+	if (!button.m_upgradeName.empty() && button.m_command != GUI_COMMAND_FIRE_WEAPON)
+	{
+		++stats().upgradeButtons;
+		logic.noteStop(kStopUpgrade);
+		return false;
+	}
+	const std::uint32_t options = button.m_options;
+	if (options & 7u)
+	{
+		return false; // a target object is needed and there is none
+	}
+	if (options & COMMAND_OPTION_NEED_TARGET_POS)
+	{
+		return canDoSpecialPowerAtLocation(obj, loc, powerOf(button), options);
+	}
+	if (button.m_command == GUI_COMMAND_FIRE_WEAPON)
+	{
+		++stats().fireWeaponButtons;
+		logic.noteStop(kStopUpgrade);
+		return false;
+	}
+	return canDoSpecialPower(obj, powerOf(button));
+}
+
+int finalTestKind(int type)
+{
+	return (int)finalTestOf(type);
+}
+
+bool canDoSpecialPower(Object &obj, const SpecialPowerTemplate *power)
+{
+	// RW 0x82D5DA(obj, power, 0, options, 0)
+	if (!power)
+	{
+		return false;
+	}
+	if (movingOnUpperLayer(obj) || !unitCostMet(obj, *power))
+	{
+		return false;
+	}
+	if (!SpecialPowerModules::findModule(obj, power)) // RW 0x68C26D
+	{
+		return false;
+	}
+	return targetlessTypeAccepted(power->getFinalOverride()->getSpecialPowerType());
+}
+
+bool targetlessTypeAccepted(int type)
+{
+	switch (type) // RW 0x82D6B1
+	{
+	case 0x1B: case 0x25: case 0x27: case 0x28: case 0x29: case 0x2B: case 0x2C: case 0x2E: case 0x34: case 0x35: case 0x36: case 0x37: case 0x38: case 0x3A:
+	case 0x3C: case 0x3D: case 0x3E: case 0x42: case 0x4C: case 0x4E: case 0x4F: case 0x51: case 0x58: case 0x5C: case 0x62: case 0x66: case 0x69: case 0x6C:
+	case 0x6D: case 0x6E: case 0x72: case 0x74: case 0x75: case 0x77: case 0x79: case 0x7A: case 0x7D: case 0x7F: case 0x80: case 0x83: case 0x85: case 0x87:
+	case 0x88: case 0x89: case 0x8D: case 0x8F: case 0x98:
+		return true;
+	default:
+		return false;
+	}
+}
+
+bool canDoSpecialPowerAtLocation(Object &obj, const Coord3D &loc, const SpecialPowerTemplate *power, unsigned options)
+{
+	// RW 0x82DFB7(obj, loc, 0, power, 0, options, 0)
+	(void)options;
+	if (!power)
+	{
+		return false;
+	}
+	GameLogic &logic = obj.logic();
+	const SpecialPowerTemplate &t = *power->getFinalOverride(); // RW 0x688D3C
+	if (!unitCostMet(obj, t) || movingOnUpperLayer(obj))
+	{
+		return false;
+	}
+	SpecialPowerModuleInterface *m = SpecialPowerModules::findModule(obj, power); // RW 0x68C26D
+	if (!m || !moduleAllows(obj, *m, t, loc))                                  // slot 0x48 (RW 0x897E01)
+	{
+		return false;
+	}
+	// RW 0x82D56A: strictly inside the pathfinder's maximum extent (TheTerrainLogic vslot 0x30) shrunk by RadiusCursorRadius (SSE)
+	{
+		const PathfindTerrain *terrain = terrainOf(logic);
+		if (!terrain)
+		{
+			throw std::logic_error("ActionManager RW 0x82D56A: the game has no terrain");
+		}
+		float loX = 0.0f, loY = 0.0f, hiX = 0.0f, hiY = 0.0f;
+		terrain->getMaximumPathfindExtent(loX, loY, hiX, hiY);
+		const float r = t.m_radiusCursorRadius;
+		if (!(loc.x > SimMath::addf32(loX, r) && SimMath::subf32(hiX, r) > loc.x && loc.y > SimMath::addf32(loY, r) && SimMath::subf32(hiY, r) > loc.y))
+		{
+			return false;
+		}
+	}
+	// RW 0x82D3A3 (LIMIT_DISTANCE): MaxCastRange^2 > (dz^2 + dy^2) + dx^2 of the object's position minus the location (SSE)
+	if (t.m_flags & SPF_LIMIT_DISTANCE)
+	{
+		const Coord3D *p = obj.getPosition();
+		const float dx = SimMath::subf32(p->x, loc.x), dy = SimMath::subf32(p->y, loc.y), dz = SimMath::subf32(p->z, loc.z);
+		const float d2 = SimMath::addf32(SimMath::addf32(SimMath::mulf32(dz, dz), SimMath::mulf32(dy, dy)), SimMath::mulf32(dx, dx));
+		if (!(SimMath::mulf32(t.m_maxCastRange, t.m_maxCastRange) > d2))
+		{
+			return false;
+		}
+	}
+	// RW 0x82D2C9 (PATHABLE_ONLY): RW 0x6F5BB0(obj, its position, loc, 0), the port's quick path test with the object's locomotor (S-1280, as FindPositionAround)
+	if (t.m_flags & SPF_PATHABLE_ONLY)
+	{
+		AIUpdateInterface *ai = obj.getAIUpdateInterface();
+		AIWorld *world = logic.aiWorld();
+		if (!ai || !world)
+		{
+			return false; // RW 0x6F5BB0: no AI (+ 0x260) and no locomotor set given -> no (INFERENCE: its earlier status / Object + 0x4AC tests, RW 0x44DDEC / 0x68C053, do not apply)
+		}
+		const PathfindLocomotorInfo loco = ai->locomotorInfo();
+		if (!world->pathfinder().clientSafeQuickDoesPathExist(loco, obj.getPosition(), &loc))
+		{
+			return false;
+		}
+	}
+	if (!waterTestPasses(logic, loc, t)) // RW 0x82D415
+	{
+		return false;
+	}
+	const Player *player = obj.getControllingPlayer();
+	// RW 0x82DEA6 (NEEDS_OBJECT_FILTER): some live object within RadiusCursorRadius (distance type 0) passes ObjectFilter for the controlling player
+	if (t.m_flags & SPF_NEEDS_OBJECT_FILTER)
+	{
+		const ObjectFilter &f = filterOrDefault(t.m_objectFilter);
+		PartitionFilterFn pass([&](Object &o) { return ObjectFilterMatch::allows(logic, f, o, player); });
+		PartitionFilterFn alive([](Object &o) { return !o.isEffectivelyDead(); });
+		if (logic.partition().iterateObjectsInRange(loc, t.m_radiusCursorRadius, FROM_CENTER_2D, { &pass, &alive }, ITER_FASTEST).empty())
+		{
+			return false;
+		}
+	}
+	// RW 0x82D2FD (NO_FORBIDDEN_OBJECTS): no live object within ForbiddenObjectRange (distance type 1) passes ForbiddenObjectFilter
+	if (t.m_flags & SPF_NO_FORBIDDEN_OBJECTS)
+	{
+		const ObjectFilter &f = filterOrDefault(t.m_forbiddenObjectFilter);
+		PartitionFilterFn pass([&](Object &o) { return ObjectFilterMatch::allows(logic, f, o, player); });
+		PartitionFilterFn alive([](Object &o) { return !o.isEffectivelyDead(); });
+		if (logic.partition().getClosestObject(loc, t.m_forbiddenObjectRange, FROM_CENTER_3D, { &pass, &alive }))
+		{
+			return false;
+		}
+	}
+	const int type = t.getSpecialPowerType();
+	// RW 0x82E135: 0x38 (the AI's slot 0x184 / RW 0x76A247: not ported), then 0x38, 0x41 and 0x8C: no cliff and no ImpassabilityToPlayers cell at the location
+	if (type == 0x38)
+	{
+		return unportedTypeTest(logic, type);
+	}
+	if ((type == 0x41 || type == 0x8C) && cliffOrImpassable(logic, loc))
+	{
+		return false;
+	}
+	// RW 0x82E1C2 .. 0x82E8EF: the per-type tests before the final switch
+	switch (type)
+	{
+	case 0x52: case 0x61: case 0x67: case 0x6A: // RW 0x82E2DE (the building powers)
+		return unportedTypeTest(logic, type);
+	case 0x55: case 0x56: case 0x5B: case 0x5D: case 0x5E: case 0x5F: case 0x73: case 0x76: case 0x78: case 0x7B: case 0x7C: case 0x7E: case 0x96: case 0x9A:
+		// RW 0x82E586 (the final switch is not reached): its first scan is the partition's geometry overlap (distance type 4, RW 0xA3C7D0), which needs the shape
+		// overlap test RW 0xAD2CE0 (stop S-1020): the spot test below is ported but cannot run; the type answers no (counted)
+		if (!kSummonOverlapPorted)
+		{
+			return unportedTypeTest(logic, type);
+		}
+		return summonSpotClear(obj, loc, t);
+	case 0x41:                                                                          // RW 0x82E252
+	case 0x49:                                                                          // RW 0x82E21A
+		return unportedTypeTest(logic, type);
+	case 0x8C:
+	{
+		// RW 0x82E860 (0x8C): no STRUCTURE (KindOf bit 7, RW 0x444D39(0, 7) / 0x445139) within 1.0 of the location (distance type 0, RW 0xA39090); the
+		// ground layer's cell under it (RW 0x680A75: the ground, S-161) exists and is not of type 5 (RW 0x6EAD90); with a current locomotor (AI + 0x1F0,
+		// RW 0x68B31D) its max speed for the condition (RW 0x5E3F49) is not 0
+		static const int kStructure = kindBit("STRUCTURE");
+		PartitionFilterFn structure([](Object &o) { return kStructure >= 0 && o.isKindOf((unsigned)kStructure); });
+		if (logic.partition().getClosestObject(loc, 1.0f, FROM_CENTER_2D, { &structure }))
+		{
+			return false;
+		}
+		AIWorld *world = logic.aiWorld();
+		const PathfindCell *cell = world ? world->pathfinder().getCell(LAYER_GROUND, &loc) : nullptr;
+		if (!cell || (int)cell->getType() == 5)
+		{
+			return false;
+		}
+		const AIUpdateInterface *ai = obj.getAIUpdateInterface();
+		if (ai && ai->curLocomotor() && ai->curLocomotorSpeed() == 0.0f)
+		{
+			return false;
+		}
+		break;
+	}
+	default:
+		break;
+	}
+	// RW 0x82E913
+	switch (finalTestOf(type))
+	{
+	case FINAL_CLEAR:
+		return shroudAt(obj, loc) == CELLSHROUD_CLEAR;
+	case FINAL_YES:
+		return true;
+	case FINAL_NOT_SHROUD:
+		return shroudAt(obj, loc) != CELLSHROUD_SHROUDED;
+	case FINAL_GRID_CLIFF:
+	{
+		// RW 0x82EC27 (0x48 .. 0x4A): r = cvttss2si(RadiusCursorRadius); the grid +- (float)r with the step r / 5 (idiv) refused by vslot 0x54 or 0x50; an
+		// object of KindOf WALK_ON_TOP_OF_WALL (bit 0x3C, RW 0x444D39 / 0x445139) within (float)r (RW 0xA39090, distance type 0) -> no; then CLEAR
+		const int r = SimMath::truncToInt32(t.m_radiusCursorRadius);
+		if (!gridClear(logic, loc, (float)r, r / 5, true))
+		{
+			return false;
+		}
+		static const int kWallWalker = kindBit("WALK_ON_TOP_OF_WALL");
+		PartitionFilterFn wall([](Object &o) { return hasKindBit(o, kWallWalker); });
+		if (logic.partition().getClosestObject(loc, (float)r, FROM_CENTER_2D, { &wall }))
+		{
+			return false;
+		}
+		return shroudAt(obj, loc) == CELLSHROUD_CLEAR;
+	}
+	case FINAL_GRID_PLANE:
+	{
+		// RW 0x82EA58 (0x59, 0x68): the same grid with vslot 0x54 only; then the status is not SHROUDED
+		const int r = SimMath::truncToInt32(t.m_radiusCursorRadius);
+		return gridClear(logic, loc, (float)r, r / 5, false) && shroudAt(obj, loc) != CELLSHROUD_SHROUDED;
+	}
+	case FINAL_ARMY:
+	{
+		// RW 0x82EB27 (0x63): no WALK_ON_TOP_OF_WALL object within 200 (RW 0xBE4170, distance type 0); the grid +- 200 with the step 40 refused by vslot 0x54;
+		// then CLEAR
+		static const int kWallWalker = kindBit("WALK_ON_TOP_OF_WALL");
+		PartitionFilterFn wall([](Object &o) { return hasKindBit(o, kWallWalker); });
+		if (logic.partition().getClosestObject(loc, 200.0f, FROM_CENTER_2D, { &wall }))
+		{
+			return false;
+		}
+		return gridClear(logic, loc, 200.0f, 40, false) && shroudAt(obj, loc) == CELLSHROUD_CLEAR;
+	}
+	case FINAL_RANGE:
+	{
+		// RW 0x82ED67: the object's 2D squared distance to the location (RW 0x66137C, x87 wide) at most ViewObjectRange (+ 0x50) squared (fmul, PC24)
+		const Coord3D *p = obj.getPosition();
+		const double dx = SimMath::pc24SubW((double)p->x, (double)loc.x), dy = SimMath::pc24SubW((double)p->y, (double)loc.y);
+		const double d2 = SimMath::pc24AddW(SimMath::pc24MulW(dy, dy), SimMath::pc24MulW(dx, dx));
+		const double r2 = SimMath::pc24MulW((double)t.m_viewObjectRange, (double)t.m_viewObjectRange);
+		return !(r2 < d2);
+	}
+	case FINAL_UNPORTED:
+		return unportedTypeTest(logic, type);
+	case FINAL_NO:
+	default:
+		return false;
+	}
+}
+
+std::vector<std::string> stopLines()
+{
+	return { kStopUpgrade, kStopLayer, kStopRequirements, kStopTypeTest };
+}
+} // namespace ActionManager

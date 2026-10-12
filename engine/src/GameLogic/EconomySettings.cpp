@@ -329,4 +329,8 @@ void EconomyContext::crc(StateHasher &h) const
 	h.addBool(gameInfoPresent);
 	h.addI32(lobbyCommandPointPercent);
 	h.addBool(scoring);
+	if (sandbox)
+	{
+		h.addBool(true); // lane GAMEMODES-1: hashed only when set, so every game that is not a sandbox hashes as before
+	}
 }

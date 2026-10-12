@@ -319,3 +319,16 @@ TEST_CASE("players: a side naming a missing PlayerTemplate is reported (ZH: an o
 	CHECK(errors[0].find("PlayerTemplate 'FactionZ' not found") != std::string::npos);
 	CHECK(lw.players.findPlayerWithName("Lost")->getMoney()->countMoney() == 0); // no template, no money rule
 }
+
+TEST_CASE("players: Player::init clears the PLAYER_HUNT flag (+ 0x35D, RW 0x6B0401), so a reinitialised player's units no longer hunt for good")
+{
+	LogicWorld lw;
+	REQUIRE(lw.loadError.empty());
+	Player *alice = lw.players.findPlayerWithName("Alice");
+	REQUIRE(alice);
+	CHECK_FALSE(alice->unitsShouldHunt());
+	alice->setUnitsShouldHuntFlag(true);
+	REQUIRE(alice->unitsShouldHunt());
+	alice->init(alice->getPlayerTemplate(), 2000);
+	CHECK_FALSE(alice->unitsShouldHunt());
+}

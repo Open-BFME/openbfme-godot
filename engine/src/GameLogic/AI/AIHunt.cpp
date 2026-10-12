@@ -63,8 +63,9 @@ int playerDifficulty(const Player &p, GameLogic &logic)
 
 const char *huntStopLine()
 {
-	return "[S-1188] AI hunt (TEAM_HUNT / NAMED_HUNT, RW 0x741133): the crate pick-up (AI + 0x238), the attack priority info (AI + 0x70) and the player-wide "
-		   "hunt flag (+ 0x35D, PLAYER_HUNT) are not part of the port; the closest enemy is the port's TargetFinder (S-326)";
+	return "[S-1188] AI hunt (TEAM_HUNT / NAMED_HUNT / PLAYER_HUNT, RW 0x741133): the crate pick-up (AI + 0x238) and the attack priority info (AI + 0x70) are "
+		   "not part of the port; the closest enemy is the port's TargetFinder (S-326); PLAYER_HUNT (RW 0x6AF4B1, lane DECOMP-2) walks the player's objects in "
+		   "object list order";
 }
 
 bool AIUpdateInterface::aiHunt(CommandSourceType source)
@@ -252,8 +253,8 @@ StateReturnType AIHuntState::update()
 			{
 				m_huntMachine->setState(AI_ATTACK_OBJECT);
 			}
-			const bool unitsShouldHunt = false; // Player + 0x35D (PLAYER_HUNT, S-1188)
 			const Player *p = obj.getControllingPlayer();
+			const bool unitsShouldHunt = p && p->unitsShouldHunt(); // Player + 0x35D (PLAYER_HUNT, lane DECOMP-2)
 			if (p && !unitsShouldHunt && m_huntMachine->currentStateId() == AI_IDLE && !victim)
 			{
 				return STATE_SUCCESS;

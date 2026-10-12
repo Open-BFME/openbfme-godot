@@ -12,8 +12,9 @@
 //     (RW 0x8DD63C: 0x7E6, 0x7E7, 0x7E8, 0x7EC) a lone object with status HORDE_MEMBER (38) is skipped.
 //   * per candidate a "choice" (RW 0x8DD819): two voice slots {Eva event id, audio event} (the template's voice and the CrowdResponse's), the object and the
 //     candidate's rank {special, hero (tt + 0x110 bit 26, KindOf HERO), level, ordinal, VoicePriority (tt + 0x570, RW 0x675095)}.
-//   * the voice rows are the audio table RW 0xC26720 by index (RW 0x676A8A -> template lookup); names (VoiceBombard, VoiceAttackUnit<target> ...) come from the
-//     template's UnitSpecificSounds map (tt + 0x388, RW 0x73EDD0). A choice's slot is filled only while it is empty (RW 0x8DDA33): the first rule that finds a
+//   * the voice rows are the audio table RW 0xC26720 by index (RW 0x676A8A: the drawable's sound selectors, then the template lookup); names (VoiceBombard,
+//     VoiceAttackUnit<target> ...) come from the selectors' maps, then the template's UnitSpecificSounds map (tt + 0x388, RW 0x674FFE -> 0x73EDD0); VoicePriority
+//     from the selectors, then tt + 0x570 (RW 0x675095). The selectors: GameClient/SoundSelectorClientBehavior.h (lane DECOMP-2). A choice's slot is filled only while it is empty (RW 0x8DDA33): the first rule that finds a
 //     voice wins.
 //   * rank order RW 0x8DD663: special first; a hero beats a non hero; two heroes: the higher level, then the EARLIER ordinal; two non heroes: the higher VoicePriority
 //     (equal priority = equal rank). A better rank clears the collected sounds (RW 0x8DE23A); an equal rank adds its sound under its primary sound
@@ -29,6 +30,8 @@
 #pragma once
 
 #include "Common/INIDataTypes.h"
+#include "Common/RandomValue.h"
+#include "GameClient/SoundSelectorClientBehavior.h"
 #include "GameLogic/ObjectTypes.h"
 
 #include <cstdint>
@@ -40,6 +43,8 @@ class GameLogic;
 class GameMessage;
 class Object;
 class ThingTemplate;
+
+typedef SoundSelectors::RandomState SoundSelectorRandomState;
 
 class UnitVoiceResponse
 {
@@ -128,9 +133,14 @@ public:
 	// the voice-bearing message types this port handles (the HUD calls pickAndPlay for these)
 	static bool handles(int msgType);
 
-	// the template's voice of `row` / of the UnitSpecificSounds name (RW 0x676A8A / 0x674FFE without the draw module overrides, S-701)
+	// the template's voice of `row` / of the UnitSpecificSounds name (the template half of RW 0x676A8A / 0x674FFE)
 	static Voice templateVoice(const ThingTemplate &tt, int row);
 	static Voice unitSpecificVoice(const ThingTemplate &tt, const std::string &name);
+	// lane DECOMP-2 (S-701): the drawable's answer, RW 0x676A8A / 0x674FFE / 0x675095: the sound selectors of the object's ClientBehavior list first
+	// (GameClient/SoundSelectorClientBehavior.h), then the template (VoicePriority: template + 0x570)
+	Voice objectVoice(const Object &obj, int row) const;
+	Voice objectNameVoice(const Object &obj, const std::string &name) const;
+	int objectVoicePriority(const Object &obj) const;
 
 	struct Stats
 	{
@@ -207,8 +217,8 @@ private:
 
 	bool fill(Choice &c, const Voice &v) const;
 	// RW 0x8DDA66 / 0x8DDB2A: the template's voice of a row / name into slot 0, the crowd entry's of the same row / name into slot 1 (each only while empty)
-	bool fillRow(Choice &c, const ThingTemplate &tt, int row) const;
-	bool fillName(Choice &c, const ThingTemplate &tt, const std::string &name) const;
+	bool fillRow(Choice &c, const Object &obj, int row) const;
+	bool fillName(Choice &c, const Object &obj, const std::string &name) const;
 	// RW 0x8DD876: no further rule is needed (an Eva id, or a sound and, with a crowd entry, its crowd sound)
 	static bool done(const Choice &c);
 	const CrowdThreshold *pickCrowd(const std::vector<std::pair<Object *, int>> &candidates) const;
@@ -225,6 +235,10 @@ private:
 	unsigned m_minDelayEnterStateFrames = 0;
 	std::map<ObjectID, Memory> m_memory;
 	std::map<std::string, CrowdResponse> m_crowd;
+	// lane DECOMP-2: the RandomSoundSelectorClientBehavior state of each asked object (retail keeps it in the drawable's module) and the client random its rolls
+	// draw from (GameClientRandomValueReal(0, 1), RW 0x6D33AB; S-093 / S-701)
+	mutable std::map<ObjectID, std::vector<SoundSelectorRandomState>> m_selectorRandom;
+	mutable GameLogicRandom m_clientRandom;
 	Stats m_stats;
 	Last m_last;
 };

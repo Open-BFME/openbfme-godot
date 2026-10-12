@@ -75,7 +75,7 @@ void lobbyLabels(MapGameText &t)
 	t.set("GUI:StartingMoneyFormat", "$%d");
 	t.set("GUI:ErrorStartingGame", "Error starting game");
 	t.set("GUI:CantFindMap", "Cannot find the map");
-	t.set("GUI:TooManyPlayers", "Too many players: the map has %d");
+	t.set("LAN:TooManyPlayers", "Too many players: the map has %d"); // lane GAMEMODES-1: RotWK's start check (RW 0x843564)
 	for (int i = 0; i <= 4; ++i)
 	{
 		t.set("Team:" + std::to_string(i), "Team " + std::to_string(i));
@@ -343,7 +343,7 @@ TEST_CASE("skirmish setup: startPressed refuses an unknown map and too many play
 	CHECK(setup.validateStart(title, body));
 	setup.setSlotState(2, SLOT_MED_AI, u"");
 	CHECK_FALSE(setup.validateStart(title, body));
-	CHECK(title == u"Error starting game");
+	CHECK(title.empty()); // lane GAMEMODES-1: RW 0x928482 -> MessageBoxOk(L"", text)
 	CHECK(body == u"Too many players: the map has 2");
 	setup.setSlotState(2, SLOT_CLOSED, u"");
 	REQUIRE(setup.validateStart(title, body));
@@ -364,7 +364,8 @@ TEST_CASE("skirmish setup: startPressed refuses an unknown map and too many play
 	SkirmishGameSetup solo = makeSetup(src, text);
 	REQUIRE(solo.init(u"P", 1, "maps/solo/solo.map", nullptr));
 	CHECK(solo.makeNewGameMessage().mode == NewGameMode::SinglePlayer);
-	// an unknown map in the info (a cache that changed under the lobby) is the first refusal
+	// an unknown map in the info (a cache that changed under the lobby) is the first refusal; lane GAMEMODES-1: RotWK's check (RW 0x843263) refuses it without
+	// a text (no map, no maximum player count)
 	FakeSetup other;
 	other.map.clear();
 	other.map.push_back(FakeSetup::mapEntry("maps/other/other.map", "$Map:Other", 2, true, 1));
@@ -372,7 +373,8 @@ TEST_CASE("skirmish setup: startPressed refuses an unknown map and too many play
 	REQUIRE(lost.init(u"P", 1, std::string(), nullptr));
 	other.map.clear();
 	CHECK_FALSE(lost.validateStart(title, body));
-	CHECK(body == u"Cannot find the map");
+	CHECK(body.empty());
+	CHECK(lost.checkStart().refusalLabel.empty());
 }
 
 TEST_CASE("skirmish setup: the map list is ordered by player count then display name; names resolve through the map string file with the retail fallbacks")
@@ -925,7 +927,16 @@ TEST_CASE("retail lobby API: handler and setter level: profile commands, map lis
 TEST_CASE("retail lobby API: StartGame with more players than the map holds is refused with the formatted message and posts nothing")
 {
 	OPENBFME_REQUIRE_RETAIL(mount);
-	LobbyFx fx(mount);
+	// lane MENU-1: with no profile the add-profile box is up and its OpenPop disables the game setup's gadgets (DisableComponents, RW 0x81456F): the
+	// player has a profile here, so the lobby takes the clicks
+	MemorySkirmishProfiles profiles;
+	REQUIRE(profiles.add(u"Gimli"));
+	profiles.setCurrent(u"Gimli");
+	LobbyFx fx(mount, false);
+	fx.environment.profiles = &profiles;
+	fx.shell->push("Skirmish.apt");
+	fx.screen = dynamic_cast<AptSkirmish *>(fx.shell->top());
+	REQUIRE(fx.screen);
 	fx.tick(60);
 	REQUIRE(fx.screen->setup());
 	GameWindow *list = fx.screen->mapListWindow();
@@ -949,7 +960,7 @@ TEST_CASE("retail lobby API: StartGame with more players than the map holds is r
 	fx.tick(2); // the screen update validates and posts (RotWK state 10)
 	CHECK(fx.sink.messages.empty());
 	REQUIRE(fx.sink.refusals.size() == 1);
-	CHECK(fx.sink.refusals[0].first == u"Error starting game");
+	CHECK(fx.sink.refusals[0].first.empty()); // lane GAMEMODES-1: MessageBoxOk(L"", text), RW 0x928482
 	CHECK(fx.sink.refusals[0].second == asciiToU16("Too many players: the map has " + std::to_string(map->numPlayers)));
 	// slots over the map's size are closed again: the lobby starts
 	for (int slot = (int)map->numPlayers; slot < MAX_SLOTS; ++slot)
@@ -1486,7 +1497,7 @@ TEST_CASE("retail lobby input: StartGame with more players than the map holds is
 	fx.tick(30);
 	CHECK(fx.sink.messages.empty());
 	REQUIRE(fx.sink.refusals.size() == 1);
-	CHECK(fx.sink.refusals[0].first == u"Error starting game");
+	CHECK(fx.sink.refusals[0].first.empty()); // lane GAMEMODES-1: MessageBoxOk(L"", text), RW 0x928482
 	CHECK(fx.sink.refusals[0].second == asciiToU16("Too many players: the map has " + std::to_string(map->numPlayers)));
 	for (int slot = (int)map->numPlayers; slot < MAX_SLOTS; ++slot)
 	{

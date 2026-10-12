@@ -877,6 +877,11 @@ void WindowManager::componentInstanceCreated(AptCharacterInst &inst, const std::
 	rec.symbol = symbolName;
 	rec.movie = movieName;
 	rec.init = req.init;
+	{
+		// lane MENU-1: RW 0x814BEC names the record by the clip's `_WindowId` (RW 0x81560E) when it has one, else by its path (RW 0x8155A7)
+		AptValue id;
+		rec.windowId = inst.getMember("_WindowId", id) && id.isString() ? id.asString() : req.instancePath;
+	}
 	// lane MP-2: a record of the same instance address or the same instance path is stale: its placeholder's subtree was released without a
 	// destroy notification (the gadgets of a removed placeholder clip stay, as the native windows of a screen do) and the clip is placed again
 	// (LanLobby.apt: LanOpenPlay's CreateComponents at frame 0, back from the setup). Left in place, a later destroy matched by address would
@@ -1141,12 +1146,9 @@ void WindowManager::registerBuiltinCallbacks()
 	registerCommand("OnClickThroughRelease", [this](const std::string &arg) {
 		note("unported-command", "OnClickThroughRelease(" + arg + ") [S-175]");
 	});
-	registerCommand("EnableComponents", [this](const std::string &arg) {
-		note("unported-command", "EnableComponents(" + arg + ") [S-175]");
-	});
-	registerCommand("DisableComponents", [this](const std::string &arg) {
-		note("unported-command", "DisableComponents(" + arg + ") [S-175]");
-	});
+	// lane MENU-1: RW 0x814511 / 0x81456F (WindowManager.h, enableComponents)
+	registerCommand("EnableComponents", [this](const std::string &arg) { enableComponents(arg, true); });
+	registerCommand("DisableComponents", [this](const std::string &arg) { enableComponents(arg, false); });
 	// Providers answered with the facts of the RotWK handlers (AptPlayerTestUtil.h, AptStubHost): a read answers "1" for InGame and
 	// "0" for the demo flags; DoTrace answers "0" (the debug flag at 0x00E0302C is clear in a retail run); a write is ignored.
 	auto constant = [](const char *answer) {
@@ -1209,6 +1211,41 @@ void WindowManager::releaseComponentWindows()
 	}
 }
 
+void WindowManager::enableComponents(const std::string &path, bool enable)
+{
+	if (path.empty())
+	{
+		if (enable)
+		{
+			m_componentBits &= ~1u;
+		}
+		else
+		{
+			m_componentBits |= 1u;
+			note("components-blocked", "[S-3502] DisableComponents(): the windows take no mouse or key input; typed characters still reach the focus window (ZH "
+									   "IMEManager's path, RotWK's not read)");
+			if (m_gadgetLayer)
+			{
+				m_gadgetLayer->gadgets().winSetFocus(nullptr);
+			}
+		}
+		return;
+	}
+	// RW 0x813395: strncmp(record name, path, strlen(path)) == 0 and a window; winEnable only when the window's enabled bit differs
+	for (ComponentRecord &rec : m_componentRecords)
+	{
+		if (!rec.window || rec.windowId.compare(0, path.size(), path) != 0)
+		{
+			continue;
+		}
+		const bool enabled = BitTest(rec.window->winGetStatus(), WIN_STATUS_ENABLED);
+		if (enabled != enable)
+		{
+			rec.window->winEnable(enable);
+		}
+	}
+}
+
 bool WindowManager::postMouseMove(float x, float y)
 {
 	m_mouseX = x;
@@ -1217,7 +1254,8 @@ bool WindowManager::postMouseMove(float x, float y)
 	{
 		m_mouseFilter(0, x, y); // lane OPTS-3
 	}
-	const bool used = m_gadgetLayer ? m_gadgetLayer->mouseMove(x, y) : false;
+	// lane MENU-1: RW 0x812C89 forwards the pointer to the Apt manager first, then keeps the message from the windows while the bit is set
+	const bool used = m_gadgetLayer && !componentInputBlocked() ? m_gadgetLayer->mouseMove(x, y) : false;
 	m_apt->input().postMouseMove(x, y);
 	return used;
 }
@@ -1228,14 +1266,14 @@ bool WindowManager::postMouseButton(bool down)
 	{
 		return true; // lane OPTS-3: the engine screen's
 	}
-	const bool used = m_gadgetLayer ? m_gadgetLayer->mouseButton(down) : false;
+	const bool used = m_gadgetLayer && !componentInputBlocked() ? m_gadgetLayer->mouseButton(down) : false;
 	m_apt->input().postMouseButton(down);
 	return used;
 }
 
 bool WindowManager::postMouseWheel(int delta)
 {
-	const bool used = m_gadgetLayer ? m_gadgetLayer->mouseWheel(delta) : false;
+	const bool used = m_gadgetLayer && !componentInputBlocked() ? m_gadgetLayer->mouseWheel(delta) : false;
 	m_apt->input().postMouseWheel(delta);
 	return used;
 }
@@ -1247,11 +1285,14 @@ void WindowManager::postAptKey(int aptKeyCode, bool down)
 
 bool WindowManager::postGadgetKey(int dikCode, bool down, int modifiers)
 {
-	return m_gadgetLayer ? m_gadgetLayer->key(dikCode, down, modifiers) : false;
+	return m_gadgetLayer && !componentInputBlocked() ? m_gadgetLayer->key(dikCode, down, modifiers) : false;
 }
 
 bool WindowManager::postTextInput(char16_t ch)
 {
+	// lane MENU-1: characters are not gated: ZH's IMEManager gives WM_CHAR to the focus window as GWM_IME_CHAR without the window translator (donor
+	// fact); the editing keys (GWM_CHAR, postGadgetKey) come through the translator and are gated (RW 0x812C89). INFERENCE (S-3502): RotWK's IME path
+	// was not read
 	return m_gadgetLayer ? m_gadgetLayer->textInput(ch) : false;
 }
 

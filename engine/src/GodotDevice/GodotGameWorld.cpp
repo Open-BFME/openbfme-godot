@@ -2363,6 +2363,20 @@ Dictionary GameWorld::get_placement_ghost(const String &template_name) const
 		}
 		out["pieces"] = pieces;
 	}
+	// lane BUILD-5: the faction bib's rectangle in the ghost's frame (PlacementGhost::bibOf; the textures by legality: bibTextureFor)
+	{
+		const PlacementGhost::Bib bib = PlacementGhost::bibOf(*tt);
+		Dictionary b;
+		b["valid"] = bib.valid;
+		b["x0"] = bib.x0;
+		b["y0"] = bib.y0;
+		b["x1"] = bib.x1;
+		b["y1"] = bib.y1;
+		b["error"] = toGodot(bib.error);
+		b["texture_illegal"] = String(PlacementGhost::bibTextureFor(1));
+		b["texture_code9"] = String(PlacementGhost::bibTextureFor(9));
+		out["bib"] = b;
+	}
 	return out;
 }
 
@@ -4315,6 +4329,7 @@ Dictionary GameWorld::get_quit_menu_context()
 	const ::Player *local = logic.players().getLocalPlayer();
 	d["local_defeated"] = local && local->isDefeated(); // Player + 0x754 (RW 0x6AAC4B)
 	d["allied_victory"] = logic.victory().localAlliedVictory(); // vslot 0x48 (RW 0x921891)
+	d["sandbox"] = logic.economy().context().sandbox;          // lane GAMEMODES-1: TheGameInfo vslot 0x50, isSandbox (RW 0x800C8F; Exit's test RW 0x625E5E)
 	return d;
 }
 
@@ -4668,6 +4683,7 @@ Array GameWorld::get_player_objects(const String &player)
 		d["template"] = toGodot(o->getTemplate()->getName());
 		d["structure"] = o->isKindOfName("STRUCTURE");
 		d["commandcenter"] = o->isKindOfName("COMMANDCENTER");
+		d["dozer"] = o->isKindOfName("DOZER"); // lane GAMEMODES-1: the builders the battle's proof leaves alive
 		d["x"] = o->getPosition()->x;
 		d["y"] = o->getPosition()->y;
 		d["z"] = o->getPosition()->z;
