@@ -267,6 +267,11 @@ Transport::Transport(UDP &socket, int localSlot, const Options &options)
 		error("maxPacketBytes " + std::to_string(m_options.maxPacketBytes) + " is not in packetBytes .. 65507: using packetBytes");
 		m_options.maxPacketBytes = m_options.packetBytes;
 	}
+	if (m_options.relay.enabled && m_options.relay.ticket.size() != RelayProtocol::kTicketBytes && m_options.relay.ticket.size() != RelayProtocol::kTicketBytesV2)
+	{
+		error("relay mode needs a " + std::to_string(RelayProtocol::kTicketBytes) + "-byte ticket (or a " + std::to_string(RelayProtocol::kTicketBytesV2)
+			+ "-byte rejoin ticket), got " + std::to_string(m_options.relay.ticket.size()) + " bytes: the relay will refuse it");
+	}
 	if (m_options.window > 0x7FFFFFFFu)
 	{
 		error("window " + std::to_string(m_options.window) + " is beyond the serial-number half-range: using 2147483647");
@@ -290,6 +295,190 @@ Transport::Transport(UDP &socket, int localSlot, const Options &options)
 	}
 }
 
+Transport::~Transport()
+{
+	// lane ONLINE-2: the relay closes the game's log once every bound slot said BYE (two copies: it is not acked; a lost one costs the relay's silence timeout)
+	if (m_options.relay.enabled && m_relayBound)
+	{
+		const std::vector<std::uint8_t> bye = RelayProtocol::encodeEmpty(RelayProtocol::BYE);
+		for (int i = 0; i < 2; ++i)
+		{
+			m_socket.sendTo(m_options.relay.address, bye.data(), bye.size());
+		}
+	}
+}
+
+void Transport::sendHello(std::uint64_t now)
+{
+	const std::vector<std::uint8_t> hello = RelayProtocol::encodeHello(m_options.relay.ticket, m_relaySession); // ONLINE-2 r2: the token proves the slot
+	if (m_impairment.blackedOut(now))
+	{
+		return; // lane MP-3: a blackout cuts the HELLO too
+	}
+	sendNow(m_options.relay.address, hello);
+	++m_stats.relayHellos;
+	m_lastHello = now;
+	m_helloSent = true;
+}
+
+void Transport::handleRelay(const std::vector<std::uint8_t> &d, std::uint64_t now)
+{
+	namespace RP = RelayProtocol; // (this file has its own kVersion / kHeaderBytes)
+	if (d[2] != RP::kVersion)
+	{
+		++m_stats.badPackets;
+		error("the relay speaks envelope version " + std::to_string(d[2]) + ", this client " + std::to_string(RP::kVersion));
+		return;
+	}
+	m_lastFromRelay = now; // lane ONLINE-3: the ping test (anything from the relay)
+	switch (d[3])
+	{
+	case RP::STATUS:
+	{
+		// lane ONLINE-3: every slot's generation and whether the relay hears it; the Network acts on it (it alone decides who is in the game)
+		std::vector<RP::SlotStatus> st;
+		if (!RP::decodeStatus(d.data(), d.size(), st))
+		{
+			++m_stats.badPackets;
+			return;
+		}
+		++m_relayStatuses;
+		for (const RP::SlotStatus &e : st)
+		{
+			m_relayStatus[e.slot].generation = std::max(m_relayStatus[e.slot].generation, (int)e.generation);
+			m_relayStatus[e.slot].silent = e.silent;
+		}
+		return;
+	}
+	case RP::LOG_CHUNK:
+	{
+		// lane ONLINE-3: a piece of the relay's command log (requestRelayLog)
+		if (d.size() < RP::kHeaderBytes + 8 || d.size() > RP::kHeaderBytes + 8 + RP::kLogChunkBytes)
+		{
+			++m_stats.badPackets;
+			return;
+		}
+		auto u32 = [&](size_t at) { return (std::uint32_t)d[at] | ((std::uint32_t)d[at + 1] << 8) | ((std::uint32_t)d[at + 2] << 16) | ((std::uint32_t)d[at + 3] << 24); };
+		const std::uint32_t offset = u32(RP::kHeaderBytes), total = u32(RP::kHeaderBytes + 4);
+		m_logSize = std::max(m_logSize, total);
+		if (m_logChunks.size() < 4096)
+		{
+			m_logChunks[offset].assign(d.begin() + (long)(RP::kHeaderBytes + 8), d.end());
+		}
+		return;
+	}
+	case RP::DATA_FROM:
+	{
+		if (d.size() < RP::kHeaderBytes + 1)
+		{
+			++m_stats.badPackets;
+			return;
+		}
+		const int source = d[RP::kHeaderBytes];
+		const std::vector<std::uint8_t> packet(d.begin() + (long)(RP::kHeaderBytes + 1), d.end());
+		handlePacket(m_options.relay.address, packet, now, source);
+		return;
+	}
+	case RP::WELCOME:
+		if (d.size() == RP::kHeaderBytes + 9 + RP::kSessionTokenBytes
+			&& d[RP::kHeaderBytes + 8] == (m_options.relay.spectatorIndex >= 0 ? (std::uint8_t)(RP::kSpectatorWelcome + m_options.relay.spectatorIndex) : (std::uint8_t)m_localSlot))
+		{
+			m_relayBound = true;
+			++m_stats.relayWelcomes;
+			// ONLINE-2 r2: the slot's session token: a later HELLO (after NOT_BOUND: a NAT rebinding) proves with it that this client owns the slot
+			m_relaySession.assign(d.begin() + (long)(RP::kHeaderBytes + 9), d.end());
+		}
+		else
+		{
+			++m_stats.badPackets;
+		}
+		return;
+	case RP::NOT_BOUND:
+		// the relay lost this address (a NAT rebinding or a relay restart): HELLO again at once (at most one per helloMs)
+		++m_stats.relayNotBound;
+		m_relayBound = false;
+		if (now - m_lastHello >= (std::uint64_t)m_options.relay.helloMs)
+		{
+			sendHello(now);
+		}
+		return;
+	case RP::REFUSED:
+		if (d.size() == RP::kHeaderBytes + 1 && d[RP::kHeaderBytes] == RP::REFUSE_NO_LOG)
+		{
+			m_logRefused = true; // lane ONLINE-3: an answer to LOG_REQUEST; the binding stays
+			return;
+		}
+		if (d.size() == RP::kHeaderBytes + 1 && d[RP::kHeaderBytes] == RP::REFUSE_SPECTATOR)
+		{
+			++m_spectatorRefusals; // lane ONLINE-3: a spectator's DATA was refused; the binding stays
+			return;
+		}
+		if (d.size() == RP::kHeaderBytes + 1 && m_relayRefusal == 0)
+		{
+			m_relayRefusal = d[RP::kHeaderBytes];
+			m_relayBound = false;
+			error(std::string("the relay refused this client: ") + RP::refuseReasonName(m_relayRefusal));
+		}
+		return;
+	default:
+		++m_stats.badPackets; // HELLO / DATA / BYE go to the relay, never from it
+		return;
+	}
+}
+
+bool Transport::localLinkAlive(std::uint32_t ms) const
+{
+	// lane ONLINE-3: in relay mode the local link is alive while something arrived from the relay within `ms` (WELCOME, DATA_FROM, STATUS: a client hears
+	// its peers' keep-alives every 100 ms through it); peer to peer there is no such test (RotWK's GameSpy ping test does not run in a LAN game)
+	return !m_options.relay.enabled || (m_lastFromRelay != 0 && NetMilliseconds() - m_lastFromRelay <= (std::uint64_t)ms);
+}
+
+void Transport::resetPeer(int slot)
+{
+	// lane ONLINE-3: a new incarnation of the slot (its game restarted and rejoined): both directions start at sequence number 0, as at setPeer
+	if (slot < 0 || slot >= MAX_SLOTS || slot == m_localSlot)
+	{
+		return;
+	}
+	setPeer(slot, m_options.relay.enabled ? m_options.relay.address : m_peers[(size_t)slot].address);
+}
+
+bool Transport::sendToLog(const std::vector<std::uint8_t> &bytes)
+{
+	// lane ONLINE-3: the stream to the relay's log (the local slot's own entry: the relay answers its acks as that slot)
+	if (!m_options.relay.enabled)
+	{
+		return false;
+	}
+	Peer &sink = m_peers[(size_t)m_localSlot];
+	if (!sink.known)
+	{
+		sink = Peer();
+		sink.known = true;
+		sink.address = m_options.relay.address;
+	}
+	std::string why;
+	if (!sendTo(m_localSlot, bytes, &why))
+	{
+		error("the relay log stream: " + why);
+		return false;
+	}
+	return true;
+}
+
+void Transport::requestRelayLog(std::uint32_t offset)
+{
+	if (!m_options.relay.enabled || !m_relayBound)
+	{
+		return;
+	}
+	const std::vector<std::uint8_t> r = RelayProtocol::encodeLogRequest(offset);
+	if (!m_impairment.blackedOut(NetMilliseconds()))
+	{
+		sendNow(m_options.relay.address, r);
+	}
+}
+
 void Transport::error(const std::string &e)
 {
 	if (m_errors.size() < kMaxErrors)
@@ -303,7 +492,7 @@ void Transport::setPeer(int slot, const NetAddress &address, std::uint32_t sendS
 	Peer &p = m_peers[(size_t)slot];
 	p = Peer();
 	p.known = true;
-	p.address = address;
+	p.address = m_options.relay.enabled ? m_options.relay.address : address; // lane ONLINE-2: every peer is behind the relay
 	p.nextSeq = sendStart;
 	p.expected = receiveStart;
 }
@@ -435,7 +624,8 @@ void Transport::flush(int slot, std::uint64_t now)
 	Peer &p = m_peers[(size_t)slot];
 	size_t i = 0;
 	bool sentAny = false;
-	const bool wantPacket = p.ackOwed || now - p.lastSent >= (std::uint64_t)m_options.keepAliveMs; // an ack or a keep-alive is due
+	// an ack or a keep-alive is due (lane ONLINE-3: never to the relay log stream, which only carries records)
+	const bool wantPacket = slot != m_localSlot && (p.ackOwed || now - p.lastSent >= (std::uint64_t)m_options.keepAliveMs);
 	// only the first `window` unacked records are in flight (the receiver accepts no more ahead of what it expects)
 	const size_t inFlight = std::min(p.unacked.size(), (size_t)m_options.window);
 	// lane MP-2: the connection's resend timeout (Karn / RFC 6298): at least resendMs; a resend for a timeout doubles it (at most 2 s), a clean round-trip
@@ -508,6 +698,10 @@ void Transport::flush(int slot, std::uint64_t now)
 		{
 			++m_stats.ackOnlyPacketsSent;
 		}
+		if (m_options.relay.enabled)
+		{
+			d = RelayProtocol::encodeData((std::uint8_t)slot, d); // lane ONLINE-2: the envelope names the target slot
+		}
 		sendDatagram(slot, p.address, std::move(d), now);
 		sentAny = true;
 		p.lastSent = now;
@@ -569,8 +763,34 @@ void Transport::deliver(int slot, Incoming &&r)
 
 void Transport::handleDatagram(const NetAddress &from, const std::vector<std::uint8_t> &d, std::uint64_t now)
 {
+	if (m_options.relay.enabled)
+	{
+		// lane ONLINE-2: only the relay talks to a client in relay mode, always in the envelope
+		if (!(from == m_options.relay.address))
+		{
+			++m_stats.unknownSenders;
+			return;
+		}
+		if (!RelayProtocol::isRelayDatagram(d))
+		{
+			++m_stats.badPackets;
+			return;
+		}
+		handleRelay(d, now);
+		return;
+	}
+	handlePacket(from, d, now, -1);
+}
+
+void Transport::handlePacket(const NetAddress &from, const std::vector<std::uint8_t> &d, std::uint64_t now, int envelopeSlot)
+{
 	if (d.size() < kHeaderBytes || get16(d.data() + 4) != kMagic)
 	{
+		if (envelopeSlot >= 0)
+		{
+			++m_stats.badPackets; // lane ONLINE-2: the relay carries transport packets only
+			return;
+		}
 		m_foreign.push_back({ from, d }); // not a transport packet: the lobby's
 		return;
 	}
@@ -582,6 +802,12 @@ void Transport::handleDatagram(const NetAddress &from, const std::vector<std::ui
 	const int slot = d[7];
 	if (slot >= MAX_SLOTS || !m_peers[(size_t)slot].known || m_peers[(size_t)slot].retiring || !(m_peers[(size_t)slot].address == from))
 	{
+		++m_stats.unknownSenders;
+		return;
+	}
+	if (envelopeSlot >= 0 && envelopeSlot != slot)
+	{
+		++m_stats.relaySlotMismatches; // lane ONLINE-2: the packet claims another slot than the session the relay stamped
 		++m_stats.unknownSenders;
 		return;
 	}
@@ -771,9 +997,13 @@ void Transport::service()
 		}
 		handleDatagram(from, d, now);
 	}
+	if (m_options.relay.enabled && !m_relayBound && m_relayRefusal == 0 && (!m_helloSent || now - m_lastHello >= (std::uint64_t)m_options.relay.helloMs))
+	{
+		sendHello(now); // lane ONLINE-2: until the relay welcomes this client (data sent before is dropped there and resent by the records' timers)
+	}
 	for (int s = 0; s < MAX_SLOTS; ++s)
 	{
-		if (s != m_localSlot && m_peers[(size_t)s].known)
+		if (m_peers[(size_t)s].known && (s != m_localSlot || m_options.relay.enabled)) // lane ONLINE-3: the local entry is the relay log stream
 		{
 			flush(s, now);
 		}

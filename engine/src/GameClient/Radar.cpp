@@ -34,8 +34,10 @@ bool Radar::setupFromTerrain()
 		m_ready = false;
 		return false;
 	}
+	// lane HUD-7: Radar::newMap (RW 0x6D8EE4) asks TheTerrainLogic vslot 0x24, RotWK's getExtent: the largest boundary (RW 0x4626A3), not boundary 0; the two
+	// differ on the maps with a larger later boundary (map evil withered heath: 239 x 259 then 400 x 550 cells)
 	float maxX = 0, maxY = 0;
-	if (!t->getExtent(0, maxX, maxY) || maxX <= 0.0f || maxY <= 0.0f)
+	if (!t->getLargestExtent(maxX, maxY) || maxX <= 0.0f || maxY <= 0.0f)
 	{
 		m_ready = false;
 		return false;
@@ -71,6 +73,17 @@ bool Radar::setupFromTerrain()
 	}
 	m_terrainAverageZ = sum / (float)(samples == 0 ? 1 : samples);
 	return true;
+}
+
+// lane HUD-7 (here, not inline: Radar.h is reached from simulation sources, Radar.cpp is client code)
+float Radar::extentWidth() const
+{
+	return m_maxX - m_minX;
+}
+
+float Radar::extentHeight() const
+{
+	return m_maxY - m_minY;
 }
 
 void Radar::worldToRadar(float wx, float wy, int size, float &rx, float &ry) const
@@ -460,6 +473,12 @@ std::vector<std::string> Radar::acceptanceStops()
 		"(Object + 0x324) are not ported: the blip is the team owner's colour",
 		"[S-2457] radar attacks (RADAR-1): INFERENCE: the drawable's damage notice (RW 0x67B4B7) is reached whenever RW 0x6968BC runs; the client reports a hit "
 		"once per object and attack frame between logic frames, in the object list's order (retail: per hit, in damage order, inside the frame)",
+		"[S-3950] radar transform (lane HUD-7, a tester's \"the minimap does not match the map, the view box is off\"): ported the extent (RotWK's largest boundary, "
+		"RW 0x4626A3; it was boundary 0) and the view box's corners without a test (RW 0x44D2C7: a corner whose ray meets the plane behind the eye no longer drops "
+		"the box); checked by the --hud7=radar walk at 1024x768, 1280x800, 1920x1080, 2560x1440, 2560x1080, 3440x1440 (Original) and 1920x1080, 2560x1080, "
+		"2560x1440 (Wider), Evendim and Fall Back 4p, default / zoomed-out / turned / tilted / map edges: the click rectangle is the drawn picture, a unit's blip is "
+		"drawn where the click mapping puts it, the ground the screen shows is inside the drawn box, a click looks at its point; the tester's view was not "
+		"reproduced; not compared: a retail screenshot of the same view; not ported: the click on RotWK's 128-cell grid (RW 0x6D9242 / 0x6D879A)",
 	};
 }
 
@@ -1000,16 +1019,16 @@ bool Radar::viewBoxCorners(float ulx, float uly, int width, int height, float ou
 	const float kx = (m_maxX - m_minX) * 0.0078125f, ky = (m_maxY - m_minY) * 0.0078125f; // RW 0xBDAD58
 	for (int i = 0; i < 4; ++i)
 	{
+		// lane HUD-7: RotWK takes the four points without a test (RW 0x44D2C7 .. 0x44D35E); DONOR (ZH W3DView::screenToWorldAtZ, Vector3::Find_X_At_Z / Find_Y_At_Z):
+		// the pick ray's LINE at the height, so a ray that meets the plane behind the eye (a corner above the horizon when zoomed out or tilted, an eye below
+		// the terrain average near the map's edge) still gives its point. The box used to vanish in those views (a rejected corner dropped it). INFERENCE: a
+		// ray parallel to the plane (d.z == 0: Find_X_At_Z divides by zero in retail) draws no box
 		Coord3D o, d;
 		if (!m_ctx.view.screenToRay(corners[i], o, d) || d.z == 0.0f)
 		{
 			return false;
 		}
 		const float t = (m_terrainAverageZ - o.z) / d.z;
-		if (!(t > 0.0f))
-		{
-			return false;
-		}
 		const float rx = (o.x + d.x * t) / kx, ry = (o.y + d.y * t) / ky;
 		// RW 0x44D41B: x * width / 128 + ul.x, (127 - y) * height / 128 + ul.y
 		out[i * 2] = rx * (float)width / 128.0f + ulx;

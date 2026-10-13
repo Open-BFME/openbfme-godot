@@ -275,12 +275,15 @@ TEST_CASE("audio3 walls: the wall hub's worker plays the hub's UnderConstruction
 		REQUIRE(gb != nullptr);
 		const std::string &loop = gb->data()->m_selfBuildingLoop;
 		INFO(t->getTemplate()->getName() << " " << loop);
-		CHECK(audio.requests(log, loop, t->getID(), "building loop") == (loop.empty() ? 0 : 1)); // the cap (MenWallHubSmall) has no SelfBuildingLoop
+		// the cap (MenWallHubSmall) has no SelfBuildingLoop. Lane PLAY-4: a segment's loop is asked for twice: GettingBuiltBehavior::onObjectCreated starts the
+		// WALL_SEGMENT building itself when BuildAssistant makes it (RW 0x856434), the build's completion stops it (RW 0x6AA72B -> finishConstruction) and the
+		// span's own restart (RW 0x795425) starts it again
+		CHECK(audio.requests(log, loop, t->getID(), "building loop") == (loop.empty() ? 0 : 2));
 		CHECK(AudioApi::heldSound(AudioApi::HELD_BUILDING_LOOP, t->getID()) == 0);
 		segments += t->getTemplate()->getName() == "MenWallSegmentSmall" ? 1 : 0;
 	}
 	CHECK(segments >= 3);
-	CHECK(audio.requests(log, "WallConstructionLoop", 0, "building loop") == segments); // MenWallSegmentSmall: SelfBuildingLoop = WallConstructionLoop
+	CHECK(audio.requests(log, "WallConstructionLoop", 0, "building loop") == 2 * segments); // MenWallSegmentSmall: SelfBuildingLoop = WallConstructionLoop (twice: above)
 	CHECK(held >= 2); // the staggered segments overlap
 }
 

@@ -168,6 +168,9 @@ public:
 	void onDefect(Object *newOwner, bool permanent) override; // lane HERO-2: RW 0x86ED25
 	void onDefectionEnded() override;                          // lane HERO-2: RW 0x86EDB0
 	unsigned getContainCount() const override { return (unsigned)m_members.size(); }
+	// lane DECOMP-3: slot 0xB4 of the contain table RW 0xC5B480 is RW 0x86C713: the horde's container's slot 0xB4, false when the horde is not contained (its
+	// slots 0xB0 / 0xC0 / 0x114 are OpenContain's RW 0x865C15 / 0x865B33 / 0x865CE3; Object::isAbleToAttack skips a HORDE container, so they are not ported)
+	bool isPassengerAllowedToFire() const override;
 	bool addToContain(Object *obj) override;
 	void removeFromContain(Object *obj) override;
 	void containReactToTransformChange() override;

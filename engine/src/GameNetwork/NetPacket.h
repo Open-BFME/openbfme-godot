@@ -45,7 +45,12 @@ enum NetCommandType : std::uint8_t
 	NETCOMMANDTYPE_DISCONNECTSCREENOFF = 29,
 	NETCOMMANDTYPE_DESYNCREPORT = 0x80,
 	NETCOMMANDTYPE_FRAMERESEND = 0x81,
-	NETCOMMANDTYPE_RUNAHEAD = 0x82 ///< lane MP-2: ZH's NETCOMMANDTYPE_RUNAHEAD (not in RotWK's list, S-720): a frame command of the packet router, `frame` = the new run-ahead
+	NETCOMMANDTYPE_RUNAHEAD = 0x82, ///< lane MP-2: ZH's NETCOMMANDTYPE_RUNAHEAD (not in RotWK's list, S-720): a frame command of the packet router, `frame` = the new run-ahead
+	// lane ONLINE-3 (OpenBFME additions, no RotWK counterpart: RW 0x989449 lists no rejoin and no pause; docs/ONLINE.md "Phase O3", stops S-3900 / S-3901):
+	NETCOMMANDTYPE_REJOIN = 0x83,        ///< a frame command of the packet router: `targetSlot`, held for a rejoin, is a member again from the frame after this one
+	NETCOMMANDTYPE_REJOINREQUEST = 0x84, ///< direct, from a rejoining client (a new incarnation of its slot): `frame` = its ticket's generation
+	NETCOMMANDTYPE_PAUSE = 0x85,         ///< direct: every peer stops before frame `frame` (the sender's next execution frame, not announced yet)
+	NETCOMMANDTYPE_RESUME = 0x86         ///< direct: the pause before frame `frame` ends
 };
 const char *NetCommandTypeName(int type);
 
@@ -149,6 +154,7 @@ struct NetCommandMsg
 	// FRAMERESEND: the relayed slot's commands of `frame` (its FRAMEINFO count is their number, plus one with a run-ahead change)
 	std::vector<std::shared_ptr<GameMessage>> messages;
 	std::int32_t runAheadChange = -1; ///< FRAMERESEND: the slot's RUNAHEAD of that frame (-1 none)
+	std::uint8_t rejoinMask = 0;      ///< lane ONLINE-3, FRAMERESEND: the slots the relayed frame's REJOINs name (bit per slot; frame entries like RUNAHEAD)
 };
 
 namespace NetPacket

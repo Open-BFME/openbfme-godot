@@ -689,7 +689,26 @@ TEST_CASE("skirmish ai vs ai: Evendim, 30 game-minutes: every pairing ends - Mor
 	// PLAYER_UPGRADE RW 0x6542D8, HordeDispatchSpecialPower; BUGS-1's production exit fix; GLIBC-1 / DEP-1 change no logic; PATHPERF-1 is not in this batch),
 	// re-measured on the merged tree 336b3e4e with remote-measure.sh (nas): seed 7 is now open at 9000 (Men's defeat at 4792 before), seeds 2 and 1234 stay
 	// open at 9000; no stalls. Engine pins, not retail values.
-	for (const Game &g : { Game{ "FactionMordor", "FactionMen", 2u, -1, -1 }, Game{ "FactionMen", "FactionMordor", 7u, -1, -1 }, Game{ "FactionMordor", "FactionMen", 1234u, -1, -1 } })
+	// Lane DECOMP-3 (the player info record AIStatCollector RW 0x8E46D9 filled by the object events: event order instead of id order, dying units listed until
+	// destroyed, contained units unlisted; Object::isAbleToAttack RW 0x691269 in the group step), (on bb053f01: seed 2 open, seed 7 Mordor at 7421, seed 1234 open), merged with the archive cb2ae2c7 and re-measured with remote-measure.sh (nas) on cba967b4: seeds 2, 7 and 1234 are all open at 9000. Engine pins, not retail values.
+	// Lane PLAY-4 (the stances' guard machine RW 0x949A10: idle units in Battle guard their spot, chase and walk back, with the guard's random draws; the melee
+	// back-off's CanApproachToTarget RW 0x6FB754 lets lone melee units engage hordes; production disabled while a structure is built, RW 0x856434; a plot's
+	// self-build starting at the placement, RW 0x6AAF3B; the damage visual skipped under construction, RW 0x8C3290): re-measured on the lane's tree (Deck,
+	// measure.sh's three runs): seed 2 is open at 9000, seed 7 ends with Men's defeat (start position 0) at 4466, seed 1234 with Men's defeat (start position 1)
+	// at 6474. Engine pins, not retail values.
+	// Lane PLAY-4 r1 (RW 0x6CC07C's melee reach of a moving unit is RW 0x6ED843's footprint test, not the edge distance: melee units engage from further away;
+	// the idle scan's gate RW 0x66849D: NO_AUTO_ACQUIRE / SPECIAL_ABILITY_PACKING_UNPACKING_OR_USING / IGNORE_AI_COMMAND / JUST_BUILT / COMING_OUT_OF_FACTORY
+	// scan nothing; the line callback RW 0x6F61BD completed): seed 2 is open at 9000, seed 7 ends with Men's defeat (start position 0) at 6315, seed 1234 is
+	// open at 9000. Engine pins.
+	// Merge of the archive fc42d9ee (merge queue q3: ONLINE-2, SELPERF-1, UBER-1) into PLAY-4 r2, re-measured on the merged tree 967f63ed with
+	// remote-measure.sh (pve): seeds 2, 7 and 1234 are all open at 9000. Engine pins, not retail values.
+	// Merge of the archive b84bd75d (q4b: DECOMP-3's player info record and isAbleToAttack, DEP-2's deterministic libm; q5) into PLAY-4 r3, re-measured on
+	// the merged tree 94360a28 with remote-measure.sh (pve) and on the Deck: seed 7 ends with Men's defeat (start position 0) at 6019, seeds 2 and 1234 are
+	// open at 9000. Engine pins, not retail values.
+	// Merge queue q8 (PATHPERF-1's hierarchical corridor, RW 0x6F8601: the routes change; ONLINE-4 and DEPLOY-2 change no logic), re-measured on the merged tree
+	// ea5eba29 with remote-measure.sh (pve): seed 2 now ends with Mordor's defeat (start position 0) at 8210, seed 7 with Men's defeat (start position 0) at
+	// 8373 (6019 before), seed 1234 stays open at 9000. Engine pins, not retail values.
+	for (const Game &g : { Game{ "FactionMordor", "FactionMen", 2u, 0, 8210 }, Game{ "FactionMen", "FactionMordor", 7u, 0, 8373 }, Game{ "FactionMordor", "FactionMen", 1234u, -1, -1 } })
 	{
 		INFO(g.a << " vs " << g.b << " seed " << g.seed);
 		VersusRun run;

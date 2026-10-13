@@ -2,6 +2,7 @@
 // See GameLogic/Module/HeroAbilityModules.h (lane HERO-2).
 
 #include "GameLogic/Module/HeroAbilityModules.h"
+#include "GameLogic/Module/GiantBirdAIUpdate.h"
 
 #include "Common/INI.h"
 #include "Common/PlayerScience.h"
@@ -1964,7 +1965,19 @@ void FellBeastSwoopPower::triggerAbilityEffect()
 		return;
 	}
 	Object *t = obj->logic().findObjectByID(m_targetID);
-	ai->aiUnported(t ? "level attack object (AI command 0x3F: GiantBirdAIUpdate vslot 0x90)" : "level attack position (AI command 0x40: GiantBirdAIUpdate vslot 0x94)", CMD_FROM_AI);
+	// lane FLY-1: AI command 0x3F reaches GiantBirdAIUpdate's aiDoCommand (RW 0x76D995 -> RW 0x76A139(victim, source, 1): the level swoop, state 0x3F3); command
+	// 0x40 (the location) does nothing there (RW 0x76DA5C). Another AI class takes neither (counted, S-1223)
+	if (GiantBirdAIUpdate *bird = dynamic_cast<GiantBirdAIUpdate *>(ai))
+	{
+		if (t)
+		{
+			bird->aiLevelAttackObject(t, CMD_FROM_AI);
+		}
+	}
+	else
+	{
+		ai->aiUnported(t ? "level attack object (AI command 0x3F: GiantBirdAIUpdate vslot 0x90)" : "level attack position (AI command 0x40: GiantBirdAIUpdate vslot 0x94)", CMD_FROM_AI);
+	}
 	++m_commands;
 }
 

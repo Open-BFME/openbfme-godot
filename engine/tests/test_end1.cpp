@@ -217,7 +217,10 @@ TEST_CASE("end1 retail: a skirmish on Evendim where one side is destroyed: stati
 	const NewGameMessage message = humanVersus(*s, "FactionMen", "FactionMordor", 77u);
 	Peer peers[2];
 	peers[0].load(*s, message, 0);
-	peers[1].load(*s, message, 1);
+	starttest::Shared *peerWorld = starttest::peerWorld(); // lane MAPRESET-1: the second peer has its own world (one live game per world, S-3808)
+	REQUIRE(peerWorld);
+	REQUIRE_MESSAGE(peerWorld->world, peerWorld->error);
+	peers[1].load(*peerWorld, message, 1);
 	Player *gondor[2] = { playerAtStart(peers[0].logic(), 0), playerAtStart(peers[1].logic(), 0) };
 	Player *mordor[2] = { playerAtStart(peers[0].logic(), 1), playerAtStart(peers[1].logic(), 1) };
 	for (int k = 0; k < 2; ++k)

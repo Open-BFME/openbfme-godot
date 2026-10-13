@@ -114,7 +114,7 @@ the original are still missing.
 | LAN multiplayer | ✅ Works | Windows and Linux players in one game, disconnect screen, every game recorded |
 | Replays | 🟡 Partial | every game is recorded and can be watched from *Load Replay*; no saving under a name, no replay controls |
 | Create-a-Hero | ✅ Works | the hero builder, colours and saving; heroes can be fielded in skirmish and LAN |
-| Save / load | ❌ Not yet | |
+| Save / load | 🟡 Partial | skirmish and campaign missions save and load through the original Save / Load screens (OpenBFME's own save files, not the original game's) |
 | War of the Ring | ❌ Not yet | |
 | Online multiplayer | ❌ Not yet | planned through an OpenBFME relay service ([roadmap](docs/ROADMAP.md#online-multiplayer-direction-owner-2026-10-08)) |
 | Mods | ❌ Not yet | designed in from the start; Edain is the first target |
@@ -123,8 +123,8 @@ the original are still missing.
 not reinvent it. Where the evidence runs out and the team has to make an
 educated guess, that guess is not hidden: it is recorded as an *acceptance
 stop* in [docs/STOPS.md](docs/STOPS.md), reported by the game at runtime and
-pinned by a test. There are **634 open stops** today. Some are big
-(save/load), most are small details waiting for better evidence. The plan to
+pinned by a test. There are **669 open stops** today. Some are big
+(retail save files), most are small details waiting for better evidence. The plan to
 get to a 1:1 game is in [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## What's new in v0.4.0-alpha.1

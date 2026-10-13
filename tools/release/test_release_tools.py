@@ -298,9 +298,10 @@ def network_call_sites(text: str) -> list[str]:
 
 def test_game_scripts_make_no_network_calls():
     """The shipped GDScript (everything but the tests, which only start sub-processes) uses no Godot networking class: LAN play is native
-    (GameNetwork/Transport.cpp), nothing else talks to the network."""
-    found = {f: v for f, v in net_guard.scan().items() if f.endswith(".gd")}
-    assert found == {}
+    (GameNetwork/Transport.cpp), nothing else talks to the network. Lane ONLINE-2: except the online lobby client the player starts
+    (net_guard.ALLOWED_GAME, its one request to the named lobby: test_net_guard_files.py)."""
+    found = {f: [x for x in v if not net_guard.game_finding_allowed(f, x)] for f, v in net_guard.scan().items() if f.endswith(".gd")}
+    assert {f: v for f, v in found.items() if v} == {}
 
 
 @pytest.mark.parametrize("line, allowed", [

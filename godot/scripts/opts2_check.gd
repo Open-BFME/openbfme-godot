@@ -114,6 +114,18 @@ func run(p_game: Node, p_shots: String) -> int:
 	check("the Controls tab lists the CommandMap's hot keys (%d) in a list box" % screen.hotkey_count(), screen.hotkey_count() >= 20 and page().has("list"),
 		str(screen.hotkey_count()))
 
+	# lane UBER-1: the Uber performance mode row, its warning in the help line under the pointer
+	await click_tab("Graphics+")
+	var uber_rows: Dictionary = page().get("rows", {})
+	if uber_rows.has("OpenBFMEUberPerformance") and uber_rows["OpenBFMEUberPerformance"].has("rect"):
+		game._mouse_event((uber_rows["OpenBFMEUberPerformance"].rect as Rect2).get_center() + Vector2(-200, 0), false, false)
+		await game._step(8)
+		var help := str(page().get("help", ""))
+		check("the Uber performance mode row warns in its help line", help.begins_with("Not compatible with the original game"), help)
+		await shot("opts2-uber-help-%dx%d" % [root.size.x, root.size.y])
+	else:
+		check("the Uber performance mode row is on the Graphics+ tab", false, str(uber_rows.keys()))
+
 	# 4. the extras through their gadgets, applied at once
 	await click_tab("Graphics+")
 	await select("OpenBFMEAntiAliasing", 3) # MSAA 4x

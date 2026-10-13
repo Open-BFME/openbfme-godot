@@ -28,12 +28,25 @@ NetGameSession::~NetGameSession()
 
 bool NetGameSession::begin(LiveGame &game, std::string *error)
 {
+	if (!setUp(game, error))
+	{
+		return false;
+	}
+	game.setFrameDriver(m_driver.get());
+	m_network->sendLoadComplete();
+	return true;
+}
+
+bool NetGameSession::setUp(LiveGame &game, std::string *error)
+{
 	const LiveGame::Report r = game.report();
 	m_config.localSlot = m_start.localSlot;
 	m_config.runAhead = m_start.runAhead;
 	m_config.crcInterval = m_start.crcInterval;
 	m_config.settings = m_options.network; // lane MP-2
 	m_config.adaptiveRunAhead = m_options.adaptiveRunAhead; // the lobby's run-ahead is the minimum
+	m_config.holdForRejoin = m_start.online;                // lane ONLINE-3: an online drop holds the player for a rejoin (LAN: retail's hand-over)
+	m_config.rejoinWindowMs = m_options.rejoinWindowMs;
 	for (int s = 0; s < MAX_SLOTS; ++s)
 	{
 		m_config.slotNames[(size_t)s] = m_start.game.game.slots[s].name;
@@ -55,7 +68,15 @@ bool NetGameSession::begin(LiveGame &game, std::string *error)
 		}
 		m_config.slotPlayerIndex[(size_t)s] = p->getPlayerIndex();
 	}
-	m_transport = std::make_unique<Transport>(m_socket, m_start.localSlot, m_options.transport);
+	Transport::Options transportOptions = m_options.transport;
+	if (m_start.online)
+	{
+		// lane ONLINE-2: the START came from the lobby service: every peer is reached through the relay with this client's ticket
+		transportOptions.relay.enabled = true;
+		transportOptions.relay.address = m_start.relay;
+		transportOptions.relay.ticket = m_start.ticket;
+	}
+	m_transport = std::make_unique<Transport>(m_socket, m_start.localSlot, transportOptions);
 	for (int s = 0; s < MAX_SLOTS; ++s)
 	{
 		if (m_start.networkSlot[(size_t)s] && s != m_start.localSlot)
@@ -81,10 +102,357 @@ bool NetGameSession::begin(LiveGame &game, std::string *error)
 	m_driver = std::make_unique<LockstepDriver>(m_network.get(), m_writer.get());
 	m_driver->setCensus(m_options.census); // lane MP-3: before the driver is installed (its capture is read then)
 	RegisterLogicCRCHandler(game.dispatch());
-	game.setFrameDriver(m_driver.get());
 	m_game = &game;
-	m_network->sendLoadComplete();
 	return true;
+}
+
+// ---- lane ONLINE-3: rejoin ------------------------------------------------------------------------------------------------------------------
+bool NetGameSession::beginRejoin(LiveGame &game, std::string *error)
+{
+	if (!m_start.online || m_start.rejoinGeneration <= 0)
+	{
+		if (error)
+		{
+			*error = "a rejoin needs an online START with a rejoin ticket";
+		}
+		return false;
+	}
+	if (!m_options.replayPath.empty())
+	{
+		if (error)
+		{
+			*error = "a rejoined client records no replay (the relay's log is the game's record)";
+		}
+		return false;
+	}
+	if (!setUp(game, error))
+	{
+		return false;
+	}
+	m_network->setRejoining(m_start.rejoinGeneration);
+	m_fetch = std::make_unique<RelayLogFetch>();
+	m_catchUp = std::make_unique<CommandLogCatchUp>(m_config.crcInterval);
+	game.setFrameDriver(m_catchUp.get());
+	m_rejoin = RejoinReport();
+	m_rejoin.startedMs = NetMilliseconds();
+	m_rejoinState = RejoinState::Binding;
+	return true;
+}
+
+void NetGameSession::failRejoin(const std::string &why)
+{
+	if (m_rejoin.failure.empty())
+	{
+		m_rejoin.failure = why;
+	}
+	m_rejoinState = RejoinState::Failed;
+}
+
+std::string NetGameSession::assembleLog()
+{
+	RelayLogFile log;
+	std::string error;
+	if (!RelayLogFile::parse(m_fetch->bytes(), log, &error, true))
+	{
+		return "the relay's log: " + error;
+	}
+	if (log.gameId != m_start.onlineGameId)
+	{
+		return "the relay's log is of another game";
+	}
+	m_logComplete = log.complete; // lane ONLINE-3: a spectator ends with the log
+	auto a = std::make_shared<RelayLog::Assembled>();
+	if (!RelayLog::assemble(log, m_config, *a, &error, true))
+	{
+		return error;
+	}
+	if (a->crcDisagreements)
+	{
+		return "the players' CRCs in the log disagree: the game desynced before the rejoin";
+	}
+	m_assembled = a;
+	m_catchUp->setLog(a);
+	m_parsedBytes = m_fetch->bytes().size();
+	m_rejoin.logBytes = m_parsedBytes;
+	return std::string();
+}
+
+void NetGameSession::fillFromLog(UnsignedInt fromFrame)
+{
+	if (!m_assembled)
+	{
+		return;
+	}
+	for (int s = 0; s < MAX_SLOTS; ++s)
+	{
+		if (s == m_start.localSlot || !m_start.networkSlot[(size_t)s])
+		{
+			continue;
+		}
+		const auto &frames = m_assembled->latestFrames[(size_t)s];
+		for (auto it = frames.lower_bound(fromFrame); it != frames.end(); ++it)
+		{
+			const unsigned long long before = m_network->framesFilledFromResend();
+			m_network->fillFromLog(s, it->first, it->second.commands, it->second.runAheadChange, it->second.rejoins);
+			m_rejoin.framesFilled += m_network->framesFilledFromResend() - before;
+		}
+	}
+}
+
+// ---- lane ONLINE-3: a spectator ------------------------------------------------------------------------------------------------------------
+bool NetGameSession::beginSpectate(LiveGame &game, std::string *error)
+{
+	if (!m_start.online || m_start.spectatorIndex < 0)
+	{
+		if (error)
+		{
+			*error = "spectating needs an online spectator START";
+		}
+		return false;
+	}
+	const LiveGame::Report r = game.report();
+	m_config = NetworkConfig();
+	m_config.localSlot = -1;
+	m_config.runAhead = m_start.runAhead;
+	m_config.crcInterval = m_start.crcInterval;
+	for (int s = 0; s < MAX_SLOTS; ++s)
+	{
+		if (!m_start.networkSlot[(size_t)s])
+		{
+			continue;
+		}
+		const Player *p = (size_t)s < r.startSlotPlayers.size() ? game.players().findPlayerWithName(r.startSlotPlayers[(size_t)s]) : nullptr;
+		if (!p)
+		{
+			if (error)
+			{
+				*error = "network slot " + std::to_string(s) + " has no player in the loaded game";
+			}
+			return false;
+		}
+		m_config.slotPlayerIndex[(size_t)s] = p->getPlayerIndex();
+	}
+	Transport::Options o = m_options.transport;
+	o.relay.enabled = true;
+	o.relay.address = m_start.relay;
+	o.relay.ticket = m_start.ticket;
+	o.relay.spectatorIndex = m_start.spectatorIndex;
+	m_transport = std::make_unique<Transport>(m_socket, 0, o); // no peer: it never sends a transport packet
+	m_fetch = std::make_unique<RelayLogFetch>();
+	m_catchUp = std::make_unique<CommandLogCatchUp>(m_config.crcInterval);
+	RegisterLogicCRCHandler(game.dispatch());
+	game.setFrameDriver(m_catchUp.get());
+	m_game = &game;
+	m_spectate = SpectateReport();
+	m_spectate.startedMs = NetMilliseconds();
+	m_spectateState = SpectateState::Binding;
+	return true;
+}
+
+NetGameSession::SpectateState NetGameSession::spectateStep(LiveGame &game, std::uint32_t budgetMs)
+{
+	if (m_spectateState == SpectateState::Ended || m_spectateState == SpectateState::Failed || !m_catchUp || !m_transport)
+	{
+		return m_spectateState;
+	}
+	auto fail = [&](const std::string &why) {
+		if (m_spectate.failure.empty())
+		{
+			m_spectate.failure = why;
+		}
+		m_spectateState = SpectateState::Failed;
+		return m_spectateState;
+	};
+	m_transport->service();
+	m_transport->foreignDatagrams().clear();
+	const std::uint64_t now = NetMilliseconds();
+	if (m_transport->relayRefusal() != 0)
+	{
+		return fail(std::string("the relay refused the spectator ticket: ") + RelayProtocol::refuseReasonName(m_transport->relayRefusal()));
+	}
+	if (!m_transport->relayBound())
+	{
+		return now - m_spectate.startedMs > 60000 ? fail("the relay did not welcome the spectator ticket in 60 s") : m_spectateState;
+	}
+	m_spectateState = SpectateState::Following;
+	m_fetch->step(*m_transport, now);
+	m_spectate.logRequests = m_fetch->requests();
+	if (m_transport->relayLogRefused())
+	{
+		return fail("the relay keeps no log of this game: it cannot be watched");
+	}
+	if (m_fetch->bytes().size() > m_parsedBytes)
+	{
+		const std::string why = assembleLog();
+		if (!why.empty())
+		{
+			return fail(why);
+		}
+	}
+	if (!m_assembled)
+	{
+		return m_spectateState;
+	}
+	if (m_spectateStop != 0xFFFFFFFFu)
+	{
+		m_catchUp->setTarget(m_spectateStop - 1);
+	}
+	const std::uint64_t t0 = NetMilliseconds();
+	while (NetMilliseconds() - t0 < budgetMs)
+	{
+		if (game.advance(0.2) == 0)
+		{
+			break;
+		}
+	}
+	m_spectate.reached = m_catchUp->reached();
+	m_spectate.served = m_assembled->anyComplete ? m_assembled->lastCompleteFrame : 0;
+	m_spectate.logBytes = m_parsedBytes;
+	m_spectate.crcsCompared = m_catchUp->crcsCompared();
+	m_spectate.crcMismatches = m_catchUp->crcMismatches();
+	m_spectate.firstMismatch = m_catchUp->firstMismatch();
+	m_spectate.logComplete = m_logComplete;
+	if (m_catchUp->crcMismatches())
+	{
+		return fail("the spectator's state differs from the players' CRC: " + m_catchUp->firstMismatch());
+	}
+	const bool atEdge = m_assembled->anyComplete && m_catchUp->reached() > m_assembled->lastCompleteFrame && m_fetch->caughtUp();
+	if (atEdge && m_spectate.caughtUpMs == 0)
+	{
+		m_spectate.caughtUpMs = NetMilliseconds();
+	}
+	if ((atEdge && m_logComplete) || (m_spectateStop != 0xFFFFFFFFu && m_catchUp->reached() >= m_spectateStop))
+	{
+		m_spectateState = SpectateState::Ended;
+	}
+	return m_spectateState;
+}
+
+NetGameSession::RejoinState NetGameSession::rejoinStep(LiveGame &game, std::uint32_t budgetMs)
+{
+	if (m_rejoinState == RejoinState::Live || m_rejoinState == RejoinState::Failed || !m_catchUp)
+	{
+		return m_rejoinState;
+	}
+	service();
+	m_network->update(game.protocolFrame(), m_empty); // rejoining: the transport, what arrived, and the REJOINREQUEST once ready
+	const std::uint64_t now = NetMilliseconds();
+	if (m_transport->relayRefusal() != 0)
+	{
+		failRejoin(std::string("the relay refused the rejoin ticket: ") + RelayProtocol::refuseReasonName(m_transport->relayRefusal()));
+		return m_rejoinState;
+	}
+	if (!m_transport->relayBound())
+	{
+		if (now - m_rejoin.startedMs > 60000)
+		{
+			failRejoin("the relay did not welcome the rejoin ticket in 60 s");
+		}
+		return m_rejoinState;
+	}
+	if (m_rejoinState == RejoinState::Binding)
+	{
+		m_rejoinState = RejoinState::CatchingUp;
+	}
+	m_fetch->step(*m_transport, now);
+	m_rejoin.logRequests = m_fetch->requests();
+	if (m_transport->relayLogRefused())
+	{
+		failRejoin("the relay keeps no log of this game: it cannot be rejoined");
+		return m_rejoinState;
+	}
+	if (m_fetch->bytes().size() > m_parsedBytes)
+	{
+		const std::string why = assembleLog();
+		if (!why.empty())
+		{
+			failRejoin(why);
+			return m_rejoinState;
+		}
+	}
+	if (!m_assembled)
+	{
+		return m_rejoinState;
+	}
+	const int local = m_start.localSlot;
+	for (const Network::MembershipEvent &e : m_assembled->membership)
+	{
+		if (e.kind == Network::MembershipEvent::DESTROY && e.slot == local)
+		{
+			failRejoin("the rejoin window ended: the player's army was handed over (frame " + std::to_string(e.frame) + ")");
+			return m_rejoinState;
+		}
+	}
+	// the REJOIN of this incarnation (the log's latest of this slot: this client bound it) names the first lockstep frame
+	const bool ours = m_assembled->incarnations[(size_t)local] >= 2;
+	const UnsignedInt join = ours ? m_assembled->joinFrame[(size_t)local] : 0xFFFFFFFFu;
+	m_catchUp->setTarget(join == 0xFFFFFFFFu ? 0xFFFFFFFFu : join - 1);
+	// the catch-up: full speed, no rendering, at most budgetMs per step (the host keeps its window alive)
+	const std::uint64_t t0 = NetMilliseconds();
+	while (NetMilliseconds() - t0 < budgetMs)
+	{
+		if (game.advance(0.2) == 0)
+		{
+			break;
+		}
+	}
+	m_rejoin.framesCaughtUp = m_catchUp->reached();
+	m_rejoin.crcsCompared = m_catchUp->crcsCompared();
+	m_rejoin.crcMismatches = m_catchUp->crcMismatches();
+	m_rejoin.firstMismatch = m_catchUp->firstMismatch();
+	if (m_catchUp->crcMismatches())
+	{
+		failRejoin("the catch-up state differs from the players' CRC: " + m_catchUp->firstMismatch());
+		return m_rejoinState;
+	}
+	if (m_rejoinState == RejoinState::CatchingUp && ours && m_fetch->caughtUp() && game.frame() + 10 >= m_assembled->lastCompleteFrame)
+	{
+		m_network->setRejoinReady(); // near the live edge: ask the others to take this slot back
+		m_rejoinState = RejoinState::Waiting;
+		m_rejoin.liveMs = now; // reused below: when the wait began
+	}
+	if (m_rejoinState == RejoinState::Waiting && join == 0xFFFFFFFFu && now - m_rejoin.liveMs > 60000)
+	{
+		failRejoin("no REJOIN from the packet router within 60 s of the request");
+		return m_rejoinState;
+	}
+	if (join == 0xFFFFFFFFu || game.frame() < join)
+	{
+		return m_rejoinState;
+	}
+	// the switch: the state after the REJOIN's frame ran is this client's; it is a member from `join` on
+	game.drainFrames();
+	Network::LiveStart ls;
+	ls.frame = join;
+	ls.runAhead = m_assembled->runAheadAfter(join - 1, m_start.runAhead);
+	ls.membership = m_assembled->membership;
+	for (const auto &kv : m_catchUp->crcs())
+	{
+		// the CRC of frame C executes on C + the run-ahead the frames before C left (Network::executionFrame); those from `join` on are this client's to send
+		const UnsignedInt c = kv.first;
+		if (c == 0 || c > join)
+		{
+			continue;
+		}
+		const UnsignedInt exec = c + (UnsignedInt)m_assembled->runAheadAfter(c - 1, m_start.runAhead);
+		if (exec < join)
+		{
+			continue;
+		}
+		Network::LiveStart::Crc crc = kv.second;
+		crc.executionFrame = exec;
+		crc.half.slot = local;
+		ls.crcs.push_back(crc);
+	}
+	m_rejoin.crcsSentAfter = ls.crcs.size();
+	m_network->beginLive(ls);
+	fillFromLog(join);
+	game.setFrameDriver(m_driver.get());
+	m_rejoin.liveFrame = join;
+	m_rejoin.liveMs = NetMilliseconds();
+	m_rejoinState = RejoinState::Live;
+	m_lastTail = m_rejoin.liveMs;
+	return m_rejoinState;
 }
 
 void NetGameSession::service()
@@ -95,6 +463,28 @@ void NetGameSession::service()
 	}
 	writeDesyncDumps();
 	m_transport->service();
+	if (m_rejoinState == RejoinState::Live && m_fetch && m_driver && m_driver->waitingMs() > 250)
+	{
+		// lane ONLINE-3: a rejoined client waiting for a frame in its first minute: frame data the others sent before they took it back is in the log
+		const std::uint64_t now = NetMilliseconds();
+		if (now - m_rejoin.liveMs < 60000 && now - m_lastTail >= 250)
+		{
+			m_lastTail = now;
+			m_fetch->step(*m_transport, now);
+			if (m_fetch->bytes().size() > m_parsedBytes)
+			{
+				const std::string why = assembleLog();
+				if (why.empty())
+				{
+					fillFromLog(0); // Network::fillFromLog takes only frames this client has not run and has not got whole
+				}
+				else if (m_rejoin.tailErrors.size() < 20)
+				{
+					m_rejoin.tailErrors.push_back(why);
+				}
+			}
+		}
+	}
 	auto &foreign = m_transport->foreignDatagrams();
 	for (const auto &d : foreign)
 	{

@@ -20,7 +20,9 @@ files.
 - [The hero bar and selection](#the-hero-bar-and-selection)
 - [Skirmish rules](#skirmish-rules)
 - [Skirmish games](#skirmish-games)
+- [Saving and loading](#saving-and-loading)
 - [Controls](#controls)
+- [Online play (test feature)](#online-play-test-feature)
 - [Known issues](#known-issues)
 - [Troubleshooting](#troubleshooting)
 - [Reporting a bug](#reporting-a-bug)
@@ -124,7 +126,9 @@ game's data folder (see [Logs](#logs) for where that is); delete that file to
 choose again.
 
 OpenBFME only reads your game files. It uses the network only for the
-launcher's update check and for LAN games you start yourself.
+launcher's update check, for LAN games you start yourself and, when you join
+or host an online test game, for the lobby and relay of that game (see
+[Online play](#online-play-test-feature)).
 
 ## Updates
 
@@ -331,6 +335,39 @@ with it off nothing changes.
 - **The computer opponent** builds heroes, uses its spell book, and lets its
   heroes and units use their powers.
 
+## Saving and loading
+
+You can save a skirmish against the computer or a campaign mission and load
+it later, from the same screens as the original.
+
+- **Saving.** Press Esc in the game and choose **Save**. The save page lists
+  your saved games. Type a name (or keep the suggested "Saved Game 2" and so
+  on) and press Save; choosing an existing save overwrites it after asking.
+  "Game Saved" confirms it.
+- **Loading.** Choose **Load** in the same menu, or **Load Game** in the main
+  menu. Pick a save and press Load. Over a running game you're asked first,
+  because that game is lost.
+- **Catching up.** A save holds the game's start and every order given since.
+  Loading replays those orders at full speed behind the loading screen, which
+  says "Catching up with the saved game", and you take over at the moment you
+  saved. This takes about 1.5 to 2 minutes for an hour-long game on a fast PC,
+  and longer on slower ones. A faster kind of save is planned.
+- **Saves only load in the version that made them.** After an update, older
+  saves are greyed out on the Load page. Choosing one tells you which version
+  made it. Keep that version if you want to finish the game.
+- **Where they are.** Saves go into the original game's Save folder in your
+  user data folder (the one with your Create-a-Hero heroes), as `.obfmesave`
+  files, so the original game never sees them.
+- **Campaign missions** save the same way, on the Campaign page. Loading one
+  plays the mission's orders again and the campaign goes on from there.
+- **Not yet:** saving between campaign missions, multiplayer saves, and
+  loading the original game's own saves (they show in the list greyed out,
+  with a note).
+- **Deleting.** Select a save and press Delete; you're asked first.
+- **Uber performance mode.** A game saved with the Uber performance mode on
+  loads with it off, and the reverse. The saved part is replayed as it was
+  played, and the game goes on in your current mode.
+
 ## Controls
 
 OpenBFME reads the key bindings from **your install's own CommandMap.ini**, so
@@ -377,6 +414,143 @@ and trebuchets ordered onto your own building don't fire.
 
 Alt sends the original's order-mode message, but no order reacts to it yet.
 
+## Online play (test feature)
+
+Online play is a **test feature**: it works, but there is no public OpenBFME
+lobby yet, so it only works when someone runs a lobby for you. The whole
+Online menu is a test feature.
+
+How it works: a **lobby** holds the game list and builds the game's start; a
+**relay** passes every turn between the players, so nobody sees anyone
+else's address and no router needs a port opened. The relay keeps a log of
+the game's orders, from which a replay of the game can be made.
+
+**From the main menu.** Choose **Online**. The game opens RotWK's own online
+screens, connected to the OpenBFME lobby instead of the old GameSpy service:
+
+1. **Sign in.** Type a name in the **Nickname** box and press **Log In**. The
+   lobby signs you in as a guest under that name (there are no accounts yet,
+   so the e-mail and password boxes and the account buttons are switched
+   off). The game remembers the name for next time.
+2. **Home** shows the lobby's message of the day, or says that the lobby has
+   none.
+3. **Open Play** is the server browser: the list of open games (name, map,
+   players; a lock means the game has a password). Click a column header to
+   sort, **Refresh** to fetch the list again, **Join Game** to join the
+   selected game, or **Create Game** to host one (a name and, if you want, a
+   password).
+4. The **staging room** is the same screen as a LAN game's: the slots,
+   factions, colours, teams, the map and the rules, chat and **Ready**. The
+   host presses **Play Game** once everyone is ready.
+5. If the lobby has no relay yet, it refuses the start and the game says
+   "Online games can't start yet: no relay server is available." With a
+   relay, the game loads and plays through it.
+
+**If your game closed during a match** (a crash, a lost connection), start
+OpenBFME again, choose **Online** and log in with the same name. The game
+asks whether to rejoin your running game; you can also pick it in Open Play,
+where it is listed with **REJOIN**, and press **Join Game**. The game then
+catches up with the match (a line on screen shows the progress) and puts you
+back in it. Other running games are listed with **WATCH**: Join Game on them
+lets you watch as a spectator.
+
+Joining a match that has already started as a new player ("hot join") is
+not possible.
+
+Quick Match, Strategic (War of the Ring online), Profile / Stats and the
+friends list are not available yet (S-4075).
+
+**Which lobby.** Release builds use `https://play.openbfme.com`. To use
+another one, start the game with `--online-lobby=<the lobby's address>`, or
+set the `OPENBFME_LOBBY` environment variable, or put
+`OpenBFMEOnlineLobby = <the lobby's address>` in Options.ini.
+
+**Joining a game.** The host gives you a link such as
+`openbfme://join/0123456789abcdef` (or a web page that shows it). Once the
+launcher handles these links, clicking the link starts OpenBFME in that game.
+To make the launcher handle them, start it once from a terminal or command
+prompt with:
+
+```
+OpenBFMELauncher --headless -- --register-url-handler --lobby=<the lobby's address>
+```
+
+On Windows this adds an entry for your user only (no administrator rights).
+On Linux and the Steam Deck it adds a hidden `openbfme-url.desktop` entry in
+`~/.local/share/applications`.
+
+You can also start the game straight from a terminal:
+
+```
+OpenBFME -- --online-lobby=<the lobby's address> --online-join=0123456789abcdef --online-name=YourName
+```
+
+The game signs you in as a guest under that name, joins, says you are ready
+and waits for the host to start. Everyone needs the same OpenBFME version and
+the same RotWK 2.01 / BFME2 1.06 files; the lobby refuses a player whose files
+or build differ, and says so.
+
+**Hosting a game** (for testers):
+
+```
+OpenBFME -- --online-lobby=<the lobby's address> --online-host --map="maps/map mp fords of isen ii/map mp fords of isen ii.map" --online-slots="player:-1:0:0;open" --online-players=2
+```
+
+The log shows `GAME ONLINE hosting game <id>: invite openbfme://join/<id>`.
+Send that link to the other players. The game starts once they are in and
+ready. In `--online-slots`, each slot is `state:faction:start:team`, where
+state is `player` (you), `open` (for someone joining), `closed`, or an AI
+level (`easy`, `medium`, `hard`, `brutal`). The faction is a number, and -1
+means random.
+
+The session log (see [Logs](#logs)) has `GAME ONLINE` lines for each step,
+and the reason when the lobby refuses something.
+
+**When someone loses their connection** (also a test feature). The others
+see the usual disconnect screen with each player's timer. If the timer runs
+out, the player is not removed at once as on a LAN: their army stays theirs
+and stands still for five minutes, so they can come back. If they don't, their
+army goes to an ally, as on a LAN. Pressing **Kick** on the disconnect screen
+(all the other players) hands the army over at once.
+
+**Rejoining after a crash or a lost connection.** Start the game again on the
+same computer with:
+
+```
+OpenBFME -- --online-lobby=<the lobby's address> --online-rejoin
+```
+
+The game signs in as the same player (it keeps the lobby session in its user
+data), asks the lobby for your running game and gets a new pass for it. The
+screen shows "Rejoining the game: catching up" while the game replays
+everything that happened since the start at full speed, then you are back.
+The other players wait a moment at the end of it. Catching up grows with the
+game's length: on a fast PC about 10 seconds for a ten-minute game, a minute
+for half an hour, two minutes for an hour. If you are in more than one
+running game, add its id: `--online-rejoin=<game id>`.
+
+**Pausing a network game.** Press **Pause** (the Pause/Break key). The game
+stops for every player at the same moment, and the screen says who paused
+it. Any player presses Pause again to resume. The original game cannot pause
+a multiplayer game at all; this is an OpenBFME addition.
+
+**Watching an online game as a spectator.** Anyone who is not a player can
+watch a game with its id:
+
+```
+OpenBFME -- --online-lobby=<the lobby's address> --online-spectate=<game id>
+```
+
+If the game has not started, the game waits for the host to start it; you
+can also join a game that is already running (the game first replays what
+happened, at full speed). You see the whole map with no fog of war and every
+player's army. Press **Tab** to see one player's view, with their resources,
+command points and power on screen; Tab again for the next player, then back
+to everyone. **Shift+Tab** goes the other way. The host can set a spectator
+delay in the lobby (in seconds): you then watch that far behind the players,
+so you cannot tell them what the other side is doing. A spectator never
+slows the players down.
+
 ## Known issues
 
 These are the open gaps a player is most likely to notice. Each one is a
@@ -387,7 +561,10 @@ recorded stop in [STOPS.md](STOPS.md); the ID is given for reference.
   save your progress the original way (S-1360). Missions load the next one
   directly.
 - War of the Ring.
-- Online play (LAN only for now).
+- Online play is a test feature: the Online menu works against an OpenBFME
+  lobby, but there is no public one yet, and Quick Match, War of the Ring
+  online and the stats pages are missing (see
+  [Online play](#online-play-test-feature); S-4070 .. S-4076).
 - Game languages other than English: other installs are refused on the first
   start (S-1561).
 

@@ -170,6 +170,7 @@ struct HudDevice : public AptNativeHook
 	DisplayedCameraView shown; // picking and projection follow the displayed (interpolated) pose (TacticalCamera.h, lane BUILD-5 r3)
 	double clientClock = 0.0;
 	double updateMs = 0.0, cameraMs = 0.0, cursorMs = 0.0; ///< SMOOTH-1: the parts of the last _process
+	double hudMs = 0.0, iconsMs = 0.0, decalsMs = 0.0, radialMs = 0.0; ///< SELPERF-1: updateMs's parts (InGameHud::update, the icon ops, the selection decals, HUD-6)
 	bool edgeScroll = false;
 	int edgeScrollMode = 0;   // lane OPTS-2: 0 retail (full screen only, or edge_scroll), 1 always, 2 never
 	float uiScale = 1.0f;     // lane OPTS-2: the decorations' scale (health bars, veterancy marks, texts) about each object's ops
@@ -210,6 +211,9 @@ struct HudDevice : public AptNativeHook
 	std::vector<std::uint32_t> radarOverlayTexels;
 	unsigned radarOverlayFrame = ~0u;
 	Rect2 radarPicture;                            ///< lane RADAR-1: the picture rectangle RenderRadar drew (the view box's frame)
+	Rect2 radarClip;                               ///< lane HUD-7: the RenderRadar clip rectangle of the last draw
+	float radarViewBox[8] = {};                    ///< lane HUD-7: the view box corners RenderRadarViewBox drew last (window pixels)
+	unsigned long long radarDraws = 0, radarViewBoxDraws = 0; ///< lane HUD-7
 	std::vector<std::string> drawErrors;
 	std::set<std::string> drawNotes; ///< lane HUD-4: the device's inference notes (S-1482: a .jpg + .png texture)
 	unsigned drawnImages = 0, drawnTimers = 0, skippedImages = 0;
@@ -270,9 +274,18 @@ struct HudDevice : public AptNativeHook
 	uint64_t decalRootId = 0;
 	std::vector<uint64_t> decalIds;
 	unsigned decalsDrawn = 0;
-	// the SHADOW_MERGE_DECAL decals composed as RotWK's stencil passes (ComposeMergeDecals) into one texture on one Decal, recomposed when its input changes
-	uint64_t mergeDecalId = 0;
-	Ref<ImageTexture> mergeTexture;
+	// lane SELPERF-1: the SHADOW_MERGE_DECAL decals drawn by the terrain shader (godot/shaders/selection_decals.gdshaderinc) from the grid of this frame
+	// (BuildMergeDecalGrid) in the global sel_data and their textures in the global sel_atlas; the atlas grows when a texture is new to it
+	MergeDecalGrid selGrid;
+	Ref<ImageTexture> selData, selAtlas;
+	unsigned long long selVersion = ~0ull; // the markers' version the grid was built from (an unchanged frame builds and uploads nothing)
+	MergeDecalAtlas selAtlasPack;
+	int selMode = -1;                       // the mode last given to the shader
+	Vector4 selGridSet, selGrid2Set;        // the grid parameters last given to it
+	int selAlphaSet = -1;
+	int64_t selUploads = 0;
+	bool selAtlasFor(const std::vector<SelectionDecal> &list);
+	void composeMergeReport(); // the CPU composition (ComposeMergeDecals) of the state report
 	// a decal texture in a colour: the texel colour times the colour, the texel alpha (the colour's alpha is the decal's modulate)
 	struct DecalTextures
 	{
@@ -282,6 +295,7 @@ struct HudDevice : public AptNativeHook
 	const DecalTextures *unlitDecalFor(const std::string &file, uint32_t rgb);
 	std::string mergeKey;
 	MergedSelectionDecals merged;
+	int64_t mergeComposes = 0; ///< lane SELPERF-1: how often the state report composed the merged image
 	std::map<std::string, PackedByteArray> decalPixels; // RGBA8 of the decal textures, by name
 	std::map<std::string, Vector2i> decalPixelSizes;
 	DecalImage decalImageFor(const std::string &file);
@@ -591,6 +605,8 @@ void HudDevice::drawPlaceholder(const AptCanvasOp &op, RID item)
 		// lane RADAR-1: the object overlay (W3DRadar::draw RW 0x450108 .. 0x4501FA): rebuilt when the client frame % 6 == 0 (and once at the start, + 0x1464),
 		// a 128 x 128 texture drawn over the picture's rectangle with UV (0,1)-(1,0) (texture row 0 at the bottom); RenderRadar's tint is -1 (RW 0x6D427C)
 		radarPicture = sq;
+		radarClip = r; // lane HUD-7
+		++radarDraws;
 		radar.setPicture(ul[0], ul[1], lr[0] - ul[0], lr[1] - ul[1]); // the events' pings (RW 0x44DE58, InGameHud::updateRadarEvents)
 		const unsigned cf = radar.clientFrame();
 		if (snap && (radarOverlay.is_null() || Radar::overlayDue(cf, radarOverlayFrame)))
@@ -682,6 +698,8 @@ void HudDevice::drawPlaceholder(const AptCanvasOp &op, RID item)
 		{
 			return;
 		}
+		std::copy(corners, corners + 8, radarViewBox); // lane HUD-7: what the box was drawn with
+		++radarViewBoxDraws;
 		const ::Image *edge = images.findImageByName("RadarViewBoxEdge");
 		Ref<ImageTexture> tex = edge ? textureFor(edge->filename) : Ref<ImageTexture>();
 		if (tex.is_null())
@@ -1122,6 +1140,7 @@ void InGameHudNode::_bind_methods()
 	ClassDB::bind_method(D_METHOD("get_spellbook_state"), &InGameHudNode::get_spellbook_state);
 	ClassDB::bind_method(D_METHOD("get_icon_ui"), &InGameHudNode::get_icon_ui); // lane HUD-5
 	ClassDB::bind_method(D_METHOD("select_object", "id"), &InGameHudNode::select_object); // lane HUD-5
+	ClassDB::bind_method(D_METHOD("select_objects", "ids"), &InGameHudNode::select_objects); // lane SELPERF-1
 	ClassDB::bind_method(D_METHOD("open_spell_store"), &InGameHudNode::open_spell_store);
 	ClassDB::bind_method(D_METHOD("close_spell_store"), &InGameHudNode::close_spell_store);
 	ClassDB::bind_method(D_METHOD("spell_store_click", "index"), &InGameHudNode::spell_store_click);
@@ -1151,6 +1170,9 @@ void InGameHudNode::_bind_methods()
 	ClassDB::bind_method(D_METHOD("get_radar_square"), &InGameHudNode::get_radar_square);
 	ClassDB::bind_method(D_METHOD("world_to_radar_pixel", "world_xy"), &InGameHudNode::world_to_radar_pixel);
 	ClassDB::bind_method(D_METHOD("create_radar_event", "world_xy", "type"), &InGameHudNode::create_radar_event);
+	ClassDB::bind_method(D_METHOD("get_radar_state"), &InGameHudNode::get_radar_state); // lane HUD-7
+	ClassDB::bind_method(D_METHOD("radar_probe", "world_xy"), &InGameHudNode::radar_probe); // lane HUD-7
+	ClassDB::bind_method(D_METHOD("camera_set_angle_pitch", "angle", "pitch"), &InGameHudNode::camera_set_angle_pitch); // lane HUD-7 (a test hook)
 	ClassDB::bind_method(D_METHOD("dump_tree", "max_depth"), &InGameHudNode::dump_tree, DEFVAL(4));
 	ClassDB::bind_method(D_METHOD("invoke_at", "path", "function", "args"), &InGameHudNode::invoke_at, DEFVAL(PackedStringArray()));
 }
@@ -1226,7 +1248,123 @@ void HudDevice::drawSelectionDecals()
 		}
 	}
 
-	// the merge decals: what decides the composed image is each decal's place, size, textures, colour and whether its alpha passes the alpha test
+	// lane SELPERF-1: the merge decals: this frame's grid to the terrain shader (RotWK's two stencil passes per pixel there); the composed image is only the
+	// state report's (composeMergeReport)
+	const SelectionDecalSettings &ds = hud->selectionDecalSettings();
+	RenderingServer *rs = RenderingServer::get_singleton();
+	std::string error;
+	// the grid follows the markers: built and uploaded when they changed (hud->selectionDecalsVersion), else the shader keeps the last one
+	const bool fresh = hud->selectionDecalsVersion() != selVersion || selMode < 0;
+	selVersion = hud->selectionDecalsVersion();
+	if (fresh && (!selAtlasFor(list) || !BuildMergeDecalGrid(list, [this](const std::string &f, MergeDecalAtlasRect &r) {
+			// a missing texture is not in the atlas: BuildMergeDecalGrid fails with its name (no outline this frame)
+			return selAtlasPack.rect(f, r);
+		}, ds, selGrid, &error)))
+	{
+		if (!error.empty() && drawErrors.size() < 100)
+		{
+			drawErrors.push_back(error);
+		}
+		selGrid = MergeDecalGrid();
+	}
+	const int mode = selGrid.decals == 0 ? 0 : (selGrid.simple ? 2 : 1);
+	if (mode != 0 && rs)
+	{
+		if (fresh)
+		{
+			// the texture's height is the grid's rows rounded up to a power of two: a marching army's grid changes its row count often, and a new
+			// texture is a global parameter change every terrain material sees (rows past the grid's are never read)
+			int height = 4;
+			while (height < selGrid.rows)
+			{
+				height *= 2;
+			}
+			const int64_t bytes = (int64_t)selGrid.texels.size() * (int64_t)sizeof(float);
+			PackedByteArray px;
+			px.resize((int64_t)height * MergeDecalGrid::kWidth * 4 * (int64_t)sizeof(float));
+			memcpy(px.ptrw(), selGrid.texels.data(), (size_t)bytes);
+			Ref<Image> img = Image::create_from_data(MergeDecalGrid::kWidth, height, false, Image::FORMAT_RGBAF, px);
+			if (selData.is_valid() && selData->get_height() == height)
+			{
+				selData->update(img); // the same texture: no material sees a change
+			}
+			else
+			{
+				selData = ImageTexture::create_from_image(img);
+				rs->global_shader_parameter_set("sel_data", selData->get_rid()); // the RID: the server holds no reference of its own
+			}
+			++selUploads;
+		}
+		// only what changed (a set marks the server's global buffer for upload)
+		const Vector4 grid(selGrid.minX, selGrid.minY, selGrid.cellSize, (float)selGrid.cellsX);
+		const Vector4 grid2((float)selGrid.cellsY, (float)selGrid.cellOffset, (float)selGrid.indexOffset, (float)mode);
+		if (mode != selMode || grid != selGridSet)
+		{
+			rs->global_shader_parameter_set("sel_grid", grid);
+			selGridSet = grid;
+		}
+		if (mode != selMode || grid2 != selGrid2Set)
+		{
+			rs->global_shader_parameter_set("sel_grid2", grid2);
+			selGrid2Set = grid2;
+		}
+		if (mode != selMode || selGrid.alphaRef != selAlphaSet)
+		{
+			rs->global_shader_parameter_set("sel_alpha_ref", (float)selGrid.alphaRef);
+			selAlphaSet = selGrid.alphaRef;
+		}
+		decalsDrawn += (unsigned)selGrid.decals;
+	}
+	else if (mode != selMode && rs)
+	{
+		rs->global_shader_parameter_set("sel_grid2", Vector4(0.0f, 0.0f, 0.0f, 0.0f));
+	}
+	selMode = mode;
+}
+
+bool HudDevice::selAtlasFor(const std::vector<SelectionDecal> &list)
+{
+	// the atlas (MergeDecalAtlas: packed and committed whole); a change is one new texture for the shader
+	std::vector<std::string> errors;
+	const bool changed = selAtlasPack.update(list, hud->selectionDecalSettings(), [this](const std::string &f) { return decalImageFor(f); }, errors);
+	for (const std::string &e : errors)
+	{
+		if (drawErrors.size() < 100)
+		{
+			drawErrors.push_back(e);
+		}
+	}
+	if (!changed)
+	{
+		return true;
+	}
+	PackedByteArray px;
+	px.resize((int64_t)selAtlasPack.pixels().size());
+	memcpy(px.ptrw(), selAtlasPack.pixels().data(), selAtlasPack.pixels().size());
+	Ref<ImageTexture> atlas = ImageTexture::create_from_image(Image::create_from_data(selAtlasPack.width(), selAtlasPack.height(), false, Image::FORMAT_RGBA8, px));
+	if (atlas.is_null())
+	{
+		if (drawErrors.size() < 100)
+		{
+			drawErrors.push_back("the selection decal atlas texture could not be made");
+		}
+		selAtlasPack.clear(); // packed again next frame
+		selAtlas.unref();
+		selVersion = ~0ull;
+		return false;
+	}
+	selAtlas = atlas;
+	if (RenderingServer *rs = RenderingServer::get_singleton())
+	{
+		rs->global_shader_parameter_set("sel_atlas", selAtlas->get_rid());
+	}
+	return true;
+}
+
+void HudDevice::composeMergeReport()
+{
+	// what decides the composed image is each decal's place, size, textures, colour and whether its alpha passes the alpha test
+	const std::vector<SelectionDecal> &list = hud->selectionDecals();
 	const SelectionDecalSettings &ds = hud->selectionDecalSettings();
 	std::string key = ds.useSimpleMergeDecals ? "s" : "m";
 	for (const SelectionDecal &sd : list)
@@ -1239,63 +1377,18 @@ void HudDevice::drawSelectionDecals()
 			key += buf + sd.texture + "," + sd.texture2;
 		}
 	}
-	if (key != mergeKey)
+	if (key == mergeKey)
 	{
-		mergeKey = key;
-		std::string error;
-		// at most 4 texels a world unit (a 50-unit decal is 200 texels; RotWK draws it at the screen's resolution)
-		if (!ComposeMergeDecals(list, [this](const std::string &f) { return decalImageFor(f); }, ds, merged, &error, 2048, 4.0f))
-		{
-			if (drawErrors.size() < 100)
-			{
-				drawErrors.push_back(error);
-			}
-			merged = MergedSelectionDecals();
-		}
-		else if (merged.decals > 0)
-		{
-			PackedByteArray px;
-			px.resize((int64_t)merged.rgba.size());
-			memcpy(px.ptrw(), merged.rgba.data(), merged.rgba.size());
-			Ref<Image> img = Image::create_from_data(merged.width, merged.height, false, Image::FORMAT_RGBA8, px);
-			if (mergeTexture.is_valid() && mergeTexture->get_width() == merged.width && mergeTexture->get_height() == merged.height)
-			{
-				mergeTexture->update(img);
-			}
-			else
-			{
-				mergeTexture = ImageTexture::create_from_image(img);
-			}
-		}
-	}
-	Decal *md = mergeDecalId ? Object::cast_to<Decal>(ObjectDB::get_instance(godot::ObjectID(mergeDecalId))) : nullptr;
-	if (merged.decals == 0 || mergeTexture.is_null())
-	{
-		if (md)
-		{
-			md->set_visible(false);
-		}
 		return;
 	}
-	if (!md)
+	mergeKey = key;
+	++mergeComposes;
+	std::string error;
+	// at most 4 texels a world unit (a 50-unit decal is 200 texels; RotWK draws it at the screen's resolution)
+	if (!ComposeMergeDecals(list, [this](const std::string &f) { return decalImageFor(f); }, ds, merged, &error, 2048, 4.0f))
 	{
-		md = memnew(Decal);
-		md->set_name("MergedSelection");
-		root->add_child(md);
-		mergeDecalId = md->get_instance_id();
+		merged = MergedSelectionDecals();
 	}
-	// row 0 of the image is the extent's +Y edge: Godot's -Z, the decal texture's top
-	md->set_position(Vector3((merged.minX + merged.maxX) * 0.5f, merged.z, -(merged.minY + merged.maxY) * 0.5f));
-	md->set_rotation(Vector3(0.0f, 0.0f, 0.0f));
-	md->set_size(Vector3(merged.maxX - merged.minX, 120.0f, merged.maxY - merged.minY));
-	md->set_texture(Decal::TEXTURE_ALBEDO, mergeTexture);
-	md->set_modulate(Color(1, 1, 1, 1));
-	md->set_albedo_mix(1.0f);
-	md->set_cull_mask(1u << 19);
-	md->set_upper_fade(0.0f);
-	md->set_lower_fade(0.0f);
-	md->set_visible(true);
-	++decalsDrawn;
 }
 
 const HudDevice::DecalTextures *HudDevice::unlitDecalFor(const std::string &file, uint32_t rgb)
@@ -1373,8 +1466,22 @@ void HudDevice::freeSelectionDecals()
 	}
 	decalRootId = 0;
 	decalIds.clear();
-	mergeDecalId = 0;
 	mergeKey.clear();
+	// lane SELPERF-1: the terrain shader draws no merge decals once the HUD is gone
+	if (selMode > 0 || selData.is_valid() || selAtlas.is_valid())
+	{
+		if (RenderingServer *rs = RenderingServer::get_singleton())
+		{
+			rs->global_shader_parameter_set("sel_grid2", Vector4(0.0f, 0.0f, 0.0f, 0.0f));
+			rs->global_shader_parameter_set("sel_data", RID()); // the textures go with the HUD
+			rs->global_shader_parameter_set("sel_atlas", RID());
+		}
+	}
+	selData.unref();
+	selAtlas.unref();
+	selAtlasPack.clear();
+	selMode = -1;
+	selVersion = ~0ull;
 }
 
 InGameHudNode::InGameHudNode() : d(std::make_unique<HudDevice>()) {}
@@ -1778,11 +1885,18 @@ Dictionary InGameHudNode::get_state() const
 		}
 		s["selection_decals"] = decals;
 		s["selection_decals_drawn"] = (int64_t)d->decalsDrawn;
+		d->composeMergeReport(); // lane SELPERF-1: composed here only (the terrain shader draws the merge decals)
 		Dictionary m;
 		m["decals"] = (int64_t)d->merged.decals;
 		m["width"] = (int64_t)d->merged.width;
 		m["height"] = (int64_t)d->merged.height;
 		m["simple"] = d->hud->selectionDecalSettings().useSimpleMergeDecals;
+		m["composes"] = d->mergeComposes; // lane SELPERF-1
+		m["gpu_decals"] = (int64_t)d->selGrid.decals;
+		m["gpu_cells"] = (int64_t)d->selGrid.cellsX * d->selGrid.cellsY;
+		m["gpu_max_per_cell"] = (int64_t)d->selGrid.maxPerCell;
+		m["gpu_uploads"] = d->selUploads;
+		m["gpu_mode"] = (int64_t)d->selMode;
 		m["show"] = d->hud->selectionDecalSettings().showSelectedUnitMarker;
 		int64_t opaque = 0;
 		for (size_t i = 3; i < d->merged.rgba.size(); i += 4)
@@ -1967,6 +2081,24 @@ bool InGameHudNode::select_object(int64_t id)
 	ui.deselectAll(true);
 	ui.selectObject((::ObjectID)id);
 	return ui.isSelected((::ObjectID)id);
+}
+
+// lane SELPERF-1: the selection benchmark (play1_player.gd selperf) selects exactly N objects; how many ended up selected
+int64_t InGameHudNode::select_objects(const PackedInt64Array &ids)
+{
+	waitLogic(d.get());
+	if (!d->hud)
+	{
+		return 0;
+	}
+	UtilityFunctions::print("GAME TEST HOOK: select ", ids.size(), " objects");
+	InGameUI &ui = d->hud->input().ui();
+	ui.deselectAll(true);
+	for (int64_t i = 0; i < ids.size(); ++i)
+	{
+		ui.selectObject((::ObjectID)ids[i]);
+	}
+	return (int64_t)ui.selected().size();
 }
 
 Dictionary InGameHudNode::get_icon_ui() const
@@ -2277,13 +2409,20 @@ void InGameHudNode::_process(double delta)
 	}
 	const uint64_t t0 = Time::get_singleton()->get_ticks_usec();
 	d->hud->update(delta);
+	const uint64_t ta = Time::get_singleton()->get_ticks_usec();
 	d->drawIconOps(get_canvas_item()); // lane HUD-5
+	const uint64_t tb = Time::get_singleton()->get_ticks_usec();
 	d->drawSelectionDecals();          // lane UI-4
+	const uint64_t tc = Time::get_singleton()->get_ticks_usec();
 	if (d->hud6)
 	{
 		d->hud6->drawRadial(get_canvas_item()); // lane HUD-6
 	}
 	const uint64_t t1 = Time::get_singleton()->get_ticks_usec();
+	d->hudMs = (double)(ta - t0) / 1000.0;
+	d->iconsMs = (double)(tb - ta) / 1000.0;
+	d->decalsMs = (double)(tc - tb) / 1000.0;
+	d->radialMs = (double)(t1 - tc) / 1000.0;
 	// the camera runs 30 client frames a second (retail FramesPerSecondLimit 30, S-456) and is drawn interpolated between two of them
 	if (LookAtTranslator *la = d->hud->input().lookAt())
 	{
@@ -2340,6 +2479,30 @@ Dictionary InGameHudNode::get_frame_timings() const
 	t["hud_update_ms"] = d->updateMs;
 	t["hud_camera_ms"] = d->cameraMs;
 	t["hud_cursor_ms"] = d->cursorMs;
+	t["hud_logic_ms"] = d->hudMs;      // lane SELPERF-1: hud_update_ms's parts
+	t["hud_icons_ms"] = d->iconsMs;
+	t["hud_decals_ms"] = d->decalsMs;
+	t["hud_radial_ms"] = d->radialMs;
+	if (d->hud)
+	{
+		// lane SELPERF-1: InGameHud::update's parts
+		const InGameHud::UpdateParts &p = d->hud->updateParts();
+		t["hud_input_ms"] = p.input;
+		t["hud_bar_ms"] = p.bar;
+		t["hud_windows_ms"] = p.windows;
+		t["hud_palantir_ms"] = p.palantir;
+		t["hud_heroes_ms"] = p.heroes;
+		t["hud_iconui_ms"] = p.icons;
+		t["hud_seldecals_ms"] = p.decals;
+		t["hud_radar_ms"] = p.radar;
+	}
+	t["icon_ops"] = (int64_t)d->iconOpsDrawn; // the drawable decorations drawn (health bars of the selection, ...)
+	t["sel_uploads"] = d->selUploads; // the merge decal grids uploaded so far
+	t["sel_decals"] = (int64_t)(d->hud ? d->hud->selectionDecals().size() : 0); // this frame's selection markers, those the terrain shader draws, its grid
+	t["sel_merge_decals"] = (int64_t)d->selGrid.decals;
+	t["sel_mode"] = (int64_t)d->selMode;
+	t["sel_cells"] = (int64_t)d->selGrid.cellsX * d->selGrid.cellsY;
+	t["sel_max_per_cell"] = (int64_t)d->selGrid.maxPerCell;
 	return t;
 }
 
@@ -2949,6 +3112,76 @@ bool InGameHudNode::create_radar_event(const Vector2 &world_xy, int type)
 	}
 	d->hud->radar().createEvent(Coord3D{ (float)world_xy.x, (float)world_xy.y, 0.0f }, type, 4.0f);
 	return true;
+}
+
+Dictionary InGameHudNode::get_radar_state() const
+{
+	// lane HUD-7: what the radar's draw callbacks drew last (the picture, the clip, the view box) beside the rectangle the clicks map through (radarSquare)
+	waitLogic(d.get());
+	Dictionary out;
+	out["ready"] = d->hud && d->hud->radar().ready();
+	out["draws"] = (int64_t)d->radarDraws;
+	out["view_box_draws"] = (int64_t)d->radarViewBoxDraws;
+	out["picture"] = d->radarPicture;
+	out["clip"] = d->radarClip;
+	PackedVector2Array box;
+	for (int i = 0; i < 4; ++i)
+	{
+		box.push_back(Vector2(d->radarViewBox[i * 2], d->radarViewBox[i * 2 + 1]));
+	}
+	out["view_box"] = box;
+	float sq[4];
+	out["square"] = d->hud && d->hud->radarSquare(sq) ? Rect2(sq[0], sq[1], sq[2] - sq[0], sq[3] - sq[1]) : Rect2();
+	if (d->hud && d->hud->radar().ready())
+	{
+		out["extent"] = Vector2(d->hud->radar().extentWidth(), d->hud->radar().extentHeight());
+	}
+	return out;
+}
+
+Dictionary InGameHudNode::radar_probe(const Vector2 &world) const
+{
+	// lane HUD-7: the overlay cell an object at SAGE (x, y) is drawn in (Radar::renderObjects: (int)(x * 128 / width), (int)(y * 128 / height)), the strongest
+	// overlay alpha of its 3 x 3 cells (a 2 x 2 dot is drawn left and below of its sample), and that cell's centre in the drawn picture (row 0 of the overlay at
+	// the bottom)
+	waitLogic(d.get());
+	Dictionary out;
+	out["ok"] = false;
+	if (!d->hud || !d->hud->radar().ready() || d->radarPicture.size.x <= 0.0f)
+	{
+		return out;
+	}
+	const Radar &radar = d->hud->radar();
+	const int n = Radar::kCells;
+	const int cx = (int)(128.0f / radar.extentWidth() * world.x), cy = (int)(world.y * (128.0f / radar.extentHeight()));
+	int alpha = 0;
+	for (int y = cy - 1; y <= cy + 1; ++y)
+	{
+		for (int x = cx - 1; x <= cx + 1; ++x)
+		{
+			if (x >= 0 && y >= 0 && x < n && y < n && d->radarOverlayTexels.size() == (size_t)n * (size_t)n)
+			{
+				alpha = std::max(alpha, (int)(d->radarOverlayTexels[(size_t)y * (size_t)n + (size_t)x] >> 24));
+			}
+		}
+	}
+	const Rect2 &p = d->radarPicture;
+	out["ok"] = true;
+	out["cell"] = Vector2i(cx, cy);
+	out["alpha"] = alpha;
+	out["drawn_pixel"] = Vector2(p.position.x + ((float)cx + 0.5f) * p.size.x / (float)n, p.position.y + ((float)(n - 1 - cy) + 0.5f) * p.size.y / (float)n);
+	return out;
+}
+
+void InGameHudNode::camera_set_angle_pitch(float angle, float pitch)
+{
+	// lane HUD-7 (a test hook, logged by the caller): TacticalCamera::setAngle (RW 0x48CA7F) and setPitch (RW 0x65E8D0), as the rotate keys and the tilt do
+	if (d->cam)
+	{
+		d->cam->setAngle(angle);
+		d->cam->setPitch(pitch);
+		d->cam->snapInterpolation();
+	}
 }
 
 Rect2 InGameHudNode::get_radar_square() const

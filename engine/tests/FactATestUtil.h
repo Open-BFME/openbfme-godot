@@ -249,8 +249,11 @@ struct FactRig
 		hud->mouseButton(HudInput::Button::Left, false, s.x, s.y, 0, rig.timeMs);
 		frames(1);
 	}
-	// the nearest point to (x, y) at least `clear` from every object and at least 200 inside the map's playable area (the pathfinder's logical extent:
-	// a move beyond it is clamped to its edge, so a unit made outside it never reaches its goal)
+	// the nearest point to (x, y) at least 200 inside the map's playable area (the pathfinder's logical extent: a move beyond it is clamped to its
+	// edge, so a unit made outside it never reaches its goal) that passes the rig's placement rules (hudtest::Rig::spotFree: clear ground, `clear` from
+	// the objects except the map's critters and props, the rig's own objects counted where they were made, 400 more from creeps).
+	// Lane PATHPERF-1 (coordinator decision 2026-10-13): the same rules as freeSpot, so a pathfinder change (where the critters and earlier
+	// actors walked) does not move a FACT-A scene, and no actor starts on a cliff, in water or in a footprint.
 	Coord3D spot(float x, float y, float clear)
 	{
 		ICoord2D lo{ 0, 0 }, hi{ 0, 0 };
@@ -259,6 +262,7 @@ struct FactRig
 			logic().aiWorld()->pathfinder().getLogicalExtent(lo, hi);
 		}
 		const float x0 = (float)lo.x * 10.0f + 200.0f, y0 = (float)lo.y * 10.0f + 200.0f, x1 = (float)(hi.x + 1) * 10.0f - 200.0f, y1 = (float)(hi.y + 1) * 10.0f - 200.0f;
+		int terrain = 0, objects = 0;
 		for (int ring = 0; ring < 60; ++ring)
 		{
 			const int per = ring == 0 ? 1 : 8 * ring;
@@ -270,16 +274,12 @@ struct FactRig
 				{
 					continue;
 				}
-				bool ok = true;
-				for (Object *o = logic().getFirstObject(); o && ok; o = o->getNextObject())
-				{
-					const float dx = o->getPosition()->x - px, dy = o->getPosition()->y - py;
-					ok = dx * dx + dy * dy >= clear * clear;
-				}
-				if (ok)
+				bool offGround = false;
+				if (rig.spotFree(px, py, clear, false, {}, nullptr, offGround))
 				{
 					return Coord3D{ px, py, 0.0f };
 				}
+				++(offGround ? terrain : objects);
 			}
 		}
 		std::string near;
@@ -291,7 +291,7 @@ struct FactRig
 				near += " " + o->getTemplate()->getName() + "#" + std::to_string((unsigned)o->getID());
 			}
 		}
-		FAIL("no free spot inside the map near the point; within 1500:" << near);
+		FAIL("no free spot inside the map near the point (" << terrain << " points off clear ground, " << objects << " too close to an object); within 1500:" << near);
 		return Coord3D{};
 	}
 	Object *make(const std::string &name, const Coord3D &at, Player *owner = nullptr) { return rig.make(name, at.x, at.y, owner); }

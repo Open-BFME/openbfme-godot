@@ -51,7 +51,7 @@ A milestone is done only when its gates pass, not when the code exists.
 | Map scripts, campaign flow, movies | [SCRIPT-1..3, CAMP-1H, CAMP-2 M]; no save game or campaign menu (S-1360) |
 | Lua 4.0.1 runtime, bindings, event dispatch | [LUA-1 M] |
 | LAN multiplayer: lockstep, disconnects, replays, cross-OS determinism | [MP-1, MP-2, WIN-1 M]; online play not started |
-| Performance: job pool, parallel loading, presentation culling | [PERF-1..3 M] |
+| Performance: job pool, parallel loading, presentation culling | [PERF-1..3 M]; the opt-in Uber performance mode, phase U1 [UBER-1] (`docs/UBER.md`) |
 | Release: tester packages, logs, crash reports, launcher with signed updates | [RELEASE-1, WINCRASH-1, LAUNCH-1 M]; automatic preview releases [AUTOREL-1 R] |
 
 Skirmish is playable from the real menu with all 7 factions, against the
@@ -280,6 +280,47 @@ fast map loads.
   - the retail detail rows the renderer cannot show yet (S-3402) and the
     Resolution list (S-3401).
 
+### Uber performance mode (track next to M8)
+
+State (2026-10-11): U1 done (UBER-1). The design, the per-system budget and the
+honest numbers are in `docs/UBER.md`.
+
+An opt-in simulation profile (owner, 2026-10-11): "an UBER performance mode that
+people can click. It isn't backwards compatible with the old game, but it
+offloads as much as possible to all the cores on the CPU and the GPU." The bar:
+144 fps or more, sustained, 1% low included, with 10,000 to 40,000 units
+fighting, on the owner's PC (RTX 4090, 24 threads); the Deck's numbers are
+reported next to it. Uber players play and replay only with Uber players (the
+profile is in the setup, the LAN lobby, the replay, the identity and the hash;
+a mismatch is refused). The Faithful default and its pins never move for it.
+
+Today (lane machine): the logic tick is 192 ms at 10k troops and 561 ms at 40k,
+against a 200 ms tick. The real client runs at 6.1 fps at 10k (1% low 3.5) and
+1.6 fps at 40k, and its main thread still waits on the logic worker. The
+targets below are unvalidated until the game gate has measured them on an idle
+reference PC. Every parallel simulation change lands only after its Uber pin
+vector matched on two machines of different CPUs (and, from U2, a native
+Windows run), not just at U5.
+
+- U1 (UBER-1, done): the option, the profile plumbing and refusals (lobby,
+  options, start, replay header consistency), the 10k / 20k / 40k battle
+  benchmark (living troops, logic + hash tick) and the game gate
+  (`--uber1=<troops>`: average fps, 1% low, worst frame), the parallel state
+  hash (132 -> 42 ms at 40k), the Uber pin vector.
+- U2: no main-thread waits on the logic (with PATHPERF-1); snapshot queries
+  (taunt, target and range scans) and parallel pathfinding on the job pool,
+  bounded by a deterministic work budget in expanded cells (a request count
+  can't bound a search's time); GPU animation (pose evaluation on the GPU).
+  Target: 10k at 144 fps on the reference PC.
+- U3: flow fields for group moves, SoA horde members, conflict-free parallel
+  collisions, per-object RNG streams; GPU culling, LOD, impostors, GPU particles.
+  Target: 40k logic inside the tick on the reference PC.
+- U4: AI players on threads, module phases split by spatial tiles, GPU shroud.
+  Target: 40k at 144 fps sustained on the reference PC.
+- U5: the Uber gate in CI on every host, the cross-machine hash vectors
+  automated (Deck, Windows, Linux, Mac; 1 / 4 / 16 / 24 threads), Uber LAN
+  soaks.
+
 ### M9 - Campaigns, War of the Ring and the rest
 
 State: the campaign plays mission by mission (SCRIPT-1..3, CAMP-1H, CAMP-2:
@@ -410,3 +451,32 @@ cross-play stays the separate, best-effort goal behind PLAN's cross-play gates.
 Phases: relay MVP (lobby + relay + log) after the closed playtest, then the
 verifier and snapshots, then the browser, accounts and spectators, then the retail
 gateway.
+
+### Hot join (not built; owner decision needed)
+
+**Hot join** lets a NEW player join a match that is already running. It is
+not a rejoin: a rejoin brings back a player who had a slot from the start,
+and that is built (ONLINE-3, offered in the server browser by ONLINE-4).
+RotWK has no hot join: its games are closed once they start (GameSpy listed
+only staging rooms), so this would be an OpenBFME feature, not a port.
+
+What makes it possible: ONLINE-3's catch-up path. A new client reads the
+relay's log of the game, re-simulates it at full speed and joins the
+lockstep at a frame the packet router names. A hot-joiner would take that
+same path. The protocol needs a frame command that adds a player to a slot
+at that frame, on every peer alike, plus a lobby ticket for a slot that had
+no player at the START.
+
+**Owner decision needed** before any lane builds it:
+- **Which slot** a hot-joiner takes: only an open slot (left open at the
+  start), or also an AI's slot (the joiner takes over the AI's army), or a
+  slot whose player left (taking over the departed player's army, instead of
+  the hand-over to an ally)?
+- **What they start with**: a fresh start (the map's start position, starting
+  money, no units) in a game already minutes in, or the army and money of the
+  slot they take over? Does a hot-joiner get a catch-up bonus?
+- Does the host have to allow it per game (a lobby option), and are ranked or
+  tournament games excluded?
+- Long games: the catch-up of an hour-long game takes about two minutes on a
+  fast PC (docs/ONLINE.md, phase O3). Hot join into long games would want the
+  snapshots of phase O4.

@@ -22,9 +22,45 @@ const ReleaseNotes := preload("res://scripts/core/release_notes.gd")
 const InstanceLock := preload("res://scripts/core/instance_lock.gd")
 const Updater := preload("res://scripts/core/updater.gd")
 const BuildInfo := preload("res://scripts/core/build_info.gd")
+const UrlHandler := preload("res://scripts/core/url_handler.gd")
 
 var _checks := 0
 var _failed := 0
+
+
+## lane ONLINE-2: openbfme:// links join a game and nothing else; the registration entries
+func _url_handler() -> void:
+	var p := UrlHandler.parse("openbfme://join/0123456789abcdef")
+	_check(p.ok and p.action == "join" and p.game == "0123456789abcdef", "a join link parses")
+	_check(UrlHandler.parse("openbfme://join/0123456789abcdef/").ok, "a trailing slash is allowed")
+	for bad in ["openbfme://join/0123456789ABCDEF", "openbfme://join/0123", "openbfme://join/0123456789abcdeg", "openbfme://run/calc.exe",
+			"openbfme://join/0123456789abcdef/extra", "https://example.org/j/0123456789abcdef", "openbfme://join/../../x", " openbfme://join/0123456789abcdef",
+			"openbfme://join/0123456789abcdef\" --update \"", "OPENBFME://join/0123456789abcdef", "openbfme://join/0123456789abcdef\n"]:
+		_check(not UrlHandler.parse(bad).ok, "a link is refused: " + bad.c_escape())
+	var args := UrlHandler.game_args(p, "https://lobby.example.org")
+	_check(args == PackedStringArray(["--", "--online-join=0123456789abcdef", "--online-lobby=https://lobby.example.org"]), "the game's arguments of a link")
+	# ONLINE-2 r2 (Sol r1): the isolated link mode; Windows splices %1 into the command line, so a link with quotes adds arguments of its own
+	var tests := ["--api-base=", "--trust-key="]
+	var ok := UrlHandler.isolated_url(PackedStringArray(["--open-url", "openbfme://join/0123456789abcdef"]), false, tests)
+	_check(ok.mode and ok.ok and ok.game == "0123456789abcdef", "--open-url <link> alone is taken")
+	_check(not UrlHandler.isolated_url(PackedStringArray(["--update", "--list"]), false, tests).mode, "no link: not the link mode")
+	for injected in [["--open-url", "openbfme://join/0123456789abcdef", "--update"],                 # Sol's injection: "...\" --update \""
+			["--open-url", "openbfme://join/0123456789abcdef", "--install=v0.1.0", ""],
+			["--update", "--open-url", "openbfme://join/0123456789abcdef"],
+			["--open-url"], ["--open-url", "--update"], ["openbfme://join/0123456789abcdef"],      # round 1's bare link
+			["--lobby=https://evil.example", "--open-url", "openbfme://join/0123456789abcdef"],
+			["--open-url", "openbfme://join/0123456789abcdef", "--open-url", "openbfme://join/0123456789abcdef"],
+			["--api-base=http://127.0.0.1:1", "--open-url", "openbfme://join/0123456789abcdef"]]:  # test options only in a test build
+		var r := UrlHandler.isolated_url(PackedStringArray(injected), false, tests)
+		_check(r.mode and not r.ok, "refused: " + str(injected))
+	_check(UrlHandler.isolated_url(PackedStringArray(["--api-base=http://127.0.0.1:1", "--open-url", "openbfme://join/0123456789abcdef"]), true, tests).ok,
+		"a test build: its test options before --open-url")
+	_check(not UrlHandler.isolated_url(PackedStringArray(["--open-url", "openbfme://join/0123456789abcdef", "--api-base=http://127.0.0.1:1"]), true, tests).ok,
+		"a test build: nothing after the link")
+	var entry := UrlHandler.linux_desktop_entry("/opt/OpenBFME Launcher/OpenBFMELauncher.x86_64")
+	_check(entry.contains("MimeType=x-scheme-handler/openbfme;") and entry.contains("Exec=\"/opt/OpenBFME Launcher/OpenBFMELauncher.x86_64\" -- --open-url %u"), "the .desktop entry")
+	var reg: Array = UrlHandler.windows_reg_commands("C:\\Games\\OpenBFMELauncher.exe")
+	_check(reg.size() == 3 and reg[0][1] == "HKCU\\Software\\Classes\\openbfme" and reg[2][4] == "\"C:\\Games\\OpenBFMELauncher.exe\" -- --open-url \"%1\"", "the registry entries (current user only)")
 
 
 func _check(ok: bool, what: String) -> void:
@@ -167,6 +203,7 @@ func _init() -> void:
 	_aio()
 	_ui()
 	_ui_dialogs()
+	_url_handler()
 	if _failed == 0:
 		print("UNIT OK %d checks" % _checks)
 		quit(0)

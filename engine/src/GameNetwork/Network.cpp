@@ -272,16 +272,41 @@ void Network::send(const NetCommandMsg &c)
 		m_errors.push_back("cannot encode " + std::string(NetCommandTypeName(c.type)) + ": " + error);
 		return;
 	}
+	bool reachedLive = false;
 	for (int s = 0; s < MAX_SLOTS; ++s)
 	{
 		// a slot whose leave arrived is retired: nothing more goes to it (it runs no frame after its leave frame)
 		if (s != m_config.localSlot && m_slots[(size_t)s].active && !hasLeft(s))
 		{
 			std::string why;
+			reachedLive = reachedLive || reachesLivePeer(s);
 			if (!m_transport.sendTo(s, bytes, &why))
 			{
 				m_errors.push_back("cannot send " + std::string(NetCommandTypeName(c.type)) + " to slot " + std::to_string(s) + ": " + why);
 			}
+		}
+	}
+	// lane ONLINE-3: a frame command no live player receives (a 1v1 whose other player is gone or held, the last player in) still reaches the relay's log;
+	// the exact bytes of the recent ones are kept for the moment this peer finds itself alone (logAloneFrames)
+	if (c.type == NETCOMMANDTYPE_GAMECOMMAND || c.type == NETCOMMANDTYPE_FRAMEINFO || c.type == NETCOMMANDTYPE_PLAYERLEAVE || c.type == NETCOMMANDTYPE_DESTROYPLAYER
+		|| c.type == NETCOMMANDTYPE_RUNAHEAD || c.type == NETCOMMANDTYPE_REJOIN)
+	{
+		// (Sol r1 of ONLINE-3: the first command sent alone went to the log before the history it follows, so the log read 2, 1, 2 for 1, 2): the
+		// history not yet on the log-only stream goes first, then this command; none goes there twice, so the relay's count of identical bytes per
+		// frame on that stream is the sender's own (every stream carries a sender's commands in its send order)
+		RecentFrameCommand rc;
+		rc.frame = c.executionFrame;
+		rc.bytes = bytes;
+		if (!reachedLive)
+		{
+			logRecentFrameCommands();
+			m_wasAlone = true;
+			rc.onLogStream = m_transport.sendToLog(bytes);
+		}
+		m_recentFrameCommands.push_back(std::move(rc));
+		while (!m_recentFrameCommands.empty() && m_relayedAny && m_recentFrameCommands.front().frame + kFramesToKeep < m_lastRelayed)
+		{
+			m_recentFrameCommands.pop_front();
 		}
 	}
 	file(c, m_config.localSlot); // the local frame data (ZH sendLocalCommand files it for the local slot too)
@@ -289,6 +314,25 @@ void Network::send(const NetCommandMsg &c)
 
 void Network::update(UnsignedInt logicFrame, CommandList &pending)
 {
+	if (m_rejoining)
+	{
+		// lane ONLINE-3: a rejoining client sends no frame data before beginLive (the catch-up runs the game from the relay's log); it files what the
+		// others send it once they took it back, and asks for that every second once its catch-up is near the live edge
+		m_logicFrame = logicFrame;
+		m_transport.service();
+		receiveAll();
+		const std::uint64_t t = now();
+		if (m_rejoinReady && (m_lastRejoinRequest == 0 || t - m_lastRejoinRequest >= 1000))
+		{
+			m_lastRejoinRequest = t;
+			NetCommandMsg c;
+			c.type = NETCOMMANDTYPE_REJOINREQUEST;
+			c.slot = (std::uint8_t)m_config.localSlot;
+			c.frame = (std::uint32_t)m_rejoinGeneration;
+			sendDirect(c);
+		}
+		return;
+	}
 	if (m_config.adaptiveRunAhead && !m_leaving && allLoaded())
 	{
 		updateRunAhead(now()); // lane MP-2: before the local commands get their execution frame
@@ -331,6 +375,12 @@ void Network::update(UnsignedInt logicFrame, CommandList &pending)
 	// (3)
 	m_transport.service();
 	receiveAll();
+	checkRelayStatus(); // lane ONLINE-3
+	logAloneFrames();
+	if (m_config.holdForRejoin && !m_leaving && allLoaded())
+	{
+		routerRejoinDuties();
+	}
 	// lane MP-2: ConnectionManager::update -> DisconnectManager::update (RW 0x8D77B5 -> 0x8D8A90), once every player has loaded
 	if (m_config.disconnectPath && allLoaded() && !m_leaving)
 	{
@@ -351,11 +401,10 @@ void Network::receiveAll()
 			m_errors.push_back("a net command from slot " + std::to_string(from) + ", which is not a remote network player");
 			continue;
 		}
-		if (m_slots[(size_t)from].disconnected)
+		if (m_slots[(size_t)from].disconnected && !newIncarnationTalking(from))
 		{
 			continue; // lane MP-2: a dropped player's late traffic (its connection is retired)
 		}
-		m_slots[(size_t)from].lastHeard = now();
 		if (!NetPacket::decodeCommand(bytes, c, &error))
 		{
 			m_errors.push_back("slot " + std::to_string(from) + ": " + error);
@@ -366,6 +415,26 @@ void Network::receiveAll()
 			m_errors.push_back("slot " + std::to_string(from) + " sent a command claiming slot " + std::to_string(c.slot));
 			continue;
 		}
+		SlotData &sd = m_slots[(size_t)from];
+		if (sd.disconnected)
+		{
+			// lane ONLINE-3: the new incarnation of a held slot (its transport was started afresh for it): its request to be taken back, and the frame
+			// data it sends once it runs in lockstep (frames after the REJOIN, kept until the REJOIN runs here); nothing else counts before it is a member
+			if (c.type == NETCOMMANDTYPE_REJOINREQUEST)
+			{
+				if (sd.held && !sd.handedOver && (int)c.frame == sd.seenGeneration && !sd.rejoinRequested)
+				{
+					sd.rejoinRequested = true;
+					m_rejoinLog.push_back("slot " + std::to_string(from) + " asked to rejoin (generation " + std::to_string(c.frame) + ")");
+				}
+			}
+			else if (c.type == NETCOMMANDTYPE_GAMECOMMAND || c.type == NETCOMMANDTYPE_FRAMEINFO)
+			{
+				file(c, from);
+			}
+			continue;
+		}
+		sd.lastHeard = now();
 		file(c, from);
 	}
 }
@@ -379,6 +448,7 @@ void Network::file(const NetCommandMsg &c, int fromSlot)
 	case NETCOMMANDTYPE_FRAMEINFO:
 	case NETCOMMANDTYPE_DESTROYPLAYER:
 	case NETCOMMANDTYPE_RUNAHEAD:
+	case NETCOMMANDTYPE_REJOIN: // lane ONLINE-3
 	{
 		if (m_relayedAny && c.executionFrame <= m_lastRelayed)
 		{
@@ -416,8 +486,19 @@ void Network::file(const NetCommandMsg &c, int fromSlot)
 				fd.runAheadChange = (int)v;
 			}
 		}
+		else if (c.type == NETCOMMANDTYPE_REJOIN)
+		{
+			// lane ONLINE-3: taken when the frame runs (relayCommands) if the sender is that frame's packet router; counted in the frame info
+			fd.rejoins.push_back((int)c.targetSlot);
+		}
 		else if (c.type == NETCOMMANDTYPE_DESTROYPLAYER)
 		{
+			if (c.targetSlot < MAX_SLOTS && m_slots[(size_t)c.targetSlot].held && !m_slots[(size_t)c.targetSlot].handedOver)
+			{
+				m_slots[(size_t)c.targetSlot].handedOver = true; // lane ONLINE-3: the held player's army goes to an ally: no rejoin any more
+				m_rejoinLog.push_back("slot " + std::to_string(c.targetSlot) + " handed over by slot " + std::to_string(fromSlot) + " at frame "
+					+ std::to_string(c.executionFrame));
+			}
 			// lane MP-2: ZH Network::processDestroyPlayerCommand / RotWK RW 0x65E234: MSG_SELF_DESTRUCT { boolean TRUE } of the slot's player (RotWK finds it by
 			// the game slot's player name, RW 0x800B55 + 0x34; ZH passed FALSE), in the frame's command list where the sender's command stands
 			const int victim = c.targetSlot < MAX_SLOTS ? m_config.slotPlayerIndex[(size_t)c.targetSlot] : -1;
@@ -487,6 +568,14 @@ void Network::file(const NetCommandMsg &c, int fromSlot)
 		}
 		fd.commands = std::move(messages);
 		fd.runAheadChange = c.runAheadChange;
+		fd.rejoins.clear();
+		for (int t = 0; t < MAX_SLOTS; ++t)
+		{
+			if (c.rejoinMask & (1u << t))
+			{
+				fd.rejoins.push_back(t); // lane ONLINE-3
+			}
+		}
 		fd.commandCount = (int)fd.entries();
 		fd.fromResend = true;
 		++m_framesFilled;
@@ -497,7 +586,7 @@ void Network::file(const NetCommandMsg &c, int fromSlot)
 	case NETCOMMANDTYPE_DISCONNECTVOTE:
 	case NETCOMMANDTYPE_DISCONNECTFRAME:
 	case NETCOMMANDTYPE_DISCONNECTSCREENOFF:
-		if (fromSlot != m_config.localSlot && m_config.disconnectPath)
+		if (fromSlot != m_config.localSlot && m_config.disconnectPath && !m_rejoining) // lane ONLINE-3: a rejoining client is not in the game yet
 		{
 			m_disconnect.processDisconnectCommand(*this, c, now(), m_logicFrame);
 		}
@@ -516,6 +605,32 @@ void Network::file(const NetCommandMsg &c, int fromSlot)
 		return;
 	case NETCOMMANDTYPE_LOADCOMPLETE:
 		sd.loaded = true;
+		return;
+	case NETCOMMANDTYPE_REJOINREQUEST:
+		return; // lane ONLINE-3: from a member slot it means nothing (receiveAll takes it from a held one)
+	case NETCOMMANDTYPE_PAUSE:
+	{
+		// lane ONLINE-3: every peer stops before frame c.frame (the sender's next execution frame: its frame info for it follows this command, so no peer
+		// can have run it); a RESUME that overtook it (from another player) cancels it
+		if (m_resumedPauses.count(c.frame))
+		{
+			return;
+		}
+		if (m_relayedAny && c.frame <= m_lastRelayed)
+		{
+			m_errors.push_back("PAUSE of slot " + std::to_string(fromSlot) + " before frame " + std::to_string(c.frame) + ", which already ran here");
+			return;
+		}
+		if (!m_pauses.count(c.frame))
+		{
+			m_pauses[c.frame] = fromSlot;
+			++m_pausesSeen;
+		}
+		return;
+	}
+	case NETCOMMANDTYPE_RESUME:
+		m_pauses.erase(c.frame); // lane ONLINE-3: any player may resume
+		m_resumedPauses.insert(c.frame);
 		return;
 	case NETCOMMANDTYPE_KEEPALIVE:
 		return;
@@ -550,7 +665,7 @@ void Network::file(const NetCommandMsg &c, int fromSlot)
 bool Network::slotNeeded(int slot, UnsignedInt frame) const
 {
 	const SlotData &sd = m_slots[(size_t)slot];
-	return sd.active && frame < sd.leaveFrame;
+	return sd.active && frame < sd.leaveFrame && frame >= sd.joinFrame; // lane ONLINE-3: a rejoined incarnation from its join frame
 }
 
 bool Network::isFrameReady(UnsignedInt frame) const
@@ -581,6 +696,7 @@ std::vector<int> Network::waitingFor(UnsignedInt frame) const
 void Network::relayCommands(UnsignedInt frame, CommandList &out)
 {
 	int newRunAhead = -1;
+	std::vector<int> rejoined; // lane ONLINE-3: the slots the frame's packet router takes back (from frame + 1)
 	std::map<int, std::uint32_t> crcs;
 	bool anyCRC = false;
 	for (int s = 0; s < MAX_SLOTS; ++s)
@@ -612,6 +728,24 @@ void Network::relayCommands(UnsignedInt frame, CommandList &out)
 			h.resent[(size_t)s] = it->second.fromResend;
 			h.commands[(size_t)s] = it->second.commands;
 			h.runAheadChange[(size_t)s] = it->second.runAheadChange;
+			for (int t : it->second.rejoins)
+			{
+				// lane ONLINE-3: only the frame's packet router takes a slot back, and only a held one (deterministic: the same membership on every peer)
+				h.rejoinMask[(size_t)s] |= (std::uint8_t)(1u << (t & 7));
+				if (s != routerAt(frame))
+				{
+					m_errors.push_back("REJOIN of slot " + std::to_string(t) + " from slot " + std::to_string(s) + " for frame " + std::to_string(frame)
+						+ ", which is not the packet router's: ignored");
+				}
+				else if (t < 0 || t >= MAX_SLOTS || t == s || !m_slots[(size_t)t].active || !m_slots[(size_t)t].held || m_slots[(size_t)t].handedOver)
+				{
+					m_errors.push_back("REJOIN of slot " + std::to_string(t) + " for frame " + std::to_string(frame) + ", which is not held for a rejoin: ignored");
+				}
+				else
+				{
+					rejoined.push_back(t);
+				}
+			}
 			if (it->second.runAheadChange >= 1)
 			{
 				// lane MP-2: the router's RUNAHEAD, on every peer at this frame; from another slot it is an error (only the packet router of the frame decides),
@@ -661,6 +795,10 @@ void Network::relayCommands(UnsignedInt frame, CommandList &out)
 	}
 	m_lastRelayed = frame;
 	m_relayedAny = true;
+	for (int t : rejoined)
+	{
+		applyRejoin(t, frame + 1);
+	}
 	if (newRunAhead >= 1 && newRunAhead != m_config.runAhead)
 	{
 		m_config.runAhead = newRunAhead;
@@ -896,6 +1034,10 @@ void Network::updateRunAhead(std::uint64_t nowMs)
 // ---- lane MP-2: the disconnect path ----------------------------------------------------------------------------------------------
 bool Network::allowedToContinue(UnsignedInt frame)
 {
+	if (pausedBefore(frame))
+	{
+		return false; // lane ONLINE-3: a pause
+	}
 	return !m_config.disconnectPath || m_disconnect.allowedToContinue(*this, frame);
 }
 
@@ -953,7 +1095,12 @@ int Network::numConnected() const
 std::uint64_t Network::lastHeard(int slot, std::uint64_t nowMs)
 {
 	SlotData &sd = m_slots[(size_t)slot];
-	std::uint64_t last = std::max(sd.lastHeard, m_transport.lastHeardFrom(slot));
+	// lane ONLINE-3: once the slot's game restarted, its transport hears the new incarnation, not the member: only the member's commands count. The same
+	// while the relay reports the slot silent (STATUS): a restarted process's first datagrams reach the transport before the relay's next STATUS names
+	// its new generation, and must not end the disconnect screen of the old one (the screen would come back on the same frame, where retail's rule
+	// ignores the repeated disconnect frame, RW 0x8D836B, and the drop could never be decided)
+	const bool memberOnly = sd.restarted || m_transport.silentAtRelay(slot);
+	std::uint64_t last = memberOnly ? sd.lastHeard : std::max(sd.lastHeard, m_transport.lastHeardFrom(slot));
 	if (last == 0)
 	{
 		if (sd.firstQuery == 0)
@@ -1001,9 +1148,9 @@ bool Network::dropClaims(int sender, int target, std::uint8_t &gone) const
 		{
 			continue;
 		}
-		if (!hasLeft(s) && !m_slots[(size_t)s].disconnected)
+		if (!hasLeft(s) && !m_slots[(size_t)s].disconnected && m_departureFrame[(size_t)s] == 0xFFFFFFFFu)
 		{
-			return false; // a predecessor this peer holds connected is the one to decide
+			return false; // a predecessor this peer holds connected is the one to decide (lane ONLINE-3: a rejoined slot is never a decider again)
 		}
 		gone |= (std::uint8_t)(1u << s);
 	}
@@ -1032,7 +1179,7 @@ int Network::verifyDropClaims(int sender, int target, std::uint8_t gone) const
 		{
 			return -1; // the sender holds a predecessor connected: not the one to decide (judged on the message and the agreed order alone)
 		}
-		if (!hasLeft(s) && !m_slots[(size_t)s].disconnected)
+		if (!hasLeft(s) && !m_slots[(size_t)s].disconnected && m_departureFrame[(size_t)s] == 0xFFFFFFFFu)
 		{
 			pending = true; // the claimed leave / drop has not reached this peer yet
 		}
@@ -1048,6 +1195,15 @@ void Network::sendDirect(const NetCommandMsg &c)
 	{
 		m_errors.push_back("cannot encode " + std::string(NetCommandTypeName(c.type)) + ": " + error);
 		return;
+	}
+	bool reachedLive = false;
+	for (int s = 0; s < MAX_SLOTS; ++s)
+	{
+		reachedLive = reachedLive || (hasConnection(s) && reachesLivePeer(s));
+	}
+	if (!reachedLive && c.type == NETCOMMANDTYPE_DISCONNECTPLAYER)
+	{
+		m_transport.sendToLog(bytes); // lane ONLINE-3: the drop frame reaches the relay's log when only the dropped player would have received it
 	}
 	for (int s = 0; s < MAX_SLOTS; ++s)
 	{
@@ -1094,8 +1250,21 @@ void Network::disconnectPlayer(int slot, UnsignedInt frame)
 	sd.disconnected = true;
 	sd.leaveFrame = std::min(sd.leaveFrame, frame);
 	m_leftNotices.push_back(playerName(slot));
-	m_transport.retire(slot);
+	if (!m_reconstructing)
+	{
+		m_transport.retire(slot); // lane ONLINE-3 r2: beginLive retires the slots gone at its end
+	}
 	passRouterRole(slot, frame);
+	if (m_config.holdForRejoin && !sd.handedOver)
+	{
+		// lane ONLINE-3: an online drop holds the slot (its army stays its own) until the packet router hands it over or takes it back
+		sd.held = true;
+		sd.heldSince = now();
+		sd.restarted = false;
+		sd.rejoinRequested = false;
+		sd.rejoinIssued = false;
+		m_rejoinLog.push_back("slot " + std::to_string(slot) + " held for a rejoin from frame " + std::to_string(frame));
+	}
 }
 
 void Network::passRouterRole(int slot, UnsignedInt frame)
@@ -1143,6 +1312,7 @@ void Network::sendFrameDataToPlayer(int slot, UnsignedInt startFrame, UnsignedIn
 			c.frame = f;
 			c.messages = h->second.commands[(size_t)owner];
 			c.runAheadChange = h->second.runAheadChange[(size_t)owner];
+			c.rejoinMask = h->second.rejoinMask[(size_t)owner]; // lane ONLINE-3
 			std::string error;
 			const std::vector<std::uint8_t> bytes = NetPacket::encodeCommand(c, &error);
 			std::string why;
@@ -1162,6 +1332,347 @@ void Network::notePlayerLatestFrame(int slot, UnsignedInt frame)
 	{
 		m_slots[(size_t)slot].latestFrame = std::max(m_slots[(size_t)slot].latestFrame, frame);
 	}
+}
+
+// ---- lane ONLINE-3: hold, rejoin and pause ---------------------------------------------------------------------------------------------
+bool Network::pingTest() const
+{
+	// RW 0x8D7C78 (RotWK's ping test, GameSpy's pinger in an internet game; no pinger in a LAN game: it passes): with the relay, the local link failed
+	// when nothing came from the relay for NetworkDisconnectTime (every client hears its peers' keep-alives through it every 100 ms)
+	return m_transport.localLinkAlive(m_config.settings.disconnectTime);
+}
+
+bool Network::reachesLivePeer(int slot) const
+{
+	// lane ONLINE-3: what is sent to the slot reaches a running process (and so the relay's log through its stream): not when the relay reports the slot
+	// silent or its game restarted (the relay starts its streams afresh for the new process: the old stream's records are not logged)
+	return !m_transport.silentAtRelay(slot) && !m_slots[(size_t)slot].restarted;
+}
+
+void Network::logAloneFrames()
+{
+	// lane ONLINE-3 (relay mode): when no live player receives this peer's frame commands any more (the last other one left, was dropped, went silent at
+	// the relay or restarted), its recent ones go to the relay's log-only stream once more: those in flight to a player whose stream the relay just
+	// started afresh (its restarted game bound) were never logged. The relay logs each command once (it counts identical bytes per frame and stream,
+	// and none reaches the log-only stream twice); a LAN transport has no log stream
+	bool alone = true;
+	for (int s = 0; s < MAX_SLOTS && alone; ++s)
+	{
+		alone = !(s != m_config.localSlot && m_slots[(size_t)s].active && !hasLeft(s) && reachesLivePeer(s));
+	}
+	if (alone && !m_wasAlone)
+	{
+		logRecentFrameCommands();
+	}
+	m_wasAlone = alone;
+}
+
+void Network::logRecentFrameCommands()
+{
+	for (RecentFrameCommand &rc : m_recentFrameCommands)
+	{
+		if (rc.onLogStream)
+		{
+			continue;
+		}
+		if (!m_transport.sendToLog(rc.bytes))
+		{
+			break;
+		}
+		rc.onLogStream = true;
+		++m_frameCommandsRelogged;
+	}
+}
+
+bool Network::newIncarnationTalking(int slot) const
+{
+	// a held slot whose new incarnation (a newer generation at the relay) this peer's transport was started afresh for
+	const SlotData &sd = m_slots[(size_t)slot];
+	return sd.held && !sd.handedOver && sd.resetGeneration > sd.memberGeneration && sd.resetGeneration == sd.seenGeneration;
+}
+
+void Network::checkRelayStatus()
+{
+	// the relay's STATUS (Transport relay mode; a LAN transport reports generation 0 for every slot): a newer generation of a slot means its game
+	// restarted and its player has a fresh ticket. While the slot is a member the old incarnation is gone (the disconnect path drops it without waiting
+	// for its timeout); once it is held, its transport streams start afresh so the new incarnation's REJOINREQUEST and frame data get through
+	for (int s = 0; s < MAX_SLOTS; ++s)
+	{
+		SlotData &sd = m_slots[(size_t)s];
+		if (s == m_config.localSlot || !sd.active)
+		{
+			continue;
+		}
+		const int gen = m_transport.peerGeneration(s);
+		if (gen > sd.seenGeneration)
+		{
+			sd.seenGeneration = gen;
+			if (!sd.disconnected && !hasLeft(s) && gen > sd.memberGeneration)
+			{
+				sd.restarted = true;
+				m_rejoinLog.push_back("slot " + std::to_string(s) + " restarted (generation " + std::to_string(gen) + ") while in the game");
+			}
+		}
+		if (sd.held && !sd.handedOver && sd.seenGeneration > sd.memberGeneration && sd.resetGeneration < sd.seenGeneration)
+		{
+			sd.resetGeneration = sd.seenGeneration;
+			m_transport.resetPeer(s);
+		}
+	}
+}
+
+void Network::routerRejoinDuties()
+{
+	// only the packet router of the frame its command would execute on decides (as for RUNAHEAD): it takes back a held slot that asked, or hands its army
+	// over (DESTROYPLAYER, retail's MSG_SELF_DESTRUCT { TRUE }) once the rejoin window has passed
+	const UnsignedInt nextExecution = std::max<UnsignedInt>(m_lastExecutionFrame, m_logicFrame + (UnsignedInt)runAheadAt(m_logicFrame));
+	if (m_config.localSlot != m_packetRouter || routerAt(nextExecution) != m_config.localSlot)
+	{
+		return;
+	}
+	const std::uint64_t t = now();
+	for (int s = 0; s < MAX_SLOTS; ++s)
+	{
+		SlotData &sd = m_slots[(size_t)s];
+		if (!sd.held || sd.handedOver || sd.rejoinIssued || s == m_config.localSlot)
+		{
+			continue;
+		}
+		if (sd.rejoinRequested)
+		{
+			NetCommandMsg c;
+			c.type = NETCOMMANDTYPE_REJOIN;
+			c.slot = (std::uint8_t)m_config.localSlot;
+			c.executionFrame = executionFrame(m_logicFrame);
+			c.targetSlot = (std::uint8_t)s;
+			send(c);
+			sd.rejoinIssued = true;
+			m_rejoinLog.push_back("took slot " + std::to_string(s) + " back at frame " + std::to_string(c.executionFrame) + " (packet router)");
+		}
+		else if (t - sd.heldSince >= (std::uint64_t)m_config.rejoinWindowMs)
+		{
+			m_rejoinLog.push_back("the rejoin window of slot " + std::to_string(s) + " ended: its army is handed over (packet router)");
+			sendPlayerDestruct(s);
+		}
+	}
+}
+
+void Network::applyRejoin(int slot, UnsignedInt joinFrame)
+{
+	// the REJOIN ran on joinFrame - 1 on every peer alike: the slot's new incarnation is waited for from joinFrame on. It never becomes packet router or
+	// decider again (its departure frame stays: routerAt, dropClaims)
+	SlotData &sd = m_slots[(size_t)slot];
+	sd.disconnected = false;
+	sd.held = false;
+	sd.restarted = false;
+	sd.leaveFrame = 0xFFFFFFFFu;
+	sd.joinFrame = joinFrame;
+	sd.loaded = true;
+	sd.memberGeneration = std::max(sd.memberGeneration, sd.seenGeneration);
+	sd.rejoinRequested = false;
+	sd.rejoinIssued = false;
+	sd.lastHeard = now();
+	while (!sd.frames.empty() && sd.frames.begin()->first < joinFrame)
+	{
+		sd.frames.erase(sd.frames.begin()); // what the old incarnation sent for frames it no longer runs
+	}
+	m_disconnect.slotRejoined(*this, slot);
+	m_rejoinLog.push_back("slot " + std::to_string(slot) + " rejoined at frame " + std::to_string(joinFrame));
+}
+
+void Network::requestPause()
+{
+	if (m_leaving || m_rejoining)
+	{
+		return;
+	}
+	// the pause frame is this peer's next execution frame: its frame info for that frame is sent after this command (in order on every link), so no peer
+	// can have run it, and every peer stops before it
+	const UnsignedInt p = executionFrame(m_logicFrame);
+	if (m_pauses.count(p))
+	{
+		return;
+	}
+	NetCommandMsg c;
+	c.type = NETCOMMANDTYPE_PAUSE;
+	c.slot = (std::uint8_t)m_config.localSlot;
+	c.frame = p;
+	sendDirect(c);
+	file(c, m_config.localSlot);
+}
+
+void Network::requestResume()
+{
+	if (m_pauses.empty())
+	{
+		return;
+	}
+	NetCommandMsg c;
+	c.type = NETCOMMANDTYPE_RESUME;
+	c.slot = (std::uint8_t)m_config.localSlot;
+	c.frame = m_pauses.begin()->first;
+	sendDirect(c);
+	file(c, m_config.localSlot);
+}
+
+void Network::setRejoining(int generation)
+{
+	m_rejoining = true;
+	m_rejoinGeneration = generation;
+	m_slots[(size_t)m_config.localSlot].memberGeneration = generation;
+}
+
+void Network::beginLive(const LiveStart &start)
+{
+	// the membership of the game so far, in the order the relay logged it (the order every peer applied it in: a drop, a leave and a rejoin are each
+	// decided on agreed data); then this client is a member from start.frame
+	const int local = m_config.localSlot;
+	// lane ONLINE-3 r2 (Sol r2 of ONLINE-3): the history changes membership and generations only, never the transport: this client's streams with the
+	// others are its current incarnation's (the relay started them afresh when it bound) and already carried the REJOINREQUEST and the frames before
+	// the switch; a reset or retire of a slot that is a member now would drop their queues and restart only this end's sequence numbers. Once the
+	// history is applied, the slots that are gone now (left, or dropped and not back) are retired, as a peer that saw it live has them
+	m_reconstructing = true;
+	for (const MembershipEvent &e : start.membership)
+	{
+		if (e.slot < 0 || e.slot >= MAX_SLOTS || !m_slots[(size_t)e.slot].active)
+		{
+			m_errors.push_back("a membership change of slot " + std::to_string(e.slot) + " in the log, which is not a network slot");
+			continue;
+		}
+		SlotData &sd = m_slots[(size_t)e.slot];
+		switch (e.kind)
+		{
+		case MembershipEvent::DROP:
+			if (e.slot == local)
+			{
+				passRouterRole(local, e.frame); // this slot's earlier incarnation was dropped: never router again
+			}
+			else if (!sd.disconnected)
+			{
+				disconnectPlayer(e.slot, e.frame);
+			}
+			break;
+		case MembershipEvent::LEAVE:
+			sd.leaveFrame = std::min(sd.leaveFrame, e.frame);
+			passRouterRole(e.slot, sd.leaveFrame);
+			break;
+		case MembershipEvent::REJOIN:
+			if (e.slot != local)
+			{
+				// as applyRejoin after checkRelayStatus on a peer that saw it live (Sol r1 of ONLINE-3: its generation unknown, the relay's STATUS
+				// made it look restarted again): this incarnation's generation is the member's, the seen and the reset one
+				sd.disconnected = false;
+				sd.held = false;
+				sd.restarted = false;
+				sd.leaveFrame = 0xFFFFFFFFu;
+				sd.joinFrame = e.frame + 1;
+				sd.memberGeneration = std::max(sd.memberGeneration, e.generation);
+				sd.seenGeneration = std::max(sd.seenGeneration, e.generation);
+				sd.resetGeneration = std::max(sd.resetGeneration, e.generation);
+			}
+			break;
+		case MembershipEvent::DESTROY:
+			sd.handedOver = true;
+			break;
+		}
+	}
+	m_reconstructing = false;
+	for (int s = 0; s < MAX_SLOTS; ++s)
+	{
+		const SlotData &sd = m_slots[(size_t)s];
+		if (s != local && sd.active && (sd.disconnected || sd.leaveFrame != 0xFFFFFFFFu))
+		{
+			m_transport.retire(s); // gone now: nothing more goes to it
+		}
+	}
+	SlotData &me = m_slots[(size_t)local];
+	me.joinFrame = start.frame;
+	me.leaveFrame = 0xFFFFFFFFu;
+	me.disconnected = false;
+	for (SlotData &sd : m_slots)
+	{
+		sd.loaded = sd.active;
+		while (!sd.frames.empty() && sd.frames.begin()->first < start.frame)
+		{
+			sd.frames.erase(sd.frames.begin());
+		}
+	}
+	m_lastRelayed = start.frame - 1;
+	m_relayedAny = true;
+	m_lastFrameAnnounced = (long long)start.frame - 1;
+	m_config.runAhead = start.runAhead;
+	m_baseRunAhead = start.runAhead;
+	m_runAheadHistory.clear();
+	m_lastExecutionFrame = 0;
+	m_logicFrame = start.frame;
+	m_rejoining = false;
+	// this slot's CRCs that execute in its frames (the others' for the same CRC frames are in theirs): the frame data and the reports
+	for (const LiveStart::Crc &crc : start.crcs)
+	{
+		GameMessage m(MSG_LOGIC_CRC, m_config.slotPlayerIndex[(size_t)local]);
+		m.appendIntegerArgument((int)crc.hash);
+		m.appendBooleanArgument(false);
+		NetCommandMsg c;
+		c.type = NETCOMMANDTYPE_GAMECOMMAND;
+		c.slot = (std::uint8_t)local;
+		c.executionFrame = crc.executionFrame;
+		c.message = std::make_shared<GameMessage>(m);
+		m_crcFrameOfExecution[crc.executionFrame] = crc.frame;
+		m_localHalves[crc.frame] = crc.half;
+		send(c);
+		m_lastExecutionFrame = std::max(m_lastExecutionFrame, crc.executionFrame);
+	}
+	m_disconnect.init(m_config.settings);
+	m_rejoinLog.push_back("rejoined: lockstep from frame " + std::to_string(start.frame) + " with run-ahead " + std::to_string(start.runAhead));
+}
+
+void Network::fillFromLog(int slot, UnsignedInt frame, const std::vector<std::shared_ptr<GameMessage>> &commands, int runAheadChange, const std::vector<int> &rejoins)
+{
+	if (slot < 0 || slot >= MAX_SLOTS || slot == m_config.localSlot || !m_slots[(size_t)slot].active || (m_relayedAny && frame <= m_lastRelayed))
+	{
+		return;
+	}
+	FrameData &fd = m_slots[(size_t)slot].frames[frame];
+	if (fd.fromResend || (fd.commandCount >= 0 && (size_t)fd.commandCount == fd.entries()))
+	{
+		return; // complete already (it came live)
+	}
+	fd.commands.clear();
+	for (const std::shared_ptr<GameMessage> &m : commands)
+	{
+		auto copy = std::make_shared<GameMessage>(*m);
+		if (copy->getType() != MSG_SELF_DESTRUCT)
+		{
+			copy->friend_setPlayerIndex(m_config.slotPlayerIndex[(size_t)slot]);
+		}
+		fd.commands.push_back(std::move(copy));
+	}
+	fd.runAheadChange = runAheadChange;
+	fd.rejoins = rejoins;
+	fd.commandCount = (int)fd.entries();
+	fd.fromResend = true;
+	++m_framesFilled;
+}
+
+std::vector<std::string> Network::onlineStopLines()
+{
+	return {
+		"[S-3900] reconnect: OpenBFME addition (RotWK 2.01 has none: a dropped player is gone, RW 0x8D57D8; RW 0x989449 lists no rejoin command): in an "
+		"online game a player the disconnect path drops after its timeout is held for a rejoin window of OpenBFME's choosing (5 minutes) and handed to an "
+		"ally (retail's MSG_SELF_DESTRUCT) by the packet router when it ends; a vote hands over at once; a restarted client rejoins by re-simulating the "
+		"relay's command log from frame 0 (no snapshots: a long game's catch-up grows with its length) and is never packet router again; the relay is "
+		"RotWK's ping test (RW 0x8D7C78) of an online game; LAN games keep retail's behaviour",
+		"[S-3901] multiplayer pause: OpenBFME addition: RotWK refuses to pause a multiplayer game (GameLogic::setGamePaused RW 0x625AF1 returns when "
+		"isInMultiplayerGame RW 0x441B7C (game mode + 0x110 is 1 or 5) or RW 0x610A21 holds; RW 0x989449 lists no pause command): any player pauses every "
+		"peer before one frame (PAUSE, direct) and any player resumes (RESUME); no per-player limit",
+		"[S-3902] spectators: retail's observer is a lobby slot (PLAYERTEMPLATE_OBSERVER) that plays in the lockstep; ported: with no slot of its own the "
+		"spectator's local player is the ReplayObserver side (replay mode, RW 0x6282F0), whose map is revealed (RW 0x62F91A), and observeNextPlayer "
+		"(RW 0x6A8D2B: the next human's view, RW 0xB4F440; inference: Player + 0x5C == 0 is a human). OpenBFME additions: an online spectator is no slot: "
+		"a spectator ticket (version 3) reads the relay's log (LOG_REQUEST: the log file is its buffer, nothing is queued per spectator, one silent for "
+		"30 s is dropped, nobody waits for one) from frame 0 and follows it, its CRCs compared with the players'; the host's delay holds the log back "
+		"by game frames (5 a second) behind the latest logged frame; the observed player's resources are a line on screen and Tab / Shift+Tab step "
+		"(the Palantir's ObserverStuff buttons, SetObserverStuffState RW 0x8003F6, are not driven; retail's key for the command was not located)",
+	};
 }
 
 std::vector<std::string> Network::stopLines()

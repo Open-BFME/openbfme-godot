@@ -11,7 +11,7 @@
 //   S-081  numeric parity: the movers mix x87 and SSE (moveForward RW 0x5E586F) and call the CRT / x87
 //          trigonometry; the facade reproduces the operation order and precision, but sin / cos / atan2 come
 //          from the platform libm (SimMath.h) and no retail oracle compares full sequences.
-//   S-084  movers and cases not ported: HOVER, SHIP, GIANT_BIRD, ScalesWalls look-ahead, ZAxisBehavior other
+//   S-084  movers and cases not ported: HOVER, SHIP, GIANT_BIRD's rotateTowardsPosition branch (the GIANT_BIRD movers: LocomotorGiantBird.cpp), ScalesWalls look-ahead, ZAxisBehavior other
 //          than NO_Z_MOTIVE_FORCE and its layer / projectile / falling special cases, the HORDE formation
 //          path nodes.
 
@@ -154,6 +154,7 @@ Locomotor::Locomotor(const LocomotorTemplate *tmpl)
 	: m_template(tmpl ? tmpl->getFinalOverride() : nullptr)
 	, m_closeEnoughDist(tmpl ? tmpl->getFinalOverride()->m_closeEnoughDist : 0.0f)
 	, m_matrix(LocomotorMatrix::identity())
+	, m_preferredHeight(tmpl ? tmpl->getFinalOverride()->m_preferredHeight : 0.0f) // lane FLY-1: RW 0x5E3DAA .. 0x5E3DB2 (template + 0x58 -> + 0x48)
 {
 	if (!m_template)
 	{
@@ -167,7 +168,7 @@ std::vector<std::string> Locomotor::allStops()
 		"S-081: locomotor numeric parity unproven: the movers mix x87 and SSE (moveForward RW 0x5E586F) and use the CRT / x87 sin, cos and atan2; "
 		"operation order and PC24 precision are reproduced through NumericState, the trigonometry is NumericState's deterministic double-double "
 		"(lane WIN-1: the same bits on every OS), not the retail CRT / x87 results.",
-		"S-084: locomotor cases not ported: HOVER, SHIP and GIANT_BIRD movers, the ScalesWalls look-ahead (RW 0x5E8956-0x5E8FF8), "
+		"S-084: locomotor cases not ported: HOVER and SHIP movers, the GIANT_BIRD branch of rotateTowardsPosition (the GIANT_BIRD movers are GiantBirdAIUpdate's, lane FLY-1), the ScalesWalls look-ahead (RW 0x5E8956-0x5E8FF8), "
 		"ZAxisBehavior other than NO_Z_MOTIVE_FORCE and the layer / projectile / falling special cases of RW 0x5E774A / 0x5E5785, "
 		"and the HORDE mover's formation path nodes (types 2, 3, 7, 8; RW 0x5E6E20-0x5E7148).",
 		"S-1750: maintainCurrentPosition (RW 0x5E7CC7) is ported without its tail: the held position's z behaviour (RW 0x5E76AC on +0x08) with its "
@@ -1298,4 +1299,12 @@ void Locomotor::crc(StateHasher &h) const
 	h.addFloat(m_maintainPosition.x); // lane EXIT-1
 	h.addFloat(m_maintainPosition.y);
 	h.addFloat(m_maintainPosition.z);
+	if (m_template->m_appearance == LOCO_GIANT_BIRD)
+	{
+		// lane FLY-1: the fields only the GIANT_BIRD movers write (hashed for those locomotors alone: every other game's hash is unchanged)
+		h.addFloat(m_preferredHeight);
+		h.addFloat(m_liftCap);
+		h.addFloat(m_hoverLift);
+		h.addFloat(m_hoverYaw);
+	}
 }

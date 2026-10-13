@@ -337,7 +337,7 @@ void parseLocomotorSet(INI *ini, void *instance, void *store, const void *userDa
 //   only), OTHER / WINGS 0x5E6835, the dispatcher 0x5E8865 (appearance table RW 0x5E91BA) and handleBehaviorZ
 //   0x5E76AC for NO_Z_MOTIVE_FORCE.
 // NOT ported (reported through Locomotor::unverified(), acceptance stops S-081, S-084):
-//   x87/SSE parity of the CRT trigonometry, HOVER / SHIP / GIANT_BIRD movers, the ScalesWalls look-ahead of the
+//   x87/SSE parity of the CRT trigonometry, HOVER / SHIP movers (GIANT_BIRD's: lane FLY-1, LocomotorGiantBird.cpp), the ScalesWalls look-ahead of the
 //   dispatcher (RW 0x5E8956-0x5E8FF8), every ZAxisBehavior other than NO_Z_MOTIVE_FORCE, the cliff / wading
 //   condition updates of RW 0x5E5785, and the HORDE mover's formation path nodes (types 2, 3, 7, 8).
 // =====================================================================================================
@@ -436,6 +436,34 @@ public:
 	virtual bool isScalingWall() const { return false; }
 };
 
+// lane FLY-1: the GIANT_BIRD movers (RW 0x5E91E2 the path mover, RW 0x5E4CD3 the hover; LocomotorGiantBird.cpp). They read GiantBirdAIUpdate's aerial fields
+// through AI vslot 0x188 (which returns the AI itself, RW 0x8CEF91) and a few object queries LocomotorHost does not have.
+struct GiantBirdFlight
+{
+	float speed = 0.0f;                    // AI + 0x5FC: the aerial speed (per frame)
+	float turnRate = 0.0f;                 // AI + 0x600: the blended turn
+	unsigned flags = 0;                    // AI + 0x57C (bit 7: MOVING whatever the distance to the anchor)
+	Coord3D anchor{ 0.0f, 0.0f, 0.0f };    // AI + 0x608: the end of the current aerial path
+};
+
+class GiantBirdLocomotorHost : public LocomotorHost
+{
+public:
+	virtual GiantBirdFlight *aerialFlight() = 0;                      // AI vslot 0x188 (null without a GiantBirdAIUpdate)
+	virtual bool aerialQuery(float distance, Coord3D &out) = 0;       // RW 0x777DAE on the AI's spline (+ 0x58C)
+	virtual Coord3D aerialPathEnd() const = 0;                        // the spline's end point (+ 0x58C + 0x54)
+	virtual bool aerialHigh() const = 0;                              // RW 0x769F24: well above the preferred height
+	virtual float boundingSphereRadius() const = 0;                   // obj + 0xBC
+	virtual float relativeAngle2D(const Coord3D &p) const = 0;        // RW 0x4B3D8D
+	virtual void setTransformAtOnce(const LocomotorMatrix &m) = 0;   // RW 0x70BBA3 (NonDirtyTransform: the transform before the angle queries)
+	virtual float heightAboveTerrainOrWater() const = 0;              // RW 0x70BC8F
+	virtual std::uint32_t objectId() const = 0;                       // obj + 0x74
+	virtual float logicRandomReal(float lo, float hi, int line) = 0;  // RW 0x6D332C
+	virtual void setOrientation(float angle) = 0;                     // RW 0x70C31E
+	virtual void setPositionZ(float z) = 0;                           // RW 0x70C0AD with the object's x, y
+	virtual bool hasBody() const = 0;                                 // obj + 0x25C
+};
+
 // Locomotor instance flag bits (RW +0x44).
 enum LocomotorFlags
 {
@@ -482,6 +510,19 @@ public:
 	// locomotor's turn rate.
 	void rotateTowardsWrapper(LocomotorHost &host, const Coord3D &goal, float *outRelAngle);
 	void handleBehaviorZ(LocomotorHost &host, const Coord3D &goal);                                                       // RW 0x5E76AC
+	// ---- lane FLY-1: the GIANT_BIRD movers (LocomotorGiantBird.cpp) ----
+	// RW 0x5E91E2: one step along GiantBirdAIUpdate's aerial path: `pathDistance` advances by the aerial speed, the object goes to the path's point there
+	// (turned and pitched by the points half a look-ahead behind and ahead), the speed moves toward `goalSpeed`; true when the path is used up (the AI's
+	// "reached" byte)
+	bool giantBirdFollowPath(GiantBirdLocomotorHost &host, float goalSpeed, float &pathDistance);
+	// RW 0x5E4CD3: the bob in place of an idle GIANT_BIRD (the preferred height plus a wave, a small random yaw)
+	void giantBirdHover(GiantBirdLocomotorHost &host);
+	// RW 0x5E3796: locomotor set speed x MinSpeed x seconds per frame (x87)
+	float getMinSpeed(const LocomotorHost &host) const;
+	// RW 0x5E37D4: seconds per frame squared x Lift (LiftDamaged from the movement-penalty damage state on) x locomotor set speed, capped at + 0x24
+	float getLiftLimit(const LocomotorHost &host) const;
+	float preferredHeight() const { return m_preferredHeight; }           // + 0x48
+	void setPreferredHeight(float h) { m_preferredHeight = h; }
 	// RW 0x5E3A81: the working matrix becomes a rotation of `angle` about Z, translation kept.
 	void setMatrixAngle(float angle);
 
@@ -535,5 +576,10 @@ private:
 	bool m_byte9a = false;              // +0x9A (HORDE mover formation state)
 	int m_turnDirection = 0;            // +0xA8
 	Coord3D m_preferredPoint{ 0.0f, 0.0f, 0.0f }; // +0x14
+	// lane FLY-1 (RW ctor 0x5E3D00): + 0x48 the template's PreferredHeight, + 0x24 the lift cap (99999, RW 0xBF3C58), + 0xA0 / + 0xA4 the hover's lift and yaw
+	float m_preferredHeight = 0.0f;
+	float m_liftCap = 99999.0f;
+	float m_hoverLift = 0.0f;
+	float m_hoverYaw = 0.0f;
 	std::vector<std::string> m_unverified;
 };

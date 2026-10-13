@@ -23,6 +23,7 @@
 #include "GameLogic/Module/AttachUpdate.h"
 #include "GameLogic/ScriptEngine/ScriptActions.h"
 #include "GameLogic/ScriptEngine/ScriptEngine.h"
+#include "GameNetwork/LockstepDriver.h"
 
 #include <godot_cpp/classes/file_access.hpp>
 #include <filesystem>
@@ -192,6 +193,38 @@ Dictionary GameWorld::start_campaign_mission(const Dictionary &options)
 		}
 	}
 	report["stops"] = stops;
+	m_campaignStart.campaign = progress.campaign; // lane SAVE-2: what a save of this mission starts again
+	m_campaignStart.map = mission->map;
+	m_campaignStart.mission = progress.mission;
+	m_campaignStart.difficulty = progress.difficulty;
+	if (boolOpt(options, "record_memory", false))
+	{
+		// lane SAVE-2: the mission is recorded in memory (not as a replay: a replay starts from a NewGameMessage, S-4002's former gap) so it can be saved;
+		// the recording driver is the one every skirmish runs behind (MP-1's LockstepDriver without a network: the local commands run on the next frame)
+		m_localWriter = std::make_unique<ReplayWriter>();
+		m_localWriter->setKeepCopy(true);
+		ReplayHeader h;
+		h.game.game.mapName = mission->map;
+		h.game.game.seed = lo.seed;
+		h.game.game.simulationProfile = lo.simulationProfile; // a mission runs Faithful whatever the player's option (UBER-1)
+		h.recordingSlot = 0;
+		h.algorithm = RandomAlgorithm::ZH_CarryChain;
+		h.profile = profileIdentityFor(lo.simulationProfile);
+		std::string error;
+		if (!m_localWriter->open(std::string(), h, &error))
+		{
+			Array errors = report.get("errors", Array());
+			errors.push_back(g("recording: " + error));
+			report["errors"] = errors;
+			m_localWriter.reset();
+		}
+		else
+		{
+			m_localDriver = std::make_unique<LockstepDriver>(nullptr, m_localWriter.get());
+			RegisterLogicCRCHandler(m_game->dispatch());
+			m_game->setFrameDriver(m_localDriver.get());
+		}
+	}
 	startEndGame(); // lane END-1: the end sequence (its script side takes the map scripts' VICTORY / DEFEAT, EndGameView)
 	return report;
 }

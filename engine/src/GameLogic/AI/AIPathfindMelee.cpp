@@ -70,6 +70,26 @@ bool Pathfinder::meleeFootprintFree(const PathfindObject &obj, int x, int y, Pat
 	return true;
 }
 
+bool Pathfinder::meleeReachCells(const PathfindObject &unit, const Coord3D &from, const PathfindObject &target, int rangeCells)
+{
+	auto box = [&](const PathfindObject &o, const Coord3D &at, ICoord2D &lo) {
+		const int size = footprintSize(&o); // RW 0x6EAF79
+		ICoord2D cell;
+		Coord3D p = at;
+		worldToCell(&p, (size & 1) != 0, &cell); // RW 0x6ECFDE: RW 0x6ECFC5 (odd -> centred), RW 0x6E8CE6
+		lo.x = cell.x + size / -2;               // idiv by -2 (C truncation)
+		lo.y = cell.y + size / -2;
+		return size;
+	};
+	ICoord2D u, t;
+	const int sizeU = box(unit, from, u);
+	const int sizeT = box(target, target.getPosition(), t);
+	const int uLoX = u.x - rangeCells, uLoY = u.y - rangeCells;
+	const int uHiX = u.x + sizeU + rangeCells, uHiY = u.y + sizeU + rangeCells;
+	const int tHiX = t.x + sizeT, tHiY = t.y + sizeT;
+	return uLoX <= tHiX && t.x <= uHiX && uLoY <= tHiY && t.y <= uHiY;
+}
+
 bool Pathfinder::adjustToMeleeDestination(const PathfindObject &obj, const PathfindLocomotorInfo &loco, Coord3D *dest)
 {
 	int radius = 0;
@@ -189,7 +209,7 @@ bool Pathfinder::adjustToMeleeDestination(const PathfindObject &obj, const Pathf
 //     accepted when marked or |dest - point| + 20 <= d0: RW 0x6F3C87 (adjustToPossibleDestination) on the point, dest = point, true; else false.
 // INFERENCE (stop S-787): RW 0x68C9AC is the target's position; RW 0x667C76 is false; RW 0x6EA0EC's WALK_ON_TOP_OF_WALL cell test (RW 0x6E82B3) is the obstacle test;
 // RW 0x6F3082 is checkDestination with no other unit's goal in it; RW 0x938939's obstacle-zone mapping and the siege-deploy branches (RW 0x863983 / 0x8C9C01) are
-// not ported; RW 0x6FB754's line callback (RW 0x6EAF14 / 0x6F807D) is the port's isLinePassable; RW 0x6F5BB0 is clientSafeQuickDoesPathExist; RW 0x6EAD32 is false
+// not ported; RW 0x6FB754 is canApproachToTarget (lane PLAY-4, its callback RW 0x6F61BD in AIPathfindSearch.cpp); RW 0x6F5BB0 is clientSafeQuickDoesPathExist; RW 0x6EAD32 is false
 // and only the ground layer exists (S-161).
 
 #include "GameLogic/AI/AIPathfindHost.h"
@@ -426,28 +446,13 @@ bool Pathfinder::findMeleeEngagementLocation(const PathfindObject &obj, const Pa
 	}
 }
 
-bool Pathfinder::meleeBackOff(PathfindObject &obj, const PathfindLocomotorInfo &loco, float weaponRange, Coord3D *dest)
+bool Pathfinder::meleeBackOff(PathfindObject &obj, const PathfindLocomotorInfo &loco, float weaponRange, Coord3D *dest, bool meleeWeapon)
 {
 	const Coord3D pos = obj.getPosition();
 	const float d0 = lengthOf(SimMath::subf32(dest->x, pos.x), SimMath::subf32(dest->y, pos.y), 0.0f);
-	// RW 0x6FB754: the target area is open when a line from dest to one of the 8 points around it at max(150, the weapon's range) is passable
-	bool open = false;
-	{
-		const float r = 150.0f < weaponRange ? weaponRange : 150.0f;
-		for (int i = -1; i < 2 && !open; ++i)
-		{
-			for (int j = -1; j < 2 && !open; ++j)
-			{
-				if (i == 0 && j == 0)
-				{
-					continue;
-				}
-				const Coord3D q{ SimMath::addf32(SimMath::mulf32(SimMath::sseFromInt32(i), r), dest->x), SimMath::addf32(SimMath::mulf32(SimMath::sseFromInt32(j), r), dest->y),
-					dest->z };
-				open = isLinePassable(&obj, loco.validSurfaces, LAYER_GROUND, *dest, q, false);
-			}
-		}
-	}
+	// RW 0x6FB754 (lane PLAY-4: CanApproachToTarget ported; PHYS-1 had taken isLinePassable for it, whose goal reservations of other units closed every
+	// line out of a horde, so a lone melee unit never got near a horde member)
+	const bool open = canApproachToTarget(obj, loco, *dest, weaponRange, meleeWeapon);
 	if (open && clientSafeQuickDoesPathExist(loco, &pos, dest))
 	{
 		return true;

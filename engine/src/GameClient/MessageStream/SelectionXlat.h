@@ -17,6 +17,8 @@
 // and MSG_SELECT_TEAMn and selects the members the local player controls; ADD_TEAMn sends MSG_ADD_TEAMn and selects every live member; a second press of
 // the same group within 5 logic frames (RW 0xD9F608) looks at the group's last live member instead, for SELECT only while the selection has not changed
 // since the last group press and the whole group is still selected; VIEW_TEAMn looks at the group for n = 1 .. 9 only.
+// Lane HUD-7: a left click that picks nothing deselects in the alternate mouse setup unless a targeting GUI command waits (RW 0x83C44F .. 0x83C4B9, see leftClick);
+// RotWK's translator has no key case, so Esc does not deselect (its only CommandMap.ini binding is Shift+Esc, RELOAD_RAPID_ITERATION_FEATURE).
 // The rest of the translator (the clicks, the drag box) was not compared with RotWK (stop S-280); the double click selects units of the same template on the screen (ZH selectMatchingAcrossScreen:
 // here the objects of the same template whose position projects on the screen) and the alt key across the map.
 

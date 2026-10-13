@@ -21,6 +21,16 @@
 ##   ghosts    (lane PLAY-3) the builder is selected by a click; for every DOZER_CONSTRUCT button of its command set (every structure it builds freely) the
 ##             button is clicked, the pointer moves over the ground around the citadel: the placement ghost (the HUD's PlacementGhostRenderer, RotWK RW 0x69C5E6 /
 ##             RW 0x6A2AE5) shows that structure under the pointer; a right click ends the placement. Run per faction with --faction
+##   selperf   (lane SELPERF-1, the owner's "select a bunch of troops, fps drops to 25-12"; a tester: "only while they move") 150 hordes of the local
+##             player in a block; for 1, 10, 50 and 150 selected, pairs of 1 s windows with nothing and with n selected (alternating which goes first,
+##             --selperf-reps=5 pairs) in each phase: idle, pan (the camera circles), march (before every window Q selects the army and a right click
+##             orders it on; the window is the frames the move hint is drawn in, 41 rendered frames; the camera following) and waypoints (the same with Alt held, RotWK's ORDERMODE_WAYPOINT: three
+##             queued clicks; the logic's queue of them is stop S-281's). Per phase and n, medians of the pairs: the main thread's CPU time per frame
+##             (FAIL above x1.10, --selperf-budget), the GPU's extra time (FAIL above 10% of the unselected frame) and, with --selperf-gate-wall=1 (a
+##             quiet machine), the wall time per frame (FAIL above x1.10). A window counts only with n selected from its start to its end, the army moving
+##             in it (marching), the hint drawn in 20 of its frames (a fresh order) and the CPU time present in 80% of its frames (else it is done again
+##             with a new order, or the run fails). --selperf-gate-cpu=0 (Windows: thread time in 15.6 ms steps), --selperf-deadline=<s> (a FAIL, not a kill).
+##             --selperf-at=x,y places the block, --selperf-phases=a,b / --selperf-counts=1,50 pick; play1-selperf-<phase>-150.png with --screens
 ##   dragbox   (lane PLAY-3) a left drag around the local units on the screen: while the button is held the drag box is drawn (RotWK's
 ##             W3DInGameUI::drawSelectionRegion RW 0x48ECF4: the region from the press to the pointer, 0xBBFFBB33, lines of width 2) and follows the pointer;
 ##             the release selects the own units inside and no structure, and the box is gone
@@ -926,6 +936,438 @@ func _scenario_selection() -> String:
 		if int(e.get("object", 0)) != hero.id:
 			return "a hovered unit got a marker: %s" % JSON.stringify(hov)
 	return ""
+
+
+# ---- lane SELPERF-1: the frame time of a large selection ----------------------------------------------------------------------------------------------
+
+const SELPERF_COUNTS := [1, 10, 50, 150]
+const SELPERF_HORDES := ["GondorFighterHorde", "RohanPeasantHorde", "MordorOrcFighterHorde", "AngmarRhudaurAxeThrowerHorde", "IsengardUrukHaiHorde"]
+const SELPERF_PHASES := ["idle", "pan", "march", "waypoints"]
+
+var _selperf_ids := PackedInt64Array()
+var _selperf_centre := Vector2()
+var _selperf_target := Vector2()
+var _selperf_dir := 1.0 # the march's direction along the map's x
+var _selperf_stalled := false # the army stopped: the next march window orders it on
+var _selperf_bad_selection := 0 # windows in a row whose selection changed
+var _selperf_deadline := 0     # --selperf-deadline=<s>: the msec the run stops by (0: none)
+var _selperf_gate_cpu := true  # --selperf-gate-cpu=0: CPU time not judged (Windows: its thread time steps by 15.6 ms)
+var _selperf_orders := 0
+
+
+func _selperf_arg(name: String, default: String) -> String:
+	for a in OS.get_cmdline_user_args():
+		if a.begins_with("--%s=" % name):
+			return a.substr(name.length() + 3)
+	return default
+
+
+## the army's middle (three hordes of the block: the camera follows it while it marches)
+func _selperf_army() -> Vector2:
+	var sum := Vector2()
+	var k := 0
+	for i in [0, _selperf_ids.size() / 2, _selperf_ids.size() - 1]:
+		var o: Dictionary = world.get_object(_selperf_ids[i])
+		if not o.is_empty():
+			sum += Vector2(float(o.get("x", 0.0)), float(o.get("y", 0.0)))
+			k += 1
+	return sum / maxf(k, 1)
+
+
+func _key_event(code: Key, down: bool, alt: bool) -> InputEventKey:
+	var e := InputEventKey.new()
+	e.keycode = code
+	e.physical_keycode = code
+	e.pressed = down
+	e.alt_pressed = alt
+	return e
+
+
+## a player's order to the whole army: Q (SELECT_ALL, RotWK's CommandMap: the logic's group of every unit), then a right click on empty ground at the
+## target (a move order and its hint), or with Alt held (ORDERMODE_WAYPOINT, RW 0x820249: MSG_CHANGE_ORDERMODE, the clicks queued orders) three clicks in
+## a row; the army walks
+## back and forth along the map's x
+func _selperf_order(waypoints: bool) -> String:
+	_selperf_orders += 1
+	Input.parse_input_event(_key_event(KEY_Q, true, false))
+	await game._step(1)
+	Input.parse_input_event(_key_event(KEY_Q, false, false))
+	await game._step(2)
+	# the targets: the far end of the march's leg along the map's x, --selperf-band=1300 either side of the block's place (Evendim: the open grass strip along the
+	# northern edge, the citadel to the south; a target just ahead of an 825-wide army stops its front row and jams the rest), empty ground (no horde
+	# within 70: a right click on an own unit selects it); the army turns round when its leading edge is within 350 of the end. Some ground takes no
+	# order (an obstacle, impassable ground: no move message): the next candidate is tried
+	var mid := _selperf_middle()
+	var lead := -1.0e9
+	for id in _selperf_ids:
+		var o: Dictionary = world.get_object(id)
+		lead = maxf(lead, _selperf_dir * float(o.get("x", 0.0)))
+	if _selperf_dir * _selperf_centre.x + float(_selperf_arg("selperf-band", "1300")) - lead < 350.0:
+		_selperf_dir = -_selperf_dir
+	var cands: Array = []
+	var band := float(_selperf_arg("selperf-band", "1300"))
+	for reach in [band, band - 200.0, band - 400.0]:
+		for dy in [0.0, -120.0, 120.0, -240.0]:
+			cands.append([Vector2(_selperf_centre.x + _selperf_dir * reach, _selperf_centre.y + dy), _selperf_dir])
+	var tried := 0
+	for c in cands:
+		var cand: Vector2 = c[0]
+		var clear := true
+		for id in _selperf_ids:
+			var o: Dictionary = world.get_object(id)
+			if Vector2(float(o.get("x", 0.0)), float(o.get("y", 0.0))).distance_to(cand) < 70.0:
+				clear = false
+				break
+		if not clear:
+			continue
+		hud.camera_look_at(cand)
+		await game._step(2)
+		var px := to_pixel(cand.x, cand.y).floor()
+		if not on_screen(px):
+			continue
+		for attempt in 2:
+			tried += 1
+			if attempt > 0:
+				# just after a logic frame finished (a long frame between the press and the release makes a click a hold: Mouse.ini DragToleranceMS 150)
+				var f := int(world.get_frame())
+				var waited := 0
+				while int(world.get_frame()) == f and waited < 300:
+					await game.get_tree().process_frame
+					waited += 1
+			var before := log_count("MSG_DO_MOVETO") + log_count("MSG_ADD_WAYPOINT")
+			# a pointer that moved since the last click (each order clicks a few pixels from the last)
+			var j := Vector2(float((_selperf_orders * 7 + tried * 13) % 31) - 15.0, float((_selperf_orders * 5 + tried * 11) % 21) - 10.0)
+			if waypoints:
+				Input.parse_input_event(_key_event(KEY_ALT, true, true))
+				await game._step(2)
+				for off in [Vector2(-90, 0), Vector2(0, 40), Vector2(90, 0)]:
+					await move_to(px + off + j)
+					await _selperf_click(px + off + j)
+				Input.parse_input_event(_key_event(KEY_ALT, false, false))
+				await game._step(1)
+			else:
+				await move_to(px + j + Vector2(40, 40))
+				await move_to(px + j)
+				await _selperf_click(px + j)
+			# the input waits while the logic worker computes a frame: up to 3 s for the message
+			for t in 90:
+				if waypoints and log_count("MSG_CHANGE_ORDERMODE i1 i0") == 0 and log_count("MSG_DO_MOVETO") > before:
+					return "Alt held gave no queued order mode (MSG_CHANGE_ORDERMODE 1, 0: RotWK's ORDERMODE_WAYPOINT, RW 0x820249)"
+				if log_count("MSG_DO_MOVETO") + log_count("MSG_ADD_WAYPOINT") > before:
+					_selperf_target = cand
+					_selperf_dir = float(c[1])
+					return ""
+				await game._step(2)
+	return "no %s order was taken at any of %d places ahead of the army (%d clicks; the army's middle %s)" % ["waypoint" if waypoints else "move", cands.size(),
+		tried, mid]
+
+
+## a right click: the press, one rendered frame, the release (the HUD sees the press in a frame of its own). A marching army's long frame between the two
+## makes it a hold (Mouse.ini DragToleranceMS 150): the order is clicked just after a logic frame finished, and tried again when no order came
+func _selperf_click(p: Vector2) -> void:
+	press(p, MOUSE_BUTTON_RIGHT, true)
+	await game.get_tree().process_frame
+	press(p, MOUSE_BUTTON_RIGHT, false)
+	await game._step(3)
+
+
+## one window of render frames: the wall time of each, the GPU's time (0 headless) and the C++ parts the HUD and the world report; `camera`: "", "pan"
+## (a circle around the block) or "follow" (over the marching army)
+## hint_only: the window is the frames in which the order's move hint is drawn (InGameUI: younger than 41 client frames, one client frame per HUD
+## update, i.e. per rendered frame: RW 0x48EDFF): it ends when the hint dies; fewer than 20 such frames is an error
+func _selperf_window(phase: String, n: int, seconds: float, camera: String, hint_only := false) -> Dictionary:
+	var times: Array = []
+	var live_frames := 0
+	var cpu_valid := 0
+	var gpu: Array = []
+	var cpu: Array = []
+	var hud_times: Array = []
+	var parts := {}
+	var vp_rid: RID = _vp().get_viewport_rid()
+	RenderingServer.viewport_set_measure_render_time(vp_rid, true)
+	var start := _selperf_middle()
+	var selected_start: int = hud.get_selection().size()
+	if shell != null and shell.has_method("reset_timing"):
+		shell.reset_timing() # the Palantir movie's display list rebuilds (AptMenuPlayer.get_stats)
+	var t0 := Time.get_ticks_usec()
+	var prev := t0
+	var i := 0
+	while (hint_only and times.size() < 600) or (not hint_only and (Time.get_ticks_usec() - t0 < int(seconds * 1.0e6) or times.size() < 8)):
+		if camera == "pan":
+			hud.camera_look_at(_selperf_centre + Vector2(cos(i * 0.02), sin(i * 0.02)) * 220.0)
+		elif camera == "follow":
+			hud.camera_look_at(_selperf_army())
+		await game.get_tree().process_frame
+		var now := Time.get_ticks_usec()
+		times.append((now - prev) / 1000.0)
+		prev = now
+		i += 1
+		var h: Dictionary = hud.get_frame_timings()
+		var w: Dictionary = world.get_frame_timings()
+		if hint_only:
+			var live := false
+			for e in hud.get_move_hints().get("hints", []):
+				live = live or int(e.get("age", 99)) < 41
+			if not live:
+				times.pop_back() # the frame after the hint's last: not the hint's
+				break
+			live_frames += 1
+		if float(w.get("main_cpu_ms", 0.0)) > 0.0:
+			cpu_valid += 1
+		hud_times.append(float(h.get("hud_update_ms", 0.0)))
+		gpu.append(RenderingServer.viewport_get_measured_render_time_gpu(vp_rid))
+		cpu.append(float(w.get("main_cpu_ms", 0.0)))
+		for k in ["hud_update_ms", "hud_palantir_ms", "hud_seldecals_ms", "hud_decals_ms", "hud_iconui_ms"]:
+			parts[k] = parts.get(k, 0.0) + float(h.get(k, 0.0))
+		for k in ["logic_ms", "sync_ms", "main_cpu_ms"]:
+			parts[k] = parts.get(k, 0.0) + float(w.get(k, 0.0))
+	var med := func(a: Array) -> float:
+		var v := a.duplicate()
+		v.sort()
+		return float(v[int(0.5 * (v.size() - 1))])
+	var m := times.size()
+	var apt_ms := 0.0
+	var apt_rebuilds := 0
+	if shell != null and shell.has_method("get_stats"):
+		var st: Dictionary = shell.get_stats()
+		apt_rebuilds = int(st.get("rebuilds", 0))
+		apt_ms = (float(st.get("list_us", 0.0)) + float(st.get("canvas_us", 0.0)) + float(st.get("submit_us", 0.0))) * apt_rebuilds / 1000.0 / maxf(m, 1) \
+			+ float(st.get("steps_us", 0.0)) / 1000.0
+		parts["apt_ms"] = apt_ms * m
+		parts["apt_rebuilds"] = float(apt_rebuilds)
+		parts["apt_ops"] = float(st.get("last_ops", 0)) * m
+		for k in ["steps_us", "list_us", "canvas_us", "submit_us"]:
+			parts["apt_" + k] = float(st.get(k, 0.0)) * m
+		parts["apt_unchanged"] = float(st.get("unchanged_frames", 0))
+	var selected_end: int = hud.get_selection().size()
+	var out := {"phase": phase, "n": n, "selected": selected_end, "decals": int(hud.get_frame_timings().get("sel_decals", 0)), "frames": m,
+		"p50": med.call(times) if m > 0 else 0.0, "gpu_p50": med.call(gpu), "cpu_p50": med.call(cpu), "hud_p50": med.call(hud_times),
+		"moved": _selperf_middle().distance_to(start), "live_frames": live_frames, "cpu_valid": cpu_valid,
+		"selected_ok": selected_start == n and selected_end == n,
+		"max": times.max() if m > 0 else 0.0, "mean": (Time.get_ticks_usec() - t0) / 1000.0 / maxf(m, 1)}
+	var line := "SELPERF %s selected=%d decals=%d frames=%d frame p50 %.2f main cpu p50 %.2f (%d valid) gpu p50 %.2f hud p50 %.3f moved in the window %.1f live hint frames %d max %.1f |" % [
+		phase, out.selected, out.decals, m, out.p50, out.cpu_p50, cpu_valid, out.gpu_p50, out.hud_p50, out.moved, live_frames, out.max]
+	for k in parts.keys():
+		line += " %s=%.3f" % [k, parts[k] / m]
+	print(line)
+	return out
+
+
+## the middle of every horde of the block (did the army march)
+func _selperf_middle() -> Vector2:
+	var mid := Vector2()
+	for id in _selperf_ids:
+		var o: Dictionary = world.get_object(id)
+		mid += Vector2(float(o.get("x", 0.0)), float(o.get("y", 0.0)))
+	return mid / maxf(_selperf_ids.size(), 1)
+
+
+## one window of `n` selected in a phase. A march window whose army did not move is done again with a new order, up to six times (150 hordes that
+## turn round at the band's end jam for a few orders as they pass through each other, then walk on)
+func _selperf_measure(phase: String, n: int) -> Dictionary:
+	var w: Dictionary = {}
+	for attempt in 7:
+		w = await _selperf_measure_once(phase, n)
+		if not w.has("stalled"):
+			return w
+		print("SELPERF %s: the window does not count (selected %d: the army did not move in it, or its move hint was drawn in too few frames), again with a new order" % [phase, n])
+	return {"error": "the army did not march after seven %s orders (selected %d)" % [phase, n]}
+
+
+## one window of `n` selected in a phase: the march phases give the army a fresh order first (its move hint is live through the window)
+func _selperf_measure_once(phase: String, n: int) -> Dictionary:
+	if _selperf_deadline > 0 and Time.get_ticks_msec() > _selperf_deadline:
+		return {"error": "out of time (--selperf-deadline): the run stops before %s %d" % [phase, n]}
+	var marching := phase == "march" or phase == "waypoints"
+	var once := _selperf_arg("selperf-march-once", "0") == "1"
+	if marching:
+		# --selperf-march-once=1: the army walks on from one order (given again only when it stopped): no click per window (a build whose frames
+		# take a second makes every click a hold: the before of this lane)
+		if not once or _selperf_stalled:
+			var r: String = await _selperf_order(phase == "waypoints")
+			if r != "":
+				return {"error": r}
+		_selperf_stalled = false
+	hud.select_objects(_selperf_ids.slice(0, n))
+	var fresh := marching and not once
+	if not fresh:
+		# a held selection: the window starts once the command bar the selection brought up has settled (1 s)
+		if not marching:
+			hud.camera_look_at(_selperf_centre)
+		var settle := Time.get_ticks_msec()
+		while Time.get_ticks_msec() - settle < 1000:
+			await game.get_tree().process_frame
+	# a fresh order: the window is the frames its move hint is drawn in (41 rendered frames from the order)
+	var w: Dictionary = await _selperf_window(phase, n, 1.0, {"idle": "", "pan": "pan", "march": "follow", "waypoints": "follow"}[phase], fresh)
+	# the window is valid: the selection is n from its start to its end; the army moved during it (marching); the hint was drawn in 20 frames or more
+	# (a fresh order); the main thread's CPU time was there in 80% of its frames (judged on it)
+	if not w.selected_ok:
+		# the selection changed during the window (a windowed run: the system pointer's own events): the window does not count, it is done again
+		var sel: Array = hud.get_selection()
+		var what: Array = []
+		for id in sel.slice(0, 4):
+			what.append("%s %s" % [str(id), str(world.get_object(int(id)).get("template", "?"))])
+		print("SELPERF %s %d: the selection was not %d through the window (%d at its end: %s), again" % [phase, n, n, int(w.selected), ", ".join(what)])
+		_selperf_bad_selection += 1
+		if _selperf_bad_selection >= 3:
+			return {"error": "%s %d: the selection was not %d through three windows in a row (%d at the end: %s)" % [phase, n, n, int(w.selected), ", ".join(what)]}
+		w["stalled"] = true
+		return w
+	_selperf_bad_selection = 0
+	if _selperf_gate_cpu and int(w.cpu_valid) < int(0.8 * float(w.frames)):
+		return {"error": "%s %d: the main thread's CPU time was missing in %d of %d frames" % [phase, n, int(w.frames) - int(w.cpu_valid), int(w.frames)]}
+	if fresh and int(w.live_frames) < 20:
+		w["stalled"] = true
+		_selperf_stalled = true
+		print("SELPERF %s: the move hint was drawn in %d frames of the window only" % [phase, int(w.live_frames)])
+		return w
+	if marching and float(w.moved) < 2.0:
+		w["stalled"] = true
+		_selperf_stalled = true
+	return w
+
+
+func _scenario_selperf() -> String:
+	await _headless_window()
+	if game._local_index < 0:
+		return "no local player index"
+	var spot := Vector2()
+	for o in world.get_player_objects(game._local_name):
+		if not o.structure:
+			spot = Vector2(o.x, o.y)
+			break
+	_selperf_centre = spot + Vector2(0, 420)
+	var at := _selperf_arg("selperf-at", "")
+	if at != "":
+		_selperf_centre = Vector2(float(at.split(",")[0]), float(at.split(",")[1]))
+	var reps := int(_selperf_arg("selperf-reps", "5"))
+	_selperf_gate_cpu = _selperf_arg("selperf-gate-cpu", "1") == "1"
+	var deadline_s := float(_selperf_arg("selperf-deadline", "0"))
+	_selperf_deadline = Time.get_ticks_msec() + int(deadline_s * 1000.0) if deadline_s > 0.0 else 0
+	var budget := float(_selperf_arg("selperf-budget", "0.10"))
+	var phases := _selperf_arg("selperf-phases", ",".join(SELPERF_PHASES)).split(",")
+	var counts: Array = []
+	for c in _selperf_arg("selperf-counts", ",".join(SELPERF_COUNTS.map(func(x): return str(x)))).split(","):
+		counts.append(int(c))
+	_selperf_ids = PackedInt64Array()
+	for r in 10:
+		for c in 15:
+			var h := _create_first(SELPERF_HORDES, _selperf_centre + Vector2((c - 7) * 55.0, (r - 4.5) * 55.0))
+			if not h.is_empty():
+				_selperf_ids.append(h.id)
+	if _selperf_ids.size() < SELPERF_COUNTS.back():
+		return "created only %d of %d hordes" % [_selperf_ids.size(), SELPERF_COUNTS.back()]
+	print("SELPERF %d hordes of %s around %s, %d objects" % [_selperf_ids.size(), str(world.get_object(_selperf_ids[0]).get("template", "")), _selperf_centre,
+		world.get_object_count()])
+	await game._step(150) # the hordes form up
+	if _selperf_arg("selperf-overview", "0") == "1":
+		# --selperf-overview=1 (with --screens): the ground around the block from high above (choosing a march route on another map)
+		hud.set_free_camera(true)
+		hud.camera_look_at(_selperf_centre)
+		hud.camera_set_height(3000.0)
+		await game._step(30)
+		shot("selperf-overview")
+		print("SELPERF overview: centre %s; pixel of the centre %s, of +1000 x %s, of +1000 y %s" % [_selperf_centre, to_pixel(_selperf_centre.x, _selperf_centre.y),
+			to_pixel(_selperf_centre.x + 1000, _selperf_centre.y), to_pixel(_selperf_centre.x, _selperf_centre.y + 1000)])
+
+	# one camera height for every window: the whole block on the screen
+	hud.set_free_camera(true)
+	var height := 0.0
+	var fits := false
+	for hgt in [500.0, 650.0, 800.0, 1000.0, 1300.0]:
+		height = hgt
+		hud.camera_look_at(_selperf_centre)
+		hud.camera_set_height(height)
+		await game._step(10)
+		fits = true
+		for id in _selperf_ids:
+			var o: Dictionary = world.get_object(id)
+			fits = fits and on_screen(to_pixel(float(o.get("x", 0.0)), float(o.get("y", 0.0))))
+		if fits:
+			break
+	if not fits:
+		return "the block does not fit on the screen"
+	print("SELPERF the camera %.0f above the ground; %d repetitions; phases %s" % [height, reps, ",".join(phases)])
+	_selperf_target = _selperf_centre
+	# pairs of windows, nothing selected and n selected, the order alternating from one repetition to the next (the machine's drift cancels). Judged per
+	# pair, each the median of the pairs: the main thread's CPU time per frame (other load on a shared machine does not inflate it as it does the wall
+	# time) within +10%; the GPU's extra time per frame within 10% of the unselected frame (the GPU works beside the CPU: its time adds to the frame
+	# only where it is the longer); with --selperf-gate-wall=1 (a quiet machine) the wall time per frame within +10%
+	var gate_wall := _selperf_arg("selperf-gate-wall", "0") == "1"
+	var fails: Array = []
+	var table := {}
+	var med := func(a: Array) -> float:
+		var v := a.duplicate()
+		v.sort()
+		return float(v[v.size() / 2])
+	for phase in phases:
+		if phase == "march" or phase == "waypoints":
+			# the army gets going first (the first order's searches, the hordes' start)
+			var r0: String = await _selperf_order(phase == "waypoints")
+			if r0 != "":
+				return r0
+			await game._step(120)
+		for n in counts:
+			var cost_ratios: Array = []
+			var wall_ratios: Array = []
+			var cost0: Array = []
+			var costn: Array = []
+			var wall0: Array = []
+			var walln: Array = []
+			var gpu0: Array = []
+			var gpun: Array = []
+			var mean0: Array = []
+			var meann: Array = []
+			for r in reps:
+				var w0: Dictionary
+				var wn: Dictionary
+				if r % 2 == 0:
+					w0 = await _selperf_measure(phase, 0)
+					wn = await _selperf_measure(phase, n)
+				else:
+					wn = await _selperf_measure(phase, n)
+					w0 = await _selperf_measure(phase, 0)
+				for w in [w0, wn]:
+					if w.has("error"):
+						return w.error
+				var c0: float = w0.cpu_p50
+				var cn: float = wn.cpu_p50
+				cost_ratios.append(cn / maxf(c0, 0.001))
+				wall_ratios.append(wn.p50 / maxf(w0.p50, 0.001))
+				cost0.append(c0)
+				costn.append(cn)
+				wall0.append(w0.p50)
+				walln.append(wn.p50)
+				gpu0.append(w0.gpu_p50)
+				gpun.append(wn.gpu_p50)
+				mean0.append(w0.mean)
+				meann.append(wn.mean)
+				if r == 0 and n == counts.back() and phase in ["idle", "march"]:
+					shot("selperf-%s-%d" % [phase, n])
+			var cost_ratio: float = med.call(cost_ratios)
+			var gpu_extra: Array = []
+			for r in gpu0.size():
+				gpu_extra.append((gpun[r] - gpu0[r]) / maxf(wall0[r], 0.001))
+			var gpu_cost: float = med.call(gpu_extra)
+			var wall_ratio: float = med.call(wall_ratios)
+			table["%s/%d" % [phase, n]] = cost_ratio
+			var over := (_selperf_gate_cpu and cost_ratio > 1.0 + budget) or gpu_cost > budget or (gate_wall and wall_ratio > 1.0 + budget)
+			print("SELPERF RESULT %s %d selected: main CPU %.2f -> %.2f ms x%.3f; GPU %.2f -> %.2f ms (+%.1f%% of the frame); wall %.2f -> %.2f ms x%.3f (means %.2f -> %.2f); medians of %d pairs%s" % [
+				phase, n, med.call(cost0), med.call(costn), cost_ratio, med.call(gpu0), med.call(gpun), gpu_cost * 100.0, med.call(wall0), med.call(walln), wall_ratio,
+				med.call(mean0), med.call(meann), reps,
+				"  OVER BUDGET" if over else ""])
+			if _selperf_gate_cpu and cost_ratio > 1.0 + budget:
+				fails.append("%s %d: main CPU x%.3f" % [phase, n, cost_ratio])
+			if gpu_cost > budget:
+				fails.append("%s %d: GPU +%.1f%%" % [phase, n, gpu_cost * 100.0])
+			if gate_wall and wall_ratio > 1.0 + budget:
+				fails.append("%s %d: wall x%.3f" % [phase, n, wall_ratio])
+	hud.select_objects(PackedInt64Array())
+	print("SELPERF orders: %d move orders, %d switches to the queued order mode (Alt: MSG_CHANGE_ORDERMODE 1, 0)" % [log_count("MSG_DO_MOVETO"),
+		log_count("MSG_CHANGE_ORDERMODE i1 i0")])
+	print("SELPERF BUDGET %s (frame time within +%.0f%% of the same scene with nothing selected, %d checks)" % ["ok" if fails.is_empty() else "FAILED",
+		budget * 100.0, table.size()])
+	return "" if fails.is_empty() else "over the budget: " + ", ".join(fails)
 
 
 func _scenario_explore() -> String:

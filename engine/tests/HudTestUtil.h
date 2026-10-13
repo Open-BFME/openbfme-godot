@@ -32,6 +32,8 @@
 #include <algorithm>
 #include <cmath>
 #include <memory>
+#include <set>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -220,37 +222,161 @@ struct Rig
 		input->update();
 	}
 
-	// the nearest point to (x, y) (a ring search, step 60) at least `clear` units from every object and inside the map
-	Coord3D freeSpot(float x, float y, float clear = 140.0f)
+	// whether every ground pathfind cell within `radius` of (x, y) is clear ground (not water, cliff, an obstacle's footprint or off the map)
+	bool clearGround(float x, float y, float radius)
 	{
-		for (int ring = 0; ring < 40; ++ring)
+		const float cell = 10.0f; // the pathfind cell (Pathfinder::worldToCell)
+		Pathfinder &pf = game->ai().pathfinder();
+		const int r = (int)(radius / cell);
+		const int cx = (int)std::floor(x / cell), cy = (int)std::floor(y / cell);
+		for (int j = -r; j <= r; ++j)
+		{
+			for (int i = -r; i <= r; ++i)
+			{
+				if (i * i + j * j > r * r)
+				{
+					continue;
+				}
+				const PathfindCell *c = pf.getCell(LAYER_GROUND, cx + i, cy + j);
+				if (!c || c->getType() != PathfindCell::CELL_CLEAR)
+				{
+					return false;
+				}
+			}
+		}
+		return true;
+	}
+	// the nearest point to (x, y) (a ring search, step 60, out to 4800) on clear ground within 40 of it and at least `clear` units from: the point make()
+	// placed each object that still exists at, and the current position of every other object except the map's critters (mobile and IGNORED_IN_GUI:
+	// the wandering rabbits, dogs, crows) and props (no AI: the ground test sees their footprints); a creep (a lair, its guards) attacks what comes
+	// near: 400 more, unless `nearCreeps`. `reach`: the offsets of the scene's other members, each on clear ground with a clear straight way from the
+	// spot (a melee attacker walks it). `walkFrom`: a unit there walks to the spot, no cliff or water on the straight way.
+	// Lane PATHPERF-1 (the MERGEQ-2 FACT failures): the spot does not depend on where the critters and the actors of earlier items walked, so a
+	// pathfinder change does not move a scene's actors, and no actor stands on a cliff, in water or in a footprint (a unit there cannot move, and the
+	// spot an earlier ring search gave depended on the critters' routes). A ground test wider than 40 finds no spot for the large scenes of the maps.
+	// freeSpot's test of one point: false with `terrain` set when the ground fails, false when an object is too close
+	bool spotFree(float px, float py, float clear, bool nearCreeps, const std::vector<std::pair<float, float>> &reach, const Coord3D *walkFrom, bool &terrain)
+	{
+		bool ground = clearGround(px, py, 40.0f);
+		for (size_t m = 0; m < reach.size() && ground; ++m)
+		{
+			// a member of the scene at (px, py) + reach[m]: on clear ground, and the straight way to it too (a melee attacker walks it)
+			const float len = std::sqrt(reach[m].first * reach[m].first + reach[m].second * reach[m].second);
+			const int steps = (int)(len / 20.0f);
+			for (int t = 1; t <= steps && ground; ++t)
+			{
+				ground = clearGround(px + reach[m].first * (float)t / (float)steps, py + reach[m].second * (float)t / (float)steps, 20.0f);
+			}
+			ground = ground && clearGround(px + reach[m].first, py + reach[m].second, 40.0f);
+		}
+		if (ground && walkFrom)
+		{
+			// a unit at walkFrom (beside its building's footprint) walks here: no cliff or water on the straight way
+			const float wx = px - walkFrom->x, wy = py - walkFrom->y;
+			const int steps = (int)(std::sqrt(wx * wx + wy * wy) / 10.0f);
+			for (int t = 1; t <= steps && ground; ++t)
+			{
+				const PathfindCell *pc = game->ai().pathfinder().getCell(LAYER_GROUND, (int)std::floor((walkFrom->x + wx * (float)t / (float)steps) / 10.0f),
+					(int)std::floor((walkFrom->y + wy * (float)t / (float)steps) / 10.0f));
+				ground = pc && pc->getType() != PathfindCell::CELL_CLIFF && pc->getType() != PathfindCell::CELL_WATER;
+			}
+		}
+		terrain = !ground;
+		if (!ground)
+		{
+			return false;
+		}
+		for (Object *o = logic().getFirstObject(); o; o = o->getNextObject())
+		{
+			const bool mobile = o->getAIUpdateInterface() != nullptr && !o->isKindOfName("STRUCTURE");
+			if ((mobile && o->isKindOfName("IGNORED_IN_GUI")) || (!mobile && !o->isKindOfName("STRUCTURE")) || placedIds.count(o->getID()))
+			{
+				continue; // a critter, a prop (its footprint: clearGround) or an actor of the rig (its spawn point below)
+			}
+			// a creep (the map's PlyrCreeps: a lair and its guards) attacks what comes within its guard range: 400 more
+			const Player *owner = o->getControllingPlayer();
+			const float keep = owner && owner->getPlayerName() == "PlyrCreeps" && !nearCreeps ? clear + 400.0f : clear;
+			const float dx = o->getPosition()->x - px, dy = o->getPosition()->y - py;
+			if (dx * dx + dy * dy < keep * keep)
+			{
+				return false;
+			}
+		}
+		for (const auto &pl : placed)
+		{
+			const float dx = pl.second.x - px, dy = pl.second.y - py;
+			if (dx * dx + dy * dy < clear * clear && logic().findObjectByID(pl.first) != nullptr)
+			{
+				return false;
+			}
+		}
+		return true;
+	}
+	// lane PLAY-4 r3: with `mapMargin` >= 0 the point stays that far inside the pathfinder's logical extent (10 per cell): a scene that clicks an enemy needs
+	// it, since off the map the shroud never clears and the click is refused (S-565)
+	Coord3D freeSpot(float x, float y, float clear = 140.0f, bool nearCreeps = false, const std::vector<std::pair<float, float>> &reach = {}, const Coord3D *walkFrom = nullptr,
+		float mapMargin = -1.0f)
+	{
+		Coord3D at{};
+		std::string why;
+		if (!tryFreeSpot(x, y, clear, at, &why, nearCreeps, reach, walkFrom, mapMargin))
+		{
+			FAIL(why);
+		}
+		return at;
+	}
+	// freeSpot without the failure: false (and `why`) when no point passes (a scene that lowers its clearance until one does)
+	bool tryFreeSpot(float x, float y, float clear, Coord3D &at, std::string *why = nullptr, bool nearCreeps = false, const std::vector<std::pair<float, float>> &reach = {},
+		const Coord3D *walkFrom = nullptr, float mapMargin = -1.0f)
+	{
+		ICoord2D lo{}, hi{};
+		if (mapMargin >= 0.0f && logic().aiWorld())
+		{
+			logic().aiWorld()->pathfinder().getLogicalExtent(lo, hi);
+		}
+		const bool bounded = hi.x > lo.x && hi.y > lo.y;
+		int terrain = 0, objects = 0, outside = 0;
+		for (int ring = 0; ring < 80; ++ring)
 		{
 			for (int k = 0; k < (ring == 0 ? 1 : 8 * ring); ++k)
 			{
 				const int per = ring == 0 ? 1 : 8 * ring;
 				const float a = 6.2831853f * (float)k / (float)per;
 				const float px = x + std::cos(a) * 60.0f * (float)ring, py = y + std::sin(a) * 60.0f * (float)ring;
-				bool ok = true;
-				for (Object *o = logic().getFirstObject(); o && ok; o = o->getNextObject())
+				if (bounded && !(px - mapMargin >= 10.0f * (float)lo.x && px + mapMargin <= 10.0f * (float)(hi.x + 1) && py - mapMargin >= 10.0f * (float)lo.y &&
+								 py + mapMargin <= 10.0f * (float)(hi.y + 1)))
 				{
-					const float dx = o->getPosition()->x - px, dy = o->getPosition()->y - py;
-					ok = dx * dx + dy * dy >= clear * clear;
+					++outside;
+					continue;
 				}
-				if (ok)
+				bool offGround = false;
+				if (spotFree(px, py, clear, nearCreeps, reach, walkFrom, offGround))
 				{
-					return Coord3D{ px, py, 0.0f };
+					at = Coord3D{ px, py, 0.0f };
+					return true;
 				}
+				++(offGround ? terrain : objects);
 			}
 		}
-		FAIL("no free spot near the point");
-		return Coord3D{};
+		if (why)
+		{
+			std::ostringstream w;
+			w << "no free spot near (" << x << ", " << y << ") clear " << clear << ": " << terrain << " points off clear ground, " << objects << " too close to an object, "
+			  << outside << " outside the map margin " << mapMargin;
+			*why = w.str();
+		}
+		return false;
 	}
+	std::vector<std::pair<ObjectID, Coord3D>> placed; // every object make() placed, and where
+	std::set<ObjectID> placedIds;
 	// makes an object for the local player (or `owner`) at (x, y)
 	Object *make(const std::string &templateName, float x, float y, Player *owner = nullptr)
 	{
 		std::string err;
 		Object *o = game->createObject(templateName, (owner ? owner : local)->getPlayerIndex(), Coord3D{ x, y, 0.0f }, 0.0f, &err);
 		REQUIRE_MESSAGE(o != nullptr, err);
+		placed.push_back({ o->getID(), Coord3D{ x, y, 0.0f } });
+		placedIds.insert(o->getID());
 		return o;
 	}
 };

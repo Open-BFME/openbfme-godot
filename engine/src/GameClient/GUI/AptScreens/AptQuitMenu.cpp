@@ -35,8 +35,12 @@ AptQuitMenu::AptQuitMenu(WindowManager &windows, Shell &shell, ShellEnvironment 
 	registerCommand("AptQuitMenu::ExitMission", [this](const std::string &argument) { post((int)ShellAction::QuitMenuExit, "QuitMenuExit", argument); });
 	registerCommand("AptQuitMenu::ReturnToGame", [this](const std::string &argument) { post((int)ShellAction::QuitMenuReturn, "QuitMenuReturn", argument); });
 	registerCommand("AptQuitMenu::OptionsScreen", [this](const std::string &argument) { post((int)ShellAction::QuitMenuOptions, "QuitMenuOptions", argument); });
-	registerCommand("AptQuitMenu::SaveMenu", unportedCommand("AptQuitMenu::SaveMenu"));
-	registerCommand("AptQuitMenu::LoadMenu", unportedCommand("AptQuitMenu::LoadMenu"));
+	// lane SAVE-2: RW 0x92179F / 0x9217F0 (BFME2 decomp AptQuitMenuCallbacks.cpp SaveMenu / LoadMenu, tier A): AptSaveLoad::OpenScreen(3 save / 2 load, the
+	// game's type, 1 = over a game); the type is 8 without TheGameLogic + 0x114 (the Living World), 16 by the decomp's Rva00210C66 field test, 4 in a multiplayer game, else
+	// (TheGameLogic + 0x110 == 2) + 1: 2 Skirmish, 1 Campaign. The host opens the screen (the Living World and multiplayer types are not offered here: a
+	// multiplayer game disables both buttons, RW 0x921D5B)
+	registerCommand("AptQuitMenu::SaveMenu", [this](const std::string &) { post((int)ShellAction::QuitMenuSave, "QuitMenuSave", saveLoadType()); });
+	registerCommand("AptQuitMenu::LoadMenu", [this](const std::string &) { post((int)ShellAction::QuitMenuLoad, "QuitMenuLoad", saveLoadType()); });
 	registerTooltip("QuitMenu/Restart/TheButton", [this](const std::string &) { return restartTooltip(); });
 	// RW 0x9216EC over the table RW 0xC7DB28
 	registerProvider("HasFocus", [](const std::string &, std::string &value, bool setting) {
@@ -63,6 +67,16 @@ AptQuitMenu::AptQuitMenu(WindowManager &windows, Shell &shell, ShellEnvironment 
 AptQuitMenu::~AptQuitMenu()
 {
 	windows().setAptText("APT:Pause", text(m_env, "APT:Pause")); // RW 0x921A9B
+}
+
+std::string AptQuitMenu::saveLoadType() const
+{
+	const QuitMenuContext *c = m_env.quitMenu;
+	if (c && c->isMultiplayer())
+	{
+		return "4";
+	}
+	return (c && c->gameMode == 2) ? "2" : "1";
 }
 
 std::string AptQuitMenu::restartPopupType() const

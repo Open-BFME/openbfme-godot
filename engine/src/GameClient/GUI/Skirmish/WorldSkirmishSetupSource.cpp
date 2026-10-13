@@ -16,7 +16,7 @@ bool WorldSkirmishSetupSource::load(RetailObjectWorld &world, const GameLogicSet
 	m_factions.clear();
 	m_colors.clear();
 	m_cashChoices.clear();
-	const PlayerTemplateStore &store = world.playerTemplates();
+	const PlayerTemplateStore &store = world.setupPlayerTemplates(); // lane MAPRESET-1: the load's templates, never a live game's map.ini
 	for (int i = 0; i < store.getPlayerTemplateCount(); ++i)
 	{
 		const PlayerTemplate *pt = store.getNthPlayerTemplate(i);

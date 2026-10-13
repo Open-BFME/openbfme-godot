@@ -60,6 +60,9 @@ public:
 
 	// Playable area of a boundary: x in [0, b.x*10], y in [0, b.y*10] (W3DTerrainLogic.cpp:200-222).
 	bool getExtent(size_t boundary, float &maxX, float &maxY) const;
+	// lane HUD-7: RotWK's getExtent (W3DTerrainLogic vtable RW 0xBDB810 slot 0x24, RW 0x4626A3; caveat S-001): lo (0, 0), hi the LARGEST x and the largest y over
+	// every boundary (each compared as a float, then times 10.0f, RW 0xBD83D8), not the active one as ZH. False without boundaries (RotWK: hi (0, 0)).
+	bool getLargestExtent(float &maxX, float &maxY) const;
 	// Whole bordered map in world units: [-border*10, w*10 - border*10] (W3DTerrainLogic.cpp:252-262).
 	void getMapExtentIncludingBorder(float &minX, float &minY, float &maxX, float &maxY) const;
 

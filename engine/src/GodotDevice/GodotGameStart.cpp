@@ -72,6 +72,7 @@ Dictionary newGameToDictionary(const NewGameMessage &m)
 	}
 	d["rules"] = rules;
 	d["legendary_heroes"] = m.game.legendaryHeroes;
+	d["simulation_profile"] = (int)m.game.simulationProfile; // lane UBER-1: 0 Faithful, 1 Uber (Common/SimulationProfile.h)
 	Array slots;
 	for (int i = 0; i < MAX_SLOTS; ++i)
 	{
@@ -161,6 +162,13 @@ bool newGameFromDictionary(const Dictionary &d, NewGameMessage &out, std::string
 	{
 		return fail("legendary_heroes " + std::to_string(m.game.legendaryHeroes) + " (1 .. 4)");
 	}
+	// lane UBER-1: the simulation profile (absent: Faithful, the setups before UBER-1); a value this build does not know is refused
+	const int64_t profile = (int64_t)d.get("simulation_profile", (int64_t)SimulationProfile::Faithful);
+	if (!simulationProfileValid((std::int32_t)profile))
+	{
+		return fail("simulation_profile " + std::to_string((long long)profile) + " (0 faithful, 1 uber)");
+	}
+	m.game.simulationProfile = (SimulationProfile)profile;
 	const Array slots = d["slots"];
 	if (slots.size() != MAX_SLOTS)
 	{

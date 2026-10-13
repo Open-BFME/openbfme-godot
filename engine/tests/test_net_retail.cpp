@@ -533,10 +533,16 @@ void spell3CastRun(starttest::Shared &s, const char *faction, const char *power,
 	const std::string path = std::string("spell3_") + power + ".replay";
 	NewGameMessage message = gameMessage(s, seed);
 	message.game.slots[0].playerTemplate = templateIndex(s.world->playerTemplates(), faction);
-	const SpecialPowerTemplate *t = TheSpecialPowerStore->findSpecialPowerTemplate(power);
-	REQUIRE(t);
+	REQUIRE(TheSpecialPowerStore->findSpecialPowerTemplate(power));
+	// the power's template, looked up in the world of the running game (lane MAPRESET-1: a game's end reloads the world, S-3808)
+	auto powerTemplate = [power]() {
+		const SpecialPowerTemplate *t = TheSpecialPowerStore->findSpecialPowerTemplate(power);
+		REQUIRE(t);
+		return t;
+	};
 	// the sciences, granted as a harness step before frame 1 in both runs (a game earns them by rank; the store's purchase is tested elsewhere)
-	auto grant = [t](LiveGame &game) {
+	auto grant = [powerTemplate](LiveGame &game) {
+		const SpecialPowerTemplate *t = powerTemplate();
 		Player *h = humanOf(game.logic());
 		REQUIRE(h);
 		for (ScienceType st : t->getRequiredSciences())
@@ -584,7 +590,7 @@ void spell3CastRun(starttest::Shared &s, const char *faction, const char *power,
 		Object *book = SpecialPowerModules::findSpellBookObject(game.logic(), *h);
 		REQUIRE(book);
 		GameMessage c(MSG_DO_SPECIAL_POWER_AT_LOCATION, h->getPlayerIndex());
-		c.appendIntegerArgument((int)t->getID());
+		c.appendIntegerArgument((int)powerTemplate()->getID());
 		c.appendLocationArgument(aimOf(game.logic(), *h));
 		c.appendObjectIDArgument(INVALID_ID);
 		c.appendIntegerArgument(0);

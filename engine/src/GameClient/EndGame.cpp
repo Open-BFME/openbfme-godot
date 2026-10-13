@@ -603,7 +603,7 @@ std::vector<std::string> EndGameController::stopLines()
 		"taken as centred text (INFERENCE: its reader was not located); the ratio cells use '.' as the decimal separator (retail: the locale's)",
 		"[S-1064] leaving the game: QuitMenu.apt (AptQuitMenu: Resume, Options, Restart in a skirmish / Forfeit in a LAN game, Exit and the movie's confirmations) over the game; the "
 		"surrender and the exit of a LAN game are MSG_SELF_DESTRUCT on the lockstep; Continue shows the screens the game started from (TheShell + 0x9C: MainMenu and Skirmish) or opens "
-		"the LAN lobby again (the LAN game is started without the shell's LAN screens, MP-1). Not ported: the save / load screens of the menu, the Living World branches, the network quit "
+		"the LAN lobby again (the LAN game is started without the shell's LAN screens, MP-1); Save / Load open SaveLoad.apt over the game (lane SAVE-2, S-4003). Not ported: the Living World branches, the network quit "
 		"of the first six frames (RW 0xBFD298), the asset transfer to an ally (RW 0x6AF598), the network session's disconnected slots (RW 0x90313E); INFERENCE: a network game answers "
 		"the quit menu with mode 1 / kind 1 (retail's LAN new-game message, RW 0x648EED), the exiting peer's own logic is cleared before it runs its MSG_SELF_DESTRUCT(true)",
 	};

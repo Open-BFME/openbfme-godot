@@ -12,6 +12,7 @@
 #include "GameLogic/AI/AIGroup.h"
 #include "GameLogic/Combat/CombatNames.h"
 #include "GameLogic/GameLogic.h"
+#include "GameLogic/SkirmishAI/AIStatCollector.h"
 #include "GameLogic/Map/TerrainLogic.h"
 #include "GameLogic/Module/AIUpdate.h"
 #include "GameLogic/Object/Object.h"
@@ -217,9 +218,9 @@ void heuristicNearestStructure(GameLogic &logic, const AISkirmishPlayer &ai, AIB
 	}
 	// RW 0x97D483: in the Rush phase an EASY or NORMAL AI does not take the fortress (B gets DOZER_FACTORY), else it may (A)
 	const bool fortressExcluded = ai.build.phase == 0 && me->getSkirmishDifficulty() <= 1;
-	const AIPlayerInfoLists theirs = AITacticalAI::listsOf(logic, *them);
+	const AIStatCollector &theirs = AITacticalAI::recordOf(logic, enemy); // RW 0x97D519 -> + 8 (the enemy's structures)
 	std::map<ObjectID, int> counts;
-	for (ObjectID unitId : b.lists.army)
+	for (ObjectID unitId : AITacticalAI::recordOf(logic, ai.playerIndex).army()) // RW 0x97D502 -> + 0 (the AI's army; a dead unit counts, RW reads no status)
 	{
 		const Object *unit = logic.findObjectByID(unitId);
 		if (!unit)
@@ -228,7 +229,7 @@ void heuristicNearestStructure(GameLogic &logic, const AISkirmishPlayer &ai, AIB
 		}
 		ObjectID nearest = INVALID_ID;
 		float best = -1.0f; // RW 0xBD19DC
-		for (ObjectID sid : theirs.structures)
+		for (ObjectID sid : theirs.structures())
 		{
 			const Object *s = logic.findObjectByID(sid);
 			if (!s || !structureFilter(s, fortressExcluded))
@@ -277,8 +278,8 @@ void heuristicDozers(GameLogic &logic, const AISkirmishPlayer &ai, AIBrainState 
 	{
 		return;
 	}
-	const AIPlayerInfoLists theirs = AITacticalAI::listsOf(logic, *them);
-	for (ObjectID sid : theirs.structures)
+	const AIStatCollector &theirs = AITacticalAI::recordOf(logic, enemy);
+	for (ObjectID sid : theirs.structures())
 	{
 		if (structureFilter(logic.findObjectByID(sid), false))
 		{
@@ -286,7 +287,7 @@ void heuristicDozers(GameLogic &logic, const AISkirmishPlayer &ai, AIBrainState 
 		}
 	}
 	const Player *me = playerOf(logic, ai.playerIndex);
-	for (ObjectID did : theirs.dozers)
+	for (ObjectID did : theirs.dozers())
 	{
 		if (const Object *d = logic.findObjectByID(did); d && me)
 		{
@@ -672,7 +673,7 @@ bool commonApplies(GameLogic &logic, const AISkirmishPlayer &ai, const AIBrainSt
 	const Kinds &k = kinds();
 	bool reachable = false;
 	const Object *last = nullptr;
-	for (ObjectID id : b.lists.army)
+	for (ObjectID id : AITacticalAI::recordOf(logic, ai.playerIndex).army())
 	{
 		const Object *o = logic.findObjectByID(id);
 		last = o;
@@ -695,11 +696,11 @@ bool commonApplies(GameLogic &logic, const AISkirmishPlayer &ai, const AIBrainSt
 }
 
 // RW 0x9B3734: a living SIEGEENGINE of the AI's army list that is still in the player's own team (not in a tactic team) and not IGNORES_SELECT_ALL
-bool hasSiegeEngine(GameLogic &logic, const AIBrainState &b)
+bool hasSiegeEngine(GameLogic &logic, const AISkirmishPlayer &ai, const AIBrainState &b)
 {
 	static const int siege = KindOfTokens::indexOf("SIEGEENGINE");
 	const Kinds &k = kinds();
-	for (ObjectID id : b.lists.army)
+	for (ObjectID id : AITacticalAI::recordOf(logic, ai.playerIndex).army())
 	{
 		const Object *o = logic.findObjectByID(id);
 		if (o && is(*o, siege) && alive(o) && !is(*o, k.ignoresSelectAll) && !inAnyTeamOf(b, id))
@@ -747,11 +748,11 @@ bool tacticApplies(GameLogic &logic, OffensiveKind kind, const AISkirmishPlayer 
 		return commonApplies(logic, ai, b, t, player, false) && t.type != kOpportunity;
 	case BASE_PENETRATION: // RW 0x9B37A7
 		return commonApplies(logic, ai, b, t, player, false) && ai.build.phase >= 1 && target && is(*target, k.dozerFactory) && alive(target) &&
-			hasSiegeEngine(logic, b);
+			hasSiegeEngine(logic, ai, b);
 	case SIMPLE_SIEGE: // RW 0x9B333D
-		return enemyKnown && commonApplies(logic, ai, b, t, player, true) && t.type == kEnemyStructure && hasSiegeEngine(logic, b);
+		return enemyKnown && commonApplies(logic, ai, b, t, player, true) && t.type == kEnemyStructure && hasSiegeEngine(logic, ai, b);
 	case SIEGE_GATES: // RW 0x9B313C
-		return enemyKnown && commonApplies(logic, ai, b, t, player, true) && t.type == kEnemyStructure && !hasSiegeEngine(logic, b);
+		return enemyKnown && commonApplies(logic, ai, b, t, player, true) && t.type == kEnemyStructure && !hasSiegeEngine(logic, ai, b);
 	}
 	return false;
 }
@@ -1064,20 +1065,6 @@ bool heldByHorde(const Object &o)
 	return o.testStatus((unsigned)CombatNames::statuses().hordeMember) && o.getContainedBy() != nullptr;
 }
 
-// RW 0x691269 (Object::isAbleToAttack) in part (S-1301): not NO_ATTACK (status 5), not the model condition 0x81, not UNDER_CONSTRUCTION (2) or SOLD (0x13), and
-// CAN_ATTACK (template + 0x108 bit 3, RW 0x6913B1 -> true); the horde / contain / weapon slot branches RW 0x691294 .. 0x6912E5 and 0x6913BE .. 0x691418 are not
-// ported (an object without CAN_ATTACK is taken as unable)
-bool canAttackAtAll(const Object &o)
-{
-	static const int noAttack = CombatNames::statuses().noAttack, sold = CombatNames::status("SOLD");
-	const Kinds &k = kinds();
-	if (o.testStatus((unsigned)noAttack) || o.testModelCondition(0x81) || o.isUnderConstruction() || o.testStatus((unsigned)sold))
-	{
-		return false;
-	}
-	return is(o, k.canAttack);
-}
-
 // RW 0x8F13FC: object + 0x10C is the model condition flags (Object.h); bit 0x70 is CAPTURING in TheModelConditionNames (lane AI-3, pinned by a test)
 constexpr int kCapturingCondition = 0x70;
 
@@ -1366,7 +1353,7 @@ Coord3D feintPosition(GameLogic &logic, const AISkirmishPlayer &ai, AITactic &ta
 	{
 		if (const Player *them = playerOf(logic, enemy))
 		{
-			for (ObjectID id : AITacticalAI::listsOf(logic, *them).structures)
+			for (ObjectID id : AITacticalAI::recordOf(logic, them->getPlayerIndex()).structures())
 			{
 				const Object *o = logic.findObjectByID(id);
 				if (o && is(*o, dozerFactory))
@@ -1488,7 +1475,7 @@ AITacticTeam *findMergeTeam(GameLogic &logic, AISkirmishPlayer &ai, AITactic &ta
 		return nullptr; // RW: no first team; a team without members divides by 0 (a NaN centre: no candidate is near)
 	}
 	std::vector<ObjectID> candidates;
-	for (ObjectID id : b.lists.army)
+	for (ObjectID id : AITacticalAI::recordOf(logic, ai.playerIndex).army())
 	{
 		const Object *o = logic.findObjectByID(id);
 		AITacticTeam *team = nullptr;
@@ -1915,7 +1902,7 @@ void updateOffensive(GameLogic &logic, AISkirmishPlayer &ai, AIBrainState &b, AI
 
 // RW 0x774F2B (lane AI-3), a tactic team's AIGroup update from RW 0x8F144C: when not every member with an AI is idle or dead (RW 0x76FCBF: AI slot 0x1B8, + 0x458
 // bit 0), RW 0x77005F(1) (the group's speed matching: NOT ported, stop S-1301) and RW 0x7728E8: the goal object (RW 0x668303) of the first member not held by a
-// horde (+ 0x27C) whose AI has one; then every member not held by a horde that can attack (RW 0x691269, S-1301: the port's stand-in canAttackAtAll), whose AI
+// horde (+ 0x27C) whose AI has one; then every member not held by a horde that can attack (Object::isAbleToAttack RW 0x691269, lane DECOMP-3), whose AI
 // has no goal object and is idle (slot 0x1B8), attack-moves to that object's position with INT_MAX shots from the AI (RW 0x696266(pos, 0x7FFFFFFF, 2):
 // AI command 0xF, the attack-move to a position)
 void updateTeamGroup(GameLogic &logic, const AITacticTeam &team)
@@ -1957,7 +1944,7 @@ void updateTeamGroup(GameLogic &logic, const AITacticTeam &team)
 	for (ObjectID id : team.members)
 	{
 		Object *o = logic.findObjectByID(id);
-		if (!o || heldByHorde(*o) || !canAttackAtAll(*o))
+		if (!o || heldByHorde(*o) || !o->isAbleToAttack())
 		{
 			continue;
 		}
@@ -2277,41 +2264,11 @@ void AITacticalAI::pincerWaypointsForTest(GameLogic &logic, AITactic &tac, const
 	pincerWaypoints(logic, tac, start, target);
 }
 
-AIPlayerInfoLists AITacticalAI::listsOf(GameLogic &logic, const Player &player)
+const AIStatCollector &AITacticalAI::recordOf(GameLogic &logic, int playerIndex)
 {
-	const Kinds &k = kinds();
-	std::vector<const Object *> mine;
-	for (Object *o = logic.getFirstObject(); o; o = o->getNextObject())
-	{
-		if (o->getControllingPlayer() == &player && alive(o))
-		{
-			mine.push_back(o);
-		}
-	}
-	std::sort(mine.begin(), mine.end(), [](const Object *a, const Object *c) { return a->getID() < c->getID(); });
-	AIPlayerInfoLists out;
-	for (const Object *o : mine)
-	{
-		// RW 0x99E6C8 / 0x99E4C9
-		if (!is(*o, k.unattackable) && !is(*o, k.immobile) && !is(*o, k.structure) && !is(*o, k.ship))
-		{
-			if (is(*o, k.canAttack) || is(*o, k.hero) || is(*o, k.support))
-			{
-				out.army.push_back(o->getID());
-			}
-			else if (is(*o, k.dozer))
-			{
-				out.dozers.push_back(o->getID());
-			}
-		}
-		// RW 0x99EA17 / 0x99E8C8
-		if ((!is(*o, k.unattackable) || is(*o, k.expansionPad)) && (!is(*o, k.notAutoAcquirable) || is(*o, k.rebuildHole)) && is(*o, k.structure) &&
-			!is(*o, k.economyStructure) && !is(*o, k.linkedToFlag) && !is(*o, k.baseSite) && !is(*o, k.expansionPad))
-		{
-			out.structures.push_back(o->getID());
-		}
-	}
-	return out;
+	static const AIStatCollector kNone(-1);
+	const AIStatCollector *r = logic.skirmishAI().record(playerIndex);
+	return r ? *r : kNone;
 }
 
 namespace
@@ -2323,13 +2280,13 @@ namespace
 // last record whose enemies hold the category the unit's ThreatBreakdown category counters (0: PIKEMAN + 0x28; 1: INFANTRY + 0x20 or PIKEMAN; 2: CAVALRY + 0x2C;
 // 3: INFANTRY or category 1 + 0x24; 7: categories 6 / 9 / 11, + 0x38 / + 0x44 / + 0x4C), else the nearest record (squared 2D distance RW 0x66137C, x87; the first
 // of equal ones); the unit attack-moves to its position with INT_MAX shots from the PLAYER (RW 0x9A328E: RW 0x696266(pos, 0x7FFFFFFF, 0), AI command 0xF)
-void dispatchIdleUnits(GameLogic &logic, AISkirmishPlayer &ai, const AIPlayerInfoLists &lists)
+void dispatchIdleUnits(GameLogic &logic, AISkirmishPlayer &ai, const std::vector<ObjectID> &army)
 {
 	AIBrainState &b = ai.brain;
 	const Kinds &k = kinds();
 	static const int leavingFactory = CombatNames::status("IS_LEAVING_FACTORY");
 	std::vector<Object *> units;
-	for (ObjectID id : lists.army)
+	for (ObjectID id : army)
 	{
 		Object *o = logic.findObjectByID(id);
 		if (!o || inAnyTeamOf(b, id) || !(is(*o, k.canAttack) || is(*o, k.hero) || is(*o, k.support)) || is(*o, k.structure))
@@ -2409,7 +2366,7 @@ void AITacticalAI::updateTeamBuilder(GameLogic &logic, AISkirmishPlayer &ai)
 	{
 		return;
 	}
-	const AIPlayerInfoLists lists = listsOf(logic, *player);
+	const std::vector<ObjectID> army = recordOf(logic, ai.playerIndex).army(); // the record + 0 -> + 4 (a copy: the loops below give orders)
 	const Kinds &k = kinds();
 	static const std::vector<int> supportHorde = { k.support, kindBit("HORDE") };
 	for (AITactic &tac : b.tactics)
@@ -2430,7 +2387,7 @@ void AITacticalAI::updateTeamBuilder(GameLogic &logic, AISkirmishPlayer &ai)
 			// RW 0x9A2E06: the army list in order while count < maximum (unsigned; -1: no maximum): a CAN_ATTACK or SUPPORT unit that RW 0x9A24FC accepts joins
 			// (Object::setTeam RW 0x69954A); a SUPPORT unit only when the team holds a member that is neither SUPPORT nor HORDE, its maximum is above 1 and it holds
 			// no SUPPORT HORDE (RW 0x9A2F0A .. 0x9A2FA4, RW 0x7A0555 twice)
-			for (ObjectID id : lists.army)
+			for (ObjectID id : army)
 			{
 				if (!(count < maximum))
 				{
@@ -2454,7 +2411,7 @@ void AITacticalAI::updateTeamBuilder(GameLogic &logic, AISkirmishPlayer &ai)
 			// RW 0x9A2FC0: an ENEMY_STRUCTURE or DEFENSIVE team (+ 0x2CC 0 / 1) takes every HERO (template + 0x113 bit 2) RW 0x9A24FC accepts, with no maximum
 			if (team.type == kEnemyStructure || team.type == kDefensive)
 			{
-				for (ObjectID id : lists.army)
+				for (ObjectID id : army)
 				{
 					const Object *o = logic.findObjectByID(id);
 					if (o && is(*o, k.hero) && recruitable(logic, b, team, *o))
@@ -2490,7 +2447,7 @@ void AITacticalAI::updateTeamBuilder(GameLogic &logic, AISkirmishPlayer &ai)
 	{
 		it = logic.findObjectByID(*it) ? std::next(it) : b.dispatched.erase(it);
 	}
-	dispatchIdleUnits(logic, ai, lists);
+	dispatchIdleUnits(logic, ai, army);
 }
 
 void AITacticalAI::updateBrain(GameLogic &logic, AISkirmishPlayer &ai, AISkirmishPlayer *first)
@@ -2501,7 +2458,6 @@ void AITacticalAI::updateBrain(GameLogic &logic, AISkirmishPlayer &ai, AISkirmis
 	{
 		return;
 	}
-	b.lists = listsOf(logic, *player);
 	AISkirmishPlayer *owner = b.chooser ? &ai : first;
 	updateAttackedAt(logic, ai); // RW 0x6C7344 (lane AI-3)
 	if (b.chooser)
@@ -2569,7 +2525,7 @@ void AITacticalAI::updateIdleArmy(GameLogic &logic, AISkirmishPlayer &ai)
 	{
 		return;
 	}
-	for (ObjectID id : listsOf(logic, *player).army)
+	for (ObjectID id : recordOf(logic, ai.playerIndex).army())
 	{
 		const Object *o = logic.findObjectByID(id);
 		if (!o || !o->getTemplate() || inAnyTeamOf(ai.brain, id))
@@ -2696,14 +2652,6 @@ void AITacticalAI::crc(const AIBrainState &b, StateHasher &h)
 		}
 	}
 	h.addU32(b.nextTacticId);
-	for (const std::vector<ObjectID> *l : { &b.lists.army, &b.lists.dozers, &b.lists.structures })
-	{
-		h.addU32((std::uint32_t)l->size());
-		for (ObjectID id : *l)
-		{
-			h.addU32(id);
-		}
-	}
 	h.addU32((std::uint32_t)b.tacticsByKind.size());
 	for (const auto &kv : b.tacticsByKind)
 	{

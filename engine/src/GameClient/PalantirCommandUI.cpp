@@ -47,6 +47,7 @@ std::string portraitFor(const HudContext &ctx, ObjectID contextObject, const std
 	const Object *first = nullptr;
 	std::string shared;
 	bool same = true;
+	const ThingTemplate *lastTemplate = nullptr; // lane SELPERF-1: the portrait is the template's: an object of the template just compared shares it
 	for (ObjectID id : selected)
 	{
 		const Object *obj = ctx.logic.findObjectByID(id);
@@ -54,6 +55,11 @@ std::string portraitFor(const HudContext &ctx, ObjectID contextObject, const std
 		{
 			continue;
 		}
+		if (first && obj->getTemplate() && obj->getTemplate() == lastTemplate)
+		{
+			continue;
+		}
+		lastTemplate = obj->getTemplate();
 		const std::string p = objectPortrait(*obj);
 		if (!first)
 		{
@@ -152,7 +158,8 @@ RankInfo rankInfo(const HudContext &ctx, const Object &obj)
 	RankInfo r;
 	r.type = 0;
 	Object &o = const_cast<Object &>(obj);
-	const LifetimeUpdate *life = dynamic_cast<const LifetimeUpdate *>(o.findModule("LifetimeUpdate"));
+	static const std::string kLifetime("LifetimeUpdate"); // lane SELPERF-1: not a temporary per selected object and frame
+	const LifetimeUpdate *life = dynamic_cast<const LifetimeUpdate *>(o.findModule(kLifetime));
 	// RW 0x92F7D9: module + 0x28 is set from WaitForWakeUp (ctor RW 0x7A7F2D) and cleared by the wake-up (RW 0x7A7E79): a module still waiting gives no time bar.
 	// INFERENCE (S-1955): the port keeps no such byte; a module waiting for its wake-up has never computed its frames (both 0)
 	const bool waiting = life && life->waitsForWakeUp() && life->dieFrame() == 0 && life->startFrame() == 0;
@@ -187,6 +194,31 @@ RankInfo rankInfoFor(const HudContext &ctx, ObjectID contextObject, const std::v
 	}
 	RankInfo info;
 	bool first = true;
+	// lane SELPERF-1: rankInfo of an object without a LifetimeUpdate is its experience tracker's (the level, the experience, the level chain's template,
+	// the game mode, trainable): an object whose tracker reads the same as the last one compared has its RankInfo (a horde army walks one chain each)
+	static const std::string kLifetime("LifetimeUpdate");
+	const Object *last = nullptr;
+	RankInfo lastInfo;
+	// whether an object has a LifetimeUpdate is its template's (an object's modules are made from its template's module list): asked once per template
+	const ThingTemplate *lifeOf = nullptr;
+	bool lifeHas = true;
+	auto hasLife = [&](const Object &o) {
+		if (!o.getTemplate() || o.getTemplate() != lifeOf)
+		{
+			lifeOf = o.getTemplate();
+			lifeHas = o.findModule(kLifetime) != nullptr;
+		}
+		return lifeHas;
+	};
+	auto sameRank = [&](const Object &a, const Object &b) {
+		const ExperienceTracker *x = a.getExperienceTracker(), *y = b.getExperienceTracker();
+		if (!x || !y || a.getTemplate() != b.getTemplate() || hasLife(b))
+		{
+			return false;
+		}
+		return x->getLevelName() == y->getLevelName() && x->getExperience() == y->getExperience() && x->levelTargetName() == y->levelTargetName()
+			&& x->levelsForMultiplayer() == y->levelsForMultiplayer() && x->isTrainable() == y->isTrainable();
+	};
 	for (ObjectID id : selected)
 	{
 		const Object *obj = ctx.logic.findObjectByID(id);
@@ -194,7 +226,9 @@ RankInfo rankInfoFor(const HudContext &ctx, ObjectID contextObject, const std::v
 		{
 			continue;
 		}
-		const RankInfo r = rankInfo(ctx, *obj);
+		const RankInfo r = (last && sameRank(*last, *obj)) ? lastInfo : rankInfo(ctx, *obj);
+		last = obj;
+		lastInfo = r;
 		if (first)
 		{
 			info = r;

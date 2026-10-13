@@ -45,11 +45,12 @@ const char *ProfileIdentity::gitProvenance()
 	return OPENBFME_GIT_PROVENANCE;
 }
 
-ProfileIdentity ProfileIdentity::compute(const std::vector<MountedArchive> &archives, RandomAlgorithm rng, const std::vector<std::string> &extraFeatures)
+ProfileIdentity ProfileIdentity::compute(const std::vector<MountedArchive> &archives, RandomAlgorithm rng, const std::vector<std::string> &extraFeatures,
+	SimulationProfile profile)
 {
 	std::ostringstream o;
 	o << "openbfme-profile 1\n";
-	o << "profile enhanced\n";
+	o << (profile == SimulationProfile::Uber ? "profile uber\n" : "profile enhanced\n"); // lane UBER-1
 	o << "engine " << OPENBFME_ENGINE_ID << "\n";
 	std::vector<std::string> extra = extraFeatures;
 	std::sort(extra.begin(), extra.end());
@@ -68,6 +69,18 @@ ProfileIdentity ProfileIdentity::compute(const std::vector<MountedArchive> &arch
 		o << "archive " << i << " " << a.install << ":" << a.canonicalPath << " " << a.md5 << " " << a.size << "\n";
 	}
 	return fromText(o.str());
+}
+
+SimulationProfile ProfileIdentity::simulationProfile() const
+{
+	for (const std::string &l : lines(text))
+	{
+		if (l == "profile uber")
+		{
+			return SimulationProfile::Uber;
+		}
+	}
+	return SimulationProfile::Faithful;
 }
 
 ProfileIdentity ProfileIdentity::fromText(const std::string &text)

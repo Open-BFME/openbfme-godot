@@ -4,6 +4,7 @@
 #include "GameClient/MapClassification.h"
 
 #include <chrono>
+#include <stdexcept>
 
 namespace
 {
@@ -38,7 +39,18 @@ bool MapClassification::run(const std::vector<std::uint8_t> &bytes, const std::s
 
 	t0 = std::chrono::steady_clock::now();
 	terrain.init(map.heightMap, map.chunks, nullptr);
-	result.mapIni = world.applyMapIni(mapDirectory(lowerName));
+	try
+	{
+		result.mapIni = world.applyMapIni(mapDirectory(lowerName));
+	}
+	catch (const std::logic_error &e) // lane MAPRESET-1: a game of this world is still live (its map would be torn out from under it)
+	{
+		if (error)
+		{
+			*error = e.what();
+		}
+		return false;
+	}
 	result.secondsMapIni = secondsSince(t0);
 
 	t0 = std::chrono::steady_clock::now();

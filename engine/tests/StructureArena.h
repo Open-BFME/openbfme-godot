@@ -12,6 +12,7 @@
 #include "GameLogic/Combat/CombatState.h"
 #include "GameLogic/Economy.h"
 #include "GameLogic/EconomySettings.h"
+#include "GameLogic/ProductionSettings.h"
 #include "GameLogic/GameLogic.h"
 #include "GameLogic/Module/AIUpdate.h"
 #include "GameLogic/Object/Contain/HordeContainRuntime.h"
@@ -54,6 +55,8 @@ struct Arena
 		std::string err;
 		REQUIRE_MESSAGE(GameLogicSettingsLoader::load(*s.mount->fs, logic.settings(), &err), err);
 		REQUIRE_MESSAGE(EconomySettings::load(*s.mount->fs, logic.economy().settings(), &err), err);
+		// lane PLAY-4: a wall piece starts building itself when it is created (GettingBuiltBehavior::onObjectCreated RW 0x856434), which asks calcTimeToBuild
+		REQUIRE_MESSAGE(ProductionSettings::load(*s.mount->fs, logic.productionSettings(), &err), err);
 		logic.random().seedRandom(7);
 		logic.economy().initAllCommandPoints();
 		REQUIRE_MESSAGE(AIWorldConfigLoader::load(*s.mount->fs, cfg, &err), err);

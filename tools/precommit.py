@@ -11,6 +11,12 @@
      compressed stream (zip, jar, gz, tgz, tar, bz2, xz, lzma, 7z, rar, cab, zstd, lz4, zlib, BIG, a Godot pck) is refused. The gate
      never unpacks: what is inside cannot be judged, so it cannot enter (Sol r4: a ZIP holding a .pdb, a ZIP holding a renamed PDB and a
      gzipped PDB passed the byte checks). The one exception is a path listed with its sha256 in tools/precommit_containers.txt (empty).
+  5. no unjustified tolerance assertion in the lines a commit ADDS to a C++ test (engine/tests/) or a GDScript test (godot/tests/) (lane
+     LINT-1, the testing standard's "no thresholds or at least N"): doctest CHECK_GE / CHECK_LE / CHECK_GT / CHECK_LT (and REQUIRE_ / WARN_),
+     CHECK / REQUIRE / assert whose expression compares with >=, <=, > or <, or with != 0, and doctest::Approx. A `// tolerance: <reason>`
+     (GDScript `# tolerance: <reason>`) comment with a non-empty reason, on the same line or the line above, justifies it. Unchanged lines
+     are never flagged; in a merge (MERGE_HEAD set) a line is added only when it is new against both parents (lane PLAY-4 r3: a merge of
+     the archive brought every line the archive gained as "added", those of commits made before this rule among them).
 
 Pure renames are skipped: their content already passed this gate. The legacy
 gate lives at archive/tools/fleet/precommit.py. Exit non-zero blocks the commit.
@@ -151,9 +157,109 @@ def commit_only_checks(rel: str, data: bytes) -> str:
     return ""
 
 
+TEST_ROOTS = ("engine/tests/", "godot/tests/")
+CPP_SUFFIXES = {".cpp", ".cc", ".cxx", ".h", ".hpp", ".hh", ".inl"}
+TOLERANCE_FIX = "assert the exact value, or justify the bound with `// tolerance: <reason>` (GDScript `# tolerance: <reason>`)"
+_STRING = re.compile(r'"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'')
+_TEMPLATE = re.compile(r"\b[A-Za-z_][\w:]*<[^<>();&|=!]*>")
+_COMPARE = re.compile(r"[<>]=?|!=\s*0(?![\w.])|!=\s*0\.0*f?(?![\w.])")
+_CPP_ASSERT = re.compile(r"\b(?:CHECK|REQUIRE|WARN)(?:_FALSE|_MESSAGE)?\s*\(")
+_CPP_TOLERANCE_MACRO = re.compile(r"\b(?:CHECK|REQUIRE|WARN)_(?:GE|LE|GT|LT)\b")
+_APPROX = re.compile(r"\bApprox\b")
+_GD_ASSERT = re.compile(r"\bassert\s*\(")
+_CPP_JUSTIFIED = re.compile(r"//\s*tolerance:\s*\S")
+_GD_JUSTIFIED = re.compile(r"#\s*tolerance:\s*\S")
+
+
+def _code_of(line: str, gdscript: bool) -> str:
+    """The line's code with string literals, the trailing comment, arrows and shifts removed, so only real operators are left."""
+    line = _STRING.sub('""', line)
+    line = line.split("#" if gdscript else "//", 1)[0]
+    if not gdscript:
+        for _ in range(3):
+            line = _TEMPLATE.sub("T", line)
+    return line.replace("->", " ").replace("<<", " ").replace(">>", " ")
+
+
+def tolerance_kind(line: str, gdscript: bool) -> str:
+    """What makes `line` a tolerance assertion (its text, e.g. 'CHECK_GE' or 'CHECK(... >= ...)'), or ''. Block-comment lines never are."""
+    if line.lstrip().startswith(("/*", "*", "//", "#")):
+        return ""
+    code = _code_of(line, gdscript)
+    if gdscript:
+        match = _GD_ASSERT.search(code)
+        if match and _COMPARE.search(code[match.end():]):
+            return "assert(... compared with a bound or != 0)"
+        return ""
+    match = _CPP_TOLERANCE_MACRO.search(code)
+    if match:
+        return match.group(0)
+    if _APPROX.search(code):
+        return "doctest::Approx"
+    match = _CPP_ASSERT.search(code)
+    if match and _COMPARE.search(code[match.end():]):
+        return f"{match.group(0).rstrip('( ')}(... compared with a bound or != 0)"
+    return ""
+
+
+def tolerance_problems(rel: str, text: str, added: set[int]) -> list[str]:
+    """Unjustified tolerance assertions among the `added` (1-based) lines of the test file `rel`."""
+    suffix = Path(rel).suffix.lower()
+    if rel.startswith("engine/tests/") and suffix in CPP_SUFFIXES:
+        gdscript = False
+    elif rel.startswith("godot/tests/") and suffix == ".gd":
+        gdscript = True
+    else:
+        return []
+    justified = _GD_JUSTIFIED if gdscript else _CPP_JUSTIFIED
+    lines = text.splitlines()
+    problems = []
+    for number in sorted(added):
+        if not 1 <= number <= len(lines):
+            continue
+        kind = tolerance_kind(lines[number - 1], gdscript)
+        if not kind:
+            continue
+        if justified.search(lines[number - 1]) or (number > 1 and justified.search(lines[number - 2])):
+            continue
+        problems.append(f"{rel}:{number}: tolerance assertion {kind}: `{lines[number - 1].strip()}`: {TOLERANCE_FIX}")
+    return problems
+
+
+def added_lines_against(*base: str) -> dict[str, set[int]]:
+    """{path: new line numbers} the staged diff against `base` (HEAD when empty) adds under the test roots (a pure rename adds none)."""
+    out = git("-c", "core.quotepath=false", "diff", "--cached", "-U0", "-M", "--no-color", "--diff-filter=ACMR", *base, "--",
+              *TEST_ROOTS).stdout.decode("utf-8", "replace")
+    result: dict[str, set[int]] = {}
+    path = ""
+    for line in out.splitlines():
+        if line.startswith("+++ "):
+            path = line[4:].removeprefix("b/") if line != "+++ /dev/null" else ""
+        elif line.startswith("@@") and path:
+            match = re.match(r"@@ -\S+ \+(\d+)(?:,(\d+))? @@", line)
+            if match:
+                start, count = int(match.group(1)), int(match.group(2) if match.group(2) is not None else 1)
+                result.setdefault(path, set()).update(range(start, start + count))
+    return result
+
+
+def added_lines() -> dict[str, set[int]]:
+    """{path: new line numbers} the commit adds under the test roots: against HEAD, and in a merge against MERGE_HEAD as well (a line either
+    parent already has was judged, or predates the rule, where that parent was committed)."""
+    result = added_lines_against()
+    if git("rev-parse", "-q", "--verify", "MERGE_HEAD").returncode == 0:
+        other = added_lines_against("MERGE_HEAD")
+        result = {path: lines & other.get(path, set()) for path, lines in result.items()}
+        result = {path: lines for path, lines in result.items() if lines}
+    return result
+
+
 def main() -> int:
     problems = []
     files = staged()
+    for rel, numbers in sorted(added_lines().items()):
+        text = git("show", f":{rel}").stdout.decode("utf-8", "replace")
+        problems += tolerance_problems(rel, text, numbers)
     for rel in files:
         data = git("show", f":{rel}").stdout
         problem = check_file(rel) or commit_only_checks(rel, data) or check_file(rel, data)

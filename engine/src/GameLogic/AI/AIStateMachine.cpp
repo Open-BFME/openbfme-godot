@@ -321,7 +321,17 @@ StateReturnType AIStateMachine::checkForTransitions(AIState &state, StateReturnT
 	{
 		bool matched = false;
 		const StateReturnType r = testConditions(state, matched);
-		return matched ? r : STATE_CONTINUE;
+		if (matched)
+		{
+			return r;
+		}
+		// lane PLAY-4: a state's own condition transition (the guard machine's "attacked me" condition, RotWK's AIGuardMachine constructor RW 0x949A10)
+		const unsigned to = state.conditionTransition();
+		if (to != INVALID_STATE_ID)
+		{
+			return internalSetState(to);
+		}
+		return STATE_CONTINUE;
 	}
 	}
 }

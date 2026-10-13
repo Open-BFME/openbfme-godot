@@ -112,11 +112,12 @@ bool AttackVictimInRange(const AIStateMachine &machine)
 // ---------------------------------------------------------------------------------------------------------------------------------
 // AIAttackState (ZH AIStates.cpp:5358)
 // ---------------------------------------------------------------------------------------------------------------------------------
-AIAttackState::AIAttackState(AIStateMachine &m, bool follow, bool attackingObject, bool forceAttacking)
+AIAttackState::AIAttackState(AIStateMachine &m, bool follow, bool attackingObject, bool forceAttacking, const AttackExitConditions *exitConditions)
 	: AIState(m, "AIAttackState")
 	, m_follow(follow)
 	, m_isAttackingObject(attackingObject)
 	, m_isForceAttacking(forceAttacking)
+	, m_exitConditions(exitConditions)
 {
 }
 
@@ -192,8 +193,16 @@ std::unique_ptr<AIStateMachine> AIAttackState::createAttackMachine()
 	return m;
 }
 
+const char *attackEndedUnfiredStopLine()
+{
+	return "[S-3807] ordered attack ended unfired (lane PLAY-4, measured): a player's attack on an object whose melee machine fails before its first strike "
+		   "(RW 0x747207's blocked test, the re-acquisition throttle RW 0x74D46D); seen with AngmarWitchking after his crush run (0xE9) through a horde dealt no "
+		   "crush damage; not verified against retail";
+}
+
 StateReturnType AIAttackState::onEnter()
 {
+	m_shotsAtEnter = m_shotsFired;
 	Object &source = owner();
 	AIUpdateInterface &a = ai();
 	ObjectWeapons *w = source.getWeapons();
@@ -258,6 +267,11 @@ StateReturnType AIAttackState::onEnter()
 
 StateReturnType AIAttackState::update()
 {
+	// ZH AIStates.cpp:5582 (lane PLAY-4): the exit conditions met count as a success
+	if (m_exitConditions && m_exitConditions->shouldExit(machine()))
+	{
+		return STATE_SUCCESS;
+	}
 	Object &source = owner();
 	AIUpdateInterface &a = ai();
 	ObjectWeapons *w = source.getWeapons();
@@ -329,6 +343,12 @@ StateReturnType AIAttackState::update()
 	if (IS_STATE_SLEEP(r))
 	{
 		r = STATE_CONTINUE; // ZH CONVERT_SLEEP_TO_CONTINUE
+	}
+	if (r == STATE_FAILURE && m_shotsFired == m_shotsAtEnter && m_isAttackingObject && a.lastCommandSource() == CMD_FROM_PLAYER)
+	{
+		// lane PLAY-4 r1 (S-3807, measured): a player's attack whose machine fails before the first strike (RW's blocked test RW 0x747207 and the
+		// re-acquisition throttle RW 0x74D46D end it; retail's idle scan picks the target up again unless the auto-acquire is off)
+		source.logic().noteStop(attackEndedUnfiredStopLine());
 	}
 	return r;
 }

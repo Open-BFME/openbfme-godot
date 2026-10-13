@@ -466,7 +466,6 @@ from the door when ordered (MOVE-3's exit, reported).
 | EvacuateDamage | MordorBattleTower |
 | FlingPassengerSpecialAbilityUpdate | MordorMountainTroll |
 | GeometryUpgrade | MordorFortressCitadel, MordorHaradrimPalace, MordorLumberMill, MordorMumakilPen, MordorSlaughterHouse |
-| GiantBirdAIUpdate (base AI) | KhamulFellBeast, MordorWitchKingOnFellBeast, MorgomirFellBeast |
 | GrabPassengerSpecialPower | MordorMountainTroll |
 | HordeTransportContainDamage | MordorMumakil |
 | ObjectCreationUpgrade | MordorFortressCitadel, MordorWallCatapultExpansion |

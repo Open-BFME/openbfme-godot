@@ -1,0 +1,26 @@
+# OpenBFME online lobby, self-hosted (services/online/DEPLOY.md). Secrets come from /etc/openbfme/*.key files (never from git).
+[Unit]
+Description=OpenBFME online lobby (HTTP)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=openbfme
+Environment=LOBBY_BIND=127.0.0.1:8787
+Environment=LOBBY_DATA=/var/lib/openbfme/lobby
+Environment=TICKET_KEYS_FILE=/etc/openbfme/ticket.keys
+Environment=SESSION_KEY_FILE=/etc/openbfme/session.key
+Environment=UPLOAD_KEY_FILE=/etc/openbfme/upload.key
+EnvironmentFile=/etc/openbfme/lobby.env
+ExecStart=/usr/bin/node /opt/openbfme/lobby/src/server.mjs
+Restart=always
+RestartSec=2
+StateDirectory=openbfme
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/openbfme
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

@@ -133,6 +133,7 @@ LANLobbyHost::LANLobbyHost(UDP &socket, const NewGameMessage &game, int hostSlot
 {
 	m_start.profile = profile;
 	m_start.game = game;
+	m_start.game.game.simulationProfile = profile.simulationProfile(); // lane UBER-1: the host's game runs the host's profile (its identity's)
 	m_start.localSlot = hostSlot;
 	m_start.runAhead = runAhead;
 	m_start.crcInterval = crcInterval;
@@ -317,6 +318,12 @@ bool LANLobbyClient::poll()
 			if (s.profile != m_profile)
 			{
 				m_error = "the host's START has another profile: " + ProfileIdentity::difference(m_profile, s.profile);
+				return false;
+			}
+			if (s.game.game.simulationProfile != m_profile.simulationProfile())
+			{
+				// lane UBER-1: a START whose game runs another simulation profile than the identities say: refused
+				m_error = std::string("the host's START has the simulation profile ") + simulationProfileName(s.game.game.simulationProfile);
 				return false;
 			}
 			s.localSlot = m_slot;

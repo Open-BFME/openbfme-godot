@@ -6,7 +6,7 @@
 # simulation-bearing library (openbfme_lua), so the requirement also reaches every consumer of an inline simulation header.
 #
 #   MSVC          /fp:strict                              (+ /arch:SSE2 when the target is 32-bit x86)
-#   GCC / Clang   -fno-fast-math -ffp-contract=off -frounding-math   (+ -msse2 -mfpmath=sse when the target is 32-bit x86)
+#   GCC / Clang   -fno-fast-math -ffp-contract=off -frounding-math -fno-math-errno   (+ -msse2 -mfpmath=sse when the target is 32-bit x86)
 #
 # Conflicting overrides are rejected at configure time (flags in CMAKE_<LANG>_FLAGS*, link-time optimisation) and again, on the
 # generated compile commands, by tools/sim/sim_audit.py (the audit that CI runs after configure/build).
@@ -38,7 +38,9 @@ if(MSVC)
     endif()
     set(OPENBFME_SIM_FP_FAMILY msvc)
 else()
-    set(OPENBFME_SIM_FP_FLAGS -fno-fast-math -ffp-contract=off -frounding-math)
+    # -fno-math-errno (lane DEP-2): no value changes; std::sqrt is then the IEEE-exact square-root instruction alone, without GCC's call into libm
+    # for the errno of a negative argument (the simulation's only libm import)
+    set(OPENBFME_SIM_FP_FLAGS -fno-fast-math -ffp-contract=off -frounding-math -fno-math-errno)
     if(OPENBFME_SIM_X86_32)
         list(APPEND OPENBFME_SIM_FP_FLAGS -msse2 -mfpmath=sse)
     endif()
@@ -166,7 +168,7 @@ function(openbfme_sim_write_manifest file)
     endforeach()
     string(APPEND _json "],\n  \"source_dir\": \"engine\",\n  \"sources\": [")
     set(_first TRUE)
-    foreach(s ${OPENBFME_SIM_SOURCES} ${OPENBFME_SIM_SOURCES_GODOT})
+    foreach(s ${OPENBFME_SIM_SOURCES} ${OPENBFME_SIM_SOURCES_GODOT} ${OPENBFME_SIM_SOURCES_LIBS})
         if(NOT _first)
             string(APPEND _json ",")
         endif()

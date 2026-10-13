@@ -171,7 +171,7 @@ void runAttackGame(starttest::Shared &s, const NewGameMessage &message, int fram
 		}
 		if (out.arrivalFrame < 0 && (i % 5) == 0)
 		{
-			for (ObjectID id : ai->brain.lists.army)
+			for (ObjectID id : AITacticalAI::recordOf(logic, ai->playerIndex).army())
 			{
 				const Object *x = logic.findObjectByID(id);
 				if (!x)
@@ -282,8 +282,6 @@ TEST_CASE("skirmish ai attack: the brain hash covers the tactical state (each mu
 	CHECK(moved([&] { b.tactics[0].teams[0].minimum = 4; }));
 	CHECK(moved([&] { b.tactics[0].teams[0].members.push_back(12); }));
 	CHECK(moved([&] { b.tactics[0].teams[0].handedOver = true; }));
-	CHECK(moved([&] { b.lists.army.push_back(3); }));
-	CHECK(moved([&] { b.lists.structures.push_back(4); }));
 	CHECK(moved([&] { b.attacksLaunched += 1; }));
 	CHECK(moved([&] { b.tactics[0].teams[0].maximum = 6; }));
 	CHECK(moved([&] { b.tactics[0].kindIndex = 3; }));
@@ -299,7 +297,6 @@ TEST_CASE("skirmish ai attack: the brain hash covers the tactical state (each mu
 	CHECK(moved([&] { b.nextTargetId += 1; }));
 	CHECK(moved([&] { b.tactics[0].targetOwner = 2; }));
 	CHECK(moved([&] { b.tactics[0].success = true; }));
-	CHECK(moved([&] { b.lists.dozers.push_back(8); }));
 }
 
 TEST_CASE("skirmish ai attack: each of the 7 factions as the Medium computer on Evendim attacks an idle human within 8 minutes")

@@ -441,6 +441,10 @@ bool DozerAIUpdate::placeUnplacedStructure()
 	{
 		body->internalChangeHealth(SimMath::fstpDword(SimMath::pc24SubW(1.0, (double)body->getHealth())));
 	}
+	// lane PLAY-4: RW 0x88D61B .. 0x88D63A: PENDING_CONSTRUCTION and PHANTOM_STRUCTURE (0x57 / 0x58) cleared (RW 0x68D440 with 0); the port's structure carries
+	// only the first (Construction::constructByDozer)
+	static const int pending = ObjectTemplateInfoBuilder::objectStatusIndex("PENDING_CONSTRUCTION");
+	obj->setStatus((unsigned)pending, false);
 	return true;
 }
 

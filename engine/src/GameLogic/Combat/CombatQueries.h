@@ -37,7 +37,7 @@ void sortByCenterDistance2D(std::vector<Object *> &objects, const Coord3D &cente
 bool isAlive(const Object &obj);
 // the object can be attacked at all (not UNATTACKABLE / INERT; a structure under construction can: lane AI-2 r6)
 bool isAttackable(const Object &obj);
-// RW 0x691269 (Object::isAbleToAttack; BFME2 decomp Object_isAbleToAttack.cpp, tier B same-shape) in part: false with the status NO_ATTACK (5), the model
-// condition 0x81, UNDER_CONSTRUCTION or SOLD; its contain, turret and CAN_ATTACK branches are not ported (S-1301), so they refuse nothing here
+// RW 0x691269 (Object::isAbleToAttack; BFME2 decomp Object_isAbleToAttack.cpp, tier B same-shape): lane DECOMP-3 ported it in full (Object::isAbleToAttack,
+// Object.cpp); this forwards to it
 bool isAbleToAttack(const Object &obj);
 } // namespace CombatQueries

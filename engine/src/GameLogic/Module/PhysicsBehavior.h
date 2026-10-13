@@ -129,6 +129,9 @@ public:
 	float apexHeight() const { return m_apex; }
 	int pointCount() const { return m_pointCount; }
 	bool isFlying() const { return !m_points.empty(); }
+	// lane FLY-1: + 0x5F, the flight ends in a kill (the rest RW 0x79308D: SPLATTED and Object::kill); GiantBirdAIUpdate's toss sets it (RW 0x76CD76)
+	void setKillOnRest(bool on) { m_killOnRest = on; }
+	bool killOnRest() const { return m_killOnRest; }
 
 private:
 	friend struct PhysicsTestAccess; // the hash mutation tests change one field at a time
@@ -154,7 +157,7 @@ private:
 	bool m_stunned = false;        // +0x5C
 	bool m_allowBouncing = false;  // +0x5D
 	bool m_bounced = false;        // +0x5E
-	bool m_killOnRest = false;     // +0x5F (no ported caller sets it)
+	bool m_killOnRest = false;     // +0x5F (set by GiantBirdAIUpdate's toss, lane FLY-1)
 };
 
 // Object::doKnockback (RW 0x692223, Object.cpp; lane COMBAT-3)

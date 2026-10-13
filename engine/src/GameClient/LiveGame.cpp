@@ -84,6 +84,15 @@ LiveGame::~LiveGame()
 	}
 }
 
+// lane MAPRESET-1 (S-3808): the world this game changed is loaded again, so the next game and its setup start from a fresh load
+LiveGame::WorldClaim::~WorldClaim()
+{
+	if (world)
+	{
+		world->endGame();
+	}
+}
+
 bool LiveGame::load(const Options &options, std::string *error)
 {
 	const auto worldContext = m_world.enterContext(); // this world's stores and hooks are the live ones for the whole call
@@ -114,6 +123,15 @@ bool LiveGame::load(const Options &options, std::string *error)
 	progress(1); // updateLoadProgress(1): the start of startNewGame (RW 0x62F9D9)
 	m_report.map = mapNameUsed;
 	const std::string lowerName = AsciiStringUtil::lowered(mapNameUsed);
+	// lane MAPRESET-1 (S-3808): one live game per world; the world it ends with is loaded again (RetailObjectWorld::endGame)
+	if (!m_worldClaim.world)
+	{
+		if (!m_world.beginGame(error))
+		{
+			return false;
+		}
+		m_worldClaim.world = &m_world;
+	}
 	std::vector<std::uint8_t> bytes;
 	if (!m_fs.readFile(MapClassification::mapPath(lowerName), bytes, error))
 	{
@@ -121,7 +139,8 @@ bool LiveGame::load(const Options &options, std::string *error)
 	}
 	// the shared pipeline (GameClient/MapClassification, the static map path's too): map -> terrain -> map.ini -> classification -> client-only split
 	MapClassification::Result cr;
-	if (!MapClassification::run(bytes, lowerName, lowerName, m_world, m_mapOptions, m_map, m_terrain, m_classified, &m_clientOnly, cr, error))
+	const bool classified = MapClassification::run(bytes, lowerName, lowerName, m_world, m_mapOptions, m_map, m_terrain, m_classified, &m_clientOnly, cr, error);
+	if (!classified)
 	{
 		return false;
 	}
@@ -177,6 +196,15 @@ bool LiveGame::load(const Options &options, std::string *error)
 			if (!n.empty())
 			{
 				slotSides.insert(n);
+			}
+		}
+		if (options.start->observer)
+		{
+			// lane ONLINE-3: a spectator (no local slot): retail's replay-mode tail of the new game (RW 0x6282F0; BFME2 decomp
+			// GameLogic::rva0023F52C, tier B same-shape, game mode 3): the ReplayObserver side is the local player (the whole map revealed below)
+			if (const Player *observer = m_players->findPlayerWithName("ReplayObserver"))
+			{
+				m_players->setLocalPlayer(m_players->getNthPlayer(observer->getPlayerIndex()));
 			}
 		}
 		progress(13); // ThePlayerList->newGame (RW 0x62FBF6)
@@ -253,6 +281,8 @@ bool LiveGame::load(const Options &options, std::string *error)
 	}
 	m_logic->setGameRules(gameRules);
 	m_logic->setLegendaryHeroes(options.start ? options.start->message.game.legendaryHeroes : LegendaryHeroes::kOff);
+	// lane UBER-1: the game setup's simulation profile (a game without a start message, a map viewer or a tool, is Faithful unless its options say Uber)
+	m_logic->setSimulationProfile(options.start ? options.start->message.game.simulationProfile : options.simulationProfile);
 	m_logic->economy().initAllCommandPoints();
 	{
 		PathfinderResourceTerrain resourceTerrain;
@@ -893,6 +923,10 @@ void LiveGame::installBatch(const FrameBatch &batch)
 	{
 		m_commands.append(m);
 	}
+	if (batch.switchProfile)
+	{
+		m_logic->setSimulationProfile(batch.profile); // lane SAVE-2: a replayed execution profile switch
+	}
 }
 
 std::shared_ptr<const FrameCompletion> LiveGame::captureCompletion(const WorkItem &item, std::int64_t simUs)
@@ -974,7 +1008,7 @@ void LiveGame::publish(std::shared_ptr<const FrameCompletion> completion)
 		hash = completion->hash;
 		hashed = true;
 	}
-	std::shared_ptr<const LogicSnapshot> snap = LogicSnapshot::build(*m_logic, m_lastBuilt.get(), hashed, hash);
+	std::shared_ptr<const LogicSnapshot> snap = LogicSnapshot::build(*m_logic, m_lastBuilt.get(), hashed, hash, m_observedPlayer);
 	m_lastBuilt = snap;
 	std::vector<ClientEvent> events = m_recorder->take();
 	std::vector<ScriptClientRequest> scriptRequests = m_logic->scriptEngine().takeClientRequests(); // lane SCRIPT-1
@@ -1092,4 +1126,65 @@ LiveGame::Report LiveGame::report() const
 		}
 	}
 	return r;
+}
+
+// ---- lane ONLINE-3: the observer's view (retail PlayerList::observeNextPlayer RW 0x6A8D2B) --------------------------------------------------
+bool LiveGame::observeNextPlayer(bool forward)
+{
+	waitIdle();
+	PlayerList &players = *m_players;
+	auto active = [](const Player *p) { return p && !p->isObserver() && !p->isDefeated(); }; // RW 0x6AAC52
+	const Player *local = players.getLocalPlayer();
+	if (!local || active(local))
+	{
+		return false; // RW 0x6A87F5
+	}
+	const Player *current = m_observedPlayer >= 0 ? players.getNthPlayer(m_observedPlayer) : local; // RW 0x6A8839
+	if (!current)
+	{
+		current = local;
+	}
+	const int count = players.getPlayerCount();
+	const int step = forward ? 1 : -1;
+	int observer = !active(current) ? current->getPlayerIndex() : -1;
+	for (int i = 0; i < count && observer == -1; ++i)
+	{
+		const Player *p = players.getNthPlayer(i);
+		if (p && !active(p) && p->getPlayerType() == PLAYER_HUMAN)
+		{
+			observer = i;
+		}
+	}
+	int index = current->getPlayerIndex();
+	const int start = index;
+	for (;;)
+	{
+		index += step;
+		if (index >= count)
+		{
+			index = 0;
+		}
+		else if (index < 0)
+		{
+			index = count; // RW 0x6A8DF4: the count itself (no player there: the next step goes on to count - 1)
+		}
+		if (index == start)
+		{
+			break;
+		}
+		const Player *p = players.getNthPlayer(index);
+		if (!p || p->getPlayerType() != PLAYER_HUMAN)
+		{
+			continue;
+		}
+		if (active(p) || index == observer)
+		{
+			break;
+		}
+	}
+	m_observedPlayer = index;
+	m_shroud->setLocalPlayer(index, [this](int, int, CellShroudStatus) { m_shroudChanged = true; }); // RW 0xB4D8E0
+	m_shroud->refreshLocalPlayer();
+	m_shroudChanged = true;
+	return true;
 }

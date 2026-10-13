@@ -18,6 +18,7 @@
 #include "Common/GameCommon.h"
 #include "Common/LogicFrameClock.h"
 #include "Common/PlayerList.h"
+#include "Common/SimulationProfile.h"
 #include "Common/Team.h"
 #include "GameClient/ClientEvents.h"
 #include "GameClient/DrawableLaunchBones.h"
@@ -46,6 +47,7 @@
 #include "GameLogic/Object/RetailObjectWorld.h"
 
 #include <atomic>
+#include <cstdint>
 #include <condition_variable>
 #include <deque>
 #include <exception>
@@ -103,6 +105,8 @@ public:
 		// lane CAMP-1: the campaign's difficulty (0 easy, 1 normal, 2 hard: the main menu command's first character, RW 0x91C108): lane CAMP-1H: the
 		// new game message's difficulty, TheGameLogic + 0xA4 (prepareNewGame RW 0x77948E; the script engine's stays 1); -1 leaves GameLogic's reset value (1)
 		int difficulty = -1;
+		// lane UBER-1: the simulation profile of a game without a start message (a started game takes its setup's, SkirmishGameInfo::simulationProfile)
+		SimulationProfile simulationProfile = SimulationProfile::Faithful;
 	};
 
 	// `world`, `fs`, `assets` and `mapOptions` must outlive the game; `mapOptions` is MapObjectGameData / playerTemplates / creationScripts as the
@@ -136,6 +140,13 @@ public:
 	AIWorld &ai() { waitIdle(); return *m_ai; }
 	// VIS-1: TheShroudManager (attached to the logic) and the GameData / MultiplayerSettings values it was made from
 	ShroudManager &shroud() { waitIdle(); return *m_shroud; }
+	// lane ONLINE-3 (retail PlayerList::observeNextPlayer, RW 0x6A8D2B; BFME2 decomp reverse/attempts/0x002a8306.cpp, tier B same-shape): when the local
+	// player is not active (an observer, a spectator's ReplayObserver side, or defeated: RW 0x6A87F5 with isPlayerActive RW 0x6AAC52), the view steps
+	// from the observed player (TheControlBar + 0x218, RW 0x6A8839; none: the local player) to the next / prior human player (Player + 0x5C == 0, read
+	// as PLAYER_HUMAN: inference, S-3902) that is active, or to the observer itself ("all"), wrapping; the observed player becomes the shroud's view
+	// player (RW 0xB4D8E0 -> ShroudManager::setLocalPlayer: whose cells the view shows). False when the local player is active. View only: no logic state
+	bool observeNextPlayer(bool forward);
+	int observedPlayer() const { return m_observedPlayer; } ///< -1: none chosen (the local player's view)
 	const VisionSettings &visionSettings() const { return m_vision; }
 	// the local player's cell edges since the last call (the client's fog texture rebuilds when this is true)
 	bool takeShroudChanged()
@@ -205,6 +216,9 @@ public:
 	// the worker was late; the worker's busy time of the last frame (ms)
 	std::vector<std::pair<UnsignedInt, std::uint32_t>> frameHashes() const;
 	unsigned long long heldPresentations() const { return m_heldPresentations; }
+	// lane PATHPERF-1: waitIdle calls that blocked on a running worker frame, and their total wall time (main thread; the worker never blocks on itself)
+	unsigned long long blockingWaits() const { return m_blockingWaits; }
+	double blockingWaitMs() const { return m_blockingWaitMs; }
 	// client events published or taken but not applied yet (their frame is not presented yet)
 	size_t pendingClientEvents() const;
 	// For drivers that run logic frames themselves (tests: logic().runLogicFrame()): publishes the current state and its events, applies every event
@@ -250,6 +264,13 @@ public:
 
 private:
 	RetailObjectWorld &m_world;
+	// lane MAPRESET-1 (S-3808): this game's claim on its world (RetailObjectWorld::beginGame). Declared before every member that points into the world's
+	// stores, so it is destroyed after them: its endGame reloads the world only when nothing of the game is left
+	struct WorldClaim
+	{
+		RetailObjectWorld *world = nullptr;
+		~WorldClaim();
+	} m_worldClaim;
 	ArchiveFileSystem &m_fs;
 	WW3DAssetManager &m_assets;
 	const MapObjectOptions &m_mapOptions;
@@ -273,6 +294,7 @@ private:
 	std::unique_ptr<AIWorld> m_ai;                // likewise (MOVE-1): the objects' destructors leave the pathfinder through its hooks
 	std::unique_ptr<GameLogic> m_logic;
 	std::unique_ptr<ShroudManager> m_shroud;       ///< VIS-1: after the logic (destroyed first: it detaches its hooks)
+	int m_observedPlayer = -1; ///< lane ONLINE-3: TheControlBar + 0x218
 	VisionSettings m_vision;
 	std::atomic<bool> m_shroudChanged{ true }; ///< set by the shroud callback on the simulation owner (the worker); the client reads the snapshot's ShroudView
 	CommandList m_commands;                          ///< lane PROD-1
@@ -336,6 +358,8 @@ private:
 	std::vector<ClientEvent> m_heldEvents; ///< main thread: taken events of frames not presented yet
 	double m_presentedAlpha = 0.0;
 	unsigned long long m_heldPresentations = 0;
+	mutable unsigned long long m_blockingWaits = 0; ///< lane PATHPERF-1 (waitIdle is const: the counters are a statistic)
+	mutable double m_blockingWaitMs = 0.0;
 	// lane SMOOTH-2 (LiveGameRunner.cpp present): the continuous presented time (logic frames: the presented snapshot's frame + its alpha) and the delay a late
 	// worker added to Options::presentationDelaySeconds (frames). Main thread.
 	double m_presentTime = 0.0;

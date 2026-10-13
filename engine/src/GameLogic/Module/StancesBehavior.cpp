@@ -32,9 +32,9 @@ const unsigned kStatusLeavingFactory = 0x5A;  // RW 0x8622F3: status 90 (IS_LEAV
 const char *const kStop =
 	"[S-585] stances: StanceTemplate (RW 0x835967 / 0x83555A), StancesBehavior's update (RW 0x8622E9: Battle once out of the factory), setStance (RW 0x8620DD: the "
 	"entries' ModifierLists through the attribute modifier pool, the horde's MeleeBehavior through HordeContain slot 0x260, the porcupine formation toggled back, the "
-	"idle commands) and MSG_CHANGE_STANCE (RW 0x77BC59 -> AIGroup::setStance RW 0x76FF27) are ported; NOT ported: RW 0x662A21 (the AI side of hold ground), the "
-	"listener notice RW 0x861F97, the callers of onMoveStart / onMoveEnd (RW 0x66A948, RW 0x743882: a HoldGround unit keeps its stance while it moves), the group "
-	"manager branch (S-223), the scripted and map object stances (RW 0x94D4EB, 0x695B93), a ModifierList's removal side effects (S-633); HordeNotifyTargetsOf"
+	"idle commands), MSG_CHANGE_STANCE (RW 0x77BC59 -> AIGroup::setStance RW 0x76FF27) and (lane PLAY-4) the guard RW 0x662A21 (AIGuard: Battle mode 0, HoldGround / "
+	"Porcupine mode 1, S-3802), onMoveStart from aiDoCommand (RW 0x66A948) and onMoveEnd from AIGoingIdleState (RW 0x743882) are ported; NOT ported: the "
+	"listener notice RW 0x861F97 (the stance button's image follows the stance in the control bar), the group manager branch (S-223), the scripted and map object stances (RW 0x94D4EB, 0x695B93), a ModifierList's removal side effects (S-633); HordeNotifyTargetsOf"
 	"ImminentProbableCrushingUpdate (RW 0x8D3167) is not ported";
 
 const FieldParse kModuleParse[] = {
@@ -228,7 +228,7 @@ bool StancesBehavior::setStance(StanceType stance)
 	{
 		if (stance == STANCE_BATTLE || stance == STANCE_HOLD_GROUND || stance == STANCE_PORCUPINE)
 		{
-			stats().aiHoldModeNotSet.fetch_add(1, std::memory_order_relaxed); // RW 0x662A21(0 / 1) (S-585)
+			ai->guardHere(stance == STANCE_BATTLE ? 0 : 1); // RW 0x86223F / 0x862263: RW 0x662A21(0 / 1) (lane PLAY-4, AIGuard.cpp)
 		}
 		else if (old == STANCE_BATTLE || old == STANCE_HOLD_GROUND)
 		{
@@ -263,7 +263,8 @@ void StancesBehavior::onMoveEnd()
 		Object *obj = getObject();
 		if (obj && !obj->testStatus(kStatusHidden) && obj->getAIUpdateInterface())
 		{
-			stats().aiHoldModeNotSet.fetch_add(1, std::memory_order_relaxed); // RW 0x8622E1: RW 0x662A21 (S-585)
+			// RW 0x8622CF .. 0x8622E1: RW 0x662A21(1) for HoldGround / Porcupine, (0) for Battle (lane PLAY-4)
+			obj->getAIUpdateInterface()->guardHere(m_stance == STANCE_HOLD_GROUND || m_stance == STANCE_PORCUPINE ? 1 : 0);
 		}
 	}
 }

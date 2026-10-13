@@ -7,6 +7,7 @@
 #include "GameNetwork/NetPacket.h"
 #include "GameNetwork/Network.h"
 
+#include <algorithm>
 #include <string>
 
 namespace
@@ -447,12 +448,15 @@ void DisconnectManager::update(Network &net, std::uint64_t now, std::uint32_t lo
 			continue;
 		}
 		++silent;
-		// the GameSpy ping test (RW 0x8D7C78) passes without pings: the spell is the silent slot's own
+		// the ping test (RW 0x8D7C78(0xBD83D4)): passed, the spell is the silent slot's own; failed, it is the LOCAL slot's (the local link failed). A LAN
+		// game has no pinger (it passes); lane ONLINE-3: through the relay it fails when nothing came from the relay for NetworkDisconnectTime
 		if (!m_silentFlag[(size_t)i])
 		{
 			m_silentFlag[(size_t)i] = true;
-			++m_silentEpisodes[(size_t)i];
-			note("slot " + std::to_string(i) + " silent at frame " + std::to_string(logicFrame) + " (spell " + std::to_string(m_silentEpisodes[(size_t)i]) + ")");
+			const int blamed = net.pingTest() ? i : local;
+			++m_silentEpisodes[(size_t)blamed];
+			note("slot " + std::to_string(i) + " silent at frame " + std::to_string(logicFrame) + " (spell " + std::to_string(m_silentEpisodes[(size_t)blamed])
+				+ (blamed == local ? " of the local link: the ping test failed)" : ")"));
 		}
 	}
 	if (silent == 0)
@@ -523,13 +527,19 @@ void DisconnectManager::updateDisconnectStatus(Network &net, std::uint64_t now, 
 			continue;
 		}
 		std::uint32_t remaining = (std::uint32_t)(m_playerTimeouts[(size_t)t] - now) + timeout; // unsigned 32-bit (RW 0x8D8785)
-		if ((remaining < timeout / 3 || isPlayerVotedOut(net, t, now, logicFrame)) && (!m_notifiedValid || logicFrame != m_lastNotifiedFrame))
+		// lane ONLINE-3: a restarted slot is announced at once too (its drop does not wait for the bar)
+		if ((remaining < timeout / 3 || isPlayerVotedOut(net, t, now, logicFrame) || net.slotRestarted(i)) && (!m_notifiedValid || logicFrame != m_lastNotifiedFrame))
 		{
 			notifyOthersOfCurrentFrame(net, logicFrame);
 			m_lastNotifiedFrame = logicFrame;
 			m_notifiedValid = true;
 		}
-		if ((std::int32_t)remaining < 0 || isPlayerVotedOut(net, t, now, logicFrame) || m_silentEpisodes[(size_t)i] > kMaxSilentEpisodes - 1)
+		// lane ONLINE-3: a slot whose game restarted (a newer incarnation at the relay) is gone at once, as if its timeout had run out. A KICK (the
+		// players voted it out with the Kick button) is a vote that carries it while more than a tenth of this decider's bar remains: the votes the
+		// timeout casts come at 0 % (below), so a drop at the end of the bar is a timeout whoever's vote completed it (OpenBFME's rule, S-3900)
+		const bool votedOut = isPlayerVotedOut(net, t, now, logicFrame);
+		const bool kicked = votedOut && (std::int32_t)remaining > 0 && (std::uint64_t)remaining * 10u > (std::uint64_t)timeout && !net.slotRestarted(i);
+		if ((std::int32_t)remaining < 0 || votedOut || m_silentEpisodes[(size_t)i] > kMaxSilentEpisodes - 1 || net.slotRestarted(i))
 		{
 			remaining = 0;
 			std::uint8_t gone = 0;
@@ -548,7 +558,16 @@ void DisconnectManager::updateDisconnectStatus(Network &net, std::uint64_t now, 
 				note("dropping slot " + std::to_string(i) + " at frame " + std::to_string(frame) + " (next packet router)");
 				m_dropped.push_back(i);
 				disconnectPlayer(net, i, frame);
-				net.sendPlayerDestruct(i);
+				if (net.config().holdForRejoin && !kicked)
+				{
+					// lane ONLINE-3 (online games): a timed-out player is held for a rejoin (its army stays its own); the packet router hands it over when
+					// the rejoin window ends (Network::routerRejoinDuties). A vote drops it as retail does
+					note("holding slot " + std::to_string(i) + " for a rejoin (no hand-over yet)");
+				}
+				else
+				{
+					net.sendPlayerDestruct(i);
+				}
 				m_announcementReleased = true;
 			}
 		}
@@ -735,6 +754,35 @@ void DisconnectManager::applyPendingDrops(Network &net, std::uint32_t logicFrame
 	}
 }
 
+void DisconnectManager::slotRejoined(Network &net, int slot)
+{
+	// lane ONLINE-3: the slot is a member again (Network::applyRejoin): its votes, disconnect frame, silent spells and screen row start afresh
+	if (slot < 0 || slot >= MAX_SLOTS)
+	{
+		return;
+	}
+	for (int i = 0; i < MAX_SLOTS; ++i)
+	{
+		m_playerVotes[slot][i] = Vote();
+		m_playerVotes[i][slot] = Vote();
+	}
+	m_disconnectFrames[(size_t)slot] = 0;
+	m_disconnectFramesReceived[(size_t)slot] = false;
+	m_silentFlag[(size_t)slot] = false;
+	m_silentEpisodes[(size_t)slot] = 0;
+	const int t = translatedSlotPosition(slot, net.config().localSlot);
+	if (t != -1)
+	{
+		m_screen.rows[(size_t)t].removed = false;
+		m_screen.rows[(size_t)t].votes = 0;
+		m_screen.rows[(size_t)t].barPercent = 100;
+		m_screen.rows[(size_t)t].kickShown = false;
+		m_playerTimeouts[(size_t)t] = net.now();
+	}
+	m_dropped.erase(std::remove(m_dropped.begin(), m_dropped.end(), slot), m_dropped.end());
+	note("slot " + std::to_string(slot) + " rejoined");
+}
+
 bool DisconnectManager::allowedToContinue(Network &net, std::uint32_t frame) const
 {
 	for (const PendingDrop &d : m_pendingDrops)
@@ -780,7 +828,7 @@ std::vector<std::string> DisconnectManager::stopLines()
 		"from Load Replay with every frame's hash compared; retail's Last Replay copy-on-save, Save Replay on the score screen and the replay camera "
 		"(MSG_SET_REPLAY_CAMERA, UseCameraInReplays) are not ported",
 		"[S-1126] load screen: SaveLoad.apt's replay page is ported (AptSaveLoad, RW 0x81874E / 0x818D41: the providers, the two lists' columns, Load); "
-		"the saved-game pages, Save, Delete and the confirmation box are not; the list's date and time are the files' (OpenBFME replays carry none), "
+		"the saved-game pages, Save, Delete and the confirmation box are lane SAVE-2's (S-4003); the list's date and time are the files' (OpenBFME replays carry none), "
 		"the gadget names are compared after their '~' prefix (inferred)",
 	};
 }

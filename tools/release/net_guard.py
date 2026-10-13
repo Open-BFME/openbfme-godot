@@ -17,11 +17,16 @@ a variable its file validates (FILE_MANAGER_CALL): a URL, a UNC path, a conditio
 Godot's globalize_path passes those through: Sol r1 / r2), or a string literal naming a networking class
 (`ClassDB.instantiate("HTTPRequest")`).
 Only engine/src/GameNetwork/Transport.cpp (the LAN transport, UDP) may have C / C++ findings.
+Lane ONLINE-2 (online play, a test feature the player starts with --online-join / --online-host or an openbfme:// link): the game's lobby client
+godot/scripts/online_lobby.gd (and, lane ONLINE-4, the online screens' transport godot/scripts/online_http.gd) may use HTTPRequest / HTTPClient,
+finding by finding (ALLOWED_GAME), and its requests must go to the lobby the player named: exactly one `.request(` call, whose URL starts with `lobby_url`, and `max_redirects = 0` (ONLINE-2 r2: no redirect takes the token
+elsewhere; online_lobby_problems). The relay traffic is the native Transport's (UDP).
 The launcher (launcher/, not launcher/tests; lane LAUNCH-1) is checked the same way with its own allow list, finding by finding:
 HTTPClient only in launcher/scripts/net/http_fetch.gd (whose every request passes NetPolicy.check: GitHub's release hosts over HTTPS),
 OS.create_process only where the launcher starts the game (updater.gd) and its own updated executable (self_update.gd), OS.execute
-only for the self-update's atomic replace on Windows (self_update.gd: cmd /c move /y) and the system's GLIBC version before Play
-(glibc_check.gd: getconf / ldd, lane GLIBC-1).
+only for the self-update's atomic replace on Windows (self_update.gd: cmd /c move /y), the system's GLIBC version before Play
+(glibc_check.gd: getconf / ldd, lane GLIBC-1) and, lane ONLINE-2, for registering the openbfme:// link
+handler when the player asks for it (url_handler.gd: reg add under HKCU, xdg-mime, update-desktop-database; --register-url-handler only).
 """
 from __future__ import annotations
 
@@ -49,7 +54,14 @@ ALLOWED_LAUNCHER = {"launcher/scripts/net/http_fetch.gd": {"HTTPClient"},
                     # OS.execute: `cmd /c move /y` on Windows, the one atomic replace of the launcher's executable (MoveFileEx)
                     "launcher/scripts/core/self_update.gd": {"OS.create_process", "OS.execute"},
                     # lane GLIBC-1: OS.execute `getconf GNU_LIBC_VERSION` / `ldd --version`, the system's GLIBC before Play (Linux)
-                    "launcher/scripts/core/glibc_check.gd": {"OS.execute"}}
+                    "launcher/scripts/core/glibc_check.gd": {"OS.execute"},
+                    # lane ONLINE-2: `reg add` under HKCU (Windows) / xdg-mime + update-desktop-database (Linux), only on --register-url-handler
+                    "launcher/scripts/core/url_handler.gd": {"OS.execute"}}
+# lane ONLINE-2: game file -> the findings it may have: the online lobby client (its requests: online_lobby_problems)
+# lane ONLINE-4: the online screens' transport (scripts/online_http.gd: the requests OnlineShell.apt's lobby client queues), the same rule
+ALLOWED_GAME = {"godot/scripts/online_lobby.gd": {"HTTPRequest", "HTTPClient"}, "godot/scripts/online_http.gd": {"HTTPRequest", "HTTPClient"}}
+ONLINE_LOBBY = "godot/scripts/online_lobby.gd"
+ONLINE_LOBBY_FILES = ("godot/scripts/online_lobby.gd", "godot/scripts/online_http.gd")
 
 GODOT_NET = re.compile(r"(HTTPRequest|HTTPClient|WebSocketPeer|WebSocketMultiplayerPeer|StreamPeerTCP|StreamPeerTLS|TCPServer|PacketPeerUDP|"
                        r"PacketPeerDTLS|DTLSServer|UDPServer|ENetConnection|ENetMultiplayerPeer|ENetPacketPeer|WebRTC\w*|JavaScriptBridge|"
@@ -379,13 +391,39 @@ def launcher_finding_allowed(path: str, finding: str) -> bool:
     return finding.split(": ", 1)[-1] in ALLOWED_LAUNCHER.get(path, set())
 
 
+def game_finding_allowed(path: str, finding: str) -> bool:
+    """lane ONLINE-2: a finding of the shipped game GDScript that ALLOWED_GAME names for its file"""
+    return finding.split(": ", 1)[-1] in ALLOWED_GAME.get(path.replace("\\", "/"), set())
+
+
+def online_lobby_problems(text: str) -> list[str]:
+    """lane ONLINE-2: the lobby client's requests go to the lobby the player named: exactly one `.request(` call, its URL argument starting with
+    the `lobby_url` member (comments and strings do not count)"""
+    tokens = [(t, line) for t, line in lex_gd(text)[0]]
+    calls = [k for k in range(1, len(tokens) - 1) if tokens[k][0] == "request" and tokens[k - 1][0] == "." and tokens[k + 1][0] == "("]
+    if len(calls) != 1:
+        return [f"{len(calls)} .request( calls (exactly one, to the lobby, is allowed)"]
+    k = calls[0]
+    if k + 2 >= len(tokens) or tokens[k + 2][0] != "lobby_url":
+        return [f"line {tokens[k][1]}: the request's URL does not start with lobby_url"]
+    # ONLINE-2 r2 (Sol r1): Godot follows a redirect to another origin with the headers (the bearer token): redirects must be off
+    names = [t for t, _ in tokens]
+    if not any(names[i:i + 3] == ["max_redirects", "=", "0"] for i in range(len(names) - 2)):
+        return ["the HTTPRequest does not set max_redirects = 0 (a redirect would take the session token to another origin)"]
+    return []
+
+
 def main() -> int:
     bad = 0
     for path, findings in scan().items():
-        allowed = path in ALLOWED_NATIVE
-        bad += 0 if allowed else 1
         for f in findings:
+            allowed = path in ALLOWED_NATIVE or game_finding_allowed(path, f)
+            bad += 0 if allowed else 1
             print(f"{'allowed' if allowed else 'FINDING'} {path}: {f}")
+    for lobby_file in ONLINE_LOBBY_FILES:
+        for p in online_lobby_problems((REPO / lobby_file).read_text(encoding="utf-8")):
+            bad += 1
+            print(f"FINDING {lobby_file}: {p}")
     for path, findings in scan_launcher().items():
         for f in findings:
             allowed = launcher_finding_allowed(path, f)

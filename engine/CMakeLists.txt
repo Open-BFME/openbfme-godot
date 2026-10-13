@@ -77,6 +77,7 @@ add_custom_command(
 # ---- core ---------------------------------------------------------------------------------
 include(cmake/SimFp.cmake) # openbfme_sim_fp (the simulation floating-point contract) and the simulation manifest helpers
 include(cmake/Apt.cmake) # OPENBFME_APT_SOURCES / OPENBFME_APT_TESTS (EA Apt player lane)
+include(cmake/Dep2.cmake) # openbfme_detlibm: the deterministic libm of the simulation (lane DEP-2; the Lua math library uses it)
 include(cmake/Lua.cmake) # openbfme_lua: Lua 4.0.1 + EA's fork (lane LUA-1)
 include(cmake/Fx.cmake)  # OPENBFME_FX_SOURCES / OPENBFME_FX_TESTS (FX-1: FXList, particles, emitters)
 include(cmake/Production.cmake) # OPENBFME_PROD_SOURCES / OPENBFME_PROD_TESTS (lane PROD-1)
@@ -118,6 +119,7 @@ include(cmake/Radar1.cmake)     # OPENBFME_RADAR1_TESTS (lane RADAR-1: the radar
 include(cmake/Smooth.cmake)     # OPENBFME_SMOOTH_SOURCES / OPENBFME_SMOOTH_TESTS (lane SMOOTH-1, client only)
 include(cmake/Phys1.cmake)      # PHYS-1: collision and separation, PhysicsBehavior (appends to OPENBFME_SIM_SOURCES; OPENBFME_PHYS1_TESTS)
 include(cmake/Perf1.cmake)      # OPENBFME_PERF1_TESTS (lane PERF-1: benchmarks, optimisation determinism)
+include(cmake/PathPerf1.cmake)  # PATHPERF-1: findPath's hierarchical corridor (appends to OPENBFME_SIM_SOURCES; OPENBFME_PATHPERF1_TESTS)
 include(cmake/Perf2.cmake)      # PERF-2: the job system, parallel phases (appends to OPENBFME_SIM_SOURCES; OPENBFME_PERF2_TESTS)
 include(cmake/Perf3.cmake)      # PERF-3: client frame-time work (OPENBFME_PERF3_TESTS)
 include(cmake/Audio3.cmake)     # AUDIO-3: the sound request log, building sounds (appends to OPENBFME_SIM_SOURCES; OPENBFME_AUDIO3_TESTS)
@@ -126,6 +128,9 @@ include(cmake/End1.cmake)       # END-1: the score keeper, the end sequence and 
 include(cmake/Qa1.cmake)       # OPENBFME_QA1_SOURCES / OPENBFME_QA1_TESTS (lane QA-1: the drawn-model pick)
 include(cmake/Mp2.cmake)        # MP-2: the disconnect path, a dropped player's assets (appends to OPENBFME_SIM_SOURCES; OPENBFME_MP2_TESTS)
 include(cmake/Mp3.cmake)        # MP-3: the network test harness (client only; OPENBFME_MP3_CLIENT_SOURCES / OPENBFME_MP3_TESTS)
+include(cmake/Online2.cmake)    # ONLINE-2: the online relay, the START from the lobby service, the relay log -> replay (client only; openbfme_online2_targets)
+include(cmake/Online4.cmake)    # ONLINE-4: the online screens on the lobby service (client only; openbfme_online4_targets)
+include(cmake/Online3.cmake)    # ONLINE-3: hold, rejoin, the multiplayer pause (appends to OPENBFME_SIM_SOURCES; openbfme_online3_targets)
 include(cmake/Script1.cmake)    # SCRIPT-1: the map script engine (appends to OPENBFME_SIM_SOURCES; OPENBFME_SCRIPT1_TESTS)
 include(cmake/Camp1.cmake)      # CAMP-1: the campaigns (OPENBFME_CAMP1_SOURCES / OPENBFME_CAMP1_TESTS)
 include(cmake/Camp2.cmake)      # CAMP-2: the movies' VP6 picture (OPENBFME_CAMP2_SOURCES / _GODOT_SOURCES / _TESTS)
@@ -136,6 +141,7 @@ include(cmake/Aipow1.cmake)     # AIPOW-1: the AISpecialPowerUpdate decisions an
 include(cmake/Ui2.cmake)        # UI-2: owner menu feedback (client only; OPENBFME_UI2_CLIENT_SOURCES / OPENBFME_UI2_TESTS)
 include(cmake/Ui4.cmake)        # UI-4: owner menu / HUD findings on v0.3.0-preview.1 (client only)
 include(cmake/Ui6.cmake)        # UI-6: a tester's menu findings on v0.3.0-preview.6, widescreen view (client only)
+include(cmake/Selperf1.cmake)   # SELPERF-1: the selection's frame cost (client only; OPENBFME_SELPERF1_TESTS)
 include(cmake/Anim1.cmake)      # OPENBFME_ANIM1_TESTS (lane ANIM-1: combat animation)
 include(cmake/Win1.cmake)       # WIN-1: the MSVCR71 real parser (appends to OPENBFME_SIM_SOURCES; OPENBFME_WIN1_TESTS: cross-OS lockstep)
 include(cmake/Garrison3.cmake)  # GARRISON-3: the garrison exit (OPENBFME_GARRISON3_TESTS)
@@ -146,11 +152,14 @@ include(cmake/Qa2fix.cmake)     # QA2-FIX: a player's wall span through the HUD,
 include(cmake/Hud5.cmake)       # HUD-5: the owner's first Windows session (OPENBFME_HUD5_CLIENT_SOURCES / OPENBFME_HUD5_TESTS)
 include(cmake/Autocast1.cmake)  # AUTOCAST-1: the ability autocast toggle and glow (OPENBFME_AUTOCAST1_TESTS)
 include(cmake/Hud6.cmake)       # HUD-6: radial bubbles, side bar frame, help box (OPENBFME_HUD6_CLIENT_SOURCES / OPENBFME_HUD6_TESTS)
+include(cmake/Hud7.cmake)       # HUD-7: a tester's HUD items (OPENBFME_HUD7_TESTS)
 include(cmake/Exit1.cmake)      # EXIT-1: the horde member update, stale MOVING (appends to OPENBFME_SIM_SOURCES; OPENBFME_EXIT1_TESTS)
 include(cmake/Decomp2.cmake)    # DECOMP-2: stops closed with the BFME2 decomp map (OPENBFME_DECOMP2_TESTS)
+include(cmake/Decomp3.cmake)    # DECOMP-3: the skirmish AI's player info record (OPENBFME_DECOMP3_TESTS)
 include(cmake/Decomp1.cmake)    # DECOMP-1: stops closed with the decompilation's progress (appends to OPENBFME_SIM_SOURCES; OPENBFME_DECOMP1_TESTS)
 include(cmake/Play1.cmake)      # PLAY-1: the tribute, the placement ghost (appends to OPENBFME_SIM_SOURCES; OPENBFME_PLAY1_SOURCES / _TESTS)
 include(cmake/Cah1.cmake)       # CAH-1: the Create-a-Hero screens (client only; OPENBFME_CAH1_SOURCES / _GODOT_SOURCES / _TESTS)
+include(cmake/Uber1.cmake)      # UBER-1: the Uber performance mode (appends to OPENBFME_SIM_SOURCES; OPENBFME_UBER1_TESTS)
 include(cmake/Rules1.cmake)     # RULES-1: the Rules tab, the game rules, Legendary Heroes (appends to OPENBFME_SIM_SOURCES; OPENBFME_RULES1_SOURCES / _TESTS)
 include(cmake/Gamemodes1.cmake) # GAMEMODES-1: the game modes' tests (OPENBFME_GAMEMODES1_TESTS)
 include(cmake/Move3.cmake)      # MOVE-3: horde spacing, the blocked path patch (appends to OPENBFME_SIM_SOURCES; OPENBFME_MOVE3_TESTS)
@@ -158,9 +167,13 @@ include(cmake/Input1.cmake)     # INPUT-1: RotWK's input layer (OPENBFME_INPUT1_
 include(cmake/Opts2.cmake)      # OPTS-2: the Options menu (OPENBFME_OPTS2_TESTS)
 include(cmake/Opts3.cmake)      # OPTS-3: the OpenBFME page of the Options screen (appends to OPENBFME_APT_SOURCES)
 include(cmake/Play1.cmake)      # PLAY-1: the tribute, the placement ghost (appends to OPENBFME_SIM_SOURCES; OPENBFME_PLAY1_SOURCES / _TESTS)
+include(cmake/Play4.cmake)      # PLAY-4: the guard machine, the tester's gameplay report (appends to OPENBFME_SIM_SOURCES; OPENBFME_PLAY4_TESTS)
+include(cmake/MapReset1.cmake)  # MAPRESET-1: map.ini overrides reset before every game (OPENBFME_MAPRESET1_TESTS)
 include(cmake/FactA.cmake)      # FACT-A: Men / Elves / Dwarves content through the HUD, selling (appends to OPENBFME_SIM_SOURCES; OPENBFME_FACTA_TESTS)
 include(cmake/FactC.cmake)      # FACT-C: the Goblins / Angmar content through the HUD (OPENBFME_FACTC_TESTS)
 include(cmake/Bugs1.cmake)      # BUGS-1: backlog bugs (production exits, hero requests; OPENBFME_BUGS1_TESTS)
+include(cmake/Save2.cmake)      # SAVE-2: the command-log save (OPENBFME_SAVE2_CLIENT_SOURCES / _TESTS)
+include(cmake/Fly1.cmake)       # FLY-1: the GIANT_BIRD flyers (appends to OPENBFME_SIM_SOURCES; OPENBFME_FLY1_TESTS)
 add_library(openbfme_core STATIC
     ${OPENBFME_PLAY2_SOURCES}
     ${OPENBFME_APT_SOURCES}
@@ -187,6 +200,7 @@ add_library(openbfme_core STATIC
     ${OPENBFME_END1_SOURCES}
     ${OPENBFME_PLAY1_SOURCES}
     ${OPENBFME_MP2_CLIENT_SOURCES}
+    ${OPENBFME_SAVE2_CLIENT_SOURCES}
     ${OPENBFME_MP3_CLIENT_SOURCES}
     ${OPENBFME_UI1_CLIENT_SOURCES}
     ${OPENBFME_RELEASE1_SOURCES}
@@ -463,6 +477,7 @@ add_library(openbfme SHARED
     ${OPENBFME_AUDIO_GODOT_SOURCES}
     ${OPENBFME_SCRIPT1_GODOT_SOURCES}
     ${OPENBFME_CAMP1_GODOT_SOURCES}
+    ${OPENBFME_SAVE2_GODOT_SOURCES}
     ${OPENBFME_CAMP2_GODOT_SOURCES}
     ${OPENBFME_RELEASE1_GODOT_SOURCES}
     ${OPENBFME_UI2_GODOT_SOURCES}
@@ -477,6 +492,12 @@ if(UNIX AND NOT APPLE)
     # The extension links libstdc++ statically; without this its exported locale facet ids collide with the system runtime that Mesa loads into a
     # windowed Godot, and the first stream integer extraction (std::istream >> int) dispatches into the wrong codecvt and crashes (PROD-1 review r1).
     target_link_options(openbfme PRIVATE "-Wl,--exclude-libs,ALL")
+    # Lane DEP-2: export the entry symbol only (the static runtime and all our symbols local), drop unreferenced sections
+    target_link_options(openbfme PRIVATE "-Wl,--version-script=${CMAKE_CURRENT_SOURCE_DIR}/cmake/openbfme-linux-exports.ver" "-Wl,--gc-sections")
+    set_property(TARGET openbfme APPEND PROPERTY LINK_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/cmake/openbfme-linux-exports.ver)
+    # ... and provide powf (GLIBC_2.27) and getentropy (GLIBC_2.25) itself (src/GodotDevice/LinuxRuntimeShims.cpp)
+    target_sources(openbfme PRIVATE src/GodotDevice/LinuxRuntimeShims.cpp)
+    target_link_options(openbfme PRIVATE "-Wl,--wrap=powf,--wrap=getentropy")
 endif()
 if(OPENBFME_LINUX_DEBUG_FILE AND UNIX AND NOT APPLE)
     # godot-cpp's interface holds only its release `-s` link option (cmake/common_compiler_flags.cmake): the strip happens after the split
@@ -504,6 +525,7 @@ endif()
 # ---- unit tests --------------------------------------------------------------------------
 add_executable(openbfme_tests
     ${OPENBFME_WIN1_TESTS}
+    ${OPENBFME_DEP2_TESTS}
     ${OPENBFME_SMOOTH_TESTS}
     ${OPENBFME_ANIM1_TESTS}
     ${OPENBFME_UPGRADE_TESTS}
@@ -512,6 +534,8 @@ add_executable(openbfme_tests
     ${OPENBFME_XP_TESTS}
     ${OPENBFME_FACTB_TESTS}
     ${OPENBFME_PLAY2_TESTS}
+    ${OPENBFME_PLAY4_TESTS}
+    ${OPENBFME_MAPRESET1_TESTS}
     ${OPENBFME_APT_TESTS}
     ${OPENBFME_FX_TESTS}
     ${OPENBFME_PROD_TESTS}
@@ -541,6 +565,7 @@ add_executable(openbfme_tests
     ${OPENBFME_MOD3_TESTS}
     ${OPENBFME_PHYS1_TESTS}
     ${OPENBFME_PERF1_TESTS}
+    ${OPENBFME_PATHPERF1_TESTS}
     ${OPENBFME_PERF2_TESTS}
     ${OPENBFME_PERF3_TESTS}
     ${OPENBFME_AUDIO3_TESTS}
@@ -553,6 +578,7 @@ add_executable(openbfme_tests
     ${OPENBFME_CASTLE1_TESTS}
     ${OPENBFME_END1_TESTS}
     ${OPENBFME_MP2_TESTS}
+    ${OPENBFME_SAVE2_TESTS}
     ${OPENBFME_MP3_TESTS}
     ${OPENBFME_SCRIPT1_TESTS}
     ${OPENBFME_CAMP1_TESTS}
@@ -564,6 +590,7 @@ add_executable(openbfme_tests
     ${OPENBFME_UI2_TESTS}
     ${OPENBFME_UI4_TESTS}
     ${OPENBFME_UI6_TESTS}
+    ${OPENBFME_SELPERF1_TESTS}
     ${OPENBFME_GARRISON3_TESTS}
     ${OPENBFME_COMBAT3_TESTS}
     ${OPENBFME_COMBAT4_TESTS}
@@ -571,14 +598,17 @@ add_executable(openbfme_tests
     ${OPENBFME_QA2FIX_TESTS}
     ${OPENBFME_EXIT1_TESTS}
     ${OPENBFME_DECOMP2_TESTS}
+    ${OPENBFME_DECOMP3_TESTS}
     ${OPENBFME_DECOMP1_TESTS}
     ${OPENBFME_PLAY1_TESTS}
     ${OPENBFME_HUD5_TESTS}
     ${OPENBFME_AUTOCAST1_TESTS}
     ${OPENBFME_HUD6_TESTS}
+    ${OPENBFME_HUD7_TESTS}
     ${OPENBFME_CAH1_TESTS}
     ${OPENBFME_RULES1_TESTS}
     ${OPENBFME_GAMEMODES1_TESTS}
+    ${OPENBFME_UBER1_TESTS}
     ${OPENBFME_MOVE3_TESTS}
     ${OPENBFME_INPUT1_TESTS}
     ${OPENBFME_OPTS2_TESTS}
@@ -586,6 +616,7 @@ add_executable(openbfme_tests
     ${OPENBFME_FACTA_TESTS}
     ${OPENBFME_FACTC_TESTS}
     ${OPENBFME_BUGS1_TESTS}
+    ${OPENBFME_FLY1_TESTS}
     tests/test_main.cpp
     tests/test_big_archive.cpp
     tests/test_archive_order.cpp
@@ -685,6 +716,9 @@ add_executable(openbfme_tests
     tests/test_econ_retail.cpp)
 target_link_libraries(openbfme_tests PRIVATE openbfme_core)
 openbfme_net_targets() # MP-1: the network host sources, the headless peer
+openbfme_online2_targets() # ONLINE-2: the relay sources and tests, the relay process (Linux)
+openbfme_online4_targets() # ONLINE-4: the online screens, the lobby client and their tests
+openbfme_online3_targets() # ONLINE-3: the rejoin, hold and pause tests
 # a separate process for the independent-process determinism test of lua_pushusertag userdata (tests/test_lua_runtime.cpp)
 add_executable(openbfme_lua_probe tests/lua_userdata_probe.cpp)
 target_link_libraries(openbfme_lua_probe PRIVATE openbfme_lua)

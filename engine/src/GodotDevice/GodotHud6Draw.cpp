@@ -234,7 +234,7 @@ void Hud6Draw::drawRadial(RID parent)
 				const float ux = std::cos(a) * 0.5f + 0.5f, uy = std::sin(a) * 0.5f + 0.5f;
 				pts.push_back(Vector2(op.x + ux * op.w, op.y + uy * op.h));
 				uvs.push_back(Vector2((src.position.x + ux * src.size.x) / tw, (src.position.y + uy * src.size.y) / th));
-				cols.push_back(Color(1, 1, 1, 1));
+				cols.push_back(argb(op.color)); // lane HUD-7: the ALWAYS_COLOR multiplier (white otherwise)
 			}
 			rs->canvas_item_add_polygon(op.grayscale ? m_grayItem : m_radialItem, pts, cols, uvs, tex->get_rid());
 			continue;

@@ -84,6 +84,33 @@ public:
 		(void)slot;
 		return -1;
 	}
+	// lane ONLINE-3 (relay mode; LAN keeps these defaults): the relay's view of a slot (RelayProtocol STATUS): the incarnation the relay bound it with (a
+	// rejoin's fresh ticket raises it) and whether the relay has not heard it lately
+	virtual int peerGeneration(int slot) const
+	{
+		(void)slot;
+		return 0;
+	}
+	virtual bool silentAtRelay(int slot) const
+	{
+		(void)slot;
+		return false;
+	}
+	// lane ONLINE-3: the disconnect path's ping test (RW 0x8D7C78): false when the local link failed (relay mode: nothing arrived from the relay for `ms`)
+	virtual bool localLinkAlive(std::uint32_t ms) const
+	{
+		(void)ms;
+		return true;
+	}
+	// lane ONLINE-3: the slot's streams start afresh (sequence numbers from 0 both ways, nothing queued): the Network takes a new incarnation of it back
+	virtual void resetPeer(int slot) { (void)slot; }
+	// lane ONLINE-3 (relay mode): a frame command no other player receives (the others left or are held) goes to the relay's log only, so the log keeps
+	// every frame a rejoining client must re-simulate; false where there is no relay (LAN: nothing logs)
+	virtual bool sendToLog(const std::vector<std::uint8_t> &bytes)
+	{
+		(void)bytes;
+		return false;
+	}
 };
 
 struct NetworkConfig
@@ -104,6 +131,11 @@ struct NetworkConfig
 	// ZH / RotWK ConnectionManager + 0x12030: the packet router fallback order (empty: the network slots in slot order, the first one the router; INFERENCE:
 	// ZH fills it from the game's slots in order, RotWK's filler was not read, S-1121)
 	std::vector<int> packetRouterOrder;
+	// lane ONLINE-3 (an online game: every peer behind the relay; LAN keeps RotWK's hand-over at the drop): a player the disconnect path drops after its
+	// timeout (not by a vote) is HELD: its frames are not waited for, its army stays its own and idle; the packet router hands the army over (DESTROYPLAYER,
+	// retail's MSG_SELF_DESTRUCT) once the rejoin window has passed, or takes the player back (REJOIN) when its restarted game asks (REJOINREQUEST)
+	bool holdForRejoin = false;
+	std::uint32_t rejoinWindowMs = 300000; ///< OpenBFME's choice (S-3900): five minutes
 };
 
 // The breakdown of one peer's state hash for one frame (GameLogic::computeStateHashBreakdown), as exchanged after a mismatch
@@ -214,6 +246,64 @@ public:
 	bool gameDecidedForLocalPlayer() const { return m_gameDecided && m_gameDecided(); }
 	std::u16string playerName(int slot) const { return slot >= 0 && slot < MAX_SLOTS ? m_config.slotNames[(size_t)slot] : std::u16string(); }
 	int packetRouterSlot() const { return m_packetRouter; }
+	// ---- lane ONLINE-3: hold, rejoin and pause (OpenBFME additions, docs/ONLINE.md "Phase O3", stops S-3900 / S-3901) ----
+	// the slot was dropped and is held for a rejoin (its army stays its own); handed over: its DESTROYPLAYER went out (the window ended or a vote)
+	bool isHeld(int slot) const { return slot >= 0 && slot < MAX_SLOTS && m_slots[(size_t)slot].held && !m_slots[(size_t)slot].handedOver; }
+	bool isHandedOver(int slot) const { return slot >= 0 && slot < MAX_SLOTS && m_slots[(size_t)slot].handedOver; }
+	// a newer incarnation of the member slot appeared at the relay (its game restarted): the old one is gone, the disconnect path drops it at once
+	bool slotRestarted(int slot) const { return slot >= 0 && slot < MAX_SLOTS && m_slots[(size_t)slot].restarted; }
+	// the frame the slot rejoined at (0: never), how many rejoins this peer applied, and their notices ("slot S rejoined at frame F")
+	UnsignedInt rejoinFrame(int slot) const { return slot >= 0 && slot < MAX_SLOTS ? m_slots[(size_t)slot].joinFrame : 0; }
+	const std::vector<std::string> &rejoinLog() const { return m_rejoinLog; }
+	// the disconnect path's ping test (RW 0x8D7C78): false when the local link failed (relay mode: nothing from the relay for NetworkDisconnectTime)
+	bool pingTest() const;
+	// pause: every peer runs the frames before the pause frame (the requester's next execution frame) and stops; resume ends it (any player may do either)
+	void requestPause();
+	void requestResume();
+	bool isPaused() const { return !m_pauses.empty(); }
+	bool pausedBefore(UnsignedInt frame) const { return !m_pauses.empty() && frame >= m_pauses.begin()->first; }
+	UnsignedInt pauseFrame() const { return m_pauses.empty() ? 0 : m_pauses.begin()->first; }
+	int pausedBy() const { return m_pauses.empty() ? -1 : m_pauses.begin()->second; }
+	unsigned long long pausesSeen() const { return m_pausesSeen; }
+	// the frame commands this peer sent to the relay's log-only stream again when it found itself alone (logAloneFrames)
+	unsigned long long frameCommandsRelogged() const { return m_frameCommandsRelogged; }
+	// the rejoining client (its game restarted, NetGameSession's rejoin): until beginLive the Network sends no frame data and runs no disconnect path;
+	// once ready it asks the others to take it back (REJOINREQUEST every second, with its ticket's generation)
+	void setRejoining(int generation);
+	void setRejoinReady() { m_rejoinReady = true; }
+	bool rejoining() const { return m_rejoining; }
+	struct MembershipEvent
+	{
+		enum Kind
+		{
+			DROP,    ///< DISCONNECTPLAYER: the slot runs no frame from `frame` on
+			LEAVE,   ///< PLAYERLEAVE at `frame`
+			REJOIN,  ///< the packet router's REJOIN ran on `frame`: the slot is a member again from frame + 1
+			DESTROY  ///< DESTROYPLAYER of the slot (its army handed over)
+		} kind = DROP;
+		int slot = -1;
+		UnsignedInt frame = 0;
+		int generation = 0; ///< REJOIN: the generation of the incarnation taken back (the log's REJOINED record)
+	};
+	struct LiveStart
+	{
+		UnsignedInt frame = 0; ///< the first frame this client runs in lockstep (the REJOIN's frame + 1)
+		int runAhead = 2;      ///< the run-ahead in effect from it
+		std::vector<MembershipEvent> membership; ///< every membership change of the game so far, in log order
+		struct Crc
+		{
+			UnsignedInt frame = 0, executionFrame = 0; ///< a CRC frame the catch-up ran whose MSG_LOGIC_CRC executes on `frame` or later
+			std::uint32_t hash = 0;
+			DesyncHalf half;
+		};
+		std::vector<Crc> crcs;
+	};
+	// the switch from the catch-up to lockstep: the membership, the frame cursors and the run-ahead of the game at `frame`, and this slot's MSG_LOGIC_CRCs
+	// that execute from `frame` on (the others sent theirs before it rejoined)
+	void beginLive(const LiveStart &start);
+	// a frame of another slot taken from the relay's log, complete (its FRAMEINFO and every entry): filled whole unless complete already (as FRAMERESEND)
+	void fillFromLog(int slot, UnsignedInt frame, const std::vector<std::shared_ptr<GameMessage>> &commands, int runAheadChange, const std::vector<int> &rejoins);
+
 	// lane MP-3 (review r1): the packet router of a frame (the role passes on at a drop or leave frame)
 	int packetRouterAt(UnsignedInt frame) const { return routerAt(frame); }
 	int nextPacketRouterSlot(int slot) const; ///< RW 0x8D3ECD (8 or more: none)
@@ -235,6 +325,8 @@ public:
 
 	// the acceptance stops of the network layer (docs/STOPS.md S-720 .. S-725), one line each; every peer report carries them
 	static std::vector<std::string> stopLines();
+	// lane ONLINE-3's acceptance stops (S-3900 reconnect, S-3901 pause); every online peer report and GameWorld.net_status of an online game carry them
+	static std::vector<std::string> onlineStopLines();
 
 private:
 	struct FrameData // ZH FrameData: one slot's data for one frame
@@ -243,7 +335,8 @@ private:
 		std::vector<std::shared_ptr<GameMessage>> commands;
 		bool fromResend = false; ///< lane MP-2: filled whole by a FRAMERESEND (the sender's own late commands for it are dropped)
 		int runAheadChange = -1; ///< lane MP-2: the slot's RUNAHEAD for this frame (counted in the frame info like a command)
-		size_t entries() const { return commands.size() + (runAheadChange >= 0 ? 1 : 0); }
+		std::vector<int> rejoins; ///< lane ONLINE-3: the slots the slot's REJOINs of this frame name (counted like commands)
+		size_t entries() const { return commands.size() + (runAheadChange >= 0 ? 1 : 0) + rejoins.size(); }
 	};
 	struct SlotData
 	{
@@ -255,6 +348,17 @@ private:
 		std::uint64_t lastHeard = 0;          ///< lane MP-2: the last command from it (the Network's clock)
 		std::uint64_t firstQuery = 0;         ///< lane MP-2: RW 0x8D335D's start of the clock
 		UnsignedInt latestFrame = 0;          ///< lane MP-2: RW + 0x12060
+		// lane ONLINE-3
+		UnsignedInt joinFrame = 0;            ///< frames before this one are not waited for (a rejoined incarnation)
+		bool held = false;                    ///< dropped in an online game: held for a rejoin
+		std::uint64_t heldSince = 0;
+		bool handedOver = false;              ///< a DESTROYPLAYER of it was filed (its army went to an ally)
+		int seenGeneration = 0;               ///< the relay's latest generation of it (STATUS)
+		int memberGeneration = 0;             ///< the generation of its incarnation in the game (or last in it)
+		int resetGeneration = 0;              ///< the generation its transport streams were last started afresh for
+		bool restarted = false;               ///< a newer generation appeared while it was a member: the old incarnation is gone
+		bool rejoinRequested = false;         ///< its new incarnation asked to be taken back
+		bool rejoinIssued = false;            ///< this peer (the packet router) sent a REJOIN of it
 	};
 	void send(const NetCommandMsg &c);
 	void receiveAll();
@@ -284,6 +388,7 @@ private:
 		std::array<bool, MAX_SLOTS> present{};
 		std::array<bool, MAX_SLOTS> resent{};
 		std::array<int, MAX_SLOTS> runAheadChange{ { -1, -1, -1, -1, -1, -1, -1, -1 } };
+		std::array<std::uint8_t, MAX_SLOTS> rejoinMask{}; ///< lane ONLINE-3
 		std::array<std::vector<std::shared_ptr<GameMessage>>, MAX_SLOTS> commands;
 	};
 	std::map<UnsignedInt, RelayedFrame> m_history;
@@ -317,4 +422,29 @@ private:
 	int routerAt(UnsignedInt frame) const;
 	// RW 0x8D57D8's membership step for a slot that is gone from `frame` on (dropped, or lane MP-3: left): the next router, the fallback order
 	void passRouterRole(int slot, UnsignedInt frame);
+	// lane ONLINE-3
+	void checkRelayStatus();
+	void routerRejoinDuties();
+	void applyRejoin(int slot, UnsignedInt joinFrame);
+	bool newIncarnationTalking(int slot) const;
+	bool reachesLivePeer(int slot) const;
+	void logAloneFrames();
+	struct RecentFrameCommand ///< lane ONLINE-3: one of this peer's frame commands of the last FRAMES_TO_KEEP frames
+	{
+		UnsignedInt frame = 0;
+		std::vector<std::uint8_t> bytes;
+		bool onLogStream = false; ///< sent to the relay's log-only stream (each goes there at most once, in send order)
+	};
+	std::deque<RecentFrameCommand> m_recentFrameCommands;
+	void logRecentFrameCommands(); ///< the recent ones not yet on the log-only stream, in send order
+	bool m_wasAlone = false;
+	bool m_reconstructing = false; ///< lane ONLINE-3 r2: beginLive applies the log's membership history (no transport effects)
+	unsigned long long m_frameCommandsRelogged = 0;
+	std::map<UnsignedInt, int> m_pauses;     ///< pause frame -> who paused (pending; a RESUME removes it)
+	std::set<UnsignedInt> m_resumedPauses;   ///< pauses resumed (a RESUME can overtake its PAUSE from another sender)
+	unsigned long long m_pausesSeen = 0;
+	bool m_rejoining = false, m_rejoinReady = false;
+	int m_rejoinGeneration = 0;
+	std::uint64_t m_lastRejoinRequest = 0;
+	std::vector<std::string> m_rejoinLog;
 };

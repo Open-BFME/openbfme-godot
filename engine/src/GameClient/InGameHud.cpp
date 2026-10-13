@@ -32,6 +32,7 @@
 #include "Libraries/Source/Apt/AptRenderList.h"
 
 #include <algorithm>
+#include <chrono>
 #include <set>
 
 InGameHud::InGameHud(Config config)
@@ -277,7 +278,16 @@ void InGameHud::update(double seconds)
 	{
 		return;
 	}
+	// lane SELPERF-1: the parts' wall time (UpdateParts)
+	using PartClock = std::chrono::steady_clock;
+	auto partStart = PartClock::now();
+	auto part = [&partStart](double &ms) {
+		const auto now = PartClock::now();
+		ms = std::chrono::duration<double, std::milli>(now - partStart).count();
+		partStart = now;
+	};
 	m_input->update();
+	part(m_updateParts.input);
 	// lane INPUT-1: the SPELL_STORE meta (the ` key): RW 0x71C6AF closes the open store, else opens it (the Palantir's powers button path)
 	while (m_spellToggleSeen < m_input->ui().spellStoreToggles())
 	{
@@ -310,10 +320,12 @@ void InGameHud::update(double seconds)
 		m_hotkeyVersion = m_bar->version();
 		registerHotkeys();
 	}
+	part(m_updateParts.bar);
 	if (m_ownedWindows)
 	{
 		m_wm->update((int)(seconds * 1000.0));
 	}
+	part(m_updateParts.windows);
 	// lane HUD-2: the local side and the control bar's context the Palantir's update reads (AptPalantir::syncLocal, PalantirCommandUI.h). INFERENCE: the context
 	// drawable is the selection's only object; a multiple selection hands NULL, as ZH's ControlBar does for its multi-select context (the RotWK context rules,
 	// RW 0x944390 .. 0x9450B3, were not read)
@@ -366,6 +378,7 @@ void InGameHud::update(double seconds)
 	updateHud6(local.contextObject, local.faction, seconds); // lane HUD-6: the side bar's gate, the radial bubbles, the help box (InGameHudHud6.cpp)
 	m_palantirRef->sync(*m_bar);
 	syncSpellBook();
+	part(m_updateParts.palantir);
 	// lane UI-4: the hero bar (RW 0x92CF64 in the Palantir's update); its object list follows the logic once per logic frame (INFERENCE, S-2521)
 	if (m_heroSelect)
 	{
@@ -381,6 +394,7 @@ void InGameHud::update(double seconds)
 			registerHotkeys();
 		}
 	}
+	part(m_updateParts.heroes);
 	// lane HUD-5: the drawable decorations of this frame (RW 0x679129 and the lists it fills), from the live game (the logic is idle here)
 	if (!m_iconSettings.text)
 	{
@@ -393,10 +407,32 @@ void InGameHud::update(double seconds)
 	m_iconSettings.shroudDrawn = iconSnap && iconSnap->shroud && iconSnap->shroud->displayed;
 	m_iconUI.build(m_config.game.logic(), m_config.game.drawables(), m_config.view, m_iconSettings, selectedSet, m_input->ui().mouseoverObject(), m_iconOps);
 	m_iconSettings.snapshot = nullptr; // the frame's snapshot goes with this frame
+	part(m_updateParts.icons);
 	// lane UI-4: the selection markers (RW 0x67580E / 0x86F4EE / 0x4B2A9B, GameClient/SelectionDecals.h) on the client clock
-	m_selectionDecals = BuildSelectionDecals(m_config.game.logic(), &m_config.game.drawables(), m_config.game.players().getLocalPlayer(), selected, m_decalSettings,
-		m_clientFrames);
+	// lane SELPERF-1: the list follows the logic and the selection (members join, die and level up only in a logic frame); a render frame between moves the
+	// markers with their drawables and runs the throb (RefreshSelectionDecals: the same list BuildSelectionDecals would give)
+	const unsigned logicFrame = m_config.game.logic().getFrame();
+	if (logicFrame != m_decalLogicFrame || selected != m_decalSelection || !(m_decalSettings == m_decalBuiltSettings) || m_decalLogic != &m_config.game.logic())
+	{
+		BuildSelectionDecals(m_config.game.logic(), &m_config.game.drawables(), m_config.game.players().getLocalPlayer(), selected, m_decalSettings,
+			m_clientFrames, m_selectionDecals);
+		m_decalLogicFrame = logicFrame;
+		m_decalSelection = selected;
+		m_decalBuiltSettings = m_decalSettings;
+		m_decalLogic = &m_config.game.logic();
+		++m_decalBuilds;
+		++m_decalVersion;
+	}
+	else if (m_clientFrames != m_decalClientFrame && RefreshSelectionDecals(&m_config.game.drawables(), m_decalSettings, m_clientFrames, m_selectionDecals))
+	{
+		// lane SELPERF-1: once a client frame (30 a second of render time), as RadiusDecal::update runs (BFME2 decomp RadiusDecal.cpp: the throb counts
+		// client frames); INFERENCE: the markers follow their drawables at that rate too (retail draws at FramesPerSecondLimit 30, S-456)
+		++m_decalVersion;
+	}
+	m_decalClientFrame = m_clientFrames;
+	part(m_updateParts.decals);
 	updateRadarEvents();
+	part(m_updateParts.radar);
 }
 
 // lane PLAY-3 (owner's play session: no box while dragging the left button). TARGET FACTS, W3DInGameUI::drawSelectionRegion RW 0x48ECF4 (W3DInGameUI

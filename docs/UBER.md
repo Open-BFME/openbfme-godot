@@ -1,0 +1,451 @@
+# Uber performance mode
+
+The owner's bar (2026-10-11): **144 fps or more, sustained, with 10,000 to
+40,000 units alive and fighting** (horde members count as units), the 1% low
+also at or above 144 (a frame under 6.9 ms), no hitches, never a frame that
+waits on a logic step. Reference machine: the owner's PC (RTX 4090, 24 CPU
+threads, Windows). The Steam Deck's numbers are reported next to it.
+
+This file is the design for getting there, the budget per system, the phases,
+and the honest numbers today. Lane UBER-1 delivered phase U1.
+
+## What the mode is
+
+Retail RotWK runs its logic frame on one thread. OpenBFME's default
+(**Faithful**) simulation ports retail's, and is meant to replay retail games.
+It keeps lockstep with the same seed on every machine and uses about one core
+of 24.
+
+**Uber** is a second simulation profile (`Common/SimulationProfile.h`), off by
+default:
+
+- **The switch:** Options → OpenBFME → Graphics+ → "Uber performance mode"
+  (`Options.ini OpenBFMEUberPerformance = yes`). Its help line warns that it
+  isn't compatible with the original game, and it takes effect from the next
+  game or LAN lobby.
+- **Same rules, different computation.** Uber plays the same game: same INI
+  data, modules and rules. But it may compute things differently from retail:
+  a different order of independent work, snapshot semantics for queries, and
+  per-thread scratch. That lets the work spread over every core and later the
+  GPU.
+- **Deterministic among Uber machines.** Every Uber peer computes bit-identical
+  state whatever its core count, OS or compiler, with the same numeric facade
+  rules as Faithful (no FMA, no CRT maths, no pointer or hash-order
+  dependence). So Uber players can play each other in lockstep.
+- **Never mixed.** The profile is in:
+  - the game setup (`SkirmishGameInfo::simulationProfile`);
+  - the LAN options and start;
+  - the replay (format 5);
+  - the profile identity (`profile uber`, compared at every lobby join and
+    start and by replay playback);
+  - the state hash.
+
+  A Faithful peer, a Faithful replay or a retail client meets a refusal, never
+  a desync.
+- **Faithful's results don't move for Uber; some of its code paths did.**
+  What is unchanged:
+  - a Faithful game's state hash values (the PERF-1 per-frame vectors,
+    `perf1: the big battle ... hash as the build before PERF-1 did`, the PERF-2
+    matrix and the AI-vs-AI pins pass unchanged);
+  - its profile identity text (`profile enhanced`, no new line).
+
+  What did change:
+  - the hash now goes through UBER-1's staging code: the sections are listed
+    first, then fed in the same order into the same chain;
+  - recordings are replay format 5 (the setup's profile field), so format 4
+    files from older builds are refused;
+  - the LAN wire's GameInfo carries one more field.
+
+  Uber has its own pin set (`test_uber1.cpp`, `tests/data/uber1/`).
+
+What Uber may change, phase by phase, is listed under each phase below. Every
+rule change is opt-in through the profile and leaves Faithful's results alone;
+a shared code path (like the hash staging) is allowed only when the Faithful
+pins prove its results unchanged.
+
+## The benchmark (the Uber gate)
+
+`openbfme_tests -tc="uber bench*" --no-skip` (`test_uber1_bench.cpp`):
+
+- the setup: 8 players on map mp fall back 8p, players 1-4 Men against 5-8
+  Mordor, as human slots, so no computer player acts;
+- the armies: rows of fighter, tower shield guard and archer hordes facing
+  each other across the middle of the map, made until there are at least N
+  living troops (N = 10k / 20k / 40k). Troops are counted by
+  `GameClient/FrameCensus.h`: living INFANTRY, CAVALRY or MONSTER objects, so
+  every horde member counts and the horde controllers don't;
+- the battle: two settling frames, then every horde attacks the enemy horde
+  facing it. 50 warm-up frames (10 game seconds) let the armies march into
+  contact; then the measured frames are the battle itself.
+
+Environment variables: `OPENBFME_UBER_UNITS`, `OPENBFME_BENCH_FRAMES`,
+`OPENBFME_UBER_WARMUP`, `OPENBFME_UBER_PROFILE` (faithful / uber / both) and
+`OPENBFME_LOGIC_THREADS`.
+
+Reported per battle:
+
+- the living troops: made, at the start of the window, the sustained mean over
+  the window, the minimum and the end;
+- **the tick**: logic plus the state hash, which every recorded game (every
+  skirmish and LAN game) computes after each frame. Its mean, p99 and max, and
+  the ticks over the 200 ms of the 5 fps logic clock;
+- the logic frame's wall time and each of its six phases;
+- the state hash's time and its own job-pool dispatches, counted apart from
+  the frame's (PERF-2's collision jobs);
+- the cores used (process CPU / wall) and the hash chain.
+
+**The game gate** is the same battle in the real client: the logic on its
+worker, replay recording with its per-frame hash, drawables, terrain, HUD:
+
+    game.gd --auto --map="maps/map mp fall back 8p/map mp fall back 8p.map" --ai=2
+            --uber1=<troops> [--uber1-seconds=20] [--vsync=off] [--perf]
+            [--options-file=F with OpenBFMEUberPerformance = yes / no]
+
+`scripts/uber1_player.gd` makes the armies through `GameWorld.create_object`
+until `GameWorld.get_census()` counts the troops, then orders every horde to
+attack the horde facing it through the player command path
+(`GameWorld.order_attack`). It times the render frames for the window and
+prints:
+- the average fps, the 1% low (the fps of the 99th percentile frame) and the
+  worst frame;
+- the logic frames run per second (5 = the logic kept its clock);
+- the living troops at the start and end of the window;
+- whether the owner's 144 fps bar was met.
+
+One count per run.
+
+The instancer's own bench (`res://scenes/w3d_viewer.tscn -- --bench=N`: N
+animated soldiers through the GPU-skinned W3DInstancer, nothing else) isolates
+the render.
+
+## Where a frame goes today
+
+### The lane machine
+
+Every number below is from the lane machine (the "Deck" of the briefs).
+Godot reports its GPU as "AMD Steam Machine (RADV NAVI33)"; it has 12
+hardware threads and was idle apart from other lanes' light work (load average
+0.5-1.2). JonathanPC: see the end of this file.
+
+### Logic: the tick (logic + hash), the battle after 10 game seconds of marching
+
+| Troops made (sustained in the window) | Faithful tick | Uber tick | Logic | Hash, Faithful → Uber | Ticks over 200 ms, Faithful → Uber |
+|---|---|---|---|---|---|
+| 10,079 (9,393) | 209 ms (p99 258) | 192 ms (p99 244) | 173-179 ms | 35.9 → 13.2 ms | 20 → 11 of 30 |
+| 20,069 (19,510) | 364 ms (p99 489) | 322 ms (p99 444) | 295-298 ms | 69.0 → 23.2 ms | 30 → 30 of 30 |
+| 40,049 (39,512) | 647 ms (p99 850) | 561 ms (p99 769) | 514-520 ms | 132.3 → 41.5 ms | 20 → 20 of 20 |
+
+Details:
+- 30 measured frames (40k: 20), 12 logic threads.
+- The 40k phases (Uber) were 17 / 111 / 176 / 81 / 104 / 32 ms. Phase 2 is
+  the partition update and collisions; phases 3-5 are the module updates and
+  the AI row.
+- The Uber hash ran 2 dispatches per frame, with 5,016 / 9,267 / 11,870 of
+  their chunks on worker threads.
+- Cores used: 1.1 Faithful, 1.6-1.7 Uber. The 40k peak RSS is 1.5 GB.
+- Right after the mass order (the first frames, before the warm-up) the
+  logic's p99 is 420-1290 ms: the path burst (PATHPERF-1).
+
+### The game gate (the real client, 1280x800, vsync off, 20 s window)
+
+| Troops | Profile | Average fps | 1% low | Worst frame | Logic frames/s (5 = on clock) |
+|---|---|---|---|---|---|
+| 10,000 | Faithful | 5.5 | 3.1 | 321 ms | 3.1 |
+| 10,000 | Uber | 6.1 | 3.5 | 297 ms | 3.3 |
+| 40,000 | Uber | 1.6 | 0.9 | 1,174 ms | 1.1 |
+
+So the owner's bar is missed by about 24x at 10k and 90x at 40k on this
+machine.
+
+`--perf` breaks the 10k Uber frame down:
+- the main thread's CPU is 51 ms a frame: the HUD update 8.5, the drawable
+  sync 6, the pose and upload 4, and the logic hand-over 27;
+- the frame takes 164 ms.
+
+So about 110 ms of every frame is spent waiting, most likely for the logic
+worker to finish its frame (the LiveGame accessors wait for the worker), and
+the logic itself runs below its clock (3.3 of 5 frames a second). At 40k the
+main thread's CPU is 166 ms and the frame 642 ms.
+
+**Finding: today the render does wait on the logic.** "The render never waits
+on the logic" is a goal, not the state. Its fix (no waits on the worker from
+the main thread, the presentation fed only by published snapshots) belongs
+with PATHPERF-1's item 4 and is a prerequisite of every fps target below.
+
+Where the logic frame goes (perf on the lane machine, one thread, Faithful, 20k
+units, the first 12 frames after the order, share of the logic frame):
+
+| System | Share | Notes |
+|---|---|---|
+| Pathfinding (`processPathfindQueue` -> `internalFindPath`) | 33% | the order's 2,400 horde paths and their members; occupancy checks (`occupantCost`, `isParked`) dominate the search |
+| Module updates, AI side (`AIUpdateInterface`, state machines, attack states) | 19% | per unit, serial, reads and writes neighbours |
+| Collisions (`processCollisions`: snapshot, pair search, `onCollide`) | 16% | the snapshot and pair search are already parallel (PERF-2); the pair application is serial |
+| Taunt / alert scans (`EmotionTrackerUpdate::tauntScan` -> `getClosestObject`) | 12% | a partition query per idle unit every few frames |
+| Target scans (`TargetFinder`), large group bonus, horde member passes | 14% | partition range queries |
+| Shroud (`ShroudManager`) | 3% | per looker, per frame |
+| Rest (partition update, scheduler, players) | 3% | |
+
+Over the whole run the logic grows about linearly with the troops (13-18 µs per
+troop per frame on the lane machine), plus the path burst after a mass order.
+So 40k troops are 2.8x over the 200 ms tick, before any client work.
+
+### The soldiers alone (lane machine GPU, 1280x800, instancer bench)
+
+| Animated soldiers | Average | fps | CPU pose evaluation | Palette upload |
+|---|---|---|---|---|
+| 1,000 | 1.13 ms | 887 | 0.4 ms | 0.3 ms |
+| 10,000 | 8.64 ms | 116 | 3.9 ms | 3.9 ms |
+| 40,000 | 37.2 ms | 27 | 15.8 ms | 17.3 ms |
+
+The bench runs on 4 pose worker threads. At 40k the CPU computes and uploads
+every bone of every soldier every frame: 40k x 23 bones = 2.76 M palette
+texels. That cost, not the GPU's triangles, is what sets the frame. A game adds
+the drawables' snapshot sync (`DrawableManager`, parallel since PERF-2), terrain,
+water, particles, shroud and the HUD.
+
+### The render and the logic (state today)
+
+SMOOTH-1 runs the logic on its own worker thread (`LiveGame` `logicThread`)
+and the presentation interpolates behind a presentation delay. When a logic
+frame is late, the presented time stops at the end of the last completed frame
+(S-1140). The design keeps the render loop going, but the game gate above shows
+the main thread still waits on the worker in a big battle (about 110 ms of a
+164 ms frame at 10k). Removing those waits comes first (with PATHPERF-1);
+making the logic finish inside its tick is Uber's other half.
+
+## The budget at 40,000 units
+
+**Logic.** On the reference PC the logic tick must finish in its 200 ms (5 fps
+clock) with room to spare. The target is 100 ms of wall time on 24 threads,
+which leaves room for a slower peer: lockstep runs at the slowest machine's
+pace. The Deck's target is 200 ms at 20k.
+
+The "today" column splits the measured 40k Uber logic (520 ms) by the 20k
+profile's shares and adds the measured hash.
+
+| System | Today, 40k Uber on the lane machine | Target at 40k on the reference PC (unvalidated) | How (phase) |
+|---|---|---|---|
+| Pathfinding | ~170 ms, bursts of seconds after a mass order | 15 ms | parallel A* with per-thread scratch (U2), flow fields for groups (U3) |
+| Module updates, AI side (state machines, attack states) | ~100 ms | 35 ms | parallel read / serial commit per module class (U3), SoA horde members (U3) |
+| Collisions | ~85 ms | 10 ms | parallel pair application by conflict-free batches (U3) |
+| Taunt, target and range scans, horde member passes | ~135 ms | 15 ms | snapshot queries on the job pool with per-thread partition buffers (U2) |
+| Shroud and visibility | ~15 ms | 3 ms | parallel per player (U2), compute shader for the client side (U4) |
+| Serial glue (partition update, scheduler, destroy list, players) | ~15 ms | 18 ms (commits added) | |
+| State hash | 42 ms measured (Faithful: 132 ms) | 4 ms | parallel sections (U1, done) |
+| **Total** | **~562 ms (measured tick: 561 ms)** | **~100 ms** | |
+
+**Render.** The frame has 6.9 ms on the reference PC, with the logic off this
+thread and no waits on it. These are targets, not measurements.
+
+| System | Target at 40k | How |
+|---|---|---|
+| Snapshot interpolation and drawable sync | 1.0 ms (parallel) | already parallel (PERF-2); SoA snapshot (U3) |
+| Animation | 0.3 ms CPU | GPU pose evaluation: animation data in textures, bones computed in the vertex or compute shader from (clip, time, blend) per instance; only the per-instance state is uploaded, 40k x 32 bytes (U2) |
+| Culling and LOD | 0.3 ms CPU | GPU frustum culling and LOD selection (compute, indirect draws), impostors at distance (U3) |
+| GPU: skinned instances | 3.0 ms | LOD so that 40k visible soldiers stay under ~25 M triangles a frame (U3) |
+| Particles | 0.5 ms | GPU particle simulation (compute), CPU only spawns (U3) |
+| Decals, selection rings, health bars | 0.3 ms | one instanced batch each (U3) |
+| Terrain, water, shroud | 1.0 ms | shroud texture from a compute pass (U4) |
+| HUD, UI | 0.5 ms | |
+
+**What stays on the CPU for determinism.** Everything the simulation reads:
+- the positions and paths, the targets, the damage and the shroud the logic
+  uses;
+- anything that decides a game event.
+
+GPUs differ in their float results and their scheduling, so the GPU only draws
+and simulates what never reaches the logic: particles, the drawn animation,
+culling, decals and the client shroud texture. A GPU flow field would have to
+be integer-exact and verified across vendors before the logic could read it.
+That's a research item, not a plan.
+
+## How determinism is proven
+
+- **Across thread counts:** `uber1: the Uber battle hashes as its pin vector
+  in every frame with 1, 4 and 16 logic threads and in a repeated run`:
+  - the battle: at least 3,000 living troops, 8 players, 40 frames, a hash
+    after every frame;
+  - each run is compared with the stored Uber pin vector
+    `tests/data/uber1/battle3000_40.hashes`;
+  - the hash's own dispatches are counted apart from the frame's, and with
+    more than one thread its chunks ran on workers;
+  - a Faithful hash dispatches nothing.
+
+  Every phase adds its own battle and threads to this test.
+- **Across machines, with every parallel simulation change (not only at U5):**
+  a change lands only after its Uber pin vector matched on at least two
+  machines with different CPUs, and (from U2 on) in a native Windows run of
+  the suite. UBER-1's evidence:
+  - the pin vector made on JonathanPC (Ryzen 9 5900X, WSL, 24 threads) passes
+    in the remote gate's suite on pve (Ryzen 7 5800H, 12 threads);
+  - the bench's hash chains (Faithful and Uber, 10k and 20k, 30 frames) are
+    equal on the lane machine (12 threads) and JonathanPC (24 threads).
+
+  Not yet covered: the gate cross-builds the Windows game but doesn't run its
+  suite. A native Windows run of the Uber pin test is the first item of U2's
+  checklist.
+
+  U5 automates it (Deck, JonathanPC Windows native and WSL, a Mac, 1 / 4 / 16 /
+  24 threads) and adds LAN peers with different `--logic-threads`
+  (`openbfme_peer --uber`), as PERF-2 did for Faithful.
+- **Rules every Uber change follows:**
+  - fixed partitioning (`JobSystem::parallelFor`: chunk k is always
+    [k * grain, (k + 1) * grain));
+  - results written to the slots of the items a chunk owns, combined in item
+    order on the calling thread;
+  - no logic RNG in a parallel body (U3 gives each object its own stream,
+    derived from the seed, the frame and the object id);
+  - no object creation or destruction in a parallel body (requests are queued
+    and committed in order);
+  - the numeric facade's floating-point environment checked per chunk, as
+    PERF-2 does.
+- **Faithful results unchanged:** the PERF-1 per-frame vectors (400-frame
+  battle, 6000-frame 4-player skirmish), the PERF-2 matrix and the AI-vs-AI
+  pins (see "What the mode is" for the code paths and formats that changed).
+
+## Phases
+
+### U1: the switch, the plumbing, the benchmark, the first speed-up (UBER-1, done)
+
+- The option and the profile everywhere it must be:
+  - setup and wire: `SkirmishGameSetup`, `GameInfo`, `NetPacket`;
+  - LAN: `LANAPI` (the host's game runs its identity's profile; options or a
+    start of another profile are refused) and `LANLobby`;
+  - replay format 5 and `ProfileIdentity` (`profile uber`); a replay header
+    whose identity and setup name different profiles is never written, never
+    read, never played (UBER-1 review);
+  - `GameLogic` (hashed only when Uber);
+  - `GameWorld.set_simulation_profile`: `prepare_new_game` and
+    `start_new_game` refuse a game of another profile;
+  - `game.gd` applies the option before a lobby, a game or a replay;
+  - the load screen line and `openbfme_peer --uber`.
+- The benchmark and the game gate above.
+- **The speed-up: the Uber state hash.** Every section of the state hash on
+  its own on the logic job pool, the objects section one object per slot, then
+  the section values chained in their fixed order. The hash is 2.7-3.2x faster
+  at 10k-40k (132 → 42 ms at 40k), 8-13% of the tick. The
+  only rule Uber changes so far is the hash function, so its simulation is
+  otherwise the Faithful one.
+- Why the hash first: pathfinding is the biggest hotspot, but parallel A* needs
+  per-thread search scratch inside the pathfinder that PATHPERF-1 is reworking
+  right now (the retail request queue), and a second lane in the same code
+  would collide. The hash was the biggest change that is safe on its own: a
+  pure function of the state, on every frame of every recorded game.
+
+### U2: parallel queries and paths, GPU animation (next)
+
+- **Snapshot queries.** Before each module phase, the queries a module will
+  ask (taunt scans, target acquisition, the large group bonus, the
+  `TargetFinder` scans) are answered in parallel against the phase-start state.
+  The partition manager gets per-thread hit buffers (its `m_hitPool` is shared
+  today). Modules then read their answers in the serial order. Uber rule
+  change: a query sees the phase start, not the moves of the modules that ran
+  earlier in the same phase.
+- **Parallel pathfinding.** The frame's queued requests are solved in parallel
+  against the frame-start grid, each search with its own open list and cell
+  scratch, and the paths are committed in queue order. Built on PATHPERF-1's
+  merged queue. Uber rule change: every request of a frame sees the same grid.
+  - What bounds the time: a request count doesn't, since one search can expand
+    the whole map. A wall-clock budget would be non-deterministic. So the
+    bound has to be a work budget counted in expanded cells, the same on every
+    machine: a search that runs out continues in the next frame, as retail's
+    queue does.
+  - Even that bounds the tick only if the budget times the slowest supported
+    machine's cost per cell fits; that is measured per machine class, not
+    assumed. U3's flow fields then cut the work of group moves at the source.
+- **No main-thread waits on the logic** (with PATHPERF-1): the client reads
+  only published snapshots, so a slow logic frame never stops a render frame.
+- **GPU animation.** The pose evaluation moves to the GPU: clips baked into
+  textures, per-instance clip, time and blend uploaded, bones evaluated in the
+  shader. This is Faithful as well (presentation only). The 40k bench's 33 ms
+  of CPU pose and upload go to about 0.5 ms.
+- The game gate runs on the reference PC (idle, briefs/jpc.md) and the Deck at
+  10k / 20k / 40k.
+- **Target (unvalidated until idle reference-PC measurements exist):** 10k at
+  144 fps on the reference PC; 10k logic inside the tick on the Deck.
+
+### U3: data-oriented movement, flow fields, GPU culling
+
+- **Flow fields** for group moves: one integration field per destination and
+  locomotor class, shared by every horde and member that goes there, computed
+  in parallel tiles (integer costs).
+- Horde members as structure-of-arrays (position, velocity, slot, target),
+  updated in parallel with a serial commit.
+- **Collisions:** pairs applied in conflict-free batches (no object in two
+  pairs of a batch; the batches in fixed order).
+- **Per-object RNG streams** for the parallel bodies that draw randomness.
+- **GPU:** culling and LOD selection, indirect draws, impostors at distance,
+  GPU particles, instanced decals and selection rings.
+- **Target (unvalidated):** 20k at 144 fps on the reference PC; 40k logic inside
+  the tick on the reference PC.
+
+### U4: AI on threads, parallel module phases, GPU shroud
+
+- Each skirmish AI player plans on its own thread against the frame snapshot.
+  Its commands are merged in player order into the next frame's command list.
+- Module phases split by spatial tiles with a halo: a tile's modules run in
+  parallel when their reads and writes stay inside the tile, and the cross-tile
+  work commits serially in object order.
+- Shroud and visibility: per player in parallel for the logic, a compute
+  shader for the client texture.
+- **Target (unvalidated):** 40k at 144 fps sustained on the reference PC.
+
+### U5: the gate in CI
+
+- The Uber benchmark on every CI host: logic tick at 10k / 20k / 40k and the
+  windowed run where a GPU exists, with average fps, 1% low and worst frame.
+- Cross-machine hash vectors automated: Deck, JonathanPC (Windows native and
+  WSL), a Mac; 1 / 4 / 16 / 24 threads. (Each parallel change already checks
+  two machines and Windows by hand, see above.)
+- Uber LAN soaks with mixed thread counts, Uber replays.
+
+## What's realistic when
+
+Every row after "Today" is an unvalidated target until the game gate has
+measured it on an idle reference PC.
+
+| Milestone | 10k units | 40k units |
+|---|---|---|
+| Today (U1), lane machine | tick 192 ms (on the edge of the 200 ms); the game 6.1 fps (1% low 3.5); the soldiers alone 116 fps | tick 561 ms (2.8x over); the game 1.6 fps (1% low 0.9); the soldiers alone 27 fps |
+| After U2 | 144 fps on the reference PC; the Deck at 60 fps with the logic inside the tick | logic about 2x over the tick on the Deck; render limited by the GPU, not the CPU |
+| After U3 | 144 fps with margin; the Deck near 90 fps | logic inside the tick on the reference PC; 144 fps with LOD where the camera sees part of the army |
+| After U4 | | 144 fps sustained on the reference PC, the 1% low included; the Deck at 30-60 fps at 40k (its 4 Zen 2 cores and 8 CUs are the limit) |
+
+These are estimates from today's profile, not promises. The game gate's 6 fps
+at 10k shows how far the client is from the bar: the waits on the logic and
+the client's own per-object work have to go before any GPU work shows. The
+risks:
+- serial dependencies in the module updates that tiles can't break: horde
+  members that reach across the map, garrisons and transports;
+- the pathfinder's occupancy checks, which read live unit positions;
+- the GPU's triangle load at the RTS camera when 40k are on screen;
+- Amdahl: today 70% of the frame is serial module and path work.
+
+## JonathanPC numbers
+
+The logic bench on JonathanPC (Ryzen 9 5900X, 24 threads, WSL), 2026-10-12.
+Conditions:
+- the machine idle: no CI unit, load average 1-2 before and after;
+- the desktop lock held for the run;
+- run through jpc-run.sh, so as a lane job: nice 10, capped at 16 cores. That
+  is not the normal priority briefs/jpc.md asks for. Holding `jpc-paused`
+  would have stopped the lane job itself.
+
+| Troops | Faithful tick | Uber tick | Uber logic | Hash, Faithful → Uber |
+|---|---|---|---|---|
+| 10k | 285 ms | 256 ms | 242 ms | 44.6 → 13.6 ms |
+| 20k | 516 ms | 452 ms | 428 ms | 86.4 → 24.5 ms |
+| 40k | 931 ms | 785 ms | 741 ms | 173 → 44 ms |
+
+The serial logic runs about 40% slower here than on the lane machine. That
+points to the WSL and lane-job conditions rather than the CPU, so these are not
+the reference PC's numbers.
+
+Every hash chain (Faithful and Uber, 10k / 20k / 40k) is equal to the lane
+machine's: the same simulation on another CPU and thread count.
+
+Still to do with the owner's desktop (the GPU-job path of briefs/jpc.md, one
+job at a time):
+- the reference measurement proper: the game gate (`--uber1`) in the native
+  Windows build on the RTX 4090, idle, at normal priority;
+- a native Windows run of the Uber pin test.

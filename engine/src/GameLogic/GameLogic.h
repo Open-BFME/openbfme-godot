@@ -49,6 +49,7 @@
 #include "Common/MpGameRules.h"
 #include "Common/PlayerList.h"
 #include "Common/RandomValue.h"
+#include "Common/SimulationProfile.h"
 #include "Common/Team.h"
 #include "GameLogic/AI/AICommandSink.h"
 #include "GameLogic/FXEvents.h"
@@ -137,6 +138,15 @@ struct GameLogicSettings
 {
 	bool enableRepulsors = true;                     ///< AIData EnableRepulsors (RW 0xDE4B40 + 0x18 + 0x64): the RepulsorHelper condition
 	float repulsedDistance = 0.0f;                   ///< AIData RepulsedDistance (+ 0x60, lane MODULES-3): the safe path radius beyond the vision range
+	// lane PLAY-4: the guard machine's AIData rows (table RW 0xC1CC00 ..: GuardChaseUnitsDuration + 0x3C, GuardEnemyScanRate + 0x40, GuardEnemyReturnScanRate
+	// + 0x44 through parseDurationUnsignedInt RW 0x73A429 (frames); AlertRangeModifier + 0x4C, AggressiveRangeModifier + 0x50 through parseReal RW 0x42ED00);
+	// guardRulesLoaded is true when the loader read the three durations (the guard machine reports their absence)
+	bool guardRulesLoaded = false;
+	unsigned guardChaseUnitsFrames = 0;
+	unsigned guardEnemyScanRate = 0;
+	unsigned guardEnemyReturnScanRate = 0;
+	float alertRangeModifier = 1.0f;
+	float aggressiveRangeModifier = 1.0f;
 	bool forceModelsToFollowTimeOfDay = false;       ///< GameData ForceModelsToFollowTimeOfDay (a new drawable gets NIGHT)
 	bool forceModelsToFollowWeather = false;         ///< GameData ForceModelsToFollowWeather (SNOW)
 	bool bodyThresholdsLoaded = false;               ///< the two thresholds below were read from GameData (an ActiveBody that needs them throws when not)
@@ -361,6 +371,10 @@ public:
 	const GameRules &gameRules() const { return m_gameRules; }
 	void setLegendaryHeroes(int factor) { m_legendaryHeroes = factor; }
 	int legendaryHeroes() const { return m_legendaryHeroes; }
+	// lane UBER-1: the simulation profile (Common/SimulationProfile.h; set before the first frame). Hashed only when Uber, so a Faithful game keeps its hash
+	void setSimulationProfile(SimulationProfile p) { m_simulationProfile = p; }
+	SimulationProfile simulationProfile() const { return m_simulationProfile; }
+	bool uber() const { return m_simulationProfile == SimulationProfile::Uber; }
 
 	// ---- frame ------------------------------------------------------------------------------------------------------------
 	UnsignedInt getFrame() const { return m_frame; }
@@ -482,11 +496,14 @@ public:
 	// returns a token for removeWorldHooks: a listener whose owner is destroyed before the logic must remove itself.
 	// lane GARRISON-1: `containment` marks a listener that is part of RW 0x68E31F / 0x68C18F themselves (the shroud registration, RW 0xB4D900 / 0xB4E2A0): it also
 	// runs when a contain takes an object out of the world and puts it back (friend_containLeaveWorld / friend_containEnterWorld). The other listeners (the
-	// pathfinder's adapters) only see the object's creation and its destruction
-	int addWorldHooks(WorldHook entered, WorldHook left, bool containment = false)
+	// pathfinder's adapters) only see the object's creation and its destruction.
+	// lane DECOMP-3: `leaveWhenOut` (with `containment`) also runs `left` at the destruction of an object a contain already took out of the world: RW 0x68C18F calls
+	// the skirmish AI manager's RW 0x6A99CB without testing + 0x474 (RW 0x68C1FA); in a contain's transitions such a listener runs last, after the partition
+	// and the script world (RW 0x68E42D / 0x68C205), the other containment listeners (the shroud) first
+	int addWorldHooks(WorldHook entered, WorldHook left, bool containment = false, bool leaveWhenOut = false)
 	{
 		const int token = ++m_nextListenerToken;
-		m_extraWorldHooks.push_back(ExtraHooks{ token, std::move(entered), std::move(left), containment });
+		m_extraWorldHooks.push_back(ExtraHooks{ token, std::move(entered), std::move(left), containment, leaveWhenOut });
 		return token;
 	}
 	void removeWorldHooks(int token)
@@ -656,8 +673,13 @@ private:
 		int token;
 		WorldHook entered, left;
 		bool containment = false;
+		bool leaveWhenOut = false;
 	};
 	std::uint32_t hashState(std::vector<StateHashSection> *sections, std::vector<ObjectStateHash> *objects) const; // lane MP-1
+	// lane UBER-1: the Uber profile's "objects" section: every object's own hash on the logic job pool, then (count, id, hash) in list order
+	void hashObjectsUber(StateHasher &x) const;
+	mutable std::vector<const Object *> m_uberHashObjects;  ///< scratch of hashObjectsUber (the logic owner thread only)
+	mutable std::vector<std::uint32_t> m_uberHashValues;
 	struct HashContributor
 	{
 		int token;
@@ -680,6 +702,7 @@ private:
 	int m_gameDifficulty = 1;     ///< lane CAMP-1H: RW GameLogic + 0xA4
 	GameRules m_gameRules = MpGameRules::none(); ///< lane RULES-1
 	int m_legendaryHeroes = LegendaryHeroes::kOff; ///< lane RULES-1 (OpenBFME)
+	SimulationProfile m_simulationProfile = SimulationProfile::Faithful; ///< lane UBER-1 (OpenBFME)
 	bool m_frameAdvance = true;   ///< RW GameLogic + 0x44
 	bool m_inUpdate = false;      ///< RW + 0x70
 	int m_lastPhase = 0;          ///< RW + 0x17C

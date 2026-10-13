@@ -14,6 +14,8 @@
 //     | --join IP:PORT --name NAME
 //     [--frames N] [--run-ahead N] [--crc-interval N] [--script] [--realtime] [--record FILE] [--hashes FILE] [--report FILE]
 //     [--inject-divergence FRAME] [--drop PERMILLE] [--delay MS] [--jitter MS] [--feature NAME] [--lobby-timeout S]
+//     lane UBER-1: [--uber] this peer runs the Uber simulation profile (docs/UBER.md): its identity says "profile uber" (a Faithful peer is refused at the
+//     lobby) and a game it hosts runs Uber
 //     SMOOTH-1 (review r4, the logic worker in a network game): [--logic-thread] the frames run on LiveGame's logic worker; [--step-ms N] the render step
 //     (advance(N ms) per loop, default 200); [--worker-delay-ms N] the worker sleeps N ms after every frame (a slow simulation owner);
 //     [--pause-at FRAME:MS] at that protocol frame only advance(0) for MS ms (presentation-only: the transport is pumped, no batch runs);
@@ -38,13 +40,44 @@
 //     lane HERO-2: [--create-a-hero SLOT:FILE.cah] (host, repeated) the slot's Create-a-Hero, read at the setup and carried by the START to every peer;
 //     with --lan-join [--create-a-hero FILE.cah] the own slot's, sent to the lobby's host (LANAPI::requestSlotCreateAHero); [--recruit-create-a-hero FRAME]
 //     with --script: from that frame the local player recruits its Create-a-Hero at its fortress until it exists
+//     lane ONLINE-2 (online play through the relay, docs/ONLINE.md phase O1): --online-start FILE.json instead of --host / --join / --lan-join: plays the
+//     game of the START the lobby service built (GameNetwork/OnlineStart.h), every peer behind the relay (Transport relay mode; the socket binds --bind,
+//     0.0.0.0 by default here, any port); the report gets a relay line
+//     lane ONLINE-3 (reconnect and pause, docs/ONLINE.md "Phase O3"): a START with a rejoin ticket (the lobby's /v1/games/<id>/rejoin) rejoins the running
+//     game: the relay's log is fetched and re-simulated at full speed, then the peer plays in lockstep (the report's rejoin lines: the catch-up time,
+//     the frames, the CRCs compared); [--net-pause-at FRAME] at that protocol frame the local player pauses the game (every peer stops before one
+//     frame); [--net-resume-ms MS] once the game has been paused MS ms this peer resumes it (any player may); [--rejoin-window-ms N] an online
+//     game's rejoin window (default 300000)
 //   openbfme_peer --rotwk DIR --bfme2 DIR --replay FILE [--report FILE]
+//   lane SAVE-2 (docs/SAVES.md T1, the fresh process): openbfme_peer ... --load-save SAVE --replay FILE [--report FILE]   loads the save (an .obfmesave of
+//     this build: its log is caught up to its frame F, every recorded hash compared, GameClient/CommandLogLoad.h), then plays the rest of FILE (the
+//     uninterrupted game's replay, the same game) from F with every frame's hash compared; the report adds save_frame and catch_up_hashes; exit 2 on a
+//     refused save, a failed catch-up or any later mismatch (a campaign mission's save starts its mission from the save's campaign start, the replay's
+//     map directory and the save's difficulty); --profile-text FILE writes this build's profile identity text to FILE (what a test records
+//     the game under, so the save is this build's) and exits
+//   lane ONLINE-2: openbfme_peer --rotwk DIR --bfme2 DIR --print-profile   prints this build's profile identity MD5 (what the lobby compares),
+//     then "faction INDEX NAME" lines (the START's faction numbers)
+//     lane ONLINE-3: a spectator START ("openbfme-spectate", the lobby's /v1/games/<id>/spectate) watches the game read-only: the relay's log (held back by
+//     the spectator delay) is re-simulated as it grows, with no local slot (the observer's ReplayObserver side: no shroud), until --frames or the
+//     log's end; the report's spectate lines (frames, CRCs compared with the players', the relay's refusals) and final_hash at that frame;
+//     [--spectate-forge] it sends one forged frame command to the relay (which must refuse it); [--spectate-observe N] every N frames its view steps
+//     to the next player (retail's observe-next, RW 0x6A8D2B); [--frame-times] frame_ms lines: when each frame (a player) / frames 100, 200, ... (a spectator) ran
+//   lane ONLINE-3: openbfme_peer --rotwk DIR --bfme2 DIR --relay-log LOG --online-start FILE.json --catch-up FRAME [--report FILE]   the rejoin's catch-up
+//     (GameNetwork/Rejoin.h CommandLogCatchUp: the START + the log -> the state at FRAME, the players' CRCs compared on the way), timed: catch_up frames
+//     N ms T crcs_compared C mismatches M; exit 2 on a CRC mismatch
+//   lane ONLINE-2: openbfme_peer --rotwk DIR --bfme2 DIR --relay-log LOG --online-start FILE.json --record OUT [--report FILE]   (FILE.json: the lobby's
+//     replay START, /v1/replays/<id>/start, or a player's START)
+//     the relay's command log of that game (services/online/relay) assembled into a replay (GameNetwork/RelayLog.h); exit 0, or 2 when the players' CRCs
+//     disagree in the log, 4 when the log is incomplete or the replay differs from the game (S-3710). `--replay OUT` then checks CRC parity
 // Exit code: 0 ok, 1 usage / load error / another profile's replay, 2 desync (or replay mismatch / an incomplete replay), 3 network failure (stall /
 // timeout, refused by the lobby: another profile), 4 network or recording errors (a command that could not be sent or recorded).
 
 #include "Common/JobSystem.h"
 #include "Common/PlayerTemplate.h"
+#include "Common/BuildVersion.h"
 #include "Common/Recorder.h"
+#include "Common/System/SaveGame/SaveGameFile.h"
+#include "GameClient/CommandLogLoad.h"
 #include "Common/RetailArchivePolicy.h"
 #include "Common/Player.h"
 #include "Common/PlayerList.h"
@@ -65,7 +98,13 @@
 #include "GameNetwork/LANAPI.h"
 #include "GameNetwork/LANLobby.h"
 #include "GameNetwork/NetGameSession.h"
+#include "GameNetwork/NetPacket.h"
 #include "GameNetwork/NetworkSettings.h"
+#include "GameNetwork/OnlineStart.h"
+#include "GameNetwork/RelayLog.h"
+#include "GameNetwork/Rejoin.h"
+#include "GameNetwork/RelayProtocol.h"
+#include "Common/Crc32.h"
 #include "GameLogic/SelfDestruct.h"
 #include "GameNetwork/ScriptedPlayer.h"
 #include "GameLogic/ObjectTemplateInfo.h"
@@ -100,6 +139,8 @@ struct Args
 	int crcInterval = 100;
 	bool script = false, realtime = false;
 	std::string record, hashes, report, replay;
+	std::string loadSave; ///< lane SAVE-2: --load-save FILE (with --replay)
+	std::string profileText; ///< lane SAVE-2: --profile-text FILE writes this build's profile identity text there and exits (a test records under it)
 	long long injectFrame = -1;
 	int dropPerMille = 0, delayMs = 0, jitterMs = 0;
 	std::vector<std::string> links;          ///< lane MP-3: --link [SLOT:]FAULTS
@@ -124,10 +165,21 @@ struct Args
 	bool lanJoin = false;
 	std::string lanFaction, lanTargets;
 	int lanPortBase = -1;
+	bool uber = false;             ///< lane UBER-1: --uber
 	int logicThreads = 0;          ///< PERF-2: --logic-threads N, the logic job pool's threads (0: OPENBFME_LOGIC_THREADS or the hardware's)
 	int toggleGates = 0;                ///< lane HUD-5: --toggle-gates N (every N frames the local player toggles each settled gate it controls)
 	long long recruitCreateAHeroAt = -1; ///< lane HERO-2: --recruit-create-a-hero FRAME (the local player recruits its Create-a-Hero from then on until made)
 	std::vector<std::string> createAHeroes; ///< lane HERO-2: --create-a-hero SLOT:FILE.cah (host) / --create-a-hero FILE.cah (--lan-join: the own slot)
+	std::string onlineStart, relayLog;      ///< lane ONLINE-2: --online-start FILE.json, --relay-log LOG
+	bool bindGiven = false;
+	bool printProfile = false;              ///< lane ONLINE-2: --print-profile (the lobby compares the profile identity's MD5)
+	long long netPauseAt = -1;              ///< lane ONLINE-3: --net-pause-at FRAME
+	long long netResumeMs = -1;             ///< lane ONLINE-3: --net-resume-ms MS
+	long long rejoinWindowMs = -1;          ///< lane ONLINE-3: --rejoin-window-ms N
+	long long catchUp = -1;                 ///< lane ONLINE-3: --catch-up FRAME (with --relay-log: time the rejoin's catch-up to that frame)
+	bool spectateForge = false;             ///< lane ONLINE-3: --spectate-forge (a spectator sends one forged command: the relay must refuse it)
+	int spectateObserveEvery = 0;           ///< lane ONLINE-3: --spectate-observe N (every N frames the spectator's view steps to the next player)
+	bool frameTimes = false;                ///< lane ONLINE-3: --frame-times (the report's frame_ms lines: when every 100th frame ran)
 };
 
 std::string envOr(const char *name)
@@ -156,7 +208,17 @@ bool parseArgs(int argc, char **argv, Args &a, std::string &error)
 		if (k == "--rotwk" && next(a.rotwk)) {}
 		else if (k == "--bfme2" && next(a.bfme2)) {}
 		else if (k == "--host" && next(v)) a.hostPort = std::atoi(v.c_str());
-		else if (k == "--bind" && next(a.bind)) {}
+		else if (k == "--bind" && next(a.bind)) a.bindGiven = true;
+		else if (k == "--online-start" && next(a.onlineStart)) {}
+		else if (k == "--relay-log" && next(a.relayLog)) {}
+		else if (k == "--print-profile") a.printProfile = true;
+		else if (k == "--net-pause-at" && next(v)) a.netPauseAt = std::atoll(v.c_str());
+		else if (k == "--net-resume-ms" && next(v)) a.netResumeMs = std::atoll(v.c_str());
+		else if (k == "--rejoin-window-ms" && next(v)) a.rejoinWindowMs = std::atoll(v.c_str());
+		else if (k == "--catch-up" && next(v)) a.catchUp = std::atoll(v.c_str());
+		else if (k == "--spectate-forge") a.spectateForge = true;
+		else if (k == "--spectate-observe" && next(v)) a.spectateObserveEvery = std::max(1, std::atoi(v.c_str()));
+		else if (k == "--frame-times") a.frameTimes = true;
 		else if (k == "--join" && next(a.join)) {}
 		else if (k == "--name" && next(a.name)) {}
 		else if (k == "--map" && next(a.map)) {}
@@ -171,6 +233,8 @@ bool parseArgs(int argc, char **argv, Args &a, std::string &error)
 		else if (k == "--hashes" && next(a.hashes)) {}
 		else if (k == "--report" && next(a.report)) {}
 		else if (k == "--replay" && next(a.replay)) {}
+		else if (k == "--load-save" && next(a.loadSave)) {}
+		else if (k == "--profile-text" && next(a.profileText)) {}
 		else if (k == "--inject-divergence" && next(v)) a.injectFrame = std::atoll(v.c_str());
 		else if (k == "--drop" && next(v)) a.dropPerMille = std::atoi(v.c_str());
 		else if (k == "--delay" && next(v)) a.delayMs = std::atoi(v.c_str());
@@ -193,6 +257,7 @@ bool parseArgs(int argc, char **argv, Args &a, std::string &error)
 		else if (k == "--quit-at" && next(v)) a.quitAt = std::atoll(v.c_str());
 		else if (k == "--cash" && next(v)) a.startingCash = std::atoi(v.c_str());
 		else if (k == "--feature" && next(v)) a.features.push_back(v);
+		else if (k == "--uber") a.uber = true; // lane UBER-1
 		else if (k == "--lobby-timeout" && next(v)) a.lobbyTimeoutSeconds = std::atoi(v.c_str());
 		else if (k == "--logic-thread") a.logicThread = true;
 		else if (k == "--step-ms" && next(v)) a.stepMs = std::max(1, std::atoi(v.c_str()));
@@ -281,7 +346,7 @@ bool loadWorld(const Args &a, World &w, std::string &error)
 		error = "the retail mount failed (a headless peer needs every archive a rendering peer reads, the W3D archives included):\n" + error;
 		return false;
 	}
-	w.profile = ProfileIdentity::compute(mr.mounted, RandomAlgorithm::ZH_CarryChain, a.features);
+	w.profile = ProfileIdentity::compute(mr.mounted, RandomAlgorithm::ZH_CarryChain, a.features, a.uber ? SimulationProfile::Uber : SimulationProfile::Faithful);
 	w.world = std::make_unique<RetailObjectWorld>(*w.fs);
 	if (!w.world->load(&error) || !MapObjectGameData::load(*w.fs, w.options, &error) || !MapObjectGameData::loadPlayerTemplates(*w.fs, w.options, &error)
 		|| !MapCreationHooks::load(*w.fs, w.options.creationScripts, &error) || !GameLogicSettingsLoader::load(*w.fs, w.settings, &error)
@@ -326,6 +391,7 @@ bool buildGame(const Args &a, const World &w, NewGameMessage &m, std::string &er
 {
 	m.game.mapName = a.map;
 	m.game.seed = a.seed;
+	m.game.simulationProfile = a.uber ? SimulationProfile::Uber : SimulationProfile::Faithful; // lane UBER-1
 	m.game.startingCash = a.startingCash;
 	if (a.slots.empty() || a.slots.size() > (size_t)MAX_SLOTS)
 	{
@@ -357,7 +423,7 @@ bool buildGame(const Args &a, const World &w, NewGameMessage &m, std::string &er
 		}
 		s.state = k->second;
 		s.name = s.isHuman() ? u"Human" + std::u16string(1, (char16_t)(u'0' + i)) : u"Computer" + std::u16string(1, (char16_t)(u'0' + i));
-		s.playerTemplate = templateIndex(w.world->playerTemplates(), f[1]);
+		s.playerTemplate = templateIndex(w.world->setupPlayerTemplates(), f[1]);
 		if (s.playerTemplate < 0)
 		{
 			error = "unknown faction " + f[1];
@@ -411,8 +477,17 @@ int runReplay(const Args &a, World &w)
 		std::fprintf(stderr, "openbfme_peer: the replay was recorded by another profile: %s\n", mismatch.c_str());
 		return 1;
 	}
+	// lane SAVE-2: a campaign mission's save names its campaign start (the mission's map directory, the difficulty): the mission is started from that,
+	// as GameWorld::start_campaign_mission does, not from the recording's NewGameMessage
+	SaveGameFile save;
+	if (!a.loadSave.empty() && !SaveGameFile::load(a.loadSave, save, &error))
+	{
+		std::fprintf(stderr, "openbfme_peer: %s\n", error.c_str());
+		return 2;
+	}
+	const bool mission = !a.loadSave.empty() && !save.header.campaign.empty();
 	NewGameStart start(replay.header.algorithm);
-	if (!NewGame::prepareNewGame(replay.header.game, w.world->playerTemplates(), w.settings, w.maps, replay.header.algorithm, start, &error))
+	if (!mission && !NewGame::prepareNewGame(replay.header.game, w.world->setupPlayerTemplates(), w.settings, w.maps, replay.header.algorithm, start, &error))
 	{
 		std::fprintf(stderr, "openbfme_peer: %s\n", error.c_str());
 		return 1;
@@ -422,11 +497,58 @@ int runReplay(const Args &a, World &w)
 	WW3DAssetManager assets(source);
 	LiveGame game(*w.world, *w.fs, assets, w.options);
 	LiveGame::Options o;
-	o.start = &start;
+	if (mission)
+	{
+		o.mapName = replay.header.game.game.mapName; // the mission's map directory ("map ang angmar")
+		o.campaign = true;
+		o.difficulty = save.header.campaignDifficulty;
+	}
+	else
+	{
+		o.start = &start;
+	}
 	if (!game.load(o, &error))
 	{
 		std::fprintf(stderr, "openbfme_peer: %s\n", error.c_str());
 		return 1;
+	}
+	std::ostringstream r;
+	if (!a.loadSave.empty())
+	{
+		// lane SAVE-2: the game is brought to the save's frame from the save's own log (a fresh process: nothing of the recording run is shared), then the
+		// replay of the uninterrupted game supplies the frames after it
+		const SaveGameCompatibility c = SaveGameCompatibility::check(save.header, w.profile, ProfileIdentity::buildId(), BuildVersion::kVersion, false);
+		CommandLogLoad load;
+		if (!c.loadable || !load.prepare(save, &error))
+		{
+			std::fprintf(stderr, "openbfme_peer: the save is refused: %s\n", c.loadable ? error.c_str() : c.refusal.c_str());
+			return 2;
+		}
+		NetByteWriter ours, theirs;
+		NetPacket::writeNewGameMessage(ours, load.log().header.game);
+		NetPacket::writeNewGameMessage(theirs, replay.header.game);
+		if (ours.data() != theirs.data() || load.log().header.profile != replay.header.profile || replay.finalFrame <= save.header.frame)
+		{
+			std::fprintf(stderr, "openbfme_peer: the save and the replay are not the same game (or the replay ends at the save)\n");
+			return 1;
+		}
+		if (!load.begin(game, &error))
+		{
+			std::fprintf(stderr, "openbfme_peer: %s\n", error.c_str());
+			return 2;
+		}
+		while (load.step(game, 1000) == CommandLogLoad::State::CatchingUp)
+		{
+		}
+		r << "save " << a.loadSave << "\n";
+		r << "save_frame " << save.header.frame << "\n";
+		r << "catch_up_hashes " << load.hashesCompared() << "\n";
+		if (load.state() != CommandLogLoad::State::Ready)
+		{
+			r << "catch_up_failed " << load.failure() << "\n";
+			writeReport(a.report, r.str());
+			return 2;
+		}
 	}
 	ReplayPlayback playback(replay);
 	RegisterLogicCRCHandler(game.dispatch());
@@ -436,7 +558,6 @@ int runReplay(const Args &a, World &w)
 		game.advance(0.2);
 	}
 	game.drainFrames();
-	std::ostringstream r;
 	r << "replay " << a.replay << "\n";
 	r << "frames " << game.frame() << " of " << replay.finalFrame << (replay.complete ? "" : " (no end record)") << "\n";
 	r << "commands " << replay.commandCount() << "\n";
@@ -459,6 +580,282 @@ int runReplay(const Args &a, World &w)
 	writeReport(a.report, r.str());
 	return playback.hasMismatch() || !replay.lost.empty() || (replay.complete && finalHash != replay.finalHash) ? 2 : 0;
 }
+// lane ONLINE-2: the START file the lobby service built, as the LobbyStart a LAN lobby would give
+bool readOnlineStart(const Args &a, const World &w, LobbyStart &out, std::string &error, OnlineStart::Kind kind = OnlineStart::Kind::Start)
+{
+	std::ifstream f(a.onlineStart, std::ios::binary);
+	if (!f)
+	{
+		error = "cannot read the online START " + a.onlineStart;
+		return false;
+	}
+	const std::string text((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+	OnlineStart::Limits limits;
+	limits.playerTemplateCount = w.world->setupPlayerTemplates().getPlayerTemplateCount();
+	limits.colorCount = (int)w.settings.multiplayerColors.size();
+	return OnlineStart::parse(text, w.profile, limits, out, &error, kind);
+}
+
+// lane ONLINE-2: the relay's command log -> a replay (GameNetwork/RelayLog.h)
+int runRelayLog(const Args &a, World &w)
+{
+	std::string error;
+	LobbyStart lobby;
+	RelayLogFile log;
+	if (a.onlineStart.empty() || (a.record.empty() && a.catchUp < 0))
+	{
+		std::fprintf(stderr, "openbfme_peer: --relay-log needs --online-start FILE.json (the game's START) and --record OUT (or --catch-up FRAME)\n");
+		return 1;
+	}
+	// ONLINE-2 r2: the lobby's published replay START (no ticket); a player's own START is accepted too (the soak's fixtures)
+	std::string replayError;
+	if (!readOnlineStart(a, w, lobby, replayError, OnlineStart::Kind::ReplayStart) && !readOnlineStart(a, w, lobby, error))
+	{
+		std::fprintf(stderr, "openbfme_peer: %s (as a replay START: %s)\n", error.c_str(), replayError.c_str());
+		return 1;
+	}
+	if (!RelayLogFile::load(a.relayLog, log, &error))
+	{
+		std::fprintf(stderr, "openbfme_peer: %s\n", error.c_str());
+		return 1;
+	}
+	if (log.gameId != lobby.onlineGameId)
+	{
+		std::fprintf(stderr, "openbfme_peer: the log is of game %016llx, the START of %016llx\n", (unsigned long long)log.gameId,
+			(unsigned long long)lobby.onlineGameId);
+		return 1;
+	}
+	// the slot -> player map of the loaded game, as NetGameSession::begin reads it
+	NewGameStart start(RandomAlgorithm::ZH_CarryChain);
+	if (!NewGame::prepareNewGame(lobby.game, w.world->setupPlayerTemplates(), w.settings, w.maps, RandomAlgorithm::ZH_CarryChain, start, &error))
+	{
+		std::fprintf(stderr, "openbfme_peer: %s\n", error.c_str());
+		return 1;
+	}
+	int recordingSlot = -1;
+	for (int s = 0; s < MAX_SLOTS && recordingSlot < 0; ++s)
+	{
+		recordingSlot = lobby.networkSlot[(size_t)s] ? s : -1;
+	}
+	start.localSlot = recordingSlot;
+	ArchiveW3DFileSource source(*w.fs);
+	WW3DAssetManager assets(source);
+	LiveGame game(*w.world, *w.fs, assets, w.options);
+	LiveGame::Options o;
+	o.start = &start;
+	if (!game.load(o, &error))
+	{
+		std::fprintf(stderr, "openbfme_peer: %s\n", error.c_str());
+		return 1;
+	}
+	NetworkConfig config;
+	config.localSlot = recordingSlot;
+	config.runAhead = lobby.runAhead;
+	config.crcInterval = lobby.crcInterval;
+	const LiveGame::Report lr = game.report();
+	for (int s = 0; s < MAX_SLOTS; ++s)
+	{
+		const Player *p = lobby.networkSlot[(size_t)s] && (size_t)s < lr.startSlotPlayers.size() ? game.players().findPlayerWithName(lr.startSlotPlayers[(size_t)s]) : nullptr;
+		config.slotPlayerIndex[(size_t)s] = p ? p->getPlayerIndex() : -1;
+	}
+	RelayLog::Assembled assembled;
+	if (!RelayLog::assemble(log, config, assembled, &error))
+	{
+		std::fprintf(stderr, "openbfme_peer: %s\n", error.c_str());
+		return 1;
+	}
+	if (a.catchUp >= 0)
+	{
+		// lane ONLINE-3: the rejoin's catch-up alone, timed (what a rejoining client spends before it plays: the log's frames at full speed)
+		auto shared = std::make_shared<RelayLog::Assembled>(assembled);
+		CommandLogCatchUp catchUp(config.crcInterval);
+		catchUp.setLog(shared);
+		catchUp.setTarget((UnsignedInt)a.catchUp);
+		RegisterLogicCRCHandler(game.dispatch());
+		const UnsignedInt from = game.frame();
+		const std::uint64_t t0 = NetMilliseconds();
+		game.setFrameDriver(&catchUp);
+		while (game.advance(0.2) > 0)
+		{
+		}
+		game.drainFrames();
+		const std::uint64_t ms = NetMilliseconds() - t0;
+		game.setFrameDriver(nullptr);
+		std::ostringstream r;
+		char b[64];
+		std::snprintf(b, sizeof b, "0x%08X", game.logic().computeStateHash());
+		r << "catch_up frames " << (game.frame() - from) << " to_frame " << game.frame() << " ms " << ms << " frames_per_second "
+		  << (ms ? (unsigned long long)(game.frame() - from) * 1000ull / ms : 0ull) << " crcs_compared " << catchUp.crcsCompared() << " mismatches "
+		  << catchUp.crcMismatches() << " hash " << b << " log_complete_frame " << assembled.lastCompleteFrame << "\n";
+		if (!catchUp.firstMismatch().empty())
+		{
+			r << "catch_up_first_mismatch " << catchUp.firstMismatch() << "\n";
+		}
+		writeReport(a.report, r.str());
+		return catchUp.crcMismatches() ? 2 : 0;
+	}
+	ReplayHeader h;
+	h.game = lobby.game;
+	h.recordingSlot = recordingSlot;
+	h.algorithm = RandomAlgorithm::ZH_CarryChain;
+	h.profile = w.profile;
+	h.network = config;
+	if (!RelayLog::writeReplay(a.record, h, assembled, &error))
+	{
+		std::fprintf(stderr, "openbfme_peer: %s\n", error.c_str());
+		return 1;
+	}
+	std::ostringstream r;
+	char b[64];
+	std::snprintf(b, sizeof b, "%016llx", (unsigned long long)log.gameId);
+	r << "relay_log " << a.relayLog << " game " << b << " complete " << (log.complete ? 1 : 0) << " end_reason " << log.endReason << "\n";
+	r << "relay_log_commands " << log.commands.size() << " frames_with_commands " << assembled.frames.size() << " last_complete_frame "
+	  << assembled.lastCompleteFrame << "\n";
+	r << "relay_log_crc_frames " << assembled.crcFrames << " disagreements " << assembled.crcDisagreements << " hashes " << assembled.hashes.size() << "\n";
+	for (int s = 0; s < MAX_SLOTS; ++s)
+	{
+		if (log.slotMask & (1u << s))
+		{
+			r << "relay_log_slot " << s << " datagrams_in " << log.datagramsIn[(size_t)s] << " bytes_in " << log.bytesIn[(size_t)s] << " dropped "
+			  << log.dropped[(size_t)s] << " leave_frame " << (assembled.leaveFrame[(size_t)s] == 0xFFFFFFFFu ? std::string("none") : std::to_string(assembled.leaveFrame[(size_t)s]))
+			  << "\n";
+		}
+	}
+	for (const std::string &e : log.events)
+	{
+		r << "relay_log_event " << e << "\n";
+	}
+	for (const std::string &g : log.gaps)
+	{
+		r << "relay_log_gap " << g << "\n";
+	}
+	for (const std::string &p : assembled.problems)
+	{
+		r << "relay_log_problem " << p << "\n";
+	}
+	r << "replay " << a.record << "\n";
+	for (const std::string &st : RelayLog::stopLines())
+	{
+		r << "stop " << st << "\n";
+	}
+	writeReport(a.report, r.str());
+	return assembled.crcDisagreements ? 2 : !assembled.problems.empty() || !log.gaps.empty() ? 4 : 0;
+}
+// lane ONLINE-3: a spectator (NetGameSession::beginSpectate): read-only, no fog (no local slot: the ReplayObserver side is the local player)
+int runSpectator(const Args &a, World &w, UDP &socket, const LobbyStart &lobby)
+{
+	std::string error;
+	NewGameStart start(RandomAlgorithm::ZH_CarryChain);
+	if (!NewGame::prepareNewGame(lobby.game, w.world->playerTemplates(), w.settings, w.maps, RandomAlgorithm::ZH_CarryChain, start, &error))
+	{
+		std::fprintf(stderr, "openbfme_peer: %s\n", error.c_str());
+		return 1;
+	}
+	start.localSlot = -1;
+	start.observer = true;
+	ArchiveW3DFileSource source(*w.fs);
+	WW3DAssetManager assets(source);
+	LiveGame game(*w.world, *w.fs, assets, w.options);
+	LiveGame::Options o;
+	o.start = &start;
+	if (!game.load(o, &error))
+	{
+		std::fprintf(stderr, "openbfme_peer: %s\n", error.c_str());
+		return 1;
+	}
+	const Player *local = game.players().getLocalPlayer();
+	NetGameSession::Options so;
+	so.profile = w.profile;
+	NetGameSession session(socket, lobby, so);
+	if (!session.beginSpectate(game, &error))
+	{
+		std::fprintf(stderr, "openbfme_peer: %s\n", error.c_str());
+		return 1;
+	}
+	if (a.frames > 0)
+	{
+		session.setSpectateStopFrame((UnsignedInt)a.frames);
+	}
+	std::vector<std::string> frameTimes, observed;
+	UnsignedInt nextTime = 100, lastObserve = 0;
+	bool forged = false;
+	NetGameSession::SpectateState st = NetGameSession::SpectateState::Binding;
+	const std::uint64_t t0 = NetMilliseconds();
+	while (st != NetGameSession::SpectateState::Ended && st != NetGameSession::SpectateState::Failed)
+	{
+		st = session.spectateStep(game, 50);
+		if (a.spectateForge && !forged && session.transport().relayBound())
+		{
+			// a forged frame command from the spectator's own address: a FRAMEINFO of slot 0 for the next frame, in a well-formed DATA envelope
+			NetCommandMsg c;
+			c.type = NETCOMMANDTYPE_FRAMEINFO;
+			c.slot = 0;
+			c.executionFrame = game.frame() + 5;
+			const std::vector<std::uint8_t> cmd = NetPacket::encodeCommand(c, nullptr);
+			std::vector<std::uint8_t> packet(4, 0);
+			packet.insert(packet.end(), { 0x42, 0x46, 2, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0 });
+			const std::uint32_t len = (std::uint32_t)cmd.size();
+			packet.insert(packet.end(), { (std::uint8_t)len, (std::uint8_t)(len >> 8), (std::uint8_t)(len >> 16), (std::uint8_t)(len >> 24) });
+			packet.insert(packet.end(), cmd.begin(), cmd.end());
+			const std::uint32_t crc = crc32Bytes(packet.data() + 4, packet.size() - 4);
+			for (int i = 0; i < 4; ++i)
+			{
+				packet[(size_t)i] = (std::uint8_t)(crc >> (8 * i));
+			}
+			const std::vector<std::uint8_t> d = RelayProtocol::encodeData(1, packet);
+			socket.sendTo(lobby.relay, d.data(), d.size());
+			forged = true;
+		}
+		if (a.frameTimes && game.frame() >= nextTime)
+		{
+			frameTimes.push_back(std::to_string(nextTime) + " " + std::to_string(NetMilliseconds()));
+			nextTime += 100;
+		}
+		if (a.spectateObserveEvery > 0 && game.frame() >= lastObserve + (UnsignedInt)a.spectateObserveEvery)
+		{
+			lastObserve = game.frame();
+			if (game.observeNextPlayer(true))
+			{
+				const Player *p = game.players().getNthPlayer(game.observedPlayer());
+				observed.push_back(std::to_string(game.frame()) + " " + (p ? p->getPlayerName() : std::string("?")));
+			}
+		}
+		NetSleepMilliseconds(2);
+	}
+	game.drainFrames();
+	const NetGameSession::SpectateReport &sr = session.spectateReport();
+	std::ostringstream r;
+	char b[64];
+	r << "spectator " << lobby.spectatorIndex << " delay " << lobby.spectatorDelay << "\n";
+	r << "local_player " << (local ? local->getPlayerName() : std::string("none")) << " observer " << (local && local->isObserver() ? 1 : 0) << "\n";
+	r << "frames " << game.frame() << "\n";
+	std::snprintf(b, sizeof b, "final_hash 0x%08X\n", game.logic().computeStateHash());
+	r << b;
+	r << "spectate state " << (st == NetGameSession::SpectateState::Ended ? "ended" : "failed") << " reached " << sr.reached << " served " << sr.served
+	  << " log_bytes " << sr.logBytes << " log_requests " << sr.logRequests << " crcs_compared " << sr.crcsCompared << " crc_mismatches " << sr.crcMismatches
+	  << " log_complete " << (sr.logComplete ? 1 : 0) << " caught_up_ms " << (sr.caughtUpMs ? sr.caughtUpMs - sr.startedMs : 0) << " seconds "
+	  << (NetMilliseconds() - t0) / 1000 << "\n";
+	r << "spectate_relay bound " << (session.transport().relayBound() ? 1 : 0) << " forged " << (forged ? 1 : 0) << " refused " << session.transport().spectatorRefusals()
+	  << " transport_packets_sent " << session.transport().stats().packetsSent << " commands_sent " << session.transport().stats().commandsSent << "\n";
+	if (!sr.failure.empty())
+	{
+		r << "spectate_failure " << sr.failure << "\n";
+	}
+	for (const std::string &l : frameTimes)
+	{
+		r << "frame_ms " << l << "\n";
+	}
+	for (const std::string &l : observed)
+	{
+		r << "observed " << l << "\n";
+	}
+	for (const std::string &st2 : Network::onlineStopLines())
+	{
+		r << "stop " << st2 << "\n";
+	}
+	writeReport(a.report, r.str());
+	return st == NetGameSession::SpectateState::Failed ? (sr.crcMismatches ? 2 : 3) : 0;
+}
 } // namespace
 
 int main(int argc, char **argv)
@@ -480,9 +877,31 @@ int main(int argc, char **argv)
 		std::fprintf(stderr, "openbfme_peer: %s\n", error.c_str());
 		return 1;
 	}
+	if (a.printProfile)
+	{
+		std::printf("%s\n", w.profile.digest.c_str()); // lane ONLINE-2: what a lobby client sends as its profile
+		for (int i = 0; i < w.world->setupPlayerTemplates().getPlayerTemplateCount(); ++i)
+		{
+			std::printf("faction %d %s\n", i, w.world->setupPlayerTemplates().getNthPlayerTemplate(i)->getName().c_str()); // the START's faction indices
+		}
+		return 0;
+	}
+	if (!a.profileText.empty())
+	{
+		writeReport(a.profileText, w.profile.text); // lane SAVE-2
+		return 0;
+	}
 	if (!a.replay.empty())
 	{
 		return runReplay(a, w);
+	}
+	if (!a.relayLog.empty())
+	{
+		return runRelayLog(a, w); // lane ONLINE-2
+	}
+	if (!a.onlineStart.empty() && !a.bindGiven)
+	{
+		a.bind = "0.0.0.0"; // lane ONLINE-2: the relay is on another host
 	}
 	NetAddress bindAddress;
 	if (!NetAddress::parse(a.bind + ":" + std::to_string(a.hostPort > 0 ? a.hostPort : 0), bindAddress))
@@ -501,10 +920,24 @@ int main(int argc, char **argv)
 	const std::uint64_t lobbyStart = NetMilliseconds();
 	std::unique_ptr<LANAPI> lan;              // lane MP-2: --lan-join
 	std::unique_ptr<UDP> lanGameSocket;
-	if (a.lanJoin)
+	if (!a.onlineStart.empty())
+	{
+		// lane ONLINE-2: the lobby service already built the START (GameNetwork/OnlineStart.h); lane ONLINE-3: or a spectator's
+		std::string spectateError;
+		if (!readOnlineStart(a, w, lobby, error))
+		{
+			if (!readOnlineStart(a, w, lobby, spectateError, OnlineStart::Kind::Spectate))
+			{
+				std::fprintf(stderr, "openbfme_peer: %s (as a spectator START: %s)\n", error.c_str(), spectateError.c_str());
+				return 3;
+			}
+			return runSpectator(a, w, socket, lobby);
+		}
+	}
+	else if (a.lanJoin)
 	{
 		LANAPI::Options lo;
-		lo.playerTemplateCount = w.world->playerTemplates().getPlayerTemplateCount();
+		lo.playerTemplateCount = w.world->setupPlayerTemplates().getPlayerTemplateCount();
 		lo.colorCount = (int)w.settings.multiplayerColors.size();
 		lo.validateCreateAHero = [&w](const CreateAHeroHero &h, std::string *why) { return w.world->createAHeroSystem().validateHero(h, w.world->commands(), why); };
 		SkirmishGameSlot ownHero;
@@ -529,7 +962,7 @@ int main(int argc, char **argv)
 			lo.broadcast = false;
 			lo.extraTargets.push_back(ta.ip);
 		}
-		const int faction = a.lanFaction.empty() ? LANAPI::kKeep : templateIndex(w.world->playerTemplates(), a.lanFaction);
+		const int faction = a.lanFaction.empty() ? LANAPI::kKeep : templateIndex(w.world->setupPlayerTemplates(), a.lanFaction);
 		if (faction == -1)
 		{
 			std::fprintf(stderr, "openbfme_peer: unknown --lan-faction %s\n", a.lanFaction.c_str());
@@ -662,7 +1095,7 @@ int main(int argc, char **argv)
 	}
 	// ---- load ----
 	NewGameStart start(RandomAlgorithm::ZH_CarryChain);
-	if (!NewGame::prepareNewGame(lobby.game, w.world->playerTemplates(), w.settings, w.maps, RandomAlgorithm::ZH_CarryChain, start, &error))
+	if (!NewGame::prepareNewGame(lobby.game, w.world->setupPlayerTemplates(), w.settings, w.maps, RandomAlgorithm::ZH_CarryChain, start, &error))
 	{
 		std::fprintf(stderr, "openbfme_peer: %s\n", error.c_str());
 		return 1;
@@ -725,21 +1158,59 @@ int main(int argc, char **argv)
 	{
 		so.network.playerTimeoutTime = (std::uint32_t)a.playerTimeoutMs;
 	}
-	NetGameSession session(lanGameSocket ? *lanGameSocket : socket, lobby, so);
-	if (!session.begin(game, &error))
+	if (a.rejoinWindowMs >= 0)
 	{
-		std::fprintf(stderr, "openbfme_peer: %s\n", error.c_str());
-		return 1;
+		so.rejoinWindowMs = (std::uint32_t)a.rejoinWindowMs; // lane ONLINE-3
 	}
-	const std::uint64_t loadWait = NetMilliseconds();
-	while (!session.pollLoaded())
+	NetGameSession session(lanGameSocket ? *lanGameSocket : socket, lobby, so);
+	const bool rejoin = lobby.online && lobby.rejoinGeneration > 0; // lane ONLINE-3
+	if (rejoin)
 	{
-		if (NetMilliseconds() - loadWait > 180000)
+		if (!session.beginRejoin(game, &error))
 		{
-			std::fprintf(stderr, "openbfme_peer: the other peers did not load in 180 s\n");
+			std::fprintf(stderr, "openbfme_peer: %s\n", error.c_str());
+			return 1;
+		}
+		// the catch-up: the relay's log at full speed (no rendering), until the packet router's REJOIN frame is reached
+		NetGameSession::RejoinState rs = NetGameSession::RejoinState::Binding;
+		while (rs != NetGameSession::RejoinState::Live && rs != NetGameSession::RejoinState::Failed)
+		{
+			rs = session.rejoinStep(game, 100);
+			if (rs == NetGameSession::RejoinState::Binding || rs == NetGameSession::RejoinState::Waiting)
+			{
+				NetSleepMilliseconds(2);
+			}
+		}
+		const NetGameSession::RejoinReport &rr = session.rejoinReport();
+		std::fprintf(stderr, "openbfme_peer: rejoin %s: frame %u after %llu ms (%u frames caught up, %llu CRCs compared)\n",
+			rs == NetGameSession::RejoinState::Live ? "live" : "failed", rr.liveFrame, (unsigned long long)(rr.liveMs > rr.startedMs ? rr.liveMs - rr.startedMs : 0), rr.framesCaughtUp,
+			rr.crcsCompared);
+		if (rs == NetGameSession::RejoinState::Failed)
+		{
+			std::ostringstream f;
+			f << "slot " << lobby.localSlot << "\nrejoin_failure " << rr.failure << "\n";
+			writeReport(a.report, f.str());
+			std::fprintf(stderr, "openbfme_peer: rejoin failed: %s\n", rr.failure.c_str());
 			return 3;
 		}
-		NetSleepMilliseconds(2);
+	}
+	else
+	{
+		if (!session.begin(game, &error))
+		{
+			std::fprintf(stderr, "openbfme_peer: %s\n", error.c_str());
+			return 1;
+		}
+		const std::uint64_t loadWait = NetMilliseconds();
+		while (!session.pollLoaded())
+		{
+			if (NetMilliseconds() - loadWait > 180000)
+			{
+				std::fprintf(stderr, "openbfme_peer: the other peers did not load in 180 s\n");
+				return 3;
+			}
+			NetSleepMilliseconds(2);
+		}
 	}
 	// the logic frame after each frame ran, the state hash then and a fold of the RNG seeds (written on the simulation owner: the worker with
 	// --logic-thread; read after the game drained)
@@ -747,6 +1218,7 @@ int main(int argc, char **argv)
 	{
 		UnsignedInt frame;
 		std::uint32_t hash, rng;
+		std::uint64_t ms; ///< lane ONLINE-3: NetMilliseconds when it ran (--frame-times)
 	};
 	std::vector<FrameHash> hashes;
 	std::vector<std::string> checkpoints; // lane MP-3 (review r1): "self_destruct_checkpoint" lines (written on the simulation owner, read after the drain)
@@ -776,7 +1248,7 @@ int main(int argc, char **argv)
 			{
 				rng = (rng ^ w) * 0x01000193u;
 			}
-			hashes.push_back({ logic.getFrame(), logic.computeStateHash(), rng });
+			hashes.push_back({ logic.getFrame(), logic.computeStateHash(), rng, NetMilliseconds() });
 			// lane MP-3 (review r1): right after the frame that executed a MSG_SELF_DESTRUCT { TRUE }: who got the army, and whether every transferred object
 			// is the ally's now
 			const auto &log = SelfDestruct::stats().transferLog;
@@ -819,6 +1291,9 @@ int main(int argc, char **argv)
 	const std::uint64_t noProgressMs = 30000u + (std::uint64_t)so.network.disconnectTime + (std::uint64_t)so.network.playerTimeoutTime;
 	std::string disconnectQuit;
 	std::vector<std::string> blackoutLog; // lane MP-3
+	std::vector<std::string> pauseLog;    // lane ONLINE-3
+	std::uint64_t pausedSince = 0, pausedMs = 0;
+	long long pauseStopFrame = -1;
 	long long quitAtFrame = -1;
 	std::uint64_t lastAdvance = NetMilliseconds();
 	while ((int)game.protocolFrame() < a.frames)
@@ -858,6 +1333,40 @@ int main(int argc, char **argv)
 			game.commands().append(m);
 			quitAtFrame = (long long)game.protocolFrame();
 			break;
+		}
+		// lane ONLINE-3: the multiplayer pause (--net-pause-at / --net-resume-ms)
+		if (a.netPauseAt >= 0 && (long long)game.protocolFrame() >= a.netPauseAt)
+		{
+			session.network().requestPause();
+			pauseLog.push_back("requested at protocol frame " + std::to_string(game.protocolFrame()) + " (pause frame " + std::to_string(session.network().pauseFrame()) + ")");
+			a.netPauseAt = -1;
+		}
+		if (session.network().isPaused())
+		{
+			const std::uint64_t t = NetMilliseconds();
+			if (pausedSince == 0)
+			{
+				pausedSince = t;
+				pauseLog.push_back("paused by slot " + std::to_string(session.network().pausedBy()) + " before frame " + std::to_string(session.network().pauseFrame()));
+			}
+			if (session.driver().paused() && pauseStopFrame < 0)
+			{
+				pauseStopFrame = (long long)game.frame(); // the frame every peer stops before (the logic's next frame)
+				pauseLog.push_back("stopped with logic frame " + std::to_string(game.frame()));
+			}
+			if (a.netResumeMs >= 0 && t - pausedSince >= (std::uint64_t)a.netResumeMs)
+			{
+				pauseLog.push_back("resumed by this peer after " + std::to_string(t - pausedSince) + " ms");
+				session.network().requestResume();
+				a.netResumeMs = -1;
+			}
+			lastProgress = t; // a pause is not a stall
+		}
+		else if (pausedSince != 0)
+		{
+			pausedMs += NetMilliseconds() - pausedSince;
+			pauseLog.push_back("running again after " + std::to_string(NetMilliseconds() - pausedSince) + " ms");
+			pausedSince = 0;
 		}
 		if (session.quitRequested())
 		{
@@ -1048,6 +1557,63 @@ int main(int argc, char **argv)
 	r << "transport_bytes sent " << ts.bytesSent << " received " << ts.bytesReceived << " ack_only_packets " << ts.ackOnlyPacketsSent << " commands_sent "
 	  << ts.commandsSent << "\n";
 	r << "transport_unacked " << session.transport().unackedRecords() << "\n";
+	if (rejoin)
+	{
+		// lane ONLINE-3: the rejoin's catch-up
+		const NetGameSession::RejoinReport &rr = session.rejoinReport();
+		r << "rejoin generation " << lobby.rejoinGeneration << " live_frame " << rr.liveFrame << " catch_up_ms " << (rr.liveMs - rr.startedMs) << " frames_caught_up "
+		  << rr.framesCaughtUp << " log_bytes " << rr.logBytes << " log_requests " << rr.logRequests << " crcs_compared " << rr.crcsCompared
+		  << " crc_mismatches " << rr.crcMismatches << " crcs_sent_after " << rr.crcsSentAfter << " frames_filled " << rr.framesFilled << "\n";
+		for (const std::string &e : rr.tailErrors)
+		{
+			r << "rejoin_tail_error " << e << "\n";
+		}
+	}
+	if (lobby.online)
+	{
+		// lane ONLINE-3: the relay's STATUS seen, the held / handed-over / rejoined slots, the pause
+		std::string held, handed, rejoined;
+		for (int sl = 0; sl < MAX_SLOTS; ++sl)
+		{
+			if (session.network().isHeld(sl))
+			{
+				held += (held.empty() ? "" : ",") + std::to_string(sl);
+			}
+			if (session.network().isHandedOver(sl))
+			{
+				handed += (handed.empty() ? "" : ",") + std::to_string(sl);
+			}
+			if (session.network().rejoinFrame(sl) > 0)
+			{
+				rejoined += (rejoined.empty() ? "" : ",") + std::to_string(sl) + "@" + std::to_string(session.network().rejoinFrame(sl));
+			}
+		}
+		r << "online_slots held " << (held.empty() ? "none" : held) << " handed_over " << (handed.empty() ? "none" : handed) << " rejoined "
+		  << (rejoined.empty() ? "none" : rejoined) << " relay_statuses " << session.transport().relayStatuses() << "\n";
+		for (const std::string &l : session.network().rejoinLog())
+		{
+			r << "rejoin_log " << l << "\n";
+		}
+	}
+	if (a.frameTimes)
+	{
+		for (const FrameHash &fh : hashes)
+		{
+			r << "frame_ms " << fh.frame << " " << fh.ms << "\n"; // lane ONLINE-3: every frame's, for a spectator's delay against the players' (same host clock)
+		}
+	}
+	r << "pause pauses_seen " << session.network().pausesSeen() << " stop_frame " << pauseStopFrame << " paused_ms " << pausedMs << "\n";
+	for (const std::string &l : pauseLog)
+	{
+		r << "pause_log " << l << "\n";
+	}
+	if (lobby.online)
+	{
+		// lane ONLINE-2: the relay link
+		r << "relay " << lobby.relay.text() << " bound " << (session.transport().relayBound() ? 1 : 0) << " refusal " << session.transport().relayRefusal()
+		  << " hellos " << ts.relayHellos << " welcomes " << ts.relayWelcomes << " not_bound " << ts.relayNotBound << " slot_mismatches "
+		  << ts.relaySlotMismatches << " unknown_senders " << ts.unknownSenders << "\n";
+	}
 	{
 		// lane MP-3: the harness's faults and what they did; the smoothness (wall clock, protocol owner)
 		const NetImpairment &im = session.transport().impairment();
@@ -1215,6 +1781,14 @@ int main(int argc, char **argv)
 	for (const std::string &st : NetImpairment::stopLines())
 	{
 		r << "stop " << st << "\n"; // lane MP-3
+	}
+	for (const std::string &st : lobby.online ? RelayLog::stopLines() : std::vector<std::string>())
+	{
+		r << "stop " << st << "\n"; // lane ONLINE-2
+	}
+	for (const std::string &st : Network::onlineStopLines())
+	{
+		r << "stop " << st << "\n"; // lane ONLINE-3 (the pause is in every network game)
 	}
 	session.service(); // lane MP-2: the desync dumps with every half that arrived
 	for (const std::string &dump : session.desyncDumps())

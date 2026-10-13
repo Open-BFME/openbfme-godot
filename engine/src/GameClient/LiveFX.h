@@ -68,6 +68,14 @@ public:
 	// plays the queued logic effects and entering-state effects, in order (the render side, while the logic is idle)
 	void flushPending();
 	size_t pendingEvents() const { return m_pending.size() + m_pendingStates.size(); }
+	// lane SAVE-2: drops the queued effects unplayed (a loaded save's catch-up: the frames before the saved one are not shown); returns how many
+	size_t discardPending()
+	{
+		const size_t n = pendingEvents();
+		m_pending.clear();
+		m_pendingStates.clear();
+		return n;
+	}
 	// DrawableFXHost
 	bool enteringStateFX(DrawableID id, const std::string &fx) override;
 

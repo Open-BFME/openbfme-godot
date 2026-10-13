@@ -417,6 +417,9 @@ func _graphics_rows() -> Array:
 		_extra_choice("OpenBFMELook", "Look", LOOK_ITEMS, "Enhanced: AgX tone mapping and a glow on the brightest effects. Original: the game's own picture."),
 		_extra_choice("OpenBFMEUIScale", "Interface scale", UI_SCALE_ITEMS, "Enlarges the health bars, the frame counter and the game clock for large screens; the menus already scale with the window."),
 		_extra_check("OpenBFMESoftParticles", "Soft particle edges", "Smoke, fire and dust fade where they meet the ground instead of a hard cut. Off: the original look."),
+		# lane UBER-1 (docs/UBER.md): the opt-in simulation profile; the help line is the warning (the label's room ends at the check box)
+		_extra_check("OpenBFMEUberPerformance", "Uber performance mode",
+			"Not compatible with the original game: uses every CPU core; games and replays then only work with players who have it on too. From the next game."),
 	]
 
 

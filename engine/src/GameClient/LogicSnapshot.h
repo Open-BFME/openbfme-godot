@@ -141,5 +141,6 @@ struct LogicSnapshot
 
 	// Builds the snapshot of the logic's current (completed) state. `previous` gives lastMovedFrame its history (null: the first snapshot).
 	// Must run on the thread that owns the simulation, between frames.
-	static std::shared_ptr<const LogicSnapshot> build(GameLogic &logic, const LogicSnapshot *previous, bool hashed, std::uint32_t stateHash);
+	// lane ONLINE-3: viewPlayer >= 0: the shroud of that player instead of the local player's (the player an observer looks at, LiveGame::observeNextPlayer)
+	static std::shared_ptr<const LogicSnapshot> build(GameLogic &logic, const LogicSnapshot *previous, bool hashed, std::uint32_t stateHash, int viewPlayer = -1);
 };

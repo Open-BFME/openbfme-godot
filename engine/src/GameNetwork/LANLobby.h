@@ -38,6 +38,17 @@ struct LobbyStart
 	std::array<NetAddress, MAX_SLOTS> addresses{}; ///< per slot, the network players' addresses (the local one is its own socket's)
 	std::array<bool, MAX_SLOTS> networkSlot{};     ///< the human slots of the game
 	ProfileIdentity profile;                       ///< the host's (equal to every player's: checked)
+	// lane ONLINE-2: an online game (GameNetwork/OnlineStart.h: the START the lobby service built): every peer is behind the relay (Transport relay mode),
+	// `addresses` are unused
+	bool online = false;
+	NetAddress relay;
+	std::vector<std::uint8_t> ticket;
+	std::uint64_t onlineGameId = 0;
+	// lane ONLINE-3: a rejoin START (the lobby's fresh ticket for a player whose game restarted, ticket version 2): the ticket's generation (0: a first START)
+	int rejoinGeneration = 0;
+	// lane ONLINE-3: a spectator's START (OnlineStart::Kind::Spectate): its index at the relay (-1: a player) and the delay the relay holds its log back
+	int spectatorIndex = -1;
+	int spectatorDelay = 0;
 };
 
 namespace LANLobby

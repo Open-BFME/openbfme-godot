@@ -200,7 +200,7 @@ TEST_CASE("rules1: the rules and the Legendary Heroes factor travel in the game 
 	CHECK(back.game.legendaryHeroes == 4);
 	// the factor is the last i32 of the GameInfo: 5 is refused (a peer of another rule set refuses the options instead of desyncing)
 	std::vector<std::uint8_t> bad = w.data();
-	bad[bad.size() - 4] = 5;
+	bad[bad.size() - 8] = 5; // lane UBER-1: the simulation profile i32 follows it
 	NetByteReader r2(bad);
 	CHECK_FALSE(NetPacket::readNewGameMessage(r2, back, &error));
 	CHECK(error.find("Legendary Heroes") != std::string::npos);
@@ -354,35 +354,40 @@ TEST_CASE("rules1 retail: the rules reach the game start: InitialResources is th
 	b.game.rules[RULE_INITIAL_RESOURCES] = 2500;
 	b.game.rules[RULE_COMMAND_POINT_FACTOR] = 200;
 	b.game.rules[RULE_ALLOW_RING_HEROES] = 0;
-	Game ga, gb;
-	load(*s, a, ga);
-	load(*s, b, gb);
-	GameLogic &la = ga.game->logic();
-	GameLogic &lb = gb.game->logic();
-	Player *ha = playerAtStart(la, 0);
-	Player *hb = playerAtStart(lb, 0);
-	REQUIRE(ha);
-	REQUIRE(hb);
+	// the games run one after another (lane MAPRESET-1: one live game per world, S-3808); each one's start facts are kept
+	struct Facts
+	{
+		long long money = 0, cap = 0;
+		bool ringHeroes = false;
+		std::uint32_t hash = 0;
+	};
+	auto factsOf = [&](const NewGameMessage &m) {
+		Game g;
+		load(*s, m, g);
+		GameLogic &l = g.game->logic();
+		Player *h = playerAtStart(l, 0);
+		REQUIRE(h);
+		return Facts{ (long long)h->getMoney()->countMoney(), (long long)h->commandPoints().getCap(), ringHeroesActive(l), l.computeStateHash() };
+	};
+	const Facts fa = factsOf(a), fb = factsOf(b);
 	// RW 0x6B0578: FactionMen's StartMoney is 0, so the rule is the money (GameData's DefaultStartingCash 1500 is the branch without a game)
-	CHECK(ha->getMoney()->countMoney() == 1000);
-	CHECK(hb->getMoney()->countMoney() == 2500);
+	CHECK(fa.money == 1000);
+	CHECK(fb.money == 2500);
 	// RW 0x6A7DE2: cap * percent / 100
-	CHECK(hb->commandPoints().getCap() == 2 * ha->commandPoints().getCap());
-	CHECK(ha->commandPoints().getCap() > 0);
+	CHECK(fb.cap == 2 * fa.cap);
+	CHECK(fa.cap > 0);
 	// RW 0x7E9E83
-	CHECK(ringHeroesActive(la));
-	CHECK_FALSE(ringHeroesActive(lb));
+	CHECK(fa.ringHeroes);
+	CHECK_FALSE(fb.ringHeroes);
 	// the rules are part of the state hash
-	CHECK(la.computeStateHash() != lb.computeStateHash());
+	CHECK(fa.hash != fb.hash);
 
 	// a message built without a lobby (no rule block) keeps GameData's DefaultStartingCash and the old answers
 	NewGameMessage c = evendim(*s, -1, 0, 31);
-	Game gc;
-	load(*s, c, gc);
-	GameLogic &lc = gc.game->logic();
-	CHECK(playerAtStart(lc, 0)->getMoney()->countMoney() == 1500);
-	CHECK(playerAtStart(lc, 0)->commandPoints().getCap() == ha->commandPoints().getCap());
-	CHECK_FALSE(ringHeroesActive(lc));
+	const Facts fc = factsOf(c);
+	CHECK(fc.money == 1500);
+	CHECK(fc.cap == fa.cap);
+	CHECK_FALSE(fc.ringHeroes);
 }
 
 TEST_CASE("rules1 retail: Legendary Heroes 4x: a player's heroes get 4x health and take a quarter of the damage, the neutral player's do not; two AI-vs-AI runs hash the same")

@@ -41,6 +41,8 @@ const EXTRAS := {
 	"OpenBFMERotateSpeed": {"default": "100", "choices": ["50", "75", "100", "150", "200"]},
 	"OpenBFMEHealthBars": {"default": "retail", "choices": ["retail", "damaged", "always"]},
 	"OpenBFMEGameClock": {"default": "no", "choices": ["yes", "no"]},
+	# lane UBER-1: the Uber performance mode (docs/UBER.md): the next lobby and game run the Uber simulation profile; never compatible with the original game
+	"OpenBFMEUberPerformance": {"default": "no", "choices": ["yes", "no"]},
 	"OpenBFMEMasterVolume": {"default": "100", "range": [0, 100]},
 	"OpenBFMEMuteUnfocused": {"default": "no", "choices": ["yes", "no"]},
 	"OpenBFMEAudioDevice": {"default": "Default", "device": true},

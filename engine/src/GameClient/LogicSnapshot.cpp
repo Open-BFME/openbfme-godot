@@ -92,7 +92,7 @@ bool sameTransform(const ObjectSnapshot &a, const ObjectSnapshot &b)
 }
 } // namespace
 
-std::shared_ptr<const LogicSnapshot> LogicSnapshot::build(GameLogic &logic, const LogicSnapshot *previous, bool hashed, std::uint32_t stateHash)
+std::shared_ptr<const LogicSnapshot> LogicSnapshot::build(GameLogic &logic, const LogicSnapshot *previous, bool hashed, std::uint32_t stateHash, int viewPlayer)
 {
 	static const int kActivelyBeingConstructed = ModelCondition::indexOf("ACTIVELY_BEING_CONSTRUCTED");
 	auto snap = std::make_shared<LogicSnapshot>();
@@ -107,7 +107,7 @@ std::shared_ptr<const LogicSnapshot> LogicSnapshot::build(GameLogic &logic, cons
 	int shroudLocal = -1;
 	if (sm)
 	{
-		const int li = local ? local->getPlayerIndex() : -1;
+		const int li = viewPlayer >= 0 ? viewPlayer : local ? local->getPlayerIndex() : -1; // lane ONLINE-3: an observer's observed player
 		const unsigned long long version = sm->stats().edges * 2 + (sm->displayed() ? 1 : 0);
 		const ShroudView *pv = previous ? previous->shroud.get() : nullptr;
 		if (pv && pv->version == version && pv->localPlayer == li && pv->countX == sm->cellCountX() && pv->countY == sm->cellCountY())

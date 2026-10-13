@@ -799,7 +799,8 @@ TEST_CASE("Locomotor stops S-081 and S-084 are reported and pinned")
 	CHECK(stops[0].rfind("S-081:", 0) == 0);
 	CHECK(stops[0].find("x87 and SSE") != std::string::npos);
 	CHECK(stops[1].rfind("S-084:", 0) == 0);
-	CHECK(stops[1].find("HOVER, SHIP and GIANT_BIRD") != std::string::npos);
+	CHECK(stops[1].find("HOVER and SHIP movers") != std::string::npos);
+	CHECK(stops[1].find("GIANT_BIRD movers are GiantBirdAIUpdate's") != std::string::npos); // lane FLY-1
 	CHECK(stops[1].find("ScalesWalls") != std::string::npos);
 	CHECK(stops[2].rfind("S-1750:", 0) == 0);
 	CHECK(stops[2].find("RW 0x5E7CC7") != std::string::npos);

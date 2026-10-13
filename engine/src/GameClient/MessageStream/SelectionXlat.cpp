@@ -5,6 +5,7 @@
 
 #include "Common/Player.h"
 #include "Common/Thing/ThingTemplate.h"
+#include "GameClient/ControlBarCommands.h"
 #include "GameClient/HudObjects.h"
 #include "GameLogic/PlayerCommands.h"
 #include "GameLogic/Object/Object.h"
@@ -386,6 +387,20 @@ MessageDisposition SelectionTranslator::leftClick(const ClientMessage &msg)
 	std::vector<Object *> will = drawablesThatWillSelect(m_ctx, selectionRegion);
 	if (will.empty())
 	{
+		// lane HUD-7, TARGET FACTS (RotWK SelectionTranslator::translateGameMessage, the MSG_MOUSE_LEFT_CLICK case, RW 0x83C44F .. 0x83C4B9; caveat S-001): a click
+		// whose list is empty deselects when GlobalData m_useAlternateMouse (+ 0x5C, RotWK's default: RW 0x642A4B) is set and the GUI command (InGameUI vslot
+		// 0xC0) is not one that waits for a target (FIRE_WEAPON 0x17, SPECIAL_POWER 0x18, COMBATDROP 0x1A, HIJACK_VEHICLE 0x1D, CONVERT_TO_CARBOMB 0x1E,
+		// SPECIAL_POWER_FROM_COMMAND_CENTER 0x20, SPELL_BOOK 0x26): RW 0x7BDD53 appends MSG_DESTROY_SELECTED_GROUP (true) and calls deselectAllDrawables
+		// (vslot 0x110). The click is kept either way (disposition 0). The standard setup deselects with the right click instead (the right button up case)
+		const CommandButton *command = m_ctx.ui.getGUICommand();
+		const int type = command ? command->m_command : GUICOMMANDMODE_NONE;
+		const bool targeting = command && (type == GUI_COMMAND_FIRE_WEAPON || type == GUI_COMMAND_SPECIAL_POWER || type == GUI_COMMAND_COMBATDROP
+			|| type == GUI_COMMAND_HIJACK_VEHICLE || type == GUI_COMMAND_CONVERT_TO_CARBOMB || type == GUI_COMMAND_SPECIAL_POWER_FROM_COMMAND_CENTER
+			|| type == GUI_COMMAND_SPELL_BOOK);
+		if (m_commands.useAlternateMouse() && !targeting)
+		{
+			m_ctx.ui.deselectAll();
+		}
 		return MessageDisposition::Keep;
 	}
 	if (m_ctx.ui.getGUICommand() != nullptr)

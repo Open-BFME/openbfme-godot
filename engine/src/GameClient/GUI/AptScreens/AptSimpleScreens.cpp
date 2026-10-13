@@ -37,8 +37,13 @@ void AptLevel0Screen::runShutdown(bool *)
 
 AptBackgroundScreen::AptBackgroundScreen(WindowManager &windows, Shell &shell) : AptScreen(windows, shell, "Background.apt", "") {}
 
-AptGuiFXScreen::AptGuiFXScreen(WindowManager &windows, Shell &shell) : AptScreen(windows, shell, "GuiFX.apt", "AptGuiFX", 11)
+AptGuiFXScreen::AptGuiFXScreen(WindowManager &windows, Shell &shell, bool adoptLoaded)
+	: AptScreen(windows, shell, "GuiFX.apt", "AptGuiFX", 11, adoptLoaded)
 {
+	if (adoptLoaded)
+	{
+		return; // the window's owner registered the movie's commands
+	}
 	registerCommand("AptGuiFX::OnInitialized", unportedCommand("AptGuiFX::OnInitialized"));
 	registerComponent("ToolTipText", [this](AptComponentRequest &) -> std::shared_ptr<GameWindow> {
 		this->windows().note("unported-component", "ToolTipText [S-175]");

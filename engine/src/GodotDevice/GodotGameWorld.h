@@ -19,6 +19,8 @@
 
 #include "GameClient/VideoPlayer.h" // lane CAMP-1H: m_videos (complete for the unique_ptr)
 #include "GameClient/EndGame.h"
+#include "GameClient/CommandLogLoad.h" // lane SAVE-2: m_saveLoad (complete for the unique_ptr)
+#include "Common/System/SaveGame/SaveGameFile.h"
 #include "GameClient/ScriptCameraDirector.h"
 #include "GameClient/LiveGame.h"
 #include "GameClient/LiveGameAudio.h"
@@ -123,6 +125,8 @@ public:
 	double get_time_scale() const { return m_timeScale; }
 
 	int64_t get_frame() const;
+
+	int64_t get_presented_frame() const; ///< lane PATHPERF-1: the published snapshot's frame, no wait
 	int64_t get_state_hash() const; // the deterministic world state hash (GameLogic::computeStateHash), as an unsigned 32-bit value
 	double get_alpha() const;
 	int64_t get_object_count() const;
@@ -344,7 +348,7 @@ public:
 	// load_screen_music, fade_up_frames, delay_carryover: [..] } ] } ] (the world must be set up)
 	Array get_campaigns() const;
 	// loads a campaign mission as the game (load_map with the campaign rules): options { campaign, mission (index), difficulty (0 easy, 1 normal, 2 hard),
-	// logic_thread, progress, test_hooks }; the report of start_new_game plus "start" { local_player, local_player_index, camera_start (the map's
+	// logic_thread, progress, test_hooks, record_memory (lane SAVE-2: the mission is recorded in memory so it can be saved) }; the report of start_new_game plus "start" { local_player, local_player_index, camera_start (the map's
 	// InitialCameraPosition waypoint, else Player_1_Start), slot_players [], starting_objects [] } and "mission" (the mission's record)
 	Dictionary start_campaign_mission(const Dictionary &options);
 	// the running mission's end: { ended, victory, action, frame } (the script engine's VICTORY / QUICKVICTORY / DEFEAT, ScriptEngine::endRequests)
@@ -359,6 +363,24 @@ public:
 	Dictionary get_movie(const String &title);
 	Dictionary get_play_intro(); // lane CAMP-2: GameData PlayIntro (GlobalData + 0xAF2): { ok, play_intro, from_ini, error }
 	static void bindCampaignMethods();
+	// ---- lane SAVE-2 (GodotDevice/GodotGameWorldSave.cpp): the command-log save of a single player game (docs/SAVES.md) ----
+	// save_game(path, { description, kind (1 Campaign, 2 Skirmish), map_display, date, time }): the running recorded skirmish as an .obfmesave file (the log so
+	// far + its header, Common/System/SaveGame/SaveGameFile.h) -> { ok, error, frame, hash, bytes, commands }. Refused (named) without a recording, in a network
+	// game or a replay, or when the recording is incomplete.
+	Dictionary save_game(const String &path, const Dictionary &options);
+	// list_saves(dir): the saved games of a folder, newest first: the .obfmesave files read by their header (path, name, map, date, time, kind, frame,
+	// build, loadable, refusal, cross_profile) and retail's own saves (*.BfME2Skirmish / *.BfME2Campaign) as { retail_import: true, loadable: false }
+	Array list_saves(const String &directory) const;
+	// prepare_save_load(path): reads and checks the save (the build, the data, the log) and prepares its game like prepare_replay -> { ok, errors, resolved,
+	// map, local_slot, frame, description, cross_profile, note }; start_save_load(options) loads that game like start_new_game (options "record": the
+	// recording continues the save's log there) and installs the catch-up; save_load_step(budget_ms) then runs it: { state ("catching_up", "ready",
+	// "failed"), frame, start, target, percent, error, hashes_compared, elapsed_ms }. At "ready" the game is at the saved frame and the player's.
+	// check_save(path): what prepare_save_load would refuse, without touching the running game -> { ok, error }
+	Dictionary check_save(const String &path) const;
+	Dictionary prepare_save_load(const String &path);
+	Dictionary start_save_load(const Dictionary &options);
+	Dictionary save_load_step(int64_t budget_ms);
+	static void bindSaveMethods();
 	// ---- player commands (lane MOVE-1): everything goes through the lockstep command path (LiveGame::commands(), executed by the logic's command list row of the
 	// next logic frame), never by touching the AI directly ----
 	// Orders the objects `ids` to (x, y) in SAGE coordinates: a select message and a move message of the first object's controlling player. options: type: "move" (default),
@@ -428,6 +450,10 @@ public:
 	Dictionary net_host(int64_t port, const Dictionary &message, int64_t run_ahead, int64_t crc_interval);
 	Dictionary net_join(const String &address, const String &name);
 	Dictionary net_poll();
+	// lane ONLINE-2: an online game: the START JSON the lobby service sent (GameNetwork/OnlineStart.h); {ok, slot, relay | error}; then net_poll / net_begin as
+	// for a LAN game. net_profile_digest: this install's profile identity MD5 (the lobby compares the players')
+	Dictionary net_online(const String &start_json);
+	String net_profile_digest() const;
 	Dictionary net_begin(const Dictionary &options);
 	Dictionary net_status() const;
 	// the local player leaves the game (PLAYERLEAVE after the frames it announced), the recording is closed; waits up to 2 s for the acks
@@ -438,6 +464,18 @@ public:
 	// player leaves: net_status().disconnect.quit_requested)
 	void net_disconnect_kick(int64_t row);
 	void net_disconnect_quit();
+	// lane ONLINE-3: the multiplayer pause (OpenBFME addition, S-3901: any player pauses every peer before one frame, any player resumes); net_status().pause
+	// says who paused. A rejoin START (net_online with the lobby's /v1/games/<id>/rejoin START) makes net_begin rejoin the running game: _process runs the
+	// catch-up (the relay's log, no rendering of the skipped frames) until net_status().rejoin.state is "live" (or "failed", with the reason)
+	void net_pause();
+	void net_resume();
+	// lane ONLINE-3: a spectator START (net_online with the lobby's /v1/games/<id>/spectate START: {ok, spectator, delay}) makes net_begin watch the game:
+	// no slot, the ReplayObserver side is the local player (the map revealed, RW 0x62F91A), _process catches up from the relay's log and then follows
+	// it (NetGameSession::spectateStep; nothing is sent, the local input is ignored); net_status().spectate: state ("binding" / "catching_up" / "live" /
+	// "ended" / "failed"), frame, served, crcs_compared, crc_mismatches, failure, observed. net_observe_next(forward) is retail's observeNextPlayer
+	// (RW 0x6A8D2B: the next human player's view, then back to every player's); net_observed() names the observed player and its resources
+	Dictionary net_observe_next(bool forward);
+	Dictionary net_observed() const;
 	// lane MP-2: replays. start_new_game({record: path}) records a skirmish (Common/Recorder.h: every frame's commands and hash); a LAN game records with
 	// net_begin({record}). prepare_replay(path) reads a recording and prepares its game (the profile identity must match; { ok, resolved, map, local_slot,
 	// final_frame, errors } like prepare_new_game); start_replay(options) loads it like start_new_game and plays the recording back (the local input is
@@ -458,12 +496,23 @@ public:
 	Dictionary lan_set_create_a_hero(const PackedByteArray &record);
 	Dictionary lan_status() const;
 	LANAPI *lan() const { return m_lan.get(); }
+	// lane ONLINE-4: the faction and colour counts the online lobby client checks the lobby's game views against (false before setup())
+	bool onlineLimits(int &factions, int &colors) const;
 	Dictionary prepare_replay(const String &path);
 	Dictionary start_replay(const Dictionary &options);
 	Dictionary replay_status() const;
 	Dictionary recording_status() const;
 	Array list_replays(const String &directory) const;
 	ProfileIdentity net_profile() const;
+	// lane UBER-1: the simulation profile this player runs (the OpenBFME option "Uber performance mode", docs/UBER.md): "faithful" or "uber". It decides the
+	// profile identity (LAN, replays) and every game this world starts must carry it (prepare_new_game refuses another). { ok, error }: refused while a
+	// LAN game (not the lobby list) is joined or hosted
+	Dictionary set_simulation_profile(const String &name);
+	// lane UBER-1 (the game's Uber gate, scripts/uber1_player.gd): { troops, battalions, objects } of GameClient/FrameCensus.h (living INFANTRY / CAVALRY /
+	// MONSTER: horde members one by one; living hordes; every object) and the playable extent { extent_x, extent_y } (TerrainLogic::getExtent(0)); {} without
+	// a game. Diagnostics only: reads the logic between frames
+	Dictionary get_census() const;
+	String simulation_profile() const;
 
 	// lane HUD-1 (C++ only, not bound): what the in-game HUD node needs of the game; null until setup() / load_map() ran
 	LiveGame *hud_game() const { return m_game.get(); }
@@ -538,6 +587,7 @@ private:
 	std::unique_ptr<InGameSpellBookModel> m_spellBar;  // lane SPELL-2
 	// lane MP-1 (after m_game: the session goes first; every m_game.reset() drops it before)
 	std::unique_ptr<LANAPI> m_lan; // lane MP-2
+	SimulationProfile m_simulationProfile = SimulationProfile::Faithful; // lane UBER-1
 	std::unique_ptr<UDP> m_netSocket;
 	std::unique_ptr<LANLobbyHost> m_netHost;
 	std::unique_ptr<LANLobbyClient> m_netClient;
@@ -552,8 +602,24 @@ private:
 	std::unique_ptr<ReplayFile> m_pendingReplay; ///< prepare_replay's, until start_replay
 	std::unique_ptr<ReplayPlayback> m_replayPlayback;
 	std::string m_replayPath, m_recordPath;
+	// lane SAVE-2: the save being loaded (prepare_save_load / start_save_load / save_load_step)
+	std::unique_ptr<SaveGameFile> m_pendingSave;
+	std::unique_ptr<CommandLogLoad> m_saveLoad;
+	std::string m_saveRecordPath; ///< "" with m_saveRecordContinues: in memory (a campaign mission)
+	bool m_saveRecordContinues = false;
+	// lane SAVE-2: the running campaign mission's start (kept for its saves; empty campaign: not a campaign mission), and the one a pending load starts
+	struct CampaignStart
+	{
+		std::string campaign, map;
+		int mission = 0, difficulty = 1;
+	};
+	CampaignStart m_campaignStart, m_pendingCampaign;
+	// the identity a game of `profile` runs under (net_profile is the player's option's; a campaign mission always runs Faithful)
+	ProfileIdentity profileIdentityFor(SimulationProfile profile) const;
 	void releaseLocalDrivers();
 	bool m_netLoaded = false, m_netScript = false;
+	bool m_netRejoining = false; ///< lane ONLINE-3: the rejoin's catch-up runs (NetGameSession::rejoinStep)
+	bool m_netSpectating = false; ///< lane ONLINE-3: a spectator START: NetGameSession::spectateStep runs the game, no Network
 	UnsignedInt m_netScriptFrame = 0xFFFFFFFFu;
 	int m_netPlayer = -1, m_netStartPos = -1;
 	unsigned long long m_netScripted = 0;

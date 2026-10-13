@@ -125,6 +125,11 @@ public:
 	// what the parse could not check (stop S-145): one line per kind, empty when nothing was stored unchecked
 	std::vector<std::string> unverified() const;
 
+	// lane MAPRESET-1: takes the other store's templates, indices and flags (not its NameKeyGenerator: this store keys names through its own,
+	// which must hold the same names). Game setup reads the world's copy (RetailObjectWorld::setupPlayerTemplates); with as many templates as before
+	// they keep their addresses
+	void assignFrom(const PlayerTemplateStore &other);
+
 private:
 	NameKeyGenerator &m_keys;
 	std::vector<PlayerTemplate> m_templates; ///< RW store + 0xC, in definition order

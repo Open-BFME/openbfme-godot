@@ -66,8 +66,9 @@ const char *const kStopMeleeMachine =
 	"computePath RW 0x7471CF with the engagement destination RW 0x6F37B3 and the back-off RW 0x7463E8), AIMeleeReAcquireState 0xE5 (RW 0x74D46D), aim / fire / wait "
 	"0xE6 / 0xE7 / 0xE8; an ordinary non-crushing horde member inside its horde requests no path through 0xE1 / 0xE2 (0xE5 always refuses it; a crushing member can dispatch 0xE9, which can path); INFERENCE: the machine-busy test, stealth, RW 0x792973 / 0x744B25 / AI vslot 0x168 / + 0x3CC "
 	"are false, STAND_GROUND's RW 0x6FF7FA is the reach test, the fire-during-approach sub-state and the run-down speed of 0xE2 are not ported, the own-position "
-	"reservation does not write AI + 0x180, 0xE5's re-acquisition uses TargetFinder, RW 0x6F37B3's obstacle-zone mapping / siege branches and RW 0x7463E8's line "
-	"callback (isLinePassable) and quick path test (clientSafeQuickDoesPathExist) are stand-ins";
+	"reservation does not write AI + 0x180, 0xE5's re-acquisition uses TargetFinder, RW 0x6F37B3's obstacle-zone mapping / siege branches are not ported; RW 0x7463E8's "
+	"CanApproachToTarget (RW 0x6FB754) is ported (lane PLAY-4) with the quick path test clientSafeQuickDoesPathExist (RW 0x6F5BB0); the reach of a melee weapon "
+	"against a moving unit is RW 0x6ED843's footprint test (lane PLAY-4 r1, S-3806)";
 
 Object *victimOf(const AIState &s)
 {
@@ -459,7 +460,9 @@ bool AIAttackMeleeEngageState::computePath()
 	}
 	m_dest = m_victimPos;
 	ObjectWeapons *w = self.getWeapons();
-	if (pf.meleeBackOff(obj, info, w ? w->currentAttackRange() : 0.0f, &m_dest))
+	const Weapon *cw = w ? w->currentWeapon() : nullptr;
+	const bool melee = cw && cw->getTemplate() && cw->getTemplate()->m_meleeWeapon; // RW 0x6FB7B6: the weapon template's MeleeWeapon (+ 0x125)
+	if (pf.meleeBackOff(obj, info, w ? w->currentAttackRange() : 0.0f, &m_dest, melee))
 	{
 		pf.adjustDestination(obj, info, &m_dest, nullptr); // RW 0x6FE456
 		mv.requestPath(m_dest, true);

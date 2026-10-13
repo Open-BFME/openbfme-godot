@@ -62,7 +62,10 @@ const char *typeName(AptMessageBox::Type t)
 
 AptMessageBox::AptMessageBox(WindowManager &windows, Shell &shell) : m_windows(windows)
 {
-	m_guiFX = std::make_unique<AptGuiFXScreen>(windows, shell);
+	// lane SAVE-2: a GuiFX.apt already loaded (the end screen's, loaded with a game) carries the box: RotWK's TheMessageBox is built on the one GuiFX level
+	// (RW 0x81A3FB on _level13's clip); a second instance could not have its level
+	const bool loaded = windows.findAptMovieIndex("GuiFX.apt") >= 0;
+	m_guiFX = std::make_unique<AptGuiFXScreen>(windows, shell, loaded);
 	registerCommands();
 }
 

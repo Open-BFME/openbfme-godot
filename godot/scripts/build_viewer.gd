@@ -23,6 +23,9 @@
 ##   --scenario=castle_fall  (lane CASTLE-1) Mordor siege (6 MordorCatapult, 4 MordorMountainTroll created for the computer next to the local fortress) is ordered onto
 ##                        the local keep; when the keep dies the fortress (KeepDeathKillsEverything) kills its pads' buildings and leaves the game; the local player's
 ##                        remaining units are then killed (a scripted hit) so the victory rules can decide; the victory report is shown. Screens castle1-*.png
+##   --scenario=play4     (lane PLAY-4) the build scenario with the percent shots (prefix play4), the under-construction control bar, then the finished
+##                        barracks damaged through DAMAGED and REALLYDAMAGED to its death, Aragorn next to an enemy horde, and a Battle and a HoldGround
+##                        horde whose enemy walks away; screens play4-*.png, PLAY4VIEW lines
 ##   --scenario=walls_timeline  (lane BUILD-4) a Men wall span from the outermost pad, watched low from the side with --wall-side (else along the span); BUILD4VIEW
 ##                        lines give every piece's construction percent per logic frame; screens build4-*.png
 extends Node3D
@@ -137,7 +140,7 @@ func _ready() -> void:
 	if not prep.ok:
 		_fail("prepare_new_game: %s" % [prep.errors])
 		return
-	var rep: Dictionary = _world.start_new_game({})
+	var rep: Dictionary = _world.start_new_game({"test_hooks": _scenario == "play4"}) # PLAY-4: debug_damage_object
 	if not rep.ok:
 		_fail("start_new_game: %s" % [rep.errors.slice(0, 5)])
 		return
@@ -339,6 +342,8 @@ func _run_scenario() -> void:
 		await _run_castle_fall(shots)
 		return
 	var slow := _scenario == "showcase"
+	if _scenario == "play4":
+		_percent_prefix = "play4"
 	if _scenario == "fortress":
 		_cam_height = 900.0
 		_cam_back = 760.0
@@ -407,6 +412,7 @@ func _run_scenario() -> void:
 	_cam_back = 440.0
 	_place_camera()
 	var shot_mid := false
+	var shot_bar := false
 	var percent_next := 0
 	var start_frame: int = _world.get_frame()
 	while _world.get_frame() < start_frame + 900:
@@ -417,6 +423,13 @@ func _run_scenario() -> void:
 			_save(shots.path_join("%s-construction-%d.png" % [_percent_prefix, percent_next]))
 			print("BUILDVIEW %d%%: percent %s at logic frame %d" % [percent_next, b.get("construction_percent", "?"), _world.get_frame()])
 			percent_next += 25
+		if _scenario == "play4" and not shot_bar and float(b.get("construction_percent", 0.0)) >= 30.0:
+			# PLAY-4 item 10: the structure selected while it rises shows only the cancel button (RW 0x944EFB)
+			shot_bar = true
+			_hud.select_object(building_id)
+			await _frames(6)
+			_save(shots.path_join("play4-under-construction-controlbar.png"))
+			print("PLAY4VIEW under construction: control bar ", _hud.get_state().get("control_bar", {}))
 		if not shot_mid and float(b.get("construction_percent", 0.0)) >= 45.0:
 			shot_mid = true
 			_save(shots.path_join("build1-construction-%s.png" % _faction.substr(7).to_lower()))
@@ -430,7 +443,184 @@ func _run_scenario() -> void:
 	if slow:
 		await _wait_logic(25)
 	print("BUILDVIEW done: ", _world.get_object(building_id))
+	if _scenario == "play4":
+		await _run_play4(building_id, shots)
 	get_tree().quit(0)
+
+
+## lane PLAY-4: the player index of a player name (create_object takes the index of the player list): a probe object per index
+func _player_index(owner: String, x: float, y: float) -> int:
+	for idx in 16:
+		var probe: int = _world.create_object("GondorFighterHorde", idx, x, y)
+		if probe < 0:
+			continue
+		var o: String = str(_world.get_object(probe).get("owner", ""))
+		_world.destroy_object(probe)
+		if o == owner:
+			return idx
+	return -1
+
+
+func _run_play4(building_id: int, shots: String) -> void:
+	var b: Dictionary = _world.get_object(building_id)
+	var bp := Vector2(b.x, b.y)
+	var enemy := ""
+	for so in _start_objects:
+		var eo: Dictionary = _world.get_object(int(so.id))
+		if eo.get("ok", false) and str(eo.owner) != _local and not str(eo.owner).is_empty():
+			enemy = str(eo.owner)
+	var base := Vector2.ZERO
+	var n := 0
+	for so in _start_objects:
+		var eo: Dictionary = _world.get_object(int(so.id))
+		if eo.get("ok", false) and str(eo.owner) == enemy:
+			base += Vector2(eo.x, eo.y)
+			n += 1
+	var away := ((base / float(maxi(n, 1))) - _focus).normalized()
+	var side := Vector2(-away.y, away.x)
+	var spot := _focus + Vector2(900.0, 0.0) # out of both fortresses' reach, on land (test_play4_heroes_retail.cpp: Evendim's start 0 + 900 in x)
+	away = Vector2(1.0, 0.0)
+	side = Vector2(0.0, 1.0)
+	var me := _player_index(_local, spot.x, spot.y)
+	var them := _player_index(enemy, spot.x, spot.y)
+	print("PLAY4VIEW players: local %s %d, enemy %s %d" % [_local, me, enemy, them])
+	# item 11 on a castle plot (Player::onStructureCreated RW 0x6AAF3B, a BASE_FOUNDATION builder): a plot's button builds on the plot at once
+	var plot_building := -1
+	for id in _world.get_object_ids():
+		var o: Dictionary = _world.get_object(id)
+		if not o.get("ok", false) or str(o.get("owner", "")) != _local or not o.get("structure", false) or int(id) == building_id:
+			continue
+		if not str(o.template).contains("ExpansionPadSide"):
+			continue
+		_cam_target = Vector2(o.x, o.y)
+		_place_camera()
+		await _frames(4)
+		await _click_world(Vector2(o.x, o.y)) # the input path: the logic's selection (MSG_CREATE_SELECTED_GROUP) is what MSG_FOUNDATION_CONSTRUCT reads
+		if _hud.press_command_button("MenArrowTowerExpansion"): # MenFortressExpansionPadSideCommandSet
+			print("PLAY4VIEW plot press: ", _hud.get_message_log().slice(-2))
+			for w in 150:
+				await _wait_logic(1)
+				plot_building = int(_world.find_object_by_template("MenArrowTowerExpansion"))
+				if plot_building >= 0:
+					break
+			print("PLAY4VIEW plot %d (%s): built %d" % [id, o.template, plot_building])
+			if plot_building >= 0:
+				break
+	if plot_building >= 0:
+		var pb: Dictionary = _world.get_object(plot_building)
+		_cam_target = Vector2(pb.x, pb.y)
+		_place_camera()
+		var next := 0
+		for f in 1200:
+			await _wait_logic(1)
+			pb = _world.get_object(plot_building)
+			if not pb.get("ok", false):
+				break
+			var pc := float(pb.get("construction_percent", -1.0))
+			if next <= 75 and pb.get("under_construction", false) and pc >= float(next):
+				_save(shots.path_join("play4-plot-construction-%d.png" % next))
+				print("PLAY4VIEW plot %d%%: conditions %s models %s" % [next, pb.get("conditions", []), pb.get("models", [])])
+				next += 25
+			if not pb.get("under_construction", true):
+				await _wait_logic(10)
+				_save(shots.path_join("play4-plot-construction-100.png"))
+				print("PLAY4VIEW plot complete at frame %d: conditions %s" % [_world.get_frame(), pb.get("conditions", [])])
+				break
+		# its damage states (BUILD_VARIATION_x DAMAGED / REALLYDAMAGED / RUBBLE: models _D1 .. _D3)
+		var pmax: float = float(_world.get_object(plot_building).get("max_health", 1.0))
+		var plast := 0
+		for step in 25:
+			var r: Dictionary = _world.debug_damage_object(plot_building, pmax * 0.05, 0)
+			if not r.get("ok", false):
+				break
+			await _wait_logic(3)
+			pb = _world.get_object(plot_building)
+			var st: int = int(pb.get("damage_state", 0))
+			if st != plast:
+				plast = st
+				await _wait_logic(30)
+				_save(shots.path_join("play4-plot-damage-state-%d.png" % st))
+				print("PLAY4VIEW plot damage state %d: conditions %s models %s" % [st, _world.get_object(plot_building).get("conditions", []), _world.get_object(plot_building).get("models", [])])
+			if st >= 2:
+				break
+	# item 11: the damage states of the finished barracks (DAMAGED, REALLYDAMAGED: models _D1 / _D2, fire and smoke), then its death (RUBBLE)
+	var max_hp: float = float(b.max_health)
+	var last_state: int = int(b.get("damage_state", 0))
+	for step in 40:
+		var r: Dictionary = _world.debug_damage_object(building_id, max_hp * 0.05, 0)
+		if not r.get("ok", false):
+			print("PLAY4VIEW damage refused: ", r)
+			break
+		await _wait_logic(3)
+		b = _world.get_object(building_id)
+		var st: int = int(b.get("damage_state", 0))
+		if st != last_state and st < 3:
+			last_state = st
+			await _wait_logic(45)
+			_save(shots.path_join("play4-damage-state-%d.png" % st))
+			print("PLAY4VIEW damage state %d at health %.0f / %.0f" % [st, float(b.health), max_hp])
+		if st >= 2:
+			break
+	_world.debug_damage_object(building_id, max_hp, 0)
+	await _wait_logic(60)
+	_save(shots.path_join("play4-damage-destroyed.png"))
+	print("PLAY4VIEW after the killing hit: ", _world.get_object(building_id))
+	# item 13: Aragorn next to an enemy horde, in the Battle stance, no order
+	_cam_target = spot
+	_place_camera()
+	var aragorn: int = _world.create_object("GondorAragornMP", me, spot.x, spot.y)
+	var horde: int = _world.create_object("MordorFighterHorde", them, spot.x + away.x * 110.0, spot.y + away.y * 110.0)
+	await _wait_logic(2)
+	var members: Array = _world.get_object(horde).get("members", [])
+	print("PLAY4VIEW aragorn %d, horde %d with %d members" % [aragorn, horde, members.size()])
+	await _wait_logic(60)
+	_save(shots.path_join("play4-aragorn-fighting-1.png"))
+	await _wait_logic(90)
+	_save(shots.path_join("play4-aragorn-fighting-2.png"))
+	var alive := 0
+	for m in members:
+		var mo: Dictionary = _world.get_object(int(m))
+		alive += 1 if mo.get("ok", false) and float(mo.get("health", 0.0)) > 0.0 else 0
+	print("PLAY4VIEW after 150 frames: aragorn ai state %s, %d of the horde's %d members alive" % [_world.get_object(aragorn).get("ai_state", -1), alive, members.size()])
+	_world.destroy_object(aragorn)
+	_world.destroy_object(horde)
+	# item 14: a Battle horde and a HoldGround horde, each with an enemy horde that walks away after the fight starts
+	var spots := [spot + side * 200.0, spot + side * 500.0]
+	var ours: Array = []
+	var foes: Array = []
+	for i in 2:
+		var p: Vector2 = spots[i]
+		ours.append(_world.create_object("GondorFighterHorde", me, p.x, p.y))
+	await _wait_logic(10)
+	_world.set_stance([ours[1]], 3) # STANCE_HOLD_GROUND
+	await _wait_logic(4)
+	var guarded: Array = []
+	for i in 2:
+		var o: Dictionary = _world.get_object(ours[i])
+		guarded.append(Vector2(o.x, o.y))
+	for i in 2:
+		var p: Vector2 = spots[i]
+		foes.append(_world.create_object("MordorFighterHorde", them, p.x + away.x * 120.0, p.y + away.y * 120.0))
+	await _wait_logic(15)
+	for i in 2:
+		var p: Vector2 = spots[i]
+		_world.order_move([foes[i]], p.x + away.x * 900.0, p.y + away.y * 900.0)
+	var far := [0.0, 0.0]
+	for f in 150:
+		await _wait_logic(1)
+		for i in 2:
+			var o: Dictionary = _world.get_object(ours[i])
+			if o.get("ok", false):
+				far[i] = maxf(far[i], Vector2(o.x, o.y).distance_to(guarded[i]))
+		if f == 45 or f == 110:
+			for i in 2:
+				_cam_target = guarded[i] + away * 120.0
+				_place_camera()
+				_label.text = "PLAY-4: %s stance, the enemy walks away (frame %d of the chase)" % [["Battle", "HoldGround"][i], f]
+				await _frames(3)
+				_save(shots.path_join("play4-stance-%s-%d.png" % [["battle", "holdground"][i], f]))
+	_label.text = ""
+	print("PLAY4VIEW stances: farthest from the guarded spot: battle %.0f, holdground %.0f" % [far[0], far[1]])
 
 
 ## lane AI-1: the computer's base grows, then its first SimpleAttack team marches to the local base (the camera only watches; the logic is the game's)

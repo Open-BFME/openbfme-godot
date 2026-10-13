@@ -251,6 +251,7 @@ void Pathfinder::reset()
 	m_queue1.reset();
 	m_queue2.reset();
 	m_units.clear();
+	m_unitIndex.clear();
 }
 
 void Pathfinder::note(const char *stop)
@@ -260,16 +261,6 @@ void Pathfinder::note(const char *stop)
 		if (s == stop) return;
 	}
 	m_stops.push_back(stop);
-}
-
-PathfindCell *Pathfinder::getCell(PathfindLayerEnum layer, int x, int y)
-{
-	(void)layer; // bridge / wall layers are not ported (S-161): every query reads the ground layer
-	if (x >= m_extent.lo.x && x <= m_extent.hi.x && y >= m_extent.lo.y && y <= m_extent.hi.y)
-	{
-		return &m_blockOfMapCells[(size_t)x * (size_t)m_stride + (size_t)y];
-	}
-	return nullptr;
 }
 
 const PathfindCell *Pathfinder::cellAt(int x, int y) const
@@ -336,6 +327,7 @@ void Pathfinder::newMap(const PathfindTerrain &terrain, const std::vector<Pathfi
 	m_queue1.reset();
 	m_queue2.reset();
 	m_units.clear();
+	m_unitIndex.clear();
 	m_stops.clear();
 	note(pathstops::kSlopeAndConfig);
 	note(pathstops::kLayers);

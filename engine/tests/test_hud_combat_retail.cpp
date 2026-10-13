@@ -763,8 +763,10 @@ TEST_CASE("combat retail: a Gondor fighter horde attacks a Mordor fighter horde:
 	CHECK(o.winnerHealthStart == 15 * 200.0f);
 	CHECK(o.loserHealthStart == 20 * 75.0f);
 	REQUIRE(o.endFrame > 0);
-	// contact needs the horde to walk (they start 140 apart, melee reach 11.5) and the first swing waits for its 3 frame pre-attack
-	CHECK(o.firstHitFrame >= 3);
+	// contact needs the hordes to walk (they start 140 apart, beyond any member's footprint reach, RW 0x6ED843) and the first swing waits for its 3 frame
+	// pre-attack: the orcs (not ordered) acquire from their placement, two frames before the loop's frame 0: one frame of walking and the pre-attack put the
+	// earliest hit at the loop's frame 1 (lane PLAY-4 r1: the footprint reach lets them swing after a shorter walk than the edge distance did)
+	CHECK(o.firstHitFrame >= 1);
 	// every orc died, every one of them took exactly two sword hits (40 + the clipped 35)
 	for (int d : o.deathFrames)
 	{

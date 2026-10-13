@@ -56,6 +56,9 @@ public:
 	void removeFromContain(Object *obj) override; // RW 0x8665BE
 	bool isValidContainerFor(const Object &obj, bool checkCapacity, bool checkPath) const override; // RW 0x86603B
 	const ObjectStatusMaskType *getObjectStatusOfContained() const override;
+	const ObjectStatusMaskType *getObjectStatusOfContainedFor(const Object *rider) const override { return &statusMaskFor(rider); } // slot 0xB0
+	bool isPassengerAllowedToFire() const override;                                    // RW 0x865A7E (lane DECOMP-3)
+	bool isPassengerShotBlocked(const Object *rider, const Object *victim) const override; // RW 0x865B33 (lane DECOMP-3)
 	void orderAllPassengersToExit(int source) override; // RW 0x867D6A
 	void onObjectWantsToEnterOrExit(Object *obj, int wants) override;
 	unsigned getStealthUnitsContained() const override { return m_stealthUnitsContained; }

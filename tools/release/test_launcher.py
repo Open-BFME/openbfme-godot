@@ -256,6 +256,25 @@ def test_launcher_unit_rules(tmp_path, keys):
     assert r.returncode == 0 and "UNIT OK" in r.stdout, r.stdout[-3000:] + r.stderr[-2000:]
 
 
+def test_online_link_injection_runs_nothing(tmp_path, server, keys):
+    """lane ONLINE-2 r2 (Sol r1): Windows splices the link into "<launcher>" -- --open-url "%1", so a link with quotes adds launcher options. A link
+    is only taken alone (--open-url <link>); with anything else the whole start is refused before any CLI action runs: no update, no install, no
+    lobby change, no game started."""
+    server.publish("v0.2.0", release_files(tmp_path, "v0.2.0", keys["release"]))
+    link = "openbfme://join/0123456789abcdef"
+    for injected in ([link + '"', "--update"], ["--open-url", link, "--update"], ["--open-url", link, "--install=v0.2.0"],
+                     ["--update", "--open-url", link], ["--open-url", link, "--lobby=https://evil.example"], [link, "--update"]):
+        args = injected if injected[0] == "--open-url" or injected[0] == "--update" else ["--open-url", *injected]
+        r = launch(tmp_path, server, keys["release"], *args)
+        assert r.code == 1 and r.has("link refused, nothing done"), (args, r)
+        assert not r.has("update installed") and installed(tmp_path) == [], (args, r)
+        assert not r.has("online lobby:") and not r.has("join game"), (args, r)
+    assert not (tmp_path / "played.txt").exists()
+    # alone, the link is taken; with no lobby set it says so and starts nothing
+    r = launch(tmp_path, server, keys["release"], "--open-url", link)
+    assert r.code == 1 and r.has("no online lobby is set"), r
+
+
 def test_fresh_install_and_play(tmp_path, server, keys):
     server.publish("v0.2.0", release_files(tmp_path, "v0.2.0", keys["release"]))
     r = launch(tmp_path, server, keys["release"], "--update", "--list", "--play")

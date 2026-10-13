@@ -37,6 +37,7 @@
 
 #include "Common/NameKeyGenerator.h"
 #include "GameLogic/SkirmishAI/AIBaseBuilder.h"
+#include "GameLogic/SkirmishAI/AIStatCollector.h"
 #include "GameLogic/SkirmishAI/AITacticalAI.h"
 
 #include <cstdint>
@@ -103,9 +104,19 @@ public:
 
 	// lane AI-2: the manager's object events, installed as GameLogic world hooks while a game runs (RW 0x68E42D in the enter-world function RW 0x68E31F, RW 0x68C205
 	// in the leave-world function RW 0x68C18F): RW 0x6A9D9C (the object's controlling player's AI, unless disabled: RW 0x6C7779 -> RW 0x8F069A; the capture flag
-	// list + 0xA68 and the player info record add RW 0x8E4591 are not ported) and RW 0x6A99CB (RW 0x6C778A -> RW 0x8F0C47; the record's remove RW 0x8E480C)
+	// list + 0xA68 is not ported; lane DECOMP-3: the player info record add RW 0x8E4591 is) and RW 0x6A99CB (RW 0x6C778A -> RW 0x8F0C47; the record's remove RW 0x8E480C)
+	// lane DECOMP-3: the world hooks are containment listeners (RW 0x68E31F / 0x68C18F also run when a contain takes an object in or out); an INERT template's
+	// world entry skips the event (RW 0x68E32A -> 0x68E439), the exit never does
 	void objectEnteredWorld(Object &obj);
 	void objectLeftWorld(Object &obj);
+	// RW 0x6A9D9C / RW 0x6A99CB themselves, also called by Object's team change (RW 0x697C09: the controlling player changes), the capture (RW 0x854712 /
+	// 0x85474D), CommandSetUpgrade (RW 0x8B7C8E / 0x8B7C9A) and the AIPlayer's Upgrade_RingHero check (RW 0x8F0E34 / 0x8F0E41). The object's + 0x4D0 byte they
+	// test first is DozerAIUpdate's phantom structure flag (makePhantomStructureInert RW 0x88D0D8 / NotInert RW 0x88D123), which the port never sets
+	void objectAdded(Object &obj);
+	void objectRemoved(Object &obj);
+	// lane DECOMP-3: the player info record of a player (manager + 0xA3C, RW 0x6A9999); null without one
+	AIStatCollector *record(int playerIndex);
+	const AIStatCollector *record(int playerIndex) const;
 	// the dozer notifications: DozerAIInterface vslot 0x7C (RW 0x88BF4E -> AIPlayer RW 0x8F0660) and the construction-complete call RW 0x86C1ED -> RW 0x6C77E4 ->
 	// RW 0x8F06FF(builder, structure, 1)
 	void dozerIdle(Object &dozer);
@@ -124,7 +135,7 @@ public:
 	{
 		unsigned long long managerUpdates = 0;     ///< update() calls that passed the gate
 		unsigned long long gatedUpdates = 0;       ///< update() calls before frame 10 or without a group
-		unsigned long long playerInfoUpdates = 0;  ///< RW 0x8E3CF3 calls (not ported)
+		unsigned long long playerInfoUpdates = 0;  ///< RW 0x8E3CF3 calls (lane DECOMP-3: ported but for the position sampler)
 		unsigned long long groupUpdates = 0;       ///< RW 0x8EDDF6 calls on an active group
 		unsigned long long sharedBrainUpdates = 0; ///< RW 0x6C6397 calls (not ported)
 		unsigned long long aiUpdates = 0;          ///< RW 0x6C7946 calls
@@ -132,8 +143,20 @@ public:
 		unsigned long long brainUpdates = 0;       ///< the + 0x164 brain updates (not ported)
 		unsigned long long disabledSkips = 0;      ///< a disabled AI whose group has no reason to update its brain
 		unsigned long long shutdowns = 0;          ///< RW 0x6C78D9 / 0x6C7928 (not ported)
+		unsigned long long objectAdds = 0;         ///< lane DECOMP-3: RW 0x6A9D9C calls while a game runs
+		unsigned long long objectRemoves = 0;      ///< lane DECOMP-3: RW 0x6A99CB calls while a game runs
 	};
 	const Counters &counters() const { return m_counters; }
+	// lane DECOMP-3: a diagnostic sink for the object events (not game state, not hashed): while set, each RW 0x6A9D9C (true) / 0x6A99CB (false) call while a
+	// game runs appends (add, object id)
+	struct ObjectEvent
+	{
+		bool add;
+		ObjectID id;
+		std::string templateName; ///< the object's template at the event
+		int playerIndex;          ///< its controlling player at the event (-1: none)
+	};
+	void setEventTrace(std::vector<ObjectEvent> *trace) { m_eventTrace = trace; }
 
 	void crc(StateHasher &h) const;
 	std::vector<std::string> report() const;
@@ -162,9 +185,12 @@ private:
 	const SkirmishAIStore *m_store = nullptr;
 	std::vector<std::unique_ptr<AISkirmishGroup>> m_groups;
 	std::vector<int> m_infoPlayers;
+	std::map<int, std::unique_ptr<AIStatCollector>> m_records; ///< manager + 0xA3C: the player info records by player index (lane DECOMP-3)
+	void makeRecord(const Player &player);
 	std::vector<std::shared_ptr<AIBuildRequest>> m_farmSites; ///< RW 0xDE9EEC (made by the first economy builder, RW 0x8EEBAC)
 	bool m_started = false;
 	std::vector<std::string> m_errors;
 	Counters m_counters;
+	std::vector<ObjectEvent> *m_eventTrace = nullptr; ///< diagnostics only (setEventTrace)
 	int m_worldHooks = 0; ///< the GameLogic world hook token while a game runs (0: none)
 };

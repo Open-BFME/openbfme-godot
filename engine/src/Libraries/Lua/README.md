@@ -67,6 +67,12 @@ SOURCE VERSIONS PLAINLY MARKED. Every altered file begins with the "ALTERED SOUR
   clamps to 0xFFFFFFFF as MSVCR71 does), then widens to the double: `tonumber('-1', 16)` is 4294967295 on every host.
 * `lua_ea_config.h` (force-included): C-locale `ctype` and `strcoll`, so a host `setlocale` cannot change what a script sees.
 * `lmathlib.c`: `math.random` uses the MSVCR71 `rand` generator (seed 1 until `randomseed`) kept in the state.
+* `lmathlib.c` (lane DEP-2): every math function (`abs sin cos tan asin acos atan atan2 ceil floor mod frexp ldexp sqrt log log10 exp`
+  and the `^` tag method's `pow`) calls the deterministic libm (`engine/src/Common/DeterministicLibm.h`), never the host's C library: the
+  transcendental ones return glibc 2.39's results as x86-64 Linux with FMA computed them (their fused operations are an integer `fma`),
+  the exact ones the IEEE result (`sqrt` is the square-root instruction), and NaN, signed zero and infinity results are decided explicitly,
+  so the bits are the same on Linux and Windows, on x86-64 with or without FMA and on AArch64 (macOS not run). Retail runs MSVCR71's x87 functions: parity with those is not claimed (no retail script
+  calls them; RotWK's `scripts.lua` has no call).
 
 ## Spec claims this layer proved wrong
 

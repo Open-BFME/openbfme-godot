@@ -120,19 +120,55 @@ void Construction::setModelConditions(Object &obj, const std::vector<const char 
 
 void Construction::onStructureCreated(Player &player, Object *builder, Object &structure)
 {
-	// RW 0x6AAF3B: the player's bookkeeping of a new structure (the counters of the score screen and the power / supply tallies of other games) is not ported; the
-	// command points follow RW 0x693D51 in Object::friend_initObject and the completion (S-302)
+	// RW 0x6AAF3B (stdcall over builder, structure; BFME2 decomp PlayerRva002ABD1D.cpp:Rva002AA559, tier A): the command points follow RW 0x693D51 in
+	// Object::friend_initObject and the completion (S-302). Lane PLAY-4: with a builder that is a BASE_FOUNDATION (template + 0x114 & 0x100: a plot or a castle)
+	// or a DOZER (+ 0x109 & 0x40), the structure's behavior slot 0x80 interface (RW 0x68C3E6: GettingBuiltBehavior) is told. A BASE_FOUNDATION builder's
+	// FoundationAIUpdate interface (RW 0x68C3C3) first records the structure (slot 2, RW 0x8582DE: the port's CastleMemberBehavior occupant, set by the callers),
+	// then the structure's + 0x36 flag is set (slot 10 with 1) and it spawns its worker or starts building itself (slot 1 with force 1); a DOZER builder only
+	// sets the flag
 	(void)player;
-	(void)builder;
-	(void)structure;
+	if (!builder)
+	{
+		return;
+	}
+	const bool foundation = builder->isKindOfName("BASE_FOUNDATION"), dozer = builder->isKindOfName("DOZER");
+	if (!foundation && !dozer)
+	{
+		return;
+	}
+	GettingBuiltBehavior *gb = dynamic_cast<GettingBuiltBehavior *>(structure.findModule("GettingBuiltBehavior"));
+	if (!gb)
+	{
+		return;
+	}
+	bool foundationInterface = false;
+	for (const std::unique_ptr<BehaviorModule> &m : builder->modules())
+	{
+		// RW 0x68C3C3: the first module answering slot 0x98 (a plot's FoundationAIUpdate; a castle's CastleBehavior is one, vtable RW 0xC30DE8)
+		foundationInterface = foundationInterface || m->getFoundationAIUpdate() != nullptr;
+	}
+	if (foundation && foundationInterface)
+	{
+		gb->setForceComplete(true);
+		gb->spawnWorkerOrStart(true);
+	}
+	if (dozer)
+	{
+		gb->setForceComplete(true);
+	}
 }
 
 void Construction::onStructureConstructionComplete(Player &player, Object *builder, Object &structure, bool fromRebuild)
 {
-	// RW 0x6AA72B -> 0x6AA7A8 -> 0x68E0C2: the structure's command points join the player's pool (once: the object remembers)
+	// RW 0x6AA72B -> 0x6AA7A8 -> 0x68E0C2: the structure's command points join the player's pool (once: the object remembers). Lane PLAY-4: before that the
+	// structure's behavior slot 0x80 interface (RW 0x68C3E6: GettingBuiltBehavior) is told the build is done (RW 0x6AA796: slot 3, finishConstruction(builder)),
+	// which enables its production again
 	(void)player;
-	(void)builder;
 	(void)fromRebuild;
+	if (GettingBuiltBehavior *gb = dynamic_cast<GettingBuiltBehavior *>(structure.findModule("GettingBuiltBehavior")))
+	{
+		gb->finishConstruction(builder);
+	}
 	structure.addToPlayerCommandPoints();
 }
 
@@ -263,6 +299,12 @@ Object *Construction::constructByDozer(Object &dozer, const ThingTemplate &what,
 	{
 		MaskSet(status, OBJECT_STATUS_UNDER_CONSTRUCTION, true); // RW 0x797894
 	}
+	// lane PLAY-4: RotWK's dozer makes the structure as a phantom with PENDING_CONSTRUCTION and PHANTOM_STRUCTURE (RW 0x88D29B .. 0x88D2C9:
+	// createPhantomStructure, statuses 0x57 / 0x58) and clears both when it places it on arrival (RW 0x88D61B .. 0x88D63A). The port makes the structure
+	// at the order (S-304) with PENDING_CONSTRUCTION, so its GettingBuiltBehavior disables its production when it is created (RW 0x856434), as retail's
+	// phantom's does; DozerAIUpdate::placeUnplacedStructure clears it (PHANTOM_STRUCTURE is not set: S-304)
+	static const int pending = ObjectTemplateInfoBuilder::objectStatusIndex("PENDING_CONSTRUCTION");
+	MaskSet(status, (unsigned)pending, true);
 	Object *obj = makeStructure(logic, what, owner, status);
 	if (!obj)
 	{
@@ -338,14 +380,15 @@ std::vector<std::string> Construction::stopLines()
 		"(lane BUILD-2): RotWK's GettingBuiltBehavior (RW 0x857E77) builds a structure without a WorkerName by healing its body MaxHealth / calcTimeToBuild per frame (the percent is health / "
 		"MaxHealth * 100, damage sets it back and pauses the build for 4 s), else spawns the worker, whose dozer AI adds 100 / calcTimeToBuild per frame of work (RW 0x88DE43), as does a Porter; "
 		"what is still open is listed in S-650 .. S-656 (the build-up animation is drawn: S-461)",
-		"[S-650] GettingBuiltBehavior (RW 0x857E77 and its interface RW 0xC56BF0) is ported with these gaps: the setters of module + 0x36 (slot 10) were not found (the flag stays false); "
+		"[S-650] GettingBuiltBehavior (RW 0x857E77 and its interface RW 0xC56BF0) is ported with these gaps (lane PLAY-4 found the writer of module + 0x36, RW 0x6AAF3B, and the production slot 0x60, setFactoryDisabled); "
 		"the recent-damage test asks the body only (RW 0x68C933 asks the module at Object + 0x258 first); a castle member's + 0x24 byte is taken as 0 (RW 0x8561C0); an idle builder of an "
 		"unfinished structure is not sent back to it (RW 0x857DEA); the player notification that counts a self-built structure's command points is inferred (BUILD-1's completion); RotWK's "
 		"dozer queues its structure and places it on arrival with 1 hit point (RW 0x88D44F, lane BUILD-3: the port makes it at the order and sets the health at the arrival, S-304); "
 		"BUILD-1's dozer completion sets CONSTRUCTION_COMPLETE, which RW 0x88DEE0 does not",
 		"[S-652] Object::attemptHealingFromSoleBenefactor (RW 0x690584): the tail behind the template byte + 0x642 (RUBBLE cleared, a dead object revived) is not ported: the field is not identified",
 		"[S-653] GettingBuiltBehavior: calls not identified and not ported: RW 0x79F0E1(object, 1) / Object + 0x456 / BuildAssistant RW 0x797465 (a rebuild's start, a wall segment crossing 20 % "
-		"health), the body's slot 0x94 after a heal (RW 0x8C1D53), the production update's slot 0x60 and RW 0x68C3A3's slot 0x28 at a self build's end (RW 0x8569B1): noted at runtime where reached",
+		"health), the body's slot 0x94 after a heal (RW 0x8C1D53), RW 0x68C3A3's slot 0x28 at a build's end (RW 0x8569C7; the production update's slot 0x60 before it is "
+		"setFactoryDisabled(false), lane PLAY-4): noted at runtime where reached",
 		"[S-654] RebuildWhenDead: the DisallowRebuildFilter scan (RW 0x857873) is ported over the object list (3D centre distance, any match blocks); a template without the "
 		"filter row blocks nothing (RW's default filter at data + 0x40 was not read: inference); what keeps a dead structure in the world is its own die modules (KeepObjectDie)",
 		"[S-655] WorkerAIUpdate (RW 0x8ADAA0, fields RW 0xC058C8) runs as the dozer AI (the workers GettingBuiltBehavior spawns build and repair); its supply-truck half (MaxBoxes, the supply "

@@ -17,6 +17,7 @@
 #include <godot_cpp/variant/array.hpp>
 #include <godot_cpp/variant/dictionary.hpp>
 #include <godot_cpp/variant/rect2.hpp>
+#include <godot_cpp/variant/packed_int64_array.hpp>
 #include <godot_cpp/variant/packed_string_array.hpp>
 #include <godot_cpp/variant/string.hpp>
 
@@ -115,6 +116,9 @@ public:
 	Vector2 world_to_radar_pixel(const Vector2 &world) const;
 	bool create_radar_event(const Vector2 &world_xy, int type); ///< lane RADAR-1 (QA): Radar::createEvent at SAGE (x, y), 4 seconds
 	Rect2 get_radar_square() const;
+	Dictionary get_radar_state() const;                 ///< lane HUD-7: the drawn picture, clip and view box beside the click rectangle
+	Dictionary radar_probe(const Vector2 &world_xy) const; ///< lane HUD-7: the overlay cell of a world point, its alpha and drawn pixel
+	void camera_set_angle_pitch(float angle, float pitch);  ///< lane HUD-7: a test hook (TacticalCamera::setAngle / setPitch)
 	// the HUD movie's instance tree (a harness / log aid)
 	String dump_tree(int max_depth) const;
 	// the bounds of the HUD element that draws at `path` (stage coordinates -> window pixels), for harnesses that click a button: { found, x, y }
@@ -130,6 +134,7 @@ public:
 	Dictionary get_icon_ui() const;
 	// lane HUD-5 (a test hook, logged): the client selection becomes the one object (InGameUI::deselectAll + selectObject), as a click on it selects it
 	bool select_object(int64_t id);
+	int64_t select_objects(const PackedInt64Array &ids); // lane SELPERF-1: the selection benchmark's N objects at once
 	bool open_spell_store();
 	void close_spell_store();
 	bool spell_store_click(int64_t index);

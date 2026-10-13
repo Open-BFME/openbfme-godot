@@ -12,6 +12,7 @@
 #include "GameClient/GUI/AptScreens/AptSaveLoad.h"
 #include "GameClient/GUI/AptScreens/AptLanLobby.h"
 #include "GameClient/GUI/AptScreens/AptCreateAHero.h"
+#include "GameClient/GUI/AptScreens/AptOnlineShell.h"
 
 void registerAptScreenFactories(AptScreenFactoryTable &table)
 {
@@ -61,6 +62,10 @@ void registerAptScreenFactories(AptScreenFactoryTable &table)
 	// lane CAH-1: the Create-a-Hero builder (the main menu's CreateAHero, RW 0x91A018)
 	table.registerFactory("CreateAHero.apt", [](AptScreenContext &c) -> std::unique_ptr<AptScreen> {
 		return std::make_unique<AptCreateAHero>(c.windows, c.shell, c.environment);
+	});
+	// lane ONLINE-4: the online screens (the main menu's Online, RW 0x91D7A3 pushes OnlineShell.apt) on the OpenBFME lobby service
+	table.registerFactory("OnlineShell.apt", [](AptScreenContext &c) -> std::unique_ptr<AptScreen> {
+		return std::make_unique<AptOnlineShell>(c.windows, c.shell, c.environment);
 	});
 	table.registerFactory("AptLevel0.apt", [](AptScreenContext &c) -> std::unique_ptr<AptScreen> {
 		return std::make_unique<AptLevel0Screen>(c.windows, c.shell);

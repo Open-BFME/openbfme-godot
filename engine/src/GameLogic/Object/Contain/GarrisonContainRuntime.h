@@ -86,6 +86,7 @@ public:
 	void removeFromContain(Object *obj) override;
 	void containReactToTransformChange() override;
 	bool isGarrisonable() const override { return true; }
+	bool isPassengerAllowedToFire() const override { return true; } // slot 0xB4 RW 0x8BD372 (GarrisonContain, HordeGarrisonContain, TunnelContain; lane DECOMP-3)
 	bool isDisplayedOnControlBar() const override { return true; } // slot 0xC8 RW 0x8BD372 (lane UI-1)
 	bool isValidContainerFor(const Object &obj, bool checkCapacity, bool checkPath) const override;
 	// RW 0x87B8C5: OpenContain's entry test RW 0x86603B, then the container alive, not SOLD, not REALLYDAMAGED unless GARRISONABLE_UNTIL_DESTROYED

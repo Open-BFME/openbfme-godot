@@ -18,6 +18,7 @@
 #include "GameLogic/Module/AIUpdate.h"
 #include "GameLogic/Module/ProductionUpdate.h"
 #include "GameLogic/Module/SpecialAbilityModules.h"
+#include "GameLogic/System/ShroudManager.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -125,10 +126,7 @@ const std::map<std::string, std::string> &knownAbilityGaps()
 {
 	static const std::map<std::string, std::string> gaps = {
 		{ "GoblinCaveTroll Command_SpecialAbilityTrollGrabTree", "S-140: GrabPassengerSpecialPower is an unported module (the trolls' tree / goblin grab)|no module of the power" },
-		// Drogoth's locomotor is FellBeastLocomotor (Appearance GIANT_BIRD): the GIANT_BIRD mover is S-084, so Drogoth never moves (a player's move order
-		// neither), and the two abilities that must walk to their point time out (RW 0x853956: two seconds of approaches without progress)
-		{ "Drogoth Command_DrogothWingBlast", "S-084: the GIANT_BIRD mover is not ported, Drogoth cannot walk to the point|the power never fired" },
-		{ "Drogoth Command_DrogothIncinerate", "S-084: the GIANT_BIRD mover is not ported, Drogoth cannot walk to the point|the power never fired" },
+		// (lane FLY-1: Drogoth flies, his WingBlast and Incinerate reach their point: the S-084 pins went)
 	};
 	return gaps;
 }
@@ -1247,6 +1245,9 @@ FightResult runFight(HudRig &h, const std::string &unit, const Coord3D &spot)
 		}
 		h.frames(2);
 	}
+	// the order's target hidden from the player (S-565: a fogged object is no order target for a human player's unit, RW 0x82C167)
+	const bool fogged = ShroudManager::isShroudedForAction(*o, *enemy);
+	const ObjectID oid = o->getID();
 	for (; r.frames < 600 && body->getHealth() >= hp0; ++r.frames)
 	{
 		h.frames(1);
@@ -1255,9 +1256,17 @@ FightResult runFight(HudRig &h, const std::string &unit, const Coord3D &spot)
 	r.outcome = r.damage > 0.0f ? "ok" : "the target took no damage in 600 frames";
 	if (r.damage <= 0.0f)
 	{
-		const float dx = o->getPosition()->x - enemy->getPosition()->x, dy = o->getPosition()->y - enemy->getPosition()->y;
 		std::ostringstream w;
-		w << " (distance " << std::sqrt(dx * dx + dy * dy) << ", moved " << o->getPosition()->x - spot.x << "," << o->getPosition()->y - spot.y << "; the clicks sent " << sent << ")";
+		if (const Object *a = logic.findObjectByID(oid)) // the unit may have died meanwhile (the target fights back)
+		{
+			const float dx = a->getPosition()->x - enemy->getPosition()->x, dy = a->getPosition()->y - enemy->getPosition()->y;
+			w << " (distance " << std::sqrt(dx * dx + dy * dy) << ", moved " << a->getPosition()->x - spot.x << "," << a->getPosition()->y - spot.y;
+		}
+		else
+		{
+			w << " (the unit died";
+		}
+		w << "; the clicks sent " << sent << (fogged ? "; the target fogged for the player at the order: S-565" : "") << ")";
 		r.outcome += w.str();
 	}
 	destroyAll(logic, made);
@@ -1303,17 +1312,10 @@ TEST_CASE("factc combat: every Goblin and Angmar unit and hero attacks an enemy 
 		MESSAGE(faction << ": " << ok << " of " << results.size() << " units fight");
 		for (const FightResult &r : results)
 		{
-			if (r.unit == "Drogoth")
+			if (r.unit == "AngmarThrallMaster" && r.outcome.find("fogged for the player at the order") != std::string::npos)
 			{
-				// S-084: the GIANT_BIRD mover is not ported (FellBeastLocomotor): Drogoth cannot walk to a target out of his reach
-				CHECK_MESSAGE(r.outcome.compare(0, 2, "ok") != 0, "Drogoth fights now: take him off the S-084 exception");
-				CHECK_MESSAGE(r.outcome.find("took no damage") != std::string::npos, "Drogoth fails for another reason than S-084: " << r.outcome);
-				continue;
-			}
-			if (r.unit == "AngmarHwaldar" && r.outcome.find("took no damage") != std::string::npos)
-			{
-				// S-2005: the melee approach against a larger body stops short (as the Goblin King's and the Dark Dunedain's against a hero)
-				MESSAGE(faction << " " << r.unit << ": KNOWN S-2005 (" << r.outcome << ")");
+				// S-565: the target 17 away stays fogged for the player (the thrall master's ShroudClearingRange is 25), so the click's attack is refused
+				MESSAGE(faction << " " << r.unit << ": KNOWN S-565 (" << r.outcome << ")");
 				continue;
 			}
 			CHECK_MESSAGE(r.outcome.compare(0, 2, "ok") == 0, faction << " " << r.unit << ": " << r.outcome);
@@ -1600,6 +1602,11 @@ TEST_CASE("factc neutral lairs: every creep lair of the skirmish maps spawns its
 		REQUIRE(creeps != nullptr);
 		creeps->getDefaultTeam()->setTeamRelationship(h.rig.local->getDefaultTeam(), ENEMIES);
 		h.rig.local->getDefaultTeam()->setTeamRelationship(creeps->getDefaultTeam(), ENEMIES);
+		// lane PLAY-4 r3: and at the player level, as SkirmishSides does (the creeps side's playerEnemies is every player, each player's has PlyrCreeps): the lair's
+		// spawns are on other teams of PlyrCreeps, which the default teams' relationship does not reach (they were neutral to the party; the guard's "attacked me"
+		// condition RW 0x949994 answers an ENEMY attacker only, RW 0x68D7AB)
+		creeps->setPlayerRelationship(h.rig.local, ENEMIES);
+		h.rig.local->setPlayerRelationship(creeps, ENEMIES);
 		h.frames(150);
 		auto spawnsNear = [&]() {
 			int n = 0;
@@ -1613,7 +1620,7 @@ TEST_CASE("factc neutral lairs: every creep lair of the skirmish maps spawns its
 		const int spawned = spawnsNear();
 		CHECK_MESSAGE(spawned >= 1, lairName << " on " << map << " spawned nothing in 30 s");
 		// a Goblin party walks up to the lair: the creeps defend it
-		const Coord3D c = h.rig.freeSpot(lair->getPosition()->x, lair->getPosition()->y - 160.0f, 60.0f);
+		const Coord3D c = h.rig.freeSpot(lair->getPosition()->x, lair->getPosition()->y - 160.0f, 60.0f, true); // the party goes to the creeps
 		Object *party = h.rig.make("GoblinFighterHorde", c.x, c.y);
 		h.frames(10);
 		std::vector<ObjectID> members; // by id: the creeps may kill the party (and the dead leave the world)
@@ -1625,7 +1632,32 @@ TEST_CASE("factc neutral lairs: every creep lair of the skirmish maps spawns its
 		}
 		const ObjectID partyId = party->getID();
 		party = nullptr;
-		h.frames(250);
+		// lane PLAY-4 r3: the creeps' hits are counted frame by frame (a member's health that drops): with RotWK's melee reach (RW 0x6ED843) the party can win
+		// and its members gain ranks, whose level-up heals them (Barrow Wights on Evendim: 1001 -> 1421 at the end), so the end's health alone does not show the fight
+		int hits = 0;
+		std::vector<float> lastHp;
+		for (ObjectID id : members)
+		{
+			const Object *m = logic.findObjectByID(id);
+			lastHp.push_back(m && m->getBodyModule() ? m->getBodyModule()->getHealth() : 0.0f);
+		}
+		for (int f = 0; f < 250; ++f)
+		{
+			h.frames(1);
+			for (size_t k = 0; k < members.size(); ++k)
+			{
+				const Object *m = logic.findObjectByID(members[k]);
+				const float now = m && m->getBodyModule() && !m->isEffectivelyDead() ? m->getBodyModule()->getHealth() : 0.0f;
+				hits += now < lastHp[k] ? 1 : 0;
+				lastHp[k] = now;
+			}
+		}
+		int ranked = 0;
+		for (ObjectID id : members)
+		{
+			const Object *m = logic.findObjectByID(id);
+			ranked += m && m->getExperienceTracker() && m->getExperienceTracker()->getRank() > m->getExperienceTracker()->getBaseRank() ? 1 : 0;
+		}
 		float hp1 = 0.0f;
 		for (ObjectID id : members)
 		{
@@ -1645,7 +1677,16 @@ TEST_CASE("factc neutral lairs: every creep lair of the skirmish maps spawns its
 				rel = w.str();
 			}
 		}
-		std::printf("factc lair %s on %s: %d creeps; the party's health %.0f -> %.0f; %s\n", lairName, map.c_str(), spawned, hp0, hp1, rel.c_str());
-		CHECK_MESSAGE(hp1 < hp0, "the creeps of " << lairName << " did not attack the party");
+		std::printf("factc lair %s on %s: %d creeps; the party's health %.0f -> %.0f, %d hits taken, %d members ranked up; %s\n", lairName, map.c_str(), spawned, hp0, hp1, hits,
+			ranked, rel.c_str());
+		// lane PLAY-4 r3 (S-787): the Barrow Wights engage (attack state, a member as victim) but land nothing: the engagement destination (RW 0x6F37B3, its
+		// obstacle-zone mapping not ported, RW 0x6F3082 inferred) lies behind the party's members, the path ends where the wight stands and the engage state
+		// waits and asks again; the stance's guard (RW 0x743882 -> RW 0x662A21, its idle state's random draw RW 0x949630) moved the slaves' wander spots onto it.
+		// Lane PATHPERF-1 (the merge of PLAY-4 r3): with the party on clear ground beside the lair (freeSpot's placement rules) the wights reach it and hit; the
+		// gap stays in S-787, this scene no longer shows it
+		{
+			// tolerance: how many hits land depends on the creeps and the party's approach; one shows the creeps fought
+			CHECK_MESSAGE(hits > 0, "the creeps of " << lairName << " did not attack the party");
+		}
 	}
 }

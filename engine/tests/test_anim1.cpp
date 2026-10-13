@@ -241,12 +241,22 @@ size_t countEntries(const W3DScriptedModelDraw &d, size_t from)
 	return n;
 }
 
-Coord3D centre(hudtest::Rig &r, float clear)
+Coord3D centre(hudtest::Rig &r, float clear, const std::vector<std::pair<float, float>> &reach = {})
 {
 	float mx = 0, my = 0;
 	REQUIRE(r.logic().terrain() != nullptr);
 	REQUIRE(r.logic().terrain()->getExtent(0, mx, my));
-	return r.freeSpot(mx * 0.5f, my * 0.5f, clear);
+	// lane PATHPERF-1: freeSpot's placement rules (clear ground, 400 more from creeps) can find no point at 900 near the middle: the clearance shrinks until
+	// one passes (as the turret test's centre does)
+	for (float c = clear; c >= 300.0f; c -= 100.0f)
+	{
+		Coord3D p{};
+		if (r.tryFreeSpot(mx * 0.5f, my * 0.5f, c, p, nullptr, false, reach))
+		{
+			return p;
+		}
+	}
+	return r.freeSpot(mx * 0.5f, my * 0.5f, 300.0f, false, reach);
 }
 
 // the arena with a client: the logic's events reach a DrawableManager after every logic frame (LiveGame::publish / present without the threads), and the
@@ -384,7 +394,8 @@ TEST_CASE("anim1 retail G8: the Rohirrim's bow mode shows the bow: WEAPONSET_TOG
 	}
 	hudtest::SharedWorld &s = hudtest::shared();
 	hudtest::Rig r(s);
-	const Coord3D c0 = centre(r, 900.0f);
+	// lane PATHPERF-1: the target 250 east and the ride 600 north on clear ground too (freeSpot's `reach`): the riders ride and shoot there
+	const Coord3D c0 = centre(r, 900.0f, { { 250.0f, 0.0f }, { 0.0f, 600.0f } });
 	Player *enemy = r.game->players().findPlayerWithName("Player_2");
 	REQUIRE(enemy != nullptr);
 	Object *horde = r.make("RohanRohirrimHorde", c0.x, c0.y, enemy);

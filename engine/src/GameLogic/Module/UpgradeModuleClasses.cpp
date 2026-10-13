@@ -13,6 +13,7 @@
 #include "Common/StateHash.h"
 #include "Common/Thing/ModuleFactory.h"
 #include "GameLogic/GameLogic.h"
+#include "GameLogic/SkirmishAI/SkirmishAIManager.h"
 #include "GameLogic/ArmorSet.h"
 #include "GameLogic/Combat/ObjectWeapons.h"
 #include "GameLogic/Object/Object.h"
@@ -411,7 +412,12 @@ void WeaponSetUpgrade::processUpgradeRemoval()
 void CommandSetUpgrade::upgradeImplementation()
 {
 	setCustomAnim(true);
-	getObject()->setCommandSetOverride(m_data->m_commandSet); // RW 0x693B94 (the control bar refresh that follows is the client's)
+	Object *obj = getObject();
+	obj->setCommandSetOverride(m_data->m_commandSet); // RW 0x693B94 (the control bar refresh that follows is the client's)
+	// RW 0x8B7C8E / 0x8B7C9A (lane DECOMP-3): the skirmish AI manager's removal and add of the object, so its AI sees the new command set (and the player info
+	// record moves it to the end of its lists)
+	obj->logic().skirmishAI().objectRemoved(*obj);
+	obj->logic().skirmishAI().objectAdded(*obj);
 }
 
 void CommandSetUpgrade::processUpgradeRemoval()

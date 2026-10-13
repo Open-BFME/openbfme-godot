@@ -7,6 +7,9 @@
 #include <godot_cpp/classes/file_access.hpp>
 #include <godot_cpp/variant/packed_byte_array.hpp>
 #include "GodotDevice/GodotGameWorld.h"
+
+#include "GameClient/FrameCensus.h"
+#include "GameLogic/Map/TerrainLogic.h"
 #include "GameClient/GUI/TributeInfo.h"
 
 #include "Common/Prefetch.h"
@@ -20,6 +23,8 @@
 
 #include "GameNetwork/ScriptedPlayer.h"
 #include "GameNetwork/NetworkSettings.h"
+#include "GameNetwork/OnlineStart.h"
+#include "GameNetwork/RelayLog.h"
 #include "GameClient/GUI/LoadScreenInfo.h"
 #include "GameClient/StealthLook.h"
 #include "GameClient/MusicScripts.h"
@@ -221,6 +226,7 @@ void GameWorld::_bind_methods()
 	bindCreateAHeroMethods(); // lane CAH-1 (GodotGameWorldCah.cpp)
 	bindScriptMethods();  // lane SCRIPT-1 (GodotGameWorldScripts.cpp)
 	bindCampaignMethods(); // lane CAMP-1 (GodotGameWorldCampaign.cpp)
+	bindSaveMethods();     // lane SAVE-2 (GodotGameWorldSave.cpp)
 	bindGarrisonMethods(); // lane GARRISON-1 (GodotGameWorldGarrison.cpp)
 	ClassDB::bind_method(D_METHOD("setup", "fs"), &GameWorld::setup);
 	ClassDB::bind_method(D_METHOD("load_map", "map_name", "options"), &GameWorld::load_map, DEFVAL(Dictionary()));
@@ -234,6 +240,7 @@ void GameWorld::_bind_methods()
 	ClassDB::bind_method(D_METHOD("set_time_scale", "scale"), &GameWorld::set_time_scale);
 	ClassDB::bind_method(D_METHOD("get_time_scale"), &GameWorld::get_time_scale);
 	ClassDB::bind_method(D_METHOD("get_frame"), &GameWorld::get_frame);
+	ClassDB::bind_method(D_METHOD("get_presented_frame"), &GameWorld::get_presented_frame); // lane PATHPERF-1: never waits for the worker
 	ClassDB::bind_method(D_METHOD("get_state_hash"), &GameWorld::get_state_hash);
 	ClassDB::bind_method(D_METHOD("get_alpha"), &GameWorld::get_alpha);
 	ClassDB::bind_method(D_METHOD("get_object_count"), &GameWorld::get_object_count);
@@ -312,13 +319,22 @@ void GameWorld::_bind_methods()
 	ClassDB::bind_method(D_METHOD("net_host", "port", "message", "run_ahead", "crc_interval"), &GameWorld::net_host, DEFVAL(2), DEFVAL(100));
 	ClassDB::bind_method(D_METHOD("net_join", "address", "name"), &GameWorld::net_join);
 	ClassDB::bind_method(D_METHOD("net_poll"), &GameWorld::net_poll);
+	ClassDB::bind_method(D_METHOD("net_online", "start_json"), &GameWorld::net_online); // lane ONLINE-2
+	ClassDB::bind_method(D_METHOD("net_profile_digest"), &GameWorld::net_profile_digest);
 	ClassDB::bind_method(D_METHOD("net_begin", "options"), &GameWorld::net_begin, DEFVAL(Dictionary()));
 	ClassDB::bind_method(D_METHOD("net_status"), &GameWorld::net_status);
 	ClassDB::bind_method(D_METHOD("net_finish"), &GameWorld::net_finish);
 	ClassDB::bind_method(D_METHOD("net_write_census", "path"), &GameWorld::net_write_census); // lane MP-3
 	ClassDB::bind_method(D_METHOD("net_disconnect_kick", "row"), &GameWorld::net_disconnect_kick); // lane MP-2
 	ClassDB::bind_method(D_METHOD("net_disconnect_quit"), &GameWorld::net_disconnect_quit);
+	ClassDB::bind_method(D_METHOD("net_pause"), &GameWorld::net_pause); // lane ONLINE-3
+	ClassDB::bind_method(D_METHOD("net_resume"), &GameWorld::net_resume);
+	ClassDB::bind_method(D_METHOD("net_observe_next", "forward"), &GameWorld::net_observe_next, DEFVAL(true));
+	ClassDB::bind_method(D_METHOD("net_observed"), &GameWorld::net_observed);
 	ClassDB::bind_method(D_METHOD("lan_open", "options"), &GameWorld::lan_open); // lane MP-2
+	ClassDB::bind_method(D_METHOD("set_simulation_profile", "name"), &GameWorld::set_simulation_profile); // lane UBER-1
+	ClassDB::bind_method(D_METHOD("simulation_profile"), &GameWorld::simulation_profile);                 // lane UBER-1
+	ClassDB::bind_method(D_METHOD("get_census"), &GameWorld::get_census);                                 // lane UBER-1
 	ClassDB::bind_method(D_METHOD("lan_close"), &GameWorld::lan_close);
 	ClassDB::bind_method(D_METHOD("lan_begin"), &GameWorld::lan_begin);
 	ClassDB::bind_method(D_METHOD("lan_set_create_a_hero", "record"), &GameWorld::lan_set_create_a_hero);
@@ -512,7 +528,7 @@ Dictionary GameWorld::setup(const Ref<RetailFileSystem> &fs)
 			}
 			result["seconds"] = timing::elapsedSeconds(t0);
 			result["templates"] = (int64_t)m_world->things().templateCount();
-			result["factions"] = (int64_t)m_world->playerTemplates().playableSideIndices().size();
+			result["factions"] = (int64_t)m_world->setupPlayerTemplates().playableSideIndices().size();
 			if (!IniSkirmishSetupSource::loadMapCache(*fs->archive_fs(), m_mapCache, &error))
 			{
 				errors.push_back(toGodot("map cache: " + error));
@@ -751,8 +767,15 @@ Dictionary GameWorld::prepare_new_game(const Dictionary &message)
 		errors.push_back(toGodot(error));
 		return result;
 	}
+	if (in.game.simulationProfile != m_simulationProfile)
+	{
+		// lane UBER-1: the game's profile is the setup's (the player's option or the LAN host's); this world runs and records another: refused, never mixed
+		errors.push_back(toGodot(std::string("the game's simulation profile is ") + simulationProfileName(in.game.simulationProfile) + ", this player's is " +
+			simulationProfileName(m_simulationProfile) + " (the OpenBFME option Uber performance mode)"));
+		return result;
+	}
 	auto start = std::make_unique<NewGameStart>(RandomAlgorithm::ZH_CarryChain);
-	if (!NewGame::prepareNewGame(in, m_world->playerTemplates(), *m_settings, m_mapCache, RandomAlgorithm::ZH_CarryChain, *start, &error))
+	if (!NewGame::prepareNewGame(in, m_world->setupPlayerTemplates(), *m_settings, m_mapCache, RandomAlgorithm::ZH_CarryChain, *start, &error))
 	{
 		errors.push_back(toGodot(error));
 		return result;
@@ -760,6 +783,7 @@ Dictionary GameWorld::prepare_new_game(const Dictionary &message)
 	if (m_netStarted)
 	{
 		start->localSlot = m_netStart.localSlot; // MP-1: GameInfo::getLocalSlotNum of this peer
+		start->observer = m_netStart.spectatorIndex >= 0; // lane ONLINE-3: a spectator watches as the ReplayObserver side
 	}
 	result["resolved"] = newGameToDictionary(start->message);
 	result["map"] = toGodot(start->mapName);
@@ -785,6 +809,17 @@ Dictionary GameWorld::start_new_game(const Dictionary &options)
 		report["ok"] = false;
 		return report;
 	}
+	if (m_start->message.game.simulationProfile != m_simulationProfile)
+	{
+		// lane UBER-1 (review): the profile changed between prepare and start (set_simulation_profile in between): the prepared game is not started
+		Dictionary report;
+		Array errors;
+		errors.push_back(toGodot(std::string("the prepared game runs the simulation profile ") + simulationProfileName(m_start->message.game.simulationProfile) +
+			", this player now runs " + simulationProfileName(m_simulationProfile)));
+		report["errors"] = errors;
+		report["ok"] = false;
+		return report;
+	}
 	LiveGame::Options lo;
 	lo.start = m_start.get();
 	lo.maxFramesPerAdvance = (int)optInt(options, "max_frames_per_advance", 10);
@@ -805,6 +840,7 @@ Dictionary GameWorld::start_new_game(const Dictionary &options)
 		// lane MP-2: every skirmish is recorded (MP-1's ReplayWriter behind a driver without a network: the local commands run on the next frame as before)
 		m_recordPath = std::string(String(options["record"]).utf8().get_data());
 		m_localWriter = std::make_unique<ReplayWriter>();
+		m_localWriter->setKeepCopy(true); // lane SAVE-2: a save takes the log so far from memory
 		ReplayHeader h;
 		h.game = m_startMessage;
 		h.recordingSlot = m_start->localSlot;
@@ -1635,7 +1671,25 @@ void GameWorld::advance(double delta)
 			m_lan->update(NetMilliseconds());
 			m_lan->takeEvents();
 		}
-		if (!m_netLoaded)
+		if (m_netSpectating)
+		{
+			// lane ONLINE-3: a spectator: the catch-up runs the relay's log at full speed (about 40 ms of frames per process call); once at the log's
+			// edge the step only fetches and assembles, and advance below runs the frames at the game's pace (the presentation interpolates)
+			const bool catchingUp = m_netSession->spectateReport().caughtUpMs == 0;
+			const NetGameSession::SpectateState st = m_netSession->spectateStep(*m_game, catchingUp ? 40 : 0);
+			m_netLoaded = st == NetGameSession::SpectateState::Following || st == NetGameSession::SpectateState::Ended;
+		}
+		else if (m_netRejoining)
+		{
+			// lane ONLINE-3: the rejoin's catch-up: the relay's log at full speed (about 40 ms of frames per process call), then lockstep
+			const NetGameSession::RejoinState rs = m_netSession->rejoinStep(*m_game, 40);
+			if (rs == NetGameSession::RejoinState::Live || rs == NetGameSession::RejoinState::Failed)
+			{
+				m_netRejoining = false;
+				m_netLoaded = rs == NetGameSession::RejoinState::Live;
+			}
+		}
+		else if (!m_netLoaded)
 		{
 			m_netLoaded = m_netSession->pollLoaded();
 		}
@@ -1645,7 +1699,9 @@ void GameWorld::advance(double delta)
 			m_netScripted += ScriptedPlayer::issue(*m_game, m_netPlayer, m_netStartPos, m_game->commands());
 		}
 	}
-	m_lastLogicFrames = m_game->advance(dt);
+	// lane ONLINE-3: rejoinStep runs the catch-up frames itself; so does spectateStep until the spectator reaches the log's edge
+	const bool spectatorCatchingUp = m_netSpectating && m_netSession && m_netSession->spectateReport().caughtUpMs == 0;
+	m_lastLogicFrames = m_netRejoining || spectatorCatchingUp ? 0 : m_game->advance(dt);
 	updateEndGame(); // lane END-1: the end sequence reads the presented frame
 	if (m_game->logicIdle())
 	{
@@ -1767,6 +1823,13 @@ void GameWorld::updateTreeTopple(double dt)
 int64_t GameWorld::get_frame() const
 {
 	return m_game ? (int64_t)m_game->logic().getFrame() : -1; // SMOOTH-1: a live query (waits for the logic worker)
+}
+
+int64_t GameWorld::get_presented_frame() const
+{
+	// lane PATHPERF-1: the logic frame of the last published snapshot, without waiting for the worker (a render-frame query must never block on a
+	// long logic frame: --perf-log's per-frame line used get_frame and so waited out every order frame)
+	return m_game ? (int64_t)m_game->frame() : -1;
 }
 
 int64_t GameWorld::get_state_hash() const
@@ -3068,6 +3131,10 @@ Dictionary GameWorld::get_frame_timings() const
 		t["presented_alpha"] = m_game->presentedAlpha();       // SMOOTH-1: after the presentation delay and the late-frame hold
 		t["worker_frame_ms"] = m_game->lastWorkerFrameMs();     // the logic worker's last frame
 		t["held_presentations"] = (int64_t)m_game->heldPresentations();
+		t["logic_waits"] = (int64_t)m_game->blockingWaits();     // lane PATHPERF-1: render-side waits that blocked on the worker (cumulative)
+		const std::shared_ptr<const LogicSnapshot> shown = m_game->presentedSnapshot();
+		t["presented_objects"] = shown ? (int64_t)shown->objects.size() : (int64_t)0; // lane PATHPERF-1: the presented frame's object count, no wait
+		t["logic_wait_ms"] = m_game->blockingWaitMs();
 		t["extra_delay_ms"] = m_game->presentationExtraDelayMs(); // lane SMOOTH-2: the adaptive part of the presentation delay
 		t["logic_thread"] = m_game->logicThread();
 	}
@@ -3191,6 +3258,13 @@ Dictionary GameWorld::get_economy() const
 		d["money"] = (int64_t)p->getMoney()->countMoney();
 		d["earned"] = (int64_t)p->getScoreKeeper().moneyEarned();
 		d["spent"] = (int64_t)p->getScoreKeeper().moneySpent();
+		// lane HUD-7: the buildings' income paid to this player (Economy::noteIncome's log, its last 8192 payments): proofs separate it from a sale's refund
+		int64_t logged = 0;
+		for (const Economy::IncomeEvent &ev : economy.incomeLog())
+		{
+			logged += ev.playerIndex == p->getPlayerIndex() ? ev.amount : 0;
+		}
+		d["income_logged"] = logged;
 		d["cp_used"] = p->commandPoints().getUsage();
 		d["cp_limit"] = p->commandPointLimit();
 		d["cp_available"] = p->commandPointsAvailable();
@@ -3228,9 +3302,9 @@ Dictionary GameWorld::net_host(int64_t port, const Dictionary &message, int64_t 
 			const String factionName = sd["faction"];
 			const std::string want{ factionName.utf8().get_data() };
 			int index = -1;
-			for (int t = 0; t < m_world->playerTemplates().getPlayerTemplateCount(); ++t)
+			for (int t = 0; t < m_world->setupPlayerTemplates().getPlayerTemplateCount(); ++t)
 			{
-				index = m_world->playerTemplates().getNthPlayerTemplate(t)->getName() == want ? t : index;
+				index = m_world->setupPlayerTemplates().getNthPlayerTemplate(t)->getName() == want ? t : index;
 			}
 			if (index < 0)
 			{
@@ -3301,6 +3375,72 @@ Dictionary GameWorld::net_join(const String &address, const String &name)
 	return r;
 }
 
+Dictionary GameWorld::net_online(const String &start_json)
+{
+	// lane ONLINE-2: the START the lobby service built (GameNetwork/OnlineStart.h): the game is "started" at once; net_poll reports it like a LAN START and
+	// net_begin plays it with every peer behind the relay
+	Dictionary r;
+	r["ok"] = false;
+	if (!m_world || !m_settings)
+	{
+		r["error"] = "net_online needs the loaded game data";
+		return r;
+	}
+	OnlineStart::Limits limits;
+	limits.playerTemplateCount = m_world->setupPlayerTemplates().getPlayerTemplateCount();
+	limits.colorCount = (int)m_settings->multiplayerColors.size();
+	LobbyStart start;
+	std::string error;
+	const std::string json(start_json.utf8().get_data());
+	if (!OnlineStart::parse(json, net_profile(), limits, start, &error))
+	{
+		// lane ONLINE-3: or a spectator START (the lobby's /v1/games/<id>/spectate)
+		std::string spectateError;
+		start = LobbyStart();
+		if (!OnlineStart::parse(json, net_profile(), limits, start, &spectateError, OnlineStart::Kind::Spectate))
+		{
+			r["error"] = toGodot(error + " (as a spectator START: " + spectateError + ")");
+			return r;
+		}
+	}
+	m_netSession.reset();
+	m_netClient.reset();
+	m_netHost.reset();
+	m_netSocket = std::make_unique<UDP>();
+	if (!m_netSocket->bind(0, 0, &error))
+	{
+		r["error"] = toGodot(error);
+		return r;
+	}
+	m_netStart = start;
+	m_netStarted = true;
+	r["ok"] = true;
+	r["slot"] = start.localSlot;
+	r["relay"] = toGodot(start.relay.text());
+	if (start.spectatorIndex >= 0)
+	{
+		r["spectator"] = start.spectatorIndex;
+		r["delay"] = start.spectatorDelay;
+	}
+	return r;
+}
+
+bool GameWorld::onlineLimits(int &factions, int &colors) const
+{
+	if (!m_world || !m_settings)
+	{
+		return false;
+	}
+	factions = m_world->playerTemplates().getPlayerTemplateCount();
+	colors = (int)m_settings->multiplayerColors.size();
+	return true;
+}
+
+String GameWorld::net_profile_digest() const
+{
+	return toGodot(net_profile().digest); // lane ONLINE-2: what the lobby compares between players
+}
+
 Dictionary GameWorld::net_poll()
 {
 	Dictionary r;
@@ -3357,6 +3497,30 @@ Dictionary GameWorld::net_begin(const Dictionary &options)
 	}
 	NetGameSession::Options so;
 	so.profile = net_profile();
+	if (m_netStart.spectatorIndex >= 0)
+	{
+		// lane ONLINE-3: a spectator: no Network, no recording (the relay's log is the game's record), nothing of the local input reaches the game
+		m_netSession = std::make_unique<NetGameSession>(*m_netSocket, m_netStart, so);
+		std::string error;
+		if (!m_netSession->beginSpectate(*m_game, &error))
+		{
+			m_netSession.reset();
+			r["error"] = toGodot(error);
+			return r;
+		}
+		m_netSpectating = true;
+		m_netRejoining = false;
+		m_netLoaded = false;
+		m_netScript = false;
+		m_netPlayer = m_game->players().getLocalPlayer() ? m_game->players().getLocalPlayer()->getPlayerIndex() : -1;
+		m_netStartPos = -1;
+		m_netScripted = 0;
+		r["ok"] = true;
+		r["player"] = m_netPlayer;
+		r["spectator"] = m_netStart.spectatorIndex;
+		return r;
+	}
+	m_netSpectating = false;
 	{
 		// lane MP-2: GameData's network timing (the disconnect path)
 		std::string nerr;
@@ -3383,11 +3547,19 @@ Dictionary GameWorld::net_begin(const Dictionary &options)
 		so.replayPath = std::string(String(options["record"]).utf8().get_data());
 	}
 	so.census = optBool(options, "census", false); // lane MP-3: the per-frame census (net_write_census)
+	// lane ONLINE-3: a rejoin START (its ticket's generation) rejoins the running game instead of starting it; it records no replay (the game's start
+	// was not this process's: the relay's log is the game's record, /v1/replays/<id>/log)
+	m_netRejoining = m_netStart.online && m_netStart.rejoinGeneration > 0;
+	if (m_netRejoining)
+	{
+		so.replayPath.clear();
+	}
 	m_netSession = std::make_unique<NetGameSession>(*m_netSocket, m_netStart, so);
 	std::string error;
-	if (!m_netSession->begin(*m_game, &error))
+	if (!(m_netRejoining ? m_netSession->beginRejoin(*m_game, &error) : m_netSession->begin(*m_game, &error)))
 	{
 		m_netSession.reset();
+		m_netRejoining = false;
 		r["error"] = toGodot(error);
 		return r;
 	}
@@ -3414,6 +3586,50 @@ Dictionary GameWorld::net_status() const
 	r["frame"] = (int64_t)m_game->frame();
 	r["hash"] = (int64_t)m_game->logic().computeStateHash();
 	r["loaded"] = m_netLoaded;
+	if (m_netSpectating)
+	{
+		// lane ONLINE-3: a spectator has no Network (no CRC vote, run-ahead, disconnect screen or pause of its own)
+		const NetGameSession::SpectateReport &sr = s.spectateReport();
+		static const char *const kStates[] = {"binding", "following", "ended", "failed"};
+		Dictionary j;
+		const int st = (int)s.spectateState();
+		j["state"] = st == (int)NetGameSession::SpectateState::Following && sr.caughtUpMs == 0 ? "catching_up" : st == (int)NetGameSession::SpectateState::Following ? "live" : kStates[st];
+		j["index"] = m_netStart.spectatorIndex;
+		j["delay"] = m_netStart.spectatorDelay;
+		j["frame"] = (int64_t)sr.reached;
+		j["served"] = (int64_t)sr.served;
+		j["log_bytes"] = (int64_t)sr.logBytes;
+		j["log_complete"] = sr.logComplete;
+		j["crcs_compared"] = (int64_t)sr.crcsCompared;
+		j["crc_mismatches"] = (int64_t)sr.crcMismatches;
+		j["catch_up_ms"] = (int64_t)(sr.caughtUpMs > sr.startedMs ? sr.caughtUpMs - sr.startedMs : 0);
+		j["failure"] = toGodot(sr.failure);
+		j["observed"] = net_observed();
+		r["spectate"] = j;
+		Dictionary relay;
+		relay["address"] = toGodot(m_netStart.relay.text());
+		relay["bound"] = s.transport().relayBound();
+		relay["refusal"] = (int64_t)s.transport().relayRefusal();
+		relay["spectator_refusals"] = (int64_t)s.transport().spectatorRefusals();
+		r["relay"] = relay;
+		Array errors, stops;
+		for (const std::string &e : s.transport().errors())
+		{
+			errors.push_back(toGodot("transport: " + e));
+		}
+		for (const std::string &st2 : RelayLog::stopLines())
+		{
+			stops.push_back(toGodot(st2));
+		}
+		for (const std::string &st2 : Network::onlineStopLines())
+		{
+			stops.push_back(toGodot(st2));
+		}
+		r["errors"] = errors;
+		r["desyncs"] = Array();
+		r["stops"] = stops;
+		return r;
+	}
 	r["crc_checks_passed"] = (int64_t)s.network().crcChecksPassed();
 	r["commands_relayed"] = (int64_t)s.network().commandsRelayed();
 	r["scripted_commands"] = (int64_t)m_netScripted;
@@ -3444,7 +3660,66 @@ Dictionary GameWorld::net_status() const
 	{
 		stops.push_back(toGodot(st));
 	}
+	if (m_netStart.online)
+	{
+		for (const std::string &st : RelayLog::stopLines())
+		{
+			stops.push_back(toGodot(st)); // lane ONLINE-2
+		}
+	}
+	for (const std::string &st : Network::onlineStopLines())
+	{
+		stops.push_back(toGodot(st)); // lane ONLINE-3
+	}
+	{
+		// lane ONLINE-3: the pause, the rejoin's catch-up, the held / handed-over / rejoined slots
+		Dictionary pause;
+		pause["paused"] = s.network().isPaused();
+		pause["by_slot"] = s.network().pausedBy();
+		pause["by_name"] = toGodot(loadScreenU16ToUtf8(s.network().playerName(s.network().pausedBy())));
+		pause["frame"] = (int64_t)s.network().pauseFrame();
+		r["pause"] = pause;
+		if (m_netStart.rejoinGeneration > 0)
+		{
+			const NetGameSession::RejoinReport &rr = s.rejoinReport();
+			Dictionary j;
+			j["state"] = m_netRejoining ? "catching_up" : rr.failure.empty() ? "live" : "failed";
+			j["frame"] = (int64_t)rr.framesCaughtUp;
+			j["live_frame"] = (int64_t)rr.liveFrame;
+			j["log_bytes"] = (int64_t)rr.logBytes;
+			j["crcs_compared"] = (int64_t)rr.crcsCompared;
+			j["crc_mismatches"] = (int64_t)rr.crcMismatches;
+			j["catch_up_ms"] = (int64_t)(rr.liveMs > rr.startedMs ? rr.liveMs - rr.startedMs : 0);
+			j["failure"] = toGodot(rr.failure);
+			r["rejoin"] = j;
+		}
+		Array held, handed;
+		for (int sl = 0; sl < MAX_SLOTS; ++sl)
+		{
+			if (s.network().isHeld(sl))
+			{
+				held.push_back(sl);
+			}
+			if (s.network().isHandedOver(sl))
+			{
+				handed.push_back(sl);
+			}
+		}
+		r["held_slots"] = held;
+		r["handed_over_slots"] = handed;
+	}
 	r["waiting_slots"] = waiting;
+	if (m_netStart.online)
+	{
+		// lane ONLINE-2: the relay link
+		Dictionary relay;
+		relay["address"] = toGodot(m_netStart.relay.text());
+		relay["bound"] = s.transport().relayBound();
+		relay["refusal"] = (int64_t)s.transport().relayRefusal();
+		relay["hellos"] = (int64_t)s.transport().stats().relayHellos;
+		relay["round_trip_ms"] = (int64_t)s.network().maxRoundTripMs();
+		r["relay"] = relay;
+	}
 	r["desyncs"] = desyncs;
 	r["errors"] = errors;
 	// lane MP-2: the disconnect path (GameNetwork/DisconnectManager.h): the screen's rows, the quit request, the players who left
@@ -3497,33 +3772,156 @@ Dictionary GameWorld::net_status() const
 void GameWorld::net_disconnect_kick(int64_t row)
 {
 	// RW 0x919064: the row's slot (RW 0x8D7D90 with the local slot), then TheNetwork vslot 0x98
-	if (m_netSession)
+	if (m_netSession && !m_netSpectating)
 	{
 		m_netSession->network().voteForPlayerDisconnect(DisconnectManager::untranslatedSlotPosition((int)row, m_netStart.localSlot));
 	}
 }
 
+void GameWorld::net_pause()
+{
+	if (m_netSession && !m_netRejoining && !m_netSpectating)
+	{
+		m_netSession->network().requestPause(); // lane ONLINE-3 (S-3901)
+	}
+}
+
+void GameWorld::net_resume()
+{
+	if (m_netSession && !m_netRejoining && !m_netSpectating)
+	{
+		m_netSession->network().requestResume();
+	}
+}
+
 void GameWorld::net_disconnect_quit()
 {
-	if (m_netSession)
+	if (m_netSession && !m_netSpectating)
 	{
 		m_netSession->network().quitFromDisconnectScreen(); // RW 0x9195E1
 	}
 }
 
+ProfileIdentity GameWorld::profileIdentityFor(SimulationProfile profile) const
+{
+	return ProfileIdentity::compute(m_fs.is_valid() ? m_fs->mountedArchives() : std::vector<MountedArchive>(), RandomAlgorithm::ZH_CarryChain, {}, profile);
+}
+
+Dictionary GameWorld::net_observe_next(bool forward)
+{
+	Dictionary r;
+	r["ok"] = false;
+	if (!m_game)
+	{
+		r["error"] = "no game";
+		return r;
+	}
+	// LiveGame::observeNextPlayer: retail's precondition (RW 0x6A87F5): the local player is not an active one (an observer or a defeated player)
+	r["ok"] = m_game->observeNextPlayer(forward);
+	r["observed"] = net_observed();
+	return r;
+}
+
+Dictionary GameWorld::net_observed() const
+{
+	// lane ONLINE-3: the player whose view the observer has (RW TheControlBar + 0x218; -1: every player's, the observer's own) and its resources: money,
+	// command points (used / limit), rank, skill points and spell book points (the "power")
+	Dictionary d;
+	const int index = m_game ? m_game->observedPlayer() : -1;
+	const Player *p = index >= 0 ? m_game->players().getNthPlayer(index) : nullptr;
+	d["index"] = p ? index : -1;
+	if (!p)
+	{
+		d["all"] = true;
+		return d;
+	}
+	d["all"] = false;
+	d["name"] = toGodot(p->getPlayerName());
+	d["display_name"] = toGodot(p->getPlayerDisplayName());
+	d["faction"] = toGodot(p->getPlayerTemplate() ? p->getPlayerTemplate()->getName() : std::string());
+	d["color"] = (int64_t)p->getPlayerColor();
+	d["money"] = (int64_t)p->getMoney()->countMoney();
+	d["cp_used"] = p->commandPoints().getUsage();
+	d["cp_limit"] = p->commandPointLimit();
+	d["rank"] = p->science().getRankLevel();
+	d["skill_points"] = (double)p->science().getSkillPoints();
+	d["power_points"] = p->science().getSciencePurchasePoints();
+	d["defeated"] = p->isDefeated();
+	return d;
+}
+
 ProfileIdentity GameWorld::net_profile() const
 {
 	// the profile identity of this peer: the mounted archives in mount order with their verified md5, the build, the RNG prepare_new_game uses
-	return ProfileIdentity::compute(m_fs.is_valid() ? m_fs->mountedArchives() : std::vector<MountedArchive>(), RandomAlgorithm::ZH_CarryChain);
+	return ProfileIdentity::compute(m_fs.is_valid() ? m_fs->mountedArchives() : std::vector<MountedArchive>(), RandomAlgorithm::ZH_CarryChain, {},
+		m_simulationProfile); // lane UBER-1: "profile uber" in the Uber performance mode
+}
+
+Dictionary GameWorld::set_simulation_profile(const String &name)
+{
+	Dictionary r;
+	r["ok"] = false;
+	SimulationProfile p;
+	if (name == "faithful")
+	{
+		p = SimulationProfile::Faithful;
+	}
+	else if (name == "uber")
+	{
+		p = SimulationProfile::Uber;
+	}
+	else
+	{
+		r["error"] = "unknown simulation profile '" + name + "' (faithful or uber)";
+		return r;
+	}
+	if (p != m_simulationProfile && m_lan && m_lan->currentGame())
+	{
+		r["error"] = "the simulation profile cannot change inside a LAN game (leave it first)";
+		return r;
+	}
+	m_simulationProfile = p;
+	if (m_lan)
+	{
+		m_lan->setProfile(net_profile()); // the lobby list announces the new identity
+	}
+	r["ok"] = true;
+	return r;
+}
+
+String GameWorld::simulation_profile() const
+{
+	return simulationProfileName(m_simulationProfile);
+}
+
+Dictionary GameWorld::get_census() const
+{
+	Dictionary d;
+	if (!m_game)
+	{
+		return d;
+	}
+	const GameLogic &logic = m_game->logic();
+	const FrameCensus::Counts c = FrameCensus::count(logic);
+	d["troops"] = c.troops;
+	d["battalions"] = c.battalions;
+	d["objects"] = c.objects;
+	float maxX = 0.0f, maxY = 0.0f;
+	if (logic.terrain() && logic.terrain()->getExtent(0, maxX, maxY))
+	{
+		d["extent_x"] = maxX;
+		d["extent_y"] = maxY;
+	}
+	return d;
 }
 
 Dictionary GameWorld::net_write_census(const String &path) const
 {
 	Dictionary r;
 	r["ok"] = false;
-	if (!m_netSession)
+	if (!m_netSession || m_netSpectating)
 	{
-		r["error"] = "no network game";
+		r["error"] = m_netSpectating ? "a spectator keeps no census" : "no network game";
 		return r;
 	}
 	std::ofstream c(std::string(path.utf8().get_data()), std::ios::binary | std::ios::trunc);
@@ -3549,7 +3947,7 @@ void GameWorld::net_finish()
 	{
 		m_netSession->finish(*m_game); // the local player leaves (PLAYERLEAVE), the recording gets its end record
 		const std::uint64_t t0 = NetMilliseconds();
-		while (!m_netSession->allAcked() && NetMilliseconds() - t0 < 2000)
+		while (!m_netSpectating && !m_netSession->allAcked() && NetMilliseconds() - t0 < 2000) // lane ONLINE-3: a spectator sent nothing
 		{
 			m_netSession->service();
 			NetSleepMilliseconds(2);
@@ -4965,6 +5363,10 @@ Array GameWorld::get_player_objects(const String &player)
 // ---- lane MP-2: replays -----------------------------------------------------------------------------------------------------------
 void GameWorld::releaseLocalDrivers()
 {
+	if (m_game && m_saveLoad && m_saveLoad->state() == CommandLogLoad::State::CatchingUp)
+	{
+		m_game->setFrameDriver(nullptr); // lane SAVE-2: a catch-up left before it reached its frame
+	}
 	if (m_game && (m_localDriver || m_replayPlayback))
 	{
 		m_game->drainFrames();
@@ -4978,6 +5380,8 @@ void GameWorld::releaseLocalDrivers()
 	m_localWriter.reset();
 	m_replayPlayback.reset();
 	m_replayFile.reset();
+	m_saveLoad.reset(); // lane SAVE-2 (its playback was removed with the driver above)
+	m_campaignStart = CampaignStart();
 }
 
 // ---- lane MP-2: the LAN lobby ---------------------------------------------------------------------------------------------------------------------------------
@@ -4996,7 +5400,7 @@ Dictionary GameWorld::lan_open(const Dictionary &options)
 		r["error"] = "lan_open needs setup() first (the faction and colour counts check the players' requests)";
 		return r;
 	}
-	o.playerTemplateCount = m_world->playerTemplates().getPlayerTemplateCount();
+	o.playerTemplateCount = m_world->setupPlayerTemplates().getPlayerTemplateCount();
 	o.colorCount = (int)m_settings->multiplayerColors.size();
 	// lane HERO-2: the slots' Create-a-Heroes are checked against this world's CreateAHeroSystem.ini and command buttons
 	o.validateCreateAHero = [this](const CreateAHeroHero &h, std::string *why) { return m_world->createAHeroSystem().validateHero(h, m_world->commands(), why); };
@@ -5159,7 +5563,7 @@ Dictionary GameWorld::prepare_replay(const String &path)
 		return r;
 	}
 	auto start = std::make_unique<NewGameStart>(file->header.algorithm);
-	if (!NewGame::prepareNewGame(file->header.game, m_world->playerTemplates(), *m_settings, m_mapCache, file->header.algorithm, *start, &error))
+	if (!NewGame::prepareNewGame(file->header.game, m_world->setupPlayerTemplates(), *m_settings, m_mapCache, file->header.algorithm, *start, &error))
 	{
 		errors.push_back(toGodot(error));
 		return r;

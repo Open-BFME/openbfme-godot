@@ -30,12 +30,25 @@
 // are removed. No signed serial comparison is used for trimming. After 2^32 records a wire value aliases an earlier cycle (the limit of a 32-bit field).
 // A peer that left the game (Network: PLAYERLEAVE) is retired: its queues are dropped, one last ack goes out, then it is forgotten.
 //
+// RELAY MODE (lane ONLINE-2, docs/ONLINE.md phase O1): with Options::relay set, every peer's address is the relay's; each packet goes out in the relay
+// envelope (GameNetwork/RelayProtocol.h: DATA + the target slot) and comes in as DATA_FROM + the source slot, which the relay stamped from the session its
+// ticket bound. The WELCOME's session token is kept and sent with every later HELLO: only it lets the relay move the slot to a new address. The "known sender at its address" check so becomes a slot check: the packet's sender byte must equal the envelope's source slot (the relay
+// already refused a packet whose sender byte is not the bound slot of its address). The transport sends HELLO (the ticket) until the relay WELCOMEs it, and
+// again when the relay answers NOT_BOUND (a NAT rebinding, a relay restart); a REFUSED is an error (errors(), relayRefusal()). The packets inside are
+// unchanged: acks, resends and fragments stay end to end.
+// Lane ONLINE-3 (reconnect): the ticket may be a rejoin ticket (version 2, 34 bytes); the relay's STATUS (each slot's generation, silent at the relay) is
+// kept for the Network (peerGeneration / silentAtRelay; nothing here acts on it), and so is the time anything last came from the relay (localLinkAlive:
+// the disconnect path's ping test). resetPeer starts a slot's streams afresh (its new incarnation). The relay's command log is fetched in LOG_CHUNKs
+// (requestRelayLog / takeRelayLogChunks). sendToLog: a frame command that reaches no other player goes in a stream to the local slot's own entry,
+// which the relay logs and acknowledges (DATA_FROM of the local slot with an ack-only packet) and forwards nowhere; it sends no keep-alives.
+//
 // Not simulation code: time and sockets only decide WHEN bytes arrive, never what a frame contains (Network.h).
 
 #pragma once
 
 #include "GameNetwork/NetImpairment.h"
 #include "GameNetwork/Network.h"
+#include "GameNetwork/RelayProtocol.h"
 
 #include <array>
 #include <cstdint>
@@ -102,8 +115,18 @@ public:
 		NetImpairment::Config impairment;
 		// lane MP-3: the fast resend and the bounded backoff (Transport.cpp, S-1891); false = MP-2's timing (A/B measurements)
 		bool fastResend = true;
+		// lane ONLINE-2: the online relay (RELAY MODE above); disabled = LAN (peer to peer)
+		struct Relay
+		{
+			bool enabled = false;
+			NetAddress address;               ///< the relay's UDP address (every peer's address in this mode)
+			std::vector<std::uint8_t> ticket; ///< the lobby's ticket for this client's slot (32 bytes; lane ONLINE-3: 34, a rejoin ticket)
+			int helloMs = 250;                ///< HELLO again after this while not welcomed
+			int spectatorIndex = -1;          ///< lane ONLINE-3: a spectator ticket's index (WELCOME names 0x80 + it); -1: a player
+		} relay;
 	};
 	Transport(UDP &socket, int localSlot, const Options &options);
+	~Transport() override; ///< lane ONLINE-2: in relay mode, says BYE to the relay
 
 	// sendStart / receiveStart: the first sequence number of the records sent to / expected from the peer (0 in a game; a test uses others to cross the 32-bit wrap)
 	void setPeer(int slot, const NetAddress &address, std::uint32_t sendStart = 0, std::uint32_t receiveStart = 0);
@@ -127,6 +150,8 @@ public:
 		// the socket and read from it, and the datagrams sent that carry no record (an ack or a keep-alive only)
 		unsigned long long bytesSent = 0, bytesReceived = 0, ackOnlyPacketsSent = 0;
 		unsigned long long fastResends = 0; ///< lane MP-3: records resent on ack evidence before their timeout
+		// lane ONLINE-2 (relay mode): HELLOs sent, WELCOMEs and NOT_BOUNDs received, envelope bytes (5 per data datagram) included in bytesSent
+		unsigned long long relayHellos = 0, relayWelcomes = 0, relayNotBound = 0, relaySlotMismatches = 0;
 	};
 	const Stats &stats() const { return m_stats; }
 	// socket send failures and protocol violations of known peers (at most 100 kept), for the reports
@@ -144,6 +169,27 @@ public:
 	// lane MP-3: the fault injector (a test or the peer's --blackout-at cuts the endpoint off with impairment().blackout(NetMilliseconds(), ms))
 	NetImpairment &impairment() { return m_impairment; }
 	const NetImpairment &impairment() const { return m_impairment; }
+
+	// lane ONLINE-2: relay mode: the relay welcomed this client (its address is bound to the ticket's game and slot); the refusal reason
+	// (RelayProtocol::RefuseReason) of a REFUSED, 0 none
+	bool relayBound() const { return m_relayBound; }
+	int relayRefusal() const { return m_relayRefusal; }
+
+	// lane ONLINE-3 (relay mode): NetTransport's view of the relay's STATUS and the local link
+	int peerGeneration(int slot) const override { return slot >= 0 && slot < MAX_SLOTS ? m_relayStatus[(size_t)slot].generation : 0; }
+	bool silentAtRelay(int slot) const override { return slot >= 0 && slot < MAX_SLOTS && m_relayStatus[(size_t)slot].silent; }
+	bool localLinkAlive(std::uint32_t ms) const override;
+	void resetPeer(int slot) override;
+	// lane ONLINE-3: the log-only stream (records to the local slot's own entry, which the relay logs and acknowledges and forwards nowhere)
+	bool sendToLog(const std::vector<std::uint8_t> &bytes) override;
+	// lane ONLINE-3: the relay's command log of this game: asks for the bytes from `offset` (one LOG_CHUNK answers); the chunks that arrived since the last
+	// call (offset -> bytes) and the log's size the relay last reported; a REFUSED (no log) shows in relayRefusal()
+	void requestRelayLog(std::uint32_t offset);
+	std::map<std::uint32_t, std::vector<std::uint8_t>> takeRelayLogChunks() { return std::move(m_logChunks); }
+	std::uint32_t relayLogSize() const { return m_logSize; }
+	bool relayLogRefused() const { return m_logRefused; } ///< the relay keeps no log of this game (REFUSED: REFUSE_NO_LOG)
+	unsigned long long spectatorRefusals() const { return m_spectatorRefusals; } ///< lane ONLINE-3: REFUSED REFUSE_SPECTATOR (a spectator's DATA)
+	unsigned long long relayStatuses() const { return m_relayStatuses; }
 
 	// the lobby's datagrams share the socket: a datagram that is not a transport packet is handed here (null: counted as bad)
 	std::vector<std::pair<NetAddress, std::vector<std::uint8_t>>> &foreignDatagrams() { return m_foreign; }
@@ -190,6 +236,10 @@ private:
 	void sendDatagram(int slot, const NetAddress &to, std::vector<std::uint8_t> datagram, std::uint64_t now);
 	void sendNow(const NetAddress &to, const std::vector<std::uint8_t> &datagram);
 	void handleDatagram(const NetAddress &from, const std::vector<std::uint8_t> &d, std::uint64_t now);
+	// envelopeSlot: relay mode, the source slot the relay stamped (-1: peer to peer)
+	void handlePacket(const NetAddress &from, const std::vector<std::uint8_t> &d, std::uint64_t now, int envelopeSlot);
+	void handleRelay(const std::vector<std::uint8_t> &d, std::uint64_t now); ///< lane ONLINE-2
+	void sendHello(std::uint64_t now);
 	void deliver(int slot, Incoming &&record);
 	void error(const std::string &e);
 
@@ -204,4 +254,22 @@ private:
 	std::vector<std::uint64_t> m_sendTimes;
 	Stats m_stats;
 	std::vector<std::string> m_errors;
+	bool m_relayBound = false;   ///< lane ONLINE-2
+	int m_relayRefusal = 0;
+	std::uint64_t m_lastHello = 0;
+	bool m_helloSent = false;
+	std::vector<std::uint8_t> m_relaySession; ///< ONLINE-2 r2: the relay's session token of this slot (from WELCOME), sent with every later HELLO
+	// lane ONLINE-3
+	struct RelaySlotStatus
+	{
+		int generation = 0;
+		bool silent = false;
+	};
+	std::array<RelaySlotStatus, MAX_SLOTS> m_relayStatus{};
+	std::uint64_t m_lastFromRelay = 0;
+	unsigned long long m_relayStatuses = 0;
+	std::map<std::uint32_t, std::vector<std::uint8_t>> m_logChunks;
+	std::uint32_t m_logSize = 0;
+	bool m_logRefused = false;
+	unsigned long long m_spectatorRefusals = 0;
 };

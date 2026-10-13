@@ -31,6 +31,7 @@
 #include "GameLogic/SkirmishAI/SkirmishAIManager.h"
 #include "GameLogic/SkirmishAI/AIThreatFinder.h"
 #include "GameLogic/Economy.h"
+#include "GameLogic/SkirmishAI/AIStatCollector.h"
 #include "GameLogic/SkirmishAI/AITacticalAI.h"
 #include "Common/Money.h"
 #include "GameLogic/Combat/ObjectWeapons.h"
@@ -622,8 +623,9 @@ TEST_CASE("AIPOW-1: end to end: a Hard computer's wounded Aragorn uses Athelas o
 	}
 	MESSAGE("Athelas ran after " << frame << " frames");
 	// the 25-frame counter (RW 0x99302D) counts the module's updates from its first (2 frames before the wound); the roll above 0.5 and Hard's chance (1 : 1)
-	// pass on that frame here. Engine pin (seed 5107)
-	CHECK(frame == 22);
+	// pass on that frame here. Engine pin (seed 5107). Lane PATHPERF-1: 23 with findPath's hierarchical corridor (RW 0x6F8601); 22 with it switched off (a
+	// test switch, measured): the corridor's routes move the frame on which the roll passes
+	CHECK(frame == 23);
 	CHECK(AISpecialPowerUpdate::stats().executedByType[10] == 1);
 	a.advance(10); // Athelas's heal lands a few frames after the cast
 	CHECK(AISpecialPowerUpdate::healthRatio(*mine) > wounded);    // healed
@@ -714,8 +716,8 @@ TEST_CASE("AIPOW-1 r2: the spell book's ASSIST_BATTLE_BUFF (RW 0x9E896E) with it
 	Object *theirs = a.make("GondorFighterHorde", a.human, 60.0f, 0.0f);
 	a.advance(2);
 	REQUIRE(mine->getAIUpdateInterface()->aiAttackObject(theirs, CMD_FROM_PLAYER));
-	REQUIRE(std::find(AITacticalAI::listsOf(*a.logic, *aiPlayer).army.begin(), AITacticalAI::listsOf(*a.logic, *aiPlayer).army.end(), mine->getID()) !=
-	        AITacticalAI::listsOf(*a.logic, *aiPlayer).army.end());
+	const std::vector<ObjectID> &aiArmy = AITacticalAI::recordOf(*a.logic, aiPlayer->getPlayerIndex()).army();
+	REQUIRE(std::find(aiArmy.begin(), aiArmy.end(), mine->getID()) != aiArmy.end());
 	// a horde's ratio is its members' average (the contain's slot 0x264): wound the members
 	REQUIRE(mine->getContain());
 	REQUIRE(mine->getContain()->getContainedItemsList());

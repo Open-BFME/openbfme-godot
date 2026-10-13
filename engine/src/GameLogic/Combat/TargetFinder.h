@@ -33,6 +33,8 @@ public:
 	};
 	// the nearest enemy of `seeker` within `range` (edge to the seeker's centre) that one of its weapons can attack, or null. Ties: the lower object id.
 	Object *findClosestEnemy(const Object &seeker, float range, unsigned flags, CommandSourceType source);
+	// lane PLAY-4: the same scan measured from `center` instead of the seeker (the guard machine's scan around the guarded spot, RW 0x70146A)
+	Object *findClosestEnemyNear(const Object &seeker, const Coord3D &center, float range, unsigned flags, CommandSourceType source);
 	// every attackable object whose centre is within `radius` of `center`, in (cell, list) order
 	void collectInRadius(const Coord3D &center, float radius, std::vector<Object *> &out);
 	void reset();

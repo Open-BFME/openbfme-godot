@@ -10,6 +10,7 @@
 
 #include "Common/CreateAHeroRecord.h"
 #include "Common/MpGameRules.h"
+#include "Common/SimulationProfile.h"
 
 #include <cstdint>
 #include <string>
@@ -146,6 +147,9 @@ struct SkirmishGameInfo
 	GameRules rules = MpGameRules::none();
 	// lane RULES-1, OpenBFME (not retail): the Legendary Heroes factor, 1 (off) .. 4 (LegendaryHeroes in Common/MpGameRules.h)
 	int legendaryHeroes = LegendaryHeroes::kOff;
+	// lane UBER-1, OpenBFME (not retail): the simulation profile (Common/SimulationProfile.h): Faithful, or the opt-in Uber performance mode the host's
+	// OpenBFME option chose; every peer's profile identity must say the same (GameNetwork/ProfileIdentity.h), so a mismatch is refused at the lobby
+	SimulationProfile simulationProfile = SimulationProfile::Faithful;
 	// lane RULES-1: AllowCustomHeroes (rule 0): a game with no rule block keeps every slot's Create-a-Hero; with the block only rule 0 == 1 allows them (RW 0x842A85
 	// enables a slot's hero combo only then). The host, the wire reader and the game start all hold a setup to it
 	bool customHeroesAllowed() const { return MpGameRules::isNone(rules) || rules[RULE_ALLOW_CUSTOM_HEROES] == 1; }
@@ -269,7 +273,8 @@ struct SkirmishGameInfo
 			}
 		}
 		return mapName == o.mapName && mapCRC == o.mapCRC && mapSize == o.mapSize && mapMask == o.mapMask && seed == o.seed && startingCash == o.startingCash
-			&& superweaponRestriction == o.superweaponRestriction && inProgress == o.inProgress && rules == o.rules && legendaryHeroes == o.legendaryHeroes;
+			&& superweaponRestriction == o.superweaponRestriction && inProgress == o.inProgress && rules == o.rules && legendaryHeroes == o.legendaryHeroes
+			&& simulationProfile == o.simulationProfile;
 	}
 };
 

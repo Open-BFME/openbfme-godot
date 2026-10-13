@@ -243,6 +243,9 @@ public:
 	const std::vector<AptCharacterInst *> &children() const { return m_children; }
 	AptCharacterInst *childAtDepth(int depth) const;
 	AptCharacterInst *childByName(const std::string &name) const;
+	// lane ONLINE-4: an unnamed child by the name its target path gives it, "instance<depth>" (RW 0xB13B30 formats it with "instance%ld" from the
+	// depth at +0x58 and enters it in a name table through 0xB1F5C0 -> 0xB1EE40, so the path resolves again); null when no unnamed child has it
+	AptCharacterInst *generatedNameChild(const std::string &name) const;
 	int totalFrames() const { return frames ? (int)frames->size() : 0; }
 
 	// Timeline entry points (also AptObject::timelineOp).

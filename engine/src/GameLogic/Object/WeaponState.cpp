@@ -703,7 +703,7 @@ bool WeaponIsWithinAttackRange(const WeaponTemplate &t, const WeaponBonus &bonus
 					return true;
 				}
 			}
-			const bool ok = host.meleeReach(source, *victim);
+			const bool ok = host.meleeReach(source, sourcePos, *victim);
 			if (!ok || host.victimFlag11A_40())
 			{
 				return ok;

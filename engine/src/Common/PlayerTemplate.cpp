@@ -194,6 +194,16 @@ void PlayerTemplateStore::registerBlock(INIBlockRegistry &registry)
 	registry.registerBlock("PlayerTemplate", [this](INI *ini) { parseBlock(ini); });
 }
 
+void PlayerTemplateStore::assignFrom(const PlayerTemplateStore &other)
+{
+	m_templates = other.m_templates;
+	m_byKey = other.m_byKey;
+	m_playableSides = other.m_playableSides;
+	m_storedLabels = other.m_storedLabels;
+	m_storedSciences = other.m_storedSciences;
+	m_storedSounds = other.m_storedSounds;
+}
+
 void PlayerTemplateStore::clear()
 {
 	m_templates.clear();

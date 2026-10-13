@@ -156,25 +156,44 @@ TEST_CASE("castle1 retail: two games of the same seed stay hash-identical frame 
 	std::string error;
 	buildtest::Game a, b;
 	REQUIRE_MESSAGE(buildtest::startGame(*s, "FactionMen", "FactionMordor", 1234, a, &error), error);
-	REQUIRE_MESSAGE(buildtest::startGame(*s, "FactionMen", "FactionMordor", 1234, b, &error), error);
+	starttest::Shared *peerWorld = starttest::peerWorld(); // lane MAPRESET-1: the second peer has its own world (one live game per world, S-3808)
+	REQUIRE(peerWorld);
+	REQUIRE_MESSAGE(peerWorld->world, peerWorld->error);
+	REQUIRE_MESSAGE(buildtest::startGame(*peerWorld, "FactionMen", "FactionMordor", 1234, b, &error), error);
 	Fortress fa, fb;
 	ObjectID centreA = INVALID_ID;
+	// each game runs with its own world's stores selected (runLogicFrame does not select them, LiveGame::advance does)
+	auto onA = [&](const std::function<void()> &f) {
+		auto context = s->world->enterContext();
+		f();
+	};
+	auto onB = [&](const std::function<void()> &f) {
+		auto context = peerWorld->world->enterContext();
+		f();
+	};
 	for (int frame = 0; frame < 120; ++frame)
 	{
 		if (frame == 3)
 		{
-			REQUIRE(findFortress(*a.live, fa));
-			REQUIRE(findFortress(*b.live, fb));
+			onA([&] { REQUIRE(findFortress(*a.live, fa)); });
+			onB([&] { REQUIRE(findFortress(*b.live, fb)); });
 			centreA = fa.centre->getID();
 		}
 		if (frame == 40)
 		{
-			killWithBody(a.live->logic().findObjectByID(fa.castle->keepId()));
-			killWithBody(b.live->logic().findObjectByID(fb.castle->keepId()));
+			onA([&] { killWithBody(a.live->logic().findObjectByID(fa.castle->keepId())); });
+			onB([&] { killWithBody(b.live->logic().findObjectByID(fb.castle->keepId())); });
 		}
-		a.live->logic().runLogicFrame();
-		b.live->logic().runLogicFrame();
-		REQUIRE_MESSAGE(a.live->logic().computeStateHash() == b.live->logic().computeStateHash(), "frame " << frame);
+		std::uint32_t ha = 0, hb = 0;
+		onA([&] {
+			a.live->logic().runLogicFrame();
+			ha = a.live->logic().computeStateHash();
+		});
+		onB([&] {
+			b.live->logic().runLogicFrame();
+			hb = b.live->logic().computeStateHash();
+		});
+		REQUIRE_MESSAGE(ha == hb, "frame " << frame);
 	}
 	CHECK(centreA != INVALID_ID);
 	CHECK(a.live->logic().findObjectByID(centreA) == nullptr);

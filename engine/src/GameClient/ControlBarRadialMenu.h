@@ -33,8 +33,9 @@
 //     (ControlBar::processCommandUI).
 // INFERENCE (stop S-2701, InGameHud reports it): the clock's colours (GlobalData + 0x1160 / + 0x1164 and the control bar's clock colour) are not identified (a
 // translucent black wipe here); the button flash animations of the ring (RW 0x9D5BDC / 0x9D6250 for windows whose CommandButton + 0xF8 > 0) are not drawn;
-// the right press cancels only a CANCELABLE button's queue (RW 0x940C70); the hit area is inclusive (RW 0x715A84); the grey-overlay status and the 0x808080 multiplier condition
-// (RW 0x327E0E's flag) are not set; the ring is drawn under the Palantir movie.
+// the right press cancels only a CANCELABLE button's queue (RW 0x940C70); the hit area is inclusive (RW 0x715A84); the 0x808080 multiplier condition
+// (RW 0x327E0E's flag) is not set; the ring is drawn under the Palantir movie. Lane HUD-7: the grey-overlay (0x80000000) and always-colour (0x01000000) statuses
+// follow the availability (see buildOps).
 
 #pragma once
 
@@ -88,7 +89,7 @@ struct RadialDrawOp
 {
 	enum Kind
 	{
-		ICON,    ///< the button image in the ellipse of (x, y, w, h); `grayscale` for a disabled window
+		ICON,    ///< the button image in the ellipse of (x, y, w, h); `grayscale` for a disabled window, else multiplied by `color` (lane HUD-7: ALWAYS_COLOR)
 		OVERLAY, ///< a mapped image over (x, y, w, h), tinted by `color` (ARGB)
 		CLOCK    ///< a mapped image wiped clockwise from the top by `percent` (0 .. 100) over (x, y, w, h), tinted by `color`
 	};

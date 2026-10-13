@@ -126,6 +126,13 @@ public:
 	}
 	// slot 0xB0 (RW 0x865C15): the module data's ObjectStatusOfContained mask (OpenContain data + 0x58); null for a contain without one
 	virtual const ObjectStatusMaskType *getObjectStatusOfContained() const { return nullptr; }
+	// lane DECOMP-3 (Object::isAbleToAttack RW 0x691269): slot 0xB0 asked for a rider (OpenContain RW 0x865C15, SiegeEngineContain RW 0x87ED55); null as above
+	virtual const ObjectStatusMaskType *getObjectStatusOfContainedFor(const Object *rider) const { (void)rider; return getObjectStatusOfContained(); }
+	// slot 0xB4 isPassengerAllowedToFire (OpenContain RW 0x865A7E; GarrisonContain, HordeGarrisonContain and TunnelContain RW 0x8BD372: true; HordeContain
+	// RW 0x86C713: its container's answer)
+	virtual bool isPassengerAllowedToFire() const { return false; }
+	// slot 0xC0 (OpenContain RW 0x865B33, the same in every contain table read): a rider's shot at `victim` is blocked by its container (PassengersTestCollisionHeight)
+	virtual bool isPassengerShotBlocked(const Object *rider, const Object *victim) const { (void)rider; (void)victim; return false; }
 	// slots 0x158 / 0x15C / 0x160: the entry position, the entry offset and the exit offset in the world (HordeGarrisonContain RW 0x87D1A7 / 0x87D1E0 / 0x87D219:
 	// the data's EntryPosition / EntryOffset / ExitOffset through the container's transform, RW 0x87CEB3); false: the contain has none (the container's position)
 	virtual bool getEntryPosition(Coord3D &out) const { (void)out; return false; }

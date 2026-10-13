@@ -306,6 +306,84 @@ struct LineInfo
 };
 } // namespace
 
+// RW 0x6F61BD, the line callback of CanApproachToTarget (record RW 0x6EAF14). The cell dword (+ 0xC): type = bits 0 .. 3, layer = bits 4 .. 9 (what RW 0x6ED023
+// is given; IsPointOnWall tests it > 0x10), bit 17 = the gate area (getBit17). Returning true stops the line.
+//   1. (bit 17 or layer > 1) and not + 0x1D and not + 0x1E and + 0x1F: stop (RW 0x6F61D3 .. 0x6F61F8)
+//   2. type 4 (obstacle): go on, the record untouched (RW 0x6F61FF)
+//   3. layer > 1 and not + 0x1D and + 0x1E: go on (RW 0x6F6204 .. 0x6F6215)
+//   4. + 0x1E = 0; validMovementPosition (RW 0x6E8200) false: go on
+//   5. the cell's point for the unit (RW 0x6ED023: centred when its footprint is odd, on the cell's layer); QuickDoesPathExist from the unit's position (RW 0x6F5BB0,
+//      last argument 0) true: + 0x1C = 1, stop
+//   6. + 0x1F = 1; + 0x20 set: stop; else stop when + 0x1D (a melee weapon ends the line at its first miss), go on otherwise (RW 0x6F626B .. 0x6F627C)
+bool Pathfinder::canApproachToTarget(const PathfindObject &obj, const PathfindLocomotorInfo &loco, const Coord3D &target, float weaponRange, bool meleeWeapon,
+	bool stopAtFirstMiss)
+{
+	const float range = 150.0f < weaponRange ? weaponRange : 150.0f; // RW 0x6FB773 .. 0x6FB7B1
+	const PathfindMovement mv = makeMovement(&obj, loco);          // the record's + 0xC (RW 0x6EA04D)
+	int radius = 0;
+	bool center = false;
+	getRadiusAndCenter(&obj, radius, center); // RW 0x6ECFC5: odd footprint (RW 0x6EAF79) -> centred
+	const Coord3D from = obj.getPosition();
+	bool found = false;                        // + 0x1C
+	const bool melee = meleeWeapon;            // + 0x1D
+	const bool callerStop = stopAtFirstMiss;   // + 0x20
+	auto raised = [](const PathfindCell *c) { return (int)c->getLayer() > (int)LAYER_GROUND; };
+	for (int i = -1; i < 2; ++i)
+	{
+		for (int j = -1; j < 2; ++j)
+		{
+			if (i == 0 && j == 0)
+			{
+				continue;
+			}
+			const Coord3D end{ SimMath::addf32(SimMath::mulf32(SimMath::sseFromInt32(i), range), target.x), SimMath::addf32(SimMath::mulf32(SimMath::sseFromInt32(j), range), target.y),
+				target.z };
+			bool noneYet = true; // + 0x1E (RW 0x6FB82F)
+			bool missed = false; // + 0x1F (RW 0x6FB833)
+			ICoord2D a, b;
+			{
+				Coord3D s0 = target, e0 = end;
+				worldToCell(&s0, true, &a); // RW 0x6FAA07 / 0x6FAA19: centring 1
+				worldToCell(&e0, true, &b);
+			}
+			// the layer of RW 0x680A75 (the target's): only the ground layer exists (S-161)
+			walkLine(*this, LAYER_GROUND, a, b, [&](PathfindCell *, PathfindCell *to, int x, int y) -> bool {
+				if ((to->getBit17() || raised(to)) && !melee && !noneYet && missed)
+				{
+					return true; // 1.
+				}
+				if (to->getType() == PathfindCell::CELL_OBSTACLE)
+				{
+					return false; // 2.
+				}
+				if (raised(to) && !melee && noneYet)
+				{
+					return false; // 3.
+				}
+				noneYet = false; // 4.
+				if (!validMovementPosition(mv, to))
+				{
+					return false;
+				}
+				Coord3D point;
+				adjustCoordToCell(x, y, center, point, to->getLayer() == LAYER_INVALID ? LAYER_GROUND : to->getLayer()); // 5.
+				if (clientSafeQuickDoesPathExist(loco, &from, &point))
+				{
+					found = true;
+					return true;
+				}
+				missed = true; // 6.
+				return callerStop || melee;
+			});
+			if (found)
+			{
+				return true; // RW 0x6FB84A
+			}
+		}
+	}
+	return false;
+}
+
 bool Pathfinder::isLinePassable(const PathfindObject *obj, unsigned acceptableSurfaces, PathfindLayerEnum layer, const Coord3D &startWorld, const Coord3D &endWorld,
 	bool blocked, bool allowPinched)
 {
@@ -518,6 +596,7 @@ int Pathfinder::occupantCost(const PathfindObject *obj, const PathfindCell *pare
 	const int shift = r >= 4 ? 2 : (r > 1 ? 1 : 0);
 	int cost = 0;
 	float selfT = -1.0f;
+	const SearcherFacts self = (m_memoActive && obj == m_memoObj) ? m_memoSelf : searcherFacts(obj);
 	for (int i = cx - r; i < cx + n; i++)
 	{
 		for (int j = cy - r; j < cy + n; j++)
@@ -529,30 +608,31 @@ int Pathfinder::occupantCost(const PathfindObject *obj, const PathfindCell *pare
 			}
 			for (const PathfindOccupant *node = c->occupants(OCC_GROUND_GOAL); node; node = node->next)
 			{
-				const PathfindObject *o = m_world ? m_world->findObjectByID(node->owner) : nullptr;
-				if (!o || o == obj || o->getContainer() == obj)
+				const OccupantFacts *f = occupantFacts(obj, node->owner);
+				if (!f || f->o == obj || f->container == obj)
 				{
 					continue;
 				}
-				const bool enemy = obj->getRelationship(*o) == PATHFIND_ENEMIES;
+				const PathfindObject *o = f->o;
+				const bool enemy = f->rel == PATHFIND_ENEMIES;
 				if (enemy && skipEnemies)
 				{
 					continue;
 				}
-				if (!obj->hasAI() || !o->hasAI())
+				if (!self.hasAI || !f->hasAI)
 				{
 					continue;
 				}
-				if (obj->aiPriority() > o->aiPriority())
+				if (self.aiPriority > f->aiPriority)
 				{
 					continue;
 				}
 				int add;
-				if (o->isParked())
+				if (f->parked)
 				{
 					add = 8;
 				}
-				else if (!obj->hasLocomotor() || !o->hasLocomotor())
+				else if (!self.hasLocomotor || !f->hasLocomotor)
 				{
 					add = 8;
 				}
@@ -581,7 +661,7 @@ int Pathfinder::occupantCost(const PathfindObject *obj, const PathfindCell *pare
 }
 
 int Pathfinder::examineNeighboringCells(PathfindCell *parentCell, PathfindCell *goalCell, const PathfindLocomotorInfo &loco, bool isHuman, bool centerInCell,
-	int radius, const ICoord2D &startCellNdx, const PathfindObject *obj)
+	int radius, const ICoord2D &startCellNdx, const PathfindObject *obj, bool hierarchical)
 {
 	(void)startCellNdx;
 	// TARGET RW 0x6F9850
@@ -633,16 +713,9 @@ int Pathfinder::examineNeighboringCells(PathfindCell *parentCell, PathfindCell *
 		{
 			continue;
 		}
-		// the hierarchical corridor: a cell in a block that is not passable is rejected unless one of the four diagonal points 3 away is
-		if (n->getLayer() == LAYER_GROUND && !m_zoneManager.isPassable(nc.x, nc.y))
-		{
-			const bool nearPassable = m_zoneManager.isPassable(nc.x + 3, nc.y + 3) || m_zoneManager.isPassable(nc.x - 3, nc.y + 3) ||
-				m_zoneManager.isPassable(nc.x + 3, nc.y - 3) || m_zoneManager.isPassable(nc.x - 3, nc.y - 3);
-			if (!nearPassable)
-			{
-				continue;
-			}
-		}
+		// lane PATHPERF-1: RW 0x6F9850 reads the block flags once, for the +1000 below (RW 0x6F9DE7); ZH's rejection of a cell whose block is not passable
+		// unless a block 3 cells away diagonally is was not RotWK's and is removed (it never applied while findPath marked every block passable). A cell
+		// outside the hierarchical corridor is dear, not forbidden: the corridor's block search does not see walls inside a block
 		if (n->hasInfo() && (n->getOpen() || n->getClosed()))
 		{
 			continue;
@@ -763,6 +836,11 @@ int Pathfinder::examineNeighboringCells(PathfindCell *parentCell, PathfindCell *
 		{
 			rem = n->costToGoal(goalCell);
 		}
+		if (hierarchical)
+		{
+			// lane PATHPERF-1, TARGET RW 0x6F9DA7 .. 0x6F9DC4: the corridor's remaining length, (last index - the cell's position (RW 0x93AD93)) * 320
+			rem += (unsigned)((m_hierLast - hierarchicalPositionOf(nc.x, nc.y)) * 320);
+		}
 		if (n->getLayer() == LAYER_GROUND && !m_zoneManager.isPassable(nc.x, nc.y) && !n->getExtraPass())
 		{
 			X += 1000;
@@ -799,20 +877,101 @@ int Pathfinder::examineNeighboringCells(PathfindCell *parentCell, PathfindCell *
 // ---------------------------------------------------------------------------------------------------------
 Path *Pathfinder::findPath(PathfindObject *obj, const PathfindLocomotorInfo &loco, const Coord3D *from, const Coord3D *rawTo, bool *partial)
 {
-	// TARGET RW 0x6FE7FE: clear the passable flags, find the hierarchical path (it marks the blocks the A* may use cheaply), mark every
-	// block passable when there is none, then internalFindPath. The hierarchical search (RW 0x6F85A6-0x6F9829) was not read: every
-	// block counts as passable, so the A* is not confined to a corridor (S-162).
-	note(pathstops::kHierarchical);
-	m_zoneManager.setAllPassable();
-	return internalFindPath(obj, loco, from, rawTo, partial);
+	// TARGET RW 0x6FE7CB (lane PATHPERF-1, read from the disassembly; the old reading 0x6FE7FE is inside it):
+	//   * *partial = 0; isHuman: the controlling player is not a computer (RW 0x68B678, player + 0x5C == 1 -> 0);
+	//   * the goal copy; no quick path (RW 0x6F5BB0, the port's clientSafeQuickDoesPathExist) -> *partial = 1 and the goal steps back toward `from`:
+	//     v = (goal - from) with z = 0, steps = -1 - _ftol2(|v| (RW 0x403111, the root left in the register) * -1/30 (RW 0xC1C4B4)), at most 5; v normalised
+	//     (RW 0x405553: 1 / |v| times each component) and times 30 (RW 0xBDAE54); the goal -= v until RW 0x6F5BB0 passes or the steps are used;
+	//   * the waypoint vector (+ 0x1C1CC) emptied, the block flags cleared (RW 0x937C23), FindClosestHierarchicalPath (RW 0x6F9829: the corridor and the
+	//     adjusted goal); none -> every block passable (RW 0x937C65); an adjusted goal that is not the stepped goal -> *partial = 1;
+	//   * internalFindPath (RW 0x6FD06F) to the adjusted goal with the corridor.
+	bool localPartial = false;
+	bool *p = partial ? partial : &localPartial;
+	*p = false;
+	const bool isHuman = obj ? !obj->isComputerControlled() : true;
+	Coord3D to = *rawTo;
+	if (!clientSafeQuickDoesPathExist(loco, from, &to))
+	{
+		*p = true;
+		float dx = SimMath::subf32(to.x, from->x), dy = SimMath::subf32(to.y, from->y);
+		const double lenW = SimMath::sqrtPC24((double)SimMath::sumSquares3(dx, dy, 0.0f));
+		int steps = -1 - (int)SimMath::ftol2Low32(SimMath::pc24MulW(lenW, (double)-0.0333333351f));
+		if (steps > 5)
+		{
+			steps = 5;
+		}
+		const float inv = SimMath::divf32(1.0f, SimMath::fstpDword(lenW));
+		dx = SimMath::mulf32(SimMath::mulf32(dx, inv), 30.0f);
+		dy = SimMath::mulf32(SimMath::mulf32(dy, inv), 30.0f);
+		for (int i = 0; i < steps; ++i)
+		{
+			to.x = SimMath::subf32(to.x, dx);
+			to.y = SimMath::subf32(to.y, dy);
+			if (clientSafeQuickDoesPathExist(loco, from, &to))
+			{
+				break;
+			}
+		}
+	}
+	m_zoneManager.clearPassableFlags();
+	Coord3D adjustedTo = to;
+	const bool hierarchical = findClosestHierarchicalPath(obj, loco, isHuman, from, &to, &adjustedTo);
+	if (!hierarchical)
+	{
+		m_zoneManager.setAllPassable();
+	}
+	else if (adjustedTo.x != to.x || adjustedTo.y != to.y)
+	{
+		*p = true;
+	}
+	return internalFindPath(obj, loco, from, &adjustedTo, hierarchical, p);
 }
 
-Path *Pathfinder::internalFindPath(PathfindObject *obj, const PathfindLocomotorInfo &loco, const Coord3D *from, const Coord3D *rawTo, bool *partial)
+// lane PATHPERF-1: the search memo is on for `obj` while the scope lives (a fresh generation each time; an object id's facts are asked once)
+struct Pathfinder::SearchMemoScope
 {
+	Pathfinder &pf;
+	SearchMemoScope(Pathfinder &p, const PathfindObject *obj) : pf(p)
+	{
+		pf.m_memoActive = obj != nullptr;
+		pf.m_memoObj = obj;
+		if (++pf.m_memoGen == 0)
+		{
+			for (OccupantFacts &f : pf.m_memo)
+			{
+				f.gen = 0;
+			}
+			pf.m_memoGen = 1;
+		}
+		if (obj)
+		{
+			pf.m_memoSelf = pf.searcherFacts(obj);
+		}
+	}
+	~SearchMemoScope()
+	{
+		pf.m_memoActive = false;
+		pf.m_memoObj = nullptr;
+	}
+};
+
+Path *Pathfinder::findPathWithoutCorridor(PathfindObject *obj, const PathfindLocomotorInfo &loco, const Coord3D *from, const Coord3D *to, bool *partial)
+{
+	// the search findPath was before lane PATHPERF-1 (every block passable, no goal step-back), kept for AIMover::pathReachingGoal: it stands for RW 0x6F74D0,
+	// a search of its own (HORDE-2, S-532), not for findPath; and for the callers of pathfinder slot + 4 (FindClosestPath RW 0x6FB869, not ported: S-166)
 	if (partial)
 	{
 		*partial = false;
 	}
+	m_zoneManager.setAllPassable();
+	return internalFindPath(obj, loco, from, to, false, partial);
+}
+
+Path *Pathfinder::internalFindPath(PathfindObject *obj, const PathfindLocomotorInfo &loco, const Coord3D *from, const Coord3D *rawTo, bool hierarchical,
+	bool *partial)
+{
+	// RW 0x6FD06F only ever SETS *partial (a path to the closest cell); findPath clears it
+	SearchMemoScope memo(*this, obj);
 	int radius = 0;
 	bool centerInCell = true;
 	if (obj)
@@ -945,6 +1104,7 @@ Path *Pathfinder::internalFindPath(PathfindObject *obj, const PathfindLocomotorI
 	m_shortcutCounter = 0;
 	PathfindCell *closest = nullptr;
 	int bestClose = std::numeric_limits<int>::max();
+	int bestPosition = 0; // RW [ebp + 0x24]: the best corridor position so far (0 to start with: a cell off the corridor, -1, never qualifies)
 	int bestD2 = std::numeric_limits<int>::max();
 	int slack = std::numeric_limits<int>::max();
 	while (!m_open.empty())
@@ -983,22 +1143,41 @@ Path *Pathfinder::internalFindPath(PathfindObject *obj, const PathfindLocomotorI
 				bestD2 = d2;
 			}
 			const int key = d2; // + 10000 * the waypoint count (none)
-			if (key < bestClose)
+			// lane PATHPERF-1, TARGET RW 0x6FDA6C .. 0x6FDB7C: with a corridor a cell is a candidate when it is further along the corridor (RW 0x93AD93) than
+			// the best so far, or as far and nearer (key); without, when it is nearer. The best is recorded BEFORE the cell's tests (RW 0x6F3082, 0x6E8200;
+			// RW's third, 0x6EF3C3, is not ported: S-163), which only decide whether it becomes the closest cell: a nearer cell that fails shuts out the
+			// farther ones, and only cells nearer than every one seen run the costly footprint test
+			bool candidate;
+			if (hierarchical)
 			{
+				const int position = hierarchicalPositionOf(c->getXIndex(), c->getYIndex());
+				candidate = position > bestPosition || (position == bestPosition && key < bestClose);
+				if (candidate)
+				{
+					bestPosition = position;
+				}
+			}
+			else
+			{
+				candidate = key < bestClose;
+			}
+			if (candidate)
+			{
+				bestClose = key;
 				int out = 0;
 				if (checkDestination(obj, c->getXIndex(), c->getYIndex(), destinationLayer, radius, centerInCell, &out, false) && out == 0 &&
 					validMovementPosition(mv, c))
 				{
 					closest = c;
-					bestClose = key;
 				}
 			}
 		}
-		if (approx && d2 > slack && d2 >= 100)
+		// TARGET RW 0x6FDB7F .. 0x6FDBD9: an approximate search skips a cell beyond the slack unless it is within 10 cells; with a corridor only after 2000 cells
+		if (approx && d2 > slack && (!hierarchical || cellCount > 2000) && d2 >= 100)
 		{
 			continue; // too far from the goal to be worth expanding
 		}
-		cellCount += examineNeighboringCells(c, goalCell, loco, isHuman, centerInCell, radius, startCellNdx, obj);
+		cellCount += examineNeighboringCells(c, goalCell, loco, isHuman, centerInCell, radius, startCellNdx, obj, hierarchical);
 	}
 	// failure or budget: a path to the closest valid cell, else nothing
 	if (closest)
