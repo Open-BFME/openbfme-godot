@@ -531,7 +531,8 @@ TEST_CASE("Shell: the A4 factory table holds MainMenu, Skirmish, LoadScreen, Opt
 		"TimeLine.apt", "QuitMenu.apt", // lane END-1: the score screen; lane END-2: the quit menu
 		"SaveLoad.apt", "LanLobby.apt", // lane MP-2: the replay page, the LAN lobby
 		"PlayerTribute.apt", // lane PLAY-1: the Palantir flag's screen
-		"CreateAHero.apt" }); // lane CAH-1: the Create-a-Hero builder
+		"CreateAHero.apt", // lane CAH-1: the Create-a-Hero builder
+		"OnlineShell.apt" }); // lane ONLINE-4: the online screens
 	CHECK(fx.factories.has("mainmenu.APT"));
 	fx.wm->init();
 	fx.shell->push("AptLevel0.apt");

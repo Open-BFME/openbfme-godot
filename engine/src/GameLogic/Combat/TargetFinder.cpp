@@ -85,6 +85,11 @@ void TargetFinder::collectInRadius(const Coord3D &center, float radius, std::vec
 
 Object *TargetFinder::findClosestEnemy(const Object &seeker, float range, unsigned flags, CommandSourceType source)
 {
+	return findClosestEnemyNear(seeker, *seeker.getPosition(), range, flags, source);
+}
+
+Object *TargetFinder::findClosestEnemyNear(const Object &seeker, const Coord3D &center, float range, unsigned flags, CommandSourceType source)
+{
 	const CombatNames::Kind &k = CombatNames::kinds();
 	const CombatNames::Status &st = CombatNames::statuses();
 	ObjectWeapons *weapons = seeker.getWeapons();
@@ -94,7 +99,7 @@ Object *TargetFinder::findClosestEnemy(const Object &seeker, float range, unsign
 	}
 	// the widest object may be `maxRadius` away at its centre and still have its edge in range: the box adds a margin
 	std::vector<Object *> near;
-	collectInRadius(*seeker.getPosition(), SimMath::addf32(range, 80.0f), near);
+	collectInRadius(center, SimMath::addf32(range, 80.0f), near);
 	Object *best = nullptr;
 	float bestD = 0.0f;
 	for (Object *o : near)
@@ -121,7 +126,7 @@ Object *TargetFinder::findClosestEnemy(const Object &seeker, float range, unsign
 		{
 			continue;
 		}
-		const float edge = SimMath::subf32(SimMath::length2d(SimMath::subf32(o->getPosition()->x, seeker.getPosition()->x), SimMath::subf32(o->getPosition()->y, seeker.getPosition()->y)),
+		const float edge = SimMath::subf32(SimMath::length2d(SimMath::subf32(o->getPosition()->x, center.x), SimMath::subf32(o->getPosition()->y, center.y)),
 			CombatQueries::boundingCircleRadius(*o));
 		if (edge > range)
 		{

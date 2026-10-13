@@ -214,6 +214,9 @@ public:
 	                          std::map<const ThingTemplate *, std::vector<ObjectGeometry::Shape>> *wallShapes = nullptr);
 	// RW 0x6D8EBE: the average of the truncated ground heights of the dry radar cells, all 128 x 128 (Radar + 0x1C)
 	float terrainAverageZ() const { return m_terrainAverageZ; }
+	// lane HUD-7: the world extent the radar shows (setupFromTerrain: RotWK's largest boundary)
+	float extentWidth() const;
+	float extentHeight() const;
 	// the view box's corners in window pixels (RW 0x44D25B + 0x44D47A) for a picture at (ulx, uly) of (width, height): TL, TR, BR, BL of the view
 	// at the terrain average height; false when a corner ray does not meet that plane
 	bool viewBoxCorners(float ulx, float uly, int width, int height, float out[8]) const;

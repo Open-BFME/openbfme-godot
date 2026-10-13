@@ -251,7 +251,14 @@ void LiveGame::waitIdle() const
 		return;
 	}
 	std::unique_lock<std::mutex> lock(m_pubMutex);
-	m_pubCv.wait(lock, [this] { return (m_work.empty() && !m_running) || m_workerError; });
+	if (!(m_work.empty() && !m_running) && !m_workerError)
+	{
+		// lane PATHPERF-1: a wait that blocks (the worker is running a frame) is counted with its wall time: the render thread must not do this every frame
+		const auto t0 = std::chrono::steady_clock::now();
+		m_pubCv.wait(lock, [this] { return (m_work.empty() && !m_running) || m_workerError; });
+		++m_blockingWaits;
+		m_blockingWaitMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+	}
 	if (m_workerError)
 	{
 		std::rethrow_exception(m_workerError);

@@ -1,0 +1,23 @@
+# OpenBFME lobby on Cloudflare (services/online/DEPLOY.md). Copy to wrangler.toml, fill the account id and names; secrets go in with
+# `wrangler secret put TICKET_KEYS` etc., never into this file.
+name = "openbfme-lobby"
+main = "src/worker.mjs"
+compatibility_date = "2026-10-01"
+# account_id = "<from the coordinator: the owner's Cloudflare account id>"
+
+[[durable_objects.bindings]]
+name = "LOBBY"
+class_name = "LobbyObject"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["LobbyObject"]
+
+[[r2_buckets]]
+binding = "LOGS"
+bucket_name = "openbfme-replays"
+
+[vars]
+LOG_STORE = "r2"   # or "durable-object" (no R2 binding needed: the Workers Free plan), unset = no log store
+RELAYS = "us-east=203.0.113.10:7350"
+PUBLIC_URL = "https://lobby.example.org"

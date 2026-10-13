@@ -59,6 +59,9 @@ const WeaponTemplateSet *FindWeaponTemplateSet(const std::vector<WeaponTemplateS
 // lane ANIM-1: RW 0xC16958, the model condition a WeaponSetFlags bit mirrors (Object::setWeaponSetFlag RW 0x691059); -1 for none or a bit beyond the table
 int WeaponSetModelCondition(int weaponSetBit);
 
+// lane PLAY-4 r1: stop S-3806, noted when a melee reach test (RW 0x6ED843) meets a SIEGE_TOWER target outside the footprint boxes
+const char *meleeReachStopLine();
+
 class ObjectWeapons
 {
 public:
@@ -104,6 +107,8 @@ public:
 	void releaseWeaponLock(WeaponLockType type);
 	// RW 0x6C80E5 (reloadAmmo on every weapon of the set, instantly when `now`)
 	void reloadAllAmmo(bool now);
+	// lane FLY-1: RW 0x6CEE4C (Weapon::reloadAmmo) on the current weapon (RW 0x68B58C(0)); nothing without one
+	void reloadCurrentWeaponAmmo();
 
 	// ---- choosing ------------------------------------------------------------------------------------------------------------------
 	// RotWK WeaponSet::chooseBestWeaponForTarget (RW 0x6C8A4E, lane DECOMP-1): sets the current slot; false when no weapon can be used against the victim

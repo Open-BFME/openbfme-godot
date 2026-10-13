@@ -100,6 +100,40 @@ bool ControlBar::pressButton(int slot, bool inPalantir)
 			m_ctx.ui.placeBuildAvailable(tt->getName(), obj->getID(), &b); // RW 0x940AA1, then the button as the GUI command (RW 0x94089B; see InGameUI.h)
 			return true;
 		}
+		case GUI_COMMAND_SET_STANCE:
+		case GUI_COMMAND_TOGGLE_STANCE:
+		{
+			// lane PLAY-4: a stance button sends MSG_CHANGE_STANCE (0x468) with the stance (RW 0x96F53C, InGameToggleStanceCommandButton's SetStance; the logic case
+			// RW 0x77BC59). SET_STANCE: its stance. TOGGLE_STANCE: INFERENCE (S-3803): retail opens the radial sub menu of the button's Stances (PalantirCommandUI::
+			// OnSubMenuLoaded RW 0x97004A, not ported) and the picked one is sent; here a press picks the stance after the current one in the button's list
+			int stance = -1;
+			if (b.m_command == GUI_COMMAND_SET_STANCE)
+			{
+				stance = b.m_stances.empty() ? -1 : b.m_stances.front();
+			}
+			else if (!b.m_stances.empty())
+			{
+				const int slot = stanceSlotOf(b, *obj);
+				stance = b.m_stances[(size_t)((slot + 1) % (int)b.m_stances.size())];
+			}
+			if (stance < 0)
+			{
+				++m_unported["STANCE (no stance)"];
+				return false;
+			}
+			ClientMessage &m = m_ctx.stream.append(MSG_CHANGE_STANCE);
+			m.appendInteger(stance);
+			return true;
+		}
+		case GUI_COMMAND_FOUNDATION_CONSTRUCT_CANCEL:
+			// lane PLAY-4: processCommandUI's case for command 2 (RW 0x9409A1, jump table RW 0x941AC3 / 0x941B63): the object's controlling player is the local
+			// one: MSG_DOZER_CANCEL_CONSTRUCT (0x41B; the logic case RW 0x77B1A0, BuildCommands)
+			if (obj->getControllingPlayer() != m_ctx.localPlayer())
+			{
+				return false;
+			}
+			m_ctx.stream.append(MSG_DOZER_CANCEL_CONSTRUCT);
+			return true;
 		case GUI_COMMAND_STOP:
 			m_ctx.stream.append(MSG_DO_STOP);
 			return true;
@@ -311,6 +345,25 @@ bool ControlBar::pressButton(int slot, bool inPalantir)
 bool ControlBar::cancelQueued(int slot, bool inPalantir)
 {
 	const ControlBarButton *cb = find(slot, inPalantir);
+	if (cb && cb->button && cb->button->m_command == GUI_COMMAND_REVIVE)
+	{
+		// lane HUD-7, TARGET FACTS (RotWK processCommandUI RW 0x940435: the jump table sends REVIVE (0x2E) to the UNIT_BUILD case RW 0x940B0E, which takes the
+		// button's record index (+ 0xC0) instead of a template; caveat S-001): the right press (RW 0x940C57) cancels only for a CANCELABLE button (+ 0x1F & 0x80)
+		// of an object the local player controls (RW 0x68B678) that has a production interface (RW 0x68C327); MSG_CANCEL_UNIT_CREATE (0x418) { bool byIndex
+		// (true), int the record index, bool all (false: RW 0x940CC6 leaves it clear for a REVIVE) }. RotWK does not ask whether the record is queued: the
+		// logic's cancel by index (RW 0x8A047B) finds nothing then
+		Object *obj = m_ctx.logic.findObjectByID(m_source);
+		if (!cb->button->hasOption(COMMAND_OPTION_CANCELABLE) || cb->reviveIndex < 0 || !obj || obj->getControllingPlayer() != m_ctx.localPlayer()
+			|| !obj->getProductionUpdate())
+		{
+			return false;
+		}
+		ClientMessage &m = m_ctx.stream.append(MSG_CANCEL_UNIT_CREATE);
+		m.appendBoolean(true);
+		m.appendInteger(cb->reviveIndex);
+		m.appendBoolean(false);
+		return true;
+	}
 	if (!cb || !cb->button || cb->button->m_command != GUI_COMMAND_UNIT_BUILD || cb->queued <= 0)
 	{
 		return false;
@@ -337,7 +390,7 @@ bool ControlBar::rightPressButton(int slot, bool inPalantir)
 	// to RW 0x9D28D4): _disabled (1) and _cantAfford (3) reach the control bar only for a CANCELABLE button (CommandButton + 0x1F & 0x80); every other state
 	// (_notReady included) sends GWM_RIGHT_UP (0x4009) to the window's owner, ControlBar's system callback, i.e. processCommandUI(button, 0)
 	const bool cancelable = b.hasOption(COMMAND_OPTION_CANCELABLE);
-	if ((cb->state == ButtonState::Restricted || cb->state == ButtonState::CantAfford) && !cancelable)
+	if ((cb->state == ButtonState::Restricted || cb->state == ButtonState::CantAfford || cb->state == ButtonState::Purchased) && !cancelable) // lane HUD-7: Purchased is a _cantAfford clip
 	{
 		return false;
 	}
@@ -387,6 +440,7 @@ bool ControlBar::rightPressButton(int slot, bool inPalantir)
 			return true;
 		}
 		case GUI_COMMAND_UNIT_BUILD:
+		case GUI_COMMAND_REVIVE: // lane HUD-7: the same case in RotWK (RW 0x940B0E)
 			return cancelable && cancelQueued(slot, inPalantir); // RW 0x940C59 .. 0x940C70 (the production cancel, lane HUD-6)
 		default:
 			return false; // INFERENCE / not ported here: the other right press cases (upgrade cancel RW 0x940FB3, ...) stay the left press handlers' (S-3460)

@@ -228,7 +228,7 @@ The live report's `unported_modules` (objects alive at the end of the run) of ei
 | 128 | BloodthirstyUpdate | Behavior | 11 | 5 | missing |
 | 129 | CastleUpgrade | Behavior | 11 | 24 | ported |
 | 130 | ClickReactionBehavior | Behavior | 11 | 6 | missing |
-| 131 | GiantBirdAIUpdate | Behavior | 11 | 5 | base AI |
+| 131 | GiantBirdAIUpdate | Behavior | 11 | 5 | ported (lane FLY-1) |
 | 132 | RunOffMapBehavior | Behavior | 11 | 11 | missing |
 | 133 | SiegeDeployHordeSpecialPower | Behavior | 11 | 7 | missing |
 | 134 | TerrainResourceClientBehavior | ClientBehavior | 11 | 8 | missing |

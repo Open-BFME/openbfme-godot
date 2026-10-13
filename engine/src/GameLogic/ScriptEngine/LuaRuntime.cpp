@@ -138,7 +138,7 @@ LuaRuntime::LuaRuntime(LuaReportSink &sink, const std::string &name)
 	m_sink.report(LUA_STOP_NUMERICS, "[" + m_name + " state] script arithmetic is rounded at x87 precision control 24 (setFPMode RW 0x440809): that the game runs at PC24 while scripts "
 		"execute is assumed, not traced. Unresolved against MSVCR71 (no executed golden values): the number text (%.16g is MSVCR71's two stage conversion, 17 digits then 16, each rounded "
 		"up by its guard digit alone, taken from the DLL's instructions in an x86 emulator: it agrees with them on 72,590 sampled doubles, e.g. 1000000000000002.5 prints "
-		"1000000000000003, and differs from the correctly rounded text; no running Windows game oracle, and the 80 bit power-of-ten table of $I10_OUTPUT is assumed to equal the exact expansion), strtod rounding of long inputs and subnormals, the CRT math library (sin, cos, pow, fmod, ...: the host's) "
+		"1000000000000003, and differs from the correctly rounded text; no running Windows game oracle, and the 80 bit power-of-ten table of $I10_OUTPUT is assumed to equal the exact expansion), strtod rounding of long inputs and subnormals, the CRT math library (every math function is the deterministic libm of lane DEP-2: glibc's x86-64 results, the same bits on Linux and Windows, x86-64 with or without FMA and AArch64 (macOS not run), not MSVCR71's x87 results) "
 		"and string.format's own conversions");
 }
 

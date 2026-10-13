@@ -83,9 +83,10 @@ FIXED = re.compile(r"\b(?:fix(?:es|ed)?|regression|crash(?:es|ed)?|no longer|sto
 INTEG_MERGE = re.compile(r"^Merge \S+ \([0-9a-f]{7,40}\) into \S+|^Merge .* into integ/\S+", re.I)
 SKIP_START = re.compile(r"^(?:batch\b|roadmap\b|docs?\b|merge\b)", re.I)
 MAX_ITEM = 140
-# the public main's top level (the sync recipe: the archive sha's tree without archive/, plus PRIVACY.md); anything else is refused
+# the public main's top level (the sync recipe: the archive sha's tree without archive/, plus PRIVACY.md); anything else is refused. ONLINE-2: services/
+# (the online relay and lobby service source) is public by the owner's decision of 2026-10-11; its secrets come from the environment at deploy time
 PUBLIC_TOP = frozenset({".gitattributes", ".gitignore", ".gitmodules", "CLAUDE.md", "LICENSE", "NOTICE", "README.md", "PRIVACY.md",
-                        "build.bat", "docs", "engine", "godot", "launcher", "pytest.ini", "run_tests.bat", "tools"})
+                        "build.bat", "docs", "engine", "godot", "launcher", "pytest.ini", "run_tests.bat", "services", "tools"})
 PRIVATE_DIRS = frozenset({"workspace", "archive", "reference", "references"})
 URL = re.compile(r"(?i)\b[a-z][a-z0-9+.-]*://\S*|\bwww\.\S+|\bmailto:\S+")
 MD_SPECIAL = re.compile(r"([\\`*_{}\[\]()!|~+\-.:#])")

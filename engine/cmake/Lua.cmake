@@ -41,6 +41,7 @@ list(APPEND OPENBFME_LUA_LIB_SOURCES ${OPENBFME_LUA_STAGE}/leanumeric.cpp)
 add_library(openbfme_lua STATIC ${OPENBFME_LUA_LIB_SOURCES})
 target_include_directories(openbfme_lua PRIVATE ${OPENBFME_LUA_STAGE})
 target_include_directories(openbfme_lua SYSTEM PUBLIC ${OPENBFME_LUA_STAGE}/include)
+target_link_libraries(openbfme_lua PUBLIC openbfme_detlibm) # lmathlib.c: the deterministic libm (lane DEP-2)
 set_target_properties(openbfme_lua PROPERTIES POSITION_INDEPENDENT_CODE ON)
 # the force-included configuration (C locale ctype, strcoll) applies to the C files only
 set(OPENBFME_LUA_CONFIG ${OPENBFME_LUA_STAGE}/lua_ea_config.h)

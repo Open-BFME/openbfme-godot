@@ -88,6 +88,8 @@ public:
 	GettingBuiltBehavior(Thing *thing, const GettingBuiltBehaviorModuleData *data);
 	UpdateSleepTime update() override;
 	void crc(StateHasher &hasher) const override;
+	// lane PLAY-4: RW 0x856434 (module slot 5): a wall piece starts building itself; a PENDING_CONSTRUCTION structure's production is disabled
+	void onObjectCreated() override;
 	const GettingBuiltBehaviorModuleData *data() const { return m_data; }
 
 	// ---- the interface (RW vtable 0xC56BF0) ----
@@ -101,7 +103,9 @@ public:
 	void stopConstruction();
 	// slot 6 RW 0x857448
 	bool isConstructing() const { return m_constructing; }
-	// slot 10 / 11 RW 0x85745F / 0x8227A4: module + 0x36 (a flag that skips the health and recent-damage gates; its setters were not found: stop S-650)
+	// slot 10 / 11 RW 0x85745F / 0x8227A4: module + 0x36, a flag that skips the health and recent-damage gates. Lane PLAY-4: its writer is RW 0x6AAF3B
+	// (Construction::onStructureCreated: a structure a plot, a castle or a dozer makes), and the control bar shows the under-construction context while it is
+	// set (RW 0x71EE8A / 0x71EF05); checkCompletion clears it
 	void setForceComplete(bool on) { m_forceComplete = on; }
 	bool forceComplete() const { return m_forceComplete; }
 	// slot 12 RW 0x85657E: calcCostToBuild(owner, no producer) * PercentOfBuildCostToRebuild<damage state>

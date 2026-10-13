@@ -41,6 +41,7 @@
 #include "GameLogic/Module/ConstructionModules.h"
 #include "GameLogic/WallSpan.h"
 #include "GameLogic/Module/DozerAIUpdate.h"
+#include "GameLogic/Module/GiantBirdAIUpdate.h"
 #include "GameLogic/Module/ActiveBody.h"
 #include "GameLogic/Module/ProductionExitModules.h"
 #include "GameLogic/Module/ProductionUpdate.h"
@@ -73,6 +74,7 @@ void LogicModules::registerAll(ModuleFactory &modules)
 	AIUpdateInterface::registerClasses(modules); // MOVE-1: every AI module class of the registry runs the AI (S-222)
 	EconomyModules::registerAll(modules); // lane ECON-1
 	DozerAIUpdate::registerClass(modules); // lane BUILD-1 (after the AI classes: it replaces the base AI's binding of DozerAIUpdate)
+	GiantBirdAIUpdate::registerClass(modules); // lane FLY-1 (after the AI classes: it replaces the base AI's binding of GiantBirdAIUpdate)
 	DozerAIUpdate::registerWorkerClass(modules); // lane BUILD-2: WorkerAIUpdate's dozer half (the workers GettingBuiltBehavior spawns)
 	ConstructionModules::registerAll(modules);
 	WallSpan::registerModules(modules); // lane BUILD-2: WallHubBehavior

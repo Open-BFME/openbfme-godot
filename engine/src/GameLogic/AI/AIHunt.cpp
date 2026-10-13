@@ -138,9 +138,13 @@ void AIHuntState::setTeamTarget(Team &team, Object *victim, GameLogic &logic)
 
 StateReturnType AIHuntState::onEnter()
 {
-	m_huntMachine = std::make_unique<AIStateMachine>(ai(), "AIAttackThenIdleStateMachine");
-	m_huntMachine->defineState(AI_ATTACK_OBJECT, std::make_unique<AIAttackState>(*m_huntMachine, false, true, false), AI_IDLE, AI_IDLE);
-	m_huntMachine->defineState(AI_IDLE, std::make_unique<HuntIdleState>(*m_huntMachine), AI_IDLE, AI_IDLE);
+	m_huntMachine = ai().makeAttackThenIdleMachine(AI_ATTACK_OBJECT); // the machine's vslot 0x24 (lane FLY-1: a giant bird's swoop-then-idle machine)
+	if (!m_huntMachine)
+	{
+		m_huntMachine = std::make_unique<AIStateMachine>(ai(), "AIAttackThenIdleStateMachine");
+		m_huntMachine->defineState(AI_ATTACK_OBJECT, std::make_unique<AIAttackState>(*m_huntMachine, false, true, false), AI_IDLE, AI_IDLE);
+		m_huntMachine->defineState(AI_IDLE, std::make_unique<HuntIdleState>(*m_huntMachine), AI_IDLE, AI_IDLE);
+	}
 	GameLogic &logic = owner().logic();
 	m_nextEnemyScanTime = logic.getFrame() + (unsigned)logic.random().getValue(0, (int)kEnemyScanRate, "AIStates.cpp", 0x3C92);
 	return m_huntMachine->initDefaultState();

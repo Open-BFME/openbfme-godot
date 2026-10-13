@@ -1,0 +1,12 @@
+# The lobby's daily data backup on bfme-pve (lane INFRA-2; services/online/DEPLOY.md "Backups and disaster recovery"). systemd --user unit, installed
+# by pve_ops.sh into ~/.config/systemd/user/. The admin key comes from backup_keys.sh's copy on this host.
+[Unit]
+Description=OpenBFME lobby backup (relay logs and replay records from play.openbfme.com)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 %h/openbfme-ops/lobby_backup.py pull --lobby https://play.openbfme.com --admin-key-file %h/openbfme-keys/online-secrets/admin.key --dest %h/openbfme-backups/lobby --keep-days 14
+StandardOutput=append:%h/openbfme-backups/backup.log
+StandardError=append:%h/openbfme-backups/backup.log

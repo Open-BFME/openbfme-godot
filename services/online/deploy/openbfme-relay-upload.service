@@ -1,0 +1,10 @@
+# Uploads the relay's finished command logs to the lobby (services/online/relay/upload_logs.py); started by openbfme-relay-upload.timer.
+# INFRA-2 r2: then posts its status (RELAY_ID: the relay's public a.b.c.d:port, in lobby.env) for bfme-pve's monitor.
+[Unit]
+Description=OpenBFME relay log upload
+
+[Service]
+Type=oneshot
+User=openbfme
+EnvironmentFile=/etc/openbfme/lobby.env
+ExecStart=/usr/bin/python3 /opt/openbfme/relay/upload_logs.py --log-dir /var/lib/openbfme/relay-logs --lobby ${PUBLIC_URL} --upload-key-file /etc/openbfme/upload.key --relay-id ${RELAY_ID} --status-file /run/openbfme/relay-status.json

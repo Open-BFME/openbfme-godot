@@ -44,6 +44,8 @@ public:
 	const std::vector<int> &waitingSlots() const { return m_waitingSlots; }
 	// lane MP-2: the current frame has every command but the disconnect path holds it (an announced disconnect frame waits for the router)
 	bool gatedByDisconnect() const { return m_gated; }
+	// lane ONLINE-3: the current frame waits for a resume (Network::requestPause)
+	bool paused() const { return m_paused; }
 	// frames that waited longer than the disconnect time (ZH NetworkDisconnectTime), with the slots they waited for
 	const std::vector<std::string> &longStalls() const { return m_longStalls; }
 	void setDisconnectTimeMs(std::uint64_t ms) { m_disconnectMs = ms; }
@@ -104,6 +106,7 @@ private:
 	std::uint64_t m_disconnectMs = 15000;
 	std::vector<int> m_waitingSlots;
 	bool m_gated = false;
+	bool m_paused = false; ///< lane ONLINE-3
 	std::vector<std::string> m_longStalls;
 	std::vector<std::string> m_errors;
 	std::function<void(GameLogic &)> m_afterFrame;

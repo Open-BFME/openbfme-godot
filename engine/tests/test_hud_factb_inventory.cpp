@@ -68,7 +68,7 @@ TEST_CASE("factb inventory: Isengard and Mordor reach every structure, unit, her
 			"TransitionDamageFX" };
 		const std::set<std::string> mordor = { "AimWeaponBehavior", "AnnounceBirthAndDeathBehavior", "AudioLoopUpgrade", "AutoPickUpUpdate", "BaseUpgrade",
 			"BloodthirstyUpdate", "BoredUpdate", "CitadelSlaughterHordeContain", "ClickReactionBehavior", "DoCommandUpgrade", "EvacuateDamage",
-			"FlingPassengerSpecialAbilityUpdate", "GeometryUpgrade", "GiantBirdAIUpdate (base AI)", "GrabPassengerSpecialPower", "HordeTransportContainDamage",
+			"FlingPassengerSpecialAbilityUpdate", "GeometryUpgrade", "GrabPassengerSpecialPower", "HordeTransportContainDamage",
 			"PickupStuffUpdate", "RunOffMapBehavior", "SiegeDeployHordeSpecialPower", "SlaughterHordeContain", "SlaveWatcherBehavior",
 			"SupplyCenterCreate", "SupplyCenterDockUpdate", "TransitionDamageFX" };
 		CHECK(classes == (std::string(f) == "FactionIsengard" ? isengard : mordor));

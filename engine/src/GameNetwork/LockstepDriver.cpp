@@ -68,6 +68,14 @@ bool LockstepDriver::acquire(UnsignedInt frame, FrameBatch &out)
 	if (m_network)
 	{
 		m_network->update(m_protocolFrame, m_local); // what arrived since the pump (no new local message: m_local holds only the protocol's own)
+		// lane ONLINE-3: a pause holds the frame on every peer alike; it is not a network stall (no stall sample, no long-stall report)
+		m_paused = m_network->pausedBefore(frame);
+		if (m_paused)
+		{
+			m_waitStart = 0;
+			m_stallReported = false;
+			return false;
+		}
 		// lane MP-2: and the disconnect path's frame gate (an announced disconnect frame waits for the next packet router, S-1121)
 		if (!m_network->allLoaded() || !m_network->isFrameReady(frame) || !m_network->allowedToContinue(frame))
 		{

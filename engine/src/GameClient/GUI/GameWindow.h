@@ -49,7 +49,10 @@ enum WindowMsgHandledType
 
 enum
 {
-	WIN_MAX_WINDOWS = 576,
+	// lane ONLINE-4: a runaway guard only (OpenBFME's, not retail). ZH declares WIN_MAX_WINDOWS = 576 but no code reads it: its windows come from the
+	// W3DGameWindow memory pool (MemoryInit.cpp: 700 at first, growing by 256), so there is no cap. RotWK's OnlineOpenPlay.apt places two MpGameSetup
+	// player matrices in its CreateComponents frame and its pages' own gadgets after them: more than 576 windows at once
+	WIN_MAX_WINDOWS = 4096,
 	CURSOR_MOVE_TOL_SQ = 4,
 	TOOLTIP_DELAY = 10,
 	WIN_TOOLTIP_LEN = 64

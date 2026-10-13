@@ -25,6 +25,11 @@ struct Shared
 };
 // nullptr when the install variables are unset (the caller prints the SKIP); a failure to load is a doctest failure at the caller
 Shared *shared();
+// lane MAPRESET-1: a newly loaded world of its own (about 12 s), as a fresh process has it; nullptr when the install variables are unset. (PLAY-4 r2's
+// private world for the fortress map tests is gone: every game now starts from a freshly loaded world, S-3808.)
+std::unique_ptr<Shared> freshWorld();
+// lane MAPRESET-1: the world of a game's second peer when a test runs both peers in one process (one live game per world, S-3808); loaded once
+Shared *peerWorld();
 // OPENBFME_REQUIRE_START also selects the world's stores (TheCommandStore, ...) for the scope: another shared world loaded since (hudtest::shared())
 // would otherwise stay current
 } // namespace starttest

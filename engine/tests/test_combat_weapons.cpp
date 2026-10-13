@@ -181,14 +181,17 @@ TEST_CASE("combat weapons: the range test - the reach of the weapon plus the bou
 	// (11.5 + 17.5) assumed
 	const float sphereGrowth = 2.0f * ((float)std::sqrt(164.0) - 10.0f);
 	CHECK(d.ow->attackDistance(*d.b) == doctest::Approx(11.5f + 17.5f + sphereGrowth));
-	// the range test itself flips between 25 and 26 units centre to centre
-	for (float gap = 10.0f; gap <= 25.0f; gap += 1.0f)
+	// the range test itself (lane PLAY-4 r1): a melee weapon against a unit with a locomotor is RW 0x6ED843's footprint test, not the edge distance (which flipped
+	// between 25 and 26): both 8-radius cylinders have 2-cell footprints (diameter 16 -> 20, RW 0x6EAF79; not centred: RW 0x6E8CE6 adds 0.5), the sword's 11.5
+	// is floor(11.5 * 0.1 + 0.1) = 1 cell, so the boxes overlap while the cells are at most 3 apart: the swordsman's cell is 30 (x 300), the dummy's
+	// floor(30.5 + gap / 10): in reach up to a gap below 35, out of reach from 35
+	for (float gap = 10.0f; gap <= 34.0f; gap += 1.0f)
 	{
 		Coord3D p{ 300.0f + gap, 300.0f, 0.0f };
 		d.b->setPosition(&p);
 		CHECK_MESSAGE(d.ow->isWithinAttackRange(*d.b), "gap " << gap);
 	}
-	for (float gap = 26.0f; gap <= 40.0f; gap += 2.0f)
+	for (float gap = 35.0f; gap <= 45.0f; gap += 2.0f)
 	{
 		Coord3D p{ 300.0f + gap, 300.0f, 0.0f };
 		d.b->setPosition(&p);

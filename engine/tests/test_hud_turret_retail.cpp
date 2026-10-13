@@ -53,10 +53,11 @@ Coord3D centre(Rig &r, float clear)
 	// lane MOVE-2: the spot must be on the map, at least 400 inside its edge (with clear = 900 the ring search on "map mp fall back 4p", 5500 x 2500, ended at
 	// y = 3150, off the map: the units moved outside the pathfinder's grid, every cell test clamped to its edge, and the members only followed their horde
 	// while the slot destination test RW 0x6F0889 was not ported); the clearance shrinks until such a spot exists
+	// lane PATHPERF-1: freeSpot's placement rules (clear ground, 400 more from creeps) can find no point at 900: the clearance shrinks then too
 	for (float c = clear; c >= 300.0f; c -= 100.0f)
 	{
-		const Coord3D p = r.freeSpot(mx * 0.5f, my * 0.5f, c);
-		if (p.x >= 400.0f && p.y >= 400.0f && p.x <= mx - 400.0f && p.y <= my - 400.0f)
+		Coord3D p{};
+		if (r.tryFreeSpot(mx * 0.5f, my * 0.5f, c, p) && p.x >= 400.0f && p.y >= 400.0f && p.x <= mx - 400.0f && p.y <= my - 400.0f)
 		{
 			return p;
 		}

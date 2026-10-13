@@ -102,8 +102,6 @@ bool isAttackable(const Object &obj)
 
 bool isAbleToAttack(const Object &obj)
 {
-	static const int sold = CombatNames::status("SOLD");
-	return !(obj.testStatus((unsigned)CombatNames::statuses().noAttack) || obj.testModelCondition(0x81) || obj.isUnderConstruction() ||
-		obj.testStatus((unsigned)sold));
+	return obj.isAbleToAttack(); // RW 0x691269 (lane DECOMP-3)
 }
 } // namespace CombatQueries

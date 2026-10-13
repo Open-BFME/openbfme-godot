@@ -20,6 +20,11 @@
 #include "lua_ea.h"
 #include "lualib.h"
 
+/* OpenBFME (lane DEP-2): every math function runs inside the lockstep simulation, so all of them are the deterministic libm
+** (Common/DeterministicLibm.h: glibc's results as x86-64 Linux computed them, the same bits on Linux and Windows, x86-64 with or without FMA and AArch64 (macOS not run), NaN and signed zero
+** results included), never the host's C library. */
+#include "Common/DeterministicLibm.h"
+
 
 #undef PI
 #define PI (3.14159265358979323846)
@@ -41,82 +46,82 @@
 
 
 static int math_abs (lua_State *L) {
-  lua_pushnumber(L, fabs(luaL_check_number(L, 1)));
+  lua_pushnumber(L, openbfme_detlibm_fabs(luaL_check_number(L, 1)));
   return 1;
 }
 
 static int math_sin (lua_State *L) {
-  lua_pushnumber(L, sin(TORAD(luaL_check_number(L, 1))));
+  lua_pushnumber(L, openbfme_detlibm_sin(TORAD(luaL_check_number(L, 1))));
   return 1;
 }
 
 static int math_cos (lua_State *L) {
-  lua_pushnumber(L, cos(TORAD(luaL_check_number(L, 1))));
+  lua_pushnumber(L, openbfme_detlibm_cos(TORAD(luaL_check_number(L, 1))));
   return 1;
 }
 
 static int math_tan (lua_State *L) {
-  lua_pushnumber(L, tan(TORAD(luaL_check_number(L, 1))));
+  lua_pushnumber(L, openbfme_detlibm_tan(TORAD(luaL_check_number(L, 1))));
   return 1;
 }
 
 static int math_asin (lua_State *L) {
-  lua_pushnumber(L, FROMRAD(asin(luaL_check_number(L, 1))));
+  lua_pushnumber(L, FROMRAD(openbfme_detlibm_asin(luaL_check_number(L, 1))));
   return 1;
 }
 
 static int math_acos (lua_State *L) {
-  lua_pushnumber(L, FROMRAD(acos(luaL_check_number(L, 1))));
+  lua_pushnumber(L, FROMRAD(openbfme_detlibm_acos(luaL_check_number(L, 1))));
   return 1;
 }
 
 static int math_atan (lua_State *L) {
-  lua_pushnumber(L, FROMRAD(atan(luaL_check_number(L, 1))));
+  lua_pushnumber(L, FROMRAD(openbfme_detlibm_atan(luaL_check_number(L, 1))));
   return 1;
 }
 
 static int math_atan2 (lua_State *L) {
-  lua_pushnumber(L, FROMRAD(atan2(luaL_check_number(L, 1), luaL_check_number(L, 2))));
+  lua_pushnumber(L, FROMRAD(openbfme_detlibm_atan2(luaL_check_number(L, 1), luaL_check_number(L, 2))));
   return 1;
 }
 
 static int math_ceil (lua_State *L) {
-  lua_pushnumber(L, ceil(luaL_check_number(L, 1)));
+  lua_pushnumber(L, openbfme_detlibm_ceil(luaL_check_number(L, 1)));
   return 1;
 }
 
 static int math_floor (lua_State *L) {
-  lua_pushnumber(L, floor(luaL_check_number(L, 1)));
+  lua_pushnumber(L, openbfme_detlibm_floor(luaL_check_number(L, 1)));
   return 1;
 }
 
 static int math_mod (lua_State *L) {
-  lua_pushnumber(L, fmod(luaL_check_number(L, 1), luaL_check_number(L, 2)));
+  lua_pushnumber(L, openbfme_detlibm_fmod(luaL_check_number(L, 1), luaL_check_number(L, 2)));
   return 1;
 }
 
 static int math_sqrt (lua_State *L) {
-  lua_pushnumber(L, sqrt(luaL_check_number(L, 1)));
+  lua_pushnumber(L, openbfme_detlibm_sqrt(luaL_check_number(L, 1)));
   return 1;
 }
 
 static int math_pow (lua_State *L) {
-  lua_pushnumber(L, pow(luaL_check_number(L, 1), luaL_check_number(L, 2)));
+  lua_pushnumber(L, openbfme_detlibm_pow(luaL_check_number(L, 1), luaL_check_number(L, 2)));
   return 1;
 }
 
 static int math_log (lua_State *L) {
-  lua_pushnumber(L, log(luaL_check_number(L, 1)));
+  lua_pushnumber(L, openbfme_detlibm_log(luaL_check_number(L, 1)));
   return 1;
 }
 
 static int math_log10 (lua_State *L) {
-  lua_pushnumber(L, log10(luaL_check_number(L, 1)));
+  lua_pushnumber(L, openbfme_detlibm_log10(luaL_check_number(L, 1)));
   return 1;
 }
 
 static int math_exp (lua_State *L) {
-  lua_pushnumber(L, exp(luaL_check_number(L, 1)));
+  lua_pushnumber(L, openbfme_detlibm_exp(luaL_check_number(L, 1)));
   return 1;
 }
 
@@ -132,13 +137,13 @@ static int math_rad (lua_State *L) {
 
 static int math_frexp (lua_State *L) {
   int e;
-  lua_pushnumber(L, frexp(luaL_check_number(L, 1), &e));
+  lua_pushnumber(L, openbfme_detlibm_frexp(luaL_check_number(L, 1), &e));
   lua_pushnumber(L, e);
   return 2;
 }
 
 static int math_ldexp (lua_State *L) {
-  lua_pushnumber(L, ldexp(luaL_check_number(L, 1), luaL_check_int(L, 2)));
+  lua_pushnumber(L, openbfme_detlibm_ldexp(luaL_check_number(L, 1), luaL_check_int(L, 2)));
   return 1;
 }
 

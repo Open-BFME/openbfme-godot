@@ -158,6 +158,10 @@ void ActiveBody::crc(StateHasher &h) const
 	h.addFloat(m_damageScalar);
 	h.addU32(m_lastDamageFrame);
 	h.addU32(m_lastDamager);
+	if (m_lastAttackerTaken)
+	{
+		h.addU32(0xB6u); // lane PLAY-4: hashed only when set
+	}
 	if (m_lastDamagerPlayerMask != 0)
 	{
 		h.addU32(m_lastDamagerPlayerMask ^ 0xCA391u); // lane CAMP-1: hashed only when set (a game without player damage keeps its hash)
@@ -175,8 +179,8 @@ void ActiveBody::crc(StateHasher &h) const
 // A WALK_ON_TOP_OF_WALL template (KindOf 60, byte 0x10F bit 0x10) runs a "Bookend" variant (BOOKENDING status 0x53, CAN_NOT_WALK_ON 0x4D) that is a wall's (S-342).
 // NOT PORTED (S-342): the geometry height (the geometry is the template's, an Object has none of its own), the production reset, the upgrade removal, the attribute modifiers, the damage FX
 // transitions of the tail (RW 0x8C2C64..0x8C2EF1) and the Bookend of walls.
-// INFERENCE: the model conditions DAMAGED / REALLYDAMAGED / RUBBLE: the call site in RW that tells the drawable was not found; ZH Drawable::reactToBodyDamageStateChange sets them
-// (clearing the other two); that is what the object's model condition mask gets here.
+// The model conditions DAMAGED / REALLYDAMAGED / RUBBLE: internalChangeHealth calls the visual update (vslot 0x94, RW 0x8C32A8) after the state changed, not while the
+// object is UNDER_CONSTRUCTION (unless dead); INFERENCE: what vslot 0x94 sets is ZH Drawable::reactToBodyDamageStateChange's (the state's flag, the other two cleared).
 void ActiveBody::updateDamageState(bool initial)
 {
 	const BodyDamageType old = m_curDamageState;
@@ -198,7 +202,13 @@ void ActiveBody::updateDamageState(bool initial)
 	{
 		set[(size_t)on >> 5] |= 1u << (on & 31);
 	}
-	obj.clearAndSetModelConditionFlags(clear, set);
+	// lane PLAY-4, RW 0x8C3290 .. 0x8C32A8 (internalChangeHealth after vslot 0x54; BFME2 decomp ActiveBody.cpp, ZH "we just don't have all the art states for
+	// that during buildup animation"): the visual change (vslot 0x94) is skipped while the object is UNDER_CONSTRUCTION, unless the health reached 0. A rising
+	// structure (1 hit point at the start, RW 0x85895D) keeps its construction states instead of REALLYDAMAGED / DAMAGED.
+	if (m_currentHealth <= 0.0f || !obj.testStatus((unsigned)CombatNames::statuses().underConstruction))
+	{
+		obj.clearAndSetModelConditionFlags(clear, set);
+	}
 	for (const std::unique_ptr<BehaviorModule> &m : obj.modules())
 	{
 		if (DamageModuleInterface *d = m->getDamage())
@@ -404,6 +414,7 @@ void ActiveBody::attemptDamage(DamageInfo &info)
 		m_lastDamageFrame = logic.getFrame();
 		m_lastDamager = info.m_input.m_sourceID;
 		m_lastDamagerPlayerMask = info.m_input.m_sourcePlayerMask; // lane CAMP-1
+		m_lastAttackerTaken = false; // lane PLAY-4: RW 0x8C42FA (+ 0xB6 cleared with the record)
 		// lane CAMP-1, RW 0x8C430F .. 0x8C4341: the last damage record's source object, when it exists, marks its controlling player as an attacker of the
 		// victim's controlling player (RW 0x6AAC05). INFERENCE: retail runs this after the record block whether or not the record changed this hit; here only
 		// when it did

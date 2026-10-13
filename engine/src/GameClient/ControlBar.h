@@ -41,7 +41,12 @@ enum class ButtonState
 	Restricted, ///< shown, cannot be used now (prerequisites, queue full, maxed out, factory disabled, not ported)
 	CantAfford,
 	NotReady,   ///< cooling down (not ported: special powers)
-	Active      ///< a toggle that is on
+	Active,     ///< a toggle that is on
+	// lane HUD-7: RotWK's availability 8 (RW 0x9431A6): an upgrade the player or object has or is researching (PLAYER_UPGRADE, OBJECT_UPGRADE, CASTLE_UPGRADE).
+	// updateContextCommand (RW 0x943C1F .. 0x943C46) disables the window and sets the status 0x80000000 and 0x01000000, which the command button clip shows as
+	// "_cantAfford" (RW 0x9D2C31: a disabled window with 0x01000000 -> state 3 of the table RW 0xC8CAF8). Unlike availability 0 it is never hidden by
+	// HIDE_WHILE_DISABLED (RW 0x943B39 tests 0 only), and a press reaches processCommandUI as for a _cantAfford clip
+	Purchased
 };
 
 struct ControlBarButton
@@ -109,11 +114,21 @@ public:
 	const std::string &displayNameLabel() const { return m_displayName; }
 	// a counter bumped whenever the visible buttons or their states change (the Palantir redraws on a change)
 	unsigned version() const { return m_version; }
+	// lane PLAY-4: the selection is in RotWK's under-construction context (evaluateContextUI RW 0x71EBDA -> switchToContext(6) -> populateUnderConstruction
+	// RW 0x944EFB): the command set is not shown, only the cancel construction button
+	bool underConstruction() const { return m_underConstruction; }
+	// RW 0x71EE67 .. 0x71EF1E: the object's GettingBuiltBehavior (behavior slot 0x80, RW 0x68C3E6) rebuilds it (+ 0x35, slot 14 RW 0x71C2EA) or has + 0x36 set
+	// (slot 11 RW 0x8227A4) while it is UNDER_CONSTRUCTION, or has + 0x36 set when it is not; or the object has the model condition BASE_BUILD (RW 0x46E918(0xDB))
+	static bool isUnderConstructionContext(const Object &obj);
+	// lane PLAY-4: StanceToButtonSlot (RW InGameToggleStanceCommandButton, BFME2 0x567807): the index of the object's StancesBehavior stance in the button's
+	// Stances list, -1 when it is not there (or the object has no stances)
+	static int stanceSlotOf(const CommandButton &b, Object &obj);
 
 	// ---- input ----
 	// ZH ControlBar::processCommandUI: the press of the button in `slot`. Returns false when the slot has no usable button (counted, reported through ui messages).
 	bool pressButton(int slot, bool inPalantir);
-	// right press on a build button: cancels one queued unit of that template (MSG_CANCEL_UNIT_CREATE by type)
+	// right press on a build button: cancels one queued unit of that template (MSG_CANCEL_UNIT_CREATE by type); lane HUD-7: on a REVIVE button the hero record by
+	// its index (RW 0x940C57)
 	bool cancelQueued(int slot, bool inPalantir);
 	// lane AUTOCAST-1: the right press of a command button: the clip's gate (RW 0x9D28D4: a _disabled / _cantAfford button only when CANCELABLE) and
 	// processCommandUI's right press (RW 0x940435 with its second argument 0): an AutoAbility (+ 0x10C) or CANCELABLE button of the source object sends
@@ -143,6 +158,9 @@ private:
 	void place(ControlBarButton cb, int rangeStart);
 	const ControlBarButton *find(int slot, bool inPalantir) const;
 	void emitStateKey();
+	// RW 0x944EFB: window 0 shows Command_CancelConstruction (RW 0xC80400) unless the template is DONT_USE_CANCEL_BUILD_BUTTON (+ 0x122 & 4); enabled for the
+	// object's controller
+	void populateUnderConstruction(Object &obj, bool mine);
 
 	HudContext &m_ctx;
 	ObjectID m_source = INVALID_ID;
@@ -157,4 +175,5 @@ private:
 	unsigned m_version = 0;
 	std::map<std::string, unsigned> m_unported;
 	unsigned m_autoToggles = 0;
+	bool m_underConstruction = false;
 };

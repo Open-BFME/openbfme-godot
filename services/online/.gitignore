@@ -1,0 +1,9 @@
+# secrets and deploy-local files never enter git (services/online/DEPLOY.md)
+*.keys
+keys.txt
+*.env
+*.secret
+*.key
+wrangler.toml
+.wrangler/
+node_modules/

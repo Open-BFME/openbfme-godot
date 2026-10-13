@@ -52,7 +52,10 @@ enum Seen : unsigned
 	SEEN_OPCYCLE = 1u << 22,
 	SEEN_REPULSED = 1u << 23, // lane MODULES-3: AIData RepulsedDistance
 	SEEN_BUILDERMOVE = 1u << 24, // lane BUILD-3: GameData BuilderMoveFromNewStructureDistance
-	SEEN_SELL = 1u << 25 // lane FACT-A: GameData SellPercentage
+	SEEN_SELL = 1u << 25, // lane FACT-A: GameData SellPercentage
+	SEEN_GUARD_CHASE = 1u << 26,  // lane PLAY-4: the guard machine's AIData durations
+	SEEN_GUARD_SCAN = 1u << 27,
+	SEEN_GUARD_RETURN = 1u << 28
 };
 
 struct BlockState
@@ -210,6 +213,12 @@ const FieldParse kAIDataFields[] = {
 	{ "EnableRepulsors", parseNoting<INI::parseBool>, SEEN_DATA(SEEN_REPULSORS), (int)offsetof(BlockState, values.enableRepulsors) },
 	// lane MODULES-3: RepulsedDistance (row RW 0x81CC40, parseReal RW 0x42ED00, AIData + 0x60): the safe path's distance beyond the vision range (RW 0x668E94)
 	{ "RepulsedDistance", parseNoting<INI::parseReal>, SEEN_DATA(SEEN_REPULSED), (int)offsetof(BlockState, values.repulsedDistance) },
+	// lane PLAY-4: the guard rows (RW 0xC1CC00 / 0xC1CC10 / 0xC1CC20 parseDurationUnsignedInt RW 0x73A429; RW 0xC1CC60 / 0xC1CC70 parseReal RW 0x42ED00)
+	{ "GuardChaseUnitsDuration", parseNoting<INI::parseDurationUnsignedInt>, SEEN_DATA(SEEN_GUARD_CHASE), (int)offsetof(BlockState, values.guardChaseUnitsFrames) },
+	{ "GuardEnemyScanRate", parseNoting<INI::parseDurationUnsignedInt>, SEEN_DATA(SEEN_GUARD_SCAN), (int)offsetof(BlockState, values.guardEnemyScanRate) },
+	{ "GuardEnemyReturnScanRate", parseNoting<INI::parseDurationUnsignedInt>, SEEN_DATA(SEEN_GUARD_RETURN), (int)offsetof(BlockState, values.guardEnemyReturnScanRate) },
+	{ "AlertRangeModifier", parseNoting<INI::parseReal>, 0, (int)offsetof(BlockState, values.alertRangeModifier) },
+	{ "AggressiveRangeModifier", parseNoting<INI::parseReal>, 0, (int)offsetof(BlockState, values.aggressiveRangeModifier) },
 	{ nullptr, noteUnapplied, nullptr, 0 }
 };
 const FieldParse kMultiplayerFields[] = {
@@ -375,6 +384,7 @@ bool finish(Load &l, unsigned blockBit, const char *blockName, const std::vector
 		out.buildRulesLoaded = true;
 	}
 	out.builderMoveLoaded = (l.state().seen & SEEN_BUILDERMOVE) != 0; // lane BUILD-3
+	out.guardRulesLoaded = (l.state().seen & (SEEN_GUARD_CHASE | SEEN_GUARD_SCAN | SEEN_GUARD_RETURN)) == (SEEN_GUARD_CHASE | SEEN_GUARD_SCAN | SEEN_GUARD_RETURN); // lane PLAY-4
 	out.sellPercentageLoaded = (l.state().seen & SEEN_SELL) != 0; // lane FACT-A
 	if ((l.state().seen & (SEEN_VSTRUCT | SEEN_VUNIT)) == (SEEN_VSTRUCT | SEEN_VUNIT))
 	{
@@ -460,6 +470,12 @@ void GameLogicSettings::crc(StateHasher &h) const
 {
 	h.addBool(enableRepulsors);
 	h.addFloat(repulsedDistance);
+	h.addBool(guardRulesLoaded); // lane PLAY-4
+	h.addU32(guardChaseUnitsFrames);
+	h.addU32(guardEnemyScanRate);
+	h.addU32(guardEnemyReturnScanRate);
+	h.addFloat(alertRangeModifier);
+	h.addFloat(aggressiveRangeModifier);
 	h.addBool(forceModelsToFollowTimeOfDay);
 	h.addBool(forceModelsToFollowWeather);
 	h.addBool(bodyThresholdsLoaded);

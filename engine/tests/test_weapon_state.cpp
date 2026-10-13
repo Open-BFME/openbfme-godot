@@ -579,7 +579,7 @@ struct RangeHostDouble : WeaponRangeHost
 	float garrisonRangeScale() override { return garrisonScale; }
 	float garrisonRangeCap(const RangeSubject &) override { return cap; }
 	float boxDistanceSquared(const RangeSubject &, const RangeSubject &) override { return 1234.0f; }
-	bool meleeReach(const RangeSubject &, const RangeSubject &) override { return reach; }
+	bool meleeReach(const RangeSubject &, const Coord3D &, const RangeSubject &) override { return reach; }
 	float meleeRunDownLimit() override { return runDown; }
 	bool victimFlag11A_40() override { return flag11A; }
 	int layerOf(bool victim) override { return victim ? vicLayer : srcLayer; }

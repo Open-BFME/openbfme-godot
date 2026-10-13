@@ -68,7 +68,9 @@ def test_the_profiler_exception_is_by_tokens():
 
 
 def test_the_game_tree_passes_and_release_gd_keeps_its_guard():
-    assert {p: f for p, f in net_guard.scan().items() if p.endswith(".gd")} == {}
+    # lane ONLINE-2: the online lobby client's HTTPRequest / HTTPClient are allowed finding by finding (net_guard.ALLOWED_GAME)
+    found = {p: [x for x in f if not net_guard.game_finding_allowed(p, x)] for p, f in net_guard.scan().items() if p.endswith(".gd")}
+    assert {p: f for p, f in found.items() if f} == {}
     release = (REPO / RELEASE).read_text()
     owner = release[release.index("func _show_in_file_manager(path: String) -> Error:"):]
     owner = owner[:owner.index("\nfunc ") if "\nfunc " in owner else len(owner)]
@@ -88,3 +90,31 @@ def test_ui3_the_launcher_has_one_file_manager_owner_too():
     assert calls("static var x := 1\n" + "func f():\n\tOS.shell_open(\"x\")\n", paths) == ["line 3: OS.shell_open"]
     found = net_guard.scan_launcher()
     assert [f for f in found.get(paths, []) if "shell_" in f] == [] and not [p for p, fs in found.items() for f in fs if "shell_" in f]
+
+
+def test_the_online_lobby_client_requests_only_the_named_lobby():
+    """lane ONLINE-2: godot/scripts/online_lobby.gd is the one game file allowed HTTP, and its one request goes to lobby_url"""
+    text = (REPO / net_guard.ONLINE_LOBBY).read_text()
+    assert net_guard.online_lobby_problems(text) == []
+    assert net_guard.online_lobby_problems(text + '\nfunc leak():\n\t_http.request("https://example.com/collect")\n') != []
+    swapped = text.replace("_http.request(lobby_url", "_http.request(other_url")
+    assert swapped != text and net_guard.online_lobby_problems(swapped) != []
+    # ONLINE-2 r2 (Sol r1): redirects must stay off (Godot would take the token to the redirect's origin)
+    following = text.replace("_http.max_redirects = 0", "_http.max_redirects = 8")
+    assert following != text and any("max_redirects" in p for p in net_guard.online_lobby_problems(following))
+    # a networking class elsewhere in the game is still a finding
+    assert not net_guard.game_finding_allowed("godot/scripts/game.gd", "line 1: HTTPRequest")
+    assert not net_guard.game_finding_allowed(net_guard.ONLINE_LOBBY, "line 1: TCPServer")
+
+
+def test_online4_the_online_screens_transport_requests_only_the_named_lobby():
+    """lane ONLINE-4: godot/scripts/online_http.gd (the online screens' HTTP) is allowed HTTP finding by finding; its one request goes to lobby_url
+    (the lobby client hands it a path), with no redirects"""
+    path = "godot/scripts/online_http.gd"
+    assert path in net_guard.ONLINE_LOBBY_FILES
+    text = (REPO / path).read_text()
+    assert net_guard.online_lobby_problems(text) == []
+    assert net_guard.online_lobby_problems(text.replace("_http.request(lobby_url", "_http.request(q.url")) != []
+    assert net_guard.online_lobby_problems(text.replace("max_redirects = 0", "max_redirects = 8")) != []
+    assert net_guard.game_finding_allowed(path, "line 3: HTTPRequest")
+    assert not net_guard.game_finding_allowed(path, "line 3: TCPServer")

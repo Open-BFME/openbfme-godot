@@ -106,6 +106,18 @@ public:
 	// the last frame the body took a damaging hit and from whom (RW + 0xAC, the last damage record); 0xFFFFFFFF / INVALID_ID when never
 	UnsignedInt lastDamageFrame() const { return m_lastDamageFrame; }
 	ObjectID lastDamager() const { return m_lastDamager; }
+	// lane PLAY-4: body interface vslot 0x4C (RW 0x8C3A33): the last damage record's source once per record (+ 0xB6 set by the first call, cleared by the
+	// next damaging hit, RW 0x8C42FA); INVALID_ID when already taken (ZH getClearableLastAttacker + clearLastAttacker in one call). The guard machine's
+	// "attacked me" condition (RW 0x949994) asks it
+	ObjectID takeLastAttacker()
+	{
+		if (m_lastAttackerTaken)
+		{
+			return INVALID_ID;
+		}
+		m_lastAttackerTaken = true;
+		return m_lastDamager;
+	}
 	// lane CAMP-1: the last damage record's source player mask (RW body vslot 0x40 record + 0xC, DamageInfo::m_sourcePlayerMask; TEAM_ATTACKED_BY_PLAYER RW 0x7E7361)
 	std::uint32_t lastDamagerPlayerMask() const { return m_lastDamagerPlayerMask; }
 	// lane COMBAT-2: the damage state the body last applied (RW + 0x30, written by setCorrectDamageState RW 0x8C2A5D)
@@ -139,6 +151,7 @@ private:
 	DamageInfo *m_currentInfo = nullptr;
 	UnsignedInt m_lastDamageFrame = 0xFFFFFFFFu; // RW + 0xAC (RW 0x8C3841: -1 = never; BUILD-2)
 	ObjectID m_lastDamager = INVALID_ID;
+	bool m_lastAttackerTaken = false; // RW + 0xB6 of the body interface (lane PLAY-4)
 	std::uint32_t m_lastDamagerPlayerMask = 0; // lane CAMP-1: the record's + 0xC
 	mutable bool m_armorReported = false;
 	// lane FX-2: the damage FX throttle of RW 0x8C2F02 (+0x3C the last DamageFX type played, +0x38 the frame until which that type stays throttled). Only the

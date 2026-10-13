@@ -26,6 +26,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <stdexcept>
 
 namespace godot
 {
@@ -211,7 +212,15 @@ Dictionary PathfindView::build(const Ref<RetailFileSystem> &fsRef, const String 
 	{
 		t0 = nowMs();
 		const auto worldContext = I.world->enterContext(); // this world's stores through the object build below
-		const RetailObjectWorld::MapIniResult mi = I.world->applyMapIni(mapDir);
+		RetailObjectWorld::MapIniResult mi;
+		try
+		{
+			mi = I.world->applyMapIni(mapDir);
+		}
+		catch (const std::logic_error &e) // lane MAPRESET-1: a game of this world is still live
+		{
+			return fail(e.what());
+		}
 		for (const std::string &e : mi.errors) errors.push_back(toGodot(e));
 		MapObjectOptions mo;
 		if (!MapObjectGameData::load(*rfs.archive_fs(), mo, &error))

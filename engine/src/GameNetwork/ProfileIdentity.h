@@ -6,7 +6,8 @@
 //
 // The identity is a canonical text, one fact per line, and its MD5:
 //   openbfme-profile 1
-//   profile enhanced
+//   profile enhanced                        (lane UBER-1: "profile uber" for the Uber performance mode, Common/SimulationProfile.h: an Uber peer never
+//                                            matches a Faithful one, so the lobby refuses the mix and a replay of the other profile does not play)
 //   engine <the engine compatibility id: SHA-256 of the canonical manifest of the simulation sources, data and configuration (cmake/EngineId.cmake), or the
 //           release pipeline's -DOPENBFME_ENGINE_ID; the Git commit is provenance only (ProfileIdentity::gitProvenance), never part of the identity>
 //   features <the owned format and rule versions: net wire, GameMessage encoding, replay, lobby, state hash; plus any extra feature names, sorted>
@@ -23,6 +24,7 @@
 
 #include "Common/RandomValue.h"
 #include "Common/RetailArchivePolicy.h"
+#include "Common/SimulationProfile.h"
 
 #include <string>
 #include <vector>
@@ -33,7 +35,11 @@ struct ProfileIdentity
 	std::string digest; ///< MD5 of text, lower-case hex
 
 	// `extraFeatures`: names of enabled engine features beyond the built-in list (a test uses one to make two builds differ)
-	static ProfileIdentity compute(const std::vector<MountedArchive> &archives, RandomAlgorithm rng, const std::vector<std::string> &extraFeatures = {});
+	// `profile`: the simulation profile the peer runs (lane UBER-1; Faithful writes exactly the identity text of the builds before UBER-1)
+	static ProfileIdentity compute(const std::vector<MountedArchive> &archives, RandomAlgorithm rng, const std::vector<std::string> &extraFeatures = {},
+		SimulationProfile profile = SimulationProfile::Faithful);
+	// lane UBER-1: the simulation profile the text names ("profile uber" -> Uber; "profile enhanced" -> Faithful)
+	SimulationProfile simulationProfile() const;
 	static ProfileIdentity fromText(const std::string &text);
 	bool operator==(const ProfileIdentity &o) const { return digest == o.digest && text == o.text; }
 	bool operator!=(const ProfileIdentity &o) const { return !(*this == o); }

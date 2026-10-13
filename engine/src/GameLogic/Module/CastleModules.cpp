@@ -617,7 +617,8 @@ Object *CastleBehavior::createOwnedObject(const CastleTemplateEntry &entry, Play
 	}
 	if (mine && obj->isKindOfName("STRUCTURE"))
 	{
-		Construction::onStructureCreated(owner, castle, *obj);
+		// lane PLAY-4: RW 0x7987EE makes no Player::onStructureCreated call (RW 0x6AAF3B is not among its calls): since that call sets GettingBuiltBehavior's
+		// + 0x36 and spawns the worker of a plot or castle builder, the castle's complete members do not get it here (they spawned workers that faded at once)
 		Construction::onStructureConstructionComplete(owner, castle, *obj, false);
 	}
 	if (!instant)

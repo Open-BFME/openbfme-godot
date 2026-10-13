@@ -865,9 +865,11 @@ func _game_world(fs: RefCounted) -> void:
 	# BUILD-1: the first logic frame (run by the load) unpacks the map's castle centres: 8 more objects (their keeps and plots from the base layouts of Bases.big);
 	# lane CASTLE-1: MordorFortress_Celduin_1's PreBuiltList (MordorWallCatapultExpansion -2, four times) pre-builds 4 more on its pads (RW 0x79C265 -> 0x79A5EC)
 	# lane MOD-4: the map's spawners (SpawnBehavior) make their first 2 spawns in that frame (one model draw each)
-	_check(l.objects == o.created + o.contained + 14 and l.objects == 1850, "%d live objects" % l.objects)
+	# lane PLAY-4: each of those 4 pre-built pieces goes through the plot construction RW 0x858701, whose Player::onStructureCreated (RW 0x858A50 -> 0x6AAF3B)
+	# has the GettingBuiltBehavior spawn its worker (slot 1 RW 0x857A19, a PlayableSide owner): 4 more objects (one model draw each); they fade away later
+	_check(l.objects == o.created + o.contained + 18 and l.objects == 1854, "%d live objects" % l.objects)
 	_check(d.live == l.objects and d.created == l.objects, "every live object has a drawable (%d)" % d.live)
-	_check(d.model_draws == 3363 and d.animated_model_draws > 100, "%d model draws, %d animated" % [d.model_draws, d.animated_model_draws])
+	_check(d.model_draws == 3367 and d.animated_model_draws > 100, "%d model draws, %d animated" % [d.model_draws, d.animated_model_draws])
 	_check(rep.errors.is_empty(), "no error in the load report %s" % [rep.errors])
 	_check(world.get_frame() == 1 and world.get_object_count() == l.objects, "the first logic frame ran at load (frame %d, %d objects)" % [world.get_frame(), world.get_object_count()])
 	var ids := {}

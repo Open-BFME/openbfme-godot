@@ -155,6 +155,13 @@ public:
 	void setAttitude(int attitude);
 	// lane SCRIPT-3: AI command 0x12 (RW 0x6AF150): aiDoCommand's gate, then privateHunt RW 0x6644E6 (AIHunt.cpp); false when nothing changed
 	bool aiHunt(CommandSourceType source);
+	// lane PLAY-4: RW 0x662A21 (AIGuard.cpp): guard this spot in `mode` (GuardMode: the stances' 0 battle / 1 hold ground): the guard mode (+ 0x4C), the target
+	// type LOCATION unless AREA (+ 0x54), the location and angle (+ 0x58 / + 0x1A0), the machine to AI_GUARD (16)
+	void guardHere(int mode);
+	int guardMode() const { return m_guardMode; }                      // AI vslot 125
+	int guardTargetType() const { return m_guardTargetType; }          // AI vslot 123
+	const Coord3D &guardLocation() const { return m_guardLocation; }   // AI vslot 118
+	unsigned autoAcquireFlags() const { return m_combat.autoAcquire; }
 	// lane SCRIPT-3: AI commands 6 / 7 / 0x32 / 0x33 (RW 0x770FA8 / 0x771072 / 0x77100D / 0x7710D7): the waypoint path states from `waypointId`
 	// (AIWaypointPath.cpp); false when nothing changed
 	bool aiFollowWaypointPath(int waypointId, CommandSourceType source, bool asTeam, bool exact);
@@ -171,6 +178,10 @@ public:
 	// the attack machine the AIAttackState builds for this module (the horde object builds the horde machine)
 	virtual AttackMachineKind attackMachineKind() const { return ATTACK_MACHINE_NORMAL; }
 	virtual std::unique_ptr<AIStateMachine> makeHordeAttackMachine(AIAttackState *) { return nullptr; }
+	// lane FLY-1: the AI machine's vslot 0x24, the attack-then-idle machine of the hunt state (the base RW 0x74D3F4 -> RW 0x74D326, which AIHuntState builds when
+	// this returns null; GiantBirdAIUpdate's machine RW 0x769C31 -> RW 0x769335 AIAttackSwoopThenIdleStateMachine). `attackStateId` is the id the caller sets for
+	// the attack
+	virtual std::unique_ptr<AIStateMachine> makeAttackThenIdleMachine(unsigned attackStateId) { (void)attackStateId; return nullptr; }
 
 	// ---- lane GARRISON-2: the turret (GameLogic/AI/TurretAI.h; RW AI + 0x20C, one slot) ----
 	TurretAI *turret() const { return m_turret.get(); }
@@ -326,9 +337,13 @@ public:
 		{
 			return false;
 		}
+		stancesOnCommand(source);
 		commandAccepted(source, command, target);
 		return true;
 	}
+	// lane PLAY-4: RW 0x66A923 .. 0x66A948 (aiDoCommand after its gate): an order that is not the AI's own (source != CMD_FROM_AI) tells the object's
+	// StancesBehavior that a move starts (RW 0x862275: HoldGround -> HoldGroundMoving, Porcupine -> Battle). AIGuard.cpp
+	void stancesOnCommand(CommandSourceType source);
 	// lane MOVE-2: the command number of a move variant whose RotWK number is not identified (the group move with a final angle, a queued waypoint): the gate
 	// treats it as an unknown command (-1), HordeAIUpdate's member hand-off (RW 0x89E169) as a move (INFERENCE, S-1501)
 	static const int kCommandUnidentifiedMove = -2;
@@ -365,6 +380,19 @@ public:
 	// (crc() above)
 
 protected:
+	// lane FLY-1: a subclass with its own aiDoCommand (GiantBirdAIUpdate RW 0x76D995) takes the commands it handles once the gate (RW 0x667174) passed; true:
+	// handled, the base body does not run. `type` is the AICommandType number (0 move, 6 / 7 / 0x32 / 0x33 waypoint paths, 0xB / 0xC attack (force) object,
+	// 0xE attack position, 0xF attack move; kCommandUnidentifiedMove the move with a final angle)
+	struct RoutedCommand
+	{
+		int type = -1;
+		Coord3D position{ 0.0f, 0.0f, 0.0f };
+		Object *target = nullptr;
+		CommandSourceType source = CMD_FROM_AI;
+		int waypointId = -1;
+	};
+	virtual bool routeCommand(const RoutedCommand &command) { (void)command; return false; }
+	void setLastCommandSource(CommandSourceType s) { m_lastCommandSource = s; }
 	// the hook HordeAIUpdate adds its per-frame work to (B1 HordeAIUpdate_update.cpp:261-293, RW 0x89E2D0)
 	virtual void updateBeforeBase() {}
 	virtual const char *machineName() const { return "AIUpdateInterfaceMachine"; }
@@ -376,7 +404,6 @@ private:
 	void privateMoveToPosition(const Coord3D &pos, CommandSourceType source);
 	void goalPositionClipped(const Coord3D &pos, CommandSourceType source, Coord3D &out) const;
 	void doMovementCompleteBookkeeping();
-	void setLastCommandSource(CommandSourceType s) { m_lastCommandSource = s; }
 	void readCombatSettings(const ModuleData *data);
 
 	AIWorld *m_world = nullptr;
@@ -404,6 +431,10 @@ private:
 	bool m_attackMoveActive = false;
 	Coord3D m_attackMoveGoal{ 0.0f, 0.0f, 0.0f };
 	CombatSettings m_combat;
+	int m_guardMode = 0;                              ///< RW AI + 0x4C (lane PLAY-4)
+	int m_guardTargetType = 0;                        ///< RW AI + 0x54
+	Coord3D m_guardLocation{ 0.0f, 0.0f, 0.0f };      ///< RW AI + 0x58
+	float m_guardAngle = 0.0f;                        ///< RW AI + 0x1A0
 	unsigned m_nextMoodCheck = 0;
 	int m_attitude = 0; ///< lane SCRIPT-3: RW + 0x218
 	std::map<std::string, unsigned> m_unportedCommands;

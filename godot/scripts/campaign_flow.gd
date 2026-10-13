@@ -115,6 +115,25 @@ func begin_mission() -> void:
 	print("CAMPAIGN mission %d: %s (%s)" % [mission, m.name, m.map])
 	active = true
 	begun += 1
+	if not await show_load_screen(m):
+		return
+	var rep: Dictionary = world.start_campaign_mission({"campaign": campaign, "mission": mission, "difficulty": difficulty,
+		"progress": Callable(game, "_on_load_progress"), "test_hooks": hooks, "record_memory": true}) # lane SAVE-2: recorded so it can be saved
+	game._report = rep
+	print("CAMPAIGN load ok=%s errors=%s" % [rep.ok, str(rep.get("errors", []).slice(0, 5))])
+	if not rep.ok:
+		game._fail("start_campaign_mission failed")
+		return
+	# lane CAMP-2: the mission's IntroMovie plays after its loading screen (LinearCampaignExpansion1.ini: "A special movie which is played when the
+	# campaign starts, BEFORE the first map is loaded (all the other movies are played AFTER the loading screen)"; CAMP-1H played it before the load)
+	if movies and not String(m.intro_movie).is_empty():
+		game._audio.stop_music(false) # INFERENCE: the loading screen's music ends for the movie (its own <file>_Music event plays); at once, not under it (PLAY-3 r2)
+	await play_movie(String(m.intro_movie))
+	enter_mission(rep)
+
+
+## the mission's loading screen (lane SAVE-2: also a loaded save's): false when it could not be shown (the run failed)
+func show_load_screen(m: Dictionary) -> bool:
 	_ended_at = -1
 	_win_step = 0
 	game._state = game.State.LOADING
@@ -126,27 +145,21 @@ func begin_mission() -> void:
 	var choice: Dictionary = game._shell.choose_load_screen({"game_mode": 0, "picture": String(m.load_screen_image)})
 	if not String(choice.get("error", "")).is_empty():
 		game._fail("CAMPAIGN load screen: " + String(choice.error))
-		return
+		return false
 	var shown: Dictionary = game._shell.show_still_load_screen(String(choice.picture))
 	print("CAMPAIGN load screen: %s %s %s" % [choice.kind, choice.picture, "" if shown.ok else str(shown.error)])
 	if not shown.ok:
 		game._fail("CAMPAIGN load screen: " + str(shown.error))
-		return
+		return false
 	for i in 4:
 		await get_tree().process_frame
 	game._shell.auto_process = false
-	var rep: Dictionary = world.start_campaign_mission({"campaign": campaign, "mission": mission, "difficulty": difficulty,
-		"progress": Callable(game, "_on_load_progress"), "test_hooks": hooks})
-	game._report = rep
-	print("CAMPAIGN load ok=%s errors=%s" % [rep.ok, str(rep.get("errors", []).slice(0, 5))])
-	if not rep.ok:
-		game._fail("start_campaign_mission failed")
-		return
-	# lane CAMP-2: the mission's IntroMovie plays after its loading screen (LinearCampaignExpansion1.ini: "A special movie which is played when the
-	# campaign starts, BEFORE the first map is loaded (all the other movies are played AFTER the loading screen)"; CAMP-1H played it before the load)
-	if movies and not String(m.intro_movie).is_empty():
-		game._audio.stop_music(false) # INFERENCE: the loading screen's music ends for the movie (its own <file>_Music event plays); at once, not under it (PLAY-3 r2)
-	await play_movie(String(m.intro_movie))
+	return true
+
+
+## the loaded mission handed to the player (lane SAVE-2: also a loaded save's mission, after its catch-up)
+func enter_mission(rep: Dictionary) -> void:
+	active = true
 	game._game_kind = "campaign %s %d" % [campaign, mission] # lane CAMP-2
 	game._enter_game(rep)
 	_cine = load("res://scripts/campaign_cine.gd").new()

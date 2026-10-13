@@ -178,7 +178,10 @@ TEST_CASE("end2 retail: the quit menu's surrender (MSG_SELF_DESTRUCT false) and 
 	const NewGameMessage message = humanVersus(*s, "FactionMen", "FactionMordor", 77u);
 	Peer peers[2];
 	peers[0].load(*s, message, 0);
-	peers[1].load(*s, message, 1);
+	starttest::Shared *peerWorld = starttest::peerWorld(); // lane MAPRESET-1: the second peer has its own world (one live game per world, S-3808)
+	REQUIRE(peerWorld);
+	REQUIRE_MESSAGE(peerWorld->world, peerWorld->error);
+	peers[1].load(*peerWorld, message, 1);
 	Player *mordor[2] = { playerAtStart(peers[0].logic(), 1), playerAtStart(peers[1].logic(), 1) };
 	REQUIRE(mordor[0]);
 	REQUIRE(mordor[1]);
@@ -221,6 +224,8 @@ TEST_CASE("end2 retail: the quit menu's surrender (MSG_SELF_DESTRUCT false) and 
 	peers[0].step(now += 200.0);
 	CHECK(v.selfDestructs() == 1);
 	// Exit with the transfer flag and no living ally: the sender is killed (RW 0x77CADD)
+	peers[0].game.reset(); // lane MAPRESET-1: the peers' games end before the third starts on their world (one live game per world, S-3808)
+	peers[1].game.reset();
 	Peer third;
 	third.load(*s, humanVersus(*s, "FactionElves", "FactionMordor", 9u), 0);
 	third.step(200.0);

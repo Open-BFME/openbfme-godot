@@ -174,6 +174,17 @@ properly reported and registered, not whether it exists.
   8. a live game with a retail client.
 - **Before CRC parity:** frame-counted recordings and memory traces of retail.
 
+## Commit gate: tolerance assertions
+
+`tools/precommit.py` flags tolerant assertions among the lines a commit
+**adds** to C++ tests (`engine/tests/`) and GDScript tests (`godot/tests/`):
+`CHECK_GE/LE/GT/LT` (and `REQUIRE_`/`WARN_`), `CHECK`/`REQUIRE`/`assert`
+comparing with `>=`, `<=`, `>`, `<` or `!= 0`, and `doctest::Approx`. Assert
+the exact value instead. If a bound is really right (a retail-derived limit, a
+timing measurement), put `// tolerance: <reason>` (GDScript `# tolerance:
+<reason>`) with a non-empty reason on the same line or the line above, so the
+reviewer sees why. Lines already in the tree are never flagged.
+
 ## Roles
 
 Opus plans and orchestrates, Sonnet implements, Sol 6.1 reviews every lane

@@ -4,6 +4,7 @@
 
 #pragma once
 
+#include "Common/SimulationProfile.h"
 #include "GameLogic/GameLogic.h"
 #include "GameLogic/GameLogicDispatch.h"
 
@@ -16,6 +17,10 @@ struct FrameBatch
 {
 	UnsignedInt frame = 0;
 	std::vector<GameMessage> commands;
+	// lane SAVE-2: the batch runs under this execution profile from now on (a replayed profile switch, UBER-1): set on the simulation owner as the batch is
+	// installed, after the previous frame's completion was captured (the hash of `frame` describes the state before the switch, as in the recorded game)
+	bool switchProfile = false;
+	SimulationProfile profile = SimulationProfile::Faithful;
 };
 
 // What the simulation owner captured of the completed state after batch N ran (the logic's frame is then N + 1), published with that frame's snapshot and

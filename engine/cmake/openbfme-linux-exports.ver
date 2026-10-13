@@ -1,0 +1,9 @@
+/* Lane DEP-2: the dynamic symbols the Linux GDExtension exports. Godot looks up only the entry symbol (godot/openbfme.gdextension); everything
+   else - our classes, template instantiations, the statically linked libstdc++ / libgcc - stays local, so the dynamic linker can never bind
+   one of our references to another library's copy (or theirs to ours). */
+{
+  global:
+    openbfme_library_init;
+  local:
+    *;
+};

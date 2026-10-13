@@ -129,7 +129,9 @@ TEST_CASE("construction: a plot's MSG_FOUNDATION_CONSTRUCT pays at placement, th
 	CHECK(f.alice()->getMoney()->countMoney() == money - 300);
 	CHECK(building->getBuildCostPaid() == 300.0f);
 	CHECK(building->isUnderConstruction());
-	CHECK(building->getConstructionPercent() == 0.0f);
+	// lane PLAY-4: Player::onStructureCreated (RW 0x6AAF3B) sets the structure's + 0x36 and starts the self-build at the placement (slot 1, force): its
+	// percent is -1 (RW 0x8567A7) until the first heal
+	CHECK(building->getConstructionPercent() == -1.0f);
 	CHECK(building->getProducerID() == f.plot->getID());
 	// the pad's BuildVariation 2 and the angle of NEED_BASE_FOUNDATION (the plot's orientation + PlacementViewAngle 0)
 	CHECK(building->testModelCondition(Construction::modelConditionIndex("BUILD_VARIATION_TWO")));
@@ -141,17 +143,18 @@ TEST_CASE("construction: a plot's MSG_FOUNDATION_CONSTRUCT pays at placement, th
 	CHECK(f.alice()->commandPointLimit() == limit0 + 50); // retail counts at birth for a plot's building (the status is set after newObject): see S-302
 	GettingBuiltBehavior *gb = dynamic_cast<GettingBuiltBehavior *>(building->findModule("GettingBuiltBehavior"));
 	REQUIRE(gb != nullptr);
-	// lane BUILD-2: the foundation's body starts at 1.0 health (RW 0x85895D) and the module has not started yet (it builds itself on its first update: no WorkerName)
+	// lane BUILD-2: the foundation's body starts at 1.0 health (RW 0x85895D); lane PLAY-4: the self-build already runs (no WorkerName: RW 0x857A19 -> slot 4)
 	CHECK(building->getBodyModule()->getHealth() == 1.0f);
-	CHECK(gb->buildFrames() == 0u);
-	CHECK_FALSE(gb->isConstructing());
+	CHECK(gb->buildFrames() == 100u);
+	CHECK(gb->isConstructing());
+	CHECK(gb->forceComplete());
 	// a second order on the same plot is refused and costs nothing
 	f.dispatch.dispatch(f.construct("Hall", *f.plot->getPosition()));
 	CHECK(f.commands.stats().foundations == 1);
 	CHECK(f.commands.refusals().size() == 1);
 	CHECK(f.alice()->getMoney()->countMoney() == money - 300);
-	// the rise is the body's health: frame 1 starts the self-build (calcTimeToBuild = 100 frames, the percent = 1 / 1000 * 100), the update sleeps 5 frames, then every
-	// frame heals 1000 / 100 = 10 and the percent follows the health; the 100th heal reaches 1000 health = 100 % and completes it (frame 6 + 99 = 105)
+	// the rise is the body's health: the self-build started at the placement (calcTimeToBuild = 100 frames), every frame heals 1000 / 100 = 10 and the percent
+	// follows the health; the 100th heal reaches 1000 health = 100 % and completes it (lane PLAY-4: frame 100; it was frame 6 + 99 = 105 when the first update started it)
 	int frames = 0, heals = 0;
 	float lastHealth = building->getBodyModule()->getHealth();
 	while (building->isUnderConstruction() && frames < 300)
@@ -173,12 +176,12 @@ TEST_CASE("construction: a plot's MSG_FOUNDATION_CONSTRUCT pays at placement, th
 		{
 			CHECK(gb->isConstructing());
 			CHECK(gb->buildFrames() == 100u);
-			CHECK(building->getConstructionPercent() == 0.1f);
+			CHECK(building->getConstructionPercent() == doctest::Approx(1.1f)); // one heal: 11 / 1000
 			CHECK(building->getBuilderID() == building->getID());
 		}
 	}
 	CHECK(heals == 100);
-	CHECK(frames == 105);
+	CHECK(frames == 100);
 	CHECK(building->getBodyModule()->getHealth() == 1000.0f);
 	CHECK(gb->completedOnce());
 	CHECK(gb->buildFrames() == 300u); // the next self-repair lasts 5 * RebuildTimeSeconds (default 60) frames (RW 0x8574AE)
@@ -416,6 +419,10 @@ TEST_CASE("build rate: damage while a structure builds itself sets the percent b
 	REQUIRE(building != nullptr);
 	GettingBuiltBehavior *gb = dynamic_cast<GettingBuiltBehavior *>(building->findModule("GettingBuiltBehavior"));
 	REQUIRE(gb != nullptr);
+	// lane PLAY-4: a plot's structure builds with + 0x36 set (RW 0x6AAF3B), which skips the damage pause (RW 0x857F2D); the pause belongs to a self-build without
+	// it (a rebuild, a repair): the flag is cleared here and the structure restarted the way checkRestart does (slot 1 with force)
+	gb->setForceComplete(false);
+	gb->stopConstruction();
 	for (int i = 0; i < 30; ++i)
 	{
 		f.logic->runLogicFrame();
@@ -469,10 +476,12 @@ TEST_CASE("build rate: a finished structure without a worker repairs itself 4 se
 	Object *building = f.find("Hall");
 	REQUIRE(building != nullptr);
 	GettingBuiltBehavior *gb = dynamic_cast<GettingBuiltBehavior *>(building->findModule("GettingBuiltBehavior"));
-	for (int i = 0; i < 120 && building->getConstructionPercent() != -1.0f; ++i)
+	// lane PLAY-4: the plot's structure starts at percent -1 (+ 0x36, RW 0x6AAF3B): its completion is the module's completed flag
+	for (int i = 0; i < 120 && !gb->completedOnce(); ++i)
 	{
 		f.logic->runLogicFrame();
 	}
+	REQUIRE(gb->completedOnce());
 	REQUIRE(building->getConstructionPercent() == -1.0f);
 	CHECK(gb->spawnTimer() == 300.0f); // the data's SpawnTimer once complete (RW 0x857DBE)
 	const std::uint32_t money = f.alice()->getMoney()->countMoney();
@@ -561,9 +570,9 @@ TEST_CASE("build rate: the builder, the sole benefactor and the GettingBuiltBeha
 	CHECK(f.logic->computeStateHash() != h0);
 	building->setBuilder(building);
 	CHECK(f.logic->computeStateHash() == h0);
-	gb->setForceComplete(true);
+	gb->setForceComplete(!gb->forceComplete()); // lane PLAY-4: the plot's structure has + 0x36 set (RW 0x6AAF3B)
 	CHECK(f.logic->computeStateHash() != h0);
-	gb->setForceComplete(false);
+	gb->setForceComplete(!gb->forceComplete());
 	CHECK(f.logic->computeStateHash() == h0);
 	CHECK(f.plot->attemptHealingFromSoleBenefactor(0.0f, building, 7)); // the plot's claim
 	CHECK(f.logic->computeStateHash() != h0);
@@ -783,7 +792,9 @@ TEST_CASE("build audio (AUDIO-2 review r2): GettingBuiltBehavior's first complet
 	f.dispatch.dispatch(f.construct("Hall", *f.plot->getPosition()));
 	Object *building = f.find("Hall");
 	REQUIRE(building != nullptr);
-	for (int i = 0; i < 120 && building->getConstructionPercent() != -1.0f; ++i)
+	const GettingBuiltBehavior *gbA = dynamic_cast<const GettingBuiltBehavior *>(building->findModule("GettingBuiltBehavior"));
+	REQUIRE(gbA);
+	for (int i = 0; i < 120 && !gbA->completedOnce(); ++i) // lane PLAY-4: the percent is -1 from the placement on (+ 0x36, RW 0x6AAF3B)
 	{
 		f.logic->runLogicFrame();
 	}

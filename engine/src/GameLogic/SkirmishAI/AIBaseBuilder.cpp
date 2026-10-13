@@ -19,6 +19,7 @@
 #include "GameLogic/Object/Object.h"
 #include "GameLogic/SimMath.h"
 #include "Common/Upgrade.h"
+#include "GameLogic/SkirmishAI/AIStatCollector.h"
 #include "GameLogic/SkirmishAI/AITacticalAI.h"
 #include "GameLogic/SkirmishAI/SkirmishAIData.h"
 #include "GameLogic/SkirmishAI/SkirmishAIManager.h"
@@ -513,12 +514,6 @@ namespace
 const float kRushUnitPriority = 500.0f;   // RW 0xBDD97C (a phase 0 request's priority, RW 0x9A0F66 / 0x9A0D4F)
 const float kReservedCost = 1000.0f;      // RW 0xC88214 (cost >= it: the request draws on the money reserve, + 0x21; not ported, S-413)
 
-bool sameTemplateName(const Object &o, const std::string &name)
-{
-	const ThingTemplate *t = o.getTemplate();
-	return t && (t->getName() == name || (t->getFinalOverride() && t->getFinalOverride()->getName() == name));
-}
-
 // RW 0x9A0705: the first factory of the unit (multimap order) that exists, is alive (object + 0x458 bit 0), has a production interface and, unless
 // `ignoreBusy`, is not disabled (slot 25) and has an empty queue (slot 17); one whose id is in `exclude` is skipped
 Object *findFactory(GameLogic &logic, const AISkirmishPlayer &ai, const std::string &unit, const std::vector<ObjectID> *exclude, bool ignoreBusy)
@@ -642,16 +637,9 @@ void recomputeComposition(GameLogic &logic, AISkirmishPlayer &ai)
 
 int ownedCount(GameLogic &logic, const Player &player, const std::string &unit)
 {
-	// RW 0x8E3FD6: the player info record's count of the template (S-416: counted from the player's living objects)
-	int n = 0;
-	for (Object *o = logic.getFirstObject(); o; o = o->getNextObject())
-	{
-		if (o->getControllingPlayer() == &player && !o->isEffectivelyDead() && sameTemplateName(*o, unit))
-		{
-			++n;
-		}
-	}
-	return n;
+	// RW 0x8E3FD6: the player info record's count of the template (lane DECOMP-3: kept by the record's Register / UnRegister, so a dying object counts until
+	// it is destroyed and a contained one does not)
+	return AITacticalAI::recordOf(logic, player.getPlayerIndex()).countOf(unit);
 }
 
 // RW 0x9A0B26
@@ -736,14 +724,14 @@ int requestsOf(const AIUnitBuilderState &u, const std::string &name)
 }
 
 // RW 0x9A03A1 (RotWK-only, lane DECOMP-2): no hero request out (+ 0x34), past the Rush phase (AI + 0x16C), more than 2 economy structures (the player info
-// record's + 0xC list, S-419: recounted) and more than 6 army units (its army list, S-418: rebuilt)
+// record's + 0xC list) and more than 6 army units (its army list)
 bool shouldBuildHero(GameLogic &logic, const AISkirmishPlayer &ai, const Player &player)
 {
 	if (ai.build.units.heroInProgress || ai.build.phase == 0)
 	{
 		return false;
 	}
-	return economyStructureCount(logic, player) > 2 && AITacticalAI::listsOf(logic, player).army.size() > 6;
+	return economyStructureCount(logic, player) > 2 && AITacticalAI::recordOf(logic, player.getPlayerIndex()).army().size() > 6;
 }
 
 // RW 0x9A05DB (RotWK-only): a built hero (+ 0x3C, in order) that is neither owned (RW 0x8E3FD6) nor requested is taken again (and leaves the list); without
@@ -942,22 +930,11 @@ int kindIndex(const char *name)
 	return KindOfTokens::indexOf(name);
 }
 
-// RW 0x99E818 (the player info record's economy structures, + 0xC): not LINKED_TO_FLAG / UNATTACKABLE, STRUCTURE, ECONOMY_STRUCTURE or SUPPLY_GATHERING_CENTER
+// the size of the player info record's economy list (+ 0xC -> + 4, RW 0x945ADA; filter RW 0x99E818), read by RW 0x9EDA17 / 0x99F313 / 0x9A03A1 (lane DECOMP-3:
+// the record's list, pruned of destroyed ids each manager update)
 int economyStructureCount(GameLogic &logic, const Player &player)
 {
-	static const int linked = kindIndex("LINKED_TO_FLAG"), unattackable = kindIndex("UNATTACKABLE"), structure = kindIndex("STRUCTURE"),
-					 economy = kindIndex("ECONOMY_STRUCTURE"), supply = kindIndex("SUPPLY_GATHERING_CENTER");
-	int n = 0;
-	for (Object *o = logic.getFirstObject(); o; o = o->getNextObject())
-	{
-		if (o->getControllingPlayer() != &player || o->isEffectivelyDead() || o->isKindOf((unsigned)linked) || o->isKindOf((unsigned)unattackable) ||
-			!o->isKindOf((unsigned)structure))
-		{
-			continue;
-		}
-		n += (o->isKindOf((unsigned)economy) || o->isKindOf((unsigned)supply)) ? 1 : 0;
-	}
-	return n;
+	return (int)AITacticalAI::recordOf(logic, player.getPlayerIndex()).economy().size();
 }
 
 // the unsigned frame difference as RW's x87 converts it (fild of the signed int, + 2^32 when negative)
@@ -1055,7 +1032,7 @@ std::shared_ptr<AIBuildRequest> chooseFarmSite(GameLogic &logic, const AISkirmis
 	const int enemy = ai.groupFirst ? ai.groupFirst->brain.currentEnemy : -1;
 	if (const Player *them = enemy >= 0 ? logic.players().getNthPlayer(enemy) : nullptr)
 	{
-		for (ObjectID id : AITacticalAI::listsOf(logic, *them).structures)
+		for (ObjectID id : AITacticalAI::recordOf(logic, them->getPlayerIndex()).structures())
 		{
 			const Object *o = logic.findObjectByID(id);
 			if (o && !o->isEffectivelyDead() && o->isKindOf((unsigned)dozerFactory))
@@ -1590,6 +1567,37 @@ void processRequests(GameLogic &logic, AISkirmishPlayer &ai, Player &player)
 
 } // namespace
 
+// RW 0x8F0D54 (AIBuilder::checkForNewUpgrades in the BFME2 decomp's attempt 0x004eca01.cpp, tier B same-shape; lane DECOMP-3): when the player's Upgrade_RingHero
+// state (the literal RW 0xC795B0, TheUpgradeCenter RW 0x66F5E5, Player RW 0x6AC2AF) differs from + 0x154, + 0x154 takes it and every DOZER_FACTORY (template
+// + 0x120 bit 2) of the player info record's structure list (+ 8 -> + 4, in order) that resolves, is not DESTROYED (+ 0x94 bit 0) and not effectively dead
+// (+ 0x458 bit 0) is collected, then each goes through the manager's removal RW 0x6A99CB and add RW 0x6A9D9C (the AI's factory events, and the record moves it
+// to the end of its lists)
+static void checkForNewUpgrades(GameLogic &logic, AISkirmishPlayer &ai, Player &player)
+{
+	static const int dozerFactory = kindIndex("DOZER_FACTORY");
+	const UpgradeTemplate *ring = TheUpgradeCenter ? TheUpgradeCenter->findUpgrade("Upgrade_RingHero") : nullptr;
+	const bool has = ring && player.hasUpgradeComplete(ring);
+	if (has == ai.build.ringHero)
+	{
+		return;
+	}
+	ai.build.ringHero = has;
+	std::vector<Object *> factories;
+	for (ObjectID id : AITacticalAI::recordOf(logic, player.getPlayerIndex()).structures())
+	{
+		Object *o = logic.findObjectByID(id);
+		if (o && o->isKindOf((unsigned)dozerFactory) && !o->isDestroyed() && !o->isEffectivelyDead())
+		{
+			factories.push_back(o);
+		}
+	}
+	for (Object *o : factories)
+	{
+		logic.skirmishAI().objectRemoved(*o);
+		logic.skirmishAI().objectAdded(*o);
+	}
+}
+
 void AIBaseBuilder::update(GameLogic &logic, AISkirmishPlayer &ai)
 {
 	AIBuildState &s = ai.build;
@@ -1631,6 +1639,7 @@ void AIBaseBuilder::update(GameLogic &logic, AISkirmishPlayer &ai)
 	}
 	// RW 0x8F0EBE: drop finished requests from the in-progress list
 	s.inProgress.erase(std::remove_if(s.inProgress.begin(), s.inProgress.end(), [](const std::shared_ptr<AIBuildRequest> &r) { return r->finished(); }), s.inProgress.end());
+	checkForNewUpgrades(logic, ai, *player); // RW 0x8F0EF8
 	// RW 0x8F0EFD: the base builder (+ 4) through RW 0x90CD00 (skipped when disabled): RW 0x90CDAD -> every base RW 0x9BCA33 -> its slots
 	if (!s.baseBuilderDisabled)
 	{
@@ -1858,6 +1867,7 @@ void AIBaseBuilder::crc(const AIBuildState &s, StateHasher &h)
 	h.addFloat(s.startPosition.z);
 	h.addI32(s.phase);
 	h.addFloat(s.phaseFraction);
+	h.addBool(s.ringHero);
 	h.addU32(s.nextSerial);
 	// the complete state of a request; the queues below hash the stable identities (serial) in queue order
 	auto request = [&h](const AIBuildRequest &r) { AIBaseBuilder::crcRequest(r, h); };

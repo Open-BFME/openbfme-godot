@@ -251,6 +251,16 @@ bool AIUpdateInterface::aiAttackObject(Object *victim, CommandSourceType source,
 	{
 		return false; // lane MODULES-3: RW 0x667174
 	}
+	{
+		RoutedCommand c; // lane FLY-1
+		c.type = 0xB;
+		c.target = victim;
+		c.source = source;
+		if (routeCommand(c))
+		{
+			return true;
+		}
+	}
 	m_targetHorde = INVALID_ID;
 	if (victim && !getObject()->isKindOf((unsigned)CombatNames::kinds().horde) && victim->getContain() && victim->getContain()->getHordeContainInterface())
 	{
@@ -290,6 +300,16 @@ bool AIUpdateInterface::aiForceAttackObject(Object *victim, CommandSourceType so
 	{
 		return false; // lane MODULES-3: RW 0x667174
 	}
+	{
+		RoutedCommand c; // lane FLY-1
+		c.type = 0xC;
+		c.target = victim;
+		c.source = source;
+		if (routeCommand(c))
+		{
+			return true;
+		}
+	}
 	m_targetHorde = INVALID_ID;
 	if (victim && !getObject()->isKindOf((unsigned)CombatNames::kinds().horde) && victim->getContain() && victim->getContain()->getHordeContainInterface())
 	{
@@ -321,6 +341,16 @@ bool AIUpdateInterface::aiAttackPosition(const Coord3D &pos, int maxShotsToFire,
 	if (!acceptCommand(source, 0xE))
 	{
 		return false; // RW 0x667174, AICommandType 0xE (RW 0x6961F1 -> slot 40)
+	}
+	{
+		RoutedCommand c; // lane FLY-1
+		c.type = 0xE;
+		c.position = pos;
+		c.source = source;
+		if (routeCommand(c))
+		{
+			return false;
+		}
 	}
 	Object *obj = getObject();
 	// RW 0x66DE17 .. 0x66DE2C: a PLAYER order to a unit whose weapon set flags (Object + 0x38C, RW 0x68BE7D) hold bit 8 (RAMPAGE) is ignored
@@ -518,23 +548,25 @@ Object *AIUpdateInterface::nextMoodTarget()
 	{
 		return nullptr;
 	}
-	// lane SPELL-3 (review r2): RW 0x6684D0 .. 0x6684DB: an object with the model condition JUST_BUILT (+ 0x124 bit 26) looks for nothing (a castle member
-	// fading in, RW 0x7987EE); RW 0x668A41 .. 0x668A4A: nor one Object::isAbleToAttack (RW 0x691269; BFME2 decomp Object_isAbleToAttack.cpp, tier B
-	// same-shape) refuses. Ported of it: its status / condition tests (NO_ATTACK status 5, the model condition 0x81 (RW 0x46E918 reads Object + 0x10C),
-	// UNDER_CONSTRUCTION, SOLD); its contain, turret and CAN_ATTACK branches are not (S-1301, as AITacticalAI's canAttackAtAll), so they refuse nothing here
+	// lane PLAY-4 r1, RW 0x66849D .. 0x6684EC (the gate's first tests; FACT-A ported 0x17 for the hold-fire toggle): an object that is NO_AUTO_ACQUIRE
+	// (status 0x17: a special ability sets it while it runs, RW 0x852F3D; a trebuchet's hold-fire toggle, MSG_TOGGLE_NO_AUTO_ACQUIRE),
+	// SPECIAL_ABILITY_PACKING_UNPACKING_OR_USING (0x46) or IGNORE_AI_COMMAND (0x4A), or whose model conditions hold JUST_BUILT (+ 0x124 bit 26, lane SPELL-3: a
+	// castle member fading in, RW 0x7987EE) or COMING_OUT_OF_FACTORY (+ 0x134 bit 13), looks for nothing (HORDE_MEMBER, 0x26, is moodCheckInterval's).
+	// INFERENCE (S-326): the AI + 0x34 test of RW 0x668489 is not identified and not ported. Lane SPELL-3 (review r2): RW 0x668A41 .. 0x668A4A: nor one
+	// Object::isAbleToAttack (RW 0x691269; BFME2 decomp Object_isAbleToAttack.cpp, tier B same-shape) refuses. Ported of it: its status / condition tests
+	// (NO_ATTACK status 5, the model condition 0x81 (RW 0x46E918 reads Object + 0x10C), UNDER_CONSTRUCTION, SOLD); its contain, turret and CAN_ATTACK branches
+	// are not (S-1301, as AITacticalAI's canAttackAtAll), so they refuse nothing here
 	{
-		static const int justBuilt = CombatNames::modelCondition("JUST_BUILT");
-		if ((justBuilt >= 0 && obj.testModelCondition(justBuilt)) || !CombatQueries::isAbleToAttack(obj))
+		static const int noAutoAcquire = CombatNames::status("NO_AUTO_ACQUIRE");
+		static const int abilityBusy = CombatNames::status("SPECIAL_ABILITY_PACKING_UNPACKING_OR_USING");
+		static const int ignoreAi = CombatNames::status("IGNORE_AI_COMMAND");
+		static const int justBuiltSelf = CombatNames::modelCondition("JUST_BUILT");
+		static const int comingOut = CombatNames::modelCondition("COMING_OUT_OF_FACTORY");
+		if (obj.testStatus((unsigned)noAutoAcquire) || obj.testStatus((unsigned)abilityBusy) || obj.testStatus((unsigned)ignoreAi) || obj.testModelCondition(justBuiltSelf) ||
+			obj.testModelCondition(comingOut) || !CombatQueries::isAbleToAttack(obj))
 		{
 			return nullptr;
 		}
-	}
-	// lane FACT-A: RW 0x66849D: an object with the status NO_AUTO_ACQUIRE (0x17: a trebuchet / catapult whose hold-fire toggle is on, MSG_TOGGLE_NO_AUTO_ACQUIRE)
-	// looks for no target (the other status gates of RW 0x66845E .. 0x6684C8, 0x46 / 0x26 / 0x4A and the AI + 0x34 test, are not read here)
-	static const int noAutoAcquire = CombatNames::status("NO_AUTO_ACQUIRE");
-	if (obj.testStatus((unsigned)noAutoAcquire))
-	{
-		return nullptr;
 	}
 	// lane IDLE-1 (community FB-0001), RW 0x66844A's gate before the scan (read with Ghidra, RW 0x6685B6 .. 0x6685F9): a contained object (+ 0x27C) looks for
 	// a target only when its AI module's CanAttackWhileContained (data + 0x25) is set, it is CONTESTING_BUILDING (status 0x25) or its own contain (+ 0x258, the
@@ -612,6 +644,16 @@ bool AIUpdateInterface::armAttackMove(const Coord3D &goal, CommandSourceType sou
 	if (!acceptCommand(source, 0xF))
 	{
 		return false; // lane MODULES-3 r2: RW 0x667174 refuses the order before it changes anything
+	}
+	{
+		RoutedCommand c; // lane FLY-1
+		c.type = 0xF;
+		c.position = goal;
+		c.source = source;
+		if (routeCommand(c))
+		{
+			return true;
+		}
 	}
 	m_attackMoveActive = true;
 	m_attackMoveGoal = goal;

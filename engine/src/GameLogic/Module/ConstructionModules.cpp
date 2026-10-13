@@ -29,8 +29,10 @@
 #include "GameLogic/GameLogic.h"
 #include "GameLogic/Module/CastleModules.h"
 #include "GameLogic/Module/DozerAIUpdate.h"
+#include "GameLogic/Module/ProductionUpdate.h"
 #include "GameLogic/ObjectFilter.h"
 #include "GameLogic/ObjectFilterMatch.h"
+#include "GameLogic/ObjectTemplateInfo.h"
 #include "GameLogic/Object/Object.h"
 #include "GameLogic/SimMath.h"
 
@@ -240,6 +242,40 @@ void GettingBuiltBehavior::killSpawnedWorkerOnDelete()
 	builder->attemptDamage(info);
 }
 
+// lane PLAY-4: RW 0x856434 (module vtable RW 0xC56D24 slot 5, onObjectCreated; the object's status mask is applied by then). The worker template is the data's
+// EvilWorkerName (+0x18) when TestFaction (+0x1C) is set and the owner's player template is evil (+0x1BC), else WorkerName (+0x14), looked up by name
+// (RW 0x6D1305; no owner: none). A WALL_SEGMENT structure, or a WALL_HUB whose worker is missing or is itself a WALL_SEGMENT or WALL_HUB (template KindOf bits
+// + 0x11C & 0x20000000 / + 0x118 & 0x10000000), starts building itself (interface slot 4 with force 1). Then a structure created PENDING_CONSTRUCTION (status
+// 0x57: the dozer's phantom, RW 0x88D29D) disables its production (RW 0x68C327(0) -> slot 0x60 with 1): canQueueCreateUnit answers FACTORY_IS_DISABLED
+// until finishConstruction enables it again (RW 0x8569B5)
+void GettingBuiltBehavior::onObjectCreated()
+{
+	Object *obj = getObject();
+	GameLogic &logic = obj->logic();
+	const ThingTemplate *worker = nullptr;
+	if (Player *owner = obj->getControllingPlayer())
+	{
+		const bool evil = m_data->m_testFaction && owner->getPlayerTemplate() && owner->getPlayerTemplate()->m_evil;
+		worker = logic.things().findTemplate(evil ? m_data->m_evilWorkerName : m_data->m_workerName);
+	}
+	static const int wallSegment = ObjectTemplateInfoBuilder::kindOfIndex("WALL_SEGMENT");
+	static const int wallHub = ObjectTemplateInfoBuilder::kindOfIndex("WALL_HUB");
+	auto kindOf = [&](const ThingTemplate &t, int bit) { return bit >= 0 && MaskTest(logic.templateInfo(&t).kindOf, (unsigned)bit); };
+	const ThingTemplate &self = *obj->getTemplate();
+	if (kindOf(self, wallSegment) || (kindOf(self, wallHub) && (!worker || kindOf(*worker, wallSegment) || kindOf(*worker, wallHub))))
+	{
+		startConstruction(true);
+	}
+	static const int pending = ObjectTemplateInfoBuilder::objectStatusIndex("PENDING_CONSTRUCTION");
+	if (pending >= 0 && obj->testStatus((unsigned)pending))
+	{
+		if (ProductionUpdateInterface *pu = obj->getProductionUpdate())
+		{
+			pu->setFactoryDisabled(true);
+		}
+	}
+}
+
 // RW 0x857238: true while a builder holds the structure. A builder that is not this structure's ally is killed; after completion (+0x30) an idle builder is released (a
 // spawned worker fades away)
 bool GettingBuiltBehavior::checkBuilder()
@@ -412,7 +448,12 @@ void GettingBuiltBehavior::stopConstruction()
 void GettingBuiltBehavior::finishConstruction(Object *other)
 {
 	Object *obj = getObject();
-	// RW 0x8569B1 ff: the production update's slot 0x60(0) and the module of RW 0x68C3A3 (slot 0x28) are told first: not identified (stop S-653)
+	// RW 0x8569B1 ff: the production update is enabled again first (RW 0x68C327(0) -> slot 0x60 with 0, lane PLAY-4: setFactoryDisabled, the counterpart of
+	// onObjectCreated's), then the module of RW 0x68C3A3 is told (slot 0x28): not identified (stop S-653)
+	if (ProductionUpdateInterface *pu = obj->getProductionUpdate())
+	{
+		pu->setFactoryDisabled(false);
+	}
 	if (!m_constructing)
 	{
 		// RW 0x8569E9: a score / radar event (0x7379CB, 0xD) is the client's; without a WorkerName a builder `other` that this structure produced and that builds it fades away
@@ -434,12 +475,10 @@ void GettingBuiltBehavior::finishConstruction(Object *other)
 		obj->setStatus(OBJECT_STATUS_UNDER_CONSTRUCTION, false);
 		setCondition(*obj, "AWAITING_CONSTRUCTION", false);
 		clearConditions(*obj, { "PARTIALLY_CONSTRUCTED", "ACTIVELY_BEING_CONSTRUCTED" });
-		// INFERENCE (S-650): RW 0x856AEE calls onBuildComplete (RW 0x6902F5 -> 0x68D252); the player notification that counts the command points of a self-built
-		// structure (RW 0x6AA72B in the dozer path) was not located here: Construction::completeConstruction's bookkeeping stands for both
-		if (Player *owner = obj->getControllingPlayer())
-		{
-			Construction::onStructureConstructionComplete(*owner, obj, *obj, false);
-		}
+		// INFERENCE (S-650): RW 0x856AEE calls onBuildComplete (RW 0x6902F5 -> 0x68D252); the call that counts the command points of a self-built structure
+		// (RW 0x68E0C2, reached through RW 0x6AA72B in the dozer path, which calls this function first: lane PLAY-4) was not located here; the count is made
+		// here as before
+		obj->addToPlayerCommandPoints();
 		obj->friend_onBuildComplete();
 		// slot 2 RW 0x8574AE: the next self-build / repair lasts ftol(max(1.0, 5 * RebuildTimeSeconds)) frames (SSE product)
 		const float frames = SimMath::mulf32(SimMath::sseFromInt32(5), m_data->m_rebuildTimeSeconds);

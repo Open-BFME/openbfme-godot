@@ -102,6 +102,37 @@ bool OpenContain::isEnclosingContainerFor(const Object &obj) const
 	return maskTest(statusMaskFor(&obj), enclosed); // RW 0x6CAC1F: slot 0xB0(obj), bit 29 of word 1 = status 61
 }
 
+// RW 0x865A7E (lane DECOMP-3): slot 0xB0(null) has CAN_ATTACK (status 1), and a container that is itself contained asks its container's slot 0xB4 in turn
+bool OpenContain::isPassengerAllowedToFire() const
+{
+	static const int canAttack = statusBit("CAN_ATTACK");
+	if (!maskTest(statusMaskFor(nullptr), canAttack))
+	{
+		return false;
+	}
+	const Object *outer = getObject()->getContainedBy(); // the container's + 0x27C
+	const ContainModuleInterface *c = outer ? outer->getContain() : nullptr;
+	return outer ? (c && c->isPassengerAllowedToFire()) : true; // RW calls the outer contain's slot without a null test
+}
+
+// RW 0x865B33 (lane DECOMP-3): with a rider and a victim, unless PassengersTestCollisionHeight (data + 0x68) is negative or the rider stands more than it above the
+// container (z), the shot is blocked when the victim does not lie behind the rider as seen from the container: (c - r) . (v - r) in 2D (SSE, in RW's order) >= 0
+bool OpenContain::isPassengerShotBlocked(const Object *rider, const Object *victim) const
+{
+	if (!rider || !victim)
+	{
+		return false;
+	}
+	const float h = openData().m_passengersTestCollisionHeight;
+	const Coord3D &c = *getObject()->getPosition(), &r = *rider->getPosition(), &v = *victim->getPosition();
+	if (0.0f > h || SimMath::subf32(r.z, c.z) > h)
+	{
+		return false;
+	}
+	const float dot = SimMath::addf32(SimMath::mulf32(SimMath::subf32(c.x, r.x), SimMath::subf32(v.x, r.x)), SimMath::mulf32(SimMath::subf32(c.y, r.y), SimMath::subf32(v.y, r.y)));
+	return !(0.0f > dot);
+}
+
 const ObjectStatusMaskType &OpenContain::statusMaskFor(const Object *obj) const
 {
 	(void)obj;

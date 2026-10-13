@@ -133,6 +133,8 @@ public:
 	void setLocalPlayer(int playerIndex, std::function<void(int, int, CellShroudStatus)> callback);
 	// RW 0xB4F9C0: the callback for every cell of the local player
 	void refreshLocalPlayer();
+	// lane ONLINE-3: the player whose view the shroud manager reports (setLocalPlayer; an observer's observed player): never part of the state hash
+	int localPlayer() const { return m_localPlayer; }
 	// every live record's cached statuses cleared and recomputed for every live player, in registration order (the peer-independent part of the refresh)
 	void reevaluateAll();
 	// the object side (default: the port of RW 0x694A45 / 0x68EDD0 over the live Object)

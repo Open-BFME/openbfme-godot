@@ -182,6 +182,10 @@ void runObject(FactRig &r, const std::string &faction, const std::string &name, 
 		wound(*o);
 		wound(*ally);
 		r.frames(2);
+		for (Object *x : { o, enemy, ally })
+		{
+			holdFire(*x); // lane PLAY-4 r3: the stances' guard began with their first update (FactAEffects.h)
+		}
 		// the enemy must be in the player's sight before an attack order on it counts (VIS-1: a fogged target refuses a player's order, RW 0x82C167)
 		auto anyFogged = [&]() {
 			bool fogged = false;

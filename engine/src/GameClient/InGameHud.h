@@ -123,9 +123,16 @@ public:
 	// lane UI-4: the selection markers of this frame (SelectionDecals.h); the device gives GameData's settings and draws them
 	void setSelectionDecalSettings(const SelectionDecalSettings &s) { m_decalSettings = s; }
 	const std::vector<SelectionDecal> &selectionDecals() const { return m_selectionDecals; }
+	unsigned long long selectionDecalsVersion() const { return m_decalVersion; } ///< lane SELPERF-1: changes whenever the list or a decal in it changes
 	const SelectionDecalSettings &selectionDecalSettings() const { return m_decalSettings; }
 	// lane UI-4: the Palantir's hero bar (InGameHeroSelect.h)
 	InGameHeroSelect *heroSelect() { return m_heroSelect.get(); }
+	// lane SELPERF-1: the wall time of update()'s parts in its last full run (milliseconds; the frame-cost report of tests/selperf and --perf)
+	struct UpdateParts
+	{
+		double input = 0, bar = 0, windows = 0, palantir = 0, heroes = 0, icons = 0, decals = 0, radar = 0;
+	};
+	const UpdateParts &updateParts() const { return m_updateParts; }
 	// lane HUD-5: the drawable decorations (health bars, construction text, veterancy marks, GameClient/DrawableIconUI.h): the device gives the settings (GameData,
 	// Options.ini, its mapped images, the camera's zoom) and draws the ops of the last update under the Palantir
 	void setIconUISettings(const IconUISettings &s) { m_iconSettings = s; }
@@ -201,6 +208,15 @@ private:
 	std::set<std::string> m_heroCommands;          // lane UI-4: the hero bar command prefixes registered
 	SelectionDecalSettings m_decalSettings;        // lane UI-4
 	std::vector<SelectionDecal> m_selectionDecals; // lane UI-4
+	UpdateParts m_updateParts;                     // lane SELPERF-1
+	// lane SELPERF-1: what m_selectionDecals was built for (rebuilt when any changes, else refreshed)
+	unsigned m_decalLogicFrame = ~0u;
+	std::vector<ObjectID> m_decalSelection;
+	SelectionDecalSettings m_decalBuiltSettings;
+	const GameLogic *m_decalLogic = nullptr;
+	unsigned long long m_decalBuilds = 0;
+	unsigned long long m_decalVersion = 0;
+	unsigned m_decalClientFrame = ~0u;              // the client frame the markers were last refreshed in
 	DrawableIconUI m_iconUI;                  // lane HUD-5
 	IconUISettings m_iconSettings;
 	std::vector<IconUIOp> m_iconOps;

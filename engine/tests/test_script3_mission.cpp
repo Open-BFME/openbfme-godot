@@ -93,6 +93,8 @@ TEST_CASE("script3 rhudaur: MAP ANG Rhudaur plays from its intro to the victory 
 		Coord3D at = teamCentre(m, team);
 		at.x += 120.0f;
 		m.place(*wk, at);
+		// lane PLAY-4: the idle Witch-king guards the spot he stood on in the Battle stance (AIGuard.h) and would walk back there from where the test puts him
+		wk->getAIUpdateInterface()->aiIdle(CMD_FROM_AI);
 		const bool hunting = m.until([&] { return teamHunting(m, team); }, 100);
 		CHECK_MESSAGE(hunting, team);
 		MESSAGE(team << std::string(hunting ? " hunts" : " does not hunt") << " at frame " << m.frame());

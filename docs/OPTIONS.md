@@ -122,7 +122,9 @@ Lane OPTS-3 made it a page of Options.apt, built from the menu's own pieces
 
 Defaults are retail behaviour, except the Max zoom-out (the owner's 2.5x, lane
 ZOOM-1); nothing here reaches the simulation (viewport, environment, audio
-buses, camera, HUD decorations). Tabs:
+buses, camera, HUD decorations), except the Uber performance mode, which picks
+the simulation profile of the player's next games (refused, never mixed, with
+another profile). Tabs:
 
 | Tab | Setting | Key | Default |
 |---|---|---|---|
@@ -133,6 +135,7 @@ buses, camera, HUD decorations). Tabs:
 | | Look: original / enhanced (AgX tone mapping, glow on overbright effects) | `OpenBFMELook` | original |
 | | Interface scale: 100 .. 200% (health bars, frame counter, clock) | `OpenBFMEUIScale` | 100 |
 | | Soft particle edges (UI-2 / FX-3) | `OpenBFMESoftParticles` | yes |
+| | Uber performance mode (UBER-1, `docs/UBER.md`): the next game and LAN lobby run the Uber simulation profile, which uses every CPU core and is not compatible with the original game (its help line says so); Uber players play and replay only with Uber players | `OpenBFMEUberPerformance` | no |
 | Camera | Scroll speed | `ScrollFactor` (retail) | 50 |
 | | Edge scrolling: full screen only / always / off | `OpenBFMEEdgeScroll` | retail |
 | | Rotation speed 50 .. 200% | `OpenBFMERotateSpeed` | 100 |

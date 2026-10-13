@@ -675,6 +675,13 @@ TEST_CASE("cah1 retail determinism: a hero built in the builder and chosen in th
 		message = setup.makeNewGameMessage();
 	}
 	REQUIRE(message.game.slots[0].hasCreateAHero);
+	// the same hero with another appearance, edited before any game runs (lane MAPRESET-1: a game's end reloads the world, and `sys` is its
+	// CreateAHeroSystem: S-3808)
+	CreateAHeroHero other = saved;
+	my.edit(other, false);
+	my.step(AptMyHero::KIND_APPEARANCE, 0, 1);
+	NewGameMessage changed = message;
+	REQUIRE(changed.game.slots[0].setCreateAHero(my.hero(), &error));
 	std::string installedA, installedB, installedNone;
 	const std::vector<std::uint32_t> a = cahRunHashes(*s, message, 8, &installedA);
 	const std::vector<std::uint32_t> b = cahRunHashes(*s, message, 8, &installedB);
@@ -685,11 +692,6 @@ TEST_CASE("cah1 retail determinism: a hero built in the builder and chosen in th
 	const std::vector<std::uint32_t> c = cahRunHashes(*s, none, 8, &installedNone);
 	CHECK(installedNone.empty());
 	CHECK(a != c);
-	CreateAHeroHero other = saved;
-	my.edit(other, false);
-	my.step(AptMyHero::KIND_APPEARANCE, 0, 1);
-	NewGameMessage changed = message;
-	REQUIRE(changed.game.slots[0].setCreateAHero(my.hero(), &error));
 	CHECK(cahRunHashes(*s, changed, 8, nullptr) != a);
 }
 

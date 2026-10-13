@@ -14,7 +14,7 @@
 //     cell and whose footprint is free (RW 0x6F3082) ends the search with a path built by RW 0x6F1A31;
 //   * otherwise the cell is closed (RW 0x6F6286) and expanded (RW 0x6F9850, no goal cell).
 // DONOR / INFERENCE (stop S-785): RW 0x67C81E is taken to be ZH's LineInRegion (TerrainLogic.cpp, Cohen-Sutherland clip of a segment against the closed box); the zone
-// manager's setAllPassable (RW 0x937C65) has no counterpart here (the expansion ignores zones); RW 0x6F3082 is checkDestination with no other unit's goal in it.
+// manager's setAllPassable (RW 0x937C65, RW 0x6FB287) runs first (lane PATHPERF-1: findPath now leaves its corridor's block flags set); RW 0x6F3082 is checkDestination with no other unit's goal in it.
 
 #include "GameLogic/AI/AIPathfind.h"
 #include "GameLogic/SimMath.h"
@@ -143,6 +143,7 @@ Path *Pathfinder::getMoveAwayFromPath(const PathfindObject *obj, const PathfindL
 	{
 		return nullptr;
 	}
+	m_zoneManager.setAllPassable(); // RW 0x6FB287
 	const bool isHuman = !obj->isComputerControlled();
 	const Coord3D pos = obj->getPosition();
 	const ICoord2D startNdx = cellOfPosition(*obj, pos);

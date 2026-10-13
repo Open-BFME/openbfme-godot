@@ -414,6 +414,10 @@ public:
 	zoneStorageType getEffectiveZone(const PathfindMovement &mv, bool terrainVariant, zoneStorageType zone) const;
 	// RW 0x937B9F: the kind of a surface mask (-1: everything passable, -666: no valid combination)
 	static int kindOf(const PathfindMovement &mv);
+	// lane PATHPERF-1: RW 0x938240 (BFME2 decomp Rva002E99F9Sub460::rva005318DB, tier A): the hierarchical search may step from a cell of zone `a` into an
+	// adjacent cell of zone `b`: an AIR mask always, a kind-less mask (-1) always, -666 never; else the two zones join directly for the unit (the pair test the
+	// effective-zone tables are built from, the non-terrain variant)
+	bool zonesJoin(const PathfindMovement &mv, zoneStorageType a, zoneStorageType b) const;
 
 	// the hierarchical block flags (RW block +0x34)
 	void clearPassableFlags();
@@ -593,7 +597,17 @@ public:
 
 	// ---- grid access ----
 	const ICoord2D *getExtent() const { return &m_extent.hi; }
-	PathfindCell *getCell(PathfindLayerEnum layer, int x, int y);
+	// inline (lane PATHPERF-1: the search asks for every cell of every footprint it tests). Bridge / wall layers are not ported (S-161): every query reads
+	// the ground layer
+	PathfindCell *getCell(PathfindLayerEnum layer, int x, int y)
+	{
+		(void)layer;
+		if (x >= m_extent.lo.x && x <= m_extent.hi.x && y >= m_extent.lo.y && y <= m_extent.hi.y)
+		{
+			return &m_blockOfMapCells[(size_t)x * (size_t)m_stride + (size_t)y];
+		}
+		return nullptr;
+	}
 	PathfindCell *getCell(PathfindLayerEnum layer, const Coord3D *pos);
 	PathfindCell *getClippedCell(PathfindLayerEnum layer, const Coord3D *pos);
 	const PathfindCell *cellAt(int x, int y) const;
@@ -641,7 +655,19 @@ public:
 	// lane PHYS-1: RW 0x7463E8, the contact back-off: true with `dest` unchanged when the target area is open (RW 0x6FB754, lines of max(150, weaponRange) from `dest`)
 	// and a path exists (RW 0x6F5BB0); else steps of 20 from `dest` back toward the unit until a path exists, accepted when at least 20 nearer to `dest` than the unit
 	// (the CastleSiegeStandBackDistance margin when a step met a raised layer), then adjustToPossibleDestination (RW 0x6F3C87)
-	bool meleeBackOff(PathfindObject &obj, const PathfindLocomotorInfo &loco, float weaponRange, Coord3D *dest);
+	bool meleeBackOff(PathfindObject &obj, const PathfindLocomotorInfo &loco, float weaponRange, Coord3D *dest, bool meleeWeapon = true);
+	// lane PLAY-4: RW 0x6FB754 (Pathfinder::CanApproachToTarget, BFME2 decomp pathfinder.cpp, tier B): along the 8 lines from `target` to the points max(150,
+	// weaponRange) away (RW 0xC041F8; i, j in -1 .. 1, not both 0; both ends to cells with centring 1, RW 0x6FA9EF -> 0x6E8CE6), the cells (Bresenham RW 0x6F807D)
+	// go to the callback RW 0x6F61BD. Its record (RW 0x6EAF14): + 0x1C found, + 0x1D `meleeWeapon` (the weapon template's MeleeWeapon, + 0x125 via RW 0x441B59),
+	// + 0x1E "no usable cell yet on this line" (1 at the start of each line), + 0x1F "a usable cell failed the path test" (0 at the start), + 0x20 `stopAtFirstMiss`
+	// (the caller's 4th argument; RW 0x7463E8 passes 0). See the callback in AIPathfindSearch.cpp. Only the ground layer exists (S-161): its raised-layer
+	// tests are ported but cannot fire.
+	bool canApproachToTarget(const PathfindObject &obj, const PathfindLocomotorInfo &loco, const Coord3D &target, float weaponRange, bool meleeWeapon,
+		bool stopAtFirstMiss = false);
+	// lane PLAY-4 r1: RW 0x6ED843's unit branch (the melee reach of RW 0x6CC07C for a victim that is not a STRUCTURE): the unit's footprint box at `from` (its cell,
+	// RW 0x6ECFDE: centred when its footprint is odd; the low corner = the cell + size / -2, C division, RW 0x6ED89A; size RW 0x6EAF79) grown by `rangeCells` on
+	// every side, against the target's box at its own position (RW 0x6EDB15 .. 0x6EDB31); the bounds lo + size are compared inclusively (RW 0x6EDB57 .. 0x6EDB69)
+	bool meleeReachCells(const PathfindObject &unit, const Coord3D &from, const PathfindObject &target, int rangeCells);
 	// lane PHYS-1: RW findAttackPath 0x6FC18E (pathfinder vtable 0xC1B8D8 slot +8, AIPathfindAttack.cpp): a path to a free cell from which `range` reaches the
 	// victim; `fallback` is set when the path only ends at the search's closest cell. Null when nothing is found.
 	Path *findAttackPath(const PathfindObject *obj, const PathfindLocomotorInfo &loco, const Coord3D *from, const PathfindObject *victim, const Coord3D *victimPos,
@@ -711,7 +737,22 @@ public:
 	// RW findPath 0x6FE7FE / internalFindPath 0x6FD06F: a short valid path between the locations, or null. `partial` (may be
 	// null) is set when the path leads to the closest reachable cell instead of the goal. The caller owns the result.
 	Path *findPath(PathfindObject *obj, const PathfindLocomotorInfo &loco, const Coord3D *from, const Coord3D *to, bool *partial = nullptr);
-	Path *internalFindPath(PathfindObject *obj, const PathfindLocomotorInfo &loco, const Coord3D *from, const Coord3D *to, bool *partial);
+	// RW internalFindPath 0x6FD06F; with `hierarchical` the search runs inside the corridor findClosestHierarchicalPath left (its block flags, its path
+	// positions in the estimate and the closest-cell choice). `partial` is only ever set here (findPath clears it)
+	Path *internalFindPath(PathfindObject *obj, const PathfindLocomotorInfo &loco, const Coord3D *from, const Coord3D *to, bool hierarchical, bool *partial);
+	// findPath as it was before lane PATHPERF-1 (no corridor, every block passable): AIMover::pathReachingGoal's stand-in for RW 0x6F74D0
+	Path *findPathWithoutCorridor(PathfindObject *obj, const PathfindLocomotorInfo &loco, const Coord3D *from, const Coord3D *to, bool *partial);
+	// lane PATHPERF-1 (AIPathfindHierarchical.cpp): RW FindClosestHierarchicalPath 0x6F9829 -> 0x6F8601, the A* over the 16 x 16 zone blocks. True when a
+	// corridor was built: its blocks are marked passable (RW 0x6F49BC) and `adjustedTo` is the goal, or the centre of the closest block cell reached when the
+	// goal's block cannot be. False: no corridor (the caller marks every block passable)
+	bool findClosestHierarchicalPath(PathfindObject *obj, const PathfindLocomotorInfo &loco, bool isHuman, const Coord3D *from, const Coord3D *to,
+		Coord3D *adjustedTo);
+	// RW 0x6F937E .. 0x6F93B9: the block search's closest-cell key of a cell (dx, dy) from the goal, binary32 as RW computes it (lane PATHPERF-1)
+	static float hierarchicalClosestKey(int dx, int dy);
+	// HierarchicalPath::lookUpPositionOnPath (RW 0x93AD93): the corridor index of the block of cell (x, y), -1 off the corridor
+	int hierarchicalPositionOf(int cellX, int cellY) const;
+	// the corridor's last index (RW HierarchicalPath + 0x14 after RW 0x93B3D8), -1 when there is none
+	int hierarchicalLastIndex() const { return m_hierLast; }
 	// terrain-and-structure zone test, no search (ZH clientSafeQuickDoesPathExist)
 	bool clientSafeQuickDoesPathExist(const PathfindLocomotorInfo &loco, const Coord3D *from, const Coord3D *to);
 	// RW 0x6F2FC3: the straight line is passable for the unit (the optimiser's test)
@@ -754,6 +795,16 @@ private:
 		Slot goal, pos;
 	};
 	UnitRecord &unit(PathfindObjectID id);
+	// lane PATHPERF-1: the record of `id` without the map search (null when none): the search asks for a unit's slots once per occupant of every cell it
+	// examines (isParked), and the map lookups were a sixth of a big order's frame. Records are never erased (only cleared with the map), so the index's
+	// pointers into the map stay valid; ids beyond kUnitIndexMax use the map
+	const UnitRecord *findUnit(PathfindObjectID id) const;
+public:
+	// lane PATHPERF-1 (tests): false switches the search memo (occupantFacts) and the unit index (findUnit) off, every answer then asked afresh / looked up in
+	// the map; test_pathperf1_hier.cpp compares the searches both ways. Not part of the state (it changes no result)
+	void setSearchShortcuts(bool on) { m_searchShortcuts = on; }
+private:
+	enum { kUnitIndexMax = 1 << 20 };
 	void releaseSlot(PathfindObjectID id, Slot &slot);
 	void registerSlot(PathfindObject &obj, Slot &slot);
 	void footprintCells(const PathfindObject &obj, const ICoord2D &cell, int angleCode, std::vector<ICoord2D> &out);
@@ -768,12 +819,36 @@ private:
 	Path *buildActualPath(const PathfindObject *obj, unsigned acceptableSurfaces, const Coord3D *fromPos, PathfindCell *goalCell, bool center, bool blocked);
 	void prependCells(Path *path, const Coord3D *fromPos, PathfindCell *goalCell, bool center);
 	int examineNeighboringCells(PathfindCell *parentCell, PathfindCell *goalCell, const PathfindLocomotorInfo &loco, bool isHuman, bool centerInCell,
-		int radius, const ICoord2D &startCellNdx, const PathfindObject *obj);
+		int radius, const ICoord2D &startCellNdx, const PathfindObject *obj, bool hierarchical = false);
+	// lane PATHPERF-1: RW 0x6F6454, one cell of a block edge in the hierarchical search, and RW 0x6F49BC, the corridor of the found cell chain
+	void examineHierarchicalEdgeCell(const ICoord2D &cell, const ICoord2D &delta, PathfindCell *parent, PathfindCell *goal, zoneStorageType parentZone,
+		zoneStorageType *zones, int &zoneCount, const PathfindMovement &mv);
+	void makeHierarchicalPathPassable(PathfindCell *last, bool expand);
 	bool examineShortcutCell(PathfindCell *from, PathfindCell *to, int x, int y, struct ShortcutState &state);
 	// RW 0x6EB151: true means the cell blocks the footprint
 	bool blockerCallback(const PathfindObject *obj, const PathfindCell *cell, int *count, bool countAllies, PathfindObjectID ignoreId, bool ignoreUnits,
-		const PathfindMovement *rectMovement);
+		const PathfindMovement *rectMovement, bool isHuman);
 	int occupantCost(const PathfindObject *obj, const PathfindCell *parent, int x, int y, int r, int n, bool skipEnemies);
+	// lane PATHPERF-1: what checkForMovement and occupantCost ask of an occupant `id` and of the searching unit `obj` (only side-effect-free getters, all
+	// asked at once). While internalFindPath runs for `obj` nothing they read can change, so the answers are kept per search (generation counted) and an
+	// occupant met in many cells is resolved once; elsewhere they are asked afresh. Null when the occupant's object is gone
+	struct OccupantFacts
+	{
+		unsigned gen = 0;
+		const PathfindObject *o = nullptr;
+		PathfindRelationship rel = PATHFIND_ENEMIES; // obj's relationship to o
+		bool parked = false, hasAI = false, hasLocomotor = false, infantry = false, largeRect = false, throughEachOther = false;
+		int aiPriority = 0;
+		const PathfindObject *container = nullptr;
+	};
+	struct SearcherFacts
+	{
+		bool isHuman = false, hasAI = false, hasLocomotor = false, largeRect = false, pathThroughInfantry = false, throughEachOther = false;
+		int aiPriority = 0;
+	};
+	const OccupantFacts *occupantFacts(const PathfindObject *obj, PathfindObjectID id);
+	SearcherFacts searcherFacts(const PathfindObject *obj) const;
+	struct SearchMemoScope; // internalFindPath's activation of the memo
 	// lane MOVE-3: RW 0x6ED46C, the footprint cost of a patch step (-1: blocked); `parent` null counts every footprint cell
 	int patchCellCost(const PathfindObject &obj, const ICoord2D *parent, const ICoord2D &cell, PathfindLayerEnum layer, int r, int n, bool skipHordePositions);
 	// RW 0x6ECFC5: the footprint of RW 0x6ED071 is centred on a cell (its size is odd)
@@ -802,10 +877,24 @@ private:
 	PathfindObjectID m_ignoreObstacleID = PATHFIND_INVALID_ID;
 	int m_cumulativeCellsAllocated = 0;
 	int m_shortcutCounter = 0; // cells examined by the straight-line shortcut during the current search
+	// lane PATHPERF-1: the last hierarchical corridor (RW HierarchicalPath, 0x18 bytes from RW 0x6F49BC): the corridor index of every block (-1: not on it; a dense
+	// copy of its two-level map) and the last index; m_hierBlocks lists the blocks set, so the next corridor resets only those
+	std::vector<int> m_hierIndex;
+	std::vector<int> m_hierBlocks;
+	int m_hierLast = -1;
 	PathfindCellInfoPool m_pool;
 	PathfindZoneManager m_zoneManager;
 	PathfindRequestRing m_queue1; // path requests (AI vtable +0x230)
 	PathfindRequestRing m_queue2; // blocked repaths (AI vtable +0x234)
 	std::map<PathfindObjectID, UnitRecord> m_units;
+	std::vector<UnitRecord *> m_unitIndex; // lane PATHPERF-1: m_units by id (see findUnit)
+	// lane PATHPERF-1: the search memo (occupantFacts): active for m_memoObj during internalFindPath; entries are valid when their gen is m_memoGen
+	std::vector<OccupantFacts> m_memo;
+	OccupantFacts m_memoScratch;
+	SearcherFacts m_memoSelf;
+	const PathfindObject *m_memoObj = nullptr;
+	unsigned m_memoGen = 0;
+	bool m_memoActive = false;
+	bool m_searchShortcuts = true;
 	std::vector<std::string> m_stops;
 };

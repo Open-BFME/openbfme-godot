@@ -17,6 +17,12 @@
 ##   --list                   print the installed versions
 ##   --play                   start the version Play starts
 ##   --version                print the launcher's version
+##   --open-url openbfme://join/<id>   (lane ONLINE-2; what the operating system runs once the handler is registered) start the version Play starts in
+##                            that online game: --online-join=<id> --online-lobby=<the lobby>; needs no launcher lock (a link works while the window is
+##                            open). It must come alone (r2, Sol r1): any other argument, or a link anywhere else, refuses the start and nothing runs
+##   --lobby=<url>            remember the online lobby the links use (until one is set, a link says so and starts nothing)
+##   --register-url-handler   register this launcher for openbfme:// links (scripts/core/url_handler.gd: the current user's registry on Windows,
+##                            ~/.local/share/applications + xdg-mime on Linux)
 ##   --auto-update=on|off     (lane UI-5) the setting "Update automatically in the background" (on by default)
 ##   --free-camera=on|off     (lane INPUT-1) the game's free camera (Options.ini OpenBFMEFreeCamera, see scripts/core/game_options.gd)
 ##   --aio=on|off             (lane AIO-1, on by default: AioInstall.DEFAULT_ENABLED) the setting "Offer to download the games"
@@ -67,7 +73,11 @@ const MessagePanel := preload("res://scripts/ui/message_panel.gd")
 const InstanceLock := preload("res://scripts/core/instance_lock.gd")
 
 const CLI_ACTIONS := ["--update", "--install=", "--select=", "--self-update", "--channel=", "--list", "--play", "--version", "--free-camera=",
-	"--aio=", "--aio-install=", "--auto-update="]
+	"--aio=", "--aio-install=", "--auto-update=", "--open-url", "--lobby=", "--register-url-handler"]
+const UrlHandler := preload("res://scripts/core/url_handler.gd")
+# the test options (honoured only by a development run or a test package); ONLINE-2 r2: also the only arguments allowed before --open-url there
+const TEST_OPTIONS := ["--api-base=", "--trust-key=", "--repo=", "--test-kill-at=", "--aio-base=", "--aio-pins=", "--aio-stop-after=", "--ui-demo=",
+	"--ui-stop=", "--ui-then="]
 const RECHECK_SECONDS := 3600.0  # lane UI-5: while the launcher stays open, it looks for updates again every hour
 
 var info: RefCounted
@@ -130,15 +140,26 @@ func _ready() -> void:
 	updater = Updater.new(info)
 	aio = AioInstall.new(updater)
 	var args := OS.get_cmdline_user_args()
+	# lane ONLINE-2 r2 (Sol r1): an openbfme:// link is taken only in the isolated mode (UrlHandler.isolated_url: the user arguments are exactly
+	# --open-url <link>), checked before anything else reads the arguments; anything else around a link (Windows splices the link into the command
+	# line: a link with quotes adds arguments) refuses the whole start, so no CLI action of an injected argument ever runs
+	var url_mode := UrlHandler.isolated_url(args, info.tests_allowed(), TEST_OPTIONS)
+	if url_mode.mode and not url_mode.ok:
+		Log.line("LAUNCHER link refused, nothing done: " + url_mode.error)
+		get_tree().quit(1)
+		return
+	for a in OS.get_cmdline_args():
+		if a.to_lower().contains(UrlHandler.SCHEME + ":"):
+			Log.line("LAUNCHER link refused, nothing done: a link outside the user arguments (start the launcher with -- --open-url <link>)")
+			get_tree().quit(1)
+			return
 	Log.line("LAUNCHER OpenBFME Launcher %s (%s, %s) updates from %s" % [info.version, info.commit.left(10) if info.commit != "" else "development run", info.platform(), info.repo])
 	var problem := ""
 	if info.error != "":
 		problem = info.error
 		Log.line("LAUNCHER " + info.error)
 	for a in args:
-		if a.begins_with("--api-base=") or a.begins_with("--trust-key=") or a.begins_with("--repo=") or a.begins_with("--test-kill-at=") \
-				or a.begins_with("--aio-base=") or a.begins_with("--aio-pins=") or a.begins_with("--aio-stop-after=") or a.begins_with("--ui-demo=") \
-				or a.begins_with("--ui-stop=") or a.begins_with("--ui-then="):
+		if TEST_OPTIONS.any(func(p): return a.begins_with(p)):
 			if not info.tests_allowed():
 				Log.line("LAUNCHER ignored %s: test options are off in a release build" % a.get_slice("=", 0))
 				continue
@@ -195,7 +216,8 @@ func _ready() -> void:
 			if a == c or (c.ends_with("=") and a.begins_with(c)):
 				cli = true
 	# one launcher at a time (after the self-update swap above: its helper never holds the lock); --version alone needs none
-	if not (cli and Array(args).all(func(x): return x == "--version" or not CLI_ACTIONS.any(func(c): return x == c or (c.ends_with("=") and x.begins_with(c))))):
+	# lane ONLINE-2: an openbfme:// link starts the game without the lock too (it installs nothing; the window may be open)
+	if not url_mode.mode and not (cli and Array(args).all(func(x): return x == "--version" or not CLI_ACTIONS.any(func(c): return x == c or (c.ends_with("=") and x.begins_with(c))))):
 		_instance = InstanceLock.new(OS.get_user_data_dir(), info.version)
 		if not _instance.acquire():
 			# Sol r4: "already open" only when the port's holder answered as a launcher; another program on the port is said as such
@@ -389,7 +411,26 @@ func _demo_progress(title: String, done: int, total: int) -> void:
 
 # ---- command line ------------------------------------------------------------------------------------------------------------------------
 
+## lane ONLINE-2: the isolated link mode: start the version Play starts in that online game (the lobby is the one --lobby set, never the link's)
+func _open_url(url_mode: Dictionary) -> int:
+	var lobby := str(updater.get_state("online", "lobby", ""))
+	if lobby == "":
+		Log.line("LAUNCHER link %s: no online lobby is set (--lobby=<url>); online play is a test feature" % url_mode.link)
+		return 1
+	var lv := updater.play_version()
+	if lv == "":
+		Log.line("LAUNCHER nothing to play: no verified version is installed")
+		return 1
+	var lp := updater.play(lv, UrlHandler.game_args(url_mode, lobby))
+	Log.line("LAUNCHER join game %s on %s with %s" % [url_mode.game, lobby, lv if lp.ok else "failed: " + lp.error])
+	return 0 if lp.ok else 1
+
+
 func _run_cli(args: PackedStringArray, problem: String) -> int:
+	var url_mode := UrlHandler.isolated_url(args, info.tests_allowed(), TEST_OPTIONS)
+	if url_mode.mode:
+		# lane ONLINE-2: openbfme://join/<id>, alone on the command line (a refused one never gets here: _ready)
+		return _open_url(url_mode) if url_mode.ok else 1
 	var code := 0
 	updater.progress = func(text: String, done: int, total: int) -> void:
 		if done < 0:
@@ -511,6 +552,15 @@ func _run_cli(args: PackedStringArray, problem: String) -> int:
 	if "--list" in args:
 		for i in updater.installed():
 			Log.line("LAUNCHER installed %s%s" % [i.version, " (selected)" if i.version == updater.selected() else ""])
+	for a in args:
+		if a.begins_with("--lobby="):
+			updater.set_state("online", "lobby", a.substr(8).strip_edges())
+			Log.line("LAUNCHER online lobby: %s" % a.substr(8).strip_edges())
+	if "--register-url-handler" in args:
+		var reg := UrlHandler.register(OS.get_executable_path())
+		Log.line("LAUNCHER openbfme:// links: %s" % (("registered (%s)" % reg.where) if reg.ok else "not registered: " + reg.error))
+		if not reg.ok:
+			code = 1
 	if "--play" in args:
 		var v := updater.play_version()
 		if v == "":

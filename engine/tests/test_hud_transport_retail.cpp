@@ -115,7 +115,7 @@ TEST_CASE("transport retail: a mumak carries its Haradrim archer horde (InitialP
 	}
 	SharedWorld &s = shared();
 	Rig r(s);
-	const Coord3D c0 = centre(r, 400.0f);
+	const Coord3D c0 = gridCentre(r, 200.0f); // lane PATHPERF-1: inside the pathfind grid (centre() found a spot in the map border, where no path search reaches)
 	Object *mumak = r.make("MordorMumakil", c0.x, c0.y);
 	r.frame(2);
 	HordeTransportContain *t = dynamic_cast<HordeTransportContain *>(mumak->getContain());

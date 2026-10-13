@@ -570,11 +570,22 @@ TEST_CASE("move retail: a skirmish map's own units and hordes obey a move messag
 		// the player's mobile objects with a locomotor of positive speed (units and hordes, not the members inside hordes)
 		std::vector<Object *> ours;
 		std::vector<Coord3D> from;
+		std::vector<ObjectID> spawnedWorkers; // lane PLAY-4: the NoSelect workers of the map's pre-built plot structures (they fade: one kill each)
+		for (Object *obj = logic.getFirstObject(); obj; obj = obj->getNextObject())
+		{
+			if (obj->isKindOfName("DOZER") && obj->isKindOfName("UNATTACKABLE") && obj->getProducerID() != INVALID_ID)
+			{
+				spawnedWorkers.push_back(obj->getID());
+			}
+		}
 		for (Object *obj = logic.getFirstObject(); obj; obj = obj->getNextObject())
 		{
 			AIUpdateInterface *ai = obj->getAIUpdateInterface();
 			// the ambient birds (Crow) fly and the shore ships sail: their movers are not ported (S-084), they are not ordered here
-			if (obj->getControllingPlayer() && obj->getControllingPlayer()->getPlayerIndex() == player && !obj->getContainedBy() && ai && ai->curLocomotor() && ai->locomotorSetSpeed() > 0.0f &&
+			// lane PLAY-4: not the NoSelect workers (DOZER, UNATTACKABLE) a map's pre-built plot structures spawn at the start (Player::onStructureCreated
+			// RW 0x6AAF3B): they fade away within seconds
+			if (obj->getControllingPlayer() && obj->getControllingPlayer()->getPlayerIndex() == player && !obj->getContainedBy() &&
+				!(obj->isKindOfName("DOZER") && obj->isKindOfName("UNATTACKABLE")) && ai && ai->curLocomotor() && ai->locomotorSetSpeed() > 0.0f &&
 				(ai->curLocomotor()->getTemplate().m_surfaces & LOCOMOTORSURFACE_AIR) == 0 && ai->curLocomotor()->getTemplate().m_appearance != LOCO_SHIP &&
 				ai->curLocomotor()->getTemplate().m_appearance != LOCO_HOVER && ai->curLocomotor()->getTemplate().m_appearance != LOCO_WINGS)
 			{
@@ -640,8 +651,13 @@ TEST_CASE("move retail: a skirmish map's own units and hordes obey a move messag
 				}
 			}
 		}
-		CHECK(logic.combat().counters().damageApplications == 0);
-		CHECK(logic.combat().counters().kills == 0);
+		unsigned long long faded = 0;
+		for (ObjectID id : spawnedWorkers)
+		{
+			faded += logic.findObjectByID(id) ? 0u : 1u;
+		}
+		CHECK(logic.combat().counters().damageApplications == faded);
+		CHECK(logic.combat().counters().kills == faded);
 		const LiveGame::Report rep = game.report();
 		out.movementErrors = rep.movement;
 		for (const auto &f : game.ai().movementFailures())

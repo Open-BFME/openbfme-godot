@@ -1,0 +1,22 @@
+# OpenBFME online relay (services/online/DEPLOY.md). Install: /etc/systemd/system/ (or ~/.config/systemd/user/ without the User= line).
+[Unit]
+Description=OpenBFME online relay (UDP)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=openbfme
+ExecStart=/opt/openbfme/bin/openbfme_relay --bind 0.0.0.0:7350 --keys /etc/openbfme/ticket.keys --log-dir /var/lib/openbfme/relay-logs --status /run/openbfme/relay-status.json
+Restart=always
+RestartSec=2
+RuntimeDirectory=openbfme
+# INFRA-2: relay-logs too (the relay does not create its --log-dir: without it every game ran unlogged, "cannot write ... has no log")
+StateDirectory=openbfme openbfme/relay-logs
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/openbfme
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

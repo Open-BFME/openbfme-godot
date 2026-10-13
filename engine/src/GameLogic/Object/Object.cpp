@@ -36,6 +36,8 @@
 #include "GameLogic/Economy.h"
 #include "GameLogic/AI/AIWorld.h"
 #include "GameLogic/GameLogic.h"
+#include "GameLogic/SkirmishAI/SkirmishAIManager.h"
+#include "GameLogic/AI/TurretAI.h"
 #include "GameLogic/Module/AIUpdate.h"
 #include "GameLogic/Module/AutoDepositUpdate.h"
 #include "GameLogic/Module/ObjectHelper.h"
@@ -456,11 +458,22 @@ void Object::joinTeam(Team *team)
 	{
 		return;
 	}
+	// lane DECOMP-3: RW 0x697C9A .. 0x697CBC: between two teams whose controlling players differ (RW 0x79FD6F) the skirmish AI manager's object events run
+	// around the + 0x31C store, the removal RW 0x6A99CB with the old owner and the add RW 0x6A9D9C with the new one
+	const bool ownerEvent = m_team && team && m_team->getControllingPlayer() != team->getControllingPlayer();
 	if (m_team)
 	{
 		m_team->friend_removeMember(this);
 	}
+	if (ownerEvent)
+	{
+		m_logic.skirmishAI().objectRemoved(*this);
+	}
 	m_team = team;
+	if (ownerEvent)
+	{
+		m_logic.skirmishAI().objectAdded(*this);
+	}
 	if (m_team)
 	{
 		m_team->friend_addMember(this);
@@ -794,6 +807,96 @@ void Object::friend_onDie(const DieModuleInterface::Event &event)
 	// lane MOD-4: RW 0x699082 -> RW 0x6938BD: the producer's spawn interface hears of the death (SpawnBehavior::onSpawnDeath)
 	SpawnBehaviorInterface::notifyProducerOfDeath(*this, event);
 	++m_logic.combat().counters().kills;
+}
+
+// lane DECOMP-3: RW 0x691269 (BFME2 decomp Object_isAbleToAttack.cpp:Object::isAbleToAttack, tier B same-shape for RW 0x691269; RotWK's offsets read here):
+//   1. NO_ATTACK (status 5) or the model condition 0x81 (RW 0x46E918 on + 0x10C): false;
+//   2. the container (+ 0x27C; a HORDE container, template + 0x115 bit 5, is skipped for its own container) with a contain (+ 0x258), unless this object is
+//      CONTESTING_BUILDING (status 0x25): its slot 0xB0(this) mask lacks CAN_ATTACK (status 1) -> false; with an AI (+ 0x260) whose current victim
+//      (RW 0x668303) the contain's slot 0xC0(this, victim) blocks -> false;
+//   3. UNDER_CONSTRUCTION (2) or SOLD (0x13): false; a PORTABLE_STRUCTURE (+ 0x10F bit 1) or SPAWNS_ARE_THE_WEAPONS (+ 0x112 bit 4) with DISABLED_EMP (+ 0x1C8
+//      bit 2): false;
+//   4. with an AI and no CAN_ATTACK KindOf: the weapon slots 0 .. 5 in order (RW 0x6C81B0 on + 0x34C): a weapon on no turret (RW 0x66246B: -1) ends the walk;
+//      one on an enabled turret (RW 0x662364) too; when there were weapons, all on disabled turrets: false;
+//   5. CAN_ATTACK KindOf (+ 0x108 bit 3) or status: true; its own contain's slot 0xB4 (isPassengerAllowedToFire) and slot 0x114(0) > 0 (the riders): true;
+//      an AI with a weapon (+ 0x374: the weapon set's filled slot mask, ZH WeaponSet::hasAnyWeapon): true; its spawn interface (RW 0x68C3A3) slot 0x1C
+//      canAnySlavesAttack: true; else false.
+bool Object::isAbleToAttack() const
+{
+	static const int noAttack = CombatNames::status("NO_ATTACK"), contesting = CombatNames::status("CONTESTING_BUILDING"),
+					 canAttackStatus = CombatNames::status("CAN_ATTACK"), sold = CombatNames::status("SOLD");
+	static const int horde = CombatNames::kindOf("HORDE"), portable = CombatNames::kindOf("PORTABLE_STRUCTURE"), spawnsWeapons = CombatNames::kindOf("SPAWNS_ARE_THE_WEAPONS"),
+					 canAttackKind = CombatNames::kindOf("CAN_ATTACK");
+	if (testStatus((unsigned)noAttack) || testModelCondition(0x81))
+	{
+		return false;
+	}
+	const Object *container = m_containedBy;
+	if (container && container->isKindOf((unsigned)horde))
+	{
+		container = container->getContainedBy();
+	}
+	const ContainModuleInterface *cmi = container ? container->getContain() : nullptr;
+	if (cmi && !testStatus((unsigned)contesting))
+	{
+		const ObjectStatusMaskType *mask = cmi->getObjectStatusOfContainedFor(this);
+		if (!mask || !MaskTest(*mask, (unsigned)canAttackStatus))
+		{
+			return false; // RW 0x6912E3 (a contain without the mask: INFERENCE, no CAN_ATTACK)
+		}
+		const Object *victim = m_ai ? m_ai->currentVictim() : nullptr; // RW 0x668303
+		if (victim && cmi->isPassengerShotBlocked(this, victim))
+		{
+			return false;
+		}
+	}
+	if (isUnderConstruction() || testStatus((unsigned)sold))
+	{
+		return false;
+	}
+	if ((isKindOf((unsigned)portable) || isKindOf((unsigned)spawnsWeapons)) && isDisabledByType(DISABLED_EMP))
+	{
+		return false;
+	}
+	if (m_ai && !isKindOf((unsigned)canAttackKind))
+	{
+		bool anyWeapon = false, anyEnabled = false, noTurret = false;
+		const TurretAI *turret = m_ai->turret();
+		for (int slot = 0; slot < WEAPONSLOT_COUNT && !noTurret && !anyEnabled; ++slot)
+		{
+			if (!m_weapons || !m_weapons->weaponInSlot(slot))
+			{
+				continue;
+			}
+			anyWeapon = true;
+			if (!turret || !turret->isWeaponSlotOnTurret(slot))
+			{
+				noTurret = true; // RW 0x691388: -1 jumps to the CAN_ATTACK tests
+			}
+			else if (turret->isEnabled())
+			{
+				anyEnabled = true;
+			}
+		}
+		if (!noTurret && anyWeapon && !anyEnabled)
+		{
+			return false;
+		}
+	}
+	if (isKindOf((unsigned)canAttackKind) || testStatus((unsigned)canAttackStatus))
+	{
+		return true;
+	}
+	if (m_contain && m_contain->isPassengerAllowedToFire() && m_contain->getContainCount() > 0)
+	{
+		return true;
+	}
+	if (m_ai && m_weapons && m_weapons->hasAnyWeapon())
+	{
+		return true;
+	}
+	const SpawnBehaviorInterface *spawn = SpawnBehaviorInterface::of(const_cast<Object &>(*this));
+	return spawn && spawn->canAnySlavesAttack();
 }
 
 Player *Object::getControllingPlayer() const

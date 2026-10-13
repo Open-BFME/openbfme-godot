@@ -178,6 +178,7 @@ struct AIBuildState
 	AIEconomyState economy;             ///< step 5: the economy builder (+ 0xC0)
 	int phase = 0;                      ///< AISkirmishPlayer + 0x16C
 	float phaseFraction = 0.0f;         ///< + 0x170
+	bool ringHero = false;              ///< AIPlayer + 0x154: the player had Upgrade_RingHero at the last check (0 from the ctor, RW 0x8F084E; lane DECOMP-3)
 	unsigned long long executed = 0, failed = 0, waitedForMoney = 0, waitedForDozer = 0; ///< structure executions; failures and waits of every request
 	std::uint32_t nextSerial = 1;       ///< port only: the next AIBuildRequest::serial
 	unsigned long long rebuilds = 0, requeuedForDozerDeath = 0; ///< lane AI-2: RW 0x90D16A restarts; RW 0x8F0C03 requests sent back after their dozer died

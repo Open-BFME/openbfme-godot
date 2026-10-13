@@ -8,6 +8,13 @@
 // Every peer starts the game from the same lobby START: the same NewGameMessage (GameInfo, seed), resolved by NewGame::prepareNewGame on every peer (the
 // resolution is a pure function of the message), with the peer's own slot as the local one (GameInfo::getLocalSlotNum; it decides only which player is
 // the local one, never hashed: PlayerList::crc). The slot -> player index map of the Network is read from the loaded game (the side of each slot).
+//
+// Lane ONLINE-3 (online games, docs/ONLINE.md "Phase O3"): a START with a rejoin ticket (LobbyStart::rejoinGeneration > 0: the player's game restarted and
+// the lobby gave it a fresh ticket) begins with beginRejoin instead of begin: the transport binds to the relay as the slot's new incarnation, the relay's
+// command log is fetched while the others play on (GameNetwork/Rejoin.h), the game is re-simulated from frame 0 at full speed (CommandLogCatchUp: the
+// players' CRCs in the log are compared on the way), the client asks the others to take it back once it is near the live edge, the packet router's REJOIN
+// names the frame, the catch-up runs up to it, and from the frame after the client plays in lockstep (Network::beginLive). The first CRC exchange that
+// includes it proves the state. The host loop calls rejoinStep until it reports Live (or Failed), then plays as usual.
 
 #pragma once
 
@@ -16,6 +23,7 @@
 #include "GameNetwork/LANLobby.h"
 #include "GameNetwork/LockstepDriver.h"
 #include "GameNetwork/Network.h"
+#include "GameNetwork/Rejoin.h"
 #include "GameNetwork/Transport.h"
 
 #include <memory>
@@ -36,6 +44,7 @@ public:
 		std::string exeName = "openbfme";
 		std::string playerName;
 		bool adaptiveRunAhead = true; ///< lane MP-2: the local command delay follows the measured round trip (Network::updateRunAhead)
+		std::uint32_t rejoinWindowMs = 300000; ///< lane ONLINE-3: an online game's rejoin window (NetworkConfig::rejoinWindowMs)
 		bool census = false;          ///< lane MP-3: LockstepDriver::setCensus (the per-frame census of the measurements)
 	};
 	NetGameSession(UDP &socket, const LobbyStart &start, const Options &options);
@@ -46,6 +55,61 @@ public:
 	bool begin(LiveGame &game, std::string *error);
 	// the load barrier: true once every network player loaded (call often before advancing the game)
 	bool pollLoaded();
+
+	// ---- lane ONLINE-3: rejoin (see above) ----
+	bool beginRejoin(LiveGame &game, std::string *error);
+	enum class RejoinState
+	{
+		Binding,    ///< HELLO with the rejoin ticket until the relay welcomes it
+		CatchingUp, ///< fetching the log and re-simulating it
+		Waiting,    ///< near the live edge, asking to be taken back (REJOINREQUEST) until the packet router's REJOIN is in the log
+		Live,       ///< in lockstep (the session's driver is installed)
+		Failed      ///< see rejoinReport().failure
+	};
+	// one step: services the transport, fetches the log, runs catch-up frames for at most `budgetMs`, switches when the REJOIN's frame is reached
+	RejoinState rejoinStep(LiveGame &game, std::uint32_t budgetMs = 50);
+	struct RejoinReport
+	{
+		std::uint64_t startedMs = 0, liveMs = 0;  ///< NetMilliseconds at beginRejoin and at the switch (the catch-up time is the difference)
+		std::uint64_t logBytes = 0;
+		UnsignedInt liveFrame = 0;               ///< the first lockstep frame (the REJOIN's frame + 1)
+		UnsignedInt framesCaughtUp = 0;          ///< the frames the catch-up ran
+		unsigned long long crcsCompared = 0, crcMismatches = 0, crcsSentAfter = 0, framesFilled = 0, logRequests = 0;
+		std::string firstMismatch, failure;
+		std::vector<std::string> tailErrors; ///< the log read after the switch could not be used (reported, the live data still arrives)
+	};
+	const RejoinReport &rejoinReport() const { return m_rejoin; }
+
+	// ---- lane ONLINE-3: a spectator (OnlineStart::Kind::Spectate; LobbyStart::spectatorIndex >= 0). Read-only: the transport binds the spectator
+	// ticket and only reads the relay's log (LOG_REQUEST, held back by the spectator delay at the relay), the game re-simulates it with the catch-up
+	// driver and follows it as it grows; no Network, so it sends no command, takes no part in the CRC exchange, the run-ahead or the disconnect path,
+	// and nobody waits for it. Its own state hash is compared with the players' CRCs in the log at every CRC frame (a mismatch fails it). The game must
+	// have been loaded with no local slot (the observer's ReplayObserver side is the local player: the whole map revealed, RW 0x62F91A) ----
+	bool beginSpectate(LiveGame &game, std::string *error);
+	enum class SpectateState
+	{
+		Binding,   ///< HELLO with the spectator ticket until the relay welcomes it
+		Following, ///< reading the log and running its frames (caught up or not)
+		Ended,     ///< the log's END record arrived and every frame of it ran
+		Failed     ///< see spectateReport().failure
+	};
+	SpectateState spectateStep(LiveGame &game, std::uint32_t budgetMs = 50);
+	struct SpectateReport
+	{
+		std::uint64_t startedMs = 0, caughtUpMs = 0; ///< NetMilliseconds at beginSpectate and when it first reached the end of what the relay served
+		UnsignedInt reached = 0;                    ///< the logic frame the spectator's game is at
+		UnsignedInt served = 0;                     ///< the last complete frame of the log the relay served so far
+		std::uint64_t logBytes = 0;
+		unsigned long long crcsCompared = 0, crcMismatches = 0, logRequests = 0;
+		bool logComplete = false;
+		std::string firstMismatch, failure;
+	};
+	const SpectateReport &spectateReport() const { return m_spectate; }
+	SpectateState spectateState() const { return m_spectateState; }
+	// the spectator stops after this logic frame is reached (a test compares its state with the players' at the same frame); default: the log's end
+	void setSpectateStopFrame(UnsignedInt frame) { m_spectateStop = frame; }
+	bool spectating() const { return m_start.spectatorIndex >= 0; }
+	bool rejoining() const { return m_rejoinState != RejoinState::Live && m_catchUp != nullptr; }
 	// services the transport and answers late lobby START datagrams (a lost START_ACK); call every tick
 	void service();
 	// the local player stops (ZH leave); the replay gets its end record
@@ -82,4 +146,20 @@ private:
 	std::vector<std::string> m_desyncDumps, m_desyncDumpErrors; ///< lane MP-2
 	std::vector<size_t> m_dumpedHalves;                         ///< per desync report, the halves its dump holds + 1 (0 = none written)
 	void writeDesyncDumps();
+	bool setUp(LiveGame &game, std::string *error); ///< begin's common part: the config, the transport, the network, the driver (not installed)
+	// lane ONLINE-3
+	std::unique_ptr<RelayLogFetch> m_fetch;
+	std::unique_ptr<CommandLogCatchUp> m_catchUp;
+	std::shared_ptr<const RelayLog::Assembled> m_assembled;
+	RejoinState m_rejoinState = RejoinState::Binding;
+	RejoinReport m_rejoin;
+	size_t m_parsedBytes = 0;
+	std::uint64_t m_lastTail = 0;
+	std::string assembleLog(); ///< "" or why the fetched log cannot be used
+	SpectateState m_spectateState = SpectateState::Binding;
+	SpectateReport m_spectate;
+	bool m_logComplete = false;
+	UnsignedInt m_spectateStop = 0xFFFFFFFFu;
+	void fillFromLog(UnsignedInt fromFrame);
+	void failRejoin(const std::string &why);
 };

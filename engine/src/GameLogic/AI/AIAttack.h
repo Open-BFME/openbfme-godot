@@ -78,11 +78,19 @@ public:
 	virtual bool isAttackingObject() const = 0;
 };
 
+// ZH AttackExitConditionsInterface (lane PLAY-4, the guard machine's exit conditions): AIAttackState::update ends with STATE_SUCCESS first thing when it says so
+class AttackExitConditions
+{
+public:
+	virtual ~AttackExitConditions() {}
+	virtual bool shouldExit(const AIStateMachine &machine) const = 0;
+};
+
 // ZH AIAttackState: the parent state. It owns the attack sub machine and runs it every frame (the sub machine's sleeps are converted to continue).
 class AIAttackState : public AIState, public AttackFireNotify
 {
 public:
-	AIAttackState(AIStateMachine &m, bool follow, bool attackingObject, bool forceAttacking);
+	AIAttackState(AIStateMachine &m, bool follow, bool attackingObject, bool forceAttacking, const AttackExitConditions *exitConditions = nullptr);
 	~AIAttackState() override;
 	StateReturnType onEnter() override;
 	StateReturnType update() override;
@@ -112,7 +120,9 @@ private:
 	ObjectID m_victimTeam = 0;
 	int m_lockedSlotOnEnter = -1;
 	unsigned m_shotsFired = 0;
+	unsigned m_shotsAtEnter = 0; // lane PLAY-4 r1: the count at onEnter, for stop S-3807 only (a diagnostic: not simulation state, not hashed)
 	bool m_meleeMachine = false;
+	const AttackExitConditions *m_exitConditions = nullptr; ///< ZH m_attackParameters
 };
 
 // ZH AIDeadState: the unit is dead; it does nothing (the die modules finish the job)
@@ -188,3 +198,6 @@ public:
 
 // the exact AIAttackApproachTargetState distance test the machines share: the victim is in the current weapon's range
 bool AttackVictimInRange(const AIStateMachine &machine);
+
+// lane PLAY-4 r1: stop S-3807, noted by AIAttackState::update
+const char *attackEndedUnfiredStopLine();

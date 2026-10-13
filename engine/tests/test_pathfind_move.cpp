@@ -736,3 +736,67 @@ TEST_CASE("ai move queues: blocked repaths that fill half the cell budget stop t
 	CHECK(sim.pf->queuedBlockedRepaths() == 0);
 	CHECK(world.calls.size() == 50);
 }
+
+// lane PATHPERF-1 (the MERGEQ-2 FACT failures): a ground unit standing on a cliff cell, as the FACT sweeps' units did. findPath (slot 0, RW 0x6FE7CB) runs the
+// block search with closestOK = 1 (its zone test RW 0x6F5547 skipped) and no start test, and kind 0 zones join equal types only: the block search spreads over the
+// cliff patch, its closest cell becomes the adjusted goal and the path ends there, partial, as in RotWK. The search without the corridor tunnels off the cliff
+TEST_CASE("ai move: a unit on a cliff cell: findPath's corridor ends it partial at the cliff patch's closest block cell (RW 0x6F8601, closestOK = 1)")
+{
+	Sim sim(60, 30);
+	for (int x = 2; x <= 25; ++x) // across the block edge x = 16: the block search reaches a cliff cell of the next block
+	{
+		for (int y = 2; y <= 12; ++y)
+		{
+			sim.terrain.cliff.insert({ x, y });
+		}
+	}
+	sim.build();
+	Unit &u = sim.add(1, 75.0f, 75.0f); // cell (7, 7): cliff
+	REQUIRE(sim.pf->getCell(LAYER_GROUND, 7, 7)->getType() == PathfindCell::CELL_CLIFF);
+	const Coord3D from = u.obj.pos, goal{ 455.0f, 75.0f, 0.0f }; // cell (45, 7): open ground, block 2
+	bool partial = false;
+	std::unique_ptr<Path> confined(sim.pf->findPath(&u.obj, groundLoco(), &from, &goal, &partial));
+	REQUIRE(confined != nullptr);
+	CHECK(partial);
+	CHECK(sim.pf->hierarchicalLastIndex() == 1); // the corridor: the start's block and the next one
+	const Coord3D end = *confined->getLastNode()->getPosition();
+	CHECK(end.x == doctest::Approx(165.0f)); // block 1, cell (16, 14): 290 short of the goal
+	CHECK(end.y == doctest::Approx(145.0f));
+	bool partial2 = true;
+	std::unique_ptr<Path> free(sim.pf->findPathWithoutCorridor(&u.obj, groundLoco(), &from, &goal, &partial2));
+	REQUIRE(free != nullptr);
+	CHECK_FALSE(partial2);
+	CHECK(free->getLastNode()->getPosition()->x == doctest::Approx(goal.x));
+	CHECK(free->getLastNode()->getPosition()->y == doctest::Approx(goal.y));
+}
+
+// lane PATHPERF-1 (the MERGEQ-2 FACT failures): the melee approach (RW 0x668E94's + 0x3B4 branch) and computeAttackPath's adjust branch (RW 0x666E51) call
+// pathfinder slot + 4 (FindClosestPath RW 0x6FB869, S-166), not findPath (slot 0): the stand-in is the search without findPath's corridor, which leaves every
+// block passable; findPath leaves the blocks off its corridor impassable
+TEST_CASE("ai move: the melee approach path is slot + 4 (FindClosestPath, S-166), not findPath: no hierarchical corridor")
+{
+	Sim sim(128, 64);
+	for (int x = 64; x < 80; ++x) // a cliff wall over the block column x = 64..79 below y = 48: the way across is a detour through the top blocks
+	{
+		for (int y = 0; y < 48; ++y)
+		{
+			sim.terrain.cliff.insert({ x, y });
+		}
+	}
+	sim.build();
+	Unit &u = sim.add(1, 105.0f, 105.0f);
+	const Coord3D from = u.obj.pos, goal{ 1105.0f, 105.0f, 0.0f };
+	// findPath: a corridor, the block of cell (120, 60) off it
+	std::unique_ptr<Path> corridor(sim.pf->findPath(&u.obj, groundLoco(), &from, &goal, nullptr));
+	REQUIRE(corridor != nullptr);
+	REQUIRE_FALSE(sim.pf->zoneManager().isPassable(120, 60));
+	// the melee approach, requested without the offset and served by the path queue
+	REQUIRE(u.ai->requestMeleeApproachPath(goal, true));
+	REQUIRE(u.ai->meleeApproachPending());
+	sim.step(false);
+	REQUIRE(u.ai->path() != nullptr);
+	CHECK(sim.pf->zoneManager().isPassable(120, 60)); // the search ran without a corridor
+	const Coord3D end = *u.ai->path()->getLastNode()->getPosition();
+	CHECK(end.x == doctest::Approx(goal.x));
+	CHECK(end.y == doctest::Approx(goal.y));
+}

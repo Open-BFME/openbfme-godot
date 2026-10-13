@@ -1,0 +1,10 @@
+[Unit]
+Description=OpenBFME lobby backup, daily
+
+[Timer]
+OnCalendar=*-*-* 04:30:00 UTC
+RandomizedDelaySec=15min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

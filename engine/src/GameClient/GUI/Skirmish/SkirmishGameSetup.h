@@ -74,6 +74,8 @@ public:
 	std::u16string mapDisplayName(const MapCacheEntry &map, bool includePlayerCount) const; // " (n)" appended from two players
 	std::u16string mapDescription(const MapCacheEntry &map) const;
 	std::u16string mapDescriptionFirstLine(const MapCacheEntry &map) const;
+	// the cache's entry of a map key (case-insensitive; null when the player does not have the map). Lane ONLINE-4: the online game list's lookup
+	const MapCacheEntry *findMap(const std::string &mapName) const;
 	// populateMapListboxNoReset (open-bfme-2 MapUtil.cpp:814): the multiplayer maps with a display name, by player count then display name
 	// (case-insensitive).  Indexes into source().maps().
 	std::vector<int> listedMaps() const;
@@ -118,6 +120,12 @@ public:
 	void resetRules();
 	// OpenBFME's Legendary Heroes factor (1 off .. 4); false for a factor the rule does not offer
 	bool setLegendaryHeroes(int factor);
+	// lane UBER-1: the simulation profile of the games this setup starts (the player's OpenBFME option; kept through init / reset)
+	void setSimulationProfile(SimulationProfile profile)
+	{
+		m_simulationProfile = profile;
+		m_info.simulationProfile = profile;
+	}
 	// the Legendary Heroes combo's entries: Off, 2x, 3x, 4x (item data = the factor; Off carries the " *" default mark like a retail row)
 	std::vector<SkirmishComboEntry> legendaryHeroesEntries() const;
 
@@ -179,12 +187,12 @@ public:
 
 private:
 	void setSlotStateInternal(SkirmishGameSlot &slot, SlotState state, const std::u16string &name);
-	const MapCacheEntry *findMap(const std::string &mapName) const;
 	std::u16string label(const std::string &label) const { return fetchOrMissing(m_text, label); }
 
 	const SkirmishSetupSource &m_source;
 	const GameTextSource *m_text;
 	SkirmishGameInfo m_info;
+	SimulationProfile m_simulationProfile = SimulationProfile::Faithful; ///< lane UBER-1
 	std::string m_error;
 	bool m_strategic = false;
 	bool m_network = false; // lane MP-2

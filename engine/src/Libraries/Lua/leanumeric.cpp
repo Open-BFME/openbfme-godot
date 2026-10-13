@@ -20,6 +20,8 @@
 
 #include "lua_ea.h"
 
+#include "Common/DeterministicLibm.h"
+
 #include <charconv>
 #include <cmath>
 #include <cstdint>
@@ -101,7 +103,7 @@ double luaEA_mul(int mode, double a, double b)
 	{
 		return r;
 	}
-	const double err = std::fma(a, b, -r); // a * b == r + err exactly
+	const double err = DetLibm::fma(a, b, -r); // a * b == r + err exactly (the integer fma: no libm, lane DEP-2)
 	return luaEA_round24(r, signOf(err));
 }
 
@@ -112,7 +114,7 @@ double luaEA_div(int mode, double a, double b)
 	{
 		return r;
 	}
-	const double rem = std::fma(-r, b, a); // a - r * b: the exact quotient is r + rem / b
+	const double rem = DetLibm::fma(-r, b, a); // a - r * b: the exact quotient is r + rem / b
 	return luaEA_round24(r, b < 0 ? -signOf(rem) : signOf(rem));
 }
 

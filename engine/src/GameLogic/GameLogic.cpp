@@ -13,6 +13,7 @@
 #include "GameLogic/StructureStops.h"
 #include "GameLogic/VictoryConditions.h"
 #include "GameLogic/SkirmishAI/SkirmishAIManager.h"
+#include "Common/JobSystem.h"
 #include "Common/NumericState.h"
 
 #include "Common/StateHash.h"
@@ -118,7 +119,7 @@ void GameLogic::friend_objectLeftWorld(Object &obj)
 	}
 	for (auto &h : m_extraWorldHooks)
 	{
-		if (h.left && (inWorld || !h.containment))
+		if (h.left && (inWorld || !h.containment || h.leaveWhenOut))
 		{
 			h.left(obj);
 		}
@@ -127,7 +128,7 @@ void GameLogic::friend_objectLeftWorld(Object &obj)
 }
 
 // lane GARRISON-1: RW 0x68E31F from a contain (the order of the ported parts: the shroud record RW 0x68E352, the partition RW 0x68E3B6, the script world RW 0x68E3E2;
-// the radar RW 0xB6C470 and RW 0x688354 / 0x6A9D9C are not ported, S-142)
+// the radar RW 0xB6C470 and RW 0x688354 are not ported, S-142; lane DECOMP-3: RW 0x6A9D9C last)
 void GameLogic::friend_containEnterWorld(Object &obj)
 {
 	if (obj.isInWorld())
@@ -136,7 +137,7 @@ void GameLogic::friend_containEnterWorld(Object &obj)
 	}
 	for (auto &h : m_extraWorldHooks)
 	{
-		if (h.entered && h.containment)
+		if (h.entered && h.containment && !h.leaveWhenOut)
 		{
 			h.entered(obj);
 		}
@@ -146,12 +147,20 @@ void GameLogic::friend_containEnterWorld(Object &obj)
 	{
 		m_enteredWorld(obj);
 	}
+	// lane DECOMP-3: the skirmish AI manager's event RW 0x6A9D9C comes last (RW 0x68E42D, after the partition RW 0x68E3B6 and the script world RW 0x68E421)
+	for (auto &h : m_extraWorldHooks)
+	{
+		if (h.entered && h.containment && h.leaveWhenOut)
+		{
+			h.entered(obj);
+		}
+	}
 	obj.friend_setInWorld(true);
 	++m_containWorldTransitions;
 }
 
 // lane GARRISON-1: RW 0x68C18F from a contain (the shroud record RW 0x68C19B, the partition RW 0x68C1B4, the script world RW 0x68C1D0; the radar RW 0xB6C480 and
-// RW 0x68836C / 0x6A99CB are not ported, S-142)
+// RW 0x68836C are not ported, S-142; lane DECOMP-3: RW 0x6A99CB last)
 void GameLogic::friend_containLeaveWorld(Object &obj)
 {
 	if (!obj.isInWorld())
@@ -160,7 +169,7 @@ void GameLogic::friend_containLeaveWorld(Object &obj)
 	}
 	for (auto &h : m_extraWorldHooks)
 	{
-		if (h.left && h.containment)
+		if (h.left && h.containment && !h.leaveWhenOut)
 		{
 			h.left(obj);
 		}
@@ -169,6 +178,14 @@ void GameLogic::friend_containLeaveWorld(Object &obj)
 	if (m_leftWorld)
 	{
 		m_leftWorld(obj);
+	}
+	// lane DECOMP-3: the skirmish AI manager's event RW 0x6A99CB comes last (RW 0x68C205, after the partition RW 0x68C1B4 and the script world RW 0x68C1F5)
+	for (auto &h : m_extraWorldHooks)
+	{
+		if (h.left && h.containment && h.leaveWhenOut)
+		{
+			h.left(obj);
+		}
 	}
 	obj.friend_setInWorld(false);
 	++m_containWorldTransitions;
@@ -959,26 +976,20 @@ std::uint32_t GameLogic::computeStateHashBreakdown(std::vector<StateHashSection>
 	return hashState(&sections, objects);
 }
 
-// One walk feeds the total and, when asked, the per-section hashes (lane MP-1): a section is hashed into the total and into its own hasher, so the
-// breakdown can never drift from the hash it explains.
+// The state's sections in a fixed order (lane MP-1), hashed by the profile's rule at the end (lane UBER-1: Faithful chains them in one walk, Uber hashes
+// each on its own in parallel).
 std::uint32_t GameLogic::hashState(std::vector<StateHashSection> *sections, std::vector<ObjectStateHash> *objects) const
 {
-	StateHasher h;
-	auto section = [&](const std::string &name, const std::function<void(StateHasher &)> &feed) {
-		const std::uint32_t before = h.value();
-		feed(h);
-		if (sections)
-		{
-			StateHasher own;
-			feed(own);
-			StateHashSection sec;
-			sec.name = name;
-			sec.value = own.value();
-			sec.chainBefore = before;
-			sec.chainAfter = h.value();
-			sections->push_back(sec);
-		}
+	// lane UBER-1: the sections are listed first and hashed after the list is complete (the Faithful profile feeds them one after another into the total
+	// exactly as before; the Uber profile hashes each on its own, see the end of this function)
+	struct PendingSection
+	{
+		std::string name;
+		std::function<void(StateHasher &)> feed;
 	};
+	std::vector<PendingSection> pending;
+	pending.reserve(32);
+	auto section = [&](const std::string &name, std::function<void(StateHasher &)> feed) { pending.push_back(PendingSection{ name, std::move(feed) }); };
 	section("frame, object ids, RNG", [&](StateHasher &x) {
 		x.addU32(m_frame);
 		x.addBool(m_frameAdvance); // RW GameLogic + 0x44: when false the frame counter does not advance
@@ -994,6 +1005,11 @@ std::uint32_t GameLogic::hashState(std::vector<StateHashSection> *sections, std:
 		if (m_legendaryHeroes != LegendaryHeroes::kOff)
 		{
 			x.addI32(m_legendaryHeroes);
+		}
+		// lane UBER-1: an Uber game hashes its profile (a Faithful game hashes nothing more: its hashes stay the ones before UBER-1)
+		if (m_simulationProfile != SimulationProfile::Faithful)
+		{
+			x.addI32((std::int32_t)m_simulationProfile);
 		}
 		x.addU32(m_nextObjectID);
 		x.addU32((std::uint32_t)m_objectCount);
@@ -1026,6 +1042,11 @@ std::uint32_t GameLogic::hashState(std::vector<StateHashSection> *sections, std:
 		}
 	});
 	section("objects", [&](StateHasher &x) {
+		if (m_simulationProfile == SimulationProfile::Uber)
+		{
+			hashObjectsUber(x); // lane UBER-1
+			return;
+		}
 		for (const Object *o = m_objectHead; o; o = o->getNextObject())
 		{
 			o->crc(x);
@@ -1047,7 +1068,7 @@ std::uint32_t GameLogic::hashState(std::vector<StateHashSection> *sections, std:
 	{
 		// MOVE-1: state outside the objects (the pathfinder; VIS-1: the shroud), named by their owners
 		const std::string name = m_hashContributors[i].name.empty() ? "contributor " + std::to_string(i) : m_hashContributors[i].name;
-		section(name, [&](StateHasher &x) { m_hashContributors[i].fn(x); });
+		section(name, [this, i](StateHasher &x) { m_hashContributors[i].fn(x); });
 	}
 	section("players and teams", [&](StateHasher &x) { m_players.crc(x); });
 	section("settings", [&](StateHasher &x) { m_settings.crc(x); });
@@ -1079,7 +1100,104 @@ std::uint32_t GameLogic::hashState(std::vector<StateHashSection> *sections, std:
 	{
 		section("script engine", [&](StateHasher &x) { m_scriptEngine->crc(x); }); // lane SCRIPT-1 (a game without map scripts keeps its hash)
 	}
+	StateHasher h;
+	auto record = [&](const PendingSection &p, std::uint32_t value, std::uint32_t before) {
+		if (sections)
+		{
+			StateHashSection sec;
+			sec.name = p.name;
+			sec.value = value;
+			sec.chainBefore = before;
+			sec.chainAfter = h.value();
+			sections->push_back(sec);
+		}
+	};
+	if (m_simulationProfile != SimulationProfile::Uber)
+	{
+		// Faithful: one walk feeds the total and, when asked, the per-section hashes (lane MP-1): a section is hashed into the total and into its own
+		// hasher, so the breakdown can never drift from the hash it explains
+		for (const PendingSection &p : pending)
+		{
+			const std::uint32_t before = h.value();
+			p.feed(h);
+			std::uint32_t own = 0;
+			if (sections)
+			{
+				StateHasher x;
+				p.feed(x);
+				own = x.value();
+			}
+			record(p, own, before);
+		}
+		return h.value();
+	}
+	// lane UBER-1 (docs/UBER.md), NOT A PORT: every section is hashed into its own StateHasher (the objects section first, on this thread: it spreads its
+	// objects over the logic job pool itself, and a dispatch from inside a job would run inline), the other sections on the logic job pool one job each
+	// (each reads only its own subsystem; nothing changes the state while the hash runs); then the total chains every section's value in the list order.
+	// The result depends only on the state, never on the thread count; the breakdown's value is the section's, its chain the Uber total's.
+	std::vector<std::uint32_t> values(pending.size(), 0u);
+	size_t objectsIndex = pending.size();
+	for (size_t i = 0; i < pending.size(); ++i)
+	{
+		if (pending[i].name == "objects")
+		{
+			objectsIndex = i;
+			StateHasher x;
+			pending[i].feed(x);
+			values[i] = x.value();
+		}
+	}
+	JobSystem::logic().parallelFor(pending.size(), 1, [&pending, &values, objectsIndex](size_t, size_t begin, size_t end) {
+		for (size_t i = begin; i < end; ++i)
+		{
+			if (i != objectsIndex)
+			{
+				StateHasher x;
+				pending[i].feed(x);
+				values[i] = x.value();
+			}
+		}
+	});
+	for (size_t i = 0; i < pending.size(); ++i)
+	{
+		const std::uint32_t before = h.value();
+		h.addU32(values[i]);
+		record(pending[i], values[i], before);
+	}
 	return h.value();
+}
+
+// lane UBER-1 (docs/UBER.md), NOT A PORT: the Uber profile's objects section. Retail's CRC step (rotate-add, Common/StateHash.h) chains every word into
+// the one before, so the Faithful section is one serial walk (about three quarters of the hash, and every recorded game hashes every frame for its
+// replay). Uber hashes each object into its own StateHasher on the logic job pool (Object::crc is const: it reads the object and its modules only),
+// then chains the object count and every (id, object hash) in object list order on this thread. Chunks are fixed runs of kObjectsPerJob objects and
+// each value lands in its object's slot, so the result is the same with any thread count; it differs from the Faithful hash on purpose (an Uber
+// game never compares hashes with a Faithful one: the profile identity refuses the mix).
+void GameLogic::hashObjectsUber(StateHasher &x) const
+{
+	constexpr size_t kObjectsPerJob = 64;
+	m_uberHashObjects.clear();
+	for (const Object *o = m_objectHead; o; o = o->getNextObject())
+	{
+		m_uberHashObjects.push_back(o);
+	}
+	m_uberHashValues.resize(m_uberHashObjects.size());
+	const std::vector<const Object *> &objects = m_uberHashObjects;
+	std::vector<std::uint32_t> &values = m_uberHashValues;
+	JobSystem::logic().parallelFor(objects.size(), kObjectsPerJob, [&objects, &values](size_t, size_t begin, size_t end) {
+		for (size_t i = begin; i < end; ++i)
+		{
+			StateHasher own;
+			objects[i]->crc(own);
+			values[i] = own.value();
+		}
+	});
+	x.addU32((std::uint32_t)objects.size());
+	for (size_t i = 0; i < objects.size(); ++i)
+	{
+		x.addU32(objects[i]->getID());
+		x.addU32(values[i]);
+	}
 }
 
 // ---- reports --------------------------------------------------------------------------------------------------------------

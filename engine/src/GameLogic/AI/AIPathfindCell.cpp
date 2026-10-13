@@ -14,6 +14,7 @@
 //   * donor (Open-BFME-1 PathfindCell_costSoFar.cpp, retail 0x003F6D20): the same costSoFar body.
 
 #include "GameLogic/AI/AIPathfind.h"
+#include "GameLogic/SimMath.h"
 
 #include <cmath>
 #include <cstdlib>
@@ -409,6 +410,17 @@ unsigned PathfindCell::costToGoal(const PathfindCell *goal) const
 		cost = 14 * dx + 10 * (dy - dx);
 	}
 	return (unsigned)cost;
+}
+
+unsigned PathfindCell::costToHierGoal(const PathfindCell *goal) const
+{
+	// lane PATHPERF-1. TARGET RW 0x9345AA (BFME2 0x52DC3F, decomp PathfindCell::CalcCostToHierGoal, tier A): d2 = dy*dy + dx*dx of the info positions (integers),
+	// fild, the CRT sqrt (RW 0xA3CF96) under the game's 24-bit precision, fmul 10.0f (RW 0xBD83D8), fadd 0.5f (RW 0xBD869C), the CRT floor, fstp dword, fistp
+	const int dx = m_info->m_pos.x - goal->getXIndex();
+	const int dy = m_info->m_pos.y - goal->getYIndex();
+	const int d2 = dy * dy + dx * dx;
+	const double r = SimMath::pc24AddW(SimMath::pc24MulW(SimMath::sqrtPC24((double)d2), (double)10.0f), (double)0.5f);
+	return (unsigned)SimMath::fistp32((double)SimMath::fstpDword(SimMath::floorD(r)));
 }
 
 unsigned PathfindCell::costSoFar(const PathfindCell *parent) const

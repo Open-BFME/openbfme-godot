@@ -10,6 +10,9 @@ shader_type spatial;
 render_mode unshaded, cull_back;
 
 #include "res://shaders/terrain_common.gdshaderinc"
+#include "res://shaders/selection_decals.gdshaderinc"
+
+varying vec2 v_sage_xy; // lane SELPERF-1: the world point of the pixel (SAGE x, y) for the selection's merge decals
 
 void vertex() {
 	vec3 lts;
@@ -28,8 +31,14 @@ void vertex() {
 	v_rec = CUSTOM1.x;
 	vec3 world = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
 	v_shroud_uv = (vec2(world.x, -world.z) - shroud_origin) / shroud_extent;
+	v_sage_xy = vec2(world.x, -world.z);
 }
 
 void fragment() {
 	ALBEDO = terrain_output(UV, COLOR);
+	// lane SELPERF-1: the selection's merge decals over the terrain, as RotWK's stencil passes draw them after it (selection_decals.gdshaderinc)
+	vec4 sel = sel_merge(v_sage_xy);
+	if (sel.a > 0.0) {
+		ALBEDO = mix(ALBEDO, retail_output(sel.rgb), sel.a);
+	}
 }

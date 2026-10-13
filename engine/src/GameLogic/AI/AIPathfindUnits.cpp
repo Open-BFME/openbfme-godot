@@ -48,17 +48,36 @@ int angleToCode(float a)
 
 Pathfinder::UnitRecord &Pathfinder::unit(PathfindObjectID id)
 {
-	return m_units[id];
+	UnitRecord &r = m_units[id];
+	if (id < (PathfindObjectID)kUnitIndexMax)
+	{
+		if (id >= m_unitIndex.size())
+		{
+			m_unitIndex.resize((size_t)id + 1, nullptr);
+		}
+		m_unitIndex[id] = &r;
+	}
+	return r;
+}
+
+const Pathfinder::UnitRecord *Pathfinder::findUnit(PathfindObjectID id) const
+{
+	if (m_searchShortcuts && id < (PathfindObjectID)kUnitIndexMax)
+	{
+		return id < m_unitIndex.size() ? m_unitIndex[id] : nullptr;
+	}
+	auto it = m_units.find(id);
+	return it == m_units.end() ? nullptr : &it->second;
 }
 
 ICoord2D Pathfinder::pathfindGoalCell(PathfindObjectID id) const
 {
 	ICoord2D c;
 	c.x = c.y = -1;
-	auto it = m_units.find(id);
-	if (it != m_units.end() && it->second.goal.occupied)
+	const UnitRecord *u = findUnit(id);
+	if (u && u->goal.occupied)
 	{
-		return it->second.goal.cell;
+		return u->goal.cell;
 	}
 	return c;
 }
@@ -67,24 +86,24 @@ ICoord2D Pathfinder::curPathfindCell(PathfindObjectID id) const
 {
 	ICoord2D c;
 	c.x = c.y = -1;
-	auto it = m_units.find(id);
-	if (it != m_units.end() && it->second.pos.occupied)
+	const UnitRecord *u = findUnit(id);
+	if (u && u->pos.occupied)
 	{
-		return it->second.pos.cell;
+		return u->pos.cell;
 	}
 	return c;
 }
 
 bool Pathfinder::goalRegistered(PathfindObjectID id) const
 {
-	auto it = m_units.find(id);
-	return it != m_units.end() && it->second.goal.occupied && !it->second.goal.cells.empty();
+	const UnitRecord *u = findUnit(id);
+	return u && u->goal.occupied && !u->goal.cells.empty();
 }
 
 bool Pathfinder::positionRegistered(PathfindObjectID id) const
 {
-	auto it = m_units.find(id);
-	return it != m_units.end() && it->second.pos.occupied && !it->second.pos.cells.empty();
+	const UnitRecord *u = findUnit(id);
+	return u && u->pos.occupied && !u->pos.cells.empty();
 }
 
 // ---------------------------------------------------------------------------------------------------------
@@ -243,6 +262,56 @@ bool Pathfinder::validMovementPosition(const PathfindObject *obj, const Pathfind
 }
 
 // ---------------------------------------------------------------------------------------------------------
+// lane PATHPERF-1: the search memo (see AIPathfind.h)
+// ---------------------------------------------------------------------------------------------------------
+Pathfinder::SearcherFacts Pathfinder::searcherFacts(const PathfindObject *obj) const
+{
+	SearcherFacts f;
+	f.isHuman = !obj->isComputerControlled();
+	f.hasAI = obj->hasAI();
+	f.hasLocomotor = obj->hasLocomotor();
+	f.largeRect = obj->isKindOf(PK_LARGE_RECTANGLE_PATHFIND);
+	f.pathThroughInfantry = obj->isKindOf(PK_PATH_THROUGH_INFANTRY);
+	f.throughEachOther = obj->pathsThroughEachOther();
+	f.aiPriority = obj->aiPriority();
+	return f;
+}
+
+const Pathfinder::OccupantFacts *Pathfinder::occupantFacts(const PathfindObject *obj, PathfindObjectID id)
+{
+	OccupantFacts *f = &m_memoScratch;
+	if (m_searchShortcuts && m_memoActive && obj == m_memoObj && id < (PathfindObjectID)kUnitIndexMax)
+	{
+		if (id >= m_memo.size())
+		{
+			m_memo.resize((size_t)id + 1);
+		}
+		f = &m_memo[id];
+		if (f->gen == m_memoGen)
+		{
+			return f->o ? f : nullptr;
+		}
+	}
+	f->gen = m_memoGen;
+	f->o = m_world ? m_world->findObjectByID(id) : nullptr;
+	if (!f->o)
+	{
+		return nullptr;
+	}
+	const PathfindObject &o = *f->o;
+	f->rel = obj->getRelationship(o);
+	f->parked = o.isParked();
+	f->hasAI = o.hasAI();
+	f->hasLocomotor = o.hasLocomotor();
+	f->infantry = o.isKindOf(PK_INFANTRY);
+	f->largeRect = o.isKindOf(PK_LARGE_RECTANGLE_PATHFIND);
+	f->throughEachOther = o.pathsThroughEachOther();
+	f->aiPriority = o.aiPriority();
+	f->container = o.getContainer();
+	return f;
+}
+
+// ---------------------------------------------------------------------------------------------------------
 // checkForMovement (RW 0x6EB792 / 0x6EBAA0)
 // ---------------------------------------------------------------------------------------------------------
 bool Pathfinder::checkForMovement(const PathfindObject *obj, PathfindCheckMovement &info, const ICoord2D *prev)
@@ -255,7 +324,8 @@ bool Pathfinder::checkForMovement(const PathfindObject *obj, PathfindCheckMoveme
 	{
 		return true;
 	}
-	const bool isHuman = !obj->isComputerControlled();
+	const SearcherFacts self = (m_memoActive && obj == m_memoObj) ? m_memoSelf : searcherFacts(obj);
+	const bool isHuman = self.isHuman;
 	const int n = info.radius + (info.center ? 1 : 0);
 	PathfindObjectID lastId = PATHFIND_INVALID_ID;
 	for (int i = info.cell.x - info.radius; i < info.cell.x + n; i++)
@@ -311,37 +381,38 @@ bool Pathfinder::checkForMovement(const PathfindObject *obj, PathfindCheckMoveme
 			// the units standing on the cell (the position list, RW info+0x20)
 			for (const PathfindOccupant *node = c->occupants(OCC_POSITION); node; node = node->next)
 			{
-				const PathfindObject *o = m_world ? m_world->findObjectByID(node->owner) : nullptr;
-				if (!o)
+				const OccupantFacts *f = occupantFacts(obj, node->owner);
+				if (!f)
 				{
 					continue;
 				}
+				const PathfindObject *o = f->o;
 				if (o == obj || o->getID() == info.ignoreId || o->getID() == lastId)
 				{
 					continue;
 				}
 				lastId = o->getID();
-				const bool ally = obj->getRelationship(*o) == PATHFIND_ALLIES;
+				const bool ally = f->rel == PATHFIND_ALLIES;
 				if (ally)
 				{
 					info.allyPresent = true;
 				}
-				const bool check = (info.transient && ally) || o->isParked() || (!ally && (info.flags & 0x10));
+				const bool check = (info.transient && ally) || f->parked || (!ally && (info.flags & 0x10));
 				if (!check)
 				{
 					continue;
 				}
-				if (ally && obj->pathsThroughEachOther() && o->pathsThroughEachOther())
+				if (ally && self.throughEachOther && f->throughEachOther)
 				{
 					continue;
 				}
-				if (obj->isKindOf(PK_PATH_THROUGH_INFANTRY) && o->isKindOf(PK_INFANTRY))
+				if (self.pathThroughInfantry && f->infantry)
 				{
 					continue;
 				}
-				if (ally && obj->isKindOf(PK_LARGE_RECTANGLE_PATHFIND))
+				if (ally && self.largeRect)
 				{
-					if (!o->isKindOf(PK_LARGE_RECTANGLE_PATHFIND))
+					if (!f->largeRect)
 					{
 						info.goalListNonEmpty = false;
 						continue;
@@ -349,7 +420,7 @@ bool Pathfinder::checkForMovement(const PathfindObject *obj, PathfindCheckMoveme
 				}
 				if (ally)
 				{
-					if (!o->hasAI())
+					if (!f->hasAI)
 					{
 						return false;
 					}
@@ -358,11 +429,11 @@ bool Pathfinder::checkForMovement(const PathfindObject *obj, PathfindCheckMoveme
 						return false;
 					}
 					info.allyFixed = true;
-					if (!o->isKindOf(PK_LARGE_RECTANGLE_PATHFIND))
+					if (!f->largeRect)
 					{
 						continue;
 					}
-					if (obj->isKindOf(PK_LARGE_RECTANGLE_PATHFIND))
+					if (self.largeRect)
 					{
 						continue;
 					}
@@ -377,7 +448,7 @@ bool Pathfinder::checkForMovement(const PathfindObject *obj, PathfindCheckMoveme
 				{
 					continue;
 				}
-				if (!obj->hasAI())
+				if (!self.hasAI)
 				{
 					return false;
 				}
@@ -396,7 +467,7 @@ bool Pathfinder::checkForMovement(const PathfindObject *obj, PathfindCheckMoveme
 // checkDestination (RW 0x6F1584, blocker callback 0x6EB151)
 // ---------------------------------------------------------------------------------------------------------
 bool Pathfinder::blockerCallback(const PathfindObject *obj, const PathfindCell *cell, int *count, bool countAllies, PathfindObjectID ignoreId,
-	bool ignoreUnits, const PathfindMovement *rectMovement)
+	bool ignoreUnits, const PathfindMovement *rectMovement, bool isHuman)
 {
 	// TARGET RW 0x6EB151: true = the cell blocks the footprint
 	if (rectMovement && obj->isKindOf(PK_LARGE_RECTANGLE_PATHFIND))
@@ -406,8 +477,7 @@ bool Pathfinder::blockerCallback(const PathfindObject *obj, const PathfindCell *
 			return true;
 		}
 	}
-	const PathfindCell::CellType t = cell->getType();
-	const bool isHuman = !obj->isComputerControlled();
+	const PathfindCell::CellType t = cell->getType(); // isHuman: the caller's !obj->isComputerControlled() (lane PATHPERF-1: asked once per footprint)
 	if (t == PathfindCell::CELL_BRIDGE_IMPASSABLE || (cell->getImpassableToPlayers() && isHuman) || t == PathfindCell::CELL_CLIFF)
 	{
 		return true;
@@ -512,7 +582,8 @@ bool Pathfinder::checkDestination(const PathfindObject *obj, int cellX, int cell
 		c = false;
 	}
 	const int n = r + (c ? 1 : 0);
-	if (!obj->isComputerControlled())
+	const bool isHuman = !obj->isComputerControlled();
+	if (isHuman)
 	{
 		if (cellX - r < m_logicalExtent.lo.x || cellX + n > m_logicalExtent.hi.x || cellY - r < m_logicalExtent.lo.y || cellY + n >= m_logicalExtent.hi.y + 1)
 		{
@@ -540,14 +611,14 @@ bool Pathfinder::checkDestination(const PathfindObject *obj, int cellX, int cell
 		}
 		note(pathstops::kLargeRectFootprint);
 		const int x0 = cellX - w / 2, y0 = cellY - h / 2;
+		const PathfindMovement mv = makeMovement(obj, PathfindLocomotorInfo{ 0xFFFFFFFFu, false, false }); // the same for every cell (lane PATHPERF-1: built once)
 		for (int i = x0; i < x0 + (w > 0 ? w : 1); i++)
 		{
 			for (int j = y0; j < y0 + (h > 0 ? h : 1); j++)
 			{
 				const PathfindCell *cell = getCell(layer, i, j);
 				if (!cell) return false;
-				const PathfindMovement mv = makeMovement(obj, PathfindLocomotorInfo{ 0xFFFFFFFFu, false, false });
-				if (blockerCallback(obj, cell, out, false, ignoreId, ignoreUnits, &mv)) return false;
+				if (blockerCallback(obj, cell, out, false, ignoreId, ignoreUnits, &mv, isHuman)) return false;
 			}
 		}
 		return true;
@@ -571,7 +642,7 @@ bool Pathfinder::checkDestination(const PathfindObject *obj, int cellX, int cell
 				}
 				if (blocked) return false;
 			}
-			else if (blockerCallback(obj, cell, out, false, ignoreId, ignoreUnits, nullptr))
+			else if (blockerCallback(obj, cell, out, false, ignoreId, ignoreUnits, nullptr, isHuman))
 			{
 				return false;
 			}

@@ -188,6 +188,18 @@ public:
 	// ---- state ----
 	const std::vector<LANGame> &games() const { return m_games; }
 	const LANGame *currentGame() const { return m_inGame ? &m_current : nullptr; }
+	// lane UBER-1: the player switched the simulation profile (the OpenBFME option): the lobby announces the new identity from now on; false (nothing
+	// changes) while in a game
+	bool setProfile(const ProfileIdentity &profile)
+	{
+		if (m_inGame)
+		{
+			return false;
+		}
+		m_profile = profile;
+		return true;
+	}
+	const ProfileIdentity &profile() const { return m_profile; }
 	bool amIHost() const { return m_inGame && m_host; }
 	int localSlot() const { return m_localSlot; }
 	const std::u16string &name() const { return m_name; }

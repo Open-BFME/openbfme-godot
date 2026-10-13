@@ -4,6 +4,9 @@
 
 #include "GameLogic/Map/TerrainLogic.h"
 
+#include "GameLogic/SimMath.h"
+
+#include <algorithm>
 #include <cmath>
 
 namespace
@@ -151,6 +154,25 @@ bool TerrainLogic::getExtent(size_t boundary, float &maxX, float &maxY) const
 	}
 	maxX = (float)m_map->m_boundaries[boundary].x * MAP_XY_FACTOR;
 	maxY = (float)m_map->m_boundaries[boundary].y * MAP_XY_FACTOR;
+	return true;
+}
+
+bool TerrainLogic::getLargestExtent(float &maxX, float &maxY) const
+{
+	if (!m_map || m_map->m_boundaries.empty())
+	{
+		return false;
+	}
+	// RW 0x4626BB .. 0x462718: cvtsi2ss of the first boundary, then each later one replaces x / y apart when its float is greater (comiss; the cell counts
+	// are exact as floats, so the integers compare the same), times 10.0f
+	int x = m_map->m_boundaries[0].x, y = m_map->m_boundaries[0].y;
+	for (size_t i = 1; i < m_map->m_boundaries.size(); ++i)
+	{
+		x = std::max(x, m_map->m_boundaries[i].x);
+		y = std::max(y, m_map->m_boundaries[i].y);
+	}
+	maxX = SimMath::mulf32((float)x, MAP_XY_FACTOR);
+	maxY = SimMath::mulf32((float)y, MAP_XY_FACTOR);
 	return true;
 }
 

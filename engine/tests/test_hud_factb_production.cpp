@@ -436,7 +436,8 @@ Outcome trainOne(factb::HudGame &g, Object *bld, const CommandButton *cb, Result
 			}
 			const Coord3D from = *unit->getPosition();
 			(void)from0;
-			const Coord3D to = g.rig.freeSpot(from.x + 300.0f, from.y - 200.0f, 60.0f);
+			// a straight walk (a slow unit's 100 in 120 frames), 200 from the structures: a click beside one picks its model, not the ground
+			const Coord3D to = g.rig.freeSpot(from.x + 300.0f, from.y - 200.0f, 200.0f, false, {}, &from);
 			g.clickAt(to); // RotWK's default mouse: a left click on the ground orders the selection there
 			g.step(120); // a catapult crawls
 			const float moved = dist2d(*unit->getPosition(), from);

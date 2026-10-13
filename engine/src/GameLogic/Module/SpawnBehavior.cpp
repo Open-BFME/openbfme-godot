@@ -109,6 +109,21 @@ SpawnBehaviorInterface *SpawnBehaviorInterface::of(Object &obj)
 	return nullptr;
 }
 
+// RW 0x862A4E (BFME2 decomp SpawnBehavior_canAnySlavesAttack.cpp, tier A; lane DECOMP-3): the first spawn, in list order, that resolves and is able to attack
+// (Object::isAbleToAttack RW 0x691269)
+bool SpawnBehavior::canAnySlavesAttack() const
+{
+	for (ObjectID id : m_spawnIDs)
+	{
+		const Object *o = getObject()->logic().findObjectByID(id);
+		if (o && o->isAbleToAttack())
+		{
+			return true;
+		}
+	}
+	return false;
+}
+
 void SpawnBehaviorInterface::notifyProducerOfDeath(Object &dead, const DieModuleInterface::Event &info)
 {
 	// RW 0x6938BD: the producer (+ 0x78) found by id; its spawn interface's onSpawnDeath. Without one the producer's contain's horde interface slot 0x34 is
@@ -378,6 +393,12 @@ UpdateSleepTime SpawnBehavior::update()
 			}
 			if (m_data->m_killSpawnsBasedOnModelConditionState)
 			{
+				// RW 0x86356C: stopped after the one try; lane DECOMP-3: a try that made nothing (no spawn bones, S-209) leaves the spawner empty for good
+				if (m_spawnIDs.empty() && !m_replacementFrames.empty())
+				{
+					logic.noteStop("[S-3800] SpawnBehavior of " + obj->getTemplate()->getName() + ": KillSpawnsBasedOnModelConditionState stopped the spawner after "
+						"one try that made no spawn (its exit has no door: the spawn bones are missing, S-209); it stays empty");
+				}
 				stopSpawning();
 			}
 		}

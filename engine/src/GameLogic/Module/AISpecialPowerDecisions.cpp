@@ -487,7 +487,7 @@ bool AISpecialPowerUpdate::decideShroudReveal(Object &obj)
 // ---- the spell book decisions over the computer's army and structure lists (lane AIPOW-1 r2) ---------------------------------------------------------------
 //
 // The lists are the skirmish AI's player info record (TheSkirmishAIManager + 0xA3C by player index, RW 0x6A9999): + 0 -> + 4 the army, + 8 -> + 4 the
-// structures, read through AITacticalAI::listsOf (S-418: rebuilt from the live objects in id order; retail keeps them in the order added).
+// structures, read through AITacticalAI::recordOf (lane DECOMP-3: the ported record, filled by the object events in RW's order).
 
 namespace
 {
@@ -502,7 +502,7 @@ bool playableSide(const Player *p)
 Object *firstBusyArmyUnit(GameLogic &logic, const Player &player, bool allowHero, bool allowStructureVictim, bool requireLiveVictim)
 {
 	static const int kStructure = kind("STRUCTURE"), kHero = kind("HERO");
-	for (ObjectID id : AITacticalAI::listsOf(logic, player).army)
+	for (ObjectID id : AITacticalAI::recordOf(logic, player.getPlayerIndex()).army())
 	{
 		Object *o = logic.findObjectByID(id);
 		if (!o || hasKind(*o, kStructure) || (!allowHero && hasKind(*o, kHero)))
@@ -666,7 +666,7 @@ bool AISpecialPowerUpdate::decideRebuild(Object &obj)
 	{
 		return false;
 	}
-	for (ObjectID id : AITacticalAI::listsOf(logic, *player).structures)
+	for (ObjectID id : AITacticalAI::recordOf(logic, player->getPlayerIndex()).structures())
 	{
 		Object *o = logic.findObjectByID(id);
 		if (o && bodyRatioWide(*o) < (double)0.5f)
@@ -688,7 +688,7 @@ bool AISpecialPowerUpdate::decideEnshroudingMist(Object &obj)
 		return false;
 	}
 	static const int kStructure = kind("STRUCTURE");
-	for (ObjectID id : AITacticalAI::listsOf(logic, *player).army)
+	for (ObjectID id : AITacticalAI::recordOf(logic, player->getPlayerIndex()).army())
 	{
 		Object *o = logic.findObjectByID(id);
 		if (!o || hasKind(*o, kStructure))
@@ -731,29 +731,22 @@ bool AISpecialPowerUpdate::decideCallTheHorde(Object &obj)
 bool AISpecialPowerUpdate::decideBuffEconomy(Object &obj)
 {
 	// RW 0x9E7671: the player info record's economy list (record + 0xC, RW 0x99E738; add RW 0x99E84E -> filter RW 0x99E818: neither LINKED_TO_FLAG nor
-	// UNATTACKABLE, a STRUCTURE, ECONOMY_STRUCTURE or SUPPLY_GATHERING_CENTER), in order (here the player's live objects in id order, as listsOf, S-418): the
-	// first not yet in the decision's set (+ 0x28, a std::set of ids) where RW 0xA0229F accepts its position joins the set -> yes
+	// UNATTACKABLE, a STRUCTURE, ECONOMY_STRUCTURE or SUPPLY_GATHERING_CENTER), in order (lane DECOMP-3: the ported record's list): the first that resolves and
+	// is not yet in the decision's set (+ 0x28, a std::set of ids) where RW 0xA0229F accepts its position joins the set -> yes
 	GameLogic &logic = obj.logic();
 	const Player *player = obj.getControllingPlayer();
 	if (!player)
 	{
 		return false;
 	}
-	static const int kLinked = kind("LINKED_TO_FLAG"), kUnattackable = kind("UNATTACKABLE"), kStructure = kind("STRUCTURE"), kEconomy = kind("ECONOMY_STRUCTURE"),
-					 kSupply = kind("SUPPLY_GATHERING_CENTER");
 	std::vector<Object *> economy;
-	for (Object *o = logic.getFirstObject(); o; o = o->getNextObject())
+	for (ObjectID id : AITacticalAI::recordOf(logic, player->getPlayerIndex()).economy())
 	{
-		if (o->getControllingPlayer() != player || o->isEffectivelyDead() || o->isDestroyed())
-		{
-			continue;
-		}
-		if (!hasKind(*o, kLinked) && !hasKind(*o, kUnattackable) && hasKind(*o, kStructure) && (hasKind(*o, kEconomy) || hasKind(*o, kSupply)))
+		if (Object *o = logic.findObjectByID(id))
 		{
 			economy.push_back(o);
 		}
 	}
-	std::sort(economy.begin(), economy.end(), [](const Object *x, const Object *y) { return x->getID() < y->getID(); });
 	for (Object *o : economy)
 	{
 		if (m_decision->buffedIds.count(o->getID()) == 0 && setLocationIfValid(obj, *o->getPosition()))

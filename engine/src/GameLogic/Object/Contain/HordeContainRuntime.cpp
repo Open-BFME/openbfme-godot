@@ -327,6 +327,14 @@ void HordeContain::createPayload()
 	applyFormationModifiers(); // lane COMBAT-3: RW 0x871D2C, the end of the payload (an unproduced horde only): interface slot 0x1E4
 }
 
+// RW 0x86C713 (lane DECOMP-3): the horde's container (+ 0x27C) with a contain (+ 0x258) answers through its slot 0xB4, else false
+bool HordeContain::isPassengerAllowedToFire() const
+{
+	const Object *outer = getObject()->getContainedBy();
+	const ContainModuleInterface *c = outer ? outer->getContain() : nullptr;
+	return c && c->isPassengerAllowedToFire();
+}
+
 bool HordeContain::addToContain(Object *obj)
 {
 	if (std::find(m_members.begin(), m_members.end(), obj) != m_members.end())

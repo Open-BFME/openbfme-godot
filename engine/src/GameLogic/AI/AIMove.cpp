@@ -400,7 +400,9 @@ bool AIMover::computeAttackPath()
 				destroyPath();
 				Coord3D adjusted = pos;
 				m_pf.adjustDestination(obj, info, &adjusted, nullptr);
-				m_path = m_pf.findPath(&obj, info, &pos, &adjusted, nullptr);
+				// lane PATHPERF-1: RW calls pathfinder slot +4 here (RW 0x666E51 -> FindClosestPath RW 0x6FB869, not ported: S-166), not findPath (slot 0, RW 0x6FE7CB):
+				// the stand-in is the search without findPath's hierarchical corridor and goal step-back
+				m_path = m_pf.findPathWithoutCorridor(&obj, info, &pos, &adjusted, nullptr);
 				if (m_path == nullptr)
 				{
 					m_pf.setIgnoreObstacleID(PATHFIND_INVALID_ID);
@@ -457,7 +459,8 @@ void AIMover::doPathfind()
 		const PathfindLocomotorInfo info = m_host.locomotorInfo();
 		const Coord3D pos = obj.getPosition();
 		destroyPath();
-		m_path = m_pf.findPath(&obj, info, &pos, &m_attackPos, nullptr);
+		// lane PATHPERF-1: slot +4 is FindClosestPath (RW 0x6FB869, not ported: S-166), not findPath: the search without findPath's corridor stands in for it
+		m_path = m_pf.findPathWithoutCorridor(&obj, info, &pos, &m_attackPos, nullptr);
 		if (m_path && m_path->getLastNode())
 		{
 			const PathNode *end = m_path->getLastNode();
@@ -702,7 +705,7 @@ Path *AIMover::pathReachingGoal(const Coord3D &from)
 	if (goalCellOnGridAndNotStart(from))
 	{
 		Coord3D start = from;
-		path = m_pf.findPath(&obj, info, &start, &m_goal, &partial);
+		path = m_pf.findPathWithoutCorridor(&obj, info, &start, &m_goal, &partial); // lane PATHPERF-1: not findPath's corridor (RW 0x6F74D0 is its own search)
 	}
 	// lane HORDE-2: RW 0x6F74D0 (read with Ghidra) returns a path that REACHES the goal or nothing (no path when the goal cell is the start cell or is
 	// not passable, nothing after 200 expansions); it never hands back the partial path to the closest cell. A partial path left a horde member

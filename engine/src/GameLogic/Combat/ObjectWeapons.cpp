@@ -10,6 +10,7 @@
 #include "Common/PlayerList.h"
 #include "Common/StateHash.h"
 #include "Common/Thing/ThingTemplate.h"
+#include "GameLogic/AI/AIWorld.h"
 #include "GameLogic/AI/TurretAI.h"
 #include "GameLogic/Combat/CombatNames.h"
 #include "GameLogic/Combat/CombatQueries.h"
@@ -157,6 +158,12 @@ private:
 	ObjectWeapons &m_w;
 };
 
+const char *meleeReachStopLine()
+{
+	return "[S-3806] melee reach (RW 0x6ED843, lane PLAY-4): the footprint test of a unit target is ported; a SIEGE_TOWER target outside the boxes takes RW's ramp branch "
+		   "(RW 0x6EDB6F .. 0x6EDC74: the tower's ramp point and the unit's radius), not ported (false); a STRUCTURE target keeps the edge distance (S-320)";
+}
+
 class ObjectWeapons::RangeHost : public WeaponRangeHost
 {
 public:
@@ -189,10 +196,52 @@ public:
 	{
 		return CircleDistanceSquared(a.position, a.boundingCircleRadius, b.position, b.boundingCircleRadius); // a box counts as its bounding circle (S-320)
 	}
-	// RW 0x6ED843 (the partition's melee reach test): the edge-to-edge distance within the weapon's reach (set by the caller, S-320)
-	bool meleeReach(const RangeSubject &source, const RangeSubject &victim) override
+	// RW 0x6ED843 (Pathfinder, the melee reach test of RW 0x6CC07C).
+	//   * the unit's current weapon (RW 0x68B58C(0)) must be a MeleeWeapon (RW 0x6ED86D), else false;
+	//   * its range in cells: floor(range * 0.1 + 0.1) (RW 0x6ED8AB .. 0x6ED8CF, x87; the range is RW 0x6CA935 called with the TARGET: its bonus and range scale);
+	//   * a STRUCTURE target (RW 0x6ED8D5): INFERENCE (S-320): the edge-to-edge distance within the weapon's reach (set by the caller) stands for the ring of cells
+	//     around the unit's footprint that RW walks for the structure's obstacle id (RW 0x6ED937 .. 0x6EDA52) and its WALK_ON_TOP_OF_WALL tail (RW 0x6EDA58);
+	//   * any other target (lane PLAY-4 r1): the footprint boxes (Pathfinder::meleeReachCells, RW 0x6EDB0C .. 0x6EDB69); a CAN_CLIMB_WALLS target on a wall
+	//     (RW 0x6EDAD4 -> 0x696057) cannot occur (only the ground layer exists, S-161); a SIEGE_TOWER target outside the boxes takes the ramp branch
+	//     (RW 0x6EDB6F .. 0x6EDC74), not ported (stop S-3806: false).
+	bool meleeReach(const RangeSubject &source, const Coord3D &sourcePos, const RangeSubject &victim) override
 	{
-		return CircleDistanceSquared(source.position, source.boundingCircleRadius, victim.position, victim.boundingCircleRadius) <= SimMath::mulf32(m_meleeReach, m_meleeReach);
+		if (victim.isStructure || !victim.object)
+		{
+			return CircleDistanceSquared(sourcePos, source.boundingCircleRadius, victim.position, victim.boundingCircleRadius) <= SimMath::mulf32(m_meleeReach, m_meleeReach);
+		}
+		Object &self = m_w.owner();
+		const Weapon *cur = m_w.currentWeapon();
+		if (!cur || !cur->getTemplate() || !cur->getTemplate()->m_meleeWeapon)
+		{
+			return false;
+		}
+		AIWorld *world = self.logic().aiWorld();
+		const PathfindObject *unit = world ? world->findObjectByID(self.getID()) : nullptr;
+		const PathfindObject *target = world ? world->findObjectByID(victim.object->getID()) : nullptr;
+		if (!unit || !target)
+		{
+			self.logic().reportError("ObjectWeapons: RW 0x6ED843's footprints need the AI world and both pathfind objects");
+			return false;
+		}
+		ObjectWeapons *tw = const_cast<Object *>(victim.object)->getWeapons();
+		WeaponBonus bonus;
+		if (tw)
+		{
+			cur->computeBonus(tw->host(), 0, bonus); // RW 0x6CA7AC(target, 0, bonus)
+		}
+		const float range = WeaponGetAttackRangeNoTarget(*cur->getTemplate(), bonus, tw ? tw->rangeHost() : *this, victim);
+		const int cells = SimMath::fistp32(SimMath::fstpDword(SimMath::floorD(SimMath::pc24AddW(SimMath::pc24MulW((double)range, (double)0.1f), (double)0.1f))));
+		if (world->pathfinder().meleeReachCells(*unit, sourcePos, *target, cells))
+		{
+			return true;
+		}
+		static const int siegeTower = CombatNames::kindOf("SIEGE_TOWER");
+		if (victim.object->isKindOf((unsigned)siegeTower))
+		{
+			self.logic().noteStop(meleeReachStopLine());
+		}
+		return false;
 	}
 	float meleeRunDownLimit() override { return 0.0f; }
 	bool victimFlag11A_40() override { return false; }
@@ -660,6 +709,15 @@ void ObjectWeapons::reloadAllAmmo(bool now)
 	}
 }
 
+// lane FLY-1: RW 0x6CEE4C on the current weapon (the giant bird attack state's exit, RW 0x76B07D)
+void ObjectWeapons::reloadCurrentWeaponAmmo()
+{
+	if (Weapon *w = currentWeapon())
+	{
+		w->reloadAmmo(host());
+	}
+}
+
 // ---------------------------------------------------------------------------------------------------------------------------------
 // choosing
 // ---------------------------------------------------------------------------------------------------------------------------------
@@ -1119,6 +1177,11 @@ RangeSubject ObjectWeapons::subjectOf(const Object &obj) const
 	s.insideGarrison = obj.testStatus((unsigned)st.insideGarrison); // lane GARRISON-1: RW status 0x3A
 	static const int contesting = CombatNames::status("CONTESTING_BUILDING");
 	s.contestingBuilding = obj.testStatus((unsigned)contesting);
+	// lane PLAY-4 r1: RW 0x6CC0CE .. 0x6CC0E3: the victim's AI (+ 0x260) with a current locomotor (AI + 0x1F0) takes RW 0x6ED843 (the port never set it, so a melee
+	// weapon measured a moving unit by distance, not by the footprints)
+	const AIUpdateInterface *ai = obj.getAIUpdateInterface();
+	s.hasMeleeAI = ai && ai->curLocomotor() != nullptr;
+	s.object = &obj;
 	return s;
 }
 

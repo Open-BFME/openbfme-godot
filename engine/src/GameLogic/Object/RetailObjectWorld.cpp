@@ -24,8 +24,9 @@
 #include "GameLogic/ProductionStops.h"
 
 #include <chrono>
+#include <stdexcept>
 
-RetailObjectWorld::RetailObjectWorld(ArchiveFileSystem &fs)
+RetailObjectWorld::State::State(ArchiveFileSystem &fs)
 	: m_fs(fs)
 {
 	m_keys.init();
@@ -88,7 +89,7 @@ RetailObjectWorld::RetailObjectWorld(ArchiveFileSystem &fs)
 
 const AudioIniState &RetailObjectWorld::audio() const
 {
-	return *m_audio;
+	return *m_s->m_audio;
 }
 
 namespace
@@ -160,21 +161,21 @@ GlobalOwnerChain<AudioExists> &weaponTemplateChain()
 
 void RetailObjectWorld::registerContext()
 {
-	locomotorChain().install(this, &m_locomotors); // the Locomotor block has a real parser (HORDE-1) that needs the store
-	commandChain().install(this, &m_commands);     // PROD-1: CommandButton / CommandSet
-	upgradeChain().install(this, &m_upgrades);     // UPGRADE-1: the Upgrade block and every upgrade mask field of the object modules
-	experienceChain().install(this, &m_experienceLevels);      // XP-1
-	attributeModifierChain().install(this, &m_attributeModifiers); // XP-1
-	stanceChain().install(this, &m_stances);                       // INTEG-1
-	emotionChain().install(this, &m_emotions);                     // MODULES-2
-	linearCampaignChain().install(this, &m_linearCampaigns);       // CAMP-1
-	createAHeroChain().install(this, &m_createAHero);              // HERO-2
-	fxListChain().install(this, m_recorder.fxLists.get());         // XP-1: the FXList blocks fill this world's store; LevelUpFx / ModifierList FX validate against it
+	locomotorChain().install(this, &m_s->m_locomotors); // the Locomotor block has a real parser (HORDE-1) that needs the store
+	commandChain().install(this, &m_s->m_commands);     // PROD-1: CommandButton / CommandSet
+	upgradeChain().install(this, &m_s->m_upgrades);     // UPGRADE-1: the Upgrade block and every upgrade mask field of the object modules
+	experienceChain().install(this, &m_s->m_experienceLevels);      // XP-1
+	attributeModifierChain().install(this, &m_s->m_attributeModifiers); // XP-1
+	stanceChain().install(this, &m_s->m_stances);                       // INTEG-1
+	emotionChain().install(this, &m_s->m_emotions);                     // MODULES-2
+	linearCampaignChain().install(this, &m_s->m_linearCampaigns);       // CAMP-1
+	createAHeroChain().install(this, &m_s->m_createAHero);              // HERO-2
+	fxListChain().install(this, m_s->m_recorder.fxLists.get());         // XP-1: the FXList blocks fill this world's store; LevelUpFx / ModifierList FX validate against it
 	// AUDIO-1: object parsing (OpenContain / HordeContain sound fields) asks whether an audio event exists. No AudioManager exists at INI time,
 	// so the predicate is AudioApi::isValidEvent's own (a non-empty name present in the parsed event table), applied to THIS world's table.
-	audioChain().install(this, [this](const std::string &name) { return !name.empty() && m_audio->infos.contains(name); });
-	m_weaponStores.install(); // WEAPON-1
-	m_spellStores->install(); // SPELL-1
+	audioChain().install(this, [this](const std::string &name) { return !name.empty() && m_s->m_audio->infos.contains(name); });
+	m_s->m_weaponStores.install(); // WEAPON-1
+	m_s->m_spellStores->install(); // SPELL-1
 	// GARRISON-2: TransportContain's GrabWeapon / ThrowOutPassengersLandingWarhead resolve through TheWeaponStore (RW 0x73AE79 -> 0x6CC5DF: an unknown name is a
 	// null pointer, no error); the store is the one install() just made current
 	weaponTemplateChain().install(this, [](const std::string &name) { return TheWeaponStore && TheWeaponStore->findWeaponTemplate(name) != nullptr; });
@@ -194,14 +195,14 @@ void RetailObjectWorld::unregisterContext()
 	fxListChain().remove(this);
 	audioChain().remove(this);
 	weaponTemplateChain().remove(this);
-	m_weaponStores.uninstall();
-	m_spellStores->uninstall();
+	m_s->m_weaponStores.uninstall();
+	m_s->m_spellStores->uninstall();
 }
 
 bool RetailObjectWorld::isCurrentContext() const
 {
-	return audioChain().current() == this && commandChain().current() == this && upgradeChain().current() == this && locomotorChain().current() == this && WeaponStores::currentOwner() == &m_weaponStores
-		&& SpellStores::currentOwner() == m_spellStores.get();
+	return audioChain().current() == this && commandChain().current() == this && upgradeChain().current() == this && locomotorChain().current() == this && WeaponStores::currentOwner() == &m_s->m_weaponStores
+		&& SpellStores::currentOwner() == m_s->m_spellStores.get();
 }
 
 const RetailObjectWorld *RetailObjectWorld::currentContext()
@@ -227,37 +228,125 @@ RetailObjectWorld::ContextScope::~ContextScope()
 	}
 }
 
+RetailObjectWorld::RetailObjectWorld(ArchiveFileSystem &fs)
+	: m_fs(fs), m_s(std::make_unique<State>(fs))
+{
+}
+
+RetailObjectWorld::State::~State() = default;
+
+void RetailObjectWorld::refreshSetup()
+{
+	m_setupKeys = m_s->m_keys;
+	if (!m_setupTemplates)
+	{
+		m_setupTemplates = std::make_unique<PlayerTemplateStore>(m_setupKeys);
+	}
+	m_setupTemplates->assignFrom(*m_s->m_playerTemplates);
+	if (!m_setupCreateAHero)
+	{
+		m_setupCreateAHero = std::make_unique<CreateAHeroSystem>(m_s->m_createAHero);
+	}
+	else
+	{
+		*m_setupCreateAHero = m_s->m_createAHero; // in place: the shell's screens keep the object
+	}
+}
+
 RetailObjectWorld::~RetailObjectWorld()
 {
 	unregisterContext();
 }
 
-bool RetailObjectWorld::load(std::string *error)
+namespace
 {
-	if (m_loaded)
+const char *const kGameLive = "RetailObjectWorld: a game of this world is still live (S-3808: every game starts from a freshly loaded world; two games at once need two worlds)";
+}
+
+void RetailObjectWorld::reload()
+{
+	if (!m_loaded)
+	{
+		throw std::logic_error("RetailObjectWorld::reload: the world is not loaded");
+	}
+	if (m_gameLive)
+	{
+		throw std::logic_error(kGameLive);
+	}
+	reloadState();
+}
+
+void RetailObjectWorld::reloadState()
+{
+	const void *previous = audioChain().current();
+	const bool registered = audioChain().contains(this);
+	unregisterContext();
+	m_s.reset(); // every store the INI load made goes (the old one first: no two states in memory)
+	m_s = std::make_unique<State>(m_fs);
+	std::string error;
+	if (!loadState(&error)) // selects this world's context, as load() does
+	{
+		throw std::runtime_error("RetailObjectWorld::reload: " + error);
+	}
+	if (!registered)
+	{
+		unregisterContext();
+	}
+	else if (previous && previous != this && audioChain().contains(previous))
+	{
+		const_cast<RetailObjectWorld *>(static_cast<const RetailObjectWorld *>(previous))->registerContext(); // the order of the chains as before
+	}
+	m_dirty = false;
+}
+
+bool RetailObjectWorld::beginGame(std::string *error)
+{
+	if (m_gameLive)
 	{
 		if (error)
 		{
-			*error = "RetailObjectWorld::load called twice";
+			*error = kGameLive;
 		}
 		return false;
 	}
-	m_commands.setThingFactory(m_things.get());
+	m_gameLive = true;
+	m_gameMapApplied = false;
+	return true;
+}
+
+void RetailObjectWorld::endGame()
+{
+	if (!m_gameLive)
+	{
+		throw std::logic_error("RetailObjectWorld::endGame: no game of this world is live");
+	}
+	m_gameLive = false;
+	m_gameMapApplied = false;
+	if (m_dirty)
+	{
+		reloadState(); // the next game, and its setup, start from a freshly loaded world
+	}
+}
+
+bool RetailObjectWorld::loadState(std::string *error)
+{
+	m_s->m_commands.setThingFactory(m_s->m_things.get());
 	registerContext(); // selected for the whole load; kept when it succeeds, rolled back when it fails (an error return or an exception)
-	const std::shared_ptr<void> rollback(nullptr, [this](void *) {
-		if (!m_loaded)
+	bool ok = false;
+	const std::shared_ptr<void> rollback(nullptr, [this, &ok](void *) {
+		if (!ok)
 		{
 			unregisterContext();
 		}
 	});
-	INI ini(m_env);
+	INI ini(m_s->m_env);
 	SubsystemLoadOptions options;
 	options.collectErrors = true;
 	options.cinematics = true; // the census counts the Cinematic folder (338 templates), like the object-model retail test
 	const auto t0 = std::chrono::steady_clock::now();
 	try
 	{
-		RunSubsystemIniLoad(m_legend, ini, options, m_report);
+		RunSubsystemIniLoad(m_s->m_legend, ini, options, m_s->m_report);
 	}
 	catch (const std::exception &e)
 	{
@@ -271,20 +360,20 @@ bool RetailObjectWorld::load(std::string *error)
 	// AI-1: TheBaseTemplateLibrary's post-load (RW 0x82FA98) reads every AIBase's .bse layout; its errors reach the report like the legend's
 	{
 		std::vector<std::string> layoutErrors;
-		m_skirmishAI->loadBaseLayouts(m_fs, &layoutErrors);
+		m_s->m_skirmishAI->loadBaseLayouts(m_fs, &layoutErrors);
 		for (const std::string &e : layoutErrors)
 		{
 			SubsystemLoadReport::FileError fe;
 			fe.file = "TheBaseTemplateLibrary";
 			fe.code = 0;
 			fe.message = e;
-			m_report.errors.push_back(fe);
+			m_s->m_report.errors.push_back(fe);
 		}
 	}
 	// INTEG-1: TheStanceTemplateStore's init (RW 0x83568D) loads Data\INI\Stances.ini itself (INI::load, type 1), not through the legend; an error reaches the report
 	try
 	{
-		INI stancesIni(m_env);
+		INI stancesIni(m_s->m_env);
 		stancesIni.load("Data\\INI\\Stances.ini", INI_LOAD_OVERWRITE); // RW 0xC536E4
 	}
 	catch (const INIException &e)
@@ -293,24 +382,24 @@ bool RetailObjectWorld::load(std::string *error)
 		fe.file = "Data\\INI\\Stances.ini";
 		fe.code = e.code();
 		fe.message = e.what();
-		m_report.errors.push_back(fe);
+		m_s->m_report.errors.push_back(fe);
 	}
 	// PROD-1: the ControlBar loads its own three files after the objects (RW 0x71CE3A); its errors reach the report like the legend's
 	std::vector<std::string> commandErrors;
-	m_commands.loadFromFiles(m_env, &commandErrors);
+	m_s->m_commands.loadFromFiles(m_s->m_env, &commandErrors);
 	for (const std::string &e : commandErrors)
 	{
 		SubsystemLoadReport::FileError fe;
 		fe.file = "ControlBar";
 		fe.code = 0;
 		fe.message = e;
-		m_report.errors.push_back(fe);
+		m_s->m_report.errors.push_back(fe);
 	}
 	// HERO-2: TheCreateAHeroSystem's init (RW 0x61A10F) loads Data\INI\CreateAHeroSystem.ini itself (type 1) once the upgrades and the control bar are loaded
 	try
 	{
-		m_createAHero.load(m_env);
-		if (!m_createAHero.loaded())
+		m_s->m_createAHero.load(m_s->m_env);
+		if (!m_s->m_createAHero.loaded())
 		{
 			throw INIException(3, "Data\\INI\\CreateAHeroSystem.ini has no CreateAHeroSystem block");
 		}
@@ -321,30 +410,49 @@ bool RetailObjectWorld::load(std::string *error)
 		fe.file = "Data\\INI\\CreateAHeroSystem.ini";
 		fe.code = e.code();
 		fe.message = e.what();
-		m_report.errors.push_back(fe);
+		m_s->m_report.errors.push_back(fe);
 	}
 	std::string perr;
-	if (!ProductionSettings::load(m_fs, m_productionSettings, &perr))
+	if (!ProductionSettings::load(m_fs, m_s->m_productionSettings, &perr))
 	{
 		SubsystemLoadReport::FileError fe;
 		fe.file = "ProductionSettings";
 		fe.code = 0;
 		fe.message = perr;
-		m_report.errors.push_back(fe);
+		m_s->m_report.errors.push_back(fe);
 	}
 	// UPGRADE-1: the sub upgrade names resolve once every Upgrade block is known; production's type table is the center's
 	perr.clear();
-	if (!m_upgrades.resolveSubUpgrades(&perr))
+	if (!m_s->m_upgrades.resolveSubUpgrades(&perr))
 	{
 		SubsystemLoadReport::FileError fe;
 		fe.file = "UpgradeCenter";
 		fe.code = 0;
 		fe.message = perr;
-		m_report.errors.push_back(fe);
+		m_s->m_report.errors.push_back(fe);
 	}
-	m_upgrades.resolveTemplates(*m_things);
-	m_upgradeTypes.assign(m_upgrades);
-	m_seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+	m_s->m_upgrades.resolveTemplates(*m_s->m_things);
+	m_s->m_upgradeTypes.assign(m_s->m_upgrades);
+	refreshSetup(); // lane MAPRESET-1: game setup's copies
+	m_s->m_seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+	ok = true;
+	return true;
+}
+
+bool RetailObjectWorld::load(std::string *error)
+{
+	if (m_loaded)
+	{
+		if (error)
+		{
+			*error = "RetailObjectWorld::load called twice";
+		}
+		return false;
+	}
+	if (!loadState(error))
+	{
+		return false;
+	}
 	m_loaded = true;
 	return true;
 }
@@ -352,13 +460,26 @@ bool RetailObjectWorld::load(std::string *error)
 RetailObjectWorld::MapIniResult RetailObjectWorld::applyMapIni(const std::string &mapDir)
 {
 	MapIniResult result;
-	m_things->reset(); // ZH ThingFactory::reset: the previous map's overrides go
-	const size_t defsBefore = m_things->definitions().size();
-	const size_t recordsBefore = m_recorder.records.size();
+	if (!m_loaded)
+	{
+		throw std::logic_error("RetailObjectWorld::applyMapIni: the world is not loaded");
+	}
+	if (m_gameLive && m_gameMapApplied)
+	{
+		throw std::logic_error(kGameLive);
+	}
+	// lane MAPRESET-1 (S-3808): a world an earlier map or game changed is loaded again: the map.ini applies to a fresh load. (Before, the
+	// previous map's ThingFactory / Weapon / ExperienceLevel / Science / Rank / SpecialPower overrides were dropped here as ZH's resets do,
+	// and everything else stayed: PLAY-4's S-3808)
+	if (m_dirty)
+	{
+		reloadState(); // also for a game being loaded: it holds nothing of the world before its map.ini
+	}
+	m_dirty = true;
+	m_gameMapApplied = m_gameLive;
+	const size_t defsBefore = m_s->m_things->definitions().size();
+	const size_t recordsBefore = m_s->m_recorder.records.size();
 	ContextScope context(*this); // this world's stores AND audio validator for the whole parse; the previous live context returns on exit
-	m_weaponStores.resetOverrides(); // the previous map's Weapon overrides go (ZH WeaponStore::reset)
-	m_experienceLevels.resetOverrides(); // XP-1: the previous map's ExperienceLevel overrides go
-	m_spellStores->resetOverrides(); // SPELL-1: and the Science / Rank / SpecialPower overrides
 	for (const char *file : { "map.ini", "solo.ini" }) // RW 0x627224, 0x627290
 	{
 		const std::string path = mapDir + "\\" + file;
@@ -367,7 +488,7 @@ RetailObjectWorld::MapIniResult RetailObjectWorld::applyMapIni(const std::string
 			continue;
 		}
 		(file[0] == 'm' ? result.mapIniFound : result.soloIniFound) = true;
-		INI ini(m_env);
+		INI ini(m_s->m_env);
 		try
 		{
 			ini.load(path, INI_LOAD_CREATE_OVERRIDES);
@@ -381,19 +502,19 @@ RetailObjectWorld::MapIniResult RetailObjectWorld::applyMapIni(const std::string
 			result.errors.push_back(path + ": " + e.what());
 		}
 	}
-	const auto &defs = m_things->definitions();
+	const auto &defs = m_s->m_things->definitions();
 	for (size_t i = defsBefore; i < defs.size(); ++i)
 	{
 		result.definitions.push_back(defs[i].kind + " " + defs[i].name);
 	}
-	result.blocksRecorded = m_recorder.records.size() - recordsBefore;
+	result.blocksRecorded = m_s->m_recorder.records.size() - recordsBefore;
 	return result;
 }
 
 std::vector<std::string> RetailObjectWorld::acceptanceStops() const
 {
-	std::vector<std::string> out = m_things->acceptanceStops();
-	for (const std::string &u : m_playerTemplates->unverified())
+	std::vector<std::string> out = m_s->m_things->acceptanceStops();
+	for (const std::string &u : m_s->m_playerTemplates->unverified())
 	{
 		out.push_back(u);
 	}
@@ -441,8 +562,16 @@ std::vector<std::string> RetailObjectWorld::acceptanceStops() const
 	{
 		out.push_back(l);
 	}
+	// lane PLAY-4 r2 found it; lane MAPRESET-1: the owner's decision (2026-10-12) to depart from RotWK here
+	out.push_back("[S-3808] deliberate departure from RotWK: every game starts from a freshly loaded world. A world a map.ini or a game changed "
+				  "is discarded and loaded again (reload: the startup INI load, about 1 s warm) before the next map's map.ini and when its game ends; "
+				  "one game per world may be live; game setup reads the load's PlayerTemplates. RotWK keeps a map's PlayerTemplate and skirmish AI "
+				  "blocks (and the other stores' map additions) for the session: its PlayerTemplateStore and SkirmishAIManager resets are empty "
+				  "(RW 0x63F3BF) and GameLogic::reset drops TheGlobalData's overrides alone (RW 0x62D3F7), so in retail a game after Helm's Deep or "
+				  "Minas Tirith places the starting units at those maps' offsets and two peers whose sessions played different maps start with "
+				  "different data. A retail session that played such a map before differs from this engine's game; not compared with retail");
 	out.push_back("[S-116] map.ini / solo.ini: only the Object / ChildObject / ObjectReskin / CommandButton / CommandSet / ExperienceLevel / ModifierList blocks are applied (load type 2); every other block is consumed by a recording stub");
-	for (const std::string &l : m_experienceLevels.stopLines()) // XP-1
+	for (const std::string &l : m_s->m_experienceLevels.stopLines()) // XP-1
 	{
 		out.push_back(l);
 	}

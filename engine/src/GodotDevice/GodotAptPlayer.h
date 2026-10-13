@@ -205,11 +205,35 @@ public:
 	Dictionary disconnect_screen(const Dictionary &state);
 	Array take_disconnect_actions();
 	// lane MP-2: what SaveLoad.apt's replay page lists, set before it is pushed: { mode: 2 load, flags: 4 replay, last_replay: the GUI:LastReplay name,
-	// replays: [{ path, name, map, date, time, compatible }] }; its Load comes back as the shell request "LoadReplayFile" with the path
+	// replays: [{ path, name, map, date, time, compatible }] }; its Load comes back as the shell request "LoadReplayFile" with the path. Lane SAVE-2, the
+	// saved-game pages: mode 3 save / 2 load, flags 1 Campaign | 2 Skirmish, in_game (opened over a game), saves: [{ path, name, map, date, time, kind (1 / 2),
+	// loadable, refusal, retail_import }]; Save, Load and Delete come back as "SaveGameFile" (the typed name), "LoadGameFile" / "DeleteGameFile" (the path).
+	// Called again while the screen is open (after a delete) it fills the lists again.
 	void set_save_load(const Dictionary &info);
+	// lane SAVE-2: the host's answer to "SaveGameFile": the screen's message box shows GUI:GameSaved (ok) or `error`; false when SaveLoad.apt is not the top
+	bool save_load_saved(bool ok, const String &error);
+	// lane SAVE-2: the host refused a "LoadGameFile" (GameWorld.check_save): the screen shows GUI:ErrorLoadingGame with `name` and `error`, and stays
+	bool save_load_refused(const String &name, const String &error);
 	// lane MP-2: hands the world's LAN lobby (GameWorld.lan_open) to LanLobby.apt, set before it is pushed (null / no lobby: the screen says so). The screen keeps
 	// the pointer: pop it before GameWorld.lan_close
 	bool set_lan(Object *world);
+	// lane ONLINE-4: the online screens (OnlineShell.apt, GameClient/GUI/AptScreens/AptOnlineShell.h) on the OpenBFME lobby service. set_online makes the shell's
+	// lobby client before OnlineShell.apt is pushed: options { lobby_url (the requests' prefix), remembered_name (the guest name of the last sign-in),
+	// poll_ms }; the world gives the profile identity and the faction / colour counts the lobby's views are checked against. { ok, error }.
+	// online_take_requests: the HTTP requests to send now [{ id, method, path, body, token }] (scripts/online_http.gd sends them; at most one in flight);
+	// online_deliver: an answer (the HTTP status and body, or the transport error). online_status: { signed_in, name, page, state, in_game, host, slot,
+	// games: ["name|map|players|lock"], chat, motd, boxes, connecting, remembered_name }. online_apply: scripted input (tests, the proof walk) { nickname,
+	// game_name, game_password, select_row, command (an fscommand name), invoke (a function of the shell movie's root, with args) } -> { ok, errors }
+	Dictionary set_online(Object *world, const Dictionary &options);
+	Array online_take_requests();
+	void online_deliver(int64_t id, int64_t status, const String &body, const String &error);
+	Dictionary online_status();
+	Dictionary online_apply(const Dictionary &spec);
+	// Sol r1: the host could not play the START OnlineShell.apt handed on (GameWorld.net_online refused it): the screens show a recoverable lobby error
+	// and go back to the game list (false: no online screens). online_redact: a text with its credentials masked (OnlineLobbyClient::redact: relay,
+	// rejoin and spectator tickets, session tokens), for anything the game prints of the lobby's
+	bool online_start_failed(const String &error);
+	static String online_redact(const String &text);
 	// lane CAH-1, the Create-a-Hero builder (CreateAHero.apt, GameClient/GUI/AptScreens/AptCreateAHero.h): set_create_a_hero gives the shell the world's
 	// TheCreateAHeroSystem and the hero list (the system heroes of the archives and the profile's MyHero*.cah files in `profile_dir`; the lobby's Hero combo
 	// lists the same heroes): { ok, heroes, errors }. get_create_a_hero_view: what the builder's 3D view shows { up, page ("M", "C", "A", "P" or ""),
@@ -326,6 +350,9 @@ private:
 	bool m_showPlaceholders = false;
 
 	void clearCanvas();
+	void recycleCanvas();                  // lane SELPERF-1: the items to the pool for the next full redraw
+	RID takeItem(RID parent, int drawIndex); // a pooled (reset) or new canvas item
+	void freeItemPool();
 	void advanceMovies(double deltaMs); // lane CAMP-2: the BinkMovie components' frames
 	// lane PERF-1 r2: whether two canvas lists draw the same (every op field drawCanvas reads); the native components of the drawn list redrawn alone
 	static bool sameCanvas(const AptCanvasList &a, const AptCanvasList &b);

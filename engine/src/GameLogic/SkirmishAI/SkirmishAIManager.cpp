@@ -8,6 +8,9 @@
 #include "Common/PlayerList.h"
 #include "Common/PlayerTemplate.h"
 #include "Common/StateHash.h"
+#include "Common/Team.h"
+#include "Common/Thing/ThingTemplate.h"
+#include "Common/Thing/KindOfTokens.h"
 #include "GameLogic/GameLogic.h"
 #include "GameLogic/Object/Object.h"
 #include "GameLogic/SkirmishAI/SkirmishAIData.h"
@@ -58,6 +61,7 @@ int SkirmishAIManager::newGame(bool skirmishOrMultiplayer, bool loadingSave, con
 		else
 		{
 			m_infoPlayers.push_back(p->getPlayerIndex()); // RW 0x6AA0B7 .. 0x6AA0EE: map[+0xA3C][index] = new info(p)
+			makeRecord(*p);
 		}
 	}
 	// RW 0x8EF287 -> 0x8EEBAC: the first AI's economy builder makes the farm site pool (the map's FarmTemplate objects)
@@ -96,8 +100,10 @@ int SkirmishAIManager::newGame(bool skirmishOrMultiplayer, bool loadingSave, con
 			// RW 0x9A10D8 (unit builder init): copies the army's HeroBuildOrder (AIBaseBuilder::init, lane DECOMP-2)
 		}
 	}
-	// RW 0x6A9E48: every playable player's objects pass through the object event RW 0x6A9D9C (lane AI-2; RW walks the player's own object list (RW 0x66362D
-	// on Player + 0x30C), S-890: taken in the game's object list order)
+	// RW 0x6A9E48: every playable player's default team's members (Player + 0x30C, Team::iterate_TeamMemberList RW 0x66362D, BFME2 decomp
+	// TeamIterateTeamMemberList.cpp tier A) pass through the object event RW 0x6A9D9C (lane AI-2), no INERT test. Lane DECOMP-3: RW's member list is built by
+	// Team::prependTo_TeamMemberList (RW 0x68AE08, tier A, from Object's team change RW 0x697C09), so it walks the newest member first; the port's team keeps
+	// insertion order and is walked backwards (INFERENCE S-890: the port's join order is RW's). Objects of the player's other teams get no event here.
 	for (int i = 0; i < players.getPlayerCount(); ++i)
 	{
 		Player *p = players.getNthPlayer(i);
@@ -105,17 +111,19 @@ int SkirmishAIManager::newGame(bool skirmishOrMultiplayer, bool loadingSave, con
 		{
 			continue;
 		}
-		for (Object *o = m_logic.getFirstObject(); o; o = o->getNextObject())
+		std::vector<Object *> members;
+		for (Object *o = p->getDefaultTeam() ? p->getDefaultTeam()->getFirstMember() : nullptr; o; o = o->friend_teamNext())
 		{
-			if (o->getControllingPlayer() == p)
-			{
-				objectEnteredWorld(*o);
-			}
+			members.push_back(o);
+		}
+		for (auto it = members.rbegin(); it != members.rend(); ++it)
+		{
+			objectAdded(**it);
 		}
 	}
 	if (m_worldHooks == 0)
 	{
-		m_worldHooks = m_logic.addWorldHooks([this](Object &o) { objectEnteredWorld(o); }, [this](Object &o) { objectLeftWorld(o); });
+		m_worldHooks = m_logic.addWorldHooks([this](Object &o) { objectEnteredWorld(o); }, [this](Object &o) { objectLeftWorld(o); }, true, true);
 	}
 	return made;
 }
@@ -179,6 +187,7 @@ AISkirmishPlayer *SkirmishAIManager::addAIPlayer(Player &player)
 			" has no ArmyDefinition: its AI is disabled (RW 0x6A9F96)");
 	}
 	m_infoPlayers.push_back(player.getPlayerIndex()); // RW 0x6A9F9D .. 0x6A9FDD
+	makeRecord(player);
 	return raw;
 }
 
@@ -223,6 +232,10 @@ void SkirmishAIManager::update()
 	// the player info records in player index order (std::map at + 0xA3C); of their update RW 0x8E3CF3 the army list's idle-army record RW 0x99E63B is ported
 	// (lane AI-3: read by the best-target gate RW 0x90B2A0; the AIs' records, no other reader); the rest is S-412
 	m_counters.playerInfoUpdates += m_infoPlayers.size();
+	for (auto &kv : m_records)
+	{
+		kv.second->update(m_logic); // lane DECOMP-3: RW 0x8E3CF3's list pruning (RW 0x65BD07), before the idle army record it feeds
+	}
 	for (auto &g : m_groups)
 	{
 		for (auto &kv : g->players)
@@ -357,18 +370,71 @@ AISkirmishPlayer *SkirmishAIManager::eventAI(const Object &obj)
 
 void SkirmishAIManager::objectEnteredWorld(Object &obj)
 {
-	if (AISkirmishPlayer *ai = eventAI(obj))
+	// RW 0x68E31F: an INERT template (+ 0x110 bit 25) leaves before RW 0x68E42D
+	static const int inert = KindOfTokens::indexOf("INERT");
+	if (inert >= 0 && obj.isKindOf((unsigned)inert))
 	{
-		AIBaseBuilder::onObjectEntered(m_logic, *ai, obj);
+		return;
 	}
+	objectAdded(obj);
 }
 
 void SkirmishAIManager::objectLeftWorld(Object &obj)
 {
+	objectRemoved(obj); // RW 0x68C205, unconditional
+}
+
+void SkirmishAIManager::objectAdded(Object &obj)
+{
+	// RW 0x6A9D9C: the AI first (RW 0x6C7779), then the player info record (RW 0x6A9999 -> RW 0x8E4591); the CAPTUREFLAG list (+ 0xA68) is not ported (S-417)
+	m_counters.objectAdds += m_started ? 1u : 0u;
+	if (m_eventTrace && m_started)
+	{
+		m_eventTrace->push_back(ObjectEvent{ true, obj.getID(), obj.getTemplate() ? obj.getTemplate()->getName() : std::string(), obj.getControllingPlayer() ? obj.getControllingPlayer()->getPlayerIndex() : -1 });
+	}
+	if (AISkirmishPlayer *ai = eventAI(obj))
+	{
+		AIBaseBuilder::onObjectEntered(m_logic, *ai, obj);
+	}
+	if (AIStatCollector *r = m_started && obj.getControllingPlayer() ? record(obj.getControllingPlayer()->getPlayerIndex()) : nullptr)
+	{
+		r->registerObject(obj);
+	}
+}
+
+void SkirmishAIManager::objectRemoved(Object &obj)
+{
+	// RW 0x6A99CB: the AI (RW 0x6C778A), then the record (RW 0x8E480C)
+	m_counters.objectRemoves += m_started ? 1u : 0u;
+	if (m_eventTrace && m_started)
+	{
+		m_eventTrace->push_back(ObjectEvent{ false, obj.getID(), obj.getTemplate() ? obj.getTemplate()->getName() : std::string(), obj.getControllingPlayer() ? obj.getControllingPlayer()->getPlayerIndex() : -1 });
+	}
 	if (AISkirmishPlayer *ai = eventAI(obj))
 	{
 		AIBaseBuilder::onObjectLeft(m_logic, *ai, obj);
 	}
+	if (AIStatCollector *r = m_started && obj.getControllingPlayer() ? record(obj.getControllingPlayer()->getPlayerIndex()) : nullptr)
+	{
+		r->unRegisterObject(obj);
+	}
+}
+
+void SkirmishAIManager::makeRecord(const Player &player)
+{
+	m_records[player.getPlayerIndex()] = std::make_unique<AIStatCollector>(player.getPlayerIndex()); // RW 0x8E46D9
+}
+
+AIStatCollector *SkirmishAIManager::record(int playerIndex)
+{
+	auto it = m_records.find(playerIndex);
+	return it == m_records.end() ? nullptr : it->second.get();
+}
+
+const AIStatCollector *SkirmishAIManager::record(int playerIndex) const
+{
+	auto it = m_records.find(playerIndex);
+	return it == m_records.end() ? nullptr : it->second.get();
 }
 
 void SkirmishAIManager::dozerIdle(Object &dozer)
@@ -407,6 +473,7 @@ void SkirmishAIManager::reset()
 	}
 	m_groups.clear();
 	m_infoPlayers.clear();
+	m_records.clear();
 	m_farmSites.clear();
 	m_started = false;
 	m_errors.clear();
@@ -463,6 +530,11 @@ void SkirmishAIManager::crc(StateHasher &h) const
 	{
 		h.addI32(i);
 	}
+	h.addU32((std::uint32_t)m_records.size());
+	for (const auto &kv : m_records)
+	{
+		kv.second->crc(h);
+	}
 	h.addU32((std::uint32_t)m_farmSites.size());
 	for (const auto &f : m_farmSites)
 	{
@@ -505,7 +577,7 @@ std::vector<std::string> SkirmishAIManager::stopLines()
 		"tables have no terminating row, so an unknown field crashes retail where the port reports it; a CombatChainDefinition without Unit writes "
 		"before RW's table (the port rejects it, S-411)",
 		"[S-412] skirmish ai: TheSkirmishAIManager's creation rules, groups and update cadence are ported (RW 0x6AA030, 0x6A9EAD, 0x6A96A0, 0x8EDDF6, "
-		"0x6C7946); the bodies they call are not: the player info records (RW 0x8E3CF3), the manager object + 0xA74, the group tasks (RW 0x8EDB2C), "
+		"0x6C7946); the bodies they call are not: the manager object + 0xA74, the group tasks (RW 0x8EDB2C), "
 		"AISkirmishPlayer RW 0x6C75B5 / the shutdown, the AIPlayer sub systems other than the base, unit and team builders (RW 0x8F0EB4: "
 		"+ 0xC0 economy builder, + 0x108 unit upgrader, + 0x12C science builder, + 0xE4 wall builder): a computer player builds its base (S-413), trains its army "
 		"(S-415) builds farms (S-419) and attacks with SimpleAttack teams (S-417)",
@@ -522,11 +594,13 @@ std::vector<std::string> SkirmishAIManager::stopLines()
 		"best target's threat gate (RW 0x90B2A0, S-1302)",
 		"[S-419] skirmish ai economy builder (+ 0xC0, RW 0x8EEF8F): farms on the map's FarmTemplate sites (RW 0x8EEC71), the farm decision (RW 0x8EE765), the "
 		"difficulty gate (RW 0x99327C), the farm priority growth (RW 0x99F313) and the unit request's effective priority (RW 0x9EDA17) are ported; inference: the "
-		"farm site pool is made at newGame in object list order, the economy structure count is recounted from the living objects",
+		"farm site pool is made at newGame in object list order (lane DECOMP-3: the economy structure count is the player info record's economy list)",
 		"[S-420] skirmish ai vs ai: games end through the fortress fall, the spawned worker's fade on its structure's delete (RW 0x85750D -> 0x85730B) and "
 		"unfinished structures as targets (lane DECOMP-2: RW's AI::findClosestEnemy RW 0x701443 -> 0x7006D7 and its attack test RW 0x68D6A6 / 0x6C9147 / "
 		"0x6C8652 never test UNDER_CONSTRUCTION); INFERENCE: the worker kill runs at the port's delete point, the defeat frames are engine pins",
-		"[S-418] skirmish ai tactical layer inference: the player info lists are rebuilt each frame in id order; (lane DECOMP-2: the team builder's recruit test "
+		"[S-418] skirmish ai tactical layer inference: (lane DECOMP-3: the player info record AIStatCollector RW 0x8E46D9 is ported and filled by the object "
+		"events RW 0x6A9D9C / 0x6A99CB, so its lists keep RW's event order; its position sampler and listeners are not ported; newGame's pass walks the port's "
+		"default team backwards as RW's prepended member list); (lane DECOMP-2: the team builder's recruit test "
 		"RW 0x9A24FC, the SUPPORT rule, the hand-over at the minimum when DEFENSIVE, full or meeting the target's threat RW 0x9A26A1, the pooled defaults and the "
 		"idle dispatch RW 0x9A3040 are ported; its unit list is taken as the army list) a unit in another team is never taken (RW's priority and DEFENSIVE-target branches), a member counts until it is destroyed, the threat sum runs "
 		"newest member first; RW 0x9EF9AF's path check is taken as reachable; the enemy score root is the double root of the float sum",
@@ -537,9 +611,9 @@ std::vector<std::string> SkirmishAIManager::stopLines()
 		"(HeroBuildOrder: RW 0x9A03A1 / 0x9A0993 / 0x9A05DB, the hero factories RW 0x9A08E8, the hero list index of the check / queue) are ported; not "
 		"ported: the HeroBuildOrder's CreateAHero entry of a slot with a Create-a-Hero (RW 0x90CE35), the money reserve (+ 0x21, cost >= 1000; a hero's "
 		"money test reads the player's money alone), the living world part (RW 0x9A0426)",
-		"[S-416] skirmish ai unit builder inference: a structure enters the factory map when it is first seen complete (RW: its completion event), the owned "
-		"count of a unit is the player's living objects of the template (RW: the player info record's map, RW 0x8E3FD6), a unit request is complete when its "
-		"factory no longer holds its queue entry (RW: the production event), the phase blend of RW 0x82FCAB is computed in double for the x87 chain",
+		"[S-416] skirmish ai unit builder inference: a structure enters the factory map when it is first seen complete (RW: its completion event), a unit "
+		"request is complete when its factory no longer holds its queue entry (RW: the production event), the phase blend of RW 0x82FCAB is computed in double "
+		"for the x87 chain; (lane DECOMP-3: the owned count is the player info record's per-template count RW 0x8E3FD6, kept by Register / UnRegister)",
 		"[S-413] skirmish ai base builder: the game phase (RW 0x6C7677), the start position, the angle facing the map centre, the layout choice (RW 0x9BCA8E, one "
 		"logic random draw), the slots, the structure requests, the request order and processor (RW 0x8F0F7E ..) and the check / execute path through BUILD-1 "
 		"(canMakeUnit, legality options 0x85, DozerAIUpdate::construct) are ported; lane AI-2: the dozer manager (RW 0x9A23A4 / 0x9A221E / 0x9A19E0: dozers queued "
@@ -584,11 +658,11 @@ std::vector<std::string> SkirmishAIManager::stopLines()
 		"RW 0x691A2F is not ported); an InactiveBody's health ratio is taken as 0; the ThreatBreakdown block is read from the template's raw lines (S-071): an "
 		"unknown AIKindOf (a load error in retail) leaves the category -1",
 		"[S-1301] skirmish ai team group step (lane AI-3): RW 0x774F2B's idle helpers (RW 0x7728E8) are ported; the group's speed matching RW 0x77005F(1) is "
-		"not (fast members lead), and Object::isAbleToAttack (RW 0x691269) is ported only for its status / model condition / CAN_ATTACK tests",
+		"not (fast members lead); Object::isAbleToAttack (RW 0x691269) is ported in full (lane DECOMP-3)",
 		"[S-1302] skirmish ai best target threat gate inference (lane AI-3): RW 0x90B2A0 (the attacked-at records RW 0x6C7344 / 0x6C720A / 0x6C6F01, RW 0x6C6743, "
 		"the idle army record RW 0x99E63B, the counter table RW 0x7EDC2F, the draw AITargetChooser.cpp 0xF7) is ported; inference: RW 0x6C7344 walks the "
 		"player's teams in its team list order (the port: the tactics in list order, offensive before targetless, each by team index); the target finder's "
-		"scan RW 0x6C6743 may reuse (RW 0x7EE166) is taken as a new scan; the idle army record is computed from the living army in id order (S-418)",
+		"scan RW 0x6C6743 may reuse (RW 0x7EE166) is taken as a new scan; the idle army record reads the player info record's army list (lane DECOMP-3)",
 	};
 }
 

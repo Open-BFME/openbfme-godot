@@ -22,6 +22,7 @@
 // the path-through flag; the port's records would not return to the pool).
 
 #include "GameLogic/AI/AIPathfind.h"
+#include "GameLogic/AI/AIPathfindStops.h"
 #include "GameLogic/SimMath.h"
 
 #include <limits>
@@ -37,6 +38,10 @@ Path *Pathfinder::findAttackPath(const PathfindObject *obj, const PathfindLocomo
 	{
 		return nullptr;
 	}
+	// lane PATHPERF-1: RW 0x6FC4CB .. 0x6FC4F9 clears the block flags, builds its own corridor (RW 0x6F9829) and marks every block passable when there is
+	// none. The corridor is not ported (S-162, kHierarchical): every block passable, as the search was before findPath kept its corridor between searches
+	note(pathstops::kHierarchical);
+	m_zoneManager.setAllPassable();
 	int radius = 0;
 	bool center = false;
 	getRadiusAndCenter(obj, radius, center);

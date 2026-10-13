@@ -71,6 +71,7 @@ class SpawnBehaviorInterface
 public:
 	virtual ~SpawnBehaviorInterface() = default;
 	virtual void onSpawnDeath(ObjectID deadSpawn, const DieModuleInterface::Event *info) = 0; // slot 1
+	virtual bool canAnySlavesAttack() const = 0;                                           // slot 7 (lane DECOMP-3, Object::isAbleToAttack RW 0x691413)
 	virtual void stopSpawning() = 0;                                                       // slot 9
 	virtual bool isSpawnerActive() const = 0;                                              // slot 11
 	static SpawnBehaviorInterface *of(Object &obj);                                        // RW 0x68C3A3
@@ -115,6 +116,7 @@ public:
 	void onSpawnDeath(ObjectID deadSpawn, const DieModuleInterface::Event *info) override;   // RW 0x862DAB
 	void stopSpawning() override { m_active = false; }                   // RW 0x8623D6
 	bool isSpawnerActive() const override { return m_active; }           // RW 0x86277F
+	bool canAnySlavesAttack() const override;                            // RW 0x862A4E
 	void crc(StateHasher &h) const override;
 	static void registerClass(ModuleFactory &modules);
 	static std::vector<std::string> stopLines();

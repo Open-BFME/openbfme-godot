@@ -55,7 +55,9 @@ public:
 class AptGuiFXScreen : public AptScreen
 {
 public:
-	AptGuiFXScreen(WindowManager &windows, Shell &shell);
+	// lane SAVE-2: adoptLoaded = the GuiFX.apt window the manager already holds is used (RotWK has one GuiFX level for the end screen and TheMessageBox);
+	// its owner registered the movie's commands, so an adopting screen registers none
+	AptGuiFXScreen(WindowManager &windows, Shell &shell, bool adoptLoaded = false);
 };
 
 // lane PLAY-1: PlayerTribute.apt (CodePrefix AptPlayerTribute), the screen the Palantir's flag opens in a skirmish / multiplayer game (RW 0x914EF0 pushes it).

@@ -410,8 +410,11 @@ TEST_CASE("hud control bar: the buildings of every playable faction show exactly
 				{
 					// lane HERO-1: a REVIVE slot without a hero record for it, or without its NeededUpgrade (RW 0x943D6F), is hidden; a special power the object has no
 					// module for too
+					// lane PLAY-4 r3: a DEFENSIVE_WALL under construction hides its OBJECT_UPGRADE buttons (RW 0x943050, FACT-A's rule): a wall segment builds
+					// itself from its creation (GettingBuiltBehavior::onObjectCreated, RW 0x856434), so the made segment is under construction here
+					const bool wallBuilding = want->m_command == GUI_COMMAND_OBJECT_UPGRADE && b->isUnderConstruction() && b->isKindOfName("DEFENSIVE_WALL");
 					const bool hiddenByRule = !want->m_showButton || (want->m_command == GUI_COMMAND_UNIT_BUILD && want->getThingTemplate() && BuildAssistant::buildable(*want->getThingTemplate()) >= 2) ||
-						want->m_command == GUI_COMMAND_REVIVE || want->m_command == GUI_COMMAND_SPECIAL_POWER;
+						want->m_command == GUI_COMMAND_REVIVE || want->m_command == GUI_COMMAND_SPECIAL_POWER || wallBuilding;
 					CHECK_MESSAGE(hiddenByRule, "slot " << slot << " " << want->m_name << " vanished without a retail rule");
 					continue;
 				}
@@ -471,7 +474,7 @@ TEST_CASE("stops S-289 .. S-295: the control bar, the radar and the Palantir rep
 	{
 		ids.insert(l.substr(0, 7));
 	}
-	CHECK(ids == std::set<std::string>{ "[S-289]", "[S-290]", "[S-291]", "[S-292]", "[S-293]", "[S-294]", "[S-295]", "[S-761]", "[S-762]", "[S-763]", "[S-764]", "[S-1260", "[S-1674", "[S-1922", "[S-2450", "[S-2451", "[S-2452", "[S-2453", "[S-2454", "[S-2455", "[S-2456", "[S-2457", "[S-3460", "[S-1990", "[S-1991", "[S-1992" }); // lane HUD-4: S-1674 (the radar events) // lane UI-1: S-1260 (the id is eight characters) // lane RADAR-1: S-2450 .. S-2457 // lane AUTOCAST-1: S-3460 // lane FACT-B: S-1990 .. S-1992
+	CHECK(ids == std::set<std::string>{ "[S-289]", "[S-290]", "[S-291]", "[S-292]", "[S-293]", "[S-294]", "[S-295]", "[S-761]", "[S-762]", "[S-763]", "[S-764]", "[S-1260", "[S-1674", "[S-1922", "[S-2450", "[S-2451", "[S-2452", "[S-2453", "[S-2454", "[S-2455", "[S-2456", "[S-2457", "[S-3460", "[S-1990", "[S-1991", "[S-1992", "[S-3950", "[S-3951", "[S-3801", "[S-3803" }); // lane HUD-4: S-1674 (the radar events) // lane UI-1: S-1260 (the id is eight characters) // lane RADAR-1: S-2450 .. S-2457 // lane AUTOCAST-1: S-3460 // lane FACT-B: S-1990 .. S-1992 // lane HUD-7: S-3950, S-3951 // lane PLAY-4: S-3801 / S-3803
 }
 
 TEST_CASE("hud radar: the map picture, the object blips in the owners' colours, the view box and a click on the radar are world points")

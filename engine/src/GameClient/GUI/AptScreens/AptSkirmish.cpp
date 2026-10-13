@@ -5,6 +5,7 @@
 #include "GameClient/GUI/Skirmish/SkirmishGameRecord.h"
 
 #include "GameClient/GUI/AptMessageBox.h"
+#include "GameClient/OptionPreferences.h"
 #include "Common/AsciiString.h"
 #include "GameLogic/CreateAHeroSystem.h"
 #include "GameClient/GUI/AptScreens/AptCreateAHero.h"
@@ -216,6 +217,10 @@ AptSkirmish::AptSkirmish(WindowManager &windows, Shell &shell, ShellEnvironment 
 			windows.note("skirmish-environment-missing", "GameTextSource: every label reads as MISSING: '<label>'");
 		}
 		m_setup = std::make_unique<SkirmishGameSetup>(*environment.skirmish, environment.gameText);
+		if (environment.options)
+		{
+			m_setup->setSimulationProfile(environment.options->simulationProfile()); // lane UBER-1: the OpenBFME option Uber performance mode
+		}
 		if (!m_setup->init(playerName(), environment.newGame->newGameSeed(), std::string(), &m_error))
 		{
 			windows.note("skirmish-setup-failed", m_error);

@@ -26,6 +26,9 @@
 #include "GameLogic/Module/CastleModules.h"
 #include "GameLogic/Module/GateModules.h"
 #include "GameLogic/Module/HeroAbilityModules.h"
+#include "GameLogic/Module/ConstructionModules.h"
+#include "GameLogic/Module/StancesBehavior.h"
+#include "GameLogic/ObjectTemplateInfo.h"
 #include "GameLogic/Module/CastleModules.h"
 #include "Common/ModelState.h"
 #include "GameLogic/Combat/ObjectWeapons.h"
@@ -33,6 +36,11 @@
 #include "GameLogic/WeaponState.h"
 
 #include <algorithm>
+
+namespace ModelCondition
+{
+int indexOf(const std::string &name);
+}
 
 namespace
 {
@@ -155,6 +163,11 @@ ButtonState ControlBar::evaluate(const CommandButton &b, Object &obj)
 			return ButtonState::Enabled;
 		case GUI_COMMAND_SET_RALLY_POINT:
 			return obj.getProductionUpdate() ? ButtonState::Enabled : ButtonState::Restricted;
+		case GUI_COMMAND_TOGGLE_STANCE:
+			// lane PLAY-4: RW 0x942A77: available when the object has a StancesBehavior (RW 0x861E6E / 0x68BDA5), else restricted
+			return StancesBehavior::of(obj) ? ButtonState::Enabled : ButtonState::Restricted;
+		case GUI_COMMAND_SET_STANCE:
+			return ButtonState::Enabled; // RW 0x942733: type 0x3A is in the default (available) arm
 		case GUI_COMMAND_TOGGLE_WEAPONSET:
 			// lane HUD-4: RW 0x942FC6: restricted while a non-horde contain of the object holds someone, else available
 			return WeaponSetToggle::isRestrictedByContain(obj) ? ButtonState::Restricted : ButtonState::Enabled;
@@ -187,7 +200,7 @@ ButtonState ControlBar::evaluate(const CommandButton &b, Object &obj)
 		case GUI_COMMAND_PLAYER_UPGRADE:
 		{
 			// lane FACT-A: RW 0x942733 case 6 (RW 0x942FF9): no upgrade template (button + 0x24) hides it (3); the player has it or is researching it: 8 (the
-			// purchased state, shown restricted); it cannot pay (UpgradeCenter::canAffordUpgrade RW 0x66F492) or the object's queue is full (RW 0x942A4F:
+			// purchased state, ButtonState::Purchased); it cannot pay (UpgradeCenter::canAffordUpgrade RW 0x66F492) or the object's queue is full (RW 0x942A4F:
 			// 20 entries): 6 (cannot afford); else available
 			const UpgradeTemplate *u = TheUpgradeCenter && !b.m_upgradeName.empty() ? TheUpgradeCenter->findUpgrade(b.m_upgradeName) : nullptr;
 			if (!u)
@@ -196,7 +209,7 @@ ButtonState ControlBar::evaluate(const CommandButton &b, Object &obj)
 			}
 			if (player->hasUpgradeComplete(u) || player->hasUpgradeInProduction(u)) // RW 0x6AC2AF / 0x6AB2E1
 			{
-				return ButtonState::Restricted;
+				return ButtonState::Purchased; // lane HUD-7: availability 8 (RW 0x9431A6)
 			}
 			const bool queueFull = pu && pu->getProductionCount() == 20;
 			if (!UpgradeCenter::canAffordUpgrade(player, u, &obj) || queueFull)
@@ -209,7 +222,7 @@ ButtonState ControlBar::evaluate(const CommandButton &b, Object &obj)
 		{
 			// lane FACT-A: RW 0x942733 case 7 (RW 0x943050): no upgrade template hides it (3); a DEFENSIVE_WALL or CASTLE_KEEP under construction (status 2) or
 			// effectively dead (+ 0x458 bit 0) and not UNDERGOING_REPAIR (0x14) hides it (3); no production queue (RW 0x68C327): disabled (0); the object has
-			// it (RW 0x691421) or queues it (queue slot 0x18): 8 (shown restricted); a full queue (20 entries): 0; an object the upgrade would not affect
+			// it (RW 0x691421) or queues it (queue slot 0x18): 8 (Purchased); a full queue (20 entries): 0; an object the upgrade would not affect
 			// (Object::affectedByUpgrade RW 0x694914: the RequiredObjectFilter's building, a module the upgrade triggers): 0; then canAffordUpgrade (RW
 			// 0x66F492): available (1), else 6 (cannot afford). Not ported: a BRIDGE whose body is RUBBLE (RW 0x94305D .. 0x943074, disabled)
 			const UpgradeTemplate *u = TheUpgradeCenter && !b.m_upgradeName.empty() ? TheUpgradeCenter->findUpgrade(b.m_upgradeName) : nullptr;
@@ -229,7 +242,7 @@ ButtonState ControlBar::evaluate(const CommandButton &b, Object &obj)
 			}
 			if (obj.hasUpgrade(u) || pu->isUpgradeInQueue(u))
 			{
-				return ButtonState::Restricted;
+				return ButtonState::Purchased; // lane HUD-7: availability 8 (RW 0x9430C8 / 0x9430DD -> 0x9431A6)
 			}
 			if (pu->getProductionCount() == 20 || !obj.affectedByUpgrade(u))
 			{
@@ -240,7 +253,7 @@ ButtonState ControlBar::evaluate(const CommandButton &b, Object &obj)
 		case GUI_COMMAND_CASTLE_UPGRADE:
 		{
 			// lane FACT-A: RW 0x942733 case 8 (RW 0x943123): the object's queue full (20 entries): 6 (cannot afford); no queue: disabled (0); the upgrade
-			// not in the queue (slot 0x18) and the object's castle (CastleMemberBehavior + 0x18) has it: 8 (shown restricted); otherwise canAffordUpgrade
+			// not in the queue (slot 0x18) and the object's castle (CastleMemberBehavior + 0x18) has it: 8 (Purchased); otherwise canAffordUpgrade
 			// (RW 0x66F492): available (1), else 6. (An upgrade already queued shows available, as RW 0x94313E has it.) A button without an upgrade template
 			// is hidden here (RW passes the null template on)
 			const UpgradeTemplate *u = TheUpgradeCenter && !b.m_upgradeName.empty() ? TheUpgradeCenter->findUpgrade(b.m_upgradeName) : nullptr;
@@ -262,7 +275,7 @@ ButtonState ControlBar::evaluate(const CommandButton &b, Object &obj)
 				const Object *castle = member && member->castleId() != INVALID_ID ? m_ctx.logic.findObjectByID(member->castleId()) : nullptr;
 				if (castle && castle->hasUpgrade(u))
 				{
-					return ButtonState::Restricted;
+					return ButtonState::Purchased; // lane HUD-7: availability 8 (RW 0x9431A0 -> 0x9431A6)
 				}
 			}
 			return UpgradeCenter::canAffordUpgrade(player, u, &obj) ? ButtonState::Enabled : ButtonState::CantAfford;
@@ -387,7 +400,14 @@ void ControlBar::update()
 	m_queue.clear();
 	m_portrait.clear();
 	m_displayName.clear();
-	if (obj)
+	m_underConstruction = false;
+	if (obj && isUnderConstructionContext(*obj))
+	{
+		m_displayName = obj->getTemplate() ? obj->getTemplate()->getName() : std::string();
+		m_setName.clear();
+		populateUnderConstruction(*obj, HudObjects::isLocallyControlled(m_ctx, *obj));
+	}
+	else if (obj)
 	{
 		m_displayName = obj->getTemplate() ? obj->getTemplate()->getName() : std::string();
 		const bool mine = HudObjects::isLocallyControlled(m_ctx, *obj);
@@ -501,6 +521,18 @@ void ControlBar::update()
 						cb.image = b->m_buttonImageName[1];
 						cb.textLabel = b->m_textLabel.size() > 1 ? b->m_textLabel[1] : cb.textLabel;
 						cb.descriptLabel = b->m_descriptLabel.size() > 1 ? b->m_descriptLabel[1] : cb.descriptLabel;
+					}
+				}
+				if (b->m_command == GUI_COMMAND_TOGGLE_STANCE)
+				{
+					// lane PLAY-4: the toggle shows the image and labels of the current stance (RW onStancesBehaviorStanceChanged / SetStance: the button's
+					// image slot StanceToButtonSlot(stance), BFME2 0x567B10)
+					const int k = stanceSlotOf(*b, *obj);
+					if (k >= 0)
+					{
+						cb.image = (size_t)k < b->m_buttonImageName.size() ? b->m_buttonImageName[(size_t)k] : cb.image;
+						cb.textLabel = (size_t)k < b->m_textLabel.size() ? b->m_textLabel[(size_t)k] : cb.textLabel;
+						cb.descriptLabel = (size_t)k < b->m_descriptLabel.size() ? b->m_descriptLabel[(size_t)k] : cb.descriptLabel;
 					}
 				}
 				cb.hotkey = hotkeyOf(cb.textLabel);
@@ -735,10 +767,67 @@ bool ControlBar::structureInventory(Object &obj, Player *local)
 	return true;
 }
 
+bool ControlBar::isUnderConstructionContext(const Object &obj)
+{
+	// RW 0x71EE29 .. 0x71EE61: a WALL_UPGRADE whose Object query RW 0x68C82D(3, ...) reads 0.0 is in this context too: that query is not identified (S-3801)
+	static const int baseBuild = ModelCondition::indexOf("BASE_BUILD");
+	if (baseBuild >= 0 && obj.testModelCondition(baseBuild))
+	{
+		return true;
+	}
+	const GettingBuiltBehavior *gb = dynamic_cast<const GettingBuiltBehavior *>(obj.findModule("GettingBuiltBehavior"));
+	if (!gb)
+	{
+		return false;
+	}
+	if (obj.isUnderConstruction())
+	{
+		return gb->rebuilding() || gb->forceComplete();
+	}
+	return gb->forceComplete();
+}
+
+int ControlBar::stanceSlotOf(const CommandButton &b, Object &obj)
+{
+	const StancesBehavior *sb = StancesBehavior::of(obj);
+	if (!sb)
+	{
+		return -1;
+	}
+	for (size_t i = 0; i < b.m_stances.size(); ++i)
+	{
+		if (b.m_stances[i] == (int)sb->getStance())
+		{
+			return (int)i;
+		}
+	}
+	return -1;
+}
+
+void ControlBar::populateUnderConstruction(Object &obj, bool mine)
+{
+	m_underConstruction = true;
+	static const int noCancel = ObjectTemplateInfoBuilder::kindOfIndex("DONT_USE_CANCEL_BUILD_BUTTON");
+	const CommandButton *b = m_ctx.commands ? m_ctx.commands->findCommandButton("Command_CancelConstruction") : nullptr;
+	if (!b || (noCancel >= 0 && obj.isKindOf((unsigned)noCancel)))
+	{
+		return;
+	}
+	ControlBarButton cb;
+	cb.slot = 0;
+	cb.button = b;
+	cb.state = mine ? ButtonState::Enabled : ButtonState::Restricted; // RW 0x945024 ff: winEnable(locally controlled)
+	cb.image = b->m_buttonImageName.empty() ? std::string() : b->m_buttonImageName.front();
+	cb.textLabel = b->m_textLabel.empty() ? std::string() : b->m_textLabel.front();
+	cb.descriptLabel = b->m_descriptLabel.empty() ? std::string() : b->m_descriptLabel.front();
+	cb.hotkey = hotkeyOf(cb.textLabel);
+	place(cb, 0); // command window 0
+}
+
 void ControlBar::emitStateKey()
 {
 	// the version moves when the picture of the bar changes
-	std::string key = std::to_string(m_source) + "|" + m_setName + "|" + std::to_string(m_rangeStack.size()) + "|" + std::to_string(m_rangeStack.back().first) + "|" + std::to_string(m_money) + "|"
+	std::string key = std::to_string(m_source) + "|" + m_setName + (m_underConstruction ? "|uc" : "") + "|" + std::to_string(m_rangeStack.size()) + "|" + std::to_string(m_rangeStack.back().first) + "|" + std::to_string(m_money) + "|"
 		+ std::to_string(m_cpUsed) + "/" + std::to_string(m_cpLimit);
 	for (const auto *v : { &m_palantir, &m_side, &m_offBar })
 	{
@@ -816,8 +905,7 @@ std::vector<std::string> ControlBar::acceptanceStops()
 	return {
 		"[S-289] control bar placement (HUD-4, RW 0x943D6F / 0x92FF5C / 0x92F082): window i shows slot rangeStart + i; the Palantir arc shows windows 0 .. 5 whose "
 		"button is InPalantir, the side command bar every Radial button in window order; a button in neither is off the bar as in retail (offBarButtons: Attack-Move / "
-		"Stop / the SET_STANCE slots, reached by hotkey); not ported: the TOGGLE_STANCE radial sub-menu (PalantirCommandUI::OnSubMenuLoaded, RW 0x97004A / 0x96FDFD, "
-		"its stance presses RW 0x96F53C): the stance button's press is counted unported, the stances are reached by the STANCE_* hotkeys",
+		"Stop / the SET_STANCE slots, reached by hotkey); the stance buttons: S-3803",
 		"[S-290] control bar availability: the rules that need other lanes' ports (special power cooldown, science, castle / gate commands, weapon toggles, stances, hero revive, spell book, "
 		"script status bits, disabled objects) are not ported: those buttons show as restricted and their presses are counted by ControlBar::unportedPresses()",
 		"[S-1990] FIRE_WEAPON buttons (lane FACT-B: the archers' and siege engines' Bombard, the explosive mine's Deploy, the Mumakil's Charge): RotWK's "
@@ -840,5 +928,16 @@ std::vector<std::string> ControlBar::acceptanceStops()
 		"(Gui_PalantirCommandButtonClick / DisabledClick, RW 0x9D2941); INFERENCE: only the command button clips of the Palantir see right presses (retail "
 		"posts every right press into the Apt, RW 0x83EE14, and its other handlers test TheAptWindowManager + 0x318 themselves; ours do not); the radial "
 		"menu's right press keeps only its build cancel (HUD-6)",
+		"[S-3801] under-construction context (lane PLAY-4, evaluateContextUI RW 0x71EBDA -> populateUnderConstruction RW 0x944EFB): a structure whose GettingBuiltBehavior "
+		"rebuilds it or has + 0x36 set while UNDER_CONSTRUCTION (+ 0x36 alone when not), or with the model condition BASE_BUILD, shows only Command_CancelConstruction "
+		"(not for DONT_USE_CANCEL_BUILD_BUTTON; enabled for its controller; MSG_DOZER_CANCEL_CONSTRUCT, RW 0x9409A1); not ported: the WALL_UPGRADE whose Object query "
+		"RW 0x68C82D(3, ...) reads 0.0 (unidentified), the overlay windows (ControlBar + 0x29C / + 0x2A0), the radar override; the construction text and the rally "
+		"point are the HUD's (DrawableIconUI)",
+		"[S-3803] stance buttons (lane PLAY-4): SET_STANCE and TOGGLE_STANCE send MSG_CHANGE_STANCE with the stance (RW 0x96F53C), TOGGLE_STANCE is available with a "
+		"StancesBehavior (RW 0x942A77) and shows the current stance's image and labels (StanceToButtonSlot); INFERENCE: retail opens the toggle's radial sub-menu "
+		"(PalantirCommandUI::OnSubMenuLoaded RW 0x97004A / 0x96FDFD, not ported) and sends the picked stance; here a press sends the next stance of the button's list",
+		"[S-3951] the right press's production cancel (lane HUD-7): a CANCELABLE UNIT_BUILD button cancels one of its template and a REVIVE button its hero "
+		"record by index (processCommandUI RW 0x940B0E / 0x940C57, MSG_CANCEL_UNIT_CREATE); not ported: the Shift form that cancels them all (RW 0x940CB7 .. "
+		"0x940CDE: Keyboard::isShift RW 0x63F122 while the template's field + 0x5F0 is 0, unidentified): the flag is always false here",
 	};
 }

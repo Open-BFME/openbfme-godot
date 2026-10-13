@@ -208,7 +208,9 @@ TEST_CASE("qa1 pick: an enemy building in the shroud is not picked: the click mo
 	REQUIRE_MESSAGE(rec->shroudedForLocal, "the enemy building far from every unit of the local player is SHROUDED for it");
 	// select the horde by a click on one of its soldiers
 	const Object *member = horde->getContain()->getContainedItemsList()->front();
-	h.click(*h.rig.game->drawables().findByObject(member->getID())->getPosition(), 1000);
+	// on the soldier's body, 8 above its feet (as the horde pick above): lane PATHPERF-1's placement put the horde where the ray through the feet misses the model
+	const Coord3D feet = *h.rig.game->drawables().findByObject(member->getID())->getPosition();
+	h.click(Coord3D{ feet.x, feet.y, feet.z + 8.0f }, 1000);
 	REQUIRE(h.hud->input().ui().selected() == std::vector<ObjectID>{ horde->getID() });
 	// the camera goes to the building; a click on where it stands
 	h.rig.lookAt({ far.x, far.y, 0 });

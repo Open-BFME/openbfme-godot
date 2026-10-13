@@ -1050,7 +1050,8 @@ void unitsOf(const std::string &faction, Results &res)
 			const float r = 600.0f + 250.0f * (float)((n / 7) % 2); // the old site's objects are gone: the sites repeat, close to the base
 			// lane FACT-C: a site past the map's low edge (a base in a corner) is mirrored onto the map: a unit there cannot walk to its target
 			const float dx = r * std::cos(0.9f * (float)n), dy = r * std::sin(0.9f * (float)n);
-			c = g.rig.freeSpot(home.x + (home.x + dx < 200.0f ? std::fabs(dx) : dx), home.y + (home.y + dy < 200.0f ? std::fabs(dy) : dy), 300.0f);
+			c = g.rig.freeSpot(home.x + (home.x + dx < 200.0f ? std::fabs(dx) : dx), home.y + (home.y + dy < 200.0f ? std::fabs(dy) : dy), 300.0f, false,
+								 { { 90.0f, 20.0f }, { -100.0f, 100.0f }, { -120.0f, -60.0f } }); // the targets (refreshTargets)
 			++n;
 			u = g.rig.make(e->name, c.x, c.y);
 			uid = u->getID();
@@ -1717,12 +1718,10 @@ TEST_CASE("factb units: every Mordor unit, horde and hero ability and upgrade bu
 	Results r;
 	unitsOf("FactionMordor", r);
 	r.print("units FactionMordor");
+	// lane FLY-1: the fell beasts' dismounts land and fire (GiantBirdAIUpdate, MOVING_TO_DISMOUNT): S-1994's pins went
 	r.check({ { "* Command_ToggleStance", "S-289" }, { "MordorWorker Command_Harvest", "S-1993" }, { "MordorPorter Command_PorterExtinguishFire", "S-1997" },
-{ "KhamulFellBeast Command_KhamulDismount", "S-1994" },
-		{ "MorgomirFellBeast Command_KhamulDismount", "S-1994" },
 		{ "MordorHaradrimArcherHorde Command_HaradrimArcherBarbedArrowAbility", "S-1997" },
-		{ "MordorBlackOrcHorde Command_BloodThirstySacrifice", "S-1991" }, { "MordorFighterHorde Command_BloodThirstySacrifice", "S-1991" },
-		{ "MordorWitchKingOnFellBeast Command_WitchKingDismount", "S-1994" } });
+		{ "MordorBlackOrcHorde Command_BloodThirstySacrifice", "S-1991" }, { "MordorFighterHorde Command_BloodThirstySacrifice", "S-1991" } });
 }
 
 // The pick of a click on a siege engine (the train sweep could not select Isengard's battering ram or Mordor's catapult with a click): the hits at
@@ -2067,7 +2066,7 @@ void fightsOf(const std::string &faction, Results &res)
 			{
 				const Coord3D home = g.home();
 				const float r = 600.0f + 250.0f * (float)((n / 7) % 2);
-				const Coord3D c = g.rig.freeSpot(home.x + r * std::cos(0.9f * (float)n), home.y + r * std::sin(0.9f * (float)n), 320.0f);
+				const Coord3D c = g.rig.freeSpot(home.x + r * std::cos(0.9f * (float)n), home.y + r * std::sin(0.9f * (float)n), 320.0f, false, { { off, 30.0f } }, nullptr, 160.0f);
 				++n;
 				Object *u = g.rig.make(e->name, c.x, c.y);
 				Object *target = g.rig.make(wallsOnly ? "GondorBarracks" : "GondorFighterHorde", c.x + off, c.y + 30.0f, enemy);
@@ -2098,8 +2097,12 @@ void fightsOf(const std::string &faction, Results &res)
 					const unsigned first = g.frame() - start;
 					g.step(25);
 					const float lost = before - healthOf(g.logic(), tid);
+					// lane PATHPERF-1: where the two ended (a melee unit stopping short of its target, S-2005)
+					const Object *ue = g.logic().findObjectByID(uid), *te = g.logic().findObjectByID(tid);
+					const float apart = ue && te ? dist2d(*ue->getPosition(), *te->getPosition()) : -1.0f;
 					outcome = lost > 0.0f ? str("first damage after %u frames at %.0f, %.0f health in the 25 frames after", first, off, lost)
-										  : str("the enemy %s lost no health in 200 frames after the click (sent: %s)", wallsOnly ? "structure" : "horde", g.lastMessages().c_str());
+										  : str("the enemy %s lost no health in 200 frames after the click, then %.0f apart (sent: %s)", wallsOnly ? "structure" : "horde", apart,
+												g.lastMessages().c_str());
 				}
 				for (ObjectID id : { uid, tid })
 				{
@@ -2149,7 +2152,7 @@ TEST_CASE("factb fights: every Mordor unit, horde and hero attacks an enemy it i
 	Results r;
 	fightsOf("FactionMordor", r);
 	r.print("fights FactionMordor");
-	r.check({ { "fight KhamulFellBeast", "S-1994" }, { "fight MordorWitchKingOnFellBeast", "S-1994" }, { "fight MorgomirFellBeast", "S-1994" } });
+	r.check({}); // lane FLY-1: the fell beasts fight (S-1994's pins went)
 }
 
 namespace
@@ -2200,6 +2203,10 @@ std::vector<float> expectedHits(const WeaponTemplate &w, const Object &victim, c
 				if (off(*d))
 				{
 					continue;
+				}
+				if (n->kind() == NUGGET_FIRE_LOGIC)
+				{
+					continue; // lane FLY-1: a FireLogicNugget feeds fires, it hits no victim (RW 0x8F8014 answers false: Drogoth's WingBlast's INCREASE_FUEL_ON_EXISTING_FIRE)
 				}
 				const float coef = armor ? armor->getCoefficient(d->m_damageType) : 1.0f;
 				// the nugget's DamageScalar entries whose filter takes the victim (Weapon.ini `DamageScalar = 80% ANY +HERO`)
@@ -2258,7 +2265,7 @@ void damageOf(const std::string &faction, Results &res, bool siege = false)
 		trace(item);
 		const Coord3D home = g.home();
 		const float r = 600.0f + 250.0f * (float)((n / 7) % 2);
-		const Coord3D c = g.rig.freeSpot(home.x + r * std::cos(0.9f * (float)n), home.y + r * std::sin(0.9f * (float)n), 320.0f);
+		const Coord3D c = g.rig.freeSpot(home.x + r * std::cos(0.9f * (float)n), home.y + r * std::sin(0.9f * (float)n), 320.0f, false, { { siege ? 380.0f : 150.0f, 0.0f } }, nullptr, 160.0f);
 		++n;
 		Object *a = g.rig.make(name, c.x, c.y);
 		// the enemy: a hero (GondorBoromir), whose health outlasts any one hit (a soldier's 200 would clip the first hit of most heroes)
@@ -2304,7 +2311,15 @@ void damageOf(const std::string &faction, Results &res, bool siege = false)
 				if (a && a->getContain() && !a->getContain()->getContainedItemsList()->empty())
 				{
 					armed = a->getContain()->getContainedItemsList()->front(); // the members carry the weapons
-					hitters = (int)a->getContain()->getContainedItemsList()->size();
+					// lane FLY-1: a contained horde (the Mumakil's Haradrim archers in its HordeTransportContain) hits with each of its members: their arrows can land
+					// in one frame (seen once the fell beasts before it in the sweep fight and the game's timing moved)
+					hitters = 0;
+					for (const Object *x : *a->getContain()->getContainedItemsList())
+					{
+						ContainModuleInterface *xc = const_cast<Object *>(x)->getContain();
+						hitters += xc && xc->getHordeContainInterface() && xc->getContainedItemsList() && !xc->getContainedItemsList()->empty()
+							? (int)xc->getContainedItemsList()->size() : 1;
+					}
 				}
 				maxHits = hitters;
 				// the weapons of the object and of what it holds (a horde's members, the Mumakil's riders): a hit is one of theirs
@@ -2407,7 +2422,8 @@ TEST_CASE("factb damage: the first hit of every Isengard unit, horde and hero on
 	Results r;
 	damageOf("FactionIsengard", r);
 	r.print("damage FactionIsengard");
-	r.check({ { "damage IsengardBeserker", "S-1996" } });
+	// lane PLAY-4 r3: IsengardBeserker hits Boromir since RotWK's melee reach (RW 0x6ED843's footprint boxes) replaced the edge distance: S-1996 closed
+	r.check({});
 }
 
 TEST_CASE("factb damage: the first hit of every Mordor unit, horde and hero on an enemy hero is its weapon's damage against the hero's armour")
@@ -2419,7 +2435,8 @@ TEST_CASE("factb damage: the first hit of every Mordor unit, horde and hero on a
 	Results r;
 	damageOf("FactionMordor", r);
 	r.print("damage FactionMordor");
-	r.check({ { "damage KhamulFellBeast", "S-1994" }, { "damage MordorWitchKingOnFellBeast", "S-1994" }, { "damage MorgomirFellBeast", "S-1994" } });
+	// lane PLAY-4 r3 / FLY-1: the fell beasts fly and strike (S-1994 closed)
+	r.check({});
 }
 
 namespace
@@ -2554,7 +2571,8 @@ void spellBookOf(const std::string &faction, Results &res, bool viaStore = false
 		// what the cast run shows beyond the control
 		const Coord3D home = g.home();
 		const float r = 600.0f + 250.0f * (float)((n / 7) % 2);
-		const Coord3D c = g.rig.freeSpot(home.x + r * std::cos(0.9f * (float)n), home.y + r * std::sin(0.9f * (float)n), 320.0f);
+		const Coord3D c = g.rig.freeSpot(home.x + r * std::cos(0.9f * (float)n), home.y + r * std::sin(0.9f * (float)n), 320.0f, false,
+										 { { -60.0f, 0.0f }, { 60.0f, 0.0f }, { 0.0f, 200.0f }, { 0.0f, -150.0f } }, nullptr, 160.0f); // the scene's members
 		++n;
 		struct Outcome
 		{
@@ -3268,7 +3286,8 @@ void upgradeEffectsOf(const std::string &faction, Results &res)
 					const Coord3D home = g.home();
 					const float r = 600.0f + 250.0f * (float)((n / 7) % 2);
 					const float dx = r * std::cos(0.9f * (float)n), dy = r * std::sin(0.9f * (float)n);
-					const Coord3D c = g.rig.freeSpot(home.x + (home.x + dx < 200.0f ? std::fabs(dx) : dx), home.y + (home.y + dy < 200.0f ? std::fabs(dy) : dy), 320.0f);
+					const Coord3D c = g.rig.freeSpot(home.x + (home.x + dx < 200.0f ? std::fabs(dx) : dx), home.y + (home.y + dy < 200.0f ? std::fabs(dy) : dy), 320.0f,
+													 false, { { weapon ? 300.0f : 150.0f, 0.0f } }); // the enemy hero
 					++n;
 					g.logic().combat().setAutoAcquireEnabled(false); // nothing fights before the measured window
 					Object *u = g.rig.make(e->name, c.x, c.y);
@@ -3559,7 +3578,7 @@ TEST_CASE("factc units: every Goblin and Angmar unit, horde and hero ability and
 		return;
 	}
 	factcCase("units", "FactionWild", unitsOf,
-			  { { "* Command_ToggleStance", "S-289" }, { "Drogoth Command_DrogothIncinerate", "S-1994|did not fire" }, { "Drogoth Command_DrogothWingBlast", "S-1994|did not fire" },
+			  { { "* Command_ToggleStance", "S-289" },
 				{ "GoblinArcherHorde Command_GoblinArcherPoisonArrows", "S-1997|HordeAttackNugget" },
 				{ "MordorWorker Command_Harvest", "S-1993|no effect of it is asserted" },
 				{ "WildBabyDrakeHorde Command_FireDrakeBroodInferno", "S-2006|BabyDrakeInferno: no result" },
@@ -3589,9 +3608,12 @@ TEST_CASE("factc fights: every Goblin and Angmar unit, horde and hero attacks an
 	{
 		return;
 	}
-	factcCase("fights", "FactionWild", fightsOf, { { "fight Drogoth", "S-1994|lost no health" } });
-	// retail: ShroudClearingRange 25 (SHROUD_CLEAR_STANDARD): the target in the fog is no order target, the click is a move (S-565)
-	factcCase("fights", "FactionAngmar", fightsOf, { { "fight AngmarNecromancerHorde", "S-565|MSG_DO_MOVETO" }, { "fight AngmarThrallMaster", "S-565|MSG_DO_MOVETO" } });
+	// lane FLY-1: Drogoth flies and fights (S-1994 closed); merge q8: on the site on clear ground (PATHPERF-1's placement rules) the click on the
+	// horde is a move for Drogoth (the horde is fogged for the player, S-565), so he deals no damage
+	factcCase("fights", "FactionWild", fightsOf, { { "fight Drogoth", "S-565|lost no health" } });
+	// lane PLAY-4 r3: the sites are kept on the map, where the enemy is in sight: the clicks are attack orders (S-565's fogged target, a move, no longer
+	// happens here); the Necromancers stop short of the enemy as in the damage sweep (S-2005)
+	factcCase("fights", "FactionAngmar", fightsOf, { { "fight AngmarNecromancerHorde", "S-2005|lost no health" } });
 }
 
 TEST_CASE("factc damage: the first hit of every Goblin and Angmar unit, horde and hero on an enemy hero, and of every siege engine on a structure")
@@ -3600,11 +3622,16 @@ TEST_CASE("factc damage: the first hit of every Goblin and Angmar unit, horde an
 	{
 		return;
 	}
+	// merge q8 (PATHPERF-1's placement on FLY-1's tree): the Goblin archers' first frame of damage on the hero is two different hits of their weapon
+	// summed (4.35 = 3.75 + 0.6), which the window's "k copies of one hit" does not accept (S-4104)
 	factcCase("damage", "FactionWild", heroDamageOf,
-			  { { "damage Drogoth", "S-1994|lost no health" }, { "damage WildGoblinKing", "S-2005|lost no health" }, { "damage WildMarauderSwordHorde", "S-2005|lost no health" } });
+			  { { "damage GoblinArcherHorde", "S-4104|the first hit took 4.35" } });
+	// lane PLAY-4 r3: RotWK's melee reach (RW 0x6ED843's footprint boxes) brings the Goblin King, the Marauder swords and the Dark Dunedain onto Boromir (S-2005
+	// keeps the Necromancers); on the site kept on the map the Thrall Master's target is in sight (S-565 no longer applies)
+	// and Karsh's first loss on the site kept on the map is his touch's two nuggets (63), not S-2004's 0.25.
+	// Lane PATHPERF-1 (the merge): on the site on clear ground (freeSpot's placement rules) Karsh's first loss is the 0.25 again (S-2004)
 	factcCase("damage", "FactionAngmar", heroDamageOf,
-			  { { "damage AngmarDarkDunedainHorde", "S-2005|lost no health" }, { "damage AngmarNecromancerHorde", "S-2005|lost no health" },
-				{ "damage AngmarKarsh", "S-2004|the first hit took 0.25" }, { "damage AngmarThrallMaster", "S-565|lost no health" } });
+			  { { "damage AngmarNecromancerHorde", "S-2005|lost no health" }, { "damage AngmarKarsh", "S-2004|the first hit took 0.25" } });
 	factcCase("siege damage", "FactionAngmar", siegeDamageOf, {});
 }
 
@@ -3615,12 +3642,9 @@ TEST_CASE("factc upgrade effects: every Goblin and Angmar weapon and armour upgr
 		return;
 	}
 	factcCase("upgrade effects", "FactionWild", upgradeEffectsOf,
-			  { { "upgrade effect GoblinArcherHorde Upgrade_WildHeavyArmor", "S-2008|no hit taken" }, { "upgrade effect WildMarauderHorde Upgrade_WildHeavyArmor", "S-2008|no hit taken" },
-				{ "upgrade effect GoblinFighterHorde Upgrade_WildHeavyArmor", "S-2008|no hit taken" },
-				{ "upgrade effect GoblinSpiderRiderHorde Upgrade_WildFireArrows", "S-2008|did not change the INI hit" } });
-	factcCase("upgrade effects", "FactionAngmar", upgradeEffectsOf,
-			  { { "upgrade effect AngmarHillTrollHorde Upgrade_AngmarDarkIronArmor", "S-2008|no hit taken" },
-				{ "upgrade effect AngmarDarkDunedainHorde Upgrade_AngmarDarkIronArmor", "S-2008|no hit taken" } });
+			  { { "upgrade effect GoblinSpiderRiderHorde Upgrade_WildFireArrows", "S-2008|did not change the INI hit" } });
+	// lane PLAY-4 r3: the armour scenes show hits since Boromir reaches the members with RotWK's melee reach (RW 0x6ED843's footprint boxes)
+	factcCase("upgrade effects", "FactionAngmar", upgradeEffectsOf, {});
 }
 
 TEST_CASE("factc spell book: every Goblin and Angmar spell bought in the store and cast through the spell bar shows its effect")

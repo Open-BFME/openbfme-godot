@@ -1,0 +1,9 @@
+# The online service's monitor on bfme-pve (lane INFRA-2): one line per run in ~/openbfme-monitor/status.log (monitor.py says what it checks).
+[Unit]
+Description=OpenBFME online monitor (lobby health, relay probe, relay log uploads, backup age)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 %h/openbfme-ops/monitor.py --lobby https://play.openbfme.com --relay 3.13.126.208:7350 --admin-key-file %h/openbfme-keys/online-secrets/admin.key --backups %h/openbfme-backups/lobby --log %h/openbfme-monitor/status.log

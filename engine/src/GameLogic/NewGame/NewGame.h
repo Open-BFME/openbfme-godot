@@ -24,6 +24,7 @@ struct NewGameStart
 	NewGameMessage message;      ///< the message with every random choice resolved
 	GameLogicRandom random;      ///< seeded from message.game.seed, advanced by the resolution
 	int localSlot = 0;           ///< GameInfo::getLocalSlotNum: the first human slot
+	bool observer = false;       ///< lane ONLINE-3: a spectator (no slot; localSlot -1): the ReplayObserver side is the local player, as in retail's replay mode
 	std::string mapName;         ///< LiveGame's map name ("map mp evendim") of the cache key
 	std::vector<std::string> notes;
 	explicit NewGameStart(RandomAlgorithm algorithm) : random(algorithm) {}

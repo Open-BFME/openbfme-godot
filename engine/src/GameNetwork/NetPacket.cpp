@@ -50,6 +50,14 @@ const char *NetCommandTypeName(int type)
 		return "NETCOMMANDTYPE_FRAMERESEND";
 	case NETCOMMANDTYPE_RUNAHEAD:
 		return "NETCOMMANDTYPE_RUNAHEAD";
+	case NETCOMMANDTYPE_REJOIN:
+		return "NETCOMMANDTYPE_REJOIN";
+	case NETCOMMANDTYPE_REJOINREQUEST:
+		return "NETCOMMANDTYPE_REJOINREQUEST";
+	case NETCOMMANDTYPE_PAUSE:
+		return "NETCOMMANDTYPE_PAUSE";
+	case NETCOMMANDTYPE_RESUME:
+		return "NETCOMMANDTYPE_RESUME";
 	default:
 		return "";
 	}
@@ -336,6 +344,7 @@ void NetPacket::writeGameInfo(NetByteWriter &w, const SkirmishGameInfo &g)
 		w.i32(v);
 	}
 	w.i32(g.legendaryHeroes);
+	w.i32((std::int32_t)g.simulationProfile); // lane UBER-1: the simulation profile (Common/SimulationProfile.h)
 }
 
 bool NetPacket::readGameInfo(NetByteReader &r, SkirmishGameInfo &g, std::string *error)
@@ -392,6 +401,7 @@ bool NetPacket::readGameInfo(NetByteReader &r, SkirmishGameInfo &g, std::string 
 		v = r.i32();
 	}
 	g.legendaryHeroes = r.i32();
+	const std::int32_t profile = r.i32();
 	if (r.failed())
 	{
 		return failWith(error, r.badFlag() ? "GameInfo with a flag that is not 0 / 1" : "truncated GameInfo");
@@ -419,6 +429,12 @@ bool NetPacket::readGameInfo(NetByteReader &r, SkirmishGameInfo &g, std::string 
 	{
 		return failWith(error, "GameInfo Legendary Heroes factor " + std::to_string(g.legendaryHeroes));
 	}
+	// lane UBER-1: a simulation profile this build does not know is a refused setup (never a guess)
+	if (!simulationProfileValid(profile))
+	{
+		return failWith(error, "GameInfo simulation profile " + std::to_string(profile));
+	}
+	g.simulationProfile = (SimulationProfile)profile;
 	// lane RULES-1: AllowCustomHeroes off and a slot with a Create-a-Hero is a setup no host makes: refused
 	if (!g.customHeroesAllowed())
 	{
@@ -480,6 +496,7 @@ std::vector<std::uint8_t> NetPacket::encodeCommand(const NetCommandMsg &c, std::
 		w.bytes(c.payload);
 		break;
 	case NETCOMMANDTYPE_DESTROYPLAYER:
+	case NETCOMMANDTYPE_REJOIN: // lane ONLINE-3
 		w.u8(c.targetSlot);
 		break;
 	case NETCOMMANDTYPE_DISCONNECTPLAYER:
@@ -493,6 +510,9 @@ std::vector<std::uint8_t> NetPacket::encodeCommand(const NetCommandMsg &c, std::
 		break;
 	case NETCOMMANDTYPE_DISCONNECTFRAME:
 	case NETCOMMANDTYPE_RUNAHEAD:
+	case NETCOMMANDTYPE_REJOINREQUEST: // lane ONLINE-3
+	case NETCOMMANDTYPE_PAUSE:
+	case NETCOMMANDTYPE_RESUME:
 		w.u32(c.frame);
 		break;
 	case NETCOMMANDTYPE_DISCONNECTSCREENOFF:
@@ -523,6 +543,7 @@ std::vector<std::uint8_t> NetPacket::encodeCommand(const NetCommandMsg &c, std::
 			}
 		}
 		w.i32(c.runAheadChange);
+		w.u8(c.rejoinMask); // lane ONLINE-3
 		break;
 	case NETCOMMANDTYPE_PLAYERLEAVE:
 	case NETCOMMANDTYPE_KEEPALIVE:
@@ -566,6 +587,7 @@ bool NetPacket::decodeCommand(const std::vector<std::uint8_t> &bytes, NetCommand
 		out.payload = r.bytes();
 		break;
 	case NETCOMMANDTYPE_DESTROYPLAYER:
+	case NETCOMMANDTYPE_REJOIN: // lane ONLINE-3
 		out.targetSlot = r.u8();
 		break;
 	case NETCOMMANDTYPE_DISCONNECTPLAYER:
@@ -579,6 +601,9 @@ bool NetPacket::decodeCommand(const std::vector<std::uint8_t> &bytes, NetCommand
 		break;
 	case NETCOMMANDTYPE_DISCONNECTFRAME:
 	case NETCOMMANDTYPE_RUNAHEAD:
+	case NETCOMMANDTYPE_REJOINREQUEST: // lane ONLINE-3
+	case NETCOMMANDTYPE_PAUSE:
+	case NETCOMMANDTYPE_RESUME:
 		out.frame = r.u32();
 		break;
 	case NETCOMMANDTYPE_DISCONNECTSCREENOFF:
@@ -608,6 +633,7 @@ bool NetPacket::decodeCommand(const std::vector<std::uint8_t> &bytes, NetCommand
 			out.messages.push_back(std::move(m));
 		}
 		out.runAheadChange = r.i32();
+		out.rejoinMask = r.u8(); // lane ONLINE-3
 		break;
 	}
 	case NETCOMMANDTYPE_PLAYERLEAVE:
@@ -620,7 +646,7 @@ bool NetPacket::decodeCommand(const std::vector<std::uint8_t> &bytes, NetCommand
 	}
 	out.type = (NetCommandType)type;
 	if ((type == NETCOMMANDTYPE_DESTROYPLAYER || type == NETCOMMANDTYPE_DISCONNECTPLAYER || type == NETCOMMANDTYPE_DISCONNECTVOTE
-			|| type == NETCOMMANDTYPE_FRAMERESEND)
+			|| type == NETCOMMANDTYPE_FRAMERESEND || type == NETCOMMANDTYPE_REJOIN)
 		&& out.targetSlot >= MAX_SLOTS && !r.failed())
 	{
 		return failWith(error, std::string(NetCommandTypeName(type)) + " about slot " + std::to_string(out.targetSlot));

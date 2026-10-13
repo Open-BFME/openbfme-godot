@@ -88,6 +88,9 @@ public:
 	// lane MODULES-3 r2: RW State slot 0x1C, called on the current state when a temporary state ends by itself (RW 0x751D9A); nothing for most states, the move
 	// states clear their internal move's "waiting for a path" (RW 0x740C97)
 	virtual void onTemporaryStateEnded() {}
+	// lane PLAY-4: ZH StateConditionInfo (the transitions a state is defined with): tested in order after a STATE_CONTINUE; the id of the first whose test
+	// passes, else INVALID_STATE_ID. None for the states defined without conditions
+	virtual unsigned conditionTransition() { return INVALID_STATE_ID; }
 
 	unsigned id() const { return m_id; }
 	const std::string &name() const { return m_name; }

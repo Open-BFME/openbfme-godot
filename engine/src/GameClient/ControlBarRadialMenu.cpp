@@ -30,6 +30,8 @@ const int kOffView = -999;                  // RW 0x9458FE (0xFFFFFC19)
 // INFERENCE (S-2701): the clock colours (the control bar's clock colour and GlobalData + 0x1160 / + 0x1164) are not identified
 const std::uint32_t kClockColor = 0x80000000u, kClockRimColor = 0xFFFFFFFFu;
 const std::uint32_t kOverlayColor = 0xFFFFFFFFu; // W3DPushButton.cpp overlayColor GameMakeColor(255, 255, 255, 255)
+const std::uint32_t kGrayOverlayColor = 0xFF909090u; // lane HUD-7: W3DPushButton.cpp grayOverlayColor GameMakeColor(144, 144, 144, 255)
+const std::uint32_t kAlwaysColorMultiplier = 0xFF909090u; // lane HUD-7: the colour multiplier of a disabled WIN_STATUS_ALWAYS_COLOR window's image
 } // namespace
 
 // ---------------------------------------------------------------------------------------------------------------------------------
@@ -307,6 +309,13 @@ void ControlBarRadialMenu::buildOps()
 		}
 		const bool enabled = s.state == ButtonState::Enabled || s.state == ButtonState::Active;
 		const bool notReady = s.state == ButtonState::NotReady;
+		// lane HUD-7, TARGET FACTS: the window statuses updateContextCommand sets per availability (RW 0x943C1F .. 0x943C7A, caveat S-001): 0 (Restricted)
+		// WIN_STATUS_GRAY_OVERLAY 0x80000000, 5 (NotReady) WIN_STATUS_NOT_READY 0x400000, 6 / 7 (CantAfford) WIN_STATUS_ALWAYS_COLOR 0x01000000, 8 (Purchased)
+		// both GRAY_OVERLAY and ALWAYS_COLOR; W3DGadgetPushButtonImageDrawOne (RW 0x4A5112, the BFME2 decomp's byte-matched W3DPushButton.cpp) draws a
+		// disabled window's image in grayscale only without NOT_READY and without ALWAYS_COLOR, an ALWAYS_COLOR one in colour times 0xFF909090, and tints
+		// the RadialBorder (144, 144, 144) with GRAY_OVERLAY: an upgrade being researched stays in dimmed colour with a grey rim
+		const bool alwaysColor = s.state == ButtonState::CantAfford || s.state == ButtonState::Purchased;
+		const bool grayOverlay = s.state == ButtonState::Restricted || s.state == ButtonState::Purchased;
 		RadialDrawOp icon;
 		icon.kind = RadialDrawOp::ICON;
 		icon.image = s.image;
@@ -314,7 +323,8 @@ void ControlBarRadialMenu::buildOps()
 		icon.y = y;
 		icon.w = w;
 		icon.h = h;
-		icon.grayscale = !enabled && !notReady; // the disabled window without the not-ready status: DRAW_IMAGE_RADIAL_GRAYSCALE
+		icon.grayscale = !enabled && !notReady && !alwaysColor; // DRAW_IMAGE_RADIAL_GRAYSCALE
+		icon.color = !enabled && !notReady && alwaysColor ? kAlwaysColorMultiplier : 0xFFFFFFFFu;
 		icon.slot = b.slot;
 		if (!s.image.empty())
 		{
@@ -363,7 +373,7 @@ void ControlBarRadialMenu::buildOps()
 		o.y = y + h * 0.5f - ry;
 		o.w = rx * 2.0f;
 		o.h = ry * 2.0f;
-		o.color = kOverlayColor;
+		o.color = grayOverlay ? kGrayOverlayColor : kOverlayColor;
 		o.slot = b.slot;
 		m_ops.push_back(o);
 	}
@@ -374,8 +384,8 @@ std::vector<std::string> ControlBarRadialMenu::acceptanceStops()
 	return {
 		"[S-2701] radial command bubbles (HUD-6): ported RW 0x9459D1 / 0x9D6521 / 0x9D6320 / 0x9D5CCE / 0x9457FE (count, size, radius, ring, centre) and the "
 		"look of W3DGadgetPushButtonImageDrawOne RW 0x4A5112; not identified: the clock colours (the control bar's clock colour, GlobalData + 0x1160 / + 0x1164), "
-		"the grey-overlay status and the 0x808080 multiplier condition (RW 0x327E0E's flag); not ported: the ring's button flash animations (RW 0x9D5BDC / "
+		"the 0x808080 multiplier condition (RW 0x327E0E's flag; lane HUD-7: the grey-overlay and always-colour statuses are RotWK's availability 0 / 6 / 7 / 8); not ported: the ring's button flash animations (RW 0x9D5BDC / "
 		"0x9D6250), the queue count number (drawNumber); the right press cancels only a CANCELABLE button's queue (RW 0x940C70; upgrade cancels not ported: "
-		"ControlBar::cancelQueued is UNIT_BUILD only), the hit area is the window rectangle with inclusive edges (RW 0x715A84); INFERENCE: a point outside the view rectangle is off the frustum, the ring is drawn under the Palantir movie"
+		"ControlBar::cancelQueued is UNIT_BUILD and REVIVE), the hit area is the window rectangle with inclusive edges (RW 0x715A84); INFERENCE: a point outside the view rectangle is off the frustum, the ring is drawn under the Palantir movie"
 	};
 }

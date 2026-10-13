@@ -1677,6 +1677,11 @@ void placeAt(Object *o, float x, float y)
 {
 	const Coord3D at = { x, y, 0.0f };
 	o->setPosition(&at);
+	// lane PLAY-4: an idle Battle-stance hero guards the spot it stood on (AIGuard.h) and would walk back there from where the test puts it: it idles at the new spot
+	if (AIUpdateInterface *ai = o->getAIUpdateInterface())
+	{
+		ai->aiIdle(CMD_FROM_AI);
+	}
 }
 
 TEST_CASE("autocast retail: the Witch-king's Morgul Blade casts by itself only while on, at an enemy hero in range, not at what the filter rejects, once per recharge")
@@ -1687,6 +1692,9 @@ TEST_CASE("autocast retail: the Witch-king's Morgul Blade casts by itself only w
 	WitchKing w = makeWitchKing(g, sh);
 	SpecialPowerModuleInterface *blade = SpecialPowerModules::findModule(*w.hero, w.blade);
 	REQUIRE(blade);
+	// lane PLAY-4 r1: the enemy Boromirs fight him (the Battle stance's guard; a melee weapon reaches a moving unit by the footprints, RW 0x6ED843): he is kept
+	// alive for the whole test, which measures the casts, not the fight
+	w.hero->getBodyModule()->setIndestructible(true);
 	const float range = witchKingScanRange(w);
 	REQUIRE(range > 100.0f);
 	const ThingTemplate *boromirT = sh.world->things().findTemplate("GondorBoromir");

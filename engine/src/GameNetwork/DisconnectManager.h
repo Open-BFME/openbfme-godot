@@ -50,6 +50,10 @@
 //   disconnect frame F runs F only after a DISCONNECTPLAYER, a later frame of an in-game peer, or the release of its announcement by the next packet router
 //   (a DISCONNECTSCREENOFF that lists it): the drop of a player and the late arrival of its commands cannot both happen at frame F (retail's race); the
 //   GameSpy ping test (no pinger in a LAN game: always passes), TheGameLogic + 0x2A4 and the left state 1 (never set here) are not ported.
+// LANE ONLINE-3 (online games through the relay; OpenBFME additions, stop S-3900): the ping test is the relay link (Network::pingTest: something came
+//   from the relay within NetworkDisconnectTime), so a client whose own link failed blames itself as retail's failed ping test does; a slot the relay
+//   reports restarted (Network::slotRestarted) is droppable at once; a drop that is not a vote HOLDS the player for a rejoin (NetworkConfig::holdForRejoin:
+//   no DESTROYPLAYER here; Network::routerRejoinDuties hands the army over after the rejoin window or takes the player back). LAN is unchanged.
 
 #pragma once
 
@@ -102,6 +106,9 @@ public:
 
 	// the frame gate (the announced-frame rule above; ZH's screen gate is not applied, see the header)
 	bool allowedToContinue(Network &net, std::uint32_t frame) const;
+
+	// lane ONLINE-3: the slot is a member again (Network::applyRejoin): its votes, frames, spells and screen row start afresh
+	void slotRejoined(Network &net, int slot);
 
 	// the menu's Kick button (RW 0x8D8194 through TheNetwork vslot 0x98): a vote of the local player for `slot` (untranslated)
 	void voteForPlayerDisconnect(Network &net, int slot, std::uint32_t logicFrame);

@@ -152,6 +152,16 @@ bool AIUpdateInterface::aiFollowWaypointPath(int waypointId, CommandSourceType s
 	{
 		return false; // RW 0x667174
 	}
+	{
+		RoutedCommand c; // lane FLY-1
+		c.type = command;
+		c.source = source;
+		c.waypointId = waypointId;
+		if (routeCommand(c))
+		{
+			return true;
+		}
+	}
 	Object &obj = *getObject();
 	if (!GarrisonRules::isMobile(obj))
 	{

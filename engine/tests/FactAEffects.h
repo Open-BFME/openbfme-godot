@@ -6,7 +6,9 @@
 #include "FactATestUtil.h"
 
 #include "Common/PlayerList.h"
+#include "GameLogic/AI/AIGuard.h"
 #include "GameLogic/Damage.h"
+#include "GameLogic/Module/AIUpdate.h"
 #include "GameLogic/Module/EmotionModules.h"
 #include "GameLogic/Module/SpecialPowerModules.h"
 #include "GameLogic/Object/AttributeModifierPool.h"
@@ -85,12 +87,19 @@ inline void wound(Object &o)
 	}
 }
 
+// lane PLAY-4 r3: NO_AUTO_ACQUIRE stops the idle scan only (RW 0x66849D); the guard a Battle / HoldGround stance puts an idle unit on (RW 0x662A21) scans
+// with no status test but Object::isAbleToAttack (RW 0x949CA7 -> RW 0x691269), so a guarding body is sent idle too: call it again after the stance's first
+// update when the object was made the same frame
 inline void holdFire(Object &o)
 {
 	static const int noAuto = ObjectTemplateInfoBuilder::objectStatusIndex("NO_AUTO_ACQUIRE");
 	for (Object *b : bodies(o))
 	{
 		b->setStatus((unsigned)noAuto, true);
+		if (AIUpdateInterface *ai = b->getAIUpdateInterface(); ai && ai->currentStateId() == (unsigned)AI_GUARD)
+		{
+			ai->aiIdle(CMD_FROM_AI);
+		}
 	}
 }
 

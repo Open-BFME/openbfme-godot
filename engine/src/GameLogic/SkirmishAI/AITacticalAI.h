@@ -13,7 +13,8 @@
 //     STRUCTURE, not SHIP; CAN_ATTACK, HERO or SUPPORT -> + 4, else a DOZER (RW 0x88B897 false) -> + 0x58); + 8 the structures (RW 0x99E989; filter RW 0x99E8C8:
 //     (not UNATTACKABLE or EXPANSION_PAD), (not NOT_AUTOACQUIRABLE or REBUILD_HOLE), STRUCTURE, not ECONOMY_STRUCTURE, not LINKED_TO_FLAG, not BASE_SITE;
 //     EXPANSION_PAD -> + 0x10 else + 4); + 0xC economy structures (RW 0x99E818); + 4 ships (RW 0x99E467). Lists hold ObjectIDs in the order added; RW 0x65BD07
-//     drops the ids that no longer resolve.
+//     drops the ids that no longer resolve. Lane DECOMP-3: the record is GameLogic/SkirmishAI/AIStatCollector.h, filled by the manager's object events
+//     (recordOf); the lists are no longer rebuilt from the living objects, so a dying unit stays listed until it is destroyed (RW reads no status).
 //   * the chooser init RW 0x90B89A: the enemy manager's init RW 0x9B2EB9 (every other player whose template is a playable side and whose relationship to the AI is
 //     ENEMIES (RW 0x6ACEAF == 0), as (index, 0.0)), the targets RW 0x90B4E7 (one AITarget, 0x3C bytes ctor RW 0x6C689D, per ArmyDefinition TacticalAITargets entry,
 //     max teams = the MaxTeamsPerTarget entry of the same index, 1 past its end), the heuristics RW 0x90B581 (TheAITargetHeuristicLibrary RW 0xDE8BDC, made at
@@ -65,7 +66,7 @@
 // DEFENSIVE / OPPORTUNITY / EXPANSION heuristics and tactics, the targetless tactics (RW 0x90C5E2: FarmBuilder, StructureCreep, ...), the AIThreatFinder (threat
 // taken as 0: no draw at RW 0x90B2A0), RW 0x6C7344, RW 0x90CCCB, RW 0x8F144C (the teams' AIGroup step) and RW 0x8F2784's retreat (no threat finder), the other tactics'
 // launch / update bodies, the end's merge of the teams, the AI team objects (members stay in the player's team), the pathfinder check of RW 0x9EF9AF (taken as reachable), the filters
-// RW 0x97D425 / 0x97CC29 / 0x9A24FC / 0x88B897 in full.
+// RW 0x97D425 / 0x97CC29 / 0x9A24FC in full (RW 0x88B897: lane DECOMP-3, AIStatCollector).
 
 #pragma once
 
@@ -82,18 +83,11 @@
 #include <vector>
 
 class GameLogic;
+class AIStatCollector;
 class Player;
 class StateHasher;
 struct AISkirmishPlayer;
 struct AISkirmishGroup;
-
-// the player info record lists the brain reads (S-418: rebuilt each frame from the living objects in id order)
-struct AIPlayerInfoLists
-{
-	std::vector<ObjectID> army;       ///< record + 0 -> + 4
-	std::vector<ObjectID> dozers;     ///< record + 0 -> + 0x58
-	std::vector<ObjectID> structures; ///< record + 8 -> + 4
-};
 
 // AITarget (0x3C bytes, ctor RW 0x6C689D)
 struct AITarget
@@ -183,7 +177,6 @@ struct AIBrainState
 	int bestTarget = -1;                          ///< + 0x14 (index; -1 none)
 	std::vector<AITactic> tactics;                ///< generator + 0x10
 	std::uint32_t nextTacticId = 0;
-	AIPlayerInfoLists lists;                      ///< the AI player's record lists (S-418)
 	std::map<std::string, int> tacticsByKind;    ///< tactics started by prototype name (report)
 	// lane AI-2 r3: the targetless prototypes (generator + 0x4C, RW 0x90C0EE) and the AI's named counters (RW 0x6C7EDD / 0x6C7EC5: a lookup of a missing name stores 0)
 	bool generatorMade = false;                   ///< RW 0x90CADA ran (the prototypes exist)
@@ -203,8 +196,9 @@ struct AIBrainState
 
 namespace AITacticalAI
 {
-// the record lists of `player` (S-418)
-AIPlayerInfoLists listsOf(GameLogic &logic, const Player &player);
+// lane DECOMP-3: the player info record (RW 0x6A9999, GameLogic/SkirmishAI/AIStatCollector.h) of the player with index `playerIndex`; an empty record when it
+// has none (RW would read through a null record)
+const AIStatCollector &recordOf(GameLogic &logic, int playerIndex);
 // AIPlayer + 0x90's update (RW 0x9A3366): recruiting and hand-over of the tactic teams
 void updateTeamBuilder(GameLogic &logic, AISkirmishPlayer &ai);
 // the brain's update (RW 0x6C74C2); `first` is the group's first AI (the target chooser's owner)

@@ -7,7 +7,8 @@
 //     blocking states; the in-game panels close, a non-multiplayer game pauses (RW 0x625AF1(1, 0, 1)), then QuitMenu.apt is pushed (RW 0x75E3B7).
 //   * the ctor registers the commands AptQuitMenu::OnInitialized (RW 0x921D5B), ::RestartMission (RW 0x92175F: + 0x27E = 1), ::ExitMission (RW 0x921769:
 //     + 0x27C = 1, the options screen closed (RW 0x917A47), close with code 2), ::OptionsScreen (RW 0x921783 -> RW 0x91ED91(0, 0, 0, 0)), ::ReturnToGame
-//     (RW 0x921794: close with code 0), ::SaveMenu / ::LoadMenu (RW 0x92179F / 0x9217F0: the save / load screen, not ported); the tooltip
+//     (RW 0x921794: close with code 0), ::SaveMenu / ::LoadMenu (RW 0x92179F / 0x9217F0: the save / load screen; lane SAVE-2: posted as QuitMenuSave /
+//     QuitMenuLoad with the game type, the host opens SaveLoad.apt over the game); the tooltip
 //     QuitMenu/Restart/TheButton (RW 0x921CB4: TOOLTIP:QuitMenu/Restart/TheButton with no game or a game of kind 3, the Living World's
 //     TOOLTIP:QuitMenu/Surrender/WOTRSurrender, else TOOLTIP:QuitMenu/Forfeit/WOTRForfeit); the providers of RW 0xC7DB28 (RW 0x9216EC): HasFocus = "1",
 //     AptQuitMenu::RestartPopupType = "Restart" (no game or kind 3), "Surrender" (Living World), else "Forfeit". In a multiplayer game the text record
@@ -22,7 +23,7 @@
 //     campaign object) RW 0x625E36(1): a multiplayer game whose TheGameInfo vslot 0x50 says no sends MSG_SELF_DESTRUCT(true), then MSG_CLEAR_GAME_DATA
 //     (RW 0x779E28: clearGameData with the score screen for a skirmish or a multiplayer game). Without an Exit a non-multiplayer game is unpaused.
 // The screen posts its decisions as ShellRequests (QuitMenuReturn / Exit / Restart / Forfeit / Options); the host closes the movie and acts.
-// NOT PORTED (stop S-1064): the save / load screens, the Living World branches, the network quit of the first six frames (the host's Exit leaves through
+// NOT PORTED (stop S-1064): the Living World branches, the network quit of the first six frames (the host's Exit leaves through
 // the same path at any frame), the asset transfer of MSG_SELF_DESTRUCT(true) to a living ally.
 
 #pragma once
@@ -45,6 +46,8 @@ public:
 	// RW 0x9216EC (AptQuitMenu::RestartPopupType) and RW 0x921CB4 (the tooltip label)
 	std::string restartPopupType() const;
 	std::string restartTooltip() const;
+	// lane SAVE-2: the game type SaveMenu / LoadMenu open SaveLoad.apt with (RW 0x92179F: "2" Skirmish, "1" Campaign, "4" multiplayer)
+	std::string saveLoadType() const;
 	const std::vector<std::string> &disabledButtons() const { return m_disabled; }
 	const std::vector<std::string> &requests() const { return m_requests; }
 

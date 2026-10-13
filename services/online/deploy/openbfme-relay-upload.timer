@@ -1,0 +1,9 @@
+[Unit]
+Description=Upload the OpenBFME relay logs every minute
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=1min
+
+[Install]
+WantedBy=timers.target

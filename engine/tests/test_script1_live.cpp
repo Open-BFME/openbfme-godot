@@ -166,7 +166,10 @@ TEST_CASE("script live: a skirmish on Evendim runs Multiplayer_Human for each hu
 	}
 	Game peers[2];
 	peers[0].loadSkirmish(*s, m, 0);
-	peers[1].loadSkirmish(*s, m, 1);
+	starttest::Shared *peerWorld = starttest::peerWorld(); // lane MAPRESET-1: the second peer has its own world (one live game per world, S-3808)
+	REQUIRE(peerWorld);
+	REQUIRE_MESSAGE(peerWorld->world, peerWorld->error);
+	peers[1].loadSkirmish(*peerWorld, m, 1);
 	REQUIRE(peers[0].game->mapScriptsRunning());
 	const ScriptEngine &e = static_cast<const GameLogic &>(peers[0].logic()).scriptEngine();
 	REQUIRE(e.loaded());

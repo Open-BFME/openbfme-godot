@@ -240,7 +240,8 @@ struct RangeSubject
 	bool insideGarrison = false;       ///< RW status 0x3A
 	bool runningDownFromBehind = false; ///< RW status 0x4B
 	bool isStructure = false;          ///< RW ThingTemplate +0x108 & 0x80
-	bool hasMeleeAI = false;           ///< RW AI (+0x260) with +0x1F0 != 0
+	bool hasMeleeAI = false;           ///< RW AI (+0x260) with +0x1F0 != 0 (the AI's current locomotor)
+	const class Object *object = nullptr; ///< lane PLAY-4 r1: the object itself (RW 0x6ED843 reads its footprint and its weapon range)
 };
 
 class WeaponRangeHost
@@ -256,7 +257,8 @@ public:
 	// RW 0x68F430 for a BOX pair; the circle distance is CircleDistanceSquared
 	virtual float boxDistanceSquared(const RangeSubject &a, const RangeSubject &b) = 0;
 	// RW 0x6ED843 (the partition's melee reach test) and the layer rule (RW 0x68BBE0 / 0x863983); only the melee branch calls them
-	virtual bool meleeReach(const RangeSubject &source, const RangeSubject &victim) = 0;
+	// lane PLAY-4 r1: `sourcePos` is RW 0x6CC07C's source position (RW 0x6ED843's second argument: the point the reach is tested from)
+	virtual bool meleeReach(const RangeSubject &source, const Coord3D &sourcePos, const RangeSubject &victim) = 0;
 	virtual float meleeRunDownLimit() = 0; ///< RW GameData+0x18 -> +0xD0
 	virtual bool victimFlag11A_40() = 0;   ///< RW victim template +0x11A & 0x40
 	virtual int layerOf(bool victim) = 0;  ///< RW 0x68BBE0

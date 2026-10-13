@@ -15,6 +15,7 @@
 #include "GameLogic/UpgradeTypes.h"
 #include "GameLogic/Economy.h"
 #include "GameLogic/GameLogic.h"
+#include "GameLogic/Module/ConstructionModules.h"
 #include "GameLogic/Module/ProductionUpdate.h"
 #include "GameLogic/Object/Object.h"
 #include "GameLogic/ObjectTemplateInfo.h"
@@ -421,10 +422,20 @@ CanMakeType BuildAssistant::canMakeUnit(Object &builder, const ThingTemplate *wh
 	GameLogic &logic = builder.logic();
 	const ThingTemplate *pointsTemplate = what; // RW 0x794035: the command point test's template (lane HERO-1: the hero record's on the build-index path)
 	// RW 0x793EEF: Object + 0x458 bit 0 is the dead flag; RW 0x793F39: the two script status bits (SCRIPT_DISABLED, SCRIPT_UNPOWERED, set by RW 0x693182) are not
-	// ported (S-207); the wall hub rule of a DozerAI builder (RW 0x793EFA) belongs to the dozer lane
+	// ported (S-207)
 	if (builder.isDestroyed())
 	{
 		return CANMAKE_FACTORY_IS_DISABLED;
+	}
+	// lane PLAY-4: RW 0x793EF8 .. 0x793F2D (BFME2 decomp BuildAssistant.cpp:canMakeUnit, tier B for RW 0x793ECB): the builder's behavior slot 0x80 interface
+	// (RW 0x68C3E6: GettingBuiltBehavior) answers slot 6 (RW 0x857448, isConstructing) true: a structure that is building itself makes nothing, unless both the
+	// builder and the template are WALL_HUBs (template + 0x118 & 0x10000000); the earlier reading as a DozerAI wall hub rule was wrong
+	if (const GettingBuiltBehavior *gb = dynamic_cast<const GettingBuiltBehavior *>(builder.findModule("GettingBuiltBehavior")))
+	{
+		if (gb->isConstructing() && !(builder.isKindOfName("WALL_HUB") && what && kindOfTemplate(logic, *what, "WALL_HUB")))
+		{
+			return CANMAKE_FACTORY_IS_DISABLED;
+		}
 	}
 	if (!isInProducersCommandSet(builder, what, buildIndex))
 	{

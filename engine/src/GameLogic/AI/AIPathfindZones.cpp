@@ -342,6 +342,28 @@ zoneStorageType PathfindZoneManager::getEffectiveZone(const PathfindMovement &mv
 	return table(profile, kind, terrainVariant)[zone];
 }
 
+bool PathfindZoneManager::zonesJoin(const PathfindMovement &mv, zoneStorageType a, zoneStorageType b) const
+{
+	// lane PATHPERF-1. TARGET RW 0x938240 (BFME2 0x5318DB, decomp Rva002E99F9Sub460::rva005318DB, tier A): the movement's byte 0 bit 3 (AIR) -> true; the kind
+	// (RW 0x937B9F) -1 -> true, other negative -> false; else the profile filter (RW 0x931720 of both zones), CouldBeInEquivSet of both and InEquivSet of the pair,
+	// with the count of the movement (no +1: the non-terrain variant). INFERENCE (S-162): that is the port's pair test `joins` with the profile getEffectiveZone uses
+	if (mv.surf & LOCOMOTORSURFACE_AIR)
+	{
+		return true;
+	}
+	const int kind = kindOf(mv);
+	if (kind < 0)
+	{
+		return kind == -1;
+	}
+	if (a >= m_zones.size() || b >= m_zones.size() || a == UNINITIALIZED_ZONE || b == UNINITIALIZED_ZONE)
+	{
+		return false;
+	}
+	const int e = (mv.i8 >= 0 ? mv.i8 + 1 : 0) + (mv.b4 ? 1 : 0) + (mv.b5 ? 2 : 0);
+	return joins(m_zones[a], m_zones[b], 2 * e, kind, false);
+}
+
 void PathfindZoneManager::clearPassableFlags()
 {
 	for (Block &b : m_blocks) b.passable = false;

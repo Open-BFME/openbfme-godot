@@ -26,6 +26,7 @@
 #include "GameLogic/Module/AreaScanModules.h"
 #include "GameLogic/Module/CastleUpgrade.h"
 #include "GameLogic/Module/FlammableUpdate.h"
+#include "GameLogic/System/InvisibilityManager.h"
 #include "GameLogic/Module/ProductionUpdate.h"
 #include "GameLogic/Module/ReplaceSelfUpgrade.h"
 #include "GameLogic/WallSpan.h"
@@ -243,12 +244,17 @@ Object *buildOnPad(FactRig &r, Object *pad, const CommandButton &b, Problems &p,
 		p.add(tag + ": nothing was made on the pad");
 		return nullptr;
 	}
-	if ((int)(money - r.money()) < cost - 5 || (int)(money - r.money()) > cost + 5)
+	// tolerance: the keep's AutoDepositUpdate (RW 0x89DB5D) pays GENERIC_KEEP_MONEY_AMOUNT 25 every GENERIC_KEEP_MONEY_TIME 6000 ms (180 frames); the
+	// window between the two money reads (the press, the click, up to 20 frames until the structure shows) is under 25 frames, so exactly one deposit can
+	// land in it (lane PLAY-4 r3: the Men's wall hub read 175 of 200); the +-5 is the existing allowance
+	if ((int)(money - r.money()) < cost - 30 || (int)(money - r.money()) > cost + 5)
 	{
 		p.add(tag + ": charged " + std::to_string((int)(money - r.money())) + ", the cost is " + std::to_string(cost));
 	}
 	const int guard = 5 * (int)BuildAssistant::buildTime(*what) + 300;
-	if (!waitFor(r, guard, [&]() { return r.logic().findObjectByID(made->getID()) && !made->isUnderConstruction(); }))
+	// lane PLAY-4 r3: risen means out of RotWK's under-construction context too (RW 0x71EBDA: GettingBuiltBehavior's + 0x36, which its completion check clears
+	// within a second of the last heal, RW 0x857BDA); until then the bar shows only the cancel button (S-3801)
+	if (!waitFor(r, guard, [&]() { return r.logic().findObjectByID(made->getID()) && !made->isUnderConstruction() && !ControlBar::isUnderConstructionContext(*made); }))
 	{
 		p.add(tag + ": still under construction after " + std::to_string(guard) + " frames (" + std::to_string((int)made->getConstructionPercent()) + " %)");
 		return nullptr;
@@ -797,7 +803,8 @@ TEST_CASE("FACT-A fortress: every expansion of every pad built from its control 
 				}
 				r.frames(3);
 				cb = r.select(keep) ? r.find(name) : nullptr;
-				if (shell->hasUpgrade(u) && (!cb || cb->state != ButtonState::Restricted))
+				// lane HUD-7: an owned upgrade is RotWK's availability 8 (RW 0x9431A6), ButtonState::Purchased (the _cantAfford clip), not availability 0
+				if (shell->hasUpgrade(u) && (!cb || cb->state != ButtonState::Purchased))
 				{
 					p.add(tag + ": the castle has it and the button does not show owned");
 				}
@@ -1395,6 +1402,10 @@ std::vector<Landed> taken(FactRig &r, Object &unit)
 	{
 		Object *e = scenePartner(r, unit, a.first, a.second);
 		const ObjectID eid = e->getID();
+		// a camouflaged battalion (the Lorien ones' InvisibilityUpdate, ALLOW_NEAR_TREES) that stopped near trees cannot be ordered upon (RW 0x6C9147): it is
+		// revealed for the measure as a detector would (RW 0x81C32C), so the measure is the armour's and not where the battalion stopped (lane FLY-1: the Elves'
+		// game moved once the ElvenFortressEagle the template walk makes for a frame ran GiantBirdAIUpdate, and a Lorien battalion stopped among trees)
+		r.logic().invisibility().markDetected(&unit, e, 1000, 0);
 		out.push_back(landedHits(r, eid, unit.getID()));
 		if (Object *x = r.logic().findObjectByID(eid))
 		{
@@ -1895,51 +1906,65 @@ struct SpellWatch
 				made[o->getID()] = ws;
 			}
 		}
+		// the enemy's bodies, and those seen before that still exist: a battalion whose members all fall in one frame (boulders landing together) is
+		// gone the next, its dying members are not (lane PATHPERF-1: the killing hit was not measured)
+		std::vector<Object *> watched;
 		if (enemy)
 		{
-			for (Object *b : bodies(*enemy))
+			watched = bodies(*enemy);
+		}
+		for (const auto &kv : health)
+		{
+			Object *x = logic.findObjectByID(kv.first);
+			if (x && std::find(watched.begin(), watched.end(), x) == watched.end())
 			{
-				const ActiveBody *body = dynamic_cast<const ActiveBody *>(b->getBodyModule());
-				if (!body)
-				{
-					continue;
-				}
-				auto it = health.find(b->getID());
-				auto by = made.find(body->lastDamager());
-				if (it != health.end() && body->getHealth() < it->second && body->lastDamageFrame() == logic.getFrame() && by != made.end())
-				{
-					const float amount = it->second - body->getHealth();
-					std::string windows;
-					bool in = false;
-					for (const WeaponTemplate *w : by->second)
-					{
-						float biggest = 0.0f, sum = 0.0f;
-						hitWindow(logic, w, *b, me, biggest, sum);
-						char t[160];
-						std::snprintf(t, sizeof t, " %s %.0f .. %.0f", w ? w->getName().c_str() : "?", (double)(biggest * 0.9f), (double)(sum * 2.5f));
-						windows += t;
-						if (biggest > 0.0f && amount >= biggest * 0.9f && amount <= sum * 2.5f && hit.empty())
-						{
-							in = true;
-							std::snprintf(t, sizeof t, "%.0f by #%u (%s: %.0f .. %.0f)", (double)amount, (unsigned)body->lastDamager(), w ? w->getName().c_str() : "?",
-								(double)(biggest * 0.9f), (double)(sum * 2.5f));
-							hit = t;
-						}
-						in = in || (biggest > 0.0f && amount >= biggest * 0.9f && amount <= sum * 2.5f);
-					}
-					if (in)
-					{
-						fx.seen.insert('P');
-					}
-					else if (near.size() < 300)
-					{
-						char t[64];
-						std::snprintf(t, sizeof t, "%.0f by #%u", (double)amount, (unsigned)body->lastDamager());
-						near += std::string(near.empty() ? "" : "; ") + t + " (windows" + windows + ")";
-					}
-				}
-				health[b->getID()] = body->getHealth();
+				watched.push_back(x);
 			}
+		}
+		for (Object *b : watched)
+		{
+			const ActiveBody *body = dynamic_cast<const ActiveBody *>(b->getBodyModule());
+			if (!body)
+			{
+				continue;
+			}
+			auto it = health.find(b->getID());
+			auto by = made.find(body->lastDamager());
+			if (it != health.end() && body->getHealth() < it->second && body->lastDamageFrame() == logic.getFrame() && by != made.end())
+			{
+				const float amount = it->second - body->getHealth();
+				std::string windows;
+				bool in = false;
+				for (const WeaponTemplate *w : by->second)
+				{
+					float biggest = 0.0f, sum = 0.0f;
+					hitWindow(logic, w, *b, me, biggest, sum);
+					char t[160];
+					std::snprintf(t, sizeof t, " %s %.0f .. %.0f", w ? w->getName().c_str() : "?", (double)(biggest * 0.9f), (double)(sum * 2.5f));
+					windows += t;
+					// a killing hit is the health that was left (a lower bound of the damage: boulders landing together): no upper bound
+					const bool lethal = body->getHealth() <= 0.0f;
+					if (biggest > 0.0f && amount >= biggest * 0.9f && (amount <= sum * 2.5f || lethal) && hit.empty())
+					{
+						in = true;
+						std::snprintf(t, sizeof t, "%.0f by #%u (%s: %.0f .. %.0f)", (double)amount, (unsigned)body->lastDamager(), w ? w->getName().c_str() : "?",
+							(double)(biggest * 0.9f), (double)(sum * 2.5f));
+						hit = t;
+					}
+					in = in || (biggest > 0.0f && amount >= biggest * 0.9f && (amount <= sum * 2.5f || lethal));
+				}
+				if (in)
+				{
+					fx.seen.insert('P');
+				}
+				else if (near.size() < 300)
+				{
+					char t[64];
+					std::snprintf(t, sizeof t, "%.0f by #%u", (double)amount, (unsigned)body->lastDamager());
+					near += std::string(near.empty() ? "" : "; ") + t + " (windows" + windows + ")";
+				}
+			}
+			health[b->getID()] = body->getHealth();
 		}
 		if (Object *e = logic.findObjectByID(econ))
 		{
@@ -1965,7 +1990,9 @@ struct SpellWatch
 };
 
 // each power: its Effects / spell-book letters and the templates it must make (all of them, each seen as a new object after the cast; named from the
-// power's module in system.ini: its OCL's CreateObject ObjectNames, and for an egg the OCL the egg hatches, so a ping or an egg alone is no summon)
+// power's module in system.ini: its OCL's CreateObject ObjectNames, and for an egg the OCL the egg hatches, so a ping or an egg alone is no summon).
+// "A|B": one CreateObject with several ObjectNames, which picks one of them at random for each object it makes (RW 0x5F11CD,
+// ObjectCreationList.cpp): any of them is the summon (lane PATHPERF-1: OCL_SpawnEnts' three ents can all be birches)
 struct SpellExpect
 {
 	std::string letters;
@@ -1991,7 +2018,7 @@ const std::map<std::string, SpellExpect> &spellExpected()
 		{ "SpellBookFarsight", { "", { "FarSeeingPing" } } },                         // OCL_SpecialPowerFarSeeing: the revealing object
 		{ "SpellBookEnshroudingMist", { "X", { "EnshroudingMistPing" } } },
 		{ "SpellBookElvenWood", { "", { "ElvenGrove" } } },                           // ElvenWoodSpecialPower ElvenGroveObject
-		{ "SpellBookEntAllies", { "", { "RohanEntFir_Summoned", "RohanEntBirch_Summoned" } } },
+		{ "SpellBookEntAllies", { "", { "RohanEntFir_Summoned|RohanEntBirch_Summoned" } } }, // OCL_SpawnEnts: Count 3 of the two names
 		{ "SpellBookEagleAllies", { "", { "GondorGwaihir_Summoned" } } },
 		{ "SpellBookFlood", { "D", { "SpellBookFlood" } } },                          // FloodUpdate is SPELL-3's: the wave's damage is seen (S-1987 closed on the merge)
 		{ "SpellBookSunflare", { "D", { "SunflareSunbeam" } } },
@@ -2156,7 +2183,14 @@ TEST_CASE("FACT-A spell book: every power of the faction's book bought in the st
 				econId = econ->getID();
 				aim = *econ->getPosition();
 			}
-			r.frames(20);
+			// lane PLAY-4 r3: held at once after the stances' first update put them on guard (RotWK's guard scan reaches past 300 and ignores NO_AUTO_ACQUIRE,
+			// RW 0x949CA7: the enemy walked off the aim to fight the ally, and the Bombard's boulders fell beside it)
+			r.frames(1);
+			for (Object *x : { enemy, ally, self })
+			{
+				holdFire(*x);
+			}
+			r.frames(19);
 			for (Object *x : { enemy, ally, self })
 			{
 				holdFire(*x);
@@ -2288,9 +2322,16 @@ TEST_CASE("FACT-A spell book: every power of the faction's book bought in the st
 				std::string made;
 				for (const std::string &t : want->second.made)
 				{
-					CHECK_MESSAGE(madeSeen.count(t) > 0, tag << ": the power made no " << t);
-					ok = ok && madeSeen.count(t) > 0;
-					made += " " + t + (madeSeen.count(t) ? "" : " (missing)");
+					std::string seenOne;
+					for (size_t b = 0, e = 0; e != std::string::npos; b = e + 1)
+					{
+						e = t.find('|', b);
+						const std::string one = t.substr(b, e == std::string::npos ? std::string::npos : e - b);
+						seenOne = seenOne.empty() && madeSeen.count(one) ? one : seenOne;
+					}
+					CHECK_MESSAGE(!seenOne.empty(), tag << ": the power made no " << t);
+					ok = ok && !seenOne.empty();
+					made += " " + (seenOne.empty() ? t + " (missing)" : seenOne);
 				}
 				std::printf("facta spell made: %s:%s\n", tag.c_str(), made.empty() ? " (no object expected)" : made.c_str());
 				if (want->second.stopped)

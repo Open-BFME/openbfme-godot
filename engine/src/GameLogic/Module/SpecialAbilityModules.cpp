@@ -7,6 +7,7 @@
 #endif
 
 #include "GameLogic/Module/SpecialAbilityModules.h"
+#include "GameLogic/Module/GiantBirdAIUpdate.h"
 #include "GameLogic/Module/EmotionModules.h"
 #include "GameLogic/Object/PartitionManager.h"
 
@@ -25,6 +26,7 @@
 #include "GameLogic/Combat/ObjectWeapons.h"
 #include "GameLogic/FXEvents.h"
 #include "GameLogic/GameLogic.h"
+#include "GameLogic/SkirmishAI/SkirmishAIManager.h"
 #include "GameLogic/Module/AIUpdate.h"
 #include "GameLogic/Module/HeroModules.h"
 #include "GameLogic/Module/HeroAbilityModules.h"
@@ -865,10 +867,25 @@ void SpecialAbilityUpdate::approachTarget()
 	++m_approachCounter;
 	m_lastTargetPos = m_targetPos;
 	AIUpdateInterface *ai = obj->getAIUpdateInterface();
+	// lane FLY-1: a GiantBirdAIUpdate takes AI commands 0x47 / 0x48 itself (RW 0x76D995 -> RW 0x76A04A: GiantBirdNormalFlightState 0x400 to the point / the
+	// object's position)
+	GiantBirdAIUpdate *bird = dynamic_cast<GiantBirdAIUpdate *>(ai);
 	if (m_targetID == INVALID_ID)
 	{
 		if (isZero(m_targetPos) || !ai)
 		{
+			return;
+		}
+		// RW 0x853B9E .. 0x853BC6 (lane FLY-1): a SPECIAL_TOGGLE_MOUNTED power (0x38) of a giant bird (AI vslot 0x168) sets MOVING_TO_DISMOUNT (status 0x5B): its flight
+		// to the point is not raised over the ground (GiantBirdNormalFlightState RW 0x76AD1D), the fell beast lands
+		static const int kToggleMounted = 0x38;
+		if (bird && m_data->m_specialPowerTemplate && m_data->m_specialPowerTemplate->m_type == kToggleMounted)
+		{
+			obj->setStatus((unsigned)CombatNames::status("MOVING_TO_DISMOUNT"), true);
+		}
+		if (bird)
+		{
+			bird->aiAbilityMoveTo(m_targetPos, CMD_FROM_AI);
 			return;
 		}
 		ai->aiMoveToPosition(m_targetPos, CMD_FROM_AI); // RW 0x852D59(pos, 2): AI command 0x47
@@ -880,6 +897,11 @@ void SpecialAbilityUpdate::approachTarget()
 		return;
 	}
 	m_lastTargetPos = *t->getPosition();
+	if (bird)
+	{
+		bird->aiAbilityMoveTo(*t->getPosition(), CMD_FROM_AI); // RW 0x852DC5(target, 2): AI command 0x48 -> RW 0x76A04A with the object's position
+		return;
+	}
 	// RW 0x853AEE: a structure target, a target on another layer or StartAbilityRange <= 50 (RW 0xBD88C4) moves to the object (AI command 0x48);
 	// otherwise the approach point at StartAbilityRange (RW 0x851607, a pathfinder cell walk: S-859) is also the object here
 	ai->aiMoveToObject(t, CMD_FROM_AI);
@@ -1075,8 +1097,8 @@ void SpecialAbilityUpdate::triggerAbilityEffect()
 // flag's structure. Nothing happens when there is none or when both are already the object's team's. Then the target (when it is not the building:
 // START_CAPTURE off, CAPTURED on) and the building take the default team of the object's player (RW 0x6996DC), the building gets CAPTURED, the target's
 // capturer (+ 0x80) clears, and the 0x1A enum restarts the power's recharge. Not ported (S-1225, noted): a garrisonable contain's passengers (vslots 0xA8 /
-// 0x54), an UNDER_CONSTRUCTION building's production cancel and score counts (RW 0x85463E .. 0x8546B5), the upgrades reset RW 0x68E083 (S-952), the skirmish
-// AI's object events RW 0x6A99CB / 0x6A9D9C; the radar / EVA / drawable calls are the client's. Returns false when nothing was captured
+// 0x54), an UNDER_CONSTRUCTION building's production cancel and score counts (RW 0x85463E .. 0x8546B5), the upgrades reset RW 0x68E083 (S-952); the radar /
+// EVA / drawable calls are the client's. Lane DECOMP-3: the skirmish AI's object events RW 0x6A99CB / 0x6A9D9C around the building's capture. Returns false when nothing was captured
 bool SpecialAbilityUpdate::captureTarget(SpecialPowerModule *spm)
 {
 	Object *obj = getObject();
@@ -1126,9 +1148,12 @@ bool SpecialAbilityUpdate::captureTarget(SpecialPowerModule *spm)
 		ModelConditionBitsHelper::clearAndSet(*t, { kMcStartCapture }, { kMcCaptured }); // RW 0x8546DC
 		t->setCapturedTeam(team);                                                       // RW 0x8546F6 / 0x854702
 	}
+	logic.skirmishAI().objectRemoved(*building); // RW 0x854712 (lane DECOMP-3): the skirmish AI manager's removal with the old owner
 	building->setCapturedTeam(team); // RW 0x854719 / 0x854725
 	setCondition(*building, kMcCaptured, true); // RW 0x85473B
 	t->setCapturerID(INVALID_ID);    // RW 0x854740
+	logic.skirmishAI().objectAdded(*building); // RW 0x85474D: and the add with the new one (the team change's own pair ran too: a building that changed owner is
+	                                           // registered twice, RW's plain push_back)
 	if (spt && spt->m_type == 0x1A)
 	{
 		spm->startPowerRecharge(1.0f); // RW 0x854764

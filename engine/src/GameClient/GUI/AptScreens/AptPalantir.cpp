@@ -256,7 +256,8 @@ const char *AptPalantir::commandStateName(ButtonState s, std::uint32_t options)
 		case ButtonState::Enabled:
 		case ButtonState::Active: return (options & COMMAND_OPTION_NONPRESSABLE) ? "_static" : "_up";
 		case ButtonState::Restricted: return "_disabled";
-		case ButtonState::CantAfford: return "_cantAfford";
+		case ButtonState::CantAfford:
+		case ButtonState::Purchased: return "_cantAfford"; // lane HUD-7: availability 8's window status 0x01000000 (RW 0x9D2C31)
 		case ButtonState::NotReady: return "_notReady";
 		default: return "_unused";
 	}

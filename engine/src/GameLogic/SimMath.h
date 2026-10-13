@@ -47,6 +47,7 @@
 
 #pragma once
 
+#include "Common/DeterministicLibm.h"
 #include "Common/NumericState.h"
 
 #include <cmath>
@@ -122,8 +123,14 @@ inline float sumSquares3(float x, float y, float z)
 }
 
 // the IEEE correctly rounded square root of a double (identical on every platform; NOT the PC24 root, which is sqrtPC24). Registered facade implementation.
+// A non-negative argument: the square-root instruction alone (sqrtsd; the simulation is built with -fno-math-errno, so no libm call). A negative
+// argument or NaN: DetLibm::sqrt decides the NaN (sqrtsd's default NaN, a NaN operand quietened), not the target's instruction (lane DEP-2).
 inline double sqrtd(double x)
 {
+	if (!(x >= 0.0))
+	{
+		return DetLibm::sqrt(x);
+	}
 	return std::sqrt(x);
 }
 

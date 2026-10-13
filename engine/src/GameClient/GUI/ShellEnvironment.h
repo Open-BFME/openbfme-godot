@@ -28,6 +28,7 @@ struct PlayerStatusInfo;
 struct CreateAHeroScreenContext;
 class ArchiveFileSystem;
 class GlobalLanguage;
+struct OnlineShellContext;
 
 // lane END-2: what QuitMenu.apt asks of the game it is opened over (TheGameLogic + 0x110 / + 0x114, the recorder, the local player)
 struct QuitMenuContext
@@ -74,5 +75,6 @@ struct ShellEnvironment
 	PlayerStatusInfo *playerStatus = nullptr; // lane HUD-5: the players screen's Status rows (GUI/PlayerStatusInfo.h); null: the page shows no rows and says so
 	CreateAHeroScreenContext *createAHero = nullptr; // lane CAH-1: what CreateAHero.apt edits (GUI/AptScreens/AptCreateAHero.h); null: it says so
 	ArchiveFileSystem *fileSystem = nullptr;  // lane UI-4: the mounted archives (the credits roll reads Data\INI\Credits.ini); null: the credits say so
+	OnlineShellContext *online = nullptr;     // lane ONLINE-4: the lobby client OnlineShell.apt drives (GUI/AptScreens/AptOnlineShell.h); null: it says so
 	const GlobalLanguage *language = nullptr; // lane UI-4: language.ini's Language block (the credits' fonts, GameClient/GlobalLanguage.h); null: likewise
 };

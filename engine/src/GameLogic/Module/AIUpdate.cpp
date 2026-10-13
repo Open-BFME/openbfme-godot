@@ -15,6 +15,7 @@
 #include "Common/Thing/ModuleFactory.h"
 #include "Common/Thing/ThingTemplate.h"
 #include "GameLogic/AI/AIEmotionStates.h"
+#include "GameLogic/AI/AIGuard.h"
 #include "GameLogic/AI/AIHunt.h"
 #include "GameLogic/AI/AIWaypointPath.h"
 #include "GameLogic/AI/AIWorld.h"
@@ -371,12 +372,13 @@ std::unique_ptr<AIStateMachine> AIUpdateInterface::makeStateMachine()
 	std::unique_ptr<AIStateMachine> m = std::make_unique<AIStateMachine>(*this, machineName());
 	// B1 AIStateMachineConstructor.cpp (ids), ZH AIStates.cpp (states and their success / failure transitions: the move states fall back to idle)
 	m->defineState(AI_IDLE, std::make_unique<AIIdleState>(*m), AI_IDLE, AI_IDLE);
-	m->defineState(AI_MOVE_TO, std::make_unique<AIMoveToMachineState>(*m), AI_IDLE, AI_IDLE);
+	// lane PLAY-4: RotWK's move states 1 and 0x1A end in AIGoingIdleState 0x4E (RW 0x753755), which tells the stances the move ended, then goes idle
+	m->defineState(AI_MOVE_TO, std::make_unique<AIMoveToMachineState>(*m), AI_GOING_IDLE, AI_GOING_IDLE);
 	m->defineState(AI_FOLLOW_PATH, std::make_unique<AIFollowPathState>(*m, false), AI_IDLE, AI_IDLE);
 	m->defineState(AI_FOLLOW_EXITPRODUCTION_PATH, std::make_unique<AIFollowPathState>(*m, true), AI_IDLE, AI_IDLE);
 	m->defineState(AI_WAIT, std::make_unique<AIWaitState>(*m), AI_IDLE, AI_IDLE);
 	m->defineState(AI_BUSY, std::make_unique<AIBusyState>(*m), AI_IDLE, AI_IDLE);
-	m->defineState(AI_MOVE_OUT_OF_THE_WAY, makeMoveOutOfTheWayState(*m), AI_IDLE, AI_IDLE); // lane PHYS-1: state 26 (AIUpdateAllies.cpp)
+	m->defineState(AI_MOVE_OUT_OF_THE_WAY, makeMoveOutOfTheWayState(*m), AI_GOING_IDLE, AI_GOING_IDLE); // lane PHYS-1: state 26 (AIUpdateAllies.cpp); PLAY-4: -> 0x4E
 	// COMBAT-1 (B1 AIStateMachineConstructor.cpp:563-567, 579): attack object 50, force attack object 51, dead 13; an attack ends in idle, which looks for the next target
 	m->defineState(AI_ATTACK_OBJECT, std::make_unique<AIAttackState>(*m, false, true, false), AI_IDLE, AI_IDLE);
 	m->defineState(AI_FORCE_ATTACK_OBJECT, std::make_unique<AIAttackState>(*m, false, true, true), AI_IDLE, AI_IDLE);
@@ -395,6 +397,9 @@ std::unique_ptr<AIStateMachine> AIUpdateInterface::makeStateMachine()
 	m->defineState(AI_QUARREL, std::make_unique<AIQuarrelState>(*m), AI_IDLE, AI_IDLE);
 	m->defineState(AI_FACE_OBJECT_IDLE, std::make_unique<AIFaceObjectIdleState>(*m), AI_IDLE, AI_IDLE);
 	m->defineState(AI_HUNT, std::make_unique<AIHuntState>(*m), AI_IDLE, AI_IDLE); // lane SCRIPT-3: RW 0x741133 (AIHunt.cpp)
+	// lane PLAY-4 (RW 0x753755): AIGuardState 16 (RW 0x74109B) and AIGoingIdleState 0x4E (RW 0x7410C2), both ending in idle (AIGuard.cpp)
+	m->defineState(AI_GUARD, std::make_unique<AIGuardState>(*m), AI_IDLE, AI_IDLE);
+	m->defineState(AI_GOING_IDLE, std::make_unique<AIGoingIdleState>(*m), AI_IDLE, AI_IDLE);
 	// lane SCRIPT-3: the waypoint path states (RW 0x753755: 2 as a team, 3 as individuals, 4 / 5 the exact forms; AIWaypointPath.cpp)
 	m->defineState(AI_FOLLOW_WAYPOINT_PATH_AS_TEAM, std::make_unique<AIFollowWaypointPathState>(*m, true, false), AI_IDLE, AI_IDLE);
 	m->defineState(AI_FOLLOW_WAYPOINT_PATH_AS_INDIVIDUALS, std::make_unique<AIFollowWaypointPathState>(*m, false, false), AI_IDLE, AI_IDLE);
@@ -595,6 +600,16 @@ void AIUpdateInterface::aiMoveToPosition(const Coord3D &pos, CommandSourceType s
 	{
 		return; // lane MODULES-3: RW 0x667174
 	}
+	{
+		RoutedCommand c; // lane FLY-1
+		c.type = 0;
+		c.position = pos;
+		c.source = source;
+		if (routeCommand(c))
+		{
+			return;
+		}
+	}
 	m_world->noteStop(kStopCommands);
 	if (source != CMD_FROM_AI)
 	{
@@ -609,6 +624,16 @@ bool AIUpdateInterface::aiMoveToPositionFromAttackMove(const Coord3D &goal)
 	if (!acceptCommand(CMD_FROM_PLAYER, 0))
 	{
 		return false; // lane MODULES-3 r2: RW 0x667174 before any change
+	}
+	{
+		RoutedCommand c; // lane FLY-1
+		c.type = 0;
+		c.position = goal;
+		c.source = CMD_FROM_PLAYER;
+		if (routeCommand(c))
+		{
+			return true;
+		}
 	}
 	privateMoveToPosition(goal, CMD_FROM_PLAYER);
 	wakeUpNow();
@@ -651,6 +676,16 @@ void AIUpdateInterface::aiMoveToPositionAndOrientate(const Coord3D &pos, float a
 	if (!acceptCommand(source, kCommandUnidentifiedMove))
 	{
 		return; // lane MODULES-3: RW 0x667174
+	}
+	{
+		RoutedCommand c; // lane FLY-1
+		c.type = kCommandUnidentifiedMove;
+		c.position = pos;
+		c.source = source;
+		if (routeCommand(c))
+		{
+			return;
+		}
 	}
 	m_world->noteStop(kStopCommands);
 	Object *obj = getObject();
@@ -1391,6 +1426,15 @@ void AIUpdateInterface::crc(StateHasher &h) const
 	h.addI32(m_curLocomotorSet);
 	h.addU32((std::uint32_t)m_lastCommandSource);
 	h.addU32(m_currentVictim);
+	if (m_guardMode != 0 || m_guardTargetType != 0 || m_guardLocation.x != 0.0f || m_guardLocation.y != 0.0f) // lane PLAY-4: hashed once a guard was set
+	{
+		h.addI32(m_guardMode);
+		h.addI32(m_guardTargetType);
+		h.addFloat(m_guardLocation.x);
+		h.addFloat(m_guardLocation.y);
+		h.addFloat(m_guardLocation.z);
+		h.addFloat(m_guardAngle);
+	}
 	h.addU32(m_targetHorde);
 	h.addU32(m_moveAwayRequesters[0]); // lane PHYS-1
 	h.addU32(m_moveAwayRequesters[1]);

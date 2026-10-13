@@ -552,11 +552,11 @@ func _prune_locked() -> void:
 
 # ---- starting the game -------------------------------------------------------------------------------------------------------------------
 
-## Start `version`'s game executable as its own process (the launcher passes no arguments: the game's first-run screen finds the game
-## files). {ok, error, pid}
+## Start `version`'s game executable as its own process (Play passes no arguments: the game's first-run screen finds the game files; lane ONLINE-2:
+## an openbfme://join link passes --online-join / --online-lobby). {ok, error, pid}
 ## Every file of the version is checked against the signed manifest first (round 3): a changed file is never started; the caller offers
 ## a fresh download ({modified: true}).
-func play(version: String) -> Dictionary:
+func play(version: String, args: PackedStringArray = PackedStringArray()) -> Dictionary:
 	_report("Checking %s" % version)
 	var v := verify_installed(version, true)
 	if not v.ok:
@@ -579,7 +579,7 @@ func play(version: String) -> Dictionary:
 	if not verify_installed(version).ok:
 		unlock_versions()
 		return {"ok": false, "error": "%s was removed or replaced while it was checked: press Play again" % version, "pid": -1}
-	var pid := OS.create_process(exe, [])
+	var pid := OS.create_process(exe, args)
 	if pid <= 0:
 		unlock_versions()
 		return {"ok": false, "error": "%s could not be started" % exe, "pid": -1}

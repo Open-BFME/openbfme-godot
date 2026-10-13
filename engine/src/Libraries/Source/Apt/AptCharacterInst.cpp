@@ -626,7 +626,21 @@ bool AptCharacterInst::getOwn(const std::string &name, AptValue &out) const
 	{
 		return true;
 	}
-	return AptObject::getOwn(name, out);
+	if (AptObject::getOwn(name, out))
+	{
+		return true;
+	}
+	// lane ONLINE-4: a clip converted to its target path and evaluated again (OnlineOpenPlay.apt's sorter: Release(param): eval(param).gotoAndPlay)
+	// passes its unnamed parents as "instance<depth>": retail enters those names when it builds the path (RW 0xB13B30)
+	if (const AptSpriteInst *s = asSprite())
+	{
+		if (AptCharacterInst *c = s->generatedNameChild(name))
+		{
+			out = AptValue::object(c);
+			return true;
+		}
+	}
+	return false;
 }
 
 void AptCharacterInst::setOwn(const std::string &name, const AptValue &value)
@@ -671,6 +685,33 @@ AptCharacterInst *AptSpriteInst::childByName(const std::string &name) const
 	for (AptCharacterInst *c : m_children)
 	{
 		if (lowerName(c->m_instName) == k)
+		{
+			return c;
+		}
+	}
+	return generatedNameChild(name);
+}
+
+AptCharacterInst *AptSpriteInst::generatedNameChild(const std::string &name) const
+{
+	const std::string k = lowerName(name);
+	if (k.size() <= 8 || k.compare(0, 8, "instance") != 0)
+	{
+		return nullptr;
+	}
+	size_t i = 8;
+	if (k[i] == '-')
+	{
+		++i;
+	}
+	if (i >= k.size() || k.find_first_not_of("0123456789", i) != std::string::npos || k.size() - i > 9)
+	{
+		return nullptr;
+	}
+	const int depth = std::stoi(k.substr(8));
+	for (AptCharacterInst *c : m_children)
+	{
+		if (c->m_instName.empty() && c->m_depth == depth)
 		{
 			return c;
 		}

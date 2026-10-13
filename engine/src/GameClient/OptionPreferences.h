@@ -16,6 +16,8 @@
 
 #pragma once
 
+#include "Common/SimulationProfile.h"
+
 #include <map>
 #include <string>
 #include <vector>
@@ -26,6 +28,8 @@ public:
 	static constexpr const char *kOpenBFMEPrefix = "OpenBFME";
 	static constexpr const char *kSoftParticles = "OpenBFMESoftParticles";
 	static constexpr const char *kLegacySoftParticles = "SoftParticles"; // lane UI-2's key
+	// lane UBER-1: "Uber performance mode (not compatible with the original game)": yes / no (default no), Common/SimulationProfile.h
+	static constexpr const char *kUberPerformance = "OpenBFMEUberPerformance";
 
 	// The file's text (ZH UserPreferences::load). Every entry replaces what was there.
 	void parse(const std::string &text);
@@ -67,6 +71,8 @@ public:
 
 	bool softParticles() const { return getYesNo(kSoftParticles, true); }
 	void setSoftParticles(bool soft) { setYesNo(kSoftParticles, soft); }
+	// lane UBER-1: the simulation profile the player's next game runs (the option off or absent: Faithful)
+	SimulationProfile simulationProfile() const { return getYesNo(kUberPerformance, false) ? SimulationProfile::Uber : SimulationProfile::Faithful; }
 
 private:
 	std::map<std::string, std::string> m_values;

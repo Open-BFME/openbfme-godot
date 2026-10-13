@@ -2,6 +2,7 @@
 // See GameLogic/Combat/WeaponDelivery.h for the target facts.
 
 #include "GameLogic/Combat/WeaponDelivery.h"
+#include "GameLogic/Module/GiantBirdAIUpdate.h"
 #include "GameLogic/LegendaryHeroesGame.h"
 
 #include "Common/Player.h"
@@ -1198,11 +1199,16 @@ void ObjectWeaponDelivery::fireWeaponTemplate(const WeaponBonus &bonus, int curB
 	emitFireFX(curBarrel, victim, pos);
 	// RW 0x6CCBF9 .. 0x6CCC51 (lane COMBAT-4): DamageDealtAtSelfPosition (+ 0x11C) delivers at the source's position with no victim (so no miss roll either); the z of
 	// the original target is kept when the source's AI answers its slot 0x184, which only the AI class of vtable RW 0xC2E1C8 does (RW 0x8CEF91; the others RW 0x851E97
-	// return null): no ported AI is that class
+	// return null): GiantBirdAIUpdate (lane FLY-1), so a flyer's wing blast lands on the ground under it
 	if (t.m_damageDealtAtSelfPosition)
 	{
+		const float targetZ = pos.z;
 		pos = *m_source->getPosition();
 		victim = nullptr;
+		if (dynamic_cast<const GiantBirdAIUpdate *>(m_source->getAIUpdateInterface()))
+		{
+			pos.z = targetZ;
+		}
 	}
 	// the miss rolls (scratch/weapon1/damage.md 2.7, in this order)
 	bool miss = false;

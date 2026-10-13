@@ -428,7 +428,9 @@ TEST_CASE("move3 retail: hordes from one barracks with and without a rally point
 		std::printf("  info: ElvenLorienArcherHorde x2 from an ElvenBarracks (natural rally point): %zu hordes, member centres %.1f apart, allied overlap at the end %.2f\n",
 			r.hordes.size(), r.minCentreDistance, r.endAllyOverlap);
 		REQUIRE(r.hordes.size() == 2);
-		CHECK(r.minCentreDistance > 60.0f);
+		// lane PLAY-4: after the exit move the idle Battle-stance hordes guard their spot (AIGuard.h: the guard's return move adjusts its destination); they end
+		// 55 apart without overlapping (60 before); FB-0006 was two hordes on one spot
+		CHECK(r.minCentreDistance > 50.0f);
 		CHECK(r.endAllyOverlap < 5.0f);
 	}
 	for (bool rally : { false, true })

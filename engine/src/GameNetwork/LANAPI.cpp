@@ -92,6 +92,17 @@ bool LANAPI::slotRequestValid(int playerTemplate, int color, int team, int start
 
 bool LANAPI::gameInfoValid(const SkirmishGameInfo &info, std::string *why) const
 {
+	// lane UBER-1: a game of another simulation profile is never played (the identity check at the join refuses it first; this holds the options and the
+	// start to it as well)
+	if (info.simulationProfile != m_profile.simulationProfile())
+	{
+		if (why)
+		{
+			*why = std::string("the simulation profile ") + simulationProfileName(info.simulationProfile) + " (this player runs " +
+				simulationProfileName(m_profile.simulationProfile()) + ")";
+		}
+		return false;
+	}
 	for (int i = 0; i < MAX_SLOTS; ++i)
 	{
 		const SkirmishGameSlot &s = info.slots[i];
@@ -340,6 +351,7 @@ void LANAPI::requestGameCreate(const SkirmishGameInfo &game)
 	m_current = LANGame();
 	m_current.name = m_name;
 	m_current.info = game;
+	m_current.info.simulationProfile = m_profile.simulationProfile(); // lane UBER-1: the host's game runs the host's profile (its identity's)
 	m_current.info.slots[0].state = SLOT_PLAYER;
 	m_current.info.slots[0].name = m_name;
 	m_current.info.inProgress = false;
@@ -568,6 +580,7 @@ bool LANAPI::hostSetOptions(const SkirmishGameInfo &info)
 	}
 	// the human slots and their addresses stay the host's (a player joins or leaves through the join / leave messages)
 	SkirmishGameInfo next = info;
+	next.simulationProfile = m_profile.simulationProfile(); // lane UBER-1: the profile is the host's identity's, never a setup's
 	for (int s = 0; s < MAX_SLOTS; ++s)
 	{
 		if (m_current.info.slots[s].isHuman())
@@ -1341,6 +1354,13 @@ bool LANAPI::handleGameStart(NetByteReader &r, const NetAddress &from)
 	if (s.profile.digest != m_profile.digest)
 	{
 		m_errors.push_back("the game start of another profile identity: " + ProfileIdentity::difference(m_profile, s.profile));
+		return true;
+	}
+	if (s.game.game.simulationProfile != m_profile.simulationProfile())
+	{
+		// lane UBER-1: the start's game of another simulation profile than the identities agree on (a host that broke the rule): refused, never played
+		m_errors.push_back(std::string("the game start of the simulation profile ") + simulationProfileName(s.game.game.simulationProfile) + " (this player runs " +
+			simulationProfileName(m_profile.simulationProfile()) + ")");
 		return true;
 	}
 	s.localSlot = m_localSlot;

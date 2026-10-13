@@ -48,7 +48,14 @@ enum class ShellAction
 	// PlayerTribute.apt over the game, otherwise RW 0x8E8843 opens the objectives screen; the host decides by the game's mode
 	PalantirObjectives,
 	TributeReturnToGame, // lane PLAY-1: PlayerTribute.apt's "<path>_ReturnToGame" (RW 0x914E89 -> RW 0x914C51: the screen closes, TheShell pops it)
-	CreateAHeroExit      // lane CAH-1: AptCreateAHero::Class::Exit (the builder is left; the device ends the map mode)
+	CreateAHeroExit,     // lane CAH-1: AptCreateAHero::Class::Exit (the builder is left; the device ends the map mode)
+	OnlineGameStart,     // lane ONLINE-4: OnlineShell.apt's staging room has the lobby's START (the argument: its JSON, GameNetwork/OnlineStart.h)
+	// lane SAVE-2: SaveLoad.apt's saved-game pages (AptSaveLoad, see AptSaveLoad.h) and the quit menu's SaveMenu / LoadMenu
+	SaveGameFile,        // AptSaveLoad::Save (RW 0x817B5F -> RW 0x817D0E's save): the argument is the name typed (UTF-8); the host saves and answers saveFinished
+	LoadGameFile,        // AptSaveLoad::Load of a saved game (RW 0x816DBF, state 3): the argument is the file
+	DeleteGameFile,      // AptSaveLoad::Delete confirmed (RW 0x81680D, state 0x14 -> RW 0x81707F): the argument is the file; the host deletes it and lists again
+	QuitMenuSave,        // AptQuitMenu::SaveMenu (RW 0x92179F -> RW 0x816655(3, kind, 1)): the argument is the game type (1 Campaign, 2 Skirmish)
+	QuitMenuLoad         // AptQuitMenu::LoadMenu (RW 0x9217F0 -> RW 0x816655(2, kind, 1))
 };
 
 struct ShellRequest
