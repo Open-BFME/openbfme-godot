@@ -346,9 +346,9 @@ func game_ended() -> void:
 
 
 func _process(_delta: float) -> void:
-	if not _clock_layer.visible or _world == null or not _world.has_method("get_frame"):
+	if not _clock_layer.visible or _world == null or not _world.has_method("get_presented_frame"):
 		return
-	var frame: int = _world.get_frame()
+	var frame: int = _world.get_presented_frame() # lane RENDERWAIT-1: get_frame waits for the logic worker; the clock shows the presented frame
 	var seconds := frame / 5 # 5 logic frames a second
 	if seconds == _last_clock:
 		return

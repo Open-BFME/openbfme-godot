@@ -284,6 +284,16 @@ public:
 	void hordeEndReform() override { base().hordeEndReform(); }
 	bool hordeFormationReady(float angle) const override { return base().hordeFormationReady(angle); }
 	bool thingWaitsForFormation() const override { return base().thingWaitsForFormation(); }
+	bool isUnderwater(float x, float y, float *waterZ) const override { return base().isUnderwater(x, y, waterZ); }
+	bool isDisabledHeld() const override { return base().isDisabledHeld(); }
+	bool isKindOfSubmarine() const override { return base().isKindOfSubmarine(); }
+	bool hasAI() const override { return base().hasAI(); }
+	bool isEffectivelyDead() const override { return base().isEffectivelyDead(); }
+	bool hasCurrentWeapon() const override { return base().hasCurrentWeapon(); }
+	int currentWeaponStatusWriteBack() override { return base().currentWeaponStatusWriteBack(); }
+	bool aiStateActive() const override { return base().aiStateActive(); }
+	float gravity() const override { return base().gravity(); }
+	bool hasStealthModule() const override { return base().hasStealthModule(); }
 
 	GiantBirdFlight *aerialFlight() override { return &m_ai.m_flight; }
 	bool aerialQuery(float distance, Coord3D &out) override { return AerialPathfinder::query(m_ai.m_spline, distance, out); }

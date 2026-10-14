@@ -38,7 +38,7 @@ func _process(delta: float) -> void:
 		return
 	image.save_jpg("%s/f%05d.jpg" % [_rec_dir, _rec_n], 0.9)
 	var game_ms := float(Time.get_ticks_msec() - _rec_t0) * _rec_scale
-	_rec_times.append("%d %.1f %d" % [_rec_n, game_ms, _world.get_frame()])
+	_rec_times.append("%d %.1f %d" % [_rec_n, game_ms, _world.get_presented_frame()]) # lane RENDERWAIT-1: the frame shown (get_frame waits for the worker)
 	_rec_n += 1
 
 

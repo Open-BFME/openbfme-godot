@@ -43,22 +43,28 @@ func _process(_delta: float) -> void:
 		return
 	var state: Dictionary = hud.get_move_hints()
 	var live := {}
+	# lane RENDERWAIT-1: the terrain's slope (get_ground_height) is a live read: a hint's basis is taken once, when it is placed, in a render frame the
+	# logic is held (a new hint waits for one; nothing here waits for the logic worker)
+	var held: bool = world == null or world.is_logic_held()
 	for h in state.get("hints", []):
 		var slot: int = h.slot
 		live[slot] = true
-		var t := Transform3D(_terrain_basis(h.x, h.y), h.position)
 		var cur = _slots.get(slot)
 		if cur != null and cur.frame != h.frame:
 			_inst.remove_instance(cur.id)
+			_slots.erase(slot)
 			cur = null
 		if cur == null:
+			if not held:
+				continue
+			var t := Transform3D(_terrain_basis(h.x, h.y), h.position)
 			var id: int = _inst.add_instance(_model, t, "", 0.0, 1.0)
 			if id < 0:
 				continue
-			_slots[slot] = {"id": id, "frame": h.frame}
+			_slots[slot] = {"id": id, "frame": h.frame, "basis": t.basis}
 			drawn_total += 1
 		else:
-			_inst.set_instance_transform(cur.id, t)
+			_inst.set_instance_transform(cur.id, Transform3D(cur.basis, h.position))
 	for slot in _slots.keys():
 		if not live.has(slot):
 			_inst.remove_instance(_slots[slot].id)

@@ -47,6 +47,7 @@
 #include "GameLogic/Object/RetailObjectWorld.h"
 
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <condition_variable>
 #include <deque>
@@ -120,26 +121,28 @@ public:
 	bool load(const Options &options, std::string *error);
 
 	// SMOOTH-1: every accessor of simulation state waits until the logic worker is idle (waitIdle): the caller sees a completed frame, never one
-	// being computed. The drawables belong to the render side and need no wait.
-	GameLogic &logic() { waitIdle(); return *m_logic; }
+	// being computed. The drawables belong to the render side and need no wait. Lane RENDERWAIT-1: each accessor passes its caller's file and line
+	// (filled in by the compiler) to waitIdle, which names the site of every blocking wait (logicWaitSites)
+	GameLogic &logic(const char *file = __builtin_FILE(), int line = __builtin_LINE()) { holdLogic(file, line); return *m_logic; }
 	DrawableManager &drawables() { return *m_drawables; }
 	// RENDER-2: the launch bone provider the logic's projectile launches ask (CombatState::setLaunchOffsets)
-	DrawableLaunchBones &launchBones() { waitIdle(); return *m_launchBones; }
+	DrawableLaunchBones &launchBones(const char *file = __builtin_FILE(), int line = __builtin_LINE()) { holdLogic(file, line); return *m_launchBones; }
 	const LoadedMap &map() const { return m_map; }
 	const MapObjectDrawables &classified() const { return m_classified; }
 	// the trees, shrubs and props of the map (not objects)
 	const MapObjectDrawables &clientOnly() const { return m_clientOnly; }
-	PlayerList &players() { waitIdle(); return *m_players; }
+	PlayerList &players(const char *file = __builtin_FILE(), int line = __builtin_LINE()) { holdLogic(file, line); return *m_players; }
 	// lane PROD-1: the lockstep command path. Messages appended to commands() are executed by the logic's `commandList` phase row in the next frame
-	CommandList &commands() { waitIdle(); return m_commands; }
-	GameLogicDispatch &dispatch() { waitIdle(); return *m_dispatch; }
+	CommandList &commands(const char *file = __builtin_FILE(), int line = __builtin_LINE()) { holdLogic(file, line); return m_commands; }
+	GameLogicDispatch &dispatch(const char *file = __builtin_FILE(), int line = __builtin_LINE()) { holdLogic(file, line); return *m_dispatch; }
 	// makes an object of `templateName` for player `playerIndex` at `pos` (a map-less start: the starting buildings and units a skirmish creates); null +
 	// *error when the template or the player does not exist
-	Object *createObject(const std::string &templateName, int playerIndex, const Coord3D &pos, float angle, std::string *error);
+	Object *createObject(const std::string &templateName, int playerIndex, const Coord3D &pos, float angle, std::string *error, const char *file = __builtin_FILE(),
+		int line = __builtin_LINE());
 	// MOVE-1: TheAI of this game (the pathfinder of the map, the AI movers)
-	AIWorld &ai() { waitIdle(); return *m_ai; }
+	AIWorld &ai(const char *file = __builtin_FILE(), int line = __builtin_LINE()) { holdLogic(file, line); return *m_ai; }
 	// VIS-1: TheShroudManager (attached to the logic) and the GameData / MultiplayerSettings values it was made from
-	ShroudManager &shroud() { waitIdle(); return *m_shroud; }
+	ShroudManager &shroud(const char *file = __builtin_FILE(), int line = __builtin_LINE()) { holdLogic(file, line); return *m_shroud; }
 	// lane ONLINE-3 (retail PlayerList::observeNextPlayer, RW 0x6A8D2B; BFME2 decomp reverse/attempts/0x002a8306.cpp, tier B same-shape): when the local
 	// player is not active (an observer, a spectator's ReplayObserver side, or defeated: RW 0x6A87F5 with isPlayerActive RW 0x6AAC52), the view steps
 	// from the observed player (TheControlBar + 0x218, RW 0x6A8839; none: the local player) to the next / prior human player (Player + 0x5C == 0, read
@@ -154,9 +157,9 @@ public:
 		return m_shroudChanged.exchange(false);
 	}
 	// MOVE-1: the movement lane's executors of the move / stop messages, registered on dispatch() (the one dispatch path)
-	AICommands &aiCommands() { waitIdle(); return m_aiCommands; }
-	BuildCommands &buildCommands() { waitIdle(); return m_buildCommands; }
-	SpellCommands &spellCommands() { waitIdle(); return m_spellCommands; } // SPELL-1
+	AICommands &aiCommands(const char *file = __builtin_FILE(), int line = __builtin_LINE()) { holdLogic(file, line); return m_aiCommands; }
+	BuildCommands &buildCommands(const char *file = __builtin_FILE(), int line = __builtin_LINE()) { holdLogic(file, line); return m_buildCommands; }
+	SpellCommands &spellCommands(const char *file = __builtin_FILE(), int line = __builtin_LINE()) { holdLogic(file, line); return m_spellCommands; } // SPELL-1
 
 	// Feeds wall-clock seconds in: runs the logic frames that are due (each as six phases), steps the drawables' animations by the render time and
 	// refreshes their interpolated poses. Returns the logic frames run.
@@ -197,8 +200,39 @@ public:
 	bool logicThread() const { return m_threaded; }
 	// the logic frame the clock has made due (the last one requested of the worker, or run): inputs keyed to logic frames compare against it
 	UnsignedInt dueFrame() const { return m_dueFrame; }
+	// lane RENDERWAIT-1: what every accessor of the live logic calls. Inside the render thread's client window (below) it returns at once: the worker holds
+	// between frames for the window. Elsewhere it is waitIdle (a blocking wait, logged by its site).
+	void holdLogic(const char *file = __builtin_FILE(), int line = __builtin_LINE()) const;
+	// ---- lane RENDERWAIT-1: the client window ----
+	// The render (main) thread never waits for a logic frame. It reads and commands the live logic only in a client window: from the start of a render frame
+	// (beginClientWindow, before any node's process) to the end of the frame's client work (endClientWindow, before the frame is drawn), and only while the
+	// worker is between frames; the worker does not start a frame while the window is open. When the worker is inside a frame at the window's start, the
+	// window stays closed for that render frame (logicHeld() is false: the client work that needs the live logic waits for a later render frame) and the
+	// worker, at the end of that frame, holds for the next render frame's window, at most `clientWindowParkMs` (then it runs on and is asked again).
+	// The logic's work and its order do not change (the frames run whole, in order, with the same commands); only when they start does.
+	bool beginClientWindow();
+	void endClientWindow();
+	// the live logic may be read and commanded now without waiting: single-threaded, inside the client window, or the worker idle (no frame requested)
+	bool logicHeld() const;
+	void setClientWindowParkMs(double ms);
+	// diagnostic (tests): the worker sleeps this long before each frame (Options::workerFrameDelayMs); only while the worker is off
+	void setWorkerFrameDelayMs(int ms) { m_options.workerFrameDelayMs = m_threaded ? m_options.workerFrameDelayMs : ms; }
+	struct ClientWindowStats
+	{
+		unsigned long long opened = 0;   ///< render frames whose window opened
+		unsigned long long missed = 0;   ///< render frames that found the worker inside a frame (window closed)
+		unsigned long long parks = 0;    ///< worker holds after a frame for a window the render thread asked for
+		unsigned long long parkTimeouts = 0; ///< holds that ended without the window (the render frame came later than the park time)
+		double windowMs = 0.0;           ///< the windows' total wall time
+		double workerHeldMs = 0.0;       ///< the worker's wall time held with a frame to run (parked or behind an open window): what the windows cost the logic
+		double maxWindowMs = 0.0;        ///< the longest window (the render thread's work before advance: nothing bounds it but that work, S-4280)
+		unsigned long long unended = 0;  ///< windows still open at the next render frame's start (no advance ended them): ended there, that frame gets none
+		unsigned long long inputHolds = 0; ///< driver games: advances that acquired no batch because input waited for the queued batches to run
+	};
+	ClientWindowStats clientWindowStats() const;
 	// Blocks until the worker has run every requested frame (no-op single-threaded or on the worker itself); rethrows a worker failure.
-	void waitIdle() const;
+	// `file` / `line`: the caller (RENDERWAIT-1's wait log; the defaults name the caller of waitIdle itself)
+	void waitIdle(const char *file = __builtin_FILE(), int line = __builtin_LINE()) const;
 	// true when no frame is requested or running: logic state may be read now without waiting
 	bool logicIdle() const;
 	// the snapshot the render side draws (the presented frame) and the latest published one
@@ -219,6 +253,21 @@ public:
 	// lane PATHPERF-1: waitIdle calls that blocked on a running worker frame, and their total wall time (main thread; the worker never blocks on itself)
 	unsigned long long blockingWaits() const { return m_blockingWaits; }
 	double blockingWaitMs() const { return m_blockingWaitMs; }
+	// lane RENDERWAIT-1: the wait log. Every wait of a non-worker thread on the logic worker, by site: waitIdle calls that blocked on a running or
+	// queued frame (the caller's source file and line, plus the script caller the device layer's detail hook names), and the publication mutex when
+	// it was contended (the worker held it). Each site with its count, total and worst wall time; sorted by total time, worst first.
+	struct WaitSite
+	{
+		std::string site;
+		unsigned long long count = 0;
+		double totalMs = 0.0, worstMs = 0.0;
+	};
+	std::vector<WaitSite> logicWaitSites() const;
+	void resetLogicWaitSites();
+	// the device layer's hook: names the script caller of a blocking wait (Godot's script backtrace); called on the waiting thread, at most once per wait
+	void setWaitSiteDetail(std::function<std::string()> detail) { m_waitSiteDetail = std::move(detail); }
+	// main-thread acquisitions of the publication mutex that found it held, and their wall time (a subset of logicWaitSites)
+	unsigned long long contendedPublicationLocks() const { return m_contendedLocks; }
 	// client events published or taken but not applied yet (their frame is not presented yet)
 	size_t pendingClientEvents() const;
 	// For drivers that run logic frames themselves (tests: logic().runLogicFrame()): publishes the current state and its events, applies every event
@@ -226,7 +275,7 @@ public:
 	void refreshClient(double elapsedMs, double alpha);
 	double lastWorkerFrameMs() const
 	{
-		std::lock_guard<std::mutex> lock(m_pubMutex); // the worker writes it under the same mutex (review r2)
+		const std::unique_lock<std::mutex> lock = lockPublication("lastWorkerFrameMs"); // the worker writes it under the same mutex (review r2)
 		return m_lastWorkerFrameMs;
 	}
 	unsigned long long droppedFrames() const { return m_droppedFrames; }
@@ -315,6 +364,7 @@ private:
 	{
 		std::shared_ptr<const FrameBatch> batch;  ///< null: a frame of the clock without a driver (commands() goes to it)
 		LiveGameFrameDriver *driver = nullptr;    ///< for simulationAfterFrame (setFrameDriver drains before the driver changes)
+		std::vector<GameMessage> commands;        ///< RENDERWAIT-1 (no driver): the pending input this frame executes (the first frame queued after it was issued)
 		LiveGameFrameDriver::Capture capture;
 	};
 	LiveGameFrameDriver::Capture m_capture;       ///< protocol owner: the installed driver's
@@ -332,6 +382,15 @@ private:
 	void runFrameOwned(const WorkItem &item); ///< one logic frame, its hash, its snapshot and events published (on the owner's thread)
 	void publish(std::shared_ptr<const FrameCompletion> completion = nullptr); ///< the completed state as a snapshot plus the events since the last one
 	void present(double seconds);         ///< the render side: events, animations, poses from the presented snapshot
+	void endWindowForPresent();           ///< RENDERWAIT-1: the render thread's events made in its client window are taken, then the window ends
+	// RENDERWAIT-1 r2 (Sol r1 #1): pending input apart from the simulation's command list. What the render thread appended to commands() while it held
+	// the logic (a window, or an idle worker) is moved here before a queued frame may run; it executes in the first frame queued AFTER it was issued, as
+	// when every accessor drained the worker first (no driver: that frame's WorkItem carries it; a driver: pumped only with the worker idle, and no
+	// batch is acquired while input waits, so the queued batches run out and the driver stamps it against the frame it would have had)
+	void stashHeldCommands();
+	void stashHeldCommandsLocked(); ///< m_pubMutex held, the logic held by the caller
+	CommandList m_pendingInput;           ///< render thread
+	unsigned long long m_inputHolds = 0;  ///< render thread
 	void workerLoop();
 	void stopWorker();
 	std::unique_ptr<ArchiveW3DFileSource> m_simAssetSource; ///< SMOOTH-1: the simulation's own asset manager (launch bones), apart from the drawables'
@@ -360,6 +419,20 @@ private:
 	unsigned long long m_heldPresentations = 0;
 	mutable unsigned long long m_blockingWaits = 0; ///< lane PATHPERF-1 (waitIdle is const: the counters are a statistic)
 	mutable double m_blockingWaitMs = 0.0;
+	// lane RENDERWAIT-1: the wait log (guarded by m_pubMutex), its detail hook (device layer) and the contended main-thread locks
+	mutable std::vector<WaitSite> m_waitSites;
+	std::function<std::string()> m_waitSiteDetail;
+	mutable unsigned long long m_contendedLocks = 0;
+	// lane RENDERWAIT-1: the client window (guarded by m_pubMutex; m_windowOpen is also read without it by the window's thread, its only writer)
+	mutable std::atomic<bool> m_windowOpen{ false }; // mutable: the const waitIdle lifts the caller's window for its wait
+	std::thread::id m_windowThread;   ///< the thread that opened the window (the render thread)
+	bool m_windowWanted = false;      ///< the render thread found the worker inside a frame: hold after it
+	double m_parkMs = 50.0;
+	std::chrono::steady_clock::time_point m_windowStart;
+	ClientWindowStats m_windowStats;
+	void noteWait(const std::string &site, double ms) const; ///< m_pubMutex held
+	// a main-thread lock of m_pubMutex that logs a contended acquisition under `site` (the worker held the mutex: publishing, taking work)
+	std::unique_lock<std::mutex> lockPublication(const char *site) const;
 	// lane SMOOTH-2 (LiveGameRunner.cpp present): the continuous presented time (logic frames: the presented snapshot's frame + its alpha) and the delay a late
 	// worker added to Options::presentationDelaySeconds (frames). Main thread.
 	double m_presentTime = 0.0;

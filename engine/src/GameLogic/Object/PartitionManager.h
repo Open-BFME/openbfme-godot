@@ -218,6 +218,9 @@ public:
 	PartitionHits iterateObjectsInRange(const Coord3D &center, float radius, DistanceCalculationType type, PartitionFilterList filters, IterOrderType order) const;
 	// RW 0xA3C4E0 with a rectangle and no center
 	PartitionHits iterateObjectsInRegion(const PartitionRegion &region, PartitionFilterList filters, IterOrderType order) const;
+	// lane BACKLOG2: RW 0xA39420 -> 0xA3C6F0 (BFME2 decomp BfmeResultSourceA.cpp:bfmeMakeResultA, tier A): every registered object in the manager's entry list
+	// order (+ 0x114, newest first) that the filters allow, unsorted, distance 0 (no layer, cell or range test)
+	PartitionHits iterateAllObjects(PartitionFilterList filters) const;
 	// RW 0xA39090 -> 0xA3BDB0: the closest object within maxDist accepted by the filters (null: none); `within` (optional) restricts the positions to a rectangle.
 	// distSqrOut receives the winner's distance
 	Object *getClosestObject(const Coord3D &center, float maxDist, DistanceCalculationType type, PartitionFilterList filters,

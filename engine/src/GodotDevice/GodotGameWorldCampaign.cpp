@@ -237,6 +237,13 @@ Dictionary GameWorld::campaign_status() const
 	{
 		return d;
 	}
+	if (!m_game->logicHeld())
+	{
+		// lane RENDERWAIT-1: campaign_flow.gd asks every render frame: a frame the worker is busy in answers "not ended yet" (a later held frame tells)
+		d["held"] = false;
+		return d;
+	}
+	d["held"] = true;
 	const ScriptEngine &e = const_cast<LiveGame &>(*m_game).logic().scriptEngine();
 	if (!e.endRequests().empty())
 	{

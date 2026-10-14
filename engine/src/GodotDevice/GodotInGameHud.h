@@ -134,6 +134,9 @@ public:
 	Dictionary get_icon_ui() const;
 	// lane HUD-5 (a test hook, logged): the client selection becomes the one object (InGameUI::deselectAll + selectObject), as a click on it selects it
 	bool select_object(int64_t id);
+	// lane BACKLOG2 (proof captures): select_object, then the selection message a click sends (MSG_CREATE_SELECTED_GROUP_NO_SOUND, SelectionTranslator::
+	// selectSingleWithoutSound), so the logic's selection follows and the object's command buttons act on it
+	bool select_object_with_message(int64_t id);
 	int64_t select_objects(const PackedInt64Array &ids); // lane SELPERF-1: the selection benchmark's N objects at once
 	bool open_spell_store();
 	void close_spell_store();

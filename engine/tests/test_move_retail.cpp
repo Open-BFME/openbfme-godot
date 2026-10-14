@@ -439,7 +439,7 @@ TEST_CASE("move retail: every ground unit and horde template of the install, ord
 				++knocked;
 				knockedNames.push_back(r.name);
 			}
-			else if (g.ai->movementFailures().count(r.name + ": S-084: ZAxisBehavior other than NO_Z_MOTIVE_FORCE, FLOATING_Z and SCALING_WALLS is not ported") != 0)
+			else if (g.ai->movementFailures().count(r.name + ": S-084: ZAxisBehavior other than NO_Z_MOTIVE_FORCE, FLOATING_Z, SEA_LEVEL, SURFACE_RELATIVE_HEIGHT, ABSOLUTE_HEIGHT and SCALING_WALLS is not ported") != 0)
 			{
 				++unported; // the unit stopped with the reported stop
 			}
@@ -475,7 +475,7 @@ TEST_CASE("move retail: every ground unit and horde template of the install, ord
 	REQUIRE(ridersWithoutSlots.size() == 2);
 	CHECK(ridersWithoutSlots[0].rfind("MordorArcherHordeForBlackGate", 0) == 0);
 	CHECK(ridersWithoutSlots[1].rfind("MordorHaradrimArcherHordeOnMumakil", 0) == 0);
-	// the pinned totals of this install: 710 templates; the ones that do not walk are still by data or the two unported Oathbreakers (below)
+	// the pinned totals of this install: 710 templates; the ones that do not walk are still by data
 	CHECK(units.size() == 710);
 	CHECK(moved + still + unported + lifetimeLimited + knocked + unexplained.size() == units.size());
 	{
@@ -497,18 +497,13 @@ TEST_CASE("move retail: every ground unit and horde template of the install, ord
 		std::printf("  info: lifetime-limited templates (%zu): %s\n", lifetimeNames.size(), joined.c_str());
 		CHECK(joined == "Cow_Replacement,Sheep_Replacement"); // pinned: the two create-a-hero replacement templates whose LifetimeUpdate expires inside the sweep
 	}
-	CHECK(unported == 2);
+	CHECK(unported == 0); // lane SHIP-1: the Rohan Oathbreakers' AODHordeLocomotor is SEA_LEVEL, ported: they walk
 	CHECK(moved >= 660);
 	CHECK(hordes > 100);
 	CHECK(hordesChecked > 90);
-	// unported cases the sweep reports, nothing else: the Rohan Oathbreakers' ZAxisBehavior (S-084), each unit stops and the logic goes on
+	// no unported case is left in the sweep (lane SHIP-1 ported the Rohan Oathbreakers' SEA_LEVEL, the last S-084 stop it met)
 	std::map<std::string, unsigned> failures = g.ai->movementFailures();
-	REQUIRE(failures.size() == 2);
-	for (const auto &f : failures)
-	{
-		CHECK(f.first.find("S-084: ZAxisBehavior other than NO_Z_MOTIVE_FORCE, FLOATING_Z and SCALING_WALLS is not ported") != std::string::npos);
-		CHECK((f.first.rfind("RohanOathbreakerHorde:", 0) == 0 || f.first.rfind("RohanOathbreakerHordeSmall:", 0) == 0));
-	}
+	CHECK(failures.empty());
 	std::printf("  info: movement sweep: %zu templates, %zu walked, %zu still by data, %zu unported, %zu hordes (%zu checked on slots), %zu unexplained\n", units.size(), moved, still, unported, hordes, hordesChecked, unexplained.size());
 }
 

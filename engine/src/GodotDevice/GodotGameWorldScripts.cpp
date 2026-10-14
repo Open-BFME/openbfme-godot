@@ -62,6 +62,9 @@ void GameWorld::bindScriptMethods()
 	ClassDB::bind_method(D_METHOD("debug_script_team", "name"), &GameWorld::debug_script_team);
 	ClassDB::bind_method(D_METHOD("debug_script_place_at", "name", "x", "y"), &GameWorld::debug_script_place_at);
 	ClassDB::bind_method(D_METHOD("debug_script_kill_team", "name"), &GameWorld::debug_script_kill_team);
+	ClassDB::bind_method(D_METHOD("debug_defer_script_audio", "sound"), &GameWorld::debug_defer_script_audio); // RENDERWAIT-1 r3 (tests)
+	ClassDB::bind_method(D_METHOD("get_pending_script_audio"), &GameWorld::get_pending_script_audio);
+	ClassDB::bind_method(D_METHOD("get_script_audio_applied"), &GameWorld::get_script_audio_applied);
 }
 
 Dictionary GameWorld::get_waypoint(const String &name) const
@@ -119,13 +122,52 @@ Array GameWorld::take_script_requests()
 		d["z"] = r.position.z;
 		d["object"] = (int64_t)r.objectId;
 		out.push_back(d);
-		if (m_audio)
-		{
-			m_audio->applyScriptRequest(r); // lane SCRIPT-2: the script's sounds, speech and music (S-1182)
-		}
+		// lane SCRIPT-2: the script's sounds, speech and music (S-1182). RENDERWAIT-1 r2 (Sol r1 #2): the audio side reads the live game (the local
+		// player, the speaking object), so the requests wait, in order, for a point the logic is held (here, or heldClientWork in the client window)
+		m_pendingScriptAudio.push_back(r);
 		m_pendingScriptRequests.push_back(r);
 	}
+	applyPendingScriptAudio();
 	return out;
+}
+
+// RENDERWAIT-1 r3 (test hook): queues a PLAY_SOUND_EFFECT request as a script of the running game would, for the audio waiting on a held logic
+void GameWorld::debug_defer_script_audio(const String &sound)
+{
+	ScriptClientRequest r;
+	r.action = "PLAY_SOUND_EFFECT";
+	ScriptParameter p;
+	p.stringValue = sound.utf8().get_data();
+	r.params.push_back(p);
+	m_pendingScriptAudio.push_back(r);
+}
+
+int64_t GameWorld::get_pending_script_audio() const
+{
+	return (int64_t)m_pendingScriptAudio.size();
+}
+
+int64_t GameWorld::get_script_audio_applied() const
+{
+	return (int64_t)m_scriptAudioApplied; // requests handed to the audio side since the world was made
+}
+
+void GameWorld::applyPendingScriptAudio()
+{
+	if (m_pendingScriptAudio.empty() || !m_game || !m_game->logicHeld())
+	{
+		return;
+	}
+	std::vector<ScriptClientRequest> requests;
+	requests.swap(m_pendingScriptAudio);
+	m_scriptAudioApplied += requests.size();
+	if (m_audio)
+	{
+		for (const ScriptClientRequest &r : requests)
+		{
+			m_audio->applyScriptRequest(r);
+		}
+	}
 }
 
 Dictionary GameWorld::update_script_view(double delta_ms, const Dictionary &camera)
@@ -159,12 +201,14 @@ Dictionary GameWorld::update_script_view(double delta_ms, const Dictionary &came
 	// lane SCRIPT-2: CAMERA_FOLLOW_NAMED: the followed object's position wins over the director's target
 	if (v.followId() != 0 && m_game)
 	{
-		if (const ::Object *o = m_game->logic().findObjectByID(v.followId()))
+		// RENDERWAIT-1 r2 (Sol r1 #2): from the presented snapshot, as the tactical camera's lock (never the live object: no wait for the worker)
+		Coord3D at;
+		if (m_game->presentedObjectPosition((::ObjectID)v.followId(), at) == 1)
 		{
 			d["has_target"] = true;
-			d["x"] = o->getPosition()->x;
-			d["y"] = o->getPosition()->y;
-			d["z"] = o->getPosition()->z;
+			d["x"] = at.x;
+			d["y"] = at.y;
+			d["z"] = at.z;
 		}
 	}
 	d["following"] = (int64_t)v.followId();

@@ -34,6 +34,8 @@ const char kBuildObjects[] =
 	"  Behavior = GettingBuiltBehavior ModuleTag_GB\n"
 	"    SpawnTimer = 300\n"
 	"  End\n"
+	"  Behavior = CastleMemberBehavior ModuleTag_HallCM\n" // lane BACKLOG2: a plot charges only a structure with one (RW 0x858AB3), as every retail fortress expansion has
+	"  End\n"
 	"  Body = ActiveBody ModuleTag_Body\n"
 	"    MaxHealth = 1000\n"
 	"    MaxHealthDamaged = 500\n"

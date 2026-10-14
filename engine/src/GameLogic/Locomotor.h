@@ -42,6 +42,7 @@
 #include <cstdint>
 #include <map>
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -335,10 +336,11 @@ void parseLocomotorSet(INI *ini, void *instance, void *store, const void *userDa
 //   0x5E372D, isCharging 0x5E3EF7, moveForward 0x5E586F, rotateTowardsPosition 0x5E4F44 (ground branch) with
 //   its wrapper 0x5E60C7, Legs 0x5E63F3, Wheels 0x5E83FD (also TREADS 0x5E8827), HORDE 0x5E6D4F (plain path
 //   only), OTHER / WINGS 0x5E6835, the dispatcher 0x5E8865 (appearance table RW 0x5E91BA) and handleBehaviorZ
-//   0x5E76AC for NO_Z_MOTIVE_FORCE.
+//   0x5E76AC for NO_Z_MOTIVE_FORCE, FLOATING_Z, SCALING_WALLS (off a wall), SEA_LEVEL, SURFACE_RELATIVE_HEIGHT and ABSOLUTE_HEIGHT; HOVER 0x5E742E and
+//   SHIP 0x5E613F (lane SHIP-1).
 // NOT ported (reported through Locomotor::unverified(), acceptance stops S-081, S-084):
-//   x87/SSE parity of the CRT trigonometry, HOVER / SHIP movers (GIANT_BIRD's: lane FLY-1, LocomotorGiantBird.cpp), the ScalesWalls look-ahead of the
-//   dispatcher (RW 0x5E8956-0x5E8FF8), every ZAxisBehavior other than NO_Z_MOTIVE_FORCE, the cliff / wading
+//   x87/SSE parity of the CRT trigonometry, the ScalesWalls look-ahead of the dispatcher (RW 0x5E8956-0x5E8FF8), the ZAxisBehaviors
+//   FIXED_* and RELATIVE_TO_HIGHEST_LAYER, the cliff / wading
 //   condition updates of RW 0x5E5785, and the HORDE mover's formation path nodes (types 2, 3, 7, 8).
 // =====================================================================================================
 
@@ -434,6 +436,28 @@ public:
 	virtual float hordeWallScalingSpeed(float desiredSpeed) const { return desiredSpeed; }
 	// RW 0x694BF8 + vtable +0x238 (ZAxisBehavior SCALING_WALLS, RW 0x5E76D3): the object is on a wall; never true here (S-084)
 	virtual bool isScalingWall() const { return false; }
+	// ---- lane SHIP-1: the SHIP / HOVER movers and the SEA_LEVEL z ----
+	// TheTerrainLogic vslot 0x4C (isUnderwater, RW 0x67DAE6) at (x, y): true when standing water covers the point; `waterZ` (may be null) gets the water height
+	virtual bool isUnderwater(float x, float y, float *waterZ) const = 0;
+	// obj + 0x1C8 bit 3 (the disabled mask's DISABLED_HELD, ZH DisabledType 3): RW 0x5E781F leaves the height alone
+	virtual bool isDisabledHeld() const = 0;
+	// template + 0x11F bit 3: KindOf SUBMARINE (index 187 of RW 0xDA0E68), the SEA_LEVEL dive with speed (RW 0x5E7893)
+	virtual bool isKindOfSubmarine() const = 0;
+	// ---- lane SHIP-1: SURFACE_RELATIVE_HEIGHT / ABSOLUTE_HEIGHT (RW 0x5E7AF6) and its preferred height (RW 0x5E5D9A) ----
+	// obj + 0x260 != 0 (the object has an AI)
+	virtual bool hasAI() const { return true; }
+	// obj + 0x458 bit 0 (the effectively dead flag)
+	virtual bool isEffectivelyDead() const { return false; }
+	// RW 0x68B58C(0): the object has a current weapon
+	virtual bool hasCurrentWeapon() const { return false; }
+	// RW 0x6CDCE7 on the current weapon (Weapon::getStatus with its write-back of a valid answer); only called with a current weapon
+	virtual int currentWeaponStatusWriteBack() { throw std::logic_error("Locomotor: no current weapon status on this host"); }
+	// AI vslot 0x1BC (RW 0x662B3C): the current state's isActive, true without one
+	virtual bool aiStateActive() const { return true; }
+	// GlobalData + 0xC4 (GameData Gravity, per frame^2): a dead object's height step
+	virtual float gravity() const { throw std::logic_error("Locomotor: GameData Gravity is not available to this host"); }
+	// RW 0x68FBD3: the object has a stealth module (behaviour list + 0x4B4 whose slot answers true); the CLIMBING reveal RW 0x5E7C0A then applies (not ported)
+	virtual bool hasStealthModule() const { return false; }
 };
 
 // lane FLY-1: the GIANT_BIRD movers (RW 0x5E91E2 the path mover, RW 0x5E4CD3 the hover; LocomotorGiantBird.cpp). They read GiantBirdAIUpdate's aerial fields
@@ -470,6 +494,7 @@ enum LocomotorFlags
 	LOCOMOTOR_FLAG_BRAKING = 0x01,      // RW 0x5E5970 sets, 0x5E5911 clears
 	LOCOMOTOR_FLAG_BIT2 = 0x04,         // cleared by the dispatcher on entry (RW 0x5E8875); set by maintainCurrentPosition with the held position (RW 0x5E7D2A, lane EXIT-1)
 	LOCOMOTOR_FLAG_NO_BRAKE = 0x10,     // moveForward does not start braking while it is set (setter not located)
+	LOCOMOTOR_FLAG_OVER_WATER = 0x20,   // the HOVER mover's last water test (RW 0x5E745D, ZH OVER_WATER; lane SHIP-1)
 	LOCOMOTOR_FLAG_BACKING_UP = 0x80    // Legs / Wheels / HORDE movers
 };
 
@@ -503,6 +528,8 @@ public:
 	void moveTowardsPositionWheels(LocomotorHost &host, const Coord3D &goal, float onPathDistToGoal, float desiredSpeed); // RW 0x5E83FD
 	void moveTowardsPositionHorde(LocomotorHost &host, const Coord3D &goal, float onPathDistToGoal, float desiredSpeed);  // RW 0x5E6D4F
 	void moveTowardsPositionOther(LocomotorHost &host, const Coord3D &goal, float onPathDistToGoal, float desiredSpeed);  // RW 0x5E6835
+	void moveTowardsPositionHover(LocomotorHost &host, const Coord3D &goal, float onPathDistToGoal, float desiredSpeed);  // RW 0x5E742E (lane SHIP-1)
+	void moveTowardsPositionShip(LocomotorHost &host, const Coord3D &goal, float onPathDistToGoal, float desiredSpeed);   // RW 0x5E613F (lane SHIP-1)
 	void moveForward(LocomotorHost &host, const Coord3D &goal, float onPathDistToGoal, float desiredSpeed);              // RW 0x5E586F
 	// RW 0x5E4F44 (ground branch): turns the working matrix by at most `maxTurnRate` radians towards `goal`.
 	void rotateTowardsPosition(LocomotorHost &host, const Coord3D &goal, float maxTurnRate, float *outRelAngle);
@@ -521,6 +548,10 @@ public:
 	float getMinSpeed(const LocomotorHost &host) const;
 	// RW 0x5E37D4: seconds per frame squared x Lift (LiftDamaged from the movement-penalty damage state on) x locomotor set speed, capped at + 0x24
 	float getLiftLimit(const LocomotorHost &host) const;
+	// RW 0x5E5D9A (lane SHIP-1): the height above the surface the SURFACE_RELATIVE / ABSOLUTE movers aim at: the preferred height, lowered toward the
+	// PreferredAttackHeight while the object circles to attack (CirclingRadius); a dead object's is 0 (it lands SPLATTED)
+	float calcPreferredHeight(LocomotorHost &host, const Coord3D &goal, float surfaceHeight);
+	int attackHeightState() const { return m_attackHeightState; }
 	float preferredHeight() const { return m_preferredHeight; }           // + 0x48
 	void setPreferredHeight(float h) { m_preferredHeight = h; }
 	// RW 0x5E3A81: the working matrix becomes a rotation of `angle` about Z, translation kept.
@@ -581,5 +612,10 @@ private:
 	float m_liftCap = 99999.0f;
 	float m_hoverLift = 0.0f;
 	float m_hoverYaw = 0.0f;
+	// lane SHIP-1 (RW ctor 0x5E3DB5 / 0x5E3DBD): + 0x4C the template's PreferredAttackHeight, + 0x50 its PreferredHeightDamping; + 0x9C the attack height state
+	// of RW 0x5E5D9A (0 none, 1 descending to attack, 2 climbing back)
+	float m_preferredAttackHeight = 0.0f;
+	float m_preferredHeightDamping = 1.0f;
+	int m_attackHeightState = 0;
 	std::vector<std::string> m_unverified;
 };

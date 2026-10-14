@@ -7,6 +7,7 @@
 #include "GameLogic/TributeCommands.h"
 #include "GameClient/ScriptAudioLength.h"
 #include "GameLogic/AI/GarrisonCommands.h"
+#include "GameLogic/CastleCommands.h"
 #include "GameLogic/AI/WeaponCommands.h"
 #include "GameLogic/BuildAssistantSell.h"
 #include "GameLogic/Object/PartitionManager.h"
@@ -374,6 +375,7 @@ bool LiveGame::load(const Options &options, std::string *error)
 	UpgradeCommands::registerHandlers(*m_dispatch); // UPGRADE-1: MSG_QUEUE_UPGRADE / MSG_CANCEL_UPGRADE
 	HordeCommands::registerHandlers(*m_dispatch);   // HORDE-2: the formation swap
 	GarrisonCommands::registerHandlers(*m_dispatch); // GARRISON-1: MSG_ENTER / MSG_EVACUATE / MSG_EXIT
+	CastleCommands::registerHandlers(*m_dispatch);   // BACKLOG2: MSG_CASTLE_UNPACK / MSG_CASTLE_PACK / MSG_CASTLE_UNPACK_EXPLICIT_OBJECT (S-951)
 	WeaponCommands::registerHandlers(*m_dispatch); // FACT-A: MSG_DO_WEAPON / _AT_LOCATION / _AT_OBJECT (RW 0x77A304 ..)
 	StancesBehavior::registerHandlers(*m_dispatch); // INTEG-1: MSG_CHANGE_STANCE (RW 0x77BC59)
 	WeaponSetToggle::registerHandlers(*m_dispatch); // HUD-4: MSG_WEAPONSET_TOGGLE (RW 0x77B529)
@@ -652,7 +654,7 @@ bool LiveGame::setupMapScripts(const Options &options, const SidesList &sidesUse
 std::vector<ScriptClientRequest> LiveGame::takeScriptRequests()
 {
 	std::vector<ScriptClientRequest> out;
-	std::lock_guard<std::mutex> lock(m_pubMutex);
+	const std::unique_lock<std::mutex> lock = lockPublication("takeScriptRequests");
 	out.swap(m_publishedScriptRequests);
 	return out;
 }
@@ -666,9 +668,10 @@ std::vector<std::pair<int, std::string>> LiveGame::progressMilestones()
 	};
 }
 
-Object *LiveGame::createObject(const std::string &templateName, int playerIndex, const Coord3D &pos, float angle, std::string *error)
+Object *LiveGame::createObject(const std::string &templateName, int playerIndex, const Coord3D &pos, float angle, std::string *error, const char *file, int line)
 {
-	waitIdle(); // SMOOTH-1: the main thread owns the logic only while the worker is idle
+	waitIdle(file, line); // SMOOTH-1: the main thread owns the logic only while the worker is idle. RENDERWAIT-1 r2: a creation changes the simulation, so it
+	// comes after every queued frame, also inside a client window (the full wait lifts the window)
 	const auto worldContext = m_world.enterContext(); // this world's stores and hooks are the live ones for the whole call
 	const ThingTemplate *tt = m_world.things().findTemplate(templateName);
 	Player *player = m_players ? m_players->getNthPlayer(playerIndex) : nullptr;
@@ -795,6 +798,7 @@ int LiveGame::advance(double seconds)
 	{
 		const int acquired = advanceWithDriver(due);
 		m_dueFrame += (UnsignedInt)acquired;
+		endWindowForPresent(); // RENDERWAIT-1: the batches are queued: the worker may run them while this thread presents
 		present(seconds);
 		return acquired;
 	}
@@ -802,10 +806,15 @@ int LiveGame::advance(double seconds)
 	{
 		// SMOOTH-1: the worker runs them in order, each complete before the next; the commands the main thread queued before this point belong to
 		// the first of them (main-thread access to the logic waits for the worker, so nothing can be queued into a frame that is running)
+		stashHeldCommands(); // RENDERWAIT-1 r2: input issued while older frames were queued does not run in them
 		if (due > 0)
 		{
-			std::lock_guard<std::mutex> lock(m_pubMutex);
-			for (int i = 0; i < due; ++i)
+			WorkItem first;
+			first.commands = m_pendingInput.messages(); // the first frame queued after the input was issued executes it
+			m_pendingInput.reset();
+			const std::unique_lock<std::mutex> lock = lockPublication("advance");
+			m_work.push_back(std::move(first));
+			for (int i = 1; i < due; ++i)
 			{
 				m_work.push_back(WorkItem());
 			}
@@ -820,6 +829,7 @@ int LiveGame::advance(double seconds)
 		}
 	}
 	m_dueFrame += (UnsignedInt)due;
+	endWindowForPresent(); // RENDERWAIT-1: the frames are queued: the worker may run them while this thread presents
 	present(seconds);
 	return due;
 }
@@ -833,13 +843,23 @@ int LiveGame::advanceWithDriver(int due)
 	// order, each exactly once. A batch that is not complete stops this call: nothing is consumed, the clock's time is dropped (stalledFrames).
 	consumeCompletions();
 	CommandList noInput;
-	m_frameDriver->pump(m_protocolFrame, logicIdle() ? m_commands : noInput);
+	// RENDERWAIT-1 r2 (Sol r1 #1): the input is pumped exactly where it was before the client window: with the worker idle (every queued batch ran and
+	// its completion is consumed: the driver stamps it against the same protocol frame). Input issued in a window while batches are queued waits in
+	// m_pendingInput (the worker's installBatch resets the simulation's list), and no further batch is acquired until it is pumped
+	stashHeldCommands();
+	const bool idle = logicIdle();
+	m_frameDriver->pump(m_protocolFrame, idle ? (m_threaded ? m_pendingInput : m_commands) : noInput);
+	const bool inputWaits = !idle && !m_pendingInput.messages().empty();
+	if (inputWaits && due > 0)
+	{
+		++m_inputHolds;
+	}
 	int acquired = 0;
-	for (int i = 0; i < due; ++i)
+	for (int i = 0; i < due && !inputWaits; ++i)
 	{
 		if (m_threaded)
 		{
-			std::lock_guard<std::mutex> lock(m_pubMutex);
+			const std::unique_lock<std::mutex> lock = lockPublication("advanceWithDriver");
 			if (m_work.size() >= kMaxQueuedBatches)
 			{
 				break; // backpressure: the next batch stays with the driver
@@ -861,7 +881,7 @@ int LiveGame::advanceWithDriver(int due)
 		if (m_threaded)
 		{
 			{
-				std::lock_guard<std::mutex> lock(m_pubMutex);
+				const std::unique_lock<std::mutex> lock = lockPublication("advanceWithDriver");
 				m_work.push_back(std::move(item));
 			}
 			m_pubCv.notify_all();
@@ -879,7 +899,7 @@ void LiveGame::consumeCompletions()
 {
 	std::deque<std::shared_ptr<const FrameCompletion>> done;
 	{
-		std::lock_guard<std::mutex> lock(m_pubMutex);
+		const std::unique_lock<std::mutex> lock = lockPublication("consumeCompletions");
 		done.swap(m_completions);
 	}
 	for (const std::shared_ptr<const FrameCompletion> &c : done)
@@ -971,6 +991,10 @@ void LiveGame::runFrameOwned(const WorkItem &item)
 	if (item.batch)
 	{
 		installBatch(*item.batch);
+	}
+	for (const GameMessage &m : item.commands)
+	{
+		m_commands.append(m); // RENDERWAIT-1 r2: the pending input of this frame (no driver)
 	}
 	const auto frameStart = std::chrono::steady_clock::now(); // lane MP-3: the frame's wall time for Capture::census (integer microseconds)
 	m_logic->runLogicFrame();

@@ -89,6 +89,9 @@ struct LocoHostMock : LocomotorHost
 	void hordeEndReform() override {}
 	bool hordeFormationReady(float) const override { return true; }
 	bool thingWaitsForFormation() const override { return false; }
+	bool isUnderwater(float, float, float *) const override { return false; }
+	bool isDisabledHeld() const override { return false; }
+	bool isKindOfSubmarine() const override { return false; }
 };
 
 struct Sim;

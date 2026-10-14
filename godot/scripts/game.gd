@@ -233,6 +233,7 @@ var _warp := 0.0
 var _warp_scale := 8.0
 var _perf_times: Array = []
 var _perf_cpu0 := -1.0       # lane PERF-1: the main thread's CPU time at the start of the GAME PERF window
+var _perf_windows := {}      # lane RENDERWAIT-1: the client window counts at the start of the GAME PERF window
 var _perf_stat := ""          # lane PERF-3: --perf-stat=<prefix>
 var _perf_log_path := ""      # lane MP-3: --perf-log=<file>: every rendered frame of the game, "<logic frame> <frame time us>" (tools/net/mp3_perf_table.py)
 var _perf_log: FileAccess = null
@@ -3486,6 +3487,28 @@ func _perf_frame(delta: float) -> void:
 		print("GAME PERF frames=%d fps=%.1f low1%%=%.1f frame_ms mean %.2f p50 %.2f p95 %.2f p99 %.2f max %.2f (engine delta p5 %.2f p50 %.2f p95 %.2f) objects=%d | mean%s" % [n,
 			1000.0 * n / maxf(sum, 0.001), 1000.0 * low_n / maxf(low_sum, 0.001), sum / maxf(n, 1), v[int(0.5 * (n - 1))], v[int(0.95 * (n - 1))], v[int(0.99 * (n - 1))], v[n - 1],
 			dv[int(0.05 * (n - 1))], dv[int(0.5 * (n - 1))], dv[int(0.95 * (n - 1))], t.get("presented_objects", 0), parts]) # lane PATHPERF-1: get_object_count waits for the worker
+		# lane RENDERWAIT-1: the window's waits on the logic worker, by site (the wait log is reset for the next window)
+		if _world.has_method("get_logic_wait_sites"):
+			var sites: Array = _world.get_logic_wait_sites()
+			var waits := 0
+			var wait_ms := 0.0
+			for w in sites:
+				waits += int(w.count)
+				wait_ms += float(w.total_ms)
+			print("GAME PERF WAITS %d waits on the logic worker, %.1f ms in the window" % [waits, wait_ms])
+			for w in sites:
+				print("GAME PERF WAIT %s: %d waits, total %.1f ms, worst %.1f ms" % [w.site, w.count, w.total_ms, w.worst_ms])
+		# lane RENDERWAIT-1 (stop S-4280): the render frames that held the logic for the HUD's, audio's and effects' live work, those that found the worker
+		# inside a frame (that work waited for a later render frame), and what the windows cost the worker
+		if _world.has_method("get_client_window_stats"):
+			var cw: Dictionary = _world.get_client_window_stats()
+			if not _perf_windows.is_empty():
+				print("GAME PERF WINDOWS held %d, missed %d (S-4280: the live client work ran in %d of %d render frames), worker parks %d (%d timed out), worker held %.1f ms, longest window %.1f ms" % [
+					cw.opened - _perf_windows.opened, cw.missed - _perf_windows.missed, cw.opened - _perf_windows.opened, n, cw.parks - _perf_windows.parks,
+					cw.park_timeouts - _perf_windows.park_timeouts, cw.worker_held_ms - _perf_windows.worker_held_ms, cw.get("max_window_ms", 0.0)])
+			_perf_windows = cw
+		if _world.has_method("reset_logic_wait_sites"):
+			_world.reset_logic_wait_sites() # the wait log and the longest window start again for the next GAME PERF window
 	_perf_times.clear()
 	_perf_deltas.clear()
 	_perf_parts.clear()
@@ -3905,7 +3928,9 @@ func _net_tick() -> void:
 			_net_label.text += "  ONLINE via relay: %s, round trip %d ms" % ["bound" if st.relay.bound else "not bound", int(st.relay.round_trip_ms)]
 	if st.frame / 50 != _net_last_print:
 		_net_last_print = st.frame / 50
-		print("GAME NET frame %d hash %08X crc_checks %d desyncs %d stalled %d" % [st.frame, st.hash & 0xFFFFFFFF, st.crc_checks_passed, st.desyncs.size(), st.stalled_frames])
+		# lane RENDERWAIT-1: the hash is the last one taken where the logic was held (of frame hash_frame)
+		print("GAME NET frame %d hash %08X (frame %d) crc_checks %d desyncs %d stalled %d" % [st.frame, st.hash & 0xFFFFFFFF, st.get("hash_frame", st.frame), st.crc_checks_passed,
+			st.desyncs.size(), st.stalled_frames])
 	if not _net_capture.is_empty():
 		# the window as drawn after the frame's own _process (its overlay shows the frame): saved on the next _process
 		if _net_captured >= 0:
@@ -4198,7 +4223,7 @@ func _replay_tick() -> void:
 	var st: Dictionary = _world.replay_status()
 	if not st.get("active", false):
 		return
-	if not _replay_watch.is_empty() and int(st.frame) >= _replay_watch_next:
+	if not _replay_watch.is_empty() and int(st.frame) >= _replay_watch_next and _world.is_logic_held(): # RENDERWAIT-1 r2: its live reads never wait
 		_replay_watch_next = int(st.frame) + 50
 		_print_replay_watch(int(st.frame))
 	if st.frame / 100 != _replay_last_print:

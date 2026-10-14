@@ -336,6 +336,24 @@ bool ControlBar::pressButton(int slot, bool inPalantir)
 			m.appendObjectID(obj->getID());
 			return true;
 		}
+		case GUI_COMMAND_CASTLE_UNPACK:
+			m_ctx.stream.append(MSG_CASTLE_UNPACK); // lane BACKLOG2: RW 0x940AB6 (no arguments)
+			return true;
+		case GUI_COMMAND_CASTLE_PACK:
+			m_ctx.stream.append(MSG_CASTLE_PACK); // RW 0x940AAC
+			return true;
+		case GUI_COMMAND_CASTLE_UNPACK_EXPLICIT_OBJECT:
+		{
+			// RW 0x940AC0 .. 0x940AE9: the button's template (RW 0x75D1DC; none: nothing), its id (+ 0x5E8) as the integer argument
+			const ThingTemplate *tt = b.getThingTemplate();
+			if (!tt)
+			{
+				return false;
+			}
+			ClientMessage &m = m_ctx.stream.append(MSG_CASTLE_UNPACK_EXPLICIT_OBJECT);
+			m.appendInteger((int)tt->getTemplateID());
+			return true;
+		}
 		default:
 			++m_unported[std::to_string(b.m_command)];
 			return false;

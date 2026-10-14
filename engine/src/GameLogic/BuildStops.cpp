@@ -16,8 +16,10 @@ std::vector<std::string> BuildStops::lines()
 		"[S-300] castle layouts: a CastleBehavior asks the CastleTemplateStore for the file Bases/<name>/<name>.bse when it unpacks (retail fills the store from a name list at start, RW 0x7311FB: same files, "
 		"same parser RW 0x731010); a missing or unparsable file is an error. The maps-and-terrain spec's claim that no CastleTemplates chunk exists in the corpus is wrong: all 207 retail .bse files have one",
 		"[S-303] castle: the instant unpack of RW 0x79C265 (the starting fortress, the camps and castles of the maps) is ported; the options 5 of the legality call RW 0x797A96 are taken as NO_OBJECT_OVERLAP "
-		"(its clear-path half needs an AI the castle does not have); the castle after its unpack is CASTLE-1's (S-950 .. S-952); not ported: "
-		"the creation interface RW 0x859198 beyond placing the object, FactionDecal, the damage evacuation of a member, CastleUpgrade and WallUpgradeUpdate (UPGRADE-1)",
+		"(its clear-path half needs an AI the castle does not have); ported since: PreBuiltList and the castle after its unpack (CASTLE-1, S-951 / S-952), CastleUpgrade "
+		"(FACT-B), the creation interface's site clearing RW 0x858C41 and push out RW 0x858CFC around every member (BACKLOG2); not ported: the creation interface "
+		"RW 0x859198's own construct for a member (slot 7, RW 0x858701 with the castle as the plot: the port places the member itself), FactionDecal, the damage "
+		"evacuation of a member, WallUpgradeUpdate",
 		"[S-304] dozer (lane BUILD-3): RotWK's dozer machines are ported (DozerAIUpdate.h: the tasks and dock points, newTask RW 0x88CCFC with the dock position "
 		"RW 0x88C2FE, the primary machine RW 0x88C06B, PickActionPos / MoveToActionPos / DoAction RW 0x88D7D2 / 0x88C5C7 / 0x88D993); INFERENCE: the structure is "
 		"made at the order with every BUILD-1 effect (RW makes it PHANTOM and places it on arrival, RW 0x88D44F: the port keeps the placement's health of 1 and "

@@ -9,6 +9,7 @@
 #include "GameLogic/Module/CastleUpgrade.h"
 #include "GameLogic/Object/PartitionManager.h"
 
+#include "Common/BuildAssistant.h"
 #include "Common/CommandPoints.h"
 #include "Common/NumericState.h"
 #include "Common/Player.h"
@@ -27,6 +28,7 @@
 #include "GameLogic/Module/AIUpdate.h"
 #include "GameLogic/Damage.h"
 #include "GameLogic/Construction.h"
+#include "GameLogic/ConstructionSite.h"
 #include "Common/Team.h"
 #include "GameLogic/GameLogic.h"
 #include "GameLogic/ObjectFilter.h"
@@ -47,13 +49,31 @@ void parseOptionalObjectFilter(INI *ini, void *instance, void *store, const void
 	ParseObjectFilter(ini, instance, &f, nullptr);
 	*static_cast<std::shared_ptr<const ObjectFilter> *>(store) = std::make_shared<const ObjectFilter>(std::move(f));
 }
-// RW 0x79BD2F: one "<faction> <base>" pair per line, appended
+// RW 0x79BD2F (lane BACKLOG2): `<side> <base> [<cost> [<limit>]]`; the counts are INI::scanUnsignedInt of the next tokens when there are any (RW 0x79BDB1 /
+// 0x79BDC8: getNextTokenOrNull, RW 0x42EA42); the entry goes into the side's map slot unless one is there (RW 0x79BE0C: map::insert). TheSidesList's RW 0x72DCBB
+// call with the base name (RW 0x79BE33: the side list's castle template names) is not ported: the CastleTemplateStore reads a layout when it is asked (S-300)
 void parseFactionBaseList(INI *ini, void *, void *store, const void *)
 {
-	auto *list = static_cast<std::vector<std::pair<std::string, std::string>> *>(store);
-	std::string faction = ini->getNextAsciiString();
-	std::string base = ini->getNextAsciiString();
-	list->emplace_back(std::move(faction), std::move(base));
+	auto *list = static_cast<std::vector<CastleFactionEntry> *>(store);
+	CastleFactionEntry e;
+	e.faction = ini->getNextAsciiString();
+	e.base = ini->getNextAsciiString();
+	if (const char *t = ini->getNextTokenOrNull())
+	{
+		e.cost = ini->scanUnsignedInt(t);
+	}
+	if (const char *t = ini->getNextTokenOrNull())
+	{
+		e.limit = ini->scanUnsignedInt(t);
+	}
+	for (const CastleFactionEntry &have : *list)
+	{
+		if (have.faction == e.faction)
+		{
+			return; // the name key is taken: the first line stays
+		}
+	}
+	list->push_back(std::move(e));
 }
 // RW 0x79CA18: one "<template> <count>" pair per line, appended
 void parsePreBuiltList(INI *ini, void *, void *store, const void *)
@@ -131,24 +151,6 @@ bool templateKindOf(GameLogic &logic, const ThingTemplate &tt, const char *name)
 	return bit >= 0 && MaskTest(logic.templateInfo(tt.getFinalOverride()).kindOf, (unsigned)bit);
 }
 
-int lowerCompare(const std::string &a, const std::string &b)
-{
-	if (a.size() != b.size())
-	{
-		return 1;
-	}
-	for (size_t i = 0; i < a.size(); ++i)
-	{
-		const char x = (char)(a[i] >= 'A' && a[i] <= 'Z' ? a[i] + 32 : a[i]);
-		const char y = (char)(b[i] >= 'A' && b[i] <= 'Z' ? b[i] + 32 : b[i]);
-		if (x != y)
-		{
-			return 1;
-		}
-	}
-	return 0;
-}
-
 struct CastleNames
 {
 	int castleKeep = CombatNames::kindOf("CASTLE_KEEP");
@@ -179,6 +181,19 @@ const CastleNames &castleNames()
 // RW 0x79CCF2 clears the status 0x53 of every member of the list + 0x5C before it destroys it (TheObjectStatusNames[83], RW 0xD8AFF0)
 const unsigned kPackStatus = 0x53;
 } // namespace
+
+const CastleFactionEntry *CastleBehaviorModuleData::entryFor(const std::string &side) const
+{
+	// the map's find on the side's name key (Player + 0x58 through TheNameKeyGenerator RW 0x49F474: case-sensitive)
+	for (const CastleFactionEntry &e : m_castleToUnpackForFaction)
+	{
+		if (e.faction == side)
+		{
+			return &e;
+		}
+	}
+	return nullptr;
+}
 
 void CastleBehaviorModuleData::buildFieldParse(MultiIniFieldParse &p)
 {
@@ -334,11 +349,11 @@ UpdateSleepTime CastleBehavior::update()
 // (RW 0x7985AA on + 0xA0) are not ported
 void CastleBehavior::onCreate()
 {
-	if (!m_data->m_summoned || m_needInstantBuild || m_state != STATE_IDLE || m_timer > 0.0f)
+	if (!m_data->m_summoned || !canUnpack(true))
 	{
 		return;
 	}
-	m_state = STATE_PACKED; // the constructor's wake (UPDATE_SLEEP_NONE) runs it on the next frame
+	initiateUnpack(false, nullptr); // lane BACKLOG2: RW 0x79C17D(0, null): state 1 and the side's price (none for a retail summoned castle); the constructor's wake runs it
 }
 
 // RW 0x799F0F: the keep (+ 0x38) and the members (+ 0x5C) clear one model condition and set another (Object RW 0x68D607); their CastleMemberBehavior's own
@@ -369,14 +384,9 @@ void CastleBehavior::setMembersModelCondition(int clear, int set)
 
 std::string CastleBehavior::baseNameFor(const Player &owner) const
 {
-	for (const auto &pair : m_data->m_castleToUnpackForFaction)
-	{
-		if (lowerCompare(pair.first, owner.getSide()) == 0)
-		{
-			return pair.second;
-		}
-	}
-	return std::string();
+	// RW 0x798F70: the base of the owner's side entry (lane BACKLOG2: the map's exact name key, not BUILD-1's case-insensitive compare)
+	const CastleFactionEntry *e = m_data->entryFor(owner.getSide());
+	return e ? e->base : std::string();
 }
 
 bool CastleBehavior::tryInstantUnpack()
@@ -473,10 +483,9 @@ Object *CastleBehavior::buildOnPad(ObjectID padId, const ThingTemplate &tt, bool
 	{
 		return nullptr; // RW 0x79A5A1 .. 0x79A5B7: no foundation, or it holds something already
 	}
-	// RW 0x79A5D6: the creation interface RW 0x859198(pad, template, pad position, 0.0, the pad's player, instant) -> construct RW 0x858701; its site clearing (RW 0x858C41) and the
-	// push out of the units in the way (RW 0x858CFC, logic random draws) are not ported (S-950)
-	logic.noteStop("[S-950] castle: a pre-built structure's site clearing (RW 0x858C41) and the push out of the units in its way (RW 0x858CFC) are not ported");
-	return Construction::constructOnPlot(*pad, tt, *pad->getPosition(), 0.0f, *pad->getControllingPlayer(), instant);
+	// RW 0x79A5D6: the creation interface RW 0x859198(pad, template, pad position, 0.0, the pad's player, instant): the site clearing (RW 0x858C41), construct
+	// RW 0x858701, the push out of the units in the way (RW 0x858CFC, logic random draws) (lane BACKLOG2)
+	return foundation->createOnSite(tt, *pad->getPosition(), 0.0f, *pad->getControllingPlayer(), instant);
 }
 
 bool CastleBehavior::unpack(bool instant)
@@ -496,25 +505,44 @@ bool CastleBehavior::unpack(bool instant)
 		ai->removeObjectFromPathfindMap(*castle); // RW 0x79BE8E
 	}
 	m_hasWalkOnWall = false; // RW 0x79BEA3
-	const std::string base = baseNameFor(*owner);
-	if (base.empty())
+	if (!m_explicitTemplate.empty())
 	{
-		m_lastError = "CastleToUnpackForFaction names no base for the faction '" + owner->getSide() + "'";
-		return false;
-	}
-	std::string error;
-	const CastleTemplate *layout = logic.castleTemplates().find(base, &error);
-	if (!layout)
-	{
-		m_lastError = error;
-		return false;
-	}
-	for (const CastleTemplateEntry &entry : layout->entries)
-	{
-		if (Object *made = createOwnedObject(entry, *owner, instant)) // RW 0x79B903(instant) -> 0x7987EE
+		// lane BACKLOG2: RW 0x79BEAC .. 0x79BED9: an explicit object (MSG_CASTLE_UNPACK_EXPLICIT_OBJECT): the template by name (RW 0x6D1305), made by
+		// createOwnedObject(template) RW 0x79B98B (BFME2 decomp CastleBehaviorCreateOwnedObject.cpp, tier A): the castle's creation interface (slot 4,
+		// RW 0x859198) with the castle's position and orientation, its controlling player and instant 0, then registerOwnedObject RW 0x79AC19; + 0x98 empties
+		const std::string name = m_explicitTemplate;
+		m_explicitTemplate.clear();
+		if (const ThingTemplate *tt = logic.things().findTemplate(name))
 		{
-			m_owned.push_back(made->getID());
-			registerOwnedObject(*made); // RW 0x79B94E
+			if (Object *made = createOnSite(*tt->getFinalOverride(), *castle->getPosition(), castle->getOrientation(), *owner, false))
+			{
+				m_owned.push_back(made->getID());
+				registerOwnedObject(*made);
+			}
+		}
+	}
+	else
+	{
+		const std::string base = baseNameFor(*owner);
+		if (base.empty())
+		{
+			m_lastError = "CastleToUnpackForFaction names no base for the faction '" + owner->getSide() + "'";
+			return false;
+		}
+		std::string error;
+		const CastleTemplate *layout = logic.castleTemplates().find(base, &error);
+		if (!layout)
+		{
+			m_lastError = error;
+			return false;
+		}
+		for (const CastleTemplateEntry &entry : layout->entries)
+		{
+			if (Object *made = createOwnedObject(entry, *owner, instant)) // RW 0x79B903(instant) -> 0x7987EE
+			{
+				m_owned.push_back(made->getID());
+				registerOwnedObject(*made); // RW 0x79B94E
+			}
 		}
 	}
 	// lane CASTLE-1: RW 0x79BF76 .. 0x79BFF7: the unpack frame (+ 0x48, the crew's clock) and every member of the lists learns the keep (member + 0x14, RW 0x7990D9: the port
@@ -603,6 +631,11 @@ Object *CastleBehavior::createOwnedObject(const CastleTemplateEntry &entry, Play
 	{
 		return nullptr;
 	}
+	// lane BACKLOG2: RW 0x79899A: the castle's creation interface (its + 0x20 vtable RW 0xC30DE8 slot 4 = RW 0x859198) with (the castle, the template, the position,
+	// the angle, the player of the team chosen above, instant): the site is cleared first (RW 0x858C41), the object made (slot 7, RW 0x858701: below, the port's
+	// placement, S-303), then the units in the way are pushed out (RW 0x858CFC)
+	Player *creator = mine ? &owner : logic.players().getNeutralPlayer();
+	ConstructionSite::clearSiteForFoundation(logic, *tt, pos, angle);
 	Object *obj = logic.newObject(tt, team, ObjectStatusMaskType{});
 	if (!obj)
 	{
@@ -620,6 +653,10 @@ Object *CastleBehavior::createOwnedObject(const CastleTemplateEntry &entry, Play
 		// lane PLAY-4: RW 0x7987EE makes no Player::onStructureCreated call (RW 0x6AAF3B is not among its calls): since that call sets GettingBuiltBehavior's
 		// + 0x36 and spawns the worker of a plot or castle builder, the castle's complete members do not get it here (they spawned workers that faded at once)
 		Construction::onStructureConstructionComplete(owner, castle, *obj, false);
+	}
+	if (creator)
+	{
+		ConstructionSite::moveObjectsForFoundation(logic, *castle, *tt, pos, angle, *creator); // RW 0x8591F4
 	}
 	if (!instant)
 	{
@@ -724,15 +761,141 @@ Object *CastleBehavior::occupantOf(const Object &foundation) const
 
 bool CastleBehavior::isPlayerAllowedToCapture(const Player &player) const
 {
-	// RW 0x7998FF: the list is not empty and holds the player's side
-	for (const auto &pair : m_data->m_castleToUnpackForFaction)
+	// RW 0x7998FF: the map is not empty and holds the player's side (BFME2 decomp Rva003973EBFind.cpp, tier A)
+	return m_data->entryFor(player.getSide()) != nullptr;
+}
+
+// ---- lane BACKLOG2: a player's unpack and pack (see the header) ------------------------------------------------------------------------------------------------
+
+bool CastleBehavior::canUnpack(bool checkTimer) const
+{
+	// RW 0x7983E3
+	if (m_needInstantBuild)
 	{
-		if (lowerCompare(pair.first, player.getSide()) == 0)
-		{
-			return true;
-		}
+		return false;
 	}
-	return false;
+	if (m_state != STATE_IDLE)
+	{
+		return false;
+	}
+	return !(checkTimer && m_timer > 0.0f);
+}
+
+bool CastleBehavior::isPlayerAllowedToPackOrUnpack(const Player *player) const
+{
+	// RW 0x79A472: alreadyMyCastle ? true : isPlayerAllowedToCapture (RW 0x7998FF reads the player unchecked; the dispatcher passes the controller)
+	if (!player)
+	{
+		return false;
+	}
+	return player == getObject()->getControllingPlayer() || isPlayerAllowedToCapture(*player);
+}
+
+std::uint32_t CastleBehavior::unpackCost(const Player *player) const
+{
+	// RW 0x7995FB
+	if (!player || player->getSide().empty())
+	{
+		return 0;
+	}
+	const CastleFactionEntry *e = m_data->entryFor(player->getSide());
+	if (!e)
+	{
+		return 0;
+	}
+	if ((std::int32_t)e->limit > 0 && player->commandPointsAvailable() < (std::int32_t)e->limit)
+	{
+		return 99999999u; // RW 0x799672: 0x5F5E0FF
+	}
+	return e->cost;
+}
+
+bool CastleBehavior::canAffordUnpack(const Player *player) const
+{
+	// RW 0x79969F
+	if (!player || getObject()->getControllingPlayer() != player)
+	{
+		return false;
+	}
+	return player->getMoney()->countMoney() >= unpackCost(player);
+}
+
+bool CastleBehavior::canAffordUnpackOf(const Player *player, const ThingTemplate *tt) const
+{
+	// RW 0x797B6D
+	if (!player || !tt || getObject()->getControllingPlayer() != player)
+	{
+		return false;
+	}
+	return player->getMoney()->countMoney() >= (std::uint32_t)BuildAssistant::calcCostToBuild(*tt, player, nullptr, -1);
+}
+
+float CastleBehavior::unpackReadiness() const
+{
+	// RW 0x797EF9: x87 1.0 - timer / UnpackDelayTime (fld, fdiv, fsubr) in state 0, else 0.0 (RW 0xC1B594)
+	if (m_state != STATE_IDLE)
+	{
+		return 0.0f;
+	}
+	return SimMath::fstpDword(SimMath::pc24SubW(1.0, SimMath::pc24DivW((double)m_timer, (double)m_data->m_unpackDelayTime)));
+}
+
+void CastleBehavior::payForUnpack()
+{
+	// RW 0x799039 (BFME2 decomp Rva00396B25Receiver.cpp, tier B same-shape): the side's entry price (record + 0x18, without the limit test) is withdrawn
+	// (Money RW 0x7B17EF with the score keeper, sound on) and kept at + 0x4C (fild of the unsigned amount, the 2^32 correction for one above 2^31)
+	Player *player = getObject()->getControllingPlayer();
+	const CastleFactionEntry *e = player ? m_data->entryFor(player->getSide()) : nullptr;
+	if (!e)
+	{
+		return;
+	}
+	player->withdrawMoney(e->cost, true);
+	m_storedPrice = SimMath::fstpDword(SimMath::fildU32(e->cost));
+}
+
+void CastleBehavior::payForUnpackOf(const ThingTemplate &tt)
+{
+	// RW 0x797B06: the template's calcCostToBuild(player, no producer, -1) is withdrawn and kept at + 0x4C
+	Player *player = getObject()->getControllingPlayer();
+	if (!player)
+	{
+		return;
+	}
+	const std::uint32_t cost = (std::uint32_t)BuildAssistant::calcCostToBuild(tt, player, nullptr, -1);
+	player->withdrawMoney(cost, true);
+	m_storedPrice = SimMath::fstpDword(SimMath::fildU32(cost));
+}
+
+void CastleBehavior::initiateUnpack(bool instant, const ThingTemplate *explicitTemplate)
+{
+	// RW 0x79C17D
+	Object *castle = getObject();
+	if (explicitTemplate)
+	{
+		m_explicitTemplate = explicitTemplate->getName(); // RW 0x79C18D: the template's name (+ 0x64) into + 0x98
+	}
+	m_storedPrice = 0.0f; // RW 0x79C1A4
+	if (instant)
+	{
+		if (!unpack(true))
+		{
+			castle->logic().reportError("CastleBehavior of object " + std::to_string(castle->getID()) + ": the instant unpack failed: " + m_lastError);
+		}
+		castle->setModelConditionState(castleNames().justBuilt, true); // RW 0x79C1B4: word + 0x124 bit 26
+		m_state = STATE_UNPACKED;                                       // RW 0x79C1CE
+		return;
+	}
+	m_state = STATE_PACKED; // RW 0x79C1D9: state 1
+	if (explicitTemplate)
+	{
+		payForUnpackOf(*explicitTemplate); // RW 0x79C1E3
+	}
+	else
+	{
+		payForUnpack(); // RW 0x79C1EA
+	}
+	// RW 0x79C1F5: the alert map's reset (RW 0x7985AA on + 0xA0) is not ported (S-951)
 }
 
 // RW 0x799ACB
@@ -1124,15 +1287,16 @@ void CastleBehavior::scanForCapture()
 std::vector<std::string> CastleBehavior::stopLines()
 {
 	return {
-		"[S-950] castle: PreBuiltList is ported (RW 0x79C31B -> 0x79A5EC / 0x79A518: one instant structure per entry on the castle's pad of that index, through construct RW 0x858701); "
-		"the creation interface's site clearing (RW 0x858C41: overlapping objects destroyed) and the push out of the units in the way (RW 0x858CFC: logic random draws) are not ported; "
-		"a pre-built structure notes it at runtime",
+		"[S-950] castle: PreBuiltList camps: closed by lane BACKLOG2 (RW 0x79C31B -> 0x79A5EC / 0x79A518: one instant structure per entry on the castle's pad of that index, "
+		"through the pad's creation interface RW 0x859198: the site clearing RW 0x858C41, construct RW 0x858701, the push out RW 0x858CFC of the allied / neutral units "
+		"to the nearer of two drawn spots; GameLogic/ConstructionSite.h); its inference (an object's own geometry, a unit's x axis) stays open in S-653",
 		"[S-951] castle: the castle after its unpack is ported (registerOwnedObject RW 0x79AC19, the keep check RW 0x799ACB, KeepDeathKillsEverything RW 0x7999E2, abandon RW 0x79CB47, the "
-		"fade, pack RW 0x79CCF2, the capture scan RW 0x79B3C4); not ported: the player's unpack / pack (the dispatcher cases MSG_CASTLE_UNPACK RW 0x77C2C1, MSG_CASTLE_PACK RW 0x77C265, "
-		"MSG_CASTLE_UNPACK_EXPLICIT_OBJECT RW 0x77C338; the cost RW 0x79969F) and the camps' unpack buttons; lane SPELL-3 runs a Summoned castle's timed unpack (onCreate RW 0x79C761, "
-		"initiateUnpack RW 0x79C17D, the states 1 .. 3 of RW 0x79CF2A with RW 0x799F0F's model conditions; the unpack itself is the instant one's, the wall straggler "
-		"teleport RW 0x79ADE9, RW 0x799039's payment and the members' RW 0x798057 are not ported), the crew (RW 0x79B0F1, 0x798397, 0x798344), the castle's alert map "
-		"(+ 0xA0, RW 0x79B374), the stored price (+ 0x4C), RW 0x625E0A, the camp EVA (RW 0x799440) and the client fades / decals; reached at runtime they are noted",
+		"fade, pack RW 0x79CCF2, the capture scan RW 0x79B3C4), and lane BACKLOG2 ported a player's unpack and pack: the dispatcher cases MSG_CASTLE_UNPACK RW 0x77C2C1, MSG_CASTLE_PACK "
+		"RW 0x77C265 and MSG_CASTLE_UNPACK_EXPLICIT_OBJECT RW 0x77C338 (canUnpack RW 0x7983E3, RW 0x79A472, the side's price RW 0x7995FB / 0x79969F with CastleToUnpackForFaction's "
+		"cost and limit columns RW 0x79BD2F, the template's RW 0x797B6D, initiateUnpack RW 0x79C17D with the payments RW 0x799039 / 0x797B06, the explicit object RW 0x79B98B), the "
+		"buttons' availability (RW 0x942733 cases 33 / 34 / 50) and messages (RW 0x940AAC .. 0x940AE9); not ported: the wall straggler teleport RW 0x79ADE9 (FindPositionAround's "
+		"FPF_USE_HIGHEST_LAYER is not), the members' RW 0x798057, the crew (RW 0x79B0F1, 0x798397, 0x798344), the castle's alert map (+ 0xA0, RW 0x79B374, its reset RW 0x7985AA), "
+		"RW 0x625E0A, the camp EVA (RW 0x799440), the button's readiness clock and the client fades / decals; reached at runtime they are noted",
 		"[S-952] castle: inference in the ported states: the capture scan and the push out run on ThePartitionManager (types 0 and 3, S-1020), the "
 		"push out's geometry overlap filter (RW 0x67C5F3 -> RW 0xAD2CE0) and the horde's slot 0x1C8 test (RW 0x79C88F) are not ported, a plot's occupant counts while the object exists (retail clears the "
 		"plot's + 0x28 in the plot's own update RW 0x8584DB), a packed castle's upgrades are not reset (RW 0x68E083); FilterValidOwnedEntries unset is taken as accepting everything; RW 0x683955 and "
@@ -1150,6 +1314,11 @@ void CastleBehavior::crc(StateHasher &h) const
 	h.addFloat(m_timer);
 	h.addU32(m_keepId);
 	h.addU32(m_unpackFrame);
+	if (m_storedPrice != 0.0f || !m_explicitTemplate.empty())
+	{
+		h.addFloat(m_storedPrice); // lane BACKLOG2: hashed once a player's unpack set them (the starting fortress keeps its hash)
+		h.addString(m_explicitTemplate);
+	}
 	for (const std::vector<ObjectID> *list : { &m_owned, &m_foundations, &m_members, &m_crew, &m_defenseFoundations })
 	{
 		h.addU32((std::uint32_t)list->size());

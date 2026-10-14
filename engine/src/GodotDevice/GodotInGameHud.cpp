@@ -306,7 +306,7 @@ struct HudDevice : public AptNativeHook
 
 // SMOOTH-1 (S-810): a bound method that reads or changes the live game waits until the logic worker has finished its frame (the HUD sees a completed
 // frame, never one being computed); the per-frame _process does not wait (InGameHud::update skips the frames the worker is busy in)
-static void waitLogic(const HudDevice *d);
+static void waitLogic(const HudDevice *d, const char *file = __builtin_FILE(), int line = __builtin_LINE());
 
 Ref<ImageTexture> HudDevice::textureFor(const std::string &file)
 {
@@ -1116,11 +1116,11 @@ void HudDevice::applyCamera(const Vector2 &window, double alpha)
 	camera->set_global_transform(t);
 }
 
-static void waitLogic(const HudDevice *d)
+static void waitLogic(const HudDevice *d, const char *file, int line)
 {
 	if (d && d->world && d->world->hud_game())
 	{
-		d->world->hud_game()->waitIdle();
+		d->world->hud_game()->holdLogic(file, line); // lane RENDERWAIT-1: no wait inside the client window; elsewhere the caller names the wait in the wait log
 	}
 }
 
@@ -1140,6 +1140,7 @@ void InGameHudNode::_bind_methods()
 	ClassDB::bind_method(D_METHOD("get_spellbook_state"), &InGameHudNode::get_spellbook_state);
 	ClassDB::bind_method(D_METHOD("get_icon_ui"), &InGameHudNode::get_icon_ui); // lane HUD-5
 	ClassDB::bind_method(D_METHOD("select_object", "id"), &InGameHudNode::select_object); // lane HUD-5
+	ClassDB::bind_method(D_METHOD("select_object_with_message", "id"), &InGameHudNode::select_object_with_message); // lane BACKLOG2
 	ClassDB::bind_method(D_METHOD("select_objects", "ids"), &InGameHudNode::select_objects); // lane SELPERF-1
 	ClassDB::bind_method(D_METHOD("open_spell_store"), &InGameHudNode::open_spell_store);
 	ClassDB::bind_method(D_METHOD("close_spell_store"), &InGameHudNode::close_spell_store);
@@ -2083,6 +2084,18 @@ bool InGameHudNode::select_object(int64_t id)
 	return ui.isSelected((::ObjectID)id);
 }
 
+bool InGameHudNode::select_object_with_message(int64_t id)
+{
+	if (!select_object(id))
+	{
+		return false;
+	}
+	ClientMessage &m = d->hud->input().stream().append(MSG_CREATE_SELECTED_GROUP_NO_SOUND);
+	m.appendBoolean(true);
+	m.appendObjectID((::ObjectID)id);
+	return true;
+}
+
 // lane SELPERF-1: the selection benchmark (play1_player.gd selperf) selects exactly N objects; how many ended up selected
 int64_t InGameHudNode::select_objects(const PackedInt64Array &ids)
 {
@@ -2381,7 +2394,7 @@ void InGameHudNode::_process(double delta)
 	Viewport *vp = get_viewport();
 	const Vector2 window = vp ? vp->get_visible_rect().get_size() : Vector2(1024, 768);
 	d->hud->setWindowSize((int)window.x, (int)window.y);
-	if (!d->pendingInput.empty() && d->world && d->world->hud_game() && d->world->hud_game()->logicIdle())
+	if (!d->pendingInput.empty() && d->world && d->world->hud_game() && d->world->hud_game()->logicHeld()) // RENDERWAIT-1: the client window (or an idle worker)
 	{
 		std::vector<Ref<InputEvent>> events;
 		events.swap(d->pendingInput);
@@ -2451,7 +2464,7 @@ void InGameHudNode::_process(double delta)
 	// builder lookup, the legality and new drawables wait for an idle frame (they read the live logic)
 	if (d->ghost && d->world && d->world->hud_game())
 	{
-		const bool idle = d->world->hud_game()->logicIdle();
+		const bool idle = d->world->hud_game()->logicHeld(); // RENDERWAIT-1: the client window (or an idle worker)
 		if (d->livePointerSeen)
 		{
 			d->hud->input().placeTranslator().setLivePointer({ (int)d->livePointer.x, (int)d->livePointer.y });
@@ -2611,7 +2624,8 @@ bool InGameHudNode::press_command_button(const String &template_name)
 		{
 			for (const ControlBarButton &b : *list)
 			{
-				if (b.button && b.button->getThingTemplate() && b.button->getThingTemplate()->getName() == want)
+				// lane BACKLOG2: a button without a template (the camps' Command_UnpackCamp, CASTLE_UNPACK) is found by its own name
+				if (b.button && ((b.button->getThingTemplate() && b.button->getThingTemplate()->getName() == want) || b.button->m_name == want))
 				{
 					return &b;
 				}
@@ -2770,7 +2784,7 @@ void InGameHudNode::_input(const Ref<InputEvent> &event)
 		d->livePointer = m->get_position(); // lane BUILD-5 r3: presentation only (the placement ghost's pose); the event itself may still wait
 	}
 	LiveGame *game = d->world ? d->world->hud_game() : nullptr;
-	if (game && (!game->logicIdle() || !d->pendingInput.empty()))
+	if (game && (!game->logicHeld() || !d->pendingInput.empty())) // RENDERWAIT-1: held: the client window (or an idle worker)
 	{
 		d->pendingInput.push_back(event);
 		++d->deferredInput;

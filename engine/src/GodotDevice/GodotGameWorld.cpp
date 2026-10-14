@@ -92,6 +92,9 @@
 #include <godot_cpp/classes/image.hpp>
 #include <godot_cpp/classes/camera3d.hpp>
 #include <godot_cpp/classes/engine.hpp>
+#include <godot_cpp/classes/scene_tree.hpp>
+#include <godot_cpp/classes/rendering_server.hpp>
+#include <godot_cpp/classes/script_backtrace.hpp>
 #include <godot_cpp/classes/viewport.hpp>
 #include <godot_cpp/core/class_db.hpp>
 #include <godot_cpp/variant/basis.hpp>
@@ -102,6 +105,10 @@
 
 #include <algorithm>
 #include <cstdio>
+#if defined(__GLIBC__)
+#include <dlfcn.h>
+#include <execinfo.h>
+#endif
 #include <cstring>
 #include <fstream>
 #include <chrono>
@@ -305,6 +312,10 @@ void GameWorld::_bind_methods()
 	ClassDB::bind_method(D_METHOD("build2_repair", "dozers", "target"), &GameWorld::build2_repair);
 	ClassDB::bind_method(D_METHOD("get_stats"), &GameWorld::get_stats);
 	ClassDB::bind_method(D_METHOD("get_frame_timings"), &GameWorld::get_frame_timings);
+	ClassDB::bind_method(D_METHOD("get_logic_wait_sites"), &GameWorld::get_logic_wait_sites);
+	ClassDB::bind_method(D_METHOD("is_logic_held"), &GameWorld::is_logic_held);
+	ClassDB::bind_method(D_METHOD("get_client_window_stats"), &GameWorld::get_client_window_stats);
+	ClassDB::bind_method(D_METHOD("reset_logic_wait_sites"), &GameWorld::reset_logic_wait_sites);
 	ClassDB::bind_method(D_METHOD("set_render_interpolation", "enabled"), &GameWorld::set_render_interpolation);
 	ClassDB::bind_method(D_METHOD("set_perf3_client", "enabled"), &GameWorld::set_perf3_client); // lane PERF-3
 	ClassDB::bind_method(D_METHOD("get_perf3_client"), &GameWorld::get_perf3_client);
@@ -465,6 +476,19 @@ GameWorld::~GameWorld()
 
 void GameWorld::_notification(int what)
 {
+	// lane RENDERWAIT-1: the client window of each render frame opens before any node's process (SceneTree process_frame) and ends when this frame's logic
+	// frames are queued (LiveGame::advance), at the latest before the frame is drawn (RenderingServer frame_pre_draw)
+	if (what == NOTIFICATION_ENTER_TREE)
+	{
+		get_tree()->connect("process_frame", callable_mp(this, &GameWorld::beginClientWindow));
+		RenderingServer::get_singleton()->connect("frame_pre_draw", callable_mp(this, &GameWorld::endClientWindow));
+	}
+	if (what == NOTIFICATION_EXIT_TREE)
+	{
+		endClientWindow();
+		get_tree()->disconnect("process_frame", callable_mp(this, &GameWorld::beginClientWindow));
+		RenderingServer::get_singleton()->disconnect("frame_pre_draw", callable_mp(this, &GameWorld::endClientWindow));
+	}
 	// lane RENDER-3 (S-831): this node's transparent shaders output gamma-space values; the camera that shows them composites the transparent pass in
 	// gamma space (GodotGammaComposite.h)
 	if (what == NOTIFICATION_READY)
@@ -475,6 +499,47 @@ void GameWorld::_notification(int what)
 	{
 		GammaComposite::ensure(this);
 	}
+}
+
+void GameWorld::beginClientWindow()
+{
+	if (m_game)
+	{
+		m_game->beginClientWindow();
+	}
+}
+
+void GameWorld::endClientWindow()
+{
+	if (m_game)
+	{
+		m_game->endClientWindow();
+	}
+}
+
+bool GameWorld::is_logic_held() const
+{
+	return !m_game || m_game->logicHeld();
+}
+
+Dictionary GameWorld::get_client_window_stats() const
+{
+	Dictionary d;
+	if (!m_game)
+	{
+		return d;
+	}
+	const LiveGame::ClientWindowStats w = m_game->clientWindowStats();
+	d["opened"] = (int64_t)w.opened;
+	d["missed"] = (int64_t)w.missed;
+	d["parks"] = (int64_t)w.parks;
+	d["park_timeouts"] = (int64_t)w.parkTimeouts;
+	d["window_ms"] = w.windowMs;
+	d["max_window_ms"] = w.maxWindowMs;
+	d["unended"] = (int64_t)w.unended;
+	d["input_holds"] = (int64_t)w.inputHolds;
+	d["worker_held_ms"] = w.workerHeldMs;
+	return d;
 }
 
 void GameWorld::_process(double delta)
@@ -568,6 +633,14 @@ void GameWorld::clear_scene()
 	m_endGame.reset(); // lane END-1: the end sequence of the game that goes
 	m_endGameRequests.clear();
 	m_endGameFrame = 0;
+	// lane RENDERWAIT-1 r3 (Sol r2): what the render side deferred for the game that goes (its script requests and their audio, the effects' time, the
+	// network overlay's hash) must not reach the next game's audio, player and objects. (LiveGame's pending input goes with the game; the HUD's deferred
+	// presses with the HUD)
+	m_pendingScriptAudio.clear();
+	m_pendingScriptRequests.clear();
+	m_fxPendingDt = 0.0;
+	m_netHash = 0;
+	m_netHashFrame = 0;
 	m_netSession.reset(); // MP-1: the session points at the game
 	releaseLocalDrivers(); // lane MP-2: the recording / replay driver too
 	m_audio.reset(); // AUDIO-2: the audio side reads the game
@@ -923,6 +996,39 @@ Dictionary GameWorld::load_internal(const LiveGame::Options &loIn, const String 
 	m_audio.reset(); // AUDIO-2: the audio side reads the game
 	m_game.reset(new LiveGame(*m_world, *m_fs->archive_fs(), *m_assets, *m_options));
 	m_game->setRenderInterpolation(m_renderInterpolation);
+	// lane RENDERWAIT-1: a blocking wait on the logic worker names its script caller (the innermost GDScript frame: the C++ site of a bound query is
+	// the query itself, the script line says who asked)
+	m_game->setWaitSiteDetail([]() -> std::string {
+		const TypedArray<Ref<ScriptBacktrace>> traces = Engine::get_singleton()->capture_script_backtraces(false);
+		for (int64_t i = 0; i < traces.size(); ++i)
+		{
+			const Ref<ScriptBacktrace> bt = traces[i];
+			if (bt.is_valid() && bt->get_frame_count() > 0)
+			{
+				const String where = bt->get_frame_file(0).get_file() + ":" + String::num_int64(bt->get_frame_line(0)) + " " + bt->get_frame_function(0);
+				return std::string(where.utf8().get_data());
+			}
+		}
+#if defined(__GLIBC__)
+		// no script on the stack (an engine callback: input, a signal): the native callers inside this library, as offsets for addr2line (diagnostic)
+		void *frames[12];
+		const int n = backtrace(frames, 12);
+		std::string native;
+		for (int i = 1; i < n; ++i)
+		{
+			Dl_info info;
+			if (dladdr(frames[i], &info) && info.dli_fname && std::strstr(info.dli_fname, "openbfme"))
+			{
+				char buf[32];
+				std::snprintf(buf, sizeof(buf), "%s0x%zx", native.empty() ? "native " : " ", (size_t)((const char *)frames[i] - (const char *)info.dli_fbase));
+				native += buf;
+			}
+		}
+		return native;
+#else
+		return std::string();
+#endif
+	});
 	double t0 = nowMs();
 	std::string error;
 	if (!m_game->load(lo, &error))
@@ -1656,6 +1762,7 @@ void GameWorld::advance(double delta)
 			m_game->advance(0.0);
 		}
 		refresh_streaks(false);
+		m_game->endClientWindow(); // RENDERWAIT-1: no frames are queued while paused
 		return;
 	}
 	const double t0 = nowMs();
@@ -1693,7 +1800,7 @@ void GameWorld::advance(double delta)
 		{
 			m_netLoaded = m_netSession->pollLoaded();
 		}
-		if (m_netScript && m_game->frame() != m_netScriptFrame)
+		if (m_netScript && m_game->frame() != m_netScriptFrame && m_game->logicHeld()) // RENDERWAIT-1: its commands only where the logic is held
 		{
 			m_netScriptFrame = m_game->frame();
 			m_netScripted += ScriptedPlayer::issue(*m_game, m_netPlayer, m_netStartPos, m_game->commands());
@@ -1701,15 +1808,21 @@ void GameWorld::advance(double delta)
 	}
 	// lane ONLINE-3: rejoinStep runs the catch-up frames itself; so does spectateStep until the spectator reaches the log's edge
 	const bool spectatorCatchingUp = m_netSpectating && m_netSession && m_netSession->spectateReport().caughtUpMs == 0;
+	// lane RENDERWAIT-1: with the logic on its worker, the client work that reads the live logic (the audio, the effects' logic part, the tree events) runs
+	// in the client window, before this render frame's logic frames are queued: LiveGame::advance ends the window (the worker may then run them while
+	// this thread presents and draws). A render frame without a window (the worker inside a frame) skips it; nothing here waits for the worker.
+	// Single-threaded, the frames run inside advance and this work follows them, as before.
+	const bool threaded = m_game->logicThread();
+	m_fxPendingDt = timing::sumMs(m_fxPendingDt, dt); // seconds: a plain sum through the timing facade (the audited file's float rule)
+	if (threaded)
+	{
+		heldClientWork();
+	}
 	m_lastLogicFrames = m_netRejoining || spectatorCatchingUp ? 0 : m_game->advance(dt);
 	updateEndGame(); // lane END-1: the end sequence reads the presented frame
-	if (m_game->logicIdle())
+	if (!threaded)
 	{
-		LiveGameAudio::drainDeferredAudio(); // S-814 (also without the effect player)
-	}
-	if (m_audio && m_game->logicIdle())
-	{
-		m_audio->update(); // AUDIO-2: the object ambient sounds follow the frame's states (SMOOTH-1: it reads the live game, so at a worker-idle point)
+		heldClientWork();
 	}
 	const double t1 = nowMs();
 	m_lastNewModels = m_lastNewStreakMaterials = 0;
@@ -1720,21 +1833,6 @@ void GameWorld::advance(double delta)
 	refresh_views(dt * 1000.0);
 	const double tf = nowMs();
 	m_lastViewsMs = timing::spanMs(tf, tv);
-	if (m_liveFX)
-	{
-		// lane FX-2: the drawables' ParticleSysBone systems follow their states, then the particles step (30 Hz client steps inside FXPlayer) and redraw.
-		// SMOOTH-1: the effect player reads the live objects (attached systems, the queued logic effects' playback): only at a worker-idle point; the time of
-		// the render frames the worker was busy in is kept and stepped then
-		m_fxPendingDt = timing::sumMs(m_fxPendingDt, dt); // seconds: a plain sum through the timing facade (the audited file's float rule)
-		if (m_game->logicIdle())
-		{
-			LiveGameAudio::drainDeferredAudio(); // S-814: the logic's audio calls of the frames done (unit voices, fire sounds, Lua sounds), in call order
-			m_liveFX->flushPending();
-			m_liveFX->updateAttachedSystems();
-			m_fxPlayer->advance(m_fxPendingDt);
-			m_fxPendingDt = 0.0;
-		}
-	}
 	updateTreeTopple(dt); // lane SPELL-3
 	const double t2 = nowMs();
 	m_lastFxMs = timing::spanMs(t2, tf);
@@ -1756,16 +1854,35 @@ void GameWorld::advance(double delta)
 	m_lastAdvanceMs = timing::elapsedMs(t0);
 }
 
-// lane SPELL-3: the logic's tree events (TerrainTrees: Devastation's topple and the lumber taken) drive the falling trees of the static layer (TreeTopple);
-// the events are read at a worker-idle point, the fall is drawn every frame
-void GameWorld::updateTreeTopple(double dt)
+// lane RENDERWAIT-1: the render side's work that reads the live logic, at a point the logic is held (the client window, or single-threaded after the frames):
+// the logic's deferred audio calls, the object sounds, the effect player's logic part and the tree events. Skipped when the logic is not held (the worker is
+// inside a frame): the next held render frame does it, the effects' time is kept until then.
+void GameWorld::heldClientWork()
 {
-	if (!m_treeTopple || !m_game)
+	if (!m_game->logicHeld())
 	{
 		return;
 	}
-	if (m_game->logicIdle())
+	LiveGameAudio::drainDeferredAudio(); // S-814 (also without the effect player)
+	applyPendingScriptAudio(); // RENDERWAIT-1 r2: the script requests' sounds taken in render frames the logic was not held in
+	if (m_audio)
 	{
+		m_audio->update(); // AUDIO-2: the object ambient sounds follow the frame's states (SMOOTH-1: it reads the live game)
+	}
+	if (m_liveFX)
+	{
+		// lane FX-2: the drawables' ParticleSysBone systems follow their states, then the particles step (30 Hz client steps inside FXPlayer) and redraw.
+		// SMOOTH-1: the effect player reads the live objects (attached systems, the queued logic effects' playback): only while the logic is held; the time
+		// of the render frames the worker was busy in is kept and stepped then
+		LiveGameAudio::drainDeferredAudio(); // S-814: the logic's audio calls of the frames done (unit voices, fire sounds, Lua sounds), in call order
+		m_liveFX->flushPending();
+		m_liveFX->updateAttachedSystems();
+		m_fxPlayer->advance(m_fxPendingDt);
+	}
+	m_fxPendingDt = 0.0;
+	if (m_treeTopple)
+	{
+		// lane SPELL-3: the logic's tree events (TerrainTrees: Devastation's topple and the lumber taken) start the falls of the static layer's trees
 		const std::vector<TerrainTrees::Event> &events = m_game->logic().trees().events();
 		for (; m_treeEventsSeen < events.size(); ++m_treeEventsSeen)
 		{
@@ -1779,6 +1896,16 @@ void GameWorld::updateTreeTopple(double dt)
 				m_treeTopple->remove(e.clientId);
 			}
 		}
+	}
+}
+
+// lane SPELL-3: the logic's tree events (TerrainTrees: Devastation's topple and the lumber taken) drive the falling trees of the static layer (TreeTopple);
+// the events are read where the logic is held (heldClientWork), the fall is drawn every frame
+void GameWorld::updateTreeTopple(double dt)
+{
+	if (!m_treeTopple || !m_game)
+	{
+		return;
 	}
 	m_treeTopple->advance(dt);
 	if (m_fxPlayer && m_fxPlayer->playback())
@@ -3137,6 +3264,7 @@ Dictionary GameWorld::get_frame_timings() const
 		t["logic_wait_ms"] = m_game->blockingWaitMs();
 		t["extra_delay_ms"] = m_game->presentationExtraDelayMs(); // lane SMOOTH-2: the adaptive part of the presentation delay
 		t["logic_thread"] = m_game->logicThread();
+		t["contended_locks"] = (int64_t)m_game->contendedPublicationLocks(); // lane RENDERWAIT-1: main-thread locks that found the worker publishing
 	}
 	if (W3DInstancer *d = instancerOf(m_dynamicId))
 	{
@@ -3150,6 +3278,33 @@ Dictionary GameWorld::get_frame_timings() const
 		t["static_mapper_ms"] = st->get_stats()["mapper_ms"];
 	}
 	return t;
+}
+
+Array GameWorld::get_logic_wait_sites() const
+{
+	Array a;
+	if (!m_game)
+	{
+		return a;
+	}
+	for (const LiveGame::WaitSite &w : m_game->logicWaitSites())
+	{
+		Dictionary d;
+		d["site"] = toGodot(w.site);
+		d["count"] = (int64_t)w.count;
+		d["total_ms"] = w.totalMs;
+		d["worst_ms"] = w.worstMs;
+		a.push_back(d);
+	}
+	return a;
+}
+
+void GameWorld::reset_logic_wait_sites()
+{
+	if (m_game)
+	{
+		m_game->resetLogicWaitSites();
+	}
 }
 
 void GameWorld::set_render_interpolation(bool enabled)
@@ -3584,7 +3739,15 @@ Dictionary GameWorld::net_status() const
 	}
 	NetGameSession &s = *m_netSession;
 	r["frame"] = (int64_t)m_game->frame();
-	r["hash"] = (int64_t)m_game->logic().computeStateHash();
+	// lane RENDERWAIT-1: game.gd's overlay asks every render frame: the state hash is computed only where the logic is held (the client window, an idle
+	// worker), else the last one is shown again; "hash_frame" is the logic frame it belongs to (never a wait for the worker)
+	if (m_game->logicHeld())
+	{
+		m_netHashFrame = m_game->logic().getFrame();
+		m_netHash = m_game->logic().computeStateHash();
+	}
+	r["hash"] = (int64_t)m_netHash;
+	r["hash_frame"] = (int64_t)m_netHashFrame;
 	r["loaded"] = m_netLoaded;
 	if (m_netSpectating)
 	{
@@ -3957,11 +4120,11 @@ void GameWorld::net_finish()
 
 // ---- lane SPELL-2: the spell book screens -------------------------------------------------------------------------------------------------
 // SMOOTH-1 (S-810): the spell store model keeps the player and reads it live, so its calls wait for the logic worker first
-void GameWorld::waitSpellIdle()
+void GameWorld::waitSpellIdle(const char *file, int line)
 {
 	if (m_game)
 	{
-		m_game->waitIdle();
+		m_game->holdLogic(file, line); // lane RENDERWAIT-1: no wait inside the client window
 	}
 }
 

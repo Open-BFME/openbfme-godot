@@ -11,8 +11,8 @@
 //   S-081  numeric parity: the movers mix x87 and SSE (moveForward RW 0x5E586F) and call the CRT / x87
 //          trigonometry; the facade reproduces the operation order and precision, but sin / cos / atan2 come
 //          from the platform libm (SimMath.h) and no retail oracle compares full sequences.
-//   S-084  movers and cases not ported: HOVER, SHIP, GIANT_BIRD's rotateTowardsPosition branch (the GIANT_BIRD movers: LocomotorGiantBird.cpp), ScalesWalls look-ahead, ZAxisBehavior other
-//          than NO_Z_MOTIVE_FORCE and its layer / projectile / falling special cases, the HORDE formation
+//   S-084  movers and cases not ported (HOVER and SHIP: lane SHIP-1): GIANT_BIRD's rotateTowardsPosition branch (the GIANT_BIRD movers: LocomotorGiantBird.cpp), ScalesWalls look-ahead, ZAxisBehavior other
+//          than NO_Z_MOTIVE_FORCE, FLOATING_Z and SEA_LEVEL and their layer / projectile / falling special cases, the HORDE formation
 //          path nodes.
 
 #include "GameLogic/Locomotor.h"
@@ -50,7 +50,7 @@ int bitIndex(const char *const *names, const char *name)
 
 struct Bits
 {
-	int moving, walking, accelerate, decelerate, backingUp, turnLeft, turnRight, turnLeftHigh, turnRightHigh, emotionTerror, charging;
+	int moving, walking, accelerate, decelerate, backingUp, turnLeft, turnRight, turnLeftHigh, turnRightHigh, emotionTerror, charging, overWater;
 	int statusAttacking, statusLeashed, statusContesting, statusHordeMember;
 	Bits()
 		: moving(bitIndex(TheModelConditionNames, "MOVING"))
@@ -64,6 +64,7 @@ struct Bits
 		, turnRightHigh(bitIndex(TheModelConditionNames, "TURN_RIGHT_HIGH_SPEED"))
 		, emotionTerror(bitIndex(TheModelConditionNames, "EMOTION_TERROR"))
 		, charging(bitIndex(TheModelConditionNames, "CHARGING"))
+		, overWater(bitIndex(TheModelConditionNames, "OVER_WATER"))
 		, statusAttacking(bitIndex(TheObjectStatusNames, "IS_ATTACKING"))
 		, statusLeashed(bitIndex(TheObjectStatusNames, "LEASHED_RETURNING"))
 		, statusContesting(bitIndex(TheObjectStatusNames, "CONTESTING_BUILDING"))
@@ -155,6 +156,8 @@ Locomotor::Locomotor(const LocomotorTemplate *tmpl)
 	, m_closeEnoughDist(tmpl ? tmpl->getFinalOverride()->m_closeEnoughDist : 0.0f)
 	, m_matrix(LocomotorMatrix::identity())
 	, m_preferredHeight(tmpl ? tmpl->getFinalOverride()->m_preferredHeight : 0.0f) // lane FLY-1: RW 0x5E3DAA .. 0x5E3DB2 (template + 0x58 -> + 0x48)
+	, m_preferredAttackHeight(tmpl ? tmpl->getFinalOverride()->m_preferredAttackHeight : 0.0f) // lane SHIP-1: RW 0x5E3DB5 (template + 0x5C -> + 0x4C)
+	, m_preferredHeightDamping(tmpl ? tmpl->getFinalOverride()->m_preferredHeightDamping : 1.0f) // lane SHIP-1: RW 0x5E3DBD (template + 0x60 -> + 0x50)
 {
 	if (!m_template)
 	{
@@ -168,8 +171,8 @@ std::vector<std::string> Locomotor::allStops()
 		"S-081: locomotor numeric parity unproven: the movers mix x87 and SSE (moveForward RW 0x5E586F) and use the CRT / x87 sin, cos and atan2; "
 		"operation order and PC24 precision are reproduced through NumericState, the trigonometry is NumericState's deterministic double-double "
 		"(lane WIN-1: the same bits on every OS), not the retail CRT / x87 results.",
-		"S-084: locomotor cases not ported: HOVER and SHIP movers, the GIANT_BIRD branch of rotateTowardsPosition (the GIANT_BIRD movers are GiantBirdAIUpdate's, lane FLY-1), the ScalesWalls look-ahead (RW 0x5E8956-0x5E8FF8), "
-		"ZAxisBehavior other than NO_Z_MOTIVE_FORCE and the layer / projectile / falling special cases of RW 0x5E774A / 0x5E5785, "
+		"S-084: locomotor cases not ported: the GIANT_BIRD branch of rotateTowardsPosition (the GIANT_BIRD movers are GiantBirdAIUpdate's, lane FLY-1), the ScalesWalls look-ahead (RW 0x5E8956-0x5E8FF8), "
+		"ZAxisBehavior other than NO_Z_MOTIVE_FORCE, FLOATING_Z, SEA_LEVEL, SURFACE_RELATIVE_HEIGHT and ABSOLUTE_HEIGHT (the last three: lane SHIP-1; the stealth reveal of a climbing object, RW 0x5E7C0A, is not ported) and the layer / projectile / falling special cases of RW 0x5E774A / 0x5E5785, "
 		"and the HORDE mover's formation path nodes (types 2, 3, 7, 8; RW 0x5E6E20-0x5E7148).",
 		"S-1750: maintainCurrentPosition (RW 0x5E7CC7) is ported without its tail: the held position's z behaviour (RW 0x5E76AC on +0x08) with its "
 		"constant-calling result, the transform write (RW 0x70BA76) and the WINGS hold (RW 0x5E74C1) are not run; an idle unit's height and sleep follow "
@@ -1016,8 +1019,208 @@ void Locomotor::moveTowardsPositionOther(LocomotorHost &host, const Coord3D &goa
 	moveForward(host, goal, onPathDistToGoal, desiredSpeed);
 }
 
-// ---- handleBehaviorZ (RW 0x5E76AC): NO_Z_MOTIVE_FORCE only ------------------------------------------------------------------
-void Locomotor::handleBehaviorZ(LocomotorHost &host, const Coord3D &)
+// ---- calcPreferredHeight (RW 0x5E5D9A; lane SHIP-1) -------------------------------------------------------------------------------------
+// TARGET FACTS (RotWK game.dat, caveat S-001; tier B same-shape with BFME2 0x5E6532, no decomp source; read from the disassembly):
+//   PreferredAttackHeight (+ 0x4C) not above 0, or no AI (obj + 0x260): the preferred height (+ 0x48). Else d = RW 0x403111 of (goal - position) in 2D (z 0),
+//   stored float; above = z - surface (SSE); the current weapon RW 0x68B58C(0). A dead object (+ 0x458 bit 0): SPLATTED (obj + 0x118 bit 26) set when it is
+//   not and 0 >= above; the result 0. No weapon or CirclingRadius (template + 0x64) not above 0: state (+ 0x9C) 0, the preferred height. State 0: without
+//   flag 4, when CirclingRadius > d and the AI's slot 0x1BC answers true, state 1; the preferred height. State 1: m = min(d / CirclingRadius, 1);
+//   m x (preferred - attack) + attack; state 2 when the weapon's status (RW 0x6CDCE7) is not READY_TO_FIRE or the AI's slot 0x1BC answers false. State 2:
+//   m = min(d / CirclingRadius x 2, 1); (preferred - attack) x m + attack; state 0 once above >= the preferred height. Any other state: the preferred height.
+float Locomotor::calcPreferredHeight(LocomotorHost &host, const Coord3D &goal, float surfaceHeight)
+{
+	const LocomotorTemplate &t = *m_template;
+	if (!(m_preferredAttackHeight > 0.0f) || !host.hasAI())
+	{
+		return m_preferredHeight;
+	}
+	const Coord3D pos = host.getPosition();
+	const float d = (float)SimMath::length3d(SimMath::subf32(goal.x, pos.x), SimMath::subf32(goal.y, pos.y), 0.0f);
+	const float above = SimMath::subf32(pos.z, surfaceHeight);
+	const bool weapon = host.hasCurrentWeapon(); // RW 0x5E5E1E: RW 0x68B58C(0); its status is asked in state 1 alone (RW 0x5E5F36)
+	if (host.isEffectivelyDead())
+	{
+		if (!(0.0f < above))
+		{
+			const int splatted = bitIndex(TheModelConditionNames, "SPLATTED");
+			if (!host.testModelCondition(splatted))
+			{
+				host.setModelCondition(splatted, true);
+			}
+		}
+		return 0.0f; // RW 0xC1B594
+	}
+	if (!weapon || !(t.m_circlingRadius > 0.0f))
+	{
+		m_attackHeightState = 0;
+		return m_preferredHeight;
+	}
+	const float span = SimMath::subf32(m_preferredHeight, m_preferredAttackHeight);
+	switch (m_attackHeightState)
+	{
+	case 0:
+		if (!(m_flags & (unsigned)LOCOMOTOR_FLAG_BIT2) && t.m_circlingRadius > d && host.aiStateActive())
+		{
+			m_attackHeightState = 1;
+		}
+		return m_preferredHeight;
+	case 1:
+	{
+		float m = SimMath::divf32(d, t.m_circlingRadius);
+		if (m > 1.0f)
+		{
+			m = 1.0f;
+		}
+		const float v = SimMath::addf32(SimMath::mulf32(m, span), m_preferredAttackHeight);
+		if (host.currentWeaponStatusWriteBack() != 0 || !host.aiStateActive()) // RW 0x5E5F36 .. 0x5E5F4C: the status first, slot 0x1BC only when it is ready
+		{
+			m_attackHeightState = 2;
+		}
+		return v;
+	}
+	case 2:
+	{
+		float m = SimMath::mulf32(SimMath::divf32(d, t.m_circlingRadius), 2.0f);
+		if (m > 1.0f)
+		{
+			m = 1.0f;
+		}
+		const float v = SimMath::addf32(SimMath::mulf32(span, m), m_preferredAttackHeight);
+		if (!(above < m_preferredHeight))
+		{
+			m_attackHeightState = 0;
+		}
+		return v;
+	}
+	default:
+		return m_preferredHeight;
+	}
+}
+
+// ---- HOVER (RW 0x5E742E; lane SHIP-1) ------------------------------------------------------------------------------------------
+// TARGET FACTS (RotWK game.dat, caveat S-001; tier A with BFME2 0x5E7C4C, the decomp has no source for it; ZH Locomotor::moveTowardsPositionHover is the same
+// shape): the OTHER mover (RW 0x5E6835), then TheTerrainLogic vslot 0x4C (isUnderwater) at the object's position (obj + 0x38 / + 0x3C, the transform the OTHER
+// mover wrote); under water with flag 0x20 clear: flag 0x20 set and OVER_WATER (obj + 0x118 bit 5 = model condition 101) set when it is not; not under water
+// with flag 0x20 set: flag 0x20 cleared and OVER_WATER cleared when it is set (RW 0x68B53C after each change).
+void Locomotor::moveTowardsPositionHover(LocomotorHost &host, const Coord3D &goal, float onPathDistToGoal, float desiredSpeed)
+{
+	const Bits &b = bits();
+	moveTowardsPositionOther(host, goal, onPathDistToGoal, desiredSpeed);
+	const Coord3D p = host.getPosition();
+	if (host.isUnderwater(p.x, p.y, nullptr))
+	{
+		if (m_flags & LOCOMOTOR_FLAG_OVER_WATER)
+		{
+			return;
+		}
+		m_flags |= LOCOMOTOR_FLAG_OVER_WATER;
+		if (!host.testModelCondition(b.overWater))
+		{
+			host.setModelCondition(b.overWater, true);
+		}
+		return;
+	}
+	if (!(m_flags & LOCOMOTOR_FLAG_OVER_WATER))
+	{
+		return;
+	}
+	m_flags &= ~(unsigned)LOCOMOTOR_FLAG_OVER_WATER;
+	if (host.testModelCondition(b.overWater))
+	{
+		host.setModelCondition(b.overWater, false);
+	}
+}
+
+// ---- SHIP (RW 0x5E613F; lane SHIP-1) ------------------------------------------------------------------------------------------
+// TARGET FACTS (RotWK game.dat, caveat S-001; tier A with BFME2 0x5E68D7, no decomp source; read from the disassembly). The Wheels mover's shape (RW 0x5E83FD)
+// with three differences: the turn's slow-down has no quarter-speed branch, the speed factor is |rel| / (3.5 x the turn rate) capped at 0.9 (not |rel| x 4/pi
+// capped at 1), and a ship at a standstill (maximum speed 0) does nothing (no wheels-stopped notice):
+//   0x5E614E maxSpeed = RW 0x5E3F49 (stored float); desiredSpeed is lowered to it (x87 compare)
+//   0x5E6169 .. 0x5E61B5 angleToGoal = RW 0x441BF4(goal.y - y, goal.x - x) (SSE subtractions), rel = normalize(angleToGoal - angle) (RW 0x644FD0)
+//   0x5E61B8 .. 0x5E6220 backing = CanMoveBackwards (template + 0xD8 != 0); off when the 2D estimate (RW 0x403720) of the stored point (+0x14) less the position
+//     is above BackingUpDistanceMin (+0x140) and onPathDistToGoal is above BackingUpDistanceMax (+0x144)
+//   0x5E6224 c0 = the speed (+0x40)
+//   0x5E6230 .. 0x5E628D backing and |rel| > BackingUpAngle x pi (x87): BACKING_UP (obj + 0x11C 0x10000000) set when clear, flag 0x80 set; otherwise BACKING_UP
+//     cleared when set and flag 0x80 cleared
+//   0x5E6291 .. 0x5E62B5 flag 0x80: angleToGoal = normalize(angleToGoal - pi)
+//   0x5E62B9 .. 0x5E6308 the point 1000 (RW 0xBD4388) out along angleToGoal (fcos / fsin, x87 fmul and fadd), RW 0x5E60C7(obj, point, 0)
+//   0x5E630D .. 0x5E632D RW 0x5E40AD (getMaxAcceleration) >= c0 (fcomip, jc): rel x 2 (RW 0xBD889C)
+//   0x5E6332 maxSpeed > 0 (RW 0xC1B594): f = fabs(rel) / (3.5 (RW 0xD9E040, only this function reads it) x RW 0x5E372D) (x87, stored float), capped at 0.9
+//     (RW 0xBDE198); desiredSpeed = (1 - f) x desiredSpeed (SSE); BackingUpStopWhenTurning (+0x13C) with flag 0x80 and TURN_LEFT or TURN_RIGHT (obj + 0x11C bits
+//     5 / 6): desiredSpeed = 0; then moveForward (RW 0x5E586F)
+void Locomotor::moveTowardsPositionShip(LocomotorHost &host, const Coord3D &goal, float onPathDistToGoal, float desiredSpeed)
+{
+	const LocomotorTemplate &t = *m_template;
+	const Bits &b = bits();
+	const float maxSpeed = getMaxSpeedForCondition(host);
+	if (desiredSpeed > maxSpeed)
+	{
+		desiredSpeed = maxSpeed;
+	}
+	const float objAngle = host.getAngle();
+	const Coord3D pos = host.getPosition();
+	float angleToGoal = (float)SimMath::atan2d(SimMath::subf32(goal.y, pos.y), SimMath::subf32(goal.x, pos.x));
+	float rel = normalizeAngle(SimMath::subf32(angleToGoal, objAngle));
+
+	bool backing = t.m_canMoveBackwards != 0;
+	if (backing)
+	{
+		const float dist = approxLength2D(SimMath::subf32(m_preferredPoint.x, pos.x), SimMath::subf32(m_preferredPoint.y, pos.y));
+		if (dist > t.m_backingUpDistanceMin && onPathDistToGoal > t.m_backingUpDistanceMax)
+		{
+			backing = false;
+		}
+	}
+	const float c0 = m_speed;
+	if (backing && (double)fabsd(rel) > (double)NumericState::pc24MulD((double)t.m_backingUpAngle, (double)kPi))
+	{
+		if (!host.testModelCondition(b.backingUp))
+		{
+			host.setModelCondition(b.backingUp, true);
+		}
+		m_flags |= LOCOMOTOR_FLAG_BACKING_UP;
+	}
+	else
+	{
+		if (host.testModelCondition(b.backingUp))
+		{
+			host.setModelCondition(b.backingUp, false);
+		}
+		m_flags &= ~(unsigned)LOCOMOTOR_FLAG_BACKING_UP;
+	}
+	if (m_flags & LOCOMOTOR_FLAG_BACKING_UP)
+	{
+		angleToGoal = normalizeAngle(SimMath::subf32(angleToGoal, kPi));
+	}
+	Coord3D farPoint{ pos.x, pos.y, pos.z };
+	farPoint.x = NumericState::pc24AddD((double)NumericState::pc24MulD(SimMath::cosd(angleToGoal), 1000.0), (double)pos.x);
+	farPoint.y = NumericState::pc24AddD((double)NumericState::pc24MulD(SimMath::sind(angleToGoal), 1000.0), (double)pos.y);
+	rotateTowardsWrapper(host, farPoint, nullptr);
+
+	if (!(getMaxAcceleration(host) < c0))
+	{
+		rel = SimMath::mulf32(rel, 2.0f);
+	}
+	if (!(maxSpeed > 0.0f))
+	{
+		return;
+	}
+	const float turnRate = getMaxTurnRate(host);
+	float f = NumericState::pc24DivD((double)fabsd(rel), (double)NumericState::pc24Mul(3.5f, turnRate)); // RW 0xD9E040
+	if (f > 0.9f)
+	{
+		f = 0.9f; // RW 0xBDE198
+	}
+	desiredSpeed = SimMath::mulf32(SimMath::subf32(1.0f, f), desiredSpeed);
+	if (t.m_backingUpStopWhenTurning && (m_flags & LOCOMOTOR_FLAG_BACKING_UP) && (host.testModelCondition(b.turnLeft) || host.testModelCondition(b.turnRight)))
+	{
+		desiredSpeed = 0.0f;
+	}
+	moveForward(host, goal, onPathDistToGoal, desiredSpeed);
+}
+
+// ---- handleBehaviorZ (RW 0x5E76AC): NO_Z_MOTIVE_FORCE, FLOATING_Z, SEA_LEVEL ------------------------------------------------------------------
+void Locomotor::handleBehaviorZ(LocomotorHost &host, const Coord3D &goal)
 {
 	const LocomotorTemplate &t = *m_template;
 	int zAxis = t.m_zAxisBehavior;
@@ -1034,10 +1237,105 @@ void Locomotor::handleBehaviorZ(LocomotorHost &host, const Coord3D &)
 		noteStop(allStops()[1].c_str());
 		return;
 	}
+	if (zAxis == Z_SEA_LEVEL)
+	{
+		// lane SHIP-1, RW 0x5E781F-0x5E78D6 (case 1 of the table RW 0x5E7CA3): unless the object is DISABLED_HELD (obj + 0x1C8 bit 3), the height is the water's
+		// where standing water covers the matrix position (TheTerrainLogic vslot 0x4C), else the ground's (vslot 0x1C on the object's layer, as NO_Z_MOTIVE_FORCE's
+		// query); a SUBMARINE (template KindOf, + 0x11F bit 3) adds (speed / (maxSpeed + 0.1) + 1) x the preferred height (x87: fadd, fdivr, fadd, fmul, fadd), any
+		// other object the preferred height (SSE add); the matrix translation takes x, y and that height. The common tail (RW 0x5E7C40) follows.
+		Coord3D p{ m_matrix.m[0][3], m_matrix.m[1][3], m_matrix.m[2][3] }; // RW 0x5E3A5A
+		if (!host.isDisabledHeld())
+		{
+			float waterZ = 0.0f;
+			float h = host.isUnderwater(p.x, p.y, &waterZ) ? waterZ : host.groundHeightAt(p.x, p.y);
+			if (host.isKindOfSubmarine())
+			{
+				const float ratio = NumericState::pc24Div(m_speed, NumericState::pc24Add(getMaxSpeedForCondition(host), kTinyAngle)); // RW 0xBD83D4
+				h = NumericState::pc24Add(NumericState::pc24Mul(NumericState::pc24Add(ratio, 1.0f), m_preferredHeight), h);
+			}
+			else
+			{
+				h = SimMath::addf32(m_preferredHeight, h);
+			}
+			p.z = h;
+			m_matrix.m[0][3] = p.x;
+			m_matrix.m[1][3] = p.y;
+			m_matrix.m[2][3] = h;
+		}
+		const Coord3D cur = host.getPosition();
+		const Coord3D effective = host.hasPendingPosition() ? host.getPendingPosition() : cur;
+		host.setPendingPosition(Coord3D{ effective.x, effective.y, SimMath::subf32(SimMath::mulf32(p.z, 2.0f), cur.z) });
+		return;
+	}
+	if (zAxis == Z_SURFACE_RELATIVE_HEIGHT || zAxis == Z_ABSOLUTE_HEIGHT)
+	{
+		// lane SHIP-1, RW 0x5E7AF6 .. 0x5E7C3B (cases 2 and 3 of the table RW 0x5E7CA3): nothing while the preferred height (+ 0x48) is 0 and flag 8 (ZH
+		// PRECISE_Z_POS) is clear. The surface (RW 0x5E3960: the water's height under standing water, else the ground's) for SURFACE_RELATIVE_HEIGHT, 0 for
+		// ABSOLUTE_HEIGHT; the aim = RW 0x5E5D9A + the surface (x87 fadd, stored), or the goal's z with flag 8. The step: a dead object (+ 0x458 bit 0) GameData
+		// Gravity, else (((aim - z) x PreferredHeightDamping (+ 0x50) + z) - z) / (LOGICFRAMES_PER_SECOND (RW 0xD9F608, int 5) x 2.0) (SSE); a step other than 0
+		// moves the matrix to (x, y, z + step). A step above 0.5 (RW 0xBD869C) sets CLIMBING (obj + 0x118 bit 7) and reveals a stealthy object (RW 0x68FBD3 ->
+		// 0x7767A9: not ported, reported), else CLIMBING is cleared. The common tail (RW 0x5E7C40) follows.
+		Coord3D p{ m_matrix.m[0][3], m_matrix.m[1][3], m_matrix.m[2][3] }; // RW 0x5E3A5A
+		if (!(m_preferredHeight == 0.0f) || (m_flags & 0x8u))
+		{
+			float surface = 0.0f;
+			if (t.m_zAxisBehavior == Z_SURFACE_RELATIVE_HEIGHT)
+			{
+				float waterZ = 0.0f;
+				surface = host.isUnderwater(p.x, p.y, &waterZ) ? waterZ : host.groundHeightAt(p.x, p.y); // RW 0x5E3960 (vslot 0x4C, else vslot 0x18)
+			}
+			float aim = NumericState::pc24Add(calcPreferredHeight(host, goal, surface), surface);
+			if (m_flags & 0x8u)
+			{
+				aim = goal.z;
+			}
+			float step;
+			if (host.isEffectivelyDead())
+			{
+				step = host.gravity();
+			}
+			else
+			{
+				const float frames2 = SimMath::mulf32((float)LOGICFRAMES_PER_SECOND, 2.0f); // cvtsi2ss [0xD9F608], mulss RW 0xBD889C
+				step = SimMath::subf32(aim, p.z);
+				step = SimMath::mulf32(step, m_preferredHeightDamping);
+				step = SimMath::addf32(step, p.z);
+				step = SimMath::subf32(step, p.z);
+				step = SimMath::divf32(step, frames2);
+			}
+			if (!(step == 0.0f))
+			{
+				p.z = SimMath::addf32(step, p.z);
+				m_matrix.m[0][3] = p.x;
+				m_matrix.m[1][3] = p.y;
+				m_matrix.m[2][3] = p.z;
+			}
+			const int climbing = bitIndex(TheModelConditionNames, "CLIMBING");
+			if (step > 0.5f)
+			{
+				if (!host.testModelCondition(climbing))
+				{
+					host.setModelCondition(climbing, true);
+				}
+				if (host.hasStealthModule())
+				{
+					noteStop(allStops()[1].c_str()); // RW 0x5E7C0A: the stealth reveal of a climbing object is not ported
+				}
+			}
+			else if (host.testModelCondition(climbing))
+			{
+				host.setModelCondition(climbing, false);
+			}
+		}
+		const Coord3D cur = host.getPosition();
+		const Coord3D effective = host.hasPendingPosition() ? host.getPendingPosition() : cur;
+		host.setPendingPosition(Coord3D{ effective.x, effective.y, SimMath::subf32(SimMath::mulf32(p.z, 2.0f), cur.z) });
+		return;
+	}
 	if (zAxis != Z_NO_Z_MOTIVE_FORCE)
 	{
 		noteStop(allStops()[1].c_str());
-		throw std::logic_error("S-084: ZAxisBehavior other than NO_Z_MOTIVE_FORCE, FLOATING_Z and SCALING_WALLS is not ported");
+		throw std::logic_error("S-084: ZAxisBehavior other than NO_Z_MOTIVE_FORCE, FLOATING_Z, SEA_LEVEL, SURFACE_RELATIVE_HEIGHT, ABSOLUTE_HEIGHT and SCALING_WALLS is not ported");
 	}
 	Coord3D pos{ m_matrix.m[0][3], m_matrix.m[1][3], m_matrix.m[2][3] }; // RW 0x5E3A5A
 	if (!host.zMotionSuppressed())
@@ -1251,9 +1549,11 @@ void Locomotor::locomotorMoveTowardsPosition(LocomotorHost &host, const Coord3D 
 	case LOCO_GIANT_BIRD:
 		break; // RW 0x5E9180: the table entry skips every mover
 	case LOCO_HOVER:
+		moveTowardsPositionHover(host, goal, onPathDistToGoal, desiredSpeed); // RW 0x5E90E3 (lane SHIP-1)
+		break;
 	case LOCO_SHIP:
-		noteStop(allStops()[1].c_str());
-		throw std::logic_error("S-084: HOVER and SHIP locomotor movers are not ported");
+		moveTowardsPositionShip(host, goal, onPathDistToGoal, desiredSpeed); // RW 0x5E911A (lane SHIP-1)
+		break;
 	default:
 		moveTowardsPositionOther(host, goal, onPathDistToGoal, desiredSpeed); // RW 0x5E9168
 		break;
@@ -1299,6 +1599,10 @@ void Locomotor::crc(StateHasher &h) const
 	h.addFloat(m_maintainPosition.x); // lane EXIT-1
 	h.addFloat(m_maintainPosition.y);
 	h.addFloat(m_maintainPosition.z);
+	if (m_template->m_zAxisBehavior == Z_SURFACE_RELATIVE_HEIGHT || m_template->m_zAxisBehavior == Z_ABSOLUTE_HEIGHT)
+	{
+		h.addI32(m_attackHeightState); // lane SHIP-1: hashed for these locomotors alone (every other game's hash is unchanged)
+	}
 	if (m_template->m_appearance == LOCO_GIANT_BIRD)
 	{
 		// lane FLY-1: the fields only the GIANT_BIRD movers write (hashed for those locomotors alone: every other game's hash is unchanged)

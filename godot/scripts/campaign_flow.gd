@@ -181,7 +181,9 @@ func _on_movie_request(title: String) -> void:
 func tick() -> void:
 	if not active or world == null:
 		return
-	if auto_win:
+	# lane RENDERWAIT-1: the auto-win harness reads and changes the live logic: only in a render frame that holds it (never a wait for the logic worker);
+	# campaign_status answers "not ended" in the others. The teardown after the end is a one-off, not a per-frame read
+	if auto_win and world.is_logic_held():
 		_auto_win_tick()
 	var st: Dictionary = world.campaign_status()
 	if not st.get("ended", false):

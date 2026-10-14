@@ -169,7 +169,8 @@ func _game_over() -> bool:
 # ---- lane QA-2: the motion invariants --------------------------------------------------------------------------------------------------------------------
 
 func _process(_delta: float) -> void:
-	if is_instance_valid(_world) and _world.get_frame() > 0:
+	# lane RENDERWAIT-1: the probe reads the live logic: only in a render frame that holds it (never a wait for the logic worker)
+	if is_instance_valid(_world) and _world.is_logic_held() and _world.get_frame() > 0:
 		_probe_motion()
 
 

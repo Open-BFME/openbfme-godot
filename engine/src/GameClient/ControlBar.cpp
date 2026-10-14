@@ -321,6 +321,31 @@ ButtonState ControlBar::evaluate(const CommandButton &b, Object &obj)
 			}
 			return sp->isReadyForDisplay() ? ButtonState::Enabled : ButtonState::NotReady;
 		}
+		case GUI_COMMAND_CASTLE_UNPACK:
+		case GUI_COMMAND_CASTLE_UNPACK_EXPLICIT_OBJECT:
+		{
+			// lane BACKLOG2: RW 0x942733 cases 33 (RW 0x942CA9) and 50 (RW 0x942D1C): no castle module (or, for the explicit one, no template) hides (3); so do
+			// canUnpack(0) (RW 0x7983E3) and isPlayerAllowedToPackOrUnpack(the controller, 0) (RW 0x79A472); the price (RW 0x79969F, the explicit template's
+			// RW 0x797B6D) not covered: cannot afford (6); the readiness (RW 0x797EF9: 1 - timer / UnpackDelayTime) below 1: not ready (5); else active (2)
+			const CastleBehavior *castle = dynamic_cast<const CastleBehavior *>(obj.findModule("CastleBehavior"));
+			const ThingTemplate *tt = b.m_command == GUI_COMMAND_CASTLE_UNPACK_EXPLICIT_OBJECT ? b.getThingTemplate() : nullptr;
+			if (!castle || (b.m_command == GUI_COMMAND_CASTLE_UNPACK_EXPLICIT_OBJECT && !tt) || !castle->canUnpack(false) || !castle->isPlayerAllowedToPackOrUnpack(player))
+			{
+				return ButtonState::Hidden;
+			}
+			const bool afford = tt ? castle->canAffordUnpackOf(player, tt) : castle->canAffordUnpack(player);
+			if (!afford)
+			{
+				return ButtonState::CantAfford;
+			}
+			return castle->unpackReadiness() < 1.0f ? ButtonState::NotReady : ButtonState::Active;
+		}
+		case GUI_COMMAND_CASTLE_PACK:
+		{
+			// lane BACKLOG2: RW 0x942733 case 34 (RW 0x942C71): unpacked (RW 0x797B63) and allowed (RW 0x79A472): active (2), else hidden (3)
+			const CastleBehavior *castle = dynamic_cast<const CastleBehavior *>(obj.findModule("CastleBehavior"));
+			return castle && castle->isUnpacked() && castle->isPlayerAllowedToPackOrUnpack(player) ? ButtonState::Active : ButtonState::Hidden;
+		}
 		default:
 			return ButtonState::Restricted;
 	}

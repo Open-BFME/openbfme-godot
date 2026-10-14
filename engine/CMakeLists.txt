@@ -174,6 +174,9 @@ include(cmake/FactC.cmake)      # FACT-C: the Goblins / Angmar content through t
 include(cmake/Bugs1.cmake)      # BUGS-1: backlog bugs (production exits, hero requests; OPENBFME_BUGS1_TESTS)
 include(cmake/Save2.cmake)      # SAVE-2: the command-log save (OPENBFME_SAVE2_CLIENT_SOURCES / _TESTS)
 include(cmake/Fly1.cmake)       # FLY-1: the GIANT_BIRD flyers (appends to OPENBFME_SIM_SOURCES; OPENBFME_FLY1_TESTS)
+include(cmake/Ship1.cmake)      # SHIP-1: ships and hover units (OPENBFME_SHIP1_TESTS)
+include(cmake/RenderWait1.cmake) # RENDERWAIT-1: the render never waits on the logic worker (OPENBFME_RENDERWAIT1_TESTS)
+include(cmake/Backlog2.cmake)   # BACKLOG2: castle / camp / construction ports (appends to OPENBFME_SIM_SOURCES; OPENBFME_BACKLOG2_TESTS)
 add_library(openbfme_core STATIC
     ${OPENBFME_PLAY2_SOURCES}
     ${OPENBFME_APT_SOURCES}
@@ -617,6 +620,9 @@ add_executable(openbfme_tests
     ${OPENBFME_FACTC_TESTS}
     ${OPENBFME_BUGS1_TESTS}
     ${OPENBFME_FLY1_TESTS}
+    ${OPENBFME_SHIP1_TESTS}
+    ${OPENBFME_RENDERWAIT1_TESTS}
+    ${OPENBFME_BACKLOG2_TESTS}
     tests/test_main.cpp
     tests/test_big_archive.cpp
     tests/test_archive_order.cpp

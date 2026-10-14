@@ -119,7 +119,7 @@ Object::Object(GameLogic &logic, const ThingTemplate *tt, const ObjectStatusMask
 		{
 			m->onObjectCreated();
 		}
-		// RW 0x69A66D: the radar (not ported, S-142)
+		// RW 0x69A66D: the radar (Radar::addObject RW 0x6D9042): client state; RADAR-1's radar applies its rules to the live objects at every draw (S-142)
 		logic.registerObject(this); // RW 0x69A673 .. 0x69A67A
 		logic.friend_objectEnteredWorld(*this); // RW 0x69A6C6: the radar / script world / partition entry of the Object (a seam, S-142)
 	}

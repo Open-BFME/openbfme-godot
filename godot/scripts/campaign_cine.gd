@@ -31,6 +31,7 @@ var control_bar_hook := Callable() # lane CAMP-2: HideControlBar / ShowControlBa
 
 
 func setup(w: Node3D, cam: Camera3D, start: Vector3, ui_parent: Node, audio: Node = null) -> void:
+	process_priority = -50 # lane RENDERWAIT-1 r2: before GameWorld's process, inside the render frame's client window
 	_audio = audio
 	world = w
 	camera = cam
@@ -81,7 +82,11 @@ func setup(w: Node3D, cam: Camera3D, start: Vector3, ui_parent: Node, audio: Nod
 func _process(delta: float) -> void:
 	if world == null:
 		return
-	_drive()
+	# lane RENDERWAIT-1 r2 (Sol r1 #2): the live reads of this function (the test drives, the terrain's height under the script's target, a drive's
+	# follow) happen only in a render frame that holds the logic; the script requests, their camera and the followed object come from published data
+	var held: bool = world.is_logic_held()
+	if held:
+		_drive()
 	for r in world.take_script_requests():
 		var ps: Array = []
 		for p in r.params:
@@ -98,10 +103,10 @@ func _process(delta: float) -> void:
 				control_bar_hook.call(false)
 	var st: Dictionary = world.update_script_view(delta * 1000.0, {"x": target.x, "y": target.y, "z": target.z, "angle": angle})
 	if st.has_target and (_look.is_empty() or st.moving): # a drive's follow (lane SCRIPT-3) holds the camera between the script's moves
-		target = Vector3(st.x, st.y, world.get_ground_height(st.x, st.y))
+		target = Vector3(st.x, st.y, world.get_ground_height(st.x, st.y) if held else target.z) # the height follows in the next held frame
 	if st.has_angle:
 		angle = st.angle
-	if not st.moving:
+	if not st.moving and held:
 		_look_at_now() # lane SCRIPT-3: a drive's follow between the script's own camera moves
 	# ZOOM_CAMERA / PITCH_CAMERA: factors of the default framing (S-1182)
 	distance = _base_distance * float(st.get("zoom", 1.0))
@@ -126,7 +131,7 @@ func _process(delta: float) -> void:
 	_caption.size = Vector2(size.x * 0.8, 100.0)
 	_status.visible = dev_overlay # lane CAMP-2: developer text never shows in the real game (the owner saw "frame 90   input disabled")
 	_objectives.visible = dev_overlay
-	_status.text = "frame %d   %s%s" % [world.get_frame(), "camera moving   " if st.moving else "", "input disabled" if st.input_disabled else ""] if dev_overlay else ""
+	_status.text = "frame %d   %s%s" % [world.get_presented_frame(), "camera moving   " if st.moving else "", "input disabled" if st.input_disabled else ""] if dev_overlay else ""
 	_status.position = Vector2(12, bar + 8.0)
 	_note.text = st.get("notification_text", "")
 	_note.position = Vector2(size.x * 0.15, bar + 40.0)

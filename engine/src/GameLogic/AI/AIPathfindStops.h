@@ -14,6 +14,10 @@ const char *const kSlopeAndConfig =
 	"S-160 slope limits are not applied (RW SlopeLimits parser 0x63F3BF is a bare ret, cell bits 19-20 are always 0) and the AIData / GameData values come from a text scan of the INI files";
 const char *const kRivers =
 	"S-160 isUnderwater: water polygons are the map's StandingWaterAreas with the retail point test (RW 0x70E911); whether river areas also enter the water list RW 0x681F0A walks (TerrainLogic+0x50) is not determined: river areas are not water cells";
+// lane SHIP-1: the shore spot's cell walk (RW 0x6E9B92)
+const char *const kShoreScanStaleEdge =
+	"S-4161 the shore spot's cell walk (RW 0x6E9B92) set its backward edge over 0 rows (the top corner's neighbour on the top row): RW keeps that edge's stale stack x / step "
+	"for the first row, the port starts it at 0 (INFERENCE)";
 // S-161 layers
 const char *const kLayers =
 	"S-161 only the ground layer exists: bridge, wall and ladder layers, portal / waypoint path nodes (RW 0x6F5547, 0x6F6286) and layer transitions are not modelled, "
