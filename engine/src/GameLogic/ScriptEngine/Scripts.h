@@ -123,8 +123,18 @@ struct ScriptsPlayersEntry
 };
 
 // One PlayerScriptsList chunk: one ScriptList per side, in SidesList order.
+// Move-only, declared: the script tree owns its nodes through unique_ptr, but std::vector's copy
+// constructor is not constrained, so without the deleted copy the type traits report a holder
+// (LoadedMap) as copyable. MSVC's std::map move is not noexcept, so a std::vector of such a holder
+// then picks the copy on reallocation and fails to compile.
 struct PlayerScriptsList
 {
+	PlayerScriptsList() = default;
+	PlayerScriptsList(PlayerScriptsList &&) = default;
+	PlayerScriptsList &operator=(PlayerScriptsList &&) = default;
+	PlayerScriptsList(const PlayerScriptsList &) = delete;
+	PlayerScriptsList &operator=(const PlayerScriptsList &) = delete;
+
 	int version = 0;
 	std::vector<ScriptList> lists;
 };

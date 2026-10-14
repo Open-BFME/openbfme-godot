@@ -24,7 +24,7 @@
     },
     "hash_driver": {
       "exe": "build/hash_driver.exe",
-      "inputs": ["hash_driver.cpp", "build.bat", "../../engine/src/Common", "../../engine/src/Libraries/file", "../../engine/src/Libraries/Source/Apt"]
+      "inputs": ["hash_driver.cpp", "build.bat", "../../engine/src"]
     }
   }
 }

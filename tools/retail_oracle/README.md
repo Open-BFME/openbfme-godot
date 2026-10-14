@@ -19,6 +19,7 @@ runtime.
     tools\retail_oracle\run_tests.bat                   :: both
 
 The top-level `build.bat` runs this script after the engine build, so a normal build keeps every helper current.
+`hash_driver` links `engine\build\openbfme_core.lib`, so the repo-root `build.bat` must have run first.
 It is incremental: `helpers.json` lists each helper exe and the sources it is built from (the engine sources the
 drivers link included), and `helper_stale.ps1` rebuilds only a helper that is missing or older than an input
 (`HELPERS_FORCE=1` rebuilds all; nothing stale takes about 1 s, a full helper build about 30 s). The tests apply the same
