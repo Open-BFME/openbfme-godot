@@ -428,6 +428,10 @@ void ActiveBody::attemptDamage(DamageInfo &info)
 			}
 		}
 		++logic.combat().counters().damageApplications;
+		if (const CombatState::DamageTrace &trace = logic.combat().damageTrace())
+		{
+			trace(obj, info.m_input.m_sourceID, info.m_output.m_actualDamageDealt, info.m_output.m_actualDamageClipped); // lane SHIP-1: a test observer
+		}
 		// ZH: the damage modules hear of the hit (RW 0x79B757 CastleMemberBehavior::onDamage reads the amount dealt)
 		if (info.m_output.m_actualDamageDealt > 0.0f)
 		{

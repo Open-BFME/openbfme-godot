@@ -167,10 +167,12 @@ worker to finish its frame (the LiveGame accessors wait for the worker), and
 the logic itself runs below its clock (3.3 of 5 frames a second). At 40k the
 main thread's CPU is 166 ms and the frame 642 ms.
 
-**Finding: today the render does wait on the logic.** "The render never waits
-on the logic" is a goal, not the state. Its fix (no waits on the worker from
-the main thread, the presentation fed only by published snapshots) belongs
-with PATHPERF-1's item 4 and is a prerequisite of every fps target below.
+**Finding (UBER-1): the render did wait on the logic.** RENDERWAIT-1's wait
+log (below) named the one site: the spell ring's per-frame HUD query
+(`spell_target_ring.gd` -> `get_spellbook_state` -> `InGameHud::enterContext`
+-> `LiveGame::waitIdle`), 12.8 s of waits in the 20 s window. Since
+RENDERWAIT-1 the render thread no longer waits for a logic frame; see "The
+render and the logic".
 
 Where the logic frame goes (perf on the lane machine, one thread, Faithful, 20k
 units, the first 12 frames after the order, share of the logic frame):
@@ -208,10 +210,76 @@ water, particles, shroud and the HUD.
 SMOOTH-1 runs the logic on its own worker thread (`LiveGame` `logicThread`)
 and the presentation interpolates behind a presentation delay. When a logic
 frame is late, the presented time stops at the end of the last completed frame
-(S-1140). The design keeps the render loop going, but the game gate above shows
-the main thread still waits on the worker in a big battle (about 110 ms of a
-164 ms frame at 10k). Removing those waits comes first (with PATHPERF-1);
-making the logic finish inside its tick is Uber's other half.
+(S-1140).
+
+**RENDERWAIT-1: the render never waits on a logic frame.**
+
+- **The wait log.** Every wait of a non-worker thread on the logic worker is
+  logged by site: each `LiveGame` accessor passes its caller's file and line,
+  the device layer adds the GDScript caller (or the native offsets of an
+  engine callback), and contended locks of the publication mutex are timed.
+  `GameWorld.get_logic_wait_sites()`; `--perf` prints `GAME PERF WAIT` lines
+  per 5 s window, the Uber battle `UBER1 wait site` lines.
+- **The client window.** The render thread reads and commands the live logic
+  only in its render frame's client window: from SceneTree `process_frame`
+  until `LiveGame::advance` has queued the frame's logic frames (at the latest
+  `frame_pre_draw`), and only while the worker is between frames (it starts
+  no frame while the window is open). That covers the HUD's update and queued
+  input, its movie presses, the audio, the effects' logic part, the tree
+  events and the per-frame scripts. A render frame that finds the worker
+  inside a frame skips that work; the worker holds after its frame (at most
+  50 ms) for the next render frame's window. The accessors return at once in
+  the window. Per-frame scripts consult `GameWorld.is_logic_held()` before a
+  live read (the pytest `tools/perf3/test_renderwait1_per_frame.py` enforces
+  it). The logic's frames run whole, in order, with the same commands; only
+  their start times move (`test_renderwait1.cpp` pins the state hash against
+  the single-threaded run).
+- **Input keeps its frame (review r2).** Commands issued in a window while
+  older frames are still queued wait as pending input and run in the first
+  frame queued after them, exactly as when every accessor drained the worker
+  first; in a driver game (recording, lockstep) the input is pumped only with
+  the worker idle and no batch is acquired until then. The campaign's script
+  presentation (`campaign_cine.gd`) reads published data (the followed
+  object, the script requests) and defers its live reads and the requests'
+  audio to a held frame.
+- **What is not bounded.** While a window is open the worker cannot start a
+  frame: the render thread is reading the live logic. The window lasts for
+  the render thread's work before `advance` (25.6 ms at most in the 10k
+  battle, 62.7 ms in a 4-player QA game with the scripted player); a window
+  no advance ended is ended at the next render frame's start. Stop S-4280.
+- **What it costs.** When the logic keeps its clock, nothing (the worker was
+  idle anyway: 1.5 ms held per 5 s in the 4-player skirmish). When it falls
+  behind, the HUD's live work runs once per logic frame instead of every
+  render frame (stop S-4280), and the worker loses the wait for the next
+  render frame plus the window: 41.5 ms per logic frame at 25 fps rendering
+  in the 10k battle (less at higher render rates: 12 ms per frame of 250 ms in
+  the 60 Hz doctest).
+
+The 10k Uber battle in the real client on the Deck (1280x800, vsync off, 20 s
+window):
+
+| | Before (UBER-1's site) | After |
+|---|---|---|
+| Render-side waits on the worker | 78 waits, 12,832 ms | 0 (a few contended publication locks, 0.1-0.2 ms) |
+| Average fps / 1% low / worst frame | 7.2 / 3.5 / 290 ms | 30.5 / 15.7 / 122 ms (run 1); 24.5 / 11.4 / 180 ms (run 2, other lanes busier) |
+| Logic frames per second | 3.88 | 4.65 (run 1); 3.20 (run 2) |
+| Back-to-back, both under other lanes' builds (load ~12) | 2.9 fps, logic 1.92/s | 13.6 fps, logic 1.99/s |
+
+Per second of the window, render frames against logic frames (the worker's
+frames take 180-370 ms; before and run 1):
+
+| Second | Before: render frames, worst frame | After: render frames, worst frame | Logic frames (before / after) |
+|---|---|---|---|
+| 2 | 7, 273 ms | 30, 66 ms | 4 / 4 |
+| 6 | 9, 203 ms | 30, 59 ms | 5 / 4 |
+| 10 | 8, 215 ms | 31, 64 ms | 4 / 4 |
+| 14 | 7, 226 ms | 31, 61 ms | 4 / 3 |
+| 18 | 8, 221 ms | 32, 57 ms | 4 / 3 |
+
+Before, every render frame lasted as long as a logic frame; after, the render
+runs at its own rate (here the 10k soldiers' CPU work bounds it) while the
+logic frames take 200-370 ms. Making the logic finish inside its tick is
+Uber's other half.
 
 ## The budget at 40,000 units
 

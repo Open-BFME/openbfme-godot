@@ -18,14 +18,74 @@ double secondsSince(const std::chrono::steady_clock::time_point &t0)
 {
 	return std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
 }
+
+// lane RENDERWAIT-1: "LiveGame.cpp:671" (the source file's name without its directory, which differs between machines)
+std::string waitSiteName(const char *file, int line)
+{
+	std::string f = file ? file : "?";
+	const size_t slash = f.find_last_of("/\\");
+	if (slash != std::string::npos)
+	{
+		f.erase(0, slash + 1);
+	}
+	return f + ":" + std::to_string(line);
+}
 } // namespace
+
+void LiveGame::noteWait(const std::string &site, double ms) const
+{
+	for (WaitSite &w : m_waitSites)
+	{
+		if (w.site == site)
+		{
+			++w.count;
+			w.totalMs += ms;
+			w.worstMs = std::max(w.worstMs, ms);
+			return;
+		}
+	}
+	m_waitSites.push_back({ site, 1, ms, ms });
+}
+
+std::unique_lock<std::mutex> LiveGame::lockPublication(const char *site) const
+{
+	std::unique_lock<std::mutex> lock(m_pubMutex, std::try_to_lock);
+	if (!lock.owns_lock())
+	{
+		// the worker holds it (publishing a frame, taking a work item): a wait, however short, so it is logged
+		const auto t0 = std::chrono::steady_clock::now();
+		lock.lock();
+		const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+		++m_contendedLocks;
+		noteWait(std::string("publication mutex (") + site + ")", ms);
+	}
+	return lock;
+}
+
+std::vector<LiveGame::WaitSite> LiveGame::logicWaitSites() const
+{
+	std::vector<WaitSite> out;
+	{
+		std::lock_guard<std::mutex> lock(m_pubMutex);
+		out = m_waitSites;
+	}
+	std::stable_sort(out.begin(), out.end(), [](const WaitSite &a, const WaitSite &b) { return a.totalMs > b.totalMs; });
+	return out;
+}
+
+void LiveGame::resetLogicWaitSites()
+{
+	std::lock_guard<std::mutex> lock(m_pubMutex);
+	m_waitSites.clear();
+	m_windowStats.maxWindowMs = 0.0; // the longest client window is per measurement window too
+}
 
 void LiveGame::present(double seconds)
 {
 	// the render side (the caller's thread): take what was published, apply the events of the presented frames in order, pose from one snapshot
 	std::shared_ptr<const LogicSnapshot> latest, prev;
 	{
-		std::lock_guard<std::mutex> lock(m_pubMutex);
+		const std::unique_lock<std::mutex> lock = lockPublication("present");
 		latest = m_published;
 		prev = m_publishedPrev;
 		for (ClientEvent &e : m_publishedEvents)
@@ -34,7 +94,7 @@ void LiveGame::present(double seconds)
 		}
 		m_publishedEvents.clear();
 		// events the main thread caused between frames (createObject, a destroy) when the logic is idle: the recorder is not in use by anyone else
-		if (!m_threaded || (m_work.empty() && !m_running))
+		if (!m_threaded || m_windowOpen || (m_work.empty() && !m_running)) // RENDERWAIT-1: or held for the client window
 		{
 			for (ClientEvent &e : m_recorder->take(false)) // lane ANIM-1: the flushes are the published frame's (ClientEventRecorder::take)
 			{
@@ -197,7 +257,7 @@ void LiveGame::refreshClient(double elapsedMs, double alpha)
 
 UnsignedInt LiveGame::frame() const
 {
-	std::lock_guard<std::mutex> lock(m_pubMutex);
+	const std::unique_lock<std::mutex> lock = lockPublication("frame");
 	return m_published ? m_published->frame : 0;
 }
 
@@ -218,19 +278,19 @@ int LiveGame::presentedObjectPosition(ObjectID id, Coord3D &position) const
 
 std::shared_ptr<const LogicSnapshot> LiveGame::latestSnapshot() const
 {
-	std::lock_guard<std::mutex> lock(m_pubMutex);
+	const std::unique_lock<std::mutex> lock = lockPublication("latestSnapshot");
 	return m_published;
 }
 
 std::vector<std::pair<UnsignedInt, std::uint32_t>> LiveGame::frameHashes() const
 {
-	std::lock_guard<std::mutex> lock(m_pubMutex);
+	const std::unique_lock<std::mutex> lock = lockPublication("frameHashes");
 	return m_frameHashes;
 }
 
 size_t LiveGame::pendingClientEvents() const
 {
-	std::lock_guard<std::mutex> lock(m_pubMutex);
+	const std::unique_lock<std::mutex> lock = lockPublication("pendingClientEvents");
 	return m_publishedEvents.size() + m_heldEvents.size();
 }
 
@@ -240,28 +300,184 @@ bool LiveGame::logicIdle() const
 	{
 		return true;
 	}
-	std::lock_guard<std::mutex> lock(m_pubMutex);
+	const std::unique_lock<std::mutex> lock = lockPublication("logicIdle");
 	return m_work.empty() && !m_running;
 }
 
-void LiveGame::waitIdle() const
+void LiveGame::waitIdle(const char *file, int line) const
 {
 	if (!m_threaded || std::this_thread::get_id() == m_workerId.load())
 	{
 		return;
 	}
 	std::unique_lock<std::mutex> lock(m_pubMutex);
+	// lane RENDERWAIT-1: the caller's own client window would keep the worker from the frames waited for: it is lifted for the wait and taken again once
+	// the worker is idle (a wait for every requested frame: the protocol owner's drain, a switch of the worker, a save)
+	const bool liftWindow = m_windowOpen && std::this_thread::get_id() == m_windowThread;
+	if (liftWindow)
+	{
+		const_cast<LiveGame *>(this)->stashHeldCommandsLocked(); // r2: the window's input does not run in the frames waited for
+		m_windowOpen = false;
+		m_pubCv.notify_all();
+	}
 	if (!(m_work.empty() && !m_running) && !m_workerError)
 	{
-		// lane PATHPERF-1: a wait that blocks (the worker is running a frame) is counted with its wall time: the render thread must not do this every frame
+		// lane PATHPERF-1: a wait that blocks (the worker is running a frame) is counted with its wall time: the render thread must not do this every frame.
+		// RENDERWAIT-1: and logged by its site (the script caller is named before the wait, while the caller's stack is the script's)
+		std::string site = waitSiteName(file, line);
+		if (m_waitSiteDetail)
+		{
+			lock.unlock();
+			const std::string detail = m_waitSiteDetail();
+			lock.lock();
+			if (!detail.empty())
+			{
+				site += " <- " + detail;
+			}
+		}
 		const auto t0 = std::chrono::steady_clock::now();
 		m_pubCv.wait(lock, [this] { return (m_work.empty() && !m_running) || m_workerError; });
+		const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
 		++m_blockingWaits;
-		m_blockingWaitMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+		m_blockingWaitMs += ms;
+		noteWait(site, ms);
+	}
+	if (liftWindow)
+	{
+		m_windowOpen = true; // the worker is idle: nothing runs until the window ends
 	}
 	if (m_workerError)
 	{
 		std::rethrow_exception(m_workerError);
+	}
+}
+
+void LiveGame::holdLogic(const char *file, int line) const
+{
+	if (m_windowOpen && std::this_thread::get_id() == m_windowThread)
+	{
+		return; // the worker holds between frames for this window
+	}
+	waitIdle(file, line);
+}
+
+bool LiveGame::logicHeld() const
+{
+	if (!m_threaded || (m_windowOpen && std::this_thread::get_id() == m_windowThread))
+	{
+		return true;
+	}
+	return logicIdle();
+}
+
+bool LiveGame::beginClientWindow()
+{
+	if (!m_threaded)
+	{
+		return true; // the frames run on this thread: the logic is always held between them
+	}
+	const std::unique_lock<std::mutex> lock = lockPublication("beginClientWindow");
+	if (m_windowOpen)
+	{
+		// r2 (Sol r1 #4): the previous render frame's window was never ended (no advance ran): it ends here, and this render frame gets none, so a
+		// window never outlives its render frame and the worker can start between two of them
+		stashHeldCommandsLocked();
+		m_windowOpen = false;
+		const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - m_windowStart).count();
+		m_windowStats.windowMs += ms;
+		m_windowStats.maxWindowMs = std::max(m_windowStats.maxWindowMs, ms);
+		++m_windowStats.unended;
+		m_pubCv.notify_all();
+		return false;
+	}
+	if (m_running)
+	{
+		// inside a frame: no window this render frame; the worker holds after the frame for the next one
+		m_windowWanted = true;
+		++m_windowStats.missed;
+		return false;
+	}
+	m_windowOpen = true;
+	m_windowWanted = false;
+	m_windowThread = std::this_thread::get_id();
+	m_windowStart = std::chrono::steady_clock::now();
+	++m_windowStats.opened;
+	return true;
+}
+
+void LiveGame::endClientWindow()
+{
+	{
+		const std::unique_lock<std::mutex> lock = lockPublication("endClientWindow");
+		if (!m_windowOpen)
+		{
+			return;
+		}
+		stashHeldCommandsLocked(); // r2: before a queued frame may run
+		m_windowOpen = false;
+		const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - m_windowStart).count();
+		m_windowStats.windowMs += ms;
+		m_windowStats.maxWindowMs = std::max(m_windowStats.maxWindowMs, ms);
+	}
+	m_pubCv.notify_all();
+}
+
+void LiveGame::endWindowForPresent()
+{
+	if (!m_windowOpen || std::this_thread::get_id() != m_windowThread)
+	{
+		return;
+	}
+	{
+		// the client events the render thread caused in the window (createObject, a destroy): the recorder is not in use by the held worker
+		const std::unique_lock<std::mutex> lock = lockPublication("endWindowForPresent");
+		for (ClientEvent &e : m_publishedEvents) // the frames' events first, as present() orders them
+		{
+			m_heldEvents.push_back(std::move(e));
+		}
+		m_publishedEvents.clear();
+		for (ClientEvent &e : m_recorder->take(false))
+		{
+			m_heldEvents.push_back(std::move(e));
+		}
+	}
+	endClientWindow();
+}
+
+void LiveGame::setClientWindowParkMs(double ms)
+{
+	const std::unique_lock<std::mutex> lock = lockPublication("setClientWindowParkMs");
+	m_parkMs = ms < 0.0 ? 0.0 : ms;
+}
+
+LiveGame::ClientWindowStats LiveGame::clientWindowStats() const
+{
+	const std::unique_lock<std::mutex> lock = lockPublication("clientWindowStats");
+	ClientWindowStats s = m_windowStats;
+	s.inputHolds = m_inputHolds;
+	return s;
+}
+
+void LiveGame::stashHeldCommandsLocked()
+{
+	// m_pubMutex held; the caller's thread holds the logic (its window is open, or the worker is idle): nobody else touches m_commands
+	for (const GameMessage &m : m_commands.messages())
+	{
+		m_pendingInput.append(m);
+	}
+	m_commands.reset();
+}
+
+void LiveGame::stashHeldCommands()
+{
+	if (!m_threaded)
+	{
+		return; // the frames run on this thread: the command list is the next frame's, as ever
+	}
+	const std::unique_lock<std::mutex> lock = lockPublication("stashHeldCommands");
+	if ((m_windowOpen && std::this_thread::get_id() == m_windowThread) || (m_work.empty() && !m_running))
+	{
+		stashHeldCommandsLocked();
 	}
 }
 
@@ -301,11 +517,24 @@ void LiveGame::stopWorker()
 	{
 		std::lock_guard<std::mutex> lock(m_pubMutex);
 		m_stop = true;
+		m_windowOpen = false; // RENDERWAIT-1: single-threaded from here (the logic is always held)
+		m_windowWanted = false;
 	}
 	m_pubCv.notify_all();
 	m_worker.join();
 	m_workerId.store(std::thread::id());
 	m_threaded = false;
+	// r2: single-threaded from here: the command list is the next frame's again (the pending input first, it is the older)
+	for (const GameMessage &m : m_commands.messages())
+	{
+		m_pendingInput.append(m);
+	}
+	m_commands.reset();
+	for (const GameMessage &m : m_pendingInput.messages())
+	{
+		m_commands.append(m);
+	}
+	m_pendingInput.reset();
 }
 
 void LiveGame::workerLoop()
@@ -316,10 +545,53 @@ void LiveGame::workerLoop()
 		WorkItem item;
 		{
 			std::unique_lock<std::mutex> lock(m_pubMutex);
-			m_pubCv.wait(lock, [this] { return m_stop || (!m_work.empty() && !m_workerError); });
-			if (m_stop)
+			// lane RENDERWAIT-1: no frame starts while the render thread's client window is open; after a frame the render thread asked a window for, the
+			// worker holds (at most m_parkMs) for that window. The time held with a frame to run is what the windows cost the logic
+			bool parking = false;
+			std::chrono::steady_clock::time_point parkEnd;
+			// the time a frame waited to start: from when one was queued (or this wait began with one queued) to its start
+			bool hadWork = !m_work.empty();
+			auto workSince = std::chrono::steady_clock::now();
+			const auto noteWork = [&]() {
+				if (!hadWork && !m_work.empty())
+				{
+					hadWork = true;
+					workSince = std::chrono::steady_clock::now();
+				}
+			};
+			for (;;)
 			{
-				return; // shutdown / switch: requested frames were waited for by setLogicThread(false); at destruction the game ends
+				if (m_stop)
+				{
+					return; // shutdown / switch: requested frames were waited for by setLogicThread(false); at destruction the game ends
+				}
+				if (m_windowWanted && !m_windowOpen)
+				{
+					if (!parking)
+					{
+						parking = true;
+						parkEnd = std::chrono::steady_clock::now() + std::chrono::microseconds((long long)(m_parkMs * 1000.0));
+						++m_windowStats.parks;
+					}
+					if (std::chrono::steady_clock::now() < parkEnd)
+					{
+						m_pubCv.wait_until(lock, parkEnd);
+						noteWork();
+						continue;
+					}
+					m_windowWanted = false; // the render frame came later than the park time: run on (the next window is asked again)
+					++m_windowStats.parkTimeouts;
+				}
+				if (!m_work.empty() && !m_workerError && !m_windowOpen)
+				{
+					break;
+				}
+				m_pubCv.wait(lock);
+				noteWork();
+			}
+			if (hadWork)
+			{
+				m_windowStats.workerHeldMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - workSince).count();
 			}
 			item = std::move(m_work.front()); // SMOOTH-1 + MP-1: the next numbered batch (or clock frame), in order, exactly once
 			m_work.pop_front();

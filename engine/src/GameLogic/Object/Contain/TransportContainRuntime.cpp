@@ -41,7 +41,7 @@ const char *const kStopTransport =
 	"transport's 0x87A677 / 0x87A6D3 / 0x87A7B4 (a horde rides: the horde object out of the world, its members on the bones), its death 0x87AE0A (the members thrown "
 	"off, GameLogicRandomValue(5, 10)) and the exits RW 0x8682D9 / 0x87A89E. Inference: the payload is made when the object is created (RW's caller of main slot 0x70 "
 	"is not located). Not ported: the fades and the drawable bone attachment (client), GrabWeapon / CanGrabStructure (the trolls' grab), ShouldThrowOutPassengers' "
-	"throw (RW 0x86A530), GoAggressiveOnExit (the AI attitude), the AI slot 0x1A8 of the exit test, the exits and entries of a SHIP in water (the shore spot RW 0x6EFBB8), an indestructible container's payload, "
+	"throw (RW 0x86A530), GoAggressiveOnExit (the AI attitude), the AI slot 0x1A8 of the exit test, the SHIP boarding AI (S-4160; lane SHIP-1 ported the shore spot RW 0x6EFBB8 of the entries and exits), an indestructible container's payload, "
 	"PassengersInTurret, the arming of the falling riders (slot 0xF8: no caller located)";
 
 const char *const kHordeTransportCpp = "HordeTransportContain.cpp"; // RW 0xC5C568
@@ -463,7 +463,10 @@ bool TransportContain::isSpecificRiderFreeToExit(const Object &rider) const
 	}
 	if (isShipOnWater(*container))
 	{
-		return false; // RW 0x86A330: a SHIP in water asks RW 0x6EFBB8 for a shore spot: S-1103's; a ship on dry ground takes the ground test below
+		// RW 0x86A34B .. 0x86A3AC (lane SHIP-1): a SHIP in water lets the rider out when RW 0x6EFBB8 finds a shore spot for its position; a ship on dry ground takes
+		// the ground test below
+		Coord3D spot = *container->getPosition();
+		return shipShoreSpot(*container, *container->getPosition(), spot);
 	}
 	// RW 0x86A36C: RW 0x6E8707 (ZH Pathfinder::validMovementTerrain) for the rider's locomotor at the container's position on the ground layer (RW 0x68BBE0: the
 	// layer of the position; 2.01 maps have no bridge layers)

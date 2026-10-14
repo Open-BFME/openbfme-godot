@@ -101,17 +101,50 @@ func _battle(troops: int, seconds: float) -> String:
 		await game.get_tree().process_frame
 	# the window
 	var start_census: Dictionary = world.get_census()
-	var f0: int = world.get_frame()
+	var f0: int = world.get_presented_frame()
 	var times: Array = []
+	# lane RENDERWAIT-1: the render's waits on the logic worker in the window (by site), and per second of the window the render frames against the
+	# logic frames (non-blocking reads only: get_frame_timings, get_presented_frame)
+	world.reset_logic_wait_sites()
+	var waits0: Dictionary = world.get_frame_timings()
+	var win0: Dictionary = world.get_client_window_stats()
+	var seconds_rows: Array = []
+	var row := {"frames": 0, "worst_render": 0.0, "logic0": world.get_presented_frame(), "worst_worker": 0.0}
 	var w0 := Time.get_ticks_usec()
 	var last := w0
+	var row_start := w0
 	while Time.get_ticks_usec() - w0 < int(seconds * 1000000.0):
 		await game.get_tree().process_frame
 		var now := Time.get_ticks_usec()
-		times.append((now - last) / 1000.0)
+		var ms := (now - last) / 1000.0
+		times.append(ms)
 		last = now
+		var ft: Dictionary = world.get_frame_timings()
+		row.frames += 1
+		row.worst_render = maxf(row.worst_render, ms)
+		row.worst_worker = maxf(row.worst_worker, float(ft.get("worker_frame_ms", 0.0)))
+		if now - row_start >= 1000000:
+			row["logic"] = world.get_presented_frame() - int(row.logic0)
+			seconds_rows.append(row)
+			row = {"frames": 0, "worst_render": 0.0, "logic0": world.get_presented_frame(), "worst_worker": 0.0}
+			row_start = now
 	var wall := (Time.get_ticks_usec() - w0) / 1000000.0
-	var logic_frames: int = world.get_frame() - f0
+	var waits1: Dictionary = world.get_frame_timings()
+	var win1: Dictionary = world.get_client_window_stats()
+	var logic_frames: int = world.get_presented_frame() - f0 # the frames completed in the window (get_frame would wait for the worker's backlog)
+	print("UBER1 waits %d: %d render-side waits on the logic worker in the window, %.1f ms (%d contended publication locks)" % [troops,
+		int(waits1.get("logic_waits", 0)) - int(waits0.get("logic_waits", 0)), float(waits1.get("logic_wait_ms", 0.0)) - float(waits0.get("logic_wait_ms", 0.0)),
+		int(waits1.get("contended_locks", 0)) - int(waits0.get("contended_locks", 0))])
+	print("UBER1 client windows %d: %d render frames held the logic (the HUD's, audio's and effects' live work), %d found the worker inside a frame; the worker held %d times (%d timed out), %.1f ms with a frame to run (%.1f ms per logic frame); the longest window %.1f ms (S-4280)" % [troops,
+		int(win1.get("opened", 0)) - int(win0.get("opened", 0)), int(win1.get("missed", 0)) - int(win0.get("missed", 0)), int(win1.get("parks", 0)) - int(win0.get("parks", 0)),
+		int(win1.get("park_timeouts", 0)) - int(win0.get("park_timeouts", 0)), float(win1.get("worker_held_ms", 0.0)) - float(win0.get("worker_held_ms", 0.0)),
+		(float(win1.get("worker_held_ms", 0.0)) - float(win0.get("worker_held_ms", 0.0))) / maxf(1.0, logic_frames), float(win1.get("max_window_ms", 0.0))])
+	for w in world.get_logic_wait_sites():
+		print("UBER1 wait site %s: %d waits, total %.1f ms, worst %.1f ms" % [w.site, w.count, w.total_ms, w.worst_ms])
+	print("UBER1 seconds %d: second | render frames | worst render frame ms | logic frames presented | worst worker logic frame ms" % troops)
+	for i in range(seconds_rows.size()):
+		var r: Dictionary = seconds_rows[i]
+		print("UBER1 second %d | %d | %.1f | %d | %.1f" % [i + 1, r.frames, r.worst_render, r.logic, r.worst_worker])
 	var end_census: Dictionary = world.get_census()
 	if times.is_empty():
 		return "no frames in the window"

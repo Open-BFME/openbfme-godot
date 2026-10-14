@@ -886,13 +886,12 @@ void OpenContain::exitObjectViaDoor(Object *obj, int door)
 	const int paths = openData().m_numberOfExitPaths; // data + 0x74
 	if (paths < 1)
 	{
-		// RW 0x868334 .. 0x86852B: the SHIP branch (a landing position on the shore, RW 0x6EFBB8) is not ported (S-1103); the rider stays where removeFromContain put it
 		static const int ship = CombatNames::kindOf("SHIP");
 		if (container->isKindOf((unsigned)ship))
 		{
-			++m_shipExitsUnported;
+			exitShipToShore(*container, *obj); // RW 0x868516 .. 0x868733 (lane SHIP-1)
 		}
-		return; // RW 0x86852B: RW 0x6E85E9 (the pathfinder's unit map) follows the object's position in the port
+		return; // RW 0x868738: RW 0x6E85E9 (the pathfinder's unit map) follows the object's position in the port
 	}
 	// RW 0x868538 .. 0x8685E3: the bones ExitStart / ExitEnd, numbered (two digits) when there are several paths, the paths taken in turn
 	std::string startBone = "ExitStart", endBone = "ExitEnd";
@@ -967,12 +966,95 @@ bool OpenContain::getEntryPosition(Coord3D &out) const
 {
 	// RW 0x8657D1
 	const Object *obj = getObject();
-	if (isShipOnWater(*obj))
+	static const int kShip = CombatNames::kindOf("SHIP");
+	if (obj->isKindOf((unsigned)kShip))
 	{
-		++m_shipEntriesUnported; // RW 0x6EFBB8's shore spot (S-1104); a ship on dry ground: its position (RW 0x6EFBB8's first branch)
+		// lane SHIP-1, RW 0x8657E2 .. 0x865834: a SHIP's entry is its shore spot (RW 0x6EFBB8 of its position, into a static buffer); none: its position
+		Coord3D spot = *obj->getPosition();
+		if (shipShoreSpot(*obj, *obj->getPosition(), spot))
+		{
+			out = spot;
+			return true;
+		}
 	}
 	out = *obj->getPosition();
 	return true;
+}
+
+bool OpenContain::shipShoreSpot(const Object &ship, const Coord3D &pos, Coord3D &out)
+{
+	// RW 0x6EFBB8 on TheAI's pathfinder (TheAI + 0x10) with the ship's geometry and angle (lane SHIP-1)
+	AIWorld *world = ship.logic().aiWorld();
+	AIUpdateInterface *ai = const_cast<Object &>(ship).getAIUpdateInterface();
+	if (!world || !ai)
+	{
+		throw std::logic_error("OpenContain: a SHIP's shore spot without a pathfinder or without the ship's AI (its pathfind geometry)");
+	}
+	return world->pathfinder().getClosestPointOnLand(pos, ai->pathfindObject(), out);
+}
+
+const char *OpenContain::shipStop()
+{
+	return "S-4160: ship boarding and landing are ported only in the contain (lane SHIP-1: the shore spot RW 0x6EFBB8 as a SHIP's entry position, its riders' exit "
+	       "test and their exit to the shore): not ported are the boarding AI (AIPrepareForBoarding RW 0x74403F / 0x756651, the SHIP branch of "
+	       "AIMoveToPositionAndEnterState RW 0x751A8A / 0x756452: the destination adjustment, the ship's states 0x46 / 0x47 and its shore test, "
+	       "privateMoveToPositionAmphibious RW 0x66B564) and the angled exit path RW 0x77122F that the exit states' byte RW 0xDE9064 selects";
+}
+
+// lane SHIP-1, RW 0x868516 .. 0x868733 (OpenContain::exitObjectViaDoor with NumberOfExitPaths 0 and a SHIP container). TARGET FACTS (RotWK game.dat, S-001):
+//   the shore spot of the ship's position (RW 0x6EFBB8); none: nothing more. The rider's AI (+ 0x260) is needed. dir = spot - the ship's position (x87 x / y,
+//   SSE z); angle = RW 0x441BD2(dir.y, dir.x) (atan2). away = the ship AI's last path request destination (AI + 0x148) - the ship's position (SSE); when 50
+//   (RW 0xDAE9BC) is more than its length (RW 0x403111): Q = spot + 50 x dir normalized (RW 0x403175; SSE), else Q = that destination. The rider goes to the spot
+//   (RW 0x70C201) facing angle (RW 0x70C31E). Unless it is a member inside a horde (RW 0x6939DF): the exit path [Q, Q, the rider machine's goal position (AI + 0x30
+//   -> + 0x24)] is followed as an exit production path (RW 0x77113C(path, ship, 2); RW 0x77122F with the angle while the exit state's byte RW 0xDE9064 is set:
+//   not ported, the port's exit states carry no such byte, S-4160) and Q becomes that goal position; then RW 0x68B3AB reserves Q as the rider's goal cell.
+void OpenContain::exitShipToShore(const Object &ship, Object &rider)
+{
+	const Coord3D shipPos = *ship.getPosition();
+	if (AIWorld *world = ship.logic().aiWorld())
+	{
+		world->noteStop(shipStop());
+	}
+	Coord3D spot = shipPos;
+	if (!shipShoreSpot(ship, shipPos, spot))
+	{
+		++m_openStats.shipExitsWithoutShore;
+		return;
+	}
+	AIUpdateInterface *ai = rider.getAIUpdateInterface();
+	if (!ai)
+	{
+		return;
+	}
+	const Coord3D goal = ai->stateMachine().goalPosition();
+	Coord3D dir{ NumericState::pc24Sub(spot.x, shipPos.x), NumericState::pc24Sub(spot.y, shipPos.y), SimMath::subf32(spot.z, shipPos.z) };
+	const float angle = (float)SimMath::atan2d(dir.y, dir.x);
+	const AIUpdateInterface *shipAI = ship.getAIUpdateInterface();
+	Coord3D q = shipAI->mover().requestedDestination();
+	const double away = SimMath::length3d(SimMath::subf32(q.x, shipPos.x), SimMath::subf32(q.y, shipPos.y), SimMath::subf32(q.z, shipPos.z));
+	if ((double)50.0f > away)
+	{
+		const float len = (float)SimMath::length3d(dir.x, dir.y, dir.z); // RW 0x403175 Coord3D::normalize: the length stored as a float, 1 / it, three SSE products
+		if (len != 0.0f)
+		{
+			const float inv = SimMath::divf32(1.0f, len);
+			dir.x = SimMath::mulf32(dir.x, inv);
+			dir.y = SimMath::mulf32(dir.y, inv);
+			dir.z = SimMath::mulf32(dir.z, inv);
+		}
+		q = Coord3D{ SimMath::addf32(spot.x, SimMath::mulf32(50.0f, dir.x)), SimMath::addf32(spot.y, SimMath::mulf32(50.0f, dir.y)),
+		             SimMath::addf32(spot.z, SimMath::mulf32(dir.z, 50.0f)) };
+	}
+	rider.setPosition(&spot);
+	rider.setOrientation(angle);
+	if (!ai->isContained())
+	{
+		std::vector<Coord3D> path{ q, q, goal };
+		ai->aiFollowPath(path, const_cast<Object *>(&ship), CMD_FROM_AI, true);
+		q = goal;
+	}
+	ai->world().pathfinder().updateGoal(ai->pathfindObject(), &q, LAYER_GROUND); // RW 0x68B3AB
+	++m_openStats.shipExitsToShore;
 }
 
 bool OpenContain::isShipOnWater(const Object &container)

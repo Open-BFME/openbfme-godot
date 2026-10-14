@@ -168,24 +168,32 @@ bool InGameHud::boot(std::string *error)
 		m_errors.push_back("Palantir.apt was refused a window slot");
 		return false;
 	}
+	// lane RENDERWAIT-1: the movie's presses reach the live game (the control bar, the spell book); an engine callback (the movie's input outside the HUD's
+	// update) may come while the logic worker runs a frame: the press then waits, in order, for the next update the logic is held in (whenHeld)
 	m_palantirRef->setButtonHandler([this](int slot, bool inPalantir) {
-		const auto worldContext = enterContext(); // the movie's own update and invoke_at reach this outside the scoped entry points (BuildAssistant reads TheCommandStore)
-		m_bar->pressButton(slot, inPalantir);
+		whenHeld([this, slot, inPalantir]() {
+			const auto worldContext = enterContext(); // the movie's own update and invoke_at reach this outside the scoped entry points (BuildAssistant reads TheCommandStore)
+			m_bar->pressButton(slot, inPalantir);
+		});
 	});
 	m_palantirRef->setRightButtonHandler([this](int slot, bool inPalantir) { // lane AUTOCAST-1
-		const auto worldContext = enterContext();
-		m_bar->rightPressButton(slot, inPalantir);
+		whenHeld([this, slot, inPalantir]() {
+			const auto worldContext = enterContext();
+			m_bar->rightPressButton(slot, inPalantir);
+		});
 	});
 	// lane SPELL-2: the spell book's press and the store button of the Palantir
-	m_palantirRef->setSpellPressHandler([this](int buttonIndex) { pressSpell(buttonIndex); });
+	m_palantirRef->setSpellPressHandler([this](int buttonIndex) { whenHeld([this, buttonIndex]() { pressSpell(buttonIndex); }); });
 	m_palantirRef->setSpellStoreHandler([this]() {
-		// lane PLAY-1: the reason a press opened nothing is kept and reported (it was dropped)
-		++m_storeRequests;
-		m_storeError.clear();
-		if (!openSpellStore(&m_storeError) && m_storeError.empty())
-		{
-			m_storeError = "the spell store did not open (no local player or no command store)";
-		}
+		whenHeld([this]() {
+			// lane PLAY-1: the reason a press opened nothing is kept and reported (it was dropped)
+			++m_storeRequests;
+			m_storeError.clear();
+			if (!openSpellStore(&m_storeError) && m_storeError.empty())
+			{
+				m_storeError = "the spell store did not open (no local player or no command store)";
+			}
+		});
 	});
 	// lane UI-4: the hero bar (InGameHeroSelect.h): AptPalantir::OnHeroSelectLoaded hands the movie's clip path (InGameHeroSelectInterface ctor RW 0x92DDE7)
 	m_heroSelect = std::make_unique<InGameHeroSelect>(m_input->context());
@@ -252,9 +260,20 @@ void InGameHud::setWindowSize(int width, int height)
 	m_windowH = std::max(1, height);
 }
 
-std::unique_ptr<RetailObjectWorld::ContextScope> InGameHud::enterContext()
+void InGameHud::whenHeld(std::function<void()> f)
 {
-	m_config.game.waitIdle();
+	if (m_config.game.logicHeld() && m_deferredPresses.empty())
+	{
+		f();
+		return;
+	}
+	m_deferredPresses.push_back(std::move(f));
+	++m_deferredPressCount;
+}
+
+std::unique_ptr<RetailObjectWorld::ContextScope> InGameHud::enterContext(const char *file, int line)
+{
+	m_config.game.holdLogic(file, line); // RENDERWAIT-1: no wait inside the client window
 	return m_config.world.enterContext();
 }
 
@@ -268,7 +287,7 @@ void InGameHud::update(double seconds)
 	{
 		m_clientFrames += m_radar->advanceClock(seconds);
 	}
-	if (!m_config.game.logicIdle())
+	if (!m_config.game.logicHeld()) // RENDERWAIT-1: the client window (or an idle worker)
 	{
 		++m_skippedUpdates;
 		return;
@@ -277,6 +296,13 @@ void InGameHud::update(double seconds)
 	if (!m_booted)
 	{
 		return;
+	}
+	// lane RENDERWAIT-1: the movie presses that came while the logic was not held, in their order
+	std::vector<std::function<void()>> deferred;
+	deferred.swap(m_deferredPresses);
+	for (std::function<void()> &f : deferred)
+	{
+		f();
 	}
 	// lane SELPERF-1: the parts' wall time (UpdateParts)
 	using PartClock = std::chrono::steady_clock;

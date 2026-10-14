@@ -793,6 +793,20 @@ PartitionHits PartitionManager::iterateObjectsInRegion(const PartitionRegion &re
 	return PartitionHits(*this, std::move(out));
 }
 
+PartitionHits PartitionManager::iterateAllObjects(PartitionFilterList filters) const
+{
+	// RW 0xA3C6F0: the entry list from its head (+ 0x114); an entry's object (its vslot) that exists and passes the filter chain is appended
+	std::vector<PartitionHit> out = takeBuffer();
+	for (const Entry *e = m_entries; e; e = e->allNext)
+	{
+		if (e->object && allowed(*e->object, filters))
+		{
+			out.push_back(PartitionHit{ e->object, 0.0f });
+		}
+	}
+	return PartitionHits(*this, std::move(out));
+}
+
 // ---- RW 0xA3A6B0 / 0xA3A700: STLport sort of (object, distance) pairs ------------------------------------------------------------------------------------------
 
 namespace

@@ -102,13 +102,9 @@ CastleLook castleLookOf(const ThingTemplate &tt, const std::string &side, Castle
 		return out;
 	}
 	out.castle = true;
-	for (const auto &pair : castle->m_castleToUnpackForFaction) // RW 0x798F70
+	if (const CastleFactionEntry *e = castle->entryFor(side)) // RW 0x798F70 (lane BACKLOG2: the map's exact side key)
 	{
-		if (AsciiStringUtil::compareNoCase(pair.first, side) == 0)
-		{
-			out.base = pair.second;
-			break;
-		}
+		out.base = e->base;
 	}
 	if (out.base.empty())
 	{

@@ -30,8 +30,10 @@
 //       - the object is made by the creation interface at module + 0x20 (RW 0x859198) and recorded in the castle's owned list; the CastleMemberBehavior of every owned object
 //         learns its castle (RW 0x79BFC9: module + 0x14 / + 0x18);
 //     then the castle centre gets the status UNSELECTABLE (RW 0x79C07E), its drawable is hidden, the model flags / pathfinder footprint are updated, and the state is 4.
-// INFERENCE (stop S-303): the owned objects' creation interface RW 0x859198 beyond placing the object (position, angle, team, the structure notifications of the starting base),
-// the faction decal, the damage evacuation of the member (EvacuateDamage is its own module), CastleUpgrade (UPGRADE-1) are not ported. The castle after its unpack is lane
+// lane BACKLOG2: the creation interface RW 0x859198 (the castle's + 0x20 vtable RW 0xC30DE8 slot 4) clears the site (RW 0x858C41) and pushes the units out (RW 0x858CFC)
+// around each member and each pre-built structure (GameLogic/ConstructionSite.h).
+// INFERENCE (stop S-303): the creation interface's construct (slot 7, RW 0x858701 with the castle as the plot) beyond placing the object (position, angle, team, the structure notifications of the starting base),
+// the faction decal, the damage evacuation of the member (EvacuateDamage is its own module) and WallUpgradeUpdate are not ported (CastleUpgrade is FACT-B's). The castle after its unpack is lane
 // CASTLE-1's (below; stops S-950 .. S-952).
 //
 // Lane CASTLE-1 (TARGET FACTS, RotWK game.dat, S-001 caveat; static disassembly; the module's fields are offsets of the CastleBehavior module, `this` of RW 0x79CF2A is module + 0x10):
@@ -45,7 +47,8 @@
 //   * update RW 0x79CF2A: the timer (+ 0x40, seconds) first loses 1 / LOGICFRAMES_PER_SECOND (SSE, single precision) while above 0; at or below 0 it is set to 0 and `expired` is
 //     set. State 0: the instant unpack (RW 0x79C265, then state 4) and the capture scan RW 0x79B3C4; the module sleeps 5 frames. State 4: RW 0x799ACB decides; true -> abandon
 //     RW 0x79CB47, false -> the crew (RW 0x79B0F1, a no-op with no crew). State 5 on `expired`: state 0, pack RW 0x79CCF2, timer = UnpackDelayTime. States 1 .. 3 are the timed
-//     unpack a player starts (initiateUnpack RW 0x79C17D, the MSG dispatcher RW 0x77C32E): not ported (S-951). Every state but 0 sleeps 1 frame.
+//     unpack a player starts (initiateUnpack RW 0x79C17D from the dispatcher RW 0x77C32E: lane BACKLOG2, GameLogic/CastleCommands.h). Every state but 0
+//     sleeps 1 frame.
 //   * RW 0x799ACB: false before frame ftol(5 * SecondsBeforeBaseCheckActive) (the VictoryConditions delay). The keep is gone (+ 0x3D) when it no longer exists, or is effectively dead,
 //     or has the model condition AWAITING_CONSTRUCTION or POST_COLLAPSE, or PARTIALLY_CONSTRUCTED with its builder (+ 0x7C) gone or dead and a DOZER. A keep that no longer exists or
 //     is dead with KeepDeathKillsEverything kills everything instead (RW 0x7999E2 twice: RW 0x797F16 kills (UNRESISTABLE, NORMAL) every member that is not a BASE_FOUNDATION and the
@@ -83,6 +86,7 @@
 #include "GameLogic/Module/ConstructionModules.h"
 #include "GameLogic/Module/DamageModule.h"
 
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <utility>
@@ -93,10 +97,23 @@ class ModuleFactory;
 class Player;
 class ThingTemplate;
 
+// lane BACKLOG2: one CastleToUnpackForFaction line (RW 0x79BD2F; BFME2 decomp CastleBehaviorModuleDataRva0039981E.cpp, tier A): `<side> <base> [<cost> [<limit>]]`,
+// the two counts scanned as unsigned integers when present (INI::scanUnsignedInt: anything else fails the parse); the module data keeps a map keyed by the side's
+// NameKey (case-sensitive), into which a second line for the same side is not inserted (STLport map::insert keeps the first)
+struct CastleFactionEntry
+{
+	std::string faction; ///< the side (Player + 0x58)
+	std::string base;    ///< the base layout (record + 0x14)
+	std::uint32_t cost = 0;  ///< record + 0x18: the price of a player's unpack (RW 0x7995FB, paid by RW 0x799039)
+	std::uint32_t limit = 0; ///< record + 0x1C: above 0, fewer free command points than this make the price 99999999 (RW 0x799664)
+};
+
 class CastleBehaviorModuleData : public FoundationAIUpdateModuleData
 {
 public:
-	std::vector<std::pair<std::string, std::string>> m_castleToUnpackForFaction; // +0x68: (faction, base name)
+	std::vector<CastleFactionEntry> m_castleToUnpackForFaction; // +0x68 (the map's entries in parse order; lookups are by exact side name)
+	// the entry of `side` (the map's find, RW 0x6B4E57 on the side's name key), or null
+	const CastleFactionEntry *entryFor(const std::string &side) const;
 	std::shared_ptr<const ObjectFilter> m_filterValidOwnedEntries;                // +0x30
 	std::shared_ptr<const ObjectFilter> m_filterCrew;                             // +0x34
 	std::string m_factionDecal;                                                   // +0x5C (parser RW 0x79CA81, retail data does not use it: kept as the line)
@@ -158,6 +175,33 @@ public:
 	std::string baseNameFor(const Player &owner) const;
 	// RW 0x7998FF: CastleToUnpackForFaction names the player's side
 	bool isPlayerAllowedToCapture(const Player &player) const;
+	// ---- lane BACKLOG2: a player's unpack and pack (S-951) ----
+	// RW 0x7983E3 canUnpack (BFME2 decomp Rva00395F57CanUnpack.cpp, tier A): no instant build pending, state 0 and, with checkTimer, the timer run out
+	bool canUnpack(bool checkTimer) const;
+	// RW 0x797B63 (BFME2 decomp Disp8CmpBoolGetters.cpp: state == 4)
+	bool isUnpacked() const { return m_state == STATE_UNPACKED; }
+	// RW 0x79A472 isPlayerAllowedToPackOrUnpack (BFME2 decomp CastleBehaviorRva00397F45.cpp, tier A): the castle's controlling player, or a player
+	// isPlayerAllowedToCapture admits
+	bool isPlayerAllowedToPackOrUnpack(const Player *player) const;
+	// RW 0x7995FB (BFME2 decomp Rva0039718BOwnedPlayerCheck.cpp:rva003970E7, tier A): the side's price; 0 without a player, a side or an entry; 99999999
+	// when the entry's limit is above 0 and the player has fewer free command points (RW 0x6A7F6A, signed)
+	std::uint32_t unpackCost(const Player *player) const;
+	// RW 0x79969F (tier A): `player` controls the castle and has at least unpackCost(player) (Player + 0x94, unsigned)
+	bool canAffordUnpack(const Player *player) const;
+	// RW 0x797B6D (BFME2 decomp Rva00395686Finish.cpp, tier A): `player` controls the castle and has at least the template's calcCostToBuild(player, no
+	// producer, -1) (RW 0x73C25F)
+	bool canAffordUnpackOf(const Player *player, const ThingTemplate *tt) const;
+	// RW 0x797EF9: the button's readiness: in state 0, 1 - timer / UnpackDelayTime (x87); else 0
+	float unpackReadiness() const;
+	// RW 0x79C17D initiateUnpack (BFME2 decomp CastleBehaviorRegisterOwnedObject.cpp, tier A): an explicit template's name is kept (+ 0x98), + 0x4C = 0;
+	// instant: unpack, JUST_BUILT, state 4; else state 1 and the price is paid: the explicit template's (RW 0x797B06) or the side's (RW 0x799039). The alert
+	// map's reset (RW 0x7985AA on + 0xA0) is not ported (the map is not, S-951)
+	void initiateUnpack(bool instant, const ThingTemplate *explicitTemplate);
+	// RW 0x79CB47 (abandon): what a player's pack starts (MSG_CASTLE_PACK, RW 0x77C2B7)
+	void abandonByPlayer() { abandon(); }
+	// RW + 0x4C: the price the last player's unpack paid (0 for the starting fortress and a summoned castle)
+	float storedPrice() const { return m_storedPrice; }
+	const std::string &explicitTemplateName() const { return m_explicitTemplate; }
 	// RW 0x79AC19
 	void registerOwnedObject(Object &obj);
 	// lane CASTLE-1: the stop lines S-950 .. S-952 (in GameLogic::report through BuildStops)
@@ -189,6 +233,9 @@ private:
 	void setMembersModelCondition(int clear, int set);
 	// RW 0x79A237
 	void releaseCrew(bool kill);
+	// RW 0x799039 / 0x797B06 (lane BACKLOG2)
+	void payForUnpack();
+	void payForUnpackOf(const ThingTemplate &tt);
 	// the occupant of a foundation (the castle's: the keep; a plot's: its member's occupant) that still exists, or null
 	Object *occupantOf(const Object &foundation) const;
 
@@ -200,6 +247,8 @@ private:
 	float m_timer = 0.0f;              // RW + 0x40 (seconds)
 	ObjectID m_keepId = INVALID_ID;    // RW + 0x38
 	UnsignedInt m_unpackFrame = 0;     // RW + 0x48 (the frame of the last unpack: the crew's clock)
+	float m_storedPrice = 0.0f;        // RW + 0x4C (lane BACKLOG2)
+	std::string m_explicitTemplate;    // RW + 0x98 (lane BACKLOG2: MSG_CASTLE_UNPACK_EXPLICIT_OBJECT's template)
 	std::vector<ObjectID> m_owned;
 	std::vector<ObjectID> m_foundations, m_members, m_crew, m_defenseFoundations; // RW + 0x50, + 0x5C, + 0x68, + 0x74
 	std::string m_lastError;

@@ -78,6 +78,10 @@ struct PathfindGeometry
 	static void applyShapeOffset(const PathfindShape &s, float angle, Coord3D &pos);
 	// RW 0xAD1D60: the 2D box (lo.x, lo.y, hi.x, hi.y) around `pos` and every ACTIVE shape of the object at `pos` turned by `angle`
 	void boundingBox2D(const Coord3D &pos, float angle, float out[4]) const;
+	// lane SHIP-1, RW 0xAD1B20 (BFME2 decomp GeometryInfo::rva006BD9C0, tier A): one shape around the ACTIVE shapes: a BOX whose half extents are half the 2D box
+	// that holds the origin and every BOX shape (with more than one shape, a shape whose major, minor and height are all below 1 is left out); the first
+	// SPHERE / CYLINDER met makes the bounding circle radius both radii instead (x87, 24-bit)
+	void boundingShape2D(float &major, float &minor) const;
 };
 
 // The KindOf bits the pathfinder tests (the adapter maps them from the object's template, by RW KindOf registry name, RW 0xDA0E68).

@@ -3,7 +3,7 @@
  "issues": [
   {"stops": ["S-1561"], "text": "Only the English versions of the two games are supported; a game in another language is refused on the first start."},
   {"stops": ["S-1360"], "text": "Campaign: missions play with their movies and narration, but there is no campaign menu between missions and no saving of your progress the original way; the next mission loads directly."},
-  {"stops": ["S-1126"], "text": "Save / Load and War of the Ring are not available yet. Skirmish, the campaign and LAN games are."},
+  {"stops": ["S-1126"], "text": "War of the Ring is not available yet. Skirmish, the campaign and LAN games are."},
   {"stops": ["S-1408"], "text": "Create-a-Hero: heroes can be built, coloured and saved, but how the house colour blends into the model is an educated guess, and the colour is not reapplied to lower-detail textures the way the original may do."},
   {"stops": ["S-119", "S-022"], "text": "Team colours on units and buildings are an educated guess at how the original blends them, and may look different."},
   {"stops": ["S-413", "S-415", "S-417", "S-1421"], "text": "The computer opponent builds a base, trains armies and heroes, uses its spell book and powers, attacks and finishes games, but does not yet defend or expand the way the original does, and it skips some powers."},

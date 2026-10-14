@@ -16,7 +16,8 @@
 //       clearAndSet(clear AWAITING_CONSTRUCTION, set PARTIALLY_CONSTRUCTED | ACTIVELY_BEING_CONSTRUCTED) (RW 0x68D607);
 //     * the plot's BuildVariation 1 / 2 sets BUILD_VARIATION_ONE / TWO on the new object;
 //     * setPosition, setOrientation, the pathfinder map (RW 0x6E85E9, unless WALK_ON_TOP_OF_WALL), Player::onStructureCreated (RW 0x6AAF3B);
-//     * instant: the under-construction status clears and the percent is -1; otherwise the player pays calcCostToBuild(tmpl, owner, plot) (RW 0x73C25F, money RW 0x7B17EF,
+//     * instant: the under-construction status clears and the percent is -1; otherwise, when the plot and the new object both have a CastleMemberBehavior (lane
+//       BACKLOG2, RW 0x858AB3), the player pays calcCostToBuild(tmpl, owner, plot) (RW 0x73C25F, money RW 0x7B17EF,
 //       the score RW 0x79DFC2) and the object keeps the price paid (RW + 0x33C); the plot's castle member fields are copied to the new object's (RW 0x858ADE);
 //       an instant build then runs onBuildComplete (RW 0x68D252).
 //   BuildAssistant slot 0x38 for any other builder with no AI path builds the object at once (RW 0x7978A1 ff): newObject with the status mask 4 (UNDER_CONSTRUCTION)

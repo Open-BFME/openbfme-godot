@@ -12,6 +12,9 @@ var mouse := Vector2.ZERO   # a harness may set the cursor it simulates
 func setup(p_hud: Node2D, p_world: Node3D) -> void:
 	hud = p_hud
 	world = p_world
+	# lane RENDERWAIT-1: before GameWorld's process (priority 0), inside the render frame's client window, where the HUD's live state may be read without
+	# waiting for the logic worker
+	process_priority = -50
 	_ring = MeshInstance3D.new()
 	var torus := TorusMesh.new()
 	torus.inner_radius = 0.96
@@ -36,6 +39,10 @@ func _input(event: InputEvent) -> void:
 
 func _process(_delta: float) -> void:
 	if hud == null:
+		return
+	# lane RENDERWAIT-1: get_spellbook_state, pixel_to_world and get_ground_height read the live game: never wait for a logic frame (the ring keeps its
+	# place for a render frame the worker is busy in)
+	if not world.is_logic_held():
 		return
 	var st: Dictionary = hud.get_spellbook_state()
 	var targeting: bool = st.get("targeting", false)

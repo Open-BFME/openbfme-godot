@@ -405,6 +405,15 @@ public:
 	// lane SMOOTH-1: the cheap per-frame numbers of the frame-time benchmark (no state hash, unlike get_stats): { logic_ms, sync_ms, streak_ms, advance_ms,
 	// logic_frames (run by the last advance), alpha, dyn_pose_ms, dyn_upload_ms, dyn_mapper_ms, static_mapper_ms }
 	Dictionary get_frame_timings() const;
+	// lane RENDERWAIT-1: the wait log of this game (LiveGame::logicWaitSites): [{site, count, total_ms, worst_ms}], worst total first; and its reset
+	Array get_logic_wait_sites() const;
+	void reset_logic_wait_sites();
+	// lane RENDERWAIT-1: the live logic may be read now without waiting (the client window is open, or the worker is idle): per-frame scripts skip their
+	// live reads otherwise; the client windows' counts and their cost to the logic (LiveGame::ClientWindowStats)
+	bool is_logic_held() const;
+	Dictionary get_client_window_stats() const;
+	void beginClientWindow(); // SceneTree process_frame
+	void endClientWindow();   // RenderingServer frame_pre_draw
 	// lane SMOOTH-1: LiveGame::setRenderInterpolation (off: the stepped 5 Hz look, for comparisons)
 	void set_render_interpolation(bool enabled);
 	bool get_render_interpolation() const;
@@ -580,10 +589,12 @@ private:
 	std::unique_ptr<MapObjectOptions> m_options;
 	std::unique_ptr<ArchiveW3DFileSource> m_source;
 	std::unique_ptr<WW3DAssetManager> m_assets;
+	mutable UnsignedInt m_netHashFrame = 0;   ///< lane RENDERWAIT-1: net_status's last state hash (computed where the logic is held) and its frame
+	mutable std::uint32_t m_netHash = 0;
 	std::unique_ptr<LiveGame> m_game;
 	std::unique_ptr<TributeSource> m_tribute; ///< lane PLAY-1 (tribute_source)
 	std::unique_ptr<SpellStoreModel> m_spellStore;     // lane SPELL-2
-	void waitSpellIdle();
+	void waitSpellIdle(const char *file = __builtin_FILE(), int line = __builtin_LINE());
 	std::unique_ptr<InGameSpellBookModel> m_spellBar;  // lane SPELL-2
 	// lane MP-1 (after m_game: the session goes first; every m_game.reset() drops it before)
 	std::unique_ptr<LANAPI> m_lan; // lane MP-2
@@ -628,6 +639,14 @@ private:
 	std::unique_ptr<EndGameController> m_endGame;
 	std::unique_ptr<ScriptCameraDirector> m_scriptView;     // lane SCRIPT-1
 	std::vector<ScriptClientRequest> m_pendingScriptRequests; // lane SCRIPT-1: taken from the game, not applied to the director yet
+	std::vector<ScriptClientRequest> m_pendingScriptAudio;    // lane RENDERWAIT-1 r2: taken, their audio not applied yet (waits for a held logic)
+	unsigned long long m_scriptAudioApplied = 0; // RENDERWAIT-1 r3: requests handed to the audio side (test counter)
+	void applyPendingScriptAudio();
+public:
+	void debug_defer_script_audio(const String &sound); // RENDERWAIT-1 r3 (tests)
+	int64_t get_pending_script_audio() const;
+	int64_t get_script_audio_applied() const;
+private:
 	UnsignedInt m_endGameFrame = 0;
 	std::vector<EndGameRequest> m_endGameRequests;
 	std::vector<std::string> m_endGameErrors;
@@ -648,6 +667,7 @@ private:
 	std::unique_ptr<TreeTopple> m_treeTopple;
 	std::vector<ToppleTreeView> m_treeViews; ///< index = the animator's tree index
 	size_t m_treeEventsSeen = 0;
+	void heldClientWork(); // lane RENDERWAIT-1: the render side's reads of the live logic, where it is held
 	void updateTreeTopple(double dt);
 	uint64_t m_staticId = 0, m_dynamicId = 0;
 	std::vector<DrawableView> m_views;       ///< index = drawable id

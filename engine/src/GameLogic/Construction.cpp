@@ -2,6 +2,7 @@
 // See GameLogic/Construction.h for the sources of every rule.
 
 #include "GameLogic/Construction.h"
+#include "GameLogic/ConstructionSite.h"
 
 
 #include "Common/BuildAssistant.h"
@@ -261,8 +262,11 @@ Object *Construction::constructOnPlot(Object &plot, const ThingTemplate &what, c
 		obj->setStatus(OBJECT_STATUS_UNDER_CONSTRUCTION, false);
 		obj->setConstructionPercent(-1.0f);
 	}
-	else
+	else if (member && obj->findModule("CastleMemberBehavior"))
 	{
+		// lane BACKLOG2: RW 0x858AB3 .. 0x858AE8: the price is paid only when the new object and the plot both have a CastleMemberBehavior (the name key
+		// RW 0xDE8E50 = "CastleMemberBehavior", RW 0xC0BE84): a structure without one built on a castle (an economy plot's explicit unpack, RW 0x79B98B) was
+		// paid by the castle's unpack (RW 0x797B06)
 		const int cost = BuildAssistant::calcCostToBuild(what, &owner, &plot, -1);
 		owner.withdrawMoney((std::uint32_t)cost, true);
 		owner.getScoreKeeper().addMoneySpentByKind(logic, &what, cost); // RW 0x858B1E (lane END-2)
@@ -340,6 +344,12 @@ Object *Construction::constructByDozer(Object &dozer, const ThingTemplate &what,
 
 Object *Construction::buildObjectNow(GameLogic &logic, Object *builder, const ThingTemplate &what, const Coord3D &pos, float angle, Player &owner)
 {
+	// lane BACKLOG2: RW 0x7977C9 .. 0x79780C: the site is cleared and the units moved off it first (ConstructionSite::prepareSite: not for a DOZER builder, a
+	// NO_COLLIDE or DO_NOT_CLASSIFY template); retail reads the builder unchecked, the port's callers without one skip it
+	if (builder)
+	{
+		ConstructionSite::prepareSite(logic, *builder, what, pos, angle, owner);
+	}
 	ObjectStatusMaskType status{};
 	const bool structure = templateKindOf(logic, what, "STRUCTURE");
 	if (structure)
@@ -386,9 +396,11 @@ std::vector<std::string> Construction::stopLines()
 		"dozer queues its structure and places it on arrival with 1 hit point (RW 0x88D44F, lane BUILD-3: the port makes it at the order and sets the health at the arrival, S-304); "
 		"BUILD-1's dozer completion sets CONSTRUCTION_COMPLETE, which RW 0x88DEE0 does not",
 		"[S-652] Object::attemptHealingFromSoleBenefactor (RW 0x690584): the tail behind the template byte + 0x642 (RUBBLE cleared, a dead object revived) is not ported: the field is not identified",
-		"[S-653] GettingBuiltBehavior: calls not identified and not ported: RW 0x79F0E1(object, 1) / Object + 0x456 / BuildAssistant RW 0x797465 (a rebuild's start, a wall segment crossing 20 % "
-		"health), the body's slot 0x94 after a heal (RW 0x8C1D53), RW 0x68C3A3's slot 0x28 at a build's end (RW 0x8569C7; the production update's slot 0x60 before it is "
-		"setFactoryDisabled(false), lane PLAY-4): noted at runtime where reached",
+		"[S-653] GettingBuiltBehavior: calls not identified and not ported: Player + 0x3DC's RW 0x79F0E1(object, 1) and Object + 0x456 at a rebuild's start, the body's slot "
+		"0x94 after a heal (RW 0x8C1D53), RW 0x68C3A3's slot 0x28 at a build's end (RW 0x8569C7; the production update's slot 0x60 before it is setFactoryDisabled(false), "
+		"lane PLAY-4): noted at runtime where reached. Lane BACKLOG2 ported BuildAssistant::moveObjectsForConstruction RW 0x797465 (the rebuild's start RW 0x85679D, a "
+		"wall segment crossing 20 % health RW 0x85805E, buildObjectNow RW 0x797807 with clearRemovableForConstruction RW 0x796576 for the plots' builds); its "
+		"inference: an object's own geometry is its template's shapes with its active flags",
 		"[S-654] RebuildWhenDead: the DisallowRebuildFilter scan (RW 0x857873) is ported over the object list (3D centre distance, any match blocks); a template without the "
 		"filter row blocks nothing (RW's default filter at data + 0x40 was not read: inference); what keeps a dead structure in the world is its own die modules (KeepObjectDie)",
 		"[S-655] WorkerAIUpdate (RW 0x8ADAA0, fields RW 0xC058C8) runs as the dozer AI (the workers GettingBuiltBehavior spawns build and repair); its supply-truck half (MaxBoxes, the supply "

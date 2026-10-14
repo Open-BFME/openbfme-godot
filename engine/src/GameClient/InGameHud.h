@@ -37,6 +37,7 @@
 #include "GameLogic/GameLogicDispatch.h"
 #include "Libraries/Source/Apt/AptLoad.h"
 
+#include <functional>
 #include <memory>
 #include <set>
 #include <string>
@@ -70,7 +71,8 @@ public:
 	// translators read the process-wide stores (TheCommandStore in BuildAssistant::canMakeUnit) and other live worlds may be the top owner; a caller that reaches into
 	// controlBar() / input() directly holds its own (lane BUILD-1: the order-dependent failure of the Palantir press test)
 	// SMOOTH-1 (S-810): every entry point is also where the HUD takes the live game: it waits until the logic worker finished its frame (LiveGame::waitIdle)
-	std::unique_ptr<RetailObjectWorld::ContextScope> enterContext();
+	// lane RENDERWAIT-1: `file` / `line` name the caller in LiveGame's wait log (filled in by the compiler)
+	std::unique_ptr<RetailObjectWorld::ContextScope> enterContext(const char *file = __builtin_FILE(), int line = __builtin_LINE());
 	~InGameHud();
 	InGameHud(const InGameHud &) = delete;
 	InGameHud &operator=(const InGameHud &) = delete;
@@ -151,6 +153,7 @@ public:
 	std::string storeImageForClip(const std::string &clipPath) const { return m_store ? m_store->imageForClip(clipPath) : std::string(); }
 	// SMOOTH-1: render frames whose update was skipped because the logic worker was busy
 	unsigned long long skippedUpdates() const { return m_skippedUpdates; }
+	unsigned long long deferredPresses() const { return m_deferredPressCount; } ///< RENDERWAIT-1: movie presses that waited for a held update
 
 	// ---- lane HUD-6 (InGameHudHud6.cpp): the radial command bubbles, the help box ----
 	ControlBarRadialMenu &radialMenu() { return m_radial; }
@@ -183,6 +186,10 @@ private:
 	int m_tooltipDelayMs = 0;
 	std::vector<std::string> m_hud6Errors;
 	unsigned long long m_skippedUpdates = 0;
+	// lane RENDERWAIT-1: movie presses that came while the logic was not held (replayed in order by the next update that holds it)
+	std::vector<std::function<void()>> m_deferredPresses;
+	unsigned long long m_deferredPressCount = 0;
+	void whenHeld(std::function<void()> f);
 	Config m_config;
 	AptArchiveFileSource m_source;
 	ShellEnvironment m_environment;

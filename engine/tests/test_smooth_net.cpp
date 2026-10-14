@@ -41,6 +41,7 @@ namespace
 constexpr int kRunAhead = 2;
 constexpr int kCrcInterval = 25;
 constexpr int kFrames = 130;
+constexpr UnsignedInt kHudInputEvery = 20; // lane RENDERWAIT-1 r2: Scenario::hudInput's marks
 
 int templateIndexOf(const PlayerTemplateStore &store, const std::string &name)
 {
@@ -186,6 +187,10 @@ struct Scenario
 	int replaceAt = -1;                ///< driver removed and reinstalled
 	int toggleAt = -1;                 ///< the worker switched off and on
 	int dropPerMille = 0, jitterMs = 0;
+	// lane RENDERWAIT-1 r2 (Sol r1 #1): the local input is not the protocol-frame source but what a HUD does: commands appended to LiveGame::commands()
+	// every kHudInputEvery batches (when nextBatchFrame() reaches the mark). 1: after draining the worker (what every accessor did before the client
+	// window: the base's timing); 2: inside a client window, taken while batches may still be queued
+	int hudInput = 0;
 };
 
 struct FrameRecord
@@ -201,6 +206,7 @@ struct Result
 	ReplayFile replay;                   ///< the batches and hashes the driver recorded
 	unsigned long long crcPassed = 0, desyncs = 0, stalled = 0, held = 0, presentGaps = 0;
 	unsigned long long remoteCrcs = 0;
+	unsigned long long hudIssues = 0, hudIssuesWithBacklog = 0, inputHolds = 0; ///< RENDERWAIT-1 r2: Scenario::hudInput
 	std::vector<std::string> errors;
 	UnsignedInt startFrame = 0;
 	std::uint32_t finalHash = 0;
@@ -271,8 +277,9 @@ Result runScenario(starttest::Shared &s, const Scenario &sc, const std::string &
 	LockstepDriver driver(&net, &writer);
 	RegisterLogicCRCHandler(game.dispatch());
 	const int me = cfg.slotPlayerIndex[0];
-	driver.setInputSource([&units, home, me](UnsignedInt pf, CommandList &out) {
-		if (pf % 15 != 0)
+	const bool hudInput = sc.hudInput != 0;
+	driver.setInputSource([&units, home, me, hudInput](UnsignedInt pf, CommandList &out) {
+		if (hudInput || pf % 15 != 0)
 		{
 			return;
 		}
@@ -349,6 +356,43 @@ Result runScenario(starttest::Shared &s, const Scenario &sc, const std::string &
 			game.setLogicThread(!game.logicThread());
 			game.setLogicThread(!game.logicThread());
 		}
+		if (sc.hudInput != 0 && game.nextBatchFrame() >= res.startFrame + kHudInputEvery * (UnsignedInt)(res.hudIssues + 1))
+		{
+			// the HUD's order at this point of the batch sequence (the same in every scenario: the steps acquire at most one batch)
+			bool issue = true;
+			if (sc.hudInput == 1)
+			{
+				game.drainFrames(); // the base: every accessor waited for the queued frames
+			}
+			else
+			{
+				issue = game.beginClientWindow() && game.logicHeld(); // else: the worker is inside a frame; no window this render frame
+			}
+			if (issue)
+			{
+				res.hudIssuesWithBacklog += game.logicIdle() ? 0 : 1;
+				GameMessage sel(MSG_CREATE_SELECTED_GROUP, me);
+				sel.appendBooleanArgument(true);
+				for (ObjectID id : units)
+				{
+					sel.appendObjectIDArgument(id);
+				}
+				game.commands().append(sel);
+				GameMessage mv(MSG_DO_MOVETO, me);
+				Coord3D at = home;
+				at.x += res.hudIssues % 2 ? 150.0f : -150.0f;
+				at.y += 80.0f;
+				mv.appendLocationArgument(at);
+				game.commands().append(mv);
+				++res.hudIssues;
+			}
+			else
+			{
+				game.advance(0.0); // the clock holds at the mark until the render frame that holds the logic (nothing is acquired)
+				NetSleepMilliseconds(1);
+				continue;
+			}
+		}
 		game.advance((double)sc.stepMs[step++ % sc.stepMs.size()] / 1000.0);
 		// no batch beyond the horizon the remote peer announced (its frame infos reach protocol frame + run-ahead - 1)
 		if (game.nextBatchFrame() > remote.protocolFrame + (UnsignedInt)kRunAhead)
@@ -379,6 +423,7 @@ Result runScenario(starttest::Shared &s, const Scenario &sc, const std::string &
 	res.desyncs = net.desyncs().size();
 	res.stalled = game.stalledFrames();
 	res.held = game.heldPresentations();
+	res.inputHolds = game.clientWindowStats().inputHolds;
 	res.remoteCrcs = remote.crcsSent;
 	for (const std::string &e : net.errors())
 	{
@@ -555,6 +600,70 @@ TEST_CASE("smooth1 r4 retail: lockstep batches on the logic worker: every scenar
 		CHECK_FALSE(mismatch);
 		CHECK(played == base.frames);
 	}
+}
+
+// lane RENDERWAIT-1 r2 (Sol's review r1 #1): multiplayer command timing with the client window. A HUD's orders issued through LiveGame::commands() while
+// the slow worker has batches queued must be stamped, relayed and executed exactly as when the accessor drained the worker first (and as single-threaded).
+// r1 pumped the window's input against the stale protocol frame: the command record and the hashes differed.
+TEST_CASE("renderwait1 r2 retail: lockstep: a HUD's orders issued in a client window with batches queued execute in the frames the draining accessors gave")
+{
+	OPENBFME_REQUIRE_START(s);
+	std::vector<Scenario> scenarios;
+	Scenario a;
+	a.label = "single thread, HUD orders";
+	a.stepMs = { 100 };
+	a.hudInput = 1;
+	scenarios.push_back(a);
+	Scenario b;
+	b.label = "worker 250 ms a frame, HUD orders after draining the worker (the base)";
+	b.threaded = true;
+	b.stepMs = { 100 };
+	b.workerDelayMs = 250;
+	b.hudInput = 1;
+	scenarios.push_back(b);
+	Scenario c = b;
+	c.label = "worker 250 ms a frame, HUD orders in the client window";
+	c.hudInput = 2;
+	scenarios.push_back(c);
+	std::vector<Result> results;
+	for (size_t i = 0; i < scenarios.size(); ++i)
+	{
+		const std::string path = "renderwait1_net_" + std::to_string(i) + ".replay";
+		results.push_back(runScenario(*s, scenarios[i], path));
+		std::remove(path.c_str());
+		const Result &r = results.back();
+		MESSAGE(std::string(scenarios[i].label) << ": " << describe(r) << "; HUD orders " << r.hudIssues << " (" << r.hudIssuesWithBacklog
+				<< " with batches queued), advances held for input " << r.inputHolds);
+		for (const std::string &e : r.errors)
+		{
+			MESSAGE("  error: " << e);
+		}
+		CHECK(r.errors.empty());
+		CHECK(r.desyncs == 0);
+		REQUIRE(r.frames.size() == (size_t)kFrames);
+		CHECK(r.hudIssues == (unsigned long long)(kFrames / (int)kHudInputEvery));
+	}
+	// the case under test happened: every order of the window scenario was issued while batches were queued (the worker is 50 ms a frame behind
+	// the clock from the start), and the driver held its acquisition for them
+	CHECK(results[2].hudIssuesWithBacklog == results[2].hudIssues);
+	CHECK(results[2].inputHolds > 0); // tolerance: how many advances fall into the wait is wall-clock timing; none would mean the input was pumped at once
+	for (size_t i = 1; i < results.size(); ++i)
+	{
+		INFO(std::string(scenarios[i].label));
+		CHECK(results[i].frames == results[0].frames);
+		CHECK(commandRecord(results[i].replay) == commandRecord(results[0].replay));
+		CHECK(results[i].replay.hashes == results[0].replay.hashes);
+		CHECK(results[i].finalHash == results[0].finalHash);
+	}
+	size_t orders = 0;
+	for (const auto &kv : results[0].replay.frames)
+	{
+		for (const auto &m : kv.second)
+		{
+			orders += m.getType() == MSG_DO_MOVETO ? 1 : 0;
+		}
+	}
+	CHECK(orders == (size_t)(kFrames / (int)kHudInputEvery)); // each order is in the record once
 }
 
 TEST_CASE("smooth1 r4 retail: the client's snapshot read of the shroud does not change the state hash (a peer's local player is not hashed)")

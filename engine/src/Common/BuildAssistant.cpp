@@ -329,7 +329,8 @@ bool BuildAssistant::isInProducersCommandSet(Object &builder, const ThingTemplat
 		}
 		return false;
 	}
-	// RW 0x794F69: the builder's modules that offer extra templates by name (the interface at +0xC vslot 0x2C): none is ported (S-207)
+	// RW 0x794F69: the builder's modules that offer extra templates by name (the behavior interface at + 0xC, vslot 0x2C; its answer's slot 0 returns a name compared
+	// with the template's + 0x64): the classes that implement that slot are not identified, none is ported (S-207)
 	if (!TheCommandStore)
 	{
 		throw std::logic_error("canMakeUnit: no CommandStore (TheCommandStore) is set");
@@ -421,8 +422,7 @@ CanMakeType BuildAssistant::canMakeUnit(Object &builder, const ThingTemplate *wh
 	}
 	GameLogic &logic = builder.logic();
 	const ThingTemplate *pointsTemplate = what; // RW 0x794035: the command point test's template (lane HERO-1: the hero record's on the build-index path)
-	// RW 0x793EEF: Object + 0x458 bit 0 is the dead flag; RW 0x793F39: the two script status bits (SCRIPT_DISABLED, SCRIPT_UNPOWERED, set by RW 0x693182) are not
-	// ported (S-207)
+	// RW 0x793EEF: Object + 0x458 bit 0 is the dead flag
 	if (builder.isDestroyed())
 	{
 		return CANMAKE_FACTORY_IS_DISABLED;
@@ -436,6 +436,13 @@ CanMakeType BuildAssistant::canMakeUnit(Object &builder, const ThingTemplate *wh
 		{
 			return CANMAKE_FACTORY_IS_DISABLED;
 		}
+	}
+	// lane BACKLOG2: RW 0x793F39 .. 0x793F45: `test byte [builder + 0x457], 3` -> 3: the script status bits SCRIPT_DISABLED (1) and SCRIPT_UNPOWERED (2) of
+	// Object + 0x457 (lane SCRIPT-2's Object::scriptStatus) disable the factory, after the construction test and before the command set (BFME2 decomp
+	// BuildAssistant.cpp:canMakeUnit, tier B for RW 0x793ECB: testScriptStatusBit(SCRIPT_DISABLED) || testScriptStatusBit(SCRIPT_UNPOWERED))
+	if ((builder.scriptStatus() & 3u) != 0)
+	{
+		return CANMAKE_FACTORY_IS_DISABLED;
 	}
 	if (!isInProducersCommandSet(builder, what, buildIndex))
 	{

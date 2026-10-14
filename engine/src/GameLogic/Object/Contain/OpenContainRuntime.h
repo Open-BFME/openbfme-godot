@@ -67,12 +67,14 @@ public:
 	int reserveDoorForExit(const Object &obj) override { (void)obj; return 0; }        // RW 0x88B20C
 	void exitObjectViaDoor(Object *obj, int door) override;                            // RW 0x8682D9
 	// contain slots 0x158 / 0x15C / 0x160 (RW 0x8657D1 / 0x8657B6 / 0x867ACD): where an entering unit walks to and where a rider leaves: the container's position;
-	// a SHIP in water enters at the pathfinder's shore spot (RW 0x6EFBB8 from slot 0x158; slot 0x15C asks slot 0x158), not ported (counted: shipEntriesUnported,
-	// S-1104: the ship's position stands)
+	// a SHIP enters at the pathfinder's shore spot of its position when there is one (RW 0x6EFBB8 from slot 0x158; slot 0x15C asks slot 0x158; lane SHIP-1)
 	bool getEntryPosition(Coord3D &out) const override;
 	bool getEntryOffset(Coord3D &out) const override;
 	bool getExitOffset(Coord3D &out) const override;
-	unsigned long long shipEntriesUnported() const { return m_shipEntriesUnported; }
+	// lane SHIP-1: RW 0x6EFBB8 (Pathfinder::getClosestPointOnLand) for `ship` at `pos` with the ship's pathfind geometry and angle; throws without a pathfinder or AI
+	static bool shipShoreSpot(const Object &ship, const Coord3D &pos, Coord3D &out);
+	// lane SHIP-1: the stop line of the ship transport legs that are not ported (S-4160), raised in the AI world's report when a unit boards or leaves a SHIP
+	static const char *shipStop();
 	// a SHIP standing in water (TheTerrainLogic slot 0x4C at its position): RW's shore-spot branches (RW 0x6EFBB8) apply
 	static bool isShipOnWater(const Object &container);
 	// RW 0x6E8707 (ZH Pathfinder::validMovementTerrain) on the ground layer for `ai`'s current locomotor at `at`: an obstacle or impassable cell (types 4 / 5)
@@ -105,7 +107,8 @@ public:
 	virtual void killRidersWhoAreNotFreeToExit() {}
 	// contain slot 0x11C: the second list RW 0x867242 walks (SiegeEngineContain's crew); null for the others
 	virtual const ContainedItemsList *crewList() const { return nullptr; }
-	unsigned long long shipExitsUnported() const { return m_shipExitsUnported; }
+	// lane SHIP-1: RW 0x868516 .. 0x868733, the exit of a SHIP without exit paths: the rider is put on the shore spot and walks off (see the .cpp)
+	void exitShipToShore(const Object &ship, Object &rider);
 	unsigned long long turretBonesUnported() const { return m_turretBonesUnported; }
 
 	struct OpenStats
@@ -115,6 +118,8 @@ public:
 		unsigned long long ridersDestroyedOnDeath = 0;
 		unsigned long long ejectedOnDeath = 0;
 		unsigned long long exitedViaDoor = 0;    // RW 0x8682D9
+		unsigned long long shipExitsToShore = 0;      // lane SHIP-1: a rider put on the shore spot (RW 0x868554 found one)
+		unsigned long long shipExitsWithoutShore = 0; // lane SHIP-1: RW 0x6EFBB8 found no clear cell: the rider stays where removeFromContain put it
 	};
 	const OpenStats &openStats() const { return m_openStats; }
 
@@ -167,10 +172,8 @@ protected:
 	std::map<ObjectID, std::string> m_riderBoneName;   // RW + 0x3C (RW 0x8689EC)
 	std::array<std::uint32_t, 19> m_watchedConditions{}; // RW + 0x84 (19 words, zero at construction: RW 0x867FF3 memset)
 	unsigned m_doorOpenFrames = 0;            // RW module + 0x70 (DoorOpenTime countdown, RW 0x8682F8 / 0x86702D)
-	unsigned long long m_shipExitsUnported = 0;
 	unsigned long long m_turretBonesUnported = 0;
 	bool m_deleting = false;                  // RW + 0xDF (onDelete)
 	int m_nextExitPath = 1;                   // RW exit interface + 0x3C (the ExitStart / ExitEnd bone number of the next exit, NumberOfExitPaths > 1)
 	OpenStats m_openStats;
-	mutable unsigned long long m_shipEntriesUnported = 0; // a statistic, not simulation state
 };

@@ -30,8 +30,9 @@ inline std::vector<std::string> lines()
 		"(what remains of the research is S-486)",
 		"[S-206] command points: production asks the economy (Economy::canAffordCommandPoints, lane ECON-1: one model, RW 0x6A7C86 / 0x6A7B9F / 0x6A7F79, tier records ported); what the economy "
 		"does not do is its own stops S-252 (upgrades), S-253 (attribute modifier of a bonus) and S-254 (that game kind 3 is the skirmish is not verified, the Living World branches are not ported)",
-		"[S-207] canMakeUnit / canBuild: the script status bits (RW 0x793F39), the dozer wall hub rule and extra-template modules (RW 0x794F69) are not ported; a template with a "
-		"Prerequisites block (RW 0x74057B: none in retail data) is reported and treated as unsatisfied",
+		"[S-207] canMakeUnit / canBuild: the modules that offer extra templates by name (RW 0x794F69: behavior interface vslot 0x2C, implementers not identified) are not "
+		"ported; a template with a Prerequisites block (RW 0x74057B: none in retail data) is reported and treated as unsatisfied (the script status bits RW 0x793F39 are ported by "
+		"lane BACKLOG2, the construction test RW 0x793EF8 by lane PLAY-4)",
 		"[S-209] SpawnPointProductionExitUpdate cannot find its spawn bones (the drawable's pristine bones are the client lane's): its reserveDoorForExit stays DOOR_NONE_AVAILABLE and the module reports "
 		"it; the supply truck AI's setForceWantingState of SupplyCenterProductionExitUpdate (RW 0x8A9E70) is not ported" };
 }

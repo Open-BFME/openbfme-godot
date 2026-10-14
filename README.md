@@ -123,7 +123,7 @@ the original are still missing.
 not reinvent it. Where the evidence runs out and the team has to make an
 educated guess, that guess is not hidden: it is recorded as an *acceptance
 stop* in [docs/STOPS.md](docs/STOPS.md), reported by the game at runtime and
-pinned by a test. There are **669 open stops** today. Some are big
+pinned by a test. There are **671 open stops** today. Some are big
 (retail save files), most are small details waiting for better evidence. The plan to
 get to a 1:1 game is in [docs/ROADMAP.md](docs/ROADMAP.md).
 

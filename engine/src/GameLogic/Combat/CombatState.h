@@ -14,11 +14,13 @@
 #include <memory>
 #include <string>
 #include <cstdint>
+#include <functional>
 #include <vector>
 
 class ObjectProjectileLauncher;
 
 class GameLogic;
+class Object;
 class StateHasher;
 
 class CombatState
@@ -83,6 +85,11 @@ public:
 	};
 	Counters &counters() { return m_counters; }
 	const Counters &counters() const { return m_counters; }
+	// lane SHIP-1: an observer of every damaging hit a body applies (ActiveBody::attemptDamage after internalChangeHealth: the victim, the source id, the amount
+	// dealt and the health it took). For tests and tools only: no simulation state, never hashed, empty in a game
+	using DamageTrace = std::function<void(const Object &victim, std::uint32_t sourceId, float dealt, float taken)>;
+	void setDamageTrace(DamageTrace trace) { m_damageTrace = std::move(trace); }
+	const DamageTrace &damageTrace() const { return m_damageTrace; }
 
 	// the spatial index of the attackable objects
 	TargetFinder &targets() { return m_targets; }
@@ -123,6 +130,7 @@ private:
 	ProjectileLaunchOffsets *m_launchOffsets = nullptr;
 	TargetFinder m_targets;
 	Counters m_counters;
+	DamageTrace m_damageTrace;
 	std::vector<CastleBreach> m_breaches;
 	bool m_autoAcquire = true;
 	std::unique_ptr<ObjectProjectileLauncher> m_real;

@@ -24,9 +24,10 @@
 //             FiringTrackerHelper (0x5C, 0x8E2EB2)           when canPossiblyHaveAnyWeapon
 //        e. the behavior modules in template list order (ModuleFactory::newModule, RW 0x656480); after each: body (vslot 0), contain
 //           (vslot 2) and AI (vslot 19) are cached (RW 0x69A3B3); a PhysicsBehavior / StealthUpdate name key test follows (RW 0x69A420);
-//        f. the experience tracker (RW 0x69A606, not ported: stop S-142);
+//        f. the experience tracker (RW 0x69A606, lane XP-1);
 //        g. onObjectCreated on every module (RW 0x69A637 `call [eax + 0x14]`);
-//        h. the radar (RW 0x6D9042, not ported), GameLogic::registerObject (RW 0x62BA8B), then partition registration (not ported);
+//        h. the radar (RW 0x6D9042: client state, RADAR-1 evaluates its rules at every draw), GameLogic::registerObject (RW 0x62BA8B), then partition registration
+//           (MODULES-2, the world entry RW 0x69A6C6);
 //     3. CreateModule::onCreate in module order (RW 0x6D16E6 .. 0x6D1709);
 //     4. Object::initObject (RW 0x693D0C): sendObjectCreated (RW 0x628882: the unconditional creation draw GetGameLogicRandomValue(1, 999,
 //        "GameLogic.cpp", 0x19A7), the Drawable made and bound, OnCreated: GameLogic::sendObjectCreated, which is lane LUA-1's

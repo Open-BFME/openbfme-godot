@@ -140,7 +140,7 @@ func _ready() -> void:
 	if not prep.ok:
 		_fail("prepare_new_game: %s" % [prep.errors])
 		return
-	var rep: Dictionary = _world.start_new_game({"test_hooks": _scenario == "play4"}) # PLAY-4: debug_damage_object
+	var rep: Dictionary = _world.start_new_game({"test_hooks": _scenario == "play4" or _scenario == "camp"}) # PLAY-4: debug_damage_object
 	if not rep.ok:
 		_fail("start_new_game: %s" % [rep.errors.slice(0, 5)])
 		return
@@ -338,6 +338,9 @@ func _run_scenario() -> void:
 	if _scenario == "walls_timeline":
 		await _run_walls_timeline(shots)
 		return
+	if _scenario == "camp":
+		await _run_camp(shots)
+		return
 	if _scenario == "castle_fall":
 		await _run_castle_fall(shots)
 		return
@@ -445,6 +448,37 @@ func _run_scenario() -> void:
 	print("BUILDVIEW done: ", _world.get_object(building_id))
 	if _scenario == "play4":
 		await _run_play4(building_id, shots)
+	get_tree().quit(0)
+
+
+## lane BACKLOG2 (S-951): a camp flag in the open with Boromir beside it, owned by the local player; the flag's Construct Camp button (CASTLE_UNPACK, 2000) is
+## pressed through the control bar: the price leaves the cash and the flag hides (its timed unpack is ordered). create_object does not run the map loader's
+## build-complete call, so the flag's CastleBehavior does not update here and no camp rises (test_backlog2_retail.cpp unpacks a completed flag).
+## Screens backlog2-camp-*.png, BACKLOG2VIEW lines
+func _run_camp(shots: String) -> void:
+	var spot := Vector2(1500.0, 1500.0) # Evendim: ground the Camp_Men layout is legal on (test_backlog2_retail.cpp)
+	var me := _player_index(_local, spot.x, spot.y)
+	if me < 0:
+		_fail("no player index for %s" % _local)
+		return
+	_cam_target = spot
+	_place_camera()
+	var flag: int = _world.create_object("CampFlag", me, spot.x, spot.y)
+	_world.create_object("GondorBoromir", me, spot.x + 45.0, spot.y)
+	await _wait_logic(15)
+	print("BACKLOG2VIEW flag %d owner %s (local %s)" % [flag, _world.get_object(flag).get("owner", ""), _local])
+	await _frames(4)
+	_hud.select_object_with_message(flag) # the selection a click makes: the bar's source and the logic's selection (what MSG_CASTLE_UNPACK reads)
+	await _wait_logic(3)
+	print("BACKLOG2VIEW buttons before: ", _hud.get_command_buttons())
+	_save(shots.path_join("backlog2-camp-1-flag-button.png"))
+	var pressed: bool = _hud.press_command_button("Command_UnpackCamp")
+	print("BACKLOG2VIEW pressed Command_UnpackCamp: ", pressed)
+	await _wait_logic(8)
+	var rep0: Dictionary = _world.get_report()
+	print("BACKLOG2VIEW report errors after the press: ", rep0.get("errors", []).slice(-3))
+	_save(shots.path_join("backlog2-camp-2-paid.png"))
+	print("BACKLOG2VIEW buttons after: ", _hud.get_command_buttons())
 	get_tree().quit(0)
 
 

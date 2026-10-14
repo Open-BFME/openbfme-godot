@@ -9,6 +9,7 @@
 
 #include "GameLogic/BitFlags.h"
 #include "GameLogic/Locomotor.h"
+#include "GameLogic/WeaponState.h"
 
 #include <cmath>
 #include <map>
@@ -232,6 +233,32 @@ struct MockHost : LocomotorHost
 	void hordeEndReform() override { ++reformEnd; }
 	bool hordeFormationReady(float) const override { return formationReady; }
 	bool thingWaitsForFormation() const override { return thingWaits; }
+	// lane SHIP-1
+	bool underwater = false;
+	float waterZ = 0.0f;
+	bool held = false;
+	bool submarine = false;
+	bool isUnderwater(float, float, float *z) const override
+	{
+		if (underwater && z)
+		{
+			*z = waterZ;
+		}
+		return underwater;
+	}
+	bool isDisabledHeld() const override { return held; }
+	bool isKindOfSubmarine() const override { return submarine; }
+	bool weapon = false;
+	int weaponStatus = 0;
+	int statusCalls = 0;
+	bool stateActive = true;
+	bool hasCurrentWeapon() const override { return weapon; }
+	int currentWeaponStatusWriteBack() override
+	{
+		++statusCalls;
+		return weaponStatus;
+	}
+	bool aiStateActive() const override { return stateActive; }
 };
 
 // A store holding one locomotor parsed from INI text; returns the template.
@@ -678,13 +705,8 @@ TEST_CASE("dispatcher: a stationary-cap frame, status refusals, appearance table
 		CHECK(l2.speed() == 0.0f);
 	}
 	{
-		LocoFixture hover("  Appearance = HOVER\n");
-		Locomotor loco(hover.tmpl());
+		// lane SHIP-1: HOVER and SHIP run their movers (RW 0x5E742E / 0x5E613F); their tests are the "SHIP mover" / "HOVER mover" cases
 		MockHost h;
-		CHECK_THROWS_WITH_AS(loco.locomotorMoveTowardsPosition(h, Coord3D{ 100, 0, 0 }, 100.0f, 11.0f), doctest::Contains("S-084"), std::logic_error);
-		LocoFixture ship("  Appearance = SHIP\n");
-		Locomotor l2(ship.tmpl());
-		CHECK_THROWS_WITH_AS(l2.locomotorMoveTowardsPosition(h, Coord3D{ 100, 0, 0 }, 100.0f, 11.0f), doctest::Contains("S-084"), std::logic_error);
 		LocoFixture bird("  Appearance = GIANT_BIRD\n");
 		Locomotor l3(bird.tmpl());
 		h.place(0, 0, 0);
@@ -692,7 +714,7 @@ TEST_CASE("dispatcher: a stationary-cap frame, status refusals, appearance table
 		CHECK(l3.speed() == 0.0f);
 	}
 	{
-		LocoFixture z(std::string(kHuman) + "  ZAxisBehavior = SURFACE_RELATIVE_HEIGHT\n");
+		LocoFixture z(std::string(kHuman) + "  ZAxisBehavior = FIXED_SURFACE_RELATIVE_HEIGHT\n"); // lane SHIP-1 ported SURFACE_RELATIVE_HEIGHT
 		Locomotor loco(z.tmpl());
 		MockHost h;
 		h.place(0, 0, 0);
@@ -799,7 +821,8 @@ TEST_CASE("Locomotor stops S-081 and S-084 are reported and pinned")
 	CHECK(stops[0].rfind("S-081:", 0) == 0);
 	CHECK(stops[0].find("x87 and SSE") != std::string::npos);
 	CHECK(stops[1].rfind("S-084:", 0) == 0);
-	CHECK(stops[1].find("HOVER and SHIP movers") != std::string::npos);
+	CHECK(stops[1].find("HOVER") == std::string::npos); // lane SHIP-1: the HOVER and SHIP movers are ported
+	CHECK(stops[1].find("FLOATING_Z, SEA_LEVEL, SURFACE_RELATIVE_HEIGHT and ABSOLUTE_HEIGHT (the last three: lane SHIP-1;") != std::string::npos);
 	CHECK(stops[1].find("GIANT_BIRD movers are GiantBirdAIUpdate's") != std::string::npos); // lane FLY-1
 	CHECK(stops[1].find("ScalesWalls") != std::string::npos);
 	CHECK(stops[2].rfind("S-1750:", 0) == 0);
@@ -873,4 +896,274 @@ TEST_CASE("maintainCurrentPosition: a goal-less locomotor drops the walk's model
 	CHECK_FALSE(l4.locomotorMaintainCurrentPosition(h4));
 	CHECK(h4.mc.count(mcIndex("MOVING")) == 0);
 	CHECK(l4.speed() == treadsSpeed);
+}
+
+// ---- lane SHIP-1: the SHIP and HOVER movers and the SEA_LEVEL z (RW 0x5E613F, 0x5E742E, 0x5E76AC case 1) ----------------------------------------------
+namespace
+{
+// retail TransportShipLocomotor's numbers (data\ini\locomotor.ini: TurnTime 10000, Acceleration / Braking 6000, MinTurnSpeed 10%, SEA_LEVEL, SHIP)
+const char *kShip = "  Surfaces = WATER DEEP_WATER\n  Speed = 100%\n  SpeedDamaged = 50%\n  SlowTurnRadius = 50.0\n  FastTurnRadius = 70.0\n  TurnTime = 10000\n"
+					"  TurnTimeDamaged = 10500\n  TurnThreshold = 5\n  Acceleration = 6000\n  Braking = 6000\n  MinTurnSpeed = 10%\n  ZAxisBehavior = SEA_LEVEL\n"
+					"  Appearance = SHIP\n  CanMoveBackwards = No\n";
+}
+
+TEST_CASE("SHIP mover: the turn slows the ship by 1 - min(|2 rel| / (3.5 x turn rate), 0.9) (RW 0x5E613F), not by the Wheels' 4/pi factor")
+{
+	LocoFixture f(kShip);
+	// LocomotorSet speed 30: maximum 6 per frame, acceleration 6 / 30 frames = 0.2, turn rate 2 pi / 50 frames
+	{
+		// at rest, the goal 45 degrees to the left: 2 rel = pi / 2, |2 rel| / (3.5 x 2 pi / 50) = 3.57 is capped at 0.9: the target is 0.1 of 1.0 (the Wheels
+		// mover's min(|2 rel| x 4 / pi, 1) = 1 would leave the ship at 0)
+		Locomotor loco(f.tmpl());
+		MockHost h;
+		h.setSpeed = 30.0f;
+		h.place(0, 0, 0);
+		h.underwater = true;
+		loco.locomotorMoveTowardsPosition(h, Coord3D{ 100, 100, 0 }, 141.0f, 1.0f);
+		CHECK(loco.speed() == 1.0f - 0.9f);
+		MockHost hw;
+		hw.setSpeed = 30.0f;
+		hw.place(0, 0, 0);
+		LocoFixture wheels(std::string(kShip) + "  Appearance = FOUR_WHEELS\n  ZAxisBehavior = NO_Z_MOTIVE_FORCE\n");
+		Locomotor lw(wheels.tmpl());
+		lw.locomotorMoveTowardsPosition(hw, Coord3D{ 100, 100, 0 }, 141.0f, 1.0f);
+		CHECK(lw.speed() == 0.0f);
+	}
+	{
+		// the goal at (100, 10): rel = atan2(10, 100), doubled at rest; f = |2 rel| / (3.5 x 2 pi / 50) = 0.4532; the target 0.1 x (1 - f), below the
+		// acceleration, is the speed after one frame
+		Locomotor loco(f.tmpl());
+		MockHost h;
+		h.setSpeed = 30.0f;
+		h.place(0, 0, 0);
+		h.underwater = true;
+		loco.locomotorMoveTowardsPosition(h, Coord3D{ 100, 10, 0 }, 100.5f, 0.1f);
+		const double rel2 = 2.0 * std::atan2(10.0, 100.0);
+		const double fexp = rel2 / (3.5 * (2.0 * kPi / 50.0));
+		CHECK(nearly(loco.speed(), (1.0 - fexp) * 0.1, 1e-8));
+		CHECK(nearly(loco.speed(), 0.0546779, 1e-7)); // the value by hand: 0.1 x (1 - 0.199337 / 0.439823)
+	}
+	{
+		// straight ahead: no slow-down, the speed is the acceleration (6 / 30 frames)
+		Locomotor loco(f.tmpl());
+		MockHost h;
+		h.setSpeed = 30.0f;
+		h.place(0, 0, 0);
+		h.underwater = true;
+		loco.locomotorMoveTowardsPosition(h, Coord3D{ 1000, 0, 0 }, 1000.0f, 6.0f);
+		CHECK(nearly(loco.speed(), 0.2, 1e-7));
+	}
+	{
+		// a ship whose maximum speed is 0 does nothing more after the turn (no wheels-stopped notice, RW 0x5E6337)
+		Locomotor loco(f.tmpl());
+		MockHost h;
+		h.setSpeed = 0.0f;
+		h.place(0, 0, 0);
+		h.underwater = true;
+		loco.locomotorMoveTowardsPosition(h, Coord3D{ 100, 0, 0 }, 100.0f, 1.0f);
+		CHECK(h.wheelsStopped == 0);
+		CHECK(loco.speed() == 0.0f);
+	}
+}
+
+TEST_CASE("SEA_LEVEL: a ship floats at the water height, on dry ground at the ground height; a SUBMARINE dives by its speed; DISABLED_HELD keeps z (RW 0x5E781F)")
+{
+	LocoFixture f(kShip);
+	{
+		Locomotor loco(f.tmpl());
+		MockHost h;
+		h.setSpeed = 30.0f;
+		h.place(0, 0, 0);
+		h.underwater = true;
+		h.waterZ = 12.5f;
+		h.groundZ = -3.0f;
+		loco.locomotorMoveTowardsPosition(h, Coord3D{ 1000, 0, 0 }, 1000.0f, 6.0f);
+		CHECK(h.pos.z == 12.5f);
+		CHECK(h.pending.z == 25.0f); // 2 x 12.5 - the z before (0)
+		CHECK(loco.unverified().size() == 1); // S-081 alone: SEA_LEVEL is ported
+	}
+	{
+		Locomotor loco(f.tmpl());
+		MockHost h;
+		h.setSpeed = 30.0f;
+		h.place(0, 0, 0);
+		h.underwater = false;
+		h.groundZ = 4.0f;
+		loco.locomotorMoveTowardsPosition(h, Coord3D{ 1000, 0, 0 }, 1000.0f, 6.0f);
+		CHECK(h.pos.z == 4.0f);
+	}
+	{
+		// SUBMARINE with PreferredHeight -10: (speed / (maxSpeed + 0.1) + 1) x -10 + water; at rest the speed after the frame is 0.2: (0.2 / 6.1 + 1) x -10
+		LocoFixture sub(std::string(kShip) + "  PreferredHeight = -10\n");
+		Locomotor loco(sub.tmpl());
+		MockHost h;
+		h.setSpeed = 30.0f;
+		h.place(0, 0, 0);
+		h.underwater = true;
+		h.waterZ = 20.0f;
+		h.submarine = true;
+		loco.locomotorMoveTowardsPosition(h, Coord3D{ 1000, 0, 0 }, 1000.0f, 6.0f);
+		CHECK(nearly(h.pos.z, (0.2 / 6.1 + 1.0) * -10.0 + 20.0, 1e-5));
+		MockHost h2;
+		h2.setSpeed = 30.0f;
+		h2.place(0, 0, 0);
+		h2.underwater = true;
+		h2.waterZ = 20.0f;
+		Locomotor l2(sub.tmpl());
+		l2.locomotorMoveTowardsPosition(h2, Coord3D{ 1000, 0, 0 }, 1000.0f, 6.0f);
+		CHECK(h2.pos.z == 10.0f); // not a SUBMARINE: the preferred height is added as it is
+	}
+	{
+		Locomotor loco(f.tmpl());
+		MockHost h;
+		h.setSpeed = 30.0f;
+		h.place(0, 0, 0);
+		h.underwater = true;
+		h.waterZ = 12.5f;
+		h.held = true;
+		loco.locomotorMoveTowardsPosition(h, Coord3D{ 1000, 0, 0 }, 1000.0f, 6.0f);
+		CHECK(h.pos.z == 0.0f);
+	}
+}
+
+TEST_CASE("HOVER mover: the OTHER mover, then OVER_WATER follows the water under the object (RW 0x5E742E)")
+{
+	LocoFixture f("  Surfaces = AIR\n  TurnTime = 500\n  Acceleration = 2000\n  Braking = 2000\n  ZAxisBehavior = NO_Z_MOTIVE_FORCE\n  Appearance = HOVER\n");
+	LocoFixture other("  Surfaces = AIR\n  TurnTime = 500\n  Acceleration = 2000\n  Braking = 2000\n  ZAxisBehavior = NO_Z_MOTIVE_FORCE\n  Appearance = OTHER\n");
+	Locomotor loco(f.tmpl());
+	Locomotor lo(other.tmpl());
+	MockHost h, ho;
+	h.place(0, 0, 0);
+	ho.place(0, 0, 0);
+	h.underwater = true;
+	loco.locomotorMoveTowardsPosition(h, Coord3D{ 100, 50, 0 }, 112.0f, 11.0f);
+	lo.locomotorMoveTowardsPosition(ho, Coord3D{ 100, 50, 0 }, 112.0f, 11.0f);
+	// the same kinematics as OTHER
+	CHECK(h.pos.x == ho.pos.x);
+	CHECK(h.pos.y == ho.pos.y);
+	CHECK(h.angle == ho.angle);
+	CHECK(loco.speed() == lo.speed());
+	CHECK(h.mc.count(mcIndex("OVER_WATER")) == 1);
+	CHECK((loco.flags() & LOCOMOTOR_FLAG_OVER_WATER) == (unsigned)LOCOMOTOR_FLAG_OVER_WATER);
+	// the condition changes only with the flag: cleared by hand, it is not set again while the flag stays
+	h.mc.erase(mcIndex("OVER_WATER"));
+	loco.locomotorMoveTowardsPosition(h, Coord3D{ 100, 50, 0 }, 100.0f, 11.0f);
+	CHECK(h.mc.count(mcIndex("OVER_WATER")) == 0);
+	// off the water: flag and condition go
+	h.mc.insert(mcIndex("OVER_WATER"));
+	h.underwater = false;
+	loco.locomotorMoveTowardsPosition(h, Coord3D{ 100, 50, 0 }, 100.0f, 11.0f);
+	CHECK(h.mc.count(mcIndex("OVER_WATER")) == 0);
+	CHECK((loco.flags() & LOCOMOTOR_FLAG_OVER_WATER) == 0);
+}
+
+TEST_CASE("SURFACE_RELATIVE_HEIGHT / ABSOLUTE_HEIGHT: a tenth of the damped way to the preferred height above the surface each frame; CLIMBING above 0.5 (RW 0x5E7AF6)")
+{
+	// CrebainLocomotor's height fields: PreferredHeight 50, PreferredAttackHeight 25 (no CirclingRadius: the attack height never applies), damping 1
+	LocoFixture f("  Surfaces = AIR\n  TurnTime = 500\n  Acceleration = 2000\n  Braking = 2000\n  PreferredHeight = 50\n  PreferredAttackHeight = 25\n"
+				  "  ZAxisBehavior = SURFACE_RELATIVE_HEIGHT\n  Appearance = HOVER\n");
+	{
+		Locomotor loco(f.tmpl());
+		MockHost h;
+		h.place(0, 0, 0);
+		h.groundZ = 10.0f;
+		loco.locomotorMoveTowardsPosition(h, Coord3D{ 100, 0, 0 }, 100.0f, 11.0f);
+		// aim 50 + 10, step (60 - 0) / 10 = 6
+		CHECK(h.pos.z == 6.0f);
+		CHECK(h.pending.z == 12.0f);
+		CHECK(h.mc.count(mcIndex("CLIMBING")) == 1);
+		// over water the surface is the water's height
+		MockHost hw;
+		hw.place(0, 0, 0);
+		hw.groundZ = -20.0f;
+		hw.underwater = true;
+		hw.waterZ = 5.0f;
+		Locomotor lw(f.tmpl());
+		lw.locomotorMoveTowardsPosition(hw, Coord3D{ 100, 0, 0 }, 100.0f, 11.0f);
+		CHECK(hw.pos.z == 5.5f); // (55 - 0) / 10
+		// at the preferred height: no step, CLIMBING goes
+		MockHost h2;
+		h2.place(0, 0, 0);
+		h2.pos.z = 60.0f;
+		h2.syncTransform();
+		h2.groundZ = 10.0f;
+		h2.mc.insert(mcIndex("CLIMBING"));
+		Locomotor l2(f.tmpl());
+		l2.locomotorMoveTowardsPosition(h2, Coord3D{ 100, 0, 0 }, 100.0f, 11.0f);
+		CHECK(h2.pos.z == 60.0f);
+		CHECK(h2.mc.count(mcIndex("CLIMBING")) == 0);
+	}
+	{
+		// ABSOLUTE_HEIGHT: the surface is 0
+		LocoFixture a("  PreferredHeight = 30\n  ZAxisBehavior = ABSOLUTE_HEIGHT\n  Appearance = HOVER\n");
+		Locomotor loco(a.tmpl());
+		MockHost h;
+		h.place(0, 0, 0);
+		h.groundZ = 10.0f;
+		loco.locomotorMoveTowardsPosition(h, Coord3D{ 100, 0, 0 }, 100.0f, 11.0f);
+		CHECK(h.pos.z == 3.0f);
+		// BoatLocomotor: PreferredHeight 0 and no flag 8: the height is left alone
+		LocoFixture b("  PreferredHeight = 0\n  ZAxisBehavior = ABSOLUTE_HEIGHT\n  Appearance = HOVER\n");
+		Locomotor lb(b.tmpl());
+		MockHost hb;
+		hb.place(0, 0, 0);
+		hb.pos.z = 7.0f;
+		hb.syncTransform();
+		lb.locomotorMoveTowardsPosition(hb, Coord3D{ 100, 0, 0 }, 100.0f, 11.0f);
+		CHECK(hb.pos.z == 7.0f);
+	}
+	{
+		// PreferredHeightDamping 0.5: a twentieth of the way
+		LocoFixture d("  PreferredHeight = 40\n  PreferredHeightDamping = 0.5\n  ZAxisBehavior = ABSOLUTE_HEIGHT\n  Appearance = HOVER\n");
+		Locomotor loco(d.tmpl());
+		MockHost h;
+		h.place(0, 0, 0);
+		loco.locomotorMoveTowardsPosition(h, Coord3D{ 100, 0, 0 }, 100.0f, 11.0f);
+		CHECK(h.pos.z == 2.0f);
+	}
+}
+
+TEST_CASE("calcPreferredHeight: the attack-height states 0 -> 1 -> 2 -> 0, and the weapon's status asked in state 1 alone (RW 0x5E5D9A)")
+{
+	// PreferredHeight 50, PreferredAttackHeight 25, CirclingRadius 100; the goal 50 away (m = 0.5)
+	LocoFixture f("  PreferredHeight = 50\n  PreferredAttackHeight = 25\n  CirclingRadius = 100\n  ZAxisBehavior = ABSOLUTE_HEIGHT\n  Appearance = HOVER\n");
+	Locomotor loco(f.tmpl());
+	MockHost h;
+	h.place(0, 0, 0);
+	h.pos.z = 30.0f;
+	h.weapon = true;
+	const Coord3D goal{ 50, 0, 0 };
+	// state 0: the goal inside the circling radius with an active AI state starts the descent; the preferred height, no status asked
+	CHECK(loco.calcPreferredHeight(h, goal, 0.0f) == 50.0f);
+	CHECK(loco.attackHeightState() == 1);
+	CHECK(h.statusCalls == 0);
+	// state 1: 0.5 x (50 - 25) + 25; the status is asked (READY_TO_FIRE: stay)
+	CHECK(loco.calcPreferredHeight(h, goal, 0.0f) == 37.5f);
+	CHECK(loco.attackHeightState() == 1);
+	CHECK(h.statusCalls == 1);
+	// a weapon that is not ready ends the descent: state 2
+	h.weaponStatus = WEAPON_RELOADING_CLIP;
+	CHECK(loco.calcPreferredHeight(h, goal, 0.0f) == 37.5f);
+	CHECK(loco.attackHeightState() == 2);
+	CHECK(h.statusCalls == 2);
+	// state 2: min(0.5 x 2, 1) = 1: the preferred height; below it (30 above the surface) the state stays, no status asked
+	CHECK(loco.calcPreferredHeight(h, goal, 0.0f) == 50.0f);
+	CHECK(loco.attackHeightState() == 2);
+	CHECK(h.statusCalls == 2);
+	// at the preferred height the climb ends: state 0
+	h.pos.z = 50.0f;
+	CHECK(loco.calcPreferredHeight(h, goal, 0.0f) == 50.0f);
+	CHECK(loco.attackHeightState() == 0);
+	CHECK(h.statusCalls == 2);
+	// an inactive AI state does not start the descent; no weapon resets the state; neither asks the status
+	h.stateActive = false;
+	CHECK(loco.calcPreferredHeight(h, goal, 0.0f) == 50.0f);
+	CHECK(loco.attackHeightState() == 0);
+	h.stateActive = true;
+	CHECK(loco.calcPreferredHeight(h, goal, 0.0f) == 50.0f);
+	CHECK(loco.attackHeightState() == 1);
+	h.weapon = false;
+	CHECK(loco.calcPreferredHeight(h, goal, 0.0f) == 50.0f);
+	CHECK(loco.attackHeightState() == 0);
+	CHECK(h.statusCalls == 2);
 }

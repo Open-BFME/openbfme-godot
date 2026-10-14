@@ -7,6 +7,7 @@
 
 #include "GameLogic/Combat/ObjectWeapons.h"
 #include "GameLogic/Module/ConstructionModules.h"
+#include "GameLogic/ConstructionSite.h"
 
 #include "Common/Audio/AudioRequests.h"
 
@@ -144,6 +145,16 @@ void FoundationAIUpdate::onCapture(Player *oldOwner, Player *newOwner)
 Object *FoundationAIUpdate::construct(const ThingTemplate &what, const Coord3D &pos, float angle, Player &owner, bool instant)
 {
 	return Construction::constructOnPlot(*getObject(), what, pos, angle, owner, instant);
+}
+
+Object *FoundationAIUpdate::createOnSite(const ThingTemplate &what, const Coord3D &pos, float angle, Player &owner, bool instant)
+{
+	// RW 0x859198 (template, position and owner are references here: the null tests of RW 0x85919B .. 0x8591B0 hold)
+	GameLogic &logic = getObject()->logic();
+	ConstructionSite::clearSiteForFoundation(logic, what, pos, angle); // RW 0x8591C3
+	Object *made = construct(what, pos, angle, owner, instant);          // RW 0x8591DF: slot 7 (0x1C)
+	ConstructionSite::moveObjectsForFoundation(logic, *getObject(), what, pos, angle, owner); // RW 0x8591F4, whatever construct answered
+	return made;
 }
 
 // ---- GettingBuiltBehavior (lane BUILD-2: RotWK's runtime) --------------------------------------------------------------------------
@@ -379,8 +390,10 @@ void GettingBuiltBehavior::startConstruction(bool force)
 	m_rebuilding = obj->isEffectivelyDead();
 	if (m_rebuilding)
 	{
-		// RW 0x856762 ff: 0x79F0E1(object, 1), Object + 0x456 = 0 and the placement call RW 0x797465 are not identified (stop S-653)
-		logic.noteStop("[S-653] GettingBuiltBehavior: a dead structure starts its rebuild (RW 0x8566DF): RW 0x79F0E1 / Object + 0x456 / RW 0x797465 are not ported");
+		// RW 0x856762 ff: Player + 0x3DC's RW 0x79F0E1(object, 1) and Object + 0x456 = 0 are not identified (stop S-653); lane BACKLOG2: then
+		// moveObjectsForConstruction(the template, the position, the orientation, the player) (RW 0x85679D -> RW 0x797465) moves the units off the site
+		logic.noteStop("[S-653] GettingBuiltBehavior: a dead structure starts its rebuild (RW 0x8566DF): Player + 0x3DC's RW 0x79F0E1 and Object + 0x456 are not ported");
+		ConstructionSite::moveObjectsForConstruction(logic, *static_cast<const ThingTemplate *>(obj->getTemplate()), *obj->getPosition(), obj->getOrientation(), *player);
 	}
 	if (!m_forceComplete)
 	{
@@ -797,8 +810,15 @@ UpdateSleepTime GettingBuiltBehavior::update()
 					ai->removeObjectFromPathfindMap(*obj); // RW 0x6E85FB
 					ai->addObjectToPathfindMap(*obj);      // RW 0x6E85E9
 				}
-				// RW 0x85805E: BuildAssistant RW 0x797465(template, position, angle, owner) is not identified (stop S-653)
-				logic.noteStop("[S-653] GettingBuiltBehavior: a wall segment crossed 20 % health: BuildAssistant RW 0x797465 is not ported");
+				// RW 0x858036 .. 0x85805E (lane BACKLOG2): moveObjectsForConstruction(the template, the position, the orientation, the controlling player)
+				if (Player *owner = obj->getControllingPlayer())
+				{
+					ConstructionSite::moveObjectsForConstruction(logic, *static_cast<const ThingTemplate *>(obj->getTemplate()), *obj->getPosition(), obj->getOrientation(), *owner);
+				}
+				else
+				{
+					logic.reportError("GettingBuiltBehavior: wall segment " + std::to_string(obj->getID()) + " has no controlling player for RW 0x797465");
+				}
 			}
 		}
 		obj->attemptHealingFromSoleBenefactor(amount, obj, 2); // RW 0x85806F

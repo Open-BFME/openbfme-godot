@@ -22,6 +22,7 @@
 #include <map>
 #include <memory>
 #include <string>
+#include <functional>
 #include <vector>
 
 typedef std::uint16_t zoneStorageType;
@@ -610,6 +611,19 @@ public:
 	}
 	PathfindCell *getCell(PathfindLayerEnum layer, const Coord3D *pos);
 	PathfindCell *getClippedCell(PathfindLayerEnum layer, const Coord3D *pos);
+	// lane SHIP-1, RW 0x6EC931 (with the polygon walk RW 0x6E9B92): `visit` (a nonzero result stops the walk and is returned) for every existing cell of the
+	// `size.x` x `size.y` cell rectangle centred on `center` and turned by `angle` (no turn: the axis-aligned rectangle), in the walk's row order; a 1 x 1 rectangle
+	// visits its one cell
+	int iterateCellsInRotatedRect(const ICoord2D &center, const ICoord2D &size, float angle, PathfindLayerEnum layer,
+	                              const std::function<int(PathfindCell &, int, int)> &visit);
+	// lane SHIP-1, RW 0x6E9B92: the polygon walk under it: `xs` / `ys` hold `count` corners (changed in place: repeats dropped); -1 under 3 corners. A rectangle
+	// never sets the walk's first backward edge over 0 rows; another polygon can (S-4161, reported)
+	int iterateCellsInPolygon(int *xs, int *ys, int count, PathfindLayerEnum layer, const std::function<int(PathfindCell &, int, int)> &visit);
+	// lane SHIP-1, RW 0x6EFBB8 (BFME2 0x6EE7EE, named getClosestPointOnLand by the World Builder): `pos` not under water: `pos`, true. Under water: the nearest
+	// CLEAR cell (squared 2D distance, the first of equals) of the rectangle around `pos` that is the object's bounding shape (RW 0xAD1B20) plus 20 on each side,
+	// turned by the object's angle; `out` is that cell's corner at `pos`'s height; false when there is none (`out` is then left alone: retail copies the
+	// visitor's unset result, which no caller reads)
+	bool getClosestPointOnLand(const Coord3D &pos, const PathfindObject &obj, Coord3D &out);
 	const PathfindCell *cellAt(int x, int y) const;
 	bool worldToCell(const Coord3D *pos, ICoord2D *cell);
 	// RW 0x6E8CE6: floor(pos * 0.1), plus 0.5 when not centred; clamped to the extent (the flag is true when it had to clamp)

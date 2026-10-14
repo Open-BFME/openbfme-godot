@@ -226,6 +226,11 @@ public:
 			return STATE_FAILURE;
 		}
 		container->getContain()->getEntryOffset(m_goal); // slot 0x15C
+		static const int kShip = CombatNames::kindOf("SHIP");
+		if (container->isKindOf((unsigned)kShip))
+		{
+			ai().world().noteStop(OpenContain::shipStop()); // lane SHIP-1: the boarding legs of RW 0x751A8A / 0x756452 are not ported (S-4160)
+		}
 		m_move = std::make_unique<AIMoveToState>(ai().mover(), m_goal, true);
 		return m_move->onEnter();
 	}

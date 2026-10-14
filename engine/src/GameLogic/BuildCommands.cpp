@@ -2,6 +2,7 @@
 // See GameLogic/BuildCommands.h for the sources of every rule.
 
 #include "GameLogic/BuildCommands.h"
+#include "GameLogic/ConstructionSite.h"
 
 #include "Common/BuildAssistant.h"
 #include "Common/Player.h"
@@ -114,6 +115,12 @@ bool BuildCommands::foundationConstruct(GameLogic &logic, const GameMessage &m)
 			foundation = f;
 			break;
 		}
+	}
+	// lane BACKLOG2: the dispatcher's BuildAssistant slot 0x38 (RW 0x77AA00 -> buildObjectNow RW 0x797796) clears the site and moves the units off it
+	// (RW 0x7977F3 / 0x797807) before the plot's construct (slot 7, RW 0x797873)
+	if (foundation)
+	{
+		ConstructionSite::prepareSite(logic, *plot, *a.tmpl, a.loc, a.angle, *owner);
 	}
 	if (!foundation || !foundation->construct(*a.tmpl, a.loc, a.angle, *owner, false))
 	{

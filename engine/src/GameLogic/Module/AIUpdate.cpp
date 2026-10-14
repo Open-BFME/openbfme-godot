@@ -22,6 +22,7 @@
 #include "GameLogic/BitFlags.h"
 #include "GameLogic/GameLogic.h"
 #include "GameLogic/Module/HordeAIUpdate.h"
+#include "GameLogic/Module/InvisibilityModules.h"
 #include "GameLogic/Module/UnportedModule.h"
 #include "GameLogic/Object/Contain/HordeContainRuntime.h"
 #include "GameLogic/Object/Object.h"
@@ -288,6 +289,51 @@ public:
 	{
 		// ThingTemplate+0x109 bit 2 (RW 0x5E73AA) is the locomotor's WaitForFormation flag of the template in use
 		return m_ai.m_curLocomotor ? m_ai.m_curLocomotor->getTemplate().m_waitForFormation : false;
+	}
+	// lane SHIP-1: TheTerrainLogic vslot 0x4C (isUnderwater, RW 0x67DAE6) is the pathfinder's map view (TerrainPathfindSource::isUnderwater: the highest
+	// StandingWaterArea above the ground); a game without a map cannot answer, so a SHIP / HOVER / SEA_LEVEL move there is an error, not dry land
+	bool isUnderwater(float x, float y, float *waterZ) const override
+	{
+		const PathfindTerrain *terrain = m_ai.world().pathfinder().terrainView();
+		if (!terrain)
+		{
+			throw std::logic_error("Locomotor: a water test (TheTerrainLogic vslot 0x4C) without a map terrain");
+		}
+		return terrain->isUnderwater(x, y, waterZ, nullptr);
+	}
+	bool isDisabledHeld() const override { return (obj().getDisabledMask() & 0x8u) != 0; } // obj + 0x1C8 bit 3
+	bool hasAI() const override { return true; } // this host is the object's AI
+	bool isEffectivelyDead() const override { return obj().isEffectivelyDead(); }
+	bool hasCurrentWeapon() const override
+	{
+		const ObjectWeapons *w = obj().getWeapons();
+		return w && w->currentWeapon() != nullptr; // RW 0x68B58C(0)
+	}
+	int currentWeaponStatusWriteBack() override
+	{
+		ObjectWeapons *w = obj().getWeapons();
+		Weapon *cur = w ? w->currentWeapon() : nullptr;
+		if (!cur)
+		{
+			throw std::logic_error("Locomotor: RW 0x6CDCE7 without a current weapon");
+		}
+		return w->extraWeaponStatus(*cur); // RW 0x6CDCE7: getStatus with the write-back
+	}
+	bool aiStateActive() const override { return m_ai.isStateActive(); } // AI vslot 0x1BC
+	float gravity() const override
+	{
+		const GameLogic &logic = obj().logic();
+		if (!logic.settings().structureRulesLoaded)
+		{
+			throw std::logic_error("Locomotor: GameData Gravity was not loaded (a dead object's height step, RW 0x5E7B7F)");
+		}
+		return logic.settings().gravity;
+	}
+	bool hasStealthModule() const override { return StealthUpdate::of(obj()) != nullptr; } // RW 0x68FBD3
+	bool isKindOfSubmarine() const override
+	{
+		static const int kSubmarine = CombatNames::kindOf("SUBMARINE"); // KindOf 187: template + 0x11F bit 3
+		return obj().isKindOf((unsigned)kSubmarine);
 	}
 
 private:
@@ -614,6 +660,33 @@ void AIUpdateInterface::aiMoveToPosition(const Coord3D &pos, CommandSourceType s
 	if (source != CMD_FROM_AI)
 	{
 		m_attackMoveActive = false; // a move order ends an attack-move (COMBAT-1)
+	}
+	privateMoveToPosition(pos, source);
+	wakeUpNow();
+}
+
+void AIUpdateInterface::aiMoveToPositionEvenIfSleeping(const Coord3D &pos, CommandSourceType source)
+{
+	if (!acceptCommand(source, 0x36))
+	{
+		return; // RW 0x667174
+	}
+	++m_evenIfSleepingOrders;
+	m_lastEvenIfSleepingGoal = pos;
+	{
+		RoutedCommand c; // lane FLY-1: a class that routes its own commands sees 0x36 (GiantBirdAIUpdate does not route it)
+		c.type = 0x36;
+		c.position = pos;
+		c.source = source;
+		if (routeCommand(c))
+		{
+			return;
+		}
+	}
+	m_world->noteStop(kStopCommands);
+	if (source != CMD_FROM_AI)
+	{
+		m_attackMoveActive = false;
 	}
 	privateMoveToPosition(pos, source);
 	wakeUpNow();

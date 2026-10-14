@@ -88,6 +88,13 @@ public:
 
 	// ---- the command interface (ZH AICommandInterface) ----
 	void aiMoveToPosition(const Coord3D &pos, CommandSourceType source);
+	// lane BACKLOG2: RW 0x79664F AICommandInterface::aiMoveToPositionEvenIfSleeping (BFME2 decomp Rva00394191.cpp, tier A): AI command 0x36 with the position; the
+	// gate RW 0x667174 lets it through a sleeping mood (BFME2 decomp AIUpdateInterfacePrivateCommands.cpp:isAllowedToRespondToAiCommands); the command runs the
+	// move to the position (ZH AIUpdateInterface::aiDoCommand AICMD_MOVE_TO_POSITION_EVEN_IF_SLEEPING -> privateMoveToPosition: donor fact)
+	void aiMoveToPositionEvenIfSleeping(const Coord3D &pos, CommandSourceType source);
+	// observation only (not state, not hashed): the commands 0x36 this AI took and the last one's position as given (the move state may adjust its goal)
+	unsigned evenIfSleepingOrders() const { return m_evenIfSleepingOrders; }
+	const Coord3D &lastEvenIfSleepingGoal() const { return m_lastEvenIfSleepingGoal; }
 	void aiMoveToObject(Object *obj, CommandSourceType source);
 	// RW 0x770C2C (MSG_DO_MOVE_AND_ORIENTATE_OBJECTTO): a move that ends facing `angle`
 	void aiMoveToPositionAndOrientate(const Coord3D &pos, float angle, CommandSourceType source);
@@ -426,6 +433,8 @@ private:
 	bool m_moveLoopPosted = false; // lane AUDIO-3: a move loop is kept for this object on the audio side (audio bookkeeping only: no logic reads it, not hashed)
 	bool m_destroying = false; // set by the destructor: the machine's exits run on an object whose drawable the world hooks already removed
 	CommandSourceType m_lastCommandSource = CMD_FROM_AI;
+	unsigned m_evenIfSleepingOrders = 0;           ///< lane BACKLOG2: observation only
+	Coord3D m_lastEvenIfSleepingGoal{ 0.0f, 0.0f, 0.0f };
 	ObjectID m_currentVictim = INVALID_ID;
 	ObjectID m_targetHorde = INVALID_ID;
 	bool m_attackMoveActive = false;
