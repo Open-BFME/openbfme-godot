@@ -153,6 +153,8 @@ struct MountedArchive
 
 struct RetailMountOptions
 {
+	// Front-end presentation override: BFME2's main menu movie and bundled assets win.
+	bool bfme2MainMenu = false;
 	// Where the md5 cache lives (the caller's user data dir, e.g. Godot user://). Empty = no
 	// cache, every archive is hashed on every mount. md5 verification itself cannot be turned off.
 	std::string md5CachePath;
@@ -170,7 +172,8 @@ struct RetailMountReport
 	int md5CacheHits = 0;                   // md5 taken from the cache (path+size+mtime unchanged)
 };
 
-// installs are in precedence order (RotWK first). On any error nothing is mounted.
+// installs are in precedence order (RotWK first), except the optional BFME2 main menu override.
+// On any error nothing is mounted.
 RetailMountReport MountRetailArchives(Win32BIGFileSystem &fileSystem, const std::vector<RetailInstall> &installs,
 	const RetailMountOptions &options);
 

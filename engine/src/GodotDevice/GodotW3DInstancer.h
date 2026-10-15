@@ -108,6 +108,12 @@ public:
 	// 1 .. 3 and up to three ARGB colours; a Create-a-Hero is kind 3 with its record's three colours) texel by texel BEFORE filtering (RW 0x531C77), as
 	// retail builds the render object "#<model>#<options>" with its own recoloured textures (RW 0x54BDE0). Its instances take no team colour.
 	int64_t add_model_colored(const String &model_name, int64_t kind, const PackedInt64Array &colors);
+	// stop S-4832 (C++ only): the next add_model / add_model_colored builds the model with a ModelConditionState's `Texture = A B` swaps (a building's SNOW
+	// state: KBHall.tga -> KBHall_snow.tga): its meshes are built again, under a name that carries Texture_Swap_Suffix, with every texture A loaded as B.
+	// The add clears them.
+	void Set_Build_Texture_Swaps(const std::vector<std::pair<std::string, std::string>> &swaps) { PendingSwaps = swaps; }
+	// "#tex&a=b&c=d" (lower case, in the state's order): the part of a model's cache name that its texture swaps make; empty without swaps
+	static std::string Texture_Swap_Suffix(const std::vector<std::pair<std::string, std::string>> &swaps);
 	// RENDER-1 (stop S-390): the instance is lit by the map's infantry light set (KINDOF_INFANTRY drawables) instead of the objects set;
 	// the buffer stores the palette base as -(base + 1) for it.
 	void set_instance_infantry_light(int64_t instance, bool infantry);
@@ -256,6 +262,7 @@ private:
 	void warn(const std::string &message);
 	const HAnimClass *resolve_clip(const Model &m, const std::string &name); // nullptr (and an error recorded) when the clip is not registered
 	std::shared_ptr<MeshGpu> build_mesh(const MeshModelClass &mesh, std::vector<std::string> &errors);
+	int64_t build_model(const String &model_name); // add_model without the pending texture swaps' set-up
 	void rebuild_layout();
 	void evaluate_pose(Instance &inst) const;
 	void evaluate_animation_pose(Instance &inst) const; ///< the animation part of evaluate_pose (lane COMBAT-4 adds the bone spins after it)
@@ -274,6 +281,7 @@ private:
 	bool AlphaOverride = false; // lane BUILD-5 r3
 	std::map<std::string, std::shared_ptr<MeshGpu>> MeshCache;
 	std::string BuildSuffix; // lane CAH-2: the colour set of the model being built (add_model_colored), part of the mesh cache key
+	std::vector<std::pair<std::string, std::string>> PendingSwaps; // stop S-4832: Set_Build_Texture_Swaps, taken by the next add_model
 	std::vector<std::unique_ptr<Model>> Models;
 	std::vector<Instance> Instances;
 	std::vector<Ref<ShaderMaterial>> AllMaterials;

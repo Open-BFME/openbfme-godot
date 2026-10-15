@@ -500,6 +500,21 @@ W3DMaterialResult W3DMaterialFactory::Create(const MeshRenderData &mesh, const M
 		}
 	}
 
+	// stop S-4832: the ModelConditionState's `Texture = A B` pairs of the model being built (the SNOW state's KBHall.tga -> KBHall_snow.tga of 159 faction
+	// buildings): every texture this surface names A is loaded as B, before the house colour lookup reads it. INFERENCE: retail's swap routine was not read
+	for (std::string *name : { &tex[0], &tex[1], &normalMapName })
+	{
+		for (const std::pair<std::string, std::string> &swap : TextureSwaps)
+		{
+			if (!name->empty() && (swap.first == "*" || AsciiStringUtil::compareNoCase(*name, swap.first) == 0)) // "*": every texture (a floor's WeatherTexture)
+			{
+				out.Notes.push_back("texture " + *name + " drawn as " + swap.second + " (the model state's Texture swap, S-4832)");
+				*name = swap.second;
+				break;
+			}
+		}
+	}
+
 	// textures
 	Ref<Texture2D> textures[2];
 	Ref<Texture2D> normalTex;

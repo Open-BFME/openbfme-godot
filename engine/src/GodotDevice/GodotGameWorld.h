@@ -434,6 +434,7 @@ public:
 	// SMOOTH-1 (S-810): the logic worker thread on / off (the single-thread fallback for debugging); also the default of the next load (option logic_thread)
 	void set_logic_thread(bool enabled);
 	bool get_logic_thread() const;
+	Dictionary execute_lua(const String &code);
 	// SMOOTH-1: [[frame, hash], ...] of every completed frame when the game was loaded with hash_every_frame
 	Array get_frame_hashes() const;
 	// lane SMOOTH-1: the drawable's render pose of an object (the interpolated transform the instancer draws) next to its logic position, SAGE coordinates:
@@ -662,6 +663,9 @@ private:
 	std::vector<std::string> m_endGameErrors;
 	ScoreScreenData m_scoreScreen;
 	bool m_testHooks = false; ///< start option test_hooks: the debug_* end-game hooks may act on a started (non-network) game
+	bool m_luaConsoleUsed = false; ///< console edits are not represented in command-log saves
+	LuaReportSink m_consoleSink;
+	std::unique_ptr<LuaRuntime> m_consoleRuntime;
 	void startEndGame();
 	void updateEndGame();
 	std::unique_ptr<MapObjectRuntime> m_clientRuntime;

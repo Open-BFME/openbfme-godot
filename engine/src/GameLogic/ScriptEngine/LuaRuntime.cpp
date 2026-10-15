@@ -72,6 +72,11 @@ namespace
 {
 // RW 0x735F1C: nothing unless a debug step is active (global 0xDE7808 == L), and none ever is
 void lineHook(lua_State *, lua_Debug *) {}
+thread_local int consoleBudget = 0;
+void consoleLineHook(lua_State *L, lua_Debug *)
+{
+	if (--consoleBudget <= 0) lua_error(L, "Console execution limit exceeded");
+}
 
 void hostLog(void *user, const char *text)
 {
@@ -175,4 +180,46 @@ void LuaRuntime::setEnhancedProfile(bool enhanced)
 int LuaRuntime::doBuffer(const std::string &text, const char *chunkName)
 {
 	return lua_dobuffer(m_L, text.data(), text.size(), chunkName);
+}
+
+LuaRuntime::ConsoleResult LuaRuntime::console(const std::string &text)
+{
+	const int top = lua_gettop(m_L);
+	const size_t printedStart = m_printed.size(), alertStart = m_alerts.size(), faultStart = m_faults.size();
+	const bool printWasEnabled = m_printEnabled;
+	m_printEnabled = true;
+	// =expression is convenient without changing statement / function-definition semantics.
+	const std::string code = !text.empty() && text[0] == '=' ? "return " + text.substr(1) : text;
+	ConsoleResult result;
+	consoleBudget = 100000;
+	const lua_Hook previousHook = lua_setlinehook(m_L, &consoleLineHook);
+	result.status = doBuffer(code, "=console");
+	lua_setlinehook(m_L, previousHook);
+	m_printEnabled = printWasEnabled;
+	result.output = m_printed.substr(printedStart);
+	m_printed.resize(printedStart);
+	for (size_t i = alertStart; i < m_alerts.size(); ++i)
+	{
+		result.output += m_alerts[i] + "\n";
+	}
+	for (size_t i = faultStart; i < m_faults.size(); ++i)
+	{
+		result.output += m_faults[i] + "\n";
+	}
+	if (result.status == 0)
+	{
+		for (int i = top + 1; i <= lua_gettop(m_L); ++i)
+		{
+			if (i > top + 1) result.output += "\t";
+			const int type = lua_type(m_L, i);
+			if (type == LUA_TBOOLEAN) result.output += lua_toboolean(m_L, i) ? "true" : "false";
+			else if (type == LUA_TNIL) result.output += "nil";
+			else if (type == LUA_TSTRING || type == LUA_TNUMBER) result.output += lua_tostring(m_L, i);
+			else result.output += lua_typename(m_L, type);
+		}
+		if (lua_gettop(m_L) > top) result.output += "\n";
+	}
+	else if (result.output.empty()) result.output = "Lua error (status " + std::to_string(result.status) + ")\n";
+	lua_settop(m_L, top);
+	return result;
 }

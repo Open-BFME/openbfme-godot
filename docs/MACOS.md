@@ -14,6 +14,11 @@ macOS 26 on. Godot 4.7 itself runs on older versions; the extension does not.
 
 `brew install lame mpg123` before the build generates the synthetic MP3 fixtures; without them the five MP3 decode cases fail loudly, as on Windows.
 
+Press **F12** in game to open the Lua console; **Escape** or **F12** closes it. Enter runs a Lua 4.0.1 command, `=1 + 2` displays an expression,
+and Up / Down browse command history. `print("hello")` writes to the console; `clear` clears its output. The menu has a separate Lua state;
+during a single-player match the console uses the game's script state and bindings. Executing a live command disables saving for that match,
+because saves replay the command log, which does not include console edits. Multiplayer, replay playback and replay recordings refuse console commands.
+
 ## What changed for macOS
 
 - **The Lua VM's NaN results** (`leanumeric.cpp`): an AArch64 CPU's default NaN is positive (`0x7FF8...`), x86's is negative (`0xFFF8...`, retail's

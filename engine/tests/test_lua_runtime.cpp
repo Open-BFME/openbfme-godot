@@ -52,6 +52,28 @@ std::string readText(const std::string &path)
 // ---------------------------------------------------------------------------------------------------------------------
 // vendoring
 // ---------------------------------------------------------------------------------------------------------------------
+TEST_CASE("lua console: persistent globals, results, output, errors and stack isolation")
+{
+	Fixture f;
+	lua_pushnumber(f.rt.state(), 99);
+	CHECK(f.rt.console("console_x = 6; print('hello')").output == "hello\n");
+	CHECK_FALSE(f.rt.printEnabled());
+	CHECK(f.rt.printed().empty());
+	CHECK(f.rt.console("=console_x * 7").output == "42\n");
+	CHECK(f.rt.console("return nil, 'ok', {}").output == "nil\tok\ttable\n");
+	CHECK(f.rt.console("this is invalid Lua").status != 0);
+	CHECK_FALSE(f.rt.console("error('console failure')").output.empty());
+	CHECK(f.rt.console("while 1 do end").status != 0);
+	CHECK(f.rt.console("=2 + 3").output == "5\n");
+	CHECK(lua_gettop(f.rt.state()) == 1);
+	CHECK(lua_tonumber(f.rt.state(), 1) == 99);
+	f.rt.setPrintEnabled(true);
+	f.rt.appendPrinted("prior output");
+	CHECK(f.rt.console("print('new output')").output == "new output\n");
+	CHECK(f.rt.printEnabled());
+	CHECK(f.rt.printed() == "prior output");
+}
+
 TEST_CASE("lua vendoring: every file of the pristine lua-4.0.1 tree matches the manifest of the tarball (md5 a31d963d...)")
 {
 	const std::string manifest = readText(std::string(OPENBFME_LUA_PRISTINE_DIR) + ".manifest");

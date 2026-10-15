@@ -167,6 +167,31 @@ TEST_CASE("pure-retail mount: RotWK over BFME2, patch over base, 2.02 excluded, 
 	bfme2.policy.patch = "1.06";
 	bfme2.policy.archives = { entryFor("ini.big", bIni) };
 
+	SUBCASE("BFME2 main menu override preserves RotWK gameplay precedence")
+	{
+		auto rMenu = makeBig("BIGF", { { "MainMenu.apt", "rotwk-menu" } });
+		auto bMenu = makeBig("BIGF", { { "MainMenu.apt", "bfme2-menu" }, { "MainMenu.const", "bfme2-constants" } });
+		writeFile(rotwkRoot / "apt/mainmenu.big", rMenu);
+		writeFile(bfme2Root / "apt/mainmenu.big", bMenu);
+		rotwk.policy.archives.push_back(entryFor("apt/MainMenu.big", rMenu));
+		bfme2.policy.archives.push_back(entryFor("apt/mainmenu.big", bMenu));
+		for (bool overrideMenu : { false, true })
+		{
+			Win32BIGFileSystem fsys;
+			RetailMountOptions opts;
+			opts.bfme2MainMenu = overrideMenu;
+			auto report = MountRetailArchives(fsys, { rotwk, bfme2 }, opts);
+			REQUIRE(report.ok);
+			CHECK(readVirtual(fsys, "MainMenu.apt") == (overrideMenu ? "bfme2-menu" : "rotwk-menu"));
+			CHECK(readVirtual(fsys, "data/ini/weapon.ini") == "rotwk-201");
+			if (overrideMenu)
+			{
+				CHECK(report.mounted.front().install == "bfme2");
+				CHECK(report.mounted.front().canonicalPath == "apt/mainmenu.big");
+			}
+		}
+	}
+
 	SUBCASE("without a cache path every mount hashes every archive")
 	{
 		for (int run = 0; run < 2; ++run)

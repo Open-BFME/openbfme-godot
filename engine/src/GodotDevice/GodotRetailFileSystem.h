@@ -33,7 +33,8 @@ public:
 	RetailFileSystem();
 	~RetailFileSystem() override;
 
-	// Mount pure RotWK 2.01 (RotWK 2.01 + BFME2 1.06 archives). Install paths come from the
+	// Mount RotWK 2.01 + BFME2 1.06 archives, with BFME2's MainMenu.big taking priority.
+	// Install paths come from the
 	// ROTWK_INSTALL / BFME2_INSTALL environment variables, else user://install-paths.cfg
 	// (KEY=VALUE lines). Every archive's size and md5 are verified against the pinned policy
 	// (hashes cached in user://retail-md5-cache.tsv by path+size+mtime). Returns a report; on any

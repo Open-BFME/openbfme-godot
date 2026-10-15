@@ -116,6 +116,7 @@ struct W3DDrawPoseView
 	float blendPercentage = 0.0f;
 	const std::set<int> *hiddenSubObjects = nullptr; ///< indices into model->SubObjects (frame() names them; empty without a model)
 	std::uint32_t hiddenGeneration = 0;             ///< changes whenever the module's hidden set may have changed (with the same model: the same set)
+	const std::vector<std::pair<std::string, std::string>> *textureSwaps = nullptr; ///< the state's `Texture = A B` pairs (stop S-4832); never null after poseView
 };
 
 struct W3DScriptedModelDrawOptions

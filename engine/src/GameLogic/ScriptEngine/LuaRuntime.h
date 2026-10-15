@@ -62,6 +62,9 @@ public:
 
 	// lua_dobuffer with a chunk name (RW 0xB61420); returns the Lua status (0 = ok), the stack is left as the call left it
 	int doBuffer(const std::string &text, const char *chunkName);
+	struct ConsoleResult { int status = 0; std::string output; };
+	// Interactive chunk; preserves the caller's stack, print gate and diagnostic history.
+	ConsoleResult console(const std::string &text);
 
 private:
 	lua_State *m_L = nullptr;

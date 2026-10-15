@@ -94,6 +94,7 @@ Dictionary RetailFileSystem::mountFrom(const std::string &rotwkRoot, const std::
 	if (errors.is_empty())
 	{
 		RetailMountOptions options;
+		options.bfme2MainMenu = true;
 		// md5 of every archive is always verified; the cache only makes repeat mounts fast.
 		options.md5CachePath = toNative(ProjectSettings::get_singleton()->globalize_path("user://retail-md5-cache.tsv"));
 		std::unique_ptr<Win32BIGFileSystem> fs = std::make_unique<Win32BIGFileSystem>();

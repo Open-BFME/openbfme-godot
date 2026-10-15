@@ -990,6 +990,14 @@ RetailMountReport MountRetailArchives(Win32BIGFileSystem &fileSystem, const std:
 		return report; // fail closed: nothing mounted
 	}
 
+	if (options.bfme2MainMenu)
+	{
+		// Move the verified BFME2 menu ahead of RotWK, keeping all other precedence intact.
+		std::stable_partition(plan.begin(), plan.end(), [](const Planned &p) {
+			return p.install == "bfme2" && p.entry.path == "apt/mainmenu.big";
+		});
+	}
+
 	// Transactional: open and validate every archive first, mount only when all of them opened.
 	std::vector<std::unique_ptr<ArchiveFile>> opened;
 	for (const Planned &p : plan)

@@ -284,6 +284,8 @@ var _display_game := false               # --display-game
 var _fs: RefCounted
 var _audio: Node
 var _world: Node3D           # GameWorld
+var _lua_console: CanvasLayer
+var _console_input_states: Array[Dictionary] = []
 var _shell: Node2D           # AptMenuPlayer
 var _camera: Camera3D
 var _env: WorldEnvironment
@@ -1014,6 +1016,10 @@ func _boot() -> void:
 	_world = ClassDB.instantiate("GameWorld")
 	_world.name = "GameWorld"
 	add_child(_world)
+	_lua_console = preload("res://scripts/lua_console.gd").new()
+	_lua_console.execute = func(code: String) -> Dictionary: return _world.execute_lua(code)
+	_lua_console.toggled.connect(_lua_console_toggled)
+	add_child(_lua_console)
 	var setup: Dictionary = _world.setup(_fs)
 	print("GAME object world: ok=%s, %d templates, %d playable factions, %.1f s" % [setup.ok, setup.get("templates", 0), setup.get("factions", 0), setup.get("seconds", 0.0)])
 	if not setup.ok:
@@ -2447,6 +2453,13 @@ func _end_game_tick() -> void:
 
 
 func _input(event: InputEvent) -> void:
+	if _lua_console != null:
+		if event is InputEventKey and event.pressed and not event.echo and (event.keycode == KEY_F12 or (_lua_console.is_open() and event.keycode == KEY_ESCAPE)):
+			_lua_console.toggle()
+			get_viewport().set_input_as_handled()
+			return
+		if _lua_console.is_open():
+			return
 	# lane END-2: Esc toggles the quit menu (the options meta command, RW 0x9DB877 -> ToggleQuitMenu RW 0x921C9D), as the Palantir's options button does
 	if _state == State.PLAYING and event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_ESCAPE:
 		get_viewport().set_input_as_handled()
@@ -2469,6 +2482,21 @@ func _input(event: InputEvent) -> void:
 			_close_tribute()
 			return
 		_toggle_quit_menu()
+
+
+func _lua_console_toggled(open: bool) -> void:
+	if open:
+		for target in [_shell, _hud]:
+			if is_instance_valid(target):
+				_console_input_states.append({"node": target, "enabled": target.is_processing_input()})
+				target.set_process_input(false)
+		if is_instance_valid(_hud):
+			_hud.notification(Node.NOTIFICATION_WM_WINDOW_FOCUS_OUT)
+	else:
+		for state in _console_input_states:
+			if is_instance_valid(state.node):
+				state.node.set_process_input(state.enabled)
+		_console_input_states.clear()
 
 
 ## lane PLAY-1: the Palantir's flag (AptPalantir::OnBttnObjectives RW 0x6D40C9). In a skirmish or a multiplayer game (RW 0x625456: mode 2 or a network game)

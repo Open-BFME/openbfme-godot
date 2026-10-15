@@ -198,6 +198,7 @@ public:
 	// Switches the logic worker on or off (Options::logicThread); waits for the frames already requested. Only between frames (never on the worker).
 	void setLogicThread(bool enabled);
 	bool logicThread() const { return m_threaded; }
+	LuaRuntime *consoleLua() { return m_scripting ? m_scripting->engine().logic() : nullptr; }
 	// the logic frame the clock has made due (the last one requested of the worker, or run): inputs keyed to logic frames compare against it
 	UnsignedInt dueFrame() const { return m_dueFrame; }
 	// lane RENDERWAIT-1: what every accessor of the live logic calls. Inside the render thread's client window (below) it returns at once: the worker holds
