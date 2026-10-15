@@ -305,6 +305,7 @@ void GameWorld::_bind_methods()
 	ClassDB::bind_method(D_METHOD("debug_set_object_rank", "id", "rank"), &GameWorld::debug_set_object_rank); // lane HUD-5
 	ClassDB::bind_method(D_METHOD("debug_grant_upgrade", "player", "upgrade"), &GameWorld::debug_grant_upgrade);
 	ClassDB::bind_method(D_METHOD("execute_lua", "code"), &GameWorld::execute_lua);
+	ClassDB::bind_method(D_METHOD("update_lua"), &GameWorld::update_lua);
 	ClassDB::bind_method(D_METHOD("order_move", "ids", "x", "y", "options"), &GameWorld::order_move, DEFVAL(Dictionary()));
 	ClassDB::bind_method(D_METHOD("order_stop", "ids"), &GameWorld::order_stop);
 	ClassDB::bind_method(D_METHOD("build2_wall_hub", "player", "hub_template"), &GameWorld::build2_wall_hub);
@@ -1032,6 +1033,7 @@ Dictionary GameWorld::load_internal(const LiveGame::Options &loIn, const String 
 	m_audio.reset(); // AUDIO-2: the audio side reads the game
 	m_game.reset(new LiveGame(*m_world, *m_fs->archive_fs(), *m_assets, *m_options));
 	m_luaConsoleUsed = false;
+	if (m_consoleRuntime) m_consoleRuntime->invalidate();
 	m_game->setRenderInterpolation(m_renderInterpolation);
 	// lane RENDERWAIT-1: a blocking wait on the logic worker names its script caller (the innermost GDScript frame: the C++ site of a bound query is
 	// the query itself, the script line says who asked)
@@ -3497,28 +3499,56 @@ Dictionary GameWorld::execute_lua(const String &code)
 {
 	Dictionary result;
 	result["ok"] = false;
-	if (m_netHost || m_netClient || m_netStarted || m_netSession || m_replayPlayback || (m_localWriter && !m_recordPath.empty()))
-	{
-		result["output"] = "Lua console is unavailable in multiplayer, replays and replay recordings.";
-		return result;
-	}
-	// A separate persistent state at the menu; the live game's state owns its own lifetime.
-	if (!m_game && !m_consoleRuntime) m_consoleRuntime = std::make_unique<LuaRuntime>(m_consoleSink, "console");
 	const bool threaded = m_game && m_game->logicThread();
 	if (threaded) m_game->setLogicThread(false);
 	const auto worldContext = m_world ? m_world->enterContext() : nullptr;
-	LuaRuntime *runtime = m_game ? m_game->consoleLua() : m_consoleRuntime.get();
-	if (runtime)
+	try
 	{
-		if (m_game) m_luaConsoleUsed = true;
-		auto evaluated = runtime->console(code.utf8().get_data());
-		result["ok"] = evaluated.status == 0;
+		if (!m_consoleRuntime)
+		{
+			BfmeLuaRuntime::Host host;
+			host.snapshot = [this] { return bfme_snapshot(); };
+			host.apply = [this](const BfmeLuaRuntime::Mutation &mutation) { return bfme_apply(mutation); };
+			host.onMutation = [this] { if (m_game) m_luaConsoleUsed = true; };
+			host.scripts = [] {
+				std::vector<std::pair<std::string, std::string>> scripts;
+				for (const String &directory : { String("res://dev"), String("user://dev") })
+				{
+					if (!DirAccess::dir_exists_absolute(directory)) continue;
+					PackedStringArray names = DirAccess::get_files_at(directory);
+					names.sort();
+					for (int64_t i = 0; i < names.size(); ++i)
+					{
+						if (!names[i].ends_with(".lua")) continue;
+						const String path = directory.path_join(names[i]);
+						Ref<FileAccess> file = FileAccess::open(path, FileAccess::READ);
+						if (file.is_null()) throw std::runtime_error("Could not read Lua script: " + std::string(path.utf8().get_data()));
+						if (file->get_length() > 65536) throw std::runtime_error("Lua entry script exceeds 64 KiB: " + std::string(path.utf8().get_data()));
+						scripts.emplace_back(path.utf8().get_data(), file->get_as_text().utf8().get_data());
+					}
+				}
+				return scripts;
+			};
+			m_consoleRuntime = std::make_unique<BfmeLuaRuntime>(std::move(host));
+		}
+		auto evaluated = m_consoleRuntime->execute(code.utf8().get_data());
+		result["ok"] = evaluated.ok;
 		result["output"] = String::utf8(evaluated.output.c_str());
 		result["state"] = m_game ? "game" : "menu";
 	}
-	else result["output"] = "The game's Lua state is not ready.";
+	catch (const std::exception &error) { result["output"] = String::utf8(error.what()); }
 	if (threaded) m_game->setLogicThread(true);
 	return result;
+}
+
+void GameWorld::update_lua()
+{
+	if (!m_consoleRuntime || !m_consoleRuntime->hasPending()) return;
+	const bool threaded = m_game && m_game->logicThread();
+	if (threaded) m_game->setLogicThread(false);
+	const auto worldContext = m_world ? m_world->enterContext() : nullptr;
+	m_consoleRuntime->flush();
+	if (threaded) m_game->setLogicThread(true);
 }
 
 Array GameWorld::get_frame_hashes() const

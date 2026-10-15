@@ -3,6 +3,8 @@
 #include "GodotDevice/GodotRetailFileSystem.h"
 
 #include "Common/RetailArchivePolicy.h"
+#include "GameClient/OptionPreferences.h"
+#include <godot_cpp/classes/os.hpp>
 #include "GameEngineDevice/Win32Device/Common/Win32BIGFileSystem.h"
 
 #include <godot_cpp/classes/project_settings.hpp>
@@ -71,6 +73,7 @@ Dictionary RetailFileSystem::mountFrom(const std::string &rotwkRoot, const std::
 	Dictionary result;
 	std::string error;
 	m_fs.reset();
+	m_menuFs.reset();
 	m_mounted = false;
 	m_loose.clear();
 
@@ -94,11 +97,32 @@ Dictionary RetailFileSystem::mountFrom(const std::string &rotwkRoot, const std::
 	if (errors.is_empty())
 	{
 		RetailMountOptions options;
-		options.bfme2MainMenu = true;
+		// The UI preference is read before shell startup; gameplay keeps canonical RotWK precedence.
+		OptionPreferences preferences;
+		String optionsPath = "user://Options.ini";
+		const PackedStringArray args = OS::get_singleton()->get_cmdline_user_args();
+		for (int64_t i = 0; i < args.size(); ++i)
+			if (args[i].begins_with("--options-file=")) optionsPath = args[i].substr(15);
+		preferences.load(toNative(ProjectSettings::get_singleton()->globalize_path(optionsPath)));
+		const bool bfme2UI = preferences.get("OpenBFMEBFME2UI") != "no";
+		result["ui_theme"] = bfme2UI ? "bfme2" : "rotwk";
 		// md5 of every archive is always verified; the cache only makes repeat mounts fast.
 		options.md5CachePath = toNative(ProjectSettings::get_singleton()->globalize_path("user://retail-md5-cache.tsv"));
 		std::unique_ptr<Win32BIGFileSystem> fs = std::make_unique<Win32BIGFileSystem>();
 		RetailMountReport report = MountRetailArchives(*fs, installs, options);
+		std::unique_ptr<Win32BIGFileSystem> menuFs;
+		if (report.ok && bfme2UI)
+		{
+			menuFs = std::make_unique<Win32BIGFileSystem>();
+			// The complete verified BFME2 view supplies matching movies, atlases, mapped images and .wnd skins.
+			// RotWK remains a fallback for assets BFME2 never shipped (for example expansion-only screens).
+			RetailMountReport uiReport = MountRetailArchives(*menuFs, { installs[1], installs[0] }, options);
+			report.archivesHashed += uiReport.archivesHashed;
+			report.md5CacheHits += uiReport.md5CacheHits;
+			for (const auto &message : uiReport.errors) report.errors.push_back("menu theme: " + message);
+			for (const auto &message : uiReport.warnings) report.warnings.push_back("menu theme: " + message);
+			report.ok = uiReport.ok;
+		}
 		for (const std::string &e : report.errors)
 		{
 			errors.push_back(toGodot(e));
@@ -132,6 +156,7 @@ Dictionary RetailFileSystem::mountFrom(const std::string &rotwkRoot, const std::
 		if (report.ok)
 		{
 			m_fs = std::move(fs);
+			m_menuFs = std::move(menuFs);
 			m_mounted = true;
 			m_mountedArchives = report.mounted; // MP-1
 			// PLAN rule 7 / stop S-039: loose map files in the install folders are contamination; they are
@@ -141,6 +166,7 @@ Dictionary RetailFileSystem::mountFrom(const std::string &rotwkRoot, const std::
 			{
 				errors.push_back(toGodot("loose file scan: " + scanError));
 				m_fs.reset();
+				m_menuFs.reset();
 				m_mounted = false;
 			}
 			for (const LooseFileFinding &f : m_loose)
@@ -164,6 +190,11 @@ Dictionary RetailFileSystem::mountFrom(const std::string &rotwkRoot, const std::
 ArchiveFileSystem *RetailFileSystem::archive_fs() const
 {
 	return m_fs.get();
+}
+
+ArchiveFileSystem *RetailFileSystem::menu_archive_fs() const
+{
+	return m_menuFs ? m_menuFs.get() : m_fs.get();
 }
 
 Array RetailFileSystem::get_loose_files() const

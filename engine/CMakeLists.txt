@@ -79,6 +79,7 @@ include(cmake/SimFp.cmake) # openbfme_sim_fp (the simulation floating-point cont
 include(cmake/Apt.cmake) # OPENBFME_APT_SOURCES / OPENBFME_APT_TESTS (EA Apt player lane)
 include(cmake/Dep2.cmake) # openbfme_detlibm: the deterministic libm of the simulation (lane DEP-2; the Lua math library uses it)
 include(cmake/Lua.cmake) # openbfme_lua: Lua 4.0.1 + EA's fork (lane LUA-1)
+include(cmake/Lua54.cmake)
 include(cmake/Fx.cmake)  # OPENBFME_FX_SOURCES / OPENBFME_FX_TESTS (FX-1: FXList, particles, emitters)
 include(cmake/Production.cmake) # OPENBFME_PROD_SOURCES / OPENBFME_PROD_TESTS (lane PROD-1)
 include(cmake/Audio.cmake) # OPENBFME_AUDIO_SOURCES / OPENBFME_AUDIO_TESTS (lane AUDIO-1)
@@ -430,12 +431,14 @@ list(APPEND OPENBFME_SIM_SOURCES
 # ---- register the manifest once (after every lane's block above) and write it for the audit ----
 list(REMOVE_DUPLICATES OPENBFME_SIM_SOURCES)
 target_sources(openbfme_core PRIVATE ${OPENBFME_SIM_SOURCES})
+target_sources(openbfme_core PRIVATE src/GameLogic/ScriptEngine/BfmeLuaRuntime.cpp) # console companion, outside automatic retail simulation
 target_sources(openbfme_core PRIVATE ${OPENBFME_SPELL_CLIENT_SOURCES}) # lane SPELL-2 (client sources, Spell.cmake)
 # Simulation sources of the GDExtension (they need godot-cpp, so they are registered with the `openbfme` target, not the core): GodotGameWorld.cpp calls the core
 # game start (GameLogic/NewGame, a thin caller since START-1), creates the logic objects and queues the player's commands (HUD-1 moves the commands into core);
 # GodotGameStart.cpp marshals the lobby's NewGameMessage between Godot Dictionaries and the logic's struct (the values the logic consumes), so it is audited too.
 if(OPENBFME_BUILD_GODOT)
     set(OPENBFME_SIM_SOURCES_GODOT src/GodotDevice/GodotGameWorld.cpp src/GodotDevice/GodotGameStart.cpp src/GodotDevice/GodotGameWorldHeroes.cpp src/GodotDevice/GodotGameWorldStealth.cpp src/GodotDevice/GodotGameWorldGarrison.cpp src/GodotDevice/GodotGameWorldCah.cpp) # CAH-1: the builder's map mode; HERO-1: the hero commands; STEALTH-1: the stealth viewer helpers; GARRISON-1: the garrison commands
+    list(APPEND OPENBFME_SIM_SOURCES_GODOT src/GodotDevice/GodotBfmeLua.cpp) # validated native Lua mutations
 endif()
 openbfme_sim_write_manifest(${CMAKE_CURRENT_BINARY_DIR}/sim_manifest.json)
 # `cmake --build <dir> --target sim_audit` (after the build): the flags of every compile command, the manifest and the type-aware AST scan (tools/sim/sim_audit.py)
@@ -448,6 +451,7 @@ if(OPENBFME_PYTHON)
 endif()
 target_include_directories(openbfme_core PUBLIC src)
 target_link_libraries(openbfme_core PUBLIC openbfme_lua)
+target_link_libraries(openbfme_core PUBLIC openbfme_lua54)
 # DEP-1: std::thread (LiveGameRunner) needs libpthread below glibc 2.34 (tools/release/build_linux.sh: Godot's Linux SDK, a glibc 2.28
 # sysroot); on a newer glibc FindThreads adds nothing (pthread is in libc). Link-only: no compile flag, so the sim flag audit is unchanged.
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
@@ -709,6 +713,7 @@ add_executable(openbfme_tests
     tests/test_mapobj_retail.cpp
     # ---- LUA-1 (Lua scripting) ----
     tests/test_lua_runtime.cpp
+    tests/test_bfme_lua.cpp
     tests/test_lua_events.cpp
     tests/test_lua_engine.cpp
     tests/test_lua_retail.cpp

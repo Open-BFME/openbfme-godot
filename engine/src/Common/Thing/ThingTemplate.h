@@ -173,6 +173,15 @@ public:
 	// ---- object-level fields -----------------------------------------------------------------
 	// the slot of the field-table row of this name, or nullptr when it was never set
 	const FieldValue *findField(const std::string &name) const;
+	// Runtime companion API: update a scalar slot without changing the field-table layout.
+	bool setRuntimeField(const std::string &name, FieldValue value)
+	{
+		if (!m_fieldIndex) return false;
+		auto it = m_fieldIndex->find(name);
+		if (it == m_fieldIndex->end() || it->second >= m_fields.size()) return false;
+		m_fields[it->second] = std::move(value);
+		return true;
+	}
 	// VIS-1: the same slots by index: the row-name table (shared by the templates of one factory, fixed by the binary's field table) and the slot's live value
 	// (nullptr when never set), so a hot reader resolves a name once per table and still reads the current value
 	const std::vector<std::string> *fieldNameTable() const { return m_fieldNames; }

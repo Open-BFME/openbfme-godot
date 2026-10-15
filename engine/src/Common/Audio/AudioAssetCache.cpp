@@ -8,14 +8,32 @@
 
 AudioAssetCache::AudioAssetCache(ArchiveFileSystem *files, std::uint64_t decodedBudgetBytes) : m_files(files), m_budget(decodedBudgetBytes) {}
 
+ArchiveFileSystem *AudioAssetCache::sourceFor(const std::string &path, std::string &resolved) const
+{
+	resolved = path;
+	std::string canonical = AsciiStringUtil::lowered(path);
+	for (char &c : canonical) if (c == '\\') c = '/';
+	const auto marker = canonical.find(menuPathMarker);
+	if (marker != std::string::npos)
+	{
+		resolved = canonical.substr(marker + std::string(menuPathMarker).size());
+		return m_menuFiles;
+	}
+	return m_files;
+}
+
 bool AudioAssetCache::exists(const std::string &virtualPath) const
 {
-	return m_files && m_files->doesFileExist(virtualPath);
+	std::string path;
+	auto source = sourceFor(virtualPath, path);
+	return source && source->doesFileExist(path);
 }
 
 std::shared_ptr<const std::vector<std::uint8_t>> AudioAssetCache::readFile(const std::string &virtualPath, std::string *error)
 {
-	if (!m_files)
+	std::string path;
+	auto source = sourceFor(virtualPath, path);
+	if (!source)
 	{
 		if (error)
 		{
@@ -25,7 +43,7 @@ std::shared_ptr<const std::vector<std::uint8_t>> AudioAssetCache::readFile(const
 	}
 	auto bytes = std::make_shared<std::vector<std::uint8_t>>();
 	std::string e;
-	if (!m_files->readFile(virtualPath, *bytes, &e))
+	if (!source->readFile(path, *bytes, &e))
 	{
 		++m_stats.errors;
 		if (error)

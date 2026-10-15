@@ -684,6 +684,10 @@
   {
    "glob": "src/GodotDevice/GodotGameWorldSave.cpp",
    "reason": "lane SAVE-2: GameWorld's saves (writes the running recording's log to a file, lists the Save folder, starts a loaded save's catch-up and hands the game over with a continuing recording; the catch-up's audio is silenced, its queued effects dropped): client side, never part of the logic state"
+  },
+  {
+   "glob": "src/GameLogic/ScriptEngine/BfmeLuaRuntime.cpp",
+   "reason": "Interactive Lua 5.4 console interpreter, detached snapshots and explicit command queue; not the automatic retail Lua simulation. Native mutation application is audited in GodotBfmeLua.cpp. Lua 5.4 third-party sources are outside engine/src."
   }
  ]
 }

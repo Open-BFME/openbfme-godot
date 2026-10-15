@@ -10,6 +10,7 @@
 #include "RetailTestMount.h"
 
 #include "Common/Audio/AudioIni.h"
+#include "Common/Audio/AudioAssetCache.h"
 #include "Common/MiniJson.h"
 
 #include <algorithm>
@@ -51,6 +52,38 @@ const char kDefaults[] =
 	"  SubmixSlider = music\n"
 	"End\n";
 } // namespace
+
+TEST_CASE("audio ini: menu theme copies music dependencies and routes only themed bytes")
+{
+	AudioFixture game, theme;
+	REQUIRE(game.load(std::string(kDefaults) + "MusicTrack Shared\n Filename = rotwk.mp3\nEnd\n").empty());
+	REQUIRE(theme.load(std::string(kDefaults) + "MusicTrack Shared\n Filename = bfme2.mp3\nEnd\n"
+		"Multisound Menu\n Control = LOOP PLAY_ONE\n Subsounds = Shared\nEnd\n"
+		"MiscAudio\n LowLODShellMusic = Menu\n FullScreenSubMenuMusic = Shared\nEnd\n").empty());
+	theme.state.settings.musicFolder = "Data\\Audio\\Tracks\\";
+	const auto slots = game.state.installMenuMusic(theme.state);
+	CHECK(game.state.infos.find("Shared")->filename == "rotwk.mp3");
+	CHECK(slots.at("LowLODShellMusic") == "OpenBFMEMenu::Menu");
+	auto menu = game.state.infos.find(slots.at("LowLODShellMusic"));
+	REQUIRE(menu);
+	REQUIRE(menu->subsounds.size() == 1);
+	CHECK(menu->subsounds[0].info == game.state.infos.find("OpenBFMEMenu::Shared"));
+	CHECK(slots.at("FullScreenSubMenuMusic") == "OpenBFMEMenu::Shared");
+	CHECK(slots.at("CreditsMusic").empty());
+	const auto file = menu->subsounds[0].info->filename;
+	game.fx.mount({{"Data/Audio/Tracks/bfme2.mp3", "rotwk-copy"}});
+	theme.fx.mount({{"Data/Audio/Tracks/bfme2.mp3", "bfme2-copy"}});
+	AudioAssetCache cache(&game.fx.fsys, 1024);
+	cache.setMenuFiles(&theme.fx.fsys);
+	std::string error;
+	auto themed = cache.readFile("Data/Audio/Tracks/" + file, &error);
+	REQUIRE(themed);
+	CHECK(std::string(themed->begin(), themed->end()) == "bfme2-copy");
+	auto original = cache.readFile("Data/Audio/Tracks/bfme2.mp3", &error);
+	REQUIRE(original);
+	CHECK(std::string(original->begin(), original->end()) == "rotwk-copy");
+	CHECK(cache.exists("Data/Audio/Tracks/" + file));
+}
 
 TEST_CASE("audio ini: an AudioEvent starts from DefaultSoundEffect, its DEFAULT bit is cleared and the default itself keeps it")
 {

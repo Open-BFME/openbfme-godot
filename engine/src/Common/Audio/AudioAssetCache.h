@@ -26,6 +26,8 @@ class AudioAssetCache
 {
 public:
 	AudioAssetCache(ArchiveFileSystem *files, std::uint64_t decodedBudgetBytes);
+	static constexpr const char *menuPathMarker = "__openbfme_menu__/";
+	void setMenuFiles(ArchiveFileSystem *files) { clear(); m_menuFiles = files; }
 
 	bool exists(const std::string &virtualPath) const;
 	// The raw bytes of the file (shared, kept alive by the caller). Null + *error when missing.
@@ -60,6 +62,8 @@ private:
 	};
 
 	ArchiveFileSystem *m_files;
+	ArchiveFileSystem *m_menuFiles = nullptr;
+	ArchiveFileSystem *sourceFor(const std::string &path, std::string &resolved) const;
 	std::uint64_t m_budget;
 	std::unordered_map<std::string, Entry> m_entries; // key: lower-case path
 	std::list<std::string> m_lru;                      // most recent first

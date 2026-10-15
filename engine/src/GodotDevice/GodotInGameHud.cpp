@@ -135,7 +135,7 @@ int dikOf(Key key)
 		case Key::KEY_BRACKETRIGHT: return ::KEY_RBRACKET;
 		case Key::KEY_SEMICOLON: return ::KEY_SEMICOLON;
 		case Key::KEY_APOSTROPHE: return ::KEY_APOSTROPHE;
-		case Key::KEY_QUOTELEFT: return ::KEY_TICK;
+		case Key::KEY_QUOTELEFT: return 0; // Reserved for the Lua console; unbind the powers-menu shortcut.
 		case Key::KEY_BACKSLASH: return ::KEY_BACKSLASH;
 		case Key::KEY_COMMA: return ::KEY_COMMA;
 		case Key::KEY_PERIOD: return ::KEY_PERIOD;
@@ -2898,6 +2898,12 @@ void InGameHudNode::set_input_enabled(bool on)
 
 void InGameHudNode::_input(const Ref<InputEvent> &event)
 {
+	// Console shortcuts must never reach the HUD, even when it runs before the overlay's input callback.
+	if (const auto *key = Object::cast_to<InputEventKey>(event.ptr()))
+	{
+		if (key->get_keycode() == Key::KEY_QUOTELEFT || key->get_physical_keycode() == Key::KEY_QUOTELEFT
+			|| ((key->get_keycode() == Key::KEY_C || key->get_keycode() == Key::KEY_F5) && key->is_ctrl_pressed() && key->is_shift_pressed())) return;
+	}
 	if (!d->ready || event.is_null())
 	{
 		return;

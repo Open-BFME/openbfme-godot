@@ -185,6 +185,7 @@ private:
 
 	std::unique_ptr<INIEnvironment> m_env;
 	std::unique_ptr<AudioIniState> m_ini;
+	std::map<std::string, std::string> m_menuMusic;
 	std::unique_ptr<AudioAssetCache> m_cache;
 	std::unique_ptr<GodotAudioDevice> m_device;
 	std::unique_ptr<AudioManager> m_manager;

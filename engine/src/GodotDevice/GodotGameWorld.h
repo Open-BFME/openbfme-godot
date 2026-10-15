@@ -23,6 +23,7 @@
 #include "Common/System/SaveGame/SaveGameFile.h"
 #include "GameClient/ScriptCameraDirector.h"
 #include "GameClient/LiveGame.h"
+#include "GameLogic/ScriptEngine/BfmeLuaRuntime.h"
 #include "GameClient/LiveGameAudio.h"
 #include "GameClient/MapCache.h"
 #include "GameNetwork/LANAPI.h"
@@ -435,6 +436,9 @@ public:
 	void set_logic_thread(bool enabled);
 	bool get_logic_thread() const;
 	Dictionary execute_lua(const String &code);
+	void update_lua();
+	BfmeLuaRuntime::Snapshot bfme_snapshot();
+	std::string bfme_apply(const BfmeLuaRuntime::Mutation &mutation);
 	// SMOOTH-1: [[frame, hash], ...] of every completed frame when the game was loaded with hash_every_frame
 	Array get_frame_hashes() const;
 	// lane SMOOTH-1: the drawable's render pose of an object (the interpolated transform the instancer draws) next to its logic position, SAGE coordinates:
@@ -664,8 +668,7 @@ private:
 	ScoreScreenData m_scoreScreen;
 	bool m_testHooks = false; ///< start option test_hooks: the debug_* end-game hooks may act on a started (non-network) game
 	bool m_luaConsoleUsed = false; ///< console edits are not represented in command-log saves
-	LuaReportSink m_consoleSink;
-	std::unique_ptr<LuaRuntime> m_consoleRuntime;
+	std::unique_ptr<BfmeLuaRuntime> m_consoleRuntime;
 	void startEndGame();
 	void updateEndGame();
 	std::unique_ptr<MapObjectRuntime> m_clientRuntime;

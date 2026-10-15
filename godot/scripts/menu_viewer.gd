@@ -1,4 +1,4 @@
-## The retail menus on screen (menus-apt.md step A8): mounts RotWK 2.01 with BFME2's main menu, boots the Apt player as the headless tests do
+## The retail menus on screen (menus-apt.md step A8): mounts RotWK 2.01 with the saved menu theme, boots the Apt player as the headless tests do
 ## (AptLevel0 as level 0, MainMenu as level 1), draws it through the AptMenuPlayer extension class and lets you click through.
 ##
 ##   godot --path godot res://scenes/menu_viewer.tscn -- [options]

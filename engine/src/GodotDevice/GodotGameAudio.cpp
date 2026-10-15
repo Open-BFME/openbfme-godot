@@ -383,6 +383,7 @@ void GameAudio::tearDown()
 	m_device.reset();
 	m_cache.reset();
 	m_ini.reset();
+	m_menuMusic.clear();
 	m_env.reset();
 }
 
@@ -466,10 +467,27 @@ Dictionary GameAudio::boot(const Ref<RetailFileSystem> &fs, const Dictionary &co
 		m_ini->loadAll(ini);
 		m_ini->loadEva(ini); // AUDIO-2: TheEva's tables (Default\Eva.ini then Eva.ini, RW 0x5DE837) for the in-game announcer
 		m_ini->loadLargeGroupAudio(ini); // AUDIO-2: LargeGroupAudio.ini (RW 0x60D70E) for the group sounds of a live game
+		if (fs->menu_archive_fs() != archive)
+		{
+			INIEnvironment menuEnv;
+			menuEnv.fileSystem = fs->menu_archive_fs();
+			AudioIniState menuAudio;
+			menuAudio.registerBlocks(menuEnv.blocks);
+			INI menuIni(menuEnv);
+			menuAudio.loadAll(menuIni);
+			m_menuMusic = m_ini->installMenuMusic(menuAudio);
+		}
 	}
 	catch (const INIException &e)
 	{
 		errors.push_back(toGodot(std::string("audio INI: ") + e.message()));
+		result["errors"] = errors;
+		tearDown();
+		return result;
+	}
+	catch (const std::exception &e)
+	{
+		errors.push_back(toGodot(std::string("menu music: ") + e.what()));
 		result["errors"] = errors;
 		tearDown();
 		return result;
@@ -483,6 +501,7 @@ Dictionary GameAudio::boot(const Ref<RetailFileSystem> &fs, const Dictionary &co
 	const std::uint32_t seed = config.has("seed") ? (std::uint32_t)(int64_t)config["seed"] : 1u;
 	const std::uint64_t budgetMb = config.has("decoded_budget_mb") ? (std::uint64_t)(int64_t)config["decoded_budget_mb"] : 128u;
 	m_cache = std::make_unique<AudioAssetCache>(archive, budgetMb << 20);
+	m_cache->setMenuFiles(fs->menu_archive_fs());
 	const AudioSettings &s = m_ini->settings;
 	m_device = std::make_unique<GodotAudioDevice>(this, m_cache.get(), std::max(8, s.sampleCount2D) + std::max(8, s.sampleCount3D) + std::max(4, s.streamCount) + 8);
 	m_manager = std::make_unique<AudioManager>(*m_ini, *m_cache, *m_device, algorithm, seed);
@@ -651,7 +670,8 @@ bool GameAudio::is_valid_event(const String &n) const
 int64_t GameAudio::play_misc(const String &field)
 {
 	REQUIRE_BOOTED(AHSV_Error)
-	const std::string &name = m_manager->miscAudio(toNative(field));
+	const auto menu = m_menuMusic.find(toNative(field));
+	const std::string &name = menu == m_menuMusic.end() ? m_manager->miscAudio(toNative(field)) : menu->second;
 	if (name.empty())
 	{
 		return AHSV_NoSound; // the slot is NoSound

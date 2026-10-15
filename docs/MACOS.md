@@ -14,10 +14,15 @@ macOS 26 on. Godot 4.7 itself runs on older versions; the extension does not.
 
 `brew install lame mpg123` before the build generates the synthetic MP3 fixtures; without them the five MP3 decode cases fail loudly, as on Windows.
 
-Press **F12** in game to open the Lua console; **Escape** or **F12** closes it. Enter runs a Lua 4.0.1 command, `=1 + 2` displays an expression,
-and Up / Down browse command history. `print("hello")` writes to the console; `clear` clears its output. The menu has a separate Lua state;
-during a single-player match the console uses the game's script state and bindings. Executing a live command disables saving for that match,
-because saves replay the command log, which does not include console edits. Multiplayer, replay playback and replay recordings refuse console commands.
+**Settings → Interface → BFME2 menus and theme (restart)** switches the main menu and shared menu movies, textures, colors and gadget skins between
+BFME2 (default) and RotWK, including main-menu, submenu, credits and score-screen music. Accept the change and restart the game. It is saved as `OpenBFMEBFME2UI = yes/no` in Options.ini.
+The theme has a separate presentation archive view; gameplay data retains RotWK precedence, and expansion-only UI assets remain available as fallbacks.
+
+Press **backtick (`)** in game to open the Lua console; **Escape** or **backtick** closes it. Ctrl+Shift+C also toggles it. The powers-menu shortcut is unbound. Enter runs a Lua 5.4.9 command, `=1 + 2` displays an expression,
+and Up / Down browse command history. Shift+Enter inserts a new line; Run executes the entire script. Command and Log tabs have separate Clear controls. The console is scaled 2×. **Ctrl+Shift+F5** or **Reload scripts** rereads `.lua` files in `godot/dev/` and `user://dev/` without restarting; `console.reload()` does the same. `print("hello")` writes to the console; `clear` clears its output. The console's persistent companion VM exposes
+the [bfme library](BFME_LUA.md), including `bfme.players.localPlayer.money = 10000`. Retail gameplay scripts retain their Lua 4.0.1 state.
+Queuing a game mutation disables saving for that match because saves replay the command log, which does not include console edits.
+Console commands also run during multiplayer, replay playback and save catch-up; edits are local and are not synchronized or recorded.
 
 ## What changed for macOS
 

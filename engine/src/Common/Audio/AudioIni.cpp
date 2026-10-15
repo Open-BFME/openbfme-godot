@@ -1,6 +1,41 @@
 // OpenBFME. GPL-3.0. See AudioIni.h.
 
 #include "Common/Audio/AudioIni.h"
+#include "Common/Audio/AudioAssetCache.h"
+#include <functional>
+#include <stdexcept>
+
+std::map<std::string, std::string> AudioIniState::installMenuMusic(const AudioIniState &theme)
+{
+	std::map<std::string, AudioEventInfoStore::InfoPtr> copied;
+	std::function<AudioEventInfoStore::InfoPtr(const std::string &)> copy = [&](const std::string &name) {
+		auto prior = copied.find(name);
+		if (prior != copied.end()) return prior->second;
+		auto source = theme.infos.find(name);
+		if (!source) throw std::runtime_error("Unknown theme music event: " + name);
+		const std::string privateName = "OpenBFMEMenu::" + name;
+		auto target = infos.findOrCreate(privateName);
+		*target = *source;
+		target->audioName = privateName;
+		copied[name] = target;
+		if (source->soundType == AT_Music && !source->filename.empty())
+			target->filename = std::string(AudioAssetCache::menuPathMarker) + theme.settings.musicFolder + source->filename;
+		for (auto &child : target->subsounds)
+		{
+			child.info = copy(child.name);
+			child.name = child.info->audioName;
+		}
+		return target;
+	};
+	std::map<std::string, std::string> slots;
+	for (const char *field : {"LowLODShellMusic", "HighLODShellMusic", "FullScreenSubMenuMusic", "CreditsMusic",
+		"ScoreScreenMusic", "ShellMapLoadMusic", "SaveFileLoadMusic", "VolumeSampleMusic"})
+	{
+		const auto &name = theme.miscAudio.get(field);
+		slots[field] = name.empty() ? "" : copy(name)->audioName;
+	}
+	return slots;
+}
 
 #include "Common/AsciiString.h"
 #include "Common/INIException.h"

@@ -47,6 +47,7 @@ const HELP := {
 	"OpenBFMELook": "Enhanced: AgX tone mapping and a glow on the brightest effects. Original: the game's own picture.",
 	"OpenBFMESoftParticles": "Smoke, fire and dust fade where they meet the ground instead of a hard cut. Off: the original look.",
 	"OpenBFMEUIScale": "Enlarges the health bars, the frame counter and the game clock for large screens; the menus already scale with the window.",
+	"OpenBFMEBFME2UI": "BFME2's main menu, menu colors, textures, gadget skins and menu music. Off uses Rise of the Witch-king. Takes effect after restarting the game.",
 	"OpenBFMEUberPerformance": "Not compatible with the original game: uses every CPU core; games and replays then only work with players who have it on too. From the next game.",
 	"OpenBFMEEdgeScroll": "Scrolling with the mouse at the screen's edge. The original game does it in full screen only.",
 	"OpenBFMERotateSpeed": "How fast the camera turns.",
@@ -537,6 +538,7 @@ func _camera_rows() -> Array:
 
 func _interface_rows() -> Array:
 	return _present([
+		_extra_check("OpenBFMEBFME2UI", "BFME2 menus and theme (restart)", HELP.OpenBFMEBFME2UI),
 		_retail_row("Retail.HealthBars"),
 		_extra_choice("OpenBFMEHealthBars", "Health bars", BARS_ITEMS, HELP.OpenBFMEHealthBars),
 		_extra_check("AlternateMouseSetup", "Alternate mouse setup", HELP.AlternateMouseSetup),

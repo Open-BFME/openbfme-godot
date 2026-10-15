@@ -33,7 +33,8 @@ public:
 	RetailFileSystem();
 	~RetailFileSystem() override;
 
-	// Mount RotWK 2.01 + BFME2 1.06 archives, with BFME2's MainMenu.big taking priority.
+	// Mount RotWK 2.01 + BFME2 1.06 gameplay archives and an optional BFME2-first UI view.
+	// Options.ini OpenBFMEBFME2UI = yes (default) selects BFME2 menus; no selects RotWK.
 	// Install paths come from the
 	// ROTWK_INSTALL / BFME2_INSTALL environment variables, else user://install-paths.cfg
 	// (KEY=VALUE lines). Every archive's size and md5 are verified against the pinned policy
@@ -52,6 +53,8 @@ public:
 
 	// Engine-side access for other device classes.
 	ArchiveFileSystem *archive_fs() const;
+	// Presentation-only archive view. Gameplay always reads archive_fs().
+	ArchiveFileSystem *menu_archive_fs() const;
 	bool readBytes(const std::string &path, std::vector<uint8_t> &out, std::string *error);
 	bool existsNative(const std::string &path) const;
 	// The mounted archive file system (nullptr until mount_retail() succeeded); engine-side only.
@@ -71,6 +74,7 @@ private:
 	Dictionary mountFrom(const std::string &rotwkRoot, const std::string &bfme2Root, PackedStringArray errors);
 
 	std::unique_ptr<Win32BIGFileSystem> m_fs;
+	std::unique_ptr<Win32BIGFileSystem> m_menuFs;
 	bool m_mounted = false;
 	String m_lastError;
 	std::vector<LooseFileFinding> m_loose;

@@ -20,6 +20,7 @@
 #include "Common/INI.h"
 
 #include <string>
+#include <map>
 #include <vector>
 
 // RW 0x602905: AudioLOD <Low|High> { MaximumAmbientStreams AllowDolby AllowReverb } (the table lives in TheGameLODManager + 0x218 + 8 * level).
@@ -51,6 +52,8 @@ public:
 	// but `Data\INI\Default\Voice.ini` is not (spec 9.5).
 	static const std::vector<std::string> &loadOrder();
 	void loadAll(INI &ini);
+	// Copy only menu music and its multisound dependencies under private names; gameplay events stay untouched.
+	std::map<std::string, std::string> installMenuMusic(const AudioIniState &theme);
 	// Eva.ini (Default first, RW 0x5DE837) and LargeGroupAudio.ini (RW 0x60D70E): loaded by their own subsystems, after the audio files
 	void loadEva(INI &ini);
 	void loadLargeGroupAudio(INI &ini);

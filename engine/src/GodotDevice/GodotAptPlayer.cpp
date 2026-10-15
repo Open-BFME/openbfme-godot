@@ -933,7 +933,7 @@ struct AptMenuPlayer::Impl
 	{
 		std::vector<std::uint8_t> bytes;
 		std::string error;
-		if (!source->readFile("data/lotr.str", bytes, &error) || !strings.parse(bytes, &error))
+		if (!fs->archive_fs()->readFile("data/lotr.str", bytes, &error) || !strings.parse(bytes, &error))
 		{
 			errorsOut.push_back(toGodot("data/lotr.str: " + error));
 		}
@@ -1263,7 +1263,7 @@ Dictionary AptMenuPlayer::boot(const Ref<RetailFileSystem> &fs, const Dictionary
 	m->fs = fs;
 	m->view3d.setOwner(this, fs); // lane UI-2
 	m->shell.reset();
-	m->source = std::make_unique<AptArchiveFileSource>(*fs->archive_fs());
+	m->source = std::make_unique<AptArchiveFileSource>(*fs->menu_archive_fs());
 	m->apt.reset(); // before the host it refers to is reused
 	m->host = AptGodotHost();
 	m->host.frame = &m->frames;
@@ -1356,7 +1356,7 @@ Dictionary AptMenuPlayer::boot_shell(const Ref<RetailFileSystem> &fs, Object *wo
 	m->view3d.setOwner(this, fs); // lane UI-2
 	m->shell.reset();
 	m->apt.reset();
-	m->source = std::make_unique<AptArchiveFileSource>(*fs->archive_fs());
+	m->source = std::make_unique<AptArchiveFileSource>(*fs->menu_archive_fs());
 	m->textures = std::make_unique<AptTextureStore>(*m->source);
 	m->godotTextures.clear();
 	m->strings = GameTextTable();
@@ -1374,7 +1374,7 @@ Dictionary AptMenuPlayer::boot_shell(const Ref<RetailFileSystem> &fs, Object *wo
 	{
 		errors.push_back(toGodot("the lobby's setup source: " + error));
 	}
-	if (!loadGadgetSkinData(*fs->archive_fs(), sm->skins, &error))
+	if (!loadGadgetSkinData(*fs->menu_archive_fs(), sm->skins, &error))
 	{
 		errors.push_back(toGodot("gadget skins: " + error));
 	}
@@ -3799,7 +3799,7 @@ void AptMenuPlayer::drawCanvas(const AptCanvasList &list)
 								std::string ddsError;
 								Ref<godot::Image> image;
 								if (stem.size() > 2 && m->fs.is_valid() && m->fs->archive_fs() &&
-									m->fs->archive_fs()->readFile("art/compiledtextures/" + stem.substr(0, 2) + "/" + stem + ".dds", dds, &ddsError))
+									m->fs->menu_archive_fs()->readFile("art/compiledtextures/" + stem.substr(0, 2) + "/" + stem + ".dds", dds, &ddsError))
 								{
 									PackedByteArray data;
 									data.resize((int64_t)dds.size());

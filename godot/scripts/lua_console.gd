@@ -1,88 +1,321 @@
-## Interactive Lua 4.0.1 console. The owner supplies the executor and manages game input.
+## BFME-style companion console, inspired by BFME2Lua's Command / Log editor.
 extends CanvasLayer
 
 signal toggled(open: bool)
 var execute: Callable
+var _root: Control
 var _panel: PanelContainer
+var _scroll: ScrollContainer
 var _output: TextEdit
-var _entry: LineEdit
+var _log: TextEdit
+var _entry: CodeEdit
+var _tabs: TabContainer
+var _status: Label
 var _history: Array[String] = []
 var _history_index := 0
 var _draft := ""
+var _layout_queued := false
+const GOLD := Color("c4a76a")
+const INK := Color("10191e")
+const TEXT := Color("e3dfcf")
+const MUTED := Color("99aaa9")
+const UI_SCALE := 2.0
+
+class OrnateFrame extends PanelContainer:
+	func _draw() -> void:
+		var gold := Color("c4a76a")
+		for corner in [Vector2(9, 9), Vector2(size.x - 9, 9), Vector2(9, size.y - 9), size - Vector2(9, 9)]:
+			var direction := Vector2(1 if corner.x < size.x / 2 else -1, 1 if corner.y < size.y / 2 else -1)
+			draw_line(corner, corner + Vector2(25 * direction.x, 0), gold, 2)
+			draw_line(corner, corner + Vector2(0, 25 * direction.y), gold, 2)
+			var center: Vector2 = corner + direction * 5
+			draw_colored_polygon(PackedVector2Array([center + Vector2(0, -3), center + Vector2(3, 0), center + Vector2(0, 3), center + Vector2(-3, 0)]), gold)
+
+func _box(color: Color, border: Color, padding: int = 10) -> StyleBoxFlat:
+	var box := StyleBoxFlat.new()
+	box.bg_color = color
+	box.border_color = border
+	box.set_border_width_all(1)
+	box.set_content_margin_all(padding)
+	box.set_corner_radius_all(2)
+	return box
+
+func _label(text: String, color: Color = TEXT, font_size: int = 14) -> Label:
+	var label := Label.new()
+	label.text = text
+	label.add_theme_color_override("font_color", color)
+	label.add_theme_font_size_override("font_size", font_size)
+	return label
+
+func _button(text: String, action: Callable) -> Button:
+	var button := Button.new()
+	button.text = text
+	button.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	button.pressed.connect(action)
+	button.focus_mode = Control.FOCUS_NONE
+	return button
+
+func _text_view() -> TextEdit:
+	var view := TextEdit.new()
+	view.editable = false
+	view.wrap_mode = TextEdit.LINE_WRAPPING_BOUNDARY
+	view.custom_minimum_size.y = 85
+	view.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	view.add_theme_font_size_override("font_size", 14)
+	return view
 
 func _ready() -> void:
 	layer = 100
-	_panel = PanelContainer.new()
-	_panel.set_anchors_and_offsets_preset(Control.PRESET_TOP_WIDE)
-	_panel.offset_bottom = 340
-	add_child(_panel)
+	_root = Control.new()
+	_root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	add_child(_root)
+	var veil := ColorRect.new()
+	veil.color = Color(0.015, 0.025, 0.03, 0.66)
+	veil.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_root.add_child(veil)
+	_panel = OrnateFrame.new()
+	_root.add_child(_panel)
+	_panel.minimum_size_changed.connect(_request_layout)
+	var theme := Theme.new()
+	var serif := SystemFont.new()
+	serif.font_names = PackedStringArray(["Palatino", "Georgia", "DejaVu Serif"])
+	serif.oversampling = UI_SCALE
+	theme.default_font = serif
+	theme.default_font_size = 15
+	theme.set_color("font_color", "Label", TEXT)
+	for state in ["normal", "hover", "pressed", "focus"]:
+		theme.set_stylebox(state, "Button", _box(Color("28383c") if state == "hover" else Color("19272d"), GOLD if state != "normal" else Color("655f48"), 8))
+		theme.set_color("font_color" if state == "normal" else "font_" + state + "_color", "Button", TEXT)
+	var mono := SystemFont.new()
+	mono.font_names = PackedStringArray(["Menlo", "Consolas", "DejaVu Sans Mono"])
+	mono.oversampling = UI_SCALE
+	for type in ["TextEdit", "CodeEdit"]:
+		theme.set_font("font", type, mono)
+		theme.set_color("font_color", type, TEXT)
+		theme.set_color("font_readonly_color", type, TEXT)
+		theme.set_color("caret_color", type, GOLD)
+		theme.set_color("selection_color", type, Color("415c65"))
+		theme.set_stylebox("normal", type, _box(Color("0c1418"), Color("425252")))
+		theme.set_stylebox("read_only", type, _box(Color("101b20"), Color("354648")))
+		theme.set_stylebox("focus", type, _box(Color.TRANSPARENT, GOLD, 0))
+	theme.set_stylebox("panel", "TabContainer", _box(Color("142126"), Color("6d674e")))
+	theme.set_stylebox("tab_selected", "TabContainer", _box(Color("26383b"), GOLD, 9))
+	theme.set_stylebox("tab_unselected", "TabContainer", _box(Color("142126"), Color("465352"), 9))
+	theme.set_color("font_selected_color", "TabContainer", GOLD)
+	theme.set_color("font_unselected_color", "TabContainer", MUTED)
+	_panel.theme = theme
+	var frame := _box(INK, GOLD, 22)
+	frame.shadow_color = Color(0, 0, 0, 0.7)
+	frame.shadow_size = 20
+	_panel.add_theme_stylebox_override("panel", frame)
 	var rows := VBoxContainer.new()
-	_panel.add_child(rows)
-	var title := Label.new()
-	title.text = "Lua console · F12 / Esc close · Enter run · ↑ / ↓ history"
-	rows.add_child(title)
-	_output = TextEdit.new()
-	_output.editable = false
-	_output.custom_minimum_size.y = 260
-	_output.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	_output.wrap_mode = TextEdit.LINE_WRAPPING_BOUNDARY
-	rows.add_child(_output)
-	_entry = LineEdit.new()
-	_entry.placeholder_text = 'print("hello")  or  =1 + 2'
-	rows.add_child(_entry)
-	_entry.text_submitted.connect(_submit)
+	var chrome := VBoxContainer.new()
+	chrome.add_theme_constant_override("separation", 10)
+	_panel.add_child(chrome)
+	_scroll = ScrollContainer.new()
+	_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	chrome.add_child(_scroll)
+	rows.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	rows.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	rows.add_theme_constant_override("separation", 10)
+	_scroll.add_child(rows)
+	var header := HBoxContainer.new()
+	rows.add_child(header)
+	var title := _label("LUA CONSOLE", GOLD, 25)
+	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	header.add_child(title)
+	header.add_child(_button("Close  `", toggle))
+	rows.add_child(_label("P A L A N T Í R   /   S C R I P T I N G", MUTED, 11))
+	_tabs = TabContainer.new()
+	_tabs.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	rows.add_child(_tabs)
+	var command := VBoxContainer.new()
+	command.name = "Command"
+	command.add_theme_constant_override("separation", 8)
+	_tabs.add_child(command)
+	_output = _text_view()
+	command.add_child(_output)
+	var editor_heading := HBoxContainer.new()
+	editor_heading.add_child(_label("SCRIPT", GOLD, 12))
+	var editor_hint := _label("Enter to run · Shift+Enter for a new line", MUTED, 12)
+	editor_hint.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	editor_hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	editor_heading.add_child(editor_hint)
+	command.add_child(editor_heading)
+	_entry = CodeEdit.new()
+	_entry.placeholder_text = 'bfme.players.localPlayer.money = 10000'
+	_entry.custom_minimum_size.y = 110
+	_entry.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_entry.size_flags_stretch_ratio = 0.5
+	_entry.gutters_draw_line_numbers = true
+	_entry.indent_size = 4
+	_entry.indent_use_spaces = true
+	_entry.add_theme_font_size_override("font_size", 14)
+	_entry.add_theme_color_override("font_color", TEXT)
+	var syntax := CodeHighlighter.new()
+	syntax.number_color = Color("d5b875")
+	syntax.symbol_color = Color("b2c4c5")
+	syntax.function_color = Color("a3c6ce")
+	syntax.member_variable_color = TEXT
+	for keyword in ["and", "break", "do", "else", "elseif", "end", "false", "for", "function", "goto", "if", "in", "local", "nil", "not", "or", "repeat", "return", "then", "true", "until", "while"]:
+		syntax.add_keyword_color(keyword, Color("d1ad73"))
+	syntax.add_color_region('"', '"', Color("9cc599"))
+	syntax.add_color_region("'", "'", Color("9cc599"))
+	syntax.add_color_region("--[[", "]]", Color("748c89"))
+	syntax.add_color_region("--", "", Color("748c89"), true)
+	_entry.syntax_highlighter = syntax
+	command.add_child(_entry)
 	_entry.gui_input.connect(_entry_input)
-	_append("Lua 4.0.1. Menu and game states are separate.\nLive commands disable saving for this match. Use clear to clear output.\n")
-	_panel.hide()
+	_log = _text_view()
+	_log.name = "Log"
+	_tabs.add_child(_log)
+	_tabs.tab_changed.connect(func(_index: int) -> void:
+		if _tabs.current_tab == 0:
+			_entry.grab_focus())
+	var toolbar := HFlowContainer.new()
+	toolbar.add_theme_constant_override("separation", 8)
+	chrome.add_child(toolbar)
+	_status = _label("READY · Lua 5.4.9", MUTED, 12)
+	_status.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	toolbar.add_child(_status)
+	toolbar.add_child(_button("Reload scripts", reload_scripts))
+	toolbar.add_child(_button("Clear", _clear_visible))
+	toolbar.add_child(_button("Run script", func() -> void:
+		_tabs.current_tab = 0
+		_submit(_entry.text)))
+	var footer := _label("` toggle · Esc close · ↑ / ↓ history · Ctrl+Shift+F5 reload", MUTED, 12)
+	footer.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	chrome.add_child(footer)
+	_append("BFME scripting console\nInspect the realm, shape the battle.\n\nTry  bfme.getLiveDataStatus()  or  bfme.players.localPlayer.money\n")
+	get_viewport().size_changed.connect(_layout)
+	_layout()
+	_root.hide()
+
+func _layout() -> void:
+	var viewport_size := get_viewport().get_visible_rect().size
+	var logical_size := viewport_size / UI_SCALE
+	var compact := logical_size.y < 600
+	_entry.custom_minimum_size.y = 70 if compact else 110
+	_output.custom_minimum_size.y = 40 if compact else 85
+	_log.custom_minimum_size.y = 40 if compact else 85
+	_panel.scale = Vector2.ONE * UI_SCALE
+	_panel.size = Vector2(minf(1060, logical_size.x - 16), minf(740, logical_size.y - 16))
+	_panel.position = (viewport_size - _panel.size * UI_SCALE) / 2
+	_panel.queue_redraw()
+
+func _request_layout() -> void:
+	if not _layout_queued:
+		_layout_queued = true
+		call_deferred("_settle_layout")
+
+func _settle_layout() -> void:
+	_layout_queued = false
+	_layout()
+
+static func is_toggle_event(event: InputEvent) -> bool:
+	if not event is InputEventKey:
+		return false
+	var backtick: bool = event.keycode == KEY_QUOTELEFT or event.physical_keycode == KEY_QUOTELEFT
+	return (backtick and not event.shift_pressed and not event.ctrl_pressed and not event.alt_pressed and not event.meta_pressed) or (event.keycode == KEY_C and event.ctrl_pressed and event.shift_pressed and not event.alt_pressed and not event.meta_pressed)
+
+func _input(event: InputEvent) -> void:
+	if event is InputEventKey and event.keycode == KEY_F5 and event.ctrl_pressed and event.shift_pressed:
+		if event.pressed and not event.echo:
+			reload_scripts()
+		get_viewport().set_input_as_handled()
+	elif is_toggle_event(event):
+		if event.pressed and not event.echo:
+			toggle()
+		get_viewport().set_input_as_handled()
+	elif is_open() and event is InputEventKey and event.keycode == KEY_ESCAPE:
+		if event.pressed and not event.echo:
+			toggle()
+		get_viewport().set_input_as_handled()
 
 func is_open() -> bool:
-	return _panel != null and _panel.visible
+	return _root != null and _root.visible
 
 func toggle() -> void:
-	_panel.visible = not _panel.visible
-	if _panel.visible:
-		_entry.grab_focus()
+	_root.visible = not _root.visible
+	if _root.visible:
+		_request_layout()
+		if _tabs.current_tab == 0:
+			_entry.grab_focus()
 	else:
 		_entry.release_focus()
-	toggled.emit(_panel.visible)
+	toggled.emit(_root.visible)
+
+func _write(view: TextEdit, text: String) -> void:
+	var follow := not view.has_selection() and view.get_v_scroll() >= view.get_v_scroll_bar().max_value - view.get_v_scroll_bar().page - 2
+	# Append through the editor API so selecting / copying old results stays undisturbed.
+	view.insert_text(text, view.get_line_count() - 1, view.get_line(view.get_line_count() - 1).length())
+	if view.text.length() > 200000:
+		view.text = view.text.right(160000)
+	if follow:
+		view.set_v_scroll(view.get_v_scroll_bar().max_value)
 
 func _append(text: String) -> void:
-	_output.text += text
-	# Bound the retained UI log, even when a command prints a large amount of text.
-	if _output.text.length() > 64000:
-		_output.text = _output.text.right(64000)
-	_output.set_caret_line(_output.get_line_count() - 1)
-	_output.set_v_scroll(_output.get_line_count())
+	_write(_output, text)
+	_write(_log, text)
+
+func _clear_visible() -> void:
+	(_output if _tabs.current_tab == 0 else _log).text = ""
+	_entry.grab_focus() if _tabs.current_tab == 0 else _log.grab_focus()
 
 func _submit(code: String) -> void:
 	if code.strip_edges().is_empty():
 		return
 	if _history.is_empty() or _history[-1] != code:
 		_history.append(code)
-		if _history.size() > 100:
+		if _history.size() > 256:
 			_history.pop_front()
 	_history_index = _history.size()
 	_draft = ""
 	_entry.clear()
 	if code.strip_edges() == "clear":
-		_output.text = ""
+		_clear_visible()
 		return
-	_append("> " + code + "\n")
+	_append("\n› " + code + "\n")
 	var result: Dictionary = execute.call(code)
 	var output := str(result.get("output", ""))
 	if not output.is_empty():
 		_append(output + ("" if output.ends_with("\n") else "\n"))
 	elif not result.get("ok", false):
 		_append("Command failed.\n")
+	var ok: bool = result.get("ok", false)
+	_status.text = "READY · command complete" if ok else "ERROR · see output"
+	_status.add_theme_color_override("font_color", MUTED if ok else Color("e8a18b"))
+	_entry.grab_focus()
+
+func reload_scripts() -> void:
+	_append("\n› Reload scripts\n")
+	var result: Dictionary = execute.call("console.reload()")
+	var ok: bool = result.get("ok", false)
+	var output := str(result.get("output", ""))
+	_append(output + ("" if output.ends_with("\n") else "\n"))
+	_status.text = "READY · scripts reloaded" if ok else "RELOAD ERROR · see output"
+	_status.add_theme_color_override("font_color", MUTED if ok else Color("e8a18b"))
 
 func _entry_input(event: InputEvent) -> void:
 	if not event is InputEventKey or not event.pressed:
 		return
+	if event.keycode == KEY_ENTER or event.keycode == KEY_KP_ENTER:
+		if not event.shift_pressed:
+			_entry.accept_event()
+			if not event.echo:
+				_submit(_entry.text)
+		return
 	if event.keycode != KEY_UP and event.keycode != KEY_DOWN:
+		return
+	# Keep normal multiline cursor movement away from the first / last editor line.
+	if event.keycode == KEY_UP and _entry.get_caret_line() != 0:
+		return
+	if event.keycode == KEY_DOWN and _entry.get_caret_line() != _entry.get_line_count() - 1:
 		return
 	if _history_index == _history.size():
 		_draft = _entry.text
 	_history_index = clampi(_history_index + (-1 if event.keycode == KEY_UP else 1), 0, _history.size())
 	_entry.text = _draft if _history_index == _history.size() else _history[_history_index]
-	_entry.caret_column = _entry.text.length()
+	_entry.set_caret_line(_entry.get_line_count() - 1)
+	_entry.set_caret_column(_entry.get_line(_entry.get_line_count() - 1).length())
 	_entry.accept_event()

@@ -61,6 +61,9 @@ func _settings_checks() -> void:
 			bad.append(key)
 	_check(bad.is_empty() and GameOptions.EXTRAS.size() >= 15, "every OpenBFME key carries the prefix (%d keys) %s" % [GameOptions.EXTRAS.size(), str(bad)])
 	var defaults := GameOptions.defaults()
+	_check(defaults.OpenBFMEBFME2UI == "yes", "BFME2 menu theme defaults on")
+	_check(GameOptions.valid("OpenBFMEBFME2UI", "yes") and GameOptions.valid("OpenBFMEBFME2UI", "no"), "BFME2 menu theme can be enabled or disabled")
+	_check(not GameOptions.valid("OpenBFMEBFME2UI", "blue"), "BFME2 menu theme rejects invalid choices")
 	var invalid := PackedStringArray()
 	for key in defaults:
 		if not GameOptions.valid(key, defaults[key]):

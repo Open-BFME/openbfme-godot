@@ -28,6 +28,7 @@ const EXTRAS := {
 	"OpenBFMELook": {"default": "original", "choices": ["original", "enhanced"]},
 	"OpenBFMESoftParticles": {"default": "yes", "choices": ["yes", "no"]},
 	"OpenBFMEUIScale": {"default": "100", "choices": ["100", "125", "150", "200"]},
+	"OpenBFMEBFME2UI": {"default": "yes", "choices": ["yes", "no"]},
 	"OpenBFMEFreeCamera": {"default": "no", "choices": ["yes", "no"]},
 	# lane ZOOM-1: the Max zoom-out, times retail's highest camera (TacticalCamera::setZoomOutFactor). The owner's default is 2.5 (2026-10-10: "by default
 	# have the option to zoom out like 2.5x as far"), the one extra whose default is not retail's behaviour; "1" is the original game

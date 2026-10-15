@@ -192,6 +192,27 @@ TEST_CASE("pure-retail mount: RotWK over BFME2, patch over base, 2.02 excluded, 
 		}
 	}
 
+	SUBCASE("BFME2 presentation view supplies menu styles without changing gameplay archives")
+	{
+		auto rMenu = makeBig("BIGF", {{"MainMenu.apt", "rotwk-menu"}, {"art/textures/menu.dds", "rotwk-texture"},
+			{"window/apt/checkbox.wnd", "rotwk-skin"}, {"ExpansionOnly.apt", "expansion-screen"}});
+		auto bMenu = makeBig("BIGF", {{"MainMenu.apt", "bfme2-menu"}, {"art/textures/menu.dds", "bfme2-texture"},
+			{"window/apt/checkbox.wnd", "bfme2-skin"}});
+		writeFile(rotwkRoot / "apt/mainmenu.big", rMenu);
+		writeFile(bfme2Root / "apt/mainmenu.big", bMenu);
+		rotwk.policy.archives.push_back(entryFor("apt/MainMenu.big", rMenu));
+		bfme2.policy.archives.push_back(entryFor("apt/mainmenu.big", bMenu));
+		Win32BIGFileSystem game, menus;
+		REQUIRE(MountRetailArchives(game, {rotwk, bfme2}, RetailMountOptions()).ok);
+		REQUIRE(MountRetailArchives(menus, {bfme2, rotwk}, RetailMountOptions()).ok);
+		CHECK(readVirtual(game, "data/ini/weapon.ini") == "rotwk-201");
+		CHECK(readVirtual(game, "MainMenu.apt") == "rotwk-menu");
+		CHECK(readVirtual(menus, "MainMenu.apt") == "bfme2-menu");
+		CHECK(readVirtual(menus, "art/textures/menu.dds") == "bfme2-texture");
+		CHECK(readVirtual(menus, "window/apt/checkbox.wnd") == "bfme2-skin");
+		CHECK(readVirtual(menus, "ExpansionOnly.apt") == "expansion-screen");
+	}
+
 	SUBCASE("without a cache path every mount hashes every archive")
 	{
 		for (int run = 0; run < 2; ++run)

@@ -1123,6 +1123,8 @@ func _boot() -> void:
 
 
 func _process(delta: float) -> void:
+	if _world != null:
+		_world.update_lua()
 	_frames += 1
 	if not _capture_dir.is_empty():
 		_capture_tick() # lane ONLINE-4
@@ -2454,10 +2456,6 @@ func _end_game_tick() -> void:
 
 func _input(event: InputEvent) -> void:
 	if _lua_console != null:
-		if event is InputEventKey and event.pressed and not event.echo and (event.keycode == KEY_F12 or (_lua_console.is_open() and event.keycode == KEY_ESCAPE)):
-			_lua_console.toggle()
-			get_viewport().set_input_as_handled()
-			return
 		if _lua_console.is_open():
 			return
 	# lane END-2: Esc toggles the quit menu (the options meta command, RW 0x9DB877 -> ToggleQuitMenu RW 0x921C9D), as the Palantir's options button does
