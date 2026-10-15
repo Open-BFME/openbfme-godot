@@ -458,7 +458,7 @@ def embedded_signatures(data: bytes, text: bool = False) -> list[str]:
                    if (not text or any(b < 0x20 or b >= 0x7F for b in sig)) and sig in data})
 
 
-MAX_TEXT = 256 << 10  # a text file of the package (README, licence, a script) is small; a large one is a finding
+MAX_TEXT = 512 << 10  # a text file of the package (README, licence, a script) is small; a large one is a finding (256 KiB until 2026-10-15: godot/scripts/game.gd passed it at 259 KiB)
 
 
 def text_problem(data: bytes) -> str:

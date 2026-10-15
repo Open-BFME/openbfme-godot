@@ -11,7 +11,7 @@
 #      under engine/ godot/ launcher/ tools/release/ changed since the last released sha. --since only sets where the notes start (the
 #      first release has no state and needs it);
 #   2. syncs the sha to the public main: a commit on top of <remote>/main whose tree is the sha's without archive/, with the public
-#      PRIVACY.md and README line. Before anything is pushed, the tree passes the privacy audit (autorelease.py audit-tree: the public
+#      README line (no PRIVACY.md: the owner removed it from the public main, PR #34). Before anything is pushed, the tree passes the privacy audit (autorelease.py audit-tree: the public
 #      top-level allowlist, no workspace / archive / reference folder, nothing a .gitignore rule ignores, the commit gate's file rules).
 #      Pushed as sync/<date>-<sha>, a PR, merged with a merge commit whose tree must be the audited one (nothing to sync: main is tagged);
 #   3. tags the merged public commit with the release's version (annotated) and pushes the tag. Lane VERSION-1 (owner, 2026-10-14):
@@ -229,7 +229,8 @@ validate_intent() {  # $1 = published: the release of the intent's version is pu
     read -r lv lastver _ < "$STATE/last-released"
     [ "$I_SHA" != "$lv" ] && git_ merge-base --is-ancestor "$lv" "$I_SHA" || intent_bad "$I_SHA does not descend from the last released archive sha $lv"
   fi
-  # the tree: the archive sha's own entries (all but archive/, README.md, PRIVACY.md), nothing else
+  # the tree: the archive sha's own entries (all but archive/, README.md), nothing else. PRIVACY.md is still tolerated here: the public trees
+  # released before PR #34 (the last released one, dbba3780) have the public main's file; a new sync never makes it (audit-tree refuses it)
   [[ "$I_TREE" =~ ^[0-9a-f]{40}$ ]] && [ "$(git_ cat-file -t "$I_TREE" 2>/dev/null)" = tree ] || intent_bad "its tree '$I_TREE' is not a tree here"
   [ "$(git_ ls-tree --name-only "$I_TREE" | grep -vxE 'README\.md|PRIVACY\.md' | sort)" = \
     "$(git_ ls-tree --name-only "$I_SHA" | grep -vxE 'archive|README\.md|PRIVACY\.md' | sort)" ] || intent_bad "its tree's entries are not those of $I_SHA"
@@ -426,7 +427,6 @@ python3 "$HERE/autorelease.py" audit-text "$WORK/pr-title.txt" "$WORK/merge-msg.
 STEP=sync
 git_ fetch -q "$REMOTE" main
 MAIN=$(git_ rev-parse "refs/remotes/$REMOTE/main")
-git_ ls-tree "$MAIN" -- PRIVACY.md | grep -q . || fail "$REMOTE/main has no PRIVACY.md"
 readme=$(git_ cat-file blob "$SHA:README.md" | python3 -c '
 import sys
 old = "previous codebase is kept in `archive/` as reference only.\n"
@@ -435,9 +435,8 @@ t = sys.stdin.read()
 if t.count(old) != 1:
     sys.exit("README.md of the archive sha does not have the archive line exactly once (the sync recipe replaces it)")
 sys.stdout.write(t.replace(old, new))' | git_ hash-object -w --stdin) || fail "README.md: the sync recipe's line was not found"
-TREE=$( { git_ ls-tree "$SHA" | grep -vP '\t(archive|README\.md|PRIVACY\.md)$'
-          printf '100644 blob %s\tREADME.md\n' "$readme"
-          git_ ls-tree "$MAIN" -- PRIVACY.md; } | git_ mktree)
+TREE=$( { git_ ls-tree "$SHA" | grep -vP '\t(archive|README\.md)$'
+          printf '100644 blob %s\tREADME.md\n' "$readme"; } | git_ mktree)
 # the privacy audit, before anything leaves the Deck (Sol r1: a tracked workspace/ file and a retail file went to the public branch)
 STEP=sync-audit
 python3 "$HERE/autorelease.py" --git-dir "$REPO" audit-tree --tree "$TREE" || fail "the public tree $TREE failed the privacy audit: nothing pushed"
@@ -644,7 +643,7 @@ git_ worktree add -q --detach "$TRUSTED" "$VERSION"
 [ "$(git -C "$TRUSTED" rev-parse 'HEAD^{tree}')" = "$TREE" ] || fail "the trusted checkout's tree is not the audited sync tree of $SHA"
 [ -z "$(git -C "$TRUSTED" status --porcelain --untracked-files=all)" ] || fail "the trusted checkout is not clean"
 for e in $(git_ ls-tree --name-only "$TREE"); do
-  case "$e" in README.md|PRIVACY.md) continue ;; esac
+  case "$e" in README.md) continue ;; esac
   [ "$(git_ rev-parse "$TREE:$e")" = "$(git_ rev-parse "$SHA:$e")" ] || fail "$e of the tag differs from $e of $SHA"
 done
 T="$TRUSTED/tools/release"

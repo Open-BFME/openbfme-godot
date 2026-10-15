@@ -102,11 +102,11 @@ class World:
         self.key.parent.mkdir(parents=True)
         pub = run(sys.executable, HERE / "sign_manifest.py", "--generate-key", self.key)
         assert pub.returncode == 0, pub.stderr
-        # the public repository: main with PRIVACY.md
+        # the public repository: main without PRIVACY.md (the owner removed it, PR #34)
         subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(self.remote)], check=True)
         seed = tmp / "seed"
         git(tmp, "init", "-q", "-b", "main", str(seed))
-        commit(seed, {"PRIVACY.md": "privacy\n", "README.md": "public\n"}, "public start")
+        commit(seed, {"README.md": "public\n"}, "public start")
         git(seed, "push", "-q", str(self.remote), "main")
         # the archive repository: the release scripts, the launcher key, an engine file, the README line the sync replaces
         git(tmp, "init", "-q", "-b", "archive-legacy-codebase", str(self.repo))
@@ -199,10 +199,10 @@ def test_real_release_end_to_end(world):
     assert "## Which file to download" in rel["body"] and "(link removed)" not in rel["body"]
     assert ("| openbfme-launcher-v0.4.5-windows-x64.zip, openbfme-launcher-v0.4.5-linux-x64.tar.gz, "
             "SHA256SUMS-v0.4.5.txt, manifest.json, manifest.json.sig | Used by OpenBFME to update itself") in rel["body"]
-    # the PR merged on the public main, its tree the archive's without archive/ plus PRIVACY.md and the README line; the branch deleted
+    # the PR merged on the public main, its tree the archive's without archive/ plus the README line, no PRIVACY.md; the branch deleted
     (pr,) = gh["prs"].values()
     main_tree = git(world.repo, "ls-tree", "--name-only", f"{pr['merge']}")
-    assert "archive" not in main_tree.split() and "PRIVACY.md" in main_tree.split()
+    assert "archive" not in main_tree.split() and "PRIVACY.md" not in main_tree.split()
     assert "legacy-final" in git(world.remote, "show", f"{pr['merge']}:README.md")
     assert world.remote_refs("refs/heads/sync/*") == ""
     assert world.remote_refs("refs/tags/v0.4.5")
@@ -431,6 +431,7 @@ def test_standin_is_refused_for_the_real_repository(world):
     ({"engine/keys.secret": "k\n"}, "a .gitignore rule ignores it"),
     ({"engine/tex.bin": b"DDS |\0\0\0"}, "retail-format bytes in the public tree (DDS texture)"),
     ({"private/x.txt": "x\n"}, "not a public top-level entry: private"),
+    ({"PRIVACY.md": "p\n"}, "not a public top-level entry: PRIVACY.md"),
     ({"tools/reference/x.txt": "x\n"}, "inside a private folder (reference/)"),
     # r3 (Sol r2): retail bytes inside containers
     ({"docs/content.bin": gzip.compress(b"BIGF\0\0\0\0retail-payload")}, "a binary file in the public tree (not UTF-8 text, or NUL bytes), not in public_binaries.txt: docs/content.bin"),
@@ -445,6 +446,23 @@ def test_sync_privacy_audit(world, files, why):
     r = world.release(sha, "--since", world.first)
     assert r.returncode != 0 and "failed the privacy audit: nothing pushed" in r.stdout and why in r.stdout, r.stdout
     assert world.remote_refs("refs/heads/sync/*") == "" and not world.gh_state.exists()
+
+
+def test_sync_drops_a_stray_privacy_md_of_the_public_main(world):
+    """a PRIVACY.md that comes back on the public main is not carried: the sync's tree is the archive sha's, so the PR deletes it"""
+    seed = world.home.parent / "seed2"
+    git(world.home.parent, "clone", "-q", str(world.remote), str(seed))
+    git(seed, "config", "user.email", "t@example.com")
+    git(seed, "config", "user.name", "t")
+    commit(seed, {"PRIVACY.md": "stray\n"}, "a stray PRIVACY.md")
+    git(seed, "push", "-q", "origin", "main")
+    sha = world.change({"engine/b.cpp": "2\n"}, "engine change")
+    world.gate(sha)
+    r = world.release(sha, "--since", world.first)
+    assert r.returncode == 0, r.stdout + r.stderr
+    gh = json.loads(world.gh_state.read_text())
+    (pr,) = gh["prs"].values()
+    assert "PRIVACY.md" not in git(world.repo, "ls-tree", "--name-only", pr["merge"]).split()
 
 
 def test_audit_tree_of_the_real_public_tree():

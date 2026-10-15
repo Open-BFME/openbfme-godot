@@ -608,7 +608,7 @@ def test_the_release_set_passes(tmp_path):
     ({"OpenBFME.pck": pck([("scripts/game.gd", b"extends Node\n"), ("assets/music.bin", b"x")])}, "not a resource type"),
     ({"OpenBFME.pck": pck([("scripts/x.gd", b"# " + BIG)])}, "control characters"),
     ({"OpenBFME.pck": pck([(".godot/exported/1/export-" + "0" * 32 + "-a.scn", b"RSRC" + BIG)])}, "BIG archive signature"),
-    ({"OpenBFME.pck": pck([("scripts/x.gd", b"x" * (300 << 10))])}, "bytes of text"),
+    ({"OpenBFME.pck": pck([("scripts/x.gd", b"x" * (600 << 10))])}, "bytes of text"),
     ({"OpenBFME.pck": pck([("scripts/x.gd", b"var s = '" + b"PK\x03\x04" + b"'")])}, "ZIP entry signature"),
     ({"OpenBFME.pck": pck([("scripts/x.gdc", b"GDSC" + b"\x28\xb5\x2f\xfd")])}, "not a resource type"),
     ({"OpenBFME.pck": pck([(".godot/exported/1/export-" + "0" * 32 + "-a.scn", b"RSCC" + b"\0" * 8)])}, "RSRC"),

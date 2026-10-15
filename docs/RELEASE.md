@@ -557,8 +557,9 @@ ref, so a tag or branch named like the abbreviation cannot stand in for it.
    - The sha must contain `MIN_CONTROL`, the commit of the round-3 release scripts. An older sha carries an older
      `publish_release.sh` and older package checks, so it is never released automatically.
    - An open release intent (below) is reconciled first, and while one is open no other sha is accepted.
-2. **Sync.** The public `main` gets the sha's tree without `archive/`, with main's `PRIVACY.md` and the README line about the legacy
-   code (the sync recipe). Before anything is pushed, that tree passes the privacy audit (`autorelease.py audit-tree`):
+2. **Sync.** The public `main` gets the sha's tree without `archive/`, with the README line about the legacy
+   code and nothing else (the sync recipe). The public `main` has no `PRIVACY.md` since its PR #34; a file that exists only on the
+   public side is not carried (the sync PR deletes it if it comes back), so a public-only file needs a pipeline change first. Before anything is pushed, that tree passes the privacy audit (`autorelease.py audit-tree`):
    - only the public top-level entries (`PUBLIC_TOP`);
    - no `workspace`, `archive` or `reference` folder anywhere;
    - no file that one of the tree's `.gitignore` rules ignores, even a tracked one;
@@ -603,7 +604,7 @@ ref, so a tag or branch named like the abbreviation cannot stand in for it.
    The packages are copied back to the Deck.
 5. **The Deck's checks of what came back.** Everything from here on runs the scripts of a trusted checkout: a fresh worktree of the
    tag made on the Deck. JonathanPC never writes to it. Its tree must be the audited sync tree of the archive sha, so every entry but
-   README.md / PRIVACY.md is the archive sha's own object. Every file of its `tools/release/` and `tools/precommit.py` must also be
+   README.md (and a PRIVACY.md of a tree released before PR #34) is the archive sha's own object. Every file of its `tools/release/` and `tools/precommit.py` must also be
    byte for byte the running autorelease's own copy, so run autorelease.sh from a checkout whose tools are the released sha's. The
    checks:
    - the returned folder holds exactly the package files;
@@ -701,7 +702,7 @@ is untrusted: before it records a completion or resumes, every field is checked,
   sha;
 - the version is an alpha build `v0.4.0-alpha.<n>` or a bridge `v0.3.0-preview.<n>`, above the last released version when that is
   of the same line (`autorelease.py intent-version`);
-- the tree has exactly the sha's entries (README.md and PRIVACY.md aside);
+- the tree has exactly the sha's entries (README.md aside; a PRIVACY.md of a tree released before PR #34 is tolerated);
 - the public commit has that tree and is on `main`, and the remote tag is on the public commit;
 - for a published release: its `manifest.json` and signature are the package folder's, the manifest names the version, the public
   commit and the repository, the signature verifies under the sha's `launcher/release_key.pub`, and the Linux library's build record
