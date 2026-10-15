@@ -173,6 +173,11 @@ function bfme.getInstanceStatus() return {ready=view.ready or false,actionsReady
 bfme.getMutationStatus=status
 bfme.log=writeLog
 bfme.getTimeMs=clock
+function bfme.setGameSpeed(value)
+ numeric(value,0,100,false)
+ return queue('match','',':setGameSpeed',value)
+end
+setGameSpeed=bfme.setGameSpeed
 function bfme.isPaused() return view.paused or false end
 function bfme.pause() return queue('match','',':pause',nil) end
 function bfme.unpause() return queue('match','',':unpause',nil) end

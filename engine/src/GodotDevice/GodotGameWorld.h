@@ -667,7 +667,6 @@ private:
 	std::vector<std::string> m_endGameErrors;
 	ScoreScreenData m_scoreScreen;
 	bool m_testHooks = false; ///< start option test_hooks: the debug_* end-game hooks may act on a started (non-network) game
-	bool m_luaConsoleUsed = false; ///< console edits are not represented in command-log saves
 	std::unique_ptr<BfmeLuaRuntime> m_consoleRuntime;
 	void startEndGame();
 	void updateEndGame();

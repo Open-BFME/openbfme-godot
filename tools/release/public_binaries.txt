@@ -13,3 +13,5 @@ b20b7d9626dd956b2c5e558692ad328b1f19e3275e2782db4fa07670d83f35e0  launcher/fonts
 29160a80ff49ddcab2c97711247e08b1fab27a484a329ce8b813d820dc559031  launcher/fonts/Inter.ttf  Inter variable font (the launcher's text), SIL OFL 1.1, launcher/fonts/OFL-Inter.txt
 # Lane NETLAG-1 (merge queue q15): the replay the previous build recorded (a 2-player LAN game of openbfme_peer on the public map, no retail data inside: the header holds archive names and hashes), played by test_netlag1.cpp
 37b7bb1f5abb1af9e1050c1ff6ac050376a8d29cc73f4ae2c921d9fafb5bb2ae  engine/tests/data/netlag1/prelane_runahead2.replay  OpenBFME replay recorded by the archive build 593e83cd, the test fixture of the older-engine replay compatibility
+67e38f0cb032e80220b41daab883ce1ab2c8155c3034f8de1fcad2fd6b413134  godot/assets/second-age.icns  Second Age application icon, reused at the owner's request; tools/release/assets/README.md
+36ea7d8223e8a7bb9eedecc2642b35ff8cc5f1cd40893f26f3828099614ac007  godot/assets/second-age.png  Second Age application icon, reused at the owner's request; tools/release/assets/README.md

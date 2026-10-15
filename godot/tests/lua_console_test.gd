@@ -64,6 +64,24 @@ func _run() -> void:
 	console._tabs.current_tab = 1
 	console._clear_visible()
 	assert(console._log.text.is_empty() and not console._output.text.is_empty())
+	assert(console._tabs.get_tab_count() == 3)
+	assert(console._tabs.get_tab_title(2) == "Cheats")
+	var commands: Array[String] = []
+	console.execute = func(code: String) -> Dictionary:
+		commands.append(code)
+		return {"ok": true, "output": ""}
+	console._tabs.current_tab = 2
+	var cheats = console._tabs.get_child(2)
+	var speed = cheats.find_child("GameSpeed", true, false)
+	assert(speed != null and speed.value == 1)
+	speed.value = 2
+	for button in cheats.find_children("*", "Button", true, false):
+		if button.text == "Apply speed":
+			button.pressed.emit()
+	assert(commands.size() == 1, str(commands))
+	assert(commands[0] in ["setGameSpeed(2)", "setGameSpeed(2.0)"], str(commands))
+	assert(console._tabs.current_tab == 2)
+	console.execute = func(code: String) -> Dictionary: return world.execute_lua(code)
 	console._tabs.current_tab = 0
 	console._submit("clear")
 	assert(console._output.text.is_empty())

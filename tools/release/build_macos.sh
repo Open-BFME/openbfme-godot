@@ -6,7 +6,8 @@
 # mpg123 (`brew install lame mpg123`) for the synthetic MP3 fixtures of the five MP3 decode cases, which fail loudly without them. The
 # library is built for the host's architecture (arm64 on Apple silicon, x86_64 on an Intel Mac; godot/openbfme.gdextension lists arm64 only).
 # Environment: OPENBFME_MACOS_DIR (the build folder, default <repo>/engine/build, the folder build.bat uses), BUILD_TYPE (default Release),
-# JOBS (default: every core).
+# JOBS (default: every core), GODOT (default /Applications/Godot.app/Contents/MacOS/Godot),
+# OPENBFME_MACOS_APP (default <build>/macos/OpenBFME.app), GODOT_MACOS_TEMPLATE (optional cached macos.zip).
 #
 # The minimum macOS is 26.0: std::from_chars of a double (leanumeric.cpp, AptValue.cpp, AptFile.cpp) is in Apple's libc++ from macOS 26 on.
 # Godot 4.7 itself runs on older versions; the extension does not.
@@ -57,3 +58,7 @@ if [ ! -f "$B/audio_fixtures/mono_44k.mp3.bin" ]; then
 fi
 echo "BUILT: $LIB (macOS $MIN_MACOS+, $ARCH) and $B/openbfme_tests"
 echo "TEST:  (cd $B && ./openbfme_tests)"
+
+GODOT_BIN=${GODOT:-/Applications/Godot.app/Contents/MacOS/Godot}
+python3 "$ROOT/tools/release/package_macos.py" --build-dir "$B" --godot "$GODOT_BIN" \
+  --output "${OPENBFME_MACOS_APP:-$B/macos/OpenBFME.app}" || fail "macOS app packaging failed"

@@ -1633,6 +1633,8 @@ void AptMenuPlayer::shell_hide_background()
 	if (m->shell && m->shell->wm)
 	{
 		m->shell->wm->hideBackground(false);
+		m->dirty = true;
+		m->drawnValid = false;
 	}
 }
 
@@ -1654,6 +1656,12 @@ Dictionary AptMenuPlayer::get_layering_report()
 	{
 		return d;
 	}
+	// The selected menu movie may keep static art visible after its hide callback.
+	// Treat the shell's background mode as authoritative for this level only; leave
+	// GuiFX and the gameplay HUD visible. Showing a submenu restores the same level.
+	if (m->shell && m->shell->wm)
+		if (AptSpriteInst *background = m->A()->level(m->shell->wm->backgroundLevel()))
+			background->visible = m->shell->wm->backgroundMode() != 0;
 	AptRenderList rl;
 	m->A()->buildRenderList(rl);
 	const ShellLayeringReport r = checkShellLayering(*m->shell->wm, *m->shell->shell, rl);
@@ -1760,6 +1768,7 @@ Dictionary AptMenuPlayer::get_backdrop_state() const
 	// lane CAMP-2: what is on screen behind the shell's movies, read from the canvas as drawn (not from the shell's flags)
 	Dictionary d;
 	d["backdrop_image"] = toGodot(m->drawnBackdrop);
+	d["animation_frame"] = m->view3d.animationFrame("_openbfme_shell_scene");
 	const int background = m->shell && m->shell->wm ? m->shell->wm->backgroundLevel() : -1;
 	d["background_level"] = (int64_t)background;
 	const auto it = m->levelCommands.find(background);
@@ -3070,6 +3079,7 @@ void AptMenuPlayer::clearCanvas()
 	m->callbackSlots.clear();
 	m->gadgetAnchors.clear(); // lane MENU-1
 	m->drawnBackdrop.clear(); // lane CAMP-2
+
 	freeItemPool();
 }
 
@@ -3367,7 +3377,30 @@ void AptMenuPlayer::drawCanvas(const AptCanvasList &list)
 	// (HandCreatedMappedImages.ini: InstallLoad.tga, 1024 x 768 of a 1024 x 1024 texture). INFERENCE (S-1912): it covers the stage as the movies do
 	// (the display's draw of the slot was not read)
 	m->drawnBackdrop.clear(); // lane CAMP-2
-	if (m->shell && m->shell->shell && !m->shell->shell->backdropImage().empty())
+	// OpenBFME presentation: the retail BFME2 ShellMapMD object (system.ini) uses
+	// Shell02_01.Shell02_01 in LOOP mode. This self-contained scene includes CAMERA.
+	// Reuse the View3D renderer for its model/camera animation; no gameplay world or RNG
+	// is created. This does not run the shell map's terrain, scripts or particle proxies.
+	// Keep submenu/settings backgrounds and RotWK's static theme on their existing path.
+	m->view3d.beginBuild();
+	const bool animatedShell = m->shell && m->shell->shell && m->fs.is_valid() &&
+		m->fs->menu_archive_fs() != m->fs->archive_fs() && m->shell->shell->shellMapRequested() &&
+		m->shell->shell->top() && m->shell->shell->top()->filename() == "MainMenu.apt";
+	if (animatedShell)
+	{
+		AptCanvasOp backdrop;
+		backdrop.path = "_openbfme_shell_scene";
+		backdrop.renderObject = "Shell02_01";
+		backdrop.nativeVars = { { "_AnimMode", "LOOP" }, { "_KeepAspectRatio", "true" } };
+		backdrop.scaleX = m->mapping.scaleX();
+		backdrop.scaleY = m->mapping.scaleY();
+		float x0, y0, x1, y1;
+		m->mapping.stageToWindow(0, 0, x0, y0);
+		m->mapping.stageToWindow(m->mapping.stageW, m->mapping.stageH, x1, y1);
+		m->view3d.draw(newItem(root), Rect2(x0, y0, x1 - x0, y1 - y0), backdrop, true);
+		m->drawnBackdrop = "Shell02_01";
+	}
+	if (!animatedShell && m->shell && m->shell->shell && !m->shell->shell->backdropImage().empty())
 	{
 		ShellMode &sm = *m->shell;
 		const std::string &name = sm.shell->backdropImage();
@@ -3452,7 +3485,6 @@ void AptMenuPlayer::drawCanvas(const AptCanvasList &list)
 			}
 		}
 	}
-	m->view3d.beginBuild(); // lane UI-2
 	for (size_t opIndex = 0; opIndex < list.ops.size(); ++opIndex)
 	{
 		const AptCanvasOp &op = list.ops[opIndex];

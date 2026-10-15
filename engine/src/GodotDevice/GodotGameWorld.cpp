@@ -1032,7 +1032,6 @@ Dictionary GameWorld::load_internal(const LiveGame::Options &loIn, const String 
 	releaseLocalDrivers(); // lane MP-2: the recording / replay driver too
 	m_audio.reset(); // AUDIO-2: the audio side reads the game
 	m_game.reset(new LiveGame(*m_world, *m_fs->archive_fs(), *m_assets, *m_options));
-	m_luaConsoleUsed = false;
 	if (m_consoleRuntime) m_consoleRuntime->invalidate();
 	m_game->setRenderInterpolation(m_renderInterpolation);
 	// lane RENDERWAIT-1: a blocking wait on the logic worker names its script caller (the innermost GDScript frame: the C++ site of a bound query is
@@ -3509,7 +3508,6 @@ Dictionary GameWorld::execute_lua(const String &code)
 			BfmeLuaRuntime::Host host;
 			host.snapshot = [this] { return bfme_snapshot(); };
 			host.apply = [this](const BfmeLuaRuntime::Mutation &mutation) { return bfme_apply(mutation); };
-			host.onMutation = [this] { if (m_game) m_luaConsoleUsed = true; };
 			host.scripts = [] {
 				std::vector<std::pair<std::string, std::string>> scripts;
 				for (const String &directory : { String("res://dev"), String("user://dev") })

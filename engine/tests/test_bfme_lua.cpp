@@ -145,3 +145,23 @@ TEST_CASE("bfme Lua: reload rereads scripts, replaces functions and preserves co
 	CHECK_FALSE(f.vm->execute("console.reload()").ok);
 	CHECK(f.run("keep") == "99\n");
 }
+
+TEST_CASE("bfme Lua: game speed validates multipliers before queuing")
+{
+	BfmeFixture f;
+	for (const auto &value : {"0", "50", "100", "12.5"})
+	{
+		CHECK(f.vm->execute(std::string("return setGameSpeed(") + value + ")").ok);
+	}
+	CHECK(f.vm->execute("return bfme.setGameSpeed(100)").ok);
+	CHECK(f.applied.empty());
+	for (const auto &value : {"-1", "101", "0/0", "math.huge", "'50'", "nil"})
+		CHECK_FALSE(f.vm->execute(std::string("setGameSpeed(") + value + ")").ok);
+	f.vm->flush();
+	REQUIRE(f.applied.size() == 5);
+	CHECK(f.writes == 5);
+	CHECK(f.applied[0].collection == "match");
+	CHECK(f.applied[0].field == ":setGameSpeed");
+	CHECK(std::get<double>(f.applied[0].value.data) == 0);
+	CHECK(std::get<double>(f.applied[3].value.data) == 12.5);
+}

@@ -11,6 +11,9 @@ config_version=5
 [application]
 
 config/name="OpenBFME"
+boot_splash/show_image=false
+boot_splash/show_progress_bar=false
+boot_splash/bg_color=Color(0, 0, 0, 1)
 run/main_scene="res://scenes/game.tscn"
 config/features=PackedStringArray("4.7", "Forward Plus")
 run/max_fps=0
@@ -38,3 +41,7 @@ rendering/soft_particles=true
 ; lane RELEASE-1: scenes are exported as their committed text (.tscn); the binary conversion gives every export new random ids, which
 ; would make the packages unreproducible (docs/RELEASE.md)
 export/convert_text_resources_to_binary=false
+
+[rendering]
+
+textures/vram_compression/import_etc2_astc=true

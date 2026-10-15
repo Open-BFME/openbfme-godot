@@ -47,6 +47,7 @@ Globals persist across menu and match transitions. Proxies from an earlier match
 | `bfme.getLiveDataStatus()` | Readiness, generation, frame, local player ID and catalog counts |
 | `bfme.getInstanceStatus()` | Readiness, action availability and instance counts |
 | `bfme.getMutationStatus(ticket)` | Ticket result; retains 1024 results, allows 128 pending mutations |
+| `setGameSpeed(0..100)`, `bfme.setGameSpeed(0..100)` | Simulation speed multiplier: 0 stops time, 1 normal, 2 twice as fast, 100 one hundred times as fast; returns a mutation ticket. Decimals allowed. Pause is independent. |
 | `bfme.pause()`, `bfme.unpause()`, `bfme.isPaused()` | Match pause; changes return tickets |
 | `bfme.log(text)`, `print(...)`, `bfme.getTimeMs()` | Console output and monotonic time |
 | `GetFrame()` | Current logic frame |
@@ -89,7 +90,7 @@ end
 Reads use detached snapshots taken when a console chunk starts. Assignments enqueue mutations; they do not update reads within that chunk.
 Mutations re-resolve engine IDs between simulation frames with the logic worker held. Missing objects and expired registries fail explicitly.
 Proxy fields and collection entries cannot be replaced using raw table writes. Inspection and position tables are detached copies.
-Read-only console use preserves saving; queuing a game mutation disables command-log saves for that match. Console execution and mutations are allowed in multiplayer, replay playback, replay recordings, and save catch-up.
+Lua console use does not change save availability. Console edits are not included in command-log saves. Console execution and mutations are allowed in multiplayer, replay playback, replay recordings, and save catch-up.
 These console edits are local and are not added to the synchronized network stream or replay command log. A chunk that fails after queuing writes does not roll those writes back.
 
 This does **not** yet implement Second Age's complete API: selection and command UI, production/construction actions, diplomacy/team edits,
@@ -103,3 +104,5 @@ Console execution has a 250 ms Lua instruction-hook budget and a bounded output 
 `engine/build/openbfme_tests --test-case='bfme Lua*'` checks module identity, modern Lua syntax alongside the retail VM,
 proxy identity, enumeration, detached copies, money tickets, validation, expired handles, queue limits, and error recovery.
 `godot --headless --path godot --script res://tests/lua_console_test.gd` exercises the console and native extension together.
+
+The backtick console’s **Cheats** tab provides local-player gold, game speed (0–100×), pause and resume controls. Actions use the same Lua API as the Command tab; their output appears in Log.

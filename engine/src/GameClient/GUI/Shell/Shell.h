@@ -82,6 +82,7 @@ public:
 	// display's backdrop slot 0 (RW 0x65C42C(image, 0, 0, 0, 1.0)), with the window transition FadeInGameMovie_NoAudio (not ported: S-1912). Callers:
 	// the engine start (RW 0x5EAB8F: showShellMap(1)), a game's start (RW 0x601C62: 0) and the return to the shell (RW 0x7792BC / 0x779A3D: 1).
 	void showShellMap(bool use);
+	bool shellMapRequested() const { return m_shellMapRequested; }
 	void update();
 	// the mapped image the display draws behind everything now ("" none)
 	const std::string &backdropImage() const { return m_backdropImage; }
@@ -111,6 +112,7 @@ private:
 	ShellServices &m_services;
 	ShellEnvironment &m_environment;
 	std::vector<std::unique_ptr<AptScreen>> m_stack;
+	bool m_shellMapRequested = false; // presentation lifecycle, including the BFME2 animated backdrop
 	bool m_lowLodBackdrop = false; // + 0x52
 	bool m_lowLodShown = false;    // + 0x53
 	std::string m_backdropImage;

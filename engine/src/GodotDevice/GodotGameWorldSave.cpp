@@ -76,10 +76,6 @@ Dictionary GameWorld::save_game(const String &path, const Dictionary &options)
 	{
 		return fail("there is no game to save");
 	}
-	if (m_luaConsoleUsed)
-	{
-		return fail("this game used the Lua console; console commands cannot be reproduced by command-log saves");
-	}
 	if (m_netSession)
 	{
 		return fail("a network game cannot be saved yet (multiplayer saves are SAVE-3)");

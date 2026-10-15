@@ -169,6 +169,7 @@ func _ready() -> void:
 	_log = _text_view()
 	_log.name = "Log"
 	_tabs.add_child(_log)
+	_build_cheats()
 	_tabs.tab_changed.connect(func(_index: int) -> void:
 		if _tabs.current_tab == 0:
 			_entry.grab_focus())
@@ -190,6 +191,54 @@ func _ready() -> void:
 	get_viewport().size_changed.connect(_layout)
 	_layout()
 	_root.hide()
+
+func _build_cheats() -> void:
+	var scroll := ScrollContainer.new()
+	scroll.name = "Cheats"
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	_tabs.add_child(scroll)
+	var rows := VBoxContainer.new()
+	rows.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	rows.add_theme_constant_override("separation", 10)
+	scroll.add_child(rows)
+	rows.add_child(_label("SHAPE THE BATTLE", GOLD, 16))
+	var hint := _label("Applies to the current match. Results appear in Log.", MUTED, 12)
+	hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	rows.add_child(hint)
+	var gold_row := HFlowContainer.new()
+	rows.add_child(gold_row)
+	gold_row.add_child(_label("Local player gold"))
+	var gold := SpinBox.new()
+	gold.name = "GoldAmount"
+	gold.min_value = 0
+	gold.max_value = 2147483647
+	gold.step = 100
+	gold.value = 10000
+	gold.custom_minimum_size.x = 150
+	gold_row.add_child(gold)
+	gold_row.add_child(_button("Set gold", func() -> void:
+		_submit("assert(bfme.players.localPlayer, 'No local player in this match').money = %d" % int(gold.value))))
+	var speed_row := HFlowContainer.new()
+	rows.add_child(speed_row)
+	speed_row.add_child(_label("Game speed"))
+	var speed := SpinBox.new()
+	speed.name = "GameSpeed"
+	speed.min_value = 0
+	speed.max_value = 100
+	speed.step = 0.25
+	speed.value = 1
+	speed.custom_minimum_size.x = 110
+	speed_row.add_child(speed)
+	speed_row.add_child(_button("Apply speed", func() -> void:
+		_submit("setGameSpeed(%s)" % str(speed.value))))
+	rows.add_child(_label("0 stops time · 1 normal · 2 twice as fast · max 100", MUTED, 12))
+	var actions := HFlowContainer.new()
+	rows.add_child(actions)
+	actions.add_child(_button("Normal speed", func() -> void:
+		speed.value = 1
+		_submit("setGameSpeed(1)")))
+	actions.add_child(_button("Pause", func() -> void: _submit("bfme.pause()")))
+	actions.add_child(_button("Resume", func() -> void: _submit("bfme.unpause()")))
 
 func _layout() -> void:
 	var viewport_size := get_viewport().get_visible_rect().size
@@ -285,7 +334,8 @@ func _submit(code: String) -> void:
 	var ok: bool = result.get("ok", false)
 	_status.text = "READY · command complete" if ok else "ERROR · see output"
 	_status.add_theme_color_override("font_color", MUTED if ok else Color("e8a18b"))
-	_entry.grab_focus()
+	if _tabs.current_tab == 0:
+		_entry.grab_focus()
 
 func reload_scripts() -> void:
 	_append("\n› Reload scripts\n")

@@ -167,6 +167,11 @@ std::string GameWorld::bfme_apply(const BfmeLuaRuntime::Mutation &m)
 	auto &logic = m_game->logic();
 	if (m.collection == "match")
 	{
+		if (m.field == ":setGameSpeed")
+		{
+			set_time_scale(numeric(m.value, 0, 100, false));
+			return {};
+		}
 		if (m.field == ":pause")
 		{
 			m_paused = true;

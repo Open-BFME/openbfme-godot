@@ -56,6 +56,7 @@ public:
 	const std::set<std::string> &errors() const { return m_errors; }
 	const std::set<std::string> &notes() const { return m_notes; }
 	std::size_t viewerCount() const { return m_slots.size(); }
+	float animationFrame(const std::string &path) const;
 
 private:
 	struct Slot

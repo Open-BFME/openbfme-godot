@@ -405,6 +405,7 @@ LAUNCHER_TOP_DIR = re.compile(r"^openbfme-launcher-[0-9A-Za-z][0-9A-Za-z.+_-]*-(
 
 # the Godot resource types of this project a pack may hold (godot/export_presets.cfg exports scripts as text), each with its format check
 PCK_RULES = [
+    (re.compile(r"^dev/[\w/.-]+\.lua$"), "text"),
     (re.compile(r"^\.godot/exported/\d+/export-[0-9a-f]{32}-[\w.-]+\.scn$"), "rsrc"),
     (re.compile(r"^(scripts|tests)/[\w/.-]+\.gd$"), "text"),
     (re.compile(r"^scenes/[\w/.-]+\.tscn$"), "scene"),  # scenes ship as their committed text (project.godot: no binary conversion)

@@ -154,6 +154,7 @@ void Shell::popImmediate()
 
 void Shell::showShellMap(bool use)
 {
+	m_shellMapRequested = use;
 	// RW 0x75DE01 (the shell map branch is not ported: S-1912)
 	m_lowLodBackdrop = use && !m_environment.shellMapOn;
 	m_lowLodShown = false;

@@ -200,7 +200,7 @@
 ##     every game's start and every return to the shell print "GAME SHELL PICTURES <where>: ..." (lane CAMP-2: the backdrop and the front-end background as
 ##     the canvas drew them, and any developer text on screen; tests/camp2_test.gd)
 ##     --shell-pictures-quit=N (lane CAMP-2) quit (exit 0) once N SHELL PICTURES lines were printed
-##     --intro / --no-intro  (lane CAMP-2) the start-up movies (EALogoMovie, NewLineLogo, TolkienLogo, Overall_Game_Intro: RW 0x645B8D / 0x64838D,
+##     --intro / --no-intro  (off by default) the start-up movies (EALogoMovie, NewLineLogo, TolkienLogo, Overall_Game_Intro: RW 0x645B8D / 0x64838D,
 ##                           when GameData PlayIntro): by default they play in a windowed start without automation options (retail: not with a
 ##                           .map file to start or headless, RW 0x63C9BB / 0x63CC07); --intro plays them anyway, --no-intro / --movies=off never
 ##     --intro-check         (lane CAMP-2, tests) play the start-up movies, then quit (exit 0 when all played)
@@ -494,7 +494,7 @@ var _shell_pictures_start_done := false
 var _shell_pictures_quit := 0    # lane CAMP-2: --shell-pictures-quit=N
 var _movie_files := {}          # lane CAMP-2: --movie-file=TITLE=PATH (tests: the file a movie title opens)
 var _movie_skip_after := -1     # lane CAMP-2: --movie-skip-after=MS (tests: every movie is skipped MS after its start, as by Esc)
-var _intro := "auto"            # lane CAMP-2: --intro (on) / --no-intro (off)
+var _intro := "off"            # lane CAMP-2: --intro (on) / --no-intro (off)
 var _intro_check := false       # lane CAMP-2: --intro-check (tests): the start-up movies, then quit
 ## lane MENU-1: the options a player's own start may carry (the launcher's, the display options); any other option makes a scripted run
 const PLAYER_ARG_PREFIXES := ["--fps", "--dev-overlay", "--intro", "--no-intro", "--alternate-mouse", "--classic-mouse", "--free-camera", "--res=",
@@ -1131,13 +1131,15 @@ func _process(delta: float) -> void:
 	Release.set_in_game(_state == State.PLAYING) # lane RELEASE-1: the version corner in the menus only
 	_campaign_check_tick() # lane CAMP-1
 	if _state == State.MENU:
-		# the engine reveals the main menu once its first frames ran (menus-apt.md 1.2, S-139: who calls ShowMainMenu is not read)
-		if not _menu_revealed and _frames >= LEVEL_MAIN_MENU_FRAMES and _shell.shell_top_level() >= 0 and _shell.shell_stack().size() > 0 and _shell.shell_stack()[-1] == "MainMenu.apt":
-			_menu_revealed = true
+		# Wait for the deferred APT load as well as the first frames: intro playback can
+		# advance the game clock before MainMenu.apt exists. A failed reveal must retry.
+		# (menus-apt.md 1.2, S-139: who calls ShowMainMenu is not read)
+		if not _menu_revealed and _frames >= LEVEL_MAIN_MENU_FRAMES and _shell.shell_top_level() >= 0 and _shell.shell_stack().size() > 0 and _shell.shell_stack()[-1] == "MainMenu.apt" and _shell.has_level(_shell.shell_top_level()):
 			var shown: Dictionary = _shell.shell_invoke(_shell.shell_top_level(), "ShowMainMenu", PackedStringArray())
 			if not shown.ok:
 				printerr("GAME ShowMainMenu: ", shown.error)
-			if not _shell_pictures_start_done:
+			_menu_revealed = shown.ok
+			if _menu_revealed and not _shell_pictures_start_done:
 				_shell_pictures_start_done = true
 				_report_shell_pictures("in the shell at start") # lane CAMP-2: what a return to the shell must show again
 		if _cah != null:

@@ -210,6 +210,16 @@ void W3DInstancer::run_parallel(size_t count, const std::function<void(size_t, s
 
 Dictionary W3DInstancer::setup(const Ref<RetailFileSystem> &fs)
 {
+	return setup_source(fs, false);
+}
+
+Dictionary W3DInstancer::setup_menu(const Ref<RetailFileSystem> &fs)
+{
+	return setup_source(fs, true);
+}
+
+Dictionary W3DInstancer::setup_source(const Ref<RetailFileSystem> &fs, bool menu)
+{
 	Dictionary result;
 	PackedStringArray errors;
 	if (fs.is_null() || !fs->is_mounted() || fs->archive_fs() == nullptr)
@@ -219,9 +229,12 @@ Dictionary W3DInstancer::setup(const Ref<RetailFileSystem> &fs)
 	else
 	{
 		FsRef = fs;
-		Source.reset(new ArchiveW3DFileSource(*fs->archive_fs()));
+		// Use one archive view for geometry, animation and textures: BFME2 menu clips
+		// must not animate the similarly named RotWK model. Gameplay still uses setup().
+		ArchiveFileSystem &source = *(menu ? fs->menu_archive_fs() : fs->archive_fs());
+		Source.reset(new ArchiveW3DFileSource(source));
 		Assets.reset(new WW3DAssetManager(*Source));
-		Materials.reset(new W3DMaterialFactory(*fs->archive_fs()));
+		Materials.reset(new W3DMaterialFactory(source));
 		Materials->Set_Alpha_Override(AlphaOverride); // lane BUILD-5 r3
 		// housecolor.ini: the table only names which textures have a house texture; applying it is stop S-022 (reported per surface).
 		// A missing or malformed file is an error, not an empty table.

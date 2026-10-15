@@ -62,6 +62,8 @@ public:
 
 	// Mounts nothing itself: takes the mounted archives of a RetailFileSystem. { ok, errors }
 	Dictionary setup(const Ref<RetailFileSystem> &fs);
+	// Presentation-only W3D models and materials follow the selected menu theme.
+	Dictionary setup_menu(const Ref<RetailFileSystem> &fs);
 
 	// Builds the model (meshes, materials, MultiMeshes). Returns the model id, or -1; the report says why either way.
 	int64_t add_model(const String &model_name);
@@ -274,6 +276,7 @@ private:
 	void mark_model(int64_t instance);       // SMOOTH-1: the instance's model rewrites its buffers
 	void run_parallel(size_t count, const std::function<void(size_t, size_t)> &fn);
 
+	Dictionary setup_source(const Ref<RetailFileSystem> &fs, bool menu);
 	Ref<RetailFileSystem> FsRef;
 	std::unique_ptr<W3DFileSource> Source;
 	std::unique_ptr<WW3DAssetManager> Assets;

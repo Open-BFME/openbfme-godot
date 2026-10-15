@@ -146,7 +146,7 @@ bool AptView3DViewers::create(Slot &slot, const AptCanvasOp &op)
 	slot.camWhite = makeCamera(slot.white, Color(1, 1, 1, 1));
 	slot.inst = memnew(W3DInstancer);
 	slot.black->add_child(slot.inst);
-	const Dictionary setup = slot.inst->setup(m_fs);
+	const Dictionary setup = slot.inst->setup_menu(m_fs);
 	if (!bool(setup.get("ok", false)))
 	{
 		m_errors.insert("View3D " + op.renderObject + ": the W3D instancer did not set up");
@@ -288,6 +288,14 @@ void AptView3DViewers::pose(Slot &slot, double now)
 	}
 	GammaComposite::ensure(slot.camBlack);
 	GammaComposite::ensure(slot.camWhite);
+}
+
+float AptView3DViewers::animationFrame(const std::string &path) const
+{
+	for (const auto &entry : m_slots)
+		if (entry.first.compare(0, path.size() + 1, path + "|") == 0 && entry.second.used && !entry.second.failed)
+			return entry.second.anim.frame();
+	return -1;
 }
 
 void AptView3DViewers::advance()

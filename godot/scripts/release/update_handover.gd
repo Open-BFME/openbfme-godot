@@ -61,6 +61,8 @@ static func game_exe() -> String:
 
 ## "" when the launcher beside the game is asked; else why this start does not ask
 static func why_not(scripted: bool) -> String:
+	if OS.has_feature("standalone_game"):
+		return "standalone game app"
 	if not OS.has_feature("template"):
 		return "a development run"
 	if DisplayServer.get_name() == "headless":
