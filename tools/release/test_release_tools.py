@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import io
+import json
 import re
 import struct
 import sys
@@ -116,6 +117,17 @@ def test_known_issues_resolve_against_stops():
     text = readme_testers.render("v9.9.9-test", "linux", lines)
     assert "OpenBFME v9.9.9-test" in text and "#feedback" in text and "KNOWN ISSUES" in text
     assert "NO game files" in text
+
+
+def test_known_issues_have_a_known_area():
+    """NOTES-1: the patch notes group the known issues by area (autorelease.AREAS); a missing or unknown one would land under General"""
+    sys.path.insert(0, str(HERE))
+    import autorelease
+    data = json.loads((HERE / "known_issues.json").read_text(encoding="utf-8"))
+    for item in data["issues"]:
+        assert item.get("area") in autorelease.AREAS, (item.get("area"), item["text"][:50])
+    text, _ = autorelease.release_notes("v0.4.0-alpha.9", [], autorelease.load_known_issues(HERE / "known_issues.json"))
+    assert "**General**" not in text.split("## Known issues", 1)[1]
 
 
 def test_known_issue_naming_a_vanished_stop_fails(tmp_path):
@@ -524,10 +536,33 @@ def elf64(extra: bytes = b"") -> bytes:
     return bytes(h) + extra
 
 
+def launcher_pack(entries=None) -> bytes:
+    return pck(entries or [("project.binary", b"ECFG" + b"\0" * 4), ("scripts/main.gd", b"extends Control\n"),
+                           ("scenes/main.tscn", b"[gd_scene format=3]\n"), ("build_info.json", b"{}\n")])
+
+
+def elf_with_pack(pack: bytes, extra: bytes = b"") -> bytes:
+    """an ELF64 whose one section holds the pack and its trailer, as Godot's export embeds it (header, section table, pack, u64 size,
+    "GDPC")"""
+    body = pack + struct.pack("<Q", len(pack)) + b"GDPC"
+    h = bytearray(64)
+    h[0:4] = b"\x7fELF"
+    h[4], h[5], h[6] = 2, 1, 1
+    struct.pack_into("<Q", h, 40, 64)                     # e_shoff
+    struct.pack_into("<HHHH", h, 52, 64, 56, 0, 64)       # e_ehsize, e_phentsize, e_phnum, e_shentsize
+    struct.pack_into("<H", h, 60, 1)                      # e_shnum
+    sh = bytearray(64)
+    struct.pack_into("<I", sh, 4, 1)                      # SHT_PROGBITS
+    struct.pack_into("<QQ", sh, 24, 128, len(body))       # sh_offset, sh_size
+    return bytes(h) + bytes(sh) + extra + body
+
+
 def release_files(**override) -> dict:
+    """the release's package of a platform (lane ONEZIP-1: the game's files and the launcher's executable with its pack embedded)"""
     files = {"OpenBFME.x86_64": elf64(), "openbfme.linux.template_debug.x86_64.so": elf64(),
              "OpenBFME.pck": pck([("scripts/game.gd", b"extends Node\n"), ("project.binary", b"ECFG" + struct.pack("<I", 0))]),
-             "README_TESTERS.txt": b"read me\n", "LICENSE": b"GPL\n", "NOTICE": b"notice\n", "VERSION": b"OpenBFME v1\n"}
+             "README_TESTERS.txt": b"read me\n", "LICENSE": b"GPL\n", "NOTICE": b"notice\n", "VERSION": b"OpenBFME v1\n",
+             "OpenBFMELauncher.x86_64": elf_with_pack(launcher_pack()), "README_LAUNCHER.txt": b"the launcher\n"}
     files.update(override)
     return {k: v for k, v in files.items() if v is not None}
 
@@ -547,6 +582,17 @@ def release_problems(tmp_path, **override):
 
 def test_the_release_set_passes(tmp_path):
     assert release_problems(tmp_path) == []
+    # lane ONEZIP-1: the release's package holds the launcher; the game alone is only package.sh --no-launcher's trial set
+    alone = {"OpenBFMELauncher.x86_64": None, "README_LAUNCHER.txt": None}
+    assert [p.split(": ", 1)[1] for p in release_problems(tmp_path / "alone", **alone)] == [
+        "OpenBFMELauncher.x86_64 is missing", "README_LAUNCHER.txt is missing"]
+    assert audit_package.check_release("game-linux", write_release(tmp_path / "trial", release_files(**alone))) == []
+    assert [p.split(": ", 1)[1] for p in audit_package.check_release("game-linux", write_release(tmp_path / "both", release_files()))] == [
+        "OpenBFMELauncher.x86_64 is not a file of the release", "README_LAUNCHER.txt is not a file of the release"]
+    # the launcher in the package is checked like the launcher package's: its pack embedded, only the launcher's resource types
+    assert any("no embedded Godot pack" in p for p in release_problems(tmp_path / "nopack", **{"OpenBFMELauncher.x86_64": elf64()}))
+    bad = elf_with_pack(launcher_pack([("tests/unit_test.gd", b"extends SceneTree\n")]))
+    assert any("not a resource type" in p for p in release_problems(tmp_path / "badpack", **{"OpenBFMELauncher.x86_64": bad}))
     # printable signatures in prose are text, not content ("BIG4 archives" in NOTICE)
     assert release_problems(tmp_path / "prose", NOTICE=b"Uses BIG4 archives, ustar and MSCF in prose\n") == []
 

@@ -2,13 +2,20 @@
 # Lane RELEASE-1: the closed-test packages.
 #
 #   tools/release/package.sh [--out DIR] [--platforms linux[,windows]] [--windows-dll FILE] [--godot BIN] [--allow-dirty]
-#                            [--repo OWNER/NAME] [--release-key FILE] [--no-launcher]
+#                            [--repo OWNER/NAME] [--release-key FILE] [--no-launcher] [--no-legacy-launchers]
 #
-# Produces, for the commit checked out:
-#   <out>/openbfme-<version>-linux-x64.tar.gz     OpenBFME.x86_64 + OpenBFME.pck + the GDExtension .so, README_TESTERS.txt, LICENSE, NOTICE, VERSION
+# Produces, for the commit checked out (lane ONEZIP-1: ONE download per platform, the game and the launcher together):
+#   <out>/openbfme-<version>-linux-x64.tar.gz     OpenBFME.x86_64 + OpenBFME.pck + the GDExtension .so, OpenBFMELauncher.x86_64 (the
+#                                                 OpenBFME Launcher, its pack embedded), README_TESTERS.txt, README_LAUNCHER.txt, LICENSE,
+#                                                 NOTICE, VERSION: ready to play after unpacking; whichever program is started keeps
+#                                                 the install up to date (docs/RELEASE.md, "One archive")
 #   <out>/openbfme-<version>-windows-x64.zip      the same for Windows (needs --windows-dll: WIN-1's cross-built openbfme DLL of this commit)
-#   <out>/openbfme-launcher-<version>-linux-x64.tar.gz / -windows-x64.zip   the OpenBFME Launcher of each platform (lane LAUNCH-1,
-#                                                 tools/release/build_launcher.sh): updates from --repo (default Open-BFME/openbfme-godot)
+#   <out>/openbfme-launcher-<version>-linux-x64.tar.gz / -windows-x64.zip   the launcher alone (lane LAUNCH-1,
+#                                                 tools/release/build_launcher.sh). Nobody downloads these by hand any more: the
+#                                                 launchers published before ONEZIP-1 (v0.3.0-preview.x, v0.4.0-alpha.1 .. 4) update
+#                                                 themselves from them, and refuse a release without them. --no-legacy-launchers leaves
+#                                                 them out (the day those launchers are retired; make_manifest.py --format 3).
+#                                                 The launcher updates from --repo (default Open-BFME/openbfme-godot)
 #                                                 and trusts the Ed25519 key of --release-key (default launcher/release_key.pub, committed
 #                                                 by the coordinator; missing = an error, or --no-launcher for a game-only trial)
 #   <out>/SHA256SUMS-<version>.txt
@@ -38,6 +45,7 @@ SELF_VERIFY=1
 TARGET_REPO="Open-BFME/openbfme-godot"
 RELEASE_KEY="$REPO/launcher/release_key.pub"
 LAUNCHER=1
+LEGACY=1
 while [ $# -gt 0 ]; do
   case "$1" in
     --out) OUT=$2; shift 2 ;;
@@ -50,7 +58,8 @@ while [ $# -gt 0 ]; do
     --repo) TARGET_REPO=$2; shift 2 ;;
     --release-key) RELEASE_KEY=$2; shift 2 ;;
     --no-launcher) LAUNCHER=0; shift ;;
-    -h|--help) sed -n '2,27p' "$0"; exit 0 ;;
+    --no-legacy-launchers) LEGACY=0; shift ;;
+    -h|--help) sed -n '2,35p' "$0"; exit 0 ;;
     *) echo "package.sh: unknown argument $1" >&2; exit 2 ;;
   esac
 done
@@ -69,14 +78,20 @@ if [ -n "$VERIFY_DIR" ]; then
   for a in "$VERIFY_DIR"/openbfme-*-linux-x64.tar.gz "$VERIFY_DIR"/openbfme-*-windows-x64.zip; do archives+=("$(basename "$a")"); done
   [ ${#archives[@]} -gt 0 ] || fail "no package archives in $VERIFY_DIR"
   python3 "$REPO/tools/release/audit_package.py" --sums "${sums[0]}" "${archives[@]}" || fail "the checksum file does not list the archives exactly"
-  plats=""; wdll=(); lopts=(--no-launcher)
+  # which run made the folder: a game-only trial (--no-launcher), the combined packages alone (--no-legacy-launchers: the game archive
+  # holds the launcher's executable and there is no launcher archive), or the combined packages with the launcher archives
+  plats=""; wdll=(); lopts=(--no-launcher); legacy=0
   for a in "${archives[@]}"; do
     case "$a" in
-      openbfme-launcher-*) lopts=(--repo "$TARGET_REPO" --release-key "$RELEASE_KEY") ;;
-      *-linux-x64.tar.gz) plats="$plats,linux" ;;
-      *) plats="$plats,windows" ;;
+      openbfme-launcher-*) legacy=1 ;;
+      *-linux-x64.tar.gz) plats="$plats,linux"
+        if python3 "$REPO/tools/release/make_archive.py" --has "$VERIFY_DIR/$a" OpenBFMELauncher.x86_64; then lopts=(--repo "$TARGET_REPO" --release-key "$RELEASE_KEY"); fi ;;
+      *) plats="$plats,windows"
+        if python3 "$REPO/tools/release/make_archive.py" --has "$VERIFY_DIR/$a" OpenBFMELauncher.exe; then lopts=(--repo "$TARGET_REPO" --release-key "$RELEASE_KEY"); fi ;;
     esac
   done
+  if [ "${lopts[0]}" = --no-launcher ]; then [ $legacy = 0 ] || fail "$VERIFY_DIR holds launcher archives beside game archives without a launcher"
+  elif [ $legacy = 0 ]; then lopts+=(--no-legacy-launchers); fi
   plats=${plats#,}
   case "$plats" in *windows*) [ -n "$WINDLL" ] || fail "--windows-dll is needed to rebuild the Windows package"; wdll=(--windows-dll "$WINDLL") ;; esac
   base=$(dirname "$VERIFY_DIR")
@@ -85,11 +100,25 @@ if [ -n "$VERIFY_DIR" ]; then
   "$0" --out "$rebuilt" --platforms "$plats" "${wdll[@]}" "${lopts[@]}" --godot "$GODOT_BIN" --no-self-verify $([ "$ALLOW_DIRTY" = 1 ] && echo --allow-dirty) >"$rebuilt.log" 2>&1 \
     || { tail -20 "$rebuilt.log"; rm -f "$rebuilt.log"; fail "the rebuild failed"; }
   rm -f "$rebuilt.log"
+  # lane ONEZIP-1 r2: a sealed package (seal_package.py added its signed payload inventory after this check ran once) is compared without
+  # the two sealing files, and its seal is checked under the release key the launcher is built with
+  cmpdir=$(mktemp -d "$base/.verify-cmp.XXXXXX")
+  trap 'rm -rf "$rebuilt" "$cmpdir"' EXIT
+  sealed=0
+  for f in "${archives[@]}"; do
+    if python3 "$REPO/tools/release/make_archive.py" --has "$VERIFY_DIR/$f" payload.json; then
+      python3 "$REPO/tools/release/seal_package.py" unseal "$VERIFY_DIR/$f" "$cmpdir/$f" || fail "$f cannot be unsealed"; sealed=1
+    else cp "$VERIFY_DIR/$f" "$cmpdir/$f"; fi
+  done
+  if [ $sealed = 1 ]; then
+    python3 "$REPO/tools/release/seal_package.py" check "$VERIFY_DIR" --public "$RELEASE_KEY" --repo "$TARGET_REPO" || fail "the seal of $VERIFY_DIR is not the release's"
+    while IFS= read -r line; do n=${line#*  }; echo "$(sha256sum "$cmpdir/$n" | cut -d' ' -f1)  $n"; done < "${sums[0]}" > "$cmpdir/$(basename "${sums[0]}")"
+  else cp "${sums[0]}" "$cmpdir/"; fi
   bad=0
   for f in "${archives[@]}" "$(basename "${sums[0]}")"; do
     if [ ! -f "$rebuilt/$f" ]; then echo "VERIFY: $f is not what this commit builds (the rebuild has no such file)"; bad=1; continue; fi
-    if cmp -s "$VERIFY_DIR/$f" "$rebuilt/$f"; then echo "VERIFY identical: $f"
-    else python3 "$REPO/tools/release/make_archive.py" --diff "$VERIFY_DIR/$f" "$rebuilt/$f" || true; bad=1; fi
+    if cmp -s "$cmpdir/$f" "$rebuilt/$f"; then echo "VERIFY identical: $f$([ $sealed = 1 ] && python3 "$REPO/tools/release/make_archive.py" --has "$VERIFY_DIR/$f" payload.json && echo ' (without its seal)')"
+    else python3 "$REPO/tools/release/make_archive.py" --diff "$cmpdir/$f" "$rebuilt/$f" || true; bad=1; fi
   done
   [ $bad = 0 ] || fail "the packages in $VERIFY_DIR are not byte for byte what $(git -C "$REPO" rev-parse --short HEAD) builds"
   echo "VERIFY OK: every archive is byte for byte the rebuild of this commit"
@@ -148,6 +177,23 @@ for p in ${PLATFORMS//,/ }; do
   if [ "$p" = linux ]; then check_lib "$LINUX_LIB" "the Linux GDExtension"; else check_lib "$WINDLL" "the Windows GDExtension"; fi
 done
 git -C "$REPO" archive --format=tar HEAD godot LICENSE NOTICE | tar -x -C "$STAGE"
+# lane ONEZIP-1 r2: what the packaged game trusts when it checks the launcher beside it (godot/scripts/release/launcher_check.gd): the
+# release key and the repository the launcher is built with (the source tree's file is empty: a development run asks no launcher)
+if [ $LAUNCHER = 1 ]; then
+  TRUST_KEY=$(tr -d ' \n\r' < "$RELEASE_KEY")
+  [[ "$TRUST_KEY" =~ ^[0-9a-f]{64}$ ]] || fail "$RELEASE_KEY does not hold an Ed25519 public key (64 lower-case hex digits)"
+  [[ "$TARGET_REPO" =~ ^[A-Za-z0-9-]{1,39}/[A-Za-z0-9._-]{1,100}$ ]] || fail "--repo $TARGET_REPO is not <owner>/<name>"
+  python3 - "$STAGE/godot/scripts/release/release_trust.gd" "$TRUST_KEY" "$TARGET_REPO" <<'PY'
+import re, sys
+path, key, repo = sys.argv[1:]
+text = open(path, encoding="utf-8").read()
+text, n1 = re.subn(r'^const RELEASE_KEY := ""$', f'const RELEASE_KEY := "{key}"', text, flags=re.M)
+text, n2 = re.subn(r'^const REPO := ""$', f'const REPO := "{repo}"', text, flags=re.M)
+if (n1, n2) != (1, 1):
+    sys.exit("release_trust.gd: the empty RELEASE_KEY / REPO lines are not there")
+open(path, "w", encoding="utf-8").write(text)
+PY
+fi
 mkdir -p "$STAGE/godot/bin"
 cp "$LINUX_LIB" "$STAGE/godot/bin/" 2>/dev/null || true
 if [ -n "$WINDLL" ]; then
@@ -161,10 +207,20 @@ python3 "$REPO/tools/release/audit_package.py" "$STAGE" || fail "the staged proj
 "$GODOT_BIN" --headless --path "$STAGE/godot" --import >"$WORK/import1.log" 2>&1 || true
 "$GODOT_BIN" --headless --path "$STAGE/godot" --import >"$WORK/import2.log" 2>&1 || { tail -20 "$WORK/import2.log"; fail "godot --import"; }
 
+LAUNCHER_OUT="$OUT"
+if [ $LAUNCHER = 1 ]; then
+  # the launcher of every platform, from the same commit (tools/release/build_launcher.sh: git archive HEAD launcher, audited). Built
+  # first: its executable goes into the game's package (lane ONEZIP-1). Without the legacy launcher archives it is built in the work
+  # folder and only the combined packages are written.
+  [ $LEGACY = 1 ] || { LAUNCHER_OUT="$WORK/launcher"; mkdir -p "$LAUNCHER_OUT"; }
+  bl_out=$("$REPO/tools/release/build_launcher.sh" --out "$LAUNCHER_OUT" --version "$VERSION" --commit "$HEAD" --repo "$TARGET_REPO" \
+    --key-file "$RELEASE_KEY" --mtime "$SOURCE_DATE_EPOCH" --platforms "$PLATFORMS" --godot "$GODOT_BIN" 2>&1) || { echo "$bl_out" | tail -30; fail "the launcher packages"; }
+fi
+
 ARCHIVES=()
 for p in ${PLATFORMS//,/ }; do
-  if [ "$p" = linux ]; then preset="Linux x64"; exe="OpenBFME.x86_64"; suffix="linux-x64"; ext="tar.gz"
-  else preset="Windows x64"; exe="OpenBFME.exe"; suffix="windows-x64"; ext="zip"; fi
+  if [ "$p" = linux ]; then preset="Linux x64"; exe="OpenBFME.x86_64"; suffix="linux-x64"; ext="tar.gz"; lexe="OpenBFMELauncher.x86_64"
+  else preset="Windows x64"; exe="OpenBFME.exe"; suffix="windows-x64"; ext="zip"; lexe="OpenBFMELauncher.exe"; fi
   name="openbfme-$VERSION-$suffix"
   dir="$WORK/$name"
   mkdir -p "$dir"
@@ -174,7 +230,8 @@ for p in ${PLATFORMS//,/ }; do
   "$GODOT_BIN" --headless --path "$STAGE/godot" --export-debug "$preset" "$dir/$exe" >"$WORK/export-$p.log" 2>&1 \
     || { tail -30 "$WORK/export-$p.log"; fail "export $preset"; }
   [ -f "$dir/$exe" ] && [ -f "$dir/OpenBFME.pck" ] || { tail -30 "$WORK/export-$p.log"; fail "export $preset produced no $exe / OpenBFME.pck"; }
-  python3 "$REPO/tools/release/readme_testers.py" --version "$VERSION" --platform "$p" --out "$dir/README_TESTERS.txt"
+  python3 "$REPO/tools/release/readme_testers.py" --version "$VERSION" --platform "$p" --out "$dir/README_TESTERS.txt" \
+    $([ $LAUNCHER = 1 ] || echo --game-only)
   cp "$STAGE/LICENSE" "$STAGE/NOTICE" "$dir/"
   printf 'OpenBFME %s\ncommit %s\ncommitted %s\n' "$VERSION" "$HEAD" "$(date -u -d "@$SOURCE_DATE_EPOCH" +%Y-%m-%d)" > "$dir/VERSION"
   if [ "$p" = linux ]; then
@@ -183,8 +240,18 @@ for p in ${PLATFORMS//,/ }; do
     printf 'requires GLIBC %s\n' "$need" >> "$dir/VERSION"
     echo "PACKAGE $name requires GLIBC $need"
   fi
+  mode="game-$p"
+  if [ $LAUNCHER = 1 ]; then
+    # lane ONEZIP-1: the launcher's executable and its README, exactly the bytes of the launcher package of this run
+    mode="$p"
+    python3 "$REPO/tools/release/make_archive.py" --extract "$LAUNCHER_OUT/openbfme-launcher-$VERSION-$suffix.$ext" "$lexe" "$dir/$lexe" \
+      || fail "the launcher's executable for $name"
+    python3 "$REPO/tools/release/make_archive.py" --extract "$LAUNCHER_OUT/openbfme-launcher-$VERSION-$suffix.$ext" README.txt "$dir/README_LAUNCHER.txt" \
+      || fail "the launcher's README for $name"
+    chmod 0755 "$dir/$lexe"
+  fi
   python3 "$REPO/tools/release/audit_package.py" "$dir" || fail "$name failed the content audit"
-  python3 "$REPO/tools/release/audit_package.py" --release "$p" "$dir" || fail "$name is not the release's file set"
+  python3 "$REPO/tools/release/audit_package.py" --release "$mode" "$dir" || fail "$name is not the release's file set"
   rm -f "$OUT/$name.$ext"
   chmod 0755 "$dir" "$dir/$exe"
   python3 "$REPO/tools/release/make_archive.py" "$dir" "$OUT/$name.$ext" --mtime "$SOURCE_DATE_EPOCH" || fail "archive $name"
@@ -192,10 +259,7 @@ for p in ${PLATFORMS//,/ }; do
   echo "PACKAGE $OUT/$name.$ext ($(du -h "$OUT/$name.$ext" | cut -f1))"
 done
 
-if [ $LAUNCHER = 1 ]; then
-  # the launcher of every platform, from the same commit (tools/release/build_launcher.sh: git archive HEAD launcher, audited)
-  bl_out=$("$REPO/tools/release/build_launcher.sh" --out "$OUT" --version "$VERSION" --commit "$HEAD" --repo "$TARGET_REPO" \
-    --key-file "$RELEASE_KEY" --mtime "$SOURCE_DATE_EPOCH" --platforms "$PLATFORMS" --godot "$GODOT_BIN" 2>&1) || { echo "$bl_out" | tail -30; fail "the launcher packages"; }
+if [ $LAUNCHER = 1 ] && [ $LEGACY = 1 ]; then
   for p in ${PLATFORMS//,/ }; do
     if [ "$p" = linux ]; then ARCHIVES+=("openbfme-launcher-$VERSION-linux-x64.tar.gz"); else ARCHIVES+=("openbfme-launcher-$VERSION-windows-x64.zip"); fi
     echo "PACKAGE $OUT/${ARCHIVES[-1]} ($(du -h "$OUT/${ARCHIVES[-1]}" | cut -f1))"
@@ -209,6 +273,7 @@ for a in "${ARCHIVES[@]}"; do
     *-linux-x64.tar.gz) ap=linux ;;
     *) ap=windows ;;
   esac
+  case "$ap" in linux|windows) [ $LAUNCHER = 1 ] || ap="game-$ap" ;; esac
   (cd "$OUT" && python3 "$REPO/tools/release/audit_package.py" --release "$ap" "$a") || fail "$a failed the release allowlist"
 done
 (cd "$OUT" && sha256sum "${ARCHIVES[@]}" > "SHA256SUMS-$VERSION.txt")

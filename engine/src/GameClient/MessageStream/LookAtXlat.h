@@ -18,6 +18,16 @@
 //     (elapsed / ScreenEdgeScrollRampTime, 0 .. 100); then View::scrollBy(offset); a type 1 scroll that hits a map edge moves the anchor to the pointer on that axis; the
 //     numpad rotate keys add KeyboardCameraRotateSpeed per frame, the zoom keys zoom once per frame.
 //   * lane INPUT-1: SAVE_VIEW1..8 / VIEW_VIEW1..8 (the cases 0x24 .. 0x33) store and restore the camera bookmarks; OPTIONS (0x70) stops a scroll.
+//   * lane BACKLOG3 (BFME2 decomp BfmeOwnVVDTranslateGameMessage.cpp / BfmeOwnVVDScrollUpdate.cpp, both tier A for RW 0x83AC4A / 0x83B471; the facts below
+//     are read in RotWK's code):
+//       - the tick ends a scroll when InGameUI's scrolling flag is off (vslot 0xA8) OR its vslot 0x17C answers (RW 0x48E916: InGameUI + 0x810, the flag
+//         whose setter RW 0x69B6A8 clears the input modes when it goes on: the input is DISABLED; RW 0x83B493 .. 0x83B4E6);
+//       - the anchor clamp of the right button scroll (RW 0x83B75E: the anchor kept within half the display of the pointer) runs only with InGameUI + 0x8C4
+//         (the decomp's m_moveRMBScrollAnchor), which RotWK 2.01 only ever clears (the constructor RW 0x6A7234; no other write in the code): never in retail;
+//       - a right button scroll also ends while InGameUI's vslot 0xCC answers (RW 0x48E8E6: + 0x98C, set by vslot 0xC4 RW 0x69B507 with a world position
+//         and by RW 0x6A5A20); the engine has no such mode (S-454);
+//       - the end of the tick (RW 0x83BAF8 ..): while scrolling, an arrow key TheKeyboard has not down (RW 0x63F0E2) is dropped, and a key scroll with no
+//         key left stops; the numpad keys the same.
 // Not ported: stop S-454 (TacticalCamera::acceptanceStops()).
 
 #pragma once
@@ -25,6 +35,8 @@
 #include "GameClient/HudContext.h"
 #include "GameClient/MessageStream/MessageStream.h"
 #include "GameClient/TacticalCamera.h"
+
+#include <functional>
 
 class LookAtTranslator : public MessageTranslator
 {
@@ -56,6 +68,10 @@ public:
 	// the client frame the translator counts (middle click timing, last mouse move)
 	unsigned clientFrame() const { return m_frame; }
 
+	// lane BACKLOG3 (S-454): TheKeyboard's state of a DirectInput key (RW 0x63F0E2; BFME2 decomp KeyboardKeyAccessors.cpp, tier A). The end of the tick
+	// (RW 0x83BAF8 ..) drops a held scroll / rotate / zoom key the keyboard no longer has down, so a release the stream never carried (the keyboard's reset
+	// when the window loses the focus) cannot leave the camera moving. Unset: every key the translator holds counts as down
+	void setKeyboard(std::function<bool(int)> isKeyDown) { m_isKeyDown = std::move(isKeyDown); }
 	// RW GlobalData Windowed (+0x2C): edge scrolling is off while windowed
 	void setEdgeScrollEnabled(bool on) { m_edgeScrollEnabled = on; }
 	// ---- lane OPTS-2: the OpenBFME camera options (not retail; client only, the logic never sees the camera). Defaults are retail's (off / 1) ----
@@ -93,6 +109,7 @@ private:
 	bool m_rotateLeft = false, m_rotateRight = false, m_zoomIn = false, m_zoomOut = false;
 	bool m_scrollKey[4] = { false, false, false, false }; // up, down, left, right (RW 0xDE8CB4 ..)
 	bool m_edgeScrollEnabled = true;
+	std::function<bool(int)> m_isKeyDown; // lane BACKLOG3
 	bool m_invertDrag = false;    // lane OPTS-2
 	float m_rotateScale = 1.0f;   // lane OPTS-2
 	// lane INPUT-1: the eight camera bookmarks (BFME2 decomp BfmeOwnVVD + 0x48, ViewLocation m_viewLocation[8])

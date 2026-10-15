@@ -323,7 +323,8 @@ func _ready() -> void:
 	if army_slots.has(3) or army_slots.has(4):
 		slots.append({"player": "Player_3", "faction": _army_factions[3], "human": false, "team": 0, "start_index": 2})
 		slots.append({"player": "Player_4", "faction": _army_factions[4], "human": false, "team": 1, "start_index": 3})
-	var rep: Dictionary = _world.load_map(_map_name, {"slots": slots, "seed": 4711, "logic_thread": _logic_thread})
+	# lane BACKLOG3: the proof scenarios run a script action and a hit through the test hooks
+	var rep: Dictionary = _world.load_map(_map_name, {"slots": slots, "seed": 4711, "logic_thread": _logic_thread, "test_hooks": _scenario.begins_with("backlog3")})
 	if not rep.ok:
 		_fail("load_map failed: %s" % [rep.errors.slice(0, 5)])
 		return
@@ -1078,6 +1079,35 @@ func _run_scenario() -> void:
 			await _frames(60)
 			print("SELECT ", _hud.get_selection(), " ", JSON.stringify(_hud.get_state().get("control_bar", {})))
 			_save(shots.path_join("hud1-select-horde.png"))
+		"backlog3_cam":
+			# lane BACKLOG3 (proof, S-454; run with --write-movie): a held arrow key scrolls; the window's focus loss stops it without a key release; a
+			# fresh press scrolls again; disabling the input (the scripts' DISABLE_INPUT) under the held key ends the scroll
+			_label.position.y = 40
+			_hud.inject_mouse_move(Vector2(get_viewport().get_visible_rect().size * 0.5))
+			_caption = "BACKLOG3 camera: Right arrow held: the camera scrolls"
+			_hud.inject_key(0xCD, true)
+			await _frames(60)
+			print("BACKLOG3 CAM scrolling ", _hud.get_camera().position)
+			_caption = "BACKLOG3 camera: the window loses the focus (no key release arrives): the camera stops"
+			_hud.notification(NOTIFICATION_WM_WINDOW_FOCUS_OUT)
+			await _frames(15)
+			var bc1: Vector2 = _hud.get_camera().position
+			await _frames(60)
+			print("BACKLOG3 CAM after the focus loss ", bc1, " -> ", _hud.get_camera().position)
+			_caption = "BACKLOG3 camera: Right arrow pressed again: it scrolls"
+			_hud.inject_key(0xCD, true)
+			await _frames(60)
+			print("BACKLOG3 CAM fresh press ", _hud.get_camera().position)
+			_caption = "BACKLOG3 camera: the input is disabled with the key still held (a script's DISABLE_INPUT): the scroll ends"
+			_hud.set_input_enabled(false)
+			await _frames(15)
+			var bc2: Vector2 = _hud.get_camera().position
+			await _frames(60)
+			print("BACKLOG3 CAM input disabled ", bc2, " -> ", _hud.get_camera().position)
+			_hud.set_input_enabled(true)
+			_hud.inject_key(0xCD, false)
+			_caption = "BACKLOG3 camera: input enabled again, key released"
+			await _frames(30)
 		"radar1":
 			# lane RADAR-1: the radar's objects, view box and attack pings while our --spawn units fight the --enemy ones next to them: radar1-NN.png every
 			# 45 frames in --shots (the Palantir's radar at the lower left)

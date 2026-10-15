@@ -4,13 +4,16 @@
 #include "GameLogic/AI/AIGroup.h"
 
 #include "GameLogic/AI/AIWorld.h"
+#include "Common/Thing/KindOfTokens.h"
 #include "GameLogic/GameLogic.h"
 #include "GameLogic/Locomotor.h"
 #include "GameLogic/Module/PhysicsBehavior.h"
 #include "GameLogic/Module/AIUpdate.h"
+#include "GameLogic/Module/InvisibilityModules.h"
 #include "GameLogic/Object/Object.h"
 #include "GameLogic/ObjectTemplateInfo.h"
 #include "GameLogic/SimMath.h"
+#include "GameLogic/System/InvisibilityManager.h"
 
 #include <algorithm>
 
@@ -18,6 +21,7 @@ namespace
 {
 const float kCellSize = 10.0f;                       // PATHFIND_CELL_SIZE_F
 const float kWaypointClampMargin = 40.0f;             // ZH STD_WAYPOINT_CLAMP_MARGIN = PATHFIND_CELL_SIZE_F * 4 (exactly representable)
+const int kLogicFramesPerSecond = 5;                  // RW 0xD9F608
 }
 
 AIGroup::AIGroup(GameLogic &logic, const std::vector<ObjectID> &ids)
@@ -100,6 +104,158 @@ Coord3D AIGroup::computeIndividualDestination(const Coord3D &groupDest, Object &
 	return dest;
 }
 
+const char *AIGroup::formationStopLine()
+{
+	return "[S-895] AIGroup RW 0x774897 (lane BACKLOG6): a player-source group move of more than one unit without waypoint, target or formation type, with AIData "
+		"UseFormations goes to the formation group manager (RW 0x7747DE), which is ported only as far as its refusals: the member filter RW 0x76FFF0 (a held, "
+		"AI-less, locomotor-less or IMMOBILE member leaves the group; the last one ends the order), a group without a FormationPriority locomotor and the group "
+		"ground path's distance and extent refusals (RW 0x76F115). NOT ported: RW 0x76F426's per-member contain call, the terrain tests (RW 0x680A75, "
+		"W3DTerrainLogic slot 0xC8), the nearby enemy test (findClosestEnemy, GroupEnemyScanRange, qualifiers 0xE4), Pathfinder::FindGroundPath (its failure "
+		"refuses the group in RW) and the formation itself (createFormation RW 0x94FCBA, moveFormationToPos RW 0x77348C): a group not refused by the ported "
+		"tests is taken as accepted, moves with individual destinations and makes no stealth draw (RW's draw, AIGroup.cpp 0x874, belongs to the generic path "
+		"after a refusal)";
+}
+
+// RW 0x76F115 (BFME2 decomp AI/AIGroupGetCenter.cpp AIGroup::computeGroundPath, byte-matched, tier B same-shape for RW 0x76F115): the checks after the
+// terrain tests, in RW's order: the members' centre and extent (RW 0x76D14F: held members and members without an AI do not count), the squared distance of
+// the nearest member to the point (starting at (MinDistanceForGroup * 4)^2), the member nearest the centre (none: refused), the extent replacing the
+// distance when it is longer than that start, the refusal when the distance is below MinDistanceForGroup^2, and the member whose AI finds the ground path
+// (INFANTRY, MONSTER, CAVALRY / MACHINE, never AIRCRAFT; none: refused). NOT ported, so never a refusal here: the terrain tests RW 0x680A75 (the layer; only
+// the ground exists, S-161) and W3DTerrainLogic slot 0xC8 (RW 0x4627C1: a height map bit plane at the point and at every path node), the nearby enemy test
+// (AI::findClosestEnemy within GroupEnemyScanRange with qualifiers 0xE4) and Pathfinder::FindGroundPath itself (a missing path refuses the group in RW)
+bool AIGroup::groupGroundPathAccepts(const Coord3D &pos) const
+{
+	static const int kInfantry = KindOfTokens::indexOf("INFANTRY"), kMonster = KindOfTokens::indexOf("MONSTER"), kCavalry = KindOfTokens::indexOf("CAVALRY"),
+		kMachine = KindOfTokens::indexOf("MACHINE"), kAircraft = KindOfTokens::indexOf("AIRCRAFT");
+	const float minDistance = m_logic.settings().minDistanceForGroup;
+	// RW 0x76D14F: the extent (its centre only feeds the ground path's start)
+	float minX = 1e10f, maxX = -1e10f, minY = 1e10f, maxY = -1e10f;
+	for (const Object *o : m_members)
+	{
+		if (o->isDisabledByType(DISABLED_HELD) || !o->getAIUpdateInterface())
+		{
+			continue;
+		}
+		const Coord3D &p = *o->getPosition();
+		minX = minX > p.x ? p.x : minX;
+		maxX = maxX < p.x ? p.x : maxX;
+		minY = minY > p.y ? p.y : minY;
+		maxY = maxY < p.y ? p.y : maxY;
+	}
+	const float start = SimMath::mulf32(SimMath::mulf32(minDistance, 4.0f), SimMath::mulf32(minDistance, 4.0f));
+	float distSqr = start;
+	bool haveCenter = false, haveObj = false;
+	for (const Object *o : m_members)
+	{
+		if (o->isDisabledByType(DISABLED_HELD) || !o->getAIUpdateInterface() || (kAircraft >= 0 && o->isKindOf((unsigned)kAircraft)))
+		{
+			continue;
+		}
+		haveObj = haveObj || (kInfantry >= 0 && o->isKindOf((unsigned)kInfantry)) || (kMonster >= 0 && o->isKindOf((unsigned)kMonster)) ||
+			(kCavalry >= 0 && o->isKindOf((unsigned)kCavalry)) || (kMachine >= 0 && o->isKindOf((unsigned)kMachine));
+		const Coord3D &p = *o->getPosition();
+		const float dx = SimMath::subf32(p.x, pos.x), dy = SimMath::subf32(p.y, pos.y);
+		const float d = SimMath::addf32(SimMath::mulf32(dx, dx), SimMath::mulf32(dy, dy));
+		if (d < distSqr)
+		{
+			distSqr = d;
+		}
+		haveCenter = true; // RW's nearest-to-the-centre member only feeds the ground path's start (not ported); one qualifying member is all the refusal needs
+	}
+	if (!haveCenter)
+	{
+		return false; // RW: no member to take the ground path from
+	}
+	const float ddx = SimMath::subf32(maxX, minX), ddy = SimMath::subf32(maxY, minY);
+	const float extent = SimMath::addf32(SimMath::mulf32(ddx, ddx), SimMath::mulf32(ddy, ddy));
+	if (extent > start)
+	{
+		distSqr = extent;
+	}
+	if (distSqr < SimMath::mulf32(minDistance, minDistance))
+	{
+		return false;
+	}
+	return haveObj;
+}
+
+AIGroup::FormationVerdict AIGroup::formationManager(const Coord3D &pos, bool addWaypoint, CommandSourceType source, bool haveFormationType)
+{
+	// RW 0x77494B .. 0x774986 (BFME2 decomp AI/AIGroupRva00372571.cpp, byte-matched, tier B same-shape for RW 0x774897: the differences are Object / AI offsets
+	// and the __FILE__ line 0x874): more than one unit, no waypoint, the player's source, no formation type, AIData UseFormations
+	if (!(m_members.size() > 1) || addWaypoint || source != CMD_FROM_PLAYER || haveFormationType || !m_logic.settings().useFormations)
+	{
+		return FORMATION_NOT_OFFERED;
+	}
+	// RW 0x7747DE (decomp Common/BfmeConv986.cpp privateGatherAndMoveInFormationToPosition, tier A). First RW 0x76FFF0 (decomp Common/Rva0036E346Count.cpp
+	// AIGroup::rva0036E357, tier B same-shape): a member that is held (object + 0x1C8 bit 3), has no AI or no current locomotor (AI + 0x1F0) or is IMMOBILE
+	// (template + 0x108 bit 2) leaves the group, and the walk starts again; the last member in the group that would leave stops it (the manager then returns 1
+	// and nothing moves)
+	static const int kImmobile = KindOfTokens::indexOf("IMMOBILE");
+	for (size_t i = 0; i < m_members.size();)
+	{
+		const Object *o = m_members[i];
+		const AIUpdateInterface *ai = o->getAIUpdateInterface();
+		const bool refuse = o->isDisabledByType(DISABLED_HELD) || !ai || !ai->curLocomotor() || (kImmobile >= 0 && o->isKindOf((unsigned)kImmobile));
+		if (!refuse)
+		{
+			++i;
+			continue;
+		}
+		if (m_members.size() == 1)
+		{
+			return FORMATION_NOTHING;
+		}
+		m_members.erase(m_members.begin() + (long)i);
+		i = 0;
+	}
+	// RW 0x7747F2 .. 0x774813: no member whose current locomotor's template has a FormationPriority (+ 0x78): the manager returns 0
+	bool priority = false;
+	for (const Object *o : m_members)
+	{
+		const AIUpdateInterface *ai = o->getAIUpdateInterface();
+		const Locomotor *loco = ai ? ai->curLocomotor() : nullptr;
+		priority = priority || (loco && loco->getTemplate().m_formationPriority != FORMATION_NO_FORMATION);
+	}
+	if (!priority)
+	{
+		return FORMATION_REJECTED;
+	}
+	// RW 0x774822 (RW 0x76F426: every member's contain interface vslot 0xD0 is not ported), then RW 0x76F115
+	return groupGroundPathAccepts(pos) ? FORMATION_TAKEN : FORMATION_REJECTED;
+}
+
+// RW 0x774C6D .. 0x774D04 (ZH AIGroup::groupMoveToPosition's "delay mood checks so the unit can restealth"): a player-source order to a unit with the
+// CAN_STEALTH status (0x12) whose AI auto-acquires (module data + 0x1C != 0) but not while stealthed (bit 1), that is not invisible (RW 0x68FC2F), STEALTHED
+// (0xF) or DETECTED (0x11) and has a StealthUpdate (RW 0x68FBD3) draws GetGameLogicRandomValue(0, LOGICFRAMES_PER_SECOND) at AIGroup.cpp 0x874 and sets the
+// AI's next mood check (RW 0x662E01) to frame + draw + StealthDelay (module data + 8)
+void AIGroup::delayMoodCheckForStealth(Object &obj, AIUpdateInterface &ai)
+{
+	static const int kCanStealth = ObjectTemplateInfoBuilder::objectStatusIndex("CAN_STEALTH");
+	static const int kStealthed = ObjectTemplateInfoBuilder::objectStatusIndex("STEALTHED");
+	static const int kDetected = ObjectTemplateInfoBuilder::objectStatusIndex("DETECTED");
+	if (kCanStealth < 0 || !obj.testStatus((unsigned)kCanStealth) || ai.autoAcquireFlags() == 0)
+	{
+		return;
+	}
+	if (InvisibilityManager::isInvisible(obj) || (kStealthed >= 0 && obj.testStatus((unsigned)kStealthed)) || (kDetected >= 0 && obj.testStatus((unsigned)kDetected)))
+	{
+		return;
+	}
+	if ((ai.autoAcquireFlags() >> 1) & 1u)
+	{
+		return;
+	}
+	const StealthUpdate *stealth = StealthUpdate::of(obj);
+	if (!stealth)
+	{
+		return;
+	}
+	const unsigned delay = stealth->data()->m_stealthDelay;
+	const unsigned draw = (unsigned)m_logic.random().getValue(0, kLogicFramesPerSecond, "AIGroup.cpp", 0x874);
+	ai.setNextMoodCheckTime(m_logic.getFrame() + draw + delay); // RW 0x774CF0 .. 0x774CFB: 32-bit adds
+}
+
 void AIGroup::groupMoveToPosition(const Coord3D &posIn, bool addWaypoint, CommandSourceType source, bool haveFinalAngle, float finalAngle)
 {
 	AIWorld *world = m_logic.aiWorld();
@@ -108,6 +264,21 @@ void AIGroup::groupMoveToPosition(const Coord3D &posIn, bool addWaypoint, Comman
 		return;
 	}
 	world->noteStop(stopLine());
+	// lane BACKLOG6: RW 0x774897's formation group manager: a group it takes keeps the port's stand-in move and makes no stealth draw; one it refuses runs the
+	// generic path below (its draw) on the members the manager's filter left; a group whose last member the filter refuses does nothing
+	bool managed = false;
+	switch (formationManager(posIn, addWaypoint, source, haveFinalAngle))
+	{
+	case FORMATION_NOTHING:
+		world->noteStop(formationStopLine());
+		return;
+	case FORMATION_TAKEN:
+		managed = true;
+		world->noteStop(formationStopLine());
+		break;
+	default:
+		break;
+	}
 	const Coord3D pos = clampWaypointPosition(posIn);
 	// the units to move, nearest to the goal first (ZH sorts them near to far so the near units get the first paths)
 	struct Entry
@@ -125,7 +296,7 @@ void AIGroup::groupMoveToPosition(const Coord3D &posIn, bool addWaypoint, Comman
 			continue;
 		}
 		AIUpdateInterface *ai = o->getAIUpdateInterface();
-		if (!ai || ai->isImmobile())
+		if (!ai || ai->isImmobile() || o->isDisabledByType(DISABLED_HELD)) // RW 0x774B2B .. 0x774B4B: a held, immobile or AI-less member takes no part
 		{
 			continue;
 		}
@@ -162,6 +333,10 @@ void AIGroup::groupMoveToPosition(const Coord3D &posIn, bool addWaypoint, Comman
 		}
 		const Coord3D dest = computeIndividualDestination(pos, *o, center);
 		AIUpdateInterface *ai = o->getAIUpdateInterface();
+		if (source == CMD_FROM_PLAYER && !managed)
+		{
+			delayMoodCheckForStealth(*o, *ai);
+		}
 		if (!addWaypoint)
 		{
 			if (haveFinalAngle)

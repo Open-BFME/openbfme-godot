@@ -112,7 +112,10 @@ enum GadgetGameMessage
 	GEM_SET_TEXT,
 	GEM_EDIT_DONE,
 	GEM_UPDATE_TEXT,
-	GPM_SET_PROGRESS
+	GPM_SET_PROGRESS,
+	// lane OPTS-4: RotWK's slider message 0x4010 (not ZH's; BFME2 decomp GadgetHorizontalSlider.cpp GSM_SLIDER_CLICKED): the owner hears it when a click
+	// on the track is done (RW 0x7234EC) and when the thumb is let go (RW 0x7237F8, GBM_SELECTED). Last here so the port's other numbers stay
+	GSM_SLIDER_CLICKED
 };
 
 // ZH GameClient/KeyDefs.h: DirectInput scan codes (KEY_*) and the key state bits of GWM_CHAR's second argument

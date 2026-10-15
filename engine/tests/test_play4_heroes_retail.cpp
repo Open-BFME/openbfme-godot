@@ -15,14 +15,24 @@
 #include "Common/Player.h"
 #include "Common/PlayerHeroList.h"
 #include "Common/PlayerTemplate.h"
+#include "GameLogic/AI/AIAttack.h"
+#include "GameLogic/Armor.h"
+#include "GameLogic/Combat/CombatNames.h"
 #include "GameLogic/Combat/CombatState.h"
 #include "GameLogic/Combat/ObjectWeapons.h"
 #include "GameLogic/GameMessage.h"
 #include "GameLogic/Module/AIUpdate.h"
+#include "GameLogic/Module/ActiveBody.h"
 #include "GameLogic/Module/ProductionUpdate.h"
+#include "GameLogic/Module/SquishCollide.h"
 #include "GameLogic/Object/Object.h"
+#include "GameLogic/ObjectFilterMatch.h"
+#include "GameLogic/Weapon.h"
+#include "GameLogic/WeaponNugget.h"
 
+#include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <set>
 
 namespace
@@ -32,6 +42,10 @@ float membersHealth(GameLogic &logic, ObjectID id)
 {
 	float h = 0.0f;
 	Object *horde = logic.findObjectByID(id);
+	if (horde && !(horde->getContain() && horde->getContain()->getHordeContainInterface()))
+	{
+		return horde->isEffectivelyDead() ? 0.0f : horde->getBodyModule()->getHealth(); // lane ATTACK-1: a lone foe (the duel)
+	}
 	if (horde && horde->getContain() && horde->getContain()->getContainedItemsList())
 	{
 		for (Object *m : *horde->getContain()->getContainedItemsList())
@@ -64,7 +78,7 @@ struct Fight
 	bool recruited = false;
 	int recruitFrames = -1;
 	bool giantBird = false; // GIANT_BIRD heroes (the fell beasts, Drogoth) run GiantBirdAIUpdate
-	unsigned long long shots = 0;
+	unsigned long long shots = 0; // ObjectWeapons' counter: the weapon's shots AND the CrushWeapon's deliveries (lane ATTACK-1 r2: weaponShots below)
 	float lost = 0.0f;
 	unsigned hordeMembers = 0;
 	unsigned membersKilled = 0;
@@ -72,7 +86,53 @@ struct Fight
 	float walked = 0.0f;     // how far the move order to the spot took it
 	bool noted3804 = false;  // the runtime stops the game reported
 	bool noted3807 = false;
+	// lane ATTACK-1: every health loss of a member during the fight (its health before the frame, what it lost), what the members lost in the frames the
+	// hero's melee machine ran its crush (0xE9, before or after the frame), and the hero at the order: MOUNTED, the hit sizes of its weapon and its
+	// CrushWeapon against a member (the INI's Damage x the member's armour x the DamageScalars that take it)
+	std::vector<std::pair<float, float>> drops;
+	float lostInCrush = 0.0f;
+	bool mounted = false;
+	std::vector<float> hitSizes;
+	float memberMaxHealth = 0.0f;
+	// lane ATTACK-1 r2: `shots` (ObjectWeapons' counter) also counts the CrushWeapon's deliveries. `weaponShots`: the frames the hero's own weapon (the
+	// current one at the order) fired (its lastFireFrame moved); `lostOnWeaponShot`: what the foe lost in the frames the weapon fired, outside the crush run;
+	// `firstWeaponLoss`: the loss in the frame of the first weapon shot
+	unsigned weaponShots = 0;
+	float lostOnWeaponShot = 0.0f;
+	float firstWeaponLoss = -1.0f;
+	// the blocking case: the hero's live crusher level at the order (RW 0x695070), the frames its mover's blocked counter (AI + 0x16C) was above 0 and the
+	// first of them, and how near the hero came to the horde object's centre
+	int crusherLevel = -1;
+	int blockedFrames = 0;
+	int firstBlocked = -1;
+	float nearestToHorde = 1.0e9f;
 };
+
+// lane ATTACK-1: the hits a weapon's DamageNuggets deal `victim` (Damage x its armour's coefficient for the DamageType x the DamageScalars whose filter takes it)
+void addHitSizes(const WeaponTemplate *w, const Object &victim, const Player *attacker, std::vector<float> &out)
+{
+	REQUIRE(w);
+	const ActiveBody *body = dynamic_cast<const ActiveBody *>(victim.getBodyModule());
+	const ArmorTemplate *armor = body ? body->currentArmor() : nullptr;
+	for (const std::shared_ptr<WeaponNugget> &n : w->m_nuggets)
+	{
+		if (const DamageNugget *d = dynamic_cast<const DamageNugget *>(n.get()))
+		{
+			float scalar = 1.0f;
+			for (const DamageScalarEntry &e : d->m_damageScalar)
+			{
+				scalar *= ObjectFilterMatch::allows(victim.logic(), e.filter, victim, attacker) ? e.scalar : 1.0f;
+			}
+			out.push_back(d->m_damage * (armor ? armor->getCoefficient(d->m_damageType) : 1.0f) * scalar);
+		}
+	}
+}
+
+unsigned meleeSubState(Object *h)
+{
+	AIAttackState *as = h && h->getAIUpdateInterface() ? dynamic_cast<AIAttackState *>(h->getAIUpdateInterface()->stateMachine().currentState()) : nullptr;
+	return as && as->attackMachine() ? as->attackMachine()->currentStateId() : 0u;
+}
 
 bool noted(GameLogic &logic, const char *id)
 {
@@ -107,7 +167,7 @@ GameMessage queueHeroMsg(int player, int index)
 }
 
 // a fresh game; the hero recruited from the fortress and walked to the spot between the bases; then the fight of the mode
-Fight fight(starttest::Shared &s, const char *faction, const std::string &hero, bool ordered)
+Fight fight(starttest::Shared &s, const char *faction, const std::string &hero, bool ordered, const char *foe = "MordorFighterHorde", const char *modifier = nullptr)
 {
 	Fight out;
 	std::string error;
@@ -204,32 +264,96 @@ Fight fight(starttest::Shared &s, const char *faction, const std::string &hero, 
 		logic.combat().setAutoAcquireEnabled(false);
 	}
 	const Coord3D at = *h->getPosition();
-	Object *horde = live.createObject("MordorFighterHorde", enemy->getPlayerIndex(), Coord3D{ at.x + 100.0f, at.y, 0.0f }, 0.0f, &error);
+	Object *horde = live.createObject(foe, enemy->getPlayerIndex(), Coord3D{ at.x + 100.0f, at.y, 0.0f }, 0.0f, &error);
 	REQUIRE_MESSAGE(horde, error);
 	const ObjectID hordeId = horde->getID();
 	logic.runLogicFrame();
 	horde = logic.findObjectByID(hordeId);
 	REQUIRE(horde);
-	REQUIRE(horde->getContain()->getContainedItemsList());
-	REQUIRE_FALSE(horde->getContain()->getContainedItemsList()->empty());
 	std::vector<ObjectID> members;
-	for (Object *m : *horde->getContain()->getContainedItemsList())
+	if (horde->getContain() && horde->getContain()->getHordeContainInterface())
 	{
-		members.push_back(m->getID());
+		REQUIRE(horde->getContain()->getContainedItemsList());
+		REQUIRE_FALSE(horde->getContain()->getContainedItemsList()->empty());
+		for (Object *m : *horde->getContain()->getContainedItemsList())
+		{
+			members.push_back(m->getID());
+		}
+	}
+	else
+	{
+		members.push_back(hordeId); // lane ATTACK-1 r2: a lone foe
 	}
 	out.hordeMembers = (unsigned)members.size();
 	const float before = membersHealth(logic, hordeId);
 	h = logic.findObjectByID(heroId);
 	const unsigned long long shots0 = h && h->getWeapons() ? h->getWeapons()->stats().shotsFired : 0;
+	if (modifier && h)
+	{
+		REQUIRE(h->addAttributeModifier(modifier, 0)); // lane ATTACK-1 r2: for good (duration 0)
+	}
 	if (ordered && h)
 	{
+		out.crusherLevel = ObjectCrush::crusherLevel(*h);
 		// the player's order: the cursor's pick of a horde member passes to the horde (HudObjects.cpp, ZH addDrawableToList), whose nearest member the AI attacks
 		// (aiAttackObject's horde victim, then the next member while the horde lives)
 		h->getAIUpdateInterface()->aiAttackObject(logic.findObjectByID(hordeId), CMD_FROM_PLAYER);
+		out.mounted = h->testModelCondition(CombatNames::modelCondition("MOUNTED"));
+		Object *member = logic.findObjectByID(members.front());
+		REQUIRE(member);
+		out.memberMaxHealth = member->getBodyModule()->getMaxHealth();
+		addHitSizes(h->getWeapons()->currentWeapon()->getTemplate(), *member, player, out.hitSizes);
+		const std::string crush = CrushTemplateInfo::cached(*h).crushWeapon;
+		if (!crush.empty())
+		{
+			addHitSizes(TheWeaponStore->findWeaponTemplate(crush), *member, player, out.hitSizes);
+		}
 	}
 	for (int f = 0; f < 150; ++f)
 	{
+		std::vector<float> health;
+		for (ObjectID id : members)
+		{
+			Object *m = logic.findObjectByID(id);
+			health.push_back(m && !m->isEffectivelyDead() ? m->getBodyModule()->getHealth() : 0.0f);
+		}
+		const bool crushBefore = meleeSubState(logic.findObjectByID(heroId)) == MELEE_SQUISH;
+		Object *hb = logic.findObjectByID(heroId);
+		const Weapon *wb = ordered && hb && hb->getWeapons() ? hb->getWeapons()->currentWeapon() : nullptr;
+		const std::uint32_t firedBefore = wb ? wb->lastFireFrame() : 0u;
 		logic.runLogicFrame();
+		const bool crushing = crushBefore || meleeSubState(logic.findObjectByID(heroId)) == MELEE_SQUISH;
+		Object *ha = logic.findObjectByID(heroId);
+		const Weapon *wa = ordered && ha && ha->getWeapons() ? ha->getWeapons()->currentWeapon() : nullptr;
+		const bool weaponFired = wb && wa == wb && wa->lastFireFrame() != firedBefore;
+		if (ha && ha->getAIUpdateInterface()->mover().blockedFrames() > 0)
+		{
+			++out.blockedFrames;
+			out.firstBlocked = out.firstBlocked < 0 ? f : out.firstBlocked;
+		}
+		if (Object *hd = ha ? logic.findObjectByID(hordeId) : nullptr)
+		{
+			const float dx = ha->getPosition()->x - hd->getPosition()->x, dy = ha->getPosition()->y - hd->getPosition()->y;
+			out.nearestToHorde = std::min(out.nearestToHorde, std::sqrt(dx * dx + dy * dy));
+		}
+		float frameLoss = 0.0f;
+		for (size_t i = 0; i < members.size(); ++i)
+		{
+			Object *m = logic.findObjectByID(members[i]);
+			const float now = m && !m->isEffectivelyDead() ? m->getBodyModule()->getHealth() : 0.0f;
+			if (now < health[i])
+			{
+				out.drops.emplace_back(health[i], health[i] - now);
+				out.lostInCrush += crushing ? health[i] - now : 0.0f;
+				frameLoss += health[i] - now;
+			}
+		}
+		if (weaponFired)
+		{
+			out.firstWeaponLoss = out.weaponShots == 0 ? frameLoss : out.firstWeaponLoss;
+			++out.weaponShots;
+			out.lostOnWeaponShot += crushing ? 0.0f : frameLoss;
+		}
 	}
 	h = logic.findObjectByID(heroId);
 	out.heroAlive = h && !h->isEffectivelyDead();
@@ -273,14 +397,16 @@ TEST_CASE("play4 heroes retail: every faction's heroes, recruited from the fortr
 			{
 				// lane FLY-1 closed S-3804 (the GIANT_BIRD mover and GiantBirdAIUpdate are ported, S-4040): the birds fly to the horde. Measured on the merged tree
 				// (merge queue q7): on their own they strike nothing and take nothing; ordered, Khamul,
-				// Morgomir and the Witch-king on his fell beast kill 5 members (450 health taken) and Drogoth 4 strikes, 1500 health, all 20
+				// Morgomir and the Witch-king on his fell beast kill 5 members (450 health taken) and Drogoth 3 strikes, 1500 health, all 20
 				CHECK_FALSE(own.noted3804);
 				CHECK_FALSE(ord.noted3804);
 				CHECK(own.shots == 0u);
 				CHECK(own.lost == 0.0f);
 				CHECK(own.membersKilled == 0u);
 				const bool drogoth = hero == "Drogoth";
-				CHECK(ord.shots == (drogoth ? 4u : 0u));
+				// lane BACKLOG4: 3 strikes (4 before): the hero's creation uses the teleport form (RW 0x7814CF: RW 0x696E63(pos, 0)), which idles the new
+				// hero's AI and wakes it; the fight's damage and kills are unchanged (measured with and without that call)
+				CHECK(ord.shots == (drogoth ? 3u : 0u));
 				CHECK(ord.lost == (drogoth ? 1500.0f : 450.0f));
 				CHECK(ord.membersKilled == (drogoth ? 20u : 5u));
 				continue;
@@ -290,23 +416,9 @@ TEST_CASE("play4 heroes retail: every faction's heroes, recruited from the fortr
 			CHECK(own.shots > 0u);
 			CHECK(own.lost > 0.0f);
 			CHECK_FALSE(own.noted3804);
-			// lane PATHPERF-1 (measured on the merge of PLAY-4 r3): MordorMouthOfSauron, ordered onto the horde, chases a member that moves (46 then 96 away);
-			// findPath gives every goal the attack machine asks (the corridor adjusts none, each path ends at its goal), its corridor's routes differ from the
-			// search without it, and the machine ends at frame 30 with the nearest member 24 - 35 away, S-3807 noted; with the corridor switched off (a test
-			// switch) he strikes twice. A second named case of S-3807, not a search that fails
-			const bool unfired3807 = (std::string(faction) == "FactionAngmar" && hero == "AngmarWitchking") || (std::string(faction) == "FactionMordor" && hero == "MordorMouthOfSauron");
-			if (unfired3807)
-			{
-				// the named exceptions, stop S-3807 (measured): the Witch-king, ordered onto the horde, runs his crush (0xE9) through its members, which deals no crush
-				// damage, and RW's blocked test (RW 0x747207) with the re-acquisition throttle (RW 0x74D46D) ends the order before a strike: no strike, no
-				// damage, the stop reported
-				CHECK(ord.shots == 0u);
-				CHECK(ord.lost == 0.0f);
-				CHECK(ord.membersKilled == 0u);
-				CHECK(ord.noted3807);
-				continue;
-			}
-			// on an order (auto-acquire off): the order alone strikes and kills (a later attack segment can still end unfired and report S-3807)
+			// on an order (auto-acquire off): the order alone strikes and kills. Lane ATTACK-1 closed S-3807 (its two named exceptions, the mounted Witch-king and
+			// Mouth of Sauron, were the port's static crush test in blockedBy: the next test); its runtime note is gone
+			CHECK_FALSE(ord.noted3807);
 			CHECK(ord.shots > 0u);
 			CHECK(ord.lost > 0.0f);
 		}
@@ -369,4 +481,112 @@ TEST_CASE("play4 heroes retail: a melee weapon reaches a moving unit by the foot
 		noted = noted || kv.first == meleeReachStopLine();
 	}
 	CHECK(noted);
+}
+
+// lane ATTACK-1 (S-3807 closed): the Angmar Witch-king and the Mouth of Sauron are recruited MOUNTED; their crusher level is then MountedCrusherLevel 1 (RW 0x695070)
+// above the MordorFighterHorde's CrushableLevel 0, while their templates' CrusherLevel is 0. RW's blockedBy (RW 0x66D16E) lets a unit pass an enemy it may crush
+// (RW 0x69519A(other, 2) with the unit as the crusher, RW 0x66D1A2 .. 0x66D1B0); the port asked the templates' static CrusherLevel, so the horde object (it
+// collides: its members do not, RW 0x66E233) blocked the hero's crush run (0xE9) in front of it: the run went round the members, no crush landed, and
+// 0xE1's computePath refused the blocked hero (RW 0x746DB6, AI + 0x16C > 0), which ended the order before a strike. Now, ordered onto the horde with the
+// auto-acquire off (only the order acts, the horde does not fight back): the run kills members with the CrushWeapon, then the weapon strikes; every
+// member's loss is a whole hit of the hero's weapon or CrushWeapon (Weapon.ini x Armor.ini; each is more than a member's health, so the hit member dies)
+TEST_CASE("attack1 heroes retail: the mounted Witch-king and Mouth of Sauron, ordered onto a horde, crush through it and strike: S-3807 closed")
+{
+	OPENBFME_REQUIRE_START(s);
+	struct Case
+	{
+		const char *faction, *hero;
+		unsigned shots, killed;
+		float lostInCrush;
+		std::vector<float> hits; // the weapon's hit, then the CrushWeapon's, against a MordorFighter (Weapon.ini x Armor.ini)
+		// r2: the hero's own weapon's swings among `shots` (the rest are CrushWeapon deliveries), what the first swing took, what all swings took outside the run
+		unsigned weaponShots;
+		float firstWeaponLoss, lostOnWeaponShot;
+		// r2, the duel with a lone MordorMountainTroll (1500 health, CrushableLevel 2: no crush): its health before and its loss at each of the hero's swings
+		std::vector<std::pair<float, float>> duel;
+		// r2, the same order with GlorfindelWindRider (CRUSHER_LEVEL -1) on the hero: frames blocked and the first, swings, health taken, the nearest it came
+		int loweredBlocked, loweredFirstBlocked;
+		unsigned loweredShots;
+		float loweredLost, loweredNearest, controlNearest;
+	};
+	// The strike, kill, blocked-frame and distance totals are MEASURED ENGINE PINS of this scene (lane ATTACK-1, the archive ad9bec05 merged), not retail
+	// values; the hit sizes are the INI's: the Witch-king's mace 400 x HERO 200% = 800 and KnightCrush 80 x CRUSH 140% = 112, the Mouth of Sauron's sword
+	// 320 x 200% = 640 and HeroCrush 160 x 200% = 320 against a MordorFighter (75 health each, 20 members); against the troll's armour (HERO 200%) 800 and 640
+	// Merge queue q12 (the q11 ATTACK-1 / BACKLOG-1 pins against this batch, measured on the merged tree on pve; the lane that moved them was not separated): the swing, kill, blocked and distance
+	// pins moved. The CRUSHER_LEVEL -1 case is no longer blocked (blocked 0 frames; the Witch-king makes no swing at all and stays 69.9 away, the Mouth of Sauron swings once
+	// from 41.3): a change of behaviour to review, not only of numbers.
+	for (const Case &c : { Case{ "FactionAngmar", "AngmarWitchking", 5u, 12u, 225.0f, { 800.0f, 112.0f }, 2u, 450.0f, 675.0f, { { 1500.0f, 800.0f }, { 700.0f, 700.0f } }, 0, -1, 0u, 0.0f, 69.9072f, 0.789662f },
+			 Case{ "FactionMordor", "MordorMouthOfSauron", 11u, 11u, 150.0f, { 640.0f, 320.0f }, 7u, 75.0f, 525.0f, { { 1500.0f, 640.0f }, { 860.0f, 640.0f }, { 220.0f, 220.0f } }, 0, -1, 1u, 75.0f, 41.3165f, 20.1465f } })
+	{
+		INFO(std::string(c.hero));
+		const ThingTemplate *tt = s->world->things().findTemplate(c.hero);
+		REQUIRE(tt);
+		const CrushTemplateInfo crush = CrushTemplateInfo::of(*tt);
+		CHECK(crush.crusherLevel == 0);
+		CHECK(crush.mountedCrusherLevel == 1);
+		const Fight ord = fight(*s, c.faction, c.hero, true);
+		std::string drops = "; hit sizes";
+		for (float h : ord.hitSizes)
+		{
+			drops += " " + std::to_string(h);
+		}
+		drops += "; losses";
+		for (const auto &d : ord.drops)
+		{
+			drops += " " + std::to_string(d.first) + "->" + std::to_string(d.second);
+		}
+		MESSAGE(std::string(c.hero) << ": mounted " << ord.mounted << ", ordered " << ord.shots << " shots, " << ord.lost << " health taken (" << ord.lostInCrush << " in the crush run), "
+						<< ord.membersKilled << "/" << ord.hordeMembers << " killed; " << ord.weaponShots << " swings of the weapon (the first took " << ord.firstWeaponLoss << ", all "
+						<< ord.lostOnWeaponShot << " outside the run), the other shots are CrushWeapon deliveries" << drops);
+		// r2, a normal weapon hit and its damage. `shots` counts the CrushWeapon's deliveries too: the mace / sword swung `weaponShots` times, and the frame of
+		// the first swing took the members within its reach (the mace's Radius 30: three of them; the sword: one)
+		CHECK(ord.weaponShots == c.weaponShots);
+		CHECK(ord.firstWeaponLoss == c.firstWeaponLoss);
+		CHECK(ord.lostOnWeaponShot == c.lostOnWeaponShot);
+		// r2, the unsaturated hit: the same order onto a lone MordorMountainTroll the hero cannot crush (CrushableLevel 2) and whose 1500 health outlasts a
+		// hit: no CrushWeapon delivery, every loss falls in the frame of a swing and is the weapon's hit against the troll's armour (the last: what was left)
+		const Fight duel = fight(*s, c.faction, c.hero, true, "MordorMountainTroll");
+		CHECK(duel.memberMaxHealth == 1500.0f);
+		REQUIRE_FALSE(duel.hitSizes.empty());
+		CHECK(duel.hitSizes[0] == c.hits[0]);
+		CHECK(duel.shots == (unsigned long long)c.duel.size());
+		CHECK(duel.weaponShots == (unsigned)c.duel.size());
+		CHECK(duel.lostInCrush == 0.0f);
+		CHECK(duel.drops == c.duel);
+		CHECK(duel.firstWeaponLoss == duel.hitSizes[0]);
+		CHECK(duel.lostOnWeaponShot == 1500.0f);
+		// r2, the negative case through blockedBy (RW 0x66D16E): the same order with the attribute modifier GlorfindelWindRider (CRUSHER_LEVEL -1) on the hero.
+		// Its live crusher level (RW 0x695070) is 0, so RW 0x69519A refuses the crush: no crush run (nothing is lost in one, the hero stays at the horde's
+		// edge instead of riding through its centre), the horde blocks the Mouth of Sauron (the Witch-king's counter is never above 0 at a frame's end), and
+		// the order ends after one swing. The control is `ord` above: crusher level 1, never blocked
+		const Fight low = fight(*s, c.faction, c.hero, true, "MordorFighterHorde", "GlorfindelWindRider");
+		MESSAGE(std::string(c.hero) << " with CRUSHER_LEVEL -1: crusher level " << low.crusherLevel << ", blocked in " << low.blockedFrames << " frames (first " << low.firstBlocked << "), nearest "
+									<< low.nearestToHorde << " (control " << ord.nearestToHorde << "), " << low.weaponShots << " swings of " << low.shots << " shots, " << low.lost << " health taken");
+		CHECK(ord.crusherLevel == 1);
+		CHECK(ord.blockedFrames == 0);
+		CHECK(ord.nearestToHorde == doctest::Approx(c.controlNearest).epsilon(0.0001)); // tolerance: the pin is the printed 6 digits of a float
+		CHECK(low.crusherLevel == 0);
+		CHECK(low.blockedFrames == c.loweredBlocked);
+		CHECK(low.firstBlocked == c.loweredFirstBlocked);
+		CHECK(low.nearestToHorde == doctest::Approx(c.loweredNearest).epsilon(0.0001)); // tolerance: the pin is the printed 6 digits of a float
+		CHECK(low.lostInCrush == 0.0f);
+		CHECK(low.shots == (unsigned long long)c.loweredShots);
+		CHECK(low.weaponShots == c.loweredShots);
+		CHECK(low.lost == c.loweredLost);
+		CHECK(ord.mounted);
+		CHECK(ord.memberMaxHealth == 75.0f);
+		// each hit is bigger than a member's 75 health, so every loss is a whole member: its full health
+		CHECK(ord.hitSizes == c.hits);
+		CHECK(ord.drops.size() == c.killed);
+		for (const auto &d : ord.drops)
+		{
+			CHECK(d.second == d.first);
+			CHECK(d.first == ord.memberMaxHealth);
+		}
+		CHECK(ord.shots == c.shots);
+		CHECK(ord.membersKilled == c.killed);
+		CHECK(ord.lost == 75.0f * (float)c.killed);
+		CHECK(ord.lostInCrush == c.lostInCrush);
+		CHECK(ord.heroAlive);
+	}
 }

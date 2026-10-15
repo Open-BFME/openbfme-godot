@@ -5,6 +5,7 @@
 #include "GameLogic/LegendaryHeroesGame.h"
 #include "GameLogic/Module/CastleModules.h"
 #include "GameLogic/Module/SpecialPowerModules.h"
+#include "GameLogic/Module/SpecialAbilityModules.h"
 #include "GameLogic/Object/ObjectGeometry.h"
 #include "GameLogic/Module/PhysicsBehavior.h"
 #include "GameLogic/ScriptEngine/ScriptEngine.h"
@@ -13,6 +14,8 @@
 
 #include "GameLogic/CreateAHeroSystem.h"
 #include "GameLogic/Module/SpawnBehavior.h"
+#include "GameLogic/Module/SlavedUpdate.h"
+#include "Common/PlayerList.h"
 #include "GameLogic/Module/HeroAbilityModules.h"
 #include "GameLogic/Object/PartitionManager.h"
 #include "GameLogic/System/EmotionSystem.h"
@@ -108,7 +111,7 @@ Object::Object(GameLogic &logic, const ThingTemplate *tt, const ObjectStatusMask
 	m_producerID = logic.takePendingProducer(); // lane PROD-1 (GameLogic::setPendingProducer)
 	logic.friend_addObjectToLookup(this); // RW 0x68BC01 setID: findable by id from now on
 	joinTeam(team);
-	m_originalTeam = team; // RW 0x69954A records the team (+ 0x320, RW 0x69959D; lane HERO-2)
+	recordOriginalTeam(); // RW 0x69954A records the team's name (+ 0x320, RW 0x69959D; lane HERO-2 / BACKLOG4)
 	try
 	{
 		buildModules();
@@ -493,11 +496,48 @@ void Object::applyTeamAttitude()
 	ai->setAttitude(m_team->getPrototype()->getDict().getInt("teamAggressiveness"));
 }
 
+// lane BACKLOG4: RW 0x69957E .. 0x6995D2: + 0x320 = the team's prototype's owner name (+ 0x10), '/', the prototype's name (+ 0x14); cleared with no team
+void Object::recordOriginalTeam()
+{
+	m_originalTeamProto = m_team ? m_team->getPrototype() : nullptr;
+	m_originalTeamID = m_team ? m_team->getID() : 0;
+}
+
+std::string Object::getOriginalTeamName() const
+{
+	if (!m_originalTeamProto)
+	{
+		return std::string();
+	}
+	const Player *owner = m_originalTeamProto->getControllingPlayer();
+	return (owner ? owner->getPlayerName() : std::string()) + "/" + m_originalTeamProto->getName();
+}
+
+Team *Object::getOriginalTeam() const
+{
+	const std::string name = getOriginalTeamName();
+	return name.empty() ? nullptr : m_logic.players().teams().findTeam(name);
+}
+
 void Object::setTeam(Team *team)
 {
+	// lane BACKLOG4: RW 0x699554 .. 0x699570 (BFME2 decomp ObjectSetTeam.cpp Object::setTeam, tier B same-shape: "to prevent spawning useful units for a
+	// player after he dies"): the team of a player who is not active (RW 0x6AAC52: an observer, Player + 0x35A, or defeated, + 0x754) is replaced by the
+	// neutral player's default team (ThePlayerList + 0x18 -> + 0x30C). Retail reads the team's player without a test; a team without one is kept here
+	if (team)
+	{
+		const Player *p = team->getControllingPlayer();
+		if (p && (p->isObserver() || p->isDefeated()))
+		{
+			if (Player *neutral = m_logic.players().getNeutralPlayer())
+			{
+				team = neutral->getDefaultTeam();
+			}
+		}
+	}
 	Player *oldOwner = getControllingPlayer();
 	joinTeam(team);
-	m_originalTeam = team; // RW 0x69959D (lane HERO-2): + 0x320 = the team's name
+	recordOriginalTeam(); // RW 0x69959D (lane HERO-2 / BACKLOG4): + 0x320 = the team's name
 	if (ShroudManager *shroud = m_logic.shroud())
 	{
 		shroud->markDirty(*this, true); // RW 0x69954A -> 0xB4E2A0 (VIS-1): a new owner looks for its own allies
@@ -517,6 +557,49 @@ void Object::setTeam(Team *team)
 		if (team)
 		{
 			updateUpgradeModules(); // RW 0x6936FE
+		}
+	}
+}
+
+// lane BACKLOG4 (S-1222): RW 0x693919 (Object.h)
+void Object::abortAbilitiesInUse()
+{
+	static const int kSummoning = ObjectTemplateInfoBuilder::objectStatusIndex("SUMMONING_REPLACEMENT"); // 0x66
+	if (kSummoning >= 0 && testStatus((unsigned)kSummoning))
+	{
+		return;
+	}
+	for (const std::unique_ptr<BehaviorModule> &m : m_modules)
+	{
+		SpecialPowerUpdateInterface *u = dynamic_cast<SpecialPowerUpdateInterface *>(m.get());
+		if (!u || !u->isActive())
+		{
+			continue;
+		}
+		SpecialAbilityUpdate *ability = dynamic_cast<SpecialAbilityUpdate *>(m.get());
+		if (!ability)
+		{
+			// retail calls slot 0x18 / module slot 0x34 of whatever class carries the interface; only SpecialAbilityUpdate's are read
+			m_logic.noteStop("[S-1222] RW 0x693919: an active special power update that is not a SpecialAbilityUpdate is not aborted (its slots 0x18 / 0x34 are not read)");
+			continue;
+		}
+		if (ability->isPowerCurrentlyInUse())
+		{
+			ability->finishAbility(false, true); // RW 0x8513E4
+		}
+	}
+	if (m_contain)
+	{
+		if (m_contain->getHordeContainInterface()) // RW 0x68C866
+		{
+			if (const ContainModuleInterface::ContainedItemsList *items = m_contain->getContainedItemsList())
+			{
+				const std::vector<Object *> members(items->begin(), items->end()); // RW 0x6939A7: slot 0x10C fills a list first
+				for (Object *member : members)
+				{
+					member->abortAbilitiesInUse();
+				}
+			}
 		}
 	}
 }
@@ -549,12 +632,24 @@ void Object::setTemporaryTeam(Team *team)
 // RW 0x69AB22
 void Object::restoreOriginalTeam()
 {
-	if (!m_team || !m_originalTeam || m_originalTeam == m_team)
+	const std::string name = getOriginalTeamName();
+	if (!m_team || name.empty())
 	{
 		return;
 	}
-	setTeam(m_originalTeam); // RW 0x69954A
-	// RW 0x69AB5F .. 0x69AB8A: a local player's object leaves the selection (RW 0x698EC3(8, 0): client)
+	Team *original = m_logic.players().teams().findTeam(name); // RW 0x69AB47: RW 0x7A7483
+	if (!original || original == m_team)
+	{
+		return;
+	}
+	setTeam(original); // RW 0x69954A
+	// lane BACKLOG4: RW 0x69AB60 .. 0x69AB83: the object of a defeated player (RW 0x6AAC4B: Player + 0x754) is killed (RW 0x698EC3(8, 0): UNRESISTABLE,
+	// NORMAL). HERO-2 read this call as a selection change
+	const Player *owner = getControllingPlayer();
+	if (owner && owner->isDefeated())
+	{
+		kill(0);
+	}
 }
 
 // RW 0x69ABA7
@@ -583,10 +678,11 @@ void Object::endDefection()
 	{
 		if (testStatus((unsigned)kUsingAbility))
 		{
-			m_logic.noteStop("[S-1222] Object::endDefection: RW 0x693919 (the ability in use) is not ported");
+			abortAbilitiesInUse(); // RW 0x69AC4E (lane BACKLOG4)
 		}
-		// RW 0x6630D7 / 0x663171: the AI's temporary state machine goes and the one kept at the defection comes back (INFERENCE, S-1222: the AI goes idle)
-		getAIUpdateInterface()->aiIdle(CMD_FROM_AI);
+		// lane BACKLOG4: RW 0x69AC55 / 0x69AC5C: RW 0x6630D7 (the temporary slot: nothing in this port, AIUpdate.h), then RW 0x663171: the machine kept
+		// at the defection is the AI's machine again (HERO-2 idled the AI here as an inference)
+		getAIUpdateInterface()->endDefectedStateMachine();
 	}
 	setStatus(kStatus52, true); // RW 0x62684D(0x52, 1)
 	updateUpgradeModules();     // RW 0x6936FE
@@ -609,12 +705,29 @@ void Object::defect(Object *newOwner, bool permanent)
 	{
 		if (testStatus((unsigned)kUsingAbility))
 		{
-			m_logic.noteStop("[S-1222] Object::defect: RW 0x693919 (the ability in use) is not ported");
+			abortAbilitiesInUse(); // RW 0x69939D (lane BACKLOG4)
 		}
-		// RW 0x6630D7 (and RW 0x663128 for a temporary defection): INFERENCE (S-1222): the AI's current goal is dropped, the AI goes idle
-		getAIUpdateInterface()->aiIdle(CMD_FROM_AI);
+		// lane BACKLOG4: RW 0x6993A4 .. 0x6993B0: RW 0x6630D7 (the temporary slot: nothing in this port, AIUpdate.h); a temporary defection keeps the
+		// machine and starts a new one (RW 0x663128); a permanent one leaves the AI as it is (HERO-2 idled the AI in both cases as an inference)
+		if (!permanent)
+		{
+			getAIUpdateInterface()->beginDefectedStateMachine();
+		}
 	}
-	// RW 0x6993A9: the selected drawable leaves the selection (client); RW 0x8A4ED8 / 0x68C3A3: the stealth and the AI's special power helpers (S-1222)
+	// RW 0x6993B5 .. 0x6993D0: the selected drawable leaves the selection (client)
+	// lane BACKLOG4: RW 0x6993D6 .. 0x6993E6: the object's slaved interface (RW 0x8A4ED8: the first module's behaviour slot 0x68) gets slot 2 with no
+	// damage info (RW 0x8A52A7 -> 0x8A51B9): a slave leaves its master as if the master had died
+	if (SlavedUpdateInterface *slaved = SlavedUpdateInterface::of(*this))
+	{
+		slaved->onSlaverDie(nullptr);
+	}
+	// RW 0x6993E9 .. 0x699401: the object's spawn interface (RW 0x68C3A3: behaviour slot 0x78) stops spawning (slot 9, RW 0x8623D6) and takes orphans for
+	// its due replacements (slot 12, RW 0x86327C)
+	if (SpawnBehaviorInterface *spawner = SpawnBehaviorInterface::of(*this))
+	{
+		spawner->stopSpawning();
+		spawner->reclaimDueOrphans();
+	}
 	if (!permanent)
 	{
 		if (TemporarilyDefectUpdate *t = TemporarilyDefectUpdate::of(*this)) // RW 0x68BDA5("TemporarilyDefectUpdate")
@@ -1044,6 +1157,60 @@ void Object::recordTransform(UnsignedInt frame)
 	if (AIUpdateInterface *ai = getAIUpdateInterface())
 	{
 		ai->clearPendingPosition();
+	}
+}
+
+// RW 0x674B1F(1), the drawable's forced gather (Object.h)
+void Object::teleportGather()
+{
+	m_teleportGathered = true;
+	m_teleportGatherFrame = m_logic.getFrame();
+}
+
+// RW 0x696E63 (Object.h)
+void Object::teleportTo(const Coord3D *pos, bool keepAI)
+{
+	setPosition(pos);
+	recordTransform(m_logic.getFrame());
+	recordTransform(m_logic.getFrame());
+	teleportGather();
+	setPosition(pos);
+	updateShroudNow();
+	if (m_contain)
+	{
+		if (HordeContainInterface *horde = m_contain->getHordeContainInterface())
+		{
+			horde->teleportMembers(); // RW 0x696EBA .. 0x696ECB: contain slot 0x7C, then interface slot 0x1B8 (RW 0x86D881)
+		}
+	}
+	if (keepAI)
+	{
+		return;
+	}
+	if (AIUpdateInterface *ai = getAIUpdateInterface())
+	{
+		// RW 0x696EE3 .. 0x696EF9: aiIdle from source 2 with the status 0x5A (IS_LEAVING_FACTORY), else 0
+		static const int leavingFactory = ObjectTemplateInfoBuilder::objectStatusIndex("IS_LEAVING_FACTORY");
+		ai->aiIdle(leavingFactory >= 0 && testStatus((unsigned)leavingFactory) ? CMD_FROM_AI : CMD_FROM_PLAYER);
+		ai->mover().destroyPath(); // RW 0x66276B
+	}
+}
+
+// RW 0x68DA67 (Object.h)
+void Object::teleportTransform(const Coord3D *pos, const float basis[9])
+{
+	setTransform(pos, basis);
+	recordTransform(m_logic.getFrame());
+	recordTransform(m_logic.getFrame());
+	teleportGather();
+	setTransform(pos, basis);
+	updateShroudNow();
+	if (m_contain)
+	{
+		if (HordeContainInterface *horde = m_contain->getHordeContainInterface())
+		{
+			horde->teleportMembersTransform(basis); // RW 0x68DAB3 .. 0x68DACB: contain slot 0x7C, then interface slot 0x1B4 (RW 0x86D8FE)
+		}
 	}
 }
 
@@ -1904,7 +2071,7 @@ void Object::crc(StateHasher &h) const
 	h.addU32(m_id);
 	h.addU32(m_template ? (std::uint32_t)static_cast<const ThingTemplate *>(m_template)->getTemplateID() : 0u);
 	h.addU32(m_team ? m_team->getID() : 0u);
-	h.addU32(m_originalTeam ? m_originalTeam->getID() : 0u); // lane HERO-2
+	h.addU32(m_originalTeamID); // lane HERO-2 / BACKLOG4: the team setTeam last recorded
 	h.addU32(m_speechLeader);                                 // lane HERO-2
 	h.addBool(m_receivingDifficultyBonus);                    // lane CAMP-1H
 	if (m_legendaryFactor != 1)

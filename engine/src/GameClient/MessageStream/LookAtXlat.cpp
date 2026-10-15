@@ -287,9 +287,10 @@ void LookAtTranslator::tick(unsigned nowMs)
 	m_nowMs = nowMs;
 	const CameraSettings &gd = m_camera.gameData();
 	float offX = 0.0f, offY = 0.0f;
-	if (m_scrolling && !m_ctx.ui.isScrolling())
+	if (m_scrolling && (!m_ctx.ui.isScrolling() || !m_ctx.ui.getInputEnabled()))
 	{
-		// forced to stop (a script): the amount is cleared and the scroll ends
+		// forced to stop (a script), or (lane BACKLOG3, RW 0x83B4A5 .. 0x83B4B5: InGameUI vslot 0x17C, + 0x810) the input was disabled under a held
+		// scroll: the amount is cleared and the scroll ends
 		stopScrolling();
 	}
 	if (m_scrolling)
@@ -424,6 +425,43 @@ void LookAtTranslator::tick(unsigned nowMs)
 		if (m_zoomOut)
 		{
 			m_camera.zoomOut();
+		}
+	}
+	// lane BACKLOG3: RW 0x83BAF8 .. the end (see LookAtXlat.h): the held keys follow TheKeyboard's state
+	if (m_isKeyDown)
+	{
+		if (m_scrolling)
+		{
+			static const int kScrollKeys[4] = { kKeyUp, kKeyDown, kKeyLeft, kKeyRight };
+			bool any = false;
+			for (int i = 0; i < 4; ++i)
+			{
+				if (!m_isKeyDown(kScrollKeys[i]))
+				{
+					m_scrollKey[i] = false;
+				}
+				any = any || m_scrollKey[i];
+			}
+			if (!any && m_scrollType == SCROLL_KEY)
+			{
+				stopScrolling();
+			}
+		}
+		if (m_rotateLeft && !m_isKeyDown(DIK_KP4))
+		{
+			m_rotateLeft = false;
+		}
+		if (m_rotateRight && !m_isKeyDown(DIK_KP6))
+		{
+			m_rotateRight = false;
+		}
+		if (m_zoomIn && !m_isKeyDown(DIK_KP8))
+		{
+			m_zoomIn = false;
+		}
+		if (m_zoomOut && !m_isKeyDown(DIK_KP2))
+		{
+			m_zoomOut = false;
 		}
 	}
 }

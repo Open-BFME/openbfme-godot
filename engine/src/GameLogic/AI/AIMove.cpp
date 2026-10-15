@@ -1028,7 +1028,9 @@ bool AIMover::blockedBy(PathfindObject &other)
 		return false;
 	}
 	const unsigned frame = m_host.frame();
-	if (obj.getRelationship(other) == PATHFIND_ENEMIES && obj.canCrushOrSquish(other))
+	// lane ATTACK-1: the crush test is RW 0x69519A(other, 2) (the object's crusher level, RW 0x695070), not the templates' static CrusherLevel: a hero
+	// whose crusher level is MountedCrusherLevel (the mounted Witch-king, the Mouth of Sauron) was blocked by the horde object it rode at (S-3807)
+	if (obj.getRelationship(other) == PATHFIND_ENEMIES && m_host.crushOrSquishPolicy(other))
 	{
 		return false;
 	}

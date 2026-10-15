@@ -6,7 +6,8 @@
         --prerelease true|false [--repo OWNER/NAME]
 
 FILE is `gh api repos/<repo>/releases/<id>`'s answer. The release must have the tag, the draft and pre-release flags given, and exactly the
-release's seven assets (publish_release.sh's list), each in state "uploaded" with the local file's size and SHA-256: the four archives'
+release's assets (publish_release.sh's list: the archives the manifest names, four in format 2, two in format 3, lane ONEZIP-1; the
+checksum file, manifest.json and its signature), each in state "uploaded" with the local file's size and SHA-256: the archives'
 digests come from the signed manifest.json (which publish_release.sh has verified against the archives and the key), the checksum file,
 manifest.json and manifest.json.sig are hashed here. An asset whose answer carries no "digest" is downloaded (`$GH api -H "Accept:
 application/octet-stream" repos/<repo>/releases/assets/<id>`) and hashed. Prints each problem; exit 0 when there is none.
@@ -26,14 +27,14 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
-from make_manifest import KINDS, PLATFORMS, asset_name  # noqa: E402
+from make_manifest import PLATFORMS, asset_name, kinds_of  # noqa: E402
 
 
 def expected(d: Path, version: str) -> dict[str, tuple[int, str]]:
-    """{asset name: (size, sha256)} of the seven assets"""
+    """{asset name: (size, sha256)} of the release's assets: the manifest's archives, the checksum file, the manifest, its signature"""
     manifest = json.loads((d / "manifest.json").read_bytes())
     out = {}
-    for kind in KINDS:
+    for kind in kinds_of(manifest.get("format")):
         for platform in PLATFORMS:
             a = manifest["assets"][kind][platform]
             if a["name"] != asset_name(kind, version, platform):
@@ -98,20 +99,24 @@ def missing(release: dict, want: dict[str, tuple[int, str]]) -> list[str]:
 
 def main(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--release-json", type=Path, required=True)
+    ap.add_argument("--release-json", type=Path)
+    ap.add_argument("--names", action="store_true", help="print the release's asset names (publish_release.sh's upload list), one per line")
     ap.add_argument("--dir", type=Path, required=True)
     ap.add_argument("--version", required=True)
-    ap.add_argument("--draft", choices=("true", "false"), required=True)
-    ap.add_argument("--prerelease", choices=("true", "false"), required=True)
+    ap.add_argument("--draft", choices=("true", "false"), default="false")
+    ap.add_argument("--prerelease", choices=("true", "false"), default="false")
     ap.add_argument("--repo", default="Open-BFME/openbfme-godot")
     ap.add_argument("--missing", action="store_true", help="check the assets that are there, print the names of those that are not")
     a = ap.parse_args(argv)
+    want = expected(a.dir, a.version)
+    if a.names:
+        print("\n".join(want))
+        return 0
     try:
         release = json.loads(a.release_json.read_text(encoding="utf-8"))
-    except (OSError, ValueError) as e:
+    except (OSError, ValueError, AttributeError) as e:
         print(f"RELEASE CHECK: cannot read the release ({e})")
         return 1
-    want = expected(a.dir, a.version)
     problems = check(release, want, a.version, a.draft == "true", a.prerelease == "true", a.repo, partial=a.missing)
     if a.missing:
         for p in problems:

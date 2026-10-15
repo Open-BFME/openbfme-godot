@@ -30,8 +30,7 @@ namespace
 {
 const char *const kStop =
 	"[S-1361] AttachUpdate (RW 0x8953BB / 0x89515C): the Eva event names are not validated at parse time (RW 0x5DE588, as S-190); a HORDE parent's anchor "
-	"is its members' mean position without the horde's second id list (HordeContain + 0x54, not kept); the horde-member test RW 0x6939DF takes the contained object's container (its status 0x26 branch not ported); AlwaysTeleport's teleport "
-	"form of setPosition (RW 0x696E63, the drawable's interpolation reset, S-813) moves the object like setPosition";
+	"is its members' mean position without the horde's second id list (HordeContain + 0x54, not kept); the horde-member test RW 0x6939DF takes the contained object's container (its status 0x26 branch not ported)";
 
 #define AU_OFF(field) (int)offsetof(AttachUpdateModuleData, field)
 
@@ -283,7 +282,14 @@ UpdateSleepTime AttachUpdate::update()
 	const Coord3D *pos = obj->getPosition();
 	if (!(at.x == pos->x && at.y == pos->y && at.z == pos->z))
 	{
-		obj->setPosition(&at); // RW 0x70C201 (AlwaysTeleport: RW 0x696E63, S-1361)
+		if (m_data->m_alwaysTeleport)
+		{
+			obj->teleportTo(&at, false); // RW 0x895420: RW 0x696E63(pos, 0) (lane BACKLOG4, S-813)
+		}
+		else
+		{
+			obj->setPosition(&at); // RW 0x70C201
+		}
 	}
 	return UPDATE_SLEEP_NONE;
 }

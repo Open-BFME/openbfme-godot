@@ -31,6 +31,8 @@
 #include "GameLogic/Combat/CombatNames.h"
 #include "GameLogic/Combat/CombatQueries.h"
 #include "GameLogic/GameLogic.h"
+#include "GameLogic/Module/AIUpdate.h"
+#include "GameLogic/ScriptEngine/ScriptEngine.h"
 #include "GameLogic/AttributeModifiers.h"
 #include "GameLogic/FXEvents.h"
 #include "GameLogic/GlobalWeatherSystem.h"
@@ -497,8 +499,10 @@ void SpecialPowerModule::startPowerRecharge(float percentOfCurrent)
 		m_updateDisabled = false;
 		return;
 	}
-	// RW 0x896EA0: the object's RECHARGE_TIME attribute modifier scale (attribute modifiers not ported: 1.0, S-529)
-	const float modifierScale = 1.0f;
+	// lane BACKLOG4 (S-529): RW 0x896E8F .. 0x896EA0: the object's RECHARGE_TIME attribute modifiers (RW 0x68C82D(0xC, &out, 0, 1), out starting at 1.0,
+	// RW 0xBD1908; BFME2 decomp SpecialPowerModuleIsReady.cpp startPowerRecharge, tier A)
+	float modifierScale = 1.0f;
+	obj->attributeModifierProduct(ATTRIBUTE_RECHARGE_TIME, nullptr, true, modifierScale);
 	float playerScale = 1.0f;
 	if (t->getFlags() & kRespectRechargeDiscount)
 	{
@@ -581,6 +585,16 @@ void emitPowerFX(GameLogic &logic, const char *site, const std::string &fx, cons
 		logic.fxEvents().emit(FXEventLog::objectEvent(FXEvent::OBJECT_FX, site, logic.getFrame(), fx, at)); // RW 0x4B1B5A
 	}
 }
+// FXList::doFXObj(fx, primary, secondary) with a second object (lane BACKLOG4: InitiateFX's target, RW 0x897FFA)
+void emitPowerFXWith(GameLogic &logic, const char *site, const std::string &fx, const Object &at, const Object *secondary)
+{
+	if (FXEventLog::isFXName(fx))
+	{
+		FXEvent e = FXEventLog::objectEvent(FXEvent::OBJECT_FX, site, logic.getFrame(), fx, at);
+		e.secondary = secondary ? secondary->getID() : (ObjectID)INVALID_ID;
+		logic.fxEvents().emit(e);
+	}
+}
 void emitPowerFXAt(GameLogic &logic, const char *site, const std::string &fx, const Object &source, const Coord3D &pos)
 {
 	if (FXEventLog::isFXName(fx))
@@ -606,7 +620,21 @@ void SpecialPowerModule::triggerSpecialPower(const Coord3D *loc, const Object *)
 	GameLogic &logic = obj->logic();
 	const SpecialPowerModuleData *d = m_spData;
 	const SpecialPowerTemplate *t = getSpecialPowerTemplate();
-	++m_clientNotices; // RW 0x89713F: the script engine's power notice (RW 0x759986) is not ported (S-920)
+	// lane BACKLOG4 (S-529): RW 0x89713F .. 0x89717E (aboutToDoSpecialPower; BFME2 decomp SpecialPowerModuleTrigger.cpp, tier A): TheScriptEngine hears of the
+	// power (RW 0x759986: the controlling player's index, the template's name, the object's id). Retail reads the index of a null player (a crash): a
+	// power without a controlling player tells nobody here
+	if (const Player *owner = obj->getControllingPlayer())
+	{
+		if (t)
+		{
+			logic.scriptEngine().notifyOfTriggeredSpecialPower(owner->getPlayerIndex(), t->getName(), obj->getID());
+			++m_clientNotices;
+		}
+	}
+	else
+	{
+		++m_unported;
+	}
 	// lane SPELL-3: RW 0x897183 .. 0x897226 (aboutToDoSpecialPower; BFME2 decomp SpecialPowerModuleTrigger.cpp, tier A): the template's InitiateSound on the
 	// caster (an event with its object id), then, with a location, InitiateAtLocationSound there with the caster's player index; fire-and-forget requests
 	// to TheAudio (the logic reads nothing back)
@@ -939,11 +967,30 @@ bool SpecialPowerModule::initiate(Object *target, const Coord3D *loc, unsigned o
 		return false;
 	}
 	++m_initiates;
+	bool driven = false;
 	if (SpecialPowerUpdateInterface *u = SpecialAbilityModules::findUpdate(*obj, getSpecialPowerTemplate()))
 	{
 		u->initiateIntentToDoSpecialPower(getSpecialPowerTemplate(), target, loc, options, 0);
+		driven = true;
 	}
-	// RW 0x897FDE: InitiateFX at the object and the voice (client)
+	// lane BACKLOG4 (S-529): RW 0x897F84 .. 0x897F97 (BFME2 decomp SpecialPowerModuleRva0049466D.cpp initiateIntentToDoSpecialPower, tier B same-shape:
+	// only struct offsets differ): IdleWhenStartingPower (data + 0x5D) idles the object's AI from the AI source (RW 0x5E821A(2)), driven or not
+	if (m_spData->m_idleWhenStartingPower)
+	{
+		if (AIUpdateInterface *ai = obj->getAIUpdateInterface())
+		{
+			ai->aiIdle(CMD_FROM_AI);
+		}
+	}
+	// RW 0x897F9C / 0x897FEF .. 0x898009: only when an update module drives the power: InitiateFX (data + 0x44) on the object with the target as the second object.
+	// Still open (S-529): the enum switch before the update call (RW 0x897EAB: types 0x33 / 0x88 end each other's module RW 0x8A007F, type 0x8D sends a
+	// harvester back, RW 0x897F0D), the target id kept at + 0x2C, the + 0x28 flag (options bit 0x40000 with the update's slot 2), the radar window
+	// override (RW 0x897FB2 .. 0x897FD4) and the unit's voice response (RW 0x898009 .. 0x89809A)
+	if (driven)
+	{
+		// RW 0x897FFA .. 0x898001: doFXObj(InitiateFX, the caster, the target object): the target is the FX's second object (its rays, filters, particles)
+		emitPowerFXWith(obj->logic(), "SpecialPower InitiateFX", m_spData->m_initiateFX, *obj, target);
+	}
 	return !m_spData->m_updateModuleStartsAttack;
 }
 

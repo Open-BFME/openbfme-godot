@@ -12,6 +12,7 @@ import io
 import zipfile
 import zlib
 import json
+import re
 import os
 import shutil
 import subprocess
@@ -55,14 +56,20 @@ def run(*cmd, env=None, **kw) -> subprocess.CompletedProcess:
                           stdin=subprocess.DEVNULL, **kw)
 
 
-def package_dir(d: Path, version: str, extra: bool = False) -> Path:
+def package_dir(d: Path, version: str, extra: bool = False, legacy: bool = True) -> Path:
+    """the build's output as package.sh writes it (lane ONEZIP-1): per platform the package, the game with the launcher's executable
+    in it, and with `legacy` the launcher-only archive holding the same launcher"""
     d.mkdir(parents=True, exist_ok=True)
     sums = ""
-    for kind in ("game", "launcher"):
+    for kind in ("game", "launcher") if legacy else ("game",):
         for platform in ("linux-x64", "windows-x64"):
             n = make_manifest.asset_name(kind, version, platform)
-            exe = ("OpenBFMELauncher" if kind == "launcher" else "OpenBFME") + (".x86_64" if platform.startswith("linux") else ".exe")
-            data = tiny_package(n, {exe: f"{n} bytes".encode()})
+            ext = ".x86_64" if platform.startswith("linux") else ".exe"
+            files = {"OpenBFMELauncher" + ext: f"the launcher of {version} for {platform}".encode()}
+            if kind == "game":
+                files["OpenBFME" + ext] = f"{n} bytes".encode()
+                files["VERSION"] = f"OpenBFME {version}\n".encode()   # seal_package.py checks it names the version
+            data = tiny_package(n, files)
             (d / n).write_bytes(data)
             sums += f"{hashlib.sha256(data).hexdigest()}  {n}\n"
     (d / f"SHA256SUMS-{version}.txt").write_text(sums)
@@ -124,7 +131,8 @@ import sys; sys.path.insert(0, {str(HERE)!r})
 from pathlib import Path
 from test_autorelease import package_dir
 import os
-package_dir(Path(sys.argv[3]), sys.argv[2], extra=os.environ.get("STANDIN_EXTRA") == "1")
+package_dir(Path(sys.argv[3]), sys.argv[2], extra=os.environ.get("STANDIN_EXTRA") == "1",
+            legacy=os.environ.get("OPENBFME_RELEASE_LEGACY_LAUNCHERS", "1") == "1")
 """)
         (self.standin / "verify").write_text('#!/bin/bash\necho "stand-in verify $3"; [ "${STANDIN_TAMPERED:-0}" = 0 ]\n')
         for f in ("build", "verify"):
@@ -184,6 +192,13 @@ def test_real_release_end_to_end(world):
         [make_manifest.asset_name(k, "v0.3.0-preview.1", p) for k in ("game", "launcher") for p in ("linux-x64", "windows-x64")]
         + ["SHA256SUMS-v0.3.0-preview.1.txt", "manifest.json", "manifest.json.sig"])
     assert "Units walk around trees instead of through them" in rel["body"]
+    # lane ONEZIP-1: the notes say which file to get, with a direct link per platform (never "(link removed)"), and name the rest once
+    base = f"https://github.com/{TARGET}/releases/download/v0.3.0-preview.1"
+    for name in ("openbfme-v0.3.0-preview.1-windows-x64.zip", "openbfme-v0.3.0-preview.1-linux-x64.tar.gz"):
+        assert f"| **[{name}]({base}/{name})** | **OpenBFME for " in rel["body"], rel["body"]
+    assert "## Which file to download" in rel["body"] and "(link removed)" not in rel["body"]
+    assert ("| openbfme-launcher-v0.3.0-preview.1-windows-x64.zip, openbfme-launcher-v0.3.0-preview.1-linux-x64.tar.gz, "
+            "SHA256SUMS-v0.3.0-preview.1.txt, manifest.json, manifest.json.sig | Used by OpenBFME to update itself") in rel["body"]
     # the PR merged on the public main, its tree the archive's without archive/ plus PRIVACY.md and the README line; the branch deleted
     (pr,) = gh["prs"].values()
     main_tree = git(world.repo, "ls-tree", "--name-only", f"{pr['merge']}")
@@ -696,7 +711,7 @@ def test_release_order_and_title():
     r = subprocess.run([sys.executable, HERE / "autorelease.py", "title", "v0.4.0-alpha.1"], capture_output=True, text=True)
     assert r.returncode == 0 and r.stdout == "OpenBFME v0.4.0 Alpha 1\n"
     text, _ = autorelease.release_notes("v0.4.0-alpha.1", [], [])
-    assert text.startswith("OpenBFME v0.4.0-alpha.1 is an alpha build for testers.")
+    assert text.startswith("# OpenBFME v0.4.0-alpha.1 patch notes\n\nalpha build for testers\n\nInstall or update it with the OpenBFME Launcher.")
 
 
 def test_player_lines():
@@ -716,13 +731,13 @@ def test_player_lines():
         "INTEG-5: an integration merge without the lane's sha"
     assert line("Merge branch 'lane/relname1' into integ/p5") is None
     assert autorelease.notes_of("Notes", "Release-note: Fix: a crash on the sound thread.\n", []) == \
-        [("fixed", "A crash on the sound thread.")]
+        [("fixed", "", "A crash on the sound thread.")]
     assert line("MOVE-2 r5 (stack6): FB-0001 measured by blockedBy") is None, "jargon only"
     assert autorelease.note_of("X-1: internal", "Body.\nRelease-note: Fix: Trolls no longer one-punch whole hordes.\n", []) == \
-        ("fixed", "Trolls no longer one-punch whole hordes.")
+        ("fixed", "", "Trolls no longer one-punch whole hordes.")
     assert autorelease.note_of("X-1: units walk around trees now", "Release-note: none\n", ["engine/a.cpp"]) is None
     assert autorelease.note_of("X-1: units walk around trees now", "", ["engine/tests/test_a.cpp", "docs/A.md"]) is None
-    assert autorelease.note_of("X-1: units walk around trees now", "", ["godot/scripts/game.gd"]) == ("new", "Units walk around trees now.")
+    assert autorelease.note_of("X-1: units walk around trees now", "", ["godot/scripts/game.gd"]) == ("added", "", "Units walk around trees now.")
 
 
 INJECTED = ("ping @octocat and @Open-BFME/team, see #12 and Open-BFME/openbfme-godot#3 and GH-7, "
@@ -757,11 +772,13 @@ def test_notes_are_neutralised(tmp_path):
     assert r.returncode == 0, r.stderr
     for f in ("notes.md", "t.txt", "i.md", "i.txt"):
         text = (tmp_path / f).read_text()
+        text = re.sub(r"## Which file to download.*?\n\n## ", "## ", text, flags=re.S)   # the download table's links are ours (validated tag and repo)
         markdown = f.endswith(".md")   # the plain files (the commit message, the PR title) are not rendered: no mention, ref or URL
         for bad in ("@", "#1", "#3", "#5", "http", "www.") + (("](", "<img", "<b>") if markdown else ()):
             assert bad not in text, (f, bad, text)
     notes = out.read_text()
-    assert [l for l in notes.splitlines() if l.startswith("#")] == ["## What's new", "## Known issues"], "no heading injected"
+    assert [l for l in notes.splitlines() if l.startswith("#")] == ["# OpenBFME v0.3.0-preview.3 patch notes", "## Which file to download",
+                                                                     f"## {autorelease.TITLES[autorelease.DEFAULT_TITLES]['added']}", "## Known issues"], "no heading injected"
 
 
 def test_release_notes_end_to_end(tmp_path):
@@ -778,10 +795,30 @@ def test_release_notes_end_to_end(tmp_path):
                         tmp_path / "title.txt"], capture_output=True, text=True)
     assert r.returncode == 0, r.stderr
     notes = out.read_text()
-    assert "v0.3.0-preview.3 is an alpha build for testers, numbered as a preview" in notes  # RELNAME-1: a preview now is a bridge
-    assert "## What's fixed\n\n- Units walk around trees instead of through them\\.\n" in notes
-    assert "Roadmap" not in notes and "RW" not in notes and "## Known issues\n\n- Create\\-a\\-Hero is not available\\.\n" in notes
+    assert "alpha build for testers, numbered as a preview" in notes  # RELNAME-1: a preview now is a bridge
+    assert f"## {autorelease.TITLES[autorelease.DEFAULT_TITLES]['fixed']}\n\n**General**\n- Units walk around trees instead of through them\\.\n" in notes
+    assert "Roadmap" not in notes and "RW" not in notes and "## Known issues\n\n**General**\n- Create\\-a\\-Hero is not available\\.\n" in notes
     assert (tmp_path / "title.txt").read_text() == "units walk around trees instead of through them\n"
+
+
+def test_a_release_without_the_legacy_launcher_archives(world):
+    """lane ONEZIP-1, the target page: OPENBFME_RELEASE_LEGACY_LAUNCHERS=0 publishes one archive per platform, the manifest (format 3),
+    its signature and the checksum file, and the notes name no launcher archive; any other value is refused before anything runs"""
+    sha = world.change({"engine/a.cpp": "2\n"}, "Merge lane/x (X-1: units walk around trees instead of through them (RW 0x123456))")
+    world.gate(sha)
+    r = world.release(sha, "--since", world.first, OPENBFME_RELEASE_LEGACY_LAUNCHERS="yes")
+    assert r.returncode == 2 and "OPENBFME_RELEASE_LEGACY_LAUNCHERS is 1 or 0" in r.stdout + r.stderr and world.gh_data()["releases"] == []
+    r = world.release(sha, "--since", world.first, OPENBFME_RELEASE_LEGACY_LAUNCHERS="0")
+    assert r.returncode == 0, r.stdout + r.stderr
+    (rel,) = world.gh_data()["releases"]
+    v = rel["tag_name"]
+    assert sorted(a["name"] for a in rel["assets"]) == sorted(
+        [f"openbfme-{v}-linux-x64.tar.gz", f"openbfme-{v}-windows-x64.zip", f"SHA256SUMS-{v}.txt", "manifest.json", "manifest.json.sig"])
+    (found,) = (world.tmp / "work").rglob("pkg/manifest.json")
+    manifest = json.loads(found.read_bytes())
+    assert manifest["format"] == 3 and sorted(manifest["assets"]) == ["game"]
+    assert "OpenBFMELauncher.exe" in manifest["assets"]["game"]["windows-x64"]["files"]
+    assert "openbfme-launcher-" not in rel["body"] and f"| SHA256SUMS-{v}.txt, manifest.json, manifest.json.sig | Used by OpenBFME" in rel["body"]
 
 
 # ---- round 3 (Sol r2 REJECT) ----------------------------------------------------------------------------------------------------------------
@@ -1224,12 +1261,15 @@ def test_a_steam_deck_release_note_is_published(world):
 def test_a_release_notes_commit_gives_one_note_per_line():
     body = "Notes.\nRelease-note: Movies play.\nRelease-note: Fix: The Options crash is fixed.\nRelease-note: Health bars show.\n"
     assert autorelease.notes_of("Release notes for v0.3.0-preview.1", body, []) == \
-        [("new", "Movies play."), ("fixed", "The Options crash is fixed."), ("new", "Health bars show.")]
+        [("added", "", "Movies play."), ("fixed", "", "The Options crash is fixed."), ("added", "", "Health bars show.")]
     assert autorelease.notes_of("X", "Release-note: A.\nRelease-note: none\n", ["engine/a.cpp"]) == []
-    assert autorelease.notes_of("X-1: units walk around trees now", "", ["godot/scripts/game.gd"]) == [("new", "Units walk around trees now.")]
+    assert autorelease.notes_of("X-1: units walk around trees now", "", ["godot/scripts/game.gd"]) == [("added", "", "Units walk around trees now.")]
     text, lines = autorelease.release_notes("v0.3.0-preview.9", [{"subject": "Release notes", "body": body, "files": []}], [])
     assert {"Movies play.", "Health bars show.", "The Options crash is fixed."} <= set(lines)
-    assert "## What's new" in text and "## What's fixed" in text
+    dt = autorelease.TITLES[autorelease.DEFAULT_TITLES]
+    assert f"## {dt['added']}\n" in text and f"## {dt['fixed']}\n" in text, "the DEFAULT_TITLES titles"
+    studio, _ = autorelease.release_notes("v0.3.0-preview.9", [{"subject": "Release notes", "body": body, "files": []}], [], titles="studio")
+    assert "## Added" in studio and "## Bug fixes" in studio and "What's" not in studio
 
 
 def test_a_user_name_is_a_whole_path_component_not_a_stem(monkeypatch):
@@ -1238,3 +1278,149 @@ def test_a_user_name_is_a_whole_path_component_not_a_stem(monkeypatch):
     assert autorelease.path_problem("docs/claude.md") == ""
     assert autorelease.path_problem("claude/notes.txt") != ""
     assert autorelease.path_problem("tools/Claude") != ""
+
+
+# ---- NOTES-1: the studio shape of the patch notes ---------------------------------------------------------------------------------------
+def _commit(body: str, subject: str = "Release notes", files=()) -> dict:
+    return {"subject": subject, "body": body, "files": list(files)}
+
+
+def test_release_note_syntax():
+    p = autorelease.parse_note
+    assert p("Added [Online]: Server browser.") == ("added", "Online", "Server browser.")
+    assert p("Changed [Performance]: faster paths.") == ("changed", "Performance", "Faster paths.")
+    assert p("Fixed [Units and heroes]: Heroes strike hordes.") == ("fixed", "Units and heroes", "Heroes strike hordes.")
+    assert p("Fix: A crash on the sound thread.") == ("fixed", "", "A crash on the sound thread.")
+    assert p("Fix [interface]: a click deselects.") == ("fixed", "Interface", "A click deselects."), "the area is case-insensitive"
+    assert p("Removed [Launcher and install]: The old updater.") == ("removed", "Launcher and install", "The old updater.")
+    assert p("Added: no area.") == ("added", "", "No area.")
+    assert p("Units walk around trees now.") == ("added", "", "Units walk around trees now.")
+    assert p("Units no longer walk through trees.") == ("fixed", "", "Units no longer walk through trees.")
+    assert p("Added [Nowhere]: x") == ("added", "", "X"), "an unknown area is General (and a plan warning)"
+    assert p("Changelog: not a kind") == ("added", "", "Changelog: not a kind")
+    assert autorelease.notes_of("S", "Release-note: Removed [Audio]: A sound.\nRelease-note: Changed: Balance.\n", []) == \
+        [("removed", "Audio", "A sound."), ("changed", "", "Balance.")]
+
+
+def test_note_warnings_name_what_to_fix():
+    w = autorelease.note_warnings
+    assert w("Added [Online]: A short, single change.") == []
+    assert w("Fix: A short fix.") == []
+    assert any("unknown area [Nowhere]" in x for x in w("Added [Nowhere]: x"))
+    assert any("';'" in x for x in w("Added [Online]: one thing; another thing"))
+    assert any("201 characters" in x for x in w("Added: " + "x" * 201)) and w("Added: " + "x" * 200) == []
+    assert w("Ends with;") == [], "a ';' joins clauses only when something follows"
+    c = {"sha": "0123456789abcdef", "subject": "S", "body": "Body.\nRelease-note: Added [Foo]: a; b\nRelease-note: Fine.\nRelease-note: none\n"}
+    ws = autorelease.release_warnings(c)
+    assert len(ws) == 2 and all(x.startswith("NOTES WARNING 0123456789: ") for x in ws), ws
+    hostile = {"sha": "0123456789abcdef", "body": "Release-note: Added [@evil https://x.example]: a; b see #12"}
+    assert not any(bad in "".join(autorelease.release_warnings(hostile)) for bad in ("@", "#1", "https"))
+
+
+def test_the_studio_page(tmp_path):
+    body = "\n".join(["Release-note: Added [Online]: Server browser.", "Release-note: Added [Saves]: Games can be saved.",
+                      "Release-note: Added [Gameplay]: First gameplay line.", "Release-note: Added: No area.",
+                      "Release-note: Changed [Linux]: Runs on older systems.", "Release-note: Changed [Performance]: Faster paths.",
+                      "Release-note: Fixed [Interface]: A click on empty ground deselects.", "Release-note: Fixed [Units and heroes]: Heroes fight.",
+                      "Release-note: Removed [Interface]: The old menu.", "Release-note: Added [Nowhere]: Unknown area.",
+                      "Release-note: Added [Online]: Server browser."])
+    issues = [{"area": "Campaign", "text": "No campaign menu."}, {"area": "Audio", "text": "Some sounds are missing."},
+              {"area": "Nowhere", "text": "An unknown area."}, {"text": "No area at all."}]
+    text, lines = autorelease.release_notes("v0.4.0-alpha.5", [_commit(body)], issues, "0123456789abcdef", "2026-10-13", titles="studio")
+    heads = [l for l in text.splitlines() if l.startswith("#")]
+    assert heads == ["# OpenBFME v0.4.0-alpha.5 patch notes", "## Which file to download", "## Added", "## Changed", "## Bug fixes", "## Removed",
+                     "## Known issues"], heads
+    assert text.splitlines()[2] == "October 13, 2026 \u00b7 alpha build for testers"
+    assert text.rstrip().endswith("Built from commit 0123456789 (2026\\-10\\-13).")
+    section = lambda t: text.split(f"## {t}\n", 1)[1].split("\n## ", 1)[0]
+    assert section("Added") == ("\n**Gameplay**\n- First gameplay line\\.\n\n**Online**\n- Server browser\\.\n\n**Saves**\n- Games can be saved\\.\n\n"
+                                "**General**\n- No area\\.\n- Unknown area\\.\n"), "areas in AREAS' order, General last, a repeated line once"
+    assert section("Changed") == "\n**Performance**\n- Faster paths\\.\n\n**Linux**\n- Runs on older systems\\.\n"
+    assert section("Known issues").startswith("\n**Campaign**\n- No campaign menu\\.\n\n**Audio**\n")
+    assert "**General**\n- An unknown area\\.\n- No area at all\\.\n" in section("Known issues")
+    assert lines == ["Server browser.", "Games can be saved.", "First gameplay line.", "No area.", "Unknown area.", "Runs on older systems.",
+                     "Faster paths.", "A click on empty ground deselects.", "Heroes fight.", "The old menu."], lines
+    # the bridge titles: the old launchers' two Play-card titles hold the added and fixed lines
+    bridge, _ = autorelease.release_notes("v0.4.0-alpha.5", [_commit(body)], issues, titles="bridge")
+    assert [l for l in bridge.splitlines() if l.startswith("## ")] == ["## Which file to download", "## What's new", "## Changed",
+                                                                         "## What's fixed", "## Removed", "## Known issues"]
+    assert "Built from commit" not in bridge and autorelease.DEFAULT_TITLES in autorelease.TITLES
+    with pytest.raises(SystemExit):
+        autorelease.release_notes("v0.4.0-alpha.5", [], [], titles="nonsense")
+
+
+def test_the_download_part_is_one_function():
+    d = autorelease.download_section("v0.4.0-alpha.3")
+    assert d[0] == "## Which file to download" and d[1] == "" and d[2:4] == ["| File | What it is |", "|---|---|"]
+    assert len(d) == 4 + 3 + 3 and all(l.startswith("|") for l in d[2:7]) and d[7] == "" and d[9] == ""   # ONEZIP-1: a game link per platform, the rest in one line
+    assert "[openbfme-v0.4.0-alpha.3-windows-x64.zip](https://github.com/Open-BFME/openbfme-godot/releases/download/v0.4.0-alpha.3/" \
+           "openbfme-v0.4.0-alpha.3-windows-x64.zip)" in d[4]
+    assert "openbfme-launcher-v0.4.0-alpha.3-windows-x64.zip" in d[6] and "SHA256SUMS-v0.4.0-alpha.3.txt" in d[6]
+    for bad in (("not a version", "Open-BFME/x"), ("v0.4.0-alpha.3", "evil.example/x y"), ("v0.4.0-alpha.3", "a/b](c")):
+        with pytest.raises(SystemExit):
+            autorelease.download_section(*bad)
+    text, _ = autorelease.release_notes("v0.4.0-alpha.3", [], [], repo="Some-Owner/some.repo")
+    assert "https://github.com/Some-Owner/some.repo/releases/download/v0.4.0-alpha.3/" in text
+
+
+def test_the_hostile_note_cannot_break_the_page(tmp_path):
+    """every new field: kind and area words are closed sets (a hostile area is General), the text keeps its escaping, the page keeps its headings"""
+    evil = "Added [## Online\n## Fake]: @octocat https://evil.example <img src=x> **bold** #12"
+    text, lines = autorelease.release_notes("v0.4.0-alpha.5", [_commit("Release-note: " + evil.replace("\n", " ")),
+                                                              _commit("Release-note: Fixed [Interface\u2028]: line break")], [], titles="studio")
+    assert [l for l in text.splitlines() if l.startswith("#")] == ["# OpenBFME v0.4.0-alpha.5 patch notes", "## Which file to download",
+                                                                    "## Added", "## Bug fixes"]
+    assert [l for l in text.splitlines() if l.startswith("**")] == ["**General**", "**General**"]
+    for bad in ("@", "#12", "<img", "evil.example", "**bold**"):
+        assert bad not in text.replace("(link removed)", ""), bad
+
+
+def _launcher_view(tmp_path, notes: str) -> str:
+    """what the alpha.3 launcher (a frozen copy of its parser) and this tree's launcher read from a release body (fixtures/notes_view.gd)"""
+    proj = tmp_path / "view"
+    proj.mkdir(exist_ok=True)
+    (proj / "project.godot").write_text('config_version=5\n\n[application]\n\nconfig/name="notes view"\n')
+    shutil.copy(HERE / "fixtures/release_notes_alpha3.gd", proj / "release_notes_alpha3.gd")
+    shutil.copy(HERE.parent.parent / "launcher/scripts/core/release_notes.gd", proj / "release_notes.gd")
+    shutil.copy(HERE / "fixtures/notes_view.gd", proj / "notes_view.gd")
+    (tmp_path / "notes.md").write_text(re.sub(r"\\(.)", r"\1", notes), encoding="utf-8")   # Updater.plain_text undoes the Markdown escapes first
+    env = dict(os.environ, XDG_DATA_HOME=str(tmp_path / "d"), XDG_CONFIG_HOME=str(tmp_path / "c"), XDG_CACHE_HOME=str(tmp_path / "k"))
+    r = subprocess.run([os.environ.get("GODOT", "godot"), "--headless", "--path", str(proj), "--script", "res://notes_view.gd", "--",
+                        str(tmp_path / "notes.md")], capture_output=True, text=True, timeout=180, env=env, stdin=subprocess.DEVNULL)
+    assert r.returncode == 0, r.stdout + r.stderr
+    return r.stdout
+
+
+def test_launchers_read_the_new_notes(tmp_path):
+    """NOTES-1: the real page text through the parser of the launcher that shipped in v0.4.0-alpha.3 and through this tree's launcher"""
+    if shutil.which(os.environ.get("GODOT", "godot")) is None:
+        pytest.skip("no Godot ($GODOT) to run the launcher's parsers")
+    body = "\n".join(["Release-note: Added [Online]: Server browser.", "Release-note: Added [Saves]: Games can be saved.",
+                      "Release-note: Changed [Performance]: Faster paths.", "Release-note: Fixed [Interface]: A click deselects.",
+                      "Release-note: Removed [Audio]: A sound."])
+    issues = [{"area": "Audio", "text": "Some sounds are missing."}]
+    for titles in ("bridge", "studio"):
+        text, _ = autorelease.release_notes("v0.4.0-alpha.5", [_commit(body)], issues, "0123456789abcdef", "2026-10-13", titles=titles)
+        view = _launcher_view(tmp_path, text)
+        assert "NEW PLAY CARD: 2 lines" in view and "NEW PLAY: Server browser." in view, view
+        assert "NEW NEWS SECTION: Known issues (1 lines) areas: Audio" in view, view
+        if titles == "bridge":   # an alpha.3 launcher that has not updated itself yet still has its Play card and the sections' titles
+            assert "OLD PLAY CARD: 2 lines" in view and "OLD PLAY: Server browser." in view, view
+            assert "OLD NEWS SECTION: What's new (2 lines)" in view and "OLD NEWS SECTION: What's fixed (1 lines)" in view, view
+        else:                    # the studio titles alone leave the old Play card empty
+            assert "OLD PLAY CARD: 0 lines" in view and "NEW NEWS SECTION: Added (2 lines) areas: Online, Saves" in view, view
+
+
+def test_every_label_goes_through_the_escaping(monkeypatch):
+    """NOTES-1 r2: the area and section-title labels are escaped like every other field, whatever the allowlists hold (a boundary test:
+    the lists are patched with hostile words, nothing hostile reaches the page unescaped)"""
+    evil = "Evil @octocat [x](https://evil.example) <b>\n## Fake"
+    monkeypatch.setattr(autorelease, "AREAS", ("Online", evil))
+    monkeypatch.setattr(autorelease, "TITLES", {"studio": {"added": evil, "changed": "Changed", "fixed": "Bug fixes", "removed": "Removed"}})
+    text, _ = autorelease.release_notes("v0.4.0-alpha.5", [_commit("Release-note: Added [Online]: a thing.")], [{"area": evil, "text": "x"}],
+                                        titles="studio")
+    body = re.sub(r"## Which file to download.*?\n\n## ", "## ", text, flags=re.S)
+    for bad in ("@", "](", "<b>", "https", "\n## Fake"):
+        assert bad not in body, (bad, body)
+    assert [l for l in body.splitlines() if l.startswith("#")] == ["# OpenBFME v0.4.0-alpha.5 patch notes", "## " + autorelease.markdown(autorelease.neutral(evil)),
+                                                                    "## Known issues"]

@@ -654,5 +654,88 @@
                          "size":  646458,
                          "language":  "ALL"
                      }
-                 ]
+                 ],
+  "entryChecked": [
+    {
+      "path": "data1.big",
+      "advice": "If your game folder is an unmodified install (from the disc, patched with EA's official patch), please report this message on OpenBFME's GitHub issues page so this version can be added; otherwise reinstall the game or let the OpenBFME launcher download it (Game files page), then choose the folder again.",
+      "entries": [
+        {
+          "name": "albertusmt.otf",
+          "size": 33860,
+          "md5": "e750107d36bdfdf47ed4a9e0da9c9d05"
+        },
+        {
+          "name": "data\\scripts\\scriptevents.xml",
+          "size": 28643,
+          "md5": "c08c178908a5bc3f7bb50891e7c15602"
+        },
+        {
+          "name": "data\\scripts\\scriptevents.xsd",
+          "size": 3026,
+          "md5": "9ce6bdae94a8852cdbbaf8154c04959e"
+        },
+        {
+          "name": "data\\scripts\\scriptevents.xsx",
+          "size": 1655,
+          "md5": "8db1f038ce0f650c18a2cd966927eb3f"
+        },
+        {
+          "name": "data\\scripts\\scripts.ini",
+          "size": 133616,
+          "md5": "f713220033c793ec5fae46db467a5b75"
+        },
+        {
+          "name": "data\\scripts\\scripts.lua",
+          "size": 27334,
+          "md5": "fdaa95e8f4fd221919ffdf736bdfeb6c"
+        },
+        {
+          "name": "data\\systemheroes\\myhero_47c6206b5c124324a54a2da3.cah",
+          "size": 1005,
+          "md5": "770ee9eebbe00d952a68aa7414c66558"
+        },
+        {
+          "name": "data\\systemheroes\\myhero_53f8791579b841c595864db3.cah",
+          "size": 957,
+          "md5": "2b1a65280786d15f732b66db030fd8ac"
+        },
+        {
+          "name": "data\\systemheroes\\myhero_7fa6f036a68f4381b2929ff7.cah",
+          "size": 955,
+          "md5": "8f08d53ccadd143370f95a629721a765"
+        },
+        {
+          "name": "data\\systemheroes\\myhero_86f62c3a695e43ecac101f38.cah",
+          "size": 986,
+          "md5": "84b989f43e401b59618d057dd2d03ba8"
+        },
+        {
+          "name": "data\\systemheroes\\myhero_cd5992a9cc24a29bc03282.cah",
+          "size": 982,
+          "md5": "d42d4da43d87bc27f3fa08679d7364aa"
+        },
+        {
+          "name": "data\\systemheroes\\myhero_d24a5d30798e43d4986d3ec.cah",
+          "size": 1050,
+          "md5": "50fb004a26fe3fc7d4267de99d2db31b"
+        },
+        {
+          "name": "data\\systemheroes\\myhero_e06bd0f22e8d478db6484e29.cah",
+          "size": 934,
+          "md5": "d8b36bacc583af469906d9c680d57363"
+        },
+        {
+          "name": "omnialtstd.ttf",
+          "size": 109476,
+          "md5": "9f3d88d62a2cdc29c2cc8b416911d7c9"
+        },
+        {
+          "name": "sachwt__.ttf",
+          "size": 69296,
+          "md5": "e66014f4647fd234f4dbe5994c879e1a"
+        }
+      ]
+    }
+  ]
 }

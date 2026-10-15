@@ -91,6 +91,9 @@ public:
 	bool key(int dikCode, bool down, int modifiers = 0);
 	bool textInput(char16_t ch);
 
+	// lane OPTS-4: the open drop-down (GameWindowManager::winGetOpenDropDown's rule) unless a movie's DisableComponents() blocks every gadget; null: none.
+	// ZH keeps the lone window after a choice closed its list, so the lone window alone does not say "open"
+	const GameWindow *openDropDown();
 	// The gadget created for an Apt instance path (tests, screens).
 	GameWindow *windowOf(const std::string &instancePath) const { return m_windows.componentWindow(instancePath); }
 	// Everything that went wrong creating gadgets (a skin that did not parse, an unknown type ...): never silent.

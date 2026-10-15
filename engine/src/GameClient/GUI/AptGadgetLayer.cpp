@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <optional>
 
 namespace
 {
@@ -107,6 +108,21 @@ void AptGadgetLayer::registerComponents()
 	m_pickers->registerComponent(); // lane CAH-2: "ColorPicker" (RW 0x8151D2) has its own handler
 }
 
+namespace
+{
+// the template map's keys (RW 0x814EFA), as createGadget spells a skin path; retail lower-cases `_Load` before the lookup (RW 0x81487B's neighbour, the
+// create of BFME2 0x008115A9)
+bool isTemplateSkin(const std::string &path)
+{
+	std::string lower = path;
+	for (char &ch : lower)
+	{
+		ch = (char)std::tolower((unsigned char)ch);
+	}
+	return lower == "window/apt/combobox.wnd" || lower == "window/apt/horzslider.wnd";
+}
+} // namespace
+
 std::shared_ptr<GameWindow> AptGadgetLayer::createGadget(AptComponentRequest &request)
 {
 	// BinkMovie is a video host (device); the others read their skin from window/apt/<symbol>.wnd
@@ -152,6 +168,16 @@ std::shared_ptr<GameWindow> AptGadgetLayer::createGadget(AptComponentRequest &re
 	if (info.windows.size() != 1)
 	{
 		m_notes.push_back(path + " defines " + std::to_string(info.windows.size()) + " windows; the first is the gadget");
+	}
+	// lane OPTS-4, TARGET FACTS: the two skins seeded in the template map at start (RW 0x814EFA: "apt/combobox.wnd", "apt/horzslider.wnd") are loaded once
+	// under the template parent, whose status is 0x08000000 (the context of RW 0x815389), and winCreateFromScript gives every window of a file loaded
+	// under such a parent that status (RW 0x7190B4: the parent's bit read at entry, winSetStatus(0x8000000) at RW 0x719393); duplicateGadget (RW 0x718D93)
+	// copies the template's status into each component (the create view's + 0x04). The slider's image draw reads the bit (RW 0x4A1130: no 800 x 600
+	// multipliers), which is why retail's tick fill is as tall as the window and the port's was 1.28 times that. Other skins are loaded under the
+	// level's window and keep their file's status
+	if (isTemplateSkin(path))
+	{
+		window->winSetStatus(WIN_STATUS_APT_TEMPLATE);
 	}
 	// created at the size of the placeholder (menus-apt.md 1.3 / 3.3)
 	const int x = (int)request.x0, y = (int)request.y0;
@@ -249,6 +275,9 @@ GameWindow *AptGadgetLayer::createEngineGadget(const std::string &path, int x, i
 		}
 		return nullptr;
 	}
+	// lane OPTS-4: an engine gadget stands where a component of the movie would (stage pixels), so it is unscaled as the template skins' components are
+	// (createGadget); not retail: retail has no engine-placed gadgets
+	window->winSetStatus(WIN_STATUS_APT_TEMPLATE);
 	window->winSetPosition(x, y);
 	window->winSetSize(w, h);
 	if (owner)
@@ -337,7 +366,85 @@ void AptGadgetLayer::buildDrawList(GadgetDrawList &out)
 			++i;
 		}
 	}
+	const std::size_t firstWindow = out.commands.size();
 	m_gwm.winRepaint(out);
+	// lane OPTS-4: the open drop-down list (GameWindowManager::winGetOpenDropDown's rule) is drawn after every other gadget, whatever its place in the
+	// window list: a row made later (nearer the list's head) drew its value and button through the list of the row above it. Its commands (its own
+	// window's and its children's, found by the drawing window, so a combo box inside another window counts) move to the end as one block under its
+	// own root, with the clip an ancestor had set when it began (the device keeps a clip until its end or the next root), and the input router takes
+	// the pointer inside that clip only. INFERENCE (S-3503): RotWK draws at the placeholder's depth; promoting the open list is the port's
+	GameWindow *drop = const_cast<GameWindow *>(openDropDown());
+	m_gwm.setOpenDropDownClip(nullptr);
+	if (!drop)
+	{
+		return;
+	}
+	std::vector<GadgetDrawCommand> kept, moved;
+	std::optional<GadgetDrawCommand> clip; // the ancestors' clip in force (a ClipBegin of the same root not ended yet)
+	for (std::size_t i = firstWindow; i < out.commands.size(); ++i)
+	{
+		GadgetDrawCommand &c = out.commands[i];
+		const bool ofDrop = c.drawer && (c.drawer == drop || drop->winIsChild(const_cast<GameWindow *>(c.drawer)));
+		if (!ofDrop)
+		{
+			if (clip && clip->root != c.root)
+			{
+				clip.reset();
+			}
+			if (c.kind == GadgetDrawCommand::Kind::ClipBegin)
+			{
+				clip = c;
+			}
+			else if (c.kind == GadgetDrawCommand::Kind::ClipEnd)
+			{
+				clip.reset();
+			}
+			kept.push_back(std::move(c));
+			continue;
+		}
+		if (moved.empty() && clip && clip->root == c.root)
+		{
+			GadgetDrawCommand inherited = *clip;
+			inherited.root = drop;
+			IRegion2D r;
+			r.lo.x = inherited.x0;
+			r.lo.y = inherited.y0;
+			r.hi.x = inherited.x1;
+			r.hi.y = inherited.y1;
+			m_gwm.setOpenDropDownClip(&r);
+			moved.push_back(std::move(inherited));
+		}
+		c.root = drop;
+		moved.push_back(std::move(c));
+	}
+	if (!moved.empty() && moved.front().kind == GadgetDrawCommand::Kind::ClipBegin && moved.back().kind != GadgetDrawCommand::Kind::ClipEnd)
+	{
+		GadgetDrawCommand end;
+		end.kind = GadgetDrawCommand::Kind::ClipEnd;
+		end.window = moved.front().window;
+		end.root = drop;
+		end.drawer = drop;
+		moved.push_back(std::move(end));
+	}
+	out.commands.resize(firstWindow);
+	for (GadgetDrawCommand &c : kept)
+	{
+		out.commands.push_back(std::move(c));
+	}
+	for (GadgetDrawCommand &c : moved)
+	{
+		out.commands.push_back(std::move(c));
+	}
+}
+
+const GameWindow *AptGadgetLayer::openDropDown()
+{
+	// a modal box of a movie (DisableComponents() without a path, RW 0x81456F) takes every gadget's input: no list is above it
+	if (m_windows.componentInputBlocked())
+	{
+		return nullptr;
+	}
+	return m_gwm.winGetOpenDropDown();
 }
 
 bool AptGadgetLayer::mouseMove(float x, float y)

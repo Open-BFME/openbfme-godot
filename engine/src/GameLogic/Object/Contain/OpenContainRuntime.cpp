@@ -9,6 +9,7 @@
 #include "Common/NumericState.h"
 #include "Common/Player.h"
 #include "Common/StateHash.h"
+#include "Common/Thing/ThingFactory.h"
 #include "Common/Thing/ThingTemplate.h"
 #include "GameLogic/AI/AIPathfind.h"
 #include "GameLogic/AI/AIWorld.h"
@@ -196,12 +197,18 @@ bool OpenContain::openContainAllows(const Object &obj) const
 	}
 	if (obj.isKindOf((unsigned)chunkVendor) || obj.isKindOf((unsigned)rockVendor))
 	{
-		// RW 0x8660F0: the body's name (body slot 0x74) as a template asked of the filter; the body slot is not identified (S-1100): refused and reported
-		logic.reportError("OpenContain of " + container->getTemplate()->getName() + ": the CHUNK_VENDOR / ROCK_VENDOR entry test (RW 0x8660F0) is not ported; " +
-			obj.getTemplate()->getName() + " refused (S-1100)");
-		return false;
+		// RW 0x8660F0 .. 0x866153 (lane BACKLOG-1; BFME2 decomp OpenContainIsValidContainerFor.cpp, tier B same-shape for RW 0x86603B): the object enters as its
+		// body's GrabObject (body vt[0x74]): an empty name, a name no template has (TheThingFactory RW 0x6D1305) or a template the PassengerFilter refuses
+		// (ObjectFilter::testTemplate RW 0x763543 with the object's and the container's players) refuses it; the filter's object test is not made
+		const BodyModuleInterface *body = obj.getBodyModule();
+		const std::string grab = body ? body->getGrabObjectName() : std::string();
+		const ThingTemplate *grabbed = grab.empty() ? nullptr : logic.things().findTemplate(grab);
+		if (!grabbed || !ObjectFilterMatch::allows(logic, d.m_passengerFilter, grabbed, obj.getControllingPlayer(), container->getControllingPlayer()))
+		{
+			return false;
+		}
 	}
-	if (!ObjectFilterMatch::allows(logic, d.m_passengerFilter, obj, container->getControllingPlayer()))
+	else if (!ObjectFilterMatch::allows(logic, d.m_passengerFilter, obj, container->getControllingPlayer()))
 	{
 		return false; // RW 0x8660E2: PassengerFilter (data + 0x40) with the container's player
 	}
@@ -670,9 +677,9 @@ void OpenContain::addOrRemoveObjFromWorld(Object *obj, bool add)
 	}
 	else
 	{
-		// RW 0x865D7B: RW 0x696E63 teleports it to the container (setPosition; the recorded transform and the AI's notification RW 0x5E821A / 0x66276B are not
-		// ported), into the world, the drawable shown
-		obj->setPosition(getObject()->getPosition());
+		// RW 0x865D5B: RW 0x696E63(the container's position, 1) teleports it to the container (lane BACKLOG4: the teleport form, the AI kept), into the
+		// world, the drawable shown
+		obj->teleportTo(getObject()->getPosition(), true);
 		if (!obj->isInWorld())
 		{
 			logic.friend_containEnterWorld(*obj);
@@ -942,6 +949,10 @@ void OpenContain::crc(StateHasher &h) const
 	h.addBool(m_dying);
 	h.addBool(m_killingRiders);
 	h.addI32(m_nextExitPath);
+	h.addFloat(m_rallyPoint.x); // lane BACKLOG-1
+	h.addFloat(m_rallyPoint.y);
+	h.addFloat(m_rallyPoint.z);
+	h.addBool(m_rallyPointExists);
 	h.addU32(m_doorOpenFrames);
 	h.addBool(m_deleting);
 	h.addU32((std::uint32_t)m_riderBoneIndex.size());

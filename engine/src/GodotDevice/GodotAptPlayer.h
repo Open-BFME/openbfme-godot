@@ -177,6 +177,11 @@ public:
 	Dictionary get_command_map();
 	Dictionary font_metrics(const String &name, int point_size, bool bold, const String &text) const; // lane UI-4
 	Array drawn_texts(bool clear); // lane UI-4: the gadgets' and render callbacks' texts drawn since the last clear
+	// lane OPTS-4 (scripted layout checks): the gadget layer's draw commands of the last frame, in draw order: { kind ("image" "fill" "rect" "line" "text"
+	// "clip" "clip_end"), window, root (the top-level window's index in this list's order of first appearance, -1: the page's own drawing), lone (the
+	// open drop-down's), rect (window pixels), root_name, root_rect (the top-level window's box, window pixels), root_stage_rect (the same in
+	// stage pixels), image, text }
+	Array gadget_draw_list();
 	// lane PLAY-1: the live game PlayerTribute.apt shows and sends tribute in (a GameWorld; null when the game ends)
 	void set_tribute_world(Object *world);
 	// lane HUD-5: the players screen's Status rows (GUI/PlayerStatusInfo.h) from GameWorld.get_player_status_state(), built with the shell's factions, colours
@@ -280,6 +285,14 @@ public:
 	Array openbfme_page_events();
 	Dictionary openbfme_page_state() const;
 	Dictionary openbfme_page_choose(const String &key, int value);
+	// lane OPTS-5: the one Options menu (AptOptionsScreen::kOpenBFMEMenu). openbfme_page_show's rows take "entry" (a text entry: value_text, max) and
+	// "column" (0 / 1); its events take "release" (a slider let go), and "entry" is the menu's opening (value 1: show the detail settings first).
+	// options_retail_rows: { key: row } of the original game's settings as the page shows them ("Retail.<gadget>": kind, label, help, help_label,
+	// items, value, min, max, value_text, enabled); openbfme_menu_finish(accept): RotWK's Save or Cancel, the screen closes ({ ok, error });
+	// openbfme_menu_reset: RotWK's Reset of every original setting
+	Dictionary options_retail_rows() const;
+	Dictionary openbfme_menu_finish(bool accept);
+	Dictionary openbfme_menu_reset();
 	Dictionary get_timeline_stats(); // lane END-2
 	Dictionary quit_menu(const Dictionary &request);
 	Array list_buttons(int level);

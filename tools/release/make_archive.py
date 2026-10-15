@@ -3,6 +3,9 @@
 
     python3 tools/release/make_archive.py <folder> <out.tar.gz | out.zip> --mtime <unix time>
     python3 tools/release/make_archive.py --diff <a> <b>     (which layer / member of two archives differs; exit 1 when they differ)
+    python3 tools/release/make_archive.py --extract <archive> <file below its top folder> <out file>
+                                                             (lane ONEZIP-1: the launcher's executable for the combined package)
+    python3 tools/release/make_archive.py --has <archive> <file below its top folder>     (exit 0 when it is there, 1 when not)
 
 The same folder content and --mtime (package.sh passes the commit's time, SOURCE_DATE_EPOCH) always give the same bytes:
   * members in sorted order, the top folder first; nothing but the folder and regular files (no links, no extra entries)
@@ -110,9 +113,48 @@ def diff(a: Path, b: Path) -> int:
     return 1
 
 
+def has(archive: Path, rel: str) -> bool:
+    """whether a package archive holds the file `rel` below its top folder (package.sh --verify: which run made a folder)"""
+    want = archive.name.removesuffix(".tar.gz").removesuffix(".zip") + "/" + rel
+    if archive.name.endswith(".zip"):
+        with zipfile.ZipFile(archive) as z:
+            return want in z.namelist()
+    with tarfile.open(archive, "r:gz") as t:
+        return want in t.getnames()
+
+
+def extract(archive: Path, rel: str, out: Path) -> int:
+    """one file of a package archive (make_archive.py's: one top folder named like the archive), written to `out`"""
+    top = archive.name.removesuffix(".tar.gz").removesuffix(".zip")
+    want = f"{top}/{rel}"
+    if archive.name.endswith(".zip"):
+        with zipfile.ZipFile(archive) as z:
+            if want not in z.namelist():
+                print(f"make_archive: {archive.name} has no {want}")
+                return 1
+            data = z.read(want)
+    else:
+        with tarfile.open(archive, "r:gz") as t:
+            try:
+                member = t.getmember(want)
+            except KeyError:
+                print(f"make_archive: {archive.name} has no {want}")
+                return 1
+            if not member.isfile():
+                print(f"make_archive: {want} in {archive.name} is not a regular file")
+                return 1
+            data = t.extractfile(member).read()
+    out.write_bytes(data)
+    return 0
+
+
 def main(argv: list[str]) -> int:
     if len(argv) == 3 and argv[0] == "--diff":
         return diff(Path(argv[1]), Path(argv[2]))
+    if len(argv) == 3 and argv[0] == "--has":
+        return 0 if has(Path(argv[1]), argv[2]) else 1
+    if len(argv) == 4 and argv[0] == "--extract":
+        return extract(Path(argv[1]), argv[2], Path(argv[3]))
     if len(argv) != 4 or argv[2] != "--mtime":
         print(__doc__)
         return 2

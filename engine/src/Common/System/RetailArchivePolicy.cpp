@@ -9,6 +9,7 @@
 #include "GameEngineDevice/Win32Device/Common/Win32BIGFileSystem.h"
 
 #include <algorithm>
+#include <cstring>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -34,6 +35,19 @@ std::string normalizedKey(std::string s)
 	std::replace(s.begin(), s.end(), '\\', '/');
 	AsciiStringUtil::toLower(s);
 	return s;
+}
+
+// lane CONTRIB-1: an entry name of a BIG directory as the entry checks compare it (lower case, backslashes: the retail directories' form)
+std::string entryKey(std::string s)
+{
+	std::replace(s.begin(), s.end(), '/', '\\');
+	AsciiStringUtil::toLower(s);
+	return s;
+}
+
+std::uint32_t readBE32(const std::uint8_t *p)
+{
+	return ((std::uint32_t)p[0] << 24) | ((std::uint32_t)p[1] << 16) | ((std::uint32_t)p[2] << 8) | (std::uint32_t)p[3];
 }
 
 // Threat model: the md5 check (and this cache) detects wrong or modified game files, such as a
@@ -180,6 +194,157 @@ bool RetailArchivePolicy::parse(const std::string &policyJson, const std::string
 		out.archives.push_back(entry);
 	}
 
+	// lane CONTRIB-1: the other known layouts and the entry-checked archives (closed sets: every path must be a policy archive)
+	auto policyArchive = [&out](const std::string &path) -> const RetailArchiveEntry * {
+		for (const RetailArchiveEntry &a : out.archives)
+		{
+			if (normalizedKey(a.path) == normalizedKey(path))
+			{
+				return &a;
+			}
+		}
+		return nullptr;
+	};
+	auto fail = [error](const std::string &e) {
+		if (error)
+		{
+			*error = "policy JSON: " + e;
+		}
+		return false;
+	};
+	auto isMd5 = [](const std::string &m) { return Md5Cache::isMd5Hex(m); };
+	if (const JsonValue *layouts = root.get("layouts"))
+	{
+		const JsonValue *base = layouts->get("base");
+		const JsonValue *others = layouts->get("others");
+		const JsonValue *advice = layouts->get("advice");
+		const JsonValue *baseId = base ? base->get("id") : nullptr;
+		const JsonValue *baseName = base ? base->get("name") : nullptr;
+		if (!baseId || !baseId->isString() || !baseName || !baseName->isString() || !others || !others->isArray() || !advice || !advice->isString())
+		{
+			return fail("layouts needs base {id, name}, others [...] and advice");
+		}
+		out.baseLayoutId = baseId->string;
+		out.baseLayoutName = baseName->string;
+		out.advice = advice->string;
+		std::map<std::string, bool> ids{ { out.baseLayoutId, true } };
+		for (const JsonValue &l : others->array)
+		{
+			const JsonValue *id = l.get("id");
+			const JsonValue *name = l.get("name");
+			const JsonValue *replace = l.get("replace");
+			const JsonValue *absent = l.get("absent");
+			if (!id || !id->isString() || !name || !name->isString() || !replace || !replace->isArray() || !absent || !absent->isArray())
+			{
+				return fail("a layout needs id, name, replace [...] and absent [...]");
+			}
+			if (ids.count(id->string))
+			{
+				return fail("layout " + id->string + " is defined twice");
+			}
+			ids[id->string] = true;
+			RetailArchiveLayout layout;
+			layout.id = id->string;
+			layout.name = name->string;
+			std::map<std::string, bool> touched;
+			for (const JsonValue &r : replace->array)
+			{
+				const JsonValue *p = r.get("path");
+				const JsonValue *m = r.get("md5");
+				const JsonValue *sz = r.get("size");
+				if (!p || !p->isString() || !m || !m->isString() || !sz || !sz->isNumber() || sz->number < 0 || !isMd5(AsciiStringUtil::lowered(m->string)))
+				{
+					return fail("layout " + layout.id + ": a replaced archive needs path, md5 (32 hex) and size");
+				}
+				if (!policyArchive(p->string) || touched.count(normalizedKey(p->string)))
+				{
+					return fail("layout " + layout.id + " replaces " + p->string + ", which is not a policy archive or is named twice");
+				}
+				touched[normalizedKey(p->string)] = true;
+				RetailArchiveEntry e = *policyArchive(p->string);
+				e.md5 = AsciiStringUtil::lowered(m->string);
+				e.size = (std::uint64_t)sz->number;
+				layout.replace.push_back(e);
+			}
+			for (const JsonValue &a : absent->array)
+			{
+				if (!a.isString() || !policyArchive(a.string) || touched.count(normalizedKey(a.string)))
+				{
+					return fail("layout " + layout.id + " leaves out an archive that is not a policy archive or is named twice");
+				}
+				touched[normalizedKey(a.string)] = true;
+				layout.absent.push_back(policyArchive(a.string)->path);
+			}
+			if (touched.empty())
+			{
+				return fail("layout " + layout.id + " changes nothing");
+			}
+			out.layouts.push_back(layout);
+		}
+	}
+	if (const JsonValue *checked = root.get("entryChecked"))
+	{
+		if (!checked->isArray())
+		{
+			return fail("entryChecked is not an array");
+		}
+		for (const JsonValue &c : checked->array)
+		{
+			const JsonValue *p = c.get("path");
+			const JsonValue *entries = c.get("entries");
+			if (!p || !p->isString() || !policyArchive(p->string) || !entries || !entries->isArray() || entries->array.empty())
+			{
+				return fail("an entry-checked archive needs the path of a policy archive and its entries");
+			}
+			if (out.entryCheckOf(p->string))
+			{
+				return fail(p->string + " is entry-checked twice");
+			}
+			for (const RetailArchiveLayout &l : out.layouts)
+			{
+				for (const RetailArchiveEntry &r : l.replace)
+				{
+					if (normalizedKey(r.path) == normalizedKey(p->string))
+					{
+						return fail(p->string + " is entry-checked and replaced by layout " + l.id);
+					}
+				}
+			}
+			RetailEntryCheckedArchive check;
+			check.path = policyArchive(p->string)->path;
+			const JsonValue *advice = c.get("advice");
+			if (!advice || !advice->isString())
+			{
+				return fail(check.path + ": an entry-checked archive needs its advice (what the player does when an entry is unknown)");
+			}
+			check.advice = advice->string;
+			for (const JsonValue &e : entries->array)
+			{
+				const JsonValue *n = e.get("name");
+				const JsonValue *m = e.get("md5");
+				const JsonValue *sz = e.get("size");
+				if (!n || !n->isString() || n->string.empty() || !m || !m->isString() || !isMd5(AsciiStringUtil::lowered(m->string)) || !sz || !sz->isNumber() ||
+					sz->number < 0)
+				{
+					return fail(check.path + ": an entry needs name, md5 (32 hex) and size");
+				}
+				RetailArchiveContentEntry v;
+				v.name = entryKey(n->string);
+				v.md5 = AsciiStringUtil::lowered(m->string);
+				v.size = (std::uint64_t)sz->number;
+				for (const RetailArchiveContentEntry &o : check.versions)
+				{
+					if (o.name == v.name && o.md5 == v.md5)
+					{
+						return fail(check.path + ": entry " + v.name + " version " + v.md5 + " is listed twice");
+					}
+				}
+				check.versions.push_back(v);
+			}
+			out.entryChecked.push_back(check);
+		}
+	}
+
 	if (!exclusionJson.empty())
 	{
 		JsonValue ex;
@@ -271,6 +436,276 @@ std::vector<RetailArchiveEntry> RetailArchiveLoadOrder(const std::vector<RetailA
 	return ordered;
 }
 
+std::vector<RetailArchiveEntry> RetailArchivePolicy::archivesOf(const RetailArchiveLayout *layout) const
+{
+	if (layout == nullptr)
+	{
+		return archives;
+	}
+	std::vector<RetailArchiveEntry> out;
+	for (const RetailArchiveEntry &a : archives)
+	{
+		const std::string key = normalizedKey(a.path);
+		if (std::any_of(layout->absent.begin(), layout->absent.end(), [&key](const std::string &p) { return normalizedKey(p) == key; }))
+		{
+			continue;
+		}
+		auto r = std::find_if(layout->replace.begin(), layout->replace.end(), [&key](const RetailArchiveEntry &e) { return normalizedKey(e.path) == key; });
+		out.push_back(r == layout->replace.end() ? a : *r);
+	}
+	return out;
+}
+
+const RetailEntryCheckedArchive *RetailArchivePolicy::entryCheckOf(const std::string &path) const
+{
+	for (const RetailEntryCheckedArchive &c : entryChecked)
+	{
+		if (normalizedKey(c.path) == normalizedKey(path))
+		{
+			return &c;
+		}
+	}
+	return nullptr;
+}
+
+RetailLayoutChoice ChooseRetailLayout(const RetailArchivePolicy &policy, const std::string &label, const std::map<std::string, std::uint64_t> &onDiskSizes)
+{
+	RetailLayoutChoice choice;
+	// the archives that differ between layouts, in policy order
+	std::vector<std::string> differing;
+	for (const RetailArchiveEntry &a : policy.archives)
+	{
+		const std::string key = normalizedKey(a.path);
+		for (const RetailArchiveLayout &l : policy.layouts)
+		{
+			const bool touched = std::any_of(l.absent.begin(), l.absent.end(), [&key](const std::string &p) { return normalizedKey(p) == key; }) ||
+				std::any_of(l.replace.begin(), l.replace.end(), [&key](const RetailArchiveEntry &e) { return normalizedKey(e.path) == key; });
+			if (touched)
+			{
+				differing.push_back(a.path);
+				break;
+			}
+		}
+	}
+	std::vector<const RetailArchiveLayout *> candidates{ nullptr };
+	for (const RetailArchiveLayout &l : policy.layouts)
+	{
+		candidates.push_back(&l);
+	}
+	auto nameOf = [&policy](const RetailArchiveLayout *l) { return l ? l->name : policy.baseLayoutName; };
+	// does what the folder has for `path` fit layout `l`?
+	auto fits = [&policy, &onDiskSizes](const RetailArchiveLayout *l, const std::string &path) {
+		const std::vector<RetailArchiveEntry> list = policy.archivesOf(l);
+		auto want = std::find_if(list.begin(), list.end(), [&path](const RetailArchiveEntry &e) { return normalizedKey(e.path) == normalizedKey(path); });
+		auto have = onDiskSizes.find(normalizedKey(path));
+		if (want == list.end())
+		{
+			return have == onDiskSizes.end();
+		}
+		return have != onDiskSizes.end() && (policy.entryCheckOf(path) != nullptr || have->second == want->size);
+	};
+	std::vector<const RetailArchiveLayout *> matching;
+	for (const RetailArchiveLayout *l : candidates)
+	{
+		if (std::all_of(differing.begin(), differing.end(), [&](const std::string &p) { return fits(l, p); }))
+		{
+			matching.push_back(l);
+		}
+	}
+	if (matching.size() == 1)
+	{
+		choice.ok = true;
+		choice.layout = matching.front();
+		choice.layoutId = matching.front() ? matching.front()->id : policy.baseLayoutId;
+		choice.layoutName = nameOf(matching.front());
+		choice.archives = policy.archivesOf(matching.front());
+		return choice;
+	}
+	// no layout (or, from a policy whose layouts cannot be told apart, several): the archives every layout shares are still checked
+	for (const RetailArchiveEntry &a : policy.archives)
+	{
+		if (std::find(differing.begin(), differing.end(), a.path) == differing.end())
+		{
+			choice.archives.push_back(a);
+		}
+	}
+	if (matching.size() > 1)
+	{
+		choice.error = label + ": the archive policy cannot tell its layouts apart (" + nameOf(matching[0]) + "; " + nameOf(matching[1]) + ")";
+		return choice;
+	}
+	// what the folder has, in player words: the files each layout claims, the missing ones (and whose they are), the ones no layout has
+	auto listOf = [](const std::vector<std::string> &v) {
+		std::string out;
+		for (size_t i = 0; i < v.size(); ++i)
+		{
+			out += std::string(i == 0 ? "" : i + 1 == v.size() ? " and " : ", ") + v[i];
+		}
+		return out;
+	};
+	auto verb = [](const std::vector<std::string> &v, const char *one, const char *many) { return std::string(v.size() == 1 ? one : many); };
+	std::vector<std::string> parts, unknown;
+	std::map<std::string, std::vector<std::string>> missingBy; // whose files they are -> the missing files
+	std::vector<std::string> missingOrder;
+	for (const RetailArchiveLayout *l : candidates)
+	{
+		std::vector<std::string> claimed;
+		for (const std::string &path : differing)
+		{
+			const bool present = onDiskSizes.count(normalizedKey(path)) > 0;
+			const auto first = std::find_if(candidates.begin(), candidates.end(), [&](const RetailArchiveLayout *c) { return fits(c, path); });
+			if (present && first != candidates.end() && *first == l)
+			{
+				claimed.push_back(path);
+			}
+		}
+		if (!claimed.empty())
+		{
+			parts.push_back(listOf(claimed) + verb(claimed, " is from ", " are from ") + nameOf(l));
+		}
+	}
+	for (const std::string &path : differing)
+	{
+		auto have = onDiskSizes.find(normalizedKey(path));
+		if (have == onDiskSizes.end())
+		{
+			std::vector<std::string> owners;
+			for (const RetailArchiveLayout *l : candidates)
+			{
+				const std::vector<RetailArchiveEntry> list = policy.archivesOf(l);
+				if (std::any_of(list.begin(), list.end(), [&path](const RetailArchiveEntry &e) { return normalizedKey(e.path) == normalizedKey(path); }))
+				{
+					owners.push_back(nameOf(l));
+				}
+			}
+			const std::string whose = listOf(owners);
+			if (!missingBy.count(whose))
+			{
+				missingOrder.push_back(whose);
+			}
+			missingBy[whose].push_back(path);
+		}
+		else if (std::none_of(candidates.begin(), candidates.end(), [&](const RetailArchiveLayout *c) { return fits(c, path); }))
+		{
+			unknown.push_back(path + " (" + std::to_string(have->second) + " bytes)");
+		}
+	}
+	for (const std::string &whose : missingOrder)
+	{
+		const std::vector<std::string> &files = missingBy[whose];
+		parts.push_back(listOf(files) + verb(files, " is missing (it belongs to ", " are missing (they belong to ") + whose + ")");
+	}
+	if (!unknown.empty())
+	{
+		parts.push_back(listOf(unknown) + verb(unknown, " is no known ", " are no known ") + policy.patch + " file");
+	}
+	std::string findings;
+	for (const std::string &part : parts)
+	{
+		findings += (findings.empty() ? "" : "; ") + part;
+	}
+	choice.error = label + ": this folder is not a complete " + policy.patch + " install: " + findings + ". " + policy.advice;
+	return choice;
+}
+
+std::string CheckArchiveEntries(const RetailEntryCheckedArchive &check, const std::string &label, const std::uint8_t *data, std::uint64_t size)
+{
+	// the directory read as Win32BIGFileSystem's parseDirectory reads it, every count and range checked before use (hostile input: a file
+	// from the player's disk)
+	const std::string what = label + ": " + check.path;
+	constexpr std::uint32_t kMaxEntries = 4096;
+	if (size < 16 || (std::memcmp(data, "BIGF", 4) != 0 && std::memcmp(data, "BIG4", 4) != 0))
+	{
+		return what + " is not a BIG archive";
+	}
+	const std::uint32_t count = readBE32(data + 8);
+	if (count > kMaxEntries || (std::uint64_t)count * 9 > size - 16)
+	{
+		return what + " declares " + std::to_string(count) + " entries, more than it can hold";
+	}
+	std::map<std::string, std::string> seen; // name -> md5 of its first copy
+	std::uint64_t hashed = 0;
+	std::vector<std::string> problems;
+	std::uint64_t pos = 16;
+	for (std::uint32_t i = 0; i < count; ++i)
+	{
+		if (pos + 8 > size)
+		{
+			return what + ": its directory is cut short at entry " + std::to_string(i);
+		}
+		const std::uint64_t offset = readBE32(data + pos), length = readBE32(data + pos + 4);
+		pos += 8;
+		std::string name;
+		while (pos < size && data[pos] != 0 && name.size() < 260)
+		{
+			name.push_back((char)data[pos++]);
+		}
+		if (pos >= size || data[pos] != 0)
+		{
+			return what + ": the name of entry " + std::to_string(i) + " is cut short or too long";
+		}
+		++pos;
+		if (offset + length > size)
+		{
+			return what + ": entry '" + name + "' runs past the end of the archive";
+		}
+		const std::string key = entryKey(name);
+		// aggregate hashing budget (review): entries that overlap would hash the same bytes again and again; an archive whose entries do not overlap
+		// hashes at most its own size, so more than that is refused by name
+		hashed += length;
+		if (hashed > size)
+		{
+			return what + ": its entries overlap (entry '" + name + "' makes the bytes to check exceed the archive's own " + std::to_string(size) + " bytes)";
+		}
+		const std::string md5 = MD5::ofBytes(data + offset, (size_t)length);
+		auto first = seen.find(key);
+		if (first != seen.end())
+		{
+			if (first->second != md5)
+			{
+				problems.push_back("'" + key + "' is stored twice with different contents");
+			}
+			continue;
+		}
+		seen[key] = md5;
+		bool knownName = false, knownVersion = false;
+		for (const RetailArchiveContentEntry &v : check.versions)
+		{
+			if (v.name == key)
+			{
+				knownName = true;
+				knownVersion = knownVersion || (v.size == length && v.md5 == md5);
+			}
+		}
+		if (!knownName)
+		{
+			problems.push_back("it holds '" + key + "', which no known copy has");
+		}
+		else if (!knownVersion)
+		{
+			problems.push_back("its '" + key + "' (" + std::to_string(length) + " bytes, md5 " + md5 + ") is not a version OpenBFME knows");
+		}
+	}
+	for (const RetailArchiveContentEntry &v : check.versions)
+	{
+		if (!seen.count(v.name))
+		{
+			problems.push_back("it lacks '" + v.name + "'");
+			seen[v.name] = std::string(); // named once
+		}
+	}
+	if (problems.empty())
+	{
+		return std::string();
+	}
+	std::string out = what + " differs from every known copy: ";
+	for (size_t i = 0; i < problems.size(); ++i)
+	{
+		out += (i ? "; " : "") + problems[i];
+	}
+	return out;
+}
+
 RetailMountReport MountRetailArchives(Win32BIGFileSystem &fileSystem, const std::vector<RetailInstall> &installs,
 	const RetailMountOptions &options)
 {
@@ -297,6 +732,9 @@ RetailMountReport MountRetailArchives(Win32BIGFileSystem &fileSystem, const std:
 		RetailArchiveEntry entry;
 		std::string diskPath; ///< the found path (the plan's)
 		std::string key;      ///< the cache key (absolute path + size + modification time)
+		const RetailEntryCheckedArchive *entryCheck = nullptr; ///< lane CONTRIB-1: verified by its entries (no cache, no whole-file pin)
+		std::string layoutName;                                ///< the install's layout (player words), for the messages
+		std::string advice;
 	};
 	struct KeyHash
 	{
@@ -331,6 +769,7 @@ RetailMountReport MountRetailArchives(Win32BIGFileSystem &fileSystem, const std:
 
 		// Every *.big under the install, keyed by lower-case relative path.
 		std::map<std::string, fs::path> onDisk;
+		std::map<std::string, std::uint64_t> onDiskSizes; // lane CONTRIB-1: for the layout choice
 		for (fs::recursive_directory_iterator it(root, ec), end; !ec && it != end; it.increment(ec))
 		{
 			if (!it->is_regular_file())
@@ -342,7 +781,12 @@ RetailMountReport MountRetailArchives(Win32BIGFileSystem &fileSystem, const std:
 			{
 				continue;
 			}
-			onDisk[normalizedKey(fs::relative(it->path(), root).u8string())] = it->path();
+			// lane CONTRIB-1: the path below the install as listed (fs::relative resolves symlinks: a symlinked archive got a key outside the install)
+			const std::string key = normalizedKey(it->path().lexically_relative(root).u8string());
+			onDisk[key] = it->path();
+			std::error_code sizeError;
+			const std::uintmax_t size = it->file_size(sizeError);
+			onDiskSizes[key] = sizeError ? ~(std::uint64_t)0 : (std::uint64_t)size; // an unreadable size fits no layout; its own check names it
 		}
 		if (ec)
 		{
@@ -373,19 +817,34 @@ RetailMountReport MountRetailArchives(Win32BIGFileSystem &fileSystem, const std:
 			}
 		}
 
-		for (const RetailArchiveEntry &entry : RetailArchiveLoadOrder(install.policy.archives))
+		// lane CONTRIB-1: which known layout the folder holds (RetailArchivePolicy.h "Layouts"); none: the error names what the folder has, and the
+		// archives every layout shares are still checked so their own problems show too
+		const RetailLayoutChoice layout = ChooseRetailLayout(install.policy, install.label, onDiskSizes);
+		if (!layout.ok)
+		{
+			stepError(layout.error);
+		}
+		else if (!install.policy.layouts.empty())
+		{
+			report.layouts.push_back(install.label + ":" + layout.layoutId);
+		}
+		const std::string layoutWords = layout.layoutName.empty() ? std::string() : " (" + layout.layoutName + ")";
+		const std::string advice = install.policy.advice.empty() ? std::string() : " " + install.policy.advice;
+		for (const RetailArchiveEntry &entry : RetailArchiveLoadOrder(layout.archives))
 		{
 			auto found = onDisk.find(normalizedKey(entry.path));
 			if (found == onDisk.end())
 			{
-				stepError(install.label + ": missing archive " + entry.path);
+				stepError(install.label + ": missing archive " + entry.path + layoutWords);
 				continue;
 			}
+			const RetailEntryCheckedArchive *entryCheck = install.policy.entryCheckOf(entry.path);
 			std::uint64_t size = (std::uint64_t)fs::file_size(found->second, ec);
-			if (ec || size != entry.size)
+			if (ec || (entryCheck == nullptr && size != entry.size))
 			{
 				stepError(install.label + ": size mismatch for " + entry.path + ": expected " +
-					std::to_string(entry.size) + ", found " + (ec ? ec.message() : std::to_string(size)));
+					std::to_string(entry.size) + ", found " + (ec ? ec.message() : std::to_string(size)) + layoutWords +
+					": a damaged, modified or other version of the file." + advice);
 				continue;
 			}
 			// md5 is always verified. The cache key is absolute path + size + last-write time, so any
@@ -409,6 +868,17 @@ RetailMountReport MountRetailArchives(Win32BIGFileSystem &fileSystem, const std:
 			p.entry = entry;
 			p.diskPath = found->second.u8string();
 			p.key = Md5Cache::key(disk, size, mtime);
+			p.entryCheck = entryCheck;
+			p.layoutName = layoutWords;
+			p.advice = advice;
+			if (entryCheck)
+			{
+				// read and checked entry by entry in the replay below (a small archive: Data1.big is under 1 MB)
+				p.entry.size = size;
+				steps.push_back(Step{ std::string(), (int)pending.size() });
+				pending.push_back(std::move(p));
+				continue;
+			}
 			// the hash this check may need: none when the cache (as the earlier checks leave it) surely vouches for it; a key already scheduled is
 			// hashed once (its result is what the sequential pass would compute again: the key fixes path, size and modification time)
 			if (!hashOfKey.count(p.key))
@@ -441,6 +911,35 @@ RetailMountReport MountRetailArchives(Win32BIGFileSystem &fileSystem, const std:
 			continue;
 		}
 		const Pending &p = pending[(size_t)step.pending];
+		if (p.entryCheck)
+		{
+			// lane CONTRIB-1: the whole file (size checked against a budget before the allocation), its md5 (the mount's identity of it) and its entries
+			constexpr std::uint64_t kMaxEntryChecked = 64ull << 20;
+			if (p.entry.size > kMaxEntryChecked)
+			{
+				report.errors.push_back(p.install + ": " + p.entry.path + " is " + std::to_string(p.entry.size) + " bytes, far larger than any known copy" + p.layoutName +
+					"." + p.advice);
+				continue;
+			}
+			std::vector<std::uint8_t> bytes((size_t)p.entry.size);
+			std::ifstream in(fs::u8path(p.diskPath), std::ios::binary);
+			if (!in || !in.read(reinterpret_cast<char *>(bytes.data()), (std::streamsize)bytes.size()) || in.peek() != std::char_traits<char>::eof())
+			{
+				report.errors.push_back(p.install + ": could not read " + p.entry.path + " (" + p.diskPath + ")");
+				continue;
+			}
+			++report.archivesHashed;
+			const std::string problem = CheckArchiveEntries(*p.entryCheck, p.install, bytes.data(), bytes.size());
+			if (!problem.empty())
+			{
+				report.errors.push_back(problem + ". " + p.entryCheck->advice);
+				continue;
+			}
+			RetailArchiveEntry verified = p.entry;
+			verified.md5 = MD5::ofBytes(bytes.data(), bytes.size());
+			plan.push_back({ p.install, verified, p.diskPath });
+			continue;
+		}
 		std::string md5;
 		bool fromCache = false;
 		auto cached = cache.entries.find(p.key);
@@ -467,7 +966,8 @@ RetailMountReport MountRetailArchives(Win32BIGFileSystem &fileSystem, const std:
 		}
 		if (md5 != p.entry.md5)
 		{
-			report.errors.push_back(p.install + ": md5 mismatch for " + p.entry.path + ": expected " + p.entry.md5 + ", found " + md5);
+			report.errors.push_back(p.install + ": md5 mismatch for " + p.entry.path + ": expected " + p.entry.md5 + ", found " + md5 + p.layoutName +
+				": a damaged, modified or other version of the file." + p.advice);
 			continue;
 		}
 		if (fromCache)

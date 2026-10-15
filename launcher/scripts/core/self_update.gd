@@ -137,7 +137,10 @@ static func _start(exe: String, extra: Array, user_args: PackedStringArray) -> i
 
 ## Called first at every start of a packaged launcher (and of the helper). Returns {exit, message}: exit true when this process must
 ## quit now; with `swap` the caller polls poll(swap) from its main loop, quits on "confirmed" and calls roll_back on a failure.
-static func on_start(updater: RefCounted, user_args: PackedStringArray) -> Dictionary:
+## `begin_swap` false (lane ONEZIP-1: a game started directly waits for this launcher's answer, scripts/core/game_start.gd): an
+## interrupted update is completed or undone as always, but a staged update is not begun now; that run begins it once the game has
+## its answer.
+static func on_start(updater: RefCounted, user_args: PackedStringArray, begin_swap := true) -> Dictionary:
 	var info: RefCounted = updater.info
 	var apply_dir := _arg(user_args, "--apply-update=")
 	if apply_dir != "":
@@ -159,12 +162,15 @@ static func on_start(updater: RefCounted, user_args: PackedStringArray) -> Dicti
 				return {"exit": true, "message": ""}
 			j.state = "confirmed"
 			_write_journal(j)
+			# lane ONEZIP-1 r2: beside a combined package's game, the signed manifest of this launcher's release proves it (Updater.check_launcher)
+			updater.write_launcher_proof(dir, j.tag)
 			Updater.test_point("after-update-confirmed")
 			Log.line("LAUNCHER %s started after the update from %s" % [info.version, j.from])
 			message = "The launcher was updated to %s." % info.version
 			if _arg(user_args, "--after-update=") != "":
 				return {"exit": false, "message": message}  # the helper is still waiting: the rest is done at the next start
 		if j.state == "confirmed" and mine == j.new_sha256:
+			updater.write_launcher_proof(dir, j.tag)   # again, in case the confirmed launcher ended before it was written
 			for f in [exe + ".old", exe + ".new", exe + ".old.tmp", exe + ".new.tmp"]:
 				DirAccess.remove_absolute(f)
 			updater.remove_tree(dir.path_join("update"))
@@ -191,14 +197,13 @@ static func on_start(updater: RefCounted, user_args: PackedStringArray) -> Dicti
 			_end_journal()
 	var staged := dir.path_join("update")
 	var tag := FileAccess.get_file_as_string(staged.path_join("VERSION.launcher")).strip_edges()
-	if tag == "":
+	if tag == "" or not begin_swap:
 		return {"exit": false, "message": message}
 	if tag in updater.state.get_value("launcher", "rejected_launcher", []):
 		updater.remove_tree(staged)
 		return {"exit": false, "message": message}
-	if OS.get_name() == "Windows" and DisplayServer.get_name() == "headless":
-		Log.line("LAUNCHER the launcher update %s is applied at the next start with a window" % tag)
-		return {"exit": false, "message": message}
+	# lane ONEZIP-1 (closes S-4480): the swap also runs without a window, on Windows too (a game started directly runs this launcher that
+	# way); tools/release/onezip_windows_test.py kills it at every step natively and under Wine
 	var helper := staged.path_join(updater.launcher_files()[0])
 	# round 3: the staged files are checked against the signed manifest NOW, and the journal takes the executable's SHA-256 from it (a
 	# file swapped into update/ after staging used to be run unchecked: the helper only compared the file with itself)
@@ -263,7 +268,9 @@ static func _helper(updater: RefCounted, dir: String, user_args: PackedStringArr
 		_end_journal()
 		return {"exit": true, "message": ""}
 	for d in DOCS:
-		if FileAccess.file_exists(own.get_base_dir().path_join(d)):
+		# lane ONEZIP-1: a launcher staged from a combined package brings no documents (update/ holds its executable only), and the
+		# folder of a combined package keeps the game's own VERSION file (Updater.bundled reads it)
+		if FileAccess.file_exists(own.get_base_dir().path_join(d)) and not FileAccess.file_exists(dir.path_join(Updater.GAME_EXE[info.platform()])):
 			DirAccess.copy_absolute(own.get_base_dir().path_join(d), dir.path_join(d))
 	j.state = "placed"
 	_write_journal(j)

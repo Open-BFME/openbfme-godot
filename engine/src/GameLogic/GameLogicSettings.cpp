@@ -219,6 +219,10 @@ const FieldParse kAIDataFields[] = {
 	{ "GuardEnemyReturnScanRate", parseNoting<INI::parseDurationUnsignedInt>, SEEN_DATA(SEEN_GUARD_RETURN), (int)offsetof(BlockState, values.guardEnemyReturnScanRate) },
 	{ "AlertRangeModifier", parseNoting<INI::parseReal>, 0, (int)offsetof(BlockState, values.alertRangeModifier) },
 	{ "AggressiveRangeModifier", parseNoting<INI::parseReal>, 0, (int)offsetof(BlockState, values.aggressiveRangeModifier) },
+	// lane BACKLOG6: UseFormations (row RW 0xC1CE90, parseBool RW 0x42E558, AIData + 0xBD): the gate of AIGroup RW 0x774897's formation group manager
+	{ "UseFormations", parseNoting<INI::parseBool>, 0, (int)offsetof(BlockState, values.useFormations) },
+	// lane BACKLOG6: MinDistanceForGroup (row RW 0xC1D390, parseReal RW 0x42ED00, AIData + 0x6C): RW 0x76F115 (the group ground path) refuses a group that is nearer than this
+	{ "MinDistanceForGroup", parseNoting<INI::parseReal>, 0, (int)offsetof(BlockState, values.minDistanceForGroup) },
 	{ nullptr, noteUnapplied, nullptr, 0 }
 };
 const FieldParse kMultiplayerFields[] = {
@@ -470,6 +474,10 @@ void GameLogicSettings::crc(StateHasher &h) const
 {
 	h.addBool(enableRepulsors);
 	h.addFloat(repulsedDistance);
+	if (!useFormations) // lane BACKLOG6: only a value other than the constructor's adds to the hash (the retail value leaves every earlier hash as it was)
+	{
+		h.addU32(0x55464D30u); // "UFM0"
+	}
 	h.addBool(guardRulesLoaded); // lane PLAY-4
 	h.addU32(guardChaseUnitsFrames);
 	h.addU32(guardEnemyScanRate);

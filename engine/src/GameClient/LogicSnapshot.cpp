@@ -175,6 +175,7 @@ std::shared_ptr<const LogicSnapshot> LogicSnapshot::build(GameLogic &logic, cons
 		s.angle = o->getOrientation();
 		s.position = *o->getPosition();
 		s.hasRecorded = o->hasRecordedTransform();
+		s.teleported = o->wasTeleportGatheredAt(snap->frame); // lane BACKLOG4: RW 0x674B1F(1) ran in this frame
 		if (s.hasRecorded)
 		{
 			// RW 0x6725C9 / 0x68EF2F / 0x6725DC: the recorded transform, its translation, the previous translation (+0x1A5 is set with every record)

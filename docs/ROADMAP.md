@@ -324,16 +324,19 @@ Windows run), not just at U5.
 ### M9 - Campaigns, War of the Ring and the rest
 
 State: the campaign plays mission by mission (SCRIPT-1..3, CAMP-1H, CAMP-2:
-scripts, narration, VP6 movies); no save game or campaign menu (S-1360).
-Create-a-Hero records play in a game (HERO-2), the builder screen does not
-exist yet. War of the Ring not started.
+scripts, narration, VP6 movies); missions save and load, but there is no campaign-progress saving as in the original and no campaign menu (S-1360).
+Create-a-Hero works (HERO-2, CAH-1: the builder screen, colours, saving).
+War of the Ring not started.
 
 Gate: every campaign mission and the tutorials complete as in retail; War of
 the Ring and Create-a-Hero work.
 
 - SCRIPT-1..3: map script engine (SCB conditions and actions, teams, waypoints,
   timers, counters), camera scripts and cinematics, EVA and objectives.
-- CAMPAIGN-1: BFME2 good/evil campaigns, RotWK Angmar campaign, epilogue.
+- CAMPAIGN-1: the RotWK Angmar campaign and epilogue.
+- CAMPAIGN-2: **the BFME2 Good and Evil campaigns**: an owner-stated goal (2026-10-14), after the RotWK campaign. They are
+  BFME2's own story missions with their scripts, movies and the campaign map between missions, played from the BFME2 install the
+  game already reads.
 - WOTR-1: War of the Ring (living world map, StrategicHUD family), including
   multiplayer War of the Ring.
 - CAH-1: Create-a-Hero.

@@ -4,11 +4,13 @@
 #
 #   tools/release/windows_player_walk.sh <tag> [<owner>/<repo>]
 #
-# In a fresh folder under the Windows %TEMP% (removed at the end, also on failure): download the launcher zip and SHA256SUMS-<tag>.txt
-# from the GitHub release with curl, check the zip's SHA-256, unpack it, let the launcher install the game of the preview / stable
-# channel (the tag's channel) from the real release (--install=<tag>: that release, also when a newer one exists, Sol r1; its data folder
-# is <temp>\appdata, through APPDATA, so the player's real %APPDATA% is not touched), write install-paths.cfg from the registry entries the retail installers write (as the first-run screen would
-# remember them), start the installed OpenBFME.console.exe --headless --quit-after 400 and judge its log with windows_start_check.sh.
+# In a fresh folder under the Windows %TEMP% (removed at the end, also on failure): download the release's ONE zip (lane ONEZIP-1: the
+# game and the launcher together) and SHA256SUMS-<tag>.txt from the GitHub release with curl, check the zip's SHA-256, unpack it; the
+# launcher must offer the game beside it with no download (--list); then it installs the same release from GitHub, the update path
+# (--install=<tag>: that release, also when a newer one exists, Sol r1; its data folder is <temp>\appdata, through APPDATA, so the
+# player's real %APPDATA% is not touched); write install-paths.cfg from the registry entries the retail installers write (as the
+# first-run screen would remember them), start the unpacked folder's OpenBFME.console.exe --headless --quit-after 400 (a start
+# without a window asks no launcher) and judge its log with windows_start_check.sh.
 # Prints WALK lines; exit 0 = every step passed.
 set -uo pipefail
 TAG=${1:?usage: windows_player_walk.sh <tag> [<owner>/<repo>]}; REPO=${2:-Open-BFME/openbfme-godot}
@@ -32,28 +34,38 @@ SHOWN="%TEMP%\\$(basename "$D")"   # what the WALK lines print: the real %TEMP% 
 trap 'cd /; rm -rf "$D" && echo "WALK removed the temp folder" || echo "WALK could not remove $SHOWN (a process still holds it?)"' EXIT
 cd "$D" || exit 1
 
-LZIP=openbfme-launcher-$TAG-windows-x64.zip
+LZIP=openbfme-$TAG-windows-x64.zip
 step "1 download $LZIP and SHA256SUMS-$TAG.txt"
 curl -fsSLO "$BASE/$LZIP" && curl -fsSLO "$BASE/SHA256SUMS-$TAG.txt" || die "download failed"
 grep -F "  $LZIP" "SHA256SUMS-$TAG.txt" | sha256sum -c - || die "$LZIP does not match SHA256SUMS-$TAG.txt"
 step "2 unpack"
 unzip -q "$LZIP" || die "unzip failed"
-LDIR=$D/openbfme-launcher-$TAG-windows-x64
+LDIR=$D/openbfme-$TAG-windows-x64
 [ -f "$LDIR/OpenBFMELauncher.exe" ] || die "the zip has no OpenBFMELauncher.exe"
+[ -f "$LDIR/OpenBFME.console.exe" ] || die "the zip has no OpenBFME.console.exe (the one download holds the game and the launcher)"
 # an unzip that does not restore the zip's modes (JonathanPC's ~/tools/bin/unzip) leaves the exe without x; under %TEMP% (drvfs) a no-op
-chmod +x "$LDIR/OpenBFMELauncher.exe"
+chmod +x "$LDIR/OpenBFMELauncher.exe" "$LDIR/OpenBFME.console.exe"
 ls "$LDIR"
 mkdir appdata
 LOG=$D/appdata/OpenBFMELauncher/launcher.log
-step "3 OpenBFMELauncher.exe --headless -- --version --channel=$CHANNEL --install=$TAG (data in $SHOWN\\appdata)"
-( cd "$LDIR" && APPDATA="$WD\\appdata" WSLENV=APPDATA timeout 900 ./OpenBFMELauncher.exe --headless -- --version "--channel=$CHANNEL" "--install=$TAG" \
+step "3 OpenBFMELauncher.exe --headless -- --version --channel=$CHANNEL --list (data in $SHOWN\\appdata): the game beside it, no download"
+( cd "$LDIR" && APPDATA="$WD\\appdata" WSLENV=APPDATA timeout 900 ./OpenBFMELauncher.exe --headless -- --version "--channel=$CHANNEL" --list \
   </dev/null > "$D/launcher.out" 2>&1 ); rc=$?
 # a GUI-subsystem exe: its stdout may not reach WSL; launcher.log has every LAUNCHER line
 [ -f "$LOG" ] && tr -d '\r' < "$LOG" | sed 's/^[^ ]* \[[0-9]*\] //' | grep '^LAUNCHER'
 [ $rc = 0 ] || die "the launcher exited $rc"
-GAME=$D/appdata/OpenBFMELauncher/versions/$TAG/game
-[ -f "$GAME/OpenBFME.console.exe" ] || die "the launcher did not install $TAG (no OpenBFME.console.exe in $SHOWN\\appdata\\OpenBFMELauncher\\versions\\$TAG\\game)"
-step "4 installed $TAG: $(ls "$GAME" | tr '\n' ' ')"
+tr -d '\r' < "$LOG" | grep -qF "LAUNCHER installed $TAG (the game beside the launcher)" \
+  || die "the launcher does not offer the game beside it ($TAG): a new player would have nothing to play before a download"
+[ ! -e "$D/appdata/OpenBFMELauncher/versions" ] || die "the launcher downloaded a version although the game is beside it"
+step "3b OpenBFMELauncher.exe --headless -- --install=$TAG (the update path, from the real release)"
+( cd "$LDIR" && APPDATA="$WD\\appdata" WSLENV=APPDATA timeout 900 ./OpenBFMELauncher.exe --headless -- "--channel=$CHANNEL" "--install=$TAG" \
+  </dev/null > "$D/launcher.out" 2>&1 ); rc=$?
+tr -d '\r' < "$LOG" | sed 's/^[^ ]* \[[0-9]*\] //' | grep '^LAUNCHER' | tail -6
+[ $rc = 0 ] || die "the launcher exited $rc"
+INST=$D/appdata/OpenBFMELauncher/versions/$TAG/game
+[ -f "$INST/OpenBFME.console.exe" ] || die "the launcher did not install $TAG (no OpenBFME.console.exe in $SHOWN\\appdata\\OpenBFMELauncher\\versions\\$TAG\\game)"
+step "4 installed $TAG: $(ls "$INST" | tr '\n' ' ')"
+GAME=$LDIR
 UD=$D/appdata/Godot/app_userdata/OpenBFME
 mkdir -p "$UD"
 printf 'ROTWK_INSTALL=%s\r\nBFME2_INSTALL=%s\r\n' "$RW" "$B2" > "$UD/install-paths.cfg"

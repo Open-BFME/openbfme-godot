@@ -41,7 +41,7 @@
 //   * lane AI-2, the dozer manager (AIPlayer + 0x140) and the AIPlayer object events: see AIDozerManagerState, onObjectEntered (RW 0x8F069A), onObjectLeft
 //     (RW 0x8F0C47 with RW 0x8F0BBC and the rebuild RW 0x90D16A), onDozerIdle (RW 0x8F0660), onStructureBuilt (RW 0x8F06FF) and updateDozerManager (RW 0x9A23A4 /
 //     0x9A221E / 0x9A19E0) in AIBaseBuilder.cpp; the processor's code 8 waits only while the dozer manager lists a DOZER_FACTORY (RW 0x8F0F8F); stop S-890.
-// What is ported: all of the above. Not ported (stop S-413 / S-414): the other sub systems, the fortress rebuild task (AIBase + 0x28, RW 0x9BC882), the
+// What is ported: all of the above and (lane BACKLOG6) the fortress rebuild task (AIBase + 0x28, RW 0x9BC882). Not ported (stop S-413 / S-414): the other sub systems, the
 // money reserve of a request (+ 0x21), RW 0x97DAFC (the burning terrain cell scan: no terrain fire system, S-191, so it never objects); since lane AI-2 the
 // free list and the request completion follow RW's events (inferences: S-890).
 
@@ -121,6 +121,7 @@ struct AIBaseInstance
 	std::string templateMap;       ///< the chosen template's Map (hash / report)
 	Coord3D position;              ///< + 0x18
 	float angle = 0.0f;            ///< + 0x24
+	std::shared_ptr<AIBuildRequest> fortress; ///< + 0x28 the fortress rebuild task (RW 0x9BC882; lane BACKLOG6)
 };
 
 // AIUnitBuilder (AIPlayer + 0x38, vtable RW 0xC88288, ctor RW 0x9A12A1)
@@ -182,6 +183,7 @@ struct AIBuildState
 	unsigned long long executed = 0, failed = 0, waitedForMoney = 0, waitedForDozer = 0; ///< structure executions; failures and waits of every request
 	std::uint32_t nextSerial = 1;       ///< port only: the next AIBuildRequest::serial
 	unsigned long long rebuilds = 0, requeuedForDozerDeath = 0; ///< lane AI-2: RW 0x90D16A restarts; RW 0x8F0C03 requests sent back after their dozer died
+	unsigned long long fortressRebuilds = 0; ///< lane BACKLOG6: fortress rebuild tasks made by RW 0x9BC882 (report)
 };
 
 namespace AIBaseBuilder

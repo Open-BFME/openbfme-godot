@@ -148,7 +148,8 @@ Not reproduced by `package.sh`, recorded instead:
    the packaged executable, and the smoke test on the packaged pack and library.
    The package is checked against an ALLOWLIST (`audit_package.py --release`): exactly the
    release's files (the executable(s), the GDExtension library, `OpenBFME.pck`,
-   `README_TESTERS.txt`, `LICENSE`, `NOTICE`, `VERSION`); executables with nothing appended
+   `README_TESTERS.txt`, `LICENSE`, `NOTICE`, `VERSION`, and since ONEZIP-1 the launcher's
+   executable with its embedded pack and `README_LAUNCHER.txt`); executables with nothing appended
    after their ELF / PE image; a pack holding only this project's resource types, each in
    its format (scenes and scripts are text, `project.binary` and the UID cache are parsed to
    their end) and with no retail or container signature inside; archives whose
@@ -158,7 +159,7 @@ Not reproduced by `package.sh`, recorded instead:
    be empty; next to the archives come `SHA256SUMS-<version>.txt` and
    `BUILDINFO-<version>.txt`.
 5. Keep `known_issues.json` current: a stop that is resolved and removed from
-   `STOPS.md` makes the README generator fail until the item is updated.
+   `STOPS.md` makes the README generator fail until the item is updated. Every item has an `area` of the patch notes (`AREAS`).
 
 Publishing (Discord, GitHub releases) needs the owner's OK, except pre-releases: the owner gave a standing approval
 (2026-10-09) to publish `v<major>.<minor>.<patch>-preview.<n>` releases automatically, without asking each time (see "Automatic
@@ -167,8 +168,9 @@ the automatic releases now publish. A stable (non-pre-release) release still nee
 
 ## The launcher (LAUNCH-1)
 
-Testers download the **OpenBFME Launcher** first (`openbfme-launcher-<version>-linux-x64.tar.gz` /
-`-windows-x64.zip`, made by `package.sh` next to the game packages). It checks the project's GitHub
+Testers download one archive per platform, the game and the **OpenBFME Launcher** together (see "One archive"
+below; until ONEZIP-1 the launcher was its own download, `openbfme-launcher-<version>-linux-x64.tar.gz` /
+`-windows-x64.zip`). The launcher checks the project's GitHub
 Releases, installs a new game build after verifying it, and starts the game. It is a separate small Godot
 project, `launcher/`: no GDExtension, no game files, its own process. A broken game build cannot break
 updating: the launcher never loads game code, it only starts `OpenBFME.x86_64` / `OpenBFME.exe` of a
@@ -189,7 +191,7 @@ verified version folder, with no arguments. The game's first-run screen still fi
 
 The repository is a build-time setting (`package.sh --repo`, default `Open-BFME/openbfme-godot`).
 
-**A release** carries, besides the four archives and `SHA256SUMS-<v>.txt`:
+**A release** carries, besides the archives (see "One archive") and `SHA256SUMS-<v>.txt`:
 - `manifest.json` (`tools/release/make_manifest.py`). It holds format 2, the product, the repo, the
   version (the tag), the channel (`preview` exactly when the tag is `-alpha.<n>` or `-preview.<n>`), the date, the
   commit, and per kind (`game`, `launcher`) and platform (`linux-x64`, `windows-x64`) the asset name,
@@ -336,8 +338,8 @@ releases"):
    - The format is OpenSSL's PKCS#8, so `openssl pkeyutl -verify -rawin -pubin` checks signatures
      independently.
 2. `tools/release/package.sh --out <dir> --platforms linux,windows --windows-dll <dll>`. This also
-   builds the launchers. It fails without `launcher/release_key.pub`; `--no-launcher` gives a game-only
-   trial.
+   builds the launchers and puts each into its platform's package ("One archive"). It fails without
+   `launcher/release_key.pub`; `--no-launcher` gives a game-only trial.
 3. `python3 tools/release/make_manifest.py <dir>`. The version must be a tag on the commit.
 4. On the offline machine: `python3 tools/release/sign_manifest.py --key <key> <dir>/manifest.json`.
 5. `tools/release/publish_release.sh <dir>` is a dry run. It checks the manifest against the archives,
@@ -376,6 +378,86 @@ releases"):
   `files/lib/vkd3d/x86_64-windows/libvkd3d-*.dll` in the prefix's `system32`. Natively, it takes
   prebuilt launchers (`--launchers`, `--key`) and points `APPDATA` into its work folder, which Godot
   follows on native Windows. Under Wine Godot does not follow it, so the prefix's own folder is cleared.
+
+### One archive (ONEZIP-1)
+
+The owner (2026-10-13): two downloads per platform, a launcher and a game-only archive, are confusing, and the
+one without the other does not update. So there is **one archive per platform**, `openbfme-<version>-windows-x64.zip`
+and `openbfme-<version>-linux-x64.tar.gz`: the game's files plus `OpenBFMELauncher.exe` / `.x86_64` (one file, its pack
+embedded) and `README_LAUNCHER.txt`. `package.sh` builds the launcher first and puts its executable into the game's
+package; `audit_package.py --release linux|windows` is that combined set.
+
+**The signed payload inventory (ONEZIP-1 r2).** The archive cannot hold a signature of itself (the manifest names
+the archive's SHA-256), so it carries a signature of its FILES: `payload.json` lists every file of the package with
+its size and SHA-256, `payload.json.sig` signs it with the release key. `tools/release/seal_package.py seal` adds both on
+the machine with the key, after `package.sh --verify` and before `make_manifest.py` (autorelease.sh step 6), and
+rewrites the archive with make_archive.py at its own time stamp; `package.sh --verify` compares a sealed package without
+the two files and checks the seal under `launcher/release_key.pub`.
+
+**Ready to play.** The launcher treats the game beside itself as installed (`Updater.bundled`) only when that
+inventory verifies under its release key for its repository and platform, and the package's `VERSION` names the
+signed version. Before Play every file is checked against it, strictly: a changed, missing or extra file, or a
+launcher executable that is neither the package's nor a signed launcher update (the release manifest of that
+update beside it, `launcher-manifest.json` + `.sig`, written when the new launcher confirmed its start), refuses the
+start by name. No case runs unchecked (S-4481 is closed). An update check never downloads the same version again.
+The folder is never written by an update: updates go to `versions/<version>/` in the data folder, as before.
+
+**One updater.** The game has no downloader. Started directly, it first checks that the launcher beside it is a
+signed one (`godot/scripts/release/launcher_check.gd`: the same inventory and proof, with the launcher's own Ed25519
+code, byte for byte; the key and repository are written into the game's pack by package.sh), then runs it without a
+window and detached from the game's console, `OpenBFMELauncher --headless -- --game-start=<request folder>`
+(`godot/scripts/release/update_handover.gd`, `launcher/scripts/core/game_start.gd`, protocol 2):
+1. The launcher answers from the disk alone which version this start plays, by the launcher's unchanged rule
+   (the player's pick, else the newest installed, else the game's own folder). For another installed version it
+   checks every file against the signed manifest, holds the version under the versions lock, and answers
+   `start <version>`; the GAME then starts that version itself, with its own arguments after `--` (user arguments,
+   never engine options), reports the process id (the launcher records it as a running game) and closes.
+2. Only the game starts a game, and only while it waits: its deadline is a hard 3 seconds from the start of the
+   hand-over. With no answer by then it closes the request and starts; a later answer is not read. An answer that is
+   not exactly the protocol's is refused by name; every write is checked (a full disk ends the hand-over by name).
+3. Then the launcher checks for an update in the background while the game runs: install into the data
+   folder, stage its own update. Its state is one line the game shows in the corner of its menus. A newer version
+   is used from the next start. A failure is named there and kept for the launcher's window.
+4. Not asked: a game the launcher started or installed, a run without a window or with scripted options,
+   `--no-update-check`, a folder without the launcher.
+The update part runs under the launcher lock; an open launcher window keeps looking after updates itself, and a
+window opened during a background download takes it over (the download resumes).
+
+**The launchers published before ONEZIP-1** (v0.3.0-preview.1 .. 6, v0.4.0-alpha.1 .. 4) accept only a format 2
+manifest with exactly `assets.game` and `assets.launcher`, each named `openbfme[-launcher]-<version>-<platform>`,
+unpacked under a top folder of that name, with exactly the signed files. So:
+- the combined archive IS the `game` asset (same name, same top folder, `OpenBFME` at its root): an old launcher
+  installs it as its game; the launcher executable inside it is one more file of the version folder;
+- every release still carries `openbfme-launcher-<version>-<platform>` (the launcher alone), which those launchers
+  update themselves from. Nobody downloads it by hand; the notes say so in one line.
+A launcher from ONEZIP-1 on takes its own update out of the combined package (`Manifest.launcher_source`: the
+launcher executable is a signed file of the game package) and never fetches the launcher-only archive.
+`tools/release/test_onezip_published.py` runs the published builds of every old version against such a release.
+
+**The target page: one archive per platform.** `OPENBFME_RELEASE_LEGACY_LAUNCHERS=0 autorelease.sh` (that is
+`package.sh --no-legacy-launchers`, `make_manifest.py --format 3`) leaves the launcher-only archives out: the
+release is two archives, `manifest.json`, `manifest.json.sig` and `SHA256SUMS`. Format 3 is format 2 without
+`assets.launcher`; the launchers from ONEZIP-1 on read both. A launcher published before ONEZIP-1 refuses such a
+release by name ("format 3 (this launcher reads format 2)") and stays on what it has (stop S-4482). That makes
+format 2 with the launcher-only archives a release constraint for as long as those launchers must keep updating; time
+alone does not prove they have (there is no telemetry), so the switch is the owner's call.
+
+**The launcher replaces itself also without a window** (S-4480 is closed): a game started directly runs it that way,
+and on Windows LAUNCH-1 applied a staged launcher only at a start with a window. The swap is killed at each of its 8
+steps natively on Windows and under Wine (`onezip_windows_test.py`, "headless self-replacement").
+
+**Checking it.**
+- `tools/release/test_onezip.py`: the launcher against the local stand-in of GitHub: the combined package installed and the launcher
+  staged out of it (formats 2 and 3), the game beside the launcher, a game start (offline, rate-limited, a newer release, a tampered
+  one, updating off, a launcher window open or opened meanwhile, hostile requests), and the game's side of the hand-over.
+- `tools/release/test_onezip_published.py` (Linux) and `tools/release/onezip_windows_test.py` (Windows: `--wine`, or
+  `onezip_windows_native.sh` from WSL on a real Windows, without a window): the PUBLISHED launcher of every old version updates to a
+  one-download release. A published launcher trusts only the real release key and GitHub, so the test changes two values of the build
+  information in its embedded pack (the key, `test_build`), nothing else. That is protocol and layout evidence, not a production-key
+  end-to-end proof (the real key and GitHub are not in the test).
+- `tools/release/onezip_play_test.py`: the packaged game with its window, started directly from the unpacked package: offline, a
+  newer release installed in the background, the next start running the newer version, `--no-update-check`.
+- `tools/release/windows_player_walk.sh <tag>` after a release: a new Windows player's first start from the one zip.
 
 ### The alpha builds (RELNAME-1)
 
@@ -518,19 +600,40 @@ ref, so a tag or branch named like the abbreviation cannot stand in for it.
    - no e-mail address but the noreply ones (`<id>+<login>@users.noreply.github.com`, `noreply@anthropic.com`).
 
    The fixed attribution lines are not checked.
-8. **Notes** (`tools/release/autorelease.py notes`) come from the first-parent commit subjects since the notes baseline, written for
-   players: "What's new", "What's fixed" and the known issues of `known_issues.json`. A subject is cut down to plain words (no lane
-   ids, binary addresses, stop ids or review verdicts). Commits that change nothing a player runs are left out. A
-   `Release-note: <text>` line in a commit message is used as written (`Release-note: Fix: ...` for a fix, `Release-note: none` to
-   leave a commit out). A merge whose subject is not plain enough should carry one. Every line is neutralised, `Release-note:`
-   text and known issues included:
+8. **Notes** (`tools/release/autorelease.py notes`) are patch notes in a studio's shape, written for players: a title line, the date and
+   the build kind, the install sentence, the "Which file to download" table, then the sections **Added**, **Changed**, **Bug fixes**,
+   **Removed** and **Known issues** (a section without lines is left out). Inside a section the bullets sit under a bold area line;
+   the areas have a fixed list and order (`AREAS` in `autorelease.py`: Gameplay, Units and heroes, Buildings, AI, Campaign,
+   Create-a-Hero, Interface, Audio, Graphics, Performance, Online, Saves, Replays and LAN, Launcher and install, Linux), a line
+   without an area goes under General, printed last. "Changed" is for what is neither new nor a fix: balance and behaviour changes,
+   performance work, system requirements. The known issues come from `known_issues.json`, each entry with its `area`.
+
+   *Rules for authors.* Every commit that a player would notice carries one `Release-note:` line per change:
+   `Release-note: Fixed [Interface]: A left click on empty ground deselects.` The kind is `Added`, `Changed`, `Fixed` or `Removed`,
+   the area one of the list in brackets. One change per line, in player words, one or two short sentences: no lane names, stop ids,
+   addresses or file names, no ";" joining two changes, under about 200 characters. Things testers reported as bugs are `Fixed`, not
+   `Added`. `Release-note: none` leaves a commit out. Still accepted: `Release-note: text` (Added, or Fixed when the words say so),
+   `Release-note: Fix: text`, several lines per commit. `autorelease.sh --plan` prints a `NOTES WARNING` line for a note that looks
+   like several changes or names an unknown area; fix it before the gate (a warning never fails a release). Without any
+   `Release-note:` line a commit that changes what a player runs gets a line made of its subject (cut down to plain words: no lane
+   ids, binary addresses, stop ids or review verdicts, Added or Fixed by its words, no area): hand-written lines are better.
+
+   *The section titles.* Launchers up to v0.4.0-alpha.3 read the Play card's lines from the sections titled exactly "What's new",
+   then "What's fixed", and print every `#` line as it stands. This tree's launcher reads both title sets. While launchers that read
+   only the old titles are installed, the generator writes "What's new" for Added and "What's fixed" for Bug fixes (`--titles bridge`,
+   `DEFAULT_TITLES`; Changed, Removed and Known issues are the same in both), so an old launcher's Play card still has its lines.
+   Once a release with the new launcher is out and the installed launchers have updated themselves, set `DEFAULT_TITLES` to
+   `"studio"` (Added, Bug fixes). `fixtures/notes_view.gd` shows what each launcher reads from a page.
+
+   Every line is neutralised, `Release-note:` text and known issues included (the kind and area words are closed sets: an unknown
+   area is General, and never printed):
    - URLs are removed;
    - `@` and `#` are written full-width (GitHub links neither), and `GH-<n>` gets a non-breaking hyphen;
    - the Markdown (the notes, the PR body) escapes every special character, with `& < >` as HTML entities.
 9. **Publish**: the trusted checkout's `publish_release.sh <dir> --notes-file <notes> --execute --confirm-tag <tag>`. `--confirm-tag`
    works for preview tags only; a stable release still waits for the typed tag. After every check of the dry run:
    1. The tag on GitHub must be the manifest's commit, and no release may exist for it.
-   2. A draft is created through the API, the seven assets are uploaded, and the draft is read back: exactly those assets, uploaded,
+   2. A draft is created through the API, the release's assets are uploaded, and the draft is read back: exactly those assets, uploaded,
       each with the size and SHA-256 of the signed manifest (the checksum file, `manifest.json` and its signature hashed locally;
       `release_assets.py`).
    3. The draft is published and read back again.

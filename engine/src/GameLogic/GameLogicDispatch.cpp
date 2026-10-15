@@ -296,6 +296,15 @@ void GameLogicDispatch::cancelUnitCreate(const GameMessage &m)
 	pu->cancelUnitCreateByType(tmpl, a2->boolean);
 }
 
+const char *const kStopContainRally =
+	"[S-4320] MSG_SET_RALLY_POINT on an object with a contain and no exit module: RotWK's Object::getObjectExitInterface answers the contain's exit interface "
+	"(RW 0x68BB37) and its setRallyPoint keeps the point (RW 0x865679); the contain fallback is not wired, the rally point is not set";
+
+const char *GameLogicDispatch::containRallyStopLine()
+{
+	return kStopContainRally;
+}
+
 // RW 0x77A26C / 0x779544 / 0x7798D5
 void GameLogicDispatch::setRallyPoint(const GameMessage &m)
 {
@@ -316,6 +325,11 @@ void GameLogicDispatch::setRallyPoint(const GameMessage &m)
 		ExitInterface *exit = o.getObjectExitInterface();
 		if (!exit)
 		{
+			if (o.getContain())
+			{
+				// lane BACKLOG-1: RW 0x68BB37 answers the contain's exit interface here and its setRallyPoint (RW 0x865679) takes the point: not wired (S-4320)
+				m_logic.noteStop(kStopContainRally);
+			}
 			return;
 		}
 		if (tgt)

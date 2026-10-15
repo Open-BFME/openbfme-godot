@@ -17,6 +17,7 @@
 #include "GameLogic/Object/Contain/HordeContainRuntime.h"
 #include "GameLogic/Object/Contain/OpenContainRuntime.h"
 #include "GameLogic/Object/Object.h"
+#include "GameLogic/Combat/CombatState.h"
 #include "GameLogic/Object/RetailObjectWorld.h"
 
 #include <godot_cpp/core/class_db.hpp>
@@ -32,6 +33,8 @@ void GameWorld::bindGarrisonMethods()
 	ClassDB::bind_method(D_METHOD("debug_set_weapon_set_flag", "id", "flag", "on"), &GameWorld::debug_set_weapon_set_flag);
 	ClassDB::bind_method(D_METHOD("debug_ai_attack", "id", "target"), &GameWorld::debug_ai_attack);
 	ClassDB::bind_method(D_METHOD("debug_ai_move", "id", "x", "y"), &GameWorld::debug_ai_move);
+	ClassDB::bind_method(D_METHOD("debug_set_auto_acquire", "on"), &GameWorld::debug_set_auto_acquire); // lane ATTACK-1
+	ClassDB::bind_method(D_METHOD("debug_build_complete", "id"), &GameWorld::debug_build_complete);     // lane ATTACK-1
 	ClassDB::bind_method(D_METHOD("order_toggle_formation", "horde"), &GameWorld::order_toggle_formation); // lane COMBAT-3
 }
 
@@ -76,6 +79,46 @@ Dictionary GameWorld::debug_ai_move(int64_t id, double x, double y)
 		return r;
 	}
 	ai->aiMoveToPosition(Coord3D{ (float)x, (float)y, 0.0f }, CMD_FROM_AI); // the AI's own move (a horde's members keep their targets: no group order)
+	r["ok"] = true;
+	return r;
+}
+
+Dictionary GameWorld::debug_set_auto_acquire(bool on)
+{
+	// a viewer-scenario hook only (lane ATTACK-1's proof scene): it changes the simulation without a command, so never in a started skirmish, a network game
+	// or under the logic worker
+	Dictionary r;
+	r["ok"] = false;
+	if (!m_game || m_start || m_netHost || m_netClient || m_netStarted || m_netSession || m_game->logicThread())
+	{
+		r["error"] = "debug hook refused: no loaded viewer game, or a started / network game or a logic worker is running";
+		return r;
+	}
+	const auto worldContext = m_world ? m_world->enterContext() : nullptr;
+	m_game->logic().combat().setAutoAcquireEnabled(on);
+	r["ok"] = true;
+	r["auto_acquire"] = m_game->logic().combat().autoAcquireEnabled();
+	return r;
+}
+
+Dictionary GameWorld::debug_build_complete(int64_t id)
+{
+	// a viewer-scenario hook only (lane ATTACK-1's proof scene), refused like debug_ai_attack
+	Dictionary r;
+	r["ok"] = false;
+	if (!m_game || m_start || m_netHost || m_netClient || m_netStarted || m_netSession || m_game->logicThread())
+	{
+		r["error"] = "debug hook refused: no loaded viewer game, or a started / network game or a logic worker is running";
+		return r;
+	}
+	const auto worldContext = m_world ? m_world->enterContext() : nullptr;
+	::Object *o = m_game->logic().findObjectByID((::ObjectID)id);
+	if (!o)
+	{
+		r["error"] = "no such object";
+		return r;
+	}
+	o->friend_onBuildComplete();
 	r["ok"] = true;
 	return r;
 }

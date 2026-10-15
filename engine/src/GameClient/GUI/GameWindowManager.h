@@ -136,6 +136,21 @@ public:
 	// The open combo box: a click anywhere outside its parts closes its list (ZH winSetLoneWindow / winProcessMouseEvent tail).
 	void winSetLoneWindow(GameWindow *window);
 	GameWindow *winGetLoneWindow() { return m_loneWindow; }
+	// lane OPTS-4 (Sol r1): THE rule of an open drop-down list, for drawing (AptGadgetLayer::buildDrawList) and input (winProcessMouseEvent) alike: the
+	// lone window while its list shows (a combo box's list box not hidden, an image combo box open), it and every ancestor shown and enabled, and no
+	// modal window above it (the modal head is neither it nor one of its ancestors: a modal pushed after it). Nested combo boxes count. Null: none.
+	// INFERENCE (S-3503): RotWK draws a component at its placeholder's depth (RW 0x814BEC -> 0x6C1B52) and its routing over an open list was not
+	// read; drawing the open list last and giving it the pointer inside it is the port's
+	GameWindow *winGetOpenDropDown();
+	// the clip region the draw keeps for the open list (an ancestor's, AptGadgetLayer::buildDrawList): the pointer outside it is not the list's. Null: none
+	void setOpenDropDownClip(const IRegion2D *clip)
+	{
+		m_openDropDownClipped = clip != nullptr;
+		if (clip)
+		{
+			m_openDropDownClip = *clip;
+		}
+	}
 	void winNextTab(GameWindow *) {}
 	void winPrevTab(GameWindow *) {}
 
@@ -204,6 +219,8 @@ private:
 	GameWindow *m_grabWindow = nullptr;
 	GameWindow *m_currMouseRgn = nullptr;
 	GameWindow *m_loneWindow = nullptr;
+	bool m_openDropDownClipped = false; // lane OPTS-4
+	IRegion2D m_openDropDownClip{};
 	std::vector<GameWindow *> m_modal; // the head is the last element
 	GameWindow *m_drawWindow = nullptr;
 	GameWindow *m_drawRoot = nullptr; // lane MENU-1: the top-level window winRepaint is drawing (GadgetDrawCommand::root)

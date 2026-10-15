@@ -104,3 +104,6 @@ workspace/agents/
 /launcher/.godot/
 # written by tools/release/package.sh into the staged launcher (version, commit, repo, release key): never committed
 /launcher/build_info.json
+
+# Replays a test run writes under a relative name when it is cut short (GitHub #23; run_tests.bat runs the tests from engine/build)
+*.replay

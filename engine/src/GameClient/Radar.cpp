@@ -447,7 +447,9 @@ std::vector<std::string> Radar::acceptanceStops()
 {
 	return {
 		"[S-1674] radar events (HUD-4): Space visits the radar's events as RW 0x5DCB28 (the next one while the window lasts, else the first; the view looks at it); "
-		"not ported: the creators of the events (attacks, EVA, scripts, the movie's pings) and the window's source (TheRadar + 0x90, 0 here): no event exists in a game yet",
+		"lane BACKLOG3: the list is TheEva's (RW 0xDE3670 + 0x68) and the scripts' radar event actions put their position at its front (RW 0x5DD1F3); not ported: "
+		"RW 0x5DD1F3's other callers (EVA events) and the sources of the window (+ 0x90) and of the merge radius (+ 0x94): both 0 here (no writer found); "
+		"OpenBFME keeps the 64 newest positions (retail's list has no bound)",
 		"[S-291] radar (narrowed, RADAR-1): a map with a <map>_art.tga shows it (W3DRadar RW 0x44F3AB) under the ScrollShroud shroud (RW 0x44E3B6); a map without art "
 		"shows a shaded height field, not W3DRadar's terrain texture (RW 0x44F4AD loop not ported); the +0x1494 image is not ported; the objects (RW 0x44F9DA) and the "
 		"view box band (RW 0x50434F) are RotWK's (Radar.h's table)",
@@ -459,8 +461,14 @@ std::vector<std::string> Radar::acceptanceStops()
 		"[S-2451] radar markers (RADAR-1): RadarMarkerClientUpdate (crates: PingOneRing / PingBeacon) and the marker list TheRadar moves (RW 0x44EDAE) are not ported",
 		"[S-2452] radar events (RADAR-1, narrowed): the 64 events (RW 0x6D93EB, tryEvent RW 0x6D9B4D, expiry RW 0x6D8E2B), the attacks of the local player's "
 		"objects (RW 0x67B4B7 -> tryUnderAttackEvent RW 0x6D9BF3) and the Palantir pings (RW 0x44DE58: CreateRadarPing / MoveRadarPing / FadeOutRadarPing) are "
-		"ported; not ported: the other creators (scripts' radar event actions, stealth detection, infiltration, battle plans, the dozer), the RadarEvent sound "
-		"and the under-attack messages / EVA sounds / control bar flash of RW 0x6D9BF3",
+		"ported; lane BACKLOG3: the scripts' radar event actions (RW 0x7BC221 / 0x7BC250 / 0x7C0B61, with TheEva's position RW 0x5DD1F3 for the Space jump), "
+		"the dozer's finished building (RW 0x88E125) and the under-attack messages of RW 0x6D9BF3 are ported; not ported: stealth detection (RW 0x7767A9 / "
+		"0x81ACD7: the types 9 / 8 have no ping in the table RW 0xBDAD30, their effect is the event sound and MESSAGE:StealthNeutralized / StealthDiscovered), "
+		"infiltration (RW 0x6D9A71, one caller RW 0x699784), battle plans (RW 0x89B7AE), RW 0x779A3D / 0x782214 / 0x8A1B9F / 0x8CDCE9, the RadarEvent sound of "
+		"a new event, the MiscAudio sounds and the control bar flash (RW 0x71C7E4) of RW 0x6D9BF3, DOZER:ConstructionComplete; INFERENCE: RW 0x7A07D8's "
+		"Object + 0x94 bit 0 test of TEAM_CREATE_RADAR_EVENT is not read; a script position that is not a finite number is refused by name (a deliberate "
+		"validation difference: retail hands it on), a huge finite one lands in cell 0 as retail's CVTTSS2SI does; the messages reach InGameUI's list, which "
+		"the game does not draw yet (S-283)",
 		"[S-2453] radar gate (RADAR-1): W3DRadar::draw (RW 0x44FE0B) and the radar's clicks draw / work when Player::hasRadar or TheRadar + 0x11; every radar update "
 		"(RW 0x6D8E41, once a client frame) sets + 0x11, the reset clears it: the radar shows from the first client frame of a game. Not ported: Player::hasRadar "
 		"and the RadarUpgrade / RadarUpdate modules (no retail object has one; it never matters while + 0x11 is set), the hidden flag + 0x10 (RW 0x7BCEE2's script "
@@ -1110,8 +1118,11 @@ void Radar::createEvent(const Coord3D &world, int type, float seconds)
 	e.dieFrame = (unsigned)(long long)((double)m_clientFrame + (double)kClientFramesPerSecond * (double)seconds);
 	e.fadeFrame = (unsigned)(long long)((double)e.dieFrame - (double)kClientFramesPerSecond * 0.5);
 	e.worldLoc = world;
-	e.radarX = std::clamp((int)(world.x / xSample), 0, kCells - 1);
-	e.radarY = std::clamp((int)(world.y / ySample), 0, kCells - 1);
+	// lane BACKLOG3: a script's position is a map's data: outside the int range cvttss2si answers 0x80000000 (negative: clamped to 0), which the C++ cast
+	// leaves undefined
+	const auto cell = [](float v) { return (v > -2147483648.0f && v < 2147483648.0f) ? std::clamp((int)v, 0, kCells - 1) : 0; };
+	e.radarX = cell(world.x / xSample);
+	e.radarY = cell(world.y / ySample);
 	e.soundPlayed = false;
 	e.ping = -1;
 	if (++m_nextEvent >= kMaxEvents)
@@ -1146,9 +1157,90 @@ bool Radar::tryEvent(int type, const Coord3D &world)
 
 bool Radar::tryUnderAttackEvent(const Coord3D &position)
 {
-	// RW 0x6D9BF3: tryEvent(UNDER_ATTACK) at the object; when it made one: the control bar's flash (RW 0x71AEC9), the message RADAR:UnitUnderAttack /
-	// HarvesterUnderAttack / StructureUnderAttack / UnderAttack and the MiscAudio under-attack sound are not ported (stop S-2452)
+	// RW 0x6D9BF3: tryEvent(UNDER_ATTACK) at the object; the caller shows underAttackLabel when it made one
 	return tryEvent(RADAR_EVENT_UNDER_ATTACK, position);
+}
+
+const char *Radar::underAttackLabel(const Object &object)
+{
+	// RW 0x6D9C2A ..: the template's KindOf bytes (+ 0x108): + 0x109 & 1 (bit 8) or + 0x108 & 0x200 (bit 9); then bit 16; else bits 7 and 37. The binary's
+	// bit numbers (RotWK's KindOf enumeration RW 0xDA0E68)
+	constexpr unsigned kStructure = 7, kInfantry = 8, kCavalry = 9, kHarvester = 16, kMpCountForVictory = 37;
+	if (object.isKindOf(kInfantry) || object.isKindOf(kCavalry))
+	{
+		return object.isKindOf(kHarvester) ? "RADAR:HarvesterUnderAttack" : "RADAR:UnitUnderAttack";
+	}
+	if (object.isKindOf(kStructure) && object.isKindOf(kMpCountForVictory))
+	{
+		return "RADAR:StructureUnderAttack";
+	}
+	return "RADAR:UnderAttack";
+}
+
+void Radar::noteEvaPosition(const Coord3D &position)
+{
+	// RW 0x5DD1F3 (see Radar.h)
+	if (!m_events.empty())
+	{
+		const Coord3D &first = m_events.front().position;
+		const float dz = position.z - first.z, dy = position.y - first.y, dx = position.x - first.x;
+		if (m_evaMergeRadius * m_evaMergeRadius > dz * dz + dy * dy + dx * dx) // RW 0x5DD255: comiss, jbe skips
+		{
+			if (m_eventCursor == 0)
+			{
+				m_eventCursor = -1; // RW 0x5DD25A: a cursor on the erased node becomes the list's head
+			}
+			else if (m_eventCursor > 0)
+			{
+				--m_eventCursor;
+			}
+			m_events.erase(m_events.begin());
+		}
+	}
+	m_events.insert(m_events.begin(), Event{ position }); // RW 0x75991F: before the first node
+	if (m_eventCursor >= 0)
+	{
+		++m_eventCursor; // the cursor is a node in retail: it stays on its event
+	}
+	// OpenBFME's bound, not retail's (retail's list only grows): the kMaxEvaPositions newest are kept, so a script that makes events without end cannot
+	// grow the client's memory (stop S-1674)
+	if (m_events.size() > kMaxEvaPositions)
+	{
+		m_events.resize(kMaxEvaPositions);
+		if (m_eventCursor >= (int)kMaxEvaPositions)
+		{
+			m_eventCursor = -1; // the cursor's event left the list: the next jump starts from the newest
+		}
+	}
+}
+
+void Radar::noteLogicEvents(GameLogic &logic)
+{
+	const Player *local = logic.players().getLocalPlayer();
+	for (const GameLogic::RadarEventNotice &n : logic.radarEventNotices())
+	{
+		if (n.seq <= m_noticeSeq)
+		{
+			continue;
+		}
+		m_noticeSeq = n.seq;
+		// a radar made while the game runs (a HUD made again) finds up to 64 old notices: one older than an event's 4 seconds would have ended already
+		// (RW 0x6D8E2B) and is not replayed. OpenBFME's rule (retail's radar lives as long as its game)
+		if (logic.getFrame() - n.frame > kNoticeLifeLogicFrames)
+		{
+			continue;
+		}
+		if (n.source == GameLogic::RadarEventNotice::SCRIPT)
+		{
+			// RW 0x7BC221 / 0x7BC250 / 0x7C0B61: createEvent(position, type, 4.0f), then TheEva's position (RW 0x5DD1F3)
+			createEvent(n.position, n.type, 4.0f);
+			noteEvaPosition(n.position);
+		}
+		else if (local && n.playerIndex == local->getPlayerIndex())
+		{
+			createEvent(n.position, n.type, 4.0f); // RW 0x88E125
+		}
+	}
 }
 
 void Radar::noteAttacks(GameLogic &logic)
@@ -1182,7 +1274,10 @@ void Radar::noteAttacks(GameLogic &logic)
 		captureObject(logic, *o, local, e);
 		if (e.listed)
 		{
-			tryUnderAttackEvent(*o->getPosition());
+			if (tryUnderAttackEvent(*o->getPosition()))
+			{
+				m_ctx.ui.message(underAttackLabel(*o)); // lane BACKLOG3: RW 0x6D9BF3's message
+			}
 		}
 	}
 }

@@ -378,16 +378,28 @@ class Audit:
 # ---- the release allowlist (review r3: a package is checked against what the release defines, not searched for what it must not hold) ----
 
 # the files of a test package, by platform: name -> kind. Nothing else may be in it, and none of these may be missing.
-RELEASE_FILES = {
+_GAME_FILES = {
     "linux": {"OpenBFME.x86_64": "elf", "openbfme.linux.template_debug.x86_64.so": "elf", "OpenBFME.pck": "pck",
               "README_TESTERS.txt": "text", "LICENSE": "text", "NOTICE": "text", "VERSION": "text"},
     "windows": {"OpenBFME.exe": "pe", "OpenBFME.console.exe": "pe", "openbfme.windows.template_debug.x86_64.dll": "pe", "OpenBFME.pck": "pck",
                 "README_TESTERS.txt": "text", "LICENSE": "text", "NOTICE": "text", "VERSION": "text"},
+}
+RELEASE_FILES = {
+    # lane ONEZIP-1: the release's package of a platform is the combined one: the game's files and the OpenBFME Launcher's executable
+    # (its pack embedded, checked like the launcher package's) with the launcher's README
+    "linux": {**_GAME_FILES["linux"], "OpenBFMELauncher.x86_64": "elf+pck", "README_LAUNCHER.txt": "text"},
+    "windows": {**_GAME_FILES["windows"], "OpenBFMELauncher.exe": "pe+pck", "README_LAUNCHER.txt": "text"},
+    # lane ONEZIP-1 r2: the signed payload inventory, added by seal_package.py on the machine with the release key (the archives package.sh
+    # writes have none yet: OPTIONAL_FILES)
+    # the game alone: package.sh --no-launcher (a local trial, never a release)
+    "game-linux": _GAME_FILES["linux"],
+    "game-windows": _GAME_FILES["windows"],
     # lane LAUNCH-1: the OpenBFME Launcher packages (tools/release/build_launcher.sh)
     # the launcher's pack is embedded in its executable (one file: a self-update replaces it with one rename, Sol r1)
     "launcher-linux": {"OpenBFMELauncher.x86_64": "elf+pck", "README.txt": "text", "LICENSE": "text", "NOTICE": "text", "VERSION": "text"},
     "launcher-windows": {"OpenBFMELauncher.exe": "pe+pck", "README.txt": "text", "LICENSE": "text", "NOTICE": "text", "VERSION": "text"},
 }
+OPTIONAL_FILES = {p: {"payload.json": "text", "payload.json.sig": "sig"} for p in ("linux", "windows")}
 TOP_DIR = re.compile(r"^openbfme-(?!launcher-)[0-9A-Za-z][0-9A-Za-z.+_-]*-(linux|windows)-x64$")
 LAUNCHER_TOP_DIR = re.compile(r"^openbfme-launcher-[0-9A-Za-z][0-9A-Za-z.+_-]*-(linux|windows)-x64$")
 
@@ -621,11 +633,19 @@ def pck_release_problems(name: str, data: bytes, rules: list | None = None) -> l
 
 def release_file_problems(platform: str, files: dict[str, bytes], where: str) -> list[str]:
     """The files of one package (names relative to its top folder) against the allowlist."""
-    allowed = RELEASE_FILES[platform]
+    allowed = dict(RELEASE_FILES[platform])
+    optional = OPTIONAL_FILES.get(platform, {})
+    allowed.update(optional)
     problems = [f"{where}: {n} is not a file of the release" for n in sorted(set(files) - set(allowed))]
-    problems += [f"{where}: {n} is missing" for n in sorted(set(allowed) - set(files))]
+    problems += [f"{where}: {n} is missing" for n in sorted(set(allowed) - set(files) - set(optional))]
+    if (set(optional) & set(files)) and set(optional) - set(files):
+        problems.append(f"{where}: {' and '.join(sorted(optional))} come together")
     for n in sorted(set(files) & set(allowed)):
         kind, data = allowed[n], files[n]
+        if kind == "sig":
+            if len(data) != 64:
+                problems.append(f"{where}/{n}: {len(data)} bytes (an Ed25519 signature is 64)")
+            continue
         if kind in ("elf", "pe"):
             problems += binary_problems(f"{where}/{n}", kind, data)
         elif kind in ("elf+pck", "pe+pck"):
@@ -768,7 +788,7 @@ def check_release(platform: str, path: Path) -> list[str]:
     """A package folder, a package archive, or a SHA256SUMS file (with its archives next to it). `platform`: linux, windows,
     launcher-linux or launcher-windows."""
     where = path.name
-    base = platform.removeprefix("launcher-")
+    base = platform.removeprefix("launcher-").removeprefix("game-")
     if path.is_dir():
         files, problems = {}, []
         for f in sorted(path.rglob("*")):
@@ -852,7 +872,7 @@ def main(argv: list[str]) -> int:
         return 1 if problems else 0
     if argv[0] == "--release":
         if len(argv) < 3 or argv[1] not in RELEASE_FILES:
-            print("usage: audit_package.py --release linux|windows|launcher-linux|launcher-windows <package folder | archive | SHA256SUMS file> ...")
+            print("usage: audit_package.py --release linux|windows|game-linux|game-windows|launcher-linux|launcher-windows <package folder | archive | SHA256SUMS file> ...")
             return 2
         problems = []
         for a in argv[2:]:

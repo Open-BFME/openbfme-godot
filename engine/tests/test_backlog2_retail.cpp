@@ -675,7 +675,7 @@ TEST_CASE("BACKLOG2 r1 determinism: three units on a build site: the draw assign
 	CHECK(a.drawOrder == std::vector<std::string>{ "GondorBoromir", "GondorFaramir", "GondorAragorn" });
 	CHECK(a.goals == std::vector<std::uint32_t>{ 0x4412CD2Bu, 0x458FD561u, 0x440FE5A5u, 0x458EB2F9u, 0x4408C216u, 0x458E2385u });
 	CHECK(a.positions == std::vector<std::uint32_t>{ 0x4413A000u, 0x458FC400u, 0x441DB5ACu, 0x458ED1F8u, 0x43FDF2A9u, 0x458D2F2Bu });
-	CHECK(a.hashes.back() == 0xDD1F4C0Fu);
+	CHECK(a.hashes.back() == 0x88F7D41Bu);   // q11: BACKLOG-1 hashes the contain rally points (was 0xDD1F4C0F); goals and positions unchanged
 	// every unit left the spot it stood on
 	CHECK(a.positions[0] != a.goals[0]);
 }

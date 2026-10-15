@@ -138,6 +138,8 @@ struct GameLogicSettings
 {
 	bool enableRepulsors = true;                     ///< AIData EnableRepulsors (RW 0xDE4B40 + 0x18 + 0x64): the RepulsorHelper condition
 	float repulsedDistance = 0.0f;                   ///< AIData RepulsedDistance (+ 0x60, lane MODULES-3): the safe path radius beyond the vision range
+	bool useFormations = true;                       ///< AIData UseFormations (+ 0xBD, row RW 0xC1CE90 parseBool; the constructor RW 0x6FFDE5 stores 1; lane BACKLOG6): AIGroup RW 0x774897's formation gate
+	float minDistanceForGroup = 100.0f;              ///< AIData MinDistanceForGroup (+ 0x6C, row RW 0xC1D390 parseReal; the constructor stores RW 0xBD88D8 = 100.0f at RW 0x6FFD56; lane BACKLOG6): RW 0x76F115's group move distance
 	// lane PLAY-4: the guard machine's AIData rows (table RW 0xC1CC00 ..: GuardChaseUnitsDuration + 0x3C, GuardEnemyScanRate + 0x40, GuardEnemyReturnScanRate
 	// + 0x44 through parseDurationUnsignedInt RW 0x73A429 (frames); AlertRangeModifier + 0x4C, AggressiveRangeModifier + 0x50 through parseReal RW 0x42ED00);
 	// guardRulesLoaded is true when the loader read the three durations (the guard machine reports their absence)
@@ -359,6 +361,28 @@ public:
 		++m_notedStopHits[text]; // lane QA-1: how often a game meets each stop (diagnostics, not simulation state)
 	}
 	const std::map<std::string, unsigned> &notedStopHits() const { return m_notedStopHits; }
+
+	// lane BACKLOG3 (S-2452): a radar event the logic's code makes for the client's radar. Retail calls TheRadar->createEvent (RW 0x6D98FA) from inside the
+	// logic frame (the scripts' radar actions RW 0x7BC221 / 0x7BC250 / 0x7C0B61, the dozer's finished building RW 0x88E125); here the logic records the event
+	// and the client's Radar reads it between frames (Radar::noteLogicEvents). Client notices only: never read back by the logic, not hashed. The list keeps
+	// the last kRadarEventNotices (the radar's own 64 records, RW Radar + 0x2C); `seq` counts every notice of the game.
+	struct RadarEventNotice
+	{
+		enum Source : std::uint8_t
+		{
+			SCRIPT = 0,       ///< a script's radar event action: an event and TheEva's position (RW 0x5DD1F3) for every client
+			CONSTRUCTION = 1  ///< a dozer's finished building: for the client whose local player controls the dozer (RW 0x88DFC9 -> RW 0x68B749 isLocallyControlled)
+		};
+		std::uint32_t seq = 0;
+		UnsignedInt frame = 0;
+		int type = 0;          ///< RadarEventType as retail passes it (a script's parameter is not checked there either)
+		Coord3D position{ 0.0f, 0.0f, 0.0f };
+		Source source = SCRIPT;
+		int playerIndex = -1;  ///< CONSTRUCTION: the dozer's controlling player
+	};
+	static constexpr size_t kRadarEventNotices = 64;
+	void noteRadarEvent(int type, const Coord3D &position, RadarEventNotice::Source source, int playerIndex);
+	const std::vector<RadarEventNotice> &radarEventNotices() const { return m_radarEventNotices; }
 
 	// lane CAMP-1H: TheGameLogic + 0xA4, the game's difficulty (0 easy, 1 normal, 2 hard, 3 brutal): reset to 1 (GameLogic::reset RW 0x62D3EB),
 	// prepareNewGame (RW 0x77948E) stores the new game message's difficulty here (the script engine's stays 1). Read by the difficulty bonus of a computer
@@ -662,6 +686,8 @@ private:
 	CastleTemplateStore m_castleTemplates;
 	std::set<std::string> m_notedStops;
 	std::map<std::string, unsigned> m_notedStopHits;
+	std::vector<RadarEventNotice> m_radarEventNotices; ///< lane BACKLOG3: oldest first, at most kRadarEventNotices
+	std::uint32_t m_radarEventSeq = 0;
 	ObjectClientHooks *m_clientHooks = nullptr;
 	ObjectCreatedProc m_objectCreatedProc;
 	ScriptEventProc m_scriptEventProc;

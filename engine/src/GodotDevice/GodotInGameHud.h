@@ -96,6 +96,8 @@ public:
 	void set_edge_scroll(bool on);
 	// lane PLAY-1: the free camera (the owner's presentation option, not retail: TacticalCamera::setFreeCamera); also the attach option free_camera
 	void set_free_camera(bool on);
+	void hold_input(bool on);        ///< lane BACKLOG3 (QA): queue _input's events as while the logic worker runs
+	void set_input_enabled(bool on); ///< lane BACKLOG3 (QA): InGameUI's input flag (the scripts' DISABLE_INPUT / ENABLE_INPUT)
 	// lane OPTS-2: the OpenBFME screen's camera / interface settings, live: { scroll_factor_option (Options.ini ScrollFactor text or null), edge_scroll_mode
 	// ("retail" | "always" | "off"), invert_drag_scroll, rotate_speed_scale, alternate_mouse, all_health_bars, health_bar_mode ("retail" | "damaged" |
 	// "always"), ui_scale, free_camera, zoom_out_factor (lane ZOOM-1: the Max zoom-out, 1 = retail), widescreen_wider (lane UI-6: the Widescreen view, false =
@@ -148,6 +150,7 @@ public:
 
 protected:
 	static void _bind_methods();
+	void _notification(int what); ///< lane BACKLOG3 (S-454): the window lost the focus: the keyboard's keys are up (HudInput::resetKeys)
 
 private:
 	void syncModifiers(const InputEventWithModifiers *event);

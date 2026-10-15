@@ -5,6 +5,7 @@
 
 #include "GameClient/GUI/AptGadgetLayer.h"
 #include "GameClient/GUI/Gadgets.h"
+#include "GameClient/GUI/GameTextSource.h"
 
 #include <algorithm>
 #include <cstdlib>
@@ -16,6 +17,7 @@ const char *const kComboSkin = "window/apt/combobox.wnd";
 const char *const kCheckSkin = "window/apt/checkbox.wnd";
 const char *const kSliderSkin = "window/apt/horzslider.wnd";
 const char *const kListSkin = "window/apt/listbox.wnd";
+const char *const kEntrySkin = "window/apt/textentry.wnd"; // lane OPTS-5: the skin of Options.apt's Port Number entry (OnlinePortNum)
 const char *const kFont = "Albertus MT"; // every text of Options.apt's pages (describe_ops: Albertus MT 14 / 16 / 18)
 constexpr int kHeaderSize = 18;
 constexpr int kLabelSize = 16;
@@ -53,21 +55,78 @@ void OpenBFMEOptionsPage::destroyGadgets()
 	}
 }
 
+void OpenBFMEOptionsPage::layout()
+{
+	// lane OPTS-5: a tab with a row in column 1 is laid out in two columns, each half of the panel; the rows of a column follow one another
+	bool twoColumns = false;
+	for (const OpenBFMEPageRow &row : m_spec.rows)
+	{
+		twoColumns = twoColumns || row.column == 1;
+	}
+	m_built.assign(m_spec.rows.size(), Built{});
+	int next[2] = { 0, 0 };
+	for (std::size_t i = 0; i < m_spec.rows.size(); ++i)
+	{
+		const int column = twoColumns && m_spec.rows[i].column == 1 ? 1 : 0;
+		Built &b = m_built[i];
+		b.y = kRowTop + next[column]++ * kRowPitch;
+		b.narrow = twoColumns;
+		b.left = !twoColumns || column == 0 ? kPanelLeft : kPanelMiddle;
+		b.right = !twoColumns || column == 1 ? kPanelRight : kPanelMiddle;
+	}
+}
+
+int OpenBFMEOptionsPage::labelLeft(std::size_t index) const
+{
+	const Built &b = m_built[index];
+	return b.narrow ? b.left + kColumnLabelInset : kLabelLeft;
+}
+
+int OpenBFMEOptionsPage::gadgetLeft(std::size_t index) const
+{
+	const Built &b = m_built[index];
+	return b.narrow ? b.left + kColumnGadgetInset : kGadgetLeft;
+}
+
 std::array<int, 4> OpenBFMEOptionsPage::gadgetRect(std::size_t index) const
 {
 	const OpenBFMEPageRow &row = m_spec.rows[index];
-	const int y = kRowTop + (int)index * kRowPitch;
+	const Built &b = m_built[index];
+	const int y = b.y;
+	const int x0 = gadgetLeft(index);
+	const int x1 = b.narrow ? b.right - kColumnRightInset : kGadgetRight;
 	switch (row.kind)
 	{
 		case OpenBFMEPageRow::Kind::Choice:
-			return { kGadgetLeft, y, kGadgetRight, y + kRowHeight };
+			return { x0, y, x1, y + kRowHeight };
 		case OpenBFMEPageRow::Kind::Check:
-			return { kGadgetLeft, y + (kRowHeight - kCheckSize) / 2, kGadgetLeft + kCheckSize, y + (kRowHeight - kCheckSize) / 2 + kCheckSize };
+			return { x0, y + (kRowHeight - kCheckSize) / 2, x0 + kCheckSize, y + (kRowHeight - kCheckSize) / 2 + kCheckSize };
 		case OpenBFMEPageRow::Kind::Slider:
-			return { kGadgetLeft, y, kGadgetLeft + kSliderWidth, y + kRowHeight };
+			// a narrow column keeps 50 pixels right of the slider for its value
+			return { x0, y, b.narrow ? std::min(x0 + kSliderWidth, x1 - 50) : x0 + kSliderWidth, y + kRowHeight };
+		case OpenBFMEPageRow::Kind::Entry:
+			return { x0, y, std::min(x0 + kEntryWidth, x1), y + kRowHeight };
 		default:
-			return { kGadgetLeft, y, kGadgetRight, y + kRowHeight };
+			return { x0, y, x1, y + kRowHeight };
 	}
+}
+
+bool OpenBFMEOptionsPage::labelBox(const std::string &key, std::array<int, 4> &out) const
+{
+	if (!m_shown)
+	{
+		return false;
+	}
+	for (std::size_t i = 0; i < m_spec.rows.size() && i < m_built.size(); ++i)
+	{
+		if (m_spec.rows[i].key == key)
+		{
+			// the label runs from its start to 8 pixels before the gadget
+			out = { labelLeft(i), m_built[i].y, gadgetLeft(i) - 8, m_built[i].y + kRowHeight };
+			return true;
+		}
+	}
+	return false;
 }
 
 bool OpenBFMEOptionsPage::show(const OpenBFMEPageSpec &spec, std::string *error)
@@ -76,11 +135,10 @@ bool OpenBFMEOptionsPage::show(const OpenBFMEPageSpec &spec, std::string *error)
 	m_spec = spec;
 	m_shown = false;
 	m_hoverRow = -1;
-	m_built.assign(m_spec.rows.size(), Built{});
+	layout();
 	for (std::size_t i = 0; i < m_spec.rows.size(); ++i)
 	{
 		const OpenBFMEPageRow &row = m_spec.rows[i];
-		m_built[i].y = kRowTop + (int)i * kRowPitch;
 		const char *skin = nullptr;
 		switch (row.kind)
 		{
@@ -92,6 +150,9 @@ bool OpenBFMEOptionsPage::show(const OpenBFMEPageSpec &spec, std::string *error)
 				break;
 			case OpenBFMEPageRow::Kind::Slider:
 				skin = kSliderSkin;
+				break;
+			case OpenBFMEPageRow::Kind::Entry:
+				skin = kEntrySkin;
 				break;
 			default:
 				break;
@@ -196,6 +257,16 @@ void OpenBFMEOptionsPage::applyRow(std::size_t index)
 		case OpenBFMEPageRow::Kind::Slider:
 			GadgetSliderSetPosition(w, std::clamp(row.value, row.minValue, row.maxValue));
 			break;
+		case OpenBFMEPageRow::Kind::Entry:
+			if (EntryData *entry = static_cast<EntryData *>(w->winGetUserData()))
+			{
+				entry->maxTextLen = (short)row.maxValue; // RW 0x81606D(entry, 5) for the port
+			}
+			if (GadgetTextEntryGetText(w) != row.valueText)
+			{
+				GadgetTextEntrySetText(w, row.valueText);
+			}
+			break;
 		default:
 			break;
 	}
@@ -216,7 +287,7 @@ bool OpenBFMEOptionsPage::setRow(const OpenBFMEPageRow &row)
 			(r.items.size() != row.items.size() || !std::equal(r.items.begin(), r.items.end(), row.items.begin(), [](const OpenBFMEPageItem &a, const OpenBFMEPageItem &b) {
 				return a.text == b.text && a.enabled == b.enabled;
 			}));
-		const bool changed = itemsChanged || r.value != row.value || r.enabled != row.enabled;
+		const bool changed = itemsChanged || r.value != row.value || r.enabled != row.enabled || (r.kind == OpenBFMEPageRow::Kind::Entry && r.valueText != row.valueText);
 		const int minValue = r.minValue, maxValue = r.maxValue;
 		r = row;
 		r.minValue = minValue; // the slider's range is the one it was built with
@@ -277,6 +348,30 @@ bool OpenBFMEOptionsPage::message(std::uint32_t msg, WindowMsgData data1, Window
 				emit({ OpenBFMEPageEvent::Kind::Value, row.key, on });
 			}
 		}
+		else if (msg == GSM_SLIDER_CLICKED && row.kind == OpenBFMEPageRow::Kind::Slider)
+		{
+			emit({ OpenBFMEPageEvent::Kind::Release, row.key, row.value }); // lane OPTS-5: the owner's 0x4010 (the volume sample stops, RW 0x91F90D)
+		}
+		else if ((msg == GEM_UPDATE_TEXT || msg == GEM_EDIT_DONE) && row.kind == OpenBFMEPageRow::Kind::Entry)
+		{
+			// lane OPTS-5: the entry's text; the value is its number as _wtoi reads it (RW 0x9202F2), 0 when empty
+			const UnicodeString text = GadgetTextEntryGetText(from);
+			if (text != row.valueText)
+			{
+				row.valueText = text;
+				int number = 0;
+				for (char16_t c : text)
+				{
+					if (c < u'0' || c > u'9' || number > 1000000)
+					{
+						break;
+					}
+					number = number * 10 + (c - u'0');
+				}
+				row.value = number;
+				emit({ OpenBFMEPageEvent::Kind::Value, row.key, number });
+			}
+		}
 		else if ((msg == GSM_SLIDER_TRACK || msg == GSM_SLIDER_DONE) && row.kind == OpenBFMEPageRow::Kind::Slider)
 		{
 			const int pos = msg == GSM_SLIDER_TRACK ? (int)data2 : GadgetSliderGetPosition(from);
@@ -297,10 +392,11 @@ int OpenBFMEOptionsPage::rowAt(float x, float y) const
 	{
 		return -1;
 	}
-	for (std::size_t i = 0; i < m_spec.rows.size(); ++i)
+	for (std::size_t i = 0; i < m_spec.rows.size() && i < m_built.size(); ++i)
 	{
-		const int top = kRowTop + (int)i * kRowPitch - (kRowPitch - kRowHeight) / 2;
-		if (y >= top && y < top + kRowPitch)
+		const Built &b = m_built[i];
+		const int top = b.y - (kRowPitch - kRowHeight) / 2;
+		if (x >= b.left && x < b.right && y >= top && y < top + kRowPitch)
 		{
 			return (int)i;
 		}
@@ -463,22 +559,23 @@ void OpenBFMEOptionsPage::decorate(GadgetDrawList &out) const
 		const Color c = chosen || (int)i == m_hoverTab ? kTabHotColor : kLabelColor;
 		text(out, m_spec.tabs[i], kTabsLeft, top + 6, kTabSize, c, kTabsRight - kTabsLeft, true);
 	}
-	// the rows: label left, gadget right (sections span the panel)
-	for (std::size_t i = 0; i < m_spec.rows.size(); ++i)
+	// the rows: label left, gadget right (sections span their column)
+	for (std::size_t i = 0; i < m_spec.rows.size() && i < m_built.size(); ++i)
 	{
 		const OpenBFMEPageRow &row = m_spec.rows[i];
-		const int y = kRowTop + (int)i * kRowPitch;
+		const Built &b = m_built[i];
+		const int y = b.y;
 		if (row.kind == OpenBFMEPageRow::Kind::Section)
 		{
-			text(out, row.label, kPanelLeft, y + 4, kHeaderSize, kHeaderColor, kPanelRight - kPanelLeft, true);
+			text(out, row.label, b.left, y + 4, kHeaderSize, kHeaderColor, b.right - b.left, true);
 			continue;
 		}
 		const Color label = row.enabled ? kLabelColor : kDisabledLabelColor;
-		text(out, row.label, kLabelLeft, y + 3, kLabelSize, label);
-		if ((row.kind == OpenBFMEPageRow::Kind::Choice || row.kind == OpenBFMEPageRow::Kind::Slider) && i < m_built.size() && m_built[i].window)
+		text(out, row.label, labelLeft(i), y + 3, kLabelSize, label);
+		const std::array<int, 4> r = gadgetRect(i);
+		if ((row.kind == OpenBFMEPageRow::Kind::Choice || row.kind == OpenBFMEPageRow::Kind::Slider || row.kind == OpenBFMEPageRow::Kind::Entry) && b.window)
 		{
 			// the box under the gadget, as Options.apt's placeholders draw it (the Detail combo, the volume sliders: a dark well, a 1 pixel outline)
-			const std::array<int, 4> r = gadgetRect(i);
 			GadgetDrawCommand well;
 			well.kind = GadgetDrawCommand::Kind::FillRect;
 			well.window = "OpenBFMEPage";
@@ -494,11 +591,11 @@ void OpenBFMEOptionsPage::decorate(GadgetDrawList &out) const
 		}
 		if (row.kind == OpenBFMEPageRow::Kind::Slider)
 		{
-			text(out, row.valueText, kGadgetLeft + kSliderWidth + 14, y + 3, kLabelSize, row.enabled ? kHelpColor : kDisabledLabelColor);
+			text(out, row.valueText, r[2] + 14, y + 3, kLabelSize, row.enabled ? kHelpColor : kDisabledLabelColor);
 		}
 		else if (row.kind == OpenBFMEPageRow::Kind::Text)
 		{
-			text(out, row.valueText, kGadgetLeft, y + 3, kLabelSize, row.enabled ? kHelpColor : kDisabledLabelColor);
+			text(out, row.valueText, gadgetLeft(i), y + 3, kLabelSize, row.enabled ? kHelpColor : kDisabledLabelColor);
 		}
 	}
 	// the help line: the pointed row's, else the tab's note
@@ -611,6 +708,11 @@ bool OpenBFMEOptionsPage::choose(const std::string &key, int value, std::string 
 				GadgetSliderSetPosition(w, std::clamp(value, row.minValue, row.maxValue));
 				m_syncing = false;
 				w->manager().winSendSystemMsg(w->winGetOwner(), GSM_SLIDER_TRACK, reinterpret_cast<WindowMsgData>(w), (WindowMsgData)GadgetSliderGetPosition(w));
+				return true;
+			case OpenBFMEPageRow::Kind::Entry:
+				// typed text: the entry's text, then its update message to the owner (GadgetTextEntry's GEM_UPDATE_TEXT)
+				GadgetTextEntrySetText(w, value > 0 ? asciiToU16(std::to_string(value)) : UnicodeString());
+				w->manager().winSendSystemMsg(w->winGetOwner(), GEM_UPDATE_TEXT, reinterpret_cast<WindowMsgData>(w), 0);
 				return true;
 			default:
 				break;

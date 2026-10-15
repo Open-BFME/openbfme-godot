@@ -11,7 +11,7 @@
 # --execute (AUTOREL-1 r2: never `gh release create` with assets, whose failure path deletes the release it presumes a draft, even one
 # whose publication succeeded with a lost answer):
 #   1. the tag on GitHub must be the manifest's commit, and no release (draft or not) may exist for it;
-#   2. a draft is created through the API (its id kept), the seven assets are uploaded, and the draft is read back and checked: exactly
+#   2. a draft is created through the API (its id kept), the release's assets are uploaded, and the draft is read back and checked: exactly
 #      those assets, uploaded, each with the local size and SHA-256 (tools/release/release_assets.py);
 #   3. the draft is published (draft=false) and read back: it must be published, with the same assets.
 # Any failure or uncertain answer is reconciled by reading the release back; nothing is ever deleted (r4, Sol r3: a draft can be
@@ -24,8 +24,9 @@
 #   * manifest.json.sig verifies under launcher/release_key.pub, the key the launcher is built with;
 #   * the manifest's repository is the target repository, its version a tag on the checked-out commit that the archives were built from;
 #   * no private key file is among the files.
-# The release is a pre-release exactly when the manifest's channel is preview. Assets: the four archives, SHA256SUMS, manifest.json and
-# manifest.json.sig (the launcher reads the last two by name).
+# The release is a pre-release exactly when the manifest's channel is preview. Assets: the archives the manifest names (lane ONEZIP-1:
+# per platform the package, the game and the launcher in one archive, and in format 2 the launcher archive the launchers published
+# before ONEZIP-1 update themselves from), SHA256SUMS, manifest.json and manifest.json.sig (the launcher reads the last two by name).
 set -euo pipefail
 REPO=$(cd "$(dirname "$0")/../.." && pwd)
 GH=${GH:-gh}
@@ -64,12 +65,14 @@ python3 "$REPO/tools/release/sign_manifest.py" --verify "$PUB" "$DIR/manifest.js
 if [ $UNTAGGED = 0 ]; then
   git -C "$REPO" tag --points-at "$COMMIT" | grep -qx "$VERSION" || fail "$VERSION is not a tag on the manifest's commit $COMMIT"
 fi
-python3 "$REPO/tools/release/audit_package.py" --sums "$DIR/SHA256SUMS-$VERSION.txt" \
-  "openbfme-$VERSION-linux-x64.tar.gz" "openbfme-$VERSION-windows-x64.zip" \
-  "openbfme-launcher-$VERSION-linux-x64.tar.gz" "openbfme-launcher-$VERSION-windows-x64.zip" || fail "the checksum file does not list the four archives"
+# lane ONEZIP-1: the release's assets are the archives the manifest names (format 2: the package and the launcher archive of each
+# platform; format 3: the packages alone), then the checksum file, the manifest and its signature
+mapfile -t ASSETS < <(python3 "$REPO/tools/release/release_assets.py" --names --dir "$DIR" --version "$VERSION") || true
+[ ${#ASSETS[@]} -ge 5 ] || fail "the manifest names no release assets"
+ARCHIVES=(); for a in "${ASSETS[@]}"; do case "$a" in openbfme-*) ARCHIVES+=("$a") ;; esac; done
+python3 "$REPO/tools/release/audit_package.py" --sums "$DIR/SHA256SUMS-$VERSION.txt" "${ARCHIVES[@]}" \
+  || fail "the checksum file does not list the release's ${#ARCHIVES[@]} archives"
 if grep -l -- "PRIVATE KEY" "$DIR"/* >/dev/null 2>&1; then fail "a private key is among the files of $DIR"; fi
-ASSETS=("openbfme-$VERSION-linux-x64.tar.gz" "openbfme-$VERSION-windows-x64.zip" "openbfme-launcher-$VERSION-linux-x64.tar.gz"
-        "openbfme-launcher-$VERSION-windows-x64.zip" "SHA256SUMS-$VERSION.txt" "manifest.json" "manifest.json.sig")
 PRE=false; [ "$CHANNEL" = preview ] && PRE=true
 # the release's name: "OpenBFME v0.4.0 Alpha 1" for an alpha build (lane RELNAME-1), "OpenBFME <tag>" otherwise
 NAME=$(python3 "$REPO/tools/release/autorelease.py" title "$VERSION") || fail "no release name for $VERSION"

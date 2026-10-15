@@ -580,13 +580,16 @@ std::vector<std::string> SkirmishAIManager::stopLines()
 		"0x6C7946); the bodies they call are not: the manager object + 0xA74, the group tasks (RW 0x8EDB2C), "
 		"AISkirmishPlayer RW 0x6C75B5 / the shutdown, the AIPlayer sub systems other than the base, unit and team builders (RW 0x8F0EB4: "
 		"+ 0xC0 economy builder, + 0x108 unit upgrader, + 0x12C science builder, + 0xE4 wall builder): a computer player builds its base (S-413), trains its army "
-		"(S-415) builds farms (S-419) and attacks with SimpleAttack teams (S-417)",
+		"(S-415) builds farms (S-419) and attacks with SimpleAttack teams (S-417); lane BACKLOG6: AIPlayer::update RW 0x8F0EB4 is checked against the BFME2 "
+		"byte-matched source (RotWK adds the code 9 failure RW 0x8F1048): a request left in the queue gives up its producer; its last call, the money saver "
+		"RW 0x8F0502, is not ported (S-413)",
 		"[S-417] skirmish ai tactical layer: the enemy manager, the targets and their ENEMY_STRUCTURE heuristics, the best target, the difficulty gate, the 10 "
 		"offensive prototypes' applicability, team counts and team sizes (RW 0x90BE31: SimpleAttack x2, FormationAttack x2, FlankAttack, PincerAttack, FeintAttack, "
 		"AIBasePenetrationTroopsTactic, SimpleSiege, SiegeGates) with the pick's draw, the SimpleAttack body, the team builder and (lane AI-2) the started "
 		"tactic's idle counters, position and idle end (RW 0x8F28DD / 0x8F135E / 0x8F27AD / 0x8F175A / 0x9B4DE7) and (r5) the bodies of FormationAttack, "
 		"FlankAttack, PincerAttack, FeintAttack and AIBasePenetrationTroopsTactic with their draws (FlankAttack RW 0x9B4642 / 0x9B4720, PincerAttack RW 0x9B4067, "
-		"FeintAttack RW 0x9B398D / 0x9B3A5A / 0x9B3AE4) are ported; not ported: the AIGroup formation move's draw RW 0x774CEB (S-895), the siege bodies, the end's merge into a nearby AI team with its draw RW 0x8F1F08 (the units are released), "
+		"FeintAttack RW 0x9B398D / 0x9B3A5A / 0x9B3AE4) are ported; lane BACKLOG6: AIGroup's stealth delay draw RW 0x774CEB is ported for the groups the formation "
+		"manager does not take (S-895); not ported: the siege bodies, the end's merge into a nearby AI team with its draw RW 0x8F1F08 (the units are released), "
 		"the DEFENSIVE / EXPANSION heuristics and tactics (only the One Ring OPPORTUNITY heuristic is "
 		"ported; the capture flag rule needs the manager's historical flag list), the targetless tactics, RW 0x90CCCB, the AI team objects; "
 		"lane AI-3 ported the threat finder (S-1300), the targets' threat, the retreat (RW 0x8F2784 / 0x8F243A), the failed end's threat move (RW 0x6C644C), "
@@ -609,8 +612,10 @@ std::vector<std::string> SkirmishAIManager::stopLines()
 		"the members below their share of the command point limit with a free factory (RW 0x9A0BC0 / 0x9A0B26, one logic random draw), priority 500 in Rush "
 		"else DefaultUnitPriority, and the unit request's check / queue through PROD-1 (RW 0x9EDBC6 / 0x9EDB44) and (lane DECOMP-2) the heroes "
 		"(HeroBuildOrder: RW 0x9A03A1 / 0x9A0993 / 0x9A05DB, the hero factories RW 0x9A08E8, the hero list index of the check / queue) are ported; not "
-		"ported: the HeroBuildOrder's CreateAHero entry of a slot with a Create-a-Hero (RW 0x90CE35), the money reserve (+ 0x21, cost >= 1000; a hero's "
-		"money test reads the player's money alone), the living world part (RW 0x9A0426)",
+		"ported: the HeroBuildOrder's CreateAHero entry of a slot with a Create-a-Hero, the money reserve (+ 0x21, cost >= 1000; a hero's "
+		"money test RW 0x99E766 reads the player's money alone; S-413), the living world part (RW 0x9A0426), RotWK's second unit check RW 0x9ED764 (a "
+		"GetGameLogicRandomValue(600, 1000) money floor; its request class is not identified); lane BACKLOG6: the effective priority RW 0x9EDA17 (S-419) "
+		"agrees with the BFME2 byte-matched source, RotWK's row offset + 0xC4",
 		"[S-416] skirmish ai unit builder inference: a structure enters the factory map when it is first seen complete (RW: its completion event), a unit "
 		"request is complete when its factory no longer holds its queue entry (RW: the production event), the phase blend of RW 0x82FCAB is computed in double "
 		"for the x87 chain; (lane DECOMP-3: the owned count is the player info record's per-template count RW 0x8E3FD6, kept by Register / UnRegister)",
@@ -618,8 +623,12 @@ std::vector<std::string> SkirmishAIManager::stopLines()
 		"logic random draw), the slots, the structure requests, the request order and processor (RW 0x8F0F7E ..) and the check / execute path through BUILD-1 "
 		"(canMakeUnit, legality options 0x85, DozerAIUpdate::construct) are ported; lane AI-2: the dozer manager (RW 0x9A23A4 / 0x9A221E / 0x9A19E0: dozers queued "
 		"at the DOZER_FACTORY structures), the object events (RW 0x8F069A / 0x8F0C47 / 0x8F0BBC / 0x8F0660 / 0x8F06FF) and the rebuild of a lost structure "
-		"(RW 0x90D16A); not ported: the fortress rebuild task (AIBase + 0x28, RW 0x9BC882), the money reserve (+ 0x21, PercentToSave, RW 0x8F0502 / 0x99E79A), "
-		"expansions (bases after the first)",
+		"(RW 0x90D16A); lane BACKLOG6: the fortress rebuild task (AIBase + 0x28, RW 0x9BC882 / 0x9BCA33: past the Rush phase, with a free dozer and no "
+		"DOZER_FACTORY within 350 of the base, the player template's StartingBuilding is requested at the base with FortressRebuildPriority); not ported: the "
+		"money reserve (RotWK only: the saver RW 0x8F0502 moves PercentToSave / (3 - difficulty) of the money into the player info record every 2 seconds up to "
+		"max(unit builder + 0x48, difficulty * 5000) once the AI has more than 2 economy structures; a request with + 0x21 is checked with the reserve added "
+		"(RW 0x9ED82A) and draws its shortfall at the execution, RW 0x96190B / 0x9ED951 / 0x9A1AA2 -> 0x99E79A), expansions (bases after the first); "
+		"INFERENCE: the game slot's player template (RW 0x90CE35) is the player's own",
 		"[S-414] skirmish ai base builder inference: RW 0x97DAFC (TheFireLogicSystem's burning cells within 150 of the site -> 9) never objects: the terrain fire "
 		"system is not ported (S-191); the CRT acos / sin / cos of the angle and the rotation are SimMath's deterministic versions (S-167)",
 		"[S-890] skirmish ai dozer manager inference (lane AI-2): a dozer is free again whenever its task ends (RW 0x88BF4E's notification is found only on the "
@@ -650,9 +659,16 @@ std::vector<std::string> SkirmishAIManager::stopLines()
 		"[S-894] produced member of a destroyed horde (lane AI-2 r4): a member the queue exit hands to a horde that is already destroyed is destroyed with it "
 		"(HordeContain::acceptCreatedMember); RW's acceptance slot for a destroyed horde is not read",
 		"[S-895] skirmish ai offensive tactic bodies (lane AI-2 r5): Formation, Flank, Pincer, Feint and BasePenetration launch / update with their draws "
-		"are ported; the formation group manager their moves go through (AIGroup RW 0x7747DE / 0x94FCBA / 0x77348C, draw 0x874), the flank's threat finder "
-		"position (lane AI-3: ported), the siege bodies and the end's merge's formation move are not (lane AI-3 ported the merge RW 0x8F1D88 with its draw "
-		"AITactic.cpp 0x3FC; a candidate whose tactic has no target, RW 0x8F14C1, is skipped and counted)",
+		"are ported; lane BACKLOG6: AIGroup RW 0x774897's generic path (the held-member filter, the stealth delay draw AIGroup.cpp 0x874 with the mood check "
+		"write RW 0x662E01, whose byte + 0x3BC clear is not ported), its gate to the formation group manager (more than one unit, the player's source, no "
+		"waypoint / target / formation type, AIData UseFormations), the manager's member filter RW 0x76FFF0, its FormationPriority test and the distance and "
+		"extent refusals of the group ground path RW 0x76F115 and the tactics' command sources (RW 0x8F18AA: 0, FormationAttack RW 0x9B4D64: 2) are "
+		"ported; not ported (a group they do not refuse is taken as accepted, an inference): the manager's other refusals (the ground path's terrain tests, "
+		"the nearby enemy test, Pathfinder::FindGroundPath), its formation (createFormation RW 0x94FCBA, moveFormationToPos "
+		"RW 0x77348C), the formation type branch (TheFormationAssistant RW 0x83320B / 0x8345F4 / 0x831CB0 / 0x834CA4, FormationAttack's layout), the "
+		"click-to-gather tighten move (GameData GroupMoveClickToGatherAreaFactor, RW 0x771C3D), the amphibious branch (RW 0x68F3F2), the siege bodies and the "
+		"end's merge's formation move (lane AI-3 ported the merge RW 0x8F1D88 with its draw AITactic.cpp 0x3FC; a candidate whose tactic has no target, "
+		"RW 0x8F14C1, is skipped and counted)",
 		"[S-1300] skirmish ai threat finder inference (lane AI-3): RW 0x7EE057 / 0x7EE166 / 0x68F0EC, the ThreatBreakdown categories (an object without one counts "
 		"twice in the total, RW 0x7EDB72) and the counter table RW 0x7EDC2F / 0x7ED963 are ported; object + 0x4B8 is taken as its constructor value 1 (its writer "
 		"RW 0x691A2F is not ported); an InactiveBody's health ratio is taken as 0; the ThreatBreakdown block is read from the template's raw lines (S-071): an "

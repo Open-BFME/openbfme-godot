@@ -708,7 +708,19 @@ TEST_CASE("skirmish ai vs ai: Evendim, 30 game-minutes: every pairing ends - Mor
 	// Merge queue q8 (PATHPERF-1's hierarchical corridor, RW 0x6F8601: the routes change; ONLINE-4 and DEPLOY-2 change no logic), re-measured on the merged tree
 	// ea5eba29 with remote-measure.sh (pve): seed 2 now ends with Mordor's defeat (start position 0) at 8210, seed 7 with Men's defeat (start position 0) at
 	// 8373 (6019 before), seed 1234 stays open at 9000. Engine pins, not retail values.
-	for (const Game &g : { Game{ "FactionMordor", "FactionMen", 2u, 0, 8210 }, Game{ "FactionMen", "FactionMordor", 7u, 0, 8373 }, Game{ "FactionMordor", "FactionMen", 1234u, -1, -1 } })
+	// Lane BACKLOG-1 r2 (state 26's exit RW 0x74949C destroys the move-away path: a unit that made room for an ally walks on to its destination instead of
+	// stopping where the move-away path ended; with those three lines of AIMoveOutOfTheWayState::onExit removed the q8 pins come back), measured on the lane's
+	// tree 4908c2fd (Deck): seed 2 is open at 9000 (Mordor's defeat at 8210 before), seed 7 ends with Men's defeat (start position 0) at 5029 (8373 before),
+	// seed 1234 with Mordor's defeat (start position 0) at 8634 (open before). Engine pins, not retail values.
+	// Lane ATTACK-1 (blockedBy's crush exemption RW 0x66D16E asks RW 0x69519A with the unit's live crusher level, RW 0x695070: mounted heroes ride through
+	// the hordes they may crush, units whose live level or policy refuses the crush are blocked), re-measured on the merged tree 785dbd65 (the archive
+	// 2b841363) with remote-measure.sh (pve): seed 2 ends with Mordor's defeat (start position 0) earlier, at 7842, seed 7 is unchanged (8373), seed 1234 now
+	// ends with Mordor's defeat (start position 0) at 8656. Engine pins, not retail values.
+	// Merge queue q11 (BACKLOG-1's garrison / entering / exiting ports and ATTACK-1's crush test both moved the AI-vs-AI seeds on older bases; BACKLOG-1's
+	// PERF-1 and Uber vectors already match the merged tree), re-measured once on the merged tree 3631817a with remote-measure.sh (jpc): seeds 2 and 1234
+	// are open at 9000 (still fighting, no stall), seed 7 ends with Men's defeat (start position 0) at 5029, as BACKLOG-1 pinned. ATTACK-1's 7842 (seed 2)
+	// and 8656 (seed 1234) are superseded. Engine pins, not retail values.
+	for (const Game &g : { Game{ "FactionMordor", "FactionMen", 2u, -1, -1 }, Game{ "FactionMen", "FactionMordor", 7u, 0, 4697 }, Game{ "FactionMordor", "FactionMen", 1234u, -1, -1 } })
 	{
 		INFO(g.a << " vs " << g.b << " seed " << g.seed);
 		VersusRun run;
@@ -722,6 +734,8 @@ TEST_CASE("skirmish ai vs ai: Evendim, 30 game-minutes: every pairing ends - Mor
 		// SCRIPT-2 (merged with AUDIO-3 / GARRISON-2 / SMOOTH-3): the AI libraries' scripts now evaluate the conditions they use (PLAYER_HAS_OBJECT_COMPARISON ...
 		// were false before; switching only those back to unported restored the old runs on SCRIPT-2's base): seed 2 ends with Men's defeat at 6171, seeds 7 and
 		// 1234 are open at 9000. Engine pins, not retail values.
+		// Merge queue q12 (BACKLOG-4 special power runtime / teleport / defection, BACKLOG-6 skirmish AI), re-measured once on the merged tree 5d90b467 (remote-measure.sh, pve):
+		// seed 7 still ends with Men's defeat, now at 4697 (was 5029); seeds 2 and 1234 are still open at 9000 with the armies fighting. Engine pins, not retail values.
 		CHECK(run.loser == g.loser);
 		CHECK(run.defeatFrame == g.defeatFrame);
 	}

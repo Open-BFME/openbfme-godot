@@ -129,11 +129,20 @@ CrossRun crossing(const char *ta, const char *tb, Cross mode, int frames)
 	{
 		b->getAIUpdateInterface()->aiMoveToPosition(bGoal, CMD_FROM_PLAYER);
 	}
+	// lane BACKLOG4: the hordes are looked up by id every frame. A horde whose members all die is deleted (the knights ride the fighters down by frame
+	// 40) and the loop read the freed object before: the run then ends with what was measured while both hordes lived
+	const ObjectID idA = a->getID(), idB = b->getID();
 	for (int f = 0; f < frames; ++f)
 	{
 		ar.logic.runLogicFrame();
 		out.stats.add(phystest::measure(ar.logic));
 		out.deepPairFrames += deepEnemyPairs(ar.logic);
+		a = ar.logic.findObjectByID(idA);
+		b = ar.logic.findObjectByID(idB);
+		if (!a || !b)
+		{
+			continue;
+		}
 		const Coord3D &pa = *a->getPosition(), &pb = *b->getPosition();
 		out.minHordeDistance = std::min(out.minHordeDistance, std::sqrt((pa.x - pb.x) * (pa.x - pb.x) + (pa.y - pb.y) * (pa.y - pb.y)));
 		out.maxSideA = std::max(out.maxSideA, std::fabs(pa.y - y));
@@ -223,10 +232,17 @@ SweepTotals sweep(const char *ta, const char *tb, Cross mode)
 			b->getAIUpdateInterface()->aiMoveToPosition(bGoal, CMD_FROM_PLAYER);
 			int deep = 0;
 			float minD = 1e9f;
+			const ObjectID idA = a->getID(), idB = b->getID(); // lane BACKLOG4: by id, as in crossing()
 			for (int f = 0; f < 250; ++f)
 			{
 				ar.logic.runLogicFrame();
 				deep += deepEnemyPairs(ar.logic);
+				a = ar.logic.findObjectByID(idA);
+				b = ar.logic.findObjectByID(idB);
+				if (!a || !b)
+				{
+					continue;
+				}
 				const Coord3D &pa = *a->getPosition(), &pb = *b->getPosition();
 				minD = std::min(minD, std::sqrt((pa.x - pb.x) * (pa.x - pb.x) + (pa.y - pb.y) * (pa.y - pb.y)));
 			}

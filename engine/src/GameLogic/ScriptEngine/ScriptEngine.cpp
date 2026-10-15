@@ -4,6 +4,7 @@
 
 #include "GameLogic/ScriptEngine/ScriptEngine.h"
 
+#include "Common/Crc32.h"
 #include "Common/Player.h"
 #include "Common/PlayerList.h"
 #include "Common/StateHash.h"
@@ -121,6 +122,10 @@ void ScriptEngine::reset()
 		m_acquiredSciences[i].clear(p ? &p->science() : nullptr);
 	}
 	m_audioTimers.clear();
+	for (std::vector<TriggeredSpecialPower> &l : m_triggeredSpecialPowers) // lane BACKLOG4: RW 0x607FB3
+	{
+		l.clear();
+	}
 	m_genericScripts.clear(); // lane CAMP-1H
 	m_thisTeam = nullptr;
 	m_stats = Stats();
@@ -1881,6 +1886,64 @@ void ScriptEngine::crc(StateHasher &h) const
 			h.addU32(t.endFrame);
 		}
 	}
+	for (size_t i = 0; i < m_triggeredSpecialPowers.size(); ++i) // lane BACKLOG4: hashed once a player has an entry
+	{
+		const std::vector<TriggeredSpecialPower> &l = m_triggeredSpecialPowers[i];
+		if (!l.empty())
+		{
+			h.addU32(0x5B4u | ((std::uint32_t)i << 12));
+			h.addU32((std::uint32_t)l.size());
+			for (const TriggeredSpecialPower &e : l)
+			{
+				h.addU32(e.nameCrc);
+				h.addU32(e.source);
+			}
+		}
+	}
+}
+
+// ---- lane BACKLOG4 (S-529): the triggered special powers ---------------------------------------------------------------------------------------
+// RW 0x7ED86B -> CRC_String (BFME2 decomp WWLib/realcrc_one_arg.cpp, tier A): the CRC-32 of the name's bytes, case kept; 0 for an empty name
+std::uint32_t ScriptEngine::specialPowerNameCrc(const std::string &name)
+{
+	return name.empty() ? 0u : crc32Bytes(name.data(), name.size());
+}
+
+// RW 0x759986
+void ScriptEngine::notifyOfTriggeredSpecialPower(int playerIndex, const std::string &name, ObjectID source)
+{
+	if (playerIndex < 0 || playerIndex >= kSpecialPowerListPlayers)
+	{
+		note("[S-529] a special power triggered by a player index outside the script engine's 20 lists (RW 0x759986 does not test it) is not recorded");
+		return;
+	}
+	TriggeredSpecialPower e;
+	e.nameCrc = specialPowerNameCrc(name);
+	e.source = source;
+	m_triggeredSpecialPowers[(size_t)playerIndex].push_back(e);
+}
+
+// RW 0x758CBF
+bool ScriptEngine::isSpecialPowerTriggered(int playerIndex, const std::string &name, bool remove, ObjectID source)
+{
+	if (playerIndex < 0 || playerIndex >= kSpecialPowerListPlayers)
+	{
+		return false; // RW 0x758CC9 .. 0x758CCE
+	}
+	std::vector<TriggeredSpecialPower> &l = m_triggeredSpecialPowers[(size_t)playerIndex];
+	const std::uint32_t crc = specialPowerNameCrc(name);
+	for (auto it = l.begin(); it != l.end(); ++it)
+	{
+		if (it->nameCrc == crc && (source == 0 || source == it->source)) // RW 0x758CEB .. 0x758CF7
+		{
+			if (remove)
+			{
+				l.erase(it); // RW 0x702055
+			}
+			return true;
+		}
+	}
+	return false;
 }
 
 // ---- lane SCRIPT-3: HAS_FINISHED_AUDIO ----------------------------------------------------------------------------------------------------------

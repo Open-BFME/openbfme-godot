@@ -73,12 +73,31 @@ public:
 	static const char *forceAttackStopLine();
 	// the stop line S-223 (raised by every group move)
 	static const char *stopLine();
+	// lane BACKLOG6: RW 0x774897's gate to the formation group manager (RW 0x7747DE) and what the manager does with the group. OFFERED_NOT: the gate is shut
+	// (the generic path runs); NOTHING: the manager's member filter RW 0x76FFF0 refused the last member (RW returns 1 and nothing moves); REJECTED: the manager
+	// returns 0 (no FormationPriority member, or the group ground path RW 0x76F115 refuses) and the generic path runs on the group the filter left;
+	// TAKEN: the manager makes the formation move, which is not ported (the port's individual destinations stand in). The filter removes the members it
+	// refuses from the group (RW leaveGroup), so this is not const
+	enum FormationVerdict
+	{
+		FORMATION_NOT_OFFERED,
+		FORMATION_NOTHING,
+		FORMATION_REJECTED,
+		FORMATION_TAKEN
+	};
+	FormationVerdict formationManager(const Coord3D &pos, bool addWaypoint, CommandSourceType source, bool haveFormationType);
+	static const char *formationStopLine();
 
 private:
 	// ZH AIGroup::computeIndividualDestination (non-formation): the offset of the unit from `center` (clamped to six bounding radii) added to the group's goal
 	Coord3D computeIndividualDestination(const Coord3D &groupDest, Object &obj, const Coord3D &center) const;
 	// ZH clampWaypointPosition: the goal stays inside the map minus four cells
 	Coord3D clampWaypointPosition(const Coord3D &pos) const;
+	// RW 0x76F115 (BFME2 decomp AIGroupGetCenter.cpp AIGroup::computeGroundPath, byte-matched, tier B same-shape): false when the group is refused by the checks the
+	// port can make (see AIGroup.cpp); true otherwise, which includes the checks it cannot (formationStopLine)
+	bool groupGroundPathAccepts(const Coord3D &pos) const;
+	// RW 0x774C6D .. 0x774D04: the stealth delay of a player-source order (one logic random draw at AIGroup.cpp 0x874)
+	void delayMoodCheckForStealth(Object &obj, AIUpdateInterface &ai);
 
 	GameLogic &m_logic;
 	std::vector<Object *> m_members;

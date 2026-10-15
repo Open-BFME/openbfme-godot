@@ -22,7 +22,7 @@
 
 class Shell;
 class WindowManager;
-struct AptRenderList;
+class AptRenderList; // lane CONTRIB-1 (GitHub #23): class, as defined (MSVC mangles class and struct differently: a struct here left checkShellLayering unresolved, LNK2019)
 
 struct ShellLayeringReport
 {

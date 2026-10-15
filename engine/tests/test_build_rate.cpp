@@ -43,6 +43,11 @@ struct PlotBuild
 	bool workerFaded = false;
 	float startHealth = 0.0f;
 	std::vector<std::uint32_t> hashes;
+	// lane BACKLOG3 (S-2452): the radar notices of the build (GameLogic::radarEventNotices), the structure's position and the builder's player index
+	std::vector<GameLogic::RadarEventNotice> radar;
+	Coord3D structurePos{ 0.0f, 0.0f, 0.0f };
+	int playerIndex = -1;
+	size_t radarBefore = 0;
 };
 
 // the independent model of a self build: health starts at 1.0, each heal adds (float)(max / T) and clamps at max (RW 0x8C31A5), done when health >= max
@@ -119,6 +124,9 @@ void buildOnPlot(starttest::Shared &s, const char *faction, PlotBuild &out)
 	out.startHealth = building->getBodyModule()->getHealth();
 	out.worker = gb->data()->m_workerName;
 	out.selfBuild = out.worker.empty();
+	out.radarBefore = logic.radarEventNotices().size();
+	out.structurePos = *building->getPosition();
+	out.playerIndex = player->getPlayerIndex();
 	const UnsignedInt placed = logic.getFrame();
 	Object *worker = nullptr;
 	float last = out.startHealth;
@@ -139,6 +147,7 @@ void buildOnPlot(starttest::Shared &s, const char *faction, PlotBuild &out)
 		last = h;
 	}
 	out.framesToComplete = (int)(logic.getFrame() - placed);
+	out.radar.assign(logic.radarEventNotices().begin() + (std::ptrdiff_t)out.radarBefore, logic.radarEventNotices().end());
 	if (building->getConstructionPercent() != -1.0f)
 	{
 		out.problem = out.structure + " never completed";
@@ -190,11 +199,19 @@ TEST_CASE("build rate: each faction's fortress plot builds its first structure a
 		if (a.selfBuild)
 		{
 			CHECK(a.heals == a.expected);
+			CHECK(a.radar.empty()); // lane BACKLOG3: a self build has no dozer, so no RW 0x88E125 event
 		}
 		else
 		{
 			CHECK(a.workFrames == a.expected);
 			CHECK(a.workerFaded); // RW 0x857BDA then 0x857238: idle, then killed with DEATH_FADED
+			// lane BACKLOG3 (S-2452): the dozer's finished building is one CONSTRUCTION (1) radar event at the structure for the builder's player (RW 0x88E125)
+			REQUIRE(a.radar.size() == 1);
+			CHECK(a.radar[0].source == GameLogic::RadarEventNotice::CONSTRUCTION);
+			CHECK(a.radar[0].type == 1);
+			CHECK(a.radar[0].playerIndex == a.playerIndex);
+			CHECK(a.radar[0].position.x == a.structurePos.x);
+			CHECK(a.radar[0].position.y == a.structurePos.y);
 		}
 		std::printf("  info: %s: %s %s, calcTimeToBuild %d, %s %d (model %d), complete after %d frames\n", faction, a.structure.c_str(), a.selfBuild ? "builds itself" : ("worker " + a.worker).c_str(),
 			a.buildFrames, a.selfBuild ? "heals" : "work frames", a.selfBuild ? a.heals : a.workFrames, a.expected, a.framesToComplete);

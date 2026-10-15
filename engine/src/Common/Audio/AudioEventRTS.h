@@ -76,7 +76,10 @@ enum PortionToPlay
 enum AudioViewType
 {
 	VIEW_TACTICAL = 0,
-	VIEW_LIVING_WORLD = 1
+	VIEW_LIVING_WORLD = 1,
+	// lane OPTS-4: the Options screen's volume samples (RW 0x91F90D passes 2 to the constructor RW 0x6DA95E, which stores it at +0x30): neither view's
+	// gate (RW 0x4591DF) mutes it, so the sample is heard over the battle and over the Living World map alike. The name is the port's
+	VIEW_ANY = 2
 };
 
 // What an event needs from the world to be positioned: object and drawable positions. Installed by the live game; a missing resolver makes an

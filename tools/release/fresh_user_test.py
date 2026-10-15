@@ -12,6 +12,8 @@ XDG folders (Godot's user data is $XDG_DATA_HOME/godot/app_userdata/OpenBFME):
   picked     no prefix; the player picks the two folders (--first-run-rotwk / --first-run-bfme2): mounted, remembered, the game starts
   swapped    the two folders picked the wrong way round: rejected with "this folder holds ...", nothing remembered
   empty      an empty folder picked for RotWK: rejected naming the expected archives, nothing remembered
+  halfpatch  a RotWK folder without _patch201ini.big (the AIO layout half there; lane CONTRIB-1, GitHub #21): rejected with the layout message
+             (what the folder has, what to do), nothing remembered
 and for every case: one session log in user://logs starting with the version line, with neither the test HOME nor the user name in it
 (found / picked: nor in the console output, review r1).
 Linux only (the Windows equivalent needs APPDATA / registry fakes). Prints a RESULT line per case; exit 0 when all pass.
@@ -171,6 +173,18 @@ def main() -> int:
         code, out = run(cmd, c, [f"--first-run-rotwk={empty}", f"--first-run-bfme2={bfme2}"] + GAME_ARGS)
         ok = code != 0 and "FIRST RUN rejected: no The Rise of the Witch-king 2.01 archives in" in out and not remembered(c)
         record("empty", ok, f"exit {code}", out)
+
+        c = Case(root, "halfpatch")
+        half = root / "halfpatch" / "RotWK"
+        for f in Path(rotwk).rglob("*"):  # the install as symlinks, without _patch201ini.big
+            if f.is_file() and f.name.lower() != "_patch201ini.big":
+                (half / f.relative_to(rotwk)).parent.mkdir(parents=True, exist_ok=True)
+                os.symlink(f, half / f.relative_to(rotwk))
+        code, out = run(cmd, c, [f"--first-run-rotwk={half}", f"--first-run-bfme2={bfme2}"] + GAME_ARGS)
+        ok = (code != 0 and "FIRST RUN rejected: The Rise of the Witch-king: this folder is not a complete 2.01 install: _patch201maps.big, INI.big and "
+              "Maps.big are from the All In One package; _patch201ini.big is missing (it belongs to the All In One package). What to do: patch a disc "
+              "install to 2.01 with EA's official patch" in out and not remembered(c))
+        record("halfpatch", ok, f"exit {code}", out)
     finally:
         if not a.keep:
             shutil.rmtree(root, ignore_errors=True)

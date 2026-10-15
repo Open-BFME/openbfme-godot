@@ -17,19 +17,22 @@ releases").
     python3 tools/release/autorelease.py changed --from A --to B [--git-dir DIR]
         exit 0 when something under RELEASE_PATHS changed between the two commits, 1 when nothing did (the release is skipped).
     python3 tools/release/autorelease.py notes --from A --to B --version V [--known-issues FILE] [--commit SHA] [--git-dir DIR]
-        --out FILE [--title-out FILE] [--items-out FILE]
+        --out FILE [--title-out FILE] [--items-out FILE] [--repo OWNER/NAME] [--titles bridge|studio]
         the release notes for players from the first-parent subjects of A..B (see release_notes()).
 
-Release notes. Every first-parent commit of A..B is one candidate (on the rebuild's branch a lane lands as one merge commit):
-  * a `Release-note: <text>` line in its message is used as written (`Release-note: none` drops the commit; a text starting with
-    `Fix:` goes under "What's fixed");
+Release notes (patch notes in a studio's shape, lane NOTES-1). Every first-parent commit of A..B is one candidate (on the rebuild's
+branch a lane lands as one merge commit):
+  * a `Release-note: [Kind [Area]:] text` line in its message is used as written. Kind is Added, Changed, Fixed (or `Fix:`) or Removed;
+    Area is one of AREAS in brackets, e.g. `Release-note: Fixed [Interface]: A left click on empty ground deselects.`; without a kind
+    the line is Added (Fixed when its words say so, FIXED); without an area it goes under "General". `Release-note: none` drops the
+    commit. One line is one change: autorelease.sh --plan warns by name about a line that looks like several (note_warnings()).
   * an integration round's lane merge ("Merge lane/x (<sha>) into integ/pN: ...") gives no note: the round's release-notes commit
     carries the player lines;
   * otherwise a commit that changes nothing a player runs (PLAYER_PATHS minus tests) is dropped, and the subject is reduced to plain
     words: the lane id, parenthesised details (binary addresses, stop ids, review verdicts) and everything after the first ';' are cut;
     a long first clause keeps only its head before ':'. Subjects that still read as lane jargon after that are dropped.
-  * a line that says something got fixed (fix, regression, crash, no longer, stop ..., instead of) goes under "What's fixed".
-Known issues come from known_issues.json (the README_TESTERS list, already in a player's words).
+The page: title, date and build kind, the install sentence, the download table (download_section()), then the sections Added, Changed,
+Bug fixes, Removed, Known issues (empty ones left out), their bullets grouped under a bold area line in AREAS' order, "General" last.
 Every line (generated, `Release-note:` text, known issues) is neutralised before it reaches GitHub (Sol r1: injection through subjects):
 links and URLs are removed, @mentions and #references are written with full-width signs (GitHub links neither), control characters go;
 the Markdown notes and PR body also escape every Markdown / HTML special character (neutral(), markdown()).
@@ -464,38 +467,90 @@ def markdown(text: str) -> str:
     return MD_SPECIAL.sub(r"\\\1", text)
 
 
-def notes_of(subject: str, body: str, files: list[str]) -> list[tuple[str, str]]:
-    """Every (section, line) of one first-parent commit. A commit with several `Release-note:` lines gives one note per line (a
-    release-notes commit lists a whole preview's news this way); `Release-note: none` anywhere drops the commit; without any
+# the patch notes' vocabulary (lane NOTES-1, owner 2026-10-13): kinds in page order with their section titles, the areas in page order
+NOTE_KINDS = (("added", "Added"), ("changed", "Changed"), ("fixed", "Bug fixes"), ("removed", "Removed"))
+AREAS = ("Gameplay", "Units and heroes", "Buildings", "AI", "Campaign", "Create-a-Hero", "Interface", "Audio", "Graphics", "Performance",
+         "Online", "Saves", "Replays and LAN", "Launcher and install", "Linux")
+GENERAL = "General"                      # a line without an area: printed last
+# Installed launchers (up to v0.4.0-alpha.3) find the Play card's lines by the section titles "What's new", then "What's fixed"
+# (launcher/scripts/ui/play_screen.gd), and the News screen prints every "#" title as it reads it. The first release with the studio
+# shape keeps those two titles ("bridge"): a launcher that has not updated itself yet still shows its Play card. Once a launcher that
+# reads both sets (this lane's release_notes.gd) has shipped, switch DEFAULT_TITLES to "studio" (docs/RELEASE.md, "Patch notes").
+TITLES = {"studio": {"added": "Added", "changed": "Changed", "fixed": "Bug fixes", "removed": "Removed"},
+          "bridge": {"added": "What's new", "changed": "Changed", "fixed": "What's fixed", "removed": "Removed"}}
+DEFAULT_TITLES = "bridge"
+NOTE_HEAD = re.compile(r"^(Added|Changed|Fixed|Fix|Removed)\s*(?:\[([^\]\n]*)\])?\s*:\s*(.*)$", re.I | re.S)
+MAX_NOTE = 200                           # a longer line is probably several changes (note_warnings)
+DEFAULT_REPO = "Open-BFME/openbfme-godot"
+
+
+def _cap(t: str) -> str:
+    return t[:1].upper() + t[1:]
+
+
+def parse_note(text: str) -> tuple[str, str, str]:
+    """(kind, area, text) of one `Release-note:` text: `Kind [Area]: text`, `Fix: text` or a bare text (Added, or Fixed when its words say
+    so). area is the AREAS entry the brackets name (case-insensitive) or "" for none / an unknown name (note_warnings names it)."""
+    m = NOTE_HEAD.match(text.strip())
+    if not m:
+        t = text.strip()
+        return ("fixed" if FIXED.search(t) else "added"), "", _cap(t)
+    kind = {"fix": "fixed", "fixed": "fixed"}.get(m.group(1).lower(), m.group(1).lower())
+    area = next((x for x in AREAS if x.lower() == (m.group(2) or "").strip().lower()), "")
+    return kind, area, _cap(m.group(3).strip())
+
+
+def note_warnings(text: str) -> list[str]:
+    """why a `Release-note:` text should be fixed before the release (never an error): it joins several changes, or names an unknown area"""
+    out, m = [], NOTE_HEAD.match(text.strip())
+    if m and m.group(2) is not None and m.group(2).strip().lower() not in {x.lower() for x in AREAS}:
+        out.append(f"unknown area [{neutral(m.group(2))[:40]}] (it goes under {GENERAL}; areas: {', '.join(AREAS)})")
+    body = m.group(3) if m else text
+    if re.search(r";\s*\S", body):
+        out.append("a ';' joins clauses: one note, one change")
+    if len(body.strip()) > MAX_NOTE:
+        out.append(f"{len(body.strip())} characters (more than {MAX_NOTE}): probably several changes in one line")
+    return out
+
+
+def release_note_texts(body: str) -> list[str]:
+    return [m.group(1).strip() for m in (re.match(r"^Release-note:\s*(.*)$", ln.strip(), re.I) for ln in body.splitlines()) if m]
+
+
+def notes_of(subject: str, body: str, files: list[str]) -> list[tuple[str, str, str]]:
+    """Every (kind, area, line) of one first-parent commit. A commit with several `Release-note:` lines gives one note per line (a
+    release-notes commit lists a whole build's news this way); `Release-note: none` anywhere drops the commit; without any
     Release-note line it is note_of's single generated line, if any."""
-    texts = [m.group(1).strip() for m in (re.match(r"^Release-note:\s*(.*)$", ln.strip(), re.I) for ln in body.splitlines()) if m]
+    texts = release_note_texts(body)
     if not texts:
         n = note_of(subject, body, files)
         return [n] if n else []
     if any(not t or t.lower() == "none" for t in texts):
         return []
-    cap = lambda t: t[:1].upper() + t[1:]              # "Fix: a crash ..." printed "a crash ..." (preview.4)
-    return [("fixed", cap(t[4:].strip())) if t.lower().startswith("fix:") else (("fixed" if FIXED.search(t) else "new"), cap(t))
-            for t in texts]
+    return [parse_note(t) for t in texts]
 
 
-def note_of(subject: str, body: str, files: list[str]) -> tuple[str, str] | None:
-    """(section, line) of one first-parent commit: section 'new' or 'fixed'; None when it is not news for a player"""
-    for line in body.splitlines():
-        m = re.match(r"^Release-note:\s*(.*)$", line.strip(), re.I)
-        if m:
-            text = m.group(1).strip()
-            if not text or text.lower() == "none":
-                return None
-            if text.lower().startswith("fix:"):
-                return "fixed", text[4:].strip()
-            return ("fixed" if FIXED.search(text) else "new"), text
+def note_of(subject: str, body: str, files: list[str]) -> tuple[str, str, str] | None:
+    """(kind, area, line) of one first-parent commit; None when it is not news for a player. A generated line has no area and no kind
+    but added / fixed (the subject has no tags: the words decide)."""
+    texts = release_note_texts(body)
+    if texts:
+        if not texts[0] or texts[0].lower() == "none":
+            return None
+        return parse_note(texts[0])
     if not any(f.startswith(PLAYER_PATHS) and not f.startswith(TEST_PATHS) for f in files):
         return None
     line = player_line(subject)
     if line is None:
         return None
-    return ("fixed" if FIXED.search(line) else "new"), line
+    return ("fixed" if FIXED.search(line) else "added"), "", line
+
+
+def release_warnings(commit: dict) -> list[str]:
+    """`NOTES WARNING <sha>: <reason>: <text start>` for each Release-note line of the commit that note_warnings() questions, plain text
+    (neutral(): the plan's output is a log, not a page)"""
+    return [f"NOTES WARNING {commit['sha'][:10]}: {w}: \"{neutral(t)[:70]}\"" for t in release_note_texts(commit.get("body", ""))
+            for w in note_warnings(t)]
 
 
 def first_parent_commits(git_dir: str | None, a: str, b: str) -> list[dict]:
@@ -511,34 +566,83 @@ def first_parent_commits(git_dir: str | None, a: str, b: str) -> list[dict]:
     return commits
 
 
-def release_notes(version: str, commits: list[dict], known_issues: list[str], commit: str = "", date: str = "") -> tuple[str, list[str]]:
-    """(markdown notes, the neutral() lines in order)"""
-    new, fixed, seen = [], [], set()
+REPO_NAME = re.compile(r"[A-Za-z0-9-]{1,39}/[A-Za-z0-9._-]{1,100}")
+
+
+def download_section(version: str, repo: str = DEFAULT_REPO, legacy_launchers: bool = True) -> list[str]:
+    """Lane ONEZIP-1: the notes' "Which file to download" part: one archive per platform with a direct link, and one line for the files
+    nobody downloads by hand. Its links are built here from the release's own version and repository (both checked against their
+    grammar) and never pass neutral(), which removes every URL from commit text; nothing else of the notes may hold a link."""
+    if not TAG.fullmatch(version) or len(version) > 40:
+        raise SystemExit(f"autorelease: {version!r} is not a release version")
+    if not REPO_NAME.fullmatch(repo):
+        raise SystemExit(f"autorelease: {repo!r} is not <owner>/<name>")
+    base = f"https://github.com/{repo}/releases/download/{version}"
+    what = "The game and the launcher in one download. Unpack it and start OpenBFME or the OpenBFME Launcher: both keep it up to date."
+    out = ["## Which file to download", "", "| File | What it is |", "|---|---|"]
+    for platform, label in (("windows-x64", "Windows"), ("linux-x64", "Linux")):
+        name = asset_name("game", version, platform)
+        out.append(f"| **[{name}]({base}/{name})** | **OpenBFME for {label}.** {what} |")
+    rest = [f"SHA256SUMS-{version}.txt", "manifest.json", "manifest.json.sig"]
+    if legacy_launchers:
+        rest = [asset_name("launcher", version, p) for p in ("windows-x64", "linux-x64")] + rest
+    out.append(f"| {', '.join(rest)} | Used by OpenBFME to update itself and for checking downloads. You don't need these. |")
+    return out + ["", "Already have OpenBFME or its launcher? Start it: it updates itself.", ""]
+
+
+def _date_text(date: str) -> str:
+    """2026-10-13 -> "October 13, 2026" ("" when it is not such a date)"""
+    m = re.fullmatch(r"(\d{4})-(\d{2})-(\d{2})", date)
+    months = ("January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December")
+    if not m or not 1 <= int(m.group(2)) <= 12 or not 1 <= int(m.group(3)) <= 31:
+        return ""
+    return f"{months[int(m.group(2)) - 1]} {int(m.group(3))}, {m.group(1)}"
+
+
+def _grouped(items: list[tuple[str, str]]) -> list[str]:
+    """Markdown lines of (area, neutral line) pairs: a bold area line for each area in AREAS' order, General last, its bullets under it"""
+    out = []
+    for area in AREAS + (GENERAL,):
+        mine = [t for a, t in items if (a if a in AREAS else GENERAL) == area]
+        if mine:
+            out += [f"**{markdown(neutral(area))}**"] + [f"- {markdown(t)}" for t in mine] + [""]
+    return out
+
+
+def release_notes(version: str, commits: list[dict], known_issues: list, commit: str = "", date: str = "", repo: str = DEFAULT_REPO,
+                  titles: str = DEFAULT_TITLES, legacy_launchers: bool = True) -> tuple[str, list[str]]:
+    """(markdown notes, the neutral() lines in order). known_issues: texts, or {"text", "area"} entries."""
+    if titles not in TITLES:
+        raise SystemExit(f"autorelease: --titles {titles!r} is not one of {', '.join(TITLES)}")
+    by_kind: dict[str, list[tuple[str, str]]] = {k: [] for k, _ in NOTE_KINDS}
+    seen = set()
     for c in commits:
-        for n in notes_of(c["subject"], c.get("body", ""), c.get("files", [])):
-            line = neutral(n[1])
+        for kind, area, text in notes_of(c["subject"], c.get("body", ""), c.get("files", [])):
+            line = neutral(text)
             if line and line not in seen:
                 seen.add(line)
-                (fixed if n[0] == "fixed" else new).append(line)
+                by_kind[kind].append((area, line))
     m = TAG.fullmatch(version)
-    kind = m.group(4) if m else None
-    # RELNAME-1 r2: an automatic preview is a bridge for the launchers up to v0.3.0-preview.4 (release_version())
-    out = [f"OpenBFME {version}" + {"alpha": " is an alpha build for testers.", "preview": " is an alpha build for testers, numbered "
-           "as a preview so that launchers of v0.3.0-preview.4 and older can update themselves: after it, they offer the alpha builds."
-           }.get(kind, "."),
+    build = {"alpha": "alpha build for testers", "preview": "alpha build for testers, numbered as a preview so that launchers of "
+             "v0.3.0-preview.4 and older can update themselves: after it, they offer the alpha builds"}.get(m.group(4) if m else None, "build")
+    when = _date_text(date)
+    # version (TAG grammar, checked by download_section), date (_date_text: digits and a month name), build words and area names (AREAS)
+    # are closed sets; the area and section labels go through markdown(neutral()) all the same (structural, not luck)
+    out = [f"# OpenBFME {version} patch notes", "", f"{when} \u00b7 {build}" if when else build, "",
            "Install or update it with the OpenBFME Launcher. It uses your installed The Rise of the Witch-king 2.01 and "
            "The Battle for Middle-earth II 1.06, or downloads them for you.", ""]   # said once, not preachy (owner, 2026-10-10/11)
-    if new:
-        out += ["## What's new", ""] + [f"- {markdown(x)}" for x in new] + [""]
-    if fixed:
-        out += ["## What's fixed", ""] + [f"- {markdown(x)}" for x in fixed] + [""]
-    if not new and not fixed:
+    out += download_section(version, repo, legacy_launchers)
+    for kind, _ in NOTE_KINDS:
+        if by_kind[kind]:
+            out += [f"## {markdown(neutral(TITLES[titles][kind]))}", ""] + _grouped(by_kind[kind])
+    if not any(by_kind.values()):
         out += ["No changes you will notice in the game: this build updates the release tooling and internal parts.", ""]
-    if known_issues:
-        out += ["## Known issues", ""] + [f"- {markdown(neutral(x))}" for x in known_issues] + [""]
+    issues = [("", neutral(i)) if isinstance(i, str) else (i.get("area", ""), neutral(i["text"])) for i in known_issues]
+    if issues:
+        out += ["## Known issues", ""] + _grouped(issues)
     if commit:
         out += [f"Built from commit {markdown(neutral(commit[:10]))}" + (f" ({markdown(neutral(date))})." if date else ".")]
-    return "\n".join(out).rstrip() + "\n", new + fixed
+    return "\n".join(out).rstrip() + "\n", [t for k, _ in NOTE_KINDS for _, t in by_kind[k]]
 
 
 def title_summary(lines: list[str], limit: int = 90) -> str:
@@ -892,8 +996,8 @@ def audit_tree(git_dir: str | None, tree: str) -> list[str]:
     return problems
 
 
-def load_known_issues(path: Path) -> list[str]:
-    return [i["text"] for i in json.loads(path.read_text(encoding="utf-8"))["issues"]]
+def load_known_issues(path: Path) -> list[dict]:
+    return [{"text": i["text"], "area": i.get("area", "")} for i in json.loads(path.read_text(encoding="utf-8"))["issues"]]
 
 
 def main(argv: list[str]) -> int:
@@ -932,10 +1036,16 @@ def main(argv: list[str]) -> int:
     n.add_argument("--known-issues", type=Path, default=HERE / "known_issues.json")
     n.add_argument("--commit", default="")
     n.add_argument("--date", default="")
+    n.add_argument("--repo", default=DEFAULT_REPO, help="OWNER/NAME of the release page (the download table's links)")
+    n.add_argument("--titles", default=DEFAULT_TITLES, choices=sorted(TITLES), help="bridge: the old launchers' section titles for added / fixed")
+    n.add_argument("--no-legacy-launchers", action="store_true", help="the release has no launcher-only archives (format 3)")
     n.add_argument("--out", type=Path, required=True)
     n.add_argument("--title-out", type=Path)
     n.add_argument("--items-out", type=Path, help="the items as Markdown (PR body)")
     n.add_argument("--plain-items-out", type=Path, help="the items as neutral plain text (the sync commit's message)")
+    w = sub.add_parser("warnings", help="NOTES WARNING lines for the Release-note lines of A..B (never an error)")
+    w.add_argument("--from", dest="a", required=True)
+    w.add_argument("--to", dest="b", required=True)
     t = sub.add_parser("audit-tree")
     t.add_argument("--tree", required=True)
     x = sub.add_parser("audit-text", help="the public metadata files: exit 1 on any privacy hit (no redaction)")
@@ -986,7 +1096,13 @@ def main(argv: list[str]) -> int:
         files = release_changed(a.git_dir, a.a, a.b)
         print(f"{len(files)} release files changed" + (f" (first: {files[0]})" if files else ""))
         return 0 if files else 1
-    text, lines = release_notes(a.version, first_parent_commits(a.git_dir, a.a, a.b), load_known_issues(a.known_issues), a.commit, a.date)
+    if a.cmd == "warnings":
+        for c in first_parent_commits(a.git_dir, a.a, a.b):
+            for w in release_warnings(c):
+                print(w)
+        return 0
+    text, lines = release_notes(a.version, first_parent_commits(a.git_dir, a.a, a.b), load_known_issues(a.known_issues), a.commit, a.date, a.repo, a.titles,
+                                not a.no_legacy_launchers)
     a.out.write_text(text, encoding="utf-8")
     if a.title_out:
         a.title_out.write_text(title_summary(lines) + "\n", encoding="utf-8")

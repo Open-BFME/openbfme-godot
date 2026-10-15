@@ -495,11 +495,7 @@ bool ScriptActions::executeUnitAction(ScriptEngine &engine, const ScriptActionRe
 		const Waypoint *w = terrain ? terrain->findWaypointByName(param(a, 1).stringValue) : nullptr;
 		if (o && w)
 		{
-			o->setPosition(&w->location);
-			if (AIUpdateInterface *ai = o->getAIUpdateInterface())
-			{
-				ai->aiIdle(CMD_FROM_PLAYER); // RW 0x696E63: aiIdle(0, or 2 with the status bit 0x5A: not read, S-1186)
-			}
+			o->teleportTo(&w->location, false); // RW 0x7BDC2D: RW 0x696E63(pos, 0) (lane BACKLOG4: the status 0x5A source and the path reset run)
 		}
 		return true;
 	}

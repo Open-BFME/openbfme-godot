@@ -576,6 +576,7 @@ public:
 	// RW 0x5E4137 (lane HORDE-2): the speed cap set by setDesiredSpeedCap while its frame has not passed (`cmp +0x60, frame; jae`), else getMaxSpeedForCondition
 	float getCurrentMaxSpeed(const LocomotorHost &host, unsigned frame) const { return m_desiredSpeedCapUntilFrame >= frame ? m_desiredSpeedCap : getMaxSpeedForCondition(host); }
 	void setPreferredPoint(const Coord3D &p) { m_preferredPoint = p; } // +0x14: the Wheels mover's back-up reference point
+	const Coord3D &preferredPoint() const { return m_preferredPoint; }   // lane BACKLOG-1 (RW 0x5E39CE writes it)
 
 	// the OpenBFME state hash of the instance (MOVE-1): every field the movers carry from one frame to the next
 	void crc(class StateHasher &hasher) const;

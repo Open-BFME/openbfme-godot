@@ -133,6 +133,7 @@ struct Unit : AIMoveHost
 	Coord2D unitDirectionOf(const PathfindObject &o) const override;
 	int pathPriority() const override { return priority; }
 	PathfindObjectID attackTargetOf(const PathfindObject &) const override { return PATHFIND_INVALID_ID; }
+	bool crushOrSquishPolicy(const PathfindObject &other) const override { return obj.canCrushOrSquish(other); } // the mock's levels are its template's
 	float wanderFactor() const override { return 0.0f; }
 	float closeEnoughDist() const override { return 10.0f; }
 	float locomotorSpeed() const override { return loco->speed(); }

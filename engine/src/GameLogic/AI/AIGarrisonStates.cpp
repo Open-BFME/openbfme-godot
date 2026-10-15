@@ -8,11 +8,14 @@
 
 #include "Common/Player.h"
 #include "Common/StateHash.h"
+#include "Common/Thing/ThingTemplate.h"
 #include "GameLogic/AI/AIWorld.h"
 #include "GameLogic/Combat/CombatNames.h"
 #include "GameLogic/Combat/CombatQueries.h"
+#include "GameLogic/Combat/ObjectWeapons.h"
 #include "GameLogic/GameLogic.h"
 #include "GameLogic/Module/AIUpdate.h"
+#include "GameLogic/Module/CollideModule.h"
 #include "GameLogic/Object/Contain/HordeContainRuntime.h"
 #include "GameLogic/Object/Object.h"
 #include "GameLogic/SimMath.h"
@@ -23,9 +26,13 @@ namespace
 const char *const kStop =
 	"[S-1101] the AI's enter / exit (lane GARRISON-1): AIMoveToPositionAndEnterState 56 (RW 0x751A8A / 0x756452), AIEnterState 15 (RW 0x7515E1 / 0x756067 / "
 	"0x752B0F), AIHordeEnterState 52 (RW 0x747C37 / 0x7433E3 / 0x747CD1), AIExitState 38 (RW 0x74352D / 0x74356A / 0x752BF4), AIHordeExitState 53 (RW 0x743437 / "
-	"0x747D04 / 0x74347D) and ActionManager::canEnterObject (RW 0x82CBD5) are ported; not ported: canEnterObject's collide-module branch (RW 0x82CD2E, taken as no), "
-	"the SHIP branches, the DOZER + HARVESTER body test (RW 0x82CC09), AIEnterState's test of a contained container (RW 0x756088), the enemy container's attack fallback (RW 0x82CFD4), the container AI's slot 0x1A8 "
-	"in the exit states (taken as not 2), the members' AI slot 0x1C4 of RW 0x875C93, the group manager of MSG_ENTER (GameData + 0x11CA)";
+	"0x747D04 / 0x74347D) and ActionManager::canEnterObject (RW 0x82CBD5) are ported; lane BACKLOG-1 (BFME2 decomp): the DOZER + HARVESTER health test (RW "
+	"0x82CC09), the collide-module branch (RW 0x82CD2E: every collide class a unit has answers no), AIEnterState's contained-container test (RW 0x756088) and "
+	"its attack on an enemy container (RW 0x7560FB, getCanAttackObject RW 0x82CFD4: its object part as ObjectWeapons::canAttackObject, S-325), MSG_ENTER's "
+	"weapon lock release (RW 0x76FB64), privateEnter's locomotor point and blocked fields (RW 0x5E39CE, AI + 0x16C / + 0x3B8); not ported: the SHIP branches "
+	"(RW 0x82CED4, privateEnter's AI command 0x4F RW 0x66C6E3), behaviour slot 0x48 of the collide branch, getCanAttackObject's STRUCTURE and "
+	"SPAWNS_ARE_THE_WEAPONS parts (reported), the container AI's slot 0x1A8 in the exit states (taken as not 2), the members' AI slot 0x1C4 of RW 0x875C93, "
+	"the locomotor's allow-invalid-position flag, the group manager of MSG_ENTER (GameData + 0x11CA)";
 
 int statusBit(const char *name)
 {
@@ -76,15 +83,49 @@ bool shroudedForPlayer(Object &obj, Object &container, CommandSourceType source)
 }
 } // namespace
 
-unsigned long long &GarrisonRules::collideBranchSkipped()
+const char *GarrisonRules::stopLine()
+{
+	return kStop;
+}
+
+unsigned long long &GarrisonRules::enemyContainerAttacks()
 {
 	static unsigned long long n = 0;
 	return n;
 }
 
-const char *GarrisonRules::stopLine()
+// RW 0x4B12E8 (lane BACKLOG-1): Thing::getHeightAboveTerrain (RW 0x70B8AE, BFME2 decomp Thing.cpp, tier A: the position's z less the terrain height, stored as a
+// float) above 0.0 (x87 fcompi)
+bool GarrisonRules::isAboveTerrain(const Object &obj)
 {
-	return kStop;
+	const Coord3D &p = *obj.getPosition();
+	return SimMath::subf32(p.z, obj.logic().getGroundHeight(p.x, p.y)) > 0.0f;
+}
+
+// RW 0x82CFD4 ActionManager::getCanAttackObject(obj, victim, source, ATTACK_NEW_TARGET) (lane BACKLOG-1; BFME2 decomp ActionManagerGetCanAttackObject.cpp, tier B
+// same-shape): no for a dead object or victim (+ 0x458 bit 0), the object itself, an object that is not able to attack (Object::isAbleToAttack RW 0x691269) or
+// one with DISABLED bit 4 (+ 0x1C8 & 0x10: ATTACK_NEW_TARGET is refused). A STRUCTURE asks its riders first (RW 0x82C8A7) and a SPAWNS_ARE_THE_WEAPONS object
+// its slave closest to the victim (RW 0x68C3A3 slot 8); neither enters a container (not mobile) and both are reported here. Then the object's own
+// getAbleToAttackSpecificObject (RW 0x68D6A6): INFERENCE (S-325, as the guard and turret machines): ObjectWeapons::canAttackObject, not forced, stands in for it
+bool GarrisonRules::canAttackAsNewTarget(Object &obj, Object &victim, CommandSourceType source)
+{
+	static const int structure = CombatNames::kindOf("STRUCTURE");
+	static const int spawnsAreTheWeapons = CombatNames::kindOf("SPAWNS_ARE_THE_WEAPONS");
+	if (obj.isEffectivelyDead() || victim.isEffectivelyDead() || &obj == &victim || !obj.isAbleToAttack())
+	{
+		return false;
+	}
+	if ((obj.getDisabledMask() & (1u << 4)) != 0)
+	{
+		return false; // RW 0x82D021 .. 0x82D034
+	}
+	if (obj.isKindOf((unsigned)structure) || obj.isKindOf((unsigned)spawnsAreTheWeapons))
+	{
+		obj.logic().reportError("getCanAttackObject (RW 0x82CFD4): the STRUCTURE / SPAWNS_ARE_THE_WEAPONS branches are not ported (S-1101), " + obj.getTemplate()->getName() +
+			" asks for itself");
+	}
+	ObjectWeapons *w = obj.getWeapons();
+	return w && w->canAttackObject(victim, source, false);
 }
 
 // RW 0x690E97
@@ -129,9 +170,15 @@ bool GarrisonRules::canEnterObject(Object &obj, Object *container, CommandSource
 	static const int infantry = CombatNames::kindOf("INFANTRY");
 	if (obj.isKindOf((unsigned)dozer) && obj.isKindOf((unsigned)harvester) && container && container->getBodyModule())
 	{
-		// RW 0x82CC09 .. 0x82CC22: a DOZER + HARVESTER object is refused when the container body's slot 0x14 is below 0.99 (RW 0xBE53BC); the slot is not
-		// identified (S-1101): counted, not tested
-		++collideBranchSkipped();
+		// RW 0x82CC09 .. 0x82CC22 (lane BACKLOG-1; BFME2 decomp BFMEActionManager::canEnterObject, tier B same-shape for RW 0x82CBD5): a DOZER + HARVESTER object
+		// is refused when the container body's vt[0x14] is below 0.99 (RW 0xBE53BC, x87 fcompi). vt[0x14] is the health fraction: ActiveBody RW 0x8C1D75
+		// (max health > 0.0 (comiss): fld health, fdiv max health, x87 PC24; else 0.0), InactiveBody RW 0x70D41A (0.0)
+		const BodyModuleInterface &body = *container->getBodyModule();
+		const double fraction = body.getMaxHealth() > 0.0f ? SimMath::pc24DivW((double)body.getHealth(), (double)body.getMaxHealth()) : 0.0;
+		if ((double)0.99f > fraction)
+		{
+			return false;
+		}
 	}
 	if (!container || container == &obj || !container->getContain() || container->isEffectivelyDead())
 	{
@@ -161,13 +208,17 @@ bool GarrisonRules::canEnterObject(Object &obj, Object *container, CommandSource
 	{
 		return true; // RW 0x82CD1C .. 0x82CD28
 	}
-	// RW 0x82CD2E: the collide modules of the object (S-1101: not evaluated)
+	// RW 0x82CD2E .. 0x82CD67 (lane BACKLOG-1): every collide module of the object (behaviour slot 1) whose behaviour slot 0x48 answers null and that would like to
+	// collide with the container (collide slot 1) lets it in. Every collide class RotWK gives a unit answers no (CollideModuleInterface::wouldLikeToCollideWith);
+	// behaviour slot 0x48 (RW 0x8A18E0 family: the module's + 0x20 sub-interface) is not identified (S-1101): a module that would like to collide is reported
 	for (const std::unique_ptr<BehaviorModule> &m : obj.modules())
 	{
-		if (m->getCollide())
+		const CollideModuleInterface *collide = m->getCollide();
+		if (collide && collide->wouldLikeToCollideWith(*container))
 		{
-			++collideBranchSkipped();
-			break;
+			obj.logic().reportError("canEnterObject: a collide module of " + obj.getTemplate()->getName() + " would like to collide with " +
+				container->getTemplate()->getName() + "; behaviour slot 0x48 of RW 0x82CD45 is not identified (S-1101): it enters");
+			return true;
 		}
 	}
 	// RW 0x82CD6D: the heal contain's full-health test (slot 0x18: false for the contains of this lane)
@@ -344,6 +395,12 @@ public:
 		{
 			return STATE_FAILURE;
 		}
+		// RW 0x756088 .. 0x7560A5 (lane BACKLOG-1; BFME2 decomp AIEnterState::update, tier B same-shape): a container that is itself contained (+ 0x27C) and above
+		// the terrain (RW 0x4B12E8) cannot be entered from the ground
+		if (container->getContainedBy() && GarrisonRules::isAboveTerrain(*container) && !GarrisonRules::isAboveTerrain(obj))
+		{
+			return STATE_FAILURE;
+		}
 		ContainModuleInterface *contain = container->getContain();
 		if (contain)
 		{
@@ -356,7 +413,15 @@ public:
 		machine().setGoalObject(container->getID()); // RW 0x6627F0
 		if (!GarrisonRules::canEnterObject(obj, container, ai().lastCommandSource(), 0, false))
 		{
-			return STATE_FAILURE; // the enemy container's attack fallback RW 0x7561FA .. (S-1101)
+			// RW 0x7560FB .. 0x75615F (lane BACKLOG-1): an enemy container (RW 0x68D7AB == ENEMIES) the object can attack as a new target (RW 0x82CFD4: POSSIBLE or
+			// POSSIBLE_AFTER_MOVING) is attacked instead: AI command 0xB (RW 0x66C536: the container, 0x7FFFFFFF shots, the last command source), CONTINUE
+			if (obj.getRelationship(*container) == ENEMIES && GarrisonRules::canAttackAsNewTarget(obj, *container, ai().lastCommandSource()))
+			{
+				ai().aiAttackObject(container, ai().lastCommandSource(), 0x7FFFFFFF);
+				++GarrisonRules::enemyContainerAttacks();
+				return STATE_CONTINUE;
+			}
+			return STATE_FAILURE;
 		}
 		if ((obj.getDisabledMask() & (1u << 3)) != 0)
 		{

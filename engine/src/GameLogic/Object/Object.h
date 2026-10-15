@@ -66,6 +66,7 @@ class ObjectClientHooks;
 class ObjectWeapons;
 struct DamageInfo;
 class Team;
+class TeamPrototype;
 class Player;
 class StateHasher;
 class ThingTemplate;
@@ -98,12 +99,16 @@ public:
 	void defect(Object *newOwner, bool permanent);
 	// RW 0x699513: TEMPORARILY_DEFECTED on, then the team without recording it as the original (RW 0x698E6F -> 0x697C09(team, 0))
 	void setTemporaryTeam(Team *team);
-	// RW 0x69AB22: back to the team setTeam last recorded (RW 0x69959D keeps its name at + 0x320; the port keeps the Team, INFERENCE: the name lookup RW
-	// 0x7A7483 finds the same team)
+	// RW 0x69AB22 (BFME2 decomp ObjectRestoreOriginalTeam.cpp, tier B same-shape): back to the team setTeam last recorded. Lane BACKLOG4: RW 0x69959D keeps
+	// the team's NAME at + 0x320 ("<the prototype's owner name>/<the prototype's name>") and RW 0x7A7483 (TeamFactory::findTeam) looks it up: the newest
+	// team of that prototype. Then an object whose controlling player is defeated (RW 0x6AAC4B, Player + 0x754) is killed (RW 0x698EC3(8, 0))
 	void restoreOriginalTeam();
+	// the name RW 0x69959D keeps ("" with no team). The port keeps the recorded team's prototype and writes the name when it is asked (object creation
+	// records a team for every object: no string is built there); prototypes live as long as the game's teams
+	std::string getOriginalTeamName() const;
 	// RW 0x69ABA7: the end of a temporary defection (TemporarilyDefectUpdate, a lethal hit on a RespawnBody)
 	void endDefection();
-	Team *getOriginalTeam() const { return m_originalTeam; }
+	Team *getOriginalTeam() const; ///< the team the recorded name finds now (RW 0x7A7483); null with no name
 	// lane HERO-2: + 0x80, the object capturing this one (SpecialAbilityUpdate's capture: RW 0x851F9C sets it, RW 0x8531CC / 0x854740 clear it; Lua's
 	// ObjectCapturingObjectPlayerSide reads it, RW 0x73684D)
 	void setCapturerID(ObjectID id) { m_capturerID = id; }
@@ -417,6 +422,28 @@ public:
 	const float *getRecordedBasis() const { return m_recordedBasis; } ///< row major, as Thing::getBasis (read by the client's RenderInterpolation)
 	const Coord3D &getPreviousPosition() const { return m_previousPosition; }
 
+	// lane BACKLOG4 (S-1222): RW 0x693919 (BFME2 decomp ObjectRva00293105.cpp Object::rva00293105 is the donor, tier B edited: RotWK adds the status
+	// test). Nothing with the status 0x66 (SUMMONING_REPLACEMENT, + 0xA0 bit 6); every module whose special power update interface (behaviour slot 0x64)
+	// is active (slot 4) and in use (slot 0x18 with a null button, RW 0x851C92) ends its ability as aborted (RW 0x8513E4: module slot 0x34 (0, 1)); then
+	// the same for every member of the object's horde (RW 0x68C866, its slot 0x10C list)
+	void abortAbilitiesInUse();
+
+	// ---- the teleport forms (lane BACKLOG4, S-813) --------------------------------------------------------------------------
+	// TARGET RW 0x696E63 Object::teleportTo(pos, keepAI) (BFME2 decomp ObjectRva0029660C.cpp Object::teleportTo is the donor, tier B: RotWK adds the
+	// status test): Thing::setPosition (RW 0x70C201); recordTransform(TheGameLogic + 0x40) TWICE (RW 0x6260E1: the previous, the recorded and the current
+	// pose are then alike); the drawable's gather RW 0x674B1F(1) (teleportGather below); setPosition again; updateShroudNow (RW 0x68C7E9); a horde contain
+	// (contain slot 0x7C) re-places its members (interface slot 0x1B8, RW 0x86D881); unless `keepAI`, the AI idles (RW 0x5E821A, from source 2 when the
+	// object has status 0x5A IS_LEAVING_FACTORY, else 0) and drops its path (RW 0x66276B).
+	void teleportTo(const Coord3D *pos, bool keepAI);
+	// TARGET RW 0x68DA67 (BFME2 decomp ObjectRva0028D412.cpp, tier B same-shape): the same with Thing::setTransformMatrix (RW 0x70BA76), the horde's slot
+	// 0x1B4 (RW 0x86D8FE) and no AI part.
+	void teleportTransform(const Coord3D *pos, const float basis[9]);
+	// The drawable's RW 0x674B1F(1) (BFME2 decomp DrawableInterpolationRebuild.cpp, tier A), the forced gather: the recorded transform, the current
+	// transform, P0, P1, the drawn transform and the drawn position all become the object's current ones, P2 the position and P3 the pending position
+	// (none after a recordTransform), and the drawable's frame stamp (+ 0x244) is -1. The port's client draws from the snapshot of the completed frame
+	// (GameClient/LogicSnapshot.h), so the object keeps the frame of its last forced gather for that snapshot. Client data: not part of the state hash.
+	bool wasTeleportGatheredAt(UnsignedInt frame) const { return m_teleportGathered && m_teleportGatherFrame == frame; }
+
 	// ---- scheduler support ------------------------------------------------------------------------------------------------
 	UnsignedInt getCreationFrame() const { return m_creationFrame; }
 	// phase 1 end-of-frame checks (RW 0x690A42 checkDisabledStatus, 0x690AB9 checkIgnoreAICommandStatus, 0x690AE5 checkNoCollisionsStatus)
@@ -497,7 +524,9 @@ private:
 	bool m_effectivelyDead = false;                         ///< RW + 0x458 bit 0
 	ArmorSetFlags m_armorSetFlags = 0;
 	std::uint32_t m_weaponBonusMask = 0;
-	Team *m_originalTeam = nullptr;       ///< lane HERO-2: + 0x320 (the team setTeam last recorded, RW 0x69959D)
+	const TeamPrototype *m_originalTeamProto = nullptr; ///< lane BACKLOG4: + 0x320 (the team setTeam last recorded, RW 0x69959D: kept there as its name)
+	std::uint32_t m_originalTeamID = 0;   ///< the id of that team when it was recorded (hashed, as lane HERO-2's pointer was)
+	void recordOriginalTeam();
 	ObjectID m_speechLeader = INVALID_ID; ///< lane HERO-2: + 0x46C
 	bool m_receivingDifficultyBonus = false; ///< lane CAMP-1H: + 0x45C (hashed)
 	std::int8_t m_legendaryFactor = 1;       ///< lane RULES-1 (OpenBFME; hashed when not 1). One byte in the padding after + 0x45C: sizeof(Object) stays as it was (a larger Object changed the move3 crossing games: some code depends on the allocation layout, reported)
@@ -538,4 +567,7 @@ private:
 	float m_recordedAngle = 0.0f;
 	float m_recordedBasis[9] = { 1, 0, 0, 0, 1, 0, 0, 0, 1 };
 	Coord3D m_previousPosition;
+	bool m_teleportGathered = false;                     ///< a forced gather (RW 0x674B1F(1)) ran
+	UnsignedInt m_teleportGatherFrame = 0;               ///< its logic frame
+	void teleportGather();
 };

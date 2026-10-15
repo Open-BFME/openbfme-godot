@@ -162,6 +162,9 @@ public:
 
 	// the machine's goal (ZH StateMachine::m_goalPosition / m_goalObjectID, AIStateMachine::m_goalPath)
 	const Coord3D &goalPosition() const { return m_goalPosition; }
+	// the goal kept for a temporary state (RW 0x741675 / 0x751DBD)
+	const Coord3D &savedGoalPosition() const { return m_savedGoalPosition; }
+	ObjectID savedGoalObjectID() const { return m_savedGoalObjectID; }
 	void setGoalPosition(const Coord3D &p) { m_goalPosition = p; }
 	ObjectID goalObjectID() const { return m_goalObjectID; }
 	// the facing a move ends with (BFME MSG_DO_MOVE_AND_ORIENTATE / formation move; AIMoveToState::setFinalAngle)

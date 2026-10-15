@@ -8,7 +8,10 @@
 
 #pragma once
 
+#include <cstdint>
+#include <set>
 #include <string>
+#include <utility>
 #include <vector>
 
 // The actions the main menu hands to the engine.  Retail's handlers (BFME1 AptMainMenu*.cpp, RotWK names only; spec 3.4 rows
@@ -80,6 +83,16 @@ public:
 	virtual void request(const ShellRequest &request) = 0;
 	// lane UI-2: an option the Options screen saved takes effect (key and value as Options.ini holds them, e.g. "SoftParticles" = "no")
 	virtual void applyOption(const std::string &key, const std::string &value) = 0;
+	// lane OPTS-4: the Options screen's volume samples (RW 0x91F90D). TheAudio->addAudioEvent of the MiscAudio slot `field` ("VolumeSampleMusic" ...)
+	// built with the view type `viewType` (the event's + 0x30, AudioEventRTS.h: RW 0x91F90D passes 2): the handle, 0 when the slot is NoSound or
+	// nothing could be asked (the host reports why)
+	virtual std::uint32_t addMiscAudioEvent(const std::string &field, int viewType) = 0;
+	// TheAudio->removeAudioEvent / isCurrentlyPlaying
+	virtual void removeAudioEvent(std::uint32_t handle) = 0;
+	virtual bool isCurrentlyPlaying(std::uint32_t handle) = 0;
+	// lane OPTS-5: TheDisplay vslot 0x64 setGamma(gamma, 0, 1, false): the Options screen's brightness slider while it moves (RW 0x91F90D), its Reset
+	// (RW 0x91F5F3) and Cancel (RW 0x91ECB8, the saved GlobalData + 0xBCC) set the display's gamma at once, before anything is saved
+	virtual void setDisplayGamma(float gamma) = 0;
 };
 
 // Records every call, for tests and for hosts that have not wired a service yet (the recorded list is the report).
@@ -99,6 +112,28 @@ public:
 	void request(const ShellRequest &r) override { requests.push_back(r); }
 	std::vector<std::pair<std::string, std::string>> appliedOptions; // lane UI-2
 	void applyOption(const std::string &key, const std::string &value) override { appliedOptions.emplace_back(key, value); }
+	// lane OPTS-4: the samples asked for ({ handle, field }, handles from 1), the handles removed, and the ones still sounding (a test ends a sample by
+	// erasing its handle from `sounding`, as the sound's end does)
+	std::vector<std::pair<std::uint32_t, std::string>> miscEvents;
+	std::vector<int> miscEventViews; // the view type of each (miscEvents' order)
+	std::vector<std::uint32_t> removedEvents;
+	std::set<std::uint32_t> sounding;
+	std::uint32_t addMiscAudioEvent(const std::string &field, int viewType) override
+	{
+		const std::uint32_t handle = (std::uint32_t)miscEvents.size() + 1;
+		miscEvents.emplace_back(handle, field);
+		miscEventViews.push_back(viewType);
+		sounding.insert(handle);
+		return handle;
+	}
+	void removeAudioEvent(std::uint32_t handle) override
+	{
+		removedEvents.push_back(handle);
+		sounding.erase(handle);
+	}
+	bool isCurrentlyPlaying(std::uint32_t handle) override { return sounding.count(handle) != 0; }
+	std::vector<float> gammas; // lane OPTS-5: every display gamma set
+	void setDisplayGamma(float gamma) override { gammas.push_back(gamma); }
 
 	std::size_t countRequests(ShellAction action) const
 	{

@@ -874,6 +874,13 @@ const char *const kOptionsExterns[7] = { "MasterOption0Num", "MasterOption0Curre
 const char *const kVolumeKeys[5] = { "SFXVolume", "VoiceVolume", "MusicVolume", "AmbientVolume", "MovieVolume" };
 // the gadget names of the volume sliders (InitGadgets: + 0x2DC SoundFx, + 0x2E0 Voice, + 0x2E4 Music, + 0x2E8 Ambient, + 0x2EC Movie)
 const char *const kVolumeGadgets[5] = { "SoundFxVolume", "VoiceVolume", "MusicVolume", "AmbientVolume", "MovieVolume" };
+// lane OPTS-4: the MiscAudio slots of the volume samples by sound type (TheAudio's MiscAudio + 0xA8 + 4 * type, read by RW 0x91F90D; the field table
+// RW 0xBF5450 puts VolumeSampleSoundFX at 0xA8, Voice 0xAC, Music 0xB0, Ambient 0xB4, Movie 0xB8)
+const char *const kVolumeSamples[5] = { "VolumeSampleSoundFX", "VolumeSampleVoice", "VolumeSampleMusic", "VolumeSampleAmbient", "VolumeSampleMovie" };
+// the Detail list's entries (InitGadgets RW 0x9205C4: GUI:UltraHigh .. GUI:VeryLow, GUI:Custom, item data the level)
+const std::pair<const char *, int> kDetailItems[6] = { { "GUI:UltraHigh", 4 }, { "GUI:High", 3 }, { "GUI:Medium", 2 }, { "GUI:Low", 1 }, { "GUI:VeryLow", 0 },
+	{ "GUI:Custom", 5 } };
+
 // RW 0xD9E760: GameLODManager's audio LOD names (index 0, 1)
 const char *const kAudioLOD[2] = { "Low", "High" };
 // the build's version (RW 0x644CC2 parses "VERSION=2.1.2614.37001" of the build string RW 0x644D8A with "%d.%d.%d.%d"; major + 0, minor + 4)
@@ -968,6 +975,8 @@ namespace
 {
 // lane OPTS-2: APT:CannotChangeResolution where the main menu opened the screen and the device cannot change the display mode [S-3401]
 const char *const kResolutionElsewhere = "Use OpenBFME \xE2\x86\x92 Display.";
+// lane OPTS-5: the page keys of the original game's settings
+const char *const kRetailKeyPrefix = "Retail.";
 } // namespace
 
 namespace
@@ -1020,6 +1029,15 @@ AptOptionsScreen::AptOptionsScreen(WindowManager &windows, Shell &shell, ShellEn
 		reset();
 	});
 	windows.setMouseFilter([this](int kind, float x, float y) { return mouseFilter(kind, x, y); });
+	windows.setCapturesMouse(true); // lane OPTS-5: Options covers the stage: over a game every press is its (the HUD asks, InGameHud::isOverGui)
+	// lane OPTS-5: after every update of the movies (their timelines place the basic page's frames) the frames stay hidden until the menu is up, so no
+	// frame of the retail page is ever drawn
+	windows.addUpdateListener(this, [this]() {
+		if (menuMode() && level() >= 0 && (!m_menuOpened || m_state == kExtensionState))
+		{
+			setExtensionHidden(true); // the movie's own timeline must not bring them (or its tooltip areas) back while the menu is up
+		}
+	});
 	registerCommand("AptOptions::RefreshNat", unportedCommand("AptOptions::RefreshNat"));
 	registerCommand("AptOptions::EnterAdvancedSettings", [this](const std::string &) { enterAdvancedSettings(); });
 	registerScreenRef("AptOptions::InitGadgets", [this](const std::string &name, GameWindow *w) { initGadget(name, w); });
@@ -1064,7 +1082,7 @@ AptOptionsScreen::AptOptionsScreen(WindowManager &windows, Shell &shell, ShellEn
 	// lane OPTS-2: the screen is retail's alone; the OpenBFME soft particle setting (UI-2) is the OpenBFME screen's (Graphics+, OpenBFMESoftParticles)
 	windows.note("options-soft-particles", "[S-1484] Options: the OpenBFME soft particle setting is on the OpenBFME screen (Graphics+), saved as Options.ini's "
 		+ std::string(OptionPreferences::kSoftParticles));
-	windows.note("options-unported", "[S-1913] Options: the display mode list, the LOD manager's ideal level (MasterOption0ResetDefault), RefreshNat and live slider tracking are not ported");
+	windows.note("options-unported", "[S-1913] Options: the display mode list, the LOD manager's ideal level (MasterOption0ResetDefault) and RefreshNat are not ported");
 	windows.note("options-advanced", m_env.gameLOD ? std::string("[S-2481] Options: the hardware detection behind the ideal level, the high-detail warnings and the '(level)' labels are not ported")
 												  : std::string("[S-2481] Options: no GameLODManager: the level and custom settings are saved but not applied"));
 }
@@ -1109,6 +1127,13 @@ void AptOptionsScreen::setMode(bool networkEnabled, bool allowResolutionChange, 
 	}
 	m_allowAdvanced = allowAdvanced;
 	m_advancedOnly = advancedOnly;
+	if (menuMode())
+	{
+		// lane OPTS-5: the main menu's CUSTOM SETTINGS (AdvancedOnly) opens the menu on its detail settings; the movie itself stays on its basic page
+		// (the one the menu replaces), so its custom settings page never shows
+		m_openOnDetail = advancedOnly;
+		m_advancedOnly = false;
+	}
 }
 
 bool AptOptionsScreen::provide(int index, std::string &value, bool setting)
@@ -1134,7 +1159,7 @@ bool AptOptionsScreen::provide(int index, std::string &value, bool setting)
 		case 3: value = m_allowResolution ? "1" : "0"; return true;
 		case 4: value = m_allowAdvanced ? "1" : "0"; return true;
 		case 5: value = m_networkEnabled ? "1" : "0"; return true;
-		case 6: value = m_advancedOnly ? "1" : "0"; return true;
+		case 6: value = m_advancedOnly ? "1" : "0"; return true; // lane OPTS-5: false in the menu (setMode)
 		default: return false;
 	}
 }
@@ -1271,8 +1296,7 @@ void AptOptionsScreen::initGadget(const std::string &fullName, GameWindow *w)
 	if (name == "Detail")
 	{
 		// GUI:UltraHigh 4, GUI:High 3, GUI:Medium 2, GUI:Low 1, GUI:VeryLow 0, GUI:Custom 5; the current one selected (RW 0x91EB30)
-		static const std::pair<const char *, int> kDetail[6] = { { "GUI:UltraHigh", 4 }, { "GUI:High", 3 }, { "GUI:Medium", 2 }, { "GUI:Low", 1 },
-			{ "GUI:VeryLow", 0 }, { "GUI:Custom", 5 } };
+		const auto &kDetail = kDetailItems;
 		GadgetComboBoxReset(w);
 		for (int i = 0; i < 6; ++i)
 		{
@@ -1304,11 +1328,7 @@ void AptOptionsScreen::initGadget(const std::string &fullName, GameWindow *w)
 	{
 		if (name == kVolumeGadgets[t])
 		{
-			GadgetSliderSetPosition(w, initialVolume(t));
-			if (t == 4)
-			{
-				w->winEnable(false); // lane OPTS-2 [S-1913]: the movies' sound is audio events, no movie volume to set: greyed, as retail greys what does not apply
-			}
+			GadgetSliderSetPosition(w, initialVolume(t)); // lane OPTS-4: the Movie slider is live too (the device has the MOVIE submix slider)
 			return;
 		}
 	}
@@ -1422,14 +1442,20 @@ void AptOptionsScreen::initGadget(const std::string &fullName, GameWindow *w)
 
 void AptOptionsScreen::reset()
 {
-	// RW 0x91F4D1 (the basic page)
-	if (m_state == 1)
+	// RW 0x91F4D1 (the basic page; lane OPTS-5: the menu, which shows its settings)
+	if (basicLive())
 	{
 		if (GameWindow *b = gadget("Brightness"))
 		{
 			int mn = 0, mx = 0;
 			GadgetSliderGetMinMax(b, &mn, &mx);
 			GadgetSliderSetPosition(b, (mx - mn) / 2 + mn);
+			// lane OPTS-5: RW 0x91F56C .. 0x91F5F3: the slider's position becomes the display's gamma at once (TheDisplay vslot 0x64)
+			const int v = GadgetSliderGetPosition(b);
+			if (v != -1)
+			{
+				m_services.setDisplayGamma(OptionPreferences::displayGamma(v, 1.0f));
+			}
 		}
 		if (GameWindow *sc = gadget("ScrollSpeed"))
 		{
@@ -1454,7 +1480,10 @@ void AptOptionsScreen::reset()
 		{
 			if (GameWindow *w = gadget(kVolumeGadgets[t]))
 			{
-				GadgetSliderSetPosition(w, (int)(m_env.defaultVolumes[t] * 100.0f));
+				// lane OPTS-4: RW 0x91F4D1 sets the slider and the volume itself (TheAudio vslot 0xE8(type, value / 100)): GSM_SET_SLIDER sends no track
+				const int value = (int)(m_env.defaultVolumes[t] * 100.0f);
+				GadgetSliderSetPosition(w, value);
+				applyVolume(t, value);
 			}
 		}
 		refreshHealthBarsBox(gadget("HealthBars")); // RW 0x91F754 -> RW 0x91EBD1
@@ -1469,19 +1498,73 @@ void AptOptionsScreen::cancel()
 		m_state = 1;
 		return;
 	}
+	// lane OPTS-5: RW 0x91EC8C .. 0x91ECB8: the display's gamma goes back to the saved one (GlobalData + 0xBCC: the brightness Options.ini holds)
+	m_services.setDisplayGamma(OptionPreferences::displayGamma(m_env.options ? (int)m_env.options->getBrightness() : 50, 1.0f));
 	for (int t = 0; t < 5; ++t)
 	{
-		char buf[64];
-		std::snprintf(buf, sizeof buf, "%f", (double)initialVolume(t));
-		m_services.applyOption(kVolumeKeys[t], buf);
+		applyVolume(t, initialVolume(t));
 	}
 	windows().requestShellPop();
+}
+
+// TheAudio vslot 0xE8(type, value / 100) as the device takes it: the Options.ini entry of the type with the slider's value ("%f")
+void AptOptionsScreen::applyVolume(int type, int value)
+{
+	char buf[64];
+	std::snprintf(buf, sizeof buf, "%f", (double)(float)value);
+	m_services.applyOption(kVolumeKeys[type], buf);
+}
+
+// Lane OPTS-4: RotWK's gadget messages of the volume sliders, RW 0x91F90D (identical to BFME2 0x00919167, decomp AptOptionsRva00519167.cpp).
+// TARGET FACTS: the track message (RotWK's 0x400C) of a volume slider with a position other than -1 sets that type's volume at once (TheAudio vslot
+// 0xE8(type, position / 100)); a sample of another type than the last one (the screen keeps the previewed type, 5 = none) is removed first (removeAudioEvent);
+// then, unless the kept handle still sounds (isCurrentlyPlaying), the type's MiscAudio sample is added (addAudioEvent) and its handle kept, except the
+// music sample, which is added only when TheGameLogic exists, the game is not a multiplayer game (RW 0x441B7C) and the screen's + 0x280 is 0 (the
+// screen was not opened from the main menu, where the shell's own music plays). So a sample does not restart while it sounds and starts again once it
+// has ended, as long as the slider moves. The slider's 0x4010 (a track click done, the thumb let go) removes the sample and forgets the type, unless
+// the type is 1: the voice line plays to its end.
+// The sample's event is built with the view type 2 (the constructor RW 0x6DA95E stores it at + 0x30): heard in either view.
+// INFERENCE: "TheGameLogic exists" is the port's "a game is running" (ShellEnvironment::quitMenu, lane END-2), so the music sample plays on the quit
+// menu's Options screen of a skirmish or campaign game only.
+void AptOptionsScreen::trackVolume(int type, int value)
+{
+	if (value == -1)
+	{
+		return;
+	}
+	applyVolume(type, value);
+	if (m_previewSlider != type)
+	{
+		m_services.removeAudioEvent(m_previewHandle);
+		m_previewHandle = 0;
+		m_previewSlider = type;
+	}
+	if (!m_services.isCurrentlyPlaying(m_previewHandle))
+	{
+		m_previewHandle = 0;
+		const QuitMenuContext *game = m_env.quitMenu; // TheGameLogic (lane END-2: null without a game)
+		if (type != 2 || (game && game->inGame && !game->isMultiplayer() && !m_allowResolution))
+		{
+			m_previewHandle = m_services.addMiscAudioEvent(kVolumeSamples[type], 2); // RW 0x91F90D: the event's view type 2 (AudioEventRTS.h VIEW_ANY)
+		}
+	}
+}
+
+void AptOptionsScreen::sliderClicked()
+{
+	if (m_previewHandle && m_previewSlider != 1)
+	{
+		m_services.removeAudioEvent(m_previewHandle);
+		m_previewHandle = 0;
+		m_previewSlider = 5;
+	}
 }
 
 AptOptionsScreen::~AptOptionsScreen()
 {
 	// lane OPTS-3: nothing of this screen may run after it is gone
 	windows().setMouseFilter(nullptr);
+	windows().setCapturesMouse(false);
 	if (AptGadgetLayer *layer = windows().gadgetLayer())
 	{
 		layer->setDecorator(nullptr);
@@ -1532,6 +1615,29 @@ WindowMsgHandledType AptOptionsScreen::gadgetMessage(GameWindow *from, std::uint
 		}
 		AptScreen::gadgetMessage(from, msg, data1, data2);
 		return MSG_HANDLED;
+	}
+	if (msg == GSM_SLIDER_TRACK)
+	{
+		// lane OPTS-4, RW 0x91F90D; lane OPTS-5: the gamma slider's track sets the display's gamma at once (stop S-4510 closed)
+		const GameWindow *control = reinterpret_cast<GameWindow *>(data1);
+		if (control && control == gadget("Brightness") && (int)data2 != -1)
+		{
+			m_services.setDisplayGamma(OptionPreferences::displayGamma((int)data2, 1.0f));
+		}
+		for (int t = 0; t < 5; ++t)
+		{
+			if (control && control == gadget(kVolumeGadgets[t]))
+			{
+				trackVolume(t, (int)data2);
+				break;
+			}
+		}
+		AptScreen::gadgetMessage(from, msg, data1, data2);
+		return MSG_HANDLED;
+	}
+	if (msg == GSM_SLIDER_CLICKED)
+	{
+		sliderClicked();
 	}
 	return AptScreen::gadgetMessage(from, msg, data1, data2);
 }
@@ -1656,7 +1762,7 @@ void AptOptionsScreen::save()
 {
 	// RW 0x91FC9C: the basic page's entries (+ 0x27C == 1), written, then the screen closes (RW 0x91EA39)
 	OptionPreferences *prefs = m_env.options;
-	if (m_state == 1 && prefs)
+	if (basicLive() && prefs)
 	{
 		if (m_allowResolution && gadget("Resolution"))
 		{
@@ -1740,7 +1846,7 @@ void AptOptionsScreen::save()
 	}
 	// RW 0x9204D9 .. 0x9204E1: the basic page's entries are written and the screen closes (RW 0x91EA39)
 	bool closed = false;
-	if (m_state == 1)
+	if (basicLive())
 	{
 		if (prefs)
 		{
@@ -1783,6 +1889,7 @@ void AptOptionsScreen::frameUpdate()
 	// does not apply). A row is found by the label the screen binds to it (APT:AdvancedOption<i>, RW 0x9213F4): the text field showing "$AdvancedOption<i>"
 	// (its bound variable read on its parent timeline); the clip holding that field is the row: _alpha 40 and every button / clip under it disabled
 	updateEntry(); // lane OPTS-3
+	menuUpdate();  // lane OPTS-5
 	if (m_state == kExtensionState && m_page)
 	{
 		// lane OPTS-3: the subtitle names the page (every text field of Main.SubTitle: the movie keeps one per page; a frame of the movie must not
@@ -1869,6 +1976,12 @@ bool AptOptionsScreen::healthBarsAllowed() const
 	}
 	if (m_masterOption == GameLODManager::kCustomLevel)
 	{
+		// lane OPTS-5: in the menu the custom settings are pending until ACCEPT; RotWK saves them at its custom page's DONE (RW 0x9204F3) before the
+		// box is judged again (RW 0x920595), so the menu judges by the pending DecalLOD
+		if (menuMode())
+		{
+			return shownAdvancedSettings()[8] != 0;
+		}
 		return m_env.options && AdvancedOptionPrefs::getSetting(*m_env.options, 8) != 0;
 	}
 	return true;
@@ -2004,9 +2117,9 @@ void AptOptionsScreen::updateEntry()
 {
 	// the OPENBFME button on the basic page: made once the movie's CUSTOM SETTINGS button exists, placed, captioned every frame (its text field is
 	// the copied button's; a frame of its own timeline must not bring the copied caption back)
-	if (!m_extensionAvailable || m_state != 1 || level() < 0)
+	if (!m_extensionAvailable || m_state != 1 || level() < 0 || menuMode())
 	{
-		return;
+		return; // lane OPTS-5: the menu has no OPENBFME button
 	}
 	AptCharacterInst *entry = entryClip();
 	if (!entry)
@@ -2115,7 +2228,24 @@ bool AptOptionsScreen::openExtension(std::string *error)
 	if (!m_page)
 	{
 		m_page = std::make_unique<OpenBFMEOptionsPage>(*layer, ownerWindow());
-		m_page->setSink([this](const OpenBFMEPageEvent &e) { m_extensionEvents.push_back(e); }); // one FIFO with the bottom bar's events
+		m_page->setSink([this](const OpenBFMEPageEvent &e) {
+			// lane OPTS-5: the original game's rows are this screen's own (their retail handlers); the rest goes to the device in one FIFO with the
+			// bottom bar's events
+			if (e.key.rfind(kRetailKeyPrefix, 0) == 0)
+			{
+				std::string error;
+				if (e.kind == OpenBFMEPageEvent::Kind::Release)
+				{
+					sliderClicked(); // RW 0x91F90D's 0x4010
+				}
+				else if (e.kind == OpenBFMEPageEvent::Kind::Value && !setRetailValue(e.key, e.value, &error))
+				{
+					windows().note("options-menu", "Options: " + error);
+				}
+				return;
+			}
+			m_extensionEvents.push_back(e);
+		});
 	}
 	layer->setDecorator([this](GadgetDrawList &out) {
 		if (m_page && m_state == kExtensionState)
@@ -2266,4 +2396,471 @@ bool AptOptionsScreen::mouseFilter(int kind, float x, float y)
 		return true;
 	}
 	return false;
+}
+
+// ---- lane OPTS-5: one Options menu (NOT RETAIL LAYOUT; see AptSimpleScreens.h kOpenBFMEMenu) ------------------------------------------------------
+
+namespace
+{
+// OpenBFME's reasons for a greyed row of the original game's (NOT RETAIL TEXT; appended to the row's own help text)
+const char *const kReasonNotDrawn = "OpenBFME does not draw this setting yet.";
+const char *const kReasonNoEax = "OpenBFME has no EAX3 sound.";
+const char *const kReasonNoAudioLod = "OpenBFME does not use this setting yet.";
+const char *const kReasonHealthBars = "This detail level already shows every health bar.";
+const char *const kReasonOnline = "Can be changed from the Options of the online screens.";
+const char *const kReasonRefreshNat = "Refresh NAT is not available in OpenBFME yet.";
+const char *const kUnavailable = "Unavailable";
+
+// a text of the string file on one line (the movie's tooltips break theirs with "\n")
+std::u16string oneLine(std::u16string text)
+{
+	std::u16string out;
+	for (std::size_t i = 0; i < text.size(); ++i)
+	{
+		char16_t c = text[i];
+		if (c == u'\\' && i + 1 < text.size() && text[i + 1] == u'n')
+		{
+			c = u'\n';
+			++i;
+		}
+		if (c == u'\n' || c == u'\r' || c == u'\t')
+		{
+			c = u' ';
+		}
+		if (c == u' ' && (out.empty() || out.back() == u' '))
+		{
+			continue;
+		}
+		out += c;
+	}
+	while (!out.empty() && out.back() == u' ')
+	{
+		out.pop_back();
+	}
+	return out;
+}
+
+// the row's own text, then a sentence of OpenBFME's (the string file's tooltips often end without a full stop)
+std::u16string withReason(const std::u16string &help, const std::u16string &reason)
+{
+	if (help.empty())
+	{
+		return reason;
+	}
+	const char16_t last = help.back();
+	return help + (last == u'.' || last == u'!' || last == u'?' ? u" " : u". ") + reason;
+}
+
+std::u16string withReason(const std::u16string &help, const char *reason)
+{
+	return withReason(help, asciiToU16(reason));
+}
+} // namespace
+
+bool AptOptionsScreen::menuMode() const
+{
+	return kOpenBFMEMenu && m_env.openbfmeOptionsMenu;
+}
+
+const std::vector<AptOptionsScreen::RetailRow> &AptOptionsScreen::retailRowTable()
+{
+	// key, the gadget InitGadgets fills, the name (the movie's own label of the control), the help (the string file's tooltip of the control: the
+	// TOOLTIP:Options/tooltip<x> family of the BFME2 movie's tooltip areas, which RotWK's lotr.str still carries, or the label RotWK's own
+	// AptButtonTooltipMap.ini maps the control to (Settings/EAX, Settings/HighQualityAudio, RefreshNAT), or the movie's own help text (PortNumHelp,
+	// WarnHighGraphicDetail on its custom settings page)). INFERENCE: the pairing of a row with a tooltip whose control RotWK's movie no longer has.
+	static const std::vector<RetailRow> rows = {
+		{ "Retail.Brightness", "Brightness", "APT:Brightness", "TOOLTIP:Options/tooltipBrightness" },
+		{ "Retail.Detail", nullptr, "APT:Graphics", "TOOLTIP:Options/tooltipDetail" }, // + 0x310: the screen's level, not the movie's list (opened over a game the list is not made)
+		{ "Retail.AdvancedOption0", nullptr, "APT:AdvancedOption_ModelLOD", "APT:WarnHighGraphicDetail" },
+		{ "Retail.AdvancedOption1", nullptr, "APT:AdvancedOption_AnimationLOD", "TOOLTIP:Options/tooltipShowAnimations" },
+		{ "Retail.AdvancedOption2", nullptr, "APT:AdvancedOption_EffectsLOD", "TOOLTIP:Options/tooltipParticleCap" },
+		{ "Retail.AdvancedOption3", nullptr, "APT:AdvancedOption_ShadowLOD", "TOOLTIP:Options/tooltip3DShadows" },
+		{ "Retail.AdvancedOption4", nullptr, "APT:AdvancedOption_TerrainLOD", "TOOLTIP:Options/tooltipTerrainLighting" },
+		{ "Retail.AdvancedOption5", nullptr, "APT:AdvancedOption_WaterLOD", "TOOLTIP:Options/tooltipSmoothWaterBorder" },
+		{ "Retail.AdvancedOption6", nullptr, "APT:AdvancedOption_TextureQualityLOD", "TOOLTIP:Options/tooltipTextureDetail" },
+		{ "Retail.AdvancedOption7", nullptr, "APT:AdvancedOption_ShaderLOD", "APT:WarnHighGraphicDetail" },
+		{ "Retail.AdvancedOption8", nullptr, "APT:AdvancedOption_DecalLOD", "TOOLTIP:Options/tooltipShowUnitDecals" },
+		{ "Retail.MusicVolume", "MusicVolume", "APT:Music", "TOOLTIP:Options/tooltipMusic" },
+		{ "Retail.SoundFxVolume", "SoundFxVolume", "APT:SoundFx", "TOOLTIP:Options/tooltipSoundFX" },
+		{ "Retail.VoiceVolume", "VoiceVolume", "APT:Voice", "TOOLTIP:Options/tooltipVoice" },
+		{ "Retail.AmbientVolume", "AmbientVolume", "APT:Ambient", "TOOLTIP:Options/tooltipAmbient" },
+		{ "Retail.MovieVolume", "MovieVolume", "APT:Movie", "TOOLTIP:Options/tooltipMovie" },
+		{ "Retail.EAX3", "EAX3", "APT:EAX3", "ToolTip:Settings/EAX" },
+		{ "Retail.HighAudioQuality", "HighAudioQuality", "APT:HighAudioQuality", "ToolTip:Settings/HighQualityAudio" },
+		{ "Retail.ScrollSpeed", "ScrollSpeed", "APT:ScrollSpeed", "TOOLTIP:Options/tooltipScrollSpeed" },
+		{ "Retail.HealthBars", "HealthBars", "APT:EnableHealthBars", "TOOLTIP:Options/tooltipEnableHealthBars" },
+		{ "Retail.OnlineIp", "OnlineIp", "APT:OnlineIP", "TOOLTIP:OnlineIP" },
+		{ "Retail.OnlinePortNum", "OnlinePortNum", "APT:PortNum", "APT:PortNumHelp" },
+		{ "Retail.SendDelay", "SendDelay", "APT:SendDelay", "TOOLTIP:SendDelay" },
+		{ "Retail.RefreshNat", nullptr, "APT:RefreshNat", "TOOLTIP:RefreshNat" },
+	};
+	return rows;
+}
+
+std::array<int, GameLODManager::kAdvancedOptionCount> AptOptionsScreen::shownAdvancedSettings() const
+{
+	// the custom settings (+ 0x314, a text of nine numbers) when the level is Custom, else the level's preset (RW 0x601BBD)
+	std::array<int, GameLODManager::kAdvancedOptionCount> out{};
+	if (m_masterOption == GameLODManager::kCustomLevel)
+	{
+		OptionPreferences scratch;
+		AdvancedOptionPrefs::parseInto(m_customTemplate, scratch);
+		for (int i = 0; i < GameLODManager::kAdvancedOptionCount; ++i)
+		{
+			out[(std::size_t)i] = AdvancedOptionPrefs::getSetting(scratch, i);
+		}
+		return out;
+	}
+	if (m_masterOption >= 0 && m_masterOption < GameLODManager::kCustomLevel)
+	{
+		out = m_env.gameLOD ? m_env.gameLOD->presetSettings(m_masterOption) : GameLODManager().presetSettings(m_masterOption);
+	}
+	return out;
+}
+
+std::vector<OpenBFMEPageRow> AptOptionsScreen::retailRows() const
+{
+	std::vector<OpenBFMEPageRow> out;
+	const std::array<int, GameLODManager::kAdvancedOptionCount> advanced = shownAdvancedSettings();
+	for (const RetailRow &info : retailRowTable())
+	{
+		OpenBFMEPageRow row;
+		row.key = info.key;
+		row.label = oneLine(fetchOrMissing(m_env.gameText, info.nameLabel));
+		row.help = oneLine(fetchOrMissing(m_env.gameText, info.helpLabel));
+		const std::string name = info.gadget ? info.gadget : "";
+		GameWindow *w = info.gadget ? gadget(name) : nullptr;
+		if (info.gadget && !w)
+		{
+			continue; // the movie made no such control (menuUpdate reported it)
+		}
+		if (row.key == "Retail.Detail")
+		{
+			row.kind = OpenBFMEPageRow::Kind::Choice;
+			for (const auto &item : kDetailItems)
+			{
+				row.items.push_back({ oneLine(fetchOrMissing(m_env.gameText, item.first)), true });
+				if (item.second == m_masterOption)
+				{
+					row.value = (int)row.items.size() - 1;
+				}
+			}
+			row.enabled = m_allowAdvanced;
+			if (!row.enabled)
+			{
+				row.help = withReason(row.help, oneLine(fetchOrMissing(m_env.gameText, "APT:CannotChangeGraphics"))); // the movie's own text for it
+			}
+		}
+		else if (!info.gadget && row.key.rfind("Retail.AdvancedOption", 0) == 0)
+		{
+			const int index = row.key.back() - '0';
+			const AdvancedOptionInfo &o = GameLODManager::advancedOption(index);
+			row.kind = OpenBFMEPageRow::Kind::Choice;
+			for (int j = 0; j < o.count; ++j)
+			{
+				std::string label = std::string("APT:AdvancedOption_") + o.key + "_" + o.choices[j];
+				if (label == "APT:AdvancedOption_ShadowLOD_UltraHigh")
+				{
+					label = "APT:AdvancedOption_ShaderLOD_UltraHigh"; // RW 0x921515 .. 0x92152E
+				}
+				row.items.push_back({ oneLine(fetchOrMissing(m_env.gameText, label)), true });
+			}
+			row.value = advanced[(std::size_t)index];
+			row.enabled = m_allowAdvanced && GameLODManager::advancedOptionDrawn(index);
+			if (!m_allowAdvanced)
+			{
+				row.help = withReason(row.help, oneLine(fetchOrMissing(m_env.gameText, "APT:CannotChangeGraphics")));
+			}
+			else if (!row.enabled)
+			{
+				row.help = withReason(row.help, kReasonNotDrawn); // stop S-3402
+			}
+		}
+		else if (row.key == "Retail.RefreshNat")
+		{
+			row.kind = OpenBFMEPageRow::Kind::Text; // RotWK's button (AptOptions::RefreshNat): not ported, stop S-1913
+			row.valueText = asciiToU16(kUnavailable);
+			row.enabled = false;
+			row.help = withReason(row.help, kReasonRefreshNat);
+		}
+		else if (BitTest(w->winGetStyle(), GWS_HORZ_SLIDER))
+		{
+			row.kind = OpenBFMEPageRow::Kind::Slider;
+			GadgetSliderGetMinMax(w, &row.minValue, &row.maxValue);
+			row.value = GadgetSliderGetPosition(w);
+			row.valueText = asciiToU16(std::to_string(row.value));
+			row.enabled = w->winGetEnabled();
+		}
+		else if (BitTest(w->winGetStyle(), GWS_CHECK_BOX))
+		{
+			row.kind = OpenBFMEPageRow::Kind::Check;
+			row.value = GadgetCheckBoxIsChecked(w) ? 1 : 0;
+			row.enabled = w->winGetEnabled();
+			if (!row.enabled && name == "HealthBars")
+			{
+				row.help = withReason(row.help, kReasonHealthBars); // RW 0x91EB77 / 0x91EBD1: Very Low, or Custom with Decal Detail Off, checks and disables it
+			}
+			else if (!row.enabled && name == "EAX3")
+			{
+				row.help = withReason(row.help, kReasonNoEax); // stop S-1913
+			}
+			else if (!row.enabled && name == "HighAudioQuality")
+			{
+				row.help = withReason(row.help, kReasonNoAudioLod); // stop S-2481
+			}
+			else if (!row.enabled && name == "SendDelay")
+			{
+				row.help = withReason(row.help, kReasonOnline); // NetworkEnabled 0 (RW 0x91ED91's first argument)
+			}
+		}
+		else if (BitTest(w->winGetStyle(), GWS_COMBO_BOX))
+		{
+			row.kind = OpenBFMEPageRow::Kind::Choice;
+			// OnlineIp: InitGadgets listed the machine's addresses in this order (RW 0x719C53)
+			for (const auto &a : m_env.localAddresses)
+			{
+				row.items.push_back({ asciiToU16(a.first), true });
+			}
+			int selected = -1;
+			GadgetComboBoxGetSelectedPos(w, &selected);
+			row.value = selected;
+			row.enabled = w->winGetEnabled();
+			if (!row.enabled)
+			{
+				row.help = withReason(row.help, kReasonOnline);
+			}
+		}
+		else if (BitTest(w->winGetStyle(), GWS_ENTRY_FIELD))
+		{
+			row.kind = OpenBFMEPageRow::Kind::Entry;
+			row.valueText = GadgetTextEntryGetText(w);
+			row.maxValue = 5; // RW 0x81606D(entry, 5)
+			int number = 0;
+			for (char16_t c : row.valueText)
+			{
+				if (c < u'0' || c > u'9')
+				{
+					break;
+				}
+				number = number * 10 + (c - u'0');
+			}
+			row.value = number;
+			row.enabled = w->winGetEnabled();
+			if (!row.enabled)
+			{
+				row.help = withReason(row.help, kReasonOnline);
+			}
+		}
+		else
+		{
+			continue;
+		}
+		out.push_back(std::move(row));
+	}
+	return out;
+}
+
+void AptOptionsScreen::refreshRetailRows()
+{
+	if (!m_page || !m_page->shown())
+	{
+		return;
+	}
+	for (const OpenBFMEPageRow &row : retailRows())
+	{
+		m_page->setRow(row); // false: the tab shown has no such row
+	}
+}
+
+bool AptOptionsScreen::setRetailValue(const std::string &key, int value, std::string *error)
+{
+	auto fail = [&](const std::string &why) {
+		if (error)
+		{
+			*error = why;
+		}
+		return false;
+	};
+	const RetailRow *info = nullptr;
+	for (const RetailRow &r : retailRowTable())
+	{
+		if (key == r.key)
+		{
+			info = &r;
+		}
+	}
+	if (!info)
+	{
+		return fail("no setting '" + key + "'");
+	}
+	const std::vector<OpenBFMEPageRow> rows = retailRows();
+	const OpenBFMEPageRow *row = nullptr;
+	for (const OpenBFMEPageRow &r : rows)
+	{
+		if (r.key == key)
+		{
+			row = &r;
+		}
+	}
+	if (!row)
+	{
+		return fail("the setting '" + key + "' has no control (the movie made none)");
+	}
+	if (!row->enabled)
+	{
+		return fail("the setting '" + key + "' is disabled");
+	}
+	if ((row->kind == OpenBFMEPageRow::Kind::Choice && (value < 0 || value >= (int)row->items.size())) ||
+		(row->kind == OpenBFMEPageRow::Kind::Slider && (value < row->minValue || value > row->maxValue)) || (row->kind == OpenBFMEPageRow::Kind::Check && value != 0 && value != 1) ||
+		(row->kind == OpenBFMEPageRow::Kind::Entry && (value < 0 || value > 99999)))
+	{
+		return fail("the setting '" + key + "' does not take " + std::to_string(value));
+	}
+	const std::string name = info->gadget ? info->gadget : "";
+	if (key == "Retail.Detail")
+	{
+		// the Detail list (RW 0x91F90D's 0x4026, lane PLAY-2): Custom opens the custom settings with the level's settings (EnterAdvancedSettings RW
+		// 0x91F043 takes the level shown before: + 0x314 = that preset's); another level becomes + 0x310 and the health bars box follows (RW 0x91EBD1)
+		const int level = kDetailItems[value].second;
+		if (level == GameLODManager::kCustomLevel)
+		{
+			if (m_masterOption != GameLODManager::kCustomLevel)
+			{
+				m_customTemplate = AdvancedOptionPrefs::format(shownAdvancedSettings());
+			}
+			m_masterOption = level;
+			refreshHealthBarsBox(gadget("HealthBars"));
+		}
+		else
+		{
+			m_masterOption = level;
+			refreshHealthBarsBox(gadget("HealthBars"));
+		}
+		selectDetail();
+	}
+	else if (!info->gadget && key.rfind("Retail.AdvancedOption", 0) == 0)
+	{
+		// a custom setting changed (the movie's custom settings page writes MasterOption0TemplateCustom and makes the level Custom): + 0x314 is the
+		// settings shown with this one changed
+		std::array<int, GameLODManager::kAdvancedOptionCount> settings = shownAdvancedSettings();
+		settings[(std::size_t)(key.back() - '0')] = value;
+		m_customTemplate = AdvancedOptionPrefs::format(settings);
+		m_masterOption = GameLODManager::kCustomLevel;
+		selectDetail();
+		refreshHealthBarsBox(gadget("HealthBars")); // RW 0x920595 after the custom page's DONE
+	}
+	else
+	{
+		GameWindow *w = gadget(name);
+		switch (row->kind)
+		{
+			case OpenBFMEPageRow::Kind::Slider:
+				// the gadget moves as a drag moves it, and the screen hears the track message (RW 0x91F90D: the volume or the gamma at once)
+				GadgetSliderSetPosition(w, value);
+				gadgetMessage(w, GSM_SLIDER_TRACK, reinterpret_cast<WindowMsgData>(w), (WindowMsgData)value);
+				break;
+			case OpenBFMEPageRow::Kind::Check:
+				if ((value != 0) != GadgetCheckBoxIsChecked(w))
+				{
+					GadgetCheckBoxToggle(w); // the click's toggle (GBM_SELECTED to the screen)
+				}
+				break;
+			case OpenBFMEPageRow::Kind::Choice:
+				GadgetComboBoxSetSelectedPos(w, value);
+				break;
+			case OpenBFMEPageRow::Kind::Entry:
+				GadgetTextEntrySetText(w, value > 0 ? asciiToU16(std::to_string(value)) : std::u16string());
+				break;
+			default:
+				return fail("the setting '" + key + "' takes no value");
+		}
+	}
+	refreshRetailRows();
+	return true;
+}
+
+void AptOptionsScreen::menuUpdate()
+{
+	if (!menuMode() || m_menuOpened || level() < 0)
+	{
+		return;
+	}
+	// until the page is up the basic page's frames stay hidden (the menu replaces them; its opening animation shows none of them)
+	setExtensionHidden(true);
+	if (m_state != 1)
+	{
+		return; // AptOptions::OnInitialized has not run: the gadgets are not filled yet
+	}
+	std::string error;
+	if (!openExtension(&error))
+	{
+		windows().note("options-menu", "[S-4670] Options: the OpenBFME menu cannot open: " + error);
+		m_menuOpened = true; // reported once; the screen shows nothing of the retail page either (the frames stay hidden)
+		return;
+	}
+	m_menuOpened = true;
+	// the custom settings start from the level's (EnterAdvancedSettings RW 0x91F043); Custom keeps the saved ones (presetTemplate)
+	m_customTemplate = presetTemplate(m_masterOption);
+	std::string missing;
+	for (const RetailRow &info : retailRowTable())
+	{
+		if (info.gadget && !gadget(info.gadget))
+		{
+			missing += std::string(missing.empty() ? "" : ", ") + info.gadget;
+		}
+	}
+	if (!missing.empty())
+	{
+		windows().note("options-menu", "[S-4670] Options: the movie made no " + missing + ": the menu has no row for it");
+	}
+	m_extensionEvents.push_back({ OpenBFMEPageEvent::Kind::Entry, std::string(), m_openOnDetail ? 1 : 0 });
+}
+
+void AptOptionsScreen::finishMenu(bool accept)
+{
+	if (!menuMode() || m_state != kExtensionState)
+	{
+		windows().note("options-menu", "Options: finishMenu outside the OpenBFME menu");
+		return;
+	}
+	if (m_page)
+	{
+		m_page->hide();
+	}
+	if (AptGadgetLayer *layer = windows().gadgetLayer())
+	{
+		layer->setDecorator(nullptr);
+	}
+	if (accept)
+	{
+		save(); // RW 0x91FC9C: the settings written and applied, the screen closes
+	}
+	else
+	{
+		cancel(); // RW 0x91EC52: the saved gamma and volumes back, the screen closes
+	}
+}
+
+void AptOptionsScreen::resetMenu()
+{
+	reset(); // RW 0x91F4D1
+	// the custom settings page's reset (MasterOption0ResetDefault, the LOD manager's ideal level + 0x17C4): the level the game takes without a
+	// StaticGameLOD, IdealStaticGameLOD when Options.ini has one, else the hardware detection's (not ported, S-2481: GameLODManager::kDetectedLevel)
+	int ideal = GameLODManager::kDetectedLevel;
+	if (m_env.options && m_env.options->has("IdealStaticGameLOD"))
+	{
+		const int level = GameLODManager::findLevel(m_env.options->get("IdealStaticGameLOD"));
+		if (level >= 0 && level < GameLODManager::kCustomLevel)
+		{
+			ideal = level;
+		}
+	}
+	if (m_allowAdvanced)
+	{
+		m_masterOption = ideal;
+		m_customTemplate = presetTemplate(ideal);
+		selectDetail();
+		refreshHealthBarsBox(gadget("HealthBars"));
+	}
+	refreshRetailRows();
 }

@@ -11,13 +11,18 @@
 ##            "files": {"<path in the package>": {"size": <bytes>, "sha256": "<64 hex>"}, ...}}
 ## Format 2 (round 3): "files" lists every file of the package, so the launcher checks unpacked files against signed data whenever it is
 ## about to run them (a staged launcher before the swap, an installed game before Play), not only the downloaded archive.
+## Lane ONEZIP-1: one package per platform. From the first combined release on, the "game" package also holds the launcher's executable
+## (OpenBFMELauncher.x86_64 / .exe next to the game's), so a launcher takes its own update from the game package (launcher_source) and
+## the player downloads one archive. Format 2 still carries assets.launcher, the launcher-only archives the launchers published before
+## ONEZIP-1 update themselves from (they refuse a manifest without them); format 3 is format 2 without assets.launcher, for the day
+## those launchers are retired (docs/RELEASE.md, "One archive"). This launcher reads both.
 extends RefCounted
 
 const Ed25519 := preload("res://scripts/crypto/ed25519.gd")
 const Semver := preload("res://scripts/core/semver.gd")
 const Archive := preload("res://scripts/core/archive.gd")
 
-const FORMAT := 2
+const FORMATS := [2, 3]
 const PLATFORMS := ["linux-x64", "windows-x64"]
 const KINDS := {"game": "openbfme", "launcher": "openbfme-launcher"}
 const MAX_BYTES := 64 * 1024
@@ -84,8 +89,9 @@ static func _schema(m: Dictionary) -> String:
 	var k := _keys(m, ["format", "product", "repo", "version", "channel", "date", "commit", "assets"])
 	if k != "":
 		return k
-	if _int(m.format) != FORMAT:
-		return "format %s (this launcher reads format %d)" % [str(m.format), FORMAT]
+	if not _int(m.format) in FORMATS:
+		var f = m.format
+		return "format %s (this launcher reads formats 2 and 3)" % (str(int(f)) if typeof(f) == TYPE_FLOAT and f == floor(f) and absf(f) < 1e15 else str(f))
 	for key in ["product", "repo", "version", "channel", "date", "commit"]:
 		if typeof(m[key]) != TYPE_STRING:
 			return "%s is not a string" % key
@@ -103,10 +109,11 @@ static func _schema(m: Dictionary) -> String:
 		return "commit '%s' is not a 40-digit hex id" % m.commit
 	if typeof(m.assets) != TYPE_DICTIONARY:
 		return "assets is not an object"
-	k = _keys(m.assets, KINDS.keys())
+	var kinds: Array = KINDS.keys() if _int(m.format) == 2 else ["game"]
+	k = _keys(m.assets, kinds)
 	if k != "":
 		return "assets: " + k
-	for kind in KINDS:
+	for kind in kinds:
 		if typeof(m.assets[kind]) != TYPE_DICTIONARY:
 			return "assets.%s is not an object" % kind
 		k = _keys(m.assets[kind], PLATFORMS)
@@ -159,9 +166,88 @@ static func _files_schema(files, top: String) -> String:
 	return ""
 
 
+## Lane ONEZIP-1 r2: the signed payload inventory inside a combined package (tools/release/seal_package.py writes it on the machine with
+## the release key, before the archive is finished, so it never names itself): payload.json, checked byte for byte against
+## payload.json.sig under the release key before it is parsed, then strictly:
+##   {"format": 1, "product": "OpenBFME", "repo": "<owner>/<name>", "version": <release version>, "platform": "linux-x64" | "windows-x64",
+##    "files": {<path in the package>: {"size", "sha256"}, ...}}     every file of the package but payload.json and payload.json.sig
+## `expect`: {repo, platform}. {ok, error, payload}
+const PAYLOAD := "payload.json"
+const PAYLOAD_SIG := "payload.json.sig"
+
+
+## Lane ONEZIP-1 r3 (Sol r2): a file read with its size checked FIRST: at most `max` bytes are read ({bytes, size}; size is the file's
+## real length, -1 when it cannot be opened). A larger file is never read whole: bytes then holds max + 1 bytes, so every size check
+## after it refuses it (a 4 MiB payload.json allocated ~93 MB before its 64 KiB limit refused it).
+static func read_bounded(path: String, max: int) -> Dictionary:
+	var f := FileAccess.open(path, FileAccess.READ)
+	if f == null:
+		return {"bytes": PackedByteArray(), "size": -1}
+	var size := f.get_length()
+	var bytes := f.get_buffer(mini(size, max + 1))
+	f.close()
+	return {"bytes": bytes, "size": size}
+
+
+static func read_limited(path: String, max: int) -> PackedByteArray:
+	return read_bounded(path, max).bytes
+
+
+static func verify_payload(bytes: PackedByteArray, sig: PackedByteArray, release_key: PackedByteArray, expect: Dictionary) -> Dictionary:
+	var fail := func(why: String) -> Dictionary: return {"ok": false, "error": why, "payload": {}}
+	if release_key.size() != 32:
+		return fail.call("this launcher has no release key")
+	if bytes.is_empty():
+		return fail.call("there is no %s (not a signed package)" % PAYLOAD)
+	if bytes.size() > MAX_BYTES:
+		return fail.call("%s is %d bytes (at most %d)" % [PAYLOAD, bytes.size(), MAX_BYTES])
+	if sig.size() != 64:
+		return fail.call("%s is %d bytes (an Ed25519 signature is 64)" % [PAYLOAD_SIG, sig.size()])
+	if not Ed25519.verify(release_key, bytes, sig):
+		return fail.call("the signature of %s is not valid for the release key: the package was not made by the OpenBFME release, or it was changed" % PAYLOAD)
+	var json := JSON.new()
+	if json.parse(bytes.get_string_from_utf8()) != OK or typeof(json.data) != TYPE_DICTIONARY:
+		return fail.call("%s is not a JSON object" % PAYLOAD)
+	var p: Dictionary = json.data
+	var k := _keys(p, ["format", "product", "repo", "version", "platform", "files"])
+	if k != "":
+		return fail.call("%s: %s" % [PAYLOAD, k])
+	if _int(p.format) != 1:
+		return fail.call("%s: format %s (this launcher reads format 1)" % [PAYLOAD, str(p.format)])
+	for key in ["product", "repo", "version", "platform"]:
+		if typeof(p[key]) != TYPE_STRING:
+			return fail.call("%s: %s is not a string" % [PAYLOAD, key])
+	if p.product != "OpenBFME":
+		return fail.call("%s: product '%s'" % [PAYLOAD, p.product.left(40)])
+	if p.repo != expect.get("repo", p.repo):
+		return fail.call("%s is for %s, this launcher updates from %s" % [PAYLOAD, p.repo.left(140), expect.repo])
+	if not Semver.is_valid(p.version):
+		return fail.call("%s: %s" % [PAYLOAD, Semver.parse(p.version).error])
+	if not p.platform in PLATFORMS or p.platform != expect.get("platform", p.platform):
+		return fail.call("%s is for the platform '%s'" % [PAYLOAD, p.platform.left(40)])
+	var why := _files_schema(p.get("files"), "openbfme-%s-%s" % [p.version, p.platform])
+	if why != "":
+		return fail.call("%s.files: %s" % [PAYLOAD, why])
+	if p.files.has(PAYLOAD) or p.files.has(PAYLOAD_SIG):
+		return fail.call("%s names itself" % PAYLOAD)
+	return {"ok": true, "error": "", "payload": p}
+
+
+## Lane ONEZIP-1: where a launcher's own update comes from in the verified manifest `m`: the launcher executable `exe` inside the game
+## package when it is there (a combined package: {ok, combined: true, file: {size, sha256}}), else the launcher-only package of a
+## release made before the combined one ({ok, combined: false, asset}); a manifest with neither is an error.
+static func launcher_source(m: Dictionary, platform: String, exe: String) -> Dictionary:
+	var game: Dictionary = m.assets.game[platform]
+	if game.files.has(exe):
+		return {"ok": true, "error": "", "combined": true, "file": game.files[exe], "asset": game}
+	if m.assets.has("launcher"):
+		return {"ok": true, "error": "", "combined": false, "asset": m.assets.launcher[platform]}
+	return {"ok": false, "error": "the release %s has no launcher: %s is not in its package" % [m.version, exe]}
+
+
 ## "" when the files of folder `dir` are exactly the signed `files` (the same names, sizes and SHA-256; `extra_ok` names files that may
-## also be there), else what differs
-static func check_files(dir: String, files: Dictionary, extra_ok: Array = []) -> String:
+## also be there; `any_extra`: other files are not looked at), else what differs
+static func check_files(dir: String, files: Dictionary, extra_ok: Array = [], any_extra := false) -> String:
 	for rel in files:
 		var p := dir.path_join(rel)
 		if not FileAccess.file_exists(p):
@@ -175,7 +261,7 @@ static func check_files(dir: String, files: Dictionary, extra_ok: Array = []) ->
 			hc.update(f.get_buffer(1 << 20))
 		if hc.finish().hex_encode() != files[rel].sha256:
 			return "%s does not match its signed SHA-256" % rel
-	for rel in _list(dir, ""):
+	for rel in ([] if any_extra else _list(dir, "")):
 		if not files.has(rel) and not rel in extra_ok:
 			return "%s is not a file of the signed package" % rel
 	return ""

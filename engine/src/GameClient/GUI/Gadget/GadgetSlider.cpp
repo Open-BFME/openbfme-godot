@@ -105,6 +105,7 @@ WindowMsgHandledType GadgetHorizontalSliderInput(GameWindow *window, std::uint32
 			}
 			child->winSetPosition(clickPos - childSize.x / 2, HORIZONTAL_SLIDER_THUMB_Y);
 			mgr.winSendSystemMsg(window, GGM_LEFT_DRAG, 0, mData1);
+			mgr.winSendSystemMsg(window->winGetOwner(), GSM_SLIDER_CLICKED, msgData(window), 0); // lane OPTS-4: RW 0x7234EC (message 0x4010)
 			break;
 		}
 		case GWM_CHAR:
@@ -160,6 +161,10 @@ WindowMsgHandledType GadgetHorizontalSliderSystem(GameWindow *window, std::uint3
 	window->winGetSize(&size.x, &size.y);
 	switch (msg)
 	{
+		case GBM_SELECTED:
+			// lane OPTS-4: RW 0x7237F8: the thumb (a push button owned by the slider) was let go: the owner hears 0x4010
+			mgr.winSendSystemMsg(window->winGetOwner(), GSM_SLIDER_CLICKED, msgData(window), 0);
+			break;
 		case GGM_LEFT_DRAG:
 		{
 			const int mousex = (int)(mData2 & 0xFFFF);
@@ -542,7 +547,8 @@ void W3DGadgetVerticalSliderDraw(GameWindow *window, WinInstanceData *instData) 
 // (int)((position - min) / (max - min) * width) and the position is not the minimum; the row is centred by half the blank width; a hilited slider
 // draws numBoxes + 1 squares (bw + 1) wide and tall, (int)(box height * 0.8) below the top (0.8 a double at RW 0xBDED60), shifted left by
 // (bw + 1) / 2; then the selected boxes with disabled image 0, the rest with disabled image 1 (HorzSlider.wnd: AptHSliderOnBar / NoImage).
-// The port's gadget coordinates are stage pixels, so `displayWidth / 800` is the multiplier retail has at a 1024 x 768 screen (INFERENCE, S-1911).
+// Lane OPTS-4: an Apt component's slider has that status bit (WIN_STATUS_APT_TEMPLATE, see AptGadgetLayer::createGadget), so its boxes are as tall as the
+// window; the multipliers remain for a slider of a plain WND layout, where the port's display is the 1024 x 768 stage (INFERENCE, S-1911).
 void W3DGadgetHorizontalSliderImageDraw(GameWindow *window, WinInstanceData *instData)
 {
 	GameWindowManager &mgr = window->manager();
@@ -559,7 +565,7 @@ void W3DGadgetHorizontalSliderImageDraw(GameWindow *window, WinInstanceData *ins
 		return; // retail dereferences the image; an unknown or missing image draws nothing (the unresolved name is reported by the list)
 	}
 	float xMulti = 1.0f, yMulti = 1.0f;
-	if (!BitTest(window->winGetStatus(), 0x08000000u))
+	if (!BitTest(window->winGetStatus(), WIN_STATUS_APT_TEMPLATE))
 	{
 		xMulti = (float)mgr.displayWidth() * (1.0f / 800.0f);
 		yMulti = (float)mgr.displayHeight() * (1.0f / 600.0f);

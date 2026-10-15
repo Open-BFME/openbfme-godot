@@ -3,6 +3,7 @@
 // ROTWK_INSTALL / BFME2_INSTALL are unset. GPL-3.0.
 
 #include "HudTestUtil.h"
+#include "ScriptTestUtil.h"
 
 #include "GameClient/GUI/ShellServices.h"
 #include "GameClient/InGameHud.h"
@@ -11,8 +12,10 @@
 #include "GameLogic/Damage.h"
 #include "GameLogic/Map/TerrainLogic.h"
 #include "GameLogic/Object/Object.h"
+#include "GameLogic/ScriptEngine/ScriptEngine.h"
 
 #include <cmath>
+#include <limits>
 
 using namespace hudtest;
 
@@ -470,4 +473,366 @@ TEST_CASE("radar1 retail plane: the terrain average height is every radar cell's
 	REQUIRE(n > 0);
 	CHECK(radar.terrainAverageZ() == sum / (float)n);
 	MESSAGE("radar1 plane: all cells truncated ", sum / (float)n, ", every second cell (Generals) ", n2 ? every2 / (float)n2 : 0.0f);
+}
+
+// ---- lane BACKLOG3 (S-2452): the scripts' radar event actions, the dozer's finished building and the under-attack message ------------------------------------
+namespace
+{
+ScriptParameter coordParam(float x, float y, float z)
+{
+	ScriptParameter p;
+	p.type = 16;
+	p.x = x;
+	p.y = y;
+	p.z = z;
+	return p;
+}
+
+int eventsOfType(const Radar &radar, int type)
+{
+	int n = 0;
+	for (int i = 0; i < Radar::kMaxEvents; ++i)
+	{
+		n += radar.radarEvent(i).active && radar.radarEvent(i).type == type;
+	}
+	return n;
+}
+
+int activeEvents(const Radar &radar)
+{
+	int n = 0;
+	for (int i = 0; i < Radar::kMaxEvents; ++i)
+	{
+		n += radar.radarEvent(i).active;
+	}
+	return n;
+}
+
+// the ping of the one active event of `type`: its movie symbol and the window pixel the movie was told (RW 0x44DF56) against the event's world position
+void checkPing(Radar &radar, int type, const char *name, const Coord3D &world)
+{
+	const int pic[4] = { 40, 500, 200, 200 };
+	const Radar::RadarEventRecord *found = nullptr;
+	for (int i = 0; i < Radar::kMaxEvents; ++i)
+	{
+		const Radar::RadarEventRecord &e = radar.radarEvent(i);
+		if (e.active && e.type == type && e.worldLoc.x == world.x && e.worldLoc.y == world.y)
+		{
+			found = &e;
+		}
+	}
+	REQUIRE(found != nullptr);
+	REQUIRE(found->ping != -1); // -1: the event has no ping
+	const Radar::Ping &p = radar.pings()[(size_t)found->ping];
+	CHECK(p.name == name);
+	CHECK(p.created);
+	const int rx = std::clamp((int)(world.x / (radar.extentWidth() / 128.0f)), 0, 127), ry = std::clamp((int)(world.y / (radar.extentHeight() / 128.0f)), 0, 127);
+	CHECK(p.x == (float)(rx * pic[2] / 128 + pic[0]));
+	CHECK(p.y == (float)((127 - ry) * pic[3] / 128 + pic[1]));
+}
+} // namespace
+
+TEST_CASE("backlog3 radar scripts: RADAR_CREATE_EVENT / OBJECT_CREATE_RADAR_EVENT / TEAM_CREATE_RADAR_EVENT make the event, its Palantir ping and the "
+          "Space jump's position (RW 0x7BC221 / 0x7BC250 / 0x7C0B61 -> 0x6D98FA, 0x5DD1F3)")
+{
+	if (!haveWorld("backlog3 radar scripts"))
+	{
+		return;
+	}
+	using scripttest::act;
+	using scripttest::ip;
+	using scripttest::sp;
+	SharedWorld &s = shared();
+	RadarRig r(s);
+	Radar &radar = r.hud->radar();
+	radar.setPicture(40, 500, 200, 200);
+	r.frames(3);
+	ScriptEngine &engine = r.rig.logic().scriptEngine();
+	REQUIRE(activeEvents(radar) == 0);
+	REQUIRE(radar.events().empty());
+
+	// a position: a beacon (6) there, 4 seconds
+	const Coord3D a{ 1500.0f, 1200.0f, 7.0f };
+	engine.executeAction(act("RADAR_CREATE_EVENT", { coordParam(a.x, a.y, a.z), ip(30, Radar::RADAR_EVENT_BEACON) }));
+	r.frames(2);
+	CHECK(activeEvents(radar) == 1);
+	CHECK(eventsOfType(radar, Radar::RADAR_EVENT_BEACON) == 1);
+	checkPing(radar, Radar::RADAR_EVENT_BEACON, "PingBeacon", a);
+	REQUIRE(radar.events().size() == 1);
+	CHECK(radar.events()[0].position.x == a.x);
+	CHECK(radar.events()[0].position.y == a.y);
+	CHECK(radar.events()[0].position.z == a.z);
+
+	// a named unit: an information event (0) at its position; an unknown name does nothing
+	const Coord3D spot = r.rig.freeSpot(1900, 1500, 250.0f);
+	Object *unit = r.rig.make("GondorBarracks", spot.x, spot.y);
+	unit->setName("BL3Unit");
+	r.frames(1);
+	const Coord3D u = *unit->getPosition();
+	const size_t notices = r.rig.logic().radarEventNotices().size();
+	engine.executeAction(act("OBJECT_CREATE_RADAR_EVENT", { sp(14, "BL3NoSuchUnit"), ip(30, 0) }));
+	CHECK(r.rig.logic().radarEventNotices().size() == notices);
+	engine.executeAction(act("OBJECT_CREATE_RADAR_EVENT", { sp(14, "BL3Unit"), ip(30, 0) }));
+	r.frames(2);
+	CHECK(activeEvents(radar) == 2);
+	checkPing(radar, 0, "PingInformation", u);
+	// the newest position is the list's first (RW 0x75991F): Space looks at it
+	REQUIRE(radar.events().size() == 2);
+	CHECK(radar.events()[0].position.x == u.x);
+	CHECK(radar.events()[1].position.x == a.x);
+	radar.tryJumpToNextEvent(r.rig.view);
+	CHECK(r.rig.view.position().x == u.x);
+	CHECK(r.rig.view.position().y == u.y);
+
+	// a team: at its members' average position (RW 0x7A0ECD), only when it has a unit (RW 0x7A07D8); an unknown team does nothing
+	Team *team = r.rig.local->getDefaultTeam();
+	REQUIRE(team != nullptr);
+	float sx = 0.0f, sy = 0.0f;
+	int n = 0, units = 0;
+	for (const Object *o = team->getFirstMember(); o; o = o->friend_teamNext())
+	{
+		sx += o->getPosition()->x;
+		sy += o->getPosition()->y;
+		++n;
+		units += !o->isEffectivelyDead() && !o->isKindOfName("STRUCTURE") && !o->isKindOfName("PROJECTILE") && !o->isKindOfName("IGNORE_FOR_VICTORY");
+	}
+	REQUIRE(team->getMemberCount() == (unsigned)n);
+	REQUIRE(team->getFirstMember() != nullptr);
+	const std::string teamName = r.rig.local->getPlayerName() + "/" + team->getName(); // the owner's side and the prototype's name (RW 0x604043)
+	engine.executeAction(act("TEAM_CREATE_RADAR_EVENT", { sp(3, "BL3NoSuchTeam"), ip(30, 2) }));
+	CHECK(r.rig.logic().radarEventNotices().size() == notices + 1);
+	engine.executeAction(act("TEAM_CREATE_RADAR_EVENT", { sp(3, teamName), ip(30, 2) }));
+	INFO("team " << teamName << " members " << n << " units " << units);
+	if (units == 0)
+	{
+		// a team of structures only has no unit: no event; a unit joins and it has one
+		CHECK(r.rig.logic().radarEventNotices().size() == notices + 1);
+		const Coord3D us = r.rig.freeSpot(1700, 1300, 150.0f);
+		Object *soldier = r.rig.make("GondorFighter", us.x, us.y);
+		REQUIRE(soldier->getTeam() == team);
+		sx += soldier->getPosition()->x;
+		sy += soldier->getPosition()->y;
+		++n;
+		engine.executeAction(act("TEAM_CREATE_RADAR_EVENT", { sp(3, teamName), ip(30, 2) }));
+	}
+	REQUIRE(r.rig.logic().radarEventNotices().size() == notices + 2);
+	const Coord3D centre = r.rig.logic().radarEventNotices().back().position;
+	const float inv = 1.0f / (float)n; // RW 0x7A0ECD: the sums times 1 / n, in member order
+	CHECK(centre.x == sx * inv);
+	CHECK(centre.y == sy * inv);
+	r.frames(2);
+	CHECK(activeEvents(radar) == 3);
+	checkPing(radar, 2, "PingUpgrade", centre);
+
+	// the events end after their 4 seconds (120 client frames)
+	r.frames(140);
+	CHECK(activeEvents(radar) == 0);
+}
+
+TEST_CASE("backlog3 radar scripts, hostile values: a position that is not a number is refused by name, a huge one lands in cell 0 as cvttss2si does, an unknown "
+          "type has no ping, and a flood keeps 64 notices, 64 events and 64 Space positions")
+{
+	if (!haveWorld("backlog3 radar scripts hostile"))
+	{
+		return;
+	}
+	using scripttest::act;
+	using scripttest::ip;
+	SharedWorld &s = shared();
+	RadarRig r(s);
+	Radar &radar = r.hud->radar();
+	radar.setPicture(40, 500, 200, 200);
+	r.frames(3);
+	GameLogic &logic = r.rig.logic();
+	ScriptEngine &engine = logic.scriptEngine();
+	const float nan = std::numeric_limits<float>::quiet_NaN(), inf = std::numeric_limits<float>::infinity();
+	auto refused = [&]() {
+		size_t n = 0;
+		for (const std::string &e : logic.report().errors)
+		{
+			n += e == "script action RADAR_CREATE_EVENT: a radar event position that is not a finite number is refused";
+		}
+		return n;
+	};
+	REQUIRE(refused() == 0);
+	const size_t notices0 = logic.radarEventNotices().size();
+	engine.executeAction(act("RADAR_CREATE_EVENT", { coordParam(nan, 100.0f, 0.0f), ip(30, 6) }));
+	engine.executeAction(act("RADAR_CREATE_EVENT", { coordParam(100.0f, -inf, 0.0f), ip(30, 6) }));
+	engine.executeAction(act("RADAR_CREATE_EVENT", { coordParam(100.0f, 100.0f, inf), ip(30, 6) }));
+	CHECK(logic.radarEventNotices().size() == notices0); // refused: nothing recorded
+	CHECK(refused() == 1);                               // and said so (each distinct text once)
+	r.frames(2);
+	CHECK(activeEvents(radar) == 0);
+	CHECK(radar.events().empty());
+	// a finite position outside the int range of its cell: cell 0 (RW 0x6D881F: cvttss2si's 0x80000000, clamped), the far side stays 127
+	engine.executeAction(act("RADAR_CREATE_EVENT", { coordParam(3.0e38f, 3.0e30f, 0.0f), ip(30, 6) }));
+	r.frames(2);
+	REQUIRE(activeEvents(radar) == 1);
+	for (int i = 0; i < Radar::kMaxEvents; ++i)
+	{
+		if (radar.radarEvent(i).active)
+		{
+			CHECK(radar.radarEvent(i).radarX == 0);
+			CHECK(radar.radarEvent(i).radarY == 0);
+		}
+	}
+	// a type outside the ping table (RW 0xBDAD30) and outside the enumeration: an event without a ping, as retail's createEvent takes any type
+	const size_t pings0 = radar.pings().size();
+	engine.executeAction(act("RADAR_CREATE_EVENT", { coordParam(900.0f, 900.0f, 0.0f), ip(30, 0x7FFFFFFF) }));
+	engine.executeAction(act("RADAR_CREATE_EVENT", { coordParam(900.0f, 900.0f, 0.0f), ip(30, -5) }));
+	engine.executeAction(act("RADAR_CREATE_EVENT", { coordParam(900.0f, 900.0f, 0.0f) })); // no type parameter: type 0
+	r.frames(2);
+	CHECK(activeEvents(radar) == 4);
+	CHECK(radar.pings().size() == pings0 + 1); // the type 0 event's PingInformation only
+	// a flood in one logic frame: the logic keeps the newest 64 notices, the radar its 64 records, the Space list its 64 newest positions
+	for (int i = 0; i < 500; ++i)
+	{
+		engine.executeAction(act("RADAR_CREATE_EVENT", { coordParam(1000.0f + (float)i, 1000.0f, 0.0f), ip(30, 6) }));
+	}
+	CHECK(logic.radarEventNotices().size() == GameLogic::kRadarEventNotices);
+	CHECK(logic.radarEventNotices().back().position.x == 1499.0f);
+	r.frames(2);
+	CHECK(activeEvents(radar) == Radar::kMaxEvents);
+	CHECK(radar.pings().size() == (size_t)Radar::kMaxEvents); // one PingBeacon per record, the replaced records' pings left the list
+	CHECK(radar.events().size() == Radar::kMaxEvaPositions);
+	CHECK(radar.events()[0].position.x == 1499.0f); // the newest first
+	for (int round = 0; round < 3; ++round)
+	{
+		for (int i = 0; i < 500; ++i)
+		{
+			engine.executeAction(act("RADAR_CREATE_EVENT", { coordParam(2000.0f + (float)i, 1000.0f, 0.0f), ip(30, 6) }));
+		}
+		r.frames(2);
+		radar.tryJumpToNextEvent(r.rig.view); // the cursor survives the list's turnover
+	}
+	CHECK(radar.events().size() == Radar::kMaxEvaPositions);
+	CHECK(radar.pings().size() == (size_t)Radar::kMaxEvents); // one PingBeacon per record, the replaced records' pings left the list
+	CHECK(logic.radarEventNotices().size() == GameLogic::kRadarEventNotices);
+	CHECK(refused() == 1);
+}
+
+TEST_CASE("backlog3 radar construction: a finished building's event (RW 0x88E125) is the PingGeneric of the dozer's local controller only")
+{
+	if (!haveWorld("backlog3 radar construction"))
+	{
+		return;
+	}
+	SharedWorld &s = shared();
+	RadarRig r(s);
+	Radar &radar = r.hud->radar();
+	radar.setPicture(40, 500, 200, 200);
+	r.frames(3);
+	Player *enemy = r.rig.game->players().findPlayerWithName("Player_2");
+	REQUIRE(enemy != nullptr);
+	REQUIRE(activeEvents(radar) == 0);
+	// another player's building: nothing on our radar
+	const Coord3D theirs{ 2500.0f, 2200.0f, 0.0f };
+	r.rig.logic().noteRadarEvent(1, theirs, GameLogic::RadarEventNotice::CONSTRUCTION, enemy->getPlayerIndex());
+	r.frames(2);
+	CHECK(activeEvents(radar) == 0);
+	CHECK(radar.pings().empty());
+	// ours: the event and its ping; no Space position (only the scripts call RW 0x5DD1F3)
+	const Coord3D ours{ 1500.0f, 1200.0f, 0.0f };
+	r.rig.logic().noteRadarEvent(1, ours, GameLogic::RadarEventNotice::CONSTRUCTION, r.rig.local->getPlayerIndex());
+	r.frames(2);
+	CHECK(activeEvents(radar) == 1);
+	checkPing(radar, 1, "PingGeneric", ours);
+	CHECK(radar.events().empty());
+	// a notice is applied once
+	r.frames(5);
+	CHECK(activeEvents(radar) == 1);
+	CHECK(radar.pings().size() == 1);
+	// a notice the radar meets later than the event would have lived (4 s: a HUD made again in a running game) is not replayed
+	r.frames(140);
+	REQUIRE(activeEvents(radar) == 0);
+	const Coord3D late{ 1800.0f, 1400.0f, 0.0f };
+	// the logic alone, `n` frames on (no HUD update reads the notice); r.rig.logic() waits for a completed frame
+	auto logicFrames = [&](UnsignedInt n) {
+		const UnsignedInt target = r.rig.logic().getFrame() + n;
+		for (int guard = 0; guard < 2000 && r.rig.logic().getFrame() != target; ++guard)
+		{
+			const UnsignedInt before = r.rig.logic().getFrame();
+			r.rig.game->advance(0.2);
+			REQUIRE(r.rig.logic().getFrame() - before <= 1u); // tolerance: a 0.2 s step is at most one logic frame (5 a second), so the loop stops exactly on `target`
+		}
+		REQUIRE(r.rig.logic().getFrame() == target);
+	};
+	r.rig.logic().noteRadarEvent(1, late, GameLogic::RadarEventNotice::CONSTRUCTION, r.rig.local->getPlayerIndex());
+	logicFrames(Radar::kNoticeLifeLogicFrames + 1);
+	r.hud->update(0.033);
+	CHECK(activeEvents(radar) == 0);
+	// one frame younger it is still shown
+	r.rig.logic().noteRadarEvent(1, late, GameLogic::RadarEventNotice::CONSTRUCTION, r.rig.local->getPlayerIndex());
+	logicFrames(Radar::kNoticeLifeLogicFrames);
+	r.hud->update(0.033);
+	CHECK(activeEvents(radar) == 1);
+}
+
+TEST_CASE("backlog3 radar attack message: each of RW 0x6D9BF3's four messages for its kind of object, one per new event; a refused event shows none")
+{
+	if (!haveWorld("backlog3 radar attack message"))
+	{
+		return;
+	}
+	SharedWorld &s = shared();
+	RadarRig r(s);
+	Player *enemy = r.rig.game->players().findPlayerWithName("Player_2");
+	REQUIRE(enemy != nullptr);
+	InGameUI &ui = r.hud->input().ui();
+	auto hit = [&](Object *o) {
+		DamageInfo d;
+		d.m_input.m_sourcePlayerMask = 1u << enemy->getPlayerIndex();
+		d.m_input.m_damageType = DAMAGE_SLASH;
+		d.m_input.m_amount = 5.0f;
+		o->attemptDamage(d);
+	};
+	auto radarMessages = [&]() {
+		std::vector<std::string> out;
+		for (const std::string &m : ui.takeMessages())
+		{
+			if (m.compare(0, 6, "RADAR:") == 0)
+			{
+				out.push_back(m);
+			}
+		}
+		return out;
+	};
+	// one retail object per branch of RW 0x6D9C2A .. (KindOf bits 8 INFANTRY / 9 CAVALRY, 16 HARVESTER, 7 STRUCTURE + 37 MP_COUNT_FOR_VICTORY), each hit more
+	// than tryEvent's 10 seconds (300 client frames, RW 0x6D9B4D) after the last event; the expected label is the literal of the binary's string, never the
+	// implementation's answer
+	struct Case
+	{
+		const char *tmpl;
+		float x, y;
+		bool unit, harvester, countedStructure; ///< the kinds the object must have for its branch (checked by name)
+		const char *label;
+	};
+	const Case cases[] = {
+		{ "GondorBoromir", 1900.0f, 1500.0f, true, false, false, "RADAR:UnitUnderAttack" },
+		{ "WildLaborer", 2200.0f, 1500.0f, true, true, false, "RADAR:HarvesterUnderAttack" },
+		{ "GondorBarracks", 1900.0f, 1800.0f, false, false, true, "RADAR:StructureUnderAttack" },
+		{ "GondorTrebuchet", 2200.0f, 1800.0f, false, false, false, "RADAR:UnderAttack" },
+	};
+	std::vector<Object *> made;
+	for (const Case &c : cases)
+	{
+		INFO(c.tmpl);
+		const Coord3D at = r.rig.freeSpot(c.x, c.y, 200.0f);
+		Object *o = r.rig.make(c.tmpl, at.x, at.y);
+		made.push_back(o);
+		r.frames(330); // 330 HUD updates of 0.033 s: 326 client frames, past the 300 of the event before
+		REQUIRE((o->isKindOfName("INFANTRY") || o->isKindOfName("CAVALRY")) == c.unit);
+		REQUIRE(o->isKindOfName("HARVESTER") == c.harvester);
+		REQUIRE((o->isKindOfName("STRUCTURE") && o->isKindOfName("MP_COUNT_FOR_VICTORY")) == c.countedStructure);
+		REQUIRE(capture(r, *o).listed); // on the radar's list (Object + 0x268, RW 0x67B57B)
+		radarMessages();
+		hit(o);
+		r.frames(3);
+		CHECK(radarMessages() == std::vector<std::string>{ c.label });
+		CHECK(std::string(Radar::underAttackLabel(*o)) == c.label);
+		// a second hit within 10 seconds and 600 units: tryEvent refuses (RW 0x6D9B4D), no second message
+		hit(o);
+		r.frames(3);
+		CHECK(radarMessages() == std::vector<std::string>{});
+	}
 }

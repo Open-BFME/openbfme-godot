@@ -27,6 +27,8 @@ OS.create_process only where the launcher starts the game (updater.gd) and its o
 only for the self-update's atomic replace on Windows (self_update.gd: cmd /c move /y), the system's GLIBC version before Play
 (glibc_check.gd: getconf / ldd, lane GLIBC-1) and, lane ONLINE-2, for registering the openbfme:// link
 handler when the player asks for it (url_handler.gd: reg add under HKCU, xdg-mime, update-desktop-database; --register-url-handler only).
+Lane ONEZIP-1: the game may start one program, the OpenBFME Launcher beside it (godot/scripts/release/update_handover.gd: a game started
+directly asks the launcher, the one updater, which version plays and for an update check); the launcher's own allow list is unchanged.
 """
 from __future__ import annotations
 
@@ -59,7 +61,10 @@ ALLOWED_LAUNCHER = {"launcher/scripts/net/http_fetch.gd": {"HTTPClient"},
                     "launcher/scripts/core/url_handler.gd": {"OS.execute"}}
 # lane ONLINE-2: game file -> the findings it may have: the online lobby client (its requests: online_lobby_problems)
 # lane ONLINE-4: the online screens' transport (scripts/online_http.gd: the requests OnlineShell.apt's lobby client queues), the same rule
-ALLOWED_GAME = {"godot/scripts/online_lobby.gd": {"HTTPRequest", "HTTPClient"}, "godot/scripts/online_http.gd": {"HTTPRequest", "HTTPClient"}}
+# lane ONEZIP-1: a game started directly runs the OpenBFME Launcher beside it once (the one updater; the game itself still opens no
+# connection): OS.create_process in scripts/release/update_handover.gd alone
+ALLOWED_GAME = {"godot/scripts/online_lobby.gd": {"HTTPRequest", "HTTPClient"}, "godot/scripts/online_http.gd": {"HTTPRequest", "HTTPClient"},
+                "godot/scripts/release/update_handover.gd": {"OS.create_process"}}
 ONLINE_LOBBY = "godot/scripts/online_lobby.gd"
 ONLINE_LOBBY_FILES = ("godot/scripts/online_lobby.gd", "godot/scripts/online_http.gd")
 

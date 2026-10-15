@@ -124,6 +124,7 @@ struct AudioLogEntry
 	int player = -1;
 	AudioHandle handle = 0;
 	bool play = false;
+	bool volume = false; ///< lane OPTS-4: a volume line (setSliderVolume): `event` is the submix slider's name, `outcome` the new volume ("%.2f")
 	std::string outcome;
 };
 
@@ -225,6 +226,11 @@ public:
 	// system (the options sliders) when AudioAffect_SystemSetting is in `affect`, else the script volume (ZH setVolume)
 	void setVolume(float volume, unsigned affect);
 	float getVolume(unsigned affect) const;
+	// lane OPTS-4: RotWK's TheAudio vslot 0xE8(type, volume), what the Options screen calls (RW 0x91F90D track, RW 0x91EC52 Cancel, RW 0x91F4D1 Reset):
+	// the system volume of one submix slider (SLIDER_SOUNDFX .. SLIDER_MOVIE), clamped to 0 .. 1; the playing voices follow at the next update. False
+	// for another slider. INFERENCE: the vslot's body was not read; the clamp is the port's
+	bool setSliderVolume(int slider, float volume);
+	float getSliderVolume(int slider) const;
 	void setCurrentView(int view) { m_currentView = view; }
 	void stopAudio(unsigned affect);
 	void setDisallowSpeech(bool d) { m_disallowSpeech = d; }
@@ -256,6 +262,17 @@ public:
 	// the lines since the last call (at most kEventLogCap are kept between two calls; more are counted in eventLogDropped)
 	std::vector<AudioLogEntry> takeEventLog();
 	std::uint64_t eventLogDropped() const { return m_logDropped; }
+	// lane OPTS-4: one tab separated line of the log file (the columns of LiveGameAudio::eventLogHeader); `objectId` / `templateName` as the writer
+	// resolved them ("-": none)
+	// a "volume" line for a volume the host holds itself (`name`, e.g. MASTER); nothing when the log is off
+	void logHostVolume(const std::string &name, float volume);
+	static std::string formatLogLine(const AudioLogEntry &entry, std::uint32_t objectId, const std::string &templateName);
+	// lane OPTS-4: the log file a host writes outside a game (the shell: GodotGameAudio) and who drains the log now (null: that host). A game's
+	// LiveGameAudio asked for the same file appends to it and is the taker while it lives
+	void setEventLogFile(const std::string &path) { m_logFilePath = path; }
+	const std::string &eventLogFile() const { return m_logFilePath; }
+	void setEventLogTaker(const void *who) { m_logTaker = who; }
+	const void *eventLogTaker() const { return m_logTaker; }
 	enum { kEventLogCap = 200000 };
 
 private:
@@ -388,5 +405,7 @@ private:
 	std::uint32_t m_logFrame = 0;
 	std::uint64_t m_logDropped = 0;
 	std::vector<AudioLogEntry> m_log;
+	std::string m_logFilePath;        ///< lane OPTS-4
+	const void *m_logTaker = nullptr; ///< lane OPTS-4
 	const char *m_refusal = ""; ///< why canPlayNow refused the event it checked last
 };

@@ -21,10 +21,13 @@
 //   * 53 AIHordeExitState (RW 0xC27AC8): onEnter RW 0x743437 (slot 0x44(horde, 1)), update RW 0x747D04 (the exit interface: busy -> CONTINUE; a door: the exit, then
 //     SUCCESS once the horde is out), onExit RW 0x74347D;
 //   * ActionManager::canEnterObject RW 0x82CBD5 and its shroud test RW 0x82C167; Object::isMobile RW 0x690E97.
-// INFERENCE / NOT PORTED (stop S-1101): the collide-module branch of canEnterObject (RW 0x82CD2E: a collide module that would like to collide with the container
-// lets the object in; counted, taken as no), the heal contain's full-health test (slot 0x18, false for every contain this lane ports), the SHIP branches
-// (RW 0x751668 / 0x75661B / 0x82CED4), the AIEnterState test of a contained container (RW 0x756088 .. 0x7560A5), the enemy container's attack fallback (RW 0x82CFD4),
-// the members' AI slot 0x1C4 / RW 0x5E821A of RW 0x875C93, the group manager (GameData + 0x11CA) of MSG_ENTER.
+// Lane BACKLOG-1 (the BFME2 decomp's BFMEActionManager::canEnterObject, AIEnterState::update and ActionManager::getCanAttackObject, tier B same-shape for RW
+// 0x82CBD5 / 0x756067 / 0x82CFD4): canEnterObject's DOZER + HARVESTER test (the container body's health fraction below 0.99) and collide-module branch, the
+// AIEnterState test of a contained container above the terrain (RW 0x756088 .. 0x7560A5) and its attack on an enemy container it can no longer enter.
+// INFERENCE / NOT PORTED (stop S-1101): behaviour slot 0x48 of the collide branch (no collide class a unit has would like to collide), the heal contain's
+// full-health test (slot 0x18, false for every contain this lane ports), the SHIP branches (RW 0x751668 / 0x75661B / 0x82CED4), getCanAttackObject's object
+// part (RW 0x68D6A6) as ObjectWeapons::canAttackObject (S-325) and its STRUCTURE / SPAWNS_ARE_THE_WEAPONS parts (reported), the members' AI slot 0x1C4 /
+// RW 0x5E821A of RW 0x875C93, the group manager (GameData + 0x11CA) of MSG_ENTER.
 
 #pragma once
 
@@ -55,8 +58,12 @@ bool isMobile(const Object &obj);
 bool canEnterObject(Object &obj, Object *container, CommandSourceType source, int mode, bool checkPath, bool *occupied = nullptr);
 // the stop line S-1101
 const char *stopLine();
-// the counter of the collide-module branch not evaluated
-unsigned long long &collideBranchSkipped();
+// RW 0x4B12E8: the height above the terrain is above 0
+bool isAboveTerrain(const Object &obj);
+// RW 0x82CFD4 ActionManager::getCanAttackObject(obj, victim, source, ATTACK_NEW_TARGET) is POSSIBLE or POSSIBLE_AFTER_MOVING (see the .cpp for the inference)
+bool canAttackAsNewTarget(Object &obj, Object &victim, CommandSourceType source);
+// AIEnterState's attacks on an enemy container it could not enter (RW 0x7560FB)
+unsigned long long &enemyContainerAttacks();
 } // namespace GarrisonRules
 
 // the five states (the AI module's machine defines them, AIUpdateInterface::makeStateMachine)

@@ -1,3 +1,5 @@
+## Lane OPTS-5: the Options screen IS the OpenBFME menu now (AptOptionsScreen::kOpenBFMEMenu): Options opens on the page, ACCEPT / CANCEL / Esc close
+## Options (back on the main menu, or on the quit menu in a game); there is no OPENBFME button and no retail page to go back to.
 ## Lane OPTS-1: game.gd --display-check, the OpenBFME display options as a player uses them (mouse events on the OPENBFME button and the screen's
 ## buttons, key events for F11 and Alt+Enter), with the owner's "maximising greys out the main menu" as the main check: the main menu's and
 ## Options.apt's buttons (path, hittable, visible, the clip's frame) are the same before and after every window change, whether the window is
@@ -44,24 +46,12 @@ func run(p_game: Node, p_shots: String) -> int:
 		await game._step(30)
 		compare("main menu after a resize to %dx%d" % [size.x, size.y], main0, widget_state(main_level))
 
-	# 2. Options.apt from the main menu (its OptionsNav -> Settings), the OPENBFME button over it
-	for b in ["OptionsNav", "OptionsNav.Settings"]:
-		if not await game._click_button(main_level, b):
-			check("open Options", false, "cannot press " + b)
-			return finish()
-		await game._step(60)
-	for i in 20:
-		if top() == "Options.apt" and screen.entry_visible():
-			break
-		await game._step(15)
+	# 2. Options.apt from the main menu (its OptionsNav -> Settings): the OpenBFME menu at once
+	if not await open_options():
+		return finish()
 	check("Options.apt is up", top() == "Options.apt", str(shell.shell_stack()))
-	await game._step(120)
 	var options_level: int = shell.shell_top_level()
-	var options0 := widget_state(options_level)
-	check("the OPENBFME button is shown on Options.apt", screen.entry_visible(), "hidden")
-	await shot("opts1-entry")
-	await click_stage(screen.entry_rect().get_center())
-	check("the OPENBFME button opens the page", screen.is_open(), "not open")
+	check("Options opens on the OpenBFME menu (no OPENBFME button)", screen.is_open() and not screen.entry_visible(), "open %s" % screen.is_open())
 	check("the page is Options.apt's (its page 3: the shell draws it and takes its clicks)", shell.options_page() == 3, "page %d" % shell.options_page())
 	if not screen.is_open():
 		return finish()
@@ -93,8 +83,11 @@ func run(p_game: Node, p_shots: String) -> int:
 		and overlay.shown() == shown_before and game._display.window_mode == "windowed" and (DisplayServer.get_name() == "headless" or root.mode == Window.MODE_WINDOWED),
 		"cap %d, scale %.2f, counter %s, mode %s / %d" % [Engine.max_fps, root.scaling_3d_scale, overlay.shown(), game._display.window_mode, root.mode])
 	check("CANCEL leaves the file as it was", file_after == file_before, file_after)
-	check("CANCEL goes back to Options' basic page", top() == "Options.apt" and shell.options_page() == 1 and screen.entry_visible(), "page %d" % shell.options_page())
-	await click_stage(screen.entry_rect().get_center())
+	await game._step(90)
+	check("CANCEL closes Options (the main menu again)", not screen.is_open() and top() != "Options.apt", str(shell.shell_stack()))
+	await open_options()
+	options_level = shell.shell_top_level()
+	page0 = widget_state(options_level)
 	check("the page opens again", screen.is_open(), "not open")
 
 	# 3. every setting through the screen's controls (applied at once)
@@ -140,7 +133,8 @@ func run(p_game: Node, p_shots: String) -> int:
 	check("the counter shows while its box is ticked", overlay.shown() and not overlay.counter_text().is_empty(), overlay.counter_text())
 	await shot("opts1-screen")
 	await click_bar("accept")
-	check("ACCEPT closes the page, back on Options' basic page", not screen.is_open() and top() == "Options.apt" and shell.options_page() == 1, "open %s page %d" % [screen.is_open(), shell.options_page()])
+	await game._step(90)
+	check("ACCEPT closes Options (the main menu again)", not screen.is_open() and top() != "Options.apt", "open %s, stack %s" % [screen.is_open(), shell.shell_stack()])
 	var saved = DisplaySettings.new()
 	saved.load_file(game._display_path)
 	var want := {"window_mode": "windowed", "vsync": "off", "max_fps": 144, "show_fps": true, "render_scale": 0.75,
@@ -151,26 +145,30 @@ func run(p_game: Node, p_shots: String) -> int:
 		if str(got[k]) != str(want[k]):
 			diff.append("%s %s != %s" % [k, got[k], want[k]])
 	check("ACCEPT wrote the file", saved.errors.is_empty() and diff.is_empty(), "%s %s" % [saved.errors, diff])
+	await game._wait_main_ready()
 	await game._step(30)
-	compare("Options.apt after the screen closed", options0, widget_state(options_level))
+	compare("main menu after Options closed", main0, widget_state(shell.shell_top_level()))
 
 	# 4. CANCEL puts back what was in effect
-	await click_stage(screen.entry_rect().get_center())
+	await open_options()
 	check("the page opens again", screen.is_open(), "not open")
 	await select("render_scale", 10)
 	await select("max_fps", 0)
 	await click_bar("cancel")
 	check("CANCEL restores the render scale and the frame limit", not screen.is_open() and is_equal_approx(root.scaling_3d_scale, 0.75) and Engine.max_fps == 144,
 		"scale %.2f, max_fps %d" % [root.scaling_3d_scale, Engine.max_fps])
+	await game._step(90)
 	# RESET TO DEFAULTS, then Esc: nothing kept
-	await click_stage(screen.entry_rect().get_center())
+	await open_options()
 	await click_bar("reset")
 	check("RESET TO DEFAULTS applies the defaults (the page stays up)", is_equal_approx(root.scaling_3d_scale, 1.0) and Engine.max_fps == 0 and screen.is_open(),
 		"scale %.2f, max_fps %d" % [root.scaling_3d_scale, Engine.max_fps])
 	await key(KEY_ESCAPE)
 	await game._step(10)
 	check("Esc closes the page and restores", not screen.is_open() and Engine.max_fps == 144, "open %s, max_fps %d" % [screen.is_open(), Engine.max_fps])
-	check("Esc stayed with the page (Options.apt is still up, on its basic page)", top() == "Options.apt" and shell.options_page() == 1, str(shell.shell_stack()))
+	await game._step(90)
+	check("Esc closes Options (the main menu again)", top() != "Options.apt", str(shell.shell_stack()))
+	await game._wait_main_ready()
 
 	# 5. the keys (not retail; free in RotWK's CommandMap): F11 the counter, Alt+Enter full screen. Outside the screen a key writes its own key only:
 	# a value another program (the launcher) wrote meanwhile stays, and the run's cap is not touched
@@ -186,7 +184,7 @@ func run(p_game: Node, p_shots: String) -> int:
 	await key(KEY_ENTER, true)
 	check("Alt+Enter goes full screen", game._display.window_mode == "borderless", game._display.window_mode)
 	await game._step(30)
-	compare("Options.apt after Alt+Enter", options0, widget_state(options_level))
+	compare("main menu after Alt+Enter", main0, widget_state(shell.shell_top_level()))
 	await key(KEY_ENTER, true)
 	check("Alt+Enter comes back to a window", game._display.window_mode == "windowed", game._display.window_mode)
 	var after_keys = DisplaySettings.new()
@@ -195,14 +193,8 @@ func run(p_game: Node, p_shots: String) -> int:
 		and is_equal_approx(after_keys.render_scale, 0.55) and after_keys.show_fps and after_keys.window_mode == "windowed" and after_keys.max_fps == 144 and Engine.max_fps == 144
 		and is_equal_approx(root.scaling_3d_scale, 0.75), "%s, cap %d, scale %.2f" % [JSON.stringify(after_keys.to_dict()), Engine.max_fps, root.scaling_3d_scale])
 
-	# 6. back to the main menu: the same buttons as before any of this
-	if not await game._click_named_button("Cancel"):
-		check("leave Options", false, "no Cancel button")
-		return finish()
-	await game._step(120)
-	await game._wait_main_ready()
+	# 6. the main menu: the same buttons as before any of this
 	await game._step(60)
-	check("the OPENBFME button is gone with Options.apt", not screen.entry_visible(), "still shown")
 	compare("main menu after Options and every window change", main0, widget_state(shell.shell_top_level()))
 	await shot("opts1-fps")
 	return finish()
@@ -234,18 +226,13 @@ func run_game(p_game: Node, p_shots: String) -> int:
 		check("the quit menu's Options", false, "no Options button")
 		return finish()
 	for i in 40:
-		if top() == "Options.apt" and screen.entry_visible():
+		if top() == "Options.apt" and screen.is_open():
 			break
 		await game._step(10)
-	check("Options.apt over the game shows the OPENBFME button", top() == "Options.apt" and screen.entry_visible(), str(shell.shell_stack()))
-	# the free corner above CANCEL: under the settings frames (they end at stage y 610), over the bottom bar (from y 708), left of the middle
-	var e: Rect2 = screen.entry_rect()
-	check("the button sits in the free corner above CANCEL (stage %s)" % e, e.position.x >= 40 and e.end.x <= 260 and e.position.y >= 612 and e.end.y <= 708, str(e))
+	check("the quit menu's Options opens the OpenBFME menu over the game", top() == "Options.apt" and screen.is_open() and shell.options_page() == 3
+		and not screen.entry_visible(), str(shell.shell_stack()))
 	await game._step(90)
 	var options_level: int = shell.shell_top_level()
-	var options0 := widget_state(options_level)
-	await click_stage(screen.entry_rect().get_center())
-	check("the page opens over the game", screen.is_open() and shell.options_page() == 3, "not open")
 	await game._step(20)
 	var page0 := widget_state(options_level)
 	await shot("opts1-game-screen")
@@ -269,18 +256,31 @@ func run_game(p_game: Node, p_shots: String) -> int:
 	await game._step(30)
 	compare("Options.apt over the game after the window changes", page0, widget_state(options_level))
 	await key(KEY_ESCAPE)
-	await game._step(10)
-	check("Esc closes the page only", not screen.is_open() and top() == "Options.apt", "open %s, stack %s" % [screen.is_open(), shell.shell_stack()])
-	compare("Options.apt's basic page again", options0, widget_state(options_level))
-	await key(KEY_ESCAPE)
 	await game._wait_seconds(2.0)
-	check("Esc then closes Options (the quit menu stays)", top() != "Options.apt" and not screen.entry_visible(), str(shell.shell_stack()))
+	check("Esc closes Options (the quit menu stays)", not screen.is_open() and top() != "Options.apt" and top() != "", "open %s, stack %s" % [screen.is_open(), shell.shell_stack()])
 	await key(KEY_ESCAPE)
 	await game._wait_seconds(2.0)
 	check("Esc closes the quit menu: the game runs again", not game._world.is_paused(), "paused")
 	await game._step(30)
 	await shot("opts1-game-after")
 	return finish()
+
+
+## the main menu's OptionsNav -> Settings, then the OpenBFME menu (Options.apt opens on it)
+func open_options() -> bool:
+	await game._wait_main_ready()
+	var main_level: int = shell.shell_top_level()
+	for b in ["OptionsNav", "OptionsNav.Settings"]:
+		if not await game._click_button(main_level, b):
+			check("open Options", false, "cannot press " + b)
+			return false
+		await game._step(60)
+	for i in 30:
+		if top() == "Options.apt" and screen.is_open():
+			break
+		await game._step(15)
+	await game._step(30)
+	return screen.is_open()
 
 
 func finish() -> int:

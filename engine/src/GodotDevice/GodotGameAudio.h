@@ -152,7 +152,9 @@ public:
 	// lane AUDIO-5: retail's microphone (RW 0x45235B) from the tactical camera's eye and the terrain point it looks at, SAGE space
 	void update_microphone(const Vector3 &camera_position, const Vector3 &look_at, bool look_at_valid);
 	Dictionary get_listener() const; // {position, forward}: where the core hears from (SAGE space)
-	void set_volume(const String &slider, double volume); // "sound" | "voice" | "music" | "ambient" (the options sliders, 0..1)
+	void set_volume(const String &slider, double volume); // "sound" | "voice" | "music" | "ambient" | "movie" (the options sliders, 0..1)
+	// lane OPTS-4: a volume the host applies outside the manager (the OpenBFME Master volume: Godot's Master bus), as a "volume" line of the request log
+	void log_volume(const String &name, double volume);
 	double get_volume(const String &slider) const;
 	// lane FB7-1: AudioSettings DefaultSoundVolume, DefaultVoiceVolume, DefaultMusicVolume, DefaultAmbientVolume, DefaultMovieVolume (0..1): the Options screen's
 	// defaults (RW 0x6E5FB3 reads TheAudio's settings + 0x1C ..); empty before boot
@@ -188,6 +190,10 @@ private:
 	std::unique_ptr<AudioManager> m_manager;
 	std::unique_ptr<Eva> m_eva; ///< AUDIO-2: TheEva, installed through AudioApi::installEva next to the manager
 	bool m_processing = false; ///< _process drives the manager: off after shutdown() until the next boot()
+	// lane OPTS-4: OPENBFME_AUDIO_LOG outside a game (the menus' requests and volume changes): the file's path, empty when the log is off. A game's
+	// LiveGameAudio appends to the same file while it is attached (AudioManager::eventLogTaker)
+	std::string m_logPath;
+	void flushLog();
 	Ref<RetailFileSystem> m_fs;
 };
 

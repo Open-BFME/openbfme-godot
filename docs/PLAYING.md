@@ -11,7 +11,7 @@ files.
 ## Contents
 
 - [What you need](#what-you-need)
-- [Installing with the launcher](#installing-with-the-launcher)
+- [Installing](#installing)
 - [The first start](#the-first-start)
 - [Updates](#updates)
 - [Logs](#logs)
@@ -31,8 +31,22 @@ files.
 
 - **The Rise of the Witch-king, patched to 2.01**, and **The Battle for
   Middle-earth II, patched to 1.06**, both in **English**. RotWK always needs
-  BFME2 next to it, as in the original. Disc installs and All In One launcher
-  installs both work.
+  BFME2 next to it, as in the original. All In One launcher installs work.
+  A disc install patched with EA's official patch
+  (`LotrBfMe2EP1-131073-english.exe`, which updates `INI.big` and `Maps.big`
+  in place; the All In One package ships them unpatched with
+  `_patch201ini.big` and `_patch201maps.big` next to them) is recognised, but
+  **not accepted yet**: its `Data1.big` (fonts, scripts, built-in heroes) is a
+  different build from the All In One one, and OpenBFME has not pinned it
+  (S-4701). The game says which entry it does not know; the message asks you
+  to report it, and `py -3 tools\release\big_entries.py "<game folder>\Data1.big"`
+  lists the entries to post. A mix of the two layouts (a half-patched install)
+  is refused with the files named.
+  Games started from a disc install and from an All In One install do not
+  match: players on different layouts cannot join each other's LAN games or
+  play each other's replays (the lobby says whose game files differ and that
+  both players need the same install), because OpenBFME has not yet shown
+  that their patched files are byte-identical (S-4700).
   No games installed? The launcher's **Download the games** gets both from the
   All In One BFME Launcher service (BFME Foundation, Patch 2.22 team): about
   8.6 GB, with Pause, Resume and Cancel. Every file is checked against
@@ -44,36 +58,44 @@ files.
   proprietary drivers). On Linux the game folders can be inside a Wine or
   Proton prefix.
 
-## Installing with the launcher
+## Installing
 
-The **OpenBFME Launcher** installs the game, keeps it up to date and starts
-it. It is a separate small program: a broken game build can never break the
-launcher.
+There is **one download per system**. It holds the game and the **OpenBFME
+Launcher** together, and the game in it is ready to play: nothing else is
+downloaded first.
 
-1. Download the launcher for your system from
+1. Download the file for your system from
    [GitHub Releases](https://github.com/Open-BFME/openbfme-godot/releases):
-   `openbfme-launcher-<version>-windows-x64.zip` or
-   `openbfme-launcher-<version>-linux-x64.tar.gz`.
+   `openbfme-<version>-windows-x64.zip` or
+   `openbfme-<version>-linux-x64.tar.gz`. The other files of a release are
+   used by OpenBFME itself; you don't need them.
    To check the download, compare its SHA-256 with the release's
    `SHA256SUMS-<version>.txt` (Linux: `sha256sum -c --ignore-missing
    SHA256SUMS-<version>.txt`; Windows PowerShell: `Get-FileHash <file>`).
-   The launcher checks everything it downloads after that by itself.
+   Everything OpenBFME downloads after that, it checks by itself.
 2. Unpack it into a folder you can write to (not `Program Files`: the
    launcher updates itself in its own folder). On Linux use `tar -xzf`, which
-   keeps the launcher executable; if your archive tool lost that, run
-   `chmod +x OpenBFMELauncher.x86_64`.
-3. Start it: `OpenBFMELauncher.exe`, or `./OpenBFMELauncher.x86_64`. On
-   Windows, SmartScreen may say *Windows protected your PC* because the
+   keeps the programs executable; if your archive tool lost that, run
+   `chmod +x OpenBFME.x86_64 OpenBFMELauncher.x86_64`.
+3. Start either program:
+   - **the game**, `OpenBFME.exe` or `./OpenBFME.x86_64`, to play at once;
+   - **the launcher**, `OpenBFMELauncher.exe` or
+     `./OpenBFMELauncher.x86_64`, for the news, the settings, older versions
+     and the games download, and **Play**.
+
+   On Windows, SmartScreen may say *Windows protected your PC* because the
    executables are not code-signed yet: choose **More info**, then **Run
-   anyway**. Windows asks this once per new launcher file.
-4. The launcher starts on the channel of its own version: an alpha launcher
-   such as v0.4.0-alpha.1 (or an earlier preview such as v0.3.0-preview.4) on
-   **Alpha** (the test builds; it was called Preview before), a release on
-   **Stable**. It downloads the newest build of that channel, checks it and
-   installs it by itself. You can switch the channel in Settings at any
-   time (there is no Stable release yet).
-5. Press **Play**. The first start asks for your game folders (next
-   section).
+   anyway**. Windows asks this once per new file.
+4. The first start asks for your game folders (next section).
+
+Whichever one you start keeps OpenBFME up to date (see [Updates](#updates)).
+Already have the launcher from an earlier build? You don't need to download
+anything: it updates itself and the game.
+
+The launcher starts on the channel of its own version: an alpha build on
+**Alpha** (the test builds; it was called Preview before), a release on
+**Stable**. You can switch the channel in Settings at any time (there is no
+Stable release yet).
 
 The menu on the left has **Play** (the installed version, whether it is up to
 date, your games and What's New from the version's release notes), **News**
@@ -102,14 +124,11 @@ The launcher keeps its files here:
 | Windows | `%APPDATA%\OpenBFMELauncher` |
 | Linux | `~/.local/share/OpenBFMELauncher` |
 
-Inside it, `versions/` holds the installed game versions (the two newest are
-kept, plus one you picked), and `launcher.log` records what the launcher did.
-To remove everything, delete the launcher's folder and this data folder.
-
-You can also download a game package (`openbfme-<version>-windows-x64.zip` /
-`-linux-x64.tar.gz`) directly, unpack it and run `OpenBFME.exe` /
-`./OpenBFME.x86_64`. The launcher is the recommended way: it checks every file
-for you.
+Inside it, `versions/` holds the game versions installed by updates (the two
+newest are kept, plus one you picked), and `launcher.log` records what the
+launcher did. The game that came in your download stays in the folder you
+unpacked and is never changed.
+To remove everything, delete the folder you unpacked and this data folder.
 
 ## The first start
 
@@ -120,7 +139,9 @@ Wine, Proton (Steam), Lutris, Heroic and Bottles prefixes. It shows what it
 found; confirm the folders or choose them with **Browse...**.
 
 It then checks every game archive (size and MD5) against the list of the
-English 2.01 / 1.06 files. This takes about a minute the first time and is
+English 2.01 / 1.06 files; `Data1.big` (fonts, scripts and the built-in
+Create-a-Heroes) is checked file by file inside it, because the disc and All
+In One copies of it differ. This takes about a minute the first time and is
 cached afterwards. The folders are remembered in `install-paths.cfg` in the
 game's data folder (see [Logs](#logs) for where that is); delete that file to
 choose again.
@@ -132,7 +153,29 @@ or host an online test game, for the lobby and relay of that game (see
 
 ## Updates
 
-At every start the launcher asks GitHub for the releases of your channel. A
+Both programs keep OpenBFME up to date, through the same updater (the
+launcher's):
+
+- **Started the launcher?** It looks for a newer build at every start and
+  every hour while it stays open.
+- **Started the game directly?** It asks the launcher next to it, without
+  opening its window. If a newer version is already installed, that version
+  starts instead. Then the launcher looks for an update in the background
+  while you play, and a line in the top right corner of the menu says what it
+  found: up to date, downloading, installed for your next start, or why it
+  was skipped.
+
+A newer version is never put in place while you play: it is used **from your
+next start**. Starting the game never waits for the network: offline, or when
+GitHub can't be reached, it starts at once with what you have and says why.
+To start the game without the check, add `--no-update-check`. A game-only
+folder (no launcher next to the game) does not update.
+
+Before it starts the launcher, the game checks that it is the signed one of
+your download (or a signed update of it). The launcher checks the game's folder
+the same way before **Play**: a changed file is refused, by name.
+
+At every check the launcher asks GitHub for the releases of your channel. A
 new build is downloaded (an interrupted download resumes next time) and
 **verified before anything runs**:
 
@@ -383,10 +426,10 @@ the keys are the original game's. In particular:
 | Shift+1 ... 9 | add the group to the selection | same |
 | Ctrl+F1 ... F8, then F1 ... F8 | store a camera position, jump back to it | same |
 | Command bar letters | the underlined letter of a button presses it (A is Attack Move) | same |
-| Ctrl held + click | force-attack a unit, building or the ground (also your own) | see [below](#force-attack) |
+| Ctrl held + click | force-attack a unit, building or the ground (also your own) | **OpenBFME only**: 2.01 has no force-attack, see [below](#force-attack) |
 | S | stop | same |
 | D / F / G | stances | same |
-| Space | jump to the last radar event | same key, but radar events are not created yet, so it does nothing for now (S-1674) |
+| Space | jump to the last radar event | same key; it jumps to a mission script's radar ping. Other events don't feed it yet, so in a skirmish it does nothing (S-1674) |
 | \` | open the spell book (powers) | same |
 | F12 | screenshot | same |
 | Esc | the game menu (Resume, Options, Restart; LAN: Forfeit, Exit) | same |
@@ -399,13 +442,20 @@ On a German keyboard layout, Y and Z swap as in the original.
 
 ### Force-attack
 
-Holding Ctrl for force-attack comes from Command & Conquer Generals: Zero
-Hour, the engine BFME was built on. How RotWK 2.01 itself turns force-attack
-on could not be found in the program, so this one is an informed guess
-(recorded as stop S-1675). The attack it gives once it is on is RotWK's own:
-Ctrl+click on the ground makes the selected units fire at that spot until you
-give another order; Ctrl+click on a unit or building attacks it, your own
-included.
+Force-attack with Ctrl is an OpenBFME addition. It comes from Command &
+Conquer Generals: Zero Hour, the engine BFME was built on. RotWK 2.01 still
+carries the key's name and the attack's code, but nothing in the program ever
+switches the mode on (this was checked in the program itself, stop S-1675).
+
+What Ctrl does today: in OpenBFME, holding Ctrl while you click force-attacks.
+The original differs: there, holding Ctrl while you press the left button
+starts a selection made from the points the pointer passes, instead of the
+usual box (stop S-4360). OpenBFME does not have that selection yet, and
+whether it keeps Ctrl for force-attack is still to be decided.
+
+The attack it gives is RotWK's own code: Ctrl+click on the ground makes the
+selected units fire at that spot until you give another order; Ctrl+click on
+a unit or building attacks it, your own included.
 
 Whether your own units and buildings can be attacked is decided by the weapon,
 as in the original: a unit only fires at your own side with a weapon that can
@@ -592,8 +642,6 @@ recorded stop in [STOPS.md](STOPS.md); the ID is given for reference.
   health bars, but OpenBFME doesn't draw shadows yet, and the model,
   animation, terrain, water and shader detail rows are greyed out (S-3402).
   A texture quality change shows from the next game.
-- Some lists and boxes of a menu show through pop-ups placed over them
-  (S-1914).
 - Replays are recorded for every game and can be watched from *Load Replay*,
   but can't be saved under a name, and there are no replay controls (S-1125,
   S-1126). The score screen's graphs are simplified (S-1063).
@@ -619,9 +667,15 @@ There are many more, smaller stops; the README gives the current count.
 **The game can't find my install, or refuses it.** Make sure both games are
 installed and patched (RotWK 2.01, BFME2 1.06) and in English. Choose the
 folders by hand with *Browse...*: the RotWK folder holds RotWK's archives,
-the BFME2 folder BFME2's. The screen says what is wrong with a folder. To
-pick again later, delete `install-paths.cfg` in the game data
-folder.
+the BFME2 folder BFME2's. The screen says what is wrong with a folder: which
+file differs and what to do. A RotWK folder that mixes the two 2.01 layouts
+(for example `INI.big` patched by EA's patch but `Maps.big` not, or EA's patch
+applied and the All In One `_patch201*.big` files copied in as well) is
+refused: patch a clean disc install with EA's official 2.01 patch only, or let
+the launcher download the games. If the screen says your `Data1.big` holds a
+version OpenBFME does not know and your install is unmodified, please report
+the message on GitHub so that version can be added. To pick again later,
+delete `install-paths.cfg` in the game data folder.
 
 **A movie doesn't play.** If your install lacks a movie file (some copies
 have the logo movies removed), the game skips that movie, as the original
@@ -646,6 +700,23 @@ the new one has started once. Rename that file back to the launcher's name.
 **The launcher can't update.** It shows why (offline, GitHub's hourly
 limit, a failed check). Play still starts the newest installed version.
 Keep the launcher in a folder you can write to.
+
+**The game says "Updates skipped" or "Update not installed".** The line in
+the corner of the menu names the reason (offline, GitHub's hourly limit, a
+download that failed its check). The game you have still starts; the check
+runs again at your next start, and an interrupted download resumes. Open the
+launcher for the details: it shows the last failure and has **Open log
+folder**.
+
+**The game still shows the old version after an update.** An update is used
+from the next start: close the game and start it again. If you unpacked a
+new download next to an old one, start the game from either folder: both
+start the newest installed version.
+
+**Which file do I download?** One file per system:
+`openbfme-<version>-windows-x64.zip` or `openbfme-<version>-linux-x64.tar.gz`.
+The `openbfme-launcher-...` files are update files for launchers from before
+this layout; you don't need them.
 
 ## Reporting a bug
 

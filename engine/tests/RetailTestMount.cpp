@@ -6,6 +6,7 @@
 #include "GameEngineDevice/Win32Device/Common/Win32BIGFileSystem.h"
 
 #include <cstdio>
+#include <cstring>
 #include <cstdlib>
 #include <fstream>
 
@@ -124,7 +125,16 @@ bool readLocalFile(const std::string &path, std::vector<unsigned char> &out, std
 
 void printSkip(const char *testName)
 {
-	std::printf("SKIP: %s needs ROTWK_INSTALL and BFME2_INSTALL (retail files); not run\n", testName);
+	// lane CONTRIB-1 (GitHub #23): the binary-fact tests need RW_GAME_DAT (the RotWK game.dat) and name it in their test name; the install
+	// variables were named for them too, which read as wrong when both installs were set
+	if (std::strstr(testName, "RW_GAME_DAT") != nullptr)
+	{
+		std::printf("SKIP: %s: needs the variables it names (RW_GAME_DAT = the path of RotWK's game.dat); not run\n", testName);
+	}
+	else
+	{
+		std::printf("SKIP: %s needs ROTWK_INSTALL and BFME2_INSTALL (retail files); not run\n", testName);
+	}
 	std::fflush(stdout);
 }
 

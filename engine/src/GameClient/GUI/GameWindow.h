@@ -132,6 +132,9 @@ enum
 	// has no name in the target table; its bit is the target's CIRCULAR.
 	WIN_STATUS_CIRCULAR = 0x04000000,
 	WIN_STATUS_AVAIL_FLAG = 0x08000000,
+	// lane OPTS-4: RotWK uses ZH's spare bit for the windows made from the Apt template skins (RW 0x815389, inherited at RW 0x719393): winRepaint
+	// skips them (RW 0x6C1C18, the component's render draws them) and the slider's image draw takes no 800 x 600 multipliers (RW 0x4A1130)
+	WIN_STATUS_APT_TEMPLATE = 0x08000000,
 	WIN_STATUS_BLOCK_INPUT = 0x10000000
 };
 

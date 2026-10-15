@@ -71,6 +71,13 @@ public:
 	// RW contain vfuncs +0x3C / +0x40 around the HORDE mover's reform snap (RW 0x5E6D4F): the members re-form to the rotated slots
 	virtual void beginReform() = 0;
 	virtual void endReform() = 0;
+	// ---- lane BACKLOG4 (S-813): the horde's part of Object's teleport forms ----
+	// slot 0x1B8 (RW 0x86D881; BFME2 decomp HordeContainIface11CSlots.cpp HordeContain::rva0046A712, tier A): the reform ends (slot 0x40, RW 0x877E12), then
+	// every contained member is teleported (RW 0x696E63(pos, 0)) to the position slot 7 (RW 0x877D89) gives for it and turned to that slot's angle
+	virtual void teleportMembers() = 0;
+	// slot 0x1B4 (RW 0x86D8FE; decomp HordeContain::rva0046A78F, tier A): the same with the transform form (RW 0x68DA67): the given transform, its
+	// translation replaced by the member's slot position
+	virtual void teleportMembersTransform(const float basis[9]) = 0;
 	// RW contain vfunc +0x1C0: the members stand on their slots (the HORDE mover waits for it, x0.1 speed, while it is false)
 	virtual bool isFormationReady(float angle) const = 0;
 	// HordeAIUpdate's once-a-second formation refresh (B1 HordeAIUpdate_update.cpp: horde->updateFormation(1), stamped with the frame): the member pass runs again
@@ -184,6 +191,8 @@ public:
 	void setLocomoting(bool on) override { m_locomoting = on; }
 	void beginReform() override;
 	void endReform() override;
+	void teleportMembers() override;
+	void teleportMembersTransform(const float basis[9]) override;
 	bool isFormationReady(float angle) const override;
 	void updateFormation() override;
 	unsigned formationRefreshFrame() const override { return m_formationRefreshFrame; }

@@ -20,6 +20,11 @@ public:
 	virtual ~CollideModuleInterface() = default;
 	// `other` is never null here (ZH passes null for the ground; the overlap pass has no ground contacts)
 	virtual void onCollide(Object *other, const Coord3D *loc, const Coord3D *normal) = 0;
+	// lane BACKLOG-1: the collide interface's slot 1 (ZH CollideModuleInterface::wouldLikeToCollideWith). ActionManager::canEnterObject lets an object whose
+	// collide module would like to collide with the container in (RW 0x82CD2E). RotWK: SquishCollide (vtable RW 0xC70EA4), HordeMemberCollide (RW 0xC711B8),
+	// FireWeaponCollide (RW 0xC70CDC), CivilianSpawnCollide (RW 0xC71670) and AODCrushCollide (collide vtable RW 0xC70EF4) answer RW 0x7FEAC1 (false); only the
+	// crate collides (RW 0x8C0664: CrateCollide's isValidToExecute) can answer yes
+	virtual bool wouldLikeToCollideWith(const Object &other) const = 0;
 };
 
 namespace ObjectCollide

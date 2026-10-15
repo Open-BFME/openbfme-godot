@@ -414,3 +414,195 @@ TEST_CASE("skirmish ai base: the request hash covers the complete request state 
 	CHECK(moved([&] { r.owner = 2; }));
 	CHECK(moved([&] { r.siteIndex = 3; }));
 }
+
+// ---- lane BACKLOG6 ---------------------------------------------------------------------------------------------------------------------------------------
+namespace
+{
+const AISkirmishPlayer &theAI(GameLogic &logic)
+{
+	const SkirmishAIManager &m = logic.skirmishAI();
+	REQUIRE(m.groups().size() == 1);
+	return *m.groups()[0]->players.begin()->second;
+}
+
+struct FortressRun
+{
+	std::string name;                 // the AI's StartingBuilding
+	std::vector<ObjectID> others;     // every object of that template the AI gets after the kill frame, in order of appearance
+	Coord3D basePosition{ 0.0f, 0.0f, 0.0f };
+	Coord3D firstPosition{ 0.0f, 0.0f, 0.0f };
+	bool firstUnderConstruction = false, firstBuilderIsAIDozer = false;
+	int firstFrame = -1, firstPhase = -1;
+	unsigned long long tasksInRush = 0, tasks = 0;
+	float taskPriority = -1.0f, armyPriority = -2.0f;
+	bool taskReserve = false;
+	int freeDozersAtKill = -1;
+	int rushFrames = -1;
+	bool defeated = false;
+};
+
+// an AI skirmish that runs 400 frames past the AI's Rush phase (PhaseDuration_Rush of its ArmyDefinition); 300 frames before the phase ends the AI gets 20000
+// and, with `kill`, loses its fortress: every DOZER_FACTORY it has within 350 of the base position (RW 0x9BC882's own test)
+FortressRun runFortressGame(starttest::Shared &s, const char *faction, bool kill)
+{
+	FortressRun out;
+	BaseRun run;
+	int killFrame = -1;
+	std::vector<ObjectID> before; // the StartingBuilding objects of the AI at the kill frame
+	const int frames = 4000;      // the callback's own end is the phase's + 400
+	bool done = false;
+	runBaseGame(s, aiMessage(s, faction), frames, run, false, [&](GameLogic &logic) {
+		if (done)
+		{
+			return;
+		}
+		const AISkirmishPlayer &ai = theAI(logic);
+		Player *p = logic.players().getNthPlayer(ai.playerIndex);
+		REQUIRE(p != nullptr);
+		REQUIRE(p->getPlayerTemplate() != nullptr);
+		REQUIRE(ai.army != nullptr);
+		if (killFrame < 0)
+		{
+			killFrame = (int)(ai.army->phaseDurationRush * 5.0f) - 300;
+			REQUIRE(killFrame > 50); // tolerance: a precondition of the scenario (the base exists before the kill), not a result
+			REQUIRE(killFrame + 700 < frames); // tolerance: a precondition of the scenario (the game is long enough), not a result
+		}
+		out.rushFrames = killFrame + 300;
+		out.name = p->getPlayerTemplate()->m_startingBuilding;
+		const int frame = (int)logic.getFrame();
+		if (frame < killFrame)
+		{
+			return;
+		}
+		if (frame > killFrame + 700)
+		{
+			done = true;
+			return;
+		}
+		std::vector<Object *> standing;
+		int factoriesAtBase = 0;
+		for (Object *o = logic.getFirstObject(); o; o = o->getNextObject())
+		{
+			if (o->getControllingPlayer() != p || o->isEffectivelyDead())
+			{
+				continue;
+			}
+			if (o->getTemplate()->getName() == out.name)
+			{
+				standing.push_back(o);
+			}
+			if (frame == killFrame && o->isKindOfName("DOZER_FACTORY"))
+			{
+				REQUIRE(ai.build.bases.size() == 1);
+				const float dx = o->getPosition()->x - ai.build.bases[0].position.x, dy = o->getPosition()->y - ai.build.bases[0].position.y;
+				if (dx * dx + dy * dy <= 350.0f * 350.0f)
+				{
+					++factoriesAtBase;
+					if (kill)
+					{
+						o->kill(0);
+					}
+				}
+			}
+		}
+		if (frame == killFrame)
+		{
+			REQUIRE(factoriesAtBase == 1);
+			out.basePosition = ai.build.bases[0].position;
+			out.freeDozersAtKill = (int)ai.build.freeDozers.size();
+			p->getMoney()->deposit(20000u, false);
+			for (Object *o : standing)
+			{
+				before.push_back(o->getID());
+			}
+			return;
+		}
+		out.defeated = p->isDefeated();
+		if (ai.build.phase == 0)
+		{
+			out.tasksInRush = ai.build.fortressRebuilds;
+		}
+		out.tasks = ai.build.fortressRebuilds;
+		if (!ai.build.bases.empty() && ai.build.bases[0].fortress && out.taskPriority < 0.0f)
+		{
+			out.taskPriority = ai.build.bases[0].fortress->priority;
+			out.taskReserve = ai.build.bases[0].fortress->reserveMoney;
+			out.armyPriority = ai.army->fortressRebuildPriority;
+		}
+		for (Object *o : standing)
+		{
+			if (std::find(before.begin(), before.end(), o->getID()) != before.end() || std::find(out.others.begin(), out.others.end(), o->getID()) != out.others.end())
+			{
+				continue;
+			}
+			if (out.others.empty())
+			{
+				out.firstFrame = frame;
+				out.firstPhase = ai.build.phase;
+				out.firstPosition = *o->getPosition();
+				out.firstUnderConstruction = o->isUnderConstruction();
+				const Object *builder = logic.findObjectByID(o->getBuilderID());
+				out.firstBuilderIsAIDozer = builder && builder->getControllingPlayer() == p && builder->isKindOfName("DOZER");
+			}
+			out.others.push_back(o->getID());
+		}
+	});
+	MESSAGE(std::string(faction) << std::string(kill ? " (fortress killed)" : " (control)") << ": " << out.name << ", Rush ends at frame " << out.rushFrames << ", free dozers at the kill frame: " << out.freeDozersAtKill << ", tasks " << out.tasks
+		<< " (in Rush " << out.tasksInRush << "), new fortress objects " << out.others.size() << ", first at frame " << out.firstFrame << " phase " << out.firstPhase
+		<< " executed " << run.executed << " failed " << run.failed);
+	return out;
+}
+} // namespace
+
+TEST_CASE("skirmish ai base: an AI past the Rush phase rebuilds its lost fortress at the base through a dozer; not in the Rush phase and not while one stands (RW 0x9BC882)")
+{
+	OPENBFME_REQUIRE_START(s);
+	for (const char *faction : { "FactionMen", "FactionMordor" })
+	{
+		INFO(std::string(faction));
+		// the control: the same game and money with the fortress standing: no task, no second fortress (RW 0x9BC965: a DOZER_FACTORY within 350 of the base)
+		const FortressRun control = runFortressGame(*s, faction, false);
+		CHECK_FALSE(control.defeated);
+		CHECK(control.tasks == 0);
+		CHECK(control.others.empty());
+		// the fortress falls 300 frames before the Rush phase ends (killing its DOZER_FACTORY, the citadel, takes the whole castle)
+		const FortressRun lost = runFortressGame(*s, faction, true);
+		CHECK_FALSE(lost.defeated);            // the AI still has structures: it plays on
+		CHECK(lost.tasksInRush == 0);          // RW 0x9BC8E3: the phase must be >= 1 (300 frames with free dozers, money and no fortress pass first)
+		CHECK(lost.tasks == 1);                // one task: it is not made again while its fortress is being built
+		REQUIRE(lost.others.size() == 1);      // exactly one new StartingBuilding object
+		CHECK(lost.firstPhase == 1);
+		CHECK(lost.firstFrame == lost.rushFrames); // the frame the phase turns: the task is made, checked and executed by the free dozer in one update
+		CHECK(lost.firstPosition.x == lost.basePosition.x); // a zero offset from the base position
+		CHECK(lost.firstPosition.y == lost.basePosition.y);
+		CHECK(lost.firstUnderConstruction);
+		CHECK(lost.firstBuilderIsAIDozer);
+		CHECK(lost.taskPriority == lost.armyPriority); // ArmyDefinition FortressRebuildPriority
+		CHECK(lost.taskReserve);
+	}
+}
+
+TEST_CASE("skirmish ai base: a request left in the queue holds no producer after the processor (AIBuilder::update RW 0x8F0EB4)")
+{
+	// BFME2 decomp AIBuilderUpdate.cpp (byte-matched): the request that stops the loop without a successful execution, and every request passed over, gives up
+	// the dozer or factory assigned this frame. Before lane BACKLOG6 a request waiting for money or a dozer kept it.
+	OPENBFME_REQUIRE_START(s);
+	for (const char *faction : { "FactionMen", "FactionIsengard" })
+	{
+		INFO(std::string(faction));
+		int held = 0;
+		BaseRun run;
+		runBaseGame(*s, aiMessage(*s, faction), 400, run, false, [&](GameLogic &logic) {
+			for (const auto &r : theAI(logic).build.pending)
+			{
+				if (r->producer != INVALID_ID)
+				{
+					++held;
+					MESSAGE("frame " << logic.getFrame() << ": pending " << r->templateName << " holds producer " << r->producer << " (check " << r->lastCheck << ")");
+				}
+			}
+		});
+		CHECK(held == 0);
+		CHECK(run.money > 0); // tolerance: the guard that the case happened (a request waited for money); how often is not this test's subject
+	}
+}

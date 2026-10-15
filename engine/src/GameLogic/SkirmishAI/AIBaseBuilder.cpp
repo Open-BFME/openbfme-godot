@@ -512,6 +512,7 @@ void reorder(std::vector<std::shared_ptr<AIBuildRequest>> &q)
 namespace
 {
 const float kRushUnitPriority = 500.0f;   // RW 0xBDD97C (a phase 0 request's priority, RW 0x9A0F66 / 0x9A0D4F)
+const float kFortressClearRadiusSq = 122500.0f; // RW 0xC8A4B4 (350^2; lane BACKLOG6)
 const float kReservedCost = 1000.0f;      // RW 0xC88214 (cost >= it: the request draws on the money reserve, + 0x21; not ported, S-413)
 
 // RW 0x9A0705: the first factory of the unit (multimap order) that exists, is alive (object + 0x458 bit 0), has a production interface and, unless
@@ -1470,6 +1471,79 @@ void rebuildDestroyedStructure(GameLogic &logic, AISkirmishPlayer &ai, const Obj
 	(void)logic;
 }
 
+// RW 0x9BC882 (BFME2 decomp AIBaseBuilder/AIBase.cpp AIBase::buildFortressIfNeeded, byte-matched, tier A for RW 0x9BC882; lane BACKLOG6), called by the base's
+// update (RW 0x9BCA33) while the base has no fortress task (+ 0x28). TARGET FACTS: the template is the StartingBuilding (PlayerTemplate + 0x44, parse row
+// RW 0xBF81F8) of the player template of the owner's game slot (RW 0x90CE35: the slot of the 8 whose name key is the player's + 0x50; slot + 0x18 ->
+// RW 0x5FCAD9); the player must be able to build it (Player::canBuild RW 0x6AC927), be past the Rush phase (AISkirmishPlayer + 0x16C >= 1) and have a free
+// dozer (the dozer manager's list + 0x140, counted by RW 0x9BC7B6), and no DOZER_FACTORY of the manager's list (+ 0x144) that still resolves may stand within
+// 350 of the base position (SSE: dy * dy + dx * dx <= 122500, RW 0xC8A4B4). Then a structure request (ctor RW 0x97DE1A) at the base position with a zero
+// offset (RW 0x97D986), the ArmyDefinition's FortressRebuildPriority (+ 0x20), the base angle, the template's name and the money reserve flag (+ 0x21) is
+// reset (vslot 0x1C(0)) and started (vslot 0x18 = RW 0x97DE12). INFERENCE: the slot's player template is the player's own template (a skirmish player is made
+// from its slot's template).
+void buildFortressIfNeeded(GameLogic &logic, AISkirmishPlayer &ai, AIBaseInstance &base, const Player &player)
+{
+	AIBuildState &s = ai.build;
+	const PlayerTemplate *pt = player.getPlayerTemplate();
+	if (!pt || !ai.army)
+	{
+		return;
+	}
+	const std::string &name = pt->m_startingBuilding;
+	const ThingTemplate *tt = logic.things().findTemplate(name); // RW 0x6D1305: null for an empty or unknown name, which canBuild refuses
+	if (!BuildAssistant::playerCanBuild(player, tt, logic))
+	{
+		return;
+	}
+	if (s.phase < 1 || s.freeDozers.empty())
+	{
+		return;
+	}
+	for (ObjectID id : s.dozerManager.factories)
+	{
+		const Object *o = logic.findObjectByID(id);
+		if (!o)
+		{
+			continue;
+		}
+		const float dy = SimMath::subf32(base.position.y, o->getPosition()->y), dx = SimMath::subf32(base.position.x, o->getPosition()->x);
+		if (kFortressClearRadiusSq >= SimMath::addf32(SimMath::mulf32(dy, dy), SimMath::mulf32(dx, dx))) // comiss RW 0x9BC971, jb
+		{
+			return;
+		}
+	}
+	auto req = std::make_shared<AIBuildRequest>();
+	req->serial = s.nextSerial++;
+	req->basePosition = base.position;
+	req->offset.x = 0.0f;
+	req->offset.y = 0.0f;
+	req->offset.z = logic.getGroundHeight(0.0f, 0.0f); // RW 0x97D986 with a zero offset
+	req->priority = ai.army->fortressRebuildPriority;
+	req->baseAngle = base.angle;
+	req->templateName = name;
+	req->reserveMoney = true;
+	base.fortress = req;
+	startRequest(s, req, false); // vslot 0x1C(0), then vslot 0x18
+	++s.fortressRebuilds;
+}
+
+// RW 0x9BCA33 before the slots: a finished fortress task leaves the AI's queues (RW 0x9618E3 -> 0x8F0602) and is deleted; a base without a task asks
+// RW 0x9BC882 (a base whose task was just deleted asks again on the next update)
+void updateFortressTask(GameLogic &logic, AISkirmishPlayer &ai, AIBaseInstance &base, const Player &player)
+{
+	AIBuildState &s = ai.build;
+	if (base.fortress)
+	{
+		if (base.fortress->finished())
+		{
+			s.pending.erase(std::remove(s.pending.begin(), s.pending.end(), base.fortress), s.pending.end());
+			s.inProgress.erase(std::remove(s.inProgress.begin(), s.inProgress.end(), base.fortress), s.inProgress.end());
+			base.fortress.reset();
+		}
+		return;
+	}
+	buildFortressIfNeeded(logic, ai, base, player);
+}
+
 // RW 0x8F0F7E .. 0x8F1104: the request processor (its early exits jump to RW 0x8F1104, the finished-request sweep)
 void processRequests(GameLogic &logic, AISkirmishPlayer &ai, Player &player)
 {
@@ -1516,6 +1590,7 @@ void processRequests(GameLogic &logic, AISkirmishPlayer &ai, Player &player)
 			else
 			{
 				req->state = 3; // RW 0x961901 -> the unit request's reset RW 0x993D2E (only the state)
+				req->producer = INVALID_ID; // no success and a producer assigned this frame (lane BACKLOG6, see the waits below)
 				++s.failed;
 			}
 			s.pending.erase(s.pending.begin() + (long)i);
@@ -1538,19 +1613,24 @@ void processRequests(GameLogic &logic, AISkirmishPlayer &ai, Player &player)
 			else
 			{
 				resetRequest(logic, *req, 3); // RW 0x97DC86
+				req->producer = INVALID_ID;
 				++s.failed;
 			}
 			s.pending.erase(s.pending.begin() + (long)i);
 			return;
 		}
+		// lane BACKLOG6 (BFME2 decomp SkirmishAI/AIBuilderUpdate.cpp AIBuilder::update, byte-matched; tier B for RW 0x8F0EB4, whose only change is the code 9
+		// failure below, RW 0x8F1048 cmp eax, 9): the request that stops the loop without a successful execution gives up the producer assigned this frame
 		if (code == 8 && dozerFactoryCount > 0)
 		{
 			++s.waitedForDozer;
+			req->producer = INVALID_ID;
 			return;
 		}
 		if (code == 2)
 		{
 			++s.waitedForMoney;
+			req->producer = INVALID_ID;
 			return;
 		}
 		if (assigned)
@@ -1645,6 +1725,7 @@ void AIBaseBuilder::update(GameLogic &logic, AISkirmishPlayer &ai)
 	{
 		for (AIBaseInstance &b : s.bases)
 		{
+			updateFortressTask(logic, ai, b, *player); // RW 0x9BCA33 .. 0x9BCA73 (lane BACKLOG6)
 			for (AIBaseSlot &slot : b.slots)
 			{
 				updateSlot(logic, ai, slot, player->getSkirmishDifficulty() < 0 ? 0 : player->getSkirmishDifficulty());
@@ -1683,7 +1764,7 @@ void AIBaseBuilder::update(GameLogic &logic, AISkirmishPlayer &ai)
 	// RW 0x8F1104 .. 0x8F1130: finished requests leave the queue; RW 0x8F1138: the dozer manager
 	s.pending.erase(std::remove_if(s.pending.begin(), s.pending.end(), [](const std::shared_ptr<AIBuildRequest> &r) { return r->finished(); }), s.pending.end());
 	updateDozerManager(logic, ai, *player);
-	// RW 0x8F113F: the money reserve (RW 0x8F0502, every 30 s) is not ported (S-413)
+	// RW 0x8F113F: the money saver (RW 0x8F0502, every 2 seconds: + 0x158 = frame + 2 * LOGICFRAMES_PER_SECOND) is not ported (S-413)
 }
 
 // ---- the AIPlayer's object events (lane AI-2) -----------------------------------------------------------------------------------------------------------
@@ -1892,6 +1973,11 @@ void AIBaseBuilder::crc(const AIBuildState &s, StateHasher &h)
 			{
 				request(*e);
 			}
+		}
+		if (b.fortress) // lane BACKLOG6: the fortress rebuild task (+ 0x28); a base without one adds nothing
+		{
+			h.addU32(0x464F5254u); // "FORT"
+			request(*b.fortress);
 		}
 	}
 	h.addU32((std::uint32_t)s.pending.size());

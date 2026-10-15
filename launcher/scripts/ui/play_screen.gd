@@ -171,14 +171,12 @@ func set_games(found: bool, aio: bool, where: String) -> void:
 	games_card.visible = not found and aio
 
 
-## the card's subtitle (the release) and its "What's new" items from `notes` (a release body); `empty` when there are none
+## the card's subtitle (the release) and its "What's new" / "Added" items from `notes` (a release body); `empty` when there are none
 func set_notes(release: String, notes: String, empty := "") -> void:
 	_notes_sub.text = release
 	for c in _notes_box.get_children():
 		c.queue_free()
-	var items := ReleaseNotes.items(notes, "What's new", NOTES_SHOWN)
-	if items.is_empty() and notes != "":
-		items = ReleaseNotes.items(notes, "What's fixed", NOTES_SHOWN)
+	var items := ReleaseNotes.play_items(notes, NOTES_SHOWN)   # added (What's new / Added), then fixed (What's fixed / Bug fixes), then changed
 	if items.is_empty():
 		var l := W.parch_label(Paths.scrub(empty if empty != "" else notes), "body", 17)
 		_notes_box.add_child(l)

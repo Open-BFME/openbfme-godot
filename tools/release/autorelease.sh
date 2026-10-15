@@ -29,8 +29,10 @@
 #      here, never written by JonathanPC, whose tree must be the audited sync tree of the archive sha): exactly the package files, the
 #      release allowlist of every archive, each library's build record against the tag and the engine id of the tag's engine/, and
 #      package.sh --verify (a byte for byte rebuild of every archive from the trusted checkout with the returned libraries);
-#   6. make_manifest.py and the signature, both from the trusted checkout, the key $OPENBFME_RELEASE_KEY;
-#   7. release notes for players from the first-parent subjects since the notes baseline (autorelease.py notes: neutralised);
+#   6. seal_package.py (the packages' signed payload inventory, lane ONEZIP-1 r2), make_manifest.py and the signature, all from the trusted
+#      checkout, the key $OPENBFME_RELEASE_KEY;
+#   7. release notes for players from the first-parent subjects since the notes baseline (autorelease.py notes: neutralised, the studio
+#      shape of docs/RELEASE.md "Patch notes"; --plan also prints NOTES WARNING lines for a Release-note that needs fixing);
 #   8. the trusted checkout's publish_release.sh --execute --confirm-tag <tag> (a draft, its assets checked, then published, every
 #      outcome read back), then the release is read back once more;
 #  8b. (RELTEST-1) the repository's homepage (the About link) set to the new release's page, read back: every release is a pre-release,
@@ -61,7 +63,9 @@
 # Environment (defaults): OPENBFME_RELEASE_STATE (~/.local/state/openbfme-release), OPENBFME_RELEASE_WORK (~/.cache/openbfme-release),
 #   OPENBFME_RELEASE_LOGS (~/.cache/openbfme-recover/logs), OPENBFME_RELEASE_KEY (only ~/.config/openbfme-release/release-ed25519.pem itself is accepted, r6),
 #   OPENBFME_JPC_LIB (~/.cache/openbfme-recover/jpc-lib.sh), GH (gh), BFME_COMMUNITY (~/.local/bin/bfme-community),
-#   OPENBFME_RELEASE_TEMPLATES (4657: the templates the Windows start must load).
+#   OPENBFME_RELEASE_TEMPLATES (4657: the templates the Windows start must load),
+#   OPENBFME_RELEASE_LEGACY_LAUNCHERS (1; lane ONEZIP-1: 0 leaves the launcher-only archives out of the release, manifest format 3:
+#   only once the launchers published before ONEZIP-1 are retired, docs/RELEASE.md "One archive": they cannot read such a release).
 #   Tests only: OPENBFME_RELEASE_MIN_COMMIT replaces MIN_CONTROL (stand-in mode only).
 #   Tests only: OPENBFME_RELEASE_STANDIN=<dir> replaces step 4 by <dir>/build <checkout> <version> <out dir> and step 5's package checks by
 #   <dir>/verify <trusted checkout> <package dir> <version>; refused unless --repo is not the real repository and the remote is a local
@@ -97,6 +101,9 @@ JPC_LIB=${OPENBFME_JPC_LIB:-$HOME/.cache/openbfme-recover/jpc-lib.sh}
 GH=${GH:-gh}; export GH
 COMMUNITY=${BFME_COMMUNITY:-$HOME/.local/bin/bfme-community}
 TEMPLATES=${OPENBFME_RELEASE_TEMPLATES:-4657}
+LEGACY=${OPENBFME_RELEASE_LEGACY_LAUNCHERS:-1}
+case $LEGACY in 1) PKGOPT=""; FORMAT=2 ;; 0) PKGOPT="--no-legacy-launchers"; FORMAT=3 ;;
+  *) echo "AUTORELEASE FAIL: OPENBFME_RELEASE_LEGACY_LAUNCHERS is 1 or 0" >&2; exit 2 ;; esac
 STANDIN=${OPENBFME_RELEASE_STANDIN:-}
 # ---- the one redaction point (r5, Sol r4: an intent field printed the key path through an echo) -------------------------------------------
 # Every line this script and the helpers it runs print, stdout and stderr, and every line of its logs, goes through redact: the release
@@ -349,6 +356,7 @@ else VERSION=$(python3 "$HERE/autorelease.py" --git-dir "$REPO" release-version 
 DATE=$(date -u +%Y-%m-%d)
 if [ "$MODE" = plan ]; then
   summary "AUTORELEASE PLAN $VERSION from $SHA (notes since $BASE)"
+  python3 "$HERE/autorelease.py" --git-dir "$REPO" warnings --from "$BASE" --to "$SHA"   # NOTES-1: a Release-note that needs splitting; never fails
   exit 0
 fi
 mkdir -p "$LOGS" "$WORK_ROOT"
@@ -375,8 +383,9 @@ if [ -z "$STANDIN" ]; then . "$JPC_LIB" || fail "cannot load the JonathanPC scri
 # ---- release notes (step 7's text; the PR and the sync commit use their items) ------------------------------------------------------------
 STEP=notes
 git_ show "$SHA:tools/release/known_issues.json" > "$WORK/known_issues.json"
-python3 "$HERE/autorelease.py" --git-dir "$REPO" notes --from "$BASE" --to "$SHA" --version "$VERSION" --known-issues "$WORK/known_issues.json" \
+python3 "$HERE/autorelease.py" --git-dir "$REPO" notes --from "$BASE" --to "$SHA" --version "$VERSION" --known-issues "$WORK/known_issues.json" --repo "$TARGET" \
   --out "$WORK/notes-draft.md" --title-out "$WORK/title.txt" --items-out "$WORK/items.md" --plain-items-out "$WORK/items.txt"
+python3 "$HERE/autorelease.py" --git-dir "$REPO" warnings --from "$BASE" --to "$SHA"
 
 # ---- the public metadata, written and audited before anything is pushed (r6, Sol r5: a Release-note with a private path and the key path
 # reached the public commit message, the PR body and the release notes). A privacy hit stops the run; nothing is redacted into it.
@@ -557,7 +566,7 @@ $slot_wait; slot_wait lanetest 3
 cd $RL || exit 1
 rm -rf $RL.pkg; mkdir -p $RL.pkg
 echo "AUTOREL: package.sh"
-run 16 16G tools/release/package.sh --out $RL.pkg --platforms linux,windows --windows-dll $RL/$DLL --repo $TARGET > $RL.package.log 2>&1 \
+run 16 16G tools/release/package.sh --out $RL.pkg --platforms linux,windows --windows-dll $RL/$DLL --repo $TARGET $PKGOPT > $RL.package.log 2>&1 \
   || { tail -40 $RL.package.log; exit 1; }
 grep -E '^(PACKAGE|VERIFY)' $RL.package.log
 EOS
@@ -629,8 +638,12 @@ for f in $(git -C "$TRUSTED" ls-files tools/release tools/precommit.py); do
   cmp -s "$TRUSTED/$f" "$REPO/$f" || fail "the tag's $f differs from the running autorelease's copy in $REPO: run autorelease.sh from a checkout whose tools are the released sha's"
 done
 PKG="$WORK/pkg"; mkdir -p "$PKG"
-WANT=("openbfme-$VERSION-linux-x64.tar.gz" "openbfme-$VERSION-windows-x64.zip" "openbfme-launcher-$VERSION-linux-x64.tar.gz"
-      "openbfme-launcher-$VERSION-windows-x64.zip" "SHA256SUMS-$VERSION.txt" "BUILDINFO-$VERSION.txt")
+# lane ONEZIP-1: per platform the package (the game and the launcher in one archive) and, while the launchers published before ONEZIP-1
+# are served, the launcher-only archive they update themselves from
+WANT=("openbfme-$VERSION-linux-x64.tar.gz" "openbfme-$VERSION-windows-x64.zip")
+[ "$LEGACY" = 0 ] || WANT+=("openbfme-launcher-$VERSION-linux-x64.tar.gz" "openbfme-launcher-$VERSION-windows-x64.zip")
+NARCH=${#WANT[@]}
+WANT+=("SHA256SUMS-$VERSION.txt" "BUILDINFO-$VERSION.txt")
 got=$(cd "$RETURNED" && find . -mindepth 1 -printf '%P %y\n' | sort)
 want=$(printf '%s f\n' "${WANT[@]}" | sort)
 [ "$got" = "$want" ] || fail "the returned folder is not exactly the package files: $(echo $got)"
@@ -638,8 +651,8 @@ for f in "${WANT[@]}"; do cp "$RETURNED/$f" "$PKG/$f"; done
 if [ -n "$STANDIN" ]; then
   "$STANDIN/verify" "$TRUSTED" "$PKG" "$VERSION" || fail "the stand-in check of the returned packages failed"
 else
-  (cd "$PKG" && python3 "$T/audit_package.py" --sums "SHA256SUMS-$VERSION.txt" "${WANT[@]:0:4}") || fail "the checksum file does not list the four archives"
-  for a in "${WANT[@]:0:4}"; do
+  (cd "$PKG" && python3 "$T/audit_package.py" --sums "SHA256SUMS-$VERSION.txt" "${WANT[@]:0:$NARCH}") || fail "the checksum file does not list the $NARCH archives"
+  for a in "${WANT[@]:0:$NARCH}"; do
     case "$a" in
       openbfme-launcher-*-linux-x64.tar.gz) ap=launcher-linux ;; openbfme-launcher-*) ap=launcher-windows ;;
       *-linux-x64.tar.gz) ap=linux ;; *) ap=windows ;;
@@ -668,13 +681,22 @@ fi
 echo "AUTORELEASE: the returned packages passed the Deck's checks"
 
 # ---- 6. manifest and signature (the trusted checkout's scripts) ----------------------------------------------------------------------------
+# lane ONEZIP-1 r2: first the packages' signed payload inventory (seal_package.py: payload.json + its signature into each combined archive,
+# which the game and the launcher check at the first start, before any update check), then the manifest of the sealed archives
+STEP=seal
+if [ "$MODE" = dry ]; then
+  mkdir -p "$WORK/dry-key"; chmod 700 "$WORK/dry-key"
+  python3 "$T/sign_manifest.py" --generate-key "$WORK/dry-key/throwaway.pem" > "$WORK/dry-key/throwaway.pub"
+  would python3 "$T/seal_package.py" seal "$PKG" --key "$KEYDISP" --repo "$TARGET"
+  python3 "$T/seal_package.py" seal "$PKG" --key "$WORK/dry-key/throwaway.pem" --repo "$TARGET" || fail "sealing the packages failed (above)"
+else
+  keyed python3 "$T/seal_package.py" seal "$PKG" --key "$KEY" --repo "$TARGET" || fail "sealing the packages failed (above)"
+fi
 STEP=manifest
-python3 "$T/make_manifest.py" "$PKG" --repo "$TARGET"
+python3 "$T/make_manifest.py" "$PKG" --repo "$TARGET" --format "$FORMAT"
 STEP=sign
 if [ "$MODE" = dry ]; then
   would python3 "$T/sign_manifest.py" --key "$KEYDISP" "$PKG/manifest.json"
-  mkdir -p "$WORK/dry-key"; chmod 700 "$WORK/dry-key"
-  python3 "$T/sign_manifest.py" --generate-key "$WORK/dry-key/throwaway.pem" > "$WORK/dry-key/throwaway.pub"
   python3 "$T/sign_manifest.py" --key "$WORK/dry-key/throwaway.pem" "$PKG/manifest.json"
   PUBOPT=(--key-file "$WORK/dry-key/throwaway.pub")
 else
@@ -684,8 +706,8 @@ fi
 
 # ---- 7. the notes ---------------------------------------------------------------------------------------------------------------------
 STEP=notes
-python3 "$HERE/autorelease.py" --git-dir "$REPO" notes --from "$BASE" --to "$SHA" --version "$VERSION" --known-issues "$WORK/known_issues.json" \
-  --commit "$PUBLIC" --date "$DATE" --out "$WORK/notes.md"
+python3 "$HERE/autorelease.py" --git-dir "$REPO" notes --from "$BASE" --to "$SHA" --version "$VERSION" --known-issues "$WORK/known_issues.json" --repo "$TARGET" \
+  --commit "$PUBLIC" --date "$DATE" $([ "$LEGACY" = 1 ] || echo --no-legacy-launchers) --out "$WORK/notes.md"
 cat "$WORK/notes.md"
 python3 "$HERE/autorelease.py" audit-text "$WORK/notes.md" || fail "the release notes failed the privacy audit: nothing published"
 

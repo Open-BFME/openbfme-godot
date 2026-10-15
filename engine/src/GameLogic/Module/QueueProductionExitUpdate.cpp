@@ -203,7 +203,7 @@ void QueueProductionExitUpdate::exitObjectViaDoor(Object *newObj, ExitDoorType)
 	{
 		pos.z = SimMath::addf32(pos.z, 250.0f); // RW 0xBDD764 (B1: 500)
 	}
-	newObj->setPosition(&pos);
+	newObj->teleportTo(&pos, true); // lane BACKLOG4 (S-813): RW 0x8A3F7A: RW 0x696E63(pos, 1) for every new object (the non-flyer path RW 0x8A405B joins it)
 	newObj->setOrientation(SimMath::addf32(m_data->m_placementViewAngle, producer->getOrientation()));
 	(void)creationInAir; // the physics kick (RW 0x792DBD applyMotiveForce, preferred locomotor height > 0.01) is not ported (S-202)
 	// RW 0x625E0A: the producer's colour index goes to the new object; RW 0x6E85E9: the pathfind map (not ported, S-202)
@@ -300,14 +300,7 @@ void QueueProductionExitUpdate::exitObjectViaDoor(Object *newObj, ExitDoorType)
 	{
 		Coord3D t;
 		getNaturalRallyPoint(&t, true);
-		newObj->setPosition(&t); // the aiIdle variant of RW 0x696E63
-		if (ai)
-		{
-			AICommand c;
-			c.type = AICMD_IDLE;
-			c.source = newObj->testStatus(kLeavingFactory) ? CMD_FROM_AI : CMD_FROM_PLAYER;
-			logic.aiCommands().issue(*newObj, std::move(c));
-		}
+		newObj->teleportTo(&t, false); // RW 0x8A4294: RW 0x696E63(pos, 0): the AI idles (source 2 with IS_LEAVING_FACTORY, else 0) and drops its path
 		m_lastExitId = newObj->getID();
 		newObj->setStatus(kUnselectable, true);
 		newObj->setStatus(kUnderConstruction, true);
