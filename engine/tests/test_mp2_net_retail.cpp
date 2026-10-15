@@ -265,7 +265,7 @@ TEST_CASE("mp2 net retail: on a slow link (200 ms each way, jitter) the peers me
 		  "lockstep")
 {
 	OPENBFME_REQUIRE_START(s);
-	const std::string common = "--map \"maps/map mp evendim/map mp evendim.map\" --seed 23 --script --crc-interval 100 --run-ahead 2 --frames 400 "
+	const std::string common = "--map \"maps/map mp evendim/map mp evendim.map\" --seed 23 --script --crc-interval 100 --run-ahead 1 --frames 400 "
 							   "--delay 200 --jitter 30 --drop 20";
 	Run r = runPeers("latency", 4, common, { "--slot human,FactionMen,0,0 --slot human,FactionMordor,1,1", "" });
 	for (size_t i = 0; i < r.reports.size(); ++i)
@@ -279,10 +279,11 @@ TEST_CASE("mp2 net retail: on a slow link (200 ms each way, jitter) the peers me
 		CHECK(field(r.reports[i], "desyncs") == "0");
 		CHECK(field(r.reports[i], "crc_checks_passed") == "3");
 		// "run_ahead N changes C worst_latency_ms L": the router measured a round trip of 400+ ms (plus four times its variation): about 215 ms each way
-		// is 2 frames (rounded up, + 10 %), + 1: 3; every peer took the router's RUNAHEAD (one change at least)
+		// + 10 % + half a period is 1 frame, + 1: 2 at least (lane NETLAG-1's target, S-4530; from the lobby's 1); every peer took the router's RUNAHEAD
+		// (one change at least)
 		const std::string ra = field(r.reports[i], "run_ahead");
 		INFO(ra);
-		CHECK(std::atoi(ra.c_str()) >= 3);
+		CHECK(std::atoi(ra.c_str()) >= 2); // tolerance: the measured variation (jitter, resends) may add a frame
 		CHECK(std::atoi(ra.substr(ra.find("changes ") + 8).c_str()) >= 1);
 		if (i == 0)
 		{

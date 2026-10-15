@@ -835,16 +835,18 @@ TEST_CASE("retail shell: the main-menu click on Skirmish pushes Skirmish.apt int
 	auto *aptSkirmish = dynamic_cast<AptSkirmish *>(skirmish);
 	REQUIRE(aptSkirmish);
 	CHECK(aptSkirmish->initializedCount() == 1);
-	// the movie also sends MpGameSetup::OnReadyPress: the lobby screen registers it (A6) and reports it as an unported command
-	bool sawReady = false;
+	// the movie also sends MpGameSetup::OnReadyPress (no argument: its Ready boxes were made). Lane ONLINE-5: the screen answers with each box's state
+	// (RW 0x84211D): "_none" in the skirmish lobby, whose panel has no Ready column; without a game to set up (this fixture gives the screen no setup
+	// source) nothing is said, as retail's `if (!game) return` (RW 0x842131)
+	fx.tick(5);
+	for (int slot = 0; slot < MAX_SLOTS; ++slot)
+	{
+		CHECK_MESSAGE(aptSkirmish->readyIcon(slot) == (aptSkirmish->setup() ? "_none" : ""), "slot " << slot);
+	}
 	for (const WindowManagerNote &n : fx.wm->notes())
 	{
-		if (n.kind == "unported-command" && n.detail == "MpGameSetup::OnReadyPress")
-		{
-			sawReady = true;
-		}
+		CHECK_FALSE((n.kind == "unported-command" && n.detail == "MpGameSetup::OnReadyPress"));
 	}
-	CHECK(sawReady);
 	// clicking Skirmish again does not push a second one (ShowSkirmish.cpp: only when the singleton does not exist)
 	fx.wm->invokeCallback("AptMainMenu::Skirmish", "");
 	CHECK(fx.shell->screenCount() == 2);
@@ -854,7 +856,7 @@ TEST_CASE("retail shell: the main-menu click on Skirmish pushes Skirmish.apt int
 // Stops S-170..S-175 (pinned: the exact behaviour the port reports instead of guessing)
 // ============================================================================================================================
 
-TEST_CASE("stops S-173: the tooltip hover path is '<movie>/<clip path>' of the clip under the pointer; no registered callback -> TOOLTIP:<name>")
+TEST_CASE("stops S-173: the tooltip hover path is '<movie>/<path of the hovered button>' (lane HOVER-1: its own name last); an unnamed button has no label; a registered callback wins")
 {
 	OPENBFME_REQUIRE_RETAIL(mount);
 	RetailShell fx(mount);
@@ -870,19 +872,20 @@ TEST_CASE("stops S-173: the tooltip hover path is '<movie>/<clip path>' of the c
 	open->globalMatrix().apply((x0 + x1) / 2, (y0 + y1) / 2, x, y);
 	fx.wm->apt().input().postMouseMove(x, y);
 	fx.tick(2);
-	CHECK(fx.wm->hoverPath() == "MainMenu/SoloPlayNav");
-	CHECK(fx.wm->currentTooltipLabel() == "TOOLTIP:MainMenu/SoloPlayNav");
-	REQUIRE_FALSE(fx.services.tooltips.empty());
-	CHECK(fx.services.tooltips.back() == "TOOLTIP:MainMenu/SoloPlayNav");
+	// lane HOVER-1 (RW 0x624C68): the navigation's own button is unnamed, so the path ends with '/' and no TOOLTIP label is made (RW 0x624E64)
+	CHECK(open->instName().empty());
+	CHECK(fx.wm->hoverPath() == "MainMenu/SoloPlayNav/");
+	CHECK(fx.wm->currentTooltipLabel().empty());
 	// a registered tooltip callback of the hovered name wins
 	fx.wm->apt().input().postMouseMove(1.0f, 1.0f);
 	fx.tick(2);
-	CHECK(fx.wm->hoverPath() != "MainMenu/SoloPlayNav");
-	CHECK(fx.wm->currentTooltipLabel() != "TOOLTIP:MainMenu/SoloPlayNav"); // the tooltip follows the pointer
-	fx.wm->registerTooltip("MainMenu/SoloPlayNav", [](const std::string &name) { return "CB:" + name; });
+	CHECK(fx.wm->hoverPath() != "MainMenu/SoloPlayNav/"); // the tooltip follows the pointer
+	fx.wm->registerTooltip("MainMenu/SoloPlayNav/", [](const std::string &name) { return "CB:" + name; });
 	fx.wm->apt().input().postMouseMove(x, y);
 	fx.tick(2);
-	CHECK(fx.wm->currentTooltipLabel() == "CB:MainMenu/SoloPlayNav");
+	CHECK(fx.wm->currentTooltipLabel() == "CB:MainMenu/SoloPlayNav/");
+	REQUIRE_FALSE(fx.services.tooltips.empty());
+	CHECK(fx.services.tooltips.back() == "CB:MainMenu/SoloPlayNav/");
 }
 
 TEST_CASE("stops S-174: ActionRandom has no client RNG behind it in the shell; the first use is reported")

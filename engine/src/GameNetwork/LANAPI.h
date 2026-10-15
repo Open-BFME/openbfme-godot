@@ -110,7 +110,7 @@ public:
 		std::uint32_t startResendMs = 300;  ///< OpenBFME: GAME_START until answered
 		bool broadcast = true;              ///< send to 255.255.255.255 (and to 127.0.0.1)
 		std::vector<std::uint32_t> extraTargets; ///< more addresses to send the lobby's messages to (tests: 127.0.0.1 only)
-		int runAhead = 2;                   ///< the started game's
+		int runAhead = 1;                   ///< the started game's (lane NETLAG-1: RotWK's frame + 1, was 2)
 		int crcInterval = 100;
 		// lane MP-2 (review): the ranges a slot's fields are checked against before a request or the host's options are applied (-1 is random / none;
 		// teams 0 .. MAX_SLOTS / 2 - 1 as the lobby's Team entries, start positions 0 .. MAX_SLOTS - 1). Required: open() fails without them

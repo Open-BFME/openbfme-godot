@@ -381,8 +381,11 @@ void Network::update(UnsignedInt logicFrame, CommandList &pending)
 	{
 		routerRejoinDuties();
 	}
-	// lane MP-2: ConnectionManager::update -> DisconnectManager::update (RW 0x8D77B5 -> 0x8D8A90), once every player has loaded
-	if (m_config.disconnectPath && allLoaded() && !m_leaving)
+	// lane MP-2: ConnectionManager::update -> DisconnectManager::update (RW 0x8D77B5 -> 0x8D8A90). lane MP-DROP-1: also at the load barrier (the others
+	// still loading): RotWK's update runs then too; its screen waits for the multiplayer load screen to go, which GameLogic's loading update (RW
+	// 0x62B385) keeps while no slot is silent and the frame is below 6 (DisconnectManager::update models that gate). GameLogic's testTimeOut (RW
+	// 0x625C92, the only caller of isProgressComplete RW 0x625C38) has no caller in RotWK, and nothing sends NETCOMMANDTYPE_TIMEOUTSTART
+	if (m_config.disconnectPath && !m_leaving)
 	{
 		m_disconnect.update(*this, now(), logicFrame);
 	}
@@ -952,7 +955,8 @@ bool Network::allLoaded() const
 {
 	for (const SlotData &sd : m_slots)
 	{
-		if (sd.active && !sd.loaded)
+		// lane MP-DROP-1: a slot dropped (or gone) before it finished loading does not hold the others at the load barrier
+		if (sd.active && !sd.loaded && !sd.disconnected && sd.leaveFrame == 0xFFFFFFFFu)
 		{
 			return false;
 		}
@@ -1001,10 +1005,17 @@ void Network::updateRunAhead(std::uint64_t nowMs)
 		return; // the last change has not run yet
 	}
 	m_runAheadChangePending = false;
+	// lane NETLAG-1: the frames a command needs to reach every peer before the frame it executes on. A peer sends its FRAMEINFO of frame P + run-ahead - 1
+	// when it completes frame P - 1, and the other peer runs that frame (run-ahead - 1) periods after its next 200 ms tick; so a one-way latency (with
+	// NetworkRunAheadSlack percent) below half a period keeps the run-ahead 1, RotWK's command delay (the packet router stamps a command with the current
+	// frame + 1, RW 0x8D4301 / 0x8D3AF1), and each further 200 ms adds a frame. OpenBFME choice (INFERENCE, S-720): the other half period is kept for
+	// the simulation time of a frame and the phase between the peers' 5 Hz clocks. MP-2's formula rounded the one-way latency up to whole frames and added
+	// one, so every real link (a 1 ms LAN included) ran at 2 frames: 400 to 600 ms from a click to its effect
 	const long long fps = 5;                                       // LOGICFRAMES_PER_SECOND (RW 0xD9F608)
-	long long frames = (worst * fps + 1999) / 2000;                // one way, rounded up
-	frames += frames * (long long)m_config.settings.runAheadSlack / 100;
-	long long target = frames + 1;
+	const long long periodMs = 1000 / fps;
+	long long oneWayMs = (worst + 1) / 2;                          // rounded up
+	oneWayMs += oneWayMs * (long long)m_config.settings.runAheadSlack / 100;
+	long long target = (oneWayMs + periodMs / 2) / periodMs + 1;
 	target = std::max<long long>(target, m_minRunAhead);
 	target = std::min<long long>(target, std::max(m_minRunAhead, m_config.maxRunAhead));
 	int next = m_config.runAhead;
@@ -1215,6 +1226,21 @@ void Network::sendDirect(const NetCommandMsg &c)
 				m_errors.push_back("cannot send " + std::string(NetCommandTypeName(c.type)) + " to slot " + std::to_string(s) + ": " + why);
 			}
 		}
+	}
+}
+
+void Network::sendDirectTo(int slot, const NetCommandMsg &c)
+{
+	if (!hasConnection(slot))
+	{
+		return;
+	}
+	std::string error;
+	const std::vector<std::uint8_t> bytes = NetPacket::encodeCommand(c, &error);
+	std::string why;
+	if (bytes.empty() || !m_transport.sendTo(slot, bytes, &why))
+	{
+		m_errors.push_back("cannot send " + std::string(NetCommandTypeName(c.type)) + " to slot " + std::to_string(slot) + ": " + (bytes.empty() ? error : why));
 	}
 }
 
@@ -1679,9 +1705,11 @@ std::vector<std::string> Network::stopLines()
 {
 	return {
 		"[S-720] run-ahead: RotWK paces a game by a packet router (RW 0x65DD0F: a 200 ms period from the performance counter; RW 0x8D3FD9: the router "
-		"stalls only when a peer's latest frame is NetworkRunAheadSlack frames behind, 3 before frame 6) whose command delay is the network's; that "
-		"protocol is not ported: OpenBFME keeps MP-1's symmetric lockstep and (lane MP-2) the packet router adapts the common command delay to its measured "
-		"round trip (ZH ConnectionManager::updateRunAhead's formula and RUNAHEAD frame command, at least the lobby's run-ahead)",
+		"stalls only when a peer's latest frame is NetworkRunAheadSlack frames behind, 3 before frame 6) that stamps every command with its current frame + 1 "
+		"(RW 0x8D4301 / 0x8D3AF1): the router's player waits one frame on any link, the others one frame plus their round trip to the router; that "
+		"protocol is not ported: OpenBFME keeps MP-1's symmetric lockstep with the same one frame on a LAN (lane NETLAG-1: the lobby's run-ahead 1) and "
+		"(lane MP-2) the packet router adapts the common command delay to its measured round trip (ZH ConnectionManager::updateRunAhead's RUNAHEAD frame "
+		"command, at least the lobby's run-ahead), so on a slow link every player waits alike and a slow peer stalls the game at once",
 		"[S-721] packet encoding: the net commands and packets use OpenBFME's own encoding (enhanced profile); retail's packet layout (cross-play gate 1) is not "
 		"reproduced",
 		"[S-722] replays: OpenBFME replays only (enhanced profile); retail .BfME2Replay playback through the command pipeline is not ported",
@@ -1691,5 +1719,8 @@ std::vector<std::string> Network::stopLines()
 		"not retail's LANMessage; the scenario description and Load Game are not ported (the countdown, the chat gadgets, the message boxes and the "
 		"Options button: lane UI-1, S-1261)",
 		"[S-725] CRC: the exchanged CRC is OpenBFME's state hash (GameLogic::computeStateHash), not retail's xfer CRC (PLAN rule 5)",
+		"[S-4530] adaptive run-ahead (lane NETLAG-1, OpenBFME choice, no retail counterpart: S-720): the packet router's target is the one-way latency (half "
+		"the round trip plus four times its variation) plus NetworkRunAheadSlack percent plus half a 200 ms period (INFERENCE: room for a frame's "
+		"simulation and the phase between the peers' clocks), in whole periods, + 1; a one-way latency under about 90 ms keeps RotWK's one frame",
 	};
 }

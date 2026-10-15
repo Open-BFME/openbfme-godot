@@ -7,6 +7,8 @@
 #include "Common/Audio/AudioEventRTS.h"
 #include "Common/Player.h"
 #include "Common/PlayerList.h"
+#include "Common/Thing/RawModuleData.h"
+#include "Common/Thing/ThingFactory.h"
 #include "Common/Thing/ThingTemplate.h"
 #include "GameClient/LiveGame.h"
 #include "GameEngineDevice/W3DDevice/GameClient/Drawable/Draw/W3DModelDrawBones.h"
@@ -198,7 +200,79 @@ std::vector<std::string> LiveFX::stops()
 	out.push_back("[S-686] TransitionDamageFX: the module class (RW data table 0xC08D10, 117 rows: Damaged / ReallyDamaged / Rubble FXList, OCL and "
 				  "ParticleSystem 1..12 with Loc / Bone + RandomBone, the Damage*Types flags, RubbleNeighbor, the sub object show / hide lists; 150 retail uses) "
 				  "is raw (S-070) and has no runtime: its damage state transition effects are not played (the draw states' EnteringStateFX and ParticleSysBone are)");
+	// lane SPELL-4
+	out.push_back("[S-4642] BuffNugget buffs (GameClient/BuffDraw.h): BuffManager / BuffInstance / TBuff are ported (RW 0x671E56, 0x764483, 0x7641A2, 0x707FFF, "
+				  "0x4D3376, 0x4D12FA, 0x4D1417); INFERENCE: the expiry test and the TBuff following its drawable every frame come from the fields, the updater was "
+				  "not read; the glow model is drawn by the live object instancer with its own materials and the TBuff opacity as the instance fade, not by "
+				  "W3DBuffBuffer's additive pass (RW 0x4D20C6 / 0x4D1ACD: emissive * vertex colour * opacity); ALIGNED (camera facing) meshes are not turned; "
+				  "IsComplexBuff (the glow outline) is unsupported in retail too");
 	return out;
+}
+
+bool LiveFX::turnOnBuff(const FXObject &obj, int type, const std::string &thingTemplate, int lifeFrames)
+{
+	// BuffNugget (BFME2 decomp BuffNuggetFXNugget.cpp): TheThingFactory->findTemplate (none: no buff); Drawable::TurnOnBuff -> MakeNormalBuff ->
+	// BuffLogic::addBuff (RW 0x707FFF): the template's first draw module data must be a W3DBuffDraw's, its ModelName the model (W3DBuffDrawModuleData,
+	// fields RW 0xBCD2F4 twin: ModelName + 0x08, PreDraw + 0x0C)
+	auto cached = m_buffModels.find(thingTemplate);
+	if (cached == m_buffModels.end())
+	{
+		std::string model;
+		const ThingTemplate *t = m_game.logic().things().findTemplate(thingTemplate);
+		if (!t)
+		{
+			return true; // findTemplate answered null: retail makes no buff (nothing to note)
+		}
+		const ThingTemplate::ModuleInfo &draws = t->drawModules();
+		const ThingTemplate::Nugget *first = draws.nuggets().empty() ? nullptr : &draws.nuggets().front();
+		const RawModuleData *raw = first ? dynamic_cast<const RawModuleData *>(first->data.get()) : nullptr;
+		if (!first)
+		{
+			m_buffErrors.insert("No draw module specified for Buff! In Buff (" + thingTemplate + ")");
+		}
+		else if (first->name != "W3DBuffDraw" || !raw)
+		{
+			m_buffErrors.insert("Buff " + thingTemplate + " requires a W3DBuffDrawModule.");
+		}
+		else
+		{
+			for (const RawModuleData::Line &l : raw->lines())
+			{
+				std::string text = l.text.substr(0, l.text.find(';'));
+				const size_t eq = text.find('=');
+				if (eq == std::string::npos)
+				{
+					continue;
+				}
+				auto trim = [](std::string v) {
+					const size_t b = v.find_first_not_of(" \t\r");
+					const size_t e = v.find_last_not_of(" \t\r");
+					return b == std::string::npos ? std::string() : v.substr(b, e - b + 1);
+				};
+				if (AsciiStringUtil::compareNoCase(trim(text.substr(0, eq)), "ModelName") == 0)
+				{
+					model = trim(text.substr(eq + 1));
+				}
+			}
+			if (model.empty())
+			{
+				m_buffErrors.insert("Buff " + thingTemplate + ": its W3DBuffDraw has no ModelName");
+			}
+		}
+		cached = m_buffModels.emplace(thingTemplate, model).first;
+	}
+	if (cached->second.empty())
+	{
+		return true; // refused above (the error is in buffErrors)
+	}
+	m_buffs.turnOn(obj.objectId(), type, thingTemplate, cached->second, lifeFrames < 0 ? 0u : (unsigned)lifeFrames, m_game.logic().getFrame());
+	return true;
+}
+
+bool LiveFX::turnOffBuff(const FXObject &obj, int type)
+{
+	m_buffs.turnOff(obj.objectId(), type, false); // RW 0x671EC6: not immediate (fades out)
+	return true;
 }
 
 Object *LiveFX::object(ObjectID id) const

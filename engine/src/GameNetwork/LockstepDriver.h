@@ -69,11 +69,17 @@ public:
 	// pump / input source, before the network stamps its execution frame) to the acquire of the batch that runs it, matched in issue order with the local
 	// player's commands of each relayed batch (MSG_LOGIC_CRC excluded); and network stalls, every wait of acquire() for a frame (missing commands or the
 	// disconnect gate) from its first refusal to the batch handed out
+	// lane NETLAG-1 (the owner's "my buildings don't do anything for half a second"): per local command also the frames between the protocol frame it
+	// was issued on and the batch that runs it (the command delay: the run-ahead on a network game, 0 on a local one) and the time from its issue to the
+	// completion of that batch (when its effect exists in the world). A local game (no Network) measures its commands alike: every one is the local
+	// player's
 	struct SmoothStats
 	{
 		std::vector<std::uint32_t> inputLatencyMs; ///< one sample per local command
 		std::vector<std::uint32_t> stallMs;        ///< one sample per wait episode (a refused acquire until the batch is handed out)
 		unsigned long long unmatchedCommands = 0;  ///< relayed local commands without an issue record (should stay 0)
+		std::vector<std::uint32_t> commandDelayFrames; ///< lane NETLAG-1: one sample per local command, batch frame - issue protocol frame
+		std::vector<std::uint32_t> commandEffectMs;    ///< lane NETLAG-1: one sample per local command, issue to the completion of its batch
 	};
 	const SmoothStats &smoothStats() const { return m_smooth; }
 	// lane MP-3 (the owner's measurements): every completion's census (Capture::census: the frame's wall time on the simulation owner, living battalions,
@@ -117,11 +123,19 @@ private:
 	void sourceInput(UnsignedInt protocolFrame);
 	// lane MP-3
 	SmoothStats m_smooth;
-	std::deque<std::pair<std::uint64_t, size_t>> m_issued; ///< (issue time, local commands) per network update that sent any, in order
+	struct Issue
+	{
+		std::uint64_t ms = 0;     ///< issue time
+		UnsignedInt frame = 0;    ///< the protocol frame it was stamped against (lane NETLAG-1)
+		size_t commands = 0;      ///< local commands of that issue still to be matched
+	};
+	std::deque<Issue> m_issued;  ///< per pump / completion that issued any, in order
+	size_t m_notedLocal = 0;     ///< m_local's messages already counted by noteIssued (lane NETLAG-1: a local game keeps m_local until the next acquire)
+	std::deque<std::pair<UnsignedInt, std::uint64_t>> m_awaitingEffect; ///< lane NETLAG-1: (batch frame, issue time) of acquired local commands
 	int m_localPlayer = -1;
 	bool m_waitAfterLoad = false;
 	bool m_census = false;
 	std::vector<CensusRow> m_censusLog;
-	void noteIssued();
-	void noteRelayed(const CommandList &commands);
+	void noteIssued(UnsignedInt protocolFrame);
+	void noteRelayed(UnsignedInt frame, const CommandList &commands);
 };

@@ -148,11 +148,14 @@ TEST_CASE("ui2 retail: the LAN setup page shows the map's picture (W3DDrawMapPre
 	CHECK(picture->filename.substr(picture->filename.size() - artSuffix.size()) == artSuffix);
 	CHECK(picture->status == IMAGE_STATUS_RAW_TEXTURE);
 	CHECK(mapWindow->winGetEnabledImage(1) == "ScrollShroud");
-	// a LAN game is not a skirmish (TheGameLogic + 0x114 != 3): the eight start spots stay hidden
+	// lane ONLINE-5: a LAN lobby is not a War of the Ring battle (TheGameLogic + 0x114 == 3: the constructor's value, RW 0x6301D3), so the map's
+	// start spots are shown in it as in a skirmish lobby (RW 0x976F9C): the map's own, the rest hidden
 	REQUIRE(screen->currentMapSpots().size() == 8);
-	for (GameWindow *spot : screen->currentMapSpots())
+	REQUIRE(map->isMultiplayer);
+	for (int i = 0; i < 8; ++i)
 	{
-		CHECK(spot->winIsHidden());
+		const bool beyondTheMap = i >= (int)map->numPlayers;
+		CHECK_MESSAGE(screen->currentMapSpots()[(size_t)i]->winIsHidden() == beyondTheMap, "spot " << i);
 	}
 	// the draw: the picture over the aspect-kept rectangle inside the window (findDrawPositions RW 0x7018E0), shroud first, then the picture
 	GadgetDrawList list;

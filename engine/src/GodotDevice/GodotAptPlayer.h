@@ -295,6 +295,8 @@ public:
 	Dictionary openbfme_menu_reset();
 	Dictionary get_timeline_stats(); // lane END-2
 	Dictionary quit_menu(const Dictionary &request);
+	// lane HOVER-1: the menus' tool tip (CursorTooltip.h): the label, the text GuiFX shows, the GuiFX calls made, the pointer, the errors
+	Dictionary get_cursor_tooltip() const;
 	Array list_buttons(int level);
 	// SetBarTo(local card, percent) on the load screen; returns false when the screen is not up or the movie has not loaded yet (the call is made by the next update)
 	bool set_load_progress(double percent);

@@ -135,7 +135,7 @@ struct Args
 	std::uint32_t seed = 1234;
 	std::vector<std::string> slots;
 	int frames = 600;
-	int runAhead = 2;
+	int runAhead = 1; // lane NETLAG-1 (was 2)
 	int crcInterval = 100;
 	bool script = false, realtime = false;
 	std::string record, hashes, report, replay;
@@ -1632,6 +1632,19 @@ int main(int argc, char **argv)
 		}
 		const LockstepDriver::SmoothStats &sm = session.driver().smoothStats();
 		r << "input_latency_ms " << LockstepDriver::percentiles(sm.inputLatencyMs) << " unmatched " << sm.unmatchedCommands << "\n";
+		// lane NETLAG-1: each local command's delay in frames (batch - issue protocol frame) as "frames:count" ascending, and issue -> effect in ms
+		std::map<std::uint32_t, unsigned long long> delays;
+		for (std::uint32_t v : sm.commandDelayFrames)
+		{
+			++delays[v];
+		}
+		r << "command_delay_frames";
+		for (const auto &kv : delays)
+		{
+			r << " " << kv.first << ":" << kv.second;
+		}
+		r << (delays.empty() ? " none" : "") << "\n";
+		r << "command_effect_ms " << LockstepDriver::percentiles(sm.commandEffectMs) << "\n";
 		unsigned long long over100 = 0, over500 = 0, over1000 = 0, total = 0;
 		for (std::uint32_t v : sm.stallMs)
 		{

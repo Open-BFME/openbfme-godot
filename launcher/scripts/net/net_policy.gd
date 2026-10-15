@@ -3,6 +3,8 @@
 ## Release builds: HTTPS only, to api.github.com (the releases list), github.com (the release download links) and *.githubusercontent.com
 ## (where github.com redirects release assets), with Godot's TLS certificate and host name verification (TLSOptions.client()). Every
 ## redirect is checked again before it is followed. A URL with user info, an explicit port, a fragment, a non-ASCII or IP-literal host is refused.
+## Lane ONLINECOUNT-1: the one request to the online lobby, GET /v1/stats on the lobby's own host (HTTPS, no port; set_lobby): the number of players
+## online that the Play card shows. Nothing else of the lobby is allowed; nothing is sent but the request line and the standard headers.
 ## Test builds (tests_allowed()) may add ONE plain-HTTP loopback origin (127.0.0.1 or localhost with a port), the local test server.
 ## Lane AIO-1: while the player's opt-in download of the game files runs (scripts/core/aio_install.gd, off by default), extra_hosts also
 ## holds the All In One BFME Launcher service's two hosts (HTTPS, no explicit port, like GitHub's); it is empty otherwise.
@@ -12,6 +14,8 @@ const GITHUB_HOSTS := ["api.github.com", "github.com"]
 const GITHUB_ASSET_SUFFIX := ".githubusercontent.com"
 
 var test_origin := ""  # "http://127.0.0.1:<port>" in a test build, or ""
+const LOBBY_STATS_PATH := "/v1/stats"
+var lobby_host := ""  # lane ONLINECOUNT-1: the lobby's host (exact), for LOBBY_STATS_PATH only; "" = none
 var extra_hosts: Array = []  # exact host names allowed besides GitHub's (lane AIO-1, only during an AIO download)
 
 
@@ -68,6 +72,8 @@ func check(url: String) -> String:
 	var host: String = u.host
 	if host in GITHUB_HOSTS or host in extra_hosts:
 		return ""
+	if lobby_host != "" and host == lobby_host and u.path == LOBBY_STATS_PATH:
+		return ""
 	if host.ends_with(GITHUB_ASSET_SUFFIX) and host.length() > GITHUB_ASSET_SUFFIX.length():
 		var label := host.substr(0, host.length() - GITHUB_ASSET_SUFFIX.length())
 		var rx := RegEx.create_from_string("^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$")
@@ -80,3 +86,18 @@ func check(url: String) -> String:
 static func check_test_origin(origin: String) -> String:
 	var rx := RegEx.create_from_string("^http://(127\\.0\\.0\\.1|localhost):[0-9]{1,5}$")
 	return "" if rx.search(origin) != null else "the test API origin must be http://127.0.0.1:<port> (got '%s')" % origin
+
+
+## "" when `url` may be the online lobby (https, a host name, no port, path, query or user info), else why not. Sets lobby_host. A test build's lobby is its test
+## origin (the one plain-HTTP loopback origin), which check() allows anyway.
+func set_lobby(url: String) -> String:
+	lobby_host = ""
+	var u := parse_url(url.trim_suffix("/"))
+	if not u.ok:
+		return u.error
+	if test_origin != "" and u.origin == test_origin and u.path == "/":
+		return ""
+	if u.scheme != "https" or u.explicit_port or u.path != "/":
+		return "the online lobby must be https://host (got '%s')" % url.left(200)
+	lobby_host = u.host
+	return ""

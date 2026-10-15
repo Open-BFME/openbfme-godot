@@ -43,7 +43,13 @@ public:
 		std::string profileDigest;   ///< the profile identity's MD5 (ProfileIdentity::digest): the lobby compares it at the join
 		int playerTemplateCount = 0; ///< factions are indices below this (or -1 random); required
 		int colorCount = 0;          ///< colours likewise; required
-		std::uint32_t pollMs = 1000; ///< the staging room's poll interval
+		std::uint32_t pollMs = 1000; ///< the staging room's poll interval (a lobby that does not hold polls; the pause after a poll that failed)
+		// lane ONLINE-5: long polling. Above 0 the client asks a lobby that holds polls (its poll answers carry "wait": lobby.mjs MAX_WAIT_S) to keep
+		// each poll until the game changes, at most this many seconds: a chat line or a ready tick arrives one round trip after it happened, and an
+		// idle room costs one request per player every `longPollS` seconds, not one a second. A held poll travels beside the ordinary requests
+		// (HttpRequest::held: its own connection), so a chat line typed meanwhile is not kept waiting. 0: plain polls every pollMs (the tests' blocking
+		// transport; a lobby without "wait" is polled that way whatever this says)
+		std::uint32_t longPollS = 0;
 	};
 	struct HttpRequest
 	{
@@ -52,6 +58,8 @@ public:
 		std::string path;   ///< "/v1/..." (the host prefixes the lobby URL)
 		std::string body;   ///< JSON ("" for a GET)
 		std::string token;  ///< the bearer token ("" before the sign-in)
+		bool held = false;  ///< lane ONLINE-5: a poll the lobby may keep for up to holdSeconds: sent on a connection of its own, with a longer timeout
+		int holdSeconds = 0;
 	};
 	// One game of the server browser (lobby.mjs publicGame)
 	struct Listing
@@ -116,6 +124,7 @@ public:
 	static constexpr std::size_t kMaxGames = 200;              ///< lobby.mjs list: .slice(0, 200)
 	static constexpr std::size_t kMaxMine = 32;                ///< the player's running games
 	static constexpr std::size_t kMaxChatLines = 200;          ///< lobby.mjs keeps the last 200 lines of a game
+	static constexpr int kMaxHoldSeconds = 60;                 ///< lane ONLINE-5: the longest hold a lobby may announce ("wait"; lobby.mjs MAX_WAIT_S is 25)
 
 	// Sol r1: the credentials a text may carry, masked for the logs and the screens: every run of 40 or more base64url characters (a relay ticket,
 	// a rejoin or spectator ticket, a session token's HMAC; with its dot-joined parts: the whole token) becomes "<redacted>". The lobby's ids (16 hex
@@ -187,6 +196,9 @@ public:
 	const Options &options() const { return m_options; }
 	std::uint32_t viewSeq() const { return m_seq; } ///< the game view's seq (moves with every change the lobby made)
 	bool busy() const { return m_inFlight != 0 || !m_queue.empty(); }
+	// lane ONLINE-5: the seconds the lobby holds a poll (its "wait"; 0: it does not, or no poll answered yet), and whether a held poll is out
+	int holdSeconds() const { return m_holdCap; }
+	bool pollHeld() const { return m_heldInFlight != 0; }
 	// the number of the requests sent of a kind ("slot", "setup" ...), for the tests
 	int sentCount(const std::string &kind) const
 	{
@@ -207,7 +219,9 @@ private:
 	};
 	void queue(const std::string &kind, const std::string &method, const std::string &path, const std::string &body);
 	void refuse(const std::string &request, const std::string &code, const std::string &message);
-	bool readGameView(const JsonValue &game, std::string *error);
+	// `fresh`: the view of a create / join (taken whatever its seq); otherwise a view older than the one held (an answer overtaken by a held poll's, or
+	// the other way round) is checked like any other and then left aside
+	bool readGameView(const JsonValue &game, std::string *error, bool fresh = false);
 	void leftGame(const std::string &why);
 	void handle(const Pending &p, int status, const JsonValue &body);
 
@@ -236,4 +250,13 @@ private:
 	std::deque<Pending> m_queue;
 	std::vector<Event> m_events;
 	std::map<std::string, int> m_sent;
+	// lane ONLINE-5: long polling and the sender's own chat lines
+	int m_holdCap = 0;              ///< the lobby's "wait" (seconds); 0 until a poll answer carried one
+	int m_heldInFlight = 0;         ///< the id of the held poll that is out (0: none)
+	bool m_heldDue = false;         ///< a held poll is to be sent (takeRequests)
+	std::uint64_t m_now = 0;        ///< the last update()'s clock
+	std::uint64_t m_heldSentAt = 0;
+	std::uint32_t m_heldSeq = 0, m_heldSince = 0; ///< what the held poll that is out asked from
+	int m_backoffS = 0;             ///< Sol r1: the last poll answer's "backoff" (seconds before the next poll; 0: none)
+	int m_ownEcho = 0;              ///< chat lines shown when they were sent whose copy from the lobby ("you") is still to come
 };

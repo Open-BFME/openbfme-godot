@@ -42,6 +42,18 @@
    "reason": "lane HUD-6: the help box's text and layout of a command button: user interface, reads the logic (costs, upgrades), never changes it"
   },
   {
+   "glob": "src/GameClient/GUI/AptHoverInventory.cpp",
+   "reason": "lane HOVER-1: the inventory of the Apt movies' hover areas (reads movie files): a tool for the client, never read by the logic"
+  },
+  {
+   "glob": "src/GameClient/GUI/CursorTooltip.cpp",
+   "reason": "lane HOVER-1: the menus' tool tips (Mouse::drawTooltip, GuiFX's ShowToolTip): user interface on the render clock, never read by the logic"
+  },
+  {
+   "glob": "src/GameClient/UnitHelpSource.cpp",
+   "reason": "lane HOVER-1: the help box's text over a hero portrait (name, level, health, damages, upgrades): user interface, reads the logic, never changes it"
+  },
+  {
    "glob": "src/GameClient/InGameHelpBox.cpp",
    "reason": "lane HUD-6: the help box movie's state machine and the hover provider: user interface on the render clock"
   },
@@ -544,6 +556,14 @@
   {
    "glob": "src/GameClient/InGameHeroSelect.cpp",
    "reason": "lane UI-4: the Palantir's hero bar (InGameHeroSelectInterface); HUD presentation and the selection messages it sends, never read by the simulation"
+  },
+  {
+   "glob": "src/GameClient/BuffDraw.cpp",
+   "reason": "lane SPELL-4: the BuffNugget buffs a drawable shows (BuffManager / TBuff fade); client presentation only, never read by the simulation"
+  },
+  {
+   "glob": "src/GameClient/RadiusCursor.cpp",
+   "reason": "lane SPELL-4: the aiming marker of a command waiting for its target (InGameUI's RadiusCursorTemplate decal); client presentation only, never read by the simulation"
   },
   {
    "glob": "src/GameClient/SelectionDecals.cpp",

@@ -190,6 +190,6 @@ std::vector<std::string> InGameHelpBox::acceptanceStops()
 		"ControlBar::update RW 0x71FC08); INFERENCE: the hovered Palantir command button is the Apt player's current button inside a content the control bar "
 		"filled (the content updater's rollover route, RW 0xC8C3D4 vslot 2, was not traced to its caller), the radial bubbles' hover is the ring's hit test, "
 		"the Apt player's y scale is the stage height over the window height; not ported: showHelp's guards (InGameUI vslot 0x1BC / 0x17C, RW 0xDE3BAC + "
-		"0x1A204, RW 0xDEA328), RW 0xA0CB16, the hero bar's and the spell book's help"
+		"0x1A204, RW 0xDEA328), RW 0xA0CB16 (lane HOVER-1 ports the hero bar's and the spell book's providers, S-4612)"
 	};
 }

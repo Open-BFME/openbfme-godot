@@ -339,6 +339,9 @@ private:
 	int m_now = 0;
 };
 
+// lane NETLAG-1: the lobby's run-ahead the helpers below play with (ONLINE-3's cases keep 2; the netlag1 cases run them with RotWK's 1)
+int g_runAhead = 2;
+
 NetworkConfig configFor(int slot, int peers, bool online, int crcInterval = 0)
 {
 	NetworkConfig c;
@@ -348,7 +351,7 @@ NetworkConfig configFor(int slot, int peers, bool online, int crcInterval = 0)
 		c.slotPlayerIndex[(size_t)i] = 10 + i;
 		c.slotNames[(size_t)i] = u"Player" + std::u16string(1, (char16_t)(u'0' + i));
 	}
-	c.runAhead = 2;
+	c.runAhead = g_runAhead;
 	c.crcInterval = crcInterval;
 	c.settings.disconnectTime = 1000;
 	c.settings.playerTimeoutTime = 6000;
@@ -1013,8 +1016,9 @@ TEST_CASE("online3: the ping test through the relay: a peer whose own link faile
 	CHECK_FALSE(g.peers[0].net->pingTest());
 }
 
-TEST_CASE("online3: pause and resume: every peer stops before the same frame and runs the same frames after; a RESUME that overtakes its PAUSE "
-		  "cancels it")
+namespace
+{
+void runPauseGame()
 {
 	Game g(3, true);
 	for (Peer &p : g.peers)
@@ -1027,8 +1031,9 @@ TEST_CASE("online3: pause and resume: every peer stops before the same frame and
 	}
 	g.peers[1].net->requestPause();
 	const UnsignedInt pauseFrame = g.peers[1].net->pauseFrame();
-	// tolerance: an ordering claim: the pause frame is ahead of what the other peer had run when it was requested
-	CHECK(pauseFrame > g.peers[1].frame);
+	// Peer::frame is the next frame to run; with the run-ahead 1 the pause frame is the requester's next frame (lane NETLAG-1)
+	// tolerance: an ordering claim: no peer had run the pause frame when it was requested
+	CHECK(pauseFrame >= std::max(g.peers[0].frame, std::max(g.peers[1].frame, g.peers[2].frame)));
 	for (int t = 0; t < 100; ++t)
 	{
 		g.tick(100000, 100);
@@ -1086,6 +1091,13 @@ TEST_CASE("online3: pause and resume: every peer stops before the same frame and
 		CHECK(g.peers[0].relayed[f] == g.peers[1].relayed[f]);
 		CHECK(g.peers[0].relayed[f] == g.peers[2].relayed[f]);
 	}
+}
+} // namespace
+
+TEST_CASE("online3: pause and resume: every peer stops before the same frame and runs the same frames after; a RESUME that overtakes its PAUSE "
+		  "cancels it")
+{
+	runPauseGame();
 }
 
 namespace
@@ -1218,6 +1230,9 @@ void runRejoinGame(int n, bool oldAlive = false, std::vector<int> restarts = {})
 	x.hashes.clear();
 	x.hash = 0x811C9DC5u;
 	x.frame = 0;
+	// lane NETLAG-1: a restarted process has no input of its old one (the old incarnation's CRC of its last completed frame, appended but never sent,
+	// went out from the new one with the run-ahead 1: an extra CRC on a frame no peer had one for)
+	x.pending.reset();
 	// the old incarnation is gone: the others drop it at once (no player timeout) and hold it; nobody hands it over
 	std::uint64_t restartedAt = g.hub.clock;
 	auto allHeld = [&] {
@@ -1378,11 +1393,11 @@ void runRejoinGame(int n, bool oldAlive = false, std::vector<int> restarts = {})
 	// the switch: the membership from the log, this slot's CRCs that execute from `join` on, the others' frames after the switch from the log
 	Network::LiveStart ls;
 	ls.frame = join;
-	ls.runAhead = a.runAheadAfter(join - 1, 2);
+	ls.runAhead = a.runAheadAfter(join - 1, g_runAhead);
 	ls.membership = a.membership;
 	for (const auto &kv : crcs)
 	{
-		const UnsignedInt exec = kv.first + (UnsignedInt)a.runAheadAfter(kv.first - 1, 2);
+		const UnsignedInt exec = kv.first + (UnsignedInt)a.runAheadAfter(kv.first - 1, g_runAhead);
 		if (kv.first <= join && exec >= join)
 		{
 			Network::LiveStart::Crc c = kv.second;
@@ -1647,6 +1662,7 @@ void runRealRejoins(const std::vector<int> &restarts)
 		peer.relayed.clear();
 		peer.hashes.clear();
 		peer.hash = 0x811C9DC5u;
+		peer.pending.reset(); // lane NETLAG-1: a restarted process has no input of its old one
 		live[(size_t)slot] = std::move(pr);
 	};
 	std::uint64_t lastTick = 0;
@@ -1812,11 +1828,11 @@ void runRealRejoins(const std::vector<int> &restarts)
 		REQUIRE(x.frame == join);
 		Network::LiveStart ls;
 		ls.frame = join;
-		ls.runAhead = a.runAheadAfter(join - 1, 2);
+		ls.runAhead = a.runAheadAfter(join - 1, g_runAhead);
 		ls.membership = a.membership;
 		for (const auto &kv : crcs)
 		{
-			const UnsignedInt exec = kv.first + (UnsignedInt)a.runAheadAfter(kv.first - 1, 2);
+			const UnsignedInt exec = kv.first + (UnsignedInt)a.runAheadAfter(kv.first - 1, g_runAhead);
 			if (kv.first <= join && exec >= join)
 			{
 				Network::LiveStart::Crc c = kv.second;
@@ -1914,6 +1930,22 @@ TEST_CASE("online3 r1 (Sol: repeated rejoins of different slots): slot 1 rejoins
 		  "log: its transport to slot 1 is live again and slot 1's generation is the member's, so slot 1 is not taken for restarted")
 {
 	runRejoinGame(3, false, { 1, 2 });
+}
+
+// lane NETLAG-1: the lobby's run-ahead is 1 now (RotWK's frame + 1, RW 0x8D4301): ONLINE-3's pause, rejoin and real-UDP rejoin cases with it
+TEST_CASE("netlag1: with the lobby's run-ahead 1, pause and resume, a rejoin (in a 1v1 and of 3 players, the same player three times) and rejoins over "
+		  "real UDP keep every peer's frames and CRCs equal")
+{
+	struct Restore
+	{
+		~Restore() { g_runAhead = 2; }
+	} restore;
+	g_runAhead = 1;
+	SUBCASE("pause") { runPauseGame(); }
+	SUBCASE("rejoin of 3") { runRejoinGame(3); }
+	SUBCASE("rejoin in a 1v1") { runRejoinGame(2); }
+	SUBCASE("repeated rejoins") { runRejoinGame(3, false, { 2, 2, 2 }); }
+	SUBCASE("rejoins over real UDP") { runRealRejoins({ 1, 2 }); }
 }
 
 TEST_CASE("online3: the acceptance stops of the lane are reported (S-3900, S-3901, S-3902)")

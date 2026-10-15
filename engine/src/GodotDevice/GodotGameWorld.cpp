@@ -291,6 +291,7 @@ void GameWorld::_bind_methods()
 	ClassDB::bind_method(D_METHOD("cast_special_power", "player", "power", "x", "y"), &GameWorld::cast_special_power);
 	ClassDB::bind_method(D_METHOD("get_spellbook", "player"), &GameWorld::get_spellbook);
 	ClassDB::bind_method(D_METHOD("get_spell_power_effect", "player", "power"), &GameWorld::get_spell_power_effect); // lane SPELL-3
+	ClassDB::bind_method(D_METHOD("get_buff_state"), &GameWorld::get_buff_state); // lane SPELL-4
 	ClassDB::bind_method(D_METHOD("spell_store_open", "player"), &GameWorld::spell_store_open);
 	ClassDB::bind_method(D_METHOD("get_spell_store"), &GameWorld::get_spell_store);
 	ClassDB::bind_method(D_METHOD("spell_store_click", "index"), &GameWorld::spell_store_click);
@@ -327,7 +328,7 @@ void GameWorld::_bind_methods()
 	ClassDB::bind_method(D_METHOD("get_economy"), &GameWorld::get_economy);
 	ClassDB::bind_method(D_METHOD("get_report"), &GameWorld::get_report);
 	ClassDB::bind_method(D_METHOD("get_live_report"), &GameWorld::get_live_report);
-	ClassDB::bind_method(D_METHOD("net_host", "port", "message", "run_ahead", "crc_interval"), &GameWorld::net_host, DEFVAL(2), DEFVAL(100));
+	ClassDB::bind_method(D_METHOD("net_host", "port", "message", "run_ahead", "crc_interval"), &GameWorld::net_host, DEFVAL(1), DEFVAL(100));
 	ClassDB::bind_method(D_METHOD("net_join", "address", "name"), &GameWorld::net_join);
 	ClassDB::bind_method(D_METHOD("net_poll"), &GameWorld::net_poll);
 	ClassDB::bind_method(D_METHOD("net_online", "start_json"), &GameWorld::net_online); // lane ONLINE-2
@@ -657,6 +658,7 @@ void GameWorld::clear_scene()
 	m_views.clear();
 	m_dynamicModels.clear();
 	m_staticModels.clear();
+	m_buffInstances.clear(); // lane SPELL-4: the buffs' instances went with the instancer
 	m_staticId = m_dynamicId = 0;
 	m_textureClock = 0.0;
 	m_animatedDrawables = 0;
@@ -1857,6 +1859,103 @@ void GameWorld::advance(double delta)
 // lane RENDERWAIT-1: the render side's work that reads the live logic, at a point the logic is held (the client window, or single-threaded after the frames):
 // the logic's deferred audio calls, the object sounds, the effect player's logic part and the tree events. Skipped when the logic is not held (the worker is
 // inside a frame): the next held render frame does it, the effects' time is kept until then.
+Dictionary GameWorld::get_buff_state() const
+{
+	Dictionary r;
+	Array list;
+	Array errors;
+	if (m_liveFX)
+	{
+		for (const auto &kv : m_liveFX->buffs().buffs())
+		{
+			const ClientBuffs::Buff &b = kv.second;
+			Dictionary e;
+			e["object"] = (int64_t)b.object;
+			e["type"] = (int64_t)b.type;
+			e["thing"] = toGodot(b.thing);
+			e["model"] = toGodot(b.model);
+			e["opacity"] = b.opacity;
+			e["state"] = (int64_t)b.state;
+			auto it = m_buffInstances.find(b.serial);
+			e["instance"] = it == m_buffInstances.end() ? (int64_t)-2 : it->second;
+			list.push_back(e);
+		}
+		for (const std::string &err : m_liveFX->buffErrors())
+		{
+			errors.push_back(toGodot(err));
+		}
+	}
+	r["count"] = (int64_t)list.size();
+	r["drawn"] = (int64_t)m_buffsDrawn;
+	r["buffs"] = list;
+	r["errors"] = errors;
+	return r;
+}
+
+void GameWorld::syncBuffs(double dt)
+{
+	// lane SPELL-4 (GameClient/BuffDraw.h): TBuff::UpdateFade once per drawn frame (RotWK draws at 30 a second, S-456), the expiry on the logic frame; each
+	// buff is its W3DBuffDraw model at the drawable's position (RW 0x676711) and instance scale (+ 0x200), not turned (W3DBuffBufferFill: the vertices are
+	// scaled and offset only), faded through the instance opacity (S-4642)
+	W3DInstancer *dyn = instancerOf(m_dynamicId);
+	ClientBuffs &buffs = m_liveFX->buffs();
+	buffs.advance(dt, m_game->logic().getFrame()); // the fade on the 30 Hz client clock (client code: GameClient/BuffDraw.cpp)
+	static const float kIdentity[9] = { 1, 0, 0, 0, 1, 0, 0, 0, 1 };
+	std::set<uint64_t> live;
+	std::vector<::ObjectID> gone;
+	for (const auto &kv : buffs.buffs())
+	{
+		const ClientBuffs::Buff &b = kv.second;
+		Drawable *d = m_game->drawables().findByObject(b.object);
+		if (!d)
+		{
+			gone.push_back(b.object); // the object and its drawable are gone: so is its BuffManager
+			continue;
+		}
+		live.insert(b.serial);
+		if (!dyn)
+		{
+			continue;
+		}
+		auto inst = m_buffInstances.find(b.serial);
+		if (inst == m_buffInstances.end())
+		{
+			auto it = m_dynamicModels.find(b.model);
+			int64_t mid = it == m_dynamicModels.end() ? -1 : it->second;
+			if (it == m_dynamicModels.end())
+			{
+				mid = dyn->add_model(toGodot(b.model)); // a model that does not build is in the instancer's report
+				m_dynamicModels[b.model] = mid;
+			}
+			const int64_t id = mid >= 0 ? dyn->add_instance(mid, toTransform(kIdentity, *d->getPosition(), d->getInstanceScale()), String(), 0.0, 1.0) : -1;
+			inst = m_buffInstances.emplace(b.serial, id).first;
+		}
+		if (inst->second >= 0)
+		{
+			dyn->set_instance_transform(inst->second, toTransform(kIdentity, *d->getPosition(), d->getInstanceScale()));
+			dyn->set_instance_opacity(inst->second, b.opacity);
+			++m_buffsDrawn;
+		}
+	}
+	for (::ObjectID id : gone)
+	{
+		buffs.removeObject(id);
+	}
+	for (auto it = m_buffInstances.begin(); it != m_buffInstances.end();)
+	{
+		if (live.count(it->first))
+		{
+			++it;
+			continue;
+		}
+		if (dyn && it->second >= 0)
+		{
+			dyn->remove_instance(it->second);
+		}
+		it = m_buffInstances.erase(it);
+	}
+}
+
 void GameWorld::heldClientWork()
 {
 	if (!m_game->logicHeld())
@@ -1878,6 +1977,7 @@ void GameWorld::heldClientWork()
 		m_liveFX->flushPending();
 		m_liveFX->updateAttachedSystems();
 		m_fxPlayer->advance(m_fxPendingDt);
+		syncBuffs(m_fxPendingDt); // lane SPELL-4
 	}
 	m_fxPendingDt = 0.0;
 	if (m_treeTopple)
@@ -3798,6 +3898,19 @@ Dictionary GameWorld::net_status() const
 	r["scripted_commands"] = (int64_t)m_netScripted;
 	r["stalled_frames"] = (int64_t)m_game->stalledFrames();
 	r["waiting_ms"] = (int64_t)s.driver().waitingMs();
+	{
+		// lane NETLAG-1: the command delay (the run-ahead in effect; each local command's frames from its issue to its batch; the wall-clock times)
+		const LockstepDriver::SmoothStats &sm = s.driver().smoothStats();
+		r["run_ahead"] = (int64_t)s.network().currentRunAhead();
+		Array delays;
+		for (std::uint32_t v : sm.commandDelayFrames)
+		{
+			delays.push_back((int64_t)v);
+		}
+		r["command_delay_frames"] = delays;
+		r["command_effect_ms"] = toGodot(LockstepDriver::percentiles(sm.commandEffectMs));
+		r["input_latency_ms"] = toGodot(LockstepDriver::percentiles(sm.inputLatencyMs));
+	}
 	Array waiting, desyncs, errors, stops;
 	for (int slot : s.driver().waitingSlots())
 	{
@@ -4287,6 +4400,10 @@ bool GameWorld::spell_bar_click_world(int64_t player, double x, double y)
 	pos.y = (float)y;
 	pos.z = m_game->logic().getGroundHeight(pos.x, pos.y);
 	std::vector<GameMessage> out;
+	if (!m_spellBar->targetValid(m_game->logic(), pos)) // lane SPELL-4: RW 0x81EBE9: an invalid location issues nothing, the targeting goes on
+	{
+		return false;
+	}
 	const bool ok = m_spellBar->clickWorld(pos, (int)player, out);
 	for (const GameMessage &m : out)
 	{

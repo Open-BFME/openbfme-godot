@@ -92,10 +92,10 @@ Whichever one you start keeps OpenBFME up to date (see [Updates](#updates)).
 Already have the launcher from an earlier build? You don't need to download
 anything: it updates itself and the game.
 
-The launcher starts on the channel of its own version: an alpha build on
-**Alpha** (the test builds; it was called Preview before), a release on
-**Stable**. You can switch the channel in Settings at any time (there is no
-Stable release yet).
+Releases have plain numbers: Alpha 0.4.5, then 0.4.6 and so on; the middle
+number goes up (0.5.0) when a big new feature lands. The launcher's channel
+is **Alpha** (these releases); **Preview** also gets test builds between
+releases. Both get every release, and you can switch in Settings.
 
 The menu on the left has **Play** (the installed version, whether it is up to
 date, your games and What's New from the version's release notes), **News**
@@ -646,6 +646,13 @@ recorded stop in [STOPS.md](STOPS.md); the ID is given for reference.
   but can't be saved under a name, and there are no replay controls (S-1125,
   S-1126). The score screen's graphs are simplified (S-1063).
 - LAN: the disconnect screen has no chat (S-1123).
+- Online: when a player's game crashes, the others drop that player when the
+  disconnect screen's bar runs out, but only if the game's first player still
+  in it (the packet router) runs this version or later: everyone in an online
+  game must update, or a crash can still freeze it (S-4810).
+- Online and LAN: a player still loading the map about a minute after the
+  others finished is treated as gone and dropped when the disconnect screen's
+  bar runs out (S-4811).
 
 **In-game interface**
 - Hero bar: pointing at a hero's portrait shows no help box, the portrait does

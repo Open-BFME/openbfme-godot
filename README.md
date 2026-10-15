@@ -48,9 +48,9 @@ OpenBFME is unofficial. It is not made or endorsed by EA.
 
 > **Alpha builds.** These are early alpha builds for testers. Expect missing
 > features and rough edges; see [Status](#status) and the known issues in the
-> [player guide](docs/PLAYING.md#known-issues). The builds up to
-> v0.3.0-preview.4 were called previews; from v0.4.0-alpha.1 on they are alpha
-> builds, on the same launcher channel (now shown as *Alpha*).
+> [player guide](docs/PLAYING.md#known-issues). Releases have plain numbers:
+> Alpha 0.4.5, then 0.4.6 and so on, and the middle number goes up (0.5.0) when
+> a big new feature lands. Your launcher updates to each one by itself.
 
 **You need** **The Rise of the Witch-king 2.01** and **The Battle for
 Middle-earth II 1.06**, both in English, and Windows 10/11 or 64-bit Linux
@@ -129,7 +129,7 @@ the original are still missing.
 not reinvent it. Where the evidence runs out and the team has to make an
 educated guess, that guess is not hidden: it is recorded as an *acceptance
 stop* in [docs/STOPS.md](docs/STOPS.md), reported by the game at runtime and
-pinned by a test. There are **679 open stops** today. Some are big
+pinned by a test. There are **697 open stops** today. Some are big
 (retail save files), most are small details waiting for better evidence. The plan to
 get to a 1:1 game is in [docs/ROADMAP.md](docs/ROADMAP.md).
 

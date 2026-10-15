@@ -65,6 +65,10 @@ public:
 	virtual std::vector<FXBoneTransform> boneWorldTransforms(const FXObject &obj, const std::string &boneName, int startIndex, int maxBones) = 0;
 	// a Sound nugget (RW 0x5DF7F3 / 0x5DF85E): true when the world played it (else it is noted as an event)
 	virtual bool playSound(const std::string &eventName, const Coord3D *pos, int playerIndex) = 0;
+	// lane SPELL-4: a non-complex BuffNugget's buff (Drawable::TurnOnBuff RW 0x671E56) / its turn-off (RW 0x671EC6): true when the world drew it (else it is
+	// noted as an event, as before)
+	virtual bool turnOnBuff(const FXObject &, int /*type*/, const std::string & /*thingTemplate*/, int /*lifeFrames*/) { return false; }
+	virtual bool turnOffBuff(const FXObject &, int /*type*/) { return false; }
 };
 
 class FXPlayback

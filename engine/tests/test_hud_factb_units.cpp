@@ -2659,6 +2659,27 @@ void spellBookOf(const std::string &faction, Results &res, bool viaStore = false
 					if (g.hud->spellBar().targeting())
 					{
 						g.clickAt(c);
+						// lane SPELL-4: RotWK refuses a spot its location test fails (RW 0x6A4260 -> 0x82DFB7: e.g. Barricade's ForbiddenObjectFilter
+						// with the scene's barracks in range); the cursor is red and the click casts nothing (RW 0x81EBE9). The cast then goes to the
+						// nearest spot of a ring search the HUD accepts; none: the item fails by name
+						for (int ring = 1; ring <= 6 && g.hud->spellBar().targeting(); ++ring)
+						{
+							for (int k = 0; k < 8 && g.hud->spellBar().targeting(); ++k)
+							{
+								const float a = 0.785398163f * (float)k, d = 150.0f * (float)ring;
+								Coord3D p{ c.x + d * std::cos(a), c.y + d * std::sin(a), 0.0f };
+								p.z = g.logic().getGroundHeight(p.x, p.y);
+								if (g.hud->spellBar().targetValid(g.logic(), p))
+								{
+									g.clickAt(p);
+								}
+							}
+						}
+						if (g.hud->spellBar().targeting())
+						{
+							out.fail = "the HUD refused the scene's spot and every spot of the ring search (RotWK's location test, RW 0x82DFB7)";
+							g.clickAt(c, HudInput::Button::Right); // the targeting is cancelled
+						}
 					}
 				}
 			}
@@ -3654,8 +3675,8 @@ TEST_CASE("factc spell book: every Goblin and Angmar spell bought in the store a
 		return;
 	}
 	factcCase("spell book", "FactionWild", spellsViaStore,
-			  { { "spell SpellBookTaint", "S-1997|no effect of TaintSpecialPower" }, { "spell SpellBookUntamedAllegiance", "S-1997|no effect of UntamedAllegianceSpecialPower" } });
-	factcCase("spell book", "FactionAngmar", spellsViaStore, { { "spell SpellBookUntamedAllegiance", "S-1997|no effect of UntamedAllegianceSpecialPower" } });
+			  { { "spell SpellBookTaint", "S-1997|no effect of TaintSpecialPower" }, { "spell SpellBookUntamedAllegiance", "S-1997|the HUD refused the scene's spot" } });
+	factcCase("spell book", "FactionAngmar", spellsViaStore, { { "spell SpellBookUntamedAllegiance", "S-1997|the HUD refused the scene's spot" } });
 }
 
 TEST_CASE("factc fortress: the Goblins and Angmar build walls, buy their fortress improvements at the started castle and cast its power")

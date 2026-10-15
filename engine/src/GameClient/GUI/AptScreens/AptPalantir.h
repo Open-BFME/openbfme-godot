@@ -177,6 +177,8 @@ public:
 	void syncSpellBook(const std::vector<SpellSlot> &slots); ///< RW 0x9312B9
 	bool pressSpellSlot(int slot); ///< RW 0x930DE5 (OnAptInGameSpellBookButtonPressed)
 	const std::string &spellBookPath() const { return m_spellPath; }
+	// lane HOVER-1: the spell book clip's full path ("_level%d.<clip>"), "" while its movie is not loaded
+	std::string spellBookTarget() const { return m_spellPath.empty() ? std::string() : levelPrefix() + m_spellPath; }
 	bool spellBookShown() const { return m_spellShown; }
 	int spellSlotState(int slot) const { return slot >= 0 && slot < kSpellSlots ? m_spellState[slot] : SPELL_UNUSED; }
 	int spellSlotButton(int slot) const { return slot >= 0 && slot < kSpellSlots ? m_spellButton[slot] : -1; } ///< lane SPELL-3: the command set index a slot shows

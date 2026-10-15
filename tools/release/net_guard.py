@@ -63,10 +63,12 @@ ALLOWED_LAUNCHER = {"launcher/scripts/net/http_fetch.gd": {"HTTPClient"},
 # lane ONLINE-4: the online screens' transport (scripts/online_http.gd: the requests OnlineShell.apt's lobby client queues), the same rule
 # lane ONEZIP-1: a game started directly runs the OpenBFME Launcher beside it once (the one updater; the game itself still opens no
 # connection): OS.create_process in scripts/release/update_handover.gd alone
+# lane ONLINECOUNT-1: the menus' "N players online" (scripts/online_stats.gd): one GET of the lobby's /v1/stats, the same request rule
 ALLOWED_GAME = {"godot/scripts/online_lobby.gd": {"HTTPRequest", "HTTPClient"}, "godot/scripts/online_http.gd": {"HTTPRequest", "HTTPClient"},
+                "godot/scripts/online_stats.gd": {"HTTPRequest"},
                 "godot/scripts/release/update_handover.gd": {"OS.create_process"}}
 ONLINE_LOBBY = "godot/scripts/online_lobby.gd"
-ONLINE_LOBBY_FILES = ("godot/scripts/online_lobby.gd", "godot/scripts/online_http.gd")
+ONLINE_LOBBY_FILES = ("godot/scripts/online_lobby.gd", "godot/scripts/online_http.gd", "godot/scripts/online_stats.gd")
 
 GODOT_NET = re.compile(r"(HTTPRequest|HTTPClient|WebSocketPeer|WebSocketMultiplayerPeer|StreamPeerTCP|StreamPeerTLS|TCPServer|PacketPeerUDP|"
                        r"PacketPeerDTLS|DTLSServer|UDPServer|ENetConnection|ENetMultiplayerPeer|ENetPacketPeer|WebRTC\w*|JavaScriptBridge|"

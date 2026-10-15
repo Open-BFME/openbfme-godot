@@ -76,6 +76,11 @@ struct ReplayFile
 	std::string profileMismatch(const ProfileIdentity &running) const
 	{
 		std::string why = ProfileIdentity::difference(running, header.profile);
+		// lane NETLAG-1: a recording of a verified older build (the engine line alone differs) plays back; live peers never take this path
+		if (!why.empty() && ProfileIdentity::replayCompatible(running, header.profile))
+		{
+			why.clear();
+		}
 		if (why.empty() && header.game.game.simulationProfile != running.simulationProfile())
 		{
 			why = std::string("the replay's game runs the simulation profile ") + simulationProfileName(header.game.game.simulationProfile) + ", this player runs " +

@@ -55,9 +55,15 @@
 //   reports restarted (Network::slotRestarted) is droppable at once; a drop that is not a vote HOLDS the player for a rejoin (NetworkConfig::holdForRejoin:
 //   no DESTROYPLAYER here; Network::routerRejoinDuties hands the army over after the rejoin window or takes the player back). LAN is unchanged.
 
+// LANE MP-DROP-1 (stops S-4810 .. S-4812): an announcement of the frame a player announced before counts once this peer's record of it was closed
+//   (S-4810, OpenBFME: RW 0x8D836B ignores it); the screen waits for RotWK's multiplayer load screen, which GameLogic's loading update (RW 0x62B385)
+//   keeps while no slot is silent below frame 6 (S-4811); a DISCONNECTPLAYER is checked whole before anything changes and its decider sends a refused
+//   one again (S-4812, OpenBFME: RW 0x8D89D7 takes it as it comes).
+
 #pragma once
 
 #include "GameNetwork/GameInfo.h"
+#include "GameNetwork/NetPacket.h"
 #include "GameNetwork/NetworkSettings.h"
 
 #include <array>
@@ -114,6 +120,10 @@ public:
 	void voteForPlayerDisconnect(Network &net, int slot, std::uint32_t logicFrame);
 
 	const Screen &screen() const { return m_screen; }
+	// lane MP-DROP-1 (tests, diagnostics): this peer's record of a slot's disconnect frame (RotWK + 0x230 / + 0x250) and the load-screen gate
+	std::uint32_t disconnectFrame(int slot) const { return slot >= 0 && slot < MAX_SLOTS ? m_disconnectFrames[(size_t)slot] : 0; }
+	bool disconnectFrameReceived(int slot) const { return slot >= 0 && slot < MAX_SLOTS && m_disconnectFramesReceived[(size_t)slot]; }
+	bool loadScreenUp() const { return m_loadScreenUp; }
 	State state() const { return m_state; }
 	bool anySilent() const { return m_anySilent; }
 	int silentEpisodes(int slot) const { return m_silentEpisodes[(size_t)slot]; }
@@ -162,6 +172,8 @@ private:
 	std::uint32_t getMaxDisconnectFrame() const;
 	void populateScreen(Network &net);
 	void note(const std::string &line);
+	bool validateDrop(Network &net, const NetCommandMsg &c, int from, std::string &why) const; // lane MP-DROP-1: the whole decision, before anything changes
+	std::string frameLine(Network &net, std::uint64_t now, std::uint32_t logicFrame) const;
 
 	NetworkSettings m_settings;
 	State m_state = SCREENOFF;
@@ -188,6 +200,7 @@ private:
 		int sender = -1, target = -1;
 		std::uint32_t frame = 0;
 		std::uint8_t gone = 0;
+		std::uint64_t arrived = 0; ///< lane MP-DROP-1: when it arrived (a claim not confirmed within NetworkPlayerTimeoutTime is refused)
 	};
 	std::vector<PendingDrop> m_pendingDrops;
 	void applyPendingDrops(Network &net, std::uint32_t logicFrame);
@@ -196,4 +209,10 @@ private:
 	std::string m_quitReason;
 	std::vector<std::string> m_log;
 	std::vector<int> m_dropped;
+	std::array<std::string, MAX_SLOTS> m_dropWait; ///< lane MP-DROP-1: the last logged reason a due drop of the slot waits
+	std::array<bool, MAX_SLOTS> m_announcedBy{};                 ///< lane MP-DROP-1: the slot sent a DISCONNECTFRAME to this peer (validateDrop)
+	std::array<std::uint32_t, MAX_SLOTS> m_announcedByFrame{};   ///< the highest frame it announced
+	bool m_announcedEver = false;        ///< lane MP-DROP-1: m_announcedFrame holds an announcement of this game (it is kept after the frame ran)
+	bool m_loadScreenUp = true;          ///< lane MP-DROP-1: RotWK's multiplayer load screen (TheGameLogic + 0x120), see update()
+	std::vector<NetCommandMsg> m_decided; ///< lane MP-DROP-1: the drops this peer decided (sent again to a player that announces a frame at or before one)
 };

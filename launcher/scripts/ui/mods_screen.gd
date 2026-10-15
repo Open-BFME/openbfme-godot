@@ -11,7 +11,7 @@ var _bfme2: Label
 
 func _init() -> void:
 	set_anchors_preset(Control.PRESET_FULL_RECT)
-	var v := W.vbox(14)
+	var v := W.vbox(Style.SCREEN_GAP)
 	v.set_anchors_preset(Control.PRESET_FULL_RECT)
 	add_child(v)
 	v.add_child(W.h2("Mods"))

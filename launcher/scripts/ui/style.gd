@@ -37,6 +37,8 @@ const PARCHMENT := ACCENT
 const EDGE := LINE
 
 const RADIUS := 10
+const NAV_PAD := 12   # lane LAUNCHERUI-1: a rail entry's side padding: its icon, and the logo and footer above / below it, start here
+const SCREEN_GAP := 14  # the gap between a screen's heading, tabs and cards (every screen's root column; the layout test measures it)
 
 static var _files := {}
 static var _fonts := {}
@@ -139,11 +141,11 @@ static func make_theme() -> Theme:
 	t.add_type("NavButton")
 	t.set_type_variation("NavButton", "Button")
 	for st in ["normal", "disabled"]:
-		t.set_stylebox(st, "NavButton", box(Color(0, 0, 0, 0), Color(0, 0, 0, 0), 0, 8, Vector2(12, 9)))
-	t.set_stylebox("hover", "NavButton", box(HOVER, Color(0, 0, 0, 0), 0, 8, Vector2(12, 9)))
-	t.set_stylebox("pressed", "NavButton", box(SELECTED, Color(0, 0, 0, 0), 0, 8, Vector2(12, 9)))
-	t.set_stylebox("hover_pressed", "NavButton", box(SELECTED, Color(0, 0, 0, 0), 0, 8, Vector2(12, 9)))
-	t.set_stylebox("focus", "NavButton", box(Color(0, 0, 0, 0), Color(ACCENT2, 0.6), 1, 8, Vector2(12, 9)))
+		t.set_stylebox(st, "NavButton", box(Color(0, 0, 0, 0), Color(0, 0, 0, 0), 0, 8, Vector2(NAV_PAD, 9)))
+	t.set_stylebox("hover", "NavButton", box(HOVER, Color(0, 0, 0, 0), 0, 8, Vector2(NAV_PAD, 9)))
+	t.set_stylebox("pressed", "NavButton", box(SELECTED, Color(0, 0, 0, 0), 0, 8, Vector2(NAV_PAD, 9)))
+	t.set_stylebox("hover_pressed", "NavButton", box(SELECTED, Color(0, 0, 0, 0), 0, 8, Vector2(NAV_PAD, 9)))
+	t.set_stylebox("focus", "NavButton", box(Color(0, 0, 0, 0), Color(ACCENT2, 0.6), 1, 8, Vector2(NAV_PAD, 9)))
 	t.set_color("font_color", "NavButton", TEXT2)
 	t.set_color("font_pressed_color", "NavButton", TEXT)
 	t.set_color("font_hover_pressed_color", "NavButton", TEXT)
@@ -200,8 +202,8 @@ static func make_theme() -> Theme:
 	# toggles (.tog) and check boxes
 	for k in ["CheckButton", "CheckBox"]:
 		for st in ["normal", "hover", "pressed", "disabled", "hover_pressed"]:
-			t.set_stylebox(st, k, box(HOVER if st.begins_with("hover") else Color(0, 0, 0, 0), Color(0, 0, 0, 0), 0, 6, Vector2(4, 4)))
-		t.set_stylebox("focus", k, box(Color(0, 0, 0, 0), Color(ACCENT2, 0.6), 1, 6, Vector2(4, 4)))
+			t.set_stylebox(st, k, _toggle_box(HOVER if st.begins_with("hover") else Color(0, 0, 0, 0), 0, Color(0, 0, 0, 0)))
+		t.set_stylebox("focus", k, _toggle_box(Color(0, 0, 0, 0), 1, Color(ACCENT2, 0.6)))
 		t.set_color("font_color", k, TEXT)
 		t.set_font("font", k, body_font(500))
 	var VectorIcon = load("res://scripts/ui/vector_icon.gd")
@@ -244,6 +246,13 @@ static func make_theme() -> Theme:
 	t.set_stylebox("separator", "HSeparator", rule)
 	t.set_constant("separation", "HSeparator", 1)
 	return t
+
+
+## a toggle's box: it hugs its drawing on the right, so the toggle's right edge is the row's (the dropdown above it ends there too)
+static func _toggle_box(bg: Color, border: int, edge: Color) -> StyleBoxFlat:
+	var b := box(bg, edge, border, 6, Vector2(4, 4))
+	b.content_margin_right = 0
+	return b
 
 
 static func _button(t: Theme, type: String, bg: Color, edge: Color, hover: Color, hover_edge: Color, radius: int, pad: Vector2) -> void:

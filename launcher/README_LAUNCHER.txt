@@ -11,8 +11,8 @@ This download holds the launcher and the game together: the game is ready to pla
 one; both keep OpenBFME up to date. The game, started directly, asks the launcher to look for an update in the background
 (it says what it found in the top right corner of its menu) and uses a newer version from your next start.
 Press Play to start the newest installed version. At every start (and every hour while it stays open) the launcher looks
-for a newer version of your channel (Stable, or Alpha for the alpha test builds; until you pick one, an alpha or preview
-launcher uses Alpha), downloads it in the background, checks it and installs it; Play keeps working meanwhile and the new
+for a newer version of your channel (Alpha: the numbered releases, Alpha 0.4.5, 0.4.6, ...; Preview: also test builds
+between releases; both get every release), downloads it in the background, checks it and installs it; Play keeps working meanwhile and the new
 version starts from your next Play on (turn off "Update automatically in the background" in Settings to update only when you press Update). Windows
 SmartScreen may warn that the launcher is unrecognised: it is not code-signed yet; choose "More info", then "Run anyway".
 The menu on the left: Play, News (release notes), Multiplayer, Mods, Game files (your game folders, the games download) and

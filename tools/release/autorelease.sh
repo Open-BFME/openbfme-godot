@@ -14,11 +14,12 @@
 #      PRIVACY.md and README line. Before anything is pushed, the tree passes the privacy audit (autorelease.py audit-tree: the public
 #      top-level allowlist, no workspace / archive / reference folder, nothing a .gitignore rule ignores, the commit gate's file rules).
 #      Pushed as sync/<date>-<sha>, a PR, merged with a merge commit whose tree must be the audited one (nothing to sync: main is tagged);
-#   3. tags the merged public commit with the release's version (annotated) and pushes the tag. Lane RELNAME-1 (owner, 2026-10-10): the
-#      builds after v0.3.0-preview.4 are alpha builds, v0.4.0-alpha.<n> (n = 1 + the highest such tag on the remote, above every release
-#      tag there), released as "OpenBFME v0.4.0 Alpha <n>" (autorelease.py title); but while the first page of releases the launchers up
-#      to v0.3.0-preview.4 read holds no verified bridge with room to spare, the release is the next bridge v0.3.0-preview.<n>, which
-#      those launchers install and update themselves from (autorelease.py release-version: GitHub reads, fail closed);
+#   3. tags the merged public commit with the release's version (annotated) and pushes the tag. Lane VERSION-1 (owner, 2026-10-14):
+#      releases are plain numbers, v0.4.5 after v0.4.0-alpha.4, then v0.4.6, ... (--minor: the middle number + 1, v0.5.0, for a feature
+#      the owner calls huge), released as "OpenBFME Alpha 0.4.5" (autorelease.py next-version / title) and published as full releases
+#      (channel stable; the earlier alpha builds and previews were pre-releases). No bridge any more: the launchers up to
+#      v0.3.0-preview.4 read plain tags, so a plain release with the launcher archives is what they install (autorelease.py
+#      release-version; RELNAME-1's v0.3.0-preview.<n> bridges were for the alpha builds, which those launchers skip);
 #   4. builds at the tag on JonathanPC's WSL from a clean checkout (the jpc scripts' machine-wide slots, niced): the Linux GDExtension
 #      (build_linux.sh, with Godot's own Linux SDK: GLIBC 2.28 at most, GLIBC-1 / DEP-1),
 #      the Windows DLL (build_windows.sh --no-export), package.sh (game + launchers, both platforms), test_export.sh on the Linux
@@ -35,9 +36,9 @@
 #      shape of docs/RELEASE.md "Patch notes"; --plan also prints NOTES WARNING lines for a Release-note that needs fixing);
 #   8. the trusted checkout's publish_release.sh --execute --confirm-tag <tag> (a draft, its assets checked, then published, every
 #      outcome read back), then the release is read back once more;
-#  8b. (RELTEST-1) the repository's homepage (the About link) set to the new release's page, read back: every release is a pre-release,
-#      so GitHub shows no "Latest release" and releases/latest only redirects to the list; the About link is the one way to the newest
-#      build. A failure there is a warning in the summary (the release is out; set the link by hand), not a failed release;
+#  8b. (RELTEST-1) the repository's homepage (the About link) set to the new release's page, read back (the releases up to
+#      v0.4.0-alpha.4 were all pre-releases, so GitHub showed no "Latest release"; the plain releases are, and the About link still points
+#      at the newest one). A failure there is a warning in the summary (the release is out; set the link by hand), not a failed release;
 #   9. the Discord announcement, if bfme-community offers a release command (it does not yet: logged);
 #  10. a one-line summary on stdout, the log in $LOGS/autorelease-<version>.log, the state.
 # On a failure it stops and publishes nothing further; publish_release.sh deletes only a draft it created and read back as a draft; a
@@ -60,6 +61,8 @@
 #   the manifest is signed with a throwaway key (the real key is only checked to match launcher/release_key.pub), publish_release.sh runs
 #   as a dry run. Every command a real run would add is printed as "WOULD RUN: ...".
 # --plan: step 1 and the version only (tests).
+# --minor: this release raises the middle number (v0.4.7 -> v0.5.0; VERSION-1, the owner's call for a huge feature); ignored when an open
+#   intent is resumed (its version is kept).
 # Environment (defaults): OPENBFME_RELEASE_STATE (~/.local/state/openbfme-release), OPENBFME_RELEASE_WORK (~/.cache/openbfme-release),
 #   OPENBFME_RELEASE_LOGS (~/.cache/openbfme-recover/logs), OPENBFME_RELEASE_KEY (only ~/.config/openbfme-release/release-ed25519.pem itself is accepted, r6),
 #   OPENBFME_JPC_LIB (~/.cache/openbfme-recover/jpc-lib.sh), GH (gh), BFME_COMMUNITY (~/.local/bin/bfme-community),
@@ -73,16 +76,17 @@
 set -Eeuo pipefail
 REPO=$(cd "$(dirname "$0")/../.." && pwd)
 HERE="$REPO/tools/release"
-SHA_ARG=""; SINCE=""; MODE=real; TARGET="Open-BFME/openbfme-godot"; REMOTE=origin; ARCHIVE=archive-legacy-codebase
+SHA_ARG=""; SINCE=""; MODE=real; BUMP=patch; TARGET="Open-BFME/openbfme-godot"; REMOTE=origin; ARCHIVE=archive-legacy-codebase
 while [ $# -gt 0 ]; do
   case "$1" in
     --since) SINCE=$2; shift 2 ;;
     --dry-run) MODE=dry; shift ;;
     --plan) MODE=plan; shift ;;
+    --minor) BUMP=minor; shift ;;
     --repo) TARGET=$2; shift 2 ;;
     --remote) REMOTE=$2; shift 2 ;;
     --archive-branch) ARCHIVE=$2; shift 2 ;;
-    -h|--help) sed -n '2,63p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,66p' "$0"; exit 0 ;;
     -*) echo "autorelease.sh: unknown option $1" >&2; exit 2 ;;
     *) [ -z "$SHA_ARG" ] || { echo "autorelease.sh: one archive sha" >&2; exit 2; }; SHA_ARG=$1; shift ;;
   esac
@@ -105,6 +109,14 @@ LEGACY=${OPENBFME_RELEASE_LEGACY_LAUNCHERS:-1}
 case $LEGACY in 1) PKGOPT=""; FORMAT=2 ;; 0) PKGOPT="--no-legacy-launchers"; FORMAT=3 ;;
   *) echo "AUTORELEASE FAIL: OPENBFME_RELEASE_LEGACY_LAUNCHERS is 1 or 0" >&2; exit 2 ;; esac
 STANDIN=${OPENBFME_RELEASE_STANDIN:-}
+# VERSION-1 (Sol): a format 3 release (no launcher archives) is refused for as long as any published launcher reads format 2 only; derived
+# from each release tag's own manifest.gd, so the day those launchers are retired from the tags the switch works again
+if [ "$LEGACY" = 0 ]; then
+  rc=0; why=$(python3 "$HERE/autorelease.py" --git-dir "$REPO" legacy-needed --remote "$REMOTE" 2>&1) || rc=$?
+  if [ "$rc" != 1 ]; then   # 0: a launcher needs the archives; anything else: the answer could not be had (fail closed)
+    echo "$why" >&2; echo "AUTORELEASE FAIL: OPENBFME_RELEASE_LEGACY_LAUNCHERS=0 is refused (above)" >&2; exit 2
+  fi
+fi
 # ---- the one redaction point (r5, Sol r4: an intent field printed the key path through an echo) -------------------------------------------
 # Every line this script and the helpers it runs print, stdout and stderr, and every line of its logs, goes through redact: the release
 # key's path, its folder and the home folder (both as given and resolved) become <release key>, <release key folder> and ~.
@@ -226,10 +238,11 @@ validate_intent() {  # $1 = published: the release of the intent's version is pu
   done
   git_ fetch -q "$REMOTE" main || fail "cannot fetch $REMOTE/main to reconcile (fail closed)"
   RTAGS=$(git_ ls-remote --tags "$REMOTE") || fail "cannot list the tags of $REMOTE to reconcile (fail closed)"
-  # RELNAME-1: an alpha build v0.4.0-alpha.<n> or a bridge v0.3.0-preview.<n>, above every version of its own line released or tagged
+  # VERSION-1 / RELNAME-1: a plain release (from v0.4.5 on), an alpha build v0.4.0-alpha.<n> or a bridge v0.3.0-preview.<n>, above every
+  # version of its own line released or tagged
   # (Sol r2: with only the last released one compared, an intent edited from alpha.2 to alpha.0 after alpha.1 and a bridge published)
   printf '%s\n' "$RTAGS" | python3 "$HERE/autorelease.py" intent-version "$I_VER" "$lastver" >/dev/null 2>&1 \
-    || intent_bad "its version '$I_VER' is not a v0.4.0-alpha.<n> or v0.3.0-preview.<n> above every released or tagged version of its line"
+    || intent_bad "its version '$I_VER' is not a plain release, v0.4.0-alpha.<n> or v0.3.0-preview.<n> above every released or tagged version of its line"
   local tagc; tagc=$(printf '%s\n' "$RTAGS" | awk -v t="refs/tags/$I_VER" '$2 == t "^{}" { p = $1 } $2 == t && !p { l = $1 } END { print (p ? p : l) }')
   if [ -n "$I_PUBLIC" ]; then
     git_ cat-file -e "$I_PUBLIC^{commit}" 2>/dev/null || intent_bad "its public commit $I_PUBLIC is not known here"
@@ -292,7 +305,9 @@ if [ -f "$INTENT" ]; then
     draft=$(python3 -c 'import json,sys; print(str(json.load(open(sys.argv[1])).get("draft")).lower())' "$RJ")
     if [ "$draft" = false ]; then
       [ -f "$I_WORK/pkg/manifest.json" ] || fail "$I_VER is published, but its package folder $I_WORK/pkg is gone: verify it by hand, then record it in $STATE/last-released and delete $INTENT"
-      python3 "$HERE/release_assets.py" --release-json "$RJ" --dir "$I_WORK/pkg" --version "$I_VER" --draft false --prerelease true --repo "$TARGET" \
+      # VERSION-1: a plain release is a full release, an alpha build or a bridge a pre-release (the channel of its version)
+      case $I_VER in *-*) I_PRE=true ;; *) I_PRE=false ;; esac
+      python3 "$HERE/release_assets.py" --release-json "$RJ" --dir "$I_WORK/pkg" --version "$I_VER" --draft false --prerelease "$I_PRE" --repo "$TARGET" \
         || intent_bad "$I_VER is published but does not match its package folder $I_WORK/pkg"
       validate_intent published
       record_released "$I_SHA" "$I_VER" "$I_PUBLIC"
@@ -351,7 +366,7 @@ if [ -n "$LAST" ] && [ $RESUME = 0 ]; then
   echo "AUTORELEASE $changed since $LAST"
 fi
 if [ $RESUME = 1 ]; then VERSION=$I_VER
-else VERSION=$(python3 "$HERE/autorelease.py" --git-dir "$REPO" release-version --remote "$REMOTE" --repo "$TARGET" --sha "$SHA" --gh "$GH") \
+else VERSION=$(python3 "$HERE/autorelease.py" --git-dir "$REPO" release-version --remote "$REMOTE" --repo "$TARGET" --sha "$SHA" --gh "$GH" --bump "$BUMP") \
   || fail "no version for this release (autorelease.py release-version)"; fi
 DATE=$(date -u +%Y-%m-%d)
 if [ "$MODE" = plan ]; then
@@ -713,12 +728,12 @@ python3 "$HERE/autorelease.py" audit-text "$WORK/notes.md" || fail "the release 
 
 # ---- 8. publish (the trusted checkout's publish_release.sh: draft, assets checked, published, read back) -------------------------------
 STEP=publish
-# RELNAME-1 (Sol r2): an alpha build, also one resumed from an open intent (its version is kept), is published only while the launchers
-# up to v0.3.0-preview.4 still have their verified bridge on the page they read, with room for this release; otherwise the run stops
+# RELNAME-1 (Sol r2): an alpha build, also one resumed from an open intent (its version is kept; VERSION-1: only an intent opened before
+# the plain releases can still be one), is published only while the launchers up to v0.3.0-preview.4 still have their verified bridge on the page they read, with room for this release; otherwise the run stops
 # here, nothing published, the intent open (docs/RELEASE.md, "The alpha builds": publish the bridge again by hand, then run again)
 case $VERSION in
   *-alpha.*) python3 "$HERE/autorelease.py" --git-dir "$REPO" bridge-ok --remote "$REMOTE" --repo "$TARGET" --sha "$SHA" --gh "$GH" \
-               || fail "the bridge for the launchers up to v0.3.0-preview.4 is gone: $VERSION is not published (the intent stays open)" ;;
+       || fail "the bridge for the launchers up to v0.3.0-preview.4 is gone: $VERSION is not published (the intent stays open)" ;;
 esac
 if [ "$MODE" = dry ]; then
   "$T/publish_release.sh" "$PKG" --repo "$TARGET" --notes-file "$WORK/notes.md" "${PUBOPT[@]}"

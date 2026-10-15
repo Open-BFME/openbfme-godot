@@ -123,3 +123,49 @@ std::string ProfileIdentity::difference(const ProfileIdentity &ours, const Profi
 	}
 	return out;
 }
+
+// lane NETLAG-1: the recordings of builds before the one-frame command delay play back here. The delay only decides WHICH batch a live command lands in;
+// a recording holds every batch's commands as they ran, so playback never reads the run-ahead. VERIFIED, not assumed: each id below has a fixture
+// recording in engine/tests/data/netlag1 that the test "netlag1 replay: ..." plays with every hash equal (a build whose recordings stop matching is
+// removed from this list). Ids come from cmake -DOPENBFME_ID_ROOT=<engine dir> -P cmake/EngineId.cmake at the commit.
+const std::vector<ProfileIdentity::VerifiedEngine> &ProfileIdentity::verifiedReplayEngines()
+{
+	static const std::vector<VerifiedEngine> v = {
+		{ "976a1229ea71f55c95f05da0b8530fc7b5a5b181663ede0396ee43ae3b6be361", "archive build 593e83cd (before NETLAG-1), fixture engine/tests/data/netlag1/prelane_runahead2.replay" },
+	};
+	return v;
+}
+
+bool ProfileIdentity::replayCompatible(const ProfileIdentity &ours, const ProfileIdentity &theirs, std::string *engine)
+{
+	const std::vector<std::string> a = lines(ours.text), b = lines(theirs.text);
+	if (a.size() != b.size())
+	{
+		return false;
+	}
+	std::string theirEngine;
+	for (size_t i = 0; i < a.size(); ++i)
+	{
+		if (a[i] == b[i])
+		{
+			continue;
+		}
+		if (a[i].rfind("engine ", 0) != 0 || b[i].rfind("engine ", 0) != 0 || !theirEngine.empty())
+		{
+			return false; // another line differs (or a second one): the data, the numerics or the formats are not the same
+		}
+		theirEngine = b[i].substr(7);
+	}
+	if (engine)
+	{
+		*engine = theirEngine;
+	}
+	for (const VerifiedEngine &v : verifiedReplayEngines())
+	{
+		if (theirEngine == v.id)
+		{
+			return true;
+		}
+	}
+	return false;
+}

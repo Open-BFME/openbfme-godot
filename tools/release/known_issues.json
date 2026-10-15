@@ -17,11 +17,14 @@
   {"area": "Replays and LAN", "stops": ["S-1125", "S-1063"], "text": "Every game is recorded as a replay and can be watched from Load Replay, but replays cannot be saved under a name, there are no replay controls, and the score screen's graphs are simplified."},
   {"area": "Replays and LAN", "stops": ["S-1123"], "text": "LAN: the disconnect screen has no chat."},
   {"area": "Interface", "stops": ["S-2521", "S-2703"], "text": "Hero bar: pointing at a hero's portrait shows no help box, the portrait does not flash when the hero is attacked, and a Create-a-Hero hero does not show its own picture."},
+  {"area": "Interface", "stops": ["S-4612", "S-4610"], "text": "Help boxes and tool tips: repair buttons do not show their cost, a hero's help does not count battles fought, and the main menu's My Heroes and Quit buttons show no tool tip. The lobby, staging and map list tool tips (players, map results, passwords), the Create-a-Hero builder's power state tips, the in-game disband / rename tips, the control bar's resource, command point and menu button tips and the War of the Ring HUD tips are not shown yet."},
   {"area": "Interface", "stops": ["S-2702", "S-2703"], "text": "Help boxes: hero ability, spell, repair and revive buttons do not show their cost yet, and the spell book has no help box."},
   {"area": "Interface", "stops": ["S-2701"], "text": "Build bubbles around a building do not flash and do not show how many units are queued."},
   {"area": "Graphics", "stops": ["S-2522"], "text": "Selection rings always use the highest-detail look, whatever the detail setting."},
   {"area": "Graphics", "stops": ["S-3304"], "text": "Units and buildings cast no shadows yet, so the building preview has none either."},
   {"area": "Graphics", "stops": ["S-3402"], "text": "Graphics detail: the detail level sets the particle limit, texture quality and health bars, but shadows are not drawn yet and the model, animation, terrain, water and shader detail settings are greyed out."},
-  {"area": "Audio", "stops": ["S-3460"], "text": "Turning a hero's autocast on or off does not play the hero's voice line."}
+  {"area": "Audio", "stops": ["S-3460"], "text": "Turning a hero's autocast on or off does not play the hero's voice line."},
+  {"area": "Replays and LAN", "stops": ["S-4810"], "text": "Online: everyone in a game must use this version or later. If the game's first player runs an older version, a crashed player can still freeze the game instead of being dropped when the disconnect screen's bar runs out."},
+  {"area": "Replays and LAN", "stops": ["S-4811"], "text": "Online and LAN: a player still loading the map about a minute after the others have finished is treated as gone and dropped when the disconnect screen's bar runs out."}
  ]
 }

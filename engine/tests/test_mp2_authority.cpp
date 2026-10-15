@@ -47,12 +47,36 @@ struct FedTransport : NetTransport
 NetworkConfig config3(int local)
 {
 	NetworkConfig c;
+	c.runAhead = 2; // lane NETLAG-1: the default became 1; these cases keep MP-2's 2 (a RUNAHEAD must leave it unchanged)
 	c.localSlot = local;
 	for (int i = 0; i < 3; ++i)
 	{
 		c.slotPlayerIndex[(size_t)i] = i;
 	}
 	return c;
+}
+
+// lane MP-DROP-1 (S-4812): a decider announces its frame before its DISCONNECTPLAYER, and a receiver takes a drop of another player only for a frame
+// it announced itself: the receiver's clock passes the silence limit and two thirds of the bar (its screen, then its announcement of `frame`)
+NetCommandMsg disconnectFrame(int slot, UnsignedInt frame)
+{
+	NetCommandMsg c;
+	c.type = NETCOMMANDTYPE_DISCONNECTFRAME;
+	c.slot = (std::uint8_t)slot;
+	c.frame = frame;
+	return c;
+}
+void announce(Network &n, std::uint64_t &clock, UnsignedInt frame)
+{
+	CommandList e;
+	const NetworkSettings st = n.config().settings;
+	clock += st.disconnectTime + 1; // every other slot silent: the load screen goes (RW 0x62B385)
+	n.update(frame, e);
+	n.update(frame, e); // the screen opens (RW 0x8D8B82), every bar full
+	clock += st.playerTimeoutTime * 7 / 10; // below a third of the bar: this player announces its frame (RW 0x8D8785)
+	n.update(frame, e);
+	REQUIRE(n.disconnectManager().disconnectFrameReceived(n.config().localSlot));
+	REQUIRE(n.disconnectManager().disconnectFrame(n.config().localSlot) == frame);
 }
 
 NetCommandMsg frameInfo(int slot, UnsignedInt frame, int count)
@@ -246,6 +270,8 @@ TEST_CASE("mp2 authority: a DISCONNECTPLAYER from a peer that is not the packet 
 	c0.crcInterval = 0;
 	c2.crcInterval = 0;
 	Network n0(c0, a), n2(c2, b);
+	std::uint64_t clock2 = 1000;
+	n2.setClock([&clock2] { return clock2; });
 	n0.sendLoadComplete();
 	n2.sendLoadComplete();
 	for (int s = 0; s < 4; ++s)
@@ -281,13 +307,17 @@ TEST_CASE("mp2 authority: a DISCONNECTPLAYER from a peer that is not the packet 
 	cmd.message->appendBooleanArgument(true);
 	a.put(cmd);
 	b.put(cmd);
+	CommandList e, x, y;
+	n2.update(10, e);
+	announce(n2, clock2, 10); // slot 2 waits on frame 10 with its disconnect screen (lane MP-DROP-1: a drop of another player needs it)
 	NetCommandMsg drop;
 	drop.type = NETCOMMANDTYPE_DISCONNECTPLAYER;
 	drop.slot = 1; // not the router (slot 0)
 	drop.targetSlot = 3;
 	drop.frame = 10;
+	b.put(disconnectFrame(1, 10));
+	b.put(disconnectFrame(0, 10));
 	b.put(drop);
-	CommandList e, x, y;
 	n0.update(10, e);
 	n2.update(10, e);
 	REQUIRE(n0.isFrameReady(10));
@@ -308,13 +338,16 @@ TEST_CASE("mp2 authority: a DISCONNECTPLAYER from a peer that is not the packet 
 	CHECK(!n2.isDisconnected(3));
 	REQUIRE(n2.errors().size() == 2);
 	CHECK(n2.errors()[1].find("already ran") != std::string::npos);
-	// the router's drop for a frame not run yet is applied
+	// the router's drop for a frame not run yet (11: slot 2 announced it on its update of frame 11) is applied
+	REQUIRE(n2.disconnectManager().disconnectFrame(2) == 11);
 	NetCommandMsg ok = drop;
 	ok.slot = 0;
-	ok.frame = 12;
+	ok.frame = 11;
+	b.put(disconnectFrame(0, 11));
 	b.put(ok);
 	n2.update(11, e);
 	CHECK(n2.isDisconnected(3));
+	CHECK(n2.errors().size() == 2);
 }
 
 TEST_CASE("mp2 authority: the router's leave reached one survivor only; a successor's drop that claims the router gone is held on the other survivor (its "
@@ -331,6 +364,9 @@ TEST_CASE("mp2 authority: the router's leave reached one survivor only; a succes
 		c2.crcInterval = 0;
 		c4.crcInterval = 0;
 		Network n2(c2, a), n4(c4, b);
+		std::uint64_t clock2 = 1000, clock4 = 1000;
+		n2.setClock([&clock2] { return clock2; });
+		n4.setClock([&clock4] { return clock4; });
 		n2.sendLoadComplete();
 		n4.sendLoadComplete();
 		for (int s = 0; s < 5; ++s)
@@ -365,6 +401,10 @@ TEST_CASE("mp2 authority: the router's leave reached one survivor only; a succes
 		CommandList e, x, y;
 		n2.update(10, e);
 		n4.update(10, e);
+		announce(n2, clock2, 10); // both survivors wait on frame 10 with their disconnect screens (lane MP-DROP-1)
+		announce(n4, clock4, 10);
+		a.put(disconnectFrame(1, 10)); // the successor announces its frame before its drop
+		b.put(disconnectFrame(1, 10));
 		NetCommandMsg drop;
 		drop.type = NETCOMMANDTYPE_DISCONNECTPLAYER;
 		drop.slot = 1;
@@ -378,6 +418,15 @@ TEST_CASE("mp2 authority: the router's leave reached one survivor only; a succes
 		gatedBeforeLeave = !n4.allowedToContinue(10);
 		b.put(leave); // the leave reaches slot 4 late
 		n4.update(10, e);
+		if (claim == 0)
+		{
+			// lane MP-DROP-1: nobody drops slot 3 at frame 10 here, so the survivors' own announcements of frame 10 hold it (S-1121's gate) until an
+			// in-game player goes past it: slot 1 announces frame 11
+			a.put(disconnectFrame(1, 11));
+			b.put(disconnectFrame(1, 11));
+			n2.update(10, e);
+			n4.update(10, e);
+		}
 		REQUIRE(n2.isFrameReady(10));
 		REQUIRE(n4.isFrameReady(10));
 		REQUIRE(n2.allowedToContinue(10));

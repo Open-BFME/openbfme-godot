@@ -141,6 +141,41 @@ TEST_CASE("ui2 View3D animation: the mode names (RW 0xDC3BC0), PLAY_TO_FRAME sto
 	CHECK(AptView3DKeepAspect("true"));
 	CHECK_FALSE(AptView3DKeepAspect("false"));
 	CHECK(AptView3DFrameOf("90") == 90);
+	// lane ONLINE-5 [S-4555]: the image a View3D clip is rendered into. A 4:3 window (equal scales): the clip's rectangle, as retail (RW 0xB5470F)
+	int w = 0, h = 0;
+	AptView3DImageSize(1280.0f, 960.0f, 1.25f, 1.25f, true, true, w, h);
+	CHECK(w == 1280);
+	CHECK(h == 960);
+	// 2560 x 1440 (the stage's 1024 x 768 stretched by 2.5 and 1.875): the full-stage clip's image keeps 4:3 at the window's width; it is then
+	// stretched over the clip's 2560 x 1440 rectangle with the movie
+	AptView3DImageSize(2560.0f, 1440.0f, 2.5f, 1.875f, true, true, w, h);
+	CHECK(w == 2560);
+	CHECK(h == 1920);
+	// Sol r1: a View3D that is not a menu screen's (GuiFX's end-screen rings) keeps retail's aspect: the clip's rectangle
+	AptView3DImageSize(2560.0f, 1440.0f, 2.5f, 1.875f, true, false, w, h);
+	CHECK(w == 2560);
+	CHECK(h == 1440);
+	// a clip that covers part of the stage (500 x 300 stage units at 1280 x 800: scales 1.25 and 800 / 768)
+	AptView3DImageSize(625.0f, 312.5f, 1.25f, 800.0f / 768.0f, true, true, w, h);
+	CHECK(w == 625);
+	CHECK(h == 375);
+	// `_KeepAspectRatio` false: the clip's rectangle whatever the stretch (the camera's own aspect is not ported, S-1483)
+	AptView3DImageSize(2560.0f, 1440.0f, 2.5f, 1.875f, false, true, w, h);
+	CHECK(w == 2560);
+	CHECK(h == 1440);
+	// Sol r1: which clips are a menu screen's: their target path's level among the shell's screens'
+	CHECK(AptView3DOnMenuLevel("_level1.Frame.instance1.MenuLogin", { 1 }));
+	CHECK(AptView3DOnMenuLevel("_level12.Frame", { 1, 12 }));
+	CHECK_FALSE(AptView3DOnMenuLevel("_level11.GoodMovie.Good3d.GoodW3D", { 1 }));
+	CHECK_FALSE(AptView3DOnMenuLevel("_level1", { 11 }));
+	CHECK_FALSE(AptView3DOnMenuLevel("_level1x.Frame", { 1 }));
+	CHECK_FALSE(AptView3DOnMenuLevel("Frame.MenuLogin", { 1 }));
+	CHECK_FALSE(AptView3DOnMenuLevel("_level.Frame", { 0 }));
+	CHECK_FALSE(AptView3DOnMenuLevel("_level99999999999.Frame", { 1 }));
+	// degenerate input is a 1 x 1 image, never a zero or negative size
+	AptView3DImageSize(0.0f, -5.0f, 0.0f, 0.0f, true, true, w, h);
+	CHECK(w == 1);
+	CHECK(h == 1);
 	// the end screen: created with Set_Animation(1.0, PLAY_TO_FRAME) at t = 0, then the clip's _Frame 90 at t = 100 ms
 	AptView3DAnimation a;
 	CHECK(a.setAnimation(91, 1, APT_VIEW3D_PLAY_TO_FRAME, 0.0));

@@ -11,6 +11,17 @@
 #   window  slot 2 is killed and never returns: it is held, then handed over when the rejoin window (E2E_WINDOW_MS, default 30000) ends
 #   pause   slot 1 pauses at frame 200, slot 2 resumes after 8 s: every peer stops before the same frame
 #   soak    rejoin, with every peer's datagrams impaired (E2E_LINK, default latency=80,jitter=30,loss=30,dup=10,reorder=10)
+#   late    lane MP-DROP-1 (S-4556): slot 2 is killed and restarted E2E_LATE_S (default 45) seconds later, while the survivors' disconnect screens are
+#           up (retail's 15 s + 60 s): its new incarnation's first datagrams must not freeze the drop; it rejoins and every peer ends on one hash
+#   hang    lane MP-DROP-1: slot 2's process is stopped (SIGSTOP: a hung game, no socket closed) at E2E_KILL_S and continued E2E_HANG_S (default
+#           100) seconds later, after its drop: the survivors hold it, hand it over when the window ends and play on in step
+#   rejoindrop lane MP-DROP-1: rejoin, and slot 1 is killed for good E2E_SECOND_S (default 5) seconds after slot 2 restarted (during its catch-up):
+#           slot 1 is held, then handed over; slot 2 rejoins; slots 0 and 2 end on one hash
+#   routerrejoin lane MP-DROP-1: slot 0 (the packet router) is killed and rejoins; E2E_SECOND_S (default 40) seconds after its restart slot 2 is
+#           killed for good: slot 1 decides that drop with slot 0 counted gone in the agreed order (its earlier incarnation departed), the rejoined
+#           slot 0 must accept it; slots 0 and 1 end on one hash
+#   loaddeath lane MP-DROP-1: slot 2 is killed E2E_LOAD_KILL_S (default 3) seconds after it starts, on the load screen: the survivors leave the load
+#           barrier after 4 x 15 s + 60 s (RotWK's silence limit below frame 6), drop it at frame 0 and play every frame in step
 # Environment: E2E_KILL_S (default 60), E2E_RESTART_S (default 25), E2E_NICE (default 10); the peers use retail's NetworkDisconnectTime (15 s) and
 # NetworkPlayerTimeoutTime (60 s). A local relay with a throw-away key on 127.0.0.1 (tools/net/online_client.py fixture signs the STARTs).
 # Needs ROTWK_INSTALL / BFME2_INSTALL. Prints "RESULT online3 <scenario>: ..." and exits 0 when the scenario's checks hold.
@@ -36,17 +47,17 @@ RPORT=$((29300 + RANDOM % 500)); RADDR="127.0.0.1:$RPORT"
 RPID=$!
 sleep 0.5
 python3 "$HERE/online_client.py" fixture --key-hex "$KEY_HEX" --game "$GAME_ID" --relay "$RADDR" --profile "$PROFILE" --map "$MAP" "${SLOTS[@]}" \
-    --seed $((9000 + RANDOM % 1000)) --rejoin 2:1 --out-dir "$D" > /dev/null || { echo "RESULT online3 $SCEN: FAIL (fixture)"; kill "$RPID"; exit 1; }
+    --seed $((9000 + RANDOM % 1000)) --rejoin 2:1 --rejoin 0:1 --out-dir "$D" > /dev/null || { echo "RESULT online3 $SCEN: FAIL (fixture)"; kill "$RPID"; exit 1; }
 
-peer() { # slot, START, extra args...
+peer() { # slot, START, extra args... (always run with &: the background subshell becomes the peer process, so its PID can be killed)
     local s="$1" start="$2"; shift 2
-    nice -n "$NICE" "$PEER" --online-start "$start" --script --paced --frames "$FRAMES" --logic-threads 2 --desync-dir "$D" "${LINKARGS[@]}" "$@" \
+    exec nice -n "$NICE" "$PEER" --online-start "$start" --script --paced --frames "$FRAMES" --logic-threads 2 --desync-dir "$D" "${LINKARGS[@]}" "$@" \
         > "$D/p$s.log" 2>&1
 }
 EXTRA0=(); EXTRA1=(); EXTRA2=()
 case "$SCEN" in
     vote) EXTRA0=(--kick); EXTRA1=(--kick) ;;
-    window) EXTRA0=(--rejoin-window-ms "$WINDOW_MS"); EXTRA1=(--rejoin-window-ms "$WINDOW_MS") ;;
+    window|hang|loaddeath|rejoindrop) EXTRA0=(--rejoin-window-ms "$WINDOW_MS"); EXTRA1=(--rejoin-window-ms "$WINDOW_MS") ;;
     pause) EXTRA1=(--net-pause-at 200); EXTRA2=(--net-resume-ms 8000) ;;
 esac
 T0=$(date +%s)
@@ -57,21 +68,52 @@ if [ "$SCEN" = pause ]; then
 else
     nice -n "$NICE" "$PEER" --online-start "$D/start-2.json" --script --paced --frames "$FRAMES" --logic-threads 2 "${LINKARGS[@]}" \
         --report "$D/p2-first.txt" > "$D/p2-first.log" 2>&1 & P2=$!
-    sleep "$KILL_S"
-    kill -KILL "$P2" 2> /dev/null; wait "$P2" 2> /dev/null
-    echo "killed slot 2 at $(( $(date +%s) - T0 )) s" > "$D/events.txt"
-    if [ "$SCEN" = rejoin ] || [ "$SCEN" = soak ]; then
+    if [ "$SCEN" = routerrejoin ]; then
+        sleep "$KILL_S"
+        kill -KILL "$P0" 2> /dev/null; wait "$P0" 2> /dev/null
+        echo "killed slot 0 (the packet router) at $(( $(date +%s) - T0 )) s" > "$D/events.txt"
+        sleep "$RESTART_S"
+        peer 0 "$D/start-0-rejoin1.json" --report "$D/p0.txt" --hashes "$D/h0.txt" & P0=$!
+        echo "restarted slot 0 with its rejoin START at $(( $(date +%s) - T0 )) s" >> "$D/events.txt"
+        sleep "${E2E_SECOND_S:-40}"
+        kill -KILL "$P2" 2> /dev/null; wait "$P2" 2> /dev/null
+        echo "killed slot 2 for good at $(( $(date +%s) - T0 )) s (slot 0 rejoined before)" >> "$D/events.txt"
+    elif [ "$SCEN" = hang ]; then
+        sleep "$KILL_S"
+        kill -STOP "$P2"
+        echo "stopped slot 2 (SIGSTOP) at $(( $(date +%s) - T0 )) s" > "$D/events.txt"
+        sleep "${E2E_HANG_S:-100}"
+        kill -CONT "$P2"
+        echo "continued slot 2 (SIGCONT) at $(( $(date +%s) - T0 )) s" >> "$D/events.txt"
+        HUNG=$P2
+    else
+        [ "$SCEN" = loaddeath ] && sleep "${E2E_LOAD_KILL_S:-3}" || sleep "$KILL_S"
+        kill -KILL "$P2" 2> /dev/null; wait "$P2" 2> /dev/null
+        echo "killed slot 2 at $(( $(date +%s) - T0 )) s" > "$D/events.txt"
+    fi
+    [ "$SCEN" = late ] && RESTART_S="${E2E_LATE_S:-45}"
+    if [ "$SCEN" = rejoin ] || [ "$SCEN" = soak ] || [ "$SCEN" = late ] || [ "$SCEN" = rejoindrop ]; then
         sleep "$RESTART_S"
         echo "restarted slot 2 with its rejoin START at $(( $(date +%s) - T0 )) s" >> "$D/events.txt"
         peer 2 "$D/start-2-rejoin1.json" --report "$D/p2.txt" --hashes "$D/h2.txt" & P2=$!
+        if [ "$SCEN" = rejoindrop ]; then
+            sleep "${E2E_SECOND_S:-5}"
+            kill -KILL "$P1" 2> /dev/null; wait "$P1" 2> /dev/null
+            echo "killed slot 1 for good at $(( $(date +%s) - T0 )) s (slot 2 catching up)" >> "$D/events.txt"
+            P1=""
+        fi
     else
         P2=""
     fi
 fi
 rc=0
 wait "$P0" || rc=1
-wait "$P1" || rc=1
+[ -n "$P1" ] && { wait "$P1" || rc=1; }
 [ -n "$P2" ] && { wait "$P2" || rc=1; }
+if [ -n "${HUNG:-}" ]; then
+    # the hung game woke up after its drop: whatever it does then (it finds itself dropped) is not the survivors' game; it is stopped here
+    sleep 5; kill -TERM "$HUNG" 2> /dev/null; wait "$HUNG" 2> /dev/null; echo "hung slot 2 exit $?" >> "$D/events.txt"
+fi
 SECS=$(( $(date +%s) - T0 ))
 for _ in $(seq 1 50); do ls "$D"/relaylog/*.obfmerlog > /dev/null 2>&1 && break; sleep 0.2; done
 kill -TERM "$RPID" 2> /dev/null; wait "$RPID" 2> /dev/null
@@ -82,7 +124,7 @@ if [ -n "$LOG" ]; then
     [ -f "$D/server.replay" ] && { "$PEER" --replay "$D/server.replay" --report "$D/replay.txt" > "$D/replay.log" 2>&1; play=$?; }
 fi
 v() { awk -v k="$2" '$1 == k { $1 = ""; sub(/^ /, ""); print; exit }' "$1" 2> /dev/null; }
-REPORTS=("$D/p0.txt" "$D/p1.txt"); [ -f "$D/p2.txt" ] && REPORTS+=("$D/p2.txt")
+REPORTS=("$D/p0.txt"); [ "$SCEN" != rejoindrop ] && REPORTS+=("$D/p1.txt"); [ -f "$D/p2.txt" ] && REPORTS+=("$D/p2.txt")
 finals=$(cat "${REPORTS[@]}" 2> /dev/null | grep "^final_hash" | sort -u | wc -l)
 desyncs=$(cat "${REPORTS[@]}" 2> /dev/null | awk '$1 == "desyncs" { s += $2 } END { print s + 0 }')
 frames_ok=$(cat "${REPORTS[@]}" 2> /dev/null | awk -v f="$FRAMES" '$1 == "frames" && $2 >= f' | wc -l)
@@ -96,7 +138,7 @@ check '[ "$desyncs" = 0 ]' "no desync"
 check '[ "$finals" = 1 ]' "one final hash"
 check '[ "$conv" = 0 ] && [ "$play" = 0 ] && [ "${compared:-0}" -ge 1 ] && [ "${mism:-1}" = 0 ]' "the relay log's replay matches the players' CRCs"
 case "$SCEN" in
-    rejoin|soak)
+    rejoin|soak|late)
         check 'grep -q "^rejoin generation 1 live_frame" "$D/p2.txt"' "slot 2 rejoined"
         check 'grep -q "crc_mismatches 0" "$D/p2.txt"' "its catch-up matched every CRC in the log"
         check '[ "$(v "$D/p2.txt" crc_checks_passed)" -ge 1 ]' "the rejoined slot took part in a CRC exchange"
@@ -108,11 +150,22 @@ case "$SCEN" in
         check 'grep -q "^self_destruct executed 1 transfers 1" "$D/p0.txt"' "its army went to an ally"
         check 'grep -q "^disconnect_log vote of slot 0 to drop slot 2" "$D/p1.txt"' "by a Kick vote"
         check '! grep -q "holding slot 2" "$D/p0.txt"' "not held" ;;
-    window)
+    routerrejoin)
+        check 'grep -q "^rejoin generation 1 live_frame" "$D/p0.txt"' "slot 0 rejoined"
+        check 'grep -q "^disconnect_log dropping slot 2 at frame" "$D/p1.txt"' "slot 1 decided the drop of slot 2"
+        check 'grep -q "^disconnect_log slot 2 disconnected at frame" "$D/p0.txt"' "the rejoined slot 0 applied it"
+        check '! grep -q "DISCONNECTPLAYER of slot [0-9]* from slot [0-9]*.*: refused$" "$D/p0.txt" "$D/p0.log"' "nothing refused" ;;
+    rejoindrop)
+        check 'grep -q "^rejoin generation 1 live_frame" "$D/p2.txt"' "slot 2 rejoined"
+        check 'grep -q "crc_mismatches 0" "$D/p2.txt"' "its catch-up matched every CRC in the log"
+        check 'grep -q "rejoin_log slot 1 held for a rejoin" "$D/p0.txt"' "slot 1 held"
+        check 'grep -q "^online_slots held none handed_over 1" "$D/p0.txt" && grep -q "^online_slots held none handed_over 1" "$D/p2.txt"' "slot 1 handed over on both" ;;
+    window|hang|loaddeath)
         check 'grep -q "rejoin_log slot 2 held for a rejoin" "$D/p0.txt"' "slot 2 held"
         check 'grep -q "^rejoin_log the rejoin window of slot 2 ended" "$D/p0.txt" || grep -q "^rejoin_log the rejoin window of slot 2 ended" "$D/p1.txt"' "the window ended (packet router)"
         check 'grep -q "^online_slots held none handed_over 2" "$D/p0.txt" && grep -q "^online_slots held none handed_over 2" "$D/p1.txt"' "then handed over"
-        check '[ "$(grep -h "^self_destruct_checkpoint" "$D/p0.txt")" = "$(grep -h "^self_destruct_checkpoint" "$D/p1.txt")" ]' "on one frame, to the same ally" ;;
+        check '[ "$(grep -h "^self_destruct_checkpoint" "$D/p0.txt")" = "$(grep -h "^self_destruct_checkpoint" "$D/p1.txt")" ]' "on one frame, to the same ally"
+        [ "$SCEN" = loaddeath ] && check 'grep -q "^disconnect_log slot 2 disconnected at frame 0$" "$D/p0.txt"' "dropped at frame 0 (the load barrier)" ;;
     pause)
         stops=$(grep -h "^pause " "${REPORTS[@]}" | awk '{print $5}' | sort -u)
         check '[ "$(wc -w <<< "$stops")" = 1 ] && [ "$stops" -gt 0 ]' "every peer stopped before the same frame ($stops)"

@@ -114,7 +114,25 @@ def test_online4_the_online_screens_transport_requests_only_the_named_lobby():
     assert path in net_guard.ONLINE_LOBBY_FILES
     text = (REPO / path).read_text()
     assert net_guard.online_lobby_problems(text) == []
-    assert net_guard.online_lobby_problems(text.replace("_http.request(lobby_url", "_http.request(q.url")) != []
+    # lane ONLINE-5: the ordinary requests and the held poll share the one request call (`node` is one of the file's two HTTPRequest nodes)
+    swapped = text.replace("node.request(lobby_url", "node.request(q.url")
+    assert swapped != text and net_guard.online_lobby_problems(swapped) != []
+    assert net_guard.online_lobby_problems(text + '\nfunc leak():\n\t_held.request("https://example.com/collect")\n') != []
     assert net_guard.online_lobby_problems(text.replace("max_redirects = 0", "max_redirects = 8")) != []
     assert net_guard.game_finding_allowed(path, "line 3: HTTPRequest")
     assert not net_guard.game_finding_allowed(path, "line 3: TCPServer")
+
+
+def test_onlinecount1_the_player_count_requests_only_the_named_lobby():
+    """lane ONLINECOUNT-1: godot/scripts/online_stats.gd (the menus' "N players online") may use HTTPRequest alone, its one request goes to lobby_url,
+    and a second request, another URL or a followed redirect is a finding"""
+    path = "godot/scripts/online_stats.gd"
+    assert path in net_guard.ONLINE_LOBBY_FILES
+    assert net_guard.ALLOWED_GAME[path] == {"HTTPRequest"}
+    text = (REPO / path).read_text()
+    assert net_guard.online_lobby_problems(text) == []
+    assert net_guard.online_lobby_problems(text.replace("_http.request(lobby_url", '_http.request("https://example.com" + lobby_url')) != []
+    assert net_guard.online_lobby_problems(text + '\nfunc leak():\n\t_http.request("https://example.com/collect")\n') != []
+    assert net_guard.online_lobby_problems(text.replace("max_redirects = 0", "max_redirects = 8")) != []
+    assert not net_guard.game_finding_allowed(path, "line 1: HTTPClient")
+    assert not net_guard.game_finding_allowed(path, "line 1: TCPServer")

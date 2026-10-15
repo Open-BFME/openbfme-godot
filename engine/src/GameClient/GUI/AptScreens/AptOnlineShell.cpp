@@ -79,6 +79,17 @@ const std::vector<std::string> &AptOnlineShell::stopLines()
 		"the host's Play Game asks the lobby for the START (no relay: refused, told to the player); loading a saved online game is not available",
 		"[S-4075] online pages not ported: Quick Match, Strategic (War of the Ring online), Profile / Stats, the Messenger",
 		"[S-4076] online Create-a-Hero: the lobby service does not carry a slot's Create-a-Hero record: online games are played without them",
+		"[S-4550] online Connections screen: not shown (retail's lists the GameSpy connection between every two players; OpenBFME's players reach each "
+		"other only through the relay): the button says so and the staging room comes back",
+		"[S-4551] online staging room chat: the Players list names the room's players (retail's fill, the chat's recipients, was not read) and every "
+		"line goes to everyone (no private lines)",
+		"[S-4552] online staging room rows: Hero (no Create-a-Hero through the lobby, S-4076) and Handicap (no entries in this port, S-178) are shown "
+		"locked; the lobby carries no handicap",
+		"[S-4553] online ready rules: the lobby unreadies every player on any change of the room (a join, a leave, a kick, a slot or setup change); "
+		"RotWK's own reset (the game's vslot 0x38 after a rule change, RW 0x8421E0) was read only for the host's rule changes; the clan game's checks "
+		"before a ready (CLAN:ErrorMissingClanAffiliation / CLAN:ErrorOnlyTwoClans) are not ported",
+		"[S-4554] online staging room transport: polls held by the lobby (long polling) and the sender's own chat line shown at its sending are "
+		"OpenBFME's (retail: GameSpy's peer chat)",
 		"[S-4077] online rejoin / watch: RotWK's movies have no Rejoin or Watch button: the player's running game is offered in GuiFX's Yes / No box at "
 		"sign-in and is a REJOIN row of the Open Play list, other running games are WATCH rows; Join Game on such a row asks the lobby for the rejoin "
 		"or spectator START (state 13, OpenBFME's)",
@@ -134,6 +145,17 @@ AptOnlineShell::AptOnlineShell(WindowManager &windows, Shell &shell, ShellEnviro
 			m_client->leaveGame();
 		}
 		this->windows().requestShellPop();
+	});
+	// lane ONLINE-5: the MESSENGER button of the shell's frame (MpGameSetup.apt's MessengerButton: its release sends AptMessenger::OnMessengerBttn and
+	// its look follows the extern AptMessenger::IsOpen). The Messenger (GameSpy's buddy chat, AptMessenger) is not ported (S-4075): the press used to
+	// reach no handler at all; now the player is told, and the button shows the Messenger closed
+	registerCommand("AptMessenger::OnMessengerBttn", [this](const std::string &) { notAvailable("the Messenger", "[S-4075]"); });
+	registerProvider("AptMessenger::IsOpen", [](const std::string &, std::string &value, bool setting) {
+		if (!setting)
+		{
+			value = "0";
+		}
+		return true;
 	});
 	registerProvider("OnlineShellStartScreen", [this](const std::string &, std::string &value, bool setting) {
 		if (!setting)
@@ -606,7 +628,15 @@ void AptOnlineShell::registerOpenPlay()
 		m_state = 1;
 		m_popUp = false;
 	});
-	pageCommand(page, "AptOnline::CustomMatch::OnOpenConnectionsScreen", [](const std::string &) {});
+	// lane ONLINE-5: the CONNECTIONS button: the page's OpenConnectionScreen closes the room's panels, loads Connections.swf and sends
+	// OnOpenConnectionsScreen. Retail's screen shows the GameSpy connection (NAT negotiation) between every two players; OpenBFME's players do not
+	// connect to each other (every one talks to the relay), so there is nothing for it to show [S-4550]: the player is told, and the room's panels
+	// come back through the page's own close (StartCloseConnectionsScreen reopens them, OnConnectionsScreenClosed unloads the movie). The handler
+	// used to do nothing: the room's panels went and an empty screen stayed
+	pageCommand(page, "AptOnline::CustomMatch::OnOpenConnectionsScreen", [this](const std::string &) {
+		m_closeConnections = 2; // the page's own functions run from the next updates (not inside the button's script)
+		notAvailable("the Connections screen (online games go through the relay server, players do not connect to each other)", "[S-4550]");
+	});
 	pageCommand(page, "AptOnline::CustomMatch::OnClosingConnectionsScreen", [](const std::string &) {});
 	// GameSorter (RW 0x98821C ..): the columns of the list
 	pageCommand(page, "GameSorter::OnSortName", [this](const std::string &) { sortBy(0); });
@@ -1095,13 +1125,26 @@ void AptOnlineShell::startPressed()
 	}
 	if (SkirmishGameSetup *model = setupModel())
 	{
-		const SkirmishGameSetup::StartCheck check = model->checkStart();
+		// lane ONLINE-5: with the screen's own flags (0x20: a player who is not ready refuses the start with GUI:NotifiedStartIntent, RW 0x8431B8's
+		// last test). The owner's vslot 0x44 (BFME2 0x59F043 MpOwnerPrintMessage): kind 2 is a line every player of the room gets, the others are local
+		const SkirmishGameSetup::StartCheck check = model->checkStart(setupFlags());
 		for (const SkirmishGameSetup::StartCheck::Line &line : check.lines)
 		{
-			systemChat(line.text);
+			if (line.kind == 2)
+			{
+				m_client->chat(line.text);
+			}
+			else
+			{
+				systemChat(line.text);
+			}
 		}
 		if (!check.ok)
 		{
+			if (!check.refusal.empty())
+			{
+				m_startRefusals.push_back(check.refusalLabel);
+			}
 			windows().note("online-start-refused", check.refusalLabel + ": " + narrow(check.refusal));
 			callPage("EnableButtonPlayGame");
 			return;
@@ -1328,6 +1371,7 @@ void AptOnlineShell::update()
 {
 	prune();
 	pumpClient();
+	serviceReadyBoxes(); // lane ONLINE-5: RW 0x846BA4 (the setup panel's update: + 0x2B9)
 	if (m_box)
 	{
 		m_box->update();
@@ -1354,6 +1398,11 @@ void AptOnlineShell::update()
 	if (!m_pages.count("OnlineOpenPlay"))
 	{
 		return;
+	}
+	if (m_closeConnections > 0 && --m_closeConnections == 0)
+	{
+		invokeRoot("StartCloseConnectionsScreen"); // lane ONLINE-5 (S-4550): the room's panels back (the page defines both on _root)
+		invokeRoot("OnConnectionsScreenClosed");
 	}
 	switch (m_state)
 	{
@@ -1504,12 +1553,41 @@ bool AptOnlineShell::lobbyEditable(int slot) const
 
 void AptOnlineShell::onReadyPress(const std::string &argument)
 {
-	// MpGameSetup::OnReadyPress (BFME2 0x5A1DCE MpOwnerOnReadyChecked: READY / UNREADY to the host): only a press (an argument) counts
-	if (argument.empty() || argument == "undefined" || !m_client || !m_client->inGame() || m_client->amIHost())
+	// MpGameSetup::OnReadyPress (RW 0x841590 region; BFME2 0x43EFD3, decomp MpGameSetupSlots.cpp AptMpGameSetup::OnReadyPress): without an argument the
+	// movie's Ready boxes were just made and get their states; with one, the slot it names (1 .. 7: the row of the box pressed) asks to toggle its ready
+	// state and the answer goes to the owner (BFME2 0x5A1DCE MpOwnerOnReadyChecked: a joined player's READY / UNREADY; the host has none). Only the local
+	// player's own box takes a press in the movie (RW 0x84211D: the others are "_disabled..."); a press naming another slot is refused by name.
+	// NOT PORTED: the clan game's checks before a ready (rules mode 1: CLAN:ErrorMissingClanAffiliation / CLAN:ErrorOnlyTwoClans): no clans here
+	if (argument.empty() || argument == "undefined")
+	{
+		readyBoxesMade();
+		return;
+	}
+	if (!m_client || !m_client->inGame())
 	{
 		return;
 	}
-	m_ready = !m_client->slotViews()[(size_t)m_client->localSlot()].ready;
+	const int local = m_client->localSlot();
+	int index = local;
+	if (argument != "PlayGame") // startPressed: a joiner's Play Game command is its own Ready
+	{
+		char *end = nullptr;
+		const long v = std::strtol(argument.c_str(), &end, 10);
+		if (end == argument.c_str() || *end != '\0' || v <= 0 || v >= MAX_SLOTS)
+		{
+			windows().note("online-ready-refused", "MpGameSetup::OnReadyPress(" + argument + "): not a player slot (1 .. 7)");
+			return;
+		}
+		index = (int)v;
+	}
+	if (index != local || m_client->amIHost())
+	{
+		windows().note("online-ready-refused", "MpGameSetup::OnReadyPress(" + argument + "): only the local player's own Ready box (slot " + std::to_string(local) +
+													 ") takes a press, and the host has none");
+		updateReadyIcon(index, true); // the box pressed goes back to what the lobby says
+		return;
+	}
+	m_ready = !m_client->slotViews()[(size_t)local].ready;
 	m_client->setReady(m_ready);
 }
 

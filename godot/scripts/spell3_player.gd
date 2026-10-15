@@ -148,7 +148,7 @@ func buy_all(st: Dictionary) -> Array:
 
 ## the probes a power is judged on, put down at the aim point by a logged test hook (create_object): two own soldiers (one wounded: the heal's target),
 ## two enemy soldiers and an enemy economy building (the debuffs' and the damage powers' targets)
-func plant_probes(aim: Vector2) -> Dictionary:
+func plant_probes(aim: Vector2, spread: float = 1.0) -> Dictionary:
 	var me: int = game._local_index
 	var foe := -1
 	for p in world.get_economy().players:
@@ -156,10 +156,13 @@ func plant_probes(aim: Vector2) -> Dictionary:
 			foe = int(p.index)
 	var probes := {"own": [], "foe": []}
 	for i in 2:
-		probes.own.append(world.create_object("GondorFighter", me, aim.x - 30.0 + 20.0 * i, aim.y + 25.0, 0.0))
-		probes.foe.append(world.create_object("MordorFighter", foe, aim.x - 30.0 + 20.0 * i, aim.y - 25.0, 0.0))
-	probes.foe.append(world.create_object("MordorSlaughterHouse", foe, aim.x + 60.0, aim.y - 60.0, 0.0))
-	probes.own.append(world.create_object("GondorFarm", me, aim.x - 60.0, aim.y + 70.0, 0.0)) # Rebuild's HealAffects = STRUCTURE
+		probes.own.append(world.create_object("GondorFighter", me, aim.x + (-30.0 + 20.0 * i) * spread, aim.y + 25.0 * spread, 0.0))
+		probes.foe.append(world.create_object("MordorFighter", foe, aim.x + (-30.0 + 20.0 * i) * spread, aim.y - 25.0 * spread, 0.0))
+	# every probe stands `spread` times further out (review r1 #1: Lone Tower and the summons are refused within their ForbiddenObjectRange of any soldier or
+	# structure (NO_SUMMON_(STRUCTURE_)NEAR_OBJECT_FILTER lists INFANTRY, HERO, CAVALRY ...), so their spot is asked with the probes out of that range
+	# around it: still measured as one group at the cast spot, just not on top of it)
+	probes.foe.append(world.create_object("MordorSlaughterHouse", foe, aim.x + 60.0 * spread, aim.y - 60.0 * spread, 0.0))
+	probes.own.append(world.create_object("GondorFarm", me, aim.x - 60.0 * spread, aim.y + 70.0 * spread, 0.0)) # Rebuild's HealAffects = STRUCTURE
 	# a creep (CREEP_OBJECTFILTER: NeutralWarg ...) of the creeps' player, for Untamed Allegiance
 	var creeps := -1
 	for p in world.get_economy().players:
@@ -211,6 +214,11 @@ func probe_moved(at: Dictionary) -> float:
 	return most
 
 
+func cancel_targeting_and_clean(probes: Dictionary, at: Vector2) -> void:
+	await click(to_pixel(at.x, at.y), MOUSE_BUTTON_RIGHT) # a right click cancels the targeting
+	remove_probes(probes)
+
+
 func remove_probes(probes: Dictionary) -> void:
 	for id in probes.own + probes.foe + [probes.get("creep", -1)]:
 		if int(id) >= 0 and world.get_object(int(id)).get("ok", false):
@@ -229,6 +237,44 @@ func baseline(aim: Vector2) -> String:
 	await game._step(4)
 	print("SPELL3 baseline at %s: the enemy probes lost %.0f and moved %.0f in 7 s without a cast" % [aim, lost, moved])
 	return "" if lost == 0.0 and moved < 10.0 else "the aim %s is not quiet: the enemy probes lost %.0f and moved %.0f without a cast" % [aim, lost, moved]
+
+
+## lane SPELL-4 (review r1 #1): the spot RotWK's location test accepts for the power of slot k, asked of the HUD's own radius cursor WITH the probes standing
+## where they are. The slot is pressed, the cursor moved over `spot` (then, when it is red, over a ring around it) and the targeting cancelled with a right
+## click (nothing is cast). { ok, spot, refused (the aim was red), cursor (the state over `spot`) }
+func accepted_spot(k: int, spot: Vector2, bad: Array = [], force_move: bool = false) -> Dictionary:
+	var out := {"ok": false, "spot": spot, "refused": false, "cursor": {}}
+	var spx := slot_pixel(k)
+	if spx.x < 0:
+		return out
+	await click(spx)
+	await game._step(4)
+	if not hud.get_spellbook_state().get("targeting", false):
+		return out
+	await move_to(to_pixel(spot.x, spot.y))
+	await game._step(4)
+	var rc: Dictionary = hud.get_spellbook_state().get("radius_cursor", {})
+	out.cursor = rc
+	if bool(rc.get("valid", true)) and not force_move:
+		out.ok = true
+	else:
+		out.refused = not bool(rc.get("valid", true))
+		for radius in [150.0, 250.0, 350.0, 500.0, 700.0, 1000.0, 1400.0]:
+			for i in 16:
+				var c: Vector2 = spot + Vector2(cos(i * PI / 8.0), sin(i * PI / 8.0)) * radius
+				if bad.any(func(b: Vector2) -> bool: return b.distance_to(c) < 100.0):
+					continue # a spot where the probes were not quiet (our defences shoot the enemy probes there)
+				await move_to(to_pixel(c.x, c.y))
+				await game._step(2)
+				if bool(hud.get_spellbook_state().get("radius_cursor", {}).get("valid", false)):
+					out.spot = c
+					out.ok = true
+					break
+			if out.ok:
+				break
+	await click(to_pixel(out.spot.x, out.spot.y), MOUSE_BUTTON_RIGHT) # cancel: the cursor goes, nothing is cast
+	await game._step(4)
+	return out
 
 
 ## the slot k clicked (and the ground at `aim` when it wants a target); the result judged by what the power's class must do:
@@ -273,39 +319,131 @@ func cast_and_judge(k: int, aim: Vector2) -> Dictionary:
 	var probes := {}
 	var farm_drift := 0.0 # the own farm's health per second without a cast
 	var quiet := ""
-	for attempt in 3:
-		probes = plant_probes(aim)
-		hud.camera_look_at(aim)
-		await game._step(8)
-		var all_ids: Array = [probes.own[0], probes.own[1]] + probes.foe # the own farm drifts on its own for some factions: measured, not required still
-		# Devastation is judged by the trees it fells, at the grove beside our base, where our defences shoot the enemy probes: there the window
-		# requires the trees and the own soldiers unchanged
-		var by_trees: bool = str(eff0.get("class", "")) == "DevastateSpecialPower"
-		if by_trees:
-			all_ids = [probes.own[0], probes.own[1]]
-		var trees_q0: int = world.get_logic_trees(aim.x, aim.y, 180.0).size()
-		var h0 := probe_each(all_ids)
-		var farm0 := probe_health([probes.own[2]])
-		var at0 := probe_positions(probes.foe.slice(0, 2) + probes.own.slice(0, 2))
-		await game._wait_seconds(2.0)
-		var h1 := probe_each(all_ids)
-		farm_drift = (probe_health([probes.own[2]]) - farm0) / 2.0
-		var moved := probe_moved(at0)
-		var trees_q1: int = world.get_logic_trees(aim.x, aim.y, 180.0).size()
-		if by_trees:
-			moved = 0.0 # the enemy probes are not part of its judgement
-		quiet = "" if h0 == h1 and moved < 10.0 and trees_q0 == trees_q1 else "the probes changed in the quiet window before the cast: health %s -> %s, moved %.0f, trees %d -> %d" % [
-			str(h0), str(h1), moved, trees_q0, trees_q1]
-		if quiet == "":
+	var wants_spot: bool = bool(b.get("needs_position", false))
+	var accepted := false
+	var refused_first := false
+	# lane SPELL-4 (review r1 #1): the probes are planted AT the spot the cast will go to, and measured there: when the HUD refuses the aim (red) the
+	# accepted spot is found with the probes standing (their structures can be what refuses it), the probes are planted again there and the spot asked
+	# once more, up to four rounds; the cast then goes to that same spot
+	var aim_first := aim
+	var bad_spots: Array = []
+	var spread := 1.0
+	for spot_round in 12:
+		for attempt in 3:
+			probes = plant_probes(aim, spread)
+			hud.camera_look_at(aim)
+			await game._step(8)
+			var all_ids: Array = [probes.own[0], probes.own[1]] + probes.foe # the own farm drifts on its own for some factions: measured, not required still
+			if spread > 1.0:
+				all_ids = [probes.own[0], probes.own[1], probes.foe[0], probes.foe[1]] # the spread-out structures stand wherever they stand: only the soldiers must be quiet
+			# Devastation is judged by the trees it fells, at the grove beside our base, where our defences shoot the enemy probes: there the window
+			# requires the trees and the own soldiers unchanged
+			var by_trees: bool = str(eff0.get("class", "")) == "DevastateSpecialPower"
+			if by_trees:
+				all_ids = [probes.own[0], probes.own[1]]
+			var trees_q0: int = world.get_logic_trees(aim.x, aim.y, 180.0).size()
+			var h0 := probe_each(all_ids)
+			var farm0 := probe_health([probes.own[2]])
+			var at0 := probe_positions(probes.foe.slice(0, 2) + probes.own.slice(0, 2))
+			await game._wait_seconds(2.0)
+			var h1 := probe_each(all_ids)
+			farm_drift = (probe_health([probes.own[2]]) - farm0) / 2.0
+			var moved := probe_moved(at0)
+			var trees_q1: int = world.get_logic_trees(aim.x, aim.y, 180.0).size()
+			if by_trees:
+				moved = 0.0 # the enemy probes are not part of its judgement
+			quiet = "" if h0 == h1 and moved < 10.0 and trees_q0 == trees_q1 else "the probes changed in the quiet window before the cast: health %s -> %s, moved %.0f, trees %d -> %d" % [
+				str(h0), str(h1), moved, trees_q0, trees_q1]
+			if quiet == "":
+				break
+			print("SPELL3 %s: %s (attempt %d)" % [power, quiet, attempt + 1])
+			remove_probes(probes)
+			await game._wait_seconds(5.0)
+		# a tower / barricade is judged by the object it makes (no probe health is read), so an unquiet window does not invalidate it; every other power needs a quiet window
+		if quiet != "" and (power.contains("LoneTower") or power.contains("Barricade")):
+			print("SPELL4 cursor %s: the probes were not quiet (%s); this power is judged by the object it makes, not by probe health: kept" % [power, quiet])
+			quiet = ""
+		if quiet != "":
+			remove_probes(probes)
+			if wants_spot and spot_round < 11:
+				# a spot that is not quiet (our defences shoot the enemy probes there): it is skipped and the next accepted spot looked for
+				print("SPELL4 cursor %s: the accepted spot %s is not quiet (%s); another one is looked for" % [power, str(aim), quiet])
+				bad_spots.append(aim)
+				var next: Dictionary = await accepted_spot(k, aim, bad_spots, true)
+				if not next.ok:
+					r["result"] = "FAIL"
+					r["why"] = "no quiet spot the HUD accepts for %s near %s" % [power, str(aim_first)]
+					return r
+				aim = next.spot
+				refused_first = true
+				trees0 = world.get_logic_trees(aim.x, aim.y, 180.0).size()
+				await game._step(4)
+				continue
+			r["result"] = "FAIL"
+			r["why"] = "not isolated: " + quiet
+			return r
+		if not wants_spot:
+			accepted = true
 			break
-		print("SPELL3 %s: %s (attempt %d)" % [power, quiet, attempt + 1])
+		var found: Dictionary = await accepted_spot(k, aim, bad_spots)
+		if not found.ok:
+			# red at every ring spot WITH the probes where they stand: a power whose test needs a qualifying object in its radius (NEEDS_OBJECT_FILTER: Industry,
+			# Blight, Snowbind ...) is only valid where the probes are, so the probes walk: planted at each candidate spot in turn and the cursor asked there
+			var walked := false
+			for radius in [250.0, 400.0, 600.0, 850.0, 1200.0]:
+				for i in 12:
+					var c: Vector2 = aim_first + Vector2(cos(i * PI / 6.0), sin(i * PI / 6.0)) * radius
+					if bad_spots.any(func(b: Vector2) -> bool: return b.distance_to(c) < 100.0):
+						continue
+					remove_probes(probes)
+					probes = plant_probes(c, spread)
+					hud.camera_look_at(c)
+					await game._step(6)
+					var chk: Dictionary = await accepted_spot(k, c)
+					if chk.ok and not chk.refused:
+						aim = c
+						walked = true
+						break
+				if walked:
+					break
+			remove_probes(probes)
+			if not walked:
+				r["result"] = "FAIL"
+				r["why"] = "no spot the HUD accepts for %s near %s (the cursor stayed red at every spot tried, with the probes walked to each)" % [power, str(aim_first)]
+				return r
+			print("SPELL4 cursor %s: the aim %s is red everywhere with the probes in place; the probes walked to the spot %s the HUD accepts" % [power, str(aim_first), str(aim)])
+			refused_first = true
+			trees0 = world.get_logic_trees(aim.x, aim.y, 180.0).size()
+			await game._step(4)
+			continue
+		if not found.refused:
+			accepted = true
+			r["cursor"] = found.cursor
+			break
+		refused_first = true
+		if aim != aim_first and spread == 1.0:
+			# a spot found with the probes elsewhere is refused again once they stand there: their own structures refuse it. They are spread out and the first
+			# aim asked again
+			spread = 4.0
+			print("SPELL4 cursor %s: %s is refused by the probes themselves (the filter lists soldiers and structures); they are spread %.1fx and the first aim %s asked again" % [power, str(aim), spread, str(aim_first)])
+			remove_probes(probes)
+			aim = aim_first
+			trees0 = world.get_logic_trees(aim.x, aim.y, 180.0).size()
+			await game._step(4)
+			continue
+		print("SPELL4 cursor %s: the aim %s is refused (red); the probes move to the accepted spot %s (round %d)" % [power, str(aim), str(found.spot), spot_round + 1])
+		shot("cursor-invalid-" + power)
 		remove_probes(probes)
-		await game._wait_seconds(5.0)
-	if quiet != "":
+		aim = found.spot
+		trees0 = world.get_logic_trees(aim.x, aim.y, 180.0).size()
+		await game._step(4)
+	if not accepted:
 		remove_probes(probes)
 		r["result"] = "FAIL"
-		r["why"] = "not isolated: " + quiet
+		r["why"] = "the accepted spot kept moving: the HUD refused %s after the probes were planted at it, twelve rounds" % power
 		return r
+	r["spot"] = [aim.x, aim.y]
+	r["aim_refused_first"] = refused_first
 	var own_each0 := probe_each(probes.own)
 	var cast_t0 := Time.get_ticks_msec()
 	var own0 := probe_health([probes.own[0], probes.own[2]])
@@ -320,11 +458,22 @@ func cast_and_judge(k: int, aim: Vector2) -> Dictionary:
 		return r
 	await click(spx)
 	await game._step(4)
+	var cast_t := Time.get_ticks_msec()
 	if hud.get_spellbook_state().get("targeting", false):
 		await move_to(to_pixel(aim.x, aim.y))
 		await game._step(4)
+		var rc: Dictionary = hud.get_spellbook_state().get("radius_cursor", {})
+		print("SPELL4 cursor %s: %s" % [power, JSON.stringify(rc)])
+		r["cursor"] = rc
+		if not bool(rc.get("valid", true)):
+			# the spot was accepted a moment ago with these probes: it must still be (a refused click casts nothing)
+			await cancel_targeting_and_clean(probes, aim)
+			r["result"] = "FAIL"
+			r["why"] = "the accepted spot %s is red again at the cast" % str(aim)
+			return r
 		shot("cursor-" + power)
 		await click(to_pixel(aim.x, aim.y))
+		cast_t = Time.get_ticks_msec()
 	# the cast's sound (review r1): the audio manager's playing events sampled for 2 s after the cast; the power's InitiateAtLocationSound (or InitiateSound)
 	var want_sound: String = str(eff0.get("initiate_at_location_sound", ""))
 	if want_sound == "":
@@ -343,7 +492,15 @@ func cast_and_judge(k: int, aim: Vector2) -> Dictionary:
 			await game._wait_seconds(0.2)
 	r["sound"] = want_sound
 	r["sound_playing"] = heard
-	await game._wait_seconds(2.5)
+	# lane SPELL-4: an early look (the heal / leadership glows fade in over 12 drawn frames and Heal's lasts 2.4 s)
+	var since := (Time.get_ticks_msec() - cast_t) / 1000.0
+	if since < 0.8:
+		await game._wait_seconds(0.8 - since)
+	shot("effect-early-" + power)
+	if world.has_method("get_buff_state"):
+		var bs: Dictionary = world.get_buff_state()
+		print("SPELL4 buffs after %s: %d shown, %d instance updates, errors %s, first %s" % [power, int(bs.count), int(bs.drawn), JSON.stringify(bs.errors), JSON.stringify(bs.buffs.slice(0, 3))])
+	await game._wait_seconds(1.7)
 	shot("effect-" + power)
 	await game._wait_seconds(4.0) # the volleys' later phases, the eggs' hatching
 	var eff: Dictionary = world.get_spell_power_effect(me, power)
@@ -493,7 +650,14 @@ func _scenario_spellbook() -> String:
 	# damage a cast is judged on is the cast's
 	var grove_at := grove(base)
 	var aim_found := false
-	for cand in [target, grove_at, base.lerp(enemy, 0.2), base.lerp(enemy, 0.08) + Vector2(250, 0), base.lerp(enemy, 0.08) + Vector2(-250, 0)]:
+	var cands: Array = [target, grove_at, base.lerp(enemy, 0.2), base.lerp(enemy, 0.08) + Vector2(250, 0), base.lerp(enemy, 0.08) + Vector2(-250, 0)]
+	if OS.get_environment("SPELL4_GROVE_AIM") == "1":
+		# lane SPELL-4 (the faction sweep): the grove beside the base first (inland on every faction's start: no water in the powers' radius)
+		cands = [grove_at, target, base.lerp(enemy, 0.2), base.lerp(enemy, 0.08) + Vector2(250, 0), base.lerp(enemy, 0.08) + Vector2(-250, 0)]
+	if OS.get_environment("SPELL4_OPEN_AIM") == "1":
+		# lane SPELL-4 (proof shots): open ground first, the grove (its trees hide the units) last
+		cands = [target, base.lerp(enemy, 0.2), base.lerp(enemy, 0.08) + Vector2(250, 0), base.lerp(enemy, 0.08) + Vector2(-250, 0), base.lerp(enemy, 0.3), grove_at]
+	for cand in cands:
 		if await baseline(cand) == "":
 			target = cand
 			aim_found = true
@@ -587,18 +751,37 @@ func _scenario_sequence() -> String:
 		var aim := base.lerp(enemy, 0.12)
 		if power.contains("Devastation"):
 			aim = grove(base)
+		# lane SPELL-4 (the proof clip, SPELL4_SEQ_CLIP=1): the probes stand at the aim (own wounded soldiers to heal / lift), the cursor glides over them
+		# before the click, and the frames come every 0.1 s for 4 s
+		var clip := OS.get_environment("SPELL4_SEQ_CLIP") == "1"
+		if clip:
+			plant_probes(aim)
 		hud.camera_look_at(aim)
 		await game._step(8)
 		await click(slot_pixel(k))
 		await game._step(4)
+		var frame_n := 0
 		if hud.get_spellbook_state().get("targeting", false):
+			if clip:
+				for i in 12:
+					var c := aim + Vector2(-180.0 + 15.0 * i, 60.0 - 5.0 * i)
+					await move_to(to_pixel(c.x, c.y))
+					await game._wait_seconds(0.1)
+					shot("seq-%s-%03d" % [power, frame_n])
+					frame_n += 1
 			await move_to(to_pixel(aim.x, aim.y))
 			await game._step(4)
 			shot("seq-%s-cursor" % power)
 			await click(to_pixel(aim.x, aim.y))
-		for n in 15:
-			await game._wait_seconds(0.4)
-			shot("seq-%s-%02d" % [power, n])
+		if clip:
+			for n in 40:
+				await game._wait_seconds(0.1)
+				shot("seq-%s-%03d" % [power, frame_n])
+				frame_n += 1
+		else:
+			for n in 15:
+				await game._wait_seconds(0.4)
+				shot("seq-%s-%02d" % [power, n])
 		print("SPELL3 sequence %s: slot %d now %s" % [power, k + 1, hud.get_spellbook_state().slots[k]])
 	return "; ".join(fails)
 

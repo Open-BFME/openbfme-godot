@@ -182,7 +182,10 @@ bool AptSkirmish::tryPopulateRules()
 	// the states: 1 for every rule a row may show; ClanGame (rule 1) is state 3 outside online play (RW 0x441ECE's BFME2 twin: the panel's
 	// rva0057E9ED(1, 3) unless the setup's flag 0x40)
 	m_ruleStates.fill(0);
-	m_ruleStates[RULE_CLAN_GAME] = 3;
+	if ((setupFlags() & 0x40) == 0) // lane ONLINE-5: the flag is the screen's (online 0x200001F0 has it: the online staging room shows Clan Game)
+	{
+		m_ruleStates[RULE_CLAN_GAME] = 3;
+	}
 	populateRuleCombos();
 	populateRuleChecks();
 	m_rulesPopulated = true;

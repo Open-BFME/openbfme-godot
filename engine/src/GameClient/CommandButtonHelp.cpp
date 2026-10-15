@@ -11,12 +11,15 @@
 #include "Common/INI/INIBlockStubs.h"
 #include "Common/Player.h"
 #include "Common/Science.h"
+#include "Common/SpecialPower.h"
+#include "Common/Thing/ThingTemplate.h"
 #include "Common/Upgrade.h"
 #include "GameClient/GUI/GameTextSource.h"
 #include "GameClient/GUI/GameWindowManager.h"
 #include "GameClient/GUI/LoadScreenInfo.h"
 #include "GameClient/GlobalLanguage.h"
 #include "GameLogic/GameLogic.h"
+#include "GameLogic/Module/CastleModules.h"
 #include "GameLogic/Module/ProductionUpdate.h"
 #include "GameLogic/Object/Object.h"
 #include "GameLogic/ObjectTemplateInfo.h"
@@ -313,10 +316,76 @@ bool HelpBoxSettings::load(ArchiveFileSystem &fs, HelpBoxSettings &out, std::str
 // ---------------------------------------------------------------------------------------------------------------------------------
 // the text (RW 0x807A81)
 // ---------------------------------------------------------------------------------------------------------------------------------
-CommandButtonHelp::Text CommandButtonHelp::compose(const ControlBarButton &button, const GameTextSource *text, GameLogic &logic, Player *player, Player *localPlayer,
-                                                   Object *selection, const std::string &faction)
+// lane HOVER-1: a ThingTemplate label row (parseLabel RW 0x73D3E0 keeps the label at the row's offset and its fetched text at offset + 4): the label as the
+// row gives it, "" when the row was never set
+std::string CommandButtonHelp::templateLabel(const ThingTemplate &tt, const std::string &field)
 {
-	(void)logic;
+	const FieldValue *v = tt.findField(field);
+	if (const std::string *label = v ? std::get_if<std::string>(v) : nullptr)
+	{
+		return *label;
+	}
+	if (const RawTokens *raw = v ? std::get_if<RawTokens>(v) : nullptr)
+	{
+		return raw->tokens.empty() ? std::string() : raw->tokens.front();
+	}
+	return std::string();
+}
+
+// the fetched text of a template label row ("" for an unset row; a label the string file lacks is its MISSING text, as retail fetched it at load)
+UnicodeString CommandButtonHelp::templateText(const ThingTemplate &tt, const std::string &field, const GameTextSource *text)
+{
+	const std::string label = templateLabel(tt, field);
+	return label.empty() ? UnicodeString() : fetchOrMissing(text, label);
+}
+
+namespace
+{
+// RW 0x8077D1 (BFME2 decomp Rva00405B8DTest.cpp OldSchoolHelpBoxContentSource::allRequiredUpgradesComplete, tier A): each needed upgrade, by its Type
+// (OBJECT: the object has it, PLAYER: the object's controlling player completed it, any other type: false at once); NeededUpgradeAny = any of them
+bool allRequiredUpgradesComplete(const Object &obj, const CommandButton &b, std::string *unresolved)
+{
+	for (const std::string &name : b.m_neededUpgrade)
+	{
+		const UpgradeTemplate *u = TheUpgradeCenter ? TheUpgradeCenter->findUpgrade(name) : nullptr;
+		if (!u)
+		{
+			*unresolved = name; // retail resolves the names at parse time: an unknown name never reaches here
+			continue;
+		}
+		bool r;
+		if (u->getUpgradeType() == UPGRADE_TYPE_OBJECT)
+		{
+			r = obj.hasUpgrade(u);
+		}
+		else if (u->getUpgradeType() == UPGRADE_TYPE_PLAYER)
+		{
+			const Player *p = obj.getControllingPlayer();
+			r = p && p->hasUpgradeComplete(u);
+		}
+		else
+		{
+			return false;
+		}
+		if (b.m_neededUpgradeAny)
+		{
+			if (r)
+			{
+				return true;
+			}
+		}
+		else if (!r)
+		{
+			return false;
+		}
+	}
+	return !b.m_neededUpgradeAny;
+}
+} // namespace
+
+CommandButtonHelp::Text CommandButtonHelp::compose(const ControlBarButton &button, const GameTextSource *text, GameLogic &logic, Player *player, Player *localPlayer,
+                                                   Object *selection, const std::string &faction, const std::vector<ObjectID> *selected)
+{
 	Text t;
 	t.resourceSuffix = faction; // RW 0x8086B5: the Palantir's faction (+ 0xF8), when the Palantir exists
 	const CommandButton *b = button.button;
@@ -328,14 +397,68 @@ CommandButtonHelp::Text CommandButtonHelp::compose(const ControlBarButton &butto
 	const ThingTemplate *tmpl = b->getThingTemplate();                                                     // RW 0x75D1DC
 	const UpgradeTemplate *upgrade = (TheUpgradeCenter && !b->m_upgradeName.empty()) ? TheUpgradeCenter->findUpgrade(b->m_upgradeName) : nullptr; // + 0x24
 	const bool upgradeCommand = cmd == GUI_COMMAND_PLAYER_UPGRADE || cmd == GUI_COMMAND_OBJECT_UPGRADE || cmd == GUI_COMMAND_CASTLE_UPGRADE; // RW 0x807BE0
-	if (cmd == GUI_COMMAND_SPELL_BOOK)
+	const bool mp = player ? player->science().mode().skirmishOrMultiplayer : true; // RW 0x5FEC64's game mode test
+
+	// the science (RW 0x807B29 .. 0x807BDD): with more than one, PURCHASE_SCIENCE takes the first the player lacks (the last when it has them all, or with
+	// no player); any other command takes the first and locks it (no science cost); with exactly one, that one
+	ScienceType science = SCIENCE_INVALID;
+	bool scienceLocked = false;
+	auto scienceAt = [](const std::string &name) { return TheScienceStore ? TheScienceStore->getScienceFromInternalName(name) : SCIENCE_INVALID; };
+	if (b->m_science.size() > 1)
 	{
-		t.unported.push_back("SPELL_BOOK's TOOLTIP:ScienceDisabled test (RW 0x807CC0)");
+		for (size_t i = 0; i < b->m_science.size(); ++i)
+		{
+			science = scienceAt(b->m_science[i]);
+			if (cmd != GUI_COMMAND_PURCHASE_SCIENCE)
+			{
+				if (player && !player->hasScience(science) && i > 0)
+				{
+					science = scienceAt(b->m_science[i - 1]);
+				}
+				scienceLocked = true;
+				break;
+			}
+			if (player && !player->hasScience(science))
+			{
+				break;
+			}
+		}
 	}
-	if (cmd == GUI_COMMAND_START_SELF_REPAIR || cmd == GUI_COMMAND_START_NEIGHBORHOOD_REPAIR)
+	else if (b->m_science.size() == 1)
 	{
-		t.unported.push_back("the repair cost (RW 0x807C2E)");
+		science = scienceAt(b->m_science.front());
 	}
+
+	// the repair cost (RW 0x807BFD .. 0x807CAF, START_SELF_REPAIR / START_NEIGHBORHOOD_REPAIR with a selection): the cost of the interface the object's
+	// behavior modules answer at vslot 0x84 (RW 0x68C3E6), vslot 0x30 / 0x50
+	if ((cmd == GUI_COMMAND_START_SELF_REPAIR || cmd == GUI_COMMAND_START_NEIGHBORHOOD_REPAIR) && selection)
+	{
+		t.unported.push_back("the repair cost of RW 0x807C14 (the behavior interface RW 0x68C3E6 answers is not ported, S-4612)");
+	}
+
+	// SPELL_BOOK (RW 0x807CBA .. 0x807D88): with a local player, the first of the power's RequiredSciences the local player owns; when that science is
+	// disabled or hidden for it (RW 0x6AC25F / 0x6AC287) or lacks its root prerequisites (RW 0x5FF4D7 on the player's science record), the description is
+	// "TOOLTIP:ScienceDisabled"
+	if (localPlayer && cmd == GUI_COMMAND_SPELL_BOOK && !b->m_specialPowerName.empty() && TheSpecialPowerStore)
+	{
+		if (const SpecialPowerTemplate *sp = TheSpecialPowerStore->findSpecialPowerTemplate(b->m_specialPowerName)) // RW 0x6A0713 (the final override's + 0x24)
+		{
+			for (ScienceType st : sp->getFinalOverride()->getRequiredSciences())
+			{
+				if (localPlayer->hasScience(st))
+				{
+					if (st != SCIENCE_INVALID &&
+					    (localPlayer->isScienceDisabled(st) || localPlayer->isScienceHidden(st) || !TheScienceStore ||
+					     !TheScienceStore->playerHasRootPrereqsForScience(localPlayer->science(), st)))
+					{
+						t.description = fetchOrMissing(text, "TOOLTIP:ScienceDisabled");
+					}
+					break;
+				}
+			}
+		}
+	}
+
 	// the description (RW 0x807D8F .. 0x807EB0): with no text yet and a DescriptLabel (RW 0x807DA3), the label's text; only then an upgrade command of a
 	// selection whose player (+ -0x20) lacks the upgrade (RW 0x6AB2E1) gets a warning after "\n\n" (RW 0xC4F008): the selection's production queue at
 	// 0x14 entries (vslot 0x44 getProductionCount, RW 0x807E29) -> "TOOLTIP:TooltipCannotPurchaseBecauseQueueFull", else, when the LOCAL player (RW 0xDE4928
@@ -393,39 +516,170 @@ CommandButtonHelp::Text CommandButtonHelp::compose(const ControlBarButton &butto
 		}
 		return t;
 	}
-	if (!upgrade)
+	if (upgrade)
 	{
-		if (cmd == GUI_COMMAND_PURCHASE_SCIENCE && b->m_science.size() == 1 && TheScienceStore)
+		// an upgrade (RW 0x808144 .. 0x8083C7): `has` starts as the player's completed upgrade (RW 0x6AC2AF)
+		const bool t6 = cmd == GUI_COMMAND_PLAYER_UPGRADE, t7 = cmd == GUI_COMMAND_OBJECT_UPGRADE, t8 = cmd == GUI_COMMAND_CASTLE_UPGRADE;
+		bool has = player && player->hasUpgradeComplete(upgrade);
+		enum
 		{
-			const ScienceType st = TheScienceStore->getScienceFromInternalName(b->m_science.front());
-			if (st != SCIENCE_INVALID)
+			NOTHING,
+			ALREADY,
+			CONFLICT,
+			LACKS
+		} label = NOTHING;
+		if (has)
+		{
+			label = ALREADY;
+		}
+		else if (selection)
+		{
+			std::string unresolved;
+			// RW 0x80818C: NEED_UPGRADE (Options 0x40), the object lacks the upgrade and its NeededUpgrade list is not complete (RW 0x8077D1)
+			if ((b->m_options & COMMAND_OPTION_NEED_UPGRADE) && !selection->hasUpgrade(upgrade) && !allRequiredUpgradesComplete(*selection, *b, &unresolved))
 			{
-				const bool mp = player ? player->science().mode().skirmishOrMultiplayer : true;
-				t.cost = formatOne(fetchOrMissing(text, "TOOLTIP:ScienceCost"), u16(std::to_string(TheScienceStore->getSciencePurchaseCost(st, mp)))); // RW 0x8083A2
+				label = LACKS;
+			}
+			else
+			{
+				// RW 0x8081C0: one selected object: `has` = it has the upgrade; an OBJECT_UPGRADE no module of it answers (RW 0x694914) conflicts; more than
+				// one: `has` = all of them have it, the conflict = none of them is affected (the walk stops when both are false)
+				bool unaffected = false;
+				const size_t count = selected ? selected->size() : 1;
+				if (count == 1)
+				{
+					has = selection->hasUpgrade(upgrade);
+					unaffected = t7 && !selection->affectedByUpgrade(upgrade);
+				}
+				else
+				{
+					has = true;
+					unaffected = true;
+					for (ObjectID id : *selected)
+					{
+						const Object *o = logic.findObjectByID(id);
+						if (o)
+						{
+							has = has && o->hasUpgrade(upgrade);
+							unaffected = unaffected && !o->affectedByUpgrade(upgrade);
+						}
+						if (!has && !unaffected)
+						{
+							break;
+						}
+					}
+				}
+				if (unaffected && !has)
+				{
+					label = CONFLICT;
+				}
+				else if (has)
+				{
+					label = ALREADY;
+				}
+			}
+			if (!unresolved.empty())
+			{
+				t.unported.push_back("NeededUpgrade " + unresolved + " names no upgrade (retail resolves it at parse time)");
 			}
 		}
-		else if (cmd == GUI_COMMAND_PURCHASE_SCIENCE)
+		if (label == LACKS) // RW 0x8082C7: + 0x78, else the default
 		{
-			t.unported.push_back("the multi-science PURCHASE_SCIENCE pick (RW 0x807B5D)");
+			t.description = b->m_lacksPrerequisiteLabel.empty() ? fetchOrMissing(text, "TOOLTIP:LacksPrerequisiteUpgradeDefault")
+			                                                     : fetchOrMissing(text, b->m_lacksPrerequisiteLabel);
 		}
-		else if (cmd == GUI_COMMAND_REVIVE || cmd == GUI_COMMAND_CASTLE_UNPACK || cmd == GUI_COMMAND_SPECIAL_POWER)
+		else if (label == CONFLICT) // RW 0x80820F: + 0x74, else the default
 		{
-			t.unported.push_back(std::string("the ") + GUICommandName(cmd) + " branch of RW 0x807A81 (the hero / castle / unit cost)");
+			t.description = b->m_conflictingLabel.empty() ? fetchOrMissing(text, "TOOLTIP:HasConflictingUpgradeDefault") : fetchOrMissing(text, b->m_conflictingLabel);
+		}
+		else if (label == ALREADY)
+		{
+			if (t6 || t7 || t8) // RW 0x808329: + 0x70, else the default
+			{
+				t.description = b->m_purchasedLabel.empty() ? fetchOrMissing(text, "TOOLTIP:AlreadyUpgradedDefault") : fetchOrMissing(text, b->m_purchasedLabel);
+			}
+			if (has)
+			{
+				return t; // RW 0x808386: no cost line for an upgrade the selection has
+			}
+		}
+		const int cost = upgrade->calcCostToBuild(player, selection); // RW 0x808390 -> 0x66F2C8
+		if (cost > 0)
+		{
+			t.cost = formatOne(fetchOrMissing(text, "TOOLTIP:Cost"), u16(std::to_string(cost)));
 		}
 		return t;
 	}
-	// an upgrade (RW 0x808121 .. 0x80839A)
-	const bool have = (player && player->hasUpgradeComplete(upgrade)) || (selection && selection->hasUpgrade(upgrade));
-	if (have && upgradeCommand)
+	if (science != SCIENCE_INVALID && !scienceLocked)
 	{
-		t.description = b->m_purchasedLabel.empty() ? fetchOrMissing(text, "TOOLTIP:AlreadyUpgradedDefault") : fetchOrMissing(text, b->m_purchasedLabel);
+		// RW 0x8083CC: any command with one science (or PURCHASE_SCIENCE's pick)
+		if (TheScienceStore)
+		{
+			t.cost = formatOne(fetchOrMissing(text, "TOOLTIP:ScienceCost"), u16(std::to_string(TheScienceStore->getSciencePurchaseCost(science, mp)))); // RW 0x5FEC64
+		}
 		return t;
 	}
-	t.unported.push_back("the upgrade's conflict / prerequisite labels (RW 0x8081C0 .. 0x80830C)");
-	const int cost = upgrade->calcCostToBuild(player, selection); // RW 0x66F2C8
-	if (cost > 0)
+	if (cmd == GUI_COMMAND_REVIVE)
 	{
-		t.cost = formatOne(fetchOrMissing(text, "TOOLTIP:Cost"), u16(std::to_string(cost)));
+		// RW 0x8083EF .. 0x80863A: the hero record (+ 0xC0, the selection's player's list + 0x758) and its template
+		const HeroRecord *r = player ? player->heroes().at(button.reviveIndex) : nullptr;
+		const ThingTemplate *hero = r ? player->heroes().templateAt(logic, button.reviveIndex) : nullptr;
+		if (!r || !hero)
+		{
+			return t;
+		}
+		const char *label = r->dead ? "CONTROLBAR:GenericReviveHero" : "CONTROLBAR:GenericRecruitHero";
+		// the description: the template's ReviveText / RecruitText (+ 0x48 / + 0x50, RW 0x73C5FE / 0x73C621), else the generic tool tip
+		const UnicodeString own = templateText(*hero, r->dead ? "ReviveText" : "RecruitText", text);
+		if (!own.empty())
+		{
+			t.description = own;
+		}
+		else
+		{
+			t.description = fetchOrMissing(text, r->dead ? "CONTROLBAR:ToolTipGenericReviveHero" : "CONTROLBAR:ToolTipGenericRecruitHero");
+		}
+		// the name (RW 0x8084CA): a CREATE_A_HERO template's created hero (RW 0x80774E) is not ported (S-4612); else the label formatted with the template's
+		// + 0x60 label (the Hotkey row, RW 0x73C644) fetched, or its DisplayName text (+ 0x30)
+		const int cahBit = ObjectTemplateInfoBuilder::kindOfIndex("CREATE_A_HERO");
+		if (cahBit >= 0 && MaskTest(ObjectTemplateInfoBuilder::build(*hero).kindOf, (unsigned)cahBit))
+		{
+			t.unported.push_back("the Create-a-Hero name of RW 0x80774E (S-4612)");
+		}
+		const std::string nameLabel = templateLabel(*hero, "Hotkey");
+		t.name = formatOne(fetchOrMissing(text, label), nameLabel.empty() ? templateText(*hero, "DisplayName", text) : fetchOrMissing(text, nameLabel));
+		// "\n" and the rank (RW 0x80858B: APT:RankLabel with the record's + 0x0C)
+		t.description += u"\n";
+		t.description += formatOne(fetchOrMissing(text, "APT:RankLabel"), u16(std::to_string(r->rank)));
+		// the cost (RW 0x780AD3 with the selection as the producer) and the command points (+ 0x628)
+		t.cost = formatOne(fetchOrMissing(text, "TOOLTIP:Cost"), u16(std::to_string(player->heroes().costAt(logic, *player, button.reviveIndex, selection))));
+		const int cp = BuildAssistant::commandPoints(*hero);
+		if (cp > 0)
+		{
+			t.commandPoints = formatOne(fetchOrMissing(text, "TOOLTIP:CommandPoints"), u16(std::to_string(cp)));
+		}
+		return t;
+	}
+	if (cmd == GUI_COMMAND_CASTLE_UNPACK)
+	{
+		// RW 0x80863C: the selection's castle module (RW 0x68BDA5), when it can unpack (RW 0x7983E3, no timer test): its unpack cost (RW 0x7995FB)
+		const CastleBehavior *castle = selection ? dynamic_cast<const CastleBehavior *>(selection->findModule("CastleBehavior")) : nullptr;
+		if (castle && castle->canUnpack(false))
+		{
+			t.cost = formatOne(fetchOrMissing(text, "TOOLTIP:Cost"), u16(std::to_string(castle->unpackCost(player))));
+		}
+		return t;
+	}
+	if (cmd == GUI_COMMAND_SPECIAL_POWER)
+	{
+		// RotWK only (RW 0x808675 .. 0x8086A3): the power's final override's UnitCost (+ 0x80) when it is not 0, as "TOOLTIP:UnitCost"
+		const SpecialPowerTemplate *sp = TheSpecialPowerStore && !b->m_specialPowerName.empty()
+		                                     ? TheSpecialPowerStore->findSpecialPowerTemplate(b->m_specialPowerName)
+		                                     : nullptr;
+		if (sp && sp->getFinalOverride()->m_unitCost != 0)
+		{
+			t.cost = formatOne(fetchOrMissing(text, "TOOLTIP:UnitCost"), u16(std::to_string(sp->getFinalOverride()->m_unitCost)));
+		}
 	}
 	return t;
 }
@@ -484,6 +738,22 @@ CommandButtonHelp::CommandButtonHelp(const Text &t, const GameTextSource *text, 
 		// the shortcut line: TOOLTIP:Shortcut formatted with the key (RW 0x97461E)
 		m_shortcut = formatOne(fetchOrMissing(text, "TOOLTIP:Shortcut"), UnicodeString(1, m_key));
 	}
+}
+
+CommandButtonHelp CommandButtonHelp::simple(const UnicodeString &title, const UnicodeString &text, const std::vector<std::string> &unported)
+{
+	CommandButtonHelp h;
+	h.m_simple = true;
+	h.m_unported = unported;
+	for (char16_t c : title) // RW 0x94002B (BFME2 Rva00539619): every '&' goes, no key is kept
+	{
+		if (c != u'&')
+		{
+			h.m_name += c;
+		}
+	}
+	h.m_cost = text;
+	return h;
 }
 
 std::vector<UnicodeString> CommandButtonHelp::wrap(const UnicodeString &text, const GameFont &font, int width, FontMetricsSource &metrics, int *widest)
@@ -570,6 +840,13 @@ int CommandButtonHelp::setWidthAndComputeHeight(int width, const HelpBoxSettings
 		f.pointSize = (int)((float)f.pointSize * fontScale); // RW 0x97428C: FontLibrary::getFont(name, size * min(scale), bold)
 		return f;
 	};
+	if (m_simple)
+	{
+		// RW 0x940159: both strings wrap at the width; the height is the sum of the non-empty ones (no padding line)
+		m_nameS = measure(m_name, scaled(settings.name), m_width, metrics);
+		m_costS = measure(m_cost, scaled(settings.description), m_width, metrics);
+		return m_nameS.h + m_costS.h;
+	}
 	UnicodeString title = m_title, description = m_description;
 	if (!hasText(title) && hasText(description))
 	{
@@ -632,6 +909,21 @@ void CommandButtonHelp::emit(const Measured &m, float x, float y, std::vector<He
 void CommandButtonHelp::render(float px, float py, float sw, float sh, std::vector<HelpDrawOp> &out) const
 {
 	(void)sh;
+	if (m_simple)
+	{
+		// RW 0x93FF0A: each non-empty string centred in the width, the second under the first
+		float y = py;
+		if (!m_nameS.lines.empty())
+		{
+			emit(m_nameS, rounded(px + (sw - (float)m_nameS.w) * 0.5f), rounded(y), out);
+			y += (float)m_nameS.h;
+		}
+		if (!m_costS.lines.empty())
+		{
+			emit(m_costS, rounded(px + (sw - (float)m_costS.w) * 0.5f), rounded(y), out);
+		}
+		return;
+	}
 	const float icon30W = m_icon30W * m_scaleX, icon30H = m_icon30H * m_scaleY, icon34W = m_icon34W * m_scaleX, icon34H = m_icon34H * m_scaleY;
 	const float maxW = std::max(icon30W, icon34W), maxH = std::max(icon30H, icon34H);
 	UnicodeString title = m_title, description = m_description;
@@ -718,10 +1010,11 @@ void CommandButtonHelp::render(float px, float py, float sw, float sh, std::vect
 std::vector<std::string> CommandButtonHelp::acceptanceStops()
 {
 	return {
-		"[S-2702] command button help (HUD-6): ported RW 0x807A81's name, description, build cost / free, command points, build-disabled, upgrade cost, "
-		"already-upgraded, queue-full and not-enough-money texts and single-science cost, and InGameCommandButtonHelp (RW 0x974EEB / 0x9744E4 / 0x974795); not ported: the "
-		"special power / repair / revive / castle cost branches, SPELL_BOOK's science-disabled test, the multi-science pick, the upgrade's conflict / "
-		"prerequisite labels, the Prerequisites text (no retail template has one, S-207); INFERENCE: the word wrap breaks at spaces and "
-		"'\\n' and centres each line (Render2DSentenceClass not read), a line's leading / trailing blanks are dropped"
+		"[S-2702] command button help (HUD-6, HOVER-1): ported RW 0x807A81's name, description, build cost / free, command points, build-disabled, the "
+		"science pick and cost, SPELL_BOOK's science-disabled test, the upgrade's cost / already-upgraded / conflicting / lacks-prerequisite texts, the "
+		"queue-full and not-enough-money warnings, the revive / recruit name, text, rank and cost, the castle unpack cost and the unit cost of SPECIAL_POWER, "
+		"and InGameCommandButtonHelp (RW 0x974EEB / 0x9744E4 / 0x974795); not ported: the repair cost (S-4612), the Create-a-Hero revive name, the "
+		"Prerequisites text (no retail template has one, S-207); INFERENCE: the word wrap breaks at spaces and '\\n' and centres each line "
+		"(Render2DSentenceClass not read), a line's leading / trailing blanks are dropped"
 	};
 }

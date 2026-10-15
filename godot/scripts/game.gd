@@ -32,6 +32,10 @@
 ##     --hud6=<a,b,...>      (lane HUD-6, with --auto) scripts/hud6_player.gd: radial (the fortress's bubbles), heroes (its hero ring), help (the
 ##                           help box over a bubble and over an arc button), sidebar (a builder's framed side bar), barracks (lane BUGS-1: the
 ##                           help box over a Men barracks' unit bubble keeps its text); hud6-<name>.png in --screens
+##     --hover1=<a,b,...>    (lane HOVER-1, with --auto) scripts/hover1_player.gd: ability (a unit cost line), spellbook (a power's help box), herobar
+##                           (a portrait's unit help); hover1-*.png in --screens
+##     --hover1-menus=DIR    (lane HOVER-1) the main menu's and Options' tool tips (GuiFX.apt's ToolTip): the pointer on a button of each navigation and on
+##                           Options' sound quality box, the window saved as DIR/hover1-menu-*.png after the tool tip's delay; then quit
 ##     --hud7=<a,b,...>      (lane HUD-7, with --auto) scripts/hud7_player.gd: radar (the view box and a radar click), deselect (a left click on empty
 ##                           ground), sell (a structure's Sell button), upgrade (the fortress's upgrade bubble in progress), herocancel (a hero recruited, then
 ##                           cancelled by a right click); hud7-<name>.png in --screens
@@ -152,9 +156,12 @@
 ##     --lan-shot=FILE       (host) save the window when the lobby is complete, before Play Game (the media)
 ##     --lan-shot-start=FILE (host, lane UI-1) save the window 8 s after Play Game: the start countdown's QM:STARTINGGAME box (the media)
 ##     --net-shot=FILE:FRAME save the window once the network game reached logic frame FRAME (the media)
+##     --net-press=TEMPLATE  (lane NETLAG-1) from logic frame 20 press the HUD button that produces TEMPLATE on the first own object showing it, then print
+##                           "GAME NET PRESS ... queued at logic frame F: N frames, M ms after the press" once the unit is in its producer's queue
 ##
 ##   lane ONLINE-2, online play through the relay (a test feature; docs/ONLINE.md phase O1, scripts/online_lobby.gd): the lobby service builds the START, every
 ##   peer plays behind the relay (GameWorld.net_online); the game then loads and runs as a LAN game does (--net-script, --net-frames, --net-shot work)
+##     --online-start-file=FILE   lane MP-DROP-1 (tests without a lobby): play the START in FILE (a signed one, tools/net/online_client.py fixture)
 ##     --online-join=ID      join that game of the lobby (also openbfme://join/ID, the launcher's link), say ready, play when the host starts it
 ##     --online-host         host a game on the lobby: --map, --online-slots=STATE:faction:start:team;... (STATE player / open / closed / easy / medium /
 ##                           hard / brutal, faction a player template index or -1), starts once --online-players=N humans are in and ready
@@ -252,6 +259,7 @@ var _perf_parts := {}
 var _perf_last := 0
 var _perf_prev_us := 0
 const DisplaySettings := preload("res://scripts/display_settings.gd") # lane OPTS-1
+const OnlineStats := preload("res://scripts/online_stats.gd") # lane ONLINECOUNT-1
 var _display: RefCounted                 # lane OPTS-1: the display settings in effect (openbfme-display.cfg)
 var _display_path := ""
 var _display_overlay: CanvasLayer        # scripts/fps_overlay.gd: the counter and the F11 / Alt+Enter keys
@@ -308,6 +316,9 @@ var _hud5 := PackedStringArray() # lane HUD-5
 var _rules_shot := 0 # lane RULES-1: --rules-shot=<factor>
 var _gamemodes := "" # lane GAMEMODES-1: --gamemodes=battle|sandbox
 var _hud6 := PackedStringArray() # lane HUD-6 (scripts/hud6_player.gd: radial, heroes, sidebar, help)
+var _hover1 := PackedStringArray() # lane HOVER-1 (scripts/hover1_player.gd: ability, spellbook, herobar)
+var _hover1_menus := "" # lane HOVER-1: --hover1-menus=DIR
+var _hover1_menus_started := false
 var _hud7 := PackedStringArray() # lane HUD-7 (scripts/hud7_player.gd: radar, deselect, sell, upgrade, herocancel)
 var _autocast1 := PackedStringArray() # lane AUTOCAST-1 (scripts/autocast1_player.gd: witchking)
 var _start_spot := -1            # lane HUD-5
@@ -326,12 +337,16 @@ var _online: Node = null
 # lane ONLINE-4
 var _online_http: Node = null
 var _online_walk := ""
+var _online_start_file := "" # lane MP-DROP-1: --online-start-file=FILE
 var _online_shots := ""
 var _online_password := ""
 var _online_saved_name := ""
 var _capture_dir := "" ## --capture-dir=DIR (lane ONLINE-4): the window saved as DIR/c<unix ms>.jpg about 15 times a second, wall clock (a real-time
 var _capture_next := 0  ## recording of a networked game: Movie Maker's --write-movie runs off the wall clock); the frames are put together afterwards
 var _online_note: CanvasLayer = null ## "Online play is a test feature", shown while OnlineShell.apt is up
+var _stats: Node = null              ## lane ONLINECOUNT-1: scripts/online_stats.gd (null: not asked for: off, or not made yet)
+var _stats_off := ""                 ## why the count is not asked for ("" = it is); set once, when the menu first shows
+var _stats_label: Label = null       ## the main menu's / the online menu's "N players online" line
 const ONLINE_DEFAULT_LOBBY := "https://play.openbfme.com"
 const ONLINE_SESSION_FILE := "user://online_session.txt" # lane ONLINE-3's file (scripts/online_lobby.gd SESSION_FILE)
 var _online_saved_session := ""
@@ -358,7 +373,7 @@ var _net_host := -1
 var _net_join := ""
 var _net_name := "Joiner"
 var _net_slots := "human:FactionMen:0:0;human:FactionMordor:1:1"
-var _net_run_ahead := 2
+var _net_run_ahead := 1  # lane NETLAG-1: RotWK's command delay, the current frame + 1 (was 2)
 var _net_crc := 100
 var _net_script := false
 var _net_record := ""
@@ -407,6 +422,15 @@ var _lan_start_ms := -1
 var _lan_shot_start := "" # lane UI-1: (host) the window 8 s after Play Game: the countdown's QM:STARTINGGAME box (the media)
 var _net_shot := ""
 var _net_shot_frame := -1
+# lane NETLAG-1: --net-press=TEMPLATE: the command delay through the HUD (a build button pressed, the frame and the time its unit reaches the queue)
+var _net_press := ""
+var _net_press_state := 0 # 0 not yet, 1 pressed (waiting for the queue), 2 done, 3 an object selected (the control bar shows its buttons next frames)
+var _net_press_candidates: Array = []
+var _net_press_wait := 0
+var _net_press_producer := -1
+var _net_press_frame := -1
+var _net_press_ms := 0
+var _net_press_queue := 0
 var _net_player_timeout_ms := -1
 var _net_kick := false
 var _net_shot_disconnect := ""
@@ -414,6 +438,7 @@ var _dc_shown := false
 var _dc_since := 0
 var _dc_shot_done := false
 var _dc_left_seen := 0
+var _dc_log_seen := 0 # lane MP-DROP-1: the disconnect path's log lines already printed
 var _dc_quit_handled := false
 var _desync_shown := false
 var _net_shot_desync := ""
@@ -609,6 +634,10 @@ func _ready() -> void:
 			_hud5 = arg.substr(7).split(",", false)
 		elif arg.begins_with("--hud6="):
 			_hud6 = arg.substr(7).split(",", false)
+		elif arg.begins_with("--hover1="):
+			_hover1 = arg.substr(9).split(",", false)
+		elif arg.begins_with("--hover1-menus="):
+			_hover1_menus = arg.substr(15)
 		elif arg.begins_with("--hud7="):
 			_hud7 = arg.substr(7).split(",", false)
 		elif arg.begins_with("--autocast1="):
@@ -674,6 +703,8 @@ func _ready() -> void:
 			_online_join = arg.substr(14).trim_prefix("openbfme://join/").trim_suffix("/")
 		elif arg.begins_with("openbfme://join/"):
 			_online_join = arg.substr(16).trim_suffix("/") # the launcher hands the link on as it came
+		elif arg.begins_with("--online-start-file="):
+			_online_start_file = arg.substr(20) # lane MP-DROP-1
 		elif arg == "--online-host":
 			_online_host = true
 		elif arg == "--online-rejoin" or arg.begins_with("--online-rejoin="):
@@ -827,6 +858,8 @@ func _ready() -> void:
 			_lan_shot = arg.substr(11)
 		elif arg.begins_with("--lan-shot-start="):
 			_lan_shot_start = arg.substr(17)
+		elif arg.begins_with("--net-press="):
+			_net_press = arg.substr(12)
 		elif arg.begins_with("--net-shot="):
 			var spec := arg.substr(11)
 			_net_shot = spec.substr(0, spec.rfind(":"))
@@ -1070,7 +1103,10 @@ func _boot() -> void:
 		_run_resize_check()
 	elif not _menu_colours.is_empty():
 		_run_menu_colours()
-	if not _online_walk.is_empty():
+	if not _online_start_file.is_empty():
+		# lane MP-DROP-1 (tests without a lobby service): a START the test signed (tools/net/online_client.py fixture), played as the staging room's
+		_on_online_started(FileAccess.get_file_as_string(_online_start_file))
+	elif not _online_walk.is_empty():
 		_online_walk_run() # lane ONLINE-4
 	elif not _online_join.is_empty() or _online_host or _online_rejoin or _online_spectate:
 		_online_open() # lane ONLINE-2
@@ -1114,13 +1150,19 @@ func _process(delta: float) -> void:
 				_fail("the main menu refused AptMainMenu::" + cmd)
 		elif not _options_shot.is_empty() and _menu_revealed:
 			_options_shot_tick()
+		elif not _hover1_menus.is_empty() and _menu_revealed and not _hover1_menus_started:
+			_hover1_menus_started = true
+			_hover1_menus_run()
 		if _online_http != null:
 			_online_keep_name() # lane ONLINE-4
 		if _online_note != null:
 			_online_note.visible = _shell.shell_stack().has("OnlineShell.apt")
+		_online_count_tick()
 	elif _state == State.PLAYING:
 		if _online_note != null:
 			_online_note.visible = false
+		if _stats != null:
+			_stats.set_mode("") # lane ONLINECOUNT-1: never in a game
 		_game_frames += 1
 		if not _net_state.is_empty():
 			_net_tick()
@@ -1636,12 +1678,8 @@ func _install_hud(rep: Dictionary) -> void:
 	if _game_options != null:
 		_game_options.game_started(_world, hud) # lane OPTS-2: the detail's particle limits, the camera and interface options
 	_shell.set_tribute_world(_world) # lane PLAY-1: PlayerTribute.apt's rows and Send (the Palantir's flag)
-	# lane SPELL-2: the spell book is the retail movies the HUD drives (the Palantir's InGameSpellBook, SpellStore.apt from its store button); this node only
-	# draws the targeting ring of a power waiting for its ground click
-	var ring = load("res://scripts/spell_target_ring.gd").new()
-	add_child(ring)
-	_game_nodes.append(ring) # lane END-1: goes with the game
-	ring.setup(hud, _world)
+	# lane SPELL-2: the spell book is the retail movies the HUD drives (the Palantir's InGameSpellBook, SpellStore.apt from its store button); lane SPELL-4:
+	# the HUD draws the aiming marker of a power waiting for its ground click itself (the button's RadiusCursorTemplate, GameClient/RadiusCursor.h)
 	# lane PLAY-1: the move hint on the ground where a move order was given (ZH W3DInGameUI::drawMoveHints, GameData MoveHintName)
 	_move_hints = load("res://scripts/move_hints.gd").new()
 	add_child(_move_hints)
@@ -1882,6 +1920,15 @@ func _run_auto() -> void:
 		var p6 = h6.new()
 		await p6.run(self, _hud6)
 		get_tree().quit(0 if p6.fail_count == 0 else 1)
+		return
+	if not _hover1.is_empty():
+		var hv: GDScript = load("res://scripts/hover1_player.gd")
+		if hv == null or not hv.can_instantiate():
+			_fail("scripts/hover1_player.gd does not load")
+			return
+		var p1v = hv.new()
+		await p1v.run(self, _hover1)
+		get_tree().quit(0 if p1v.fail_count == 0 else 1)
 		return
 	if not _hud7.is_empty():
 		var h7: GDScript = load("res://scripts/hud7_player.gd")
@@ -2644,6 +2691,7 @@ func _exit_to_score_screen() -> void:
 	_dc_shown = false
 	_dc_shot_done = false
 	_dc_left_seen = 0
+	_dc_log_seen = 0
 	_dc_quit_handled = false
 	_desync_shown = false
 	# the HUD and the HUD movie go first (they read the game), then the game data
@@ -3239,6 +3287,32 @@ func _walk_main_ok(when: String) -> int:
 
 
 ## lane UI-2: --options-shot: the main menu's Options screen (with the OpenBFME Soft particles box) saved to FILE, then quit
+## --hover1-menus (lane HOVER-1): the pointer rests on a button of each main menu navigation and on Options' sound quality box; the window is saved once
+## the tool tip's delay (Mouse.ini TooltipDelayTime) has passed
+func _hover1_menus_run() -> void:
+	await _step(60)
+	DirAccess.make_dir_recursive_absolute(_hover1_menus)
+	var level: int = _shell.shell_top_level()
+	for pair in [["SoloPlayNav", "SoloPlayNav.Skirmish", "skirmish"], ["MultiPlayNav", "MultiPlayNav.Online", "online"], ["OptionsNav", "OptionsNav.Settings", "settings"]]:
+		await _click_button(level, pair[0])
+		await _step(90)
+		var b: Dictionary = _shell.find_button(level, pair[1])
+		if not b.found:
+			print("HOVER1 menus: no button %s" % pair[1])
+			continue
+		_mouse_event(Vector2(b.x, b.y), false, false)
+		await _step(90) # TooltipDelayTime 800 ms, then GuiFX's ToolTip opens
+		var image := _capture_image(pair[2])
+		if image != null:
+			var path := "%s/hover1-menu-%s.png" % [_hover1_menus, pair[2]]
+			print("HOVER1 menus %s -> %s (%s)" % [pair[1], path, error_string(image.save_png(path))])
+		_mouse_event(Vector2(4, 4), false, false)
+		await _step(30)
+		await _click_button(level, pair[0]) # the navigation closes
+		await _step(60)
+	get_tree().quit(0)
+
+
 func _options_shot_tick() -> void:
 	_options_shot_frames += 1
 	if _options_shot_frames == 30:
@@ -3674,11 +3748,61 @@ func _online_test_note() -> void:
 	label.add_theme_constant_override("shadow_offset_x", 1)
 	label.add_theme_constant_override("shadow_offset_y", 1)
 	label.offset_left = 8
-	label.offset_top = 4
+	label.offset_top = 30 # lane ONLINE-5: under the fps counter's line (scripts/fps_overlay.gd draws at y 4, 16 px): the two never overlap
 	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	label.set_meta("game_text", true) # the game's own text (not a developer overlay)
 	_online_note.add_child(label)
 	add_child(_online_note)
+
+
+## lane ONLINECOUNT-1: "N players online" (scripts/online_stats.gd). The main menu shows it in its own line, the online menu's pages under the test-feature note;
+## the count is asked for only while one of those is on top, never in a game, and not at all when the player turned it off
+func _online_count_tick() -> void:
+	var stack: PackedStringArray = _shell.shell_stack()
+	var mode := ""
+	if _menu_revealed and stack.size() > 0:
+		# the staging room (the player is in a game of the lobby) shows no count and asks nothing: its own polls keep the player counted
+		mode = ("" if _shell.online_status().get("in_game", false) else "online") if stack.has("OnlineShell.apt") else ("menu" if stack[-1] == "MainMenu.apt" else "")
+	if _stats == null:
+		if mode.is_empty() or not _stats_off.is_empty():
+			return
+		var named := not _online_lobby.is_empty() or not OS.get_environment("OPENBFME_LOBBY").is_empty()
+		var dev := not OS.has_feature("template") or DisplayServer.get_name() == "headless" or _scripted_run()
+		var made: Dictionary = OnlineStats.start(self, _online_lobby_url(), func() -> String: return str(_shell.online_status().get("session_token", "")),
+			OS.get_cmdline_user_args(), OS.get_environment(OnlineStats.OFF_ENV), _shell.get_options(), OnlineStats.read_launcher_state(), dev and not named)
+		if made.why != "":
+			_stats_off = made.why
+			print("GAME ONLINE count: not asked for: %s" % _stats_off)
+			return
+		print("GAME ONLINE count: asked for from the lobby while the menus show; ", OnlineStats.STOP_LINE)
+		_stats = made.node
+		_stats.visible_check = func() -> bool: return DisplayServer.get_name() == "headless" or (DisplayServer.window_get_mode() != DisplayServer.WINDOW_MODE_MINIMIZED and get_window().has_focus())
+		_stats.changed.connect(_online_count_show)
+	_stats.set_mode(mode)
+	if _stats_label != null:
+		_stats_label.position = Vector2(8, 48) if mode == "online" else Vector2(8, 30)
+
+
+func _online_count_show(text: String) -> void:
+	if _stats_label == null:
+		var layer := CanvasLayer.new()
+		layer.layer = 100
+		layer.name = "OnlineCountLayer"
+		_stats_label = Label.new()
+		_stats_label.name = "OnlineCount"
+		_stats_label.add_theme_font_size_override("font_size", 13)
+		_stats_label.add_theme_color_override("font_color", Color(1, 0.9, 0.6, 0.9))
+		_stats_label.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.9))
+		_stats_label.add_theme_constant_override("shadow_offset_x", 1)
+		_stats_label.add_theme_constant_override("shadow_offset_y", 1)
+		_stats_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		_stats_label.tooltip_text = "Players in OpenBFME's online lobbies and games"
+		_stats_label.set_meta("game_text", true)
+		layer.add_child(_stats_label)
+		add_child(layer)
+	_stats_label.text = text
+	_stats_label.visible = not text.is_empty()
+	print("GAME ONLINE count shown: %s" % (text if not text.is_empty() else "(nothing)"))
 
 
 ## The guest name of the last sign-in goes to Options.ini (OpenBFMEOnlineName); a scripted run never writes the player's file
@@ -3737,6 +3861,18 @@ func _online_click(path: String) -> void:
 	await get_tree().process_frame
 
 
+## lane ONLINE-5: a click on start spot `n` of the MAP tab's map window (the pointer to its centre, then the button down and up, as a player's)
+func _online_spot(n: int) -> void:
+	_online_apply({"start_spot": n})
+	await get_tree().process_frame
+	await get_tree().process_frame
+	_online_apply({"mouse": true})
+	await get_tree().process_frame
+	await get_tree().process_frame
+	_online_apply({"mouse": false})
+	await get_tree().process_frame
+
+
 func _online_apply(spec: Dictionary) -> void:
 	var r: Dictionary = _shell.online_apply(spec)
 	print("GAME ONLINE WALK %s -> %s" % [JSON.stringify(spec), "ok" if r.ok else str(r.errors)])
@@ -3747,6 +3883,8 @@ func _online_walk_run() -> void:
 	while not _menu_revealed:
 		await get_tree().process_frame
 	await _wait_seconds(1.0)
+	await _wait_seconds(2.0) # lane ONLINECOUNT-1: the count's answer
+	_online_shot("main-menu")
 	print("GAME ONLINE WALK: the main menu's Online")
 	_shell.shell_fscommand("AptMainMenu::OnlineButtonPressed", "")
 	if not await _online_wait("the sign-in page", func(st): return st.get("page", "") == "OnlineLogin", 30.0):
@@ -3780,6 +3918,36 @@ func _online_walk_run() -> void:
 		await _wait_seconds(2.0)
 		_online_shot("staging-host")
 		var players := _online_players
+		# lane ONLINE-5: once the other players are in, Play Game before anyone is ready: refused by name, and every player reads why in the chat
+		if await _online_wait("%d players in the room" % players, func(st):
+				var joined := 0
+				for line in st.get("chat", []):
+					joined += 1 if str(line).ends_with(" joined") else 0
+				return joined >= players - 1, 180.0):
+			_online_apply({"chat_tab": true})
+			await _wait_seconds(1.0)
+			await _online_click("*LowerButtons_Host.PlayGame")
+			if await _online_wait("the start refused while a player is not ready", func(st): return not (st.get("start_refusals", []) as Array).is_empty(), 15.0):
+				print("GAME ONLINE WALK start refused: ", _shell.online_status().get("start_refusals", []))
+				await _wait_seconds(1.5)
+				_online_shot("staging-start-refused")
+			# the host's start position: the MAP tab's map, a click on its first spot
+			await _online_click("*TabButtons.MapTab")
+			if await _online_wait("the map's start spots", func(st): return int(st.get("start_spots", 0)) > 0, 15.0):
+				await _online_spot(0)
+				await _online_wait("the host's start position", func(st): return int((st.get("start_pos", []) as Array)[0]) == 0, 15.0)
+				await _online_wait("every player's start position", func(st):
+						var n := 0
+						for p in st.get("start_pos", []):
+							n += 1 if int(p) >= 0 else 0
+						return n >= mini(players, int(st.get("start_spots", 0))), 30.0)
+				await _wait_seconds(1.0)
+				_online_shot("staging-map-host")
+				print("GAME ONLINE WALK start positions: ", _shell.online_status().get("start_pos", []))
+			# the RULES tab (the host's rule rows), for the comparison with retail's
+			await _online_click("*TabButtons.RulesTab")
+			await _wait_seconds(1.5)
+			_online_shot("staging-rules-host")
 		if not await _online_wait("%d players ready" % players, func(st):
 				var ready: Array = st.get("ready", [])
 				var n := 0
@@ -3834,15 +4002,39 @@ func _online_walk_run() -> void:
 		return _online_walk_end(false)
 	await _wait_seconds(2.0)
 	_online_apply({"chat": "Hello from the joiner"}) # the chat entry's line, sent as AptMpChat::Send does (through the lobby)
-	_online_apply({"command": "MpGameSetup::OnReadyPress", "argument": "1"})
-	if not await _online_wait("ready", func(st): return (st.get("ready", []) as Array)[int(st.get("slot", 0))], 15.0):
+	# lane ONLINE-5: ready through the row's own Ready box (the movie's button, as a player's click). Another player's join or change unreadies
+	# everyone (the lobby), so the box is pressed again whenever it is unchecked, until the START comes
+	var own_ready := func(st): return (st.get("ready", []) as Array)[int(st.get("slot", 0))]
+	await _wait_seconds(1.0)
+	# the joiner's start position: the MAP tab's map, a click on the spot of its own slot number (when the map has that many)
+	var own_slot := int(_shell.online_status().get("slot", 0))
+	await _online_click("*TabButtons.MapTab")
+	if await _online_wait("the map's start spots", func(st): return int(st.get("start_spots", 0)) > 0, 15.0):
+		if own_slot < int(_shell.online_status().get("start_spots", 0)):
+			await _online_spot(own_slot)
+			await _online_wait("the joiner's start position", func(st): return int((st.get("start_pos", []) as Array)[own_slot]) == own_slot, 15.0)
+		await _wait_seconds(1.0)
+		_online_shot("staging-map-join")
+	await _online_click("*TabButtons.ChatTab")
+	await _wait_seconds(1.0)
+	_online_shot("staging-join-unready")
+	await _online_click("*~%d.Ready" % int(_shell.online_status().get("slot", 0)))
+	if not await _online_wait("ready", own_ready, 15.0):
 		return _online_walk_end(false)
 	await _wait_seconds(2.0)
 	_online_shot("staging-join")
 	# the joiner waits for the START (or the host's refusal: then nothing comes; the walk ends after a while)
-	if await _online_wait("the START", func(_st): return _net_state != "", 60.0):
-		print("GAME ONLINE WALK: the START arrived: the game loads")
-		return
+	var until := Time.get_ticks_msec() + 90000
+	while Time.get_ticks_msec() < until:
+		if _net_state != "":
+			print("GAME ONLINE WALK: the START arrived: the game loads")
+			return
+		var st: Dictionary = _shell.online_status()
+		if st.get("in_game", false) and not own_ready.call(st):
+			print("GAME ONLINE WALK: unreadied by a change in the room: the Ready box again")
+			await _online_click("*~%d.Ready" % int(st.get("slot", 0)))
+			await _online_wait("ready again", own_ready, 15.0)
+		await _wait_seconds(0.5)
 	_online_walk_end(true)
 
 
@@ -3972,6 +4164,57 @@ func _net_begin() -> void:
 		layer.add_child(_net_label)
 
 
+# lane NETLAG-1 (--net-press=TEMPLATE): from logic frame 20 the local player's first own object whose command set shows a button producing TEMPLATE is
+# selected and the button pressed through the HUD (InGameHudNode.press_command_button: ControlBar::pressButton, the HUD's command path into the lockstep);
+# then the producer's queue is read every render frame until the unit is in it: "GAME NET PRESS" names the logic frames and the milliseconds
+func _net_press_tick(st: Dictionary) -> void:
+	if _net_press.is_empty() or _net_press_state == 2 or _hud == null or _state != State.PLAYING:
+		return
+	if not _world.is_logic_held():
+		return # RENDERWAIT-1: the HUD's live reads and the press only in the client window (a render frame never waits for the logic)
+	if _net_press_state == 0:
+		if int(st.frame) < 20:
+			return
+		_net_press_candidates = _world.get_player_objects(_local_name)
+		_net_press_state = 3
+		_net_press_wait = -1
+	if _net_press_state == 3:
+		# one own object at a time: select it, give the control bar a few frames to show its command set, then press (the HUD's own timing)
+		if _net_press_wait < 0:
+			if _net_press_candidates.is_empty():
+				print("GAME NET PRESS %s: no own object shows the button at logic frame %d" % [_net_press, int(st.frame)])
+				_net_press_state = 2
+				return
+			_net_press_producer = int(_net_press_candidates[0].id)
+			# as a player's click: the selection message goes through the lockstep before the press (the logic queues on the selected producer)
+			_net_press_wait = 3 if _hud.select_object_with_message(_net_press_producer) else 0
+			return
+		_net_press_wait -= 1
+		if _net_press_wait > 0:
+			return
+		var o: Dictionary = _net_press_candidates.pop_front()
+		_net_press_wait = -1
+		var before: Dictionary = _world.get_production(_local_index, int(o.id))
+		if before.get("ok", false) and _hud.press_command_button(_net_press):
+			_net_press_state = 1
+			_net_press_queue = before.get("queue", []).size()
+			_net_press_frame = int(st.frame)
+			_net_press_ms = Time.get_ticks_msec()
+			print("GAME NET PRESS %s pressed on %s %d at logic frame %d (queue %d)" % [_net_press, o.template, _net_press_producer, _net_press_frame, _net_press_queue])
+		return
+	var now: Dictionary = _world.get_production(_local_index, _net_press_producer)
+	var queue: Array = now.get("queue", [])
+	if queue.size() > _net_press_queue:
+		_net_press_state = 2
+		# the exact entry: the queue's new last entry (its template, count and cost), and the logic frame it was first seen on
+		var entry: Dictionary = queue[queue.size() - 1]
+		print("GAME NET PRESS %s queued at logic frame %d: %d frames, %d ms after the press (run-ahead %d)" % [_net_press, int(st.frame),
+			int(st.frame) - _net_press_frame, Time.get_ticks_msec() - _net_press_ms, int(st.get("run_ahead", -1))])
+		print("GAME NET PRESS ENTRY template %s quantity_total %d quantity_produced %d queue_before %d queue_after %d frame_pressed %d frame_seen %d" % [
+			str(entry.get("template", "")), int(entry.get("quantity_total", -1)), int(entry.get("quantity_produced", -1)), _net_press_queue, queue.size(),
+			_net_press_frame, int(st.frame)])
+
+
 func _net_tick() -> void:
 	var st: Dictionary = _world.net_status()
 	if not st.get("active", false):
@@ -4011,6 +4254,7 @@ func _net_tick() -> void:
 		_show_desync_box(st.get("desync_dumps", []))
 	_net_disconnect_tick(st.get("disconnect", {}))
 	_net_pause_tick(st) # lane ONLINE-3
+	_net_press_tick(st) # lane NETLAG-1
 	if _state != State.PLAYING:
 		return
 	if _net_frames > 0 and st.frame >= _net_frames:
@@ -4164,6 +4408,11 @@ func _net_pause_tick(st: Dictionary) -> void:
 func _net_disconnect_tick(dc: Dictionary) -> void:
 	if dc.is_empty():
 		return
+	# lane MP-DROP-1: what the disconnect path decided (silence, the screen, votes, the drop), one line each, as the headless peers' reports carry it
+	var dc_log: Array = dc.get("log", [])
+	while _dc_log_seen < dc_log.size():
+		print("GAME NET disconnect log: ", dc_log[_dc_log_seen])
+		_dc_log_seen += 1
 	var visible: bool = dc.get("visible", false)
 	if visible or _dc_shown:
 		var res: Dictionary = _shell.disconnect_screen(dc)

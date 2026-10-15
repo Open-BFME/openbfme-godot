@@ -12,6 +12,7 @@
 #include "GameClient/DrawableManager.h"
 #include "GameClient/GUI/GameTextSource.h"
 #include "GameClient/LiveGame.h"
+#include "GameClient/UnitHelpSource.h"
 #include "GameLogic/Object/Object.h"
 #include "Libraries/Source/Apt/AptButtonInst.h"
 #include "Libraries/Source/Apt/AptInput.h"
@@ -116,6 +117,107 @@ bool InGameHud::hoveredAptButton(InGameHelpBox::Provider &p, ControlBarButton &b
 	return false;
 }
 
+// lane HOVER-1 (S-4612): the spell book's slot handler (RW 0x930DC4: the slot's command button through RW 0x807A00(0, button)), the hero bar's slot handler
+// (RW 0x92BF34: the builder slot "NonCommand_SelectNearestBuilder", a hero's UnitHelpSource) and its select-all handler (RW 0x92C265:
+// "NonCommand_SelectAllHeroes"). INFERENCE: the hovered button is the Apt player's current button below the slot's clip (retail keys its over-button
+// handlers by "Palantir/<clip>/Spell%d/" and "<clip>/Hero%d/", RW 0x931698 / 0x92DFDE)
+bool InGameHud::hoveredHelpButton(InGameHelpBox::Provider &p, ControlBarButton &b, ObjectID &unit, ObjectID context)
+{
+	AptButtonInst *button = m_wm ? m_wm->apt().input().currentButton() : nullptr;
+	if (!button || !m_palantirRef)
+	{
+		return false;
+	}
+	const std::string path = button->targetPath();
+	auto under = [&path](const std::string &clip) {
+		return path == clip || (path.size() > clip.size() && path.compare(0, clip.size(), clip) == 0 && path[clip.size()] == '.');
+	};
+	auto commandHelp = [&p, &b](const CommandButton *cb) {
+		if (!cb)
+		{
+			return false; // RW 0x92BF98 / 0x930DD2: no button, no help
+		}
+		b = ControlBarButton();
+		b.button = cb;
+		b.textLabel = cb->m_textLabel.empty() ? std::string() : cb->m_textLabel.front();
+		b.descriptLabel = cb->m_descriptLabel.empty() ? std::string() : cb->m_descriptLabel.front();
+		p.bar = 3;
+		p.slot = -1;
+		p.button = cb;
+		return true;
+	};
+	// the Palantir's portrait (PalantirCommandUI's over-button handler "CommandUI/PortraitBackground", BFME2 decomp PalantirCommandInterface.cpp, RW 0x93099D:
+	// Rva00529F3DMethod.cpp, tier A): the portrait's object (+ 0x30), when it exists and the local player is not active or is its ally (RW 0x6A8803:
+	// isPlayerActive RW 0x6AAC52, then the relationship to the object's team == ALLIES), shows its UnitHelpSource
+	if (under(m_palantirRef->portraitKey().substr(0, m_palantirRef->portraitKey().rfind('.')) + ".PortraitBackground"))
+	{
+		const Object *o = context != INVALID_ID ? m_config.game.logic().findObjectByID(context) : nullptr;
+		const Player *local = m_config.game.players().getLocalPlayer();
+		const bool active = local && !local->isObserver() && !local->isDefeated();
+		if (!o || !local || (active && local->getRelationship(o->getTeam()) != ALLIES))
+		{
+			return false;
+		}
+		p.bar = 4;
+		p.slot = -1;
+		p.button = nullptr;
+		p.object = (std::uint32_t)context;
+		unit = context;
+		return true;
+	}
+	const std::string spellBook = m_palantirRef->spellBookTarget();
+	if (!spellBook.empty())
+	{
+		for (int i = 0; i < AptPalantir::kSpellSlots; ++i)
+		{
+			if (!under(spellBook + ".Spell" + std::to_string(i + 1)))
+			{
+				continue;
+			}
+			const int index = m_palantirRef->spellSlotButton(i); // the slot table (+ 0x54, 0x14 bytes a slot)
+			for (const InGameSpellBookModel::Button &sb : m_spellBar.buttons())
+			{
+				if (sb.index == index)
+				{
+					return commandHelp(sb.button);
+				}
+			}
+			return false;
+		}
+	}
+	if (m_heroSelect && m_heroSelect->attached())
+	{
+		const std::string prefix = m_heroSelect->commandPrefix();
+		if (under(prefix + ".SelectAllHeroesBttn"))
+		{
+			return commandHelp(TheCommandStore ? TheCommandStore->findCommandButton("NonCommand_SelectAllHeroes") : nullptr);
+		}
+		for (int i = 0; i < InGameHeroSelect::kSlots; ++i)
+		{
+			if (!under(prefix + ".Hero" + std::to_string(i + 1)))
+			{
+				continue;
+			}
+			const InGameHeroSelect::Slot &slot = m_heroSelect->slot(i);
+			if (slot.builder) // + 0x16
+			{
+				return commandHelp(TheCommandStore ? TheCommandStore->findCommandButton("NonCommand_SelectNearestBuilder") : nullptr);
+			}
+			if (slot.hero == INVALID_ID) // the slot's iterator is the list's end
+			{
+				return false;
+			}
+			p.bar = 4;
+			p.slot = i;
+			p.button = nullptr;
+			p.object = (std::uint32_t)slot.hero;
+			unit = slot.hero;
+			return true;
+		}
+	}
+	return false;
+}
+
 void InGameHud::updateHud6(ObjectID context, const std::string &faction, double seconds)
 {
 	m_hud6ClockMs += (std::uint32_t)(seconds * 1000.0); // the help's hover clock (retail: timeGetTime)
@@ -148,6 +250,11 @@ void InGameHud::updateHud6(ObjectID context, const std::string &faction, double 
 	{
 		have = hoveredAptButton(p, hovered);
 	}
+	ObjectID unit = INVALID_ID;
+	if (!have)
+	{
+		have = hoveredHelpButton(p, hovered, unit, context); // lane HOVER-1
+	}
 	const std::vector<ObjectID> &selected = m_input->ui().selected();
 	if (have)
 	{
@@ -155,8 +262,19 @@ void InGameHud::updateHud6(ObjectID context, const std::string &faction, double 
 		Player *player = selection ? selection->getControllingPlayer() : local;                  // RW 0x807AE9 / 0x807AF3
 		const MappedImageCollection *images = m_hud6Images;
 		const GameTextSource *text = m_config.gameText;
-		m_helpBox.showHelp(p, m_hud6ClockMs, m_tooltipDelayMs, [&]() {
-			CommandButtonHelp::Text t = CommandButtonHelp::compose(hovered, text, logic, player, local, selection, faction);
+		m_helpBox.showHelp(p, m_hud6ClockMs, m_tooltipDelayMs, [&]() -> std::shared_ptr<CommandButtonHelp> {
+			if (p.bar == 4)
+			{
+				// RW 0x8EBC61: a gone object makes no help
+				const Object *o = logic.findObjectByID(unit);
+				if (!o)
+				{
+					return nullptr;
+				}
+				const UnitHelpSource::Text u = UnitHelpSource::compose(*o, text, logic, local);
+				return std::make_shared<CommandButtonHelp>(CommandButtonHelp::simple(u.title, u.text, u.unported));
+			}
+			CommandButtonHelp::Text t = CommandButtonHelp::compose(hovered, text, logic, player, local, selection, faction, &selected);
 			return std::make_shared<CommandButtonHelp>(t, text, imageSizeOf, (void *)images);
 		});
 	}
@@ -244,6 +362,10 @@ void InGameHud::hud6Stops(std::vector<std::string> &out) const
 		out.push_back(l);
 	}
 	for (const std::string &l : InGameHelpBox::acceptanceStops())
+	{
+		out.push_back(l);
+	}
+	for (const std::string &l : UnitHelpSource::acceptanceStops())
 	{
 		out.push_back(l);
 	}

@@ -34,6 +34,7 @@ public:
 	String commit() const;
 	String build_date() const;
 	String version_line() const; // "OpenBFME <version> (<date>)"
+	String display_line() const; // lane VERSION-1: "OpenBFME Alpha 0.4.5 (<date>)" (BuildVersion::displayLine)
 	String engine_id() const;    // GameNetwork/ProfileIdentity::buildId
 	String build_record() const; // BuildVersion::kBuildRecord (the provenance package.sh checks)
 	String redact(const String &text) const;

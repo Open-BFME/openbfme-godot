@@ -368,7 +368,7 @@ def test_the_notes_say_which_file_to_download():
     assert "Which file to download" in notes and "Install or update it with the OpenBFME Launcher." in notes
     full, _ = autorelease.release_notes("v0.4.0-alpha.5", [{"subject": "x", "body": "Release-note: See https://evil.example now", "files": []}], [],
                                         repo="Open-BFME/openbfme-godot")
-    assert full.count("https://") == 2 and "evil.example" not in full and "\\(link removed\\)" in full, "commit text still loses its links"
+    assert full.count("https://") == 2 and "evil.example" not in full and "(link removed)" in full, "commit text still loses its links"
     assert autorelease.public_text_problems("notes.md", full) == []
 
 

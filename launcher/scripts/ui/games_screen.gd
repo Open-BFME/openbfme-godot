@@ -35,11 +35,11 @@ var _dialog: FileDialog
 
 func _init() -> void:
 	set_anchors_preset(Control.PRESET_FULL_RECT)
-	var v := W.vbox(14)
+	var v := W.vbox(Style.SCREEN_GAP)
 	v.set_anchors_preset(Control.PRESET_FULL_RECT)
 	add_child(v)
 	v.add_child(W.h2("Game files"))
-	var s := W.scroll(14)
+	var s := W.scroll(Style.SCREEN_GAP)
 	v.add_child(s.scroll)
 	var grid := W.hbox(16)
 	grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -77,29 +77,22 @@ func _init() -> void:
 	var row := W.hbox(10)
 	var to := W.label("Install to", "Muted")
 	row.add_child(to)
-	_where = W.label("")
+	_where = W.trim_label("")
 	_where.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_where.clip_text = true
-	_where.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	row.add_child(_where)
 	var change := W.button("Change…", "folder", "", 15)
-	change.pressed.connect(func() -> void:
-		_dialog.current_dir = folder if DirAccess.dir_exists_absolute(folder) else Paths.home()
-		_dialog.popup_centered_ratio(0.75))
+	change.pressed.connect(open_picker)
 	row.add_child(change)
 	dl.box.add_child(row)
 	_progress = W.vbox(6)
 	_progress.visible = false
-	_bar_label = W.label("", "Muted")
-	_bar_label.clip_text = true
-	_bar_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	_bar_label = W.trim_label("", "Muted")
 	_progress.add_child(_bar_label)
 	_bar = W.progress_bar()
 	_progress.add_child(_bar)
 	dl.box.add_child(_progress)
 	var buttons := W.hbox(8)
 	_go = W.button("Download", "download", "", 16)
-	_go.custom_minimum_size.x = 150
 	_go.pressed.connect(func() -> void: download.emit(folder))
 	buttons.add_child(_go)
 	_pause = W.button("Pause", "pause", "", 14)
@@ -120,6 +113,12 @@ func _init() -> void:
 	set_download_state(false, false, false, true)
 
 
+## the folder picker ("Change…"); `demo` (the layout test) opens it on the home folder
+func open_picker(demo := false) -> void:
+	_dialog.current_dir = Paths.home() if demo or not DirAccess.dir_exists_absolute(folder) else folder
+	_dialog.popup_centered_ratio(0.75)
+
+
 ## folders: Paths.game_folders(); demo: the screenshots' made-up folders (Show folder stays enabled)
 func set_folders(f: Dictionary, demo := false) -> void:
 	_found_title.text = "FOUND" if f.found else "NOT FOUND"
@@ -138,10 +137,8 @@ func set_folders(f: Dictionary, demo := false) -> void:
 			if String(g[1]) == "":
 				continue
 			var row := W.hbox(10)
-			var p := W.label(Paths.short(g[1]), "Muted")
+			var p := W.trim_label(Paths.short(g[1]), "Muted")
 			p.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-			p.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-			p.clip_text = true
 			row.add_child(p)
 			var show := W.button("Show folder", "folder", "", 14)
 			var full: String = g[1]

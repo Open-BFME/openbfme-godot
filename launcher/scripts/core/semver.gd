@@ -9,7 +9,13 @@
 ## whose numeric identifiers were read with String.is_valid_int, which accepts "-1").
 ## Order (SemVer 2.0.0 section 11): by major, minor, patch; a pre-release below its release; between pre-releases of one release
 ## "alpha" < "preview" (ASCII), then by their number. So v0.3.0-preview.4 < v0.4.0-alpha.1 < v0.4.0-alpha.2 < v0.4.0.
+## Lane VERSION-1 (owner, 2026-10-14): the releases after v0.4.0-alpha.4 are plain numbers, v0.4.5, v0.4.6, ... (a stable-channel tag,
+## above every v0.4.0-alpha.<n>), shown to players as "Alpha 0.4.5" (display()); the stable channel is shown as "Alpha", the pre-release
+## channel as "Preview" (channel_name()). The grammar and the order are unchanged, so every launcher already installed takes them.
 extends RefCounted
+
+## the word before a plain number in what players see ("Alpha 0.4.5"; tools/release/autorelease.py STAGE)
+const STAGE := "Alpha"
 
 const _PATTERN := "^v(0|[1-9][0-9]{0,8})\\.(0|[1-9][0-9]{0,8})\\.(0|[1-9][0-9]{0,8})(?:-(alpha|preview)\\.(0|[1-9][0-9]{0,8}))?$"
 
@@ -56,7 +62,22 @@ static func channel_of(tag: String) -> String:
 	return "preview" if parse(tag).preview >= 0 else "stable"
 
 
-## lane RELNAME-1: the name a player sees for a channel id: the pre-release channel "preview" is shown as "Alpha" (its builds are alpha
-## builds since v0.4.0-alpha.1; the id is unchanged so a player's remembered pick and --channel=preview keep working)
+## the name a player sees for a channel id. Lane VERSION-1: the plain releases ("Alpha 0.4.5") are the stable channel, shown as "Alpha";
+## the pre-release channel "preview" (the earlier alpha builds and previews, and any later test build) is shown as "Preview" (RELNAME-1
+## had shown it as "Alpha"). The ids are unchanged, so a player's remembered pick and --channel=stable / preview keep working.
 static func channel_name(ch: String) -> String:
-	return {"stable": "Stable", "preview": "Alpha"}.get(ch, ch)
+	return {"stable": STAGE, "preview": "Preview"}.get(ch, ch)
+
+
+## lane VERSION-1: a version as players read it: "v0.4.5" -> "Alpha 0.4.5", "v0.4.0-alpha.3" -> "v0.4.0 Alpha 3" (its GitHub title), a
+## preview keeps its tag; anything that is not a release version (a development run) is shown as it is
+static func display(tag: String) -> String:
+	var p := parse(tag)
+	if not p.ok:
+		return tag
+	var core := "%d.%d.%d" % p.core
+	if p.kind == "":
+		return "%s %s" % [STAGE, core]
+	if p.kind == "alpha":
+		return "v%s Alpha %d" % [core, p.preview]
+	return tag

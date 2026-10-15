@@ -74,7 +74,6 @@ public:
 	struct Stats
 	{
 		unsigned long long delayedUpgrades = 0;   ///< Upgrade with a delay: not granted (S-633)
-		unsigned long long fxNotShown = 0;        ///< FX of an add or refresh (client)
 		unsigned long long expiringAdds = 0;      ///< entries that will expire without the removal side effects
 	};
 	static Stats &stats();

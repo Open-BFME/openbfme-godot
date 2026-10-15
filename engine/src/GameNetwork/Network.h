@@ -26,9 +26,11 @@
 // 200 ms frame period, one period subtracted per frame run, accumulated lag beyond two seconds dropped; the preview RW 0x65DE5E uses the same period
 // (threshold 1.5 at 0xBDE8C8); non-router peers advance on announced frames and complete command counts (FRAMEINFO RW 0x8D4E89, update RW 0x8D77B5). The
 // command paths RW 0x8D4301 / 0x8D3AF1 stamp an unassigned command with the current logic frame + 1 and RW 0x65E2EF asks for the next frame's commands.
-// FRAME_DATA_LENGTH = 258 (0xDB8248) and FRAMES_TO_KEEP = 65 (0xDB824C) give ZH's MAX_FRAMES_AHEAD = 128. RotWK's EFFECTIVE command delay is not
-// established (stop S-720): the run-ahead here is OpenBFME's fixed choice, carried in the start message; LiveGame's 5 Hz clock drops a held frame's time
-// as the 2 s lag drop does in spirit (not ported exactly).
+// FRAME_DATA_LENGTH = 258 (0xDB8248) and FRAMES_TO_KEEP = 65 (0xDB824C) give ZH's MAX_FRAMES_AHEAD = 128. Lane NETLAG-1 (BFME2 decomp, tier A for
+// RW 0x8D4301 ConnectionManager::sendLocalCommand and RW 0x8D3AF1 sendLocalCommandDirect): the packet router stamps every command, its own and the ones
+// the other peers send it, with its current frame + 1, so RotWK's command delay is one frame on the router (S-720); the lobby's run-ahead, carried in
+// the start message, is therefore 1 (MP-1 .. MP-3 used 2). LiveGame's 5 Hz clock drops a held frame's time as the 2 s lag drop does in spirit (not
+// ported exactly).
 // The CRC interval (GameInfo::getCRCInterval) is 100 in retail MP games (PLAN, replays); MSG_LOGIC_CRC = 1098 (PLAN rule 4).
 // OpenBFME DIFFERENCE: the CRC is OpenBFME's state hash (GameLogic::computeStateHash), not retail's xfer CRC (PLAN rule 5, CRC-1). On a mismatch the peers
 // exchange the hash cut into its sections (DESYNCREPORT, OpenBFME's own command) so the report names the diverging subsystem and objects.
@@ -118,7 +120,9 @@ struct NetworkConfig
 	int localSlot = 0;
 	// per GameInfo slot: the logic player index of the human player in that slot, -1 for a slot that is not a network player (AI, open, closed)
 	std::array<int, MAX_SLOTS> slotPlayerIndex{ { -1, -1, -1, -1, -1, -1, -1, -1 } };
-	int runAhead = 2;      ///< frames between issuing a command and executing it (stop S-720: RotWK's value not identified); with adaptiveRunAhead the minimum
+	// frames between issuing a command and executing it; with adaptiveRunAhead the minimum. Lane NETLAG-1: 1, RotWK's delay (the packet router stamps a
+	// command with the current frame + 1, RW 0x8D4301 / 0x8D3AF1: 200 to 400 ms from a click to its frame); MP-1 .. MP-3 used 2
+	int runAhead = 1;
 	// lane MP-2: the run-ahead follows the packet router's measured round trip (Network::updateRunAhead): the router sends RUNAHEAD as a frame command and
 	// every peer takes the new value when that frame runs (equal run-aheads keep every peer's MSG_LOGIC_CRC on one execution frame)
 	bool adaptiveRunAhead = false;
@@ -224,6 +228,9 @@ public:
 	std::string quitReason() const { return m_quitFromScreen ? std::string("the local player quit from the disconnect screen") : m_disconnect.quitReason(); }
 	// the slot was dropped by the disconnect path (its frames from its disconnect frame on are not waited for)
 	bool isDisconnected(int slot) const { return slot >= 0 && slot < MAX_SLOTS && m_slots[(size_t)slot].disconnected; }
+	bool isGameSlot(int slot) const { return slot >= 0 && slot < MAX_SLOTS && m_slots[(size_t)slot].active; } ///< lane MP-DROP-1: a network player of the game
+	/// lane MP-DROP-1: the slot left or was dropped at some frame here (a rejoined slot keeps its departure: it is never router or decider again)
+	bool hasDeparted(int slot) const { return slot >= 0 && slot < MAX_SLOTS && m_departureFrame[(size_t)slot] != 0xFFFFFFFFu; }
 	// "Network:PlayerLeftGame" notices (RW 0x8D57D8), one per dropped or departed player, for the UI
 	const std::vector<std::u16string> &leftGameNotices() const { return m_leftNotices; }
 	// the clock of the disconnect path (default NetMilliseconds); a test drives its own
@@ -288,7 +295,7 @@ public:
 	struct LiveStart
 	{
 		UnsignedInt frame = 0; ///< the first frame this client runs in lockstep (the REJOIN's frame + 1)
-		int runAhead = 2;      ///< the run-ahead in effect from it
+		int runAhead = 1;      ///< the run-ahead in effect from it
 		std::vector<MembershipEvent> membership; ///< every membership change of the game so far, in log order
 		struct Crc
 		{
@@ -318,6 +325,7 @@ public:
 	void reportError(const std::string &e) { m_errors.push_back(e); }
 	bool frameStillOpen(UnsignedInt frame) const { return !m_relayedAny || frame > m_lastRelayed; }
 	void sendDirect(const NetCommandMsg &c);  ///< ZH sendLocalCommandDirect: to every other connected slot, not frame data
+	void sendDirectTo(int slot, const NetCommandMsg &c); ///< lane MP-DROP-1: as sendDirect, to one connected slot (the decider's resent drop)
 	void sendPlayerDestruct(int slot);        ///< ZH DisconnectManager::sendPlayerDestruct: DESTROYPLAYER at the execution frame + 1
 	void disconnectPlayer(int slot, UnsignedInt frame); ///< RW 0x8D57D8: the slot is not waited for from `frame` on, its connection is retired
 	void sendFrameDataToPlayer(int slot, UnsignedInt startFrame, UnsignedInt endFrame); ///< RW 0x8D4761
@@ -403,7 +411,7 @@ private:
 	std::vector<std::u16string> m_leftNotices;
 	unsigned long long m_framesResent = 0, m_framesFilled = 0;
 	// lane MP-2: the adaptive run-ahead
-	int m_minRunAhead = 2;
+	int m_minRunAhead = 1;
 	std::uint64_t m_lastRunAheadUpdate = 0;
 	int m_runAheadChanges = 0;
 	int m_lastMaxRtt = -1;
@@ -414,7 +422,7 @@ private:
 	// folded into m_baseRunAhead once older than the frames still in play; runAheadAt(L) is the run-ahead of protocol frame L: the changes of the frames
 	// before L, which every peer relayed before it completes frame L (independent of how far the logic worker has acquired)
 	std::map<UnsignedInt, int> m_runAheadHistory;
-	int m_baseRunAhead = 2;
+	int m_baseRunAhead = 1;
 	int runAheadAt(UnsignedInt logicFrame) const;
 	// lane MP-2 (review): the packet router of each frame (a drop of the router hands the role on at the drop frame): only its RUNAHEAD is taken. Lane MP-3
 	// (review r3): derived from every slot's departure frame (leave or drop; none = 0xFFFFFFFF) and the agreed fallback order, never from arrival order

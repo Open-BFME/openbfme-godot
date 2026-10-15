@@ -3,6 +3,7 @@
 extends Control
 
 const W := preload("res://scripts/ui/widgets.gd")
+const Style := preload("res://scripts/ui/style.gd")
 const Paths := preload("res://scripts/ui/paths.gd")
 const ReleaseNotes := preload("res://scripts/core/release_notes.gd")
 
@@ -14,11 +15,11 @@ var _empty: Label
 
 func _init() -> void:
 	set_anchors_preset(Control.PRESET_FULL_RECT)
-	var v := W.vbox(14)
+	var v := W.vbox(Style.SCREEN_GAP)
 	v.set_anchors_preset(Control.PRESET_FULL_RECT)
 	add_child(v)
 	v.add_child(W.h2("News & patch notes"))
-	var s := W.scroll(14)
+	var s := W.scroll(Style.SCREEN_GAP)
 	v.add_child(s.scroll)
 	_empty = W.wrap("The release notes appear here after the first update check.", "Muted")
 	s.box.add_child(_empty)

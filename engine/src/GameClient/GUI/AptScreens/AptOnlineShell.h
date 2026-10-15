@@ -102,6 +102,8 @@ public:
 	bool connectingShown() const { return m_connecting; }
 	// the boxes shown (title|text, as the game text gave them), for the tests
 	const std::vector<std::string> &boxesShown() const { return m_boxes; }
+	// lane ONLINE-5: the labels of the host's refused starts (the start check's refusal: "GUI:NotifiedStartIntent" while a player is not ready)
+	const std::vector<std::string> &startRefusals() const { return m_startRefusals; }
 	// Sol r1: the host program could not play the START the screens handed on (GodotAptPlayer.online_start_failed: the relay socket would not open):
 	// the player is told in a box and is back at the game list (a recoverable lobby error, never the game's end)
 	void startFailed(const std::string &why);
@@ -111,6 +113,8 @@ protected:
 	void lobbyChanged() override;
 	bool lobbyEditable(int slot) const override;
 	void onReadyPress(const std::string &argument) override;
+	bool heroChoiceAvailable() const override { return false; } // lane ONLINE-5: S-4076 (no Create-a-Hero record through the lobby): shown locked
+	int setupFlags() const override { return 0x200001F0; } // lane ONLINE-5: RW 0x9AF464 (BFME2 0x5A5BC7's 0x200001F0)
 	bool applySlotHero(int slot, const CreateAHeroHero *hero) override;
 	void onKickPlayer(const std::string &argument) override;
 	void onChatSend(const std::u16string &text) override;
@@ -182,6 +186,8 @@ private:
 	std::string m_advMode = "0";
 	std::unique_ptr<AptMessageBox> m_box;
 	std::vector<std::string> m_boxes;
+	std::vector<std::string> m_startRefusals;
+	int m_closeConnections = 0; ///< lane ONLINE-5 (S-4550): updates until the Connections screen the movie opened is closed again (0: none)
 	// login
 	GameWindow *m_nickname = nullptr, *m_email = nullptr, *m_password = nullptr, *m_remember = nullptr;
 	bool m_loginSent = false;

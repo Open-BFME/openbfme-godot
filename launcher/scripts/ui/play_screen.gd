@@ -1,7 +1,7 @@
 ## Lane UI-5: the Play screen of "Parchment & Steel": the OPENBFME title, the italic subtitle, the gold divider, the status chips (update
 ## state, channel, version), "Your games" and, on parchment, "What's New" from the installed release's notes. The bottom bar with Play
 ## belongs to the window (scripts/main.gd). It only shows; main.gd fills it in.
-extends Control
+extends HBoxContainer
 
 signal download_games
 signal show_news
@@ -14,10 +14,15 @@ const ReleaseNotes := preload("res://scripts/core/release_notes.gd")
 const Paths := preload("res://scripts/ui/paths.gd")
 
 const NOTES_SHOWN := 6
+const NOTES_W := 360.0   # the What's New card's width
 
 var state_chip: PanelContainer
 var channel_chip: PanelContainer
 var version_chip: PanelContainer
+var _chips: HFlowContainer
+var _left: VBoxContainer
+var _games_panel: PanelContainer
+var players_chip: PanelContainer   # lane ONLINECOUNT-1: "N players online" (hidden while the count is off or unknown)
 var games_card: Control    # the games were not found (and the download is offered)
 var games_found: Control   # the games were found: where
 var games_where: Label
@@ -32,8 +37,9 @@ var _notes_card: PanelContainer
 
 func _init() -> void:
 	set_anchors_preset(Control.PRESET_FULL_RECT)
+	add_theme_constant_override("separation", 16)
 	var left := W.vbox(0)
-	left.position = Vector2(0, 0)
+	left.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	left.custom_minimum_size.x = 480
 	add_child(left)
 	var h1 := W.label("OPENBFME")
@@ -49,11 +55,19 @@ func _init() -> void:
 	var spacer := Control.new()
 	spacer.custom_minimum_size.y = 8
 	left.add_child(spacer)
-	var chips := W.hbox(8)
+	# the chips wrap (Sol r1: the row's minimum width grew past the 480 px column and the count chip crossed What's New)
+	_left = left
+	var chips := HFlowContainer.new()
+	chips.add_theme_constant_override("h_separation", 8)
+	chips.add_theme_constant_override("v_separation", 8)
+	_chips = chips
 	state_chip = W.chip("")
 	channel_chip = W.chip("")
 	version_chip = W.chip("")
-	for c in [state_chip, channel_chip, version_chip]:
+	players_chip = W.chip("")
+	players_chip.visible = false
+	players_chip.tooltip_text = "Players in OpenBFME's online lobbies and games right now. A total from the lobby server, no names."
+	for c in [state_chip, channel_chip, version_chip, players_chip]:
 		chips.add_child(c)
 	left.add_child(chips)
 	var gap := Control.new()
@@ -63,6 +77,7 @@ func _init() -> void:
 	# Your games
 	var p := W.panel(6)
 	p.panel.custom_minimum_size.x = 470
+	_games_panel = p.panel
 	p.panel.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
 	left.add_child(p.panel)
 	p.box.add_child(W.h3("Your games"))
@@ -71,9 +86,7 @@ func _init() -> void:
 	var names := W.label("RotWK 2.01 · BFME II 1.06")
 	p.box.add_child(W.row(names, status, true))
 	games_found = W.vbox(4)
-	games_where = W.label("", "Muted")
-	games_where.clip_text = true
-	games_where.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	games_where = W.trim_label("", "Muted")
 	games_found.add_child(games_where)
 	p.box.add_child(games_found)
 	games_card = W.vbox(8)
@@ -91,13 +104,10 @@ func _init() -> void:
 	# What's New, on parchment, at the right
 	var parch := W.parchment(4, Vector2(26, 24))
 	_notes_card = parch.card
-	_notes_card.anchor_left = 1.0
-	_notes_card.anchor_right = 1.0
-	_notes_card.offset_left = -360
-	_notes_card.offset_right = -6
-	_notes_card.offset_top = 10
+	_notes_card.custom_minimum_size.x = NOTES_W
+	_notes_card.size_flags_vertical = Control.SIZE_SHRINK_BEGIN   # the card's top is the title block's top, its right the screen's margin
 	add_child(_notes_card)
-	resized.connect(func() -> void: _notes_card.offset_bottom = _notes_card.offset_top + clampf(size.y * 0.7, 300.0, 470.0))
+	resized.connect(func() -> void: _notes_card.custom_minimum_size.y = clampf(size.y * 0.7, 300.0, 470.0))
 	var title := W.parch_label("What's New", "title", 24)
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	parch.box.add_child(title)
@@ -159,7 +169,35 @@ func _init() -> void:
 	more.size_flags_horizontal = Control.SIZE_SHRINK_END
 	more.pressed.connect(func() -> void: show_news.emit())
 	parch.box.add_child(more)
+	# the left column is at most as wide as the room left of the card (480 px when there is room): at a narrow layout the chips wrap sooner
+	resized.connect(_fit_left)
+	_fit_left()
 	set_notes("", "The notes of your version appear here after the first update check.")
+
+
+func _fit_left() -> void:
+	var room := maxf(size.x - 366.0 - 12.0, 260.0)
+	_left.custom_minimum_size.x = minf(480.0, room)
+	_games_panel.custom_minimum_size.x = minf(470.0, room - 10.0)
+	_left.size.x = 0.0  # a container's size follows its new minimum
+
+
+## the chips whose box meets What's New's card (names; empty: none do). The flow container's minimum width is its widest chip, so the column stays 480 px and the chips wrap
+func chip_overlaps() -> PackedStringArray:
+	var out := PackedStringArray()
+	if _notes_card == null or not _notes_card.is_visible_in_tree():
+		return out
+	var card := _notes_card.get_global_rect()
+	for c in [state_chip, channel_chip, version_chip, players_chip, _games_panel]:
+		if c.is_visible_in_tree() and c.get_global_rect().intersects(card):
+			out.append(c.get_child(0).text if c != _games_panel else "Your games")
+	return out
+
+
+## the online player count's text ("" hides the chip: off, not fetched, or the lobby did not answer)
+func set_players(text: String) -> void:
+	W.set_chip(players_chip, "●  " + text, Style.GOOD) if text != "" else null
+	players_chip.visible = text != ""
 
 
 ## found: the games' state; aio: the download is offered (the setting)

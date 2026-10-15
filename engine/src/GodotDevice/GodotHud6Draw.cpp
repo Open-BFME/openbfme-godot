@@ -308,6 +308,12 @@ Dictionary Hud6Draw::state() const
 	help["draws"] = (int64_t)m_helpDraws;
 	help["text_ops"] = (int64_t)m_helpTextOps;
 	help["name"] = h.help() ? toGodot(u16ToUtf8(h.help()->name())) : String();
+	// lane HOVER-1: the rest of what the box shows (the cost line, the command points line, the long text), its kind and the provider's bar
+	help["title"] = h.help() ? toGodot(u16ToUtf8(h.help()->title())) : String();
+	help["points"] = h.help() ? toGodot(u16ToUtf8(h.help()->description())) : String();
+	help["text"] = h.help() ? toGodot(u16ToUtf8(h.help()->longText())) : String();
+	help["simple"] = h.help() ? h.help()->isSimple() : false;
+	help["bar"] = h.provider().bar;
 	Array calls;
 	for (const std::string &c : h.calls())
 	{

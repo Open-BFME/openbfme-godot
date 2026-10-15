@@ -49,8 +49,9 @@ namespace ActionManager
 {
 // RW 0x75CF21 with no target object and source 0 (the AI's location run, RW 0xA021D8)
 bool canDoSpecialPowerAtLocation(Object &obj, const CommandButton &button, const Coord3D &loc);
-// RW 0x82DFB7(obj, loc, 0, power, 0, options, 0)
-bool canDoSpecialPowerAtLocation(Object &obj, const Coord3D &loc, const SpecialPowerTemplate *power, unsigned options);
+// RW 0x82DFB7(obj, loc, 0, power, 0, options, 0); lane SPELL-4: `unported` (when given) is set when the answer no came from a per-type test this file does
+// not port (S-1874), not from a test that was run
+bool canDoSpecialPowerAtLocation(Object &obj, const Coord3D &loc, const SpecialPowerTemplate *power, unsigned options, bool *unported = nullptr);
 // RW 0x82D5DA(obj, power, 0, options, 0)
 bool canDoSpecialPower(Object &obj, const SpecialPowerTemplate *power);
 

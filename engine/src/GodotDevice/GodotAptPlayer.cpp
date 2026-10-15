@@ -24,6 +24,7 @@
 #include "GameClient/GUI/AptScreens/AptScreenFactories.h"
 #include "GameClient/GUI/AptScreens/AptSimpleScreens.h"
 #include "GameClient/GUI/AptScreens/AptTimeLine.h"
+#include "GameClient/GUI/CursorTooltip.h"
 #include "GameClient/GUI/AptScreens/AptDisconnectScreen.h"
 #include "GameClient/GUI/AptScreens/AptSaveLoad.h"
 #include "GameClient/GUI/SaveLoadInfo.h"
@@ -640,6 +641,7 @@ struct ShellMode
 	ScoreScreenData scoreScreen; // lane END-1
 	std::unique_ptr<SkirmishPreferences> profiles; // lane MENU-1: Skirmish.ini, the profiles a player made (GUI/Skirmish/SkirmishPreferences.h)
 	std::unique_ptr<AptScreen> guiFX; // lane END-1: GuiFX.apt, loaded for the end screen (not on the shell stack)
+	std::unique_ptr<ShellCursorTooltip> cursorTooltip; // lane HOVER-1: the menus' tool tips (GuiFX.apt's ToolTip, CursorTooltip.h)
 	std::unique_ptr<AptDisconnectScreen> disconnect; // lane MP-2: DisconnectScreen.apt while the disconnect screen is shown
 	Array disconnectActions;                         // lane MP-2: the buttons pressed, for take_disconnect_actions
 	SaveLoadInfo saveLoad;                           // lane MP-2: what SaveLoad.apt lists
@@ -672,6 +674,7 @@ struct ShellMode
 	{
 		disconnect.reset();
 		quitMenu.reset();
+		cursorTooltip.reset();
 		guiFX.reset();
 		shell.reset();
 		layer.reset();
@@ -1132,6 +1135,7 @@ void AptMenuPlayer::_bind_methods()
 	ClassDB::bind_method(D_METHOD("get_member", "level", "path", "name"), &AptMenuPlayer::get_member);
 	ClassDB::bind_method(D_METHOD("get_timeline_stats"), &AptMenuPlayer::get_timeline_stats); // lane END-2
 	ClassDB::bind_method(D_METHOD("quit_menu", "request"), &AptMenuPlayer::quit_menu);
+	ClassDB::bind_method(D_METHOD("get_cursor_tooltip"), &AptMenuPlayer::get_cursor_tooltip); // lane HOVER-1
 	ClassDB::bind_method(D_METHOD("list_buttons", "level"), &AptMenuPlayer::list_buttons);
 	ClassDB::bind_method(D_METHOD("fetch_text", "label"), &AptMenuPlayer::fetch_text);
 	ClassDB::bind_method(D_METHOD("shell_mapped_image", "name"), &AptMenuPlayer::shell_mapped_image);
@@ -1563,6 +1567,30 @@ Dictionary AptMenuPlayer::boot_shell(const Ref<RetailFileSystem> &fs, Object *wo
 		if (!sm->wm->loadBackground())
 		{
 			errors.push_back("Background.apt did not load (the front-end background)");
+		}
+		// lane HOVER-1: the menus' tool tips: AptButtonTooltipMap.ini's names, Mouse.ini / Language.ini's tool tip font and delay, GuiFX.apt (the window
+		// manager's own movie at its level 11, BFME1 AptGuiFXRegisterCallbacks) whose ToolTip clip shows them; a missing file or field is a boot error
+		{
+			AptButtonTooltipMap names;
+			CursorTooltipSettings tipSettings;
+			std::string tipError;
+			if (!AptButtonTooltipMap::load(*fs->archive_fs(), names, &tipError) || !CursorTooltipSettings::load(*fs->archive_fs(), tipSettings, &tipError))
+			{
+				errors.push_back(toGodot("boot_shell: tool tips: " + tipError));
+			}
+			else
+			{
+				sm->wm->setTooltipNameMap(names.buttonMap);
+				if (!sm->guiFX)
+				{
+					sm->guiFX = std::make_unique<AptGuiFXScreen>(*sm->wm, *sm->shell);
+				}
+				sm->cursorTooltip = std::make_unique<ShellCursorTooltip>(*sm->wm, sm->text.get(), tipSettings);
+				for (const std::string &l : CursorTooltip::acceptanceStops())
+				{
+					sm->deviceUnverified.insert(l); // [S-4610] in the shell report
+				}
+			}
 		}
 	}
 	m->shell = std::move(sm);
@@ -2983,6 +3011,17 @@ int AptMenuPlayer::tick(double delta)
 		// with input between movie steps, so the canvas is rebuilt on every tick in shell mode.
 		m->shell->wm->update(ms);
 		stepped = 1;
+		if (m->shell->cursorTooltip && m->shell->metrics)
+		{
+			// lane HOVER-1: Mouse::drawTooltip once a frame (RW 0x5EE7A8) at the pointer's stage position
+			const std::size_t before = m->shell->cursorTooltip->calls().size();
+			const Vector2 window = windowSize();
+			m->shell->cursorTooltip->update((std::uint32_t)Time::get_singleton()->get_ticks_msec(), window.x, window.y, *m->shell->metrics);
+			if (m->shell->cursorTooltip->calls().size() != before)
+			{
+				m->dirty = true;
+			}
+		}
 	}
 	else
 	{
@@ -3524,7 +3563,19 @@ void AptMenuPlayer::drawCanvas(const AptCanvasList &list)
 					}
 					RID item = newItem(parents.back());
 					current = RID();
-					m->view3d.draw(item, Rect2(minx, miny, maxx - minx, maxy - miny), op);
+					// Sol r1 (ONLINE-5, S-4555): only a shell menu screen's View3D (the 3D menu frame) stretches with the stage
+					std::vector<int> menuLevels;
+					if (m->shell && m->shell->shell)
+					{
+						for (int i = 0; i < m->shell->shell->screenCount(); ++i)
+						{
+							if (const AptScreen *screen = m->shell->shell->screenAt(i))
+							{
+								menuLevels.push_back(screen->level());
+							}
+						}
+					}
+					m->view3d.draw(item, Rect2(minx, miny, maxx - minx, maxy - miny), op, AptView3DOnMenuLevel(op.path, menuLevels));
 					break;
 				}
 				if (m->shell && op.nativeTag && m->shell->wm->renderCallback(op.symbolName))
@@ -5437,6 +5488,9 @@ Dictionary AptMenuPlayer::set_online(Object *worldObject, const Dictionary &opti
 	o.playerTemplateCount = factions;
 	o.colorCount = colors;
 	o.pollMs = (std::uint32_t)(int64_t)options.get("poll_ms", (int64_t)o.pollMs);
+	// lane ONLINE-5: the staging room's polls are held by a lobby that can (20 s: one request per player every 20 s in an idle room); "long_poll_s" 0
+	// turns it off (plain polls every poll_ms)
+	o.longPollS = (std::uint32_t)std::clamp<int64_t>((int64_t)options.get("long_poll_s", (int64_t)20), 0, OnlineLobbyClient::kMaxHoldSeconds);
 	sm.online = std::make_unique<OnlineLobbyClient>(o);
 	sm.onlineUrl = toNative(String(options.get("lobby_url", String())));
 	sm.onlineCtx = OnlineShellContext();
@@ -5469,6 +5523,8 @@ Array AptMenuPlayer::online_take_requests()
 		d["path"] = toGodot(q.path); // the transport prefixes the lobby URL the player named (online_http.gd: the release privacy guard checks it)
 		d["body"] = String::utf8(q.body.c_str(), (int64_t)q.body.size());
 		d["token"] = toGodot(q.token);
+		d["held"] = q.held; // lane ONLINE-5: a poll the lobby may keep for hold_seconds: its own connection (online_http.gd)
+		d["hold_seconds"] = (int64_t)q.holdSeconds;
 		out.push_back(d);
 	}
 	return out;
@@ -5542,6 +5598,14 @@ Dictionary AptMenuPlayer::online_status()
 		ready.push_back(v.ready);
 	}
 	r["ready"] = ready;
+	// lane ONLINE-5: the players' start positions (-1: random) and whether the lobby holds the staging room's polls
+	Array startPos;
+	for (const SkirmishGameSlot &gs : c.gameInfo().slots)
+	{
+		startPos.push_back((int64_t)gs.startPos);
+	}
+	r["start_pos"] = startPos;
+	r["hold_seconds"] = (int64_t)c.holdSeconds();
 	AptOnlineShell *screen = sm.shell ? dynamic_cast<AptOnlineShell *>(sm.shell->findScreenByFilename("OnlineShell.apt")) : nullptr;
 	r["screen"] = screen != nullptr;
 	if (screen)
@@ -5554,6 +5618,20 @@ Dictionary AptMenuPlayer::online_status()
 		r["boxes"] = strings(screen->boxesShown());
 		r["connecting"] = screen->connectingShown();
 		r["level"] = (int64_t)screen->level();
+		// lane ONLINE-5: what each Ready box was told to show (SetReadyState), the host's refused starts, the start spots the map tab shows
+		Array icons;
+		for (int i = 0; i < MAX_SLOTS; ++i)
+		{
+			icons.push_back(toGodot(screen->readyIcon(i)));
+		}
+		r["ready_icons"] = icons;
+		r["start_refusals"] = strings(screen->startRefusals());
+		int64_t spots = 0;
+		for (GameWindow *w : screen->currentMapSpots())
+		{
+			spots += w && !w->winIsHidden() ? 1 : 0;
+		}
+		r["start_spots"] = spots;
 	}
 	return r;
 }
@@ -5656,6 +5734,24 @@ Dictionary AptMenuPlayer::online_apply(const Dictionary &spec)
 			sm.wm->postMouseMove(x, y);
 			out["x"] = x;
 			out["y"] = y;
+		}
+	}
+	if (spec.has("start_spot"))
+	{
+		// lane ONLINE-5: the pointer to the centre of a start spot of the MAP tab's map window (a gadget, not a movie button); the click is "mouse"
+		// true and false on later frames, as a player's
+		const int n = (int)(int64_t)spec["start_spot"];
+		const std::vector<GameWindow *> &spots = screen->currentMapSpots();
+		if (n < 0 || n >= (int)spots.size() || !spots[(size_t)n] || spots[(size_t)n]->winIsHidden())
+		{
+			errors.push_back(String("no start spot ") + String::num_int64(n) + " is shown");
+		}
+		else
+		{
+			int x = 0, y = 0, w = 0, h = 0;
+			spots[(size_t)n]->winGetScreenPosition(&x, &y);
+			spots[(size_t)n]->winGetSize(&w, &h);
+			sm.wm->postMouseMove((float)x + (float)w / 2.0f, (float)y + (float)h / 2.0f);
 		}
 	}
 	if (spec.has("box"))
@@ -5912,6 +6008,34 @@ Dictionary AptMenuPlayer::get_timeline_stats()
 }
 
 // lane END-2: QuitMenu.apt over the live game. request.kind: "open" (request.context: GameWorld.get_quit_menu_context()), "close", "state"
+Dictionary AptMenuPlayer::get_cursor_tooltip() const
+{
+	Dictionary out;
+	const ShellCursorTooltip *t = m->shell ? m->shell->cursorTooltip.get() : nullptr;
+	out["ok"] = t != nullptr;
+	if (!t)
+	{
+		return out;
+	}
+	out["label"] = toGodot(t->label());
+	out["shown"] = toGodot(u16ToUtf8(t->tooltip().shown()));
+	float px = 0.0f, py = 0.0f;
+	m->shell->wm->apt().mousePosition(px, py);
+	out["pointer"] = Vector2(px, py);
+	Array calls, errors;
+	for (const std::string &c : t->calls())
+	{
+		calls.push_back(toGodot(c));
+	}
+	for (const std::string &e : t->errors())
+	{
+		errors.push_back(toGodot(e));
+	}
+	out["calls"] = calls;
+	out["errors"] = errors;
+	return out;
+}
+
 Dictionary AptMenuPlayer::quit_menu(const Dictionary &request)
 {
 	Dictionary out;

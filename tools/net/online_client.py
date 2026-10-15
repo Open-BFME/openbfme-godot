@@ -307,7 +307,7 @@ def main() -> int:
     f.add_argument("--out-dir", required=True)
     f.add_argument("--seed", type=int, default=1234)
     f.add_argument("--cash", type=int, default=1500)
-    f.add_argument("--run-ahead", type=int, default=2)
+    f.add_argument("--run-ahead", type=int, default=1)
     f.add_argument("--crc-interval", type=int, default=100)
     f.add_argument("--expires", type=int, default=int(time.time()) + 86400)
     sm = sub.add_parser("smoke")

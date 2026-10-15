@@ -48,7 +48,8 @@ public:
 	// A canvas build starts: every viewer is marked unused (an unused one stops rendering at endBuild).
 	void beginBuild();
 	// The View3D placeholder `op` (nativeTag, symbolName "View3D") drawn into `item` over `rect` (window pixels). Creates the viewer on first use.
-	void draw(RID item, const Rect2 &rect, const AptCanvasOp &op);
+	// `stretchWithStage`: Sol r1 (ONLINE-5, S-4555): the clip is on a shell menu screen (AptView3DOnMenuLevel): it stretches with the stage
+	void draw(RID item, const Rect2 &rect, const AptCanvasOp &op, bool stretchWithStage);
 	void endBuild();
 	// Per render frame: the animation clocks, the poses and the cameras.
 	void advance();

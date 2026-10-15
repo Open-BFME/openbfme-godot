@@ -496,6 +496,17 @@ void OnlineLobbyClient::chat(const std::u16string &text)
 		return;
 	}
 	queue("chat", "POST", "/v1/games/" + m_gameId + "/chat", "{\"text\":" + jsonQuote(utf16ToUtf8(text)) + "}");
+	if (m_holdCap > 0)
+	{
+		// lane ONLINE-5: the sender reads its own line at once (it used to wait for the next poll: up to a second and a round trip). A lobby that
+		// announces "wait" marks the sender's lines in its polls ("you"), so the copy that comes back is not shown again; an older lobby marks
+		// nothing and the line appears with the poll, as before
+		Event e{ Event::Chat };
+		e.from = m_accountName;
+		e.text = text;
+		m_events.push_back(e);
+		++m_ownEcho;
+	}
 }
 
 void OnlineLobbyClient::kick(int slot)
@@ -527,7 +538,17 @@ void OnlineLobbyClient::dropStart()
 
 void OnlineLobbyClient::update(std::uint64_t nowMs)
 {
-	if (inGame() && m_startJson.empty() && !m_pollQueued && nowMs >= m_nextPoll)
+	m_now = nowMs;
+	if (m_options.longPollS > 0 && m_holdCap > 0)
+	{
+		// lane ONLINE-5: the lobby holds polls: one held poll at a time, on its own connection, the next as soon as the last was answered
+		if (inGame() && m_startJson.empty() && m_heldInFlight == 0 && !m_pollQueued && nowMs >= m_nextPoll)
+		{
+			m_heldDue = true;
+		}
+		return;
+	}
+	if (inGame() && m_startJson.empty() && !m_pollQueued && m_heldInFlight == 0 && nowMs >= m_nextPoll)
 	{
 		queue("poll", "GET", "/v1/games/" + m_gameId + "?since=" + std::to_string(m_chatSince), "");
 		m_pollQueued = true;
@@ -538,16 +559,35 @@ void OnlineLobbyClient::update(std::uint64_t nowMs)
 std::vector<OnlineLobbyClient::HttpRequest> OnlineLobbyClient::takeRequests()
 {
 	std::vector<HttpRequest> out;
-	if (m_inFlight != 0 || m_queue.empty())
+	if (m_inFlight == 0 && !m_queue.empty())
 	{
-		return out;
+		m_current = m_queue.front();
+		m_queue.pop_front();
+		m_current.request.token = m_token;
+		m_inFlight = m_current.request.id;
+		++m_sent[m_current.kind.substr(0, m_current.kind.find(':'))];
+		out.push_back(m_current.request);
 	}
-	m_current = m_queue.front();
-	m_queue.pop_front();
-	m_current.request.token = m_token;
-	m_inFlight = m_current.request.id;
-	++m_sent[m_current.kind.substr(0, m_current.kind.find(':'))];
-	out.push_back(m_current.request);
+	if (m_heldDue && m_heldInFlight == 0 && inGame() && m_startJson.empty())
+	{
+		// lane ONLINE-5: the held poll (lobby.mjs: answered at once unless the game's seq is still `seq`, else at its next change or after `wait`)
+		m_heldDue = false;
+		HttpRequest r;
+		r.id = m_nextId++;
+		r.method = "GET";
+		r.held = true;
+		r.holdSeconds = std::min<int>((int)m_options.longPollS, m_holdCap);
+		r.path = "/v1/games/" + m_gameId + "?since=" + std::to_string(m_chatSince) + "&seq=" + std::to_string(m_seq) + "&wait=" + std::to_string(r.holdSeconds);
+		r.token = m_token;
+		m_heldInFlight = r.id;
+		m_heldSentAt = m_now;
+		m_heldSeq = m_seq;
+		m_heldSince = m_chatSince;
+		++m_sent["poll"];
+		++m_sent["held"];
+		out.push_back(r);
+	}
+	m_heldDue = false;
 	return out;
 }
 
@@ -570,6 +610,10 @@ void OnlineLobbyClient::leftGame(const std::string &why)
 	m_startJson.clear();
 	m_pollQueued = false;
 	m_nextPoll = 0;
+	m_heldInFlight = 0; // lane ONLINE-5: the held poll's answer, when it comes, is an answer to nothing we asked
+	m_heldDue = false;
+	m_holdCap = 0;      // the next game's first poll says again whether its lobby holds polls
+	m_ownEcho = 0;
 	// a queued poll / change of the game left behind is dropped (its answer would say "not in game")
 	for (auto it = m_queue.begin(); it != m_queue.end();)
 	{
@@ -582,7 +626,7 @@ void OnlineLobbyClient::leftGame(const std::string &why)
 	m_events.push_back(e);
 }
 
-bool OnlineLobbyClient::readGameView(const JsonValue &g, std::string *error)
+bool OnlineLobbyClient::readGameView(const JsonValue &g, std::string *error, bool fresh)
 {
 	// lobby.mjs gameView: { id, name, state, hostSlot, profile, setup: { map, startingCash, superweaponRestriction, legendaryHeroes, rules }, slots: [8 x
 	// { slot, state, name, faction, color, startPos, team, ready, you }], seq }
@@ -703,6 +747,16 @@ bool OnlineLobbyClient::readGameView(const JsonValue &g, std::string *error)
 	{
 		return fail("no slot is ours");
 	}
+	if (!fresh && id == m_gameId && (std::uint32_t)seq < m_seq)
+	{
+		// lane ONLINE-5: two connections (the held poll and the ordinary requests): an answer made before the one already read is not a step back.
+		// (lobby.mjs: a game's seq only grows.) A view of another game than the one we are in is no answer to us at all
+		return true;
+	}
+	if (!fresh && !m_gameId.empty() && id != m_gameId)
+	{
+		return fail("it is game " + id + "'s, not ours");
+	}
 	m_gameId = id;
 	m_gameName = u16(strOf(g.get("name")));
 	m_hostSlot = (int)hostSlot;
@@ -715,16 +769,35 @@ bool OnlineLobbyClient::readGameView(const JsonValue &g, std::string *error)
 
 void OnlineLobbyClient::deliver(int id, int status, const std::string &body, const std::string &transportError)
 {
-	if (id != m_inFlight || id == 0)
+	if (id == 0 || (id != m_inFlight && id != m_heldInFlight))
 	{
 		return; // an answer to nothing we asked
 	}
-	const Pending p = m_current;
-	m_inFlight = 0;
+	Pending p;
+	const bool held = id == m_heldInFlight;
+	if (held)
+	{
+		// lane ONLINE-5: the held poll's answer. The next one goes out at once when this one was really held or brought something; a lobby (or
+		// something between) that answers a held poll at once with nothing new is polled at the plain interval, never in a tight loop; so is a
+		// lobby that failed
+		p.kind = "poll";
+		p.request.id = id;
+		m_heldInFlight = 0;
+		m_nextPoll = m_now + m_options.pollMs;
+	}
+	else
+	{
+		p = m_current;
+		m_inFlight = 0;
+	}
 	const std::string kind = p.kind.substr(0, p.kind.find(':'));
-	if (kind == "poll")
+	if (kind == "poll" && !held)
 	{
 		m_pollQueued = false;
+	}
+	if (kind == "chat" && (!transportError.empty() || status != 200) && m_ownEcho > 0)
+	{
+		--m_ownEcho; // the line shown at its sending never comes back from the lobby (the refusal below says why)
 	}
 	if (!transportError.empty())
 	{
@@ -773,7 +846,36 @@ void OnlineLobbyClient::deliver(int id, int status, const std::string &body, con
 		refuse(kind, code.empty() ? "http_" + std::to_string(status) : code, message.empty() ? "HTTP " + std::to_string(status) : message);
 		return;
 	}
+	const std::uint32_t seqBefore = m_seq, sinceBefore = m_chatSince;
+	const std::size_t eventsBefore = m_events.size();
 	handle(p, status, root);
+	if (!held && kind == "poll" && inGame() && m_holdCap > 0 && m_options.longPollS > 0)
+	{
+		m_nextPoll = 0; // the plain poll that told us the lobby holds polls: the first held one follows at once
+	}
+	if (kind == "poll" && inGame() && m_backoffS > 0)
+	{
+		// Sol r1: the lobby did not hold the poll (a bound was reached) and asked for a pause: kept whatever else the answer says
+		m_nextPoll = std::max<std::uint64_t>(m_nextPoll, m_now + (std::uint64_t)m_backoffS * 1000u);
+		m_backoffS = 0;
+		return;
+	}
+	if (held && inGame())
+	{
+		const bool refused = std::any_of(m_events.begin() + (std::ptrdiff_t)std::min(eventsBefore, m_events.size()), m_events.end(),
+			[](const Event &e) { return e.kind == Event::Refused; });
+		// "something new" is measured against what this poll asked from (m_heldSeq): our own change's answer may have been read first, and the
+		// lobby still answered this poll for a reason
+		long long answered = 0;
+		const JsonValue *game = root.get("game");
+		const bool moved = game && game->isObject() && intOf(game->get("seq"), 0, 0xFFFFFFFFll, answered) && (std::uint32_t)answered != m_heldSeq;
+		const bool news = moved || m_seq != seqBefore || m_chatSince != sinceBefore || !m_startJson.empty();
+		const bool waited = m_now >= m_heldSentAt + 500;
+		if (!refused && (news || waited))
+		{
+			m_nextPoll = 0;
+		}
+	}
 }
 
 void OnlineLobbyClient::handle(const Pending &p, int, const JsonValue &root)
@@ -912,7 +1014,7 @@ void OnlineLobbyClient::handle(const Pending &p, int, const JsonValue &root)
 	if (kind == "create" || kind == "join")
 	{
 		const JsonValue *game = root.get("game");
-		if (!game || !readGameView(*game, &error))
+		if (!game || !readGameView(*game, &error, true))
 		{
 			refuse(kind, "protocol", error.empty() ? "no game in the answer" : error);
 			return;
@@ -955,55 +1057,116 @@ void OnlineLobbyClient::handle(const Pending &p, int, const JsonValue &root)
 		{
 			return;
 		}
-		if (kind == "poll")
+		// Sol r1 (ONLINE-5): a poll answer is checked whole before anything of it is kept: a refused answer changes nothing (the view, the ready flags,
+		// the chat read so far, the hold). The game view is the last check (readGameView keeps it only when all of it is good)
+		const JsonValue *game = kind == "poll" ? root.get("game") : nullptr;
+		if (kind == "poll" && (!game || !game->isObject()))
 		{
-			const JsonValue *game = root.get("game");
-			if (!game || !readGameView(*game, &error))
+			refuse(kind, "protocol", "no game in the answer");
+			return;
+		}
+		// lane ONLINE-5: "wait": the lobby holds polls for up to that many seconds (lobby.mjs MAX_WAIT_S) and marks the reader's own chat lines
+		// ("you"). No such field: an older lobby, polled plainly. Sol r1: "backoff": the lobby did not hold this poll (a bound was reached) and
+		// asks for that many seconds before the next one
+		long long cap = 0, backoff = 0;
+		const JsonValue *wait = kind == "poll" ? root.get("wait") : nullptr;
+		if (wait && !intOf(wait, 1, kMaxHoldSeconds, cap))
+		{
+			refuse(kind, "protocol", "the lobby's \"wait\" is not a number of seconds from 1 to " + std::to_string(kMaxHoldSeconds));
+			return;
+		}
+		const JsonValue *back = kind == "poll" ? root.get("backoff") : nullptr;
+		if (back && !intOf(back, 1, kMaxHoldSeconds, backoff))
+		{
+			refuse(kind, "protocol", "the lobby's \"backoff\" is not a number of seconds from 1 to " + std::to_string(kMaxHoldSeconds));
+			return;
+		}
+		const JsonValue *chat = kind == "poll" ? root.get("chat") : nullptr;
+		if (chat && chat->type != JsonValue::NUL && !chat->isArray())
+		{
+			refuse(kind, "protocol", "\"chat\" is not a list");
+			return;
+		}
+		if (chat && chat->array.size() > kMaxChatLines)
+		{
+			refuse(kind, "protocol", "the lobby sent more than " + std::to_string(kMaxChatLines) + " chat lines");
+			return;
+		}
+		if (chat)
+		{
+			for (const JsonValue &c : chat->array)
 			{
-				refuse(kind, "protocol", error.empty() ? "no game in the answer" : error);
-				return;
-			}
-			m_events.push_back(Event{ Event::GameUpdated });
-			if (const JsonValue *chat = root.get("chat"))
-			{
-				if (chat->array.size() > kMaxChatLines)
+				long long seq = 0;
+				const JsonValue *mine = c.get("you");
+				if (!c.isObject() || !intOf(c.get("seq"), 0, 0xFFFFFFFFll, seq))
 				{
-					refuse(kind, "protocol", "the lobby sent more than " + std::to_string(kMaxChatLines) + " chat lines");
+					refuse(kind, "protocol", "a chat line without its seq");
 					return;
 				}
-				for (const JsonValue &c : chat->array)
+				if (!fits(c.get("from"), kMaxPlayerNameBytes) || !fits(c.get("text"), kMaxChatBytes))
 				{
-					long long seq = 0;
-					if (!intOf(c.get("seq"), 0, 0xFFFFFFFFll, seq))
-					{
-						continue;
-					}
-					if (!fits(c.get("from"), kMaxPlayerNameBytes) || !fits(c.get("text"), kMaxChatBytes))
-					{
-						refuse(kind, "protocol", "a chat line beyond the lobby's limits");
-						return;
-					}
-					m_chatSince = std::max<std::uint32_t>(m_chatSince, (std::uint32_t)seq);
-					const JsonValue *from = c.get("from");
-					Event e{ Event::Chat };
-					e.flag = !from || from->type == JsonValue::NUL;
-					e.from = e.flag ? std::u16string() : u16(strOf(from));
-					e.text = u16(strOf(c.get("text")));
-					m_events.push_back(e);
+					refuse(kind, "protocol", "a chat line beyond the lobby's limits");
+					return;
+				}
+				if (mine && mine->type != JsonValue::BOOL)
+				{
+					refuse(kind, "protocol", "a chat line's \"you\" must be true or false");
+					return;
 				}
 			}
 		}
 		const JsonValue *start = root.get("start");
+		std::string startJson;
 		if (start && start->isObject())
 		{
 			// the START is handed on whole: OnlineStart::parse checks every field (the screens before the host program's net_online)
-			const std::string json = toJson(*start);
-			if (json.size() > kMaxStartBytes)
+			startJson = toJson(*start);
+			if (startJson.size() > kMaxStartBytes)
 			{
 				refuse(kind, "protocol", "the START is larger than " + std::to_string(kMaxStartBytes) + " bytes");
 				return;
 			}
-			m_startJson = json;
+		}
+		if (game && !readGameView(*game, &error))
+		{
+			refuse(kind, "protocol", error);
+			return;
+		}
+		// ---- everything checked: kept ----
+		if (kind == "poll")
+		{
+			m_holdCap = (int)cap;
+			m_backoffS = (int)backoff;
+			m_events.push_back(Event{ Event::GameUpdated });
+		}
+		if (chat)
+		{
+			for (const JsonValue &c : chat->array)
+			{
+				long long seq = 0;
+				intOf(c.get("seq"), 0, 0xFFFFFFFFll, seq);
+				const JsonValue *mine = c.get("you");
+				if ((std::uint32_t)seq <= m_chatSince)
+				{
+					continue; // lane ONLINE-5: a line an earlier answer brought already (two connections: answers may cross)
+				}
+				m_chatSince = std::max<std::uint32_t>(m_chatSince, (std::uint32_t)seq);
+				if (mine && mine->boolean && m_ownEcho > 0)
+				{
+					--m_ownEcho; // the sender's own line: shown when it was sent (chat())
+					continue;
+				}
+				const JsonValue *from = c.get("from");
+				Event e{ Event::Chat };
+				e.flag = !from || from->type == JsonValue::NUL;
+				e.from = e.flag ? std::u16string() : u16(strOf(from));
+				e.text = u16(strOf(c.get("text")));
+				m_events.push_back(e);
+			}
+		}
+		if (!startJson.empty())
+		{
+			m_startJson = startJson;
 			m_events.push_back(Event{ Event::GameStart });
 		}
 		return;

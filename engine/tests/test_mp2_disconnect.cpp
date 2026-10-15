@@ -8,6 +8,7 @@
 #include "doctest.h"
 
 #include "GameNetwork/DisconnectManager.h"
+#include "GameNetwork/LockstepDriver.h"
 #include "GameNetwork/NetPacket.h"
 #include "GameNetwork/Network.h"
 #include "GameNetwork/NetworkSettings.h"
@@ -509,7 +510,10 @@ TEST_CASE("mp2 disconnect: the last connected player quits; GameData's network t
 TEST_CASE("mp2 disconnect: the lane's acceptance stops are reported (S-1121 .. S-1126)")
 {
 	const std::vector<std::string> lines = DisconnectManager::stopLines();
-	REQUIRE(lines.size() == 6);
+	REQUIRE(lines.size() == 9);
+	CHECK(lines[6].rfind("[S-4810]", 0) == 0); // lane MP-DROP-1
+	CHECK(lines[7].rfind("[S-4811]", 0) == 0);
+	CHECK(lines[8].rfind("[S-4812]", 0) == 0);
 	CHECK(lines[4].rfind("[S-1125]", 0) == 0);
 	CHECK(lines[5].rfind("[S-1126]", 0) == 0);
 	CHECK(Network::stopLines()[0].find("the packet router adapts the common command delay") != std::string::npos);
@@ -556,12 +560,12 @@ TEST_CASE("mp2 run-ahead: the packet router's measured round trip sets every pee
 	tickWithCommands(10);
 	CHECK(g.peers[0].net->currentRunAhead() == 2);
 	CHECK(g.peers[1].net->currentRunAhead() == 2);
-	g.hub.endpoint(0).rtt = 800; // the router (slot 0): (800 / 2) ms one way = 2 frames, + 10 % = 2, + 1 = 3, on both peers once the RUNAHEAD frame ran
+	g.hub.endpoint(0).rtt = 800; // the router (slot 0): 400 ms one way + 10 % = 440 ms, + half a period = 2 frames, + 1 = 3, on both peers once the RUNAHEAD frame ran
 	tickWithCommands(10);
 	CHECK(g.peers[0].net->currentRunAhead() == 3);
 	CHECK(g.peers[1].net->currentRunAhead() == 3);
 	CHECK(g.peers[0].net->maxRoundTripMs() == 800);
-	g.hub.endpoint(0).rtt = 4000; // 10 frames + 1 + 1 = 12
+	g.hub.endpoint(0).rtt = 4000; // 2200 ms + 100 = 11 frames, + 1 = 12
 	tickWithCommands(10);
 	CHECK(g.peers[0].net->currentRunAhead() == 12);
 	CHECK(g.peers[1].net->currentRunAhead() == 12);
@@ -573,7 +577,7 @@ TEST_CASE("mp2 run-ahead: the packet router's measured round trip sets every pee
 	tickWithCommands(150);
 	CHECK(g.peers[0].net->currentRunAhead() == 2);
 	CHECK(g.peers[1].net->currentRunAhead() == 2);
-	g.hub.endpoint(0).rttVar = 300; // the variation counts four times: 1300 ms -> 4 frames + 1
+	g.hub.endpoint(0).rttVar = 300; // the variation counts four times: 1300 ms -> 715 ms one way + 100 = 4 frames, + 1
 	tickWithCommands(15);
 	CHECK(g.peers[0].net->currentRunAhead() == 5);
 	CHECK(g.peers[1].net->currentRunAhead() == 5);
@@ -699,4 +703,165 @@ TEST_CASE("mp2 disconnect (review): the router leaves while another player is si
 	CHECK(differing == 0);
 	CHECK(a.net->errors().empty());
 	CHECK(b.net->errors().empty());
+}
+
+namespace
+{
+// lane NETLAG-1: the frame a tagged MSG_DO_MOVETO (x = tag) was relayed on by a peer, -1 when it was not
+long long relayFrameOf(const Peer &p, int player)
+{
+	for (const auto &f : p.relayed)
+	{
+		for (const std::string &c : f.second)
+		{
+			if (c == std::to_string((int)MSG_DO_MOVETO) + " " + std::to_string(player))
+			{
+				return (long long)f.first;
+			}
+		}
+	}
+	return -1;
+}
+} // namespace
+
+TEST_CASE("netlag1 run-ahead: the lobby's run-ahead 1 is RotWK's command delay (frame + 1, RW 0x8D4301): on a LAN round trip it stays 1, a command issued "
+		  "on frame P runs on P + 1 on every peer; slower links raise it per 200 ms of one-way latency and it falls back to 1")
+{
+	Game g(2);
+	for (int i = 0; i < 2; ++i)
+	{
+		NetworkConfig c = configFor(i, 2);
+		c.runAhead = 1;
+		c.adaptiveRunAhead = true;
+		c.settings.runAheadMetricsTime = 1000;
+		g.peers[(size_t)i].net = std::make_unique<Network>(c, g.hub.endpoint(i));
+		Hub *h = &g.hub;
+		g.peers[(size_t)i].net->setClock([h] { return h->clock; });
+	}
+	for (Peer &p : g.peers)
+	{
+		p.net->sendLoadComplete();
+	}
+	// a peer issues one order on its current frame P (before its update stamps it); returns the frame both peers ran it on, -1 when they differ
+	auto orderDelay = [&](int slot) -> long long {
+		for (Peer &p : g.peers)
+		{
+			p.relayed.clear();
+		}
+		Peer &issuer = g.peers[(size_t)slot];
+		const UnsignedInt issuedOn = issuer.frame;
+		GameMessage m(MSG_DO_MOVETO, 10 + slot);
+		m.appendLocationArgument(Coord3D{ 1.0f, 2.0f, 0.0f });
+		issuer.pending.append(m);
+		for (int t = 0; t < 40; ++t)
+		{
+			g.tick(100000, 200);
+		}
+		const long long a = relayFrameOf(g.peers[0], 10 + slot), b = relayFrameOf(g.peers[1], 10 + slot);
+		return a >= 0 && a == b ? a - (long long)issuedOn : -1;
+	};
+	g.hub.endpoint(0).rtt = 2; // a LAN: 1 ms one way
+	g.hub.endpoint(1).rtt = 2;
+	for (int t = 0; t < 20; ++t)
+	{
+		g.tick(100000, 200);
+	}
+	CHECK(g.peers[0].net->currentRunAhead() == 1);
+	CHECK(g.peers[1].net->currentRunAhead() == 1);
+	CHECK(g.peers[0].net->runAheadChanges() == 0);
+	CHECK(orderDelay(0) == 1); // the packet router's own order
+	CHECK(orderDelay(1) == 1); // the other player's
+	// the round trips where the delay steps up: one-way latency + 10 % (NetworkRunAheadSlack) + half a period, in 200 ms frames, + 1
+	const int rtts[] = { 160, 180, 181, 400, 544, 545, 2 };
+	const int expected[] = { 1, 1, 2, 2, 2, 3, 1 };
+	for (size_t k = 0; k < sizeof(rtts) / sizeof(rtts[0]); ++k)
+	{
+		g.hub.endpoint(0).rtt = rtts[k];
+		for (int t = 0; t < 60; ++t) // a fall is one frame per NetworkRunAheadMetricsTime (5 ticks here)
+		{
+			g.tick(100000, 200);
+		}
+		INFO("round trip " << rtts[k] << " ms");
+		CHECK(g.peers[0].net->currentRunAhead() == expected[k]);
+		CHECK(g.peers[1].net->currentRunAhead() == expected[k]);
+		CHECK(orderDelay(1) == expected[k]);
+	}
+	CHECK(g.peers[0].net->errors().empty());
+	CHECK(g.peers[1].net->errors().empty());
+}
+
+TEST_CASE("netlag1: the lockstep driver measures each local command's delay in frames and to its effect: a local game runs a command on the next batch "
+		  "(0 frames), a network game on the batch of its execution frame (the run-ahead)")
+{
+	// a local game (no Network): what is pumped on protocol frame P is in batch P
+	LockstepDriver local(nullptr, nullptr);
+	CommandList pending;
+	pending.append(GameMessage(MSG_DO_STOP, 3));
+	local.pump(5, pending);
+	local.pump(5, pending); // nothing new: counted once
+	FrameBatch b;
+	REQUIRE(local.acquire(5, b));
+	CHECK(b.frame == 5);
+	REQUIRE(b.commands.size() == 1);
+	FrameCompletion c;
+	c.batchFrame = 5;
+	c.frame = 6;
+	local.completed(c);
+	CHECK(local.smoothStats().commandDelayFrames == std::vector<std::uint32_t>{ 0 });
+	CHECK(local.smoothStats().commandEffectMs.size() == 1);
+	CHECK(local.smoothStats().inputLatencyMs.size() == 1);
+	CHECK(local.smoothStats().unmatchedCommands == 0);
+
+	// a network game of two peers with run-ahead 1: the local order of protocol frame 0 runs in batch 1
+	Hub hub(2);
+	std::vector<std::unique_ptr<Network>> nets;
+	for (int i = 0; i < 2; ++i)
+	{
+		NetworkConfig cfg = configFor(i, 2);
+		cfg.runAhead = 1;
+		nets.push_back(std::make_unique<Network>(cfg, hub.endpoint(i)));
+		Hub *h = &hub;
+		nets.back()->setClock([h] { return h->clock; });
+		nets.back()->sendLoadComplete();
+	}
+	LockstepDriver driver(nets[0].get(), nullptr);
+	CommandList order;
+	order.append(GameMessage(MSG_DO_STOP, 10));
+	driver.pump(0, order);
+	CommandList none;
+	UnsignedInt remoteFrame = 0;
+	UnsignedInt next = 0;
+	for (int t = 0; t < 40 && next < 3; ++t)
+	{
+		nets[1]->update(remoteFrame, none);
+		while (nets[1]->isFrameReady(remoteFrame) && remoteFrame < 3)
+		{
+			CommandList out;
+			nets[1]->relayCommands(remoteFrame, out);
+			++remoteFrame;
+			nets[1]->update(remoteFrame, none);
+		}
+		hub.tick(50);
+		FrameBatch batch;
+		if (driver.acquire(next, batch))
+		{
+			FrameCompletion done;
+			done.batchFrame = next;
+			done.frame = next + 1;
+			done.hashed = true;
+			driver.completed(done);
+			++next;
+		}
+		else
+		{
+			driver.pump(next, none);
+		}
+	}
+	CHECK(next == 3);
+	CHECK(driver.smoothStats().commandDelayFrames == std::vector<std::uint32_t>{ 1 });
+	CHECK(driver.smoothStats().commandEffectMs.size() == 1);
+	CHECK(driver.smoothStats().unmatchedCommands == 0);
+	CHECK(driver.errors().empty());
+	CHECK(nets[0]->errors().empty());
+	CHECK(nets[1]->errors().empty());
 }

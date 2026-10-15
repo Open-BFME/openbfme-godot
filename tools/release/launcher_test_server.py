@@ -23,6 +23,7 @@ class ReleaseServer:
         self.ignore_range = False
         self.status: dict[str, int] = {}       # path -> an HTTP error status to answer (lane AIO-1)
         self.throttle: dict[str, float] = {}   # path part -> seconds between 16 KiB chunks (lane UI-3: Pause / Cancel mid-download)
+        self.stats: bytes | None = None        # lane ONLINECOUNT-1: the lobby's GET /v1/stats answer (None: 404, a lobby without stats)
         self.requests: list[tuple[str, dict]] = []
         self.stopped = False
         srv = self
@@ -35,6 +36,13 @@ class ReleaseServer:
                 srv.requests.append((self.path, {k.lower(): v for k, v in self.headers.items()}))
                 if self.path.startswith("/repos/"):
                     return self._api()
+                if self.path == "/v1/stats" and srv.stats is not None:
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json")
+                    self.send_header("Content-Length", str(len(srv.stats)))
+                    self.end_headers()
+                    self.wfile.write(srv.stats)
+                    return
                 if self.path in srv.redirect:
                     self.send_response(302)
                     self.send_header("Location", srv.redirect[self.path])

@@ -684,16 +684,17 @@ TEST_CASE("fx2 retail: a trebuchet shelling an orc pit in a live game plays its 
 	CHECK(bare.logicSites == live.logicSites);
 }
 
-TEST_CASE("fx2 stops: S-680 .. S-686 are reported by the live effect player (S-684 retired by lane FX-3)")
+TEST_CASE("fx2 stops: S-680 .. S-686 and S-4642 are reported by the live effect player (S-684 retired by lane FX-3)")
 {
 	const std::vector<std::string> s = LiveFX::stops();
-	REQUIRE(s.size() == 6);
+	REQUIRE(s.size() == 7);
 	CHECK(s[0].rfind("[S-680] fire FX:", 0) == 0);
 	CHECK(s[1].rfind("[S-681] damage FX:", 0) == 0);
 	CHECK(s[2].rfind("[S-683] effects not played:", 0) == 0);
 	CHECK(s[3].rfind("[S-685] slow death phases:", 0) == 0);
 	CHECK(s[4].rfind("[S-682] live FX:", 0) == 0);
 	CHECK(s[5].rfind("[S-686] TransitionDamageFX:", 0) == 0);
+	CHECK(s[6].rfind("[S-4642] BuffNugget buffs", 0) == 0); // lane SPELL-4
 	for (const std::string &line : s)
 	{
 		CHECK(line.find("S-684") == std::string::npos);

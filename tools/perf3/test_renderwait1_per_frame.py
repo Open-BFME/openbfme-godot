@@ -171,7 +171,8 @@ def test_the_waiting_set_is_found():
 def test_per_frame_scripts_never_call_a_waiting_method_unguarded():
     waiting = waiting_methods()
     found = per_frame_functions()
-    for script in ("spell_target_ring.gd", "move_hints.gd", "game_options.gd", "qa_player.gd", "campaign_cine.gd"):
+    # lane SPELL-4: spell_target_ring.gd is gone (the HUD draws the radius cursor in InGameHud::update, which runs only while the logic is held)
+    for script in ("move_hints.gd", "game_options.gd", "qa_player.gd", "campaign_cine.gd"):
         assert any(f == script for f, _, _, _ in found), f"{script}'s _process is not among the per-frame functions"
     bad = []
     for script, func, source, body in found:

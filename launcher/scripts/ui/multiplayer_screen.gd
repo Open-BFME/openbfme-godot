@@ -15,7 +15,7 @@ func _init() -> void:
 
 ## repo: the GitHub <owner>/<name> whose docs/ONLINE.md the link opens
 func build(repo: String) -> void:
-	var v := W.vbox(14)
+	var v := W.vbox(Style.SCREEN_GAP)
 	v.set_anchors_preset(Control.PRESET_FULL_RECT)
 	add_child(v)
 	v.add_child(W.h2("Multiplayer"))

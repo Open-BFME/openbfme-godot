@@ -40,6 +40,8 @@ const LAUNCHER_EXE := {"linux-x64": "OpenBFMELauncher.x86_64", "windows-x64": "O
 ## (godot/scripts/release/update_handover.gd)
 const STARTED_BY_LAUNCHER := "OPENBFME_STARTED_BY_LAUNCHER"
 
+const DEFAULT_LOBBY := "https://play.openbfme.com"  # lane ONLINECOUNT-1 (the game's ONLINE_DEFAULT_LOBBY)
+
 var info: RefCounted  # BuildInfo
 var data_dir := ""
 var api_base := API_BASE
@@ -112,6 +114,29 @@ func auto_update() -> bool:
 
 func set_auto_update(on: bool) -> void:
 	set_state("launcher", "auto_update", on)
+
+
+## lane ONLINECOUNT-1 (the owner): "Show how many players are online". On by default; off, the launcher never asks the lobby for the count (not at
+## start, not later) and shows nothing in its place; the game reads the same setting (godot/scripts/online_stats.gd) from state.cfg
+func show_online_count() -> bool:
+	var v: Variant = get_state("launcher", "show_online_count", true)
+	return v if typeof(v) == TYPE_BOOL else false  # a damaged value (a string, a list ...) is off, never an error: online_count_problem() says so
+
+
+## "" or what is wrong with the stored setting (the game reads the same value and treats it the same way)
+func online_count_problem() -> String:
+	var v: Variant = get_state("launcher", "show_online_count", true)
+	return "" if typeof(v) == TYPE_BOOL else "show_online_count in state.cfg is not true or false: the player count is off until it is set again"
+
+
+func set_show_online_count(on: bool) -> void:
+	set_state("launcher", "show_online_count", on)
+
+
+## the online lobby the launcher's links and the count use: --lobby=<url> (state online/lobby), else the release's lobby
+func lobby_url() -> String:
+	var kept := str(get_state("online", "lobby", "")).strip_edges()
+	return kept if kept != "" else DEFAULT_LOBBY
 
 
 func _save_state() -> void:

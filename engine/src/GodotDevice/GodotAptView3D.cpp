@@ -189,7 +189,7 @@ void AptView3DViewers::beginBuild()
 	}
 }
 
-void AptView3DViewers::draw(RID item, const Rect2 &rect, const AptCanvasOp &op)
+void AptView3DViewers::draw(RID item, const Rect2 &rect, const AptCanvasOp &op, bool stretchWithStage)
 {
 	if (op.renderObject.empty() || rect.size.x < 1.0f || rect.size.y < 1.0f)
 	{
@@ -231,8 +231,12 @@ void AptView3DViewers::draw(RID item, const Rect2 &rect, const AptCanvasOp &op)
 		slot.frameCommand = frame;
 		slot.anim.setAnimation(slot.numFrames, AptView3DFrameOf(frame), mode, now);
 	}
-	// RW 0xB5470F: the viewport is the clip's rectangle
-	const Vector2i size((int)std::max(1.0f, std::round(rect.size.x)), (int)std::max(1.0f, std::round(rect.size.y)));
+	// RW 0xB5470F: the viewport is the clip's rectangle. Lane ONLINE-5 [S-4555]: under an uneven stage stretch (a window that is not 4:3) a menu
+	// screen's model (stretchWithStage) is rendered with its clip's stage aspect and stretched with the movie (AptView3DImageSize), so the 3D menu frame
+	// stays around its panels; any other View3D (GuiFX's end-screen rings) keeps retail's aspect
+	int imageW = 1, imageH = 1;
+	AptView3DImageSize(rect.size.x, rect.size.y, op.scaleX, op.scaleY, slot.keepAspect, stretchWithStage, imageW, imageH);
+	const Vector2i size(imageW, imageH);
 	if (slot.black->get_size() != size)
 	{
 		slot.black->set_size(size);

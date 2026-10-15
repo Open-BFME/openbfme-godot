@@ -26,6 +26,7 @@
 #include "GameClient/DrawableManager.h"
 #include "GameEngineDevice/W3DDevice/GameClient/Drawable/Draw/W3DScriptedModelDraw.h"
 #include "GameClient/ControlBarCommands.h"
+#include "Common/SpecialPower.h"
 #include "GameLogic/GameMessage.h"
 #include "Libraries/Source/Apt/AptButtonInst.h"
 #include "Libraries/Source/Apt/AptInput.h"
@@ -231,6 +232,14 @@ bool InGameHud::boot(std::string *error)
 			});
 		}
 	});
+	{
+		// lane SPELL-4: InGameUI.ini's RadiusCursorTemplate blocks (RW 0x6A4E27), the aiming markers of the commands that name a RadiusCursorType
+		std::string cursorError;
+		if (!m_radiusTemplates.load(m_config.fs, &cursorError))
+		{
+			m_errors.push_back("radius cursors: " + cursorError);
+		}
+	}
 	bootHud6(); // lane HUD-6: the help box's settings and the Palantir's help box movie (InGameHudHud6.cpp)
 	m_radar->setupFromTerrain();
 	{
@@ -404,6 +413,7 @@ void InGameHud::update(double seconds)
 	updateHud6(local.contextObject, local.faction, seconds); // lane HUD-6: the side bar's gate, the radial bubbles, the help box (InGameHudHud6.cpp)
 	m_palantirRef->sync(*m_bar);
 	syncSpellBook();
+	updateRadiusCursor();
 	part(m_updateParts.palantir);
 	// lane UI-4: the hero bar (RW 0x92CF64 in the Palantir's update); its object list follows the logic once per logic frame (INFERENCE, S-2521)
 	if (m_heroSelect)
@@ -530,6 +540,76 @@ void InGameHud::send(const std::vector<GameMessage> &msgs)
 	{
 		m_config.game.commands().append(m);
 	}
+}
+
+// lane SPELL-4 (GameClient/RadiusCursor.h). While a spell book power waits for its target, each update is one createCommandHint of RotWK (RW 0x6A3B77 for a
+// pending command with a RadiusCursorType): the pointer is hidden (cursor 0, None) and setRadiusCursor (RW 0x6A077A) makes the button's template's decal
+// once (the radius is the power's RadiusCursorRadius, the player the spell book's controller) and colours it by the hint: valid (0xAE) when the power may
+// be cast at the terrain point under the pointer (InGameSpellBookModel::targetValid, RW 0x6A4260), else invalid (0xAF); then handleRadiusCursor /
+// RadiusDecal::update move it there and throb it on the client clock. Over a window no hint comes (the translators do not see the pointer): the decal
+// keeps its place and colour. The command's end clears the decal and gives the pointer back (setGUICommand RW 0x69B398: Arrow, then setRadiusCursorNone).
+void InGameHud::updateRadiusCursor()
+{
+	const InGameSpellBookModel::Button *b = m_spellBar.targeting() ? m_spellBar.targetButton() : nullptr;
+	Player *local = m_config.game.players().getLocalPlayer();
+	if (!b || !b->power || !local)
+	{
+		if (m_radiusCursor.active() || m_targetingCursor)
+		{
+			m_radiusCursor.clear();
+			m_targetingCursor = false;
+			m_input->ui().hintCursor(MouseCursorName::Arrow);
+		}
+		return;
+	}
+	GameLogic &logic = m_config.game.logic();
+	m_targetingCursor = true;
+	if (b->radiusCursor.empty())
+	{
+		// RW 0x6A3D2A .. 0x6A3D60: no RadiusCursorType: setRadiusCursorNone and the button's CursorName (valid) / InvalidCursorName (invalid) as the pointer,
+		// cursor 4 (Target) when TheMouse has no cursor of that name (RW 0x5EE9CA answers -1). INFERENCE (S-4640): an empty name stands for -1; a name
+		// Mouse.ini lacks is handed on (the device draws no pointer for it)
+		m_radiusCursor.clear();
+		if (m_pointerSeen && !isOverGui(m_pointerX, m_pointerY))
+		{
+			Coord3D w;
+			if (m_config.view.screenToTerrain(ICoord2D{ m_pointerX, m_pointerY }, logic, w))
+			{
+				const std::string &name = m_spellBar.targetValid(logic, w) ? b->button->m_cursorName : b->button->m_invalidCursorName;
+				m_input->ui().hintCursor(name.empty() ? std::string(MouseCursorName::Target) : name);
+			}
+		}
+		return;
+	}
+	Coord3D at = m_radiusCursor.decal().position;
+	bool valid = m_radiusCursor.active() ? m_radiusCursor.decal().valid : true; // setGUICommand's first call (RW 0x69B3B3) passes valid
+	bool hinted = false;
+	if (m_pointerSeen && !isOverGui(m_pointerX, m_pointerY))
+	{
+		Coord3D w;
+		if (m_config.view.screenToTerrain(ICoord2D{ m_pointerX, m_pointerY }, logic, w))
+		{
+			at = w;
+			const InGameSpellBookModel::Target verdict = m_spellBar.targetVerdict(logic, w);
+			valid = verdict != InGameSpellBookModel::Target::INVALID;
+			hinted = true;
+			if (verdict == InGameSpellBookModel::Target::UNPORTED && m_cursorStopPowers.insert(b->power->getName()).second)
+			{
+				m_cursorStops.push_back("[S-4641] the location test of " + b->power->getName()
+					+ " is not ported (S-1874): its radius cursor shows valid where the generic tests pass and the click casts there");
+			}
+		}
+	}
+	// RW 0x6A077A: the radius's object is the local player's spell book (command type 0x20, RW 0x6AD0D9), the player its controller (RW 0x68B678)
+	Object *book = logic.findObjectByID(m_spellBar.book());
+	Player *controller = book ? book->getControllingPlayer() : nullptr;
+	m_radiusCursor.set(b->radiusCursor, m_radiusTemplates.find(b->radiusCursor), b->power->getFinalOverride()->getRadiusCursorRadius(), controller != nullptr,
+		controller == local, controller ? controller->getPlayerColor() : 0u, valid);
+	if (hinted)
+	{
+		m_input->ui().hintCursor(MouseCursorName::None); // RW 0x6A3D65: cursor 0 through RW 0x69BD53
+	}
+	m_radiusCursor.update(at, m_clientFrames, m_decalSettings.drawIconUI);
 }
 
 // RW 0x9312B9's slot pass: the spell book command set's visible buttons in order. INFERENCE (S-923): ControlBar::getCommandAvailability (RW 0x942733) for a
@@ -834,6 +914,9 @@ void InGameHud::mouseMove(int x, int y, int keyState)
 		m_wm->postMouseMove(sx, sy);
 	}
 	hud6MouseMove(x, y); // lane HUD-6
+	m_pointerX = x; // lane SPELL-4: the radius cursor follows the pointer (InGameUI::handleRadiusCursor reads TheMouse + 0x4F0C)
+	m_pointerY = y;
+	m_pointerSeen = true;
 	m_input->mouseMove(x, y, keyState);
 }
 
@@ -856,6 +939,11 @@ void InGameHud::mouseButton(HudInput::Button button, bool down, int x, int y, in
 			Player *local = m_config.game.players().getLocalPlayer();
 			if (local && m_config.view.screenToTerrain(pixel, m_config.game.logic(), world))
 			{
+				// lane SPELL-4: RW 0x81EAD3 -> 0x81EBE9: an invalid location issues nothing and the targeting goes on
+				if (!m_spellBar.targetValid(m_config.game.logic(), world))
+				{
+					return;
+				}
 				std::vector<GameMessage> out;
 				m_spellBar.clickWorld(world, local->getPlayerIndex(), out);
 				send(out);
@@ -920,6 +1008,13 @@ std::vector<std::string> InGameHud::stops() const
 				  "screen, then map; the donor ZH selectUnitsMatchingCurrentSelection supplies the bodies); H (VIEW_HOME_BASE) looks at the local player's best structure by RW 0x81FD5B -> "
 				  "0x6AC722 (a command centre, the lowest id, else the costliest); not identified: the status bits 0 and 3 of + 0x458 the walk skips (bit 0 taken as destroyed) and "
 				  "the look-at argument");
+	out.push_back("[S-4640] radius cursor (lane SPELL-4): InGameUI's RadiusCursorTemplate decal of a targeted spell book power (RW 0x6A077A / 0x732DE7 / "
+				  "0x732926 / 0x73232B); handleRadiusCursor's radar pixel and shroud second pass are not ported (the view's terrain point), the spiral branch and "
+				  "the radius > 110 flag are not used, the decal is a Godot Decal on the terrain layer (S-2522)");
+	for (const std::string &l : m_cursorStops)
+	{
+		out.push_back(l);
+	}
 	out.push_back("[S-3301] drag selection (lane PLAY-3): a left drag with Ctrl held at the press is RotWK's point-list selection (InGameUI + 0x924, RW 0x83CA72; "
 				  "points RW 0x6A091A, polyline RW 0x48ED1B, selection RW 0x6A0A5E), not ported: it draws and selects the plain box");
 	for (const std::string &l : ControlBar::acceptanceStops())

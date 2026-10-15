@@ -232,7 +232,7 @@ AptSkirmish::AptSkirmish(WindowManager &windows, Shell &shell, ShellEnvironment 
 		}
 	}
 	// lane UI-2: the map window's inferences (GadgetMapPreview.cpp, AptSkirmish::updateCurrentMapWindow)
-	windows.note("map-preview-inferences", "[S-1480] map window: the preview file is read where it is mounted (retail copies it to MapPreviews first), its image name is the path with '\\' and ':' as '_', start spots are shown in the skirmish lobby only (TheGameLogic + 0x114 == 3 taken as the screen kind) and enabled, an APT gadget's parent is its owner; a start-spot click is handled as RW 0x845830 (FB7-1, S-1915)");
+	windows.note("map-preview-inferences", "[S-1480] map window: the preview file is read where it is mounted (retail copies it to MapPreviews first), its image name is the path with '\\' and ':' as '_', start spots are shown in every lobby that is not a War of the Ring battle's (TheGameLogic + 0x114 == 3, the battle kind) and enabled, an APT gadget's parent is its owner; a start-spot click is handled as RW 0x845830 (FB7-1, S-1915)");
 	if (m_lan)
 	{
 		registerLobby(); // lane MP-2: AptLanLobby registers its own commands and update
@@ -639,6 +639,7 @@ void AptSkirmish::closePopupState()
 void AptSkirmish::update()
 {
 	// RotWK 0x928CDB
+	serviceReadyBoxes(); // lane ONLINE-5
 	if (m_ruleBox)
 	{
 		m_ruleBox->update(); // lane RULES-1: the rule warning box reaches its clip once GuiFX.apt is loaded (RW 0x9532F3)
@@ -777,9 +778,149 @@ void AptSkirmish::registerLobby()
 	});
 }
 
-void AptSkirmish::onReadyPress(const std::string &)
+void AptSkirmish::onReadyPress(const std::string &argument)
 {
-	windows().note("unported-command", "MpGameSetup::OnReadyPress");
+	// lane ONLINE-5: without an argument the movie's Ready boxes were just made (RW 0x84211D gives each "_none" here: the skirmish panel has no flag 0x20)
+	if (argument.empty() || argument == "undefined")
+	{
+		readyBoxesMade();
+		return;
+	}
+	windows().note("command-ignored", "MpGameSetup::OnReadyPress(" + argument + "): the skirmish lobby has no Ready boxes");
+}
+
+bool AptSkirmish::callSetupMovie(const std::string &function, const std::vector<std::string> &args)
+{
+	return level() >= 0 && windows().invokeAS(level(), function, args, nullptr, nullptr);
+}
+
+bool AptSkirmish::slotAccepted(int slot) const
+{
+	return m_setup && slot >= 0 && slot < MAX_SLOTS && m_setup->info().slots[slot].accepted;
+}
+
+bool AptSkirmish::slotGadgetsEnabled(int slot) const
+{
+	if (!lobbyEditable(slot))
+	{
+		return false;
+	}
+	// RW 0x843F6E (BFME2 0x441B15 UpdateSlot): the local slot, accepted, and the local player is not the host: every gadget off
+	if (m_setup && m_setup->network() && slot == m_setup->localSlot() && !amIHost() && slotAccepted(slot))
+	{
+		return false;
+	}
+	return true;
+}
+
+void AptSkirmish::updateReadyIcon(int slot, bool force)
+{
+	// RW 0x84211D (see the header)
+	if (!m_setup || slot < 0 || slot >= MAX_SLOTS)
+	{
+		return;
+	}
+	const SkirmishGameSlot &s = m_setup->info().slots[slot];
+	const char *state = "_none"; // RW 0xC5416C
+	if (setupFlags() & 0x20)
+	{
+		if (slot == 0)
+		{
+			state = "_disabledChecked"; // RW 0x84215C: slot 0 is the host's
+		}
+		else if (s.isOccupied())
+		{
+			if (s.isHuman())
+			{
+				const bool local = m_setup->localSlot() == slot; // the game's vslot 0x34 (RW 0x84217C)
+				state = slotAccepted(slot) ? (local ? "_enabledChecked" : "_disabledChecked") : (local ? "_enabledUnchecked" : "_disabledUnchecked");
+			}
+			else
+			{
+				state = "_disabledChecked"; // an AI
+			}
+		}
+	}
+	if (!force && m_readyIcon[(size_t)slot] == state)
+	{
+		return;
+	}
+	// the movie's SetReadyState(index, to): `~<index>.Ready`.gotoAndPlay(to) (MpGameSetup.apt)
+	if (callSetupMovie("SetReadyState", { std::to_string(slot), state }))
+	{
+		m_readyIcon[(size_t)slot] = state;
+	}
+	else
+	{
+		m_readyIcon[(size_t)slot].clear(); // the setup movie is not up (or has not defined the function yet): the update tries again
+		m_readyDirty = true;
+	}
+}
+
+void AptSkirmish::readyBoxesMade()
+{
+	// RW 0x841590's first branch only sets + 0x2B9: the slots are refreshed by the screen's next update
+	m_readyDirty = true;
+	for (std::string &shown : m_readyIcon)
+	{
+		shown.clear(); // new boxes show nothing yet
+	}
+}
+
+void AptSkirmish::serviceChatLists()
+{
+	// lane ONLINE-5: the chat tab's lists are made while the tab's clip still plays in (the placeholder grows to its size over a few frames). A list
+	// box filled at the small size scrolls to its last row and stays there: going MAP -> CHAT showed one line of the chat and one player. The lists
+	// are filled again once their size has changed (INFERENCE: retail's gadgets are made at their final size by the movie's component, RW 0x814DDC)
+	if (!m_chatList && !m_chatPlayers)
+	{
+		return;
+	}
+	pruneDeadGadgets();
+	if (m_chatList)
+	{
+		int w = 0, h = 0;
+		m_chatList->winGetSize(&w, &h);
+		if (w != m_chatListW || h != m_chatListH)
+		{
+			m_chatListW = w;
+			m_chatListH = h;
+			GadgetListBoxReset(m_chatList);
+			for (const auto &line : m_chatHistory)
+			{
+				GadgetListBoxAddEntryText(m_chatList, line.first, line.second, -1, 0);
+			}
+		}
+	}
+	if (m_chatPlayers)
+	{
+		int w = 0, h = 0;
+		m_chatPlayers->winGetSize(&w, &h);
+		if (w != m_chatPlayersW || h != m_chatPlayersH)
+		{
+			m_chatPlayersW = w;
+			m_chatPlayersH = h;
+			GadgetListBoxReset(m_chatPlayers);
+			refreshChatPlayers();
+		}
+	}
+}
+
+void AptSkirmish::serviceReadyBoxes()
+{
+	serviceChatLists();
+	if (!m_readyDirty || !m_setup)
+	{
+		return;
+	}
+	m_readyDirty = false;
+	for (int slot = 0; slot < MAX_SLOTS; ++slot)
+	{
+		if (m_readyIcon[(size_t)slot].empty())
+		{
+			updateReadyIcon(slot, true); // a failure sets the flag again
+		}
+	}
 }
 
 void AptSkirmish::onKickPlayer(const std::string &)
@@ -803,6 +944,7 @@ void AptSkirmish::initChatGadget(const std::string &name, GameWindow *window)
 	{
 		// RW 0x9BE9F5: the list holds 1000 lines (RW 0x728867) and gets the chat history so far (RW 0x783A78: channel 1's lines, column 0, row -1)
 		m_chatList = window;
+		m_chatListW = m_chatListH = -1; // lane ONLINE-5: filled again at the list's final size (serviceChatLists)
 		GadgetListBoxSetListLength(window, 1000);
 		GadgetListBoxReset(window);
 		for (const auto &line : m_chatHistory)
@@ -814,8 +956,10 @@ void AptSkirmish::initChatGadget(const std::string &name, GameWindow *window)
 	{
 		// RW 0x9BEA20: reset, 1000 lines. Not ported: the list's flag + 0x12 (RW 0x97D69E) and its fill (the chat's recipients; every line goes to every player here)
 		m_chatPlayers = window;
+		m_chatPlayersW = m_chatPlayersH = -1;
 		GadgetListBoxReset(window);
 		GadgetListBoxSetListLength(window, 1000);
+		refreshChatPlayers(); // lane ONLINE-5
 	}
 	else if (name == "ChatEntry")
 	{
@@ -831,6 +975,37 @@ void AptSkirmish::initChatGadget(const std::string &name, GameWindow *window)
 	else
 	{
 		windows().note("unknown-gadget", "AptMpChat::InitGadgets(" + name + ")");
+	}
+}
+
+void AptSkirmish::refreshChatPlayers()
+{
+	if (!m_chatPlayers || !m_setup || !m_setup->network())
+	{
+		return;
+	}
+	std::vector<std::u16string> names;
+	for (const SkirmishGameSlot &s : m_setup->info().slots)
+	{
+		if (s.isHuman())
+		{
+			names.push_back(s.name);
+		}
+	}
+	// only when the room's players changed (a refill would drop the list's scroll position every poll)
+	bool same = GadgetListBoxGetNumEntries(m_chatPlayers) == (int)names.size();
+	for (int i = 0; same && i < (int)names.size(); ++i)
+	{
+		same = GadgetListBoxGetText(m_chatPlayers, i, 0) == names[(size_t)i];
+	}
+	if (same)
+	{
+		return;
+	}
+	GadgetListBoxReset(m_chatPlayers);
+	for (const std::u16string &name : names)
+	{
+		GadgetListBoxAddEntryText(m_chatPlayers, name, 0xFFFFFFFFu, -1, 0);
 	}
 }
 
@@ -1310,6 +1485,7 @@ void AptSkirmish::refreshSlot(int slot)
 	}
 	m_refreshing = true;
 	const SkirmishGameSlot &s = m_setup->info().slots[slot];
+	updateReadyIcon(slot); // lane ONLINE-5: RW 0x843F6E (BFME2 0x441B15 UpdateSlot) begins with the slot's Ready box
 	if (GameWindow *combo = m_slots[slot][(int)Leaf::Player])
 	{
 		const int kind = m_setup->slotShowsName(slot) ? 1 : 0;
@@ -1326,7 +1502,7 @@ void AptSkirmish::refreshSlot(int slot)
 			{
 				if (w)
 				{
-					w->winEnable(lobbyEditable(slot));
+					w->winEnable(slotGadgetsEnabled(slot));
 				}
 			}
 		}
@@ -1349,6 +1525,15 @@ void AptSkirmish::refreshSlot(int slot)
 		selectByItemData(combo, s.teamNumber);
 	}
 	refreshColors(slot);
+	if (GameWindow *combo = m_slots[slot][(int)Leaf::Handicap])
+	{
+		// lane ONLINE-5: the Handicap combo has no entries in this port (S-178: RotWK's source for them is not ported): it is shown locked, never
+		// as a drop-down that opens on nothing
+		if (GadgetComboBoxGetLength(combo) == 0)
+		{
+			combo->winEnable(false);
+		}
+	}
 	if (GameWindow *combo = m_slots[slot][(int)Leaf::Hero]) // lane CAH-1: the slot's choice (RW 0x72437D)
 	{
 		// lane RULES-1: RW 0x842A85: the hero combo is enabled only while AllowCustomHeroes (rule 0) is 1; otherwise disabled with its choice dropped
@@ -1358,7 +1543,11 @@ void AptSkirmish::refreshSlot(int slot)
 			m_slotHero[(size_t)slot] = -1;
 			combo->winEnable(false);
 		}
-		else if (!m_setup->network() || lobbyEditable(slot))
+		else if (!heroChoiceAvailable())
+		{
+			combo->winEnable(false); // lane ONLINE-5: shown locked (the online lobby, S-4076)
+		}
+		else if (!m_setup->network() || slotGadgetsEnabled(slot))
 		{
 			combo->winEnable(true);
 		}
@@ -1392,6 +1581,7 @@ void AptSkirmish::refreshAll()
 		refreshSlot(slot);
 	}
 	refreshRuleGadgets(); // lane RULES-1: a network game's rules come with the host's options
+	refreshChatPlayers(); // lane ONLINE-5
 	m_refreshing = outer;
 }
 
@@ -1569,9 +1759,13 @@ void AptSkirmish::updateCurrentMapWindow(const MapCacheEntry *map)
 	if (map)
 	{
 		window->winEnable(true);
-		// RW 0x976F9C .. 0x976FB6: only for a multiplayer map (MapMetaData + 0x24) when TheGameLogic + 0x114 is 3 (a skirmish). INFERENCE [S-1480]: the
-		// shell's game kind is taken as 3 in the skirmish lobby and not in a LAN lobby (+0x114 is 1 for a LAN game, RW 0x779CB4)
-		if (map->isMultiplayer && !m_lan && map->numPlayers > 0)
+		// RW 0x976F9C .. 0x976FB6: only for a multiplayer map (MapMetaData + 0x24) while TheGameLogic + 0x114 is 3. Lane ONLINE-5: + 0x114 is the battle
+		// kind, and 3 is "not a War of the Ring battle" (docs/SAVES-RETAIL.md: 0 a single-player War of the Ring battle, 1 / 2 a multiplayer one): the
+		// value GameLogic's constructor sets (RW 0x6301D3) and the logic dispatcher sets again when a game's data is cleared (RW 0x779F20). So every
+		// ordinary lobby that hosts the setup movie shows the map's start spots: the skirmish, the LAN and the online staging room alike. (FB7-1 took 3
+		// for "a skirmish" and hid them in the network lobbies: the owner's "no spot to place where you wanted to play".) NOT PORTED: a War of the
+		// Ring battle's lobby (kinds 0 .. 2) would hide them; this port's War of the Ring does not use this screen for its battles
+		if (map->isMultiplayer && map->numPlayers > 0)
 		{
 			for (; shown < map->numPlayers && shown < 8; ++shown)
 			{
@@ -1762,6 +1956,7 @@ bool AptSkirmish::onStartSpotSelected(GameWindow *button, bool left)
 	if (changed)
 	{
 		updateMapStartSpots(); // RW 0x8404F2 sets +0x2BE; the update (RW 0x846BA4 .. 0x846BB9) redraws the spots
+		lobbyChanged();        // lane ONLINE-5: RW 0x8404F2 ends in the owner's vslot 2: a network lobby sends the change on (the host, the lobby service)
 	}
 	return true;
 }

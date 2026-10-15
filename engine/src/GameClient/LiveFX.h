@@ -39,6 +39,7 @@
 
 #pragma once
 
+#include "GameClient/BuffDraw.h"
 #include "GameClient/Drawable.h"
 #include "GameClient/FXPlayback.h"
 #include "GameLogic/FXEvents.h"
@@ -94,6 +95,13 @@ public:
 	bool boneWorldMatrix(const FXObject &obj, const std::string &boneName, Matrix3D &out) override;
 	std::vector<FXBoneTransform> boneWorldTransforms(const FXObject &obj, const std::string &boneName, int startIndex, int maxBones) override;
 	bool playSound(const std::string &eventName, const Coord3D *pos, int playerIndex) override;
+	// lane SPELL-4: the BuffNugget's buffs (GameClient/BuffDraw.h): the template's W3DBuffDraw model on the object's drawable
+	bool turnOnBuff(const FXObject &obj, int type, const std::string &thingTemplate, int lifeFrames) override;
+	bool turnOffBuff(const FXObject &obj, int type) override;
+	ClientBuffs &buffs() { return m_buffs; }
+	const ClientBuffs &buffs() const { return m_buffs; }
+	// the buff templates refused (BuffLogic::addBuff RW 0x707FFF: "No draw module specified for Buff!", "Buff <name> requires a W3DBuffDrawModule.")
+	const std::set<std::string> &buffErrors() const { return m_buffErrors; }
 
 	struct Stats
 	{
@@ -150,6 +158,9 @@ private:
 
 	LiveGame &m_game;
 	FXPlayback &m_playback;
+	ClientBuffs m_buffs;                 // lane SPELL-4
+	std::set<std::string> m_buffErrors;  // lane SPELL-4
+	std::map<std::string, std::string> m_buffModels; // lane SPELL-4: template -> ModelName (looked up only)
 	Stats m_stats;
 	std::map<DrawableID, Attached> m_attached;
 	FrameEventMap m_frameEvents; // looked up only (and pruned), never ordered by pointer
