@@ -2,17 +2,21 @@
 """Lane AUTOREL-1: the decisions of tools/release/autorelease.sh that are worth testing on their own (docs/RELEASE.md, "Automatic preview
 releases").
 
-    python3 tools/release/autorelease.py next-version [--remote origin] [--base v0.4.0] [--kind alpha] [--git-dir DIR]
-        prints v0.4.0-alpha.<n>, n = 1 + the highest v0.4.0-alpha.<n> tag on the remote (git ls-remote); 1 when there is none. Tags
-        outside the launcher's release grammar (make_manifest.TAG: no leading zeros, digits only) are ignored. Lane RELNAME-1 (owner,
-        2026-10-10): the builds after v0.3.0-preview.4 are alpha builds; the line is v0.4.0 because SemVer orders "alpha" before
-        "preview" (v0.3.0-alpha.1 would be older than v0.3.0-preview.4 and no launcher would offer it), so a version that is not above
-        every release tag on the remote is refused.
-    python3 tools/release/autorelease.py release-version --repo OWNER/NAME --sha SHA [--remote origin] [--gh gh] [--git-dir DIR]
-        the version autorelease.sh releases: the next alpha build, or the next bridge v0.3.0-preview.<n> while the launchers up to
-        v0.3.0-preview.4 have no verified bridge on the page they read (RELNAME-1 r2, release_version()).
-    python3 tools/release/autorelease.py intent-version V [LAST]   exit 0 when an open intent's V is an alpha build or a bridge above LAST
-    python3 tools/release/autorelease.py title V       the GitHub release's name ("OpenBFME v0.4.0 Alpha 1", release_title())
+    python3 tools/release/autorelease.py next-version [--remote origin] [--bump patch|minor] [--git-dir DIR]
+        prints the next plain release number (lane VERSION-1, owner 2026-10-14: "Alpha 0.4.5", then 0.4.6, ...): the highest plain tag
+        v<x>.<y>.<z> at or above FIRST_PLAIN on the remote (git ls-remote) with its last number + 1 (--bump minor: the middle number + 1
+        and the last 0, for a feature the owner calls huge); FIRST_PLAIN (v0.4.5; v0.5.0 with --bump minor) when there is none. Tags
+        outside the launcher's release grammar (make_manifest.TAG: no leading zeros, digits only) are ignored; a version that is not
+        above every release tag on the remote is refused (the launchers install only a newer version).
+    python3 tools/release/autorelease.py release-version --repo OWNER/NAME --sha SHA [--bump patch|minor] [--remote origin] [--gh gh]
+        [--git-dir DIR]
+        the version autorelease.sh releases: the next plain release (release_version(); VERSION-1: no v0.3.0-preview.<n> bridge any more,
+        the launchers up to v0.3.0-preview.4 read plain tags).
+    python3 tools/release/autorelease.py intent-version V [LAST]   exit 0 when an open intent's V is a plain release, an alpha build or
+        a bridge above every released or tagged version of its line
+    python3 tools/release/autorelease.py title V       the GitHub release's name ("OpenBFME Alpha 0.4.5", release_title())
+    python3 tools/release/autorelease.py auto-publish V   exit 0 when V is a plain alpha-stage release (v0.4.5 to below v1.0.0), which
+        publish_release.sh --confirm-tag publishes without the typed tag (auto_publish_ok())
     python3 tools/release/autorelease.py newer A B     exit 0 when release version A is above B in the launcher's order, else 1
     python3 tools/release/autorelease.py changed --from A --to B [--git-dir DIR]
         exit 0 when something under RELEASE_PATHS changed between the two commits, 1 when nothing did (the release is skipped).
@@ -92,7 +96,9 @@ PUBLIC_TOP = frozenset({".gitattributes", ".gitignore", ".gitmodules", "CLAUDE.m
                         "build.bat", "docs", "engine", "godot", "launcher", "pytest.ini", "run_tests.bat", "services", "tools"})
 PRIVATE_DIRS = frozenset({"workspace", "archive", "reference", "references"})
 URL = re.compile(r"(?i)\b[a-z][a-z0-9+.-]*://\S*|\bwww\.\S+|\bmailto:\S+")
-MD_SPECIAL = re.compile(r"([\\`*_{}\[\]()!|~+\-.:#])")
+# characters that could start emphasis, code or a link in Markdown: replaced by plain look-alikes, never escaped with a backslash (the launcher
+# shows the notes as text, so "original\." would show its backslash)
+MD_PLAIN = str.maketrans({"\\": "/", "`": "'", "*": "\u2217", "[": "(", "]": ")", "|": "/", "~": "\u223c"})
 
 
 def git(git_dir: str | None, *args: str) -> str:
@@ -101,31 +107,41 @@ def git(git_dir: str | None, *args: str) -> str:
 
 
 # ---- version --------------------------------------------------------------------------------------------------------------------------
-BASE_VERSION = "v0.4.0"
-KIND = "alpha"
+# Lane VERSION-1 (owner, 2026-10-14: "instead of alpha 0.3.x preview 1, just alpha 0.3.x <number>; make a major version number when you
+# get a huge new feature"): releases are plain numbers, v<x>.<y>.<z>, shown as "OpenBFME Alpha 0.4.5". Each release takes the next last
+# number; --bump minor (the owner's call for a huge feature) raises the middle one. The first is v0.4.5: the count goes on from
+# v0.4.0-alpha.4, and SemVer orders every v0.4.0-alpha.<n> below it (a pre-release is below its release, v0.4.0 < v0.4.5). A plain tag is
+# on the launcher's "stable" channel (semver.gd channel_of), so it is published as a full release, not a GitHub pre-release: the manifest's
+# channel must match the release's pre-release flag (manifest.gd), and a launcher on either channel offers a full release (in_channel).
+FIRST_PLAIN = "v0.4.5"
+BUMPS = ("patch", "minor")
+STAGE = "Alpha"   # the word before a plain number in what players see ("OpenBFME Alpha 0.4.5"); also launcher semver.gd and godot release.gd
 
 
-def next_version(tag_names: list[str], base: str = BASE_VERSION, kind: str = KIND) -> str:
-    """1 + the highest <base>-<kind>.<n> among tag_names (ls-remote names, refs/tags/ and ^{} allowed); <base>-<kind>.1 when none.
-    Refused when the result is not above every release tag in tag_names (the launcher installs only a newer version automatically)."""
-    if not TAG.fullmatch(base) or "-" in base:
-        raise SystemExit(f"autorelease: base {base!r} is not v<major>.<minor>.<patch>")
-    if kind not in ("alpha", "preview"):
-        raise SystemExit(f"autorelease: kind {kind!r} is not alpha or preview")
-    high, tags = 0, []
-    for name in tag_names:
-        name = name.removeprefix("refs/tags/").removesuffix("^{}")
-        m = TAG.fullmatch(name)
-        if not m:
-            continue
-        tags.append(name)
-        if m.group(4) == kind and name.startswith(f"{base}-{kind}."):
-            high = max(high, int(m.group(5)))
-    version = f"{base}-{kind}.{high + 1}"
+def _plain_core(version: str) -> tuple[int, int, int] | None:
+    m = TAG.fullmatch(version)
+    return (int(m.group(1)), int(m.group(2)), int(m.group(3))) if m and m.group(4) is None else None
+
+
+def next_version(tag_names: list[str], bump: str = "patch") -> str:
+    """the next plain release (see the comment above): 1 + the last number of the highest plain tag at or above FIRST_PLAIN among
+    tag_names (ls-remote names, refs/tags/ and ^{} allowed), or the middle number + 1 with bump="minor"; FIRST_PLAIN (bump="minor": its
+    middle number + 1) when there is none. Refused when the result is not above every release tag in tag_names (the launcher installs only
+    a newer version automatically)."""
+    if bump not in BUMPS:
+        raise SystemExit(f"autorelease: --bump {bump!r} is not one of {', '.join(BUMPS)}")
+    tags = [n for n in _tag_names(tag_names) if TAG.fullmatch(n) and len(n) <= 40]
+    plain = [n for n in tags if _plain_core(n) and version_key(n) >= version_key(FIRST_PLAIN)]
+    if plain:
+        x, y, z = _plain_core(max(plain, key=version_key))
+        version = f"v{x}.{y}.{z + 1}" if bump == "patch" else f"v{x}.{y + 1}.0"
+    else:
+        x, y, z = _plain_core(FIRST_PLAIN)
+        version = FIRST_PLAIN if bump == "patch" else f"v{x}.{y + 1}.0"
     newer = sorted({t for t in tags if version_key(t) >= version_key(version)}, key=version_key)
     if newer:
         raise SystemExit(f"autorelease: {version} would not be above the release tag {newer[-1]} (the launcher's order: a pre-release "
-                         f"below its release, alpha below preview): installed launchers would never offer it; raise the base version")
+                         f"below its release, alpha below preview): installed launchers would never offer it")
     return version
 
 
@@ -135,15 +151,30 @@ def remote_tags(git_dir: str | None, remote: str) -> list[str]:
     return [line.split("\t", 1)[1] for line in out.splitlines() if "\t" in line]
 
 
-def release_title(version: str) -> str:
-    """the GitHub release's name: "OpenBFME v0.4.0 Alpha 1" for an alpha build (the owner, RELNAME-1); a preview or stable release
-    keeps the plain tag, as the earlier previews were named"""
+def auto_publish_ok(version: str) -> bool:
+    """VERSION-1: a plain release of the alpha stage (line 'plain', major 0) is what the automatic releases make under the owner's scheme
+    (2026-10-14), so publish_release.sh --confirm-tag takes it as it takes a pre-release; v1.0.0 and later wait for the owner's typed tag"""
     m = TAG.fullmatch(version)
-    if not m:
+    return bool(m) and line_of(version) == "plain" and m.group(1) == "0"
+
+
+def display_name(version: str) -> str:
+    """what players read for a version: "Alpha 0.4.5" for a plain release (VERSION-1), "v0.4.0 Alpha 1" for an alpha build (RELNAME-1);
+    a preview keeps its tag, as the earlier previews were named"""
+    m = TAG.fullmatch(version)
+    if not m or len(version) > 40:
         raise SystemExit(f"autorelease: {version!r} is not a release version")
+    if m.group(4) is None:
+        return f"{STAGE} {m.group(1)}.{m.group(2)}.{m.group(3)}"
     if m.group(4) == "alpha":
-        return f"OpenBFME v{m.group(1)}.{m.group(2)}.{m.group(3)} Alpha {m.group(5)}"
-    return f"OpenBFME {version}"
+        return f"v{m.group(1)}.{m.group(2)}.{m.group(3)} Alpha {m.group(5)}"
+    return version
+
+
+def release_title(version: str) -> str:
+    """the GitHub release's name: "OpenBFME Alpha 0.4.5" (VERSION-1), "OpenBFME v0.4.0 Alpha 1" for an alpha build (RELNAME-1), the plain
+    tag for a preview"""
+    return f"OpenBFME {display_name(version)}"
 
 
 # ---- the bridge for the launchers up to v0.3.0-preview.4 (RELNAME-1 r2) ---------------------------------------------------------------
@@ -238,9 +269,12 @@ def bridge_check(releases: list[dict], verify, margin: int = BRIDGE_MARGIN) -> t
 
 
 def line_of(version: str) -> str:
-    """'alpha' (v0.4.0-alpha.<n>), 'bridge' (v0.3.0-preview.<n>) or '' for a version automatic releases never make"""
+    """'plain' (v<x>.<y>.<z> from FIRST_PLAIN on, VERSION-1), 'alpha' (v0.4.0-alpha.<n>: an intent opened before VERSION-1), 'bridge'
+    (v0.3.0-preview.<n>) or '' for a version automatic releases never make"""
     m = TAG.fullmatch(version)
-    if m and m.group(4) == "alpha" and version.startswith(BASE_VERSION + "-alpha."):
+    if m and len(version) <= 40 and m.group(4) is None and version_key(version) >= version_key(FIRST_PLAIN):
+        return "plain"
+    if m and m.group(4) == "alpha" and version.startswith("v0.4.0-alpha."):
         return "alpha"
     if m and m.group(4) == "preview" and version.startswith(BRIDGE_BASE + "-preview."):
         return "bridge"
@@ -248,14 +282,51 @@ def line_of(version: str) -> str:
 
 
 def intent_version_ok(version: str, last: str, tag_names: list[str] = ()) -> bool:
-    """an open intent's version: of one of the two lines, and above every version of its line already released or tagged (the last
+    """an open intent's version: of one of the lines (line_of), and above every version of its line already released or tagged (the last
     released one and every tag on the remote but its own: Sol r2, after alpha.1 and a bridge an intent edited to alpha.0 was published;
-    an alpha build and a bridge are on separate lines, so alpha.3 then the bridge preview.6 is forward)"""
+    an alpha build and a bridge are on separate lines, so alpha.3 then the bridge preview.6 is forward). VERSION-1: once a plain release
+    is released or tagged, only a plain version is (the alpha builds and the bridges are over: one sorts below every plain release)."""
     line = line_of(version)
     if not line:
         return False
+    known = [n for n in _tag_names(list(tag_names)) if n != version] + ([last] if last else [])
+    if line != "plain" and any(line_of(n) == "plain" for n in known):
+        return False
+    # Sol (VERSION-1 review): a resumed plain release must still be above EVERY valid release tag but its own reserved one, whatever
+    # line they are on (v0.4.5 interrupted, v0.5.0-alpha.1 tagged meanwhile: resuming v0.4.5 would publish below it)
+    if line == "plain" and any(TAG.fullmatch(n) and len(n) <= 40 and version_key(n) >= version_key(version) for n in known):
+        return False
     older = [n for n in _tag_names(list(tag_names)) if n != version and line_of(n) == line] + ([last] if line_of(last) == line else [])
     return all(version_key(version) > version_key(n) for n in older)
+
+
+# ---- the formats the published launchers read (VERSION-1, Sol) ---------------------------------------------------------------------------
+FORMAT_LINE = re.compile(r"^const (?:FORMATS := \[([0-9, ]+)\]|FORMAT := ([0-9]+))\s*(?:#.*)?$", re.M)
+
+
+def launcher_formats(manifest_gd: str) -> set[int]:
+    """the manifest formats a launcher's launcher/scripts/core/manifest.gd reads (`const FORMATS := [2, 3]` or `const FORMAT := 2`);
+    a source with neither is an error (fail closed)"""
+    found = FORMAT_LINE.findall(manifest_gd)
+    if len(found) != 1:
+        raise SystemExit("autorelease: cannot tell which manifest formats a launcher reads (no single FORMATS / FORMAT constant)")
+    many, one = found[0]
+    return {int(x) for x in many.split(",")} if many else {int(one)}
+
+
+def format2_only_launchers(git_dir: str | None, tag_names: list[str]) -> list[str]:
+    """the release tags whose launcher reads manifest format 2 only: published launchers that cannot take a format 3 release
+    (no launcher archives). Derived from each tag's own manifest.gd; a release tag whose source is not in the repository is an error."""
+    out = []
+    for name in sorted({n for n in _tag_names(tag_names) if TAG.fullmatch(n) and len(n) <= 40}, key=version_key):
+        try:
+            src = git(git_dir, "show", f"{name}:launcher/scripts/core/manifest.gd")
+        except subprocess.CalledProcessError:
+            raise SystemExit(f"autorelease: the launcher of the release tag {name} is not in this repository, so the formats it reads are unknown "
+                             f"(fail closed): fetch the tags")
+        if launcher_formats(src) == {2}:
+            out.append(name)
+    return out
 
 
 EXE = {"game": {"linux-x64": "OpenBFME.x86_64", "windows-x64": "OpenBFME.exe"},
@@ -364,15 +435,13 @@ class Live:
         return ""
 
 
-def release_version(tags: list[str], releases: list[dict], verify, sha_semver: str) -> tuple[str, str]:
-    """(the version of this automatic release, why): the next alpha build when the old launchers have their bridge, else the next
-    bridge, which needs this sha's launcher to know -alpha"""
-    why, tag = bridge_check(releases, verify)
-    if not why:
-        return next_version(tags), f"the bridge {tag} is in place"
-    if not knows_alpha(sha_semver):
-        raise SystemExit(f"autorelease: a bridge is needed ({why}) but this sha's launcher does not know -alpha tags")
-    return next_bridge(tags), why
+def release_version(tags: list[str], bump: str = "patch") -> tuple[str, str]:
+    """(the version of this automatic release, why): the next plain release (next_version, `bump`). Lane VERSION-1: no bridge any more.
+    The launchers up to v0.3.0-preview.4 read plain tags (OLD_TAG) and a plain release is the newest entry of the page they read, so a
+    plain release that carries the launcher archives (manifest format 2) is what they install and update themselves from; a
+    v0.3.0-preview.<n> bridge would sort below every plain release and never be installed. (The bridge rule, bridge_check(), still guards
+    an alpha build resumed from an intent opened before VERSION-1: autorelease.sh bridge-ok.)"""
+    return next_version(tags, bump), "a plain release: every published launcher reads it (VERSION-1)"
 
 
 # ---- skip-when-unchanged --------------------------------------------------------------------------------------------------------------
@@ -462,9 +531,10 @@ def neutral(text: str) -> str:
 
 
 def markdown(text: str) -> str:
-    """a neutral() line as literal Markdown text: HTML entities for & < >, a backslash before every other special character"""
+    """a neutral() line as literal Markdown text with no backslash escapes: HTML entities for & < >, look-alikes for the characters that
+    could start emphasis, code, a link or a table cell (MD_PLAIN)"""
     text = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-    return MD_SPECIAL.sub(r"\\\1", text)
+    return text.translate(MD_PLAIN)
 
 
 # the patch notes' vocabulary (lane NOTES-1, owner 2026-10-13): kinds in page order with their section titles, the areas in page order
@@ -611,7 +681,8 @@ def _grouped(items: list[tuple[str, str]]) -> list[str]:
 
 def release_notes(version: str, commits: list[dict], known_issues: list, commit: str = "", date: str = "", repo: str = DEFAULT_REPO,
                   titles: str = DEFAULT_TITLES, legacy_launchers: bool = True) -> tuple[str, list[str]]:
-    """(markdown notes, the neutral() lines in order). known_issues: texts, or {"text", "area"} entries."""
+    """(markdown notes, the neutral() lines in order). known_issues: texts, or {"text", "area"} entries. `repo`: the release's repository,
+    for the "Which file to download" part (repo="" leaves it out: tests of the items alone)"""
     if titles not in TITLES:
         raise SystemExit(f"autorelease: --titles {titles!r} is not one of {', '.join(TITLES)}")
     by_kind: dict[str, list[tuple[str, str]]] = {k: [] for k, _ in NOTE_KINDS}
@@ -623,15 +694,17 @@ def release_notes(version: str, commits: list[dict], known_issues: list, commit:
                 seen.add(line)
                 by_kind[kind].append((area, line))
     m = TAG.fullmatch(version)
-    build = {"alpha": "alpha build for testers", "preview": "alpha build for testers, numbered as a preview so that launchers of "
-             "v0.3.0-preview.4 and older can update themselves: after it, they offer the alpha builds"}.get(m.group(4) if m else None, "build")
+    build = {None: "alpha build for testers", "alpha": "alpha build for testers", "preview": "alpha build for testers, numbered as a preview so that launchers of "
+             "v0.3.0-preview.4 and older can update themselves: after it, they offer the alpha builds"}.get(m.group(4), "build") if m else "build"
     when = _date_text(date)
     # version (TAG grammar, checked by download_section), date (_date_text: digits and a month name), build words and area names (AREAS)
     # are closed sets; the area and section labels go through markdown(neutral()) all the same (structural, not luck)
-    out = [f"# OpenBFME {version} patch notes", "", f"{when} \u00b7 {build}" if when else build, "",
+    # VERSION-1: "OpenBFME Alpha 0.4.5 patch notes"; the alpha builds and previews keep their tag here
+    out = [f"# OpenBFME {display_name(version) if m and m.group(4) is None else version} patch notes", "", f"{when} \u00b7 {build}" if when else build, "",
            "Install or update it with the OpenBFME Launcher. It uses your installed The Rise of the Witch-king 2.01 and "
            "The Battle for Middle-earth II 1.06, or downloads them for you.", ""]   # said once, not preachy (owner, 2026-10-10/11)
-    out += download_section(version, repo, legacy_launchers)
+    if repo:
+        out += download_section(version, repo, legacy_launchers)
     for kind, _ in NOTE_KINDS:
         if by_kind[kind]:
             out += [f"## {markdown(neutral(TITLES[titles][kind]))}", ""] + _grouped(by_kind[kind])
@@ -1006,9 +1079,9 @@ def main(argv: list[str]) -> int:
     sub = ap.add_subparsers(dest="cmd", required=True)
     v = sub.add_parser("next-version")
     v.add_argument("--remote", default="origin")
-    v.add_argument("--base", default=BASE_VERSION)
-    v.add_argument("--kind", default=KIND, choices=("alpha", "preview"))
-    rv = sub.add_parser("release-version", help="the version of this automatic release: the next alpha build or the next bridge")
+    v.add_argument("--bump", default="patch", choices=BUMPS, help="minor: the middle number + 1 (a huge feature, the owner's call)")
+    rv = sub.add_parser("release-version", help="the version of this automatic release: the next plain release")
+    rv.add_argument("--bump", default="patch", choices=BUMPS)
     rv.add_argument("--remote", default="origin")
     rv.add_argument("--repo", required=True)
     rv.add_argument("--sha", required=True)
@@ -1021,6 +1094,10 @@ def main(argv: list[str]) -> int:
     iv = sub.add_parser("intent-version", help="the remote's tags (git ls-remote lines) on stdin")
     iv.add_argument("version")
     iv.add_argument("last", nargs="?", default="")
+    ap_ = sub.add_parser("auto-publish", help="exit 0 when a plain release may be published without the typed tag (v0.4.5 to below v1.0.0)")
+    ap_.add_argument("version")
+    lg = sub.add_parser("legacy-needed", help="exit 0 and name them when a published launcher reads format 2 only (a release must carry the launcher archives)")
+    lg.add_argument("--remote", default="origin")
     tt = sub.add_parser("title")
     tt.add_argument("version")
     nw = sub.add_parser("newer")
@@ -1064,15 +1141,11 @@ def main(argv: list[str]) -> int:
         print(f"SYNC AUDIT {'FAILED' if problems else 'ok'}: {a.tree}")
         return 1 if problems else 0
     if a.cmd == "next-version":
-        print(next_version(remote_tags(a.git_dir, a.remote), a.base, a.kind))
+        print(next_version(remote_tags(a.git_dir, a.remote), a.bump))
         return 0
     if a.cmd == "release-version":
-        key = bytes.fromhex(git(a.git_dir, "show", f"{a.sha}:launcher/release_key.pub").strip())
-        git(a.git_dir, "fetch", "-q", a.remote, "main")
-        live = Live(a.gh, a.repo, a.git_dir, a.remote, key)
-        version, why = release_version(remote_tags(a.git_dir, a.remote), live.releases(), live.verify,
-                                       git(a.git_dir, "show", f"{a.sha}:launcher/scripts/core/semver.gd"))
-        print(f"AUTORELEASE line: {version} ({'an alpha build' if line_of(version) == 'alpha' else 'a bridge'}: {why})", file=sys.stderr)
+        version, why = release_version(remote_tags(a.git_dir, a.remote), a.bump)
+        print(f"AUTORELEASE line: {version} ({why})", file=sys.stderr)
         print(version)
         return 0
     if a.cmd == "bridge-ok":
@@ -1087,6 +1160,14 @@ def main(argv: list[str]) -> int:
     if a.cmd == "intent-version":
         tags = [line.split("\t", 1)[1] for line in sys.stdin.read().splitlines() if "\t" in line]
         return 0 if intent_version_ok(a.version, a.last, tags) else 1
+    if a.cmd == "legacy-needed":
+        old = format2_only_launchers(a.git_dir, remote_tags(a.git_dir, a.remote))
+        if old:
+            print(f"AUTORELEASE: published launchers read manifest format 2 only ({', '.join(old)}): a release without the launcher archives "
+                  f"(format 3) would strand them")
+        return 0 if old else 1
+    if a.cmd == "auto-publish":
+        return 0 if auto_publish_ok(a.version) else 1
     if a.cmd == "title":
         print(release_title(a.version))
         return 0

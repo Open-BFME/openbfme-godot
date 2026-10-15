@@ -152,6 +152,11 @@ def test_the_readme_says_how_to_open_the_log_folder():
     lines, _ = readme_testers.known_issues(HERE / "known_issues.json", REPO / "docs/STOPS.md")
     assert "OpenBFME.exe --open-logs" in readme_testers.render("v9", "windows", lines)
     assert "./OpenBFME.x86_64 --open-logs" in readme_testers.render("v9", "linux", lines)
+    # VERSION-1: a plain release's readme says "Alpha 0.4.5"; anything else keeps the tag
+    first = readme_testers.render("v0.4.5", "linux", lines).splitlines()[:2]
+    assert first == ["OpenBFME Alpha 0.4.5 for Linux x86-64", "=" * len("OpenBFME Alpha 0.4.5 for Linux x86-64")], first
+    assert readme_testers.render("v0.4.0-alpha.4", "windows", lines).startswith("OpenBFME v0.4.0-alpha.4 - alpha build for Windows x86-64\n")
+    assert readme_testers.render("v0.4.05", "linux", lines).startswith("OpenBFME v0.4.05 - alpha build for Linux x86-64\n")
     for platform in ("windows", "linux"):
         assert '"Logs" next to the version' in readme_testers.render("v9", platform, lines)
 

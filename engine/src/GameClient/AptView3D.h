@@ -27,6 +27,7 @@
 
 #include <climits>
 #include <string>
+#include <vector>
 
 enum AptView3DAnimMode
 {
@@ -43,6 +44,20 @@ enum AptView3DAnimMode
 int AptView3DAnimModeIndex(const std::string &name);
 // RW 0x8145DD: `_KeepAspectRatio` keeps the aspect unless its text contains 'f'
 bool AptView3DKeepAspect(const std::string &value);
+// Lane ONLINE-5 (the owner, 2026-10-13: "the nickname menu isn't fully lined up" at 2560x1440): the pixel size of the image a View3D clip is
+// rendered into, given the clip's rectangle in window pixels and the stage mapping's scales.
+// TARGET FACT: RW 0xB5470F(x, y, w, h) sets the camera's viewport to the clip's rectangle over the display's size (vslots 0x40 / 0x44 of [0xDE4418])
+// and, with `_KeepAspectRatio`, the camera's aspect to w / h (RW 0x533630), with a fixed 50 degree horizontal field of view: the model keeps its
+// proportions in display pixels. At RotWK's own 4:3 modes the stage's two scales are equal and that is also the proportions of the movie around it.
+// OpenBFME DIFFERENCE [S-4555], `stretchWithStage` only (Sol r1: the shell's menu screens, whose 3D frame, SFE_MenuFrame / SFE_MenuLogin, frames the
+// panels of a 4:3 movie stretched to the window; not GuiFX's end screen, whose victory / defeat rings keep retail's proportions): where the stage is
+// stretched unevenly (a 16:9 or 16:10 window), the model is rendered with the aspect its clip has in STAGE units and stretched with the movie, so the
+// frame stays around the panels and titles it frames. With equal scales, or without `stretchWithStage`, the result is the clip's rectangle, as
+// retail's. `keepAspect` false: the clip's rectangle (the camera's own aspect is not ported, S-1483)
+void AptView3DImageSize(float rectW, float rectH, float scaleX, float scaleY, bool keepAspect, bool stretchWithStage, int &width, int &height);
+// Sol r1 (ONLINE-5): does the View3D clip at `path` ("_level<N>.<...>", its target path) belong to one of `menuLevels` (the levels of the shell's menu
+// screens)? Those clips stretch with the stage (AptView3DImageSize); any other level's (GuiFX's end screen, an in-game movie) keeps retail's aspect
+bool AptView3DOnMenuLevel(const std::string &path, const std::vector<int> &menuLevels);
 // RW 0x813514: the frame of a "_frame=<n>" command (atoi)
 int AptView3DFrameOf(const std::string &value);
 

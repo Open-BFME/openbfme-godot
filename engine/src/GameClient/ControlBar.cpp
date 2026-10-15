@@ -964,5 +964,10 @@ std::vector<std::string> ControlBar::acceptanceStops()
 		"[S-3951] the right press's production cancel (lane HUD-7): a CANCELABLE UNIT_BUILD button cancels one of its template and a REVIVE button its hero "
 		"record by index (processCommandUI RW 0x940B0E / 0x940C57, MSG_CANCEL_UNIT_CREATE); not ported: the Shift form that cancels them all (RW 0x940CB7 .. "
 		"0x940CDE: Keyboard::isShift RW 0x63F122 while the template's field + 0x5F0 is 0, unidentified): the flag is always false here",
+		"[S-4531] the left press's gate and click sound (lane NETLAG-1, read, not ported): RW 0x9D285E (BFME2 decomp Rva005C3427::Run, tier A) reads the "
+		"command button clip's state (RW 0xA00C0E: clip + 0x50, set by RW 0x9D2BEE: 1 _disabled, 2 _extraDisabled, 3 _cantAfford, 4 _static, 5 _notReady, "
+		"6 _up, 7 _visuallyEnabled) and for 1, 3 and 5 plays Gui_PalantirCommandButtonDisabledClick and drops the press; any other state goes to "
+		"processCommandUI (RW 0x9D2814) with no sound of its own, so an enabled press sounds only through its clip. Here every press reaches "
+		"ControlBar::pressButton, which refuses what it cannot do, silently",
 	};
 }

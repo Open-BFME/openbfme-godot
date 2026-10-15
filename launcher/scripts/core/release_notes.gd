@@ -7,6 +7,8 @@
 ## dropped. Nothing is rendered as markup.
 extends RefCounted
 
+const Semver := preload("res://scripts/core/semver.gd")
+
 
 ## the titles of the Play card's lines, in the order tried: the added lines (both generations of titles), then the fixed ones, then the changed ones
 const PLAY_TITLES := [["What's new", "Added"], ["What's fixed", "Bug fixes"], ["Changed"]]
@@ -75,9 +77,10 @@ static func date_text(iso: String) -> String:
 	return "%d %s %d" % [int(d.day), months[int(d.month) - 1], int(d.year)]
 
 
-## "v0.3.0-preview.2" -> "Preview 2 of 0.3.0"; "v1.0.0" -> "Version 1.0.0"
+## "v0.3.0-preview.2" -> "Preview 2 of 0.3.0"; "v0.4.5" -> "Alpha 0.4.5" and "v0.4.0-alpha.3" -> "v0.4.0 Alpha 3" (lane VERSION-1,
+## Semver.display)
 static func title_of(tag: String) -> String:
-	var m := RegEx.create_from_string("^v(\\d+\\.\\d+\\.\\d+)(?:-preview\\.(\\d+))?$").search(tag)
+	var m := RegEx.create_from_string("^v(\\d+\\.\\d+\\.\\d+)-preview\\.(\\d+)$").search(tag)
 	if m == null:
-		return tag
-	return "Preview %s of %s" % [m.get_string(2), m.get_string(1)] if m.get_string(2) != "" else "Version " + m.get_string(1)
+		return Semver.display(tag)
+	return "Preview %s of %s" % [m.get_string(2), m.get_string(1)]

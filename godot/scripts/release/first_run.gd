@@ -192,7 +192,7 @@ func _build_ui(problem: String) -> void:
 	buttons.add_child(_start)
 	box.add_child(buttons)
 	var version := Label.new()
-	version.text = Release.version_line()
+	version.text = Release.display_line()  # lane VERSION-1: "OpenBFME Alpha 0.4.5 (<date>)"
 	version.add_theme_color_override("font_color", Color(1, 1, 1, 0.5))
 	box.add_child(version)
 

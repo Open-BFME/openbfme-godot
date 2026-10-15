@@ -223,7 +223,9 @@ struct LiveGameNet
 {
 	std::vector<std::unique_ptr<LivePeer>> peers;
 	int frameMs;
-	LiveGameNet(int n, const NetLinkFaults &faults, int frameMs_, std::uint32_t disconnectMs)
+	// `linkFaults` (lane NETLAG-1): the faults of the datagrams peer `from` sends to peer `to` where they differ from `faults` (null: the same everywhere)
+	LiveGameNet(int n, const NetLinkFaults &faults, int frameMs_, std::uint32_t disconnectMs,
+		const std::function<bool(int from, int to, NetLinkFaults &out)> &linkFaults = nullptr)
 		: frameMs(frameMs_)
 	{
 		std::string error;
@@ -238,6 +240,10 @@ struct LiveGameNet
 			Transport::Options o;
 			o.impairment.all = faults;
 			o.impairment.seed = 100u + (std::uint32_t)i;
+			for (int j = 0; j < n && linkFaults; ++j)
+			{
+				o.impairment.linkSet[(size_t)j] = j != i && linkFaults(i, j, o.impairment.link[(size_t)j]);
+			}
 			p.transport = std::make_unique<Transport>(p.socket, i, o);
 			NetworkConfig c;
 			c.localSlot = i;
@@ -446,17 +452,27 @@ TEST_CASE("mp3 impairment: the lane's acceptance stops are reported (S-1890 .. S
 	CHECK(stops[0].rfind("[S-1890] network faults:", 0) == 0);
 	CHECK(stops[1].rfind("[S-1891] resend policy:", 0) == 0);
 	CHECK(stops[2].rfind("[S-1892] smoothness:", 0) == 0);
-	CHECK(stops[2].find("RW 0x4E03C7") != std::string::npos);
+	CHECK(stops[2].find("S-1920") != std::string::npos); // lane NETLAG-1: the move hint is drawn (PLAY-1), retail's delay read (S-720)
 }
 
 TEST_CASE("mp3 lockstep under faults (review r1): the packet router leaves gracefully; the next slot of the fallback order is the router from the leave "
 		  "frame on on every survivor, its run-ahead changes are taken, and the survivors stay identical")
 {
-	NetLinkFaults f;
+	NetLinkFaults f, near;
 	std::string error;
 	REQUIRE(NetLinkFaults::parse("latency=150,jitter=50,loss=50", f, &error));
+	REQUIRE(NetLinkFaults::parse("latency=10,jitter=5,loss=50", near, &error));
 	const UnsignedInt kFrames = 260;
-	LiveGameNet g(3, f, 50, 5000);
+	// lane NETLAG-1: the survivors are near each other (10 ms) and far from the leaver (150 ms): the router's command delay for the three is above the
+	// lobby's 1, the successor's own measurement after the leave brings it down (the run-ahead target is no longer noisy enough to differ by chance)
+	LiveGameNet g(3, f, 50, 5000, [&](int from, int to, NetLinkFaults &out) {
+		if (from != 0 && to != 0)
+		{
+			out = near;
+			return true;
+		}
+		return false;
+	});
 	UnsignedInt leaveFrame = 0;
 	std::vector<int> changesAtLeave(3, -1);
 	g.run(kFrames, 120000, [&](LivePeer &p, int i) {

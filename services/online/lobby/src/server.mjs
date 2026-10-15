@@ -112,7 +112,10 @@ export function startServer(env = readEnv(), { log = console.log } = {}) {
         ip: req.socket.remoteAddress ?? '',
         bytes: async () => new Uint8Array(raw),
       };
-      chain = chain.then(() => route(lobby, r)).then((out) => {
+      // ONLINE-5: a held poll (route's `deferred`) is answered when it resolves; the chain goes on with the next request meanwhile
+      const routed = chain.then(() => route(lobby, r));
+      chain = routed.catch(() => {});
+      routed.then((out) => out.deferred ?? out).then((out) => {
         res.writeHead(out.status, out.headers);
         res.end(typeof out.body === 'string' ? out.body : Buffer.from(out.body));
         if (out.status >= 500) log(`lobby: ${req.method} ${url.pathname} -> ${out.status}`);

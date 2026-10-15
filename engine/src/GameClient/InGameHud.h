@@ -32,6 +32,7 @@
 #include "GameClient/InGameHeroSelect.h"
 #include "GameClient/SelectionDecals.h"
 #include "GameClient/Radar.h"
+#include "GameClient/RadiusCursor.h"
 #include "GameClient/UnitVoiceResponse.h"
 #include "GameLogic/Object/RetailObjectWorld.h"
 #include "GameLogic/GameLogicDispatch.h"
@@ -122,6 +123,9 @@ public:
 	bool openSpellStore(std::string *error = nullptr);
 	void closeSpellStore();
 	AptSpellStore *spellStore() { return m_store.get(); }
+	// lane SPELL-4: the aiming marker of a spell book power waiting for its target (GameClient/RadiusCursor.h), updated each update(); the device draws it
+	const RadiusCursor &radiusCursor() const { return m_radiusCursor; }
+	const RadiusCursorTemplates &radiusCursorTemplates() const { return m_radiusTemplates; }
 	// lane UI-4: the selection markers of this frame (SelectionDecals.h); the device gives GameData's settings and draws them
 	void setSelectionDecalSettings(const SelectionDecalSettings &s) { m_decalSettings = s; }
 	const std::vector<SelectionDecal> &selectionDecals() const { return m_selectionDecals; }
@@ -176,6 +180,9 @@ private:
 	bool hud6MouseButton(HudInput::Button button, bool down, int x, int y);
 	void hud6Stops(std::vector<std::string> &out) const;
 	bool hoveredAptButton(InGameHelpBox::Provider &p, ControlBarButton &b);
+	// lane HOVER-1: the spell book's slots (RW 0x930DC4), the hero bar's buttons (RW 0x92BF34 / 0x92C265) and the Palantir's portrait (RW 0x93099D) under
+	// the pointer; `unit` is a portrait's object; `context` the control bar's object (the portrait's)
+	bool hoveredHelpButton(InGameHelpBox::Provider &p, ControlBarButton &b, ObjectID &unit, ObjectID context);
 	ControlBarRadialMenu m_radial;
 	InGameHelpBox m_helpBox;
 	HelpBoxSettings m_helpSettings;
@@ -234,6 +241,15 @@ private:
 	unsigned m_storeRequests = 0;             // lane PLAY-1
 	std::string m_storeError;
 	void syncSpellBook();
+	// lane SPELL-4: InGameUI's radius cursor for the spell book's targeting (RW 0x6A3B77 -> RW 0x6A077A, RadiusDecal::update RW 0x732926)
+	void updateRadiusCursor();
+	RadiusCursorTemplates m_radiusTemplates;
+	RadiusCursor m_radiusCursor;
+	int m_pointerX = 0, m_pointerY = 0;
+	bool m_pointerSeen = false;
+	bool m_targetingCursor = false; ///< the spell book's targeting set the pointer (it is given back at its end)
+	std::set<std::string> m_cursorStopPowers; ///< the powers whose unported location test the cursor met (S-4641), once each
+	std::vector<std::string> m_cursorStops;
 	void send(const std::vector<GameMessage> &msgs);
 	int m_windowW = 1024, m_windowH = 768;
 	bool m_booted = false;

@@ -542,11 +542,11 @@ TEST_CASE("net core (ONLINE-1): the transport counts the datagram bytes it sends
 	CHECK(b.ackOnlyPacketsSent > 0);
 }
 
-TEST_CASE("net core: the network layer's acceptance stops are reported (S-720 .. S-725)")
+TEST_CASE("net core: the network layer's acceptance stops are reported (S-720 .. S-725, lane NETLAG-1's S-4530)")
 {
 	const std::vector<std::string> lines = Network::stopLines();
-	REQUIRE(lines.size() == 6);
-	const char *ids[] = { "[S-720]", "[S-721]", "[S-722]", "[S-723]", "[S-724]", "[S-725]" };
+	REQUIRE(lines.size() == 7);
+	const char *ids[] = { "[S-720]", "[S-721]", "[S-722]", "[S-723]", "[S-724]", "[S-725]", "[S-4530]" };
 	for (size_t i = 0; i < lines.size(); ++i)
 	{
 		CHECK(lines[i].rfind(ids[i], 0) == 0);

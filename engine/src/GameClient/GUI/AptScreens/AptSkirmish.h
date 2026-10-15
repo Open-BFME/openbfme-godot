@@ -79,6 +79,12 @@ public:
 	// The retail flag at +0x6C2: the popup's accept button is disabled (an empty raw text).
 	bool profileAcceptDisabled() const { return m_acceptDisabled; }
 	GameWindow *slotGadget(int slot, const std::string &leaf) const;
+	// lane ONLINE-5: the state the slot's Ready box was last given (SetReadyState: "_none", "_enabledChecked" ...; "" before the first)
+	const std::string &readyIcon(int slot) const
+	{
+		static const std::string none;
+		return slot >= 0 && slot < MAX_SLOTS ? m_readyIcon[(size_t)slot] : none;
+	}
 	GameWindow *mapListWindow() const { return m_mapList; }
 	const std::vector<GameWindow *> &mapStartSpotWindows() const { return m_currentMapChildren; } // lane FB7-1 (tests)
 	// lane UI-2: the map preview window (MpGameSetup's CurrentMap, MpMapWindow.wnd) and its start-spot buttons
@@ -102,6 +108,11 @@ public:
 	{
 		pruneDeadGadgets();
 		return m_chatList;
+	}
+	GameWindow *chatPlayersWindow()
+	{
+		pruneDeadGadgets();
+		return m_chatPlayers;
 	}
 	// lane CAH-1: the hero combo's choice of a slot (GameSlot + 0x5C: -1 none, -2 random, else the index into the hero list)
 	int slotHero(int slot) const { return slot >= 0 && slot < MAX_SLOTS ? m_slotHero[(size_t)slot] : -1; }
@@ -139,6 +150,35 @@ protected:
 	virtual void onReadyPress(const std::string &argument);
 	virtual void onKickPlayer(const std::string &argument);
 	virtual void onChatSend(const std::u16string &text);
+	// lane ONLINE-5: the setup panel's flags (AptMpGameSetup + 0x3A4, the constructor's second argument): the online custom match screen passes
+	// 0x200001F0 (RW 0x9AF464), the LAN lobby 0x400001A0 (RW 0x848C6B). Bit 0x20 is the Ready column (RW 0x84214C) and the host's start notice (RW
+	// 0x8431B8: GUI:NotifiedStartIntent). The skirmish screen's own value was read only in BFME2 (0x10000007, decomp AptSkirmishConstructor.cpp: no 0x20):
+	// 0 here, the bits this port reads are all clear in it
+	virtual int setupFlags() const { return 0; }
+	// the slot's accepted flag (GameSlot + 8, RW 0x842185): the model's; the LAN lobby's are LANAPI's
+	virtual bool slotAccepted(int slot) const;
+	// lane ONLINE-5: a function of the MpGameSetup movie (RW 0x841330 with the owner's Apt path, vslot 0x58): false when the movie does not have it (yet)
+	virtual bool callSetupMovie(const std::string &function, const std::vector<std::string> &args);
+	// lane ONLINE-5: AptMpGameSetup::UpdateReadyIcon (RW 0x84211D, BFME2 0x43FB5C byte-matched decomp MpGameSetupSlots.cpp): the slot's Ready box through
+	// the movie's SetReadyState(slot, state): "_none" without flag 0x20 or for an empty slot; slot 0 (the host) and an AI "_disabledChecked"; a human
+	// "_enabledChecked" / "_enabledUnchecked" for the local player's own box (the only one that takes a press), "_disabledChecked" /
+	// "_disabledUnchecked" for the others. `force`: sent even when the box showed that state already (the boxes were made again)
+	void updateReadyIcon(int slot, bool force = false);
+	// MpGameSetup::OnReadyPress without an argument (RW 0x841590's first branch, BFME2 0x43EFD3: + 0x2B9, the slots are refreshed): the movie's Ready
+	// boxes were just made (MpGameSetup.apt: the first box's first frame sends it once, vReadyInitialized) and get their states
+	void readyBoxesMade();
+	// the per-update part (RW 0x846BA4's test of + 0x2B9): boxes whose state could not be given yet (the setup movie defines SetReadyState a frame
+	// after its boxes ask) get it now. Every screen that hosts the setup movie runs it from its update
+	void serviceReadyBoxes();
+	// may the slot's combos be changed now: lobbyEditable, and (RW 0x843F6E UpdateSlot, BFME2 0x441B15: a local player who accepted and is not the host
+	// has every gadget disabled, RW 0x8404AC(false, -1)) not after the local player's own Ready
+	bool slotGadgetsEnabled(int slot) const;
+	// lane ONLINE-5: may a slot's Hero combo be used at all (the online lobby carries no Create-a-Hero record yet, S-4076: shown locked there)
+	virtual bool heroChoiceAvailable() const { return true; }
+	// lane ONLINE-5: the chat panel's Players list (AptMpChat's "ChatPlayers", RW 0x9BEA20): the human players of the network game, in slot order.
+	// INFERENCE [S-4551]: retail's chat helper fills it with the chat's recipients (the room's players; its fill, RW 0x9BECCB's source, was not read)
+	// and sends a line only to the ones selected; here it lists who is in the room and every line goes to everyone
+	void refreshChatPlayers();
 	// lane UI-1: AptMpGameRules::ShowChat (RW 0x845AE2 id 0): the host interface's answer; the skirmish lobby has no chat
 	virtual bool showChat() const { return false; }
 	// lane RULES-1: the panel's ruleChanged (RW 0x8421E0) on the host posts "GUI:RuleChangeWarning" + the rule's name (kind 10 with a reset:
@@ -322,6 +362,11 @@ private:
 	std::vector<std::pair<std::u16string, std::u16string>> m_ruleWarnings;
 
 	bool m_rulesStopReported = false; // lane RULES-1
+	// lane ONLINE-5: the size each chat list had when it was last filled (a list made while its tab still plays in is filled again at its final size)
+	int m_chatListW = -1, m_chatListH = -1, m_chatPlayersW = -1, m_chatPlayersH = -1;
+	void serviceChatLists();
+	bool m_readyDirty = false;                      // lane ONLINE-5: AptMpGameSetup + 0x2B9 (as far as the Ready boxes go)
+	std::array<std::string, MAX_SLOTS> m_readyIcon; // lane ONLINE-5: what each Ready box shows (the last SetReadyState that reached the movie)
 
 public:
 	static const char *const kHeroComboStop;

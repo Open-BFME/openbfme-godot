@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 import textwrap
 from pathlib import Path
@@ -20,7 +21,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[2]
 
 TEMPLATE = """\
-OpenBFME {version} - alpha build for {platform_name}
+{title}
 {rule}
 
 Thank you for testing! OpenBFME is an unofficial, fan-made rebuild of
@@ -163,6 +164,13 @@ FILES = """\
 """
 
 
+def title_of(version: str, platform_name: str) -> str:
+    """the first line: "OpenBFME Alpha 0.4.5 for Linux" for a plain release (lane VERSION-1: the owner's plain numbers, 2026-10-14),
+    "OpenBFME <version> - alpha build for Linux" for anything else (an alpha build, a preview, a development package)"""
+    m = re.fullmatch(r"v((?:0|[1-9][0-9]{0,8})\.(?:0|[1-9][0-9]{0,8})\.(?:0|[1-9][0-9]{0,8}))", version)
+    return f"OpenBFME Alpha {m.group(1)} for {platform_name}" if m else f"OpenBFME {version} - alpha build for {platform_name}"
+
+
 def render(version: str, platform: str, issues: list[str], game_only: bool = False) -> str:
     p = dict(PLATFORMS[platform])
     names = {"game": p.pop("game"), "launcher": p.pop("launcher")}
@@ -170,8 +178,8 @@ def render(version: str, platform: str, issues: list[str], game_only: bool = Fal
         p["start"] = p.pop("start_game_only")
     else:
         p.pop("start_game_only")
-    title = TEMPLATE.split("\n", 1)[0].format(version=version, platform_name=p["platform_name"])
-    return TEMPLATE.format(version=version, rule="=" * len(title), issues="\n".join(issues),
+    title = title_of(version, p["platform_name"])
+    return TEMPLATE.format(version=version, title=title, rule="=" * len(title), issues="\n".join(issues),
                            updates=(GAME_ONLY_UPDATES if game_only else UPDATES).format(**names),
                            files="" if game_only else FILES.format(**names), **p)
 

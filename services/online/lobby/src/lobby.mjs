@@ -7,6 +7,11 @@
 // Wire: JSON over HTTP, every body carries "v": 1. Sign-in gives a bearer token (a signed guest identity; ONLINE-2 r2 dropped Discord sign-in until its
 // return link to the game is built: Sol r1). Clients
 // poll GET /v1/games/<id>?since=<seq> about once a second (WebSocket push is the next step, docs/ONLINE.md).
+// ONLINE-5: a poll may wait for a change (long polling): GET /v1/games/<id>?since=<chat seq>&seq=<view seq>&wait=<seconds> is answered at once when the
+// game's seq is not <view seq>, else when the game next changes or after min(wait, MAX_WAIT_S) seconds. Every poll answer carries "wait": MAX_WAIT_S, by
+// which a client knows the lobby holds polls (an older lobby has no such field and is polled once a second, as before; an older client sends no wait and
+// is answered at once, as before; Sol r1: a poll not held because a bound is reached carries "backoff": seconds to wait). A poll's chat lines carry "you": true for the reader's own lines (a client that showed its line when it was typed
+// does not show it twice).
 //
 // Platform hooks (`env`): hmac(keyBytes, dataBytes) -> Promise<Uint8Array> (HMAC-SHA256), randomBytes(n) -> Uint8Array, now() -> ms, store (games and
 // blobs: saveGame / deleteGame / putBlob / getBlob), config (below). No secret is in this file: keys come from the environment / files.
@@ -16,8 +21,29 @@ export const MAX_JSON_BYTES = 16384;          // a JSON request body (ONLINE-2 r
 export const MAX_LOG_BYTES = 64 * 1024 * 1024; // a relay log upload
 const LOG_HEADER_BYTES = 25; // RelayCore.h "Log format": magic 8, version 4, game id 8, slot mask 1, start 4
 const MAX_SLOTS = 8;
+// ONLINE-5: long polling. A held poll is one open request and one timer: bounded per game (8 players, each one poll, and a second one while the first
+// is being replaced) and in total; beyond the bounds a poll is answered at once (the client's next poll waits)
+export const MAX_WAIT_S = 25;
+export const MAX_WAITERS_PER_GAME = 16;
+export const MAX_WAITERS = 4000;
+// Sol r1 (ONLINE-5): the holds are shared fairly: one account (a player, any number of windows) has at most MAX_HOLDS_PER_ACCOUNT at once (its poll,
+// and the next one while the last is being replaced), so it cannot take a room's holds from the other players. A poll that is not held because a
+// bound is reached is answered at once with "backoff": HOLD_BACKOFF_S, the seconds the client waits before its next poll (an explicit back-off: without
+// it a client that is never held would poll back to back, about 3,600 requests an hour)
+export const MAX_HOLDS_PER_ACCOUNT = 2;
+export const HOLD_BACKOFF_S = 10;
+// ONLINECOUNT-1: GET /v1/stats. A player counts while the lobby has seen a request with their valid session token in the last PRESENCE_S seconds
+// (the online menu's own stats poll every 90 s keeps them present; a staging room's polls do too), or while they hold a human slot of a game that has started and has no relay log yet
+// (the lobby hears of a game's end only through the relay's log upload, so a game whose log never arrives counts for startedGameKeepMs). Nothing is
+// stored: presence lives in memory and a restarted lobby counts from zero again. The answer is computed at most every STATS_CACHE_S seconds.
+export const STATS_STOP = '[S-4830] players online = accounts whose token was seen in the last 150 s plus the humans of started games whose relay log has not been uploaded (3 h at most): an estimate, not a connection count';
+export const PRESENCE_S = 150;
+export const STATS_CACHE_S = 30;
+export const MAX_PRESENT = 50000; // the presence table's bound (sign-ins are rate-limited per address; past it a new session is not remembered)
 const SLOT_STATES = ['open', 'closed', 'player', 'easy', 'medium', 'hard', 'brutal'];
 const AI_STATES = new Set(['easy', 'medium', 'hard', 'brutal']);
+// ONLINE-5 (Sol r1): the choices of a slot no one holds: an open or closed slot keeps none (they would come back with the next occupant)
+const NO_CHOICES = Object.freeze({ faction: -1, color: -1, startPos: -1, team: -1 });
 // INFRA-2: the admin backup's signature window, page size and the blob keys it moves (the three kinds the lobby stores per started game)
 export const ADMIN_WINDOW_S = 300;
 export const ADMIN_PAGE = 1000;
@@ -169,7 +195,7 @@ export class Lobby {
   constructor(env, config) {
     this.env = env;
     this.config = {
-      runAhead: 2,
+      runAhead: 1, // lane NETLAG-1: RotWK's command delay, the current frame + 1 (was 2); the peers raise it on a slow link
       crcInterval: 100,
       ticketSeconds: 6 * 3600,
       sessionSeconds: 30 * 24 * 3600,
@@ -188,6 +214,75 @@ export class Lobby {
     this.games = new Map(); // id -> game
     this.buckets = new Map(); // rate limit key -> { tokens, at }
     this.relayStatus = new Map(); // INFRA-2 r2: relay address -> its uploader's last status (relayStatus())
+    this.waiters = new Map(); // ONLINE-5: game id -> Set of wake functions (held polls)
+    this.waiterCount = 0;
+    this.accountHolds = new Map(); // Sol r1: account id -> its held polls
+    this.present = new Map(); // ONLINECOUNT-1: account id -> the last time (ms) the lobby saw its token
+    this.statsCache = null; // { at (ms), answer }
+  }
+
+  // ---- ONLINECOUNT-1: who is online ----
+  seen(accountId) {
+    const now = this.env.now();
+    if (!this.present.has(accountId) && this.present.size >= MAX_PRESENT) {
+      for (const [k, t] of this.present) if (now - t > PRESENCE_S * 1000) this.present.delete(k);
+      if (this.present.size >= MAX_PRESENT) return;
+    }
+    this.present.set(accountId, now);
+  }
+  // counts only: no names, no addresses, no ids in the answer
+  stats() {
+    const now = this.env.now();
+    if (this.statsCache && now - this.statsCache.at >= 0 && now - this.statsCache.at < STATS_CACHE_S * 1000) return this.statsCache.answer;
+    this.sweep();
+    const online = new Set();
+    for (const [id, t] of this.present) {
+      if (now - t <= PRESENCE_S * 1000) online.add(id);
+      else this.present.delete(id);
+    }
+    let open = 0;
+    let running = 0;
+    for (const g of this.games.values()) {
+      if (g.state === 'open') open += 1;
+      else if (g.state === 'started' && !g.finished) {
+        running += 1;
+        for (const s of g.slots) if (s.state === 'player' && s.account) online.add(s.account);
+      }
+    }
+    const answer = { v: VERSION, players: online.size, games_open: open, games_running: running, as_of: Math.floor(now / 1000) };
+    this.statsCache = { at: now, answer };
+    return answer;
+  }
+
+  // ---- ONLINE-5: held polls ----
+  // resolves when game `id` changes (save), goes away, or after `ms`; null when a bound is reached (the caller answers at once, with the back-off).
+  // Every hold is released exactly once, whichever comes first: the game's change, the game's removal or the timer
+  holdPoll(id, ms, accountId) {
+    const set = this.waiters.get(id) ?? new Set();
+    const mine = this.accountHolds.get(accountId) ?? 0;
+    if (this.waiterCount >= (this.config.maxHolds ?? MAX_WAITERS) || set.size >= MAX_WAITERS_PER_GAME || mine >= MAX_HOLDS_PER_ACCOUNT) return null;
+    this.waiters.set(id, set);
+    this.waiterCount += 1;
+    this.accountHolds.set(accountId, mine + 1);
+    return new Promise((resolve) => {
+      let timer = null;
+      const wake = () => {
+        if (!set.delete(wake)) return; // woken once
+        this.waiterCount -= 1;
+        const left = (this.accountHolds.get(accountId) ?? 1) - 1;
+        if (left > 0) this.accountHolds.set(accountId, left);
+        else this.accountHolds.delete(accountId);
+        if (!set.size && this.waiters.get(id) === set) this.waiters.delete(id);
+        (this.env.clearTimer ?? clearTimeout)(timer);
+        resolve();
+      };
+      set.add(wake);
+      timer = (this.env.setTimer ?? setTimeout)(wake, ms);
+    });
+  }
+  wake(id) {
+    const set = this.waiters.get(id);
+    if (set) for (const w of [...set]) w();
   }
 
   load(games, relayStatus = []) {
@@ -235,6 +330,7 @@ export class Lobby {
     if (diff) throw new LobbyError(401, 'signed_out', 'the session token is not this lobby\'s');
     const a = JSON.parse(dec.decode(body));
     if (!(a.exp > this.env.now() / 1000)) throw new LobbyError(401, 'signed_out', 'the session expired: sign in again');
+    if (typeof a.id === 'string') this.seen(a.id); // ONLINECOUNT-1
     return a;
   }
 
@@ -244,6 +340,7 @@ export class Lobby {
     if (!name) throw bad('bad_field', 'name must not be blank');
     const id = `guest:${bytesToHex(this.env.randomBytes(8))}`;
     const account = { id, name, kind: 'guest' };
+    this.seen(id); // ONLINECOUNT-1
     return { v: VERSION, token: await this.makeToken(account), account };
   }
 
@@ -289,6 +386,7 @@ export class Lobby {
       if (now - g.touched > keep) {
         this.games.delete(id);
         this.env.store.deleteGame?.(id);
+        this.wake(id);
       }
     }
   }
@@ -304,17 +402,32 @@ export class Lobby {
     g.seq += 1;
     g.touched = this.env.now();
     await this.env.store.saveGame?.(g);
+    this.wake(g.id); // ONLINE-5: the held polls of the game answer now
   }
-  event(g, text, from = null) {
-    g.chat.push({ seq: g.seq + 1, from, text, at: this.env.now() });
+  // `account`: the id of the player who wrote the line (ONLINE-5: a poll marks the reader's own lines)
+  event(g, text, from = null, account = undefined) {
+    g.chat.push({ seq: g.seq + 1, from, text, at: this.env.now(), ...(account ? { account } : {}) });
     if (g.chat.length > 200) g.chat.splice(0, g.chat.length - 200);
   }
 
-  checkSlotChoice(s, body) {
-    if (body.faction !== undefined) s.faction = intIn(body.faction, -1, 63, 'faction');
-    if (body.color !== undefined) s.color = intIn(body.color, -1, 63, 'color');
-    if (body.startPos !== undefined) s.startPos = intIn(body.startPos, -1, MAX_SLOTS - 1, 'startPos');
-    if (body.team !== undefined) s.team = intIn(body.team, -1, MAX_SLOTS - 1, 'team');
+  // ONLINE-5: the choices of a slot request, checked whole before anything is changed (a refused request leaves the slot as it was: the old code set
+  // the fields one by one, so a good faction before a bad colour stayed). `slots` / `index`: the game's slots and the slot the choices are for; a
+  // start position or a colour another occupied slot holds is refused by name (random, -1, is never taken)
+  checkSlotChoice(s, body, slots = null, index = -1) {
+    const out = {};
+    if (body.faction !== undefined) out.faction = intIn(body.faction, -1, 63, 'faction');
+    if (body.color !== undefined) out.color = intIn(body.color, -1, 63, 'color');
+    if (body.startPos !== undefined) out.startPos = intIn(body.startPos, -1, MAX_SLOTS - 1, 'startPos');
+    if (body.team !== undefined) out.team = intIn(body.team, -1, MAX_SLOTS - 1, 'team');
+    if (slots) {
+      const occupied = (o) => o.state === 'player' || AI_STATES.has(o.state);
+      const holder = (field) => slots.findIndex((o, i) => i !== index && occupied(o) && out[field] !== undefined && out[field] >= 0 && o[field] === out[field]);
+      const spot = holder('startPos');
+      if (spot >= 0) throw new LobbyError(409, 'spot_taken', `start position ${out.startPos + 1} is ${slots[spot].name ?? `slot ${spot + 1}`}'s`);
+      const color = holder('color');
+      if (color >= 0) throw new LobbyError(409, 'color_taken', `that colour is ${slots[color].name ?? `slot ${color + 1}`}'s`);
+    }
+    return out;
   }
   checkSetup(setup, slotsRequired) {
     if (typeof setup !== 'object' || setup === null) throw bad('bad_field', 'setup must be an object');
@@ -354,9 +467,12 @@ export class Lobby {
       if (!SLOT_STATES.includes(s?.state)) throw bad('bad_field', `setup.slots[${i}].state must be one of ${SLOT_STATES.join(', ')}`);
       const slot = { state: s.state, faction: -1, color: -1, startPos: -1, team: -1, ready: false };
       if (AI_STATES.has(s.state)) slot.name = str(s.name ?? 'Computer', 24, `setup.slots[${i}].name`);
-      this.checkSlotChoice(slot, s);
+      const choices = this.checkSlotChoice(slot, s);
+      if (s.state === 'player' || AI_STATES.has(s.state)) Object.assign(slot, choices); // Sol r1: an open or closed slot keeps none
       return slot;
     });
+    // ONLINE-5: two occupied slots of a new game never share a start position or a colour either
+    for (const [i, sl] of slots.entries()) this.checkSlotChoice(sl, sl.state === 'player' || AI_STATES.has(sl.state) ? { startPos: sl.startPos, color: sl.color } : {}, slots, i);
     while (slots.length < MAX_SLOTS) slots.push({ state: 'closed', faction: -1, color: -1, startPos: -1, team: -1, ready: false });
     const hostSlot = intIn(body.hostSlot ?? 0, 0, MAX_SLOTS - 1, 'hostSlot');
     if (slots[hostSlot].state !== 'player') throw bad('bad_field', `the host's slot ${hostSlot} must be "player"`);
@@ -396,7 +512,9 @@ export class Lobby {
     }
     const slot = g.slots.findIndex((s) => s.state === 'open');
     if (slot < 0) throw new LobbyError(409, 'full', 'the game is full');
-    Object.assign(g.slots[slot], { state: 'player', account: account.id, name: account.name, ready: false });
+    // Sol r1 (ONLINE-5): a joiner takes the slot with no choices of its own: nothing an earlier AI of the slot held (a start position, a colour others
+    // may have claimed since) carries over to the player
+    Object.assign(g.slots[slot], { state: 'player', account: account.id, name: account.name, ready: false, ...NO_CHOICES });
     this.unreadyAll(g);
     this.event(g, `${account.name} joined`);
     await this.save(g);
@@ -436,17 +554,36 @@ export class Lobby {
     if (own < 0) throw new LobbyError(403, 'not_in_game', 'join the game first');
     const target = body.slot === undefined ? own : intIn(body.slot, 0, MAX_SLOTS - 1, 'slot');
     const s = g.slots[target];
+    // ONLINE-5: everything is checked before anything changes (a refusal leaves the room as it was)
+    const change = {};
     if (target !== own) {
       // the host arranges the slots that are not players: open / closed / an AI and its options
       if (own !== g.hostSlot) throw new LobbyError(403, 'not_host', 'only the host changes other slots');
       if (s.state === 'player') throw new LobbyError(403, 'player_slot', 'a player chooses their own options');
       if (body.state !== undefined) {
         if (!SLOT_STATES.includes(body.state) || body.state === 'player') throw bad('bad_field', 'state must be open, closed or an AI level');
-        s.state = body.state;
-        s.name = AI_STATES.has(body.state) ? str(body.name ?? 'Computer', 24, 'name') : undefined;
+        change.state = body.state;
+        change.name = AI_STATES.has(body.state) ? str(body.name ?? 'Computer', 24, 'name') : undefined;
       }
+    } else if (body.state !== undefined || body.name !== undefined) {
+      throw bad('bad_field', 'a player\'s own slot takes faction, color, startPos and team');
     }
-    this.checkSlotChoice(s, body);
+    // the choices are checked for the slot as it will be. Sol r1: an open or closed slot keeps no choices at all (a spot or a colour it kept came back
+    // with the slot's next AI or player, beside another slot that had claimed it since), and none can be given to it
+    const after = { ...s, ...change };
+    const willHold = after.state === 'player' || AI_STATES.has(after.state);
+    if (!willHold) {
+      // (-1, "none", is what a client that sends the whole row says for them)
+      if (['faction', 'color', 'startPos', 'team'].some((k) => body[k] !== undefined && body[k] !== -1)) {
+        throw bad('bad_field', 'an open or closed slot has no faction, color, startPos or team');
+      }
+      Object.assign(change, NO_CHOICES);
+    } else {
+      Object.assign(change, this.checkSlotChoice(after, body, g.slots, target));
+      // what the slot keeps (an AI level changed, a choice left as it was) is checked against the others as well
+      this.checkSlotChoice(after, { startPos: change.startPos ?? s.startPos, color: change.color ?? s.color }, g.slots, target);
+    }
+    Object.assign(s, change);
     this.unreadyAll(g);
     await this.save(g);
     return { v: VERSION, game: this.gameView(g, account) };
@@ -456,7 +593,10 @@ export class Lobby {
     const g = this.game(id);
     if (g.state !== 'open') throw new LobbyError(409, 'started', 'the game has started');
     if (this.slotOf(g, account) !== g.hostSlot) throw new LobbyError(403, 'not_host', 'only the host changes the game options');
-    g.setup = this.checkSetup({ ...g.setup, ...body }, false);
+    const setup = this.checkSetup({ ...g.setup, ...body }, false);
+    // ONLINE-5: another map has other start positions: every slot is back to a random one (ZH GameInfo::setMap resets the start spots)
+    if (setup.map !== g.setup.map) for (const s of g.slots) s.startPos = -1;
+    g.setup = setup;
     this.unreadyAll(g);
     this.event(g, 'the host changed the game options');
     await this.save(g);
@@ -468,6 +608,10 @@ export class Lobby {
     const slot = this.slotOf(g, account);
     if (slot < 0) throw new LobbyError(403, 'not_in_game', 'join the game first');
     if (typeof body?.ready !== 'boolean') throw bad('bad_field', 'ready must be true or false');
+    // ONLINE-5: a player readies their own slot only (a body naming another slot is refused by name, never applied to the sender's), in an open game
+    if (body.slot !== undefined && body.slot !== slot) throw new LobbyError(403, 'not_your_slot', 'a player readies their own slot only');
+    if (g.state !== 'open') throw new LobbyError(409, 'started', 'the game has started');
+    if (g.slots[slot].ready === body.ready) return { v: VERSION, game: this.gameView(g, account) }; // nothing changed: no new seq
     g.slots[slot].ready = body.ready;
     await this.save(g);
     return { v: VERSION, game: this.gameView(g, account) };
@@ -478,7 +622,7 @@ export class Lobby {
     const g = this.game(id);
     if (this.slotOf(g, account) < 0) throw new LobbyError(403, 'not_in_game', 'join the game first');
     const text = str(body?.text, 200, 'text');
-    this.event(g, text, account.name);
+    this.event(g, text, account.name, account.id);
     await this.save(g);
     return { v: VERSION, seq: g.seq };
   }
@@ -572,8 +716,11 @@ export class Lobby {
     return { v: VERSION, start: g.starts[this.slotOf(g, account)] };
   }
 
-  async poll(account, id, since) {
+  // ONLINE-5: no awaits inside (a held poll is answered in one step when it wakes)
+  poll(account, id, since) {
     const g = this.game(id);
+    // the host closed the game (leave): it is being removed; a poll held until then says what the next one would
+    if (g.state === 'closed') throw new LobbyError(404, 'no_game', `no game ${id}`);
     const slot = this.slotOf(g, account);
     if (slot < 0) {
       if (g.kicked?.length) throw new LobbyError(403, 'not_in_game', 'you are not in this game (kicked or left)');
@@ -584,9 +731,22 @@ export class Lobby {
     return {
       v: VERSION,
       game: this.gameView(g, account),
-      chat: g.chat.filter((c) => c.seq > s).map(({ seq, from, text }) => ({ seq, from, text })),
+      chat: g.chat.filter((c) => c.seq > s).map(({ seq, from, text, account: by }) => ({ seq, from, text, ...(by && by === account.id ? { you: true } : {}) })),
       start: g.state === 'started' ? g.starts[slot] : null,
+      wait: MAX_WAIT_S, // ONLINE-5: this lobby holds polls (and marks the reader's own chat lines)
     };
+  }
+  // ONLINE-5: should this poll be held? Only an open game the caller sits in, whose seq is the one the caller has, with a whole number of seconds
+  // 1 .. MAX_WAIT_S (anything else is answered at once, as before): { held: Promise }; { backoff: s } when it would be held but a bound (the account's,
+  // the game's, the lobby's) is reached; null when it is not a poll to hold
+  pollHold(account, id, seqText, waitText) {
+    if (seqText === null || waitText === null || !/^\d{1,10}$/.test(seqText) || !/^\d{1,3}$/.test(waitText)) return null;
+    const wait = Math.min(Number(waitText), MAX_WAIT_S);
+    const g = this.games.get(id);
+    if (!g || wait < 1 || g.state !== 'open' || g.seq !== Number(seqText) || this.slotOf(g, account) < 0) return null;
+    g.touched = this.env.now();
+    const held = this.holdPoll(id, wait * 1000, account.id);
+    return held ? { held } : { backoff: HOLD_BACKOFF_S };
   }
 
   // ---- lane ONLINE-3: rejoin ----
@@ -701,11 +861,24 @@ export class Lobby {
     const key = `logs/${id}.obfmerlog`;
     const old = await store.getBlob(key);
     if (old) {
-      if (old.length === bytes.length && old.every((x, i) => x === bytes[i])) return { v: VERSION, stored: key, unchanged: true };
+      if (old.length === bytes.length && old.every((x, i) => x === bytes[i])) {
+        await this.markFinished(id);
+        return { v: VERSION, stored: key, unchanged: true };
+      }
       throw new LobbyError(409, 'log_exists', `game ${id} has a different log stored already`);
     }
     await store.putBlob(key, bytes);
+    await this.markFinished(id); // ONLINECOUNT-1: the relay's log is in, the game is over
     return { v: VERSION, stored: key };
+  }
+  // ONLINECOUNT-1 r2 (Sol: a restart brought finished games back as running): the game's record keeps `finished`, so a reload knows (one save per game end;
+  // the seq and the idle clock are not touched)
+  async markFinished(id) {
+    const g = this.games.get(id);
+    if (!g || g.finished) return;
+    g.finished = true;
+    this.statsCache = null;
+    await this.env.store.saveGame?.(g);
   }
   async replayFile(account, id, which) {
     const store = this.logStore();
@@ -789,6 +962,7 @@ export class Lobby {
       games: this.games.size,
       relays,
       ...(relays.length ? {} : { relay: 'no relay configured' }),
+      stats: STATS_STOP,
       logStore: this.env.store.kind ?? (this.env.store.putBlob ? 'yes' : 'none'),
     };
   }
@@ -822,6 +996,12 @@ export async function route(lobby, req) {
     if (!v1) return json(404, { v: VERSION, error: 'not_found', message: 'unknown path' });
     if (m === 'GET' && p[1] === 'health') return json(200, lobby.health());
     // ONLINE-4: the message of the day the game's online home page shows (OnlineHome.apt); null when the lobby has none
+    // ONLINECOUNT-1: the counts the menus and the launcher show. No sign-in needed; a valid token on the request also marks its player present
+    if (m === 'GET' && p[1] === 'stats' && p.length === 2) {
+      lobby.limit(`stats:${req.ip}`, 60, 20);
+      if (req.headers.authorization) await lobby.account(req.headers.authorization).catch(() => {});
+      return { status: 200, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': `public, max-age=${STATS_CACHE_S}` }, body: JSON.stringify(lobby.stats()) };
+    }
     if (m === 'GET' && p[1] === 'motd' && p.length === 2) return json(200, { v: VERSION, motd: lobby.config.motd || null });
     if (m === 'POST' && p[1] === 'auth' && p[2] === 'guest') return json(200, await lobby.guest(await body(), req.ip));
     if (m === 'POST' && p[1] === 'relay' && p[2] === 'logs' && p.length === 4) {
@@ -857,7 +1037,20 @@ export async function route(lobby, req) {
     if (!/^[0-9a-f]{16}$/.test(id ?? '')) return json(404, { v: VERSION, error: 'no_game', message: 'a game id is 16 hex digits' });
     if (m === 'GET' && p.length === 3) {
       const since = req.query.get('since');
-      return json(200, await lobby.poll(account, id, since === null ? 0 : Number(since)));
+      const answer = (backoff) => {
+        try {
+          const out = lobby.poll(account, id, since === null ? 0 : Number(since));
+          return json(200, backoff ? { ...out, backoff } : out);
+        } catch (e) {
+          if (e instanceof LobbyError) return json(e.status, { v: VERSION, error: e.code, message: e.message });
+          return json(500, { v: VERSION, error: 'internal', message: 'internal error' });
+        }
+      };
+      // ONLINE-5: a held poll: the platform sends `deferred`'s answer when it resolves, and lets other requests through meanwhile
+      const hold = lobby.pollHold(account, id, req.query.get('seq'), req.query.get('wait'));
+      if (hold?.held) return { deferred: hold.held.then(() => answer()) };
+      return answer(hold?.backoff); // Sol r1: not held for a bound: the client is told how long to wait
+
     }
     const actions = { join: 'join', leave: 'leave', slot: 'setSlot', setup: 'setSetup', ready: 'ready', chat: 'chat', kick: 'kick', start: 'start', rejoin: 'rejoin', spectate: 'spectate' };
     if (m === 'POST' && p.length === 4 && actions[p[3]]) {

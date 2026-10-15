@@ -214,9 +214,17 @@ TEST_CASE("mp2 retail: LanLobby.apt hosts and joins a LAN game: the list, Join, 
 	CHECK(join.wm->invokeCallback("AptLanLobby::OnJoinGameBttn", ""));
 	REQUIRE(run([&] { return js->state() == 4 && hostLan->currentGame()->info.slots[1].isHuman(); }));
 	CHECK(joinLan->localSlot() == 1);
+	// lane ONLINE-5: the Ready column (the LAN panel's flag 0x20, RW 0x848C6B): each screen told its movie the boxes' states (RW 0x84211D): the host's
+	// slot ticked, the joiner's own box the only one that takes a press
+	REQUIRE(run([&] { return hs->readyIcon(1) == "_disabledUnchecked" && js->readyIcon(1) == "_enabledUnchecked"; }));
+	CHECK(hs->readyIcon(0) == "_disabledChecked");
+	CHECK(js->readyIcon(0) == "_disabledChecked");
+	CHECK(hs->readyIcon(2) == "_none");
 	// Accept (MpGameSetup::OnReadyPress), then Play Game: every player gets the start, both screens hand it to the host program
 	CHECK(join.wm->invokeCallback("MpGameSetup::OnReadyPress", "1"));
 	REQUIRE(run([&] { return hostLan->currentGame()->accepted[1]; }));
+	REQUIRE(run([&] { return hs->readyIcon(1) == "_disabledChecked" && js->readyIcon(1) == "_enabledChecked"; }));
+	CHECK(!enabled(js->slotGadget(1, "PlayerTemplate"))); // RW 0x843F6E: a joiner who accepted cannot change its row
 	CHECK(host.wm->invokeCallback("AptLanLobby::OnStartGameBttn", ""));
 	// lane UI-1: the start counts down first (RW 0x843840 / 0x84392C: six seconds of LAN:GameStartTimer lines to every player, then five seconds of the
 	// QM:STARTINGGAME box)

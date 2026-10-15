@@ -45,11 +45,12 @@ void LockstepDriver::pump(UnsignedInt protocolFrame, CommandList &pending)
 	pending.reset();
 	m_protocolFrame = protocolFrame;
 	sourceInput(protocolFrame);
+	noteIssued(protocolFrame);
 	if (m_network)
 	{
-		noteIssued();
 		// ZH Network::update: the local messages get their execution frame here, once (protocol frame + run-ahead); the transport is serviced
 		m_network->update(protocolFrame, m_local);
+		m_notedLocal = std::min(m_notedLocal, m_local.messages().size());
 	}
 }
 
@@ -68,6 +69,7 @@ bool LockstepDriver::acquire(UnsignedInt frame, FrameBatch &out)
 	if (m_network)
 	{
 		m_network->update(m_protocolFrame, m_local); // what arrived since the pump (no new local message: m_local holds only the protocol's own)
+		m_notedLocal = std::min(m_notedLocal, m_local.messages().size());
 		// lane ONLINE-3: a pause holds the frame on every peer alike; it is not a network stall (no stall sample, no long-stall report)
 		m_paused = m_network->pausedBefore(frame);
 		if (m_paused)
@@ -108,7 +110,7 @@ bool LockstepDriver::acquire(UnsignedInt frame, FrameBatch &out)
 		m_waitingSlots.clear();
 		m_gated = false;
 		m_network->relayCommands(frame, commands);
-		noteRelayed(commands);
+		noteRelayed(frame, commands);
 	}
 	else
 	{
@@ -117,6 +119,8 @@ bool LockstepDriver::acquire(UnsignedInt frame, FrameBatch &out)
 			commands.append(m);
 		}
 		m_local.reset();
+		m_notedLocal = 0;
+		noteRelayed(frame, commands); // lane NETLAG-1: a local game's commands run on the next batch
 	}
 	if (m_writer)
 	{
@@ -151,6 +155,13 @@ void LockstepDriver::completed(const FrameCompletion &c)
 	}
 	m_nextCompletion = c.frame + 1;
 	++m_completions;
+	// lane NETLAG-1: the local commands of this batch have their effect now
+	const std::uint64_t doneMs = NetMilliseconds();
+	while (!m_awaitingEffect.empty() && m_awaitingEffect.front().first <= c.batchFrame)
+	{
+		m_smooth.commandEffectMs.push_back((std::uint32_t)(doneMs - m_awaitingEffect.front().second));
+		m_awaitingEffect.pop_front();
+	}
 	if (c.census)
 	{
 		m_censusLog.push_back({ c.frame, c.simUs, c.battalions, c.troops, c.censusObjects }); // lane MP-3
@@ -172,10 +183,11 @@ void LockstepDriver::completed(const FrameCompletion &c)
 		m_network->frameCompleted(c, m_local);
 	}
 	sourceInput(c.frame); // after the CRC: both are stamped against c.frame
+	noteIssued(c.frame);
 	if (m_network)
 	{
-		noteIssued();
 		m_network->update(c.frame, m_local); // ZH processCommand on the new frame: the CRC and the next frame infos go out at once
+		m_notedLocal = std::min(m_notedLocal, m_local.messages().size());
 	}
 	if (m_onCompleted)
 	{
@@ -199,23 +211,26 @@ std::uint64_t LockstepDriver::waitingMs() const
 	return m_waitStart == 0 ? 0 : NetMilliseconds() - m_waitStart;
 }
 
-// lane MP-3: the local player's commands about to get their execution frame (MSG_LOGIC_CRC is the protocol's, not the player's)
-void LockstepDriver::noteIssued()
+// lane MP-3: the local player's commands about to get their execution frame (MSG_LOGIC_CRC is the protocol's, not the player's); lane NETLAG-1: only the
+// ones not counted yet (a local game keeps them in m_local until the next acquire), with the protocol frame they are stamped against
+void LockstepDriver::noteIssued(UnsignedInt protocolFrame)
 {
+	const std::vector<GameMessage> &local = m_local.messages();
 	size_t n = 0;
-	for (const GameMessage &m : m_local.messages())
+	for (size_t i = m_notedLocal; i < local.size(); ++i)
 	{
-		n += m.getType() != MSG_LOGIC_CRC ? 1 : 0;
+		n += local[i].getType() != MSG_LOGIC_CRC ? 1 : 0;
 	}
+	m_notedLocal = local.size();
 	if (n > 0)
 	{
-		m_issued.push_back({ NetMilliseconds(), n });
+		m_issued.push_back({ NetMilliseconds(), protocolFrame, n });
 	}
 }
 
-void LockstepDriver::noteRelayed(const CommandList &commands)
+void LockstepDriver::noteRelayed(UnsignedInt frame, const CommandList &commands)
 {
-	if (m_localPlayer < 0)
+	if (m_network && m_localPlayer < 0)
 	{
 		const int slot = m_network->config().localSlot;
 		m_localPlayer = slot >= 0 && slot < MAX_SLOTS ? m_network->config().slotPlayerIndex[(size_t)slot] : -1;
@@ -223,7 +238,8 @@ void LockstepDriver::noteRelayed(const CommandList &commands)
 	const std::uint64_t now = NetMilliseconds();
 	for (const GameMessage &m : commands.messages())
 	{
-		if (m.getType() == MSG_LOGIC_CRC || m_localPlayer < 0 || m.getPlayerIndex() != m_localPlayer)
+		// a local game's batch holds only the local player's commands
+		if (m.getType() == MSG_LOGIC_CRC || (m_network && (m_localPlayer < 0 || m.getPlayerIndex() != m_localPlayer)))
 		{
 			continue;
 		}
@@ -232,8 +248,11 @@ void LockstepDriver::noteRelayed(const CommandList &commands)
 			++m_smooth.unmatchedCommands; // e.g. the disconnect path's MSG_SELF_DESTRUCT of the local player: no issue record
 			continue;
 		}
-		m_smooth.inputLatencyMs.push_back((std::uint32_t)(now - m_issued.front().first));
-		if (--m_issued.front().second == 0)
+		Issue &issue = m_issued.front();
+		m_smooth.inputLatencyMs.push_back((std::uint32_t)(now - issue.ms));
+		m_smooth.commandDelayFrames.push_back(frame >= issue.frame ? (std::uint32_t)(frame - issue.frame) : 0xFFFFFFFFu); // lane NETLAG-1
+		m_awaitingEffect.emplace_back(frame, issue.ms);
+		if (--issue.commands == 0)
 		{
 			m_issued.pop_front();
 		}

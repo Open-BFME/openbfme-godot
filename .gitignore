@@ -107,3 +107,5 @@ workspace/agents/
 
 # Replays a test run writes under a relative name when it is cut short (GitHub #23; run_tests.bat runs the tests from engine/build)
 *.replay
+# the one recording kept as a test fixture (NETLAG-1: a replay of the previous build, tools/release/public_binaries.txt)
+!/engine/tests/data/netlag1/*.replay

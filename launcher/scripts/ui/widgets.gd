@@ -18,6 +18,15 @@ static func label(text: String, variation := "", size := 0) -> Label:
 	return l
 
 
+## a one-line label that trims with an ellipsis and shows its whole text as the tooltip (scripts/ui/trim_label.gd)
+static func trim_label(text: String, variation := "") -> Label:
+	var l: Label = load("res://scripts/ui/trim_label.gd").new()
+	l.text = text
+	if variation != "":
+		l.theme_type_variation = variation
+	return l
+
+
 static func wrap(text: String, variation := "") -> Label:
 	var l := label(text, variation)
 	l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART

@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <cstdlib>
 
 namespace
@@ -40,6 +41,41 @@ int AptView3DAnimModeIndex(const std::string &name)
 bool AptView3DKeepAspect(const std::string &value)
 {
 	return value.find('f') == std::string::npos;
+}
+
+void AptView3DImageSize(float rectW, float rectH, float scaleX, float scaleY, bool keepAspect, bool stretchWithStage, int &width, int &height)
+{
+	width = std::max(1, (int)std::lround(rectW));
+	height = std::max(1, (int)std::lround(rectH));
+	if (!keepAspect || !stretchWithStage || !(scaleX > 0.0f) || !(scaleY > 0.0f) || scaleX == scaleY)
+	{
+		return;
+	}
+	// the clip's height in stage units, at the horizontal scale: the image has the stage rectangle's aspect at the window's horizontal resolution
+	height = std::max(1, (int)std::lround(rectH / scaleY * scaleX));
+}
+
+bool AptView3DOnMenuLevel(const std::string &path, const std::vector<int> &menuLevels)
+{
+	static const char kPrefix[] = "_level";
+	if (path.compare(0, sizeof(kPrefix) - 1, kPrefix) != 0)
+	{
+		return false;
+	}
+	std::size_t at = sizeof(kPrefix) - 1;
+	int level = 0;
+	bool digits = false;
+	while (at < path.size() && path[at] >= '0' && path[at] <= '9' && level < 100000)
+	{
+		level = level * 10 + (path[at] - '0');
+		digits = true;
+		++at;
+	}
+	if (!digits || (at < path.size() && path[at] != '.'))
+	{
+		return false;
+	}
+	return std::find(menuLevels.begin(), menuLevels.end(), level) != menuLevels.end();
 }
 
 int AptView3DFrameOf(const std::string &value)

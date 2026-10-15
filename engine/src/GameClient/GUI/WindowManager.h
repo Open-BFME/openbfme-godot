@@ -346,6 +346,8 @@ public:
 	// the pointer is over nothing (WindowManager::update 0x0046E850, with the path source inferred [S-173]).
 	std::string hoverPath() const;
 	const std::string &currentTooltipLabel() const { return m_tooltipLabel; }
+	// lane HOVER-1: AptButtonTooltipMap.ini's ButtonMap rows (hover path -> tooltip name; RW 0x6235E2 looks a name up before it makes the label)
+	void setTooltipNameMap(const std::map<std::string, std::string> &names) { m_tooltipNames = names; }
 
 	// ---- diagnostics ------------------------------------------------------------------------------------------
 	const std::vector<WindowManagerNote> &notes() const { return m_notes; }
@@ -448,6 +450,7 @@ private:
 	std::vector<std::string> m_traces;
 	std::vector<MovieLoadNote> m_movieLoads;
 	std::string m_tooltipLabel;
+	std::map<std::string, std::string> m_tooltipNames; // lane HOVER-1
 	std::string m_tooltipPath;
 	std::uint32_t m_randomState = 1u;
 };

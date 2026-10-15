@@ -43,6 +43,8 @@ void DisconnectManager::init(const NetworkSettings &settings)
 	}
 	m_disconnectFrames.fill(0);
 	m_disconnectFramesReceived.fill(false);
+	m_announcedBy.fill(false);
+	m_announcedByFrame.fill(0);
 	m_lastNotifiedFrame = 0;
 	m_notifiedValid = false;
 	m_timeOfDisconnectScreenOn = 0;
@@ -53,6 +55,10 @@ void DisconnectManager::init(const NetworkSettings &settings)
 	m_announcementReleased = false;
 	m_screen = Screen();
 	m_quitReason.clear();
+	m_dropWait.fill(std::string());
+	m_announcedEver = false;
+	m_loadScreenUp = true;
+	m_decided.clear();
 }
 
 int DisconnectManager::translatedSlotPosition(int slot, int localSlot)
@@ -330,6 +336,7 @@ void DisconnectManager::notifyOthersOfCurrentFrame(Network &net, std::uint32_t l
 	note("announced frame " + std::to_string(logicFrame));
 	processDisconnectCommand(net, c, net.now(), logicFrame);
 	m_announced = true;
+	m_announcedEver = true;
 	m_announcedFrame = logicFrame;
 	m_announcementReleased = false;
 	m_lastReannounce = net.now();
@@ -423,6 +430,24 @@ void DisconnectManager::playerHasAdvancedAFrame(int slot, std::uint32_t frame)
 	}
 }
 
+std::string DisconnectManager::frameLine(Network &net, std::uint64_t now, std::uint32_t logicFrame) const
+{
+	// lane MP-DROP-1 (diagnostics): the disconnect frame each player still counted by allOnSameFrame announced ("-" none received)
+	std::string line;
+	const int local = net.config().localSlot;
+	for (int i = 0; i < MAX_SLOTS; ++i)
+	{
+		const int t = translatedSlotPosition(i, local);
+		if (t != -1 && (!net.isPlayerConnected(i) || !isPlayerInGame(net, t, now, logicFrame) || net.isLeftState(i) || !heard(net, i, now, logicFrame)))
+		{
+			continue;
+		}
+		line += (line.empty() ? "" : ", ") + std::string("slot ") + std::to_string(i) + " "
+			+ (m_disconnectFramesReceived[(size_t)i] ? std::to_string(m_disconnectFrames[(size_t)i]) : std::string("-"));
+	}
+	return line;
+}
+
 void DisconnectManager::update(Network &net, std::uint64_t now, std::uint32_t logicFrame)
 {
 	const int local = net.config().localSlot;
@@ -471,7 +496,8 @@ void DisconnectManager::update(Network &net, std::uint64_t now, std::uint32_t lo
 	else
 	{
 		m_anySilent = true;
-		if (net.gameRunning() && m_state == SCREENOFF)
+		// RW 0x8D8B82: the screen opens (and the local player quits, below) only once TheGameLogic + 0x120, the multiplayer load screen, is gone
+		if (net.gameRunning() && m_state == SCREENOFF && !m_loadScreenUp)
 		{
 			bool quit = true;
 			if (m_silentEpisodes[(size_t)local] < kMaxSilentEpisodes)
@@ -493,6 +519,16 @@ void DisconnectManager::update(Network &net, std::uint64_t now, std::uint32_t lo
 			}
 		}
 		sendKeepAlive(net, now);
+	}
+	// lane MP-DROP-1: RotWK's multiplayer load screen. GameLogic's loading update (RW 0x62B385) keeps it (only its update, RW 0x62550D) while TheNetwork
+	// vslot 0xD0 (RW 0x65DA20: this manager's + 0x270, a slot is silent) is false and the logic frame is below 6, and deletes it (RW 0x625524)
+	// otherwise. So a player that never finishes loading takes the others off the load screen once it is silent (four times NetworkDisconnectTime below
+	// frame 6, RW 0x8D335D) and the screen above opens on the next update; a loader that is heard keeps every player on the load screen. Here the gate
+	// is modelled in the manager (the Godot client draws its own loading screen: S-4811)
+	if (m_loadScreenUp && (m_anySilent || logicFrame >= kStartupFrames))
+	{
+		m_loadScreenUp = false;
+		note("load screen gone at frame " + std::to_string(logicFrame) + (m_anySilent ? " (a slot is silent)" : ""));
 	}
 	if (m_lastFrameTime == -1 || m_lastFrame != logicFrame)
 	{
@@ -543,8 +579,23 @@ void DisconnectManager::updateDisconnectStatus(Network &net, std::uint64_t now, 
 		{
 			remaining = 0;
 			std::uint8_t gone = 0;
-			if (allOnSameFrame(net, now, logicFrame) && isLocalPlayerNextPacketRouter(net, now, logicFrame)
-				&& (!net.isLeftState(i) || i == net.packetRouterSlot()) && net.dropClaims(local, i, gone))
+			const bool sameFrame = allOnSameFrame(net, now, logicFrame);
+			const int router = nextPacketRouter(net, now, logicFrame);
+			const bool claims = sameFrame && router == local && net.dropClaims(local, i, gone);
+			if (!(sameFrame && router == local && claims))
+			{
+				// lane MP-DROP-1: why a due drop waits (logged once per reason): the frames of the players still in, or another decider
+				std::string why = !sameFrame ? "not every player is on one frame (" + frameLine(net, now, logicFrame) + ")"
+					: router != local      ? "slot " + std::to_string(router) + " is the next packet router"
+										   : "a slot before this one in the fallback order is connected here";
+				why = "the drop of slot " + std::to_string(i) + " waits: " + why;
+				if (why != m_dropWait[(size_t)i])
+				{
+					m_dropWait[(size_t)i] = why;
+					note(why);
+				}
+			}
+			if (sameFrame && router == local && claims)
 			{
 				notifyOthersOfCurrentFrame(net, logicFrame);
 				const std::uint32_t frame = getMaxDisconnectFrame();
@@ -555,6 +606,10 @@ void DisconnectManager::updateDisconnectStatus(Network &net, std::uint64_t now, 
 				c.frame = frame;
 				c.releasedMask = gone; // lane MP-2 (review): the predecessors this decider holds gone
 				net.sendDirect(c);
+				if (m_decided.size() < 16)
+				{
+					m_decided.push_back(c); // lane MP-DROP-1: sent again to a player that announces a frame at or before it (it refused it: not announced yet)
+				}
 				note("dropping slot " + std::to_string(i) + " at frame " + std::to_string(frame) + " (next packet router)");
 				m_dropped.push_back(i);
 				disconnectPlayer(net, i, frame);
@@ -596,6 +651,54 @@ void DisconnectManager::updateDisconnectStatus(Network &net, std::uint64_t now, 
 	}
 }
 
+bool DisconnectManager::validateDrop(Network &net, const NetCommandMsg &c, int from, std::string &why) const
+{
+	// lane MP-DROP-1 (hostile input, OpenBFME's own, S-4812: RotWK's processDisconnectPlayer RW 0x8D89D7 disconnects the named slot with no check of its
+	// sender or frame): the whole decision is checked
+	// against what this peer knows, before anything is queued or changed. A decider sends DISCONNECTPLAYER only after announcing its own frame
+	// (notifyOthersOfCurrentFrame right before it) and only when every in-game player it hears announced that same frame (RW 0x8D861A), the drop frame;
+	// the decision lists the predecessors it holds gone (lane MP-2's review)
+	const int local = net.config().localSlot;
+	const int target = c.targetSlot;
+	if (!net.isGameSlot(target) || target == from)
+	{
+		why = target == from ? "the sender drops itself" : "slot " + std::to_string(target) + " is not a player of the game";
+		return false;
+	}
+	for (int s = 0; s < 8; ++s)
+	{
+		if (!(c.releasedMask & (1u << s)))
+		{
+			continue;
+		}
+		if (!net.isGameSlot(s) || s == target || s == from)
+		{
+			why = "its list of departed players names slot " + std::to_string(s) + (!net.isGameSlot(s) ? ", which is not a player of the game"
+				: s == target ? ", the player it drops" : ", its sender");
+			return false;
+		}
+		if (s == local && !net.hasDeparted(local))
+		{
+			why = "it claims this player is gone"; // a rejoined player is gone in the agreed order for good: that claim is true
+			return false;
+		}
+	}
+	// the sender's ACTUAL announcements (Sol r2: the zero a slot's record starts with, or a frame set by a DISCONNECTSCREENOFF, is not one)
+	if (!m_announcedBy[(size_t)from] || m_announcedByFrame[(size_t)from] < c.frame)
+	{
+		why = "its sender never announced a disconnect frame at or after it to this player";
+		return false;
+	}
+	if (target != local && (!m_announcedEver || m_announcedFrame != c.frame))
+	{
+		// this player is heard by the decider, or the decision could not count it: in both cases it announced the drop frame first. Refused here, the
+		// decider sends the drop again when this player announces a frame at or before it (DISCONNECTFRAME above)
+		why = "this player did not announce that frame (its last announcement: " + (m_announcedEver ? std::to_string(m_announcedFrame) : std::string("none")) + ")";
+		return false;
+	}
+	return true;
+}
+
 void DisconnectManager::processDisconnectCommand(Network &net, const NetCommandMsg &c, std::uint64_t now, std::uint32_t logicFrame)
 {
 	const int local = net.config().localSlot;
@@ -614,6 +717,18 @@ void DisconnectManager::processDisconnectCommand(Network &net, const NetCommandM
 	}
 	case NETCOMMANDTYPE_DISCONNECTVOTE:
 	{
+		// lane MP-DROP-1 (hostile input): a vote for the sender itself or for a slot that is not a network player of the game is refused by name
+		// (RW 0x8D8314 checks only the sender; our own Kick never sends either: voteForPlayerDisconnect skips the local slot)
+		if (c.targetSlot == from)
+		{
+			net.reportError("DISCONNECTVOTE of slot " + std::to_string(from) + " for itself: refused");
+			return;
+		}
+		if (!net.isGameSlot(c.targetSlot))
+		{
+			net.reportError("DISCONNECTVOTE of slot " + std::to_string(from) + " for slot " + std::to_string(c.targetSlot) + ", which is not a player of the game: refused");
+			return;
+		}
 		// RW 0x8D8314: only from an in-game sender
 		const int t = translatedSlotPosition(from, local);
 		if (isPlayerInGame(net, t, now, logicFrame))
@@ -627,6 +742,19 @@ void DisconnectManager::processDisconnectCommand(Network &net, const NetCommandM
 		// lane MP-2 (review): only the decider of the agreed fallback order may drop a player (Network::verifyDropClaims): refused at once when the
 		// message itself shows the sender is not it; held while a claimed leave / drop has not reached this peer (the frames from the drop frame on wait,
 		// allowedToContinue); applied before the drop frame runs, else refused
+		if (net.isGameSlot(c.targetSlot) && net.isDisconnected(c.targetSlot))
+		{
+			return; // lane MP-DROP-1: a drop this peer applied already (the decider sends it again to a player that announces an earlier frame)
+		}
+		{
+			std::string why;
+			if (!validateDrop(net, c, from, why))
+			{
+				net.reportError("DISCONNECTPLAYER of slot " + std::to_string(c.targetSlot) + " from slot " + std::to_string(from) + " at frame "
+					+ std::to_string(c.frame) + ": " + why + ": refused");
+				return;
+			}
+		}
 		const int verdict = net.verifyDropClaims(from, c.targetSlot, c.releasedMask);
 		if (verdict < 0)
 		{
@@ -634,20 +762,32 @@ void DisconnectManager::processDisconnectCommand(Network &net, const NetCommandM
 				+ ", which may not decide it (a slot before it in the fallback order is connected for it): refused");
 			return;
 		}
-		m_pendingDrops.push_back(PendingDrop{ from, (int)c.targetSlot, c.frame, c.releasedMask });
+		m_pendingDrops.push_back(PendingDrop{ from, (int)c.targetSlot, c.frame, c.releasedMask, now });
 		applyPendingDrops(net, logicFrame);
 		return;
 	}
 	case NETCOMMANDTYPE_DISCONNECTFRAME:
 	{
-		// RW 0x8D836B
-		if (from < 0 || from >= MAX_SLOTS || m_disconnectFrames[(size_t)from] >= c.frame)
+		// Why an equal frame here is always a new announcement of the sender (Sol r1): the record is closed (received false) only by the sender's own
+		// DISCONNECTSCREENOFF of a frame at or after it, this peer's release of it, this peer's screen going off, or the slot's rejoin; a sender
+		// announces a frame again only after its notify state was reset (a new screen spell, turnOnScreen, or OpenBFME's repeat after a release); each
+		// sender's stream is reliable, ordered and deduplicated (Transport) and nobody forwards another player's DISCONNECTFRAME. So no duplicate or stale
+		// copy can arrive after the record closed.
+		// RW 0x8D836B ignores an announcement at or below the sender's known frame. lane MP-DROP-1 (S-4810): except the same frame announced again after
+		// the sender's DISCONNECTSCREENOFF of that frame released it (received cleared): here a screen goes off when the silence ends, not when a frame
+		// runs (S-1121), so a moment of traffic from the silent slot turns a screen off and on at one frame; with retail's rule the second announcement
+		// was lost and "every player on one frame" (RW 0x8D861A) never held again: the game froze with every vote cast (ONLINE-5's S-4556); the first
+		// announcement of frame 0 counts too (a player that dies on the load screen stalls the others at frame 0 here: retail's first frames need no commands)
+		if (from < 0 || from >= MAX_SLOTS || m_disconnectFrames[(size_t)from] > c.frame
+			|| (m_disconnectFrames[(size_t)from] == c.frame && m_disconnectFramesReceived[(size_t)from]))
 		{
 			return;
 		}
 		resetPlayersVotes(net, from, c.frame - 1);
 		m_disconnectFrames[(size_t)from] = c.frame;
 		m_disconnectFramesReceived[(size_t)from] = true;
+		m_announcedBy[(size_t)from] = true; // lane MP-DROP-1 (Sol r2): an actual DISCONNECTFRAME of this sender (frame 0 counts), unlike the zero a slot starts with
+		m_announcedByFrame[(size_t)from] = std::max(m_announcedByFrame[(size_t)from], c.frame);
 		net.notePlayerLatestFrame(from, c.frame); // RW 0x8D4884
 		if (from == local)
 		{
@@ -669,6 +809,16 @@ void DisconnectManager::processDisconnectCommand(Network &net, const NetCommandM
 			if (m_disconnectFrames[(size_t)from] < m_disconnectFrames[(size_t)local] && m_disconnectFramesReceived[(size_t)from])
 			{
 				net.sendFrameDataToPlayer(from, m_disconnectFrames[(size_t)from], logicFrame);
+			}
+			// lane MP-DROP-1: a player announcing a frame at or before a drop this peer decided has not applied it (it refuses a drop for a frame it
+			// had not announced itself, validateDrop): the drop goes to it again, now that its announcement can match
+			for (const NetCommandMsg &d : m_decided)
+			{
+				if (c.frame <= d.frame && from != (int)d.targetSlot)
+				{
+					net.sendDirectTo(from, d);
+					note("sent the drop of slot " + std::to_string(d.targetSlot) + " at frame " + std::to_string(d.frame) + " again to slot " + std::to_string(from));
+				}
 			}
 			// OpenBFME (S-1121): the next packet router with its screen off releases the announcement at once
 			if (m_state == SCREENOFF && nextPacketRouter(net, now, logicFrame) == local)
@@ -718,10 +868,37 @@ void DisconnectManager::applyPendingDrops(Network &net, std::uint32_t logicFrame
 	for (size_t k = 0; k < m_pendingDrops.size();)
 	{
 		const PendingDrop d = m_pendingDrops[k];
+		if (net.isDisconnected(d.target))
+		{
+			// lane MP-DROP-1: the target was dropped meanwhile (by the decider of the agreed order): this held one decides nothing any more and must not
+			// hold the frame
+			m_pendingDrops.erase(m_pendingDrops.begin() + (std::ptrdiff_t)k);
+			note("the drop of slot " + std::to_string(d.target) + " from slot " + std::to_string(d.sender) + " was discarded: the slot was dropped meanwhile");
+			continue;
+		}
 		const int verdict = net.verifyDropClaims(d.sender, d.target, d.gone);
 		if (verdict == 0)
 		{
-			++k; // a claimed leave / drop is still on its way
+			// lane MP-DROP-1 (hostile input): a claimed departure of a player this peer still hears is false (forged): held, it froze this peer's
+			// game for good with every player heard (no screen, no drop). Refused once a player's timeout has passed with a claimed-gone slot still
+			// heard; a departure that is only late (its leave cut off on the way, lane MP-2's review case) is held as before
+			bool falseClaim = false;
+			if (net.now() - d.arrived > (std::uint64_t)m_settings.playerTimeoutTime)
+			{
+				for (int s = 0; s < MAX_SLOTS; ++s)
+				{
+					// a slot this peer never saw depart (a rejoined slot's departure is a fact: it may be heard again)
+					falseClaim = falseClaim || ((d.gone & (1u << s)) && !net.hasDeparted(s) && net.hasConnection(s) && heard(net, s, net.now(), logicFrame));
+				}
+			}
+			if (!falseClaim)
+			{
+				++k; // a claimed leave / drop is still on its way
+				continue;
+			}
+			m_pendingDrops.erase(m_pendingDrops.begin() + (std::ptrdiff_t)k);
+			net.reportError("DISCONNECTPLAYER of slot " + std::to_string(d.target) + " from slot " + std::to_string(d.sender)
+				+ ": it claims a player is gone that this peer still hears after NetworkPlayerTimeoutTime: refused");
 			continue;
 		}
 		m_pendingDrops.erase(m_pendingDrops.begin() + (std::ptrdiff_t)k);
@@ -768,8 +945,11 @@ void DisconnectManager::slotRejoined(Network &net, int slot)
 	}
 	m_disconnectFrames[(size_t)slot] = 0;
 	m_disconnectFramesReceived[(size_t)slot] = false;
+	m_announcedBy[(size_t)slot] = false;
+	m_announcedByFrame[(size_t)slot] = 0;
 	m_silentFlag[(size_t)slot] = false;
 	m_silentEpisodes[(size_t)slot] = 0;
+	m_dropWait[(size_t)slot].clear();
 	const int t = translatedSlotPosition(slot, net.config().localSlot);
 	if (t != -1)
 	{
@@ -830,5 +1010,15 @@ std::vector<std::string> DisconnectManager::stopLines()
 		"[S-1126] load screen: SaveLoad.apt's replay page is ported (AptSaveLoad, RW 0x81874E / 0x818D41: the providers, the two lists' columns, Load); "
 		"the saved-game pages, Save, Delete and the confirmation box are lane SAVE-2's (S-4003); the list's date and time are the files' (OpenBFME replays carry none), "
 		"the gadget names are compared after their '~' prefix (inferred)",
+		"[S-4810] repeated disconnect frame: OpenBFME counts a player's announcement of the frame it announced before once that announcement was closed (its "
+		"DISCONNECTSCREENOFF, this peer's release or screen-off; RW 0x8D836B ignores any announcement at or below the known frame): here a screen goes off "
+		"when the silence ends, not when a frame runs, and with retail's rule a crash could freeze the game for good; a game whose packet router runs a "
+		"client without this rule still freezes that way (every player must update)",
+		"[S-4811] loading: OpenBFME's client sends nothing while it loads (RotWK's handles NETCOMMANDTYPE_PROGRESS), so a player still loading four times "
+		"NetworkDisconnectTime after the others reach the start is silent to them: they leave the load screen (RW 0x62B385), the disconnect screen "
+		"opens and its bar can drop it",
+		"[S-4812] drop validation: OpenBFME refuses a DISCONNECTPLAYER the whole decision does not support (its target, its departed list, a frame its "
+		"sender announced and this player announced; RotWK's RW 0x8D89D7 takes it on its sender's word); the decider sends a refused one again when that player "
+		"announces the frame",
 	};
 }

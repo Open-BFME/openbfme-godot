@@ -45,6 +45,16 @@ struct ProfileIdentity
 	bool operator!=(const ProfileIdentity &o) const { return !(*this == o); }
 	// "" when equal, else the first differing lines of the two texts ("ours: ... / theirs: ...")
 	static std::string difference(const ProfileIdentity &ours, const ProfileIdentity &theirs);
+	// lane NETLAG-1: REPLAY playback only (a live peer, a lobby JOIN / START and a save still compare the whole identity): true when `theirs` is `ours` in
+	// every line but its `engine` line and that engine id is one a recording was verified to play back under (verifiedReplayEngines): older builds' recordings
+	// keep playing after the engine id moved with the sources. `engine` receives theirs' id
+	static bool replayCompatible(const ProfileIdentity &ours, const ProfileIdentity &theirs, std::string *engine = nullptr);
+	// the engine ids of older builds whose recordings are known to play back on this one, each with the evidence (the fixture test that plays one)
+	struct VerifiedEngine
+	{
+		const char *id, *note;
+	};
+	static const std::vector<VerifiedEngine> &verifiedReplayEngines();
 	// the build's engine compatibility id (OPENBFME_ENGINE_ID)
 	static const char *buildId();
 	// the commit the build was configured from ("none" without Git): provenance for reports, not identity

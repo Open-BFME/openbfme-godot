@@ -108,6 +108,11 @@ func version_line() -> String:
 	return info.version_line() if info != null else "OpenBFME (no extension)"
 
 
+## lane VERSION-1: the version as players read it, "OpenBFME Alpha 0.4.5 (<date>)" (the log and the error box keep version_line(): the tag)
+func display_line() -> String:
+	return info.display_line() if info != null else "OpenBFME (no extension)"
+
+
 ## Shows the error and the log file (with the Open log folder button), then quits with exit code 1 when the player closes it (headless:
 ## printed only, quits at once). The game is paused while the message is up.
 func fatal(message: String) -> void:
@@ -428,8 +433,10 @@ func _add_watermark() -> void:
 	_watermark = CanvasLayer.new()
 	_watermark.layer = 100
 	var label := Label.new()
-	# lane RELNAME-1 (owner, 2026-10-10): an alpha build, no longer "test build"; "unofficial" stays (not made or endorsed by EA)
-	label.text = version_line() + "  -  unofficial alpha build"
+	# lane RELNAME-1 (owner, 2026-10-10): an alpha build, no longer "test build"; "unofficial" stays (not made or endorsed by EA).
+	# Lane VERSION-1: "OpenBFME Alpha 0.4.5 (<date>)  -  unofficial build" (the line already says Alpha)
+	var shown := display_line()
+	label.text = shown + ("  -  unofficial build" if shown.begins_with("OpenBFME Alpha ") else "  -  unofficial alpha build")
 	label.add_theme_font_size_override("font_size", 13)
 	label.add_theme_color_override("font_color", Color(1, 1, 1, 0.75))
 	label.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.9))

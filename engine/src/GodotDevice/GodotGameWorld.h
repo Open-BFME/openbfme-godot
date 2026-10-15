@@ -217,6 +217,9 @@ public:
 	Dictionary get_spellbook(int64_t player) const;
 	// lane SPELL-3 (review r1): what a spell book power's module did so far (its class and counters), for the harness's effect checks
 	Dictionary get_spell_power_effect(int64_t player, const String &power) const;
+	// lane SPELL-4: the BuffNugget buffs shown now (GameClient/BuffDraw.h): { count, drawn (instance updates so far), errors, buffs: [ { object, type,
+	// thing, model, opacity, state, instance } ] }
+	Dictionary get_buff_state() const;
 	// ---- lane SPELL-2: the spell book screens (GameClient/SpellBookUI.h) ----
 	// the store (RotWK AptSpellStore): open for `player`; { open, set, points, pending: [science], buttons: [ { index, science, cost, image, label,
 	// state: "purchased" | "pending" | "available" | "locked" } ] }; a click (OnBttnSpell), Reset, and the close that sends the pending purchases
@@ -723,6 +726,10 @@ private:
 	// lane FX-2
 	FXPlayer *m_fxPlayer = nullptr;            ///< child node, kept by clear_scene
 	std::unique_ptr<LiveFX> m_liveFX;          ///< destroyed before m_game (it is the logic's FX sink and the drawables' FX host)
+	// lane SPELL-4: the BuffNugget buffs (GameClient/BuffDraw.h) as instances of the live objects' instancer, by TBuff serial
+	std::map<uint64_t, int64_t> m_buffInstances;
+	unsigned long long m_buffsDrawn = 0;
+	void syncBuffs(double dt);
 	Array m_fxSetupErrors;
 };
 

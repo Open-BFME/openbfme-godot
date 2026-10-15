@@ -13,7 +13,7 @@
 ##   --install=<version>      install that release (the user's pick: an older version is allowed)
 ##   --select=<version>       play that installed version from now on (--select= clears the pick)
 ##   --self-update            stage a newer launcher (replaced on the next start)
-##   --channel=stable|preview remember the channel (--channel=alpha is the same as preview, the channel's shown name)
+##   --channel=stable|preview remember the channel (--channel=alpha is the same as stable, the channel's shown name since VERSION-1)
 ##   --list                   print the installed versions
 ##   --play                   start the version Play starts
 ##   --version                print the launcher's version
@@ -24,6 +24,8 @@
 ##   --register-url-handler   register this launcher for openbfme:// links (scripts/core/url_handler.gd: the current user's registry on Windows,
 ##                            ~/.local/share/applications + xdg-mime on Linux)
 ##   --auto-update=on|off     (lane UI-5) the setting "Update automatically in the background" (on by default)
+##   --online-count=on|off    (lane ONLINECOUNT-1) the setting "Show how many players are online" (on by default): the Play card's "N players online" from
+##                            the lobby's GET /v1/stats (scripts/core/online_count.gd); off, the launcher never asks the lobby, and the game's menus follow it
 ##   --free-camera=on|off     (lane INPUT-1) the game's free camera (Options.ini OpenBFMEFreeCamera, see scripts/core/game_options.gd)
 ##   --aio=on|off             (lane AIO-1, on by default: AioInstall.DEFAULT_ENABLED) the setting "Offer to download the games"
 ##                            (Settings; the All In One BFME Launcher's service)
@@ -33,6 +35,8 @@
 ##   --game-start=<folder>    (lane ONEZIP-1; what the game runs when a player starts it directly from the combined package, see
 ##                            scripts/core/game_start.gd) decide which version that start plays, then look for an update in the background
 ## --screenshot=FILE (with the window): save the window as a PNG once the start-up check has finished, then quit (the layout check).
+## --screenshot-window=WxH: the same for a window of that size under the project's own stretch (expand aspect: a wider window lays out wider,
+##   a smaller one scales down) instead of a layout at exactly WxH pixels.
 ## --ui-dump (with --screenshot): print every text of every screen, hidden ones included, as "LAUNCHER ui text:" lines, unscrubbed (the
 ##   test that no screen shows the home folder or the user name); --screenshot-size=WxH lays the window out at that size and saves
 ##   exactly that (the screenshots at 1280x720 and 1280x800 on any display).
@@ -77,9 +81,11 @@ const SettingsScreen := preload("res://scripts/ui/settings_screen.gd")
 const MessagePanel := preload("res://scripts/ui/message_panel.gd")
 const InstanceLock := preload("res://scripts/core/instance_lock.gd")
 const GameStart := preload("res://scripts/core/game_start.gd")
+const OnlineCount := preload("res://scripts/core/online_count.gd")  # lane ONLINECOUNT-1
+const HttpFetch := preload("res://scripts/net/http_fetch.gd")
 
 const CLI_ACTIONS := ["--update", "--install=", "--select=", "--self-update", "--channel=", "--list", "--play", "--version", "--free-camera=",
-	"--aio=", "--aio-install=", "--auto-update=", "--open-url", "--lobby=", "--register-url-handler", "--game-start="]
+	"--aio=", "--aio-install=", "--auto-update=", "--online-count=", "--open-url", "--lobby=", "--register-url-handler", "--game-start="]
 const UrlHandler := preload("res://scripts/core/url_handler.gd")
 # the test options (honoured only by a development run or a test package); ONLINE-2 r2: also the only arguments allowed before --open-url there
 const TEST_OPTIONS := ["--api-base=", "--trust-key=", "--repo=", "--test-kill-at=", "--aio-base=", "--aio-pins=", "--aio-stop-after=", "--ui-demo=",
@@ -91,6 +97,11 @@ var updater: Updater
 var _instance: InstanceLock  # lane UI-5 (Sol r2): one launcher at a time
 var aio: AioInstall
 var _thread: Thread
+var _count_thread: Thread     # lane ONLINECOUNT-1
+var _count_timer: Timer
+var _count_asked_ms := 0
+var _count_text := ""         # the chip's text and when it arrived (it expires: OnlineCount.EXPIRY_SECONDS)
+var _count_got_ms := 0
 var _releases: Array = []
 var _older: Array = []        # the channel's release tags, newest first (Settings: install another one)
 var _latest: Dictionary = {}  # the newer release the Update button installs ({} when up to date)
@@ -271,6 +282,10 @@ func _ready() -> void:
 	if start.message != "":
 		_set_status(start.message)
 	_refresh_installed()
+	var count_problem := updater.online_count_problem()
+	if count_problem != "":
+		Log.line("LAUNCHER " + count_problem)
+	_refresh_count()
 	var unseen := str(updater.get_state("launcher", "unseen_error", ""))
 	if unseen != "" and _demo == "":
 		Log.line("LAUNCHER showing an update failure from while the game ran: " + unseen)
@@ -297,6 +312,14 @@ func _screenshot(path: String) -> void:
 			want = Vector2i(int(wh[0]), int(wh[1]))
 			get_window().content_scale_size = want
 			get_window().content_scale_aspect = Window.CONTENT_SCALE_ASPECT_KEEP
+		elif a.begins_with("--screenshot-window="):
+			# what a window of that size shows (lane LAUNCHERUI-1): the project's stretch (canvas_items, expand aspect over 1280 x 720)
+			# laid out on a display of any size: the base is the window over min(w / 1280, h / 720), saved at the window's pixels
+			var wh := a.substr(20).split("x")
+			want = Vector2i(int(wh[0]), int(wh[1]))
+			var k := minf(want.x / BASE_SIZE.x, want.y / BASE_SIZE.y)
+			get_window().content_scale_size = Vector2i((Vector2(want) / k).round())
+			get_window().content_scale_aspect = Window.CONTENT_SCALE_ASPECT_KEEP
 	await _settle()
 	if _ui_then != "":
 		Log.line("LAUNCHER ui paused: " + _paused)
@@ -307,6 +330,7 @@ func _screenshot(path: String) -> void:
 	Log.line("LAUNCHER ui paused: " + _paused)
 	Log.line("LAUNCHER ui status: " + _status.text)
 	Log.line("LAUNCHER ui warning: " + (_warning.text if _banner.visible else ""))
+	Log.line("LAUNCHER ui chip overlaps: " + ", ".join(_play_screen.chip_overlaps()))
 	Log.line("LAUNCHER ui games card: " + ("shown" if _play_screen.games_card.visible else "hidden"))
 	Log.line("LAUNCHER ui dialog: " + (_message.shown_text() if _message.visible else ""))
 	Log.line("LAUNCHER ui update button: " + (_update.text if _update.visible else ""))
@@ -371,10 +395,13 @@ static func _texts(node: Node) -> PackedStringArray:
 ## in screenshots).
 ## Screens: main (Play), news, multiplayer, mods, games (no games found: the download), games-downloading, settings (General), display,
 ## about, update (a newer version, updating by itself off), downloading (an update downloading), error, glibc (Play on a Linux system older
-## than the build's GLIBC, lane GLIBC-1).
+## than the build's GLIBC, lane GLIBC-1). Lane LAUNCHERUI-1 (the layout check, tests/layout_test.gd) adds the states a player meets: first-run
+## (nothing installed, no games), offline (the check failed), verifying (an install is being checked), paused (a paused download),
+## update-launcher (only the launcher is newer), warning (the freeze banner), ask (the question dialog), playing (Play pressed while an
+## update downloads), long (the longest texts the window gets), picker (the games' folder picker).
 func _show_demo(screen: String) -> void:
 	var home := Paths.home()
-	var no_games := screen in ["games", "games-downloading"]
+	var no_games := screen in ["games", "games-downloading", "first-run"]
 	var games := {"found": true, "rotwk": home.path_join("Games/BFME/RotWK"), "bfme2": home.path_join("Games/BFME/BFME2"), "source": "config"}
 	if no_games:
 		games = {"found": false, "rotwk": "", "bfme2": "", "source": ""}
@@ -391,12 +418,15 @@ func _show_demo(screen: String) -> void:
 		updater.set_channel("preview")  # the screenshots' launcher is a development run (Stable); the demo is a preview player's
 		_show_channel()
 		chan = rels
-	var installed: String = chan[1].tag if screen in ["update", "downloading", "error"] and chan.size() > 1 else chan[0].tag
+	var installed: String = chan[1].tag if screen in ["update", "downloading", "error", "paused", "update-launcher", "long"] and chan.size() > 1 else chan[0].tag
+	if screen == "first-run":
+		installed = ""
 	_pv = installed
 	_older = chan.map(func(r): return r.tag)
-	_settings.set_versions([{"version": installed}], installed, _older)
+	_settings.set_versions([{"version": installed}] if installed != "" else [], installed, _older)
 	_settings.set_options(true, screen != "update", true, _about())
-	_play.disabled = false
+	_play_screen.set_players("12345 players online")  # lane ONLINECOUNT-1: the widest chip, so the screens show the layout with it
+	_play.disabled = installed == ""
 	_show_notes()
 	_set_update_state("current")
 	_set_status("Up to date.")
@@ -416,6 +446,46 @@ func _show_demo(screen: String) -> void:
 				_set_status("Downloading the games. Play is back when they are checked.")
 		"glibc":
 			_show_error("The game did not start", "%s cannot be started: %s" % [installed, GlibcCheck.too_old("2.28", "2.27")])
+		"first-run":
+			_show_screen("play")
+			_set_update_state("none")
+			_set_status("Looking for the first version.")
+		"offline":
+			_set_update_state("failed")
+			_set_status("Updates skipped: could not reach api.github.com (offline). Play starts the newest installed version.")
+		"verifying":
+			_set_update_state("updating", chan[0].tag)
+			_demo_progress("Checking openbfme-%s-%s.%s" % [chan[0].tag, info.platform(), "zip" if OS.get_name() == "Windows" else "tar.gz"], 1073741824, 1073741824)
+			_set_status("Checking %s." % chan[0].tag)
+		"paused":
+			_paused = "game"
+			_set_update_state("updating", chan[0].tag)
+			_demo_progress("Downloading openbfme-%s-%s.tar.gz" % [chan[0].tag, info.platform()], 327155712, 1073741824)
+			_set_status("Paused. Resume continues the download.")
+		"update-launcher":
+			_launcher_only = true
+			_latest = {"tag": chan[0].tag}
+			_set_update_state("update", chan[0].tag)
+			_set_status("Launcher %s is available." % chan[0].tag)
+		"warning":
+			_set_warning("This build is frozen: the free camera and the other test options are off until the next release. Nothing is lost.")
+		"ask":
+			_message.ask("Install an older version?", "%s is older than the installed %s. Install it and play it from now on?" % [chan[chan.size() - 1].tag, installed], "Install", Callable())
+		"playing":
+			_quit_when_done = true
+			_set_update_state("updating", chan[0].tag)
+			_demo_progress("Downloading openbfme-%s-%s.tar.gz" % [chan[0].tag, info.platform()], 327155712, 1073741824)
+			_set_status("Play started %s. The window closes when the update is installed." % installed)
+		"picker":
+			_show_screen("games")
+			_games_screen.setup(Paths.default_games_dir(), aio.total_size() / 1e9, aio.packages)
+			_games_screen.open_picker(true)
+		"long":
+			_latest = {"tag": chan[0].tag}
+			_set_update_state("update", chan[0].tag)
+			_set_warning("This build is frozen: the free camera and the other test options are off until the next release. It stays frozen for as long as this very long line takes to wrap onto a second and a third line of the banner.")
+			_set_status("Update rejected: openbfme-%s-%s.tar.gz does not match the signed manifest: deleted, nothing was installed, and this status line is much longer than the bottom bar can show." % [chan[0].tag, info.platform()])
+			_demo_progress("Downloading openbfme-%s-%s-a-very-long-package-name-that-goes-on.tar.gz" % [chan[0].tag, info.platform()], 327155712, 1073741824)
 		"update", "downloading", "error":
 			_latest = {"tag": chan[0].tag}
 			_set_update_state("update", chan[0].tag)
@@ -472,7 +542,7 @@ func _run_cli(args: PackedStringArray, problem: String) -> int:
 		if a.begins_with("--channel="):
 			var ch := a.substr(10)
 			if ch == "alpha":
-				ch = "preview"  # lane RELNAME-1: the pre-release channel's shown name
+				ch = "stable"  # lane VERSION-1: the shown name of the stable channel, where the plain releases ("Alpha 0.4.5") are
 			if not ch in ["stable", "preview"]:
 				Log.line("LAUNCHER unknown channel '%s' (stable, preview)" % ch)
 				return 1
@@ -498,6 +568,14 @@ func _run_cli(args: PackedStringArray, problem: String) -> int:
 				return 1
 			updater.set_auto_update(v == "on")
 			Log.line("LAUNCHER updating by itself %s" % v)
+	for a in args:
+		if a.begins_with("--online-count="):
+			var v := a.substr(15)
+			if not v in ["on", "off"]:
+				Log.line("LAUNCHER --online-count takes on or off, not '%s'" % v)
+				return 1
+			updater.set_show_online_count(v == "on")
+			Log.line("LAUNCHER online player count %s" % v)
 	for a in args:
 		if a.begins_with("--aio="):
 			var v := a.substr(6)
@@ -619,6 +697,8 @@ func _run_cli(args: PackedStringArray, problem: String) -> int:
 ## the window's size before DPI scaling (project.godot's viewport; canvas_items stretch scales everything with the window)
 const BASE_SIZE := Vector2(1280, 720)
 const RAIL_W := 214.0
+const RAIL_INK := Style.NAV_PAD  # lane LAUNCHERUI-1: the rail's logo and footer start where an entry's icon does
+const SCREEN_MARGIN := 34  # the screens' and the bottom bar's left and right margin: one right edge for every card and PLAY
 const BAR_H := 96.0
 const SCREENS := [["play", "swords", "Play"], ["news", "star", "News"], ["multiplayer", "rings", "Multiplayer"], ["mods", "hammer", "Mods"],
 	["games", "drive", "Game files"], ["settings", "gear", "Settings"]]
@@ -677,7 +757,7 @@ func _build_ui() -> void:
 	var logo := W.label("OPENBFME")
 	Style.text(logo, "Cinzel", 700, 25, Style.ACCENT, 2)
 	var lm := MarginContainer.new()
-	lm.add_theme_constant_override("margin_left", 9)
+	lm.add_theme_constant_override("margin_left", RAIL_INK)
 	lm.add_theme_constant_override("margin_bottom", 16)
 	lm.add_child(logo)
 	rv.add_child(lm)
@@ -692,10 +772,10 @@ func _build_ui() -> void:
 		_nav[s[0]] = b
 	rv.add_child(W.spacer())
 	rv.get_child(rv.get_child_count() - 1).size_flags_vertical = Control.SIZE_EXPAND_FILL
-	var foot := W.label("Launcher %s" % info.version, "Muted")
+	var foot := W.label("Launcher %s" % Semver.display(info.version), "Muted")
 	foot.add_theme_font_size_override("font_size", 12)
 	var fm := MarginContainer.new()
-	fm.add_theme_constant_override("margin_left", 10)
+	fm.add_theme_constant_override("margin_left", RAIL_INK)
 	fm.add_child(foot)
 	rv.add_child(fm)
 
@@ -704,8 +784,8 @@ func _build_ui() -> void:
 	content.set_anchors_preset(Control.PRESET_FULL_RECT)
 	content.offset_left = RAIL_W
 	content.offset_bottom = -BAR_H
-	content.add_theme_constant_override("margin_left", 34)
-	content.add_theme_constant_override("margin_right", 34)
+	content.add_theme_constant_override("margin_left", SCREEN_MARGIN)
+	content.add_theme_constant_override("margin_right", SCREEN_MARGIN)
 	content.add_theme_constant_override("margin_top", 28)
 	content.add_theme_constant_override("margin_bottom", 4)
 	add_child(content)
@@ -747,6 +827,7 @@ func _build_ui() -> void:
 	_settings.free_camera_toggled.connect(_on_free_camera)
 	_settings.auto_update_toggled.connect(_on_auto_update)
 	_settings.aio_toggled.connect(_on_aio_toggled)
+	_settings.show_online_count_toggled.connect(_on_online_count_toggled)
 	_settings.use_version.connect(_on_use)
 	_settings.install_release.connect(_on_install_pick)
 	_settings.open_logs.connect(_open_logs)
@@ -779,8 +860,8 @@ func _build_ui() -> void:
 	bar_root.add_child(shade)
 	var bm := MarginContainer.new()
 	bm.set_anchors_preset(Control.PRESET_FULL_RECT)
-	bm.add_theme_constant_override("margin_left", 34)
-	bm.add_theme_constant_override("margin_right", 30)
+	bm.add_theme_constant_override("margin_left", SCREEN_MARGIN)
+	bm.add_theme_constant_override("margin_right", SCREEN_MARGIN)
 	bm.add_theme_constant_override("margin_top", 10)
 	bm.add_theme_constant_override("margin_bottom", 10)
 	bar_root.add_child(bm)
@@ -794,20 +875,16 @@ func _build_ui() -> void:
 	_status_head = W.label("")
 	Style.text(_status_head, "Inter", 600, 14, Style.TEXT)
 	head.add_child(_status_head)
-	_status_tail = W.label("")
+	_status_tail = W.trim_label("")
 	Style.text(_status_tail, "Inter", 500, 14, Style.TEXT2)
-	_status_tail.clip_text = true
-	_status_tail.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	_status_tail.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	head.add_child(_status_tail)
 	info_box.add_child(head)
 	_progress = W.vbox(5)
 	_progress.visible = false
 	var trow := W.hbox(10)
-	_bar_title = W.label("", "Muted")
+	_bar_title = W.trim_label("", "Muted")
 	_bar_title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_bar_title.clip_text = true
-	_bar_title.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	trow.add_child(_bar_title)
 	_bar_label = W.label("", "Muted")
 	trow.add_child(_bar_label)
@@ -852,6 +929,12 @@ func _build_ui() -> void:
 	recheck.timeout.connect(_on_recheck)
 	add_child(recheck)
 	recheck.start()
+	# lane ONLINECOUNT-1: the player count's refresh while the Play screen is visible (a timer that asks only when it may: _refresh_count)
+	_count_timer = Timer.new()
+	_count_timer.wait_time = OnlineCount.REFRESH_SECONDS
+	_count_timer.timeout.connect(_count_tick)
+	add_child(_count_timer)
+	_count_timer.start()
 
 	_show_channel()
 	_show_progress(false)
@@ -868,8 +951,14 @@ func _show_screen(key: String) -> void:
 		_nav[k].set_pressed_no_signal(k == key)
 	if key == "games" and _games_screen.folder == "":
 		_games_screen.setup(Paths.default_games_dir(), aio.total_size() / 1e9, aio.packages)
+	if key == "play" and _play_screen != null:
+		# back on the Play card: an old number is gone, and a stale one is asked for again (at most every MIN_GAP_SECONDS)
+		_expire_count()
+		if OnlineCount.stale(_count_text, float(Time.get_ticks_msec() - _count_got_ms) / 1000.0):
+			_refresh_count()
 	if key == "settings":
 		_settings.set_options(GameOptions.free_camera(), updater.auto_update(), aio.enabled(), _about())
+		_settings.set_online_count(updater.show_online_count())
 
 
 func _show_channel() -> void:
@@ -882,9 +971,9 @@ func _show_channel() -> void:
 func _set_update_state(state: String, tag := "") -> void:
 	_update_state = state
 	_update_tag = tag
-	_update.visible = state == "update"
+	_update.visible = state == "update" and not _progress.visible
 	if state == "update":
-		_update.text = ("Update launcher to " if _launcher_only else "Update to " if _pv != "" else "Install ") + tag
+		_update.text = ("Update launcher to " if _launcher_only else "Update to " if _pv != "" else "Install ") + Semver.display(tag)
 	_refresh_head()
 
 
@@ -892,22 +981,23 @@ func _set_update_state(state: String, tag := "") -> void:
 func _refresh_head() -> void:
 	if _status_head == null:
 		return
-	var ch := Semver.channel_name(updater.channel())  # lane RELNAME-1: the pre-release channel is shown as "Alpha"
+	var ch := Semver.channel_name(updater.channel())  # lane VERSION-1: stable is shown as "Alpha", the pre-release channel as "Preview"
+	var pv := Semver.display(_pv)
 	var head: String = {"idle": "Ready", "checking": "Checking for updates", "updating": "Updating", "current": "Up to date",
 		"update": "Update available", "failed": "Could not check for updates", "none": "No %s release yet" % ch.to_lower()}[_update_state]
 	var colour: Color = {"idle": Style.TEXT2, "checking": Style.TEXT2, "updating": Style.ACCENT, "current": Style.GOOD, "update": Style.ACCENT,
 		"failed": Style.WARN, "none": Style.TEXT2}[_update_state]
 	if _update_state == "update":
-		head = ("Launcher %s is available" if _launcher_only else "%s is available") % _update_tag
+		head = ("Launcher %s is available" if _launcher_only else "%s is available") % Semver.display(_update_tag)
 	if _update_state == "updating" and _update_tag != "":
-		head = "Updating to %s" % _update_tag
+		head = "Updating to %s" % Semver.display(_update_tag)
 	if _quit_when_done:
-		head = "Playing %s" % _pv
+		head = "Playing %s" % pv
 	_status_head.text = head
-	_status_tail.text = "  ·  %s  ·  %s channel" % [_pv if _pv != "" else "nothing installed yet", ch]
+	_status_tail.text = "  ·  %s  ·  %s channel" % [pv if _pv != "" else "nothing installed yet", ch]
 	W.set_chip(_play_screen.state_chip, "●  " + head, colour)
 	W.set_chip(_play_screen.channel_chip, "Channel: " + ch)
-	W.set_chip(_play_screen.version_chip, _pv if _pv != "" else "Not installed")
+	W.set_chip(_play_screen.version_chip, pv if _pv != "" else "Not installed")
 	_status.visible = _status.text.trim_suffix(".") != head
 
 
@@ -924,6 +1014,68 @@ func _on_free_camera(on: bool) -> void:
 func _on_auto_update(on: bool) -> void:
 	updater.set_auto_update(on)
 	_set_status("Updates install by themselves in the background." if on else "Updates are only checked: press Update to install one.")
+
+
+func _on_online_count_toggled(on: bool) -> void:
+	updater.set_show_online_count(on)
+	Log.line("LAUNCHER online player count %s" % ["on" if on else "off"])
+	if on:
+		_set_status("The number of players online is shown. The game's menus show it too.")
+		_refresh_count()
+	else:
+		_count_text = ""
+		_play_screen.set_players("")
+		_set_status("The number of players online is not asked for any more. The game's menus follow this the next time the game starts.")
+
+
+## lane ONLINECOUNT-1: the lobby's player count for the Play card. Asks only when the setting is on, the Play screen is the one in view and the window
+## is not minimized, not offline / a demo / a development run without a named lobby, at most every MIN_GAP_SECONDS and never twice at once
+## (its own thread and its own HttpFetch: an update download is never held up by it). Anything but a stats answer shows nothing.
+func _expire_count() -> void:
+	var shown := OnlineCount.chip_text(_count_text, float(Time.get_ticks_msec() - _count_got_ms) / 1000.0)
+	if shown != _count_text:
+		_count_text = ""
+		_play_screen.set_players("")
+
+
+func _count_tick() -> void:
+	_expire_count()  # on any page: a number that is not renewed goes away
+	_refresh_count()
+
+
+func _refresh_count() -> void:
+	if not updater.show_online_count() or _demo != "" or "--offline" in OS.get_cmdline_user_args() or _screen != "play":
+		return
+	var headless := DisplayServer.get_name() == "headless"
+	if not OnlineCount.in_view(headless, not headless and get_window().mode == Window.MODE_MINIMIZED, not headless and get_window().has_focus()):
+		return  # minimized or in the background: nothing is asked (the timer asks again, and the Play screen when it is back in view)
+	if _count_thread != null and _count_thread.is_alive():
+		return
+	if Time.get_ticks_msec() - _count_asked_ms < int(OnlineCount.MIN_GAP_SECONDS * 1000.0) and _count_asked_ms != 0:
+		return
+	var url := updater.lobby_url()
+	var why := updater.policy.set_lobby(url)
+	if why != "":
+		Log.line("LAUNCHER online player count not asked: " + why)
+		_play_screen.set_players("")
+		return
+	if _count_thread != null:
+		_count_thread.wait_to_finish()
+	_count_asked_ms = maxi(Time.get_ticks_msec(), 1)
+	var http := HttpFetch.new(updater.policy, info.version)
+	_count_thread = Thread.new()
+	_count_thread.start(func() -> void: _on_count.call_deferred(OnlineCount.fetch(http, url)))
+
+
+func _on_count(r: Dictionary) -> void:
+	if not updater.show_online_count():
+		_count_text = ""
+		_play_screen.set_players("")  # it was switched off while the request was out: its answer is not shown
+		return
+	_count_text = r.text
+	_count_got_ms = Time.get_ticks_msec()
+	_play_screen.set_players(r.text)
+	Log.line("LAUNCHER online player count: %s" % (r.text if r.ok else "not shown (%s)" % r.why))
 
 
 func _on_aio_toggled(on: bool) -> void:
@@ -956,7 +1108,7 @@ func _show_folder(path: String) -> void:
 
 
 func _about() -> String:
-	return "OpenBFME Launcher %s (%s)" % [info.version, info.platform()]
+	return "OpenBFME Launcher %s (%s)" % [Semver.display(info.version), info.platform()]
 
 
 func _show_error(title: String, text: String) -> void:
@@ -1111,6 +1263,7 @@ func _set_buttons() -> void:
 	_check.disabled = busy
 	_pause.visible = downloading
 	_cancel.visible = downloading
+	_update.visible = _update_state == "update" and not downloading  # LAUNCHERUI-1: no room beside Pause and Cancel, and it is disabled meanwhile
 	_update.disabled = busy or _latest.is_empty()
 	_play.disabled = _pv == "" or _play_blocked()
 	_play_screen.games_button.disabled = busy or _paused != ""

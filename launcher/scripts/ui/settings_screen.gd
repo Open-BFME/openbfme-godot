@@ -8,6 +8,7 @@ extends Control
 signal channel_picked(channel: String)
 signal free_camera_toggled(on: bool)
 signal auto_update_toggled(on: bool)
+signal show_online_count_toggled(on: bool)
 signal aio_toggled(on: bool)
 signal use_version(version: String)
 signal install_release(tag: String)
@@ -27,6 +28,7 @@ var _channel: OptionButton
 var _free_camera: CheckButton
 var _auto: CheckButton
 var _aio: CheckButton
+var _count: CheckButton
 var _launcher: Label
 var _game: Label
 var _versions: ItemList
@@ -37,7 +39,7 @@ var _install: Button
 
 func _init() -> void:
 	set_anchors_preset(Control.PRESET_FULL_RECT)
-	var v := W.vbox(14)
+	var v := W.vbox(Style.SCREEN_GAP)
 	v.set_anchors_preset(Control.PRESET_FULL_RECT)
 	add_child(v)
 	v.add_child(W.h2("Settings"))
@@ -59,10 +61,10 @@ func _init() -> void:
 	# General
 	var g := _page(s.box, "general")
 	_channel = OptionButton.new()
-	_channel.add_item(Semver.channel_name("preview"))  # lane RELNAME-1: shown as "Alpha"
-	_channel.add_item("Stable")
+	_channel.add_item(Semver.channel_name("preview"))  # lane VERSION-1: shown as "Preview"
+	_channel.add_item(Semver.channel_name("stable"))   # shown as "Alpha": the numbered releases ("Alpha 0.4.5")
 	_channel.item_selected.connect(func(i: int) -> void: channel_picked.emit(CHANNELS[i]))
-	g.add_child(W.row(_with_note("Channel", "Alpha gets the test builds first."), _channel))
+	g.add_child(W.row(_with_note("Channel", "Preview also gets test builds between releases."), _channel))
 	_free_camera = CheckButton.new()
 	_free_camera.tooltip_text = "Applies the next time the game starts. In a game, Ctrl+Z toggles it."
 	_free_camera.toggled.connect(func(on: bool) -> void: free_camera_toggled.emit(on))
@@ -71,6 +73,11 @@ func _init() -> void:
 	_auto.toggled.connect(func(on: bool) -> void: auto_update_toggled.emit(on))
 	g.add_child(W.row(_with_note("Update automatically in the background",
 		"New versions download while the launcher is open or you play, and start with your next Play."), _auto))
+	_count = CheckButton.new()
+	_count.toggled.connect(func(on: bool) -> void: show_online_count_toggled.emit(on))
+	g.add_child(W.row(_with_note("Show how many players are online",
+		"Asks the online lobby for one total (a number, no personal data) when the launcher opens and every few minutes while you look at it. " +
+		"The game's menus follow this. Off: nothing is asked."), _count))
 	_aio = CheckButton.new()
 	_aio.toggled.connect(func(on: bool) -> void: aio_toggled.emit(on))
 	g.add_child(W.row(_with_note("Offer to download the games", "Game files: the All In One download."), _aio, true))
@@ -97,6 +104,7 @@ func _init() -> void:
 	left.add_child(W.label("Installed versions"))
 	_versions = ItemList.new()
 	_versions.custom_minimum_size = Vector2(0, 74)
+	_versions.size_flags_vertical = Control.SIZE_EXPAND_FILL  # LAUNCHERUI-1: the two columns end in buttons on one line
 	left.add_child(_versions)
 	_use = W.button("Play this version", "play", "", 14)
 	_use.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
@@ -109,11 +117,14 @@ func _init() -> void:
 	right.add_child(W.wrap("Install another release of the channel, also an older one.", "Muted"))
 	_releases = OptionButton.new()
 	right.add_child(_releases)
+	var fill := Control.new()
+	fill.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	right.add_child(fill)
 	_install = W.button("Install", "download", "", 15)
 	_install.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
 	_install.pressed.connect(func() -> void:
 		if _releases.item_count > 0:
-			install_release.emit(_releases.get_item_text(_releases.selected)))
+			install_release.emit(str(_releases.get_item_metadata(_releases.selected))))
 	right.add_child(_install)
 	vrow.add_child(right)
 	var pad := MarginContainer.new()
@@ -172,12 +183,16 @@ func set_options(free_camera: bool, auto_update: bool, aio_on: bool, launcher: S
 	_launcher.text = launcher
 
 
+func set_online_count(on: bool) -> void:
+	_count.set_pressed_no_signal(on)
+
+
 ## installed: [{version}], play: the version Play starts, releases: the channel's tags (newest first)
 func set_versions(installed: Array, play: String, releases: Array) -> void:
-	_game.text = play if play != "" else "nothing installed yet"
+	_game.text = Semver.display(play) if play != "" else "nothing installed yet"
 	_versions.clear()
 	for i in installed:
-		var label: String = i.version
+		var label: String = Semver.display(i.version)
 		if i.version == play:
 			label += "    (Play starts this)"
 		_versions.add_item(label)
@@ -188,7 +203,8 @@ func set_versions(installed: Array, play: String, releases: Array) -> void:
 		_versions.set_item_metadata(0, "")
 	_releases.clear()
 	for t in releases:
-		_releases.add_item(t)
+		_releases.add_item(Semver.display(t))   # lane VERSION-1: "Alpha 0.4.5"; the tag is the item's metadata
+		_releases.set_item_metadata(_releases.item_count - 1, t)
 
 
 func _on_use() -> void:

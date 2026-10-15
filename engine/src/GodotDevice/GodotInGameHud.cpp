@@ -303,6 +303,11 @@ struct HudDevice : public AptNativeHook
 	DecalImage decalImageFor(const std::string &file);
 	void drawSelectionDecals();
 	void freeSelectionDecals();
+	// lane SPELL-4: the radius cursor (InGameHud::radiusCursor, GameClient/RadiusCursor.h) as one Godot Decal beside the selection markers
+	uint64_t radiusDecalId = 0;
+	bool radiusDecalDrawn = false;
+	std::string radiusDecalError; ///< the texture of the cursor that could not be read (also in the HUD's draw errors)
+	void drawRadiusCursor();
 	void applyCamera(const Vector2 &window, double alpha);
 };
 
@@ -1182,6 +1187,53 @@ void InGameHudNode::_bind_methods()
 	ClassDB::bind_method(D_METHOD("invoke_at", "path", "function", "args"), &InGameHudNode::invoke_at, DEFVAL(PackedStringArray()));
 }
 
+void HudDevice::drawRadiusCursor()
+{
+	// lane SPELL-4: drawn as the selection decals are (S-2522, S-4640): the texture times the RGB, the alpha the throb's opacity (the alpha styles, 0x1420),
+	// laid on the terrain layer; an additive style's RGB already carries the opacity (Shadow::setColor RW 0x73232B)
+	const RadiusCursorDecal &rc = hud->radiusCursor().decal();
+	Decal *decal = radiusDecalId ? Object::cast_to<Decal>(ObjectDB::get_instance(godot::ObjectID(radiusDecalId))) : nullptr;
+	Node3D *root = decalRootId ? Object::cast_to<Node3D>(ObjectDB::get_instance(godot::ObjectID(decalRootId))) : nullptr;
+	radiusDecalDrawn = false;
+	if (!rc.visible || !root)
+	{
+		if (decal)
+		{
+			decal->set_visible(false);
+		}
+		return;
+	}
+	const bool alphaStyle = (rc.style & 0x1420u) != 0;
+	const DecalTextures *dt = unlitDecalFor(rc.texture, alphaStyle ? rc.rgb : (rc.packed & 0xFFFFFFu));
+	if (!dt)
+	{
+		radiusDecalError = "radius cursor " + rc.type + ": no texture " + rc.texture;
+		if (decal)
+		{
+			decal->set_visible(false);
+		}
+		return; // textureFor reported it in drawErrors
+	}
+	if (!decal)
+	{
+		decal = memnew(Decal);
+		root->add_child(decal);
+		radiusDecalId = decal->get_instance_id();
+	}
+	// SAGE (x, y, z up) -> Godot (x, z, -y); projected down over a box 2 * radius wide and 200 units deep around the point
+	decal->set_position(Vector3(rc.position.x, rc.position.z, -rc.position.y));
+	decal->set_rotation(Vector3(0.0f, rc.angle, 0.0f));
+	decal->set_size(Vector3(rc.size, 200.0f, rc.size));
+	decal->set_texture(Decal::TEXTURE_ALBEDO, dt->albedo);
+	decal->set_modulate(Color(1, 1, 1, alphaStyle ? rc.opacity / 255.0f : 1.0f));
+	decal->set_albedo_mix(1.0f);
+	decal->set_cull_mask(1u << 19); // the terrain's layer (GodotMapTerrain)
+	decal->set_upper_fade(0.0f);
+	decal->set_lower_fade(0.0f);
+	decal->set_visible(true);
+	radiusDecalDrawn = true;
+}
+
 void HudDevice::drawSelectionDecals()
 {
 	Node3D *root = decalRootId ? Object::cast_to<Node3D>(ObjectDB::get_instance(godot::ObjectID(decalRootId))) : nullptr;
@@ -1471,6 +1523,7 @@ void HudDevice::freeSelectionDecals()
 	}
 	decalRootId = 0;
 	decalIds.clear();
+	radiusDecalId = 0; // lane SPELL-4: the cursor's decal was the root's child
 	mergeKey.clear();
 	// lane SELPERF-1: the terrain shader draws no merge decals once the HUD is gone
 	if (selMode > 0 || selData.is_valid() || selAtlas.is_valid())
@@ -2190,6 +2243,28 @@ Dictionary InGameHudNode::get_spellbook_state()
 	const InGameSpellBookModel &bar = d->hud->spellBar();
 	r["targeting"] = bar.targeting();
 	r["radius"] = bar.targetButton() ? bar.targetButton()->radius : 0.0f;
+	{
+		// lane SPELL-4: the aiming marker (InGameHud::radiusCursor) and what the device drew of it
+		const RadiusCursorDecal &rc = d->hud->radiusCursor().decal();
+		Dictionary c;
+		c["active"] = d->hud->radiusCursor().active();
+		c["type"] = toGodot(rc.type);
+		c["visible"] = rc.visible;
+		c["texture"] = toGodot(rc.texture);
+		c["style"] = (int64_t)rc.style;
+		c["size"] = rc.size;
+		c["x"] = rc.position.x;
+		c["y"] = rc.position.y;
+		c["z"] = rc.position.z;
+		c["rgb"] = (int64_t)rc.rgb;
+		c["opacity"] = (int64_t)rc.opacity;
+		c["valid"] = rc.valid;
+		c["drawn"] = d->radiusDecalDrawn;
+		c["error"] = toGodot(d->radiusDecalError);
+		const InGameUI &ui = d->hud->input().ui();
+		c["pointer"] = toGodot(ui.cursor());
+		r["radius_cursor"] = c;
+	}
 	r["target_power"] = String(bar.targetButton() && bar.targetButton()->power ? bar.targetButton()->power->getName().c_str() : "");
 	Dictionary store;
 	AptSpellStore *st = d->hud->spellStore();
@@ -2434,6 +2509,7 @@ void InGameHudNode::_process(double delta)
 	d->drawIconOps(get_canvas_item()); // lane HUD-5
 	const uint64_t tb = Time::get_singleton()->get_ticks_usec();
 	d->drawSelectionDecals();          // lane UI-4
+	d->drawRadiusCursor();             // lane SPELL-4
 	const uint64_t tc = Time::get_singleton()->get_ticks_usec();
 	if (d->hud6)
 	{

@@ -1029,12 +1029,14 @@ GameWindow *WindowManager::componentWindow(const std::string &instancePath) cons
 std::string WindowManager::hoverPath() const
 {
 	// 0x0046E850 reads a path string from bfmeGo929E (0x008922A0, "copies a path string into the caller's buffer": the engine's
-	// current hover target).  Inference [S-173]: the hover target is the clip under the pointer (its button's parent clip when a
-	// button is current); retail turns "_levelN/a/b" into "<movie file name without '.'-suffix>/a/b".
+	// current hover target); retail turns "_levelN/a/b" into "<movie file name without '.'-suffix>/a/b".
+	// Lane HOVER-1 (TARGET FACT, AptPlayer::HandleOverButtons RW 0x624C68 and its keys: AptButtonTooltipMap.ini's "MainMenu/SoloPlayNav/Skirmish/bttn",
+	// the spell book's "Palantir/<clip>/Spell%d/"): the target is the hovered BUTTON itself, its own instance name last (empty for an unnamed button, so
+	// the path ends with '/'). INFERENCE [S-173]: with no button current, the clip under the pointer
 	const AptCharacterInst *target = nullptr;
 	if (AptButtonInst *b = m_apt->input().currentButton())
 	{
-		target = b->parent();
+		target = b;
 	}
 	if (!target)
 	{
@@ -1104,7 +1106,9 @@ void WindowManager::updateTooltip()
 	}
 	else if (name.back() != '/')
 	{
-		label = "TOOLTIP:" + name;
+		// RW 0x6235E2: the AptButtonTooltipMap name of the path, when it has one (lane HOVER-1)
+		auto alias = m_tooltipNames.find(name);
+		label = "TOOLTIP:" + (alias != m_tooltipNames.end() ? alias->second : name);
 	}
 	m_tooltipLabel = label;
 	m_services.setCursorTooltip(label);

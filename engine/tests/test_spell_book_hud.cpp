@@ -17,6 +17,7 @@
 #include "GameClient/ControlBarCommands.h"
 #include "GameClient/InGameHud.h"
 #include "GameLogic/Object/Object.h"
+#include "GameLogic/System/ShroudManager.h"
 #include "GameClient/GUI/AptScreens/AptPalantir.h"
 #include "GameClient/GUI/AptScreens/AptSpellStore.h"
 #include "Libraries/Source/Apt/AptButtonInst.h"
@@ -147,8 +148,23 @@ TEST_CASE("SPELL-2 retail: the retail InGameSpellBook and SpellStore.apt movies 
 		CHECK(p->pressSpellSlot(0));
 		if (b.hud->spellBar().targeting())
 		{
-			b.hud->mouseButton(HudInput::Button::Left, true, 512, 500, 0, 2000);
-			b.hud->mouseButton(HudInput::Button::Left, false, 512, 500, 0, 2050);
+			// lane SPELL-4: the click casts only where the power may be cast (RW 0x6A4260): the spot CLEAR of shroud (the map revealed) and, for Angmar's
+			// Blight (NEEDS_OBJECT_FILTER: an enemy economy building in its radius), at an enemy farm
+			b.rig.game->shroud().revealMapForPlayerPermanently(b.rig.local->getPlayerIndex());
+			Player *enemy = b.rig.game->players().findPlayerWithName("Player_2");
+			REQUIRE(enemy);
+			const ThingTemplate *farmT = s.world->things().findTemplate("GondorFarm");
+			REQUIRE(farmT);
+			Object *farm = b.rig.logic().newObject(farmT, enemy->getDefaultTeam(), ObjectStatusMaskType{});
+			REQUIRE(farm);
+			const Coord3D farmAt{ 800.0f, 600.0f, b.rig.logic().getGroundHeight(800.0f, 600.0f) };
+			farm->setPosition(&farmAt);
+			farm->friend_onBuildComplete();
+			b.frames(12); // a logic frame (5 a second) puts it into the partition
+			b.rig.lookAt(farmAt);
+			const ICoord2D px = b.rig.screenOf(farmAt);
+			b.hud->mouseButton(HudInput::Button::Left, true, px.x, px.y, 0, 2000);
+			b.hud->mouseButton(HudInput::Button::Left, false, px.x, px.y, 0, 2050);
 		}
 		CHECK_FALSE(b.hud->spellBar().targeting());
 		b.frames(20);

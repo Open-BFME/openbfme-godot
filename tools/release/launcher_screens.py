@@ -21,7 +21,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[2]
 LAUNCHER = REPO / "launcher"
 SCREENS = ("main", "news", "multiplayer", "mods", "games", "games-downloading", "settings", "display", "about", "update", "downloading",
-           "error", "glibc")
+           "error", "glibc", "first-run", "offline", "verifying", "paused", "update-launcher", "warning", "ask", "playing", "long", "picker")
 SIZES = ((1280, 720), (1280, 800))
 
 
@@ -30,6 +30,10 @@ def main() -> int:
     ap.add_argument("--out", required=True, type=Path)
     ap.add_argument("--home", default="/tmp/openbfme-demo", help="the neutral home folder the launcher sees")
     ap.add_argument("--screens", default=",".join(SCREENS))
+    ap.add_argument("--project", type=Path, default=LAUNCHER, help="the launcher project to run (a copy, for before / after shots)")
+    ap.add_argument("--sizes", default="", help="WxH,WxH: instead of 1280x720 and 1280x800")
+    ap.add_argument("--window", action="store_true",
+                    help="lay out as a window of that size under the project's stretch (--screenshot-window) instead of exactly WxH pixels")
     ap.add_argument("--releases", type=Path, help="a GitHub release list (JSON) for the notes cards")
     args = ap.parse_args()
     if not os.environ.get("DISPLAY") and not os.environ.get("WAYLAND_DISPLAY"):
@@ -47,12 +51,14 @@ def main() -> int:
     env = {k: v for k, v in os.environ.items() if k not in ("ROTWK_INSTALL", "BFME2_INSTALL", "OPENBFME_GAME_USER_DIR")}
     env.update(HOME=str(home), USER="player", LOGNAME="player", XDG_DATA_HOME=str(home / ".local/share"),
                XDG_CONFIG_HOME=str(home / ".config"), XDG_CACHE_HOME=str(home / ".cache"))
-    subprocess.run([godot, "--headless", "--path", str(LAUNCHER), "--import"], env=env, capture_output=True, timeout=300)
+    subprocess.run([godot, "--headless", "--path", str(args.project), "--import"], env=env, capture_output=True, timeout=300)
     failed = 0
+    sizes = [tuple(int(v) for v in x.split("x")) for x in args.sizes.split(",")] if args.sizes else SIZES
+    option = "--screenshot-window" if args.window else "--screenshot-size"
     for screen in args.screens.split(","):
-        for w, h in SIZES:
+        for w, h in sizes:
             out = (args.out / f"launcher-{screen}-{w}x{h}.png").resolve()
-            r = subprocess.run([godot, "--path", str(LAUNCHER), "--", f"--ui-demo={screen}", f"--screenshot-size={w}x{h}",
+            r = subprocess.run([godot, "--path", str(args.project), "--", f"--ui-demo={screen}", f"{option}={w}x{h}",
                                 f"--screenshot={out}"], env=env, capture_output=True, text=True, timeout=120, stdin=subprocess.DEVNULL)
             ok = r.returncode == 0 and out.is_file()
             failed += not ok

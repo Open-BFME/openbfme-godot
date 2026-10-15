@@ -267,7 +267,14 @@ bool PlayerHealSpecialPower::healObject(Object &victim)
 	victim.attemptHealing(amount, nullptr); // RW 0x690532 (source 0)
 	if (!m_data->m_healFX.empty())
 	{
-		++m_fx; // RW 0x4B1B5A: the FX list at the victim (client)
+		++m_fx;
+		// RW 0x4B1B5A: FXList::doFXObj(HealFX, victim) (lane SPELL-4: it was only counted; Heal's FX_SpellHealUnitHealBuff (the HealingBuff glow and the
+		// SpellHeal particles) and Rebuild's FX_SpellRebuild never played)
+		if (FXEventLog::isFXName(m_data->m_healFX))
+		{
+			GameLogic &logic = victim.logic();
+			logic.fxEvents().emit(FXEventLog::objectEvent(FXEvent::OBJECT_FX, "PlayerHealSpecialPower HealFX", logic.getFrame(), m_data->m_healFX, victim));
+		}
 	}
 	return true;
 }

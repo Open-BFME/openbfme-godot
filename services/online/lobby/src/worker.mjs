@@ -210,16 +210,20 @@ export class LobbyObject {
     // showed zero): a place is held from here until the request's response is built, i.e. while its body waits in the queue too
     this.reading.all += 1;
     if (isLog) this.reading.logs += 1;
+    let out;
     try {
       const body = await readBodyLimited(request, isLog ? this.lobby.maxLogBytes() : MAX_JSON_BYTES, this.bodyTimeoutMs);
       if (body.status) return refuse(body.status, body.code, body.error);
       const run = this.queue.then(() => this.handle(request, body.bytes));
       this.queue = run.catch(() => {});
-      return await run;
+      out = await run;
     } finally {
       this.reading.all -= 1;
       if (isLog) this.reading.logs -= 1;
     }
+    // ONLINE-5: a held poll (route's `deferred`) waits outside the queue and holds no body place (it has no body); the lobby bounds the held polls
+    if (out.deferred) out = await out.deferred;
+    return new Response(out.body, { status: out.status, headers: out.headers });
   }
   async handle(request, bytes) {
     const url = new URL(request.url);
@@ -233,14 +237,65 @@ export class LobbyObject {
       ip: request.headers.get('cf-connecting-ip') ?? '',
       bytes: async () => bytes,
     });
-    return new Response(out.body, { status: out.status, headers: out.headers });
+    return out;
   }
 }
 
+// ONLINECOUNT-1: GET /v1/stats without a token (the main menu's and the launcher's line) is answered from the data centre's Cache API for STATS_CACHE_S
+// seconds, so those requests do not reach the Durable Object (its own 100,000-a-day free allowance); they still count as Worker requests (the Worker runs
+// before any cache). A request with a token (the online menu's, which marks the player present) always goes to the object.
+// ONLINECOUNT-1 r2 (Sol: a cache hit skipped the limiter, 100 x 200 from one address): the order is admission -> cache -> the object (whose lobby limiter
+// is the second line). Admission is a token bucket per address kept per Worker isolate ( separate or recycled isolates and the eviction of old buckets reset it, so it is no aggregate cap and no protection for the Worker
+// request budget; it only stops one address hammering one isolate, and costs no Durable Object request). A refused request is a
+// 429 with Retry-After and is never cached.
+export const STATS_ADMIT_PER_MINUTE = 60;
+export const STATS_ADMIT_BURST = 20;
+export const MAX_ADMIT_ADDRESSES = 5000;
+
+export class StatsAdmission {
+  constructor(now = () => Date.now()) {
+    this.now = now;
+    this.buckets = new Map();
+  }
+  // true when the request may go on
+  admit(address) {
+    const t = this.now();
+    const b = this.buckets.get(address) ?? { tokens: STATS_ADMIT_BURST, at: t };
+    b.tokens = Math.min(STATS_ADMIT_BURST, b.tokens + ((t - b.at) * STATS_ADMIT_PER_MINUTE) / 60000);
+    b.at = t;
+    const ok = b.tokens >= 1;
+    if (ok) b.tokens -= 1;
+    this.buckets.delete(address); // re-inserted last: the map's order is the least recently used first
+    this.buckets.set(address, b);
+    while (this.buckets.size > MAX_ADMIT_ADDRESSES) this.buckets.delete(this.buckets.keys().next().value);
+    return ok;
+  }
+}
+export const statsAdmission = new StatsAdmission();
+
+export async function statsFromCache(request, ctx, cache, ask) {
+  const url = new URL(request.url);
+  const key = new Request(`${url.origin}/v1/stats`, { method: 'GET' });
+  const hit = await cache.match(key);
+  if (hit) return hit;
+  const fresh = await ask();
+  if (fresh.status === 200 && ctx) ctx.waitUntil(cache.put(key, fresh.clone()));
+  return fresh;
+}
+
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     // one lobby object for now (one region); docs/ONLINE.md: one per region later
     const stub = env.LOBBY.get(env.LOBBY.idFromName('lobby'));
+    const url = new URL(request.url);
+    if (request.method === 'GET' && url.pathname === '/v1/stats') {
+      // every stats request is admitted first, signed or not, cached or not
+      if (!statsAdmission.admit(request.headers.get('cf-connecting-ip') ?? '')) {
+        return new Response(JSON.stringify({ v: 1, error: 'rate_limited', message: 'too many requests: wait a moment' }),
+          { status: 429, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', 'retry-after': '10' } });
+      }
+      if (!request.headers.has('authorization') && typeof caches !== 'undefined') return statsFromCache(request, ctx, caches.default, () => stub.fetch(request));
+    }
     return stub.fetch(request);
   },
 };

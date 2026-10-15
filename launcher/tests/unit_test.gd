@@ -23,6 +23,7 @@ const InstanceLock := preload("res://scripts/core/instance_lock.gd")
 const Updater := preload("res://scripts/core/updater.gd")
 const BuildInfo := preload("res://scripts/core/build_info.gd")
 const UrlHandler := preload("res://scripts/core/url_handler.gd")
+const OnlineCount := preload("res://scripts/core/online_count.gd")
 
 var _checks := 0
 var _failed := 0
@@ -87,7 +88,33 @@ func _init() -> void:
 			var want := 0 if i == j else (-1 if i < j else 1)
 			_check(Semver.compare(alpha[i], alpha[j]) == want, "semver %s vs %s" % [alpha[i], alpha[j]])
 	_check(Semver.channel_of("v0.4.0-alpha.1") == "preview", "an alpha build is in the pre-release channel (id preview)")
-	_check(Semver.channel_name("preview") == "Alpha" and Semver.channel_name("stable") == "Stable", "the pre-release channel is shown as Alpha")
+	# lane VERSION-1: the plain releases ("Alpha 0.4.5") are the stable channel, shown as "Alpha"; the pre-release channel is "Preview"
+	_check(Semver.channel_name("stable") == "Alpha" and Semver.channel_name("preview") == "Preview", "stable is shown as Alpha, preview as Preview")
+	var plain := ["v0.4.0-alpha.1", "v0.4.0-alpha.4", "v0.4.0-alpha.10", "v0.4.0", "v0.4.5", "v0.4.6", "v0.4.10", "v0.5.0", "v1.0.0"]
+	for i in plain.size():
+		for j in plain.size():
+			var want := 0 if i == j else (-1 if i < j else 1)
+			_check(Semver.compare(plain[i], plain[j]) == want, "semver %s vs %s" % [plain[i], plain[j]])
+	_check(Semver.compare("v0.4.5", "v0.3.0-preview.6") > 0 and Semver.channel_of("v0.4.5") == "stable", "v0.4.5 is a stable release above every preview")
+	for d in [["v0.4.5", "Alpha 0.4.5"], ["v0.5.0", "Alpha 0.5.0"], ["v0.4.0-alpha.3", "v0.4.0 Alpha 3"], ["v0.3.0-preview.6", "v0.3.0-preview.6"],
+			["v0.0.0-dev", "v0.0.0-dev"], ["0af8b6b84c-dirty", "0af8b6b84c-dirty"], ["", ""]]:
+		_check(Semver.display(d[0]) == d[1], "display %s: %s, not %s" % [d[0], d[1], Semver.display(d[0])])
+	# a launcher installed from v0.4.5 starts on stable and offers every later plain release, a full release (not a pre-release)
+	var rels45 := [{"tag": "v0.4.5", "prerelease": false}, {"tag": "v0.4.6", "prerelease": false}, {"tag": "v0.5.0", "prerelease": false},
+		{"tag": "v0.4.0-alpha.4", "prerelease": true}, {"tag": "v0.3.0-preview.6", "prerelease": true}]
+	rels45.sort_custom(func(a, b): return Semver.compare(a.tag, b.tag) > 0)
+	var bi45 = BuildInfo.new()
+	bi45.version = "v0.4.5"
+	var u45 = Updater.new(bi45)
+	u45.state = ConfigFile.new()
+	var offered45: Array = u45.in_channel(rels45, u45.channel())
+	_check(u45.channel() == "stable" and offered45.map(func(r): return r.tag) == ["v0.5.0", "v0.4.6", "v0.4.5"],
+		"a v0.4.5 launcher on its default channel offers the plain releases: %s" % [offered45.map(func(r): return r.tag)])
+	var bia4 = BuildInfo.new()
+	bia4.version = "v0.4.0-alpha.4"
+	var ua4 = Updater.new(bia4)
+	ua4.state = ConfigFile.new()
+	_check(ua4.channel() == "preview" and ua4.in_channel(rels45, ua4.channel())[0].tag == "v0.5.0", "an alpha.4 launcher offers the plain releases")
 	# a launcher on the pre-release channel at v0.3.0-preview.4 offers v0.4.0-alpha.1 (its release list keeps the alpha tag, the channel
 	# filter keeps it, and it sorts first)
 	var rels := [{"tag": "v0.3.0-preview.4", "prerelease": true}, {"tag": "v0.4.0-alpha.1", "prerelease": true}, {"tag": "v0.2.0", "prerelease": false}]
@@ -143,6 +170,39 @@ func _init() -> void:
 	pol.test_origin = "http://127.0.0.1:8123"
 	_check(pol.check("http://127.0.0.1:8123/dl/x") == "", "test origin allowed")
 	_check(pol.check("http://localhost:8123/dl/x") != "" and pol.check("http://127.0.0.1:8124/dl/x") != "", "only the one test origin")
+	# lane ONLINECOUNT-1: the lobby's host, for its stats path alone
+	var lp := NetPolicy.new()
+	_check(lp.check("https://play.openbfme.com/v1/stats") != "", "the lobby is refused before one is set")
+	_check(lp.set_lobby("https://play.openbfme.com") == "" and lp.set_lobby("https://play.openbfme.com/") == "", "the lobby is a plain https host")
+	_check(lp.check("https://play.openbfme.com/v1/stats") == "", "the lobby's stats path is allowed")
+	for bad in ["https://play.openbfme.com/v1/games", "https://play.openbfme.com/v1/stats?x=1", "https://play.openbfme.com/v1/stats/", "https://play.openbfme.com/",
+			"https://play.openbfme.com/v1/auth/guest", "https://play.openbfme.com:8443/v1/stats", "http://play.openbfme.com/v1/stats", "https://evil.com/v1/stats",
+			"https://play.openbfme.com.evil.com/v1/stats", "https://u@play.openbfme.com/v1/stats"]:
+		_check(lp.check(bad) != "", "policy refuses %s for the lobby" % bad)
+	for bad in ["http://lobby.example.org", "https://lobby.example.org:8443", "https://lobby.example.org/x", "https://u@lobby.example.org", "ftp://x", "", "https://"]:
+		_check(lp.set_lobby(bad) != "" and lp.lobby_host == "", "a lobby of %s is refused and leaves none set" % bad)
+	_check(NetPolicy.new().check("https://api.github.com/repos/a/b/releases") == "", "GitHub stays allowed beside a lobby")
+	# the player count's answer: exactly version 1 with whole counts
+	for t in [[200, '{"v":1,"players":1,"games_open":0,"games_running":0}', "1 player online"], [200, '{"v":1,"players":0,"games_open":3,"games_running":2,"as_of":5}', "0 players online"],
+			[200, '{"v":1,"players":1234,"games_open":0,"games_running":0}', "1234 players online"]]:
+		var good := OnlineCount.parse(t[0], t[1].to_utf8_buffer())
+		_check(good.ok and good.text == t[2], "the count of %s is '%s', not '%s'" % [t[1], t[2], good.text])
+	for t in [[404, '{"v":1,"players":1,"games_open":0,"games_running":0}'], [200, ''], [200, 'null'], [200, '[]'], [200, '{"v":2,"players":1,"games_open":0,"games_running":0}'],
+			[200, '{"players":1,"games_open":0,"games_running":0}'], [200, '{"v":1,"players":-1,"games_open":0,"games_running":0}'],
+			[200, '{"v":1,"players":1.5,"games_open":0,"games_running":0}'], [200, '{"v":1,"players":"1","games_open":0,"games_running":0}'],
+			[200, '{"v":1,"players":1e9,"games_open":0,"games_running":0}'], [200, '{"v":1,"players":1,"games_open":0}'], [200, '{"v":1,"players":null,"games_open":0,"games_running":0}']]:
+		var r := OnlineCount.parse(t[0], t[1].to_utf8_buffer())
+		_check(not r.ok and r.text == "", "the answer %d %s shows nothing" % [t[0], t[1].left(40)])
+	# r2 (Sol): the count never outlives its renewal
+	_check(OnlineCount.chip_text("3 players online", 0.0) == "3 players online" and OnlineCount.chip_text("3 players online", OnlineCount.EXPIRY_SECONDS - 1.0) == "3 players online",
+		"a count is shown until it expires")
+	_check(OnlineCount.chip_text("3 players online", OnlineCount.EXPIRY_SECONDS) == "" and OnlineCount.chip_text("3 players online", 1e9) == "" and OnlineCount.chip_text("x", -1.0) == "",
+		"an expired (or future-dated) count is gone")
+	_check(OnlineCount.stale("", 0.0) and OnlineCount.stale("1 player online", OnlineCount.REFRESH_SECONDS) and not OnlineCount.stale("1 player online", 10.0),
+		"the Play screen asks again for no number or an old one only")
+	_check(OnlineCount.in_view(false, false, true) and OnlineCount.in_view(true, true, false), "a focused window, or a headless run, is in view")
+	_check(not OnlineCount.in_view(false, true, true) and not OnlineCount.in_view(false, false, false) and not OnlineCount.in_view(false, true, false),
+		"a minimized or unfocused window asks nothing")
 	# archive member names
 	var top := "openbfme-v1.0.0-linux-x64"
 	for ok in [top + "/", top + "/OpenBFME.x86_64", top + "/sub/file.txt"]:
@@ -329,7 +389,7 @@ func _ui_dialogs() -> void:
 	_check(ReleaseNotes.items("no structure at all", "What's new").is_empty() and ReleaseNotes.parse("").sections.is_empty(), "notes: none")
 	_check(ReleaseNotes.parse("[b]x[/b]\n## What's new\n- <img src=x> [url]y[/url]").sections[0].items[0] == "<img src=x> [url]y[/url]", "notes: text stays text")
 	_check(ReleaseNotes.date_text("2026-10-10T18:03:11Z") == "10 October 2026" and ReleaseNotes.date_text("") == "" and ReleaseNotes.date_text("soon") == "", "notes: dates")
-	_check(ReleaseNotes.title_of("v0.3.0-preview.2") == "Preview 2 of 0.3.0" and ReleaseNotes.title_of("v1.0.0") == "Version 1.0.0", "notes: titles")
+	_check(ReleaseNotes.title_of("v0.3.0-preview.2") == "Preview 2 of 0.3.0" and ReleaseNotes.title_of("v1.0.0") == "Alpha 1.0.0" and ReleaseNotes.title_of("v0.4.5") == "Alpha 0.4.5" and ReleaseNotes.title_of("v0.4.0-alpha.2") == "v0.4.0 Alpha 2", "notes: titles")
 	# NOTES-1: the studio-style patch notes (bold area lines, a title heading, a table, both generations of section titles)
 	var studio := "# OpenBFME v0.4.0-alpha.5 patch notes\n\nOctober 13, 2026 · alpha build for testers\n\nInstall it.\n\n## Which file to download\n\n| File | What |\n|---|---|\n" + \
 		"| **[a.zip](https://x.example/a.zip)** | **Launcher.** |\n\n## Added\n\n**Online**\n- Server browser.\n- Rejoin.\n\n**Saves**\n- Games can be saved.\n\n" + \

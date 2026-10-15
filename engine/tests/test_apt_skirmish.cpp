@@ -1569,6 +1569,11 @@ TEST_CASE("fb7 retail lobby input: a click on a start spot gives it to the playe
 	CHECK(info.slots[1].startPos == -1);
 	CHECK(spots[0]->winGetText().empty());
 	CHECK(spots[0]->winGetInstanceData()->getTooltipText() == u"Start position");
+	// lane ONLINE-5: the skirmish panel has no Ready column (no flag 0x20): every Ready box of the movie was told "_none" (RW 0x84211D)
+	for (int slot = 0; slot < MAX_SLOTS; ++slot)
+	{
+		CHECK_MESSAGE(fx.screen->readyIcon(slot) == "_none", "slot " << slot);
+	}
 
 	// a free spot: the first selectable slot (the player) takes it, the spot shows its number
 	clickWindowCentre(fx, spots[0]);

@@ -50,6 +50,7 @@ class GameLogic;
 class GameTextSource;
 class Object;
 class Player;
+class ThingTemplate;
 
 struct HelpBoxFont
 {
@@ -98,8 +99,19 @@ public:
 	};
 	// RW 0x807A81: the texts of `button` for the local player and the selection's object (null without one)
 	// `player` is the selection's controlling player (the local player without a selection), `localPlayer` the local one (RW 0x6A8839 / 0xDE4928 + 0x10)
+	// `selected`: every selected object (TheInGameUI's list, RW 0x8081C0's walk); null counts as the one `selection`
 	static Text compose(const ControlBarButton &button, const GameTextSource *text, GameLogic &logic, Player *player, Player *localPlayer, Object *selection,
-	                    const std::string &faction);
+	                    const std::string &faction, const std::vector<ObjectID> *selected = nullptr);
+	// lane HOVER-1: a ThingTemplate label row (parseLabel RW 0x73D3E0) as written ("" unset) and its text (fetchOrMissing; "" for an unset row)
+	static std::string templateLabel(const ThingTemplate &tt, const std::string &field);
+	static UnicodeString templateText(const ThingTemplate &tt, const std::string &field, const GameTextSource *text);
+
+	// lane HOVER-1: InGameSimpleHelp (RW 0x9402E7, BFME2 decomp InGameSimpleHelp.cpp / InGameCommandButtonHelpDisplayStrings.cpp, tier A): a title without
+	// its '&' markers (RW 0x94002B's strip, no key) in HelpBoxNameFont and a text in HelpBoxDescriptionFont, both wrapped at the box's width
+	// (RW 0x940159: the height is the sum of the non-empty strings' heights), drawn centred one under the other (RW 0x93FF0A, BFME2 decomp
+	// Rva005394F0DrawLines.cpp: x = left + (width - text width) * 0.5, floor(v + 0.5))
+	static CommandButtonHelp simple(const UnicodeString &title, const UnicodeString &text, const std::vector<std::string> &unported = {});
+	bool isSimple() const { return m_simple; }
 
 	CommandButtonHelp() = default;
 	// RW 0x974EEB (Impl's constructor): the name's '&' markers go, the shortcut key is kept; the icons are looked up
@@ -139,4 +151,5 @@ private:
 	int m_width = 0;
 	Measured m_nameS, m_titleS, m_descriptionS, m_shortcutS, m_costS;
 	std::vector<std::string> m_unported;
+	bool m_simple = false; ///< lane HOVER-1: InGameSimpleHelp
 };

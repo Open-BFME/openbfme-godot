@@ -122,3 +122,20 @@ TEST_CASE("release1: the version line")
 	CHECK(line == std::string("OpenBFME ") + BuildVersion::kVersion + " (" + BuildVersion::kBuildDate + ")");
 	MESSAGE("version line: " << line << ", commit " << std::string(BuildVersion::kCommit));
 }
+
+TEST_CASE("version1: the version players read")
+{
+	using BuildVersion::displayVersion;
+	CHECK(displayVersion("v0.4.5") == "Alpha 0.4.5");
+	CHECK(displayVersion("v0.5.0") == "Alpha 0.5.0");
+	CHECK(displayVersion("v10.20.300") == "Alpha 10.20.300");
+	CHECK(displayVersion("v0.4.0-alpha.3") == "v0.4.0 Alpha 3");
+	CHECK(displayVersion("v0.4.0-alpha.12") == "v0.4.0 Alpha 12");
+	// as they are: previews, development builds, and anything outside the launcher's release grammar
+	for (const char *same : {"v0.3.0-preview.6", "v0.4.5-3-g0123456789", "0af8b6b84c-dirty", "untracked", "", "v", "v0.4", "v0.4.", "v0.4.5.",
+							 "v0.04.5", "v0.4.5-alpha.01", "v0.4.5-alpha.", "v0.4.5-alpha.1x", "v0.4.5-beta.1", "V0.4.5", "v0.4.5 ",
+							 "v1234567890.0.0", "v0.4.-1"})
+		CHECK_MESSAGE(displayVersion(same) == same, same);
+	const std::string line = BuildVersion::displayLine();
+	CHECK(line == std::string("OpenBFME ") + displayVersion(BuildVersion::kVersion) + " (" + BuildVersion::kBuildDate + ")");
+}

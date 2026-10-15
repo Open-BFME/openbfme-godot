@@ -7,6 +7,7 @@
 #include "Common/StateHash.h"
 #include "Common/Thing/ModuleFactory.h"
 #include "GameLogic/AttributeModifiers.h"
+#include "GameLogic/FXEvents.h"
 #include "GameLogic/GameLogic.h"
 #include "GameLogic/Object/Object.h"
 #include "GameLogic/SimMath.h"
@@ -34,8 +35,7 @@ std::vector<std::string> AttributeModifierPool::stopLines()
 	const Stats &s = stats();
 	return { "[S-633] AttributeModifierPoolUpdate (RW 0x8057B0): add / sum / product run; not ported: the expiry update that removes entries (HEALTH / "
 		"ClearModelCondition reversal, EndFX, category counts; the queries skip an expired entry themselves) with " + std::to_string(s.expiringAdds) +
-		" expiring adds, the delayed Upgrade grant (" + std::to_string(s.delayedUpgrades) + " not granted), the client FX (" + std::to_string(s.fxNotShown) +
-		" not shown) and the xfer (lane DECOMP-1: a SHROUD_CLEARING list marks the shroud record dirty, RW 0x68C213; AttributeModifierNugget's anti-category "
+		" expiring adds, the delayed Upgrade grant (" + std::to_string(s.delayedUpgrades) + " not granted), the expiry's EndFX and the xfer (lane DECOMP-1: a SHROUD_CLEARING list marks the shroud record dirty, RW 0x68C213; AttributeModifierNugget's anti-category "
 		"disabling RW 0x804FCC runs)" };
 }
 
@@ -126,6 +126,36 @@ void AttributeModifierPool::removeByName(const std::string &listName)
 	}
 }
 
+namespace
+{
+// lane SPELL-4: RW 0x804E32 (FX) / 0x804E8A (EndFX): with MultiLevelFX and the object's pool, the entry (category count - 1) of FX / FX2 / FX3, else FX.
+// INFERENCE (S-633): a count above 3 takes FX3 (the binary's index there is a reused stack slot)
+const std::string &pickModifierFX(const std::string (&fx)[3], bool multiLevel, int categoryCount)
+{
+	if (multiLevel)
+	{
+		int i = categoryCount - 1;
+		if (i > 2)
+		{
+			i = 2;
+		}
+		if (i >= 0)
+		{
+			return fx[i];
+		}
+	}
+	return fx[0];
+}
+// RW 0x4B1B5A (FXList::doFXObj(fx, object, null)): a client effect of the logic's FX log (not state)
+void emitModifierFX(Object &obj, const std::string &fx)
+{
+	if (FXEventLog::isFXName(fx))
+	{
+		obj.logic().fxEvents().emit(FXEventLog::objectEvent(FXEvent::OBJECT_FX, "AttributeModifier FX", obj.logic().getFrame(), fx, obj));
+	}
+}
+} // namespace
+
 bool AttributeModifierPool::add(const std::string &listName, int duration)
 {
 	if (!TheAttributeModifierStore)
@@ -180,7 +210,10 @@ bool AttributeModifierPool::add(const std::string &listName, int duration)
 			{
 				m_nextWake = expire;
 			}
-			++stats().fxNotShown;
+			// RW 0x805C8E .. 0x805CB9 (lane SPELL-4): the refresh plays the list's FX while the entry runs, its EndFX when the expiry is already past
+			const int count = categoryCount(cat);
+			emitModifierFX(obj, frame < e.expire ? pickModifierFX(list->m_fx, list->m_multiLevelFX, count)
+												  : pickModifierFX(list->m_endFx, list->m_multiLevelFX, count));
 			return true;
 		}
 	}
@@ -207,7 +240,13 @@ bool AttributeModifierPool::add(const std::string &listName, int duration)
 	{
 		++stats().expiringAdds;
 	}
-	++stats().fxNotShown;
+	// RW 0x805D00 .. 0x805D27 (lane SPELL-4): a new entry that has not expired plays the list's FX on the object (before the category count grows).
+	// INFERENCE (S-633): RW 0x70E013's pointer (+ 0x84) is taken as the object's drawable; the client skips an object without one (LiveFX), so the logic
+	// emits it for every object
+	if (frame < expire)
+	{
+		emitModifierFX(obj, pickModifierFX(list->m_fx, list->m_multiLevelFX, categoryCount(cat)));
+	}
 	// HEALTH (RW 0x805D3A): the pool's HEALTH_MULT product (before this entry) scales it
 	float health = 0.0f;
 	if (list->value(ATTRIBUTE_HEALTH, nullptr, health) && health > 0.0f)

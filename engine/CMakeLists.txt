@@ -131,6 +131,7 @@ include(cmake/Mp3.cmake)        # MP-3: the network test harness (client only; O
 include(cmake/Online2.cmake)    # ONLINE-2: the online relay, the START from the lobby service, the relay log -> replay (client only; openbfme_online2_targets)
 include(cmake/Online4.cmake)    # ONLINE-4: the online screens on the lobby service (client only; openbfme_online4_targets)
 include(cmake/Online3.cmake)    # ONLINE-3: hold, rejoin, the multiplayer pause (appends to OPENBFME_SIM_SOURCES; openbfme_online3_targets)
+include(cmake/MpDrop1.cmake)    # MP-DROP-1: a dropped player never freezes an online game (openbfme_mpdrop1_targets)
 include(cmake/Script1.cmake)    # SCRIPT-1: the map script engine (appends to OPENBFME_SIM_SOURCES; OPENBFME_SCRIPT1_TESTS)
 include(cmake/Camp1.cmake)      # CAMP-1: the campaigns (OPENBFME_CAMP1_SOURCES / OPENBFME_CAMP1_TESTS)
 include(cmake/Camp2.cmake)      # CAMP-2: the movies' VP6 picture (OPENBFME_CAMP2_SOURCES / _GODOT_SOURCES / _TESTS)
@@ -153,6 +154,7 @@ include(cmake/Qa2fix.cmake)     # QA2-FIX: a player's wall span through the HUD,
 include(cmake/Hud5.cmake)       # HUD-5: the owner's first Windows session (OPENBFME_HUD5_CLIENT_SOURCES / OPENBFME_HUD5_TESTS)
 include(cmake/Autocast1.cmake)  # AUTOCAST-1: the ability autocast toggle and glow (OPENBFME_AUTOCAST1_TESTS)
 include(cmake/Hud6.cmake)       # HUD-6: radial bubbles, side bar frame, help box (OPENBFME_HUD6_CLIENT_SOURCES / OPENBFME_HUD6_TESTS)
+include(cmake/Hover1.cmake)     # HOVER-1: every on-hover text (OPENBFME_HOVER1_CLIENT_SOURCES / OPENBFME_HOVER1_TESTS)
 include(cmake/Hud7.cmake)       # HUD-7: a tester's HUD items (OPENBFME_HUD7_TESTS)
 include(cmake/Exit1.cmake)      # EXIT-1: the horde member update, stale MOVING (appends to OPENBFME_SIM_SOURCES; OPENBFME_EXIT1_TESTS)
 include(cmake/Decomp2.cmake)    # DECOMP-2: stops closed with the BFME2 decomp map (OPENBFME_DECOMP2_TESTS)
@@ -181,6 +183,7 @@ include(cmake/Ship1.cmake)      # SHIP-1: ships and hover units (OPENBFME_SHIP1_
 include(cmake/RenderWait1.cmake) # RENDERWAIT-1: the render never waits on the logic worker (OPENBFME_RENDERWAIT1_TESTS)
 include(cmake/Backlog2.cmake)   # BACKLOG2: castle / camp / construction ports (appends to OPENBFME_SIM_SOURCES; OPENBFME_BACKLOG2_TESTS)
 include(cmake/Contrib1.cmake)   # CONTRIB-1: the known RotWK 2.01 layouts, Data1.big by its entries (OPENBFME_CONTRIB1_TESTS)
+include(cmake/Netlag1.cmake)    # NETLAG-1: the command delay of a multiplayer game (OPENBFME_NETLAG1_TESTS)
 add_library(openbfme_core STATIC
     ${OPENBFME_PLAY2_SOURCES}
     ${OPENBFME_APT_SOURCES}
@@ -218,6 +221,7 @@ add_library(openbfme_core STATIC
     ${OPENBFME_CAMP1_SOURCES}
     ${OPENBFME_HUD5_CLIENT_SOURCES}
     ${OPENBFME_HUD6_CLIENT_SOURCES}
+    ${OPENBFME_HOVER1_CLIENT_SOURCES}
     ${OPENBFME_CAH1_SOURCES}
     ${OPENBFME_RULES1_SOURCES}
     ${OPENBFME_CAMP2_SOURCES}
@@ -613,6 +617,7 @@ add_executable(openbfme_tests
     ${OPENBFME_HUD5_TESTS}
     ${OPENBFME_AUTOCAST1_TESTS}
     ${OPENBFME_HUD6_TESTS}
+    ${OPENBFME_HOVER1_TESTS}
     ${OPENBFME_HUD7_TESTS}
     ${OPENBFME_CAH1_TESTS}
     ${OPENBFME_RULES1_TESTS}
@@ -631,6 +636,7 @@ add_executable(openbfme_tests
     ${OPENBFME_RENDERWAIT1_TESTS}
     ${OPENBFME_BACKLOG2_TESTS}
     ${OPENBFME_CONTRIB1_TESTS}
+    ${OPENBFME_NETLAG1_TESTS}
     tests/test_main.cpp
     tests/test_big_archive.cpp
     tests/test_archive_order.cpp
@@ -733,6 +739,7 @@ openbfme_net_targets() # MP-1: the network host sources, the headless peer
 openbfme_online2_targets() # ONLINE-2: the relay sources and tests, the relay process (Linux)
 openbfme_online4_targets() # ONLINE-4: the online screens, the lobby client and their tests
 openbfme_online3_targets() # ONLINE-3: the rejoin, hold and pause tests
+openbfme_mpdrop1_targets() # MP-DROP-1: the disconnect path's drop tests
 # a separate process for the independent-process determinism test of lua_pushusertag userdata (tests/test_lua_runtime.cpp)
 add_executable(openbfme_lua_probe tests/lua_userdata_probe.cpp)
 target_link_libraries(openbfme_lua_probe PRIVATE openbfme_lua)

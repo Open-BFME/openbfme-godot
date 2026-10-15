@@ -161,10 +161,11 @@ Not reproduced by `package.sh`, recorded instead:
 5. Keep `known_issues.json` current: a stop that is resolved and removed from
    `STOPS.md` makes the README generator fail until the item is updated. Every item has an `area` of the patch notes (`AREAS`).
 
-Publishing (Discord, GitHub releases) needs the owner's OK, except pre-releases: the owner gave a standing approval
+Publishing (Discord, GitHub releases) needs the owner's OK, except the automatic releases: the owner gave a standing approval
 (2026-10-09) to publish `v<major>.<minor>.<patch>-preview.<n>` releases automatically, without asking each time (see "Automatic
-preview releases" below), and on 2026-10-10 renamed the next builds alpha builds (`v0.4.0-alpha.<n>`, "The alpha builds" below), which
-the automatic releases now publish. A stable (non-pre-release) release still needs the owner.
+preview releases" below), on 2026-10-10 renamed the next builds alpha builds (`v0.4.0-alpha.<n>`, "The alpha builds" below), and on
+2026-10-14 asked for plain numbers (`v0.4.5`, "OpenBFME Alpha 0.4.5", "Plain version numbers" below), which the automatic releases now
+publish. A v1.0.0 or later release still needs the owner.
 
 ## The launcher (LAUNCH-1)
 
@@ -243,9 +244,10 @@ The repository is a build-time setting (`package.sh --repo`, default `Open-BFME/
    confirmation, or `--install=<v>`), and Play then starts the pick. The next new build replaces the
    pick.
 4. **Channels.** *Stable* offers non-prerelease releases. The pre-release channel offers all releases (non-draft,
-   release-version tags); its id is `preview` (state.cfg, `--channel=preview`, the manifests), and since RELNAME-1 the launcher shows
-   it as *Alpha* (`--channel=alpha` is accepted as the same channel). The id was kept so a player's remembered pick and every
-   launcher's default stay on it: a preview player gets the alpha builds with nothing to do. The two newest installed versions are kept, plus the user's pick.
+   release-version tags); its id is `preview` (state.cfg, `--channel=preview`, the manifests). Since VERSION-1 the launcher shows
+   stable as *Alpha* (the plain releases, "Alpha 0.4.5"; `--channel=alpha` is stable) and the pre-release channel as *Preview*
+   (RELNAME-1 had shown it as *Alpha*). The ids never changed, so a player's remembered pick and every launcher's default keep
+   working: both channels offer the plain releases. The two newest installed versions are kept, plus the user's pick.
    *Freeze warning:* when the newest manifest the launcher can get is signed with a date more than 60
    days ago, it shows a plain warning (an old list may be being served). It is not a block: a quiet
    project looks the same. The warning has its own line in the window. In round 2 it was folded into
@@ -308,6 +310,11 @@ The repository is a build-time setting (`package.sh --repo`, default `Open-BFME/
    - `tools/release/net_guard.py` allows `HTTPClient` only in `http_fetch.gd`, and `OS.create_process`
      only for the game and the self-update. `test_launcher_tools.py` checks that the policy runs before
      every connection.
+   - Lane ONLINECOUNT-1: with "Show how many players are online" on (the default), the lobby's host (`https://play.openbfme.com`,
+     or the one `--lobby=` remembered) is allowed for ONE path, `GET /v1/stats` (`NetPolicy.set_lobby`). It answers three counts
+     (players online, open games, running games) and nothing else: no sign-in, no token, no cookie, no name. The launcher asks when it opens
+     and every 5 minutes while the Play screen is in view, on a thread of its own. Off (`state.cfg`: `[launcher] show_online_count=false`,
+     or `--online-count=off`) it never contacts the lobby. The game's menus read the same file (`godot/scripts/online_stats.gd`).
    - Lane AIO-1 (`docs/AIO.md`): only while the player's opt-in download of
      the game files runs, `bfmeladder.com` and `workshop-files.bfmeladder.com` (HTTPS, no port) are
      allowed as well (`NetPolicy.extra_hosts`). The requests to them are the file lists of the two
@@ -345,8 +352,9 @@ releases"):
 5. `tools/release/publish_release.sh <dir>` is a dry run. It checks the manifest against the archives,
    the signature against `launcher/release_key.pub`, the tag and the checksum file, then prints the
    commands it would run (a draft through the API, the uploads, the read-back, publishing; pre-release for preview). `--execute` runs
-   them after the tag is typed again; `--confirm-tag <tag>` replaces the prompt for a preview release without a terminal and must
-   equal the manifest's version (see "Automatic preview releases").
+   them after the tag is typed again; `--confirm-tag <tag>` replaces the prompt without a terminal for a pre-release or a plain
+   alpha-stage release (v0.4.5 to below v1.0.0, `autorelease.py auto-publish`) and must equal the manifest's version (see "Automatic
+   preview releases").
 
 **Tests.**
 - `tools/release/test_launcher.py` runs the launcher's command line (`--update`, `--install=`,
@@ -459,6 +467,26 @@ steps natively on Windows and under Wine (`onezip_windows_test.py`, "headless se
   newer release installed in the background, the next start running the newer version, `--no-update-check`.
 - `tools/release/windows_player_walk.sh <tag>` after a release: a new Windows player's first start from the one zip.
 
+### Plain version numbers (VERSION-1)
+
+The owner (2026-10-14): "Instead of like alpha 0.3.x 1 preview, can we just do alpha 0.3.x number ... Just make a major version number
+when you get a huge new feature." The release after v0.4.0-alpha.4 is **v0.4.5**, shown as "OpenBFME Alpha 0.4.5"; each release takes
+the next last number (v0.4.6, v0.4.7, ...), and when the owner calls a feature huge the middle number goes up (`autorelease.sh
+--minor`: v0.5.0). SemVer orders every v0.4.0-alpha.<n> below v0.4.5, and v0.4.5 above every v0.3.0-preview.<n>.
+- **Full releases.** A plain tag is on the launchers' stable channel (`channel_of`), and every launcher refuses a manifest whose channel
+  does not match the release's pre-release flag, so a plain release is published as a full GitHub release (the "Latest release").
+  Every launcher offers it: the stable channel shows full releases only, the pre-release channel shows all.
+- **No bridge.** The launchers up to v0.3.0-preview.4 read plain tags, and a plain release is the newest entry of the page they read,
+  so they install it and take its launcher directly (format 2, with the launcher archives, as long as ONEZIP-1's legacy archives are
+  published). A `v0.3.0-preview.<n>` bridge would sort below every plain release, so none is made any more; the bridge rule below
+  only guards an alpha build resumed from an intent opened before VERSION-1. An intent opened after a plain tag must be plain.
+- **What players see.** The release title and the notes' first line ("OpenBFME Alpha 0.4.5 patch notes"), the launcher's version
+  chip, buttons, Settings and notes titles (`Semver.display`), the game's corner text and first-run screen
+  (`BuildVersion::displayLine`), README_TESTERS.txt's first line. Logs, `VERSION` and the manifests keep the tag (`v0.4.5`).
+- **Evidence.** `tools/release/test_version1_published.py` runs each published Linux launcher (v0.3.0-preview.1 to .4, .6,
+  v0.4.0-alpha.1 to .4; patched only to trust the test key and the local stand-in) with no channel option against today's page plus
+  v0.4.5: each installs v0.4.5, swaps itself for the v0.4.5 launcher, which then installs v0.4.6 and v0.5.0 on its default channel.
+
 ### The alpha builds (RELNAME-1)
 
 The owner (2026-10-10): "instead of preview, make it say alpha build on the next one." The builds after v0.3.0-preview.4 are
@@ -550,10 +578,10 @@ ref, so a tag or branch named like the abbreviation cannot stand in for it.
    It is then one commit on top of `main`, pushed as `sync/<date>-<sha>`, a PR titled `Sync the rebuild: <date> (<summary>)`, merged
    with a merge commit; then the branch is deleted. A merge whose answer was lost is read back. The merge commit must have exactly the
    audited tree. If `main` already has it, there is no PR and `main` is released as it is.
-3. **Version and tag.** `v0.4.0-alpha.<n>`, n = 1 + the highest `v0.4.0-alpha.<n>` tag on origin (the launcher's grammar; other
-   tags are ignored), and it must be above every release tag on origin in the launcher's order, or the run stops (RELNAME-1; until
-   v0.3.0-preview.4 it was `v0.3.0-preview.<n>`). When the old launchers' page has no verified bridge with room to spare, the
-   release is the next bridge `v0.3.0-preview.<n>` instead ("The alpha builds"). The release is named "OpenBFME v0.4.0 Alpha <n>" (`autorelease.py title`). An annotated tag on the merged public commit, pushed (a push whose answer was lost is checked on the remote).
+3. **Version and tag.** The next plain number (VERSION-1, "Plain version numbers"): v0.4.5 after the alpha builds, then the highest
+   plain tag on origin with its last number + 1 (`--minor`: the middle number + 1); it must be above every release tag on origin in
+   the launcher's order, or the run stops. Until v0.4.0-alpha.4 it was `v0.4.0-alpha.<n>` with bridges (RELNAME-1), before that
+   `v0.3.0-preview.<n>`. The release is named "OpenBFME Alpha 0.4.5" (`autorelease.py title`). An annotated tag on the merged public commit, pushed (a push whose answer was lost is checked on the remote).
    A commit carries one release tag at most: a second one would make `git describe`, the build's version, pick either. A failed run
    leaves its pushed tag on origin with no release, and the tag cannot be deleted: the repository's ruleset forbids deleting tags
    (GH013). It does not need to be: the run's release intent stays open, and the next real run (for the same sha or a later one)

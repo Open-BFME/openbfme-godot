@@ -863,13 +863,10 @@ func _run_scenario() -> void:
 			# recharge timers; SpellStore.apt is opened as the Palantir's spell store button does (OnBttnSpellStore), the harness adds purchase points
 			# (debug_add_science_points: a viewer shortcut for the ranks a game earns), clicks every _active button tier by tier (OnBttnSpell: pending),
 			# closes the store (the purchases are sent) and opens it again (purchased); then each slot of the cast bar is pressed as the movie's
-			# OnAptInGameSpellBookButtonPressed does: a NEED_TARGET_POS power shows the radius ring and the ground click casts it.
+			# OnAptInGameSpellBookButtonPressed does: a NEED_TARGET_POS power shows its radius cursor (lane SPELL-4: the HUD's decal) and the ground click casts it.
 			# Saves <prefix>-palantir-empty / -store-start / -store-pending / -store-purchased / -palantir-book / -targeting / -<power> / -bar.
 			if _shot_prefix == "proj1":
 				_shot_prefix = "spell2"
-			var ring = load("res://scripts/spell_target_ring.gd").new()
-			_root.add_child(ring)
-			ring.setup(_hud, _world)
 			var at := _focus + Vector2(340, 260)
 			_cam_target = at
 			_cam_height = 420.0
@@ -928,7 +925,6 @@ func _run_scenario() -> void:
 				_spell_text = "SPELL-2: spell book slot %d %s" % [k + 1, power if not power.is_empty() else "(no target)"]
 				if sb.targeting:
 					var px: Vector2 = _hud.world_to_pixel(spot)
-					ring.mouse = px
 					_hud.inject_mouse_move(px)
 					await _frames(8)
 					if not targeted:

@@ -6,8 +6,10 @@
 #
 # A DRY RUN by default: it checks everything and prints the commands it would run. Only --execute runs them, and only after the owner's OK
 # (publishing needs it, docs/RELEASE.md) and typing the tag again at the prompt. --confirm-tag TAG replaces the prompt for a run without a
-# terminal (tools/release/autorelease.sh, lane AUTOREL-1), for preview tags only (the owner's standing approval covers v..-preview.<n>; a
-# stable release is always confirmed at the prompt): TAG must equal the manifest's version, or nothing is published; every other check stays.
+# terminal (tools/release/autorelease.sh, lane AUTOREL-1), for pre-release tags and (lane VERSION-1, owner 2026-10-14: the releases are
+# plain numbers now, "Alpha 0.4.5") the plain releases of the alpha stage, v0.4.5 up to below v1.0.0 (autorelease.py auto-publish); any
+# other stable release (v1.0.0 and later) is always confirmed at the prompt: TAG must equal the manifest's version, or nothing is
+# published; every other check stays.
 # --execute (AUTOREL-1 r2: never `gh release create` with assets, whose failure path deletes the release it presumes a draft, even one
 # whose publication succeeded with a lost answer):
 #   1. the tag on GitHub must be the manifest's commit, and no release (draft or not) may exist for it;
@@ -58,7 +60,8 @@ REPO_IN=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["repo"
 CHANNEL=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["channel"])' "$DIR/manifest.json")
 COMMIT=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["commit"])' "$DIR/manifest.json")
 [ -z "$CONFIRM" ] || [ "$CONFIRM" = "$VERSION" ] || fail "--confirm-tag $CONFIRM is not the manifest's version $VERSION"
-[ -z "$CONFIRM" ] || [ "$CHANNEL" = preview ] || fail "--confirm-tag is for preview releases only: $VERSION is a stable release, confirm it at the prompt (the owner's OK)"
+[ -z "$CONFIRM" ] || [ "$CHANNEL" = preview ] || python3 "$REPO/tools/release/autorelease.py" auto-publish "$VERSION" \
+  || fail "--confirm-tag is for pre-releases and the alpha-stage releases (v0.4.5 to below v1.0.0) only: $VERSION is a stable release, confirm it at the prompt (the owner's OK)"
 [ "$REPO_IN" = "$TARGET" ] || fail "the manifest is for $REPO_IN, the target is $TARGET"
 python3 "$REPO/tools/release/make_manifest.py" --check "$DIR" --version "$VERSION" || fail "manifest.json is not the manifest of these archives"
 python3 "$REPO/tools/release/sign_manifest.py" --verify "$PUB" "$DIR/manifest.json" || fail "the signature does not verify under $PUB"
@@ -74,7 +77,8 @@ python3 "$REPO/tools/release/audit_package.py" --sums "$DIR/SHA256SUMS-$VERSION.
   || fail "the checksum file does not list the release's ${#ARCHIVES[@]} archives"
 if grep -l -- "PRIVATE KEY" "$DIR"/* >/dev/null 2>&1; then fail "a private key is among the files of $DIR"; fi
 PRE=false; [ "$CHANNEL" = preview ] && PRE=true
-# the release's name: "OpenBFME v0.4.0 Alpha 1" for an alpha build (lane RELNAME-1), "OpenBFME <tag>" otherwise
+# the release's name: "OpenBFME Alpha 0.4.5" for a plain release (lane VERSION-1; a full release, PRE=false: channel stable),
+# "OpenBFME v0.4.0 Alpha 1" for an alpha build (lane RELNAME-1), "OpenBFME <tag>" for a preview
 NAME=$(python3 "$REPO/tools/release/autorelease.py" title "$VERSION") || fail "no release name for $VERSION"
 NOTES_ARG=$NOTES
 if [ -z "$NOTES_ARG" ]; then NOTES_ARG=$(mktemp); trap 'rm -f "$NOTES_ARG"' EXIT

@@ -205,6 +205,7 @@ std::vector<std::string> NetImpairment::stopLines()
 		"after it went out, and caps Karn's backoff at twice the RFC 6298 timeout once the link has round-trip samples (lane MP-3); retail's retry policy "
 		"(ZH Connection::doRetryMetrics, RotWK's not read) is not reproduced (with S-721: cross-play gate 1)",
 		"[S-1892] smoothness: input-to-action latency and network stalls are measured on OpenBFME peers only (LockstepDriver::SmoothStats); no retail "
-		"measurement under the same faults exists to compare against, and retail's immediate move hint (RW 0x4E03C7, SCMoveHintSml) is not drawn",
+		"measurement under the same faults exists to compare against (lane NETLAG-1: retail's command delay is read from the binary, one frame, S-720; "
+		"the move hint at the click is drawn since lane PLAY-1, S-1920)",
 	};
 }

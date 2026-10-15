@@ -577,3 +577,46 @@ See docs/ONLINE.md section 2: about $20-30 a month for the recommended setup
 at 1,000 players at peak. This is Workers Paid at $5, plus one or two small
 bandwidth-included VPSs. R2 stays inside its free tier at the measured
 replay volume.
+
+## Player count: `GET /v1/stats` (lane ONLINECOUNT-1)
+
+New endpoint of the lobby, version 1, no sign-in needed:
+`{"v":1,"players":N,"games_open":M,"games_running":K,"as_of":<unix s>}`. Counts only (no names, no addresses). The game's main menu and
+online menu and the launcher's Play card show "N players online" from it. Older lobbies answer 404 and the clients show nothing.
+
+**Deploying (the coordinator, Cloudflare access is on the owner's PC):** deploy `lobby/src/lobby.mjs` and `lobby/src/worker.mjs` as usual
+(`wrangler deploy`); no new binding, secret, variable or migration. The self-hosted `server.mjs` needs only a restart. Check:
+`curl -s https://<lobby>/v1/stats` returns the JSON above with `cache-control: public, max-age=30`.
+
+**What "online" means.** A player counts while the lobby has seen a request with their valid session token in the last 150 s (sign-in, the
+online menu's stats poll every 90 s, a staging room's polls, any signed request), or while they hold a human slot of a started game whose relay
+log has not been uploaded (the lobby learns a game is over only from that upload; a game whose log never comes counts until the lobby forgets it,
+3 h). Players in the main menu or in single player are not counted: the main menu's and the launcher's requests carry no token. Presence is in
+memory only (no storage write per request); a restarted lobby counts from zero and recovers within 150 s. The answer is computed at most every 30 s.
+Limits: the presence table holds 50,000 sessions; `/v1/stats` is rate limited to 60 a minute (burst 20) per address.
+
+**Free plan budget (100,000 Worker requests a day, all endpoints together).** Cloudflare's docs (developers.cloudflare.com/workers/platform/pricing,
+read 2026-10-14): the Worker runs before the cache, so a cached answer (Cache API, or Cache Rules) is still a Worker request; only the Durable Object
+request and the CPU are saved. So `worker.mjs` admits every `/v1/stats` request first (a token bucket per address in the Worker isolate: 20 burst,
+60 a minute, then 429 with Retry-After; kept per Worker isolate), then answers a token-less one from the data centre's Cache
+API for 30 s (no Durable Object request), and the lobby's own limiter stays behind it for requests that reach the object. This is not an aggregate cap and gives no protection for the Worker request budget: separate or recycled isolates and the eviction of old buckets (5,000 addresses) reset it, so
+many isolates or addresses pass. Every stats request still counts
+against the 100,000. Client polling that keeps it small: the online menu asks when it opens and every 90 s while open (not in a staging room); the
+main menu and the launcher ask once when shown and then at most every 5 minutes while visible (not minimized, not in the background; a number
+that is not renewed for two intervals is hidden); never in a game; a turned-off setting asks nothing.
+
+| Concurrent players, all day | online menu (stats 40 / h each) | main menu or launcher in view (12 / h each) | staging rooms (the existing held poll, 20 s: 180 / h each; stats add 0) |
+|---|---|---|---|
+| 10 | 9,600 / day | 2,880 / day each | 43,200 / day |
+| 100 | 96,000 / day | 28,800 / day each | 432,000 / day |
+| 1,000 | 960,000 / day | 288,000 / day each | 4,320,000 / day |
+
+**Known limit (the owner decides later whether to go paid).** These are 24-hour constant loads; a real day is far lighter. Without this feature the
+free plan already runs out at about 23 players constantly in staging rooms (100,000 / (180 x 24) = 23.1); the feature adds nothing there. For players parked in the
+online menu it adds 40 requests an hour each (about 104 constantly parked players would use the whole allowance by themselves); a player who opens the
+main menu or the launcher for 15 minutes a day costs about 3 requests each. At 1,000 players a day, each opening both once for 15 minutes: about
+6,000 requests a day for the feature. If the allowance gets tight, raise `ONLINE_SECONDS` (godot/scripts/online_stats.gd) and `PRESENCE_S` (lobby.mjs)
+together, lengthen the staging poll, or move to the paid plan.
+
+**Restarts.** A game's end is kept in its stored record (`finished`, one save when the relay's log arrives), so a restarted lobby does not count a
+finished game's players again. Presence is in memory only: a restarted lobby counts the people in lobbies from zero and recovers within 150 s.

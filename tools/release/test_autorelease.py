@@ -183,35 +183,35 @@ def test_real_release_end_to_end(world):
     world.gate(sha)
     r = world.release(sha, "--since", world.first)
     assert r.returncode == 0, r.stdout + r.stderr
-    assert "AUTORELEASE OK v0.3.0-preview.1" in r.stdout and "stand-in verify v0.3.0-preview.1" in r.stdout
+    assert "AUTORELEASE OK v0.4.5" in r.stdout and "stand-in verify v0.4.5" in r.stdout
     gh = world.gh_data()
     (rel,) = gh["releases"]
-    assert rel["tag_name"] == "v0.3.0-preview.1" and rel["draft"] is False and rel["prerelease"] is True
-    assert rel["name"] == "OpenBFME v0.3.0-preview.1", "RELNAME-1: the first release is the bridge"
+    assert rel["tag_name"] == "v0.4.5" and rel["draft"] is False and rel["prerelease"] is False
+    assert rel["name"] == "OpenBFME Alpha 0.4.5", "VERSION-1: the first release is a plain number, a full release (no bridge any more)"
     assert sorted(a["name"] for a in rel["assets"]) == sorted(
-        [make_manifest.asset_name(k, "v0.3.0-preview.1", p) for k in ("game", "launcher") for p in ("linux-x64", "windows-x64")]
-        + ["SHA256SUMS-v0.3.0-preview.1.txt", "manifest.json", "manifest.json.sig"])
+        [make_manifest.asset_name(k, "v0.4.5", p) for k in ("game", "launcher") for p in ("linux-x64", "windows-x64")]
+        + ["SHA256SUMS-v0.4.5.txt", "manifest.json", "manifest.json.sig"])
     assert "Units walk around trees instead of through them" in rel["body"]
     # lane ONEZIP-1: the notes say which file to get, with a direct link per platform (never "(link removed)"), and name the rest once
-    base = f"https://github.com/{TARGET}/releases/download/v0.3.0-preview.1"
-    for name in ("openbfme-v0.3.0-preview.1-windows-x64.zip", "openbfme-v0.3.0-preview.1-linux-x64.tar.gz"):
+    base = f"https://github.com/{TARGET}/releases/download/v0.4.5"
+    for name in ("openbfme-v0.4.5-windows-x64.zip", "openbfme-v0.4.5-linux-x64.tar.gz"):
         assert f"| **[{name}]({base}/{name})** | **OpenBFME for " in rel["body"], rel["body"]
     assert "## Which file to download" in rel["body"] and "(link removed)" not in rel["body"]
-    assert ("| openbfme-launcher-v0.3.0-preview.1-windows-x64.zip, openbfme-launcher-v0.3.0-preview.1-linux-x64.tar.gz, "
-            "SHA256SUMS-v0.3.0-preview.1.txt, manifest.json, manifest.json.sig | Used by OpenBFME to update itself") in rel["body"]
+    assert ("| openbfme-launcher-v0.4.5-windows-x64.zip, openbfme-launcher-v0.4.5-linux-x64.tar.gz, "
+            "SHA256SUMS-v0.4.5.txt, manifest.json, manifest.json.sig | Used by OpenBFME to update itself") in rel["body"]
     # the PR merged on the public main, its tree the archive's without archive/ plus PRIVACY.md and the README line; the branch deleted
     (pr,) = gh["prs"].values()
     main_tree = git(world.repo, "ls-tree", "--name-only", f"{pr['merge']}")
     assert "archive" not in main_tree.split() and "PRIVACY.md" in main_tree.split()
     assert "legacy-final" in git(world.remote, "show", f"{pr['merge']}:README.md")
     assert world.remote_refs("refs/heads/sync/*") == ""
-    assert world.remote_refs("refs/tags/v0.3.0-preview.1")
-    assert (world.state / "last-released").read_text().split()[:2] == [sha, "v0.3.0-preview.1"]
+    assert world.remote_refs("refs/tags/v0.4.5")
+    assert (world.state / "last-released").read_text().split()[:2] == [sha, "v0.4.5"]
     # the publish steps: a draft, the uploads, the read-back, then published; gh never asked to create with assets
     log = world.gh_log.read_text()
-    assert "release create" not in log and "-F draft=true" in log and "-F draft=false" in log and "release upload v0.3.0-preview.1" in log
+    assert "release create" not in log and "-F draft=true" in log and "-F draft=false" in log and "release upload v0.4.5" in log
     # RELTEST-1: the About link points at the new release (read back)
-    assert gh["repo"]["homepage"] == f"https://github.com/{TARGET}/releases/tag/v0.3.0-preview.1", gh.get("repo")
+    assert gh["repo"]["homepage"] == f"https://github.com/{TARGET}/releases/tag/v0.4.5", gh.get("repo")
     assert "AUTORELEASE homepage: the About link is" in r.stdout
     # forward only: the same sha, and an older one, are refused whatever --since says
     r = world.release(sha, "--since", world.first)
@@ -228,10 +228,14 @@ def test_real_release_end_to_end(world):
     nxt = world.change({"engine/a.cpp": "3\n"}, "Merge lane/y (Y-1: archers no longer shoot through walls)")
     world.gate(nxt)
     r = world.release(nxt)
-    assert r.returncode == 0 and "AUTORELEASE OK v0.4.0-alpha.1" in r.stdout, r.stdout + r.stderr
-    body = world.gh_data()["releases"][1]["body"]
+    assert r.returncode == 0 and "AUTORELEASE OK v0.4.6" in r.stdout, r.stdout + r.stderr
+    rel = world.gh_data()["releases"][1]
+    body = rel["body"]
     assert "Archers no longer shoot through walls" in body and "Units walk around trees" not in body
-    assert world.gh_data()["repo"]["homepage"] == f"https://github.com/{TARGET}/releases/tag/v0.4.0-alpha.1"
+    # VERSION-1: the next plain number, published as a full release (channel stable) and named as players read it
+    assert rel["tag_name"] == "v0.4.6" and rel["prerelease"] is False and rel["name"] == "OpenBFME Alpha 0.4.6", rel
+    assert body.startswith("# OpenBFME Alpha 0.4.6 patch notes\n") and "-alpha." not in body.split("## Which file")[0]
+    assert world.gh_data()["repo"]["homepage"] == f"https://github.com/{TARGET}/releases/tag/v0.4.6"
 
 
 def test_a_failed_homepage_update_is_a_warning(world):
@@ -239,7 +243,7 @@ def test_a_failed_homepage_update_is_a_warning(world):
     sha = world.change({"engine/a.cpp": "2\n"}, "X-1: something new for players to see")
     world.gate(sha)
     r = world.release(sha, "--since", world.first, FAKE_GH_FAULT="homepage-fail")
-    assert r.returncode == 0 and "AUTORELEASE OK v0.3.0-preview.1" in r.stdout, r.stdout + r.stderr
+    assert r.returncode == 0 and "AUTORELEASE OK v0.4.5" in r.stdout, r.stdout + r.stderr
     assert "AUTORELEASE WARNING: the repository's About link could not be set" in r.stdout
     gh = world.gh_data()
     assert gh["releases"][0]["draft"] is False and gh.get("repo", {}).get("homepage", "") == ""
@@ -261,12 +265,12 @@ def test_plan_rules(world):
     world.gate(sha)
     r = world.release(sha, "--plan")
     assert r.returncode != 0 and "pass --since" in r.stdout
-    # RELNAME-1: no bridge on GitHub yet (the tags alone are no release): the next release is the bridge above v0.3.0-preview.4
+    # VERSION-1: after the previews the next release is the first plain number (RELNAME-1 made a bridge here)
     git(world.repo, "tag", "v0.3.0-preview.4", world.first)
     git(world.repo, "push", "-q", "origin", "refs/tags/v0.3.0-preview.4")
     r = world.release(sha, "--plan", "--since", world.first)
-    assert r.returncode == 0 and f"AUTORELEASE PLAN v0.3.0-preview.5 from {sha}" in r.stdout, r.stdout + r.stderr
-    assert "a bridge: no release on the first 30 an old launcher can read" in r.stdout + r.stderr, r.stdout + r.stderr
+    assert r.returncode == 0 and f"AUTORELEASE PLAN v0.4.5 from {sha}" in r.stdout, r.stdout + r.stderr
+    assert "a plain release: every published launcher reads it" in r.stdout + r.stderr, r.stdout + r.stderr
     # only commits of the archive branch
     git(world.repo, "checkout", "-q", "-b", "side", world.first)
     side = world.change({"engine/b.cpp": "x\n"}, "not gated")
@@ -281,62 +285,38 @@ def test_plan_rules(world):
     assert r.returncode != 0 and "another autorelease is running" in r.stdout
 
 
-def test_the_bridge_comes_first_and_stays_on_the_old_launchers_page(world):
-    """RELNAME-1 r2 (Sol): no alpha build before a published, verified bridge (a v0.3.0-preview.<n> whose signed manifest names a commit
-    on main whose launcher knows -alpha); a new bridge whenever the old one nears the end of the 30 releases an old launcher reads"""
-    git(world.repo, "tag", "v0.3.0-preview.4", world.first)
-    git(world.repo, "push", "-q", "origin", "refs/tags/v0.3.0-preview.4")
-    a = world.change({"engine/a.cpp": "2\n"}, "X-1: something new")
-    world.gate(a)
+def test_plain_releases_follow_the_alpha_builds_without_a_bridge(world):
+    """VERSION-1 (owner, 2026-10-14): after the previews and alpha builds the releases are plain numbers, v0.4.5 first (above every
+    v0.4.0-alpha.<n>), each one the next last number, --minor the next middle number; full releases (channel stable) named "OpenBFME
+    Alpha 0.4.5". No v0.3.0-preview.<n> bridge is made any more: the launchers up to v0.3.0-preview.4 read plain tags (a bridge would
+    sort below every plain release)."""
+    for t in ("v0.3.0-preview.4", "v0.3.0-preview.6", "v0.4.0-alpha.4"):
+        git(world.repo, "tag", t, world.first)
+        git(world.repo, "push", "-q", "origin", f"refs/tags/{t}")
+    shas = []
+    for n in range(2, 5):
+        shas.append(world.change({"engine/a.cpp": f"{n}\n"}, f"X-{n}: change {n}"))
+        world.gate(shas[-1])
+    a, b, c = shas
     r = world.release(a, "--since", world.first)
-    assert r.returncode == 0 and "AUTORELEASE OK v0.3.0-preview.5" in r.stdout, r.stdout + r.stderr
-    bridge = world.gh_data()["releases"][-1]
-    assert bridge["name"] == "OpenBFME v0.3.0-preview.5" and bridge["prerelease"] is True
-    assert "numbered as a preview so that launchers of v0.3.0-preview.4 and older can update themselves" in bridge["body"]
-    b = world.change({"engine/a.cpp": "3\n"}, "X-2: something else")
-    world.gate(b)
-    r = world.release(b)
-    assert r.returncode == 0 and "AUTORELEASE OK v0.4.0-alpha.1" in r.stdout and "the bridge v0.3.0-preview.5 is in place" in r.stdout + r.stderr, \
-        r.stdout + r.stderr
-    assert world.gh_data()["releases"][-1]["name"] == "OpenBFME v0.4.0 Alpha 1"
-    c = world.change({"engine/a.cpp": "4\n"}, "X-3: more")
-    world.gate(c)
-
-    def releases_after_the_bridge(n):  # n more releases newer than the bridge (alpha.1 is one)
-        s = world.gh_data()
-        s["releases"] = [x for x in s["releases"] if not x["tag_name"].startswith("v0.4.0-alpha.9")]
-        for i in range(n - 1):
-            s["releases"].append({"id": 9000 + i, "tag_name": f"v0.4.0-alpha.9{i}", "name": "x", "draft": False, "prerelease": True,
-                                  "body": "", "assets": []})
-        s["releases"].append({"id": 8999, "tag_name": "v0.4.0-alpha.99", "name": "draft", "draft": True, "prerelease": True,
-                              "body": "", "assets": []})   # a draft: not on an anonymous launcher's page
-        world.gh_state.write_text(json.dumps(s))
-    releases_after_the_bridge(24)   # the bridge is entry 25 of 30: room for the margin of 5
+    assert r.returncode == 0 and "AUTORELEASE OK v0.4.5" in r.stdout and "a plain release" in r.stdout + r.stderr, r.stdout + r.stderr
+    rel = world.gh_data()["releases"][-1]
+    assert (rel["tag_name"], rel["name"], rel["prerelease"]) == ("v0.4.5", "OpenBFME Alpha 0.4.5", False)
+    mid = next(x["id"] for x in rel["assets"] if x["name"] == "manifest.json")
+    m = json.loads((Path(str(world.gh_state) + ".d") / str(mid)).read_bytes())
+    assert m["version"] == "v0.4.5" and m["channel"] == "stable" and m["format"] == 2 and sorted(m["assets"]) == ["game", "launcher"], \
+        "the launcher archives stay (the launchers before ONEZIP-1 read format 2 only)"
+    assert autorelease.manifest_problems(m, "v0.4.5", TARGET, False) == [], "what every launcher checks: stable channel, no pre-release flag"
+    r = world.release(b, "--plan")
+    assert r.returncode == 0 and "AUTORELEASE PLAN v0.4.6" in r.stdout, r.stdout + r.stderr
+    r = world.release(b, "--plan", "--minor")
+    assert r.returncode == 0 and "AUTORELEASE PLAN v0.5.0" in r.stdout, r.stdout + r.stderr
+    r = world.release(b, "--minor")
+    assert r.returncode == 0 and "AUTORELEASE OK v0.5.0" in r.stdout, r.stdout + r.stderr
     r = world.release(c, "--plan")
-    assert r.returncode == 0 and "AUTORELEASE PLAN v0.4.0-alpha.2" in r.stdout, r.stdout + r.stderr
-    releases_after_the_bridge(25)   # entry 26: the next release is a new bridge, which old launchers see first
-    r = world.release(c, "--plan")
-    assert r.returncode == 0 and "AUTORELEASE PLAN v0.3.0-preview.6" in r.stdout and "is entry 26 of the 30" in r.stdout + r.stderr, \
-        r.stdout + r.stderr
-    releases_after_the_bridge(1)
-    # a bridge whose manifest signature does not verify is no bridge
-    s = world.gh_data()
-    sig = next(x for x in s["releases"] if x["tag_name"] == "v0.3.0-preview.5" for x in x["assets"] if x["name"] == "manifest.json.sig")
-    store = Path(str(world.gh_state) + ".d") / str(sig["id"])
-    good = store.read_bytes()
-    store.write_bytes(bytes(64))
-    r = world.release(c, "--plan")
-    assert r.returncode == 0 and "AUTORELEASE PLAN v0.3.0-preview.6" in r.stdout and "signature does not verify" in r.stdout + r.stderr, \
-        r.stdout + r.stderr
-    store.write_bytes(good)
-    # a bridge is needed but this sha's launcher does not know -alpha tags: refused, never a bridge that strands the players
-    releases_after_the_bridge(30)
-    old = subprocess.run(["git", "-C", REPO, "show", "2a422ce6:launcher/scripts/core/semver.gd"], capture_output=True, text=True).stdout
-    hacked = old.replace('(0|[1-9][0-9]{0,8}))?$"', '(0|[1-9][0-9]{0,8}))?$"  # alpha', 1)
-    d = world.change({"launcher/scripts/core/semver.gd": hacked}, "X-4: the old grammar with a comment saying alpha (Sol r2)")
-    world.gate(d)
-    r = world.release(d, "--plan")
-    assert r.returncode != 0 and "this sha's launcher does not know -alpha tags" in r.stdout + r.stderr, r.stdout + r.stderr
+    assert r.returncode == 0 and "AUTORELEASE PLAN v0.5.1" in r.stdout, r.stdout + r.stderr
+    assert [x["tag_name"] for x in world.gh_data()["releases"]] == ["v0.4.5", "v0.5.0"]
+    assert [x["prerelease"] for x in world.gh_data()["releases"]] == [False, False]
 
 
 def test_bridge_rules():
@@ -377,19 +357,19 @@ def test_bridge_rules():
     assert not iv("v0.4.0-alpha.0", "v0.3.0-preview.6", tags) and not iv("v0.4.0-alpha.0", "v0.3.0-preview.6", tags[:3])
     assert iv("v0.4.0-alpha.2", "v0.3.0-preview.6", tags) and iv("v0.4.0-alpha.2", "v0.3.0-preview.6", tags + ["refs/tags/v0.4.0-alpha.2"])
     assert not iv("v0.3.0-preview.6", "v0.4.0-alpha.1", tags[:3] + ["refs/tags/v0.3.0-preview.7"])
+    # VERSION-1: the plain line; once a plain release is tagged or released, an alpha build or a bridge is no intent any more
+    assert iv("v0.4.5", "v0.4.0-alpha.4") and iv("v0.4.5", "v0.3.0-preview.6", tags) and iv("v0.5.0", "v0.4.5") and iv("v0.4.6", "v0.4.5")
+    assert not iv("v0.4.5", "v0.4.5") and not iv("v0.4.5", "v0.4.6") and not iv("v0.4.4", "") and not iv("v0.4.05", "")
+    assert not iv("v0.4.6", "v0.4.0-alpha.4", tags + ["refs/tags/v0.4.7"]) and iv("v0.4.8", "v0.4.5", tags + ["refs/tags/v0.4.7"])
+    assert not iv("v0.4.0-alpha.5", "v0.4.5") and not iv("v0.4.0-alpha.5", "v0.4.0-alpha.4", ["refs/tags/v0.4.5"])
+    assert not iv("v0.3.0-preview.7", "v0.4.5") and not iv("v0.3.0-preview.7", "", ["refs/tags/v0.4.5^{}"])
 
 
-def test_bridge_manifest_rules(world):
+def test_bridge_manifest_rules(world, tmp_path):
     """Sol r2: a bridge must be what the launchers accept: the signed manifest's schema, its channel and the release's pre-release flag,
-    every kind and platform"""
-    git(world.repo, "tag", "v0.3.0-preview.4", world.first)
-    git(world.repo, "push", "-q", "origin", "refs/tags/v0.3.0-preview.4")
-    a = world.change({"engine/a.cpp": "2\n"}, "X-1: something new")
-    world.gate(a)
-    assert world.release(a, "--since", world.first).returncode == 0
-    rel = world.gh_data()["releases"][-1]
-    mid = next(x["id"] for x in rel["assets"] if x["name"] == "manifest.json")
-    m = json.loads((Path(str(world.gh_state) + ".d") / str(mid)).read_bytes())
+    every kind and platform (VERSION-1: the rule only guards an alpha build resumed from an old intent; the manifest is made directly)"""
+    d = publish_dir(tmp_path, "v0.3.0-preview.5", world, git(world.repo, "rev-parse", "HEAD"))
+    m = json.loads((d / "manifest.json").read_bytes())
     mp = autorelease.manifest_problems
     assert mp(m, "v0.3.0-preview.5", TARGET, True) == []
     assert "does not match the channel" in " ".join(mp(m, "v0.3.0-preview.5", TARGET, False))
@@ -405,69 +385,35 @@ def test_bridge_manifest_rules(world):
         assert why in " ".join(mp(y, "v0.3.0-preview.5", TARGET, True)), why
 
 
-def test_sol_r2_bridge_gaps(world):
-    """Sol r2: (3) a bridge with the wrong pre-release flag or a missing / changed launcher download is no bridge; (1) an alpha build
-    resumed from an open intent is not published once its bridge is gone, and is, with its reserved version, when it is back; (2) an
-    intent's version edited below a version of its line already tagged is refused"""
-    git(world.repo, "tag", "v0.3.0-preview.4", world.first)
-    git(world.repo, "push", "-q", "origin", "refs/tags/v0.3.0-preview.4")
+def test_an_open_plain_intent_keeps_its_version(world):
+    """Sol r2 (RELNAME-1), for the plain releases (VERSION-1): a release interrupted after its tag is resumed with its reserved version;
+    an intent's version edited below a version of its line already tagged, or to an alpha build, is refused and changes nothing"""
+    git(world.repo, "tag", "v0.4.0-alpha.4", world.first)
+    git(world.repo, "push", "-q", "origin", "refs/tags/v0.4.0-alpha.4")
     shas = []
-    for n in range(2, 7):
+    for n in range(2, 4):
         shas.append(world.change({"engine/a.cpp": f"{n}\n"}, f"X-{n}: change {n}"))
         world.gate(shas[-1])
-    a, b, c, d, e = shas
-    assert "AUTORELEASE OK v0.3.0-preview.5" in world.release(a, "--since", world.first).stdout
-    assert "AUTORELEASE OK v0.4.0-alpha.1" in world.release(b).stdout
-
-    def edit(fn):
-        s = world.gh_data()
-        fn(s)
-        world.gh_state.write_text(json.dumps(s))
-    bridge = lambda s: next(x for x in s["releases"] if x["tag_name"] == "v0.3.0-preview.5")
-    asset = lambda s, n: next(x for x in bridge(s)["assets"] if x["name"] == n)
-    good = world.gh_data()
-    lzip = "openbfme-launcher-v0.3.0-preview.5-windows-x64.zip"
-    for fn, why in [(lambda s: bridge(s).update(prerelease=False), "pre-release flag False does not match"),
-                    (lambda s: bridge(s)["assets"].remove(asset(s, lzip)), f"its {lzip} is missing"),
-                    (lambda s: asset(s, lzip).update(size=1), f"its {lzip} is missing or not the signed size"),
-                    (lambda s: asset(s, lzip).update(digest="sha256:" + "0" * 64), f"its {lzip} is not the signed one")]:
-        edit(fn)
-        r = world.release(c, "--plan")
-        assert r.returncode == 0 and "AUTORELEASE PLAN v0.3.0-preview.6" in r.stdout and why in r.stdout + r.stderr, (why, r.stdout + r.stderr)
-        world.gh_state.write_text(json.dumps(good))
-    edit(lambda s: asset(s, lzip).update(digest=None))   # no digest from GitHub: the launcher archive is downloaded and hashed
-    r = world.release(c, "--plan")
-    assert r.returncode == 0 and "AUTORELEASE PLAN v0.4.0-alpha.2" in r.stdout, r.stdout + r.stderr
-    world.gh_state.write_text(json.dumps(good))
-    # (1) alpha.2 reserved and tagged, then interrupted; the bridge disappears; the resumed run does not publish; back, it does
-    r = world.release(c, STANDIN_TAMPERED="1")
-    assert r.returncode != 0 and world.remote_refs("refs/tags/v0.4.0-alpha.2") and "version=v0.4.0-alpha.2" in (world.state / "intent").read_text()
-    edit(lambda s: s["releases"].remove(bridge(s)))
-    r = world.release(c)
-    assert r.returncode != 0 and "the bridge for the launchers up to v0.3.0-preview.4 is gone" in r.stdout, r.stdout + r.stderr
-    assert "v0.4.0-alpha.2" not in [x["tag_name"] for x in world.gh_data()["releases"] if not x["draft"]] and (world.state / "intent").exists()
-    edit(lambda s: s["releases"].insert(0, bridge(good)))
-    r = world.release(c)
-    assert r.returncode == 0 and "AUTORELEASE OK v0.4.0-alpha.2" in r.stdout, r.stdout + r.stderr
-    # (2) a bridge after alpha.2 (the old one pushed down the page), then alpha.3 interrupted and its intent edited to alpha.0 / alpha.2
-    edit(lambda s: s["releases"].extend({"id": 9000 + i, "tag_name": f"v0.4.0-alpha.9{i}", "name": "x", "draft": False, "prerelease": True,
-                                         "body": "", "assets": []} for i in range(24)))
-    r = world.release(d)
-    assert r.returncode == 0 and "AUTORELEASE OK v0.3.0-preview.6" in r.stdout, r.stdout + r.stderr
-    r = world.release(e, STANDIN_TAMPERED="1")
-    assert r.returncode != 0 and "version=v0.4.0-alpha.3" in (world.state / "intent").read_text(), r.stdout + r.stderr
+    a, b = shas
+    assert "AUTORELEASE OK v0.4.5" in world.release(a, "--since", world.first).stdout
+    r = world.release(b, STANDIN_TAMPERED="1")
+    assert r.returncode != 0 and world.remote_refs("refs/tags/v0.4.6") and "version=v0.4.6" in (world.state / "intent").read_text(), \
+        r.stdout + r.stderr
     intent = world.state / "intent"
     text = intent.read_text()
     before = json.dumps(world.gh_data()["releases"])
-    intent.write_text(text.replace("version=v0.4.0-alpha.3", "version=v0.4.0-alpha.0"))
-    r = world.release(e)
-    assert r.returncode != 0 and "above every released or tagged version of its line" in r.stdout, r.stdout + r.stderr
-    intent.write_text(text.replace("version=v0.4.0-alpha.3", "version=v0.4.0-alpha.2"))   # a published one: refused by the reconcile
-    r = world.release(e)
+    for wrong in ("v0.4.4", "v0.4.0-alpha.5", "v0.3.0-preview.7"):
+        intent.write_text(text.replace("version=v0.4.6", f"version={wrong}"))
+        r = world.release(b)
+        assert r.returncode != 0 and json.dumps(world.gh_data()["releases"]) == before, (wrong, r.stdout + r.stderr)
+    intent.write_text(text.replace("version=v0.4.6", "version=v0.4.5"))   # a published one: refused by the reconcile
+    r = world.release(b)
     assert r.returncode != 0 and json.dumps(world.gh_data()["releases"]) == before, r.stdout + r.stderr
     intent.write_text(text)
-    r = world.release(e)
-    assert r.returncode == 0 and "AUTORELEASE OK v0.4.0-alpha.3" in r.stdout, r.stdout + r.stderr
+    r = world.release(b, "--minor")   # an open intent keeps its version: --minor does not move it
+    assert r.returncode == 0 and "AUTORELEASE OK v0.4.6" in r.stdout, r.stdout + r.stderr
+    rel = world.gh_data()["releases"][-1]
+    assert (rel["tag_name"], rel["prerelease"], rel["name"]) == ("v0.4.6", False, "OpenBFME Alpha 0.4.6")
 
 
 def test_standin_is_refused_for_the_real_repository(world):
@@ -515,16 +461,16 @@ def test_returned_artifacts_are_checked_before_signing(world):
     assert r.returncode != 0 and "at step deck-verify" in r.stdout
     assert not list((world.tmp / "work").rglob("manifest.json.sig")) and world.gh_data()["releases"] == []
     # the tag stays (no release was created for it) and the release intent stays open: the next run resumes that sha and tag
-    assert world.remote_refs("refs/tags/v0.3.0-preview.1") and (world.state / "intent").exists()
+    assert world.remote_refs("refs/tags/v0.4.5") and (world.state / "intent").exists()
     r = world.release(sha, "--since", world.first)
-    assert r.returncode == 0 and "AUTORELEASE OK v0.3.0-preview.1" in r.stdout and "already on origin" in r.stdout, r.stdout + r.stderr
-    assert not world.remote_refs("refs/tags/v0.4.0-alpha.2") and not (world.state / "intent").exists()
+    assert r.returncode == 0 and "AUTORELEASE OK v0.4.5" in r.stdout and "already on origin" in r.stdout, r.stdout + r.stderr
+    assert not world.remote_refs("refs/tags/v0.4.6") and not (world.state / "intent").exists()
     # an extra file among the returned ones
     nxt = world.change({"engine/a.cpp": "3\n"}, "X-2: something else new for players")
     world.gate(nxt)
     r = world.release(nxt, "--since", world.first, STANDIN_EXTRA="1")
     assert r.returncode != 0 and "is not exactly the package files" in r.stdout
-    assert [x["tag_name"] for x in world.gh_data()["releases"]] == ["v0.3.0-preview.1"], "nothing of v0.4.0-alpha.2 was published"
+    assert [x["tag_name"] for x in world.gh_data()["releases"]] == ["v0.4.5"], "nothing of v0.4.6 was published"
 
 
 def test_trusted_checkout_runs_the_deck_scripts(world):
@@ -532,9 +478,9 @@ def test_trusted_checkout_runs_the_deck_scripts(world):
     world.gate(sha)
     r = world.release(sha, "--since", world.first)
     assert r.returncode == 0, r.stdout + r.stderr
-    log = (world.tmp / "logs" / "autorelease-v0.3.0-preview.1.log").read_text()
-    assert "MANIFEST " + str(world.tmp / "work/v0.3.0-preview.1/pkg/manifest.json") in log
-    assert not (world.tmp / "work/v0.3.0-preview.1/trusted").exists(), "the trusted worktree is removed after the run"
+    log = (world.tmp / "logs" / "autorelease-v0.4.5.log").read_text()
+    assert "MANIFEST " + str(world.tmp / "work/v0.4.5/pkg/manifest.json") in log
+    assert not (world.tmp / "work/v0.4.5/trusted").exists(), "the trusted worktree is removed after the run"
 
 
 # ---- publishing: draft, assets checked, published, read back (Sol r1: gh's failure path could delete a published release) ---------------
@@ -572,13 +518,25 @@ def publish_dir(tmp: Path, version: str, world: World, sha: str) -> Path:
 
 
 def test_confirm_tag_is_for_previews_only(world, tmp_path):
+    """--confirm-tag: pre-releases and (VERSION-1) the plain alpha-stage releases v0.4.5 .. v0.x.y; every other stable release waits for
+    the owner's typed tag"""
     sha = git(world.repo, "rev-parse", "HEAD")
     tool = world.repo / "tools/release/publish_release.sh"
-    stable = publish_dir(tmp_path, "v0.3.0", world, sha)
-    r = run("bash", tool, stable, "--repo", TARGET, "--execute", "--confirm-tag", "v0.3.0", env=world.env())
-    assert r.returncode != 0 and "--confirm-tag is for preview releases only" in r.stderr and not world.gh_state.exists()
-    r = run("bash", tool, stable, "--repo", TARGET, "--execute", env=world.env())
-    assert r.returncode != 0 and "not confirmed" in r.stderr and not world.gh_state.exists(), "a stable release waits for the typed tag"
+    for version in ("v0.3.0", "v0.4.4", "v1.0.0"):
+        stable = publish_dir(tmp_path, version, world, sha)
+        r = run("bash", tool, stable, "--repo", TARGET, "--execute", "--confirm-tag", version, env=world.env())
+        assert r.returncode != 0 and "--confirm-tag is for pre-releases and the alpha-stage releases" in r.stderr and not world.gh_state.exists(), version
+        r = run("bash", tool, stable, "--repo", TARGET, "--execute", env=world.env())
+        assert r.returncode != 0 and "not confirmed" in r.stderr and not world.gh_state.exists(), "a stable release waits for the typed tag"
+    assert [v for v in ("v0.4.4", "v0.4.5", "v0.4.6", "v0.5.0", "v0.99.0", "v1.0.0", "v0.4.5-alpha.1", "v0.4.05") if autorelease.auto_publish_ok(v)] == \
+        ["v0.4.5", "v0.4.6", "v0.5.0", "v0.99.0"]
+    plain = publish_dir(tmp_path, "v0.4.5", world, sha)
+    r = run("bash", tool, plain, "--repo", TARGET, "--execute", "--confirm-tag", "v0.4.5", env=world.env())
+    assert r.returncode == 0 and "PUBLISHED v0.4.5" in r.stdout, r.stdout + r.stderr
+    rel = next(x for x in world.gh_data()["releases"] if x["tag_name"] == "v0.4.5")
+    assert rel["prerelease"] is False and rel["name"] == "OpenBFME Alpha 0.4.5", "a plain release is a full release, named Alpha 0.4.5"
+    world.gh_state.unlink()
+    world.gh_log.unlink()
     preview = publish_dir(tmp_path, "v0.3.0-preview.7", world, sha)
     r = run("bash", tool, preview, "--repo", TARGET, "--execute", "--confirm-tag", "v0.3.0-preview.6", env=world.env())
     assert r.returncode != 0 and "is not the manifest's version" in r.stderr and not world.gh_state.exists()
@@ -671,47 +629,63 @@ def test_record_gate(world):
 
 # ---- versions and the release notes -------------------------------------------------------------------------------------------------------
 def test_next_version():
-    # the preview line, as before (a bridge release could still use it): no leading zeros, digits only, this base
-    tags = ["refs/tags/v0.3.0-preview.1", "refs/tags/v0.3.0-preview.10", "refs/tags/v0.3.0-preview.10^{}", "refs/tags/v0.3.0-preview.9",
-            "refs/tags/v0.3.0-preview.012", "refs/tags/v0.3.0-preview.11x", "refs/tags/v0.2.0-playtest.7"]
-    assert autorelease.next_version(tags, "v0.3.0", "preview") == "v0.3.0-preview.11"
-    with pytest.raises(SystemExit):
-        autorelease.next_version([], "v0.3.0-preview.1")
-    with pytest.raises(SystemExit):
-        autorelease.next_version([], "v0.4.0", "rc")
-
-
-def test_next_version_after_the_last_preview_is_the_first_alpha():
-    """RELNAME-1 (owner, 2026-10-10): the build after v0.3.0-preview.4 is v0.4.0-alpha.1, then alpha.2"""
-    previews = [f"refs/tags/v0.3.0-preview.{n}" for n in (1, 2, 3, 4)] + ["refs/tags/v0.3.0-preview.4^{}", "refs/tags/v0.2.0-playtest.7"]
-    assert autorelease.next_version([]) == "v0.4.0-alpha.1"
-    assert autorelease.next_version(previews) == "v0.4.0-alpha.1"
-    assert autorelease.next_version(previews + ["refs/tags/v0.4.0-alpha.1"]) == "v0.4.0-alpha.2"
-    assert autorelease.next_version(previews + ["refs/tags/v0.4.0-alpha.1", "refs/tags/v0.4.0-alpha.01"]) == "v0.4.0-alpha.2"
-    # a version the launchers would order below a published one is refused, never tagged: an alpha of the preview line's release
-    # (SemVer: alpha < preview), or an alpha after its own release or a preview of it
-    for tags, base in ((previews, "v0.3.0"), (previews + ["refs/tags/v0.4.0"], "v0.4.0"), (previews + ["refs/tags/v0.4.0-preview.1"], "v0.4.0"),
-                       (previews + ["refs/tags/v0.5.0-alpha.1"], "v0.4.0")):
+    """VERSION-1 (owner, 2026-10-14): plain numbers. v0.4.5 follows any v0.4.0-alpha.<n> (the count goes on from alpha.4), then the next
+    last number; --bump minor the next middle number (a huge feature, the owner's call); tags outside the grammar are ignored"""
+    previews = [f"refs/tags/v0.3.0-preview.{n}" for n in (1, 2, 3, 4, 6)] + ["refs/tags/v0.3.0-preview.4^{}", "refs/tags/v0.2.0-playtest.7"]
+    alphas = previews + [f"refs/tags/v0.4.0-alpha.{n}" for n in (1, 2, 3, 4)]
+    nv = autorelease.next_version
+    assert nv([]) == "v0.4.5" and nv(previews) == "v0.4.5" and nv(alphas) == "v0.4.5"
+    assert nv(alphas + ["refs/tags/v0.4.0-alpha.9"]) == "v0.4.5", "after any alpha build"
+    assert nv(alphas, "minor") == "v0.5.0" and nv([], "minor") == "v0.5.0"
+    assert nv(alphas + ["refs/tags/v0.4.5"]) == "v0.4.6" and nv(alphas + ["refs/tags/v0.4.5", "refs/tags/v0.4.5^{}"]) == "v0.4.6"
+    assert nv(alphas + ["refs/tags/v0.4.5", "refs/tags/v0.4.9", "refs/tags/v0.4.10"]) == "v0.4.11", "numbers, not text"
+    assert nv(alphas + ["refs/tags/v0.4.5", "refs/tags/v0.4.6"], "minor") == "v0.5.0"
+    assert nv(alphas + ["refs/tags/v0.4.6", "refs/tags/v0.5.0"]) == "v0.5.1" and nv(["refs/tags/v0.5.3"], "minor") == "v0.6.0"
+    # outside the launcher's grammar: ignored (no leading zeros, digits only); a plain tag below v0.4.5 does not start the count
+    assert nv(alphas + ["refs/tags/v0.4.07", "refs/tags/v0.4.6x", "refs/tags/v0.4.8-rc.1"]) == "v0.4.5"
+    assert nv(previews + ["refs/tags/v0.3.0"]) == "v0.4.5"
+    # a version the launchers would order below a published one is refused by name, never tagged
+    assert nv(alphas + ["refs/tags/v0.4.5-alpha.1"]) == "v0.4.5", "a pre-release of v0.4.5 sorts below it"
+    for tags in (alphas + ["refs/tags/v0.4.6-alpha.1"], alphas + ["refs/tags/v0.5.0-alpha.1"], ["refs/tags/v1.0.0-preview.1"]):
         with pytest.raises(SystemExit, match="would not be above"):
-            autorelease.next_version(tags, base)
+            nv(tags)
+    assert nv(alphas + ["refs/tags/v0.5.0-alpha.1"], "minor") == "v0.5.0"
+    with pytest.raises(SystemExit, match="would not be above the release tag v0.5.1-alpha.1"):
+        nv(alphas + ["refs/tags/v0.5.1-alpha.1"], "minor")
+    with pytest.raises(SystemExit, match="--bump 'major' is not one of patch, minor"):
+        nv([], "major")
+    for args in ([], ["--bump", "minor"]):
+        r = subprocess.run([sys.executable, HERE / "autorelease.py", "--git-dir", str(REPO), "next-version", "--remote", "/nonexistent", *args],
+                           capture_output=True, text=True)
+        assert r.returncode != 0, "a remote that cannot be listed is an error, never a default version"
+    r = subprocess.run([sys.executable, HERE / "autorelease.py", "next-version", "--bump", "huge"], capture_output=True, text=True)
+    assert r.returncode == 2 and "invalid choice" in r.stderr
 
 
 def test_release_order_and_title():
-    order = ["v0.3.0-preview.3", "v0.3.0-preview.4", "v0.3.0", "v0.4.0-alpha.1", "v0.4.0-alpha.2", "v0.4.0-alpha.10", "v0.4.0-preview.1",
-             "v0.4.0"]
+    order = ["v0.3.0-preview.3", "v0.3.0-preview.4", "v0.3.0", "v0.4.0-alpha.1", "v0.4.0-alpha.2", "v0.4.0-alpha.4", "v0.4.0-alpha.10",
+             "v0.4.0-preview.1", "v0.4.0", "v0.4.5", "v0.4.6", "v0.4.10", "v0.5.0", "v1.0.0"]
     for i, x in enumerate(order):
         for j, y in enumerate(order):
             assert (make_manifest.version_key(x) > make_manifest.version_key(y)) == (i > j), (x, y)
             assert subprocess.run([sys.executable, HERE / "autorelease.py", "newer", x, y]).returncode == (0 if i > j else 1), (x, y)
     assert make_manifest.channel_of("v0.4.0-alpha.1") == "preview", "an alpha build is in the launcher's pre-release channel"
-    assert autorelease.release_title("v0.4.0-alpha.1") == "OpenBFME v0.4.0 Alpha 1"
+    assert make_manifest.channel_of("v0.4.5") == "stable", "a plain release is on the stable channel (a full GitHub release)"
+    assert autorelease.release_title("v0.4.5") == "OpenBFME Alpha 0.4.5" and autorelease.release_title("v0.5.0") == "OpenBFME Alpha 0.5.0"
+    assert autorelease.release_title("v0.4.0-alpha.1") == "OpenBFME v0.4.0 Alpha 1", "the alpha builds keep their names"
     assert autorelease.release_title("v0.4.0-alpha.12") == "OpenBFME v0.4.0 Alpha 12"
     assert autorelease.release_title("v0.3.0-preview.4") == "OpenBFME v0.3.0-preview.4", "the previews keep their names"
-    assert autorelease.release_title("v0.4.0") == "OpenBFME v0.4.0"
-    r = subprocess.run([sys.executable, HERE / "autorelease.py", "title", "v0.4.0-alpha.1"], capture_output=True, text=True)
-    assert r.returncode == 0 and r.stdout == "OpenBFME v0.4.0 Alpha 1\n"
+    for bad in ("v0.4.05", "0.4.5", "v0.4.5-beta.1", "v0.4.5 ", ""):
+        with pytest.raises(SystemExit):
+            autorelease.release_title(bad)
+    r = subprocess.run([sys.executable, HERE / "autorelease.py", "title", "v0.4.5"], capture_output=True, text=True)
+    assert r.returncode == 0 and r.stdout == "OpenBFME Alpha 0.4.5\n"
+    text, _ = autorelease.release_notes("v0.4.5", [], [])
+    assert text.startswith("# OpenBFME Alpha 0.4.5 patch notes\n\nalpha build for testers\n\nInstall or update it with the OpenBFME Launcher.")
+    head = text.split("## Which file to download")[0]
+    assert "-alpha." not in head and "-preview." not in head, "no -alpha.N / -preview.N where a player looks"
     text, _ = autorelease.release_notes("v0.4.0-alpha.1", [], [])
-    assert text.startswith("# OpenBFME v0.4.0-alpha.1 patch notes\n\nalpha build for testers\n\nInstall or update it with the OpenBFME Launcher.")
+    assert text.startswith("# OpenBFME v0.4.0-alpha.1 patch notes\n\nalpha build for testers\n\n"), "the alpha builds' pages as they were"
 
 
 def test_player_lines():
@@ -755,7 +729,7 @@ def test_notes_are_neutralised(tmp_path):
         assert bad not in lines[0], bad
     for bad in REF_FREE:                              # the Markdown (notes, PR body): no link, image, HTML or heading either
         assert bad not in md, bad
-    assert "**" not in md.replace("\\*", "") and "`" not in md.replace("\\`", "")
+    assert "**" not in md and "`" not in md
     # end to end: an injected Release-note line and an injected subject, notes, PR items and the title
     repo = tmp_path / "r"
     git(tmp_path, "init", "-q", str(repo))
@@ -796,8 +770,8 @@ def test_release_notes_end_to_end(tmp_path):
     assert r.returncode == 0, r.stderr
     notes = out.read_text()
     assert "alpha build for testers, numbered as a preview" in notes  # RELNAME-1: a preview now is a bridge
-    assert f"## {autorelease.TITLES[autorelease.DEFAULT_TITLES]['fixed']}\n\n**General**\n- Units walk around trees instead of through them\\.\n" in notes
-    assert "Roadmap" not in notes and "RW" not in notes and "## Known issues\n\n**General**\n- Create\\-a\\-Hero is not available\\.\n" in notes
+    assert f"## {autorelease.TITLES[autorelease.DEFAULT_TITLES]['fixed']}\n\n**General**\n- Units walk around trees instead of through them.\n" in notes
+    assert "Roadmap" not in notes and "RW" not in notes and "## Known issues\n\n**General**\n- Create-a-Hero is not available.\n" in notes
     assert (tmp_path / "title.txt").read_text() == "units walk around trees instead of through them\n"
 
 
@@ -848,9 +822,9 @@ def test_stale_state_cannot_roll_back(world):
     assert r.returncode != 0 and (world.state / "intent").exists(), r.stdout
     assert (world.state / "last-released").read_text().split()[0] == a
     r = world.release(c)
-    assert r.returncode != 0 and "reconciled: v0.4.0-alpha.1" in r.stdout and "is older than the last released archive sha" in r.stdout, r.stdout
-    assert (world.state / "last-released").read_text().split()[:2] == [b, "v0.4.0-alpha.1"] and not (world.state / "intent").exists()
-    assert [(x["tag_name"], x["draft"]) for x in world.gh_data()["releases"]] == [("v0.3.0-preview.1", False), ("v0.4.0-alpha.1", False)]
+    assert r.returncode != 0 and "reconciled: v0.4.6" in r.stdout and "is older than the last released archive sha" in r.stdout, r.stdout
+    assert (world.state / "last-released").read_text().split()[:2] == [b, "v0.4.6"] and not (world.state / "intent").exists()
+    assert [(x["tag_name"], x["draft"]) for x in world.gh_data()["releases"]] == [("v0.4.5", False), ("v0.4.6", False)]
 
 
 def test_an_open_intent_is_resumed_before_any_other_sha(world):
@@ -859,8 +833,8 @@ def test_an_open_intent_is_resumed_before_any_other_sha(world):
     r = world.release(a, "--since", world.first, STANDIN_TAMPERED="1")
     assert r.returncode != 0 and (world.state / "intent").exists()
     # RELTEST-1: the pushed tag cannot be deleted (GH013); the stop message says the next run resumes the same version from it
-    assert world.remote_refs("refs/tags/v0.3.0-preview.1")
-    assert "run autorelease.sh again (for this sha or a later one) and it resumes v0.3.0-preview.1" in r.stdout, r.stdout
+    assert world.remote_refs("refs/tags/v0.4.5")
+    assert "run autorelease.sh again (for this sha or a later one) and it resumes v0.4.5" in r.stdout, r.stdout
     assert "next number" not in r.stdout and "--delete refs/tags" not in r.stdout
     b = world.change({"engine/a.cpp": "3\n"}, "X-2: second change")
     world.gate(b)
@@ -869,9 +843,9 @@ def test_an_open_intent_is_resumed_before_any_other_sha(world):
         assert r.returncode != 0 and "only a real run reconciles it" in r.stdout
     r = world.release(b)
     assert r.returncode == 3 and "RESUMED ONLY" in r.stdout and f"{b} was not released" in r.stdout, r.stdout + r.stderr
-    assert (world.state / "last-released").read_text().split()[:2] == [a, "v0.3.0-preview.1"]
+    assert (world.state / "last-released").read_text().split()[:2] == [a, "v0.4.5"]
     r = world.release(b)
-    assert r.returncode == 0 and "AUTORELEASE OK v0.4.0-alpha.1" in r.stdout, r.stdout + r.stderr
+    assert r.returncode == 0 and "AUTORELEASE OK v0.4.6" in r.stdout, r.stdout + r.stderr
 
 
 def test_an_intents_own_draft_is_resumed_never_deleted(world):
@@ -883,7 +857,7 @@ def test_an_intents_own_draft_is_resumed_never_deleted(world):
     r = world.release(sha)
     assert r.returncode == 0 and "the intent's own draft" in r.stdout and "resuming the draft release" in r.stdout, r.stdout + r.stderr
     rels = world.gh_data()["releases"]
-    assert [(x["tag_name"], x["draft"], len(x["assets"])) for x in rels] == [("v0.3.0-preview.1", False, 7)]
+    assert [(x["tag_name"], x["draft"], len(x["assets"])) for x in rels] == [("v0.4.5", False, 7)]
     assert "--method DELETE" not in world.gh_log.read_text()
 
 
@@ -905,7 +879,7 @@ def test_a_draft_published_meanwhile_survives(world):
     r = world.release(sha, FAKE_GH_FAULT="publish-after-read")
     assert r.returncode != 0, r.stdout + r.stderr
     rels = world.gh_data()["releases"]
-    assert [(x["tag_name"], x["draft"]) for x in rels] == [("v0.3.0-preview.1", False)], "the release survives"
+    assert [(x["tag_name"], x["draft"]) for x in rels] == [("v0.4.5", False)], "the release survives"
     assert "--method DELETE" not in world.gh_log.read_text() and (world.state / "intent").exists()
 
 
@@ -946,7 +920,7 @@ def test_dangling_tags(world, tmp_path):
     wbin = git_wrapper(tmp_path, ["ls-remote", "--tags", "origin"])
     r = world.release(sha, "--since", world.first, PATH=f"{wbin}:{world.gh.parent}:{os.environ['PATH']}")
     assert r.returncode != 0 and "cannot list the tags of origin (fail closed)" in r.stdout
-    assert not world.remote_refs("refs/tags/v0.3.0-preview.1")
+    assert not world.remote_refs("refs/tags/v0.4.5")
     # main already has the tree now (the PR merged); a playtest tag on it does not count, a release tag does
     shutil.rmtree(world.tmp / "work", ignore_errors=True)
     (world.state / "intent").unlink(missing_ok=True)
@@ -955,7 +929,7 @@ def test_dangling_tags(world, tmp_path):
     git(world.repo, "tag", "v0.2.0-playtest.99", public)
     git(world.repo, "push", "-q", "origin", "refs/tags/v0.2.0-playtest.99")
     r = world.release(sha, "--since", world.first)
-    assert r.returncode == 0 and "AUTORELEASE OK v0.3.0-preview.1" in r.stdout, r.stdout + r.stderr
+    assert r.returncode == 0 and "AUTORELEASE OK v0.4.5" in r.stdout, r.stdout + r.stderr
 
 
 def test_old_or_modified_control_scripts_are_refused(world):
@@ -1060,14 +1034,14 @@ def test_a_swapped_intent_sha_changes_nothing(world):
     after = (intent.read_text(), (world.state / "last-released").read_text(), json.dumps(world.gh_data()["releases"]))
     assert before == after, "no state changed"
     # the same for the version
-    intent.write_text(text.replace("version=v0.4.0-alpha.1", "version=v0.3.0-preview.1"))
+    intent.write_text(text.replace("version=v0.4.6", "version=v0.4.5"))
     r = world.release(b)
     assert r.returncode != 0 and "does not hold" in r.stdout and (world.state / "last-released").read_text() == before[1]
     # the true record reconciles
     intent.write_text(text)
     r = world.release(b)
-    assert r.returncode != 0 and "reconciled: v0.4.0-alpha.1" in r.stdout and "is the last released archive sha" in r.stdout, r.stdout
-    assert (world.state / "last-released").read_text().split()[:2] == [b, "v0.4.0-alpha.1"]
+    assert r.returncode != 0 and "reconciled: v0.4.6" in r.stdout and "is the last released archive sha" in r.stdout, r.stdout
+    assert (world.state / "last-released").read_text().split()[:2] == [b, "v0.4.6"]
 
 
 # ---- round 5 (Sol r4 REJECT): no containers in the public tree, one redaction point -----------------------------------------------------
@@ -1164,7 +1138,7 @@ def test_one_redaction_point_covers_intent_fields(world, tmp_path):
     sha = world.change({"engine/a.cpp": "2\n"}, "X-1: changes")
     world.gate(sha)
     world.state.mkdir(exist_ok=True)
-    (world.state / "intent").write_text(f"sha={sha}\nversion=v0.3.0-preview.1\nstep={key}\nwork={keydir}\ntree={home}\npublic={key}\n")
+    (world.state / "intent").write_text(f"sha={sha}\nversion=v0.4.5\nstep={key}\nwork={keydir}\ntree={home}\npublic={key}\n")
     env = {}
     runs = [world.release(sha, **env)]
     (world.state / "intent").unlink()
@@ -1254,7 +1228,7 @@ def test_a_steam_deck_release_note_is_published(world):
     sha = git(world.repo, "rev-parse", "HEAD")
     world.gate(sha)
     r = world.release(sha, "--since", world.first)
-    assert r.returncode == 0 and "AUTORELEASE OK v0.3.0-preview.1" in r.stdout, r.stdout + r.stderr
+    assert r.returncode == 0 and "AUTORELEASE OK v0.4.5" in r.stdout, r.stdout + r.stderr
     assert "Steam Deck controls now work" in world.gh_data()["releases"][0]["body"]
 
 
@@ -1331,13 +1305,13 @@ def test_the_studio_page(tmp_path):
     assert heads == ["# OpenBFME v0.4.0-alpha.5 patch notes", "## Which file to download", "## Added", "## Changed", "## Bug fixes", "## Removed",
                      "## Known issues"], heads
     assert text.splitlines()[2] == "October 13, 2026 \u00b7 alpha build for testers"
-    assert text.rstrip().endswith("Built from commit 0123456789 (2026\\-10\\-13).")
+    assert text.rstrip().endswith("Built from commit 0123456789 (2026-10-13).")
     section = lambda t: text.split(f"## {t}\n", 1)[1].split("\n## ", 1)[0]
-    assert section("Added") == ("\n**Gameplay**\n- First gameplay line\\.\n\n**Online**\n- Server browser\\.\n\n**Saves**\n- Games can be saved\\.\n\n"
-                                "**General**\n- No area\\.\n- Unknown area\\.\n"), "areas in AREAS' order, General last, a repeated line once"
-    assert section("Changed") == "\n**Performance**\n- Faster paths\\.\n\n**Linux**\n- Runs on older systems\\.\n"
-    assert section("Known issues").startswith("\n**Campaign**\n- No campaign menu\\.\n\n**Audio**\n")
-    assert "**General**\n- An unknown area\\.\n- No area at all\\.\n" in section("Known issues")
+    assert section("Added") == ("\n**Gameplay**\n- First gameplay line.\n\n**Online**\n- Server browser.\n\n**Saves**\n- Games can be saved.\n\n"
+                                "**General**\n- No area.\n- Unknown area.\n"), "areas in AREAS' order, General last, a repeated line once"
+    assert section("Changed") == "\n**Performance**\n- Faster paths.\n\n**Linux**\n- Runs on older systems.\n"
+    assert section("Known issues").startswith("\n**Campaign**\n- No campaign menu.\n\n**Audio**\n")
+    assert "**General**\n- An unknown area.\n- No area at all.\n" in section("Known issues")
     assert lines == ["Server browser.", "Games can be saved.", "First gameplay line.", "No area.", "Unknown area.", "Runs on older systems.",
                      "Faster paths.", "A click on empty ground deselects.", "Heroes fight.", "The old menu."], lines
     # the bridge titles: the old launchers' two Play-card titles hold the added and fixed lines
@@ -1382,6 +1356,8 @@ def _launcher_view(tmp_path, notes: str) -> str:
     (proj / "project.godot").write_text('config_version=5\n\n[application]\n\nconfig/name="notes view"\n')
     shutil.copy(HERE / "fixtures/release_notes_alpha3.gd", proj / "release_notes_alpha3.gd")
     shutil.copy(HERE.parent.parent / "launcher/scripts/core/release_notes.gd", proj / "release_notes.gd")
+    (proj / "scripts/core").mkdir(parents=True, exist_ok=True)   # VERSION-1: release_notes.gd preloads the launcher's semver.gd
+    shutil.copy(HERE.parent.parent / "launcher/scripts/core/semver.gd", proj / "scripts/core/semver.gd")
     shutil.copy(HERE / "fixtures/notes_view.gd", proj / "notes_view.gd")
     (tmp_path / "notes.md").write_text(re.sub(r"\\(.)", r"\1", notes), encoding="utf-8")   # Updater.plain_text undoes the Markdown escapes first
     env = dict(os.environ, XDG_DATA_HOME=str(tmp_path / "d"), XDG_CONFIG_HOME=str(tmp_path / "c"), XDG_CACHE_HOME=str(tmp_path / "k"))
@@ -1424,3 +1400,81 @@ def test_every_label_goes_through_the_escaping(monkeypatch):
         assert bad not in body, (bad, body)
     assert [l for l in body.splitlines() if l.startswith("#")] == ["# OpenBFME v0.4.0-alpha.5 patch notes", "## " + autorelease.markdown(autorelease.neutral(evil)),
                                                                     "## Known issues"]
+
+
+# ---- VERSION-1 review (Sol): two release guards that failed open -------------------------------------------------------------------------
+def test_a_resumed_plain_release_is_above_every_release_tag():
+    """Sol's repro 1: v0.4.5 interrupted, v0.5.0-alpha.1 tagged meanwhile, v0.4.5 resumed would publish below it. Every valid release tag
+    but the intent's own counts, whatever its line"""
+    iv = autorelease.intent_version_ok
+    tags = ["refs/tags/v0.4.0-alpha.4", "refs/tags/v0.4.5", "refs/tags/v0.4.5^{}"]
+    assert iv("v0.4.5", "v0.4.0-alpha.4", tags), "its own reserved tag is no obstacle"
+    for later in ("v0.5.0-alpha.1", "v0.4.6-preview.1", "v0.4.6", "v1.0.0"):
+        assert not iv("v0.4.5", "v0.4.0-alpha.4", tags + [f"refs/tags/{later}"]), later
+    assert iv("v0.4.5", "v0.4.0-alpha.4", tags + ["refs/tags/v0.4.5-alpha.1", "refs/tags/not-a-release"]), "below it, or no release tag"
+    assert not iv("v0.4.5", "v0.5.0-alpha.1", tags), "the last released one counts too"
+    r = subprocess.run([sys.executable, HERE / "autorelease.py", "intent-version", "v0.4.5", "v0.4.0-alpha.4"], capture_output=True, text=True,
+                       input="x\trefs/tags/v0.4.5\nx\trefs/tags/v0.5.0-alpha.1\n")
+    assert r.returncode == 1
+
+
+def test_a_resumed_release_below_a_later_tag_is_refused_by_the_run(world):
+    sha = world.change({"engine/a.cpp": "2\n"}, "X-1: something new for players to see")
+    world.gate(sha)
+    r = world.release(sha, "--since", world.first, STANDIN_TAMPERED="1")
+    assert r.returncode != 0 and "version=v0.4.5" in (world.state / "intent").read_text(), r.stdout + r.stderr
+    git(world.repo, "tag", "v0.5.0-alpha.1", sha)
+    git(world.repo, "push", "-q", "origin", "refs/tags/v0.5.0-alpha.1")
+    r = world.release(sha, "--since", world.first)
+    assert r.returncode != 0 and "above every released or tagged version" in r.stdout + r.stderr and world.gh_data()["releases"] == [], \
+        r.stdout + r.stderr
+
+
+def test_format_3_is_refused_while_a_published_launcher_reads_format_2_only(world):
+    """Sol's repro 2: OPENBFME_RELEASE_LEGACY_LAUNCHERS=0 published format 3, which the published preview.4 launcher refuses
+    ("this launcher reads format 2"). Derived from each release tag's own manifest.gd"""
+    assert autorelease.launcher_formats("const FORMATS := [2, 3]\n") == {2, 3} and autorelease.launcher_formats("const FORMAT := 2\n") == {2}
+    for bad in ("", "const FORMAT := 2\nconst FORMAT := 3\n", "# FORMAT := 2\n"):
+        with pytest.raises(SystemExit, match="cannot tell which manifest formats"):
+            autorelease.launcher_formats(bad)
+    old = "extends RefCounted\nconst FORMAT := 2\n"
+    new = "extends RefCounted\nconst FORMATS := [2, 3]\n"
+    a = world.change({"launcher/scripts/core/manifest.gd": old}, "old launcher")
+    git(world.repo, "tag", "v0.3.0-preview.4", a)
+    git(world.repo, "push", "-q", "origin", "refs/tags/v0.3.0-preview.4")
+    b = world.change({"launcher/scripts/core/manifest.gd": new, "engine/a.cpp": "2\n"}, "X-1: something new for players to see")
+    git(world.repo, "tag", "v0.4.0-alpha.9", b)
+    git(world.repo, "push", "-q", "origin", "refs/tags/v0.4.0-alpha.9")
+    assert autorelease.format2_only_launchers(str(world.repo), ["refs/tags/v0.3.0-preview.4", "refs/tags/v0.4.0-alpha.9^{}",
+                                                                "refs/tags/v0.2.0-playtest.1"]) == ["v0.3.0-preview.4"]
+    with pytest.raises(SystemExit, match="not in this repository"):
+        autorelease.format2_only_launchers(str(world.repo), ["refs/tags/v0.3.0-preview.7"])
+    world.gate(b)
+    r = world.release(b, "--since", world.first, OPENBFME_RELEASE_LEGACY_LAUNCHERS="0")
+    assert r.returncode == 2 and "read manifest format 2 only (v0.3.0-preview.4)" in r.stdout + r.stderr, r.stdout + r.stderr
+    assert "LEGACY_LAUNCHERS=0 is refused" in r.stdout + r.stderr and world.gh_data()["releases"] == [] and not (world.state / "intent").exists()
+    r = world.release(b, "--since", world.first)   # the default (archives kept) still releases
+    assert r.returncode == 0, r.stdout + r.stderr
+
+
+def test_the_real_published_launchers_read_format_2_only():
+    tags = subprocess.run(["git", "-C", str(REPO), "tag", "-l", "v0.3.0-preview.*", "v0.4.0-alpha.*"], capture_output=True, text=True).stdout.split()
+    if not tags:
+        pytest.skip("SKIP: this clone has no release tags")
+    old = autorelease.format2_only_launchers(str(REPO), tags)
+    assert {"v0.3.0-preview.4", "v0.4.0-alpha.4"} <= set(old) or not {"v0.3.0-preview.4", "v0.4.0-alpha.4"} <= set(tags), old
+
+
+def test_notes_have_no_backslash_escapes():
+    """The launcher shows the notes as text: v0.4.0-alpha.5 printed "original\\.", "\\(" and "under\\-attack" (NOTES-1 escaped punctuation)"""
+    text = 'The original. Radar (pings), under-attack lines: 1+1 = 2! snake_case {x} a|b `c` *d* [e](f) ~g~ back\\slash <h> & i'
+    md = autorelease.markdown(autorelease.neutral(text))
+    assert "\\" not in md
+    for plain in ("original.", "(pings)", "under-attack", "lines: 1+1 = 2!", "snake_case", "{x}"):
+        assert plain in md, plain
+    for active in ("`", "*", "[", "]", "|", "~", "<h>"):
+        assert active not in md, active
+    commits = [{"subject": "X-1: y", "body": "Release-note: Fixed [Gameplay]: the original. Radar (pings) and under-attack lines (see [x](u)) work again", "files": []}]
+    notes, _ = autorelease.release_notes("v0.4.0-alpha.6", commits, [{"text": "A known (issue) with under-attack.", "area": "Gameplay"}])
+    assert "\\" not in notes
+    assert "- The original. Radar (pings) and under-attack lines" in notes or "original. Radar (pings)" in notes

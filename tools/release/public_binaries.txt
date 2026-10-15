@@ -11,3 +11,5 @@ f4d83d34d1f6c741193e4acf4b3dff9531e5a67b6aa65228d00a7db72a4e0f34  launcher/fonts
 b20b7d9626dd956b2c5e558692ad328b1f19e3275e2782db4fa07670d83f35e0  launcher/fonts/CormorantGaramond.ttf  Cormorant Garamond variable font (parchment text), SIL OFL 1.1, launcher/fonts/OFL-CormorantGaramond.txt
 0f48ea6abb2084537854f7174c470991a463b13036309e3b50a81511611c530d  launcher/fonts/CormorantGaramond-Italic.ttf  Cormorant Garamond Italic variable font (the subtitle), SIL OFL 1.1, launcher/fonts/OFL-CormorantGaramond.txt
 29160a80ff49ddcab2c97711247e08b1fab27a484a329ce8b813d820dc559031  launcher/fonts/Inter.ttf  Inter variable font (the launcher's text), SIL OFL 1.1, launcher/fonts/OFL-Inter.txt
+# Lane NETLAG-1 (merge queue q15): the replay the previous build recorded (a 2-player LAN game of openbfme_peer on the public map, no retail data inside: the header holds archive names and hashes), played by test_netlag1.cpp
+37b7bb1f5abb1af9e1050c1ff6ac050376a8d29cc73f4ae2c921d9fafb5bb2ae  engine/tests/data/netlag1/prelane_runahead2.replay  OpenBFME replay recorded by the archive build 593e83cd, the test fixture of the older-engine replay compatibility

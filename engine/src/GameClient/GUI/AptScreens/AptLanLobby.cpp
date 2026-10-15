@@ -521,6 +521,7 @@ void AptLanLobby::update()
 	// RW 0x8490E0
 	pruneLan(); // a gadget that went falls back to its live twin (and the list refills)
 	pumpLan();
+	serviceReadyBoxes(); // lane ONLINE-5
 	if (m_box)
 	{
 		m_box->update();
@@ -723,6 +724,13 @@ bool AptLanLobby::lobbyEditable(int slot) const
 	return m_lan->amIHost() && !m_lan->currentGame()->info.slots[slot].isHuman(); // the host sets the other slots that are not players
 }
 
+bool AptLanLobby::slotAccepted(int slot) const
+{
+	// lane ONLINE-5: LANAPI keeps the accept flags beside the slots (SET_ACCEPT); the host's own slot has none
+	const LANGame *game = m_lan ? m_lan->currentGame() : nullptr;
+	return game && slot >= 0 && slot < MAX_SLOTS && game->accepted[(std::size_t)slot];
+}
+
 bool AptLanLobby::applySlotHero(int slot, const CreateAHeroHero *hero)
 {
 	// lane CAH-1: the owner's applySlotHero in a LAN game (BFME2 owner vslot 6): only the local slot's hero, and through the host
@@ -747,6 +755,7 @@ void AptLanLobby::onReadyPress(const std::string &argument)
 	// vReadyInitialized); a press passes the box's slot (the name's suffix): only a press accepts
 	if (argument.empty() || argument == "undefined")
 	{
+		readyBoxesMade(); // lane ONLINE-5: the boxes get their states (RW 0x84211D)
 		return;
 	}
 	if (!m_lan || !m_lan->currentGame() || m_lan->amIHost())

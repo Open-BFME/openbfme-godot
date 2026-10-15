@@ -230,8 +230,7 @@ frames through it on equal state hashes (0 desyncs).
   deploy, not run yet: the token launcher needs the owner's Windows session)
   with `MOTD` set, and a relay in its `RELAYS` (no VPS yet): until then START
   is refused with the message above;
-- the staging room's Ready column draws no tick (MpGameSetup's ready display
-  is not ported for LAN either; the ready flag itself works);
+- (fixed by ONLINE-5: the staging room's Ready column, below);
 - Quick Match, War of the Ring online, Stats and the Messenger (S-4075),
   Create-a-Heroes online (S-4076), ping per relay region (S-4073).
 
@@ -287,6 +286,143 @@ screens played by two `openbfme_peer` processes), the lobby's
   redaction are tested on the client (no lobby needed), on the screens (a
   local lobby with answers rewritten), and in Godot
   (`tools/net/test_online_hostile.py`).
+
+## The staging room as players met it (ONLINE-5, 2026-10-14)
+
+The owner hosted a game on the live lobby with two testers and could not get it
+going. What was wrong, and what the room does now:
+
+- **Ready.** The movie's Ready column was never given its states, so a joiner
+  had no box to tick and the host's Play Game could never pass. The panel now
+  tells the movie each slot's state (`SetReadyState`, RW 0x84211D) with the
+  screens' own panel flags (online 0x200001F0, LAN 0x400001A0: bit 0x20). A
+  joiner ticks its own box; a ready joiner's row is locked until it unticks;
+  the host's Play Game with someone not ready says `GUI:NotifiedStartIntent`
+  to every player (RW 0x8431B8). The lobby unreadies everyone on any change of
+  the room (S-4553).
+- **Start positions.** The MAP tab's map shows the start spots in every lobby
+  that is not a War of the Ring battle's (RW 0x976F59: TheGameLogic + 0x114 is
+  the battle kind, 3 = "not a War of the Ring battle"): click a free spot to
+  take it, your own to free it; the host places its AIs. The lobby refuses a
+  spot or a colour another slot holds (`spot_taken` / `color_taken`) and frees
+  every spot when the map changes; the START carries the positions.
+- **The rows.** The chat's Players list names the room's players; a row's
+  drop-downs work for its owner and are disabled for the others; Hero and
+  Handicap are shown locked (S-4552); the title is the movie's own (CREATE
+  GAME for the host, JOIN GAME for a joiner).
+- **Chat.** The lobby holds a staging room poll until the room changes (long
+  polling, at most 25 s; see "Request budget" below); the sender's own line
+  appears as it is typed. Holds are shared fairly (Sol r1): at most two per
+  player (16 a room, 4,000 in all); a poll not held for one of these bounds is
+  answered with `"backoff": 10`, the seconds the client waits before its next
+  poll. A refused poll answer changes nothing on the client (it is checked
+  whole before any of it is kept).
+- **Slots (Sol r1).** An open or closed slot keeps no faction, colour, start
+  position or team, and a player who joins a slot starts with none: a
+  reopened AI slot's spot or colour can no longer come back beside another
+  player who has taken it since.
+- **Buttons.** MESSENGER and CONNECTIONS say they are not available
+  (S-4075, S-4550) instead of doing nothing / leaving an empty screen.
+- **Wide screens.** The thorn frame of the online pages (a 3D model) is
+  rendered at its clip's stage aspect under a non-4:3 stretch, so it stays
+  around the panels at 16:9 (S-4555). Only the menu screens' 3D frame does
+  this: the end screen's victory and defeat rings keep RotWK's proportions.
+
+### Request budget (Cloudflare Workers Free plan)
+
+The lobby is one Durable Object behind a Worker. The Free plan's daily request
+allowance (100,000 Worker requests a day) is what limits it; a staging room
+player used to cost one request a second (3,600 an hour: about 28
+player-hours a day).
+
+| | requests per player-hour in a staging room | chat line reaches the others |
+|---|---|---|
+| before (poll every 1 s) | 3,600 | 0 .. 1,000 ms (500 on average) + a round trip |
+| after (held poll, wait 20 s) | 180 idle, + 1 per change of the room per player | one round trip (1-2 ms on a local lobby) |
+
+A busy room (two changes a minute: chat lines, ready ticks) costs about 300
+requests per player-hour: about 330 player-hours a day on the Free plan. A
+held poll keeps the Durable Object in memory while it waits; so did the
+once-a-second poll (the object stays up for seconds after each request), and
+one object all day is 24 h x 128 MB = 11,000 GB-s, under the Free plan's
+13,000 GB-s a day (the duration allowance as documented when CFDEPLOY-1 chose
+the Free plan; check the current figure before a public launch). No paid plan
+is needed. The next step, if the request allowance is ever reached, is the
+Durable Object's hibernating WebSockets (incoming messages count 20 to 1).
+
+**Compatibility.** A lobby with these changes answers an older client (alpha.3,
+alpha.4: no `wait` in its polls) at once, as before; the extra fields of its
+answers (`wait`, a chat line's `you`) are ignored by them. A client with these
+changes polls an older lobby (no `wait` in its answers) once a second and shows
+the sender's line when it comes back, as before. The refusals the new lobby
+adds (`spot_taken`, `color_taken`, `not_your_slot`, `started` for a late ready)
+reach an older client as the lobby's message in the room's chat. `backoff`
+only ever answers a poll that asked to wait, which older clients never do. An
+older client that sends faction / colour / spot / team for a slot it is
+emptying gets `bad_field`; ONLINE-4's and later screens never send them for an
+open or closed slot.
+
+**RULES tab.** It matches RotWK's rows: Initial Resources, Command Point
+Factor, Allow Custom Heroes, Allow Ring Heroes and (online only) Clan Game,
+plus OpenBFME's Legendary Heroes. Clan affiliation is not available (no clan
+tags): a clan game is refused at the start, and the clan checks before a ready
+are not ported (S-4553).
+
+## A player who crashes or drops (MP-DROP-1, 2026-10-14)
+
+ONLINE-5 found that a crash could freeze a three-player online game for good
+(S-4556): the survivors' disconnect screen came up, the crashed player's bar
+ran out and both votes showed, but nobody was dropped. What happens now (the
+disconnect path is MP-2's port of RotWK's DisconnectManager; the stops name
+where OpenBFME differs):
+
+- **The screen.** A player who sends nothing for NetworkDisconnectTime
+  (GameData: 15 s) brings up the disconnect screen on every other player: the
+  missing player's name, a bar that runs down over NetworkPlayerTimeoutTime
+  (60 s), the votes, and a Kick button once the bar is below 90 %.
+- **The drop.** When every other player pressed Kick, or the bar runs out
+  (the screen votes by itself at 0 %), the next packet router drops the player
+  at the frame everyone is on, and the game goes on. Online, a player dropped
+  by the bar is held for a rejoin (5 minutes, ONLINE-3), then their army goes
+  to an ally; a Kick hands it over at once; on LAN it goes at once.
+- **What froze before, fixed (an OpenBFME rule, S-4810).** A moment of traffic
+  from the silent player (a restarted game's first datagrams before the relay
+  names it, or a hung game that flickers back) turned one survivor's screen
+  off and on at one frame; RotWK's rule ignores a repeated announcement of a
+  frame (RW 0x8D836B), so "everyone on one frame" never held again. OpenBFME
+  counts the repeat once the earlier announcement was closed. A due drop that
+  waits now logs why (`GAME NET disconnect log: the drop of slot N waits: ...`).
+- **Everyone must update.** The rule above has to run on the packet router.
+  In a game whose packet router (the first player of the game still in it)
+  runs an older OpenBFME, a crash can still freeze the game exactly as before.
+  The protocol is unchanged, so old and new clients still join each other's
+  games: there is no version check that would warn about this.
+- **A crash on the load screen.** RotWK keeps every player on the load screen
+  while nobody is silent and the game is below frame 6 (RW 0x62B385); once a
+  player is silent for four times NetworkDisconnectTime (60 s), the load
+  screen goes and the disconnect screen opens (RW 0x8D8B82), so the others
+  start after about 2 minutes (60 s + the 60 s bar) without the missing player.
+  OpenBFME now does the same. A loader that keeps sending is never dropped, but
+  OpenBFME's client sends nothing while it loads (RotWK's sends its progress),
+  so a player still loading about a minute after the first one finished is
+  treated as gone (S-4811).
+- **Forged or inconsistent messages.** A drop message is checked against what
+  the receiving player knows before anything changes: its target and list of
+  departed players must be players of the game, its sender must have announced
+  the drop frame, and the receiver must have announced it too; otherwise it is
+  refused by name (RotWK takes any drop on its sender's word, RW 0x8D89D7;
+  S-4812). The decider sends a refused drop again once that player announces
+  the frame. A vote for oneself or for a slot outside the game is refused.
+
+Tests: `engine/tests/test_mpdrop1_disconnect.cpp` (in-memory, exact timings:
+the flicker on either survivor, two to eight players with the last slot or
+the packet router crashing, a crash during a pause, a crash on the load
+screen, a slow loader that keeps sending, the forged and inconsistent drops,
+the decider's resend, the repeated-frame races); `tools/net/online3_e2e.sh`
+scenarios `late` (the crashed player's game restarts while the survivors'
+screens are up), `hang` (SIGSTOP), `loaddeath`, `rejoindrop` (a second crash
+during a rejoin) and `routerrejoin`, with real peers through a local relay;
+`tools/net/mpdrop1_godot.sh` (three game clients) and `mpdrop1_lan.sh`.
 
 ## Phase O3, the reconnect half: what is built (ONLINE-3)
 
@@ -640,7 +776,11 @@ What an internet relay needs on top of this:
    tickets). The profile identity is compared on the server before a join.
 
 Lockstep and latency: the logic runs at 5 frames a second and the adaptive
-run-ahead follows the measured round trip. A relay hop adds a few
+run-ahead follows the measured round trip. Since NETLAG-1 the lobby's
+run-ahead (the floor) is 1, RotWK's own command delay: an order runs on the
+frame after the one it was given on, 200 to 400 ms after the click (v0.4.0-alpha.3
+used 2: 400 to 600 ms). It rises by a frame for about every 200 ms of one-way
+latency above roughly 90 ms (stop S-4530). A relay hop adds a few
 milliseconds in-region. A transatlantic game picks one relay, and both sides
 see roughly the Atlantic round trip. MP-3 measured games at 150 ± 50 ms with
 5 % loss: 2.8 s of stalls per 80 s with fast resend. That is a playable game,
@@ -1025,3 +1165,17 @@ Read 2026-10-10.
 - [D2] Discord Social SDK game invites: https://docs.discord.com/developers/discord-social-sdk/development-guides/managing-game-invites
 - [D3] discord-rpc (deprecated, MIT): https://github.com/discord/discord-rpc
 - [M1] Resend pricing: https://resend.com/pricing
+
+## Player count (lane ONLINECOUNT-1)
+
+The lobby's `GET /v1/stats` (counts of players online, open and running games; services/online/DEPLOY.md has the definition, the request budget and the
+free-plan estimate) feeds three lines: the main menu's top-left "N players online" and the online menu's "N players online, M games open"
+(`godot/scripts/online_stats.gd`), and the launcher's Play card chip (`launcher/scripts/core/online_count.gd`). The setting "Show how many players are
+online" (launcher: Settings > General, `state.cfg` `[launcher] show_online_count`, `--online-count=on|off`) is on by default; off, neither asks the lobby.
+The game reads the launcher's `state.cfg` (read only), so one switch covers both; a game without a launcher is turned off with `--no-online-count`,
+`OPENBFME_NO_ONLINE_COUNT=1` or Options.ini `OpenBFMEShowOnlineCount = No`. Development and scripted runs ask only when a lobby is named
+(`--online-lobby` / `OPENBFME_LOBBY`). A failed, malformed or missing answer shows nothing.
+
+Known limit (ONLINECOUNT-1, for the owner): on Cloudflare's Free plan (100,000 Worker requests a day) the lobby already runs out at about 23 players
+constantly in staging rooms (the held poll is 20 s, 180 requests an hour each); the player count adds nothing for them and 40 an hour for a player parked in the
+online menu. The numbers at 10 / 100 / 1,000 players are in services/online/DEPLOY.md.

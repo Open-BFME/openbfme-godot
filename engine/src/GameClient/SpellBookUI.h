@@ -124,7 +124,20 @@ public:
 	bool press(int index, int playerIndex, std::vector<GameMessage> &out);
 	bool targeting() const { return m_targeting >= 0; }
 	const Button *targetButton() const;
-	// the targeting click on the ground: MSG_DO_SPECIAL_POWER_AT_LOCATION { power id, location, no object, options 0, the book } (SPELL-1's format)
+	// lane SPELL-4: whether the targeting power may be cast at `where` (RW 0x6A4260 -> RW 0x82DFB7(..., 1)): the valid / invalid hint of the radius cursor.
+	// UNPORTED: the generic tests passed but the power type's own test is not ported (S-1874: the summons' spot test, the building powers, Rebuild's scan);
+	// stop S-4641: the hint and the click then take it as valid (the cast goes through as before this lane), and the HUD reports the stop
+	enum class Target
+	{
+		VALID,
+		INVALID,
+		UNPORTED
+	};
+	Target targetVerdict(GameLogic &logic, const Coord3D &where) const;
+	bool targetValid(GameLogic &logic, const Coord3D &where) const { return targetVerdict(logic, where) != Target::INVALID; }
+	// the targeting click on the ground: MSG_DO_SPECIAL_POWER_AT_LOCATION { power id, location, no object, options 0, the book } (SPELL-1's format).
+	// lane SPELL-4: the callers (InGameHud, GameWorld) first ask targetValid: at an invalid location retail sends nothing and the targeting goes on
+	// (RW 0x81EAD3 -> 0x81EBE9: the invalid hint 0xAF)
 	bool clickWorld(const Coord3D &where, int playerIndex, std::vector<GameMessage> &out);
 	void cancel() { m_targeting = -1; }
 

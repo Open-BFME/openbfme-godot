@@ -9,7 +9,7 @@ import { createHmac } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { Lobby, route, signTicket, signRejoinTicket, signSpectatorTicket, base64UrlDecode, parseKeyRing, configFromEnv, LobbyError } from '../src/lobby.mjs';
+import { MAX_WAIT_S, MAX_WAITERS_PER_GAME, MAX_HOLDS_PER_ACCOUNT, HOLD_BACKOFF_S, Lobby, route, signTicket, signRejoinTicket, signSpectatorTicket, base64UrlDecode, parseKeyRing, configFromEnv, LobbyError } from '../src/lobby.mjs';
 import { startServer, nodeEnv } from '../src/server.mjs';
 // node:sqlite (Node 22.5+) stands in for a Durable Object's SQLite storage; an older Node skips those tests loudly
 const sqlite = await import('node:sqlite').catch(() => null);
@@ -43,6 +43,11 @@ async function call(lobby, method, path, { token, body, ip = '198.51.100.1' } = 
     bytes: async () => (body instanceof Uint8Array ? body : new TextEncoder().encode(body === undefined ? '' : JSON.stringify(body))),
   });
   return { status: out.status, body: out.headers['content-type']?.startsWith('application/json') ? JSON.parse(out.body) : out.body };
+}
+// ONLINE-5: route's raw answer (a held poll is { deferred })
+async function rawCall(lobby, method, path, token) {
+  const url = new URL(path, 'http://lobby');
+  return route(lobby, { method, path: url.pathname, query: url.searchParams, ip: '198.51.100.1', headers: { authorization: `Bearer ${token}` }, bytes: async () => new Uint8Array(0) });
 }
 
 test('the ticket is the 32 bytes the relay checks (pinned with engine/tests/test_online_relay.cpp)', async () => {
@@ -828,4 +833,375 @@ test('INFRA-2 r2: the relay uploader\'s status is stored in the Durable Object, 
   // an old status is refused (it could hide a fault for longer than the window)
   const old = new TextEncoder().encode(JSON.stringify({ ...JSON.parse(new TextDecoder().decode(body)), at: 1000 }));
   assert.equal((await (await post(src.obj, old)).json()).error, 'status_clock');
+});
+
+// ---- lane ONLINE-5: the staging room as three players met it -----------------------------------------------------------------------------------------------
+// a lobby with a fake clock whose timers fire when the clock passes them, and a game of Ann (host, slot 0), Bea (1) and Cy (2) with an AI in slot 3
+async function room5() {
+  const env = fakeEnv();
+  const timers = new Set();
+  env.setTimer = (fn, ms) => { const t = { fn, at: env.now() + ms }; timers.add(t); return t; };
+  env.clearTimer = (t) => timers.delete(t);
+  const advance = env.advance;
+  env.advance = (ms) => {
+    advance(ms);
+    for (const t of [...timers]) if (t.at <= env.now() && timers.delete(t)) t.fn();
+  };
+  const lobby = new Lobby(env, configFromEnv(ENV));
+  const guest = async (name) => (await call(lobby, 'POST', '/v1/auth/guest', { body: { name } })).body;
+  const [a, b, c] = [await guest('Ann'), await guest('Bea'), await guest('Cy')];
+  const slots = [{ state: 'player', faction: 0, color: 0, startPos: 0, team: -1 }, { state: 'open' }, { state: 'open' }, { state: 'hard', name: 'Computer', faction: 2, color: 3, startPos: 3, team: -1 }];
+  const created = await call(lobby, 'POST', '/v1/games', { token: a.token, body: { name: 'three', profile: PROFILE, setup: { ...setup, slots } } });
+  assert.equal(created.status, 200, JSON.stringify(created.body));
+  const id = created.body.id;
+  for (const p of [b, c]) assert.equal((await call(lobby, 'POST', `/v1/games/${id}/join`, { token: p.token, body: { profile: PROFILE } })).status, 200);
+  const post = (who, what, body) => call(lobby, 'POST', `/v1/games/${id}/${what}`, { token: who.token, body });
+  // the room as stored, without the clock's touch
+  const snapshot = () => JSON.stringify({ ...lobby.games.get(id), touched: 0 });
+  return { env, lobby, timers, a, b, c, id, post, snapshot };
+}
+
+test('ONLINE-5: a ready, spot, colour or slot claim for another player is refused by name and the room is unchanged', async () => {
+  const { lobby, a, b, c, id, post, snapshot } = await room5();
+  assert.equal((await post(b, 'slot', { faction: 1, color: 1, startPos: 1, team: 0 })).status, 200);
+  assert.equal((await post(c, 'slot', { faction: 2, color: 2, startPos: 2, team: 1 })).status, 200);
+  assert.equal((await post(b, 'ready', { ready: true })).status, 200);
+  const before = snapshot();
+  const refused = async (who, what, body, status, code, message) => {
+    const r = await post(who, what, body);
+    assert.equal(r.status, status, `${what} ${JSON.stringify(body)}: ${JSON.stringify(r.body)}`);
+    assert.equal(r.body.error, code);
+    if (message) assert.equal(r.body.message, message);
+    assert.equal(snapshot(), before, `${what} ${JSON.stringify(body)} changed the room`);
+  };
+  // ready for someone else's slot (it must not ready or unready the sender either)
+  await refused(c, 'ready', { ready: true, slot: 1 }, 403, 'not_your_slot', 'a player readies their own slot only');
+  await refused(b, 'ready', { ready: false, slot: 2 }, 403, 'not_your_slot');
+  await refused(a, 'ready', { ready: true, slot: 1 }, 403, 'not_your_slot');
+  await refused(c, 'ready', { ready: 'yes' }, 400, 'bad_field');
+  // a start position or a colour another player or an AI holds
+  await refused(c, 'slot', { startPos: 1 }, 409, 'spot_taken', 'start position 2 is Bea\'s');
+  await refused(c, 'slot', { startPos: 0 }, 409, 'spot_taken', 'start position 1 is Ann\'s');
+  await refused(c, 'slot', { startPos: 3 }, 409, 'spot_taken', 'start position 4 is Computer\'s');
+  await refused(c, 'slot', { color: 1 }, 409, 'color_taken', 'that colour is Bea\'s');
+  await refused(a, 'slot', { slot: 3, color: 0, startPos: 2 }, 409, 'spot_taken'); // the host's AI on a player's spot
+  await refused(a, 'slot', { slot: 3, color: 2 }, 409, 'color_taken');
+  // another player's slot, by a player and by the host; a player cannot make its own slot something else
+  await refused(c, 'slot', { slot: 1, faction: 3 }, 403, 'not_host');
+  await refused(c, 'slot', { slot: 3, state: 'open' }, 403, 'not_host');
+  await refused(a, 'slot', { slot: 1, faction: 3 }, 403, 'player_slot');
+  await refused(c, 'slot', { state: 'closed' }, 400, 'bad_field');
+  await refused(c, 'slot', { name: 'Ann' }, 400, 'bad_field');
+  // one bad field refuses the whole change: the good faction before it is not kept (the old code kept it)
+  await refused(c, 'slot', { faction: 5, color: 64 }, 400, 'bad_field');
+  await refused(c, 'slot', { faction: 5, startPos: 8 }, 400, 'bad_field');
+  await refused(a, 'slot', { slot: 3, state: 'easy', name: 'Bot', team: 9 }, 400, 'bad_field');
+  await refused(a, 'slot', { slot: 8 }, 400, 'bad_field');
+  await refused(c, 'kick', { slot: 1 }, 403, 'not_host');
+  await refused(c, 'setup', { map: 'maps/x/x.map' }, 403, 'not_host');
+  await refused(c, 'start', undefined, 403, 'not_host');
+  // the same ready again changes nothing (no new seq: nobody's poll is woken for it)
+  assert.equal((await post(b, 'ready', { ready: true })).status, 200);
+  assert.equal(snapshot(), before);
+  // the legal twins of the refused claims work: random is never taken, a free spot is
+  assert.equal((await post(c, 'slot', { startPos: -1, color: -1 })).status, 200);
+  assert.equal((await post(c, 'slot', { startPos: 4, color: 5 })).status, 200);
+  assert.deepEqual(lobby.games.get(id).slots.slice(0, 4).map((s) => [s.startPos, s.color]), [[0, 0], [1, 1], [4, 5], [3, 3]]);
+  // an AI slot closed frees its spot and colour; a new game cannot begin with two slots on one spot
+  assert.equal((await post(a, 'slot', { slot: 3, state: 'closed' })).status, 200);
+  assert.equal((await post(c, 'slot', { startPos: 3, color: 3 })).status, 200);
+  const d = (await call(lobby, 'POST', '/v1/auth/guest', { body: { name: 'Dee' } })).body;
+  const twice = await call(lobby, 'POST', '/v1/games', { token: d.token, body: { name: 'dup', profile: PROFILE, setup: { ...setup, slots: [{ state: 'player', startPos: 1 }, { state: 'easy', startPos: 1 }] } } });
+  assert.equal(twice.body.error, 'spot_taken');
+  assert.equal(lobby.games.size, 1);
+});
+
+test('ONLINE-5: a change of the game unreadies everyone, a new map frees every start position, and a started game takes no ready', async () => {
+  const { lobby, a, b, c, id, post } = await room5();
+  await post(b, 'slot', { startPos: 1 });
+  await post(c, 'slot', { startPos: 2 });
+  const ready = () => lobby.games.get(id).slots.slice(0, 3).map((s) => s.ready);
+  const both = async () => {
+    for (const p of [b, c]) assert.equal((await post(p, 'ready', { ready: true })).status, 200);
+    assert.deepEqual(ready(), [false, true, true]);
+  };
+  await both();
+  assert.equal((await post(a, 'setup', { startingCash: 4000 })).status, 200);
+  assert.deepEqual(ready(), [false, false, false]);
+  assert.deepEqual(lobby.games.get(id).slots.map((s) => s.startPos), [0, 1, 2, 3, -1, -1, -1, -1]); // the same map: the spots stay
+  await both();
+  assert.equal((await post(a, 'slot', { faction: 4 })).status, 200); // the host's own army
+  assert.deepEqual(ready(), [false, false, false]);
+  await both();
+  assert.equal((await post(a, 'setup', { map: 'maps/map mp other/map mp other.map' })).status, 200);
+  assert.deepEqual(ready(), [false, false, false]);
+  assert.deepEqual(lobby.games.get(id).slots.map((s) => s.startPos), [-1, -1, -1, -1, -1, -1, -1, -1]);
+  // the start names who is not ready
+  await post(b, 'ready', { ready: true });
+  const early = await post(a, 'start');
+  assert.equal(early.body.error, 'not_ready');
+  assert.equal(early.body.message, 'not ready: Cy');
+  await post(c, 'ready', { ready: true });
+  assert.equal((await post(a, 'start')).status, 200);
+  const late = await post(b, 'ready', { ready: false });
+  assert.equal(late.status, 409);
+  assert.equal(late.body.error, 'started');
+  assert.deepEqual(ready(), [false, true, true]);
+});
+
+test('ONLINE-5: a poll that asks to wait is held until the game changes, its own chat lines are marked, and held polls are bounded', async () => {
+  const { env, lobby, a, b, c, id, post } = await room5();
+  const poll = (who, q) => rawCall(lobby, 'GET', `/v1/games/${id}${q}`, who.token);
+  const seq = () => lobby.games.get(id).seq;
+  // a poll without wait is answered at once, as every client before ONLINE-5 expects; it says the lobby can hold polls
+  const plain = await poll(b, '?since=0');
+  assert.equal(plain.deferred, undefined);
+  assert.equal(JSON.parse(plain.body).wait, MAX_WAIT_S);
+  assert.equal(JSON.parse(plain.body).game.seq, seq());
+  // an old view (another seq) is answered at once too
+  assert.equal((await poll(b, `?since=0&seq=${seq() - 1}&wait=20`)).deferred, undefined);
+  // the current view: held; nothing comes until the game changes
+  const held = await poll(b, `?since=${seq()}&seq=${seq()}&wait=20`);
+  assert.ok(held.deferred);
+  let answer = null;
+  held.deferred.then((r) => { answer = r; });
+  await new Promise((r) => setImmediate(r));
+  assert.equal(answer, null);
+  assert.equal(lobby.waiterCount, 1);
+  env.advance(19000);
+  await new Promise((r) => setImmediate(r));
+  assert.equal(answer, null);
+  const sinceBefore = seq();
+  assert.equal((await post(c, 'chat', { text: 'hello' })).status, 200);
+  await new Promise((r) => setImmediate(r));
+  assert.ok(answer, 'the chat line woke the held poll');
+  assert.equal(lobby.waiterCount, 0);
+  assert.equal(lobby.waiters.size, 0);
+  const woken = JSON.parse(answer.body);
+  assert.deepEqual(woken.chat, [{ seq: sinceBefore + 1, from: 'Cy', text: 'hello' }]); // Bea reads Cy's line: not marked
+  // the writer's own poll marks it
+  const own = JSON.parse((await poll(c, `?since=${sinceBefore}`)).body);
+  assert.deepEqual(own.chat, [{ seq: sinceBefore + 1, from: 'Cy', text: 'hello', you: true }]);
+  // a held poll with nothing happening is answered when its time is up, with the unchanged view; the wait is capped at MAX_WAIT_S
+  const idle = await poll(a, `?since=${seq()}&seq=${seq()}&wait=999`);
+  let idleAnswer = null;
+  idle.deferred.then((r) => { idleAnswer = r; });
+  env.advance((MAX_WAIT_S - 1) * 1000);
+  await new Promise((r) => setImmediate(r));
+  assert.equal(idleAnswer, null);
+  env.advance(1000);
+  await new Promise((r) => setImmediate(r));
+  assert.equal(JSON.parse(idleAnswer.body).game.seq, seq());
+  assert.deepEqual(JSON.parse(idleAnswer.body).chat, []);
+  assert.equal(lobby.waiterCount, 0);
+  // anything that is not a whole number of seconds from 1, or not a view seq, is not held (answered at once, never an error or a timer)
+  for (const q of ['&wait=0', '&wait=-5', '&wait=1e3', '&wait=abc', '&wait=20.5', '&wait=', '&wait=1000000']) {
+    const r = await poll(b, `?since=0&seq=${seq()}${q}`);
+    assert.equal(r.deferred, undefined, q);
+    assert.equal(r.status, 200, q);
+  }
+  for (const q of [`?since=0&wait=20`, `?since=0&seq=abc&wait=20`, `?since=0&seq=-1&wait=20`, `?since=0&seq=99999999999&wait=20`]) assert.equal((await poll(b, q)).deferred, undefined, q);
+  await new Promise((r) => setImmediate(r));
+  assert.equal(lobby.waiterCount, 0);
+  // someone who is not in the game is refused at once, never held
+  const d = (await call(lobby, 'POST', '/v1/auth/guest', { body: { name: 'Dee' } })).body;
+  const stranger = await poll(d, `?since=0&seq=${seq()}&wait=20`);
+  assert.equal(stranger.status, 403);
+  // Sol r1: each player has MAX_HOLDS_PER_ACCOUNT holds at once: a third poll of Bea's is answered at once with the back-off, and takes nothing from Cy
+  const many = [];
+  for (let i = 0; i < 2 * MAX_HOLDS_PER_ACCOUNT; i++) many.push(await poll(i % 2 ? b : c, `?since=${seq()}&seq=${seq()}&wait=20`));
+  assert.ok(many.every((r) => r.deferred));
+  assert.equal(lobby.waiterCount, 2 * MAX_HOLDS_PER_ACCOUNT);
+  const over = await poll(b, `?since=${seq()}&seq=${seq()}&wait=20`);
+  assert.equal(over.deferred, undefined);
+  assert.equal(over.status, 200);
+  assert.equal(JSON.parse(over.body).backoff, HOLD_BACKOFF_S);
+  assert.equal(lobby.waiterCount, 2 * MAX_HOLDS_PER_ACCOUNT);
+  // a poll that is held, or answered at once for an old view, carries no back-off
+  assert.equal(JSON.parse((await poll(b, `?since=0&seq=${seq() - 1}&wait=20`)).body).backoff, undefined);
+  // a kick wakes them: the kicked player's held polls say so, the others' carry the new view; every hold is released (none left for anyone)
+  assert.equal((await post(a, 'kick', { slot: 2 })).status, 200);
+  const done = await Promise.all(many.map((r) => r.deferred));
+  assert.equal(lobby.waiterCount, 0);
+  assert.equal(lobby.waiters.size, 0);
+  assert.equal(lobby.accountHolds.size, 0);
+  done.forEach((r, i) => {
+    assert.equal(r.status, i % 2 ? 200 : 403, JSON.stringify(r.body));
+    if (!(i % 2)) assert.equal(JSON.parse(r.body).error, 'not_in_game');
+    else assert.equal(JSON.parse(r.body).backoff, undefined);
+  });
+  // the host leaves: a held poll says the game is gone
+  const last = await poll(b, `?since=${seq()}&seq=${seq()}&wait=20`);
+  assert.ok(last.deferred);
+  assert.equal((await post(a, 'leave')).status, 200);
+  assert.equal(JSON.parse((await last.deferred).body).error, 'no_game');
+  assert.equal(lobby.waiterCount, 0);
+  // a started game's polls are not held (the START is in them; the client stops polling)
+});
+
+test('ONLINE-5: through the HTTP server a held poll does not block other requests, and a chat line reaches a waiting player in milliseconds', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'openbfme-lobby5-'));
+  const { server, port } = await startServer({ ...ENV, LOBBY_BIND: '127.0.0.1:0', LOBBY_DATA: dir }, { log: () => {} });
+  try {
+    const base = `http://127.0.0.1:${port}`;
+    const req = async (method, path, token, body) => {
+      const r = await fetch(base + path, { method, headers: token ? { authorization: `Bearer ${token}` } : {}, body: body === undefined ? undefined : JSON.stringify(body) });
+      return { status: r.status, body: await r.json() };
+    };
+    const a = (await req('POST', '/v1/auth/guest', null, { name: 'Ann' })).body;
+    const b = (await req('POST', '/v1/auth/guest', null, { name: 'Bea' })).body;
+    const id = (await req('POST', '/v1/games', a.token, { name: 'g', profile: PROFILE, setup })).body.id;
+    const joined = (await req('POST', `/v1/games/${id}/join`, b.token, { profile: PROFILE })).body;
+    const seq = joined.game.seq;
+    const t0 = Date.now();
+    let heldDone = 0;
+    const held = req('GET', `/v1/games/${id}?since=${seq}&seq=${seq}&wait=10`, b.token).then((r) => { heldDone = Date.now(); return r; });
+    await new Promise((r) => setTimeout(r, 150));
+    assert.equal(heldDone, 0, 'the poll is held');
+    // while it is held: the list, the health check and the host's own plain poll are answered
+    assert.equal((await req('GET', '/v1/health')).status, 200);
+    assert.equal((await req('GET', '/v1/games')).body.games.length, 1);
+    assert.equal((await req('GET', `/v1/games/${id}?since=0`, a.token)).status, 200);
+    const sent = Date.now();
+    assert.equal((await req('POST', `/v1/games/${id}/chat`, a.token, { text: 'now' })).status, 200);
+    const r = await held;
+    assert.deepEqual(r.body.chat.map((c) => c.text), ['now']);
+    const delay = heldDone - sent;
+    console.log(`ONLINE-5 chat delay through a held poll (local HTTP): ${delay} ms after the send; the poll was held ${sent - t0} ms`);
+    assert.ok(delay < 500, `the held poll answered ${delay} ms after the chat line`); // tolerance: local HTTP round trips take a few ms; the old 1 s poll averaged 500 ms
+  } finally {
+    server.closeAllConnections?.();
+    await new Promise((r) => server.close(r));
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('ONLINE-5: the Durable Object answers other requests while polls are held, and held polls take no body place', async () => {
+  const { LobbyObject, MAX_BODIES } = await import('../src/worker.mjs');
+  const obj = new LobbyObject({ storage: { put: async () => {}, delete: async () => {}, list: async () => new Map() }, blockConcurrencyWhile: (fn) => fn() }, { ...ENV });
+  const req = async (method, path, token, body) => {
+    const r = await obj.fetch(new Request(`http://lobby${path}`, { method, headers: token ? { authorization: `Bearer ${token}` } : {}, body: body === undefined ? undefined : JSON.stringify(body) }));
+    return { status: r.status, body: await r.json() };
+  };
+  const a = (await req('POST', '/v1/auth/guest', null, { name: 'Ann' })).body;
+  const b = (await req('POST', '/v1/auth/guest', null, { name: 'Bea' })).body;
+  const id = (await req('POST', '/v1/games', a.token, { name: 'g', profile: PROFILE, setup })).body.id;
+  const seq = (await req('POST', `/v1/games/${id}/join`, b.token, { profile: PROFILE })).body.game.seq;
+  // each of the two players has MAX_HOLDS_PER_ACCOUNT polls held; their other polls are answered at once with the back-off (Sol r1)
+  const held = [];
+  for (let i = 0; i < 2 * MAX_HOLDS_PER_ACCOUNT; i++) held.push(req('GET', `/v1/games/${id}?since=${seq}&seq=${seq}&wait=20`, i % 2 ? a.token : b.token));
+  await new Promise((r) => setTimeout(r, 50));
+  assert.equal(obj.lobby.waiterCount, 2 * MAX_HOLDS_PER_ACCOUNT);
+  const extra = await Promise.all(Array.from({ length: 12 }, (_, i) => req('GET', `/v1/games/${id}?since=${seq}&seq=${seq}&wait=20`, i % 2 ? a.token : b.token)));
+  assert.ok(extra.every((r) => r.status === 200 && r.body.backoff === HOLD_BACKOFF_S && r.body.chat.length === 0));
+  assert.equal(obj.lobby.waiterCount, 2 * MAX_HOLDS_PER_ACCOUNT);
+  assert.deepEqual(obj.reading, { logs: 0, all: 0 }); // no place is held while they wait
+  assert.ok(MAX_BODIES >= 16);
+  assert.equal((await req('GET', '/v1/health')).status, 200);
+  assert.equal((await req('POST', `/v1/games/${id}/chat`, b.token, { text: 'hi' })).status, 200);
+  const answers = await Promise.all(held);
+  assert.ok(answers.every((r) => r.status === 200 && r.body.chat.length === 1 && r.body.chat[0].text === 'hi'));
+  assert.deepEqual(answers.map((r) => !!r.body.chat[0].you), Array.from({ length: 2 * MAX_HOLDS_PER_ACCOUNT }, (_, i) => !(i % 2)));
+  assert.equal(obj.lobby.waiterCount, 0);
+  assert.equal(obj.lobby.accountHolds.size, 0);
+});
+
+test('ONLINE-5 (Sol r1): held polls are shared fairly across rooms: a per-player allowance, the lobby-wide bound with the back-off, and every hold released', async () => {
+  const env = fakeEnv();
+  const timers = new Set();
+  env.setTimer = (fn, ms) => { const t = { fn, at: env.now() + ms }; timers.add(t); return t; };
+  env.clearTimer = (t) => timers.delete(t);
+  const advance = (ms) => {
+    env.advance(ms);
+    for (const t of [...timers]) if (t.at <= env.now() && timers.delete(t)) t.fn();
+  };
+  const lobby = new Lobby(env, { ...configFromEnv(ENV), maxHolds: 5 });
+  const guest = async (name) => (await call(lobby, 'POST', '/v1/auth/guest', { body: { name } })).body;
+  const [ann, bea, cy, dee] = [await guest('Ann'), await guest('Bea'), await guest('Cy'), await guest('Dee')];
+  const room = async (host, joiner) => {
+    const id = (await call(lobby, 'POST', '/v1/games', { token: host.token, body: { name: 'r', profile: PROFILE, setup } })).body.id;
+    assert.equal((await call(lobby, 'POST', `/v1/games/${id}/join`, { token: joiner.token, body: { profile: PROFILE } })).status, 200);
+    return id;
+  };
+  const x = await room(ann, bea);
+  const y = await room(cy, dee);
+  const seqOf = (id) => lobby.games.get(id).seq;
+  const poll = (who, id) => rawCall(lobby, 'GET', `/v1/games/${id}?since=${seqOf(id)}&seq=${seqOf(id)}&wait=20`, who.token);
+  const backoff = (r) => (r.deferred ? null : JSON.parse(r.body).backoff);
+  // room X: Ann 2 (her allowance; a third is told to back off), Bea 2
+  const xs = [await poll(ann, x), await poll(ann, x), await poll(bea, x), await poll(bea, x)];
+  assert.ok(xs.every((r) => r.deferred));
+  assert.equal(backoff(await poll(ann, x)), HOLD_BACKOFF_S);
+  // room Y: Cy gets the fifth hold, the lobby-wide bound; Dee, with none of her own, is told to back off
+  const cyHeld = await poll(cy, y);
+  assert.ok(cyHeld.deferred);
+  assert.equal(lobby.waiterCount, 5);
+  assert.equal(backoff(await poll(dee, y)), HOLD_BACKOFF_S);
+  assert.deepEqual([...lobby.accountHolds.entries()].map(([, n]) => n).sort(), [1, 2, 2]);
+  // room X changes: its four holds end; Dee is held now (another room's bookkeeping freed the lobby's places)
+  assert.equal((await call(lobby, 'POST', `/v1/games/${x}/chat`, { token: bea.token, body: { text: 'hi' } })).status, 200);
+  await Promise.all(xs.map((r) => r.deferred));
+  assert.equal(lobby.waiterCount, 1);
+  const deeHeld = await poll(dee, y);
+  assert.ok(deeHeld.deferred);
+  // the timers release the rest when nothing happens; nothing is left behind (counters, sets, timers)
+  advance(MAX_WAIT_S * 1000);
+  const [cyAnswer, deeAnswer] = await Promise.all([cyHeld.deferred, deeHeld.deferred]);
+  assert.equal(cyAnswer.status, 200);
+  assert.equal(deeAnswer.status, 200);
+  assert.equal(lobby.waiterCount, 0);
+  assert.equal(lobby.waiters.size, 0);
+  assert.equal(lobby.accountHolds.size, 0);
+  assert.equal(timers.size, 0);
+  // a game removed with holds on it releases them (the sweep of an idle game)
+  const z = await poll(ann, x);
+  assert.ok(z.deferred);
+  advance(11 * 60 * 1000); // past openGameIdleMs: the timer answered first; then the sweep removes the game
+  lobby.sweep();
+  await z.deferred;
+  assert.equal(lobby.accountHolds.size, 0);
+  assert.equal(lobby.waiterCount, 0);
+});
+
+test('ONLINE-5 (Sol r1): an emptied slot keeps no choices: a reopened AI slot\'s spot and colour do not come back with the player who joins it', async () => {
+  const { lobby, a, b, c, id, post, snapshot } = await room5();
+  const slotsOf = () => lobby.games.get(id).slots.slice(0, 4).map((s) => `${s.state}:${s.startPos}/${s.color}/${s.faction}/${s.team}`);
+  // Sol's reproduction: the AI in slot 3 holds spot 4 and colour 3; the host reopens the slot; Bea takes spot 4 and colour 3; Dee joins slot 3
+  assert.equal((await post(a, 'slot', { slot: 3, state: 'open' })).status, 200);
+  assert.deepEqual(slotsOf()[3], 'open:-1/-1/-1/-1');
+  assert.equal((await post(b, 'slot', { startPos: 3, color: 3 })).status, 200);
+  const d = (await call(lobby, 'POST', '/v1/auth/guest', { body: { name: 'Dee' } })).body;
+  const joined = await call(lobby, 'POST', `/v1/games/${id}/join`, { token: d.token, body: { profile: PROFILE } });
+  assert.equal(joined.body.slot, 3);
+  assert.deepEqual(slotsOf(), ['player:0/0/0/-1', 'player:3/3/-1/-1', 'player:-1/-1/-1/-1', 'player:-1/-1/-1/-1']);
+  // no two occupied slots share a spot or a colour
+  const held = lobby.games.get(id).slots.filter((s) => s.state === 'player' || s.state === 'hard');
+  for (const k of ['startPos', 'color']) {
+    const taken = held.map((s) => s[k]).filter((v) => v >= 0);
+    assert.equal(new Set(taken).size, taken.length, k);
+  }
+  // Dee may not take Bea's spot; an AI made in an emptied slot starts with none either
+  assert.equal((await post(d, 'slot', { startPos: 3 })).body.error, 'spot_taken');
+  assert.equal((await post(d, 'leave')).status, 200);
+  assert.deepEqual(slotsOf()[3], 'open:-1/-1/-1/-1');
+  assert.equal((await post(a, 'slot', { slot: 3, state: 'easy' })).status, 200);
+  assert.deepEqual(slotsOf()[3], 'easy:-1/-1/-1/-1');
+  // closing an AI's slot clears its choices too; an open or closed slot takes no choices (-1, "none", is accepted)
+  assert.equal((await post(a, 'slot', { slot: 3, startPos: 5, color: 6 })).status, 200);
+  assert.equal((await post(a, 'slot', { slot: 3, state: 'closed' })).status, 200);
+  assert.deepEqual(slotsOf()[3], 'closed:-1/-1/-1/-1');
+  const before = snapshot();
+  const refused = await post(a, 'slot', { slot: 3, startPos: 5 });
+  assert.equal(refused.body.error, 'bad_field');
+  assert.equal(refused.body.message, 'an open or closed slot has no faction, color, startPos or team');
+  assert.equal((await post(a, 'slot', { slot: 4, state: 'open', startPos: 6 })).body.error, 'bad_field');
+  assert.equal(snapshot(), before);
+  assert.equal((await post(a, 'slot', { slot: 3, state: 'open', startPos: -1, color: -1, faction: -1, team: -1 })).status, 200);
+  assert.deepEqual(slotsOf()[3], 'open:-1/-1/-1/-1');
+  // a new game whose open slots carry choices keeps none of them
+  const e = (await call(lobby, 'POST', '/v1/auth/guest', { body: { name: 'Eve' } })).body;
+  const made = await call(lobby, 'POST', '/v1/games', { token: e.token, body: { name: 'x', profile: PROFILE, setup: { ...setup, slots: [{ state: 'player', startPos: 0 }, { state: 'open', startPos: 1, color: 2 }] } } });
+  assert.equal(made.status, 200, JSON.stringify(made.body));
+  assert.deepEqual([lobby.games.get(made.body.id).slots[1].startPos, lobby.games.get(made.body.id).slots[1].color], [-1, -1]);
+  void c;
 });

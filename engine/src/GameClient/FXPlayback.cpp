@@ -72,8 +72,21 @@ public:
 	}
 	void tintDrawable(const FXObject &, const RGBColor &, unsigned, unsigned, unsigned, float, float) override { note("tint", "", nullptr); }
 	void attachModel(const FXObject &, const std::string &model, bool, int) override { note("attachModel", model, nullptr); }
-	void addBuff(const FXObject &, int type, const std::string *tmpl, int, const RGBColor &, float) override { note("addBuff", std::to_string(type) + (tmpl ? " " + *tmpl : std::string()), nullptr); }
-	void removeBuff(const FXObject &, int type) override { note("removeBuff", std::to_string(type), nullptr); }
+	void addBuff(const FXObject &o, int type, const std::string *tmpl, int life, const RGBColor &, float) override
+	{
+		// lane SPELL-4: a non-complex buff (a template) goes to the world; the complex (glow outline) kind is unsupported in retail too (MakeGlowOutlineBuff asserts)
+		if (!tmpl || !m_owner.m_world || !m_owner.m_world->turnOnBuff(o, type, *tmpl, life))
+		{
+			note("addBuff", std::to_string(type) + (tmpl ? " " + *tmpl : std::string()), nullptr);
+		}
+	}
+	void removeBuff(const FXObject &o, int type) override
+	{
+		if (!m_owner.m_world || !m_owner.m_world->turnOffBuff(o, type))
+		{
+			note("removeBuff", std::to_string(type), nullptr);
+		}
+	}
 	void createDecal(const FXDecalDesc &d) override { note("decal", d.name, &d.position); }
 	void createRayEffect(const Coord3D &a, const Coord3D &, const std::string &t) override { note("rayEffect", t, &a); }
 	void cursorParticles(const std::string &name, unsigned, const GameClientRandomVariable &, const GameClientRandomVariable &, const GameClientRandomVariable &,

@@ -33,7 +33,7 @@ struct LobbyStart
 {
 	NewGameMessage game;
 	int localSlot = -1;
-	int runAhead = 2;
+	int runAhead = 1; ///< lane NETLAG-1: RotWK's frame + 1 (was 2)
 	int crcInterval = 100;
 	std::array<NetAddress, MAX_SLOTS> addresses{}; ///< per slot, the network players' addresses (the local one is its own socket's)
 	std::array<bool, MAX_SLOTS> networkSlot{};     ///< the human slots of the game

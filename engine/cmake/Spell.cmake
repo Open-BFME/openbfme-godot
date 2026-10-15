@@ -22,7 +22,9 @@ set(OPENBFME_SPELL_SOURCES
 set(OPENBFME_SPELL_CLIENT_SOURCES
     src/GameClient/SpellBookUI.cpp
     src/GameClient/GUI/AptScreens/AptSpellStore.cpp
-    src/GameClient/TreeTopple.cpp) # lane SPELL-3: the falling trees (client)
+    src/GameClient/TreeTopple.cpp # lane SPELL-3: the falling trees (client)
+    src/GameClient/RadiusCursor.cpp # lane SPELL-4: the aiming marker of a targeted power (client)
+    src/GameClient/BuffDraw.cpp) # lane SPELL-4: the BuffNugget buffs (client)
 
 set(OPENBFME_SPELL_TESTS
     tests/test_spell_stores.cpp
@@ -33,4 +35,6 @@ set(OPENBFME_SPELL_TESTS
     tests/test_spell_book_powers.cpp
     tests/test_spell_book_ui.cpp
     tests/test_spell_book_hud.cpp
-    tests/test_spell3_powers.cpp) # lane SPELL-3
+    tests/test_spell3_powers.cpp # lane SPELL-3
+    tests/test_spell4_cursor.cpp # lane SPELL-4
+    tests/test_spell4_buffs.cpp) # lane SPELL-4

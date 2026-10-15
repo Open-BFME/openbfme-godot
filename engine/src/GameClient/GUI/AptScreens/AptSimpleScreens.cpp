@@ -45,10 +45,8 @@ AptGuiFXScreen::AptGuiFXScreen(WindowManager &windows, Shell &shell, bool adoptL
 		return; // the window's owner registered the movie's commands
 	}
 	registerCommand("AptGuiFX::OnInitialized", unportedCommand("AptGuiFX::OnInitialized"));
-	registerComponent("ToolTipText", [this](AptComponentRequest &) -> std::shared_ptr<GameWindow> {
-		this->windows().note("unported-component", "ToolTipText [S-175]");
-		return nullptr;
-	});
+	// lane HOVER-1: the tool tip's text has no window: the render callback "ToolTipText" (CursorTooltip.h, RW 0x782D52) draws it in the clip's place
+	registerComponent("ToolTipText", [](AptComponentRequest &) -> std::shared_ptr<GameWindow> { return nullptr; });
 }
 
 // lane PLAY-1: PlayerTribute.apt (see the header)

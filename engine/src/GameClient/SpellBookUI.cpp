@@ -9,6 +9,7 @@
 #include "Common/PlayerTemplate.h"
 #include "Common/SpecialPower.h"
 #include "GameClient/ControlBarCommands.h"
+#include "GameLogic/ActionManager.h"
 #include "GameLogic/GameLogic.h"
 #include "GameLogic/Module/SpecialPowerModules.h"
 #include "GameLogic/Object/Object.h"
@@ -293,6 +294,25 @@ bool InGameSpellBookModel::press(int index, int playerIndex, std::vector<GameMes
 		return true;
 	}
 	return false;
+}
+
+InGameSpellBookModel::Target InGameSpellBookModel::targetVerdict(GameLogic &logic, const Coord3D &where) const
+{
+	// lane SPELL-4: CommandTranslator's SPELL_BOOK case (RW 0x81EA88): the local player's spell book (RW 0x6AD0D9) and RW 0x6A4260(button, no object,
+	// the location, 0, options, book) -> RW 0x82DFB7(book, location, 0, power, 0, options, 1): with the last argument 1 the book must have the power
+	// (RW 0x68DF46) and its module must be 100% ready (vslot 8 >= 1.0), then the location tests of ActionManager
+	const Button *b = targetButton();
+	Object *book = logic.findObjectByID(m_book);
+	if (!b || !b->power || !b->button || !book || !b->ready)
+	{
+		return Target::INVALID;
+	}
+	bool unported = false;
+	if (ActionManager::canDoSpecialPowerAtLocation(*book, where, b->power, b->button->m_options, &unported))
+	{
+		return Target::VALID;
+	}
+	return unported ? Target::UNPORTED : Target::INVALID;
 }
 
 bool InGameSpellBookModel::clickWorld(const Coord3D &where, int playerIndex, std::vector<GameMessage> &out)

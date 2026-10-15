@@ -24,7 +24,7 @@
 // INFERENCE (stop S-2703): the hovered command button of the Palantir's movie is the Apt player's current button (the button under the pointer) inside a
 // content clip the control bar filled (the content updaters' rollover route, vslot 2 of RW 0xC8C3D4, was not traced to its caller); the Apt player's y scale
 // is the stage height over the window height; the guards of showHelp (InGameUI vslot 0x1BC / 0x17C, RW 0xDE3BAC + 0x1A204, RW 0xDEA328) and RW 0xA0CB16
-// are not ported; the hero bar's and the spell book's buttons are not providers yet.
+// are not ported. Lane HOVER-1 adds the spell book's slots (RW 0x930DC4) and the hero bar's (RW 0x92BF34 / 0x92C265) as providers (InGameHud, S-4612).
 
 #pragma once
 
@@ -64,10 +64,12 @@ public:
 	// ---- the control bar's provider ----
 	struct Provider
 	{
-		int bar = -1;  ///< 0 the Palantir arc, 1 the side bar, 2 the radial ring (the "kind" of RW 0x8075A3)
+		int bar = -1;  ///< 0 the Palantir arc, 1 the side bar, 2 the radial ring (the "kind" of RW 0x8075A3); lane HOVER-1: 3 a command button without a window
+		               ///< (RW 0x807A00(0, button): the spell book, the hero bar's builder / select-all), 4 a unit's help (the hero bar's portraits)
 		int slot = -1; ///< the command set slot (the window)
 		const CommandButton *button = nullptr;
-		bool operator==(const Provider &o) const { return bar == o.bar && slot == o.slot && button == o.button; }
+		std::uint32_t object = 0; ///< lane HOVER-1: bar 4's object (a UnitHelpSource, RW 0xC130E8, compares its object id)
+		bool operator==(const Provider &o) const { return bar == o.bar && slot == o.slot && button == o.button && object == o.object; }
 	};
 	// RW 0x71FC08's test, once per HUD update before the hover: a frame nobody marked hides the box soon and drops the provider
 	void beginFrame();

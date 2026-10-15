@@ -256,6 +256,92 @@ def test_launcher_unit_rules(tmp_path, keys):
     assert r.returncode == 0 and "UNIT OK" in r.stdout, r.stdout[-3000:] + r.stderr[-2000:]
 
 
+def _layout_run(project: Path, tmp_path: Path, *args: str) -> subprocess.CompletedProcess:
+    """launcher/tests/layout_test.gd on `project` (a neutral home folder: nothing of the user's is read or written)"""
+    home = tmp_path / "layout-home"
+    home.mkdir(exist_ok=True)
+    env = {k: v for k, v in os.environ.items() if k not in ("ROTWK_INSTALL", "BFME2_INSTALL", "OPENBFME_GAME_USER_DIR")}
+    env.update(HOME=str(home), XDG_DATA_HOME=str(home / ".local/share"), XDG_CONFIG_HOME=str(home / ".config"),
+               XDG_CACHE_HOME=str(home / ".cache"))
+    subprocess.run([GODOT, "--headless", "--path", str(project), "--import"], env=env, capture_output=True, timeout=300)
+    return subprocess.run([GODOT, "--headless", "--path", str(project), "--script", "res://tests/layout_test.gd", "--", *args],
+                          env=env, capture_output=True, text=True, timeout=900, stdin=subprocess.DEVNULL)
+
+
+LAYOUT_STATES = ["main", "news", "multiplayer", "mods", "games", "games-downloading", "settings", "display", "about", "update", "downloading",
+                 "error", "glibc", "first-run", "offline", "verifying", "paused", "update-launcher", "warning", "ask", "playing", "long",
+                 "picker", "update-launcher+123", "update-launcher+10000000", "long+123", "long+10000000"]
+LAYOUT_SIZES = ["1280x720", "1280x800", "1920x1080", "2560x1440", "3440x1440", "960x540", "960x1000"]
+LAYOUT_LAYERS = {"error": ["main", "dialog"], "glibc": ["main", "dialog"], "ask": ["main", "dialog"], "picker": ["main", "picker"]}
+
+
+def _layout_cases(stdout: str) -> dict[str, dict[str, int]]:
+    """the `LAYOUT case <name>@<WxH> main=<n> ...` lines: case -> layer -> controls measured"""
+    out = {}
+    for line in stdout.splitlines():
+        if line.startswith("LAYOUT case "):
+            name, *layers = line[len("LAYOUT case "):].split()
+            out[name] = {k: int(v) for k, v in (x.split("=") for x in layers)}
+    return out
+
+
+def test_launcher_layout_lines_up_in_every_state_and_size(tmp_path):
+    """lane LAUNCHERUI-1: the window's own layout check (cells where their size flags put them, gaps equal the separation, padding is the
+    theme's, shared margins, nothing overlaps or sticks out, no text is cut without its tooltip, icons are centred) over every demo state
+    and the online-players chip at every window size, with no finding. The inventory is this test's own: every (state, size) pair by name,
+    each with the layers it must have (window; dialog; folder picker) and more than zero controls measured in each."""
+    r = _layout_run(LAUNCHER, tmp_path, "--ui-demo=main")
+    findings = [x for x in r.stdout.splitlines() if x.startswith("LAYOUT finding")]
+    assert r.returncode == 0 and not findings, "\n".join(findings) + r.stdout[-1500:] + r.stderr[-1500:]
+    cases = _layout_cases(r.stdout)
+    want = {f"{st}@{sz}": LAYOUT_LAYERS.get(st.split("+")[0], ["main"]) for st in LAYOUT_STATES for sz in LAYOUT_SIZES}
+    assert sorted(cases) == sorted(want), sorted(set(cases) ^ set(want))
+    for name, layers in want.items():
+        assert list(cases[name]) == layers and all(n > 0 for n in cases[name].values()), (name, cases[name])
+    assert f"LAYOUT OK {len(LAYOUT_STATES)} cases x {len(LAYOUT_SIZES)} sizes," in r.stdout, r.stdout[-500:]
+
+
+def _sabotaged(tmp_path: Path, name: str, edits: list[tuple[str, str, str]]) -> subprocess.CompletedProcess:
+    """a copy of the launcher project with `edits` (file, old, new) applied (each must apply), and the layout check run on it"""
+    copy = tmp_path / name
+    shutil.copytree(LAUNCHER, copy, ignore=shutil.ignore_patterns(".godot"))
+    for rel, old, new in edits:
+        f = copy / rel
+        text = f.read_text()
+        assert old in text, (rel, old)
+        f.write_text(text.replace(old, new, 1))
+    return _layout_run(copy, tmp_path, "--ui-demo=main")
+
+
+@pytest.mark.parametrize("name, edits, expect", [
+    # Sol's cases: a card 20 px (not 6) off the right margin; the bottom bar and PLAY 20 px off it; the rail's logo off its entries
+    ("card-20", [("scripts/ui/play_screen.gd", "\tadd_child(_notes_card)\n", "\tvar wrap := MarginContainer.new()\n\twrap.add_theme_constant_override(\"margin_right\", 20)\n"
+                  "\twrap.add_child(_notes_card)\n\tadd_child(wrap)\n")], ["screen blocks do not span the margins"]),
+    ("bar-20", [("scripts/main.gd", 'bm.add_theme_constant_override("margin_right", SCREEN_MARGIN)', 'bm.add_theme_constant_override("margin_right", SCREEN_MARGIN + 20)')],
+     ["margins are not the window's", "PLAY is off the right margin"]),
+    ("rail", [("scripts/main.gd", "const RAIL_INK := Style.NAV_PAD", "const RAIL_INK := 9")], ["the rail does not start on one x"]),
+    # a screen's column with a gap of its own
+    ("gap", [("scripts/ui/settings_screen.gd", "var v := W.vbox(Style.SCREEN_GAP)", "var v := W.vbox(20)")], ["gap is not the theme's SCREEN_GAP"]),
+    # the demo states that must apply: the offline state never applies; the folder picker never opens
+    ("offline-not-applied", [("scripts/main.gd", '\t\t"offline":\n', '\t\t"offline-gone":\n')], ["does not show 'Could not check for updates'"]),
+    ("picker-not-opened", [("scripts/main.gd", "_games_screen.open_picker(true)", "pass")], ["the layers are", "the folder picker is not open"]),
+    # nothing to measure
+    ("no-sizes", [("tests/layout_test.gd", "const WINDOWS := [Vector2i(1280, 720), Vector2i(1280, 800), Vector2i(1920, 1080), Vector2i(2560, 1440), Vector2i(3440, 1440),\n\tVector2i(960, 540), Vector2i(960, 1000)]", "const WINDOWS := []")], ["nothing to measure"]),
+])
+def test_launcher_layout_check_fails_closed(tmp_path, name, edits, expect):
+    """the layout check is not a rubber stamp: each sabotaged copy of the project (defects of any size, a state that never applies, a
+    picker that never opens, an empty size list) fails by name"""
+    r = _sabotaged(tmp_path, name, edits)
+    assert r.returncode != 0 and "LAYOUT FAIL" in r.stdout, r.stdout[-2500:]
+    for text in expect:
+        assert text in r.stdout, (text, r.stdout[-3000:])
+
+
+def test_launcher_layout_check_needs_its_demo_option(tmp_path):
+    r = _layout_run(LAUNCHER, tmp_path)
+    assert r.returncode != 0 and "LAYOUT FAIL" in r.stdout and not _layout_cases(r.stdout), r.stdout[-1500:]
+
+
 def test_online_link_injection_runs_nothing(tmp_path, server, keys):
     """lane ONLINE-2 r2 (Sol r1): Windows splices the link into "<launcher>" -- --open-url "%1", so a link with quotes adds launcher options. A link
     is only taken alone (--open-url <link>); with anything else the whole start is refused before any CLI action runs: no update, no install, no
@@ -348,10 +434,13 @@ def test_preview_channel_gets_the_alpha_builds(tmp_path, server, keys):
     assert r.code == 0 and r.has("update installed v0.4.0-alpha.1") and not r.has("skipped release"), r
     assert installed(tmp_path) == ["v0.3.0-preview.4", "v0.4.0-alpha.1"]
     server.publish("v0.4.0-alpha.2", release_files(tmp_path, "v0.4.0-alpha.2", keys["release"]))
-    r = launch(tmp_path, server, keys["release"], "--channel=alpha", "--update")  # the shown name works as well
+    r = launch(tmp_path, server, keys["release"], "--channel=preview", "--update")
     assert r.code == 0 and r.has("channel preview") and r.has("update installed v0.4.0-alpha.2"), r
     r = launch(tmp_path, server, keys["release"], "--update")
     assert r.code == 0 and r.has("up to date: v0.4.0-alpha.2 installed"), r
+    # VERSION-1: "Alpha" is now the shown name of the stable channel (the plain releases, "Alpha 0.4.5"); it works as well
+    r = launch(tmp_path, server, keys["release"], "--channel=alpha", "--list")
+    assert r.code == 0 and r.has("channel stable"), r
     other = tmp_path / "stable"
     other.mkdir()
     r = launch(other, server, keys["release"], "--channel=stable", "--update")
@@ -1112,7 +1201,7 @@ def test_the_notes_cards_show_the_releases_own_notes(tmp_path, server, keys):
     assert r.has("ui status: Installed v0.2.0."), r
     assert texts.count("Ground force-attack with Ctrl+click.") == 2, "What's New and News"
     assert texts.count("[b]not bold[/b] <i>") == 2 and "Tribute does not work yet." in texts and "The first build." in texts, texts
-    assert any(t.startswith("Version 0.2.0") for t in texts) and "What's new" in texts, texts
+    assert any(t.startswith("Alpha 0.2.0") for t in texts) and "What's new" in texts, texts
     r, texts = screen_texts(tmp_path, None, keys["release"], "--offline")
     assert r.code == 0 and texts.count("Ground force-attack with Ctrl+click.") == 2, texts
 
@@ -1185,7 +1274,7 @@ def test_with_updating_by_itself_off_a_launcher_only_update_is_offered(tmp_path,
     r = launch(tmp_path, server, keys["release"], "--auto-update=off", "--install=v0.3.0", exe=exe)
     assert r.code == 0 and installed(tmp_path) == ["v0.3.0"], r
     r = window(tmp_path, server, keys["release"], exe=exe)
-    assert r.has("ui status: The launcher v0.3.0 is available.") and r.has("ui update button: Update launcher to v0.3.0"), r
+    assert r.has("ui status: The launcher v0.3.0 is available.") and r.has("ui update button: Update launcher to Alpha 0.3.0"), r  # VERSION-1: the button names the version as players read it
     assert not (inst / "update").exists(), "nothing staged until the player presses Update"
 
 
@@ -1322,3 +1411,112 @@ def test_another_program_on_the_lock_port_is_not_called_a_launcher(tmp_path, key
         srv.close()
     r = launch(tmp_path, None, keys["release"], "--list")
     assert r.code == 0, r
+
+
+# ---- lane ONLINECOUNT-1: "N players online" on the Play card, and the setting that turns it off ----------------------------------------------
+
+STATS_GOOD = b'{"v":1,"players":7,"games_open":2,"games_running":1,"as_of":1700000000}'
+
+
+def stats_requests(server: ReleaseServer) -> list[tuple[str, dict]]:
+    return [(p, h) for p, h in server.requests if p.startswith("/v1/")]
+
+
+def count_window(tmp: Path, server: ReleaseServer, key: bytes, *args: str) -> tuple[Run, list[str]]:
+    """the launcher's window against `server`, which is also its lobby (--lobby=), headless with every text of every screen dumped"""
+    launch(tmp, server, key, f"--lobby={server.origin}", *args)  # the CLI step: remembers the lobby (and the setting)
+    r = subprocess.run([GODOT, "--headless", "--path", str(LAUNCHER), "--", f"--api-base={server.origin}", f"--trust-key={ed25519.public_key(key).hex()}",
+                        f"--repo={TEST_REPO}", "--ui-dump", f"--screenshot={tmp / 'shot.png'}"],
+                       env=dict(os.environ, XDG_DATA_HOME=str(tmp / "data")), capture_output=True, text=True, timeout=180, stdin=subprocess.DEVNULL)
+    run = Run(r.returncode, r.stdout + r.stderr)
+    return run, [ln.split("LAUNCHER ui text: ", 1)[1] for ln in run.lines if "LAUNCHER ui text: " in ln]
+
+
+def test_the_play_card_shows_the_players_online(tmp_path, server, keys):
+    server.stats = STATS_GOOD
+    r, texts = count_window(tmp_path, server, keys["release"])
+    assert r.has("online player count: 7 players online"), r
+    assert any("7 players online" in t for t in texts), texts
+    reqs = stats_requests(server)
+    assert [p for p, _ in reqs] == ["/v1/stats"], reqs        # one request, to the lobby's stats path
+    h = reqs[0][1]
+    assert "authorization" not in h and "cookie" not in h, h  # nothing about the player
+    assert h["user-agent"].startswith("OpenBFME-Launcher/"), h
+
+
+@pytest.mark.parametrize("answer", [None, b"<html>no</html>", b'{"v":1,"players":-1,"games_open":0,"games_running":0}',
+                                    b'{"v":1,"players":1.5,"games_open":0,"games_running":0}', b'{"v":2,"players":3,"games_open":0,"games_running":0}',
+                                    b'{"v":1,"players":"3","games_open":0,"games_running":0}', b""])
+def test_no_stats_answer_shows_no_number(tmp_path, server, keys, answer):
+    """a lobby without stats (404), garbage or an out-of-range count: nothing is shown, never a made-up number, never a dialog"""
+    server.stats = answer
+    r, texts = count_window(tmp_path, server, keys["release"])
+    assert r.has("online player count: not shown"), r
+    assert not any("players online" in t or "player online" in t for t in texts), texts
+    assert r.has("ui dialog: ") and not any(ln.rstrip().startswith("LAUNCHER ui dialog: ") and ln.strip() != "LAUNCHER ui dialog:" for ln in r.lines), r
+
+
+def test_with_the_setting_off_the_lobby_is_never_asked(tmp_path, server, keys):
+    server.stats = STATS_GOOD
+    r, texts = count_window(tmp_path, server, keys["release"], "--online-count=off")
+    assert r.has("online player count not asked") is False and not r.has("online player count: "), r
+    assert stats_requests(server) == [], stats_requests(server)   # not at the start, not later: no request at all
+    assert not any("players online" in t for t in texts), texts
+    state = (data(tmp_path) / "state.cfg").read_text()
+    assert "show_online_count=false" in state, state              # the game reads the same file (godot/scripts/online_stats.gd)
+    # on again: asked again
+    r, texts = count_window(tmp_path, server, keys["release"], "--online-count=on")
+    assert r.has("online player count: 7 players online") and len(stats_requests(server)) == 1, r
+    assert launch(tmp_path, server, keys["release"], "--online-count=maybe").code == 1
+
+
+def test_an_offline_start_asks_nothing(tmp_path, server, keys):
+    server.stats = STATS_GOOD
+    launch(tmp_path, server, keys["release"], f"--lobby={server.origin}")
+    r = subprocess.run([GODOT, "--headless", "--path", str(LAUNCHER), "--", f"--api-base={server.origin}", f"--trust-key={ed25519.public_key(keys['release']).hex()}",
+                        f"--repo={TEST_REPO}", "--offline", f"--screenshot={tmp_path / 'shot.png'}"],
+                       env=dict(os.environ, XDG_DATA_HOME=str(tmp_path / "data")), capture_output=True, text=True, timeout=180, stdin=subprocess.DEVNULL)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert stats_requests(server) == [], stats_requests(server)
+
+
+def test_the_policy_allows_only_the_lobbys_stats_path():
+    """NetPolicy: the lobby host, over https without a port, for GET /v1/stats alone; any other path or host stays refused"""
+    text = (LAUNCHER / "scripts/net/net_policy.gd").read_text()
+    assert 'const LOBBY_STATS_PATH := "/v1/stats"' in text and "u.path == LOBBY_STATS_PATH" in text
+
+
+@pytest.mark.parametrize("size", ["1280x720", "1024x768", "1920x1080", "1600x900"])
+@pytest.mark.parametrize("screen", ["main", "update", "downloading", "error"])
+def test_the_players_chip_never_meets_whats_new(tmp_path, server, keys, screen, size):
+    """lane ONLINECOUNT-1 r2 (Sol: the chip crossed What's New in the update state at 1280 wide and at 1024x768): every Play-card state with the widest
+    count chip, at four layouts, reports no chip touching the notes card (the launcher measures the boxes: PlayScreen.chip_overlaps)"""
+    r, texts = screen_texts(tmp_path, None, keys["release"], f"--ui-demo={screen}", f"--screenshot-size={size}")
+    assert r.has("ui chip overlaps: ") and any("12345 players online" in t for t in texts), r
+    assert any(ln.rstrip().endswith("ui chip overlaps:") for ln in r.lines), [ln for ln in r.lines if "chip overlaps" in ln]
+
+
+def test_the_overlap_check_fails_closed(tmp_path, server, keys):
+    """the checker itself: a chip placed over the card is reported (the test is not vacuous)"""
+    src = (LAUNCHER / "scripts/ui/play_screen.gd").read_text()
+    assert "func chip_overlaps() -> PackedStringArray:" in src and "intersects(card)" in src
+
+
+@pytest.mark.parametrize("value,asks", [(None, True), ("true", True), ("false", False), ('"yes"', False), ('"false"', False), ("[1, 2]", False),
+                                        ('{"a": 1}', False), ("1", False), ("0", False)])
+def test_malformed_online_count_settings_never_crash(tmp_path, server, keys, value, asks):
+    """lane ONLINECOUNT-1 r2 (Sol: a string / list / dictionary crashed the reader): a missing key (an older launcher's state.cfg) is on; true / false
+    are what they say; anything else is off, named in the log, and never a script error"""
+    server.stats = STATS_GOOD
+    launch(tmp_path, server, keys["release"], f"--lobby={server.origin}")
+    state = data(tmp_path) / "state.cfg"
+    text = state.read_text()
+    state.write_text(text + ("" if value is None else f"\n[launcher]\nshow_online_count={value}\n") if "[launcher]" not in text else
+                     text.replace("[launcher]\n", "[launcher]\n" + ("" if value is None else f"show_online_count={value}\n"), 1))
+    r, texts = count_window(tmp_path, server, keys["release"])
+    assert not r.has("SCRIPT ERROR") and not r.has("Nonexistent"), r
+    n = len(stats_requests(server))
+    assert (n == 1) == asks and n <= 1, (n, r)
+    if value is not None and value not in ("true", "false", "1", "0"):
+        assert r.has("is not true or false"), r
+    assert any("7 players online" in t for t in texts) == asks, texts

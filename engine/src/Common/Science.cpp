@@ -14,6 +14,7 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <map>
 
 thread_local ScienceStore *TheScienceStore = nullptr; // SMOOTH-1: per thread (the world context of each thread, RetailObjectWorld::ContextScope)
 
@@ -210,6 +211,54 @@ bool ScienceStore::playerHasPrereqsForScience(const ScienceOwner &player, Scienc
 		}
 	}
 	return false;
+}
+
+// RW 0x5FF4D7 -> RW 0x5FF323 (lane HOVER-1, see Science.h)
+namespace
+{
+bool rootPrereqs(const ScienceStore &store, const ScienceOwner &player, ScienceType st, std::map<ScienceType, bool> &memo)
+{
+	const auto found = memo.find(st);
+	if (found != memo.end())
+	{
+		return found->second;
+	}
+	memo[st] = false; // INFERENCE (S-4612): the cycle guard
+	bool result = false;
+	if (player.hasScience(st)) // the owner's slot 0
+	{
+		result = true;
+	}
+	else if (const ScienceInfo *si = store.findScienceInfo(st))
+	{
+		result = si->m_prereqSciences.empty();
+		for (const ScienceVec &group : si->m_prereqSciences)
+		{
+			bool all = true;
+			for (ScienceType need : group)
+			{
+				if (!rootPrereqs(store, player, need, memo))
+				{
+					all = false;
+					break;
+				}
+			}
+			if (all)
+			{
+				result = true;
+				break;
+			}
+		}
+	}
+	memo[st] = result;
+	return result;
+}
+} // namespace
+
+bool ScienceStore::playerHasRootPrereqsForScience(const ScienceOwner &player, ScienceType st) const
+{
+	std::map<ScienceType, bool> memo;
+	return rootPrereqs(*this, player, st, memo);
 }
 
 // RW 0x5FED5B

@@ -395,6 +395,15 @@ bool unportedTypeTest(GameLogic &logic, int type)
 	logic.noteStop(kStopTypeTest);
 	return false;
 }
+// lane SPELL-4: an unported per-type test answers no as before and, for a caller that asks, says so
+bool unportedAnswer(bool *unported, GameLogic &logic, int type)
+{
+	if (unported)
+	{
+		*unported = true;
+	}
+	return unportedTypeTest(logic, type);
+}
 } // namespace
 
 namespace ActionManager
@@ -470,10 +479,14 @@ bool targetlessTypeAccepted(int type)
 	}
 }
 
-bool canDoSpecialPowerAtLocation(Object &obj, const Coord3D &loc, const SpecialPowerTemplate *power, unsigned options)
+bool canDoSpecialPowerAtLocation(Object &obj, const Coord3D &loc, const SpecialPowerTemplate *power, unsigned options, bool *unported)
 {
 	// RW 0x82DFB7(obj, loc, 0, power, 0, options, 0)
 	(void)options;
+	if (unported)
+	{
+		*unported = false;
+	}
 	if (!power)
 	{
 		return false;
@@ -561,7 +574,7 @@ bool canDoSpecialPowerAtLocation(Object &obj, const Coord3D &loc, const SpecialP
 	// RW 0x82E135: 0x38 (the AI's slot 0x184 / RW 0x76A247: not ported), then 0x38, 0x41 and 0x8C: no cliff and no ImpassabilityToPlayers cell at the location
 	if (type == 0x38)
 	{
-		return unportedTypeTest(logic, type);
+		return unportedAnswer(unported, logic, type);
 	}
 	if ((type == 0x41 || type == 0x8C) && cliffOrImpassable(logic, loc))
 	{
@@ -571,18 +584,18 @@ bool canDoSpecialPowerAtLocation(Object &obj, const Coord3D &loc, const SpecialP
 	switch (type)
 	{
 	case 0x52: case 0x61: case 0x67: case 0x6A: // RW 0x82E2DE (the building powers)
-		return unportedTypeTest(logic, type);
+		return unportedAnswer(unported, logic, type);
 	case 0x55: case 0x56: case 0x5B: case 0x5D: case 0x5E: case 0x5F: case 0x73: case 0x76: case 0x78: case 0x7B: case 0x7C: case 0x7E: case 0x96: case 0x9A:
 		// RW 0x82E586 (the final switch is not reached): its first scan is the partition's geometry overlap (distance type 4, RW 0xA3C7D0), which needs the shape
 		// overlap test RW 0xAD2CE0 (stop S-1020): the spot test below is ported but cannot run; the type answers no (counted)
 		if (!kSummonOverlapPorted)
 		{
-			return unportedTypeTest(logic, type);
+			return unportedAnswer(unported, logic, type);
 		}
 		return summonSpotClear(obj, loc, t);
 	case 0x41:                                                                          // RW 0x82E252
 	case 0x49:                                                                          // RW 0x82E21A
-		return unportedTypeTest(logic, type);
+		return unportedAnswer(unported, logic, type);
 	case 0x8C:
 	{
 		// RW 0x82E860 (0x8C): no STRUCTURE (KindOf bit 7, RW 0x444D39(0, 7) / 0x445139) within 1.0 of the location (distance type 0, RW 0xA39090); the
@@ -664,7 +677,7 @@ bool canDoSpecialPowerAtLocation(Object &obj, const Coord3D &loc, const SpecialP
 		return !(r2 < d2);
 	}
 	case FINAL_UNPORTED:
-		return unportedTypeTest(logic, type);
+		return unportedAnswer(unported, logic, type);
 	case FINAL_NO:
 	default:
 		return false;
