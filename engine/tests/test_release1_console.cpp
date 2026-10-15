@@ -21,6 +21,10 @@
 #include <sys/wait.h>
 #include <thread>
 #include <vector>
+#ifdef __APPLE__
+#include <libproc.h>
+#include <sys/proc_info.h>
+#endif
 
 namespace
 {
@@ -30,6 +34,45 @@ std::string readAll(const std::string &path)
 	std::ostringstream o;
 	o << in.rdbuf();
 	return o.str();
+}
+
+// What descriptor `fd` of process `pid` refers to ("" when it cannot be read), and the open descriptors of `pid`: Linux reads /proc; macOS has
+// no /proc (lane MAC-1) and asks libproc: a file by its device and inode, a pipe end or a socket by its kernel handle.
+std::string fdIdentity(pid_t pid, int fd)
+{
+#ifdef __APPLE__
+	vnode_fdinfowithpath v;
+	if (proc_pidfdinfo(pid, fd, PROC_PIDFDVNODEPATHINFO, &v, sizeof v) == (int)sizeof v)
+		return "vnode:" + std::to_string((long long)v.pvip.vip_vi.vi_stat.vst_dev) + ":" + std::to_string((unsigned long long)v.pvip.vip_vi.vi_stat.vst_ino);
+	pipe_fdinfo p;
+	if (proc_pidfdinfo(pid, fd, PROC_PIDFDPIPEINFO, &p, sizeof p) == (int)sizeof p && p.pipeinfo.pipe_handle != 0)
+		return "pipe:" + std::to_string((unsigned long long)p.pipeinfo.pipe_handle);
+	socket_fdinfo so;
+	if (proc_pidfdinfo(pid, fd, PROC_PIDFDSOCKETINFO, &so, sizeof so) == (int)sizeof so && so.psi.soi_so != 0)
+		return "socket:" + std::to_string((unsigned long long)so.psi.soi_so);
+	return std::string();
+#else
+	char target[512] = {};
+	const std::string link = "/proc/" + std::to_string((long long)pid) + "/fd/" + std::to_string(fd);
+	const ssize_t n = ::readlink(link.c_str(), target, sizeof(target) - 1);
+	return n > 0 ? std::string(target, (size_t)n) : std::string();
+#endif
+}
+
+std::vector<int> openFds(pid_t pid)
+{
+	std::vector<int> fds;
+#ifdef __APPLE__
+	const int bytes = proc_pidinfo(pid, PROC_PIDLISTFDS, 0, nullptr, 0);
+	std::vector<proc_fdinfo> list(bytes > 0 ? (size_t)bytes / sizeof(proc_fdinfo) + 16 : 0);
+	const int got = list.empty() ? 0 : proc_pidinfo(pid, PROC_PIDLISTFDS, 0, list.data(), (int)(list.size() * sizeof(proc_fdinfo)));
+	for (int i = 0; i < got / (int)sizeof(proc_fdinfo); ++i)
+		fds.push_back(list[(size_t)i].proc_fd);
+#else
+	for (const auto &e : std::filesystem::directory_iterator("/proc/" + std::to_string((long long)pid) + "/fd"))
+		fds.push_back(std::stoi(e.path().filename().string()));
+#endif
+	return fds;
 }
 } // namespace
 
@@ -151,8 +194,7 @@ TEST_CASE("onezip1: the console filter ends while a child holds the stream, and 
 	const int err = ::open(errPath.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
 	REQUIRE(out >= 0); // tolerance: open() returns any descriptor number, -1 on failure
 	REQUIRE(err >= 0); // tolerance: open() returns any descriptor number, -1 on failure
-	char before[512] = {};
-	const ssize_t beforeLen = ::readlink("/proc/self/fd/1", before, sizeof(before) - 1);
+	const std::string before = fdIdentity(::getpid(), 1);
 	LogPrivacy::Rules rules;
 	std::string error;
 	REQUIRE(ConsoleFilter::install(rules, &error, out, err));
@@ -181,15 +223,13 @@ TEST_CASE("onezip1: the console filter ends while a child holds the stream, and 
 	}
 	std::this_thread::sleep_for(std::chrono::milliseconds(300)); // the exec has happened
 	std::vector<std::string> leaked;
-	for (const auto &e : fs::directory_iterator("/proc/" + std::to_string((long long)clean) + "/fd"))
+	for (const int fd : openFds(clean))
 	{
-		const std::string n = e.path().filename().string();
-		if (n == "0" || n == "1" || n == "2")
+		if (fd <= 2)
 			continue;
-		std::error_code ec;
-		const std::string target = fs::read_symlink(e.path(), ec).string();
-		if (beforeLen > 0 && target == std::string(before, (size_t)beforeLen))
-			leaked.push_back(n + " -> " + target);
+		const std::string target = fdIdentity(clean, fd);
+		if (!before.empty() && target == before)
+			leaked.push_back(std::to_string(fd) + " -> " + target);
 	}
 	CHECK_MESSAGE(leaked.empty(), "the child inherited the saved console: " << (leaked.empty() ? "" : leaked[0]));
 

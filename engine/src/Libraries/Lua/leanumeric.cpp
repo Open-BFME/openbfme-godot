@@ -78,9 +78,38 @@ double luaEA_round24(double r, int errsign)
 
 static int signOf(double v) { return (v > 0) - (v < 0); }
 
+// A NaN result, decided in code (as DetLibm does, lane DEP-2), never by the CPU: a NaN operand is returned quietened (the first NaN operand of
+// two), an invalid operation (0 / 0, inf - inf, 0 * inf, inf / inf) returns the x86 default NaN 0xFFF8000000000000 (retail's -1.#IND).
+// Lane MAC-1: AArch64's default NaN is 0x7FF8000000000000 (`tostring(0/0)` printed 1.#QNAN on Apple silicon), and the compiler may swap the
+// operands of a commutative add or multiply. On x86 these are the results the SSE2 instruction already gave.
+static double nanResult(double a, double b)
+{
+	std::uint64_t bits;
+	if (std::isnan(a))
+	{
+		std::memcpy(&bits, &a, sizeof bits);
+	}
+	else if (std::isnan(b))
+	{
+		std::memcpy(&bits, &b, sizeof bits);
+	}
+	else
+	{
+		bits = 0xFFF8000000000000ull;
+	}
+	bits |= std::uint64_t(1) << 51;
+	double r;
+	std::memcpy(&r, &bits, sizeof r);
+	return r;
+}
+
 double luaEA_add(int mode, double a, double b)
 {
 	const double r = a + b;
+	if (std::isnan(r))
+	{
+		return nanResult(a, b);
+	}
 	if (mode != LUA_EA_NUM_PC24 || !std::isfinite(r) || r == 0.0)
 	{
 		return r;
@@ -99,6 +128,10 @@ double luaEA_sub(int mode, double a, double b)
 double luaEA_mul(int mode, double a, double b)
 {
 	const double r = a * b;
+	if (std::isnan(r))
+	{
+		return nanResult(a, b);
+	}
 	if (mode != LUA_EA_NUM_PC24 || !std::isfinite(r) || r == 0.0)
 	{
 		return r;
@@ -110,6 +143,10 @@ double luaEA_mul(int mode, double a, double b)
 double luaEA_div(int mode, double a, double b)
 {
 	const double r = a / b;
+	if (std::isnan(r))
+	{
+		return nanResult(a, b);
+	}
 	if (mode != LUA_EA_NUM_PC24 || !std::isfinite(r) || r == 0.0)
 	{
 		return r;

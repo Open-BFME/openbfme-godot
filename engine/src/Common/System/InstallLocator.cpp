@@ -206,17 +206,19 @@ std::vector<fs::path> sortedSubdirs(const fs::path &dir)
 // One component matched case-insensitively (a Windows path inside a Linux file system).
 fs::path childCaseInsensitive(const fs::path &dir, const std::string &name)
 {
-	fs::path exact = dir / fs::u8path(name);
-	std::error_code ec;
-	if (fs::exists(exact, ec))
-	{
-		return exact;
-	}
+	// the spelling on disk, read from the listing: on a case-insensitive file system (macOS, lane MAC-1) every spelling of the name exists
+	const fs::path exact = dir / fs::u8path(name);
 	const std::string want = lower(name);
 	std::vector<fs::path> matches;
+	std::error_code ec;
 	for (fs::directory_iterator it(dir, ec), end; !ec && it != end; it.increment(ec))
 	{
-		if (lower(it->path().filename().u8string()) == want)
+		const std::string entry = it->path().filename().u8string();
+		if (entry == name)
+		{
+			return it->path();
+		}
+		if (lower(entry) == want)
 		{
 			matches.push_back(it->path());
 		}
@@ -308,8 +310,15 @@ std::string queryTag(const RegistryQuery &q)
 
 std::string shortHome(const std::string &path, const std::string &home)
 {
-	if (!home.empty() && path.compare(0, home.size(), home) == 0)
+	if (home.empty())
+		return path;
+	if (path.compare(0, home.size(), home) == 0)
 		return "~" + path.substr(home.size());
+	// the prefixes are canonical paths: a home behind a symbolic link (macOS's /var is /private/var, lane MAC-1) is compared canonical too
+	std::error_code ec;
+	const std::string canonicalHome = fs::weakly_canonical(fs::u8path(home), ec).u8string();
+	if (!ec && !canonicalHome.empty() && path.compare(0, canonicalHome.size(), canonicalHome) == 0)
+		return "~" + path.substr(canonicalHome.size());
 	return path;
 }
 

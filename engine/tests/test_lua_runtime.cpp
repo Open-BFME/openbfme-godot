@@ -561,6 +561,13 @@ TEST_CASE("lua numerics: tostring of a number is MSVCR71's printf %.16g: three d
 	CHECK(std::string(b) == "-1.#INF");
 	CHECK(f.eval("return tostring(1/0)") == "string:1.#INF");
 	CHECK(f.eval("return tostring(0/0)") == "string:-1.#IND"); // the x87 default NaN: sign set, empty payload
+	// lane MAC-1: every invalid operation gives that NaN on every CPU (AArch64's own default NaN is positive), a NaN operand passes through
+	CHECK(f.eval("return tostring(1/0 - 1/0)") == "string:-1.#IND");
+	CHECK(f.eval("return tostring(0 * (1/0))") == "string:-1.#IND");
+	CHECK(f.eval("return tostring((1/0) / (1/0))") == "string:-1.#IND");
+	CHECK(f.eval("return tostring(-(0/0))") == "string:1.#QNAN");
+	CHECK(f.eval("return tostring(1 + -(0/0))") == "string:1.#QNAN");
+	CHECK(f.eval("return tostring(-(0/0) * 2)") == "string:1.#QNAN");
 	CHECK(f.eval("return 7 .. ''") == "string:7");
 	CHECK(f.eval("return 0.5 .. ''") == "string:0.5");
 }
