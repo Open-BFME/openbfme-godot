@@ -28,6 +28,7 @@
 #include "GameLogic/GameLogic.h"
 #include "GameLogic/HeroSystem.h"
 #include "GameLogic/Module/AIUpdate.h"
+#include "GameLogic/Module/GiantBirdAIUpdate.h"
 #include "GameLogic/Module/HeroModules.h"
 #include "GameLogic/Object/ExperienceTracker.h"
 #include "GameLogic/Map/TerrainLogic.h"
@@ -1105,17 +1106,30 @@ void ProductionUpdate::completeUnit(ProductionEntry *entry, Player *player, Unsi
 			// RW 0x8A27D4 .. 0x8A283B: VeteranUnitsFromVeteranFactory and the XP for the producer need the experience tracker (S-203)
 			if (hasPos)
 			{
-				newObj->setOrientation(angle);
-				// RW 0x8A28BC: TerrainLogic::isUnderwater(x, y, &z) writes the water height into z over standing water; no ground snap
-				if (const TerrainLogic *terrain = logic.terrain())
+				// lane BACKLOG4 (S-813): RW 0x8A284A .. 0x8A28C7: a flyer (AI vslot 0x168, true only for GiantBirdAIUpdate) is put 250 above the exit position
+				// (addss RW 0xBDD764) with the teleport form (RW 0x8A287A: RW 0x696E63(pos, 1)) and turned after it (RW 0x70C31E); anything else is turned, put on
+				// standing water and placed with the teleport form (RW 0x8A28C7: RW 0x696E63(pos, 1)): the AI keeps its state, the drawn pose does not slide
+				const bool flyer = dynamic_cast<const GiantBirdAIUpdate *>(newObj->getAIUpdateInterface()) != nullptr;
+				if (flyer)
 				{
-					float waterZ = 0.0f;
-					if (terrain->getStandingWaterHeight(pos.x, pos.y, waterZ))
-					{
-						pos.z = waterZ;
-					}
+					pos.z = SimMath::sseAdd(pos.z, 250.0f);
+					newObj->teleportTo(&pos, true);
+					newObj->setOrientation(angle);
 				}
-				newObj->setPosition(&pos);
+				else
+				{
+					newObj->setOrientation(angle);
+					// RW 0x8A28BC: TerrainLogic::isUnderwater(x, y, &z) writes the water height into z over standing water; no ground snap
+					if (const TerrainLogic *terrain = logic.terrain())
+					{
+						float waterZ = 0.0f;
+						if (terrain->getStandingWaterHeight(pos.x, pos.y, waterZ))
+						{
+							pos.z = waterZ;
+						}
+					}
+					newObj->teleportTo(&pos, true);
+				}
 			}
 			newObj->setStatus(kLeavingFactory, true); // RW 0x8A28D8: IS_LEAVING_FACTORY
 			float fade = 0.0f; // BuildFadeInOnCreateTime, tt + 0x354

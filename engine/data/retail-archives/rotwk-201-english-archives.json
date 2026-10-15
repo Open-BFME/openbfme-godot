@@ -648,5 +648,113 @@
       "size": 79595,
       "language": "ALL"
     }
+  ],
+  "layouts": {
+    "base": {
+      "id": "aio",
+      "name": "the All In One package"
+    },
+    "others": [
+      {
+        "id": "ea-official-patch",
+        "name": "EA's official 2.01 patch",
+        "source": "GitHub issue #21: a disc install + LotrBfMe2EP1-131073-english.exe (24,921,361 bytes, md5 2283709ea4b27f5356669821d5378894)",
+        "replace": [
+          {
+            "path": "INI.big",
+            "md5": "b488351a1d3ff02f43228201ca9d5f73",
+            "size": 29059250
+          },
+          {
+            "path": "Maps.big",
+            "md5": "9f7ddc331cfa6b6b612c8f4963e55cd3",
+            "size": 86684399
+          }
+        ],
+        "absent": [
+          "_patch201ini.big",
+          "_patch201maps.big"
+        ]
+      }
+    ],
+    "advice": "What to do: patch a disc install to 2.01 with EA's official patch (LotrBfMe2EP1-131073-english.exe) and nothing else, or let the OpenBFME launcher download the games (Game files page), then choose the folder again."
+  },
+  "entryChecked": [
+    {
+      "path": "Data1.big",
+      "advice": "If your game folder is an unmodified install (from the disc, patched with EA's official patch), please report this message on OpenBFME's GitHub issues page so this version can be added; otherwise reinstall the game or let the OpenBFME launcher download it (Game files page), then choose the folder again.",
+      "entries": [
+        {
+          "name": "albertusmt.otf",
+          "size": 33860,
+          "md5": "e750107d36bdfdf47ed4a9e0da9c9d05"
+        },
+        {
+          "name": "data\\scripts\\scriptevents.xml",
+          "size": 28970,
+          "md5": "2ff14da66778eb7ee2874dfe70607d3f"
+        },
+        {
+          "name": "data\\scripts\\scripts.ini",
+          "size": 133616,
+          "md5": "f713220033c793ec5fae46db467a5b75"
+        },
+        {
+          "name": "data\\scripts\\scripts.lua",
+          "size": 29240,
+          "md5": "38849a61980303adb37db8519c7204f1"
+        },
+        {
+          "name": "data\\systemheroes\\myhero_47c6206b5c124324a54a2da3.cah",
+          "size": 1005,
+          "md5": "770ee9eebbe00d952a68aa7414c66558"
+        },
+        {
+          "name": "data\\systemheroes\\myhero_53f8791579b841c595864db3.cah",
+          "size": 957,
+          "md5": "2b1a65280786d15f732b66db030fd8ac"
+        },
+        {
+          "name": "data\\systemheroes\\myhero_54e1572918804a4cb8ed643.cah",
+          "size": 958,
+          "md5": "3f11c3888830075bb6f90ef8d3ab3c8b"
+        },
+        {
+          "name": "data\\systemheroes\\myhero_7fa6f036a68f4381b2929ff7.cah",
+          "size": 955,
+          "md5": "81922397b02e8416c7853b8ec4a3065a"
+        },
+        {
+          "name": "data\\systemheroes\\myhero_86f62c3a695e43ecac101f38.cah",
+          "size": 986,
+          "md5": "138b80a18de42cb26c410cb131382abf"
+        },
+        {
+          "name": "data\\systemheroes\\myhero_cd5992a9cc24a29bc03282.cah",
+          "size": 982,
+          "md5": "d42d4da43d87bc27f3fa08679d7364aa"
+        },
+        {
+          "name": "data\\systemheroes\\myhero_d24a5d30798e43d4986d3ec.cah",
+          "size": 1050,
+          "md5": "50fb004a26fe3fc7d4267de99d2db31b"
+        },
+        {
+          "name": "data\\systemheroes\\myhero_e06bd0f22e8d478db6484e29.cah",
+          "size": 934,
+          "md5": "d8b36bacc583af469906d9c680d57363"
+        },
+        {
+          "name": "omnialtstd.ttf",
+          "size": 109476,
+          "md5": "9f3d88d62a2cdc29c2cc8b416911d7c9"
+        },
+        {
+          "name": "sachwt__.ttf",
+          "size": 69296,
+          "md5": "e66014f4647fd234f4dbe5994c879e1a"
+        }
+      ]
+    }
   ]
 }

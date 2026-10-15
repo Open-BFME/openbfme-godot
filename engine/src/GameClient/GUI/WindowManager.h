@@ -322,6 +322,10 @@ public:
 	// always goes on). Empty: none.
 	using MouseFilterFn = std::function<bool(int kind, float x, float y)>;
 	void setMouseFilter(MouseFilterFn filter) { m_mouseFilter = std::move(filter); }
+	// lane OPTS-5: a screen that covers the whole stage takes every press (Options.apt over a game: its page's tabs and gadgets are not Apt buttons,
+	// so the in-game HUD's "over the GUI" test, InGameHud::isOverGui, asks this too; the world under it must not see the press)
+	void setCapturesMouse(bool captures) { m_capturesMouse = captures; }
+	bool capturesMouse() const { return m_capturesMouse; }
 	float mouseX() const { return m_mouseX; }
 	float mouseY() const { return m_mouseY; }
 	// A key for the Apt movie (Apt key code) and, separately, for the gadgets (DirectInput code + state, ZH KeyDefs.h).
@@ -405,6 +409,7 @@ private:
 	Shell *m_shell = nullptr;
 	std::unique_ptr<Apt> m_apt;
 	MouseFilterFn m_mouseFilter; // lane OPTS-3
+	bool m_capturesMouse = false; // lane OPTS-5
 	float m_mouseX = 0, m_mouseY = 0;
 	int m_pressButton = 0; ///< lane AUTOCAST-1: + 0x318
 

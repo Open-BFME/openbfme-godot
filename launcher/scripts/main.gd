@@ -30,18 +30,23 @@
 ##   --aio-install=<folder> --aio-consent   with that setting on: download RotWK 2.01 and BFME2 1.06 from the All In One BFME Launcher's
 ##                            service into <folder>/RotWK and <folder>/BFME2 (scripts/core/aio_install.gd, docs/AIO.md); --aio-consent is
 ##                            the player's agreement to the text it logs (in the window: the Download press)
+##   --game-start=<folder>    (lane ONEZIP-1; what the game runs when a player starts it directly from the combined package, see
+##                            scripts/core/game_start.gd) decide which version that start plays, then look for an update in the background
 ## --screenshot=FILE (with the window): save the window as a PNG once the start-up check has finished, then quit (the layout check).
 ## --ui-dump (with --screenshot): print every text of every screen, hidden ones included, as "LAUNCHER ui text:" lines, unscrubbed (the
 ##   test that no screen shows the home folder or the user name); --screenshot-size=WxH lays the window out at that size and saves
 ##   exactly that (the screenshots at 1280x720 and 1280x800 on any display).
 ## Test options (honoured only by a development run or a test package, BuildInfo.tests_allowed):
 ##   --api-base=http://127.0.0.1:<port>   the API origin (a local test server); --trust-key=<64 hex>   the release key of a development run;
-##   --repo=<owner>/<name>   the repository; --aio-base=http://127.0.0.1:<port>   the AIO service's stand-in (both of its hosts);
+##   --repo=<owner>/<name>   the repository; --launcher-dir=<folder>   the launcher's own folder in a development run (the combined
+##   package's game beside it, the staged launcher update); --launcher-version=<version>   its version there; --aio-base=http://127.0.0.1:<port>   the AIO service's stand-in (both of its hosts);
 ##   --aio-pins=<file>   made-up pinned tables (JSON) for that stand-in; --aio-stop-after=<folder>/<file>:<pause|cancel>   a stop right
 ##   after that file was kept (the pause / cancel paths); --ui-demo=<screen>   made-up state for the screenshots of each screen (no
 ##   network; tools/release/launcher_screens.py; the screens are listed at _show_demo); --ui-stop=<pause|cancel|play>@<text>   press
 ##   Pause / Cancel / Play once while a download whose progress names <text> runs, --ui-then=resume|cancel   then press Resume / Cancel
 ##   once (with --screenshot)
+##   OPENBFME_TEST_LAUNCHER_OPTIONS (environment): test options, separated by spaces, for a launcher a game starts by itself
+##   (tools/release/onezip_play_test.py); nothing but test options is taken from it
 ## Exit status: 0 done; 1 an install / play / select failed (or the AIO download was refused: setting off, no consent, a bad folder); 2
 ## updates skipped (offline, API error; an AIO download that broke or was stopped: it resumes next time); 3 an update was rejected (signature, size,
 ## digest, archive or rollback check; the AIO service's data failed a check). Every step prints a LAUNCHER line (also in user://launcher.log).
@@ -71,13 +76,14 @@ const GamesScreen := preload("res://scripts/ui/games_screen.gd")
 const SettingsScreen := preload("res://scripts/ui/settings_screen.gd")
 const MessagePanel := preload("res://scripts/ui/message_panel.gd")
 const InstanceLock := preload("res://scripts/core/instance_lock.gd")
+const GameStart := preload("res://scripts/core/game_start.gd")
 
 const CLI_ACTIONS := ["--update", "--install=", "--select=", "--self-update", "--channel=", "--list", "--play", "--version", "--free-camera=",
-	"--aio=", "--aio-install=", "--auto-update=", "--open-url", "--lobby=", "--register-url-handler"]
+	"--aio=", "--aio-install=", "--auto-update=", "--open-url", "--lobby=", "--register-url-handler", "--game-start="]
 const UrlHandler := preload("res://scripts/core/url_handler.gd")
 # the test options (honoured only by a development run or a test package); ONLINE-2 r2: also the only arguments allowed before --open-url there
 const TEST_OPTIONS := ["--api-base=", "--trust-key=", "--repo=", "--test-kill-at=", "--aio-base=", "--aio-pins=", "--aio-stop-after=", "--ui-demo=",
-	"--ui-stop=", "--ui-then="]
+	"--ui-stop=", "--ui-then=", "--launcher-dir=", "--launcher-version="]
 const RECHECK_SECONDS := 3600.0  # lane UI-5: while the launcher stays open, it looks for updates again every hour
 
 var info: RefCounted
@@ -140,6 +146,15 @@ func _ready() -> void:
 	updater = Updater.new(info)
 	aio = AioInstall.new(updater)
 	var args := OS.get_cmdline_user_args()
+	# lane ONEZIP-1: a game started directly runs the launcher beside it with fixed arguments; a test of that start gives the test
+	# options through the environment (test builds and development runs only, like every test option)
+	var test_env := OS.get_environment("OPENBFME_TEST_LAUNCHER_OPTIONS")
+	if test_env != "" and info.tests_allowed():
+		var first := PackedStringArray()   # before the command line's own: a link still has to come last and alone
+		for a in test_env.split(" ", false):
+			if TEST_OPTIONS.any(func(p): return a.begins_with(p)) and not a in args:
+				first.append(a)
+		args = first + args
 	# lane ONLINE-2 r2 (Sol r1): an openbfme:// link is taken only in the isolated mode (UrlHandler.isolated_url: the user arguments are exactly
 	# --open-url <link>), checked before anything else reads the arguments; anything else around a link (Windows splices the link into the command
 	# line: a link with quotes adds arguments) refuses the whole start, so no CLI action of an injected argument ever runs
@@ -174,6 +189,10 @@ func _ready() -> void:
 				info.repo = a.substr(7)
 			elif a.begins_with("--test-kill-at="):
 				Updater.kill_at = a.substr(15)
+			elif a.begins_with("--launcher-dir="):
+				updater.set_launcher_dir(a.substr(15))
+			elif a.begins_with("--launcher-version="):
+				info.version = a.substr(19)
 			elif a.begins_with("--aio-stop-after="):
 				aio.test_stop_after = a.substr(17)
 			elif a.begins_with("--ui-demo="):
@@ -194,7 +213,7 @@ func _ready() -> void:
 	if info.release_key.size() != 32 and problem == "":
 		problem = "this launcher has no release key: it cannot check updates"
 	updater.recover()
-	var start := SelfUpdate.on_start(updater, args)
+	var start := SelfUpdate.on_start(updater, args, GameStart.request_of(args) == "" or SelfUpdate._arg(args, "--apply-update=") != "")
 	if start.exit:
 		get_tree().quit(0)
 		return
@@ -217,9 +236,23 @@ func _ready() -> void:
 				cli = true
 	# one launcher at a time (after the self-update swap above: its helper never holds the lock); --version alone needs none
 	# lane ONLINE-2: an openbfme:// link starts the game without the lock too (it installs nothing; the window may be open)
+	var game_start := GameStart.request_of(args)
+	if game_start != "":
+		# lane ONEZIP-1: the game asked (it was started directly); this run takes the launcher lock only for its update part, and never
+		# stops because a launcher window is open
+		var code := GameStart.new(updater, game_start).run(problem)
+		# the game has its answer and the update part is done: a launcher update staged by it (or earlier) is applied now, so the next
+		# start runs the new launcher (its helper and the new launcher get --version: they print it and end)
+		var forward := PackedStringArray(Array(args).filter(func(x): return TEST_OPTIONS.any(func(p): return x.begins_with(p))))
+		forward.append("--version")
+		SelfUpdate.on_start(updater, forward)
+		get_tree().quit(code)
+		return
 	if not url_mode.mode and not (cli and Array(args).all(func(x): return x == "--version" or not CLI_ACTIONS.any(func(c): return x == c or (c.ends_with("=") and x.begins_with(c))))):
 		_instance = InstanceLock.new(OS.get_user_data_dir(), info.version)
-		if not _instance.acquire():
+		# lane ONEZIP-1: a background update a directly started game asked for holds the lock: it is asked to stop (its download resumes
+		# here) and this launcher takes over
+		if not _instance.acquire() and not GameStart.take_over(_instance):
 			# Sol r4: "already open" only when the port's holder answered as a launcher; another program on the port is said as such
 			var why := ("Another OpenBFME Launcher (%s) is already open. Use that one, or close it and start this one again." % _instance.other_launcher) \
 				if _instance.other_launcher != "" else ("The OpenBFME Launcher cannot start: %s. The launcher uses that port only to make sure one " +
@@ -486,7 +519,7 @@ func _run_cli(args: PackedStringArray, problem: String) -> int:
 	for a in args:
 		if a.begins_with("--select="):
 			var v := a.substr(9)
-			if v != "" and not updater.installed().any(func(i): return i.version == v):
+			if v != "" and not updater.playable().any(func(i): return i.version == v):
 				Log.line("LAUNCHER cannot select %s: it is not installed" % v)
 				code = 1
 			else:
@@ -550,8 +583,9 @@ func _run_cli(args: PackedStringArray, problem: String) -> int:
 					else:
 						Log.line("LAUNCHER launcher update: " + s.why)
 	if "--list" in args:
-		for i in updater.installed():
-			Log.line("LAUNCHER installed %s%s" % [i.version, " (selected)" if i.version == updater.selected() else ""])
+		for i in updater.playable():
+			Log.line("LAUNCHER installed %s%s%s" % [i.version, " (selected)" if i.version == updater.selected() else "",
+				" (the game beside the launcher)" if i.get("bundled", false) else ""])
 	for a in args:
 		if a.begins_with("--lobby="):
 			updater.set_state("online", "lobby", a.substr(8).strip_edges())
@@ -989,11 +1023,7 @@ func _remove_partials(assets: Array) -> void:
 ## the manifest is cached, the install reads it anyway); [] when it does not verify (then nothing is downloaded either)
 func _assets_of(release: Dictionary, kinds: Array) -> Array:
 	var mm := updater.release_manifest(release)
-	var out := []
-	if mm.ok:
-		for k in kinds:
-			out.append(String(mm.manifest.assets[k][info.platform()].name))
-	return out
+	return updater.asset_names(mm.manifest, kinds) if mm.ok else []
 
 
 static func _folders_text(folders: Dictionary) -> String:
@@ -1020,7 +1050,7 @@ func _refresh_installed() -> void:
 	if _demo != "":
 		return
 	_pv = updater.play_version()
-	_settings.set_versions(updater.installed(), _pv, _older)
+	_settings.set_versions(updater.playable(), _pv, _older)
 	_set_buttons()
 	_show_notes()
 	_refresh_head()

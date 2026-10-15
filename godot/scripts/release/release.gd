@@ -19,8 +19,15 @@
 ##  * the game folders: mount_retail(fs) mounts the retail archives from ROTWK_INSTALL / BFME2_INSTALL (a developer / test override) or the folders
 ##    remembered in user://install-paths.cfg; when neither exists, or the remembered folders stopped working, the first-run screen
 ##    (scripts/release/first_run.gd) lets the player choose them, checks them and remembers them.
+##  * updates (lane ONEZIP-1): a game the player starts directly from the combined package asks the OpenBFME Launcher beside it which
+##    version to play and for an update check (update_handover(), scripts/release/update_handover.gd); the check's state is one line
+##    under the version in the menus' corner ("UPDATE ..." in the log).
 extends Node
 
+const UpdateHandover := preload("res://scripts/release/update_handover.gd")
+const UPDATE_POLL_SECONDS := 1.0
+const UPDATE_NOTE_SECONDS := 15.0   # how long "Up to date" stays in the corner
+const UPDATE_WATCH_SECONDS := 3 * 3600.0
 const LOG_DIR := "user://logs"
 const KEEP_LOGS := 20
 const REPORT_HINT := "Please attach this file to your report in the OpenBFME Discord, channel #feedback, together with the version above."
@@ -33,6 +40,10 @@ var previous_crash_log := "" # the log of a run that did not end normally ("" = 
 var _marker := ""
 var _watermark: CanvasLayer
 var _in_game := false
+var _handover: RefCounted   # UpdateHandover of this start (null: the launcher was not asked)
+var _update_note: Label
+var _update_timer: Timer
+var _update_watched := 0.0
 
 
 func _init() -> void:
@@ -182,6 +193,60 @@ func _show_in_file_manager(path: String) -> Error:
 		printerr("RELEASE refused to show a path outside the user data folder in the file manager")
 		return ERR_INVALID_PARAMETER
 	return OS.shell_show_in_file_manager(target, true)
+
+
+## Lane ONEZIP-1: asks the launcher beside the game which version this start plays (at most UpdateHandover.WAIT_MS). true when the
+## launcher started another installed version: the caller quits. Otherwise this game starts; why the launcher was not asked, or what
+## it answered, is printed ("UPDATE ..."), and the update check's later state is shown in the menus' corner.
+func update_handover(scripted: bool) -> bool:
+	var why := UpdateHandover.why_not(scripted)
+	if why != "":
+		print("UPDATE the launcher is not asked for updates: ", why)
+		return false
+	_handover = UpdateHandover.new()
+	why = _handover.begin(OS.get_cmdline_user_args())
+	if why != "":
+		_handover = null
+		print("UPDATE not checked: ", why)
+		set_update_note("Updates were not checked: " + why)
+		return false
+	var answer := {"state": "waiting", "text": ""}
+	while answer.state == "waiting":
+		await get_tree().process_frame
+		answer = _handover.poll()
+	if answer.state == "switched":
+		print("UPDATE ", answer.text, ": this game closes")
+		return true
+	if answer.text != "":
+		print("UPDATE ", answer.text)
+		set_update_note(answer.text)
+	_update_timer = Timer.new()
+	_update_timer.wait_time = UPDATE_POLL_SECONDS
+	_update_timer.timeout.connect(_on_update_status)
+	add_child(_update_timer)
+	_update_timer.start()
+	return false
+
+
+func _on_update_status() -> void:
+	_update_watched += UPDATE_POLL_SECONDS
+	var s: Dictionary = _handover.status()
+	if not s.is_empty():
+		print("UPDATE ", s.text)
+		set_update_note(s.text)
+		if s.final:
+			_update_timer.stop()
+			if String(s.text).begins_with("Up to date"):
+				get_tree().create_timer(UPDATE_NOTE_SECONDS).timeout.connect(set_update_note.bind(""))
+	elif _update_watched > UPDATE_WATCH_SECONDS:
+		_update_timer.stop()
+
+
+## the update line under the version in the menus' corner ("" removes it)
+func set_update_note(text: String) -> void:
+	if _update_note != null:
+		_update_note.text = text
+		_update_note.visible = not text.is_empty()
 
 
 ## game.gd: true while a game is on screen (the version corner is shown in the menus only).
@@ -395,5 +460,30 @@ func _add_watermark() -> void:
 	logs.name = "OpenLogs"
 	logs.pressed.connect(func() -> void: open_log_folder())
 	_watermark.add_child(logs)
+	# lane ONEZIP-1: the update check's state (a game started directly), under the Logs link
+	_update_note = Label.new()
+	# a dark plate behind it: the line is longer than the version text and lies over the menu's art
+	var plate := StyleBoxFlat.new()
+	plate.bg_color = Color(0, 0, 0, 0.6)
+	plate.set_corner_radius_all(4)
+	plate.set_content_margin_all(6)
+	_update_note.add_theme_stylebox_override("normal", plate)
+	_update_note.add_theme_font_size_override("font_size", 13)
+	_update_note.add_theme_color_override("font_color", Color(1, 1, 1, 0.95))
+	_update_note.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.9))
+	_update_note.add_theme_constant_override("shadow_offset_x", 1)
+	_update_note.add_theme_constant_override("shadow_offset_y", 1)
+	_update_note.set_anchors_and_offsets_preset(Control.PRESET_TOP_RIGHT)
+	_update_note.grow_horizontal = Control.GROW_DIRECTION_BEGIN
+	_update_note.offset_right = -8
+	_update_note.offset_top = 44
+	_update_note.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	_update_note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_update_note.custom_minimum_size = Vector2(380, 0)
+	_update_note.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_update_note.name = "UpdateNote"
+	_update_note.set_meta("game_text", true)
+	_update_note.visible = false
+	_watermark.add_child(_update_note)
 	_watermark.name = "ReleaseWatermark"
 	add_child(_watermark)

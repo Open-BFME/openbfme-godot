@@ -2137,6 +2137,24 @@ void SpecialDisguiseUpdate::crc(StateHasher &h) const
 }
 
 // ---------------------------------------------------------------------------------------------------------------------------------
+// lane BACKLOG4 (S-1222): RW 0x851C92 with a null command button
+bool SpecialAbilityUpdate::isPowerCurrentlyInUse() const
+{
+	if (m_packingState == 0)
+	{
+		return false; // RW 0x851CC3
+	}
+	if (const SpecialPowerTemplate *t = m_data->m_specialPowerTemplate)
+	{
+		const int type = t->m_type;
+		if (type == 0x1D || type == 0x1A) // RW 0x851CF5 / 0x851CFA: the capture types (finishAbility's RW 0x85318F)
+		{
+			return true;
+		}
+	}
+	return m_withinRange; // RW 0x851CFF: + 0x80
+}
+
 SpecialPowerUpdateInterface *SpecialAbilityModules::findUpdate(const Object &obj, const SpecialPowerTemplate *t)
 {
 	for (const std::unique_ptr<BehaviorModule> &m : obj.modules())

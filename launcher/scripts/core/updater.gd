@@ -14,6 +14,10 @@
 ##   state.cfg                       the channel, the version picked by the user, launcher versions that failed to start, whether updates
 ##                                   install by themselves (lane UI-5), the versions started and their process ids (never removed while
 ##                                   they run)
+## Lane ONEZIP-1 (one download): the folder of the launcher's executable may hold the game too (the combined package: OpenBFME beside
+## OpenBFMELauncher, with the package's VERSION file). That game is playable at once, with no first download (bundled): Play starts it
+## in place while no newer version is installed, and it counts as installed when the launcher decides whether a release is newer.
+## The launcher's own update comes out of the game package (stage_self_update, Manifest.launcher_source).
 ## See docs/RELEASE.md, "The launcher", for the rules (verify before use, rollback protection, keep two, offline start).
 extends RefCounted
 
@@ -32,6 +36,9 @@ const MAX_RELEASES_JSON := 4 * 1024 * 1024
 const MAX_NOTES := 20000
 const GAME_EXE := {"linux-x64": "OpenBFME.x86_64", "windows-x64": "OpenBFME.exe"}
 const LAUNCHER_EXE := {"linux-x64": "OpenBFMELauncher.x86_64", "windows-x64": "OpenBFMELauncher.exe"}
+## lane ONEZIP-1: set for every game this launcher starts, so that game does not ask the launcher for an update check again
+## (godot/scripts/release/update_handover.gd)
+const STARTED_BY_LAUNCHER := "OPENBFME_STARTED_BY_LAUNCHER"
 
 var info: RefCounted  # BuildInfo
 var data_dir := ""
@@ -50,7 +57,20 @@ func _init(build_info: RefCounted) -> void:
 	http = HttpFetch.new(policy, info.version)
 	state.load(data_dir.path_join("state.cfg"))
 	if info.packaged:
-		launcher_dir = OS.get_executable_path().get_base_dir()
+		set_launcher_dir(OS.get_executable_path().get_base_dir())
+
+
+## the folder of this launcher's executable: where its own update is staged, and where the game of the combined package lies. A
+## launcher started out of an installed version (lane ONEZIP-1: the combined package is installed with its launcher in it) has none:
+## staging an update there would add files to a signed version folder, and that folder's game is the installed version already.
+func set_launcher_dir(dir: String) -> void:
+	var here := dir.replace("\\", "/").simplify_path()
+	var versions := data_dir.replace("\\", "/").simplify_path().path_join("versions") + "/"
+	if here.begins_with(versions) or (OS.get_name() == "Windows" and here.to_lower().begins_with(versions.to_lower())):
+		Log.line("LAUNCHER this launcher runs out of an installed version's folder: it plays and updates the installed versions, and does not update itself there (start the launcher of the folder you unpacked)")
+		launcher_dir = ""
+		return
+	launcher_dir = dir
 
 
 func set_test_api_base(origin: String) -> String:
@@ -140,7 +160,7 @@ func fetch_releases() -> Dictionary:
 	var cache := data_dir.path_join("cache")
 	DirAccess.make_dir_recursive_absolute(cache)
 	var etag := ""
-	var cached := FileAccess.get_file_as_bytes(cache.path_join("releases.json"))
+	var cached := Manifest.read_limited(cache.path_join("releases.json"), MAX_RELEASES_JSON)
 	if not cached.is_empty() and FileAccess.file_exists(cache.path_join("releases.etag")):
 		etag = FileAccess.get_file_as_string(cache.path_join("releases.etag")).strip_edges()
 	var url := "%s/repos/%s/releases?per_page=30" % [api_base, info.repo]
@@ -181,7 +201,7 @@ func fetch_releases() -> Dictionary:
 ## lane UI-5: the release list of the last check (cache/releases.json), for the notes cards before a check has answered or offline; []
 ## when there is none. Never trusted for an install: an install reads the release's signed manifest.
 func cached_releases() -> Array:
-	var out = parse_releases(FileAccess.get_file_as_bytes(data_dir.path_join("cache/releases.json")), true)
+	var out = parse_releases(Manifest.read_limited(data_dir.path_join("cache/releases.json"), MAX_RELEASES_JSON), true)
 	return out if typeof(out) == TYPE_ARRAY else []
 
 
@@ -268,8 +288,8 @@ func in_channel(releases: Array, ch: String) -> Array:
 func release_manifest(release: Dictionary) -> Dictionary:
 	var dir := data_dir.path_join("cache/manifests").path_join(release.tag)
 	var expect := {"repo": info.repo, "tag": release.tag, "prerelease": release.prerelease}
-	var bytes := FileAccess.get_file_as_bytes(dir.path_join("manifest.json"))
-	var sig := FileAccess.get_file_as_bytes(dir.path_join("manifest.json.sig"))
+	var bytes := Manifest.read_limited(dir.path_join("manifest.json"), Manifest.MAX_BYTES)
+	var sig := Manifest.read_limited(dir.path_join("manifest.json.sig"), 64)
 	if not bytes.is_empty() and sig.size() == 64:
 		var v := Manifest.verify(bytes, sig, info.release_key, expect)
 		if v.ok:
@@ -318,8 +338,8 @@ func verify_installed(name: String, full := false) -> Dictionary:
 	if not Semver.is_valid(name):
 		return {"ok": false, "error": "not a version folder"}
 	var dir := data_dir.path_join("versions").path_join(name)
-	var v := Manifest.verify(FileAccess.get_file_as_bytes(dir.path_join("manifest.json")),
-		FileAccess.get_file_as_bytes(dir.path_join("manifest.json.sig")), info.release_key, {"repo": info.repo})
+	var v := Manifest.verify(Manifest.read_limited(dir.path_join("manifest.json"), Manifest.MAX_BYTES),
+		Manifest.read_limited(dir.path_join("manifest.json.sig"), 64), info.release_key, {"repo": info.repo})
 	if not v.ok:
 		return {"ok": false, "error": v.error}
 	if v.manifest.version != name:
@@ -353,18 +373,220 @@ static func same_files(got: Dictionary, signed: Dictionary) -> String:
 	return ""
 
 
+## the newest version this launcher can start: the newest installed one, or the game beside the launcher when that is newer (lane
+## ONEZIP-1: the combined package needs no first download, and an automatic update never fetches its own version again)
 func newest_installed() -> String:
 	var inst := installed()
-	return "" if inst.is_empty() else inst[0].version
+	var newest: String = "" if inst.is_empty() else inst[0].version
+	var b := bundled()
+	if not b.is_empty() and (newest == "" or Semver.compare(b.version, newest) > 0):
+		return b.version
+	return newest
 
 
-## the version Play starts: the user's pick when it is installed, else the newest installed
+## the version Play starts: the user's pick when it is installed, else the newest installed (or the game beside the launcher while
+## nothing newer is installed)
 func play_version() -> String:
-	var inst := installed()
-	for i in inst:
-		if i.version == selected():
-			return i.version
-	return "" if inst.is_empty() else inst[0].version
+	var sel := selected()
+	for i in playable():
+		if i.version == sel:
+			return sel
+	return newest_installed()
+
+
+## the versions Play can start, newest first: the installed ones and the game beside the launcher ({version, path, bundled: true})
+## when that version is not installed
+func playable() -> Array:
+	var out := installed()
+	var b := bundled()
+	if not b.is_empty() and not out.any(func(i): return i.version == b.version):
+		out.append({"version": b.version, "path": b.path, "bundled": true})
+		out.sort_custom(func(x, y): return Semver.compare(x.version, y.version) > 0)
+	return out
+
+
+# ---- the game beside the launcher (lane ONEZIP-1) ----------------------------------------------------------------------------------------
+## The combined package carries its signed payload inventory (payload.json + payload.json.sig, Manifest.verify_payload; written by
+## tools/release/seal_package.py before the archive is finished). The game beside the launcher is offered only when that inventory
+## verifies under the release key; before Play every file is checked against it, strictly: a changed or missing file, or a file that
+## is neither the package's nor one of the launcher's own (bundle_extras), refuses the start by name. The launcher's executable is the
+## package's, or a newer signed launcher a self-update put there, proven by that release's signed manifest beside it (PROOF).
+
+const PROOF := "launcher-manifest.json"
+const PROOF_SIG := "launcher-manifest.json.sig"
+
+var _bundled_said := ""
+var _bundled_cache := {}   # the payload's bytes and signature -> the verified result (a verification costs a signature check)
+
+
+## the files that may lie in the package's folder besides its signed ones: the payload, the launcher's proof, its update in progress
+func bundle_extras() -> Array:
+	var exe: String = LAUNCHER_EXE[info.platform()]
+	return [Manifest.PAYLOAD, Manifest.PAYLOAD_SIG, PROOF, PROOF_SIG, "update/" + exe, "update/VERSION.launcher", exe + ".old", exe + ".new",
+		exe + ".old.tmp", exe + ".new.tmp", PROOF + ".tmp", PROOF_SIG + ".tmp", "update.partial/" + exe, "update.partial/VERSION.launcher"]
+
+
+## {version, path, files} of the game in the launcher's own folder (the combined package as it was unpacked), {} when there is none
+## or its payload inventory does not verify (said once in the log, by name; never guessed)
+func bundled() -> Dictionary:
+	if launcher_dir == "" or not FileAccess.file_exists(launcher_dir.path_join(GAME_EXE[info.platform()])):
+		return {}
+	# sizes first (Sol r2): nothing larger than the limits is read whole
+	var pr := Manifest.read_bounded(launcher_dir.path_join(Manifest.PAYLOAD), Manifest.MAX_BYTES)
+	var sr := Manifest.read_bounded(launcher_dir.path_join(Manifest.PAYLOAD_SIG), 64)
+	var bytes: PackedByteArray = pr.bytes
+	var sig: PackedByteArray = sr.bytes
+	var key := bytes.hex_encode() + ":" + sig.hex_encode() + ":%d:%d" % [pr.size, sr.size]
+	if not _bundled_cache.has(key):
+		var v := Manifest.verify_payload(bytes, sig, info.release_key, {"repo": info.repo, "platform": info.platform()})
+		if pr.size > Manifest.MAX_BYTES:
+			v = {"ok": false, "error": "%s is %d bytes (at most %d)" % [Manifest.PAYLOAD, pr.size, Manifest.MAX_BYTES]}
+		elif sr.size > 64:
+			v = {"ok": false, "error": "%s is %d bytes (an Ed25519 signature is 64)" % [Manifest.PAYLOAD_SIG, sr.size]}
+		var why: String = v.error
+		if v.ok:
+			var first := FileAccess.get_file_as_string(launcher_dir.path_join("VERSION")).get_slice("\n", 0).strip_edges()
+			if first != "OpenBFME " + String(v.payload.version):
+				why = "its VERSION file (%s) is not the signed version %s" % [first.left(60).c_escape(), v.payload.version]
+		_bundled_cache = {key: {} if why != "" else {"version": v.payload.version, "path": launcher_dir, "files": v.payload.files}}
+		if why != "" and _bundled_said != why:
+			_bundled_said = why
+			Log.line("LAUNCHER the game beside the launcher is not offered: " + why)
+	var b: Dictionary = _bundled_cache[key]
+	return b.duplicate() if not b.is_empty() else {}
+
+
+## why the game beside the launcher is not offered ("" when it is, or when there is none)
+func bundled_problem() -> String:
+	return _bundled_said if bundled().is_empty() else ""
+
+
+## Lane ONEZIP-1 r2: a game started directly starts an installed version itself (game_start.gd): that version is checked file by file
+## against its signed manifest (and, on Linux, the system's GLIBC), and the versions lock is taken so that nothing removes or replaces
+## it before the game reports its process id (record_started) or the hold ends (unlock_versions). {ok, error}
+func hold_for_start(version: String) -> Dictionary:
+	var v := verify_installed(version, true)
+	if not v.ok:
+		return {"ok": false, "error": v.error}
+	var dir := data_dir.path_join("versions").path_join(version).path_join("game")
+	if info.os_name() == "Linux":
+		var glibc := GlibcCheck.check(dir, OS.get_environment("OPENBFME_TEST_SYSTEM_GLIBC") if info.tests_allowed() else "")
+		if glibc != "":
+			return {"ok": false, "error": glibc}
+	if not lock_versions():
+		return {"ok": false, "error": "another launcher holds the versions folder (%s)" % LOCK}
+	if not verify_installed(version).ok:
+		unlock_versions()
+		return {"ok": false, "error": "it was removed or replaced while it was checked"}
+	return {"ok": true, "error": ""}
+
+
+## records a game of `version` the game started (under hold_for_start's lock): prune never removes a version that is played. false
+## when `pid` is not a running game of that version
+func record_started(version: String, pid: int) -> bool:
+	if not _game_runs(pid, version):
+		Log.line("LAUNCHER process %d is not a running game of %s: not recorded" % [pid, version])
+		return false
+	var runs := _live_runs()
+	var pids: Array = runs.get(version, [])
+	pids.append(pid)
+	runs[version] = pids
+	set_state("launcher", "running", runs)
+	Log.line("LAUNCHER the game started %s (pid %d)" % [version, pid])
+	return true
+
+
+## whether Play of `version` starts the game beside the launcher (that version is not installed in the data folder)
+func plays_bundled(version: String) -> bool:
+	var b := bundled()
+	return not b.is_empty() and b.version == version and not DirAccess.dir_exists_absolute(data_dir.path_join("versions").path_join(version))
+
+
+## Every file of the game beside the launcher against its signed payload inventory, and the launcher's executable against signed data
+## (check_launcher). {ok, error}
+func check_bundled() -> Dictionary:
+	var b := bundled()
+	if b.is_empty():
+		return {"ok": false, "error": "there is no signed game beside the launcher"}
+	var exe: String = LAUNCHER_EXE[info.platform()]
+	var files: Dictionary = b.files.duplicate()
+	files.erase(exe)
+	var why := Manifest.check_files(b.path, files, bundle_extras() + [exe])
+	if why == "":
+		why = check_launcher(b.path, b.files.get(exe, {}))
+	return {"ok": why == "", "error": why}
+
+
+## "" when the launcher executable in `dir` is a signed one: the package's own (`signed`: its entry in the payload) or the launcher a
+## self-update put there, whose release's signed manifest lies beside it (PROOF, written when the new launcher confirmed its start)
+func check_launcher(dir: String, signed: Dictionary) -> String:
+	var exe: String = LAUNCHER_EXE[info.platform()]
+	var path := dir.path_join(exe)
+	if not FileAccess.file_exists(path):
+		return "%s is missing" % exe
+	var d := DirAccess.open(dir)
+	if d != null and d.is_link(exe):
+		return "%s is a link, not the signed file" % exe
+	var sha := _sha256_of(path)
+	if not signed.is_empty() and sha == signed.sha256:
+		return ""
+	var v := Manifest.verify(Manifest.read_limited(dir.path_join(PROOF), Manifest.MAX_BYTES), Manifest.read_limited(dir.path_join(PROOF_SIG), 64),
+		info.release_key, {"repo": info.repo})
+	if v.ok:
+		var src := Manifest.launcher_source(v.manifest, info.platform(), exe)
+		if src.ok and sha == (src.file.sha256 if src.combined else String(src.asset.files.get(exe, {}).get("sha256", ""))):
+			return ""
+	return "%s is neither the package's nor a signed launcher update (%s)" % [exe, v.error if not v.ok else "its SHA-256 is not the signed one"]
+
+
+## a confirmed launcher update in a combined package's folder: the signed manifest of its release beside it (PROOF), so check_launcher
+## and the game (godot/scripts/release/launcher_check.gd) can tell it is signed. Written through a temporary file and a rename.
+func write_launcher_proof(dir: String, tag: String) -> bool:
+	if not FileAccess.file_exists(dir.path_join(GAME_EXE[info.platform()])):
+		return true   # a launcher-only folder needs none
+	var cache := data_dir.path_join("cache/manifests").path_join(tag)
+	var bytes := Manifest.read_limited(cache.path_join("manifest.json"), Manifest.MAX_BYTES)
+	var sig := Manifest.read_limited(cache.path_join("manifest.json.sig"), 64)
+	if not Manifest.verify(bytes, sig, info.release_key, {"repo": info.repo, "tag": tag}).ok:
+		Log.line("LAUNCHER no verified manifest of %s to prove the launcher beside the game" % tag)
+		return false
+	for item in [[PROOF_SIG, sig], [PROOF, bytes]]:
+		var tmp: String = dir.path_join(item[0] + ".tmp")
+		if not _write(tmp, item[1]) or (FileAccess.file_exists(dir.path_join(item[0])) and DirAccess.remove_absolute(dir.path_join(item[0])) != OK) \
+				or DirAccess.rename_absolute(tmp, dir.path_join(item[0])) != OK:
+			DirAccess.remove_absolute(tmp)
+			Log.line("LAUNCHER the proof of the launcher %s could not be written beside the game (is the folder writable, the disk full?)" % tag)
+			return false
+	return true
+
+
+static func _sha256_of(path: String) -> String:
+	var f := FileAccess.open(path, FileAccess.READ)
+	if f == null:
+		return ""
+	var hc := HashingContext.new()
+	hc.start(HashingContext.HASH_SHA256)
+	while f.get_position() < f.get_length():
+		hc.update(f.get_buffer(1 << 20))
+	return hc.finish().hex_encode()
+
+
+func _play_bundled(b: Dictionary, args: PackedStringArray) -> Dictionary:
+	var c := check_bundled()
+	if not c.ok:
+		return {"ok": false, "pid": -1, "modified": true, "error": ("%s (the game beside the launcher) is not the signed package " +
+			"(%s): it is not started; download it again (--install=%s, or Play to confirm)") % [b.version, c.error, b.version]}
+	var exe: String = String(b.path).path_join(GAME_EXE[info.platform()])
+	if info.os_name() == "Linux":
+		var glibc := GlibcCheck.check(b.path, OS.get_environment("OPENBFME_TEST_SYSTEM_GLIBC") if info.tests_allowed() else "")
+		if glibc != "":
+			return {"ok": false, "error": "%s cannot be started: %s" % [b.version, glibc], "pid": -1}
+	OS.set_environment(STARTED_BY_LAUNCHER, "1")
+	var pid := OS.create_process(exe, args)
+	if pid <= 0:
+		return {"ok": false, "error": "%s could not be started" % exe, "pid": -1}
+	Log.line("LAUNCHER started %s, the game beside the launcher (pid %d)" % [b.version, pid])
+	return {"ok": true, "error": "", "pid": pid}
 
 
 # ---- installing --------------------------------------------------------------------------------------------------------------------------
@@ -556,8 +778,12 @@ func _prune_locked() -> void:
 ## an openbfme://join link passes --online-join / --online-lobby). {ok, error, pid}
 ## Every file of the version is checked against the signed manifest first (round 3): a changed file is never started; the caller offers
 ## a fresh download ({modified: true}).
-func play(version: String, args: PackedStringArray = PackedStringArray()) -> Dictionary:
+## lane ONEZIP-1: `before_start` (optional) is asked right before the process is started, after every check: false stops the start
+## ({ok: false, stopped: true}; the game that asked for this start went on by itself, main.gd --game-start).
+func play(version: String, args: PackedStringArray = PackedStringArray(), before_start := Callable()) -> Dictionary:
 	_report("Checking %s" % version)
+	if plays_bundled(version):
+		return _play_bundled(bundled(), args)
 	var v := verify_installed(version, true)
 	if not v.ok:
 		var why := "%s cannot be started: %s" % [version, v.error]
@@ -579,6 +805,10 @@ func play(version: String, args: PackedStringArray = PackedStringArray()) -> Dic
 	if not verify_installed(version).ok:
 		unlock_versions()
 		return {"ok": false, "error": "%s was removed or replaced while it was checked: press Play again" % version, "pid": -1}
+	if before_start.is_valid() and not before_start.call():
+		unlock_versions()
+		return {"ok": false, "error": "%s was not started: the game that asked for it went on by itself" % version, "pid": -1, "stopped": true}
+	OS.set_environment(STARTED_BY_LAUNCHER, "1")
 	var pid := OS.create_process(exe, args)
 	if pid <= 0:
 		unlock_versions()
@@ -710,7 +940,7 @@ func launcher_update_available(release: Dictionary) -> bool:
 ## happens on the next start (apply_staged_update). {ok, error, staged (version or "")}
 func stage_self_update(release: Dictionary) -> Dictionary:
 	if launcher_dir == "":
-		return {"ok": true, "error": "", "staged": "", "why": "a development run does not update itself"}
+		return {"ok": true, "error": "", "staged": "", "why": "this launcher has no folder of its own (a development run, or one out of an installed version): it does not update itself"}
 	if not Semver.is_valid(info.version):
 		return {"ok": true, "error": "", "staged": "", "why": "this launcher's version %s is not a release version: it does not update itself" % info.version}
 	if Semver.compare(release.tag, info.version) <= 0:
@@ -727,7 +957,12 @@ func stage_self_update(release: Dictionary) -> Dictionary:
 	var mm := release_manifest(release)
 	if not mm.ok:
 		return {"ok": false, "error": mm.error, "staged": ""}
-	var asset: Dictionary = mm.manifest.assets.launcher[info.platform()]
+	var src := Manifest.launcher_source(mm.manifest, info.platform(), LAUNCHER_EXE[info.platform()])
+	if not src.ok:
+		return {"ok": false, "error": src.error, "staged": ""}
+	if src.combined:
+		return _stage_from_package(release, src)
+	var asset: Dictionary = src.asset
 	var got := fetch_asset(release, asset)
 	if not got.ok:
 		return {"ok": false, "error": got.error, "staged": ""}
@@ -754,17 +989,85 @@ func stage_self_update(release: Dictionary) -> Dictionary:
 	return {"ok": true, "error": "", "staged": release.tag}
 
 
+## Lane ONEZIP-1: stage the launcher of a combined package: its executable is a signed file of the game package. It is copied from the
+## installed version of that release when there is one (the usual case: the game update was installed first), else the package is
+## downloaded and unpacked beside the downloads for this alone; the copy in update.partial/ is checked against the signed size and
+## SHA-256 before it becomes update/ (and again when it is applied, check_staged).
+func _stage_from_package(release: Dictionary, src: Dictionary) -> Dictionary:
+	var exe: String = LAUNCHER_EXE[info.platform()]
+	var asset: Dictionary = src.asset
+	var from := data_dir.path_join("versions").path_join(release.tag).path_join("game").path_join(exe)
+	var unpacked := ""
+	var downloaded := ""
+	if not verify_installed(release.tag).ok:
+		var got := fetch_asset(release, asset)
+		if not got.ok:
+			return {"ok": false, "error": got.error, "staged": ""}
+		unpacked = data_dir.path_join("downloads").path_join(Manifest.top_folder(asset.name) + ".unpack")
+		remove_tree(unpacked)
+		_report("Unpacking %s" % asset.name)
+		var x := Archive.extract(got.path, "zip" if asset.name.ends_with(".zip") else "tar.gz", Manifest.top_folder(asset.name), unpacked)
+		var differ: String = x.error if not x.ok else same_files(x.files, asset.files)
+		if differ != "":
+			remove_tree(unpacked)
+			return {"ok": false, "error": "the launcher %s was not staged: %s" % [release.tag, differ], "staged": ""}
+		from = unpacked.path_join(exe)
+		downloaded = got.path
+	var staged := launcher_dir.path_join("update")
+	var partial := launcher_dir.path_join("update.partial")
+	remove_tree(partial)
+	remove_tree(staged)
+	var why := ""
+	if DirAccess.make_dir_recursive_absolute(partial) != OK or DirAccess.copy_absolute(from, partial.path_join(exe)) != OK:
+		why = "it could not be copied into %s (is the folder writable, is the disk full?)" % launcher_dir
+	else:
+		why = Manifest.check_files(partial, {exe: src.file})
+	if unpacked != "":
+		remove_tree(unpacked)
+	if why == "" and OS.get_name() != "Windows":
+		FileAccess.set_unix_permissions(partial.path_join(exe), 493)  # rwxr-xr-x
+	if why == "" and (not _write(partial.path_join("VERSION.launcher"), (release.tag + "\n").to_utf8_buffer()) \
+			or DirAccess.rename_absolute(partial, staged) != OK):
+		why = "it could not be staged in %s (is the folder writable?)" % launcher_dir
+	if why != "":
+		remove_tree(partial)
+		return {"ok": false, "error": "the launcher %s was not staged: %s" % [release.tag, why], "staged": ""}
+	if downloaded != "":
+		DirAccess.remove_absolute(downloaded)
+	Log.line("LAUNCHER staged the launcher %s (from the package %s); it replaces this one on the next start" % [release.tag, asset.name])
+	return {"ok": true, "error": "", "staged": release.tag}
+
+
+## the release assets a job downloads for these kinds ("game", "launcher"), for Pause / Cancel (main.gd): a combined package is the
+## launcher's download too
+func asset_names(manifest: Dictionary, kinds: Array) -> Array:
+	var out := []
+	for k in kinds:
+		var name: String = manifest.assets.game[info.platform()].name
+		if k == "launcher":
+			var src := Manifest.launcher_source(manifest, info.platform(), LAUNCHER_EXE[info.platform()])
+			if src.ok:
+				name = src.asset.name
+		if not name in out:
+			out.append(name)
+	return out
+
+
 ## The staged launcher of `tag` in <dir>/update/, checked against signed data at the moment it is applied (round 3: the swap used to
 ## trust whatever file was in update/): the cached manifest of `tag` must verify again, and every staged file must be exactly a signed
 ## file of the launcher package (VERSION.launcher aside). {ok, error, new_sha256 (the signed SHA-256 of the executable)}
 func check_staged(dir: String, tag: String) -> Dictionary:
 	var cache := data_dir.path_join("cache/manifests").path_join(tag)
-	var v := Manifest.verify(FileAccess.get_file_as_bytes(cache.path_join("manifest.json")),
-		FileAccess.get_file_as_bytes(cache.path_join("manifest.json.sig")), info.release_key, {"repo": info.repo, "tag": tag})
+	var v := Manifest.verify(Manifest.read_limited(cache.path_join("manifest.json"), Manifest.MAX_BYTES),
+		Manifest.read_limited(cache.path_join("manifest.json.sig"), 64), info.release_key, {"repo": info.repo, "tag": tag})
 	if not v.ok:
 		return {"ok": false, "error": "no verified manifest for the staged launcher %s (%s)" % [tag, v.error]}
-	var files: Dictionary = v.manifest.assets.launcher[info.platform()].files
 	var exe: String = launcher_files()[0]
+	var src := Manifest.launcher_source(v.manifest, info.platform(), exe)
+	if not src.ok:
+		return {"ok": false, "error": src.error}
+	# lane ONEZIP-1: a combined package: the one staged file is the package's signed launcher executable
+	var files: Dictionary = {exe: src.file} if src.combined else src.asset.files
 	if not files.has(exe):
 		return {"ok": false, "error": "the signed launcher package %s has no %s" % [tag, exe]}
 	var why := Manifest.check_files(dir.path_join("update"), files, ["VERSION.launcher"])

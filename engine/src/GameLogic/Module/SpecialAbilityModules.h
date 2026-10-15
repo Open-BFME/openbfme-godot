@@ -207,6 +207,10 @@ public:
 	// RW 0x852E8F
 	void initiateIntentToDoSpecialPower(const SpecialPowerTemplate *t, Object *target, const Coord3D *loc, unsigned options, int extra) override;
 	bool isActive() const override { return m_active; }
+	// lane BACKLOG4 (S-1222): the special power update interface's slot 0x18 (RW 0x851C92) asked without a command button, as Object RW 0x693919 asks it:
+	// false with the packing state (+ 0x30) 0; else true for the template types 0x1A and 0x1D, else the within-range flag (+ 0x80). The command button
+	// branches (RW 0x851C9E .. 0x851CE1) are not this caller's
+	bool isPowerCurrentlyInUse() const;
 	// RW 0x851B6E: the RequiredConditions / RejectedConditions (RW 0x851551); a power of the garrison types 0x27 / 0x28 also needs room in the object's
 	// contain (contain slots 0x114 / 0x70)
 	bool allowsSpecialPowerUse() const override;

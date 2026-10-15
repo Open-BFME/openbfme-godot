@@ -1250,9 +1250,9 @@ bool WindowManager::postMouseMove(float x, float y)
 {
 	m_mouseX = x;
 	m_mouseY = y;
-	if (m_mouseFilter)
+	if (m_mouseFilter && !componentInputBlocked())
 	{
-		m_mouseFilter(0, x, y); // lane OPTS-3
+		m_mouseFilter(0, x, y); // lane OPTS-3; lane OPTS-5: not while a message box has taken the input (DisableComponents())
 	}
 	// lane MENU-1: RW 0x812C89 forwards the pointer to the Apt manager first, then keeps the message from the windows while the bit is set
 	const bool used = m_gadgetLayer && !componentInputBlocked() ? m_gadgetLayer->mouseMove(x, y) : false;
@@ -1262,9 +1262,11 @@ bool WindowManager::postMouseMove(float x, float y)
 
 bool WindowManager::postMouseButton(bool down)
 {
-	if (m_mouseFilter && m_mouseFilter(down ? 1 : 2, m_mouseX, m_mouseY))
+	// lane OPTS-3: the engine screen's press; lane OPTS-5: a modal (a message box, whose movie calls DisableComponents()) takes the input first, so the
+	// screen under it hears nothing
+	if (m_mouseFilter && !componentInputBlocked() && m_mouseFilter(down ? 1 : 2, m_mouseX, m_mouseY))
 	{
-		return true; // lane OPTS-3: the engine screen's
+		return true;
 	}
 	const bool used = m_gadgetLayer && !componentInputBlocked() ? m_gadgetLayer->mouseButton(down) : false;
 	m_apt->input().postMouseButton(down);

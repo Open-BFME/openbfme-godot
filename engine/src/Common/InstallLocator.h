@@ -133,6 +133,7 @@ struct InstallCheck
 	std::vector<std::string> unknown;   // archives in the folder that are neither in the policy nor known exclusions
 	int present = 0;                    // policy archives found with the right size
 	int expected = 0;
+	std::string layout;                 // lane CONTRIB-1: the known layout the folder holds (RetailArchivePolicy.h "Layouts"); "" = none
 };
 
 // Is `root` the folder of `game` described by `policy`? Fast: presence and size of every policy archive

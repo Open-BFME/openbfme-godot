@@ -170,7 +170,7 @@ int CommandTranslator::issueMove(Object *target, const Coord3D *pos, EvaluateTyp
 
 int CommandTranslator::evaluateForceAttack(Object *target, const Coord3D *pos, EvaluateType type)
 {
-	// RW 0x81E4B5 (lane INPUT-1 r2; reached in the force-attack mode, Ctrl held: see the BEGIN_FORCEATTACK case). The FIRST
+	// RW 0x81E4B5 (lane INPUT-1 r2; reached in the force-attack mode, which RotWK 2.01 itself never turns on: see the BEGIN_FORCEATTACK case). The FIRST
 	// selected object with an object decides (RW 0x81DFB5 -> RW 0x81D9DE: Object::isAbleToAttack RW 0x691269, then getAbleToAttackSpecificObject RW
 	// 0x68D6A6 (forced) for an object, getAbleToUseWeaponAgainstTarget RW 0x68B5FA for the ground: POSSIBLE / POSSIBLE_AFTER_MOVING give the command).
 	// MSG_DO_FORCE_ATTACK_OBJECT (0x426) carries the object and the position, MSG_DO_FORCE_ATTACK_GROUND (0x427) the position.
@@ -595,10 +595,16 @@ MessageDisposition CommandTranslator::translate(const ClientMessage &msg)
 			case CMSG_META_TOGGLE_ATTACKMOVE:
 				m_retailNoOp[metaNameOf(t)]++;
 				return MessageDisposition::Keep;
-			// lane INPUT-1 r3: Ctrl (BEGIN_ / END_FORCEATTACK) sets the force-attack mode as ZH does (CommandXlat.cpp:3483 / 3488). INFERENCE (stop
-			// S-1675): RotWK's activation path was not recovered: its jump table sends 0x74 / 0x75 to the default RW 0x82076C (BFME2 1.06's table RW
-			// 0x82BF9F too), the setter RW 0x69AD1F has no reference and no other code writes InGameUI + 0x8B8 but to clear it; the mode is read by the
-			// click branch RW 0x81FBBC (-> evaluateForceAttack RW 0x81E4B5) and issueMoveToLocationCommand RW 0x81DB0C
+			// Force attack. TARGET FACT (lane BACKLOG3; RotWK game.dat, caveat S-001): RotWK 2.01 has no force-attack activation. BEGIN_ / END_FORCEATTACK
+			// (0x74 / 0x75, the name table RW 0xBF0948 / 0xBF0950) go to the default RW 0x82076C in the meta jump table RW 0x8207A0 (entries 8 and 9), while
+			// its neighbours 0x76 .. 0x7B are the inlined setters of force move (+ 0x8B9, RW 0x8200E3 / 0x8200EF), waypoints (+ 0x8B0, RW 0x8200FA /
+			// 0x82011D) and prefer selection (+ 0x8BA, RW 0x820106 / 0x820112). The only stores to InGameUI + 0x8B8 in the code are the setter RW 0x69AD23
+			// (no call, jump or pointer reaches RW 0x69AD1F) and the clears RW 0x69B638, 0x69B6F0, 0x6A6A49, 0x6A7250, 0x83C42B (pinned by
+			// test_input1.cpp's binary facts). So in retail Ctrl sets nothing and the mode's readers (RW 0x81FBBC -> evaluateForceAttack RW 0x81E4B5,
+			// RW 0x81DB0C) are never reached.
+			// NOT RETAIL (stop S-1675): lane INPUT-1 r3 set the mode here as ZH's CommandXlat.cpp:3483 / 3488 do, and Ctrl force attack was released
+			// (v0.3.0-preview.1 / .2). It is kept as an OpenBFME addition until the owner decides; retail's behaviour is these two cases as
+			// retail no-ops (m_retailNoOp, like TOGGLE_ATTACKMOVE above)
 			case CMSG_META_BEGIN_FORCEATTACK: m_ctx.ui.setForceAttackMode(true); return MessageDisposition::Keep;
 			case CMSG_META_END_FORCEATTACK: m_ctx.ui.setForceAttackMode(false); return MessageDisposition::Keep;
 			case CMSG_META_BEGIN_FORCEMOVE: m_ctx.ui.setForceMoveToMode(true); return MessageDisposition::Keep;   // RW 0x8200E3: InGameUI + 0x8B9

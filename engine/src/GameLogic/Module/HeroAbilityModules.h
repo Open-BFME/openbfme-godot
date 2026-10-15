@@ -92,7 +92,7 @@
 //     runs SpecialPowerModule's (RW 0x89763B) and then every module of the victim gets its + 0xC slot 0xB0 (RW 0x68BDF9): a SpecialPowerModule's is
 //     refreshTimer (RW 0x6519C2 -> 0x896F99), the other classes' are no-ops. Elrond's Restoration.
 // INFERENCE (stop S-1222, stopLines): the module tags are kept as strings and resolved with NameKeyGenerator::findKey when used (retail makes the keys while
-// parsing: an unknown tag finds no module either way); RW 0x7A7483's team-name lookup of the defection end is the recorded Team.
+// parsing: an unknown tag finds no module either way); RW 0x7A7483's team-name lookup of the defection end runs (lane BACKLOG4, Object::restoreOriginalTeam).
 
 #pragma once
 

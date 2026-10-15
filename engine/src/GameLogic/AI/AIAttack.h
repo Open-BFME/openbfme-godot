@@ -120,7 +120,6 @@ private:
 	ObjectID m_victimTeam = 0;
 	int m_lockedSlotOnEnter = -1;
 	unsigned m_shotsFired = 0;
-	unsigned m_shotsAtEnter = 0; // lane PLAY-4 r1: the count at onEnter, for stop S-3807 only (a diagnostic: not simulation state, not hashed)
 	bool m_meleeMachine = false;
 	const AttackExitConditions *m_exitConditions = nullptr; ///< ZH m_attackParameters
 };
@@ -199,5 +198,3 @@ public:
 // the exact AIAttackApproachTargetState distance test the machines share: the victim is in the current weapon's range
 bool AttackVictimInRange(const AIStateMachine &machine);
 
-// lane PLAY-4 r1: stop S-3807, noted by AIAttackState::update
-const char *attackEndedUnfiredStopLine();

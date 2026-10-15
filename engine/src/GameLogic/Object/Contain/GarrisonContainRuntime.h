@@ -31,7 +31,9 @@
 // apparent controller is the owner), the radar, the passenger damage of DamagePercentToUnits (contain slot 0x148), healSingleObject (HealObjects: no 2.01 garrison
 // sets it, reported when one does), MobileGarrison (RW 0x87C273), the killing branch of GarrisonContain::onRemoving (KillPassengersOnDeath, RW 0x87C09A: the fling
 // and kill of an ejected rider), the contain's rally point of the exit path (exit slots 0x1C / 0x20, S-1620; the exit itself, RW 0x87CA2B with the cell test
-// RW 0x6E8707 and the adjustment RW 0x6F3C87, is lane GARRISON-3's), the exit position search of removeAllContained (RW 0x87B3EC). Determinism: the
+// RW 0x6E8707 and the adjustment RW 0x6F3C87, is lane GARRISON-3's). Lane BACKLOG-1 (BFME2 decomp GarrisonContainValidateRallyPoint.cpp, tier A for RW
+// 0x87B3EC; the decomp's removeInvalidObjectsFromGarrisonPoints attempt for RW 0x87C5D8): the exit position search of removeAllContained (validateRallyPoint: two
+// findPositionAround calls, the second's random start angle draws the logic RNG) and the points' weapon test RW 0x441B59 (the current weapon's MeleeWeapon). Determinism: the
 // contained list keeps insertion order, the points are an array, the members on the way a set ordered by id.
 
 #pragma once
@@ -114,6 +116,9 @@ public:
 	// the garrison point index `obj` holds, -1 (RW 0x87B4.. slot 0x6C getObjectGarrisonPointIndex)
 	int getObjectGarrisonPointIndex(ObjectID id) const;
 	UnsignedInt nextExitFrame() const { return m_nextExitFrame; }
+	// RW + 0x9D0 / + 0x9DE: the exit rally point validateRallyPoint (RW 0x87B3EC) searched and whether it holds one (only the save reads it in RotWK)
+	const Coord3D &exitRallyPoint() const { return m_exitRallyPoint; }
+	bool exitRallyValid() const { return m_rallyValid; }
 	// RW 0x87B4DC: every rider leaves (onDie with EjectPassengersOnDeath, the evacuation of a dying building)
 	void removeAllContained() override;
 
@@ -135,6 +140,7 @@ public:
 		unsigned long long exitCellRetries = 0;        // the EntryPosition failed the cell test (RW 0x6E8707)
 		unsigned long long exitAtContainerPosition = 0; // both fallbacks failed: the container's position
 		unsigned long long hordeRegroups = 0;          // a horde object took its members back (slots 0x98 / 0x10)
+		unsigned long long rallyExits = 0;             // the exit path's second waypoint was the contain's rally point (RW 0x87CC13, lane BACKLOG-1)
 	};
 	const ExitStats &exitStats() const { return m_exitStats; }
 
@@ -160,6 +166,8 @@ private:
 	void transformPoint(const Coord3D &local, Coord3D &out) const;                              // RW 0x87CEB3
 	bool memberHordeOf(const Object &obj, Object **horde) const;
 	void createInitialRoster();                       // RW 0x87BA4C
+	void validateRallyPoint();                        // RW 0x87B3EC
+	static bool currentWeaponIsMelee(const Object &obj); // RW 0x68B58C(0) -> RW 0x441B59
 
 	const GarrisonContainModuleData *m_garrison;
 	const HordeGarrisonContainModuleData *m_horde;
@@ -169,7 +177,9 @@ private:
 	int m_pointsInUse = 0;                            // RW + 0x420
 	std::array<std::array<Coord3D, MAX_GARRISON_POINTS>, GARRISON_POINT_CONDITIONS> m_pointPositions{}; // RW + 0x424
 	int m_pointCount[GARRISON_POINT_CONDITIONS] = { 0, 0, 0 }; // RW + 0x9C4
+	Coord3D m_exitRallyPoint{ 0.0f, 0.0f, 0.0f };    // RW + 0x9D0 (the constructor RW 0x87B293 zeroes it)
 	bool m_pointsLoaded = false;                      // RW + 0x9DC
+	bool m_rallyValid = false;                        // RW + 0x9DE
 	UnsignedInt m_nextExitFrame = 0;                  // HordeGarrisonContain RW + 0x9E0
 	Stats m_stats;
 	ExitStats m_exitStats;

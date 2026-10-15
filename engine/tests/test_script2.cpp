@@ -614,3 +614,92 @@ TEST_CASE("script2 sequential scripts: at most 21 actions per queue and frame (R
 	CHECK(a.g.lw.logic->random().callLog().size() == 21);
 	CHECK(a.g.lw.logic->computeStateHash() == b.g.lw.logic->computeStateHash());
 }
+
+// ---- lane BACKLOG3 (S-2452, review r1): the logic's radar event notices (GameLogic::noteRadarEvent) -------------------------------------------------------------
+namespace
+{
+ScriptParameter radarCoord(float x, float y, float z)
+{
+	ScriptParameter p;
+	p.type = 16;
+	p.x = x;
+	p.y = y;
+	p.z = z;
+	return p;
+}
+
+// the three script actions and a finished building's notice, once
+void radarNotices(Fixture &f)
+{
+	run(f.g, act("RADAR_CREATE_EVENT", { radarCoord(120.0f, 80.0f, 0.0f), ip(30, 6) }));
+	run(f.g, act("OBJECT_CREATE_RADAR_EVENT", { sp(14, "U"), ip(30, 0) }));
+	run(f.g, act("TEAM_CREATE_RADAR_EVENT", { sp(3, "Alice/teamAlice"), ip(30, 2) }));
+	f.g.engine().logic().noteRadarEvent(1, Coord3D{ 50.0f, 60.0f, 0.0f }, GameLogic::RadarEventNotice::CONSTRUCTION, 0);
+}
+} // namespace
+
+TEST_CASE("backlog3 radar notices: the scripts' radar events and a finished building's notice are outside the state hash, in the frame and over a run")
+{
+	Fixture a;
+	GameLogic &la = a.g.engine().logic();
+	const std::uint32_t h0 = la.computeStateHash();
+	const size_t n0 = la.radarEventNotices().size();
+	radarNotices(a);
+	REQUIRE(la.radarEventNotices().size() == n0 + 4); // the position, the unit U, U's team and the building: all four were recorded
+	CHECK(la.radarEventNotices()[n0 + 1].position.x == a.u->getPosition()->x);
+	CHECK(la.radarEventNotices()[n0 + 2].position.x == a.u->getPosition()->x); // the team's one member
+	CHECK(la.computeStateHash() == h0);
+	// the same game without a notice: every frame's hash agrees with the game that records four notices a frame
+	Fixture b;
+	GameLogic &lb = b.g.engine().logic();
+	REQUIRE(lb.computeStateHash() == h0);
+	for (int frame = 0; frame < 20; ++frame)
+	{
+		radarNotices(a);
+		la.runLogicFrame();
+		lb.runLogicFrame();
+		INFO("frame " << frame);
+		REQUIRE(la.computeStateHash() == lb.computeStateHash());
+	}
+	CHECK(la.radarEventNotices().size() == GameLogic::kRadarEventNotices);
+	CHECK(lb.radarEventNotices().empty());
+}
+
+TEST_CASE("backlog3 radar notices: the list keeps 63, then 64, then the newest 64 of 65; a reset empties it and the sequence goes on")
+{
+	Fixture f;
+	GameLogic &logic = f.g.engine().logic();
+	REQUIRE(logic.radarEventNotices().empty());
+	REQUIRE(GameLogic::kRadarEventNotices == 64);
+	auto note = [&](int i) { logic.noteRadarEvent(6, Coord3D{ (float)i, 0.0f, 0.0f }, GameLogic::RadarEventNotice::SCRIPT, -1); };
+	for (int i = 1; i <= 63; ++i)
+	{
+		note(i);
+	}
+	CHECK(logic.radarEventNotices().size() == 63);
+	CHECK(logic.radarEventNotices().front().seq == 1);
+	CHECK(logic.radarEventNotices().back().seq == 63);
+	note(64);
+	CHECK(logic.radarEventNotices().size() == 64); // at the cap: nothing dropped yet
+	CHECK(logic.radarEventNotices().front().seq == 1);
+	CHECK(logic.radarEventNotices().back().seq == 64);
+	note(65);
+	CHECK(logic.radarEventNotices().size() == 64); // one over: the oldest left
+	CHECK(logic.radarEventNotices().front().seq == 2);
+	CHECK(logic.radarEventNotices().front().position.x == 2.0f);
+	CHECK(logic.radarEventNotices().back().seq == 65);
+	CHECK(logic.radarEventNotices().back().position.x == 65.0f);
+	for (size_t i = 1; i < logic.radarEventNotices().size(); ++i)
+	{
+		REQUIRE(logic.radarEventNotices()[i].seq == logic.radarEventNotices()[i - 1].seq + 1); // oldest first, no gap
+	}
+	// a reset (a new game on the same logic) empties the list; the sequence goes on, so a reader's cursor (the last sequence it applied) neither replays
+	// an old notice nor skips the new game's first
+	f.u = nullptr; // the reset deletes the fixture's unit
+	logic.reset();
+	CHECK(logic.radarEventNotices().empty());
+	note(66);
+	REQUIRE(logic.radarEventNotices().size() == 1);
+	CHECK(logic.radarEventNotices().front().seq == 66);
+	CHECK(logic.radarEventNotices().front().position.x == 66.0f);
+}

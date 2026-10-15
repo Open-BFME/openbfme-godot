@@ -323,7 +323,7 @@ void FloodUpdate::createMembers()
 		const float sinp = dir.z, cosp = len2;
 		const float basis[9] = { SimMath::mulf32(cosy, cosp), SimMath::subf32(0.0f, siny), SimMath::subf32(0.0f, SimMath::mulf32(cosy, sinp)),
 			SimMath::mulf32(siny, cosp), cosy, SimMath::subf32(0.0f, SimMath::mulf32(siny, sinp)), sinp, 0.0f, cosp };
-		m->setTransform(&start, basis);
+		m->teleportTransform(&start, basis); // RW 0x89197A: RW 0x68DA67
 		m_records.push_back(std::move(r)); // RW 0x891986
 	}
 	m_membersCreated = true;

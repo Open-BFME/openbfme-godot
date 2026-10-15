@@ -15,8 +15,10 @@
 //   * the move-away handler RW 0x66DA5F: see aiMoveAwayFromUnit.
 // TARGET (review r3): the base AI vtable 0xC10590 slots + 0x1B0 (RW 0x8BD372: true), + 0x1B8 (RW 0x6643FC: isIdle) and + 0x1BC (RW 0x662B3C: the current state's isAttack).
 // INFERENCE (stop S-785):
-// RW 0x6F503B's model condition 154 test and its HORDE test against Object + 0x78 (taken as the unit's container) are approximations; the collision-ignore timer of a repeated requester (AI + 0x178, flag + 0x3B8) are not ported; the locomotor call
-// RW 0x5E39CE and the temporary-state clear RW 0x741675 are not ported; AI command 0x34 is called directly (no command record).
+// RW 0x6F503B's model condition 154 test and its HORDE test against Object + 0x78 (taken as the unit's container) are approximations; AI command 0x34 is called
+// directly (no command record). Lane BACKLOG-1 (BFME2 decomp AIUpdateInterface::privateMoveAwayFromUnit, tier B edited for RW 0x66DA5F; RW 0x5E39CE and
+// 0x741675 tier A): the collision-ignore timer of a repeated requester (AI + 0x178 while + 0x3B8), the locomotor's preferred point (RW 0x5E39CE) and the saved
+// goal (RW 0x741675) before RotWK's temporary state (RW 0x74168E).
 
 #include "GameLogic/Module/AIUpdate.h"
 
@@ -42,8 +44,8 @@ namespace
 {
 const char *const kStopAllies =
 	"[S-785] allied clearing: moveAllies (RW 0x6F503B), the move-away handler (RW 0x66DA5F), getMoveAwayFromPath (RW 0x6FB231) and AI_MOVE_OUT_OF_THE_WAY (26) are ported; "
-	"the AI vslots 0x1B0 / 0x1B8 / 0x1BC are true / isIdle / isAttack (subclass overrides not ported); INFERENCE: RW 0x67C81E is ZH's LineInRegion, the repeated-requester "
-	"collision timer, RW 0x5E39CE and RW 0x741675 are not ported, command 0x34 is a direct call";
+	"the AI vslots 0x1B0 / 0x1B8 / 0x1BC are true / isIdle / isAttack (subclass overrides not ported); lane BACKLOG-1: the repeated-requester collision timer "
+	"(AI + 0x178), RW 0x5E39CE and RW 0x741675 with RotWK's temporary state RW 0x74168E, state 26's exit RW 0x74949C (the path destroyed); INFERENCE: state 26's update is the port's own (RW: the internal move's), RW 0x67C81E is ZH's LineInRegion, command 0x34 is a direct call";
 
 int kindIndex(const char *name)
 {
@@ -126,11 +128,18 @@ public:
 		}
 		return STATE_CONTINUE;
 	}
+	// RW 0x74949C (lane BACKLOG-1; state 26's vtable RW 0xC28AF0: onEnter RW 0x74E328, update RW 0x749497 = the internal move's, onExit here; ZH
+	// AIMoveOutOfTheWayState::onExit): the internal move's onExit (RW 0x748D8A), then the path is destroyed (RW 0x66276B), the two remembered requesters are
+	// forgotten (AI + 0x198 / + 0x19C) and the unit no longer paths through units (+ 0x3BA). Without the path the move state under a temporary state asks
+	// for a new one to its own goal (RW 0x748E46: no path forces the recompute) and the unit goes on to where it was going
 	void onExit(StateExitType) override
 	{
 		if (!ai().isDestroying())
 		{
 			ai().mover().endingMove();
+			ai().mover().destroyPath();
+			ai().clearMoveOutOfWay();
+			ai().setCanPathThroughUnits(false);
 		}
 	}
 };
@@ -492,6 +501,12 @@ void AIUpdateInterface::aiMoveAwayFromUnit(Object *unit, const Coord3D &requeste
 	{
 		if (m_moveAwayRequesters[0] == unitId || m_moveAwayRequesters[1] == unitId)
 		{
+			// RW 0x66DB7A .. 0x66DB98 (lane BACKLOG-1): a repeated requester while blocked (AI + 0x3B8): collisions are ignored until now + 2 *
+			// LOGICFRAMES_PER_SECOND (+ 0x178, RW 0xD9F608)
+			if (m_mover->isBlocked())
+			{
+				m_mover->setIgnoreCollisionsUntil(obj.logic().getFrame() + 2 * LOGICFRAMES_PER_SECOND);
+			}
 			return;
 		}
 	}
@@ -509,6 +524,11 @@ void AIUpdateInterface::aiMoveAwayFromUnit(Object *unit, const Coord3D &requeste
 		setCanPathThroughUnits(true);
 		path = pf.getMoveAwayFromPath(&adapter(), locomotorInfo(), unitPf, unitPath, prevPf, prevPath);
 	}
+	// RW 0x66DC43 .. 0x66DC57 (lane BACKLOG-1): with or without a path, the current locomotor's preferred point becomes the object's position (RW 0x5E39CE)
+	if (m_curLocomotor)
+	{
+		m_curLocomotor->setPreferredPoint(*obj.getPosition());
+	}
 	if (path == nullptr)
 	{
 		return;
@@ -522,11 +542,16 @@ void AIUpdateInterface::aiMoveAwayFromUnit(Object *unit, const Coord3D &requeste
 	const float r = CombatQueries::boundingCircleRadius(*unit);
 	const float ex = SimMath::subf32(dest.x, requesterPos.x), ey = SimMath::subf32(dest.y, requesterPos.y), ez = SimMath::subf32(dest.z, requesterPos.z);
 	const bool far = SimMath::mulf32(r, r) <= SimMath::addf32(SimMath::addf32(SimMath::mulf32(ez, ez), SimMath::mulf32(ey, ey)), SimMath::mulf32(ex, ex));
+	if (far)
+	{
+		// RW 0x66DD04 / 0x66DD3D (lane BACKLOG-1): the goal is saved (RW 0x741675) before the destroyPath / setPath, then RotWK's own temporary state (RW 0x74168E)
+		m_machine->saveGoalForTemporaryState();
+	}
 	m_mover->setPath(path);
 	m_mover->setGoalOnPath();
 	if (far)
 	{
-		m_machine->setTemporaryState(AI_MOVE_OUT_OF_THE_WAY, 10 * LOGICFRAMES_PER_SECOND);
+		m_machine->setTemporaryStateRW(AI_MOVE_OUT_OF_THE_WAY, 10 * LOGICFRAMES_PER_SECOND);
 	}
 	else
 	{

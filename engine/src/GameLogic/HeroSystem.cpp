@@ -115,7 +115,7 @@ Object *HeroSystem::produce(GameLogic &logic, Player &player, std::uint32_t prod
 		return nullptr;
 	}
 	Coord3D at = pos;
-	obj->setPosition(&at); // RW 0x696E63(pos, 0)
+	obj->teleportTo(&at, false); // RW 0x7814CF: RW 0x696E63(pos, 0)
 	// RW 0x7814D9 / 0x7814E1 / 0x7814F1: Object + 0x47C / + 0x480 / + 0x488 from the record: not identified (S-852)
 	if (!r.objectName.empty())
 	{

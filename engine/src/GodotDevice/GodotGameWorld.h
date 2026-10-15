@@ -303,6 +303,12 @@ public:
 	Dictionary debug_set_weapon_set_flag(int64_t id, const String &flag, bool on);
 	// lane GARRISON-2: AIUpdateInterface::aiAttackObject(target, CMD_FROM_AI) for the viewer (a player's attack order meets the shroud, S-565)
 	Dictionary debug_ai_attack(int64_t id, int64_t target);
+	// lane ATTACK-1: the logic's auto-acquire switch (CombatState::setAutoAcquireEnabled, the tests' "only the order acts") for a viewer scene; refused like
+	// debug_ai_attack
+	Dictionary debug_set_auto_acquire(bool on);
+	// lane ATTACK-1: Object::friend_onBuildComplete (RW 0x68D252) for an object create_object made, as a finished production runs it (a hero's
+	// ToggleMountedSpecialAbilityUpdate TriggerInstantlyOnCreate mounts there, RW 0x8B11FE); refused like debug_ai_attack
+	Dictionary debug_build_complete(int64_t id);
 	Dictionary debug_ai_move(int64_t id, double x, double y);
 	// lane COMBAT-3: MSG_HORDE_TOGGLE_FORMATION for a horde (the pikemen's porcupine formation) through the command path
 	Dictionary order_toggle_formation(int64_t horde);
@@ -339,6 +345,7 @@ public:
 	Dictionary debug_script_kill(const String &name);
 	// lane SCRIPT-3 (test_hooks only, never in a network game): a named unit's / a script team's position, a unit placed at a point, a team killed
 	Dictionary debug_script_unit(const String &name);
+	Dictionary debug_script_action(const String &name, const Array &params); ///< lane BACKLOG3 (test hook)
 	Dictionary debug_script_team(const String &name);
 	Dictionary debug_script_place_at(const String &name, double x, double y);
 	Dictionary debug_script_kill_team(const String &name);

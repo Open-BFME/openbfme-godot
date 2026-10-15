@@ -292,6 +292,25 @@ public:
 	// RW 0x604C9F / 0x604CD9 (UNIT_ / TEAM_STOP_SEQUENTIAL_SCRIPT)
 	void removeSequentialScriptsOf(ObjectID object, std::uint32_t team);
 
+	// lane BACKLOG4 (S-529): the special powers triggered, RW ScriptEngine + 0x1A368: per player (20) a list of { CRC_String(the template's name) (RW
+	// 0x7ED86B), the caster's object id }. SpecialPowerModule::aboutToDoSpecialPower (RW 0x89713F) appends (RW 0x759986, the list's end); the conditions
+	// PLAYER_TRIGGERED_SPECIAL_POWER / _FROM_NAMED (RW 0x7E4E08) ask RW 0x758CBF, which removes the entry it finds. Nothing else removes entries (the reset
+	// and the destructor, RW 0x607FB3 / 0x609FCF): a game whose scripts never ask keeps every entry, as retail does. DONOR: the BFME2 decomp's
+	// ScriptEngineRva00357E7B.cpp / ScriptEngineRva003571B8.cpp (the same code at + 0x1A268; the map pairs the four sibling lists ambiguously, so the
+	// offsets were read from the RotWK code)
+	struct TriggeredSpecialPower
+	{
+		std::uint32_t nameCrc = 0;
+		ObjectID source = INVALID_ID;
+	};
+	static constexpr int kSpecialPowerListPlayers = 20; // RW 0x758CCB: cmp eax, 0x14
+	static std::uint32_t specialPowerNameCrc(const std::string &name);
+	// RW 0x759986. Retail does not test the index; one outside the 20 lists is refused here and noted (S-529)
+	void notifyOfTriggeredSpecialPower(int playerIndex, const std::string &name, ObjectID source);
+	// RW 0x758CBF: the first entry of the player's list with the name's CRC and, when `source` is not 0, that source; removed when `remove`
+	bool isSpecialPowerTriggered(int playerIndex, const std::string &name, bool remove, ObjectID source);
+	const std::vector<TriggeredSpecialPower> &triggeredSpecialPowers(int playerIndex) const { return m_triggeredSpecialPowers[(size_t)playerIndex]; }
+
 	// lane SCRIPT-3: HAS_FINISHED_AUDIO's list (RW ScriptEngine + 0x1A35C, a list of { name key, end frame }, appended at the end, RW 0x759903)
 	struct AudioTimer
 	{
@@ -402,6 +421,7 @@ private:
 	std::vector<std::vector<SequentialScript>> m_sequential; ///< lane SCRIPT-2: RW + 0x10 (a chain per slot; an empty chain is retail's null slot)
 	std::array<AcquiredScienceQueue, 20> m_acquiredSciences; ///< lane AUDIO-4: + 0x1A3A8, one per player index (RW 0x759646 bound 0x14)
 	std::vector<AudioTimer> m_audioTimers;                  ///< lane SCRIPT-3: RW + 0x1A35C
+	std::array<std::vector<TriggeredSpecialPower>, kSpecialPowerListPlayers> m_triggeredSpecialPowers; ///< lane BACKLOG4: RW + 0x1A368
 	std::uint32_t m_conditionTeam = 0; ///< lane SCRIPT-3: RW + 0x1A218 while a sequential action runs (the record's team): "<This Team>" (not state)
 	Team *m_thisTeam = nullptr;        ///< lane CAMP-1H: RW + 0x1A210 while a team script runs (not state: set and restored inside one call)
 	// lane CAMP-1H: the generic scripts of a prototype (RW 0x7A1759: looked up once by name in the prototype owner's side and DUPLICATED, RW 0x7B7F2B: the copy

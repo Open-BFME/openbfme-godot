@@ -261,10 +261,19 @@ func _environment() -> Environment:
 
 ## RW 0x641E8B: the gamma of Brightness (get_detail_state's display_gamma); 1.0 draws nothing
 func apply_brightness() -> void:
-	if shell == null:
+	if shell == null or hold_gamma:
 		return
 	var st: Dictionary = shell.get_detail_state()
-	var gamma: float = st.get("display_gamma", 1.0)
+	set_gamma(st.get("display_gamma", 1.0))
+
+
+## lane OPTS-5: true while the Options menu is up: its brightness slider's pending gamma stays through every other edit (apply_global runs per edit);
+## ACCEPT / CANCEL set the saved one (the shell's Save / Cancel) after the menu clears it
+var hold_gamma := false
+## lane OPTS-5: TheDisplay's gamma now (the brightness slider moving, the Options screen's Reset / Cancel; the saved one through apply_brightness)
+var gamma_in_effect := 1.0
+func set_gamma(gamma: float) -> void:
+	gamma_in_effect = gamma
 	_gamma_layer.visible = gamma != 1.0
 	(_gamma_rect.material as ShaderMaterial).set_shader_parameter("inv_gamma", 1.0 / clampf(gamma, 0.6, 6.0)) # DX8Wrapper::Set_Gamma's bound
 

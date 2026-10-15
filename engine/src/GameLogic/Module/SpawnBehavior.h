@@ -74,6 +74,9 @@ public:
 	virtual bool canAnySlavesAttack() const = 0;                                           // slot 7 (lane DECOMP-3, Object::isAbleToAttack RW 0x691413)
 	virtual void stopSpawning() = 0;                                                       // slot 9
 	virtual bool isSpawnerActive() const = 0;                                              // slot 11
+	// slot 12 (RW 0x86327C; lane BACKLOG4, Object::defect RW 0x699401): every replacement that is due (its frame is before now) takes an orphan when one can
+	// be reclaimed (RW 0x862A88) and leaves the list
+	virtual void reclaimDueOrphans() = 0;
 	static SpawnBehaviorInterface *of(Object &obj);                                        // RW 0x68C3A3
 	// RW 0x6938BD (Object::onDie at RW 0x699082): the producer's spawn interface hears of the death
 	static void notifyProducerOfDeath(Object &dead, const DieModuleInterface::Event &info);
@@ -115,6 +118,7 @@ public:
 	void onBodyDamageStateChange(BodyDamageType oldState, BodyDamageType newState) override; // RW 0x863585
 	void onSpawnDeath(ObjectID deadSpawn, const DieModuleInterface::Event *info) override;   // RW 0x862DAB
 	void stopSpawning() override { m_active = false; }                   // RW 0x8623D6
+	void reclaimDueOrphans() override;                                   // RW 0x86327C
 	bool isSpawnerActive() const override { return m_active; }           // RW 0x86277F
 	bool canAnySlavesAttack() const override;                            // RW 0x862A4E
 	void crc(StateHasher &h) const override;

@@ -169,6 +169,9 @@ public:
 	int guardTargetType() const { return m_guardTargetType; }          // AI vslot 123
 	const Coord3D &guardLocation() const { return m_guardLocation; }   // AI vslot 118
 	unsigned autoAcquireFlags() const { return m_combat.autoAcquire; }
+	// RW 0x662E01 (AI + 0x21C; ZH AIUpdateInterface::setNextMoodCheckTime): the frame of the next mood check (lane BACKLOG6: the port reads it for the attack-move scan only, S-1106)
+	void setNextMoodCheckTime(unsigned frame) { m_nextMoodCheck = frame; }
+	unsigned nextMoodCheckTime() const { return m_nextMoodCheck; }
 	// lane SCRIPT-3: AI commands 6 / 7 / 0x32 / 0x33 (RW 0x770FA8 / 0x771072 / 0x77100D / 0x7710D7): the waypoint path states from `waypointId`
 	// (AIWaypointPath.cpp); false when nothing changed
 	bool aiFollowWaypointPath(int waypointId, CommandSourceType source, bool asTeam, bool exact);
@@ -190,6 +193,18 @@ public:
 	// the attack
 	virtual std::unique_ptr<AIStateMachine> makeAttackThenIdleMachine(unsigned attackStateId) { (void)attackStateId; return nullptr; }
 
+	// ---- lane BACKLOG4 (S-1222): the state machine kept across a temporary defection (RW AI + 0x38) ----
+	// RW 0x663128 (BFME2 decomp AIUpdateInterface::BeginDefectedStateMachine, tier A): nothing when a machine is kept already; the current state, when it
+	// is active (State slot 0x24) or there is none, gets machine slot 0x34 (RW 0x8DB749 -> the state's slot 0x40: nothing for the plain states, RW
+	// 0x63F3BF; the attack states' is not read and reported); then the machine is kept at + 0x38, a new one is made (vslot 0x258) and started (slot 0x1C)
+	void beginDefectedStateMachine();
+	// RW 0x663171 (decomp AIUpdateInterface::rva002633B6, tier A): with a kept machine, the current one halts (slot 0x3C, RW 0x8DB758) and is deleted and
+	// the kept one is the machine again: the object goes on with what it did before it defected
+	void endDefectedStateMachine();
+	bool hasDefectedStateMachine() const { return m_defectedMachine != nullptr; }
+	// RW 0x6630D7 (decomp AIUpdateInterface::rva0026331C, tier A) gives the machine of the temporary slot (AI + 0x34) back: nothing while that slot is
+	// empty, and nothing fills it in this port (BeginTemporaryStateMachine RW 0x6630A9's callers are not ported: S-1222), so it has no call here
+
 	// ---- lane GARRISON-2: the turret (GameLogic/AI/TurretAI.h; RW AI + 0x20C, one slot) ----
 	TurretAI *turret() const { return m_turret.get(); }
 	// RW 0x66243F getWhichTurretForCurWeapon: the turret that holds the current weapon, null when none
@@ -200,6 +215,8 @@ public:
 	// ---- lane GARRISON-1 (GameLogic/AI/AIGarrisonStates.h): the enter / exit commands of RotWK's aiDoCommand (RW 0x66A7EC) ----
 	// AI command 0x42 -> RW 0x66D85F privateEnter: a mobile unit goes to AIMoveToPositionAndEnterState (56) with the container as the goal (MSG_ENTER's group,
 	// RW 0x774EDF -> 0x770EDE). Returns false when the unit is not mobile (RW 0x66D86E)
+	// the stop line S-4321 (noted by a plain move of a unit whose locomotor can move backwards)
+	static const char *preferredPointStopLine();
 	bool aiEnter(Object *container, CommandSourceType source);
 	// AI command 0x17 -> RW 0x664579 privateEnterObject: a horde enters through its contain (horde slot 0x80); another unit that may enter goes to AIEnterState (15)
 	void aiEnterObject(Object *container, CommandSourceType source);
@@ -299,6 +316,7 @@ public:
 	Coord2D unitDirectionOf(const PathfindObject &o) const override;
 	int pathPriority() const override;
 	PathfindObjectID attackTargetOf(const PathfindObject &o) const override;
+	bool crushOrSquishPolicy(const PathfindObject &other) const override; // lane ATTACK-1: RW 0x69519A(other, 2)
 	float wanderFactor() const override;
 	float closeEnoughDist() const override;
 	float locomotorSpeed() const override;
@@ -319,6 +337,8 @@ public:
 	void aiMoveAwayFromUnit(Object *unit, const Coord3D &requesterPos, CommandSourceType source);
 	// the two requesters remembered by RW 0x66DA5F (AI +0x198 / +0x19C), the retry flag (+0x3BA)
 	ObjectID moveAwayRequester(int i) const { return m_moveAwayRequesters[i]; }
+	// lane BACKLOG-1: RW 0x7494BF .. 0x7494C6 (ZH clearMoveOutOfWay): AI + 0x198 / + 0x19C = 0
+	void clearMoveOutOfWay() { m_moveAwayRequesters[0] = m_moveAwayRequesters[1] = INVALID_ID; }
 	// RW 0x662B80 (lane MOVE-3 r2): the unit is moving out of the way (its current or temporary state is AI_MOVE_OUT_OF_THE_WAY, 26) for `requester` (one of the
 	// two remembered requesters, AI + 0x198 / + 0x19C)
 	bool isMovingAwayFrom(ObjectID requester) const;
@@ -420,6 +440,7 @@ private:
 	std::unique_ptr<AIMover> m_mover;
 	std::unique_ptr<ObjectLocomotorHost> m_locoHost;
 	std::unique_ptr<AIStateMachine> m_machine;
+	std::unique_ptr<AIStateMachine> m_defectedMachine; ///< lane BACKLOG4: RW AI + 0x38
 	std::vector<std::unique_ptr<Locomotor>> m_locomotors; // the current set, in set order (B1 m_locomotorSet)
 	Locomotor *m_curLocomotor = nullptr;
 	int m_curLocomotorSet = -1;

@@ -8,6 +8,10 @@
 #include "doctest.h"
 #include "AptRetail.h"
 
+#include "Common/Audio/AudioAssetCache.h"
+#include "Common/Audio/AudioIni.h"
+#include "Common/Audio/GameAudio.h"
+#include "Common/Audio/SimulatedAudioDevice.h"
 #include "Common/INI.h"
 #include "Common/INI/INIBlockStubs.h"
 #include "GameClient/GameLODManager.h"
@@ -1084,19 +1088,21 @@ TEST_CASE("opts2 options retail: without a display mode change the Resolution li
 
 // lane OPTS-2 (S-3402, coordinator review): the advanced page greys the rows of the options the device does not draw (the text field showing
 // "$AdvancedOption<i>" finds the row); EffectsLOD, TextureQualityLOD and DecalLOD stay usable; the movie / EAX / audio quality controls are disabled
-TEST_CASE("opts2 options retail: the advanced rows the device cannot show are greyed; Movie, EAX3 and High Audio Quality are disabled")
+// Lane OPTS-4: the Movie slider is live (the MOVIE submix slider, S-4510) and no longer disabled
+TEST_CASE("opts2 options retail: the advanced rows the device cannot show are greyed; EAX3 and High Audio Quality are disabled")
 {
 	OPENBFME_REQUIRE_RETAIL(mount);
 	ShellFx fx(mount, "StaticGameLOD = High\n");
 	AptOptionsScreen *options = fx.openOptionsFromMainMenu();
 	REQUIRE(options);
-	for (const char *name : { "MovieVolume", "EAX3", "HighAudioQuality" })
+	for (const char *name : { "EAX3", "HighAudioQuality" })
 	{
 		GameWindow *w = options->gadget(name);
 		REQUIRE_MESSAGE(w, name);
 		CHECK_FALSE_MESSAGE(w->winGetEnabled(), name);
 	}
 	CHECK(options->gadget("MusicVolume")->winGetEnabled());
+	CHECK(options->gadget("MovieVolume")->winGetEnabled());
 	REQUIRE(fx.wm->invokeCallback("AptOptions::EnterAdvancedSettings", ""));
 	std::string error;
 	REQUIRE_MESSAGE(fx.wm->invokeAS(options->level(), "ShowAdvancedSettings", {}, nullptr, &error), error);
@@ -1559,4 +1565,1187 @@ TEST_CASE("opts3 gadget layer retail: a decoration image the mapped images lack 
 		CHECK(c.image != "NoSuchImageOpts3");
 	}
 	options->closeExtension();
+}
+
+// ---- lane OPTS-4: three Options bugs of v0.4.0-alpha.3 -----------------------------------------------------------------------------------------------
+namespace
+{
+std::array<int, 4> screenRect(GameWindow *w)
+{
+	int x = 0, y = 0, sx = 0, sy = 0;
+	w->winGetScreenPosition(&x, &y);
+	w->winGetSize(&sx, &sy);
+	return { x, y, x + sx, y + sy };
+}
+
+// two drop-downs one row apart, as Graphics+ has "Look" over "Interface scale"
+OpenBFMEPageSpec stackedChoices()
+{
+	OpenBFMEPageSpec spec = samplePage();
+	OpenBFMEPageRow look;
+	look.kind = OpenBFMEPageRow::Kind::Choice;
+	look.key = "look";
+	look.label = u"Look";
+	look.items = { { u"Original", true }, { u"Enhanced", true } };
+	OpenBFMEPageRow scale;
+	scale.kind = OpenBFMEPageRow::Kind::Choice;
+	scale.key = "ui_scale";
+	scale.label = u"Interface scale";
+	scale.items = { { u"100%", true }, { u"125%", true }, { u"150%", true } };
+	spec.rows = { look, scale };
+	return spec;
+}
+
+// the fill and blank boxes of a slider's tick row in a draw list (W3DGadgetHorizontalSliderImageDraw's images)
+std::vector<const GadgetDrawCommand *> sliderBoxes(const GadgetDrawList &list, const GameWindow *slider)
+{
+	std::vector<const GadgetDrawCommand *> out;
+	for (const GadgetDrawCommand &c : list.commands)
+	{
+		if (c.root == slider && c.kind == GadgetDrawCommand::Kind::Image && c.image == "AptHSliderOnBar")
+		{
+			out.push_back(&c);
+		}
+	}
+	return out;
+}
+
+std::string volumeText(int value)
+{
+	char buf[64];
+	std::snprintf(buf, sizeof buf, "%f", (double)(float)value);
+	return buf;
+}
+} // namespace
+
+// Bug 1 (the owner at 2560 x 1440, Graphics+ "Look"): the open list had the next row's value and arrow button drawn through it, and that row took the
+// clicks on the list. The rows are engine gadgets without a placeholder; a row made later is nearer the window list's head (drawn later, asked first)
+TEST_CASE("opts4 gadget layer retail: an open drop-down list is drawn after every other gadget and takes the clicks inside it")
+{
+	OPENBFME_REQUIRE_RETAIL(mount);
+	ShellFx fx(mount, "StaticGameLOD = High\n");
+	AptOptionsScreen *options = fx.openOptionsFromMainMenu();
+	REQUIRE(options);
+	options->setExtensionAvailable(true);
+	fx.tick(40);
+	std::string error;
+	REQUIRE_MESSAGE(options->openExtension(&error), error);
+	OpenBFMEOptionsPage *page = options->extensionPage();
+	REQUIRE(page);
+	REQUIRE_MESSAGE(page->show(stackedChoices(), &error), error);
+	fx.tick(10);
+	options->takeExtensionEvents();
+	GameWindow *look = page->gadget("look");
+	GameWindow *scale = page->gadget("ui_scale");
+	REQUIRE(look);
+	REQUIRE(scale);
+	GameWindow *lookList = GadgetComboBoxGetListBox(look);
+	GameWindow *scaleList = GadgetComboBoxGetListBox(scale);
+	REQUIRE(lookList);
+	REQUIRE(scaleList);
+	REQUIRE(lookList->winIsHidden());
+	// open "Look" by its arrow button
+	const std::array<int, 4> button = screenRect(GadgetComboBoxGetDropDownButton(look));
+	clickStage(fx, (button[0] + button[2]) / 2.0f, (button[1] + button[3]) / 2.0f);
+	REQUIRE_FALSE(lookList->winIsHidden());
+	REQUIRE(fx.layer->gadgets().winGetLoneWindow() == look);
+	REQUIRE(fx.layer->openDropDown() == look);
+	const std::array<int, 4> list = screenRect(lookList);
+	const std::array<int, 4> below = screenRect(scale);
+	// the scenario of the report: the open list lies over the row below (stage pixels: the page's rows are 30 apart since OPTS-5, a list entry is
+	// 18 tall)
+	CHECK(list == std::array<int, 4>{ 605, 246, 905, 290 });  // two entries of 22
+	CHECK(below == std::array<int, 4>{ 605, 250, 905, 276 }); // the next row's combo box, 4 under the list's top
+
+	// drawn: every command of the row below comes before the first command of the open drop-down
+	GadgetDrawList drawn;
+	fx.layer->buildDrawList(drawn);
+	std::ptrdiff_t firstLook = -1, lastScale = -1, lastOther = -1, listText = -1;
+	for (std::size_t i = 0; i < drawn.commands.size(); ++i)
+	{
+		const GadgetDrawCommand &c = drawn.commands[i];
+		if (c.root == look)
+		{
+			firstLook = firstLook < 0 ? (std::ptrdiff_t)i : firstLook;
+			if (c.kind == GadgetDrawCommand::Kind::Text && c.text == u"Enhanced")
+			{
+				listText = (std::ptrdiff_t)i;
+			}
+		}
+		else
+		{
+			lastOther = (std::ptrdiff_t)i;
+			if (c.root == scale)
+			{
+				lastScale = (std::ptrdiff_t)i;
+			}
+		}
+	}
+	REQUIRE(firstLook != -1);
+	REQUIRE(lastScale != -1);
+	REQUIRE(listText != -1); // the list's second entry is drawn
+	CHECK(lastScale < firstLook); // tolerance: draw order (an index before another), the property itself
+	CHECK(lastOther < firstLook); // tolerance: draw order: nothing of the page or of another gadget is drawn over the open drop-down
+	CHECK((std::size_t)(lastOther + 1) + (drawn.commands.size() - (std::size_t)firstLook) == drawn.commands.size()); // the drop-down's commands are one block at the end
+
+	// clicked: the entry "Enhanced", at a point inside the row below, is the list's
+	const float clickX = 755.0f, clickY = 275.0f; // inside the list's second entry (268 .. 290) and inside the row below (254 .. 280)
+	clickStage(fx, clickX, clickY);
+	const std::vector<OpenBFMEPageEvent> events = options->takeExtensionEvents();
+	REQUIRE(events.size() == 1);
+	CHECK(events[0].key == "look");
+	CHECK(events[0].value == 1);
+	int sel = -1;
+	GadgetComboBoxGetSelectedPos(look, &sel);
+	CHECK(sel == 1);
+	CHECK(lookList->winIsHidden());  // chosen: the list closed
+	CHECK(scaleList->winIsHidden()); // the row below never saw the click
+	GadgetComboBoxGetSelectedPos(scale, &sel);
+	CHECK(sel == 0);
+	CHECK(fx.layer->gadgets().winGetLoneWindow() == look); // ZH: a click inside the lone window leaves it the lone window (its list is closed)
+	// ... which is no open drop-down: the closed combo box is drawn in its own place again (not over what a movie draws later)
+	CHECK(fx.layer->openDropDown() == nullptr);
+	{
+		GadgetDrawList closed;
+		fx.layer->buildDrawList(closed);
+		std::ptrdiff_t lookFirst = -1, scaleFirst = -1;
+		for (std::size_t i = 0; i < closed.commands.size(); ++i)
+		{
+			if (closed.commands[i].root == look && lookFirst < 0)
+			{
+				lookFirst = (std::ptrdiff_t)i;
+			}
+			if (closed.commands[i].root == scale && scaleFirst < 0)
+			{
+				scaleFirst = (std::ptrdiff_t)i;
+			}
+		}
+		REQUIRE(lookFirst != -1);
+		REQUIRE(scaleFirst != -1);
+		CHECK(lookFirst < scaleFirst); // tolerance: draw order (the window list's: the row made first is drawn first)
+	}
+	// with the list closed the row below takes its own clicks again
+	const std::array<int, 4> scaleButton = screenRect(GadgetComboBoxGetDropDownButton(scale));
+	clickStage(fx, (scaleButton[0] + scaleButton[2]) / 2.0f, (scaleButton[1] + scaleButton[3]) / 2.0f);
+	CHECK_FALSE(scaleList->winIsHidden());
+	CHECK(fx.layer->gadgets().winGetLoneWindow() == scale);
+	CHECK(fx.layer->openDropDown() == scale);
+}
+
+// Bug 2 (the owner: "the % bars overflow"): RotWK's slider draw (RW 0x4A1130) scales its boxes by the display's width / 800 and height / 600 unless the
+// window has status 0x08000000, which every component made from the template skins has (RW 0x815389 / 0x7190B4 / 0x718D93). The port left the bit
+// off, so at its 1024 x 768 stage a box was 1.28 times the window's height: below the frame at every window size
+TEST_CASE("opts4 options retail: a slider's tick boxes are as tall as its window and stay inside it (Options.apt's seven sliders, the OpenBFME page's)")
+{
+	OPENBFME_REQUIRE_RETAIL(mount);
+	ShellFx fx(mount, "StaticGameLOD = High\nMusicVolume = 100\nSFXVolume = 73\nVoiceVolume = 1\nAmbientVolume = 50\nMovieVolume = 70\nBrightness = 100\nScrollFactor = 50\n");
+	AptOptionsScreen *options = fx.openOptionsFromMainMenu();
+	REQUIRE(options);
+	auto checkSlider = [&](GameWindow *slider, const std::string &name) {
+		INFO(name);
+		REQUIRE(slider);
+		CHECK(BitTest(slider->winGetStatus(), WIN_STATUS_APT_TEMPLATE));
+		GadgetDrawList drawn;
+		fx.layer->buildDrawList(drawn);
+		const std::array<int, 4> r = screenRect(slider);
+		const std::vector<const GadgetDrawCommand *> boxes = sliderBoxes(drawn, slider);
+		REQUIRE_FALSE(boxes.empty());
+		for (const GadgetDrawCommand *c : boxes)
+		{
+			CHECK(c->y0 == r[1]);
+			CHECK(c->y1 == r[3]); // the window's height exactly (retail: (int)(height * 1.0))
+			CHECK(c->x0 >= r[0]); // tolerance: containment in the window, the property itself
+			CHECK(c->x1 <= r[2]); // tolerance: containment in the window
+		}
+		// the thumb is the window's height too (RW 0x7237F8), so the row and the thumb end on one line
+		const std::array<int, 4> thumb = screenRect(GadgetSliderGetThumb(slider));
+		CHECK(thumb[1] == r[1]);
+		CHECK(thumb[3] == r[3]);
+		// the fill ends at the thumb: no selected box starts right of the thumb's right edge
+		CHECK(boxes.back()->x0 <= thumb[2]); // tolerance: an edge left of another, the property itself
+	};
+	for (const char *name : { "MusicVolume", "SoundFxVolume", "VoiceVolume", "AmbientVolume", "MovieVolume", "Brightness", "ScrollSpeed" })
+	{
+		checkSlider(options->gadget(name), name);
+	}
+	// the OpenBFME page's slider (an engine gadget of the same skin)
+	options->setExtensionAvailable(true);
+	fx.tick(40);
+	std::string error;
+	REQUIRE_MESSAGE(options->openExtension(&error), error);
+	REQUIRE_MESSAGE(options->extensionPage()->show(samplePage(), &error), error);
+	fx.tick(10);
+	checkSlider(options->extensionPage()->gadget("render_scale"), "OpenBFME page: render_scale");
+}
+
+// Bug 3 (the owner: the sliders "should be able to lower the audio in real time, and it plays a sound related to that slider"): RW 0x91F90D
+TEST_CASE("opts4 options retail: a volume slider sets its volume while it moves and plays its sample; the sample does not restart while it sounds; Cancel puts the saved volumes back")
+{
+	OPENBFME_REQUIRE_RETAIL(mount);
+	const std::string saved = "StaticGameLOD = High\nMusicVolume = 40.000000\nSFXVolume = 30.000000\nVoiceVolume = 50.000000\nAmbientVolume = 20.000000\nMovieVolume = 60.000000\n";
+	ShellFx fx(mount, saved);
+	AptOptionsScreen *options = fx.openOptionsFromMainMenu();
+	REQUIRE(options);
+	RecordingShellServices &sv = fx.services;
+	sv.appliedOptions.clear();
+	REQUIRE(sv.miscEvents.empty());
+	// every volume slider takes input, the Movie one too
+	for (const char *name : { "MusicVolume", "SoundFxVolume", "VoiceVolume", "AmbientVolume", "MovieVolume" })
+	{
+		REQUIRE_MESSAGE(options->gadget(name), name);
+		CHECK_MESSAGE(BitTest(options->gadget(name)->winGetStatus(), WIN_STATUS_ENABLED), name);
+	}
+
+	// 1. a click on the Sound FX track: the volume at once, the sound effects' sample, removed when the click is done (RotWK's message 0x4010)
+	GameWindow *sfx = options->gadget("SoundFxVolume");
+	std::array<int, 4> r = screenRect(sfx);
+	REQUIRE(GadgetSliderGetPosition(sfx) == 30);
+	clickStage(fx, r[0] + (r[2] - r[0]) * 0.8f, (r[1] + r[3]) / 2.0f);
+	const int sfxNow = GadgetSliderGetPosition(sfx);
+	REQUIRE(sfxNow == 50); // a track click pages the thumb a fifth of the width towards the pointer (RW 0x7234EC)
+	REQUIRE(sv.appliedOptions.size() == 1);
+	CHECK(sv.appliedOptions[0].first == "SFXVolume");
+	CHECK(sv.appliedOptions[0].second == volumeText(sfxNow));
+	REQUIRE(sv.miscEvents.size() == 1);
+	CHECK(sv.miscEvents[0].second == "VolumeSampleSoundFX");
+	// RW 0x91F90D removes the kept handle whenever the type changes, the empty one (0) too: 0 at the first track, then the sample when the click is done
+	REQUIRE(sv.removedEvents.size() == 2);
+	CHECK(sv.removedEvents[0] == 0);
+	CHECK(sv.removedEvents[1] == sv.miscEvents[0].first);
+	CHECK(sv.sounding.empty());
+	CHECK(fx.fileText() == saved); // nothing is written before ACCEPT
+
+	// 2. the Voice thumb dragged: a volume per step, one sample while it sounds, another once it has ended; the voice line is not removed on release
+	GameWindow *voice = options->gadget("VoiceVolume");
+	std::array<int, 4> thumb = screenRect(GadgetSliderGetThumb(voice));
+	const float ty = (thumb[1] + thumb[3]) / 2.0f;
+	float tx = (thumb[0] + thumb[2]) / 2.0f;
+	sv.appliedOptions.clear();
+	sv.removedEvents.clear();
+	fx.wm->postMouseMove(tx, ty);
+	fx.tick(2);
+	fx.wm->postMouseButton(true);
+	fx.tick(2);
+	std::vector<int> positions;
+	for (int step = 0; step < 3; ++step)
+	{
+		tx += 12.0f;
+		fx.wm->postMouseMove(tx, ty);
+		fx.tick(2);
+		positions.push_back(GadgetSliderGetPosition(voice));
+	}
+	REQUIRE(positions == std::vector<int>{ 56, 63, 70 }); // from 50: 12 stage pixels a step on a track of (width - 13) / 100 pixels a point
+	REQUIRE(sv.appliedOptions.size() == 3); // one per step, while the button is down
+	for (int step = 0; step < 3; ++step)
+	{
+		CHECK(sv.appliedOptions[(std::size_t)step].first == "VoiceVolume");
+		CHECK(sv.appliedOptions[(std::size_t)step].second == volumeText(positions[(std::size_t)step]));
+	}
+	REQUIRE(sv.miscEvents.size() == 2); // the sound effects' sample of step 1, then one voice sample for the three steps
+	CHECK(sv.miscEvents[1].second == "VolumeSampleVoice");
+	const std::uint32_t voiceSample = sv.miscEvents[1].first;
+	sv.sounding.erase(voiceSample); // the line has ended
+	tx += 12.0f;
+	fx.wm->postMouseMove(tx, ty);
+	fx.tick(2);
+	REQUIRE(sv.miscEvents.size() == 3); // moved again after the end: the sample again
+	CHECK(sv.miscEvents[2].second == "VolumeSampleVoice");
+	fx.wm->postMouseButton(false);
+	fx.tick(2);
+	REQUIRE(sv.removedEvents.size() == 1); // the type's change at the first step (the empty handle); nothing when the thumb is let go: type 1 plays to its end
+	CHECK(sv.removedEvents[0] == 0);
+	CHECK(sv.sounding.count(sv.miscEvents[2].first) == 1);
+
+	// 3. another slider while the voice line sounds: the line is removed, the new type's sample starts
+	GameWindow *ambient = options->gadget("AmbientVolume");
+	r = screenRect(ambient);
+	fx.wm->postMouseMove(r[0] + (r[2] - r[0]) * 0.9f, (r[1] + r[3]) / 2.0f);
+	fx.tick(2);
+	fx.wm->postMouseButton(true);
+	fx.tick(2);
+	fx.wm->postMouseButton(false);
+	fx.tick(2);
+	REQUIRE(sv.miscEvents.size() == 4);
+	CHECK(sv.miscEvents[3].second == "VolumeSampleAmbient");
+	REQUIRE(sv.removedEvents.size() == 3);
+	CHECK(sv.removedEvents[1] == sv.miscEvents[2].first); // the voice line, when the type changed
+	CHECK(sv.removedEvents[2] == sv.miscEvents[3].first); // the ambient sample, when the click was done
+	CHECK(sv.sounding.empty());
+	CHECK(sv.appliedOptions.back().first == "AmbientVolume");
+	CHECK(sv.appliedOptions.back().second == volumeText(GadgetSliderGetPosition(ambient)));
+
+	// 4. the Movie slider: its own volume and sample
+	GameWindow *movie = options->gadget("MovieVolume");
+	r = screenRect(movie);
+	clickStage(fx, r[0] + (r[2] - r[0]) * 0.1f, (r[1] + r[3]) / 2.0f);
+	REQUIRE(GadgetSliderGetPosition(movie) == 38); // from 60, a fifth of the track down
+	CHECK(sv.appliedOptions.back().first == "MovieVolume");
+	CHECK(sv.appliedOptions.back().second == volumeText(GadgetSliderGetPosition(movie)));
+	REQUIRE(sv.miscEvents.size() == 5);
+	CHECK(sv.miscEvents[4].second == "VolumeSampleMovie");
+	CHECK(sv.miscEventViews == std::vector<int>(5, 2)); // every sample with the view type 2 (RW 0x91F90D -> RW 0x6DA95E + 0x30)
+
+	// 5. the Music slider of a screen opened from the main menu (+ 0x280 set): the volume, no sample (the shell's music plays)
+	GameWindow *music = options->gadget("MusicVolume");
+	r = screenRect(music);
+	clickStage(fx, r[0] + (r[2] - r[0]) * 0.9f, (r[1] + r[3]) / 2.0f);
+	REQUIRE(GadgetSliderGetPosition(music) == 61); // from 40, a fifth of the track up
+	CHECK(sv.appliedOptions.back().first == "MusicVolume");
+	CHECK(sv.appliedOptions.back().second == volumeText(GadgetSliderGetPosition(music)));
+	CHECK(sv.miscEvents.size() == 5);
+
+	// 6. Cancel (RW 0x91EC52): the five saved volumes again, Options.ini as it was
+	sv.appliedOptions.clear();
+	REQUIRE(fx.wm->invokeCallback("AptOptions::Cancel", ""));
+	REQUIRE(sv.appliedOptions.size() == 5);
+	const std::pair<std::string, std::string> want[5] = { { "SFXVolume", volumeText(30) }, { "VoiceVolume", volumeText(50) }, { "MusicVolume", volumeText(40) },
+		{ "AmbientVolume", volumeText(20) }, { "MovieVolume", volumeText(60) } };
+	for (int t = 0; t < 5; ++t)
+	{
+		CHECK(sv.appliedOptions[(std::size_t)t] == want[t]);
+	}
+	CHECK(fx.fileText() == saved);
+}
+
+TEST_CASE("opts4 options retail: the music sample plays only outside the main menu's screen and outside a multiplayer game; Reset sets the default volumes at once; ACCEPT keeps a moved volume")
+{
+	OPENBFME_REQUIRE_RETAIL(mount);
+	ShellFx fx(mount, "StaticGameLOD = High\nMusicVolume = 40.000000\n");
+	AptOptionsScreen *options = fx.openOptionsFromMainMenu();
+	REQUIRE(options);
+	RecordingShellServices &sv = fx.services;
+	GameWindow *music = options->gadget("MusicVolume");
+	REQUIRE(music);
+	const std::array<int, 4> r = screenRect(music);
+	auto clickAt = [&](float part) { clickStage(fx, r[0] + (r[2] - r[0]) * part, (r[1] + r[3]) / 2.0f); };
+	// the quit menu's screen (RW 0x921783: every mode byte 0) in a skirmish game: the music sample, removed when the click is done
+	options->setMode(false, false, false, false);
+	QuitMenuContext game;
+	game.inGame = true;
+	game.gameMode = 2;
+	fx.environment.quitMenu = &game;
+	clickAt(0.9f);
+	REQUIRE(sv.miscEvents.size() == 1);
+	CHECK(sv.miscEvents[0].second == "VolumeSampleMusic");
+	REQUIRE(sv.removedEvents.size() == 2); // the empty handle at the type's change, the sample when the click is done
+	CHECK(sv.removedEvents[1] == sv.miscEvents[0].first);
+	// the same screen in a LAN game (RW 0x441B7C): the volume, no sample
+	game.gameMode = 1;
+	sv.appliedOptions.clear();
+	clickAt(0.1f);
+	REQUIRE(sv.appliedOptions.size() == 1);
+	CHECK(sv.appliedOptions[0].first == "MusicVolume");
+	CHECK(sv.miscEvents.size() == 1);
+	// and without a game (TheGameLogic null): none either
+	game.gameMode = 2;
+	fx.environment.quitMenu = nullptr;
+	clickAt(0.9f);
+	CHECK(sv.miscEvents.size() == 1);
+
+	// Reset (RW 0x91F4D1) on the basic page: the sliders at the AudioSettings defaults and the five volumes set at once (the fixture's 70 75 55 60 80)
+	options->setMode(false, true, true, false);
+	sv.appliedOptions.clear();
+	REQUIRE(fx.wm->invokeCallback("AptOptions::Reset", ""));
+	std::vector<std::pair<std::string, std::string>> volumes;
+	for (const auto &o : sv.appliedOptions)
+	{
+		if (o.first.size() > 6 && o.first.compare(o.first.size() - 6, 6, "Volume") == 0)
+		{
+			volumes.push_back(o);
+		}
+	}
+	REQUIRE(volumes.size() == 5);
+	// (int)(default * 100.0f) in float, as the binary computes it
+	const float defaults[5] = { 0.70f, 0.75f, 0.55f, 0.60f, 0.80f };
+	const char *const keys[5] = { "SFXVolume", "VoiceVolume", "MusicVolume", "AmbientVolume", "MovieVolume" };
+	for (int t = 0; t < 5; ++t)
+	{
+		CHECK(volumes[(std::size_t)t].first == keys[t]);
+		CHECK(volumes[(std::size_t)t].second == volumeText((int)(defaults[t] * 100.0f)));
+	}
+	CHECK(GadgetSliderGetPosition(music) == (int)(0.55f * 100.0f));
+
+	// a moved volume is kept by ACCEPT (RW 0x91FC9C writes the slider)
+	clickAt(0.9f);
+	const int moved = GadgetSliderGetPosition(music);
+	REQUIRE(moved == 76); // 55 and a fifth of the track
+	REQUIRE(fx.wm->invokeCallback("AptOptions::Save", ""));
+	CHECK(fx.fileText().find("MusicVolume = " + volumeText(moved)) != std::string::npos);
+}
+
+// the audio manager's side of the volume: RotWK's TheAudio vslot 0xE8(type, volume), and the request log's volume line (OPENBFME_AUDIO_LOG)
+TEST_CASE("opts4 audio: setSliderVolume sets one submix slider's system volume, the Movie one too, and writes a volume line to the request log")
+{
+	OPENBFME_REQUIRE_RETAIL(mount);
+	AudioIniState ini;
+	INIEnvironment env;
+	env.fileSystem = &mount.fs;
+	ini.registerBlocks(env.blocks);
+	{
+		INI loader(env);
+		ini.loadAll(loader);
+	}
+	AudioAssetCache cache(&mount.fs, 8u << 20);
+	SimulatedAudioDevice device(&cache);
+	AudioManager audio(ini, cache, device, RandomAlgorithm::RotWK_GameDat_LCG, 1);
+	audio.enableEventLog(true);
+	const float before[5] = { audio.getSliderVolume(SLIDER_SOUNDFX), audio.getSliderVolume(SLIDER_VOICE), audio.getSliderVolume(SLIDER_MUSIC), audio.getSliderVolume(SLIDER_AMBIENT),
+		audio.getSliderVolume(SLIDER_MOVIE) };
+	REQUIRE(audio.setSliderVolume(SLIDER_MOVIE, 0.25f));
+	CHECK(audio.getSliderVolume(SLIDER_MOVIE) == 0.25f);
+	for (int s = SLIDER_SOUNDFX; s <= SLIDER_AMBIENT; ++s)
+	{
+		CHECK(audio.getSliderVolume(s) == before[s]); // one slider only
+	}
+	REQUIRE(audio.setSliderVolume(SLIDER_MUSIC, 0.5f));
+	CHECK(audio.getVolume(AudioAffect_Music | AudioAffect_SystemSetting) == 0.5f);
+	REQUIRE(audio.setSliderVolume(SLIDER_VOICE, 7.0f));
+	CHECK(audio.getSliderVolume(SLIDER_VOICE) == 1.0f);
+	CHECK_FALSE(audio.setSliderVolume(SLIDER_NONE, 0.5f)); // no such slider: refused, nothing changes
+	CHECK_FALSE(audio.setSliderVolume(-1, 0.5f));
+	// the Movie sample is heard at the Movie slider's volume: the effective volume follows it
+	AudioEventRTS sample(audio.miscAudio("VolumeSampleMovie"));
+	REQUIRE(audio.isValidAudioEvent(sample.getEventName()));
+	sample.setAudioEventInfo(ini.infos.find(sample.getEventName()));
+	const float quarter = audio.getEffectiveVolume(sample);
+	REQUIRE(audio.setSliderVolume(SLIDER_MOVIE, 0.5f));
+	const float halfVolume = audio.getEffectiveVolume(sample);
+	CHECK(quarter == 0x1.b33332p-3f); // VolumeSampleMovie's Volume (MOVIE_VOLUME, 85%) at the slider's 0.25
+	CHECK(halfVolume == quarter * 2.0f); // twice the slider, exactly (a power of two)
+	const std::vector<AudioLogEntry> log = audio.takeEventLog();
+	REQUIRE(log.size() == 4);
+	CHECK((log[0].volume && log[0].event == "MOVIE" && log[0].outcome == "0.25"));
+	CHECK((log[1].volume && log[1].event == "MUSIC" && log[1].outcome == "0.50"));
+	CHECK((log[2].volume && log[2].event == "VOICE" && log[2].outcome == "1.00"));
+	CHECK((log[3].volume && log[3].event == "MOVIE" && log[3].outcome == "0.50"));
+	const std::string line = AudioManager::formatLogLine(log[1], 0, "-");
+	CHECK(line.find("\tvolume\t") != std::string::npos);
+	CHECK(line.find("\tMUSIC\t") != std::string::npos);
+	CHECK(line.substr(line.rfind('\t') + 1) == "0.50");
+}
+
+// Sol r1 on OPTS-4: one rule for drawing and input (GameWindowManager::winGetOpenDropDown): an open list, nested ones too, is drawn last with the clip
+// its ancestors had set and takes the clicks inside that clip; a closed list, a modal window pushed after it and the movies' DisableComponents() end it
+namespace
+{
+int g_parentClipBottom = 300; // the clipping parent's region bottom (stage), changed by the test
+
+struct NestedCombos
+{
+	GameWindow *parent = nullptr; // a top-level window that clips what follows it (as a list box clips its cells)
+	GameWindow *inner = nullptr;  // a combo box inside it, at (120, 120)
+	GameWindow *lower = nullptr;  // a top-level combo box made later, under the inner one's list
+};
+
+NestedCombos makeNestedCombos(ShellFx &fx)
+{
+	NestedCombos n; // the inner combo box's list drops from y 146 (22 an entry), over the lower one (180 .. 206)
+	GameWindowManager &gwm = fx.layer->gadgets();
+	WinInstanceData inst;
+	inst.m_style = GWS_USER_WINDOW;
+	inst.m_decoratedNameString = "ClippingParent";
+	n.parent = gwm.winCreate(nullptr, WIN_STATUS_ENABLED, 100, 100, 300, 200, nullptr, &inst);
+	REQUIRE(n.parent);
+	n.parent->winSetDrawFunc([](GameWindow *w, WinInstanceData *) {
+		IRegion2D r;
+		r.lo.x = 100;
+		r.lo.y = 100;
+		r.hi.x = 400;
+		r.hi.y = g_parentClipBottom;
+		w->manager().setClipRegion(r);
+	});
+	std::string error;
+	n.inner = fx.layer->createEngineGadget("window/apt/combobox.wnd", 0, 0, 200, 26, nullptr, &error);
+	REQUIRE_MESSAGE(n.inner, error);
+	n.inner->winSetParent(n.parent);
+	n.inner->winSetPosition(20, 20);
+	n.lower = fx.layer->createEngineGadget("window/apt/combobox.wnd", 120, 180, 200, 26, nullptr, &error);
+	REQUIRE_MESSAGE(n.lower, error);
+	for (const char16_t *t : { u"One", u"Two", u"Three" })
+	{
+		GadgetComboBoxAddEntry(n.inner, t, 0xFFFFFFFFu);
+		GadgetComboBoxAddEntry(n.lower, t, 0xFFFFFFFFu);
+	}
+	GadgetComboBoxSetSelectedPos(n.inner, 0);
+	GadgetComboBoxSetSelectedPos(n.lower, 0);
+	return n;
+}
+
+void layerClick(ShellFx &fx, float x, float y)
+{
+	fx.layer->mouseMove(x, y);
+	fx.layer->mouseButton(true);
+	fx.layer->mouseButton(false);
+}
+
+void openByButton(ShellFx &fx, GameWindow *combo)
+{
+	const std::array<int, 4> b = screenRect(GadgetComboBoxGetDropDownButton(combo));
+	layerClick(fx, (b[0] + b[2]) / 2.0f, (b[1] + b[3]) / 2.0f);
+}
+
+// the stage box of an entry's text in a draw list (the open list's)
+std::array<int, 4> entryText(const GadgetDrawList &list, const char16_t *text)
+{
+	for (const GadgetDrawCommand &c : list.commands)
+	{
+		if (c.kind == GadgetDrawCommand::Kind::Text && c.text == text && c.root != nullptr && BitTest(const_cast<GameWindow *>(c.root)->winGetStyle(), GWS_COMBO_BOX))
+		{
+			return { c.x0, c.y0, c.x1, c.y1 };
+		}
+	}
+	return { -1, -1, -1, -1 };
+}
+
+int selected(GameWindow *combo)
+{
+	int sel = -1;
+	GadgetComboBoxGetSelectedPos(combo, &sel);
+	return sel;
+}
+} // namespace
+
+TEST_CASE("opts4 gadget layer retail: the open drop-down rule: a nested list is drawn last with its ancestor's clip and takes the clicks inside that clip only")
+{
+	OPENBFME_REQUIRE_RETAIL(mount);
+	ShellFx fx(mount, "StaticGameLOD = High\n");
+	g_parentClipBottom = 300;
+	NestedCombos n = makeNestedCombos(fx);
+	GameWindowManager &gwm = fx.layer->gadgets();
+	openByButton(fx, n.inner);
+	REQUIRE(gwm.winGetOpenDropDown() == n.inner);
+	REQUIRE(fx.layer->openDropDown() == n.inner);
+	GadgetDrawList drawn;
+	fx.layer->buildDrawList(drawn);
+	// the block: from the first command under the inner combo's root to the end, the parent's clip first and its end last
+	std::size_t first = drawn.commands.size();
+	for (std::size_t i = 0; i < drawn.commands.size(); ++i)
+	{
+		if (drawn.commands[i].root == n.inner)
+		{
+			first = i;
+			break;
+		}
+	}
+	REQUIRE(first != drawn.commands.size());
+	for (std::size_t i = first; i < drawn.commands.size(); ++i)
+	{
+		CHECK(drawn.commands[i].root == n.inner); // one block at the end: nothing of the lower combo or the parent after it
+	}
+	const GadgetDrawCommand &clip = drawn.commands[first];
+	CHECK(clip.kind == GadgetDrawCommand::Kind::ClipBegin);
+	CHECK(std::array<int, 4>{ clip.x0, clip.y0, clip.x1, clip.y1 } == std::array<int, 4>{ 100, 100, 400, 300 });
+	CHECK(drawn.commands.back().kind == GadgetDrawCommand::Kind::ClipEnd);
+	const std::array<int, 4> three = entryText(drawn, u"Three");
+	REQUIRE(three[1] != -1);
+	const std::array<int, 4> lowerRect = screenRect(n.lower);
+	const float x = 200.0f, y = (float)three[1] + 4.0f;
+	// the entry lies over the lower combo box
+	REQUIRE(y >= (float)lowerRect[1]); // tolerance: a point inside a rectangle, the scenario itself
+	REQUIRE(y <= (float)lowerRect[3]); // tolerance: a point inside a rectangle
+	layerClick(fx, x, y);
+	CHECK(selected(n.inner) == 2);
+	CHECK(GadgetComboBoxGetListBox(n.lower)->winIsHidden());
+	CHECK(selected(n.lower) == 0);
+
+	// closed by the choice: the lone window stays (ZH) but the rule is over, so the same point is the lower combo box's again
+	CHECK(gwm.winGetLoneWindow() == n.inner);
+	CHECK(gwm.winGetOpenDropDown() == nullptr);
+	layerClick(fx, x, y);
+	CHECK(selected(n.inner) == 2);
+	CHECK_FALSE(GadgetComboBoxGetListBox(n.lower)->winIsHidden()); // the click opened the lower list
+	CHECK(gwm.winGetOpenDropDown() == n.lower);
+	layerClick(fx, 10, 10); // beside everything: closes it
+	CHECK(gwm.winGetOpenDropDown() == nullptr);
+
+	// the ancestor's clip ends above the third entry: the list's part outside it is neither drawn nor the list's for the pointer
+	g_parentClipBottom = (int)y - 6;
+	openByButton(fx, n.inner);
+	REQUIRE(gwm.winGetOpenDropDown() == n.inner);
+	drawn.clear();
+	fx.layer->buildDrawList(drawn);
+	CHECK(drawn.commands[drawn.commands.size() - 1].kind == GadgetDrawCommand::Kind::ClipEnd);
+	layerClick(fx, x, y);
+	CHECK(selected(n.inner) == 2);                                   // not the list's
+	CHECK_FALSE(GadgetComboBoxGetListBox(n.lower)->winIsHidden()); // the lower combo box took it
+	layerClick(fx, 10, 10);
+}
+
+TEST_CASE("opts4 gadget layer retail: the open drop-down rule: a modal window pushed after the list and the movies' DisableComponents() end it; a modal around it does not")
+{
+	OPENBFME_REQUIRE_RETAIL(mount);
+	ShellFx fx(mount, "StaticGameLOD = High\n");
+	g_parentClipBottom = 300;
+	NestedCombos n = makeNestedCombos(fx);
+	GameWindowManager &gwm = fx.layer->gadgets();
+	openByButton(fx, n.lower);
+	REQUIRE(gwm.winGetOpenDropDown() == n.lower);
+	GadgetDrawList drawn;
+	fx.layer->buildDrawList(drawn);
+	const std::array<int, 4> two = entryText(drawn, u"Two");
+	REQUIRE(two[1] != -1);
+	auto promoted = [&]() {
+		GadgetDrawList l;
+		fx.layer->buildDrawList(l);
+		return !l.commands.empty() && l.commands.back().root == n.lower && entryText(l, u"Two")[1] != -1;
+	};
+
+	// a modal window pushed after the list opened (a message box of the window system): the list is no longer above everything, its clicks are the modal's
+	WinInstanceData inst;
+	inst.m_style = GWS_USER_WINDOW;
+	inst.m_decoratedNameString = "ModalBox";
+	GameWindow *modal = gwm.winCreate(nullptr, WIN_STATUS_ENABLED, 0, 0, 1024, 768, nullptr, &inst);
+	REQUIRE(modal);
+	modal->winSetDrawFunc([](GameWindow *w, WinInstanceData *) { w->manager().winFillRect(0xFF000000u, 1, 300, 300, 600, 400); });
+	gwm.winSetModal(modal);
+	CHECK(gwm.winGetOpenDropDown() == nullptr);
+	CHECK(fx.layer->openDropDown() == nullptr);
+	drawn.clear();
+	fx.layer->buildDrawList(drawn);
+	CHECK(drawn.commands.back().root == modal); // the modal (made last, the list's head) is drawn last; the open list stays under it
+	gwm.winUnsetModal(modal);
+	CHECK(gwm.winGetOpenDropDown() == n.lower); // the list is still open: above everything again
+	CHECK(promoted());
+	// the click of an entry while the modal is up is the modal's (the list closes as ZH closes it on a click elsewhere)
+	gwm.winSetModal(modal);
+	layerClick(fx, 200.0f, (float)two[1] + 4.0f);
+	CHECK(selected(n.lower) == 0);
+	CHECK(GadgetComboBoxGetListBox(n.lower)->winIsHidden());
+	gwm.winUnsetModal(modal);
+	gwm.winDestroy(modal);
+	gwm.processDestroyList();
+	openByButton(fx, n.lower);
+	REQUIRE(gwm.winGetOpenDropDown() == n.lower);
+
+	// a modal window the list is part of (the combo box inside the modal) keeps it
+	gwm.winSetModal(n.lower);
+	CHECK(gwm.winGetOpenDropDown() == n.lower);
+	gwm.winUnsetModal(n.lower);
+
+	// the movies' DisableComponents() (a pop-up of a movie): no list above it, no gadget input; EnableComponents() gives both back. The inner combo
+	// box's list (made before the lower one: drawn before it unless promoted)
+	layerClick(fx, 10, 10);
+	REQUIRE(gwm.winGetOpenDropDown() == nullptr);
+	openByButton(fx, n.inner);
+	REQUIRE(gwm.winGetOpenDropDown() == n.inner);
+	auto innerLast = [&]() {
+		GadgetDrawList l;
+		fx.layer->buildDrawList(l);
+		return !l.commands.empty() && l.commands.back().root == n.inner;
+	};
+	CHECK(innerLast());
+	GadgetDrawList open;
+	fx.layer->buildDrawList(open);
+	const std::array<int, 4> innerTwo = entryText(open, u"Two");
+	REQUIRE(innerTwo[1] != -1);
+	REQUIRE(fx.wm->invokeCallback("DisableComponents", ""));
+	REQUIRE(fx.wm->componentInputBlocked());
+	CHECK(fx.layer->openDropDown() == nullptr);
+	CHECK_FALSE(innerLast());
+	fx.wm->postMouseMove(200.0f, (float)innerTwo[1] + 4.0f);
+	fx.wm->postMouseButton(true);
+	fx.wm->postMouseButton(false);
+	CHECK(selected(n.inner) == 0);
+	REQUIRE(fx.wm->invokeCallback("EnableComponents", ""));
+	CHECK(fx.layer->openDropDown() == n.inner);
+	CHECK(innerLast());
+	layerClick(fx, 200.0f, (float)innerTwo[1] + 4.0f);
+	CHECK(selected(n.inner) == 1);
+}
+
+// ---- lane OPTS-5: one Options menu, the OpenBFME one (AptOptionsScreen::kOpenBFMEMenu; NOT RETAIL LAYOUT) -------------------------------------------
+namespace
+{
+// Options opened by the main menu (`advanced`: its CUSTOM SETTINGS) with the device offering the page; every frame of the opening the retail page's
+// frames, its custom settings page and the OPENBFME button must be off screen
+AptOptionsScreen *openMenu(ShellFx &fx, bool advanced)
+{
+	fx.environment.openbfmeOptionsMenu = true;
+	fx.tick(2);
+	fx.shell->push("MainMenu.apt");
+	fx.tick(5);
+	REQUIRE(fx.wm->invokeCallback("AptMainMenu::Options", advanced ? "true" : "false"));
+	AptOptionsScreen *options = nullptr;
+	for (int i = 0; i < 80; ++i)
+	{
+		fx.tick(1);
+		options = dynamic_cast<AptOptionsScreen *>(fx.shell->top());
+		REQUIRE(options);
+		options->setExtensionAvailable(true); // the device's every frame (AptMenuPlayer::_process)
+		CHECK(options->pageState() != 2);
+		float box[4];
+		CHECK_FALSE(options->entryBox(box));
+		if (options->level() < 0)
+		{
+			continue;
+		}
+		AptSpriteInst *root = fx.wm->apt().level(options->level());
+		for (const char *path : { "Main.FrameLeft", "Main.FrameMiddle", "Main.FrameRight" })
+		{
+			if (AptCharacterInst *f = fx.wm->apt().resolvePath(root, path))
+			{
+				CHECK_FALSE_MESSAGE(f->globallyVisible(), path << " at tick " << i);
+			}
+		}
+	}
+	REQUIRE(options->extensionOpen());
+	return options;
+}
+
+std::u16string gameText(ShellFx &fx, const char *label)
+{
+	std::u16string t;
+	REQUIRE_MESSAGE(fx.text.fetch(label, t), label);
+	return t;
+}
+
+const OpenBFMEPageRow *findRow(const std::vector<OpenBFMEPageRow> &rows, const std::string &key)
+{
+	for (const OpenBFMEPageRow &r : rows)
+	{
+		if (r.key == key)
+		{
+			return &r;
+		}
+	}
+	return nullptr;
+}
+
+const OpenBFMEPageRow &rowOf(const std::vector<OpenBFMEPageRow> &rows, const std::string &key)
+{
+	const OpenBFMEPageRow *r = findRow(rows, key);
+	REQUIRE_MESSAGE(r, "no row " << key);
+	return *r;
+}
+
+// the page with the original game's rows `keys` (one tab, in that order), as the device's spec puts them
+OpenBFMEOptionsPage *showRetail(AptOptionsScreen *options, const std::vector<std::string> &keys, std::vector<int> columns = {})
+{
+	OpenBFMEPageSpec spec = samplePage();
+	spec.rows.clear();
+	const std::vector<OpenBFMEPageRow> all = options->retailRows();
+	for (std::size_t i = 0; i < keys.size(); ++i)
+	{
+		const OpenBFMEPageRow *r = findRow(all, keys[i]);
+		REQUIRE_MESSAGE(r, keys[i]);
+		spec.rows.push_back(*r);
+		spec.rows.back().column = i < columns.size() ? columns[i] : 0;
+	}
+	OpenBFMEOptionsPage *page = options->extensionPage();
+	REQUIRE(page);
+	std::string error;
+	REQUIRE_MESSAGE(page->show(spec, &error), error);
+	return page;
+}
+
+std::string iniLine(const std::string &text, const std::string &key)
+{
+	const std::string file = "\n" + text;
+	const std::size_t at = file.find("\n" + key + " = ");
+	if (at == std::string::npos)
+	{
+		return "(none)";
+	}
+	const std::size_t end = file.find_first_of("\r\n", at + 1);
+	return file.substr(at + 1, end - at - 1);
+}
+} // namespace
+
+TEST_CASE("opts5 options retail: the main menu's SETTINGS and CUSTOM SETTINGS open the OpenBFME menu at once; the retail page, its custom page and the OPENBFME button never show")
+{
+	OPENBFME_REQUIRE_RETAIL(mount);
+	{
+		ShellFx fx(mount, "StaticGameLOD = High\n");
+		AptOptionsScreen *options = openMenu(fx, false);
+		CHECK(options->menuMode());
+		const std::vector<OpenBFMEPageEvent> events = options->takeExtensionEvents();
+		REQUIRE(events.size() == 1);
+		CHECK(events[0].kind == OpenBFMEPageEvent::Kind::Entry);
+		CHECK(events[0].value == 0);
+		AptSpriteInst *root = fx.wm->apt().level(options->level());
+		CHECK(fx.wm->apt().resolvePath(root, "Main.FrameLeft.OpenBFMEEntry") == nullptr); // no OPENBFME button was made
+		CHECK(options->gadget("MusicVolume")->winIsHidden());
+		CHECK(options->gadget("Detail")->winIsHidden()); // the retail Detail list (its Custom opens the custom page) cannot be clicked
+		// over a game every press is the menu's while it is up (InGameHud::isOverGui asks this: its tabs and gadgets are not Apt buttons)
+		CHECK(fx.wm->capturesMouse());
+		options->finishMenu(false);
+		fx.tick(30);
+		CHECK_FALSE(fx.wm->capturesMouse());
+	}
+	{
+		ShellFx fx(mount, "StaticGameLOD = High\n");
+		AptOptionsScreen *options = openMenu(fx, true);
+		const std::vector<OpenBFMEPageEvent> events = options->takeExtensionEvents();
+		REQUIRE(events.size() == 1);
+		CHECK(events[0].kind == OpenBFMEPageEvent::Kind::Entry);
+		CHECK(events[0].value == 1); // the detail settings first
+		CHECK(options->pageState() == AptOptionsScreen::kExtensionState);
+		fx.tick(30);
+		CHECK(options->pageState() == AptOptionsScreen::kExtensionState);
+	}
+}
+
+TEST_CASE("opts5 options retail: the original game's rows carry its names and help texts from the string file and the values Options.ini holds")
+{
+	OPENBFME_REQUIRE_RETAIL(mount);
+	ShellFx fx(mount, "AllHealthBars = yes\nBrightness = 70\nMusicVolume = 40.000000\nSFXVolume = 30.000000\nScrollFactor = 60\nStaticGameLOD = High\n");
+	AptOptionsScreen *options = openMenu(fx, false);
+	const std::vector<OpenBFMEPageRow> rows = options->retailRows();
+	// every row of the table but the ones the movie lacks (none in RotWK 2.01's Options.apt)
+	REQUIRE(rows.size() == AptOptionsScreen::retailRowTable().size());
+	for (const AptOptionsScreen::RetailRow &info : AptOptionsScreen::retailRowTable())
+	{
+		const OpenBFMEPageRow *r = findRow(rows, info.key);
+		REQUIRE_MESSAGE(r, info.key);
+		std::u16string name = gameText(fx, info.nameLabel);
+		CHECK_MESSAGE(r->label == name, info.key);
+		std::u16string help = gameText(fx, info.helpLabel);
+		// the help line starts with the string file's text on one line (the movie's tooltips break lines with "\n")
+		std::u16string flat;
+		for (char16_t c : help)
+		{
+			flat += c == u'\n' ? u' ' : c;
+		}
+		std::u16string squeezed;
+		for (char16_t c : flat)
+		{
+			if (!(c == u' ' && (squeezed.empty() || squeezed.back() == u' ')))
+			{
+				squeezed += c;
+			}
+		}
+		CHECK_MESSAGE(r->help.compare(0, squeezed.size(), squeezed) == 0, info.key);
+	}
+	CHECK(rowOf(rows, "Retail.MusicVolume").value == 40);
+	CHECK(rowOf(rows, "Retail.SoundFxVolume").value == 30);
+	CHECK(rowOf(rows, "Retail.Brightness").value == 70);
+	CHECK(rowOf(rows, "Retail.ScrollSpeed").value == options->initialScrollSpeed());
+	CHECK(rowOf(rows, "Retail.HealthBars").value == 1);
+	// the level High (data 3) is the Graphics list's second entry; the custom rows show High's preset
+	const OpenBFMEPageRow *detail = findRow(rows, "Retail.Detail");
+	REQUIRE(detail->items.size() == 6);
+	CHECK(detail->items[1].text == gameText(fx, "GUI:High"));
+	CHECK(detail->value == 1);
+	CHECK(detail->enabled);
+	const std::array<int, GameLODManager::kAdvancedOptionCount> high = fx.gameLOD.presetSettings(3);
+	for (int i = 0; i < GameLODManager::kAdvancedOptionCount; ++i)
+	{
+		const OpenBFMEPageRow *r = findRow(rows, "Retail.AdvancedOption" + std::to_string(i));
+		CHECK(r->value == high[(std::size_t)i]);
+		CHECK(r->items.size() == (std::size_t)GameLODManager::advancedOption(i).count);
+		CHECK(r->enabled == GameLODManager::advancedOptionDrawn(i));
+	}
+	// greyed with the reason: EAX3, High Audio Quality, Refresh NAT, and the network rows from the main menu (NetworkEnabled 0)
+	for (const char *key : { "Retail.EAX3", "Retail.HighAudioQuality", "Retail.RefreshNat", "Retail.OnlineIp", "Retail.OnlinePortNum", "Retail.SendDelay" })
+	{
+		const OpenBFMEPageRow *r = findRow(rows, key);
+		CHECK_FALSE_MESSAGE(r->enabled, key);
+	}
+	// the string file's text, a full stop where it has none, then OpenBFME's reason
+	CHECK(gameText(fx, "ToolTip:Settings/EAX") == u"Enables EAX sound if you have an EAX compatible sound card");
+	CHECK(rowOf(rows, "Retail.EAX3").help == u"Enables EAX sound if you have an EAX compatible sound card. OpenBFME has no EAX3 sound.");
+	CHECK(rowOf(rows, "Retail.OnlineIp").help == gameText(fx, "TOOLTIP:OnlineIP") + u". Can be changed from the Options of the online screens.");
+	CHECK(rowOf(rows, "Retail.OnlinePortNum").kind == OpenBFMEPageRow::Kind::Entry);
+	CHECK(rowOf(rows, "Retail.RefreshNat").kind == OpenBFMEPageRow::Kind::Text);
+}
+
+TEST_CASE("opts5 options retail: the original rows act as on the retail screen: volumes and brightness at once, the sample stops on release; ACCEPT writes and applies them")
+{
+	OPENBFME_REQUIRE_RETAIL(mount);
+	ShellFx fx(mount, "AllHealthBars = no\nBrightness = 50\nSFXVolume = 30.000000\nScrollFactor = 50\nStaticGameLOD = High\n");
+	AptOptionsScreen *options = openMenu(fx, false);
+	OpenBFMEOptionsPage *page = showRetail(options, { "Retail.SoundFxVolume", "Retail.Brightness", "Retail.ScrollSpeed", "Retail.HealthBars", "Retail.Detail",
+														"Retail.AdvancedOption6" });
+	fx.tick(2);
+	RecordingShellServices &sv = fx.services;
+	sv.appliedOptions.clear();
+	sv.gammas.clear();
+	std::string error;
+	// Sound FX through its gadget: the volume at once and its sample (RW 0x91F90D); the thumb let go removes the sample (0x4010)
+	REQUIRE_MESSAGE(page->choose("Retail.SoundFxVolume", 64, &error), error);
+	REQUIRE(sv.appliedOptions.size() == 1);
+	CHECK(sv.appliedOptions[0].first == "SFXVolume");
+	CHECK(sv.appliedOptions[0].second == volumeText(64));
+	REQUIRE(sv.miscEvents.size() == 1);
+	CHECK(sv.miscEvents[0].second == "VolumeSampleSoundFX");
+	CHECK(sv.miscEventViews[0] == 2);
+	CHECK(GadgetSliderGetPosition(options->gadget("SoundFxVolume")) == 64); // the retail gadget holds the value Save reads
+	GameWindow *sfxRow = page->gadget("Retail.SoundFxVolume");
+	sfxRow->manager().winSendSystemMsg(sfxRow->winGetOwner(), GSM_SLIDER_CLICKED, reinterpret_cast<WindowMsgData>(sfxRow), 0);
+	CHECK(sv.sounding.empty());
+	// Brightness: the display's gamma at once (RW 0x91F90D's curve, as RW 0x641E8B)
+	REQUIRE_MESSAGE(page->choose("Retail.Brightness", 80, &error), error);
+	REQUIRE(sv.gammas.size() == 1);
+	CHECK(sv.gammas[0] == OptionPreferences::displayGamma(80, 1.0f));
+	// the rest at ACCEPT, as the retail screen
+	REQUIRE_MESSAGE(page->choose("Retail.ScrollSpeed", 70, &error), error);
+	REQUIRE_MESSAGE(page->choose("Retail.Detail", 3, &error), error); // GUI:Low, level 1
+	CHECK(options->masterOption() == 1);
+	// a custom setting: the level becomes Custom with Low's settings and this one changed (Texture Quality High)
+	REQUIRE_MESSAGE(page->choose("Retail.AdvancedOption6", 2, &error), error);
+	CHECK(options->masterOption() == GameLODManager::kCustomLevel);
+	std::array<int, GameLODManager::kAdvancedOptionCount> want = fx.gameLOD.presetSettings(1);
+	want[6] = 2;
+	CHECK(options->shownAdvancedSettings() == want);
+	CHECK(page->spec().rows[4].value == 5); // the Graphics list shows Custom now
+	// Show All Health Bars after the level (a level change sets the box from the saved value again, RW 0x91F9CE -> 0x91EBD1); the pending custom
+	// DecalLOD (Low's) allows it
+	REQUIRE_MESSAGE(page->choose("Retail.HealthBars", 1, &error), error);
+	CHECK(fx.fileText().find("SFXVolume = 30.000000") != std::string::npos); // nothing written yet
+	options->finishMenu(true);
+	fx.tick(30);
+	CHECK((fx.shell->top() == nullptr || fx.shell->top()->filename() != "Options.apt"));
+	const std::string file = fx.fileText();
+	CHECK(iniLine(file, "SFXVolume") == "SFXVolume = 64.000000");
+	CHECK(iniLine(file, "Brightness") == "Brightness = 80");
+	CHECK(iniLine(file, "ScrollFactor") == "ScrollFactor = 70");
+	CHECK(iniLine(file, "AllHealthBars") == "AllHealthBars = yes");
+	CHECK(iniLine(file, "StaticGameLOD") == "StaticGameLOD = Custom");
+	CHECK(iniLine(file, "TextureQualityLOD") == "TextureQualityLOD = High");
+	CHECK(fx.gameLOD.staticLevel() == GameLODManager::kCustomLevel);
+	CHECK(fx.gameLOD.state().textureReduction == 0); // Texture Quality High: no reduction (RW 0x517540)
+}
+
+TEST_CASE("opts5 options retail: CANCEL puts the saved volumes and brightness back and writes nothing; RESET sets retail's defaults and the level the game takes")
+{
+	OPENBFME_REQUIRE_RETAIL(mount);
+	const std::string saved = "Brightness = 30\nSFXVolume = 30.000000\nStaticGameLOD = Low\n";
+	{
+		ShellFx fx(mount, saved);
+		AptOptionsScreen *options = openMenu(fx, false);
+		OpenBFMEOptionsPage *page = showRetail(options, { "Retail.SoundFxVolume", "Retail.Brightness", "Retail.Detail" });
+		std::string error;
+		REQUIRE_MESSAGE(page->choose("Retail.SoundFxVolume", 90, &error), error);
+		REQUIRE_MESSAGE(page->choose("Retail.Brightness", 90, &error), error);
+		REQUIRE_MESSAGE(page->choose("Retail.Detail", 0, &error), error);
+		fx.services.appliedOptions.clear();
+		fx.services.gammas.clear();
+		options->finishMenu(false);
+		fx.tick(30);
+		CHECK((fx.shell->top() == nullptr || fx.shell->top()->filename() != "Options.apt"));
+		REQUIRE(fx.services.gammas.size() == 1);
+		CHECK(fx.services.gammas[0] == OptionPreferences::displayGamma(30, 1.0f)); // RW 0x91ECB8: the saved gamma
+		bool sfx = false;
+		for (const auto &o : fx.services.appliedOptions)
+		{
+			sfx = sfx || (o.first == "SFXVolume" && o.second == volumeText(30));
+		}
+		CHECK(sfx);
+		CHECK(fx.fileText() == saved);
+		CHECK(fx.gameLOD.staticLevel() == 1);
+	}
+	{
+		ShellFx fx(mount, saved);
+		AptOptionsScreen *options = openMenu(fx, false);
+		showRetail(options, { "Retail.SoundFxVolume", "Retail.Brightness", "Retail.Detail" });
+		fx.services.appliedOptions.clear();
+		fx.services.gammas.clear();
+		options->resetMenu();
+		REQUIRE(fx.services.gammas.size() == 1);
+		CHECK(fx.services.gammas[0] == 1.0f); // RW 0x91F5F3: the slider's middle, 50
+		CHECK(GadgetSliderGetPosition(options->gadget("Brightness")) == 50);
+		CHECK(GadgetSliderGetPosition(options->gadget("SoundFxVolume")) == 70); // AudioSettings' default (the fixture's 0.70)
+		CHECK(options->masterOption() == GameLODManager::kDetectedLevel);
+		const OpenBFMEOptionsPage *page = options->extensionPage();
+		CHECK(page->spec().rows[0].value == 70);  // the rows follow
+		CHECK(page->spec().rows[1].value == 50);
+		CHECK(page->spec().rows[2].value == 0);   // GUI:UltraHigh
+		options->finishMenu(true);
+		fx.tick(30);
+		const std::string file = fx.fileText();
+		CHECK(iniLine(file, "Brightness") == "Brightness = 50");
+		CHECK(iniLine(file, "SFXVolume") == "SFXVolume = 70.000000");
+		CHECK(iniLine(file, "StaticGameLOD") == "StaticGameLOD = UltraHigh");
+	}
+}
+
+TEST_CASE("opts5 options retail: opened in a game the detail rows are greyed with the movie's reason and refused; online rows work from the online shell; Refresh NAT is refused by name")
+{
+	OPENBFME_REQUIRE_RETAIL(mount);
+	{
+		// the quit menu's opening (RW 0x91ED91(0, 0, 0, 0))
+		ShellFx fx(mount, "StaticGameLOD = High\n");
+		fx.environment.openbfmeOptionsMenu = true;
+		fx.tick(2);
+		AptOptionsScreen::open(*fx.shell, false, false, false, false);
+		fx.tick(80);
+		auto *options = dynamic_cast<AptOptionsScreen *>(fx.shell->top());
+		REQUIRE(options);
+		REQUIRE(options->extensionOpen());
+		const std::vector<OpenBFMEPageRow> rows = options->retailRows();
+		const std::u16string cannot = gameText(fx, "APT:CannotChangeGraphics");
+		for (int i = -1; i < GameLODManager::kAdvancedOptionCount; ++i)
+		{
+			const std::string key = i < 0 ? std::string("Retail.Detail") : "Retail.AdvancedOption" + std::to_string(i);
+			const OpenBFMEPageRow &r = rowOf(rows, key);
+			CHECK_FALSE_MESSAGE(r.enabled, key);
+			REQUIRE_MESSAGE(r.help.size() > cannot.size(), key); // tolerance: the row's own text, then the movie's reason
+			CHECK_MESSAGE(r.help.compare(r.help.size() - cannot.size(), cannot.size(), cannot) == 0, key);
+			std::string error;
+			CHECK_FALSE(options->setRetailValue(key, 0, &error));
+			CHECK(error == "the setting '" + key + "' is disabled");
+		}
+		CHECK(rowOf(rows, "Retail.MusicVolume").enabled); // what may change in a game
+		CHECK(rowOf(rows, "Retail.Brightness").enabled);
+		std::string error;
+		CHECK_FALSE(options->setRetailValue("Retail.RefreshNat", 1, &error));
+		CHECK(error == "the setting 'Retail.RefreshNat' is disabled");
+		CHECK_FALSE(options->setRetailValue("Retail.Nothing", 1, &error));
+		CHECK(error == "no setting 'Retail.Nothing'");
+		CHECK_FALSE(options->setRetailValue("Retail.MusicVolume", 101, &error));
+		CHECK(error == "the setting 'Retail.MusicVolume' does not take 101");
+	}
+	{
+		// the online shell's opening (AptOnline::Options, RW 0x91D6BA: (1, 0, 1, 0))
+		ShellFx fx(mount, "FirewallPortOverride = 0\nGameSpyIPAddress = 192.168.1.5\nSendDelay = no\nStaticGameLOD = High\n");
+		fx.environment.openbfmeOptionsMenu = true;
+		fx.tick(2);
+		AptOptionsScreen::open(*fx.shell, true, false, true, false);
+		fx.tick(80);
+		auto *options = dynamic_cast<AptOptionsScreen *>(fx.shell->top());
+		REQUIRE(options);
+		REQUIRE(options->extensionOpen());
+		OpenBFMEOptionsPage *page = showRetail(options, { "Retail.OnlineIp", "Retail.OnlinePortNum", "Retail.SendDelay", "Retail.RefreshNat" });
+		std::string error;
+		REQUIRE_MESSAGE(page->choose("Retail.OnlineIp", 1, &error), error);
+		REQUIRE_MESSAGE(page->choose("Retail.OnlinePortNum", 8100, &error), error);
+		REQUIRE_MESSAGE(page->choose("Retail.SendDelay", 1, &error), error);
+		CHECK_FALSE(page->choose("Retail.RefreshNat", 1, &error)); // a text row: no gadget
+		CHECK(GadgetTextEntryGetText(options->gadget("OnlinePortNum")) == u"8100");
+		options->finishMenu(true);
+		fx.tick(30);
+		const std::string file = fx.fileText();
+		CHECK(iniLine(file, "GameSpyIPAddress") == "GameSpyIPAddress = 10.0.0.7");
+		CHECK(iniLine(file, "FirewallPortOverride") == "FirewallPortOverride = 8100");
+		CHECK(iniLine(file, "SendDelay") == "SendDelay = yes");
+	}
+}
+
+// An Options.ini the original game wrote (CR LF, its own number formats) shows its values in the menu and ACCEPT unchanged writes it back byte for byte:
+// the new menu reads and writes the same file the same way (the original game and older builds keep reading it)
+TEST_CASE("opts5 options retail: a retail Options.ini round-trips through the menu byte for byte")
+{
+	OPENBFME_REQUIRE_RETAIL(mount);
+	const std::string retail = "AllHealthBars = yes\r\nAmbientVolume = 55.000000\r\nAudioLOD = High\r\nBrightness = 62\r\nFirewallPortOverride = 0\r\n"
+							   "GameSpyIPAddress = 192.168.1.5\r\nMovieVolume = 80.000000\r\nMusicVolume = 41.000000\r\nSFXVolume = 77.000000\r\nScrollFactor = 50\r\n"
+							   "SendDelay = no\r\nStaticGameLOD = Medium\r\nUseEAX3 = no\r\nVoiceVolume = 66.000000\r\n";
+	ShellFx fx(mount, retail);
+	AptOptionsScreen *options = openMenu(fx, false);
+	const std::vector<OpenBFMEPageRow> rows = options->retailRows();
+	CHECK(rowOf(rows, "Retail.AmbientVolume").value == 55);
+	CHECK(rowOf(rows, "Retail.MusicVolume").value == 41);
+	CHECK(rowOf(rows, "Retail.VoiceVolume").value == 66);
+	CHECK(rowOf(rows, "Retail.MovieVolume").value == 80);
+	CHECK(rowOf(rows, "Retail.Brightness").value == 62);
+	CHECK(rowOf(rows, "Retail.HighAudioQuality").value == 1);
+	CHECK(rowOf(rows, "Retail.EAX3").value == 0);
+	CHECK(rowOf(rows, "Retail.Detail").value == 2); // GUI:Medium
+	CHECK(rowOf(rows, "Retail.OnlineIp").value == 0);
+	options->finishMenu(true);
+	fx.tick(30);
+	CHECK(fx.fileText() == retail);
+}
+
+TEST_CASE("opts5 options page: a tab of two columns keeps each column's rows inside its half, and labels and gadgets apart")
+{
+	OPENBFME_REQUIRE_RETAIL(mount);
+	ShellFx fx(mount, "StaticGameLOD = High\n");
+	AptOptionsScreen *options = openMenu(fx, false);
+	std::vector<std::string> keys = { "Retail.Detail" };
+	std::vector<int> columns = { 0 };
+	for (int i = 0; i < GameLODManager::kAdvancedOptionCount; ++i)
+	{
+		keys.push_back("Retail.AdvancedOption" + std::to_string(i));
+		columns.push_back(0);
+	}
+	for (const char *k : { "Retail.HealthBars", "Retail.SoundFxVolume", "Retail.OnlinePortNum" })
+	{
+		keys.push_back(k);
+		columns.push_back(1);
+	}
+	OpenBFMEOptionsPage *page = showRetail(options, keys, columns);
+	std::vector<std::array<int, 4>> boxes;
+	for (std::size_t i = 0; i < keys.size(); ++i)
+	{
+		std::array<int, 4> g{}, l{};
+		REQUIRE_MESSAGE(page->rect(keys[i], g), keys[i]);
+		REQUIRE(page->labelBox(keys[i], l));
+		const int left = columns[i] == 0 ? OpenBFMEOptionsPage::kPanelLeft : OpenBFMEOptionsPage::kPanelMiddle;
+		const int right = columns[i] == 0 ? OpenBFMEOptionsPage::kPanelMiddle : OpenBFMEOptionsPage::kPanelRight;
+		CHECK_MESSAGE(l[0] == left + OpenBFMEOptionsPage::kColumnLabelInset, keys[i]);
+		CHECK_MESSAGE(l[2] == g[0] - 8, keys[i]);
+		CHECK_MESSAGE(g[0] == left + OpenBFMEOptionsPage::kColumnGadgetInset, keys[i]);
+		CHECK_MESSAGE(g[2] <= right - OpenBFMEOptionsPage::kColumnRightInset, keys[i]); // tolerance: the gadget's width is its kind's
+		CHECK_MESSAGE(g[3] <= OpenBFMEOptionsPage::kHelpTop - 6, keys[i]);             // tolerance: above the help line's rule
+		boxes.push_back(g);
+	}
+	// the tenth row of the left column ends above the help line; no two gadgets meet
+	std::array<int, 4> last{};
+	REQUIRE(page->rect("Retail.AdvancedOption8", last));
+	CHECK(last[1] == OpenBFMEOptionsPage::kRowTop + 9 * OpenBFMEOptionsPage::kRowPitch);
+	for (std::size_t a = 0; a < boxes.size(); ++a)
+	{
+		for (std::size_t b = a + 1; b < boxes.size(); ++b)
+		{
+			const bool meet = boxes[a][0] < boxes[b][2] && boxes[b][0] < boxes[a][2] && boxes[a][1] < boxes[b][3] && boxes[b][1] < boxes[a][3];
+			CHECK_FALSE_MESSAGE(meet, keys[a] << " / " << keys[b]);
+		}
+	}
+}
+
+// Sol review r1 (2): a modal (a message box: its movie calls DisableComponents()) takes the input first; the Options page under it hears no press
+TEST_CASE("opts5 options retail: with a modal up (components disabled) a click on a tab, a gadget row or the bottom bar under it is not the menu's")
+{
+	OPENBFME_REQUIRE_RETAIL(mount);
+	ShellFx fx(mount, "StaticGameLOD = High\n");
+	AptOptionsScreen *options = openMenu(fx, false);
+	OpenBFMEOptionsPage *page = showRetail(options, { "Retail.MusicVolume", "Retail.HealthBars" });
+	options->takeExtensionEvents();
+	std::array<int, 4> tab{}, bar{}, row{};
+	REQUIRE(page->rect("tab:1", tab));
+	REQUIRE(page->rect("Retail.HealthBars", row));
+	fx.wm->enableComponents("", false); // the box's DisableComponents()
+	REQUIRE(fx.wm->componentInputBlocked());
+	const bool bars = GadgetCheckBoxIsChecked(options->gadget("HealthBars"));
+	clickStage(fx, (tab[0] + tab[2]) / 2.0f, (tab[1] + tab[3]) / 2.0f);
+	CHECK(options->takeExtensionEvents().empty()); // no tab event
+	clickStage(fx, (row[0] + row[2]) / 2.0f, (row[1] + row[3]) / 2.0f);
+	CHECK(GadgetCheckBoxIsChecked(options->gadget("HealthBars")) == bars);
+	AptSpriteInst *root = fx.wm->apt().level(options->level());
+	AptButtonInst *accept = firstButtonUnder(findClip(root, "Accept"));
+	REQUIRE(accept);
+	float x0, y0, x1, y1, x, y;
+	REQUIRE(accept->contentBounds(x0, y0, x1, y1));
+	accept->globalMatrix().apply((x0 + x1) / 2, (y0 + y1) / 2, x, y);
+	clickStage(fx, x, y);
+	CHECK(options->takeExtensionEvents().empty()); // no ACCEPT from the page's filter either
+	// the modal gone: the same tab click is the page's again
+	fx.wm->enableComponents("", true);
+	REQUIRE_FALSE(fx.wm->componentInputBlocked());
+	clickStage(fx, (tab[0] + tab[2]) / 2.0f, (tab[1] + tab[3]) / 2.0f);
+	const std::vector<OpenBFMEPageEvent> events = options->takeExtensionEvents();
+	REQUIRE(events.size() == 1);
+	CHECK(events[0].kind == OpenBFMEPageEvent::Kind::Tab);
+}
+
+// Sol review r1 (4): the greyed Show All Health Bars says why (Very Low, or a custom Decal Detail of Off)
+TEST_CASE("opts5 options retail: Show All Health Bars greyed by the detail level has a reason in its help line")
+{
+	OPENBFME_REQUIRE_RETAIL(mount);
+	ShellFx fx(mount, "StaticGameLOD = VeryLow\n");
+	AptOptionsScreen *options = openMenu(fx, false);
+	std::vector<OpenBFMEPageRow> rows = options->retailRows();
+	const std::u16string own = gameText(fx, "TOOLTIP:Options/tooltipEnableHealthBars");
+	CHECK_FALSE(rowOf(rows, "Retail.HealthBars").enabled);
+	CHECK(rowOf(rows, "Retail.HealthBars").help == own + u". This detail level already shows every health bar.");
+	// a level that allows it: no reason; a custom Decal Detail Off: the reason again
+	std::string error;
+	REQUIRE(options->setRetailValue("Retail.Detail", 1, &error)); // GUI:High
+	rows = options->retailRows();
+	CHECK(rowOf(rows, "Retail.HealthBars").enabled);
+	CHECK(rowOf(rows, "Retail.HealthBars").help == own);
+	REQUIRE(options->setRetailValue("Retail.AdvancedOption8", 0, &error)); // Decal Detail Off, Custom
+	rows = options->retailRows();
+	CHECK_FALSE(rowOf(rows, "Retail.HealthBars").enabled);
+	CHECK(rowOf(rows, "Retail.HealthBars").help == own + u". This detail level already shows every health bar.");
 }

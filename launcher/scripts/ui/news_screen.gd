@@ -48,6 +48,9 @@ func set_releases(releases: Array) -> void:
 			if sec.title != "":
 				var t := W.parch_label(String(sec.title), "title", 14)
 				p.box.add_child(t)
-			for it in sec.items:
-				p.box.add_child(W.parch_item(Paths.scrub(it), 16))
+			for g in sec.groups:   # NOTES-1: the studio-style notes' bold area lines
+				if g.area != "":
+					p.box.add_child(W.parch_label(Paths.scrub(String(g.area)), "sub", 14))
+				for it in g.items:
+					p.box.add_child(W.parch_item(Paths.scrub(it), 16))
 		_grid.add_child(p.card)

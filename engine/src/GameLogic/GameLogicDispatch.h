@@ -57,6 +57,8 @@ private:
 class GameLogicDispatch
 {
 public:
+	// the stop line S-4320 (noted when MSG_SET_RALLY_POINT meets an object whose only exit interface is its contain's)
+	static const char *containRallyStopLine();
 	explicit GameLogicDispatch(GameLogic &logic)
 		: m_logic(logic)
 	{

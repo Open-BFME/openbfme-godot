@@ -19,8 +19,10 @@
 
 #include "GameClient/GUI/AptScreen.h"
 #include "GameClient/GUI/AptScreens/OpenBFMEOptionsPage.h"
+#include "GameClient/GameLODManager.h"
 #include "Libraries/Source/Apt/AptValue.h"
 
+#include <array>
 #include <memory>
 #include <string>
 #include <vector>
@@ -251,7 +253,8 @@ private:
 // Custom DecalLOD Off check and disable it; Save writes AllHealthBars only while it is allowed); Brightness / ScrollFactor reach the device as options.
 // NOT PORTED (stop S-1913, S-2481): the display mode list (the device offers the window's and the screen's size), the LOD manager's ideal level behind
 // MasterOption0ResetDefault, the warnings (RW 0x91F2AB: APT:WarnHighGraphicSettings / Detail / Resolution), the "(level)" labels of RW 0x91F175 /
-// 0x920E0F, RefreshNat, the live tracking of the sliders (the volumes take effect when saved).
+// 0x920E0F, RefreshNat (lane OPTS-5: the brightness slider tracks live, see gadgetMessage).
+// Lane OPTS-4: the volume sliders act while they move and play their samples (RW 0x91F90D, see trackVolume); Reset and Cancel set the volumes at once.
 class AptOptionsScreen : public AptScreen
 {
 public:
@@ -306,6 +309,38 @@ public:
 	// Esc while the page is up: the page's CANCEL (the movie never sees the key)
 	void extensionCancel() { m_extensionEvents.push_back({ OpenBFMEPageEvent::Kind::Cancel, std::string(), 0 }); }
 
+	// ---- lane OPTS-5: one Options menu, the OpenBFME one (owner, 2026-10-14: "scrap the original settings options and rework the menu to be our
+	// menu for now, but put the settings ... from the original game in places that make sense for it in the new menu"). NOT RETAIL LAYOUT. ----------
+	// THE SWITCH. true: while the device offers the OpenBFME page (ShellEnvironment::openbfmeOptionsMenu) every opening of Options.apt (the main menu's
+	// SETTINGS and CUSTOM SETTINGS, the LAN lobby, the online shell, the quit menu in a game) shows the OpenBFME page at once, the basic page's frames
+	// and its OPENBFME button never show, and the original game's settings are rows of the page (retailRows, keys "Retail.<gadget>"), driven through the
+	// retail screen's own code below: the hidden gadgets InitGadgets filled hold their values, the volume / brightness handlers act while a slider
+	// moves, and the page's ACCEPT / CANCEL / RESET TO DEFAULTS are RotWK's Save / Cancel / Reset (finishMenu, resetMenu) besides the device's own rows.
+	// false: OPTS-3's screen (the retail basic page with the OPENBFME button; the page is a sub-page of it). The retail code stays for both.
+	static constexpr bool kOpenBFMEMenu = true;
+	bool menuMode() const;
+	// one original-game setting of the menu: its key, the gadget InitGadgets fills (Options::<gadget>), its name and help labels in the game's string
+	// file, and the reason OpenBFME shows when it greys the row (empty: none of its own)
+	struct RetailRow
+	{
+		const char *key;
+		const char *gadget;
+		const char *nameLabel;
+		const char *helpLabel;
+	};
+	static const std::vector<RetailRow> &retailRowTable();
+	// the rows as the page shows them now (values from the hidden gadgets and the detail state; texts from the string file)
+	std::vector<OpenBFMEPageRow> retailRows() const;
+	// a row of the page changed (the page's own sink calls it; tests too): the retail handler of that control runs; false and `*error` when the row is
+	// disabled or unknown
+	bool setRetailValue(const std::string &key, int value, std::string *error);
+	// ACCEPT (RotWK's Save, RW 0x91FC9C) or CANCEL (RW 0x91EC52): the screen closes
+	void finishMenu(bool accept);
+	// RESET TO DEFAULTS: RotWK's Reset of the basic page (RW 0x91F4D1) and of the custom settings (the level the game takes without a setting)
+	void resetMenu();
+	// the detail settings shown (the level's, or the custom ones)
+	std::array<int, GameLODManager::kAdvancedOptionCount> shownAdvancedSettings() const;
+
 protected:
 	WindowMsgHandledType gadgetMessage(GameWindow *from, std::uint32_t msg, WindowMsgData data1, WindowMsgData data2) override;
 
@@ -313,6 +348,12 @@ private:
 	void save();
 	void reset();
 	void cancel();
+	// lane OPTS-4: the volume sliders (RW 0x91F90D, see AptSimpleScreens.cpp)
+	void applyVolume(int type, int value);
+	void trackVolume(int type, int value);
+	void sliderClicked();
+	std::uint32_t m_previewHandle = 0; // the sample's handle (0: none)
+	int m_previewSlider = 5;           // the type whose sample was asked last (5: none)
 	void initGadget(const std::string &name, GameWindow *w);
 	bool provide(int index, std::string &value, bool setting);
 	// lane PLAY-2: the advanced page
@@ -360,6 +401,12 @@ private:
 		AptValue variableValue;
 	};
 	std::vector<SavedField> m_savedSubtitles;
+	// lane OPTS-5
+	void menuUpdate();
+	void refreshRetailRows();
+	bool basicLive() const { return m_state == 1 || (menuMode() && m_state == kExtensionState); }
+	bool m_menuOpened = false;
+	bool m_openOnDetail = false; // the main menu's CUSTOM SETTINGS opened it (AdvancedOnly): the detail settings' tab first
 	std::vector<std::string> m_mirroredAtOpen; // Options.ini's ScrollFactor, AllHealthBars, AlternateMouseSetup when the page opened // Main.SubTitle's text fields when the page opened
 	static void setFieldText(AptTextInst *field, const std::string &text);
 };

@@ -3,6 +3,7 @@
 #include "GodotDevice/GodotGameAudio.h"
 
 #include "GameClient/Eva.h"
+#include "GameClient/LiveGameAudio.h"
 
 #include "Common/Audio/AudioAssetCache.h"
 #include "Common/Audio/AudioEntryPoints.h"
@@ -20,6 +21,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
 
 namespace godot
@@ -366,6 +369,7 @@ GameAudio::~GameAudio()
 void GameAudio::tearDown()
 {
 	m_processing = false;
+	m_logPath.clear();
 	if (m_manager && AudioApi::current() == m_manager.get())
 	{
 		AudioApi::install(nullptr); // the engine entry points must not outlive the manager they call
@@ -423,6 +427,7 @@ void GameAudio::_bind_methods()
 	ClassDB::bind_method(D_METHOD("get_listener"), &GameAudio::get_listener);
 	ClassDB::bind_method(D_METHOD("set_volume", "slider", "volume"), &GameAudio::set_volume);
 	ClassDB::bind_method(D_METHOD("get_volume", "slider"), &GameAudio::get_volume);
+	ClassDB::bind_method(D_METHOD("log_volume", "name", "volume"), &GameAudio::log_volume);
 	ClassDB::bind_method(D_METHOD("get_default_volumes"), &GameAudio::get_default_volumes);
 	ClassDB::bind_method(D_METHOD("set_enabled", "affect", "on"), &GameAudio::set_enabled);
 	ClassDB::bind_method(D_METHOD("set_current_view", "view"), &GameAudio::set_current_view);
@@ -488,6 +493,24 @@ Dictionary GameAudio::boot(const Ref<RetailFileSystem> &fs, const Dictionary &co
 	AudioApi::installEva(m_eva.get());
 	m_processing = true;
 	set_process(true);
+	// lane OPTS-4: the request log from the first menu on (AUDIO-3's log began with the game: the Options screen's samples and volumes were not in it)
+	m_logPath.clear();
+	if (const char *logPath = std::getenv("OPENBFME_AUDIO_LOG"); logPath && *logPath)
+	{
+		if (std::FILE *f = std::fopen(logPath, "w"))
+		{
+			std::fprintf(f, "%s\n", LiveGameAudio::eventLogHeader());
+			std::fclose(f);
+			m_logPath = logPath;
+			m_manager->setEventLogFile(m_logPath);
+			m_manager->enableEventLog(true);
+			result["audio_log"] = toGodot(m_logPath);
+		}
+		else
+		{
+			errors.push_back(toGodot(std::string("OPENBFME_AUDIO_LOG: cannot write ") + logPath));
+		}
+	}
 	result["ok"] = true;
 	result["events"] = (int64_t)m_ini->infos.size();
 	result["sample_count_2d"] = s.sampleCount2D;
@@ -521,6 +544,37 @@ void GameAudio::_process(double)
 	{
 		m_eva->update(m_manager->nowMs());
 	}
+	flushLog();
+}
+
+// lane OPTS-4: the lines since the last flush, unless a game's LiveGameAudio drains the log (it resolves the objects' templates and writes the same file)
+void GameAudio::flushLog()
+{
+	if (m_logPath.empty() || !m_manager || m_manager->eventLogTaker() != nullptr)
+	{
+		return;
+	}
+	if (!m_manager->eventLogEnabled())
+	{
+		m_manager->enableEventLog(true);
+	}
+	const std::vector<AudioLogEntry> lines = m_manager->takeEventLog();
+	if (lines.empty())
+	{
+		return;
+	}
+	std::FILE *f = std::fopen(m_logPath.c_str(), "a");
+	if (!f)
+	{
+		UtilityFunctions::push_error("GameAudio: cannot append to the audio log ", toGodot(m_logPath));
+		m_logPath.clear();
+		return;
+	}
+	for (const AudioLogEntry &e : lines)
+	{
+		std::fprintf(f, "%s\n", AudioManager::formatLogLine(e, e.objectId, "-").c_str());
+	}
+	std::fclose(f);
 }
 
 #define REQUIRE_BOOTED(retval)                                                                  \
@@ -688,13 +742,29 @@ static unsigned affectFor(const String &slider)
 	return 0;
 }
 
+void GameAudio::log_volume(const String &name, double v)
+{
+	REQUIRE_BOOTED()
+	if (!m_manager->eventLogEnabled())
+	{
+		return;
+	}
+	// a line of the manager's own log, in order with its requests (the manager holds no such volume: the host's bus does)
+	m_manager->logHostVolume(toNative(name), (float)v);
+}
+
 void GameAudio::set_volume(const String &slider, double v)
 {
 	REQUIRE_BOOTED()
+	if (slider.to_lower() == "movie")
+	{
+		m_manager->setSliderVolume(SLIDER_MOVIE, (float)v); // lane OPTS-4: the MOVIE submix slider has no AudioAffect bit
+		return;
+	}
 	const unsigned affect = affectFor(slider);
 	if (!affect)
 	{
-		UtilityFunctions::push_error("GameAudio.set_volume: unknown slider '", slider, "' (sound, voice, music, ambient)");
+		UtilityFunctions::push_error("GameAudio.set_volume: unknown slider '", slider, "' (sound, voice, music, ambient, movie)");
 		return;
 	}
 	m_manager->setVolume((float)v, affect | AudioAffect_SystemSetting);
@@ -720,6 +790,10 @@ double GameAudio::get_volume(const String &slider) const
 	if (!m_manager)
 	{
 		return 0.0;
+	}
+	if (slider.to_lower() == "movie")
+	{
+		return m_manager->getSliderVolume(SLIDER_MOVIE); // lane OPTS-4
 	}
 	return m_manager->getVolume(affectFor(slider) | AudioAffect_SystemSetting);
 }

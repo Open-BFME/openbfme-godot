@@ -8,6 +8,7 @@
 #include "GameLogic/AI/AICommands.h"
 #include "GameLogic/AI/AIGroup.h"
 #include "GameLogic/Combat/CombatNames.h"
+#include "GameLogic/Combat/ObjectWeapons.h"
 #include "GameLogic/GameLogic.h"
 #include "GameLogic/GameLogicDispatch.h"
 #include "GameLogic/Module/AIUpdate.h"
@@ -30,7 +31,8 @@ GarrisonCommands::Stats &stats()
 	return s;
 }
 
-// MSG_ENTER (RW 0x77AC26): argument 1 is the container; the player's group (RW 0x76FB64 releases its weapon locks: not ported) enters it through RW 0x774EDF: when
+// MSG_ENTER (RW 0x77AC26): argument 1 is the container; once it exists the player's group releases its temporary weapon locks (RW 0x77AC55: RW 0x76FB64(1),
+// lane BACKLOG-1) and enters it through RW 0x774EDF: when
 // the container has a contain, every unit of the group gets AI command 0x42 (RW 0x774897 with the target in the parameters' slot 3 -> RW 0x770EDE). The group
 // manager branch (GameData + 0x11CA, RW 0x75754C) is S-223's.
 bool enter(GameLogic &logic, const GameMessage &m)
@@ -43,11 +45,16 @@ bool enter(GameLogic &logic, const GameMessage &m)
 	}
 	++stats().enters;
 	Object *container = logic.findObjectByID(target->objectID);
-	if (!container || container->isDestroyed() || !container->getContain())
+	if (!container || container->isDestroyed())
 	{
-		return true; // RW 0x77AC40 / 0x774EEC: nothing happens
+		return true; // RW 0x77AC40: nothing happens
 	}
 	AIGroup group(logic, AICommands::selection(logic, m.getPlayerIndex()));
+	group.releaseWeaponLockForGroup(LOCKED_TEMPORARILY); // RW 0x77AC55
+	if (!container->getContain())
+	{
+		return true; // RW 0x774EEC: no contain, no order
+	}
 	for (Object *o : group.members())
 	{
 		if (AIUpdateInterface *ai = o->getAIUpdateInterface())

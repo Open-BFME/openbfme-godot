@@ -60,6 +60,10 @@ public:
 	virtual int pathPriority() const = 0;           // RW 0x663F48
 	// RW 0x68B36F: the object (or its container) the unit is attacking or approaching, 0 when none
 	virtual PathfindObjectID attackTargetOf(const PathfindObject &o) const = 0;
+	// lane ATTACK-1: RW 0x69519A(other, 2) with this unit as the crusher (ECX), the crush exemption of blockedBy RW 0x66D16E: the object's crusher level
+	// (RW 0x695070: MountedCrusherLevel while MOUNTED, the CRUSHER_LEVEL modifiers) above the other's crushable level (RW 0x68D4D0), then the policy's
+	// status, relationship and weapon tests
+	virtual bool crushOrSquishPolicy(const PathfindObject &other) const = 0;
 	virtual float wanderFactor() const = 0;         // locomotor template WanderWidthFactor (RW +0xF0)
 	virtual float closeEnoughDist() const = 0;      // locomotor +0x3C
 	virtual float locomotorSpeed() const = 0;       // locomotor +0x40 (RW getter 0x5E36F7), per frame
@@ -154,6 +158,16 @@ public:
 	bool isAiDead() const { return m_isAiDead; }
 	void markAiDead() { m_isAiDead = true; }
 	unsigned ignoreCollisionsUntil() const { return m_ignoreUntil; }
+	// lane BACKLOG-1: RW AI + 0x178 (the move-away handler's repeated requester, RW 0x66DB98)
+	void setIgnoreCollisionsUntil(unsigned frame) { m_ignoreUntil = frame; }
+	// lane BACKLOG-1: RW AI + 0x16C = 0 and + 0x3B8 = 0 (privateEnter RW 0x66D8A3 .. 0x66D8AA)
+	void clearBlocked()
+	{
+		m_blockedFrames = 0;
+		m_isBlocked = false;
+	}
+	// tests: the blocked flag (+ 0x3B8) as the collision pass leaves it
+	void friend_setBlocked(bool blocked) { m_isBlocked = blocked; }
 	bool retryPath() const { return m_retryPath; }
 	Coord3D finalPosition() const { return m_finalPosition; }
 

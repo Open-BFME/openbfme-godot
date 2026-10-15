@@ -47,6 +47,10 @@ struct ObjectSnapshot
 	Coord3D previousPos;           ///< P0
 	Coord3D nextPos;               ///< P3
 	bool hasNext = false;          ///< the pending position was set during this frame (retail +0x1A6)
+	// lane BACKLOG4 (S-813): the object was teleported during this frame (Object RW 0x696E63 / 0x68DA67 ran the drawable's forced gather RW 0x674B1F(1)).
+	// The record's poses come from the object as always: the two recordTransform calls of the teleport made the previous and the recorded pose the
+	// teleport's, so nothing is drawn across the jump
+	bool teleported = false;
 	UnsignedInt lastMovedFrame = 0; ///< retail Drawable +0x3A4: the last frame whose snapshot showed a different transform than the one before
 	float instanceScale = 1.0f;
 	// lane SMOOTH-3: the speed the model draw syncs its Distance animations to (RW 0x4B67D4 at every draw update, RW 0x4BFAEA): RW 0x68B34C, the current

@@ -15,6 +15,7 @@
 #include "Common/Thing/ModuleFactory.h"
 #include "Common/Thing/ThingTemplate.h"
 #include "GameLogic/AI/AIEmotionStates.h"
+#include "GameLogic/AI/AIAttackMelee.h"
 #include "GameLogic/AI/AIGuard.h"
 #include "GameLogic/AI/AIHunt.h"
 #include "GameLogic/AI/AIWaypointPath.h"
@@ -405,6 +406,11 @@ AIUpdateInterface::~AIUpdateInterface()
 		m_machine->halt(); // B1 ~AIUpdateInterface: the machine halts before the path goes
 		m_machine.reset();
 	}
+	if (m_defectedMachine) // lane BACKLOG4: an object deleted while it is defected
+	{
+		m_defectedMachine->halt();
+		m_defectedMachine.reset();
+	}
 	m_turret.reset(); // after the machine: the attack state's exit clears the turret's target
 	if (m_world)
 	{
@@ -465,12 +471,53 @@ void AIUpdateInterface::onObjectCreated()
 	}
 }
 
+// lane BACKLOG4 (S-1222): RW 0x663128
+void AIUpdateInterface::beginDefectedStateMachine()
+{
+	if (m_defectedMachine || !m_machine)
+	{
+		return; // RW 0x66312B: a machine is kept already (retail reads the machine without a test: an AI before its creation keeps none here)
+	}
+	const AIState *current = m_machine->currentState();
+	if (current && current->isActive())
+	{
+		// RW 0x663131 .. 0x663151: machine slot 0x34 (RW 0x8DB749) calls the state's slot 0x40. The states that answer slot 0x24 true are the attack
+		// states; their slot 0x40 is not read
+		getObject()->logic().noteStop("[S-1222] a defecting object's attack state is kept without its slot 0x40 call (RW 0x8DB749: not read)"); // the world's acceptance stops, as the other S-1222 notes
+	}
+	m_defectedMachine = std::move(m_machine);
+	m_machine = makeStateMachine(); // RW 0x66315E: vslot 0x258
+	m_machine->initDefaultState();  // RW 0x66316C: slot 0x1C
+	wakeUpNow();
+}
+
+// lane BACKLOG4 (S-1222): RW 0x663171. Retail's halt (RW 0x8DB758) drops the current state without its onExit before the machine is deleted; the port's
+// halt lets the state exit (ZH ~StateMachine), so what the state holds (its path, its turret target) is released: INFERENCE, S-1222
+void AIUpdateInterface::endDefectedStateMachine()
+{
+	if (!m_defectedMachine)
+	{
+		return;
+	}
+	if (m_machine)
+	{
+		m_machine->halt();
+		m_machine.reset();
+	}
+	m_machine = std::move(m_defectedMachine);
+	wakeUpNow();
+}
+
 void AIUpdateInterface::onDelete()
 {
 	// the object leaves the pathfinder before its modules are deleted (AIWorld::objectLeftWorld also runs from ~Object)
 	if (m_machine)
 	{
 		m_machine->halt();
+	}
+	if (m_defectedMachine)
+	{
+		m_defectedMachine->halt();
 	}
 	m_mover->destroyPath();
 }
@@ -713,6 +760,12 @@ bool AIUpdateInterface::aiMoveToPositionFromAttackMove(const Coord3D &goal)
 	return true;
 }
 
+const char *AIUpdateInterface::preferredPointStopLine()
+{
+	return "[S-4321] the locomotor's preferred point (RW 0x5E39CE) is set by the enter order and the move-away handler only: privateMoveToPosition (RW 0x66B437) "
+		   "and nine other callers do not set it, so a CanMoveBackwards unit's backing-up test (RW 0x5E83FD) reads the point of its last enter / move-away";
+}
+
 void AIUpdateInterface::privateMoveToPosition(const Coord3D &pos, CommandSourceType source)
 {
 	Object *obj = getObject();
@@ -724,6 +777,12 @@ void AIUpdateInterface::privateMoveToPosition(const Coord3D &pos, CommandSourceT
 	if (!GarrisonRules::isMobile(*obj) || BitFlagsTest(obj->getWeaponSetFlags(), (size_t)kRampage))
 	{
 		return;
+	}
+	// lane BACKLOG-1: RW 0x66B437 sets the current locomotor's preferred point here (RW 0x5E39CE): not ported for this command (S-4321); the Wheels mover's
+	// backing-up test reads the point, so a locomotor that can move backwards meets the gap
+	if (m_curLocomotor && m_curLocomotor->getTemplate().m_canMoveBackwards != 0)
+	{
+		obj->logic().noteStop(preferredPointStopLine());
 	}
 	Coord3D goal;
 	goalPositionClipped(pos, source, goal);
@@ -886,9 +945,17 @@ bool AIUpdateInterface::aiEnter(Object *container, CommandSourceType source)
 	{
 		return false;
 	}
-	// RW 0x66D873: the locomotor's RW 0x5E39CE(obj) and the AI fields + 0x16C / + 0x3B8 are not ported (S-1101)
+	// RW 0x66D873 .. 0x66D8B8 (lane BACKLOG-1; BFME2 decomp bfmePrivateCommand42, tier B edited): the current locomotor's preferred point becomes the object's
+	// position (RW 0x5E39CE, tier A: + 0x14 = object + 0x38), the machine is cleared (slot 0x14), the container is the goal object (slot 0x38), the blocked
+	// frames (AI + 0x16C) and the blocked flag (+ 0x3B8) are cleared, the source kept (+ 0x48), state 56. The voice (RW 0x66B379, source 0 / 1) is client side.
+	// A SHIP container (template + 0x11F bit 7, KindOf 191) is given AI command 0x4F with the object (RW 0x66C6E3): the SHIP branch is not ported (S-1101)
+	if (m_curLocomotor)
+	{
+		m_curLocomotor->setPreferredPoint(*getObject()->getPosition());
+	}
 	m_machine->clear();
 	m_machine->setGoalObject(container->getID());
+	m_mover->clearBlocked();
 	setLastCommandSource(source);
 	m_machine->setState(AI_MOVE_TO_POSITION_AND_ENTER);
 	wakeUpNow();
@@ -1328,6 +1395,14 @@ PathfindObjectID AIUpdateInterface::attackTargetOf(const PathfindObject &) const
 	return PATHFIND_INVALID_ID; // the attack machine is the combat milestone's
 }
 
+bool AIUpdateInterface::crushOrSquishPolicy(const PathfindObject &other) const
+{
+	// lane ATTACK-1: RW 0x69519A(other, 2) is HordeSquishState's crush policy (AttackCrushPolicy, HordeAIUpdateCombat.cpp; its line test RW 0x6F5BB0 is
+	// stop S-583's inference)
+	Object *o = getObject()->logic().findObjectByID((ObjectID)other.getID());
+	return o && AttackCrushPolicy(*getObject(), *o);
+}
+
 float AIUpdateInterface::wanderFactor() const
 {
 	return m_curLocomotor ? m_curLocomotor->getTemplate().m_wanderWidthFactor : 0.0f;
@@ -1496,6 +1571,11 @@ void AIUpdateInterface::crc(StateHasher &h) const
 		h.addU32(w);
 	}
 	h.addU32(currentStateId());
+	if (m_defectedMachine) // lane BACKLOG4: hashed while a machine is kept (RW AI + 0x38): the whole machine (its state, goals, path, temporary state)
+	{
+		h.addU32(0x663128u);
+		m_defectedMachine->crc(h);
+	}
 	h.addI32(m_curLocomotorSet);
 	h.addU32((std::uint32_t)m_lastCommandSource);
 	h.addU32(m_currentVictim);

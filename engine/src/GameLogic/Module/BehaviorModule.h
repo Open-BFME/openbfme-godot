@@ -17,6 +17,7 @@
 #include "GameLogic/ObjectTypes.h"
 
 #include <list>
+#include <string>
 #include <vector>
 
 class Object;
@@ -72,6 +73,9 @@ public:
 	virtual bool isIndestructible() const { return false; }
 	// RW vt[0x90]: the body's DodgePercent (a fraction)
 	virtual float getDodgePercent() const { return 0.0f; }
+	// lane BACKLOG-1: RW vt[0x74], the body's GrabObject template name (ActiveBody RW 0x8C281E: the data's + 0x2C; InactiveBody RW 0x8C1B14: the empty string
+	// RW 0xBD0C3F). OpenContain's CHUNK_VENDOR / ROCK_VENDOR entry test reads it (RW 0x8660FC)
+	virtual std::string getGrabObjectName() const { return std::string(); }
 	// lane XP-1: RW vt[0x5C] (ActiveBody RW 0x8C1CD5) setMaxHealth(newMax, changeType): 1 keeps the health ratio, 2 adds the difference to the health
 	// (the AttributeModifier HEALTH / HEALTH_MULT bonuses use 1). A body class without the override counts the call (bodyMaxHealthCallsIgnored)
 	virtual void setMaxHealth(float newMax, int changeType)

@@ -239,7 +239,7 @@ void ReplaceSelfUpgrade::upgradeImplementation()
 		{
 			break;
 		}
-		piece->setPosition(&cur); // RW 0x696E63
+		piece->teleportTo(&cur, false); // RW 0x8BB8F1: RW 0x696E63(pos, 0)
 		if (!name.empty())
 		{
 			piece->setName(name); // RW 0x8BB900

@@ -16,6 +16,8 @@
 #include "GameLogic/GameLogic.h"
 #include "GameLogic/Map/TerrainLogic.h"
 #include "GameLogic/ScriptEngine/ScriptEngine.h"
+#include "GameLogic/ScriptEngine/ScriptTemplates.h"
+#include "GameLogic/ScriptEngine/Scripts.h"
 #include "GameLogic/ScriptEngine/ScriptConditions.h"
 #include "Common/Team.h"
 #include "GodotDevice/GodotRetailFileSystem.h"
@@ -65,6 +67,7 @@ void GameWorld::bindScriptMethods()
 	ClassDB::bind_method(D_METHOD("debug_defer_script_audio", "sound"), &GameWorld::debug_defer_script_audio); // RENDERWAIT-1 r3 (tests)
 	ClassDB::bind_method(D_METHOD("get_pending_script_audio"), &GameWorld::get_pending_script_audio);
 	ClassDB::bind_method(D_METHOD("get_script_audio_applied"), &GameWorld::get_script_audio_applied);
+	ClassDB::bind_method(D_METHOD("debug_script_action", "name", "params"), &GameWorld::debug_script_action); // lane BACKLOG3
 }
 
 Dictionary GameWorld::get_waypoint(const String &name) const
@@ -378,6 +381,44 @@ Dictionary GameWorld::debug_script_unit(const String &name)
 		out["z"] = o->getPosition()->z;
 		out["dead"] = o->isEffectivelyDead();
 	}
+	return out;
+}
+
+// lane BACKLOG3 (a test hook, as the others here): one script action run by the script engine (ScriptEngine::executeAction), by its template's internal
+// name; `params` are dictionaries { type, int, real, string, x, y, z } in the template's order (the proof scenario's RADAR_CREATE_EVENT)
+Dictionary GameWorld::debug_script_action(const String &name, const Array &params)
+{
+	Dictionary out;
+	out["ok"] = false;
+	if (hooksRefused(m_game.get(), m_testHooks, m_netHost || m_netClient || m_netStarted || m_netSession, out))
+	{
+		return out;
+	}
+	const auto worldContext = m_world ? m_world->enterContext() : nullptr;
+	ScriptActionRec a;
+	a.internalName = name.utf8().get_data();
+	a.type = a.resolved = ScriptTemplates::findAction(a.internalName.c_str());
+	if (a.resolved < 0)
+	{
+		out["error"] = "no script action of that name";
+		return out;
+	}
+	a.version = 3;
+	for (int i = 0; i < params.size(); ++i)
+	{
+		const Dictionary pd = params[i];
+		ScriptParameter p;
+		p.type = (std::int32_t)(int64_t)pd.get("type", 0);
+		p.intValue = (std::int32_t)(int64_t)pd.get("int", 0);
+		p.realValue = (float)(double)pd.get("real", 0.0);
+		p.stringValue = String(pd.get("string", "")).utf8().get_data();
+		p.x = (float)(double)pd.get("x", 0.0);
+		p.y = (float)(double)pd.get("y", 0.0);
+		p.z = (float)(double)pd.get("z", 0.0);
+		a.params.push_back(p);
+	}
+	m_game->logic().scriptEngine().executeAction(a);
+	out["ok"] = true;
 	return out;
 }
 

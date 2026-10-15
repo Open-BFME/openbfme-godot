@@ -846,9 +846,15 @@ std::vector<std::string> TacticalCamera::acceptanceStops()
 		"[S-453] game start: RW 0x6311ED (load progress 0x5F .. 0x61) calls setAngleAndPitchToDefault and setZoomToDefault (view vslots 0x114 / 0x13C), initHeightForMap (0x58), the same two "
 		"again, then resetCamera (vslot 0xC8) at the local player's Player_N_Start waypoint (name built by RW 0x6311A0) or (50, 50, 0); ported in that order (differs from BFME1's "
 		"lookAt + initHeightForMap); the AltCamera trigger area scale (RW View + 0xA0 / + 0xA8, GameLogic AI + 0xBC / + 0xC0) is not applied",
-		"[S-454] LookAt translator (RW 0x83AC4A, 0x83B471): the locked-mouse rotation path (RW 0x83B029: the view flag at View + 0x2449), the view bookmarks (SAVE_VIEW / VIEW_VIEW, View vslot "
-		"0x170 / 0x174), the replay camera sample (RW 0x83B9FA), the RMB anchor clamp (InGameUI + 0x8C4 and the Mouse position read) and the other flags it reads of InGameUI (+0x17C, "
-		"vslot 0xCC) are treated as off, the War of the Ring strategic view (RW 0xDE4958, its own translator RW 0x838EBA / 0x8392A7) is not ported",
+		"[S-454] LookAt translator (RW 0x83AC4A, 0x83B471; narrowed by lane BACKLOG3 with the BFME2 decomp's BfmeOwnVVD sources, tier A): ported: the scrolls, the "
+		"rotation, the zoom, the bookmarks (INPUT-1), the input-disabled stop of a held scroll (InGameUI vslot 0x17C, + 0x810) and the keys following TheKeyboard's "
+		"state (RW 0x83BAF8; INFERENCE: the keyboard is reset when the window loses the focus, as ZH's); TARGET FACT: the RMB anchor clamp (RW 0x83B75E) needs "
+		"InGameUI + 0x8C4, which RotWK 2.01 never sets (only the constructor RW 0x6A7234 writes it, 0): there is nothing to port. Not ported: the object-follow "
+		"view's branch (RW 0x83B029: View vslot 0x1CC = View + 0x2449, set by W3DView RW 0x48A72D and cleared by RW 0x486F76 / 0x48713E: rotation and pitch at the "
+		"mouse region's edges), the view's mouse lock of a middle button rotation (View vslot 0x1A4), the right button scroll's end under InGameUI vslot 0xCC "
+		"(+ 0x98C, set by vslot 0xC4 RW 0x69B507), the left-button test of the edge scroll's selecting gate (TheMouse's status), the bookmark message's slot "
+		"number, the message 0x452 (View vslot 0x74), the scroll's other consumer (RW 0x83B851's global), the replay camera sample (RW 0x83B9FA: message 0x447), "
+		"the War of the Ring strategic view (RW 0xDE4958, its own translator RW 0x838EBA / 0x8392A7)",
 		"[S-455] field of view: the horizontal field of view is 50 degrees (View + 0x6C) and the view plane's height follows the viewport aspect (RW CameraClass +0xE8 is set elsewhere "
 		"from the viewport: assumed equal to the window's)",
 		"[S-456] timing: the camera and the scroll translator advance once per client frame at 30 frames a second (retail: UseFPSLimit Yes, FramesPerSecondLimit 30; the translator reads "

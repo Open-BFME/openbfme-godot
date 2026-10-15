@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """Lane RELEASE-1: writes README_TESTERS.txt for a test package.
 
-    python3 tools/release/readme_testers.py --version <version> --platform linux|windows [--out FILE]
+    python3 tools/release/readme_testers.py --version <version> --platform linux|windows [--out FILE] [--game-only]
+
+Lane ONEZIP-1: the package holds the game and the OpenBFME Launcher; the README says how to start either and how updates work.
+--game-only: the text for package.sh --no-launcher's trial package (the game alone, which does not update).
 
 The known issues come from tools/release/known_issues.json, each item checked against the docs/STOPS.md rows it names (the row's Area is
 printed with its ID); a row that is gone fails the run, so the list cannot silently describe issues that were fixed or renumbered.
@@ -38,9 +41,9 @@ STARTING
   shows them; confirm them or choose them with "Browse...". It checks
   every game file once (this can take a minute) and remembers the folders.
   To choose again, delete install-paths.cfg in the data folder below.
-- OpenBFME only reads your game files, it never changes them. It talks to
-  the network only for LAN games you start yourself.
-
+- OpenBFME only reads your game files, it never changes them. The game
+  talks to the network only for LAN games you start yourself.
+{updates}
 WHAT TO TEST
 - Skirmish against the computer: pick a map, a faction and opponents in
   Solo Play > Skirmish and play a whole game.
@@ -62,7 +65,7 @@ KNOWN ISSUES
 {issues}
 
 FILES
-- README_TESTERS.txt  this file
+{files}- README_TESTERS.txt  this file
 - LICENSE, NOTICE     OpenBFME's licence (GPL-3.0) and notices
 - VERSION             the exact build
 - SHA256SUMS of the archives are published next to them.
@@ -72,7 +75,9 @@ PLATFORMS = {
     "linux": dict(
         platform_name="Linux x86-64",
         requirements="A 64-bit Linux with Vulkan graphics (Mesa or the proprietary drivers). The game folders can be anywhere, e.g. in a Wine or Proton prefix.",
-        start="Unpack the archive and run ./OpenBFME.x86_64 (keep the files together).",
+        start="Unpack the archive and run ./OpenBFME.x86_64 (the game) or\n  ./OpenBFMELauncher.x86_64 (the launcher). Keep the files together.",
+        start_game_only="Unpack the archive and run ./OpenBFME.x86_64 (keep the files together).",
+        game="./OpenBFME.x86_64", launcher="./OpenBFMELauncher.x86_64",
         wine=", also inside Wine, Proton (Steam), Lutris, Heroic and Bottles prefixes",
         logs="~/.local/share/godot/app_userdata/OpenBFME/logs/",
         find_logs="To open that folder: \"Logs\" next to the version in the menus, \"Open log\n  folder\" in the error / crash message, or ./OpenBFME.x86_64 --open-logs",
@@ -81,7 +86,9 @@ PLATFORMS = {
     "windows": dict(
         platform_name="Windows x86-64",
         requirements="64-bit Windows 10 or 11 with a graphics card that supports Vulkan or Direct3D 12.",
-        start="Unpack the archive and run OpenBFME.exe (keep the files together).",
+        start="Unpack the archive and run OpenBFME.exe (the game) or\n  OpenBFMELauncher.exe (the launcher). Keep the files together.",
+        start_game_only="Unpack the archive and run OpenBFME.exe (keep the files together).",
+        game="OpenBFME.exe", launcher="OpenBFMELauncher.exe",
         wine="",
         logs="%APPDATA%\\Godot\\app_userdata\\OpenBFME\\logs\\",
         find_logs="To open that folder: \"Logs\" next to the version in the menus, \"Open log\n  folder\" in the error / crash message, or OpenBFME.exe --open-logs",
@@ -103,6 +110,10 @@ def stop_rows(stops_md: Path) -> dict[str, str]:
     return rows
 
 
+# the areas whose issues read better with their area in front in a flat list (the patch notes group by area instead)
+AREA_PREFIX = {"Campaign": "Campaign", "Create-a-Hero": "Create-a-Hero", "Launcher and install": "Install"}
+
+
 def known_issues(issues_json: Path, stops_md: Path) -> tuple[list[str], list[str]]:
     """(the formatted issue lines, the errors)."""
     rows = stop_rows(stops_md)
@@ -114,15 +125,55 @@ def known_issues(issues_json: Path, stops_md: Path) -> tuple[list[str], list[str
             errors.append(f"known issue names stops that are not in {stops_md.name}: {', '.join(missing)} ({item['text'][:60]}...)")
             continue
         refs = "; ".join(f"{s} {rows[s]}" for s in item["stops"])
-        body = textwrap.fill(item["text"] + f" [{refs}]", width=72, initial_indent="- ", subsequent_indent="  ")
+        text = item["text"]
+        if item.get("area") in AREA_PREFIX and not text.startswith(AREA_PREFIX[item["area"]]):
+            text = f"{AREA_PREFIX[item['area']]}: {text[:1].lower()}{text[1:]}"
+        body = textwrap.fill(text + f" [{refs}]", width=72, initial_indent="- ", subsequent_indent="  ")
         lines.append(body)
     return lines, errors
 
 
-def render(version: str, platform: str, issues: list[str]) -> str:
-    p = PLATFORMS[platform]
+UPDATES = """
+UPDATES
+- Start whichever you like: {game} (the game) or {launcher} (the
+  launcher: news, settings, older versions). Both keep OpenBFME up to
+  date, through the launcher's updater.
+- A newer version is downloaded in the background, checked against the
+  signed release, and used from your next start. This folder is never
+  changed while you play: updates are kept in the launcher's data folder
+  (see README_LAUNCHER.txt), the two newest versions.
+- Offline, or when GitHub cannot be reached, the game starts at once with
+  what you have and says why in the top right corner of the menu.
+- The update check contacts GitHub only (README_LAUNCHER.txt, "What it
+  contacts"). To start without it: {game} --no-update-check. To be told
+  about updates without downloading them: untick "Update automatically
+  in the background" in the launcher's Settings.
+"""
+
+GAME_ONLY_UPDATES = """
+UPDATES
+- This package is the game alone: it does not update itself. Get the
+  normal download (the game and the launcher together) to stay up to date.
+"""
+
+FILES = """\
+- {game:<19} the game
+- {launcher:<19} the OpenBFME Launcher
+- README_LAUNCHER.txt the launcher's own notes (what it contacts, where it stores files)
+"""
+
+
+def render(version: str, platform: str, issues: list[str], game_only: bool = False) -> str:
+    p = dict(PLATFORMS[platform])
+    names = {"game": p.pop("game"), "launcher": p.pop("launcher")}
+    if game_only:
+        p["start"] = p.pop("start_game_only")
+    else:
+        p.pop("start_game_only")
     title = TEMPLATE.split("\n", 1)[0].format(version=version, platform_name=p["platform_name"])
-    return TEMPLATE.format(version=version, rule="=" * len(title), issues="\n".join(issues), **p)
+    return TEMPLATE.format(version=version, rule="=" * len(title), issues="\n".join(issues),
+                           updates=(GAME_ONLY_UPDATES if game_only else UPDATES).format(**names),
+                           files="" if game_only else FILES.format(**names), **p)
 
 
 def main() -> int:
@@ -130,6 +181,7 @@ def main() -> int:
     ap.add_argument("--version", required=True)
     ap.add_argument("--platform", required=True, choices=sorted(PLATFORMS))
     ap.add_argument("--out")
+    ap.add_argument("--game-only", action="store_true", help="the game alone (package.sh --no-launcher): it does not update")
     ap.add_argument("--issues", default=str(REPO / "tools/release/known_issues.json"))
     ap.add_argument("--stops", default=str(REPO / "docs/STOPS.md"))
     a = ap.parse_args()
@@ -138,7 +190,7 @@ def main() -> int:
         for e in errors:
             print("README_TESTERS:", e, file=sys.stderr)
         return 1
-    text = render(a.version, a.platform, issues)
+    text = render(a.version, a.platform, issues, a.game_only)
     if a.platform == "windows":
         text = text.replace("\n", "\r\n")
     if a.out:

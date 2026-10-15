@@ -140,7 +140,7 @@ func _ready() -> void:
 	if not prep.ok:
 		_fail("prepare_new_game: %s" % [prep.errors])
 		return
-	var rep: Dictionary = _world.start_new_game({"test_hooks": _scenario == "play4" or _scenario == "camp"}) # PLAY-4: debug_damage_object
+	var rep: Dictionary = _world.start_new_game({"test_hooks": _scenario == "play4" or _scenario == "camp" or _scenario == "backlog3"}) # PLAY-4: debug_damage_object; BACKLOG3: debug_script_action
 	if not rep.ok:
 		_fail("start_new_game: %s" % [rep.errors.slice(0, 5)])
 		return
@@ -216,7 +216,9 @@ func _process(_delta: float) -> void:
 	# (the arrow keys, the wheel and the mouse scroll / rotate the retail camera through the HUD's own translator, lane CAM-1)
 	_update_ghost()
 	var pl: Dictionary = _hud.get_placement()
-	if _scenario != "ai_tactics": # (ai_tactics writes its own overlay)
+	if not _b3_caption.is_empty():
+		_label.text = _b3_caption # lane BACKLOG3: the proof scenario's caption
+	elif _scenario != "ai_tactics": # (ai_tactics writes its own overlay)
 		_label.text = "selected %s  frame %d  placing %s legal %s" % [_hud.get_selection(), _world.get_frame(), pl.get("template", ""), pl.get("legal", "-")]
 	_free_frames += 1
 	if _quit_after > 0 and _scenario.is_empty() and _free_frames >= _quit_after:
@@ -334,6 +336,9 @@ func _run_scenario() -> void:
 		return
 	if _scenario == "walls":
 		await _run_walls(shots)
+		return
+	if _scenario == "backlog3":
+		await _run_backlog3(shots)
 		return
 	if _scenario == "walls_timeline":
 		await _run_walls_timeline(shots)
@@ -975,6 +980,76 @@ func _look_at(x: float, y: float, height: float, back: float) -> void:
 	_cam_height = height
 	_cam_back = back
 	_place_camera()
+
+
+## lane BACKLOG3 (proof, S-2452): --scenario=backlog3 (FactionMen): a script's radar event (RADAR_CREATE_EVENT run by the script engine), the ping of a finished
+## building (a fortress pad's structure, built by its spawned worker: RW 0x88E125) and an enemy horde's attack on our fortress with RW 0x6D9BF3's message. The
+## message is shown in the caption: the game does not draw InGameUI's message list yet (S-283). Shots backlog3-script-ping / -construction-ping /
+## -attack-message.png; the radar is the Palantir's, lower left.
+var _b3_caption := ""
+
+
+func _b3_radar() -> String:
+	return str(_hud.get_report().get("radar", ""))
+
+
+func _run_backlog3(shots: String) -> void:
+	_label.position.y = 40
+	var base := _focus # the local player's start
+	_look_at(base.x, base.y, 620.0, 520.0)
+	await _wait_logic(5)
+	var at := base + Vector2(500.0, 350.0)
+	var r: Dictionary = _world.debug_script_action("RADAR_CREATE_EVENT", [{"type": 16, "x": at.x, "y": at.y, "z": 0.0}, {"type": 30, "int": 6}])
+	_b3_caption = "BACKLOG3: a script ran RADAR_CREATE_EVENT (type 6, a beacon): its ping on the radar, lower left"
+	await _frames(45)
+	print("BACKLOG3 script action ", r, " radar: ", _b3_radar())
+	_save(shots.path_join("backlog3-script-ping.png"))
+	await _frames(160)
+	var before := _b3_radar().get_slice(" pings", 0)
+	var built: Dictionary = _world.build2_construct_on_plot(_local, "MenTrebuchetSideExpansion")
+	if not built.get("ok", false):
+		_fail("backlog3: construct on a pad: %s" % built.get("error", ""))
+		return
+	_look_at(float(built.x), float(built.y), 620.0, 520.0)
+	_b3_caption = "BACKLOG3: a worker builds MenTrebuchetSideExpansion on a fortress pad ..."
+	var done := false
+	var start: int = _world.get_frame()
+	while _world.get_frame() < start + 600:
+		await get_tree().process_frame
+		if _b3_radar().get_slice(" pings", 0) != before:
+			done = true
+			break
+	_b3_caption = "BACKLOG3: the building is finished: its construction ping (PingGeneric) on the radar, lower left"
+	await _frames(30)
+	print("BACKLOG3 construction ping ", done, " after ", _world.get_frame() - start, " logic frames; radar: ", _b3_radar())
+	_save(shots.path_join("backlog3-construction-ping.png"))
+	await _frames(160)
+	# an enemy horde next to the new building attacks it
+	var enemy := ""
+	for so in _start_objects:
+		var eo: Dictionary = _world.get_object(int(so.id))
+		if eo.get("ok", false) and str(eo.owner) != _local and not str(eo.owner).is_empty():
+			enemy = str(eo.owner)
+	var bx := float(built.x)
+	var by := float(built.y)
+	var out := (Vector2(bx, by) - base).normalized()
+	var hp := Vector2(bx, by) + out * 170.0
+	var them := _player_index(enemy, hp.x, hp.y)
+	var horde: int = _world.create_object("MordorFighterHorde", them, hp.x, hp.y)
+	var ordered: Variant = _world.order_attack([horde], int(built.id))
+	_b3_caption = "BACKLOG3: an enemy horde attacks our new building ..."
+	var msgs: Array = []
+	start = _world.get_frame()
+	while _world.get_frame() < start + 600 and msgs.is_empty():
+		await get_tree().process_frame
+		for m in _hud.get_state().get("messages", []):
+			if String(m).begins_with("RADAR:"):
+				msgs.append(m)
+	_b3_caption = "BACKLOG3: the enemy hit our building: InGameUI's message list holds %s (the game does not draw that list yet);\nthe attack ping (PingAttack) on the radar, lower left" % [msgs]
+	await _frames(20)
+	print("BACKLOG3 attack: enemy ", enemy, " index ", them, " horde ", horde, " order ", ordered, " messages ", msgs, " radar: ", _b3_radar())
+	_save(shots.path_join("backlog3-attack-message.png"))
+	get_tree().quit(0)
 
 
 func _run_walls(shots: String) -> void:

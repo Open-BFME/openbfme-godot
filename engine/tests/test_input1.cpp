@@ -6,6 +6,7 @@
 #include "doctest.h"
 
 #include "HudTestUtil.h"
+#include "PeImage.h"
 
 #include "Common/INI.h"
 #include "Common/INIException.h"
@@ -614,4 +615,106 @@ TEST_CASE("input1 r3 force attack: Ctrl held makes the force-attack mode (ZH's B
 	r.move(pg.x, pg.y);
 	CHECK(r.input->ui().cursor() == std::string(MouseCursorName::Move));
 	CHECK(r.input->commandTranslator().retailNoOpMeta().count("BEGIN_FORCEATTACK") == 0);
+	// lane BACKLOG3: the stops say what this is: S-1675 an OpenBFME addition (RotWK 2.01 never turns the mode on), S-4360 what RotWK does with Ctrl at a left press
+	bool s1675 = false, s4360 = false;
+	for (const std::string &l : r.input->stops())
+	{
+		s1675 = s1675 || l.compare(0, 57, "[S-1675] force attack (an OpenBFME addition, NOT retail):") == 0;
+		s4360 = s4360 || l.compare(0, 8, "[S-4360]") == 0;
+	}
+	CHECK(s1675);
+	CHECK(s4360);
+}
+
+// lane BACKLOG3 (S-1675): the binary facts behind "RotWK 2.01 never turns the force-attack mode on" (and S-454's "the RMB anchor clamp never runs")
+TEST_CASE("backlog3 binary facts: no code sets InGameUI's force-attack mode (+ 0x8B8) or the RMB scroll anchor flag (+ 0x8C4); BEGIN_ / END_FORCEATTACK reach the default case")
+{
+	const retailtest::PeImage *pe = retailtest::PeImage::fromEnvironment();
+	if (!pe)
+	{
+		retailtest::printSkip("backlog3 binary facts (RW_GAME_DAT unset)");
+		return;
+	}
+	// the meta names' numbers (the table RW 0xBF0938 ..: { name, number } rows)
+	struct Name
+	{
+		std::uint32_t row;
+		const char *name;
+		std::uint32_t number;
+	};
+	const Name names[] = { { 0xBF0948, "BEGIN_FORCEATTACK", 0x74 }, { 0xBF0950, "END_FORCEATTACK", 0x75 },        { 0xBF0958, "BEGIN_FORCEMOVE", 0x76 },
+		                   { 0xBF0960, "END_FORCEMOVE", 0x77 },     { 0xBF0968, "BEGIN_WAYPOINTS", 0x78 },        { 0xBF0970, "END_WAYPOINTS", 0x79 },
+		                   { 0xBF0978, "BEGIN_PREFER_SELECTION", 0x7A }, { 0xBF0980, "END_PREFER_SELECTION", 0x7B } };
+	for (const Name &n : names)
+	{
+		INFO(n.name);
+		CHECK(pe->cstring(pe->u32At(n.row)) == n.name);
+		CHECK(pe->u32At(n.row + 4) == n.number);
+	}
+	// CommandTranslator's switch (RW 0x81FECD: lea eax, [esi - 0x6C]; cmp eax, 0x15; jmp [eax * 4 + 0x8207A0])
+	CHECK(pe->hex(0x81FECD, 19) == "8d469483f8150f8793080000ff2485a0078200");
+	const std::uint32_t kDefault = 0x82076C;
+	auto entry = [&](std::uint32_t meta) { return pe->u32At(0x8207A0 + (meta - 0x6C) * 4); };
+	CHECK(entry(0x74) == kDefault); // BEGIN_FORCEATTACK
+	CHECK(entry(0x75) == kDefault); // END_FORCEATTACK
+	// the neighbours are the inlined mode setters: mov byte ptr [ecx + mode], 1 / bl
+	CHECK(entry(0x76) == 0x8200E3);
+	CHECK(pe->hex(0x8200E3, 7) == "c681b908000001");
+	CHECK(entry(0x77) == 0x8200EF);
+	CHECK(pe->hex(0x8200EF, 6) == "8899b9080000");
+	CHECK(entry(0x78) == 0x8200FA);
+	CHECK(pe->hex(0x8200FA, 7) == "c681b008000001");
+	CHECK(entry(0x79) == 0x82011D);
+	CHECK(entry(0x7A) == 0x820106);
+	CHECK(pe->hex(0x820106, 7) == "c681ba08000001");
+	CHECK(entry(0x7B) == 0x820112);
+	// every byte store (88 /r or C6 /0 with a 32-bit displacement, no SIB) to the displacement in .text (RW 0x401000, 0x7CF000 bytes)
+	std::vector<std::uint8_t> text;
+	REQUIRE(pe->read(0x401000, 0x7CF000, &text));
+	auto stores = [&](std::uint32_t disp) {
+		std::vector<std::pair<std::uint32_t, std::uint8_t>> out; // address, opcode
+		for (size_t i = 2; i + 5 <= text.size(); ++i)
+		{
+			const std::uint32_t d = (std::uint32_t)text[i] | ((std::uint32_t)text[i + 1] << 8) | ((std::uint32_t)text[i + 2] << 16) | ((std::uint32_t)text[i + 3] << 24);
+			const std::uint8_t op = text[i - 2], modrm = text[i - 1];
+			if (d == disp && (op == 0x88 || op == 0xC6) && modrm >= 0x80 && modrm <= 0xBF && (modrm & 7) != 4)
+			{
+				out.push_back({ (std::uint32_t)(0x401000 + i - 2), op });
+			}
+		}
+		return out;
+	};
+	using Stores = std::vector<std::pair<std::uint32_t, std::uint8_t>>;
+	// + 0x8B8: the setter's store (RW 0x69AD23) and five clears; the one immediate store writes 0
+	CHECK(stores(0x8B8) == Stores{ { 0x69AD23, 0x88 }, { 0x69B638, 0x88 }, { 0x69B6F0, 0x88 }, { 0x6A6A49, 0x88 }, { 0x6A7250, 0x88 }, { 0x83C42B, 0xC6 } });
+	CHECK(pe->hex(0x83C42B, 7) == "c680b808000000");
+	// the register clears store bl, zeroed just before in each function (xor ebx, ebx / xor bl, bl)
+	CHECK(pe->hex(0x69B6B8, 2) == "33db"); // RW 0x69B6A8's, before 0x69B6F0
+	// nothing reaches the setter RW 0x69AD1F: no call / jump displacement in .text, no pointer in .text / .rdata / .data
+	CHECK(pe->hex(0x69AD1F, 13) == "8a4424048881b8080000c20400");
+	size_t refs = 0;
+	for (size_t i = 0; i + 5 <= text.size(); ++i)
+	{
+		if (text[i] == 0xE8 || text[i] == 0xE9)
+		{
+			const std::int32_t rel = (std::int32_t)((std::uint32_t)text[i + 1] | ((std::uint32_t)text[i + 2] << 8) | ((std::uint32_t)text[i + 3] << 16) | ((std::uint32_t)text[i + 4] << 24));
+			refs += (std::uint32_t)(0x401000 + i + 5) + (std::uint32_t)rel == 0x69AD1F;
+		}
+	}
+	CHECK(refs == 0);
+	const std::pair<std::uint32_t, std::uint32_t> sections[] = { { 0x401000, 0x7CF000 }, { 0xBD0000, 0x1B9000 }, { 0xD89000, 0x81000 } };
+	size_t pointers = 0;
+	for (const auto &sec : sections)
+	{
+		std::vector<std::uint8_t> b;
+		REQUIRE(pe->read(sec.first, sec.second, &b));
+		for (size_t i = 0; i + 4 <= b.size(); ++i)
+		{
+			pointers += b[i] == 0x1F && b[i + 1] == 0xAD && b[i + 2] == 0x69 && b[i + 3] == 0x00;
+		}
+	}
+	CHECK(pointers == 0);
+	// + 0x8C4 (S-454): the constructor's clear only; the LookAt tick's clamp tests it (RW 0x83B75E: cmp byte ptr [eax + 0x8C4], 0)
+	CHECK(stores(0x8C4) == Stores{ { 0x6A7234, 0x88 } });
+	CHECK(pe->hex(0x83B75E, 7) == "80b8c408000000");
 }

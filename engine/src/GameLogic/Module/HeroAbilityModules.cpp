@@ -2,6 +2,7 @@
 // See GameLogic/Module/HeroAbilityModules.h (lane HERO-2).
 
 #include "GameLogic/Module/HeroAbilityModules.h"
+#include "GameLogic/AttributeModifiers.h"
 #include "GameLogic/Module/GiantBirdAIUpdate.h"
 
 #include "Common/INI.h"
@@ -1150,7 +1151,9 @@ void WeaponModeSpecialPowerUpdate::startPowerRecharge(float percentOfCurrent)
 		p->science().resetOrStartSharedReadyFrame(t->getID(), t->getReloadTime(), now()); // RW 0x991549
 		return;
 	}
-	const float modifierScale = 1.0f; // RW 0x991564: the RECHARGE attribute modifier product (not ported, as SpecialPowerModule's: S-529)
+	// lane BACKLOG4: RW 0x991553 .. 0x991564: the object's RECHARGE_TIME attribute modifiers (RW 0x68C82D(0xC, &out, 0, 1), as SpecialPowerModule's RW 0x896EA0)
+	float modifierScale = 1.0f;
+	obj->attributeModifierProduct(ATTRIBUTE_RECHARGE_TIME, nullptr, true, modifierScale);
 	const float playerScale = SimMath::pc24Add(p->science().rechargeDiscount(), 1.0f); // RW 0x99156C .. 0x99157B
 	const double wide = SimMath::pc24MulW(SimMath::pc24MulW(NumericState::fildU32(t->getReloadTime()), playerScale), modifierScale);
 	const unsigned reload = SimMath::ftol2Low32(wide); // RW 0x9915A1
@@ -2259,7 +2262,7 @@ void TeleportSpecialAbilityUpdate::triggerAbilityEffect()
 	Object *obj = getObject();
 	const Coord3D dest = m_targetPos; // + 0x44
 	const float angle = SimMath::pc24Add(emotionRelAngle(*obj, dest), obj->getOrientation()); // RW 0x4B3D8D; fadd dword (Object + 0x44)
-	obj->setPosition(&dest);  // RW 0x696E63(location, 1)
+	obj->teleportTo(&dest, true); // RW 0x8964F3: RW 0x696E63(location, 1)
 	obj->setOrientation(angle); // RW 0x70C31E
 	fireTempWeapon(m_tp->m_destinationWeapon, dest); // RW 0x896506 .. 0x896529
 	++m_teleports;
@@ -2378,11 +2381,20 @@ void HeroAbilityModules::registerHandlers(GameLogicDispatch &d)
 std::vector<std::string> HeroAbilityModules::stopLines()
 {
 	return {
-		"[S-1222] defection and domination (lane HERO-2): Object::defect / setTemporaryTeam / endDefection (RW 0x699368 / 0x699513 / 0x69ABA7), "
-		"TemporarilyDefectUpdate and DominateEnemySpecialPower run; INFERENCE / not ported: the AI's temporary state machine kept and given back (RW 0x6630D7 / "
-		"0x663128 / 0x663171: the AI goes idle), RW 0x693919 for an object using an ability, the stealth and special power helpers RW 0x8A4ED8 / 0x68C3A3, the "
-		"contain vslots 0x108 / 0x10C of the classes other than HordeContain, the original team kept as the Team (RW 0x69959D keeps its name, RW 0x7A7483 looks it "
-		"up), the module tags of ActivateModuleSpecialPower resolved when used (retail makes the keys while parsing); the selection / UI refresh is the client's",
+		"[S-1222] defection and domination (lane HERO-2, BACKLOG4): Object::defect / setTemporaryTeam / restoreOriginalTeam / endDefection (RW 0x699368 / "
+		"0x699513 / 0x69AB22 / 0x69ABA7), TemporarilyDefectUpdate and DominateEnemySpecialPower run; lane BACKLOG4: the AI's machine kept across a temporary "
+		"defection and given back (RW 0x663128 / 0x663171), the ability in use aborted (RW 0x693919 -> 0x851C92 / 0x8513E4), the slave released and the "
+		"spawner stopped (RW 0x8A4ED8 slot 2, RW 0x68C3A3 slots 9 / 12), the original team kept by name and looked up (RW 0x69959D / 0x7A7483), the kill of "
+		"an object returned to a defeated player (RW 0x69AB83) and setTeam's neutral team for a player who is not active (RW 0x699554). "
+		"Open (lane BACKLOG4 r1 inventory): (1) the AI's temporary machine slot (AI + 0x34): RW 0x6630D7 gives it back at defect / endDefection, but nothing "
+		"fills it in this port (BeginTemporaryStateMachine RW 0x6630A9's callers are not ported), so the call is absent; (2) a kept attack state's slot 0x40 "
+		"(RW 0x8DB749: the machine's slot 0x34 calls it for a state answering State slot 0x24) is not read, reported when met; (3) the defection's machine is "
+		"halted with its state's exit (retail's halt RW 0x8DB758 drops the state without it: INFERENCE that what the state holds is to be released); (4) RW "
+		"0x693919 aborts only SpecialAbilityUpdate's abilities: an active special power update of another class (WeaponModeSpecialPowerUpdate) is reported, "
+		"its slots 0x18 / 0x34 not read; RW 0x851C92's command button branches are not this caller's; (5) contain vslots 0x108 / 0x10C of the classes other "
+		"than HordeContain (a defecting transport's / garrison's passengers keep their side; reported when met); (6) the selected drawable's deselection (RW "
+		"0x6993B5 .. 0x6993D0) and restoreOriginalTeam's selection refresh are the client's; (7) ActivateModuleSpecialPower's tags are resolved when used "
+		"(retail makes the keys while parsing); (8) setTeam's redirect keeps a team without a controlling player (retail reads its player without a test)",
 		"[S-1223] FellBeastSwoopPower (lane HERO-2): the module runs (RW 0x8CB2CE / 0x8CB28B / 0x8CB194); the level attack itself is GiantBirdAIUpdate's swoop "
 		"(AI commands 0x3F / 0x40, AI vslots 0x90 / 0x94: GiantBirdAIUpdate runs as the base AI, S-222): the command is counted by the AI (aiUnported) and the "
 		"ability ends when the AI idles; AI vslot 0x1D0 is not identified",
@@ -2394,7 +2406,7 @@ std::vector<std::string> HeroAbilityModules::stopLines()
 		"right press toggle and glow are lane AUTOCAST-1's (ControlBar::rightPressButton, S-3460)",
 		"[S-1228] WeaponModeSpecialPowerUpdate and DualWeaponBehavior (lane HERO-2): the mode runs (RW 0x89841E / 0x8983B5 over the base timer RW 0x991660 / "
 		"0x991500 / 0x9913BC) and the close range switch runs (RW 0x85DF88); not ported: the firing tracker reset at the start (RW 0x8E302A, COMBAT-1's), the "
-		"RECHARGE attribute modifier of the recharge (1.0, as S-529), the initiate sound (client); INFERENCE: DualWeaponBehavior's victim without "
+		"initiate sound (client); INFERENCE: DualWeaponBehavior's victim without "
 		"UseRealVictimRange (RW 0x701443 -> 0x7006D7 flags 0x62, the AI's target search) is the closest visible alive enemy; its + 0x20 request has no writer",
 		"[S-1224] RousingSpeechUpdate (lane HERO-2): the speech runs (RW 0x8B068D / 0x8B0485 / 0x8B0A0D / 0x8B07EA); retail's update never ends the ability "
 		"(no call of finishAbility found: the base startPreparation's USING_ABILITY / SPECIAL_ABILITY_PACKING_UNPACKING_OR_USING stay set, so the hero's "

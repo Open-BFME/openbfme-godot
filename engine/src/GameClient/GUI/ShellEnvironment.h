@@ -71,6 +71,9 @@ struct ShellEnvironment
 	// OpenBFME screen's): the Options screen then opens with AllowResolutionChange off, the list disabled as retail's lobby / in-game openings leave it
 	// (stop S-3401)
 	bool resolutionChangeApplies = true;
+	// lane OPTS-5: the device offers the OpenBFME options page (AptMenuPlayer.set_openbfme_available): with AptOptionsScreen::kOpenBFMEMenu on, the
+	// Options screen opens as the one OpenBFME menu (the original game's settings among its rows), never on the retail page
+	bool openbfmeOptionsMenu = false;
 	bool shellMapOn = false;                  // lane FB7-1: GameData ShellMapOn (GlobalData + 0xAF0; Shell::showShellMap)
 	PlayerStatusInfo *playerStatus = nullptr; // lane HUD-5: the players screen's Status rows (GUI/PlayerStatusInfo.h); null: the page shows no rows and says so
 	CreateAHeroScreenContext *createAHero = nullptr; // lane CAH-1: what CreateAHero.apt edits (GUI/AptScreens/AptCreateAHero.h); null: it says so

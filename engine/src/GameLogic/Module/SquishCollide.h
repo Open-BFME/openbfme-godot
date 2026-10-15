@@ -101,6 +101,7 @@ public:
 	static void registerClass(ModuleFactory &modules);
 	CollideModuleInterface *getCollide() override { return this; }
 	void onCollide(Object *other, const Coord3D *loc, const Coord3D *normal) override; // RW 0x8BFBAE
+	bool wouldLikeToCollideWith(const Object &) const override { return false; }        // collide slot 1: RW 0x7FEAC1 (lane BACKLOG-1)
 };
 
 // HordeMemberCollide (lane HORDE-2): physical contact keeps a horde's melee alive. RW onCollide 0x8C0518 (create RW 0x650E45, the shared collide data, no fields):
@@ -121,4 +122,5 @@ public:
 	static void registerClass(ModuleFactory &modules);
 	CollideModuleInterface *getCollide() override { return this; }
 	void onCollide(Object *other, const Coord3D *loc, const Coord3D *normal) override; // RW 0x8C0518
+	bool wouldLikeToCollideWith(const Object &) const override { return false; }        // collide slot 1: RW 0x7FEAC1 (lane BACKLOG-1)
 };

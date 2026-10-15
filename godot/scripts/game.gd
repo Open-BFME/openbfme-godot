@@ -97,6 +97,11 @@
 ##     --opts2-game          (with --auto and --options-file) after --advance seconds: the game clock, the camera's scroll factor, the detail's particle limits on
 ##                           the live FX player, the health bars' mode and Brightness's gamma pass in the live game; exit 0 when all held
 ##     --opts2-size=WxH      (with --opts2-check / --opts2-game) the window's size for the screenshots (1280x720, 2560x1440)
+##     --opts4-check         the scripted check of tests/opts4_test.gd (scripts/opts4_check.gd): an open drop-down on top, the sliders' tick rows inside
+##                           their windows, the volume sliders live with their samples; --opts4-size=WxH the window, --opts4-shots=DIR the screenshots
+##     --opts5-check         the scripted check of tests/opts5_test.gd (scripts/opts5_check.gd): Options is the one OpenBFME menu, the original game's settings
+##                           among its rows (their effects, Options.ini, CANCEL / RESET), the layout rules; --opts5-size=WxH, --opts5-shots=DIR
+##     --opts5-game          (with --auto) after --advance seconds: the quit menu's Options opens the menu over the game (what may not change in a game greyed)
 ##     --opts2-shots=DIR     (with --opts2-check) opts2-<tab>-<w>x<h>.png and the Options.apt pages (the proof screenshots; a window, not --headless)
 ##     --opponents=<n>       (lane PERF-1, with --auto) slots 1..n are computers of level --ai (default 1; a 4-player map takes 3)
 ##     --warp=<seconds>      (lane PERF-1, with --auto) run the game at --warp-scale (default 8) times speed until this much game time has passed, then at normal speed
@@ -259,6 +264,13 @@ var _opts2_check := false                # lane OPTS-2: --opts2-check
 var _opts2_game := false                 # lane OPTS-2: --opts2-game
 var _opts2_shots := ""                   # lane OPTS-2: --opts2-shots=DIR
 var _opts2_size := Vector2i.ZERO         # lane OPTS-2: --opts2-size=WxH (the screenshots' window size)
+var _opts4_check := false                # lane OPTS-4: --opts4-check
+var _opts4_shots := ""                   # lane OPTS-4: --opts4-shots=DIR
+var _opts4_size := Vector2i.ZERO         # lane OPTS-4: --opts4-size=WxH
+var _opts5_check := false                # lane OPTS-5: --opts5-check
+var _opts5_game := false                 # lane OPTS-5: --opts5-game
+var _opts5_shots := ""                   # lane OPTS-5: --opts5-shots=DIR
+var _opts5_size := Vector2i.ZERO         # lane OPTS-5: --opts5-size=WxH
 var _display_game := false               # --display-game
 
 var _fs: RefCounted
@@ -459,7 +471,7 @@ var _intro := "auto"            # lane CAMP-2: --intro (on) / --no-intro (off)
 var _intro_check := false       # lane CAMP-2: --intro-check (tests): the start-up movies, then quit
 ## lane MENU-1: the options a player's own start may carry (the launcher's, the display options); any other option makes a scripted run
 const PLAYER_ARG_PREFIXES := ["--fps", "--dev-overlay", "--intro", "--no-intro", "--alternate-mouse", "--classic-mouse", "--free-camera", "--res=",
-	"--vsync=", "--max-fps=", "--movies=", "--zoom-out=", "--widescreen=", "--online-lobby="] # --zoom-out: ZOOM-1, --widescreen: UI-6, player options (PLAYING.md)
+	"--vsync=", "--max-fps=", "--movies=", "--zoom-out=", "--widescreen=", "--online-lobby=", "--no-update-check"] # --zoom-out: ZOOM-1, --widescreen: UI-6, player options (PLAYING.md)
 var _scripted_skirmish_ini := ""
 
 
@@ -544,6 +556,20 @@ func _ready() -> void:
 			_opts2_game = true
 		elif arg.begins_with("--opts2-shots="):
 			_opts2_shots = arg.substr(14)
+		elif arg == "--opts4-check":
+			_opts4_check = true
+		elif arg.begins_with("--opts4-shots="):
+			_opts4_shots = arg.substr(14)
+		elif arg.begins_with("--opts4-size="):
+			_opts4_size = Vector2i(arg.substr(13).get_slice("x", 0).to_int(), arg.substr(13).get_slice("x", 1).to_int())
+		elif arg == "--opts5-check":
+			_opts5_check = true
+		elif arg == "--opts5-game":
+			_opts5_game = true
+		elif arg.begins_with("--opts5-shots="):
+			_opts5_shots = arg.substr(14)
+		elif arg.begins_with("--opts5-size="):
+			_opts5_size = Vector2i(arg.substr(13).get_slice("x", 0).to_int(), arg.substr(13).get_slice("x", 1).to_int())
 		elif arg.begins_with("--opts2-size="):
 			_opts2_size = Vector2i(arg.substr(13).get_slice("x", 0).to_int(), arg.substr(13).get_slice("x", 1).to_int())
 		elif arg == "--check":
@@ -871,6 +897,7 @@ func _display_screen_setup() -> void:
 	_display_screen.settings_path = _display_path
 	_display_screen.overlay = _display_overlay
 	_display_screen.game_options = _game_options # lane OPTS-2: the other tabs
+	_display_screen.audio_getter = func() -> Node: return _audio # lane OPTS-4
 	add_child(_display_screen)
 
 
@@ -878,6 +905,20 @@ func _display_screen_setup() -> void:
 func _run_opts2_check() -> void:
 	var check: Object = load("res://scripts/opts2_check.gd").new()
 	var failed: int = await check.run(self, _opts2_shots)
+	get_tree().quit(0 if failed == 0 else 1)
+
+
+## lane OPTS-4: --opts4-check (scripts/opts4_check.gd)
+func _run_opts4_check() -> void:
+	var check: Object = load("res://scripts/opts4_check.gd").new()
+	var failed: int = await check.run(self, _opts4_shots)
+	get_tree().quit(0 if failed == 0 else 1)
+
+
+## lane OPTS-5: --opts5-check (scripts/opts5_check.gd)
+func _run_opts5_check() -> void:
+	var check: Object = load("res://scripts/opts5_check.gd").new()
+	var failed: int = await check.run(self, _opts5_shots)
 	get_tree().quit(0 if failed == 0 else 1)
 
 
@@ -921,6 +962,11 @@ func _fail(message: String) -> void:
 func _boot() -> void:
 	if not ClassDB.class_exists("AptMenuPlayer") or not ClassDB.class_exists("GameWorld"):
 		_fail("the openbfme extension is not loaded (or too old); " + Release.extension_hint())
+		return
+	# lane ONEZIP-1: started directly from the combined package: the launcher beside the game says which installed version plays (a few
+	# seconds at most) and looks for an update in the background
+	if await Release.update_handover(_scripted_run()):
+		get_tree().quit(0)
 		return
 	_fs = ClassDB.instantiate("RetailFileSystem")
 	# lane RELEASE-1: the environment, the remembered folders, or the first-run screen (scripts/release/release.gd)
@@ -1005,6 +1051,10 @@ func _boot() -> void:
 		_run_display_check() # lane OPTS-1
 	elif _opts2_check:
 		_run_opts2_check() # lane OPTS-2
+	elif _opts4_check:
+		_run_opts4_check() # lane OPTS-4
+	elif _opts5_check:
+		_run_opts5_check() # lane OPTS-5
 	elif _auto and not _auto_task_started:
 		_auto_task_started = true
 		_run_auto()
@@ -1115,17 +1165,22 @@ func _on_shell_service(kind: String, a: String, b: String) -> void:
 		_audio.play_music(a)
 	elif kind == "option":
 		_apply_option(a, b)
+	elif kind == "gamma":
+		# lane OPTS-5: the Options screen's brightness while its slider moves, its Reset and Cancel (TheDisplay setGamma, RW 0x91F90D / 0x91F5F3 / 0x91ECB8)
+		if _game_options != null:
+			_game_options.set_gamma(a.to_float())
 	elif kind == "tooltip" or kind == "mouse_visible" or kind == "background":
 		pass
 
 
-# lane FB7-1: an Options.ini entry the Options screen saved takes effect: the volumes (RW 0x91EC52 / 0x91FC9C: TheAudio vslot 0xE8(type, value * 0.01));
-# the movie volume has no slider in the audio device (S-1913). Lane OPTS-2: the detail level (StaticGameLOD, applied by GameLODManager), the brightness
+# lane FB7-1: an Options.ini entry the Options screen saved takes effect. Lane OPTS-4: the five volumes (RW 0x91F90D / 0x91EC52 / 0x91FC9C: TheAudio
+# vslot 0xE8(type, value * 0.01)) are set by the shell's device itself, in the installed audio manager, while a slider moves (AptMenuPlayer's
+# services; without a manager the shell's report says so). Lane OPTS-2: the detail level (StaticGameLOD, applied by GameLODManager), the brightness
 # (the display gamma), the scroll speed, the health bars and the mouse setup (scripts/game_options.gd)
-const OPTION_VOLUME_SLIDERS := {"SFXVolume": "sound", "VoiceVolume": "voice", "MusicVolume": "music", "AmbientVolume": "ambient"}
+const OPTION_VOLUME_KEYS := ["SFXVolume", "VoiceVolume", "MusicVolume", "AmbientVolume", "MovieVolume"]
 func _apply_option(key: String, value: String) -> void:
-	if OPTION_VOLUME_SLIDERS.has(key) and _audio != null:
-		_audio.set_volume(OPTION_VOLUME_SLIDERS[key], clampf(value.to_float() * 0.01, 0.0, 1.0))
+	if OPTION_VOLUME_KEYS.has(key):
+		pass
 	elif _game_options == null:
 		return
 	elif key == "StaticGameLOD" or key == "Brightness" or key == "ScrollFactor" or key == "AllHealthBars" or key == "AlternateMouseSetup":
@@ -1912,6 +1967,11 @@ func _run_auto() -> void:
 		var check2: Object = load("res://scripts/opts2_check.gd").new()
 		var failed2: int = await check2.run_game(self, _opts2_shots) # lane OPTS-2
 		get_tree().quit(0 if failed2 == 0 else 1)
+		return
+	if _opts5_game:
+		var check5: Object = load("res://scripts/opts5_check.gd").new()
+		var failed5: int = await check5.run_game(self, _opts5_shots) # lane OPTS-5
+		get_tree().quit(0 if failed5 == 0 else 1)
 		return
 	if _display_game:
 		var check: Object = load("res://scripts/opts1_check.gd").new()
@@ -2976,7 +3036,9 @@ func _walk_options_accept() -> int:
 			return failures + 1
 		await _walk_shot("options-save-%d" % visit)
 		var leave := "Accept"
-		if visit == 1:
+		if visit == 1 and _display_screen != null and _display_screen.is_open():
+			leave = "Cancel" # lane OPTS-5: Options is the OpenBFME menu (no retail Advanced page): the second visit leaves with CANCEL
+		elif visit == 1:
 			if not await _click_named_button("Advanced"):
 				_walk_fail("options-save: no Advanced button")
 				return failures + 1

@@ -60,7 +60,7 @@
 class ModuleFactory;
 class StateHasher;
 struct DamageInfo;
-struct MultiIniFieldParse;
+class MultiIniFieldParse; // lane CONTRIB-1 (GitHub #23): class, as INI.h defines it (MSVC C4099: the two keys mangle differently)
 
 struct PhysicsBehaviorModuleData : public ModuleData
 {

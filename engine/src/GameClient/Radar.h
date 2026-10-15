@@ -153,6 +153,13 @@ public:
 		Coord3D position{ 0.0f, 0.0f, 0.0f };
 	};
 	void addEvent(const Coord3D &position) { m_events.push_back(Event{ position }); }
+	// lane BACKLOG3: TheEva's event position (RW 0x5DD1F3, the object RW 0xDE3670 whose list + 0x68 the jump RW 0x5DCB28 walks; the scripts' radar event
+	// actions call it after createEvent). A new position goes to the FRONT of the list (RW 0x75991F inserts before the first node), with the logic frame
+	// (TheGameLogic + 0x40); when the list's first position is within the merge radius (+ 0x94: squared distance below its square, three axes) that node
+	// is erased first (a cursor on it goes back to the list's head). INFERENCE (stop S-1674): no writer of + 0x94 was found, as for the window + 0x90: the
+	// radius is 0 here, so nothing merges (0 > d * d is never true)
+	void noteEvaPosition(const Coord3D &position);
+	static constexpr size_t kMaxEvaPositions = 64; ///< OpenBFME's bound of the list (not retail's, S-1674)
 	const std::vector<Event> &events() const { return m_events; }
 	// RW 0x5DCB28; `now` in client frames (30 a second)
 	void tryJumpToNextEvent(TacticalView &view);
@@ -253,8 +260,17 @@ public:
 	void createEvent(const Coord3D &world, int type, float seconds = 4.0f);
 	// RW 0x6D9B4D: no new event of the type within 600 units of one created less than 10 seconds (300 client frames) ago
 	bool tryEvent(int type, const Coord3D &world);
-	// RW 0x6D9BF3: an UNDER_ATTACK event at the object (its message and EVA sound are not ported, stop S-2452)
+	// RW 0x6D9BF3: an UNDER_ATTACK event at the object; false when tryEvent refused it
 	bool tryUnderAttackEvent(const Coord3D &position);
+	// lane BACKLOG3: RW 0x6D9BF3 after a new event (BFME2 decomp attempt 0x002d8b9d.cpp Radar::tryUnderAttackEvent, tier A): the message by the object's KindOf
+	// bits: INFANTRY (8) or CAVALRY (9): HARVESTER (16) -> RADAR:HarvesterUnderAttack, else RADAR:UnitUnderAttack; else STRUCTURE (7) and
+	// MP_COUNT_FOR_VICTORY (37) -> RADAR:StructureUnderAttack; else RADAR:UnderAttack. The control bar's flash (RW 0x71C7E4) and the MiscAudio sound of each
+	// are not ported (stop S-2452)
+	static const char *underAttackLabel(const Object &object);
+	// lane BACKLOG3 (S-2452): the radar events the logic recorded since the last call (GameLogic::radarEventNotices): a script's action makes the event (4 s)
+	// and TheEva's position for every client; a finished building's event (RW 0x88E125) is the dozer's local controller's. The logic must be idle
+	void noteLogicEvents(GameLogic &logic);
+	static constexpr unsigned kNoticeLifeLogicFrames = 4 * 5; ///< 4 seconds of logic frames (5 a second): the life of the event a notice makes
 	// RW 0x67B4B7's radar half for every listed object of the local player whose attack frame (Object::radarAttackFrame) changed since the last call; the
 	// logic must be idle
 	void noteAttacks(GameLogic &logic);
@@ -300,6 +316,8 @@ private:
 	int m_nextPingId = 0;              ///< AptPalantir + 0x144
 	std::vector<Ping> m_pings;
 	unsigned m_attackStats[3] = { 0, 0, 0 }; ///< noteAttacks: calls, objects with an attack frame, of the local player
+	std::uint32_t m_noticeSeq = 0;     ///< lane BACKLOG3: the last GameLogic::RadarEventNotice applied
+	float m_evaMergeRadius = 0.0f;     ///< TheEva + 0x94 (S-1674)
 	std::map<ObjectID, UnsignedInt> m_attackSeen;
 	mutable std::map<const ThingTemplate *, std::vector<ObjectGeometry::Shape>> m_wallShapes; ///< renderOverlay's cache (templates outlive the HUD's game) ///< the attack frame each object last reported (looked up only)
 	int m_picture[4] = { 0, 0, 0, 0 };

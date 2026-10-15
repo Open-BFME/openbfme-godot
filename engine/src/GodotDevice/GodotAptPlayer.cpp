@@ -50,6 +50,9 @@
 #include "GameClient/GameText.h"
 #include "GameLogic/GameLogic.h"
 #include "GameLogic/Object/RetailObjectWorld.h"
+#include "Common/Audio/AudioEntryPoints.h"
+#include "Common/Audio/AudioLog.h"
+#include "Common/Audio/GameAudio.h"
 #include "GodotDevice/GodotGameStart.h"
 #include "GodotDevice/GodotGameWorld.h"
 #include "GodotDevice/GodotRetailFileSystem.h"
@@ -442,6 +445,64 @@ public:
 			}
 			ProjectSettings::get_singleton()->set_setting("openbfme/rendering/soft_particles", v == "yes");
 		}
+		// lane OPTS-4: a volume of the Options screen (RW 0x91F90D / 0x91EC52 / 0x91F4D1 / 0x91FC9C: TheAudio vslot 0xE8(type, value * 0.01)) is set in
+		// the installed audio manager at once, so the sounds playing follow while a slider moves
+		static const char *const kVolumeKeys[5] = { "SFXVolume", "VoiceVolume", "MusicVolume", "AmbientVolume", "MovieVolume" }; // RW 0xDA2298, by type
+		for (int t = 0; t < 5; ++t)
+		{
+			if (key == kVolumeKeys[t])
+			{
+				if (AudioManager *audio = AudioApi::current())
+				{
+					AudioLog::Scope tag("options " + key);
+					audio->setSliderVolume(t, (float)std::atof(value.c_str()) * 0.01f);
+				}
+				else
+				{
+					problems.insert("Options: no audio manager is installed, the volume " + key + " = " + value + " was not applied");
+				}
+			}
+		}
+	}
+	// lane OPTS-4: the Options screen's volume samples through the installed audio manager (TheAudio); without one the request is reported
+	std::set<std::string> problems;
+	std::uint32_t addMiscAudioEvent(const std::string &field, int viewType) override
+	{
+		AudioManager *audio = AudioApi::current();
+		if (!audio)
+		{
+			problems.insert("Options: no audio manager is installed, the sample " + field + " was not played");
+			return 0;
+		}
+		const std::string &name = audio->miscAudio(field);
+		if (name.empty())
+		{
+			return 0; // the slot is NoSound
+		}
+		AudioLog::Scope tag("options " + field);
+		const AudioHandle handle = audio->addAudioEvent(AudioEventRTS(name, viewType));
+		events.push_back({ "volume_sample", field, std::to_string((unsigned)handle) });
+		return handle >= AHSV_FirstHandle ? (std::uint32_t)handle : 0;
+	}
+	void removeAudioEvent(std::uint32_t handle) override
+	{
+		AudioManager *audio = AudioApi::current();
+		if (audio && handle >= AHSV_FirstHandle)
+		{
+			audio->removeAudioEvent((AudioHandle)handle);
+		}
+	}
+	bool isCurrentlyPlaying(std::uint32_t handle) override
+	{
+		AudioManager *audio = AudioApi::current();
+		return audio && handle >= AHSV_FirstHandle && audio->isCurrentlyPlaying((AudioHandle)handle);
+	}
+	// lane OPTS-5: TheDisplay's gamma (the brightness slider while it moves, Reset, Cancel): the device's brightness pass (game_options.gd set_gamma)
+	void setDisplayGamma(float gamma) override
+	{
+		char buf[32];
+		std::snprintf(buf, sizeof buf, "%.9g", (double)gamma);
+		events.push_back({ "gamma", buf, "" });
 	}
 };
 
@@ -1031,8 +1092,12 @@ void AptMenuPlayer::_bind_methods()
 	ClassDB::bind_method(D_METHOD("openbfme_page_events"), &AptMenuPlayer::openbfme_page_events);
 	ClassDB::bind_method(D_METHOD("openbfme_page_state"), &AptMenuPlayer::openbfme_page_state);
 	ClassDB::bind_method(D_METHOD("openbfme_page_choose", "key", "value"), &AptMenuPlayer::openbfme_page_choose);
+	ClassDB::bind_method(D_METHOD("options_retail_rows"), &AptMenuPlayer::options_retail_rows); // lane OPTS-5
+	ClassDB::bind_method(D_METHOD("openbfme_menu_finish", "accept"), &AptMenuPlayer::openbfme_menu_finish);
+	ClassDB::bind_method(D_METHOD("openbfme_menu_reset"), &AptMenuPlayer::openbfme_menu_reset);
 	ClassDB::bind_method(D_METHOD("font_metrics", "name", "point_size", "bold", "text"), &AptMenuPlayer::font_metrics); // lane UI-4
 	ClassDB::bind_method(D_METHOD("drawn_texts", "clear"), &AptMenuPlayer::drawn_texts); // lane UI-4
+	ClassDB::bind_method(D_METHOD("gadget_draw_list"), &AptMenuPlayer::gadget_draw_list); // lane OPTS-4
 	ClassDB::bind_method(D_METHOD("set_tribute_world", "world"), &AptMenuPlayer::set_tribute_world);
 	ClassDB::bind_method(D_METHOD("set_player_status", "state"), &AptMenuPlayer::set_player_status); // lane HUD-5
 	ClassDB::bind_method(D_METHOD("shell_top_level"), &AptMenuPlayer::shell_top_level);
@@ -1129,6 +1194,7 @@ void AptMenuPlayer::_process(double delta)
 		{
 			o->setExtensionAvailable(m->openbfmeAvailable);
 		}
+		m->shell->environment.openbfmeOptionsMenu = m->openbfmeAvailable; // lane OPTS-5: the next Options screen opens as the OpenBFME menu
 	}
 	tick(delta);
 	render(false);
@@ -1349,6 +1415,27 @@ Dictionary AptMenuPlayer::boot_shell(const Ref<RetailFileSystem> &fs, Object *wo
 		UtilityFunctions::print("SHELL Options.ini: ", toGodot(key), " is now ", toGodot(std::string(OptionPreferences::kSoftParticles)), " (lane OPTS-2: OpenBFME keys carry the prefix)");
 	}
 	sm->environment.options = &sm->options;
+	// lane OPTS-4: the saved volumes are in effect from the start, as ZH's AudioManager::init takes them from OptionPreferences (DONOR; RotWK's reader
+	// is RW 0x6E5FB3, its caller at start was not read: INFERENCE, S-4510). Before, the AudioSettings defaults played until the Options screen's
+	// ACCEPT or CANCEL, and CANCEL changed the volume. Without an installed audio manager (a shell viewer) nothing is applied, and the report says so
+	{
+		static const char *const kVolumeKeys[5] = { "SFXVolume", "VoiceVolume", "MusicVolume", "AmbientVolume", "MovieVolume" };
+		for (const char *key : kVolumeKeys)
+		{
+			if (!sm->options.has(key))
+			{
+				continue;
+			}
+			if (AudioApi::current())
+			{
+				sm->services.applyOption(key, sm->options.get(key));
+			}
+			else
+			{
+				sm->deviceUnverified.insert("[S-4510] Options.ini's volumes are not applied at start: no audio manager is installed");
+			}
+		}
+	}
 	// lane PLAY-2: Data\INI\GameLOD.ini (RW 0x7F995C): StaticGameLOD for the Options screen's advanced page; its other blocks are read past
 	{
 		INIEnvironment env;
@@ -1751,6 +1838,50 @@ Array AptMenuPlayer::drawn_texts(bool clear)
 	return out;
 }
 
+Array AptMenuPlayer::gadget_draw_list()
+{
+	Array out;
+	if (!m->shell || !m->shell->layer)
+	{
+		return out;
+	}
+	static const char *const kinds[] = { "image", "fill", "rect", "line", "text", "clip", "clip_end" };
+	const AptStageMapping &map = m->mapping;
+	auto box = [&map](float x0, float y0, float x1, float y1) {
+		float ax, ay, bx, by;
+		map.stageToWindow(x0, y0, ax, ay);
+		map.stageToWindow(x1, y1, bx, by);
+		return Rect2(Vector2(ax, ay), Vector2(bx - ax, by - ay));
+	};
+	GameWindowManager &gwm = m->shell->layer->gadgets();
+	const GameWindow *lone = m->shell->layer->openDropDown();
+	std::map<const GameWindow *, int> roots;
+	for (const GadgetDrawCommand &c : m->gadgets.commands)
+	{
+		Dictionary e;
+		e["kind"] = kinds[(int)c.kind];
+		e["window"] = toGodot(c.window);
+		e["rect"] = box((float)c.x0, (float)c.y0, (float)c.x1, (float)c.y1);
+		e["image"] = toGodot(c.image);
+		e["text"] = toGodot(u16ToUtf8(c.text));
+		e["lone"] = c.root != nullptr && c.root == lone;
+		int index = -1;
+		if (c.root && gwm.winIsAlive(const_cast<GameWindow *>(c.root)))
+		{
+			index = roots.emplace(c.root, (int)roots.size()).first->second;
+			int x = 0, y = 0, w = 0, h = 0;
+			const_cast<GameWindow *>(c.root)->winGetScreenPosition(&x, &y);
+			const_cast<GameWindow *>(c.root)->winGetSize(&w, &h);
+			e["root_rect"] = box((float)x, (float)y, (float)(x + w), (float)(y + h));
+			e["root_stage_rect"] = Rect2((float)x, (float)y, (float)w, (float)h);
+			e["root_name"] = toGodot(c.root->aptInstanceName().empty() ? c.root->name() : c.root->aptInstanceName());
+		}
+		e["root"] = index;
+		out.push_back(e);
+	}
+	return out;
+}
+
 bool AptMenuPlayer::set_option(const String &key, const Variant &value)
 {
 	if (!m->shell)
@@ -1807,6 +1938,7 @@ OpenBFMEPageRow pageRowOf(const Dictionary &d)
 		: kind == "choice"     ? OpenBFMEPageRow::Kind::Choice
 		: kind == "check"      ? OpenBFMEPageRow::Kind::Check
 		: kind == "slider"     ? OpenBFMEPageRow::Kind::Slider
+		: kind == "entry"      ? OpenBFMEPageRow::Kind::Entry
 							   : OpenBFMEPageRow::Kind::Text;
 	r.key = toNative(String(d.get("key", "")));
 	r.label = u16Of(d.get("label", ""));
@@ -1830,7 +1962,35 @@ OpenBFMEPageRow pageRowOf(const Dictionary &d)
 	r.maxValue = (int)d.get("max", 100);
 	r.valueText = u16Of(d.get("value_text", ""));
 	r.enabled = (bool)d.get("enabled", true);
+	r.column = (int)d.get("column", 0); // lane OPTS-5
 	return r;
+}
+
+// lane OPTS-5: a row as GDScript describes them (pageRowOf's input)
+Dictionary pageRowDict(const OpenBFMEPageRow &r)
+{
+	static const char *const kinds[] = { "section", "choice", "check", "slider", "text", "entry" };
+	Dictionary d;
+	d["kind"] = kinds[(int)r.kind];
+	d["key"] = toGodot(r.key);
+	d["label"] = toGodot(u16ToUtf8(r.label));
+	d["help"] = toGodot(u16ToUtf8(r.help));
+	Array items;
+	for (const OpenBFMEPageItem &it : r.items)
+	{
+		Dictionary id;
+		id["text"] = toGodot(u16ToUtf8(it.text));
+		id["enabled"] = it.enabled;
+		items.push_back(id);
+	}
+	d["items"] = items;
+	d["value"] = r.value;
+	d["min"] = r.minValue;
+	d["max"] = r.maxValue;
+	d["value_text"] = toGodot(u16ToUtf8(r.valueText));
+	d["enabled"] = r.enabled;
+	d["column"] = r.column;
+	return d;
 }
 
 Rect2 stageRect(const std::array<int, 4> &r)
@@ -1842,6 +2002,10 @@ Rect2 stageRect(const std::array<int, 4> &r)
 void AptMenuPlayer::set_openbfme_available(bool available)
 {
 	m->openbfmeAvailable = available;
+	if (m->shell)
+	{
+		m->shell->environment.openbfmeOptionsMenu = available; // lane OPTS-5
+	}
 	if (AptOptionsScreen *o = optionsTop(m->shell ? m->shell->shell.get() : nullptr))
 	{
 		o->setExtensionAvailable(available);
@@ -1928,7 +2092,7 @@ Array AptMenuPlayer::openbfme_page_events()
 	{
 		return out;
 	}
-	static const char *kinds[] = { "value", "tab", "cancel", "reset", "accept", "entry" };
+	static const char *kinds[] = { "value", "tab", "cancel", "reset", "accept", "entry", "release" };
 	for (const OpenBFMEPageEvent &e : o->takeExtensionEvents())
 	{
 		Dictionary d;
@@ -1946,6 +2110,8 @@ Dictionary AptMenuPlayer::openbfme_page_state() const
 	d["available"] = m->openbfmeAvailable;
 	AptOptionsScreen *o = optionsTop(m->shell ? m->shell->shell.get() : nullptr);
 	d["open"] = o && o->extensionOpen();
+	d["menu"] = o && o->menuMode(); // lane OPTS-5
+	d["page_state"] = o ? o->pageState() : 0;
 	if (!o)
 	{
 		return d;
@@ -1997,6 +2163,14 @@ Dictionary AptMenuPlayer::openbfme_page_state() const
 		rd["value"] = row.value;
 		rd["enabled"] = row.enabled;
 		rd["items"] = (int)row.items.size();
+		// lane OPTS-5: the label's text and room, the help line and the value text (the checks measure the label, read the help)
+		rd["label"] = toGodot(u16ToUtf8(row.label));
+		rd["help"] = toGodot(u16ToUtf8(row.help));
+		rd["value_text"] = toGodot(u16ToUtf8(row.valueText));
+		if (page->labelBox(row.key, r))
+		{
+			rd["label_rect"] = stageRect(r);
+		}
 		rows[toGodot(row.key)] = rd;
 	}
 	d["rows"] = rows;
@@ -2017,6 +2191,56 @@ Dictionary AptMenuPlayer::openbfme_page_choose(const String &key, int value)
 	const bool ok = o && o->extensionOpen() && o->extensionPage() && o->extensionPage()->choose(toNative(key), value, &error);
 	r["ok"] = ok;
 	r["error"] = ok ? String() : toGodot(error);
+	return r;
+}
+
+Dictionary AptMenuPlayer::options_retail_rows() const
+{
+	Dictionary out;
+	AptOptionsScreen *o = optionsTop(m->shell ? m->shell->shell.get() : nullptr);
+	if (!o)
+	{
+		return out;
+	}
+	std::map<std::string, std::string> helpLabels;
+	for (const AptOptionsScreen::RetailRow &r : AptOptionsScreen::retailRowTable())
+	{
+		helpLabels[r.key] = r.helpLabel;
+	}
+	for (const OpenBFMEPageRow &row : o->retailRows())
+	{
+		Dictionary d = pageRowDict(row);
+		d["help_label"] = toGodot(helpLabels[row.key]);
+		out[toGodot(row.key)] = d;
+	}
+	return out;
+}
+
+Dictionary AptMenuPlayer::openbfme_menu_finish(bool accept)
+{
+	Dictionary r;
+	AptOptionsScreen *o = optionsTop(m->shell ? m->shell->shell.get() : nullptr);
+	const bool ok = o && o->menuMode() && o->extensionOpen();
+	r["ok"] = ok;
+	r["error"] = ok ? String() : String(o ? "the OpenBFME menu is not open" : "Options.apt is not the top screen");
+	if (ok)
+	{
+		o->finishMenu(accept);
+	}
+	return r;
+}
+
+Dictionary AptMenuPlayer::openbfme_menu_reset()
+{
+	Dictionary r;
+	AptOptionsScreen *o = optionsTop(m->shell ? m->shell->shell.get() : nullptr);
+	const bool ok = o && o->menuMode() && o->extensionOpen();
+	r["ok"] = ok;
+	r["error"] = ok ? String() : String(o ? "the OpenBFME menu is not open" : "Options.apt is not the top screen");
+	if (ok)
+	{
+		o->resetMenu();
+	}
 	return r;
 }
 
@@ -2660,6 +2884,10 @@ Dictionary AptMenuPlayer::get_shell_report() const
 	for (const std::string &e : sm.gadgetErrors)
 	{
 		errors.push_back(toGodot("gadget draw: " + e));
+	}
+	for (const std::string &e : sm.services.problems)
+	{
+		errors.push_back(toGodot("services: " + e)); // lane OPTS-4: a volume or a sample the Options screen asked for without an audio manager
 	}
 	if (sm.profiles)
 	{
@@ -3859,7 +4087,9 @@ void AptMenuPlayer::drawGadgets(const GadgetDrawList &commands)
 	// lane MENU-1: each top-level window's commands go under its placeholder's anchor (drawCanvas); the open drop-down list (the lone window, ZH
 	// GadgetComboBox) and windows without a placeholder this frame are drawn after the movies. INFERENCE (S-3503): retail's drop-down list of a lobby
 	// combo over the rows below it was not read; it is kept on top so the rows drawn later do not cover it
-	const GameWindow *lone = sm.layer->gadgets().winGetLoneWindow();
+	// lane OPTS-4: only while its list shows: a combo box that stayed the lone window after a choice (ZH) is drawn at its placeholder's depth again, so
+	// it no longer shows through a pop-up placed over it later (the known issue of S-1914)
+	const GameWindow *lone = sm.layer->openDropDown();
 	const GameWindow *currentRoot = nullptr;
 	bool firstCommand = true;
 	m->unanchoredGadgets = 0;

@@ -145,6 +145,7 @@ include(cmake/Selperf1.cmake)   # SELPERF-1: the selection's frame cost (client 
 include(cmake/Anim1.cmake)      # OPENBFME_ANIM1_TESTS (lane ANIM-1: combat animation)
 include(cmake/Win1.cmake)       # WIN-1: the MSVCR71 real parser (appends to OPENBFME_SIM_SOURCES; OPENBFME_WIN1_TESTS: cross-OS lockstep)
 include(cmake/Garrison3.cmake)  # GARRISON-3: the garrison exit (OPENBFME_GARRISON3_TESTS)
+include(cmake/Backlog1.cmake)   # BACKLOG-1: garrison / enter / exit / allied clearing from the BFME2 decomp (OPENBFME_BACKLOG1_TESTS)
 include(cmake/Combat3.cmake)    # COMBAT-3: cavalry charges and siege crews (OPENBFME_COMBAT3_TESTS)
 include(cmake/Combat4.cmake)    # COMBAT-4: shockwaves, siege crews in motion, corpses (OPENBFME_COMBAT4_TESTS)
 include(cmake/Hud4.cmake)       # HUD-4: every command reachable, every hotkey (appends to OPENBFME_SIM_SOURCES; OPENBFME_HUD4_TESTS)
@@ -156,6 +157,7 @@ include(cmake/Hud7.cmake)       # HUD-7: a tester's HUD items (OPENBFME_HUD7_TES
 include(cmake/Exit1.cmake)      # EXIT-1: the horde member update, stale MOVING (appends to OPENBFME_SIM_SOURCES; OPENBFME_EXIT1_TESTS)
 include(cmake/Decomp2.cmake)    # DECOMP-2: stops closed with the BFME2 decomp map (OPENBFME_DECOMP2_TESTS)
 include(cmake/Decomp3.cmake)    # DECOMP-3: the skirmish AI's player info record (OPENBFME_DECOMP3_TESTS)
+include(cmake/Backlog6.cmake)   # BACKLOG6: the AI's fortress rebuild, builder update and AIGroup gate (OPENBFME_BACKLOG6_TESTS)
 include(cmake/Decomp1.cmake)    # DECOMP-1: stops closed with the decompilation's progress (appends to OPENBFME_SIM_SOURCES; OPENBFME_DECOMP1_TESTS)
 include(cmake/Play1.cmake)      # PLAY-1: the tribute, the placement ghost (appends to OPENBFME_SIM_SOURCES; OPENBFME_PLAY1_SOURCES / _TESTS)
 include(cmake/Cah1.cmake)       # CAH-1: the Create-a-Hero screens (client only; OPENBFME_CAH1_SOURCES / _GODOT_SOURCES / _TESTS)
@@ -174,9 +176,11 @@ include(cmake/FactC.cmake)      # FACT-C: the Goblins / Angmar content through t
 include(cmake/Bugs1.cmake)      # BUGS-1: backlog bugs (production exits, hero requests; OPENBFME_BUGS1_TESTS)
 include(cmake/Save2.cmake)      # SAVE-2: the command-log save (OPENBFME_SAVE2_CLIENT_SOURCES / _TESTS)
 include(cmake/Fly1.cmake)       # FLY-1: the GIANT_BIRD flyers (appends to OPENBFME_SIM_SOURCES; OPENBFME_FLY1_TESTS)
+include(cmake/Backlog4.cmake)  # BACKLOG4: the teleport forms, the special power runtime, defection (OPENBFME_BACKLOG4_TESTS)
 include(cmake/Ship1.cmake)      # SHIP-1: ships and hover units (OPENBFME_SHIP1_TESTS)
 include(cmake/RenderWait1.cmake) # RENDERWAIT-1: the render never waits on the logic worker (OPENBFME_RENDERWAIT1_TESTS)
 include(cmake/Backlog2.cmake)   # BACKLOG2: castle / camp / construction ports (appends to OPENBFME_SIM_SOURCES; OPENBFME_BACKLOG2_TESTS)
+include(cmake/Contrib1.cmake)   # CONTRIB-1: the known RotWK 2.01 layouts, Data1.big by its entries (OPENBFME_CONTRIB1_TESTS)
 add_library(openbfme_core STATIC
     ${OPENBFME_PLAY2_SOURCES}
     ${OPENBFME_APT_SOURCES}
@@ -595,6 +599,7 @@ add_executable(openbfme_tests
     ${OPENBFME_UI6_TESTS}
     ${OPENBFME_SELPERF1_TESTS}
     ${OPENBFME_GARRISON3_TESTS}
+    ${OPENBFME_BACKLOG1_TESTS}
     ${OPENBFME_COMBAT3_TESTS}
     ${OPENBFME_COMBAT4_TESTS}
     ${OPENBFME_HUD4_TESTS}
@@ -602,6 +607,7 @@ add_executable(openbfme_tests
     ${OPENBFME_EXIT1_TESTS}
     ${OPENBFME_DECOMP2_TESTS}
     ${OPENBFME_DECOMP3_TESTS}
+    ${OPENBFME_BACKLOG6_TESTS}
     ${OPENBFME_DECOMP1_TESTS}
     ${OPENBFME_PLAY1_TESTS}
     ${OPENBFME_HUD5_TESTS}
@@ -619,10 +625,12 @@ add_executable(openbfme_tests
     ${OPENBFME_FACTA_TESTS}
     ${OPENBFME_FACTC_TESTS}
     ${OPENBFME_BUGS1_TESTS}
+    ${OPENBFME_BACKLOG4_TESTS}
     ${OPENBFME_FLY1_TESTS}
     ${OPENBFME_SHIP1_TESTS}
     ${OPENBFME_RENDERWAIT1_TESTS}
     ${OPENBFME_BACKLOG2_TESTS}
+    ${OPENBFME_CONTRIB1_TESTS}
     tests/test_main.cpp
     tests/test_big_archive.cpp
     tests/test_archive_order.cpp

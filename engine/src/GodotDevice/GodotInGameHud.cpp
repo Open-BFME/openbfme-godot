@@ -195,6 +195,8 @@ struct HudDevice : public AptNativeHook
 	int localPlayerIndex = -1;                   ///< SMOOTH-1: the local player's index (the radar's own blips, from the snapshot)
 	std::vector<Ref<InputEvent>> pendingInput;   ///< SMOOTH-1: input that arrived while the logic worker ran a frame, replayed in order when it is idle
 	unsigned long long deferredInput = 0;
+	unsigned long long droppedInput = 0, focusResets = 0; ///< lane BACKLOG3: queued presses dropped at a focus loss, the focus losses
+	bool holdInput = false;                               ///< lane BACKLOG3 (QA): hold_input
 
 	std::unique_ptr<AptArchiveFileSource> source;
 	std::unique_ptr<AptTextureStore> textures;
@@ -1157,6 +1159,8 @@ void InGameHudNode::_bind_methods()
 	ClassDB::bind_method(D_METHOD("inject_mouse_move", "position"), &InGameHudNode::inject_mouse_move);
 	ClassDB::bind_method(D_METHOD("inject_mouse_button", "button", "down", "position", "double_click"), &InGameHudNode::inject_mouse_button, DEFVAL(false));
 	ClassDB::bind_method(D_METHOD("inject_key", "dik_code", "down"), &InGameHudNode::inject_key);
+	ClassDB::bind_method(D_METHOD("hold_input", "on"), &InGameHudNode::hold_input);                 // lane BACKLOG3 (QA)
+	ClassDB::bind_method(D_METHOD("set_input_enabled", "on"), &InGameHudNode::set_input_enabled); // lane BACKLOG3 (QA)
 	ClassDB::bind_method(D_METHOD("inject_mouse_wheel", "notches", "position"), &InGameHudNode::inject_mouse_wheel);
 	ClassDB::bind_method(D_METHOD("get_camera"), &InGameHudNode::get_camera);
 	ClassDB::bind_method(D_METHOD("set_edge_scroll", "on"), &InGameHudNode::set_edge_scroll);
@@ -1975,6 +1979,10 @@ Dictionary InGameHudNode::get_state() const
 		keys["key_state"] = d->keyState;
 		keys["key_events"] = (int64_t)d->keyEvents;
 		keys["deferred"] = (int64_t)d->deferredInput;
+		keys["pending"] = (int64_t)d->pendingInput.size(); // lane BACKLOG3
+		keys["dropped"] = (int64_t)d->droppedInput;
+		keys["focus_resets"] = (int64_t)d->focusResets;
+		keys["input_enabled"] = ui.getInputEnabled();
 		keys["map_records"] = (int64_t)d->meta.records().size();
 		keys["german"] = mt.germanKeyboard();
 		PackedStringArray recent;
@@ -2394,7 +2402,7 @@ void InGameHudNode::_process(double delta)
 	Viewport *vp = get_viewport();
 	const Vector2 window = vp ? vp->get_visible_rect().get_size() : Vector2(1024, 768);
 	d->hud->setWindowSize((int)window.x, (int)window.y);
-	if (!d->pendingInput.empty() && d->world && d->world->hud_game() && d->world->hud_game()->logicHeld()) // RENDERWAIT-1: the client window (or an idle worker)
+	if (!d->holdInput && !d->pendingInput.empty() && d->world && d->world->hud_game() && d->world->hud_game()->logicHeld())
 	{
 		std::vector<Ref<InputEvent>> events;
 		events.swap(d->pendingInput);
@@ -2770,6 +2778,48 @@ void InGameHudNode::syncModifiers(const InputEventWithModifiers *e)
 	}
 }
 
+// lane BACKLOG3 (S-454): a key held when the window loses the focus never sends its release here. ZH's Keyboard::resetKeys runs then; the LookAt translator's
+// tick (RW 0x83BAF8) drops the scroll / rotate / zoom keys the keyboard no longer has down, so the camera stops. Client state only (HudInput's key table).
+// Review r1 (Sol): input that waited for the logic worker (pendingInput) is replayed after this reset, so a press queued before the focus went would
+// set its key again with no release to follow: the queued PRESSES (keys and mouse buttons) are dropped here. Queued releases and pointer moves stay: they
+// only end what the HUD already holds
+void InGameHudNode::_notification(int what)
+{
+	if ((what == NOTIFICATION_WM_WINDOW_FOCUS_OUT || what == NOTIFICATION_APPLICATION_FOCUS_OUT) && d && d->ready && d->hud)
+	{
+		std::vector<Ref<InputEvent>> kept;
+		for (const Ref<InputEvent> &e : d->pendingInput)
+		{
+			const InputEventKey *k = Object::cast_to<InputEventKey>(e.ptr());
+			const InputEventMouseButton *b = Object::cast_to<InputEventMouseButton>(e.ptr());
+			if ((k && k->is_pressed()) || (b && b->is_pressed()))
+			{
+				++d->droppedInput;
+				continue;
+			}
+			kept.push_back(e);
+		}
+		d->pendingInput.swap(kept);
+		d->hud->input().resetKeys();
+		++d->focusResets;
+	}
+}
+
+// lane BACKLOG3 (QA, review r1): _input queues every event as it does while the logic worker runs a frame, until released (the focus test's deferred presses)
+void InGameHudNode::hold_input(bool on)
+{
+	d->holdInput = on;
+}
+
+// lane BACKLOG3 (QA): InGameUI's input flag, as the scripts' DISABLE_INPUT / ENABLE_INPUT set it in retail (InGameUI + 0x810, RW 0x69B6A8)
+void InGameHudNode::set_input_enabled(bool on)
+{
+	if (d->ready && d->hud)
+	{
+		d->hud->input().ui().setInputEnabled(on);
+	}
+}
+
 void InGameHudNode::_input(const Ref<InputEvent> &event)
 {
 	if (!d->ready || event.is_null())
@@ -2784,7 +2834,7 @@ void InGameHudNode::_input(const Ref<InputEvent> &event)
 		d->livePointer = m->get_position(); // lane BUILD-5 r3: presentation only (the placement ghost's pose); the event itself may still wait
 	}
 	LiveGame *game = d->world ? d->world->hud_game() : nullptr;
-	if (game && (!game->logicHeld() || !d->pendingInput.empty())) // RENDERWAIT-1: held: the client window (or an idle worker)
+	if (d->holdInput || (game && (!game->logicHeld() || !d->pendingInput.empty())))
 	{
 		d->pendingInput.push_back(event);
 		++d->deferredInput;

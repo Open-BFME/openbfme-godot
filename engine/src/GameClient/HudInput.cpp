@@ -74,10 +74,19 @@ void HudInput::mouseButton(Button button, bool down, int x, int y, int keyState,
 
 void HudInput::key(int key, int keyState, char32_t character)
 {
+	m_keyDown[key & 0xFF] = (keyState & KEY_STATE_UP) == 0; // lane BACKLOG3
 	ClientMessage &m = m_stream.append((keyState & KEY_STATE_UP) ? CMSG_RAW_KEY_UP : CMSG_RAW_KEY_DOWN);
 	m.appendInteger(key);
 	m.appendInteger(keyState);
 	m.appendInteger((int)character);
+}
+
+void HudInput::resetKeys()
+{
+	for (bool &k : m_keyDown)
+	{
+		k = false;
+	}
 }
 
 void HudInput::mouseWheel(int spin, int x, int y)
@@ -91,6 +100,7 @@ void HudInput::attachCamera(TacticalCamera &camera)
 {
 	m_camera = &camera;
 	m_lookAt = std::make_unique<LookAtTranslator>(m_ctx, camera);
+	m_lookAt->setKeyboard([this](int key) { return isKeyDown(key); }); // lane BACKLOG3
 	m_stream.attachTranslator(m_lookAt.get(), 60); // ZH GameClient.cpp: LookAtTranslator 60 (RW 0x646BC6 pushes 0x3C)
 }
 
@@ -238,7 +248,7 @@ std::vector<std::string> HudInput::acceptanceStops()
 		"stance keys and view last radar event: S-1673 / S-1674, lane HUD-4; sell, the spell store, diplomacy, screenshot, camera reset and the no-op cases: lane INPUT-1); "
 		"select next / previous unit and worker have no case in RotWK and do nothing (S-1673); CommandTranslator::unportedMeta() counts the cases whose effect is not "
 		"ported (chat, control bar toggle, cheer, beacon, order synchronize, planning, fast forward, the camera key flags); TOGGLE_ATTACKMOVE has no case in RotWK (a retail no-op: "
-		"A is the Attack Move button's hotkey); BEGIN_ / END_FORCEATTACK set the force-attack mode as ZH does (S-1675); ORDERMODE sends MSG_CHANGE_ORDERMODE, the "
+		"A is the Attack Move button's hotkey); BEGIN_ / END_FORCEATTACK set the force-attack mode as ZH does, an OpenBFME addition: RotWK's table sends them to the default case (S-1675; its Ctrl + left press is S-4360); ORDERMODE sends MSG_CHANGE_ORDERMODE, the "
 		"logic stores the order mode, whose AiOrdersManager queue is not ported (S-281: the orders ignore it)",
 
 		"[S-288] selection filters: the shroud (VIS-1) is not applied to what a pick or a drag may select (an enemy's invisible, undetected object is not picked: lane STEALTH-1, "
@@ -283,9 +293,15 @@ std::vector<std::string> HudInput::stops() const
 				  "MSG_CHANGE_STANCE 2 / 1 / 3 (RW 0x8201F5 .. 0x820247); Shift+Up / Shift+Down (and the unit cycle keys) have no handler in RotWK 2.01 and pass "
 				  "unexecuted, as there");
 	// lane INPUT-1 r3
-	out.push_back("[S-1675] force attack (INFERENCE): Ctrl (BEGIN_ / END_FORCEATTACK) sets InGameUI's force-attack mode as ZH's CommandXlat.cpp:3483 does; RotWK's "
-				  "activation path was not recovered (its meta jump table RW 0x8207A0 and BFME2 1.06's send 0x74 / 0x75 to the default case, the setter RW 0x69AD1F has "
-				  "no reference, every other write of InGameUI + 0x8B8 clears it); the mode's readers are RotWK's (RW 0x81FBBC -> 0x81E4B5, RW 0x81DB0C)");
+	// lane INPUT-1 r3, restated by lane BACKLOG3 with the binary's facts
+	out.push_back("[S-1675] force attack (an OpenBFME addition, NOT retail): Ctrl (BEGIN_ / END_FORCEATTACK) sets InGameUI's force-attack mode as ZH's CommandXlat.cpp:3483 "
+				  "does. TARGET FACT: RotWK 2.01 never turns the mode on (its meta jump table RW 0x8207A0 sends 0x74 / 0x75 to the default case beside the inlined "
+				  "setters of force move, waypoints and prefer selection; the setter RW 0x69AD1F has no reference, every other store to InGameUI + 0x8B8 clears it); "
+				  "the mode's readers are RotWK's (RW 0x81FBBC -> 0x81E4B5, RW 0x81DB0C). Kept because it was released; the owner decides whether it stays");
+	out.push_back("[S-4360] Ctrl + left button (lane BACKLOG3): RotWK's SelectionTranslator tests TheKeyboard's Ctrl at the left button's press (RW 0x83CA72 -> RW "
+				  "0x63F135), sets InGameUI + 0x924 and collects the pointer's points (RW 0x6A091A: a list at + 0x910 with its bounds at + 0x914, a new point every "
+				  "third of the drag tolerance); at the release RW 0x6A0A5E walks the drawables with the test RW 0x69CBBE against those points (fewer than three "
+				  "points or an empty box: the pick at the box). Not ported: a Ctrl + drag is the plain box selection here, and Ctrl is the force-attack key (S-1675)");
 	if (m_camera)
 	{
 		for (const std::string &s : TacticalCamera::acceptanceStops())

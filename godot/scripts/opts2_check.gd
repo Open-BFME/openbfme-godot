@@ -9,7 +9,14 @@
 ##   * no label text is green: the colours the page's text is drawn in (AptMenuPlayer.drawn_texts), and (in a window) the pixels of every text of every tab.
 ## Prints "OPTS2 <name>: ok" / "OPTS2 <name>: FAIL <why>" and "OPTS2 RESULT: <n> ok, <m> failed"; run() returns the failures. tests/opts2_test.gd runs it
 ## headless; a windowed run with --opts2-shots=DIR writes the screenshots at the window's size (opts2-<tab>-<w>x<h>.png, opts2-options-*.png).
+## Lane OPTS-5: Options IS the OpenBFME menu (AptOptionsScreen::kOpenBFMEMenu): it opens on the page, the retail pages are not reachable, ACCEPT /
+## CANCEL close Options; the original game's settings are the page's "Retail.*" rows (Scroll Speed on Camera), written by RotWK's Save.
 extends RefCounted
+
+## the keys RotWK's Save writes (RW 0x91FC9C .. 0x9205AA): the menu's ACCEPT writes them too
+const RETAIL_SAVE_KEYS := ["Brightness", "ScrollFactor", "SFXVolume", "VoiceVolume", "MusicVolume", "AmbientVolume", "MovieVolume", "AllHealthBars",
+	"UseEAX3", "SendDelay", "AudioLOD", "GameSpyIPAddress", "FirewallPortOverride", "StaticGameLOD", "ModelLOD", "AnimationLOD", "EffectsLOD", "ShadowLOD",
+	"TerrainLOD", "WaterLOD", "TextureQualityLOD", "ShaderLOD", "DecalLOD", "AlternateMouseSetup"]
 
 var game: Node
 var shell: Node
@@ -52,49 +59,17 @@ func run(p_game: Node, p_shots: String) -> int:
 	check("the W3D textures take the level's texture reduction (%d)" % int(detail.texture_reduction),
 		ClassDB.class_call_static("GameWorld", "get_texture_reduction") == int(detail.texture_reduction), str(ClassDB.class_call_static("GameWorld", "get_texture_reduction")))
 
-	# 2. Options.apt, both pages, and the OPENBFME button over it
-	var main_level: int = shell.shell_top_level()
-	for b in ["OptionsNav", "OptionsNav.Settings"]:
-		if not await game._click_button(main_level, b):
-			check("open Options", false, "cannot press " + b)
-			return finish()
-		await game._step(60)
-	for i in 30:
-		if top() == "Options.apt" and screen.entry_visible():
-			break
-		await game._step(15)
-	check("Options.apt is up with the OPENBFME button", top() == "Options.apt" and screen.entry_visible(), str(shell.shell_stack()))
-	await game._step(120)
-	await shot("opts2-options-basic")
-	await _green_image_check("Options.apt's basic page")
-	if await game._click_named_button("Advanced"):
-		await game._step(150)
-		await shot("opts2-options-advanced")
-		check("Options.apt's advanced page opens (the detail level's nine settings)", true, "")
-		if await game._click_named_button("Done"):
-			await game._step(200)
-			await game._wait_main_ready()
-	else:
-		check("Options.apt's advanced page opens", false, "no Advanced button")
-	# Done saved and closed Options (RW 0x9205A3 with AdvancedOnly 0 goes back to the basic page, which Save then closes); open it again
-	if top() != "Options.apt":
-		await game._wait_main_ready()
-		main_level = shell.shell_top_level()
-		for b in ["OptionsNav", "OptionsNav.Settings"]:
-			await game._click_button(main_level, b)
-			await game._step(60)
-		for i in 30:
-			if top() == "Options.apt" and screen.entry_visible():
-				break
-			await game._step(15)
-		await game._step(120)
+	# 2. Options.apt: the OpenBFME menu at once (lane OPTS-5)
 	var retail_after_apt := FileAccess.get_file_as_string(file)
+	if not await open_options():
+		check("Options opens on the OpenBFME menu", false, str(shell.shell_stack()))
+		return finish()
+	await _green_image_check("the Options menu")
 
 	# 3. the OpenBFME page: the tabs (lane OPTS-3: a page of Options.apt, its tabs clicked as a player clicks them)
-	await click_stage(screen.entry_rect().get_center())
 	await game._step(10)
 	check("the page is the shell's own drawing (no Godot Control of the former screen)", screen.get_child_count() == 0, str(screen.get_children()))
-	check("the OPENBFME button opens the page on its Display tab", screen.is_open() and screen.current_tab() == "Display" and page().get("open", false),
+	check("Options opens the page on its Display tab", screen.is_open() and screen.current_tab() == "Display" and page().get("open", false),
 		"open %s tab %s" % [screen.is_open(), screen.current_tab()])
 	if not screen.is_open():
 		return finish()
@@ -108,14 +83,14 @@ func run(p_game: Node, p_shots: String) -> int:
 			game._mouse_event((tabs[(screen.TABS.find(tab) + 1) % tabs.size()] as Rect2).get_center(), false, false)
 		await game._step(8)
 		check("the %s tab shows" % tab, screen.current_tab() == tab and int(page().get("tab", -1)) == screen.TABS.find(tab), screen.current_tab())
-		await shot("opts2-%s-%dx%d" % [tab.replace("+", "plus").to_lower(), root.size.x, root.size.y])
+		await shot("opts2-%s-%dx%d" % [tab.to_lower(), root.size.x, root.size.y])
 		_text_colours_check(tab)
 		await _green_pixels_check(tab)
 	check("the Controls tab lists the CommandMap's hot keys (%d) in a list box" % screen.hotkey_count(), screen.hotkey_count() >= 20 and page().has("list"),
 		str(screen.hotkey_count()))
 
 	# lane UBER-1: the Uber performance mode row, its warning in the help line under the pointer
-	await click_tab("Graphics+")
+	await click_tab("Performance")
 	var uber_rows: Dictionary = page().get("rows", {})
 	if uber_rows.has("OpenBFMEUberPerformance") and uber_rows["OpenBFMEUberPerformance"].has("rect"):
 		game._mouse_event((uber_rows["OpenBFMEUberPerformance"].rect as Rect2).get_center() + Vector2(-200, 0), false, false)
@@ -124,10 +99,10 @@ func run(p_game: Node, p_shots: String) -> int:
 		check("the Uber performance mode row warns in its help line", help.begins_with("Not compatible with the original game"), help)
 		await shot("opts2-uber-help-%dx%d" % [root.size.x, root.size.y])
 	else:
-		check("the Uber performance mode row is on the Graphics+ tab", false, str(uber_rows.keys()))
+		check("the Uber performance mode row is on the Performance tab", false, str(uber_rows.keys()))
 
 	# 4. the extras through their gadgets, applied at once
-	await click_tab("Graphics+")
+	await click_tab("Graphics")
 	await select("OpenBFMEAntiAliasing", 3) # MSAA 4x
 	check("anti-aliasing MSAA 4x is applied to the window", root.msaa_3d == Viewport.MSAA_4X and screen.extra_value("OpenBFMEAntiAliasing") == "msaa4", str(root.msaa_3d))
 	await select("OpenBFMEAntiAliasing", 1) # FXAA
@@ -146,15 +121,15 @@ func run(p_game: Node, p_shots: String) -> int:
 	await click_row("OpenBFMEGameClock")
 	check("the game clock box ticks (a click on the retail check box)", screen.extra_value("OpenBFMEGameClock") == "yes", str(screen.extra_value("OpenBFMEGameClock")))
 	await click_tab("Camera")
-	await select("ScrollFactor", 70)
+	await select("Retail.ScrollSpeed", 70)
 	await select("OpenBFMEEdgeScroll", 1)
-	check("the camera's values are pending", screen.extra_value("ScrollFactor") == "70" and screen.extra_value("OpenBFMEEdgeScroll") == "always",
-		"%s %s" % [screen.extra_value("ScrollFactor"), screen.extra_value("OpenBFMEEdgeScroll")])
+	check("the camera's values are pending", int(page().rows["Retail.ScrollSpeed"].value) == 70 and screen.extra_value("OpenBFMEEdgeScroll") == "always",
+		"%s %s" % [page().rows["Retail.ScrollSpeed"].value, screen.extra_value("OpenBFMEEdgeScroll")])
 	await game._step(10)
 	await shot("opts2-changed-camera")
 	await click_bar("accept")
-	check("ACCEPT closes the page, back on Options' basic page", not screen.is_open() and top() == "Options.apt" and not page().get("open", true)
-		and shell.options_page() == 1 and screen.entry_visible(), "open %s, stack %s, page %d" % [screen.is_open(), shell.shell_stack(), shell.options_page()])
+	await game._step(90)
+	check("ACCEPT closes Options (the main menu again)", not screen.is_open() and top() != "Options.apt", "open %s, stack %s" % [screen.is_open(), shell.shell_stack()])
 
 	# 5. Options.ini: the new entries carry the prefix (or are the mirrored retail keys), the retail lines that were there are unchanged
 	var after := FileAccess.get_file_as_string(file)
@@ -165,13 +140,13 @@ func run(p_game: Node, p_shots: String) -> int:
 		if before_lines.has(line):
 			continue
 		var key := line.get_slice(" = ", 0)
-		if not key.begins_with("OpenBFME") and not options.RETAIL_KEYS.has(key):
+		if not key.begins_with("OpenBFME") and not RETAIL_SAVE_KEYS.has(key):
 			changed.append(line)
-	check("every entry the screen wrote is OpenBFME-prefixed or a mirrored retail key", changed.is_empty(), str(changed))
+	check("every entry the menu wrote is OpenBFME-prefixed or one RotWK's Save writes", changed.is_empty(), str(changed))
 	var lost := PackedStringArray()
 	for line in before_lines:
 		var key := line.get_slice(" = ", 0)
-		if not options.RETAIL_KEYS.has(key) and not after_lines.has(line):
+		if not RETAIL_SAVE_KEYS.has(key) and not after_lines.has(line):
 			lost.append(line)
 	check("the other retail entries are unchanged (%d)" % before_lines.size(), lost.is_empty(), str(lost))
 	for pair in [["OpenBFMEAntiAliasing", "fxaa"], ["OpenBFMEAnisotropic", "16x"], ["OpenBFMELook", "enhanced"], ["OpenBFMEMasterVolume", "50"],
@@ -180,17 +155,19 @@ func run(p_game: Node, p_shots: String) -> int:
 	check("the file is sorted ZH-style (\"key = value\" lines in key order)", _sorted(after_lines), "")
 
 	# 6. CANCEL puts back what was in effect; RESET TO DEFAULTS gives retail behaviour
-	await click_stage(screen.entry_rect().get_center())
-	await click_tab("Graphics+")
+	await open_options()
+	await click_tab("Graphics")
 	await select("OpenBFMEAntiAliasing", 3)
 	await select("OpenBFMELook", 0)
 	await click_bar("cancel")
 	check("CANCEL restores the anti-aliasing and the look", root.screen_space_aa == Viewport.SCREEN_SPACE_AA_FXAA and root.msaa_3d == Viewport.MSAA_DISABLED
 		and env.tonemap_mode == Environment.TONE_MAPPER_AGX, "aa %d msaa %d tonemap %d" % [root.screen_space_aa, root.msaa_3d, env.tonemap_mode])
 	check("CANCEL writes nothing", FileAccess.get_file_as_string(file) == after, "")
-	await click_stage(screen.entry_rect().get_center())
+	await game._step(90)
+	await open_options()
 	await click_bar("reset")
 	await click_bar("accept")
+	await game._step(90)
 	var reset := _lines(FileAccess.get_file_as_string(file))
 	check("RESET TO DEFAULTS then ACCEPT: retail behaviour (no anti-aliasing, the original look, the full master volume)", reset.has("OpenBFMEAntiAliasing = off")
 		and reset.has("OpenBFMELook = original") and reset.has("OpenBFMEMasterVolume = 100") and root.msaa_3d == Viewport.MSAA_DISABLED
@@ -332,6 +309,23 @@ static func _strcmp(a: String, b: String) -> int:
 		if x[i] != y[i]:
 			return x[i] - y[i]
 	return x.size() - y.size()
+
+
+## lane OPTS-5: the main menu's OptionsNav -> Settings, then the OpenBFME menu (Options.apt opens on it)
+func open_options() -> bool:
+	await game._wait_main_ready()
+	var main_level: int = shell.shell_top_level()
+	for b in ["OptionsNav", "OptionsNav.Settings"]:
+		if not await game._click_button(main_level, b):
+			check("open Options", false, "cannot press " + b)
+			return false
+		await game._step(60)
+	for i in 30:
+		if top() == "Options.apt" and screen.is_open():
+			break
+		await game._step(15)
+	await game._step(30)
+	return screen.is_open()
 
 
 func top() -> String:

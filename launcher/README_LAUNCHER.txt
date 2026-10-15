@@ -7,6 +7,9 @@ Witch-king 2.01. OpenBFME runs on YOUR OWN copies of The Rise of the Witch-king 
 the first time, it asks where they are.
 
 Start it: @START@
+This download holds the launcher and the game together: the game is ready to play, with no first download. Start either
+one; both keep OpenBFME up to date. The game, started directly, asks the launcher to look for an update in the background
+(it says what it found in the top right corner of its menu) and uses a newer version from your next start.
 Press Play to start the newest installed version. At every start (and every hour while it stays open) the launcher looks
 for a newer version of your channel (Stable, or Alpha for the alpha test builds; until you pick one, an alpha or preview
 launcher uses Alpha), downloads it in the background, checks it and installs it; Play keeps working meanwhile and the new
@@ -43,7 +46,8 @@ Where it stores files
 ---------------------
   Linux:   ~/.local/share/OpenBFMELauncher
   Windows: %APPDATA%\OpenBFMELauncher
-    versions\<version>\   the installed versions (the two newest are kept, and the one you picked)
+    versions\<version>\   the installed versions (the two newest are kept, and the one you picked); the game that
+                         came in this download stays in its own folder and is never changed by an update
     downloads\            downloads in progress (resumed next time)
     cache\                the last release list and the checked manifests
     launcher.log          what the launcher did (attach it to a bug report; your home folder is written as ~)
@@ -53,4 +57,4 @@ launcher is kept as OpenBFMELauncher(.exe).old until the new one has started onc
 start after an update, rename that .old file back to the launcher's name. Keep the launcher in a folder you can
 write to.
 
-Remove everything: delete the launcher's folder and the data folder above.
+Remove everything: delete this folder and the data folder above.

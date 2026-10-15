@@ -177,7 +177,8 @@ bool RelayLog::assemble(const RelayLogFile &log, const NetworkConfig &config, As
 	Assembled a;
 	a.leaveFrame.fill(0xFFFFFFFFu);
 	a.joinFrame.fill(0);
-	constexpr UnsignedInt kNever = 0xFFFFFFFFu;
+	// lane CONTRIB-1 (GitHub #23): static, so the local structs below may name it; MSVC 19.44 refused the automatic one in a default member initializer (C2065)
+	static constexpr UnsignedInt kNever = 0xFFFFFFFFu;
 	struct FrameOfSlot
 	{
 		int count = -1; ///< FRAMEINFO

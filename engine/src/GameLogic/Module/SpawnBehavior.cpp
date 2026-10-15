@@ -406,6 +406,23 @@ UpdateSleepTime SpawnBehavior::update()
 	return UPDATE_SLEEP_NONE;
 }
 
+// lane BACKLOG4: RW 0x86327C (spawn interface slot 12)
+void SpawnBehavior::reclaimDueOrphans()
+{
+	const unsigned now = getObject()->logic().getFrame();
+	for (auto it = m_replacementFrames.begin(); it != m_replacementFrames.end();)
+	{
+		if (now > *it && reclaimOrphan()) // RW 0x863295 .. 0x8632A2
+		{
+			it = m_replacementFrames.erase(it);
+		}
+		else
+		{
+			++it;
+		}
+	}
+}
+
 void SpawnBehavior::onSpawnDeath(ObjectID deadSpawn, const DieModuleInterface::Event *info)
 {
 	// RW 0x862DAB

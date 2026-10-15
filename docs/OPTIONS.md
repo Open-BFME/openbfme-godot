@@ -1,4 +1,4 @@
-# Options (lane OPTS-2)
+# Options (lanes OPTS-2 .. OPTS-5)
 
 RotWK 2.01's Options menu, every control and every `Options.ini` key the game
 reads or writes, with what each one does in OpenBFME. Then the OpenBFME
@@ -31,8 +31,7 @@ Save RW 0x91FC9C, Reset RW 0x91F4D1, Cancel RW 0x91EC52.
 
 | Control (gadget) | Options.ini key, getter | Effect in RotWK | OpenBFME |
 |---|---|---|---|
-| Music / Sound FX / Voice / Ambient sliders | `MusicVolume`, `SFXVolume`, `VoiceVolume`, `AmbientVolume` (`%f`, RW 0x6E5FB3 / 0x6E68F6) | TheAudio vslot 0xE8 on Save / Cancel | applied (FB7-1) |
-| Movie slider | `MovieVolume` | the movie's volume | disabled (greyed; value kept): the movies' sound is audio events, no separate volume (S-1913) |
+| Music / Sound FX / Voice / Ambient / Movie sliders | `MusicVolume`, `SFXVolume`, `VoiceVolume`, `AmbientVolume`, `MovieVolume` (`%f`, RW 0x6E5FB3 / 0x6E68F6) | TheAudio vslot 0xE8 while the slider moves, with the type's MiscAudio `VolumeSample*` sound (RW 0x91F90D); again on Reset and Cancel | live with the samples (OPTS-4, S-4510): the sample starts when none is sounding and stops when the slider is let go (the voice line plays out); from the main menu the music slider plays no sample (the menu music is the sample) |
 | Graphics (`Detail` combo) | `StaticGameLOD` (RW 0x6E563A getStaticGameDetail, RW 0x6E6798) | GameLODManager setStaticLODLevel RW 0x6020B4 -> apply RW 0x601C62 | applied (see the detail levels below) |
 | Custom Settings (advanced page) | the nine keys below | Custom record RW 0x6019D1, then the apply | applied |
 | Brightness | `Brightness` (`%d`; RW 0x6E5ECD, missing 50) | GlobalData + 0xBCC gamma (RW 0x641E8B: < 50: 1 - (50 - b) * 0.008, 0 and below 0.6; > 50: 1 + (b - 50) * 0.02), the display's gamma ramp | applied: a pass over the window draws DX8 Set_Gamma's ramp (`game_options.gd`); retail skips the ramp in a window, OpenBFME applies it in every mode |
@@ -88,6 +87,77 @@ At start GameLODManager::init (RW 0x602165) takes `StaticGameLOD`, else
 RW 0x4465D8 applies findStaticLODLevel (RW 0x602C03): `IdealStaticGameLOD`, else
 the hardware detection and benchmark (stop S-2481: OpenBFME takes UltraHigh,
 the picture it drew before, and says so).
+
+## One Options menu (lane OPTS-5, the owner's decision of 2026-10-14)
+
+"Let's scrap the original settings options and rework the menu to be our menu for now, but put the settings for graphics and options from the
+original game in places that make sense for it in the new menu." Options is the OpenBFME menu below: the main menu's SETTINGS and CUSTOM
+SETTINGS (this one opens on Graphics), the LAN lobby's and the online shell's Options and the quit menu's Options in a game all open it at once.
+The retail basic page, its CUSTOM SETTINGS page and the OPENBFME button are not reachable. **The switch** is
+`AptOptionsScreen::kOpenBFMEMenu` in `engine/src/GameClient/GUI/AptScreens/AptSimpleScreens.h`: `false` brings back OPTS-3's screen (the retail
+basic page with the OPENBFME button); the retail screen's code is the same in both, stop S-4670.
+
+The original game's settings are rows of the menu (keys `Retail.<gadget>`), driven by the retail screen's own code: Options.apt still runs with
+its settings frames hidden, InitGadgets fills its gadgets from Options.ini as before, a row's change is that gadget's change plus its retail
+handler, and ACCEPT / CANCEL / RESET TO DEFAULTS are RotWK's Save (RW 0x91FC9C) / Cancel (RW 0x91EC52) / Reset (RW 0x91F4D1), besides the
+OpenBFME rows' own. So the keys, formats, ranges, defaults and live behaviour are the original game's, and an Options.ini the original game wrote
+round-trips byte for byte (`opts5 options retail: a retail Options.ini round-trips ...`). Live as in RotWK: the five volumes with their samples
+(OPTS-4) and, new here, the brightness (the gamma at once while the slider moves, RW 0x91F90D; Reset's RW 0x91F5F3 and Cancel's RW 0x91ECB8 set it
+too). RESET TO DEFAULTS also sets the detail level the game takes without a setting (IdealStaticGameLOD, else the S-2481 stand-in Ultra High):
+the custom settings page's own reset. In a game the detail rows are greyed with the movie's own reason (APT:CannotChangeGraphics), as retail
+disables its Graphics list there; the online rows are enabled only when the online screens open Options (RotWK's AptOnline::Options, RW
+0x91D6BA, opens it with NetworkEnabled 1).
+
+| Row | Tab | Origin | Saved in |
+|---|---|---|---|
+| Window mode, Resolution, Vertical sync, Frame rate limit, Show the frame rate, Render scale, Upscaling | Display | OpenBFME (OPTS-1) | `openbfme-display.cfg` |
+| Widescreen view | Display | OpenBFME (UI-6) | Options.ini `OpenBFMEWidescreen` |
+| Brightness | Display | retail | Options.ini `Brightness` |
+| Graphics (Very Low .. Ultra High, Custom) | Graphics (left) | retail | `StaticGameLOD` |
+| Model, Animation, VFX, Shadows, Terrain, Water, Texture Quality, Shader, Decal Detail | Graphics (left) | retail (custom settings page) | `ModelLOD` .. `DecalLOD` (written for Custom, removed for a level) |
+| Anti-aliasing, Anisotropic, Look, Soft particles | Graphics (right) | OpenBFME | `OpenBFMEAntiAliasing`, `OpenBFMEAnisotropic`, `OpenBFMELook`, `OpenBFMESoftParticles` |
+| Master volume | Audio | OpenBFME | `OpenBFMEMasterVolume` |
+| Music, Sound FX, Voice, Ambient, Movie | Audio | retail | `MusicVolume`, `SFXVolume`, `VoiceVolume`, `AmbientVolume`, `MovieVolume` |
+| EAX3, High Audio Quality | Audio | retail (greyed: S-1913, S-2481) | `UseEAX3`, `AudioLOD` (kept) |
+| Mute in the background, Output device | Audio | OpenBFME | `OpenBFMEMuteUnfocused`, `OpenBFMEAudioDevice` |
+| Scroll Speed | Camera | retail | `ScrollFactor` |
+| Edge scrolling, Rotation speed, Max zoom-out, Free camera, Invert drag scrolling, Keep the mouse in the window | Camera | OpenBFME | `OpenBFME*` |
+| Show All Health Bars | Interface | retail | `AllHealthBars` |
+| Health bars, Show the game clock, Interface scale | Interface | OpenBFME | `OpenBFMEHealthBars`, `OpenBFMEGameClock`, `OpenBFMEUIScale` |
+| Alternate mouse setup | Interface | retail key, OpenBFME row (RotWK 2.01's screen has no box for it) | `AlternateMouseSetup` |
+| Online IP, Port Number, Send Delay | Online | retail (enabled from the online screens) | `GameSpyIPAddress`, `FirewallPortOverride`, `SendDelay` |
+| Refresh NAT | Online | retail (refused by name: S-1913) | |
+| Uber performance mode | Performance | OpenBFME (UBER-1) | `OpenBFMEUberPerformance` |
+| Hot keys (read only) | Controls | retail data (CommandMap.ini) | |
+
+Why there: the brightness is a property of the picture, so Display; the detail level and its custom settings are what the retail screen calls
+Graphics, with OpenBFME's renderer settings beside them in a second column (the tab has fourteen rows; two columns keep every row on screen);
+the volumes with the master volume; Scroll Speed with the camera rows (the original game's "Controls" frame held only it; our Controls tab is the
+hot key list); Show All Health Bars with the other health bar choice; the network settings on a tab of their own; Uber performance mode on its own
+tab because it changes how the game itself runs (OPTS-2 had it on Graphics+). Interface scale moved from Graphics+ to Interface (it scales the
+HUD's decorations, not the 3D picture).
+
+**Help lines.** Every row has one. The original game's rows take the string file's text (the labels are in
+`AptOptionsScreen::retailRowTable`, `engine/src/GameClient/GUI/AptScreens/AptSimpleScreens.cpp`, with OpenBFME's reason appended where it greys
+a row); OpenBFME's rows take theirs from the `HELP` table of `godot/scripts/openbfme_options_screen.gd` (the one table of the menu's own texts, for
+a later translation; the hover-text lane HOVER-1 can find both there).
+
+| Row | Help label (lotr.str) |
+|---|---|
+| Brightness | TOOLTIP:Options/tooltipBrightness |
+| Graphics | TOOLTIP:Options/tooltipDetail |
+| Model Detail, Shader Detail | APT:WarnHighGraphicDetail (the custom settings page's own notice; no tooltip of their own) |
+| Animation / VFX / Shadows / Terrain / Water / Texture Quality / Decal Detail | TOOLTIP:Options/tooltipShowAnimations / tooltipParticleCap / tooltip3DShadows / tooltipTerrainLighting / tooltipSmoothWaterBorder / tooltipTextureDetail / tooltipShowUnitDecals |
+| Music / Sound FX / Voice / Ambient / Movie | TOOLTIP:Options/tooltipMusic / tooltipSoundFX / tooltipVoice / tooltipAmbient / tooltipMovie |
+| EAX3 / High Audio Quality | ToolTip:Settings/EAX / ToolTip:Settings/HighQualityAudio (RotWK's AptButtonTooltipMap.ini) |
+| Scroll Speed | TOOLTIP:Options/tooltipScrollSpeed |
+| Show All Health Bars | TOOLTIP:Options/tooltipEnableHealthBars |
+| Online IP / Port Number / Send Delay / Refresh NAT | TOOLTIP:OnlineIP / APT:PortNumHelp / TOOLTIP:SendDelay / TOOLTIP:RefreshNat |
+
+The pairing of a row with a TOOLTIP:Options/tooltip<x> text is an inference (S-4670): RotWK 2.01's movie has tooltip areas only for EAX3, High
+Audio Quality and Send Delay, but its string file still carries BFME2's texts for the others.
+
+Proof: `workspace/rebuild/proof/OPTS-5/` (each tab at 2560 x 1440 and 1280 x 800, the main menu's and the in-game entry points).
 
 ## OpenBFME's screen (not retail)
 
@@ -147,7 +217,7 @@ another profile). Tabs:
 | | Health bars on infantry and cavalry too | `AllHealthBars` (retail) | no |
 | | Alternate mouse setup | `AlternateMouseSetup` (retail) | no |
 | | Game clock | `OpenBFMEGameClock` | no |
-| Audio | Master volume 0 .. 100 | `OpenBFMEMasterVolume` | 100 |
+| Audio | Master volume 0 .. 100 (live while it moves, with the sound effects sample: OPTS-4) | `OpenBFMEMasterVolume` | 100 |
 | | Mute in the background | `OpenBFMEMuteUnfocused` | no |
 | | Output device (Godot's list: Windows, Linux, macOS) | `OpenBFMEAudioDevice` | Default |
 | Controls | the CommandMap's hot keys, read only | | |

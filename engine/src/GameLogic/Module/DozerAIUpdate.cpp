@@ -1063,6 +1063,13 @@ int DozerAIUpdate::workOnBuild(int t, Object &structure)
 	// again (RW 0x6E85FB / 0x6E85E9); the EVA / radar message is the client's
 	finishBuildingSound(); // RW 0x88DEFA (lane AUDIO-3): dozer interface slot 0x60 at the build's completion
 	Construction::completeConstruction(structure, self);
+	// lane BACKLOG3 (S-2452): RW 0x88E10D .. 0x88E125 (BFME2 decomp DozerAIUpdateCtor.cpp DozerActionDoActionState::update, tier B for RW 0x88D993; the call is
+	// in RotWK's code): for the dozer's local controller (RW 0x88DFC9 -> RW 0x68B749 isLocallyControlled), TheRadar->createEvent(the structure's position, 1 (CONSTRUCTION), 4.0f). The local test is the
+	// client's (Radar::noteLogicEvents); the DOZER:ConstructionComplete message and the unit voice beside it are not ported
+	if (const Player *owner = self->getControllingPlayer())
+	{
+		logic.noteRadarEvent(1, *structure.getPosition(), GameLogic::RadarEventNotice::CONSTRUCTION, owner->getPlayerIndex());
+	}
 	// lane AI-2: the structure's construction-complete call to its player's AI (RW 0x86C1ED -> RW 0x6C77E4 -> AIPlayer RW 0x8F06FF(builder, structure, 1))
 	logic.skirmishAI().structureBuilt(*self, structure);
 	structure.setStatus(21, false);

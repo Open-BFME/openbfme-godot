@@ -761,9 +761,15 @@ Bytes loadFixture(const std::string &name)
 	const std::string dir = env && *env ? env : OPENBFME_AUDIO_FIXTURE_DIR;
 	const std::string path = dir + "/" + name + ".mp3.bin";
 	// the streams are generated (never committed): a missing one is a missing prerequisite, reported with the command that makes it
+	// (lane CONTRIB-1, GitHub #23: on Windows `python3` is often the Microsoft Store stub; the py launcher is what python.org installs)
+#ifdef _WIN32
+	const std::string python = "py -3"; // a std::string: doctest printed a const char * as an address under MSVC
+#else
+	const std::string python = "python3";
+#endif
 	REQUIRE_MESSAGE(retailtest::readLocalFile(path, bytes, &err),
-		err << " -- the synthetic MP3 fixtures are generated, not committed: run `python3 tools/audio/gen_mp3_fixtures.py --out " << dir
-			<< "` (needs lame and mpg123; the CMake target audio_mp3_fixtures does it at build time)");
+		err << " -- the synthetic MP3 fixtures are generated, not committed: run `" << python << " tools/audio/gen_mp3_fixtures.py --out " << dir
+			<< "` (needs lame and mpg123 on PATH, docs/WINDOWS.md; the CMake target audio_mp3_fixtures does it at build time)");
 	return Bytes(bytes.begin(), bytes.end());
 }
 
@@ -844,7 +850,7 @@ TEST_CASE("audio decode: MP3 streaming equals the whole-file decode for any chun
 {
 	for (const char *name : {"joint_44k", "mpeg2_22k_mono", "id3_44k", "notag_44k"})
 	{
-		INFO("fixture " << name);
+		INFO("fixture " << std::string(name)); // a std::string: doctest printed the const char * as an address under MSVC (GitHub #23 log)
 		Bytes mp3 = loadFixture(name);
 		DecodedAudio whole = decode(mp3.data(), mp3.size());
 		for (size_t chunk : {size_t(1), size_t(7), size_t(576), size_t(1152), size_t(4000)})

@@ -181,7 +181,9 @@ TEST_CASE("mp2 retail: LanLobby.apt hosts and joins a LAN game: the list, Join, 
 	CHECK(!enabled(hs->slotGadget(1, "PlayerTemplate")));
 	// chat (lane UI-1: RotWK's Send reads the ChatEntry gadget, RW 0x9BEDE0, and a line reads "[name] text", RW 0x649E5C)
 	REQUIRE(run([&] { return pressChatTab(*join.wm, js->level()) && pressChatTab(*host.wm, hs->level()); }));
-	REQUIRE(run([&] { return js->chatEntryWindow() != nullptr && hs->chatListWindow() != nullptr; }));
+	// GitHub #23: one REQUIRE per side, so a failure says which window is missing
+	REQUIRE(run([&] { return js->chatEntryWindow() != nullptr; }));
+	REQUIRE(run([&] { return hs->chatListWindow() != nullptr; }));
 	GadgetTextEntrySetText(js->chatEntryWindow(), u"  hello host ");
 	CHECK(join.wm->invokeCallback("AptMpChat::Send", ""));
 	CHECK(GadgetTextEntryGetText(js->chatEntryWindow()).empty());

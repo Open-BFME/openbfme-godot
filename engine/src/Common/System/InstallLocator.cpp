@@ -695,7 +695,8 @@ InstallCheck checkInstall(const std::string &game, const std::string &root, cons
 		std::error_code entryError;
 		if (!it->is_regular_file(entryError) || lower(it->path().extension().u8string()) != ".big")
 			continue;
-		onDisk[normalizedKey(fs::relative(it->path(), base, entryError).u8string())] = it->file_size(entryError);
+		// lane CONTRIB-1: the path below the folder as listed (fs::relative resolves symlinks: a folder of symlinked archives read as holding none)
+		onDisk[normalizedKey(it->path().lexically_relative(base).u8string())] = it->file_size(entryError);
 	}
 	if (ec)
 	{
@@ -704,13 +705,18 @@ InstallCheck checkInstall(const std::string &game, const std::string &root, cons
 	}
 	std::set<std::string> known;
 	for (const RetailArchiveEntry &a : policy.archives)
+		known.insert(normalizedKey(a.path));
+	// lane CONTRIB-1: the known layout the folder holds (Common/RetailArchivePolicy.h "Layouts"), as the mount chooses it; none: its error says what
+	// the folder has and what to do, and the archives every layout shares are still checked
+	const RetailLayoutChoice layout = ChooseRetailLayout(policy, displayName(game), onDisk);
+	r.layout = layout.ok ? layout.layoutId : std::string();
+	r.expected = layout.ok ? (int)layout.archives.size() : r.expected;
+	for (const RetailArchiveEntry &a : layout.archives)
 	{
-		const std::string k = normalizedKey(a.path);
-		known.insert(k);
-		auto f = onDisk.find(k);
+		auto f = onDisk.find(normalizedKey(a.path));
 		if (f == onDisk.end())
 			r.missing.push_back(a.path);
-		else if (f->second != a.size)
+		else if (f->second != a.size && policy.entryCheckOf(a.path) == nullptr) // an entry-checked archive (Data1.big): the mount checks its entries
 			r.wrongSize.push_back(a.path + " (" + std::to_string(f->second) + " bytes, " + policy.patch + " has " + std::to_string(a.size) + ")");
 		else
 			++r.present;
@@ -731,7 +737,7 @@ InstallCheck checkInstall(const std::string &game, const std::string &root, cons
 			s += " and " + std::to_string(v.size() - 6) + " more";
 		return s;
 	};
-	const bool complete = r.missing.empty() && r.wrongSize.empty() && r.unknown.empty();
+	const bool complete = layout.ok && r.missing.empty() && r.wrongSize.empty() && r.unknown.empty();
 	if (!complete && other)
 	{
 		// the two games share archive names, many with the same size (apt/*.big): a swapped pick is a folder that is exactly the other game
@@ -742,12 +748,15 @@ InstallCheck checkInstall(const std::string &game, const std::string &root, cons
 			return r;
 		}
 	}
-	if (r.present == 0 && r.wrongSize.empty())
+	const bool noneOfThem = std::none_of(policy.archives.begin(), policy.archives.end(), [&onDisk](const RetailArchiveEntry &a) { return onDisk.count(normalizedKey(a.path)) > 0; });
+	if ((r.present == 0 && r.wrongSize.empty() && layout.ok) || noneOfThem)
 	{
 		r.errors.push_back("no " + name + " archives in " + root + " (expected " + (policy.archives.empty() ? std::string("?") : policy.archives.front().path) +
 			" and " + std::to_string(policy.archives.size() > 0 ? policy.archives.size() - 1 : 0) + " more): pick the folder that holds the game's .big files");
 		return r;
 	}
+	if (!layout.ok)
+		r.errors.push_back(layout.error);
 	if (!r.missing.empty())
 	{
 		bool allLang = std::all_of(r.missing.begin(), r.missing.end(), [](const std::string &p) { return normalizedKey(p).compare(0, 5, "lang/") == 0; });

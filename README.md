@@ -9,15 +9,20 @@
 [![Godot 4.7](https://img.shields.io/badge/Godot-4.7-478cbf?logo=godotengine&logoColor=white)](https://godotengine.org)
 [![Platforms](https://img.shields.io/badge/platforms-Windows%20%7C%20Linux-555)](#play-it)
 
-<a href="https://github.com/Open-BFME/openbfme-godot/releases"><img alt="Download the alpha build launcher (Windows / Linux)" src="https://img.shields.io/badge/Download-the%20alpha%20build%20launcher%20for%20Windows%20%2F%20Linux-2ea44f?style=for-the-badge&logo=github"></a>
+<a href="https://github.com/Open-BFME/openbfme-godot/releases"><img alt="Download the alpha build (Windows / Linux)" src="https://img.shields.io/badge/Download-the%20alpha%20build%20for%20Windows%20%2F%20Linux-2ea44f?style=for-the-badge&logo=github"></a>
 
-<sub>The newest alpha build is at the top of the releases page: get the <code>openbfme-launcher-…</code> file for your system.</sub>
+<sub>The newest alpha build is at the top of the releases page: one file per system, <code>openbfme-…-windows-x64.zip</code> or <code>openbfme-…-linux-x64.tar.gz</code>, with the game and the launcher in it.</sub>
 
-[Play it](#play-it) · [Status](#status) · [What's new](#whats-new-in-v040-alpha1) · [Build from source](#build-from-source) · [Player guide](docs/PLAYING.md) · [Roadmap](docs/ROADMAP.md)
+[Play it](#play-it) · [Status](#status) · [Where it's going](#where-its-going) · [Build from source](#build-from-source) · [Player guide](docs/PLAYING.md) · [Roadmap](docs/ROADMAP.md)
 
 </div>
 
 ## What it is
+
+OpenBFME is built with AI assistance and is still being optimized. The Rise
+of the Witch-king has not been decompiled yet, so many features are reverse
+engineered from the game, and some use a stand-in until OpenBFME's RotWK
+decompilation project is complete.
 
 OpenBFME is a faithful, fan-made recreation of **The Rise of the Witch-king
 2.01** that runs on the original game files from your own install. This
@@ -51,19 +56,20 @@ OpenBFME is unofficial. It is not made or endorsed by EA.
 Middle-earth II 1.06**, both in English, and Windows 10/11 or 64-bit Linux
 with Vulkan graphics (or Direct3D 12 on Windows).
 
-1. **Download the launcher** from
+1. **Download OpenBFME** from
    [GitHub Releases](https://github.com/Open-BFME/openbfme-godot/releases):
-   `openbfme-launcher-<version>-windows-x64.zip` or
-   `openbfme-launcher-<version>-linux-x64.tar.gz`. Unpack it into a folder you
-   can write to.
-2. **Start the launcher** (`OpenBFMELauncher.exe`, or
-   `./OpenBFMELauncher.x86_64` on Linux). On Windows, SmartScreen may say
+   `openbfme-<version>-windows-x64.zip` or
+   `openbfme-<version>-linux-x64.tar.gz`. It is one file with the game and the
+   launcher in it. Unpack it into a folder you can write to.
+2. **Start the game or the launcher**: `OpenBFME.exe` or
+   `OpenBFMELauncher.exe` (on Linux `./OpenBFME.x86_64` or
+   `./OpenBFMELauncher.x86_64`). The game is ready to play, with no first
+   download, and whichever one you start keeps OpenBFME up to date: a newer
+   build is downloaded in the background, checked against the signed release,
+   and used from your next start. On Windows, SmartScreen may say
    *Windows protected your PC*, because the files are not code-signed yet:
-   choose *More info*, then *Run anyway*. The launcher downloads the newest
-   game build of its channel (an alpha or preview launcher starts on *Alpha*),
-   checks its signature and every file, installs it, and keeps itself up to
-   date.
-3. **Press Play.** On the first start the game looks for your RotWK and BFME2
+   choose *More info*, then *Run anyway*.
+3. **Play.** On the first start the game looks for your RotWK and BFME2
    folders (the registry entries the original installers write, and on Linux
    also Wine, Proton, Lutris, Heroic and Bottles prefixes). Confirm them or
    choose them with *Browse...*. It checks every game file once (this can
@@ -107,200 +113,41 @@ the original are still missing.
 | Building, economy, upgrades | ✅ Works | builders, walls, castles, resources, upgrades and experience |
 | Computer opponent | 🟡 Partial | builds a base, trains armies and heroes, uses its spell book and most of its powers, attacks and finishes games; defending and expanding are not yet like the original |
 | In-game interface | ✅ Works | Palantir, command bar, RotWK's radar and pings, health bars and levels, control groups, camera bookmarks, hotkeys, right-click orders as in the original |
-| Main menu and options | 🟡 Partial | real menus with the original layout; the credits roll; the graphics detail level sets particles, texture quality and health bars, but shadows and the other detail rows are not drawn yet; OpenBFME's own settings inside Options; save/load pages are not done |
+| Main menu and options | 🟡 Partial | real menus with the original layout; the credits roll; the graphics detail level sets particles, texture quality and health bars, but shadows and the other detail rows are not drawn yet; OpenBFME's own settings inside Options |
 | Sound and music | 🟡 Partial | voices, effects, music and the original stereo image; some sounds (damage sounds, scripted music, parts of the big-battle ambience) are missing |
 | Movies | ✅ Works | the start-up logos and intro, and the campaign movies (no subtitles) |
-| Campaign | 🟡 Partial | missions start from the menu with their movies and narration; no saving and no campaign menu between missions yet |
+| Campaign | 🟡 Partial | missions start from the menu with their movies and narration; missions can be saved and loaded, but the original game's campaign-progress saving and the campaign menu between missions are not done yet |
 | LAN multiplayer | ✅ Works | Windows and Linux players in one game, disconnect screen, every game recorded |
 | Replays | 🟡 Partial | every game is recorded and can be watched from *Load Replay*; no saving under a name, no replay controls |
 | Create-a-Hero | ✅ Works | the hero builder, colours and saving; heroes can be fielded in skirmish and LAN |
 | Save / load | 🟡 Partial | skirmish and campaign missions save and load through the original Save / Load screens (OpenBFME's own save files, not the original game's) |
 | War of the Ring | ❌ Not yet | |
-| Online multiplayer | ❌ Not yet | planned through an OpenBFME relay service ([roadmap](docs/ROADMAP.md#online-multiplayer-direction-owner-2026-10-08)) |
+| Online multiplayer | 🟡 Test feature | server browser, rejoin and spectating on the original online screens, through an OpenBFME lobby and relay; there is no public lobby yet, so someone has to host one ([player guide](docs/PLAYING.md#online-play-test-feature)) |
 | Mods | ❌ Not yet | designed in from the start; Edain is the first target |
 
 **Faithful first.** OpenBFME copies the original game's behaviour; it does
 not reinvent it. Where the evidence runs out and the team has to make an
 educated guess, that guess is not hidden: it is recorded as an *acceptance
 stop* in [docs/STOPS.md](docs/STOPS.md), reported by the game at runtime and
-pinned by a test. There are **671 open stops** today. Some are big
+pinned by a test. There are **679 open stops** today. Some are big
 (retail save files), most are small details waiting for better evidence. The plan to
 get to a 1:1 game is in [docs/ROADMAP.md](docs/ROADMAP.md).
 
-## What's new in v0.4.0-alpha.1
+**Latest version.** The newest build and its patch notes are on the
+[releases page](https://github.com/Open-BFME/openbfme-godot/releases); the
+history is in [docs/CHANGELOG.md](docs/CHANGELOG.md).
 
-The first alpha build. Launchers on v0.3.0-preview.5 or later offer it on
-the *Alpha* channel.
+## Where it's going
 
-- **Defeat as in the original.** You're out when your last building falls;
-  builders and armies left in the field no longer keep a player in the game.
-- **Sandbox mode.** Put every player on one team, or play alone, and nobody
-  wins: build and try things for as long as you like.
-- **The computer opponent uses its spell book and hero powers.** It also
-  builds heroes, and its heroes and units use their abilities in battle.
-- **Menus no longer overlap.** Only one screen is drawn at a time, a pop-up
-  covers the menu under it, and the pause menu covers the build bubbles.
-- **The profile prompt works.** The first visit to Skirmish asks for your
-  profile name, as the original does, and keeps it.
-- **Loading screens as in the original.** A skirmish shows every player's
-  name, team, army and rank icon; a campaign mission loads behind its own
-  picture.
-- **The building preview looks like the original.** It's in your colour and
-  see-through, plays the building's animation, turns red with a red base
-  where it can't go, and a harbour snaps to the shore.
-- **Scroll while placing a building.** Hold the right button and drag to
-  move the map without losing the placement; a quick right click still
-  cancels it. The pointer shows the scroll arrow.
+1. Skirmish and multiplayer parity with the original: every faction, the
+   computer opponent, LAN and online games, replays.
+2. The Rise of the Witch-king campaign.
+3. The Battle for Middle-earth II Good and Evil campaigns.
+4. War of the Ring.
+5. Mods, with Edain first.
 
-### v0.3.0-preview.5
-
-This preview carries the launcher that moves everyone to the alpha builds:
-once your launcher has updated itself to this version, it offers the alpha
-builds (v0.4.0-alpha.1 and later) on the same channel, now called *Alpha*.
-You don't need to do anything.
-
-- **A new launcher look.** A menu on the left (Play, News, Multiplayer, Mods,
-  Game files, Settings), the release notes on parchment, and updates that
-  download in the background while you play: Play keeps starting the
-  version you have until the new one is installed. Only one launcher runs at
-  a time.
-- **The graphics detail settings take effect.** The detail level and Custom
-  Settings in Options now set the particle limit, the texture quality and
-  the health bars, and **Brightness** and **Scroll Speed** work. Detail
-  rows OpenBFME can't draw yet (shadows, models, terrain, water ...) are
-  greyed out.
-- **OpenBFME's settings inside the Options screen.** The **OPENBFME** button
-  opens them as a page of the original Options screen, drawn sharp at any
-  window size.
-- **Zoom out 2.5 times farther.** The mouse wheel takes the camera up to 2.5
-  times the original height; change it in OPENBFME, Camera tab, **Max
-  zoom-out** (from the original limit to 3x). Past the map's edge the ground
-  fades to black, as in the original.
-- **Health bars for every unit you can see.** The Interface tab's **Always
-  (all players)** shows the bar of every unit and building in sight, yours
-  and the enemy's, without selecting them.
-- **Autocast hero abilities.** Right-click a hero's ability button: it glows
-  and the hero uses the ability by themselves; right-click again to stop.
-- **The Skirmish Rules tab.** The lobby's Rules tab sets the starting
-  resources, the command point limit, custom heroes and ring heroes, as in
-  the original.
-- **Legendary Heroes.** A new OpenBFME rule on the Rules tab (off by
-  default): heroes get 2, 3 or 4 times their health and hit harder.
-- **"Alpha build" naming.** The launcher shows the test channel as *Alpha*,
-  and the version text in the menus reads "unofficial alpha build".
-
-### v0.3.0-preview.4
-
-- **Display options.** A new **OPENBFME** button in Options opens OpenBFME's
-  own display settings: windowed, borderless window or fullscreen, the
-  resolution, vertical sync, a frame rate limit, a frame rate counter and a
-  render scale with AMD FSR 1 or FSR 2 upscaling. **F11** shows the frame
-  rate, **Alt+Enter** switches between a window and full screen.
-- **The hero bar.** The bar at the bottom of the screen shows your heroes'
-  portraits with their health and rank, and a builder button with the number
-  of idle builders. Click a portrait to select the hero, click it again to
-  look at them; a button selects all your heroes.
-- **Selection rings.** Selected units stand on the original's rings in your
-  colour; a selected battalion gets one outline around all its soldiers and a
-  hero gets the rune ring.
-- **Build bubbles.** Selecting a building shows its buttons as round bubbles
-  around it, as in the original (the fortress's heroes and upgrades among
-  them).
-- **The builder's side panel** has the original's carved frame.
-- **Help boxes.** Holding the pointer over a button shows its help box: the
-  name, key, cost and description.
-- **Options text in RotWK's colours** instead of green.
-- **Bold credits titles**, as in the original.
-- **Fix:** a crash on the sound thread when the game was busy is gone.
-
-### v0.3.0-preview.3
-
-- **Building placement previews.** Choosing a building to build shows it
-  under the pointer, tinted red where you can't build, for every faction,
-  fortresses included.
-- **The selection box.** Dragging with the left mouse button draws the
-  original's selection box, and letting go selects your units inside it.
-- **Archers spread their fire.** A battalion of archers shoots at the whole
-  enemy battalion, as in the original, instead of every archer aiming at the
-  nearest soldier.
-- **Tribute.** Send resources to an ally from the flag above the radar, once
-  the game's waiting time has passed.
-- **Move markers on the ground.** A move order shows the original's marker
-  where your units are going.
-- **"Not enough money" for upgrades.** An upgrade you can't afford says so
-  and is not bought.
-- **The credits screen.** *Credits* in the main menu rolls the original
-  credits.
-- **Custom Settings opens the advanced options** in the Options screen.
-- **The menu music stops when a campaign starts**, before the opening movie.
-- **Missing intro movies are skipped quietly**, as in the original, instead
-  of showing an error.
-- **The window title** reads "OpenBFME".
-- **A redesigned launcher** that starts on the right channel: a preview
-  launcher installs the newest preview, and release notes read as plain text.
-
-### v0.3.0-preview.2
-
-- **Force-attack on the ground.** Hold Ctrl and click a spot on the ground:
-  the selected units fire at it until you give another order. As in the
-  original, a unit only fires at your own side with a weapon that can hurt
-  it: archers and trebuchets won't shoot at your own buildings.
-- **The Options Advanced page shows its settings.** It lists the nine detail
-  settings with their values and saves your custom choice; the detail levels
-  don't change the graphics yet (S-2481).
-- **Combat details from the original.** Disabled and paralysed units,
-  temporary weapons, turrets that aim before they fire, and the original's
-  splash damage rules.
-- **Multiplayer games stay in sync when players leave.**
-
-### v0.3.0-preview.1
-
-This is the first preview built for automatic updates through the launcher.
-It fixes what came up in the first hands-on play sessions:
-
-- **Movies play.** The start-up movies and the campaign movies are shown,
-  not just heard.
-- **The campaign is visible.** The menu backdrop no longer covers a campaign
-  mission, and no developer text appears on screen.
-- **Control groups and hotkeys work.** Ctrl+number makes a group, the number
-  selects it, a double press jumps the camera there; camera bookmarks
-  (Ctrl+F1 to F8, then F1 to F8) and the command bar's letter hotkeys work
-  again.
-- **Force-attack on units and buildings.** Hold Ctrl and click a target,
-  even one of your own. (Ctrl+click on the ground comes in the next preview.)
-- **Orders like the original.** Right-click gives orders by default, with the
-  move marker on the ground; after a victory or defeat the game moves on to
-  the score screen as the original does.
-- **Stereo sound matches the original.** Sounds pan left and right the way
-  RotWK's sound engine does them (before, sounds above or below the screen
-  centre came out of one ear).
-- **The Options crash is fixed** (Advanced, then Done), and the Options screen
-  shows and saves the real settings.
-- **Easier bug reports.** *Logs* in the menus and *Open log folder* in error
-  and crash messages.
-- **Health bars, levels and building progress.** Selected or hovered units
-  show their health bar (Options' *Health Bars* adds infantry and cavalry),
-  buildings show retail's structure bars and "Building: n%", battalions show
-  their veterancy marks, and a selected hero shows their level and experience
-  bar under the portrait.
-- **Fortress maps start in the fortress.** On Helm's Deep and the other
-  fortress maps you own the map's fortress instead of building a castle, and
-  gates open and close with their button.
-- **The radar looks like RotWK's.** A dot for every soldier, a halo for
-  heroes, a ring for the fortress, walls in their real shape, the gold view
-  box, and a ping on the Palantir when your units are attacked.
-- **Create-a-Hero.** *My Heroes* opens the hero builder: pick a class,
-  powers and colours, name your hero and save. Your heroes can be fielded in
-  skirmish and LAN games.
-- **The launcher can download the games for you** through
-  the BFME Foundation's All In One service (original 2.01 / 1.06 only, every
-  file checked).
-- **Clicks pick like the original.** Your own units win a click over enemies
-  behind them, and hovering, ordering, double-clicking and box selection each
-  follow RotWK's rules.
-- **Free camera** option in the launcher (not retail, off by default).
-- **Menu fixes:** button text centred as in the original, the main menu after
-  returning from Options, sliders, drop-down lists, lobby start spots by click.
+The full plan, with what is done and what is next, is in
+[docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## Build from source
 

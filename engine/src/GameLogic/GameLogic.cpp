@@ -855,8 +855,26 @@ void GameLogic::processDestroyList()
 	m_objectsToDestroy.clear();
 }
 
+// lane BACKLOG3 (S-2452): see GameLogic.h
+void GameLogic::noteRadarEvent(int type, const Coord3D &position, RadarEventNotice::Source source, int playerIndex)
+{
+	if (m_radarEventNotices.size() >= kRadarEventNotices)
+	{
+		m_radarEventNotices.erase(m_radarEventNotices.begin()); // the radar keeps 64 records itself (round robin, RW 0x6D93EB)
+	}
+	RadarEventNotice n;
+	n.seq = ++m_radarEventSeq;
+	n.frame = m_frame;
+	n.type = type;
+	n.position = position;
+	n.source = source;
+	n.playerIndex = playerIndex;
+	m_radarEventNotices.push_back(n);
+}
+
 void GameLogic::reset()
 {
+	m_radarEventNotices.clear(); // lane BACKLOG3: a new game's radar starts empty (the sequence goes on: a client's cursor stays behind it)
 	// ZH GameLogic::reset: every object goes; the scheduler vectors are cleared with their modules' indices
 	m_current = nullptr;
 	while (m_objectHead)

@@ -330,6 +330,32 @@ func _ui_dialogs() -> void:
 	_check(ReleaseNotes.parse("[b]x[/b]\n## What's new\n- <img src=x> [url]y[/url]").sections[0].items[0] == "<img src=x> [url]y[/url]", "notes: text stays text")
 	_check(ReleaseNotes.date_text("2026-10-10T18:03:11Z") == "10 October 2026" and ReleaseNotes.date_text("") == "" and ReleaseNotes.date_text("soon") == "", "notes: dates")
 	_check(ReleaseNotes.title_of("v0.3.0-preview.2") == "Preview 2 of 0.3.0" and ReleaseNotes.title_of("v1.0.0") == "Version 1.0.0", "notes: titles")
+	# NOTES-1: the studio-style patch notes (bold area lines, a title heading, a table, both generations of section titles)
+	var studio := "# OpenBFME v0.4.0-alpha.5 patch notes\n\nOctober 13, 2026 · alpha build for testers\n\nInstall it.\n\n## Which file to download\n\n| File | What |\n|---|---|\n" + \
+		"| **[a.zip](https://x.example/a.zip)** | **Launcher.** |\n\n## Added\n\n**Online**\n- Server browser.\n- Rejoin.\n\n**Saves**\n- Games can be saved.\n\n" + \
+		"**General**\n- No area.\n\n## Changed\n\n**Performance**\n- Faster paths.\n\n## Bug fixes\n\n**Interface**\n- A click deselects.\n\n" + \
+		"## Known issues\n\n**Audio**\n- Some sounds are missing.\n  and a wrapped line.\n\nBuilt from commit a5c0211ba1 (2026-10-13)."
+	var sp := ReleaseNotes.parse(studio)
+	_check(sp.sections.map(func(x): return x.title) == ["Added", "Changed", "Bug fixes", "Known issues"], "notes: studio sections (the title and the table have no items)")
+	_check(sp.sections[0].items == ["Server browser.", "Rejoin.", "Games can be saved.", "No area."], "notes: studio items stay flat for the Play card")
+	_check(sp.sections[0].groups.map(func(g): return g.area) == ["Online", "Saves", "General"] and sp.sections[0].groups[0].items.size() == 2, "notes: studio area groups")
+	_check(sp.sections[3].groups[0].items == ["Some sounds are missing. and a wrapped line."], "notes: a wrapped item stays in its group")
+	_check(ReleaseNotes.play_items(studio, 2) == ["Server browser.", "Rejoin."], "notes: the Play card reads Added")
+	_check(ReleaseNotes.play_items("## Bug fixes\n\n**UI**\n- Only a fix.\n") == ["Only a fix."] and ReleaseNotes.play_items("## Changed\n- c\n") == ["c"], "notes: the Play card falls back to fixes, then changes")
+	_check(ReleaseNotes.play_items(body) == ["Force-attack on the ground: hold Ctrl.", "Multiplayer games stay in sync."] and ReleaseNotes.parse(body).sections[0].groups[0].area == "", "notes: the older titles still read")
+	var bridge := studio.replace("## Added", "## What's new").replace("## Bug fixes", "## What's fixed")
+	_check(ReleaseNotes.play_items(bridge) == sp.sections[0].items, "notes: the bridge titles give the same Play card")
+	_check(ReleaseNotes.parse("## Added\n**not an area | a table**\n**a** and **b**\n- x").sections[0].groups[0].area == "", "notes: only a whole-line bold text is an area")
+	# NOTES-1 r2: the News screen's own labels for a page as the generator escapes it (Updater.plain_text undoes the escapes first)
+	var esc := Updater.plain_text("## Added\n\n**Create\\-a\\-Hero**\n- A hero\\.\n\n**Online**\n- A browser\\.\n\n## Known issues\n\n**Audio**\n- A sound\\.\n")
+	var news = load("res://scripts/ui/news_screen.gd").new()
+	root.add_child(news)
+	news.set_releases([{"tag": "v0.4.0-alpha.5", "notes": esc, "published": "2026-10-13T10:00:00Z"}])
+	var shown: Array = news.find_children("*", "Label", true, false).map(func(l): return l.text)
+	_check(shown.filter(func(t): return t in ["Added", "Create-a-Hero", "Online", "Known issues", "Audio"]) == ["Added", "Create-a-Hero", "Online", "Known issues", "Audio"],
+		"News: section titles and area labels as shown (%s)" % str(shown))
+	_check(shown.has("A hero.") and not shown.any(func(t): return String(t).contains("\\") or String(t).contains("**")), "News: no escapes or bold marks on screen")
+	news.free()
 	var bi = BuildInfo.new()
 	var u = Updater.new(bi)
 	u.state = ConfigFile.new()

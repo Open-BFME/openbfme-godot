@@ -18,7 +18,9 @@
 #include "GameLogic/Combat/CombatNames.h"
 #include "GameLogic/Combat/CombatQueries.h"
 #include "GameLogic/Combat/CombatState.h"
+#include "GameLogic/Combat/ObjectWeapons.h"
 #include "GameLogic/Combat/WeaponDelivery.h"
+#include "GameLogic/FindPositionAround.h"
 #include "GameLogic/GameLogic.h"
 #include "GameLogic/Module/AIUpdate.h"
 #include "GameLogic/Module/GarrisonContain.h"
@@ -27,6 +29,7 @@
 #include "GameLogic/ObjectFilter.h"
 #include "GameLogic/ObjectFilterMatch.h"
 #include "GameLogic/SimMath.h"
+#include "GameLogic/Weapon.h"
 
 #include <algorithm>
 #include <cstdlib>
@@ -91,13 +94,14 @@ bool quickPathToContainer(Pathfinder &pf, const PathfindLocomotorInfo &loco, con
 }
 
 const char *const kStopRuntime =
-	"[S-1100] GarrisonContain / HordeGarrisonContain (lane GARRISON-1): ported from RW 0x86603B / 0x87B8C5 / 0x87D0E0 (who may enter), 0x8674C2 / 0x87CFEB / 0x990DEA "
-	"(enter: a horde and then its members), 0x87BEC8 / 0x87BFA6 (on containing / removing), 0x87C2B7 .. 0x87BD77 (the garrison points: the PassengerBonePrefix bones of "
-	"the three damage states, the point nearest to a rider's victim), 0x87C8DF (update), 0x867120 (death: EjectPassengersOnDeath ejects, else the riders are "
-	"destroyed) and 0x87D3CA / 0x87CA2B (exit: ExitDelay between members, the EntryPosition with the exit cell test RW 0x6E8707 (lane GARRISON-3), the exit path to the ExitOffset). Not ported: the door model conditions, the "
-	"enter / exit sounds, ModifierToGiveOnExit, the apparent controlling player and the radar, DamagePercentToUnits' passenger damage, HealObjects, MobileGarrison, "
-	"KillPassengersOnDeath's fling, the rally point (S-1620), the exit position search of removeAllContained (RW 0x87B3EC), the CHUNK_VENDOR / "
-	"ROCK_VENDOR entry test (RW 0x8660F0) and the second path test of the horde garrison's checkPath (RW 0x6F5F65)";
+	"[S-1100] GarrisonContain / HordeGarrisonContain (lane GARRISON-1): ported from RW 0x86603B / 0x87B8C5 / 0x87D0E0 (who may enter; the CHUNK_VENDOR / ROCK_VENDOR "
+	"entry as the body's GrabObject, RW 0x8660F0, lane BACKLOG-1), 0x8674C2 / 0x87CFEB / 0x990DEA (enter: a horde and then its members), 0x87BEC8 / 0x87BFA6 (on "
+	"containing / removing), 0x87C2B7 .. 0x87BD77 (the garrison points: the PassengerBonePrefix bones of the three damage states, the point nearest to a rider's "
+	"victim, a current MeleeWeapon takes none and leaves one, RW 0x441B59), 0x87C8DF (update), 0x867120 (death: EjectPassengersOnDeath ejects through "
+	"removeAllContained and its exit position search RW 0x87B3EC, else the riders are destroyed) and 0x87D3CA / 0x87CA2B (exit: ExitDelay between members, the "
+	"EntryPosition with the exit cell test RW 0x6E8707 (lane GARRISON-3), the exit path to the ExitOffset). Not ported: the door model conditions, the enter / exit "
+	"sounds, ModifierToGiveOnExit, the apparent controlling player and the radar, DamagePercentToUnits' passenger damage, HealObjects, MobileGarrison, "
+	"KillPassengersOnDeath's fling, the rally point (S-1620)";
 
 const char *const kStopNotPorted =
 	"[S-1103] not ported by lanes GARRISON-1 / GARRISON-2: HordeTransportContainDamage (5 templates, an unported module, S-140), the siege "
@@ -113,10 +117,11 @@ const char *const kStopExit =
 	"[S-1620] a horde leaving a garrison (lane GARRISON-3, the owner's feedback G6): ported from RW 0x87D3CA / 0x87CA2B (every member released at the "
 	"EntryPosition, the cell test RW 0x6E8707 and its two fallbacks along the facing, the ExitOffset adjusted by RW 0x6F3C87, AI command 10 with the container), "
 	"RW 0x86EBF4 / 0x86CF2A / 0x872D0A (a member on the way keeps its slot and rejoins unplaced), RW 0x86F18F (the horde recentred on its members) and RW "
-	"0x8759FF (the members taken back, the fill-in, the re-form RW 0x877E12, the synced model conditions RW 0x86D061). Not ported: the contain's rally point "
-	"(exit slots 0x1C / 0x20: the ExitOffset is the second waypoint), the layers of RW 0x68BB9D, the UNDER_CONSTRUCTION branch of RW 0x8759FF (busy and walk "
-	"back, counted). Inference: a member on the way that is gone or dead gives its slot back; the registered set of RW 0x873F30 and the map of the members on the "
-	"way are kept apart (RW: one set, interface + 0x54)";
+	"0x8759FF (the members taken back, the fill-in, the re-form RW 0x877E12, the synced model conditions RW 0x86D061); the contain's rally point as the second "
+	"waypoint with a regroup before it (exit slots 0x1C / 0x20, RW 0x865679 / 0x865694 / 0x87CC13, lane BACKLOG-1; its writer, Object::getObjectExitInterface's "
+	"contain fallback RW 0x68BB37, is S-4320). Not ported: the layers of RW 0x68BB9D (the ground layer only, S-362), the UNDER_CONSTRUCTION branch of RW 0x8759FF "
+	"(busy and the walk back RW 0x665777, the decomp's moveThroughPortalWithMicropath: a horde under construction has no member on the way into a garrison, counted). Inference: a member on the way that is "
+	"gone or dead gives its slot back; the registered set of RW 0x873F30 and the map of the members on the way are kept apart (RW: one set, interface + 0x54)";
 
 int statusBit(const char *name)
 {
@@ -790,8 +795,15 @@ void GarrisonContain::putObjectAtBestGarrisonPoint(Object *obj, Object *target, 
 	putObjectAtGarrisonPoint(obj, target ? target->getID() : INVALID_ID, condition, index);
 }
 
-// RW 0x87C5D8: a point whose object is gone, or whose object's weapon (slot 0) answers RW 0x441B59, is freed. The weapon test is not identified (S-1100): only
-// the vanished objects are freed
+// RW 0x87C5D8 (tier A; the BFME2 decomp's attempt for 0x47933C): a point whose object still exists and whose current weapon (RW 0x68B58C(0)) is a MeleeWeapon
+// (the weapon template's byte + 0x125, RW 0x441B59) is freed (RW 0x87B123). A point whose object is gone is not freed here (RW 0x87C5FF: no object, next point)
+bool GarrisonContain::currentWeaponIsMelee(const Object &obj)
+{
+	const ObjectWeapons *w = obj.getWeapons();
+	const Weapon *cur = w ? w->currentWeapon() : nullptr;
+	return cur && cur->getTemplate() && cur->getTemplate()->m_meleeWeapon;
+}
+
 void GarrisonContain::removeInvalidObjectsFromGarrisonPoints()
 {
 	if (m_pointsInUse == 0)
@@ -800,11 +812,10 @@ void GarrisonContain::removeInvalidObjectsFromGarrisonPoints()
 	}
 	for (int i = 0; i < MAX_GARRISON_POINTS; ++i)
 	{
-		const ObjectID id = m_points[(size_t)i].object;
-		if (id != INVALID_ID && !getObject()->logic().findObjectByID(id))
+		Object *obj = getObject()->logic().findObjectByID(m_points[(size_t)i].object);
+		if (obj && currentWeaponIsMelee(*obj))
 		{
-			m_points[(size_t)i] = GarrisonPoint();
-			--m_pointsInUse;
+			removeObjectFromGarrisonPoint(obj, i);
 		}
 	}
 }
@@ -842,12 +853,13 @@ void GarrisonContain::addValidObjectsToGarrisonPoints()
 		}
 		else if (h)
 		{
-			// RW 0x87BC4E: the horde's members (horde slot 0x108) that have a weapon in slot 0 not answering RW 0x441B59 (not identified: every armed member, S-1100)
+			// RW 0x87BC4E .. 0x87BC7F: the horde's members (horde slot 0x108) with a current weapon (RW 0x68B58C(0)) that is not a MeleeWeapon (RW 0x441B59)
 			if (const ContainedItemsList *members = obj->getContain()->getContainedItemsList())
 			{
 				for (Object *m : *members)
 				{
-					if (m->hasAnyWeapon())
+					const ObjectWeapons *w = m->getWeapons();
+					if (w && w->currentWeapon() && !currentWeaponIsMelee(*m))
 					{
 						riders.push_back(m);
 					}
@@ -1011,14 +1023,47 @@ UpdateSleepTime GarrisonContain::update()
 }
 
 
-// RW 0x87B4DC GarrisonContain::removeAllContained: with riders the exit position search (RW 0x87B3EC, not ported), OpenContain's RW 0x866675 (each rider through
-// RW 0x865EB6 until the list is empty), slot 0x50
+// RW 0x87B3EC GarrisonContain::validateRallyPoint (BFME2 decomp GarrisonContainValidateRallyPoint.cpp, tier A): a valid rally point (+ 0x9DE == 1) is kept when
+// findPositionAround finds a spot at it (radius 0, FPF_IGNORE_ALLY_OR_NEUTRAL_UNITS, the container ignored and the relationship object; the spot found is not
+// kept), else it is no longer valid; an invalid one is searched around the container from its bounding circle radius (+ 0xB8) to 1.8 times it (RW 0xBE9B44,
+// SSE) straight into + 0x9D0, valid when found. Both searches take the random start angle (the FindPositionOptions constructor's -99999.9: a logic random draw
+// each). RotWK reads + 0x9D0 nowhere else but in the save (RW 0x87B65E): the exit (RW 0x87CA2B) uses the EntryPosition
+void GarrisonContain::validateRallyPoint()
+{
+	Object *container = getObject();
+	if (m_rallyValid)
+	{
+		FindPositionOptions options;
+		options.flags = FPF_IGNORE_ALLY_OR_NEUTRAL_UNITS;
+		options.ignoreObject = container;
+		options.relationshipObject = container;
+		Coord3D found;
+		if (!FindPosition::findPositionAround(container->logic(), m_exitRallyPoint, options, found))
+		{
+			m_rallyValid = false;
+		}
+	}
+	if (!m_rallyValid)
+	{
+		FindPositionOptions options;
+		options.flags = FPF_IGNORE_ALLY_OR_NEUTRAL_UNITS;
+		options.minRadius = CombatQueries::boundingCircleRadius(*container);
+		options.maxRadius = SimMath::mulf32(options.minRadius, 1.8f);
+		options.ignoreObject = container;
+		options.relationshipObject = container;
+		m_rallyValid = FindPosition::findPositionAround(container->logic(), *container->getPosition(), options, m_exitRallyPoint);
+	}
+}
+
+// RW 0x87B4DC GarrisonContain::removeAllContained: with riders (slot 0x114(0)) the exit position search (RW 0x87B3EC), OpenContain's RW 0x866675 (each rider
+// through RW 0x865EB6 until the list is empty), slot 0x50
 void GarrisonContain::removeAllContained()
 {
 	if (getContainCount() == 0)
 	{
 		return;
 	}
+	validateRallyPoint(); // RW 0x87B4F0
 	while (!m_contained.empty())
 	{
 		Object *r = m_contained.front();
@@ -1178,8 +1223,8 @@ void GarrisonContain::exitObjectViaDoor(Object *obj, int door)
 //      CMD_FROM_AI)) and RW 0x68B3AB (the drawable's rally flag, client);
 //   5. recalcApparentControllingPlayer (main slot 0x50).
 // A member of a horde garrison comes here released (no container, no horde): it walks the exit path on its own until the horde object, which leaves last, takes it
-// back and re-forms (the members then walk to their slots from where they stand). NOT PORTED (S-1620): the rally point of a contain (exit slots 0x1C / 0x20 are
-// not stored by the port's contains: the path takes the ExitOffset twice), the layer of RW 0x68BB9D (2.01 maps have the ground layer only).
+// back and re-forms (the members then walk to their slots from where they stand). Lane BACKLOG-1: the contain's rally point (exit slots 0x1C / 0x20, RW 0x865679 /
+// 0x865694) as the second waypoint. NOT PORTED (S-1620): the layer of RW 0x68BB9D (2.01 maps have the ground layer only).
 void GarrisonContain::exitOneObject(Object *obj, int door)
 {
 	(void)door;
@@ -1209,7 +1254,7 @@ void GarrisonContain::exitOneObject(Object *obj, int door)
 			}
 		}
 	}
-	obj->setPosition(&pos);   // RW 0x87CB79: RW 0x696E63(pos, 1)
+	obj->teleportTo(&pos, true); // RW 0x87CB79: RW 0x696E63(pos, 1)
 	obj->setOrientation(angle); // RW 0x87CB88
 	if (AIWorld *world = obj->logic().aiWorld())
 	{
@@ -1227,7 +1272,6 @@ void GarrisonContain::exitOneObject(Object *obj, int door)
 		}
 		std::vector<Coord3D> path;
 		path.push_back(exitPos); // RW 0x87CC0E
-		// RW 0x87CC13: exit slot 0x20, the contain's rally point: not stored by the port's contains (S-1620), the second waypoint is the ExitOffset again
 		HordeContainInterface *horde = nullptr;
 		static const int hordeKind = CombatNames::kindOf("HORDE");
 		if (obj->isKindOf((unsigned)hordeKind))
@@ -1238,13 +1282,25 @@ void GarrisonContain::exitOneObject(Object *obj, int door)
 		{
 			horde = c->isKindOf((unsigned)hordeKind) ? hordeOf(*c) : nullptr; // its horde (RW 0x693A1A: + 0x27C with the HORDE KindOf)
 		}
-		path.push_back(exitPos); // RW 0x87CC57
-		if (horde)
+		auto regroup = [&]() {
+			if (horde)
+			{
+				horde->recentreOnMembers(obj); // slot 0x98(obj)
+				horde->returnToFormation(false); // slot 0x10(0)
+				++m_exitStats.hordeRegroups;
+			}
+		};
+		// RW 0x87CC13 .. 0x87CC4A (lane BACKLOG-1): exit slot 0x20, the contain's rally point (RW 0x865694): when one is set it is the second waypoint, and the
+		// horde regroups once before it is added (RW 0x87CC29 .. 0x87CC47); else the second waypoint is the ExitOffset again
+		Coord3D second = exitPos;
+		if (const Coord3D *rally = getRallyPoint())
 		{
-			horde->recentreOnMembers(obj); // RW 0x87CC72: slot 0x98(obj)
-			horde->returnToFormation(false); // RW 0x87CC7F: slot 0x10(0)
-			++m_exitStats.hordeRegroups;
+			second = *rally;
+			++m_exitStats.rallyExits;
+			regroup();
 		}
+		path.push_back(second); // RW 0x87CC57
+		regroup();              // RW 0x87CC5C .. 0x87CC7F
 		ai->aiFollowPath(path, container, CMD_FROM_AI, true); // RW 0x87CC8F: RW 0x87C9B8(path, container, 2), AI command 10
 		++m_exitStats.exitPaths;
 	}
@@ -1276,4 +1332,8 @@ void GarrisonContain::crc(StateHasher &h) const
 	}
 	h.addBool(m_pointsLoaded);
 	h.addU32(m_nextExitFrame);
+	h.addFloat(m_exitRallyPoint.x); // lane BACKLOG-1: RW + 0x9D0 / + 0x9DE
+	h.addFloat(m_exitRallyPoint.y);
+	h.addFloat(m_exitRallyPoint.z);
+	h.addBool(m_rallyValid);
 }

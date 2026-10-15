@@ -130,7 +130,8 @@ bool GameWorld::cast_object_power_at(int64_t player, int64_t id, const String &p
 	}
 	GameMessage m(MSG_DO_SPECIAL_POWER_AT_LOCATION, (int)player); // {id, location, target, options, source}
 	m.appendIntegerArgument((int)t->getID());
-	m.appendLocationArgument(Coord3D{ (float)x, (float)y, 0.0f });
+	// lane BACKLOG4: the location carries the terrain height, as a player's click on the terrain does (a teleport to it lands on the ground, not at z 0)
+	m.appendLocationArgument(Coord3D{ (float)x, (float)y, m_game->logic().getGroundHeight((float)x, (float)y) });
 	m.appendObjectIDArgument(INVALID_ID);
 	m.appendIntegerArgument(0);
 	m.appendObjectIDArgument((::ObjectID)id);

@@ -179,6 +179,60 @@ void AudioManager::setVolume(float volume, unsigned affect)
 	}
 }
 
+bool AudioManager::setSliderVolume(int slider, float volume)
+{
+	if (slider < SLIDER_SOUNDFX || slider > SLIDER_MOVIE)
+	{
+		return false;
+	}
+	m_systemVolume[slider] = clamp01(volume);
+	static const char *const names[5] = { "SOUNDFX", "VOICE", "MUSIC", "AMBIENT", "MOVIE" };
+	logHostVolume(names[slider], m_systemVolume[slider]);
+	return true;
+}
+
+void AudioManager::logHostVolume(const std::string &name, float volume)
+{
+	if (!m_logOn)
+	{
+		return;
+	}
+	if (m_log.size() >= kEventLogCap)
+	{
+		++m_logDropped;
+		return;
+	}
+	AudioLogEntry e;
+	e.clockMs = m_clockMs;
+	e.frame = m_logFrame;
+	e.event = name;
+	e.origin = AudioLog::origin();
+	e.volume = true;
+	char buf[32];
+	std::snprintf(buf, sizeof buf, "%.2f", (double)volume);
+	e.outcome = buf;
+	m_log.push_back(std::move(e));
+}
+
+float AudioManager::getSliderVolume(int slider) const
+{
+	return slider >= SLIDER_SOUNDFX && slider <= SLIDER_MOVIE ? m_systemVolume[slider] : 0.0f;
+}
+
+std::string AudioManager::formatLogLine(const AudioLogEntry &e, std::uint32_t objectId, const std::string &templateName)
+{
+	char head[160];
+	std::snprintf(head, sizeof head, "%.1f\t%u\t%s\t%u\t%u\t%u\t", e.clockMs, (unsigned)e.frame, e.volume ? "volume" : e.play ? "play" : "request", (unsigned)e.handle,
+		(unsigned)objectId, (unsigned)e.drawableId);
+	char pos[96] = "-";
+	if (e.positional)
+	{
+		std::snprintf(pos, sizeof pos, "%.0f,%.0f,%.0f", e.position.x, e.position.y, e.position.z);
+	}
+	return std::string(head) + e.event + "\t" + templateName + "\t" + pos + "\t" + std::to_string(e.player) + "\t" + (e.origin.empty() ? std::string("-") : e.origin) + "\t" +
+		e.outcome;
+}
+
 float AudioManager::getVolume(unsigned affect) const
 {
 	int slider = SLIDER_SOUNDFX;

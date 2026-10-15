@@ -493,6 +493,7 @@ bool InGameHud::selectionRegionOp(const InGameUI &ui, IconUIOp &out)
 void InGameHud::updateRadarEvents()
 {
 	m_radar->noteAttacks(m_config.game.logic()); // the logic is idle here (update's gate)
+	m_radar->noteLogicEvents(m_config.game.logic()); // lane BACKLOG3 (S-2452): the scripts' and the dozer's events
 	int pic[4];
 	if (!m_palantirRef || !m_radar->picture(pic))
 	{
@@ -816,7 +817,8 @@ bool InGameHud::isOverGui(int x, int y)
 	m.windowH = (float)m_windowH;
 	float sx, sy;
 	m.windowToStage((float)x, (float)y, sx, sy);
-	return m_booted && m_wm->apt().input().hitTestButtons(sx, sy) != nullptr;
+	// lane OPTS-5: a shell screen over the whole stage (Options.apt) takes every press (WindowManager::capturesMouse)
+	return m_booted && (m_wm->capturesMouse() || m_wm->apt().input().hitTestButtons(sx, sy) != nullptr);
 }
 
 void InGameHud::mouseMove(int x, int y, int keyState)

@@ -642,6 +642,41 @@ int GameWindowManager::winUnsetModal(GameWindow *window)
 	return WIN_ERR_OK;
 }
 
+GameWindow *GameWindowManager::winGetOpenDropDown()
+{
+	GameWindow *lone = m_loneWindow;
+	if (!lone)
+	{
+		return nullptr;
+	}
+	bool showing = false;
+	if (BitTest(lone->winGetStyle(), GWS_COMBO_BOX))
+	{
+		GameWindow *list = GadgetComboBoxGetListBox(lone);
+		showing = list && !BitTest(list->m_status, WIN_STATUS_HIDDEN);
+	}
+	else
+	{
+		showing = GadgetImageComboBoxIsOpen(lone);
+	}
+	if (!showing)
+	{
+		return nullptr; // ZH keeps the lone window after a choice closed its list
+	}
+	for (GameWindow *w = lone; w; w = w->m_parent)
+	{
+		if (BitTest(w->m_status, WIN_STATUS_HIDDEN) || !BitTest(w->m_status, WIN_STATUS_ENABLED))
+		{
+			return nullptr;
+		}
+	}
+	if (!m_modal.empty() && m_modal.back() && m_modal.back() != lone && !m_modal.back()->winIsChild(lone))
+	{
+		return nullptr; // a modal window it is not part of is above it
+	}
+	return lone;
+}
+
 void GameWindowManager::winSetLoneWindow(GameWindow *window)
 {
 	if (m_loneWindow == window)
@@ -854,7 +889,22 @@ WinInputReturnCode GameWindowManager::winProcessMouseEvent(GameWindowMessage msg
 				}
 				return nullptr;
 			};
-			window = scan(0);
+			// lane OPTS-4: the open drop-down list is drawn over every other window, so the pointer inside it (and inside the clip the draw keeps for it) is
+			// its own: a row made later (nearer the head) took the clicks on the list of the row above it. The rule is winGetOpenDropDown's (S-3503)
+			GameWindow *drop = winGetOpenDropDown();
+			bool inDrop = false;
+			if (drop)
+			{
+				int dx = 0, dy = 0;
+				drop->winGetScreenPosition(&dx, &dy);
+				inDrop = mousePos->x >= dx && mousePos->x <= dx + drop->m_size.x && mousePos->y >= dy && mousePos->y <= dy + drop->m_size.y;
+				if (inDrop && m_openDropDownClipped)
+				{
+					inDrop = mousePos->x >= m_openDropDownClip.lo.x && mousePos->x <= m_openDropDownClip.hi.x && mousePos->y >= m_openDropDownClip.lo.y &&
+						mousePos->y <= m_openDropDownClip.hi.y;
+				}
+			}
+			window = inDrop ? drop->winPointInChild(mousePos->x, mousePos->y) : scan(0);
 			if (window == nullptr)
 			{
 				window = scan(1);
@@ -1125,6 +1175,7 @@ void GameWindowManager::winDrawImage(const std::string &image, int startX, int s
 	c.kind = GadgetDrawCommand::Kind::Image;
 	c.window = drawerName(m_drawWindow);
 	c.root = m_drawRoot;
+	c.drawer = m_drawWindow;
 	c.x0 = startX;
 	c.y0 = startY;
 	c.x1 = endX;
@@ -1144,6 +1195,7 @@ void GameWindowManager::winFillRect(Color color, float width, int startX, int st
 	c.kind = GadgetDrawCommand::Kind::FillRect;
 	c.window = drawerName(m_drawWindow);
 	c.root = m_drawRoot;
+	c.drawer = m_drawWindow;
 	c.x0 = startX;
 	c.y0 = startY;
 	c.x1 = endX;
@@ -1163,6 +1215,7 @@ void GameWindowManager::winOpenRect(Color color, float width, int startX, int st
 	c.kind = GadgetDrawCommand::Kind::OpenRect;
 	c.window = drawerName(m_drawWindow);
 	c.root = m_drawRoot;
+	c.drawer = m_drawWindow;
 	c.x0 = startX;
 	c.y0 = startY;
 	c.x1 = endX;
@@ -1182,6 +1235,7 @@ void GameWindowManager::winDrawLine(Color color, float width, int startX, int st
 	c.kind = GadgetDrawCommand::Kind::Line;
 	c.window = drawerName(m_drawWindow);
 	c.root = m_drawRoot;
+	c.drawer = m_drawWindow;
 	c.x0 = startX;
 	c.y0 = startY;
 	c.x1 = endX;
@@ -1201,6 +1255,7 @@ void GameWindowManager::winDrawText(const UnicodeString &text, GameFont *font, i
 	c.kind = GadgetDrawCommand::Kind::Text;
 	c.window = drawerName(m_drawWindow);
 	c.root = m_drawRoot;
+	c.drawer = m_drawWindow;
 	c.x0 = x;
 	c.y0 = y;
 	c.color = color;
@@ -1225,6 +1280,7 @@ void GameWindowManager::setClipRegion(const IRegion2D &region)
 	c.kind = GadgetDrawCommand::Kind::ClipBegin;
 	c.window = drawerName(m_drawWindow);
 	c.root = m_drawRoot;
+	c.drawer = m_drawWindow;
 	c.x0 = region.lo.x;
 	c.y0 = region.lo.y;
 	c.x1 = region.hi.x;
@@ -1242,6 +1298,7 @@ void GameWindowManager::enableClipping(bool on)
 	c.kind = GadgetDrawCommand::Kind::ClipEnd;
 	c.window = drawerName(m_drawWindow);
 	c.root = m_drawRoot;
+	c.drawer = m_drawWindow;
 	m_drawList->commands.push_back(std::move(c));
 }
 

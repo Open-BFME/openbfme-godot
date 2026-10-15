@@ -590,6 +590,12 @@ TEST_CASE("SPELL-3 retail: area damage: Earthquake makes its six ground pieces, 
 		foes.push_back(g.place("MordorFighter", 1, where.x - 50.0f + 25.0f * (float)i, where.y - 60.0f));
 	}
 	const float before = g.health(foes);
+	// lane BACKLOG4: the foes by id. The quake kills them and the dead are deleted within the 45 frames; the health of the freed objects was read before
+	std::vector<ObjectID> foeIds;
+	for (const Object *o : foes)
+	{
+		foeIds.push_back(o->getID());
+	}
 	g.castAt(quake, where);
 	const OCLSpecialPower *ocl = oclOf(g, quake);
 	REQUIRE(ocl);
@@ -611,6 +617,14 @@ TEST_CASE("SPELL-3 retail: area damage: Earthquake makes its six ground pieces, 
 		if (Object *c = g.logic->findObjectByID(controller))
 		{
 			shots = dynamic_cast<FireWeaponUpdate *>(c->findModule("FireWeaponUpdate"))->shots();
+		}
+	}
+	foes.clear();
+	for (ObjectID id : foeIds)
+	{
+		if (Object *o = g.logic->findObjectByID(id))
+		{
+			foes.push_back(o);
 		}
 	}
 	const float after = g.health(foes);

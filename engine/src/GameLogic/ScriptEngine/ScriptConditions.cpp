@@ -101,6 +101,8 @@ enum ConditionType
 	HAS_DELAYED_CARRYOVER_UNIT_OF_TYPE = 195,
 	IS_GAME_MODE_ACTIVE = 201,
 	HAS_FINISHED_AUDIO = 50,
+	PLAYER_TRIGGERED_SPECIAL_POWER = 61,              // lane BACKLOG4
+	PLAYER_TRIGGERED_SPECIAL_POWER_FROM_NAMED = 64,   // lane BACKLOG4
 	CAN_BUILD_AT_BASE = 127,
 	NAMED_ATTACKED_BY_PLAYER = 21,                    // lane CAMP-1
 	TEAM_ATTACKED_BY_PLAYER = 22,                     // lane CAMP-1
@@ -1166,6 +1168,31 @@ bool ScriptConditions::evaluate(ScriptEngine &engine, const ScriptCondition &c)
 	}
 	case HAS_FINISHED_AUDIO: // RW 0x7E4DF0 -> RW 0x759B84(name, consume 1): the logic-side length model (S-1187)
 		return engine.hasFinishedAudio(param(c, 0).stringValue, true);
+	case PLAYER_TRIGGERED_SPECIAL_POWER:
+	case PLAYER_TRIGGERED_SPECIAL_POWER_FROM_NAMED:
+	{
+		// lane BACKLOG4 (S-529). RW 0x7E4E08 (BFME2 decomp ScriptConditions::evaluatePlayerSpecialPowerFromUnitTriggered, the donor): with a unit parameter the
+		// named unit must exist (RW 0x75A3D8) and its id is the source, else the source is 0 (any); the first player of the parameter (RW 0x75968D /
+		// 0x6A85EE) whose list holds the power (RW 0x758CBF, the entry removed) answers true
+		ObjectID source = INVALID_ID;
+		if (c.resolved == PLAYER_TRIGGERED_SPECIAL_POWER_FROM_NAMED)
+		{
+			const Object *unit = engine.getUnitNamed(param(c, 2).stringValue);
+			if (!unit)
+			{
+				return false;
+			}
+			source = unit->getID();
+		}
+		for (Player *p : ScriptConditions::players(engine, param(c, 0).stringValue))
+		{
+			if (engine.isSpecialPowerTriggered(p->getPlayerIndex(), param(c, 1).stringValue, true, source))
+			{
+				return true;
+			}
+		}
+		return false;
+	}
 	case HAS_DELAYED_CARRYOVER_UNIT_OF_TYPE:
 		// RW 0x7EB69A: the campaign's carry-over store (the units a previous mission kept); a mission started on its own has none
 		engine.note("[S-1180] HAS_DELAYED_CARRYOVER_UNIT_OF_TYPE: no campaign carry-over store (a mission started on its own: false)");

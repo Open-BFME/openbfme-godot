@@ -100,14 +100,26 @@ std::string ProfileIdentity::difference(const ProfileIdentity &ours, const Profi
 	const std::vector<std::string> a = lines(ours.text), b = lines(theirs.text);
 	std::string out = "profile " + ours.digest + " != " + theirs.digest;
 	int shown = 0;
-	for (size_t i = 0; i < std::max(a.size(), b.size()) && shown < 3; ++i)
+	bool archives = false;
+	for (size_t i = 0; i < std::max(a.size(), b.size()); ++i)
 	{
 		const std::string x = i < a.size() ? a[i] : "(none)", y = i < b.size() ? b[i] : "(none)";
 		if (x != y)
 		{
-			out += "; ours: '" + x + "' theirs: '" + y + "'";
+			archives = archives || x.rfind("archive ", 0) == 0 || y.rfind("archive ", 0) == 0;
+			if (shown < 3)
+			{
+				out += "; ours: '" + x + "' theirs: '" + y + "'";
+			}
 			++shown;
 		}
+	}
+	if (archives)
+	{
+		// lane CONTRIB-1 (review): in player words. A disc install patched with EA's official patch and an All In One install keep different
+		// archive lists (S-4700), so they cannot play together even though both are RotWK 2.01
+		out += ". The two players' game files differ (for example one has a disc install patched with EA's official patch and the other the All In One "
+			"install, or a mod): both players need the same game install";
 	}
 	return out;
 }

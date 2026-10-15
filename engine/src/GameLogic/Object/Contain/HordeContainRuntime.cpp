@@ -643,6 +643,42 @@ void HordeContain::placeMember(Object *member)
 	member->setOrientation(owner.angle); // inference: a member faces its horde's angle (S-149)
 }
 
+// Lane BACKLOG4 (S-813). RW 0x86D881, interface slot 0x1B8 (BFME2 decomp HordeContain::rva0046A712, tier A): slot 0x40 (the reform's end), then every
+// contained member: Object RW 0x696E63(slot 7's position, 0), Thing::setOrientation(slot 7's angle). The member's slot position and angle are placeMember's
+// (the ground height and the horde's angle: S-149). A garrisoned horde's members are placed by the garrison, as in containReactToTransformChange.
+void HordeContain::teleportMembers()
+{
+	if (m_garrisoned)
+	{
+		return;
+	}
+	endReform();
+	const std::vector<Object *> members(m_members.begin(), m_members.end()); // the member's aiIdle may not change the list; a copy keeps the walk defined
+	for (Object *m : members)
+	{
+		const Coord3D pos = getMemberFormationPosition(m);
+		m->teleportTo(&pos, false);
+		m->setOrientation(getObject()->getOrientation());
+	}
+}
+
+// RW 0x86D8FE, interface slot 0x1B4 (BFME2 decomp HordeContain::rva0046A78F, tier A): slot 0x40, then every contained member gets the transform with its
+// translation replaced by slot 7's position (Object RW 0x68DA67)
+void HordeContain::teleportMembersTransform(const float basis[9])
+{
+	if (m_garrisoned)
+	{
+		return;
+	}
+	endReform();
+	const std::vector<Object *> members(m_members.begin(), m_members.end());
+	for (Object *m : members)
+	{
+		const Coord3D pos = getMemberFormationPosition(m);
+		m->teleportTransform(&pos, basis);
+	}
+}
+
 // ZH OpenContain::containReactToTransformChange: the contents follow the container
 void HordeContain::containReactToTransformChange()
 {

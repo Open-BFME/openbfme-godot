@@ -1246,7 +1246,9 @@ void teamMoveFormation(GameLogic &logic, const Player &player, AITactic &tac, in
 	else
 	{
 		AIGroup group(logic, team->members);
-		group.groupMoveToPosition(pos, false, CMD_FROM_PLAYER, haveAngle, angle);
+		// RW 0x8F18AA .. 0x8F18C3: command source 0 (the player's), no formation type; FormationAttack's formation move RW 0x9B4D64 passes source 2 (the AI's;
+		// lane BACKLOG6) with a formation type and the facing
+		group.groupMoveToPosition(pos, false, haveAngle ? CMD_FROM_AI : CMD_FROM_PLAYER, haveAngle, angle);
 	}
 	team->idleFrames = 0;
 }

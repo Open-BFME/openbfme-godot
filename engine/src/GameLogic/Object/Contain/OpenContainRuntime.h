@@ -8,7 +8,8 @@
 //
 // TARGET FACTS (RotWK game.dat, caveat S-001), each at the cited address:
 //   * the entry test RW 0x86603B (isValidContainerFor's OpenContain part: destroyed, TEMPORARILY_DEFECTED, HOLDING_THE_RING, the enabled byte, COMBO_HORDE, the
-//     PassengerFilter for the container's player, a MOUNTED object against a filter excluding CAVALRY, the relationship and the Allow* bytes);
+//     PassengerFilter for the container's player (a CHUNK_VENDOR / ROCK_VENDOR object: its body's GrabObject template, RW 0x8660F0, lane BACKLOG-1), a MOUNTED
+//     object against a filter excluding CAVALRY, the relationship and the Allow* bytes);
 //   * addToContain RW 0x8674C2 (the list RW 0x866987 with the STEALTH_GARRISON count, the entering player's mask, the contain slot 0x58 onContaining, the main slot
 //     0x48 redeploy, Object::onContainedBy RW 0x6901AE, the apparent controller, the ENCLOSED world exit RW 0x865D3D);
 //   * removeFromContain RW 0x8665BE -> 0x865EB6 (NO_ATTACK, PORTER_TAGGED, TAGGED, the list, the ENCLOSED world entry, the slot 0x5C onRemoving, Object::onRemovedFrom
@@ -93,6 +94,15 @@ public:
 	std::string riderBone(ObjectID id) const;
 	// RW 0x86603B: OpenContain's part of every contain's entry test
 	bool openContainAllows(const Object &obj) const;
+	// lane BACKLOG-1: the exit interface's rally point (slots 7 / 8: setRallyPoint RW 0x865679 stores it at exit interface + 0xA0 and sets + 0xAC;
+	// getRallyPoint RW 0x865694 answers it, null when never set; the BFME2 decomp's SlaughterHordeContain::rva0046255E, tier A). Its writer, the contain
+	// fallback of Object::getObjectExitInterface (RW 0x68BB37), is not wired (S-4320): only the garrison exit reads it (RW 0x87CC13)
+	void setRallyPoint(const Coord3D &pos)
+	{
+		m_rallyPoint = pos;
+		m_rallyPointExists = true;
+	}
+	const Coord3D *getRallyPoint() const { return m_rallyPointExists ? &m_rallyPoint : nullptr; }
 	// RW 0x6CAC1F's question: ObjectStatusOfContained has ENCLOSED (a rider leaves the world, its projectiles leave from the container)
 	bool isEnclosingContainerFor(const Object &obj) const;
 	bool ridersFireFromContainer() const;
@@ -174,6 +184,8 @@ protected:
 	unsigned m_doorOpenFrames = 0;            // RW module + 0x70 (DoorOpenTime countdown, RW 0x8682F8 / 0x86702D)
 	unsigned long long m_turretBonesUnported = 0;
 	bool m_deleting = false;                  // RW + 0xDF (onDelete)
+	Coord3D m_rallyPoint{ 0.0f, 0.0f, 0.0f }; // RW exit interface + 0xA0 (lane BACKLOG-1)
+	bool m_rallyPointExists = false;          // RW exit interface + 0xAC
 	int m_nextExitPath = 1;                   // RW exit interface + 0x3C (the ExitStart / ExitEnd bone number of the next exit, NumberOfExitPaths > 1)
 	OpenStats m_openStats;
 };

@@ -48,7 +48,8 @@ struct OpenBFMEPageRow
 		Choice,  // combobox.wnd: `items`, `value` = the chosen index
 		Check,   // checkbox.wnd: `value` 0 / 1
 		Slider,  // horzslider.wnd: `minValue` .. `maxValue`, `value` = the position; `valueText` is drawn right of it
-		Text     // a read-only value: `valueText`
+		Text,    // a read-only value: `valueText`
+		Entry    // lane OPTS-5: textentry.wnd: `valueText` the text, at most `maxValue` characters; `value` = the text's number (0 when empty)
 	};
 	Kind kind = Kind::Text;
 	std::string key;
@@ -60,6 +61,7 @@ struct OpenBFMEPageRow
 	int maxValue = 100;
 	UnicodeString valueText;
 	bool enabled = true;
+	int column = 0; // lane OPTS-5: 0 the panel's left (or only) column, 1 its right one (a tab with a row in column 1 is laid out in two columns)
 };
 
 struct OpenBFMEPageSpec
@@ -85,7 +87,8 @@ struct OpenBFMEPageEvent
 		Cancel, // Options.apt's CANCEL while the page is up
 		Reset,  // RESET TO DEFAULTS
 		Accept, // ACCEPT
-		Entry   // the OPENBFME button of the basic page
+		Entry,  // the OPENBFME button of the basic page; lane OPTS-5: the menu opened (`value` the tab to show first: 0, or 1 for the detail settings)
+		Release // lane OPTS-5: a slider row's thumb let go or its track click done (RotWK's 0x4010, GSM_SLIDER_CLICKED): `key`
 	};
 	Kind kind = Kind::Value;
 	std::string key;
@@ -105,12 +108,19 @@ public:
 	static constexpr int kPanelRight = 927;
 	static constexpr int kHeaderHeight = 30; // the frame's header band (the movie's: 27 .. 30 stage pixels)
 	static constexpr int kRowTop = kTop + kHeaderHeight + 8;
-	static constexpr int kRowPitch = 34;
+	static constexpr int kRowPitch = 30; // lane OPTS-5: ten rows above the help line (OPTS-3: 34, eight rows)
 	static constexpr int kRowHeight = 26;
 	static constexpr int kLabelLeft = kPanelLeft + 22;
 	static constexpr int kGadgetLeft = kPanelLeft + 300;
 	static constexpr int kGadgetRight = kPanelRight - 22;
 	static constexpr int kSliderWidth = 220;
+	// lane OPTS-5: a tab of two columns (the Graphics tab: the original game's detail settings left, OpenBFME's right): each half of the panel, the
+	// label kColumnLabelInset in, the gadget from kColumnGadgetInset to kColumnRightInset before the half's right edge
+	static constexpr int kPanelMiddle = (kPanelLeft + kPanelRight) / 2;
+	static constexpr int kColumnLabelInset = 16;
+	static constexpr int kColumnGadgetInset = 160;
+	static constexpr int kColumnRightInset = 12;
+	static constexpr int kEntryWidth = 110;
 	static constexpr int kCheckSize = 30; // checkbox.wnd draws its box (height - 6) square: 24, the size of Options.apt's Show All Health Bars box
 	static constexpr int kHelpTop = kBottom - 70;
 	static constexpr int kTabTop = kTop + kHeaderHeight + 12;
@@ -161,6 +171,8 @@ public:
 	void setSink(std::function<void(const OpenBFMEPageEvent &)> sink) { m_sink = std::move(sink); }
 	std::vector<OpenBFMEPageEvent> takeEvents();
 
+	// lane OPTS-5: where a row's label starts and the room it has before its gadget (stage pixels; the checks measure the label against it)
+	bool labelBox(const std::string &key, std::array<int, 4> &out) const;
 	// Tests and automation: the stage rectangle (x0 y0 x1 y1) of a row's gadget ("<key>") or a tab ("tab:<index>"); the gadget of a row; a choice
 	// made through the gadget as a click makes it (the gadget's selection, then its message to the owner).
 	bool rect(const std::string &name, std::array<int, 4> &out) const;
@@ -174,13 +186,19 @@ private:
 	struct Built
 	{
 		GameWindow *window = nullptr;
-		int y = 0; // the row's top (stage)
+		int y = 0;            // the row's top (stage)
+		int left = 0;         // lane OPTS-5: the row's column (stage x of its left and right edge)
+		int right = 0;
+		bool narrow = false;  // a column of a two-column tab
 	};
 	void destroyGadgets();
 	void applyRow(std::size_t index);
 	int rowAt(float x, float y) const;
 	int tabAt(float x, float y) const;
 	std::array<int, 4> gadgetRect(std::size_t index) const;
+	int gadgetLeft(std::size_t index) const;
+	int labelLeft(std::size_t index) const;
+	void layout(); // lane OPTS-5: m_built's places (one column, or two when a row asks for column 1)
 	static void frame(GadgetDrawList &out, int x0, int y0, int x1, int y1, const UnicodeString &header);
 	static void text(GadgetDrawList &out, const UnicodeString &s, int x, int y, int size, Color color, int wrapWidth = 0, bool centred = false);
 

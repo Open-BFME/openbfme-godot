@@ -42,6 +42,8 @@ struct GadgetDrawCommand
 	// lane MENU-1: the top-level window whose repaint made the command (a gadget's own window for its children too). The renderer draws a component's
 	// commands at its placeholder's depth in the Apt render (RW 0x814BEC draws the window in the movie's render, see GodotAptPlayer drawGadgets)
 	const GameWindow *root = nullptr;
+	// lane OPTS-4: the window whose draw made it (a child's own for a child), so the open drop-down's commands are found inside a parent's block
+	const GameWindow *drawer = nullptr;
 	int x0 = 0, y0 = 0, x1 = 0, y1 = 0;
 	Color color = 0;
 	Color dropColor = 0;

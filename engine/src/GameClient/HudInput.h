@@ -46,6 +46,11 @@ public:
 	// a key: `key` a KeyCode, `keyState` the KeyState flags including the modifier flags after this event (KEY_STATE_DOWN / UP, AUTOREPEAT)
 	// `character`: the keyboard layout's character of the key (lane INPUT-1: RotWK's hotkeys look the character up, RW 0x63F14D), 0 when unknown
 	void key(int key, int keyState, char32_t character = 0);
+	// lane BACKLOG3 (S-454): the keyboard's state the LookAt translator reads (TheKeyboard's key table, RW 0x63F0E2): a key is down from its press to its
+	// release. resetKeys is ZH Keyboard::resetKeys (the window lost the focus: every key is up, no release reaches the stream). INFERENCE (S-454): that
+	// RotWK resets its keyboard there too was not read
+	bool isKeyDown(int key) const { return m_keyDown[key & 0xFF]; }
+	void resetKeys();
 	// the wheel: `spin` notches (positive = away from the player = zoom in; ZH MSG_RAW_MOUSE_WHEEL carries the pixel and the spin)
 	void mouseWheel(int spin, int x, int y);
 
@@ -101,6 +106,7 @@ private:
 	HotKeyTranslator m_hotKey; // lane INPUT-1
 	TacticalCamera *m_camera = nullptr;
 	std::unique_ptr<LookAtTranslator> m_lookAt;
+	bool m_keyDown[256] = {}; // lane BACKLOG3
 	bool m_ignoreLeftUp = false, m_ignoreRightUp = false, m_ignoreMiddleUp = false;
 	unsigned long long m_sent = 0;
 	std::function<void(const GameMessage &)> m_observer;

@@ -132,27 +132,7 @@ def test_publish_dry_run(tmp_path):
     assert r.returncode != 0 and "is not a tag" in r.stderr
 
 
-def launcher_pack(entries=None) -> bytes:
-    from test_release_tools import pck  # noqa: PLC0415 (the synthetic pack builder)
-    return pck(entries or [("project.binary", b"ECFG" + b"\0" * 4), ("scripts/main.gd", b"extends Control\n"),
-                           ("scenes/main.tscn", b"[gd_scene format=3]\n"), ("build_info.json", b"{}\n")])
-
-
-def elf_with_pack(pack: bytes, extra: bytes = b"") -> bytes:
-    """an ELF64 whose one section holds the pack and its trailer, as Godot's export embeds it (header, section table, pack, u64 size,
-    "GDPC")"""
-    import struct  # noqa: PLC0415
-    body = pack + struct.pack("<Q", len(pack)) + b"GDPC"
-    h = bytearray(64)
-    h[0:4] = b"\x7fELF"
-    h[4], h[5], h[6] = 2, 1, 1
-    struct.pack_into("<Q", h, 40, 64)                     # e_shoff
-    struct.pack_into("<HHHH", h, 52, 64, 56, 0, 64)       # e_ehsize, e_phentsize, e_phnum, e_shentsize
-    struct.pack_into("<H", h, 60, 1)                      # e_shnum
-    sh = bytearray(64)
-    struct.pack_into("<I", sh, 4, 1)                      # SHT_PROGBITS
-    struct.pack_into("<QQ", sh, 24, 128, len(body))       # sh_offset, sh_size
-    return bytes(h) + bytes(sh) + extra + body
+from test_release_tools import elf_with_pack, launcher_pack  # noqa: E402  (the synthetic launcher executable)
 
 
 def launcher_files() -> dict[str, bytes]:
@@ -263,3 +243,309 @@ def test_the_launcher_presets_have_no_include_or_exclude_filter():
         assert text.count(f'\n{key}=""\n') == presets, f"every preset's {key} must be empty"
     project = (REPO / "launcher" / "project.godot").read_text(encoding="utf-8")
     assert 'enabled=PackedStringArray("res://addons/pack_files/plugin.cfg")' in project, "the plugin that picks the pack's files is on"
+
+
+# ---- lane ONEZIP-1: one package per platform -------------------------------------------------------------------------------------------
+
+def one_download_dir(d: Path, version: str, legacy: bool = True, launcher_in_game: bytes | None = b"the launcher") -> Path:
+    """package.sh's output in the one-download layout: the game's package with the launcher's executable in it, and with `legacy`
+    the launcher-only archives holding the launcher"""
+    d.mkdir(parents=True, exist_ok=True)
+    sums = ""
+    for kind in ("game", "launcher") if legacy else ("game",):
+        for platform in ("linux-x64", "windows-x64"):
+            n = make_manifest.asset_name(kind, version, platform)
+            ext = ".x86_64" if platform.startswith("linux") else ".exe"
+            files = {"OpenBFMELauncher" + ext: b"the launcher"}
+            if kind == "game":
+                files = {"OpenBFME" + ext: b"the game"} | ({"OpenBFMELauncher" + ext: launcher_in_game} if launcher_in_game else {})
+            data = tiny_package(n, files)
+            (d / n).write_bytes(data)
+            sums += f"{hashlib.sha256(data).hexdigest()}  {n}\n"
+    (d / f"SHA256SUMS-{version}.txt").write_text(sums)
+    return d
+
+
+def test_the_manifest_of_the_one_download_layout(tmp_path):
+    """format 2 names the package and the launcher archive of each platform and insists on ONE launcher per release; format 3 names
+    the packages alone, each with its launcher inside, and refuses a folder that still holds launcher archives"""
+    tool = HERE / "make_manifest.py"
+    common = ("--repo", "Test/repo", "--commit", COMMIT, "--date", "2026-10-13", "--allow-untagged")
+    d = one_download_dir(tmp_path / "two", "v0.5.0")
+    assert run(sys.executable, tool, d, *common).returncode == 0
+    m = json.loads((d / "manifest.json").read_bytes())
+    assert m["format"] == 2 and sorted(m["assets"]) == ["game", "launcher"]
+    assert m["assets"]["game"]["linux-x64"]["files"]["OpenBFMELauncher.x86_64"] == m["assets"]["launcher"]["linux-x64"]["files"]["OpenBFMELauncher.x86_64"]
+    assert run(sys.executable, tool, "--check", d).returncode == 0
+    r = run(sys.executable, tool, d, *common, "--format", "3")
+    assert r.returncode != 0 and "format 3 names no launcher archive, but" in r.stderr + r.stdout
+    other = one_download_dir(tmp_path / "other", "v0.5.0", launcher_in_game=b"another launcher")
+    r = run(sys.executable, tool, other, *common)
+    assert r.returncode != 0 and "OpenBFMELauncher.x86_64 in openbfme-v0.5.0-linux-x64.tar.gz is not the one in openbfme-launcher-v0.5.0-linux-x64.tar.gz" in r.stderr + r.stdout
+
+    d3 = one_download_dir(tmp_path / "three", "v0.5.0", legacy=False)
+    r = run(sys.executable, tool, d3, *common)
+    assert r.returncode != 0 and "openbfme-launcher-v0.5.0-linux-x64.tar.gz is missing" in r.stderr + r.stdout, "format 2 needs the launcher archives"
+    assert run(sys.executable, tool, d3, *common, "--format", "3").returncode == 0
+    m3 = json.loads((d3 / "manifest.json").read_bytes())
+    assert m3["format"] == 3 and sorted(m3["assets"]) == ["game"] and "OpenBFMELauncher.exe" in m3["assets"]["game"]["windows-x64"]["files"]
+    r = run(sys.executable, tool, "--check", d3)
+    assert r.returncode == 0 and "matches 2 archives" in r.stdout, r.stdout + r.stderr
+    bare = one_download_dir(tmp_path / "bare", "v0.5.0", legacy=False, launcher_in_game=None)
+    r = run(sys.executable, tool, bare, *common, "--format", "3")
+    assert r.returncode != 0 and "holds no OpenBFMELauncher.x86_64: a format 3 release has no other launcher" in r.stderr + r.stdout
+    (d3 / "manifest.json").write_bytes((d3 / "manifest.json").read_bytes().replace(b'"format": 3', b'"format": 4'))
+    r = run(sys.executable, tool, "--check", d3)
+    assert r.returncode != 0 and "has the format 4 (2 or 3)" in r.stdout
+
+
+@pytest.mark.parametrize("legacy, archives", [(True, 4), (False, 2)])
+def test_the_release_assets_follow_the_manifest(tmp_path, legacy, archives):
+    """release_assets.py --names (publish_release.sh's upload list) and its read-back check: the archives the manifest names, the
+    checksum file, the manifest and its signature; a launcher archive on a format 3 release is foreign"""
+    import release_assets
+    v = "v0.5.0"
+    d = one_download_dir(tmp_path / "pkg", v, legacy=legacy)
+    assert run(sys.executable, HERE / "make_manifest.py", d, "--repo", "Test/repo", "--commit", COMMIT, "--date", "2026-10-13",
+               "--allow-untagged", "--format", "2" if legacy else "3").returncode == 0
+    (d / "manifest.json.sig").write_bytes(b"s" * 64)
+    r = run(sys.executable, HERE / "release_assets.py", "--names", "--dir", d, "--version", v)
+    names = r.stdout.split()
+    assert r.returncode == 0 and len(names) == archives + 3 and names[-3:] == [f"SHA256SUMS-{v}.txt", "manifest.json", "manifest.json.sig"], r.stdout
+    assert [n for n in names if n.startswith("openbfme-launcher-")] == ([f"openbfme-launcher-{v}-linux-x64.tar.gz",
+                                                                       f"openbfme-launcher-{v}-windows-x64.zip"] if legacy else [])
+    want = release_assets.expected(d, v)
+    release = {"tag_name": v, "draft": False, "prerelease": False, "assets": [
+        {"name": n, "state": "uploaded", "size": s, "digest": f"sha256:{h}", "id": i} for i, (n, (s, h)) in enumerate(want.items())]}
+    assert release_assets.check(release, want, v, False, False, "Test/repo") == []
+    stray = f"openbfme-launcher-{v}-windows-x64.zip" if not legacy else "openbfme-extra.zip"
+    release["assets"].append({"name": stray, "state": "uploaded", "size": 1, "digest": "sha256:" + "0" * 64, "id": 99})
+    assert release_assets.check(release, want, v, False, False, "Test/repo") == [f"an asset that is not the release's: {stray}"]
+
+
+def test_publish_dry_run_uploads_the_manifests_archives(tmp_path):
+    """the dry run of a format 3 release names two archives and no launcher archive; a checksum file that lists another set stops it"""
+    d = one_download_dir(tmp_path / "pkg", "v0.5.0", legacy=False)
+    secret = os.urandom(32)
+    pub = tmp_path / "key.pub"
+    pub.write_text(ed25519.public_key(secret).hex() + "\n")
+    assert run(sys.executable, HERE / "make_manifest.py", d, "--repo", "Test/repo", "--commit", COMMIT, "--date", "2026-10-13",
+               "--allow-untagged", "--format", "3").returncode == 0
+    (d / "manifest.json.sig").write_bytes(ed25519.sign(secret, (d / "manifest.json").read_bytes()))
+    r = run("bash", HERE / "publish_release.sh", d, "--repo", "Test/repo", "--key-file", pub, "--allow-untagged")
+    assert r.returncode == 0 and "DRY RUN" in r.stdout, r.stdout + r.stderr
+    upload = next(ln for ln in r.stdout.splitlines() if " release upload " in ln)
+    assert upload.count("openbfme-v0.5.0-") == 2 and "openbfme-launcher-" not in upload and upload.rstrip().endswith("manifest.json.sig"), upload
+    sums = d / "SHA256SUMS-v0.5.0.txt"
+    sums.write_text(sums.read_text().splitlines()[0] + "\n")
+    r = run("bash", HERE / "publish_release.sh", d, "--repo", "Test/repo", "--key-file", pub, "--allow-untagged")
+    assert r.returncode != 0 and "PUBLISH FAIL" in r.stderr, r.stdout + r.stderr
+
+
+def test_the_notes_say_which_file_to_download():
+    """one linked archive per platform, the remaining files in one line; the links are built from the checked version and repository
+    alone, and anything else is refused (a version or repository with Markdown or a URL in it never reaches the page)"""
+    import autorelease
+    lines = autorelease.download_section("v0.4.0-alpha.5", "Open-BFME/openbfme-godot")
+    text = "\n".join(lines)
+    base = "https://github.com/Open-BFME/openbfme-godot/releases/download/v0.4.0-alpha.5"
+    assert lines[0] == "## Which file to download"
+    assert f"| **[openbfme-v0.4.0-alpha.5-windows-x64.zip]({base}/openbfme-v0.4.0-alpha.5-windows-x64.zip)** | **OpenBFME for Windows.** " in text
+    assert f"| **[openbfme-v0.4.0-alpha.5-linux-x64.tar.gz]({base}/openbfme-v0.4.0-alpha.5-linux-x64.tar.gz)** | **OpenBFME for Linux.** " in text
+    assert text.count("https://") == 2 and "(link removed)" not in text
+    rest = next(ln for ln in lines if ln.startswith("| openbfme-launcher-"))
+    assert rest == ("| openbfme-launcher-v0.4.0-alpha.5-windows-x64.zip, openbfme-launcher-v0.4.0-alpha.5-linux-x64.tar.gz, "
+                    "SHA256SUMS-v0.4.0-alpha.5.txt, manifest.json, manifest.json.sig | Used by OpenBFME to update itself and for checking "
+                    "downloads. You don't need these. |")
+    single = "\n".join(autorelease.download_section("v0.4.0-alpha.5", "Open-BFME/openbfme-godot", legacy_launchers=False))
+    assert "openbfme-launcher-" not in single and "| SHA256SUMS-v0.4.0-alpha.5.txt, manifest.json, manifest.json.sig | Used by" in single
+    for version, repo in (("v0.4.0-alpha.5](https://evil.example)", "Open-BFME/openbfme-godot"), ("v0.4.0", "Open-BFME/x](https://evil.example)"),
+                          ("v0.4.0", "evil.example/a/b"), ("0.4.0", "Open-BFME/openbfme-godot")):
+        with pytest.raises(SystemExit):
+            autorelease.download_section(version, repo)
+    # the notes without a repository argument use the default repository (NOTES-1): the table and the sentence are both there
+    notes, _ = autorelease.release_notes("v0.4.0-alpha.5", [], [])
+    assert "Which file to download" in notes and "Install or update it with the OpenBFME Launcher." in notes
+    full, _ = autorelease.release_notes("v0.4.0-alpha.5", [{"subject": "x", "body": "Release-note: See https://evil.example now", "files": []}], [],
+                                        repo="Open-BFME/openbfme-godot")
+    assert full.count("https://") == 2 and "evil.example" not in full and "\\(link removed\\)" in full, "commit text still loses its links"
+    assert autorelease.public_text_problems("notes.md", full) == []
+
+
+def test_make_archive_extracts_one_file(tmp_path):
+    """package.sh takes the launcher's executable out of the launcher archive for the combined package: exactly that file's bytes"""
+    for name in ("openbfme-launcher-v1-linux-x64.tar.gz", "openbfme-launcher-v1-windows-x64.zip"):
+        (tmp_path / name).write_bytes(tiny_package(name, {"OpenBFMELauncher.x86_64": b"the launcher \x00\xff", "README.txt": b"read me\n"}))
+        assert make_archive.extract(tmp_path / name, "OpenBFMELauncher.x86_64", tmp_path / "out.bin") == 0
+        assert (tmp_path / "out.bin").read_bytes() == b"the launcher \x00\xff"
+        assert make_archive.extract(tmp_path / name, "missing.txt", tmp_path / "none.bin") == 1 and not (tmp_path / "none.bin").exists()
+        assert make_archive.extract(tmp_path / name, "../" + name, tmp_path / "none.bin") == 1 and not (tmp_path / "none.bin").exists()
+        # --has: how package.sh --verify tells a combined package from the game alone
+        assert make_archive.has(tmp_path / name, "OpenBFMELauncher.x86_64") and not make_archive.has(tmp_path / name, "OpenBFME.x86_64")
+        assert run(sys.executable, HERE / "make_archive.py", "--has", tmp_path / name, "README.txt").returncode == 0
+        assert run(sys.executable, HERE / "make_archive.py", "--has", tmp_path / name, "OpenBFME.pck").returncode == 1
+
+
+# ---- lane ONEZIP-1 r3 (Sol r2): the seal tool reads only plain archives --------------------------------------------------------------
+
+def _hostile_tar(path: Path, top: str, members: list) -> None:
+    import io
+    import tarfile
+    with tarfile.open(path, "w:gz", format=tarfile.GNU_FORMAT) as t:
+        d = tarfile.TarInfo(top)
+        d.type = tarfile.DIRTYPE
+        t.addfile(d)
+        for name, kind, data in members:
+            info = tarfile.TarInfo(name)
+            if kind == "file":
+                info.size = len(data)
+                t.addfile(info, io.BytesIO(data))
+            else:
+                info.type = {"symlink": tarfile.SYMTYPE, "hardlink": tarfile.LNKTYPE, "device": tarfile.CHRTYPE,
+                             "fifo": tarfile.FIFOTYPE, "dir": tarfile.DIRTYPE}[kind]
+                info.linkname = data.decode() if kind in ("symlink", "hardlink") else ""
+                t.addfile(info)
+
+
+def _hostile_zip(path: Path, members: list) -> None:
+    import zipfile
+    with zipfile.ZipFile(path, "w") as z:
+        for name, kind, data in members:
+            info = zipfile.ZipInfo(name)
+            info.create_system = 3
+            info.external_attr = ((0o120777 if kind == "symlink" else 0o100644) << 16)
+            z.writestr(info, data)
+
+
+@pytest.mark.parametrize("fmt", ["tar.gz", "zip"])
+@pytest.mark.parametrize("extra, said", [
+    (lambda d, top, out: [(f"{top}//{out}/escaped.txt", "file", b"x")], "an absolute path"),
+    (lambda d, top, out: [(f"{top}/../escaped.txt", "file", b"x")], "a '..' path component"),
+    (lambda d, top, out: [(f"{top}/a/../../escaped.txt", "file", b"x")], "a '..' path component"),
+    (lambda d, top, out: [(f"{top}/./x", "file", b"x")], "a '.' path component"),
+    (lambda d, top, out: [(f"{top}/C:x", "file", b"x")], "an absolute path"),   # a drive letter
+    (lambda d, top, out: [(f"{top}/ab:c", "file", b"x")], "a backslash, a drive letter or a character Windows refuses"),
+    (lambda d, top, out: [(f"{top}/a\\b", "file", b"x")], "a backslash, a drive letter or a character Windows refuses"),
+    (lambda d, top, out: [(f"{top}/VERSION", "file", b"again")], "appears twice"),
+    (lambda d, top, out: [(f"{top}/version", "file", b"again")], "appears twice"),
+    (lambda d, top, out: [(f"{top}/link", "symlink", str(out).encode())], "a link"),
+    (lambda d, top, out: [(f"elsewhere/x", "file", b"x")], "not inside the package folder"),
+    (lambda d, top, out: [(f"{top}/VERSION/x", "file", b"x")], "lies below a member that is a file"),
+])
+def test_the_seal_tool_refuses_a_hostile_archive_before_writing_anything(tmp_path, fmt, extra, said):
+    """seal_package.py unseal / seal read archives before any signature check (package.sh --verify unseals first): every member is
+    checked first, and a member that is not a plain file below the package folder refuses the whole archive by name; nothing is
+    written, inside or outside the staging folder"""
+    import seal_package
+    out = tmp_path / "outside"
+    out.mkdir()
+    plat = "linux-x64" if fmt == "tar.gz" else "windows-x64"
+    top = f"openbfme-v1.0.0-{plat}"
+    members = [(f"{top}/VERSION", "file", b"OpenBFME v1.0.0\n"), (f"{top}/game", "file", b"game")] + extra(tmp_path, top, out)
+    arc = tmp_path / f"{top}.{fmt}"
+    if fmt == "tar.gz":
+        _hostile_tar(arc, top, members)
+    else:
+        _hostile_zip(arc, members)
+    with pytest.raises(SystemExit, match=said.replace("(", r"\(").replace(")", r"\)")):
+        seal_package.unseal(arc, tmp_path / "unsealed.out")
+    with pytest.raises(SystemExit, match=said.replace("(", r"\(").replace(")", r"\)")):
+        seal_package.seal_archive(arc, os.urandom(32), "Test/repo")
+    assert list(out.iterdir()) == [] and not (tmp_path / "escaped.txt").exists() and not (tmp_path / "unsealed.out").exists()
+
+
+@pytest.mark.parametrize("kind", ["hardlink", "device", "fifo", "dir"])
+def test_the_seal_tool_refuses_special_tar_members(tmp_path, kind):
+    import seal_package
+    top = "openbfme-v1.0.0-linux-x64"
+    arc = tmp_path / f"{top}.tar.gz"
+    _hostile_tar(arc, top, [(f"{top}/VERSION", "file", b"OpenBFME v1.0.0\n"), (f"{top}/special", kind, b"VERSION")])
+    with pytest.raises(SystemExit, match="a link, folder, device or other special member"):
+        seal_package.unseal(arc, tmp_path / "x.tar.gz")
+
+
+def test_the_seal_tool_counts_tar_members_before_keeping_them_and_checks_the_root_entry(tmp_path):
+    """Sol r3 of ONEZIP-1: a tar with no root header and 10,001 files was accepted against the 10,000 cap, duplicate root entries passed,
+    and the count guards ran after all the metadata was allocated. The members are streamed and counted first: the 10,001st file
+    refuses the archive having kept at most the cap's worth of headers (measured), and a second root entry refuses by name."""
+    import io
+    import tarfile
+    import tracemalloc
+
+    import seal_package
+    top = "openbfme-v1.0.0-linux-x64"
+
+    def make(path: Path, files: int, roots: int) -> None:
+        with tarfile.open(path, "w:gz") as t:
+            for _ in range(roots):
+                d = tarfile.TarInfo(top)
+                d.type = tarfile.DIRTYPE
+                t.addfile(d)
+            for i in range(files):
+                f = tarfile.TarInfo(f"{top}/f{i}")
+                t.addfile(f, io.BytesIO(b""))
+
+    a = tmp_path / f"{top}.tar.gz"
+    make(a, 10001, 0)
+    tracemalloc.start()
+    with pytest.raises(SystemExit, match="more than 10000 files"):
+        seal_package.read_archive(a)
+    peak = tracemalloc.get_traced_memory()[1]
+    tracemalloc.stop()
+    assert peak < 16 << 20, f"{peak} bytes held (the cap's worth of headers is about 6 MB)"   # tolerance: 10,000 kept TarInfos
+    make(a, 3, 2)
+    with pytest.raises(SystemExit, match="the package folder appears twice"):
+        seal_package.read_archive(a)
+    make(a, 10000, 1)   # exactly the cap, with its root entry: accepted
+    assert len(seal_package.read_archive(a)[0]) == 10000
+    make(a, 10001, 1)
+    with pytest.raises(SystemExit, match="more than 10000 (members|files)"):
+        seal_package.read_archive(a)
+
+
+def test_the_seal_tool_refuses_a_huge_zip_directory_before_allocating_for_it(tmp_path):
+    """Sol r4 of ONEZIP-1: a zip of 100,000 empty files (14 MB) allocated 63 MB before the member cap refused it. The end-of-central-
+    directory record is read first: the entry count and the directory's size refuse it by name with bounded memory; a malformed
+    record refuses by name; exactly 10,000 files are still accepted."""
+    import tracemalloc
+    import zipfile
+
+    import seal_package
+    top = "openbfme-v1.0.0-windows-x64"
+
+    def make(path: Path, files: int) -> None:
+        with zipfile.ZipFile(path, "w") as z:
+            for i in range(files):
+                info = zipfile.ZipInfo(f"{top}/f{i}")
+                info.create_system = 3
+                info.external_attr = 0o100644 << 16
+                z.writestr(info, b"")
+
+    a = tmp_path / f"{top}.zip"
+    make(a, 100000)
+    tracemalloc.start()
+    with pytest.raises(SystemExit, match=r"more than 10000 members \(100000 entries in the central directory\)"):
+        seal_package.read_archive(a)
+    peak = tracemalloc.get_traced_memory()[1]
+    tracemalloc.stop()
+    assert peak < 1 << 20, f"{peak} bytes allocated before the refusal"   # tolerance: the 64 KiB tail read and bookkeeping; was 63 MB
+    make(a, 10000)
+    assert len(seal_package.read_archive(a)[0]) == 10000
+    make(a, 3)
+    raw = a.read_bytes()
+    for name, data, said in (("no record", b"PK\x03\x04" + b"x" * 40, "no zip end-of-central-directory record"),
+                             ("comment", raw[:-2] + b"\x09\x00", "comment length disagrees"),
+                             ("counts", raw[:-14] + b"\x09" + raw[-13:], "entry counts disagree"),
+                             ("offset", raw[:-6] + b"\xff\xff\xff\x7f" + raw[-2:], "beyond the end of the file")):
+        b = tmp_path / f"{top}-{name.replace(' ', '')}.zip"
+        b.write_bytes(data)
+        with pytest.raises(SystemExit, match=said):
+            seal_package.read_archive(b.rename(tmp_path / f"{top}.zip"))
+    big = tmp_path / f"{top}.zip"   # a directory of 3 MB: 5,000 entries with 600-byte comments each
+    with zipfile.ZipFile(big, "w") as z:
+        for i in range(5000):
+            info = zipfile.ZipInfo(f"{top}/f{i}")
+            info.comment = b"c" * 600
+            z.writestr(info, b"")
+    with pytest.raises(SystemExit, match="the central directory is [0-9]+ bytes \\(at most 2097152\\)"):
+        seal_package.read_archive(big)

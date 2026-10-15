@@ -91,6 +91,7 @@ public:
 	void attemptHealing(DamageInfo &info) override;
 	float estimateDamage(const DamageInfoInput &input) const override;
 	float getDodgePercent() const override { return m_data->m_dodgePercent; }
+	std::string getGrabObjectName() const override { return m_data->m_grabObject; } // RW 0x8C281E (lane BACKLOG-1)
 	// lane XP-1: RW 0x8C1CD5
 	void setMaxHealth(float newMax, int changeType) override;
 	// RW 0x8C31A5 internalChangeHealth (Immortal overrides it, RW 0x8C4AB4)

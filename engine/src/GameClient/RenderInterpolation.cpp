@@ -292,8 +292,22 @@ std::vector<std::string> stopLines()
 		"[S-811] presentation beyond retail (SMOOTH-1): the render rate is uncapped (retail: UseFPSLimit, FramesPerSecondLimit 30) and the client alpha is the "
 		"continuous fraction of the logic frame (retail: the engine tick's phase / 6, RW 0x63256F); the drawn pose itself is retail's (RW 0x6765B9: Catmull-Rom, "
 		"slerp, the stale snap)",
-		"[S-813] the teleport form of setPosition / setTransform (RW 0x696E63 / 0x68DA67: recordTransform twice, then the drawable's gather RW 0x674B1F(1)) is "
-		"not ported: an object moved by such a call is drawn interpolated across the jump for one frame",
+		"[S-813] the teleport forms of setPosition / setTransform (RW 0x696E63 / 0x68DA67: recordTransform twice, the drawable's forced gather RW 0x674B1F(1), "
+		"the horde's members, the AI's idle and path reset) are ported (lane BACKLOG4). RW 0x696E63 (29 call sites) wired at 12: 0x7814CF hero revival, "
+		"0x7BDC2D UNIT_TELEPORT_TO_WAYPOINT, 0x865D5B contain exit, 0x86D8DA the horde's members (slot 0x1B8), 0x87CB79 garrison exit, 0x895420 AttachUpdate, "
+		"0x8964F3 the teleport ability, 0x8A287A / 0x8A28C7 ProductionUpdate, 0x8A3F7A / 0x8A4294 the queue exit, 0x8BB8F1 ReplaceSelfUpgrade; open (17, by "
+		"function): 0x684534 (TerrainLogic RW 0x68449B, the terrain prop made an object: branch not ported), 0x697F1F (Object::restoreObjectToWorld RW "
+		"0x697F0F), 0x76F4ED (AIGroup::groupSetPositionInFormation RW 0x76F466), 0x782179 (RW 0x781FAF, beside the hero revival), 0x7953FB (BuildAssistant RW "
+		"0x795221, the wall span's pieces), 0x79B04A / 0x79B08D (CastleBehavior::teleportStragglersFromWallToGround RW 0x79ADE9, not ported: S-951), 0x7A48B9 "
+		"(Team RW 0x7A4606), 0x7C4026 (a script action RW 0x7C3FD1), 0x8589C5 / 0x8589DF (FoundationAIUpdate RW 0x858701: plain placement in the port), "
+		"0x870AD9 (HordeContain RW 0x870A92), 0x87FB00 (SiegeEngineContain::exitObjectViaDoor RW 0x87F7B4: the crew exit), 0x8A4E00 (MonsterDockUpdate::action "
+		"RW 0x8A4D09), 0x8A7CB5 (StructureCollapseUpdate::beginStructureCollapse RW 0x8A7BF9: plain placement), 0x8AEE76 (WallUpgradeUpdate RW 0x8AEC79), "
+		"0x8D1AB7 (TeleportToCasterSpecialPower::teleportList RW 0x8D1979: the class is not ported). RW 0x68DA67 (8 call sites) wired at 2: 0x86D9ED the "
+		"horde's members (slot 0x1B4), 0x89197A the flood's members; open (6): 0x631A39 (GameLogic RW 0x6316EF), 0x692429 (Object RW 0x69241B, a wrapper whose "
+		"own callers are not counted), 0x873B7D (HordeContain RW 0x873AE3, the banner carrier's new member: plain placement), 0x87F9D7 "
+		"(SiegeEngineContain::exitObjectViaDoor), 0x8809E8 (HordeSiegeEngineContain RW 0x8807CA), 0x8A8E26 (StructureToppleUpdate::doToppleDoneStuff). The "
+		"ProductionUpdate sites are reached only with QueueProductionExitUpdate's exit position, whose own exit teleports again in the same frame. Ordinary "
+		"OCL creation places with the plain form (as the donor); an object moved by an open site's port is drawn across the jump for one frame",
 		"[S-814] audio beside the logic worker: the logic's audio calls (unit voices, weapon fire sounds, Lua object sounds) made on the worker are queued and "
 		"run on the audio owner at the next worker-idle point (AudioApi::drainDeferred), in call order; a deferred playSoundForObject returns no handle "
 		"(AHSV_Error) to its logic caller; the audio manager follows its owners through the drawables and the latest snapshot",

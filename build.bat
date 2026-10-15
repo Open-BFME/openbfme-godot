@@ -33,6 +33,14 @@ rem The helper executables the tests drive (x87_oracle, retail_oracle, numeric/a
 rem rebuilt only when older than their sources (tools\retail_oracle\helpers.json). The tests refuse stale ones.
 call "%ROOT%tools\retail_oracle\build.bat"
 if errorlevel 1 exit /b 1
+rem GitHub #23: CMake's warning about the MP3 fixtures scrolls past inside the Ninja output; repeat it as the last thing on screen
+if exist "%BUILD_DIR%\audio_fixtures\mono_44k.mp3.bin" goto fixtures_ok
+echo.
+echo WARNING: the synthetic MP3 test fixtures were not generated (CMake did not find python, lame and mpg123).
+echo          The five MP3 decode cases of run_tests.bat FAIL until they exist. Install lame and mpg123 on PATH (docs\WINDOWS.md)
+echo          and run build.bat again, or run: py -3 tools\audio\gen_mp3_fixtures.py --out engine\build\audio_fixtures
+echo.
+:fixtures_ok
 echo BUILD OK: godot\bin\ and engine\build\openbfme_tests.exe, test helpers in tools\
 exit /b 0
 

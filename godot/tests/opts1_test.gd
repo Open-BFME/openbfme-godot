@@ -1,7 +1,7 @@
 ## Headless test of lane OPTS-1, the OpenBFME display options (not retail):
 ##  * scripts/display_settings.gd: the file's values read, written and rejected (a bad value is an error and keeps the default), the Resolution list, the
 ##    scalers each renderer has, apply() on the window (frame cap, render scale, scaler; a maximised window is left alone when only the cap changes);
-##  * the game with --display-check (scripts/opts1_check.gd): the OPENBFME button over Options.apt, every control of the screen, ACCEPT / CANCEL /
+##  * the game with --display-check (scripts/opts1_check.gd): Options opening on the OpenBFME menu (lane OPTS-5), every control of the screen, ACCEPT / CANCEL /
 ##    RESET TO DEFAULTS / Esc, F11 and Alt+Enter, and the owner's "maximising greys out the main menu": the main menu's and Options.apt's buttons
 ##    unchanged across a maximise, resizes and every window mode;
 ##  * the game with --auto --display-game: the screen over a live game (the HUD takes no input while it is up, the menus' stage follows a resolution
@@ -38,8 +38,8 @@ func _run() -> int:
 	if not ClassDB.class_exists("AptMenuPlayer"):
 		_check(false, "the openbfme extension is loaded")
 		return 1
-	_game_run(["--display-check", "--max-fps=77"], 52, "the menu check (a command-line cap the file does not hold)")
-	_game_run(["--auto", "--advance=2", "--display-game"], 12, "the in-game check")
+	_game_run(["--display-check", "--max-fps=77"], 50, "the menu check (a command-line cap the file does not hold)")
+	_game_run(["--auto", "--advance=2", "--display-game"], 8, "the in-game check")
 	return 0 if _failures == 0 else 1
 
 

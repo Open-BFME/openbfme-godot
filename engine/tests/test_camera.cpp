@@ -1112,3 +1112,83 @@ TEST_CASE("play1 orders: with the tactical camera attached (its LookAt translato
 	CHECK(moves == 1);
 	CHECK(r.input->ui().liveMoveHintCount() == 1);
 }
+
+// ---- lane BACKLOG3 (S-454): the LookAt translator's tick, BFME2 decomp BfmeOwnVVDScrollUpdate.cpp (tier A for RW 0x83B471) ------------------------------------
+TEST_CASE("backlog3 camera: a key whose release the stream never carried (the keyboard's reset) stops the key scroll and the numpad rotation (RW 0x83BAF8)")
+{
+	if (!haveWorld("backlog3 camera keys"))
+	{
+		return;
+	}
+	CamRig r(shared());
+	TacticalCamera &c = *r.cam;
+	// control: a held key keeps scrolling, frame after frame
+	r.key(kKeyRight, true);
+	r.frame(1);
+	const float x1 = c.position().x;
+	r.frame(1);
+	const float x2 = c.position().x;
+	CHECK(x2 > x1); // tolerance: the control needs only that the scroll goes on; the step is pinned by "camera: the arrow keys scroll by the retail tick"
+	REQUIRE(r.input->isKeyDown(kKeyRight));
+	// the window lost the focus: the keyboard has no key down, no key-up message was made
+	r.input->resetKeys();
+	CHECK_FALSE(r.input->isKeyDown(kKeyRight));
+	r.frame(1); // this tick still scrolls (the keys are tested at its end), then the scroll is over
+	const Coord3D stopped = c.position();
+	CHECK_FALSE(r.input->lookAt()->isScrolling());
+	CHECK_FALSE(r.input->ui().isScrolling());
+	CHECK(r.input->lookAt()->scrollType() == LookAtTranslator::SCROLL_NONE);
+	r.frame(5);
+	CHECK(c.position().x == stopped.x);
+	CHECK(c.position().y == stopped.y);
+	CHECK(r.input->lookAt()->offsetX() == 0.0f);
+	// the key works again after its next press
+	r.key(kKeyRight, true);
+	r.frame(1);
+	CHECK(c.position().x > stopped.x); // tolerance: only that the key scrolls again; the step is pinned by "camera: the arrow keys scroll by the retail tick"
+	r.key(kKeyRight, false);
+	CHECK_FALSE(r.input->lookAt()->isScrolling());
+
+	// the numpad rotation (numpad 6): held it turns every tick; after the reset it turns once more, then no more
+	const float a0 = c.getAngle();
+	r.key(LookAtTranslator::DIK_KP6, true);
+	r.frame(1);
+	const float a1 = c.getAngle();
+	CHECK(a1 != a0);
+	r.frame(1);
+	const float a2 = c.getAngle();
+	CHECK(a2 != a1);
+	r.input->resetKeys();
+	r.frame(1);
+	const float a3 = c.getAngle();
+	r.frame(5);
+	CHECK(c.getAngle() == a3);
+}
+
+TEST_CASE("backlog3 camera: disabling the input under a held scroll ends it with no offset (InGameUI vslot 0x17C, RW 0x83B4A5)")
+{
+	if (!haveWorld("backlog3 camera input"))
+	{
+		return;
+	}
+	CamRig r(shared());
+	TacticalCamera &c = *r.cam;
+	r.key(kKeyRight, true);
+	r.frame(1);
+	const float x1 = c.position().x;
+	r.frame(1);
+	CHECK(c.position().x > x1); // tolerance: the control (input enabled) needs only that the scroll goes on; the step is pinned by the arrow key test
+	const Coord3D before = c.position();
+	r.input->ui().setInputEnabled(false);
+	r.frame(1);
+	CHECK(r.input->lookAt()->offsetX() == 0.0f);
+	CHECK(c.position().x == before.x);
+	CHECK(c.position().y == before.y);
+	CHECK_FALSE(r.input->lookAt()->isScrolling());
+	CHECK_FALSE(r.input->ui().isScrolling());
+	// the key is still held when the input comes back: nothing scrolls until a key event starts a scroll again (RW 0x83B2FC)
+	r.input->ui().setInputEnabled(true);
+	r.frame(3);
+	CHECK(c.position().x == before.x);
+	r.key(kKeyRight, false);
+}

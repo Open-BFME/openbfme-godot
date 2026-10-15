@@ -356,7 +356,15 @@ LiveGameAudio::~LiveGameAudio()
 		if (audioAlive())
 		{
 			flushEventLog();
-			m_audio.enableEventLog(false);
+			// lane OPTS-4: the shell's host goes on with the file it shares
+			if (m_audio.eventLogTaker() == this)
+			{
+				m_audio.setEventLogTaker(nullptr);
+			}
+			if (m_audio.eventLogFile().empty())
+			{
+				m_audio.enableEventLog(false);
+			}
 		}
 		std::fclose(m_logFile);
 	}
@@ -897,16 +905,7 @@ std::vector<std::string> LiveGameAudio::takeEventLogLines()
 				tt = o->getTemplate();
 			}
 		}
-		char head[160];
-		std::snprintf(head, sizeof head, "%.1f\t%u\t%s\t%u\t%u\t%u\t", e.clockMs, (unsigned)e.frame, e.play ? "play" : "request", (unsigned)e.handle,
-			(unsigned)objectId, (unsigned)e.drawableId);
-		char pos[96] = "-";
-		if (e.positional)
-		{
-			std::snprintf(pos, sizeof pos, "%.0f,%.0f,%.0f", e.position.x, e.position.y, e.position.z);
-		}
-		out.push_back(std::string(head) + e.event + "\t" + (tt ? tt->getName() : std::string("-")) + "\t" + pos + "\t" + std::to_string(e.player) + "\t" +
-			(e.origin.empty() ? std::string("-") : e.origin) + "\t" + e.outcome);
+		out.push_back(AudioManager::formatLogLine(e, objectId, tt ? tt->getName() : std::string("-")));
 	}
 	return out;
 }
@@ -918,7 +917,10 @@ bool LiveGameAudio::openEventLogFile(const std::string &path, std::string *error
 		std::fclose(m_logFile);
 		m_logFile = nullptr;
 	}
-	m_logFile = std::fopen(path.c_str(), "w");
+	// lane OPTS-4: the shell's host may write the same file already (the menus' requests): the game's lines go after them, and this attachment drains
+	// the log while it lives
+	const bool shared = audioAlive() && m_audio.eventLogFile() == path;
+	m_logFile = std::fopen(path.c_str(), shared ? "a" : "w");
 	if (!m_logFile)
 	{
 		if (error)
@@ -927,8 +929,15 @@ bool LiveGameAudio::openEventLogFile(const std::string &path, std::string *error
 		}
 		return false;
 	}
-	std::fprintf(m_logFile, "%s\n", eventLogHeader());
+	if (!shared)
+	{
+		std::fprintf(m_logFile, "%s\n", eventLogHeader());
+	}
 	enableEventLog(true);
+	if (audioAlive())
+	{
+		m_audio.setEventLogTaker(this);
+	}
 	return true;
 }
 

@@ -16,6 +16,11 @@
 #include <sstream>
 #include <string>
 #include <unistd.h>
+#include <chrono>
+#include <csignal>
+#include <sys/wait.h>
+#include <thread>
+#include <vector>
 
 namespace
 {
@@ -130,6 +135,145 @@ TEST_CASE("release1: the console filter redacts stdout and stderr, partial lines
 		CHECK(o.find("tester") == std::string::npos);
 	}
 	fs::remove_all(dir);
+}
+
+
+// lane ONEZIP-1 (Sol r1): a child process that inherited the filtered stdout (the game starts the launcher) must not keep the game from
+// ending: uninstall waits for the pipe's EOF a bounded time, then takes what the pipe holds and ends. And the saved original streams are
+// close-on-exec: a child started with its own stdio keeps nothing of the parent's console open.
+TEST_CASE("onezip1: the console filter ends while a child holds the stream, and children do not inherit the saved console")
+{
+	namespace fs = std::filesystem;
+	const fs::path dir = fs::temp_directory_path() / ("openbfme-onezip1-console-" + std::to_string((long long)::getpid()));
+	fs::create_directories(dir);
+	const std::string outPath = (dir / "out.txt").string(), errPath = (dir / "err.txt").string();
+	const int out = ::open(outPath.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
+	const int err = ::open(errPath.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
+	REQUIRE(out >= 0); // tolerance: open() returns any descriptor number, -1 on failure
+	REQUIRE(err >= 0); // tolerance: open() returns any descriptor number, -1 on failure
+	char before[512] = {};
+	const ssize_t beforeLen = ::readlink("/proc/self/fd/1", before, sizeof(before) - 1);
+	LogPrivacy::Rules rules;
+	std::string error;
+	REQUIRE(ConsoleFilter::install(rules, &error, out, err));
+	std::printf("before the child\n");
+	std::fflush(stdout);
+
+	// a child that keeps the inherited stdout (the pipe's write end) for 5 s, as a launcher started without a redirect did
+	const pid_t holder = ::fork();
+	REQUIRE(holder >= 0); // tolerance: fork() returns any process id, -1 on failure
+	if (holder == 0)
+	{
+		::sleep(5);
+		::_exit(0);
+	}
+	// a child started the way update_handover.gd starts the launcher (its stdio on /dev/null), then exec'd: it must not see the saved console
+	const pid_t clean = ::fork();
+	REQUIRE(clean >= 0); // tolerance: fork() returns any process id, -1 on failure
+	if (clean == 0)
+	{
+		const int null = ::open("/dev/null", O_RDWR);
+		::dup2(null, 0);
+		::dup2(null, 1);
+		::dup2(null, 2);
+		::execl("/bin/sleep", "sleep", "3", (char *)nullptr);
+		::_exit(127);
+	}
+	std::this_thread::sleep_for(std::chrono::milliseconds(300)); // the exec has happened
+	std::vector<std::string> leaked;
+	for (const auto &e : fs::directory_iterator("/proc/" + std::to_string((long long)clean) + "/fd"))
+	{
+		const std::string n = e.path().filename().string();
+		if (n == "0" || n == "1" || n == "2")
+			continue;
+		std::error_code ec;
+		const std::string target = fs::read_symlink(e.path(), ec).string();
+		if (beforeLen > 0 && target == std::string(before, (size_t)beforeLen))
+			leaked.push_back(n + " -> " + target);
+	}
+	CHECK_MESSAGE(leaked.empty(), "the child inherited the saved console: " << (leaked.empty() ? "" : leaked[0]));
+
+	const auto t0 = std::chrono::steady_clock::now();
+	ConsoleFilter::uninstall();
+	const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count();
+	// ONE shutdown deadline for both streams (500 ms for their EOF, everything ended by 1000 ms; Sol r2: both streams kept took 1025 ms)
+	// tolerance: wall time on a loaded machine against that one deadline, far below the child's 5 s
+	CHECK_MESSAGE(ms < 1000, "uninstall waited " << ms << " ms for a child holding the stream");
+	CHECK(readAll(outPath) == "before the child\n");
+	::kill(holder, SIGKILL);
+	::kill(clean, SIGKILL);
+	::waitpid(holder, nullptr, 0);
+	::waitpid(clean, nullptr, 0);
+	::close(out);
+	::close(err);
+	fs::remove_all(dir);
+}
+
+// lane ONEZIP-1 r3 (Sol r2): a console that takes nothing (a pipe nobody reads, full) must not keep uninstall from returning: the
+// reader's writes wait for the sink only until the shutdown's deadline, and what is left then is dropped
+TEST_CASE("onezip1: the console filter ends when its console takes nothing")
+{
+	int sink[2];
+	REQUIRE(::pipe(sink) == 0);
+	// fill the pipe: nobody reads it
+	::fcntl(sink[1], F_SETFL, ::fcntl(sink[1], F_GETFL) | O_NONBLOCK);
+	const std::string block(4096, 'x');
+	while (::write(sink[1], block.data(), block.size()) > 0)
+	{
+	}
+	::fcntl(sink[1], F_SETFL, ::fcntl(sink[1], F_GETFL) & ~O_NONBLOCK);
+	::fcntl(sink[0], F_SETFD, FD_CLOEXEC);
+	::fcntl(sink[1], F_SETFD, FD_CLOEXEC);
+	LogPrivacy::Rules rules;
+	std::string error;
+	REQUIRE(ConsoleFilter::install(rules, &error, sink[1], sink[1]));
+	for (int i = 0; i < 64; ++i)
+		std::printf("a line the blocked console never takes %d\n", i);
+	std::fflush(stdout);
+	std::this_thread::sleep_for(std::chrono::milliseconds(100)); // the reader is now waiting for the sink
+	const auto t0 = std::chrono::steady_clock::now();
+	ConsoleFilter::uninstall();
+	const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count();
+	// tolerance: the shutdown's deadline is 1000 ms; wall time on a loaded machine
+	CHECK_MESSAGE(ms < 1500, "uninstall waited " << ms << " ms for a console that takes nothing");
+	CHECK_FALSE(ConsoleFilter::installed());
+	::close(sink[0]);
+	::close(sink[1]);
+}
+
+// lane ONEZIP-1 r3 (Sol r3): the flush of the buffered stdio at shutdown is inside the same deadline. A console that takes nothing,
+// a filter input pipe that is full and a megabyte of buffered stdout used to hang uninstall's fflush (killed at 3 s).
+TEST_CASE("onezip1: the shutdown flush is bounded when the console takes nothing and stdio is buffered")
+{
+	int sink[2];
+	REQUIRE(::pipe(sink) == 0);
+	::fcntl(sink[1], F_SETFL, ::fcntl(sink[1], F_GETFL) | O_NONBLOCK);
+	const std::string block(4096, 'x');
+	while (::write(sink[1], block.data(), block.size()) > 0)
+	{
+	}
+	::fcntl(sink[1], F_SETFL, ::fcntl(sink[1], F_GETFL) & ~O_NONBLOCK);
+	::fcntl(sink[0], F_SETFD, FD_CLOEXEC);
+	::fcntl(sink[1], F_SETFD, FD_CLOEXEC);
+	static char buffer[1 << 20];
+	std::fflush(stdout);
+	REQUIRE(std::setvbuf(stdout, buffer, _IOFBF, sizeof(buffer)) == 0);
+	LogPrivacy::Rules rules;
+	std::string error;
+	REQUIRE(ConsoleFilter::install(rules, &error, sink[1], sink[1]));
+	const std::string line(99, 'y');
+	for (int i = 0; i < 2000; ++i) // 200 KB: more than the pipe to the filter holds, less than the buffer: nothing reaches it before the flush
+		std::printf("%s\n", line.c_str());
+	const auto t0 = std::chrono::steady_clock::now();
+	ConsoleFilter::uninstall();
+	const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count();
+	// tolerance: the shutdown's deadline is 1000 ms (the flush gets 400 of it); wall time on a loaded machine, far below the 3 s the hang was killed at
+	CHECK_MESSAGE(ms < 1500, "uninstall took " << ms << " ms with buffered stdio and a console that takes nothing");
+	CHECK_FALSE(ConsoleFilter::installed());
+	std::fflush(stdout);
+	std::setvbuf(stdout, nullptr, _IOLBF, 0);
+	::close(sink[0]);
+	::close(sink[1]);
 }
 
 #endif
