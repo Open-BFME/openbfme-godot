@@ -1,0 +1,139 @@
+name: Windows and macOS CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  audio-fixtures:
+    name: Generate synthetic audio fixtures
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install audio tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes lame mpg123
+      - name: Generate and check fixtures against committed golden values
+        run: python tools/audio/gen_mp3_fixtures.py --out audio-fixtures
+      - uses: actions/upload-artifact@v4
+        with:
+          name: synthetic-audio-fixtures
+          path: audio-fixtures/*.mp3.bin
+          if-no-files-found: error
+          retention-days: 7
+
+  windows:
+    name: Windows x64 (MSVC)
+    runs-on: windows-2022
+    needs: audio-fixtures
+    timeout-minutes: 90
+    env:
+      CMAKE_BUILD_PARALLEL_LEVEL: '4'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/download-artifact@v4
+        with:
+          name: synthetic-audio-fixtures
+          path: engine/build/audio_fixtures
+      - name: Build extension, tests and Windows oracle helpers
+        shell: cmd
+        run: call build.bat Release
+      - name: Run unit tests
+        shell: pwsh
+        working-directory: engine/build
+        run: |
+          & .\openbfme_tests.exe --no-colors 2>&1 | Tee-Object -FilePath unit-tests.log
+          exit $LASTEXITCODE
+      - name: Upload test log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-x64-test-log
+          path: engine/build/unit-tests.log
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: Upload native build
+        uses: actions/upload-artifact@v4
+        with:
+          name: openbfme-windows-x64-native
+          path: |
+            godot/bin/*.dll
+            engine/build/openbfme_tests.exe
+            engine/build/openbfme_lua_probe.exe
+            engine/build/audio_fixtures/*.mp3.bin
+          if-no-files-found: error
+          retention-days: 7
+
+  macos:
+    name: macOS arm64 (Apple Clang)
+    runs-on: macos-26
+    needs: audio-fixtures
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install build tools
+        run: brew install ninja
+      - uses: actions/download-artifact@v4
+        with:
+          name: synthetic-audio-fixtures
+          path: engine/build/audio_fixtures
+      - name: Configure
+        run: >-
+          cmake -S engine -B engine/build -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_OSX_ARCHITECTURES=arm64
+          -DCMAKE_OSX_DEPLOYMENT_TARGET=26.0
+      - name: Build extension and tests
+        run: cmake --build engine/build --target openbfme openbfme_tests --parallel 3
+      - name: Run unit tests
+        working-directory: engine/build
+        run: |
+          set -o pipefail
+          ./openbfme_tests --no-colors 2>&1 | tee unit-tests.log
+      - name: Upload test log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-arm64-test-log
+          path: engine/build/unit-tests.log
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: Archive native build (preserve executable permissions)
+        run: >-
+          tar -czf openbfme-macos-arm64-native.tar.gz
+          godot/bin/*.dylib engine/build/openbfme_tests
+          engine/build/openbfme_lua_probe engine/build/audio_fixtures
+      - name: Upload native build
+        uses: actions/upload-artifact@v4
+        with:
+          name: openbfme-macos-arm64-native
+          path: openbfme-macos-arm64-native.tar.gz
+          if-no-files-found: error
+          retention-days: 7
