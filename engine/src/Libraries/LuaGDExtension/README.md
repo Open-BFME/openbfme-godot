@@ -9,11 +9,14 @@ MIT, Copyright (C) 2026 Gil Barbosa Reis) is vendored unedited in `engine/thirdp
 LuaJIT (`engine/src/Libraries/LuaJIT/README.md`).
 
 `cmake/LuaGDExtension.cmake` builds it into the openbfme GDExtension from a staging folder: the pristine `src/`, then the files of
-this folder's `src/` copied over them by path. Each altered file starts with `ALTERED SOURCE VERSION` and says why. The changes,
-all for godot-cpp 10 / Godot 4.7 (upstream 0.8.2 is written against godot-cpp's 4.6 branch), where `memnew` of a `RefCounted` class
-gives a `Ref<T>`:
+this folder's `src/` copied over them by path. Each altered file starts with `ALTERED SOURCE VERSION` and says why. The changes
+(the godot-cpp ones: upstream 0.8.2 is written against godot-cpp's 4.6 branch, and in godot-cpp 10 / Godot 4.7 `memnew` of a
+`RefCounted` class gives a `Ref<T>`):
 
 - `src/LuaCoroutine.hpp`, `src/LuaCoroutine.cpp`: `LuaCoroutine::create` returns `Ref<LuaCoroutine>` (and its binding).
+- `src/script-language/LuaScriptMethod.cpp` (not godot-cpp: LuaJIT): a script method's info says it returns a Variant, and, when its
+  parameter list is unknown (LuaJIT reports Lua 5.1, whose debug API has no parameter count; release builds), that it takes any
+  arguments. Upstream's empty, non-vararg list makes GDScript's analyzer refuse every call with arguments (`lua_console.lua`).
 - `src/script-language/LuaScriptLanguage.cpp`: `_create_script` (a deprecated virtual that returns `Object *`, editor only) keeps
   the new script's reference for the caller.
 

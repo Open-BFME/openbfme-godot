@@ -8,7 +8,7 @@ func _run() -> void:
 	assert(game_script != null and game_script.can_instantiate())
 	var world = ClassDB.instantiate("GameWorld")
 	root.add_child(world)
-	var console = preload("res://scripts/lua_console.gd").new()
+	var console = preload("res://scripts/lua_console.lua").new()
 	console.history_path = "/tmp/openbfme-console-history-%d.cfg" % OS.get_process_id()
 	console.controller_options_path = "/tmp/openbfme-controller-options-%d.cfg" % OS.get_process_id()
 	console.execute = func(code: String) -> Dictionary: return world.execute_lua(code)
@@ -137,7 +137,7 @@ func _run() -> void:
 	console._submit(persisted)
 	var saved_history = console._history.duplicate()
 	assert(saved_history[-1] == persisted and saved_history[-2] != persisted)
-	var restored = preload("res://scripts/lua_console.gd").new()
+	var restored = preload("res://scripts/lua_console.lua").new()
 	restored.history_path = console.history_path
 	root.add_child(restored)
 	assert(restored._history == saved_history)

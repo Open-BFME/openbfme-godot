@@ -1040,7 +1040,7 @@ func _boot() -> void:
 	_world = ClassDB.instantiate("GameWorld")
 	_world.name = "GameWorld"
 	add_child(_world)
-	_lua_console = preload("res://scripts/lua_console.gd").new()
+	_lua_console = preload("res://scripts/lua_console.lua").new()
 	_lua_console.execute = func(code: String) -> Dictionary: return _world.execute_lua(code)
 	_lua_console.toggled.connect(_lua_console_toggled)
 	add_child(_lua_console)

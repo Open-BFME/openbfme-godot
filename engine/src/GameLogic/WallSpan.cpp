@@ -23,6 +23,7 @@
 #include "GameLogic/Object/ObjectGeometry.h"
 #include "GameLogic/SimMath.h"
 
+#include <algorithm>
 #include <cstddef>
 #include <stdexcept>
 
@@ -540,7 +541,7 @@ std::vector<std::string> WallSpan::stopLines()
 {
 	return {
 		"[S-657] walls: WallHubBehavior and MSG_WALL_HUB_CONSTRUCT_SPAN (RW 0x77C4C3 -> BuildAssistant RW 0x795221 / 0x79586E) are ported for a straight span; not ported: RotWK's legal-build "
-		"codes the plan acts on (5 / 6 cliff cap, 8 blocked mid-way, 10 rebuild of a dead equivalent segment: RW 0x797A96 is not read, the port's codes only refuse a tile), the end-hub link "
+		"codes 8 blocked mid-way and 10 rebuild of a dead equivalent segment (RW 0x797A96 is not read; terrain termination adapts the port's terrain checks), the end-hub link "
 		"path (RW 0x793DB9 then slot 0x58), the filter of the end-hub search (the port takes the owner's WALL_HUBs), the consumers of the linked-piece list (RW 0x856E1F / 0x856E5C), "
 		"CANCEL_NEIGHBORHOOD, WallUpgradeUpdate and CastleUpgrade",
 	};

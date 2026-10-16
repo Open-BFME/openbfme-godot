@@ -3,6 +3,7 @@
 #include "doctest.h"
 #include "CombatTestUtil.h"
 #include "GameLogic/WallBalance.h"
+#include "GameLogic/WallSpan.h"
 #include "Common/BuildAssistant.h"
 #include "GameLogic/Module/ReplaceSelfUpgrade.h"
 using namespace combattest;
@@ -119,4 +120,29 @@ TEST_CASE("wall gates: opening clears the corridor and closing blocks it again")
  CHECK(unit->getPosition()->x > 520);
  behavior->close(); w.frames(4);
  CHECK(cell->isObstaclePresent(gate->getID()));
+}
+
+TEST_CASE("wall span terminates at terrain with a hub and cliff cap") {
+ const char definitions[] =
+ "Object TerrainWallHub\n KindOf = STRUCTURE IMMOBILE WALL_HUB\n Geometry = BOX\n GeometryMajorRadius = 4\n GeometryMinorRadius = 10\n GeometryHeight = 20\n Behavior = WallHubBehavior Hub\n SegmentTemplateName = TerrainWallTile\n DefaultSegmentTemplateName = TerrainWallTile\n HubCapTemplateName = TerrainWallHub\n CliffCapTemplateName = TerrainWallEnd\n BuilderRadius = 10\n End\nEnd\n"
+ "Object TerrainWallTile\n KindOf = STRUCTURE IMMOBILE WALL_SEGMENT\n Geometry = BOX\n GeometryMajorRadius = 4\n GeometryMinorRadius = 10\n GeometryHeight = 20\nEnd\n"
+ "ChildObject TerrainWallEnd TerrainWallTile\nEnd\n";
+ CombatWorld w(definitions);
+ w.logic->settings().buildRulesLoaded = true;
+ w.logic->settings().allowedHeightVariationForBuilding = 10;
+ w.logic->settings().maxLineBuildObjects = 50;
+ auto *hub = w.unit("TerrainWallHub", 'A', 300,500);
+ // A vertical cliff band crosses the proposed span, with ground continuing beyond it.
+ for (int y=0; y<100; ++y) for(int x=45; x<50; ++x) w.terrain.cliff.insert({x,y});
+ WallSpan::Plan plan;
+ REQUIRE(WallSpan::plan(*w.logic,*hub,{300,500,0},{700,500,0},0,plan));
+ REQUIRE(plan.tiles.size() >= 2);
+ CHECK(plan.worstCode == 0);
+ CHECK(plan.endCapPlaced);
+ CHECK(plan.tiles.back().tmpl->getName() == "TerrainWallEnd");
+ CHECK(plan.tiles[plan.tiles.size()-2].tmpl->getName() == "TerrainWallHub");
+ for (const auto &tile : plan.tiles) CHECK(tile.pos.x < 500);
+ std::vector<ObjectID> made;
+ REQUIRE(WallSpan::build(*w.logic,*hub,{300,500,0},{700,500,0},*hub->getControllingPlayer(),0,&made));
+ CHECK(made.size() == plan.tiles.size());
 }
