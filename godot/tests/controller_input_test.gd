@@ -67,6 +67,18 @@ func _run() -> void:
 	key.keycode = KEY_BACKSLASH
 	controller._input(key)
 	assert(not controller.keyboard_mode and not controller.palette_open)
+	controller.resolve_action = func(button_name: String, _playing: bool) -> String: return "rotateLeft" if button_name == "Comma" else "rotateRight"
+	var rotations: Array = []
+	controller.camera_rotation.connect(func(value: float) -> void: rotations.append(value))
+	key.keycode = KEY_COMMA
+	controller._input(key)
+	controller._process(0.1)
+	assert(rotations.back() < 0)
+	key.pressed = false
+	controller._input(key)
+	var total := rotations.size()
+	controller._process(0.1)
+	assert(rotations.size() == total)
 	controller.queue_free()
 	await process_frame
 	print("CONTROLLER INPUT PASS")

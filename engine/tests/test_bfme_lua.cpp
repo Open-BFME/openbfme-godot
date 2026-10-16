@@ -10,6 +10,7 @@ struct BfmeFixture
 	BfmeLuaRuntime::Snapshot snapshot;
 	std::vector<BfmeLuaRuntime::Mutation> applied;
 	int writes = 0;
+	std::string constructionState = "building";
 	std::vector<std::pair<std::string, std::string>> scripts;
 	std::unique_ptr<BfmeLuaRuntime> vm;
 	BfmeFixture()
@@ -29,6 +30,14 @@ struct BfmeFixture
 				snapshot.collections["players"]["1"]["money"] = m.value;
 			return m.field == ":kill" ? std::string("expired object") : std::string();
 		};
+		host.construct = [this](const auto &m) -> unsigned {
+			applied.push_back(m);
+			if (std::get<double>(m.args[0].data) == -999) throw std::runtime_error("illegal construction site");
+			snapshot.collections["buildingInstances"]["777"] = {{"id", 777}, {"playerId", 1}, {"underConstruction", true}};
+			return 777;
+		};
+		host.constructionStatus = [this](unsigned id) { CHECK(id == 777); return constructionState; };
+		snapshot.collections["buildingTypes"]["TestBuilding"] = {{"id", "TestBuilding"}};
 		host.onMutation = [this] { ++writes; };
 		host.scripts = [this] { return scripts; };
 		vm = std::make_unique<BfmeLuaRuntime>(std::move(host));
@@ -164,4 +173,59 @@ TEST_CASE("bfme Lua: game speed validates multipliers before queuing")
 	CHECK(f.applied[0].field == ":setGameSpeed");
 	CHECK(std::get<double>(f.applied[0].value.data) == 0);
 	CHECK(std::get<double>(f.applied[3].value.data) == 12.5);
+}
+
+TEST_CASE("bfme Lua: construction validates, queues, returns building and completes callback once")
+{
+	BfmeFixture f;
+	CHECK(f.run("ticket=bfme.beginConstruction('TestBuilding',{x=10,y=20},nil,bfme.players.localPlayer,2,function(b) calls=(calls or 0)+1; finished=b.id; b.ownerPlayer.money=4321 end); return bfme.getMutationStatus(ticket)") == "pending\n");
+	CHECK(f.applied.empty());
+	f.vm->flush();
+	REQUIRE(f.applied.size() == 1);
+	CHECK(std::get<double>(f.applied[0].args[2].data) == 0);
+	CHECK(std::get<double>(f.applied[0].args[3].data) == 1);
+	CHECK(std::get<double>(f.applied[0].args[4].data) == 2);
+	CHECK(f.run("return bfme.getConstructionResult(ticket),bfme.getMutationStatus(ticket),calls") == "777\tbuilding\tnil\n");
+	CHECK(f.vm->hasPending());
+	f.vm->flush();
+	CHECK(f.run("return calls") == "nil\n");
+	f.constructionState="complete";
+	f.vm->flush();
+	CHECK(f.run("return calls,finished,bfme.getMutationStatus(ticket)") == "1\t777\tcomplete\n");
+	f.vm->flush();
+	CHECK(f.run("return calls,bfme.players.localPlayer.money") == "1\t4321\n");
+	CHECK_FALSE(f.vm->hasPending());
+}
+
+TEST_CASE("bfme Lua: construction rejection, cancellation, callback errors and registry invalidation")
+{
+	BfmeFixture f;
+	for (const char *code : {
+		"bfme.beginConstruction('missing',{x=1,y=2})",
+		"bfme.beginConstruction('TestBuilding',{x=0/0,y=2})",
+		"bfme.beginConstruction('TestBuilding',{x=1,y=2},nil,nil,0)",
+		"bfme.beginConstruction('TestBuilding',{x=1,y=2},nil,nil,math.huge)",
+		"bfme.beginConstruction('TestBuilding',{x=1,y=2},nil,nil,1,123)",
+		"bfme.beginConstruction('TestBuilding',{x=1,y=2},bfme.players[1])"})
+		CHECK_FALSE(f.vm->execute(code).ok);
+	CHECK_FALSE(f.vm->hasPending());
+	CHECK(f.run("ticket=beginConstruction(bfme.buildingTypes.TestBuilding,{x=-999,y=0});return ticket") == "1\n");
+	f.vm->flush();
+	CHECK(f.run("return bfme.getMutationStatus(ticket),bfme.getConstructionResult(ticket)") == "illegal construction site\tnil\n");
+	f.run("ticket=beginConstruction('TestBuilding',{x=1,y=2},bfme.unitInstances[1234],1,0.5,function() calls=1 end)");
+	f.vm->flush();
+	CHECK(std::get<double>(f.applied.back().args[2].data) == 1234);
+	f.constructionState="construction cancelled or building destroyed";
+	f.vm->flush();
+	CHECK(f.run("return calls,bfme.getMutationStatus(ticket)") == "nil\tconstruction cancelled or building destroyed\n");
+	f.constructionState="complete";
+	f.run("ticket=beginConstruction('TestBuilding',{x=1,y=2},nil,nil,1,function() error('callback test') end)");
+	f.vm->flush();
+	CHECK(f.run("return bfme.getMutationStatus(ticket):find('completion callback failed',1,true)~=nil") == "true\n");
+	f.constructionState="building";
+	f.run("ticket=beginConstruction('TestBuilding',{x=1,y=2},nil,nil,1,function() calls=1 end)");
+	f.vm->flush();
+	f.vm->invalidate();
+	CHECK_FALSE(f.vm->hasPending());
+	CHECK(f.run("return calls,bfme.getMutationStatus(ticket),bfme.getConstructionResult(ticket)") == "nil\texpired registry\tnil\n");
 }

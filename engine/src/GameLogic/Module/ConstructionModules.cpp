@@ -461,6 +461,7 @@ void GettingBuiltBehavior::stopConstruction()
 void GettingBuiltBehavior::finishConstruction(Object *other)
 {
 	Object *obj = getObject();
+	obj->setScriptConstructionSpeed(1.0f);
 	// RW 0x8569B1 ff: the production update is enabled again first (RW 0x68C327(0) -> slot 0x60 with 0, lane PLAY-4: setFactoryDisabled, the counterpart of
 	// onObjectCreated's), then the module of RW 0x68C3A3 is told (slot 0x28): not identified (stop S-653)
 	if (ProductionUpdateInterface *pu = obj->getProductionUpdate())
@@ -797,7 +798,9 @@ UpdateSleepTime GettingBuiltBehavior::update()
 	if (BodyModuleInterface *body = obj->getBodyModule())
 	{
 		// RW 0x857FBD: max health / (float)(unsigned)buildFrames, x87 PC24 (one rounding: the float quotient)
-		const float amount = SimMath::fstpDword(SimMath::pc24DivW((double)body->getMaxHealth(), SimMath::fildU32(m_buildFrames)));
+		float amount = SimMath::fstpDword(SimMath::pc24DivW((double)body->getMaxHealth(), SimMath::fildU32(m_buildFrames)));
+		if (obj->isUnderConstruction() && obj->scriptConstructionSpeed() != 1.0f)
+			amount = SimMath::mulf32(amount, obj->scriptConstructionSpeed());
 		if (obj->isKindOfName("WALL_SEGMENT"))
 		{
 			// RW 0x857FD6: a wall segment re-registers its pathfinder footprint when this heal takes its health across 20 % of the max (PC24 products / sums)

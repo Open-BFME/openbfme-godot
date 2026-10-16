@@ -45,3 +45,7 @@ Controller mode matches the reference visibility policy: hide native portrait co
 Controller command focus and mouse hover use the native InGameHelpBox provider, delay, command composition and APT tooltip movie. Hero/builder entries use native unit help; assigned powers use native spell command help. No custom tooltip panel is drawn.
 
 Like the reference Palantir controller, focusing an enabled builder construction command readies its native placement preview. Targeted portrait commands also arm on focus. Trigger release preserves placement; A/Enter while the palette is open confirms the current world target. Production and purchases never execute merely from focus.
+
+Hold comma/period (`<` / `>`, with or without Shift) during gameplay to rotate the camera left/right. The reloadable Lua game and palantir bindings map `Comma`/`Period` to `rotateLeft`/`rotateRight`. Releasing the key, opening a menu/console, or losing focus stops rotation.
+
+Original controller artwork is loaded from the ignored local `godot/controller_art/` folder, copied from BFME2Lua `dev/cursors`. It contains retail-extracted Xbox/PC art and must not be committed. Local exports include it. Selected command circles use the original 30 fps good/evil halo and A glyph; active controller mode replaces the pointer with the original contextual reticle strips. The pointer position follows this port's existing controls.

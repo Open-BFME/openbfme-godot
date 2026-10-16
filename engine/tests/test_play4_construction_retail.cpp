@@ -338,3 +338,44 @@ TEST_CASE("play4 construction retail: a castle pad's tower rises in its build va
 	CHECK(sawReally);
 	CHECK(exclusive);
 }
+
+TEST_CASE("Lua construction: builderless foundation rises at its own rate and enables production on completion")
+{
+	OPENBFME_REQUIRE_START(s);
+	std::string error;
+	buildtest::Game g;
+	REQUIRE_MESSAGE(buildtest::startGame(*s, "FactionMen", "FactionMordor", 4242, g, &error), error);
+	auto &logic = g.live->logic();
+	auto player = g.live->players().findPlayerWithName(g.live->report().startSlotPlayers[0]);
+	REQUIRE(player);
+	auto tt = s->world->things().findTemplate("GondorBarracks");
+	REQUIRE(tt);
+	player->getMoney()->deposit(20000, false);
+	const auto money = player->getMoney()->countMoney();
+	const int cost = BuildAssistant::calcCostToBuild(*tt, player, nullptr, -1);
+	auto normal = Construction::constructWithoutBuilder(logic, *tt, {1000, 1000, 0}, 0, *player);
+	auto fast = Construction::constructWithoutBuilder(logic, *tt, {1300, 1000, 0}, 0, *player);
+	REQUIRE(normal);
+	REQUIRE(fast);
+	CHECK(player->getMoney()->countMoney() == money - 2 * cost);
+	CHECK(normal->getBuilderID() == INVALID_ID);
+	CHECK(fast->isUnderConstruction());
+	CHECK(fast->getConstructionPercent() == 0.0f);
+	CHECK(fast->getBodyModule()->getHealth() == 1.0f);
+	auto normalBuild = dynamic_cast<GettingBuiltBehavior *>(normal->findModule("GettingBuiltBehavior"));
+	auto fastBuild = dynamic_cast<GettingBuiltBehavior *>(fast->findModule("GettingBuiltBehavior"));
+	REQUIRE(normalBuild);
+	REQUIRE(fastBuild);
+	fast->setScriptConstructionSpeed(2.0f);
+	normalBuild->update();
+	fastBuild->update();
+	CHECK(fast->getBodyModule()->getHealth() - 1.0f == 2.0f * (normal->getBodyModule()->getHealth() - 1.0f));
+	CHECK(normal->scriptConstructionSpeed() == 1.0f);
+	for (unsigned i = 0; i < fastBuild->buildFrames(); ++i) fastBuild->update();
+	CHECK_FALSE(fast->isUnderConstruction());
+	CHECK(fast->getConstructionPercent() == -1.0f);
+	CHECK(fast->scriptConstructionSpeed() == 1.0f);
+	CHECK(fastBuild->completedOnce());
+	CHECK_FALSE(fast->getProductionUpdate()->isFactoryDisabled());
+	CHECK(normal->isUnderConstruction());
+}

@@ -5,9 +5,9 @@ package.preload['lib.keybinds'] = function()
         controller={
             menu={A='accept', B='back', Start='options', DpadUp='up', DpadDown='down',
                 DpadLeft='left', DpadRight='right', LeftShoulder='previous', RightShoulder='next'},
-            palantir={DpadLeft='previousCommand', DpadRight='nextCommand', DpadUp='shortcutUp',
+            palantir={Comma='rotateLeft', Period='rotateRight', DpadLeft='previousCommand', DpadRight='nextCommand', DpadUp='shortcutUp',
                 DpadDown='shortcutDown', A='pressCommand', B='rightPressCommand', X='saveFavorites', Y='backPalette', Start='options'},
-            game={A='pointerLeft', B='pointerRight', X='jumpToSelection', Start='options',
+            game={Comma='rotateLeft', Period='rotateRight', A='pointerLeft', B='pointerRight', X='jumpToSelection', Start='options',
                 DpadUp='cycleHeroes', DpadDown='cycleBuilders', DpadLeft='selectAll',
                 LeftShoulder='zoomOut', RightShoulder='zoomIn'},
         },

@@ -1041,7 +1041,8 @@ int DozerAIUpdate::workOnBuild(int t, Object &structure)
 		return taskSucceeded(t);
 	}
 	const int frames = BuildAssistant::calcTimeToBuild(*structure.getTemplate(), self->getControllingPlayer(), self, -1, logic.productionSettings(), logic);
-	const float framesF = SimMath::sseFromInt32(frames);
+	const float framesF = structure.scriptConstructionSpeed() == 1.0f ? SimMath::sseFromInt32(frames)
+		: SimMath::divf32(SimMath::sseFromInt32(frames), structure.scriptConstructionSpeed());
 	structure.setConstructionPercent(SimMath::addf32(structure.getConstructionPercent(), SimMath::divf32(100.0f, framesF)));
 	if (ActiveBody *body = dynamic_cast<ActiveBody *>(structure.getBodyModule()))
 	{

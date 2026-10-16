@@ -66,6 +66,10 @@ Object *constructByDozer(Object &dozer, const ThingTemplate &what, const Coord3D
 // BuildAssistant slot 0x38 for a builder that is neither a dozer nor a plot (the script engine, the AI): the structure appears complete at once (RW 0x7978A1 ff)
 Object *buildObjectNow(GameLogic &logic, Object *builder, const ThingTemplate &what, const Coord3D &pos, float angle, Player &owner);
 
+// OpenBFME Lua extension. Uses the native rising foundation and self-construction
+// machinery; charges the ordinary price. Caller validates template, funds and site.
+Object *constructWithoutBuilder(GameLogic &logic, const ThingTemplate &what, const Coord3D &pos, float angle, Player &owner);
+
 // the model condition flag index by the binary's name (-1: not in the table; a logic error to ask for such a name)
 int modelConditionIndex(const char *name);
 void setModelConditions(Object &obj, const std::vector<const char *> &clear, const std::vector<const char *> &set);

@@ -342,6 +342,39 @@ Object *Construction::constructByDozer(Object &dozer, const ThingTemplate &what,
 	return obj;
 }
 
+Object *Construction::constructWithoutBuilder(GameLogic &logic, const ThingTemplate &what, const Coord3D &pos, float angle, Player &owner)
+{
+	// Enhanced scripting operation, composed from constructOnPlot/startRise and
+	// GettingBuiltBehavior::startConstruction. No fabricated builder or instant completion.
+	ObjectStatusMaskType status{};
+	MaskSet(status, OBJECT_STATUS_UNDER_CONSTRUCTION, true);
+	MaskSet(status, (unsigned)ObjectTemplateInfoBuilder::objectStatusIndex("PENDING_CONSTRUCTION"), true);
+	Object *obj = makeStructure(logic, what, owner, status);
+	if (!obj) return nullptr;
+	auto build = dynamic_cast<GettingBuiltBehavior *>(obj->findModule("GettingBuiltBehavior"));
+	if (!build || !dynamic_cast<ActiveBody *>(obj->getBodyModule()))
+	{
+		logic.destroyObject(obj);
+		throw std::runtime_error("building needs GettingBuiltBehavior and ActiveBody");
+	}
+	Coord3D p = pos;
+	p.z = logic.getGroundHeight(p.x, p.y);
+	obj->setPosition(&p);
+	obj->setOrientation(angle);
+	if (auto ai = logic.aiWorld()) ai->addObjectToPathfindMap(*obj);
+	onStructureCreated(owner, nullptr, *obj);
+	startRise(*obj);
+	startAtOneHealth(*obj);
+	obj->setStatus((unsigned)ObjectTemplateInfoBuilder::objectStatusIndex("PENDING_CONSTRUCTION"), false);
+	build->setForceComplete(true);
+	build->startConstruction(true);
+	const int cost = BuildAssistant::calcCostToBuild(what, &owner, nullptr, -1);
+	owner.withdrawMoney((std::uint32_t)cost, true);
+	owner.getScoreKeeper().addMoneySpentByKind(logic, &what, cost);
+	obj->setBuildCostPaid((float)cost);
+	return obj;
+}
+
 Object *Construction::buildObjectNow(GameLogic &logic, Object *builder, const ThingTemplate &what, const Coord3D &pos, float angle, Player &owner)
 {
 	// lane BACKLOG2: RW 0x7977C9 .. 0x79780C: the site is cleared and the units moved off it first (ConstructionSite::prepareSite: not for a DOZER builder, a

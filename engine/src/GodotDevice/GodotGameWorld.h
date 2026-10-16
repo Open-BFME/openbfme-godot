@@ -438,6 +438,8 @@ public:
 	Dictionary execute_lua(const String &code);
 	void update_lua();
 	BfmeLuaRuntime::Snapshot bfme_snapshot();
+	unsigned bfme_construct(const BfmeLuaRuntime::Mutation &mutation);
+	std::string bfme_construction_status(unsigned id);
 	std::string bfme_apply(const BfmeLuaRuntime::Mutation &mutation);
 	// SMOOTH-1: [[frame, hash], ...] of every completed frame when the game was loaded with hash_every_frame
 	Array get_frame_hashes() const;

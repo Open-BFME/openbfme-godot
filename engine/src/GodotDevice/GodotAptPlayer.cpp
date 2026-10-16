@@ -4754,6 +4754,7 @@ void AptMenuPlayer::_input(const Ref<InputEvent> &event)
 		}
 		const Key controllerKey = key->get_keycode();
 		if (controllerKey == Key::KEY_BACKSLASH) return;
+		if ((controllerKey == Key::KEY_COMMA || controllerKey == Key::KEY_PERIOD) && (bool)Engine::get_singleton()->get_meta("controller_camera_keys", false) && !key->is_ctrl_pressed() && !key->is_alt_pressed()) return;
 		if (controllerKey == Key::KEY_TAB && (bool)Engine::get_singleton()->get_meta("controller_keyboard_enabled", false)) return;
 		if ((bool)Engine::get_singleton()->get_meta("controller_keyboard_active", false) && !key->is_ctrl_pressed() && !key->is_alt_pressed() &&
 			(controllerKey == Key::KEY_LEFT || controllerKey == Key::KEY_RIGHT || controllerKey == Key::KEY_UP || controllerKey == Key::KEY_DOWN ||

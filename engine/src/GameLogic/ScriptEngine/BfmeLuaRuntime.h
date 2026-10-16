@@ -63,6 +63,9 @@ class BfmeLuaRuntime
 		// Empty string = success. Resolve IDs again; never retain an Object* in a queued request.
 		std::function<std::string(const Mutation &)> apply;
 		std::function<void()> onMutation;
+		std::function<unsigned(const Mutation &)> construct;
+		// "building", "complete", or a terminal error; resolve the ID every time.
+		std::function<std::string(unsigned)> constructionStatus;
 		// Sorted entry-script name/source pairs, freshly read for each reload.
 		std::function<std::vector<std::pair<std::string, std::string>>()> scripts;
 	};

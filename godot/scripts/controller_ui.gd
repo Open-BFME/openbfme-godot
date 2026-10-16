@@ -22,9 +22,18 @@ var _render_hash := -1
 var _owns_store := false
 var _native_layout_active := false
 var _armed_focus := ""
+var _shortcut_art: TextureRect
+var _palette_opened_at := 0
+var _reticle: TextureRect
+var _cursor_hidden := false
 
 func _ready() -> void:
 	layer = 25
+	_reticle = TextureRect.new()
+	_reticle.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	_reticle.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_reticle.hide()
+	add_child(_reticle)
 	_keyboard_hint = Label.new()
 	_keyboard_hint.text = "Keyboard controller mode · hold Tab for commands · \\ to disable"
 	_keyboard_hint.set_anchors_and_offsets_preset(Control.PRESET_CENTER_BOTTOM)
@@ -51,12 +60,22 @@ func _ready() -> void:
 	_commands.alignment = BoxContainer.ALIGNMENT_CENTER
 	_commands.add_theme_constant_override("separation", 6)
 	bottom.add_child(_commands)
+	_shortcut_art = TextureRect.new()
+	_shortcut_art.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	_shortcut_art.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_panel.add_child(_shortcut_art)
 	_shortcuts = Control.new()
 	_shortcuts.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_LEFT)
 	_shortcuts.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_panel.add_child(_shortcuts)
 	bridge.palette_toggled.connect(_toggle)
 	bridge.command_action.connect(action)
+	bridge.camera_rotation.connect(func(radians: float) -> void:
+		var live: Node = hud.call()
+		if live != null and live.is_ready():
+			var camera: Dictionary = live.get_camera()
+			if not camera.is_empty():
+				live.camera_set_angle_pitch(float(camera.angle) + radians, float(camera.pitch)))
 	_panel.hide()
 	_configure()
 	_panel.resized.connect(_layout)
@@ -96,6 +115,8 @@ func _navigate(value: String) -> void:
 		_state = fields
 
 func _toggle(open: bool) -> void:
+	if open:
+		_palette_opened_at = Time.get_ticks_msec()
 	_panel.visible = open
 	if not open:
 		_armed_focus = ""
@@ -128,9 +149,15 @@ func _process(delta: float) -> void:
 	if live != null and live.has_method("set_controller_layout"):
 		live.set_controller_layout(active)
 	_native_layout_active = active
+	_update_reticle(live, active)
 	_keyboard_hint.visible = bridge.keyboard_mode and bridge._gameplay() and not _panel.visible
 	if not _panel.visible:
 		return
+	var art_scale := get_viewport().get_visible_rect().size.y / 1080.0
+	_shortcut_art.position = Vector2(50 * art_scale, get_viewport().get_visible_rect().size.y - 550 * art_scale)
+	_shortcut_art.size = Vector2(320, 200) * art_scale
+	var art_frame := mini(11, int((Time.get_ticks_msec() - _palette_opened_at) * 30 / 1000))
+	_shortcut_art.texture = preload("res://scripts/controller_art.gd").texture("shortcut_xbox_%02d" % art_frame)
 	_elapsed += delta
 	if _elapsed >= 0.15:
 		_elapsed = 0.0
@@ -186,6 +213,7 @@ func _button(text: String, selected: bool) -> Button:
 	button.source = _source
 	button.caption = text
 	button.selected = selected
+	button.evil = bool(_source.get_state().get("controller_evil", false)) if _source.has_method("get_state") else false
 	button.custom_minimum_size = Vector2(72, 72)
 	return button
 
@@ -327,6 +355,8 @@ func _focus_selection() -> void:
 		_source.camera_look_at(centre / count)
 
 func _exit_tree() -> void:
+	if _cursor_hidden:
+		Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 	_clear_native_tooltip()
 	if hud.is_valid():
 		var live: Node = hud.call()
@@ -373,3 +403,37 @@ func _clear_native_tooltip() -> void:
 
 func _show_tooltip(_text: String) -> void:
 	_clear_native_tooltip()
+
+func _update_reticle(live: Node, active: bool) -> void:
+	_reticle.visible = active and live != null and live.has_method("get_cursor_image")
+	if _reticle.visible:
+		if not _cursor_hidden:
+			Input.mouse_mode = Input.MOUSE_MODE_HIDDEN
+			_cursor_hidden = true
+		var cursor: Dictionary = live.get_cursor_image()
+		var state: Dictionary = live.get_state()
+		var native := str(cursor.get("name", "")).to_lower()
+		var name_text := "reticle"
+		if "invalid" in native or "notallowed" in native or "nobomb" in native:
+			name_text = "reticle_invalid"
+		elif state.get("gui_command", false):
+			name_text = "reticle_ability"
+		elif "hostile2" in native or "capture" in native:
+			name_text = "reticle_capture"
+		elif "enter" in native or "garrison" in native:
+			name_text = "reticle_garrison"
+		elif "onering" in native:
+			name_text = "reticle_ring"
+		elif "attack" in native or "hostile" in native:
+			name_text = "reticle_attack"
+		elif live.get_selection().is_empty():
+			name_text = "reticle_yellow"
+		else:
+			name_text = "reticle_a"
+		_reticle.texture = preload("res://scripts/controller_art.gd").frame(name_text, 15.0)
+		_reticle.size = Vector2.ONE * (48.0 * get_viewport().get_visible_rect().size.y / 720.0)
+		_reticle.position = get_viewport().get_mouse_position() - _reticle.size * 0.5
+		move_child(_reticle, get_child_count() - 1)
+	elif _cursor_hidden:
+		Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+		_cursor_hidden = false

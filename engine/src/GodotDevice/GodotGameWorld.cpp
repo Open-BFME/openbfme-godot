@@ -3508,6 +3508,8 @@ Dictionary GameWorld::execute_lua(const String &code)
 			BfmeLuaRuntime::Host host;
 			host.snapshot = [this] { return bfme_snapshot(); };
 			host.apply = [this](const BfmeLuaRuntime::Mutation &mutation) { return bfme_apply(mutation); };
+			host.construct = [this](const auto &mutation) { return bfme_construct(mutation); };
+			host.constructionStatus = [this](unsigned id) { return bfme_construction_status(id); };
 			host.scripts = [] {
 				std::vector<std::pair<std::string, std::string>> scripts;
 				for (const String &directory : { String("res://dev"), String("user://dev") })

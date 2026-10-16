@@ -139,6 +139,10 @@ public:
 	bool isCountedInCommandPoints() const { return m_commandPointsCounted; }
 	// lane BUILD-1: RW + 0x288 the construction percent: -1 (CONSTRUCTION_COMPLETE, RW 0xBD19DC) for a finished object, 0 .. 100 while the foundation rises
 	// (RW 0x858924 sets 0.0 when a foundation makes its building; GettingBuiltBehavior RW 0x857E77 advances it; 0x858A7A resets it to -1 for an instant build)
+	// OpenBFME companion extension: per-object construction rate, never a template change.
+	// Session-only; retail save serialization is unchanged.
+	float scriptConstructionSpeed() const { return m_scriptConstructionSpeed; }
+	void setScriptConstructionSpeed(float speed) { m_scriptConstructionSpeed = speed; }
 	float getConstructionPercent() const { return m_constructionPercent; }
 	void setConstructionPercent(float percent) { m_constructionPercent = percent; }
 	// RW 0x62684D(2, on)
@@ -536,6 +540,7 @@ private:
 	bool m_commandPointsCounted = false;  ///< RW + 0x4A0
 	float m_buildCostPaid = 0.0f;         ///< RW + 0x33C
 	float m_upgradeCostPaid = 0.0f;       ///< RW + 0x340 (UPGRADE-1)
+	float m_scriptConstructionSpeed = 1.0f;
 	float m_constructionPercent = -1.0f;  ///< RW + 0x288
 
 	Object *m_containedBy = nullptr;

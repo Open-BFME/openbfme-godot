@@ -1,5 +1,8 @@
 // OpenBFME. GPL-3.0. The bfme companion's adapter to live engine objects.
 #include "Common/BuildAssistant.h"
+#include "GameLogic/Construction.h"
+#include "GameLogic/BuildPlacement.h"
+#include "GameLogic/Module/DozerAIUpdate.h"
 #include "Common/Player.h"
 #include "Common/PlayerList.h"
 #include "Common/Thing/ThingTemplate.h"
@@ -161,6 +164,50 @@ BfmeLuaRuntime::Snapshot GameWorld::bfme_snapshot()
 	}
 	return out;
 }
+unsigned GameWorld::bfme_construct(const BfmeLuaRuntime::Mutation &m)
+{
+	if (!m_game || !m_world) throw std::runtime_error("no active match");
+	auto &logic = m_game->logic();
+	if (m.args.size() != 6) throw std::runtime_error("invalid construction arguments");
+	auto name = std::get_if<std::string>(&m.value.data);
+	auto tt = name ? m_world->things().findTemplate(*name) : nullptr;
+	if (!tt || !kind(logic.templateInfo(tt->getFinalOverride()), 7))
+		throw std::runtime_error("unknown building template");
+	tt = tt->getFinalOverride();
+	Coord3D pos{float(numeric(m.args[0], -1e7, 1e7, false)), float(numeric(m.args[1], -1e7, 1e7, false)), 0};
+	int builderId = int(numeric(m.args[2], 0, 2147483647));
+	int playerId = int(numeric(m.args[3], 0, 19));
+	float speed = float(numeric(m.args[4], 0.01, 100, false));
+	float angle = float(numeric(m.args[5], -1e6, 1e6, false));
+	auto player = logic.players().getNthPlayer(playerId);
+	if (!player || !player->getDefaultTeam()) throw std::runtime_error("invalid construction player");
+	::Object *builder = builderId ? logic.findObjectByID(builderId) : nullptr;
+	DozerAIUpdate *dozer = builder ? dynamic_cast<DozerAIUpdate *>(builder->getAIUpdateInterface()) : nullptr;
+	if (builderId && (!builder || builder->isDestroyed() || builder->isEffectivelyDead() ||
+		builder->getControllingPlayer() != player || !dozer))
+		throw std::runtime_error("builder must be a living builder owned by the player");
+	const int cost = BuildAssistant::calcCostToBuild(*tt, player, builder, -1);
+	if (cost < 0 || player->getMoney()->countMoney() < (unsigned)cost)
+		throw std::runtime_error("not enough money for construction");
+	// Scripted construction may select any structure template, but placement and
+	// builder pathfinding use the same gates as normal construction.
+	if (BuildPlacement::isLocationLegalToBuild(logic, pos, *tt, angle,
+		LLF_TERRAIN_RESTRICTIONS | LLF_NO_OBJECT_OVERLAP, builder, player) != LBC_OK)
+		throw std::runtime_error("illegal construction site");
+	auto obj = dozer ? dozer->construct(*tt, pos, angle, *player)
+		: Construction::constructWithoutBuilder(logic, *tt, pos, angle, *player);
+	if (!obj) throw std::runtime_error("construction refused (site or builder unavailable)");
+	obj->setScriptConstructionSpeed(speed);
+	return obj->getID();
+}
+std::string GameWorld::bfme_construction_status(unsigned id)
+{
+	if (!m_game) return "match ended";
+	auto obj = m_game->logic().findObjectByID(id);
+	if (!obj || obj->isDestroyed() || obj->isEffectivelyDead()) return "construction cancelled or building destroyed";
+	return obj->isUnderConstruction() ? "building" : "complete";
+}
+
 std::string GameWorld::bfme_apply(const BfmeLuaRuntime::Mutation &m)
 {
 	if (!m_game || !m_world)

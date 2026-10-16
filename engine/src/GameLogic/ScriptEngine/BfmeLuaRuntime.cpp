@@ -172,6 +172,36 @@ function bfme.getLiveDataStatus()
 end
 function bfme.getInstanceStatus() return {ready=view.ready or false,actionsReady=view.ready or false,generation=generation,unitCount=#bfme.unitInstances,buildingCount=#bfme.buildingInstances} end
 bfme.getMutationStatus=status
+bfme.getConstructionResult=_bfmeConstructionResult
+_bfmeConstructionResult=nil
+-- Script-only extension. Map coordinates are SAGE x/y; terrain supplies z.
+function bfme.beginConstruction(building, position, builder, player, speedMultiplier, onComplete)
+ if type(building)=='userdata' then
+  local r,h=record(building)
+  if h.kind~='buildingTypes' then error('expected BuildingType',2) end
+  building=r.id
+ end
+ if type(building)~='string' or not bfme.buildingTypes[building] then error('unknown building template',2) end
+ if type(position)~='table' then error('expected position {x=..., y=...}',2) end
+ numeric(position.x,-1e7,1e7,false); numeric(position.y,-1e7,1e7,false)
+ local angle=position.rotation or 0; numeric(angle,-1e6,1e6,false)
+ local function id(value,kind)
+  if type(value)=='userdata' then local _,h=record(value); if h.kind~=kind then error('wrong bfme handle kind',3) end; value=tonumber(h.id) end
+  numeric(value,0,2147483647,true); return value
+ end
+ local builderId=builder~=nil and id(builder,'unitInstances') or 0
+ local playerId=player~=nil and id(player,'players') or view.localPlayerId
+ numeric(playerId,0,19,true)
+ local speed=speedMultiplier or 1; numeric(speed,0.01,100,false)
+ if onComplete~=nil and type(onComplete)~='function' then error('expected completion function',2) end
+ local callback
+ if onComplete then callback=function(objectId)
+  view=snapshot()
+  onComplete(assert(proxy('buildingInstances',objectId),'completed building no longer exists'))
+ end end
+ return queue('match','',':beginConstruction',building,position.x,position.y,builderId,playerId,speed,angle,callback)
+end
+beginConstruction=bfme.beginConstruction
 bfme.log=writeLog
 bfme.getTimeMs=clock
 function bfme.setGameSpeed(value)
@@ -238,8 +268,12 @@ struct BfmeLuaRuntime::Impl
 	{
 		unsigned long long ticket;
 		Mutation mutation;
+		int callback = LUA_NOREF;
 	};
 	std::deque<Pending> pending;
+	struct ConstructionJob { unsigned id; int callback; };
+	std::map<unsigned long long, ConstructionJob> constructions;
+	std::map<unsigned long long, unsigned> constructionResults;
 	std::map<unsigned long long, std::string> results;
 	std::chrono::steady_clock::time_point deadline;
 	int refreshRef = LUA_NOREF, invalidateRef = LUA_NOREF, printRef = LUA_NOREF;
@@ -299,19 +333,28 @@ struct BfmeLuaRuntime::Impl
 		try
 		{
 			auto &s = self(L);
-			if (s.pending.size() >= 128)
+			if (s.pending.size() + s.constructions.size() >= 128)
 				throw std::runtime_error("bfme mutation queue full (128)");
 			Mutation m;
 			m.collection = luaL_checkstring(L, 1);
 			m.id = luaL_checkstring(L, 2);
 			m.field = luaL_checkstring(L, 3);
 			m.value = scalar(L, 4);
-			for (int i = 5; i <= lua_gettop(L); ++i)
+			const bool construction = m.field == ":beginConstruction";
+			if (construction && (!s.host.construct || !s.host.constructionStatus))
+				throw std::runtime_error("construction interface unavailable");
+			for (int i = 5; i <= (construction ? 10 : lua_gettop(L)); ++i)
 				m.args.push_back(scalar(L, i));
 			if (s.host.onMutation)
 				s.host.onMutation();
 			auto ticket = s.nextTicket++;
-			s.pending.push_back({ticket, std::move(m)});
+			int callback = LUA_NOREF;
+			if (construction && lua_isfunction(L, 11))
+			{
+				lua_pushvalue(L, 11);
+				callback = luaL_ref(L, LUA_REGISTRYINDEX);
+			}
+			s.pending.push_back({ticket, std::move(m), callback});
 			s.results[ticket] = "pending";
 			while (s.results.size() > 1024)
 				s.results.erase(s.results.begin());
@@ -323,6 +366,14 @@ struct BfmeLuaRuntime::Impl
 			lua_pushstring(L, e.what());
 		}
 		return lua_error(L);
+	}
+	static int constructionResult(lua_State *L)
+	{
+		auto &s = self(L);
+		auto i = s.constructionResults.find(luaL_checkinteger(L, 1));
+		if (i == s.constructionResults.end()) lua_pushnil(L);
+		else lua_pushinteger(L, i->second);
+		return 1;
 	}
 	static int status(lua_State *L)
 	{
@@ -411,6 +462,7 @@ BfmeLuaRuntime::BfmeLuaRuntime(Host host) : m(new Impl)
 	m->bind("_bfmeSnapshot", Impl::snapshot);
 	m->bind("_bfmeQueue", Impl::queue);
 	m->bind("_bfmeStatus", Impl::status);
+	m->bind("_bfmeConstructionResult", Impl::constructionResult);
 	m->bind("_bfmeLog", Impl::log);
 	m->bind("_bfmeClock", Impl::clock);
 	lua_pushlightuserdata(L, m.get());
@@ -488,30 +540,79 @@ BfmeLuaRuntime::Result BfmeLuaRuntime::execute(const std::string &code)
 }
 bool BfmeLuaRuntime::hasPending() const
 {
-	return !m->pending.empty();
+	return !m->pending.empty() || !m->constructions.empty();
 }
 void BfmeLuaRuntime::flush()
 {
-	while (!m->pending.empty())
+	// Only consume the queue present on entry. A completion callback can enqueue
+	// another request, which runs on the next safe point rather than recursively.
+	auto count = m->pending.size();
+	while (count--)
 	{
 		auto p = std::move(m->pending.front());
 		m->pending.pop_front();
 		std::string error;
 		try
 		{
-			error = m->host.apply(p.mutation);
+			if (p.mutation.field == ":beginConstruction")
+			{
+				unsigned id = m->host.construct(p.mutation);
+				m->constructionResults[p.ticket] = id;
+				m->constructions[p.ticket] = {id, p.callback};
+				p.callback = LUA_NOREF;
+			}
+			else error = m->host.apply(p.mutation);
 		}
 		catch (const std::exception &e)
 		{
 			error = e.what();
 		}
-		m->results[p.ticket] = error.empty() ? "applied" : error;
+		if (p.callback != LUA_NOREF) luaL_unref(m->L, LUA_REGISTRYINDEX, p.callback);
+		m->results[p.ticket] = error.empty() ? (p.mutation.field == ":beginConstruction" ? "building" : "applied") : error;
 	}
+	for (auto it = m->constructions.begin(); it != m->constructions.end();)
+	{
+		const auto ticket = it->first;
+		const auto job = it->second;
+		std::string state;
+		try { state = m->host.constructionStatus(job.id); }
+		catch (const std::exception &e) { state = e.what(); }
+		if (state == "building") { ++it; continue; }
+		it = m->constructions.erase(it);
+		m->results[ticket] = state;
+		if (state == "complete" && job.callback != LUA_NOREF)
+		{
+			auto L = m->L;
+			m->deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(250);
+			lua_sethook(L, Impl::hook, LUA_MASKCOUNT, 1000);
+			lua_rawgeti(L, LUA_REGISTRYINDEX, job.callback);
+			lua_pushinteger(L, job.id);
+			if (lua_pcall(L, 1, 0, 0) != LUA_OK)
+			{
+				const char *error = lua_tostring(L, -1);
+				m->results[ticket] = std::string("completion callback failed: ") + (error ? error : "non-string Lua error");
+				lua_pop(L, 1);
+			}
+			lua_sethook(L, nullptr, 0, 0);
+		}
+		if (job.callback != LUA_NOREF) luaL_unref(m->L, LUA_REGISTRYINDEX, job.callback);
+	}
+	while (m->constructionResults.size() > 1024) m->constructionResults.erase(m->constructionResults.begin());
 }
 void BfmeLuaRuntime::invalidate()
 {
 	for (auto &p : m->pending)
+	{
 		m->results[p.ticket] = "expired registry";
+		if (p.callback != LUA_NOREF) luaL_unref(m->L, LUA_REGISTRYINDEX, p.callback);
+	}
+	for (auto &entry : m->constructions)
+	{
+		m->results[entry.first] = "expired registry";
+		if (entry.second.callback != LUA_NOREF) luaL_unref(m->L, LUA_REGISTRYINDEX, entry.second.callback);
+	}
+	m->constructions.clear();
+	m->constructionResults.clear();
 	m->pending.clear();
 	m->call(m->invalidateRef);
 }

@@ -11,6 +11,7 @@
 
 #include "Common/INI.h"
 #include "Common/Player.h"
+#include "Common/PlayerTemplate.h"
 #include "GameClient/AptCanvas.h"
 #include "GameClient/GUI/Image.h"
 #include "GameClient/GUI/ShellServices.h"
@@ -1969,6 +1970,12 @@ Dictionary InGameHudNode::get_state() const
 	}
 	const InGameUI &ui = d->hud->input().ui();
 	s["cursor"] = toGodot(ui.cursor());
+	if (d->world && d->world->hud_game())
+	{
+		const Player *local = d->world->hud_game()->players().getLocalPlayer();
+		s["controller_evil"] = local && local->getPlayerTemplate() && local->getPlayerTemplate()->m_evil;
+	}
+
 	s["screenshot"] = d->lastScreenshot; // lane INPUT-1: the last TAKE_SCREENSHOT file
 	s["spell_store_open"] = d->hud->spellStore() != nullptr; // lane INPUT-1: the SPELL_STORE key
 	// lane UI-4: the Palantir portrait: the image the selection asks for (PalantirCommandUI) and the one the CommandUI.Portrait clip drew
@@ -3085,6 +3092,7 @@ void InGameHudNode::_input(const Ref<InputEvent> &event)
 	{
 		const Key code = key->get_keycode();
 		if (code == Key::KEY_BACKSLASH) return;
+		if ((code == Key::KEY_COMMA || code == Key::KEY_PERIOD) && (bool)Engine::get_singleton()->get_meta("controller_camera_keys", false) && !key->is_ctrl_pressed() && !key->is_alt_pressed()) return;
 		if (code == Key::KEY_TAB && (bool)Engine::get_singleton()->get_meta("controller_keyboard_enabled", false)) return;
 		if ((bool)Engine::get_singleton()->get_meta("controller_keyboard_active", false) && !key->is_ctrl_pressed() && !key->is_alt_pressed() &&
 			(code == Key::KEY_LEFT || code == Key::KEY_RIGHT || code == Key::KEY_UP || code == Key::KEY_DOWN ||

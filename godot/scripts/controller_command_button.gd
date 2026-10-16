@@ -3,6 +3,9 @@ extends Button
 var source: Node
 var artwork: Texture2D
 var selected := false
+var evil := false
+var _halo: TextureRect
+var _glyph: TextureRect
 var caption := ""
 var _rim: TextureRect
 var _picture: TextureRect
@@ -48,6 +51,15 @@ func _ready() -> void:
 	_rim.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	_rim.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(_rim)
+	_halo = TextureRect.new()
+	_halo.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	_halo.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(_halo)
+	_glyph = TextureRect.new()
+	_glyph.texture = preload("res://scripts/controller_art.gd").texture("a_button")
+	_glyph.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	_glyph.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(_glyph)
 	resized.connect(_layout)
 	mouse_entered.connect(_update_rim)
 	mouse_exited.connect(_update_rim)
@@ -73,7 +85,18 @@ func _layout() -> void:
 	_label.size = size * 0.75
 	_label.position = size * 0.125
 	_label.add_theme_font_size_override("font_size", maxi(8, int(size.x / 6.0)))
+	_halo.size = size * 1.5
+	_halo.position = -size * 0.25
+	_glyph.size = size * 0.38
+	_glyph.position = size * Vector2(0.63, 0.71)
 	queue_redraw()
+
+func _process(_delta: float) -> void:
+	var active := selected or is_hovered()
+	_halo.visible = active
+	_glyph.visible = active
+	if active:
+		_halo.texture = preload("res://scripts/controller_art.gd").frame("select_ring" if evil else "select_ring_good")
 
 func _update_rim() -> void:
 	_rim.texture = _rims.get("RadialPush" if is_pressed() else "RadialOver" if selected or is_hovered() else "RadialBorder")

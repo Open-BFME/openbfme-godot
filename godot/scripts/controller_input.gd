@@ -3,6 +3,8 @@ extends Node
 signal input_generated(event: InputEvent)
 signal palette_toggled(open: bool)
 signal command_action(action: String)
+signal camera_rotation(radians: float)
+var _rotation_keys: Dictionary = {}
 var palette_open := false
 var keyboard_mode := false
 var _keyboard_trigger := false
@@ -53,6 +55,7 @@ func _mouse(button: MouseButton, pressed: bool) -> void:
 	input_generated.emit(event)
 
 func _release_all() -> void:
+	_rotation_keys.clear()
 	_keyboard_trigger = false
 	_pad_trigger = false
 	if palette_open:
@@ -68,6 +71,18 @@ func _release_all() -> void:
 
 func _input(event: InputEvent) -> void:
 	if event is InputEventKey:
+		if event.keycode in [KEY_COMMA, KEY_PERIOD] and not event.ctrl_pressed and not event.alt_pressed:
+			if not event.pressed:
+				_rotation_keys.erase(event.keycode)
+			if _gameplay() and not _suspended:
+				var action := ""
+				if resolve_action.is_valid():
+					action = str(resolve_action.call("Comma" if event.keycode == KEY_COMMA else "Period", true))
+				if action in ["rotateLeft", "rotateRight"]:
+					get_viewport().set_input_as_handled()
+					if event.pressed:
+						_rotation_keys[event.keycode] = -1.0 if action == "rotateLeft" else 1.0
+					return
 		if event.keycode == KEY_BACKSLASH and not event.alt_pressed and not event.ctrl_pressed and not event.shift_pressed:
 			get_viewport().set_input_as_handled()
 			if event.pressed and not event.echo:
@@ -155,6 +170,13 @@ func _axis(axis: JoyAxis) -> float:
 
 func _process(delta: float) -> void:
 	_update_keyboard_mode()
+	if not _gameplay() or _suspended:
+		_rotation_keys.clear()
+	if not _rotation_keys.is_empty():
+		var direction := 0.0
+		for value in _rotation_keys.values():
+			direction += float(value)
+		camera_rotation.emit(direction * 1.5 * delta)
 	if device < 0 or _suspended:
 		return
 	var playing := _gameplay()
@@ -200,6 +222,7 @@ func _notification(what: int) -> void:
 		_suspended = false
 
 func _exit_tree() -> void:
+	Engine.set_meta("controller_camera_keys", false)
 	_release_all()
 	Engine.set_meta("controller_keyboard_active", false)
 	Engine.set_meta("controller_keyboard_enabled", false)
@@ -210,6 +233,7 @@ func _update_keyboard_mode() -> void:
 		_keyboard_trigger = false
 		_pad_trigger = false
 	var active := (enabled and _keyboard_trigger or _pad_trigger) and _gameplay() and not _suspended
+	Engine.set_meta("controller_camera_keys", _gameplay() and not _suspended)
 	Engine.set_meta("controller_keyboard_enabled", enabled)
 	Engine.set_meta("controller_keyboard_active", enabled and _keyboard_trigger)
 	if active != palette_open:
