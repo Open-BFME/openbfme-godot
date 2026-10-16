@@ -45,7 +45,7 @@ class FoundationAIUpdate : public UpdateModule
 public:
 	FoundationAIUpdate(Thing *thing, const FoundationAIUpdateModuleData *data);
 	FoundationAIUpdate *getFoundationAIUpdate() override { return this; }
-	UpdateSleepTime update() override { return UPDATE_SLEEP_FOREVER; }
+	UpdateSleepTime update() override;
 	const FoundationAIUpdateModuleData *foundationData() const { return m_foundationData; }
 	// RW 0x858701 (Construction::constructOnPlot)
 	Object *construct(const ThingTemplate &what, const Coord3D &pos, float angle, Player &owner, bool instant);

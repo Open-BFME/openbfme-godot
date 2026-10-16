@@ -110,6 +110,7 @@ const FieldParse kSpecialPowerModuleFieldParse[] = {
 	{ "SpecialPowerTemplate", parseSpecialPowerTemplate, nullptr, 0 },
 	{ "UpdateModuleStartsAttack", INI::parseBool, nullptr, SP_OFF(m_updateModuleStartsAttack) },
 	{ "StartsPaused", INI::parseBool, nullptr, SP_OFF(m_startsPaused) },
+	{ "InitiateSound2", parseName, nullptr, SP_OFF(m_initiateSound2) },
 	{ "InitiateSound", parseName, nullptr, SP_OFF(m_initiateSound) },
 	{ "ReEnableAntiCategory", INI::parseBool, nullptr, SP_OFF(m_reEnableAntiCategory) },
 	{ "AntiCategory", INI::parseBitString32, TheAntiCategoryNames, SP_OFF(m_antiCategory) }, // RW 0x89F32D (BitFlags<15>::parse, lane SPELL-2)

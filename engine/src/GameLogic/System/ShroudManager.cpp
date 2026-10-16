@@ -899,10 +899,10 @@ ShroudManager::TemplateVision ShroudManager::templateVision(const ThingTemplate 
 	// with another layout resolves again); the VALUES are always the template's current ones
 	enum
 	{
-		F_RANGE, F_SIDE, F_REAR, F_PERFOOT, F_RADIUS, F_MAX, F_MIN, F_SEGMENTS, F_COUNT
+		F_RANGE, F_SIDE, F_REAR, F_PERFOOT, F_RADIUS, F_MAX, F_MIN, F_SEGMENTS, F_VISION, F_COUNT
 	};
 	static const char *const names[F_COUNT] = { "ShroudClearingRange", "VisionSide", "VisionRear", "VisionBonusPercentPerFoot", "VisionBonusTestRadius",
-		"MaxVisionBonusPercent", "MinVisionBonusPercent", "VisionBonusTestSegments" };
+		"MaxVisionBonusPercent", "MinVisionBonusPercent", "VisionBonusTestSegments", "VisionRange" };
 	struct Slots
 	{
 		const std::vector<std::string> *table = nullptr;
@@ -946,7 +946,13 @@ ShroudManager::TemplateVision ShroudManager::templateVision(const ThingTemplate 
 		}
 		return fallback;
 	};
-	v.shroudClearingRange = real(F_RANGE, 0.0f);
+	v.shroudClearingRange = real(F_RANGE, -1.0f);
+	// Object::initObject in Open-BFME-1: an omitted (-1) clearing range
+	// defaults to VisionRange. Gondor's castle keep relies on that default.
+	if (v.shroudClearingRange < 0.0f)
+	{
+		v.shroudClearingRange = real(F_VISION, 0.0f);
+	}
 	v.visionSide = real(F_SIDE, 1.0f);
 	v.visionRear = real(F_REAR, 1.0f);
 	v.bonusPerFoot = real(F_PERFOOT, 0.0f);

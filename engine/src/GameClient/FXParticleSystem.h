@@ -37,6 +37,8 @@
 
 namespace FXParticleSystem
 {
+void ParsePriority(INI *ini, void *instance, void *store, const void *userData);
+
 
 // RW category table 0xc339d8 (token column).
 enum ModuleCategory

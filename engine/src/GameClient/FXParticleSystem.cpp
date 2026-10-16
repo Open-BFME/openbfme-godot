@@ -25,6 +25,20 @@ const char *const WindMotionNames[] = { "NONE", "Unused", "PingPong", "Circular"
 namespace
 {
 
+// BFME1 Rva00D10180.cpp has semantic priorities rather than RotWK quality
+// thresholds. Keep its critical effects visible; quality tiers approximate the
+// older budget categories until a separate BFME1 particle budget is implemented.
+void parsePriority(INI *ini, void *, void *store, const void *)
+{
+	const char *token = ini->getNextToken();
+	const char *const bfme1[] = { "NONE", "WEAPON_EXPLOSION", "SCORCHMARK", "DUST_TRAIL", "BUILDUP", "DEBRIS_TRAIL", "UNIT_DAMAGE_FX", "DEATH_EXPLOSION", "SEMI_CONSTANT", "CONSTANT", "WEAPON_TRAIL", "AREA_EFFECT", "CRITICAL", "ALWAYS_RENDER", nullptr };
+	for (int i = 0; ParticlePriorityNames[i]; ++i)
+		if (AsciiStringUtil::compareNoCase(token, ParticlePriorityNames[i]) == 0) { *(int *)store = i; return; }
+	for (int i = 1; bfme1[i]; ++i)
+		if (AsciiStringUtil::compareNoCase(token, bfme1[i]) == 0) { *(int *)store = i >= 12 ? 6 : 2; return; }
+	*(int *)store = INI::scanIndexList(token, ParticlePriorityNames);
+}
+
 // ---- field parsers --------------------------------------------------------------------------------------------------
 // RW 0x969878: Alpha<N> = low high frame
 void parseAlphaKey(INI *ini, void *, void *store, const void *)
@@ -630,7 +644,7 @@ const FieldParse *ParticleSystemTemplate::systemFieldParse()
 	if (t.empty())
 	{
 		static ParticleSystemInfo d;
-		t.push_back(ROW("Priority", INI::parseIndexList, ParticlePriorityNames, d, m_priority));
+		t.push_back(ROW("Priority", parsePriority, ParticlePriorityNames, d, m_priority));
 		t.push_back(ROW("IsOneShot", INI::parseBool, nullptr, d, m_isOneShot));
 		t.push_back(ROW("Shader", INI::parseIndexList, ParticleShaderNames, d, m_shaderType));
 		t.push_back(ROW("Type", INI::parseIndexList, ParticleTypeNames, d, m_particleType));
@@ -701,6 +715,8 @@ void FXParticleSystemTemplateStore::clear()
 	m_order.clear();
 	m_overrideLoaded = false;
 }
+
+void ParsePriority(INI *ini, void *instance, void *store, const void *userData) { parsePriority(ini, instance, store, userData); }
 
 FXParticleSystemTemplateStore *TheFXParticleSystemTemplateStore = nullptr;
 

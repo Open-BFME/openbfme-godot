@@ -39,6 +39,12 @@ const char *const *at(size_t index) { return kLODNameRun + index; }
 #define LOD_OFF(f) (int)offsetof(StaticGameLODInfo, f)
 // RW 0xBF9468, in its order
 const FieldParse kStaticGameLODFields[] = {
+	{ "UseAnisotropic", INI::parseBool, nullptr, LOD_OFF(useAnisotropic) },
+	{ "UsePixelShaders", INI::parseBool, nullptr, LOD_OFF(usePixelShaders) },
+	{ "UseLightMap", INI::parseBool, nullptr, LOD_OFF(useLightMap) },
+	{ "UseBuildupScaffolds", INI::parseBool, nullptr, LOD_OFF(useBuildupScaffolds) },
+	{ "UseTreeSway", INI::parseBool, nullptr, LOD_OFF(useTreeSway) },
+	{ "UseHighQualityVideo", INI::parseBool, nullptr, LOD_OFF(useHighQualityVideo) },
 	{ "ModelLOD", INI::parseIndexList, at(kModel), LOD_OFF(modelLOD) },
 	{ "EffectsLOD", INI::parseIndexList, at(kEffects), LOD_OFF(effectsLOD) },
 	{ "MaxParticleCount", INI::parseInt, nullptr, LOD_OFF(maxParticleCount) },
@@ -60,8 +66,8 @@ const FieldParse kStaticGameLODFields[] = {
 	{ "ShaderMaterialReplacement", INI::parseBool, nullptr, LOD_OFF(shaderMaterialReplacement) },
 	{ "UseHeatEffects", INI::parseBool, nullptr, LOD_OFF(useHeatEffects) },
 	{ "DecalLOD", INI::parseIndexList, at(kDecal), LOD_OFF(decalLOD) },
-	{ "MinParticlePriority", INI::parseIndexList, FXParticleSystem::ParticlePriorityNames, LOD_OFF(minParticlePriority) },       // RW 0xC31AE8
-	{ "MinParticleSkipPriority", INI::parseIndexList, FXParticleSystem::ParticlePriorityNames, LOD_OFF(minParticleSkipPriority) }, // RW 0xC31AE8
+	{ "MinParticlePriority", FXParticleSystem::ParsePriority, FXParticleSystem::ParticlePriorityNames, LOD_OFF(minParticlePriority) },       // RW 0xC31AE8
+	{ "MinParticleSkipPriority", FXParticleSystem::ParsePriority, FXParticleSystem::ParticlePriorityNames, LOD_OFF(minParticleSkipPriority) }, // RW 0xC31AE8
 	{ nullptr, nullptr, nullptr, 0 },
 };
 #undef LOD_OFF

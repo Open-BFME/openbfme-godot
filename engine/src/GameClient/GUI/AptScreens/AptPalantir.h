@@ -115,12 +115,13 @@ public:
 	const std::string &portraitShown() const { return m_portraitShown; }
 	// the key under which the movie's RenderImage clip at `clipPath` finds its image: its `_imageMap` variable, else the clip's own path (retail keys the portrait
 	// by the clip path "CommandUI/Portrait", RW 0x9308F3)
-	const NativeImage *imageForClip(const std::string &clipPath, const std::string &imageMapVar) const { return imageFor(imageMapVar.empty() ? clipPath : imageMapVar); }
+	const NativeImage *imageForClip(const std::string &clipPath, const std::string &imageMapVar) const;
 	std::string portraitKey() const { return levelPrefix() + "CommandUI.Portrait"; }
 	static std::vector<std::string> acceptanceStops();
 	static constexpr int kArcPositions = 6, kSidePositions = 12;
 	// lane HUD-6: the side command bar shows only for the control bar's context object when it is a DOZER the local player controls (RW 0x92F27D: template
 	// KindOf + 0x109 bit 0x40, its controlling player the local one); the HUD sets it every update
+	void setBfme1(bool value) { m_bfme1 = value; }
 	void setSideBarObject(bool localDozer) { m_sideBarGate = localDozer; }
 	// lane HUD-6: the side bar's SetButtonState calls made ("2 _show", "5 _hide"; the last 64) and the frames shown (+ 0xD8)
 	const std::vector<std::string> &sideBarCalls() const { return m_sideBarCalls; }
@@ -224,6 +225,7 @@ private:
 	std::string m_sidePrefix;            ///< + 0x18: the argument of OnAptInGameSideCommandBarLoaded (the movie's clip)
 	int m_sideCount = 0;                 ///< + 0xD8: the frames shown (SetButtonState "_show")
 	int m_sideKey[16] = {};              ///< slot + 8: the control bar window each shown frame belongs to (-1 none)
+	bool m_bfme1 = false;
 	bool m_sideBarGate = false;
 	std::vector<std::string> m_sideBarCalls;
 	std::function<void(const std::string &, bool)> m_helpBoxHandler;

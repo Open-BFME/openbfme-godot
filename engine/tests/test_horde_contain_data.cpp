@@ -123,10 +123,16 @@ TEST_CASE("HordeContain: buildFieldParse chains OpenContain, TransportContain, H
 {
 	MultiIniFieldParse p;
 	HordeContainModuleData::buildFieldParse(p);
-	REQUIRE(p.getCount() == 3);
+	REQUIRE(p.getCount() == 4);
 	CHECK(p.getNthFieldParse(0) == OpenContainModuleData::getFieldParse());
 	CHECK(p.getNthFieldParse(1) == TransportContainModuleData::getFieldParse());
 	CHECK(p.getNthFieldParse(2) == HordeContainModuleData::getFieldParse());
+	const FieldParse *legacy = p.getNthFieldParse(3);
+	CHECK(std::string(legacy[0].token) == "UsePorcupineBody");
+	CHECK(std::string(legacy[1].token) == "UpdateWeaponSetFlagsOnHordeToo");
+	CHECK(legacy[0].parse == INI::parseBool);
+	CHECK(legacy[1].parse == INI::parseBool);
+	CHECK(legacy[2].token == nullptr);
 	// the embedded structs sit at offset 0, so one pointer serves all three tables
 	HordeContainModuleData d;
 	CHECK((void *)&d == (void *)&d.m_transport);

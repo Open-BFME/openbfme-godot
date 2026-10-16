@@ -1138,3 +1138,32 @@ TEST_CASE("stops S-130..S-139 are registered in docs/STOPS.md with the identitie
 		CHECK_MESSAGE(line.find("| code |") != std::string::npos, row.id << " is not a code stop");
 	}
 }
+
+TEST_CASE("GameText: BFME1 CSF decodes complemented Unicode and wave records, rejects truncated data")
+{
+	std::vector<std::uint8_t> bytes;
+	auto word = [&](std::uint32_t v) { for (int i = 0; i < 4; ++i) bytes.push_back((std::uint8_t)(v >> (8 * i))); };
+	auto raw = [&](const std::string &s) { bytes.insert(bytes.end(), s.begin(), s.end()); };
+	raw(" FSC"); word(3); word(2); word(3); word(0); word(0);
+	raw(" LBL"); word(2); word(9); raw("APT:Title");
+	for (const std::u16string text : {std::u16string(u"  Rohan  \u00e9\U0001f40e  "), std::u16string(u"unused")})
+	{
+		raw("WRTS"); word((std::uint32_t)text.size());
+		for (char16_t c : text) { const auto v = (std::uint16_t)~c; bytes.push_back(v & 255); bytes.push_back(v >> 8); }
+		word(5); raw("voice");
+	}
+	raw(" LBL"); word(1); word(9); raw("APT:Empty"); raw(" RTS"); word(0);
+	std::string error, value;
+	GameTextTable table;
+	REQUIRE(table.parseCSF(bytes.data(), bytes.size(), &error));
+	REQUIRE(table.lookup("apt:title", value));
+	CHECK(value == "Rohan \xc3\xa9\xf0\x9f\x90\x8e");
+	REQUIRE(table.lookup("APT:Empty", value));
+	CHECK(value.empty());
+	for (std::size_t length = 0; length < bytes.size(); ++length)
+	{
+		GameTextTable truncated;
+		CHECK_FALSE(truncated.parseCSF(bytes.data(), length, &error));
+		CHECK(truncated.size() == 0);
+	}
+}

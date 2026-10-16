@@ -179,14 +179,24 @@ Result rayTest(const Drawable &drawable, const Coord3D &o, const Coord3D &d, flo
 	const float scale = drawable.getInstanceScale();
 	for (const DrawEntry &e : drawable.entries())
 	{
-		if (e.kind != W3D_DRAWKIND_MODEL || !e.draw || e.moduleHidden || e.missingModel)
+		if (e.moduleHidden || e.conditionHidden || e.missingModel)
 		{
-			continue; // trees, props and floors are batched buffers (no render object of their own); effect draws are not drawn (S-113)
+			continue;
 		}
-		const RenderObjPrototype *proto = e.draw->currentModel();
+		const RenderObjPrototype *proto = nullptr;
+		if (e.kind == W3D_DRAWKIND_MODEL && e.draw)
+			proto = e.draw->currentModel();
+		else if (e.kind == W3D_DRAWKIND_FLOOR && !e.staticModel.empty())
+		{
+			// BFME1 building plots expose their clickable surface through FloorDraw.
+			std::string error;
+			proto = drawable.drawServices().assets.Create_Render_Obj(e.staticModel, &error);
+		}
+		else
+			continue; // batched trees/props and effect draws are not pick targets
 		if (!proto)
 		{
-			unknown = unknown || e.draw->currentModelState() == nullptr;
+			unknown = unknown || (e.draw && e.draw->currentModelState() == nullptr);
 			continue;
 		}
 		const std::shared_ptr<const ModelTriangles> tris = trianglesOf(*proto);
@@ -216,7 +226,8 @@ Result rayTest(const Drawable &drawable, const Coord3D &o, const Coord3D &d, flo
 		{
 			continue;
 		}
-		const std::set<int> &hidden = e.draw->hiddenSubObjects();
+		static const std::set<int> noHidden;
+		const std::set<int> &hidden = e.draw ? e.draw->hiddenSubObjects() : noHidden;
 		const size_t count = tris->subObject.size();
 		for (size_t i = 0; i < count; ++i)
 		{

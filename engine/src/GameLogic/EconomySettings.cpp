@@ -51,7 +51,9 @@ void parsePair(INI *ini, void *instance, void *store, const void *userData)
 {
 	EconomySettings::Pair *pair = static_cast<EconomySettings::Pair *>(store);
 	INI::parseInt(ini, instance, &pair->start, nullptr);
-	INI::parseInt(ini, instance, &pair->cap, nullptr);
+	const bool bfme1 = ini->environment().fileSystem && ini->environment().fileSystem->doesFileExist("Data\\INI\\Default\\SubsystemLegend.ini") && !ini->environment().fileSystem->doesFileExist("Data\\INI\\Default\\SubsystemLegendExpansion1.ini");
+	if (bfme1) pair->cap = pair->start; // BFME1 has a fixed scalar command-point allowance.
+	else INI::parseInt(ini, instance, &pair->cap, nullptr);
 	static_cast<State *>(instance)->seen |= (unsigned long long)(std::uintptr_t)userData;
 }
 
@@ -133,6 +135,15 @@ void skipField(INI *ini, void *, void *, const void *userData)
 	}
 }
 
+// BFME1's combined player-count rows (GoodCommandPointsMP56 / MP78 ...): one value for both slots of the pair array it starts. Open-BFME-1
+// GlobalDataConstructor.cpp:756-759 (+ 0xEA0 .. + 0xEAC) and Player_newMap.cpp: 7 or more players take MP78, 5 or more MP56, else MP4 / MP3 / MP2
+void parsePairTwice(INI *ini, void *instance, void *store, const void *userData)
+{
+	parsePair(ini, instance, store, userData);
+	EconomySettings::Pair *pair = static_cast<EconomySettings::Pair *>(store);
+	pair[1] = pair[0];
+}
+
 #define SEEN_DATA(bit) ((const void *)(std::uintptr_t)(bit))
 #define ES_OFF(member) (int)offsetof(State, values.member)
 
@@ -162,6 +173,10 @@ FieldParse kFields[] = {
 	{ "GoodCommandPointsMP6", parsePair, SEEN_DATA(SEEN_MP0 << 4), ES_OFF(goodMP[4]) },
 	{ "GoodCommandPointsMP7", parsePair, SEEN_DATA(SEEN_MP0 << 5), ES_OFF(goodMP[5]) },
 	{ "GoodCommandPointsMP8", parsePair, SEEN_DATA(SEEN_MP0 << 6), ES_OFF(goodMP[6]) },
+	{ "GoodCommandPointsMP56", parsePairTwice, SEEN_DATA((SEEN_MP0 << 3) | (SEEN_MP0 << 4)), ES_OFF(goodMP[3]) }, // BFME1: 5 and 6 players
+	{ "GoodCommandPointsMP78", parsePairTwice, SEEN_DATA((SEEN_MP0 << 5) | (SEEN_MP0 << 6)), ES_OFF(goodMP[5]) }, // BFME1: 7 and 8 players
+	{ "EvilCommandPointsMP56", parsePairTwice, SEEN_DATA((SEEN_MP0 << 10) | (SEEN_MP0 << 11)), ES_OFF(evilMP[3]) },
+	{ "EvilCommandPointsMP78", parsePairTwice, SEEN_DATA((SEEN_MP0 << 12) | (SEEN_MP0 << 13)), ES_OFF(evilMP[5]) },
 	{ "EvilCommandPointsMP2", parsePair, SEEN_DATA(SEEN_MP0 << 7), ES_OFF(evilMP[0]) },
 	{ "EvilCommandPointsMP3", parsePair, SEEN_DATA(SEEN_MP0 << 8), ES_OFF(evilMP[1]) },
 	{ "EvilCommandPointsMP4", parsePair, SEEN_DATA(SEEN_MP0 << 9), ES_OFF(evilMP[2]) },
@@ -180,6 +195,12 @@ public:
 	explicit Load(ArchiveFileSystem *fs)
 	{
 		m_env.fileSystem = fs;
+		if (fs && fs->doesFileExist("Data\\INI\\Default\\SubsystemLegend.ini") && !fs->doesFileExist("Data\\INI\\Default\\SubsystemLegendExpansion1.ini"))
+		{
+			// BFME1 fixed-income farms do not use RotWK's circular farm grid.
+			m_state.values.terrainResourceCellSize = 1.0f;
+			m_state.seen |= SEEN_CELL;
+		}
 		RegisterRecordingBlockStubs(m_env.blocks, m_recorder, { "GameData" }, StubExtent::Lenient);
 		m_env.blocks.registerBlock("GameData", [this](INI *ini) {
 			m_state.block = true;

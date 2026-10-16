@@ -3,6 +3,7 @@
 #include "Common/Audio/EvaEvents.h"
 
 #include "Common/AsciiString.h"
+#include "Common/ArchiveFileSystem.h"
 #include "Common/INIException.h"
 
 namespace
@@ -163,8 +164,13 @@ void EvaEventStore::parseRecord(INI *ini, EvaEventRecord &record, const AudioEve
 void EvaEventStore::parsePredefined(INI *ini, const AudioEventInfoStore &audio)
 {
 	const std::string name = ini->getNextToken();
+	// BFME1 Eva.cpp names three events absent from RotWK's predefined table.
+	const bool bfme1 = ini->environment().fileSystem && ini->environment().fileSystem->doesFileExist("Data\\INI\\Default\\SubsystemLegend.ini") && !ini->environment().fileSystem->doesFileExist("Data\\INI\\Default\\SubsystemLegendExpansion1.ini");
+	if (bfme1)
+		for (const char *event : { "BaseUnderAttack", "AllyUnderAttack", "EnemyCampSighted" })
+			if (findIndex(event, false) < 0) createRecord(event, false);
 	const int index = findIndex(name, false);
-	if (index < 0 || index >= kPredefinedCount)
+	if (index < 0 || (!bfme1 && index >= kPredefinedCount))
 	{
 		throw INIException(3, "'%s' is not a predefined Eva event name", name.c_str());
 	}

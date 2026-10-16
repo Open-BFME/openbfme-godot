@@ -1,6 +1,7 @@
 // OpenBFME. GPL-3.0.
 // See GameClient/GUI/AptScreens/AptSkirmish.h.
 
+#include "Common/BfmeGame.h"
 #include "GameClient/GUI/AptScreens/AptSkirmish.h"
 #include "GameClient/GUI/Skirmish/SkirmishGameRecord.h"
 
@@ -322,6 +323,25 @@ void AptSkirmish::registerProfileCommands()
 		}
 		closePopupState();
 	});
+	// BFME1's persona popup (Open-BFME-1 AptSkirmishConstructor.cpp:380-387 registers these under the screen's prefix): accept adds the typed
+	// persona as OnAddProfileAccept does, cancel closes as OnProfilePopupCancel, remove deletes the selected one; PersonaOk closes an error page
+	registerCommand("AptSkirmish::Skirmish::PersonaAccept", [this](const std::string &) {
+		pruneDeadGadgets();
+		if (m_profileState != kStateNewProfile && m_profileState != kStateChangeProfile)
+			m_profileState = kStateNewProfile;
+		acceptAction();
+	});
+	registerCommand("AptSkirmish::Skirmish::PersonaCancel", [this](const std::string &) {
+		pruneDeadGadgets();
+		if (m_profileEntry)
+			GadgetTextEntrySetText(m_profileEntry, std::u16string());
+		closePopupState();
+	});
+	registerCommand("AptSkirmish::Skirmish::PersonaRemove", [this](const std::string &) {
+		pruneDeadGadgets();
+		deleteProfileFromList();
+	});
+	registerCommand("AptSkirmish::Skirmish::PersonaOk", [](const std::string &) {});
 	registerCommand("AptSkirmish::OnAddProfileAccept", [this](const std::string &) {
 		pruneDeadGadgets();
 		if (addProfileFromEntry())
@@ -354,7 +374,25 @@ void AptSkirmish::registerProfileCommands()
 void AptSkirmish::invokeRoot(const char *function)
 {
 	std::string err;
-	if (level() < 0 || !windows().invokeAS(level(), function, {}, nullptr, &err))
+	std::vector<std::string> args;
+	if (m_env.fileSystem && isBfme1Data(*m_env.fileSystem))
+	{
+		// BFME1's Skirmish.apt (docs/BFME1.md): OpenDefault plays the lobby in ("now Open normal"), PopUpPersona opens the persona popup and
+		// PopUpControl("close") closes it; it has no accept-button toggle. CloseMain and ButtonReset keep their names
+		const std::string f = function;
+		if (f == "ShowMain")
+			function = "OpenDefault";
+		else if (f == "ShowAddProfile")
+			function = "PopUpPersona";
+		else if (f == "CloseProfilePopup")
+		{
+			function = "PopUpControl";
+			args.push_back("close");
+		}
+		else if (f == "PopupSelectBttnDisable")
+			return;
+	}
+	if (level() < 0 || !windows().invokeAS(level(), function, args, nullptr, &err))
 	{
 		windows().note("movie-function-missing", std::string("_root.") + function + ": " + err);
 	}
@@ -433,6 +471,11 @@ void AptSkirmish::restoreGame(int mode)
 	{
 		return;
 	}
+	// The preferred map remains useful even without a valid full lobby record.
+	std::string map = m_profiles->profileValue(mode, "Map");
+	for (char &c : map)
+		c = c == '\\' ? '/' : (c >= 'A' && c <= 'Z' ? (char)(c - 'A' + 'a') : c);
+	if (!map.empty()) m_setup->setMap(map);
 	const std::string record = m_profiles->profileValue(mode, "GameInfo");
 	if (record.empty())
 	{
@@ -448,11 +491,6 @@ void AptSkirmish::restoreGame(int mode)
 	{
 		windows().note("skirmish-kept-game", "[S-3701] the profile's kept game does not parse (" + error + "): the lobby starts from the defaults");
 		return;
-	}
-	std::string map = m_profiles->profileValue(mode, "Map");
-	for (char &c : map)
-	{
-		c = c == '\\' ? '/' : (c >= 'A' && c <= 'Z' ? (char)(c - 'A' + 'a') : c);
 	}
 	if (!m_setup->restoreSaved(saved, map, m_env.newGame->newGameSeed(), &error))
 	{
@@ -653,6 +691,8 @@ void AptSkirmish::update()
 			if (m_profiles->current().empty())
 			{
 				invokeRoot("ShowAddProfile");
+				if (m_env.fileSystem && isBfme1Data(*m_env.fileSystem))
+					m_profileState = kStateNewProfile; // BFME1's PopUpPersona sends no OnNewProfileMenu: the popup is the new-profile page
 			}
 			break;
 		case kStateStats:
@@ -680,6 +720,7 @@ void AptSkirmish::update()
 void AptSkirmish::registerLobby()
 {
 	// ---- screen references (`_Init` of the placeholders) ----
+	registerScreenRef("MpGameSetup::GadgetInit", [this](const std::string &name, GameWindow *w) { initMpGameSetupGadget(name, w); }); // BFME1 MpGameSetupGadgetInit.cpp
 	registerScreenRef("MpGameSetup::InitGadgets", [this](const std::string &name, GameWindow *w) { initMpGameSetupGadget(name, w); });
 	registerScreenRef("AptMapPreview::MapGadgetInit", [this](const std::string &name, GameWindow *w) { initMapPreviewGadget(name, w); });
 	// lane UI-1: AptMpChat::InitGadgets (RW 0x987E4B): "Chat", "ChatPlayers", "ChatEntry"
@@ -2267,6 +2308,7 @@ void AptSkirmish::onMapListSelected(int row)
 	}
 	refreshAll();
 	updateMapPreview();
+	keepGame(); // persist the chosen map before leaving the lobby or starting a game
 	lobbyChanged();
 }
 

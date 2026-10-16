@@ -44,6 +44,7 @@ struct SubsystemLoadOptions
 {
 	// The -cinematics command-line switch. Off by default, like a normal launch.
 	bool cinematics = false;
+	bool bfme1 = false;
 	// false: an INI error propagates (retail SubsystemInterface::loadIniFilesFromLegend does not
 	// catch). true: errors are recorded in the report and loading continues with the next file
 	// (the test harness).

@@ -526,7 +526,7 @@ TEST_CASE("audio ini: the AudioEvent field table has exactly the rows and the ro
 	CHECK(control[6] == "\not used by INI files"); // the binary placeholder: a newline character followed by "ot used by INI files"
 }
 
-TEST_CASE("audio ini: AudioSettings, MiscAudio, AudioLOD and the animation setting register exactly the binary's field names")
+TEST_CASE("audio ini: audio field names retain the RotWK tables and explicit BFME1 additions")
 {
 	const JsonValue t = loadTables();
 	std::vector<std::string> binary;
@@ -538,10 +538,14 @@ TEST_CASE("audio ini: AudioSettings, MiscAudio, AudioLOD and the animation setti
 		}
 	}
 	std::vector<std::string> mine = AudioSettings::fieldNames();
+	binary.push_back("3DBufferLengthMS");
+	binary.push_back("3DBufferCallbackCallsPerBufferLength");
 	std::sort(binary.begin(), binary.end());
 	std::sort(mine.begin(), mine.end());
 	CHECK(mine == binary);
-	CHECK(MiscAudio::fieldNames() == rowNames(t.get("blocks")->get("MiscAudio")->get("tables")->array[0]));
+	auto misc = rowNames(t.get("blocks")->get("MiscAudio")->get("tables")->array[0]);
+	misc.insert(misc.begin(), {"BattleCrySound", "CrateSalvage"});
+	CHECK(MiscAudio::fieldNames() == misc);
 	CHECK(rowNames(t.get("blocks")->get("AudioLOD")->get("tables")->array[0]) == std::vector<std::string>({ "MaximumAmbientStreams", "AllowDolby", "AllowReverb" }));
 	CHECK(rowNames(t.get("blocks")->get("Multisound")->get("tables")->array[0]) == std::vector<std::string>({ "Control", "Subsounds" }));
 }

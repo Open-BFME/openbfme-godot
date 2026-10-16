@@ -21,6 +21,8 @@
 ## See docs/RELEASE.md, "The launcher", for the rules (verify before use, rollback protection, keep two, offline start).
 extends RefCounted
 
+const Paths := preload("res://scripts/ui/paths.gd")
+
 const Semver := preload("res://scripts/core/semver.gd")
 const Manifest := preload("res://scripts/core/manifest.gd")
 const Archive := preload("res://scripts/core/archive.gd")
@@ -805,7 +807,22 @@ func _prune_locked() -> void:
 ## a fresh download ({modified: true}).
 ## lane ONEZIP-1: `before_start` (optional) is asked right before the process is started, after every check: false stops the start
 ## ({ok: false, stopped: true}; the game that asked for this start went on by itself, main.gd --game-start).
+func game_arguments(args: PackedStringArray = PackedStringArray()) -> Dictionary:
+	args = args.duplicate()
+	if get_state("launcher", "game", "bfme2") == "bfme1" and not Array(args).any(func(a): return a.begins_with("--online-")):
+		var folder := Paths.bfme1_folder()
+		if folder.is_empty():
+			return {"ok": false, "error": "BFME1 assets were not found. Download the games from Game files, or set BFME1_INSTALL."}
+		if not "--" in args: args.append("--")
+		args.append_array(PackedStringArray(["--game=bfme1", "--bfme1-install=" + folder]))
+	return {"ok": true, "args": args}
+
+
 func play(version: String, args: PackedStringArray = PackedStringArray(), before_start := Callable()) -> Dictionary:
+	var launch := game_arguments(args)
+	if not launch.ok:
+		return {"ok": false, "pid": -1, "error": launch.error}
+	args = launch.args
 	_report("Checking %s" % version)
 	if plays_bundled(version):
 		return _play_bundled(bundled(), args)

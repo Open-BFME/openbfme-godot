@@ -82,17 +82,17 @@ ThingFactory::Semantic ThingFactory::semanticOf(const std::string &s)
 	return (ThingFactory::Semantic)it->second;
 }
 
-ThingFactory::ThingFactory(NameKeyGenerator &keys, ModuleFactory &modules, const RwGrammar &grammar)
+ThingFactory::ThingFactory(NameKeyGenerator &keys, ModuleFactory &modules, const RwGrammar &grammar, bool bfme1)
 	: m_keys(keys)
 	, m_modules(modules)
 	, m_grammar(grammar)
 {
-	buildTables();
+	buildTables(bfme1);
 }
 
 ThingFactory::~ThingFactory() = default;
 
-void ThingFactory::buildTables()
+void ThingFactory::buildTables(bool bfme1)
 {
 	const RwBinaryData &data = m_grammar.data();
 	std::set<std::string> seen;
@@ -141,6 +141,28 @@ void ThingFactory::buildTables()
 	}
 	build(obj, m_objectRows);
 	build(aud, m_audioRows);
+	if (bfme1)
+	{
+		const std::pair<const char *, Semantic> fields[] = {
+#include "Common/Thing/Bfme1ObjectFields.inc"
+		};
+		m_objectRows.pop_back();
+		for (const auto &field : fields)
+		{
+			if (seen.count(field.first)) continue;
+			auto b = std::make_unique<FieldBinding>();
+			b->factory = this;
+			b->slot = m_slotNames.size();
+			b->name = field.first;
+			b->sem = field.second;
+			m_slotIndex.emplace(b->name, b->slot);
+			m_slotNames.push_back(b->name);
+			m_objectRows.push_back({b->name.c_str(), &ThingFactory::parseField, b.get(), 0});
+			m_bindings.push_back(std::move(b));
+		}
+		m_objectRows.push_back({nullptr, nullptr, nullptr, 0});
+	}
+
 }
 
 void ThingFactory::buildFieldParse(MultiIniFieldParse &p) const

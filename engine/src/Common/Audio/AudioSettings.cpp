@@ -58,6 +58,8 @@ const FieldParse *table1()
 		add("StreamCount", INI::parseInt, AS(streamCount));
 		add("MixaheadLatency", INI::parseUnsignedInt, AS(mixaheadLatency));
 		add("MixaheadLatencyDuringMovies", INI::parseUnsignedInt, AS(mixaheadLatencyDuringMovies));
+		add("3DBufferCallbackCallsPerBufferLength", INI::parseUnsignedInt, AS(bufferCallbacks3D));
+		add("3DBufferLengthMS", INI::parseUnsignedInt, AS(bufferLength3DMS));
 		add("LoopBufferLengthMS", INI::parseUnsignedInt, AS(loopBufferLengthMS));
 		add("LoopBufferCallbackCallsPerBufferLength", INI::parseUnsignedInt, AS(loopBufferCallbackCallsPerBufferLength));
 		add("AutomaticSubtitleDurationMS", INI::parseInt, AS(automaticSubtitleDurationMS));

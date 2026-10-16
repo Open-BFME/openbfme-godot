@@ -172,6 +172,7 @@ public:
 	// lane AUDIO-4: the client modules hear every transform change (Thing::setPosition / setOrientation / setTransform)
 	void reactToTransformChange(const Coord3D *oldPos, float oldAngle) override;
 	DrawServices &drawServices() { return m_services; }
+	DrawServices &drawServices() const { return m_services; }
 	bool hasAnimatedEntry() const;
 	// steps every model draw's animations by `elapsedMs` of render time
 	void advanceAnimation(double elapsedMs);

@@ -10,7 +10,7 @@
 
 #include <algorithm>
 
-bool WorldSkirmishSetupSource::load(RetailObjectWorld &world, const GameLogicSettings &settings, ArchiveFileSystem &fs, std::string *error)
+bool WorldSkirmishSetupSource::load(RetailObjectWorld &world, const GameLogicSettings &settings, ArchiveFileSystem &fs, std::string *error, bool bfme1)
 {
 	m_fs = &fs;
 	m_factions.clear();
@@ -55,7 +55,19 @@ bool WorldSkirmishSetupSource::load(RetailObjectWorld &world, const GameLogicSet
 	}
 	std::sort(m_cashChoices.begin(), m_cashChoices.end());
 	m_defaultStartingCash = (int)settings.defaultStartingCash;
-	return IniSkirmishSetupSource::loadMapCache(fs, m_maps, error);
+	if (!IniSkirmishSetupSource::loadMapCache(fs, m_maps, error)) return false;
+	if (bfme1)
+	{
+		// BFME1 map packs also mark co-op campaigns and utility maps as MP.
+		// Keep them available by name, but only offer standard skirmish maps.
+		for (MapCacheEntry &map : m_maps)
+		{
+			if (map.name.rfind("maps/map mp ", 0) != 0 || map.numPlayers < 2 ||
+				map.name.rfind("maps/map mp test/", 0) == 0 || map.name.rfind("maps/map mp nctest/", 0) == 0)
+				map.isMultiplayer = false;
+		}
+	}
+	return true;
 }
 
 int WorldSkirmishSetupSource::mapContentsMask(const MapCacheEntry &map) const

@@ -12,6 +12,8 @@
 #include "GameClient/GUI/AptGadgetLayer.h"
 #include "GameClient/Credits.h"
 #include "Common/INIException.h"
+#include "Common/ArchiveFileSystem.h"
+#include "GameClient/OptionPreferences.h"
 
 #include <algorithm>
 
@@ -37,6 +39,7 @@ const CommandRow kRequestCommands[] = {
 	{ "AptMainMenu::BonusCampaign", ShellAction::BonusCampaign },
 	{ "AptMainMenu::WarOfTheRing", ShellAction::WarOfTheRing },
 	{ "AptMainMenu::OnTutorial", ShellAction::Tutorial },
+	{ "AptMainMenu::Tutorial", ShellAction::Tutorial },
 	{ "AptMainMenu::StopGameMovie", ShellAction::StopGameMovie },
 	{ "AptMainMenu::ResetResolution", ShellAction::ResetResolution },
 };
@@ -82,6 +85,8 @@ std::string AptMainMenu::unavailableScreenName(const std::string &action)
 		{ "LevelSelect", "Level Select" },
 		{ "LoadCampaign", "Load Campaign" },
 		{ "ContinueCampaign", "Continue Campaign" },
+		{ "GoodCampaign", "BFME1 Good campaign (Living World)" },
+		{ "EvilCampaign", "BFME1 Evil campaign (Living World)" },
 		{ "ContinueCampaignNone", "Continue Campaign (no saved campaign progress)" },
 		{ "Expansion1Campaign", "The Rise of the Witch-king campaign" },
 		{ "BonusCampaign", "The bonus campaign" },
@@ -255,6 +260,15 @@ void AptMainMenu::registerAll()
 	registerCommand("AptMainMenu::OnInitialized", [this](const std::string &) {
 		// the retail body sets preference counters (TimesInGame, FlashTutorial) and the logo mapped image; not ported [S-175]
 		windows().note("unported-command", "AptMainMenu::OnInitialized: preference bookkeeping");
+		// BFME1 (docs/BFME1.md): MainMenu.apt shows its menu bar only when ShowMainMenu() is called; its root stops after the background fade
+		// and no frame script calls it. INFERENCE: the engine's OnInitialized does (Open-BFME-1 declares BfmeAptScreenMainMenu::_bfme_onInitialized,
+		// AptMainMenuConstructor.cpp:275, without its body); without the call no menu button ever appears
+		if (m_env && m_env->fileSystem && !m_env->fileSystem->doesFileExist("Data\\INI\\Default\\SubsystemLegendExpansion1.ini"))
+		{
+			std::string err;
+			if (level() < 0 || !windows().invokeAS(level(), "ShowMainMenu", {}, nullptr, &err))
+				windows().note("bfme1-main-menu", "ShowMainMenu() could not be called: " + err);
+		}
 	});
 	registerCommand("AptMainMenu::Skirmish", [this](const std::string &) { showSkirmish(); });
 	registerCommand("AptMainMenu::Options", [this](const std::string &argument) {
@@ -294,6 +308,26 @@ void AptMainMenu::registerAll()
 	registerProvider("MainMenuLevel", unwiredProvider("MainMenuLevel"));
 	registerProvider("MainMenuContinueCampaign", unwiredProvider("MainMenuContinueCampaign"));
 	registerProvider("BlinkBattleSchoolOff", unwiredProvider("BlinkBattleSchoolOff"));
+	// BFME1 BfmeAptScreenMainMenuProvider.cpp (0x0051E9B0): selectors
+	// 0 (read/write level), 1 (campaign save exists), 3 (FlashTutorial inverted).
+	if (m_env && m_env->fileSystem && !m_env->fileSystem->doesFileExist("Data\\INI\\Default\\SubsystemLegendExpansion1.ini"))
+	{
+		windows().unregisterProvider("MainMenuLevel");
+		windows().unregisterProvider("MainMenuContinueCampaign");
+		windows().unregisterProvider("BlinkBattleSchoolOff");
+		registerProvider("MainMenuLevel", [this](const std::string &, std::string &value, bool setting) {
+			if (setting) m_mainMenuLevel = value; else value = m_mainMenuLevel;
+			return true;
+		});
+		registerProvider("MainMenuContinueCampaign", [](const std::string &, std::string &value, bool setting) {
+			if (!setting) value = "0"; // Living World campaign save import is not implemented.
+			return true;
+		});
+		registerProvider("BlinkBattleSchoolOff", [this](const std::string &, std::string &value, bool setting) {
+			if (!setting) value = m_env->options && !m_env->options->getYesNo("FlashTutorial", true) ? "1" : "0";
+			return true;
+		});
+	}
 	// the credits render callback (registerAptCallback, RW 0x91D301 binds RW 0x91B1B8): the clip is a component with no window; the device asks the
 	// render callback below for the text it draws in the clip's place
 	registerComponent("AptMainMenu::RenderCredits", [](AptComponentRequest &) -> std::shared_ptr<GameWindow> { return nullptr; });

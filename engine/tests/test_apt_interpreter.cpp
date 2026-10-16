@@ -450,6 +450,23 @@ TEST_CASE("VM: a function defined inside a function keeps reading and writing th
 	CHECK(fx.errorsText() == "");
 }
 
+TEST_CASE("VM: BFME1 PushData lookup constants read the active pool")
+{
+	Fx fx;
+	REQUIRE(fx.run([&](TestMovie &m, Asm &a) {
+		a.constantPool({ "Options", "Resume Game" });
+		a.defineFunction("label", {}, [&](Asm &f) {
+			f.pushDataIdx({ m.constTyped(APT_CONST_LOOKUP, 0) }).op(APT_OP_RETURN);
+		});
+		setVar(a, "resume", [&] { a.pushDataIdx({ m.constTyped(APT_CONST_LOOKUP, 1) }); });
+	}));
+	CHECK(fx.var("resume").asString() == "Resume Game");
+	REQUIRE(fx.run([&](TestMovie &, Asm &a) { a.constantPool({ "different pool" }); }));
+	AptValue label = fx.var("label");
+	CHECK(fx.vm.callFunction(label, AptValue::object(fx.root), {}).asString() == "Options");
+	CHECK(fx.vm.errors().empty());
+}
+
 TEST_CASE("VM: a function keeps the constant pool and defining timeline of the program that defined it")
 {
 	Fx fx;
@@ -877,7 +894,7 @@ TEST_CASE("String.split respects the array bound (resource bound S-009)")
 
 TEST_CASE("VM: constants with no decoded runtime meaning are reported acceptance stops (S-013)")
 {
-	for (std::uint32_t type : { (std::uint32_t)APT_CONST_NONE, (std::uint32_t)APT_CONST_LOOKUP, (std::uint32_t)APT_CONST_PROPERTY, (std::uint32_t)APT_CONST_UNDEFINED })
+	for (std::uint32_t type : { (std::uint32_t)APT_CONST_NONE, (std::uint32_t)APT_CONST_PROPERTY, (std::uint32_t)APT_CONST_UNDEFINED })
 	{
 		Fx fx;
 		std::string expected;
@@ -1457,7 +1474,7 @@ TEST_CASE("VM: faults and skipped operations are reported with the opcode and fi
 			std::uint32_t lookup = m.constTyped(APT_CONST_LOOKUP, 3);
 			a.pushDataIdx({ lookup });
 		}));
-		CHECK(fx.vm.errors()[0].find("no verified runtime meaning") != std::string::npos);
+		CHECK(fx.vm.errors()[0].find("constant pool index 3") != std::string::npos);
 	}
 	{
 		// runaway recursion is cut off

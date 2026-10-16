@@ -261,6 +261,8 @@ const FieldParse kCommandButtonFieldParse[] = {
 	{ "InvalidCursorName", INI::parseAsciiString, nullptr, CB_OFF(m_invalidCursorName) },
 	{ "ButtonBorderType", INI::parseLookupList, kBorderTypes, CB_OFF(m_commandButtonBorder) },
 	{ "RadiusCursorType", INI::parseAsciiString, nullptr, CB_OFF(m_radiusCursor) },
+	{ "AffectsAllies", INI::parseBool, nullptr, CB_OFF(m_affectsAllies) },
+	{ "UnitSpecificSound2", parseSoundRefList, nullptr, CB_OFF(m_unitSpecificSound2) },
 	{ "UnitSpecificSound", parseSoundRefList, nullptr, CB_OFF(m_unitSpecificSound) },
 	{ "SetAutoAbilityUnitSound", parseSoundRefList, nullptr, CB_OFF(m_setAutoAbilityUnitSound) },
 	{ "UnsetAutoAbilityUnitSound", parseSoundRefList, nullptr, CB_OFF(m_unsetAutoAbilityUnitSound) },

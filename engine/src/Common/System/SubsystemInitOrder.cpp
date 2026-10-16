@@ -38,6 +38,8 @@
 // (RW 0x5B4C25-0x5B4C42, confirmed in the Sol review).
 
 #include "Common/SubsystemLegend.h"
+#include "Common/INI.h"
+#include "Common/ArchiveFileSystem.h"
 
 #include <algorithm>
 
@@ -152,7 +154,7 @@ const std::vector<std::string> &RotwkNeverLoadedSubsystems()
 void RunSubsystemIniLoad(SubsystemLegend &legend, INI &ini, const SubsystemLoadOptions &options, SubsystemLoadReport &report)
 {
 	legend.reset();
-	LoadSubsystemFile(ini, kSubsystemLegendFile, options, &report);
+	LoadSubsystemFile(ini, options.bfme1 ? "Data\\INI\\Default\\SubsystemLegend.ini" : kSubsystemLegendFile, options, &report);
 	report.subsystemsLoaded.push_back("TheSubsystemLegend");
 
 	const std::vector<std::string> &never = RotwkNeverLoadedSubsystems();
@@ -172,7 +174,7 @@ void RunSubsystemIniLoad(SubsystemLegend &legend, INI &ini, const SubsystemLoadO
 		}
 		for (const char *extra : step.extraFiles)
 		{
-			LoadSubsystemFile(ini, extra, options, &report);
+			if (!options.bfme1 || ini.environment().fileSystem->doesFileExist(extra)) LoadSubsystemFile(ini, extra, options, &report);
 		}
 	}
 

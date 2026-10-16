@@ -812,7 +812,10 @@ TEST_CASE("RiverAreas v3 is refused (layout unverified), PolygonTriggers v5 pars
 	for (int i = 0; i < 6; ++i) p.astr(std::string("tex") + std::to_string(i));
 	p.u8(1).u8(11).u8(22).u8(33).u8(0).f32(0.5f).f32(0.25f).f32(0.75f);
 	p.i32(2).i32(1).i32(2).i32(3).i32(4).i32(5).i32(6);
-	REQUIRE_MESSAGE(loadMap(file(t2, chunk(t2, "PolygonTriggers", 5, p.b)), m, &err), err);
+	const char *name = "PolygonTriggers";
+	SUBCASE("standard spelling") {}
+	SUBCASE("BFME1 base spelling") { name = "PolyGonTriggers"; }
+	REQUIRE_MESSAGE(loadMap(file(t2, chunk(t2, name, 5, p.b)), m, &err), err);
 	REQUIRE(m.chunks.polygonTriggers.size() == 1);
 	const PolygonTrigger &pt = m.chunks.polygonTriggers[0];
 	CHECK(pt.name == "Pond");

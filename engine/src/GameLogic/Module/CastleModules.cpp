@@ -92,6 +92,9 @@ void parseRestOfLine(INI *ini, void *, void *store, const void *)
 
 #define CB_OFF(member) (int)offsetof(CastleBehaviorModuleData, member)
 const FieldParse kCastleFieldParse[] = {
+	{ "UseTheNewCastleSystemInsteadOfTheClunkyBuildList", INI::parseBool, nullptr, CB_OFF(m_useNewCastleSystem) },
+	{ "UseSecondaryBuildList", INI::parseBool, nullptr, CB_OFF(m_useSecondaryBuildList) },
+	{ "SidesAllowed", INI::parseAsciiStringVector, nullptr, CB_OFF(m_sidesAllowed) },
 	{ "CastleToUnpackForFaction", parseFactionBaseList, nullptr, CB_OFF(m_castleToUnpackForFaction) },
 	{ "FilterValidOwnedEntries", parseOptionalObjectFilter, nullptr, CB_OFF(m_filterValidOwnedEntries) },
 	{ "FilterCrew", parseOptionalObjectFilter, nullptr, CB_OFF(m_filterCrew) },
@@ -124,6 +127,8 @@ const FieldParse kCastleMemberFieldParse[] = {
 	{ "CampDestroyedOwnerEvaEvent", INI::parseAsciiString, nullptr, CM_OFF(m_campDestroyedOwnerEvaEvent) },
 	{ "CampDestroyedAllyEvaEvent", INI::parseAsciiString, nullptr, CM_OFF(m_campDestroyedAllyEvaEvent) },
 	{ "CampDestroyedAttackerEvaEvent", INI::parseAsciiString, nullptr, CM_OFF(m_campDestroyedAttackerEvaEvent) },
+	{ "UnderAttackAllyEvaEventIfKeep", INI::parseAsciiString, nullptr, CM_OFF(m_underAttackAllyEvaEventIfKeep) },
+	{ "UnderAttackEvaEventIfKeep", INI::parseAsciiString, nullptr, CM_OFF(m_underAttackEvaEventIfKeep) },
 	{ "BeingBuiltSound", INI::parseAsciiString, nullptr, CM_OFF(m_beingBuiltSound) },
 	{ "StoreUpgradePrice", INI::parseBool, nullptr, CM_OFF(m_storeUpgradePrice) },
 	{ "CountsForEvaCastleBreached", INI::parseBool, nullptr, CM_OFF(m_countsForEvaCastleBreached) },
@@ -273,6 +278,19 @@ UpdateSleepTime CastleBehavior::update()
 	switch (m_state)
 	{
 	case STATE_IDLE:
+		if (m_data->m_useNewCastleSystem && !m_bfme1StartChecked)
+		{
+			// BFME1's castle flags (UseTheNewCastleSystemInsteadOfTheClunkyBuildList, a row no RotWK castle has): a match starts with each player's
+			// castle standing. INFERENCE (docs/BFME1.md): on its first update a flag whose owner's faction has a CastleToUnpackForFaction entry
+			// unpacks that castle at once and free (the flag's JUST_BUILT "for instant-build" state); a neutral flag stays capturable for the price.
+			// The retail trigger (the caller of CastleBehavior::initiateUnpack) is not in Open-BFME-1
+			m_bfme1StartChecked = true;
+			const Player *owner = getObject()->getControllingPlayer();
+			if (owner && m_data->entryFor(owner->getSide()))
+			{
+				m_needInstantBuild = true;
+			}
+		}
 		if (tryInstantUnpack())
 		{
 			m_state = STATE_UNPACKED;
@@ -625,8 +643,10 @@ Object *CastleBehavior::createOwnedObject(const CastleTemplateEntry &entry, Play
 	pos.y = SimMath::addf32(castle->getPosition()->y, SimMath::addf32(SimMath::mulf32(entry.x, s), SimMath::mulf32(entry.y, c)));
 	pos.z = SimMath::addf32(castle->getPosition()->z, entry.z);
 	const float angle = normalizeAngle(SimMath::addf32(castleAngle, entry.angle));
-	// RW 0x798951 ff: a template that is not a COMMANDCENTER must have clear ground (options 5 in retail; the clear-path half needs an AI the castle does not have: S-303)
-	if (!templateKindOf(logic, *tt, "COMMANDCENTER") &&
+	// BFME1 authored castle pieces overlap at seams and gateways. They are a
+	// single predefined layout, not independent player building placements.
+	// Keep the RotWK placement check for its castle system.
+	if (!m_data->m_useNewCastleSystem && !templateKindOf(logic, *tt, "COMMANDCENTER") &&
 		BuildPlacement::isLocationLegalToBuild(logic, pos, *tt, angle, LLF_NO_OBJECT_OVERLAP, castle, &owner) != LBC_OK)
 	{
 		return nullptr;
@@ -1309,6 +1329,10 @@ void CastleBehavior::crc(StateHasher &h) const
 	FoundationAIUpdate::crc(h);
 	h.addI32(m_state);
 	h.addBool(m_needInstantBuild);
+	if (m_data->m_useNewCastleSystem)
+	{
+		h.addBool(m_bfme1StartChecked); // BFME1 flags only: RotWK castles keep their hashes
+	}
 	h.addBool(m_keepGone);
 	h.addBool(m_hasWalkOnWall);
 	h.addFloat(m_timer);

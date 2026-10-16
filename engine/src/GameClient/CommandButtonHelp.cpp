@@ -69,11 +69,6 @@ std::string withoutComment(const std::string &line)
 	}
 	return cut == std::string::npos ? line : line.substr(0, cut);
 }
-size_t indentOf(const std::string &line)
-{
-	const size_t b = line.find_first_not_of(" \t");
-	return b == std::string::npos ? line.size() : b;
-}
 bool firstTokenIsEnd(const std::string &line)
 {
 	const std::string l = withoutComment(line);
@@ -93,7 +88,6 @@ void skipField(INI *ini, void *, void *, const void *userData)
 	{
 		return;
 	}
-	const size_t headerIndent = indentOf(header);
 	for (;;)
 	{
 		const std::string *next = ini->peekNextLine();
@@ -104,7 +98,7 @@ void skipField(INI *ini, void *, void *, const void *userData)
 		}
 		const std::string line = *next;
 		ini->readLine();
-		if (firstTokenIsEnd(line) && indentOf(line) <= headerIndent)
+		if (firstTokenIsEnd(line))
 		{
 			return;
 		}

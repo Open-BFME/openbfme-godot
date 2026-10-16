@@ -264,10 +264,19 @@ const FieldParse kHeroMode[] = { // RW 0xC052F0
 #undef HM_OFF
 
 #define LG_OFF(m) (int)offsetof(LevelGrantSpecialPowerModuleData, m)
+void parseLegacyUseKindOf(INI *ini, void *, void *store, const void *)
+{
+	ObjectFilter filter;
+	filter.rule = ObjectFilter::RULE_ANY;
+	ParseKindOfMask(ini, nullptr, &filter.includeKindOf, nullptr);
+	*static_cast<std::shared_ptr<const ObjectFilter> *>(store) = std::make_shared<const ObjectFilter>(std::move(filter));
+}
 const FieldParse kLevelGrant[] = { // RW 0xC73550
 	{ "Experience", INI::parseInt, nullptr, LG_OFF(m_experience) },
 	{ "RadiusEffect", INI::parseReal, nullptr, LG_OFF(m_radiusEffect) },
 	{ "LevelFX", parseFX, nullptr, LG_OFF(m_levelFX) },
+	{ "UseKindOf", INI::parseBool, nullptr, LG_OFF(m_useKindOf) },
+	{ "AffectsKindOf", parseLegacyUseKindOf, nullptr, LG_OFF(m_acceptanceFilter) },
 	{ "AcceptanceFilter", parseFilter, nullptr, LG_OFF(m_acceptanceFilter) },
 	{ nullptr, nullptr, nullptr, 0 },
 };

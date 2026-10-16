@@ -39,6 +39,10 @@ public:
 	// (hashes cached in user://retail-md5-cache.tsv by path+size+mtime). Returns a report; on any
 	// error nothing is mounted.
 	Dictionary mount_retail();
+	// Standalone BFME1 installation, using its own archives for both menus and gameplay.
+	Dictionary mount_bfme1_path(const String &root);
+	bool is_bfme1() const { return m_bfme1; }
+	const std::string &bfme1_root() const { return m_bfme1Root; }
 	// lane RELEASE-1: the same mount from two folders the player picked on the first-run screen (nothing is read from the
 	// environment or the config file; remembering the pick is InstallSetup.remember's job once this succeeded).
 	Dictionary mount_retail_paths(const String &rotwk, const String &bfme2);
@@ -71,6 +75,8 @@ private:
 
 	std::unique_ptr<Win32BIGFileSystem> m_fs;
 	bool m_mounted = false;
+	bool m_bfme1 = false;
+	std::string m_bfme1Root;
 	String m_lastError;
 	std::vector<LooseFileFinding> m_loose;
 	std::vector<MountedArchive> m_mountedArchives;

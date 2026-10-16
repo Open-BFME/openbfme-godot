@@ -34,7 +34,13 @@ OUT = REPO / "launcher" / "scripts" / "core" / "aio_pins.gd"
 # files' URLs are <files host>/<owner>/<md5>; the owner's decision 2026-10-10))
 OWNER = "bdc6bc60-73f9-4833-9069-3076aff26418"
 GAMES = [("rotwk-201-english-archives.json", "rotwk", 2, "RotWK", "The Rise of the Witch-king 2.01", OWNER),
-         ("bfme2-106-english-archives.json", "bfme2", 1, "BFME2", "The Battle for Middle-earth II 1.06", OWNER)]
+         ("bfme2-106-english-archives.json", "bfme2", 1, "BFME2", "The Battle for Middle-earth II 1.06", OWNER),
+         ("aio_bfme1_package.json", "bfme1", 0, "BFME1", "The Battle for Middle-earth 1.03", OWNER)]
+
+
+def package_table(table):
+    path = TABLES / table if table != "aio_bfme1_package.json" else FILES.parent / table
+    return json.loads(path.read_text())
 
 
 def load_files() -> dict:
@@ -45,9 +51,9 @@ def check_tables(files: dict) -> list[str]:
     """every archive of the engine's tables is pinned with the same MD5 and size"""
     errors = []
     for table, *_ in GAMES:
-        t = json.loads((TABLES / table).read_text())
+        t = package_table(table)
         pins = {f[0].lower(): f for f in files[t["package"]["guid"]]}
-        for a in t["archives"]:
+        for a in t.get("archives", []):
             f = pins.get(a["path"].lower())
             if f is None or f[1] != a["md5"] or f[2] != a["size"]:
                 errors.append(f"{t['package']['guid']}: {a['path']} is {f} in {FILES.name}, {a['md5']} {a['size']} in {table}")
@@ -63,7 +69,7 @@ def render() -> str:
            "## Every file the launcher's All In One BFME Launcher download installs, with its MD5 and size (scripts/core/aio_install.gd).",
            "extends RefCounted", "", "const PACKAGES := ["]
     for table, key, game, folder, label, owner in GAMES:
-        t = json.loads((TABLES / table).read_text())
+        t = package_table(table)
         pkg = t["package"]
         rows = files[pkg["guid"]]
         out.append(f'\t{{"key": "{key}", "guid": {json.dumps(pkg["guid"])}, "name": {json.dumps(pkg["name"])}, "game": {game}, '
@@ -81,7 +87,7 @@ def capture(install: Path, manifests: Path) -> dict:
     (its Size is not used: the service lists some files with 0)"""
     out = {}
     for table, key, game, folder, label, owner in GAMES:
-        t = json.loads((TABLES / table).read_text())
+        t = package_table(table)
         guid = t["package"]["guid"]
         m = json.loads((manifests / f"{guid}.raw").read_text())
         rows = []

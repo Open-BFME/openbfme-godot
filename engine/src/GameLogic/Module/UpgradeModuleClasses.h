@@ -164,6 +164,7 @@ public:
 	{
 		std::string from, to;
 	};
+	std::string m_fxListUpgrade; // BFME1
 	std::vector<std::string> m_showSubObjects;
 	std::vector<std::string> m_hideSubObjects;
 	std::vector<std::string> m_excludeSubobjects;

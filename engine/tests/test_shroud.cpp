@@ -736,6 +736,19 @@ TEST_CASE("shroud stops: S-560 .. S-567 are the exact stop lines and reach GameL
 	}
 }
 
+TEST_CASE("shroud objects: omitted clearing range defaults to vision, explicit zero stays blind")
+{
+	Fx f;
+	REQUIRE(f.w.load("Object Keep\n KindOf = STRUCTURE IMMOBILE\n VisionRange = 100\n Geometry = CYLINDER\n GeometryMajorRadius = 9\nEnd\n"
+		"Object BlindKeep\n KindOf = STRUCTURE IMMOBILE\n VisionRange = 100\n ShroudClearingRange = 0\n Geometry = CYLINDER\n GeometryMajorRadius = 9\nEnd\n").empty());
+	Object *keep = f.place("Keep", "Alice", 300.0f, 300.0f);
+	f.place("BlindKeep", "Bob", 700.0f, 300.0f);
+	f.shroud.update();
+	CHECK(f.shroud.getObjectStatus(*keep, f.idx("Alice")) == OBJECTSHROUD_CLEAR);
+	CHECK(f.shroud.getCellStatus(f.idx("Alice"), 7, 7) == CELLSHROUD_CLEAR);
+	CHECK(f.shroud.getCellStatus(f.idx("Bob"), 17, 7) == CELLSHROUD_SHROUDED);
+}
+
 TEST_CASE("shroud objects: a GeometryOffset with a blank after the colon parses like retail's colon sub-tokens (RotWK mumakilpen.ini `X: -10.0`)")
 {
 	Fx f;

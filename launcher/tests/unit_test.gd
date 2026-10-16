@@ -309,8 +309,8 @@ func _aio() -> void:
 		_check(AioInstall.safe_relative(good[0]) == good[1], "AIO: plain path %s" % good[0])
 	for bad in ["", "\\x.big", "/etc/passwd", "C:\\x.big", "a\\..\\..\\x", "./x", "a\\\\b", "a. \\b", "a.\\b", "x\tb", "caf\u00e9.big", "a|b", "a*b"]:
 		_check(AioInstall.safe_relative(bad) == "", "AIO: refuses the name '%s'" % bad.c_escape())
-	_check(AioPins.PACKAGES.size() == 2 and AioPins.PACKAGES[0].guid == "original-RotWK" and AioPins.PACKAGES[1].guid == "original-BFME2", "AIO: two packages")
-	_check(AioPins.PACKAGES[0].files.size() == 315 and AioPins.PACKAGES[1].files.size() == 297, "AIO: 315 + 297 pinned files")
+	_check(AioPins.PACKAGES.size() == 3 and AioPins.PACKAGES[0].guid == "original-RotWK" and AioPins.PACKAGES[1].guid == "original-BFME2", "AIO: three packages")
+	_check(AioPins.PACKAGES[0].files.size() == 315 and AioPins.PACKAGES[1].files.size() == 297 and AioPins.PACKAGES[2].files.size() == 346, "AIO: 315 + 297 + 346 pinned files")
 	_check(AioInstall._whole(2.0) and not AioInstall._whole(2.5) and not AioInstall._whole("2") and not AioInstall._whole(null), "AIO: whole numbers only")
 
 

@@ -163,6 +163,13 @@ void AptPalantir::hook(const std::string &name)
 
 AptPalantir::AptPalantir(WindowManager &windows, Shell &shell) : AptScreen(windows, shell, "Palantir.apt", "AptPalantir")
 {
+	registerCommand("AptPalantir::OnBttnCommand", [this](const std::string &arg) {
+		m_log.push_back("AptPalantir::OnBttnCommand(" + arg + ")");
+		const size_t digit = arg.find_first_of("0123456789");
+		const int i = digit == std::string::npos ? -1 : std::atoi(arg.c_str() + digit) - 1;
+		if (i >= 0 && i < kArcPositions && m_arc[i].created && m_press) m_press(m_arc[i].slot, true);
+	});
+
 	for (const std::string &name : retailCommandNames())
 	{
 		hook(name);
@@ -231,6 +238,17 @@ bool AptPalantir::createContent(const std::string &frame)
 	return ok && written;
 }
 
+const AptPalantir::NativeImage *AptPalantir::imageForClip(const std::string &clipPath, const std::string &imageMapVar) const
+{
+	if (m_bfme1)
+		for (int i = 0; i < kArcPositions; ++i)
+		{
+			const std::string frame = levelPrefix() + "CommandButtons.Command" + std::to_string(i + 1);
+			if (clipPath.compare(0, frame.size() + 1, frame + ".") == 0) return imageFor(frame);
+		}
+	return imageFor(imageMapVar.empty() ? clipPath : imageMapVar);
+}
+
 const AptPalantir::NativeImage *AptPalantir::imageFor(const std::string &key) const
 {
 	auto it = m_images.find(key);
@@ -296,6 +314,26 @@ void AptPalantir::frameLoaded(bool arc, const std::string &arg, bool loaded)
 
 void AptPalantir::syncFrames(const std::vector<ControlBarButton> &buttons, bool arc)
 {
+	if (m_bfme1 && arc)
+	{
+		for (int i = 0; i < kArcPositions; ++i)
+		{
+			const ControlBarButton *button = nullptr;
+			for (const auto &b : buttons) if (b.position == i) { button = &b; break; }
+			const std::string number = std::to_string(i + 1);
+			const std::string state = !button ? "_unused" : commandStateName(button->state, button->button ? button->button->m_options : 0u);
+			const std::string sig = state + (button ? button->image : std::string());
+			if (m_arc[i].sig != sig) { call("", "SetCommandButtonState", { number, state }); m_arc[i].sig = sig; }
+			const std::string frame = "CommandButtons.Command" + number;
+			m_arcFramePath[i] = frame;
+			m_arc[i].created = button != nullptr;
+			m_arc[i].slot = button ? button->slot : -1;
+			m_images[levelPrefix() + frame] = NativeImage{ button ? button->image : std::string(), button && button->state == ButtonState::Restricted };
+			windows().setAptText("APT:PalantirCommand" + number + "ProductionCount", button && button->queued > 0 ? "x" + std::to_string(button->queued) : " ");
+			m_timers["PalantirCommand" + number + "Timer"] = button ? button->timer : -1.0f;
+		}
+		return;
+	}
 	const int positions = arc ? kArcPositions : kSidePositions;
 	Slot *slots = arc ? m_arc : m_side;
 	// lane HUD-4: the arc is positional (window i of the control bar, RW 0x930035: ControlBarButton::position 0 .. 5); the side bar packs its Radial buttons in
@@ -750,7 +788,8 @@ void AptPalantir::sync(const ControlBar &bar)
 	if (wantArc != m_arcShown)
 	{
 		m_arcShown = wantArc;
-		call("CommandButtons", "gotoAndPlay", { wantArc ? "_show" : "_hide" });
+		if (m_bfme1) call("", wantArc ? "ShowCommandInterface" : "HideCommandInterface", {});
+		else call("CommandButtons", "gotoAndPlay", { wantArc ? "_show" : "_hide" });
 	}
 	if (wantArc)
 	{

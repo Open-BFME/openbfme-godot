@@ -266,6 +266,18 @@ func set_in_game(in_game: bool) -> void:
 ## Mounts the retail archives (RetailFileSystem `fs`) from the environment, the remembered folders or the first-run screen. Returns the
 ## mount report ({ok, errors, ...}); with ok false the caller fails with the errors.
 func mount_retail(fs: RefCounted) -> Dictionary:
+	if OS.get_cmdline_user_args().has("--game=bfme1"):
+		var install := OS.get_environment("BFME1_INSTALL")
+		for arg in OS.get_cmdline_user_args():
+			if arg.begins_with("--bfme1-install="): install = arg.trim_prefix("--bfme1-install=")
+		if install.is_empty():
+			for file in ["user://install-paths.cfg", "user://downloaded-installs.cfg"]:
+				if not FileAccess.file_exists(file): continue
+				for line in FileAccess.get_file_as_string(file).split("\n"):
+					if line.begins_with("BFME1_INSTALL="):
+						install = line.trim_prefix("BFME1_INSTALL=").strip_edges()
+				if not install.is_empty(): break
+		return fs.mount_bfme1_path(install)
 	var setup: RefCounted = ClassDB.instantiate("InstallSetup")
 	var conf: Dictionary = setup.configured()
 	var args := OS.get_cmdline_user_args()

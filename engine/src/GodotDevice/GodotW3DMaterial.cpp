@@ -1,6 +1,8 @@
 // OpenBFME. GPL-3.0.
 
 #include "GodotDevice/GodotW3DMaterial.h"
+#include "GodotDevice/GodotPackedTexture.h"
+#include "Libraries/Source/Apt/AptLoad.h"
 
 #include <cstdio>
 
@@ -29,6 +31,17 @@ namespace godot
 
 namespace
 {
+
+// Some BFME1 texture packs retain .dds names for PNG replacements.
+Error decodeTexture(const Ref<Image> &image, const PackedByteArray &buffer, bool dds)
+{
+	static const unsigned char png[] = { 137, 80, 78, 71, 13, 10, 26, 10 };
+	if (buffer.size() >= 8 && std::memcmp(buffer.ptr(), png, sizeof(png)) == 0)
+		return image->load_png_from_buffer(buffer);
+	if (buffer.size() >= 3 && buffer[0] == 0xff && buffer[1] == 0xd8 && buffer[2] == 0xff)
+		return image->load_jpg_from_buffer(buffer);
+	return dds ? image->load_dds_from_buffer(buffer) : image->load_tga_from_buffer(buffer);
+}
 
 String toGodot(const std::string &s)
 {
@@ -269,7 +282,15 @@ Ref<Texture2D> W3DMaterialFactory::Load_Texture(const std::string &name, std::ve
 	if (!bytes.empty()) std::memcpy(buffer.ptrw(), bytes.data(), bytes.size());
 	Ref<Image> image;
 	image.instantiate();
-	Error err = res.IsDDS ? image->load_dds_from_buffer(buffer) : image->load_tga_from_buffer(buffer);
+	Error err = decodeTexture(image, buffer, res.IsDDS);
+	if (err == OK && res.Path.size() >= 4 && res.Path.substr(res.Path.size() - 4) == ".jpg")
+	{
+		// BFME1 floor textures pack their alpha separately beside JPEG colour.
+		AptArchiveFileSource source(Fs);
+		bool paired = false;
+		Ref<Image> merged = loadPackedTexture(source, res.Path.substr(0, res.Path.size() - 4), &paired);
+		if (merged.is_valid()) image = merged;
+	}
 	if (err != OK || image->is_empty())
 	{
 		errors.push_back("could not decode texture " + res.Path);
@@ -316,7 +337,7 @@ Ref<Texture2D> W3DMaterialFactory::Recolored_House_Texture(const std::string &na
 	if (!bytes.empty()) std::memcpy(buffer.ptrw(), bytes.data(), bytes.size());
 	Ref<Image> image;
 	image.instantiate();
-	Error err = res.IsDDS ? image->load_dds_from_buffer(buffer) : image->load_tga_from_buffer(buffer);
+	Error err = decodeTexture(image, buffer, res.IsDDS);
 	if (err != OK || image->is_empty())
 	{
 		errors.push_back("could not decode texture " + res.Path);

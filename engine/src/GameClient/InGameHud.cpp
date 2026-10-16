@@ -1,6 +1,7 @@
 // OpenBFME. GPL-3.0.
 // See InGameHud.h.
 
+#include "Common/BfmeGame.h"
 #include "GameClient/InGameHud.h"
 #include "GameClient/GUI/GameTextSource.h"
 
@@ -88,7 +89,9 @@ InGameHud::InGameHud(Config config)
 	m_input->hotKeyTranslator().setPress([this](int slot, bool inPalantir) { return m_bar->pressButton(slot, inPalantir); });
 	// AUDIO-2: ZH CommandXlat / SelectionXlat play the unit voice when a command or a selection leaves the translators (RotWK RW 0x8DEDBB)
 	m_voice = std::make_unique<UnitVoiceResponse>(m_config.game.logic(), m_voiceSink);
-	// the crowd responses of the voices (S-700): Data\INI\CrowdResponse.ini; a missing or malformed file is an error of the HUD, the voices still work
+	// the crowd responses of the voices (S-700): Data\INI\CrowdResponse.ini; a missing or malformed file is an error of the HUD, the voices still work.
+	// BFME1 has no crowd responses (no CrowdResponse.ini: the second voice slot is BFME2's; docs/BFME1.md)
+	if (!isBfme1Data(m_config.fs))
 	{
 		std::vector<std::uint8_t> bytes;
 		std::string error;
@@ -171,6 +174,7 @@ bool InGameHud::boot(std::string *error)
 	}
 	// lane RENDERWAIT-1: the movie's presses reach the live game (the control bar, the spell book); an engine callback (the movie's input outside the HUD's
 	// update) may come while the logic worker runs a frame: the press then waits, in order, for the next update the logic is held in (whenHeld)
+	m_palantirRef->setBfme1(isBfme1Data(m_config.fs));
 	m_palantirRef->setButtonHandler([this](int slot, bool inPalantir) {
 		whenHeld([this, slot, inPalantir]() {
 			const auto worldContext = enterContext(); // the movie's own update and invoke_at reach this outside the scoped entry points (BuildAssistant reads TheCommandStore)

@@ -2506,6 +2506,7 @@ Dictionary GameWorld::get_object(int64_t id) const
 	}
 	d["ok"] = true;
 	d["id"] = id;
+	d["drawable_hidden"] = o->isDrawableHidden();
 	d["template"] = toGodot(o->getTemplate()->getName());
 	d["team"] = o->getTeam() ? toGodot(o->getTeam()->getName()) : String();
 	d["owner"] = o->getControllingPlayer() ? toGodot(o->getControllingPlayer()->getPlayerName()) : String();

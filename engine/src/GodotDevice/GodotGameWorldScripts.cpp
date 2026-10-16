@@ -43,10 +43,7 @@ const GameTextTable *gameText(ArchiveFileSystem *fs)
 		tried = true;
 		std::vector<std::uint8_t> bytes;
 		std::string error;
-		if (fs->readFile("data/lotr.str", bytes, &error))
-		{
-			table.parse(bytes, &error);
-		}
+		table.loadRetail(*fs, &error);
 	}
 	return tried ? &table : nullptr;
 }

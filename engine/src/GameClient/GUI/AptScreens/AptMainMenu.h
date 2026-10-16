@@ -77,6 +77,7 @@ private:
 	void exitCredits();
 
 	ShellServices &m_services;
+	std::string m_mainMenuLevel; // BFME1 provider selector 0
 	bool m_optionsAdvanced = false;
 	std::unique_ptr<AptMessageBox> m_box; // lane CAH-2: made on demand, released after its Ok (GuiFX.apt can be loaded once: the lobbies own their own)
 	bool m_boxClosed = false;

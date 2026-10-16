@@ -933,7 +933,7 @@ struct AptMenuPlayer::Impl
 	{
 		std::vector<std::uint8_t> bytes;
 		std::string error;
-		if (!source->readFile("data/lotr.str", bytes, &error) || !strings.parse(bytes, &error))
+		if (!strings.loadRetail(*fs->archive_fs(), &error))
 		{
 			errorsOut.push_back(toGodot("data/lotr.str: " + error));
 		}
@@ -1370,7 +1370,7 @@ Dictionary AptMenuPlayer::boot_shell(const Ref<RetailFileSystem> &fs, Object *wo
 	auto sm = std::make_unique<ShellMode>();
 	std::string error;
 	sm->text = std::make_unique<ShellGameText>(m->strings, *fs->archive_fs());
-	if (!sm->setup.load(*world->object_world(), world->logic_settings(), *fs->archive_fs(), &error))
+	if (!sm->setup.load(*world->object_world(), world->logic_settings(), *fs->archive_fs(), &error, fs->is_bfme1()))
 	{
 		errors.push_back(toGodot("the lobby's setup source: " + error));
 	}
@@ -1395,7 +1395,7 @@ Dictionary AptMenuPlayer::boot_shell(const Ref<RetailFileSystem> &fs, Object *wo
 		std::string skirmishIni = toNative(OS::get_singleton()->get_user_data_dir()) + "/Skirmish.ini";
 		if (config.has("skirmish_ini") && !String(config["skirmish_ini"]).is_empty())
 		{
-			skirmishIni = toNative(String(config["skirmish_ini"]));
+			skirmishIni = toNative(ProjectSettings::get_singleton()->globalize_path(String(config["skirmish_ini"]))); // a user:// path is the user data folder's
 		}
 		sm->profiles = std::make_unique<SkirmishPreferences>(skirmishIni);
 		for (const std::string &e : sm->profiles->errors())
@@ -1411,7 +1411,7 @@ Dictionary AptMenuPlayer::boot_shell(const Ref<RetailFileSystem> &fs, Object *wo
 	sm->environment.optionsFile = toNative(OS::get_singleton()->get_user_data_dir()) + "/Options.ini";
 	if (config.has("options_file"))
 	{
-		sm->environment.optionsFile = toNative(String(config["options_file"])); // lane OPTS-2: a check's own file (game.gd --options-file), never the player's
+		sm->environment.optionsFile = toNative(ProjectSettings::get_singleton()->globalize_path(String(config["options_file"]))); // lane OPTS-2: a check's own file (game.gd --options-file), never the player's
 	}
 	sm->options.load(sm->environment.optionsFile);
 	for (const std::string &key : sm->options.migrateLegacyKeys())
@@ -1556,7 +1556,7 @@ Dictionary AptMenuPlayer::boot_shell(const Ref<RetailFileSystem> &fs, Object *wo
 			{
 				errors.push_back(toGodot("boot_shell: data\\ini\\gamedata.ini: " + readError));
 			}
-			else if (!Shell::readShellMapOn(std::string(bytes.begin(), bytes.end()), on, &parseError))
+			else if (!fs->is_bfme1() && !Shell::readShellMapOn(std::string(bytes.begin(), bytes.end()), on, &parseError))
 			{
 				errors.push_back(toGodot("boot_shell: " + parseError));
 			}
@@ -1570,6 +1570,7 @@ Dictionary AptMenuPlayer::boot_shell(const Ref<RetailFileSystem> &fs, Object *wo
 		}
 		// lane HOVER-1: the menus' tool tips: AptButtonTooltipMap.ini's names, Mouse.ini / Language.ini's tool tip font and delay, GuiFX.apt (the window
 		// manager's own movie at its level 11, BFME1 AptGuiFXRegisterCallbacks) whose ToolTip clip shows them; a missing file or field is a boot error
+		if (!fs->is_bfme1())
 		{
 			AptButtonTooltipMap names;
 			CursorTooltipSettings tipSettings;
@@ -2601,6 +2602,9 @@ Dictionary AptMenuPlayer::lobby_state()
 	const SkirmishGameInfo &g = screen->setup()->info();
 	out["found"] = true;
 	out["map"] = toGodot(g.mapName);
+	PackedStringArray mapKeys;
+	for (const auto &key : screen->mapListKeys()) mapKeys.push_back(toGodot(key));
+	out["map_keys"] = mapKeys;
 	Array rules;
 	for (std::int32_t r : g.rules)
 	{
@@ -2667,10 +2671,13 @@ Dictionary AptMenuPlayer::lobby_apply(const Dictionary &spec)
 		if (GameWindow *entry = screen->profileEntryWindow())
 		{
 			GadgetTextEntrySetText(entry, utf8ToU16(toNative(String(spec["profile"]))));
-			sm.wm->invokeCallback("AptSkirmish::OnAddProfileAccept", "");
+			// BFME1's persona popup accepts with Skirmish::PersonaAccept and closes with the root's PopUpControl("close") (docs/BFME1.md)
+			const bool bfme1 = m->fs->is_bfme1();
+			sm.wm->invokeCallback(bfme1 ? "AptSkirmish::Skirmish::PersonaAccept" : "AptSkirmish::OnAddProfileAccept", "");
 			// the click on the popup's Select button also runs the movie's own close (the C++ click-through tests); the hook does the same
 			std::string closeError;
-			if (!sm.wm->invokeASAt(screen->level(), "ProfilePopup", "ClosePop", {}, nullptr, &closeError))
+			if (!(bfme1 ? sm.wm->invokeASAt(screen->level(), "", "PopUpControl", { "close" }, nullptr, &closeError) :
+				sm.wm->invokeASAt(screen->level(), "ProfilePopup", "ClosePop", {}, nullptr, &closeError)))
 			{
 				errors.push_back(toGodot("ProfilePopup.ClosePop: " + closeError));
 			}

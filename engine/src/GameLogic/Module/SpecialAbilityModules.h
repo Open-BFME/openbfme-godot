@@ -150,6 +150,7 @@ public:
 class LevelGrantSpecialPowerModuleData : public SpecialAbilityUpdateModuleData
 {
 public:
+	bool m_useKindOf = false; // BFME1
 	int m_experience = 0;                                // + 0xD0
 	float m_radiusEffect = 0.0f;                         // + 0xD4
 	std::shared_ptr<const ObjectFilter> m_acceptanceFilter; // + 0xD8

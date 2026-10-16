@@ -131,3 +131,18 @@ static func show_in_file_manager(path: String) -> String:
 static func default_games_dir() -> String:
 	var h := home()
 	return h.path_join("Games").path_join("BFME") if h != "" else ""
+
+
+## BFME1 is independent of the BFME2/RotWK pair. Prefer an explicit path, then
+## remembered/downloaded installs; also reuse the AIO launcher's macOS install.
+static func bfme1_folder(user_dir: String = GameOptions.game_user_dir()) -> String:
+	var candidates := [OS.get_environment("BFME1_INSTALL")]
+	for name in [CONFIG, MARKER]:
+		candidates.append(read_cfg(user_dir.path_join(name)).get("BFME1_INSTALL", ""))
+	candidates.append(default_games_dir().path_join("BFME1"))
+	if OS.get_name() == "macOS":
+		candidates.append(OS.get_data_dir().path_join("BFMELauncher/Installation/CrossOverPrefix/drive_c/BFME/BFME1"))
+	for candidate in candidates:
+		if candidate != "" and DirAccess.dir_exists_absolute(candidate):
+			return candidate
+	return ""

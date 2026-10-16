@@ -379,7 +379,8 @@ Dictionary GameWorld::get_movie(const String &title)
 	// lane's), the language of this install's archives (lang\English*.big)
 	std::string root, error;
 	const std::string config = n(ProjectSettings::get_singleton()->globalize_path("user://install-paths.cfg"));
-	if (!ResolveInstallPath("ROTWK_INSTALL", config, root, &error))
+	if (m_fs.is_valid() && m_fs->is_bfme1()) root = m_fs->bfme1_root();
+	else if (!ResolveInstallPath("ROTWK_INSTALL", config, root, &error))
 	{
 		d["error"] = g(error);
 		return d;

@@ -496,7 +496,7 @@ var _intro := "auto"            # lane CAMP-2: --intro (on) / --no-intro (off)
 var _intro_check := false       # lane CAMP-2: --intro-check (tests): the start-up movies, then quit
 ## lane MENU-1: the options a player's own start may carry (the launcher's, the display options); any other option makes a scripted run
 const PLAYER_ARG_PREFIXES := ["--fps", "--dev-overlay", "--intro", "--no-intro", "--alternate-mouse", "--classic-mouse", "--free-camera", "--res=",
-	"--vsync=", "--max-fps=", "--movies=", "--zoom-out=", "--widescreen=", "--online-lobby=", "--no-update-check"] # --zoom-out: ZOOM-1, --widescreen: UI-6, player options (PLAYING.md)
+	"--vsync=", "--max-fps=", "--movies=", "--zoom-out=", "--widescreen=", "--online-lobby=", "--no-update-check", "--game=", "--bfme1-install="] # --zoom-out: ZOOM-1, --widescreen: UI-6, player options (PLAYING.md)
 var _scripted_skirmish_ini := ""
 
 
@@ -1011,6 +1011,9 @@ func _boot() -> void:
 	if not mount.ok:
 		_fail("mount failed:\n" + "\n".join(mount.errors))
 		return
+	if _fs.is_bfme1():
+		DisplayServer.window_set_title("OpenBFME — BFME1")
+		if _options_file.is_empty(): _options_file = "user://bfme1-Options.ini"
 	_world = ClassDB.instantiate("GameWorld")
 	_world.name = "GameWorld"
 	add_child(_world)
@@ -1034,6 +1037,8 @@ func _boot() -> void:
 	if screen_size != window_size:
 		modes.append(screen_size)
 	var shell_config := {"seed": _seed, "default_volumes": _audio.get_default_volumes(), "display_modes": modes, "current_resolution": window_size}
+	if _fs.is_bfme1():
+		shell_config["skirmish_ini"] = "user://bfme1-Skirmish.ini"
 	if not _options_file.is_empty():
 		shell_config["options_file"] = _options_file # lane OPTS-2
 	if _scripted_run():
@@ -1049,7 +1054,7 @@ func _boot() -> void:
 		return
 	print("GAME shell booted in %.0f ms: %d strings, lobby seed %d" % [boot.load_ms, boot.strings, boot.seed])
 	# lane CAH-1: the Create-a-Hero builder's and the lobby's heroes: the system heroes of the archives and the profile's MyHero*.cah (RW 0x61EEB6: <user data>\\Save\\)
-	var cah: Dictionary = _shell.set_create_a_hero(_world, _cah_profile_dir())
+	var cah: Dictionary = {"ok":true} if _fs.is_bfme1() else _shell.set_create_a_hero(_world, _cah_profile_dir())
 	print("GAME Create-a-Hero heroes: %d in %s %s" % [cah.get("heroes", 0), _cah_profile_dir(), "" if cah.ok else str(cah.errors)])
 	_shell.shell_request.connect(_on_shell_request)
 	_shell.shell_service.connect(_on_shell_service)
@@ -1260,6 +1265,8 @@ func _on_shell_request(action: String, argument: String) -> void:
 		_open_online_shell() # lane ONLINE-4
 	elif action == "OnlineGameStart":
 		_on_online_started(argument) # lane ONLINE-4: the staging room's START, played as ONLINE-2's
+	elif _fs.is_bfme1() and action in ["GoodCampaign", "EvilCampaign", "ContinueCampaign", "LoadCampaign"]:
+		_shell.shell_screen_unavailable(action)
 	elif action == "Expansion1Campaign": # lane CAMP-1: RW 0x91BE64 (ANGMAR_CAMPAIGN; the demo campaign only with [0xDE4324] + 0x60)
 		_campaign_flow.start("ANGMAR_CAMPAIGN", _campaign_flow.difficulty_from_command(argument))
 	elif action == "BonusCampaign": # RW 0x91BEFA
@@ -1802,6 +1809,35 @@ func _step(frames: int) -> void:
 		await get_tree().process_frame
 
 
+## BFME1: the path (under `menu`) of the button clip whose `buttonName` is `label` ("" when none has it); the movie's labels name the
+## buttons, its instance names do not (docs/BFME1.md)
+func _bfme1_button(level: int, menu: String, label: String) -> String:
+	var prefix := "_level%d.%s." % [level, menu]
+	for b in _shell.list_buttons(level):
+		var path := String(b.path)
+		if not path.begins_with(prefix):
+			continue
+		var clip := menu + "." + path.trim_prefix(prefix).get_slice(".", 0)
+		var name: Dictionary = _shell.get_member(level, clip, "buttonName")
+		if name.get("found", false) and name.value == label:
+			return clip
+	return ""
+
+
+## Waits (at most 10 s) until the button's position is the same for 10 frames in a row: an animated menu has finished moving it.
+func _wait_button_settled(level: int, path: String) -> void:
+	var last := Vector2(INF, INF)
+	var still := 0
+	for i in 300:
+		var b: Dictionary = _shell.find_button(level, path)
+		var p := Vector2(b.x, b.y) if b.found else Vector2(INF, INF)
+		still = still + 1 if b.found and p == last else 0
+		if still >= 10:
+			return
+		last = p
+		await _step(1)
+
+
 func _click_button(level: int, path: String) -> bool:
 	var button: Dictionary = _shell.find_button(level, path)
 	if not button.found:
@@ -2296,13 +2332,28 @@ func _auto_lobby_and_start() -> bool:
 	var stack: PackedStringArray = _shell.shell_stack()
 	if stack.size() == 0 or stack[-1] != "Skirmish.apt":
 		var menu_level: int = _shell.shell_top_level()
-		if not await _click_button(menu_level, "SoloPlayNav"):
-			_fail("no SoloPlayNav button")
+		# BFME1's MainMenu.apt: the menu bar's Solo Play opens SoloPlayMenu, whose Skirmish starts the lobby (docs/BFME1.md). Its instance names
+		# do not follow the buttons: the clip named "Skirmish" is the Campaign button (its init sets buttonName "$Campaign"), "Tutorial" is
+		# Skirmish ... so the buttons are found by the label the movie gives them, as a player finds them
+		var nav := _bfme1_button(menu_level, "MainMenu", "$SoloPlay") if _fs.is_bfme1() else "SoloPlayNav"
+		var item := "SoloPlayNav.Skirmish"
+		if not await _click_button(menu_level, nav):
+			_fail("no %s button" % nav)
 			return false
 		await _step(90)
-		if not await _click_button(menu_level, "SoloPlayNav.Skirmish"):
+		if _fs.is_bfme1():
+			item = _bfme1_button(menu_level, "SoloPlayMenu", "$Skirmish")
+		await _wait_button_settled(menu_level, item) # BFME1's sub-menu slides in: a click before it stops lands on a neighbour
+		if not await _click_button(menu_level, item):
 			_fail("no Skirmish item")
 			return false
+		# the menu's close animation runs before its GameCode('Skirmish') (BFME1's is longer than RotWK's): up to 10 s
+		for wait in 300:
+			if _shell.shell_stack().size() >= 2 and _shell.shell_stack()[-1] == "Skirmish.apt":
+				break
+			await _step(1)
+		if _shell.shell_stack()[-1] != "Skirmish.apt":
+			print("GAME shell report: ", JSON.stringify(_shell.get_shell_report()))
 		await _step(90)
 	else:
 		print("GAME the score screen's Continue left the Skirmish lobby up: ", str(stack))
@@ -2366,7 +2417,13 @@ func _auto_lobby_and_start() -> bool:
 		_save_named("rules1-rules-tab-legendary")
 	_save_screenshot("lobby")
 	var skirmish_level: int = _shell.shell_top_level()
-	if not await _click_button(skirmish_level, "lobby.StartGame"):
+	# the Start button: RotWK's lobby (lobby.StartGame), the BFME2-style lobby (lobby.bottomNav.StartGame), BFME1's Skirmish.apt (bottomNav.StartGame)
+	var start := ""
+	for candidate in ["lobby.StartGame", "lobby.bottomNav.StartGame", "bottomNav.StartGame"]:
+		if _shell.find_button(skirmish_level, candidate).found:
+			start = candidate
+			break
+	if start.is_empty() or not await _click_button(skirmish_level, start):
 		_fail("no StartGame button")
 		return false
 	if _gamemodes == "sandbox":

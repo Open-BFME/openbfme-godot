@@ -207,8 +207,27 @@ bool Load_W3D_File(const std::uint8_t *data, size_t size, W3DFileContents &out, 
 	return true;
 }
 
+namespace
+{
+std::atomic<bool> g_flatAssetLayout{ false };
+}
+
+void W3D_Set_Flat_Asset_Layout(bool flat)
+{
+	g_flatAssetLayout = flat;
+}
+
+bool W3D_Flat_Asset_Layout()
+{
+	return g_flatAssetLayout.load();
+}
+
 std::string W3D_Asset_Path(const std::string &assetName)
 {
+	if (g_flatAssetLayout.load())
+	{
+		return "art\\w3d\\" + AsciiStringUtil::lowered(assetName) + ".w3d"; // BFME1: its W3D.big stores art\\w3d\\<name>.w3d, no two-letter folders
+	}
 	return "art\\w3d\\" + twoLetterFolder(assetName) + "\\" + AsciiStringUtil::lowered(assetName) + ".w3d";
 }
 

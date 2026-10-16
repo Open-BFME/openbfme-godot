@@ -26,18 +26,63 @@
 #include <chrono>
 #include <stdexcept>
 
+namespace
+{
+const RwBinaryData &bfme1Grammar()
+{
+	static const RwBinaryData data = [] {
+		auto result = RwBinaryData::embedded();
+		constexpr unsigned line = 0xbf100001;
+		result.functions[line] = RwFunction();
+		const std::map<std::string, std::vector<std::string>> fields = {
+			{"AutoPickUpUpdate", {"PickUpKindOf", "PickUpKindOf2", "Bored", "BoredFilter"}},
+			{"DynamicPortalBehaviour", {"AllowKindOf", "RejectKindOf", "AllowEnemies"}},
+			{"BloodthirstyUpdate", {"NumToSacrifice", "InitiateVoice2"}},
+			{"SlaughterHordeContain", {"MaxHordeCapacity"}},
+		};
+		for (auto &cls : result.classes)
+		{
+			auto found = fields.find(cls.name);
+			if (found == fields.end()) continue;
+			RwTable table;
+			table.id = "bfme1-" + cls.name;
+			for (const auto &name : found->second) table.rows.push_back({name, line});
+			result.tables[table.id] = table;
+			cls.tables.push_back({table.id});
+		}
+		// BFME1 RandomSoundSelectorFieldParse.cpp: SoundState's voice table.
+		const char *voices[] = {"VoiceSelect2", "VoiceSelectGroup2", "VoiceMove2", "VoiceAttack2", "VoiceAmbushed", "VoiceSelectBattle2", "SoundAmbientReallyDamaged2"};
+		for (auto &entry : result.tables)
+		{
+			auto &rows = entry.second.rows;
+			if (std::none_of(rows.begin(), rows.end(), [](const RwRow &r) { return r.name == "VoiceSelect"; })) continue;
+			for (const auto *name : voices)
+				if (std::none_of(rows.begin(), rows.end(), [name](const RwRow &r) { return r.name == name; })) rows.push_back({name, line});
+		}
+		for (auto &entry : result.tables)
+		{
+			auto &rows = entry.second.rows;
+			if (std::any_of(rows.begin(), rows.end(), [](const RwRow &r) { return r.name == "InitiateSound"; }) &&
+				std::none_of(rows.begin(), rows.end(), [](const RwRow &r) { return r.name == "InitiateSound2"; })) rows.push_back({"InitiateSound2", line});
+		}
+		return result;
+	}();
+	return data;
+}
+}
+
 RetailObjectWorld::State::State(ArchiveFileSystem &fs)
 	: m_fs(fs)
 {
 	m_keys.init();
-	m_grammar = std::make_unique<RwGrammar>(RwBinaryData::embedded());
+	m_grammar = std::make_unique<RwGrammar>(m_fs.doesFileExist("Data\\INI\\Default\\SubsystemLegendExpansion1.ini") ? RwBinaryData::embedded() : bfme1Grammar());
 	m_modules = std::make_unique<ModuleFactory>(m_keys, *m_grammar);
 	m_modules->init();
 	W3DDrawModules::registerTypedDrawModuleData(*m_modules);
 	// the horde contain data of the map's horde objects (their members are the drawables of a horde)
 	MapHordeSpawn::bindHordeContainData(*m_modules);
 	LogicModules::registerAll(*m_modules); // LOGIC-1: ActiveBody and HordeContain run for real, every other class is an UnportedModule (S-140)
-	m_things = std::make_unique<ThingFactory>(m_keys, *m_modules, *m_grammar);
+	m_things = std::make_unique<ThingFactory>(m_keys, *m_modules, *m_grammar, !m_fs.doesFileExist("Data\\INI\\Default\\SubsystemLegendExpansion1.ini"));
 	m_playerTemplates = std::make_unique<PlayerTemplateStore>(m_keys);
 	m_spellStores = std::make_unique<SpellStores>(m_keys);
 	m_audio = std::make_unique<AudioIniState>();
@@ -342,6 +387,7 @@ bool RetailObjectWorld::loadState(std::string *error)
 	INI ini(m_s->m_env);
 	SubsystemLoadOptions options;
 	options.collectErrors = true;
+	options.bfme1 = !m_fs.doesFileExist("Data\\INI\\Default\\SubsystemLegendExpansion1.ini");
 	options.cinematics = true; // the census counts the Cinematic folder (338 templates), like the object-model retail test
 	const auto t0 = std::chrono::steady_clock::now();
 	try
@@ -371,7 +417,7 @@ bool RetailObjectWorld::loadState(std::string *error)
 		}
 	}
 	// INTEG-1: TheStanceTemplateStore's init (RW 0x83568D) loads Data\INI\Stances.ini itself (INI::load, type 1), not through the legend; an error reaches the report
-	try
+	if (!options.bfme1) try
 	{
 		INI stancesIni(m_s->m_env);
 		stancesIni.load("Data\\INI\\Stances.ini", INI_LOAD_OVERWRITE); // RW 0xC536E4
@@ -396,7 +442,7 @@ bool RetailObjectWorld::loadState(std::string *error)
 		m_s->m_report.errors.push_back(fe);
 	}
 	// HERO-2: TheCreateAHeroSystem's init (RW 0x61A10F) loads Data\INI\CreateAHeroSystem.ini itself (type 1) once the upgrades and the control bar are loaded
-	try
+	if (!options.bfme1) try
 	{
 		m_s->m_createAHero.load(m_s->m_env);
 		if (!m_s->m_createAHero.loaded())

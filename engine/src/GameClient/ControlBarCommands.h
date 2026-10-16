@@ -162,6 +162,8 @@ public:
 	std::vector<std::string> m_science;       ///< +0xA4 Science (S-200)
 	int m_commandButtonBorder = 0;            ///< +0xB0 ButtonBorderType
 	std::vector<std::string> m_buttonImageName; ///< +0xB4
+	bool m_affectsAllies = false;
+	std::vector<std::string> m_unitSpecificSound2; // BFME1 secondary command voice
 	std::vector<std::string> m_unitSpecificSound, m_setAutoAbilityUnitSound, m_unsetAutoAbilityUnitSound; ///< +0xC8 / +0xD4 / +0xE0 (S-200)
 	bool m_doubleClick = false, m_radial = false, m_inPalantir = false, m_showProductionCount = false; ///< +0x100 .. +0x104
 	bool m_isClickable = true, m_showButton = true, m_requiresValidContainer = false; ///< +0x105 .. +0x107
