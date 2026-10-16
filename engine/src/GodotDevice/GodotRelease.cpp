@@ -167,6 +167,9 @@ void SessionLogger::_bind_methods()
 	ClassDB::bind_method(D_METHOD("get_last_error"), &SessionLogger::get_last_error);
 	ClassDB::bind_method(D_METHOD("write_line", "line"), &SessionLogger::write_line);
 	ClassDB::bind_method(D_METHOD("filter_console"), &SessionLogger::filter_console);
+	ClassDB::bind_method(D_METHOD("start_watchdog", "stall_seconds"), &SessionLogger::start_watchdog);
+	ClassDB::bind_method(D_METHOD("heartbeat"), &SessionLogger::heartbeat);
+	ClassDB::bind_method(D_METHOD("set_background", "background"), &SessionLogger::set_background);
 }
 
 SessionLogger::~SessionLogger()
@@ -199,6 +202,7 @@ bool SessionLogger::open(const String &path)
 		return false;
 	}
 	m_path = path;
+	m_nativePath = native;
 	m_error = String();
 	const std::string head = BuildVersion::versionLine() + ", commit " + BuildVersion::kCommit + ", engine id " + ProfileIdentity::buildId() + "\n";
 	std::fwrite(head.data(), 1, head.size(), m_file);
@@ -208,6 +212,13 @@ bool SessionLogger::open(const String &path)
 
 void SessionLogger::close()
 {
+	if (m_watchdog)
+	{
+		m_watchdog->stop();
+		m_watchdog.reset();
+	}
+	if (const unsigned long long dropped = ConsoleFilter::droppedBytes())
+		writeRaw("RELEASE the console took nothing for a while: " + std::to_string(dropped) + " bytes reached only this log");
 	ConsoleFilter::uninstall();
 	std::lock_guard<std::mutex> lock(m_mutex);
 	if (m_file)
@@ -239,6 +250,13 @@ void SessionLogger::writeRaw(const std::string &utf8)
 	if (!m_file)
 		return;
 	const std::string clean = LogPrivacy::redact(utf8, m_rules);
+	if (lock.owns_lock())
+	{
+		const size_t end = clean.find_last_not_of("\r\n");
+		const std::string last = end == std::string::npos ? std::string() : clean.substr(0, end + 1);
+		const size_t start = last.find_last_of('\n');
+		m_lastLine = (start == std::string::npos ? last : last.substr(start + 1)).substr(0, 300);
+	}
 	std::fwrite(clean.data(), 1, clean.size(), m_file);
 	if (clean.empty() || clean.back() != '\n')
 		std::fputc('\n', m_file);
@@ -252,6 +270,47 @@ bool SessionLogger::filter_console()
 		return true;
 	m_error = toGodot(error);
 	return false;
+}
+
+std::string SessionLogger::lastLine() const
+{
+	std::lock_guard<std::mutex> lock(m_mutex);
+	return m_lastLine;
+}
+
+bool SessionLogger::start_watchdog(double stall_seconds)
+{
+	if (m_nativePath.empty())
+	{
+		m_error = "the watchdog needs an open session log";
+		return false;
+	}
+	if (m_watchdog)
+		return true;
+	FreezeWatchdog::Config config;
+	config.stallMs = (int)(stall_seconds * 1000.0);
+	const std::string base = m_nativePath;
+	const LogPrivacy::Rules rules = m_rules;
+	m_watchdog = std::make_unique<FreezeWatchdog>(
+		config, [this](const std::string &line) { writeRaw(line); },
+		[base, rules](unsigned n) {
+			return ThreadStacks::capture(base + ".freeze-" + std::to_string(n) + ".txt", [&rules](const std::string &t) { return LogPrivacy::redact(t, rules); });
+		},
+		[this] { return lastLine(); });
+	m_watchdog->start();
+	return true;
+}
+
+void SessionLogger::heartbeat()
+{
+	if (m_watchdog)
+		m_watchdog->beat();
+}
+
+void SessionLogger::set_background(bool background)
+{
+	if (m_watchdog)
+		m_watchdog->setBackground(background);
 }
 
 void SessionLogger::write_line(const String &line)

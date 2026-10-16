@@ -1203,6 +1203,14 @@ void InGameHudNode::_bind_methods()
 	ClassDB::bind_method(D_METHOD("get_placement"), &InGameHudNode::get_placement);
 	ClassDB::bind_method(D_METHOD("take_misc_sounds"), &InGameHudNode::take_misc_sounds);
 	ClassDB::bind_method(D_METHOD("get_cursor_image"), &InGameHudNode::get_cursor_image);
+	ClassDB::bind_method(D_METHOD("set_placement_snap", "active", "spacing"), &InGameHudNode::set_placement_snap);
+	ClassDB::bind_method(D_METHOD("controller_formation", "action", "direction"), &InGameHudNode::controller_formation);
+	ClassDB::bind_method(D_METHOD("controller_select_area", "radius", "commit"), &InGameHudNode::controller_select_area);
+	ClassDB::bind_method(D_METHOD("controller_attack_move"), &InGameHudNode::controller_attack_move);
+	ClassDB::bind_method(D_METHOD("get_controller_primary_button", "selection_assist_radius"), &InGameHudNode::get_controller_primary_button, DEFVAL(0.0f));
+	ClassDB::bind_method(D_METHOD("get_controller_target", "selection_assist_radius"), &InGameHudNode::get_controller_target);
+	ClassDB::bind_method(D_METHOD("controller_deselect"), &InGameHudNode::controller_deselect);
+	ClassDB::bind_method(D_METHOD("controller_placement_aim", "direction"), &InGameHudNode::controller_placement_aim);
 	ClassDB::bind_method(D_METHOD("get_placement_ghost_state"), &InGameHudNode::get_placement_ghost_state);
 	ClassDB::bind_method(D_METHOD("get_move_hints"), &InGameHudNode::get_move_hints);
 	ClassDB::bind_method(D_METHOD("press_command_button", "template_name"), &InGameHudNode::press_command_button);
@@ -1225,6 +1233,7 @@ void InGameHudNode::_bind_methods()
 	ClassDB::bind_method(D_METHOD("set_view_options", "options"), &InGameHudNode::set_view_options); // lane OPTS-2
 	ClassDB::bind_method(D_METHOD("camera_look_at", "sage_xy"), &InGameHudNode::camera_look_at);
 	ClassDB::bind_method(D_METHOD("camera_set_height", "height_above_ground"), &InGameHudNode::camera_set_height);
+	ClassDB::bind_method(D_METHOD("camera_pan", "amount"), &InGameHudNode::camera_pan);
 	ClassDB::bind_method(D_METHOD("pixel_to_world", "pixel"), &InGameHudNode::pixel_to_world);
 	ClassDB::bind_method(D_METHOD("world_to_pixel", "world_xy"), &InGameHudNode::world_to_pixel);
 	ClassDB::bind_method(D_METHOD("pick_probe", "pixel", "id"), &InGameHudNode::pick_probe);
@@ -1667,6 +1676,7 @@ Dictionary InGameHudNode::attach(const Ref<RetailFileSystem> &fs, GameWorld *wor
 	d->fs = fs;
 	d->owner = this;
 	d->world = world;
+	world->set_lua_hud_source(get_instance_id());
 	d->camera = camera;
 	LiveGame &game = *world->hud_game();
 	Player *local = game.players().findPlayerWithName(local_player.utf8().get_data());
@@ -2582,7 +2592,12 @@ void InGameHudNode::_process(double delta)
 			}
 		};
 		hide("CommandButtons");
+		hide("CommandBackground");
+		hide("PalantirButtons");
 		hide("SideCommandBar");
+		hide("PalantirButtons.Buttons.Options");
+		hide("PalantirButtons.Buttons.Objectives");
+		hide("PalantirButtons.Buttons.PlayerMagic");
 		hide(palantir->spellBookPath());
 		if (auto *heroes = d->hud->heroSelect())
 			for (int slot = 0; slot < InGameHeroSelect::kSlots; ++slot)
@@ -2646,7 +2661,7 @@ void InGameHudNode::_process(double delta)
 		// while scrolling); its direction follows the scroll amount
 		const InGameUI &ui = d->hud->input().ui();
 		const bool overGui = !ui.isScrolling() && d->hud->isOverGui((int)d->lastPointer.x, (int)d->lastPointer.y);
-		d->updateCursor(delta, overGui ? std::string(MouseCursorName::Arrow) : ui.cursor(), ui.scrollAmountX(), ui.scrollAmountY(), ui.isScrolling());
+		d->updateCursor(delta, ui.isPlacing() && ui.placeHasGhost() && !overGui ? std::string() : (overGui ? std::string(MouseCursorName::Arrow) : ui.cursor()), ui.scrollAmountX(), ui.scrollAmountY(), ui.isScrolling());
 	}
 	const uint64_t t3 = Time::get_singleton()->get_ticks_usec();
 	d->updateMs = (double)(t1 - t0) / 1000.0;
@@ -2712,6 +2727,8 @@ Dictionary InGameHudNode::get_move_hints() const
 		Dictionary e;
 		e["slot"] = i;
 		e["frame"] = (int64_t)h.frame;
+		e["attack_move"] = h.attackMove;
+		e["controller"] = d->controllerLayout;
 		e["age"] = (int64_t)(ui.clientFrame() - h.frame);
 		e["position"] = toGodotAxes(h.pos);
 		e["x"] = h.pos.x;
@@ -2838,13 +2855,223 @@ void InGameHudNode::set_controller_layout(bool active)
 {
     if (d->controllerLayout == active) return;
     d->controllerLayout = active;
+    if (d->cam) d->cam->setControllerBounds(active);
     if (!d->hud) return;
+    if (!active) d->hud->setControllerSelectionHover(INVALID_ID);
     d->hud->radialMenu().setPresentationVisible(!active);
     // Restore exactly the visibility seen before our override, including clips
     // already hidden by the native HUD. Resolve paths afresh after movie changes.
     for (const auto &entry : d->controllerHidden)
         if (auto *clip = d->hud->windows().apt().resolvePath(d->hud->windows().apt().level(d->hud->palantir()->level()), entry.first)) clip->visible = entry.second;
     d->controllerHidden.clear();
+}
+
+static ::Object *controllerPickTarget(HudDevice *d, float selection_assist_radius, float viewportHeight, bool &assisted)
+{
+	assisted = false;
+	const InGameUI &ui = d->hud->input().ui();
+	const CommandButton *pending = ui.getGUICommand();
+	const HudContext &ctx = d->hud->input().context();
+	const ICoord2D pixel{ (int)d->lastPointer.x, (int)d->lastPointer.y };
+	::Object *target = HudObjects::pickForSelection(ctx, pixel);
+	if (!target && !pending && std::isfinite(selection_assist_radius) && selection_assist_radius > 0.0f && !d->hud->isOverGui(pixel.x, pixel.y))
+	{
+		const float radius = std::min(selection_assist_radius, 200.0f) * viewportHeight / 720.0f;
+		float bestDistance = radius * radius;
+		::Object *nearest = nullptr;
+		for (::Object *object = ctx.logic.getFirstObject(); object; object = object->getNextObject())
+		{
+			if (!object->isInWorld() || object->getContainedBy() || object->isKindOfName("STRUCTURE") || ui.isSelected(object->getID()) ||
+				!HudObjects::isLocallyControlled(ctx, *object) || !HudObjects::canSelect(ctx, *object, false)) continue;
+			ICoord2D projected;
+			if (!ctx.view.worldToScreen(*object->getPosition(), projected)) continue;
+			const float dx = (float)projected.x - pixel.x, dy = (float)projected.y - pixel.y;
+			const float distance = dx * dx + dy * dy;
+			if (distance < bestDistance || (distance == bestDistance && (!nearest || object->getID() < nearest->getID())))
+			{
+				bestDistance = distance;
+				nearest = object;
+			}
+		}
+		if (nearest) { assisted = true; return nearest; }
+	}
+	return target;
+}
+
+Dictionary InGameHudNode::get_controller_target(float selection_assist_radius)
+{
+	waitLogic(d.get());
+	Dictionary result;
+	if (!d->hud) return result;
+	d->hud->setControllerSelectionHover(INVALID_ID);
+	if (!d->controllerLayout) return result;
+	const auto context = d->hud->enterContext();
+	auto &input = d->hud->input();
+	input.update();
+	const InGameUI &ui = input.ui();
+	if (ui.isPlacing() || ui.getGUICommand() || d->hud->spellBar().targeting() || d->hud->isOverGui((int)d->lastPointer.x, (int)d->lastPointer.y)) return result;
+	bool assisted = false;
+	::Object *target = controllerPickTarget(d.get(), selection_assist_radius, get_viewport_rect().size.y, assisted);
+	if (!target) return result;
+	const bool selectable = HudObjects::canSelect(input.context(), *target, false);
+	const bool order = !assisted && ui.getSelectCount() > 0 && input.commandTranslator().evaluateContextCommand(target, target->getPosition(), EvaluateType::EvaluateOnly) != 0;
+	result["id"] = (int64_t)target->getID();
+	result["assisted"] = assisted;
+	result["can_select"] = selectable && !order;
+	if (selectable || order) d->hud->setControllerSelectionHover(target->getID());
+	return result;
+}
+
+int InGameHudNode::get_controller_primary_button(float selection_assist_radius) const
+{
+	waitLogic(d.get());
+	if (!d->hud) return (int)MouseButton::MOUSE_BUTTON_LEFT;
+	const auto context = d->hud->enterContext();
+	// Resolve the just-pinned pointer before choosing A's button, including the
+	// first controller press after switching from mouse input.
+	d->hud->input().update();
+	const InGameUI &ui = d->hud->input().ui();
+	// A selects unless the native context evaluator finds an applicable order.
+	// Placement and targeted abilities keep LMB.
+	const CommandButton *pending = ui.getGUICommand();
+	if (ui.isPlacing() || d->hud->spellBar().targeting() || (pending && pending->m_command != GUI_COMMAND_ATTACK_MOVE)) return (int)MouseButton::MOUSE_BUTTON_LEFT;
+	bool assisted = false;
+	::Object *target = controllerPickTarget(d.get(), selection_assist_radius, get_viewport_rect().size.y, assisted);
+	const HudContext &ctx = d->hud->input().context();
+	const ICoord2D pixel{ (int)d->lastPointer.x, (int)d->lastPointer.y };
+	if (assisted)
+	{
+		ctx.ui.deselectAll(true);
+		ctx.ui.selectObject(target->getID());
+		ClientMessage &message = ctx.stream.append(MSG_CREATE_SELECTED_GROUP);
+		message.appendBoolean(true);
+		message.appendObjectID(target->getID());
+		return 0;
+	}
+	if (ui.getSelectCount() == 0) return (int)MouseButton::MOUSE_BUTTON_LEFT;
+	Coord3D position;
+	const Coord3D *at = target ? target->getPosition() : (ctx.view.screenToTerrain(pixel, ctx.logic, position) ? &position : nullptr);
+	auto &commands = d->hud->input().commandTranslator();
+	// Evaluate the actual target, rather than its cursor: generic Move hints
+	// also appear over friendly objects even though no move can target them.
+	const bool order = at && commands.evaluateContextCommand(target, at, EvaluateType::EvaluateOnly) != 0;
+	return order && commands.useAlternateMouse() ? (int)MouseButton::MOUSE_BUTTON_RIGHT : (int)MouseButton::MOUSE_BUTTON_LEFT;
+}
+
+void InGameHudNode::set_placement_snap(bool active, float spacing)
+{
+	if (!d->hud) return;
+	auto &ui = d->hud->input().ui();
+	ui.placementSnap = active;
+	ui.placementGrid = std::isfinite(spacing) ? std::clamp(spacing, 10.0f, 200.0f) : 50.0f;
+}
+
+bool InGameHudNode::controller_select_area(float radius, bool commit)
+{
+	waitLogic(d.get());
+	if (!d->ready || !d->hud) return false;
+	const auto context = d->hud->enterContext();
+	auto &input = d->hud->input();
+	auto &ctx = input.context();
+	auto &ui = ctx.ui;
+	if (!std::isfinite(radius) || radius < 0)
+	{
+		ui.controllerAreaRadius = -1;
+		return true;
+	}
+	if (ui.isPlacing() || ui.getGUICommand() || d->hud->spellBar().targeting() || d->hud->isOverGui((int)d->lastPointer.x,(int)d->lastPointer.y)) return false;
+	if (radius == 0)
+	{
+		input.update();
+		if (!ctx.view.screenToTerrain({(int)d->lastPointer.x,(int)d->lastPointer.y},ctx.logic,ui.controllerAreaCenter)) return false;
+	}
+	ui.controllerAreaRadius = std::clamp(radius,0.0f,600.0f);
+	if (!commit) return true;
+	PackedInt64Array ids;
+	for (auto *o = ctx.logic.getFirstObject(); o; o = o->getNextObject())
+	{
+		if (!o->isInWorld() || o->getContainedBy() || o->isKindOfName("STRUCTURE") || !HudObjects::isLocallyControlled(ctx,*o) || !HudObjects::canSelect(ctx,*o,false)) continue;
+		const auto &p = *o->getPosition();
+		const float dx = p.x-ui.controllerAreaCenter.x, dy = p.y-ui.controllerAreaCenter.y;
+		if (dx*dx+dy*dy <= ui.controllerAreaRadius*ui.controllerAreaRadius) ids.push_back(o->getID());
+	}
+	ui.controllerAreaRadius = -1;
+	if (!ids.is_empty()) select_controller_group(ids);
+	return true;
+}
+
+bool InGameHudNode::controller_attack_move()
+{
+	waitLogic(d.get());
+	if (!d->ready || !d->hud) return false;
+	const auto context = d->hud->enterContext();
+	auto &input = d->hud->input();
+	input.update();
+	auto &ctx = input.context();
+	if (ctx.ui.isPlacing() || ctx.ui.getGUICommand() || d->hud->spellBar().targeting() || ctx.ui.getSelectCount() == 0) return false;
+	bool unit = false;
+	for (auto id : ctx.ui.selected())
+	{
+		const auto *o = ctx.logic.findObjectByID(id);
+		if (o && !o->isKindOfName("STRUCTURE") && !o->isKindOfName("IMMOBILE")) unit = true;
+	}
+	Coord3D at;
+	const ICoord2D pixel{(int)d->lastPointer.x, (int)d->lastPointer.y};
+	if (!unit || d->hud->isOverGui(pixel.x, pixel.y) || !ctx.view.screenToTerrain(pixel, ctx.logic, at)) return false;
+	ctx.stream.append(MSG_DO_ATTACKMOVETO).appendLocation(at);
+	input.update();
+	return true;
+}
+
+void InGameHudNode::controller_placement_aim(const Vector2 &direction)
+{
+	waitLogic(d.get());
+	if (!d->ready || !d->hud || !std::isfinite(direction.x) || !std::isfinite(direction.y) || direction.length_squared() == 0) return;
+	const auto context = d->hud->enterContext();
+	auto &input = d->hud->input();
+	input.update(); // the A press must establish its native placement anchor first
+	InGameUI &ui = input.ui();
+	if (!ui.isPlacing() || !ui.isPlacementAnchored()) return;
+	// BFME2Lua motion.lua: aim a point 200 pixels away at 720p, leaving
+	// the pointer at the anchor. Native terrain projection determines the angle.
+	const Vector2 offset = direction.normalized() * (200.0f * get_viewport_rect().size.y / 720.0f);
+	const ICoord2D start = ui.placementStart();
+	ui.setPlacementEnd({ start.x + (int)offset.x, start.y + (int)offset.y });
+	input.placementUpdate(true);
+}
+
+void InGameHudNode::controller_deselect()
+{
+	waitLogic(d.get());
+	if (!d->ready || !d->hud) return;
+	const auto context = d->hud->enterContext();
+	auto &input = d->hud->input();
+	input.update();
+	InGameUI &ui = input.ui();
+	if (ui.isPlacing() || ui.getGUICommand() || d->hud->spellBar().targeting())
+	{
+		const int now = (int)Time::get_singleton()->get_ticks_msec();
+		d->hud->mouseButton(HudInput::Button::Right, true, (int)d->lastPointer.x, (int)d->lastPointer.y, d->keyState, now);
+		d->hud->mouseButton(HudInput::Button::Right, false, (int)d->lastPointer.x, (int)d->lastPointer.y, d->keyState, now);
+		return;
+	}
+	const ICoord2D pixel{ (int)d->lastPointer.x, (int)d->lastPointer.y };
+	const ::Object *under = HudObjects::pickForSelection(input.context(), pixel);
+	if (!under)
+	{
+		ui.deselectAll(true);
+	}
+	else if (ui.isSelected(under->getID()))
+	{
+		ui.deselectObject(under->getID());
+		if (ui.selected().empty()) ui.deselectAll(true);
+		else
+		{
+			ClientMessage &message = input.stream().append(MSG_CREATE_SELECTED_GROUP_NO_SOUND);
+			message.appendBoolean(true);
+			for (::ObjectID id : ui.selected()) message.appendObjectID(id);
+		}
+	}
 }
 
 bool InGameHudNode::activate_command(int slot, bool in_palantir, bool cancel)
@@ -2893,7 +3120,7 @@ int64_t InGameHudNode::select_controller_group(const PackedInt64Array &ids)
     if (valid.empty()) return 0;
     ui.deselectAll(true);
     for (::ObjectID id : valid) ui.selectObject(id);
-    ClientMessage &message = d->hud->input().stream().append(MSG_CREATE_SELECTED_GROUP_NO_SOUND);
+    ClientMessage &message = d->hud->input().stream().append(MSG_CREATE_SELECTED_GROUP);
     message.appendBoolean(true);
     for (::ObjectID id : ui.selected()) message.appendObjectID(id);
     return (int64_t)ui.selected().size();
@@ -3194,6 +3421,15 @@ void InGameHudNode::camera_look_at(const Vector2 &sage_xy)
 	}
 }
 
+void InGameHudNode::camera_pan(const Vector2 &amount)
+{
+	if (d->cam && std::isfinite(amount.x) && std::isfinite(amount.y))
+	{
+		d->cam->scrollBy(amount.x, amount.y);
+		d->cam->snapInterpolation();
+	}
+}
+
 void InGameHudNode::camera_set_height(float height_above_ground)
 {
 	// lane PERF-3: client state, no wait for the logic worker (camera_look_at)
@@ -3337,6 +3573,26 @@ Dictionary InGameHudNode::get_camera() const
 	}
 	out["map_overrides"] = overridden;
 	out["height_field_ready"] = c.heightField().ready();
+	return out;
+}
+
+bool InGameHudNode::cursor_map_position(const GameWorld *world, Coord3D &out) const
+{
+	// Same displayed-camera terrain intersection used by placement, including
+	// synthetic controller pointer motion. Caller already holds the logic worker.
+	if (!d->ready || !d->cam || d->world != world || !world->hud_game()) return false;
+	const Vector2 pixel = d->livePointerSeen ? d->livePointer : d->lastPointer;
+	const auto size = get_viewport()->get_visible_rect().size;
+	if (pixel.x < 0 || pixel.y < 0 || pixel.x >= size.x || pixel.y >= size.y) return false;
+	return d->shown.screenToTerrain({(int)pixel.x, (int)pixel.y}, world->hud_game()->logic(), out);
+}
+
+std::vector<unsigned> InGameHudNode::selected_ids(const GameWorld *world) const
+{
+	std::vector<unsigned> out;
+	if (!d->ready || !d->hud || d->world != world) return out;
+	for (std::uint32_t id : d->hud->input().ui().selected())
+		out.push_back(id);
 	return out;
 }
 
@@ -3567,4 +3823,27 @@ Dictionary InGameHudNode::find_button_window(const String &path) const
 	return r;
 }
 
+} // namespace godot
+
+namespace godot {
+bool InGameHudNode::controller_formation(const String &action, const Vector2 &direction) {
+ waitLogic(d.get());
+ if(!d->ready||!d->hud)return false;
+ const auto context=d->hud->enterContext();
+ auto &input=d->hud->input();auto &formation=input.formationPlacement();
+ if(action=="cancel") {formation.cancel();return true;}
+ if(action=="begin") {
+  input.update();
+  const auto size=input.context().view.size();
+  return formation.begin({size.x/2,size.y/2},true);
+ }
+ if(!input.ui().formationActive)return false;
+ if(action=="commit") {formation.commit();return true;}
+ if(action=="aim" && std::isfinite(direction.x)&&std::isfinite(direction.y)) {
+  const auto size=input.context().view.size();
+  const Vector2 offset=direction.limit_length(1)*200.f*((float)size.y/720.f);
+  formation.aim({size.x/2+(int)offset.x,size.y/2+(int)offset.y});return true;
+ }
+ return false;
+}
 } // namespace godot

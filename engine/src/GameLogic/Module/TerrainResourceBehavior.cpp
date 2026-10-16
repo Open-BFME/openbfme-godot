@@ -138,7 +138,10 @@ UpdateSleepTime TerrainResourceBehavior::update()
 		}
 	}
 	// RW 0x885650 .. 0x885699: ceil(MaxIncome * share * modifier * bonus), x87 at 24 bits
-	double wide = NumericState::pc24MulW((double)m_data->m_maxIncome, (double)m_share);
+	float share = m_share;
+	const auto &rules = logic.settings().wallBalance;
+	if (rules.enabled && rules.enclosedIncome > 1 && WallBalance::enclosed(logic,*owner,*obj->getPosition(),true)) share = NumericState::pc24Mul(share,rules.enclosedIncome);
+	double wide = NumericState::pc24MulW((double)m_data->m_maxIncome, (double)share);
 	wide = NumericState::pc24MulW(wide, (double)modifier);
 	wide = NumericState::pc24MulW(wide, (double)bonus);
 	const float stored = NumericState::fstpDword(NumericState::ceilD(wide)); // fstp qword; MSVCR71 ceil; fstp dword

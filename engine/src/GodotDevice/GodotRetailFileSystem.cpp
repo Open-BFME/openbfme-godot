@@ -3,6 +3,11 @@
 #include "GodotDevice/GodotRetailFileSystem.h"
 
 #include "Common/RetailArchivePolicy.h"
+#include "Common/ArchiveFile.h"
+#include <filesystem>
+#include <godot_cpp/classes/config_file.hpp>
+#include <godot_cpp/classes/file_access.hpp>
+#include <godot_cpp/classes/dir_access.hpp>
 #include "GameClient/OptionPreferences.h"
 #include <godot_cpp/classes/os.hpp>
 #include "GameEngineDevice/Win32Device/Common/Win32BIGFileSystem.h"
@@ -110,6 +115,34 @@ Dictionary RetailFileSystem::mountFrom(const std::string &rotwkRoot, const std::
 		options.md5CachePath = toNative(ProjectSettings::get_singleton()->globalize_path("user://retail-md5-cache.tsv"));
 		std::unique_ptr<Win32BIGFileSystem> fs = std::make_unique<Win32BIGFileSystem>();
 		RetailMountReport report = MountRetailArchives(*fs, installs, options);
+		Ref<ConfigFile> wallOptions; wallOptions.instantiate();
+		wallOptions->load("res://dev/wall_balance.cfg");
+		Ref<ConfigFile> savedWalls; savedWalls.instantiate();
+		if (savedWalls->load("user://wall_balance.cfg") == OK) wallOptions = savedWalls;
+		if (report.ok && (bool)wallOptions->get_value("walls","new_towers",false))
+		{
+			const String resource = "res://mods/wall_towers.big";
+			String path = ProjectSettings::get_singleton()->globalize_path(resource);
+			std::error_code nativePathError;
+			if (!std::filesystem::is_regular_file(toNative(path), nativePathError))
+			{
+				path = ProjectSettings::get_singleton()->globalize_path("user://mods/wall_towers.big");
+				DirAccess::make_dir_recursive_absolute(path.get_base_dir());
+				const auto bytes = FileAccess::get_file_as_bytes(resource);
+				Ref<FileAccess> output = FileAccess::open(path,FileAccess::WRITE);
+				if (output.is_valid() && !bytes.is_empty()) {
+					output->store_buffer(bytes);
+					output->close(); // the native BIG reader must see a fully written physical file
+				} else {
+					report.ok = false;
+					report.errors.push_back("BFME2Lua wall towers: could not extract packaged tower assets to " + toNative(path));
+				}
+			}
+			std::string problem;
+			auto archive = fs->openArchiveFile(toNative(path), &problem);
+			if (archive) fs->mountArchive(std::move(archive),toNative(path),true);
+			else { report.ok = false; report.errors.push_back("BFME2Lua wall towers: " + problem); }
+		}
 		std::unique_ptr<Win32BIGFileSystem> menuFs;
 		if (report.ok && bfme2UI)
 		{

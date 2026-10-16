@@ -57,6 +57,7 @@
 #include "GameLogic/Map/CastleTemplates.h"
 #include "GameLogic/ObjectTemplateInfo.h"
 #include "GameLogic/ProductionSettings.h"
+#include "GameLogic/WallBalance.h"
 #include "GameLogic/ObjectTypes.h"
 
 #include <array>
@@ -136,6 +137,7 @@ struct ObjectFilter;
 
 struct GameLogicSettings
 {
+	WallBalance wallBalance;
 	bool enableRepulsors = true;                     ///< AIData EnableRepulsors (RW 0xDE4B40 + 0x18 + 0x64): the RepulsorHelper condition
 	float repulsedDistance = 0.0f;                   ///< AIData RepulsedDistance (+ 0x60, lane MODULES-3): the safe path radius beyond the vision range
 	bool useFormations = true;                       ///< AIData UseFormations (+ 0xBD, row RW 0xC1CE90 parseBool; the constructor RW 0x6FFDE5 stores 1; lane BACKLOG6): AIGroup RW 0x774897's formation gate

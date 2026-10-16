@@ -89,10 +89,14 @@ ActiveBody::ActiveBody(Thing *thing, const ActiveBodyModuleData *data)
 {
 	m_initialHealth = data->m_initialHealth; // +0x1C = data + 0xC
 	m_maxHealth = data->m_maxHealth;         // +0x20 = data + 0x8
-	const float inverse = SimMath::divf32(1.0f, m_maxHealth); // RW 0x8C392B divss
+	const int wallCategory = WallBalance::healthCategory(*getObject());
+	const auto &rules = getObject()->logic().settings().wallBalance;
+	const float wallMultiplier = rules.enabled && wallCategory >= 0 ? rules.health[wallCategory] : 1.0f;
+	m_maxHealth = SimMath::mulf32(m_maxHealth, wallMultiplier);
+	const float inverse = SimMath::divf32(1.0f, data->m_maxHealth); // RW 0x8C392B divss
 	m_damagedFraction = SimMath::mulf32(data->m_maxHealthDamaged, inverse); // RW 0x8C3930 mulss
 	m_reallyDamagedFraction = SimMath::mulf32(data->m_maxHealthReallyDamaged, inverse); // RW 0x8C393E mulss
-	m_currentHealth = data->m_initialHealth == -1.0f ? data->m_maxHealth : data->m_initialHealth;
+	m_currentHealth = SimMath::mulf32(data->m_initialHealth == -1.0f ? data->m_maxHealth : data->m_initialHealth, wallMultiplier);
 	m_previousHealth = m_currentHealth;
 	m_reviveReference = m_currentHealth; // lane HERO-1: module + 0x2C starts at the actual initial health
 	m_curDamageState = BODY_PRISTINE; // RW 0x8C3841 ends with setCorrectDamageState: its effects need the finished object, so applyInitialDamageState runs after Object::buildModules
@@ -366,6 +370,12 @@ void ActiveBody::attemptDamage(DamageInfo &info)
 	{
 		return;
 	}
+	if (type != DAMAGE_HEALING && !info.m_input.m_kill)
+		if (const Object *source = logic.findObjectByID(info.m_input.m_sourceID))
+			if (!WallBalance::attackerAllowed(obj,*source)) {
+				info.m_output.m_actualDamageDealt = info.m_output.m_actualDamageClipped = 0;
+				return;
+			}
 	// (3) UNATTACKABLE only takes UNRESISTABLE
 	if (obj.testStatus((unsigned)st.unattackable) && type != DAMAGE_UNRESISTABLE)
 	{

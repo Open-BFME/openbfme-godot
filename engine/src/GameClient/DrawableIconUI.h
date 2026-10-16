@@ -75,6 +75,7 @@ struct IconUISettings
 {
 	bool showObjectHealth = false;       ///< GameData ShowObjectHealth
 	bool allHealthBars = false;          ///< Options.ini AllHealthBars
+	ObjectID controllerHover = INVALID_ID; ///< controller target preview always exposes this object's health
 	const ObjectFilter *veterancyFilter = nullptr; ///< GameData VeterancyPipDrawObjectFilter (null: no marks, reported)
 	const MappedImageCollection *images = nullptr;
 	const GameTextSource *text = nullptr;

@@ -2,6 +2,7 @@
 // See Common/BuildAssistant.h.
 
 #include "Common/BuildAssistant.h"
+#include <cmath>
 
 #include "Common/AsciiString.h"
 #include "Common/GameCommon.h"
@@ -70,6 +71,11 @@ float BuildAssistant::buildTime(const ThingTemplate &tt)
 int BuildAssistant::calcCostToBuild(const ThingTemplate &tt, const Player *player, const Object *producer, int costOverride)
 {
 	int cost = costOverride == -1 ? (int)buildCost(tt) : costOverride;
+	if (producer && costOverride == -1) {
+		const auto &r = producer->logic().settings().wallBalance;
+		const int category = WallBalance::costCategory(tt);
+		if (r.enabled && category >= 0) cost = (int)std::floor(cost * r.cost[category] + .5f);
+	}
 	if (!player)
 	{
 		return cost;

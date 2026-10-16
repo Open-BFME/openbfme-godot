@@ -25,6 +25,8 @@ import json
 import sys
 from pathlib import Path
 
+from compact_retail_assets import compact_names
+
 REPO = Path(__file__).resolve().parents[2]
 TABLES = REPO / "engine" / "data" / "retail-archives"
 FILES = Path(__file__).resolve().parent / "aio_package_files.json"
@@ -73,6 +75,15 @@ def render() -> str:
             out.append(f'\t\t[{json.dumps(name)}, "{md5}", {int(size)}],')
         out.append("\t]},")
     out.append("]")
+    # the iOS app downloads only the compact set (the required archives and the menu movies: compact_retail_assets.compact_names)
+    out += ["", "## Per package key: the files of the compact set, the only ones the iOS app downloads (AioInstall.use_compact).", "const COMPACT := {"]
+    for table, key, *_ in GAMES:
+        rows = files[json.loads((TABLES / table).read_text())["package"]["guid"]]
+        chosen = compact_names({r[0]: r[2] for r in rows}, key)
+        out.append(f'\t"{key}": [')
+        out += [f'\t\t{json.dumps(r[0])},' for r in rows if r[0] in chosen]
+        out.append("\t],")
+    out.append("}")
     return "\n".join(out) + "\n"
 
 

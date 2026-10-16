@@ -110,7 +110,7 @@ bool plan(GameLogic &logic, Object &hub, const Coord3D &start, const Coord3D &en
 // at 1.0 health, staggered by StaggeredBuildFactor * index frames (lane BUILD-4: in retail's order - the stagger first, then percent 0, the status bits, the
 // construction conditions and the drawable's fade-in over 138 client frames, S-1520), links the tiles, and charges the whole cost. The made objects go to `made`
 // (may be null)
-bool build(GameLogic &logic, Object &hub, const Coord3D &start, const Coord3D &end, Player &owner, unsigned options, std::vector<ObjectID> *made);
+bool build(GameLogic &logic, Object &hub, const Coord3D &start, const Coord3D &end, Player &owner, unsigned options, std::vector<ObjectID> *made, bool startingWalls = false);
 
 void registerModules(ModuleFactory &modules);
 std::vector<std::string> stopLines();

@@ -358,7 +358,7 @@ TEST_CASE("Lua construction: builderless foundation rises at its own rate and en
 	REQUIRE(normal);
 	REQUIRE(fast);
 	CHECK(player->getMoney()->countMoney() == money - 2 * cost);
-	CHECK(normal->getBuilderID() == INVALID_ID);
+	CHECK(normal->getBuilderID() == normal->getID()); // native self-construction marker
 	CHECK(fast->isUnderConstruction());
 	CHECK(fast->getConstructionPercent() == 0.0f);
 	CHECK(fast->getBodyModule()->getHealth() == 1.0f);

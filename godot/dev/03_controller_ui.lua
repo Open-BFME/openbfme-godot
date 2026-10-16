@@ -17,7 +17,7 @@ package.preload['lib.controller.palantir'] = function()
     return M
 end
 
--- Navigation state lives in Lua so console.reload() also resets controller UI state.
+-- Navigation state lives in Lua so bfme.console.reload() also resets controller UI state.
 local ui=require('lib.controller.palantir')
 ui.command=1
 ui.shortcut=1

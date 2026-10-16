@@ -83,6 +83,7 @@ public:
 	float rotateSpeedScale() const { return m_rotateScale; }
 
 	// ---- state, for tests and the report ----
+	void cancelPointer() { stopScrolling(); m_rotating = false; }
 	bool isScrolling() const { return m_scrolling; }
 	int scrollType() const { return m_scrollType; }
 	bool isRotating() const { return m_rotating; }

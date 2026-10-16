@@ -167,6 +167,8 @@ const ThingTemplate *WallHubBehavior::cliffCapTemplate() const { return byName(m
 bool WallHubBehavior::maxBuildoutDistance(float &out) const
 {
 	out = m_data->m_maxBuildoutDistance;
+	const auto &r = getObject()->logic().settings().wallBalance;
+	if (r.enabled && out != 54321.0f) out *= getObject()->getTemplate()->getName().find("Outer") != std::string::npos ? r.hubRange : r.fortressRange;
 	return !(m_data->m_maxBuildoutDistance == 54321.0f); // RW 0x855EAC: true unless it is the unset default
 }
 
@@ -308,6 +310,7 @@ bool WallSpan::plan(GameLogic &logic, Object &hub, const Coord3D &start, const C
 		while ((int)i < maxTiles - 1)
 		{
 			const ThingTemplate *tt = wh->patternTemplate(i);
+			if (logic.settings().wallBalance.enabled && !logic.settings().wallBalance.intermediateHubs && tt && WallBalance::costCategory(*tt) == 1) tt = wh->defaultSegmentTemplate();
 			tt = tt ? tt : hub.getTemplate();
 			float half = SimMath::subf32(halfExtentY(*tt), 1.0f);
 			if (remaining < SimMath::addf32(SimMath::mulf32(half, 2.0f), done))
@@ -385,10 +388,10 @@ bool WallSpan::plan(GameLogic &logic, Object &hub, const Coord3D &start, const C
 	return false;
 }
 
-bool WallSpan::build(GameLogic &logic, Object &hub, const Coord3D &start, const Coord3D &end, Player &owner, unsigned options, std::vector<ObjectID> *made)
+bool WallSpan::build(GameLogic &logic, Object &hub, const Coord3D &start, const Coord3D &end, Player &owner, unsigned options, std::vector<ObjectID> *made, bool startingWalls)
 {
 	Plan p;
-	if (!plan(logic, hub, start, end, options, p) || (p.worstCode != 0 && p.worstCode != 10) || owner.getMoney()->countMoney() < (std::uint32_t)p.cost)
+	if (!plan(logic, hub, start, end, options, p) || (!startingWalls && ((p.worstCode != 0 && p.worstCode != 10) || owner.getMoney()->countMoney() < (std::uint32_t)p.cost)))
 	{
 		return false;
 	}
@@ -432,7 +435,11 @@ bool WallSpan::build(GameLogic &logic, Object &hub, const Coord3D &start, const 
 		{
 			lastHub = obj;
 		}
-		obj->setBuildCostPaid((float)BuildAssistant::calcCostToBuild(*t.tmpl, &owner, &hub, -1)); // RW 0x7953F5
+		obj->setBuildCostPaid(startingWalls ? 0 : (float)BuildAssistant::calcCostToBuild(*t.tmpl, &owner, &hub, -1));
+		if (startingWalls) {
+			Construction::completeConstruction(*obj,&hub);
+			if (auto *body=dynamic_cast<ActiveBody *>(obj->getBodyModule())) body->internalChangeHealth(body->getMaxHealth()-body->getHealth());
+		} // RW 0x7953F5
 	}
 	// RW 0x79541C ff: the hub, the end hub and every tile know each other (GettingBuiltBehavior slot 18)
 	Object *endHub = logic.findObjectByID(p.endHub);
@@ -471,9 +478,9 @@ bool WallSpan::build(GameLogic &logic, Object &hub, const Coord3D &start, const 
 		link(hub, tile);
 	}
 	(void)lastHub;
-	owner.withdrawMoney((std::uint32_t)p.cost, true); // RW 0x7954D6
+	if (!startingWalls) owner.withdrawMoney((std::uint32_t)p.cost, true); // RW 0x7954D6
 	// RW 0x795637 .. 0x795647 (lane END-2): the spend by kind with the first planned tile's template (RW 0x795126(0) -> TheThingFactory by name)
-	owner.getScoreKeeper().addMoneySpentByKind(logic, p.tiles.empty() ? nullptr : p.tiles[0].tmpl, p.cost);
+	if (!startingWalls) owner.getScoreKeeper().addMoneySpentByKind(logic, p.tiles.empty() ? nullptr : p.tiles[0].tmpl, p.cost);
 	if (made)
 	{
 		*made = ids;

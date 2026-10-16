@@ -224,16 +224,20 @@ bool wantsHealthBar(const Object &obj, const IconUISettings &s, const std::set<O
 	static const int STRUCTURE = kindIndex("STRUCTURE"), HAS_HEALTH_BAR = kindIndex("HAS_HEALTH_BAR"), INFANTRY = kindIndex("INFANTRY"), CAVALRY = kindIndex("CAVALRY");
 	static const int WALL_UPGRADE = kindIndex("WALL_UPGRADE"), DEFENSIVE_WALL = kindIndex("DEFENSIVE_WALL"), UNATTACKABLE = kindIndex("UNATTACKABLE");
 	static const int ROCK_VENDOR = kindIndex("ROCK_VENDOR"), HORDE = kindIndex("HORDE");
-	if (!s.showObjectHealth)
+	const bool controllerHover = s.controllerHover != INVALID_ID && (s.controllerHover == obj.getID() ||
+		(obj.getContainedBy() && kindOf(*obj.getContainedBy(), HORDE) && s.controllerHover == obj.getContainedBy()->getID()));
+	if (!s.showObjectHealth && !controllerHover)
 	{
 		return false;
 	}
 	bool sel = selected.count(obj.getID()) != 0;
+	bool hovered = mousedOver == obj.getID();
 	if (!sel && obj.getContainedBy() && kindOf(*obj.getContainedBy(), HORDE))
 	{
 		sel = selected.count(obj.getContainedBy()->getID()) != 0;
+		hovered = hovered || mousedOver == obj.getContainedBy()->getID();
 	}
-	if (!sel && mousedOver != obj.getID())
+	if (!sel && !hovered)
 	{
 		// lane OPTS-2: the OpenBFME health bar mode (retail: none here)
 		const BodyModuleInterface *body = s.healthBarMode == IconUISettings::HEALTH_BARS_DAMAGED ? obj.getBodyModule() : nullptr;
@@ -253,7 +257,7 @@ bool wantsHealthBar(const Object &obj, const IconUISettings &s, const std::set<O
 			return false;
 		}
 	}
-	if (!kindOf(obj, HERO) && !kindOf(obj, MACHINE) && !kindOf(obj, MONSTER) && !kindOf(obj, MINE) && !kindOf(obj, STRUCTURE) && !kindOf(obj, HAS_HEALTH_BAR))
+	if (!controllerHover && !kindOf(obj, HERO) && !kindOf(obj, MACHINE) && !kindOf(obj, MONSTER) && !kindOf(obj, MINE) && !kindOf(obj, STRUCTURE) && !kindOf(obj, HAS_HEALTH_BAR))
 	{
 		// lane ZOOM-1: the OpenBFME "Always (all players)" mode shows the infantry and cavalry bars as AllHealthBars does (the owner, 2026-10-10: "see all my
 		// troops' health bars all the time, and the enemies' too"); retail's AllHealthBars alone only widens the kinds of the selected / moused-over objects

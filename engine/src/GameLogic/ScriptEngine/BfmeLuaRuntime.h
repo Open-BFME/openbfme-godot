@@ -49,6 +49,8 @@ class BfmeLuaRuntime
 		bool ready = false, paused = false;
 		int localPlayerId = -1;
 		unsigned frame = 0;
+		Value cursorPosition; // nil when no active terrain hit; SAGE x/y/z otherwise
+		std::vector<unsigned> selection; // client-selected object IDs, newest first (InGameUI::selected)
 		std::map<std::string, Records> collections;
 	};
 	struct Mutation

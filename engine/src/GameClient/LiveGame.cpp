@@ -234,6 +234,7 @@ bool LiveGame::load(const Options &options, std::string *error)
 	m_drawables.reset(); // (not yet made: the manager needs the logic's settings)
 	m_logic = std::make_unique<GameLogic>(m_world.things(), m_world.modules(), *m_players, RandomAlgorithm::ZH_CarryChain);
 	m_logic->settings() = settings;
+	m_logic->settings().wallBalance = options.wallBalance;
 	m_logic->settings().night = m_map.chunks.hasGlobalLighting && m_map.chunks.lighting.timeOfDay == 4;
 	m_logic->settings().snowy = m_map.chunks.hasWorldInfo && m_map.chunks.worldInfo.getInt("weather") == 1;
 	m_logic->setTerrain(&m_terrain);
@@ -445,6 +446,7 @@ bool LiveGame::load(const Options &options, std::string *error)
 			progress(counter++);
 		}
 		m_report.startingObjects = placed.placed;
+		WallBalance::createStartingWalls(*m_logic);
 		// RW cachePlayerPtrs (0x808B6A): the players the victory rules watch, once their bases exist (a game that was not started from a skirmish setup, a map or script test with
 		// no bases, has no victory rules to judge: everyone would be eliminated at frame 25)
 		m_logic->victory().init();

@@ -11,6 +11,7 @@
 #pragma once
 
 #include "GameClient/HudContext.h"
+#include "GameClient/FormationPlacement.h"
 #include "GameClient/MessageStream/CommandXlat.h"
 #include "GameClient/MessageStream/GUICommandTranslator.h"
 #include "GameClient/MessageStream/HotKey.h"
@@ -80,6 +81,7 @@ public:
 	const MetaEventTranslator &metaTranslator() const { return m_meta; }
 	MetaEventTranslator &metaTranslator() { return m_meta; }
 	PlaceEventTranslator &placeTranslator() { return m_place; }
+	FormationPlacement &formationPlacement() { return m_formation; }
 	SelectionTranslator &selectionTranslator() { return m_selection; }
 	HotKeyTranslator &hotKeyTranslator() { return m_hotKey; }
 	MessageStream &stream() { return m_stream; }
@@ -99,6 +101,7 @@ private:
 	MessageStream m_stream;
 	HudContext m_ctx;
 	MetaEventTranslator m_meta;
+	FormationPlacement m_formation;
 	PlaceEventTranslator m_place; // BUILD-1
 	GUICommandTranslator m_guiCommand;
 	CommandTranslator m_command;

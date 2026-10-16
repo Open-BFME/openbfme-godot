@@ -125,6 +125,7 @@ private:
 	{
 		bool known = false, dead = false;
 		float health = 0.0f;
+		unsigned damageFrame = 0xFFFFFFFFu; ///< ActiveBody::lastDamageFrame at the last watch
 	};
 	void evaWatch(const Object &o);
 	void largeGroupUpdate();

@@ -555,6 +555,7 @@ void GameLogic::update(int phase)
 		{
 			++m_frame;
 		}
+		WallBalance::createStartingWalls(*this); // after packed starting fortresses have unpacked
 		m_fxEvents.beginFrame(); // lane FX-2: the event list holds the current frame's calls only
 		runRow(ROW_COMMAND_ONLY);
 	}

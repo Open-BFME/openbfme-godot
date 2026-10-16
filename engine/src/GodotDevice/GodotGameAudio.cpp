@@ -13,6 +13,7 @@
 #include "GodotDevice/GodotRetailFileSystem.h"
 
 #include <godot_cpp/classes/audio_server.hpp>
+#include <godot_cpp/classes/project_settings.hpp>
 #include <godot_cpp/classes/audio_stream_mp3.hpp>
 #include <godot_cpp/classes/time.hpp>
 #include <godot_cpp/core/class_db.hpp>
@@ -231,12 +232,14 @@ int GodotAudioDevice::startVoice(const VoiceStart &start, std::string *error)
 	}
 	slot.voice = m_nextVoice++;
 	slot.loop = start.loop;
+	slot.stream = start.kind == VoiceKind::Stream;
 	slot.fadeInMs = start.fadeInMs;
 	slot.startedMs = m_nowMs;
 	slot.player->set_stream(stream);
 	applyParams(slot, start.params, m_nowMs);
 	startAtVolume(slot);
 	slot.player->play((float)(start.startFraction * lengthSeconds));
+	slot.player->set_stream_paused(m_suspended && slot.stream);
 	m_voiceSlot[slot.voice] = slotIndex;
 	++m_started;
 	return slot.voice;
@@ -312,7 +315,7 @@ bool GodotAudioDevice::isVoicePlaying(int voice)
 		return false;
 	}
 	Slot &slot = m_slots[it->second];
-	return slot.loop || slot.player->is_playing();
+	return slot.loop || slot.player->get_stream_paused() || slot.player->is_playing();
 }
 
 double GodotAudioDevice::fileLengthMs(const std::string &file, std::string *error)
@@ -330,6 +333,14 @@ void GodotAudioDevice::process(double nowMs)
 			setVolume(s, s.volume * (float)std::min(1.0, (nowMs - s.startedMs) / s.fadeInMs));
 		}
 	}
+}
+
+void GodotAudioDevice::setSuspended(bool suspended)
+{
+	if (m_suspended == suspended) return;
+	m_suspended = suspended;
+	for (auto &slot : m_slots)
+		if (slot.voice && slot.player && slot.stream) slot.player->set_stream_paused(suspended);
 }
 
 void GodotAudioDevice::stopAll()
@@ -351,7 +362,7 @@ size_t GodotAudioDevice::activeVoices() const
 	size_t n = 0;
 	for (const Slot &s : m_slots)
 	{
-		n += (s.voice && (s.loop || s.player->is_playing()));
+		n += (s.voice && (s.loop || s.player->get_stream_paused() || s.player->is_playing()));
 	}
 	return n;
 }
@@ -389,6 +400,11 @@ void GameAudio::tearDown()
 
 void GameAudio::_notification(int what)
 {
+	if (m_device && (what == NOTIFICATION_APPLICATION_FOCUS_OUT || what == NOTIFICATION_APPLICATION_FOCUS_IN))
+	{
+		const bool mute = ProjectSettings::get_singleton()->get_setting("openbfme/audio/mute_unfocused",true);
+		m_device->setSuspended(what == NOTIFICATION_APPLICATION_FOCUS_OUT && mute);
+	}
 	if (what == NOTIFICATION_PREDELETE)
 	{
 		tearDown();

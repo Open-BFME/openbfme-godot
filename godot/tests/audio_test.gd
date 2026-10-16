@@ -76,10 +76,11 @@ func _run() -> int:
 	_check(booted.ok, "boot: " + str(booted.get("errors", [])))
 	if not booted.ok:
 		return EXIT_FAIL
-	_check(booted.events == 7988, "7,988 audio events parsed (%d)" % booted.events)
+	var menu_aliases := Array(audio.get_event_names(-1)).filter(func(name): return str(name).begins_with("OpenBFMEMenu::")).size()
+	_check(booted.events - menu_aliases == 7988, "7,988 retail audio events plus %d menu-theme aliases" % menu_aliases)
 	_check(booted.sample_count_2d == 4 and booted.sample_count_3d == 25 and booted.stream_count == 3, "voice pools 4 / 25 / 3 from AudioSettings.ini")
 	_check(audio.get_event_names(2).size() == 6630, "6,630 non-default AudioEvent names (%d)" % audio.get_event_names(2).size())
-	_check(audio.get_event_names(5).size() == 608, "608 Multisound names")
+	_check(Array(audio.get_event_names(5)).filter(func(name): return not str(name).begins_with("OpenBFMEMenu::")).size() == 608, "608 retail Multisound names")
 	_check(audio.is_valid_event("Gui_ShellMapMouseOver"), "the shell button sound exists")
 	_check(not audio.is_valid_event("NoSuchEvent"), "an unknown event is invalid")
 
@@ -107,6 +108,16 @@ func _run() -> int:
 	await _wait(0.5)
 	_check(audio.is_music_playing(), "the shell music is playing (track %s)" % audio.get_music_track())
 	_check(audio.get_stats().playing_streams == 1, "one stream voice")
+	var focus_track: String = audio.get_music_track()
+	AudioServer.set_bus_mute(AudioServer.get_bus_index("Master"),true)
+	audio.notification(Node.NOTIFICATION_APPLICATION_FOCUS_OUT)
+	await _wait(0.25)
+	_check(audio.is_music_playing() and audio.get_music_track() == focus_track, "focus loss preserves the paused music track")
+	audio.notification(Node.NOTIFICATION_APPLICATION_FOCUS_IN)
+	AudioServer.set_bus_mute(AudioServer.get_bus_index("Master"),false)
+	await _wait(0.25)
+	_check(audio.is_music_playing() and audio.get_music_track() == focus_track, "focus return resumes the same music track")
+
 
 	# the engine entry points (AudioApi) reach this manager while it is booted
 	_check(audio.engine_api_installed(), "AudioApi has the booted manager installed")

@@ -1101,6 +1101,7 @@ bool ObjectWeapons::chooseBestWeaponForTarget(const Object *victimIn, WeaponChoi
 bool ObjectWeapons::canAttackObject(const Object &victim, CommandSourceType source, bool forced) const
 {
 	const CombatNames::Status &st = CombatNames::statuses();
+	if (!WallBalance::attackerAllowed(victim,*m_owner)) return false;
 	if (&victim == m_owner || !CombatQueries::isAlive(*m_owner) || !CombatQueries::isAlive(victim))
 	{
 		return false;

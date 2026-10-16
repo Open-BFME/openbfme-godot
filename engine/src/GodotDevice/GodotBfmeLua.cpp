@@ -3,6 +3,7 @@
 #include "GameLogic/Construction.h"
 #include "GameLogic/BuildPlacement.h"
 #include "GameLogic/Module/DozerAIUpdate.h"
+#include "GameLogic/Module/ProductionUpdate.h"
 #include "Common/Player.h"
 #include "Common/PlayerList.h"
 #include "Common/Thing/ThingTemplate.h"
@@ -14,6 +15,7 @@
 #include "GameLogic/SimMath.h"
 #include "GameLogic/System/ShroudManager.h"
 #include "GodotDevice/GodotGameWorld.h"
+#include "GodotDevice/GodotInGameHud.h"
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -93,6 +95,13 @@ BfmeLuaRuntime::Snapshot GameWorld::bfme_snapshot()
 	if (!m_game)
 		return out;
 	out.ready = true;
+	if (auto hud = Object::cast_to<InGameHudNode>(ObjectDB::get_instance(ObjectID(m_luaHudSource))))
+	{
+		Coord3D point;
+		if (hud->cursor_map_position(this, point))
+			out.cursorPosition = Table{{"x", double(point.x)}, {"y", double(point.y)}, {"z", double(point.z)}};
+		out.selection = hud->selected_ids(this);
+	}
 	auto &logic = m_game->logic();
 	out.frame = logic.getFrame();
 	auto &players = logic.players();
@@ -210,6 +219,24 @@ std::string GameWorld::bfme_construction_status(unsigned id)
 
 std::string GameWorld::bfme_apply(const BfmeLuaRuntime::Mutation &m)
 {
+	if (m.collection == "templates" || m.collection == "unitTypes" || m.collection == "buildingTypes")
+	{
+		if (!m_world) return "definitions are not loaded";
+		auto base = m_world->things().findTemplate(m.id);
+		if (!base)
+			return "expired template";
+		auto tt = const_cast<ThingTemplate *>(base->getFinalOverride());
+		static const std::map<std::string, std::string> fields{
+			{"cost", "BuildCost"},		{"refund", "RefundValue"},		{"buildTime", "BuildTime"},
+			{"trainTime", "BuildTime"}, {"visionRange", "VisionRange"}, {"shroudClearingRange", "ShroudClearingRange"}};
+		auto f = fields.find(m.field);
+		if (f == fields.end())
+			return "unsupported template field";
+		bool integer = m.field == "cost" || m.field == "refund";
+		double n = numeric(m.value, 0, integer ? 65535 : 1e30, integer);
+		FieldValue value = integer ? FieldValue((long long)SimMath::ftol2(n)) : FieldValue(SimMath::fstpDword(n));
+		return tt->setRuntimeField(f->second, std::move(value)) ? "" : "template field is unavailable";
+	}
 	if (!m_game || !m_world)
 		return "no active match";
 	auto &logic = m_game->logic();
@@ -285,28 +312,48 @@ std::string GameWorld::bfme_apply(const BfmeLuaRuntime::Mutation &m)
 			return "unsupported player field";
 		return {};
 	}
-	if (m.collection == "templates" || m.collection == "unitTypes" || m.collection == "buildingTypes")
-	{
-		auto base = m_world->things().findTemplate(m.id);
-		if (!base)
-			return "expired template";
-		auto tt = const_cast<ThingTemplate *>(base->getFinalOverride());
-		static const std::map<std::string, std::string> fields{
-			{"cost", "BuildCost"},		{"refund", "RefundValue"},		{"buildTime", "BuildTime"},
-			{"trainTime", "BuildTime"}, {"visionRange", "VisionRange"}, {"shroudClearingRange", "ShroudClearingRange"}};
-		auto f = fields.find(m.field);
-		if (f == fields.end())
-			return "unsupported template field";
-		bool integer = m.field == "cost" || m.field == "refund";
-		double n = numeric(m.value, 0, integer ? 65535 : 1e30, integer);
-		FieldValue value = integer ? FieldValue((long long)SimMath::ftol2(n)) : FieldValue(SimMath::fstpDword(n));
-		return tt->setRuntimeField(f->second, std::move(value)) ? "" : "template field is unavailable";
-	}
 	if (m.collection == "unitInstances" || m.collection == "buildingInstances")
 	{
 		auto obj = logic.findObjectByID(numberId(m.id));
 		if (!obj || obj->isDestroyed())
 			return "expired object";
+		if (m.field == ":trainUnit")
+		{
+			if (m.collection != "buildingInstances" || !obj->isKindOfName("STRUCTURE") || obj->isEffectivelyDead())
+				return "producer must be a living building";
+			auto production = obj->getProductionUpdate();
+			if (!production || obj->isUnderConstruction()) return "building is not ready for production";
+			auto name = std::get_if<std::string>(&m.value.data);
+			auto tt = name ? m_world->things().findTemplate(*name) : nullptr;
+			if (!tt || !kind(logic.templateInfo(tt->getFinalOverride()), 1) || kind(logic.templateInfo(tt->getFinalOverride()), 7))
+				return "unknown unit template";
+			tt = tt->getFinalOverride();
+			if (m.args.size() != 1) return "expected production count";
+			const int count = int(numeric(m.args[0], 1, 1000));
+			for (int queued = 0; queued < count; ++queued)
+			{
+				// Same eligibility, unique IDs and queue path as MSG_QUEUE_UNIT_CREATE
+				// (GameLogicDispatch::queueUnitCreate). One entry per requested recruitment,
+				// so money/queue limits are rechecked rather than using the five-unit batch flag.
+				const auto allowed = BuildAssistant::canMakeUnit(*obj, tt, -1);
+				std::string reason;
+				switch (allowed)
+				{
+				case CANMAKE_OK: break;
+				case CANMAKE_NO_MONEY: reason = "not enough gold"; break;
+				case CANMAKE_NO_PREREQUISITES: reason = "unit unavailable at this building or prerequisites missing"; break;
+				case CANMAKE_FACTORY_IS_DISABLED: reason = "building disabled"; break;
+				case CANMAKE_QUEUE_FULL: reason = "production queue full"; break;
+				case CANMAKE_PARKING_PLACES_FULL: reason = "no room for units"; break;
+				case CANMAKE_MAXED_OUT_FOR_PLAYER: reason = "player unit limit reached"; break;
+				default: reason = "production unavailable (code " + std::to_string(allowed) + ")"; break;
+				}
+				if (reason.empty() && !production->queueCreateUnit(tt, -1, production->requestUniqueUnitID(), -1, false, {}, false))
+					reason = "native production queue refused request";
+				if (!reason.empty()) return "queued " + std::to_string(queued) + " of " + std::to_string(count) + ": " + reason;
+			}
+			return {};
+		}
 		if (m.field == ":kill")
 		{
 			obj->kill(DEATH_NORMAL);

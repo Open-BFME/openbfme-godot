@@ -3,6 +3,8 @@ extends CanvasLayer
 
 signal toggled(open: bool)
 var execute: Callable
+var history_path := "user://console_history.cfg"
+var controller_options_path := "user://controller_options.cfg"
 var _root: Control
 var _panel: PanelContainer
 var _scroll: ScrollContainer
@@ -65,6 +67,7 @@ func _text_view() -> TextEdit:
 	return view
 
 func _ready() -> void:
+	_load_history()
 	layer = 100
 	_root = Control.new()
 	_root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -170,6 +173,8 @@ func _ready() -> void:
 	_log.name = "Log"
 	_tabs.add_child(_log)
 	_build_cheats()
+	_build_controller_options()
+	preload("res://scripts/wall_balance_options.gd").build(_tabs)
 	_tabs.tab_changed.connect(func(_index: int) -> void:
 		if _tabs.current_tab == 0:
 			_entry.grab_focus())
@@ -187,7 +192,7 @@ func _ready() -> void:
 	var footer := _label("` toggle · Esc close · ↑ / ↓ history · Ctrl+Shift+F5 reload", MUTED, 12)
 	footer.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	chrome.add_child(footer)
-	_append("BFME scripting console\nInspect the realm, shape the battle.\n\nTry  bfme.getLiveDataStatus()  or  bfme.players.localPlayer.money\n")
+	_append("BFME scripting console\nInspect the realm, shape the battle.\n\nTry  bfme.match.getStatus()  or  bfme.players.localPlayer.money\n")
 	get_viewport().size_changed.connect(_layout)
 	_layout()
 	_root.hide()
@@ -227,11 +232,11 @@ func _build_cheats() -> void:
 	var visibility := HFlowContainer.new()
 	rows.add_child(visibility)
 	visibility.add_child(_button("Reveal map", func() -> void:
-		_submit("assert(bfme.players.localPlayer,'No local player in this match').revealMap=true")))
+		_submit("assert(bfme.players.localPlayer,'No local player in this match'):revealMap()")))
 	visibility.add_child(_button("Disable fog of war", func() -> void:
-		_submit("assert(bfme.players.localPlayer,'No local player in this match').fogOfWar=false")))
+		_submit("assert(bfme.players.localPlayer,'No local player in this match'):setFogOfWar(false)")))
 	visibility.add_child(_button("Restore fog of war", func() -> void:
-		_submit("assert(bfme.players.localPlayer,'No local player in this match').fogOfWar=true")))
+		_submit("assert(bfme.players.localPlayer,'No local player in this match'):setFogOfWar(true)")))
 	var speed_row := HFlowContainer.new()
 	rows.add_child(speed_row)
 	speed_row.add_child(_label("Game speed"))
@@ -244,15 +249,63 @@ func _build_cheats() -> void:
 	speed.custom_minimum_size.x = 110
 	speed_row.add_child(speed)
 	speed_row.add_child(_button("Apply speed", func() -> void:
-		_submit("setGameSpeed(%s)" % str(speed.value))))
+		_submit("bfme.match.setGameSpeed(%s)" % str(speed.value))))
 	rows.add_child(_label("0 stops time · 1 normal · 2 twice as fast · max 100", MUTED, 12))
 	var actions := HFlowContainer.new()
 	rows.add_child(actions)
 	actions.add_child(_button("Normal speed", func() -> void:
 		speed.value = 1
-		_submit("setGameSpeed(1)")))
-	actions.add_child(_button("Pause", func() -> void: _submit("bfme.pause()")))
-	actions.add_child(_button("Resume", func() -> void: _submit("bfme.unpause()")))
+		_submit("bfme.match.setGameSpeed(1)")))
+	actions.add_child(_button("Pause", func() -> void: _submit("bfme.match.pause()")))
+	actions.add_child(_button("Resume", func() -> void: _submit("bfme.match.unpause()")))
+
+func _build_controller_options() -> void:
+	var rows := VBoxContainer.new()
+	rows.name = "Controller"
+	rows.add_theme_constant_override("separation", 12)
+	_tabs.add_child(rows)
+	rows.add_child(_label("CONTROLLER OPTIONS", GOLD, 16))
+	var row := HFlowContainer.new()
+	rows.add_child(row)
+	row.add_child(_label("Selection assistance radius"))
+	var radius := SpinBox.new()
+	radius.name = "SelectionAssistRadius"
+	radius.min_value = 0
+	radius.max_value = 200
+	radius.step = 1
+	radius.suffix = " px"
+	radius.value = 48
+	var saved := ConfigFile.new()
+	if saved.load(controller_options_path) == OK:
+		radius.value = float(saved.get_value("controller", "selection_assist_radius", 48))
+	row.add_child(radius)
+	row.add_child(_button("Apply radius", func() -> void:
+		_submit("controller.config.selectionAssistRadius = %d" % int(radius.value))
+		saved.set_value("controller", "selection_assist_radius", int(radius.value))
+		var error := saved.save(controller_options_path)
+		if error != OK:
+			_append("Could not save controller options: " + error_string(error) + "\n")))
+	var grid_row := HFlowContainer.new()
+	rows.add_child(grid_row)
+	grid_row.add_child(_label("Placement grid spacing"))
+	var grid := SpinBox.new()
+	grid.name = "PlacementGridSpacing"
+	grid.min_value = 10
+	grid.max_value = 200
+	grid.step = 5
+	grid.value = float(saved.get_value("controller", "placement_grid_spacing", 50))
+	grid.suffix = " map units"
+	grid_row.add_child(grid)
+	grid_row.add_child(_button("Apply grid", func() -> void:
+		_submit("controller.config.placementGridSpacing = %d" % int(grid.value))
+		saved.set_value("controller", "placement_grid_spacing", int(grid.value))
+		var error := saved.save(controller_options_path)
+		if error != OK:
+			_append("Could not save controller options: " + error_string(error) + "\n")))
+	rows.add_child(_label("Hold LT or Shift during placement to show the grid and snap position and rotation (45°).", MUTED, 12))
+	var hint := _label("A selects the nearest friendly, unselected unit when nothing is directly under the reticle. Radius scales from 720p. Set 0 to disable. Saved between sessions.", MUTED, 12)
+	hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	rows.add_child(hint)
 
 func _layout() -> void:
 	var viewport_size := get_viewport().get_visible_rect().size
@@ -309,12 +362,16 @@ func toggle() -> void:
 	toggled.emit(_root.visible)
 
 func _write(view: TextEdit, text: String) -> void:
-	var follow := not view.has_selection() and view.get_v_scroll() >= view.get_v_scroll_bar().max_value - view.get_v_scroll_bar().page - 2
 	# Append through the editor API so selecting / copying old results stays undisturbed.
 	view.insert_text(text, view.get_line_count() - 1, view.get_line(view.get_line_count() - 1).length())
 	if view.text.length() > 200000:
 		view.text = view.text.right(160000)
-	if follow:
+	_scroll_to_bottom.call_deferred(view)
+
+func _scroll_to_bottom(view: TextEdit) -> void:
+	# Wrapped text updates the scroll range after insertion. Read the new range
+	# once that update has run, even if the user had scrolled up before the append.
+	if is_instance_valid(view):
 		view.set_v_scroll(view.get_v_scroll_bar().max_value)
 
 func _append(text: String) -> void:
@@ -325,6 +382,27 @@ func _clear_visible() -> void:
 	(_output if _tabs.current_tab == 0 else _log).text = ""
 	_entry.grab_focus() if _tabs.current_tab == 0 else _log.grab_focus()
 
+func _load_history() -> void:
+	var config := ConfigFile.new()
+	var error := config.load(history_path)
+	if error != OK and error != ERR_FILE_NOT_FOUND:
+		push_warning("Could not load console history: " + error_string(error))
+	if error == OK:
+		var commands = config.get_value("console", "history", [])
+		if commands is Array:
+			for command in commands:
+				if command is String and not command.strip_edges().is_empty():
+					_history.append(command)
+			_history = _history.slice(maxi(0, _history.size() - 256))
+	_history_index = _history.size()
+
+func _save_history() -> void:
+	var config := ConfigFile.new()
+	config.set_value("console", "history", _history)
+	var error := config.save(history_path)
+	if error != OK:
+		push_warning("Could not save console history: " + error_string(error))
+
 func _submit(code: String) -> void:
 	if code.strip_edges().is_empty():
 		return
@@ -332,6 +410,7 @@ func _submit(code: String) -> void:
 		_history.append(code)
 		if _history.size() > 256:
 			_history.pop_front()
+		_save_history()
 	_history_index = _history.size()
 	_draft = ""
 	_entry.clear()
@@ -353,7 +432,7 @@ func _submit(code: String) -> void:
 
 func reload_scripts() -> void:
 	_append("\n› Reload scripts\n")
-	var result: Dictionary = execute.call("console.reload()")
+	var result: Dictionary = execute.call("bfme.console.reload()")
 	var ok: bool = result.get("ok", false)
 	var output := str(result.get("output", ""))
 	_append(output + ("" if output.ends_with("\n") else "\n"))

@@ -2,6 +2,7 @@
 // See PlaceEventTranslator.h.
 
 #include "GameClient/MessageStream/PlaceEventTranslator.h"
+#include <cmath>
 
 #include "Common/BuildAssistant.h"
 #include "Common/Player.h"
@@ -158,6 +159,16 @@ void PlaceEventTranslator::handleBuildPlacements(bool judge)
 	{
 		return; // INFERENCE: RotWK does not test TheTacticalView slot 0x168's answer (RW 0x6A346B); a pixel off the terrain leaves the ghost where it was
 	}
+	// Optional user placement aid, aligned to world/map axes.
+	if (m_ctx.ui.placementSnap)
+	{
+		const float grid = m_ctx.ui.placementGrid;
+		world.x = std::round(world.x / grid) * grid;
+		world.y = std::round(world.y / grid) * grid;
+		world.z = m_ctx.logic.getGroundHeight(world.x, world.y);
+		constexpr float step = 0.7853981633974483f;
+		angle = std::round(angle / step) * step;
+	}
 	// lane BUILD-5 r2: a PORT (KindOf 188, template + 0x11F & 0x10) shows the site snapped to the shore and its angle (RW 0x6A37AD .. 0x6A37E0:
 	// BuildAssistant::getPortTransform RW 0x794C63; no answer keeps the pointer's site); the slot keeps the angle before the snap (RW 0x6A3847)
 	Coord3D shown = world;
@@ -205,6 +216,7 @@ MessageDisposition PlaceEventTranslator::releaseLineBuild(const ThingTemplate &t
 	{
 		click = m_ctx.ui.placeLocation(); // INFERENCE: RotWK does not test the answer (RW 0x83E745); a pixel off the terrain keeps the ghost's point
 	}
+	if (m_ctx.ui.placementSnap) click = m_ctx.ui.placeLocation();
 	m.appendLocation(click);
 	m.appendInteger(command ? (int)command->m_options : 0xFFFFFE);
 	m.appendObjectID(builder.getID());
@@ -232,7 +244,7 @@ MessageDisposition PlaceEventTranslator::leftClick(const ClientMessage &msg)
 	// RW 0x83E709 .. 0x83E745: the ghost's angle and the anchor start's terrain point now
 	const float angle = m_ctx.ui.placeAngle();
 	Coord3D location = m_ctx.ui.placeLocation();
-	m_ctx.view.screenToTerrain(m_ctx.ui.placementStart(), m_ctx.logic, location);
+	if (!m_ctx.ui.placementSnap) m_ctx.view.screenToTerrain(m_ctx.ui.placementStart(), m_ctx.logic, location);
 	const bool lineBuild = BuildAssistant::isLineBuildTemplate(m_ctx.logic, tt, builder); // RW 0x83E764 (slot 0x60)
 	// RW 0x83E771: the builder's canMakeUnit (slot 0x64) with build index -1, for every build
 	switch (BuildAssistant::canMakeUnit(*builder, tt, -1))

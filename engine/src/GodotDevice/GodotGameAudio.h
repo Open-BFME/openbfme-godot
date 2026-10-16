@@ -65,6 +65,7 @@ public:
 	size_t activeVoices() const;
 	// stops every voice and drops its stream (the engine releases a playback on its next mix, so a caller that quits waits a frame or two)
 	void stopAll();
+	void setSuspended(bool suspended);
 	size_t poolSize() const { return m_slots.size(); }
 	std::uint64_t voicesStarted() const { return m_started; }
 	std::uint64_t poolExhausted() const { return m_exhausted; }
@@ -78,6 +79,7 @@ private:
 		Ref<AudioEffectPanner> panner;   ///< the voice's pan (bus effect 1)
 		int voice = 0; ///< 0 = free
 		bool loop = false;
+		bool stream = false;
 		double fadeInMs = 0.0;
 		double startedMs = 0.0;
 		float volume = 1.0f;
@@ -91,6 +93,7 @@ private:
 	AudioAssetCache *m_cache;
 	std::vector<Slot> m_slots;
 	std::map<int, size_t> m_voiceSlot;
+	bool m_suspended = false;
 	int m_nextVoice = 1;
 	double m_nowMs = 0.0;
 	std::uint64_t m_started = 0;

@@ -109,6 +109,8 @@ public:
 	void constraint(float out[4]) const;
 	bool zoomLimited() const { return m_zoomLimited; }
 	void setZoomLimited(bool on) { m_zoomLimited = on; }
+	// Controller reticle targets the camera centre, which must reach the map edge.
+	void setControllerBounds(bool on) { if (m_controllerBounds != on) { m_controllerBounds = on; m_constraintValid = false; } }
 
 	void setAngle(float angle);
 	void setPitch(float pitch);
@@ -233,6 +235,7 @@ private:
 	Coord3D m_pos{ 870.0f, 770.0f, 0.0f }; // RW 0x48B6A4 (87.0f * 10, 77.0f * 10)
 	float m_angle = 0.0f, m_pitch = 0.0f, m_zoom = 1.0f, m_heightAboveGround = 0.0f;
 	bool m_zoomLimited = true;
+	bool m_controllerBounds = false;
 	float m_defaultAngle = 0.0f, m_defaultPitch = 0.0f;
 	float m_fov = 0.8726646f; // RW 0xBDD410: 50 degrees
 	bool m_widescreenWider = false; // lane UI-6: the Widescreen view option (Wider = Hor+; false = retail)

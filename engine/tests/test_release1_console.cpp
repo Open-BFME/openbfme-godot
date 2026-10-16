@@ -11,6 +11,8 @@
 #include <cstdio>
 #include <cstring>
 #include <fcntl.h>
+#include <poll.h>
+#include <cerrno>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -312,6 +314,81 @@ TEST_CASE("onezip1: the shutdown flush is bounded when the console takes nothing
 	CHECK_FALSE(ConsoleFilter::installed());
 	std::fflush(stdout);
 	std::setvbuf(stdout, nullptr, _IOLBF, 0);
+	::close(sink[0]);
+	::close(sink[1]);
+}
+
+namespace
+{
+// FREEZE-1: writes `total` bytes to fd 1 (the filter's pipe) without ever blocking the test: false when the filter stopped draining it for
+// longer than `budgetMs` (the game's prints block forever in that state)
+bool writeThroughFilter(size_t total, int budgetMs)
+{
+	const int flags = ::fcntl(1, F_GETFL);
+	::fcntl(1, F_SETFL, flags | O_NONBLOCK);
+	std::string chunk(1000, 'z');
+	chunk.back() = '\n';
+	size_t done = 0;
+	const auto end = std::chrono::steady_clock::now() + std::chrono::milliseconds(budgetMs);
+	bool ok = true;
+	while (done < total)
+	{
+		const ssize_t n = ::write(1, chunk.data(), chunk.size());
+		if (n > 0)
+		{
+			done += (size_t)n;
+			continue;
+		}
+		if ((n < 0 && errno != EAGAIN) || std::chrono::steady_clock::now() > end)
+		{
+			ok = false;
+			break;
+		}
+		pollfd p = { 1, POLLOUT, 0 };
+		::poll(&p, 1, 20);
+	}
+	::fcntl(1, F_SETFL, flags);
+	return ok;
+}
+} // namespace
+
+// FREEZE-1: a game started from the Finder has /dev/null as its console; macOS answers poll() on it with POLLNVAL, and the reader spun on
+// that without draining its pipe, so every print blocked after 64 KiB and the game froze
+TEST_CASE("freeze1: the console filter drains to /dev/null")
+{
+	const int null = ::open("/dev/null", O_WRONLY | O_CLOEXEC);
+	REQUIRE(null >= 0);
+	LogPrivacy::Rules rules;
+	std::string error;
+	REQUIRE(ConsoleFilter::install(rules, &error, null, null));
+	const bool drained = writeThroughFilter(4u << 20, 5000);
+	ConsoleFilter::uninstall();
+	CHECK_MESSAGE(drained, "the filter stopped draining its pipe to /dev/null");
+	::close(null);
+}
+
+// FREEZE-1: a console that takes nothing (a suspended terminal, a pipe whose reader stopped) is skipped after 2 s: the game keeps printing
+TEST_CASE("freeze1: a console that stops taking text never blocks the game's prints")
+{
+	int sink[2];
+	REQUIRE(::pipe(sink) == 0);
+	::fcntl(sink[1], F_SETFL, ::fcntl(sink[1], F_GETFL) | O_NONBLOCK);
+	const std::string block(4096, 'x');
+	while (::write(sink[1], block.data(), block.size()) > 0)
+	{
+	}
+	::fcntl(sink[1], F_SETFL, ::fcntl(sink[1], F_GETFL) & ~O_NONBLOCK);
+	::fcntl(sink[0], F_SETFD, FD_CLOEXEC);
+	::fcntl(sink[1], F_SETFD, FD_CLOEXEC);
+	LogPrivacy::Rules rules;
+	std::string error;
+	REQUIRE(ConsoleFilter::install(rules, &error, sink[1], sink[1]));
+	const unsigned long long droppedBefore = ConsoleFilter::droppedBytes();
+	// 1 MiB: far more than the filter's pipe and the sink hold; the stall is detected once (2 s), then the text is dropped at once
+	const bool drained = writeThroughFilter(1u << 20, 6000);
+	ConsoleFilter::uninstall();
+	CHECK_MESSAGE(drained, "the game's prints blocked on a console that takes nothing");
+	CHECK(ConsoleFilter::droppedBytes() > droppedBefore);
 	::close(sink[0]);
 	::close(sink[1]);
 }

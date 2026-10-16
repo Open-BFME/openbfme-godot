@@ -12,6 +12,7 @@ list(APPEND OPENBFME_SIM_SOURCES
     src/GameLogic/Module/CastleModules.cpp
     src/GameLogic/Module/DozerAIUpdate.cpp
     src/GameLogic/WallSpan.cpp # lane BUILD-2
+    src/GameLogic/WallBalance.cpp # optional BFME2Lua wall rules
     src/GameLogic/FindPositionAround.cpp # lane BUILD-3
 )
 set(OPENBFME_BUILD_TESTS
@@ -25,3 +26,8 @@ set(OPENBFME_BUILD_TESTS
     tests/test_build4_walls.cpp # lane BUILD-4
     tests/test_build5_placement.cpp # lane BUILD-5
 )
+
+# Focused optional-rule checks; a separate target avoids rebuilding unrelated test suites.
+add_executable(openbfme_wall_balance_tests tests/test_wall_balance.cpp)
+target_include_directories(openbfme_wall_balance_tests PRIVATE tests thirdparty/doctest)
+target_link_libraries(openbfme_wall_balance_tests PRIVATE openbfme_core)

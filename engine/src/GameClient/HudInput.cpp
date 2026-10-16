@@ -7,12 +7,19 @@
 #include "Common/Player.h"
 #include "GameLogic/Object/Object.h"
 #include "GameLogic/System/ShroudManager.h"
+#include "GameLogic/Module/AIUpdate.h"
+#include "GameLogic/Locomotor.h"
+#include "GameLogic/Map/TerrainLogic.h"
+#include "GameLogic/Combat/CombatQueries.h"
+#include <algorithm>
+#include <cmath>
 
 HudInput::HudInput(GameLogic &logic, AIWorld *ai, TacticalView &view, CommandList &commands, const MouseSettings &mouse, const MetaMap &metaMap)
 	: m_logic(logic)
 	, m_commands(commands)
 	, m_ctx{ logic, ai, view, m_ui, m_stream, nullptr, mouse }
 	, m_meta(m_ctx, metaMap)
+	, m_formation(m_ctx)
 	, m_place(m_ctx)
 	, m_guiCommand(m_ctx)
 	, m_command(m_ctx)
@@ -26,6 +33,7 @@ HudInput::HudInput(GameLogic &logic, AIWorld *ai, TacticalView &view, CommandLis
 	m_stream.attachTranslator(&m_meta, 20);
 	m_stream.attachTranslator(&m_hotKey, 25);
 	m_stream.attachTranslator(&m_place, 30); // BUILD-1 (ZH PlaceEventTranslator)
+	m_stream.attachTranslator(&m_formation, 35);
 	m_stream.attachTranslator(&m_guiCommand, 40);
 	m_stream.attachTranslator(&m_selection, 50);
 	m_stream.attachTranslator(&m_command, 70);
@@ -83,6 +91,7 @@ void HudInput::key(int key, int keyState, char32_t character)
 
 void HudInput::resetKeys()
 {
+	m_formation.cancel();
 	for (bool &k : m_keyDown)
 	{
 		k = false;
@@ -136,9 +145,16 @@ size_t HudInput::update()
 	{
 		m_ui.forgetObject(id);
 	}
+	m_formation.frame();
 	m_place.frame(); // lane QA2-FIX: the placement update's line build step (RW 0x6A2D12) runs in InGameUI::update, before the stream (ZH GameEngine::update)
 	const int local = m_ctx.localPlayer() ? m_ctx.localPlayer()->getPlayerIndex() : 0;
 	std::vector<ClientMessage> out = m_stream.propagate();
+	if (m_formation.consumed()) {
+		m_selection.setLeftMouseButton(false);
+		m_ui.setSelecting(false);
+		m_ui.endAreaSelectHint();
+		if (m_lookAt) m_lookAt->cancelPointer();
+	}
 	size_t n = 0;
 	for (const ClientMessage &m : out)
 	{
@@ -218,7 +234,7 @@ void HudInput::hintSpy(const ClientMessage &m)
 	}
 	if (hinted)
 	{
-		m_ui.createMoveHint(pos);
+		m_ui.createMoveHint(pos, m.type() == MSG_DO_ATTACKMOVETO);
 	}
 }
 
@@ -226,7 +242,7 @@ std::vector<std::string> HudInput::acceptanceStops()
 {
 	std::vector<std::string> out = {
 		"[S-280] translator pipeline (narrowed, lane INPUT-1): RotWK's priorities (GameClient::init RW 0x646771): MetaEvent 20, HotKey 25, PlaceEvent 30, GUICommand 40, "
-		"Selection 50, LookAt 60, Command 70; the Window (4 / 10), RW 0x83EE14 (5), War of the Ring (27) and Formation (35) translators are not ported; the HotKey "
+		"Selection 50, LookAt 60, Command 70; the Window (4 / 10), RW 0x83EE14 (5), War of the Ring (27) translators are not ported; the HotKey "
 		"manager registers the command bar only (no message-type actions, spell book, radial menu or garrison hotkeys; its sounds are counted, not played); the "
 		"SelectionTranslator's clicks and drag box were not compared with RW 0x83C29E; a drag selection does not emit MSG_AREA_SELECTION",
 		"[S-281] CommandMap (narrowed, lane INPUT-1): RotWK's field table RW 0xBF0E70 and modifier values are ported; open: the files the subsystem entry "
@@ -318,4 +334,93 @@ std::vector<std::string> HudInput::stops() const
 		out.push_back("[S-1673] met (no retail handler): " + kv.first + " x" + std::to_string(kv.second));
 	}
 	return out;
+}
+
+// Two-button placement takes priority over selection and right-drag scrolling.
+bool FormationPlacement::begin(const ICoord2D &pixel, bool controller) {
+ auto &ui=m_ctx.ui;
+ if(!ui.getInputEnabled() || ui.isPlacing() || ui.getGUICommand() || !m_ctx.localPlayer()) return false;
+ m_selection.clear();
+ for(ObjectID id:ui.selected()) {
+  Object *o=m_ctx.logic.findObjectByID(id);
+  if(!o || o->isDestroyed() || o->isEffectivelyDead() || o->getControllingPlayer()!=m_ctx.localPlayer()) continue;
+  auto *ai=o->getAIUpdateInterface();
+  if(ai && !ai->isImmobile() && !o->isKindOfName("HORDE_MEMBER")) m_selection.push_back(id);
+ }
+ if(m_selection.empty() || !m_ctx.view.screenToTerrain(pixel,m_ctx.logic,m_anchor)) return false;
+ m_controller=controller;
+ m_originalSelection=ui.selected();
+ ui.formationActive=true; m_consumed=true; aim(pixel); return true;
+}
+void FormationPlacement::aim(const ICoord2D &pixel) {
+ auto &ui=m_ctx.ui;
+ Coord3D end;
+ if(!m_ctx.view.screenToTerrain(pixel,m_ctx.logic,end)) return;
+ if(!std::isfinite(end.x)||!std::isfinite(end.y))return;
+ float mx=0,my=0;
+ if(auto *terrain=m_ctx.logic.terrain();terrain && terrain->getLargestExtent(mx,my)) {
+  if(end.x<0||end.y<0||end.x>mx||end.y>my)return;
+ }
+ const float dx=end.x-m_anchor.x,dy=end.y-m_anchor.y;
+ const float length=std::sqrt(dx*dx+dy*dy);
+ float angle=length>1 ? std::atan2(dy,dx) : 0;
+ float spacing=30;
+ std::vector<Object *> units;
+ for(ObjectID id:m_selection) {
+  Object *o=m_ctx.logic.findObjectByID(id);
+  if(!o || o->isDestroyed() || o->isEffectivelyDead() || o->getControllingPlayer()!=m_ctx.localPlayer()) continue;
+  units.push_back(o); spacing=std::max(spacing,2*CombatQueries::boundingCircleRadius(*o)+10);
+ }
+ if(units.empty()) { cancel(); return; }
+ std::stable_sort(units.begin(),units.end(),[](Object *a,Object *b){
+  auto priority=[](Object *o){auto *l=o->getAIUpdateInterface()->curLocomotor();return l ? (int)l->getTemplate().m_formationPriority : 0;};
+  return priority(a)<priority(b);
+ });
+ const int columns=(int)std::clamp(length/spacing+1,1.f,(float)units.size());
+ const float c=std::cos(angle),s=std::sin(angle);
+ ui.formationSlots.clear();
+ for(size_t i=0;i<units.size();++i) {
+  const int row=(int)i/columns,col=(int)i%columns;
+  const int rowSize=std::min(columns,(int)units.size()-row*columns);
+  const float across=(col-(rowSize-1)*.5f)*spacing,back=-row*spacing;
+  Coord3D p{m_anchor.x+back*c-across*s,m_anchor.y+back*s+across*c,0};
+  if(mx>0&&my>0){p.x=std::clamp(p.x,0.f,mx);p.y=std::clamp(p.y,0.f,my);}
+  p.z=m_ctx.logic.getGroundHeight(p.x,p.y);
+  ui.formationSlots.push_back({units[i]->getID(),p,angle,spacing*.4f});
+ }
+}
+void FormationPlacement::commit() {
+ for(const auto &slot:m_ctx.ui.formationSlots) {
+  Object *o=m_ctx.logic.findObjectByID(slot.object);
+  if(!o || o->isDestroyed() || o->isEffectivelyDead() || o->getControllingPlayer()!=m_ctx.localPlayer()) continue;
+  ClientMessage &order=m_ctx.stream.append(MSG_DO_MOVE_AND_ORIENTATE_OBJECTTO);
+  order.appendObjectID(slot.object);order.appendLocation(slot.position);order.appendReal(slot.angle);
+ }
+ m_ctx.ui.formationActive=false;m_ctx.ui.formationSlots.clear();
+}
+void FormationPlacement::frame() {
+ if(m_ctx.ui.formationActive && (!m_ctx.ui.getInputEnabled() || m_ctx.ui.isQuitMenuVisible() || m_ctx.ui.selected()!=m_originalSelection)) cancel();
+}
+void FormationPlacement::cancel() {
+ m_ctx.ui.formationActive=false;m_ctx.ui.formationSlots.clear();m_left=m_right=false;
+}
+MessageDisposition FormationPlacement::translate(const ClientMessage &msg) {
+ const int t=msg.type();
+ if(m_ctx.ui.formationActive && (!m_ctx.ui.getInputEnabled() || m_ctx.ui.isPlacing() || m_ctx.ui.getGUICommand())) cancel();
+ if(t==CMSG_RAW_KEY_DOWN && msg.arg(0).integer==KEY_ESC && m_ctx.ui.formationActive) {cancel();return MessageDisposition::Destroy;}
+ const bool leftDown=t==CMSG_RAW_MOUSE_LEFT_BUTTON_DOWN,rightDown=t==CMSG_RAW_MOUSE_RIGHT_BUTTON_DOWN;
+ const bool leftUp=t==CMSG_RAW_MOUSE_LEFT_BUTTON_UP,rightUp=t==CMSG_RAW_MOUSE_RIGHT_BUTTON_UP;
+ if(leftDown||rightDown) {
+  if(!m_left&&!m_right&&!m_ctx.ui.formationActive) m_consumed=false;
+  if(leftDown)m_left=true;else m_right=true;
+  if(m_left&&m_right&&!m_ctx.ui.formationActive) begin(msg.arg(0).pixel);
+ }
+ if(leftUp||rightUp) {
+  if(leftUp)m_left=false;else m_right=false;
+  if(m_ctx.ui.formationActive && !m_controller) commit();
+ }
+ if(t==CMSG_RAW_MOUSE_POSITION && m_ctx.ui.formationActive && !m_controller) aim(msg.arg(0).pixel);
+ const bool click=t==CMSG_MOUSE_LEFT_CLICK||t==CMSG_MOUSE_RIGHT_CLICK||t==CMSG_MOUSE_LEFT_DOUBLE_CLICK||t==CMSG_MOUSE_RIGHT_DOUBLE_CLICK;
+ if(m_consumed && (leftDown||rightDown||leftUp||rightUp||click||(t==CMSG_RAW_MOUSE_POSITION && m_ctx.ui.formationActive))) return MessageDisposition::Destroy;
+ return MessageDisposition::Keep;
 }

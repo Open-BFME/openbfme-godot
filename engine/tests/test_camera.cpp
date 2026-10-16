@@ -428,6 +428,33 @@ TEST_CASE("camera: the camera starts on the start position at the default view o
 	CHECK(r.input->lookAt()->isScrolling() == false);
 }
 
+TEST_CASE("camera: controller centre reaches every map edge and restores normal camera margins")
+{
+	if (!haveWorld("controller camera bounds")) return;
+	CamRig r(shared());
+	TacticalCamera &c = *r.cam;
+	float maxX, maxY;
+	REQUIRE(r.game->logic().terrain()->getExtent(0, maxX, maxY));
+	c.setControllerBounds(true);
+	for (const Coord3D &point : { Coord3D{ 0, 0, 0 }, Coord3D{ maxX, 0, 0 }, Coord3D{ 0, maxY, 0 }, Coord3D{ maxX, maxY, 0 } })
+	{
+		c.lookAt(point);
+		CHECK(c.position().x == point.x);
+		CHECK(c.position().y == point.y);
+		CHECK(c.target().x == point.x);
+		CHECK(c.target().y == point.y);
+	}
+	c.lookAt({ maxX + 1000, maxY + 1000, 0 });
+	CHECK(c.position().x == maxX);
+	CHECK(c.position().y == maxY);
+	c.setControllerBounds(false);
+	c.lookAt(r.start);
+	float limits[4];
+	c.constraint(limits);
+	CHECK(limits[0] > 0);
+	CHECK(limits[2] < maxX);
+}
+
 TEST_CASE("camera: the wheel zooms by the retail steps between the retail height limits")
 {
 	if (!haveWorld("camera zoom"))

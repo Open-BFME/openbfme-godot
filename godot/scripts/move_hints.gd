@@ -15,6 +15,7 @@ var _model_name := ""
 var _slots := {}         # hint slot -> { id: instance id, frame: the hint's client frame }
 var drawn_total := 0     # instances created (tests, reports)
 var errors: Array = []
+var _attack_marker: MeshInstance3D
 
 
 func setup(p_hud: Node, fs: RefCounted, p_world: Node = null) -> Dictionary:
@@ -43,10 +44,30 @@ func _process(_delta: float) -> void:
 		return
 	var state: Dictionary = hud.get_move_hints()
 	var live := {}
+	if _attack_marker != null:
+		_attack_marker.hide()
 	# lane RENDERWAIT-1: the terrain's slope (get_ground_height) is a live read: a hint's basis is taken once, when it is placed, in a render frame the
 	# logic is held (a new hint waits for one; nothing here waits for the logic worker)
 	var held: bool = world == null or world.is_logic_held()
 	for h in state.get("hints", []):
+		if h.get("controller", false) and h.get("attack_move", false):
+			if _attack_marker == null:
+				_attack_marker = MeshInstance3D.new()
+				var plane := PlaneMesh.new()
+				plane.size = Vector2(45, 45)
+				var material := StandardMaterial3D.new()
+				material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+				material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+				material.cull_mode = BaseMaterial3D.CULL_DISABLED
+				material.albedo_texture = load("res://controller_art/ground_attack_good.tga")
+				plane.material = material
+				_attack_marker.mesh = plane
+				add_child(_attack_marker)
+			_attack_marker.position = h.position + Vector3(0, 1, 0)
+			if held:
+				_attack_marker.basis = _terrain_basis(h.x, h.y)
+			_attack_marker.show()
+			continue
 		var slot: int = h.slot
 		live[slot] = true
 		var cur = _slots.get(slot)
@@ -87,4 +108,4 @@ func _terrain_basis(x: float, y: float) -> Basis:
 
 ## the hints drawn this frame (tests)
 func drawn_count() -> int:
-	return _slots.size()
+	return _slots.size() + (1 if _attack_marker != null and _attack_marker.visible else 0)

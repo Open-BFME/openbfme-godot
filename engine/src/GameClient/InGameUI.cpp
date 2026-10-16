@@ -85,12 +85,13 @@ void InGameUI::placeBuildAvailable(const std::string &templateName, ObjectID sou
 }
 
 // RW 0x69F54F (its selection and location tests need the logic: HudInput::hintSpy)
-void InGameUI::createMoveHint(const Coord3D &pos)
+void InGameUI::createMoveHint(const Coord3D &pos, bool attackMove)
 {
 	expireMoveHints();
 	MoveHint &h = m_moveHints[m_nextMoveHint];
 	h.frame = m_clientFrame;
 	h.pos = pos;
+	h.attackMove = attackMove;
 	h.expired = false;
 	++m_moveHintsMade;
 	if (++m_nextMoveHint == MAX_MOVE_HINTS)

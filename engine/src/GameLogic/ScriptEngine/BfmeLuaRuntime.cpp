@@ -72,9 +72,8 @@ V scalar(lua_State *L, int index)
 	}
 }
 const char *bootstrap = R"lua(
-local snapshot, queue, status, writeLog, clock, newproxy, scripts = _bfmeSnapshot, _bfmeQueue, _bfmeStatus, _bfmeLog, _bfmeClock, _bfmeProxy, _bfmeScripts
-_bfmeSnapshot, _bfmeQueue, _bfmeStatus, _bfmeLog, _bfmeClock, _bfmeProxy = nil,nil,nil,nil,nil,nil
-_bfmeScripts = nil
+local snapshot, queue, status, writeLog, clock, newproxy, scripts, constructionResult = _bfmeSnapshot, _bfmeQueue, _bfmeStatus, _bfmeLog, _bfmeClock, _bfmeProxy, _bfmeScripts, _bfmeConstructionResult
+_bfmeSnapshot, _bfmeQueue, _bfmeStatus, _bfmeLog, _bfmeClock, _bfmeProxy, _bfmeScripts, _bfmeConstructionResult = nil,nil,nil,nil,nil,nil,nil,nil
 local view, generation, cache = {}, 1, {}
 local kinds = {templates='Template',unitTypes='UnitType',buildingTypes='BuildingType',players='Player',unitInstances='Unit',buildingInstances='Building'}
 local info = setmetatable({}, {__mode='k'})
@@ -92,14 +91,24 @@ end
 local function numeric(v,lo,hi,integer)
  if type(v)~='number' or v~=v or v<lo or v>hi or (integer and v%1~=0) then error('value out of range',3) end
 end
+local function count(kind) local n=0; for _ in pairs(view.collections[kind] or {}) do n=n+1 end; return n end
 local proxy
+-- A template handle or INI name that must exist in collection `kind`; returns the name.
+local function templateName(value, kind, label)
+ if type(value)=='userdata' and info[value] then value=(record(value)).id end
+ if type(value)~='string' or not (view.collections[kind] or {})[value] then error('unknown '..label,3) end
+ return value
+end
+local function owned(kind, player)
+ local _,h=record(player); local id=tonumber(h.id)
+ local list={}; for key,r in pairs(view.collections[kind] or {}) do if r.playerId==id then list[#list+1]=proxy(kind,key) end end
+ table.sort(list,function(a,b) return a.id<b.id end); return list
+end
 local function set(p, field, value)
  local r,h=record(p)
- local player=h.kind=='players'
  local template=h.kind=='templates' or h.kind=='unitTypes' or h.kind=='buildingTypes'
- if player then
-  if field=='revealMap' or field=='fogOfWar' then if type(value)~='boolean' then error('expected boolean',2) end
-  elseif field=='money' or field=='gold' then numeric(value,0,2147483647,true)
+ if h.kind=='players' then
+  if field=='money' or field=='gold' then numeric(value,0,2147483647,true)
   elseif field=='powerPoints' or field=='powerpoint' or field=='commandPoints' or field=='commandPointsBase' or field=='commandPointsCap' or field=='commandPointsUsed' then numeric(value,0,1000000,true)
   elseif field=='commandPointsBonus' then numeric(value,-1000000,1000000,true)
   else error('unsupported or read-only player field: '..tostring(field),2) end
@@ -117,16 +126,65 @@ end
 local function inspect(p)
  local r,h=record(p); return {label=kinds[h.kind]..'['..h.id..']',kind=kinds[h.kind],id=r.id,values=copy(r)}
 end
-local function action(p,name,...)
- local _,h=record(p); return queue(h.kind,h.id,':'..name,nil,...)
+-- Map coordinates are SAGE x/y; terrain supplies z. builderId 0 = the building raises itself.
+local function construct(building, position, builderId, playerId, speed, onComplete)
+ building=templateName(building,'buildingTypes','building template')
+ if type(position)~='table' then error('expected position {x=..., y=...}',2) end
+ numeric(position.x,-1e7,1e7,false); numeric(position.y,-1e7,1e7,false)
+ local angle=position.rotation or 0; numeric(angle,-1e6,1e6,false)
+ numeric(playerId,0,19,true)
+ if speed==nil then speed=1 end; numeric(speed,0.01,100,false)
+ if onComplete~=nil and type(onComplete)~='function' then error('expected completion function',2) end
+ local callback
+ if onComplete then callback=function(objectId)
+  view=snapshot()
+  onComplete(assert(proxy('buildingInstances',objectId),'completed building no longer exists'))
+ end end
+ return queue('match','',':construct',building,position.x,position.y,builderId,playerId,speed,angle,callback)
 end
+local function action(name) return function(o) local _,h=record(o); return queue(h.kind,h.id,':'..name,nil) end end
+-- Handle methods, by collection; every handle also has :set(field, value) and :inspect().
+local methods={
+ players={
+  setMoney=function(p,amount) return set(p,'money',amount) end,
+  addMoney=function(p,amount)
+   local r=record(p); numeric(amount,-2147483647,2147483647,true)
+   return set(p,'money',r.money+amount)
+  end,
+  revealMap=function(p) local _,h=record(p); return queue(h.kind,h.id,'revealMap',true) end,
+  setFogOfWar=function(p,enabled)
+   local _,h=record(p); if type(enabled)~='boolean' then error('expected boolean',2) end
+   return queue(h.kind,h.id,'fogOfWar',enabled)
+  end,
+  units=function(p) return owned('unitInstances',p) end,
+  buildings=function(p) return owned('buildingInstances',p) end,
+  construct=function(p,building,position,speed,onComplete)
+   local _,h=record(p); return construct(building,position,0,tonumber(h.id),speed,onComplete)
+  end,
+ },
+ unitInstances={
+  kill=action('kill'), destroy=action('destroy'),
+  construct=function(u,building,position,speed,onComplete)
+   local r,h=record(u); if r.playerId==nil then error('builder has no owning player',2) end
+   return construct(building,position,tonumber(h.id),r.playerId,speed,onComplete)
+  end,
+ },
+ buildingInstances={
+  kill=action('kill'), destroy=action('destroy'),
+  trainUnit=function(b,unit,count)
+   local _,h=record(b)
+   unit=templateName(unit,'unitTypes','unit template')
+   if count==nil then count=1 end; numeric(count,1,1000,true)
+   return queue(h.kind,h.id,':trainUnit',unit,count)
+  end,
+ },
+}
 local mt={
  __index=function(p,key)
   local r,h=record(p)
   if key=='set' then return set elseif key=='inspect' then return inspect end
-  if (h.kind=='unitInstances' or h.kind=='buildingInstances') and (key=='kill' or key=='destroy' or key=='destory') then
-   return function(self) return action(self,key=='destory' and 'destroy' or key) end
-  end
+  local method=methods[h.kind] and methods[h.kind][key]
+  if method then return method end
   if key=='ownerPlayer' and r.playerId then return proxy('players',tostring(r.playerId)) end
   if (key=='type' or key=='template') and r.typeId then return proxy(h.kind=='buildingInstances' and 'buildingTypes' or 'unitTypes',r.typeId) end
   return copy(r[key])
@@ -143,109 +201,128 @@ proxy=function(kind,id)
  if not cache[key] then local p=newproxy(mt); info[p]={kind=kind,id=id,generation=generation}; cache[key]=p end
  return cache[key]
 end
-bfme={version='OpenBFME bfme API 0.1',capabilities={players=true,templates=true,instances=true,mutationTickets=true,luaVersion='5.4.9'}}
+local root={version='OpenBFME bfme API 0.2',capabilities={luaVersion='5.4.9',libraries={}}}
 for kind in pairs(kinds) do
- local collection=newproxy({
+ root[kind]=newproxy({
   __index=function(_,key)
    if kind=='players' and key=='localPlayer' then return view.localPlayerId and proxy(kind,view.localPlayerId) end
    if kind=='players' and key=='neutral' then key=0 end
    return proxy(kind,key)
   end,
   __newindex=function() error('collection entries cannot be replaced',2) end,
-  __len=function() local n=0; for _ in pairs(view.collections[kind] or {}) do n=n+1 end; return n end,
+  __len=function() return count(kind) end,
   __pairs=function()
    local entries={}; for id in pairs(view.collections[kind] or {}) do entries[tonumber(id) or id]=proxy(kind,id) end
    return next,entries,nil
   end,
-  __call=function(_,player)
-   if kind~='unitInstances' and kind~='buildingInstances' then error('only instance collections support owner filtering',2) end
-   if type(player)=='userdata' then local _,h=record(player); if h.kind~='players' then error('expected Player',2) end; player=tonumber(h.id) end
-   if player~=nil then numeric(player,0,19,true) end
-   local list={}; for id,r in pairs(view.collections[kind] or {}) do if player==nil or r.playerId==player then list[#list+1]=proxy(kind,id) end end
-   table.sort(list,function(a,b) return a.id<b.id end); return list
-  end,
   __metatable='bfme collection'
- }); bfme[kind]=collection
+ })
 end
-function bfme.getLiveDataStatus()
- return {ready=view.ready or false,generation=generation,localPlayerId=view.localPlayerId,templateCount=#bfme.templates,playerCount=#bfme.players,frame=view.frame or 0}
-end
-function bfme.getInstanceStatus() return {ready=view.ready or false,actionsReady=view.ready or false,generation=generation,unitCount=#bfme.unitInstances,buildingCount=#bfme.buildingInstances} end
-bfme.getMutationStatus=status
-bfme.getConstructionResult=_bfmeConstructionResult
-_bfmeConstructionResult=nil
--- Script-only extension. Map coordinates are SAGE x/y; terrain supplies z.
-function bfme.beginConstruction(building, position, builder, player, speedMultiplier, onComplete)
- if type(building)=='userdata' then
-  local r,h=record(building)
-  if h.kind~='buildingTypes' then error('expected BuildingType',2) end
-  building=r.id
+-- Libraries: read-only objects reachable as bfme.<name>, import('bfme.<name>') and
+-- require('bfme.<name>'). Functions accept both lib.fn(...) and lib:fn(...).
+local libraries={}
+local function library(name, functions)
+ local lib
+ local fns={}
+ for key,fn in pairs(functions) do
+  fns[key]=function(first,...) if first==lib then return fn(...) end; return fn(first,...) end
  end
- if type(building)~='string' or not bfme.buildingTypes[building] then error('unknown building template',2) end
- if type(position)~='table' then error('expected position {x=..., y=...}',2) end
- numeric(position.x,-1e7,1e7,false); numeric(position.y,-1e7,1e7,false)
- local angle=position.rotation or 0; numeric(angle,-1e6,1e6,false)
- local function id(value,kind)
-  if type(value)=='userdata' then local _,h=record(value); if h.kind~=kind then error('wrong bfme handle kind',3) end; value=tonumber(h.id) end
-  numeric(value,0,2147483647,true); return value
- end
- local builderId=builder~=nil and id(builder,'unitInstances') or 0
- local playerId=player~=nil and id(player,'players') or view.localPlayerId
- numeric(playerId,0,19,true)
- local speed=speedMultiplier or 1; numeric(speed,0.01,100,false)
- if onComplete~=nil and type(onComplete)~='function' then error('expected completion function',2) end
- local callback
- if onComplete then callback=function(objectId)
-  view=snapshot()
-  onComplete(assert(proxy('buildingInstances',objectId),'completed building no longer exists'))
- end end
- return queue('match','',':beginConstruction',building,position.x,position.y,builderId,playerId,speed,angle,callback)
+ lib=newproxy({
+  __index=fns,
+  __newindex=function() error('bfme.'..name..' is read-only',2) end,
+  __pairs=function() local out={}; for k,f in pairs(fns) do out[k]=f end; return next,out,nil end,
+  __tostring=function() return 'bfme.'..name end,
+  __metatable='bfme library'
+ })
+ libraries[name]=lib; root[name]=lib; package.loaded['bfme.'..name]=lib
+ local list=root.capabilities.libraries; list[#list+1]=name; table.sort(list)
+ return lib
 end
-beginConstruction=bfme.beginConstruction
-bfme.log=writeLog
-bfme.getTimeMs=clock
-function bfme.setGameSpeed(value)
- numeric(value,0,100,false)
- return queue('match','',':setGameSpeed',value)
-end
-setGameSpeed=bfme.setGameSpeed
-function bfme.isPaused() return view.paused or false end
-function bfme.pause() return queue('match','',':pause',nil) end
-function bfme.unpause() return queue('match','',':unpause',nil) end
-function import(name) if name~='bfme' then error('Unknown module: '..tostring(name),2) end; return bfme end
-package.loaded.bfme=bfme
-console = {}
-function console.reload()
- local entries=scripts()
- local chunks={}
- -- Compile every file first; a syntax error leaves the previous definitions running.
- for i,entry in ipairs(entries) do
-  local fn,err=load(entry.source,'@'..entry.name,'t',_G)
-  if not fn then error(err,2) end
-  chunks[i]=fn
+-- Client selection (newest first; the first entry drives the command bar), sampled with this chunk.
+-- Selected objects outside the unit/building collections are skipped.
+local function selected(kind)
+ local out={}
+ for _,id in ipairs(view.selection or {}) do
+  local key=tostring(id)
+  local p=(kind~='buildingInstances' and proxy('unitInstances',key)) or (kind~='unitInstances' and proxy('buildingInstances',key)) or nil
+  if p then out[#out+1]=p end
  end
- for i,fn in ipairs(chunks) do
-  local ok,err=pcall(fn)
-  if not ok then error(entries[i].name..': '..tostring(err),2) end
-  print('Reloaded '..entries[i].name)
- end
- return #chunks
+ return out
 end
-bfme.reloadScripts=console.reload
+library('match',{
+ getFrame=function() return view.frame or 0 end,
+ getTimeMs=clock,
+ isPaused=function() return view.paused or false end,
+ pause=function() return queue('match','',':pause',nil) end,
+ unpause=function() return queue('match','',':unpause',nil) end,
+ -- 0 stops time, 1 normal, 100 one hundred times as fast; pause is independent.
+ setGameSpeed=function(value) numeric(value,0,100,false); return queue('match','',':setGameSpeed',value) end,
+ getStatus=function()
+  return {ready=view.ready or false,generation=generation,frame=view.frame or 0,paused=view.paused or false,localPlayerId=view.localPlayerId,
+   playerCount=count('players'),templateCount=count('templates'),unitCount=count('unitInstances'),buildingCount=count('buildingInstances'),selectionCount=#selected(nil)}
+ end,
+})
+-- Detached terrain position sampled with this Lua chunk; no simulation mutation.
+library('input',{getCursorPosition=function() return copy(view.cursorPosition) end})
+library('selection',{
+ all=function() return selected(nil) end,
+ units=function() return selected('unitInstances') end,
+ buildings=function() return selected('buildingInstances') end,
+ first=function() return selected(nil)[1] end,
+ count=function() return #selected(nil) end,
+})
+library('mutations',{
+ getStatus=status,
+ -- The Building a construction ticket created, while it exists in this chunk's snapshot.
+ getBuilding=function(ticket) local id=constructionResult(ticket); return id and proxy('buildingInstances',id) end,
+})
+library('debug',{
+ getSelectedBuilding=function() return selected('buildingInstances')[1] end,
+ getSelectedUnit=function() return selected('unitInstances')[1] end,
+ inspect=function(handle)
+  if type(handle)~='userdata' or getmetatable(handle)~='bfme proxy' then error('expected a bfme handle',2) end
+  return inspect(handle)
+ end,
+})
+library('console',{
+ log=writeLog,
+ reload=function()
+  local entries=scripts()
+  local chunks={}
+  -- Compile every file first; a syntax error leaves the previous definitions running.
+  for i,entry in ipairs(entries) do
+   local fn,err=load(entry.source,'@'..entry.name,'t',_G)
+   if not fn then error(err,2) end
+   chunks[i]=fn
+  end
+  for i,fn in ipairs(chunks) do
+   local ok,err=pcall(fn)
+   if not ok then error(entries[i].name..': '..tostring(err),2) end
+   print('Reloaded '..entries[i].name)
+  end
+  return #chunks
+ end,
+})
+local module
+module=newproxy({
+ __index=function(_,key) if key=='capabilities' then return copy(root.capabilities) end; return root[key] end,
+ __newindex=function() error('bfme is read-only',2) end,
+ __pairs=function() local out={}; for k in pairs(root) do out[k]=module[k] end; return next,out,nil end,
+ __tostring=function() return 'bfme' end,
+ __metatable='bfme module'
+})
+bfme=module
+function import(name)
+ if name=='bfme' then return module end
+ local lib=type(name)=='string' and libraries[name:match('^bfme%.(.+)$') or '']
+ if not lib then error('Unknown module: '..tostring(name),2) end
+ return lib
+end
+package.loaded.bfme=module
 package.path=''; package.cpath=''; package.loadlib=nil; package.searchers={package.searchers[1]}
 function print(...)
  local parts={}; for i=1,select('#',...) do parts[i]=tostring(select(i,...)):sub(1,65536) end
  writeLog(table.concat(parts,'\t'))
-end
-function GetFrame() return view.frame or 0 end
-function ExecuteAction(name,player,amount)
- if name~='PLAYER_SET_MONEY' and name~='PLAYER_GIVE_MONEY' then error('unsupported ExecuteAction: '..tostring(name),2) end
- local p
- if type(player)=='number' then p=bfme.players[player]
- else for _,candidate in pairs(bfme.players) do if candidate.name==player then p=candidate; break end end end
- if not p then error('unknown player: '..tostring(player),2) end
- if name=='PLAYER_GIVE_MONEY' then amount=p.money+amount end
- return p:set('money',amount)
 end
 function _bfmeRefresh()
  view=snapshot()
@@ -307,7 +384,11 @@ struct BfmeLuaRuntime::Impl
 		try
 		{
 			auto s = self(L).host.snapshot();
-			V::Table t{{"ready", s.ready}, {"paused", s.paused}, {"frame", s.frame}};
+			V::Table t{{"ready", s.ready}, {"paused", s.paused}, {"frame", s.frame}, {"cursorPosition", s.cursorPosition}};
+			V::List selection;
+			for (auto id : s.selection)
+				selection.emplace_back(id);
+			t["selection"] = std::move(selection);
 			if (s.localPlayerId >= 0)
 				t["localPlayerId"] = s.localPlayerId;
 			V::Table all;
@@ -340,7 +421,7 @@ struct BfmeLuaRuntime::Impl
 			m.id = luaL_checkstring(L, 2);
 			m.field = luaL_checkstring(L, 3);
 			m.value = scalar(L, 4);
-			const bool construction = m.field == ":beginConstruction";
+			const bool construction = m.field == ":construct";
 			if (construction && (!s.host.construct || !s.host.constructionStatus))
 				throw std::runtime_error("construction interface unavailable");
 			for (int i = 5; i <= (construction ? 10 : lua_gettop(L)); ++i)
@@ -554,7 +635,7 @@ void BfmeLuaRuntime::flush()
 		std::string error;
 		try
 		{
-			if (p.mutation.field == ":beginConstruction")
+			if (p.mutation.field == ":construct")
 			{
 				unsigned id = m->host.construct(p.mutation);
 				m->constructionResults[p.ticket] = id;
@@ -568,7 +649,7 @@ void BfmeLuaRuntime::flush()
 			error = e.what();
 		}
 		if (p.callback != LUA_NOREF) luaL_unref(m->L, LUA_REGISTRYINDEX, p.callback);
-		m->results[p.ticket] = error.empty() ? (p.mutation.field == ":beginConstruction" ? "building" : "applied") : error;
+		m->results[p.ticket] = error.empty() ? (p.mutation.field == ":construct" ? "building" : "applied") : error;
 	}
 	for (auto it = m->constructions.begin(); it != m->constructions.end();)
 	{

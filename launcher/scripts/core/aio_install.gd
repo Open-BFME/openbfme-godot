@@ -56,6 +56,7 @@ var updater  # Updater (scripts/core/updater.gd): its state, HTTP client, networ
 var service := SERVICE
 var files_origin := FILES
 var packages: Array = Pins.PACKAGES
+var only := {}  # package key -> {lower-case relative name: true}: install only these of its files (use_compact); a package not here: all
 var stop_request := ""  # "pause" or "cancel", set from the UI thread (with updater.http.cancelled)
 var test_stop_after := ""  # tests: "<folder>/<file>:<pause|cancel>" asks for a stop right after that file was checked and kept
 
@@ -92,10 +93,26 @@ func set_test_pins(path: String) -> String:
 	return ""
 
 
+## The game's iOS app: only the compact set of every package (Pins.COMPACT: the required archives and the menu movies; no campaign
+## videos, intros, Windows programs or installers), which fits an iPad. Every file is still pinned and checked as in a full install.
+func use_compact() -> void:
+	only = {}
+	for key in Pins.COMPACT:
+		var names := {}
+		for name in Pins.COMPACT[key]:
+			names[String(name).to_lower()] = true
+		only[key] = names
+
+
 func total_size() -> int:
 	var n := 0
 	for p in packages:
-		n += int(p.get("bytes", 0))
+		if not only.has(p.key):
+			n += int(p.get("bytes", 0))
+			continue
+		for f in p.files:
+			if only[p.key].has(str(f[0]).to_lower()):
+				n += int(f[2])
 	return n
 
 
@@ -267,6 +284,9 @@ func _install(target: String) -> Dictionary:
 		var c := check_manifest(pkg, m.body)
 		if not c.ok:
 			return c
+		if only.has(pkg.key):
+			var names: Dictionary = only[pkg.key]
+			c.files = c.files.filter(func(f): return names.has(f.rel.to_lower()))
 		plans.append({"pkg": pkg, "dir": target.path_join(pkg.folder), "files": c.files})
 		Log.line("LAUNCHER AIO %s: %d of the package's %d files are installed (%s; every one is pinned and matches)" % [pkg.guid, c.files.size(), c.all, pkg.language])
 	var total := 0

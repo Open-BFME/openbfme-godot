@@ -62,6 +62,19 @@ What a tester gets, and how to make it. Lane RELEASE-1.
   continue from shows a message box with the error, the version and the log file (and
   "Open log folder"), then quits when it is closed. `--crash-test` (debug builds) crashes
   on purpose two seconds after the start, in native code, for the release checks.
+- **Freezes (FREEZE-1).** A watchdog thread (`Common/FreezeWatchdog.h`) gets a heartbeat
+  from the main thread every frame, also while the game is paused. A frame longer than
+  1 s writes a `HITCH` line. No frame for 5 s writes a `FREEZE` line with the last log line
+  before it. It then writes every thread's stack to `<log>.freeze-<n>.txt` beside the log
+  (macOS `/usr/bin/sample`, Linux gdb or eu-stack; scrubbed like the log). A second capture
+  follows at 30 s, then a "still stalled" line every 30 s, and `FREEZE over` when frames
+  resume. An unfocused window waits 30 s and captures nothing. The lines go to the log
+  file directly, never through stdout. The next start says a frozen run "stopped
+  responding". The console filter never blocks a print: a console that takes nothing for
+  2 s is skipped until it takes text again (the dropped byte count is logged at exit), and
+  `/dev/null`'s `POLLNVAL` on macOS counts as writable. Before this fix, a game started
+  from the Finder froze for good after 64 KiB of output. `godot/tests/freeze_watchdog_test.gd`
+  checks the whole path.
 - **Network.** Only the LAN transport (`GameNetwork/Transport.cpp`, UDP) opens sockets;
   `tools/release/net_guard.py` (run by `tools/release/test_release_tools.py`) lexes every
   engine source and shipped script, comments and strings aware, and fails on any other

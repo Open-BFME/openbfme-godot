@@ -39,6 +39,7 @@ class CastleUpgrade : public UpgradeModule
 public:
 	CastleUpgrade(Thing *thing, const CastleUpgradeModuleData *data) : UpgradeModule(thing, data), m_data(data) {}
 	static void registerClass(ModuleFactory &modules);
+	static void shareWithNewTower(Object &tower);
 
 protected:
 	void upgradeImplementation() override; // RW 0x8BAAC0

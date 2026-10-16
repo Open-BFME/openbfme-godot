@@ -15,6 +15,7 @@ set(OPENBFME_RELEASE1_SOURCES
     src/Common/System/InstallLocator.cpp
     src/Common/System/LogPrivacy.cpp
     src/Common/System/ConsoleFilter.cpp
+    src/Common/System/FreezeWatchdog.cpp
     src/Common/System/BuildVersion.cpp
     ${OPENBFME_RELEASE1_VERSION_CPP}
 )
@@ -25,4 +26,5 @@ set(OPENBFME_RELEASE1_TESTS
     tests/test_release1_install.cpp
     tests/test_release1_log.cpp
     tests/test_release1_console.cpp
+    tests/test_freeze1_watchdog.cpp
 )

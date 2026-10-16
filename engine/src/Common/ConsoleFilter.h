@@ -7,6 +7,7 @@
 // a partial line is written (scrubbed) only at uninstall() or by the crash path (review r3: a time-based flush leaked split paths).
 // On a crash the reader thread may not get to run before the process dies: crashWrite() writes the held partial lines and the crash text,
 // scrubbed, straight to the original streams and makes the thread drop what follows (the session log has the whole crash either way).
+// A console that takes nothing for 2 s is skipped (its text dropped) until it takes text again (FREEZE-1).
 // Windows: not available (install() returns false with the reason; the release executable has no console). See docs/RELEASE.md.
 
 #pragma once
@@ -24,6 +25,9 @@ bool install(const LogPrivacy::Rules &rules, std::string *error, int outFd = -1,
 // Flushes stdio, restores the original descriptors and writes what the pipes still hold. Safe to call when not installed.
 void uninstall();
 bool installed();
+// Bytes the console did not take (it stalled for 2 s, or the shutdown's deadline passed); the session log has them. Never blocks the game:
+// the reader keeps draining its pipe so a print cannot wait for a console that takes nothing (FREEZE-1).
+unsigned long long droppedBytes();
 // The crash path: `text` (redacted here) goes to the original stderr at once; the pipes' further contents are dropped.
 void crashWrite(const std::string &text);
 

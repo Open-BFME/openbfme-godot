@@ -15,8 +15,11 @@
 #pragma once
 
 #include "GameClient/PlacementIcons.h"
+#include "GameClient/InGameUI.h"
 
 #include <godot_cpp/classes/mesh_instance3d.hpp>
+#include <godot_cpp/classes/decal.hpp>
+#include <godot_cpp/classes/label.hpp>
 #include <godot_cpp/classes/node3d.hpp>
 #include <godot_cpp/classes/standard_material3d.hpp>
 #include <godot_cpp/classes/texture2d.hpp>
@@ -62,6 +65,7 @@ private:
 	};
 	struct IconView
 	{
+		const ThingTemplate *tt = nullptr;
 		W3DInstancer *inst = nullptr;
 		std::map<std::string, int64_t> models;
 		std::vector<EntryView> entries;
@@ -78,14 +82,35 @@ private:
 	void applyTint(IconView &view, const Color &tint);
 	void updateBib(PlacementIcons::Icon &icon, IconView &view);
 	void updateArrow(const InGameUI &ui);
+	void updateResources(const InGameUI &ui);
+	void updateGrid(LiveGame &game, const InGameUI &ui, bool idle);
+	void updateFootprints(LiveGame &game, const InGameUI &ui, bool idle);
+	void updateFormation(LiveGame &game, const InGameUI &ui, bool idle);
+	void updateSelectionCircle(LiveGame &game, const InGameUI &ui, bool idle);
 	Ref<Texture2D> texture(const std::string &name);
 
+	std::vector<InGameUI::FormationSlot> m_formationSlots;
+	MeshInstance3D *m_formation = nullptr;
+	uint64_t m_formationId = 0;
+	MeshInstance3D *m_selectionCircle = nullptr;
+	uint64_t m_selectionCircleId = 0;
+	MeshInstance3D *m_footprint = nullptr;
+	uint64_t m_footprintId = 0;
+	int m_footprintCount = 0;
+	MeshInstance3D *m_grid = nullptr;
+	uint64_t m_gridId = 0;
+	int m_gridX = 0, m_gridY = 0;
+	float m_gridSpacing = 0;
+	Decal *m_resourceDecal = nullptr;
+	Label *m_resourceLabel = nullptr;
+	uint64_t m_resourceDecalId = 0, m_resourceLabelId = 0;
 	Node3D *m_parent = nullptr;
 	Ref<RetailFileSystem> m_fs;
 	std::unique_ptr<CastleTemplateStore> m_castles;
 	std::unique_ptr<PlacementIcons> m_icons;
 	LiveGame *m_game = nullptr;
 	std::vector<IconView> m_views;
+	unsigned m_modelLoads = 0;
 	std::map<std::string, Ref<Texture2D>> m_textures;
 	Ref<W3DModelBuilder> m_textureLoader;
 	W3DInstancer *m_arrow = nullptr;

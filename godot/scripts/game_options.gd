@@ -210,6 +210,7 @@ func apply_global(values: Dictionary) -> PackedStringArray:
 	apply_look(values.OpenBFMELook)
 	done.append("look " + values.OpenBFMELook)
 	ProjectSettings.set_setting("openbfme/rendering/soft_particles", values.OpenBFMESoftParticles == "yes")
+	ProjectSettings.set_setting("openbfme/audio/mute_unfocused", values.OpenBFMEMuteUnfocused == "yes")
 	var master := AudioServer.get_bus_index("Master")
 	AudioServer.set_bus_volume_db(master, linear_to_db(values.OpenBFMEMasterVolume.to_int() / 100.0) if values.OpenBFMEMasterVolume.to_int() > 0 else -80.0)
 	AudioServer.set_bus_mute(master, values.OpenBFMEMasterVolume.to_int() == 0 or (_focus_muted and values.OpenBFMEMuteUnfocused == "yes"))

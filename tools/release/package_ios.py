@@ -73,6 +73,9 @@ def main():
         presets.write_text(before + '[preset.3.options]' + options)
         subprocess.run([args.godot, '--headless', '--path', str(stage), '--editor', '--import', '--quit'], check=True)
         subprocess.run([args.godot, '--headless', '--path', str(stage), '--export-debug', 'iOS', str(output)], check=True)
+    # The official template references SDL's UIKit idiom queries without defining them.
+    dummy = output.parent / 'OpenBFME/dummy.cpp'
+    dummy.write_text(dummy.read_text() + (Path(__file__).parent / 'ios_sdl_uikit.cpp').read_text())
     if not args.team_id:
         project = output / 'project.pbxproj'
         project.write_text(project.read_text().replace('UNSIGNED00', '""'))

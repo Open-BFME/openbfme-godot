@@ -541,6 +541,7 @@ public:
 	String simulation_profile() const;
 
 	// lane HUD-1 (C++ only, not bound): what the in-game HUD node needs of the game; null until setup() / load_map() ran
+	void set_lua_hud_source(uint64_t id) { m_luaHudSource = id; }
 	LiveGame *hud_game() const { return m_game.get(); }
 	// AUDIO-2: connects the loaded game to the installed audio manager (a booted GameAudio): object / drawable owned sounds follow their owners, the
 	// player filter knows the local player, the objects' ambient sounds run. { ok, error }
@@ -669,6 +670,7 @@ private:
 	std::vector<std::string> m_endGameErrors;
 	ScoreScreenData m_scoreScreen;
 	bool m_testHooks = false; ///< start option test_hooks: the debug_* end-game hooks may act on a started (non-network) game
+	uint64_t m_luaHudSource = 0; // ObjectDB ID, safe when the HUD is freed
 	std::unique_ptr<BfmeLuaRuntime> m_consoleRuntime;
 	void startEndGame();
 	void updateEndGame();

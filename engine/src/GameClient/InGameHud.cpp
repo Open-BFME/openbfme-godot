@@ -441,7 +441,9 @@ void InGameHud::update(double seconds)
 	const std::shared_ptr<const LogicSnapshot> iconSnap = m_config.game.presentedSnapshot();
 	m_iconSettings.snapshot = iconSnap.get();
 	m_iconSettings.shroudDrawn = iconSnap && iconSnap->shroud && iconSnap->shroud->displayed;
-	m_iconUI.build(m_config.game.logic(), m_config.game.drawables(), m_config.view, m_iconSettings, selectedSet, m_input->ui().mouseoverObject(), m_iconOps);
+	m_iconSettings.controllerHover = m_controllerSelectionHover;
+	m_iconUI.build(m_config.game.logic(), m_config.game.drawables(), m_config.view, m_iconSettings, selectedSet,
+		m_controllerSelectionHover != INVALID_ID ? m_controllerSelectionHover : m_input->ui().mouseoverObject(), m_iconOps);
 	m_iconSettings.snapshot = nullptr; // the frame's snapshot goes with this frame
 	part(m_updateParts.icons);
 	// lane UI-4: the selection markers (RW 0x67580E / 0x86F4EE / 0x4B2A9B, GameClient/SelectionDecals.h) on the client clock

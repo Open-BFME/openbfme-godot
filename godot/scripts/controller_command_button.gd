@@ -3,6 +3,9 @@ extends Button
 var source: Node
 var artwork: Texture2D
 var selected := false
+var queued := 0
+var progress := -1.0
+var _clock: ProductionClock
 var evil := false
 var _halo: TextureRect
 var _glyph: TextureRect
@@ -10,7 +13,24 @@ var caption := ""
 var _rim: TextureRect
 var _picture: TextureRect
 var _label: Label
+var _queue_count: Label
 var _rims: Dictionary = {}
+
+class ProductionClock extends Control:
+	var progress := -1.0
+	func _draw() -> void:
+		if progress < 0.0 or progress >= 1.0:
+			return
+		# Native inverse clock: the remaining work is a dark sector, whose
+		# leading edge travels clockwise from the top as production advances.
+		var center := size * 0.5
+		var radius := minf(size.x, size.y) * 0.5
+		var angle := -PI * 0.5 + TAU * progress
+		var points := PackedVector2Array([center])
+		for i in 65:
+			points.append(center + Vector2.from_angle(angle + TAU * (1.0 - progress) * i / 64.0) * radius)
+		draw_colored_polygon(points, Color(0, 0, 0, 0.5))
+		draw_line(center, center + Vector2.from_angle(angle) * radius, Color(1, 1, 0.85, 0.9), 1.5, true)
 
 func _ready() -> void:
 	focus_mode = Control.FOCUS_NONE
@@ -38,6 +58,11 @@ func _ready() -> void:
 	material_instance.shader = shader
 	_picture.material = material_instance
 	add_child(_picture)
+	_clock = ProductionClock.new()
+	_clock.progress = progress
+	_clock.visible = progress >= 0.0 and progress < 1.0
+	_clock.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(_clock)
 	_label = Label.new()
 	_label.text = caption
 	_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -60,6 +85,16 @@ func _ready() -> void:
 	_glyph.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	_glyph.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(_glyph)
+	_queue_count = Label.new()
+	_queue_count.text = str(queued)
+	_queue_count.visible = queued > 1
+	_queue_count.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_queue_count.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_queue_count.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_queue_count.add_theme_color_override("font_color", Color("fff0bf"))
+	_queue_count.add_theme_color_override("font_outline_color", Color.BLACK)
+	_queue_count.add_theme_constant_override("outline_size", 3)
+	add_child(_queue_count)
 	resized.connect(_layout)
 	mouse_entered.connect(_update_rim)
 	mouse_exited.connect(_update_rim)
@@ -67,6 +102,7 @@ func _ready() -> void:
 	button_up.connect(_update_rim)
 	_layout()
 	_update_rim()
+	_update_selection()
 
 func _has_point(point: Vector2) -> bool:
 	return ((point - size * 0.5) / (size * 0.5)).length_squared() <= 1.0
@@ -80,6 +116,9 @@ func _layout() -> void:
 	var ratio := 48.0 / float(border.get_width()) if border != null else 0.85
 	_picture.size = size * ratio
 	_picture.position = (size - _picture.size) * 0.5
+	_clock.size = _picture.size * (46.0 / 48.0)
+	_clock.position = (size - _clock.size) * 0.5
+	_clock.queue_redraw()
 	(_picture.material as ShaderMaterial).set_shader_parameter("rect_size", _picture.size)
 	_rim.size = size
 	_label.size = size * 0.75
@@ -89,12 +128,20 @@ func _layout() -> void:
 	_halo.position = -size * 0.25
 	_glyph.size = size * 0.38
 	_glyph.position = size * Vector2(0.63, 0.71)
+	_queue_count.position = size * Vector2(0.65, 0.02)
+	_queue_count.size = size * Vector2(0.35, 0.35)
+	_queue_count.add_theme_font_size_override("font_size", maxi(10, int(size.x * 0.28)))
 	queue_redraw()
 
 func _process(_delta: float) -> void:
+	_update_selection()
+
+func _update_selection() -> void:
 	var active := selected or is_hovered()
 	_halo.visible = active
-	_glyph.visible = active
+	# Only controller focus owns the A prompt. Initialize it before the first
+	# draw too: live queue/timer updates can recreate these buttons every frame.
+	_glyph.visible = selected
 	if active:
 		_halo.texture = preload("res://scripts/controller_art.gd").frame("select_ring" if evil else "select_ring_good")
 

@@ -472,6 +472,19 @@ bool GameLogicSettingsLoader::load(ArchiveFileSystem &fs, GameLogicSettings &out
 
 void GameLogicSettings::crc(StateHasher &h) const
 {
+	// Native games keep their historical hash. Modified games identify every wall rule.
+	if (wallBalance.enabled) {
+		h.addU32(0x57414C4C); h.addU32(wallBalance.wallDamage); h.addU32(wallBalance.fortressDamage);
+		h.addU32(wallBalance.intermediateHubs); h.addU32(wallBalance.shareArrows);
+		for (float n : wallBalance.health) h.addFloat(n);
+		for (float n : wallBalance.cost) h.addFloat(n);
+		h.addFloat(wallBalance.fortressRange); h.addFloat(wallBalance.hubRange);
+		h.addU32(wallBalance.startingWalls); h.addU32(wallBalance.requireEnclosed); h.addU32(wallBalance.gateGap);
+		h.addFloat(wallBalance.enclosedIncome); h.addFloat(wallBalance.startingRadius); h.addFloat(wallBalance.startingSpacing);
+		for (const auto &p : wallBalance.startingHubs) { h.addString(p.first); h.addString(p.second); }
+		for (const auto &p : wallBalance.startingGates) { h.addString(p.first); h.addString(p.second); }
+	}
+
 	h.addBool(enableRepulsors);
 	h.addFloat(repulsedDistance);
 	if (!useFormations) // lane BACKLOG6: only a value other than the constructor's adds to the hash (the retail value leaves every earlier hash as it was)

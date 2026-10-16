@@ -276,7 +276,7 @@ bool BuildPlacement::isLocationClearOfObjects(GameLogic &logic, const Coord3D &p
 
 LegalBuildCode BuildPlacement::isLocationLegalToBuild(GameLogic &logic, const Coord3D &pos, const ThingTemplate &build, float angle, unsigned options, Object *builder, Player *player)
 {
-	(void)player;
+	if (!WallBalance::placementAllowed(logic,build,pos,builder,player)) return LBC_RESTRICTED_TERRAIN;
 	AIWorld *ai = logic.aiWorld();
 	const PathfindTerrain *terrain = ai ? ai->pathfinder().terrainView() : nullptr;
 	// ZH: "You just can't never build off the map, regardless of options"

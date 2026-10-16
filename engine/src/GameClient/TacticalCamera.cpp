@@ -363,6 +363,7 @@ void TacticalCamera::calcCameraConstraints()
 	{
 		offset = 0.0f;
 	}
+	if (m_controllerBounds) offset = 0.0f;
 	m_constraintLo[0] = 0.0f + offset;
 	m_constraintHi[0] = maxX - offset;
 	m_constraintLo[1] = 0.0f + offset;

@@ -2,6 +2,7 @@
 // See GameLogic/Object/Object.h for the creation order and its sources.
 
 #include "GameLogic/Object/Object.h"
+#include "GameLogic/Module/CastleUpgrade.h"
 #include "GameLogic/LegendaryHeroesGame.h"
 #include "GameLogic/Module/CastleModules.h"
 #include "GameLogic/Module/SpecialPowerModules.h"
@@ -871,6 +872,7 @@ void Object::removeFromPlayerCommandPoints()
 
 void Object::friend_onBuildComplete()
 {
+	CastleUpgrade::shareWithNewTower(*this);
 	// RW 0x68D252: the create interface's slot 1 of every module (the drawable's modules follow in retail: the client lane's)
 	for (size_t i = 0; i < m_modules.size(); ++i)
 	{

@@ -9,11 +9,15 @@
 #include "Common/BuildAssistant.h"
 #include "GameClient/ControlBar.h"
 #include "GameClient/InGameHud.h"
+#include "GameClient/PlacementIcons.h"
+#include "GameClient/Drawable.h"
+#include "GameClient/DrawableManager.h"
 #include "GameClient/GUI/ShellServices.h"
 #include "GameClient/GUI/WindowManager.h"
 #include "GameLogic/WallSpan.h"
 
 #include <cstdio>
+#include <limits>
 
 using namespace hudtest;
 
@@ -121,6 +125,15 @@ TEST_CASE("qa2fix walls: a player selects a Gondor wall hub, presses Begin Wall 
 	const ICoord2D endPx = rig.screenOf(end);
 	move(endPx.x, endPx.y);
 	CHECK(hud.input().ui().isLineBuildStarted());
+	// Exercise the actual command-button path, including its selected Options.
+	PlacementIcons preview(rig.game->drawables().services(), logic);
+	preview.update(hud.input().ui(), 33.0, PlaceEventTranslator::ghostOptions());
+	WallSpan::Plan previewPlan;
+	REQUIRE(WallSpan::plan(logic, *hub, *hub->getPosition(), hud.input().ui().placeLocation(), spanButton->m_options, previewPlan));
+	REQUIRE(preview.icons().size() == previewPlan.tiles.size());
+	REQUIRE(preview.icons().size() > 1);
+	CHECK(preview.icons().back().drawable->getPosition()->x == previewPlan.tiles.back().pos.x);
+	CHECK(preview.icons().back().drawable->getPosition()->y == previewPlan.tiles.back().pos.y);
 	// 4. RotWK's release without the flag only drops the anchor (RW 0x83E8A1): nothing is sent, the mode stays
 	const size_t sentBefore = hud.input().sentMessages();
 	button(true, endPx.x, endPx.y);
@@ -205,4 +218,98 @@ TEST_CASE("qa2fix walls: S-1770 is in HudInput::acceptanceStops() exactly once")
 		n += s.rfind("[S-1770]", 0) == 0 ? 1 : 0;
 	}
 	CHECK(n == 1);
+}
+
+TEST_CASE("qa2fix walls: Men preview shows every planned segment and snaps the destination hub to the wall length")
+{
+	if (!haveWorld("qa2fix wall preview"))
+	{
+		return;
+	}
+	Rig rig(shared());
+	const auto context = shared().world->enterContext();
+	rig.local->depositMoney(100000);
+	const Coord3D start = rig.freeSpot(1800.0f, 1800.0f, 420.0f);
+	std::string hubTemplate;
+	SUBCASE("standalone hub") { hubTemplate = "MenWallHubSmall"; }
+	SUBCASE("fortress expansion hub") { hubTemplate = "MenWallHubSmallExpansion"; }
+	Object *hub = rig.make(hubTemplate.c_str(), start.x, start.y);
+	REQUIRE(hub != nullptr);
+	InGameUI &ui = rig.input->ui();
+	ui.placeBuildAvailable("MenWallHubSmall", hub->getID());
+	PlacementIcons icons(rig.game->drawables().services(), rig.logic());
+	float previousEnd = -1.0f;
+	bool sawSnap = false;
+	const Drawable *firstSegment = nullptr;
+	// Cross segment boundaries in both directions, including intermediate hubs
+	// in long spans; a changed icon count must never leave holes in the preview.
+	for (float distance : { 320.0f, 321.0f, 420.0f, 800.0f, 600.0f, 319.0f, 320.0f })
+	{
+		Coord3D end{ start.x + distance, start.y, start.z };
+		ui.setPlaceGhost(end, 0.0f, 0);
+		WallSpan::Plan plan;
+		REQUIRE(WallSpan::plan(rig.logic(), *hub, *hub->getPosition(), end, 0, plan));
+		icons.update(ui, 33.0, PlaceEventTranslator::ghostOptions());
+		REQUIRE(icons.icons().size() == plan.tiles.size());
+		REQUIRE(icons.icons().size() > 1);
+		if (!firstSegment)
+		{
+			firstSegment = icons.icons()[0].drawable.get();
+		}
+		CHECK(icons.icons()[0].drawable.get() == firstSegment);
+		for (size_t i = 0; i < plan.tiles.size(); ++i)
+		{
+			const auto &icon = icons.icons()[i];
+			INFO("distance " << distance << ", tile " << i);
+			CHECK(icon.tt == plan.tiles[i].tmpl->getFinalOverride());
+			CHECK(icon.drawable->getPosition()->x == plan.tiles[i].pos.x);
+			CHECK(icon.drawable->getPosition()->y == plan.tiles[i].pos.y);
+			CHECK(icon.drawable->getPosition()->z == plan.tiles[i].pos.z);
+			CHECK(icon.angle == plan.tiles[i].angle);
+			CHECK(icon.code == plan.tiles[i].code);
+			bool visible = false;
+			for (const DrawEntry &entry : icon.drawable->entries())
+			{
+				visible = visible || (entry.draw && entry.draw->frame().model && !entry.moduleHidden);
+			}
+			CHECK(visible);
+		}
+		const float snappedEnd = icons.icons().back().drawable->getPosition()->x;
+		CHECK(icons.icons().back().tt->getName() == "MenWallHubSmall");
+		if (distance == 321.0f)
+		{
+			CHECK(snappedEnd == previousEnd);
+			sawSnap = true;
+		}
+		previousEnd = snappedEnd;
+		const size_t count = icons.icons().size();
+		end.x += 100.0f;
+		ui.setPlaceGhost(end, 0.0f, 0);
+		icons.update(ui, 33.0, PlaceEventTranslator::ghostOptions(), false);
+		CHECK(icons.icons().size() == count);
+		CHECK(icons.icons().back().drawable->getPosition()->x == snappedEnd);
+	}
+	CHECK(sawSnap);
+	const size_t lastCount = icons.icons().size();
+	const Coord3D lastEnd = *icons.icons().back().drawable->getPosition();
+	for (const Coord3D &offMap : { Coord3D{ -100000.0f, start.y, 0.0f }, Coord3D{ 100000.0f, start.y, 0.0f },
+	                             Coord3D{ start.x, -100000.0f, 0.0f }, Coord3D{ start.x, 100000.0f, 0.0f },
+	                             Coord3D{ std::numeric_limits<float>::infinity(), start.y, 0.0f },
+	                             Coord3D{ std::numeric_limits<float>::quiet_NaN(), start.y, 0.0f } })
+	{
+		ui.setPlaceGhost(offMap, 0.0f, 0);
+		icons.update(ui, 33.0, PlaceEventTranslator::ghostOptions());
+		REQUIRE(icons.icons().size() == lastCount);
+		CHECK(icons.icons()[0].drawable.get() == firstSegment);
+		CHECK(icons.icons().back().drawable->getPosition()->x == lastEnd.x);
+		CHECK(icons.icons().back().drawable->getPosition()->y == lastEnd.y);
+	}
+	ui.setPlaceGhost({ start.x + 420.0f, start.y, start.z }, 0.0f, 0);
+	icons.update(ui, 33.0, PlaceEventTranslator::ghostOptions());
+	CHECK(icons.icons()[0].drawable.get() == firstSegment);
+	ui.placeBuildAvailable("GondorBarracks", hub->getID());
+	ui.setPlaceGhost(start, 0.0f, 0);
+	icons.update(ui, 33.0, PlaceEventTranslator::ghostOptions());
+	REQUIRE(icons.icons().size() == 1);
+	CHECK(icons.icons()[0].tt->getName() == "GondorBarracks");
 }

@@ -17,6 +17,14 @@
 #include "GodotDevice/GodotW3DModelBuilder.h"
 
 #include <godot_cpp/classes/array_mesh.hpp>
+#include <godot_cpp/classes/immediate_mesh.hpp>
+#include "GameLogic/GameLogic.h"
+#include "GameLogic/BuildPlacement.h"
+#include <array>
+#include <limits>
+#include <godot_cpp/classes/camera3d.hpp>
+#include <godot_cpp/classes/viewport.hpp>
+#include <cmath>
 #include <godot_cpp/classes/geometry_instance3d.hpp>
 #include <godot_cpp/classes/multi_mesh_instance3d.hpp>
 #include <godot_cpp/core/object.hpp>
@@ -113,12 +121,29 @@ void PlacementGhostRenderer::error(const std::string &e)
 
 void PlacementGhostRenderer::clear()
 {
+	freeNode(m_formationId); m_formationId=0; m_formation=nullptr;
 	for (IconView &v : m_views)
 	{
 		freeNode(v.instId);
 		freeNode(v.bibId);
 	}
 	m_views.clear();
+	freeNode(m_footprintId);
+	m_footprintId = 0;
+	m_footprint = nullptr;
+	m_footprintCount = 0;
+	freeNode(m_selectionCircleId);
+	m_selectionCircleId = 0;
+	m_selectionCircle = nullptr;
+	freeNode(m_gridId);
+	m_gridId = 0;
+	m_grid = nullptr;
+	m_gridSpacing = 0;
+	freeNode(m_resourceDecalId);
+	freeNode(m_resourceLabelId);
+	m_resourceDecalId = m_resourceLabelId = 0;
+	m_resourceDecal = nullptr;
+	m_resourceLabel = nullptr;
 }
 
 W3DInstancer *PlacementGhostRenderer::newInstancer(const char *name)
@@ -142,6 +167,18 @@ W3DInstancer *PlacementGhostRenderer::newInstancer(const char *name)
 
 void PlacementGhostRenderer::drawIcon(size_t i, PlacementIcons::Icon &icon, IconView &view)
 {
+	if (view.tt != icon.tt)
+	{
+		// The destination hub moves between slots as a wall span changes length.
+		// Keep each slot's loaded models instead of rebuilding GPU resources every
+		// time that slot alternates between a segment and the destination hub.
+		for (const EntryView &entry : view.entries)
+		{
+			if (view.inst && entry.instance >= 0) view.inst->remove_instance(entry.instance);
+		}
+		view.entries.clear();
+		view.tt = icon.tt;
+	}
 	Drawable &d = *icon.drawable;
 	if (!view.inst)
 	{
@@ -181,6 +218,7 @@ void PlacementGhostRenderer::drawIcon(size_t i, PlacementIcons::Icon &icon, Icon
 			if (!model.empty())
 			{
 				auto it = view.models.find(model);
+				if (it == view.models.end()) ++m_modelLoads;
 				int64_t mid = it == view.models.end() ? view.inst->add_model(toGodotString(*f.modelName)) : it->second;
 				view.models[model] = mid;
 				if (mid < 0)
@@ -423,9 +461,12 @@ void PlacementGhostRenderer::sync(LiveGame &game, const InGameUI &ui, double del
 	{
 		error(e);
 	}
-	if (m_icons->templateName() != before || m_icons->icons().size() != m_views.size())
+	if (m_icons->templateName() != before)
 	{
 		clear(); // a new template: new instancers (the models differ)
+	}
+	if (m_icons->icons().size() > m_views.size())
+	{
 		m_views.resize(m_icons->icons().size());
 	}
 	if (ui.isPlacing() && ui.placeHasGhost())
@@ -445,20 +486,251 @@ void PlacementGhostRenderer::sync(LiveGame &game, const InGameUI &ui, double del
 			}
 		}
 	}
-	for (IconView &v : m_views)
+	for (size_t i = 0; i < m_views.size(); ++i)
 	{
+		IconView &v = m_views[i];
+		const bool visible = ui.isPlacing() && ui.placeHasGhost() && i < m_icons->icons().size();
 		if (v.inst)
 		{
-			v.inst->set_visible(ui.isPlacing() && ui.placeHasGhost());
+			v.inst->set_visible(visible);
+		}
+		if (!visible && v.bib)
+		{
+			v.bib->set_visible(false);
 		}
 	}
 	updateArrow(ui);
+	updateResources(ui);
+	updateGrid(game, ui, judge);
+	updateFootprints(game, ui, judge);
+	updateSelectionCircle(game, ui, judge);
+	updateFormation(game, ui, judge);
+	m_formationSlots = ui.formationSlots;
+}
+
+
+void PlacementGhostRenderer::updateSelectionCircle(LiveGame &game, const InGameUI &ui, bool idle)
+{
+	if (ui.controllerAreaRadius <= 0)
+	{
+		if (m_selectionCircle) m_selectionCircle->hide();
+		return;
+	}
+	if (!idle) return;
+	if (!m_selectionCircle)
+	{
+		m_selectionCircle = memnew(MeshInstance3D);
+		m_parent->add_child(m_selectionCircle);
+		m_selectionCircleId = m_selectionCircle->get_instance_id();
+		m_selectionCircle->set_cast_shadows_setting(GeometryInstance3D::SHADOW_CASTING_SETTING_OFF);
+	}
+	Ref<StandardMaterial3D> material;
+	material.instantiate();
+	material->set_shading_mode(BaseMaterial3D::SHADING_MODE_UNSHADED);
+	material->set_albedo(Color(1,.8f,.2f));
+	Ref<ImmediateMesh> mesh;
+	mesh.instantiate();
+	mesh->surface_begin(Mesh::PRIMITIVE_LINE_STRIP,material);
+	for (int i=0;i<=128;++i)
+	{
+		const float angle = i * 6.28318530718f / 128;
+		const float x = ui.controllerAreaCenter.x + std::cos(angle)*ui.controllerAreaRadius;
+		const float y = ui.controllerAreaCenter.y + std::sin(angle)*ui.controllerAreaRadius;
+		mesh->surface_add_vertex(Vector3(x,game.logic().getGroundHeight(x,y)+1,-y));
+	}
+	mesh->surface_end();
+	m_selectionCircle->set_mesh(mesh);
+	m_selectionCircle->show();
+}
+
+void PlacementGhostRenderer::updateFootprints(LiveGame &game, const InGameUI &ui, bool idle)
+{
+	if (!ui.isPlacing() || !ui.placeHasGhost() || !ui.placementSnap)
+	{
+		if (m_footprint) m_footprint->hide();
+		return;
+	}
+	if (!idle) return; // footprint geometry reads the live movement cache
+	Ref<ImmediateMesh> mesh;
+	mesh.instantiate();
+	Ref<StandardMaterial3D> material;
+	material.instantiate();
+	material->set_shading_mode(BaseMaterial3D::SHADING_MODE_UNSHADED);
+	material->set_transparency(BaseMaterial3D::TRANSPARENCY_ALPHA);
+	material->set_cull_mode(BaseMaterial3D::CULL_DISABLED);
+	material->set_albedo(Color(1,.8f,.15f,.9f));
+	bool begun = false;
+	m_footprintCount = 0;
+	for (const auto &icon : m_icons->icons())
+	{
+		if (!icon.drawable || !icon.tt) continue;
+		const auto &p = *icon.drawable->getPosition();
+		std::vector<BuildPlacement::Footprint> shapes;
+		if (!BuildPlacement::footprintsOf(game.logic(),*icon.tt,p,icon.angle,shapes) || shapes.empty()) continue;
+		const float c=std::cos(icon.angle),s=std::sin(icon.angle);
+		float loX=std::numeric_limits<float>::infinity(),loY=loX,hiX=-loX,hiY=-loX;
+		// A rotated foundation rectangle bounds the active collision shapes, including offsets.
+		for (const auto &shape : shapes)
+			for (float dx : {-shape.major,shape.major})
+				for (float dy : {-(shape.type==0?shape.minor:shape.major),shape.type==0?shape.minor:shape.major})
+				{
+					const float a=shape.type==0?shape.angle:icon.angle;
+					const float x=shape.x+dx*std::cos(a)-dy*std::sin(a)-p.x;
+					const float y=shape.y+dx*std::sin(a)+dy*std::cos(a)-p.y;
+					const float lx=x*c+y*s,ly=-x*s+y*c;
+					loX=std::min(loX,lx);hiX=std::max(hiX,lx);loY=std::min(loY,ly);hiY=std::max(hiY,ly);
+				}
+		if (!std::isfinite(loX) || hiX<=loX || hiY<=loY) continue;
+		if (!begun) { mesh->surface_begin(Mesh::PRIMITIVE_TRIANGLES,material); begun=true; }
+		auto point = [&](float x,float y) {
+			const float wx=p.x+x*c-y*s,wy=p.y+x*s+y*c;
+			return Vector3(wx,game.logic().getGroundHeight(wx,wy)+1.5f,-wy);
+		};
+		const std::array<Vector2,4> corners={Vector2(loX,loY),Vector2(hiX,loY),Vector2(hiX,hiY),Vector2(loX,hiY)};
+		for (int edge=0;edge<4;++edge)
+		{
+			const Vector2 a=corners[edge],b=corners[(edge+1)%4];
+			const Vector2 normal=Vector2(-(b-a).y,(b-a).x).normalized();
+			for (int j=0;j<16;++j)
+			{
+				const Vector2 u=a+(b-a)*(j/16.0f),v=a+(b-a)*((j+1)/16.0f);
+				const Vector2 uv[6]={u-normal,v-normal,v+normal,u-normal,v+normal,u+normal};
+				for (const auto &vertex:uv) mesh->surface_add_vertex(point(vertex.x,vertex.y));
+			}
+		}
+		++m_footprintCount;
+	}
+	if (begun) mesh->surface_end();
+	if (!m_footprint && begun)
+	{
+		m_footprint=memnew(MeshInstance3D);
+		m_parent->add_child(m_footprint);
+		m_footprintId=m_footprint->get_instance_id();
+		m_footprint->set_cast_shadows_setting(GeometryInstance3D::SHADOW_CASTING_SETTING_OFF);
+	}
+	if (m_footprint) { m_footprint->set_mesh(mesh); m_footprint->set_visible(begun); }
+}
+
+void PlacementGhostRenderer::updateGrid(LiveGame &game, const InGameUI &ui, bool idle)
+{
+	const bool show = ui.isPlacing() && ui.placeHasGhost() && ui.placementSnap;
+	if (!show)
+	{
+		if (m_grid) m_grid->hide();
+		return;
+	}
+	const Coord3D &p = ui.placeLocation();
+	if (!std::isfinite(p.x) || !std::isfinite(p.y)) return;
+	const float spacing = ui.placementGrid;
+	const int cx = (int)std::round(p.x / spacing), cy = (int)std::round(p.y / spacing);
+	if (idle && (!m_grid || cx != m_gridX || cy != m_gridY || spacing != m_gridSpacing))
+	{
+		if (!m_grid)
+		{
+			m_grid = memnew(MeshInstance3D);
+			m_parent->add_child(m_grid);
+			m_gridId = m_grid->get_instance_id();
+			m_grid->set_cast_shadows_setting(GeometryInstance3D::SHADOW_CASTING_SETTING_OFF);
+		}
+		Ref<StandardMaterial3D> material;
+		material.instantiate();
+		material->set_shading_mode(BaseMaterial3D::SHADING_MODE_UNSHADED);
+		material->set_transparency(BaseMaterial3D::TRANSPARENCY_ALPHA);
+		material->set_albedo(Color(.8f, .85f, 1, .55f));
+		Ref<ImmediateMesh> mesh;
+		mesh.instantiate();
+		mesh->surface_begin(Mesh::PRIMITIVE_LINES, material);
+		auto vertex = [&](float x, float y) {
+			mesh->surface_add_vertex(Vector3(x, game.logic().getGroundHeight(x,y) + 1.0f, -y));
+		};
+		// Bounded local portion of a global map grid. Subdivide lines to follow terrain.
+		for (int i = -10; i <= 10; ++i)
+			for (int j = -40; j < 40; ++j)
+			{
+				vertex((cx+i)*spacing, (cy+j*.25f)*spacing);
+				vertex((cx+i)*spacing, (cy+(j+1)*.25f)*spacing);
+				vertex((cx+j*.25f)*spacing, (cy+i)*spacing);
+				vertex((cx+(j+1)*.25f)*spacing, (cy+i)*spacing);
+			}
+		mesh->surface_end();
+		m_grid->set_mesh(mesh);
+		m_gridX = cx; m_gridY = cy; m_gridSpacing = spacing;
+	}
+	if (m_grid) m_grid->show();
+}
+
+void PlacementGhostRenderer::updateResources(const InGameUI &ui)
+{
+	const bool show = ui.isPlacing() && ui.placeHasGhost() && m_icons->resourceRadius() > 0;
+	if (!show)
+	{
+		if (m_resourceDecal) m_resourceDecal->hide();
+		if (m_resourceLabel) m_resourceLabel->hide();
+		return;
+	}
+	if (!m_resourceDecal)
+	{
+		m_resourceDecal = memnew(Decal);
+		m_parent->add_child(m_resourceDecal);
+		m_resourceDecalId = m_resourceDecal->get_instance_id();
+		// Retail farmreticle02 mapped image: the whole BuildingRadialButtons_003 texture.
+		m_resourceDecal->set_texture(Decal::TEXTURE_ALBEDO, texture("BuildingRadialButtons_003.tga"));
+		m_resourceDecal->set_cull_mask(1u << 19);
+		m_resourceDecal->set_albedo_mix(1);
+		m_resourceDecal->set_upper_fade(0);
+		m_resourceDecal->set_lower_fade(0);
+		m_resourceLabel = memnew(Label);
+		m_resourceLabel->set_mouse_filter(Control::MOUSE_FILTER_IGNORE);
+		m_resourceLabel->add_theme_font_size_override("font_size", 14);
+		m_resourceLabel->add_theme_color_override("font_outline_color", Color(0,0,0,1));
+		m_resourceLabel->add_theme_constant_override("outline_size", 2);
+		m_parent->add_child(m_resourceLabel);
+		m_resourceLabelId = m_resourceLabel->get_instance_id();
+	}
+	const float share = m_icons->resourceShare();
+	const Color color = share > .75f ? Color(0,1,0) : share >= .5f ? Color(1,1,0) : share >= .25f ? Color(1,0,0) : Color(0,0,0);
+	const Coord3D &p = ui.placeLocation();
+	m_resourceDecal->set_position(Vector3(p.x,p.z,-p.y));
+	const float diameter = 2 * m_icons->resourceRadius();
+	m_resourceDecal->set_size(Vector3(diameter, 200, diameter));
+	m_resourceDecal->set_modulate(Color(color.r,color.g,color.b,128.0f/255));
+	m_resourceDecal->show();
+	m_resourceLabel->set_text(String::num_int64((int)std::floor(share*100+.5f)) + "%");
+	m_resourceLabel->add_theme_color_override("font_color", color);
+	const Vector2 size = m_resourceLabel->get_minimum_size();
+	m_resourceLabel->set_size(size);
+	Viewport *viewport = m_parent->get_viewport();
+	Vector2 at = viewport->get_mouse_position() - Vector2(size.x/2, 20+size.y);
+	const Vector2 extent = viewport->get_visible_rect().size;
+	at.x = std::max(0.0f, std::min(at.x, extent.x-size.x));
+	at.y = std::max(0.0f, std::min(at.y, extent.y-size.y));
+	m_resourceLabel->set_position(at);
+	m_resourceLabel->show();
 }
 
 Dictionary PlacementGhostRenderer::state() const
 {
 	Dictionary s;
+	int cachedModels = 0;
+	for (const IconView &view : m_views) cachedModels += (int)view.models.size();
+	s["cached_models"] = cachedModels;
+	s["model_loads"] = m_modelLoads;
+	s["formation_visible"] = m_formation && m_formation->is_visible();
+	Array formation;
+	for(const auto &slot:m_formationSlots) {
+		Dictionary item;item["id"]=(int64_t)slot.object;item["x"]=slot.position.x;item["y"]=slot.position.y;item["angle"]=slot.angle;
+		formation.push_back(item);
+	}
+	s["formation_slots"]=formation;
 	s["template"] = m_icons ? toGodotString(m_icons->templateName()) : String();
+	s["selection_circle_visible"] = m_selectionCircle && m_selectionCircle->is_visible();
+	s["footprint_visible"] = m_footprint && m_footprint->is_visible();
+	s["footprint_count"] = m_footprintCount;
+	s["grid_visible"] = m_grid && m_grid->is_visible();
+	s["grid_spacing"] = m_gridSpacing;
+	s["resource_radius"] = m_icons ? m_icons->resourceRadius() : 0;
+	s["resource_share"] = m_icons ? m_icons->resourceShare() : 0;
+	s["resource_visible"] = m_resourceLabel && m_resourceLabel->is_visible();
 	s["castle"] = m_icons && m_icons->castle();
 	s["anchored"] = m_anchored;
 	s["arrow"] = m_arrowShown;
@@ -513,4 +785,39 @@ Dictionary PlacementGhostRenderer::state() const
 	s["notes"] = notes; // lane BUILD-5 r3: the counted draw problems (hide misses, retail data defects)
 	return s;
 }
+} // namespace godot
+
+namespace godot {
+void PlacementGhostRenderer::updateFormation(LiveGame &game, const InGameUI &ui, bool idle) {
+ if(!ui.formationActive || ui.formationSlots.empty()) { if(m_formation)m_formation->hide();return; }
+ if(!idle)return;
+ if(!m_formation) {
+  m_formation=memnew(MeshInstance3D);m_parent->add_child(m_formation);
+  m_formationId=m_formation->get_instance_id();
+  m_formation->set_cast_shadows_setting(GeometryInstance3D::SHADOW_CASTING_SETTING_OFF);
+ }
+ Ref<ImmediateMesh> mesh;mesh.instantiate();
+ Ref<StandardMaterial3D> material;material.instantiate();
+ material->set_shading_mode(BaseMaterial3D::SHADING_MODE_UNSHADED);
+ material->set_albedo(Color(.25f,1,.4f,.9f));
+ material->set_transparency(BaseMaterial3D::TRANSPARENCY_ALPHA);
+ mesh->surface_begin(Mesh::PRIMITIVE_LINES,material);
+ auto point=[&](float x,float y){return Vector3(x,game.logic().getGroundHeight(x,y)+2,-y);};
+ for(const auto &slot:ui.formationSlots) {
+  const float x=slot.position.x,y=slot.position.y,r=slot.radius;
+  for(int i=0;i<24;++i) {
+   const float a=i*6.28318530718f/24,b=(i+1)*6.28318530718f/24;
+   mesh->surface_add_vertex(point(x+r*std::cos(a),y+r*std::sin(a)));
+   mesh->surface_add_vertex(point(x+r*std::cos(b),y+r*std::sin(b)));
+  }
+  const float c=std::cos(slot.angle),s=std::sin(slot.angle),tipX=x+r*c,tipY=y+r*s;
+  mesh->surface_add_vertex(point(x,y));mesh->surface_add_vertex(point(tipX,tipY));
+  for(float side:{-1.f,1.f}) {
+   mesh->surface_add_vertex(point(tipX,tipY));
+   mesh->surface_add_vertex(point(tipX-r*.4f*c-side*r*.3f*s,tipY-r*.4f*s+side*r*.3f*c));
+  }
+ }
+ mesh->surface_end();m_formation->set_mesh(mesh);m_formation->show();
+}
+
 } // namespace godot

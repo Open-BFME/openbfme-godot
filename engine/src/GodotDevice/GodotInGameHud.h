@@ -23,7 +23,9 @@
 #include <godot_cpp/variant/string.hpp>
 
 #include <memory>
+#include <vector>
 
+struct Coord3D;
 struct INIEnvironment;
 class InGameHud;
 class LiveGame;
@@ -72,6 +74,9 @@ public:
 	// lane BUILD-5: the MiscAudio field names the input asked to play since the last call (InGameUI::takeMiscSounds), e.g. BadBuildingPlacementSound
 	PackedStringArray take_misc_sounds();
 	// lane BUILD-5: the pointer as drawn now { name, direction, hidden, texture (null: none), hot } (proof screenshots draw it: a capture omits the OS pointer)
+	bool cursor_map_position(const GameWorld *world, Coord3D &out) const;
+	// bfme Lua: the client selection, newest first (InGameUI::selected); caller holds the logic worker
+	std::vector<unsigned> selected_ids(const GameWorld *world) const;
 	Dictionary get_cursor_image() const;
 	// lane BUILD-5 r2: the placement ghost as drawn (PlacementGhostRenderer::state): { template, castle, anchored, arrow, icons: [...], errors: [...] }
 	Dictionary get_placement_ghost_state() const;
@@ -113,6 +118,15 @@ public:
 	// scripted camera moves for the viewers (the same View::lookAt / setHeightAboveGround the radar click and the wheel call)
 	void camera_look_at(const Vector2 &sage_xy);
 	void camera_set_height(float height_above_ground);
+	void camera_pan(const Vector2 &amount);
+	int get_controller_primary_button(float selection_assist_radius = 0.0f) const;
+	bool controller_attack_move();
+	bool controller_select_area(float radius, bool commit);
+	bool controller_formation(const String &action, const Vector2 &direction);
+	void set_placement_snap(bool active, float spacing);
+	Dictionary get_controller_target(float selection_assist_radius);
+	void controller_deselect();
+	void controller_placement_aim(const Vector2 &direction);
 	Vector2 pixel_to_world(const Vector2 &pixel) const;
 	Vector2 world_to_pixel(const Vector2 &world_xy) const;
 	// lane IDLE-1: { ok, picked (the id the HUD's pick answers at `pixel`, 0 for none), target ("hit" / "miss" / "not_drawn" / "unknown" / "gone": the pick ray

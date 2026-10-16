@@ -7,6 +7,7 @@
 #include <godot_cpp/classes/file_access.hpp>
 #include <godot_cpp/variant/packed_byte_array.hpp>
 #include "GodotDevice/GodotGameWorld.h"
+#include <godot_cpp/classes/config_file.hpp>
 
 #include "GameClient/FrameCensus.h"
 #include "GameLogic/Map/TerrainLogic.h"
@@ -1024,6 +1025,45 @@ Dictionary GameWorld::load_internal(const LiveGame::Options &loIn, const String 
 	m_textureAnimation = optBool(options, "texture_animation", true);
 
 	LiveGame::Options lo = loIn;
+	// Optional BFME2Lua wall profile, captured once before creating any objects.
+	Ref<ConfigFile> wallConfig; wallConfig.instantiate();
+	wallConfig->load("res://dev/wall_balance.cfg");
+	Ref<ConfigFile> savedWalls; savedWalls.instantiate();
+	if (savedWalls->load("user://wall_balance.cfg") == OK) wallConfig = savedWalls;
+	auto setting = [&](const char *key, const Variant &fallback) { return wallConfig->get_value("walls",key,fallback); };
+	auto scalar = [&](const char *key, float fallback, float lo, float hi) {
+		const float value = setting(key,fallback);
+		return std::isfinite(value) ? std::clamp(value,lo,hi) : fallback;
+	};
+	auto &walls = lo.wallBalance;
+	walls.enabled = setting("enabled",false);
+	walls.intermediateHubs = setting("intermediate_hubs",false);
+	walls.shareArrows = setting("share_arrows",true);
+	walls.startingWalls = setting("starting_walls",false);
+	walls.requireEnclosed = setting("require_enclosed",true);
+	walls.gateGap = setting("gate_gap",false);
+	walls.enclosedIncome = scalar("enclosed_income",2,1,10);
+	walls.startingRadius = scalar("starting_radius",450,150,1500);
+	walls.startingSpacing = scalar("starting_spacing",300,100,1000);
+	const PackedStringArray factions = wallConfig->get_section_keys("starting_hubs");
+	for (int64_t i=0;i<factions.size();++i) walls.startingHubs[toNative(factions[i])] = toNative(wallConfig->get_value("starting_hubs",factions[i]));
+	const PackedStringArray gates = wallConfig->get_section_keys("starting_gates");
+	for (int64_t i=0;i<gates.size();++i) walls.startingGates[toNative(gates[i])] = toNative(wallConfig->get_value("starting_gates",gates[i]));
+	walls.wallDamage = (int)scalar("wall_damage",1,0,2);
+	walls.fortressDamage = (int)scalar("fortress_damage",1,0,2);
+	const char *healthKeys[] = {"wall_health","hub_health","gate_health"};
+	const float healthDefaults[] = {6,30,6};
+	for (int i=0;i<3;++i) walls.health[i] = scalar(healthKeys[i],healthDefaults[i],.01f,10000);
+	const char *costKeys[] = {"wall_cost","hub_cost","outer_hub_cost","expansion_cost"};
+	const float costDefaults[] = {.5f,.7f,.3f,.8f};
+	for (int i=0;i<4;++i) walls.cost[i] = scalar(costKeys[i],costDefaults[i],0,100);
+	walls.fortressRange = scalar("fortress_range",2,.01f,100);
+	walls.hubRange = scalar("hub_range",2,.01f,100);
+	if (options.has("wall_rebalance")) walls.enabled = options["wall_rebalance"];
+	if (options.has("starting_walls")) walls.startingWalls = options["starting_walls"];
+	if (options.has("require_enclosed")) walls.requireEnclosed = options["require_enclosed"];
+	if (m_netStarted) walls.startingHubs.clear(); // reference starting-wall jobs are offline only
+
 	if (progress.is_valid())
 	{
 		lo.progress = [&progress](int percent) { progress.call(percent); };

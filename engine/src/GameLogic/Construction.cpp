@@ -368,6 +368,8 @@ Object *Construction::constructWithoutBuilder(GameLogic &logic, const ThingTempl
 	obj->setStatus((unsigned)ObjectTemplateInfoBuilder::objectStatusIndex("PENDING_CONSTRUCTION"), false);
 	build->setForceComplete(true);
 	build->startConstruction(true);
+	// Native force-start uses a repair sentinel; a new scripted foundation starts at zero.
+	startRise(*obj);
 	const int cost = BuildAssistant::calcCostToBuild(what, &owner, nullptr, -1);
 	owner.withdrawMoney((std::uint32_t)cost, true);
 	owner.getScoreKeeper().addMoneySpentByKind(logic, &what, cost);

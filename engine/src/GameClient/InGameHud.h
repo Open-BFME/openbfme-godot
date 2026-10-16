@@ -143,6 +143,7 @@ public:
 	// Options.ini, its mapped images, the camera's zoom) and draws the ops of the last update under the Palantir
 	void setIconUISettings(const IconUISettings &s) { m_iconSettings = s; }
 	const IconUISettings &iconSettings() const { return m_iconSettings; }
+	void setControllerSelectionHover(ObjectID id) { m_controllerSelectionHover = id; }
 	const std::vector<IconUIOp> &iconOps() const { return m_iconOps; }
 	// lane PLAY-3: the drag selection box of this render frame (W3DInGameUI::drawSelectionRegion, RW 0x48ECF4): an OPEN_RECT over the region the
 	// SelectionTranslator's drag holds (InGameUI's area select hint), drawn while the drag lasts; false when there is none. Computed from the client
@@ -237,6 +238,7 @@ private:
 	unsigned m_decalClientFrame = ~0u;              // the client frame the markers were last refreshed in
 	DrawableIconUI m_iconUI;                  // lane HUD-5
 	IconUISettings m_iconSettings;
+	ObjectID m_controllerSelectionHover = INVALID_ID;
 	std::vector<IconUIOp> m_iconOps;
 	unsigned m_spellToggleSeen = 0;           // lane INPUT-1: the SPELL_STORE metas done
 	unsigned m_diplomacySeen = 0;             // lane INPUT-1: the DIPLOMACY metas done

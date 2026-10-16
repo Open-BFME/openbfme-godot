@@ -21,7 +21,9 @@ var _elapsed := 0.0
 var _render_hash := -1
 var _owns_store := false
 var _native_layout_active := false
+var _was_playing := false
 var _armed_focus := ""
+var _selection_key := ""
 var _shortcut_art: TextureRect
 var _palette_opened_at := 0
 var _reticle: TextureRect
@@ -70,6 +72,35 @@ func _ready() -> void:
 	_panel.add_child(_shortcuts)
 	bridge.palette_toggled.connect(_toggle)
 	bridge.command_action.connect(action)
+	bridge.formation = func(operation: String, direction: Vector2) -> bool:
+		var live: Node = hud.call()
+		return live.controller_formation(operation, direction) if live != null and live.has_method("controller_formation") else false
+	bridge.area_selection = func(radius: float, commit: bool) -> bool:
+		var live: Node = hud.call()
+		return live.controller_select_area(radius, commit) if live != null and live.has_method("controller_select_area") else false
+	bridge.placement_active = func() -> bool:
+		var live: Node = hud.call()
+		return live != null and live.has_method("get_placement") and bool(live.get_placement().get("placing", false))
+	bridge.placement_aim.connect(func(direction: Vector2) -> void:
+		var live: Node = hud.call()
+		if live != null and live.has_method("controller_placement_aim"):
+			live.controller_placement_aim(direction))
+	bridge.camera_pan.connect(func(amount: Vector2) -> void:
+		var live: Node = hud.call()
+		if live != null and live.is_ready() and live.has_method("camera_pan"):
+			live.camera_pan(amount))
+	bridge.attack_move = func() -> bool:
+		var live: Node = hud.call()
+		return live.controller_attack_move() if live != null and live.has_method("controller_attack_move") else false
+	bridge.primary_button = func() -> int:
+		var live: Node = hud.call()
+		return live.get_controller_primary_button(bridge.selection_assist_radius) if live != null and live.has_method("get_controller_primary_button") else MOUSE_BUTTON_LEFT
+	bridge.camera_zoom.connect(func(amount: float) -> void:
+		var live: Node = hud.call()
+		if live != null and live.is_ready():
+			var camera: Dictionary = live.get_camera()
+			if not camera.is_empty():
+				live.camera_set_height(clampf(float(camera.height_above_ground) + amount, float(camera.min_height), float(camera.max_height))))
 	bridge.camera_rotation.connect(func(radians: float) -> void:
 		var live: Node = hud.call()
 		if live != null and live.is_ready():
@@ -77,6 +108,11 @@ func _ready() -> void:
 			if not camera.is_empty():
 				live.camera_set_angle_pitch(float(camera.angle) + radians, float(camera.pitch)))
 	_panel.hide()
+	var saved_options := ConfigFile.new()
+	if saved_options.load("user://controller_options.cfg") == OK:
+		var radius := clampf(float(saved_options.get_value("controller", "selection_assist_radius", 48)), 0, 200)
+		_lua("controller.config.selectionAssistRadius = %s" % str(radius))
+		_lua("controller.config.placementGridSpacing = %s" % str(clampf(float(saved_options.get_value("controller", "placement_grid_spacing", 50)), 10, 200)))
 	_configure()
 	_panel.resized.connect(_layout)
 	_layout()
@@ -126,28 +162,38 @@ func _toggle(open: bool) -> void:
 			live.close_spell_store()
 		_owns_store = false
 		return
-	_configure()
 	_render_hash = -1
-	_shortcut_layout.clear()
-	for i in 4:
-		var fields := _lua("local u=controller.ui; local p=u.layout.positions[%d]; return u.shortcuts[%d].title,p.x,p.y,u.layout.size,u.shortcuts[%d].image" % [i + 1, i + 1, i + 1]).split("\t")
-		if fields.size() == 5:
-			_shortcut_layout.append(fields)
 	_refresh()
 
 func _configure() -> void:
-	var config := _lua("return controller.config.deadzone,controller.config.cursorSpeed,controller.config.menuRepeatDelay,controller.config.menuRepeatRate").split("\t")
-	if config.size() == 4:
-		bridge.deadzone = clampf(float(config[0]), 0.0, 0.95)
-		bridge.cursor_speed = maxf(float(config[1]), 0.0)
-		bridge.menu_repeat_delay = maxi(int(config[2]), 1)
-		bridge.menu_repeat_rate = maxi(int(config[3]), 1)
+	# One snapshot/VM call for all options and shortcut metadata, off the RT-open path.
+	var fields := _lua("local c=controller.config; local u=controller.ui; local v={c.placementGridSpacing or 50,c.selectionAssistRadius or 48,c.cameraPanSpeed or 1200,c.centerCursor,c.cameraRotationSpeed,c.cameraZoomSpeed,c.deadzone,c.cursorSpeed,c.menuRepeatDelay,c.menuRepeatRate}; for i=1,4 do local p=u.layout.positions[i]; v[#v+1]=u.shortcuts[i].title; v[#v+1]=p.x; v[#v+1]=p.y; v[#v+1]=u.layout.size; v[#v+1]=u.shortcuts[i].image end; return (table.unpack or unpack)(v)").split("\t")
+	if fields.size() != 30: return
+	bridge.placement_grid_spacing = clampf(float(fields[0]),10,200)
+	bridge.selection_assist_radius = clampf(float(fields[1]),0,200)
+	bridge.camera_pan_speed = maxf(float(fields[2]),0)
+	bridge.center_cursor = fields[3] != "false"
+	bridge.camera_rotation_speed = maxf(float(fields[4]),0)
+	bridge.camera_zoom_speed = maxf(float(fields[5]),0)
+	bridge.deadzone = clampf(float(fields[6]),0,0.95)
+	bridge.cursor_speed = maxf(float(fields[7]),0)
+	bridge.menu_repeat_delay = maxi(int(fields[8]),1)
+	bridge.menu_repeat_rate = maxi(int(fields[9]),1)
+	_shortcut_layout.clear()
+	for i in 4: _shortcut_layout.append(fields.slice(10+i*5,15+i*5))
 
 func _process(delta: float) -> void:
 	var live: Node = hud.call()
+	if live != null and live.has_method("set_placement_snap"):
+		live.set_placement_snap(bridge._gameplay() and not bridge._suspended and (bridge._left_trigger or Input.is_key_pressed(KEY_SHIFT)), bridge.placement_grid_spacing)
 	var active: bool = bridge._gameplay() and (bridge.keyboard_mode or bridge.device >= 0)
+	if (bridge._gameplay() and not _was_playing) or (active and not _native_layout_active):
+		_configure() # refresh once when returning from console, menus, or mouse mode
+	_was_playing = bridge._gameplay()
 	if live != null and live.has_method("set_controller_layout"):
 		live.set_controller_layout(active)
+	if live != null and live.is_ready():
+		_sync_selection(live)
 	_native_layout_active = active
 	_update_reticle(live, active)
 	_keyboard_hint.visible = bridge.keyboard_mode and bridge._gameplay() and not _panel.visible
@@ -163,6 +209,15 @@ func _process(delta: float) -> void:
 		_elapsed = 0.0
 		_refresh()
 
+func _sync_selection(live: Node) -> void:
+	var key := str(live.get_instance_id()) + ":" + str(live.get_selection())
+	if key == _selection_key:
+		return
+	_selection_key = key
+	_armed_focus = ""
+	_render_hash = -1
+	_navigate("backPalette")
+
 func _refresh() -> void:
 	var live: Node = hud.call()
 	if live == null or not live.is_ready():
@@ -172,6 +227,7 @@ func _refresh() -> void:
 		_source = live
 		_icons.clear()
 		_favorites.clear()
+	_sync_selection(live)
 	_entries.clear()
 	match _state[0]:
 		"commands":
@@ -181,6 +237,10 @@ func _refresh() -> void:
 					continue
 				seen[entry.name] = true
 				_entries.append(entry)
+			# Keep destructive actions after production, upgrades and other commands.
+			var demolition := _entries.filter(func(entry): return entry.get("command", "") == "SELL")
+			_entries = _entries.filter(func(entry): return entry.get("command", "") != "SELL")
+			_entries.append_array(demolition)
 		"heroes", "builders":
 			_entries = live.get_controller_objects(_state[0])
 		"powers":
@@ -233,6 +293,8 @@ func _render() -> void:
 		var entry: Dictionary = _entries[i]
 		var caption := _entry_tooltip(entry)
 		var button := _button(caption, _state[1] == "commands" and i == int(_state[2]) - 1)
+		button.queued = int(entry.get("queued", 0))
+		button.progress = float(entry.get("timer", -1.0))
 		var image := str(entry.get("image", ""))
 		if not image.is_empty():
 			if not _icons.has(image):
@@ -274,6 +336,11 @@ func _render() -> void:
 	_selection_tooltip()
 
 func action(value: String) -> void:
+	if value == "deselect":
+		var live: Node = hud.call()
+		if live != null and live.is_ready() and live.has_method("controller_deselect"):
+			live.controller_deselect()
+		return
 	if value in ["cycleHeroes", "cycleBuilders", "selectAll", "jumpToSelection"]:
 		var live: Node = hud.call()
 		if live == null or not live.is_ready():
@@ -392,7 +459,9 @@ func _native_tooltip(entry: Dictionary) -> void:
 	var signature := str(_source.get_instance_id()) + ":" + str(entry.get("name", "")) + ":" + str(entry.get("slot", -1)) + ":" + str(_source.get_selection())
 	if entry.get("preview_on_focus", false) and int(entry.get("state", 0)) in [1, 5] and signature != _armed_focus:
 		_armed_focus = signature
-		_source.activate_command(entry.slot, entry.in_palantir, false)
+		var placement: Dictionary = _source.get_placement() if _source.has_method("get_placement") else {}
+		if not (placement.get("placing",false) and not str(entry.get("template", "")).is_empty() and placement.get("template", "") == entry.get("template", "")):
+			_source.activate_command(entry.slot, entry.in_palantir, false)
 	elif not entry.get("preview_on_focus", false):
 		_armed_focus = ""
 
@@ -410,11 +479,18 @@ func _update_reticle(live: Node, active: bool) -> void:
 		if not _cursor_hidden:
 			Input.mouse_mode = Input.MOUSE_MODE_HIDDEN
 			_cursor_hidden = true
+		var placement: Dictionary = live.get_placement() if live.has_method("get_placement") else {}
+		if placement.get("placing", false) and placement.get("has_ghost", false):
+			_reticle.hide()
+			return
 		var cursor: Dictionary = live.get_cursor_image()
 		var state: Dictionary = live.get_state()
 		var native := str(cursor.get("name", "")).to_lower()
 		var name_text := "reticle"
-		if "invalid" in native or "notallowed" in native or "nobomb" in native:
+		var target: Dictionary = live.get_controller_target(bridge.selection_assist_radius) if live.has_method("get_controller_target") else {}
+		if target.get("can_select", false):
+			name_text = "reticle_a"
+		elif "invalid" in native or "notallowed" in native or "nobomb" in native:
 			name_text = "reticle_invalid"
 		elif state.get("gui_command", false):
 			name_text = "reticle_ability"

@@ -33,6 +33,7 @@ bool install(const LogPrivacy::Rules &, std::string *error, int, int, size_t)
 void uninstall() {}
 bool installed() { return false; }
 void crashWrite(const std::string &) {}
+unsigned long long droppedBytes() { return 0; }
 
 #else
 
@@ -51,12 +52,14 @@ struct Stream
 	std::thread reader;
 	std::mutex pendingLock; // the reader's partial line; the crash path takes it too
 	std::string pending;
+	bool stalled = false; // the console took nothing for kStallMs: text is dropped until it takes some again
 
 	void reset()
 	{
 		fd = original = target = readEnd = writeEnd = stopRead = stopWrite = -1;
 		done = false;
 		pending.clear();
+		stalled = false;
 	}
 };
 
@@ -79,10 +82,18 @@ long long nowMs()
 	return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
 }
 
+std::atomic<unsigned long long> g_droppedBytes{ 0 };
+
+// A console that takes nothing for this long is stalled (a suspended terminal, a pipe whose reader stopped): its text is dropped from then
+// on, until poll() says it takes text again. The reader must keep draining the filter's pipe, or every print of the game blocks once that
+// pipe is full (FREEZE-1: the whole game froze after 64 KiB of output). The session log has every line either way.
+constexpr int kStallMs = 2000;
+
 // Writes `text` to `fd`. With `stopFd` (the reader's stop pipe) a write never blocks past the shutdown's deadline: each piece of at most
 // PIPE_BUF bytes is written only once poll() says the sink takes it, and once the stop came, poll() waits no longer than the deadline
-// (Sol r2: a blocked console kept uninstall from returning). What is left at the deadline is dropped.
-void writeAll(int fd, const std::string &text, int stopFd = -1)
+// (Sol r2: a blocked console kept uninstall from returning). What is left at the deadline is dropped. `stalled` (the reader's stream):
+// without a deadline poll() waits at most kStallMs, then the stream counts as stalled and later text is dropped without waiting.
+void writeAll(int fd, const std::string &text, int stopFd = -1, bool *stalled = nullptr)
 {
 	size_t done = 0;
 	bool stopped = false;
@@ -91,31 +102,43 @@ void writeAll(int fd, const std::string &text, int stopFd = -1)
 		if (stopFd >= 0)
 		{
 			const long long deadline = g_deadlineMs.load();
-			int timeout = -1;
+			int timeout = stalled ? (*stalled ? 0 : kStallMs) : -1;
 			if (deadline != 0)
 			{
 				const long long left = deadline - nowMs();
 				if (left <= 0)
 					return;
-				timeout = (int)left;
+				timeout = timeout < 0 ? (int)left : std::min(timeout, (int)left);
 			}
 			pollfd fds[2] = { { fd, POLLOUT, 0 }, { stopFd, POLLIN, 0 } };
 			const int r = ::poll(fds, stopped ? 1 : 2, timeout);
 			if (r < 0 && errno == EINTR)
 				continue;
+			if (r == 0 && stalled)
+				*stalled = true;
 			if (r <= 0)
-				return; // an error, or the deadline: the rest is dropped
+			{
+				g_droppedBytes += text.size() - done; // an error, the deadline or a stalled console: the rest is dropped
+				return;
+			}
 			if (!stopped && (fds[1].revents & (POLLIN | POLLHUP)) != 0)
 				stopped = true; // from now on bounded by the deadline (uninstall sets it before the stop)
-			if ((fds[0].revents & (POLLOUT | POLLERR | POLLHUP)) == 0)
+			// FREEZE-1: macOS answers POLLNVAL for a character device such as /dev/null (the console of a game started from the Finder) although
+			// the descriptor is valid and writable; the write below then tells (the loop used to spin on it forever, never draining the pipe)
+			if ((fds[0].revents & (POLLOUT | POLLERR | POLLHUP | POLLNVAL)) == 0)
 				continue;
+			if (stalled)
+				*stalled = false;
 		}
 		const size_t piece = stopFd >= 0 ? std::min<size_t>(text.size() - done, PIPE_BUF) : text.size() - done;
 		const ssize_t n = ::write(fd, text.data() + done, piece);
 		if (n < 0 && errno == EINTR)
 			continue;
 		if (n <= 0)
+		{
+			g_droppedBytes += text.size() - done;
 			return;
+		}
 		done += (size_t)n;
 	}
 }
@@ -160,7 +183,7 @@ void readLoop(Stream *s)
 		const size_t lastNewline = s->pending.rfind('\n');
 		if (lastNewline != std::string::npos)
 		{
-			writeAll(s->target, LogPrivacy::redact(s->pending.substr(0, lastNewline + 1), g_rules), s->stopRead);
+			writeAll(s->target, LogPrivacy::redact(s->pending.substr(0, lastNewline + 1), g_rules), s->stopRead, &s->stalled);
 			s->pending.erase(0, lastNewline + 1);
 		}
 		else if (s->pending.size() > g_maxLine)
@@ -169,7 +192,7 @@ void readLoop(Stream *s)
 			if (cut == 0)
 				cut = s->pending.size() / 2; // cannot happen with names shorter than half a line; never an endless hold
 			cut = LogPrivacy::safeCut(s->pending.substr(0, cut), g_rules);
-			writeAll(s->target, LogPrivacy::redact(s->pending.substr(0, cut), g_rules), s->stopRead);
+			writeAll(s->target, LogPrivacy::redact(s->pending.substr(0, cut), g_rules), s->stopRead, &s->stalled);
 			s->pending.erase(0, cut);
 		}
 	}
@@ -316,6 +339,11 @@ void uninstall()
 bool installed()
 {
 	return g_installed.load();
+}
+
+unsigned long long droppedBytes()
+{
+	return g_droppedBytes.load();
 }
 
 void crashWrite(const std::string &text)

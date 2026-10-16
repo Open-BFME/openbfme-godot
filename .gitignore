@@ -115,3 +115,6 @@ workspace/agents/
 
 # Local extracted controller-mod artwork; never commit retail pixels.
 /godot/controller_art/
+
+# Local BFME2Lua tower models and retail INI overlays.
+/godot/mods/

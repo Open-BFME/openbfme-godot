@@ -13,6 +13,9 @@
 #include "Common/Player.h"
 #include "Common/Thing/ThingFactory.h"
 #include "GameLogic/SimMath.h"
+#include "GameLogic/GameLogic.h"
+#include "GameLogic/Object/Object.h"
+#include <cmath>
 #include "GameLogic/ObjectFilter.h"
 
 #include <cstddef>
@@ -170,11 +173,14 @@ UpgradeMaskType UpgradeTemplate::grantMask() const
 
 int UpgradeTemplate::calcCostToBuild(const Player *player, const Object *producer) const
 {
+	int baseCost = m_cost;
+	if (producer && producer->logic().settings().wallBalance.enabled && m_type == UPGRADE_TYPE_OBJECT && WallBalance::wall(*producer) && m_name.find("Wall") != std::string::npos)
+		baseCost = (int)std::floor(baseCost * producer->logic().settings().wallBalance.cost[3] + .5f);
 	if (m_costDiscountTemplate) // RW 0x66F2D1 .. 0x66F2FA
 	{
-		return BuildAssistant::calcCostToBuild(*m_costDiscountTemplate, player, producer, m_cost);
+		return BuildAssistant::calcCostToBuild(*m_costDiscountTemplate, player, producer, baseCost);
 	}
-	int cost = m_cost;
+	int cost = baseCost;
 	if (!player)
 	{
 		return cost;

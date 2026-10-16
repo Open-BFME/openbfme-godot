@@ -70,6 +70,7 @@ class LiveGame
 public:
 	struct Options
 	{
+		WallBalance wallBalance;
 		std::string mapName;               ///< "map mp evendim": the map's directory / file stem
 		SkirmishSetup slots;               ///< lobby slots taken over by the map's players (empty: the map's own players)
 		std::uint32_t seed = 1;            ///< the logic RNG seed

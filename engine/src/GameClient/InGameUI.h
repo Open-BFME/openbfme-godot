@@ -51,6 +51,9 @@ inline constexpr const char *Scroll = "Scroll";
 class InGameUI
 {
 public:
+	struct FormationSlot { ObjectID object; Coord3D position; float angle; float radius; };
+	bool formationActive = false;
+	std::vector<FormationSlot> formationSlots;
 	InGameUI() = default;
 	InGameUI(const InGameUI &) = delete;
 	InGameUI &operator=(const InGameUI &) = delete;
@@ -169,6 +172,10 @@ public:
 	// first client frame a pending line build (a wall hub from a wall hub) is not anchored; the placement release sends the span only while it is set (RW 0x83E924)
 	bool isLineBuildStarted() const { return m_lineBuildStarted; }
 	void setLineBuildStarted(bool on) { m_lineBuildStarted = on; }
+	Coord3D controllerAreaCenter{};
+	float controllerAreaRadius = -1;
+	bool placementSnap = false;
+	float placementGrid = 50.0f;
 	bool isPlacing() const { return !m_placeTemplate.empty(); }
 	void setPlaceGhost(const Coord3D &location, float angle, int legalCode)
 	{
@@ -237,11 +244,12 @@ public:
 	{
 		Coord3D pos{};
 		unsigned frame = 0;   ///< the client frame it was made in; 0 = unused / expired
+		bool attackMove = false;
 		bool expired = true;  ///< + 0x10 (RW 0x69B745 sets it)
 	};
 	static constexpr int MAX_MOVE_HINTS = 25;              // RW 0x69F5D6 (cmp 0x19) / RW 0x48E8AD
 	static constexpr unsigned MOVE_HINT_FRAMES = 40;       // RW 0x48EE1A: drawn while the age is below 0x29
-	void createMoveHint(const Coord3D &pos);
+	void createMoveHint(const Coord3D &pos, bool attackMove = false);
 	void expireMoveHints();                                // RW 0x69B76C(0)
 	const MoveHint *moveHints() const { return m_moveHints; }
 	// the client frame (ZH TheGameClient->getFrame(): one per 30 Hz client frame; the HUD's camera frame advances it)

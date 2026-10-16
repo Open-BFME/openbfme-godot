@@ -146,6 +146,7 @@ bool ReplaceSelfUpgrade::wouldUpgrade(const UpgradeMaskType &mask) const
 		// the walls in the way (RW 0x8BB454 .. 0x8BB503)
 		const std::vector<ObjectGeometry::Shape> shapes = ObjectGeometry::shapesOf(*tt->getFinalOverride());
 		PartitionFilterFn inTheWay([&](Object &o) {
+			if (logic.settings().wallBalance.enabled && !logic.settings().wallBalance.gateGap && o.isKindOf((unsigned)wallHub) && templateKindOf(*tt,kindBit("WALL_GATE"))) return false;
 			if (!o.isKindOf((unsigned)wallUpgrade) && !o.isKindOf((unsigned)wallHub))
 			{
 				return false;

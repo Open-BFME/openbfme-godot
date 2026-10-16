@@ -10,6 +10,9 @@
 ##  * a crash: a marker user://logs/<log name>.running (with the process id) exists while the game runs and is removed when it ends normally; a
 ##    marker left by a process that is no longer running means the last run crashed or was killed: a message box names that run's log and asks the
 ##    tester to attach it.
+##  * a freeze (lane FREEZE-1, Common/FreezeWatchdog.h): _process beats once per frame (also while the tree is paused); a frame longer than
+##    1 s is a HITCH line, no frame for FREEZE_SECONDS a FREEZE line with every thread's stack in <log>.freeze-<n>.txt beside the log, and
+##    "FREEZE over" when frames come again. A hidden or unfocused window waits 30 s and captures nothing. The next start names a frozen run.
 ##  * a stop the game cannot continue from: fatal(message) shows a message box with the error and the log file, then quits.
 ##  * the logs within reach (lane WINCRASH-1): the crash and error messages show the log's real path (Windows: %APPDATA%\...) and an "Open log
 ##    folder" button (the file manager opens with the log selected); a "Logs" link next to the version in the menus opens the folder; the
@@ -32,6 +35,7 @@ const LOG_DIR := "user://logs"
 const KEEP_LOGS := 20
 const REPORT_HINT := "Please attach this file to your report in the OpenBFME Discord, channel #feedback, together with the version above."
 const OPEN_LOGS_ACTION := "open_logs"
+const FREEZE_SECONDS := 5.0
 
 var info: RefCounted        # ReleaseInfo
 var logger: RefCounted      # SessionLogger
@@ -51,8 +55,11 @@ func _init() -> void:
 		printerr("RELEASE the openbfme extension is not loaded: no session log, no version")
 		return
 	info = ClassDB.instantiate("ReleaseInfo")
+	process_mode = Node.PROCESS_MODE_ALWAYS # the freeze heartbeat runs while the game is paused too
 	_find_previous_crash()
 	_open_log()
+	if logger != null and not logger.start_watchdog(FREEZE_SECONDS):
+		printerr("RELEASE freeze watchdog not started: ", logger.get_last_error())
 	print(info.version_line())
 	if not log_path.is_empty():
 		print("RELEASE session log: ", info.redact(ProjectSettings.globalize_path(log_path)))
@@ -90,8 +97,23 @@ func _ready() -> void:
 		_crash_test.call_deferred()
 	# lane PLAY-1: a scripted run (--auto) never waits for a modal dialog (a killed test run left the marker and the next windowed run stopped at the alert)
 	if not previous_crash_log.is_empty() and not _headless() and not OS.get_cmdline_user_args().has("--auto"):
-		_message.call_deferred("OpenBFME did not close normally last time (a crash?).\n\nThe log of that run is:\n%s\n\n%s" % [
+		var froze := FileAccess.get_file_as_string(previous_crash_log).contains("\nFREEZE ")
+		_message.call_deferred(("OpenBFME stopped responding last time (it froze)." if froze else "OpenBFME did not close normally last time (a crash?).") + "\n\nThe log of that run is:\n%s\n\n%s" % [
 			_folder_and_file(log_path_for_user(previous_crash_log)), REPORT_HINT], "OpenBFME", previous_crash_log, false)
+
+
+func _process(_delta: float) -> void:
+	if logger != null:
+		logger.heartbeat()
+
+
+func _notification(what: int) -> void:
+	if logger == null:
+		return
+	if what == NOTIFICATION_APPLICATION_FOCUS_OUT or what == NOTIFICATION_APPLICATION_PAUSED:
+		logger.set_background(true)
+	elif what == NOTIFICATION_APPLICATION_FOCUS_IN or what == NOTIFICATION_APPLICATION_RESUMED:
+		logger.set_background(false)
 
 
 func _exit_tree() -> void:
@@ -450,6 +472,10 @@ func _prune_logs() -> void:
 		var old: String = logs.pop_front()
 		if LOG_DIR + "/" + old != previous_crash_log:
 			DirAccess.remove_absolute(ProjectSettings.globalize_path(LOG_DIR + "/" + old))
+			# FREEZE-1: the run's thread stack captures go with it
+			for file in DirAccess.get_files_at(LOG_DIR):
+				if file.begins_with(old + ".freeze-"):
+					DirAccess.remove_absolute(ProjectSettings.globalize_path(LOG_DIR + "/" + file))
 
 
 func _add_watermark() -> void:

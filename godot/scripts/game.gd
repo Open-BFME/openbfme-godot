@@ -1028,7 +1028,7 @@ func _boot() -> void:
 	add_child(_lua_console)
 	var controller := preload("res://scripts/controller_input.gd").new()
 	controller.name = "ControllerInput"
-	var controller_loaded: Dictionary = _world.execute_lua("console.reload()")
+	var controller_loaded: Dictionary = _world.execute_lua("bfme.console.reload()")
 	if not controller_loaded.ok:
 		printerr("CONTROLLER Lua scripts: ", controller_loaded.output)
 	controller.resolve_action = func(button: String, playing: bool) -> String:
@@ -1039,6 +1039,7 @@ func _boot() -> void:
 		return str(result.output).strip_edges()
 	controller.gameplay = func() -> bool: return _state == State.PLAYING and not _quit_open and (_lua_console == null or not _lua_console.is_open())
 	controller.input_generated.connect(func(event: InputEvent) -> void: Input.parse_input_event(event))
+	controller.command_action.connect(_controller_menu_action)
 	add_child(controller)
 	var controller_ui := preload("res://scripts/controller_ui.gd").new()
 	controller_ui.name = "ControllerUI"
@@ -1908,6 +1909,18 @@ func _run_campaign_play1() -> void:
 	await player.run(self, _play1)
 	get_tree().quit(0 if player.fail_count == 0 else 1)
 
+
+func _controller_menu_action(action: String) -> void:
+	if action != "skirmish" or _state != State.MENU or _shell == null or _quit_open:
+		return
+	if _lua_console != null and _lua_console.is_open():
+		return
+	var stack = _shell.shell_stack()
+	if stack.is_empty():
+		return
+	match stack[-1]:
+		"MainMenu.apt": _shell.shell_fscommand("AptMainMenu::Skirmish", "")
+		"Skirmish.apt": _shell.shell_fscommand("AptSkirmish::StartGame", "")
 
 func _run_startup_skirmish() -> void:
 	await _wait_main_ready()

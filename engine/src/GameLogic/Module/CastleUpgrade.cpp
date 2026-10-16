@@ -7,6 +7,7 @@
 #endif
 
 #include "GameLogic/Module/CastleUpgrade.h"
+#include "Common/Thing/ThingTemplate.h"
 
 #include "Common/INI.h"
 #include "Common/Thing/ModuleFactory.h"
@@ -133,6 +134,9 @@ void CastleUpgrade::giveToWallsInRange(const UpgradeTemplate *u)
 	static const int walls[] = { ObjectTemplateInfoBuilder::kindOfIndex("WALL_SEGMENT"), ObjectTemplateInfoBuilder::kindOfIndex("WALL_HUB"),
 		ObjectTemplateInfoBuilder::kindOfIndex("WALL_UPGRADE"), ObjectTemplateInfoBuilder::kindOfIndex("DEFENSIVE_WALL") };
 	PartitionFilterFn anyWall([&](Object &o) {
+		const auto &r = logic.settings().wallBalance;
+		if (r.enabled && r.shareArrows && o.isKindOfName("STRUCTURE") && o.getTemplate()->getName().find("Tower") != std::string::npos && o.getTemplate()->getName().find("Catapult") == std::string::npos && o.getTemplate()->getName().find("Ballista") == std::string::npos &&
+			(m_data->m_upgradeName.find("FlamingMunitions") != std::string::npos || m_data->m_upgradeName.find("FireArrows") != std::string::npos || m_data->m_upgradeName.find("Silverthorn") != std::string::npos)) return true;
 		for (int bit : walls)
 		{
 			if (bit >= 0 && o.isKindOf((unsigned)bit))
@@ -142,11 +146,31 @@ void CastleUpgrade::giveToWallsInRange(const UpgradeTemplate *u)
 		}
 		return false;
 	});
-	for (const PartitionHit &hit : logic.partition().iterateObjectsInRange(*obj->getPosition(), m_data->m_wallUpgradeRadius, FROM_CENTER_3D, { &anyWall }, ITER_FASTEST))
+	for (const PartitionHit &hit : logic.partition().iterateObjectsInRange(*obj->getPosition(), m_data->m_wallUpgradeRadius * (logic.settings().wallBalance.enabled ? logic.settings().wallBalance.fortressRange : 1.0f), FROM_CENTER_3D, { &anyWall }, ITER_FASTEST))
 	{
 		if (hit.object->getControllingPlayer() == obj->getControllingPlayer()) // RW 0x8BAA77 .. 0x8BAA89
 		{
 			hit.object->giveUpgrade(u); // RW 0x69388B
+		}
+	}
+}
+
+void CastleUpgrade::shareWithNewTower(Object &tower)
+{
+	auto &logic = tower.logic();
+	const auto &r = logic.settings().wallBalance;
+	const auto &name = tower.getTemplate()->getName();
+	if (!r.enabled || !r.shareArrows || !tower.isKindOfName("STRUCTURE") || name.find("Tower") == std::string::npos || name.find("Catapult") != std::string::npos || name.find("Ballista") != std::string::npos) return;
+	for (Object *source = logic.getFirstObject(); source; source = source->getNextObject()) {
+		if (source == &tower || source->isEffectivelyDead() || source->getControllingPlayer() != tower.getControllingPlayer()) continue;
+		for (const auto &module : source->modules()) {
+			auto *castle = dynamic_cast<CastleUpgrade *>(module.get());
+			if (!castle || !castle->isAlreadyUpgraded()) continue;
+			const auto &upgrade = castle->m_data->m_upgradeName;
+			if (upgrade.find("FlamingMunitions") == std::string::npos && upgrade.find("FireArrows") == std::string::npos && upgrade.find("Silverthorn") == std::string::npos) continue;
+			const float radius = castle->m_data->m_wallUpgradeRadius * r.fortressRange;
+			const auto &a = *source->getPosition(), &b = *tower.getPosition();
+			if ((a.x-b.x)*(a.x-b.x)+(a.y-b.y)*(a.y-b.y)+(a.z-b.z)*(a.z-b.z) <= radius*radius) tower.giveUpgrade(upgrade);
 		}
 	}
 }

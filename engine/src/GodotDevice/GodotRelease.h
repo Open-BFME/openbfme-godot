@@ -9,6 +9,7 @@
 
 #pragma once
 
+#include "Common/FreezeWatchdog.h"
 #include "Common/LogPrivacy.h"
 
 #include <godot_cpp/classes/logger.hpp>
@@ -20,6 +21,7 @@
 #include <godot_cpp/variant/typed_array.hpp>
 
 #include <cstdio>
+#include <memory>
 #include <mutex>
 
 namespace godot
@@ -68,6 +70,11 @@ public:
 	// Routes the console (stdout / stderr) through the same filter (Common/ConsoleFilter.h) until close(); false + get_last_error() where
 	// that is not available (Windows).
 	bool filter_console();
+	// Lane FREEZE-1 (Common/FreezeWatchdog.h): watches heartbeat() from the main thread; a frame longer than 1 s is a HITCH line, no frame for
+	// `stall_seconds` a FREEZE line (with the last log line before it) and every thread's stack in <log>.freeze-<n>.txt next to the log.
+	bool start_watchdog(double stall_seconds);
+	void heartbeat();
+	void set_background(bool background); // a hidden or unfocused window: a longer threshold, no stack capture
 
 	void _log_message(const String &p_message, bool p_error) override;
 	void _log_error(const String &p_function, const String &p_file, int32_t p_line, const String &p_code, const String &p_rationale,
@@ -78,6 +85,7 @@ protected:
 
 private:
 	void writeRaw(const std::string &utf8);
+	std::string lastLine() const;
 
 	mutable std::mutex m_mutex;
 	std::FILE *m_file = nullptr;
@@ -85,6 +93,9 @@ private:
 	String m_error;
 	LogPrivacy::Rules m_rules;
 	bool m_crashed = false;
+	std::string m_nativePath;
+	std::string m_lastLine; // FREEZE-1: the newest line, the freeze report's context (guarded by m_mutex)
+	std::unique_ptr<FreezeWatchdog> m_watchdog;
 };
 
 class InstallSetup : public RefCounted
