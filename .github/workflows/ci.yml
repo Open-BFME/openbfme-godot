@@ -29,11 +29,11 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes lame mpg123
       - name: Generate and check fixtures against committed golden values
-        run: python tools/audio/gen_mp3_fixtures.py --out audio-fixtures
+        run: python tools/audio/gen_mp3_fixtures.py --out engine/build/audio_fixtures
       - uses: actions/upload-artifact@v4
         with:
           name: synthetic-audio-fixtures
-          path: audio-fixtures/*.mp3.bin
+          path: engine/build/audio_fixtures/*.mp3.bin
           if-no-files-found: error
           retention-days: 7
 
