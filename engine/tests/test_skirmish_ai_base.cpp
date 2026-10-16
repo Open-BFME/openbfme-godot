@@ -606,3 +606,44 @@ TEST_CASE("skirmish ai base: a request left in the queue holds no producer after
 		CHECK(run.money > 0); // tolerance: the guard that the case happened (a request waited for money); how often is not this test's subject
 	}
 }
+
+// lane LUAAI-1: a script may take a computer player over (bfme Lua player:setAIEnabled(false)); the native AI then decides nothing, and resumes when
+// it is handed back
+TEST_CASE("skirmish ai script control: a script-controlled computer builds and trains nothing, and builds again once handed back")
+{
+	OPENBFME_REQUIRE_START(s);
+	const NewGameMessage message = aiMessage(*s, "FactionMordor");
+	int aiPlayer = -1;
+	BaseRun scripted;
+	runBaseGame(*s, message, 900, scripted, false, [&](GameLogic &logic) {
+		SkirmishAIManager &m = logic.skirmishAI();
+		if (aiPlayer < 0 && !m.groups().empty())
+		{
+			aiPlayer = m.groups()[0]->players.begin()->first;
+			REQUIRE(m.setScriptControlled(aiPlayer, true));
+			CHECK(m.isScriptControlled(aiPlayer));
+			CHECK_FALSE(m.aiDecides(aiPlayer));
+			CHECK_FALSE(m.setScriptControlled(aiPlayer + 1, true)); // the human has no skirmish AI
+		}
+	});
+	REQUIRE(aiPlayer >= 0);
+	MESSAGE("scripted: executed " << scripted.executed << " built " << scripted.built.size() << " units queued " << scripted.unitsQueued);
+	CHECK(scripted.executed == 0);
+	CHECK(scripted.built.empty());
+	CHECK(scripted.unitsQueued == 0);
+	CHECK(scripted.army.empty());
+
+	int frame = 0;
+	BaseRun handedBack;
+	runBaseGame(*s, message, 1200, handedBack, false, [&](GameLogic &logic) {
+		SkirmishAIManager &m = logic.skirmishAI();
+		++frame;
+		if (frame == 1)
+			REQUIRE(m.setScriptControlled(m.groups()[0]->players.begin()->first, true));
+		if (frame == 300)
+			REQUIRE(m.setScriptControlled(m.groups()[0]->players.begin()->first, false));
+	});
+	MESSAGE("handed back at frame 300: executed " << handedBack.executed << " built " << handedBack.built.size());
+	CHECK(handedBack.executed >= 1);
+	CHECK(handedBack.completed >= 1);
+}

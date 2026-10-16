@@ -442,7 +442,7 @@ target_sources(openbfme_core PRIVATE ${OPENBFME_SPELL_CLIENT_SOURCES}) # lane SP
 # GodotGameStart.cpp marshals the lobby's NewGameMessage between Godot Dictionaries and the logic's struct (the values the logic consumes), so it is audited too.
 if(OPENBFME_BUILD_GODOT)
     set(OPENBFME_SIM_SOURCES_GODOT src/GodotDevice/GodotGameWorld.cpp src/GodotDevice/GodotGameStart.cpp src/GodotDevice/GodotGameWorldHeroes.cpp src/GodotDevice/GodotGameWorldStealth.cpp src/GodotDevice/GodotGameWorldGarrison.cpp src/GodotDevice/GodotGameWorldCah.cpp) # CAH-1: the builder's map mode; HERO-1: the hero commands; STEALTH-1: the stealth viewer helpers; GARRISON-1: the garrison commands
-    list(APPEND OPENBFME_SIM_SOURCES_GODOT src/GodotDevice/GodotBfmeLua.cpp) # validated native Lua mutations
+    list(APPEND OPENBFME_SIM_SOURCES_GODOT src/GodotDevice/GodotBfmeLua.cpp src/GodotDevice/GodotBfmeLuaAI.cpp) # validated native Lua mutations; LUAAI-1: orders, queries, the AI switch
 endif()
 openbfme_sim_write_manifest(${CMAKE_CURRENT_BINARY_DIR}/sim_manifest.json)
 # `cmake --build <dir> --target sim_audit` (after the build): the flags of every compile command, the manifest and the type-aware AST scan (tools/sim/sim_audit.py)

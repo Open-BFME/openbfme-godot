@@ -167,7 +167,7 @@ TEST_CASE("camp1 CampaignProgress: the difficulty character (RW 0x91C108), the n
 	CHECK(error.find("campaign progress") == 0);
 }
 
-TEST_CASE("camp1 retail: RotWK's TheLinearCampaignManager holds the expansion legend's three campaigns; ANGMAR_CAMPAIGN is the eight Angmar missions")
+TEST_CASE("camp1 retail: TheLinearCampaignManager holds BFME2 and expansion campaigns; ANGMAR_CAMPAIGN is the eight Angmar missions")
 {
 	OPENBFME_REQUIRE_START(s);
 	const LinearCampaignManager &m = s->world->linearCampaigns();
@@ -176,8 +176,15 @@ TEST_CASE("camp1 retail: RotWK's TheLinearCampaignManager holds the expansion le
 	{
 		names.push_back(c.name);
 	}
-	// subsystemlegendexpansion1.ini: LinearCampaignManager InitFile = Data\INI\LinearCampaignExpansion1.ini (BFME2's GOOD / EVIL_CAMPAIGN are not loaded)
-	CHECK(names == std::vector<std::string>{ "ANGMAR_CAMPAIGN", "ANGMAR_CAMPAIGN_DEMO", "ANGMAR_BONUS_CAMPAIGN" });
+	// Load the base campaigns alongside the expansion legend.
+	CHECK(names == std::vector<std::string>{ "ANGMAR_CAMPAIGN", "ANGMAR_CAMPAIGN_DEMO", "ANGMAR_BONUS_CAMPAIGN", "GOOD_CAMPAIGN", "EVIL_CAMPAIGN" });
+	const auto *good = m.find("GOOD_CAMPAIGN"), *evil = m.find("EVIL_CAMPAIGN");
+	REQUIRE(good != nullptr);
+	REQUIRE(evil != nullptr);
+	CHECK(good->missions.size() == 8);
+	CHECK(evil->missions.size() == 8);
+	CHECK(good->missions.front().map == "MAP GOOD Rivendell");
+	CHECK(evil->missions.front().map == "MAP EVIL Lorien");
 	const LinearCampaign *a = m.find("ANGMAR_CAMPAIGN");
 	REQUIRE(a != nullptr);
 	std::vector<std::string> maps;

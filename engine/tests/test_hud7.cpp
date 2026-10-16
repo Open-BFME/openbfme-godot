@@ -405,6 +405,12 @@ TEST_CASE("hud7 upgrade: an object upgrade being researched shows RotWK's availa
 	b = r.find(name);
 	REQUIRE(b != nullptr); // shown: availability 8 is never hidden (HIDE_WHILE_DISABLED tests availability 0 only, RW 0x943B39)
 	CHECK(b->state == ButtonState::Purchased);
+ CHECK(b->timer > 0.0f);
+ CHECK(b->timer < 1.0f);
+ bool clock = false;
+ for (const auto &op : radial.ops())
+  if (op.slot == slot && op.kind == RadialDrawOp::CLOCK) clock = true;
+ CHECK(clock);
 	CHECK(std::string(AptPalantir::commandStateName(b->state, b->button->m_options)) == "_cantAfford");
 	CHECK(std::string(AptPalantir::commandStateName(ButtonState::Restricted, b->button->m_options)) == "_disabled"); // what it showed before HUD-7
 	// the bubble (W3DGadgetPushButtonImageDrawOne RW 0x4A5112 with the statuses ALWAYS_COLOR | GRAY_OVERLAY): the image in colour times 0x909090, a grey rim;

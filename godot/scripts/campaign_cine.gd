@@ -16,6 +16,8 @@ var _caption: Label
 var _fade: ColorRect
 var _status: Label
 var _note: Label         # lane SCRIPT-2: DISPLAY_NOTIFICATION_BOX's text
+var objectives_open := false
+var _objectives_panel: PanelContainer
 var _objectives: Label   # lane SCRIPT-2: SHOW_MISSION_OBJECTIVE / MARK_MISSION_OBJECTIVE_COMPLETED
 var _audio: Node         # lane SCRIPT-2: GameAudio (the listener follows the camera)
 var drive := ""          # lane SCRIPT-2: "angmar" plays the first objective's part of the player (map_viewer --cine-drive); lane SCRIPT-3: "rhudaur" the whole mission
@@ -74,7 +76,28 @@ func setup(w: Node3D, cam: Camera3D, start: Vector3, ui_parent: Node, audio: Nod
 	_objectives.add_theme_font_size_override("font_size", 15)
 	_objectives.add_theme_color_override("font_outline_color", Color.BLACK)
 	_objectives.add_theme_constant_override("outline_size", 4)
-	ui.add_child(_objectives)
+	_objectives.set_meta("game_text", true)
+	_objectives.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_objectives_panel = PanelContainer.new()
+	_objectives_panel.name = "MissionObjectives"
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.06, 0.07, 0.05, 0.96)
+	style.border_color = Color("a69763")
+	style.set_border_width_all(1)
+	style.set_content_margin_all(16)
+	_objectives_panel.add_theme_stylebox_override("panel", style)
+	var column := VBoxContainer.new()
+	var close := Button.new()
+	close.text = "Objectives  ×"
+	close.pressed.connect(func(): objectives_open = false)
+	column.add_child(close)
+	var scroll := ScrollContainer.new()
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_objectives.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.add_child(_objectives)
+	column.add_child(scroll)
+	_objectives_panel.add_child(column)
+	ui.add_child(_objectives_panel)
 	ui_parent.add_child(ui)
 	_place_camera()
 
@@ -92,6 +115,7 @@ func _process(delta: float) -> void:
 		for p in r.params:
 			ps.append(p.string if not String(p.string).is_empty() else (str(p.real) if p.type == 1 else str(p.int)))
 		print("SCRIPTREQ frame %d %s(%s) [%s]" % [r.frame, r.action, ", ".join(ps), r.script])
+		if r.action == "CLOSE_OBJECTIVES_SCREEN": objectives_open = false
 		if r.action == "PLAY_MOVIE_IN_GAME" and movie_hook.is_valid() and r.params.size() > 0:
 			movie_hook.call(String(r.params[0].string))
 		# lane CAMP-2: ScriptActions::executeAction (RW 0x7CAFA5): cases 118 / 119 doLetterBoxMode (RW 0x7BC8B7: HideControlBar(true) or ShowControlBar(false),
@@ -130,7 +154,7 @@ func _process(delta: float) -> void:
 	_caption.position = Vector2(size.x * 0.1, size.y - bar - 120.0)
 	_caption.size = Vector2(size.x * 0.8, 100.0)
 	_status.visible = dev_overlay # lane CAMP-2: developer text never shows in the real game (the owner saw "frame 90   input disabled")
-	_objectives.visible = dev_overlay
+	_objectives_panel.visible = objectives_open or dev_overlay
 	_status.text = "frame %d   %s%s" % [world.get_presented_frame(), "camera moving   " if st.moving else "", "input disabled" if st.input_disabled else ""] if dev_overlay else ""
 	_status.position = Vector2(12, bar + 8.0)
 	_note.text = st.get("notification_text", "")
@@ -138,9 +162,11 @@ func _process(delta: float) -> void:
 	_note.size = Vector2(size.x * 0.7, 60.0)
 	var lines: PackedStringArray = []
 	for o in st.get("objectives", []):
-		lines.append(("[x] " if o.completed else "[ ] ") + "objective %d" % o.index)
-	_objectives.text = "\n".join(lines) if dev_overlay else ""
-	_objectives.position = Vector2(size.x - 220.0, bar + 40.0)
+		lines.append(("✓ " if o.completed else "• ") + ("Bonus: " if o.get("bonus", false) else "") + str(o.get("text", "Objective %d" % o.index)))
+	_objectives.text = "\n\n".join(lines) if not lines.is_empty() else "No objectives yet."
+	_objectives.add_theme_font_size_override("font_size", roundi(18 * clampf(size.y / 720.0, 1.0, 2.0)))
+	_objectives_panel.position = Vector2(size.x - minf(600, size.x * 0.42) - 24, bar + 40)
+	_objectives_panel.size = Vector2(minf(600, size.x * 0.42), minf(440, size.y * 0.55))
 
 
 func _place_camera() -> void:
@@ -257,3 +283,12 @@ func _drive_kill() -> void:
 	elif _drive_step == 1 and f >= at:
 		print("DRIVE kill %s: %s" % [name, world.debug_script_kill(name)])
 		_drive_step = 2
+
+
+func toggle_objectives() -> void:
+	objectives_open = not objectives_open
+
+func _input(event: InputEvent) -> void:
+	if objectives_open and event is InputEventKey and event.pressed and event.keycode == KEY_ESCAPE:
+		objectives_open = false
+		get_viewport().set_input_as_handled()

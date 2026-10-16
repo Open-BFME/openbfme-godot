@@ -129,14 +129,17 @@ std::string Generate_W3D_Shader_Code(const W3DShaderKey &k)
 	}
 	if (k.DepthTestDisabled) mode("depth_test_disabled");
 	mode(k.CullDisabled ? "cull_disabled" : "cull_back");
-	// RENDER-1: every W3D surface is drawn unshaded: the lighting of the retail effects (defaultw3d.fxo for classic materials,
+	// RENDER-1: W3D lighting is evaluated explicitly: the lighting of the retail effects (defaultw3d.fxo for classic materials,
 	// normalmapped.fxo for FX materials) is computed here from the map's light environment (W3DObjectLighting, globals below), in
 	// the gamma space D3D9 works in, and converted to linear once at the end (Godot sRGB-encodes the output again).
-	mode("unshaded");
-	mode("shadows_disabled");
+	// Opaque lit surfaces use Godot only for shadow visibility, preserving that evaluated lighting.
+	const bool shadowReceiver = k.Blend == W3D_GODOT_BLEND_OPAQUE && !alphaOverride && !k.Unshaded;
+	if (shadowReceiver) mode("ambient_light_disabled");
+	else { mode("unshaded"); mode("shadows_disabled"); }
 	line("render_mode " + modes + ";");
 
 	// ---- uniforms ----
+	if (shadowReceiver) line("global uniform float w3d_shadow_strength;");
 	line("uniform sampler2D w3d_palette : filter_nearest, repeat_disable;");
 	// material colours: classic = the vertex material (defaultw3d.fxo ColorDiffuse + Opacity, ColorAmbient, ColorEmissive,
 	// ColorSpecular, Shininess); FX = normalmapped.fxo DiffuseColor, AmbientColor, SpecularColor, SpecularExponent, BumpScale
@@ -545,7 +548,13 @@ std::string Generate_W3D_Shader_Code(const W3DShaderKey &k)
 	case W3D_GODOT_BLEND_PREMUL: line("\tALPHA = a * v_fade;"); break;
 	case W3D_GODOT_BLEND_NONE: break;
 	}
+	if (shadowReceiver) {
+		line("\tEMISSION = ALBEDO * (1.0 - w3d_shadow_strength);");
+		line("\tALBEDO *= w3d_shadow_strength;");
+		line("\tSPECULAR = 0.0;");
+	}
 	line("}");
+	if (shadowReceiver) line("void light() { if (LIGHT_IS_DIRECTIONAL) DIFFUSE_LIGHT += ALBEDO * ATTENUATION; }");
 	return c;
 }
 

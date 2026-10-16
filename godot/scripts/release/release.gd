@@ -307,9 +307,23 @@ func mount_retail(fs: RefCounted) -> Dictionary:
 		return mounted
 	var setup: RefCounted = ClassDB.instantiate("InstallSetup")
 	if OS.has_feature("ios"):
-		var external: CanvasLayer = preload("res://scripts/release/ios_assets.gd").new()
+		var ios_assets := preload("res://scripts/release/ios_assets.gd")
+		var problem := ""
+		var downloaded: Dictionary = ios_assets.downloaded_folders()
+		if not downloaded.is_empty():
+			var mounted: Dictionary = fs.mount_retail_paths(downloaded.rotwk, downloaded.bfme2)
+			if mounted.ok:
+				# remembered at every launch, as the bundled folders above: loose movie/audio lookup uses them
+				var remembered: Dictionary = setup.remember(downloaded.rotwk, downloaded.bfme2)
+				if not remembered.ok:
+					return {"ok": false, "errors": [remembered.error]}
+				print("RELEASE game folders: iOS download")
+				return mounted
+			problem = "The downloaded game files do not work any more; download them again to repair them:\n" + "\n".join(mounted.errors)
+			printerr("RELEASE ", problem)
+		var external: CanvasLayer = ios_assets.new()
 		add_child(external)
-		var result: Dictionary = await external.run(fs, setup)
+		var result: Dictionary = await external.run(fs, setup, problem)
 		external.queue_free()
 		return result
 	var conf: Dictionary = setup.configured()

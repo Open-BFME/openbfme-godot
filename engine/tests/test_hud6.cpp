@@ -474,6 +474,16 @@ TEST_CASE("hud6 retail: a right press on a bubble cancels only a CANCELABLE butt
 	ProductionUpdateInterface *pu = citadel->getProductionUpdate();
 	REQUIRE(pu != nullptr);
 	CHECK(pu->getProductionCount() == 1);
+ bool clock = false;
+ for (const auto &button : radial.buttons())
+  if (button.slot == porter.slot)
+  {
+   CHECK(button.source.timer > 0.0f);
+   CHECK(button.source.timer < 1.0f);
+  }
+ for (const auto &op : radial.ops())
+  if (op.slot == porter.slot && op.kind == RadialDrawOp::CLOCK) clock = true;
+ CHECK(clock);
 	// a right press on the non-cancelable hero bubble: the ring takes it (the selection stays), nothing is cancelled
 	const std::vector<ObjectID> before = h.hud->input().ui().selected();
 	press(HudInput::Button::Right, heroes.rect.x + heroes.rect.w / 2, heroes.rect.y + heroes.rect.h / 2);

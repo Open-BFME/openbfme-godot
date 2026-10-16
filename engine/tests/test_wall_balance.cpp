@@ -4,6 +4,7 @@
 #include "CombatTestUtil.h"
 #include "GameLogic/WallBalance.h"
 #include "Common/BuildAssistant.h"
+#include "GameLogic/Module/ReplaceSelfUpgrade.h"
 using namespace combattest;
 namespace {
 const char objects[] =
@@ -42,4 +43,38 @@ TEST_CASE("wall balance: a closed wall region is enclosed, a breach opens it") {
  w.logic->destroyObject(top);
  w.logic->runLogicFrame();
  CHECK_FALSE(WallBalance::enclosed(*w.logic,*left->getControllingPlayer(),center));
+}
+
+TEST_CASE("wall replacement clears covered side segments and preserves adjacent walls") {
+ const char gateObjects[] =
+ "Object GateTestSegment\n KindOf = STRUCTURE IMMOBILE WALL_SEGMENT\n Geometry = BOX\n GeometryMajorRadius = 5\n GeometryMinorRadius = 10\n GeometryHeight = 20\n Body = ActiveBody Body\n MaxHealth = 100\n End\nEnd\n"
+ "Object GateTestGate\n KindOf = STRUCTURE IMMOBILE WALL_UPGRADE\n Behavior = GateOpenAndCloseBehavior Gate\n End\n Geometry = BOX\n GeometryMajorRadius = 5\n GeometryMinorRadius = 30\n GeometryHeight = 20\n Body = ActiveBody Body\n MaxHealth = 100\n End\nEnd\n";
+ CombatWorld w(gateObjects);
+ float angle = 0;
+ SUBCASE("vertical span") { angle = 0; }
+ SUBCASE("rotated span") { angle = 1.57079632679f; }
+ const bool rotated = angle != 0;
+ auto segment = [&](float offset, float across = 0) {
+  Object *o = w.unit("GateTestSegment", 'A', 500 + (rotated ? offset : across), 500 + (rotated ? across : offset));
+  o->setOrientation(angle);
+  return o;
+ };
+ Object *center = segment(0);
+ Object *left = segment(-18), *right = segment(18);
+ // Real wall spans overlap their tile edges: 2 * (half extent - 1).
+ Object *outsideLeft = segment(-36), *outsideRight = segment(36);
+ Object *parallel = segment(0, 20);
+ ReplaceSelfUpgradeModuleData data;
+ data.m_pieces = {"GateTestGate"};
+ ReplaceSelfUpgrade replacement(center, &data);
+ replacement.giveSelfUpgrade();
+ CHECK(left->isEffectivelyDead());
+ CHECK(right->isEffectivelyDead());
+ CHECK_FALSE(outsideLeft->isEffectivelyDead());
+ CHECK_FALSE(outsideRight->isEffectivelyDead());
+ CHECK_FALSE(parallel->isEffectivelyDead());
+ bool built = false;
+ for (Object *o = w.logic->getFirstObject(); o; o = o->getNextObject())
+  if (o->getTemplate()->getName() == "GateTestGate") built = true;
+ CHECK(built);
 }

@@ -52,7 +52,7 @@ RetailObjectWorld::State::State(ArchiveFileSystem &fs)
 		"StanceTemplate", // INTEG-1: TheStanceTemplateStore (RW 0x835967)
 		"EmotionNugget", // MODULES-2: TheEmotionSystem (RW 0x8E0D59)
 		"CreateAHeroSystem", // HERO-2: TheCreateAHeroSystem (its own file, RW 0x61A10F)
-		"LinearCampaign" }; // CAMP-1: TheLinearCampaignManager (RW 0x5ECCB9)
+		"LinearCampaign", "MissionObjectiveList" }; // CAMP-1: TheLinearCampaignManager (RW 0x5ECCB9)
 	// AUDIO-1: the audio blocks (AudioEvent, DialogEvent, MusicTrack, ..., EvaEvent, AudioSettings, MiscAudio) are parsed for real
 	skip.insert(skip.end(), AudioIniState::blockKeywords().begin(), AudioIniState::blockKeywords().end());
 	// AI-1: the skirmish AI blocks are parsed for real (GameLogic/SkirmishAI/SkirmishAIData.h)
@@ -85,6 +85,20 @@ RetailObjectWorld::State::State(ArchiveFileSystem &fs)
 	m_createAHero.registerBlock(m_env.blocks); // HERO-2: TheCreateAHeroSystem (RW 0xDE3D84)
 	SpellStores::registerBlocks(m_env.blocks); // SPELL-1
 	m_linearCampaigns.registerBlock(m_env.blocks); // CAMP-1
+	m_env.blocks.registerBlock("MissionObjectiveList", [this](INI *ini) {
+		using Objectives = std::vector<std::pair<std::string, bool>>;
+		static const FieldParse fields[] = {
+			{ "MissionObjectiveTag", [](INI *i, void *, void *store, const void *) {
+				static_cast<Objectives *>(store)->emplace_back(i->getNextToken(), false);
+			}, nullptr, 0 },
+			{ "BonusMissionObjectiveTag", [](INI *i, void *, void *store, const void *) {
+				static_cast<Objectives *>(store)->emplace_back(i->getNextToken(), true);
+			}, nullptr, 0 },
+			{ nullptr, nullptr, nullptr, 0 }
+		};
+		m_missionObjectives.clear();
+		ini->initFromINI(&m_missionObjectives, fields);
+	});
 }
 
 const AudioIniState &RetailObjectWorld::audio() const
@@ -367,6 +381,23 @@ bool RetailObjectWorld::loadState(std::string *error)
 			fe.file = "TheBaseTemplateLibrary";
 			fe.code = 0;
 			fe.message = e;
+			m_s->m_report.errors.push_back(fe);
+		}
+	}
+	// The BFME2 front end exposes both base-game campaigns alongside the expansion.
+	// RotWK's subsystem legend only loads LinearCampaignExpansion1.ini.
+	if (!m_s->m_linearCampaigns.find("GOOD_CAMPAIGN") && m_fs.doesFileExist("Data\\INI\\LinearCampaign.ini"))
+	{
+		try
+		{
+			ini.load("Data\\INI\\LinearCampaign.ini", INI_LOAD_OVERWRITE);
+		}
+		catch (const INIException &e)
+		{
+			SubsystemLoadReport::FileError fe;
+			fe.file = "Data\\INI\\LinearCampaign.ini";
+			fe.code = e.code();
+			fe.message = e.what();
 			m_s->m_report.errors.push_back(fe);
 		}
 	}

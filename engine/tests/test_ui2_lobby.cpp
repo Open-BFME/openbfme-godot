@@ -147,6 +147,8 @@ TEST_CASE("ui2 retail: the LAN setup page shows the map's picture (W3DDrawMapPre
 	REQUIRE(picture->filename.size() > artSuffix.size());
 	CHECK(picture->filename.substr(picture->filename.size() - artSuffix.size()) == artSuffix);
 	CHECK(picture->status == IMAGE_STATUS_RAW_TEXTURE);
+	CHECK(picture->uvLo[1] == 1.0f);
+	CHECK(picture->uvHi[1] == 0.0f);
 	CHECK(mapWindow->winGetEnabledImage(1) == "ScrollShroud");
 	// lane ONLINE-5: a LAN lobby is not a War of the Ring battle (TheGameLogic + 0x114 == 3: the constructor's value, RW 0x6301D3), so the map's
 	// start spots are shown in it as in a skirmish lobby (RW 0x976F9C): the map's own, the rest hidden

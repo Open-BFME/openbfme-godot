@@ -1,5 +1,5 @@
 ## Lane CAMP-1: the linear campaign flow of the game (scripts/game.gd owns this node). TheLinearCampaignManager's campaigns come from the retail INI
-## (GameWorld.get_campaigns: RotWK's legend loads Data\INI\LinearCampaignExpansion1.ini: ANGMAR_CAMPAIGN, ANGMAR_CAMPAIGN_DEMO, ANGMAR_BONUS_CAMPAIGN).
+## (GameWorld.get_campaigns: BFME2 GOOD_CAMPAIGN / EVIL_CAMPAIGN plus RotWK's Angmar campaigns).
 ##
 ##   the main menu's AptMainMenu::Expansion1Campaign (RW 0x91AF8C) starts ANGMAR_CAMPAIGN, AptMainMenu::BonusCampaign (RW 0x91AFAF) ANGMAR_BONUS_CAMPAIGN;
 ##   the command's first character is the difficulty (RW 0x91C108: 'E' easy, 'H' hard, else normal); AptMainMenu::ContinueCampaign continues the saved
@@ -218,7 +218,10 @@ func _next() -> void:
 		await begin_mission()
 		return
 	# RW 0x927EC6: the last mission won: the preference "BCU" = true (the bonus campaign) and the main menu
-	print("CAMPAIGN %s complete: the bonus campaign is unlocked (BCU)" % campaign)
+	if campaign == "ANGMAR_CAMPAIGN":
+		print("CAMPAIGN %s complete: the bonus campaign is unlocked (BCU)" % campaign)
+	else:
+		print("CAMPAIGN %s complete" % campaign)
 	game._campaign_complete = true
 	_to_main_menu()
 

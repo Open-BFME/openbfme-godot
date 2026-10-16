@@ -6,6 +6,7 @@
 #include "Common/AsciiString.h"
 #include "Common/Audio/AudioEntryPoints.h"
 #include "Common/Audio/GameAudio.h"
+#include "Common/Audio/AudioIni.h"
 #include "Common/Player.h"
 #include "Common/PlayerList.h"
 #include "Common/Thing/RawModuleData.h"
@@ -724,14 +725,21 @@ bool LiveGameAudio::applyScriptRequest(const ScriptClientRequest &r)
 	if (a == "SOUND_PLAY_NAMED")
 	{
 		const Object *o = r.objectId ? m_game.logic().findObjectByID(r.objectId) : nullptr;
-		if (!o)
+		if (!o && r.params.size() > 1)
+			o = m_game.logic().scriptEngine().getUnitNamed(r.params[1].stringValue);
+		if (o)
 		{
-			return true; // RW 0x7BE239: no object, no sound
+			event.setObjectID(o->getID());
+			if (o->getControllingPlayer()) event.setPlayerIndex(o->getControllingPlayer()->getPlayerIndex());
 		}
-		event.setObjectID(o->getID());
-		if (o->getControllingPlayer())
+		else
 		{
-			event.setPlayerIndex(o->getControllingPlayer()->getPlayerIndex());
+			const auto *ini = m_audio.env().ini;
+			const auto info = ini ? ini->infos.find(name) : nullptr;
+			// Campaign carry-over speakers may not exist yet. Keep their scripted
+			// dialogue audible as an unbound voice; missing positional effects stay silent.
+			if (!info || !(info->type & ST_VOICE)) return true;
+			if (local) event.setPlayerIndex(local->getPlayerIndex());
 		}
 	}
 	else

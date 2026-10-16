@@ -441,6 +441,12 @@ public:
 	unsigned bfme_construct(const BfmeLuaRuntime::Mutation &mutation);
 	std::string bfme_construction_status(unsigned id);
 	std::string bfme_apply(const BfmeLuaRuntime::Mutation &mutation);
+	// lane LUAAI-1 (GodotBfmeLuaAI.cpp): unit / building / player orders, the AI switch, the read-only queries and the snapshot's AI fields
+	std::string bfme_order(const BfmeLuaRuntime::Mutation &mutation);
+	std::string bfme_set_ai(int playerIndex, bool enabled);
+	BfmeLuaRuntime::Value bfme_query(const std::string &name, const std::vector<BfmeLuaRuntime::Value> &args);
+	void bfme_snapshot_ai(BfmeLuaRuntime::Snapshot &out);
+	bool bfme_network_game() const;
 	// SMOOTH-1: [[frame, hash], ...] of every completed frame when the game was loaded with hash_every_frame
 	Array get_frame_hashes() const;
 	// lane SMOOTH-1: the drawable's render pose of an object (the interpolated transform the instancer draws) next to its logic position, SAGE coordinates:

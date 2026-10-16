@@ -52,6 +52,15 @@ bool templateKindOf(const ThingTemplate &tt, int bit)
 	return MaskTest(ObjectTemplateInfoBuilder::build(*tt.getFinalOverride()).kindOf, (unsigned)bit);
 }
 
+bool gateTemplate(const ThingTemplate &tt)
+{
+ if (templateKindOf(tt, kindBit("WALL_GATE"))) return true;
+ // Retail small wall gates do not consistently carry WALL_GATE.
+ for (const auto &module : tt.getFinalOverride()->behaviorModules().nuggets())
+  if (module.name == "GateOpenAndCloseBehavior") return true;
+ return false;
+}
+
 // template + 0xB0: the geometry's bounding circle radius (GeometryInfo + 0x10, computed over the active shapes by RW 0xAD2860)
 float boundingCircle(const ThingTemplate &tt)
 {
@@ -195,6 +204,7 @@ void ReplaceSelfUpgrade::upgradeImplementation()
 	const std::string name = obj->getName(); // + 0x88
 	Player *owner = obj->getControllingPlayer();
 	const Coord3D d = directionOf(*obj);
+	const float segmentSpacing = SimMath::mulf32(2.0f, SimMath::subf32(WallSpan::halfExtentY(*static_cast<const ThingTemplate *>(obj->getTemplate())), 1.0f));
 	logic.destroyObject(obj); // RW 0x68C18F, 0x68C6EE, the drawable, RW 0x6E85FB, RW 0x62BBAB
 	std::vector<const ThingTemplate *> list;
 	float total = 0.0f;
@@ -224,11 +234,23 @@ void ReplaceSelfUpgrade::upgradeImplementation()
 			{
 				return false;
 			}
+			if (gateTemplate(*tt))
+			{
+				// A regular gate replaces exactly three wall tiles. Tile edges overlap,
+				// and decorative/open gate shapes do not describe this construction gap.
+				const Coord3D &p = *o.getPosition();
+				const float along = (p.x - cur.x) * across + (p.y - cur.y) * d.x;
+				const float normal = (p.x - cur.x) * d.x + (p.y - cur.y) * d.y;
+				return o.getControllingPlayer() == owner && SimMath::absD(normal) < 1.0 &&
+					SimMath::absD(along) <= SimMath::mulf32(segmentSpacing, 1.5f);
+			}
 			const ThingTemplate *ot = static_cast<const ThingTemplate *>(o.getTemplate())->getFinalOverride();
-			return NotifyCrushModules::geometriesOverlap(shapes, pos, angle, ObjectGeometry::shapesOf(*ot), *o.getPosition(), o.getOrientation());
+			return NotifyCrushModules::geometriesOverlap(shapes, cur, angle, ObjectGeometry::shapesOf(*ot), *o.getPosition(), o.getOrientation());
 		});
-		const float radius = SimMath::mulf32(boundingCircle(*tt), 0.5f); // RW 0xBD869C
-		for (const PartitionHit &h : logic.partition().iterateObjectsInRange(pos, radius, FROM_CENTER_3D, { &covered }, ITER_FASTEST))
+		// Include segments whose edges overlap the piece even when their centers lie outside it.
+		// A center-only query at half the radius misses the walls on either side of a gate.
+		const float radius = gateTemplate(*tt) ? SimMath::mulf32(segmentSpacing, 1.5f) : boundingCircle(*tt);
+		for (const PartitionHit &h : logic.partition().iterateObjectsInRange(cur, radius, FROM_BOUNDINGSPHERE_2D, { &covered }, ITER_FASTEST))
 		{
 			if (h.object && !h.object->isEffectivelyDead())
 			{

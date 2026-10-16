@@ -16,6 +16,7 @@
 #include "Common/ConsoleFilter.h"
 #include "GodotDevice/GodotRetailFileSystem.h"
 #include "GodotDevice/GodotW3DInstancer.h"
+#include "GodotDevice/GodotTextureOverrides.h"
 #include "GodotDevice/GodotVideoStream.h"
 #include "GodotDevice/GodotW3DModelBuilder.h"
 
@@ -60,6 +61,7 @@ static void uninitialize_openbfme(ModuleInitializationLevel p_level)
 	{
 		ConsoleFilter::uninstall(); // RELEASE-1: the original stdout / stderr back before the extension's code goes
 		GammaComposite::shutdown();
+		W3D_Clear_Texture_Overrides();
 	}
 }
 

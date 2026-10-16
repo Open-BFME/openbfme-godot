@@ -1,6 +1,7 @@
 // OpenBFME. GPL-3.0.
 
 #include "GodotDevice/GodotW3DMaterial.h"
+#include "GodotDevice/GodotTextureOverrides.h"
 
 #include <cstdio>
 
@@ -23,6 +24,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <set>
 
 namespace godot
 {
@@ -108,6 +110,7 @@ void W3D_Ensure_Light_Globals()
 	rs->global_shader_parameter_add(StringName("w3d_fog"), RenderingServer::GLOBAL_VAR_TYPE_VEC3, Vector3(0.0f, 0.0f, 1.0f));
 	rs->global_shader_parameter_add(StringName("w3d_fog_color"), RenderingServer::GLOBAL_VAR_TYPE_VEC3, Vector3(0.5f, 0.5f, 0.5f));
 	// lane PLAY-1: the free camera's fog shift (TacticalCamera::fogShift): the distance every fog range is measured from; 0 = retail
+	rs->global_shader_parameter_add(StringName("w3d_shadow_strength"), RenderingServer::GLOBAL_VAR_TYPE_FLOAT, 0.0f);
 	rs->global_shader_parameter_add(StringName("w3d_fog_shift"), RenderingServer::GLOBAL_VAR_TYPE_FLOAT, 0.0f);
 	// lane SELPERF-1: the selection's merge decals the terrain shader draws (godot/shaders/selection_decals.gdshaderinc; the HUD sets them, mode 0 = none)
 	rs->global_shader_parameter_add(StringName("sel_data"), RenderingServer::GLOBAL_VAR_TYPE_SAMPLER2D, Variant());
@@ -234,6 +237,76 @@ bool W3DMaterialFactory::Reduce_Image(Ref<Image> &image, int reduction)
 	return true;
 }
 
+namespace
+{
+std::map<std::string, Ref<Image>> g_textureOverrides;
+std::set<W3DMaterialFactory *> g_materialFactories;
+std::string textureOverrideKey(std::string name)
+{
+	name = AsciiStringUtil::lowered(name);
+	const auto slash = name.find_last_of("/\\");
+	if (slash != std::string::npos)
+		name.erase(0, slash + 1);
+	const auto suffix = name.find_first_of(".#");
+	if (suffix != std::string::npos)
+		name.resize(suffix);
+	return name;
+}
+} // namespace
+void W3D_Clear_Texture_Overrides()
+{
+	g_textureOverrides.clear();
+}
+W3DMaterialFactory::W3DMaterialFactory(ArchiveFileSystem &fs) : Fs(fs)
+{
+	g_materialFactories.insert(this);
+}
+W3DMaterialFactory::~W3DMaterialFactory()
+{
+	g_materialFactories.erase(this);
+}
+void W3DMaterialFactory::Set_Texture_Override(const std::string &name, const Ref<Image> &image)
+{
+	const std::string key = textureOverrideKey(name);
+	if (image.is_valid())
+		g_textureOverrides[key] = image;
+	else
+		g_textureOverrides.erase(key);
+	for (auto *factory : g_materialFactories)
+		for (auto &cached : factory->Textures)
+		{
+			if (textureOverrideKey(cached.first) != key)
+				continue;
+			Ref<Image> pixels;
+			if (image.is_valid())
+				pixels = image->duplicate();
+			else
+			{
+				const std::string path = cached.first.substr(0, cached.first.find('#'));
+				std::vector<std::uint8_t> bytes;
+				if (!factory->Fs.readFile(path, bytes, nullptr))
+					continue;
+				PackedByteArray buffer;
+				buffer.resize(bytes.size());
+				if (!bytes.empty())
+					std::memcpy(buffer.ptrw(), bytes.data(), bytes.size());
+				pixels.instantiate();
+				Error error =
+					path.size() >= 4 && path.substr(path.size() - 4) == ".dds" ? pixels->load_dds_from_buffer(buffer) : pixels->load_tga_from_buffer(buffer);
+				if (error != OK || pixels->is_empty())
+					continue;
+			}
+			if (!pixels->has_mipmaps() && !pixels->is_compressed())
+				pixels->generate_mipmaps();
+			auto reductionAt = cached.first.find("#reduction");
+			if (reductionAt != std::string::npos)
+				Reduce_Image(pixels, std::stoi(cached.first.substr(reductionAt + 10)));
+			Ref<ImageTexture> texture = cached.second;
+			if (texture.is_valid())
+				texture->set_image(pixels);
+		}
+}
+
 Ref<Texture2D> W3DMaterialFactory::Load_Texture(const std::string &name, std::vector<std::string> &errors, bool &found, bool quietWhenMissing)
 {
 	found = false;
@@ -269,7 +342,12 @@ Ref<Texture2D> W3DMaterialFactory::Load_Texture(const std::string &name, std::ve
 	if (!bytes.empty()) std::memcpy(buffer.ptrw(), bytes.data(), bytes.size());
 	Ref<Image> image;
 	image.instantiate();
-	Error err = res.IsDDS ? image->load_dds_from_buffer(buffer) : image->load_tga_from_buffer(buffer);
+	Error err = OK;
+	auto override = g_textureOverrides.find(textureOverrideKey(name));
+	if (override != g_textureOverrides.end())
+		image = override->second->duplicate();
+	else
+		err = res.IsDDS ? image->load_dds_from_buffer(buffer) : image->load_tga_from_buffer(buffer);
 	if (err != OK || image->is_empty())
 	{
 		errors.push_back("could not decode texture " + res.Path);

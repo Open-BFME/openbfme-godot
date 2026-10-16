@@ -56,7 +56,7 @@ private:
 	RID m_radialItem, m_grayItem, m_solidItem;
 	Ref<Shader> m_grayShader, m_solidShader;
 	Ref<ShaderMaterial> m_grayMaterial, m_solidMaterial;
-	unsigned m_helpDraws = 0, m_radialDraws = 0;
+	unsigned m_helpDraws = 0, m_radialDraws = 0, m_clockDraws = 0;
 	unsigned m_helpTextOps = 0; ///< lane BUGS-1: the text lines the last help draw drew (0: an empty box)
 };
 

@@ -107,6 +107,8 @@ public:
 #ifdef IOS_ENABLED
 	void pick_external_assets();
 	Dictionary external_assets() const;
+	// the downloaded game files stay out of iCloud/device backups (NSURLIsExcludedFromBackupKey on the folder); {ok, error}
+	Dictionary exclude_from_backup(const String &path) const;
 #endif
 	// {source: "env" | "config" | "none", rotwk, bfme2}
 	Dictionary configured() const;

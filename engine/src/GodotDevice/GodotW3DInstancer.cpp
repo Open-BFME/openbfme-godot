@@ -587,7 +587,7 @@ int64_t W3DInstancer::build_model(const String &model_name)
 			item.Node = memnew(MultiMeshInstance3D);
 			item.Node->set_name(toGodot(name + "_" + sub.Name));
 			item.Node->set_multimesh(item.MM);
-			item.Node->set_cast_shadows_setting(GeometryInstance3D::SHADOW_CASTING_SETTING_OFF);
+			item.Node->set_cast_shadows_setting(AlphaOverride ? GeometryInstance3D::SHADOW_CASTING_SETTING_OFF : GeometryInstance3D::SHADOW_CASTING_SETTING_ON);
 			add_child(item.Node);
 			model->Draws.push_back(std::move(item));
 		}

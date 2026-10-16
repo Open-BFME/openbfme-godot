@@ -198,7 +198,7 @@ void ScriptCameraDirector::apply(const ScriptClientRequest &r, const Coord3D &ca
 		m_notificationMs = intParam(r, 2) * 1000.0;
 		return;
 	}
-	if (a == "SHOW_MISSION_OBJECTIVE" || a == "MARK_MISSION_OBJECTIVE_COMPLETED" || a == "HIDE_MISSION_OBJECTIVE")
+	if (a == "SHOW_MISSION_OBJECTIVE" || a == "MARK_MISSION_OBJECTIVE_COMPLETED" || a == "MARK_MISSION_OBJECTIVE_NOT_COMPLETED" || a == "HIDE_MISSION_OBJECTIVE")
 	{
 		const int index = intParam(r, 0);
 		auto it = m_objectives.begin();
@@ -217,9 +217,9 @@ void ScriptCameraDirector::apply(const ScriptClientRequest &r, const Coord3D &ca
 		{
 			m_objectives.emplace_back(index, a == "MARK_MISSION_OBJECTIVE_COMPLETED");
 		}
-		else if (a == "MARK_MISSION_OBJECTIVE_COMPLETED")
+		else if (a == "MARK_MISSION_OBJECTIVE_COMPLETED" || a == "MARK_MISSION_OBJECTIVE_NOT_COMPLETED")
 		{
-			it->second = true;
+			it->second = a == "MARK_MISSION_OBJECTIVE_COMPLETED";
 		}
 		return;
 	}

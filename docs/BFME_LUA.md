@@ -28,7 +28,7 @@ if barracks then barracks:trainUnit("GondorFighterHorde", 3) end
   `bfme.buildingInstances`) index engine data and return **handles**.
 - **Handles** (`Player`, `Template`, `UnitType`, `BuildingType`, `Unit`, `Building`) expose fields and the actions
   that belong to them, called with `:` — `building:trainUnit(...)`, `player:construct(...)`, `unit:kill()`.
-- **Libraries** (`bfme.match`, `bfme.input`, `bfme.selection`, `bfme.mutations`, `bfme.debug`, `bfme.console`)
+- **Libraries** (`bfme.match`, `bfme.input`, `bfme.selection`, `bfme.mutations`, `bfme.debug`, `bfme.graphics`, `bfme.console`)
   group functions that do not belong to a single handle.
 
 The only globals are `bfme`, `import`, `print` and the standard Lua libraries. Each library is also reachable with
@@ -140,10 +140,14 @@ end
 | `bfme.mutations` | `getStatus(ticket)`, `getBuilding(ticket)` |
 | `bfme.debug` | `getSelectedBuilding()`, `getSelectedUnit()`, `inspect(handle)` |
 | `bfme.console` | `reload()`, `log(text)` |
+| `bfme.orders` | the unit and building orders below, for a handle or a list of handles of one player |
+| `bfme.ai` | `list()`, `setEnabled(player, enabled)`, `isEnabled(player)`, `getStatus(player)` |
+| `bfme.events` | `onUpdate(name, fn, intervalMs)`, `remove(name)`, `list()` |
+| `bfme.map` | `getStartPositions()`, `getFarmSites()`, `getGroundHeight(x, y)`, `distance(a, b)` |
 
 ### bfme.match
 
-`getStatus()` returns `{ready, generation, frame, paused, localPlayerId, playerCount, templateCount, unitCount, buildingCount, selectionCount}`.
+`getStatus()` returns `{ready, generation, frame, paused, localPlayerId, networkGame, replay, playerCount, templateCount, unitCount, buildingCount, selectionCount}`.
 `getFrame()` is the current logic frame and `getTimeMs()` a monotonic clock.
 
 `setGameSpeed(0..100)` sets the simulation speed multiplier: 0 stops time, 1 normal, 2 twice as fast, 100 one hundred times as fast.
@@ -181,6 +185,112 @@ a construction ticket created while it exists in the current snapshot.
 ### bfme.console
 
 `reload()` rereads the entry scripts and returns how many ran. `log(text)` writes one console line; `print(...)` also writes there.
+
+## Lua AI
+
+A computer player's skirmish AI can be switched off so a Lua script plays that player instead.
+Nothing is removed: the native AI keeps its state while it is off and resumes from it when it is handed back.
+
+```lua
+local ai = bfme.ai.list()[1]          -- a computer player
+ai:setAIEnabled(false)                -- the native AI stops deciding (a ticket, applied at the next update)
+bfme.events.onUpdate("myAI", function()
+    for _, b in ipairs(ai:buildings()) do
+        if b.isFactory and b.productionCount == 0 then
+            for _, t in ipairs(b:getTrainableUnits()) do
+                if t.ok and not t.isBuilder then b:trainUnit(t.unit) break end
+            end
+        end
+    end
+end, 1000)
+```
+
+While a script controls a player, its native base builder, team builder, brain (targets and attacks) and automatic
+unit ability casting do not run. Bookkeeping still runs: structures and builders are recorded, and a defeated AI shuts
+down. `ai:setAIEnabled(true)` hands the player back. `player.hasAI`, `player.aiEnabled` and `player.scriptControlled`
+show the state.
+
+[`godot/dev/05_skirmish_ai.lua`](../godot/dev/05_skirmish_ai.lua) is a complete Lua skirmish AI built only on this API.
+It covers economy, production buildings, training, upgrades, sciences, defense and attack waves, for every faction.
+Resource buildings (farms, Mallorn trees, furnaces, ...) go on the map's markers for them (`FarmTemplate` objects, as the
+native economy builder uses them). It takes the nearest free marker to the fortress, at the marker's position and angle,
+and skips markers within 900 of an enemy fortress or with enemies near. Only on a map without a usable marker does it
+use a widely spaced grid behind the fortress (`economySpacing`).
+Production buildings go in a block on a grid just in front of the fortress, aligned with its front, which faces the
+nearest enemy start.
+Each block fills from its middle outward (1 slot, then 3×2, then 5×3, up to `blockHalfWidth` and `blockDepth`), with
+walking room between buildings, and blocked slots are skipped. Each site is checked the way its builder's construction
+checks it, including a path to it. Sites already ordered are reserved until their foundations stand. A site the engine
+refuses is avoided for two minutes, and the next think picks another. A foundation that stops progressing gets an idle
+builder sent to finish it. `luaai.stats` counts placed and refused constructions.
+It is off by default, so computer players use the native AI. Set `luaai.config.autoEnable = true` to take over every
+computer player at the start of each skirmish, except in network games and during replay playback, where the native AI plays and orders and the AI switch are refused.
+`luaai.disableAll()` (or **Computers: native AI** in the console's Cheats tab) hands them back until the next match, and
+`luaai.enableAll()` takes them again.
+`luaai.status()` reports each player. It sees the whole map, ignoring the shroud.
+Its numbers are in `luaai.config`.
+
+### Update callbacks
+
+`bfme.events.onUpdate(name, fn, intervalMs)` runs `fn(name)` every `intervalMs` milliseconds of real time (default 500,
+range 50 to 3,600,000) at a safe point between simulation frames. Each run sees a fresh snapshot and has the 250 ms
+execution budget. Registering a name again replaces it, so reloading a script does not duplicate its callbacks.
+A failing callback keeps its schedule and writes its error to the log once per new message. `bfme.events.list()` shows
+each callback's runs, failures and last error, and `remove(name)` stops one. Output from callbacks goes to the session log
+(`LUA ...` lines). Callbacks survive match changes; check `bfme.match.getStatus().ready`.
+
+### Orders
+
+Orders go through the same player commands a click sends (and the native AI uses). They run in the next logic frame
+for the objects' owner. Each order selects the objects, gives the order, and then restores that player's previous
+selection, so a human's next click is unaffected. A ticket's `applied` means the order was issued.
+Positions are `{x=..., y=...}` tables or handles (their position).
+
+| Unit method | Building method | Order |
+| --- | --- | --- |
+| `moveTo(pos)`, `attackMoveTo(pos)`, `forceMoveTo(pos)`, `addWaypoint(pos)` | | move |
+| `attack(target)`, `forceAttack(target)`, `attackGround(pos)` | `attack(target)`, `attackGround(pos)` | attack a Unit/Building or the ground |
+| `stop()` | `stop()` | stop |
+| `enter(building)` | `evacuate()` | garrison / empty a garrison |
+| `repair(building)`, `resumeConstruction(building)` | | builders |
+| `setStance(name)` | | `battle`, `aggressive`, `holdGround`, `porcupine` |
+| `useAbility(name, target?)` | `useAbility(name, target?)` | a special power: no target, a position or a handle |
+| `construct(building, pos, speed, onComplete)` | `trainUnit(unit, count)` | see [Construction](#construction), [Training units](#training-units) |
+| | `researchUpgrade(name)`, `cancelUpgrade(name)` | upgrades |
+| | `setRallyPoint(pos)`, `sell()` | |
+
+`bfme.orders.<order>(objects, ...)` gives the same order to a list of handles at once, which all must belong to one
+player. Players have `purchaseScience(name)` and `castPower(name, target?)` (a spell-book power: no target, a position or a handle).
+
+### What a script can ask
+
+These are read-only engine answers, computed at once.
+
+| Method | Answer |
+| --- | --- |
+| `building:getTrainableUnits()` | its command set's units: `{unit, ok, status, cost, isBuilder, isHero}` |
+| `building:canTrain(unit)` | `ok, status` (`ok`, `not enough gold`, `prerequisites missing`, `production queue full`, ...) |
+| `building:getUpgrades()` | its upgrades: `{upgrade, kind, ok, status, cost}` (`complete`, `researching`, ...) |
+| `builder:getBuildableStructures()` | `{building, cost, affordable, onPlot, isEconomy, isFactory, radius}` |
+| `player:findBuildSite(building, near, radius?, builder?, options?)` | the nearest valid site `{x, y, z}` within `radius` (default 600), or nil; `options.clearance` keeps that gap to every structure, `options.angle` is the facing to test, `options.avoid` lists `{x, y, r}` circles to keep free |
+| `player:canBuildAt(building, pos, builder?, angle?)` | `ok, reason`: the same check for one position |
+
+With a builder, a site is valid when the builder's own construction check passes (terrain, objects and the owner's
+shroud, as `construct()` checks) and the builder has a path to it. Without one, the builder-less construction check applies.
+| `object:getAbilities()`, `player:getPowers()` | `{name, ready, percentReady}` |
+| `player:getSciences()` | `{science, owned, canPurchase, cost}` |
+| `object:isKindOf(kind)` | a KindOf test (`CAVALRY`, `ARCHER`, `MONSTER`, ...) |
+| `player:isEnemy(other)`, `player:isAlly(other)`, `player:getStartPosition()`, `player:getAIStatus()` | |
+
+The snapshot also carries what an AI decides from every second. Players have `defeated`, `observer`, `relations`,
+`hasAI`, `aiEnabled` and `scriptControlled`. Units and buildings have `isHero`, `isBuilder`, `isHorde` and `isIdle`.
+Buildings also have `isEconomy`, `isFactory`, `radius` (how far its footprint reaches), `productionCount`, `producing` and `productionPercent`.
+
+### Limits
+
+Orders and the AI switch are local. They are refused in network games, where they would desync the other players.
+A replay of a game with a Lua-controlled player is not exact: its orders are recorded, but the AI switch and the script
+are not. Update callbacks run on wall-clock time, so a Lua AI is not deterministic.
 
 ## Construction
 
@@ -256,8 +366,8 @@ Lua console use does not change save availability. Console edits are not include
 These console edits are local and are not added to the synchronized network stream or replay command log. A chunk that fails after queuing writes does not roll those writes back.
 
 This does **not** implement Second Age's complete API: selection edits and command UI,
-diplomacy/team edits, AI suspension, power catalogs/unlocks, durability edits, shared values/messages, JSON/dialogs,
-automatic dev-script callbacks, controller/camera routing, save sync, or multiplayer script synchronization.
+diplomacy/team edits, power catalogs/unlocks, durability edits, shared values/messages, JSON/dialogs,
+controller/camera routing, save sync, or multiplayer script synchronization.
 Second Age's flat helpers (`ExecuteAction`, `GetFrame`, global `setGameSpeed`) are not provided; use the handle methods and libraries above.
 `require` loads only `bfme` and `bfme.<library>`; IO, OS, debug and native module loading are not exposed.
 Console execution has a 250 ms Lua instruction-hook budget and a bounded output buffer; this is not a transactional script sandbox.
@@ -275,11 +385,27 @@ New engine state is added to `BfmeLuaRuntime::Snapshot` and filled in `GameWorld
 the logic worker held. New queued actions are applied in `GameWorld::bfme_apply()`. Add a contract test to
 `engine/tests/test_bfme_lua.cpp` and document it here.
 
-Planned: `bfme.camera` (read/move the view), selection writes (select/deselect via the native selection messages),
-`bfme.powers`, `bfme.events` (callbacks on frame/selection/death), and unit orders (`unit:moveTo`, `unit:attack`).
+- **An order** is a new case in `GameWorld::bfme_order()` (`GodotBfmeLuaAI.cpp`), which builds the player command message, plus an entry in `orderFns`.
+- **A question** is a new name in `GameWorld::bfme_query()`, which must not change state, plus a method that calls `query(name, ...)`.
+
+Planned: `bfme.camera` (read/move the view), selection writes, and event callbacks on selection or death.
 
 ## Verification
 
 `engine/build/openbfme_tests --test-case='bfme Lua*'` checks module identity, library and handle structure, modern Lua syntax alongside the retail VM,
-handle identity, enumeration, detached copies, money tickets, validation, expired handles, queue limits, construction, training, selection and error recovery.
+handle identity, enumeration, detached copies, money tickets, validation, expired handles, queue limits, construction, training, selection, orders, queries,
+the AI switch, update callbacks and error recovery. `--test-case='skirmish ai script control*'` (retail files) checks that a script-controlled computer
+builds and trains nothing and builds again once handed back. `godot --headless --path godot --script res://tests/lua_ai_test.gd` plays the
+Lua skirmish AI on Evendim for five game minutes.
 `godot --headless --path godot --script res://tests/lua_console_test.gd` exercises the console and native extension together.
+
+## Texture overrides
+
+`bfme.graphics.setTextureOverride(textureName, path)` queues a presentation-only texture override and returns a mutation ticket.
+Use a W3D texture filename (extension and case are ignored) and a `res://` or `user://` DDS, TGA, or PNG path.
+Pass `nil` to restore the archive texture. Overrides update already loaded W3D materials and persist across matches.
+Check `bfme.mutations.getStatus(ticket)` for missing-file or decode errors.
+
+`dev/04_gondor_plots.lua` enables the seven BFME1 Gondor/Men floors copied from BFME2Lua into
+`godot/mods/gondor_plots/`. These local retail assets are ignored by Git. Run `gondorPlots.enable(false)`
+to restore native floors, or `gondorPlots.enable(true)` to reapply them. Snow textures use different names and stay native.

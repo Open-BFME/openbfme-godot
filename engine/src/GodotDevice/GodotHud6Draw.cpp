@@ -231,6 +231,7 @@ void Hud6Draw::drawRadial(RID parent)
 	rs->canvas_item_clear(m_solidItem);
 	rs->canvas_item_clear(m_grayItem);
 	rs->canvas_item_clear(m_radialItem);
+	m_clockDraws = 0;
 	const int kSegments = 32;
 	for (const RadialDrawOp &op : m_hud.radialMenu().ops())
 	{
@@ -283,6 +284,7 @@ void Hud6Draw::drawRadial(RID parent)
 			cols.push_back(argb(op.color));
 		}
 		rs->canvas_item_add_polygon(m_radialItem, pts, cols, uvs, tex->get_rid());
+		++m_clockDraws;
 	}
 	++m_radialDraws;
 }
@@ -301,6 +303,7 @@ Dictionary Hud6Draw::state() const
 	radial["unverified"] = "[S-3507] the bubbles are drawn under the menus (ZH's in-game UI before the window manager); RotWK's own order was not read"; // lane MENU-1
 	radial["presses"] = (int64_t)r.presses();
 	radial["draws"] = (int64_t)m_radialDraws;
+	radial["clock_draws"] = (int64_t)m_clockDraws;
 	Array buttons;
 	for (const ControlBarRadialMenu::Button &b : r.buttons())
 	{
@@ -308,6 +311,7 @@ Dictionary Hud6Draw::state() const
 		e["slot"] = b.slot;
 		e["rect"] = Rect2((float)b.rect.x, (float)b.rect.y, (float)b.rect.w, (float)b.rect.h);
 		e["state"] = (int)b.source.state;
+		e["timer"] = b.source.timer;
 		e["image"] = toGodot(b.source.image);
 		e["name"] = toGodot(b.source.button ? b.source.button->m_name : std::string());
 		e["command"] = toGodot(b.source.button ? GUICommandName(b.source.button->m_command) : "");

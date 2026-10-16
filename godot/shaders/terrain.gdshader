@@ -7,7 +7,8 @@
 // Vertex inputs: UV = base layer atlas UV, UV2 = cell-local coordinates of the corner, CUSTOM0 = base layer
 // class wrap rect (x0, y0, w, h), CUSTOM1.x = record index of the cell's blend layers (-1: none).
 shader_type spatial;
-render_mode unshaded, cull_back;
+render_mode cull_back, ambient_light_disabled;
+global uniform float w3d_shadow_strength;
 
 #include "res://shaders/terrain_common.gdshaderinc"
 #include "res://shaders/selection_decals.gdshaderinc"
@@ -41,4 +42,11 @@ void fragment() {
 	if (sel.a > 0.0) {
 		ALBEDO = mix(ALBEDO, retail_output(sel.rgb), sel.a);
 	}
+	EMISSION = ALBEDO * (1.0 - w3d_shadow_strength);
+	ALBEDO *= w3d_shadow_strength;
+	SPECULAR = 0.0;
+}
+// Lighting is already baked by terrain_output; apply only sun visibility.
+void light() {
+	if (LIGHT_IS_DIRECTIONAL) DIFFUSE_LIGHT += ALBEDO * ATTENUATION;
 }

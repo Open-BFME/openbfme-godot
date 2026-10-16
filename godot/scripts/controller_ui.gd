@@ -100,7 +100,8 @@ func _ready() -> void:
 		if live != null and live.is_ready():
 			var camera: Dictionary = live.get_camera()
 			if not camera.is_empty():
-				live.camera_set_height(clampf(float(camera.height_above_ground) + amount, float(camera.min_height), float(camera.max_height))))
+				# the camera clamps like the mouse wheel's zoom: the map's min height up to zoom_out_limit (Max zoom-out factor, free camera)
+				live.camera_set_height(float(camera.height_above_ground) + amount))
 	bridge.camera_rotation.connect(func(radians: float) -> void:
 		var live: Node = hud.call()
 		if live != null and live.is_ready():

@@ -63,6 +63,7 @@ TEST_CASE("script2 client audio: the scripts' sound effects, speech and unit sou
 	const std::uint64_t before = audio.report().eventsAdded;
 	// MAP ANG Angmar's intro line (voice.ini)
 	CHECK(att.applyScriptRequest(request("PLAY_SOUND_EFFECT", { str(12, "MAFound_Witchking01") })));
+	CHECK(att.applyScriptRequest(request("SOUND_PLAY_NAMED", { str(12, "MGRiven_ElfOfficer052"), str(14, "MissingCarryoverSpeaker") })));
 	CHECK(att.applyScriptRequest(request("SPEECH_PLAY", { str(21, "MAFound_Witchking02"), num(8, 0) })));
 	Object *o = r.make("MordorLumberMill", 1200, 1200);
 	REQUIRE(o);
@@ -138,6 +139,7 @@ TEST_CASE("camp1h voice: the campaign's dialogue lines start on the audio device
 	LiveGameAudio att(*r.game, audio);
 	CHECK(att.applyScriptRequest(request("PLAY_SOUND_EFFECT", { str(12, "MAAmonS_Witchking04") })));
 	CHECK(att.applyScriptRequest(request("PLAY_SOUND_EFFECT", { str(12, "MAFound_Witchking01") })));
+	CHECK(att.applyScriptRequest(request("SOUND_PLAY_NAMED", { str(12, "MGRiven_ElfOfficer052"), str(14, "MissingCarryoverSpeaker") })));
 	for (int i = 1; i < 30; ++i)
 	{
 		device.setTime(i * 33.0);
@@ -147,13 +149,28 @@ TEST_CASE("camp1h voice: the campaign's dialogue lines start on the audio device
 	for (const auto &kv : device.voices())
 	{
 		const std::string &f = kv.second.start.file;
-		if (f == "Data\\Audio\\Sounds\\MAAmonS_Wtkg004.wav" || f == "Data\\Audio\\Sounds\\MAFound_Wtkg001.wav")
+		if (f == "Data\\Audio\\Sounds\\MAAmonS_Wtkg004.wav" || f == "Data\\Audio\\Sounds\\MAFound_Wtkg001.wav" || f == "Data\\Audio\\Sounds\\MGRiven_OffE052.wav")
 		{
 			++started;
 			CHECK(kv.second.start.kind == VoiceKind::Sample2D);
 			CHECK(kv.second.params.volume > 0.3f);
 		}
 	}
-	CHECK(started == 2);
+	CHECK(started == 3);
 	CHECK(audio.report().errors.empty());
+}
+
+TEST_CASE("campaign objectives initialize visible, hide and reset completion")
+{
+ ScriptCameraDirector d;
+ Coord3D origin{};
+ d.initializeObjectives(3);
+ REQUIRE(d.objectives().size() == 3);
+ CHECK(d.objectives()[0].first == 1);
+ d.apply(request("HIDE_MISSION_OBJECTIVE", {num(0, 2)}), origin, 0);
+ d.apply(request("MARK_MISSION_OBJECTIVE_COMPLETED", {num(0, 1)}), origin, 0);
+ CHECK(d.objectives()[0].second);
+ d.apply(request("MARK_MISSION_OBJECTIVE_NOT_COMPLETED", {num(0, 1)}), origin, 0);
+ CHECK_FALSE(d.objectives()[0].second);
+ CHECK(d.objectives().size() == 2);
 }

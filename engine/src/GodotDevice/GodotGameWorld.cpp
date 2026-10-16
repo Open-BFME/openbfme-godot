@@ -637,6 +637,7 @@ void GameWorld::clear_scene()
 	m_endGame.reset(); // lane END-1: the end sequence of the game that goes
 	m_endGameRequests.clear();
 	m_endGameFrame = 0;
+	m_scriptView.reset(); // mission objectives and cinematic state belong to this map
 	// lane RENDERWAIT-1 r3 (Sol r2): what the render side deferred for the game that goes (its script requests and their audio, the effects' time, the
 	// network overlay's hash) must not reach the next game's audio, player and objects. (LiveGame's pending input goes with the game; the HUD's deferred
 	// presses with the HUD)
@@ -2604,6 +2605,7 @@ Dictionary GameWorld::get_object(int64_t id) const
 	d["y"] = p.y;
 	d["z"] = p.z;
 	d["angle"] = o->getOrientation();
+	d["drawable_hidden"] = o->isDrawableHidden();
 	d["construction_percent"] = o->getConstructionPercent(); // lane BUILD-1: -1 for a finished object, 0 .. 100 while it rises
 	d["under_construction"] = o->isUnderConstruction();
 	if (const BodyModuleInterface *b = o->getBodyModule())
@@ -3550,6 +3552,8 @@ Dictionary GameWorld::execute_lua(const String &code)
 			host.apply = [this](const BfmeLuaRuntime::Mutation &mutation) { return bfme_apply(mutation); };
 			host.construct = [this](const auto &mutation) { return bfme_construct(mutation); };
 			host.constructionStatus = [this](unsigned id) { return bfme_construction_status(id); };
+			host.query = [this](const std::string &name, const std::vector<BfmeLuaRuntime::Value> &args) { return bfme_query(name, args); };
+			host.output = [](const std::string &text) { UtilityFunctions::print(String::utf8(("LUA " + text).c_str()).strip_edges()); };
 			host.scripts = [] {
 				std::vector<std::pair<std::string, std::string>> scripts;
 				for (const String &directory : { String("res://dev"), String("user://dev") })

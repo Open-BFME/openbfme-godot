@@ -118,6 +118,8 @@ public:
 	int slotHero(int slot) const { return slot >= 0 && slot < MAX_SLOTS ? m_slotHero[(size_t)slot] : -1; }
 	// The map cache keys in the order of the MapList rows.
 	const std::vector<std::string> &mapListKeys() const { return m_mapKeys; }
+	void setMapSearch(const std::u16string &query);
+	const std::u16string &mapSearch() const { return m_mapSearch; }
 	// lane RULES-1: the Rules tab's gadgets (AptMpGameRules::InitGadgets files "RuleComboBox_<n>" / "RuleCheckBox_<n>" under n); null when not placed
 	GameWindow *ruleComboWindow(int n) const { return n >= 0 && n < (int)m_ruleCombos.size() ? m_ruleCombos[(size_t)n] : nullptr; }
 	GameWindow *ruleCheckWindow(int n) const { return n >= 0 && n < (int)m_ruleChecks.size() ? m_ruleChecks[(size_t)n] : nullptr; }
@@ -300,6 +302,7 @@ private:
 	std::map<const GameWindow *, SlotGadget> m_slotGadgets;
 	GameWindow *m_slots[MAX_SLOTS][6] = {};
 	GameWindow *m_mapList = nullptr;
+	std::u16string m_mapSearch;
 	std::vector<std::string> m_mapKeys;     // the map key of each MapList row (MpGameSetup +0x398)
 	int m_sortPrimary = 2;                  // MpGameSetup +0x3AC (RW 0x8451A9): 0/1 name, 2/3 players, 4/5 conquest state (ascending / descending)
 	int m_sortSecondary = 0;                // +0x3B0

@@ -2,6 +2,7 @@
 #include "GameLogic/WallBalance.h"
 #include "GameLogic/GameLogic.h"
 #include "GameLogic/Object/Object.h"
+#include "GameLogic/Object/PartitionManager.h"
 #include "GameLogic/ObjectTemplateInfo.h"
 #include "Common/Thing/ThingTemplate.h"
 #include "GameLogic/BitFlags.h"
@@ -178,6 +179,8 @@ void WallBalance::createStartingWalls(GameLogic &logic) {
    std::vector<ObjectID> made; if(!WallSpan::build(logic,*a,*a->getPosition(),*b->getPosition(),*owner,wh->data()->m_options,&made,true))logic.reportError("Starting walls: span failed");
    pieces.insert(pieces.end(),made.begin(),made.end());
   }
+  // The spans were just teleported into place; flush their spatial cells before gate clearance queries them.
+  logic.partition().update();
   auto gate=r.startingGates.find(owner->getSide());if(gate==r.startingGates.end()||!TheCommandStore)continue;
   const auto *button=TheCommandStore->findCommandButton(gate->second);if(!button||button->m_upgradeName.empty())continue;
   for(float offset:{0.0f,3.14159265359f}){

@@ -73,6 +73,10 @@ struct AISkirmishPlayer
 	std::vector<std::shared_ptr<AIBuildRequest>> *farmSites = nullptr; ///< the manager's farm site pool (RW: a global vector, RW 0xDE9EEC)
 	AISkirmishPlayer *groupFirst = nullptr;   ///< the group's first AI (its brain's current enemy is the group's, RW 0x6C7807)
 	AIBrainState brain;                       ///< step 4: the brain (+ 0x164): target chooser, tactics, the team builder's teams (AITacticalAI.h)
+	// lane LUAAI-1 (not retail): a script controls this player instead. The base builder, the team builder, the brain and the AI's unit ability decisions
+	// (AISpecialPowerUpdate) do not run; the object / dozer / structure bookkeeping and the defeat shutdown still do, so the AI resumes where it was when
+	// it is handed back. Hashed only while set (retail games keep their hashes)
+	bool scriptControlled = false;
 };
 
 // the 0x28-byte group of allied AI players (ctor RW 0x8EDD10)
@@ -124,6 +128,11 @@ public:
 
 	const std::vector<std::unique_ptr<AISkirmishGroup>> &groups() const { return m_groups; }
 	const AISkirmishPlayer *findAI(int playerIndex) const;
+	// lane LUAAI-1: hand a player's AI to a script (true) or back to the native AI (false); false when the player has no skirmish AI
+	bool setScriptControlled(int playerIndex, bool scripted);
+	bool isScriptControlled(int playerIndex) const;
+	// the player's native AI makes decisions: it has one, it is not disabled and no script controls it
+	bool aiDecides(int playerIndex) const;
 	const AISkirmishGroup *findGroup(int playerIndex) const;
 	// manager + 0xA3C: the players with a player info record (every playable player of a started game), in index order
 	const std::vector<int> &infoPlayers() const { return m_infoPlayers; }
@@ -143,6 +152,7 @@ public:
 		unsigned long long brainUpdates = 0;       ///< the + 0x164 brain updates (not ported)
 		unsigned long long disabledSkips = 0;      ///< a disabled AI whose group has no reason to update its brain
 		unsigned long long shutdowns = 0;          ///< RW 0x6C78D9 / 0x6C7928 (not ported)
+		unsigned long long scriptSkips = 0;        ///< lane LUAAI-1: AI updates a script took over
 		unsigned long long objectAdds = 0;         ///< lane DECOMP-3: RW 0x6A9D9C calls while a game runs
 		unsigned long long objectRemoves = 0;      ///< lane DECOMP-3: RW 0x6A99CB calls while a game runs
 	};

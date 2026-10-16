@@ -972,3 +972,20 @@ TEST_CASE("stops S-171: an APT screen shuts down at once (hidden, loses focus); 
 	CHECK((fx.wm->aptWindow(1).flags & WindowManager::APTWIN_HIDDEN) != 0);
 	CHECK((fx.wm->aptWindow(2).flags & WindowManager::APTWIN_HIDDEN) == 0);
 }
+
+TEST_CASE("BFME2 main menu: Good and Evil campaign callbacks retain difficulty")
+{
+ ShellFx fx;
+ fx.addMovie("MainMenu", {});
+ registerAptScreenFactories(fx.factories);
+ fx.wm->init();
+ fx.shell->push("MainMenu.apt");
+ fx.tick(1);
+ REQUIRE(fx.wm->invokeCallback("AptMainMenu::GoodCampaign", "E"));
+ REQUIRE(fx.wm->invokeCallback("AptMainMenu::EvilCampaign", "H"));
+ REQUIRE(fx.services.requests.size() == 2);
+ CHECK(fx.services.requests[0].action == ShellAction::GoodCampaign);
+ CHECK(fx.services.requests[0].argument == "E");
+ CHECK(fx.services.requests[1].action == ShellAction::EvilCampaign);
+ CHECK(fx.services.requests[1].argument == "H");
+}

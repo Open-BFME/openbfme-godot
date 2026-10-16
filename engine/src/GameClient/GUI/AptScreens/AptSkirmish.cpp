@@ -1344,6 +1344,14 @@ void AptSkirmish::setMapSort(int mode)
 	populateMapList();
 }
 
+void AptSkirmish::setMapSearch(const std::u16string &query)
+{
+	const std::u16string trimmed = trimU16(query);
+	if (trimmed == m_mapSearch) return;
+	m_mapSearch = trimmed;
+	populateMapList();
+}
+
 void AptSkirmish::populateMapList()
 {
 	// MpGameSetup's map list fill (RW 0x8460B5; the column widths {8, 2, 70, 10, 10} come from MpGameSetup::InitGadgets RW 0x840906):
@@ -1374,6 +1382,18 @@ void AptSkirmish::populateMapList()
 	for (int index : m_setup->listedMaps())
 	{
 		const MapCacheEntry &m = maps[(std::size_t)index];
+		if (!m_mapSearch.empty())
+		{
+			const auto name = m_setup->mapDisplayName(m, false);
+			bool matches = false;
+			for (std::size_t start = 0; start + m_mapSearch.size() <= name.size(); ++start)
+				if (compareNoCase(name.substr(start, m_mapSearch.size()), m_mapSearch) == 0)
+				{
+					matches = true;
+					break;
+				}
+			if (!matches) continue;
+		}
 		const int state = m.isOfficial ? 0 : 0x8000;
 		rows.push_back(Row{ index, state, m_setup->mapDisplayName(m, true) });
 	}
@@ -1690,22 +1710,22 @@ std::string AptSkirmish::mapPreviewImage(const MapCacheEntry &map)
 	image.name = name;
 	image.status = IMAGE_STATUS_RAW_TEXTURE;
 	image.textureSize.x = image.textureSize.y = 128;
-	// retail UV -> the port's top-row-first textures: v' = 1 - v (WindowManager::RenderPicture)
+	// Preserve the map preview's vertical UV direction after the TGA loader normalizes its rows.
 	if (m_setup->source().fileExists(base + "_art.tga"))
 	{
 		image.filename = base + "_art.tga";
 		image.uvLo[0] = 0.0f;
-		image.uvLo[1] = 0.0f; // retail (0, 1)
+		image.uvLo[1] = 1.0f;
 		image.uvHi[0] = 1.0f;
-		image.uvHi[1] = 1.0f; // retail (1, 0)
+		image.uvHi[1] = 0.0f;
 	}
 	else if (m_setup->source().fileExists(base + ".tga"))
 	{
 		image.filename = base + ".tga";
 		image.uvLo[0] = 0.0f;
-		image.uvLo[1] = 1.0f; // retail (0, 0)
+		image.uvLo[1] = 0.0f;
 		image.uvHi[0] = 1.0f;
-		image.uvHi[1] = 0.0f; // retail (1, 1)
+		image.uvHi[1] = 1.0f;
 	}
 	else
 	{

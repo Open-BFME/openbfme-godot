@@ -38,15 +38,42 @@ func _run() -> void:
 	for i in 8: world.advance(0.2)
 	var gates := 0
 	var walls := 0
+	var gate_objects: Array[Dictionary] = []
+	var segments: Array[Dictionary] = []
 	for object_id in world.get_object_ids():
 		var object: Dictionary = world.get_object(object_id)
 		if object.get("owner", "") != "Player_1": continue
 		if "Wall" in object.template:
 			walls += 1
 			assert(not object.under_construction, str(object))
-			if "Gate" in object.template: gates += 1
+			if "Gate" in object.template:
+				gates += 1
+				gate_objects.append(object)
+			if "WallSegment" in object.template and object.get("health", 0) > 0:
+				segments.append(object)
 	assert(walls >= 16, "Starting walls: " + str(walls))
 	assert(gates >= 2, "Starting gates: " + str(gates))
+	# Auto walls leave the first surviving tile two tile-spacings from the gate
+	# center: the center and one tile on each side were replaced, not five tiles.
+	for gate in gate_objects:
+		var normal := Vector2(cos(gate.angle), sin(gate.angle))
+		var along := Vector2(-normal.y, normal.x)
+		var offsets: Array[float] = []
+		for segment in segments:
+			var delta := Vector2(segment.x - gate.x, segment.y - gate.y)
+			if absf(delta.dot(normal)) < 1.0:
+				offsets.append(delta.dot(along))
+		offsets.sort()
+		var spacing := INF
+		var left := INF
+		var right := INF
+		for i in offsets.size():
+			if offsets[i] < 0: left = minf(left, -offsets[i])
+			else: right = minf(right, offsets[i])
+			if i > 0: spacing = minf(spacing, offsets[i] - offsets[i-1])
+		assert(is_finite(spacing) and spacing > 0)
+		assert(absf(left / spacing - 2.0) < 0.1, "Auto gate left gap: " + str(offsets))
+		assert(absf(right / spacing - 2.0) < 0.1, "Auto gate right gap: " + str(offsets))
 	inst.queue_free()
 	world.queue_free()
 	await process_frame

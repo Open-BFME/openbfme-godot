@@ -47,6 +47,7 @@ class BfmeLuaRuntime
 	struct Snapshot
 	{
 		bool ready = false, paused = false;
+		bool networkGame = false, replay = false; // lane LUAAI-1: orders and the AI switch are refused in both
 		int localPlayerId = -1;
 		unsigned frame = 0;
 		Value cursorPosition; // nil when no active terrain hit; SAGE x/y/z otherwise
@@ -70,6 +71,11 @@ class BfmeLuaRuntime
 		std::function<std::string(unsigned)> constructionStatus;
 		// Sorted entry-script name/source pairs, freshly read for each reload.
 		std::function<std::vector<std::pair<std::string, std::string>>()> scripts;
+		// Read-only engine questions answered at once (the caller holds the simulation): bfme queries such as building:getTrainableUnits().
+		// Throws for an unknown name or bad arguments; never changes game state.
+		std::function<Value(const std::string &name, const std::vector<Value> &args)> query;
+		// Output of Lua that runs outside execute() (update callbacks, completion callbacks): print / bfme.console.log text.
+		std::function<void(const std::string &text)> output;
 	};
 	struct Result
 	{
@@ -79,8 +85,9 @@ class BfmeLuaRuntime
 	explicit BfmeLuaRuntime(Host host);
 	~BfmeLuaRuntime();
 	Result execute(const std::string &code);
+	// queued writes, construction jobs, or an update callback that is due (wall clock): the caller should flush() at its next safe point
 	bool hasPending() const;
-	void flush();	   // caller holds the simulation between frames
+	void flush();	   // caller holds the simulation between frames; also runs the due update callbacks
 	void invalidate(); // new match / registry: old proxies expire; globals remain
   private:
 	struct Impl;

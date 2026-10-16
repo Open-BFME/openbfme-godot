@@ -80,4 +80,12 @@ Dictionary InstallSetup::external_assets() const {
     result["error"] = String([assetError UTF8String]);
     return result;
 }
+Dictionary InstallSetup::exclude_from_backup(const String &path) const {
+    NSURL *url = [NSURL fileURLWithPath:[NSString stringWithUTF8String:path.utf8().get_data()] isDirectory:YES];
+    NSError *error = nil;
+    Dictionary result;
+    result["ok"] = (bool)[url setResourceValue:@YES forKey:NSURLIsExcludedFromBackupKey error:&error];
+    result["error"] = error ? String([error.localizedDescription UTF8String]) : String();
+    return result;
+}
 }

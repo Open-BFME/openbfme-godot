@@ -763,6 +763,12 @@ def test_the_game_shares_the_launchers_signature_code_byte_for_byte():
         assert (LAUNCHER.parent / "godot/scripts/crypto" / f).read_bytes() == (LAUNCHER / "scripts/crypto" / f).read_bytes(), f
 
 
+def test_the_game_shares_the_launchers_game_download_code_byte_for_byte():
+    """one implementation: the iOS app's game download (godot/scripts/release/ios_assets.gd) runs the launcher's AIO code"""
+    for f in ("core/aio_install.gd", "core/aio_pins.gd", "core/launcher_log.gd", "core/game_options.gd", "net/http_fetch.gd", "net/net_policy.gd"):
+        assert (LAUNCHER.parent / "godot/scripts" / f).read_bytes() == (LAUNCHER / "scripts" / f).read_bytes(), f
+
+
 def test_a_signed_file_larger_than_its_limit_is_refused_before_it_is_read(tmp_path):
     """Sol r2 of ONEZIP-1: a 4 MiB payload.json (limit 64 KiB) and a 32 MiB payload.json.sig are refused by their size, and the
     launcher's peak memory does not grow by the file (launcher/tests/bounded_read_test.gd)"""

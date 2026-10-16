@@ -32,6 +32,8 @@ const CommandRow kRequestCommands[] = {
 	{ "AptMainMenu::BattleSchool", ShellAction::BattleSchool },
 	{ "AptMainMenu::LevelSelect", ShellAction::LevelSelect },
 	{ "AptMainMenu::LoadCampaign", ShellAction::LoadCampaign },
+	{ "AptMainMenu::GoodCampaign", ShellAction::GoodCampaign },
+	{ "AptMainMenu::EvilCampaign", ShellAction::EvilCampaign },
 	{ "AptMainMenu::ContinueCampaign", ShellAction::ContinueCampaign },
 	{ "AptMainMenu::Expansion1Campaign", ShellAction::Expansion1Campaign },
 	{ "AptMainMenu::BonusCampaign", ShellAction::BonusCampaign },

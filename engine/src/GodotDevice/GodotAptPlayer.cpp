@@ -533,6 +533,8 @@ const char *shellActionName(ShellAction a)
 		case ShellAction::LoadCampaign: return "LoadCampaign";
 		case ShellAction::ContinueCampaign: return "ContinueCampaign";
 		case ShellAction::Expansion1Campaign: return "Expansion1Campaign";
+		case ShellAction::GoodCampaign: return "GoodCampaign";
+		case ShellAction::EvilCampaign: return "EvilCampaign";
 		case ShellAction::BonusCampaign: return "BonusCampaign";
 		case ShellAction::WarOfTheRing: return "WarOfTheRing";
 		case ShellAction::CreateAHero: return "CreateAHero";
@@ -2559,7 +2561,11 @@ Dictionary AptMenuPlayer::lobby_gadget_rect(const String &name)
 	}
 	const std::string n = toNative(name);
 	GameWindow *w = nullptr;
-	if (n == "profile-entry")
+	if (n == "map-list")
+	{
+		w = screen->mapListWindow();
+	}
+	else if (n == "profile-entry")
 	{
 		w = screen->profileEntryWindow(); // lane MENU-1: the add-profile box's name entry (Skirmish::CreatePersonaEntry)
 	}
@@ -2591,6 +2597,7 @@ Dictionary AptMenuPlayer::lobby_gadget_rect(const String &name)
 	w->winGetScreenPosition(&x, &y);
 	w->winGetSize(&ww, &hh);
 	out["found"] = true;
+	out["enabled"] = !m->shell->wm->componentInputBlocked() && !w->winIsHidden() && (w->winGetStatus() & WIN_STATUS_ENABLED) != 0;
 	out["x"] = x;
 	out["y"] = y;
 	out["w"] = ww;
@@ -2614,6 +2621,10 @@ Dictionary AptMenuPlayer::lobby_state()
 	const SkirmishGameInfo &g = screen->setup()->info();
 	out["found"] = true;
 	out["map"] = toGodot(g.mapName);
+	out["map_search"] = toGodot(u16ToUtf8(screen->mapSearch()));
+	PackedStringArray mapKeys;
+	for (const auto &key : screen->mapListKeys()) mapKeys.push_back(toGodot(key));
+	out["map_keys"] = mapKeys;
 	Array rules;
 	for (std::int32_t r : g.rules)
 	{
@@ -2675,6 +2686,8 @@ Dictionary AptMenuPlayer::lobby_apply(const Dictionary &spec)
 		errors.push_back("the Skirmish screen is not up");
 		return out;
 	}
+	if (spec.has("map_search"))
+		screen->setMapSearch(utf8ToU16(toNative(String(spec["map_search"]))));
 	if (spec.has("profile"))
 	{
 		if (GameWindow *entry = screen->profileEntryWindow())
@@ -4724,6 +4737,9 @@ void AptMenuPlayer::_input(const Ref<InputEvent> &event)
 	{
 		return;
 	}
+	// Godot text fields over the shell own their typing and caret navigation.
+	if (Object::cast_to<InputEventKey>(event.ptr()) && get_viewport()->gui_get_focus_owner())
+		return;
 	if (const InputEventMouseMotion *mm = Object::cast_to<InputEventMouseMotion>(event.ptr()))
 	{
 		m->keyboardButton = String();

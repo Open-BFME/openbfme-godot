@@ -52,6 +52,41 @@ void push(lua_State *L, const V &v)
 		}
 	}
 }
+V scalar(lua_State *L, int index);
+// An argument of a queued action or a query: a scalar, or a table of them (a 1..n sequence becomes a List, string keys a Table), at most 4 deep.
+V argument(lua_State *L, int index, int depth = 0)
+{
+	if (lua_type(L, index) != LUA_TTABLE)
+		return scalar(L, index);
+	if (depth >= 4)
+		throw std::runtime_error("argument tables nest too deep");
+	index = lua_absindex(L, index);
+	const lua_Integer n = (lua_Integer)lua_rawlen(L, index);
+	if (n > 0)
+	{
+		V::List list;
+		for (lua_Integer i = 1; i <= n; ++i)
+		{
+			lua_rawgeti(L, index, i);
+			list.push_back(argument(L, -1, depth + 1));
+			lua_pop(L, 1);
+		}
+		return list;
+	}
+	V::Table table;
+	lua_pushnil(L);
+	while (lua_next(L, index) != 0)
+	{
+		if (lua_type(L, -2) != LUA_TSTRING)
+		{
+			lua_pop(L, 2);
+			throw std::runtime_error("argument tables need string keys or a 1..n sequence");
+		}
+		table[lua_tostring(L, -2)] = argument(L, -1, depth + 1);
+		lua_pop(L, 1);
+	}
+	return table;
+}
 V scalar(lua_State *L, int index)
 {
 	switch (lua_type(L, index))
@@ -74,6 +109,8 @@ V scalar(lua_State *L, int index)
 const char *bootstrap = R"lua(
 local snapshot, queue, status, writeLog, clock, newproxy, scripts, constructionResult = _bfmeSnapshot, _bfmeQueue, _bfmeStatus, _bfmeLog, _bfmeClock, _bfmeProxy, _bfmeScripts, _bfmeConstructionResult
 _bfmeSnapshot, _bfmeQueue, _bfmeStatus, _bfmeLog, _bfmeClock, _bfmeProxy, _bfmeScripts, _bfmeConstructionResult = nil,nil,nil,nil,nil,nil,nil,nil
+local onUpdateNative, updateList, query = _bfmeOnUpdate, _bfmeUpdateList, _bfmeQuery
+_bfmeOnUpdate, _bfmeUpdateList, _bfmeQuery = nil,nil,nil
 local view, generation, cache = {}, 1, {}
 local kinds = {templates='Template',unitTypes='UnitType',buildingTypes='BuildingType',players='Player',unitInstances='Unit',buildingInstances='Building'}
 local info = setmetatable({}, {__mode='k'})
@@ -143,6 +180,62 @@ local function construct(building, position, builderId, playerId, speed, onCompl
  return queue('match','',':construct',building,position.x,position.y,builderId,playerId,speed,angle,callback)
 end
 local function action(name) return function(o) local _,h=record(o); return queue(h.kind,h.id,':'..name,nil) end end
+-- Orders (lane LUAAI-1): the player commands the skirmish AI and a human give, issued for the objects' owner and run in the next logic frame
+local function group(objects)
+ if type(objects)=='userdata' then objects={objects} end
+ if type(objects)~='table' or #objects==0 then error('expected a Unit or Building handle, or a list of them',3) end
+ local owner,ids=nil,{}
+ for _,o in ipairs(objects) do
+  local r,h=record(o)
+  if h.kind~='unitInstances' and h.kind~='buildingInstances' then error('expected Unit or Building handles',3) end
+  if r.playerId==nil then error(tostring(o)..' has no owning player',3) end
+  if owner==nil then owner=r.playerId elseif owner~=r.playerId then error('every object of one order must belong to one player',3) end
+  ids[#ids+1]=tonumber(h.id)
+ end
+ return owner,ids
+end
+-- a position table, or a handle's position
+local function where(p)
+ if type(p)=='userdata' then p=(record(p)).position end
+ if type(p)~='table' then error('expected a position {x=..., y=...} or a handle',3) end
+ numeric(p.x,-1e7,1e7,false); numeric(p.y,-1e7,1e7,false)
+ return {x=p.x,y=p.y}
+end
+local function instanceId(t,label)
+ local _,h=record(t)
+ if h.kind~='unitInstances' and h.kind~='buildingInstances' then error('expected a Unit or Building '..label,3) end
+ return tonumber(h.id)
+end
+local function playerId(p)
+ local _,h=record(p)
+ if h.kind~='players' then error('expected a Player',3) end
+ return tonumber(h.id)
+end
+local function name(v,label) if type(v)~='string' or v=='' then error('expected '..label..' name',3) end; return v end
+local function target(t) if t==nil then return nil end; if type(t)=='userdata' then return instanceId(t,'target') end; return where(t) end
+local function order(kind,objects,...) local owner,ids=group(objects); return queue('orders',tostring(owner),':'..kind,nil,ids,...) end
+local orderFns={
+ moveTo=function(o,p) return order('moveTo',o,where(p)) end,
+ attackMoveTo=function(o,p) return order('attackMoveTo',o,where(p)) end,
+ forceMoveTo=function(o,p) return order('forceMoveTo',o,where(p)) end,
+ addWaypoint=function(o,p) return order('addWaypoint',o,where(p)) end,
+ attackGround=function(o,p) return order('attackGround',o,where(p)) end,
+ attack=function(o,t) return order('attack',o,instanceId(t,'target')) end,
+ forceAttack=function(o,t) return order('forceAttack',o,instanceId(t,'target')) end,
+ stop=function(o) return order('stop',o) end,
+ enter=function(o,b) return order('enter',o,instanceId(b,'to enter')) end,
+ repair=function(o,b) return order('repair',o,instanceId(b,'to repair')) end,
+ resumeConstruction=function(o,b) return order('resumeConstruction',o,instanceId(b,'to finish')) end,
+ evacuate=function(o) return order('evacuate',o) end,
+ sell=function(o) return order('sell',o) end,
+ setStance=function(o,stance) return order('setStance',o,name(stance,'a stance')) end,
+ researchUpgrade=function(o,u) return order('researchUpgrade',o,name(u,'an upgrade')) end,
+ cancelUpgrade=function(o,u) return order('cancelUpgrade',o,name(u,'an upgrade')) end,
+ setRallyPoint=function(o,p) return order('setRallyPoint',o,where(p)) end,
+ useAbility=function(o,a,t) return order('useAbility',o,name(a,'an ability'),target(t)) end,
+}
+local function objectQuery(kind) return function(o,...) local _,h=record(o); return query(kind,tonumber(h.id),...) end end
+local function relation(p,other,want) local r=record(p); return (r.relations or {})[tostring(playerId(other))]==want end
 -- Handle methods, by collection; every handle also has :set(field, value) and :inspect().
 local methods={
  players={
@@ -161,6 +254,44 @@ local methods={
   construct=function(p,building,position,speed,onComplete)
    local _,h=record(p); return construct(building,position,0,tonumber(h.id),speed,onComplete)
   end,
+  -- lane LUAAI-1
+  setAIEnabled=function(p,enabled)
+   local _,h=record(p); if type(enabled)~='boolean' then error('expected boolean',2) end
+   return queue(h.kind,h.id,':setAIEnabled',enabled)
+  end,
+  purchaseScience=function(p,science) local _,h=record(p); return queue('orders',h.id,':purchaseScience',nil,name(science,'a science')) end,
+  castPower=function(p,power,t) local _,h=record(p); return queue('orders',h.id,':castPower',nil,name(power,'a power'),target(t)) end,
+  getSciences=function(p) return query('sciences',playerId(p)) end,
+  getPowers=function(p) return query('powers',playerId(p)) end,
+  getAIStatus=function(p) return query('ai',playerId(p)) end,
+  isEnemy=function(p,other) return relation(p,other,'enemy') end,
+  isAlly=function(p,other) return relation(p,other,'ally') end,
+  getStartPosition=function(p)
+   local id=playerId(p)
+   for _,s in ipairs(query('startPositions')) do if s.playerId==id then return {x=s.x,y=s.y,z=s.z} end end
+  end,
+  -- options: {clearance = gap to every structure, angle = facing in radians, avoid = {{x=,y=,r=}, ...} circles kept free}
+  findBuildSite=function(p,building,near,radius,builder,options)
+   building=templateName(building,'buildingTypes','building template')
+   if radius==nil then radius=600 end; numeric(radius,0,5000,false)
+   options=options or {}
+   if type(options)~='table' then error('expected an options table',2) end
+   if options.clearance~=nil then numeric(options.clearance,0,1000,false) end
+   if options.angle~=nil then numeric(options.angle,-1e6,1e6,false) end
+   local avoid=options.avoid
+   if avoid~=nil then
+    if type(avoid)~='table' then error('expected avoid = a list of {x=,y=,r=}',2) end
+    local copy={}; for i,a in ipairs(avoid) do local w=where(a); copy[i]={x=w.x,y=w.y,r=a.r or 0} end; avoid=#copy>0 and copy or nil
+   end
+   return query('findBuildSite',playerId(p),building,where(near),radius,builder and instanceId(builder,'builder') or nil,options.angle,options.clearance,avoid)
+  end,
+  -- ok, reason: the check findBuildSite makes for one position (a builder's own construction check and its path, when given)
+  canBuildAt=function(p,building,position,builder,angle)
+   building=templateName(building,'buildingTypes','building template')
+   if angle~=nil then numeric(angle,-1e6,1e6,false) end
+   local r=query('canBuildAt',playerId(p),building,where(position),0,builder and instanceId(builder,'builder') or nil,angle)
+   return r.ok,r.reason
+  end,
  },
  unitInstances={
   kill=action('kill'), destroy=action('destroy'),
@@ -168,6 +299,7 @@ local methods={
    local r,h=record(u); if r.playerId==nil then error('builder has no owning player',2) end
    return construct(building,position,tonumber(h.id),r.playerId,speed,onComplete)
   end,
+  getBuildableStructures=objectQuery('buildable'),
  },
  buildingInstances={
   kill=action('kill'), destroy=action('destroy'),
@@ -177,8 +309,25 @@ local methods={
    if count==nil then count=1 end; numeric(count,1,1000,true)
    return queue(h.kind,h.id,':trainUnit',unit,count)
   end,
+  getTrainableUnits=objectQuery('trainable'),
+  getUpgrades=objectQuery('upgrades'),
+  canTrain=function(b,unit)
+   local _,h=record(b); unit=templateName(unit,'unitTypes','unit template')
+   local r=query('canTrain',tonumber(h.id),unit); return r.ok,r.status
+  end,
  },
 }
+-- shared by units and buildings: the orders that apply to them, abilities and KindOf
+for _,n in ipairs{'moveTo','attackMoveTo','forceMoveTo','addWaypoint','attackGround','attack','forceAttack','stop','enter','repair','resumeConstruction','setStance','useAbility'} do
+ methods.unitInstances[n]=orderFns[n]
+end
+for _,n in ipairs{'attack','attackGround','stop','evacuate','sell','researchUpgrade','cancelUpgrade','setRallyPoint','useAbility'} do
+ methods.buildingInstances[n]=orderFns[n]
+end
+for _,kind in ipairs{'unitInstances','buildingInstances'} do
+ methods[kind].getAbilities=objectQuery('abilities')
+ methods[kind].isKindOf=function(o,k) local _,h=record(o); return query('kindOf',tonumber(h.id),name(k,'a KindOf')) end
+end
 local mt={
  __index=function(p,key)
   local r,h=record(p)
@@ -259,10 +408,18 @@ library('match',{
  setGameSpeed=function(value) numeric(value,0,100,false); return queue('match','',':setGameSpeed',value) end,
  getStatus=function()
   return {ready=view.ready or false,generation=generation,frame=view.frame or 0,paused=view.paused or false,localPlayerId=view.localPlayerId,
+   networkGame=view.networkGame or false,replay=view.replay or false,
    playerCount=count('players'),templateCount=count('templates'),unitCount=count('unitInstances'),buildingCount=count('buildingInstances'),selectionCount=#selected(nil)}
  end,
 })
 -- Detached terrain position sampled with this Lua chunk; no simulation mutation.
+library('graphics',{
+ setTextureOverride=function(texture,path)
+  if type(texture)~='string' or texture=='' then error('expected a texture name',2) end
+  if path~=nil and (type(path)~='string' or path=='') then error('expected a texture path or nil',2) end
+  return queue('graphics',texture,':setTextureOverride',path)
+ end,
+})
 library('input',{getCursorPosition=function() return copy(view.cursorPosition) end})
 library('selection',{
  all=function() return selected(nil) end,
@@ -283,6 +440,33 @@ library('debug',{
   if type(handle)~='userdata' or getmetatable(handle)~='bfme proxy' then error('expected a bfme handle',2) end
   return inspect(handle)
  end,
+})
+library('orders',orderFns)
+library('ai',{
+ -- the players with a skirmish AI (a Player handle each), native or script controlled
+ list=function() local out={}; for id,r in pairs(view.collections.players or {}) do if r.hasAI then out[#out+1]=proxy('players',id) end end; table.sort(out,function(a,b) return a.id<b.id end); return out end,
+ setEnabled=function(p,enabled) return methods.players.setAIEnabled(p,enabled) end,
+ isEnabled=function(p) local r=record(p); return r.aiEnabled or false end,
+ getStatus=function(p) return query('ai',playerId(p)) end,
+})
+library('events',{
+ -- fn(name) runs at a safe point between frames every intervalMs (default 500, 50 .. 3600000), with a fresh snapshot; the name replaces an earlier one
+ onUpdate=function(n,fn,intervalMs)
+  name(n,'an update')
+  if type(fn)~='function' then error('expected a function',2) end
+  if intervalMs~=nil then numeric(intervalMs,50,3600000,true) end
+  onUpdateNative(n,fn,intervalMs)
+ end,
+ remove=function(n) onUpdateNative(name(n,'an update'),nil) end,
+ list=updateList,
+})
+library('map',{
+ getStartPositions=function() return query('startPositions') end,
+ -- the map's resource building markers (FarmTemplate): {x, y, z, angle, occupied, playerId of the structure on it}
+ getFarmSites=function() return query('farmSites') end,
+ getGroundHeight=function(x,y) numeric(x,-1e7,1e7,false); numeric(y,-1e7,1e7,false); return query('groundHeight',x,y) end,
+ -- 2D distance between positions or handles
+ distance=function(a,b) a,b=where(a),where(b); local dx,dy=a.x-b.x,a.y-b.y; return math.sqrt(dx*dx+dy*dy) end,
 })
 library('console',{
  log=writeLog,
@@ -354,6 +538,81 @@ struct BfmeLuaRuntime::Impl
 	std::map<unsigned long long, std::string> results;
 	std::chrono::steady_clock::time_point deadline;
 	int refreshRef = LUA_NOREF, invalidateRef = LUA_NOREF, printRef = LUA_NOREF;
+	// bfme.events.onUpdate: named callbacks run by flush() every intervalMs (wall clock), each under the execution budget
+	struct UpdateCallback
+	{
+		int ref = LUA_NOREF;
+		long long intervalMs = 500;
+		std::chrono::steady_clock::time_point next;
+		std::string lastError;
+		unsigned long long runs = 0, failures = 0;
+	};
+	std::map<std::string, UpdateCallback> updates;
+	static int onUpdate(lua_State *L)
+	{
+		auto &s = self(L);
+		const std::string name = luaL_checkstring(L, 1);
+		auto it = s.updates.find(name);
+		if (lua_isnoneornil(L, 2))
+		{
+			if (it != s.updates.end())
+			{
+				luaL_unref(L, LUA_REGISTRYINDEX, it->second.ref);
+				s.updates.erase(it);
+			}
+			return 0;
+		}
+		luaL_checktype(L, 2, LUA_TFUNCTION);
+		const lua_Integer interval = luaL_optinteger(L, 3, 500);
+		if (interval < 50 || interval > 3600000)
+			return luaL_error(L, "update interval must be 50 .. 3600000 ms");
+		lua_pushvalue(L, 2);
+		const int ref = luaL_ref(L, LUA_REGISTRYINDEX);
+		if (it != s.updates.end())
+			luaL_unref(L, LUA_REGISTRYINDEX, it->second.ref);
+		UpdateCallback &cb = s.updates[name];
+		cb.ref = ref;
+		cb.intervalMs = interval;
+		cb.next = std::chrono::steady_clock::now(); // first run at the next safe point
+		cb.lastError.clear();
+		return 0;
+	}
+	static int updateList(lua_State *L)
+	{
+		V::List out;
+		for (const auto &kv : self(L).updates)
+			out.emplace_back(V::Table{{"name", kv.first}, {"intervalMs", double(kv.second.intervalMs)}, {"runs", double(kv.second.runs)},
+				{"failures", double(kv.second.failures)}, {"lastError", kv.second.lastError}});
+		push(L, out);
+		return 1;
+	}
+	static int query(lua_State *L)
+	{
+		try
+		{
+			auto &s = self(L);
+			if (!s.host.query)
+				throw std::runtime_error("engine queries are unavailable");
+			const std::string name = luaL_checkstring(L, 1);
+			std::vector<V> args;
+			for (int i = 2; i <= lua_gettop(L); ++i)
+				args.push_back(argument(L, i));
+			push(L, s.host.query(name, args));
+			return 1;
+		}
+		catch (const std::exception &e)
+		{
+			lua_pushstring(L, e.what());
+		}
+		return lua_error(L);
+	}
+	// output written outside execute() goes to the host as it happens
+	void drainOutput()
+	{
+		if (!output.empty() && host.output)
+			host.output(output);
+		output.clear();
+	}
 	static Impl &self(lua_State *L)
 	{
 		return *static_cast<Impl *>(lua_touserdata(L, lua_upvalueindex(1)));
@@ -384,7 +643,8 @@ struct BfmeLuaRuntime::Impl
 		try
 		{
 			auto s = self(L).host.snapshot();
-			V::Table t{{"ready", s.ready}, {"paused", s.paused}, {"frame", s.frame}, {"cursorPosition", s.cursorPosition}};
+			V::Table t{{"ready", s.ready}, {"paused", s.paused}, {"frame", s.frame}, {"cursorPosition", s.cursorPosition},
+				{"networkGame", s.networkGame}, {"replay", s.replay}};
 			V::List selection;
 			for (auto id : s.selection)
 				selection.emplace_back(id);
@@ -425,7 +685,7 @@ struct BfmeLuaRuntime::Impl
 			if (construction && (!s.host.construct || !s.host.constructionStatus))
 				throw std::runtime_error("construction interface unavailable");
 			for (int i = 5; i <= (construction ? 10 : lua_gettop(L)); ++i)
-				m.args.push_back(scalar(L, i));
+				m.args.push_back(argument(L, i));
 			if (s.host.onMutation)
 				s.host.onMutation();
 			auto ticket = s.nextTicket++;
@@ -546,6 +806,9 @@ BfmeLuaRuntime::BfmeLuaRuntime(Host host) : m(new Impl)
 	m->bind("_bfmeConstructionResult", Impl::constructionResult);
 	m->bind("_bfmeLog", Impl::log);
 	m->bind("_bfmeClock", Impl::clock);
+	m->bind("_bfmeOnUpdate", Impl::onUpdate);
+	m->bind("_bfmeUpdateList", Impl::updateList);
+	m->bind("_bfmeQuery", Impl::query);
 	lua_pushlightuserdata(L, m.get());
 	lua_setfield(L, LUA_REGISTRYINDEX, "bfme.runtime");
 	if (luaL_dostring(L, bootstrap) != LUA_OK)
@@ -621,12 +884,19 @@ BfmeLuaRuntime::Result BfmeLuaRuntime::execute(const std::string &code)
 }
 bool BfmeLuaRuntime::hasPending() const
 {
-	return !m->pending.empty() || !m->constructions.empty();
+	if (!m->pending.empty() || !m->constructions.empty())
+		return true;
+	const auto now = std::chrono::steady_clock::now();
+	for (const auto &kv : m->updates)
+		if (now >= kv.second.next)
+			return true;
+	return false;
 }
 void BfmeLuaRuntime::flush()
 {
 	// Only consume the queue present on entry. A completion callback can enqueue
 	// another request, which runs on the next safe point rather than recursively.
+	m->output.clear(); // what Lua prints during this flush goes to Host::output at its end
 	auto count = m->pending.size();
 	while (count--)
 	{
@@ -679,6 +949,50 @@ void BfmeLuaRuntime::flush()
 		if (job.callback != LUA_NOREF) luaL_unref(m->L, LUA_REGISTRYINDEX, job.callback);
 	}
 	while (m->constructionResults.size() > 1024) m->constructionResults.erase(m->constructionResults.begin());
+	// update callbacks: each sees a fresh snapshot; a failing one keeps running (its error is reported once per change of message)
+	const auto now = std::chrono::steady_clock::now();
+	std::vector<std::string> due;
+	for (const auto &kv : m->updates)
+		if (now >= kv.second.next)
+			due.push_back(kv.first);
+	if (!due.empty())
+	{
+		auto L = m->L;
+		try { m->call(m->refreshRef); }
+		catch (const std::exception &e) { m->output += std::string("bfme update snapshot failed: ") + e.what() + "\n"; due.clear(); }
+		for (const std::string &name : due)
+		{
+			auto it = m->updates.find(name);
+			if (it == m->updates.end()) continue; // removed by an earlier callback
+			Impl::UpdateCallback &cb = it->second;
+			cb.next = now + std::chrono::milliseconds(cb.intervalMs);
+			++cb.runs;
+			m->deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(250);
+			lua_sethook(L, Impl::hook, LUA_MASKCOUNT, 1000);
+			lua_rawgeti(L, LUA_REGISTRYINDEX, cb.ref);
+			lua_pushstring(L, name.c_str());
+			const int status = lua_pcall(L, 1, 0, 0);
+			lua_sethook(L, nullptr, 0, 0);
+			it = m->updates.find(name); // the callback may have replaced or removed itself
+			if (status != LUA_OK)
+			{
+				const char *text = lua_tostring(L, -1);
+				const std::string error = text ? text : "non-string Lua error";
+				lua_pop(L, 1);
+				if (it != m->updates.end())
+				{
+					++it->second.failures;
+					if (it->second.lastError != error)
+						m->output += "bfme update '" + name + "' failed: " + error + "\n";
+					it->second.lastError = error;
+				}
+			}
+			else if (it != m->updates.end())
+				it->second.lastError.clear();
+		}
+		lua_settop(L, 0);
+	}
+	m->drainOutput();
 }
 void BfmeLuaRuntime::invalidate()
 {

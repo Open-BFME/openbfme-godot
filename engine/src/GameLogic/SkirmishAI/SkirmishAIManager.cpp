@@ -326,6 +326,12 @@ void SkirmishAIManager::updateAI(AISkirmishPlayer &ai, AISkirmishGroup &g)
 		ai.disabled = true;
 		return;
 	}
+	if (ai.scriptControlled)
+	{
+		// lane LUAAI-1: a script decides for this player (bfme Lua, docs/BFME_LUA.md); the defeat test above still ran
+		++m_counters.scriptSkips;
+		return;
+	}
 	// RW 0x6C7961 .. 0x6C797A: RW 0x6C75B5 (+ 0x178 != -1; not ported), the game phase RW 0x6C7677, AIPlayer::update RW 0x8F0EB4 (step 2: the in-progress list, the
 	// base builder and the request processor; the other sub systems are S-412), then the brain (S-412)
 	AIBaseBuilder::updatePhase(m_logic, ai);
@@ -495,6 +501,32 @@ const AISkirmishPlayer *SkirmishAIManager::findAI(int playerIndex) const
 	return nullptr;
 }
 
+bool SkirmishAIManager::setScriptControlled(int playerIndex, bool scripted)
+{
+	for (auto &g : m_groups)
+	{
+		auto it = g->players.find(playerIndex);
+		if (it != g->players.end())
+		{
+			it->second->scriptControlled = scripted;
+			return true;
+		}
+	}
+	return false;
+}
+
+bool SkirmishAIManager::isScriptControlled(int playerIndex) const
+{
+	const AISkirmishPlayer *ai = findAI(playerIndex);
+	return ai && ai->scriptControlled;
+}
+
+bool SkirmishAIManager::aiDecides(int playerIndex) const
+{
+	const AISkirmishPlayer *ai = findAI(playerIndex);
+	return ai && !ai->disabled && !ai->scriptControlled;
+}
+
 const AISkirmishGroup *SkirmishAIManager::findGroup(int playerIndex) const
 {
 	// RW 0x6A957E: the group whose map has the player
@@ -564,6 +596,10 @@ void SkirmishAIManager::crc(StateHasher &h) const
 			h.addString(ai.dozerTemplate);
 			h.addU32(ai.shutdownFrame);
 			h.addU32(ai.retryTimer);
+			if (ai.scriptControlled)
+			{
+				h.addU32(0x4C554131u); // "LUA1": hashed only while a script controls the player, so retail games keep their hashes
+			}
 			AIBaseBuilder::crc(ai.build, h);
 			AITacticalAI::crc(ai.brain, h);
 		}

@@ -1059,6 +1059,9 @@ func _boot() -> void:
 	_shell = ClassDB.instantiate("AptMenuPlayer")
 	_shell.name = "Shell"
 	add_child(_shell)
+	var map_search := preload("res://scripts/skirmish_map_search.gd").new()
+	map_search.shell = _shell
+	add_child(map_search)
 	_save_flow = load("res://scripts/save_flow.gd").new(self) # lane SAVE-2
 	# lane FB7-1: the Options screen's inputs the device knows (AptSimpleScreens.h): the AudioSettings default volumes and the display modes (Godot lists
 	# no adapter modes: the screen's size and the window's; S-1913); the addresses come from the native LAN transport
@@ -1303,6 +1306,10 @@ func _on_shell_request(action: String, argument: String) -> void:
 		_open_online_shell() # lane ONLINE-4
 	elif action == "OnlineGameStart":
 		_on_online_started(argument) # lane ONLINE-4: the staging room's START, played as ONLINE-2's
+	elif action == "GoodCampaign":
+		_campaign_flow.start("GOOD_CAMPAIGN", _campaign_flow.difficulty_from_command(argument))
+	elif action == "EvilCampaign":
+		_campaign_flow.start("EVIL_CAMPAIGN", _campaign_flow.difficulty_from_command(argument))
 	elif action == "Expansion1Campaign": # lane CAMP-1: RW 0x91BE64 (ANGMAR_CAMPAIGN; the demo campaign only with [0xDE4324] + 0x60)
 		_campaign_flow.start("ANGMAR_CAMPAIGN", _campaign_flow.difficulty_from_command(argument))
 	elif action == "BonusCampaign": # RW 0x91BEFA
@@ -1811,7 +1818,14 @@ func _apply_lighting(rep: Dictionary) -> void:
 	_sun = DirectionalLight3D.new()
 	_sun.name = "ObjectSun"
 	_sun.light_color = lit.diffuse
-	_sun.shadow_enabled = false
+	var shadow_lod := int(_shell.get_detail_state().get("shadow_lod", 3)) if _shell != null else 3
+	_sun.shadow_enabled = shadow_lod > 0
+	_sun.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_4_SPLITS
+	_sun.directional_shadow_max_distance = 3000.0
+	_sun.directional_shadow_blend_splits = true
+	_sun.shadow_bias = 0.03
+	_sun.shadow_normal_bias = 1.0
+	RenderingServer.global_shader_parameter_set("w3d_shadow_strength", 0.65 if _sun.shadow_enabled else 0.0)
 	var dir: Vector3 = lit.direction
 	if dir.length() > 0.0001:
 		_sun.transform = Transform3D(Basis.looking_at(dir.normalized(), Vector3.UP if absf(dir.normalized().y) < 0.99 else Vector3.RIGHT), Vector3.ZERO)
@@ -2582,7 +2596,8 @@ func _palantir_objectives() -> void:
 	var ctx: Dictionary = _world.get_quit_menu_context()
 	var mode: int = ctx.get("mode", 2)
 	if mode != 2 and mode != 1 and mode != 5:
-		print("GAME STOP [S-1922] the objectives screen (RW 0x8E8843) is not ported")
+		if _campaign_flow != null and is_instance_valid(_campaign_flow._cine):
+			_campaign_flow._cine.toggle_objectives()
 		return
 	if _shell.shell_stack().has("PlayerTribute.apt") or _quit_open or _state != State.PLAYING:
 		return

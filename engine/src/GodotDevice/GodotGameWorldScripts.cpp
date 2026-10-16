@@ -100,6 +100,7 @@ Array GameWorld::take_script_requests()
 	if (!m_scriptView)
 	{
 		m_scriptView = std::make_unique<ScriptCameraDirector>();
+		if (m_world) m_scriptView->initializeObjectives(m_world->missionObjectives().size());
 	}
 	for (const ScriptClientRequest &r : m_game->takeScriptRequests())
 	{
@@ -178,6 +179,7 @@ Dictionary GameWorld::update_script_view(double delta_ms, const Dictionary &came
 	if (!m_scriptView)
 	{
 		m_scriptView = std::make_unique<ScriptCameraDirector>();
+		if (m_world) m_scriptView->initializeObjectives(m_world->missionObjectives().size());
 	}
 	if (m_game)
 	{
@@ -234,6 +236,16 @@ Dictionary GameWorld::update_script_view(double delta_ms, const Dictionary &came
 			Dictionary od;
 			od["index"] = (int64_t)o.first;
 			od["completed"] = o.second;
+			const auto &definitions = m_world->missionObjectives();
+			if (o.first > 0 && (size_t)o.first <= definitions.size())
+			{
+				const auto &definition = definitions[o.first - 1];
+				std::string text;
+				const auto *table = gameText(m_fs.is_valid() ? m_fs->archive_fs() : nullptr);
+				if (!table || !table->lookup(definition.first, text)) text = definition.first;
+				od["text"] = g(text);
+				od["bonus"] = definition.second;
+			}
 			objectives.push_back(od);
 		}
 		d["objectives"] = objectives;

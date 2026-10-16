@@ -3,6 +3,10 @@
 #include "LuaTestUtil.h"
 #include "doctest.h"
 
+#include <chrono>
+#include <map>
+#include <thread>
+
 namespace
 {
 struct BfmeFixture
@@ -12,6 +16,9 @@ struct BfmeFixture
 	int writes = 0;
 	std::string constructionState = "building";
 	std::vector<std::pair<std::string, std::string>> scripts;
+	std::vector<std::pair<std::string, std::vector<BfmeLuaValue>>> queries;
+	std::map<std::string, BfmeLuaValue> answers;
+	std::string asyncOutput;
 	std::unique_ptr<BfmeLuaRuntime> vm;
 	BfmeFixture()
 	{
@@ -40,6 +47,13 @@ struct BfmeFixture
 		snapshot.collections["buildingTypes"]["TestBuilding"] = {{"id", "TestBuilding"}};
 		host.onMutation = [this] { ++writes; };
 		host.scripts = [this] { return scripts; };
+		host.query = [this](const std::string &name, const std::vector<BfmeLuaValue> &args) {
+			queries.emplace_back(name, args);
+			auto it = answers.find(name);
+			if (it == answers.end()) throw std::runtime_error("unknown bfme query: " + name);
+			return it->second;
+		};
+		host.output = [this](const std::string &text) { asyncOutput += text; };
 		vm = std::make_unique<BfmeLuaRuntime>(std::move(host));
 	}
 	std::string run(const std::string &code)
@@ -292,8 +306,8 @@ TEST_CASE("bfme Lua: libraries are read-only objects reachable through bfme, imp
 	BfmeFixture f;
 	CHECK(f.run("return bfme.debug==import('bfme.debug'), bfme.debug==require('bfme.debug'), tostring(bfme.debug)") ==
 		  "true\ttrue\tbfme.debug\n");
-	CHECK(f.run("return table.concat(bfme.capabilities.libraries,',')") == "console,debug,input,match,mutations,selection\n");
-	CHECK(f.run("bfme.capabilities.libraries[1]='x'; return bfme.capabilities.libraries[1]") == "console\n");
+	CHECK(f.run("return table.concat(bfme.capabilities.libraries,',')") == "ai,console,debug,events,graphics,input,map,match,mutations,orders,selection\n");
+	CHECK(f.run("bfme.capabilities.libraries[1]='x'; return bfme.capabilities.libraries[1]") == "ai\n");
 	CHECK(f.run("return getmetatable(bfme.selection), getmetatable(bfme), type(bfme.match.getFrame), bfme.debug.missing") ==
 		  "bfme library\tbfme module\tfunction\tnil\n");
 	CHECK_FALSE(f.vm->execute("bfme.debug.getSelectedBuilding=nil").ok);
@@ -319,4 +333,133 @@ TEST_CASE("bfme Lua: debug and selection libraries read the sampled client selec
 	f.snapshot.selection.clear();
 	CHECK(f.run("return bfme.debug.getSelectedBuilding()") == "nil\n");
 	CHECK(f.writes == 1);
+}
+
+TEST_CASE("bfme Lua: orders go to the owner as one group with validated positions and targets")
+{
+	BfmeFixture f;
+	f.snapshot.collections["unitInstances"]["1235"] = {{"id", 1235}, {"playerId", 1}, {"position", BfmeLuaValue::Table{{"x", 7}, {"y", 8}}}};
+	f.snapshot.collections["unitInstances"]["2000"] = {{"id", 2000}, {"playerId", 2}, {"position", BfmeLuaValue::Table{{"x", 50}, {"y", 60}}}};
+	f.snapshot.collections["buildingInstances"]["99"] = {{"id", 99}, {"playerId", 1}};
+	CHECK(f.run("ticket=bfme.orders.attackMoveTo({bfme.unitInstances[1234],bfme.unitInstances[1235]},{x=100,y=200});return bfme.mutations.getStatus(ticket)") == "pending\n");
+	f.run("bfme.unitInstances[1234]:attack(bfme.unitInstances[2000]); bfme.unitInstances[1235]:moveTo(bfme.unitInstances[2000])");
+	f.run("bfme.buildingInstances[99]:setRallyPoint({x=1,y=2}); bfme.buildingInstances[99]:researchUpgrade('Upgrade_Forge')");
+	f.run("bfme.unitInstances[1234]:useAbility('SpecialAbilityLeap', {x=3,y=4}); bfme.unitInstances[1234]:useAbility('SpecialAbilityHeal')");
+	f.vm->flush();
+	REQUIRE(f.applied.size() == 7);
+	const auto &move = f.applied[0];
+	CHECK(move.collection == "orders");
+	CHECK(move.id == "1");
+	CHECK(move.field == ":attackMoveTo");
+	const auto &ids = std::get<BfmeLuaValue::List>(move.args[0].data);
+	REQUIRE(ids.size() == 2);
+	CHECK(std::get<double>(ids[1].data) == 1235);
+	const auto &pos = std::get<BfmeLuaValue::Table>(move.args[1].data);
+	CHECK(std::get<double>(pos.at("y").data) == 200);
+	CHECK(std::get<double>(f.applied[1].args[1].data) == 2000);              // attack: the target's id
+	CHECK(std::get<double>(std::get<BfmeLuaValue::Table>(f.applied[2].args[1].data).at("x").data) == 50); // a handle as a position
+	CHECK(f.applied[3].field == ":setRallyPoint");
+	CHECK(std::get<std::string>(f.applied[4].args[1].data) == "Upgrade_Forge");
+	CHECK(std::get<std::string>(f.applied[5].args[1].data) == "SpecialAbilityLeap");
+	CHECK(std::holds_alternative<BfmeLuaValue::Table>(f.applied[5].args[2].data));
+	CHECK(std::holds_alternative<std::monostate>(f.applied[6].args[2].data)); // no target
+	for (const char *code : {
+		"bfme.orders.moveTo({bfme.unitInstances[1234],bfme.unitInstances[2000]},{x=1,y=1})", // two owners
+		"bfme.orders.moveTo({},{x=1,y=1})",
+		"bfme.unitInstances[1234]:moveTo({x=0/0,y=1})",
+		"bfme.unitInstances[1234]:attack({x=1,y=1})",
+		"bfme.unitInstances[1234]:setStance(3)",
+		"bfme.unitInstances[1234]:sell()",            // buildings only
+		"bfme.buildingInstances[99]:moveTo({x=1,y=1})"}) // units only
+		CHECK_FALSE(f.vm->execute(code).ok);
+	CHECK_FALSE(f.vm->hasPending());
+}
+
+TEST_CASE("bfme Lua: the AI switch, player orders and the AI library")
+{
+	BfmeFixture f;
+	f.snapshot.collections["players"]["2"] = {{"id", 2}, {"name", "AI"}, {"hasAI", true}, {"aiEnabled", true},
+		{"relations", BfmeLuaValue::Table{{"1", "enemy"}}}};
+	f.snapshot.collections["players"]["1"]["relations"] = BfmeLuaValue::Table{{"2", "enemy"}};
+	CHECK(f.run("local list=bfme.ai.list(); return #list, list[1].id, bfme.ai.isEnabled(list[1])") == "1\t2\ttrue\n");
+	CHECK(f.run("return bfme.players[2]:isEnemy(bfme.players[1]), bfme.players[2]:isAlly(bfme.players[1])") == "true\tfalse\n");
+	f.run("bfme.ai.setEnabled(bfme.players[2], false); bfme.players[2]:purchaseScience('SCIENCE_HealingHands'); bfme.players[2]:castPower('SpecialPowerArrowVolley', {x=5,y=6})");
+	CHECK_FALSE(f.vm->execute("bfme.players[2]:setAIEnabled('no')").ok);
+	f.vm->flush();
+	REQUIRE(f.applied.size() == 3);
+	CHECK(f.applied[0].collection == "players");
+	CHECK(f.applied[0].field == ":setAIEnabled");
+	CHECK(std::get<bool>(f.applied[0].value.data) == false);
+	CHECK(f.applied[1].field == ":purchaseScience");
+	CHECK(std::get<std::string>(f.applied[1].args[0].data) == "SCIENCE_HealingHands");
+	CHECK(f.applied[2].id == "2");
+	CHECK(std::holds_alternative<BfmeLuaValue::Table>(f.applied[2].args[1].data));
+}
+
+TEST_CASE("bfme Lua: queries are read-only engine answers with checked arguments")
+{
+	BfmeFixture f;
+	f.snapshot.collections["buildingInstances"]["99"] = {{"id", 99}, {"playerId", 1}};
+	f.answers["trainable"] = BfmeLuaValue::List{BfmeLuaValue::Table{{"unit", "GondorSoldier"}, {"ok", true}, {"status", "ok"}}};
+	f.answers["canTrain"] = BfmeLuaValue::Table{{"ok", false}, {"status", "not enough gold"}};
+	f.answers["findBuildSite"] = BfmeLuaValue::Table{{"x", 40}, {"y", 80}, {"z", 0}};
+	f.snapshot.collections["unitInstances"]["1234"]["position"] = BfmeLuaValue::Table{{"x", 5}, {"y", 6}};
+	CHECK(f.run("local t=bfme.buildingInstances[99]:getTrainableUnits(); return #t, t[1].unit, t[1].ok") == "1\tGondorSoldier\ttrue\n");
+	CHECK(f.run("return bfme.buildingInstances[99]:canTrain(bfme.unitTypes.GondorSoldier)") == "false\tnot enough gold\n");
+	CHECK(f.run("local s=bfme.players[1]:findBuildSite('TestBuilding', bfme.unitInstances[1234]); return s.x, s.y") == "40\t80\n");
+	REQUIRE(f.queries.size() == 3);
+	CHECK(std::get<double>(f.queries[0].second[0].data) == 99);
+	CHECK(std::get<std::string>(f.queries[2].second[1].data) == "TestBuilding");
+	CHECK(std::get<double>(f.queries[2].second[3].data) == 600); // the default radius
+	CHECK_FALSE(f.vm->execute("bfme.players[1]:findBuildSite('NoSuchBuilding', {x=1,y=1})").ok);
+	CHECK_FALSE(f.vm->execute("bfme.buildingInstances[99]:getUpgrades()").ok); // the host has no answer: the error reaches Lua
+	CHECK(f.writes == 0);
+}
+
+TEST_CASE("bfme Lua: update callbacks run at flush with a fresh snapshot, by name, and report failures")
+{
+	BfmeFixture f;
+	f.run("ticks=0; bfme.events.onUpdate('ai', function(n) ticks=ticks+1; seen=bfme.players[1].money; print('tick', n) end, 50)");
+	CHECK(f.vm->hasPending()); // due at the next safe point
+	f.snapshot.collections["players"]["1"]["money"] = 777;
+	f.vm->flush();
+	CHECK(f.run("return ticks, seen") == "1\t777\n");
+	CHECK(f.asyncOutput == "tick\tai\n");
+	CHECK_FALSE(f.vm->hasPending()); // not due again for 50 ms
+	f.vm->flush();
+	CHECK(f.run("return ticks") == "1\n");
+	std::this_thread::sleep_for(std::chrono::milliseconds(60));
+	CHECK(f.vm->hasPending());
+	f.vm->flush();
+	CHECK(f.run("return ticks") == "2\n");
+	// a callback that orders: the order runs at the next flush like any other
+	f.run("bfme.events.onUpdate('ai', function() bfme.unitInstances[1234]:stop(); error('after the order') end, 50)");
+	f.asyncOutput.clear();
+	f.vm->flush();
+	CHECK(f.asyncOutput.find("bfme update 'ai' failed:") != std::string::npos);
+	CHECK(f.run("local l=bfme.events.list(); return #l, l[1].failures") == "1\t1\n");
+	f.vm->flush();
+	REQUIRE_FALSE(f.applied.empty());
+	CHECK(f.applied.back().field == ":stop");
+	f.run("bfme.events.remove('ai')");
+	CHECK(f.run("return #bfme.events.list()") == "0\n");
+	CHECK_FALSE(f.vm->execute("bfme.events.onUpdate('x', function() end, 10)").ok);
+}
+
+TEST_CASE("bfme graphics texture overrides queue in menus and validate arguments")
+{
+ BfmeFixture f;
+ f.snapshot.ready = false;
+ f.run("ticket = require('bfme.graphics'):setTextureOverride('GBBarracks_Bib.tga', 'res://mods/gondor_plots/gbbarracks_bib.dds')");
+ f.vm->flush();
+ REQUIRE(f.applied.size() == 1);
+ CHECK(f.applied[0].collection == "graphics");
+ CHECK(f.applied[0].id == "GBBarracks_Bib.tga");
+ CHECK(std::get<std::string>(f.applied[0].value.data) == "res://mods/gondor_plots/gbbarracks_bib.dds");
+ f.run("bfme.graphics.setTextureOverride('gbbarracks_bib', nil)");
+ f.vm->flush();
+ REQUIRE(f.applied.size() == 2);
+ CHECK(std::holds_alternative<std::monostate>(f.applied[1].value.data));
+ CHECK_FALSE(f.vm->execute("bfme.graphics.setTextureOverride('', 'res://bad.dds')").ok);
+ CHECK_FALSE(f.vm->execute("bfme.graphics.setTextureOverride('floor', 42)").ok);
 }

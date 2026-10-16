@@ -42,7 +42,7 @@ Held input releases on context changes, focus loss and disconnect. The palette c
 - `select_controller_group(ids)`: validates ownership/liveness and synchronizes client and logic selection through the normal message stream.
 - `get_command_buttons()` also exposes `image`, `label`, and `timer`.
 
-This implements the command palette and core controller play flow. Reference features such as formation previews, touchpad gestures, modifier combinations and specialized controller editors for every lobby gadget are not included. Physical-controller testing remains necessary; automated Lua, input, UI and live-game checks cover the host interfaces.
+This implements the command palette and core controller play flow. Reference features such as touchpad gestures, modifier combinations and specialized controller editors for every lobby gadget are not included. Physical-controller testing remains necessary; automated Lua, input, UI and live-game checks cover the host interfaces.
 
 Controller mode matches the reference visibility policy: hide native portrait commands, the builder-list shortcut, the assigned powers bar and floating building-command bubbles (including their hit areas). The minimap, portrait, resources and hero entries remain. The three minimap buttons (Options, Objectives and Player Magic) are hidden and cannot receive pointer clicks in controller mode. Native visibility is restored when keyboard-controller mode is disabled or the pad disconnects.
 

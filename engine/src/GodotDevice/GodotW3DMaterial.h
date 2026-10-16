@@ -72,7 +72,12 @@ struct W3DMaterialResult
 class W3DMaterialFactory
 {
 public:
-	explicit W3DMaterialFactory(ArchiveFileSystem &fs) : Fs(fs) {}
+	explicit W3DMaterialFactory(ArchiveFileSystem &fs);
+	~W3DMaterialFactory();
+	W3DMaterialFactory(const W3DMaterialFactory &) = delete;
+	W3DMaterialFactory &operator=(const W3DMaterialFactory &) = delete;
+	// Presentation-only Lua overrides; update cached textures in place for existing materials.
+	static void Set_Texture_Override(const std::string &name, const Ref<Image> &image);
 
 	// Stop S-119 (lane MAPOBJ-1): with a housecolor.ini table set, a classic surface whose stage 0 texture has a house colour texture gets
 	// the HouseColor shader permutation and that texture as `w3d_hc_tex` (the table must outlive the factory). Off (nullptr) by default.

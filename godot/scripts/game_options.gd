@@ -288,6 +288,10 @@ func apply_detail() -> Dictionary:
 	if not _detail.get("ok", false):
 		problems.append("detail: " + str(_detail.get("error", "no level")))
 		return _detail
+	if game != null and game.get("_sun") != null:
+		var sun: DirectionalLight3D = game.get("_sun")
+		sun.shadow_enabled = int(_detail.get("shadow_lod", 3)) > 0
+		RenderingServer.global_shader_parameter_set("w3d_shadow_strength", 0.65 if sun.shadow_enabled else 0.0)
 	ClassDB.class_call_static("GameWorld", "set_texture_reduction", _detail.texture_reduction)
 	if _world != null and _world.has_method("get_fx_player"):
 		var fx = _world.get_fx_player()

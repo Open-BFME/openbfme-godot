@@ -258,6 +258,12 @@ func _build_cheats() -> void:
 		_submit("bfme.match.setGameSpeed(1)")))
 	actions.add_child(_button("Pause", func() -> void: _submit("bfme.match.pause()")))
 	actions.add_child(_button("Resume", func() -> void: _submit("bfme.match.unpause()")))
+	# lane LUAAI-1: the computer players to the Lua skirmish AI (godot/dev/05_skirmish_ai.lua) and back
+	var ai_row := HFlowContainer.new()
+	rows.add_child(ai_row)
+	ai_row.add_child(_button("Computers: Lua AI", func() -> void: _submit("assert(luaai,'Reload scripts first'); return luaai.enableAll()")))
+	ai_row.add_child(_button("Computers: native AI", func() -> void: _submit("assert(luaai,'Reload scripts first'); luaai.disableAll()")))
+	ai_row.add_child(_button("Lua AI status", func() -> void: _submit("assert(luaai,'Reload scripts first'); return luaai.status()")))
 
 func _build_controller_options() -> void:
 	var rows := VBoxContainer.new()

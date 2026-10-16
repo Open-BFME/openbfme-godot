@@ -58,7 +58,9 @@ enum class ShellAction
 	LoadGameFile,        // AptSaveLoad::Load of a saved game (RW 0x816DBF, state 3): the argument is the file
 	DeleteGameFile,      // AptSaveLoad::Delete confirmed (RW 0x81680D, state 0x14 -> RW 0x81707F): the argument is the file; the host deletes it and lists again
 	QuitMenuSave,        // AptQuitMenu::SaveMenu (RW 0x92179F -> RW 0x816655(3, kind, 1)): the argument is the game type (1 Campaign, 2 Skirmish)
-	QuitMenuLoad         // AptQuitMenu::LoadMenu (RW 0x9217F0 -> RW 0x816655(2, kind, 1))
+	QuitMenuLoad,        // AptQuitMenu::LoadMenu (RW 0x9217F0 -> RW 0x816655(2, kind, 1))
+	GoodCampaign,        // BFME2 AptMainMenu::GoodCampaign
+	EvilCampaign         // BFME2 AptMainMenu::EvilCampaign
 };
 
 struct ShellRequest

@@ -64,6 +64,7 @@ public:
 	float zoom() const { return m_zoom.value; }
 	float pitch() const { return m_pitch.value; }
 	const std::string &notificationLabel() const { return m_notificationLabel; }
+	void initializeObjectives(unsigned count) { for (unsigned i = 0; i < count; ++i) m_objectives.emplace_back(i + 1, false); }
 	const std::vector<std::pair<int, bool>> &objectives() const { return m_objectives; } ///< (index, completed) in the order shown
 	const std::vector<std::string> &unhandled() const { return m_unhandled; }
 

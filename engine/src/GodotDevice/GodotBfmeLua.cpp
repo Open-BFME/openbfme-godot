@@ -16,6 +16,8 @@
 #include "GameLogic/System/ShroudManager.h"
 #include "GodotDevice/GodotGameWorld.h"
 #include "GodotDevice/GodotInGameHud.h"
+#include <godot_cpp/classes/file_access.hpp>
+#include <godot_cpp/classes/image.hpp>
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -171,6 +173,7 @@ BfmeLuaRuntime::Snapshot GameWorld::bfme_snapshot()
 		}
 		out.collections[building ? "buildingInstances" : "unitInstances"][std::to_string(obj->getID())] = std::move(r);
 	}
+	bfme_snapshot_ai(out);
 	return out;
 }
 unsigned GameWorld::bfme_construct(const BfmeLuaRuntime::Mutation &m)
@@ -219,6 +222,30 @@ std::string GameWorld::bfme_construction_status(unsigned id)
 
 std::string GameWorld::bfme_apply(const BfmeLuaRuntime::Mutation &m)
 {
+	if (m.collection == "graphics" && m.field == ":setTextureOverride")
+	{
+		Ref<Image> image;
+		if (!std::holds_alternative<std::monostate>(m.value.data))
+		{
+			const auto path = std::get_if<std::string>(&m.value.data);
+			if (!path || (path->rfind("res://", 0) != 0 && path->rfind("user://", 0) != 0))
+				return "texture overrides require a res:// or user:// path";
+			const String filename = String::utf8(path->c_str());
+			if (!FileAccess::file_exists(filename))
+				return "texture override file not found: " + *path;
+			const auto bytes = FileAccess::get_file_as_bytes(filename);
+			image.instantiate();
+			const auto extension = filename.get_extension().to_lower();
+			Error error = extension == "dds"   ? image->load_dds_from_buffer(bytes)
+						  : extension == "tga" ? image->load_tga_from_buffer(bytes)
+						  : extension == "png" ? image->load_png_from_buffer(bytes)
+											   : ERR_FILE_UNRECOGNIZED;
+			if (error != OK || image->is_empty())
+				return "could not decode texture override: " + *path;
+		}
+		W3DMaterialFactory::Set_Texture_Override(m.id, image);
+		return "";
+	}
 	if (m.collection == "templates" || m.collection == "unitTypes" || m.collection == "buildingTypes")
 	{
 		if (!m_world) return "definitions are not loaded";
@@ -240,6 +267,8 @@ std::string GameWorld::bfme_apply(const BfmeLuaRuntime::Mutation &m)
 	if (!m_game || !m_world)
 		return "no active match";
 	auto &logic = m_game->logic();
+	if (m.collection == "orders")
+		return bfme_order(m);
 	if (m.collection == "match")
 	{
 		if (m.field == ":setGameSpeed")
@@ -264,6 +293,13 @@ std::string GameWorld::bfme_apply(const BfmeLuaRuntime::Mutation &m)
 		auto p = logic.players().getNthPlayer(numberId(m.id));
 		if (!p)
 			return "expired player";
+		if (m.field == ":setAIEnabled")
+		{
+			const bool *enabled = std::get_if<bool>(&m.value.data);
+			if (!enabled)
+				return "expected boolean";
+			return bfme_set_ai(p->getPlayerIndex(), *enabled);
+		}
 		if (m.field == "revealMap" || m.field == "fogOfWar")
 		{
 			const bool *value = std::get_if<bool>(&m.value.data);

@@ -311,7 +311,7 @@ public:
 	// it began from, "" for the defaults) }; found false when no lobby is up
 	Dictionary lobby_state();
 	// lane FB7-1 (scripted input runs): the stage rectangle of a lobby gadget: "<slot>/<Leaf>" (a slot combo), "list/<slot>/<Leaf>" (its drop-down list),
-	// "spot/<n>" (a start spot of the map window): { found, x, y, w, h }
+	// "spot/<n>" (a start spot of the map window), "map-list": { found, enabled, x, y, w, h }
 	Dictionary lobby_gadget_rect(const String &name);
 	// Everything the shell reported (notes of the window manager, shell errors, gadget layer errors and notes, unported commands): the unverified list
 	Dictionary get_shell_report() const;

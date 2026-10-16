@@ -12,7 +12,12 @@ The included helper provides `setGold(10000)` after reloading. It returns a muta
 
 Exported games also read `.lua` files in `user://dev` after the bundled scripts.
 On macOS that is `~/Library/Application Support/Godot/app_userdata/OpenBFME/dev/`.
-Use that directory for editable scripts in a packaged game. `require()` only loads the built-in `bfme` module and its `bfme.<library>` libraries.
+Use that directory for editable scripts in a packaged game. `require()` only loads the built-in `bfme` module and its `bfme.<library>` libraries. `05_skirmish_ai.lua` is the Lua skirmish AI (`luaai.enableAll()`).
 
 All entries are compiled before any run. A syntax error prevents the reload; a runtime
 error stops at that file, after any earlier files have already run. Edits are not transactional.
+
+`04_gondor_plots.lua` loads the seven BFME1 Men/Gondor floor textures from local DDS assets.
+Import them with `python3 tools/import_bfme2lua_gondor_plots.py --source /path/to/BFME2Lua`
+from the repository root. The assets stay in the ignored `godot/mods/gondor_plots/` directory.
+Use `gondorPlots.enable(false)` / `gondorPlots.enable(true)` to switch the floors during a match.
