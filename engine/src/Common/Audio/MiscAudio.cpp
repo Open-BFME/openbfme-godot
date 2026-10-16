@@ -39,7 +39,7 @@ void parseAudioEventName(INI *ini, void *instance, void *, const void *userData)
 const std::vector<std::string> &MiscAudio::fieldNames()
 {
 	static const std::vector<std::string> names = {
-		"RadarNotifyHarvesterUnderAttackSound", "RadarNotifyStructureUnderAttackSound", "RadarNotifyInfiltrationSound", "RadarNotifyOnlineSound", "RadarNotifyOfflineSound", "GenericRadarEvent",
+		"BattleCrySound", "CrateSalvage", "RadarNotifyHarvesterUnderAttackSound", "RadarNotifyStructureUnderAttackSound", "RadarNotifyInfiltrationSound", "RadarNotifyOnlineSound", "RadarNotifyOfflineSound", "GenericRadarEvent",
 		"BeaconPlacedSound", "BeaconPlacementFailed", "DefectorTimerTickSound", "DefectorTimerDingSound", "AllCheerSound", "NoCanDoSound", "StealthDiscoveredSound", "StealthNeutralizedSound",
 		"MoneyDepositSound", "MoneyWithdrawSound", "BuildingDisabled", "BuildingReenabled", "VehicleDisabled", "VehicleReenabled", "SplatterVehiclePilotsBrain", "CrateHeal", "CrateShroud",
 		"CrateFreeUnit", "CrateMoney", "UnitPromoted", "RepairSparks", "EnterCloseCombat", "ExitCloseCombat", "IncomingChatNotification", "PrivateMessageNotification", "BuddyMessageNotification",

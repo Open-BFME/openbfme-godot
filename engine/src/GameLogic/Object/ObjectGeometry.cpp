@@ -143,7 +143,19 @@ std::vector<ObjectGeometry::Shape> ObjectGeometry::shapesOf(const ThingTemplate 
 		{
 			// lane HUD-5: RW 0xAD16B0 -> INI::parseAsciiString (the next token; none: the empty string, as getNextAsciiString answers: retail's
 			// AngmarHallofTwilight has `GeometryName =`)
-			shapes.back().name = e.tokens.empty() ? std::string() : e.tokens[0];
+			std::string name;
+			for (const auto &token : e.tokens)
+			{
+				if (!name.empty()) name += ' ';
+				name += token;
+			}
+			if (!name.empty() && name.front() == '"')
+			{
+				name.erase(0, 1);
+				const auto quote = name.find('"');
+				if (quote != std::string::npos) name.resize(quote);
+			}
+			shapes.back().name = std::move(name);
 		}
 		else if (e.row == "GeometryActive")
 		{

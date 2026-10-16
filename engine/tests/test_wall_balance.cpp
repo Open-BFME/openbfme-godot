@@ -73,8 +73,42 @@ TEST_CASE("wall replacement clears covered side segments and preserves adjacent 
  CHECK_FALSE(outsideLeft->isEffectivelyDead());
  CHECK_FALSE(outsideRight->isEffectivelyDead());
  CHECK_FALSE(parallel->isEffectivelyDead());
+ for (Object *removed : {center, left, right}) {
+  auto *cell = w.ai->pathfinder().getCell(LAYER_GROUND, removed->getPosition());
+  REQUIRE(cell);
+  CHECK_FALSE(cell->isObstaclePresent(removed->getID()));
+ }
  bool built = false;
  for (Object *o = w.logic->getFirstObject(); o; o = o->getNextObject())
   if (o->getTemplate()->getName() == "GateTestGate") built = true;
  CHECK(built);
+}
+
+#include "GameLogic/Module/GateModules.h"
+TEST_CASE("wall gates: opening clears the corridor and closing blocks it again") {
+ const char definitions[] =
+ "Object CorridorGate\n KindOf = STRUCTURE IMMOBILE BLOCKING_GATE WALL_GATE\n"
+ " Behavior = GateOpenAndCloseBehavior Gate\n OpenByDefault = No\n ResetTimeInMilliseconds = 200\n End\n"
+ " AdditionalGeometry = BOX\n GeometryName = \"Closed\"\n GeometryMajorRadius = 10\n GeometryMinorRadius = 50\n GeometryHeight = 50\n"
+ " AdditionalGeometry = BOX\n GeometryName = \"OpenLeft\"\n GeometryMajorRadius = 10\n GeometryMinorRadius = 10\n GeometryHeight = 50\n GeometryOffset = X:0 Y:-50 Z:0\n"
+ " AdditionalGeometry = BOX\n GeometryName = \"OpenRight\"\n GeometryMajorRadius = 10\n GeometryMinorRadius = 10\n GeometryHeight = 50\n GeometryOffset = X:0 Y:50 Z:0\n End\n";
+ CombatWorld w(definitions);
+ auto *gate = w.unit("CorridorGate", 'A', 500,500);
+ w.frames(2);
+ auto &pf = w.ai->pathfinder();
+ Coord3D from{450,500,0},to{550,500,0};
+ auto *cell = pf.getCell(LAYER_GROUND, gate->getPosition());
+ REQUIRE(cell);
+ CHECK(cell->isObstaclePresent(gate->getID()));
+ auto *behavior = GateOpenAndCloseBehavior::findGate(*gate);
+ REQUIRE(behavior);
+ behavior->open(); w.frames(4);
+ CHECK_FALSE(cell->isObstaclePresent(gate->getID()));
+ auto *unit = w.unit("Swordsman", 'A',450,500);
+ const int player = unit->getControllingPlayer()->getPlayerIndex();
+ w.select(player,{unit});
+ w.moveTo(player,550,500); w.frames(100);
+ CHECK(unit->getPosition()->x > 520);
+ behavior->close(); w.frames(4);
+ CHECK(cell->isObstaclePresent(gate->getID()));
 }

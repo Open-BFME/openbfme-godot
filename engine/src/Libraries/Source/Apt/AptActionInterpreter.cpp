@@ -424,6 +424,13 @@ AptValue AptActionInterpreter::constantToValue(Frame &f, const AptConstRef &c)
 				return AptValue();
 			}
 			return (*f.regs)[c.raw];
+		case APT_CONST_LOOKUP:
+			if (!f.pool || c.raw >= f.pool->size())
+			{
+				reportError("constant pool index " + std::to_string(c.raw) + " is outside the active pool" + whereIs(f.ins));
+				return AptValue();
+			}
+			return (*f.pool)[c.raw];
 		case APT_CONST_NONE:
 			// no null value exists in the EA runtime (0x75 and 0x76 push the same undefined singleton) and no
 			// corpus movie uses a type-3 constant, so its meaning is an acceptance stop, not a guess

@@ -27,10 +27,11 @@
 ##   --online-count=on|off    (lane ONLINECOUNT-1) the setting "Show how many players are online" (on by default): the Play card's "N players online" from
 ##                            the lobby's GET /v1/stats (scripts/core/online_count.gd); off, the launcher never asks the lobby, and the game's menus follow it
 ##   --free-camera=on|off     (lane INPUT-1) the game's free camera (Options.ini OpenBFMEFreeCamera, see scripts/core/game_options.gd)
+##   --game=bfme1|bfme2      remember which game Play starts (BFME1 uses its own asset folder)
 ##   --aio=on|off             (lane AIO-1, on by default: AioInstall.DEFAULT_ENABLED) the setting "Offer to download the games"
 ##                            (Settings; the All In One BFME Launcher's service)
-##   --aio-install=<folder> --aio-consent   with that setting on: download RotWK 2.01 and BFME2 1.06 from the All In One BFME Launcher's
-##                            service into <folder>/RotWK and <folder>/BFME2 (scripts/core/aio_install.gd, docs/AIO.md); --aio-consent is
+##   --aio-install=<folder> --aio-consent   with that setting on: download BFME1 1.03, RotWK 2.01 and BFME2 1.06 from the All In One BFME Launcher's
+##                            service into <folder>/BFME1, <folder>/RotWK and <folder>/BFME2 (scripts/core/aio_install.gd, docs/AIO.md); --aio-consent is
 ##                            the player's agreement to the text it logs (in the window: the Download press)
 ##   --game-start=<folder>    (lane ONEZIP-1; what the game runs when a player starts it directly from the combined package, see
 ##                            scripts/core/game_start.gd) decide which version that start plays, then look for an update in the background
@@ -85,7 +86,7 @@ const OnlineCount := preload("res://scripts/core/online_count.gd")  # lane ONLIN
 const HttpFetch := preload("res://scripts/net/http_fetch.gd")
 
 const CLI_ACTIONS := ["--update", "--install=", "--select=", "--self-update", "--channel=", "--list", "--play", "--version", "--free-camera=",
-	"--aio=", "--aio-install=", "--auto-update=", "--online-count=", "--open-url", "--lobby=", "--register-url-handler", "--game-start="]
+	"--game=", "--aio=", "--aio-install=", "--auto-update=", "--online-count=", "--open-url", "--lobby=", "--register-url-handler", "--game-start="]
 const UrlHandler := preload("res://scripts/core/url_handler.gd")
 # the test options (honoured only by a development run or a test package); ONLINE-2 r2: also the only arguments allowed before --open-url there
 const TEST_OPTIONS := ["--api-base=", "--trust-key=", "--repo=", "--test-kill-at=", "--aio-base=", "--aio-pins=", "--aio-stop-after=", "--ui-demo=",
@@ -548,6 +549,13 @@ func _run_cli(args: PackedStringArray, problem: String) -> int:
 				return 1
 			updater.set_channel(ch)
 			Log.line("LAUNCHER channel %s" % ch)
+	for a in args:
+		if a.begins_with("--game="):
+			var game := a.trim_prefix("--game=")
+			if game not in ["bfme1", "bfme2"]:
+				Log.line("LAUNCHER --game takes bfme1 or bfme2")
+				return 1
+			updater.set_state("launcher", "game", game)
 	if "--version" in args:
 		print("OpenBFME Launcher %s" % info.version)
 	for a in args:
@@ -810,6 +818,10 @@ func _build_ui() -> void:
 	stack.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	cv.add_child(stack)
 	_play_screen = PlayScreen.new()
+	_play_screen.game_picker.select(1 if updater.get_state("launcher", "game", "bfme2") == "bfme1" else 0)
+	_play_screen.game_selected.connect(func(game: String):
+		updater.set_state("launcher", "game", game)
+		_refresh_games())
 	_play_screen.download_games.connect(_open_download)
 	_play_screen.show_news.connect(_show_screen.bind("news"))
 	_news = NewsScreen.new()
@@ -1236,7 +1248,12 @@ func _show_games(g: Dictionary, demo := false) -> void:
 		var b := Paths.short(g.bfme2)
 		var common := r.get_base_dir()
 		where = ("In " + common) if common == b.get_base_dir() and common != "" else "%s and %s" % [r, b]
-	_play_screen.set_games(g.found, aio.enabled(), where)
+	var bfme1 := Paths.bfme1_folder()
+	g["bfme1"] = bfme1
+	var use_bfme1: bool = updater.get_state("launcher", "game", "bfme2") == "bfme1"
+	_play_screen.game_names.text = "Battle for Middle-earth I 1.03" if use_bfme1 else "RotWK 2.01 · BFME II 1.06"
+	_play_screen.missing_games.text = "Battle for Middle-earth I assets were not found." if use_bfme1 else "The Rise of the Witch-king 2.01 and Battle for Middle-earth II 1.06 were not found."
+	_play_screen.set_games(not bfme1.is_empty() if use_bfme1 else g.found, aio.enabled(), Paths.short(bfme1) if use_bfme1 else where)
 	_mods.set_games(g.found)
 	_games_screen.set_folders(g, demo)
 	_set_buttons()

@@ -1,6 +1,7 @@
 // OpenBFME. GPL-3.0.
 // See GodotInGameHud.h.
 
+#include "Common/BfmeGame.h"
 #include "GodotDevice/GodotInGameHud.h"
 #include "GodotDevice/GodotPackedTexture.h"
 #include "GameLogic/Module/HeroAbilityModules.h"
@@ -60,6 +61,8 @@
 #include <godot_cpp/classes/input_event_mouse_motion.hpp>
 #include <godot_cpp/classes/input_event_screen_touch.hpp>
 #include <godot_cpp/classes/input_event_screen_drag.hpp>
+#include <godot_cpp/classes/input_event_magnify_gesture.hpp>
+#include <godot_cpp/classes/input_event_pan_gesture.hpp>
 #include <godot_cpp/classes/os.hpp>
 #include <godot_cpp/classes/time.hpp>
 #include <godot_cpp/classes/viewport.hpp>
@@ -365,7 +368,9 @@ Ref<ImageTexture> HudDevice::textureFor(const std::string &file)
 			lower += (char)std::tolower((unsigned char)ch);
 		}
 		bool paired = false;
-		Ref<Image> img = lower.size() > 2 ? loadPackedTexture(*source, "art/compiledtextures/" + lower.substr(0, 2) + "/" + lower, &paired) : Ref<Image>();
+		const std::string packedStem = fs.is_valid() && fs->is_bfme1() ? "art/textures/" + lower :
+			(lower.size() > 2 ? "art/compiledtextures/" + lower.substr(0, 2) + "/" + lower : std::string());
+		Ref<Image> img = !packedStem.empty() ? loadPackedTexture(*source, packedStem, &paired) : Ref<Image>();
 		if (img.is_valid())
 		{
 			tex = ImageTexture::create_from_image(img);
@@ -1712,7 +1717,9 @@ Dictionary InGameHudNode::attach(const Ref<RetailFileSystem> &fs, GameWorld *wor
 	d->metaEnv = std::make_unique<INIEnvironment>();
 	d->metaEnv->fileSystem = &afs;
 	d->meta.registerBlocks(*d->metaEnv);
-	if (!d->meta.load(*d->metaEnv, "Data\\INI\\CommandMap.ini", &error) || !d->meta.load(*d->metaEnv, "CommandMap.ini", &error))
+	// BFME1 ships only Data\\INI\\CommandMap.ini (no root CommandMap.ini override; docs/BFME1.md)
+	const bool bfme1Keys = d->metaEnv->fileSystem && isBfme1Data(*d->metaEnv->fileSystem);
+	if (!d->meta.load(*d->metaEnv, "Data\\INI\\CommandMap.ini", &error) || (!bfme1Keys && !d->meta.load(*d->metaEnv, "CommandMap.ini", &error)))
 	{
 		errors.push_back(toGodot(error));
 	}
@@ -1806,7 +1813,7 @@ Dictionary InGameHudNode::attach(const Ref<RetailFileSystem> &fs, GameWorld *wor
 		auto text = std::make_unique<GameTextTableSource>();
 		std::vector<std::uint8_t> bytes;
 		std::string textError;
-		if (!afs.readFile("data/lotr.str", bytes, &textError) || !text->table.parse(bytes, &textError))
+		if (!text->table.loadRetail(afs, &textError))
 		{
 			errors.push_back(toGodot("data/lotr.str: " + textError));
 		}
@@ -2644,6 +2651,16 @@ void InGameHudNode::_process(double delta)
 	if (d->hud6)
 	{
 		d->hud6->drawRadial(get_canvas_item()); // lane HUD-6
+		if (d->fs.is_valid() && d->fs->is_bfme1())
+		{
+			const Vector2 size = get_viewport_rect().size;
+			const float width = std::min(420.0f, (float)size.x * 0.4f);
+			const Rect2 rect(size.x - width - 24.0f, std::max(24.0f, (float)size.y - 370.0f), width, 300.0f);
+			if (d->hud->helpBox().isShown())
+				RenderingServer::get_singleton()->canvas_item_add_rect(get_canvas_item(), rect.grow(10), Color(0.06f, 0.05f, 0.03f, 0.95f));
+			d->hud6->drawHelp(rect, get_canvas_item());
+		}
+
 	}
 	const uint64_t t1 = Time::get_singleton()->get_ticks_usec();
 	d->hudMs = (double)(ta - t0) / 1000.0;
@@ -3443,6 +3460,31 @@ void InGameHudNode::_input(const Ref<InputEvent> &event)
 
 void InGameHudNode::handleInput(const Ref<InputEvent> &event)
 {
+	if (const auto *scroll = Object::cast_to<InputEventPanGesture>(event.ptr()))
+	{
+		const Vector2 delta = scroll->get_delta();
+		if (d->cam && d->hud->input().ui().getInputEnabled() && std::isfinite(delta.x) && std::isfinite(delta.y))
+		{
+			// Convert trackpad scroll units to camera drag pixels.
+			camera_pan(delta * 40.0f);
+			get_viewport()->set_input_as_handled();
+		}
+		return;
+	}
+	if (const auto *pinch = Object::cast_to<InputEventMagnifyGesture>(event.ptr()))
+	{
+		const float factor = pinch->get_factor();
+		if (d->cam && d->hud->input().ui().getInputEnabled() && std::isfinite(factor) && factor > 0.0f)
+		{
+			// Native trackpad pinch factors are incremental: spreading fingers
+			// magnifies the view, so reduce camera height by the same ratio.
+			d->cam->setHeightAboveGround(d->cam->getHeightAboveGround() / factor);
+			d->cam->snapInterpolation();
+			get_viewport()->set_input_as_handled();
+		}
+		return;
+	}
+
 	if (const auto *touch = Object::cast_to<InputEventScreenTouch>(event.ptr()))
 	{
 		if (touch->is_pressed())
@@ -3572,6 +3614,20 @@ void InGameHudNode::handleInput(const Ref<InputEvent> &event)
 		if (idx == 1 || idx == 2 || idx == 3)
 		{
 			inject_mouse_button(idx, mb->is_pressed(), mb->get_position(), mb->is_double_click());
+		}
+		else if (idx >= 4 && idx <= 7 && OS::get_singleton()->get_name() == "macOS")
+		{
+			// Some macOS trackpads/drivers deliver scrolling as wheel events
+			// instead of PanGesture. Route both axes to the same camera pan;
+			// pinch remains the zoom gesture. Keep fractional scroll precision.
+			if (mb->is_pressed() && d->hud->input().ui().getInputEnabled())
+			{
+				const float amount = mb->get_factor();
+				if (std::isfinite(amount))
+					camera_pan(Vector2(idx == 6 ? amount : idx == 7 ? -amount : 0.0f,
+						idx == 4 ? amount : idx == 5 ? -amount : 0.0f) * -120.0f);
+			}
+			get_viewport()->set_input_as_handled();
 		}
 		else if ((idx == 4 || idx == 5) && mb->is_pressed())
 		{

@@ -455,6 +455,8 @@ const FieldParse *HordeContainModuleData::getFieldParse()
 		{ "BackupPercentage", INI::parsePercentToReal, nullptr, offsetof(HordeContainModuleData, m_backupPercentage) },
 		{ "CowerRadius", INI::parseReal, nullptr, offsetof(HordeContainModuleData, m_cowerRadius) },
 		{ "AttributeModifiers", INI::parseAsciiStringVector, nullptr, offsetof(HordeContainModuleData, m_attributeModifiers) },
+		{ "UsePorcupineBody", INI::parseBool, nullptr, offsetof(HordeContainModuleData, m_usePorcupineBody) },
+		{ "UpdateWeaponSetFlagsOnHordeToo", INI::parseBool, nullptr, offsetof(HordeContainModuleData, m_updateWeaponSetFlagsOnHordeToo) },
 		{ "IsPorcupineFormation", INI::parseBool, nullptr, offsetof(HordeContainModuleData, m_isPorcupineFormation) },
 		{ "ForcedLocomotorSet", INI::parseIndexList, TheLocomotorSetNames, offsetof(HordeContainModuleData, m_forcedLocomotorSet) },
 		{ "MachineAllowed", INI::parseBool, nullptr, offsetof(HordeContainModuleData, m_machineAllowed) },

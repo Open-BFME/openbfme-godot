@@ -82,6 +82,7 @@ HordeGarrisonContainModuleData::HordeGarrisonContainModuleData()
 const FieldParse *HordeGarrisonContainModuleData::getFieldParse()
 {
 	static const FieldParse table[] = { // RW 0xC5C9A0
+		{ "MaxHordeCapacity", INI::parseInt, nullptr, offsetof(HordeGarrisonContainModuleData, m_maxHordeCapacity) },
 		{ "ExitDelay", INI::parseDurationUnsignedInt, nullptr, offsetof(HordeGarrisonContainModuleData, m_exitDelay) },
 		{ "EntryOffset", INI::parseCoord3D, nullptr, offsetof(HordeGarrisonContainModuleData, m_entryOffset) },
 		{ "EntryPosition", INI::parseCoord3D, nullptr, offsetof(HordeGarrisonContainModuleData, m_entryPosition) },

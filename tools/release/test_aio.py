@@ -42,7 +42,7 @@ def test_aio_pins_are_current():
     """every downloaded file is pinned (Sol r1): tools/release/aio_package_files.json has the 315 + 297 English files, holds every archive
     of engine/data/retail-archives with the same MD5 and size, and the launcher's aio_pins.gd is generated from it"""
     files = aio_pins.load_files()
-    assert {g: len(rows) for g, rows in files.items()} == {"original-RotWK": 315, "original-BFME2": 297}
+    assert {g: len(rows) for g, rows in files.items()} == {"original-RotWK": 315, "original-BFME2": 297, "original-BFME1": 346}
     assert aio_pins.check_tables(files) == []
     for rows in files.values():
         names = [r[0].lower() for r in rows]

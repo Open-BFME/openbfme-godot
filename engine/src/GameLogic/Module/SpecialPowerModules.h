@@ -60,6 +60,7 @@ public:
 	const SpecialPowerTemplate *m_specialPowerTemplate = nullptr;
 	bool m_updateModuleStartsAttack = false;                   // +0x0C
 	bool m_startsPaused = false;                               // +0x0D
+	std::string m_initiateSound2; // BFME1
 	std::string m_initiateSound;                               // +0x10 (name, S-520)
 	std::string m_attributeModifier;                           // +0x18
 	float m_attributeModifierRange = 0.0f;                     // +0x1C

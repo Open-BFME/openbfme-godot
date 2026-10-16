@@ -4,11 +4,13 @@
 #include "GameLogic/AI/AIPathfindConfig.h"
 
 #include "Common/ArchiveFileSystem.h"
+#include "Common/BfmeGame.h"
 #include "Common/AsciiString.h"
 #include "Common/INI/HostRealText.h"
 
 #include <cctype>
 #include <cstdlib>
+#include <limits>
 #include <map>
 
 namespace
@@ -167,12 +169,35 @@ bool PathfindConfigLoader::load(ArchiveFileSystem &fs, PathfindConfig &out, std:
 		return false;
 	}
 	PathfindConfig c;
+	const bool bfme1 = isBfme1Data(fs);
 	if (!getFloat(ai, "WadeWaterDepth", c.wadeWaterDepth, "aidata.ini", error)) return false;
-	if (!getFloat(ai, "DeepWaterDepth", c.deepWaterDepth, "aidata.ini", error)) return false;
+	if (bfme1)
+		c.deepWaterDepth = std::numeric_limits<float>::max(); // BFME1's AIData has no DeepWaterDepth row (Open-BFME-1 ai.cpp field table): no deep water class
+	else if (!getFloat(ai, "DeepWaterDepth", c.deepWaterDepth, "aidata.ini", error)) return false;
 	if (!getBool(ai, "HordesWaitForHordes", c.hordesWaitForHordes, "aidata.ini", error)) return false;
 	if (!getFloat(ai, "MeleeApproachTolerance", c.meleeApproachTolerance, "aidata.ini", error)) return false; // lane PHYS-1: AIData +0x90 (row RW 0xC1CDB0)
 	if (!getFloat(ai, "MeleeApproachDist", c.meleeApproachDist, "aidata.ini", error)) return false; // lane PHYS-1: AIData +0x94 (row RW 0xC1CDC0) // lane PHYS-1: AIData +0xB9 (row RW 0xC1CE40)
 	if (!getFloat(ai, "CastleSiegeStandBackDistance", c.castleSiegeStandBackDistance, "aidata.ini", error)) return false; // lane PHYS-1: AIData +0xD4 (row RW 0xC1CF00)
+	if (bfme1)
+	{
+		// BFME1's pathfinder compiles its search budgets in; BFME2 moved them to GameData MaxCells* (none of which BFME1's gamedata.ini has).
+		// Open-BFME-1 AIPathfind.cpp: PATHFIND_CELLS_PER_FRAME 5000 (:946), adjustDestination MAX_CELLS_TO_TRY 400 (:4754), patchPath
+		// CELL_LIMIT 2000 (:12402), findAttackPath ATTACK_CELL_LIMIT 2500 (:12654), CELL_INFOS_TO_ALLOCATE 30000 (:947, what bounds a
+		// findPath there). INFERENCE (docs/BFME1.md): the horde melee, melee engagement, possible destination and towards-goal budgets
+		// have no BFME1 constant located; RotWK 2.01's values are used
+		c.cellsPerFrame = 5000;
+		c.adjustDestinationLimit = 400;
+		c.patchPathLimit = 2000;
+		c.findAttackPathLimit = 2500;
+		c.findPathLimit = 30000;
+		c.adjustHordeMeleeLimit = 200;
+		c.adjustToMeleeLimit = 400;
+		c.findMeleeEngagementLimit = 50;
+		c.adjustToPossibleLimit = 400;
+		c.examineTowardsGoalLimit = 25000;
+	}
+	else
+	{
 	if (!getInt(gd, "MaxPathfindCellsPerFrame", c.cellsPerFrame, "gamedata.ini", error)) return false;
 	if (!getInt(gd, "MaxCellsAdjustDestination", c.adjustDestinationLimit, "gamedata.ini", error)) return false;
 	if (!getInt(gd, "MaxCellsAdjustHordeMeleeDestination", c.adjustHordeMeleeLimit, "gamedata.ini", error)) return false;
@@ -183,6 +208,7 @@ bool PathfindConfigLoader::load(ArchiveFileSystem &fs, PathfindConfig &out, std:
 	if (!getInt(gd, "MaxCellsFindMeleeEngagementLocation", c.findMeleeEngagementLimit, "gamedata.ini", error)) return false;
 	if (!getInt(gd, "MaxCellsAdjustToPossibleDestination", c.adjustToPossibleLimit, "gamedata.ini", error)) return false;
 	if (!getInt(gd, "MaxCellsToExamineTowardsGoal", c.examineTowardsGoalLimit, "gamedata.ini", error)) return false;
+	}
 	// lane MOVE-3: PlanningModeEnabled keeps the constructor's Yes (RW 0x643982) unless GameData names it
 	if (gd.kv.count(AsciiStringUtil::lowered("PlanningModeEnabled")) && !getBool(gd, "PlanningModeEnabled", c.planningModeEnabled, "gamedata.ini", error)) return false;
 	// Pathfinder.ini SlopeLimits: the RW field row's parse proc is a lone `ret` (RW 0x63F3BF), so retail never loads

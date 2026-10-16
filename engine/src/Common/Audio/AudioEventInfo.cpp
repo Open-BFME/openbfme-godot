@@ -12,9 +12,8 @@
 
 const char *const theAudioPriorityNames[] = { "LOWEST", "LOW", "NORMAL", "HIGH", "CRITICAL", nullptr };
 const char *const theSoundTypeNames[] = { "UI", "WORLD", "SHROUDED", "GLOBAL", "VOICE", "PLAYER", "ALLIES", "ENEMIES", "EVERYONE", "FAKE", "DEFAULT", nullptr };
-// RW 0xD9DB70: the seventh name is the C string "\not used by INI files": a newline character followed by "ot used by INI files" (the author meant
-// "not used"; the escape ate the n). No INI line can name it.
-const char *const theAudioControlNames[] = { "LOOP", "SEQUENTIAL", "RANDOMSTART", "INTERRUPT", "FADE_ON_KILL", "FADE_ON_START", "\not used by INI files", "PLAY_ONE", nullptr };
+// BFME1 uses RANDOM for bit 6; RotWK leaves that slot unavailable to INI files.
+const char *const theAudioControlNames[] = { "LOOP", "SEQUENTIAL", "RANDOMSTART", "INTERRUPT", "FADE_ON_KILL", "FADE_ON_START", "RANDOM", "PLAY_ONE", nullptr };
 const char *const theSubmixSliderNames[] = { "SOUNDFX", "VOICE", "MUSIC", "AMBIENT", "MOVIE", "NONE", nullptr };
 
 namespace

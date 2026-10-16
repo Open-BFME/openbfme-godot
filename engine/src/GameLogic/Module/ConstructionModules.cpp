@@ -130,7 +130,7 @@ FoundationAIUpdate::FoundationAIUpdate(Thing *thing, const FoundationAIUpdateMod
 UpdateSleepTime FoundationAIUpdate::update()
 {
  Object *plot = getObject();
- if (!(plot->isKindOfName("BASE_DEFENSE_FOUNDATION") || plot->isKindOfName("EXPANSION_PAD"))) return UPDATE_SLEEP_FOREVER;
+ if (!(plot->isKindOfName("BASE_FOUNDATION") || plot->isKindOfName("BASE_DEFENSE_FOUNDATION") || plot->isKindOfName("EXPANSION_PAD"))) return UPDATE_SLEEP_FOREVER;
  auto *member = dynamic_cast<CastleMemberBehavior *>(plot->findModule("CastleMemberBehavior"));
  Object *occupant = member ? plot->logic().findObjectByID(member->occupantId()) : nullptr;
  if (occupant && !occupant->isDestroyed() && !occupant->isEffectivelyDead()) return UPDATE_SLEEP_NONE;

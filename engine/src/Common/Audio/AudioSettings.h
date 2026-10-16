@@ -83,6 +83,8 @@ struct AudioSettings
 	unsigned audioFootprintInBytes;
 	unsigned mixaheadLatency;
 	unsigned mixaheadLatencyDuringMovies;
+	unsigned bufferCallbacks3D = 4;
+	unsigned bufferLength3DMS = 64; // BFME1 INIAudioSettings.cpp +0x50
 	unsigned loopBufferLengthMS;
 	unsigned loopBufferCallbackCallsPerBufferLength;
 	int automaticSubtitleDurationMS;

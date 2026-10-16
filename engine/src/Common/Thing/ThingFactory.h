@@ -55,7 +55,7 @@ class Team;
 class ThingFactory
 {
 public:
-	ThingFactory(NameKeyGenerator &keys, ModuleFactory &modules, const RwGrammar &grammar);
+	ThingFactory(NameKeyGenerator &keys, ModuleFactory &modules, const RwGrammar &grammar, bool bfme1 = false);
 	~ThingFactory();
 	ThingFactory(const ThingFactory &) = delete;
 	ThingFactory &operator=(const ThingFactory &) = delete;
@@ -123,7 +123,7 @@ private:
 
 	static void parseField(INI *ini, void *instance, void *store, const void *userData);
 	static Semantic semanticOf(const std::string &semantic);
-	void buildTables();
+	void buildTables(bool bfme1);
 	void noteRaw(const std::string &field) { ++m_rawFieldCounts[field]; }
 
 	NameKeyGenerator &m_keys;

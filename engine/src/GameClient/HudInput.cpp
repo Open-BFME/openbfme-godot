@@ -137,7 +137,7 @@ size_t HudInput::update()
 	{
 		Object *o = m_logic.findObjectByID(id);
 		if (!o || o->isDestroyed() || (sold >= 0 && o->testStatus((unsigned)sold)) ||
-		    ((o->isKindOfName("BASE_DEFENSE_FOUNDATION") || o->isKindOfName("EXPANSION_PAD")) && o->isDrawableHidden()))
+		    ((o->isKindOfName("BASE_FOUNDATION") || o->isKindOfName("BASE_DEFENSE_FOUNDATION") || o->isKindOfName("EXPANSION_PAD")) && o->isDrawableHidden()))
 		{
 			gone.push_back(id);
 		}

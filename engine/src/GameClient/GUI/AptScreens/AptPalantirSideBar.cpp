@@ -114,7 +114,7 @@ bool AptPalantir::contentSlotAt(const std::string &path, bool &arc, int &slot) c
 			{
 				continue;
 			}
-			const std::string key = levelPrefix() + frame + ".content";
+			const std::string key = levelPrefix() + frame + (m_bfme1 && inArc ? "" : ".content");
 			if (path == key || (path.size() > key.size() && path.compare(0, key.size(), key) == 0 && path[key.size()] == '.'))
 			{
 				arc = inArc;

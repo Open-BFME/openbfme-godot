@@ -27,9 +27,14 @@
 #include <string>
 #include <vector>
 
+class ArchiveFileSystem;
+
 class GameTextTable
 {
 public:
+	bool loadRetail(ArchiveFileSystem &fs, std::string *error);
+	bool parseCSF(const std::uint8_t *data, std::size_t size, std::string *error);
+
 	// Parse one STR file (appends to the table; a label that is already present keeps its first string).
 	bool parse(const std::uint8_t *data, std::size_t size, std::string *error);
 	bool parse(const std::vector<std::uint8_t> &data, std::string *error) { return parse(data.data(), data.size(), error); }

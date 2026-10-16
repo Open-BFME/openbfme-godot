@@ -53,7 +53,11 @@ struct W3DFileContents
 bool Load_W3D_File(const std::uint8_t *data, size_t size, W3DFileContents &out, std::string *error);
 
 // Virtual paths per the naming rules above.
-std::string W3D_Asset_Path(const std::string &assetName);          // art\w3d\xx\name.w3d
+std::string W3D_Asset_Path(const std::string &assetName);          // art\w3d\xx\name.w3d (BFME1: art\w3d\name.w3d)
+// The mounted game's model layout (docs/BFME1.md): BFME2 / RotWK file models in two-letter folders, BFME1 keeps them all in art\w3d\.
+// Set by the archive mount (RetailFileSystem); the default is BFME2's.
+void W3D_Set_Flat_Asset_Layout(bool flat);
+bool W3D_Flat_Asset_Layout();
 std::string W3D_Compiled_Texture_Path(const std::string &textureName); // art\compiledtextures\xx\stem.dds
 
 // ---------------------------------------------------------------------------------------------------------------------

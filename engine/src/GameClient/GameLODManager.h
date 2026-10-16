@@ -38,6 +38,7 @@ class OptionPreferences;
 // OPTS-2; every record of the manager, Custom included, starts with them): + 0x2C and + 0x38 are not written there (INFERENCE: 0).
 struct StaticGameLODInfo
 {
+	bool useAnisotropic = false, usePixelShaders = true, useLightMap = true, useBuildupScaffolds = true, useTreeSway = true, useHighQualityVideo = true; // BFME1
 	int modelLOD = 2;                                  // + 0x00
 	int effectsLOD = 3;                                // + 0x04
 	int maxParticleCount = 2500;                       // + 0x08

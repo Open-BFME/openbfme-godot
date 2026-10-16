@@ -40,6 +40,7 @@ void parseFilter(INI *ini, void *instance, void *store, const void *)
 const FieldParse kSpecialPowerFieldParse[] = {
 	{ "Flags", INI::parseBitString32, kSpecialPowerFlagNames, SP_OFF(m_flags) },
 	{ "ReloadTime", INI::parseDurationUnsignedInt, nullptr, SP_OFF(m_reloadTime) },
+	{ "RequiredScience", ScienceParse::parseScienceVector, nullptr, SP_OFF(m_requiredSciences) },
 	{ "RequiredSciences", ScienceParse::parseScienceVector, nullptr, SP_OFF(m_requiredSciences) },
 	{ "LightPointCost", INI::parseInt, nullptr, SP_OFF(m_lightPointCost) },
 	{ "InitiateSound", parseName, nullptr, SP_OFF(m_initiateSound) },

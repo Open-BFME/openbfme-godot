@@ -4,6 +4,10 @@
 #include "GameClient/GameText.h"
 
 #include <cctype>
+#include <cstring>
+#include <codecvt>
+#include <locale>
+#include "Common/ArchiveFileSystem.h"
 
 namespace
 {
@@ -176,6 +180,76 @@ std::string Windows1252ToUtf8(const std::string &bytes)
 		}
 	}
 	return out;
+}
+
+// BFME1 GameText.cpp GameTextManager::parseCSF (retail 0x00437570):
+// little-endian records, complemented UTF-16, first string per label, optional wave.
+bool GameTextTable::parseCSF(const std::uint8_t *data, std::size_t size, std::string *error)
+{
+	std::size_t offset = 0;
+	auto fail = [&]() { if (error) *error = "Malformed or truncated CSF string table"; return false; };
+	auto u32 = [&](std::uint32_t &v) {
+		if (size - offset < 4) return false;
+		v = (std::uint32_t)data[offset] | (std::uint32_t)data[offset+1] << 8 | (std::uint32_t)data[offset+2] << 16 | (std::uint32_t)data[offset+3] << 24;
+		offset += 4; return true;
+	};
+	if (size < 24 || std::memcmp(data, " FSC", 4)) return fail();
+	offset = 4;
+	std::uint32_t version, labels, strings, reserved, language;
+	if (!u32(version) || !u32(labels) || !u32(strings) || !u32(reserved) || !u32(language) || version != 3 || labels > size / 12) return fail();
+	std::map<std::string, std::string> parsed;
+	std::uint32_t totalStrings = 0;
+	for (std::uint32_t i = 0; i < labels; ++i)
+	{
+		std::uint32_t tag, count, length;
+		if (!u32(tag) || tag != 0x4c424c20 || !u32(count) || !u32(length) || length > size - offset) return fail();
+		std::string label((const char *)data + offset, length);
+		offset += length;
+		std::string first;
+		if (count > (size - offset) / 8) return fail();
+		for (std::uint32_t j = 0; j < count; ++j)
+		{
+			if (!u32(tag) || (tag != 0x53545220 && tag != 0x53545257) || !u32(length) || length > (size - offset) / 2) return fail();
+			std::u16string text;
+			for (std::uint32_t k = 0; k < length; ++k)
+			{
+				text.push_back((char16_t)~((unsigned)data[offset] | (unsigned)data[offset+1] << 8));
+				offset += 2;
+			}
+			if (j == 0)
+			{
+				try { first = stripSpaces(std::wstring_convert<std::codecvt_utf8_utf16<char16_t>, char16_t>().to_bytes(text)); }
+				catch (const std::range_error &) { return fail(); }
+			}
+			if (tag == 0x53545257)
+			{
+				if (!u32(length) || length > size - offset) return fail();
+				offset += length;
+			}
+			++totalStrings;
+		}
+		parsed.emplace(lowerAscii(label), first);
+	}
+	if (offset != size || totalStrings != strings) return fail();
+	for (auto &entry : parsed)
+		if (!m_strings.emplace(entry).second) m_duplicates.push_back(entry.first);
+	return true;
+}
+
+bool GameTextTable::loadRetail(ArchiveFileSystem &fs, std::string *error)
+{
+	std::vector<std::uint8_t> bytes;
+	if (fs.doesFileExist("data/lotr.str"))
+		return fs.readFile("data/lotr.str", bytes, error) && parse(bytes, error);
+	FilenameList candidates;
+	fs.getFileListInDirectory("lang", "", "lotr.csf", candidates, true);
+	std::string path = "lang/english/lotr.csf";
+	if (!fs.doesFileExist(path))
+	{
+		if (candidates.size() != 1) { if (error) *error = "Choose an installation with one language's lotr.csf"; return false; }
+		path = *candidates.begin();
+	}
+	return fs.readFile(path, bytes, error) && parseCSF(bytes.data(), bytes.size(), error);
 }
 
 bool GameTextTable::parse(const std::uint8_t *data, std::size_t size, std::string *error)

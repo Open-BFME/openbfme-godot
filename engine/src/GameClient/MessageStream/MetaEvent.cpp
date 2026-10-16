@@ -1,6 +1,7 @@
 // OpenBFME. GPL-3.0.
 // See MetaEvent.h.
 
+#include "Common/BfmeGame.h"
 #include "GameClient/MessageStream/MetaEvent.h"
 #include "GameClient/MessageStream/CommandMapList.h"
 
@@ -395,7 +396,8 @@ bool ListCommandMap(ArchiveFileSystem &fs, std::vector<CommandMapEntry> &out, st
 	env.fileSystem = &fs;
 	MetaMap map;
 	map.registerBlocks(env);
-	if (!map.load(env, "Data\\INI\\CommandMap.ini", error) || !map.load(env, "CommandMap.ini", error))
+	const bool bfme1Keys = env.fileSystem && isBfme1Data(*env.fileSystem); // BFME1: no root CommandMap.ini (docs/BFME1.md)
+	if (!map.load(env, "Data\\INI\\CommandMap.ini", error) || (!bfme1Keys && !map.load(env, "CommandMap.ini", error)))
 	{
 		return false;
 	}

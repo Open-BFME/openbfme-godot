@@ -146,6 +146,8 @@ struct HordeContainModuleData
 	bool m_bannerCarrierDestroyHordeOnDeath;           // 0x224
 	std::uint32_t m_bannerCarrierHordeDeathType;       // 0x228 (DeathType mask)
 	std::vector<std::string> m_attributeModifiers;     // 0x22C
+	bool m_usePorcupineBody = false; // BFME1 legacy formation data
+	bool m_updateWeaponSetFlagsOnHordeToo = false;
 	bool m_isPorcupineFormation;                       // 0x238
 	int m_forcedLocomotorSet;                          // 0x23C (SET_* index, -1)
 	bool m_machineAllowed;                             // 0x240

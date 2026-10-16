@@ -169,6 +169,7 @@ const FieldParse kCommandSet[] = { // RW 0xC6DF70
 };
 #define SO_OFF(m) (int)offsetof(SubObjectsUpgradeModuleData, m)
 const FieldParse kSubObjects[] = { // RW 0xC6E928
+	{ "FXListUpgrade", INI::parseAsciiString, nullptr, SO_OFF(m_fxListUpgrade) },
 	{ "ShowSubObjects", INI::parseAsciiStringVectorAppend, nullptr, SO_OFF(m_showSubObjects) },
 	{ "HideSubObjects", INI::parseAsciiStringVectorAppend, nullptr, SO_OFF(m_hideSubObjects) },
 	{ "UpgradeTexture", parseUpgradeTexture, nullptr, SO_OFF(m_upgradeTexture) },

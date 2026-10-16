@@ -124,7 +124,7 @@ func set_folders(f: Dictionary, demo := false) -> void:
 	_found_title.text = "FOUND" if f.found else "NOT FOUND"
 	for c in _games.get_children() + _folders.get_children():
 		c.queue_free()
-	var games := [["The Rise of the Witch-king 2.01", f.rotwk], ["Battle for Middle-earth II 1.06", f.bfme2]]
+	var games := [["Battle for Middle-earth I 1.03", f.get("bfme1", "")], ["The Rise of the Witch-king 2.01", f.rotwk], ["Battle for Middle-earth II 1.06", f.bfme2]]
 	for i in games.size():
 		var ok := String(games[i][1]) != "" and (demo or DirAccess.dir_exists_absolute(games[i][1]))
 		var mark := W.label("✓" if ok else "—")

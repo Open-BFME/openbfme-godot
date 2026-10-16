@@ -40,6 +40,7 @@ struct MapCacheEntry
 	Coord3D initialCamera;
 	std::u16string displayName;
 	std::u16string description;
+	std::map<int, std::map<std::string, std::string>> playerPositions; // scenario slot restrictions
 	std::map<int, Coord3D> startPositions; // Player_N_Start, keyed by N (1-based)
 };
 

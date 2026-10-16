@@ -10,6 +10,7 @@
 // EnableRepulsors is AIData + 0x64 (RW 0x699FF4: `[0xDE4B40] + 0x18` then `byte + 0x64`; the name is the INI's, the offset tie is
 // INFERENCE, stop S-149).
 
+#include "Common/BfmeGame.h"
 #include "GameLogic/GameLogic.h"
 #include "GameLogic/ObjectFilter.h"
 #include "GameLogic/ObjectFilterMatch.h"
@@ -456,6 +457,18 @@ bool GameLogicSettingsLoader::load(ArchiveFileSystem &fs, GameLogicSettings &out
 		{
 			return false;
 		}
+	}
+	if (isBfme1Data(fs) && (l.state().seen & (SEEN_VSTRUCT | SEEN_VUNIT)) != (SEEN_VSTRUCT | SEEN_VUNIT))
+	{
+		// BFME1's GameData has no victory filter rows (BFME2 made the rule data; BFME1 decides in code). INFERENCE (docs/BFME1.md): a player
+		// still has a base while it has a STRUCTURE that is not IGNORE_FOR_VICTORY, and an army while it has a unit that is not a DOZER; the
+		// compiled BFME1 rule (VictoryConditions, not in Open-BFME-1) was not decoded
+		static const char *const kBfme1Victory = "GameData\n"
+			"  VictoryConditionStructureObjectFilter = NONE +STRUCTURE -IGNORE_FOR_VICTORY\n"
+			"  VictoryConditionUnitObjectFilter = ANY -DOZER\n"
+			"End\n";
+		if (!l.text("BFME1 victory rule (built in)", kBfme1Victory, error))
+			return false;
 	}
 	GameLogicSettings result = out;
 	if (!finish(l, 1u, "GameData", kGameDataNeeds, "gamedata.ini", result, error) || !finish(l, 2u, "AIData", kAIDataNeeds, "default\\aidata.ini", result, error) ||

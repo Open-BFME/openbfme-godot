@@ -46,7 +46,23 @@ void parseFireWeaponNugget(INI *ini, void *instance, void *, const void *)
 	static_cast<FireWeaponUpdateModuleData *>(instance)->m_nuggets.push_back(n);
 }
 
+void parseLegacyFireWeapon(INI *ini, void *instance, void *, const void *field)
+{
+	auto &nuggets = static_cast<FireWeaponUpdateModuleData *>(instance)->m_nuggets;
+	if (nuggets.empty()) nuggets.emplace_back();
+	auto &n = nuggets.front();
+	switch ((std::uintptr_t)field)
+	{
+		case 0: INI::parseAsciiString(ini, nullptr, &n.weaponName, nullptr); break;
+		case 1: INI::parseDurationUnsignedInt(ini, nullptr, &n.fireDelay, nullptr); break;
+		case 2: INI::parseBool(ini, nullptr, &n.oneShot, nullptr); break;
+	}
+}
+
 const FieldParse kFireWeaponUpdateFields[] = { // RW 0xC62A40
+	{ "Weapon", parseLegacyFireWeapon, (const void *)0, 0 },
+	{ "FireDelay", parseLegacyFireWeapon, (const void *)1, 0 },
+	{ "OneShot", parseLegacyFireWeapon, (const void *)2, 0 },
 	{ "FireWeaponNugget", parseFireWeaponNugget, nullptr, 0 },
 	{ "HeroModeTrigger", INI::parseBool, nullptr, (int)offsetof(FireWeaponUpdateModuleData, m_heroModeTrigger) },
 	{ "ChargingModeTrigger", INI::parseBool, nullptr, (int)offsetof(FireWeaponUpdateModuleData, m_chargingModeTrigger) },

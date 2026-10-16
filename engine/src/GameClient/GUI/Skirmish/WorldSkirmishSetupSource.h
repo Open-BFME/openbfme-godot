@@ -20,7 +20,7 @@ class WorldSkirmishSetupSource : public SkirmishSetupSource
 {
 public:
 	// `world` must be loaded; `settings` is GameLogicSettingsLoader::load's result. False + *error when the map cache cannot be read.
-	bool load(RetailObjectWorld &world, const GameLogicSettings &settings, ArchiveFileSystem &fs, std::string *error);
+	bool load(RetailObjectWorld &world, const GameLogicSettings &settings, ArchiveFileSystem &fs, std::string *error, bool bfme1 = false);
 
 	const std::vector<SkirmishFaction> &factions() const override { return m_factions; }
 	const std::vector<SkirmishColor> &colors() const override { return m_colors; }

@@ -6,7 +6,7 @@
 // DONOR FACTS (ZH W3DView::pickDrawable, RTS3DScene::castRay, HLodClass / MeshClass::Cast_Ray): the pick casts the ray at the scene's render objects and
 // takes the drawable from the nearest render object it hits (its user data). A render object is the drawn W3D model of a draw module: the meshes of the
 // HLOD's current LOD and its aggregates, at the drawable's transform; a drawable that draws no render object (a castle shell with Model = None, a
-// W3DDefaultDraw helper, a tree or prop of the batched buffers) cannot be picked.
+// W3DDefaultDraw helper, a tree or prop of the batched buffers) cannot be picked. Selectable floor models, including BFME1 building plots, are tested too.
 // DATA FACT (RotWK): structure models are far larger than their GEOMETRY volumes (GondorBarracks: a cylinder of radius 8 and height 10 under a building
 // about 60 across), and a fortress shell (MenFortress) stands on the spot of its citadel; the geometry pick of S-284 selected the wrong object for both.
 // INFERENCE / NOT READ (stop S-1200): RotWK's own pick (the collision type W3DModelDraw sets, the LOD it tests, the animated pose) is not read from the

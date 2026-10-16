@@ -45,13 +45,22 @@ void parseNames(INI *ini, void *instance, void *, const void *)
 #define N_OFF(member) (int)offsetof(OCLNugget, member)
 #define KEPT(name) { name, parseKept, name, 0 }
 // RW 0xBF6E50 (the generic nugget, 40 rows, in the binary's order)
+void parseDisposition(INI *ini, void *instance, void *store, const void *)
+{
+	const char *names[33] = {};
+	int i = 0;
+	for (; kOCLDispositionNames[i]; ++i) names[i] = kOCLDispositionNames[i];
+	if (ini->environment().fileSystem && ini->environment().fileSystem->doesFileExist("Data\\INI\\Default\\SubsystemLegend.ini") && !ini->environment().fileSystem->doesFileExist("Data\\INI\\Default\\SubsystemLegendExpansion1.ini")) names[13] = "SET_ANGLE";
+	INI::parseBitString32(ini, instance, store, names);
+}
+
 const FieldParse kGenericFieldParse[] = {
 	{ "PutInContainer", INI::parseAsciiString, nullptr, N_OFF(putInContainer) },
 	{ "ParticleSystem", INI::parseAsciiString, nullptr, N_OFF(particleSystem) },
 	{ "Count", INI::parseInt, nullptr, N_OFF(count) },
 	KEPT("OrientInForceDirection"), KEPT("ExtraBounciness"), KEPT("ExtraFriction"),
 	{ "Offset", INI::parseCoord3D, nullptr, N_OFF(offset) },
-	{ "Disposition", INI::parseBitString32, kOCLDispositionNames, N_OFF(disposition) },
+	{ "Disposition", parseDisposition, kOCLDispositionNames, N_OFF(disposition) },
 	KEPT("DispositionIntensity"), KEPT("DispositionAngle"), KEPT("VelocityScale"), KEPT("MinForceMagnitude"), KEPT("MaxForceMagnitude"),
 	KEPT("MinForcePitch"), KEPT("MaxForcePitch"), KEPT("MinLifetime"), KEPT("MaxLifetime"), KEPT("SpreadFormation"), KEPT("MinDistanceAFormation"),
 	KEPT("MinDistanceBFormation"), KEPT("MaxDistanceFormation"), KEPT("FadeIn"), KEPT("FadeOut"), KEPT("FadeTime"), KEPT("FadeSound"),

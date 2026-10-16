@@ -111,6 +111,9 @@ struct CastleFactionEntry
 class CastleBehaviorModuleData : public FoundationAIUpdateModuleData
 {
 public:
+	bool m_useSecondaryBuildList = false;
+	bool m_useNewCastleSystem = false;
+	std::vector<std::string> m_sidesAllowed; // BFME1 castle capture restrictions
 	std::vector<CastleFactionEntry> m_castleToUnpackForFaction; // +0x68 (the map's entries in parse order; lookups are by exact side name)
 	// the entry of `side` (the map's find, RW 0x6B4E57 on the side's name key), or null
 	const CastleFactionEntry *entryFor(const std::string &side) const;
@@ -242,6 +245,7 @@ private:
 	const CastleBehaviorModuleData *m_data;
 	int m_state = STATE_IDLE;
 	bool m_needInstantBuild = false;   // RW + 0x3C
+	bool m_bfme1StartChecked = false;  // BFME1 (docs/BFME1.md): the start-of-game unpack of a player's castle flag was considered
 	bool m_keepGone = false;           // RW + 0x3D
 	bool m_hasWalkOnWall = false;      // RW + 0x44
 	float m_timer = 0.0f;              // RW + 0x40 (seconds)
@@ -258,6 +262,8 @@ class CastleMemberBehaviorModuleData : public ModuleData
 {
 public:
 	std::string m_campDestroyedOwnerEvaEvent, m_campDestroyedAllyEvaEvent, m_campDestroyedAttackerEvaEvent; // +8, +0xC, +0x10
+	std::string m_underAttackAllyEvaEventIfKeep;
+	std::string m_underAttackEvaEventIfKeep; // BFME1
 	std::string m_beingBuiltSound;                                                                           // +0x14
 	bool m_storeUpgradePrice = false;                                                                        // +0x18
 	bool m_countsForEvaCastleBreached = false;                                                               // +0x19

@@ -4,6 +4,7 @@
 #include "Libraries/WWVegas/WW3D2/textureloader.h"
 
 #include "Common/AsciiString.h"
+#include "Libraries/WWVegas/WW3D2/assetmgr.h"
 
 namespace
 {
@@ -24,6 +25,13 @@ void addCandidates(const std::string &lowerName, const std::function<bool(const 
 	const std::string folder = "art\\compiledtextures\\" + stem.substr(0, 2) + "\\";
 	// ZH replaces the last three characters with "dds"; for the usual ".xxx" suffix that is the same as swapping the extension.
 	std::vector<std::string> candidates = { folder + stem + ".dds", folder + stem + "." + ext, "art\\textures\\" + stem + "." + ext };
+	if (W3D_Flat_Asset_Layout())
+	{
+		// BFME1 (docs/BFME1.md) has no compiled texture folders: its Textures.big holds art\textures\<stem>.dds for the .tga a model names,
+		// ZH's lookup (the extension swapped for dds, then the name as written)
+		candidates = { "art\\textures\\" + stem + ".dds", "art\\textures\\" + stem + "." + ext,
+			"art\\textures\\" + stem + ".jpg", "art\\textures\\" + stem + ".png" };
+	}
 	for (const std::string &c : candidates)
 	{
 		out.Tried.push_back(c);

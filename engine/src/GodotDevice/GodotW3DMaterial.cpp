@@ -2,6 +2,8 @@
 
 #include "GodotDevice/GodotW3DMaterial.h"
 #include "GodotDevice/GodotTextureOverrides.h"
+#include "GodotDevice/GodotPackedTexture.h"
+#include "Libraries/Source/Apt/AptLoad.h"
 
 #include <cstdio>
 
@@ -31,6 +33,17 @@ namespace godot
 
 namespace
 {
+
+// Some BFME1 texture packs retain .dds names for PNG replacements.
+Error decodeTexture(const Ref<Image> &image, const PackedByteArray &buffer, bool dds)
+{
+	static const unsigned char png[] = { 137, 80, 78, 71, 13, 10, 26, 10 };
+	if (buffer.size() >= 8 && std::memcmp(buffer.ptr(), png, sizeof(png)) == 0)
+		return image->load_png_from_buffer(buffer);
+	if (buffer.size() >= 3 && buffer[0] == 0xff && buffer[1] == 0xd8 && buffer[2] == 0xff)
+		return image->load_jpg_from_buffer(buffer);
+	return dds ? image->load_dds_from_buffer(buffer) : image->load_tga_from_buffer(buffer);
+}
 
 String toGodot(const std::string &s)
 {
@@ -292,7 +305,7 @@ void W3DMaterialFactory::Set_Texture_Override(const std::string &name, const Ref
 					std::memcpy(buffer.ptrw(), bytes.data(), bytes.size());
 				pixels.instantiate();
 				Error error =
-					path.size() >= 4 && path.substr(path.size() - 4) == ".dds" ? pixels->load_dds_from_buffer(buffer) : pixels->load_tga_from_buffer(buffer);
+					decodeTexture(pixels, buffer, path.size() >= 4 && path.substr(path.size() - 4) == ".dds");
 				if (error != OK || pixels->is_empty())
 					continue;
 			}
@@ -347,7 +360,15 @@ Ref<Texture2D> W3DMaterialFactory::Load_Texture(const std::string &name, std::ve
 	if (override != g_textureOverrides.end())
 		image = override->second->duplicate();
 	else
-		err = res.IsDDS ? image->load_dds_from_buffer(buffer) : image->load_tga_from_buffer(buffer);
+		err = decodeTexture(image, buffer, res.IsDDS);
+	if (override == g_textureOverrides.end() && err == OK && res.Path.size() >= 4 && res.Path.substr(res.Path.size() - 4) == ".jpg")
+	{
+		// BFME1 floor textures pack their alpha separately beside JPEG colour.
+		AptArchiveFileSource source(Fs);
+		bool paired = false;
+		Ref<Image> merged = loadPackedTexture(source, res.Path.substr(0, res.Path.size() - 4), &paired);
+		if (merged.is_valid()) image = merged;
+	}
 	if (err != OK || image->is_empty())
 	{
 		errors.push_back("could not decode texture " + res.Path);
@@ -394,7 +415,7 @@ Ref<Texture2D> W3DMaterialFactory::Recolored_House_Texture(const std::string &na
 	if (!bytes.empty()) std::memcpy(buffer.ptrw(), bytes.data(), bytes.size());
 	Ref<Image> image;
 	image.instantiate();
-	Error err = res.IsDDS ? image->load_dds_from_buffer(buffer) : image->load_tga_from_buffer(buffer);
+	Error err = decodeTexture(image, buffer, res.IsDDS);
 	if (err != OK || image->is_empty())
 	{
 		errors.push_back("could not decode texture " + res.Path);

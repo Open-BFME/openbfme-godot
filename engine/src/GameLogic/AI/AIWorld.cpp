@@ -231,8 +231,10 @@ void buildInfo(const ThingTemplate &tt, INIEnvironment &env, ObjectMovementInfo 
 	out.geometry.isSmall = isSmall;
 	// lane PATH-2 (S-341): the shape list the Geometry rows build in order (RW 0xAD4040 / 0xAD3BC0 and the rows that change the last shape,
 	// GameLogic/Object/ObjectGeometry.h). Shape 0 gives the single-shape fields; the footprint (RW 0x936B7D) and the bounding circle / sphere
-	// (RW 0xAD2860) read every shape. A template without a Geometry row keeps the fields above as its one shape.
-	if (out.hasGeometry)
+	// (RW 0xAD2860) read every shape. AdditionalGeometry can start the
+	// list itself (MenWallGate): those named shapes must also respond to gate
+	// opening, rather than remaining one immutable obstacle at the center.
+	if (out.hasGeometry || !tt.geometryEvents().empty())
 	{
 		try
 		{

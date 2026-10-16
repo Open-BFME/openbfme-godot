@@ -350,3 +350,37 @@ TEST_CASE("hud5 gates: the acceptance stops are reported")
 	CHECK(stops[1].rfind("[S-1941]", 0) == 0);
 	CHECK(stops[2].rfind("[S-1942]", 0) == 0);
 }
+
+TEST_CASE("hud5 gates retail: soldiers cross opened player-built Men gates")
+{
+ OPENBFME_REQUIRE_START(s);
+ GateGame g(*s, gateMessage(*s, "maps/map mp fall back 4p/map mp fall back 4p.map", false));
+ const auto *owner = g.game->players().findPlayerWithName(g.game->report().startSlotPlayers[0]);
+ REQUIRE(owner);
+ const int player = owner->getPlayerIndex();
+ std::string error;
+ Coord3D at{2000,2000,0};
+ at.z = g.game->logic().getGroundHeight(at.x,at.y);
+ const char *gateName = "MenWallGateSmall";
+ SUBCASE("small gate") {}
+ SUBCASE("large gate") { gateName = "MenWallGate"; }
+ auto *gate = g.game->createObject(gateName,player,at,0,&error);
+ REQUIRE_MESSAGE(gate,error);
+ g.frames(4);
+ auto *behavior = GateOpenAndCloseBehavior::findGate(*gate);
+ REQUIRE(behavior);
+ behavior->open(); g.frames(30);
+ REQUIRE(behavior->isOpen());
+ CHECK_FALSE(g.blocksCentre(*gate));
+ Coord3D from{at.x-100,at.y,at.z},goal{at.x+100,at.y,at.z};
+ auto *unit = g.game->createObject("GondorFighter",player,from,0,&error);
+ REQUIRE_MESSAGE(unit,error);
+ GameMessage select(MSG_CREATE_SELECTED_GROUP,player);
+ select.appendBooleanArgument(true);select.appendObjectIDArgument(unit->getID());
+ g.game->commands().append(select);
+ GameMessage move(MSG_DO_MOVETO,player);move.appendLocationArgument(goal);
+ g.game->commands().append(move);
+ g.frames(30);
+ INFO("gate=" << gateName << " unit=" << unit->getPosition()->x << "," << unit->getPosition()->y);
+ CHECK(unit->getPosition()->x > at.x+50);
+}
