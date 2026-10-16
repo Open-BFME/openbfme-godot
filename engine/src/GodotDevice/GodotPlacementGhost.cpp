@@ -2,6 +2,8 @@
 // See GodotPlacementGhost.h (lane BUILD-5 r2).
 
 #include "GodotDevice/GodotPlacementGhost.h"
+#include <godot_cpp/classes/viewport.hpp>
+#include <cmath>
 
 #include "Common/AsciiString.h"
 #include "Common/Thing/ThingTemplate.h"
@@ -113,6 +115,11 @@ void PlacementGhostRenderer::error(const std::string &e)
 
 void PlacementGhostRenderer::clear()
 {
+	freeNode(m_resourceDecalId);
+	freeNode(m_resourceLabelId);
+	m_resourceDecalId = m_resourceLabelId = 0;
+	m_resourceDecal = nullptr;
+	m_resourceLabel = nullptr;
 	for (IconView &v : m_views)
 	{
 		freeNode(v.instId);
@@ -142,6 +149,18 @@ W3DInstancer *PlacementGhostRenderer::newInstancer(const char *name)
 
 void PlacementGhostRenderer::drawIcon(size_t i, PlacementIcons::Icon &icon, IconView &view)
 {
+	if (view.tt != icon.tt)
+	{
+		// The destination hub moves between slots as a wall span changes length.
+		// Keep each slot's loaded models instead of rebuilding GPU resources every
+		// time that slot alternates between a segment and the destination hub.
+		for (const EntryView &entry : view.entries)
+		{
+			if (view.inst && entry.instance >= 0) view.inst->remove_instance(entry.instance);
+		}
+		view.entries.clear();
+		view.tt = icon.tt;
+	}
 	Drawable &d = *icon.drawable;
 	if (!view.inst)
 	{
@@ -453,12 +472,65 @@ void PlacementGhostRenderer::sync(LiveGame &game, const InGameUI &ui, double del
 		}
 	}
 	updateArrow(ui);
+	updateResources(ui);
+}
+
+void PlacementGhostRenderer::updateResources(const InGameUI &ui)
+{
+	const bool show = ui.isPlacing() && ui.placeHasGhost() && m_icons->resourceRadius() > 0;
+	if (!show)
+	{
+		if (m_resourceDecal) m_resourceDecal->hide();
+		if (m_resourceLabel) m_resourceLabel->hide();
+		return;
+	}
+	if (!m_resourceDecal)
+	{
+		m_resourceDecal = memnew(Decal);
+		m_parent->add_child(m_resourceDecal);
+		m_resourceDecalId = m_resourceDecal->get_instance_id();
+		// Retail farmreticle02 mapped image: the whole BuildingRadialButtons_003 texture.
+		m_resourceDecal->set_texture(Decal::TEXTURE_ALBEDO, texture("BuildingRadialButtons_003.tga"));
+		m_resourceDecal->set_cull_mask(1u << 19);
+		m_resourceDecal->set_albedo_mix(1);
+		m_resourceDecal->set_upper_fade(0);
+		m_resourceDecal->set_lower_fade(0);
+		m_resourceLabel = memnew(Label);
+		m_resourceLabel->set_mouse_filter(Control::MOUSE_FILTER_IGNORE);
+		m_resourceLabel->add_theme_font_size_override("font_size", 14);
+		m_resourceLabel->add_theme_color_override("font_outline_color", Color(0,0,0,1));
+		m_resourceLabel->add_theme_constant_override("outline_size", 2);
+		m_parent->add_child(m_resourceLabel);
+		m_resourceLabelId = m_resourceLabel->get_instance_id();
+	}
+	const float share = m_icons->resourceShare();
+	const Color color = share > .75f ? Color(0,1,0) : share >= .5f ? Color(1,1,0) : share >= .25f ? Color(1,0,0) : Color(0,0,0);
+	const Coord3D &p = ui.placeLocation();
+	m_resourceDecal->set_position(Vector3(p.x,p.z,-p.y));
+	const float diameter = 2 * m_icons->resourceRadius();
+	m_resourceDecal->set_size(Vector3(diameter, 200, diameter));
+	m_resourceDecal->set_modulate(Color(color.r,color.g,color.b,128.0f/255));
+	m_resourceDecal->show();
+	m_resourceLabel->set_text(String::num_int64((int)std::floor(share*100+.5f)) + "%");
+	m_resourceLabel->add_theme_color_override("font_color", color);
+	const Vector2 size = m_resourceLabel->get_minimum_size();
+	m_resourceLabel->set_size(size);
+	Viewport *viewport = m_parent->get_viewport();
+	Vector2 at = viewport->get_mouse_position() - Vector2(size.x/2, 20+size.y);
+	const Vector2 extent = viewport->get_visible_rect().size;
+	at.x = std::max(0.0f, std::min(at.x, extent.x-size.x));
+	at.y = std::max(0.0f, std::min(at.y, extent.y-size.y));
+	m_resourceLabel->set_position(at);
+	m_resourceLabel->show();
 }
 
 Dictionary PlacementGhostRenderer::state() const
 {
 	Dictionary s;
 	s["template"] = m_icons ? toGodotString(m_icons->templateName()) : String();
+	s["resource_radius"] = m_icons ? m_icons->resourceRadius() : 0;
+	s["resource_share"] = m_icons ? m_icons->resourceShare() : 0;
+	s["resource_visible"] = m_resourceLabel && m_resourceLabel->is_visible();
 	s["castle"] = m_icons && m_icons->castle();
 	s["anchored"] = m_anchored;
 	s["arrow"] = m_arrowShown;

@@ -34,7 +34,9 @@
 #include "Libraries/WWVegas/WW3D2/hanim.h"
 #include "GameLogic/ContainParseHooks.h"
 #include "GameLogic/GameLogic.h"
+#include "GameLogic/Damage.h"
 #include "GameLogic/LargeGroupAudioLink.h"
+#include "GameLogic/Module/ActiveBody.h"
 #include "GameLogic/Module/LargeGroupAudioUpdate.h"
 #include "GameLogic/Object/Object.h"
 #include "GameLogic/ScriptEngine/ScriptEngine.h"
@@ -939,4 +941,49 @@ TEST_CASE("audio4 footsteps review r1: a drawable made before the audio attached
 		fall = fall || e.event == "BodyFallGeneric1";
 	}
 	CHECK(fall);
+}
+
+TEST_CASE("audio4 eva retail: a structure set to 1 health for building says nothing; a hit reports EvaEventDamagedOwner (StructureUnderAttack)")
+{
+	if (!hudtest::haveWorld("audio4 eva retail"))
+	{
+		return;
+	}
+	hudtest::Rig game(hudtest::shared());
+	retailtest::Mount *mount = hudtest::shared().mount;
+	INIEnvironment env;
+	env.fileSystem = mount->fs.get();
+	AudioIniState ini;
+	ini.registerBlocks(env.blocks);
+	INI reader(env);
+	ini.loadAll(reader);
+	AudioAssetCache cache(mount->fs.get(), 32u << 20);
+	SimulatedAudioDevice device(&cache);
+	AudioManager mgr(ini, cache, device, RandomAlgorithm::ZH_CarryChain, 3);
+	LiveGameAudio att(*game.game, mgr);
+	std::string error;
+	Object *barracks = game.game->createObject("GondorBarracks", game.index(), Coord3D{ 1500.0f, 1500.0f, 0.0f }, 0.0f, &error);
+	REQUIRE_MESSAGE(barracks != nullptr, error);
+	ActiveBody *body = dynamic_cast<ActiveBody *>(barracks->getBodyModule());
+	REQUIRE(body);
+	auto frames = [&](int n) {
+		for (int i = 0; i < n; ++i)
+		{
+			game.logic().runLogicFrame();
+			att.update();
+		}
+	};
+	frames(3);
+	// what DozerAIUpdate does when its builder starts on a placed structure (RW 0x85895D): health to 1.0, no damage record
+	body->internalChangeHealth(1.0f - body->getHealth());
+	frames(3);
+	CHECK(att.stats().evaDamaged == 0);
+	DamageInfo hit;
+	hit.m_input.m_amount = 10.0f;
+	hit.m_input.m_damageType = DAMAGE_UNRESISTABLE;
+	body->internalChangeHealth(body->getMaxHealth());
+	frames(1);
+	barracks->attemptDamage(hit);
+	frames(1);
+	CHECK(att.stats().evaDamaged == 1);
 }

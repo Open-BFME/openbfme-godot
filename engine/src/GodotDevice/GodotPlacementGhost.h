@@ -18,6 +18,8 @@
 
 #include <godot_cpp/classes/mesh_instance3d.hpp>
 #include <godot_cpp/classes/node3d.hpp>
+#include <godot_cpp/classes/decal.hpp>
+#include <godot_cpp/classes/label.hpp>
 #include <godot_cpp/classes/standard_material3d.hpp>
 #include <godot_cpp/classes/texture2d.hpp>
 #include <godot_cpp/variant/dictionary.hpp>
@@ -62,6 +64,7 @@ private:
 	};
 	struct IconView
 	{
+		const ThingTemplate *tt = nullptr;
 		W3DInstancer *inst = nullptr;
 		std::map<std::string, int64_t> models;
 		std::vector<EntryView> entries;
@@ -78,8 +81,12 @@ private:
 	void applyTint(IconView &view, const Color &tint);
 	void updateBib(PlacementIcons::Icon &icon, IconView &view);
 	void updateArrow(const InGameUI &ui);
+	void updateResources(const InGameUI &ui);
 	Ref<Texture2D> texture(const std::string &name);
 
+	Decal *m_resourceDecal = nullptr;
+	Label *m_resourceLabel = nullptr;
+	uint64_t m_resourceDecalId = 0, m_resourceLabelId = 0;
 	Node3D *m_parent = nullptr;
 	Ref<RetailFileSystem> m_fs;
 	std::unique_ptr<CastleTemplateStore> m_castles;

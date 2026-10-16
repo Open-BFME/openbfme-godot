@@ -1130,3 +1130,49 @@ TEST_CASE("build5 r3 alpha override: an opaque surface of a translucent drawable
 	CHECK(addCode.find("blend_add") != std::string::npos);
 	CHECK(addCode.find("ALPHA = v_fade;") != std::string::npos);
 }
+
+TEST_CASE("build5 resource preview: farms expose their radius and share without claiming resources")
+{
+	if (!haveWorld("build5 resource preview")) return;
+	PlaceRig r(shared());
+	r.startPlacing("GondorFarm");
+	r.move(512, 384);
+	PlacementIcons icons(r.game->drawables().services(), r.game->logic());
+	icons.update(r.ui(), 33.0, PlaceEventTranslator::ghostOptions());
+	CHECK(icons.resourceRadius() > 0);
+	CHECK(icons.resourceShare() >= 0);
+	CHECK(icons.resourceShare() <= 1);
+	const float share = icons.resourceShare();
+	icons.update(r.ui(), 33.0, PlaceEventTranslator::ghostOptions());
+	CHECK(icons.resourceShare() == share);
+	icons.clear();
+	CHECK(icons.resourceRadius() == 0);
+	CHECK(icons.resourceShare() == 0);
+}
+
+#include "GameLogic/WallSpan.h"
+TEST_CASE("build5 wall preview: every ghost matches the construction planner tile")
+{
+	if (!haveWorld("build5 wall preview")) return;
+	PlaceRig r(shared());
+	std::string error;
+	Object *hub = r.game->createObject("MenWallHubSmallExpansion", r.game->players().getLocalPlayer()->getPlayerIndex(), r.start, 0, &error);
+	REQUIRE_MESSAGE(hub, error);
+	Coord3D end = *hub->getPosition();
+	end.x += 300;
+	InGameUI ui;
+	ui.placeBuildAvailable("MenWallHubSmall", hub->getID());
+	ui.setPlaceGhost(end, 0, 0);
+	WallSpan::Plan plan;
+	REQUIRE(WallSpan::plan(r.game->logic(), *hub, *hub->getPosition(), end, 0, plan));
+	PlacementIcons icons(r.game->drawables().services(), r.game->logic());
+	icons.update(ui, 33, PlaceEventTranslator::ghostOptions());
+	REQUIRE(icons.icons().size() == plan.tiles.size());
+	for (size_t i = 0; i < plan.tiles.size(); ++i)
+	{
+		CHECK(icons.icons()[i].tt == plan.tiles[i].tmpl->getFinalOverride());
+		CHECK(icons.icons()[i].drawable->getPosition()->x == plan.tiles[i].pos.x);
+		CHECK(icons.icons()[i].drawable->getPosition()->y == plan.tiles[i].pos.y);
+		CHECK(icons.icons()[i].code == plan.tiles[i].code);
+	}
+}

@@ -157,6 +157,7 @@ int dikOf(Key key)
 
 struct HudDevice : public AptNativeHook
 {
+	std::map<std::string, Ref<ShaderMaterial>> imageModes;
 	Ref<RetailFileSystem> fs;
 	GameWorld *world = nullptr;
 	Camera3D *camera = nullptr;
@@ -745,6 +746,16 @@ void HudDevice::drawPlaceholder(const AptCanvasOp &op, RID item)
 	{
 		// lane HUD-2: a RenderImage clip without `_imageMap` (the Palantir portrait, CommandUI.Portrait) finds its image by its own path
 		const AptPalantir::NativeImage *img = hud->palantir() ? hud->palantir()->imageForClip(op.path, varOf(op, "_imageMap")) : nullptr;
+		// BFME2 AptPlayer::FindRenderImage (0x223AC4 / 0x412B94): after the
+		// dynamic image map, resolve _imageMap directly in MappedImageCollection.
+		// Static button/background layers are not entries in Palantir's dynamic map.
+		AptPalantir::NativeImage staticImage;
+		const std::string imageMap = varOf(op, "_imageMap");
+		if ((!img || img->image.empty()) && !imageMap.empty() && images.findImageByName(imageMap))
+		{
+			staticImage.image = imageMap;
+			img = &staticImage;
+		}
 		// lane SPELL-2: the spell store's buttons ("SpellStore/Buttons/Spell%d", RW 0x822B23); RenderImageDisabled draws the same image grey
 		AptPalantir::NativeImage storeImage;
 		if ((!img || img->image.empty()) && hud->spellStore())
@@ -788,6 +799,32 @@ void HudDevice::drawPlaceholder(const AptCanvasOp &op, RID item)
 		// lane PLAY-1: the clip's cumulative colour multiplies the image (SpellStore.apt's _disabled frame places the image at alpha 0.396: a locked power is
 		// dimmed; drawn at full alpha every power looked buyable). INFERENCE: retail's RenderImage draw was not read; the add terms are not applied
 		mod = Color(mod.r * op.placeholderColor[0], mod.g * op.placeholderColor[1], mod.b * op.placeholderColor[2], mod.a * op.placeholderColor[3]);
+		// BFME2 AptImageModeParser (0x412AF3) and W3DDisplay::drawImage:
+		// SOLID disables texture alpha; ALPHA preserves it. Recruitment art uses
+		// transparent foreground pixels whose RGB still contains the background.
+		std::string mode = varOf(op, "_mode");
+		for (char &ch : mode) ch = (char)std::toupper((unsigned char)ch);
+		const bool solid = mode == "SOLID" || mode == "SOLID_TEXTURE" || mode == "SOLID_GRAYSCALE";
+		const bool grayscale = mode == "GRAYSCALE" || mode == "SOLID_GRAYSCALE";
+		if (solid || grayscale || mode == "ADDITIVE")
+		{
+			auto &material = imageModes[mode];
+			if (material.is_null())
+			{
+				Ref<Shader> shader;
+				shader.instantiate();
+				std::string code = "shader_type canvas_item;\n";
+				if (mode == "ADDITIVE") code += "render_mode blend_add;\n";
+				code += "void fragment() { vec4 tint = COLOR; vec4 pixel = texture(TEXTURE, UV);";
+				if (solid) code += "pixel.a = 1.0;";
+				if (grayscale) code += "pixel.rgb = vec3(dot(pixel.rgb, vec3(0.299, 0.587, 0.114)));";
+				code += "COLOR = pixel * tint; }";
+				shader->set_code(String(code.c_str()));
+				material.instantiate();
+				material->set_shader(shader);
+			}
+			rs->canvas_item_set_material(item, material->get_rid());
+		}
 		rs->canvas_item_add_texture_rect_region(item, r, tex->get_rid(), src, mod);
 		++drawnImages;
 		if (hud->palantir() && op.path == hud->palantir()->portraitKey())

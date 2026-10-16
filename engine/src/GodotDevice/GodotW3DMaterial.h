@@ -80,6 +80,9 @@ public:
 	// lane CAH-2 (S-1408): the colour set of the model being built (W3DInstancer::add_model_colored; kind 0 = none): its house colour textures are
 	// recoloured texel by texel as RW 0x531C77 before any filtering, the mipmaps made from the recoloured level (Recolored_House_Texture)
 	void Set_House_Params(const HouseColorParams &params) { HouseParams = params; }
+	// stop S-4832: the texture swaps of the model being built (W3DInstancer::Set_Build_Texture_Swaps, a ModelConditionState's `Texture = A B` pairs):
+	// a surface texture named A (any case; A = "*": every texture) is loaded as B. Empty by default.
+	void Set_Texture_Swaps(const std::vector<std::pair<std::string, std::string>> &swaps) { TextureSwaps = swaps; }
 	// lane BUILD-5 r3: the surfaces this factory builds belong to a translucent drawable (W3DShaderKey::AlphaOverride); off by default
 	void Set_Alpha_Override(bool on) { AlphaOverride = on; }
 	// RW 0x531C77 applied to the texture `name` (its A8R8G8B8 texels; another format stays as it is, as retail's switch leaves it), then mipmaps; cached
@@ -115,6 +118,7 @@ private:
 	ArchiveFileSystem &Fs;
 	const HouseColorTable *HouseColors = nullptr;
 	HouseColorParams HouseParams;
+	std::vector<std::pair<std::string, std::string>> TextureSwaps; // stop S-4832
 	bool AlphaOverride = false;
 	std::map<std::string, Ref<Shader>> Shaders;
 	std::map<std::string, Ref<Texture2D>> Textures; // by virtual path

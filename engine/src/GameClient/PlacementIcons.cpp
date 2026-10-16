@@ -4,12 +4,14 @@
 #include "GameClient/PlacementIcons.h"
 
 #include "Common/AsciiString.h"
+#include "Common/BuildAssistant.h"
 #include "Common/ModelState.h"
 #include "Common/Player.h"
 #include "Common/PlayerList.h"
 #include "Common/Thing/ThingFactory.h"
 #include "Common/Thing/ThingTemplate.h"
 #include "GameClient/ClientEvents.h"
+#include "GameClient/ControlBarCommands.h"
 #include "GameClient/Drawable.h"
 #include "GameClient/InGameUI.h"
 #include "GameClient/MapObjectRuntime.h"
@@ -18,9 +20,13 @@
 #include "GameLogic/BitFlags.h"
 #include "GameLogic/BuildPlacement.h"
 #include "GameLogic/GameLogic.h"
+#include "GameLogic/Economy.h"
+#include "GameLogic/Module/TerrainResourceBehavior.h"
 #include "GameLogic/Map/CastleTemplates.h"
+#include "GameLogic/Map/TerrainLogic.h"
 #include "GameLogic/Object/Object.h"
 #include "GameLogic/ObjectTemplateInfo.h"
+#include "GameLogic/WallSpan.h"
 
 #include <algorithm>
 #include <cmath>
@@ -71,6 +77,8 @@ void PlacementIcons::clear()
 	m_template.clear();
 	m_source = INVALID_ID;
 	m_castle = false;
+	m_wall = false;
+	m_resourceRadius = m_resourceShare = 0;
 }
 
 std::uint32_t PlacementIcons::indicatorColor(const GameLogic &logic, ObjectID builder)
@@ -85,12 +93,12 @@ std::uint32_t PlacementIcons::indicatorColor(const GameLogic &logic, ObjectID bu
 	return logic.settings().night ? p->getPlayerNightColor() : p->getPlayerColor();
 }
 
-std::unique_ptr<Drawable> PlacementIcons::make(const ThingTemplate &tt)
+std::unique_ptr<Drawable> PlacementIcons::make(const ThingTemplate &tt, size_t slot)
 {
 	// RW 0x6CFE8C (ThingFactory::newDrawable): the draw modules of the template; then opacity 0.45 and BUILD_PLACEMENT_CURSOR (RW 0x69C714 / 0x69C724)
 	std::vector<std::string> problems;
 	const std::vector<ClientEvent::ClientModule> noClientModules;
-	std::unique_ptr<Drawable> d(new Drawable(m_services, tt.getFinalOverride(), (DrawableID)(kFirstGhostId + (DrawableID)m_icons.size()), INVALID_ID, noClientModules, problems));
+	std::unique_ptr<Drawable> d(new Drawable(m_services, tt.getFinalOverride(), (DrawableID)(kFirstGhostId + (DrawableID)slot), INVALID_ID, noClientModules, problems));
 	for (const std::string &p : problems)
 	{
 		error(tt.getName() + ": " + p);
@@ -121,9 +129,15 @@ void PlacementIcons::rebuild(const InGameUI &ui)
 		error("the pending template " + m_template + " is unknown");
 		return;
 	}
+	Object *builder = m_logic.findObjectByID(m_source);
+	m_wall = BuildAssistant::isLineBuildTemplate(m_logic, tt, builder);
+	if (m_wall)
+	{
+		return; // the span planner supplies every icon, including the snapped end cap
+	}
 	Icon main;
 	main.tt = tt->getFinalOverride();
-	main.drawable = make(*tt);
+	main.drawable = make(*tt, m_icons.size());
 	main.angle = placementViewAngle(*main.tt); // RW 0x69C6FC
 	main.drawable->setOrientation(main.angle);
 	main.drawable->setHouseColor(indicatorColor(m_logic, m_source)); // RW 0x674504
@@ -161,8 +175,61 @@ void PlacementIcons::rebuild(const InGameUI &ui)
 		icon.offX = p.x;
 		icon.offY = p.y;
 		icon.baseSite = baseSite >= 0 && MaskTest(m_logic.templateInfo(icon.tt).kindOf, (unsigned)baseSite); // template + 0x117 & 1 (RW 0x6A3993)
-		icon.drawable = make(*pt);
+		icon.drawable = make(*pt, m_icons.size());
 		m_icons.push_back(std::move(icon));
+	}
+}
+
+void PlacementIcons::updateWall(const InGameUI &ui)
+{
+	const Coord3D end = ui.placeLocation();
+	if (!std::isfinite(end.x) || !std::isfinite(end.y) || !std::isfinite(end.z))
+	{
+		return;
+	}
+	if (const TerrainLogic *terrain = m_logic.terrain())
+	{
+		float maxX, maxY;
+		if (terrain->getLargestExtent(maxX, maxY) && (end.x < 0.0f || end.y < 0.0f || end.x > maxX || end.y > maxY))
+		{
+			return; // off-map projection retains the last valid span without allocating more icons
+		}
+	}
+	Object *hub = m_logic.findObjectByID(m_source);
+	const CommandButton *command = ui.placeBuildCommand();
+	WallSpan::Plan plan;
+	// Use the construction planner (RW 0x7958F5 .. 0x796090), including its
+	// template pattern, spacing, terrain heights and existing destination hub.
+	if (!hub || !WallSpan::plan(m_logic, *hub, *hub->getPosition(), ui.placeLocation(), command ? command->m_options : 0, plan))
+	{
+		m_icons.clear();
+		return;
+	}
+	// Keep unchanged segments alive as the end cap moves between slots.
+	m_icons.resize(plan.tiles.size());
+	for (size_t i = 0; i < plan.tiles.size(); ++i)
+	{
+		const ThingTemplate *tt = plan.tiles[i].tmpl->getFinalOverride();
+		if (m_icons[i].tt != tt)
+		{
+			Icon icon;
+			icon.tt = tt;
+			icon.drawable = make(*icon.tt, i);
+			icon.drawable->setHouseColor(indicatorColor(m_logic, m_source));
+			m_icons[i] = std::move(icon);
+		}
+	}
+	for (size_t i = 0; i < plan.tiles.size(); ++i)
+	{
+		Icon &icon = m_icons[i];
+		const WallSpan::Tile &tile = plan.tiles[i];
+		icon.angle = tile.angle;
+		icon.drawable->setPosition(&tile.pos);
+		icon.drawable->setOrientation(tile.angle);
+		icon.code = tile.code;
+		icon.tint = tile.code == 0 ? TINT_NONE : (tile.code == 9 ? TINT_CODE9 : TINT_ILLEGAL);
+		icon.tintBlue = (ui.clientFrame() & 4) ? 1.7f : 0.5f;
+		icon.bib = tile.code == 0 ? BIB_NONE : (tile.code == 9 ? BIB_NORMAL : BIB_HIGHLIGHT);
 	}
 }
 
@@ -239,7 +306,25 @@ void PlacementIcons::update(const InGameUI &ui, double elapsedMs, unsigned ghost
 		}
 		rebuild(ui);
 	}
-	if (m_icons.empty() || !ui.placeHasGhost())
+	if (!ui.placeHasGhost())
+	{
+		return;
+	}
+	if (m_wall)
+	{
+		if (judge)
+		{
+			updateWall(ui);
+		}
+		// Busy frames retain the complete last plan; they cannot read live logic.
+		for (Icon &icon : m_icons)
+		{
+			icon.drawable->advanceAnimation(elapsedMs);
+		}
+		collectProblems();
+		return;
+	}
+	if (m_icons.empty())
 	{
 		return;
 	}
@@ -250,6 +335,25 @@ void PlacementIcons::update(const InGameUI &ui, double elapsedMs, unsigned ghost
 	main.angle = angle;
 	main.drawable->setPosition(&site);
 	main.drawable->setOrientation(angle);
+	// BFME2 0x4E6295/0x4E6455: hypothetical claim, without creating an object or claiming ground.
+	// Never read the resource grid while the logic worker is running.
+	if (judge)
+	{
+		m_resourceRadius = m_resourceShare = 0;
+		for (const auto &n : main.tt->behaviorModules().nuggets())
+		{
+			const auto *data = dynamic_cast<const TerrainResourceBehaviorModuleData *>(n.data.get());
+			if (!data) continue;
+			if (data->m_maxIncome > 0 && data->m_radius > 0 && std::isfinite(site.x) && std::isfinite(site.y))
+			{
+				m_resourceRadius = data->m_radius;
+				m_resourceShare = m_logic.economy().resources().previewShare(site.x, site.y, data->m_radius,
+					data->m_highPriority, INVALID_ID, 0);
+			}
+			break;
+		}
+	}
+
 	// the castle's entries (RW 0x6A359E .. 0x6A36FB): x' = x cos - y sin, y' = x sin + y cos about the site, z on the ground, turned by the ghost's angle
 	const double c = std::cos((double)angle), s = std::sin((double)angle);
 	for (size_t i = 1; i < m_icons.size(); ++i)

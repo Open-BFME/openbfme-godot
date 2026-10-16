@@ -678,6 +678,26 @@ void GameWorld::clear_scene()
 	}
 }
 
+// stops S-115 / S-4832: a W3DFloorDraw's WeatherTexture of the map's weather (the first entry, as RW 0x4CFA9A picks a streak's) replaces the floor model's
+// texture: every texture of the model ("*"; 92 of the 96 retail floor models that set one have a single texture, the other four none or one name the
+// extractor split). INFERENCE: the floor draw's own routine was not read. Empty for any other draw module or when no entry has the weather.
+static std::vector<std::pair<std::string, std::string>> floorWeatherSwaps(const ModuleData *data, int weather)
+{
+	std::vector<std::pair<std::string, std::string>> swaps;
+	if (const W3DFloorDrawModuleData *fd = dynamic_cast<const W3DFloorDrawModuleData *>(data))
+	{
+		for (const std::pair<int, std::string> &w : fd->m_weatherTextures)
+		{
+			if (w.first == weather)
+			{
+				swaps.emplace_back("*", w.second);
+				break;
+			}
+		}
+	}
+	return swaps;
+}
+
 void GameWorld::build_static_layer(const Ref<RetailFileSystem> &fs, Dictionary &report, Array &errors, Array &stops)
 {
 	W3DInstancer *staticInst = memnew(W3DInstancer);
@@ -710,11 +730,24 @@ void GameWorld::build_static_layer(const Ref<RetailFileSystem> &fs, Dictionary &
 		}
 		const MapObjectDrawable &d = m_game->clientOnly().drawables[p.drawable];
 		const Transform3D xf = toTransform(d.basis, d.position, d.scale);
-		const std::string key = AsciiStringUtil::lowered(p.modelName);
+		// stop S-4832: a model draw's state swaps textures (a rock's or a civilian building's SNOW state on a snowy map): its own model variant
+		std::vector<std::pair<std::string, std::string>> swaps;
+		if (p.draw)
+		{
+			W3DDrawPoseView view;
+			p.draw->poseView(view);
+			swaps = *view.textureSwaps;
+		}
+		else if (p.kind == W3D_DRAWKIND_FLOOR && p.module < d.draws.size())
+		{
+			swaps = floorWeatherSwaps(d.draws[p.module].data, m_streakWeather); // a map-placed building's floor (bib) on a snowy map
+		}
+		const std::string key = AsciiStringUtil::lowered(p.modelName) + W3DInstancer::Texture_Swap_Suffix(swaps);
 		auto it = m_staticModels.find(key);
 		int64_t model;
 		if (it == m_staticModels.end())
 		{
+			staticInst->Set_Build_Texture_Swaps(swaps);
 			model = staticInst->add_model(toGodot(p.modelName));
 			m_staticModels[key] = model;
 		}
@@ -1576,7 +1609,13 @@ void GameWorld::refresh_views(double deltaMs)
 					std::snprintf(opt, sizeof(opt), "#%d&%d&%d&%d", d->customColorKind(), (int)d->customColors()[0], (int)d->customColors()[1], (int)d->customColors()[2]);
 					coloredModel = "#" + ev.rawLowered + opt;
 				}
-				const std::string &model = !coloredModel.empty() ? coloredModel : shown ? ev.rawLowered : kNoModel;
+				// stop S-4832: the state's `Texture = A B` swaps (a building's SNOW state on a snowy map) make another model variant, "<model>#tex&a=b"
+				std::string swappedModel;
+				if (shown && !f.textureSwaps->empty())
+				{
+					swappedModel = (!coloredModel.empty() ? coloredModel : ev.rawLowered) + W3DInstancer::Texture_Swap_Suffix(*f.textureSwaps);
+				}
+				const std::string &model = !swappedModel.empty() ? swappedModel : !coloredModel.empty() ? coloredModel : shown ? ev.rawLowered : kNoModel;
 				if (model != ev.model)
 				{
 					if (ev.instance >= 0)
@@ -1596,6 +1635,10 @@ void GameWorld::refresh_views(double deltaMs)
 						if (it == m_dynamicModels.end())
 						{
 							const double tm = nowMs();
+							if (!swappedModel.empty())
+							{
+								dyn->Set_Build_Texture_Swaps(*f.textureSwaps); // taken by the add below (and add_model_colored's)
+							}
 							if (!coloredModel.empty())
 							{
 								PackedInt64Array colors;
@@ -1694,12 +1737,16 @@ void GameWorld::refresh_views(double deltaMs)
 				if (!ev.posed)
 				{
 					ev.posed = true;
-					const std::string model = AsciiStringUtil::lowered(e.staticModel);
+					// a player's building's floor (bib) takes its WeatherTexture on a snowy map (stop S-4832)
+					const std::vector<std::pair<std::string, std::string>> swaps =
+						e.kind == W3D_DRAWKIND_FLOOR ? floorWeatherSwaps(e.data, m_streakWeather) : std::vector<std::pair<std::string, std::string>>();
+					const std::string model = AsciiStringUtil::lowered(e.staticModel) + W3DInstancer::Texture_Swap_Suffix(swaps);
 					auto it = m_dynamicModels.find(model);
 					int64_t mid;
 					if (it == m_dynamicModels.end())
 					{
 						const double tm = nowMs();
+						dyn->Set_Build_Texture_Swaps(swaps);
 						mid = dyn->add_model(toGodot(e.staticModel));
 						m_dynamicModels[model] = mid;
 						m_lastNewModelMs = timing::sumMs(m_lastNewModelMs, timing::elapsedMs(tm));
