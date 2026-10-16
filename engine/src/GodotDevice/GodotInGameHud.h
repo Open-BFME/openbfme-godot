@@ -126,6 +126,8 @@ public:
 	void set_placement_snap(bool active, float spacing);
 	Dictionary get_controller_target(float selection_assist_radius);
 	void controller_deselect();
+	void deselect_all();
+	bool touch_build(const String &action, const Vector2 &value);
 	void controller_placement_aim(const Vector2 &direction);
 	Vector2 pixel_to_world(const Vector2 &pixel) const;
 	Vector2 world_to_pixel(const Vector2 &world_xy) const;

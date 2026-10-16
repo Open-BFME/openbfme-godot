@@ -544,6 +544,11 @@ var _cah_hero_id := ""          # lane CAH-1: the unique id of the hero the --ca
 var _startup_shortcut: Node
 
 func _ready() -> void:
+	if OS.has_feature("ios"):
+		var keyboard := preload("res://scripts/release/ios_keyboard.gd").new()
+		keyboard.shell = func() -> Node: return _shell
+		add_child(keyboard)
+	print("STARTUP game ready at %d ms" % Time.get_ticks_msec())
 	_startup_shortcut = preload("res://scripts/startup_shortcut.gd").new()
 	add_child(_startup_shortcut)
 	_display_setup() # lane OPTS-1: the player's display settings first; the command line below wins for the run
@@ -990,6 +995,7 @@ func _build_stage() -> void:
 
 
 func _fail(message: String) -> void:
+	get_tree().call_group("ios_startup", "finished")
 	_cah_cleanup() # lane CAH-2 r2: a failed --cah run leaves no hero behind either
 	_failed = message
 	_state = State.FAILED
@@ -1011,7 +1017,13 @@ func _boot() -> void:
 		return
 	_fs = ClassDB.instantiate("RetailFileSystem")
 	# lane RELEASE-1: the environment, the remembered folders, or the first-run screen (scripts/release/release.gd)
+	get_tree().call_group("ios_startup", "stage", "Checking game files…")
+	await get_tree().process_frame
+	var mount_started := Time.get_ticks_msec()
 	var mount: Dictionary = await Release.mount_retail(_fs)
+	print("STARTUP data mount took %d ms" % (Time.get_ticks_msec() - mount_started))
+	print("STARTUP archive verification: %d hashed, %d cached" % [mount.get("archives_hashed", 0), mount.get("md5_cache_hits", 0)])
+	get_tree().call_group("ios_startup", "stage", "Loading game…")
 	_rotwk_install = str(mount.get("rotwk_install", "")) # lane CAH-2: the Create-a-Hero save folder's name is in the install's gi.dat
 	if mount.get("quit", false):
 		get_tree().quit(0)
@@ -1055,6 +1067,7 @@ func _boot() -> void:
 		return
 	if not _boot_audio():
 		return
+	get_tree().call_group("ios_startup", "finished")
 	await _play_intro_movies() # lane CAMP-2
 	_shell = ClassDB.instantiate("AptMenuPlayer")
 	_shell.name = "Shell"
@@ -1725,6 +1738,15 @@ func _install_hud(rep: Dictionary) -> void:
 		return
 	_hud = hud
 	_hud_installed = true
+	if OS.has_feature("ios") and not has_node("TouchToolbar"):
+		var toolbar := preload("res://scripts/touch_toolbar.gd").new()
+		toolbar.name = "TouchToolbar"
+		toolbar.hud = func() -> Node: return _hud
+		toolbar.gameplay = func() -> bool: return _state == State.PLAYING and not _quit_open and (_lua_console == null or not _lua_console.is_open())
+		toolbar.open_menu = _toggle_quit_menu
+		toolbar.open_console = func() -> void:
+			if _lua_console != null: _lua_console.toggle()
+		add_child(toolbar)
 	if _game_options != null:
 		_game_options.game_started(_world, hud) # lane OPTS-2: the detail's particle limits, the camera and interface options
 	_shell.set_tribute_world(_world) # lane PLAY-1: PlayerTribute.apt's rows and Send (the Palantir's flag)

@@ -22,6 +22,7 @@
 #include "GameLogic/BuildPlacement.h"
 #include <array>
 #include <limits>
+#include <chrono>
 #include <godot_cpp/classes/camera3d.hpp>
 #include <godot_cpp/classes/viewport.hpp>
 #include <cmath>
@@ -144,6 +145,20 @@ void PlacementGhostRenderer::clear()
 	m_resourceDecalId = m_resourceLabelId = 0;
 	m_resourceDecal = nullptr;
 	m_resourceLabel = nullptr;
+}
+
+void PlacementGhostRenderer::prewarm(LiveGame &game, const std::vector<std::string> &templates, unsigned source)
+{
+	InGameUI preview;
+	for (const auto &name : templates)
+	{
+		preview.placeBuildAvailable(name, source);
+		preview.setPlaceGhost(Coord3D{0, 0, 0}, 0, 0);
+		sync(game, preview, 0, 0, true);
+	}
+	preview.placeBuildAvailable("", INVALID_ID);
+	sync(game, preview, 0, 0, true);
+	UtilityFunctions::print("PERF preloaded building previews: ", (int64_t)templates.size(), "; models=", (int64_t)m_modelLoads);
 }
 
 W3DInstancer *PlacementGhostRenderer::newInstancer(const char *name)
@@ -444,6 +459,8 @@ void PlacementGhostRenderer::updateArrow(const InGameUI &ui)
 
 void PlacementGhostRenderer::sync(LiveGame &game, const InGameUI &ui, double deltaSeconds, unsigned ghostOptions, bool judge)
 {
+	const auto started = std::chrono::steady_clock::now();
+	const unsigned loadsBefore = m_modelLoads;
 	if ((&game != m_game || !m_icons) && !judge)
 	{
 		return; // the drawables are made on an idle frame
@@ -455,16 +472,14 @@ void PlacementGhostRenderer::sync(LiveGame &game, const InGameUI &ui, double del
 		m_icons.reset(new PlacementIcons(game.drawables().services(), game.logic()));
 		m_icons->setCastleStore(m_castles.get());
 	}
-	const std::string before = m_icons->templateName();
 	m_icons->update(ui, deltaSeconds * 1000.0, ghostOptions, judge);
 	for (const std::string &e : m_icons->errors())
 	{
 		error(e);
 	}
-	if (m_icons->templateName() != before)
-	{
-		clear(); // a new template: new instancers (the models differ)
-	}
+	// drawIcon replaces instances when their template changes, while retaining
+	// model/material caches. Keep them when placement closes too: reopening a
+	// building must not reread its textures and recreate its GPU resources.
 	if (m_icons->icons().size() > m_views.size())
 	{
 		m_views.resize(m_icons->icons().size());
@@ -506,6 +521,9 @@ void PlacementGhostRenderer::sync(LiveGame &game, const InGameUI &ui, double del
 	updateSelectionCircle(game, ui, judge);
 	updateFormation(game, ui, judge);
 	m_formationSlots = ui.formationSlots;
+	const auto millis = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - started).count();
+	if (millis >= 100)
+		UtilityFunctions::print("PERF placement preview: ", toGodotString(m_icons->templateName()), " ", (int64_t)millis, " ms; new models=", (int64_t)(m_modelLoads - loadsBefore));
 }
 
 

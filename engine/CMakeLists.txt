@@ -476,6 +476,9 @@ endif()
 # ---- GDExtension -------------------------------------------------------------------------
 if(OPENBFME_BUILD_GODOT)
 set(OPENBFME_GODOT_BIN ${CMAKE_CURRENT_SOURCE_DIR}/../godot/bin)
+if(CMAKE_SYSTEM_NAME STREQUAL "iOS" AND OPENBFME_IOS_SDK STREQUAL "iphonesimulator")
+    set(OPENBFME_GODOT_BIN ${OPENBFME_GODOT_BIN}/ios-simulator)
+endif()
 add_library(openbfme SHARED
     src/GodotDevice/register_types.cpp
     src/GodotDevice/GodotRetailFileSystem.cpp
@@ -544,6 +547,10 @@ set_target_properties(openbfme PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "$<1:${OPENBFME_GODOT_BIN}>"
     PDB_OUTPUT_DIRECTORY "$<1:${OPENBFME_GODOT_BIN}>")
 if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    if(OPENBFME_IOS_SDK STREQUAL "iphonesimulator")
+        # Keep the export framework name stable for the arm64 simulator.
+        set_target_properties(openbfme PROPERTIES OUTPUT_NAME "openbfme.ios.template_debug.arm64")
+    endif()
     enable_language(OBJCXX)
     target_sources(openbfme PRIVATE src/GodotDevice/GodotIOSAssets.mm)
     set_source_files_properties(src/GodotDevice/GodotIOSAssets.mm PROPERTIES COMPILE_OPTIONS "-fobjc-arc")

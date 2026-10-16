@@ -49,6 +49,7 @@ public:
 	// `judge` false on a frame the logic worker runs (InGameUI's pose only: PlacementIcons::update)
 	void sync(LiveGame &game, const InGameUI &ui, double deltaSeconds, unsigned ghostOptions, bool judge = true);
 	void clear();
+	void prewarm(LiveGame &game, const std::vector<std::string> &templates, unsigned source);
 	// { template, castle, anchored, arrow, icons: [ { template, x, y, z, angle, code, tint: Color (a 0: none), bib: "" | "TBBib.tga" | "TBRedBib.tga",
 	//   instances, piece, base_site } ], errors: [...] }
 	Dictionary state() const;

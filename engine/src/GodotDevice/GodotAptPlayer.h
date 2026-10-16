@@ -310,6 +310,8 @@ public:
 	// lane UI-6 (checks): the Skirmish lobby's game { found, map, rules: [10], slots: [{ state, template, color, team, start, name }], restored (the kept game
 	// it began from, "" for the defaults) }; found false when no lobby is up
 	Dictionary lobby_state();
+	Dictionary native_text_input() const;
+	void edit_native_text(const String &text, bool submit);
 	// lane FB7-1 (scripted input runs): the stage rectangle of a lobby gadget: "<slot>/<Leaf>" (a slot combo), "list/<slot>/<Leaf>" (its drop-down list),
 	// "spot/<n>" (a start spot of the map window), "map-list": { found, enabled, x, y, w, h }
 	Dictionary lobby_gadget_rect(const String &name);

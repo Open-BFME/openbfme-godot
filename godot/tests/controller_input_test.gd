@@ -52,6 +52,10 @@ func _run() -> void:
 	var mouse_events = generated.filter(func(event): return event is InputEventMouseButton)
 	assert(mouse_events.size() == 2 and not mouse_events[1].pressed)
 	assert(controller.device == -1 and controller._held_mouse.is_empty() and not controller.palette_open)
+	controller._input(trigger)
+	controller._input(button)
+	assert(controller.device == -1 and not controller.palette_open, "queued pad events cannot reactivate a disconnected controller")
+	controller._connection(0, true)
 	var key := InputEventKey.new()
 	key.keycode = KEY_BACKSLASH
 	key.pressed = true
@@ -205,6 +209,24 @@ func _run() -> void:
 	controller.primary_button = func() -> int: return MOUSE_BUTTON_LEFT
 	button.pressed = true
 	controller._input(button)
+	button.pressed = false
+	controller._input(button)
+	assert(generated.filter(func(event): return event is InputEventMouseButton).size() == 2)
+	# iOS placement stays active without holding A; a press confirms immediately.
+	controller._release_all()
+	controller.placement_requires_hold = false
+	controller.placement_active = func() -> bool: return true
+	controller.resolve_action = func(_button: String, _playing: bool) -> String: return "contextPrimary"
+	var aim_calls: Array = []
+	controller.placement_aim.connect(func(direction: Vector2) -> void: aim_calls.append(direction))
+	controller._pan_stick(Vector2.RIGHT, 0.016)
+	assert(aim_calls == [Vector2.RIGHT])
+	generated.clear()
+	button.pressed = true
+	controller._input(button)
+	assert(not controller._construction_held)
+	var clicks = generated.filter(func(event): return event is InputEventMouseButton)
+	assert(clicks.size() == 2 and clicks[0].pressed and not clicks[1].pressed)
 	button.pressed = false
 	controller._input(button)
 	assert(generated.filter(func(event): return event is InputEventMouseButton).size() == 2)

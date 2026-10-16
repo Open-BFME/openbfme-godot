@@ -58,6 +58,8 @@
 #include <godot_cpp/classes/input_event_mouse.hpp>
 #include <godot_cpp/classes/input_event_mouse_button.hpp>
 #include <godot_cpp/classes/input_event_mouse_motion.hpp>
+#include <godot_cpp/classes/input_event_screen_touch.hpp>
+#include <godot_cpp/classes/input_event_screen_drag.hpp>
 #include <godot_cpp/classes/os.hpp>
 #include <godot_cpp/classes/time.hpp>
 #include <godot_cpp/classes/viewport.hpp>
@@ -279,6 +281,16 @@ struct HudDevice : public AptNativeHook
 	unsigned iconOpsDrawn = 0;
 	// lane PLAY-3: the drag selection box drawn in the last frame, the box, the frames it was drawn in
 	bool dragBoxShown = false;
+	std::map<int, Vector2> touchPoints;
+	bool touchPan = false;
+	bool touchOrderPending = false;
+	bool touchBuildGesture = false;
+	bool touchBuildRotate = false, touchBuildMoved = false;
+	Vector2 touchBuildStart;
+	std::string touchBuildTemplate;
+	Vector2 touchOrderStart;
+	unsigned touchOrders = 0;
+	bool touchInputWasEnabled = true;
 	IconUIOp dragBox;
 	unsigned long long dragBoxFrames = 0;
 	void drawIconOps(RID parent);
@@ -1210,6 +1222,8 @@ void InGameHudNode::_bind_methods()
 	ClassDB::bind_method(D_METHOD("get_controller_primary_button", "selection_assist_radius"), &InGameHudNode::get_controller_primary_button, DEFVAL(0.0f));
 	ClassDB::bind_method(D_METHOD("get_controller_target", "selection_assist_radius"), &InGameHudNode::get_controller_target);
 	ClassDB::bind_method(D_METHOD("controller_deselect"), &InGameHudNode::controller_deselect);
+	ClassDB::bind_method(D_METHOD("deselect_all"), &InGameHudNode::deselect_all);
+	ClassDB::bind_method(D_METHOD("touch_build", "action", "value"), &InGameHudNode::touch_build);
 	ClassDB::bind_method(D_METHOD("controller_placement_aim", "direction"), &InGameHudNode::controller_placement_aim);
 	ClassDB::bind_method(D_METHOD("get_placement_ghost_state"), &InGameHudNode::get_placement_ghost_state);
 	ClassDB::bind_method(D_METHOD("get_move_hints"), &InGameHudNode::get_move_hints);
@@ -1898,6 +1912,22 @@ Dictionary InGameHudNode::attach(const Ref<RetailFileSystem> &fs, GameWorld *wor
 	}
 	d->hud->setSelectionDecalSettings(decalSettings); // lane UI-4
 	d->ready = errors.is_empty();
+	if (d->ready && (bool)options.get("prewarm_buildings", OS::get_singleton()->has_feature("ios")))
+	{
+		const auto context = d->hud->enterContext();
+		std::set<std::string> names;
+		auto &commands = world->hud_world()->commands();
+		for (const auto &name : commands.buttonNames())
+		{
+			const auto *button = commands.findCommandButton(name);
+			if (button && button->m_command == GUI_COMMAND_DOZER_CONSTRUCT && button->getThingTemplate())
+				names.insert(button->getThingTemplate()->getName());
+		}
+		::ObjectID source = INVALID_ID;
+		for (const ::Object *object = game.logic().getFirstObject(); object; object = object->getNextObject())
+			if (object->getControllingPlayer() && object->getControllingPlayer()->getPlayerIndex() == d->localPlayerIndex && object->isKindOfName("DOZER")) { source = object->getID(); break; }
+		d->ghost->prewarm(game, std::vector<std::string>(names.begin(), names.end()), source);
+	}
 	set_process(true);
 	// the camera is set before the world's own _process (the streak ribbons face the camera transform of the same frame)
 	set_process_priority(-100);
@@ -2105,6 +2135,7 @@ Dictionary InGameHudNode::get_state() const
 		keys["dropped"] = (int64_t)d->droppedInput;
 		keys["focus_resets"] = (int64_t)d->focusResets;
 		keys["input_enabled"] = ui.getInputEnabled();
+		keys["touch_orders"] = (int64_t)d->touchOrders;
 		keys["map_records"] = (int64_t)d->meta.records().size();
 		keys["german"] = mt.germanKeyboard();
 		PackedStringArray recent;
@@ -2760,6 +2791,7 @@ Dictionary InGameHudNode::get_placement() const
 	p["legal"] = ui.placeLegalCode();
 	// lane BUILD-5: the rotation anchor (W3DInGameUI::drawPlaceAngle RW 0x48EAD8 draws W_Arrow on the ghost while anchored) and the client frame (the code 9 pulse)
 	p["anchored"] = ui.isPlacementAnchored();
+	p["touch_rotating"] = d->touchBuildRotate && d->touchBuildTemplate == ui.placeBuildTemplate();
 	p["client_frame"] = (int64_t)ui.clientFrame();
 	return p;
 }
@@ -3074,6 +3106,54 @@ void InGameHudNode::controller_deselect()
 	}
 }
 
+void InGameHudNode::deselect_all()
+{
+	waitLogic(d.get());
+	if (!d->ready || !d->hud) return;
+	const auto context = d->hud->enterContext();
+	d->hud->input().ui().deselectAll(true);
+}
+
+bool InGameHudNode::touch_build(const String &action, const Vector2 &value)
+{
+	waitLogic(d.get());
+	if (!d->ready || !d->hud) return false;
+	const auto context = d->hud->enterContext();
+	auto &input = d->hud->input();
+	input.update();
+	auto &ui = input.ui();
+	if (!ui.isPlacing()) return false;
+	if (d->touchBuildTemplate != ui.placeBuildTemplate()) d->touchBuildRotate = false;
+	d->touchBuildTemplate = ui.placeBuildTemplate();
+	if (action == "lock") { d->touchBuildRotate = ui.isPlacementAnchored(); return d->touchBuildRotate; }
+	if (action == "reposition") { d->touchBuildRotate = false; return true; }
+	if (action == "position")
+	{
+		if (!std::isfinite(value.x) || !std::isfinite(value.y)) return false;
+		const ICoord2D point{(int)value.x, (int)value.y};
+		ui.setPlacementStart(&point);
+		d->touchBuildRotate = false;
+		input.placementUpdate(true);
+		return true;
+	}
+	if (action == "rotate")
+	{
+		controller_placement_aim(value);
+		return ui.isPlacementAnchored();
+	}
+	if (action == "cancel") { d->touchBuildRotate = false; controller_deselect(); return true; }
+	if (action == "confirm" && ui.isPlacementAnchored() && d->touchBuildRotate)
+	{
+		const auto p = ui.placementStart();
+		inject_mouse_button(1, true, Vector2(p.x, p.y), false);
+		inject_mouse_button(1, false, Vector2(p.x, p.y), false);
+		input.update();
+		d->touchBuildRotate = false;
+		return true;
+	}
+	return false;
+}
+
 bool InGameHudNode::activate_command(int slot, bool in_palantir, bool cancel)
 {
     waitLogic(d.get());
@@ -3279,6 +3359,10 @@ void InGameHudNode::_notification(int what)
 {
 	if ((what == NOTIFICATION_WM_WINDOW_FOCUS_OUT || what == NOTIFICATION_APPLICATION_FOCUS_OUT) && d && d->ready && d->hud)
 	{
+		if (d->touchPan && !d->touchPoints.empty()) d->hud->input().ui().setInputEnabled(d->touchInputWasEnabled);
+		d->touchPoints.clear();
+		d->touchPan = false;
+		d->touchOrderPending = false;
 		std::vector<Ref<InputEvent>> kept;
 		for (const Ref<InputEvent> &e : d->pendingInput)
 		{
@@ -3314,6 +3398,15 @@ void InGameHudNode::set_input_enabled(bool on)
 
 void InGameHudNode::_input(const Ref<InputEvent> &event)
 {
+	// Godot controls draw this toolbar above the native HUD; its taps belong to
+	// the controls, never to world selection or contextual orders underneath.
+	if (Engine::get_singleton()->has_meta("touch_toolbar_rect"))
+	{
+		const Rect2 toolbar = Engine::get_singleton()->get_meta("touch_toolbar_rect");
+		const auto *mouse = Object::cast_to<InputEventMouse>(event.ptr());
+		const auto *touch = Object::cast_to<InputEventScreenTouch>(event.ptr());
+		if ((mouse && toolbar.has_point(mouse->get_position())) || (touch && toolbar.has_point(touch->get_position()))) return;
+	}
 	// Console shortcuts must never reach the HUD, even when it runs before the overlay's input callback.
 	if (const auto *key = Object::cast_to<InputEventKey>(event.ptr()))
 	{
@@ -3350,6 +3443,119 @@ void InGameHudNode::_input(const Ref<InputEvent> &event)
 
 void InGameHudNode::handleInput(const Ref<InputEvent> &event)
 {
+	if (const auto *touch = Object::cast_to<InputEventScreenTouch>(event.ptr()))
+	{
+		if (touch->is_pressed())
+		{
+			if (d->touchPoints.empty())
+			{
+				d->touchPan = false;
+				d->touchBuildGesture = (bool)Engine::get_singleton()->get_meta("touch_build_controls", false) && d->hud->input().ui().isPlacing();
+				d->touchBuildStart = touch->get_position();
+				d->touchBuildMoved = false;
+				if (d->touchBuildTemplate != d->hud->input().ui().placeBuildTemplate()) d->touchBuildRotate = false;
+			}
+			d->touchPoints[touch->get_index()] = touch->get_position();
+			if (d->touchPoints.size() >= 2 && !d->touchPan)
+			{
+				d->touchPan = true;
+				d->touchOrderPending = false;
+				d->touchInputWasEnabled = d->hud->input().ui().getInputEnabled();
+				d->hud->input().ui().setInputEnabled(false);
+				d->hud->input().selectionTranslator().setLeftMouseButton(false);
+				d->hud->input().selectionTranslator().setDragSelecting(false);
+				d->hud->input().ui().setSelecting(false);
+				d->hud->input().ui().endAreaSelectHint();
+			}
+		}
+		else
+		{
+			if (d->touchBuildGesture && !d->touchPan && d->touchPoints.size() == 1 && !touch->is_canceled())
+			{
+				if (!d->touchBuildMoved)
+					touch_build(d->touchBuildRotate ? "confirm" : "lock", Vector2());
+				else if (!d->touchBuildRotate)
+					touch_build("position", touch->get_position());
+			}
+			d->touchPoints.erase(touch->get_index());
+			if (d->touchPoints.empty() && d->touchPan)
+				d->hud->input().ui().setInputEnabled(d->touchInputWasEnabled);
+		}
+		return;
+	}
+	if (const auto *drag = Object::cast_to<InputEventScreenDrag>(event.ptr()))
+	{
+		auto point = d->touchPoints.find(drag->get_index());
+		if (point != d->touchPoints.end())
+		{
+			const Vector2 delta = drag->get_position() - point->second;
+			point->second = drag->get_position();
+			if (d->touchBuildGesture && !d->touchPan && d->touchPoints.size() == 1)
+			{
+				const float tolerance = 12.0f * get_viewport_rect().size.y / 720.0f;
+				if (drag->get_position().distance_to(d->touchBuildStart) > tolerance) d->touchBuildMoved = true;
+				if (d->touchBuildMoved)
+				{
+					if (!d->touchBuildRotate) touch_build("position", drag->get_position());
+					else
+					{
+						const auto anchor = d->hud->input().ui().placementStart();
+						touch_build("rotate", drag->get_position() - Vector2(anchor.x, anchor.y));
+					}
+				}
+			}
+			if (d->touchPan && d->touchPoints.size() >= 2)
+				camera_pan(-delta / (float)d->touchPoints.size());
+		}
+		return;
+	}
+	// Godot synthesizes left-mouse drags from the first touch. Once a gesture
+	// becomes a pan, swallow those events until a fresh touch sequence starts.
+	if (d->touchPan && event->get_device() == InputEvent::DEVICE_ID_EMULATION && Object::cast_to<InputEventMouse>(event.ptr())) return;
+	if (d->touchBuildGesture && event->get_device() == InputEvent::DEVICE_ID_EMULATION && Object::cast_to<InputEventMouse>(event.ptr())) return;
+	if (event->get_device() == InputEvent::DEVICE_ID_EMULATION)
+	{
+		if (const auto *button = Object::cast_to<InputEventMouseButton>(event.ptr()))
+		{
+			if (button->get_button_index() == MOUSE_BUTTON_LEFT)
+			{
+				const Vector2 p = button->get_position();
+				if (button->is_pressed() && !d->hud->isOverGui((int)p.x, (int)p.y) &&
+					!d->hud->input().ui().getGUICommand() && !d->hud->input().ui().isPlacing() && !d->hud->spellBar().targeting())
+				{
+					for (::ObjectID id : d->hud->input().ui().selected())
+					{
+						const ::Object *unit = d->world->hud_game()->logic().findObjectByID(id);
+						if (unit && !unit->isKindOfName("STRUCTURE"))
+						{
+							d->touchOrderPending = true;
+							d->touchOrderStart = p;
+							return;
+						}
+					}
+				}
+				if (!button->is_pressed() && d->touchOrderPending)
+				{
+					d->touchOrderPending = false;
+					if (!d->hud->isOverGui((int)p.x, (int)p.y))
+					{
+						const int orderButton = d->hud->input().commandTranslator().useAlternateMouse() ? 2 : 1;
+						inject_mouse_button(orderButton, true, p, false);
+						inject_mouse_button(orderButton, false, p, false);
+						++d->touchOrders;
+					}
+					return;
+				}
+			}
+		}
+		if (const auto *motion = Object::cast_to<InputEventMouseMotion>(event.ptr()); motion && d->touchOrderPending)
+		{
+			const float tolerance = 12.0f * get_viewport_rect().size.y / 720.0f;
+			if (motion->get_position().distance_to(d->touchOrderStart) <= tolerance) return;
+			d->touchOrderPending = false;
+			inject_mouse_button(1, true, d->touchOrderStart, false);
+		}
+	}
 	if (LookAtTranslator *la = d->hud->input().lookAt())
 	{
 		la->setTime((unsigned)Time::get_singleton()->get_ticks_msec());

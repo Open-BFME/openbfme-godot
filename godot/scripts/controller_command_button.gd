@@ -15,6 +15,7 @@ var _picture: TextureRect
 var _label: Label
 var _queue_count: Label
 var _rims: Dictionary = {}
+var shared_rims: Dictionary = {}
 
 class ProductionClock extends Control:
 	var progress := -1.0
@@ -38,24 +39,13 @@ func _ready() -> void:
 	for state in ["normal", "hover", "pressed", "disabled", "focus"]:
 		add_theme_stylebox_override(state, StyleBoxEmpty.new())
 	for name_text in ["RadialBorder", "RadialOver", "RadialPush"]:
-		_rims[name_text] = source.get_command_icon(name_text)
+		_rims[name_text] = shared_rims.get(name_text) if shared_rims.has(name_text) else source.get_command_icon(name_text)
 	_picture = TextureRect.new()
 	_picture.texture = artwork
 	_picture.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	_picture.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	var shader := Shader.new()
-	shader.code = """shader_type canvas_item;
-	uniform vec2 rect_size = vec2(1.0);
-	varying vec2 local_uv;
-	varying vec4 tint;
-	void vertex() { local_uv = VERTEX / rect_size; tint = COLOR; }
-	void fragment() {
-		float edge = length(local_uv - vec2(0.5));
-		float alpha = 1.0 - smoothstep(0.5 - fwidth(edge), 0.5, edge);
-		COLOR = vec4(texture(TEXTURE, UV).rgb * tint.rgb, alpha * tint.a);
-	}"""
 	var material_instance := ShaderMaterial.new()
-	material_instance.shader = shader
+	material_instance.shader = preload("res://shaders/controller_icon.gdshader")
 	_picture.material = material_instance
 	add_child(_picture)
 	_clock = ProductionClock.new()
@@ -147,3 +137,13 @@ func _update_selection() -> void:
 
 func _update_rim() -> void:
 	_rim.texture = _rims.get("RadialPush" if is_pressed() else "RadialOver" if selected or is_hovered() else "RadialBorder")
+
+func update_production(count: int, value: float) -> void:
+	queued = count
+	progress = value
+	_queue_count.text = str(count)
+	_queue_count.visible = count > 1
+	if _clock.progress != value:
+		_clock.progress = value
+		_clock.visible = value >= 0.0 and value < 1.0
+		_clock.queue_redraw()

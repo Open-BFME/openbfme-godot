@@ -1,6 +1,7 @@
 ## Original BFME2Lua/Xbox controller strips, kept in an ignored local asset folder.
 extends RefCounted
 static var _cache: Dictionary = {}
+static var _frames: Dictionary = {}
 static func texture(name: String) -> Texture2D:
 	if not _cache.has(name):
 		var path := "res://controller_art/%s.tga" % name
@@ -16,7 +17,12 @@ static func frame(name: String, fps: float = 30.0) -> Texture2D:
 		return null
 	var side := strip.get_height()
 	var count := maxi(1, strip.get_width() / side)
+	var index := int(Time.get_ticks_msec() * fps / 1000.0) % count
+	var key := "%s:%d" % [name, index]
+	if _frames.has(key):
+		return _frames[key]
 	var atlas := AtlasTexture.new()
 	atlas.atlas = strip
-	atlas.region = Rect2((int(Time.get_ticks_msec() * fps / 1000.0) % count) * side, 0, side, side)
+	atlas.region = Rect2(index * side, 0, side, side)
+	_frames[key] = atlas
 	return atlas

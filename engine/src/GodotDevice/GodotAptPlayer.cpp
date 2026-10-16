@@ -1149,6 +1149,8 @@ void AptMenuPlayer::_bind_methods()
 	ClassDB::bind_method(D_METHOD("take_load_progress_calls"), &AptMenuPlayer::take_load_progress_calls);
 	ClassDB::bind_method(D_METHOD("lobby_apply", "spec"), &AptMenuPlayer::lobby_apply);
 	ClassDB::bind_method(D_METHOD("lobby_state"), &AptMenuPlayer::lobby_state); // lane UI-6
+	ClassDB::bind_method(D_METHOD("native_text_input"), &AptMenuPlayer::native_text_input);
+	ClassDB::bind_method(D_METHOD("edit_native_text", "text", "submit"), &AptMenuPlayer::edit_native_text);
 	ClassDB::bind_method(D_METHOD("lobby_gadget_rect", "name"), &AptMenuPlayer::lobby_gadget_rect);
 	ClassDB::bind_method(D_METHOD("get_shell_report"), &AptMenuPlayer::get_shell_report);
 	ADD_SIGNAL(MethodInfo("shell_service", PropertyInfo(Variant::STRING, "kind"), PropertyInfo(Variant::STRING, "a"), PropertyInfo(Variant::STRING, "b")));
@@ -2646,6 +2648,33 @@ Dictionary AptMenuPlayer::lobby_state()
 	out["slots"] = slots;
 	out["restored"] = toGodot(screen->restoredGame());
 	return out;
+}
+
+Dictionary AptMenuPlayer::native_text_input() const
+{
+	Dictionary result;
+	result["focused"] = false;
+	if (!m->shell || !m->shell->layer) return result;
+	GameWindow *field = m->shell->layer->gadgets().winGetFocus();
+	if (!field || !(field->winGetStyle() & GWS_ENTRY_FIELD) || field->winIsHidden()) return result;
+	int x, y, w, h;
+	field->winGetScreenPosition(&x, &y);
+	field->winGetSize(&w, &h);
+	const Vector2 a = stage_to_window(Vector2(x, y));
+	result["focused"] = true;
+	result["id"] = (int64_t)(uintptr_t)field;
+	result["text"] = toGodot(u16ToUtf8(GadgetTextEntryGetText(field)));
+	result["rect"] = Rect2(a, stage_to_window(Vector2(x+w, y+h)) - a);
+	return result;
+}
+
+void AptMenuPlayer::edit_native_text(const String &text, bool submit)
+{
+	if (!m->shell || !m->shell->layer) return;
+	GameWindow *field = m->shell->layer->gadgets().winGetFocus();
+	if (!field || !(field->winGetStyle() & GWS_ENTRY_FIELD)) return;
+	GadgetTextEntrySetText(field, utf8ToU16(toNative(text)));
+	if (submit) m->shell->layer->textInput(u'\r');
 }
 
 Dictionary AptMenuPlayer::lobby_apply(const Dictionary &spec)

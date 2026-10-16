@@ -2,6 +2,7 @@
 extends Node
 signal input_generated(event: InputEvent)
 signal palette_toggled(open: bool)
+signal controller_disconnected
 signal command_action(action: String)
 signal camera_rotation(radians: float)
 signal camera_zoom(amount: float)
@@ -46,6 +47,9 @@ var menu_repeat_rate := 150
 var gameplay: Callable
 var resolve_action: Callable
 var device := -1
+var placement_requires_hold := not OS.has_feature("ios")
+var _placement_tap := false
+var _disconnected_devices: Dictionary = {}
 var _held_keys: Dictionary = {}
 var _held_mouse: Dictionary = {}
 var _menu_direction := Vector2i.ZERO
@@ -58,9 +62,16 @@ func _ready() -> void:
 	Input.joy_connection_changed.connect(_connection)
 
 func _connection(id: int, connected: bool) -> void:
+	if connected:
+		_disconnected_devices.erase(id)
+	else:
+		_disconnected_devices[id] = true
 	if not connected and id == device:
-		_release_all()
 		device = -1
+		keyboard_mode = false
+		_release_all()
+		_update_keyboard_mode()
+		controller_disconnected.emit()
 
 func _gameplay() -> bool:
 	return gameplay.is_valid() and gameplay.call()
@@ -89,6 +100,7 @@ func _mouse(button: MouseButton, pressed: bool) -> void:
 	input_generated.emit(event)
 
 func _release_all(preserve_snap := false) -> void:
+	_placement_tap = false
 	if _formation_held and formation.is_valid(): formation.call("cancel", Vector2.ZERO)
 	_formation_held = false
 	_formation_latched = false
@@ -155,6 +167,8 @@ func _input(event: InputEvent) -> void:
 				return
 	if not (event is InputEventJoypadButton or event is InputEventJoypadMotion):
 		return
+	if _disconnected_devices.has(event.device):
+		return # queued releases/axis events must not reactivate an unplugged pad
 	if device < 0:
 		device = event.device
 	if _suspended or event.device != device:
@@ -206,6 +220,9 @@ func _input(event: InputEvent) -> void:
 		JOY_BUTTON_START:"Start", JOY_BUTTON_LEFT_SHOULDER:"LeftShoulder", JOY_BUTTON_RIGHT_SHOULDER:"RightShoulder",
 		JOY_BUTTON_DPAD_UP:"DpadUp", JOY_BUTTON_DPAD_DOWN:"DpadDown", JOY_BUTTON_DPAD_LEFT:"DpadLeft", JOY_BUTTON_DPAD_RIGHT:"DpadRight"}
 	var action := ""
+	if event.button_index == JOY_BUTTON_A and not event.pressed and _placement_tap:
+		_placement_tap = false
+		return
 	if resolve_action.is_valid():
 		action = str(resolve_action.call(names.get(event.button_index, ""), playing))
 	else:
@@ -247,6 +264,13 @@ func _input(event: InputEvent) -> void:
 			_area_replay = false
 			return
 	if action == "contextPrimary":
+		if not placement_requires_hold and _is_placing():
+			if event.pressed:
+				_placement_tap = true
+				if center_cursor: _pin_cursor()
+				_mouse(MOUSE_BUTTON_LEFT, true)
+				_mouse(MOUSE_BUTTON_LEFT, false)
+			return
 		if event.pressed:
 			_construction_held = _is_placing()
 			if center_cursor:
@@ -318,6 +342,10 @@ func _pan_stick(left: Vector2, delta: float) -> void:
 		if not formation.call("aim", left): _release_all()
 		return
 	if _area_pending: return
+	if not placement_requires_hold and _is_placing():
+		if _gameplay() and not _suspended and left != Vector2.ZERO:
+			placement_aim.emit(left.normalized())
+		return
 	if _construction_held:
 		if _gameplay() and not _suspended and _is_placing() and left != Vector2.ZERO:
 			placement_aim.emit(left.normalized())

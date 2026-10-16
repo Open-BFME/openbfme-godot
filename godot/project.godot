@@ -23,6 +23,11 @@ run/max_fps=0
 
 Release="*res://scripts/release/release.gd"
 
+[audio]
+
+; Playback ignores the iPad silent switch; system and game volume still apply.
+general/ios/session_category=3
+
 [debug]
 
 file_logging/enable_file_logging=false

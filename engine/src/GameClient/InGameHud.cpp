@@ -925,6 +925,9 @@ void InGameHud::mouseMove(int x, int y, int keyState)
 void InGameHud::mouseButton(HudInput::Button button, bool down, int x, int y, int keyState, int timeMs, bool doubleClick)
 {
 	const auto worldContext = enterContext(); // this world's stores for the whole call (see InGameHud.h)
+	// Touch taps need not have a preceding mouse motion. APT button dispatch uses
+	// its stored pointer position, so update it before hit testing and posting the press.
+	mouseMove(x, y, keyState);
 	const bool over = isOverGui(x, y);
 	if (hud6MouseButton(button, down, x, y)) // lane HUD-6: a radial bubble took the press (the world sees neither it nor its release)
 	{

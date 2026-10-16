@@ -77,8 +77,11 @@ func _run() -> void:
 		var unfocused = ui._commands.get_child(i)
 		assert(not unfocused._glyph.visible and not unfocused._queue_count.visible)
 	live.queue_count = 2
+	var existing_button = ui._commands.get_child(0)
 	live.production_progress = 0.75
 	ui._refresh()
+	assert(ui._commands.get_child(0) == existing_button, "timer updates must reuse the existing button")
+	assert(existing_button._picture.material.shader == ui._commands.get_child(1)._picture.material.shader, "buttons share one shader")
 	assert(ui._commands.get_child(0)._queue_count.text == "2")
 	assert(ui._commands.get_child(0)._clock.progress == 0.75)
 	live.production_progress = 1.0

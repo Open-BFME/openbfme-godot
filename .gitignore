@@ -112,9 +112,12 @@ workspace/agents/
 
 # iOS cross-build and exported Xcode products
 /engine/build-ios/
+/engine/build-ios-simulator/
 
 # Local extracted controller-mod artwork; never commit retail pixels.
 /godot/controller_art/
 
 # Local BFME2Lua tower models and retail INI overlays.
 /godot/mods/
+
+/engine/build-ios-simulator-x64/

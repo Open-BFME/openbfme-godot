@@ -19,6 +19,7 @@ var _shortcut_layout: Array = []
 var _source: Node
 var _elapsed := 0.0
 var _render_hash := -1
+var _render_evil := false
 var _owns_store := false
 var _native_layout_active := false
 var _was_playing := false
@@ -71,6 +72,14 @@ func _ready() -> void:
 	_shortcuts.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_panel.add_child(_shortcuts)
 	bridge.palette_toggled.connect(_toggle)
+	bridge.controller_disconnected.connect(func() -> void:
+		_toggle(false)
+		_keyboard_hint.hide()
+		_update_reticle(null, false)
+		var live: Node = hud.call()
+		if live != null and live.has_method("set_controller_layout"):
+			live.set_controller_layout(false)
+		_native_layout_active = false)
 	bridge.command_action.connect(action)
 	bridge.formation = func(operation: String, direction: Vector2) -> bool:
 		var live: Node = hud.call()
@@ -274,15 +283,29 @@ func _button(text: String, selected: bool) -> Button:
 	button.source = _source
 	button.caption = text
 	button.selected = selected
-	button.evil = bool(_source.get_state().get("controller_evil", false)) if _source.has_method("get_state") else false
+	button.evil = _render_evil
+	for rim in ["RadialBorder", "RadialOver", "RadialPush"]:
+		if not _icons.has(rim): _icons[rim] = _source.get_command_icon(rim)
+	button.shared_rims = _icons
 	button.custom_minimum_size = Vector2(72, 72)
 	return button
 
 func _render() -> void:
-	var signature := hash([_entries, _state, get_viewport().get_visible_rect().size])
+	var structure: Array = []
+	for entry in _entries:
+		var stable: Dictionary = entry.duplicate()
+		stable.erase("timer")
+		stable.erase("queued")
+		structure.append(stable)
+	var signature := hash([structure, _state, get_viewport().get_visible_rect().size])
 	if signature == _render_hash:
+		for i in _entries.size():
+			var button = _commands.get_child(i)
+			if button.has_method("update_production"):
+				button.update_production(int(_entries[i].get("queued", 0)), float(_entries[i].get("timer", -1.0)))
 		return
 	_render_hash = signature
+	_render_evil = bool(_source.get_state().get("controller_evil", false)) if _source.has_method("get_state") else false
 	_clear(_commands)
 	_clear(_shortcuts)
 	_title.text = ("Hold Tab · arrows navigate · Enter select · Backspace cancel · X save group · Y back · %s" if bridge.keyboard_mode else "RT · %s   ◀ ▶ commands   ▲ ▼ shortcuts   A select   B cancel queue   X save group   Y back") % _state[0].capitalize()
@@ -408,6 +431,10 @@ func _activate(entry: Dictionary, cancel: bool) -> void:
 			_source.select_controller_group(_favorites)
 	else:
 		_source.activate_command(entry.slot, entry.in_palantir, cancel)
+		if not cancel and not bridge.placement_requires_hold and entry.get("command", "") == "DOZER_CONSTRUCT":
+			bridge._pad_trigger = false
+			bridge._keyboard_trigger = false
+			bridge._update_keyboard_mode()
 
 func _focus_selection() -> void:
 	if not object_info.is_valid():
@@ -458,7 +485,7 @@ func _native_tooltip(entry: Dictionary) -> void:
 	# Highlight readies builder construction and targeted portrait abilities exactly
 	# once per focused command; production and purchases never execute on hover.
 	var signature := str(_source.get_instance_id()) + ":" + str(entry.get("name", "")) + ":" + str(entry.get("slot", -1)) + ":" + str(_source.get_selection())
-	if entry.get("preview_on_focus", false) and int(entry.get("state", 0)) in [1, 5] and signature != _armed_focus:
+	if not (OS.has_feature("ios") and entry.get("command", "") == "DOZER_CONSTRUCT") and entry.get("preview_on_focus", false) and int(entry.get("state", 0)) in [1, 5] and signature != _armed_focus:
 		_armed_focus = signature
 		var placement: Dictionary = _source.get_placement() if _source.has_method("get_placement") else {}
 		if not (placement.get("placing",false) and not str(entry.get("template", "")).is_empty() and placement.get("template", "") == entry.get("template", "")):

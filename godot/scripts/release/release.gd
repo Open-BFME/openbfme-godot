@@ -8,8 +8,7 @@
 ##  * the version: "OpenBFME <git describe> (<build date>)" printed first, written first into the log, and shown in a corner of the menus
 ##    (game.gd calls set_in_game(true) while a game is on screen).
 ##  * a crash: a marker user://logs/<log name>.running (with the process id) exists while the game runs and is removed when it ends normally; a
-##    marker left by a process that is no longer running means the last run crashed or was killed: a message box names that run's log and asks the
-##    tester to attach it.
+##    marker left by a process that is no longer running means the last run crashed or was killed: the new session log records that run's log path without showing a popup.
 ##  * a freeze (lane FREEZE-1, Common/FreezeWatchdog.h): _process beats once per frame (also while the tree is paused); a frame longer than
 ##    1 s is a HITCH line, no frame for FREEZE_SECONDS a FREEZE line with every thread's stack in <log>.freeze-<n>.txt beside the log, and
 ##    "FREEZE over" when frames come again. A hidden or unfocused window waits 30 s and captures nothing. The next start names a frozen run.
@@ -95,11 +94,7 @@ func _ready() -> void:
 		return
 	if _has_arg("--crash-test") and OS.is_debug_build():
 		_crash_test.call_deferred()
-	# lane PLAY-1: a scripted run (--auto) never waits for a modal dialog (a killed test run left the marker and the next windowed run stopped at the alert)
-	if not previous_crash_log.is_empty() and not _headless() and not OS.get_cmdline_user_args().has("--auto"):
-		var froze := FileAccess.get_file_as_string(previous_crash_log).contains("\nFREEZE ")
-		_message.call_deferred(("OpenBFME stopped responding last time (it froze)." if froze else "OpenBFME did not close normally last time (a crash?).") + "\n\nThe log of that run is:\n%s\n\n%s" % [
-			_folder_and_file(log_path_for_user(previous_crash_log)), REPORT_HINT], "OpenBFME", previous_crash_log, false)
+	# Previous abnormal exits are recorded in the session log without a startup dialog.
 
 
 func _process(_delta: float) -> void:
