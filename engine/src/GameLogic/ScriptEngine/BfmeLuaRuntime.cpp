@@ -106,6 +106,7 @@ V scalar(lua_State *L, int index)
 		throw std::runtime_error("expected a scalar value");
 	}
 }
+// Keep each raw literal below MSVC's 16 KiB limit; adjacent literals form one Lua chunk.
 const char *bootstrap = R"lua(
 local snapshot, queue, status, writeLog, clock, newproxy, scripts, constructionResult = _bfmeSnapshot, _bfmeQueue, _bfmeStatus, _bfmeLog, _bfmeClock, _bfmeProxy, _bfmeScripts, _bfmeConstructionResult
 _bfmeSnapshot, _bfmeQueue, _bfmeStatus, _bfmeLog, _bfmeClock, _bfmeProxy, _bfmeScripts, _bfmeConstructionResult = nil,nil,nil,nil,nil,nil,nil,nil
@@ -209,7 +210,8 @@ end
 local function playerId(p)
  local _,h=record(p)
  if h.kind~='players' then error('expected a Player',3) end
- return tonumber(h.id)
+)lua"
+R"lua( return tonumber(h.id)
 end
 local function name(v,label) if type(v)~='string' or v=='' then error('expected '..label..' name',3) end; return v end
 local function target(t) if t==nil then return nil end; if type(t)=='userdata' then return instanceId(t,'target') end; return where(t) end
@@ -307,7 +309,8 @@ local methods={
    local _,h=record(b)
    unit=templateName(unit,'unitTypes','unit template')
    if count==nil then count=1 end; numeric(count,1,1000,true)
-   return queue(h.kind,h.id,':trainUnit',unit,count)
+)lua"
+R"lua(   return queue(h.kind,h.id,':trainUnit',unit,count)
   end,
   getTrainableUnits=objectQuery('trainable'),
   getUpgrades=objectQuery('upgrades'),
@@ -434,7 +437,8 @@ library('mutations',{
  getBuilding=function(ticket) local id=constructionResult(ticket); return id and proxy('buildingInstances',id) end,
 })
 library('debug',{
- getSelectedBuilding=function() return selected('buildingInstances')[1] end,
+)lua"
+R"lua( getSelectedBuilding=function() return selected('buildingInstances')[1] end,
  getSelectedUnit=function() return selected('unitInstances')[1] end,
  inspect=function(handle)
   if type(handle)~='userdata' or getmetatable(handle)~='bfme proxy' then error('expected a bfme handle',2) end
