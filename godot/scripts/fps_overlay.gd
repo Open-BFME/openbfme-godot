@@ -30,7 +30,7 @@ func _ready() -> void:
 	_label = Label.new()
 	_label.name = "FpsCounter"
 	_label.set_meta("game_text", true) # a player's option, not developer text (game.gd _dev_text_on_screen)
-	_label.position = Vector2(8, 4)
+	_label.position = Vector2(16, 16)
 	_label.add_theme_color_override("font_color", Color(1.0, 0.92, 0.6))
 	_label.add_theme_color_override("font_outline_color", Color.BLACK)
 	_label.add_theme_constant_override("outline_size", 4)
@@ -60,6 +60,7 @@ func _process(_delta: float) -> void:
 		_frames = 0
 		_since_us = Time.get_ticks_usec()
 		return
+	_update_position()
 	_frames += 1
 	var now := Time.get_ticks_usec()
 	var span := now - _since_us
@@ -127,3 +128,17 @@ func _save(keys: Array) -> void:
 		return
 	if not settings.save_keys(settings_path, keys):
 		printerr("GAME DISPLAY ", settings.errors[-1])
+
+
+func _update_position() -> void:
+	var bounds := get_viewport().get_visible_rect()
+	var padding := 16.0
+	if OS.has_feature("ios") or OS.has_feature("android"):
+		var screen_safe := Rect2(DisplayServer.get_display_safe_area())
+		if screen_safe.has_area():
+			# DisplayServer returns screen pixels; the overlay uses viewport coordinates.
+			var safe := get_viewport().get_screen_transform().affine_inverse() * screen_safe
+			bounds = bounds.intersection(safe)
+		# Extra inset keeps text away from rounded screen corners.
+		padding = 24.0
+	_label.position = bounds.position + Vector2.ONE * padding
