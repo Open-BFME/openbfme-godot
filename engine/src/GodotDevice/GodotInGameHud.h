@@ -14,6 +14,7 @@
 #include <godot_cpp/classes/input_event_with_modifiers.hpp>
 #include <godot_cpp/classes/node2d.hpp>
 #include <godot_cpp/classes/ref.hpp>
+#include <godot_cpp/classes/texture2d.hpp>
 #include <godot_cpp/variant/array.hpp>
 #include <godot_cpp/variant/dictionary.hpp>
 #include <godot_cpp/variant/rect2.hpp>
@@ -83,6 +84,12 @@ public:
 	// command (the retail Command name), template, upgrade, power, state (ButtonState: 0 hidden, 1 enabled, 2 restricted, 3 can't afford, 4 not ready, 5 active),
 	// cost, queued, frame (the movie clip of its position: a click there is the player's press) }
 	Array get_command_buttons() const;
+	void set_controller_layout(bool active);
+	void set_controller_hover(int slot, bool arc, int64_t unit, int spell);
+	bool activate_command(int slot, bool in_palantir, bool cancel);
+	Ref<Texture2D> get_command_icon(const String &name);
+	Array get_controller_objects(const String &role) const;
+	int64_t select_controller_group(const PackedInt64Array &ids);
 	// synthetic input (a viewer harness): window pixels
 	void inject_mouse_move(const Vector2 &position);
 	void inject_mouse_button(int button, bool down, const Vector2 &position, bool double_click);

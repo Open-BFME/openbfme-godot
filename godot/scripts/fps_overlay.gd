@@ -1,7 +1,7 @@
 ## Lane OPTS-1: the frame-rate counter and the OpenBFME display hotkeys (NOT RETAIL: owner, 2026-10-10).
-##   F11        shows / hides the frame-rate counter (saved as show_fps in openbfme-display.cfg)
+##   F10        shows / hides the frame-rate counter (saved as show_fps in openbfme-display.cfg)
 ##   Alt+Enter  toggles between a window and full screen (the last full-screen kind chosen, borderless by default; saved as window_mode)
-## Both keys are free in RotWK 2.01's CommandMap.ini (no CommandMap record uses KEY_F11 with any modifier, or KEY_ENTER with ALT; checked against the
+## Both keys are free in RotWK 2.01's CommandMap.ini (no CommandMap record uses KEY_F10 with any modifier, or KEY_ENTER with ALT; checked against the
 ## retail file by tools/opts/test_opts1_hotkeys.py), so no retail command loses its key. The node sits under the scene root after the game, so it sees
 ## a key before the shell, the HUD and the game do, and a key it acts on goes no further.
 ## The counter: frames per second and the mean frame time of the last half second, drawn over everything in the top-left corner.
@@ -10,7 +10,7 @@ extends CanvasLayer
 const DisplaySettings := preload("res://scripts/display_settings.gd")
 
 const HOTKEYS := [
-	{"name": "OPENBFME_TOGGLE_FPS", "key": KEY_F11, "alt": false, "commandmap": "KEY_F11", "modifiers": "any"},
+	{"name": "OPENBFME_TOGGLE_FPS", "key": KEY_F10, "alt": false, "commandmap": "KEY_F10", "modifiers": "any"},
 	{"name": "OPENBFME_TOGGLE_FULLSCREEN", "key": KEY_ENTER, "alt": true, "commandmap": "KEY_ENTER", "modifiers": "ALT"},
 ]
 
@@ -74,7 +74,7 @@ func _input(event: InputEvent) -> void:
 	var key := event as InputEventKey
 	if key == null or not key.pressed or key.echo:
 		return
-	if key.keycode == KEY_F11 and not key.alt_pressed and not key.ctrl_pressed and not key.shift_pressed:
+	if key.keycode == KEY_F10 and not key.alt_pressed and not key.ctrl_pressed and not key.shift_pressed:
 		get_viewport().set_input_as_handled()
 		toggle_fps()
 	elif (key.keycode == KEY_ENTER or key.keycode == KEY_KP_ENTER) and key.alt_pressed and not key.ctrl_pressed and not key.shift_pressed:
@@ -88,13 +88,13 @@ func toggle_fps() -> void:
 	var on := not shown()
 	if screen != null and screen.is_open():
 		screen.hotkey("show_fps", on) # the screen's settings, written by its ACCEPT, put back by its CANCEL
-		print("GAME DISPLAY frame-rate counter %s (F11, options screen)" % ("on" if on else "off"))
+		print("GAME DISPLAY frame-rate counter %s (F10, options screen)" % ("on" if on else "off"))
 		return
 	session_fps = false
 	settings.show_fps = on
 	_save(["show_fps"])
 	refresh()
-	print("GAME DISPLAY frame-rate counter %s (F11)" % ("on" if shown() else "off"))
+	print("GAME DISPLAY frame-rate counter %s (F10)" % ("on" if shown() else "off"))
 
 
 ## Alt+Enter: windowed <-> full screen, from the mode the window is in. Going full screen uses the kind this run last left (borderless when it never

@@ -1,8 +1,8 @@
 """Lane OPTS-1: the OpenBFME display hotkeys are not retail (owner, 2026-10-10) and must not take a key from a retail command. Their registry is
-HOTKEYS in godot/scripts/fps_overlay.gd: F11 (the frame-rate counter, any modifier) and Alt+Enter (full screen). The retail-file test reads every
+HOTKEYS in godot/scripts/fps_overlay.gd: F10 (the frame-rate counter, any modifier) and Alt+Enter (full screen). The retail-file test reads every
 CommandMap.ini of the RotWK 2.01 / BFME2 1.06 mount (Data\\INI\\CommandMap.ini and the language archive's CommandMap.ini, the two files GameClient's
 "CommandMap.ini" subsystem entry resolves to, MetaEvent.h / stop S-281) and checks that no CommandMap record uses those keys: no record with
-Key = KEY_F11, and none with Key = KEY_ENTER / KEY_KPENTER and a Modifiers value that holds ALT. Runs only when ROTWK_INSTALL and BFME2_INSTALL are set.
+Key = KEY_F10, and none with Key = KEY_ENTER / KEY_KPENTER and a Modifiers value that holds ALT. Runs only when ROTWK_INSTALL and BFME2_INSTALL are set.
 """
 from __future__ import annotations
 
@@ -56,10 +56,10 @@ def records(text: str) -> list[dict]:
 def test_registry_names_the_two_keys():
     reg = registry()
     assert [(r["name"], r["commandmap"], r["modifiers"]) for r in reg] == [
-        ("OPENBFME_TOGGLE_FPS", "KEY_F11", "any"),
+        ("OPENBFME_TOGGLE_FPS", "KEY_F10", "any"),
         ("OPENBFME_TOGGLE_FULLSCREEN", "KEY_ENTER", "ALT"),
     ]
-    assert [r["godot_key"] for r in reg] == ["KEY_F11", "KEY_ENTER"]
+    assert [r["godot_key"] for r in reg] == ["KEY_F10", "KEY_ENTER"]
 
 
 @needs_installs
@@ -80,7 +80,7 @@ def test_hotkeys_are_free_in_retail_commandmap():
         for r in all_records:
             key = r.get("key", "")
             mods = r.get("modifiers", "NONE").upper()
-            if hk["commandmap"] == "KEY_F11" and key == "KEY_F11":
+            if hk["commandmap"] == "KEY_F10" and key == "KEY_F10":
                 clash.append(r)
             if hk["commandmap"] == "KEY_ENTER" and key in ("KEY_ENTER", "KEY_KPENTER") and "ALT" in mods:
                 clash.append(r)

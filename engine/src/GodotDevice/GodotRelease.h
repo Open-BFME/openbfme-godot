@@ -93,6 +93,10 @@ class InstallSetup : public RefCounted
 
 public:
 	String config_path() const;
+#ifdef IOS_ENABLED
+	void pick_external_assets();
+	Dictionary external_assets() const;
+#endif
 	// {source: "env" | "config" | "none", rotwk, bfme2}
 	Dictionary configured() const;
 	// [{game: "rotwk" | "bfme2", path, source, ok, errors}] every folder found on this machine, each already checked

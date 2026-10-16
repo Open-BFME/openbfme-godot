@@ -9,6 +9,7 @@
 #include "GameLogic/Object/RetailObjectWorld.h"
 #include "GameLogic/ObjectTemplateInfo.h"
 #include "GameLogic/SimMath.h"
+#include "GameLogic/System/ShroudManager.h"
 #include "GodotDevice/GodotGameWorld.h"
 #include <algorithm>
 #include <cmath>
@@ -189,6 +190,14 @@ std::string GameWorld::bfme_apply(const BfmeLuaRuntime::Mutation &m)
 		auto p = logic.players().getNthPlayer(numberId(m.id));
 		if (!p)
 			return "expired player";
+		if (m.field == "revealMap" || m.field == "fogOfWar")
+		{
+			const bool *value = std::get_if<bool>(&m.value.data);
+			if (!value || !logic.shroud()) return "map visibility is unavailable";
+			if (m.field == "fogOfWar") logic.shroud()->setCheatFogDisabled(p->getPlayerIndex(), !*value);
+			else if (*value) logic.shroud()->revealMapForPlayer(p->getPlayerIndex());
+			return {};
+		}
 		if (m.field == "money" || m.field == "gold")
 		{
 			auto amount = std::uint32_t(SimMath::ftol2(numeric(m.value, 0, 2147483647)));

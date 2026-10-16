@@ -106,3 +106,5 @@ proxy identity, enumeration, detached copies, money tickets, validation, expired
 `godot --headless --path godot --script res://tests/lua_console_test.gd` exercises the console and native extension together.
 
 The backtick console’s **Cheats** tab provides local-player gold, game speed (0–100×), pause and resume controls. Actions use the same Lua API as the Command tab; their output appears in Log.
+
+The console Cheats tab offers +100k gold, +100k command points, Reveal map, Disable fog of war, and Restore fog of war for the local player. Gold and CP additions respect their supported limits. `player.revealMap = true` explores the map once; `player.fogOfWar = false` adds a persistent visibility override, and `true` removes that override. Repeated fog-disable presses do not stack. These use the existing queued mutation path.

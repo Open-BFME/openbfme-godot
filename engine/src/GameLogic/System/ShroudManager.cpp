@@ -130,6 +130,7 @@ void ShroudManager::init(float cellSize, unsigned unlookPersistFrames)
 
 void ShroudManager::setExtent(float loX, float loY, float hiX, float hiY, float cellSize)
 {
+	m_cheatFogPlayers.clear();
 	// RW 0xB520F0: a non-positive size keeps the current one; a negative extent is ignored
 	if (cellSize <= 0.0f)
 	{
@@ -1568,4 +1569,17 @@ ShroudManager::ObjectSource ShroudManager::retailObjectSource()
 		return true;
 	};
 	return s;
+}
+
+// Explicit companion-console override, balanced so repeated button presses do not stack reveals.
+void ShroudManager::setCheatFogDisabled(int player, bool disabled)
+{
+    auto found = std::find(m_cheatFogPlayers.begin(), m_cheatFogPlayers.end(), player);
+    if (disabled && found == m_cheatFogPlayers.end()) {
+        revealMapForPlayerPermanently(player);
+        m_cheatFogPlayers.push_back(player);
+    } else if (!disabled && found != m_cheatFogPlayers.end()) {
+        undoRevealMapForPlayerPermanently(player);
+        m_cheatFogPlayers.erase(found);
+    }
 }

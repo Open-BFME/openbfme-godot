@@ -88,9 +88,9 @@
 ##     --fps                 (lane SMOOTH-1) show the render frame rate and frame time in a corner (lane OPTS-1: the counter of scripts/fps_overlay.gd, for the run)
 ##   lane OPTS-1, the OpenBFME display options (not retail; scripts/display_settings.gd, openbfme-display.cfg in the user data folder): Options.apt shows an
 ##   OPENBFME button that opens scripts/openbfme_options_screen.gd (window mode, resolution, vsync, frame cap, frame-rate counter, render scale, FSR);
-##   F11 toggles the counter, Alt+Enter full screen (scripts/fps_overlay.gd)
+##   F10 toggles the counter, Alt+Enter full screen (scripts/fps_overlay.gd)
 ##     --display-check       the scripted check of tests/opts1_test.gd: every window mode, resolution and scaler through the screen, with the main menu's
-##                           and Options.apt's widget states compared before and after; F11 and Alt+Enter as key events; exit 0 when all held
+##                           and Options.apt's widget states compared before and after; F10 and Alt+Enter as key events; exit 0 when all held
 ##     --display-shots=DIR   (with --display-check / --display-game) opts1-entry.png, opts1-screen.png, opts1-fps.png, opts1-game-*.png (the proof screenshots)
 ##     --display-game        (with --auto) after --advance seconds: Esc, the quit menu's Options, the OPENBFME screen over the live game (the HUD takes no
 ##                           input while it is up; a resolution change keeps the menus' 1024 x 768 stage on the whole window), Esc back to the game; exit 0 when all held
@@ -262,7 +262,7 @@ const DisplaySettings := preload("res://scripts/display_settings.gd") # lane OPT
 const OnlineStats := preload("res://scripts/online_stats.gd") # lane ONLINECOUNT-1
 var _display: RefCounted                 # lane OPTS-1: the display settings in effect (openbfme-display.cfg)
 var _display_path := ""
-var _display_overlay: CanvasLayer        # scripts/fps_overlay.gd: the counter and the F11 / Alt+Enter keys
+var _display_overlay: CanvasLayer        # scripts/fps_overlay.gd: the counter and the F10 / Alt+Enter keys
 var _display_screen: CanvasLayer         # scripts/openbfme_options_screen.gd
 var _game_options: Node                  # lane OPTS-2: scripts/game_options.gd, the retail detail / brightness / scroll and the OpenBFME extras in effect
 var _display_check := false              # --display-check
@@ -290,6 +290,8 @@ var _shell: Node2D           # AptMenuPlayer
 var _camera: Camera3D
 var _env: WorldEnvironment
 var _sun: DirectionalLight3D
+var _quit_q_time := -1
+const DOUBLE_Q_MS := 450
 var _state := State.BOOT
 var _frames := 0
 var _menu_revealed := false
@@ -539,7 +541,11 @@ var _rotwk_install := ""        # lane CAH-2: the mounted RotWK install folder (
 var _cah_hero_id := ""          # lane CAH-1: the unique id of the hero the --cah run saved
 
 
+var _startup_shortcut: Node
+
 func _ready() -> void:
+	_startup_shortcut = preload("res://scripts/startup_shortcut.gd").new()
+	add_child(_startup_shortcut)
 	_display_setup() # lane OPTS-1: the player's display settings first; the command line below wins for the run
 	print("FRAME PACING ", preload("res://scripts/frame_pacing.gd").apply_from_args(OS.get_cmdline_user_args())) # lane SMOOTH-1
 	for arg in OS.get_cmdline_user_args():
@@ -1020,6 +1026,27 @@ func _boot() -> void:
 	_lua_console.execute = func(code: String) -> Dictionary: return _world.execute_lua(code)
 	_lua_console.toggled.connect(_lua_console_toggled)
 	add_child(_lua_console)
+	var controller := preload("res://scripts/controller_input.gd").new()
+	controller.name = "ControllerInput"
+	var controller_loaded: Dictionary = _world.execute_lua("console.reload()")
+	if not controller_loaded.ok:
+		printerr("CONTROLLER Lua scripts: ", controller_loaded.output)
+	controller.resolve_action = func(button: String, playing: bool) -> String:
+		var result: Dictionary = _world.execute_lua("return controller.action(%s, %s, %s)" % [JSON.stringify(button), "true" if playing else "false", "true" if controller.palette_open else "false"])
+		if not result.ok:
+			printerr("CONTROLLER Lua: ", result.output)
+			return ""
+		return str(result.output).strip_edges()
+	controller.gameplay = func() -> bool: return _state == State.PLAYING and not _quit_open and (_lua_console == null or not _lua_console.is_open())
+	controller.input_generated.connect(func(event: InputEvent) -> void: Input.parse_input_event(event))
+	add_child(controller)
+	var controller_ui := preload("res://scripts/controller_ui.gd").new()
+	controller_ui.name = "ControllerUI"
+	controller_ui.bridge = controller
+	controller_ui.object_info = func(id: int) -> Dictionary: return _world.get_object(id)
+	controller_ui.execute = func(code: String) -> Dictionary: return _world.execute_lua(code)
+	controller_ui.hud = func() -> Node: return _hud
+	add_child(controller_ui)
 	var setup: Dictionary = _world.setup(_fs)
 	print("GAME object world: ok=%s, %d templates, %d playable factions, %.1f s" % [setup.ok, setup.get("templates", 0), setup.get("factions", 0), setup.get("seconds", 0.0)])
 	if not setup.ok:
@@ -1076,6 +1103,11 @@ func _boot() -> void:
 	_campaign_flow.auto_win = _campaign_win
 	_campaign_flow.movies = _campaign_movies # lane CAMP-1H
 	add_child(_campaign_flow)
+	var quick_skirmish: bool = _startup_shortcut.skirmish_requested and not _scripted_run()
+	_startup_shortcut.queue_free()
+	if quick_skirmish:
+		_run_startup_skirmish()
+		return
 	if not _cli_campaign.is_empty():
 		_campaign_flow.mission = _cli_mission
 		_campaign_flow.campaign = _cli_campaign
@@ -1877,6 +1909,20 @@ func _run_campaign_play1() -> void:
 	get_tree().quit(0 if player.fail_count == 0 else 1)
 
 
+func _run_startup_skirmish() -> void:
+	await _wait_main_ready()
+	var level: int = _shell.shell_top_level()
+	if not await _click_button(level, "SoloPlayNav"):
+		return
+	await _step(90)
+	if not await _click_button(level, "SoloPlayNav.Skirmish"):
+		return
+	await _step(90)
+	# Press Start on the existing setup. Normal validation leaves the lobby open
+	# if the player still needs to choose a profile or fix the setup.
+	_shell.shell_fscommand("AptSkirmish::StartGame", "")
+
+
 func _run_auto() -> void:
 	# main menu: wait for ShowMainMenu, open the solo nav and click Skirmish (real mouse events)
 	await _step(LEVEL_MAIN_MENU_FRAMES + 70)
@@ -2459,7 +2505,24 @@ func _end_game_tick() -> void:
 func _input(event: InputEvent) -> void:
 	if _lua_console != null:
 		if _lua_console.is_open():
+			_quit_q_time = -1
 			return
+	if event is InputEventKey and event.pressed and not event.echo:
+		var can_quit := _state in [State.MENU, State.SCORE]
+		var focus := get_viewport().gui_get_focus_owner()
+		can_quit = can_quit and not (focus is LineEdit or focus is TextEdit)
+		if can_quit and _shell != null:
+			can_quit = not _shell.get_report().get("gadget_keyboard_focus", false)
+		var plain_q: bool = event.keycode == KEY_Q and not (event.ctrl_pressed or event.alt_pressed or event.meta_pressed or event.shift_pressed)
+		if can_quit and plain_q:
+			var now := Time.get_ticks_msec()
+			if _quit_q_time >= 0 and now - _quit_q_time <= DOUBLE_Q_MS:
+				get_viewport().set_input_as_handled()
+				get_tree().quit()
+				return
+			_quit_q_time = now
+		else:
+			_quit_q_time = -1
 	# lane END-2: Esc toggles the quit menu (the options meta command, RW 0x9DB877 -> ToggleQuitMenu RW 0x921C9D), as the Palantir's options button does
 	if _state == State.PLAYING and event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_ESCAPE:
 		get_viewport().set_input_as_handled()
@@ -3149,7 +3212,7 @@ func _wait_main_ready() -> void:
 		if stack.size() > 0 and stack[-1] == "MainMenu.apt":
 			var level: int = _shell.shell_top_level()
 			var ready := 0
-			for nav in ["SoloPlayNav", "MultiPlayNav", "OptionsNav", "MyHeroes", "QuitMainMenu"]:
+			for nav in ["SoloPlayNav", "MultiPlayNav", "OptionsNav", "MyHeores", "QuitMainMenu"]:
 				var b: Dictionary = _shell.find_button(level, nav)
 				for x in _shell.list_buttons(level) if b.found else []:
 					if x.path == b.path and x.hittable:

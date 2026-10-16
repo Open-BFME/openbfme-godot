@@ -51,3 +51,25 @@ Not done yet:
    tests found; NaN results of the C++ simulation code itself (outside DetLibm and the Lua VM) are still the CPU's.
 3. The test helpers of `tools/retail_oracle/build.bat` (the x87 oracle is a 32-bit x86 Windows program), an x86_64 or universal library, a
    Developer ID signed and notarised distribution package (local builds are ad-hoc signed).
+
+## Package with game assets
+
+Build the app first, then create a separate portable copy including your installed game data:
+
+```sh
+tools/release/build_macos.sh
+python3 tools/release/package_game_with_assets.py \
+  --rotwk /path/to/RotWK --bfme2 /path/to/BFME2
+```
+
+Output: `engine/build/macos-with-assets/OpenBFME.app`. Both install folders are copied into `Contents/Resources/retail/`; the app uses them directly without the path picker. Archive verification still runs at startup. The source installs and saved user paths are unchanged. This is a local package containing your retail files, separate from the public release packaging workflow.
+
+Use `--dry-run` to check inputs and estimate disk usage, `--app` to select the freshly built app, and `--output` for a new destination. Existing output is never overwritten. `ROTWK_INSTALL` and `BFME2_INSTALL` can replace the path arguments. The complete install folders are copied, including loose movies and language files; allow roughly 8 GiB plus the app depending on your installs.
+
+Menu movie buttons support **Tab** / **Shift+Tab** to cycle currently clickable buttons **arrow keys** to move toward a nearby button, and **Enter** / **Space** to activate the highlighted button. Moving the mouse returns to pointer navigation.
+
+Main-menu arrows follow its hierarchy: Left/Right across navigation headings, Up/Down within the current submenu. On skirmish/review screens, horizontal navigation on the bottom row stays among its actions (such as Main Menu and Play). Tab follows visual row order.
+
+Double-tap **Q** within 450 ms to quit from menus or the score screen. This shortcut is disabled during gameplay, while the Lua console is open, and while a text field or native menu control has keyboard focus.
+
+Hold **Shift** while launching to open Skirmish and press Start using the saved setup. Release Shift once startup begins. This bypasses menu navigation; explicit scripted/test runs keep their requested startup mode.

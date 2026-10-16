@@ -113,6 +113,7 @@ public:
 	// and the view to project with. Builds the button rectangles and the draw ops.
 	void update(GameLogic &logic, DrawableManager *drawables, const TacticalView &view, int displayW, int displayH, ObjectID context,
 	            const std::vector<ControlBarButton> &radialButtons, bool allowed);
+	void setPresentationVisible(bool visible) { m_presentationVisible = visible; }
 	void setImageSize(ImageSizeFn fn, void *ctx) { m_imageSize = fn; m_imageCtx = ctx; }
 
 	// ---- input (window pixels) ----
@@ -143,6 +144,7 @@ public:
 	static void centerOf(GameLogic &logic, DrawableManager *drawables, const TacticalView &view, ObjectID id, int &x, int &y);
 
 private:
+	bool m_presentationVisible = true;
 	void buildOps();
 	RadialMenuLayout m_layout;
 	ObjectID m_object = INVALID_ID;

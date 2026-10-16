@@ -266,7 +266,30 @@ func set_in_game(in_game: bool) -> void:
 ## Mounts the retail archives (RetailFileSystem `fs`) from the environment, the remembered folders or the first-run screen. Returns the
 ## mount report ({ok, errors, ...}); with ok false the caller fails with the errors.
 func mount_retail(fs: RefCounted) -> Dictionary:
+	# Portable macOS packages carry installs beside the PCK. Resolve at launch so
+	# moving the .app never leaves absolute paths in the user's configuration.
+	var bundle_root := OS.get_executable_path().get_base_dir()
+	var bundled := bundle_root.path_join("retail") if OS.has_feature("ios") else bundle_root.path_join("../Resources/retail").simplify_path()
+	if OS.has_feature("standalone_game") and DirAccess.dir_exists_absolute(bundled):
+		print("RELEASE game folders: bundled assets")
+		var rotwk := bundled.path_join("rotwk")
+		var bfme2 := bundled.path_join("bfme2")
+		var mounted: Dictionary = fs.mount_retail_paths(rotwk, bfme2)
+		if mounted.ok and OS.has_feature("ios"):
+			# Loose video/audio lookup also uses InstallSetup's configured roots.
+			# Refresh them each launch: iOS can relocate an app's sandbox on update.
+			var bundled_setup: RefCounted = ClassDB.instantiate("InstallSetup")
+			var remembered: Dictionary = bundled_setup.remember(rotwk, bfme2)
+			if not remembered.ok:
+				return {"ok": false, "errors": [remembered.error]}
+		return mounted
 	var setup: RefCounted = ClassDB.instantiate("InstallSetup")
+	if OS.has_feature("ios"):
+		var external: CanvasLayer = preload("res://scripts/release/ios_assets.gd").new()
+		add_child(external)
+		var result: Dictionary = await external.run(fs, setup)
+		external.queue_free()
+		return result
 	var conf: Dictionary = setup.configured()
 	var args := OS.get_cmdline_user_args()
 	var test_pick := _first_run_test_args(args)

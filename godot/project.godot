@@ -11,6 +11,7 @@ config_version=5
 [application]
 
 config/name="OpenBFME"
+config/icon="res://assets/second-age.png"
 boot_splash/show_image=false
 boot_splash/show_progress_bar=false
 boot_splash/bg_color=Color(0, 0, 0, 1)
@@ -43,5 +44,7 @@ rendering/soft_particles=true
 export/convert_text_resources_to_binary=false
 
 [rendering]
+
+renderer/rendering_method.ios="mobile"
 
 textures/vram_compression/import_etc2_astc=true

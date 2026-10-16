@@ -153,6 +153,7 @@ public:
 	std::uint32_t counter() const { return m_counter; }
 
 	// ---- map-wide operations ----
+	void setCheatFogDisabled(int player, bool disabled);
 	void revealMapForPlayer(int player);               ///< RW 0xB4F570
 	void revealMapForPlayerPermanently(int player);    ///< RW 0xB4F5D0
 	void undoRevealMapForPlayerPermanently(int player);///< RW 0xB519B0
@@ -220,6 +221,7 @@ public:
 	const Stats &stats() const { return m_stats; }
 
 private:
+	std::vector<int> m_cheatFogPlayers;
 	struct Cell
 	{
 		std::array<std::int16_t, kMaxPlayers> lookers;

@@ -1,3 +1,4 @@
+#include <godot_cpp/classes/engine.hpp>
 // OpenBFME. GPL-3.0.
 // See GodotAptPlayer.h.
 
@@ -696,6 +697,9 @@ struct AptMenuPlayer::Impl
 	WindowManager *external = nullptr;
 	AptNativeHook *nativeHook = nullptr;
 	bool inputForwarded = false;
+	String keyboardButton;
+	int mainMenuGroup = -1, mainMenuItem = -1;
+	bool keyboardButtonPressed = false;
 	bool openbfmeAvailable = false; // lane OPTS-3: set_openbfme_available
 	std::unique_ptr<AptTextureStore> textures;
 	GameTextTable strings;
@@ -4722,6 +4726,8 @@ void AptMenuPlayer::_input(const Ref<InputEvent> &event)
 	}
 	if (const InputEventMouseMotion *mm = Object::cast_to<InputEventMouseMotion>(event.ptr()))
 	{
+		m->keyboardButton = String();
+		m->mainMenuGroup = m->mainMenuItem = -1;
 		post_mouse_move_stage(window_to_stage(mm->get_position()));
 	}
 	else if (const InputEventMouseButton *mb = Object::cast_to<InputEventMouseButton>(event.ptr()))
@@ -4744,6 +4750,184 @@ void AptMenuPlayer::_input(const Ref<InputEvent> &event)
 	{
 		if (key->is_echo())
 		{
+			return;
+		}
+		const Key controllerKey = key->get_keycode();
+		if (controllerKey == Key::KEY_BACKSLASH) return;
+		if (controllerKey == Key::KEY_TAB && (bool)Engine::get_singleton()->get_meta("controller_keyboard_enabled", false)) return;
+		if ((bool)Engine::get_singleton()->get_meta("controller_keyboard_active", false) && !key->is_ctrl_pressed() && !key->is_alt_pressed() &&
+			(controllerKey == Key::KEY_LEFT || controllerKey == Key::KEY_RIGHT || controllerKey == Key::KEY_UP || controllerKey == Key::KEY_DOWN ||
+			controllerKey == Key::KEY_ENTER || controllerKey == Key::KEY_KP_ENTER || controllerKey == Key::KEY_BACKSPACE || controllerKey == Key::KEY_X || controllerKey == Key::KEY_Y)) return;
+		// BFME2Lua dev/lib/main_menu.lua: explicit group/item policy and native
+		// timeline highlights. Expanded groups cover other headings in APT hit
+		// testing, so spatial mouse traversal cannot establish this order.
+		const Key menuKey = key->get_keycode();
+		const bool menuArrow = menuKey == Key::KEY_LEFT || menuKey == Key::KEY_RIGHT || menuKey == Key::KEY_UP || menuKey == Key::KEY_DOWN;
+		const bool mainScreen = m->shell && m->shell->shell && m->shell->shell->top() && m->shell->shell->top()->filename() == "MainMenu.apt";
+		AptCharacterInst *mainHeading = mainScreen ? m->A()->resolvePath(m->A()->level(m->shell->shell->top()->level()), "SoloPlayNav") : nullptr;
+		const bool main = mainHeading && mainHeading->globallyVisible() && !m->shell->wm->componentInputBlocked();
+		if (!main || menuKey == Key::KEY_TAB) m->mainMenuGroup = m->mainMenuItem = -1;
+		if (main && (menuArrow || (m->mainMenuGroup >= 0 && (menuKey == Key::KEY_ENTER || menuKey == Key::KEY_KP_ENTER || menuKey == Key::KEY_SPACE))))
+		{
+			struct Menu { const char *clip; std::vector<const char *> items; };
+			const std::vector<Menu> menus = {
+				{ "TutorialsNav", { "BasicTutorial", "AdvancedTutorial", "StrategicTutorial" } },
+				{ "SoloPlayNav", { "Skirmish", "WarOfTheRing", "EvilCampaign", "GoodCampaign", "LoadGame" } },
+				{ "MultiPlayNav", { "Online", "LocalNetwork", "Replay" } },
+				{ "OptionsNav", { "Settings", "AdvancedSettings", "Credits" } },
+				{ "MyHeores", {} }, { "QuitMainMenu", {} }
+			};
+			const int level = m->shell->shell->top()->level();
+			auto animate = [&](const std::string &path, const char *label, bool play) {
+				AptCharacterInst *clip = m->A()->resolvePath(m->A()->level(level), path);
+				AptSpriteInst *sprite = clip ? clip->asSprite() : nullptr;
+				const int frame = sprite ? sprite->labelFrame(label) : -1;
+				if (frame >= 0) { sprite->gotoFrame(frame); sprite->playing = play; }
+			};
+			if (key->is_pressed())
+			{
+				const int previousGroup = m->mainMenuGroup;
+				const bool horizontal = menuKey == Key::KEY_LEFT || menuKey == Key::KEY_RIGHT;
+				if (menuArrow)
+				{
+					if (horizontal)
+					{
+						const int delta = menuKey == Key::KEY_RIGHT ? 1 : -1;
+						if (m->mainMenuGroup < 0) m->mainMenuGroup = delta > 0 ? -1 : 0;
+						m->mainMenuGroup = (m->mainMenuGroup + delta + (int)menus.size()) % (int)menus.size();
+						m->mainMenuItem = -1;
+					}
+					else
+					{
+						if (m->mainMenuGroup < 0) m->mainMenuGroup = 0;
+						const int count = (int)menus[m->mainMenuGroup].items.size();
+						if (count) m->mainMenuItem = m->mainMenuItem < 0 ? 0 : (m->mainMenuItem + (menuKey == Key::KEY_UP ? 1 : -1) + count) % count;
+					}
+				}
+				else if (m->mainMenuItem < 0 && !menus[m->mainMenuGroup].items.empty()) m->mainMenuItem = 0;
+				else
+				{
+					const std::vector<std::vector<const char *>> actions = {
+						{ "OnTutorial", "OnTutorial", "OnTutorial" },
+						{ "Skirmish", "WarOfTheRing", "EvilCampaignButton", "GoodCampaignButton", "LoadGame" },
+						{ "OnlineButtonPressed", "LAN", "LoadReplay" },
+						{ "SettingsButton", "AdvancedSettingsButton", "Credits" }, { "CreateAHero" }, { "ExitGame" }
+					};
+					const int item = std::max(0, m->mainMenuItem);
+					const std::string action = actions[m->mainMenuGroup][item];
+					if (action.find("Button") != std::string::npos && action != "OnlineButtonPressed")
+					{
+						std::string error;
+						if (!m->shell->wm->invokeASAt(level, "", action, {}, nullptr, &error)) m->errors.insert(error);
+					}
+					else
+					{
+						const char *tutorials[] = { "Basic", "Advanced", "Strategic" };
+						m->shell->wm->invokeCallback("AptMainMenu::" + action, m->mainMenuGroup == 0 ? tutorials[item] : "");
+					}
+				}
+				for (int g = 0; g < (int)menus.size(); ++g)
+				{
+					const bool chosen = g == m->mainMenuGroup;
+					const bool single = menus[g].items.empty();
+					if (previousGroup != m->mainMenuGroup) animate(menus[g].clip, single ? (chosen ? "_over" : "_up") : (chosen ? "_show" : "_hide"), chosen || single);
+					if (!single && previousGroup != m->mainMenuGroup) animate(std::string(menus[g].clip) + ".OpenButton", chosen ? "_over" : "_up", true);
+					for (int j = 0; j < (int)menus[g].items.size(); ++j)
+						animate(std::string(menus[g].clip) + "." + menus[g].items[j], chosen && j == m->mainMenuItem ? "_over" : "_up", true);
+				}
+				m->keyboardButton = String(menus[m->mainMenuGroup].clip);
+				if (m->mainMenuItem >= 0) m->keyboardButton += String(".") + menus[m->mainMenuGroup].items[m->mainMenuItem];
+			}
+			get_viewport()->set_input_as_handled();
+			return;
+		}
+		// OpenBFME menu accessibility: traverse only currently hittable APT buttons.
+		// Hit testing excludes hidden, disabled and modal-covered controls. Hovering
+		// provides the movie's native highlight rather than drawing a second skin.
+		const Key keyCode = key->get_keycode();
+		const bool arrow = keyCode == Key::KEY_LEFT || keyCode == Key::KEY_RIGHT || keyCode == Key::KEY_UP || keyCode == Key::KEY_DOWN;
+		if (m->shell && m->shell->shell && m->shell->shell->screenCount() > 0 && (keyCode == Key::KEY_TAB || arrow ||
+			(!m->keyboardButton.is_empty() && (keyCode == Key::KEY_ENTER || keyCode == Key::KEY_KP_ENTER || keyCode == Key::KEY_SPACE))))
+		{
+			Array candidates;
+			for (int level : m->A()->loadedLevels())
+			{
+				if (level == m->shell->wm->backgroundLevel()) continue;
+				for (const Variant &entry : list_buttons(level))
+				{
+					Dictionary button = entry;
+					if ((bool)button.get("hittable", false)) candidates.push_back(button);
+				}
+			}
+			// Use visual order rather than APT display-list depth for Tab traversal.
+			std::vector<Dictionary> ordered;
+			for (const Variant &entry : candidates) ordered.push_back(Dictionary(entry));
+			std::stable_sort(ordered.begin(), ordered.end(), [](const Dictionary &a, const Dictionary &b) {
+				const double ay = a["y"], by = b["y"];
+				const int rowA = (int)std::floor(ay / 12.0), rowB = (int)std::floor(by / 12.0);
+				if (rowA != rowB) return rowA < rowB;
+				return (double)a["x"] < (double)b["x"];
+			});
+			candidates.clear();
+			for (const auto &entry : ordered) candidates.push_back(entry);
+			int current = -1;
+			for (int i = 0; i < candidates.size(); ++i)
+				if (String(Dictionary(candidates[i])["path"]) == m->keyboardButton) current = i;
+			if ((keyCode == Key::KEY_TAB || arrow) && key->is_pressed() && !candidates.is_empty())
+			{
+				const int count = candidates.size();
+				if (arrow && current >= 0)
+				{
+					const Dictionary origin = candidates[current];
+					const Vector2 direction = keyCode == Key::KEY_LEFT ? Vector2(-1, 0) :
+						keyCode == Key::KEY_RIGHT ? Vector2(1, 0) : keyCode == Key::KEY_UP ? Vector2(0, -1) : Vector2(0, 1);
+					double best = 1e30;
+					int next = current;
+					for (int i = 0; i < count; ++i)
+					{
+						const Dictionary target = candidates[i];
+						const Vector2 delta((double)target["x"] - (double)origin["x"], (double)target["y"] - (double)origin["y"]);
+						const double forward = delta.dot(direction);
+						if (forward <= 0.5) continue;
+						const double across = std::abs(delta.cross(direction));
+						const double score = delta.length() + across * 2.0;
+						if (score < best) { best = score; next = i; }
+					}
+					const bool horizontal = keyCode == Key::KEY_LEFT || keyCode == Key::KEY_RIGHT;
+					// Skirmish/review bottom actions form a horizontal row: don't jump
+					// into a map or player widget when moving between Main Menu and Play.
+					if (horizontal)
+					{
+						double bottom = -1e30;
+						for (const Variant &entry : candidates) bottom = std::max(bottom, (double)Dictionary(entry)["y"]);
+						if ((double)origin["y"] >= bottom - 40.0)
+						{
+							best = 1e30; next = current;
+							for (int i = 0; i < count; ++i)
+							{
+								const Dictionary target = candidates[i];
+								if ((double)target["y"] < bottom - 40.0) continue;
+								const double forward = ((double)target["x"] - (double)origin["x"]) * (keyCode == Key::KEY_LEFT ? -1.0 : 1.0);
+								if (forward > 0.5 && forward < best) { best = forward; next = i; }
+							}
+						}
+					}
+					current = next;
+				}
+				else
+					current = current < 0 ? (key->is_shift_pressed() ? count - 1 : 0) :
+						(current + (key->is_shift_pressed() ? count - 1 : 1)) % count;
+				Dictionary button = candidates[current];
+				m->keyboardButton = button["path"];
+				post_mouse_move_stage(Vector2((double)button["x"], (double)button["y"]));
+			}
+			else if (keyCode != Key::KEY_TAB && !arrow && (current >= 0 || m->keyboardButtonPressed))
+			{
+				post_mouse_button(key->is_pressed());
+				m->keyboardButtonPressed = key->is_pressed();
+			}
+			else if (current < 0) m->keyboardButton = String();
+			get_viewport()->set_input_as_handled();
 			return;
 		}
 		// lane OPTS-3: Esc on the OpenBFME page is its CANCEL; the movie never sees the key (its own Esc would play Options' closing animation)
@@ -5030,6 +5214,8 @@ Dictionary AptMenuPlayer::get_report() const
 	r["placeholders"] = toArray(m->placeholders);
 	r["view3d_errors"] = toArray(m->view3d.errors()); // lane UI-2
 	r["view3d_viewers"] = (int64_t)m->view3d.viewerCount();
+	r["keyboard_button"] = m->keyboardButton;
+	r["gadget_keyboard_focus"] = m->shell && m->shell->layer && m->shell->layer->gadgets().winGetFocus() != nullptr;
 	r["view3d_notes"] = toArray(m->view3d.notes());
 	r["movie_errors"] = toArray(m->movieErrors); // lane CAMP-2: BinkMovie components that could not play
 	Dictionary notes;

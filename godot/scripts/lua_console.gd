@@ -213,11 +213,25 @@ func _build_cheats() -> void:
 	gold.min_value = 0
 	gold.max_value = 2147483647
 	gold.step = 100
-	gold.value = 10000
+	gold.value = 100000
 	gold.custom_minimum_size.x = 150
 	gold_row.add_child(gold)
 	gold_row.add_child(_button("Set gold", func() -> void:
 		_submit("assert(bfme.players.localPlayer, 'No local player in this match').money = %d" % int(gold.value))))
+	var quick := HFlowContainer.new()
+	rows.add_child(quick)
+	quick.add_child(_button("+100k gold", func() -> void:
+		_submit("local p=assert(bfme.players.localPlayer,'No local player in this match'); p.money=math.min(2147483647,p.money+100000)")))
+	quick.add_child(_button("+100k CP", func() -> void:
+		_submit("local p=assert(bfme.players.localPlayer,'No local player in this match'); p.commandPoints=math.min(1000000,p.commandPoints+100000)")))
+	var visibility := HFlowContainer.new()
+	rows.add_child(visibility)
+	visibility.add_child(_button("Reveal map", func() -> void:
+		_submit("assert(bfme.players.localPlayer,'No local player in this match').revealMap=true")))
+	visibility.add_child(_button("Disable fog of war", func() -> void:
+		_submit("assert(bfme.players.localPlayer,'No local player in this match').fogOfWar=false")))
+	visibility.add_child(_button("Restore fog of war", func() -> void:
+		_submit("assert(bfme.players.localPlayer,'No local player in this match').fogOfWar=true")))
 	var speed_row := HFlowContainer.new()
 	rows.add_child(speed_row)
 	speed_row.add_child(_label("Game speed"))

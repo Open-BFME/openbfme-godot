@@ -6,6 +6,10 @@ cmake_minimum_required(VERSION 3.17)
 #   openbfme_tests  - doctest unit tests over openbfme_core
 project(OpenBFME LANGUAGES C CXX)
 
+if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    set(CMAKE_SYSTEM_PROCESSOR arm64)
+endif()
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -452,6 +456,9 @@ endif()
 target_include_directories(openbfme_core PUBLIC src)
 target_link_libraries(openbfme_core PUBLIC openbfme_lua)
 target_link_libraries(openbfme_core PUBLIC openbfme_lua54)
+if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    target_compile_definitions(openbfme_lua54 PRIVATE LUA_USE_IOS)
+endif()
 # DEP-1: std::thread (LiveGameRunner) needs libpthread below glibc 2.34 (tools/release/build_linux.sh: Godot's Linux SDK, a glibc 2.28
 # sysroot); on a newer glibc FindThreads adds nothing (pthread is in libc). Link-only: no compile flag, so the sim flag audit is unchanged.
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
@@ -536,6 +543,18 @@ set_target_properties(openbfme PROPERTIES
     LIBRARY_OUTPUT_DIRECTORY "$<1:${OPENBFME_GODOT_BIN}>"
     RUNTIME_OUTPUT_DIRECTORY "$<1:${OPENBFME_GODOT_BIN}>"
     PDB_OUTPUT_DIRECTORY "$<1:${OPENBFME_GODOT_BIN}>")
+if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    enable_language(OBJCXX)
+    target_sources(openbfme PRIVATE src/GodotDevice/GodotIOSAssets.mm)
+    set_source_files_properties(src/GodotDevice/GodotIOSAssets.mm PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
+    target_link_libraries(openbfme PRIVATE "-framework UIKit" "-framework UniformTypeIdentifiers" "-framework Foundation")
+    set_target_properties(openbfme PROPERTIES FRAMEWORK TRUE
+        FRAMEWORK_VERSION A
+        MACOSX_FRAMEWORK_IDENTIFIER org.openbfme.engine
+        MACOSX_FRAMEWORK_BUNDLE_VERSION 1
+        MACOSX_FRAMEWORK_SHORT_VERSION_STRING 0.4.6
+        XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED NO)
+endif()
 if(MSVC)
     target_compile_options(openbfme PRIVATE /utf-8)
 endif()

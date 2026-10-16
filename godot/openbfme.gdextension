@@ -15,3 +15,6 @@ macos.release.arm64 = "res://bin/openbfme.macos.template_debug.arm64.dylib"
 macos.debug.x86_64 = "res://bin/openbfme.macos.template_debug.x86_64.dylib"
 macos.release.x86_64 = "res://bin/openbfme.macos.template_debug.x86_64.dylib"
 
+
+ios.debug.arm64 = "res://bin/openbfme.ios.template_debug.arm64.framework"
+ios.release.arm64 = "res://bin/openbfme.ios.template_debug.arm64.framework"

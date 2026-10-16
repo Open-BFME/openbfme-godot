@@ -98,7 +98,8 @@ local function set(p, field, value)
  local player=h.kind=='players'
  local template=h.kind=='templates' or h.kind=='unitTypes' or h.kind=='buildingTypes'
  if player then
-  if field=='money' or field=='gold' then numeric(value,0,2147483647,true)
+  if field=='revealMap' or field=='fogOfWar' then if type(value)~='boolean' then error('expected boolean',2) end
+  elseif field=='money' or field=='gold' then numeric(value,0,2147483647,true)
   elseif field=='powerPoints' or field=='powerpoint' or field=='commandPoints' or field=='commandPointsBase' or field=='commandPointsCap' or field=='commandPointsUsed' then numeric(value,0,1000000,true)
   elseif field=='commandPointsBonus' then numeric(value,-1000000,1000000,true)
   else error('unsupported or read-only player field: '..tostring(field),2) end

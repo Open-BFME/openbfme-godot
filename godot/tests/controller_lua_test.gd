@@ -1,0 +1,16 @@
+extends SceneTree
+func _initialize() -> void:
+	var world = ClassDB.instantiate("GameWorld")
+	root.add_child(world)
+	var loaded: Dictionary = world.execute_lua("console.reload()")
+	assert(loaded.ok, loaded.output)
+	var result: Dictionary = world.execute_lua("return controller.action('A',false),controller.action('A',true),#controller.ui.shortcuts")
+	assert(result.ok and result.output == "accept\tpointerLeft\t4\n",result.output)
+	result=world.execute_lua("require('lib.keybinds').controller.menu.A='back'; return controller.action('A',false)")
+	assert(result.ok and result.output == "back\n",result.output)
+	assert(world.execute_lua("console.reload()").ok)
+	result=world.execute_lua("return controller.action('A',false),#controller.ui.commands({1,2,3,4,5},4)")
+	assert(result.ok and result.output == "accept\t4\n",result.output)
+	print("CONTROLLER LUA PASS")
+	world.queue_free()
+	quit()

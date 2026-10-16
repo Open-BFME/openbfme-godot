@@ -15,6 +15,7 @@
 #include "GameClient/GUI/Image.h"
 #include "GameClient/GUI/ShellServices.h"
 #include "Libraries/Source/Apt/AptLoad.h"
+#include "Libraries/Source/Apt/AptCharacterInst.h"
 #include "GameClient/Radar.h"
 #include "GameClient/CursorFile.h"
 #include "GodotDevice/GodotPlacementGhost.h"
@@ -36,9 +37,12 @@
 #include "GodotDevice/GodotW3DMaterial.h"
 
 #include <godot_cpp/classes/camera3d.hpp>
+#include <godot_cpp/classes/atlas_texture.hpp>
 #include <godot_cpp/classes/shader.hpp>
 #include <godot_cpp/classes/shader_material.hpp>
 #include <godot_cpp/classes/environment.hpp>
+#include <godot_cpp/classes/shader.hpp>
+#include <godot_cpp/classes/shader_material.hpp>
 #include <godot_cpp/classes/image.hpp>
 #include <godot_cpp/classes/sub_viewport.hpp>
 #include <godot_cpp/classes/viewport_texture.hpp>
@@ -47,6 +51,7 @@
 #include <godot_cpp/classes/file_access.hpp>
 #include <godot_cpp/core/object.hpp>
 #include <godot_cpp/classes/input.hpp>
+#include <godot_cpp/classes/engine.hpp>
 #include <godot_cpp/classes/input_event_key.hpp>
 #include <godot_cpp/classes/rendering_server.hpp>
 #include <godot_cpp/classes/input_event_mouse.hpp>
@@ -157,6 +162,9 @@ int dikOf(Key key)
 
 struct HudDevice : public AptNativeHook
 {
+	bool controllerLayout = false;
+	std::map<std::string, bool> controllerHidden;
+	std::map<std::string, Ref<ShaderMaterial>> imageModes;
 	Ref<RetailFileSystem> fs;
 	GameWorld *world = nullptr;
 	Camera3D *camera = nullptr;
@@ -177,6 +185,7 @@ struct HudDevice : public AptNativeHook
 	float fogShift = 0.0f; ///< lane PLAY-1: the last w3d_fog_shift sent
 	// lane SPELL-2 (review r2): the game text of a standalone HUD (data/lotr.str); an attached HUD uses its shell's. Before the HUD: it outlives it
 	std::unique_ptr<GameTextSource> ownedText;
+	GameTextSource *controllerText = nullptr;
 	std::unique_ptr<InGameHud> hud;
 	std::unique_ptr<Hud6Draw> hud6; ///< lane HUD-6: the radial bubbles and the help box's content (destroyed before the HUD)
 	int keyState = 0;
@@ -745,6 +754,16 @@ void HudDevice::drawPlaceholder(const AptCanvasOp &op, RID item)
 	{
 		// lane HUD-2: a RenderImage clip without `_imageMap` (the Palantir portrait, CommandUI.Portrait) finds its image by its own path
 		const AptPalantir::NativeImage *img = hud->palantir() ? hud->palantir()->imageForClip(op.path, varOf(op, "_imageMap")) : nullptr;
+		// BFME2 AptPlayer::FindRenderImage (0x223AC4 / 0x412B94): after the
+		// dynamic image map, resolve _imageMap directly in MappedImageCollection.
+		// Static button/background layers are not entries in Palantir's dynamic map.
+		AptPalantir::NativeImage staticImage;
+		const std::string imageMap = varOf(op, "_imageMap");
+		if ((!img || img->image.empty()) && !imageMap.empty() && images.findImageByName(imageMap))
+		{
+			staticImage.image = imageMap;
+			img = &staticImage;
+		}
 		// lane SPELL-2: the spell store's buttons ("SpellStore/Buttons/Spell%d", RW 0x822B23); RenderImageDisabled draws the same image grey
 		AptPalantir::NativeImage storeImage;
 		if ((!img || img->image.empty()) && hud->spellStore())
@@ -788,6 +807,32 @@ void HudDevice::drawPlaceholder(const AptCanvasOp &op, RID item)
 		// lane PLAY-1: the clip's cumulative colour multiplies the image (SpellStore.apt's _disabled frame places the image at alpha 0.396: a locked power is
 		// dimmed; drawn at full alpha every power looked buyable). INFERENCE: retail's RenderImage draw was not read; the add terms are not applied
 		mod = Color(mod.r * op.placeholderColor[0], mod.g * op.placeholderColor[1], mod.b * op.placeholderColor[2], mod.a * op.placeholderColor[3]);
+		// BFME2 AptImageModeParser (0x412AF3) and W3DDisplay::drawImage:
+		// SOLID disables texture alpha; ALPHA preserves it. Recruitment art uses
+		// transparent foreground pixels whose RGB still contains the background.
+		std::string mode = varOf(op, "_mode");
+		for (char &ch : mode) ch = (char)std::toupper((unsigned char)ch);
+		const bool solid = mode == "SOLID" || mode == "SOLID_TEXTURE" || mode == "SOLID_GRAYSCALE";
+		const bool grayscale = mode == "GRAYSCALE" || mode == "SOLID_GRAYSCALE";
+		if (solid || grayscale || mode == "ADDITIVE")
+		{
+			auto &material = imageModes[mode];
+			if (material.is_null())
+			{
+				Ref<Shader> shader;
+				shader.instantiate();
+				std::string code = "shader_type canvas_item;\n";
+				if (mode == "ADDITIVE") code += "render_mode blend_add;\n";
+				code += "void fragment() { vec4 tint = COLOR; vec4 pixel = texture(TEXTURE, UV);";
+				if (solid) code += "pixel.a = 1.0;";
+				if (grayscale) code += "pixel.rgb = vec3(dot(pixel.rgb, vec3(0.299, 0.587, 0.114)));";
+				code += "COLOR = pixel * tint; }";
+				shader->set_code(String(code.c_str()));
+				material.instantiate();
+				material->set_shader(shader);
+			}
+			rs->canvas_item_set_material(item, material->get_rid());
+		}
 		rs->canvas_item_add_texture_rect_region(item, r, tex->get_rid(), src, mod);
 		++drawnImages;
 		if (hud->palantir() && op.path == hud->palantir()->portraitKey())
@@ -1160,7 +1205,13 @@ void InGameHudNode::_bind_methods()
 	ClassDB::bind_method(D_METHOD("get_placement_ghost_state"), &InGameHudNode::get_placement_ghost_state);
 	ClassDB::bind_method(D_METHOD("get_move_hints"), &InGameHudNode::get_move_hints);
 	ClassDB::bind_method(D_METHOD("press_command_button", "template_name"), &InGameHudNode::press_command_button);
+	ClassDB::bind_method(D_METHOD("set_controller_hover", "slot", "arc", "unit", "spell"), &InGameHudNode::set_controller_hover);
+	ClassDB::bind_method(D_METHOD("set_controller_layout", "active"), &InGameHudNode::set_controller_layout);
 	ClassDB::bind_method(D_METHOD("get_command_buttons"), &InGameHudNode::get_command_buttons);
+	ClassDB::bind_method(D_METHOD("activate_command", "slot", "in_palantir", "cancel"), &InGameHudNode::activate_command, DEFVAL(false));
+	ClassDB::bind_method(D_METHOD("get_command_icon", "name"), &InGameHudNode::get_command_icon);
+	ClassDB::bind_method(D_METHOD("get_controller_objects", "role"), &InGameHudNode::get_controller_objects);
+	ClassDB::bind_method(D_METHOD("select_controller_group", "ids"), &InGameHudNode::select_controller_group);
 	ClassDB::bind_method(D_METHOD("inject_mouse_move", "position"), &InGameHudNode::inject_mouse_move);
 	ClassDB::bind_method(D_METHOD("inject_mouse_button", "button", "down", "position", "double_click"), &InGameHudNode::inject_mouse_button, DEFVAL(false));
 	ClassDB::bind_method(D_METHOD("inject_key", "dik_code", "down"), &InGameHudNode::inject_key);
@@ -1740,6 +1791,7 @@ Dictionary InGameHudNode::attach(const Ref<RetailFileSystem> &fs, GameWorld *wor
 			gameText = d->ownedText.get();
 		}
 	}
+	d->controllerText = gameText;
 	InGameHud::Config cfg{ game, *world->hud_world(), afs, d->services, d->shown, d->mouse, d->meta, gameText, shellPlayer ? shellPlayer->window_manager() : nullptr, shellPlayer ? shellPlayer->shell_object() : nullptr };
 	d->hud = std::make_unique<InGameHud>(cfg);
 	d->hud->input().attachCamera(*d->cam);
@@ -2217,6 +2269,7 @@ Dictionary InGameHudNode::get_icon_ui() const
 
 Dictionary InGameHudNode::get_spellbook_state()
 {
+	waitLogic(d.get());
 	Dictionary r;
 	r["ok"] = false;
 	if (!d->hud || !d->hud->palantir())
@@ -2336,6 +2389,7 @@ bool InGameHudNode::spell_store_click(int64_t index)
 // what the movie's OnAptInGameSpellBookButtonPressed(slot) does (a harness without a mouse on the button)
 bool InGameHudNode::press_spell_slot(int64_t slot)
 {
+	waitLogic(d.get());
 	if (!d->hud || !d->hud->palantir())
 	{
 		return false;
@@ -2504,7 +2558,30 @@ void InGameHudNode::_process(double delta)
 		UtilityFunctions::print("HUD screenshot ", d->lastScreenshot);
 	}
 	const uint64_t t0 = Time::get_singleton()->get_ticks_usec();
+	for (const auto &entry : d->controllerHidden)
+		if (auto *clip = d->hud->windows().apt().resolvePath(d->hud->windows().apt().level(d->hud->palantir()->level()), entry.first)) clip->visible = entry.second;
+	d->controllerHidden.clear();
 	d->hud->update(delta);
+	if (d->controllerLayout && d->hud->palantir())
+	{
+		AptPalantir *palantir = d->hud->palantir();
+		auto hide = [&](const std::string &path) {
+			if (path.empty()) return;
+			const std::string full = path.rfind("_level", 0) == 0 ? path : "_level" + std::to_string(palantir->level()) + "." + path;
+			if (auto *clip = d->hud->windows().apt().resolvePath(d->hud->windows().apt().level(palantir->level()), full))
+			{
+				d->controllerHidden[full] = clip->visible;
+				clip->visible = false;
+			}
+		};
+		hide("CommandButtons");
+		hide("SideCommandBar");
+		hide(palantir->spellBookPath());
+		if (auto *heroes = d->hud->heroSelect())
+			for (int slot = 0; slot < InGameHeroSelect::kSlots; ++slot)
+				if (heroes->slot(slot).builder) hide(palantir->heroSelectPath() + ".Hero" + std::to_string(slot + 1));
+	}
+
 	const uint64_t ta = Time::get_singleton()->get_ticks_usec();
 	d->drawIconOps(get_canvas_item()); // lane HUD-5
 	const uint64_t tb = Time::get_singleton()->get_ticks_usec();
@@ -2744,6 +2821,97 @@ bool InGameHudNode::press_command_button(const String &template_name)
 	return false;
 }
 
+// Controller adapters use the same evaluated commands and message stream as the retail HUD.
+void InGameHudNode::set_controller_hover(int slot, bool arc, int64_t unit, int spell)
+{
+    if (d->hud) d->hud->setControllerHover(slot, arc, (::ObjectID)unit, spell);
+}
+
+void InGameHudNode::set_controller_layout(bool active)
+{
+    if (d->controllerLayout == active) return;
+    d->controllerLayout = active;
+    if (!d->hud) return;
+    d->hud->radialMenu().setPresentationVisible(!active);
+    // Restore exactly the visibility seen before our override, including clips
+    // already hidden by the native HUD. Resolve paths afresh after movie changes.
+    for (const auto &entry : d->controllerHidden)
+        if (auto *clip = d->hud->windows().apt().resolvePath(d->hud->windows().apt().level(d->hud->palantir()->level()), entry.first)) clip->visible = entry.second;
+    d->controllerHidden.clear();
+}
+
+bool InGameHudNode::activate_command(int slot, bool in_palantir, bool cancel)
+{
+    waitLogic(d.get());
+    if (!d->ready) return false;
+    const auto context = d->hud->enterContext();
+    ControlBar &bar = d->hud->controlBar();
+    bar.update();
+    const auto &buttons = in_palantir ? bar.palantirButtons() : bar.sideButtons();
+    for (const auto &b : buttons)
+        if (b.slot == slot && b.button && b.state != ButtonState::Hidden)
+            return cancel ? bar.cancelQueued(slot, in_palantir) : bar.pressButton(slot, in_palantir);
+    return false;
+}
+
+Ref<Texture2D> InGameHudNode::get_command_icon(const String &name)
+{
+    if (!d->ready) return {};
+    const ::Image *image = d->images.findImageByName(name.utf8().get_data());
+    if (!image) return {};
+    Ref<ImageTexture> texture = d->textureFor(image->filename);
+    if (texture.is_null()) return {};
+    Ref<AtlasTexture> icon;
+    icon.instantiate();
+    icon->set_atlas(texture);
+    icon->set_region(Rect2(image->uvLo[0] * texture->get_width(), image->uvLo[1] * texture->get_height(),
+        (image->uvHi[0]-image->uvLo[0]) * texture->get_width(), (image->uvHi[1]-image->uvLo[1]) * texture->get_height()));
+    return icon;
+}
+
+int64_t InGameHudNode::select_controller_group(const PackedInt64Array &ids)
+{
+    waitLogic(d.get());
+    if (!d->ready || !d->world || !d->world->hud_game()) return 0;
+    const auto context = d->hud->enterContext();
+    InGameUI &ui = d->hud->input().ui();
+    std::vector<::ObjectID> valid;
+    for (int64_t id : ids)
+    {
+        const ::Object *o = d->world->hud_game()->logic().findObjectByID((::ObjectID)id);
+        if (o && !o->isDestroyed() && o->getControllingPlayer() &&
+            o->getControllingPlayer()->getPlayerIndex() == d->localPlayerIndex && HudObjects::isSelectable(*o))
+            valid.push_back(o->getID());
+    }
+    if (valid.empty()) return 0;
+    ui.deselectAll(true);
+    for (::ObjectID id : valid) ui.selectObject(id);
+    ClientMessage &message = d->hud->input().stream().append(MSG_CREATE_SELECTED_GROUP_NO_SOUND);
+    message.appendBoolean(true);
+    for (::ObjectID id : ui.selected()) message.appendObjectID(id);
+    return (int64_t)ui.selected().size();
+}
+
+Array InGameHudNode::get_controller_objects(const String &role) const
+{
+    waitLogic(d.get());
+    Array result;
+    if (!d->ready || !d->world || !d->world->hud_game()) return result;
+    const auto context = d->hud->enterContext();
+    const char *kind = role == "heroes" ? "HERO" : role == "builders" ? "DOZER" : nullptr;
+    if (!kind && role != "units") return result;
+    for (const ::Object *o = d->world->hud_game()->logic().getFirstObject(); o; o = o->getNextObject())
+    {
+        if (o->isDestroyed() || !o->getControllingPlayer() || o->getControllingPlayer()->getPlayerIndex() != d->localPlayerIndex ||
+            (kind ? !o->isKindOfName(kind) : o->isKindOfName("STRUCTURE")) || !HudObjects::isSelectable(*o)) continue;
+        Dictionary entry;
+        entry["id"] = (int64_t)o->getID();
+        entry["name"] = toGodot(o->getTemplate()->getName());
+        result.push_back(entry);
+    }
+    return result;
+}
+
 Array InGameHudNode::get_command_buttons() const
 {
 	waitLogic(d.get());
@@ -2768,7 +2936,21 @@ Array InGameHudNode::get_command_buttons() const
 			e["in_palantir"] = b.inPalantir;
 			e["position"] = (int64_t)(b.position >= 0 ? b.position : (int)i); // lane HUD-4: the arc window / the side bar position
 			e["name"] = toGodot(b.button->m_name);
+			e["image"] = toGodot(b.image);
+			e["label"] = toGodot(b.textLabel);
+			auto localized = [&](const std::string &label) -> String {
+				if (label.empty()) return {};
+				const std::u16string text = fetchOrMissing(d->controllerText, label);
+				return String::utf16(text.c_str(), (int64_t)text.size()).replace("&", "");
+			};
+			e["title"] = localized(b.textLabel);
+			e["description"] = localized(b.descriptLabel);
+
+			e["timer"] = b.timer;
 			e["command"] = String(GUICommandName(b.button->m_command));
+			e["preview_on_focus"] = b.button->m_command == GUI_COMMAND_DOZER_CONSTRUCT ||
+				(arc && b.button->hasOption(COMMAND_OPTION_NEED_TARGET_ENEMY_OBJECT | COMMAND_OPTION_NEED_TARGET_NEUTRAL_OBJECT | COMMAND_OPTION_NEED_TARGET_ALLY_OBJECT | COMMAND_OPTION_NEED_TARGET_POS));
+
 			e["template"] = b.button->getThingTemplate() ? toGodot(b.button->getThingTemplate()->getName()) : String();
 			e["upgrade"] = toGodot(b.button->m_upgradeName);
 			e["power"] = toGodot(b.button->m_specialPowerName);
@@ -2901,6 +3083,12 @@ void InGameHudNode::_input(const Ref<InputEvent> &event)
 	// Console shortcuts must never reach the HUD, even when it runs before the overlay's input callback.
 	if (const auto *key = Object::cast_to<InputEventKey>(event.ptr()))
 	{
+		const Key code = key->get_keycode();
+		if (code == Key::KEY_BACKSLASH) return;
+		if (code == Key::KEY_TAB && (bool)Engine::get_singleton()->get_meta("controller_keyboard_enabled", false)) return;
+		if ((bool)Engine::get_singleton()->get_meta("controller_keyboard_active", false) && !key->is_ctrl_pressed() && !key->is_alt_pressed() &&
+			(code == Key::KEY_LEFT || code == Key::KEY_RIGHT || code == Key::KEY_UP || code == Key::KEY_DOWN ||
+			code == Key::KEY_ENTER || code == Key::KEY_KP_ENTER || code == Key::KEY_BACKSPACE || code == Key::KEY_X || code == Key::KEY_Y)) return;
 		if (key->get_keycode() == Key::KEY_QUOTELEFT || key->get_physical_keycode() == Key::KEY_QUOTELEFT
 			|| ((key->get_keycode() == Key::KEY_C || key->get_keycode() == Key::KEY_F5) && key->is_ctrl_pressed() && key->is_shift_pressed())) return;
 	}

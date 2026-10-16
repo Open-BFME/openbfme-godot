@@ -1,7 +1,7 @@
 ## Lane OPTS-5: the Options screen IS the OpenBFME menu now (AptOptionsScreen::kOpenBFMEMenu): Options opens on the page, ACCEPT / CANCEL / Esc close
 ## Options (back on the main menu, or on the quit menu in a game); there is no OPENBFME button and no retail page to go back to.
 ## Lane OPTS-1: game.gd --display-check, the OpenBFME display options as a player uses them (mouse events on the OPENBFME button and the screen's
-## buttons, key events for F11 and Alt+Enter), with the owner's "maximising greys out the main menu" as the main check: the main menu's and
+## buttons, key events for F10 and Alt+Enter), with the owner's "maximising greys out the main menu" as the main check: the main menu's and
 ## Options.apt's buttons (path, hittable, visible, the clip's frame) are the same before and after every window change, whether the window is
 ## maximised / resized directly or the mode is changed through the screen. Prints "DISPLAY <name>: ok" / "DISPLAY <name>: FAIL <why>" lines and
 ## "DISPLAY RESULT: <n> ok, <m> failed"; run() returns the failures. tests/opts1_test.gd runs it headless (window modes are no-ops there, the
@@ -59,7 +59,7 @@ func run(p_game: Node, p_shots: String) -> int:
 	var page0 := widget_state(options_level) # Options.apt's buttons while the page is up (its frames hidden)
 
 	# review r1 (Sol): the screen opens on what the game runs with (tests/opts1_test.gd starts this run with --max-fps=77, a command-line cap the
-	# file does not hold); F11 / Alt+Enter while it is up change the screen's settings only; CANCEL puts back the run's state, not the file's
+	# file does not hold); F10 / Alt+Enter while it is up change the screen's settings only; CANCEL puts back the run's state, not the file's
 	var runtime_cap := Engine.max_fps
 	var file_before := FileAccess.get_file_as_string(game._display_path) if FileAccess.file_exists(game._display_path) else "(none)"
 	var limit_row: Dictionary = screen.row("max_fps")
@@ -69,11 +69,11 @@ func run(p_game: Node, p_shots: String) -> int:
 	await select("max_fps", DisplaySettings.FRAME_LIMITS.find(120))
 	await select("render_scale", 14) # 70%: the slider's positions are the 5% steps
 	var shown_before: bool = overlay.shown()
-	await key(KEY_F11)
+	await key(KEY_F10)
 	await key(KEY_ENTER, true)
-	check("F11 and Alt+Enter over the screen keep its other settings (cap 120, scale 70%)", screen.pending_value("max_fps") == 120 and is_equal_approx(screen.pending_value("render_scale"), 0.7)
+	check("F10 and Alt+Enter over the screen keep its other settings (cap 120, scale 70%)", screen.pending_value("max_fps") == 120 and is_equal_approx(screen.pending_value("render_scale"), 0.7)
 		and Engine.max_fps == 120 and is_equal_approx(root.scaling_3d_scale, 0.7), "pending %s, runtime cap %d scale %.2f" % [JSON.stringify(screen.pending_value("max_fps")), Engine.max_fps, root.scaling_3d_scale])
-	check("F11 and Alt+Enter over the screen change its settings", screen.pending_value("show_fps") == (not shown_before) and screen.pending_value("window_mode") == "borderless"
+	check("F10 and Alt+Enter over the screen change its settings", screen.pending_value("show_fps") == (not shown_before) and screen.pending_value("window_mode") == "borderless"
 		and int(screen.row("show_fps").value) == (1 if not shown_before else 0), "show_fps %s, window_mode %s" % [screen.pending_value("show_fps"), screen.pending_value("window_mode")])
 	var file_mid := FileAccess.get_file_as_string(game._display_path) if FileAccess.file_exists(game._display_path) else "(none)"
 	check("the keys over the screen write nothing", file_mid == file_before, file_mid)
@@ -170,17 +170,17 @@ func run(p_game: Node, p_shots: String) -> int:
 	check("Esc closes Options (the main menu again)", top() != "Options.apt", str(shell.shell_stack()))
 	await game._wait_main_ready()
 
-	# 5. the keys (not retail; free in RotWK's CommandMap): F11 the counter, Alt+Enter full screen. Outside the screen a key writes its own key only:
+	# 5. the keys (not retail; free in RotWK's CommandMap): F10 the counter, Alt+Enter full screen. Outside the screen a key writes its own key only:
 	# a value another program (the launcher) wrote meanwhile stays, and the run's cap is not touched
 	var cfg := ConfigFile.new()
 	cfg.load(game._display_path)
 	cfg.set_value(DisplaySettings.SECTION, "render_scale", 0.55)
 	cfg.save(game._display_path)
-	await key(KEY_F11)
-	check("F11 hides the counter", not overlay.shown() and not game._display.show_fps, "shown")
-	await key(KEY_F11)
+	await key(KEY_F10)
+	check("F10 hides the counter", not overlay.shown() and not game._display.show_fps, "shown")
+	await key(KEY_F10)
 	await game._step(40)
-	check("F11 shows it again", overlay.shown() and game._display.show_fps, "hidden")
+	check("F10 shows it again", overlay.shown() and game._display.show_fps, "hidden")
 	await key(KEY_ENTER, true)
 	check("Alt+Enter goes full screen", game._display.window_mode == "borderless", game._display.window_mode)
 	await game._step(30)
@@ -216,9 +216,9 @@ func run_game(p_game: Node, p_shots: String) -> int:
 	check("a live game with its HUD", hud != null and game._state == game.State.PLAYING, "state %d" % game._state)
 	if hud == null:
 		return finish()
-	await key(KEY_F11)
+	await key(KEY_F10)
 	await game._step(40)
-	check("F11 shows the counter in the game", overlay.shown(), "hidden")
+	check("F10 shows the counter in the game", overlay.shown(), "hidden")
 	await shot("opts1-game-fps")
 	await game._press_escape()
 	await game._wait_seconds(3.0)

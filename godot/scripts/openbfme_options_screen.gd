@@ -301,7 +301,7 @@ func current_tab() -> String:
 	return _tab
 
 
-## F11 / Alt+Enter while the page is up (fps_overlay.gd hands them here): a change of the page's settings like a click on its controls, applied at
+## F10 / Alt+Enter while the page is up (fps_overlay.gd hands them here): a change of the page's settings like a click on its controls, applied at
 ## once, written only by ACCEPT
 func hotkey(key: String, value) -> void:
 	set_value(key, value)
@@ -464,7 +464,7 @@ func _display_rows() -> Array:
 	var limits := _frame_limits()
 	rows.append(_choice("max_fps", "Frame rate limit", limits.map(func(f): return "Off" if f == 0 else ("%d fps" % f if DisplaySettings.FRAME_LIMITS.has(f) else "%d fps (custom)" % f)),
 		limits.find(p.max_fps), HELP.max_fps))
-	rows.append(_check("show_fps", "Show the frame rate (F11)", p.show_fps, HELP.show_fps))
+	rows.append(_check("show_fps", "Show the frame rate (F10)", p.show_fps, HELP.show_fps))
 	var pct := roundi(p.render_scale * 100.0)
 	# the slider's positions are the 5% steps (10 .. 20): the gadget's thumb lands on what is applied
 	rows.append(_slider("render_scale", "Render scale", roundi(DisplaySettings.SCALE_MIN * 100.0) / SCALE_STEP, roundi(DisplaySettings.SCALE_MAX * 100.0) / SCALE_STEP,

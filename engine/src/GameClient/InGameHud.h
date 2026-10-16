@@ -161,6 +161,7 @@ public:
 
 	// ---- lane HUD-6 (InGameHudHud6.cpp): the radial command bubbles, the help box ----
 	ControlBarRadialMenu &radialMenu() { return m_radial; }
+	void setControllerHover(int slot, bool arc, ObjectID unit, int spell) { m_controllerHoverSlot = slot; m_controllerHoverArc = arc; m_controllerHoverUnit = unit; m_controllerHoverSpell = spell; }
 	InGameHelpBox &helpBox() { return m_helpBox; }
 	const HelpBoxSettings &helpBoxSettings() const { return m_helpSettings; }
 	// the device's mapped images (the overlays' and icons' sizes) and font metrics (the help's text); without metrics the help measures with the
@@ -184,6 +185,9 @@ private:
 	// the pointer; `unit` is a portrait's object; `context` the control bar's object (the portrait's)
 	bool hoveredHelpButton(InGameHelpBox::Provider &p, ControlBarButton &b, ObjectID &unit, ObjectID context);
 	ControlBarRadialMenu m_radial;
+	int m_controllerHoverSlot = -1, m_controllerHoverSpell = -1;
+	bool m_controllerHoverArc = true;
+	ObjectID m_controllerHoverUnit = INVALID_ID;
 	InGameHelpBox m_helpBox;
 	HelpBoxSettings m_helpSettings;
 	const MappedImageCollection *m_hud6Images = nullptr;

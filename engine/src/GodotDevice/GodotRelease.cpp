@@ -286,6 +286,10 @@ void SessionLogger::_log_error(const String &p_function, const String &p_file, i
 
 void InstallSetup::_bind_methods()
 {
+#ifdef IOS_ENABLED
+	ClassDB::bind_method(D_METHOD("pick_external_assets"), &InstallSetup::pick_external_assets);
+	ClassDB::bind_method(D_METHOD("external_assets"), &InstallSetup::external_assets);
+#endif
 	ClassDB::bind_method(D_METHOD("config_path"), &InstallSetup::config_path);
 	ClassDB::bind_method(D_METHOD("configured"), &InstallSetup::configured);
 	ClassDB::bind_method(D_METHOD("discover"), &InstallSetup::discover);

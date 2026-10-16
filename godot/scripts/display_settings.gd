@@ -10,7 +10,7 @@
 ##                  the two fullscreen modes always cover the screen at its own resolution; render_scale lowers the 3D resolution there.
 ##   vsync          on | off | adaptive | mailbox             (DisplayServer vsync modes; the screen offers the first three, mailbox stays a file / --vsync value)
 ##   max_fps        0 (no limit) or a frame cap in frames per second (Engine.max_fps)
-##   show_fps       the frame-rate counter (scripts/fps_overlay.gd; F11 toggles it)
+##   show_fps       the frame-rate counter (scripts/fps_overlay.gd; F10 toggles it)
 ##   render_scale   0.5 .. 1.0, the 3D view's resolution as a fraction of the window's (Viewport.scaling_3d_scale); the menus and the HUD (2D) stay sharp
 ##   scaler         bilinear | fsr | fsr2   (Viewport.scaling_3d_mode). The game's renderer is Forward+ (project.godot), which has all three; Godot's
 ##                  Mobile renderer has no FSR 2 and the Compatibility renderer bilinear only, so a scaler the renderer lacks is reported, not applied.

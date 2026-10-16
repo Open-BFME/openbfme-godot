@@ -255,6 +255,33 @@ void InGameHud::updateHud6(ObjectID context, const std::string &faction, double 
 	{
 		have = hoveredHelpButton(p, hovered, unit, context); // lane HOVER-1
 	}
+	// Controller focus feeds the same provider, delay, composition and movie as mouse hover.
+	if (m_controllerHoverSlot >= 0)
+	{
+		have = false;
+		const auto &buttons = m_controllerHoverArc ? m_bar->palantirButtons() : m_bar->sideButtons();
+		for (const auto &b : buttons) if (b.slot == m_controllerHoverSlot && b.button)
+		{
+			hovered = b; p.bar = m_controllerHoverArc ? 0 : 1; p.slot = b.slot; p.button = b.button; have = true; break;
+		}
+	}
+	else if (m_controllerHoverUnit != INVALID_ID)
+	{
+		unit = m_controllerHoverUnit; p.bar = 4; p.object = unit; have = true;
+	}
+	else if (m_controllerHoverSpell >= 0)
+	{
+		have = false;
+		const int index = m_palantirRef ? m_palantirRef->spellSlotButton(m_controllerHoverSpell) : -1;
+		for (const auto &sb : m_spellBar.buttons()) if (sb.index == index && sb.button)
+		{
+			const CommandButton *button = sb.button;
+			hovered = ControlBarButton(); hovered.button = button;
+			hovered.textLabel = button->m_textLabel.empty() ? "" : button->m_textLabel.front();
+			hovered.descriptLabel = button->m_descriptLabel.empty() ? "" : button->m_descriptLabel.front();
+			p.bar = 3; p.button = button; have = true; break;
+		}
+	}
 	const std::vector<ObjectID> &selected = m_input->ui().selected();
 	if (have)
 	{

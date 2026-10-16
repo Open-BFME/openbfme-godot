@@ -183,7 +183,7 @@ void ControlBarRadialMenu::update(GameLogic &logic, DrawableManager *drawables, 
 		m_layout.reset();
 	}
 	std::vector<int> keys;
-	if (allowed && m_object != INVALID_ID)
+	if (allowed && m_presentationVisible && m_object != INVALID_ID)
 	{
 		for (const ControlBarButton &b : radialButtons)
 		{
@@ -223,6 +223,7 @@ void ControlBarRadialMenu::update(GameLogic &logic, DrawableManager *drawables, 
 
 int ControlBarRadialMenu::hit(int x, int y) const
 {
+	if (!m_presentationVisible) return -1;
 	for (const Button &b : m_buttons)
 	{
 		// RW 0x715A84 (winPointInChild, byte-matched in the decomp's GameWindowCursorSearch.cpp): both edges inclusive, lo <= p <= lo + size
