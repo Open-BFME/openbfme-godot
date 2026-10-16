@@ -436,6 +436,10 @@ public:
 	void set_logic_thread(bool enabled);
 	bool get_logic_thread() const;
 	Dictionary execute_lua(const String &code);
+	// lane LUAGD-1: the LuaState (lua-gdextension) of the bfme.* API, for GDScript: globals["bfme"], do_string ... Code run through it
+	// directly has neither the console's execution budget nor its output capture (execute_lua has both)
+	Ref<RefCounted> get_lua_state();
+	const BfmeLuaValue::List &wall_hub_markers() const { return m_wallHubMarkers; }
 	void update_lua();
 	BfmeLuaRuntime::Snapshot bfme_snapshot();
 	unsigned bfme_construct(const BfmeLuaRuntime::Mutation &mutation);
@@ -593,6 +597,8 @@ private:
 	};
 
 	Array m_commandErrors;
+	uint64_t m_mapWeatherId = 0;
+	void update_map_weather();
 	void clear_scene();
 	void build_static_layer(const Ref<RetailFileSystem> &fs, Dictionary &report, Array &errors, Array &stops);
 	void refresh_views(double deltaMs);
@@ -677,7 +683,10 @@ private:
 	ScoreScreenData m_scoreScreen;
 	bool m_testHooks = false; ///< start option test_hooks: the debug_* end-game hooks may act on a started (non-network) game
 	uint64_t m_luaHudSource = 0; // ObjectDB ID, safe when the HUD is freed
+	// lane LUAGD-1: the lua-gdextension LuaState whose lua_State the bfme.* runtime runs on (declared first: the runtime goes first)
+	Ref<RefCounted> m_consoleLuaState;
 	std::unique_ptr<BfmeLuaRuntime> m_consoleRuntime;
+	void ensureConsoleRuntime();
 	void startEndGame();
 	void updateEndGame();
 	std::unique_ptr<MapObjectRuntime> m_clientRuntime;
@@ -730,6 +739,8 @@ private:
 		float opacity = 1.0f; ///< PROJ-2: the drawable's opacity (RW 0x672FC4, Drawable::drawOpacity)
 	};
 	W3DDrawPoseView m_viewPose;               ///< lane PERF-3: refresh_views reads the pose request by reference (W3DScriptedModelDraw::poseView)
+	BfmeLuaValue::List m_wallHubMarkers;
+	void load_wall_hub_markers();
 	int m_streakWeather = 0;                  ///< lane PERF-1: the map's WeatherType for the streak textures (0 NORMAL, 1 SNOWY), set by load_map
 	std::map<uint64_t, StreakView> m_streaks;  ///< key = drawable id << 8 | entry index
 	std::unique_ptr<W3DMaterialFactory> m_streakTextures;

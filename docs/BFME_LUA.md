@@ -1,6 +1,7 @@
 # bfme Lua library
 
-OpenBFME's console embeds **Lua 5.4.9** with an object-based `bfme` API. Its collections and player/template fields
+OpenBFME's console runs an object-based `bfme` API on **LuaJIT 2.1**, the VM of
+[lua-gdextension](https://github.com/gilzoide/lua-gdextension) (see [Lua in Godot](#lua-in-godot-lua-gdextension) below). Its collections and player/template fields
 follow the [BFME2Lua / Second Age API](https://docs.secondage.dev/#templates); functions are grouped into libraries
 and actions are methods on handles. This is an independent implementation over OpenBFME's engine;
 it does not load or inject the Second Age DLL. The retail game's Lua 4.0.1 VM continues to run its original scripts independently.
@@ -371,6 +372,32 @@ controller/camera routing, save sync, or multiplayer script synchronization.
 Second Age's flat helpers (`ExecuteAction`, `GetFrame`, global `setGameSpeed`) are not provided; use the handle methods and libraries above.
 `require` loads only `bfme` and `bfme.<library>`; IO, OS, debug and native module loading are not exposed.
 Console execution has a 250 ms Lua instruction-hook budget and a bounded output buffer; this is not a transactional script sandbox.
+The language is LuaJIT's: Lua 5.1 with LuaJIT's Lua 5.2 extensions (`goto`, `bit` library, `table.unpack`...). There is no
+integer subtype (`3 // 2`, `math.type`, `math.tointeger` and the `utf8` library do not exist; use `math.floor(a / b)`).
+LuaJIT's JIT compiler is off in this state: the instruction-hook budget does not reach compiled code, so the console runs on
+LuaJIT's interpreter.
+
+## Lua in Godot (lua-gdextension)
+
+[lua-gdextension](https://github.com/gilzoide/lua-gdextension) 0.8.2 (MIT) is built from source into the openbfme
+extension, on LuaJIT (lane LUAGD-1; `engine/src/Libraries/LuaGDExtension/README.md`). Its classes are registered like the
+engine's own: `LuaState`, `LuaTable`, `LuaFunction`, `LuaCoroutine`, `LuaError`, ..., and Lua as a Godot script language
+(`.lua` scripts that return a class table, see the upstream README).
+
+The `bfme` API runs on one of its `LuaState`s. `GameWorld.get_lua_state()` returns it, so GDScript can use what the console made:
+
+```gdscript
+var lua: LuaState = world.get_lua_state()
+var bfme = lua.globals["bfme"]
+var money = lua.do_string("return bfme.players.localPlayer and bfme.players.localPlayer.money")
+```
+
+That state opens Godot's Variant types (`Vector3(1, 2, 3)`, `Color`, String methods) and global enums alongside the `bfme`
+API. It does not open Godot classes, singletons, `res://` file loading or the utility functions (`bytes_to_var_with_objects`
+makes objects), which would reach past the sandbox above. Code run through `get_lua_state()` directly has neither the
+console's execution budget nor its output capture. Use `world.execute_lua(code)` for both.
+
+A separate `LuaState.new()` is an ordinary lua-gdextension state with every library it offers. The `bfme` API is not in it.
 
 ## Extending the API
 
@@ -392,12 +419,14 @@ Planned: `bfme.camera` (read/move the view), selection writes, and event callbac
 
 ## Verification
 
-`engine/build/openbfme_tests --test-case='bfme Lua*'` checks module identity, library and handle structure, modern Lua syntax alongside the retail VM,
+`engine/build/openbfme_tests --test-case='bfme Lua*'` checks module identity, the LuaJIT sandbox, library and handle structure, Lua syntax alongside the retail VM,
 handle identity, enumeration, detached copies, money tickets, validation, expired handles, queue limits, construction, training, selection, orders, queries,
 the AI switch, update callbacks and error recovery. `--test-case='skirmish ai script control*'` (retail files) checks that a script-controlled computer
 builds and trains nothing and builds again once handed back. `godot --headless --path godot --script res://tests/lua_ai_test.gd` plays the
 Lua skirmish AI on Evendim for five game minutes.
 `godot --headless --path godot --script res://tests/lua_console_test.gd` exercises the console and native extension together.
+`godot --headless --path godot --script res://tests/lua_gdextension_test.gd` (no game files) checks the lua-gdextension classes, the
+`bfme` API on the `LuaState` of `get_lua_state()`, the execution budget and the sandbox.
 
 ## Texture overrides
 

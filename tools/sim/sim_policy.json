@@ -687,7 +687,7 @@
   },
   {
    "glob": "src/GameLogic/ScriptEngine/BfmeLuaRuntime.cpp",
-   "reason": "Interactive Lua 5.4 console interpreter, detached snapshots and explicit command queue; not the automatic retail Lua simulation. Native mutation application is audited in GodotBfmeLua.cpp. Lua 5.4 third-party sources are outside engine/src."
+   "reason": "Interactive bfme.* console interpreter on LuaJIT (lua-gdextension's VM, lane LUAGD-1), detached snapshots and explicit command queue; not the automatic retail Lua simulation. Native mutation application is audited in GodotBfmeLua.cpp. LuaJIT and lua-gdextension third-party sources are outside engine/src."
   }
  ]
 }

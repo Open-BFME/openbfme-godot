@@ -53,7 +53,7 @@ public:
 	void setUseAlternateMouse(bool on) { m_alternateMouse = on; }
 	bool useAlternateMouse() const { return m_alternateMouse; }
 	// a right click on the radar: the selection moves to the ground point (a plain MSG_DO_MOVETO, the same message a click on the map issues)
-	void issueRadarMove(const Coord3D &world) { m_ctx.stream.append(MSG_DO_MOVETO).appendLocation(world); }
+	void issueRadarMove(const Coord3D &world);
 	bool teamExists() const { return m_teamExists; }
 
 	// ZH InGameUI::areSelectedObjectsControllable: the selection is the local player's and alive
@@ -69,6 +69,7 @@ public:
 	void setRadar(class Radar *radar) { m_radar = radar; }
 
 private:
+	bool selectionCanReach(const Coord3D &pos) const;
 	bool selectionCanAttack();
 	bool selectionCanSetRallyPoint();
 	bool objectCanAttack(Object &obj);

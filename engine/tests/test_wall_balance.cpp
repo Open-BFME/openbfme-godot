@@ -45,11 +45,19 @@ TEST_CASE("wall balance: a closed wall region is enclosed, a breach opens it") {
  CHECK_FALSE(WallBalance::enclosed(*w.logic,*left->getControllingPlayer(),center));
 }
 
-TEST_CASE("wall replacement clears covered side segments and preserves adjacent walls") {
+TEST_CASE("wall replacement clears side tiles only for gates") {
  const char gateObjects[] =
  "Object GateTestSegment\n KindOf = STRUCTURE IMMOBILE WALL_SEGMENT\n Geometry = BOX\n GeometryMajorRadius = 5\n GeometryMinorRadius = 10\n GeometryHeight = 20\n Body = ActiveBody Body\n MaxHealth = 100\n End\nEnd\n"
  "Object GateTestGate\n KindOf = STRUCTURE IMMOBILE WALL_UPGRADE\n Behavior = GateOpenAndCloseBehavior Gate\n End\n Geometry = BOX\n GeometryMajorRadius = 5\n GeometryMinorRadius = 30\n GeometryHeight = 20\n Body = ActiveBody Body\n MaxHealth = 100\n End\nEnd\n";
- CombatWorld w(gateObjects);
+ std::string definitions(gateObjects);
+ definitions += "ChildObject GateTestPostern GateTestSegment\n KindOf = STRUCTURE IMMOBILE WALL_UPGRADE WALL_GATE\n Behavior = DynamicPortalBehaviour Portal\n End\nEnd\n";
+ definitions += "ChildObject GateTestTower GateTestSegment\n GeometryMinorRadius = 12\nEnd\n";
+ CombatWorld w(definitions.c_str());
+ bool gate = true;
+ bool postern = false;
+ SUBCASE("postern preserves neighboring tiles despite WALL_GATE") { gate = false; postern = true; }
+ SUBCASE("gate clears three tiles") { gate = true; }
+ SUBCASE("tower preserves overlapping neighboring tiles") { gate = false; }
  float angle = 0;
  SUBCASE("vertical span") { angle = 0; }
  SUBCASE("rotated span") { angle = 1.57079632679f; }
@@ -65,22 +73,22 @@ TEST_CASE("wall replacement clears covered side segments and preserves adjacent 
  Object *outsideLeft = segment(-36), *outsideRight = segment(36);
  Object *parallel = segment(0, 20);
  ReplaceSelfUpgradeModuleData data;
- data.m_pieces = {"GateTestGate"};
+ data.m_pieces = {gate ? "GateTestGate" : postern ? "GateTestPostern" : "GateTestTower"};
  ReplaceSelfUpgrade replacement(center, &data);
  replacement.giveSelfUpgrade();
- CHECK(left->isEffectivelyDead());
- CHECK(right->isEffectivelyDead());
+ CHECK(left->isEffectivelyDead() == gate);
+ CHECK(right->isEffectivelyDead() == gate);
  CHECK_FALSE(outsideLeft->isEffectivelyDead());
  CHECK_FALSE(outsideRight->isEffectivelyDead());
  CHECK_FALSE(parallel->isEffectivelyDead());
- for (Object *removed : {center, left, right}) {
+ for (Object *removed : (gate ? std::vector<Object *>{center, left, right} : std::vector<Object *>{center})) {
   auto *cell = w.ai->pathfinder().getCell(LAYER_GROUND, removed->getPosition());
   REQUIRE(cell);
   CHECK_FALSE(cell->isObstaclePresent(removed->getID()));
  }
  bool built = false;
  for (Object *o = w.logic->getFirstObject(); o; o = o->getNextObject())
-  if (o->getTemplate()->getName() == "GateTestGate") built = true;
+  if (o->getTemplate()->getName() == (gate ? "GateTestGate" : postern ? "GateTestPostern" : "GateTestTower")) built = true;
  CHECK(built);
 }
 

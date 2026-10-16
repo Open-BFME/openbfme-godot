@@ -42,6 +42,8 @@ var log_path := ""          # user://logs/openbfme-....log of this run
 var previous_crash_log := "" # the log of a run that did not end normally ("" = none)
 var _marker := ""
 var _watermark: CanvasLayer
+var _mods_link: LinkButton
+var active_mods: Array = []   ## lane MODS-1: the mods this session mounted (the mount report's "mods"; game.gd sets it)
 var _in_game := false
 var _handover: RefCounted   # UpdateHandover of this start (null: the launcher was not asked)
 var _update_note: Label
@@ -188,7 +190,7 @@ func open_log_folder(path: String = "") -> void:
 
 
 ## The user data folders the game may show in the file manager (lane WINCRASH-1 r4: a fixed set, their paths built here).
-enum UserFolder { LOGS }
+enum UserFolder { LOGS, MODS }
 
 
 func open_user_folder(kind: UserFolder) -> Error:
@@ -196,6 +198,9 @@ func open_user_folder(kind: UserFolder) -> Error:
 		UserFolder.LOGS:
 			DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path("user://logs"))
 			return _show_in_file_manager(ProjectSettings.globalize_path("user://logs"))
+		UserFolder.MODS:
+			DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path("user://mods"))
+			return _show_in_file_manager(ProjectSettings.globalize_path("user://mods"))
 	return ERR_INVALID_PARAMETER
 
 
@@ -537,6 +542,23 @@ func _add_watermark() -> void:
 	logs.name = "OpenLogs"
 	logs.pressed.connect(func() -> void: open_log_folder())
 	_watermark.add_child(logs)
+	# lane MODS-1: the mod manager, under the Logs link (menus only, like the rest of the corner)
+	var mods := LinkButton.new()
+	mods.text = "Mods (%d)" % active_mods.size() if not active_mods.is_empty() else "Mods"
+	mods.tooltip_text = "Choose the RotWK mods OpenBFME loads (applies after a restart)"
+	mods.underline = LinkButton.UNDERLINE_MODE_ON_HOVER
+	mods.add_theme_font_size_override("font_size", 13)
+	mods.add_theme_color_override("font_color", Color(1, 1, 1, 0.75))
+	mods.add_theme_color_override("font_hover_color", Color(1, 1, 1, 1))
+	mods.set_anchors_and_offsets_preset(Control.PRESET_TOP_RIGHT)
+	mods.grow_horizontal = Control.GROW_DIRECTION_BEGIN
+	mods.offset_right = -8
+	mods.offset_top = 40
+	mods.focus_mode = Control.FOCUS_NONE
+	mods.name = "OpenMods"
+	mods.pressed.connect(open_mod_manager)
+	_watermark.add_child(mods)
+	_mods_link = mods
 	# lane ONEZIP-1: the update check's state (a game started directly), under the Logs link
 	_update_note = Label.new()
 	# a dark plate behind it: the line is longer than the version text and lies over the menu's art
@@ -564,3 +586,19 @@ func _add_watermark() -> void:
 	_watermark.add_child(_update_note)
 	_watermark.name = "ReleaseWatermark"
 	add_child(_watermark)
+
+
+## lane MODS-1: the mod manager (scripts/mod_manager.gd) over everything; one at a time
+func open_mod_manager() -> void:
+	if get_tree().root.has_node("ModManagerLayer"):
+		return
+	var manager: CanvasLayer = preload("res://scripts/mod_manager.gd").new()
+	manager.name = "ModManagerLayer"
+	manager.active_mods = active_mods
+	get_tree().root.add_child(manager)
+
+
+func set_active_mods(mods: Array) -> void:
+	active_mods = mods
+	if _mods_link != null:
+		_mods_link.text = "Mods (%d)" % mods.size() if not mods.is_empty() else "Mods"

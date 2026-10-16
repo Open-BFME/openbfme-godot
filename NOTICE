@@ -34,6 +34,15 @@ Copyright (C) 1994-2000 TeCGraf, PUC-Rio, under Lua's own permissive licence rep
 engine/thirdparty/lua-4.0.1/COPYRIGHT; engine/src/Libraries/Lua is the altered source
 version that reproduces EA's fork, plainly marked, see its README.md).
 
+Lua in Godot (lane LUAGD-1), built from source into the openbfme extension, each under the MIT
+licence reproduced in its folder: engine/thirdparty/lua-gdextension-0.8.2 (Copyright (C) 2026 Gil
+Barbosa Reis; engine/src/Libraries/LuaGDExtension holds the altered source versions, plainly
+marked, see its README.md), engine/thirdparty/luajit-18b087cd2cd4 (LuaJIT, Copyright (C)
+2005-2026 Mike Pall, and Lua 5.1 parts Copyright (C) 1994-2012 Lua.org, PUC-Rio; see its
+COPYRIGHT), engine/thirdparty/sol2 (Copyright (c) 2013-2022 Rapptz, ThePhD, and contributors),
+engine/thirdparty/tree-sitter (Copyright (c) 2018-2025 Max Brunsfeld) and
+engine/thirdparty/tree-sitter-lua (Copyright (c) 2021 Munif Tanjim).
+
 launcher/fonts (lane UI-5, the launcher's look): Cinzel (Copyright 2020 The Cinzel Project
 Authors), Cormorant Garamond (Copyright 2015 the Cormorant Project Authors) and Inter (Copyright
 2020 The Inter Project Authors), unmodified, from the Google Fonts repository, licensed under the

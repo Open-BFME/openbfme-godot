@@ -2,6 +2,7 @@
 // See GodotInGameHud.h.
 
 #include "Common/BfmeGame.h"
+#include "Common/AsciiString.h"
 #include "GodotDevice/GodotInGameHud.h"
 #include "GodotDevice/GodotPackedTexture.h"
 #include "GameLogic/Module/HeroAbilityModules.h"
@@ -39,6 +40,9 @@
 #include "GodotDevice/GodotW3DMaterial.h"
 
 #include <godot_cpp/classes/camera3d.hpp>
+#include <godot_cpp/classes/mesh_instance3d.hpp>
+#include <godot_cpp/classes/immediate_mesh.hpp>
+#include <godot_cpp/classes/standard_material3d.hpp>
 #include <godot_cpp/classes/atlas_texture.hpp>
 #include <godot_cpp/classes/shader.hpp>
 #include <godot_cpp/classes/shader_material.hpp>
@@ -298,6 +302,8 @@ struct HudDevice : public AptNativeHook
 	unsigned long long dragBoxFrames = 0;
 	void drawIconOps(RID parent);
 	// lane UI-4: the selection markers (GameClient/SelectionDecals.h) as Godot Decal nodes under a Node3D beside the camera, one per decal, reused
+	uint64_t mapSiteMarkersId = 0;
+	void setMapSiteMarkers(bool enabled);
 	uint64_t decalRootId = 0;
 	std::vector<uint64_t> decalIds;
 	unsigned decalsDrawn = 0;
@@ -1595,8 +1601,70 @@ DecalImage HudDevice::decalImageFor(const std::string &file)
 	return out;
 }
 
+void HudDevice::setMapSiteMarkers(bool enabled)
+{
+	auto *node = mapSiteMarkersId ? Object::cast_to<MeshInstance3D>(ObjectDB::get_instance(godot::ObjectID(mapSiteMarkersId))) : nullptr;
+	if (node) { node->set_visible(enabled); return; }
+	if (!enabled || !world || !world->hud_game()) return;
+	LiveGame &game = *world->hud_game();
+	Ref<ImmediateMesh> mesh;
+	mesh.instantiate();
+	Ref<StandardMaterial3D> material;
+	material.instantiate();
+	material->set_shading_mode(BaseMaterial3D::SHADING_MODE_UNSHADED);
+	material->set_flag(BaseMaterial3D::FLAG_ALBEDO_FROM_VERTEX_COLOR, true);
+	bool started = false;
+	auto drawMarker = [&](float x, float y, bool farm) {
+		if (!started) { mesh->surface_begin(Mesh::PRIMITIVE_LINES, material); started = true; }
+		mesh->surface_set_color(farm ? Color(0.25f, 1.0f, 0.3f) : Color(0.2f, 0.7f, 1.0f));
+		auto vertex = [&](float px, float py) {
+			mesh->surface_add_vertex(Vector3(px, game.logic().getGroundHeight(px, py) + 3.0f, -py));
+		};
+		for (int i = 0; i < 32; ++i)
+		{
+			const float a = i * 6.28318530718f / 32, b = (i + 1) * 6.28318530718f / 32;
+			vertex(x + 20 * std::cos(a), y + 20 * std::sin(a));
+			vertex(x + 20 * std::cos(b), y + 20 * std::sin(b));
+		}
+		vertex(x - 12, y); vertex(x + 12, y);
+		vertex(x, y - 12); vertex(x, y + 12);
+	};
+	bool nativeWalls = false;
+	for (const MapObject &object : game.map().chunks.objects)
+	{
+		const std::string name = AsciiStringUtil::lowered(object.m_objectName);
+		const bool farm = name == "farmtemplate";
+		const std::string id = AsciiStringUtil::lowered(object.m_properties.getAsciiString("uniqueID"));
+		const std::string aiName = AsciiStringUtil::lowered(object.m_properties.getAsciiString("GenericAIObjectName"));
+		bool numbered = false;
+		object.m_properties.getInt("GenericAIObjectWallHubNumber", &numbered);
+		const bool wall = numbered || name.find("wallhub") != std::string::npos ||
+			id.find("wallhub") != std::string::npos || aiName.find("wallhub") != std::string::npos;
+		if (!farm && !wall) continue;
+		nativeWalls |= wall;
+		drawMarker(object.m_location.x, object.m_location.y, farm);
+	}
+	// Map-authored markers take precedence; never double-render a stock or edited map's hubs.
+	if (!nativeWalls)
+		for (const auto &value : world->wall_hub_markers())
+		{
+			const auto &marker = std::get<BfmeLuaValue::Table>(value.data);
+			drawMarker((float)std::get<double>(marker.at("x").data), (float)std::get<double>(marker.at("y").data), false);
+		}
+	if (started) mesh->surface_end();
+	node = memnew(MeshInstance3D);
+	node->set_name("FarmAndWallHubMarkers");
+	node->set_mesh(mesh);
+	node->set_cast_shadows_setting(GeometryInstance3D::SHADOW_CASTING_SETTING_OFF);
+	world->add_child(node);
+	mapSiteMarkersId = node->get_instance_id();
+}
+
 void HudDevice::freeSelectionDecals()
 {
+	if (Node *markers = mapSiteMarkersId ? Object::cast_to<Node>(ObjectDB::get_instance(godot::ObjectID(mapSiteMarkersId))) : nullptr)
+		markers->queue_free();
+	mapSiteMarkersId = 0;
 	if (Node3D *root = decalRootId ? Object::cast_to<Node3D>(ObjectDB::get_instance(godot::ObjectID(decalRootId))) : nullptr)
 	{
 		root->queue_free();
@@ -3709,6 +3777,11 @@ void InGameHudNode::set_edge_scroll(bool on)
 
 Dictionary InGameHudNode::set_view_options(const Dictionary &o)
 {
+	if (o.has("map_site_markers"))
+	{
+		waitLogic(d.get());
+		d->setMapSiteMarkers((bool)o["map_site_markers"]);
+	}
 	// lane OPTS-2: the options screen's camera and interface settings, applied live (client only)
 	Dictionary r;
 	if (o.has("scroll_factor_option") && d->cam)

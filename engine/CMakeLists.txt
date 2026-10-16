@@ -83,7 +83,7 @@ include(cmake/SimFp.cmake) # openbfme_sim_fp (the simulation floating-point cont
 include(cmake/Apt.cmake) # OPENBFME_APT_SOURCES / OPENBFME_APT_TESTS (EA Apt player lane)
 include(cmake/Dep2.cmake) # openbfme_detlibm: the deterministic libm of the simulation (lane DEP-2; the Lua math library uses it)
 include(cmake/Lua.cmake) # openbfme_lua: Lua 4.0.1 + EA's fork (lane LUA-1)
-include(cmake/Lua54.cmake)
+include(cmake/LuaJIT.cmake) # openbfme_luajit: LuaJIT 2.1, the VM of lua-gdextension and the bfme.* API (lane LUAGD-1)
 include(cmake/Fx.cmake)  # OPENBFME_FX_SOURCES / OPENBFME_FX_TESTS (FX-1: FXList, particles, emitters)
 include(cmake/Production.cmake) # OPENBFME_PROD_SOURCES / OPENBFME_PROD_TESTS (lane PROD-1)
 include(cmake/Audio.cmake) # OPENBFME_AUDIO_SOURCES / OPENBFME_AUDIO_TESTS (lane AUDIO-1)
@@ -260,6 +260,7 @@ add_library(openbfme_core STATIC
     src/Libraries/Compression/EAC/refdecode.cpp
     src/GameEngineDevice/Win32Device/Common/ArchiveHandle.cpp
     src/GameEngineDevice/Win32Device/Common/Win32BIGFile.cpp
+    src/GameEngineDevice/Win32Device/Common/FolderArchiveFile.cpp
     src/GameEngineDevice/Win32Device/Common/Win32BIGFileSystem.cpp
     src/Libraries/WWVegas/WWLib/chunkio.cpp
     src/Libraries/WWVegas/WW3D2/assetmgr.cpp
@@ -455,10 +456,7 @@ if(OPENBFME_PYTHON)
 endif()
 target_include_directories(openbfme_core PUBLIC src)
 target_link_libraries(openbfme_core PUBLIC openbfme_lua)
-target_link_libraries(openbfme_core PUBLIC openbfme_lua54)
-if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
-    target_compile_definitions(openbfme_lua54 PRIVATE LUA_USE_IOS)
-endif()
+target_link_libraries(openbfme_core PUBLIC openbfme_luajit)
 # DEP-1: std::thread (LiveGameRunner) needs libpthread below glibc 2.34 (tools/release/build_linux.sh: Godot's Linux SDK, a glibc 2.28
 # sysroot); on a newer glibc FindThreads adds nothing (pthread is in libc). Link-only: no compile flag, so the sim flag audit is unchanged.
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
@@ -479,6 +477,7 @@ set(OPENBFME_GODOT_BIN ${CMAKE_CURRENT_SOURCE_DIR}/../godot/bin)
 if(CMAKE_SYSTEM_NAME STREQUAL "iOS" AND OPENBFME_IOS_SDK STREQUAL "iphonesimulator")
     set(OPENBFME_GODOT_BIN ${OPENBFME_GODOT_BIN}/ios-simulator)
 endif()
+include(cmake/LuaGDExtension.cmake) # openbfme_luagd: lua-gdextension 0.8.2, compiled into the extension (lane LUAGD-1)
 add_library(openbfme SHARED
     src/GodotDevice/register_types.cpp
     src/GodotDevice/GodotRetailFileSystem.cpp
@@ -512,7 +511,7 @@ add_library(openbfme SHARED
     ${OPENBFME_HUD6_GODOT_SOURCES}
     ${OPENBFME_CAH1_GODOT_SOURCES})
 target_sources(openbfme PRIVATE ${OPENBFME_SIM_SOURCES_GODOT}) # the simulation sources of the extension (listed in the manifest)
-target_link_libraries(openbfme PRIVATE openbfme_core godot-cpp)
+target_link_libraries(openbfme PRIVATE openbfme_core godot-cpp openbfme_luagd)
 if(UNIX AND NOT APPLE)
     # The extension links libstdc++ statically; without this its exported locale facet ids collide with the system runtime that Mesa loads into a
     # windowed Godot, and the first stream integer extraction (std::istream >> int) dispatches into the wrong codecvt and crashes (PROD-1 review r1).

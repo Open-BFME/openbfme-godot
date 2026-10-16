@@ -1,6 +1,5 @@
-## Headless test of the stealth look of static draws (lane STEALTH-1, review r1 fix 2): a stealth postern gate (AngmarWallPosternGateSmall: an InvisibilityUpdate
-## CAMOUFLAGE nugget and a W3DFloorDraw) is not drawn for an enemy while camouflaged, pulses for its owner, and its draws return to full opacity and are drawn
-## for the enemy once a detector reveals it.
+## Headless regression: a postern's gate and floor follow camouflage, while its wall draw
+## (AffectedByStealth = No) remains visible and opaque for both players.
 ##
 ##   godot --headless --path godot --script res://tests/stealth_gate_test.gd
 ##
@@ -8,7 +7,7 @@
 extends SceneTree
 
 const MAP := "map mp fall back 4p"
-const GATE := "AngmarWallPosternGateSmall"
+const GATE := "MenWallPosternGateSmall"
 
 var _failures := 0
 
@@ -81,18 +80,21 @@ func _run() -> int:
 	world.advance(0.2)
 	_check(inv.get("type", 2) == 1 and inv.get("look", 0) == 5, "the gate is camouflaged and an enemy's view hides it: %s" % [inv])
 	var g: Dictionary = world.get_object(gate)
-	_check(g.instances == 0, "no draw of the gate is shown to the enemy, its floor draw included (%d instances)" % g.instances)
+	_check(g.instances == 1, "the wall remains visible to the enemy while the postern and floor hide (%d instances)" % g.instances)
 	# the owner's view: the draws are shown and pulse (InvisibilityOpacityMin 0.4)
 	world.set_local_player(angmar)
 	var lowest := 1.0
 	var shown := 0
+	var wall_full := true
 	for k in 40:
 		world.advance(0.05)
 		g = world.get_object(gate)
 		shown = maxi(shown, g.instances)
+		wall_full = wall_full and is_equal_approx(g.instance_opacities[0], 1.0)
 		for op in g.instance_opacities:
 			lowest = minf(lowest, op)
 	_check(shown >= 2, "the owner sees the gate's draws (%d instances)" % shown)
+	_check(wall_full, "the wall stays fully opaque throughout the postern pulse")
 	_check(lowest < 0.99, "the owner's view pulses (lowest opacity %.2f)" % lowest)
 	# a detector of the enemy reveals it: every draw, the static floor included, back to full opacity; the enemy sees it again
 	var totem: int = world.create_object("WildSkullTotem", men, c.x + 150.0, c.y, 0.0)

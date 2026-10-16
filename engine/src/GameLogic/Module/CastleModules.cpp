@@ -544,7 +544,8 @@ bool CastleBehavior::unpack(bool instant)
 		const std::string base = baseNameFor(*owner);
 		if (base.empty())
 		{
-			m_lastError = "CastleToUnpackForFaction names no base for the faction '" + owner->getSide() + "'";
+			m_lastError = "CastleToUnpackForFaction names no base for the faction '" + owner->getSide() + "' (player " + std::to_string(owner->getPlayerIndex()) + " '" +
+				owner->getPlayerName() + "')";
 			return false;
 		}
 		std::string error;

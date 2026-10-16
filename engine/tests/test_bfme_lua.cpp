@@ -68,7 +68,11 @@ struct BfmeFixture
 TEST_CASE("bfme Lua: module identity, modern syntax, proxies and collection contracts")
 {
 	BfmeFixture f;
-	CHECK(f.run("return _VERSION, bfme==import('bfme'), bfme==require('bfme')") == "Lua 5.4\ttrue\ttrue\n");
+	// lane LUAGD-1: LuaJIT (Lua 5.1 + its 5.2 extensions), the sandbox unchanged: no jit / ffi / io / os / debug, no native modules
+	CHECK(f.run("return _VERSION, bfme==import('bfme'), bfme==require('bfme')") == "Lua 5.1\ttrue\ttrue\n");
+	CHECK(f.run("return jit, io, os, debug, package.loadlib, package.cpath, #package.loaders, (pcall(require, 'ffi'))") ==
+		  "nil\tnil\tnil\tnil\tnil\t\t2\tfalse\n");
+	CHECK(f.run("return bit.band(12, 10), goto_ok") == "8\tnil\n");
 	CHECK(f.run("return #bfme.players, bfme.players.localPlayer==bfme.players[1], bfme.players.neutral.id") == "2\ttrue\t0\n");
 	CHECK(f.run("local n=0; for id,p in pairs(bfme.players) do n=n+1 end; return n") == "2\n");
 	CHECK(f.run("return tostring(bfme.players[1]), bfme.players[99]") == "Player[1]\tnil\n");
@@ -462,4 +466,19 @@ TEST_CASE("bfme graphics texture overrides queue in menus and validate arguments
  CHECK(std::holds_alternative<std::monostate>(f.applied[1].value.data));
  CHECK_FALSE(f.vm->execute("bfme.graphics.setTextureOverride('', 'res://bad.dds')").ok);
  CHECK_FALSE(f.vm->execute("bfme.graphics.setTextureOverride('floor', 42)").ok);
+}
+
+TEST_CASE("bfme Lua data: preserves marker properties without exposing engine libraries")
+{
+ auto data = BfmeLuaRuntime::readData("return {markers={{x=12.5,properties={GenericAIObjectID=7,GenericAIObjectName='_WallHub_A'}}}}", "markers");
+ const auto &root = std::get<BfmeLuaValue::Table>(data.data);
+ const auto &markers = std::get<BfmeLuaValue::List>(root.at("markers").data);
+ REQUIRE(markers.size() == 1);
+ const auto &marker = std::get<BfmeLuaValue::Table>(markers[0].data);
+ CHECK(std::get<double>(marker.at("x").data) == 12.5);
+ const auto &props = std::get<BfmeLuaValue::Table>(marker.at("properties").data);
+ CHECK(std::get<double>(props.at("GenericAIObjectID").data) == 7);
+ CHECK(std::get<std::string>(props.at("GenericAIObjectName").data) == "_WallHub_A");
+ CHECK_THROWS(BfmeLuaRuntime::readData("return io.open('file')", "bad"));
+ CHECK_THROWS(BfmeLuaRuntime::readData("return {", "bad"));
 }

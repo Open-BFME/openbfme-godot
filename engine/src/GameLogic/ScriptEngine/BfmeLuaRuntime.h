@@ -82,9 +82,13 @@ class BfmeLuaRuntime
 		bool ok = false;
 		std::string output;
 	};
-	explicit BfmeLuaRuntime(Host host);
+	// luaState: a fresh LuaJIT lua_State the caller owns (a lua-gdextension LuaState's, GodotBfmeLua) to run on; null: the runtime
+	// makes and closes its own. The runtime opens its libraries and the bfme.* API in it either way.
+	explicit BfmeLuaRuntime(Host host, void *luaState = nullptr);
 	~BfmeLuaRuntime();
 	Result execute(const std::string &code);
+	// Evaluate a data-only Lua chunk in an isolated state without libraries or engine access.
+	static Value readData(const std::string &source, const std::string &name);
 	// queued writes, construction jobs, or an update callback that is due (wall clock): the caller should flush() at its next safe point
 	bool hasPending() const;
 	void flush();	   // caller holds the simulation between frames; also runs the due update callbacks

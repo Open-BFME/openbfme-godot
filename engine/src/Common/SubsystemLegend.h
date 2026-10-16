@@ -66,6 +66,7 @@ struct SubsystemLoadReport
 	std::vector<std::string> neverLoaded;        ///< legend entries RotWK code never requests (spec 3.5)
 	std::vector<std::string> skippedCinematics;  ///< InitFile entries skipped by IncludePathCinematics
 	std::vector<FileError> errors;
+	std::vector<std::string> warnings;           ///< problems that do not stop the load (a mod's missing AI base layout), shown with the report
 };
 
 class SubsystemLegend

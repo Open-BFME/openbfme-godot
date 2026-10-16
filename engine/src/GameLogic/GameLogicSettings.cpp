@@ -470,6 +470,25 @@ bool GameLogicSettingsLoader::load(ArchiveFileSystem &fs, GameLogicSettings &out
 		if (!l.text("BFME1 victory rule (built in)", kBfme1Victory, error))
 			return false;
 	}
+	// GameData rows a gamedata.ini may leave out (a mod replaces the whole file: RJ RotWK has none of these): GlobalData's constructor values
+	// (Open-BFME-2 GlobalData.cpp, retail 0x0023631C: +0xB4 0.5f, +0xB8 0.1f, +0x13E 1, +0x13F 1). The constructor leaves DefaultStartingCash
+	// (+0xBB8) unset; INFERENCE: 0 (a skirmish takes its money from the lobby)
+	std::vector<std::string> defaulted;
+	{
+		BlockState &st = l.state();
+		auto fill = [&](unsigned bit, const char *name, auto apply) {
+			if (st.seen & bit)
+				return;
+			apply();
+			st.seen |= bit;
+			defaulted.push_back(name);
+		};
+		fill(SEEN_TOD, "ForceModelsToFollowTimeOfDay = Yes", [&] { st.values.forceModelsToFollowTimeOfDay = true; });
+		fill(SEEN_WEATHER, "ForceModelsToFollowWeather = Yes", [&] { st.values.forceModelsToFollowWeather = true; });
+		fill(SEEN_DAMAGED, "UnitDamagedThreshold = 0.5", [&] { st.values.unitDamagedThreshold = 0.5f; });
+		fill(SEEN_REALLY, "UnitReallyDamagedThreshold = 0.1", [&] { st.values.unitReallyDamagedThreshold = 0.1f; });
+		fill(SEEN_CASH, "DefaultStartingCash = 0 (not set by the constructor)", [&] { st.values.defaultStartingCash = 0; });
+	}
 	GameLogicSettings result = out;
 	if (!finish(l, 1u, "GameData", kGameDataNeeds, "gamedata.ini", result, error) || !finish(l, 2u, "AIData", kAIDataNeeds, "default\\aidata.ini", result, error) ||
 		!finish(l, 4u, "MultiplayerSettings", kMultiplayerNeeds, "multiplayer.ini", result, error))
@@ -479,6 +498,7 @@ bool GameLogicSettingsLoader::load(ArchiveFileSystem &fs, GameLogicSettings &out
 	result.bodyThresholdsLoaded = true;
 	result.startingCashLoaded = true;
 	result.filesLoaded = l.files();
+	result.constructorDefaults = defaulted;
 	out = result;
 	return true;
 }

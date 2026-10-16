@@ -72,6 +72,8 @@ func _run() -> int:
 	_check(_lua("return bfme.players[%d].aiEnabled" % ai) == "true", "the native AI stays enabled by default")
 	# Opt in to automatic takeover for the rest of this Lua AI exercise.
 	_lua("luaai.config.autoEnable = true")
+	# one think now: the update callback runs every thinkMs of wall-clock time, which two quick frames need not reach
+	_lua("luaai.thinkAll()")
 	_frames(1)
 	_frames(1)
 	_check(_lua("return luaai.players[%d] ~= nil" % ai) == "true", "the Lua AI took the computer player at match start (autoEnable)")

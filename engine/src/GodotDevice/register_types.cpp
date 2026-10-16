@@ -19,6 +19,7 @@
 #include "GodotDevice/GodotTextureOverrides.h"
 #include "GodotDevice/GodotVideoStream.h"
 #include "GodotDevice/GodotW3DModelBuilder.h"
+#include "GodotDevice/LuaGDExtensionRegister.h"
 
 #include <gdextension_interface.h>
 #include <godot_cpp/core/class_db.hpp>
@@ -53,12 +54,14 @@ static void initialize_openbfme(ModuleInitializationLevel p_level)
 	GDREGISTER_CLASS(SessionLogger);
 	GDREGISTER_CLASS(InstallSetup);
 	GDREGISTER_CLASS(VP6MovieStream); // CAMP-2
+	LuaGDExtension::initialize(); // LUAGD-1: LuaState, LuaTable, ... and Lua as a script language
 }
 
 static void uninitialize_openbfme(ModuleInitializationLevel p_level)
 {
 	if (p_level == MODULE_INITIALIZATION_LEVEL_SCENE)
 	{
+		LuaGDExtension::uninitialize(); // LUAGD-1
 		ConsoleFilter::uninstall(); // RELEASE-1: the original stdout / stderr back before the extension's code goes
 		GammaComposite::shutdown();
 		W3D_Clear_Texture_Overrides();

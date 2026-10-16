@@ -14,7 +14,7 @@ func _run() -> void:
 	console.execute = func(code: String) -> Dictionary: return world.execute_lua(code)
 	root.add_child(console)
 	var version: Dictionary = world.execute_lua("return _VERSION")
-	assert(version.ok and version.output.contains("Lua 5.4"))
+	assert(version.ok and version.output.contains("Lua 5.1")) # LuaJIT (lane LUAGD-1)
 	var module: Dictionary = world.execute_lua("return bfme == import('bfme'), bfme == require('bfme'), bfme.match.getStatus().ready")
 	assert(module.ok and module.output == "true\ttrue\tfalse\n")
 	var pending: Dictionary = world.execute_lua("pause_ticket = bfme.match.pause(); return bfme.mutations.getStatus(pause_ticket)")
@@ -121,7 +121,7 @@ func _run() -> void:
 	assert(console._output.text.is_empty())
 	for arg in OS.get_cmdline_user_args():
 		if arg.begins_with("--console-shot="):
-			console._submit("print('Lua 5.4.9 · bfme companion runtime')")
+			console._submit("print('LuaJIT · bfme runtime')")
 			console._submit("print('Enter runs your script. Shift+Enter adds a line.')")
 			console._entry.text = "local me = bfme.players.localPlayer\nif me then\n    me.money = 10000\n    print(me, me.money)\nend"
 			await process_frame

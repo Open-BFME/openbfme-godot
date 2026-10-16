@@ -328,8 +328,43 @@ bool WallSpan::plan(GameLogic &logic, Object &hub, const Coord3D &start, const C
 			t.angle = angle;
 			t.tmpl = tt;
 			t.code = legal(pos, *tt);
+			// A wall may terminate against terrain, but never use this exception to
+			// tunnel through another object or evade buildout/shroud restrictions.
+			const int terrainCode = BuildPlacement::isLocationLegalToBuild(logic, pos, *tt, angle,
+				LLF_TERRAIN_RESTRICTIONS, &hub, owner);
+			if (terrainCode == LBC_RESTRICTED_TERRAIN || terrainCode == LBC_NOT_FLAT_ENOUGH)
+			{
+				const ThingTemplate *cliff = wh->cliffCapTemplate();
+				if (cliff && t.code == 0 && !out.tiles.empty())
+				{
+					Tile &last = out.tiles.back();
+					const int hubCode = legal(last.pos, *cap);
+					const int hubTerrain = BuildPlacement::isLocationLegalToBuild(logic, last.pos, *cap, angle,
+						LLF_TERRAIN_RESTRICTIONS, &hub, owner);
+					const int cliffCode = legal(pos, *cliff);
+					if (hubCode == 0 && hubTerrain == 0 && cliffCode == 0)
+					{
+						out.cost -= costOf(*last.tmpl, hub);
+						last.tmpl = cap;
+						out.cost += costOf(*cap, hub);
+						t.tmpl = cliff;
+						t.code = 0;
+						out.tiles.push_back(t);
+						out.cost += costOf(*cliff, hub);
+						out.endsOnHub = false;
+						out.endHub = INVALID_ID;
+						endCap = false;
+						out.endCapPlaced = true;
+						if ((int)money < out.cost) out.tiles.back().code = out.worstCode = 7;
+						for (const Tile &tile : out.tiles) out.worstCode = std::max(out.worstCode, tile.code);
+						return true;
+					}
+				}
+				// No safe termination: retain an illegal preview rather than building past terrain.
+				t.code = terrainCode;
+			}
 			out.tiles.push_back(t);
-			// RW 0x795D56: codes 5 / 6 (RotWK's cliff codes) put the cliff cap here: not reachable with the port's codes (S-657)
+			// Terrain termination above maps the port's terrain codes to the configured cliff cap.
 			pos.x = SimMath::addf32(sx, pos.x);
 			pos.y = SimMath::addf32(sy, pos.y);
 			out.cost += costOf(*tt, hub);

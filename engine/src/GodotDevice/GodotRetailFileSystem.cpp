@@ -2,6 +2,7 @@
 
 #include "GodotDevice/GodotRetailFileSystem.h"
 #include "Libraries/WWVegas/WW3D2/assetmgr.h"
+#include "GameEngineDevice/Win32Device/Common/FolderArchiveFile.h"
 
 #include "Common/RetailArchivePolicy.h"
 #include "Common/ArchiveFile.h"
@@ -275,7 +276,28 @@ Dictionary RetailFileSystem::mountFrom(const std::string &rotwkRoot, const std::
 		{
 			report.warnings.push_back("Optional wall tower assets are not included; using native wall towers.");
 		}
-		if (report.ok && wantsTowers && hasTowerPack)
+		// lane MODS-1: the enabled mods (user://mods.cfg [mods] enabled, in load order; RotWK's -mod "<folder>" as --mod=<folder> too)
+		PackedStringArray modPaths;
+		{
+			Ref<ConfigFile> modsCfg;
+			modsCfg.instantiate();
+			if (modsCfg->load("user://mods.cfg") == OK)
+			{
+				const Array enabled = modsCfg->get_value("mods", "enabled", Array());
+				for (int64_t i = 0; i < enabled.size(); ++i)
+					modPaths.push_back(String(enabled[i]));
+			}
+			const PackedStringArray modArgs = OS::get_singleton()->get_cmdline_user_args();
+			for (int64_t i = 0; i < modArgs.size(); ++i)
+				if (modArgs[i].begins_with("--mod="))
+					modPaths.push_back(modArgs[i].substr(6));
+		}
+		// the BFME2Lua wall tower pack is written against the stock game data (its INI uses the stock gamedata.ini macros): not with a mod
+		if (report.ok && wantsTowers && hasTowerPack && !modPaths.is_empty())
+		{
+			report.warnings.push_back("Wall tower pack not loaded: a mod is enabled (the pack is written for the unmodded game data).");
+		}
+		if (report.ok && wantsTowers && hasTowerPack && modPaths.is_empty())
 		{
 			const String resource = "res://mods/wall_towers.big";
 			String path = ProjectSettings::get_singleton()->globalize_path(resource);
@@ -356,6 +378,128 @@ Dictionary RetailFileSystem::mountFrom(const std::string &rotwkRoot, const std::
 			if (report.ok) mountMaps(*fs);
 			if (report.ok && menuFs) mountMaps(*menuFs);
 		}
+		// lane MODS-1: the enabled mods over both views: each mod's *.big, then its loose files on top (FolderArchiveFile). A later mod overrides
+		// an earlier one.
+		Array modsMounted;
+		std::vector<std::string> modObjectInis; // the mods' Data\INI\Object\*.ini (a GameData block there is the game's: MergeGameDataBlocks)
+		if (report.ok)
+		{
+			for (int64_t i = 0; i < modPaths.size() && report.ok; ++i)
+			{
+				const std::string modPath = toNative(ProjectSettings::get_singleton()->globalize_path(modPaths[i]));
+				Dictionary mod;
+				mod["path"] = toGodot(modPath);
+				std::error_code dirError;
+				std::vector<std::string> bigs;
+				size_t looseFiles = 0, skipped = 0;
+				const bool isFolder = std::filesystem::is_directory(std::filesystem::u8path(modPath), dirError);
+				if (!isFolder)
+					bigs.push_back(modPath); // a single .big mod
+				std::string problem;
+				std::unique_ptr<FolderArchiveFile> loose;
+				if (isFolder)
+				{
+					loose = std::make_unique<FolderArchiveFile>();
+					if (!loose->open(modPath, &problem))
+					{
+						report.ok = false;
+						report.errors.push_back("mod " + modPath + ": " + problem);
+						break;
+					}
+					bigs.assign(loose->bigFiles().rbegin(), loose->bigFiles().rend()); // ascending: the first in ZH's descending order is mounted last (wins)
+					looseFiles = loose->fileCount();
+					skipped = loose->skippedPrograms();
+					for (const std::string &p : loose->paths())
+						if (p.rfind("data\\ini\\object\\", 0) == 0 && p.size() > 4 && p.compare(p.size() - 4, 4, ".ini") == 0)
+							modObjectInis.push_back(p);
+				}
+				size_t emptyBigs = 0;
+				for (const std::string &big : bigs)
+				{
+					std::error_code sizeError;
+					if (std::filesystem::file_size(std::filesystem::u8path(big), sizeError) == 0 && !sizeError)
+					{
+						// an empty .big holds nothing (RJ RotWK ships art\test.big and art\w3d\ar\s.big at 0 bytes): reported, not mounted
+						++emptyBigs;
+						report.warnings.push_back("mod " + modPath + ": " + big + " is empty (0 bytes), not mounted");
+						continue;
+					}
+					for (Win32BIGFileSystem *target : { fs.get(), menuFs.get() })
+					{
+						if (!target) continue;
+						auto archive = target->openArchiveFile(big, &problem);
+						if (!archive)
+						{
+							report.ok = false;
+							report.errors.push_back("mod " + modPath + ": " + problem);
+							break;
+						}
+						target->mountArchive(std::move(archive), big, true);
+					}
+				}
+				if (loose && report.ok)
+				{
+					fs->mountArchive(std::move(loose), modPath, true);
+					if (menuFs)
+					{
+						// the BFME2-themed menus draw BFME2's movies: a mod's .apt / .const are RotWK's (RJ RotWK ships RotWK 2.01's .const
+						// files), and a BFME2 movie with a RotWK constant file does not load. The menu view takes the mod's other files
+						auto menuLoose = std::make_unique<FolderArchiveFile>();
+						if (menuLoose->open(modPath, &problem, { ".apt", ".const" }))
+						{
+							if (menuLoose->skippedByExtension() > 0)
+								report.warnings.push_back("mod " + modPath + ": its " + std::to_string(menuLoose->skippedByExtension()) +
+									" menu movie file(s) (.apt / .const) are not used by the BFME2-style menus; choose the RotWK menus in Options to see them");
+							menuFs->mountArchive(std::move(menuLoose), modPath, true);
+						}
+					}
+				}
+				mod["big_files"] = (int64_t)(bigs.size() - emptyBigs);
+				mod["empty_big_files"] = (int64_t)emptyBigs;
+				mod["loose_files"] = (int64_t)looseFiles;
+				mod["skipped_programs"] = (int64_t)skipped;
+				modsMounted.push_back(mod);
+				report.warnings.push_back("mod " + modPath + ": " + std::to_string(bigs.size() - emptyBigs) + " archive(s) and " + std::to_string(looseFiles) +
+					" loose file(s) override the verified game files (not verified; " + std::to_string(skipped) + " program file(s) not mounted)");
+			}
+		}
+		// a mod's GameData block in an object INI (RJ RotWK): one merged Data\INI\GameData.ini over both views, so every GameData reader
+		// sees the rows retail applies (its later object files override GameData.ini's rows)
+		if (report.ok && !modObjectInis.empty())
+		{
+			std::sort(modObjectInis.begin(), modObjectInis.end());
+			modObjectInis.erase(std::unique(modObjectInis.begin(), modObjectInis.end()), modObjectInis.end());
+			std::vector<std::pair<std::string, std::string>> blocks;
+			for (const std::string &p : modObjectInis)
+			{
+				std::vector<std::uint8_t> bytes;
+				std::string readError;
+				if (!fs->readFile(p, bytes, &readError))
+					continue;
+				std::string text(bytes.begin(), bytes.end());
+				if (!GameDataBlockRows(text).empty())
+					blocks.emplace_back(p, std::move(text));
+			}
+			if (!blocks.empty())
+			{
+				std::vector<std::uint8_t> base;
+				std::string readError;
+				fs->readFile("data\\ini\\gamedata.ini", base, &readError);
+				const std::string merged = MergeGameDataBlocks(std::string(base.begin(), base.end()), blocks);
+				std::string sources;
+				for (const auto &b : blocks)
+					sources += (sources.empty() ? "" : ", ") + b.first;
+				for (Win32BIGFileSystem *target : { fs.get(), menuFs.get() })
+				{
+					if (!target) continue;
+					auto mem = std::make_unique<MemoryArchiveFile>("mods: merged GameData");
+					mem->put("data\\ini\\gamedata.ini", std::vector<std::uint8_t>(merged.begin(), merged.end()));
+					target->mountArchive(std::move(mem), "mods: merged GameData", true);
+				}
+				report.warnings.push_back("mods: Data\\INI\\GameData.ini merged with the GameData block of " + sources + " (RotWK reads GameData from any INI)");
+			}
+		}
+		result["mods"] = modsMounted;
 		for (const std::string &e : report.errors)
 		{
 			errors.push_back(toGodot(e));

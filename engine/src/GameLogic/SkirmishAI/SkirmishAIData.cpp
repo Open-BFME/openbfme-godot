@@ -562,7 +562,7 @@ const std::vector<NameKeyType> *SkirmishAIStore::basesOfSide(const std::string &
 	return it == m_sideBases.end() ? nullptr : &it->second;
 }
 
-bool SkirmishAIStore::loadBaseLayouts(ArchiveFileSystem &fs, std::vector<std::string> *errors)
+bool SkirmishAIStore::loadBaseLayouts(ArchiveFileSystem &fs, std::vector<std::string> *errors, std::vector<std::string> *warnings)
 {
 	bool ok = true;
 	// lane PERF-2: the layouts are read in key order on this thread (the archives' file handles are shared), decompressed and parsed on the client job
@@ -598,6 +598,14 @@ bool SkirmishAIStore::loadBaseLayouts(ArchiveFileSystem &fs, std::vector<std::st
 	for (Layout &l : layouts)
 	{
 		AIBaseTemplate &base = *l.base;
+		if (!l.read && warnings)
+		{
+			// lane MODS-1: a .bse that is not there (RJ RotWK names Bases\mordor_bfme1_dunharrow_2 but ships mordor_bfme1_dunharrow_1.bse in that
+			// folder). The mod runs on retail, so retail does not stop for it; the base stays without a layout and is never chosen
+			// (AIBaseBuilder::candidates). A file that is there but does not parse is still an error
+			warnings->push_back("[S-413] AIBase '" + base.map + "' has no layout: " + l.path + ": " + l.error + " (the base is not used)");
+			continue;
+		}
 		if (!l.parsed)
 		{
 			ok = false;

@@ -166,6 +166,10 @@ std::vector<const AIBaseTemplate *> AIBaseBuilder::candidates(const std::vector<
 	std::vector<const AIBaseTemplate *> out;
 	for (const AIBaseTemplate *t : sideBases)
 	{
+		if (!t->layoutLoaded)
+		{
+			continue; // lane MODS-1: a base whose .bse is missing (reported at load) is never chosen
+		}
 		const bool match = t->gameMapToUseOn == mapFileName || (anyAllowed && t->gameMapToUseOn == "<ANY>");
 		if (!match)
 		{

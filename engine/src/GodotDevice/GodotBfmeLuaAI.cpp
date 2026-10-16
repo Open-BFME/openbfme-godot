@@ -592,6 +592,7 @@ BfmeLuaRuntime::Value GameWorld::bfme_query(const std::string &name, const std::
 		}
 		return out;
 	}
+	if (name == "wallHubSites") return wall_hub_markers();
 	if (name == "farmSites")
 	{
 		// the map's resource building markers: FarmTemplate objects (the native economy builder's farm sites, AIBaseBuilder::makeFarmSites RW 0x8EEBAC),

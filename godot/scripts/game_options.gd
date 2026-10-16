@@ -23,6 +23,7 @@ const PREFIX := "OpenBFME"
 
 ## key -> { default, choices } (every value is text, as Options.ini holds it)
 const EXTRAS := {
+	"OpenBFMEMapSiteMarkers": {"default": "no", "choices": ["yes", "no"]},
 	"OpenBFMEAntiAliasing": {"default": "off", "choices": ["off", "fxaa", "msaa2", "msaa4", "taa"]},
 	"OpenBFMEAnisotropic": {"default": "4x", "choices": ["off", "2x", "4x", "8x", "16x"]},
 	"OpenBFMELook": {"default": "original", "choices": ["original", "enhanced"]},
@@ -313,6 +314,7 @@ func view_options(values: Dictionary) -> Dictionary:
 		"alternate_mouse": values.AlternateMouseSetup != "yes",
 		"all_health_bars": all_bars,
 		"health_bar_mode": values.OpenBFMEHealthBars,
+		"map_site_markers": values.OpenBFMEMapSiteMarkers == "yes",
 		"ui_scale": values.OpenBFMEUIScale.to_int() / 100.0,
 		"free_camera": values.OpenBFMEFreeCamera == "yes" or (game != null and game.get("_free_camera_flag") == true),
 		"zoom_out_factor": _zoom_out_factor(values),

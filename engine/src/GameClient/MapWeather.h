@@ -6,7 +6,7 @@
 // no fog keys has no fog (weather.ini holds none).
 //
 // This is a name-level scan of one block, not the INI system (another lane owns engine/src/Common/INI*).
-// Every other Weather key (snow, rain, lightning, ramps) is ignored here and left to the weather lane.
+// Snowfall settings are passed to the presentation renderer; lightning and spell ramps remain separate.
 
 #pragma once
 
@@ -16,6 +16,11 @@
 
 struct MapWeather
 {
+	bool snowEnabled = true, isSnowing = false;
+	std::string snowTexture = "EXRainDrop.tga";
+	float snowHeight = 300, snowSpacing = 30, snowSpeed = 50, snowQuadSize = 10;
+	float snowAmplitude = 0;
+	float snowXYSpeed[2] = {0, 0};
 	bool fogEnabled = false;
 	float fogColor[3] = { 0.5f, 0.5f, 0.5f }; // 0..1
 	float fogStart = 0.0f;

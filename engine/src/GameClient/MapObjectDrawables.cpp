@@ -208,14 +208,12 @@ bool MapObjectGameData::scanText(const std::string &text, MapObjectOptions &out,
 			haveWeather = true;
 		}
 	}
-	if (!haveTod || !haveWeather)
-	{
-		if (error)
-		{
-			*error = std::string("gamedata.ini: no ") + (haveTod ? "ForceModelsToFollowWeather" : "ForceModelsToFollowTimeOfDay") + " in the GameData block";
-		}
-		return false;
-	}
+	// a gamedata.ini without the rows (a mod's own file, e.g. RJ RotWK) keeps GlobalData's constructor values: both Yes (Open-BFME-2
+	// GlobalData.cpp, the constructor at retail 0x0023631C: m_013E(1), m_013F(1))
+	if (!haveTod)
+		out.forceModelsToFollowTimeOfDay = true;
+	if (!haveWeather)
+		out.forceModelsToFollowWeather = true;
 	return true;
 }
 

@@ -2,6 +2,7 @@
 // See GameLogic/BuildPlacement.h for the sources of every rule.
 
 #include "GameLogic/BuildPlacement.h"
+#include "GameLogic/Module/AIUpdate.h"
 
 #include "Common/Player.h"
 #include "Common/Thing/ThingTemplate.h"
@@ -309,7 +310,11 @@ LegalBuildCode BuildPlacement::isLocationLegalToBuild(GameLogic &logic, const Co
 		{
 			return LBC_NO_CLEAR_PATH;
 		}
-		// the path query itself is not ported (stop S-301)
+		if (ai && ai->mapReady() && !ai->pathfinder().clientSafeQuickDoesPathExist(
+			builder->getAIUpdateInterface()->locomotorInfo(), builder->getPosition(), &pos))
+		{
+			return LBC_NO_CLEAR_PATH;
+		}
 	}
 	if (options & LLF_TERRAIN_RESTRICTIONS)
 	{

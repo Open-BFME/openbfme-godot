@@ -6,6 +6,8 @@
 #include "Common/Team.h"
 #include "GameClient/Radar.h"
 #include "GameLogic/AI/AIGarrisonStates.h"
+#include "GameLogic/AI/AIWorld.h"
+#include "GameLogic/Module/AIUpdate.h"
 
 #include "Common/BuildAssistant.h"
 #include "Common/SpecialPower.h"
@@ -20,6 +22,7 @@
 #include "GameLogic/SimMath.h"
 
 #include <cstdlib>
+#include <cmath>
 
 namespace
 {
@@ -127,8 +130,40 @@ void CommandTranslator::hint(const char *cursor)
 	m_ctx.ui.hintCursor(c);
 }
 
+bool CommandTranslator::selectionCanReach(const Coord3D &pos) const
+{
+	if (!std::isfinite(pos.x) || !std::isfinite(pos.y) || !std::isfinite(pos.z)) return false;
+	if (!m_ctx.ai || !m_ctx.ai->mapReady()) return true;
+	float loX, loY, hiX, hiY;
+	m_ctx.ai->pathfinder().terrainView()->getMaximumPathfindExtent(loX, loY, hiX, hiY);
+	if (pos.x < loX || pos.y < loY || pos.x >= hiX || pos.y >= hiY) return false;
+	for (ObjectID id : m_ctx.ui.selected())
+	{
+		Object *object = m_ctx.logic.findObjectByID(id);
+		if (!object || object->isDestroyed() || object->isKindOfName("IMMOBILE")) continue;
+		AIUpdateInterface *ai = object->getAIUpdateInterface();
+		if (!ai) continue;
+		const PathfindLocomotorInfo loco = ai->locomotorInfo();
+		// Flying units do not inherit the ground layer's walls or cliffs.
+		if ((loco.validSurfaces & LOCOMOTORSURFACE_AIR) ||
+			m_ctx.ai->pathfinder().clientSafeQuickDoesPathExist(loco, object->getPosition(), &pos)) return true;
+	}
+	return false;
+}
+
+void CommandTranslator::issueRadarMove(const Coord3D &world)
+{
+	if (selectionCanReach(world)) m_ctx.stream.append(MSG_DO_MOVETO).appendLocation(world);
+	else hint(MouseCursorName::GenericInvalid);
+}
+
 int CommandTranslator::issueMove(Object *target, const Coord3D *pos, EvaluateType type)
 {
+	if (pos && !selectionCanReach(*pos))
+	{
+		hint(MouseCursorName::GenericInvalid);
+		return 0;
+	}
 	// ZH issueMoveToLocationCommand (CommandXlat.cpp:865) as RotWK's RW 0x81DB0C
 	int msgType = 0;
 	if (m_teamExists)
@@ -239,6 +274,7 @@ int CommandTranslator::evaluateContextCommand(Object *obj, const Coord3D *pos, E
 		// override every other command with waypoint commands
 		if (type == EvaluateType::DoHint)
 		{
+			if (pos && !selectionCanReach(*pos)) { hint(MouseCursorName::GenericInvalid); return 0; }
 			hint(MouseCursorName::Move);
 			return MSG_ADD_WAYPOINT;
 		}
@@ -363,6 +399,11 @@ int CommandTranslator::evaluateContextCommand(Object *obj, const Coord3D *pos, E
 	{
 		if (type == EvaluateType::DoHint)
 		{
+			if (m_teamExists && !selectionCanReach(*pos))
+			{
+				hint(MouseCursorName::GenericInvalid);
+				return 0;
+			}
 			msgType = m_teamExists ? (m_ctx.ui.isInAttackMoveToMode() ? MSG_DO_ATTACKMOVETO : MSG_DO_MOVETO) : 0;
 			if (msgType != 0)
 			{

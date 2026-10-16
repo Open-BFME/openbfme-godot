@@ -420,7 +420,7 @@ bool RetailObjectWorld::loadState(std::string *error)
 	// AI-1: TheBaseTemplateLibrary's post-load (RW 0x82FA98) reads every AIBase's .bse layout; its errors reach the report like the legend's
 	{
 		std::vector<std::string> layoutErrors;
-		m_s->m_skirmishAI->loadBaseLayouts(m_fs, &layoutErrors);
+		m_s->m_skirmishAI->loadBaseLayouts(m_fs, &layoutErrors, &m_s->m_report.warnings);
 		for (const std::string &e : layoutErrors)
 		{
 			SubsystemLoadReport::FileError fe;

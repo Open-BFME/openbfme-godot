@@ -97,7 +97,16 @@ void MapWeatherScan::applyText(const std::string &text, MapWeather &w)
 		}
 		const std::string key = lower(trim(line.substr(0, eq)));
 		const std::string val = trim(line.substr(eq + 1));
-		if (key == "hardwarefogenable")
+		if (key == "snowenabled") w.snowEnabled = lower(val) == "yes" || lower(val) == "true" || val == "1";
+		else if (key == "issnowing") w.isSnowing = lower(val) == "yes" || lower(val) == "true" || val == "1";
+		else if (key == "snowtexture") w.snowTexture = val;
+		else if (key == "snowboxheight") w.snowHeight = (float)std::atof(val.c_str());
+		else if (key == "snowspacing") w.snowSpacing = (float)std::atof(val.c_str());
+		else if (key == "snowspeed") w.snowSpeed = (float)std::atof(val.c_str());
+		else if (key == "snowquadsize") w.snowQuadSize = (float)std::atof(val.c_str());
+		else if (key == "snowamplitude") w.snowAmplitude = (float)std::atof(val.c_str());
+		else if (key == "snowxyspeed") parseXY(val, w.snowXYSpeed);
+		else if (key == "hardwarefogenable")
 		{
 			w.fogEnabled = lower(val) == "yes" || val == "1" || lower(val) == "true";
 			w.fogKeysSeen = true;

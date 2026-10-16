@@ -231,7 +231,7 @@ public:
 
 	// RW 0x82FA98 (TheBaseTemplateLibrary's post-load): every AIBase's "Bases\\<Map>\\<Map>.bse", its CastleTemplates chunks routed by EXACT name to the base of
 	// that Map (RW 0x82F3D5); false + *errors when a file does not open or parse (retail throws 0xDEAD0005 at RW 0x82FC54)
-	bool loadBaseLayouts(ArchiveFileSystem &fs, std::vector<std::string> *errors);
+	bool loadBaseLayouts(ArchiveFileSystem &fs, std::vector<std::string> *errors, std::vector<std::string> *warnings = nullptr);
 	// every base of a side, in the side's list order (a repeated map appears again), null entries skipped
 	std::vector<const AIBaseTemplate *> baseTemplatesOfSide(const std::string &side) const;
 

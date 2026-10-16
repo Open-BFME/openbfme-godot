@@ -250,6 +250,7 @@ struct GameLogicSettings
 	bool night = false;                              ///< the map's time of day is night (TerrainLogic / GlobalLighting)
 	bool snowy = false;                              ///< the map's weather is snow
 	// not simulation inputs: what the loader read from and left unread (stop S-152); never hashed
+	std::vector<std::string> constructorDefaults;     ///< GameData rows the files did not set, taken from GlobalData's constructor (a mod's gamedata.ini)
 	std::set<std::string> unappliedFields;           ///< "Block.Field" of the GameData / AIData / MultiplayerSettings fields no row of this lane reads
 	std::vector<std::string> filesLoaded;
 	// the mutable simulation settings in explicit order (lockstep hash): everything above except the two diagnostics

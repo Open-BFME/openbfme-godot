@@ -387,3 +387,23 @@ TEST_CASE("Stops S-030..S-039 and S-060 are all in code, unique, and registered 
 	CHECK(std::string(MapStops::mapLoad()[1]->id) == "S-038");
 	CHECK(std::string(MapStops::mapLoad()[2]->id) == "S-039");
 }
+
+TEST_CASE("MapWeather: map snowfall overrides defaults, including dense snow and explicit disabling")
+{
+	MapWeather w;
+	MapWeatherScan::applyText("Weather\n SnowEnabled = Yes\n IsSnowing = No\n SnowTexture = EXRainDrop.tga\n SnowSpacing = 30\n SnowSpeed = 50\nEnd\n", w);
+	CHECK(w.snowEnabled);
+	CHECK_FALSE(w.isSnowing);
+	MapWeatherScan::applyText("Weather\n IsSnowing = Yes\n SnowTexture = EXSnowFlake2.tga ; snow\n SnowSpacing = 5\n SnowSpeed = 60\n SnowBoxHeight = 1500\n SnowQuadSize = 3\n SnowAmplitude = 20\n SnowXYSpeed = X:2 Y:-3\nEnd\n", w);
+	CHECK(w.isSnowing);
+	CHECK(w.snowTexture == "EXSnowFlake2.tga");
+	CHECK(w.snowSpacing == 5);
+	CHECK(w.snowSpeed == 60);
+	CHECK(w.snowHeight == 1500);
+	CHECK(w.snowQuadSize == 3);
+	CHECK(w.snowAmplitude == 20);
+	CHECK(w.snowXYSpeed[0] == 2);
+	CHECK(w.snowXYSpeed[1] == -3);
+	MapWeatherScan::applyText("Weather\n SnowEnabled = No\nEnd\n", w);
+	CHECK_FALSE(w.snowEnabled);
+}

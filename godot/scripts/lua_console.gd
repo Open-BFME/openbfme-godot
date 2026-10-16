@@ -181,7 +181,7 @@ func _ready() -> void:
 	var toolbar := HFlowContainer.new()
 	toolbar.add_theme_constant_override("separation", 8)
 	chrome.add_child(toolbar)
-	_status = _label("READY · Lua 5.4.9", MUTED, 12)
+	_status = _label("READY · LuaJIT", MUTED, 12)
 	_status.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	toolbar.add_child(_status)
 	toolbar.add_child(_button("Reload scripts", reload_scripts))

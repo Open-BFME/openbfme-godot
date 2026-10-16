@@ -1,11 +1,14 @@
-// OpenBFME. GPL-3.0. Lua 5.4 companion; no Lua 4 headers or ABI cross this boundary.
+// OpenBFME. GPL-3.0. The bfme.* API on LuaJIT (lane LUAGD-1: the VM of lua-gdextension; before, a Lua 5.4 companion); no Lua 4 headers
+// or ABI cross this boundary. LuaJIT is Lua 5.1 with its Lua 5.2 extensions (LUAJIT_ENABLE_LUA52COMPAT): no integer subtype, no //
+// operator, no utf8 library.
 #include "GameLogic/ScriptEngine/BfmeLuaRuntime.h"
-#include "Libraries/Lua54/prefix.h"
+#include "Libraries/LuaJIT/prefix.h"
 extern "C"
 {
-#include "../../../thirdparty/lua-5.4.9/src/lauxlib.h"
-#include "../../../thirdparty/lua-5.4.9/src/lua.h"
-#include "../../../thirdparty/lua-5.4.9/src/lualib.h"
+#include <luajit/lauxlib.h>
+#include <luajit/lua.h>
+#include <luajit/luajit.h>
+#include <luajit/lualib.h>
 }
 #include <algorithm>
 #include <chrono>
@@ -54,21 +57,22 @@ void push(lua_State *L, const V &v)
 }
 V scalar(lua_State *L, int index);
 // An argument of a queued action or a query: a scalar, or a table of them (a 1..n sequence becomes a List, string keys a Table), at most 4 deep.
-V argument(lua_State *L, int index, int depth = 0)
+V argument(lua_State *L, int index, int depth = 0, int maxDepth = 4)
 {
 	if (lua_type(L, index) != LUA_TTABLE)
 		return scalar(L, index);
-	if (depth >= 4)
+	if (depth >= maxDepth)
 		throw std::runtime_error("argument tables nest too deep");
-	index = lua_absindex(L, index);
-	const lua_Integer n = (lua_Integer)lua_rawlen(L, index);
+	if (index < 0 && index > LUA_REGISTRYINDEX)
+		index = lua_gettop(L) + index + 1; // lua_absindex (Lua 5.2)
+	const lua_Integer n = (lua_Integer)lua_objlen(L, index);
 	if (n > 0)
 	{
 		V::List list;
 		for (lua_Integer i = 1; i <= n; ++i)
 		{
 			lua_rawgeti(L, index, i);
-			list.push_back(argument(L, -1, depth + 1));
+			list.push_back(argument(L, -1, depth + 1, maxDepth));
 			lua_pop(L, 1);
 		}
 		return list;
@@ -82,7 +86,7 @@ V argument(lua_State *L, int index, int depth = 0)
 			lua_pop(L, 2);
 			throw std::runtime_error("argument tables need string keys or a 1..n sequence");
 		}
-		table[lua_tostring(L, -2)] = argument(L, -1, depth + 1);
+		table[lua_tostring(L, -2)] = argument(L, -1, depth + 1, maxDepth);
 		lua_pop(L, 1);
 	}
 	return table;
@@ -468,6 +472,7 @@ library('map',{
  getStartPositions=function() return query('startPositions') end,
  -- the map's resource building markers (FarmTemplate): {x, y, z, angle, occupied, playerId of the structure on it}
  getFarmSites=function() return query('farmSites') end,
+ getWallHubSites=function() return query('wallHubSites') end,
  getGroundHeight=function(x,y) numeric(x,-1e7,1e7,false); numeric(y,-1e7,1e7,false); return query('groundHeight',x,y) end,
  -- 2D distance between positions or handles
  distance=function(a,b) a,b=where(a),where(b); local dx,dy=a.x-b.x,a.y-b.y; return math.sqrt(dx*dx+dy*dy) end,
@@ -623,7 +628,7 @@ struct BfmeLuaRuntime::Impl
 	}
 	static int proxy(lua_State *L)
 	{
-		lua_newuserdatauv(L, 0, 0);
+		lua_newuserdata(L, 0);
 		lua_pushvalue(L, 1);
 		lua_setmetatable(L, -2);
 		return 1;
@@ -774,34 +779,43 @@ struct BfmeLuaRuntime::Impl
 			throw std::runtime_error(e);
 		}
 	}
+	bool ownsState = true; // false: the state is a LuaState's (lua-gdextension), which closes it
 	~Impl()
 	{
-		if (L)
+		if (L && ownsState)
 			lua_close(L);
 	}
 };
-BfmeLuaRuntime::BfmeLuaRuntime(Host host) : m(new Impl)
+BfmeLuaRuntime::BfmeLuaRuntime(Host host, void *luaState) : m(new Impl)
 {
 	m->host = std::move(host);
-	m->L = luaL_newstate();
+	m->ownsState = luaState == nullptr;
+	m->L = luaState ? static_cast<lua_State *>(luaState) : luaL_newstate();
 	if (!m->L)
 		throw std::bad_alloc();
 	auto L = m->L;
-	// Load only portable libraries. OS, IO, native modules and debug hooks are not exposed.
-	for (auto lib : std::vector<std::pair<const char *, lua_CFunction>>{{"_G", luaopen_base},
-																		{"table", luaopen_table},
-																		{"string", luaopen_string},
-																		{"math", luaopen_math},
-																		{"utf8", luaopen_utf8},
-																		{"package", luaopen_package}})
+	// The execution budget (hook below) is an instruction-count hook, and LuaJIT never calls a count hook inside JIT-compiled code: a
+	// compiled `while true do end` would run past it and freeze the game. The JIT compiler is off for this state (the interpreter runs).
+	luaJIT_setmode(L, 0, LUAJIT_MODE_ENGINE | LUAJIT_MODE_OFF);
+	// Load only portable libraries. OS, IO, native modules (FFI, package.loadlib / C searchers) and debug hooks are not exposed.
+	for (auto lib : std::vector<std::pair<const char *, lua_CFunction>>{{"", luaopen_base},
+																		{LUA_TABLIBNAME, luaopen_table},
+																		{LUA_STRLIBNAME, luaopen_string},
+																		{LUA_MATHLIBNAME, luaopen_math},
+																		{LUA_BITLIBNAME, luaopen_bit},
+																		{LUA_LOADLIBNAME, luaopen_package}})
 	{
-		luaL_requiref(L, lib.first, lib.second, 1);
-		lua_pop(L, 1);
+		lua_pushcfunction(L, lib.second);
+		lua_pushstring(L, lib.first);
+		lua_call(L, 1, 0);
 	}
 	lua_pushnil(L);
 	lua_setglobal(L, "dofile");
 	lua_pushnil(L);
 	lua_setglobal(L, "loadfile");
+	// package: Lua modules only, no native ones
+	if (luaL_dostring(L, "package.loadlib=nil package.cpath='' local l=package.loaders l[4]=nil l[3]=nil") != 0)
+		throw std::runtime_error(lua_tostring(L, -1));
 	m->bind("_bfmeProxy", Impl::proxy);
 	m->bind("_bfmeScripts", Impl::scripts);
 	m->bind("_bfmeSnapshot", Impl::snapshot);
@@ -827,6 +841,18 @@ BfmeLuaRuntime::BfmeLuaRuntime(Host host) : m(new Impl)
 	lua_setglobal(L, "_bfmeInvalidate");
 	lua_getglobal(L, "print");
 	m->printRef = luaL_ref(L, LUA_REGISTRYINDEX);
+}
+BfmeLuaRuntime::Value BfmeLuaRuntime::readData(const std::string &source, const std::string &name)
+{
+ auto *L = luaL_newstate();
+ if (!L) throw std::bad_alloc();
+ try {
+  if (luaL_loadbufferx(L, source.data(), source.size(), name.c_str(), "t") != LUA_OK || lua_pcall(L, 0, 1, 0) != LUA_OK)
+   throw std::runtime_error(lua_tostring(L, -1));
+  Value result = argument(L, -1, 0, 8);
+  lua_close(L);
+  return result;
+ } catch (...) { lua_close(L); throw; }
 }
 BfmeLuaRuntime::~BfmeLuaRuntime() = default;
 BfmeLuaRuntime::Result BfmeLuaRuntime::execute(const std::string &code)

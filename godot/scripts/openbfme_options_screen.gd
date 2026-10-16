@@ -542,6 +542,7 @@ func _interface_rows() -> Array:
 		_retail_row("Retail.HealthBars"),
 		_extra_choice("OpenBFMEHealthBars", "Health bars", BARS_ITEMS, HELP.OpenBFMEHealthBars),
 		_extra_check("AlternateMouseSetup", "Alternate mouse setup", HELP.AlternateMouseSetup),
+		_extra_check("OpenBFMEMapSiteMarkers", "Show farm and wall-hub map markers", "Show map-authored farm sites in green and wall planning markers in blue."),
 		_extra_check("OpenBFMEGameClock", "Show the game clock", HELP.OpenBFMEGameClock),
 		_extra_choice("OpenBFMEUIScale", "Interface scale", UI_SCALE_ITEMS, HELP.OpenBFMEUIScale),
 	])

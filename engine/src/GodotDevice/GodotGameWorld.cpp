@@ -1,3 +1,4 @@
+#include "GameClient/MapClassification.h"
 // OpenBFME. GPL-3.0.
 // See GodotDevice/GodotGameWorld.h.
 
@@ -7,9 +8,15 @@
 #include <godot_cpp/classes/file_access.hpp>
 #include <godot_cpp/variant/packed_byte_array.hpp>
 #include "GodotDevice/GodotGameWorld.h"
+#include "GodotDevice/LuaGDExtensionRegister.h"
 #include <godot_cpp/classes/config_file.hpp>
 
 #include "GameClient/FrameCensus.h"
+#include "GameClient/MapWeather.h"
+#include "GodotDevice/GodotW3DModelBuilder.h"
+#include <godot_cpp/classes/cpu_particles3d.hpp>
+#include <godot_cpp/classes/quad_mesh.hpp>
+#include <godot_cpp/classes/standard_material3d.hpp>
 #include "GameLogic/Map/TerrainLogic.h"
 #include "GameClient/GUI/TributeInfo.h"
 
@@ -306,6 +313,7 @@ void GameWorld::_bind_methods()
 	ClassDB::bind_method(D_METHOD("debug_set_object_rank", "id", "rank"), &GameWorld::debug_set_object_rank); // lane HUD-5
 	ClassDB::bind_method(D_METHOD("debug_grant_upgrade", "player", "upgrade"), &GameWorld::debug_grant_upgrade);
 	ClassDB::bind_method(D_METHOD("execute_lua", "code"), &GameWorld::execute_lua);
+	ClassDB::bind_method(D_METHOD("get_lua_state"), &GameWorld::get_lua_state);
 	ClassDB::bind_method(D_METHOD("update_lua"), &GameWorld::update_lua);
 	ClassDB::bind_method(D_METHOD("order_move", "ids", "x", "y", "options"), &GameWorld::order_move, DEFVAL(Dictionary()));
 	ClassDB::bind_method(D_METHOD("order_stop", "ids"), &GameWorld::order_stop);
@@ -502,6 +510,7 @@ void GameWorld::_notification(int what)
 	if (what == NOTIFICATION_READY || what == NOTIFICATION_INTERNAL_PROCESS)
 	{
 		GammaComposite::ensure(this);
+		update_map_weather();
 	}
 }
 
@@ -544,6 +553,51 @@ Dictionary GameWorld::get_client_window_stats() const
 	d["input_holds"] = (int64_t)w.inputHolds;
 	d["worker_held_ms"] = w.workerHeldMs;
 	return d;
+}
+
+void GameWorld::load_wall_hub_markers()
+{
+ m_wallHubMarkers.clear();
+ if (!m_game || (m_fs.is_valid() && m_fs->is_bfme1())) return;
+ const String path = "res://data/wall_hub_markers.lua";
+ Ref<FileAccess> file = FileAccess::open(path, FileAccess::READ);
+ if (file.is_null()) return;
+ try {
+  const auto data = BfmeLuaRuntime::readData(toNative(file->get_as_text()), toNative(path));
+  const auto &root = std::get<BfmeLuaValue::Table>(data.data);
+  const auto &equivalents = std::get<BfmeLuaValue::Table>(root.at("equivalents").data);
+  std::string map = AsciiStringUtil::lowered(m_game->map().sourceName);
+ if (map.size() < 4 || map.substr(map.size() - 4) != ".map") map = MapClassification::mapPath(map);
+  std::replace(map.begin(), map.end(), '/', '\\');
+  auto found = equivalents.find(map);
+  if (found == equivalents.end()) return;
+  const auto &sources = std::get<BfmeLuaValue::Table>(root.at("sources").data);
+  const auto &source = std::get<BfmeLuaValue::Table>(sources.at(std::get<std::string>(found->second.data)).data);
+  // An edited/user map with the same name must not inherit placements from a different-sized map.
+  const auto &dims = std::get<BfmeLuaValue::List>(source.at("dimensions").data);
+  const auto &height = m_game->map().heightMap;
+  if (dims.size() != 3 || std::get<double>(dims[0].data) != height.m_width ||
+      std::get<double>(dims[1].data) != height.m_height || std::get<double>(dims[2].data) != height.m_borderSize) return;
+  m_wallHubMarkers = std::get<BfmeLuaValue::List>(source.at("markers").data);
+ } catch (const std::exception &error) { UtilityFunctions::push_error("Wall hub marker data: ", error.what()); }
+}
+
+void GameWorld::update_map_weather()
+{
+	auto *snow = m_mapWeatherId ? Object::cast_to<CPUParticles3D>(ObjectDB::get_instance(godot::ObjectID(m_mapWeatherId))) : nullptr;
+	Camera3D *camera = get_viewport() ? get_viewport()->get_camera_3d() : nullptr;
+	if (!snow || !camera) return;
+	const Transform3D view = camera->get_global_transform();
+	const Vector3 forward = -view.basis.get_column(2);
+	const float distance = forward.y < -0.05f ? std::max(0.0f, (float)(-view.origin.y / forward.y)) : 600.0f;
+	// Keep the precipitation volume in front of the eye, within the visible
+	// frustum at both retail and extended camera heights.
+	Vector3 centre = view.origin + forward * std::min(600.0f, distance * 0.5f);
+	// Move only the emitter. Existing flakes remain in world space as the camera pans.
+	const float height = snow->get_lifetime() * snow->get_param_max(CPUParticles3D::PARAM_INITIAL_LINEAR_VELOCITY);
+	snow->set_global_position(centre + Vector3(0, height / 2, 0));
+	Ref<ShaderMaterial> material = snow->get_mesh()->surface_get_material(0);
+	if (material.is_valid()) material->set_shader_parameter("snow_centre", centre);
 }
 
 void GameWorld::_process(double delta)
@@ -595,6 +649,13 @@ Dictionary GameWorld::setup(const Ref<RetailFileSystem> &fs)
 			{
 				errors.push_back(toGodot(e.file + ": " + e.message));
 			}
+			PackedStringArray warnings;
+			for (const std::string &w : m_world->report().warnings)
+			{
+				warnings.push_back(toGodot(w));
+				UtilityFunctions::print("GAME object world warning: ", toGodot(w));
+			}
+			result["warnings"] = warnings;
 			result["seconds"] = timing::elapsedSeconds(t0);
 			result["templates"] = (int64_t)m_world->things().templateCount();
 			result["factions"] = (int64_t)m_world->setupPlayerTemplates().playableSideIndices().size();
@@ -609,6 +670,8 @@ Dictionary GameWorld::setup(const Ref<RetailFileSystem> &fs)
 				errors.push_back(toGodot("settings: " + error));
 				m_world.reset();
 			}
+			for (const std::string &d : m_settings->constructorDefaults)
+				UtilityFunctions::print("GAME settings: gamedata.ini has no ", toGodot(d.substr(0, d.find(' '))), " row: ", toGodot(d), " (GlobalData's constructor)");
 			m_source.reset(new ArchiveW3DFileSource(*fs->archive_fs()));
 			m_assets.reset(new WW3DAssetManager(*m_source));
 			// lane FX-2: the effect player of the live games (FXParticleSystem.ini / FXList.ini through FX-1's FXPlayer), a child kept across loads
@@ -634,6 +697,7 @@ Dictionary GameWorld::setup(const Ref<RetailFileSystem> &fs)
 
 void GameWorld::clear_scene()
 {
+	m_mapWeatherId = 0;
 	m_endGame.reset(); // lane END-1: the end sequence of the game that goes
 	m_endGameRequests.clear();
 	m_endGameFrame = 0;
@@ -1124,6 +1188,87 @@ Dictionary GameWorld::load_internal(const LiveGame::Options &loIn, const String 
 	// lane PERF-1: the map's weather, read once here (LiveGame::load sets it, nothing changes it later): the streaks read it every render frame, and
 	// m_game->logic() waits for the logic worker, which made every render frame during a logic frame wait for the whole frame (a 5 Hz hitch)
 	m_streakWeather = m_game->logic().settings().snowy ? 1 : 0;
+	load_wall_hub_markers();
+	MapWeather weather;
+	std::string weatherError;
+	std::string weatherDir = toNative(map_name);
+	std::replace(weatherDir.begin(), weatherDir.end(), '\\', '/');
+	if (weatherDir.size() > 4 && weatherDir.substr(weatherDir.size() - 4) == ".map")
+	{
+		weatherDir = weatherDir.substr(0, weatherDir.find_last_of('/'));
+		weatherDir = weatherDir.substr(weatherDir.find_last_of('/') + 1);
+	}
+	if (MapWeatherScan::load(*m_fs->archive_fs(), weatherDir, weather, &weatherError))
+	{
+		Dictionary state;
+		state["snowing"] = weather.snowEnabled && weather.isSnowing;
+		state["texture"] = toGodot(weather.snowTexture);
+		state["spacing"] = weather.snowSpacing;
+		state["speed"] = weather.snowSpeed;
+		if (weather.snowEnabled && weather.isSnowing)
+		{
+			auto bounded = [](float n, float fallback, float lo, float hi) { return std::isfinite(n) ? std::clamp(n, lo, hi) : fallback; };
+			const float height = bounded(weather.snowHeight, 500, 100, 3000);
+			const float spacing = bounded(weather.snowSpacing, 30, 5, 300);
+			const float speed = bounded(weather.snowSpeed, 50, 1, 1000);
+			CPUParticles3D *snow = memnew(CPUParticles3D);
+			snow->set_name("MapSnowfall");
+			snow->set_amount(std::clamp((int)(1400 * 1400 / (spacing * spacing)), 32, 12000));
+			snow->set_lifetime(height / speed);
+			// Fill the complete falling column before the first frame, including heavy snow.
+			snow->set_pre_process_time(std::min(30.0f, height / speed));
+			snow->set_use_local_coordinates(false);
+			snow->set_emission_shape(CPUParticles3D::EMISSION_SHAPE_BOX);
+			// Emit at the ceiling: volume emission spends half each lifetime below the snow box.
+			snow->set_emission_box_extents(Vector3(700, 0, 700));
+			snow->set_direction(Vector3(0, -1, 0));
+			snow->set_spread(std::min(20.0f, std::abs(weather.snowAmplitude)));
+			snow->set_gravity(Vector3(weather.snowXYSpeed[0], 0, -weather.snowXYSpeed[1]));
+			snow->set_param_min(CPUParticles3D::PARAM_INITIAL_LINEAR_VELOCITY, speed);
+			snow->set_param_max(CPUParticles3D::PARAM_INITIAL_LINEAR_VELOCITY, speed);
+			Ref<QuadMesh> quad; quad.instantiate();
+			const float size = bounded(weather.snowQuadSize, 10, 0.5f, 50);
+			quad->set_size(Vector2(size, size));
+			Ref<Shader> shader; shader.instantiate();
+			shader->set_code(R"(
+shader_type spatial;
+render_mode unshaded, cull_disabled, depth_draw_never;
+uniform sampler2D snow_texture : source_color;
+uniform vec3 snow_centre;
+uniform vec3 snow_bounds;
+void vertex() {
+ // Recycle at the edges of the camera volume, without translating in-flight flakes.
+ vec3 centre = MODEL_MATRIX[3].xyz;
+ centre = snow_centre + mod(centre - snow_centre + snow_bounds * 0.5, snow_bounds) - snow_bounds * 0.5;
+ vec4 eye = VIEW_MATRIX * vec4(centre, 1.0);
+ eye.xy += VERTEX.xy;
+ POSITION = PROJECTION_MATRIX * eye;
+}
+void fragment() {
+ vec4 flake = texture(snow_texture, UV);
+ ALBEDO = flake.rgb;
+ ALPHA = flake.a;
+}
+)");
+			Ref<ShaderMaterial> mat; mat.instantiate();
+			mat->set_shader(shader);
+			mat->set_shader_parameter("snow_bounds", Vector3(1400, height, 1400));
+			Ref<W3DModelBuilder> textures; textures.instantiate();
+			Ref<Texture2D> texture = textures->load_texture(m_fs, toGodot(weather.snowTexture));
+			if (texture.is_valid()) mat->set_shader_parameter("snow_texture", texture);
+			else errors.push_back(toGodot("Missing weather texture: " + weather.snowTexture));
+			quad->set_material(mat);
+			snow->set_mesh(quad);
+			snow->set_cast_shadows_setting(GeometryInstance3D::SHADOW_CASTING_SETTING_OFF);
+			add_child(snow);
+			m_mapWeatherId = snow->get_instance_id();
+			update_map_weather();
+			state["particles"] = snow->get_amount();
+		}
+		report["weather"] = state;
+	}
+	else errors.push_back(toGodot("weather: " + weatherError));
+
 	// VIS-1: the shroud is drawn for a game started from a game setup (a skirmish: RW 0x62F91A gave every player its explored map); a bare map load (the map and HUD
 	// viewers, the smoke test) has no explored cells and is drawn without it (set_shroud_drawn switches it)
 	m_shroudDrawn = m_game->shroud().displayed();
@@ -1546,6 +1691,7 @@ void GameWorld::refresh_views(double deltaMs)
 		// VIS-1: an object the local player cannot see is not drawn (RW 0xB4E890 SHROUDED: never seen, or a mobile / unseen object in the fog, RW 0x68EDD0)
 		// SMOOTH-1: from the presented snapshot's record (the snapshot builder asked the shroud manager between frames)
 		bool fogHidden = false;
+		bool stealthHidden = false;
 		const ObjectSnapshot *stealthRec = nullptr;
 		if (presented)
 		{
@@ -1561,10 +1707,7 @@ void GameWorld::refresh_views(double deltaMs)
 			}
 			// lane STEALTH-1 (RW 0x81AA03 -> the drawable state RW 0x6760F9, GameClient/StealthLook): an invisible object an enemy looks at is not drawn; one a friend
 			// looks at pulses between GameData InvisibilityOpacityMin and Max
-			if (rec && StealthLook::hidden(*rec))
-			{
-				fogHidden = true;
-			}
+			if (rec && StealthLook::hidden(*rec)) stealthHidden = true;
 			// lane GARRISON-1: the drawable's hidden flag the logic sets (RW 0x6718FB: a rider of an ENCLOSED container, a horde member gone into a garrison)
 			if (rec && rec->drawableHidden)
 			{
@@ -1572,14 +1715,18 @@ void GameWorld::refresh_views(double deltaMs)
 			}
 			stealthRec = rec;
 		}
-		const bool fogChanged = fogHidden != v.fogHidden;
-		v.fogHidden = fogHidden;
+		const bool fogChanged = (fogHidden || stealthHidden) != v.fogHidden;
+		v.fogHidden = fogHidden || stealthHidden;
 		const bool flagsChanged = d->getChangeCount() != v.seenChange || fogChanged;
 		std::vector<DrawEntry> &entries = d->entries();
 		for (size_t k = 0; k < entries.size() && k < v.entries.size(); ++k)
 		{
 			DrawEntry &e = entries[k];
 			EntryView &ev = v.entries[k];
+			const auto *modelData = dynamic_cast<const W3DModelDrawModuleData *>(e.data);
+			const bool affectedByStealth = !modelData || modelData->m_affectedByStealth;
+			const bool entryHidden = fogHidden || (affectedByStealth && stealthHidden);
+			const ObjectSnapshot *entryStealth = affectedByStealth ? stealthRec : nullptr;
 			// RENDER-2: a structure being built moves along its own Z by the draw's construction offset (RW 0x4B686D)
 			Transform3D entryXf = xf;
 			if (e.constructionOffsetZ != 0.0f)
@@ -1624,7 +1771,7 @@ void GameWorld::refresh_views(double deltaMs)
 					}
 					if (ev.instance >= 0) // lane STEALTH-1: the pulse moves without a pose change, and a revealed object returns to its own opacity
 					{
-						const float pulse = StealthLook::drawOpacity(d->drawOpacity(), stealthRec, presented.get(), m_stealthClockMs);
+						const float pulse = StealthLook::drawOpacity(d->drawOpacity(), entryStealth, presented.get(), m_stealthClockMs);
 						if (pulse != ev.opacity)
 						{
 							dyn->set_instance_opacity(ev.instance, pulse);
@@ -1636,7 +1783,7 @@ void GameWorld::refresh_views(double deltaMs)
 				}
 				W3DDrawPoseView &f = m_viewPose; // lane PERF-3: the frame's pose request and model by reference (frame() copied every name of the module)
 				e.draw->poseView(f);
-				const bool shown = f.model && !e.moduleHidden && !fogHidden;
+				const bool shown = f.model && !e.moduleHidden && !entryHidden;
 				if (shown && *f.modelName != ev.rawModel)
 				{
 					ev.rawModel = *f.modelName;
@@ -1751,7 +1898,7 @@ void GameWorld::refresh_views(double deltaMs)
 					}
 					applyTires();
 					// PROJ-2: the drawable's fade (a launched stone hidden for its InvisibleFrames, then faded in: GameClient/DrawableFade)
-					const float opacity = StealthLook::drawOpacity(d->drawOpacity(), stealthRec, presented.get(), m_stealthClockMs); // lane STEALTH-1: the friend's invisibility pulse
+					const float opacity = StealthLook::drawOpacity(d->drawOpacity(), entryStealth, presented.get(), m_stealthClockMs); // lane STEALTH-1: the friend's invisibility pulse
 					if (opacity != ev.opacity)
 					{
 						dyn->set_instance_opacity(ev.instance, opacity);
@@ -1763,7 +1910,7 @@ void GameWorld::refresh_views(double deltaMs)
 					ev.posed = true;
 				}
 			}
-			else if (!e.staticModel.empty() && (e.conditionHidden || e.moduleHidden || fogHidden))
+			else if (!e.staticModel.empty() && (e.conditionHidden || e.moduleHidden || entryHidden))
 			{
 				// RENDER-2: a floor draw whose HideIfModelConditions hold (the foundation floor while the structure is built): not drawn until they clear;
 				// lane STEALTH-1: nor while the object is hidden for the local player (fogged, or an enemy's invisible object: the stealth gates have floor draws);
@@ -1813,7 +1960,7 @@ void GameWorld::refresh_views(double deltaMs)
 				}
 				if (ev.instance >= 0) // lane STEALTH-1: a friend's invisible object pulses, a revealed one returns to full opacity (GameClient/StealthLook)
 				{
-					const float opacity = StealthLook::drawOpacity(1.0f, stealthRec, presented.get(), m_stealthClockMs);
+					const float opacity = StealthLook::drawOpacity(1.0f, entryStealth, presented.get(), m_stealthClockMs);
 					if (opacity != ev.opacity)
 					{
 						dyn->set_instance_opacity(ev.instance, opacity);
@@ -3536,6 +3683,55 @@ bool GameWorld::get_logic_thread() const
 	return m_game ? m_game->logicThread() : m_logicThreadDefault;
 }
 
+void GameWorld::ensureConsoleRuntime()
+{
+	if (!m_consoleRuntime)
+	{
+		BfmeLuaRuntime::Host host;
+		host.snapshot = [this] { return bfme_snapshot(); };
+		host.apply = [this](const BfmeLuaRuntime::Mutation &mutation) { return bfme_apply(mutation); };
+		host.construct = [this](const auto &mutation) { return bfme_construct(mutation); };
+		host.constructionStatus = [this](unsigned id) { return bfme_construction_status(id); };
+		host.query = [this](const std::string &name, const std::vector<BfmeLuaRuntime::Value> &args) { return bfme_query(name, args); };
+		host.output = [](const std::string &text) { UtilityFunctions::print(String::utf8(("LUA " + text).c_str()).strip_edges()); };
+		host.scripts = [] {
+			std::vector<std::pair<std::string, std::string>> scripts;
+			for (const String &directory : { String("res://dev"), String("user://dev") })
+			{
+				if (!DirAccess::dir_exists_absolute(directory)) continue;
+				PackedStringArray names = DirAccess::get_files_at(directory);
+				names.sort();
+				for (int64_t i = 0; i < names.size(); ++i)
+				{
+					if (!names[i].ends_with(".lua")) continue;
+					const String path = directory.path_join(names[i]);
+					Ref<FileAccess> file = FileAccess::open(path, FileAccess::READ);
+					if (file.is_null()) throw std::runtime_error("Could not read Lua script: " + std::string(path.utf8().get_data()));
+					if (file->get_length() > 65536) throw std::runtime_error("Lua entry script exceeds 64 KiB: " + std::string(path.utf8().get_data()));
+					scripts.emplace_back(path.utf8().get_data(), file->get_as_text().utf8().get_data());
+				}
+			}
+			return scripts;
+		};
+		void *luaState = nullptr;
+		m_consoleLuaState = LuaGDExtension::newBfmeState(&luaState); // LUAGD-1: the runtime runs on the addon's LuaState
+		m_consoleRuntime = std::make_unique<BfmeLuaRuntime>(std::move(host), luaState);
+	}
+}
+
+Ref<RefCounted> GameWorld::get_lua_state()
+{
+	try
+	{
+		ensureConsoleRuntime();
+	}
+	catch (const std::exception &error)
+	{
+		UtilityFunctions::push_error(String::utf8(("bfme Lua: " + std::string(error.what())).c_str()));
+	}
+	return m_consoleLuaState;
+}
+
 Dictionary GameWorld::execute_lua(const String &code)
 {
 	Dictionary result;
@@ -3545,36 +3741,7 @@ Dictionary GameWorld::execute_lua(const String &code)
 	const auto worldContext = m_world ? m_world->enterContext() : nullptr;
 	try
 	{
-		if (!m_consoleRuntime)
-		{
-			BfmeLuaRuntime::Host host;
-			host.snapshot = [this] { return bfme_snapshot(); };
-			host.apply = [this](const BfmeLuaRuntime::Mutation &mutation) { return bfme_apply(mutation); };
-			host.construct = [this](const auto &mutation) { return bfme_construct(mutation); };
-			host.constructionStatus = [this](unsigned id) { return bfme_construction_status(id); };
-			host.query = [this](const std::string &name, const std::vector<BfmeLuaRuntime::Value> &args) { return bfme_query(name, args); };
-			host.output = [](const std::string &text) { UtilityFunctions::print(String::utf8(("LUA " + text).c_str()).strip_edges()); };
-			host.scripts = [] {
-				std::vector<std::pair<std::string, std::string>> scripts;
-				for (const String &directory : { String("res://dev"), String("user://dev") })
-				{
-					if (!DirAccess::dir_exists_absolute(directory)) continue;
-					PackedStringArray names = DirAccess::get_files_at(directory);
-					names.sort();
-					for (int64_t i = 0; i < names.size(); ++i)
-					{
-						if (!names[i].ends_with(".lua")) continue;
-						const String path = directory.path_join(names[i]);
-						Ref<FileAccess> file = FileAccess::open(path, FileAccess::READ);
-						if (file.is_null()) throw std::runtime_error("Could not read Lua script: " + std::string(path.utf8().get_data()));
-						if (file->get_length() > 65536) throw std::runtime_error("Lua entry script exceeds 64 KiB: " + std::string(path.utf8().get_data()));
-						scripts.emplace_back(path.utf8().get_data(), file->get_as_text().utf8().get_data());
-					}
-				}
-				return scripts;
-			};
-			m_consoleRuntime = std::make_unique<BfmeLuaRuntime>(std::move(host));
-		}
+		ensureConsoleRuntime();
 		auto evaluated = m_consoleRuntime->execute(code.utf8().get_data());
 		result["ok"] = evaluated.ok;
 		result["output"] = String::utf8(evaluated.output.c_str());

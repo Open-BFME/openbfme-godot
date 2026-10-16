@@ -244,7 +244,10 @@ std::vector<std::string> PlayerList::newGame(const SidesList &sides, std::uint32
 		}
 		finishRelationships(p);
 		const std::string dt = "team" + p->getPlayerName(); // ZH Player::setDefaultTeam
-		Team *team = m_teams.findTeam(dt);
+		// the player's own team "team<Name>": RotWK keys the prototypes by owner and name (RW 0x7A2C47), and a map may keep a team of the same name
+		// with another owner (RJ RotWK's map mp evendim: teamPlayer_1 .. 4 owned by the neutral side as well as by Player_1 .. 4; the neutral ones
+		// survive prepareForMP_or_Skirmish). INFERENCE: the owner's own one is the default team (the bare name finds the first, the neutral one)
+		Team *team = m_teams.findTeam(p->getPlayerName() + "/" + dt);
 		if (!team)
 		{
 			errors.push_back("player '" + p->getPlayerName() + "': no default team '" + dt + "'");

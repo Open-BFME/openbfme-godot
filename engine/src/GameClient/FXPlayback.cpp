@@ -183,6 +183,18 @@ std::vector<std::string> FXPlayback::loadRetailData()
 		INI ini(m_iniEnv);
 		ini.preprocessFile("Data\\INI\\GameData.ini", INI_LOAD_OVERWRITE);
 	});
+	// and in the files TheWritableGlobalData loads after it (SubsystemInitOrder.cpp, RW 0x63B02F-0x63B0CF), which retail reads before the
+	// FX: their #define macros are global too (lane MODS-1: RJ RotWK defines its macros in an include of Data\INI\Default\Water.ini)
+	for (const char *file : { "Data\\INI\\Default\\Water.ini", "Data\\INI\\Water.ini", "Data\\INI\\Default\\Fire.ini", "Data\\INI\\Fire.ini",
+			 "Data\\INI\\Default\\Environment.ini", "Data\\INI\\Environment.ini" })
+	{
+		if (!m_iniEnv.fileSystem || !m_iniEnv.fileSystem->doesFileExist(file))
+			continue;
+		run(file, [&] {
+			INI ini(m_iniEnv);
+			ini.preprocessFile(file, INI_LOAD_OVERWRITE);
+		});
+	}
 	run("FXParticleSystem.ini", [&] {
 		INI ini(m_iniEnv);
 		ini.load("Data\\INI\\FXParticleSystem.ini", INI_LOAD_OVERWRITE);

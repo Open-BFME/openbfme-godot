@@ -198,3 +198,53 @@ TEST_CASE("commands: the same messages in two worlds give the same state hash in
 	}
 	CHECK(h1.front() != h1.back()); // the state really changes
 }
+
+#include "GameClient/HudContext.h"
+#include "GameClient/MessageStream/CommandXlat.h"
+#include "GameLogic/BuildPlacement.h"
+
+TEST_CASE("reachability: closed walls refuse ground orders and builder placement")
+{
+	const char objects[] =
+		"Object ReachWallX\n KindOf = STRUCTURE IMMOBILE\n Geometry = BOX\n GeometryMajorRadius = 215\n GeometryMinorRadius = 15\n GeometryHeight = 50\n End\n"
+		"Object ReachWallY\n KindOf = STRUCTURE IMMOBILE\n Geometry = BOX\n GeometryMajorRadius = 15\n GeometryMinorRadius = 215\n GeometryHeight = 50\n End\n"
+		"ChildObject ReachBuilder Walker\n KindOf = SELECTABLE DOZER\n End\n";
+	MoveWorld mw(100, 100, objects);
+	mw.spawn("ReachWallX", 500, 300);
+	mw.spawn("ReachWallX", 500, 700);
+	mw.spawn("ReachWallY", 300, 500);
+	Object *wall = mw.spawn("ReachWallY", 700, 500);
+	Object *unit = mw.spawn("ReachBuilder", 150, 150);
+	mw.buildMap();
+	mw.frames(2);
+	mw.logic->players().setLocalPlayer(unit->getControllingPlayer());
+	InGameUI ui;
+	ui.selectObject(unit->getID());
+	PinholeView view;
+	MessageStream stream;
+	HudContext context{*mw.logic, mw.ai.get(), view, ui, stream, nullptr, {}};
+	CommandTranslator translator(context);
+	ClientMessage selected(MSG_CREATE_SELECTED_GROUP);
+	translator.translate(selected);
+	const Coord3D inside{500,500,0}, outside{150,250,0};
+	CHECK(translator.evaluateContextCommand(nullptr, &inside, EvaluateType::DoHint) == 0);
+	CHECK(ui.cursor() == MouseCursorName::GenericInvalid);
+	CHECK(translator.evaluateContextCommand(nullptr, &inside, EvaluateType::DoCommand) == 0);
+	CHECK(stream.pending() == 0);
+	translator.issueRadarMove(inside);
+	CHECK(stream.pending() == 0);
+	CHECK(translator.evaluateContextCommand(nullptr, &outside, EvaluateType::DoHint) == MSG_DO_MOVETO);
+	CHECK(ui.cursor() == MouseCursorName::Move);
+	const ThingTemplate *build = mw.w.things.findTemplate("Block");
+	REQUIRE(build);
+	CHECK(BuildPlacement::isLocationLegalToBuild(*mw.logic, inside, *build, 0, LLF_CLEAR_PATH, unit, unit->getControllingPlayer()) == LBC_NO_CLEAR_PATH);
+	CHECK(BuildPlacement::isLocationLegalToBuild(*mw.logic, outside, *build, 0, LLF_CLEAR_PATH, unit, unit->getControllingPlayer()) == LBC_OK);
+	// Removing a wall footprint (the same pathfinder update used by open gates)
+	// must restore both commands and placement without stale client state.
+	mw.ai->removeObjectFromPathfindMap(*wall);
+	mw.frames(2);
+	CHECK(translator.evaluateContextCommand(nullptr, &inside, EvaluateType::DoHint) == MSG_DO_MOVETO);
+	CHECK(ui.cursor() == MouseCursorName::Move);
+	CHECK(BuildPlacement::isLocationLegalToBuild(*mw.logic, inside, *build, 0, LLF_CLEAR_PATH, unit, unit->getControllingPlayer()) == LBC_OK);
+
+}

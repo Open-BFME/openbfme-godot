@@ -26,10 +26,8 @@
 //     0xDE8200) builds the piece for the old object's controlling player with the old object as the builder (none made: the rest is skipped); the piece is
 //     put at the point (RW 0x696E63) and gets the old name; the step is added again; the piece's paid cost (+ 0x33C) is the BuildCost (+ 0x34, int ->
 //     float) of the first upgrade of the module's TriggeredBy mask (RW 0x66F468); then the wall links are carried over (RW 0x8BB96D .. 0x8BB9DF, stop S-1986).
-// Port correction: replacement clearance queries each piece's actual position and full bounding circle against segment bounding spheres, then tests
-// geometry overlap there. Regular gates instead clear three collinear wall tile centers using the original segment spacing (2 * (half extent - 1)),
-// independent of decorative/open gate geometry, so the two outer tiles survive.
-// The retail half-radius center query above missed covered side segments.
+// Port correction: only regular gates clear the two neighboring wall tiles, using the original segment spacing
+// (2 * (half extent - 1)) rather than decorative/open gate geometry. All other replacements occupy only the source tile.
 // NOT PORTED (stop S-1986): the wall links: for every object of KindOf CASTLE_KEEP, BRIDGE or DEFENSIVE_WALL, the interface the first module answers through
 // behaviour slot 0x80 (RW 0x68C3E6) is asked (vslot 0x5C) whether it holds the old object and then given the piece (vslot 0x48), and the old object's
 // interface's holdings go to the piece's: no ported module answers that slot. The x87 fsin / fcos of the shape's point are SimMath's deterministic sin / cos

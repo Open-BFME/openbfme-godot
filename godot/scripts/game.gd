@@ -1021,6 +1021,9 @@ func _boot() -> void:
 	await get_tree().process_frame
 	var mount_started := Time.get_ticks_msec()
 	var mount: Dictionary = await Release.mount_retail(_fs)
+	Release.set_active_mods(mount.get("mods", [])) # lane MODS-1
+	for mod in mount.get("mods", []):
+		print("GAME mod: %s (%d archive(s), %d loose file(s), %d program file(s) not mounted)" % [mod.path, mod.big_files, mod.loose_files, mod.skipped_programs])
 	print("STARTUP data mount took %d ms" % (Time.get_ticks_msec() - mount_started))
 	print("STARTUP archive verification: %d hashed, %d cached" % [mount.get("archives_hashed", 0), mount.get("md5_cache_hits", 0)])
 	get_tree().call_group("ios_startup", "stage", "Loading game…")
