@@ -1,3 +1,4 @@
+#include "Common/BuildAssistant.h"
 // OpenBFME. GPL-3.0.
 //
 // Lane HUD-6: the parts of InGameHud that drive RotWK's side command bar gate, the radial command bubbles and the help box (see AptPalantirSideBar.cpp,
@@ -233,11 +234,11 @@ void InGameHud::updateHud6(ObjectID context, const std::string &faction, double 
 	Player *local = m_config.game.players().getLocalPlayer();
 	Object *ctx = context != INVALID_ID ? logic.findObjectByID(context) : nullptr;
 	// the side command bar's gate (RW 0x92F27D): a DOZER the local player controls
-	m_palantirRef->setSideBarObject(ctx && local && ctx->isKindOfName("DOZER") && ctx->getControllingPlayer() == local);
+	m_palantirRef->setSideBarObject(ctx && local && (ctx->isKindOfName("DOZER") || BuildAssistant::isFortressBuilder(*ctx)) && ctx->getControllingPlayer() == local);
 	// the radial ring (RW 0x9443CF: the object is locally controlled, or the local player is not active; INFERENCE: a skirmish's local player is active)
 	const bool allowed = ctx && local && ctx->getControllingPlayer() == local;
 	m_radial.setImageSize(imageSizeOf, (void *)m_hud6Images);
-	m_radial.update(logic, &m_config.game.drawables(), m_config.view, m_windowW, m_windowH, context, m_bar->sideButtons(), allowed);
+	m_radial.update(logic, &m_config.game.drawables(), m_config.view, m_windowW, m_windowH, context, m_bar->radialButtons(), allowed);
 	// the help box: the control bar's test of the last frame, the hover of this one, the movie clip's update
 	m_helpBox.beginFrame();
 	InGameHelpBox::Provider p;

@@ -2676,7 +2676,7 @@ Dictionary AptMenuPlayer::lobby_state()
   d["default"] = defaults[(size_t)i]; d["value"] = g.rules[(size_t)i];
   d["choices"] = combo ? entries(setup.ruleComboEntries(*combo)) : Array(); definitions.push_back(d);
  }
- out["rule_definitions"] = definitions; out["legendary_heroes"] = g.legendaryHeroes;
+	out["rule_definitions"] = definitions; out["legendary_heroes"] = g.legendaryHeroes; out["fortress_construction"] = g.fortressConstruction;
 
 	Array slots;
 	for (const SkirmishGameSlot &s : g.slots)
@@ -2831,6 +2831,7 @@ Dictionary AptMenuPlayer::lobby_apply(const Dictionary &spec)
 		}
 	}
 
+	if (spec.has("browser_fortress_construction") && !screen->setBrowserFortressConstruction(bool(spec["browser_fortress_construction"]))) errors.push_back("Cannot change Fortress construction");
  if (spec.has("browser_legendary") && !screen->setBrowserLegendary(int(spec["browser_legendary"]))) errors.push_back("Invalid Legendary Heroes factor");
  const Array browserRules = spec.get("browser_rules", Array());
  for (int64_t i = 0; i < browserRules.size(); ++i) {

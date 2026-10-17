@@ -12,6 +12,7 @@
 #include "Common/PlayerList.h"
 #include "Common/PlayerTemplate.h"
 #include "Common/Thing/ThingTemplate.h"
+#include "Common/Thing/ThingFactory.h"
 #include "GameClient/ControlBarCommands.h"
 #include "GameLogic/UpgradeTypes.h"
 #include "GameLogic/Economy.h"
@@ -296,6 +297,30 @@ bool BuildAssistant::commandPointsAvailable(const Player &player, const ThingTem
 	return logic.economy().canAffordCommandPoints(player, tt);
 }
 
+// OpenBFME optional rule; the builder menu is read from faction data.
+bool BuildAssistant::isFortressBuilder(const Object &obj)
+{
+	return obj.logic().fortressConstruction() && obj.isKindOfName("CASTLE_KEEP") && obj.isKindOfName("STRUCTURE")
+		&& !obj.isDestroyed() && !obj.isEffectivelyDead() && !obj.isUnderConstruction();
+}
+
+const CommandSet *BuildAssistant::fortressBuildSet(const Object &obj)
+{
+	if (!isFortressBuilder(obj) || !TheCommandStore) return nullptr;
+	const Player *player = obj.getControllingPlayer();
+	const PlayerTemplate *faction = player ? player->getPlayerTemplate() : nullptr;
+	if (!faction) return nullptr;
+	for (const auto &name : faction->m_startingUnit)
+	{
+		const ThingTemplate *tt = obj.logic().things().findTemplate(name);
+		if (!tt || !kindOfTemplate(obj.logic(), *tt, "DOZER")) continue;
+		const auto field = tt->getFinalOverride()->findField("CommandSet");
+		const auto setName = field ? std::get_if<std::string>(field) : nullptr;
+		if (setName) if (const auto set = TheCommandStore->findCommandSet(*setName)) return set;
+	}
+	return nullptr;
+}
+
 // RW 0x794F38
 bool BuildAssistant::isInProducersCommandSet(Object &builder, const ThingTemplate *what, int buildIndex)
 {
@@ -341,7 +366,8 @@ bool BuildAssistant::isInProducersCommandSet(Object &builder, const ThingTemplat
 	{
 		throw std::logic_error("canMakeUnit: no CommandStore (TheCommandStore) is set");
 	}
-	const CommandSet *set = TheCommandStore->findCommandSet(builder.getCommandSetName());
+	const bool fortressBuild = what && kindOfTemplate(logic, *what, "STRUCTURE") && isFortressBuilder(builder);
+	const CommandSet *set = fortressBuild ? fortressBuildSet(builder) : TheCommandStore->findCommandSet(builder.getCommandSetName());
 	if (!set)
 	{
 		return false;
@@ -454,7 +480,7 @@ CanMakeType BuildAssistant::canMakeUnit(Object &builder, const ThingTemplate *wh
 	{
 		return CANMAKE_NO_PREREQUISITES;
 	}
-	if (ProductionUpdateInterface *pu = builder.getProductionUpdate())
+	if (ProductionUpdateInterface *pu = builder.getProductionUpdate(); pu && !(what && kindOfTemplate(logic, *what, "STRUCTURE") && isFortressBuilder(builder)))
 	{
 		const int r = pu->canQueueCreateUnit();
 		if (r != CANMAKE_OK)
@@ -473,7 +499,7 @@ CanMakeType BuildAssistant::canMakeUnit(Object &builder, const ThingTemplate *wh
 	{
 		if (what && !kindOfTemplate(logic, *what, "BUILD_FOR_FREE"))
 		{
-			const int cost = calcCostToBuild(*what, player, &builder, -1);
+			const int cost = calcCostToBuild(*what, player, isFortressBuilder(builder) && kindOfTemplate(logic, *what, "STRUCTURE") ? nullptr : &builder, -1);
 			if ((std::uint32_t)cost > player->getMoney()->countMoney() + reserved)
 			{
 				return CANMAKE_NO_MONEY;

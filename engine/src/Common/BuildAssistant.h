@@ -21,6 +21,7 @@
 
 #include "GameLogic/ProductionSettings.h"
 
+class CommandSet;
 class Object;
 class Player;
 class ThingTemplate;
@@ -70,6 +71,10 @@ bool isEquivalentTo(const ThingTemplate *a, const ThingTemplate *b);
 // RW 0x794F38 (BuildAssistant vtable slot 0x68): `what` must be offered by a button of the builder's CommandSet (UNIT_BUILD, DOZER_CONSTRUCT or
 // FOUNDATION_CONSTRUCT whose Object is equivalent), the button's NeededUpgrade list satisfied (all, or any with NeededUpgradeAny: object upgrades by the
 // builder, player upgrades by its owner) and the owner able to build it. The hero / REVIVE path (buildIndex != -1) is HERO-1's: false.
+// Enhanced fortress construction: uses the faction's starting DOZER template data,
+// never a live builder. nullptr when the rule/object/faction has no such menu.
+const CommandSet *fortressBuildSet(const Object &fortress);
+bool isFortressBuilder(const Object &object);
 bool isInProducersCommandSet(Object &builder, const ThingTemplate *what, int buildIndex);
 
 // lane QA2-FIX: RW 0x793E33 (BuildAssistant vtable slot 0x60, the line build test the placement code asks, RW 0x83E911 / 0x6A2B6D): `what` and the builder's

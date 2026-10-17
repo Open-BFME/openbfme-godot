@@ -437,10 +437,12 @@ export class Lobby {
       startingCash: intIn(setup.startingCash ?? 1500, -1, 1000000000, 'setup.startingCash'),
       superweaponRestriction: intIn(setup.superweaponRestriction ?? 0, 0, 1, 'setup.superweaponRestriction'),
       legendaryHeroes: intIn(setup.legendaryHeroes ?? 1, 1, 4, 'setup.legendaryHeroes'),
+      fortressConstruction: setup.fortressConstruction ?? false,
       // lane ONLINE-3: how far behind the players the spectators watch (seconds of game time; the relay holds the log back that far)
       spectatorDelay: intIn(setup.spectatorDelay ?? 0, 0, 600, 'setup.spectatorDelay'),
       rules: setup.rules ?? null,
     };
+    if (typeof out.fortressConstruction !== 'boolean') throw bad('bad_field', 'setup.fortressConstruction must be boolean');
     if (out.rules !== null) {
       if (!Array.isArray(out.rules) || out.rules.length !== 10) throw bad('bad_field', 'setup.rules must be null or 10 integers');
       out.rules.forEach((r, i) => intIn(r, -2147483648, 2147483647, `setup.rules[${i}]`));
@@ -680,6 +682,7 @@ export class Lobby {
       superweaponRestriction: g.setup.superweaponRestriction,
       rules: g.setup.rules,
       legendaryHeroes: g.setup.legendaryHeroes,
+      fortressConstruction: g.setup.fortressConstruction,
       slots: g.slots.slice(0, last).map((s) => (s.state === 'player' || AI_STATES.has(s.state)
         ? { state: s.state, name: s.name, faction: s.faction, color: s.color, startPos: s.startPos, team: s.team }
         : { state: s.state })),

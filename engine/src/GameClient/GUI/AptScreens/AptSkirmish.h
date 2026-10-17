@@ -66,6 +66,7 @@ public:
 	bool setLobbyStartPosition(int slot, int position);
 	bool setBrowserRule(int rule, int value);
 	bool setBrowserLegendary(int value);
+	bool setBrowserFortressConstruction(bool enabled);
 	SkirmishProfileStore &profiles() { return *m_profiles; }
 	// lane UI-6: the kept game (SkirmishGameRecord.h): what the lobby restored at its start ("" when it began from the defaults), and the stop of a kept
 	// game it could not use
@@ -362,6 +363,7 @@ private:
 	std::array<GameWindow *, NUM_GAME_RULES> m_ruleWindows{};
 	std::array<int, NUM_GAME_RULES> m_ruleStates{};
 	GameWindow *m_legendaryCombo = nullptr;
+	GameWindow *m_fortressCombo = nullptr;
 	bool m_ruleInput = true;
 	bool m_rulesPopulated = false;
 	std::unique_ptr<AptMessageBox> m_ruleBox;

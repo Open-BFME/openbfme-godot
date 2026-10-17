@@ -397,6 +397,8 @@ public:
 	// OpenBFME's Legendary Heroes factor (1 = off). Both are part of the state hash only when set, so a game without them keeps its hashes
 	void setGameRules(const GameRules &rules) { m_gameRules = rules; }
 	const GameRules &gameRules() const { return m_gameRules; }
+	void setFortressConstruction(bool enabled) { m_fortressConstruction = enabled; }
+	bool fortressConstruction() const { return m_fortressConstruction; }
 	void setLegendaryHeroes(int factor) { m_legendaryHeroes = factor; }
 	int legendaryHeroes() const { return m_legendaryHeroes; }
 	// lane UBER-1: the simulation profile (Common/SimulationProfile.h; set before the first frame). Hashed only when Uber, so a Faithful game keeps its hash
@@ -731,6 +733,7 @@ private:
 	UnsignedInt m_frame = 0;
 	int m_gameDifficulty = 1;     ///< lane CAMP-1H: RW GameLogic + 0xA4
 	GameRules m_gameRules = MpGameRules::none(); ///< lane RULES-1
+	bool m_fortressConstruction = false;
 	int m_legendaryHeroes = LegendaryHeroes::kOff; ///< lane RULES-1 (OpenBFME)
 	SimulationProfile m_simulationProfile = SimulationProfile::Faithful; ///< lane UBER-1 (OpenBFME)
 	bool m_frameAdvance = true;   ///< RW GameLogic + 0x44

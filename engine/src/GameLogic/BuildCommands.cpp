@@ -2,6 +2,7 @@
 // See GameLogic/BuildCommands.h for the sources of every rule.
 
 #include "GameLogic/BuildCommands.h"
+#include "GameLogic/BuildPlacement.h"
 #include "GameLogic/ConstructionSite.h"
 
 #include "Common/BuildAssistant.h"
@@ -153,7 +154,7 @@ bool BuildCommands::dozerConstruct(GameLogic &logic, const GameMessage &m)
 		refuse(m, !builder ? "no builder selected" : "unknown template id");
 		return true;
 	}
-	if (!kindOfName(*builder, "DOZER")) // RW 0x77B067
+	if (!kindOfName(*builder, "DOZER") && !BuildAssistant::isFortressBuilder(*builder)) // RW 0x77B067
 	{
 		refuse(m, "the first selected object is not a DOZER");
 		return true;
@@ -168,6 +169,23 @@ bool BuildCommands::dozerConstruct(GameLogic &logic, const GameMessage &m)
 	if (can != CANMAKE_OK)
 	{
 		refuse(m, "canMakeUnit " + std::to_string((int)can));
+		return true;
+	}
+	if (BuildAssistant::isFortressBuilder(*builder))
+	{
+		const unsigned options = 0x49F; // Same legality flags as the normal placement release.
+		if (!a.tmpl || !MaskTest(logic.templateInfo(a.tmpl).kindOf, (unsigned)ObjectTemplateInfoBuilder::kindOfIndex("STRUCTURE")))
+		{
+			refuse(m, "expected a structure"); return true;
+		}
+		if (BuildPlacement::isLocationLegalToBuild(logic, a.loc, *a.tmpl, a.angle, options, builder, owner) != LBC_OK)
+		{
+			refuse(m, "the site is not legal to build on"); return true;
+		}
+		ConstructionSite::prepareSite(logic, *builder, *a.tmpl, a.loc, a.angle, *owner);
+		if (!Construction::constructWithoutBuilder(logic, *a.tmpl, a.loc, a.angle, *owner))
+			refuse(m, "the fortress did not start it");
+		else ++m_stats.dozerBuilds;
 		return true;
 	}
 	DozerAIUpdate *dozer = dynamic_cast<DozerAIUpdate *>(builder->getAIUpdateInterface());

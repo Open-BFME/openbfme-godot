@@ -358,6 +358,17 @@ their health, take less damage and hit harder. The loading screen names the
 rule when it is on. A game with it on plays differently from the original;
 with it off nothing changes.
 
+### Fortress construction
+
+Enable **Fortress construction** in the match's Rules tab (under OpenBFME
+extensions in the map browser). It defaults to Off. Selecting your completed
+fortress opens your faction builder's building menu on the right. Choose a
+building and place/rotate it normally; construction starts immediately at the
+site without a builder, using normal prices, placement checks and build times.
+The fortress keeps its ordinary recruitment and upgrade commands. This applies
+to every player and travels with match setup and replays. The menu comes from
+the faction's starting builder template, including mod-defined command sets.
+
 ## Skirmish games
 
 - **Your profile.** The first time you open Skirmish, the game asks for a

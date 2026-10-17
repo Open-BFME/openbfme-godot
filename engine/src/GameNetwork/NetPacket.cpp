@@ -344,7 +344,9 @@ void NetPacket::writeGameInfo(NetByteWriter &w, const SkirmishGameInfo &g)
 		w.i32(v);
 	}
 	w.i32(g.legendaryHeroes);
-	w.i32((std::int32_t)g.simulationProfile); // lane UBER-1: the simulation profile (Common/SimulationProfile.h)
+	// OpenBFME setup flags share the profile word. Off retains the existing wire/replay bytes;
+	// older readers reject the flagged profile rather than silently ignoring the rule.
+	w.i32((std::int32_t)g.simulationProfile | (g.fortressConstruction ? 0x100 : 0)); // lane UBER-1: the simulation profile (Common/SimulationProfile.h)
 }
 
 bool NetPacket::readGameInfo(NetByteReader &r, SkirmishGameInfo &g, std::string *error)
@@ -401,7 +403,9 @@ bool NetPacket::readGameInfo(NetByteReader &r, SkirmishGameInfo &g, std::string 
 		v = r.i32();
 	}
 	g.legendaryHeroes = r.i32();
-	const std::int32_t profile = r.i32();
+	const std::int32_t profileFlags = r.i32();
+	g.fortressConstruction = (profileFlags & 0x100) != 0;
+	const std::int32_t profile = profileFlags & ~0x100;
 	if (r.failed())
 	{
 		return failWith(error, r.badFlag() ? "GameInfo with a flag that is not 0 / 1" : "truncated GameInfo");

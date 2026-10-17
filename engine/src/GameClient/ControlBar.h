@@ -88,7 +88,8 @@ public:
 	ObjectID sourceObject() const { return m_source; }
 	const std::string &commandSetName() const { return m_setName; }
 	const std::vector<ControlBarButton> &palantirButtons() const { return m_palantir; }
-	const std::vector<ControlBarButton> &sideButtons() const { return m_side; }
+	const std::vector<ControlBarButton> &sideButtons() const { return m_fortressSide.empty() ? m_side : m_fortressSide; }
+	const std::vector<ControlBarButton> &radialButtons() const { return m_side; }
 	// lane HUD-4: the visible buttons that neither the arc nor the side bar shows (retail too: InPalantir beyond window 5, or neither InPalantir nor Radial);
 	// the hotkeys (STOP, TOGGLE_ATTACKMOVE, STANCE_*) and the context commands reach their commands
 	const std::vector<ControlBarButton> &offBarButtons() const { return m_offBar; }
@@ -165,7 +166,7 @@ private:
 	HudContext &m_ctx;
 	ObjectID m_source = INVALID_ID;
 	std::string m_setName;
-	std::vector<ControlBarButton> m_palantir, m_side, m_offBar;
+	std::vector<ControlBarButton> m_palantir, m_side, m_offBar, m_fortressSide;
 	std::vector<ControlBarQueueEntry> m_queue;
 	std::uint32_t m_money = 0;
 	int m_cpUsed = 0, m_cpLimit = 0;

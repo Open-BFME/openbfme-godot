@@ -90,9 +90,10 @@ LoadScreenInfo makeLoadScreenInfo(const SkirmishGameInfo &game, const SkirmishSe
 		++card;
 	}
 	// lane RULES-1, OpenBFME: the rules a player must know about that retail's load screen has no field for (drawn by the device over the movie)
+	if (game.fortressConstruction) info.rulesSummary = u"Fortress construction (OpenBFME rule)";
 	if (game.legendaryHeroes != LegendaryHeroes::kOff)
 	{
-		info.rulesSummary = LegendaryHeroes::label() + u": " + LegendaryHeroes::choiceText(game.legendaryHeroes);
+		info.rulesSummary += (info.rulesSummary.empty() ? u"" : u"; ") + LegendaryHeroes::label() + u": " + LegendaryHeroes::choiceText(game.legendaryHeroes);
 	}
 	// lane UBER-1: the Uber performance mode is on the load screen too, so nobody is surprised the game is not the original's simulation
 	if (game.simulationProfile == SimulationProfile::Uber)

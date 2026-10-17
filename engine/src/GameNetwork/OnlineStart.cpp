@@ -243,6 +243,10 @@ bool parse(const std::string &json, const ProfileIdentity &ownProfile, const Lim
 	g.startingCash = (int)cash;
 	g.superweaponRestriction = (int)sw;
 	g.legendaryHeroes = (int)lh;
+	if (const auto flag = setup->get("fortressConstruction")) {
+		if (flag->type != JsonValue::BOOL) return fail(error, "fortressConstruction must be boolean");
+		g.fortressConstruction = flag->boolean;
+	}
 	if (!LegendaryHeroes::valid(g.legendaryHeroes))
 	{
 		return fail(error, "\"legendaryHeroes\" " + std::to_string(lh) + " is not a known factor");

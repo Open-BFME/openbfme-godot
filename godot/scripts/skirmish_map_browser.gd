@@ -369,7 +369,7 @@ func _commit() -> bool:
   slots.append(change)
  var rules=[]
  for key in rule_edits:rules.append({'id':int(key),'value':rule_edits[key]})
- var result:Dictionary=shell.lobby_apply({'map_search':'','map':selected.key,'slots':slots,'browser_rules':rules,'browser_legendary':draft.get('legendary_heroes',1)})
+ var result:Dictionary=shell.lobby_apply({'map_search':'','map':selected.key,'slots':slots,'browser_rules':rules,'browser_legendary':draft.get('legendary_heroes',1),'browser_fortress_construction':draft.get('fortress_construction',false)})
  if not result.get('ok',false):message.text=str(result.get('errors',[]))
  return result.get('ok',false)
 
@@ -411,6 +411,11 @@ func _setup_tabs():
  var row=HBoxContainer.new();rows.add_child(row)
  var label=Label.new();label.text='Legendary Heroes';label.size_flags_horizontal=Control.SIZE_EXPAND_FILL;row.add_child(label)
  _choice(row,[{'label':'Off','value':1},{'label':'2×','value':2},{'label':'3×','value':3},{'label':'4×','value':4}],int(draft.get('legendary_heroes',1)),func(value):draft.legendary_heroes=value)
+
+ # The fortress offers the faction builder's menu and starts paid foundations immediately.
+ var fortress=CheckButton.new();fortress.text='Fortress construction';fortress.button_pressed=bool(draft.get('fortress_construction',false));rows.add_child(fortress)
+ fortress.tooltip_text='Select a fortress to place buildings without a builder. Normal prices and build times apply.'
+ fortress.toggled.connect(func(on):draft.fortress_construction=on)
 
 func _owner(start: int) -> int:
  for key in assignments:

@@ -1109,7 +1109,7 @@ TEST_CASE("stops S-178 / S-179: the lobby reports its inferences, the profile ga
 	REQUIRE(fx.wm->getExtern("MpGameRules::NumCheckBoxes", value) == AptExternResult::Value);
 	CHECK(value == "3");
 	REQUIRE(fx.wm->getExtern("MpGameRules::NumComboBoxes", value) == AptExternResult::Value);
-	CHECK(value == "3");
+	CHECK(value == "4");
 	REQUIRE(fx.wm->getExtern("AptMpGameRules::ShowClans", value) == AptExternResult::Value);
 	CHECK(value == "0");
 	// SuppressStrategicPromo is remembered nowhere ([S-179])
@@ -1749,7 +1749,13 @@ TEST_CASE("rules1 retail lobby: the Rules tab shows RotWK's rows (Initial Resour
 	CHECK(cash == fx.screen->ruleComboWindow(0));
 	CHECK(cp == fx.screen->ruleComboWindow(1));
 	CHECK(legendary == fx.screen->ruleComboWindow(2));
-	for (int i = 3; i < 6; ++i)
+	auto fortress = fx.screen->ruleComboWindow(3);
+	REQUIRE(fortress);
+	CHECK_FALSE(fortress->winIsHidden());
+	CHECK(GadgetComboBoxGetLength(fortress) == 2);
+	GadgetComboBoxSetSelectedPos(fortress, 1, false);
+	CHECK(fx.screen->setup()->info().fortressConstruction);
+	for (int i = 4; i < 6; ++i)
 	{
 		CHECK(fx.screen->ruleComboWindow(i)->winIsHidden());
 	}
@@ -1798,6 +1804,7 @@ TEST_CASE("rules1 retail lobby: the Rules tab shows RotWK's rows (Initial Resour
 	fx.wm->invokeCallback("AptMpGameRules::Reset", "");
 	CHECK(fx.screen->setup()->info().rules == MpGameRules::defaults(RULES_MODE_SKIRMISH));
 	CHECK(fx.screen->setup()->info().legendaryHeroes == LegendaryHeroes::kOff);
+	CHECK_FALSE(fx.screen->setup()->info().fortressConstruction);
 	CHECK(selectedValue(cash) == 1000);
 	CHECK(selectedValue(legendary) == 1);
 	CHECK(GadgetCheckBoxIsChecked(fx.screen->ruleCheckWindow(0)));
@@ -1959,6 +1966,7 @@ TEST_CASE("ui6 retail lobby: creating, changing and deleting profiles keep each 
 	fx.wm->invokeCallback("AptSkirmish::OnAddProfileAccept", "");
 	REQUIRE(store.current() == u"Legolas");
 	CHECK(fx.screen->setup()->info().legendaryHeroes == LegendaryHeroes::kOff);
+	CHECK_FALSE(fx.screen->setup()->info().fortressConstruction);
 	CHECK(fx.screen->setup()->info().slots[0].name == u"Legolas");
 	GadgetListBoxSetSelected(fx.screen->mapListWindow(), 3);
 	REQUIRE(fx.screen->setup()->info().mapName == keys[3]);
@@ -1994,6 +2002,7 @@ TEST_CASE("ui6 retail lobby: creating, changing and deleting profiles keep each 
 	REQUIRE(store.current() == u"Legolas");
 	CHECK(fx.screen->setup()->info().mapName == keys[3]);
 	CHECK(fx.screen->setup()->info().legendaryHeroes == LegendaryHeroes::kOff);
+	CHECK_FALSE(fx.screen->setup()->info().fortressConstruction);
 	CHECK(fx.screen->setup()->info().slots[0].name == u"Legolas");
 	fx.shell->pop();
 	fx.tick(30);
@@ -2001,4 +2010,18 @@ TEST_CASE("ui6 retail lobby: creating, changing and deleting profiles keep each 
 	std::replace(map.begin(), map.end(), '/', '\\');
 	CHECK(store.profileValue(0, "Map") == map);
 	CHECK(store.profileValue(0, "OpenBFMELegendaryHeroes") == "1");
+}
+
+TEST_CASE("fortress construction rules: default off, optional match setting, reset returns to off")
+{
+ FakeSetup src;
+ MapGameText text;
+ auto setup = makeSetup(src, text);
+ std::string error;
+ REQUIRE_MESSAGE(setup.init(u"Builderless", 77, std::string(), &error), error);
+ CHECK_FALSE(setup.info().fortressConstruction);
+ setup.setFortressConstruction(true);
+ CHECK(setup.info().fortressConstruction);
+ setup.resetRules();
+ CHECK_FALSE(setup.info().fortressConstruction);
 }

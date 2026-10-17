@@ -147,6 +147,7 @@ struct SkirmishGameInfo
 	GameRules rules = MpGameRules::none();
 	// lane RULES-1, OpenBFME (not retail): the Legendary Heroes factor, 1 (off) .. 4 (LegendaryHeroes in Common/MpGameRules.h)
 	int legendaryHeroes = LegendaryHeroes::kOff;
+	bool fortressConstruction = false; // OpenBFME: fortress build menu and self-building foundations
 	// lane UBER-1, OpenBFME (not retail): the simulation profile (Common/SimulationProfile.h): Faithful, or the opt-in Uber performance mode the host's
 	// OpenBFME option chose; every peer's profile identity must say the same (GameNetwork/ProfileIdentity.h), so a mismatch is refused at the lobby
 	SimulationProfile simulationProfile = SimulationProfile::Faithful;
@@ -274,7 +275,7 @@ struct SkirmishGameInfo
 		}
 		return mapName == o.mapName && mapCRC == o.mapCRC && mapSize == o.mapSize && mapMask == o.mapMask && seed == o.seed && startingCash == o.startingCash
 			&& superweaponRestriction == o.superweaponRestriction && inProgress == o.inProgress && rules == o.rules && legendaryHeroes == o.legendaryHeroes
-			&& simulationProfile == o.simulationProfile;
+			&& fortressConstruction == o.fortressConstruction && simulationProfile == o.simulationProfile;
 	}
 };
 

@@ -136,7 +136,7 @@ ButtonState ControlBar::evaluate(const CommandButton &b, Object &obj)
 			{
 				return ButtonState::Hidden; // Buildable = No, and Only_By_AI for a human
 			}
-			if (pu && pu->getProductionCount() >= pu->maxQueueEntries())
+			if (pu && !(b.m_command == GUI_COMMAND_DOZER_CONSTRUCT && BuildAssistant::isFortressBuilder(obj)) && pu->getProductionCount() >= pu->maxQueueEntries())
 			{
 				return ButtonState::Restricted;
 			}
@@ -421,6 +421,7 @@ void ControlBar::update()
 	}
 	m_palantir.clear();
 	m_side.clear();
+	m_fortressSide.clear();
 	m_offBar.clear();
 	m_queue.clear();
 	m_portrait.clear();
@@ -624,6 +625,22 @@ void ControlBar::update()
 			m_queue.push_back(q);
 		}
 	}
+	// Preserve the fortress's normal radial commands; the independent build list occupies the side bar.
+	if (obj && HudObjects::isLocallyControlled(m_ctx, *obj))
+		if (const auto buildSet = BuildAssistant::fortressBuildSet(*obj))
+			for (int slot = 0; slot < CommandSet::MAX_BUTTONS; ++slot)
+			{
+				const auto b = buildSet->getCommandButton(slot);
+				if (!b || !b->m_showButton || b->m_command != GUI_COMMAND_DOZER_CONSTRUCT || !b->getThingTemplate()) continue;
+				ControlBarButton cb; cb.slot = CommandSet::MAX_BUTTONS + slot; cb.button = b;
+				cb.state = evaluate(*b, *obj); if (cb.state == ButtonState::Hidden) continue;
+				cb.position = (int)m_fortressSide.size();
+				cb.image = b->m_buttonImageName.empty() ? std::string() : b->m_buttonImageName.front();
+				cb.textLabel = b->m_textLabel.empty() ? std::string() : b->m_textLabel.front();
+				cb.descriptLabel = b->m_descriptLabel.empty() ? std::string() : b->m_descriptLabel.front();
+				cb.cost = BuildAssistant::calcCostToBuild(*b->getThingTemplate(), local, nullptr, -1);
+				cb.hotkey = hotkeyOf(cb.textLabel); m_fortressSide.push_back(cb);
+			}
 	emitStateKey();
 }
 
@@ -866,7 +883,7 @@ void ControlBar::emitStateKey()
 	// the version moves when the picture of the bar changes
 	std::string key = std::to_string(m_source) + "|" + m_setName + (m_underConstruction ? "|uc" : "") + "|" + std::to_string(m_rangeStack.size()) + "|" + std::to_string(m_rangeStack.back().first) + "|" + std::to_string(m_money) + "|"
 		+ std::to_string(m_cpUsed) + "/" + std::to_string(m_cpLimit);
-	for (const auto *v : { &m_palantir, &m_side, &m_offBar })
+	for (const auto *v : { &m_palantir, &m_side, &m_offBar, &m_fortressSide })
 	{
 		for (const ControlBarButton &b : *v)
 		{
@@ -919,6 +936,7 @@ void ControlBar::place(ControlBarButton cb, int rangeStart)
 
 const ControlBarButton *ControlBar::find(int slot, bool inPalantir) const
 {
+	if (!inPalantir) for (const auto &b : m_fortressSide) if (b.slot == slot) return &b;
 	for (const ControlBarButton &b : inPalantir ? m_palantir : m_side)
 	{
 		if (b.slot == slot)

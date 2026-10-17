@@ -1205,3 +1205,10 @@ test('ONLINE-5 (Sol r1): an emptied slot keeps no choices: a reopened AI slot\'s
   assert.deepEqual([lobby.games.get(made.body.id).slots[1].startPos, lobby.games.get(made.body.id).slots[1].color], [-1, -1]);
   void c;
 });
+
+test('Fortress construction is an opt-in rule preserved by setup validation', () => {
+  const lobby = new Lobby(fakeEnv(), configFromEnv(ENV));
+  assert.equal(lobby.checkSetup(setup, true).fortressConstruction, false);
+  assert.equal(lobby.checkSetup({ ...setup, fortressConstruction: true }, true).fortressConstruction, true);
+  assert.throws(() => lobby.checkSetup({ ...setup, fortressConstruction: 1 }, true), /must be boolean/);
+});

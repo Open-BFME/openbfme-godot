@@ -72,6 +72,7 @@ Dictionary newGameToDictionary(const NewGameMessage &m)
 	}
 	d["rules"] = rules;
 	d["legendary_heroes"] = m.game.legendaryHeroes;
+	d["fortress_construction"] = m.game.fortressConstruction;
 	d["simulation_profile"] = (int)m.game.simulationProfile; // lane UBER-1: 0 Faithful, 1 Uber (Common/SimulationProfile.h)
 	Array slots;
 	for (int i = 0; i < MAX_SLOTS; ++i)
@@ -157,6 +158,7 @@ bool newGameFromDictionary(const Dictionary &d, NewGameMessage &out, std::string
 			m.game.rules[(size_t)i] = (std::int32_t)(int64_t)rules[i];
 		}
 	}
+	m.game.fortressConstruction = (bool)d.get("fortress_construction", false);
 	m.game.legendaryHeroes = (int)(int64_t)d.get("legendary_heroes", (int64_t)LegendaryHeroes::kOff);
 	if (!LegendaryHeroes::valid(m.game.legendaryHeroes))
 	{

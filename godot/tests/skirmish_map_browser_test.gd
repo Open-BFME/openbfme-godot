@@ -75,6 +75,7 @@ func _run():
  browser._assign(0,int(browser.selected.starts[0].index))
  browser.rule_edits[4]=4000
  browser.draft.legendary_heroes=2
+ browser.draft.fortress_construction=true
  assert(browser.start_buttons[0].point.y>1,'Fortress sits on the terrain')
  assert('height samples' in browser.stats.text,'Stats derived from terrain data')
  browser.start_buttons[0].button.pressed.emit()
@@ -98,6 +99,7 @@ func _run():
  assert(shell.lobby_state().slots[0].team==0,'Team committed')
  assert(shell.lobby_state().rules[4]==4000,'Vanilla rules committed')
  assert(shell.lobby_state().legendary_heroes==2,'Extension committed')
+ assert(shell.lobby_state().fortress_construction,'Fortress construction rule committed')
  browser.show_browser()
  browser.draft.slots[1].state=5;browser.rule_edits[4]=1000
  var original_catalog=browser.catalog

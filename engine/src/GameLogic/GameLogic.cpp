@@ -1021,6 +1021,7 @@ std::uint32_t GameLogic::hashState(std::vector<StateHashSection> *sections, std:
 				x.addI32(v);
 			}
 		}
+		if (m_fortressConstruction) x.addU32(0xF04C0001u);
 		if (m_legendaryHeroes != LegendaryHeroes::kOff)
 		{
 			x.addI32(m_legendaryHeroes);

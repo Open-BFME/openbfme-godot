@@ -120,6 +120,7 @@ public:
 	void resetRules();
 	// OpenBFME's Legendary Heroes factor (1 off .. 4); false for a factor the rule does not offer
 	bool setLegendaryHeroes(int factor);
+	void setFortressConstruction(bool enabled) { m_info.fortressConstruction = enabled; }
 	// lane UBER-1: the simulation profile of the games this setup starts (the player's OpenBFME option; kept through init / reset)
 	void setSimulationProfile(SimulationProfile profile)
 	{
