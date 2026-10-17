@@ -2,6 +2,7 @@
 // See GameLogic/Construction.h for the sources of every rule.
 
 #include "GameLogic/Construction.h"
+#include "GameLogic/FactionBuildPlots.h"
 #include "GameLogic/ConstructionSite.h"
 
 
@@ -234,7 +235,8 @@ Object *Construction::constructOnPlot(Object &plot, const ThingTemplate &what, c
 	{
 		angle = SimMath::addf32(placementViewAngle(what), plot.getOrientation());
 	}
-	const bool rises = !instant && needsBase && !isBase;
+	const bool factionPlot = FactionBuildPlots::isPlot(plot.getTemplate()->getName());
+	const bool rises = !instant && (needsBase || factionPlot) && !isBase;
 	if (rises)
 	{
 		startRise(*obj); // RW 0x858924 ff
@@ -262,11 +264,11 @@ Object *Construction::constructOnPlot(Object &plot, const ThingTemplate &what, c
 		obj->setStatus(OBJECT_STATUS_UNDER_CONSTRUCTION, false);
 		obj->setConstructionPercent(-1.0f);
 	}
-	else if (member && obj->findModule("CastleMemberBehavior"))
+	else if (member && (factionPlot || obj->findModule("CastleMemberBehavior")))
 	{
 		// lane BACKLOG2: RW 0x858AB3 .. 0x858AE8: the price is paid only when the new object and the plot both have a CastleMemberBehavior (the name key
 		// RW 0xDE8E50 = "CastleMemberBehavior", RW 0xC0BE84): a structure without one built on a castle (an economy plot's explicit unpack, RW 0x79B98B) was
-		// paid by the castle's unpack (RW 0x797B06)
+		// paid by the castle's unpack (RW 0x797B06). Enhanced faction plots charge ordinary builder buildings here too.
 		const int cost = BuildAssistant::calcCostToBuild(what, &owner, &plot, -1);
 		owner.withdrawMoney((std::uint32_t)cost, true);
 		owner.getScoreKeeper().addMoneySpentByKind(logic, &what, cost); // RW 0x858B1E (lane END-2)

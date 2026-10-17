@@ -375,7 +375,18 @@ bool GameTextTable::lookup(const std::string &label, std::string &text) const
 	auto it = m_strings.find(lowerAscii(label));
 	if (it == m_strings.end())
 	{
-		return false;
+		// Authored enhanced-content labels. Mounted translations can override these.
+		static const std::map<std::string, std::string> plotLabels = {
+			{"openbfme:buildplotgeneral", "General build plot"},
+			{"openbfme:buildplotsiege", "Siege build plot"},
+			{"openbfme:buildplotmilitary", "Unit production build plot"},
+			{"openbfme:buildploteconomy", "Economy build plot"},
+			{"openbfme:buildplotupgrades", "Upgrade build plot"}
+		};
+		const auto authored = plotLabels.find(lowerAscii(label));
+		if (authored == plotLabels.end()) return false;
+		text = authored->second;
+		return true;
 	}
 	text = it->second;
 	return true;

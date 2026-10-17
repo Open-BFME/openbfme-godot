@@ -2,6 +2,7 @@
 // See GameLogic/Object/RetailObjectWorld.h.
 
 #include "GameLogic/Object/RetailObjectWorld.h"
+#include "GameLogic/FactionBuildPlots.h"
 
 #include "Common/Audio/AudioIni.h"
 #include "Common/GlobalOwnerChain.h"
@@ -510,6 +511,20 @@ bool RetailObjectWorld::loadState(std::string *error)
 	}
 	m_s->m_upgrades.resolveTemplates(*m_s->m_things);
 	m_s->m_upgradeTypes.assign(m_s->m_upgrades);
+	// Enhanced templates are appended after retail IDs are assigned. Existing menus
+	// and starting bases remain untouched. Each peer derives identical variants.
+	if (!options.bfme1) try
+	{
+		const auto generated = FactionBuildPlots::generate(*m_s->m_things, m_s->m_commands, *m_s->m_playerTemplates);
+		ini.loadMemory("OpenBFME faction build plots", std::vector<std::uint8_t>(generated.ini.begin(), generated.ini.end()), INI_LOAD_OVERWRITE);
+		FactionBuildPlots::copyButtons(generated, m_s->m_commands);
+	}
+	catch (const std::exception &e)
+	{
+		SubsystemLoadReport::FileError fe;
+		fe.file = "OpenBFME faction build plots"; fe.code = 0; fe.message = e.what();
+		m_s->m_report.errors.push_back(fe);
+	}
 	refreshSetup(); // lane MAPRESET-1: game setup's copies
 	m_s->m_seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
 	ok = true;
