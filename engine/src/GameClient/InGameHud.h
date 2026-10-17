@@ -102,6 +102,8 @@ public:
 	// a click at a window pixel inside the radar square: the left button moves the view there, the right button orders the selection to that ground point (MSG_DO_MOVETO) when it is
 	// controllable. True when the click was the radar's.
 	bool radarClick(HudInput::Button button, int x, int y, int timeMs);
+	bool radarNormalizedClick(HudInput::Button button, float u, float v);
+	void setPresentationVisible(bool visible) { m_presentationVisible = visible; }
 
 	WindowManager &windows() { return *m_wm; }
 	Apt &apt() { return m_wm->apt(); }
@@ -215,6 +217,7 @@ private:
 	std::unique_ptr<HudInput> m_input;
 	std::unique_ptr<ControlBar> m_bar;
 	std::unique_ptr<Radar> m_radar;
+	bool m_presentationVisible = true;
 	unsigned m_clientFrames = 0; ///< lane HUD-4
 	AudioApiVoiceSink m_voiceSink;
 	std::unique_ptr<UnitVoiceResponse> m_voice;

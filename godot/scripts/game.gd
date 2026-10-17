@@ -1758,15 +1758,17 @@ func _install_hud(rep: Dictionary) -> void:
 		return
 	_hud = hud
 	_hud_installed = true
-	if OS.has_feature("ios") and not has_node("TouchToolbar"):
-		var toolbar := preload("res://scripts/touch_toolbar.gd").new()
-		toolbar.name = "TouchToolbar"
-		toolbar.hud = func() -> Node: return _hud
-		toolbar.gameplay = func() -> bool: return _state == State.PLAYING and not _quit_open and (_lua_console == null or not _lua_console.is_open()) and (not is_instance_valid(_map_editor) or not _map_editor.active)
-		toolbar.open_menu = _toggle_quit_menu
-		toolbar.open_console = func() -> void:
+	if not has_node("AdaptiveHUD"):
+		var adaptive := preload("res://scripts/adaptive_hud.gd").new()
+		adaptive.name = "AdaptiveHUD"
+		adaptive.hud = func() -> Node: return _hud
+		adaptive.gameplay = func() -> bool: return _state == State.PLAYING and not _quit_open and (_lua_console == null or not _lua_console.is_open()) and (not is_instance_valid(_map_editor) or not _map_editor.active)
+		adaptive.execute = func(code: String) -> Dictionary: return _world.execute_lua(code)
+		adaptive.open_menu = _toggle_quit_menu
+		adaptive.open_console = func() -> void:
 			if _lua_console != null: _lua_console.toggle()
-		add_child(toolbar)
+		adaptive.bridge = get_node_or_null("ControllerInput")
+		add_child(adaptive)
 	if _game_options != null:
 		_game_options.game_started(_world, hud) # lane OPTS-2: the detail's particle limits, the camera and interface options
 	_shell.set_tribute_world(_world) # lane PLAY-1: PlayerTribute.apt's rows and Send (the Palantir's flag)

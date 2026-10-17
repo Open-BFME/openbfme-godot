@@ -791,7 +791,7 @@ void InGameHud::closeSpellStore()
 
 bool InGameHud::radarSquare(float out[4])
 {
-	if (!m_booted || !m_palantirRef)
+	if (!m_presentationVisible || !m_booted || !m_palantirRef)
 	{
 		return false;
 	}
@@ -850,17 +850,14 @@ bool InGameHud::radarClick(HudInput::Button button, int x, int y, int timeMs)
 	{
 		return false;
 	}
-	if (!m_radar->drawn(false)) // lane RADAR-1: LeftHUDInput's gate (RW 0x803CF2; Player::hasRadar is not ported, S-2453)
-	{
-		return true; // MSG_HANDLED: the click is the radar window's, nothing happens
-	}
-	const int size = 128;
-	const float kx = (float)size / (sq[2] - sq[0]), ky = (float)size / (sq[3] - sq[1]);
+	return radarNormalizedClick(button, ((float)x - sq[0]) / (sq[2] - sq[0]), ((float)y - sq[1]) / (sq[3] - sq[1]));
+}
+
+bool InGameHud::radarNormalizedClick(HudInput::Button button, float u, float v)
+{
+	if (!m_radar->ready() || !m_radar->drawn(false) || u < 0 || u > 1 || v < 0 || v > 1) return false;
 	float wx, wy;
-	if (!m_radar->click(((float)x - sq[0]) * kx, ((float)y - sq[1]) * ky, size, wx, wy))
-	{
-		return true;
-	}
+	if (!m_radar->click(u * 128, v * 128, 128, wx, wy)) return false;
 	const Coord3D world{ wx, wy, m_config.game.logic().getGroundHeight(wx, wy) };
 	if (button == HudInput::Button::Left)
 	{

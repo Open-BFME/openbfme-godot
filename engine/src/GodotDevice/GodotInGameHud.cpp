@@ -173,6 +173,11 @@ int dikOf(Key key)
 struct HudDevice : public AptNativeHook
 {
 	bool controllerLayout = false;
+	bool nativeHudVisible = true;
+	std::map<int,bool> adaptiveHiddenLevels;
+	Ref<ImageTexture> adaptiveMapTexture;
+	std::set<int> overlayTouches;
+	bool overlayMouseHeld = false;
 	std::map<std::string, bool> controllerHidden;
 	std::map<std::string, Ref<ShaderMaterial>> imageModes;
 	Ref<RetailFileSystem> fs;
@@ -1241,6 +1246,10 @@ void InGameHudNode::_bind_methods()
 	ClassDB::bind_method(D_METHOD("press_command_button", "template_name"), &InGameHudNode::press_command_button);
 	ClassDB::bind_method(D_METHOD("set_controller_hover", "slot", "arc", "unit", "spell"), &InGameHudNode::set_controller_hover);
 	ClassDB::bind_method(D_METHOD("set_controller_layout", "active"), &InGameHudNode::set_controller_layout);
+	ClassDB::bind_method(D_METHOD("set_native_hud_visible", "visible"), &InGameHudNode::set_native_hud_visible);
+	ClassDB::bind_method(D_METHOD("get_adaptive_minimap"), &InGameHudNode::get_adaptive_minimap);
+	ClassDB::bind_method(D_METHOD("get_adaptive_resources"), &InGameHudNode::get_adaptive_resources);
+	ClassDB::bind_method(D_METHOD("adaptive_minimap_click", "uv", "order"), &InGameHudNode::adaptive_minimap_click, DEFVAL(false));
 	ClassDB::bind_method(D_METHOD("get_command_buttons"), &InGameHudNode::get_command_buttons);
 	ClassDB::bind_method(D_METHOD("activate_command", "slot", "in_palantir", "cancel"), &InGameHudNode::activate_command, DEFVAL(false));
 	ClassDB::bind_method(D_METHOD("get_command_icon", "name"), &InGameHudNode::get_command_icon);
@@ -2419,6 +2428,17 @@ Dictionary InGameHudNode::get_spellbook_state()
 	}
 	r["slot_buttons"] = slotButtons;
 	const InGameSpellBookModel &bar = d->hud->spellBar();
+	Array adaptivePowers;
+	for(int slot=0;slot<AptPalantir::kSpellSlots;++slot)for(const auto &power:bar.buttons())
+	 if(power.index==p->spellSlotButton(slot) && power.owned && power.button) {
+	  Dictionary entry;entry["spell"]=slot;entry["image"]=toGodot(power.image);
+	  const auto label=power.button->m_textLabel.empty() ? std::string() : power.button->m_textLabel.front();
+	  const auto title=fetchOrMissing(d->controllerText,label);
+	  entry["title"]=String::utf16(title.c_str(),title.size()).replace("&", "");
+	  entry["state"]=power.usable && power.ready ? 1 : 4;entry["timer"]=power.percent;adaptivePowers.push_back(entry);
+	 }
+	r["power_entries"]=adaptivePowers;
+
 	r["targeting"] = bar.targeting();
 	r["radius"] = bar.targetButton() ? bar.targetButton()->radius : 0.0f;
 	{
@@ -2466,6 +2486,15 @@ Dictionary InGameHudNode::get_spellbook_state()
 		}
 		store["states"] = states;
 		store["sciences"] = sciences;
+		Array purchases;
+		for(const auto &button:st->model().buttons()) {
+		 Dictionary entry;entry["purchase"]=button.index;entry["image"]=toGodot(button.image);
+		 const auto title=fetchOrMissing(d->controllerText,button.label);
+		 entry["title"]=String::utf16(title.c_str(),title.size()).replace("&", "");
+		 entry["detail"]=String::num_int64(button.cost)+" power points";
+		 entry["state"]=button.state==SpellStoreModel::STATE_AVAILABLE ? 1 : 2;purchases.push_back(entry);
+		}
+		store["purchase_entries"]=purchases;
 		store["level"] = st->level();
 		store["spell_clicks"] = (int64_t)st->commandCalls("AptSpellStore::OnBttnSpell"); // lane SPELL-3: the movie's OnBttnSpell calls
 		store["spell_arg"] = toGodot(st->lastSpellArgument());
@@ -2686,8 +2715,17 @@ void InGameHudNode::_process(double delta)
 	for (const auto &entry : d->controllerHidden)
 		if (auto *clip = d->hud->windows().apt().resolvePath(d->hud->windows().apt().level(d->hud->palantir()->level()), entry.first)) clip->visible = entry.second;
 	d->controllerHidden.clear();
+	for(const auto &hidden:d->adaptiveHiddenLevels)
+	 if(auto *root=d->hud->windows().apt().level(hidden.first))root->visible=hidden.second;
+	d->adaptiveHiddenLevels.clear();
 	d->hud->update(delta);
-	if (d->controllerLayout && d->hud->palantir())
+	if(!d->nativeHudVisible && d->hud->palantir()) {
+	 auto hideLevel=[&](int level){if(auto *root=d->hud->windows().apt().level(level)){d->adaptiveHiddenLevels[level]=root->visible;root->visible=false;}};
+	 hideLevel(d->hud->palantir()->level());
+	 if(auto *store=d->hud->spellStore())hideLevel(store->level());
+	}
+
+	if ((d->controllerLayout || !d->nativeHudVisible) && d->hud->palantir())
 	{
 		AptPalantir *palantir = d->hud->palantir();
 		auto hide = [&](const std::string &path) {
@@ -2718,7 +2756,7 @@ void InGameHudNode::_process(double delta)
 	d->drawSelectionDecals();          // lane UI-4
 	d->drawRadiusCursor();             // lane SPELL-4
 	const uint64_t tc = Time::get_singleton()->get_ticks_usec();
-	if (d->hud6)
+	if (d->hud6 && d->nativeHudVisible)
 	{
 		d->hud6->drawRadial(get_canvas_item()); // lane HUD-6
 		if (d->fs.is_valid() && d->fs->is_bfme1())
@@ -2970,6 +3008,62 @@ void InGameHudNode::set_controller_hover(int slot, bool arc, int64_t unit, int s
     if (d->hud) d->hud->setControllerHover(slot, arc, (::ObjectID)unit, spell);
 }
 
+void InGameHudNode::set_native_hud_visible(bool visible)
+{
+ if(visible && d->hud) {
+  for(const auto &hidden:d->adaptiveHiddenLevels)if(auto *root=d->hud->windows().apt().level(hidden.first))root->visible=hidden.second;
+  d->adaptiveHiddenLevels.clear();
+ }
+ d->nativeHudVisible = visible;
+ if (d->hud) {
+  d->hud->setPresentationVisible(visible);
+  d->hud->radialMenu().setPresentationVisible(visible && !d->controllerLayout);
+ }
+}
+
+Dictionary InGameHudNode::get_adaptive_resources() const
+{
+ waitLogic(d.get());Dictionary out;
+ const auto local=d->world && d->world->hud_game() ? d->world->hud_game()->players().getLocalPlayer() : nullptr;
+ if(local) {
+  out["money"]=local->getMoney()->countMoney();out["used"]=local->commandPoints().getUsage();
+  out["limit"]=local->commandPointLimit();out["power"]=local->science().getSciencePurchasePoints();
+ }
+ return out;
+}
+
+Dictionary InGameHudNode::get_adaptive_minimap()
+{
+ waitLogic(d.get());Dictionary result;result["ready"] = false;
+ if (!d->hud || !d->hud->radar().ready() || !d->hud->radar().drawn(false)) return result;
+ auto &radar = d->hud->radar();
+ const int n = 256;const auto pixels = radar.shroudedImage(n);
+ if (pixels.size() != n*n*4) return result;
+ PackedByteArray bytes;bytes.resize(pixels.size());std::memcpy(bytes.ptrw(),pixels.data(),pixels.size());
+ auto image = Image::create_from_data(n,n,false,Image::FORMAT_RGBA8,bytes);
+ if (d->adaptiveMapTexture.is_null()) d->adaptiveMapTexture=ImageTexture::create_from_image(image);
+ else d->adaptiveMapTexture->update(image);
+ result["texture"] = d->adaptiveMapTexture;
+ Array dots;
+ const auto snapshot = d->world && d->world->hud_game() ? d->world->hud_game()->presentedSnapshot() : nullptr;
+ if (snapshot) for (const auto &dot : radar.blips(*snapshot,n,d->localPlayerIndex)) {
+  Dictionary entry;entry["uv"] = Vector2(dot.x/n,dot.y/n);
+  entry["color"] = Color(((dot.color>>16)&255)/255.0f,((dot.color>>8)&255)/255.0f,(dot.color&255)/255.0f);
+  entry["mine"] = dot.mine;dots.push_back(entry);
+ }
+ result["dots"] = dots;PackedVector2Array box;float footprint[8];
+ if(radar.viewBox(n,footprint))for(int i=0;i<4;++i)box.push_back(Vector2(footprint[i*2]/n,footprint[i*2+1]/n));
+ result["view_box"] = box;result["ready"] = true;return result;
+}
+
+bool InGameHudNode::adaptive_minimap_click(const Vector2 &uv,bool order)
+{
+ waitLogic(d.get());
+ if(!d->hud || !std::isfinite(uv.x) || !std::isfinite(uv.y))return false;
+ const auto context=d->hud->enterContext();
+ return d->hud->radarNormalizedClick(order ? HudInput::Button::Right : HudInput::Button::Left,uv.x,uv.y);
+}
+
 void InGameHudNode::set_controller_layout(bool active)
 {
     if (d->controllerLayout == active) return;
@@ -2977,7 +3071,7 @@ void InGameHudNode::set_controller_layout(bool active)
     if (d->cam) d->cam->setControllerBounds(active);
     if (!d->hud) return;
     if (!active) d->hud->setControllerSelectionHover(INVALID_ID);
-    d->hud->radialMenu().setPresentationVisible(!active);
+    d->hud->radialMenu().setPresentationVisible(!active && d->nativeHudVisible);
     // Restore exactly the visibility seen before our override, including clips
     // already hidden by the native HUD. Resolve paths afresh after movie changes.
     for (const auto &entry : d->controllerHidden)
@@ -3485,6 +3579,34 @@ void InGameHudNode::set_input_enabled(bool on)
 
 void InGameHudNode::_input(const Ref<InputEvent> &event)
 {
+	// Independent rectangles preserve world input between collapsed HUD panels.
+	const auto engine = Engine::get_singleton();
+	Vector2 overlayPoint;bool hasOverlayPoint=false;
+	const auto mouse=Object::cast_to<InputEventMouse>(event.ptr());
+	const auto touch=Object::cast_to<InputEventScreenTouch>(event.ptr());
+	const auto drag=Object::cast_to<InputEventScreenDrag>(event.ptr());
+	if(mouse){overlayPoint=mouse->get_position();hasOverlayPoint=true;}
+	if(touch){overlayPoint=touch->get_position();hasOverlayPoint=true;}
+	if(drag){overlayPoint=drag->get_position();hasOverlayPoint=true;}
+	bool overlayHit=false;
+	if(hasOverlayPoint && engine->has_meta("adaptive_hud_rects")) {
+	 const Array rects=engine->get_meta("adaptive_hud_rects");
+	 for(int i=0;i<rects.size();++i)if(Rect2(rects[i]).has_point(overlayPoint)){overlayHit=true;break;}
+	}
+	if(touch) {
+	 const bool captured=d->overlayTouches.count(touch->get_index())!=0;
+	 if(touch->is_pressed() && overlayHit)d->overlayTouches.insert(touch->get_index());
+	 if(!touch->is_pressed())d->overlayTouches.erase(touch->get_index());
+	 if(captured || overlayHit)return;
+	}
+	if(drag && (overlayHit || d->overlayTouches.count(drag->get_index())))return;
+	if(const auto button=Object::cast_to<InputEventMouseButton>(event.ptr())) {
+	 const bool captured=d->overlayMouseHeld;
+	 if(button->is_pressed() && overlayHit)d->overlayMouseHeld=true;
+	 if(!button->is_pressed())d->overlayMouseHeld=false;
+	 if(captured || overlayHit)return;
+	}
+	if(mouse && (overlayHit || d->overlayMouseHeld))return;
 	// Godot controls draw this toolbar above the native HUD; its taps belong to
 	// the controls, never to world selection or contextual orders underneath.
 	if (Engine::get_singleton()->has_meta("touch_toolbar_rect"))
@@ -3499,6 +3621,7 @@ void InGameHudNode::_input(const Ref<InputEvent> &event)
 	{
 		const Key code = key->get_keycode();
 		if (code == Key::KEY_BACKSLASH) return;
+		if (code == Key::KEY_F10 && Engine::get_singleton()->has_meta("adaptive_hud_rects")) return;
 		if ((code == Key::KEY_COMMA || code == Key::KEY_PERIOD) && (bool)Engine::get_singleton()->get_meta("controller_camera_keys", false) && !key->is_ctrl_pressed() && !key->is_alt_pressed()) return;
 		if (code == Key::KEY_TAB && (bool)Engine::get_singleton()->get_meta("controller_keyboard_enabled", false)) return;
 		if ((bool)Engine::get_singleton()->get_meta("controller_keyboard_active", false) && !key->is_ctrl_pressed() && !key->is_alt_pressed() &&

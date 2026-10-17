@@ -161,6 +161,9 @@ func _navigate(value: String) -> void:
 		_state = fields
 
 func _toggle(open: bool) -> void:
+	if Engine.get_meta("adaptive_hud_replaces_native", false):
+		_panel.hide()
+		return
 	if open:
 		_palette_opened_at = Time.get_ticks_msec()
 	_panel.visible = open
@@ -196,6 +199,9 @@ func _process(delta: float) -> void:
 	var live: Node = hud.call()
 	if live != null and live.has_method("set_placement_snap"):
 		live.set_placement_snap(bridge._gameplay() and not bridge._suspended and (bridge._left_trigger or Input.is_key_pressed(KEY_SHIFT)), bridge.placement_grid_spacing)
+	if Engine.get_meta("adaptive_hud_replaces_native", false):
+		_panel.hide()
+		_keyboard_hint.hide()
 	var active: bool = bridge._gameplay() and (bridge.keyboard_mode or bridge.device >= 0)
 	if (bridge._gameplay() and not _was_playing) or (active and not _native_layout_active):
 		_configure() # refresh once when returning from console, menus, or mouse mode
@@ -360,6 +366,8 @@ func _render() -> void:
 	_selection_tooltip()
 
 func action(value: String) -> void:
+	if Engine.get_meta("adaptive_hud_replaces_native", false) and bridge.palette_open:
+		return
 	if value == "deselect":
 		var live: Node = hud.call()
 		if live != null and live.is_ready() and live.has_method("controller_deselect"):

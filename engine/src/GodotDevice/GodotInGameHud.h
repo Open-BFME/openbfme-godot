@@ -90,6 +90,10 @@ public:
 	// cost, queued, frame (the movie clip of its position: a click there is the player's press) }
 	Array get_command_buttons() const;
 	void set_controller_layout(bool active);
+	void set_native_hud_visible(bool visible);
+	Dictionary get_adaptive_minimap();
+	Dictionary get_adaptive_resources() const;
+	bool adaptive_minimap_click(const Vector2 &uv, bool order);
 	void set_controller_hover(int slot, bool arc, int64_t unit, int spell);
 	bool activate_command(int slot, bool in_palantir, bool cancel);
 	Ref<Texture2D> get_command_icon(const String &name);
