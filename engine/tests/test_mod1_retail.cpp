@@ -226,6 +226,46 @@ TEST_CASE("modules retail: AttributeModifierUpgrade puts its ModifierList on the
 	CHECK(hashes[0] == hashes[1]);
 }
 
+TEST_CASE("modules retail: a creep lair leaves its rubble hole (RebuildHoleExposeDie) and the broken hole its treasure [S-1427]")
+{
+	REQUIRE_RETAIL_WORLD(sh);
+	const ThingTemplate *lairTmpl = sh.world->things().findTemplate("HillTrollLair");
+	REQUIRE(lairTmpl);
+	Game g(*sh.world, *sh.mount);
+	Object *lair = g.make(lairTmpl);
+	RebuildHoleExposeDie *expose = moduleOf<RebuildHoleExposeDie>(lair);
+	REQUIRE(expose);
+	g.run(2);
+	lair->kill(DEATH_NORMAL);
+	Object *hole = g.logic->findObjectByID(expose->holeId());
+	REQUIRE(hole);
+	CHECK(hole->getTemplate()->getName() == "HillTrollLairHole");
+	CHECK(hole->getPosition()->x == lair->getPosition()->x);
+	CHECK(hole->getPosition()->y == lair->getPosition()->y);
+	CHECK(hole->getOrientation() == lair->getOrientation());
+	REQUIRE(hole->getBodyModule());
+	CHECK(hole->getBodyModule()->getMaxHealth() == 500.0f); // HoleMaxHealth; the hole's own 9999999.9 clamped to it
+	CHECK(hole->getBodyModule()->getHealth() == 500.0f);
+	auto treasure = [&] {
+		int n = 0;
+		for (Object *o = g.logic->getFirstObject(); o; o = o->getNextObject())
+		{
+			n += o->getTemplate()->getName() == "TreasureChest1" ? 1 : 0;
+		}
+		return n;
+	};
+	g.run(5);
+	CHECK(treasure() == 0);
+	hole->kill(DEATH_NORMAL);
+	CHECK(treasure() == 4); // OCL_SpawnLairTreasure: Count = 4
+	// the neutral player's lair leaves nothing
+	Object *neutralLair = g.make(lairTmpl, g.players.getNeutralPlayer(), 900.0f, 900.0f);
+	RebuildHoleExposeDie *neutralExpose = moduleOf<RebuildHoleExposeDie>(neutralLair);
+	REQUIRE(neutralExpose);
+	neutralLair->kill(DEATH_NORMAL);
+	CHECK(neutralExpose->holeId() == INVALID_ID);
+}
+
 TEST_CASE("modules retail: CreateObjectDie runs its ObjectCreationList when the object dies (and not before); deterministic")
 {
 	REQUIRE_RETAIL_WORLD(sh);

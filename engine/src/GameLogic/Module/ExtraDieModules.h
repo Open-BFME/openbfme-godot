@@ -37,6 +37,14 @@
 //     SpecialPowerTemplate (+0x38, RW 0x73B22F: the template by name from TheSpecialPowerStore)). onDie RW 0x8C64FE: the controlling player iterates its objects
 //     (RW 0x6ABABD) with RW 0x8C642D: an object whose special power module for the template exists (RW 0x68C26D) gets setReadyFrame(now) (slot 0x20): the
 //     power is ready at once.
+//   * RebuildHoleExposeDie (lane MOD-4 fact sheet [S-1427]; die RW 0x889AAF, data: the DieMux table RW 0xC76BD8 (extra 8) and RW 0xC616B8: HoleName (+0x38),
+//     HoleMaxHealth (+0x3C), FadeInTimeSeconds (+0x40), TransferAttackers (+0x44)). onDie: when the DieMux applies and the dead object's controlling player
+//     is live and not the neutral player, a HoleName object of that player's default team takes the object's position and angle (and its name when it has
+//     one), max health HoleMaxHealth (the hole's own 9999999.9 clamps to it), and fades in over FadeInTimeSeconds. The creep lairs' holes are their rubble
+//     (NBTrollLair_R ...): breaking one runs its CreateObjectDie (OCL_SpawnLairTreasure, the gold piles).
+// RebuildHoleExposeDie, NOT PORTED ([S-1427], reported per use): the dead object's geometry is not copied (an object's geometry is its template's here,
+// S-1423); Object + 0x94 bit 2 is not tested; TransferAttackers (no retail lair sets it) and the hole's rebuild interface (template, id, spawner flag, RW
+// 0x886831) are not run: RebuildHoleBehavior stays unported, so a hole never rebuilds its structure and stays until it is destroyed.
 // WHAT IS INFERENCE / NOT PORTED (stop S-980, reported per use):
 //   * HeroDie walks the logic's object list for the player's objects (RW walks the player's own object list; every match gets the same frame);
 //   * the OCL is created through ObjectCreationList::create(logic, object, object position), the position variant (RW slot 3) of SPELL-1's port, not RW's
@@ -55,6 +63,31 @@
 
 #include <string>
 #include <vector>
+
+class RebuildHoleExposeDieModuleData : public ModuleData
+{
+public:
+	DieMuxData m_dieMux;             ///< RW 0xC76BD8
+	std::string m_holeName;          ///< +0x38
+	float m_holeMaxHealth = 0.0f;    ///< +0x3C
+	float m_fadeInTimeSeconds = 0.0f; ///< +0x40
+	bool m_transferAttackers = false; ///< +0x44
+	static void buildFieldParse(MultiIniFieldParse &p);
+};
+
+class RebuildHoleExposeDie : public BehaviorModule, public DieModuleInterface
+{
+public:
+	RebuildHoleExposeDie(Thing *thing, const RebuildHoleExposeDieModuleData *data) : BehaviorModule(thing, data), m_data(data) {}
+	DieModuleInterface *getDie() override { return this; }
+	void onDie(const DieModuleInterface::Event &event) override;
+	ObjectID holeId() const { return m_hole; } ///< the hole this module's death left (tests)
+	void crc(StateHasher &hasher) const override;
+
+private:
+	const RebuildHoleExposeDieModuleData *m_data;
+	ObjectID m_hole = INVALID_ID;
+};
 
 class CreateObjectDieModuleData : public ModuleData
 {

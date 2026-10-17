@@ -46,6 +46,12 @@ func _run():
  assert(browser.start_buttons.size()>0,'Fortress positions are selectable')
  assert(browser.tabs.get_tab_count()==3,'Three setup tabs')
  assert(browser.draft.rule_definitions.size()==4,'Vanilla skirmish rules')
+ # OpenBFME's Infinite starting resources: the last InitialResources choice, 10,000,000, accepted by the lobby
+ var resources=browser.draft.rule_definitions.filter(func(r):return int(r.id)==4)[0]
+ assert(resources.choices[-1].label=='Infinite' and int(resources.choices[-1].value)==10000000,'Infinite starting resources offered')
+ assert(shell.lobby_apply({'browser_rules':[{'id':4,'value':10000000}]}).ok,'Infinite starting resources accepted')
+ assert(not shell.lobby_apply({'browser_rules':[{'id':4,'value':9999999}]}).ok,'Other off-table amounts still rejected')
+ assert(shell.lobby_apply({'browser_rules':[{'id':4,'value':int(resources.default)}]}).ok)
  browser._assign(0,int(browser.selected.starts[0].index))
  var factions=browser.draft.factions.filter(func(f):return not str(f.building).is_empty())
  assert(factions.size()>1)
@@ -104,4 +110,13 @@ func _run():
  browser.catalog=original_catalog;browser.feature_filter.select(0)
  browser.close_browser()
  assert(shell.lobby_state().slots[1].state==3 and shell.lobby_state().rules[4]==4000,'Cancel discards player and rule edits')
+ # Play: commits like Use map and presses the lobby's start; the lobby queues the game on its next update.
+ browser.show_browser();browser.rule_edits[4]=10000000
+ browser._play();assert(not browser.open,'Play closes the browser: '+browser.message.text)
+ var started={}
+ for i in 60:
+  shell.tick(.03);started=shell.take_new_game()
+  if not started.is_empty():break
+ assert(not started.is_empty(),'Play starts the game')
+ assert(int(started.rules[4])==10000000,'Infinite starting resources reach the game')
  browser.free();shell.free();world.free();print('MAP BROWSER PASS');quit(0)

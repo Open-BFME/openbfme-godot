@@ -1,5 +1,5 @@
 extends CanvasLayer
-## Local skirmish map browser. Selection is committed only with Use map.
+## Local skirmish map browser. Selection is committed only with Use map or Play.
 var tabs: TabContainer
 var players_page: VBoxContainer
 var rules_page: VBoxContainer
@@ -103,6 +103,11 @@ func _ready():
  var random=Button.new();random.text='Random start';random.pressed.connect(func():_assign(slot.get_item_id(slot.selected),-1));footer.add_child(random)
  message=Label.new();message.size_flags_horizontal=Control.SIZE_EXPAND_FILL;message.autowrap_mode=TextServer.AUTOWRAP_WORD_SMART;footer.add_child(message)
  var use=Button.new();use.text='Use map';use.custom_minimum_size=Vector2(150,48);use.pressed.connect(_apply);footer.add_child(use)
+ var play=Button.new();play.name='Play';play.text='Play';play.tooltip_text='Use this map and setup, then start the game';play.custom_minimum_size=Vector2(150,48)
+ var play_style=StyleBoxFlat.new();play_style.bg_color=Color('#4a3a14');play_style.border_color=Color('#e8c36d');play_style.set_border_width_all(2);play_style.set_corner_radius_all(4)
+ play.add_theme_stylebox_override('normal',play_style)
+ var play_hover:StyleBoxFlat=play_style.duplicate();play_hover.bg_color=Color('#6a5320');play.add_theme_stylebox_override('hover',play_hover);play.add_theme_stylebox_override('pressed',play_hover)
+ play.add_theme_color_override('font_color',Color('#fff2c8'));play.pressed.connect(_play);footer.add_child(play)
  builder=ClassDB.instantiate('MapTerrainBuilder');root.hide();set_process(false)
 
 func show_browser():
@@ -230,7 +235,7 @@ func _full_scan(token: int):
  if token!=revision or not open:return
  selected.definition=definitions.generate(selected);_update_definition_stats()
  if feature_filter.selected>0:_filter()
- message.text='Drag to orbit · wheel to zoom · click a fortress position'
+ message.text='Drag to orbit · wheel to zoom · set each fortress owner on its card'
 
 ## Builds terrain, objects and fortresses of one catalog entry into the preview scene (no UI).
 func _build_scene(entry: Dictionary):
@@ -281,7 +286,7 @@ func _show_scene():
   _fortress_controls(card,int(start.index))
   start_buttons.append({'anchor':anchor,'card':card,'button':button,'point':scene_info.points[n]+Vector3(0,260,0),'index':int(start.index)})
  viewport.render_target_update_mode=SubViewport.UPDATE_ONCE;_update_starts()
- message.text=scene_info.object_error if not str(scene_info.object_error).is_empty() else 'Drag to orbit · wheel to zoom · click a fortress position'
+ message.text=scene_info.object_error if not str(scene_info.object_error).is_empty() else 'Drag to orbit · wheel to zoom · set each fortress owner on its card'
 
 # The map's GlobalLighting sun and ambient, as map_viewer.gd lights its objects.
 func _light(lighting: Dictionary):
@@ -303,8 +308,8 @@ func _update_starts():
  var chosen=int(assignments.get(slot.get_selected_id(),-1)) if slot.selected>=0 else -1
  for item in start_buttons:
   item.button.modulate=Color('#e8c36d') if item.index==chosen else Color.WHITE
-  item.anchor.visible=tabs.current_tab==1
-  item.button.visible=tabs.current_tab!=1
+  # The fortress cards (owner, AI, faction, team) show on every tab; their owner choice also assigns the start, so the plain buttons stay hidden.
+  item.button.visible=false
 
 func _camera_pose():
  camera.position=center+Vector3(sin(yaw)*cos(pitch),sin(pitch),cos(yaw)*cos(pitch))*distance;camera.look_at(center)
@@ -330,8 +335,8 @@ func _process(_delta):
  panel.position=size*.035;panel.size=size*.93
  for item in start_buttons:
   var visible_point=not camera.is_position_behind(item.point)
-  item.button.visible=visible_point and tabs.current_tab!=1
-  item.anchor.visible=visible_point and tabs.current_tab==1
+  item.button.visible=false
+  item.anchor.visible=visible_point
   var projected=camera.unproject_position(item.point)
   item.button.position=projected-item.button.size*.5
   item.anchor.position=(projected-Vector2(item.anchor.size.x*.5,item.anchor.size.y)).clamp(Vector2.ZERO,(preview_container.size-item.anchor.size).max(Vector2.ZERO))
@@ -340,7 +345,18 @@ func _input(event: InputEvent):
  if open and event is InputEventKey and event.pressed and event.keycode==KEY_ESCAPE:close_browser();get_viewport().set_input_as_handled()
 
 func _apply():
- if selected.is_empty():return
+ if _commit():close_browser()
+
+## Play: commit like Use map, then press the lobby's own start (the movie's AptSkirmish::StartGame command: the lobby validates the setup on its next
+## update and shows its refusal message itself).
+func _play():
+ if not _commit():return
+ close_browser()
+ if not shell.shell_fscommand('AptSkirmish::StartGame',''):message.text='The lobby could not start the game.'
+
+## Writes the browser's map, slots and rules into the lobby; false (with the errors shown) when the lobby refuses them.
+func _commit() -> bool:
+ if selected.is_empty():return false
  var slots=[]
  for i in mini(int(selected.players),draft.slots.size()):
   var entry=draft.slots[i]
@@ -354,8 +370,8 @@ func _apply():
  var rules=[]
  for key in rule_edits:rules.append({'id':int(key),'value':rule_edits[key]})
  var result:Dictionary=shell.lobby_apply({'map_search':'','map':selected.key,'slots':slots,'browser_rules':rules,'browser_legendary':draft.get('legendary_heroes',1)})
- if result.get('ok',false):close_browser()
- else:message.text=str(result.get('errors',[]))
+ if not result.get('ok',false):message.text=str(result.get('errors',[]))
+ return result.get('ok',false)
 
 func _exit_tree():
  if open and is_instance_valid(shell):

@@ -206,7 +206,7 @@ The live report's `unported_modules` (objects alive at the end of the run) of ei
 | 106 | HorseHordeContain | Behavior | 21 | 21 | ported |
 | 107 | EvaAnnounceClientCreate | ClientUpdate | 20 | 10 | missing |
 | 108 | DelayedDeathBody | Body | 19 | 14 | ported |
-| 109 | RebuildHoleExposeDie | Behavior | 18 | 14 | missing |
+| 109 | RebuildHoleExposeDie | Behavior | 18 | 14 | ported (the hole; RebuildHoleBehavior is not: S-1427) |
 | 110 | StealthUpdate | Behavior | 18 | 16 | ported |
 | 111 | LargeGroupBonusUpdate | Behavior | 17 | 7 | ported |
 | 112 | PassiveAreaEffectBehavior | Behavior | 17 | 15 | ported |

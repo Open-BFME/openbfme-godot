@@ -35,6 +35,7 @@ void ExtraModules::registerAll(ModuleFactory &modules)
 {
 	bind<AttributeModifierUpgrade, AttributeModifierUpgradeModuleData>(modules, "AttributeModifierUpgrade");
 	bind<CreateObjectDie, CreateObjectDieModuleData>(modules, "CreateObjectDie");
+	bind<RebuildHoleExposeDie, RebuildHoleExposeDieModuleData>(modules, "RebuildHoleExposeDie"); // lane MOD-4 [S-1427]: the hole, no rebuild
 	bind<FireWeaponWhenDeadBehavior, FireWeaponWhenDeadBehaviorModuleData>(modules, "FireWeaponWhenDeadBehavior");
 	bind<UpgradeDie, UpgradeDieModuleData>(modules, "UpgradeDie");
 	bind<HeroDie, HeroDieModuleData>(modules, "HeroDie");
