@@ -6,6 +6,7 @@
 #endif
 
 #include "GameLogic/Module/ReplaceSelfUpgrade.h"
+#include "GameLogic/AI/AIWorld.h"
 
 #include "Common/Player.h"
 #include "Common/Thing/ModuleFactory.h"
@@ -208,6 +209,9 @@ void ReplaceSelfUpgrade::upgradeImplementation()
 	Player *owner = obj->getControllingPlayer();
 	const Coord3D d = directionOf(*obj);
 	const float segmentSpacing = SimMath::mulf32(2.0f, SimMath::subf32(WallSpan::halfExtentY(*static_cast<const ThingTemplate *>(obj->getTemplate())), 1.0f));
+	// Destruction is deferred until the end of the frame. Release the old
+	// footprint now, before replacement pieces try to claim the same cells.
+	if (AIWorld *ai = logic.aiWorld()) ai->removeObjectFromPathfindMap(*obj);
 	logic.destroyObject(obj); // RW 0x68C18F, 0x68C6EE, the drawable, RW 0x6E85FB, RW 0x62BBAB
 	std::vector<const ThingTemplate *> list;
 	float total = 0.0f;

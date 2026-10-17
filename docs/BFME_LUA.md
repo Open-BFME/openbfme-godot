@@ -309,6 +309,27 @@ local ticket = p:construct(
 bfme.unitInstances[builderId]:construct("GondorBarracks", {x = 1500, y = 2200})
 ```
 
+`bfme.layouts.save(name, data)`, `.load(name)` and `.list()` provide restricted
+JSON persistence in `user://building_layouts/`, available without a match. Names
+use 1..80 ASCII letters, digits, underscores or hyphens. Files are versioned,
+limited to 4 MiB, and replaced through a temporary file. These helpers do not
+expose arbitrary paths or executable script loading. Recording automatically saves;
+replay automatically loads a missing in-memory layout. `saveBuildings(name)` and
+`loadBuildings(name)` explicitly save/reload; `listBuildingLayouts()` lists files.
+
+Layout scripts in `res://dev/building_record.lua` and `building_replay.lua` use
+`building:getLayoutInfo()` to record completed object upgrades, castle IDs, producer
+pad coordinates and linked wall IDs. `building:giveUpgrade(name)` grants an object
+upgrade immediately through native upgrade modules (no research cost/time), and
+`building:linkWallPiece(other)` restores a wall neighborhood link. Both return
+mutation tickets. These are local scripting helpers, not network-safe orders.
+
+For an expansion, `player:construct` also accepts `position.plotId`: a living,
+owned foundation ID. This uses native plot construction and attachment bookkeeping,
+including fortress upgrade inheritance. The plot supplies the actual position.
+Self-building walls allow joins with the owner's existing walls while still checking
+terrain and overlap with other immobile structures.
+
 `unit:construct` uses a living builder; it walks to the site and builds through its native builder AI.
 `player:construct` raises the building on its own with native construction visuals and disabled production
 until complete. Both modes charge the owner the normal gold cost. Scripts can choose a building outside the builder's
@@ -438,3 +459,19 @@ Check `bfme.mutations.getStatus(ticket)` for missing-file or decode errors.
 `dev/04_gondor_plots.lua` enables the seven BFME1 Gondor/Men floors copied from BFME2Lua into
 `godot/mods/gondor_plots/`. These local retail assets are ignored by Git. Run `gondorPlots.enable(false)`
 to restore native floors, or `gondorPlots.enable(true)` to reapply them. Snow textures use different names and stay native.
+
+## Console UI
+
+The console is a Lua Godot `CanvasLayer` script at `godot/scripts/lua_console.lua`. It owns the command editor, log, cheats, controller controls, and Wall Rules tab. `game.gd` instantiates that Lua script and supplies the `execute` Callable to the match's Lua state. Opening the console uses the existing keyboard or touch controls.
+
+The UI runs with Godot classes, signals, and resources through lua-gdextension; submitted commands use the match API and its existing sandbox and execution budget. Command history and controller/wall configuration retain their existing file formats. On leaving the tree the console releases its execution Callable and collects Lua garbage before Godot's script teardown.
+
+### Neutral scenery construction
+
+`bfme.match.setClearNeutralDecorations(boolean)` returns a mutation ticket and
+controls a match-local placement option. The bundled `neutral_decorations.lua`
+script enables it for local matches and reapplies it after changing matches;
+`neutralDecorations.enable(false)` disables it. Eligible objects are neutral,
+immobile structures without capture/gameplay roles. Placement ignores their
+footprints, and accepted construction removes only overlapping scenery through
+the native site-cleanup path. Previewing or cancelling placement removes nothing.

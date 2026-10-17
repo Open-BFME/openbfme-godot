@@ -11,6 +11,7 @@
 #include "Common/Thing/ThingFactory.h"
 #include "Common/Thing/ThingTemplate.h"
 #include "GameClient/LiveGame.h"
+#include "GameLogic/System/ShroudManager.h"
 #include "GameEngineDevice/W3DDevice/GameClient/Drawable/Draw/W3DModelDrawBones.h"
 #include "GameLogic/System/InvisibilityManager.h"
 #include "GameLogic/Combat/CombatQueries.h"
@@ -196,7 +197,7 @@ std::vector<std::string> LiveFX::stops()
 	std::vector<std::string> out = FXEventLog::stops();
 	out.push_back("[S-682] live FX: bone positions of ParticleSysBone systems and fire FX come from the model's bind pose (FollowBone systems do not follow the "
 			 "animation); ParticleSysBone FXTrigger / Persist / PersistID / HouseColor are ignored and OnlyIfOnWater systems are not created; the shooter's "
-			 "stealth (RW 0x694C0D, NULL viewer) is read when the effect plays, not at the shot (lane STEALTH-1); muzzle flashes and recoil are not drawn; isWater is false and the shroud is clear for the FX");
+			 "stealth (RW 0x694C0D, NULL viewer) is read when the effect plays, not at the shot (lane STEALTH-1); muzzle flashes and recoil are not drawn; isWater is false");
 	out.push_back("[S-686] TransitionDamageFX: the module class (RW data table 0xC08D10, 117 rows: Damaged / ReallyDamaged / Rubble FXList, OCL and "
 				  "ParticleSystem 1..12 with Loc / Bone + RandomBone, the Damage*Types flags, RubbleNeighbor, the sub object show / hide lists; 150 retail uses) "
 				  "is raw (S-070) and has no runtime: its damage state transition effects are not played (the draw states' EnteringStateFX and ParticleSysBone are)");
@@ -360,6 +361,21 @@ bool LiveFX::modelBone(const RenderObjPrototype *proto, const std::string &bone,
 	return true;
 }
 
+int LiveFX::shroudStatusAt(const Coord3D &pos)
+{
+ auto &shroud = m_game.shroud();
+ const Player *local = m_game.players().getLocalPlayer();
+ return shroud.displayed() && local ? (int)shroud.getStatusAt(local->getPlayerIndex(), pos.x, pos.y) : 0;
+}
+
+bool LiveFX::objectShroudedForLocalPlayer(const FXObject &obj)
+{
+ const Object *o = object(obj.objectId());
+ const Player *local = m_game.players().getLocalPlayer();
+ return o && local && m_game.shroud().displayed() &&
+  m_game.shroud().clientObjectStatus(*o, local->getPlayerIndex()) >= OBJECTSHROUD_FOGGED;
+}
+
 FXParticleSystem::ParticleAttachInfo LiveFX::attachedDrawable(std::uint32_t drawableId, const std::string &boneName)
 {
 	FXParticleSystem::ParticleAttachInfo info;
@@ -369,6 +385,11 @@ FXParticleSystem::ParticleAttachInfo LiveFX::attachedDrawable(std::uint32_t draw
 		return info;
 	}
 	info.found = true;
+ if (const auto snapshot = m_game.presentedSnapshot())
+  if (const auto *record = snapshot->find(d->getObjectID())) {
+   info.shrouded = record->shroudedForLocal;
+   info.hidden = record->drawableHidden || record->stealthLook == 5;
+  }
 	info.position = *d->getPosition();
 	info.transform = thingMatrix(info.position, d->getBasis());
 	if (!boneName.empty())
@@ -394,6 +415,11 @@ FXParticleSystem::ParticleAttachInfo LiveFX::attachedObject(std::uint32_t object
 		return info;
 	}
 	info.found = true;
+ if (const auto snapshot = m_game.presentedSnapshot())
+  if (const auto *record = snapshot->find(objectId)) {
+   info.shrouded = record->shroudedForLocal;
+   info.hidden = record->drawableHidden || record->stealthLook == 5;
+  }
 	info.position = *o->getPosition();
 	info.transform = thingMatrix(info.position, o->getBasis());
 	const Drawable *od = m_game.drawables().findByObject(o->getID());

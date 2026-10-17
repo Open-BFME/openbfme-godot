@@ -278,6 +278,10 @@ Object *Construction::constructOnPlot(Object &plot, const ThingTemplate &what, c
 		if (CastleMemberBehavior *theirs = dynamic_cast<CastleMemberBehavior *>(obj->findModule("CastleMemberBehavior")))
 		{
 			theirs->setCastleId(member->castleId()); // RW 0x858ADE
+			// The new expansion is created before its castle link exists. Reapply
+			// upgrades now so improvements bought before construction reach it too.
+			theirs->setKeepId(member->keepId());
+			obj->updateUpgradeModules();
 		}
 	}
 	// the plot's pad is drawn away once something stands on it (the pad's own CONSTRUCTION_COMPLETE model state is `Model = None`)
@@ -321,6 +325,7 @@ Object *Construction::constructByDozer(Object &dozer, const ThingTemplate &what,
 	{
 		return nullptr;
 	}
+	ConstructionSite::clearRemovableForConstruction(logic, what, pos, angle);
 	obj->setProducer(&dozer);
 	obj->setBuilder(&dozer); // RW 0x88D307
 	Coord3D p = pos;
@@ -364,6 +369,7 @@ Object *Construction::constructWithoutBuilder(GameLogic &logic, const ThingTempl
 		logic.destroyObject(obj);
 		throw std::runtime_error("building needs GettingBuiltBehavior and ActiveBody");
 	}
+	ConstructionSite::clearSiteForFoundation(logic, what, pos, angle);
 	Coord3D p = pos;
 	p.z = logic.getGroundHeight(p.x, p.y);
 	obj->setPosition(&p);

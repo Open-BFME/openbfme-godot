@@ -197,3 +197,17 @@ TEST_CASE("draw: ground-aligned and volume flags reach the batch; GPU types are 
 	CHECK(batches[0].groundAligned);
 	CHECK(batches[0].volume);
 }
+
+TEST_CASE("draw: fog visibility hides existing particles without deleting their simulation")
+{
+ Sim sim(withDraw("Dust", "    Lifetime = 50 50\n    Size = 10 10\n    BurstCount = 1 1\n    BurstDelay = 100 100\n",
+  std::string(kPointOrtho) + "  Update = DefaultUpdate\n  End\n", kDefaultDraw));
+ sim.spawn("Dust");
+ sim.step();
+ ParticleDrawBuilder builder(sim.env.rng);
+ REQUIRE(builder.build(*sim.mgr, DrawCamera()).size() == 1);
+ const auto count = sim.mgr->particleCount();
+ CHECK(builder.build(*sim.mgr, DrawCamera(), [](const ParticleSystem &) { return false; }).empty());
+ CHECK(sim.mgr->particleCount() == count);
+ CHECK(builder.build(*sim.mgr, DrawCamera(), [](const ParticleSystem &) { return true; }).size() == 1);
+}

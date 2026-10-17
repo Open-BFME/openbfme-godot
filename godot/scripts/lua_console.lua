@@ -150,6 +150,66 @@ local function lua_highlighter()
 	return syntax
 end
 
+local function build_wall_rules(tabs)
+ local scroll = ScrollContainer:new()
+ scroll.name = "Wall rules"
+ tabs:add_child(scroll)
+ local rows = VBoxContainer:new()
+ rows.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+ scroll:add_child(rows)
+ local hint = label("BFME2Lua wall rebalance · Changes apply to the next match. Tower assets require restarting the app.")
+ hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+ rows:add_child(hint)
+ local config = ConfigFile:new()
+ config:load("res://dev/wall_balance.cfg")
+ local saved = ConfigFile:new()
+ if saved:load("user://wall_balance.cfg") == OK then config = saved end
+ for _, entry in ipairs {
+  {"enabled","Enable wall rebalance",true}, {"new_towers","Elven and Isengard wall arrow towers",true},
+  {"intermediate_hubs","Intermediate wall hubs",false}, {"share_arrows","Share fortress arrow upgrades with towers",true},
+  {"starting_walls","Begin with completed walls and front/back gates",false},
+  {"require_enclosed","Require enclosure for non-resource buildings (human players)",true},
+  {"gate_gap","Require native clearance beside gates",false}
+ } do
+  local key = entry[1]
+  local check = CheckBox:new()
+  check.text = entry[2]
+  check.button_pressed = config:get_value("walls", key, entry[3])
+  check.toggled:connect(Callable(function(value) config:set_value("walls", key, value) end))
+  rows:add_child(check)
+ end
+ for _, entry in ipairs {{"wall_damage","Wall damage"},{"fortress_damage","Fortress damage"}} do
+  local key = entry[1]
+  local row = HBoxContainer:new(); rows:add_child(row)
+  row:add_child(label(entry[2]))
+  local options = OptionButton:new()
+  for _, title in ipairs {"Native","Wall-capable attackers only","Siege engines only"} do options:add_item(title) end
+  options:select(config:get_value("walls",key,1))
+  options.item_selected:connect(Callable(function(index) config:set_value("walls",key,index) end))
+  row:add_child(options)
+ end
+ for _, entry in ipairs {
+  {"enclosed_income","Enclosed resource income",2,1,10}, {"starting_radius","Starting wall radius (map units)",450,150,1500},
+  {"starting_spacing","Starting hub spacing (map units)",300,100,1000}, {"wall_health","Wall health",6,0.01,10000},
+  {"hub_health","Hub health",30,0.01,10000}, {"gate_health","Gate health",6,0.01,10000},
+  {"wall_cost","Wall cost",0.5,0,100}, {"hub_cost","Run hub cost",0.7,0,100},
+  {"outer_hub_cost","Standalone hub cost",0.3,0,100}, {"expansion_cost","Wall expansion cost",0.8,0,100},
+  {"fortress_range","Fortress wall range",2,0.01,100}, {"hub_range","Standalone hub wall range",2,0.01,100}
+ } do
+  local key = entry[1]
+  local row = HBoxContainer:new(); rows:add_child(row)
+  local title = label(entry[2] .. (key:match("^starting_") and "" or " multiplier"))
+  title.custom_minimum_size = Vector2(280,0); row:add_child(title)
+  local value = spin_box(key,entry[4],entry[5],0.05,config:get_value("walls",key,entry[3]))
+  value.value_changed:connect(Callable(function(number) config:set_value("walls",key,number) end))
+  row:add_child(value)
+ end
+ rows:add_child(button("Save wall rules",function()
+  local err = config:save("user://wall_balance.cfg")
+  hint.text = err == OK and "Saved. Applies to the next match; restart the app for tower changes." or ("Could not save wall rules: " .. error_string(err))
+ end))
+end
+
 function LuaConsole:_ready()
 	self._history = Array()
 	self._history_index = 0
@@ -232,10 +292,7 @@ function LuaConsole:_ready()
 	self._log = log
 	self:_build_cheats()
 	self:_build_controller_options()
-	local wall_rules = ResourceLoader:load("res://scripts/wall_balance_options.gd")
-	print("DBG wall", wall_rules, wall_rules and wall_rules:get_class())
-	wall_rules:call("build", tabs)
-	print("DBG built")
+	build_wall_rules(tabs)
 	tabs.tab_changed:connect(Callable(function(_index)
 		if tabs.current_tab == 0 then entry:grab_focus() end
 	end))
@@ -514,6 +571,14 @@ function LuaConsole:_submit(code)
 	end
 	self:_set_status(ok and "READY · command complete" or "ERROR · see output", ok)
 	if self._tabs.current_tab == 0 then self._entry:grab_focus() end
+end
+
+-- Release callbacks into GDScript while the scene tree and its script language are
+-- still alive. Lua may otherwise retain them until its later shutdown collection.
+function LuaConsole:_exit_tree()
+ self.execute = Callable()
+ collectgarbage("collect")
+ collectgarbage("collect")
 end
 
 function LuaConsole:reload_scripts()

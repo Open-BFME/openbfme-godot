@@ -1,6 +1,10 @@
 // OpenBFME. GPL-3.0. The bfme companion's adapter to live engine objects.
 #include "Common/BuildAssistant.h"
+#include "Common/Upgrade.h"
+#include "GameLogic/Module/CastleModules.h"
+#include "GameLogic/Module/ConstructionModules.h"
 #include "GameLogic/Construction.h"
+#include "GameLogic/ConstructionSite.h"
 #include "GameLogic/BuildPlacement.h"
 #include "GameLogic/Module/DozerAIUpdate.h"
 #include "GameLogic/Module/ProductionUpdate.h"
@@ -180,7 +184,7 @@ unsigned GameWorld::bfme_construct(const BfmeLuaRuntime::Mutation &m)
 {
 	if (!m_game || !m_world) throw std::runtime_error("no active match");
 	auto &logic = m_game->logic();
-	if (m.args.size() != 6) throw std::runtime_error("invalid construction arguments");
+	if (m.args.size() != 6 && m.args.size() != 7) throw std::runtime_error("invalid construction arguments");
 	auto name = std::get_if<std::string>(&m.value.data);
 	auto tt = name ? m_world->things().findTemplate(*name) : nullptr;
 	if (!tt || !kind(logic.templateInfo(tt->getFinalOverride()), 7))
@@ -201,10 +205,49 @@ unsigned GameWorld::bfme_construct(const BfmeLuaRuntime::Mutation &m)
 	const int cost = BuildAssistant::calcCostToBuild(*tt, player, builder, -1);
 	if (cost < 0 || player->getMoney()->countMoney() < (unsigned)cost)
 		throw std::runtime_error("not enough money for construction");
+	const int plotId = m.args.size() == 7 ? int(numeric(m.args[6], 0, 2147483647)) : 0;
+	if (plotId)
+	{
+		auto plot = logic.findObjectByID(plotId);
+		if (builderId || !plot || plot->isDestroyed() || plot->isEffectivelyDead() || plot->getControllingPlayer() != player ||
+			!(plot->isKindOfName("BASE_FOUNDATION") || plot->isKindOfName("BASE_DEFENSE_FOUNDATION") || plot->isKindOfName("EXPANSION_PAD")))
+			throw std::runtime_error("plot must be a living foundation owned by the player");
+		auto obj = Construction::constructOnPlot(*plot, *tt, *plot->getPosition(), angle, *player, false);
+		if (!obj) throw std::runtime_error("plot construction refused (occupied or unavailable)");
+		obj->setScriptConstructionSpeed(speed);
+		return obj->getID();
+	}
+	// Wall spans deliberately join/overlap their neighboring pieces. A layout
+	// restores the final segment/tower/gate templates directly, without deleting
+	// neighbors a second time through ReplaceSelfUpgrade.
+	auto wall = [](const ObjectTemplateInfo &info) {
+		for (const char *k : {"WALL_SEGMENT", "WALL_HUB", "WALL_UPGRADE", "WALL_GATE", "DEFENSIVE_WALL"})
+		{
+			int bit = ObjectTemplateInfoBuilder::kindOfIndex(k);
+			if (bit >= 0 && kind(info, bit)) return true;
+		}
+		return false;
+	};
+	const bool joiningWall = !builderId && wall(logic.templateInfo(tt));
+	if (joiningWall)
+	{
+		std::vector<BuildPlacement::Footprint> mine, other;
+		BuildPlacement::footprintsOf(logic, *tt, pos, angle, mine);
+		for (auto o = logic.getFirstObject(); o; o = o->getNextObject())
+		{
+			if (ConstructionSite::isNeutralDecoration(logic, *o)) continue;
+			if (o->isDestroyed() || !o->isInWorld() || !o->getTemplate() || !o->isKindOfName("IMMOBILE") ||
+				o->isKindOfName("INERT") || o->isKindOfName("CLEARED_BY_BUILD") || o->isKindOfName("MINE")) continue;
+			if (o->getControllingPlayer() == player && wall(logic.templateInfo(o->getTemplate()))) continue;
+			BuildPlacement::footprintsOf(logic, *o->getTemplate(), *o->getPosition(), o->getOrientation(), other);
+			for (const auto &a : mine) for (const auto &b : other)
+				if (BuildPlacement::footprintsCollide(a, b)) throw std::runtime_error("wall site overlaps another structure");
+		}
+	}
 	// Scripted construction may select any structure template, but placement and
 	// builder pathfinding use the same gates as normal construction.
 	if (BuildPlacement::isLocationLegalToBuild(logic, pos, *tt, angle,
-		LLF_TERRAIN_RESTRICTIONS | LLF_NO_OBJECT_OVERLAP, builder, player) != LBC_OK)
+		LLF_TERRAIN_RESTRICTIONS | (joiningWall ? 0 : LLF_NO_OBJECT_OVERLAP), builder, player) != LBC_OK)
 		throw std::runtime_error("illegal construction site");
 	auto obj = dozer ? dozer->construct(*tt, pos, angle, *player)
 		: Construction::constructWithoutBuilder(logic, *tt, pos, angle, *player);
@@ -271,6 +314,13 @@ std::string GameWorld::bfme_apply(const BfmeLuaRuntime::Mutation &m)
 		return bfme_order(m);
 	if (m.collection == "match")
 	{
+		if (m.field == ":clearNeutralDecorations")
+		{
+			auto enabled = std::get_if<bool>(&m.value.data);
+			if (!enabled) return "expected enabled boolean";
+			logic.settings().clearNeutralDecorations = *enabled;
+			return {};
+		}
 		if (m.field == ":setGameSpeed")
 		{
 			set_time_scale(numeric(m.value, 0, 100, false));
@@ -353,6 +403,22 @@ std::string GameWorld::bfme_apply(const BfmeLuaRuntime::Mutation &m)
 		auto obj = logic.findObjectByID(numberId(m.id));
 		if (!obj || obj->isDestroyed())
 			return "expired object";
+		if (m.field == ":giveUpgrade")
+		{
+			auto name = std::get_if<std::string>(&m.value.data);
+			auto u = name && TheUpgradeCenter ? TheUpgradeCenter->findUpgrade(*name) : nullptr;
+			if (!u || u->getUpgradeType() != UPGRADE_TYPE_OBJECT) return "expected an object upgrade";
+			obj->giveUpgrade(*name);
+			return {};
+		}
+		if (m.field == ":linkWallPiece")
+		{
+			auto other = logic.findObjectByID(unsigned(numeric(m.value, 1, 2147483647)));
+			auto gb = dynamic_cast<GettingBuiltBehavior *>(obj->findModule("GettingBuiltBehavior"));
+			if (!gb || !other || other->isDestroyed() || other->getControllingPlayer() != obj->getControllingPlayer()) return "invalid linked wall piece";
+			gb->addLinkedPiece(*other);
+			return {};
+		}
 		if (m.field == ":trainUnit")
 		{
 			if (m.collection != "buildingInstances" || !obj->isKindOfName("STRUCTURE") || obj->isEffectivelyDead())

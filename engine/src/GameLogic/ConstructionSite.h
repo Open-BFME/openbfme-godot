@@ -61,6 +61,9 @@ class ThingTemplate;
 
 namespace ConstructionSite
 {
+// Optional Lua rule: neutral scenery only, never capturable or functional structures.
+bool isNeutralDecoration(const GameLogic &logic, const Object &obj);
+
 // RW 0x67C5F3 / 0x66139C (vtable RW 0xC112C8)
 class GeometryFilter : public PartitionFilter
 {

@@ -19,6 +19,8 @@
 #include "GameLogic/Module/AIUpdate.h"
 #include "GameLogic/Module/BehaviorModule.h"
 #include "GameLogic/Module/DozerAIUpdate.h"
+#include "GameLogic/Module/CastleModules.h"
+#include "GameLogic/Module/ConstructionModules.h"
 #include "GameLogic/AI/AIWorld.h"
 #include "GameLogic/AI/AIPathfind.h"
 #include "GameLogic/Economy.h"
@@ -31,6 +33,9 @@
 #include "GameLogic/SimMath.h"
 #include "GameLogic/SkirmishAI/SkirmishAIManager.h"
 #include "GodotDevice/GodotGameWorld.h"
+#include <godot_cpp/classes/json.hpp>
+#include <godot_cpp/classes/file_access.hpp>
+#include <godot_cpp/classes/dir_access.hpp>
 #include <cmath>
 #include <limits>
 
@@ -39,6 +44,29 @@ namespace
 using Value = BfmeLuaValue;
 using Table = Value::Table;
 using List = Value::List;
+
+godot::Variant layoutVariant(const Value &v)
+{
+	if (auto p=std::get_if<bool>(&v.data)) return *p;
+	if (auto p=std::get_if<double>(&v.data)) return *p;
+	if (auto p=std::get_if<std::string>(&v.data)) return godot::String::utf8(p->c_str());
+	if (auto p=std::get_if<Table>(&v.data)) { godot::Dictionary d; for (const auto &kv:*p) d[godot::String::utf8(kv.first.c_str())]=layoutVariant(kv.second); return d; }
+	if (auto p=std::get_if<List>(&v.data)) { godot::Array a; for(const auto &item:*p) a.push_back(layoutVariant(item)); return a; }
+	return {};
+}
+Value layoutValue(const godot::Variant &v, int depth=0)
+{
+	if (depth>8) throw std::runtime_error("layout JSON nests too deeply");
+	switch(v.get_type()) {
+	case godot::Variant::NIL: return {};
+	case godot::Variant::BOOL: return bool(v);
+	case godot::Variant::INT: case godot::Variant::FLOAT: return double(v);
+	case godot::Variant::STRING: return std::string(godot::String(v).utf8().get_data());
+	case godot::Variant::ARRAY: { List out; godot::Array a=v; for(int i=0;i<a.size();++i) out.push_back(layoutValue(a[i],depth+1)); return out; }
+	case godot::Variant::DICTIONARY: { Table out; godot::Dictionary d=v; auto keys=d.keys(); for(int i=0;i<keys.size();++i) out[godot::String(keys[i]).utf8().get_data()]=layoutValue(d[keys[i]],depth+1); return out; }
+	default: throw std::runtime_error("invalid layout JSON value");
+	}
+}
 
 double number(const Value &v, const char *what, double lo, double hi)
 {
@@ -379,6 +407,47 @@ std::string GameWorld::bfme_set_ai(int playerIndex, bool enabled)
 
 BfmeLuaRuntime::Value GameWorld::bfme_query(const std::string &name, const std::vector<BfmeLuaRuntime::Value> &args)
 {
+	// Restricted persistence: named JSON documents in one application-owned folder.
+	if (name == "saveBuildingLayout" || name == "loadBuildingLayout" || name == "listBuildingLayouts")
+	{
+		const String directory = "user://building_layouts";
+		if (name == "listBuildingLayouts")
+		{
+			Value::List result;
+			for (const auto &file : DirAccess::get_files_at(directory))
+				if (file.ends_with(".json")) result.emplace_back(std::string(file.trim_suffix(".json").utf8().get_data()));
+			return result;
+		}
+		const auto key = text(at(args,0,"layout name"),"layout name");
+		if (key.empty() || key.size()>80 || key.find_first_not_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-")!=std::string::npos)
+			throw std::runtime_error("layout names must use 1..80 letters, digits, underscores or hyphens");
+		const String path = directory + String("/") + String::utf8(key.c_str()) + String(".json");
+		if (name == "saveBuildingLayout")
+		{
+			const auto data = layoutVariant(at(args,1,"layout"));
+			Dictionary document; document["version"]=1; document["buildings"]=data;
+			const String content = JSON::stringify(document,"  ");
+			if (content.utf8().length()>4*1024*1024) throw std::runtime_error("layout exceeds 4 MiB");
+			if (DirAccess::make_dir_recursive_absolute(directory)!=OK) throw std::runtime_error("could not create layout directory");
+			auto file = FileAccess::open(path+String(".tmp"),FileAccess::WRITE);
+			if (file.is_null()) throw std::runtime_error("could not open layout for saving");
+			file->store_string(content); file->flush();
+			if (file->get_error()!=OK) throw std::runtime_error("could not write layout");
+			file->close();
+			if (DirAccess::rename_absolute(path+String(".tmp"),path)!=OK) throw std::runtime_error("could not replace saved layout");
+			return std::string(path.utf8().get_data());
+		}
+		auto file = FileAccess::open(path,FileAccess::READ);
+		if (file.is_null()) throw std::runtime_error("saved layout not found: "+key);
+		if (file->get_length()>4*1024*1024) throw std::runtime_error("layout exceeds 4 MiB");
+		Ref<JSON> json; json.instantiate();
+		if (json->parse(file->get_as_text())!=OK) throw std::runtime_error("invalid layout JSON");
+		Variant data=json->get_data();
+		if (data.get_type()!=Variant::DICTIONARY) throw std::runtime_error("invalid layout document");
+		Dictionary document=data;
+		if (int(document.get("version",0))!=1 || !document.has("buildings")) throw std::runtime_error("unsupported layout document version");
+		return layoutValue(document["buildings"]);
+	}
 	if (!m_game || !m_world)
 		throw std::runtime_error("no active match");
 	const auto worldContext = m_world->enterContext();
@@ -425,6 +494,33 @@ BfmeLuaRuntime::Value GameWorld::bfme_query(const std::string &name, const std::
 			throw std::runtime_error("unknown unit template");
 		const CanMakeType r = BuildAssistant::canMakeUnit(b, tt->getFinalOverride(), -1);
 		return Table{{"ok", r == CANMAKE_OK}, {"status", canMakeText(r)}};
+	}
+	if (name == "buildingLayout")
+	{
+		::Object &b = object(0);
+		Value::List upgrades, links;
+		if (TheUpgradeCenter)
+			for (const auto *u : TheUpgradeCenter->templates())
+				if (u && u->getUpgradeType() == UPGRADE_TYPE_OBJECT && b.hasUpgrade(u))
+					upgrades.emplace_back(u->getUpgradeName());
+		Table out{{"upgrades", std::move(upgrades)}, {"castle", b.findModule("CastleBehavior") != nullptr}};
+		if (auto castle = dynamic_cast<CastleBehavior *>(b.findModule("CastleBehavior")))
+		{
+			out["castleReady"] = castle->state() == CastleBehavior::STATE_UNPACKED;
+			out["castleError"] = castle->lastError();
+		}
+		if (auto member = dynamic_cast<CastleMemberBehavior *>(b.findModule("CastleMemberBehavior")))
+		{
+			out["castleId"] = double(member->castleId());
+			out["keepId"] = double(member->keepId());
+		}
+		if (auto plot = m_game->logic().findObjectByID(b.getProducerID()))
+			if (plot->isKindOfName("BASE_FOUNDATION") || plot->isKindOfName("BASE_DEFENSE_FOUNDATION") || plot->isKindOfName("EXPANSION_PAD"))
+				out["plot"] = Table{{"template", plot->getTemplate()->getName()}, {"x", double(plot->getPosition()->x)}, {"y", double(plot->getPosition()->y)}};
+		if (auto gb = dynamic_cast<GettingBuiltBehavior *>(b.findModule("GettingBuiltBehavior")))
+			for (const auto &link : gb->linkedPieces()) links.emplace_back(double(link.id));
+		out["links"] = std::move(links);
+		return out;
 	}
 	if (name == "upgrades")
 	{

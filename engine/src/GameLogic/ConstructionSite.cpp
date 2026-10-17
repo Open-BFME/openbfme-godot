@@ -5,6 +5,8 @@
 
 #include "Common/NumericState.h"
 #include "Common/Player.h"
+#include "Common/PlayerList.h"
+#include "GameLogic/AI/AIWorld.h"
 #include "Common/RandomValue.h"
 #include "Common/Thing/ThingTemplate.h"
 #include "GameLogic/AI/AIMove.h"
@@ -274,6 +276,20 @@ std::vector<ObjectGeometry::Shape> ConstructionSite::objectShapes(const Object &
 	return shapes;
 }
 
+bool ConstructionSite::isNeutralDecoration(const GameLogic &logic, const Object &obj)
+{
+	if (!logic.settings().clearNeutralDecorations || obj.isDestroyed() ||
+		!obj.getControllingPlayer() || obj.getControllingPlayer()->getPlayerIndex() != 0 ||
+		!obj.isKindOfName("STRUCTURE") || !obj.isKindOfName("IMMOBILE")) return false;
+	for (const char *kind : {"CAPTURABLE", "CAPTUREFLAG", "COMMANDCENTER", "BASE_FOUNDATION", "BASE_DEFENSE_FOUNDATION", "EXPANSION_PAD",
+		"WALL_HUB", "WALL_SEGMENT", "WALL_GATE", "WALL_UPGRADE", "CREEP", "CAN_ATTACK", "FS_FACTORY", "ALWAYS_SELECTABLE"})
+		if (obj.isKindOfName(kind)) return false;
+	// Lairs and economy structures are neutral gameplay objects, not scenery.
+	for (const char *module : {"SpawnBehavior", "ProductionUpdate", "TerrainResourceBehavior", "AutoDepositUpdate", "CastleBehavior", "CaptureFlagUpdate", "TechBuildingBehavior"})
+		if (obj.findModule(module)) return false;
+	return true;
+}
+
 bool ConstructionSite::isRemovableForConstruction(GameLogic &logic, const Object *obj)
 {
 	(void)logic;
@@ -282,6 +298,7 @@ bool ConstructionSite::isRemovableForConstruction(GameLogic &logic, const Object
 	{
 		return false;
 	}
+	if (isNeutralDecoration(logic, *obj)) return true;
 	const Kinds &k = kinds();
 	if (objectIs(*obj, k.inert) || objectIs(*obj, k.taint))
 	{
@@ -302,6 +319,7 @@ bool ConstructionSite::isRemovableForFoundation(GameLogic &logic, const Object *
 	{
 		return false;
 	}
+	if (isNeutralDecoration(logic, *obj)) return true;
 	const Kinds &k = kinds();
 	if (objectIs(*obj, k.inert))
 	{
@@ -337,6 +355,7 @@ int clearSite(GameLogic &logic, const ThingTemplate &what, const Coord3D &pos, f
 	{
 		if (!o->isDestroyed())
 		{
+			if (logic.aiWorld()) logic.aiWorld()->removeObjectFromPathfindMap(*o);
 			logic.destroyObject(o); // RW 0x796602: RW 0x62BBAB (TheGameLogic->destroyObject marks it; the list it walks is the query's copy)
 			++n;
 		}

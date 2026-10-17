@@ -973,7 +973,16 @@ void FXPlayer::rebuild()
 		}
 	}
 	const auto t0 = std::chrono::steady_clock::now();
-	std::vector<DrawBatch> batches = m_builder->build(m_playback->particles(), cam);
+	std::vector<DrawBatch> batches = m_builder->build(m_playback->particles(), cam, [&](const ParticleSystem &system) {
+  auto *world = m_playback->world();
+  if (!world) return true;
+  ParticleAttachInfo attachment;
+  if (system.attachedDrawableID()) attachment = world->attachedDrawable(system.attachedDrawableID(), "");
+  else if (system.attachedObjectID()) attachment = world->attachedObject(system.attachedObjectID(), "", 0);
+  if (attachment.found && (attachment.hidden || attachment.shrouded)) return false;
+  // Also hide lingering, detached dust and positional effects in unexplored/fogged cells.
+  return world->shroudStatusAt(system.position()) == 0;
+ });
 	m_emitterStops = BuildEmitterBatches(m_playback->emitters(), cam, batches);
 	m_buildUs = usSince(t0);
 	if (m_summaryEnabled)

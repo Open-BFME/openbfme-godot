@@ -73,6 +73,7 @@ class BfmeLuaRuntime
 		std::function<std::vector<std::pair<std::string, std::string>>()> scripts;
 		// Read-only engine questions answered at once (the caller holds the simulation): bfme queries such as building:getTrainableUnits().
 		// Throws for an unknown name or bad arguments; never changes game state.
+		// The restricted layout persistence helpers also use this bridge for local JSON files.
 		std::function<Value(const std::string &name, const std::vector<Value> &args)> query;
 		// Output of Lua that runs outside execute() (update callbacks, completion callbacks): print / bfme.console.log text.
 		std::function<void(const std::string &text)> output;

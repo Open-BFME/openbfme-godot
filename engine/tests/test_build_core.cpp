@@ -4,6 +4,7 @@
 // entry (RW 0x7987EE: position = castle matrix * entry, angle sum normalised) and the footprint tests of ZH's BuildAssistant.  GPL-3.0.
 
 #include "Common/Audio/AudioEntryPoints.h"
+#include "GameEngineDevice/W3DDevice/GameClient/Drawable/Draw/W3DModelDraw.h"
 #include "doctest.h"
 
 #include "ProdTestUtil.h"
@@ -14,6 +15,8 @@
 #include "GameLogic/BuildCommands.h"
 #include "GameLogic/BuildPlacement.h"
 #include "GameLogic/Construction.h"
+#include "GameLogic/ConstructionSite.h"
+#include "GameLogic/AI/AIWorld.h"
 #include "GameLogic/GameLogicDispatch.h"
 #include "GameLogic/Module/CastleModules.h"
 #include "GameLogic/Module/ConstructionModules.h"
@@ -819,4 +822,62 @@ TEST_CASE("build audio (AUDIO-2 review r2): GettingBuiltBehavior's first complet
 	Construction::completeConstruction(*building, nullptr);
 	CHECK(seen.size() == 1);
 	AudioApi::uninstallUnitVoiceHandler(&owner);
+}
+
+TEST_CASE("construction: new fortress expansion inherits the keep's existing upgrades")
+{
+ BuildFx f;
+ f.load("ChildObject UpgradedHall Hall\n Behavior = ModelConditionUpgrade Stonework\n TriggeredBy = Upgrade_Barracks2\n AddConditionFlags = UPGRADE_NUMENOR_STONEWORK\n End\nEnd\n");
+ Object *keep = f.make("Keep", f.teamOf("Alice"));
+ REQUIRE(keep);
+ keep->giveUpgrade("Upgrade_Barracks2");
+ auto *plotMember = dynamic_cast<CastleMemberBehavior *>(f.plot->findModule("CastleMemberBehavior"));
+ REQUIRE(plotMember);
+ plotMember->setKeepId(keep->getID());
+ Object *expansion = Construction::constructOnPlot(*f.plot, *f.w.get("UpgradedHall"), *f.plot->getPosition(), 0, *f.alice(), false);
+ REQUIRE(expansion);
+ auto *member = dynamic_cast<CastleMemberBehavior *>(expansion->findModule("CastleMemberBehavior"));
+ REQUIRE(member);
+ CHECK(member->keepId() == keep->getID());
+ CHECK(expansion->testModelCondition(ModelCondition::indexOf("UPGRADE_NUMENOR_STONEWORK")));
+}
+
+TEST_CASE("construction: optional neutral scenery clearing preserves capturable and player structures")
+{
+	BuildFx f;
+	AIWorldConfig config;
+	INIMacroTable macros;
+	AIWorld ai(*f.logic,config,macros);
+	ai.attach();
+	f.load("Object Scenery\n KindOf = STRUCTURE IMMOBILE\n Geometry = BOX\n GeometryMajorRadius = 20\n GeometryMinorRadius = 20\n GeometryHeight = 20\nEnd\n"
+		"ChildObject CaptureScenery Scenery\n KindOf = STRUCTURE IMMOBILE CAPTURABLE\nEnd\n"
+		"Object NewBuilding\n KindOf = STRUCTURE IMMOBILE\n Geometry = BOX\n GeometryMajorRadius = 15\n GeometryMinorRadius = 15\n GeometryHeight = 20\nEnd\n");
+	auto neutral = f.logic->players().getNeutralPlayer();
+	REQUIRE(neutral);
+	auto decoration = f.make("Scenery", neutral->getDefaultTeam());
+	auto capturable = f.make("CaptureScenery", neutral->getDefaultTeam());
+	auto owned = f.make("Scenery", f.teamOf("Alice"));
+	REQUIRE(decoration); REQUIRE(capturable); REQUIRE(owned);
+	Coord3D position{100,100,0};
+	decoration->setPosition(&position);
+	position.x=200; capturable->setPosition(&position);
+	position.x=300; owned->setPosition(&position);
+	CHECK_FALSE(ConstructionSite::isNeutralDecoration(*f.logic,*decoration));
+	auto building=f.w.get("NewBuilding"); REQUIRE(building);
+	position.x=100;
+	CHECK_FALSE(BuildPlacement::isLocationClearOfObjects(*f.logic,position,*building,0,nullptr,LLF_NO_OBJECT_OVERLAP));
+	f.logic->settings().clearNeutralDecorations = true;
+	CHECK(ConstructionSite::isNeutralDecoration(*f.logic,*decoration));
+	CHECK_FALSE(ConstructionSite::isNeutralDecoration(*f.logic,*capturable));
+	CHECK_FALSE(ConstructionSite::isNeutralDecoration(*f.logic,*owned));
+	position.x=100;
+	CHECK(BuildPlacement::isLocationClearOfObjects(*f.logic,position,*building,0,nullptr,LLF_NO_OBJECT_OVERLAP));
+	CHECK_FALSE(decoration->isDestroyed()); // preview leaves scenery intact
+	CHECK(ConstructionSite::clearSiteForFoundation(*f.logic,*building,position,0)==1);
+	CHECK(decoration->isDestroyed());
+	CHECK_FALSE(capturable->isDestroyed()); CHECK_FALSE(owned->isDestroyed());
+	position.x=200;
+	CHECK_FALSE(BuildPlacement::isLocationClearOfObjects(*f.logic,position,*building,0,nullptr,LLF_NO_OBJECT_OVERLAP));
+	f.logic->settings().clearNeutralDecorations = false;
+	CHECK_FALSE(ConstructionSite::isNeutralDecoration(*f.logic,*owned));
 }

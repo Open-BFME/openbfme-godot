@@ -51,21 +51,25 @@ TEST_CASE("wall replacement clears side tiles only for gates") {
  "Object GateTestSegment\n KindOf = STRUCTURE IMMOBILE WALL_SEGMENT\n Geometry = BOX\n GeometryMajorRadius = 5\n GeometryMinorRadius = 10\n GeometryHeight = 20\n Body = ActiveBody Body\n MaxHealth = 100\n End\nEnd\n"
  "Object GateTestGate\n KindOf = STRUCTURE IMMOBILE WALL_UPGRADE\n Behavior = GateOpenAndCloseBehavior Gate\n End\n Geometry = BOX\n GeometryMajorRadius = 5\n GeometryMinorRadius = 30\n GeometryHeight = 20\n Body = ActiveBody Body\n MaxHealth = 100\n End\nEnd\n";
  std::string definitions(gateObjects);
+ definitions += "ChildObject GateTestBarrier GateTestSegment\n GeometryMinorRadius = 240\nEnd\n";
  definitions += "ChildObject GateTestPostern GateTestSegment\n KindOf = STRUCTURE IMMOBILE WALL_UPGRADE WALL_GATE\n Behavior = DynamicPortalBehaviour Portal\n End\nEnd\n";
- definitions += "ChildObject GateTestTower GateTestSegment\n GeometryMinorRadius = 12\nEnd\n";
+ definitions += "ChildObject GateTestTower GateTestSegment\n KindOf = STRUCTURE IMMOBILE WALL_UPGRADE CAN_ATTACK\n Behavior = AIUpdateInterface AI\n End\n GeometryMajorRadius = 15\n GeometryMinorRadius = 15\n AdditionalGeometry = BOX\n GeometryMajorRadius = 10\n GeometryMinorRadius = 10\n GeometryHeight = 50\n GeometryOffset = X:0 Y:0 Z:40\n AdditionalGeometry = BOX\n GeometryMajorRadius = 5\n GeometryMinorRadius = 20\n GeometryHeight = 40\nEnd\n";
  CombatWorld w(definitions.c_str());
  bool gate = true;
  bool postern = false;
+ bool rotatedTower = false;
  SUBCASE("postern preserves neighboring tiles despite WALL_GATE") { gate = false; postern = true; }
  SUBCASE("gate clears three tiles") { gate = true; }
  SUBCASE("tower preserves overlapping neighboring tiles") { gate = false; }
- float angle = 0;
+ SUBCASE("rotated tower blocks movement across the wall") { gate = false; rotatedTower = true; }
+ float angle = rotatedTower ? 1.57079632679f : 0;
  SUBCASE("vertical span") { angle = 0; }
  SUBCASE("rotated span") { angle = 1.57079632679f; }
  const bool rotated = angle != 0;
  auto segment = [&](float offset, float across = 0) {
   Object *o = w.unit("GateTestSegment", 'A', 500 + (rotated ? offset : across), 500 + (rotated ? across : offset));
   o->setOrientation(angle);
+  w.ai->addObjectToPathfindMap(*o);
   return o;
  };
  Object *center = segment(0);
@@ -89,7 +93,33 @@ TEST_CASE("wall replacement clears side tiles only for gates") {
  }
  bool built = false;
  for (Object *o = w.logic->getFirstObject(); o; o = o->getNextObject())
-  if (o->getTemplate()->getName() == (gate ? "GateTestGate" : postern ? "GateTestPostern" : "GateTestTower")) built = true;
+  if (o->getTemplate()->getName() == (gate ? "GateTestGate" : postern ? "GateTestPostern" : "GateTestTower")) {
+   built = true;
+   if (!gate && !postern) {
+    auto *cell = w.ai->pathfinder().getCell(LAYER_GROUND,o->getPosition());
+    REQUIRE(cell);
+    CHECK(cell->isObstaclePresent(o->getID()));
+    // Neighboring wall updates can leave pinch-padding cells inside a replacement footprint.
+    w.ai->removeObjectFromPathfindMap(*o);
+    cell->setType(PathfindCell::CELL_BRIDGE_IMPASSABLE);
+    w.ai->addObjectToPathfindMap(*o);
+    CHECK(cell->isObstaclePresent(o->getID()));
+    w.frames(5);
+    CHECK(cell->isObstaclePresent(o->getID()));
+    // Seal the span to both map borders, so a move across must stay blocked.
+    for (float offset : {-260.0f,260.0f}) {
+     Object *barrier = w.unit("GateTestBarrier", 'A', 500 + (rotated ? offset : 0), 500 + (rotated ? 0 : offset));
+     barrier->setOrientation(angle);
+     w.ai->addObjectToPathfindMap(*barrier);
+    }
+    Object *walker = w.unit("Swordsman", 'A', rotated ? 500 : 450, rotated ? 450 : 500);
+    const int player = walker->getControllingPlayer()->getPlayerIndex();
+    w.select(player,{walker});
+    w.moveTo(player,rotated ? 500 : 550,rotated ? 550 : 500);
+    w.frames(150);
+    CHECK((rotated ? walker->getPosition()->y : walker->getPosition()->x) < 490);
+   }
+  }
  CHECK(built);
 }
 

@@ -482,3 +482,24 @@ TEST_CASE("bfme Lua data: preserves marker properties without exposing engine li
  CHECK_THROWS(BfmeLuaRuntime::readData("return io.open('file')", "bad"));
  CHECK_THROWS(BfmeLuaRuntime::readData("return {", "bad"));
 }
+
+TEST_CASE("bfme Lua: layout restoration retains plot ID, completion callback and upgrade/link actions")
+{
+	BfmeFixture f;
+	f.run("ticket=bfme.players[1]:construct('TestBuilding',{x=10,y=20,rotation=1.25,plotId=42},2,function(b) done=b.id end)");
+	f.vm->flush();
+	REQUIRE(f.applied.size() == 1);
+	REQUIRE(f.applied[0].args.size() == 7);
+	CHECK(std::get<double>(f.applied[0].args[5].data) == 1.25);
+	CHECK(std::get<double>(f.applied[0].args[6].data) == 42);
+	f.constructionState = "complete";
+	f.vm->flush();
+	CHECK(f.run("return done") == "777\n");
+	f.run("bfme.buildingInstances[777]:giveUpgrade('Upgrade_Test'); bfme.buildingInstances[777]:linkWallPiece(bfme.buildingInstances[777])");
+	f.vm->flush();
+	REQUIRE(f.applied.size() == 3);
+	CHECK(f.applied[1].field == ":giveUpgrade");
+	CHECK(std::get<std::string>(f.applied[1].value.data) == "Upgrade_Test");
+	CHECK(f.applied[2].field == ":linkWallPiece");
+	CHECK(std::get<double>(f.applied[2].value.data) == 777);
+}

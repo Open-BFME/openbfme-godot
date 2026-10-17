@@ -182,7 +182,8 @@ local function construct(building, position, builderId, playerId, speed, onCompl
   view=snapshot()
   onComplete(assert(proxy('buildingInstances',objectId),'completed building no longer exists'))
  end end
- return queue('match','',':construct',building,position.x,position.y,builderId,playerId,speed,angle,callback)
+ if position.plotId~=nil then numeric(position.plotId,1,2147483647,true) end
+ return queue('match','',':construct',building,position.x,position.y,builderId,playerId,speed,angle,callback,position.plotId or 0)
 end
 local function action(name) return function(o) local _,h=record(o); return queue(h.kind,h.id,':'..name,nil) end end
 -- Orders (lane LUAAI-1): the player commands the skirmish AI and a human give, issued for the objects' owner and run in the next logic frame
@@ -318,6 +319,9 @@ R"lua(   return queue(h.kind,h.id,':trainUnit',unit,count)
   end,
   getTrainableUnits=objectQuery('trainable'),
   getUpgrades=objectQuery('upgrades'),
+  getLayoutInfo=objectQuery('buildingLayout'),
+  giveUpgrade=function(b,u) local _,h=record(b); return queue(h.kind,h.id,':giveUpgrade',name(u,'an upgrade')) end,
+  linkWallPiece=function(b,other) local _,h=record(b); return queue(h.kind,h.id,':linkWallPiece',instanceId(other,'wall piece')) end,
   canTrain=function(b,unit)
    local _,h=record(b); unit=templateName(unit,'unitTypes','unit template')
    local r=query('canTrain',tonumber(h.id),unit); return r.ok,r.status
@@ -412,6 +416,10 @@ library('match',{
  pause=function() return queue('match','',':pause',nil) end,
  unpause=function() return queue('match','',':unpause',nil) end,
  -- 0 stops time, 1 normal, 100 one hundred times as fast; pause is independent.
+ setClearNeutralDecorations=function(enabled)
+  if type(enabled)~='boolean' then error('expected enabled boolean',2) end
+  return queue('match','',':clearNeutralDecorations',enabled)
+ end,
  setGameSpeed=function(value) numeric(value,0,100,false); return queue('match','',':setGameSpeed',value) end,
  getStatus=function()
   return {ready=view.ready or false,generation=generation,frame=view.frame or 0,paused=view.paused or false,localPlayerId=view.localPlayerId,
@@ -420,6 +428,11 @@ library('match',{
  end,
 })
 -- Detached terrain position sampled with this Lua chunk; no simulation mutation.
+library('layouts',{
+ save=function(key,data) return query('saveBuildingLayout',key,data) end,
+ load=function(key) return query('loadBuildingLayout',key) end,
+ list=function() return query('listBuildingLayouts') end,
+})
 library('graphics',{
  setTextureOverride=function(texture,path)
   if type(texture)~='string' or texture=='' then error('expected a texture name',2) end
@@ -695,6 +708,7 @@ struct BfmeLuaRuntime::Impl
 				throw std::runtime_error("construction interface unavailable");
 			for (int i = 5; i <= (construction ? 10 : lua_gettop(L)); ++i)
 				m.args.push_back(argument(L, i));
+			if (construction && lua_gettop(L) >= 12) m.args.push_back(argument(L, 12));
 			if (s.host.onMutation)
 				s.host.onMutation();
 			auto ticket = s.nextTicket++;

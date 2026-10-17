@@ -523,7 +523,8 @@ void ParticleDrawBuilder::buildLightning(const ParticleSystem &s, const Particle
 	}
 }
 
-std::vector<DrawBatch> ParticleDrawBuilder::build(const ParticleSystemManager &manager, const DrawCamera &camera)
+std::vector<DrawBatch> ParticleDrawBuilder::build(const ParticleSystemManager &manager, const DrawCamera &camera,
+ const std::function<bool(const ParticleSystem &)> &visible)
 {
 	// lane PERF-2: three passes. 1: the systems in list order on this thread: the skipped kinds and their notes, the batch headers, and the draws that
 	// sample the render stream (GpuDraw's alpha keys, LightningDraw's re-rolls and its per-system state) built here, so the stream is drawn in list order
@@ -546,6 +547,7 @@ std::vector<DrawBatch> ParticleDrawBuilder::build(const ParticleSystemManager &m
 	std::vector<Event> events;
 	auto deferNote = [&events](const char *code, const char *text) { events.push_back(Event{ code, text, 0 }); };
 	manager.forEachSystem([&](const ParticleSystem &s) {
+		if (visible && !visible(s)) return;
 		const int type = s.particleType();
 		if (type == PARTICLE_TYPE_TERRAIN_PARTICLE)
 		{

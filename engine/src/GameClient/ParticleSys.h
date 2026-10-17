@@ -214,6 +214,7 @@ public:
 	ParticleSystemID slaveID() const { return m_slaveID; }
 	bool isIdentity() const { return m_isIdentity; }
 	const std::string &attachedBone() const { return m_attachedBone; }
+	std::uint32_t attachedObjectID() const { return m_attachedObjectID; }
 	std::uint32_t attachedDrawableID() const { return m_attachedDrawableID; } ///< lane FX-3 (tests)
 	// the first / next particle in this system's list, oldest first (-1 at the end)
 	int firstParticle() const { return m_firstParticle; }

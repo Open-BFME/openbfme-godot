@@ -2,8 +2,11 @@
 // See GameLogic/BuildPlacement.h for the sources of every rule.
 
 #include "GameLogic/BuildPlacement.h"
+#include "GameLogic/ConstructionSite.h"
 #include "GameLogic/Module/AIUpdate.h"
 
+#include <algorithm>
+#include <cmath>
 #include "Common/Player.h"
 #include "Common/Thing/ThingTemplate.h"
 #include "GameLogic/AI/AIWorld.h"
@@ -233,6 +236,7 @@ bool BuildPlacement::isLocationClearOfObjects(GameLogic &logic, const Coord3D &p
 	static const int clearedByBuild = ObjectTemplateInfoBuilder::kindOfIndex("CLEARED_BY_BUILD");
 	for (Object *them = logic.getFirstObject(); them; them = them->getNextObject())
 	{
+		if (ConstructionSite::isNeutralDecoration(logic, *them)) continue;
 		if (them == builder || them->isDestroyed() || !them->getTemplate() || !them->isInWorld())
 		{
 			continue; // lane GARRISON-1: a contain's rider out of the world (RW 0x68C18F) is not in the partition
@@ -313,7 +317,30 @@ LegalBuildCode BuildPlacement::isLocationLegalToBuild(GameLogic &logic, const Co
 		if (ai && ai->mapReady() && !ai->pathfinder().clientSafeQuickDoesPathExist(
 			builder->getAIUpdateInterface()->locomotorInfo(), builder->getPosition(), &pos))
 		{
-			return LBC_NO_CLEAR_PATH;
+			// The scenery's obstacle still occupies the destination until an order
+			// is accepted. Check access to the construction perimeter instead;
+			// never destroy or alter pathfinding merely to preview a placement.
+			bool scenery = false, accessible = false;
+			std::vector<Footprint> mine, other;
+			footprintsOf(logic, build, pos, angle, mine);
+			float radius = 10.0f;
+			for (const auto &f : mine) radius = std::max(radius, std::hypot(f.x-pos.x,f.y-pos.y) + std::hypot(f.major,f.minor) + 10.0f);
+			for (Object *o=logic.getFirstObject(); o && !scenery; o=o->getNextObject())
+			{
+				if (!ConstructionSite::isNeutralDecoration(logic,*o) || !o->getTemplate()) continue;
+				footprintsOf(logic,*o->getTemplate(),*o->getPosition(),o->getOrientation(),other);
+				for (const auto &a:mine) for (const auto &b:other) if (footprintsCollide(a,b)) scenery=true;
+			}
+			if (scenery)
+				for (int i=0;i<8 && !accessible;++i)
+				{
+					const float a = SimMath::mulf32(float(i),0.78539816339f);
+					Coord3D edge=pos;
+					edge.x=SimMath::addf32(pos.x,SimMath::mulf32(radius,SimMath::cosDet(a)));
+					edge.y=SimMath::addf32(pos.y,SimMath::mulf32(radius,SimMath::sinDet(a)));
+					accessible=ai->pathfinder().clientSafeQuickDoesPathExist(builder->getAIUpdateInterface()->locomotorInfo(),builder->getPosition(),&edge);
+				}
+			if (!accessible) return LBC_NO_CLEAR_PATH;
 		}
 	}
 	if (options & LLF_TERRAIN_RESTRICTIONS)

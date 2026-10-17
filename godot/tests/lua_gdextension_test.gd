@@ -36,6 +36,10 @@ func _run() -> void:
 	var err: Variant = lua.call("do_string", "error('boom')")
 	_check(err != null and err.get_class() == "LuaError", "a Lua error is a LuaError")
 
+	# A callback made in a temporary coroutine must keep a main-state reference.
+	var callback: Variant = lua.call("do_string", "local co=coroutine.create(function() return Callable(function(value) return value+1 end) end); local ok,cb=coroutine.resume(co); assert(ok); return cb")
+	lua.call("do_string", "collectgarbage('collect'); collectgarbage('collect')")
+	_check(callback is Callable and callback.call(41) == 42, "Godot callback survives collection of its creating coroutine")
 	# the bfme.* API on the addon's LuaState
 	var world: Node = ClassDB.instantiate("GameWorld")
 	root.add_child(world)

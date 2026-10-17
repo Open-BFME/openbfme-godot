@@ -160,7 +160,9 @@ void Pathfinder::internal_classifyObjectFootprint(PathfindObject &obj, bool inse
 	auto applyCell = [&](int cx, int cy) {
 		PathfindCell &cellRef = *getCell(LAYER_GROUND, cx, cy);
 		const PathfindCell::CellType t = cellRef.getType();
-		const bool proceed = insert ? (t == PathfindCell::CELL_CLEAR || t == PathfindCell::CELL_RUBBLE) : (t == PathfindCell::CELL_RUBBLE || t == PathfindCell::CELL_OBSTACLE);
+		// Pinch cells are temporary clearance padding, not terrain. Claim them
+		// for the new structure so a later neighbor refresh cannot open its footprint.
+		const bool proceed = insert ? (t == PathfindCell::CELL_CLEAR || t == PathfindCell::CELL_RUBBLE || t == PathfindCell::CELL_BRIDGE_IMPASSABLE) : (t == PathfindCell::CELL_RUBBLE || t == PathfindCell::CELL_OBSTACLE);
 		if (!proceed && !(insert && wall && (t == PathfindCell::CELL_CLIFF)))
 		{
 			return;

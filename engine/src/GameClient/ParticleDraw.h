@@ -16,6 +16,7 @@
 // All positions are SAGE world space (x east, y north, z up), as the simulator keeps them; the Godot layer converts to (x, z, -y).
 
 #pragma once
+#include <functional>
 
 #include "GameClient/ParticleSys.h"
 #include "GameEngineDevice/W3DDevice/GameClient/Drawable/Draw/W3DDrawServices.h"
@@ -116,7 +117,8 @@ public:
 	explicit ParticleDrawBuilder(W3DDrawRandom &render) : m_render(render) {}
 
 	// Batches in draw order: list-order systems, then the deferred SortLevel 1 systems in reverse list order.
-	std::vector<DrawBatch> build(const ParticleSystemManager &manager, const DrawCamera &camera);
+	std::vector<DrawBatch> build(const ParticleSystemManager &manager, const DrawCamera &camera,
+		const std::function<bool(const FXParticleSystem::ParticleSystem &)> &visible = {});
 
 	// Draw-side acceptance-stop lines (S-194 smudge, S-195 drawable particles).
 	std::vector<std::string> unverified() const { return m_unverified; }

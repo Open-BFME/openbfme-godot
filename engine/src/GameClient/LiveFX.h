@@ -29,7 +29,7 @@
 //   * ParticleSysBone FXTrigger / Persist / PersistID / HouseColor are ignored; OnlyIfOnWater systems are not created (no water query), OnlyIfOnLand ones are;
 //   * the shooter's stealth (RW 0x694C0D with a NULL viewer, RW 0x6CCB91; lane STEALTH-1) is read when the effect plays, not at the shot;
 //   * the muzzle flash and recoil of handleWeaponFireFX are not drawn;
-//   * isWater is false everywhere; the shroud is clear (VIS-1 owns it).
+//   * isWater is false everywhere; visibility follows the local player’s shroud and presented object state.
 // Data\INI\ParticleSystem.ini (329 ZH-format `ParticleSystem` blocks) is not loaded, as in retail (lane FX-3, retires stop S-684). TARGET FACTS (RotWK
 // game.dat, S-001 caveat): GameEngine::init never names TheParticleSystemManager (the string is not in the image; the legend entry is never requested,
 // spec ini-and-object-model 3.5); no INI block registration names `ParticleSystem` (the only particle block is `FXParticleSystem` -> RW 0x5FC7DB, record
@@ -88,8 +88,8 @@ public:
 	std::uint32_t logicFrame() const override;
 	float groundHeight(float x, float y) override;
 	bool isWater(float, float) override { return false; }
-	int shroudStatusAt(const Coord3D &) override { return 0; }
-	bool objectShroudedForLocalPlayer(const FXObject &) override { return false; }
+	int shroudStatusAt(const Coord3D &pos) override;
+	bool objectShroudedForLocalPlayer(const FXObject &obj) override;
 	FXParticleSystem::ParticleAttachInfo attachedDrawable(std::uint32_t drawableId, const std::string &boneName) override;
 	FXParticleSystem::ParticleAttachInfo attachedObject(std::uint32_t objectId, const std::string &boneName, int localPlayerIndex) override;
 	bool boneWorldMatrix(const FXObject &obj, const std::string &boneName, Matrix3D &out) override;
