@@ -533,3 +533,10 @@ script enables it for local matches and reapplies it after changing matches;
 immobile structures without capture/gameplay roles. Placement ignores their
 footprints, and accepted construction removes only overlapping scenery through
 the native site-cleanup path. Previewing or cancelling placement removes nothing.
+
+## Build-mode classification
+
+`bfme.buildMode.list(options)`, `classify(templateOrInstance)`, and
+`matches(templateOrInstance, options)` classify buildings, units, foundations,
+markers, helpers, and unfinished content from mounted template/command data.
+See [Build-mode filter](BUILD_MODE_FILTER.md) for flags, evidence, and examples.

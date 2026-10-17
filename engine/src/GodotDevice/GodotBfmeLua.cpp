@@ -1,5 +1,6 @@
 // OpenBFME. GPL-3.0. The bfme companion's adapter to live engine objects.
 #include "Common/BuildAssistant.h"
+#include "GameLogic/BuildModeFilter.h"
 #include "Common/Upgrade.h"
 #include "GameLogic/Module/CastleModules.h"
 #include "GameLogic/Module/ConstructionModules.h"
@@ -97,11 +98,18 @@ BfmeLuaRuntime::Snapshot GameWorld::bfme_snapshot()
 	out.paused = m_paused;
 	if (!m_world)
 		return out;
+	const auto buildClasses = BuildModeFilter::classify(m_world->things(), m_world->commands(), m_world->modules());
 	for (auto master : m_world->things().templates())
 	{
 		const auto tt = master->getFinalOverride();
 		auto info = ObjectTemplateInfoBuilder::build(*tt);
 		auto r = definition(*tt);
+		const auto &c = buildClasses.at(tt->getName());
+		auto list = [](const std::vector<std::string> &items) { Value::List out; for (const auto &item : items) out.emplace_back(item); return out; };
+		r["buildMode"] = Table{{"building",c.building},{"unit",c.unit},{"plot",c.plot},{"marker",c.marker},{"placeholder",c.placeholder},
+			{"scenery",c.scenery},{"builderBuildable",c.builderBuildable},{"plotBuildable",c.plotBuildable},{"enhancedPlotBuildable",c.enhancedPlotBuildable},
+			{"unfinishedContent",c.unfinishedContent},{"unsupported",c.unsupported},{"recommended",c.recommended},
+			{"builders",list(c.builders)},{"plots",list(c.plots)},{"enhancedPlots",list(c.enhancedPlots)},{"reasons",list(c.reasons)},{"warnings",list(c.warnings)}};
 		out.collections["templates"][tt->getName()] = r;
 		if (kind(info, 7))
 			out.collections["buildingTypes"][tt->getName()] = r;

@@ -415,6 +415,51 @@ local function selected(kind)
  end
  return out
 end
+-- Build palette classification is sampled from native commands and KindOf data.
+local buildFilterKeys={building=true,unit=true,plot=true,marker=true,placeholder=true,scenery=true,
+ builderBuildable=true,plotBuildable=true,enhancedPlotBuildable=true,unfinishedContent=true,
+ unsupported=true,recommended=true,underConstruction=true,unfinished=true}
+local function buildClass(value)
+ local r,h
+ if type(value)=='string' then
+  r=(view.collections.templates or {})[value]
+  if not r then error('unknown template: '..value,3) end
+ else r,h=record(value) end
+ local template=r.typeId and (view.collections.templates or {})[r.typeId] or r
+ if not template or not template.buildMode then error('build classification unavailable for this handle',3) end
+ local out=copy(template.buildMode)
+ out.underConstruction=r.underConstruction or false
+ out.unfinished=out.unfinishedContent or out.unsupported or out.underConstruction
+ return out
+end
+local function buildOptions(options)
+ options=options or {recommended=true}
+ if type(options)~='table' then error('expected filter options',3) end
+ for key,want in pairs(options) do
+  if not buildFilterKeys[key] then error('unknown build filter: '..tostring(key),3) end
+  if type(want)~='boolean' then error('build filter values must be booleans',3) end
+ end
+ return options
+end
+local function buildMatches(value,options)
+ options=buildOptions(options)
+ local c=buildClass(value)
+ for key,want in pairs(options) do if c[key]~=want then return false end end
+ return true
+end
+library('buildMode',{
+ classify=buildClass,
+ matches=buildMatches,
+ list=function(options)
+  options=buildOptions(options)
+  local out={}
+  for name in pairs(view.collections.templates or {}) do
+   if buildMatches(name,options) then out[#out+1]=proxy('templates',name) end
+  end
+  table.sort(out,function(a,b) return a.name<b.name end)
+  return out
+ end,
+})
 library('timing',{
 	onBuild=function(fn) return timingNative('build',fn) end,
 	onTrain=function(fn) return timingNative('train',fn) end,

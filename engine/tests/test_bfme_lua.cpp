@@ -311,7 +311,7 @@ TEST_CASE("bfme Lua: libraries are read-only objects reachable through bfme, imp
 	BfmeFixture f;
 	CHECK(f.run("return bfme.debug==import('bfme.debug'), bfme.debug==require('bfme.debug'), tostring(bfme.debug)") ==
 		  "true\ttrue\tbfme.debug\n");
-	CHECK(f.run("return table.concat(bfme.capabilities.libraries,',')") == "ai,console,debug,events,graphics,input,layouts,map,match,mutations,orders,selection,timing\n");
+	CHECK(f.run("return table.concat(bfme.capabilities.libraries,',')") == "ai,buildMode,console,debug,events,graphics,input,layouts,map,match,mutations,orders,selection,timing\n");
 	CHECK(f.run("bfme.capabilities.libraries[1]='x'; return bfme.capabilities.libraries[1]") == "ai\n");
 	CHECK(f.run("return getmetatable(bfme.selection), getmetatable(bfme), type(bfme.match.getFrame), bfme.debug.missing") ==
 		  "bfme library\tbfme module\tfunction\tnil\n");
@@ -566,4 +566,28 @@ TEST_CASE("bfme timing: callbacks can edit seconds or return a duration; removal
 		CHECK_FALSE(f.vm->execute("bfme.timing.onBuild(function(c) return 1 end)").ok);
 	}
 	f.run("bfme.timing.clear()");
+}
+
+TEST_CASE("bfme Lua: build mode filters keep template completeness and live construction separate")
+{
+ BfmeFixture f;
+ using V=BfmeLuaValue;
+ V::Table flags{{"building",true},{"unit",false},{"plot",false},{"marker",false},{"placeholder",false},{"scenery",false},
+  {"builderBuildable",true},{"plotBuildable",false},{"enhancedPlotBuildable",true},{"unfinishedContent",false},
+  {"unsupported",false},{"recommended",true},{"reasons",V::List{"offered_by_builder_command"}},{"warnings",V::List{}}};
+ f.snapshot.collections["templates"]["Barracks"]={{"id","Barracks"},{"name","Barracks"},{"buildMode",flags}};
+ f.snapshot.collections["buildingInstances"]["9"]={{"id",9},{"typeId","Barracks"},{"underConstruction",true}};
+ CHECK(f.run(R"lua(
+ local filter=require('bfme.buildMode')
+ local all=filter.list();assert(#all==1 and all[1].name=='Barracks')
+ assert(filter.matches('Barracks',{builderBuildable=true,unfinished=false}))
+ local b=bfme.buildingInstances[9]
+ local c=filter.classify(b)
+ assert(c.underConstruction and c.unfinished and not c.unfinishedContent)
+ assert(not filter.matches(b,{unfinished=false}))
+ c.recommended=false
+ assert(filter.classify(b).recommended) -- detached classification
+ assert(not pcall(function()filter.matches('Barracks',{bogus=true})end))
+ return #filter.list({plotBuildable=true})
+ )lua")=="0\n");
 }
