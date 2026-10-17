@@ -114,8 +114,8 @@ V scalar(lua_State *L, int index)
 const char *bootstrap = R"lua(
 local snapshot, queue, status, writeLog, clock, newproxy, scripts, constructionResult = _bfmeSnapshot, _bfmeQueue, _bfmeStatus, _bfmeLog, _bfmeClock, _bfmeProxy, _bfmeScripts, _bfmeConstructionResult
 _bfmeSnapshot, _bfmeQueue, _bfmeStatus, _bfmeLog, _bfmeClock, _bfmeProxy, _bfmeScripts, _bfmeConstructionResult = nil,nil,nil,nil,nil,nil,nil,nil
-local onUpdateNative, updateList, query = _bfmeOnUpdate, _bfmeUpdateList, _bfmeQuery
-_bfmeOnUpdate, _bfmeUpdateList, _bfmeQuery = nil,nil,nil
+local onUpdateNative, updateList, query, timingNative = _bfmeOnUpdate, _bfmeUpdateList, _bfmeQuery, _bfmeTiming
+_bfmeOnUpdate, _bfmeUpdateList, _bfmeQuery, _bfmeTiming = nil,nil,nil,nil
 local view, generation, cache = {}, 1, {}
 local kinds = {templates='Template',unitTypes='UnitType',buildingTypes='BuildingType',players='Player',unitInstances='Unit',buildingInstances='Building'}
 local info = setmetatable({}, {__mode='k'})
@@ -415,6 +415,11 @@ local function selected(kind)
  end
  return out
 end
+library('timing',{
+	onBuild=function(fn) return timingNative('build',fn) end,
+	onTrain=function(fn) return timingNative('train',fn) end,
+	clear=function() timingNative('build',nil); timingNative('train',nil) end,
+})
 library('match',{
  getFrame=function() return view.frame or 0 end,
  getTimeMs=clock,
@@ -555,6 +560,28 @@ _bfmeRefresh()
 struct BfmeLuaRuntime::Impl
 {
 	Host host;
+	std::map<std::string, int> timingHooks;
+	bool timingBusy = false;
+	static int timing(lua_State *L)
+	{
+		try {
+			auto &s = self(L);
+			const std::string kind = luaL_checkstring(L, 1);
+			if (kind != "build" && kind != "train") throw std::runtime_error("unknown timing kind");
+			const bool removing = lua_isnoneornil(L, 2);
+			if (!removing && !lua_isfunction(L, 2)) throw std::runtime_error("expected a function or nil");
+			if (!removing) {
+				const auto state = s.host.snapshot();
+				if (!state.ready || state.networkGame || state.replay) throw std::runtime_error("timing hooks require a local live match");
+			}
+			auto found = s.timingHooks.find(kind);
+			if (found != s.timingHooks.end()) { luaL_unref(L, LUA_REGISTRYINDEX, found->second); s.timingHooks.erase(found); }
+			if (!removing) { lua_pushvalue(L, 2); s.timingHooks[kind] = luaL_ref(L, LUA_REGISTRYINDEX); }
+			if (s.host.onTimingChanged) s.host.onTimingChanged();
+			return 0;
+		} catch (const std::exception &error) { lua_pushstring(L, error.what()); }
+		return lua_error(L);
+	}
 	lua_State *L = nullptr;
 	std::string output;
 	unsigned long long nextTicket = 1;
@@ -850,6 +877,7 @@ BfmeLuaRuntime::BfmeLuaRuntime(Host host, void *luaState) : m(new Impl)
 	m->bind("_bfmeLog", Impl::log);
 	m->bind("_bfmeClock", Impl::clock);
 	m->bind("_bfmeOnUpdate", Impl::onUpdate);
+	m->bind("_bfmeTiming", Impl::timing);
 	m->bind("_bfmeUpdateList", Impl::updateList);
 	m->bind("_bfmeQuery", Impl::query);
 	lua_pushlightuserdata(L, m.get());
@@ -1049,8 +1077,52 @@ void BfmeLuaRuntime::flush()
 	}
 	m->drainOutput();
 }
+bool BfmeLuaRuntime::hasTimingHook(const std::string &kind) const { return m->timingHooks.count(kind) != 0; }
+bool BfmeLuaRuntime::hasTimingHooks() const { return !m->timingHooks.empty(); }
+int BfmeLuaRuntime::adjustTiming(const std::string &kind, Value::Table context, int nativeFrames)
+{
+	auto found = m->timingHooks.find(kind);
+	if (found == m->timingHooks.end()) return nativeFrames;
+	if (m->timingBusy) throw std::runtime_error("recursive timing callback");
+	auto L = m->L;
+	const int top = lua_gettop(L);
+	const auto oldDeadline = m->deadline;
+	const auto oldHook = lua_gethook(L);
+	const int oldMask = lua_gethookmask(L), oldCount = lua_gethookcount(L);
+	auto restore = [&] { lua_settop(L, top); lua_sethook(L, oldHook, oldMask, oldCount); m->deadline = oldDeadline; m->timingBusy = false; };
+	m->timingBusy = true;
+	try {
+		m->call(m->refreshRef); // callbacks read current handles and match state, not the last console snapshot
+		// RotWK's five logic frames per second: seconds round UP to a whole frame.
+		context["kind"] = kind;
+		context["seconds"] = double(std::max(1, nativeFrames)) / 5.0;
+		context["baseSeconds"] = double(std::max(1, nativeFrames)) / 5.0;
+		push(L, Value(std::move(context)));
+		lua_rawgeti(L, LUA_REGISTRYINDEX, found->second);
+		lua_pushvalue(L, top + 1);
+		m->deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(250);
+		lua_sethook(L, Impl::hook, LUA_MASKCOUNT, 1000);
+		if (lua_pcall(L, 1, 1, 0) != LUA_OK)
+			throw std::runtime_error(lua_tostring(L, -1) ? lua_tostring(L, -1) : "non-string Lua error");
+		if (lua_isnil(L, -1)) { lua_pop(L, 1); lua_pushliteral(L, "seconds"); lua_rawget(L, top + 1); }
+		if (lua_type(L, -1) != LUA_TNUMBER) throw std::runtime_error("timing callback must return seconds or edit context.seconds");
+		const double seconds = lua_tonumber(L, -1);
+		if (!std::isfinite(seconds) || seconds <= 0 || seconds > double(std::numeric_limits<int>::max()) / 5.0)
+			throw std::runtime_error("timing seconds must be finite, positive and fit in logic frames");
+		const double roundedFrames = std::ceil(seconds * 5.0);
+		if (roundedFrames > double(std::numeric_limits<int>::max())) throw std::runtime_error("timing duration exceeds logic frame range");
+		const int frames = int(roundedFrames);
+		restore();
+		m->drainOutput();
+		return frames;
+	} catch (...) { restore(); m->drainOutput(); throw; }
+}
+
 void BfmeLuaRuntime::invalidate()
 {
+	for (const auto &hook : m->timingHooks) luaL_unref(m->L, LUA_REGISTRYINDEX, hook.second);
+	m->timingHooks.clear();
+	if (m->host.onTimingChanged) m->host.onTimingChanged();
 	for (auto &p : m->pending)
 	{
 		m->results[p.ticket] = "expired registry";

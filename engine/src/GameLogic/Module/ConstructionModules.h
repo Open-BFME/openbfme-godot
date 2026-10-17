@@ -128,6 +128,7 @@ public:
 	};
 	const std::vector<LinkedPiece> &linkedPieces() const { return m_linked; }
 
+	int scriptBuildFrames(int nativeFrames, const Object *producer);
 	UnsignedInt buildFrames() const { return m_buildFrames; }
 	float spawnTimer() const { return m_spawnTimer; }
 	bool workerSpawned() const { return m_workerSpawned; }
@@ -150,6 +151,7 @@ private:
 
 	const GettingBuiltBehaviorModuleData *m_data;
 	float m_spawnTimer = 0.0f;      // + 0x28
+	int m_scriptBuildFrames = 0; // duration captured by bfme.timing before the first work
 	UnsignedInt m_buildFrames = 0;  // + 0x2C
 	bool m_releaseBuilder = false;  // + 0x30
 	bool m_wasDead = false;         // + 0x31

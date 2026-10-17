@@ -145,6 +145,49 @@ is blocked; explicit `:destroy()` still removes the object. It does not heal,
 prevent targeting, or change other armor/modifier immunities. New contained units
 follow the engine's native creation rules; the call updates current contents.
 
+## Timing callbacks
+
+`bfme.timing` intercepts durations **once, immediately before work starts** in a
+local live match. It covers builder/plot/fortress/self-building construction and
+ordinary unit recruitment queues. UI estimates never invoke callbacks. Queued
+training that is waiting for another item or command points calls its callback
+when it actually starts, rather than when purchased.
+
+```lua
+local timing = require('bfme.timing')
+timing.onBuild(function(context)
+    if context.playerId == bfme.players.localPlayer.id then
+        context.seconds = context.seconds / 2
+    end
+end)
+timing.onTrain(function(context)
+    if context.typeId == 'GondorSoldier' then
+        return 3 -- seconds; returning a number overrides context.seconds
+    end
+end)
+-- timing.onBuild(nil)  -- remove only the building callback
+-- timing.clear()       -- remove both callbacks
+```
+
+The mutable context contains `kind` (`build` or `train`), `typeId`, `playerId`,
+`producerId`, `objectId`, `baseSeconds`, and `seconds`. IDs are engine IDs, with
+0 for an absent producer/object; a unit has not been created when training
+starts. Edit `seconds`, return a replacement number, or return nil to use the
+edited context. Durations must be finite and positive; they round up to a whole
+logic frame (0.2 seconds). Other context fields are informational.
+
+One callback per kind is active; registering another replaces it. Already
+started operations retain their chosen duration when a callback is replaced or
+removed. Errors and invalid durations are reported by the engine and leave that
+operation's native duration in place. Callbacks have the console's execution
+budget. They are cleared on a new match. They do not change template defaults,
+prices, research/upgrade timers, or hero revival timers.
+
+Callbacks run on the main Lua thread: while registered, simulation uses the main
+thread, and restores its previous worker setting when removed. Registration is
+refused in network matches and replay playback; these are local scripting hooks.
+
+
 ## Libraries
 
 | Library | Functions |
@@ -156,6 +199,7 @@ follow the engine's native creation rules; the call updates current contents.
 | `bfme.debug` | `getSelectedBuilding()`, `getSelectedUnit()`, `inspect(handle)` |
 | `bfme.console` | `reload()`, `log(text)` |
 | `bfme.orders` | the unit and building orders below, for a handle or a list of handles of one player |
+| `bfme.timing` | `onBuild(fn)`, `onTrain(fn)`, `clear()`; see timing callbacks above |
 | `bfme.ai` | `list()`, `setEnabled(player, enabled)`, `isEnabled(player)`, `getStatus(player)` |
 | `bfme.events` | `onUpdate(name, fn, intervalMs)`, `remove(name)`, `list()` |
 | `bfme.map` | `getStartPositions()`, `getFarmSites()`, `getGroundHeight(x, y)`, `distance(a, b)` |

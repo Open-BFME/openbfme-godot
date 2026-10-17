@@ -1040,7 +1040,9 @@ int DozerAIUpdate::workOnBuild(int t, Object &structure)
 		showFromStructure(&structure); // RW 0x88DE56 -> 0x88E156: already complete
 		return taskSucceeded(t);
 	}
-	const int frames = BuildAssistant::calcTimeToBuild(*structure.getTemplate(), self->getControllingPlayer(), self, -1, logic.productionSettings(), logic);
+	int frames = BuildAssistant::calcTimeToBuild(*structure.getTemplate(), self->getControllingPlayer(), self, -1, logic.productionSettings(), logic);
+	if (auto build = dynamic_cast<GettingBuiltBehavior *>(structure.findModule("GettingBuiltBehavior")))
+		frames = build->scriptBuildFrames(frames, self);
 	const float framesF = structure.scriptConstructionSpeed() == 1.0f ? SimMath::sseFromInt32(frames)
 		: SimMath::divf32(SimMath::sseFromInt32(frames), structure.scriptConstructionSpeed());
 	structure.setConstructionPercent(SimMath::addf32(structure.getConstructionPercent(), SimMath::divf32(100.0f, framesF)));

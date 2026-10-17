@@ -77,6 +77,7 @@ struct ProductionEntry
 	ObjectID hordeTarget = INVALID_ID;              ///< +0x3C
 	std::string name;                               ///< +0x40
 	bool flag44 = false;                            ///< +0x44
+	int scriptTimingFrames = 0; // bfme.timing: captured once when this entry starts training
 	int quantityRemaining() const { return quantityTotal - quantityProduced; }
 };
 

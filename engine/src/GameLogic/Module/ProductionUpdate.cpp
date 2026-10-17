@@ -961,8 +961,11 @@ UpdateSleepTime ProductionUpdate::update()
 	}
 	// RW 0x8A1EBC: the progress rate is 1.0f modified by the object's attribute modifiers of type 0xD (RW 0x68C82D; not ported: S-203)
 	float rate = 1.0f;
+	int total = totalProductionFrames(*entry, player);
+	if (entry->type == PRODUCTION_UNIT && !entry->scriptTimingFrames && entry->framesUnderConstruction == 0.0f && logic.hasTimingHook("train"))
+		entry->scriptTimingFrames = logic.interceptTiming({"train", *entry->objectToProduce, player, us, nullptr, total});
+	if (entry->scriptTimingFrames) total = entry->scriptTimingFrames;
 	entry->framesUnderConstruction = SimMath::addf32(entry->framesUnderConstruction, rate);
-	const int total = totalProductionFrames(*entry, player);
 	entry->percentComplete = SimMath::mulf32(SimMath::divf32(entry->framesUnderConstruction, (float)total), 100.0f); // RW 0xBD88D8 = 100.0f; the divide before the multiply
 	entry->percentPerFrame = SimMath::divf32(100.0f, (float)total);
 	if (entry->type == PRODUCTION_BUILD_INDEX)
@@ -1296,6 +1299,7 @@ void ProductionUpdate::crc(StateHasher &h) const
 		h.addFloat(e->percentComplete);
 		h.addFloat(e->percentPerFrame);
 		h.addFloat(e->framesUnderConstruction);
+		if (e->scriptTimingFrames) { h.addU32(0x71A10001u); h.addI32(e->scriptTimingFrames); }
 		h.addI32(e->quantityTotal);
 		h.addI32(e->quantityProduced);
 		h.addI32(e->cost);

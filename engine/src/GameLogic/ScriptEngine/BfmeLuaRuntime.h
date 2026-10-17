@@ -77,6 +77,7 @@ class BfmeLuaRuntime
 		std::function<Value(const std::string &name, const std::vector<Value> &args)> query;
 		// Output of Lua that runs outside execute() (update callbacks, completion callbacks): print / bfme.console.log text.
 		std::function<void(const std::string &text)> output;
+		std::function<void()> onTimingChanged; // registration changes while the simulation is held
 	};
 	struct Result
 	{
@@ -93,6 +94,11 @@ class BfmeLuaRuntime
 	// queued writes, construction jobs, or an update callback that is due (wall clock): the caller should flush() at its next safe point
 	bool hasPending() const;
 	void flush();	   // caller holds the simulation between frames; also runs the due update callbacks
+	bool hasTimingHook(const std::string &kind) const;
+	bool hasTimingHooks() const;
+	// Caller owns the simulation on the Lua thread. Context is data, never engine pointers.
+	// Throws on a callback error/invalid duration; engine reports it and keeps the native duration.
+	int adjustTiming(const std::string &kind, Value::Table context, int nativeFrames);
 	void invalidate(); // new match / registry: old proxies expire; globals remain
   private:
 	struct Impl;

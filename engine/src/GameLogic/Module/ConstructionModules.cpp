@@ -371,6 +371,20 @@ void GettingBuiltBehavior::payRebuildCost(Player &player)
 	player.withdrawMoney((std::uint32_t)price, true);
 }
 
+int GettingBuiltBehavior::scriptBuildFrames(int nativeFrames, const Object *producer)
+{
+	auto obj = getObject();
+	auto &logic = obj->logic();
+	if (m_scriptBuildFrames == 0) {
+		// -1 marks an operation that began without a hook. Registering a hook later
+		// must not change work already in progress; native dynamic modifiers still apply.
+		m_scriptBuildFrames = -1;
+		if (logic.hasTimingHook("build"))
+			m_scriptBuildFrames = logic.interceptTiming({"build", *obj->getTemplate(), obj->getControllingPlayer(), producer, obj, nativeFrames});
+	}
+	return m_scriptBuildFrames > 0 ? m_scriptBuildFrames : nativeFrames;
+}
+
 void GettingBuiltBehavior::startConstruction(bool force)
 {
 	Object *obj = getObject();
@@ -400,7 +414,7 @@ void GettingBuiltBehavior::startConstruction(bool force)
 	{
 		// RW 0x856736: calcTimeToBuild(owner, no producer, -1)
 		const int frames = BuildAssistant::calcTimeToBuild(*obj->getTemplate(), player, nullptr, -1, logic.productionSettings(), logic);
-		m_buildFrames = (UnsignedInt)frames;
+		m_buildFrames = (UnsignedInt)scriptBuildFrames(frames, logic.findObjectByID(obj->getProducerID()));
 	}
 	m_rebuilding = obj->isEffectivelyDead();
 	if (m_rebuilding)
@@ -870,6 +884,7 @@ void GettingBuiltBehavior::crc(StateHasher &h) const
 	UpdateModule::crc(h);
 	h.addFloat(m_spawnTimer);
 	h.addU32(m_buildFrames);
+	if (m_scriptBuildFrames > 0) { h.addU32(0x71B10001u); h.addI32(m_scriptBuildFrames); }
 	h.addBool(m_releaseBuilder);
 	h.addBool(m_wasDead);
 	h.addBool(m_constructing);

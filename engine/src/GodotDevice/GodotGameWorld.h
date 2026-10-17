@@ -688,6 +688,9 @@ private:
 	Ref<RefCounted> m_consoleLuaState;
 	std::unique_ptr<BfmeLuaRuntime> m_consoleRuntime;
 	void ensureConsoleRuntime();
+	void refreshTimingHooks();
+	bool m_timingRestoreLogicThread = false;
+	bool m_timingHooksAttached = false;
 	void startEndGame();
 	void updateEndGame();
 	std::unique_ptr<MapObjectRuntime> m_clientRuntime;

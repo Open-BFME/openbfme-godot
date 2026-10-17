@@ -962,3 +962,50 @@ TEST_CASE("fortress construction: opt-in menu uses template data without a live 
 	CHECK(f.alice()->getMoney()->countMoney() == money - 300);
 	f.logic->reset();
 }
+
+TEST_CASE("timing build: one callback before self-building starts, duration is captured through completion")
+{
+	BuildFx f;
+	int calls = 0;
+	f.logic->setTimingHook("build", [&](const GameLogic::TimingRequest &r) {
+		++calls;
+		CHECK(r.kind == "build"); CHECK(r.type.getName() == "Hall");
+		CHECK(r.player == f.alice()); REQUIRE(r.object);
+		CHECK(r.frames == 100);
+		return 5;
+	});
+	auto building = Construction::constructWithoutBuilder(*f.logic, *f.w.get("Hall"), {300,300,0}, 0, *f.alice());
+	REQUIRE(building);
+	CHECK(calls == 1);
+	auto gb = dynamic_cast<GettingBuiltBehavior *>(building->findModule("GettingBuiltBehavior")); REQUIRE(gb);
+	CHECK(gb->buildFrames() == 5u);
+	f.logic->setTimingHook("build", {});
+	f.frames(4); CHECK(building->isUnderConstruction());
+	f.frames(1); CHECK_FALSE(building->isUnderConstruction());
+	CHECK(calls == 1);
+	CHECK(building->getBodyModule()->getHealth() == 1000.0f);
+}
+
+TEST_CASE("timing build: callback errors are reported and preserve the native duration")
+{
+	BuildFx f;
+	f.logic->setTimingHook("build", [](const GameLogic::TimingRequest &) -> int { throw std::runtime_error("bad timing"); });
+	auto building = Construction::constructWithoutBuilder(*f.logic, *f.w.get("Hall"), {300,300,0}, 0, *f.alice()); REQUIRE(building);
+	auto gb = dynamic_cast<GettingBuiltBehavior *>(building->findModule("GettingBuiltBehavior")); REQUIRE(gb);
+	CHECK(gb->buildFrames() == 100u);
+	const auto report = f.logic->report();
+	REQUIRE_FALSE(report.errors.empty());
+	CHECK(report.errors.back().find("bad timing") != std::string::npos);
+}
+
+TEST_CASE("timing build: registering a callback after builder work starts does not retime that operation")
+{
+	BuildFx f;
+	auto structure = f.make("Hall", f.teamOf("Alice")); REQUIRE(structure);
+	auto gb = dynamic_cast<GettingBuiltBehavior *>(structure->findModule("GettingBuiltBehavior")); REQUIRE(gb);
+	CHECK(gb->scriptBuildFrames(100, nullptr) == 100);
+	int calls = 0;
+	f.logic->setTimingHook("build", [&](const GameLogic::TimingRequest &) { ++calls; return 5; });
+	CHECK(gb->scriptBuildFrames(100, nullptr) == 100);
+	CHECK(calls == 0);
+}

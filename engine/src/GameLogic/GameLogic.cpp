@@ -74,6 +74,22 @@ GameLogic::GameLogic(ThingFactory &things, ModuleFactory &modules, PlayerList &p
 
 // lane MODULES-2: RW 0x68E31F registers the object with ThePartitionManager (RW 0x68E3B6 -> 0xA39050) unless its template's KindOf has INERT (+ 0x110 bit 25) or
 // PROJECTILE (+ 0x108 bit 25); RW 0x68C18F unregisters it (RW 0x68C1B4 -> 0xA39060) when it has an entry
+int GameLogic::interceptTiming(const TimingRequest &request)
+{
+	auto it = m_timingHooks.find(request.kind);
+	if (it == m_timingHooks.end()) return request.frames;
+	// Copy: a callback may replace/remove itself while running.
+	auto hook = it->second;
+	try {
+		const int frames = hook(request);
+		if (frames < 1) throw std::runtime_error("duration must be at least one logic frame");
+		return frames;
+	} catch (const std::exception &error) {
+		reportError("Lua " + request.kind + " timing callback failed: " + error.what());
+		return request.frames; // Reported failure: this operation keeps its native duration.
+	}
+}
+
 void GameLogic::partitionEnter(Object &obj)
 {
 	if ((m_inertBit >= 0 && obj.isKindOf((unsigned)m_inertBit)) || (m_projectileBit >= 0 && obj.isKindOf((unsigned)m_projectileBit)))

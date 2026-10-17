@@ -760,3 +760,30 @@ TEST_CASE("production: the post-exit fade delay counts down in the completion pa
 	REQUIRE(exitedAt != 0);
 	CHECK(exitedAt - madeAt == 8); // 5 passes + 3 sold frames; the old top-of-update decrement finalized after 5
 }
+
+TEST_CASE("timing train: callbacks run when each queue entry starts and retain the chosen time")
+{
+	BarracksFx f;
+	auto pu = f.barracks->getProductionUpdate(); REQUIRE(pu);
+	int calls = 0;
+	f.logic->setTimingHook("train", [&](const GameLogic::TimingRequest &r) {
+		++calls; CHECK(r.frames == 50); CHECK(r.producer == f.barracks);
+		CHECK(r.type.getName() == "Soldier"); CHECK(r.object == nullptr);
+		return 20;
+	});
+	const auto soldier = f.w.get("Soldier");
+	REQUIRE(pu->queueCreateUnit(soldier, -1, pu->requestUniqueUnitID(), -1, false, "", false));
+	REQUIRE(pu->queueCreateUnit(soldier, -1, pu->requestUniqueUnitID(), -1, false, "", false));
+	CHECK(calls == 0); // Queuing and cost/time estimates do not execute callbacks.
+	CHECK(BuildAssistant::calcTimeToBuild(*soldier, f.alice(), f.barracks, -1, f.logic->productionSettings(), *f.logic) == 50);
+	CHECK(calls == 0);
+	f.frames(6);
+	CHECK(calls == 1);
+	REQUIRE(pu->firstProduction()); CHECK(pu->firstProduction()->scriptTimingFrames == 20);
+	f.logic->setTimingHook("train", [&](const GameLogic::TimingRequest &) { ++calls; return 10; });
+	f.frames(18);
+	CHECK(f.count("Soldier") == 1);
+	f.frames(40);
+	CHECK(f.count("Soldier") == 2);
+	CHECK(calls == 2);
+}

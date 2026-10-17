@@ -1140,8 +1140,9 @@ Dictionary GameWorld::load_internal(const LiveGame::Options &loIn, const String 
 	m_netSession.reset(); // MP-1: the session points at the game
 	releaseLocalDrivers(); // lane MP-2: the recording / replay driver too
 	m_audio.reset(); // AUDIO-2: the audio side reads the game
-	m_game.reset(new LiveGame(*m_world, *m_fs->archive_fs(), *m_assets, *m_options));
 	if (m_consoleRuntime) m_consoleRuntime->invalidate();
+	m_game.reset(new LiveGame(*m_world, *m_fs->archive_fs(), *m_assets, *m_options));
+	m_timingRestoreLogicThread = false;
 	m_game->setRenderInterpolation(m_renderInterpolation);
 	// lane RENDERWAIT-1: a blocking wait on the logic worker names its script caller (the innermost GDScript frame: the C++ site of a bound query is
 	// the query itself, the script line says who asked)
@@ -3844,13 +3845,32 @@ void GameWorld::set_logic_thread(bool enabled)
 	m_logicThreadDefault = enabled;
 	if (m_game)
 	{
-		m_game->setLogicThread(enabled);
+		if (m_consoleRuntime && m_consoleRuntime->hasTimingHooks()) {
+			m_timingRestoreLogicThread = enabled;
+			m_game->setLogicThread(false);
+		} else m_game->setLogicThread(enabled);
 	}
 }
 
 bool GameWorld::get_logic_thread() const
 {
 	return m_game ? m_game->logicThread() : m_logicThreadDefault;
+}
+
+void GameWorld::refreshTimingHooks()
+{
+	if (!m_game || !m_consoleRuntime) { m_timingHooksAttached = false; return; }
+	if (!m_consoleRuntime->hasTimingHooks() && !m_timingHooksAttached) return;
+	auto &logic = m_game->logic();
+	m_timingHooksAttached = m_consoleRuntime->hasTimingHooks();
+	for (const std::string kind : {"build", "train"}) {
+		if (!m_consoleRuntime->hasTimingHook(kind)) { logic.setTimingHook(kind, {}); continue; }
+		logic.setTimingHook(kind, [this](const GameLogic::TimingRequest &r) {
+			BfmeLuaValue::Table context{{"typeId", r.type.getName()}, {"playerId", r.player ? r.player->getPlayerIndex() : -1},
+				{"producerId", r.producer ? r.producer->getID() : 0u}, {"objectId", r.object ? r.object->getID() : 0u}};
+			return m_consoleRuntime->adjustTiming(r.kind, std::move(context), r.frames);
+		});
+	}
 }
 
 void GameWorld::ensureConsoleRuntime()
@@ -3863,6 +3883,12 @@ void GameWorld::ensureConsoleRuntime()
 		host.construct = [this](const auto &mutation) { return bfme_construct(mutation); };
 		host.constructionStatus = [this](unsigned id) { return bfme_construction_status(id); };
 		host.query = [this](const std::string &name, const std::vector<BfmeLuaRuntime::Value> &args) { return bfme_query(name, args); };
+		host.onTimingChanged = [this] {
+			if (m_game && m_game->logicThread()) {
+				m_game->setLogicThread(false); m_timingRestoreLogicThread = true;
+			}
+			refreshTimingHooks();
+		};
 		host.output = [](const std::string &text) { UtilityFunctions::print(String::utf8(("LUA " + text).c_str()).strip_edges()); };
 		host.scripts = [] {
 			std::vector<std::pair<std::string, std::string>> scripts;
@@ -3918,18 +3944,30 @@ Dictionary GameWorld::execute_lua(const String &code)
 		result["state"] = m_game ? "game" : "menu";
 	}
 	catch (const std::exception &error) { result["output"] = String::utf8(error.what()); }
-	if (threaded) m_game->setLogicThread(true);
+	if (m_consoleRuntime && m_consoleRuntime->hasTimingHooks()) m_timingRestoreLogicThread |= threaded;
+	else if (m_game && (threaded || m_timingRestoreLogicThread)) {
+		m_game->setLogicThread(true); m_timingRestoreLogicThread = false;
+	}
 	return result;
 }
 
 void GameWorld::update_lua()
 {
-	if (!m_consoleRuntime || !m_consoleRuntime->hasPending()) return;
+	if (!m_consoleRuntime) return;
+	if (!m_consoleRuntime->hasPending()) {
+		if (m_game && m_timingRestoreLogicThread && !m_consoleRuntime->hasTimingHooks()) {
+			m_game->setLogicThread(true); m_timingRestoreLogicThread = false;
+		}
+		return;
+	}
 	const bool threaded = m_game && m_game->logicThread();
 	if (threaded) m_game->setLogicThread(false);
 	const auto worldContext = m_world ? m_world->enterContext() : nullptr;
 	m_consoleRuntime->flush();
-	if (threaded) m_game->setLogicThread(true);
+	if (m_consoleRuntime && m_consoleRuntime->hasTimingHooks()) m_timingRestoreLogicThread |= threaded;
+	else if (m_game && (threaded || m_timingRestoreLogicThread)) {
+		m_game->setLogicThread(true); m_timingRestoreLogicThread = false;
+	}
 }
 
 Array GameWorld::get_frame_hashes() const
