@@ -285,8 +285,16 @@ bool ConstructionSite::isNeutralDecoration(const GameLogic &logic, const Object 
 		"WALL_HUB", "WALL_SEGMENT", "WALL_GATE", "WALL_UPGRADE", "CREEP", "CAN_ATTACK", "FS_FACTORY", "ALWAYS_SELECTABLE"})
 		if (obj.isKindOfName(kind)) return false;
 	// Lairs and economy structures are neutral gameplay objects, not scenery.
-	for (const char *module : {"SpawnBehavior", "ProductionUpdate", "TerrainResourceBehavior", "AutoDepositUpdate", "CastleBehavior", "CaptureFlagUpdate", "TechBuildingBehavior"})
+	for (const char *module : {"SpawnBehavior", "TerrainResourceBehavior", "AutoDepositUpdate", "CastleBehavior", "CaptureFlagUpdate", "TechBuildingBehavior"})
 		if (obj.findModule(module)) return false;
+	// Retail civilian houses (notably Dale/Umbar) carry an empty
+	// ProductionUpdate. Only a production interface with commands makes a
+	// structure functional; the module's presence alone does not.
+	if (obj.getProductionUpdate())
+	{
+		const auto commands = obj.getCommandSetName();
+		if (!commands.empty() && commands != "EmptyCommandSet") return false;
+	}
 	return true;
 }
 

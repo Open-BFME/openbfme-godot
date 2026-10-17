@@ -776,11 +776,13 @@ void AptPalantir::sync(const ControlBar &bar)
 		m_sideShown = true;
 	}
 	syncLocal();
-	const std::string texts = std::to_string(bar.money()) + "|" + std::to_string(bar.commandPointsUsed()) + "/" + std::to_string(bar.commandPointsLimit());
+	// OpenBFME (owner request 2026-10-16): more than a million (the lobby's "Infinite" starting resources, 10,000,000) shows as the infinity sign
+	const std::string money = bar.money() > 1000000u ? std::string("\u221E") : std::to_string(bar.money());
+	const std::string texts = money + "|" + std::to_string(bar.commandPointsUsed()) + "/" + std::to_string(bar.commandPointsLimit());
 	if (texts != m_lastTexts)
 	{
 		m_lastTexts = texts;
-		windows().setAptText("APT:PalantirResources", std::to_string(bar.money()));
+		windows().setAptText("APT:PalantirResources", money);
 		windows().setAptText("APT:PalantirCommandPoints", std::to_string(bar.commandPointsUsed()) + "/" + std::to_string(bar.commandPointsLimit()));
 		windows().setAptText("APT:PalantirResourceMultiplier", "x1"); // the territory multiplier is the economy's (stop S-290)
 	}

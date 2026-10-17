@@ -2430,3 +2430,9 @@ void AptSkirmish::refreshProfileList()
 		GadgetListBoxSetSelected(m_profileList, selection);
 	}
 }
+
+bool AptSkirmish::setLobbyStartPosition(int slot,int position)
+{
+ if(!m_setup || position < -1 || (position>=0 && (!m_setup->findMap(m_setup->info().mapName) || position>=m_setup->findMap(m_setup->info().mapName)->numPlayers)) || !m_setup->setSlotStartPos(slot,position))return false;
+ updateMapStartSpots();return true;
+}

@@ -5,6 +5,7 @@
 
 #include "Common/ArchiveFileSystem.h"
 #include "Common/AsciiString.h"
+#include "Common/Thing/KindOfTokens.h"
 #include "GameClient/MapClassification.h"
 #include "GameClient/MapObjectDrawables.h"
 #include "GameClient/MapObjectRuntime.h"
@@ -132,6 +133,45 @@ bool applyFrame(W3DInstancer *inst, int64_t instance, const W3DDrawFrame &f)
 	}
 	return inst->set_instance_pose(instance, clip0, f.frame0, clip1, f.frame1, f.blendPercentage);
 }
+// The objects the map.ini / solo.ini next to `mapPath` define (the lowered names of their Object, ObjectReskin and ChildObject blocks). Their
+// other blocks change no drawable, so a preview or a scan may leave them out (and spare the full INI reload a changed world needs, about 1 s).
+std::set<std::string> mapIniObjectNames(RetailFileSystem &rfs, const std::string &mapPath)
+{
+	std::set<std::string> names;
+	const std::string dir = mapPath.substr(0, mapPath.find_last_of('\\'));
+	for (const char *file : { "\\map.ini", "\\solo.ini" })
+	{
+		std::vector<uint8_t> ini;
+		if (!rfs.readBytes(dir + file, ini, nullptr))
+		{
+			continue;
+		}
+		std::string line;
+		for (size_t i = 0; i <= ini.size(); ++i)
+		{
+			if (i < ini.size() && ini[i] != '\n')
+			{
+				line.push_back((char)ini[i]);
+				continue;
+			}
+			line = AsciiStringUtil::lowered(line.substr(0, line.find(';')));
+			const size_t b = line.find_first_not_of(" \t\r");
+			const size_t e = b == std::string::npos ? b : line.find_first_of(" \t\r", b);
+			const std::string token = b == std::string::npos ? std::string() : line.substr(b, e == std::string::npos ? e : e - b);
+			if (e != std::string::npos && (token == "object" || token == "objectreskin" || token == "childobject"))
+			{
+				const size_t nb = line.find_first_not_of(" \t\r", e);
+				if (nb != std::string::npos)
+				{
+					names.insert(line.substr(nb, line.find_first_of(" \t\r", nb) - nb));
+				}
+			}
+			line.clear();
+		}
+	}
+	return names;
+}
+
 } // namespace
 
 void MapObjectBuilder::_bind_methods()
@@ -139,6 +179,7 @@ void MapObjectBuilder::_bind_methods()
 	ClassDB::bind_method(D_METHOD("setup", "fs"), &MapObjectBuilder::setup);
 	ClassDB::bind_method(D_METHOD("build_objects", "fs", "map_name", "options"), &MapObjectBuilder::build_objects, DEFVAL(Dictionary()));
 	ClassDB::bind_method(D_METHOD("advance", "delta"), &MapObjectBuilder::advance);
+	ClassDB::bind_method(D_METHOD("scan_definition", "fs", "map_name", "options"), &MapObjectBuilder::scan_definition, DEFVAL(Dictionary()));
 	ClassDB::bind_method(D_METHOD("get_report"), &MapObjectBuilder::get_report);
 	ClassDB::bind_method(D_METHOD("get_stats"), &MapObjectBuilder::get_stats);
 }
@@ -192,6 +233,83 @@ Dictionary MapObjectBuilder::setup(const Ref<RetailFileSystem> &fs)
 	return result;
 }
 
+// Browser metadata only: parse map objects and INI overrides without building drawables or touching a live world.
+Dictionary MapObjectBuilder::scan_definition(const Ref<RetailFileSystem> &fs, const String &map_name, const Dictionary &options)
+{
+ Dictionary out; out["ok"] = false;
+ Array errors; out["errors"] = errors;
+ if (!m_world || m_fs != fs) {
+  const Dictionary loaded = setup(fs);
+  if (!bool(loaded["ok"])) return loaded;
+ }
+ const std::string name = AsciiStringUtil::lowered(toNative(map_name));
+ const std::string path = MapClassification::mapPath(name);
+ std::vector<uint8_t> bytes; std::string error;
+ if (!fs->readBytes(path, bytes, &error)) { errors.push_back(toGodot(error)); return out; }
+ LoadedMap map;
+ if (!MapReader::load(bytes, path, MapReadOptions(), map, &error)) { errors.push_back(toGodot(error)); return out; }
+ // The map.ini only matters when the map places objects the retail INI does not define and the map.ini does: applying it to every map dirtied the scanner's world
+ // and cost a full INI reload (about 1 s) per map. The rare map that needs it gets it (and a following one pays the reload).
+ bool missing = false;
+ std::set<std::string> defined;
+ bool definedRead = false;
+ for (const auto &object : map.chunks.objects) {
+  if (object.isWaypoint() || object.isLight() || object.isScorch() || (object.m_flags & (FLAG_ROAD_FLAGS | FLAG_BRIDGE_FLAGS))) continue;
+  if (m_world->things().findTemplate(object.m_objectName)) continue;
+  if (!definedRead) { defined = mapIniObjectNames(*fs.ptr(), path); definedRead = true; }
+  if (defined.count(AsciiStringUtil::lowered(object.m_objectName))) { missing = true; break; }
+ }
+ // options.map_ini false: the world is never changed (the browser scans with its preview's world); a map that needs its map.ini says so
+ if (missing && !optBool(options, "map_ini", true)) { out["needs_map_ini"] = true; return out; }
+ if (missing) {
+  const auto overrides = m_world->applyMapIni(MapClassification::mapDirectory(name));
+  for (const auto &e : overrides.errors) errors.push_back(toGodot(e));
+  if (!errors.is_empty()) return out;
+ }
+ const auto context = m_world->enterContext();
+ Array buildings, captureFlags, fortressStarts, unresolved;
+ Dictionary counts; counts["outpost"]=0; counts["inn"]=0; counts["signal_fire"]=0; counts["other"]=0;
+ std::map<std::string, std::array<uint32_t,7>> masks;
+ for (const auto &object : map.chunks.objects) {
+  if (object.isWaypoint()) {
+   // StartingBase (RW 0x62AD24) suppresses a generated base at typed starts; type 5 is a fortress start.
+   const auto waypoint = AsciiStringUtil::lowered(object.getWaypointName());
+   if (waypoint.rfind("player_",0)==0 && waypoint.size()>6 && waypoint.find("_start")!=std::string::npos && object.m_properties.getInt("waypointType")==5) {
+    Dictionary start; start["name"]=toGodot(object.getWaypointName()); start["x"]=object.m_location.x; start["y"]=object.m_location.y; fortressStarts.push_back(start);
+   }
+   continue;
+  }
+  if (object.isLight() || object.isScorch() || (object.m_flags & (FLAG_ROAD_FLAGS | FLAG_BRIDGE_FLAGS))) continue;
+  const auto *tt = m_world->things().findTemplate(object.m_objectName);
+  if (!tt) { unresolved.push_back(toGodot(object.m_objectName)); continue; }
+  tt=tt->getFinalOverride();
+  auto found=masks.find(tt->getName());
+  if (found==masks.end()) {
+   std::array<uint32_t,7> mask{}; KindOfTokens::parseTemplate(*tt,mask,error);
+   if (!error.empty()) { errors.push_back(toGodot(error)); error.clear(); continue; }
+   found=masks.emplace(tt->getName(),mask).first;
+  }
+  auto has=[&](const char *kind) { int bit=KindOfTokens::indexOf(kind); return bit>=0 && (found->second[(size_t)bit/32] & (1u<<(bit%32))); };
+  if (!has("STRUCTURE") || (!has("CAPTURABLE") && !has("LINKED_TO_FLAG"))) continue;
+  // Browser category hints are descriptive, not simulation rules. Preserve every capturable, including unknown/mod categories.
+  const auto label=AsciiStringUtil::lowered(tt->getName());
+  std::string category="other";
+  if (label.find("outpost")!=std::string::npos) category="outpost";
+  else if (label.find("signalfire")!=std::string::npos || label.find("signal_fire")!=std::string::npos) category="signal_fire";
+  else if (label.find("inn")!=std::string::npos) category="inn";
+  Dictionary building; building["template"]=toGodot(tt->getName()); building["category"]=toGodot(category);
+  building["x"]=object.m_location.x; building["y"]=object.m_location.y; building["z"]=object.m_location.z;
+  building["owner"]=toGodot(object.m_properties.getAsciiString("originalOwner"));
+  if (has("CAPTUREFLAG")) { captureFlags.push_back(building); continue; }
+  buildings.push_back(building); const String key=toGodot(category); counts[key]=int(counts[key])+1;
+ }
+ out["capturables"]=buildings; out["capture_flags"]=captureFlags; out["counts"]=counts; out["fortress_starts"]=fortressStarts;
+ out["is_fortress"]=!fortressStarts.is_empty(); out["unresolved_templates"]=unresolved;
+ // unresolved templates (retail maps keep editor leftovers the INI never defines; the game skips them) are listed, not a failure
+ out["ok"]=errors.is_empty();
+ return out;
+}
+
 Node3D *MapObjectBuilder::build_objects(const Ref<RetailFileSystem> &fsRef, const String &map_name, const Dictionary &options)
 {
 	m_report = Dictionary();
@@ -228,6 +346,11 @@ Node3D *MapObjectBuilder::build_objects(const Ref<RetailFileSystem> &fsRef, cons
 	m_textureAnimationOn = optBool(options, "texture_animation", true);
 	m_textureClock = 0.0;
 	const int64_t maxObjects = optInt(options, "max_objects", 0);
+	// clip_rect (Rect2, SAGE x/y): only drawables standing inside it are placed (the skirmish map browser shows the playable area)
+	const bool clipped = options.has("clip_rect");
+	const Rect2 clipRect = clipped ? (Rect2)options["clip_rect"] : Rect2();
+	// skybox: false leaves out KindOf SKYBOX drawables (the map browser shows the map alone)
+	const int skyboxBit = optBool(options, "skybox", true) ? -1 : MapObjectCreation::kindOfIndex("SKYBOX");
 
 	// drop the previous map (its drawables point into the template factory the map.ini step resets)
 	m_animated.clear();
@@ -249,7 +372,10 @@ Node3D *MapObjectBuilder::build_objects(const Ref<RetailFileSystem> &fsRef, cons
 	m_drawables.reset(new MapObjectDrawables());
 	TerrainLogic terrain;
 	MapClassification::Result cr;
-	if (!MapClassification::run(bytes, path, lowerName, *m_world, *m_options, *m_map, terrain, *m_drawables, nullptr, cr, &error))
+	// map_ini "objects": the map's map.ini / solo.ini load only when they define objects (Object, ObjectReskin or ChildObject blocks). The
+	// other blocks change no drawable, and a world they changed needs the full INI load again (about 1 s) before the next map.
+	const bool applyMapIni = !(options.has("map_ini") && String(options["map_ini"]) == "objects") || !mapIniObjectNames(rfs, path).empty();
+	if (!MapClassification::run(bytes, path, lowerName, *m_world, *m_options, *m_map, terrain, *m_drawables, nullptr, cr, &error, applyMapIni))
 	{
 		return fail(error);
 	}
@@ -345,8 +471,12 @@ Node3D *MapObjectBuilder::build_objects(const Ref<RetailFileSystem> &fsRef, cons
 			++skippedHiddenModule; // a script hid this draw module (Drawable::showModule, RW 0x6789B4)
 			continue;
 		}
-		drawablesSeen.insert(p.drawable);
 		const MapObjectDrawable &d = m_drawables->drawables[p.drawable];
+		if ((clipped && !clipRect.has_point(Vector2(d.position.x, d.position.y))) || (skyboxBit >= 0 && d.info && d.info->kindOf_test(skyboxBit)))
+		{
+			continue;
+		}
+		drawablesSeen.insert(p.drawable);
 		const Transform3D xf = drawableTransform(d);
 		const bool animatedPlay = p.animated && m_animationsOn && p.draw;
 		W3DInstancer *target = animatedPlay ? dynamicInst : staticInst;

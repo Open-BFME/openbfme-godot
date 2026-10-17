@@ -63,6 +63,9 @@ public:
 	// ---- state (tests, the host) ----------------------------------------------------------------------------------------------------------
 	// Null when the environment lacked the setup source or the new-game sink (reported) or the map cache had no multiplayer map.
 	const SkirmishGameSetup *setup() const { return m_setup.get(); }
+	bool setLobbyStartPosition(int slot, int position);
+	bool setBrowserRule(int rule, int value);
+	bool setBrowserLegendary(int value);
 	SkirmishProfileStore &profiles() { return *m_profiles; }
 	// lane UI-6: the kept game (SkirmishGameRecord.h): what the lobby restored at its start ("" when it began from the defaults), and the stop of a kept
 	// game it could not use

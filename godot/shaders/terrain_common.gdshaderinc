@@ -69,6 +69,8 @@ uniform vec2 shroud_origin = vec2(0.0);
 uniform vec2 shroud_extent = vec2(1.0);
 uniform vec3 shroud_color = vec3(1.0);
 uniform bool shroud_enabled = false;
+// map browser: pixels outside this SAGE rect (min x, min y, max x, max y) are discarded; the default keeps everything
+uniform vec4 clip_rect = vec4(-1e20, -1e20, 1e20, 1e20);
 varying vec2 v_shroud_uv;
 uniform float output_gamma = 2.2; // != 1: decode for Godot's linear output (retail_output)
 // Debug views (0 = retail maths): 1 albedo, 2 vertex colour, 3 normal map, 4 uv, 5 lit without cloud/macro,

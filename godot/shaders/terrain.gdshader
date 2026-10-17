@@ -36,6 +36,9 @@ void vertex() {
 }
 
 void fragment() {
+	if (v_sage_xy.x < clip_rect.x || v_sage_xy.y < clip_rect.y || v_sage_xy.x > clip_rect.z || v_sage_xy.y > clip_rect.w) {
+		discard;
+	}
 	ALBEDO = terrain_output(UV, COLOR);
 	// lane SELPERF-1: the selection's merge decals over the terrain, as RotWK's stencil passes draw them after it (selection_decals.gdshaderinc)
 	vec4 sel = sel_merge(v_sage_xy);

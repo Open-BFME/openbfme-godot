@@ -731,6 +731,20 @@ BfmeLuaRuntime::Value GameWorld::bfme_query(const std::string &name, const std::
 		}
 		return out;
 	}
+	if(name=="defenseGrid") {
+		const auto c=location(at(args,0,"center"),logic);
+		const double radius=number(at(args,1,"radius"),"radius",200,3000),step=number(at(args,2,"step"),"step",40,160);
+		if(!logic.aiWorld() || !logic.aiWorld()->pathfinder().isMapReady())throw std::runtime_error("pathfinding map unavailable");
+		auto &pf=logic.aiWorld()->pathfinder();PathfindMovement mv;mv.surf=LOCOMOTORSURFACE_GROUND;mv.b4=true;mv.b5=true;
+		int n=std::min(24,int(std::ceil(radius/step)));Value::List cells;
+		for(int y=-n;y<=n;++y)for(int x=-n;x<=n;++x) {
+			bool open=true;
+			for(int dy=-1;dy<=1 && open;++dy)for(int dx=-1;dx<=1 && open;++dx) {Coord3D p{float(c.x+x*step+dx*step*.4),float(c.y+y*step+dy*step*.4),0};ICoord2D at;
+				open=!pf.worldToCell(&p,&at) && pf.validMovementPosition(mv,pf.cellAt(at.x,at.y));}
+			cells.emplace_back(Table{{"x",c.x+x*step},{"y",c.y+y*step},{"gx",x},{"gy",y},{"open",open}});
+		}
+		return Table{{"n",n},{"step",step},{"cells",std::move(cells)}};
+	}
 	if (name == "groundHeight")
 	{
 		const float x = float(number(at(args, 0, "x"), "x", -1e7, 1e7)), y = float(number(at(args, 1, "y"), "y", -1e7, 1e7));

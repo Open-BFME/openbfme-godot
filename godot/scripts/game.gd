@@ -284,6 +284,7 @@ var _display_game := false               # --display-game
 var _fs: RefCounted
 var _audio: Node
 var _world: Node3D           # GameWorld
+var _map_editor: CanvasLayer
 var _lua_console: CanvasLayer
 var _console_input_states: Array[Dictionary] = []
 var _shell: Node2D           # AptMenuPlayer
@@ -1043,6 +1044,8 @@ func _boot() -> void:
 	_lua_console = preload("res://scripts/lua_console.lua").new()
 	_lua_console.execute = func(code: String) -> Dictionary: return _world.execute_lua(code)
 	_lua_console.toggled.connect(_lua_console_toggled)
+	_lua_console.restart_requested.connect(func(): call_deferred("_console_restart"))
+	_lua_console.map_editor_requested.connect(func(): call_deferred("_open_map_editor"))
 	add_child(_lua_console)
 	var controller := preload("res://scripts/controller_input.gd").new()
 	controller.name = "ControllerInput"
@@ -1055,7 +1058,7 @@ func _boot() -> void:
 			printerr("CONTROLLER Lua: ", result.output)
 			return ""
 		return str(result.output).strip_edges()
-	controller.gameplay = func() -> bool: return _state == State.PLAYING and not _quit_open and (_lua_console == null or not _lua_console.is_open())
+	controller.gameplay = func() -> bool: return _state == State.PLAYING and not _quit_open and (_lua_console == null or not _lua_console.is_open()) and (not is_instance_valid(_map_editor) or not _map_editor.active)
 	controller.input_generated.connect(func(event: InputEvent) -> void: Input.parse_input_event(event))
 	controller.command_action.connect(_controller_menu_action)
 	add_child(controller)
@@ -1080,6 +1083,8 @@ func _boot() -> void:
 	add_child(_shell)
 	var map_search := preload("res://scripts/skirmish_map_search.gd").new()
 	map_search.shell = _shell
+	map_search.fs = _fs
+	map_search.world = _world
 	add_child(map_search)
 	_save_flow = load("res://scripts/save_flow.gd").new(self) # lane SAVE-2
 	# lane FB7-1: the Options screen's inputs the device knows (AptSimpleScreens.h): the AudioSettings default volumes and the display modes (Godot lists
@@ -1130,6 +1135,8 @@ func _boot() -> void:
 	add_child(_campaign_flow)
 	var quick_skirmish: bool = _startup_shortcut.skirmish_requested and not _scripted_run()
 	_startup_shortcut.queue_free()
+	if _resume_console_restart():
+		return
 	if quick_skirmish:
 		_run_startup_skirmish()
 		return
@@ -1712,6 +1719,9 @@ func _enter_game(rep: Dictionary) -> void:
 ## shell-mode AptMenuPlayer and the local player: it feeds the camera and the mouse / keyboard to the HUD (selection, orders, the Palantir, the radar, the cursors) and draws
 ## the native components of the movie.
 func _install_hud(rep: Dictionary) -> void:
+	if is_instance_valid(_map_editor):
+		_map_editor.free()
+		_map_editor = null
 	_hud_installed = false
 	var hud: Node = ClassDB.instantiate("InGameHudNode")
 	add_child(hud)
@@ -1752,7 +1762,7 @@ func _install_hud(rep: Dictionary) -> void:
 		var toolbar := preload("res://scripts/touch_toolbar.gd").new()
 		toolbar.name = "TouchToolbar"
 		toolbar.hud = func() -> Node: return _hud
-		toolbar.gameplay = func() -> bool: return _state == State.PLAYING and not _quit_open and (_lua_console == null or not _lua_console.is_open())
+		toolbar.gameplay = func() -> bool: return _state == State.PLAYING and not _quit_open and (_lua_console == null or not _lua_console.is_open()) and (not is_instance_valid(_map_editor) or not _map_editor.active)
 		toolbar.open_menu = _toggle_quit_menu
 		toolbar.open_console = func() -> void:
 			if _lua_console != null: _lua_console.toggle()
@@ -2612,6 +2622,9 @@ func _end_game_tick() -> void:
 
 
 func _input(event: InputEvent) -> void:
+	if is_instance_valid(_map_editor) and _map_editor.active and (_lua_console == null or not _lua_console.is_open()) and _map_editor.handle_input(event):
+		get_viewport().set_input_as_handled()
+		return
 	if _lua_console != null:
 		if _lua_console.is_open():
 			_quit_q_time = -1
@@ -2836,6 +2849,61 @@ func _quit_menu_exit() -> void:
 
 ## Restart (RW 0x9220DE): the game is cleared without the score screen and the same new-game message starts again (a skirmish keeps its seed: RW 0x922222 reseeds
 ## only outside mode 2)
+const CONSOLE_RESTART_FILE := "user://console_restart.cfg"
+
+func _open_map_editor() -> void:
+	if _state != State.PLAYING or not _net_state.is_empty() or _game_kind not in ["skirmish", "restart"]:
+		_lua_console._append("Map editor is available in local skirmishes only.\n")
+		return
+	if _lua_console.is_open():
+		_lua_console.toggle()
+	if not is_instance_valid(_map_editor):
+		_map_editor = preload("res://scripts/map_editor.gd").new()
+		_map_editor.world = _world
+		_map_editor.hud = _hud
+		_map_editor.camera = _camera
+		_map_editor.fs = _fs
+		add_child(_map_editor)
+	_map_editor.set_active(true)
+
+func _console_restart() -> void:
+	var config := ConfigFile.new()
+	# A local skirmish starts over with its resolved map, seed and player slots.
+	# Network sessions, campaigns and replays return to the menu.
+	if _state == State.PLAYING and _game_kind in ["skirmish", "restart"] and _net_state.is_empty():
+		config.set_value("restart", "skirmish", _last_new_game.duplicate(true))
+	else:
+		config.set_value("restart", "skirmish", {})
+	var err := config.save(CONSOLE_RESTART_FILE)
+	if err != OK:
+		push_error("Could not prepare game restart: " + error_string(err))
+		return
+	if OS.has_feature("mobile") or OS.has_feature("web"):
+		# These platforms cannot relaunch their application process.
+		err = get_tree().reload_current_scene()
+		if err != OK:
+			DirAccess.remove_absolute(CONSOLE_RESTART_FILE)
+			push_error("Could not restart game: " + error_string(err))
+	else:
+		OS.set_restart_on_exit(true, OS.get_cmdline_args())
+		get_tree().quit()
+
+func _resume_console_restart() -> bool:
+	if not FileAccess.file_exists(CONSOLE_RESTART_FILE):
+		return false
+	var config := ConfigFile.new()
+	var err := config.load(CONSOLE_RESTART_FILE)
+	# Consume before starting: a failed load must never cause a restart loop.
+	DirAccess.remove_absolute(CONSOLE_RESTART_FILE)
+	if err != OK:
+		return false
+	var message: Dictionary = config.get_value("restart", "skirmish", {})
+	if message.is_empty():
+		return false
+	_begin_game(message)
+	return true
+
+
 func _restart_game() -> void:
 	if _last_new_game.is_empty():
 		return
@@ -2847,6 +2915,9 @@ func _restart_game() -> void:
 
 ## the running game cleared without the score screen (Restart, lane SAVE-2: a save loaded over a game): the HUD and the game's nodes go, the shell is emptied
 func _tear_down_game(why: String) -> void:
+	if is_instance_valid(_map_editor):
+		_map_editor.free()
+		_map_editor = null
 	_world.set_auto_advance(false)
 	_net_state = ""
 	for n in _game_nodes:

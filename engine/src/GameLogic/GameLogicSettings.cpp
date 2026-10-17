@@ -508,7 +508,7 @@ void GameLogicSettings::crc(StateHasher &h) const
 	// Native games keep their historical hash. Modified games identify every wall rule.
 	if (wallBalance.enabled) {
 		h.addU32(0x57414C4C); h.addU32(wallBalance.wallDamage); h.addU32(wallBalance.fortressDamage);
-		h.addU32(wallBalance.intermediateHubs); h.addU32(wallBalance.shareArrows);
+		h.addU32(wallBalance.trebuchetWallTargets); h.addU32(wallBalance.intermediateHubs); h.addU32(wallBalance.shareArrows);
 		for (float n : wallBalance.health) h.addFloat(n);
 		for (float n : wallBalance.cost) h.addFloat(n);
 		h.addFloat(wallBalance.fortressRange); h.addFloat(wallBalance.hubRange);

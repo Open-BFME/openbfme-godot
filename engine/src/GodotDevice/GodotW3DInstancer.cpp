@@ -104,6 +104,7 @@ void W3DInstancer::_bind_methods()
 	ClassDB::bind_method(D_METHOD("set_pose_culling", "enabled"), &W3DInstancer::set_pose_culling); // lane PERF-3
 	ClassDB::bind_method(D_METHOD("get_pose_culling"), &W3DInstancer::get_pose_culling);
 	ClassDB::bind_method(D_METHOD("get_instance_palette", "instance"), &W3DInstancer::get_instance_palette);
+	ClassDB::bind_method(D_METHOD("get_model_radius", "model"), &W3DInstancer::get_model_radius);
 	ClassDB::bind_method(D_METHOD("update_now"), &W3DInstancer::update_now);
 	ClassDB::bind_method(D_METHOD("update_mappers"), &W3DInstancer::update_mappers);
 	ClassDB::bind_method(D_METHOD("get_mapper_state"), &W3DInstancer::get_mapper_state);
@@ -120,6 +121,7 @@ void W3DInstancer::_bind_methods()
 	ClassDB::bind_method(D_METHOD("set_instance_house_color", "instance", "color"), &W3DInstancer::set_instance_house_color);
 	ClassDB::bind_method(D_METHOD("add_model_colored", "model", "kind", "colors"), &W3DInstancer::add_model_colored); // lane CAH-2
 	ClassDB::bind_method(D_METHOD("set_instance_infantry_light", "instance", "infantry"), &W3DInstancer::set_instance_infantry_light);
+	ClassDB::bind_method(D_METHOD("set_alpha_override", "enabled"), &W3DInstancer::set_alpha_override);
 	ClassDB::bind_method(D_METHOD("set_instance_opacity", "instance", "opacity"), &W3DInstancer::set_instance_opacity);
 	ClassDB::bind_method(D_METHOD("get_auto_update"), &W3DInstancer::get_auto_update);
 	ClassDB::bind_method(D_METHOD("probe_shaders", "origin"), &W3DInstancer::probe_shaders);
@@ -1382,6 +1384,11 @@ Array W3DInstancer::get_mapper_state() const
 		out.push_back(d);
 	}
 	return out;
+}
+
+double W3DInstancer::get_model_radius(int64_t model)
+{
+ return model>=0 && model<(int64_t)Models.size() ? std::max(1.0f,(cull_radius(*Models[(size_t)model])-30.0f)/1.5f) : 30.0;
 }
 
 void W3DInstancer::update_now()

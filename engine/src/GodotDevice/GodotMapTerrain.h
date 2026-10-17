@@ -36,10 +36,13 @@ public:
 	//   cliff_uv: "hypothesis" (default) | "atlas"       vertex_color: "accent" (default) | "all"
 	//   markers: bool (default true)   water: bool   rivers: bool   roads: bool   terrain: bool
 	//   resolve_objects: bool (default false)
+	//   height_probes: PackedVector2Array of SAGE (x, y); their ground heights come back as map_info.probe_heights
 	Node3D *build_map(const Ref<RetailFileSystem> &fs, const String &map_name, const Dictionary &options);
 
 	// { map, errors: [..], stops: [..], assumptions: [..], timings_ms: {..}, map_info: {..}, atlas: {..},
 	//   mesh: {..}, water: {..}, rivers: {..}, roads: {..}, objects: {..}, camera: {..} }
+	Dictionary preview_texture(const Ref<RetailFileSystem> &fs, const String &terrain_name);
+
 	Dictionary get_report() const { return m_report; }
 
 	// Test hook (godot/tests/shader_test.gd): one 10 x 10 cell drawn through the SAME composite path and shader as a

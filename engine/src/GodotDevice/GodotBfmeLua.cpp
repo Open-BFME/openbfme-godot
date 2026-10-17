@@ -314,6 +314,15 @@ std::string GameWorld::bfme_apply(const BfmeLuaRuntime::Mutation &m)
 		return bfme_order(m);
 	if (m.collection == "match")
 	{
+		if (m.field == ":planningMarker")
+		{
+			const auto value=std::get_if<std::string>(&m.value.data);if(!value)return "expected marker name";const std::string name=*value;
+			if(name!="GondorBuildingFoundation_Independant" && name!="GondorBuildingFoundation" && name!="MenWallHubSmall") return "unsupported planning marker";
+			if(m.args.size()!=4) return "invalid marker arguments";
+			const auto status=bfme_snapshot();if(status.networkGame || status.replay) return "planning markers require a local match";
+			const int player=int(numeric(m.args[2],0,19));
+			return create_object(String(name.c_str()),player,numeric(m.args[0],-1e7,1e7,false),numeric(m.args[1],-1e7,1e7,false),numeric(m.args[3],-1e6,1e6,false))>=0 ? "" : "marker creation failed";
+		}
 		if (m.field == ":clearNeutralDecorations")
 		{
 			auto enabled = std::get_if<bool>(&m.value.data);

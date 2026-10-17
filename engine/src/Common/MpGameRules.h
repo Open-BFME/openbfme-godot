@@ -103,6 +103,15 @@ const MpRuleCombo *findCombo(int mode, int rule);
 const MpRuleCheck *findCheck(int mode, int rule);
 }
 
+// ---- OpenBFME: Infinite starting resources (not a retail choice, owner request 2026-10-16) ------------------------------------------------------
+// The InitialResources row offers one more choice after RotWK's eleven: "Infinite", which starts every player with 10,000,000. The retail table
+// above stays as the binary has it (test_rules1 pins it); the lobby appends this entry and accepts its value.
+namespace InfiniteResources
+{
+constexpr std::int32_t kValue = 10000000;
+inline bool isChoice(int rule, int value) { return rule == RULE_INITIAL_RESOURCES && value == kValue; }
+}
+
 // ---- OpenBFME: Legendary Heroes (not a retail rule) ----------------------------------------------------------------------------------------------
 namespace LegendaryHeroes
 {

@@ -43,8 +43,16 @@ std::string toNative(const String &s)
 RetailFileSystem::RetailFileSystem() = default;
 RetailFileSystem::~RetailFileSystem() = default;
 
+String RetailFileSystem::content_signature() const
+{
+ String identity = m_bfme1 ? "bfme1" : "rotwk";
+ for (const auto &archive : m_mountedArchives) identity += String::utf8((archive.canonicalPath + ":" + archive.md5 + "\n").c_str());
+ return identity.sha256_text();
+}
+
 void RetailFileSystem::_bind_methods()
 {
+ ClassDB::bind_method(D_METHOD("content_signature"), &RetailFileSystem::content_signature);
 	ClassDB::bind_method(D_METHOD("mount_bfme1_path", "root"), &RetailFileSystem::mount_bfme1_path);
 	ClassDB::bind_method(D_METHOD("is_bfme1"), &RetailFileSystem::is_bfme1);
 	ClassDB::bind_method(D_METHOD("mount_retail"), &RetailFileSystem::mount_retail);

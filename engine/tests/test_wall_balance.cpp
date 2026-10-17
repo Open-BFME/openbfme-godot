@@ -3,6 +3,7 @@
 #include "doctest.h"
 #include "CombatTestUtil.h"
 #include "GameLogic/WallBalance.h"
+#include "GameLogic/BuildPlacement.h"
 #include "GameLogic/WallSpan.h"
 #include "Common/BuildAssistant.h"
 #include "GameLogic/Module/ReplaceSelfUpgrade.h"
@@ -175,4 +176,39 @@ TEST_CASE("wall span terminates at terrain with a hub and cliff cap") {
  std::vector<ObjectID> made;
  REQUIRE(WallSpan::build(*w.logic,*hub,{300,500,0},{700,500,0},*hub->getControllingPlayer(),0,&made));
  CHECK(made.size() == plan.tiles.size());
+}
+
+TEST_CASE("wall span optionally connects to friendly fortress trebuchet expansions") {
+ CombatWorld w(
+ "Object TestHub\n KindOf = STRUCTURE IMMOBILE WALL_HUB\n Geometry = BOX\n GeometryMajorRadius = 4\n GeometryMinorRadius = 10\n GeometryHeight = 20\n Behavior = WallHubBehavior Hub\n SegmentTemplateName = TestTile\n DefaultSegmentTemplateName = TestTile\n HubCapTemplateName = TestHub\n BuilderRadius = 10\n End\nEnd\n"
+ "Object TestTile\n KindOf = STRUCTURE IMMOBILE WALL_SEGMENT\n Geometry = BOX\n GeometryMajorRadius = 4\n GeometryMinorRadius = 10\n GeometryHeight = 20\nEnd\n"
+ "Object MenTrebuchetExpansion\n KindOf = STRUCTURE IMMOBILE\n Geometry = BOX\n GeometryMajorRadius = 20\n GeometryMinorRadius = 20\n GeometryHeight = 20\nEnd\n"
+"ChildObject MenTrebuchetSideExpansion MenTrebuchetExpansion\nEnd\n");
+ w.logic->settings().buildRulesLoaded=true;w.logic->settings().allowedHeightVariationForBuilding=10;w.logic->settings().maxLineBuildObjects=50;
+ auto hub=w.unit("TestHub",'A',300,500);auto target=w.unit("MenTrebuchetExpansion",'A',600,500);
+ WallSpan::Plan native;
+ REQUIRE(WallSpan::plan(*w.logic,*hub,{300,500,0},{600,500,0},0,native));
+ CHECK_FALSE(native.endsOnHub);
+ w.logic->settings().wallBalance.enabled=true;w.logic->settings().wallBalance.trebuchetWallTargets=true;
+ WallSpan::Plan connected;
+ REQUIRE(WallSpan::plan(*w.logic,*hub,{300,500,0},{600,500,0},0,connected));
+ CHECK(connected.endsOnHub);CHECK(connected.endHub==target->getID());
+ auto side=w.unit("MenTrebuchetSideExpansion",'A',600,700);
+ WallSpan::Plan middle;
+ REQUIRE(WallSpan::plan(*w.logic,*hub,{300,500,0},{600,700,0},0,middle));
+ CHECK(middle.endsOnHub);CHECK(middle.endHub==side->getID());
+ REQUIRE_FALSE(connected.tiles.empty());
+ CHECK(connected.tiles.back().pos.x>580); // extra tile clips into the expansion footprint
+ CHECK(connected.worstCode==0);
+ const auto last=connected.tiles.back();
+ auto blocker=w.unit("MenTrebuchetExpansion",'A',last.pos.x,last.pos.y);
+ WallSpan::Plan overlap;
+ REQUIRE(WallSpan::plan(*w.logic,*hub,{300,500,0},{600,500,0},0,overlap));
+ CHECK(overlap.tiles.back().code==0);
+ CHECK(overlap.tiles.back().pos.x==last.pos.x);
+ // Earlier segments still reject overlapping structures.
+ blocker->setPosition(&connected.tiles.front().pos);
+ WallSpan::Plan blocked;
+ REQUIRE(WallSpan::plan(*w.logic,*hub,{300,500,0},{600,500,0},0,blocked));
+ CHECK(blocked.tiles.front().code==LBC_OBJECTS_IN_THE_WAY);
 }

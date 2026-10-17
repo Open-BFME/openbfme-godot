@@ -26,7 +26,7 @@ std::string MapClassification::mapPath(const std::string &lowerName)
 
 bool MapClassification::run(const std::vector<std::uint8_t> &bytes, const std::string &sourceName, const std::string &lowerName, RetailObjectWorld &world,
 	const MapObjectOptions &options, LoadedMap &map, TerrainLogic &terrain, MapObjectDrawables &classified, MapObjectDrawables *clientOnly,
-	Result &result, std::string *error)
+	Result &result, std::string *error, bool applyMapIni)
 {
 	auto t0 = std::chrono::steady_clock::now();
 	const auto worldContext = world.enterContext(); // this world's stores and audio validator for the map.ini parse and the classification
@@ -41,7 +41,10 @@ bool MapClassification::run(const std::vector<std::uint8_t> &bytes, const std::s
 	terrain.init(map.heightMap, map.chunks, nullptr);
 	try
 	{
-		result.mapIni = world.applyMapIni(mapDirectory(lowerName));
+		if (applyMapIni)
+		{
+			result.mapIni = world.applyMapIni(mapDirectory(lowerName));
+		}
 	}
 	catch (const std::logic_error &e) // lane MAPRESET-1: a game of this world is still live (its map would be torn out from under it)
 	{

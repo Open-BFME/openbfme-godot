@@ -849,7 +849,8 @@ TEST_CASE("construction: optional neutral scenery clearing preserves capturable 
 	INIMacroTable macros;
 	AIWorld ai(*f.logic,config,macros);
 	ai.attach();
-	f.load("Object Scenery\n KindOf = STRUCTURE IMMOBILE\n Geometry = BOX\n GeometryMajorRadius = 20\n GeometryMinorRadius = 20\n GeometryHeight = 20\nEnd\n"
+	f.load("Object Scenery\n KindOf = STRUCTURE IMMOBILE\n Behavior = ProductionUpdate EmptyProduction\n End\n Geometry = BOX\n GeometryMajorRadius = 20\n GeometryMinorRadius = 20\n GeometryHeight = 20\nEnd\n"
+		"ChildObject FunctionalScenery Scenery\n CommandSet = PlotSet\nEnd\n"
 		"ChildObject CaptureScenery Scenery\n KindOf = STRUCTURE IMMOBILE CAPTURABLE\nEnd\n"
 		"Object NewBuilding\n KindOf = STRUCTURE IMMOBILE\n Geometry = BOX\n GeometryMajorRadius = 15\n GeometryMinorRadius = 15\n GeometryHeight = 20\nEnd\n");
 	auto neutral = f.logic->players().getNeutralPlayer();
@@ -857,6 +858,8 @@ TEST_CASE("construction: optional neutral scenery clearing preserves capturable 
 	auto decoration = f.make("Scenery", neutral->getDefaultTeam());
 	auto capturable = f.make("CaptureScenery", neutral->getDefaultTeam());
 	auto owned = f.make("Scenery", f.teamOf("Alice"));
+	auto functional = f.make("FunctionalScenery", neutral->getDefaultTeam());
+	REQUIRE(functional);
 	REQUIRE(decoration); REQUIRE(capturable); REQUIRE(owned);
 	Coord3D position{100,100,0};
 	decoration->setPosition(&position);
@@ -870,6 +873,7 @@ TEST_CASE("construction: optional neutral scenery clearing preserves capturable 
 	CHECK(ConstructionSite::isNeutralDecoration(*f.logic,*decoration));
 	CHECK_FALSE(ConstructionSite::isNeutralDecoration(*f.logic,*capturable));
 	CHECK_FALSE(ConstructionSite::isNeutralDecoration(*f.logic,*owned));
+	CHECK_FALSE(ConstructionSite::isNeutralDecoration(*f.logic,*functional));
 	position.x=100;
 	CHECK(BuildPlacement::isLocationClearOfObjects(*f.logic,position,*building,0,nullptr,LLF_NO_OBJECT_OVERLAP));
 	CHECK_FALSE(decoration->isDestroyed()); // preview leaves scenery intact

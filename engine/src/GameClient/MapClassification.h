@@ -34,7 +34,9 @@ struct Result
 
 // `bytes` is the content of mapPath(lowerName); `sourceName` names it in errors. `clientOnly` may be null (the static path draws everything from
 // `classified`). false + *error when the map cannot be parsed; problems inside it are in classified.report.
+// applyMapIni false (a preview whose map.ini defines no objects): the map's map.ini / solo.ini are not loaded, and a world an earlier map
+// changed is NOT loaded again (about 1 s): the object blocks of a map previewed before stay until the next map.ini applies to a fresh load.
 bool run(const std::vector<std::uint8_t> &bytes, const std::string &sourceName, const std::string &lowerName, RetailObjectWorld &world,
 	const MapObjectOptions &options, LoadedMap &map, TerrainLogic &terrain, MapObjectDrawables &classified, MapObjectDrawables *clientOnly,
-	Result &result, std::string *error);
+	Result &result, std::string *error, bool applyMapIni = true);
 } // namespace MapClassification

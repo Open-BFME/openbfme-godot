@@ -1148,6 +1148,7 @@ void AptMenuPlayer::_bind_methods()
 	ClassDB::bind_method(D_METHOD("shell_font", "name", "size"), &AptMenuPlayer::shell_font);
 	ClassDB::bind_method(D_METHOD("take_load_progress_calls"), &AptMenuPlayer::take_load_progress_calls);
 	ClassDB::bind_method(D_METHOD("lobby_apply", "spec"), &AptMenuPlayer::lobby_apply);
+	ClassDB::bind_method(D_METHOD("lobby_map_catalog"), &AptMenuPlayer::lobby_map_catalog);
 	ClassDB::bind_method(D_METHOD("lobby_state"), &AptMenuPlayer::lobby_state); // lane UI-6
 	ClassDB::bind_method(D_METHOD("native_text_input"), &AptMenuPlayer::native_text_input);
 	ClassDB::bind_method(D_METHOD("edit_native_text", "text", "submit"), &AptMenuPlayer::edit_native_text);
@@ -2608,6 +2609,18 @@ Dictionary AptMenuPlayer::lobby_gadget_rect(const String &name)
 	return out;
 }
 
+Array AptMenuPlayer::lobby_map_catalog()
+{
+ Array out;if(!m->shell || !m->shell->shell)return out;
+ auto screen=dynamic_cast<AptSkirmish *>(m->shell->shell->findScreenByFilename("Skirmish.apt"));if(!screen || !screen->setup())return out;
+ const auto &setup=*screen->setup();
+ for(int index:setup.listedMaps()) {
+  const auto &entry=setup.source().maps()[index];Dictionary d;d["key"]=toGodot(entry.name);d["name"]=toGodot(u16ToUtf8(setup.mapBaseDisplayName(entry)));d["description"]=toGodot(u16ToUtf8(setup.mapDescription(entry)));d["players"]=entry.numPlayers;d["official"]=entry.isOfficial;
+  Array starts;for(const auto &s:entry.startPositions){Dictionary p;p["index"]=s.first-1;p["x"]=s.second.x;p["y"]=s.second.y;p["z"]=s.second.z;starts.push_back(p);}d["starts"]=starts;out.push_back(d);
+ }
+ return out;
+}
+
 Dictionary AptMenuPlayer::lobby_state()
 {
 	Dictionary out;
@@ -2634,6 +2647,37 @@ Dictionary AptMenuPlayer::lobby_state()
 		rules.push_back((int64_t)r);
 	}
 	out["rules"] = rules;
+ // Native browser schema follows the mounted data and the retail rule tables.
+ const auto &setup = *screen->setup();
+ auto entries = [](const std::vector<SkirmishComboEntry> &source) {
+  Array result;
+  for (const auto &e : source) { Dictionary d; d["label"] = toGodot(u16ToUtf8(e.text)); d["value"] = e.itemData; result.push_back(d); }
+  return result;
+ };
+ Array factions;
+ for (const auto &e : setup.templateEntries()) {
+  Dictionary d; d["label"] = toGodot(u16ToUtf8(e.text)); d["value"] = e.itemData;
+  if (e.itemData >= 0 && e.itemData < (int)setup.source().factions().size()) {
+   const auto &f = setup.source().factions()[(size_t)e.itemData];
+   d["template"] = toGodot(f.templateName); d["building"] = toGodot(f.startingBuilding); d["side"] = toGodot(f.side);
+  } else { d["template"] = ""; d["building"] = ""; }
+  factions.push_back(d);
+ }
+ out["factions"] = factions; out["teams"] = entries(setup.teamEntries());
+ Array definitions;
+ const auto defaults = MpGameRules::defaults(setup.rulesMode());
+ for (int i = 0; i < NUM_GAME_RULES; ++i) {
+  const auto *combo = MpGameRules::findCombo(setup.rulesMode(), i);
+  const auto *check = MpGameRules::findCheck(setup.rulesMode(), i);
+  if (!combo && !check) continue;
+  // Clan games are an online-only rule, as in the APT rules panel.
+  if (i == RULE_CLAN_GAME) continue;
+  Dictionary d; d["id"] = i; d["label"] = toGodot(u16ToUtf8(setup.ruleName(i)));
+  d["default"] = defaults[(size_t)i]; d["value"] = g.rules[(size_t)i];
+  d["choices"] = combo ? entries(setup.ruleComboEntries(*combo)) : Array(); definitions.push_back(d);
+ }
+ out["rule_definitions"] = definitions; out["legendary_heroes"] = g.legendaryHeroes;
+
 	Array slots;
 	for (const SkirmishGameSlot &s : g.slots)
 	{
@@ -2643,6 +2687,7 @@ Dictionary AptMenuPlayer::lobby_state()
 		d["color"] = (int64_t)s.color;
 		d["team"] = (int64_t)s.teamNumber;
 		d["start"] = (int64_t)s.startPos;
+		d["player_choices"] = entries(setup.playerEntries((int)slots.size()));
 		d["name"] = s.isOccupied() ? toGodot(u16ToUtf8(s.name)) : String();
 		slots.push_back(d);
 	}
@@ -2785,11 +2830,25 @@ Dictionary AptMenuPlayer::lobby_apply(const Dictionary &spec)
 			}
 		}
 	}
+
+ if (spec.has("browser_legendary") && !screen->setBrowserLegendary(int(spec["browser_legendary"]))) errors.push_back("Invalid Legendary Heroes factor");
+ const Array browserRules = spec.get("browser_rules", Array());
+ for (int64_t i = 0; i < browserRules.size(); ++i) {
+  const Dictionary rule = browserRules[i];
+  if (!screen->setBrowserRule(int(rule["id"]), int(rule["value"]))) errors.push_back("Invalid browser rule");
+ }
 	const Array slots = spec.get("slots", Array());
+ // Release the edited positions before assigning them, so swaps cannot collide with old occupants.
+ for (int64_t i = 0; i < slots.size(); ++i) {
+  const Dictionary sd = slots[i];
+  if (sd.has("start")) screen->setLobbyStartPosition(int(sd["slot"]), -1);
+ }
+
 	for (int64_t i = 0; i < slots.size(); ++i)
 	{
 		const Dictionary sd = slots[i];
 		const int slot = (int)(int64_t)sd["slot"];
+		if(sd.has("start")) {if(!screen->setLobbyStartPosition(slot,int(sd["start"])))errors.push_back("Start position is unavailable");}
 		if (sd.has("state"))
 		{
 			GameWindow *combo = screen->slotGadget(slot, "Player");
@@ -2812,7 +2871,7 @@ Dictionary AptMenuPlayer::lobby_apply(const Dictionary &spec)
 				index = sm.setup.factions()[(size_t)f].templateName == name ? f : index;
 			}
 			GameWindow *combo = screen->slotGadget(slot, "PlayerTemplate");
-			const int row = (combo && index >= 0) ? itemRow(combo, (std::intptr_t)index) : -1;
+			const int row = (combo && (index >= 0 || name.empty())) ? itemRow(combo, (std::intptr_t)index) : -1;
 			if (row < 0)
 			{
 				errors.push_back(toGodot("slot " + std::to_string(slot) + ": no faction entry for " + name));

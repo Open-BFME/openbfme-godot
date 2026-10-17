@@ -124,6 +124,7 @@ public:
 	// A scene that needs no per-frame work (every instance static) turns the automatic update off and calls update_now() itself after
 	// changes. Default on. (Added by lane MAPOBJ-1.)
 	void set_auto_update(bool enabled);
+	double get_model_radius(int64_t model);
 	bool get_auto_update() const { return AutoUpdate; }
 
 	// { ok, name, frames, frame_rate, seconds, pivots } for a clip of a model

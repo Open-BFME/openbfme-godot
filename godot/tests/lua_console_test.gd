@@ -84,10 +84,24 @@ func _run() -> void:
 	console.execute = func(code: String) -> Dictionary:
 		commands.append(code)
 		return {"ok": true, "output": ""}
+	var restart_requests := [0]
+	console.restart_requested.connect(func(): restart_requests[0] += 1)
+	for restart_button in console.find_children("*", "Button", true, false):
+		if restart_button.text == "Restart game": restart_button.pressed.emit()
+	assert(restart_requests[0] == 1)
+	var editor_requests := [0]
+	console.map_editor_requested.connect(func(): editor_requests[0] += 1)
+	for editor_button in console.find_children("*", "Button", true, false):
+		if editor_button.text == "Map editor": editor_button.pressed.emit()
+	assert(editor_requests[0] == 1)
 	console._tabs.current_tab = 2
 	var cheats = console._tabs.get_child(2)
 	var speed = cheats.find_child("GameSpeed", true, false)
 	assert(speed != null and speed.value == 1)
+	var history_before := ConfigFile.new()
+	assert(history_before.load(console.history_path) == OK)
+	var entered_history = history_before.get_value("console", "history")
+	console._entry.text = "-- preserve cheat draft"
 	speed.value = 2
 	for button in cheats.find_children("*", "Button", true, false):
 		if button.text == "Apply speed":
@@ -95,6 +109,11 @@ func _run() -> void:
 	assert(commands.size() == 1, str(commands))
 	assert(commands[0] in ["bfme.match.setGameSpeed(2)", "bfme.match.setGameSpeed(2.0)"], str(commands))
 	assert(console._tabs.current_tab == 2)
+	assert(console._entry.text == "-- preserve cheat draft")
+	var history_after := ConfigFile.new()
+	assert(history_after.load(console.history_path) == OK)
+	assert(history_after.get_value("console", "history") == entered_history)
+	console._entry.clear()
 	var options = console._tabs.get_child(3)
 	var radius = options.find_child("SelectionAssistRadius", true, false)
 	assert(radius.value == 48)

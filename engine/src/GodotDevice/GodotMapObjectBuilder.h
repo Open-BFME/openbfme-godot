@@ -49,6 +49,8 @@ public:
 	// Loads the retail object templates (the subsystem INI load with the real object parsers; a few seconds). { ok, errors, seconds,
 	// templates }. Called once per builder; build_objects calls it when it has not run.
 	Dictionary setup(const Ref<RetailFileSystem> &fs);
+	// options: map_ini (default true) false never changes the world: a map that needs its map.ini returns { ok: false, needs_map_ini: true }
+	Dictionary scan_definition(const Ref<RetailFileSystem> &fs, const String &map_name, const Dictionary &options);
 
 	// Builds the object layer of `map_name` ("map wor fangorn"). Returns a Node3D (add it under the terrain root), or null on failure
 	// (see get_report()["errors"]). options (all optional):
@@ -56,6 +58,9 @@ public:
 	//   texture_animation: bool (default true) the material clocks (UV scroll ...) run in advance(); independent of `animations`
 	//   horde_members: bool (default true) hordes show their members
 	//   max_objects: int (default 0 = all) stop after this many drawables (debugging)
+	//   clip_rect: Rect2 of SAGE x/y; only drawables standing inside it are placed
+	//   skybox: bool (default true) false leaves out KindOf SKYBOX drawables
+	//   map_ini: "objects" loads the map.ini / solo.ini only when they define objects (a preview; other blocks change no drawable)
 	Node3D *build_objects(const Ref<RetailFileSystem> &fs, const String &map_name, const Dictionary &options);
 
 	// Steps the animations of the dynamic drawables and the material clocks of both instancers by `delta` seconds of render time (call once

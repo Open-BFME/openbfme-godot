@@ -6,6 +6,8 @@
 local LuaConsole = {
 	extends = CanvasLayer,
 	toggled = signal("open"),
+	restart_requested = signal(),
+	map_editor_requested = signal(),
 	execute = property { type = Callable },
 	history_path = "user://console_history.cfg",
 	controller_options_path = "user://controller_options.cfg",
@@ -166,6 +168,7 @@ local function build_wall_rules(tabs)
  if saved:load("user://wall_balance.cfg") == OK then config = saved end
  for _, entry in ipairs {
   {"enabled","Enable wall rebalance",true}, {"new_towers","Elven and Isengard wall arrow towers",true},
+  {"trebuchet_wall_targets","Connect walls to fortress trebuchet expansions",false},
   {"intermediate_hubs","Intermediate wall hubs",false}, {"share_arrows","Share fortress arrow upgrades with towers",true},
   {"starting_walls","Begin with completed walls and front/back gates",false},
   {"require_enclosed","Require enclosure for non-resource buildings (human players)",true},
@@ -303,6 +306,8 @@ function LuaConsole:_ready()
 	self._status = label("READY · LuaJIT", MUTED, 12)
 	self._status.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	toolbar:add_child(self._status)
+	toolbar:add_child(button("Map editor", function() self.map_editor_requested:emit() end))
+	toolbar:add_child(button("Restart game", function() self.restart_requested:emit() end))
 	toolbar:add_child(button("Reload scripts", function() self:reload_scripts() end))
 	toolbar:add_child(button("Clear", function() self:_clear_visible() end))
 	toolbar:add_child(button("Run script", function()
@@ -337,39 +342,39 @@ function LuaConsole:_build_cheats()
 	local gold = spin_box("GoldAmount", 0, 2147483647, 100, 100000, 150)
 	gold_row:add_child(gold)
 	gold_row:add_child(button("Set gold", function()
-		self:_submit(string.format("%s.money = %d", local_player, math.floor(gold.value)))
+		self:_execute_command(string.format("%s.money = %d", local_player, math.floor(gold.value)))
 	end))
 	local quick = flow(rows)
 	quick:add_child(button("+100k gold", function()
-		self:_submit("local p=" .. local_player .. "; p.money=math.min(2147483647,p.money+100000)")
+		self:_execute_command("local p=" .. local_player .. "; p.money=math.min(2147483647,p.money+100000)")
 	end))
 	quick:add_child(button("+100k CP", function()
-		self:_submit("local p=" .. local_player .. "; p.commandPoints=math.min(1000000,p.commandPoints+100000)")
+		self:_execute_command("local p=" .. local_player .. "; p.commandPoints=math.min(1000000,p.commandPoints+100000)")
 	end))
 	local visibility = flow(rows)
-	visibility:add_child(button("Reveal map", function() self:_submit(local_player .. ":revealMap()") end))
-	visibility:add_child(button("Disable fog of war", function() self:_submit(local_player .. ":setFogOfWar(false)") end))
-	visibility:add_child(button("Restore fog of war", function() self:_submit(local_player .. ":setFogOfWar(true)") end))
+	visibility:add_child(button("Reveal map", function() self:_execute_command(local_player .. ":revealMap()") end))
+	visibility:add_child(button("Disable fog of war", function() self:_execute_command(local_player .. ":setFogOfWar(false)") end))
+	visibility:add_child(button("Restore fog of war", function() self:_execute_command(local_player .. ":setFogOfWar(true)") end))
 	local speed_row = flow(rows)
 	speed_row:add_child(label("Game speed"))
 	local speed = spin_box("GameSpeed", 0, 100, 0.25, 1, 110)
 	speed_row:add_child(speed)
 	speed_row:add_child(button("Apply speed", function()
-		self:_submit("bfme.match.setGameSpeed(" .. tostring(speed.value) .. ")")
+		self:_execute_command("bfme.match.setGameSpeed(" .. tostring(speed.value) .. ")")
 	end))
 	rows:add_child(label("0 stops time · 1 normal · 2 twice as fast · max 100", MUTED, 12))
 	local actions = flow(rows)
 	actions:add_child(button("Normal speed", function()
 		speed.value = 1
-		self:_submit("bfme.match.setGameSpeed(1)")
+		self:_execute_command("bfme.match.setGameSpeed(1)")
 	end))
-	actions:add_child(button("Pause", function() self:_submit("bfme.match.pause()") end))
-	actions:add_child(button("Resume", function() self:_submit("bfme.match.unpause()") end))
+	actions:add_child(button("Pause", function() self:_execute_command("bfme.match.pause()") end))
+	actions:add_child(button("Resume", function() self:_execute_command("bfme.match.unpause()") end))
 	-- lane LUAAI-1: the computer players to the Lua skirmish AI (godot/dev/05_skirmish_ai.lua) and back
 	local ai_row = flow(rows)
-	ai_row:add_child(button("Computers: Lua AI", function() self:_submit("assert(luaai,'Reload scripts first'); return luaai.enableAll()") end))
-	ai_row:add_child(button("Computers: native AI", function() self:_submit("assert(luaai,'Reload scripts first'); luaai.disableAll()") end))
-	ai_row:add_child(button("Lua AI status", function() self:_submit("assert(luaai,'Reload scripts first'); return luaai.status()") end))
+	ai_row:add_child(button("Computers: Lua AI", function() self:_execute_command("assert(luaai,'Reload scripts first'); return luaai.enableAll()") end))
+	ai_row:add_child(button("Computers: native AI", function() self:_execute_command("assert(luaai,'Reload scripts first'); luaai.disableAll()") end))
+	ai_row:add_child(button("Lua AI status", function() self:_execute_command("assert(luaai,'Reload scripts first'); return luaai.status()") end))
 end
 
 function LuaConsole:_build_controller_options()
@@ -395,7 +400,7 @@ function LuaConsole:_build_controller_options()
 	row:add_child(radius)
 	row:add_child(button("Apply radius", function()
 		local value = math.floor(radius.value)
-		self:_submit(string.format("controller.config.selectionAssistRadius = %d", value))
+		self:_execute_command(string.format("controller.config.selectionAssistRadius = %d", value))
 		save("selection_assist_radius", value)
 	end))
 	local grid_row = flow(rows)
@@ -405,7 +410,7 @@ function LuaConsole:_build_controller_options()
 	grid_row:add_child(grid)
 	grid_row:add_child(button("Apply grid", function()
 		local value = math.floor(grid.value)
-		self:_submit(string.format("controller.config.placementGridSpacing = %d", value))
+		self:_execute_command(string.format("controller.config.placementGridSpacing = %d", value))
 		save("placement_grid_spacing", value)
 	end))
 	rows:add_child(label("Hold LT or Shift during placement to show the grid and snap position and rotation (45°).", MUTED, 12))
@@ -556,6 +561,12 @@ function LuaConsole:_submit(code)
 	self._history_index = #history
 	self._draft = ""
 	self._entry:clear()
+	self:_execute_command(code)
+end
+
+-- UI actions execute normally but never alter entered history or the draft.
+function LuaConsole:_execute_command(code)
+	if trim(code) == "" then return end
 	if trim(code) == "clear" then
 		self:_clear_visible()
 		return

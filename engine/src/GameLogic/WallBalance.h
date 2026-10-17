@@ -12,6 +12,7 @@ class ThingTemplate;
 struct WallBalance
 {
  bool enabled = false, intermediateHubs = true, shareArrows = false;
+ bool trebuchetWallTargets = false;
  bool startingWalls = false, requireEnclosed = false, gateGap = true;
  float enclosedIncome = 1, startingRadius = 450, startingSpacing = 300;
  std::map<std::string,std::string> startingHubs, startingGates;

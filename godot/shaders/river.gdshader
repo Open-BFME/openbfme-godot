@@ -32,6 +32,9 @@ uniform vec2 shroud_origin = vec2(0.0);
 uniform vec2 shroud_extent = vec2(1.0);
 uniform vec3 shroud_color = vec3(1.0);
 uniform bool shroud_enabled = false;
+// map browser: pixels outside this SAGE rect (min x, min y, max x, max y) are discarded; the default keeps everything
+uniform vec4 clip_rect = vec4(-1e20, -1e20, 1e20, 1e20);
+varying vec2 v_clip_xy;
 varying vec2 v_shroud_uv;
 
 void vertex() {
@@ -39,6 +42,7 @@ void vertex() {
 	v_noise_uv = world_xy * 0.0625 + TIME * uv_scroll_per_second;
 	vec3 shroud_world = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
 	v_shroud_uv = (vec2(shroud_world.x, -shroud_world.z) - shroud_origin) / shroud_extent;
+	v_clip_xy = vec2(shroud_world.x, -shroud_world.z);
 }
 
 // lane RENDER-4: the hand-over to Godot. output_gamma 1.0: the gamma-space value itself (the transparent pass composites in gamma space,
@@ -53,6 +57,9 @@ vec3 retail_output(vec3 c) {
 }
 
 void fragment() {
+	if (v_clip_xy.x < clip_rect.x || v_clip_xy.y < clip_rect.y || v_clip_xy.x > clip_rect.z || v_clip_xy.y > clip_rect.w) {
+		discard;
+	}
 	vec4 river = texture(river_tex, UV);
 	vec3 sparkle = texture(sparkle_tex, UV).rgb;
 	vec3 noise = texture(noise_tex, v_noise_uv).rgb;

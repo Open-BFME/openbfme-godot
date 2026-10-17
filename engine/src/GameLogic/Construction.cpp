@@ -369,9 +369,9 @@ Object *Construction::constructWithoutBuilder(GameLogic &logic, const ThingTempl
 		logic.destroyObject(obj);
 		throw std::runtime_error("building needs GettingBuiltBehavior and ActiveBody");
 	}
-	ConstructionSite::clearSiteForFoundation(logic, what, pos, angle);
 	Coord3D p = pos;
 	p.z = logic.getGroundHeight(p.x, p.y);
+	ConstructionSite::clearSiteForFoundation(logic, what, p, angle);
 	obj->setPosition(&p);
 	obj->setOrientation(angle);
 	if (auto ai = logic.aiWorld()) ai->addObjectToPathfindMap(*obj);

@@ -49,6 +49,7 @@ public:
 	// environment or the config file; remembering the pick is InstallSetup.remember's job once this succeeded).
 	Dictionary mount_retail_paths(const String &rotwk, const String &bfme2);
 
+	String content_signature() const;
 	bool is_mounted() const { return m_mounted; }
 	bool file_exists(const String &path) const;
 	PackedByteArray read_file(const String &path);

@@ -254,7 +254,21 @@ void MapTerrainBuilder::_bind_methods()
 {
 	ClassDB::bind_method(D_METHOD("build_map", "fs", "map_name", "options"), &MapTerrainBuilder::build_map, DEFVAL(Dictionary()));
 	ClassDB::bind_method(D_METHOD("get_report"), &MapTerrainBuilder::get_report);
+	ClassDB::bind_method(D_METHOD("preview_texture", "fs", "terrain_name"), &MapTerrainBuilder::preview_texture);
 	ClassDB::bind_method(D_METHOD("build_test_patch", "spec"), &MapTerrainBuilder::build_test_patch);
+}
+
+Dictionary MapTerrainBuilder::preview_texture(const Ref<RetailFileSystem> &fs, const String &terrain_name)
+{
+	Dictionary result;result["ok"]=false;
+	if(fs.is_null() || !fs->archive_fs()) {result["error"]="No mounted assets";return result;}
+	TerrainTypeIndex types;std::string error;
+	if(!TerrainTypes::load(*fs->archive_fs(),types,&error)) {result["error"]=toGodot(error);return result;}
+	const auto file=types.findTexture(toNative(terrain_name));
+	if(!file) {result["error"]="Unknown terrain texture";return result;}
+	Array errors;auto texture=loadTexture(*fs.ptr(),*file,errors);
+	if(texture.is_null()) {result["error"]="Could not load terrain texture";result["errors"]=errors;return result;}
+	result["ok"]=true;result["texture"]=texture;result["file"]=toGodot(*file);return result;
 }
 
 Ref<Texture2D> MapTerrainBuilder::loadTexture(RetailFileSystem &fs, const std::string &name, Array &errors, bool mipmaps)
@@ -518,6 +532,30 @@ Node3D *MapTerrainBuilder::build_map(const Ref<RetailFileSystem> &fsRef, const S
 			return fail(error);
 		}
 	}
+	if(options.has("editor_roads")) {
+		auto &objects=map.chunks.objects;
+		objects.erase(std::remove_if(objects.begin(),objects.end(),[](const MapObject &o){return o.getFlag(FLAG_ROAD_FLAGS);}),objects.end());
+		Array roads=options["editor_roads"];
+		for(int64_t i=0;i<roads.size();++i) {Dictionary d=roads[i];Array points=d["points"];for(int j=0;j<2;++j) {Array p=points[j];MapObject o;o.m_objectName=toNative(String(d["name"]));Array flags=d.get("flags",Array()),angles=d.get("angles",Array());o.m_flags=(flags.size()==2?int(flags[j]) & ~FLAG_ROAD_FLAGS:0) | (j?FLAG_ROAD_POINT2:FLAG_ROAD_POINT1);if(angles.size()==2)o.m_angle=double(angles[j]);o.m_location.x=double(p[0]);o.m_location.y=double(p[1]);o.m_location.z=0;objects.push_back(o);}}
+	}
+	// Editor overrides operate on a parsed copy; the installed retail archive is untouched.
+	if (options.has("editor_heights"))
+	{
+		if(options.has("editor_classes")) {
+			map.heightMap.m_textureClasses.clear();Array classes=options["editor_classes"];
+			for(int64_t i=0;i<classes.size();++i) {Dictionary d=classes[i];TXTextureClass c;c.name=toNative(String(d["name"]));c.firstTile=int(d["first"]);c.numTiles=int(d["count"]);c.width=int(d["width"]);map.heightMap.m_textureClasses.push_back(c);}
+			map.heightMap.m_numBitmapTiles=int(options["editor_tile_count"]);
+		}
+		PackedInt32Array heights=options["editor_heights"], tiles=options["editor_tiles"];
+		if (heights.size()==(int64_t)map.heightMap.m_data.size())
+			for (int64_t i=0;i<heights.size();++i) map.heightMap.m_data[i]=(uint16_t)heights[i];
+		if (tiles.size()==(int64_t)map.heightMap.m_tileNdxes.size())
+			for (int64_t i=0;i<tiles.size();++i) map.heightMap.m_tileNdxes[i]=(int16_t)tiles[i];
+		PackedInt32Array blend=options["editor_blends"], extra=options["editor_extra"], cliffs=options["editor_cliffs"];
+		for (int64_t i=0;i<blend.size() && i<(int64_t)map.heightMap.m_blendTileNdxes.size();++i) map.heightMap.m_blendTileNdxes[i]=blend[i];
+		for (int64_t i=0;i<extra.size() && i<(int64_t)map.heightMap.m_extraBlendTileNdxes.size();++i) map.heightMap.m_extraBlendTileNdxes[i]=extra[i];
+		for (int64_t i=0;i<cliffs.size() && i<(int64_t)map.heightMap.m_cliffInfoNdxes.size();++i) map.heightMap.m_cliffInfoNdxes[i]=cliffs[i];
+	}
 	timings["load_map"] = nowMs() - t0;
 	for (const std::string &id : map.stops)
 	{
@@ -604,6 +642,19 @@ Node3D *MapTerrainBuilder::build_map(const Ref<RetailFileSystem> &fsRef, const S
 	info["waypoints"] = (int64_t)terrain.waypoints().size();
 	info["blend_version"] = hm.m_blendTileVersion;
 	info["texture_classes"] = (int64_t)hm.m_textureClasses.size();
+	if(!hm.m_data.empty()){auto range=std::minmax_element(hm.m_data.begin(),hm.m_data.end());info["elevation_min"]=*range.first*MAP_HEIGHT_SCALE;info["elevation_max"]=*range.second*MAP_HEIGHT_SCALE;}
+	int roadPoints=0;for(const auto &o:map.chunks.objects)if(o.getFlag(FLAG_ROAD_POINT1))++roadPoints;info["road_segments"]=roadPoints;
+	// options["height_probes"] (PackedVector2Array, SAGE x/y): ground heights for callers that place things without a GameWorld (skirmish map browser)
+	if (options.has("height_probes"))
+	{
+		PackedVector2Array probes = options["height_probes"];
+		PackedFloat32Array heights;
+		for (const Vector2 &p : probes)
+		{
+			heights.push_back(terrain.getGroundHeight(p.x, p.y));
+		}
+		info["probe_heights"] = heights;
+	}
 	info["time_of_day"] = map.chunks.hasGlobalLighting ? map.chunks.lighting.timeOfDay : 0;
 	Array problems;
 	for (const std::string &p : logicProblems)

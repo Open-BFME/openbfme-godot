@@ -118,6 +118,7 @@ public:
 	// scripted camera moves for the viewers (the same View::lookAt / setHeightAboveGround the radar click and the wheel call)
 	void camera_look_at(const Vector2 &sage_xy);
 	void camera_set_height(float height_above_ground);
+	void camera_refresh_terrain();
 	void camera_pan(const Vector2 &amount);
 	int get_controller_primary_button(float selection_assist_radius = 0.0f) const;
 	bool controller_attack_move();
@@ -134,6 +135,7 @@ public:
 	// lane IDLE-1: { ok, picked (the id the HUD's pick answers at `pixel`, 0 for none), target ("hit" / "miss" / "not_drawn" / "unknown" / "gone": the pick ray
 	// against object `id`'s drawn model alone), target_t, selectable (HudObjects::isSelectable of `id`) } (the QA harness's failed-click verdict)
 	Dictionary pick_probe(const Vector2 &pixel, int64_t id) const;
+	int64_t editor_pick(const Vector2 &pixel) const;
 	// engine -> movie: calls `function` on the clip at `path` below the HUD movie's root ("" = the root) with string arguments; { ok, result, error }
 	Dictionary invoke_at(const String &path, const String &function, const PackedStringArray &args);
 	// the radar picture's square in window pixels (Rect2; size 0 before the movie shows it)

@@ -514,3 +514,25 @@ void AptSkirmish::pruneRuleGadgets(const std::set<const GameWindow *> &alive)
 		m_legendaryCombo = nullptr;
 	}
 }
+
+// Native map browser: reuse the same rule model and refresh path as the APT panel.
+bool AptSkirmish::setBrowserRule(int rule, int value)
+{
+ if (!m_setup) return false;
+ bool valid = false;
+ if (const auto *combo = MpGameRules::findCombo(m_setup->rulesMode(), rule))
+  for (int i = 0; i < combo->count; ++i) valid |= combo->choices[i].value == value;
+ valid |= InfiniteResources::isChoice(rule, value);
+ if (MpGameRules::findCheck(m_setup->rulesMode(), rule)) valid = value == 0 || value == 1;
+ if (!valid || !m_setup->setRule(rule, value)) return false;
+ ruleChanged(rule, false);
+ refreshRuleGadgets();
+ return true;
+}
+
+bool AptSkirmish::setBrowserLegendary(int value)
+{
+ if (!m_setup || !m_setup->setLegendaryHeroes(value)) return false;
+ refreshRuleGadgets();
+ return true;
+}

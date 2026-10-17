@@ -1258,10 +1258,12 @@ void InGameHudNode::_bind_methods()
 	ClassDB::bind_method(D_METHOD("set_view_options", "options"), &InGameHudNode::set_view_options); // lane OPTS-2
 	ClassDB::bind_method(D_METHOD("camera_look_at", "sage_xy"), &InGameHudNode::camera_look_at);
 	ClassDB::bind_method(D_METHOD("camera_set_height", "height_above_ground"), &InGameHudNode::camera_set_height);
+	ClassDB::bind_method(D_METHOD("camera_refresh_terrain"), &InGameHudNode::camera_refresh_terrain);
 	ClassDB::bind_method(D_METHOD("camera_pan", "amount"), &InGameHudNode::camera_pan);
 	ClassDB::bind_method(D_METHOD("pixel_to_world", "pixel"), &InGameHudNode::pixel_to_world);
 	ClassDB::bind_method(D_METHOD("world_to_pixel", "world_xy"), &InGameHudNode::world_to_pixel);
 	ClassDB::bind_method(D_METHOD("pick_probe", "pixel", "id"), &InGameHudNode::pick_probe);
+	ClassDB::bind_method(D_METHOD("editor_pick", "pixel"), &InGameHudNode::editor_pick);
 	ClassDB::bind_method(D_METHOD("find_button_window", "path"), &InGameHudNode::find_button_window);
 	ClassDB::bind_method(D_METHOD("get_radar_square"), &InGameHudNode::get_radar_square);
 	ClassDB::bind_method(D_METHOD("world_to_radar_pixel", "world_xy"), &InGameHudNode::world_to_radar_pixel);
@@ -3683,20 +3685,6 @@ void InGameHudNode::handleInput(const Ref<InputEvent> &event)
 		{
 			inject_mouse_button(idx, mb->is_pressed(), mb->get_position(), mb->is_double_click());
 		}
-		else if (idx >= 4 && idx <= 7 && OS::get_singleton()->get_name() == "macOS")
-		{
-			// Some macOS trackpads/drivers deliver scrolling as wheel events
-			// instead of PanGesture. Route both axes to the same camera pan;
-			// pinch remains the zoom gesture. Keep fractional scroll precision.
-			if (mb->is_pressed() && d->hud->input().ui().getInputEnabled())
-			{
-				const float amount = mb->get_factor();
-				if (std::isfinite(amount))
-					camera_pan(Vector2(idx == 6 ? amount : idx == 7 ? -amount : 0.0f,
-						idx == 4 ? amount : idx == 5 ? -amount : 0.0f) * -120.0f);
-			}
-			get_viewport()->set_input_as_handled();
-		}
 		else if ((idx == 4 || idx == 5) && mb->is_pressed())
 		{
 			d->hud->mouseWheel(idx == 4 ? 1 : -1, (int)mb->get_position().x, (int)mb->get_position().y);
@@ -3931,6 +3919,14 @@ std::vector<unsigned> InGameHudNode::selected_ids(const GameWorld *world) const
 	return out;
 }
 
+void InGameHudNode::camera_refresh_terrain()
+{
+	waitLogic(d.get());
+	if(!d->cam || !d->world || !d->world->hud_game()) return;
+	const auto &values=d->cam->mapValues();
+	const_cast<CameraHeightField &>(d->cam->heightField()).build(d->world->hud_game()->map().heightMap,values.heightSmoothness,values.groundMinHeight,values.groundMaxHeight);
+}
+
 Vector2 InGameHudNode::pixel_to_world(const Vector2 &pixel) const
 {
 	waitLogic(d.get());
@@ -3957,6 +3953,24 @@ Vector2 InGameHudNode::world_to_pixel(const Vector2 &w) const
 // (HudObjects::pickObject, the nearest drawn model on the ray) and the same ray against object `id` alone: a click whose ray meets the object's model while the
 // pick answers another object met that one nearer (the object is drawn behind it); a ray that misses the object's model aimed beside it.
 // Client state only: nothing reaches the simulation.
+int64_t InGameHudNode::editor_pick(const Vector2 &pixel) const
+{
+	waitLogic(d.get());
+	if(!d->hud || !d->world || !d->world->hud_game()) return 0;
+	const HudContext &ctx=d->hud->input().context();
+	Coord3D origin,dir;
+	if(!ctx.pickRay || !ctx.view.screenToRay({int(pixel.x),int(pixel.y)},origin,dir)) return 0;
+	float nearest=std::numeric_limits<float>::max();int64_t picked=0;
+	for(auto obj=d->world->hud_game()->logic().getFirstObject();obj;obj=obj->getNextObject())
+	{
+		if(obj->isDestroyed() || !obj->isInWorld()) continue;
+		float distance=0;
+		if(ctx.pickRay(*obj,origin,dir,&distance)==DrawablePick::Result::Hit && distance>=0 && distance<nearest)
+		{nearest=distance;picked=obj->getID();}
+	}
+	return picked;
+}
+
 Dictionary InGameHudNode::pick_probe(const Vector2 &pixel, int64_t id) const
 {
 	waitLogic(d.get());

@@ -629,6 +629,10 @@ std::vector<SkirmishComboEntry> SkirmishGameSetup::ruleComboEntries(const MpRule
 		}
 		out.push_back({ text, 0xFFFFFFFFu, choice.value });
 	}
+	if (combo.id == RULE_INITIAL_RESOURCES)
+	{
+		out.push_back({ u"Infinite", 0xFFFFFFFFu, InfiniteResources::kValue }); // OpenBFME (MpGameRules.h): 10,000,000
+	}
 	return out;
 }
 

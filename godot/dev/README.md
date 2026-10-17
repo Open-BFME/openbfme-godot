@@ -81,3 +81,51 @@ Use `neutralDecorations.enable(false)` to disable, or `.enable(true)` to restore
 The script applies the option again when a new match starts. Network games and
 replays are excluded. Reload scripts after installing; the native engine must also
 be rebuilt for the placement hook.
+
+The console's wall settings include **Connect walls to fortress trebuchet expansions**
+(`trebuchet_wall_targets` in `wall_balance.cfg`). Enable wall rebalance and this
+option before starting a match to let friendly trebuchet expansions receive wall
+spans. It does not add a Begin Wall command to the expansion.
+
+### Automatic base layout
+
+Run `planBase()` in a local skirmish to reserve four Men production sites with
+`GondorBuildingFoundation_Independant` plots and mark a terrain-following perimeter
+with `MenWallHubSmall` hubs. No connecting walls or production buildings are
+built. Sites use production footprints, spacing reservations, native terrain and
+collision checks, and a builder's reachability check. Ground pathfinding data identifies terrain and object barriers on a coarse grid.
+A weighted separator chooses closures around reserved base space, using natural
+barriers as free defense rather than marking their entire boundary. A forward opening is left
+for a future entrance. Markers spawn completed through a dedicated local planning operation, without
+construction behaviors or costs. Marker mutation tickets can
+be inspected with `bfme.mutations.getStatus(ticket)`.
+
+Example: `planBase({name='west-base', plots=8, radius=500, rotation=0})`.
+`plots` requests 1–32 sites (default: number of production templates, normally 4).
+Production templates repeat in order when more sites are requested. Blocked sites
+are reported as missing; increase the radius if the requested number cannot fit. Options include
+`player`, `center={x=...,y=...}`, `builder`, `clearance`, `siteRadius`, `production`
+(template-name list), `plot`, `hub` (supported planning-marker templates only), and `dryRun=true` (calculate/save without
+placing). Missing sites are reported, never forced into blocked terrain. Plans
+are saved as JSON through `bfme.layouts.save` and remain in `basePlans[name]`.
+Use `bfme.layouts.load(name)` to inspect a saved plan in another session.
+
+Base production plots use rectangular rows and corners around a central
+courtyard, with a clear forward lane. `rotation` rotates the plot layout. Native
+site searches can shift plots to accommodate terrain; perimeter hubs mark
+defensive closures between barriers. More plots expand the rectangular layout as needed.
+
+`defenseRadius` controls the barrier survey extent (default: protected base extent
+plus 640 units, normally capped at 1900). The 80-unit planning grid samples ground
+movement, including static object obstacles, with extra samples inside each cell.
+The planner reserves all proposed production sites and courtyard space before
+minimizing wall cost. It may choose a wider closure outside that space instead of
+an unusably tight choke. Proposed closures are stored in `basePlans[name].defenses`.
+Only hubs are placed; wall spans and gates remain unbuilt. This is a coarse tactical
+layout, so inspect the markers before connecting walls, especially near narrow
+terrain details or destructible scenery.
+
+Defensive threats include distant traversable ground inside the survey, even
+when the survey edge is blocked by cliffs or the map boundary. Set `hubSpacing`
+(80–400, default 120) to control marker density along closures. Short closures
+receive endpoint pairs when both sites are legal.

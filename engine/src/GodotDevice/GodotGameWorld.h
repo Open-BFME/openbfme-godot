@@ -137,6 +137,7 @@ public:
 	Dictionary get_object(int64_t id) const;
 	// destroys an object like any logic caller would (GameLogic::destroyObject): it is deleted at the end of the next logic frame's phase 5
 	bool destroy_object(int64_t id);
+	Dictionary map_editor_terrain(const Dictionary &operation);
 	// lane COMBAT-1: { ok, kills, damage_applications, bounty_paid, in_flight, projectiles_launched, projectiles_detonated, projectile_ground_hits, unported_nuggets, auto_acquire }
 	Dictionary get_combat_report() const;
 	// VIS-1: the shroud of the local player (cells, counts, settings), one point's cell status (0 clear, 1 fogged, 2 shrouded), an object's status
@@ -189,7 +190,7 @@ public:
 
 	// lane PLAY-1: { model, state, hidden: [sub object names], shown: [...], unread: [script lines] } of the template's BUILD_PLACEMENT_CURSOR look (the ghost);
 	// lane PLAY-3: a castle also gives castle = true, base, castle_error and pieces: [{ template, model, hidden, x, y, z, angle }] (PlacementGhost::castleLookOf)
-	Dictionary get_placement_ghost(const String &template_name) const;
+	Dictionary get_placement_ghost(const String &template_name, const String &preview_side = String()) const;
 
 	// ---- lane PROD-1: production by player command ----
 	// makes an object of `template_name` for the player with index `player` (PlayerList order) at map position (x, y), ground height from the terrain;

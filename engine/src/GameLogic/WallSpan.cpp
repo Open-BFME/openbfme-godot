@@ -1,3 +1,4 @@
+#include "Common/AsciiString.h"
 // OpenBFME. GPL-3.0.
 // See GameLogic/WallSpan.h for the sources of every rule.
 
@@ -240,7 +241,8 @@ bool WallSpan::plan(GameLogic &logic, Object &hub, const Coord3D &start, const C
 		float best = 0.0f;
 		for (Object *o = logic.getFirstObject(); o; o = o->getNextObject())
 		{
-			if (o == &hub || o->isDestroyed() || !o->isInWorld() || o->getControllingPlayer() != owner || !o->isKindOfName("WALL_HUB"))
+			if (o == &hub || o->isDestroyed() || !o->isInWorld() || o->getControllingPlayer() != owner || !(o->isKindOfName("WALL_HUB") || (logic.settings().wallBalance.enabled && logic.settings().wallBalance.trebuchetWallTargets
+				&& (AsciiStringUtil::lowered(o->getTemplate()->getName()).find("trebuchetexpansion") != std::string::npos || AsciiStringUtil::lowered(o->getTemplate()->getName()).find("trebuchetsideexpansion") != std::string::npos))))
 			{
 				continue;
 			}
@@ -291,8 +293,15 @@ bool WallSpan::plan(GameLogic &logic, Object &hub, const Coord3D &start, const C
 	pos.y = SimMath::fstpDword(SimMath::pc24AddW(SimMath::pc24MulW((double)done, (double)dir.y), (double)pos.y));
 	const std::uint32_t money = owner ? owner->getMoney()->countMoney() : 0u;
 	float remaining = SimMath::subf32((float)SimMath::length3d(vx, vy, 0.0f), capHalf); // -0x20
-	auto legal = [&](const Coord3D &p, const ThingTemplate &tt) {
-		int code = (int)BuildPlacement::isLocationLegalToBuild(logic, p, tt, angle, 0x55, &hub, nullptr);
+	const bool trebuchetEnd = endHub && !endHub->isKindOfName("WALL_HUB");
+	if (trebuchetEnd) {
+		const ThingTemplate *segment=wh->defaultSegmentTemplate();
+		if(segment) remaining=SimMath::addf32(remaining,SimMath::mulf32(2.0f,SimMath::subf32(halfExtentY(*segment),1.0f)));
+	}
+	auto legal = [&](const Coord3D &p, const ThingTemplate &tt, bool ignoreCollision=false) {
+		int code = (int)BuildPlacement::isLocationLegalToBuild(logic, p, tt, angle, ignoreCollision ? (0x55 & ~LLF_NO_OBJECT_OVERLAP) : 0x55, &hub, nullptr);
+		if(trebuchetEnd && !ignoreCollision && code==LBC_OBJECTS_IN_THE_WAY)
+			code=(int)BuildPlacement::isLocationLegalToBuild(logic,p,tt,angle,0x55,endHub,owner);
 		if (!centres.empty())
 		{
 			bool near = false;
@@ -328,7 +337,8 @@ bool WallSpan::plan(GameLogic &logic, Object &hub, const Coord3D &start, const C
 			t.pos = pos;
 			t.angle = angle;
 			t.tmpl = tt;
-			t.code = legal(pos, *tt);
+			const bool finalTrebuchetSegment=trebuchetEnd && remaining<=SimMath::addf32(done,SimMath::mulf32(half,2.0f));
+			t.code = legal(pos, *tt, finalTrebuchetSegment);
 			// A wall may terminate against terrain, but never use this exception to
 			// tunnel through another object or evade buildout/shroud restrictions.
 			const int terrainCode = BuildPlacement::isLocationLegalToBuild(logic, pos, *tt, angle,

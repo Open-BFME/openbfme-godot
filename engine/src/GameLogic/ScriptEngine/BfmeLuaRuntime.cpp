@@ -277,6 +277,7 @@ local methods={
    local id=playerId(p)
    for _,s in ipairs(query('startPositions')) do if s.playerId==id then return {x=s.x,y=s.y,z=s.z} end end
   end,
+  getDefenseGrid=function(p,center,radius,step) return query('defenseGrid',where(center),radius or 1000,step or 80) end,
   -- options: {clearance = gap to every structure, angle = facing in radians, avoid = {{x=,y=,r=}, ...} circles kept free}
   findBuildSite=function(p,building,near,radius,builder,options)
    building=templateName(building,'buildingTypes','building template')
@@ -416,6 +417,11 @@ library('match',{
  pause=function() return queue('match','',':pause',nil) end,
  unpause=function() return queue('match','',':unpause',nil) end,
  -- 0 stops time, 1 normal, 100 one hundred times as fast; pause is independent.
+ placePlanningMarker=function(template,position,player)
+  if type(template)~='string' or type(position)~='table' then error('expected marker template and position',2) end
+  numeric(position.x,-1e7,1e7,false);numeric(position.y,-1e7,1e7,false);numeric(player,0,19,true)
+  return queue('match','',':planningMarker',template,position.x,position.y,player,position.rotation or 0)
+ end,
  setClearNeutralDecorations=function(enabled)
   if type(enabled)~='boolean' then error('expected enabled boolean',2) end
   return queue('match','',':clearNeutralDecorations',enabled)
@@ -618,7 +624,7 @@ struct BfmeLuaRuntime::Impl
 			const std::string name = luaL_checkstring(L, 1);
 			std::vector<V> args;
 			for (int i = 2; i <= lua_gettop(L); ++i)
-				args.push_back(argument(L, i));
+				args.push_back(argument(L, i, 0, name == "saveBuildingLayout" ? 8 : 4));
 			push(L, s.host.query(name, args));
 			return 1;
 		}

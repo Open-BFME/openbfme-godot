@@ -12,6 +12,8 @@
 #include <godot_cpp/classes/config_file.hpp>
 
 #include "GameClient/FrameCensus.h"
+#include "GameClient/TerrainRoads.h"
+#include <godot_cpp/classes/texture2d.hpp>
 #include "GameClient/MapWeather.h"
 #include "GodotDevice/GodotW3DModelBuilder.h"
 #include <godot_cpp/classes/cpu_particles3d.hpp>
@@ -284,9 +286,10 @@ void GameWorld::_bind_methods()
 	ClassDB::bind_method(D_METHOD("get_player_objects", "player"), &GameWorld::get_player_objects);
 	ClassDB::bind_method(D_METHOD("get_logic_trees", "x", "y", "radius"), &GameWorld::get_logic_trees); // lane SPELL-3
 	ClassDB::bind_method(D_METHOD("destroy_object", "id"), &GameWorld::destroy_object);
+	ClassDB::bind_method(D_METHOD("map_editor_terrain", "operation"), &GameWorld::map_editor_terrain);
 	ClassDB::bind_method(D_METHOD("find_object_by_template", "template_name"), &GameWorld::find_object_by_template);
 	ClassDB::bind_method(D_METHOD("get_template_model", "template_name"), &GameWorld::get_template_model);
-	ClassDB::bind_method(D_METHOD("get_placement_ghost", "template_name"), &GameWorld::get_placement_ghost);
+	ClassDB::bind_method(D_METHOD("get_placement_ghost", "template_name", "preview_side"), &GameWorld::get_placement_ghost, DEFVAL(String()));
 	ClassDB::bind_method(D_METHOD("create_object", "template_name", "player", "x", "y", "angle"), &GameWorld::create_object, DEFVAL(0.0));
 	ClassDB::bind_method(D_METHOD("get_ground_height", "x", "y"), &GameWorld::get_ground_height);
 	ClassDB::bind_method(D_METHOD("queue_unit", "player", "producer", "template_name", "secondary"), &GameWorld::queue_unit, DEFVAL(false));
@@ -1102,6 +1105,7 @@ Dictionary GameWorld::load_internal(const LiveGame::Options &loIn, const String 
 	};
 	auto &walls = lo.wallBalance;
 	walls.enabled = setting("enabled",false);
+	walls.trebuchetWallTargets = setting("trebuchet_wall_targets",false);
 	walls.intermediateHubs = setting("intermediate_hubs",false);
 	walls.shareArrows = setting("share_arrows",true);
 	walls.startingWalls = setting("starting_walls",false);
@@ -2724,6 +2728,7 @@ Array GameWorld::get_projectiles() const
 		d["segments"] = (int64_t)b->segments();
 		d["in_flight"] = !b->flightPath().empty();
 		d["owner"] = o->getControllingPlayer() ? toGodot(o->getControllingPlayer()->getPlayerName()) : String();
+	d["player_id"] = o->getControllingPlayer() ? o->getControllingPlayer()->getPlayerIndex() : 0;
 		out.push_back(d);
 	}
 	return out;
@@ -2747,6 +2752,7 @@ Dictionary GameWorld::get_object(int64_t id) const
 	d["template"] = toGodot(o->getTemplate()->getName());
 	d["team"] = o->getTeam() ? toGodot(o->getTeam()->getName()) : String();
 	d["owner"] = o->getControllingPlayer() ? toGodot(o->getControllingPlayer()->getPlayerName()) : String();
+	d["player_id"] = o->getControllingPlayer() ? o->getControllingPlayer()->getPlayerIndex() : 0;
 	const Coord3D &p = *o->getPosition();
 	d["x"] = p.x;
 	d["y"] = p.y;
@@ -2921,7 +2927,7 @@ int64_t GameWorld::find_object_by_template(const String &template_name) const
 }
 
 // lane PLAY-1: the building placement ghost's look (GameClient/PlacementGhost.h, stop S-3302)
-Dictionary GameWorld::get_placement_ghost(const String &template_name) const
+Dictionary GameWorld::get_placement_ghost(const String &template_name, const String &preview_side) const
 {
 	Dictionary out;
 	out["model"] = String();
@@ -2961,9 +2967,9 @@ Dictionary GameWorld::get_placement_ghost(const String &template_name) const
 		m_ghostCastles.reset(new CastleTemplateStore());
 		m_ghostCastles->setLoader(CastleTemplateStore::fileSystemLoader(*m_fs->archive_fs()));
 	}
-	if (m_ghostCastles && local)
+	if (m_ghostCastles && (local || !preview_side.is_empty()))
 	{
-		const PlacementGhost::CastleLook castle = PlacementGhost::castleLookOf(*tt, local->getSide(), *m_ghostCastles,
+		const PlacementGhost::CastleLook castle = PlacementGhost::castleLookOf(*tt, preview_side.is_empty() ? local->getSide() : toNative(preview_side), *m_ghostCastles,
 			[this](const std::string &name) { return m_world->things().findTemplate(name); });
 		out["castle"] = castle.castle;
 		out["base"] = toGodot(castle.base);
@@ -3033,6 +3039,170 @@ String GameWorld::get_template_model(const String &template_name) const
 		}
 	}
 	return String();
+}
+
+Dictionary GameWorld::map_editor_terrain(const Dictionary &operation)
+{
+	const auto worldContext=m_world ? m_world->enterContext() : nullptr;
+	Dictionary result; result["ok"]=false;
+	if (!m_game) { result["error"]="No active map"; return result; }
+	auto &logic=m_game->logic(); // hold the simulation before editing shared terrain
+	const auto status=bfme_snapshot();
+	if(status.networkGame || status.replay) { result["error"]="Editor requires a local non-replay match";return result; }
+	if(operation.has("owners")) {
+		if(!m_paused) {result["error"]="Pause before editing";return result;}
+		Array changes=operation["owners"],undo;
+		for(int64_t i=0;i<changes.size();++i) {Dictionary d=changes[i];auto obj=logic.findObjectByID(int64_t(d.get("id",-1)));auto player=logic.players().getNthPlayer(int(d.get("owner",-1)));
+			if(!obj || obj->isDestroyed() || !player || !player->getDefaultTeam()) {result["error"]="Invalid object or owner slot";return result;}}
+		for(int64_t i=0;i<changes.size();++i) {Dictionary d=changes[i];auto obj=logic.findObjectByID(int64_t(d["id"]));Dictionary previous;previous["id"]=d["id"];previous["owner"]=obj->getControllingPlayer()?obj->getControllingPlayer()->getPlayerIndex():0;undo.push_back(previous);obj->setTeam(logic.players().getNthPlayer(int(d["owner"]))->getDefaultTeam());}
+		m_game->refreshClient(0,1);refresh_views(0);if(auto dyn=instancerOf(m_dynamicId))dyn->update_now();result["ok"]=true;result["undo_owners"]=undo;return result;
+	}
+	if(bool(operation.get("sync",false)))
+	{
+		if(!m_paused) {result["error"]="Pause before editing";return result;}
+		logic.processDestroyList();m_game->refreshClient(0,1);refresh_views(0);if(auto dyn=instancerOf(m_dynamicId)) dyn->update_now();result["ok"]=true;return result;
+	}
+	std::vector<MapObject> originalObjects;
+	if(operation.has("roads")) originalObjects=m_game->map().chunks.objects;
+	auto &hm=const_cast<WorldHeightMap &>(m_game->map().heightMap);
+	Array textures;
+	for (const auto &t:hm.m_textureClasses) { Dictionary d; d["name"]=toGodot(t.name); d["tile"]=t.firstTile*4; textures.push_back(d); }
+	result["textures"]=textures; result["map"]=toGodot(m_game->map().sourceName);
+	result["ok"]=true;
+	Array roads;
+	const auto &objects=m_game->map().chunks.objects;
+	for(size_t i=0;i+1<objects.size();++i) if(objects[i].getFlag(FLAG_ROAD_POINT1) && objects[i+1].getFlag(FLAG_ROAD_POINT2)) {
+		Dictionary d;d["name"]=toGodot(objects[i].m_objectName);Array points;
+		for(size_t j=i;j<=i+1;++j) {Array p;p.push_back(objects[j].m_location.x);p.push_back(objects[j].m_location.y);points.push_back(p);}d["points"]=points;Array flags,angles;for(size_t j=i;j<=i+1;++j) {flags.push_back(objects[j].m_flags);angles.push_back(objects[j].m_angle);}d["flags"]=flags;d["angles"]=angles;roads.push_back(d);++i;
+	}
+	result["roads"]=roads;
+	if(operation.is_empty()) {
+		RoadTypeIndex types;std::string error;Array catalog;
+		if(TerrainRoads::load(*m_fs->archive_fs(),types,&error)) for(const auto &item:types.byName) if(!item.second.isBridge) {Dictionary d;d["name"]=toGodot(item.second.name);d["texture"]=toGodot(item.second.texture);catalog.push_back(d);}
+		result["road_types"]=catalog;
+	}
+	if(operation.has("sample")) {
+		Vector2 p=operation["sample"];if(!std::isfinite(p.x) || !std::isfinite(p.y) || std::abs(p.x)>1e7 || std::abs(p.y)>1e7) {result["ok"]=false;return result;}
+		int x=int(std::floor(p.x/10))+hm.m_borderSize,y=int(std::floor(p.y/10))+hm.m_borderSize;
+		if(!std::isfinite(p.x) || !std::isfinite(p.y) || x<0 || y<0 || x>=hm.m_width || y>=hm.m_height) {result["ok"]=false;return result;}
+		int i=y*hm.m_width+x;
+		if(i>=(int)hm.m_tileNdxes.size()) {result["ok"]=false;return result;}
+		int tile=hm.m_tileNdxes[i]/4;result["ok"]=false;
+		for(const auto &c:hm.m_textureClasses) if(tile>=c.firstTile && tile<c.firstTile+c.numTiles) {result["texture"]=toGodot(c.name);result["tile"]=hm.m_tileNdxes[i];result["texture_cells"]=c.width*2;result["ok"]=true;break;}
+		return result;
+	}
+	if (operation.is_empty()) return result;
+	if (!m_paused) { result["ok"]=false; result["error"]="Pause the simulation before editing terrain"; return result; }
+	// Register a catalog texture lazily; saved commands use its stable name, never a map-specific tile ID.
+	if(operation.has("texture"))
+	{
+		String name=operation["texture"];int tile=-1;
+		for(const auto &c:hm.m_textureClasses) if(toGodot(c.name).nocasecmp_to(name)==0) tile=c.firstTile*4;
+		if(tile<0) {
+			Ref<MapTerrainBuilder> loader;loader.instantiate();Dictionary preview=loader->preview_texture(m_fs,name);
+			if(!bool(preview.get("ok",false))) {result["ok"]=false;result["error"]="Cannot load selected terrain texture";return result;}
+			Ref<Texture2D> image=preview["texture"];int width=std::min(16,std::min(image->get_width(),image->get_height())/64);
+			if(width<1 || (hm.m_numBitmapTiles+width*width)*4>32767) {result["ok"]=false;result["error"]="Terrain tile capacity exceeded";return result;}
+			TXTextureClass c;c.name=toNative(name);c.firstTile=hm.m_numBitmapTiles;c.width=width;c.numTiles=width*width;
+			tile=c.firstTile*4;hm.m_numBitmapTiles+=c.numTiles;hm.m_textureClasses.push_back(c);
+		}
+		Dictionary command=operation.duplicate();command.erase("texture");command["tile"]=tile;
+		return map_editor_terrain(command);
+	}
+	if(operation.has("roads")) {
+		Array replacement=operation["roads"];RoadTypeIndex types;std::string error;
+		if(!TerrainRoads::load(*m_fs->archive_fs(),types,&error)) {result["ok"]=false;result["error"]=toGodot(error);return result;}
+		std::vector<MapObject> additions;
+		for(int64_t i=0;i<replacement.size();++i) {
+			Dictionary d=replacement[i];String name=d.get("name",String());Array points=d.get("points",Array());
+			if(!types.find(toNative(name)) || points.size()!=2) {result["ok"]=false;result["error"]="Invalid road segment";return result;}
+			for(int j=0;j<2;++j) {Array p=points[j];if(p.size()!=2 || !std::isfinite(double(p[0])) || !std::isfinite(double(p[1])) || std::abs(double(p[0]))>1e7 || std::abs(double(p[1]))>1e7) {result["ok"]=false;result["error"]="Invalid road point";return result;}
+				MapObject o;o.m_objectName=toNative(name);Array flags=d.get("flags",Array()),angles=d.get("angles",Array());o.m_flags=(flags.size()==2?int(flags[j]) & ~FLAG_ROAD_FLAGS:0) | (j?FLAG_ROAD_POINT2:FLAG_ROAD_POINT1);if(angles.size()==2)o.m_angle=double(angles[j]);o.m_location.x=double(p[0]);o.m_location.y=double(p[1]);o.m_location.z=logic.getGroundHeight(o.m_location.x,o.m_location.y);additions.push_back(o);}
+		}
+		auto &edited=const_cast<LoadedMap &>(m_game->map()).chunks.objects;
+		edited.erase(std::remove_if(edited.begin(),edited.end(),[](const MapObject &o){return o.getFlag(FLAG_ROAD_FLAGS);}),edited.end());
+		edited.insert(edited.end(),additions.begin(),additions.end());
+	}
+	std::vector<std::pair<::Object *,float>> grounded;
+	for(auto obj=logic.getFirstObject();obj;obj=obj->getNextObject())
+		if(!obj->isDestroyed() && obj->isInWorld() && std::abs(obj->getPosition()->z-logic.getGroundHeight(obj->getPosition()->x,obj->getPosition()->y))<2.0f)
+			grounded.emplace_back(obj,obj->getPosition()->z);
+	Array undo;
+	auto save=[&](int i) {
+		Dictionary d; d["index"]=i; d["height"]=hm.m_data[i];
+		if (i<(int)hm.m_tileNdxes.size()) d["tile"]=hm.m_tileNdxes[i];
+		if (i<(int)hm.m_blendTileNdxes.size()) d["blend"]=hm.m_blendTileNdxes[i];
+		if (i<(int)hm.m_extraBlendTileNdxes.size()) d["extra"]=hm.m_extraBlendTileNdxes[i];
+		if (i<(int)hm.m_cliffInfoNdxes.size()) d["cliff"]=hm.m_cliffInfoNdxes[i];
+		undo.push_back(d);
+	};
+	if (operation.has("patch"))
+	{
+		Array patch=operation["patch"];
+		for(int64_t j=0;j<patch.size();++j) { Dictionary d=patch[j]; int i=d.get("index",-1); if(i<0 || i>=(int)hm.m_data.size()) continue; save(i);
+			hm.m_data[i]=(uint16_t)std::clamp(int(d.get("height",hm.m_data[i])),0,65535);
+			if(d.has("tile") && i<(int)hm.m_tileNdxes.size()) hm.m_tileNdxes[i]=int(d["tile"]);
+			if(d.has("blend") && i<(int)hm.m_blendTileNdxes.size()) hm.m_blendTileNdxes[i]=int(d["blend"]);
+			if(d.has("extra") && i<(int)hm.m_extraBlendTileNdxes.size()) hm.m_extraBlendTileNdxes[i]=int(d["extra"]);
+			if(d.has("cliff") && i<(int)hm.m_cliffInfoNdxes.size()) hm.m_cliffInfoNdxes[i]=int(d["cliff"]);
+		}
+	}
+	else
+	{
+		Array points=operation.get("points",Array());
+		const double radius=std::clamp(double(operation.get("radius",40.0)),10.0,500.0);
+		const double amount=std::clamp(double(operation.get("amount",10.0)),-200.0,200.0);
+		const int tile=operation.get("tile",-1); bool validTile=tile<0;int paintWidth=1;
+		for(const auto &t:hm.m_textureClasses) if(tile==t.firstTile*4) {validTile=true;paintWidth=std::max(1,t.width);}
+		if(!validTile) {result["ok"]=false; result["error"]="Unknown terrain texture"; return result;}
+		const bool square=operation.get("square",false); const String mode=operation.get("mode",String("raise"));
+		std::set<int> changed;
+		Array skip=operation.get("skip",Array());
+		for(int64_t j=0;j<skip.size();++j) changed.insert(int(skip[j]));
+		for(int64_t p=0;p<points.size();++p)
+		{
+			Vector2 point=points[p];
+			if(!std::isfinite(point.x) || !std::isfinite(point.y) || std::abs(point.x)>1e7 || std::abs(point.y)>1e7) continue;
+			const double angle=double(operation.get("grid_angle",0.0));
+			int cx=int(point.x/10)+hm.m_borderSize, cy=int(point.y/10)+hm.m_borderSize, r=int(radius*(square?1.415:1.0)/10)+1;
+			for(int y=std::max(0,cy-r);y<std::min(hm.m_height,cy+r+1);++y) for(int x=std::max(0,cx-r);x<std::min(hm.m_width,cx+r+1);++x)
+			{
+				double dx=(x-hm.m_borderSize)*10-point.x,dy=(y-hm.m_borderSize)*10-point.y;
+				const double rx=dx*std::cos(angle)+dy*std::sin(angle),ry=-dx*std::sin(angle)+dy*std::cos(angle);
+				if(square ? std::max(std::abs(rx),std::abs(ry))>radius : dx*dx+dy*dy>radius*radius) continue;
+				int i=y*hm.m_width+x; if(!changed.insert(i).second) continue; save(i);
+				if(mode=="paint" && tile>=0 && i<(int)hm.m_tileNdxes.size()) {// A 64px source tile supplies four 32px terrain cells. Anchor the
+					// complete class pattern to map coordinates so separate strokes join.
+					const int period=paintWidth*2;
+					const int px=((x-hm.m_borderSize)%period+period)%period,py=((y-hm.m_borderSize)%period+period)%period;
+					hm.m_tileNdxes[i]=tile+4*((px/2)+(py/2)*paintWidth)+(px&1)+2*(py&1); hm.m_blendTileNdxes[i]=0;hm.m_extraBlendTileNdxes[i]=0;hm.m_cliffInfoNdxes[i]=0;}
+				else if(mode=="flatten") hm.m_data[i]=(uint16_t)std::clamp(int(double(operation.get("height",0.0))*256.0/10.0),0,65535);
+				else hm.m_data[i]=(uint16_t)std::clamp(int(hm.m_data[i]+amount*256.0/10.0),0,65535);
+			}
+		}
+	}
+	if(undo.is_empty() && !operation.has("roads")) {result["undo"]=undo;result["changed"]=0;return result;}
+	Dictionary options; options["markers"]=false; options["fog"]=false;
+	auto packed=[](const auto &values) { PackedInt32Array out; out.resize(values.size()); for(size_t i=0;i<values.size();++i) out.set(i,values[i]); return out; };
+	Array classes;for(const auto &c:hm.m_textureClasses) {Dictionary d;d["name"]=toGodot(c.name);d["first"]=c.firstTile;d["count"]=c.numTiles;d["width"]=c.width;classes.push_back(d);}
+	options["editor_roads"]=operation.get("roads",roads);
+	options["editor_classes"]=classes;options["editor_tile_count"]=hm.m_numBitmapTiles;
+	options["editor_heights"]=packed(hm.m_data);options["editor_tiles"]=packed(hm.m_tileNdxes);
+	options["editor_blends"]=packed(hm.m_blendTileNdxes);options["editor_extra"]=packed(hm.m_extraBlendTileNdxes);options["editor_cliffs"]=packed(hm.m_cliffInfoNdxes);
+	String map=toGodot(m_game->map().sourceName).replace("\\","/").get_file().get_basename();
+	Ref<MapTerrainBuilder> builder;builder.instantiate(); Node3D *terrain=builder->build_map(m_fs,map,options);
+	if(!terrain) {
+		if(operation.has("roads")) const_cast<LoadedMap &>(m_game->map()).chunks.objects=originalObjects;
+		for(int j=undo.size()-1;j>=0;--j) {Dictionary d=undo[j];int i=d["index"];hm.m_data[i]=int(d["height"]);if(d.has("tile"))hm.m_tileNdxes[i]=int(d["tile"]);if(d.has("blend"))hm.m_blendTileNdxes[i]=int(d["blend"]);if(d.has("extra"))hm.m_extraBlendTileNdxes[i]=int(d["extra"]);if(d.has("cliff"))hm.m_cliffInfoNdxes[i]=int(d["cliff"]);}
+		result["ok"]=false;result["error"]="Terrain rebuild failed; edit reverted";return result;
+	}
+	if(auto old=get_node_or_null(NodePath("Terrain"))) {remove_child(old);old->queue_free();}
+	terrain->set_name("Terrain");add_child(terrain);m_shroudVersionShown=~0ull;
+	// Ground-bound objects follow the edited surface.
+	for(const auto &item:grounded) { auto obj=item.first;Coord3D p=*obj->getPosition();p.z=logic.getGroundHeight(p.x,p.y);obj->setPosition(&p); }
+	if(auto ai=logic.aiWorld()) if(auto source=ai->pathfinder().terrainView()) ai->newMap(*source);
+	m_game->refreshClient(0,1);refresh_views(0);
+	result["undo"]=undo;result["changed"]=undo.size();if(operation.has("roads"))result["undo_roads"]=roads;return result;
 }
 
 int64_t GameWorld::create_object(const String &template_name, int64_t player, double x, double y, double angle)
@@ -5217,6 +5387,7 @@ Dictionary GameWorld::get_shroud_report() const
 	d["shrouded"] = shrouded;
 	d["hidden_objects"] = hidden;
 	d["use_shroud"] = m_game->visionSettings().useShroud;
+	d["displayed"] = m_shroudDrawn;
 	d["pending_unlooks"] = (int64_t)sm.pendingUnlooks();
 	d["looks"] = (int64_t)sm.stats().looks;
 	return d;
