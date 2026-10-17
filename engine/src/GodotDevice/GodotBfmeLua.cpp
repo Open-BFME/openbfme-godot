@@ -59,6 +59,16 @@ Table definition(const ThingTemplate &tt)
 			{"visionRange", field(tt, "VisionRange")},
 			{"shroudClearingRange", field(tt, "ShroudClearingRange")}};
 }
+// Companion API: use the same body flag and contained-object propagation as
+// ScriptActionsUnits.cpp affectObjectPanelFlag("Indestructible", ...).
+void setInvulnerable(Object &obj, bool enabled, int depth = 0)
+{
+	if (auto body = obj.getBodyModule()) body->setIndestructible(enabled);
+	auto contain = obj.getContain();
+	if (!contain || depth > 16 || !contain->getContainedItemsList()) return;
+	for (auto member : *contain->getContainedItemsList())
+		if (member) setInvulnerable(*member, enabled, depth + 1);
+}
 bool kind(const ObjectTemplateInfo &info, int bit)
 {
 	return (info.kindOf[bit / 32] & (1u << (bit % 32))) != 0;
@@ -166,6 +176,7 @@ BfmeLuaRuntime::Snapshot GameWorld::bfme_snapshot()
 		{
 			r["health"] = double(body->getHealth());
 			r["maxHealth"] = double(body->getMaxHealth());
+			r["invulnerable"] = body->isIndestructible();
 		}
 		if (auto xp = obj->getExperienceTracker())
 			r["level"] = xp->getRank();
@@ -412,6 +423,14 @@ std::string GameWorld::bfme_apply(const BfmeLuaRuntime::Mutation &m)
 		auto obj = logic.findObjectByID(numberId(m.id));
 		if (!obj || obj->isDestroyed())
 			return "expired object";
+		if (m.field == ":setInvulnerable")
+		{
+			auto enabled = std::get_if<bool>(&m.value.data);
+			if (!enabled) return "expected boolean";
+			if (!obj->getBodyModule()) return "object has no body";
+			setInvulnerable(*obj, *enabled);
+			return {};
+		}
 		if (m.field == ":giveUpgrade")
 		{
 			auto name = std::get_if<std::string>(&m.value.data);

@@ -5,6 +5,7 @@
 
 #include <chrono>
 #include <map>
+#include <stdexcept>
 #include <thread>
 
 namespace
@@ -502,4 +503,28 @@ TEST_CASE("bfme Lua: layout restoration retains plot ID, completion callback and
 	CHECK(std::get<std::string>(f.applied[1].value.data) == "Upgrade_Test");
 	CHECK(f.applied[2].field == ":linkWallPiece");
 	CHECK(std::get<double>(f.applied[2].value.data) == 777);
+}
+
+TEST_CASE("bfme Lua: invulnerability is a validated queued unit and building action")
+{
+	BfmeFixture f;
+	f.snapshot.collections["buildingInstances"]["777"] = {{"id", 777}};
+	CHECK(f.run("t=bfme.unitInstances[1234]:setInvulnerable(true);return bfme.mutations.getStatus(t)") == "pending\n");
+	CHECK(f.applied.empty());
+	f.vm->flush();
+	REQUIRE(f.applied.size() == 1);
+	CHECK(f.applied.back().collection == "unitInstances");
+	CHECK(f.applied.back().field == ":setInvulnerable");
+	CHECK(std::get<bool>(f.applied.back().value.data));
+	CHECK(f.run("return bfme.mutations.getStatus(t)") == "applied\n");
+	f.run("bfme.buildingInstances[777]:setInvulnerable(false)");
+	f.vm->flush();
+	CHECK(f.applied.back().collection == "buildingInstances");
+	CHECK_FALSE(std::get<bool>(f.applied.back().value.data));
+	for (const char *value : {"nil", "1", "'true'", "{}"})
+		CHECK_FALSE(f.vm->execute(std::string("bfme.unitInstances[1234]:setInvulnerable(") + value + ")").ok);
+	CHECK_FALSE(f.vm->hasPending());
+	f.run("u=bfme.unitInstances[1234]");
+	f.snapshot.collections["unitInstances"].clear();
+	CHECK_FALSE(f.vm->execute("u:setInvulnerable(true)").ok);
 }

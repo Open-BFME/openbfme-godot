@@ -185,6 +185,11 @@ local function construct(building, position, builderId, playerId, speed, onCompl
  if position.plotId~=nil then numeric(position.plotId,1,2147483647,true) end
  return queue('match','',':construct',building,position.x,position.y,builderId,playerId,speed,angle,callback,position.plotId or 0)
 end
+local function setInvulnerable(o,enabled)
+ local _,h=record(o)
+ if type(enabled)~='boolean' then error('expected boolean',2) end
+ return queue(h.kind,h.id,':setInvulnerable',enabled)
+end
 local function action(name) return function(o) local _,h=record(o); return queue(h.kind,h.id,':'..name,nil) end end
 -- Orders (lane LUAAI-1): the player commands the skirmish AI and a human give, issued for the objects' owner and run in the next logic frame
 local function group(objects)
@@ -302,7 +307,7 @@ local methods={
   end,
  },
  unitInstances={
-  kill=action('kill'), destroy=action('destroy'),
+  kill=action('kill'), destroy=action('destroy'), setInvulnerable=setInvulnerable,
   construct=function(u,building,position,speed,onComplete)
    local r,h=record(u); if r.playerId==nil then error('builder has no owning player',2) end
    return construct(building,position,tonumber(h.id),r.playerId,speed,onComplete)
@@ -310,7 +315,7 @@ local methods={
   getBuildableStructures=objectQuery('buildable'),
  },
  buildingInstances={
-  kill=action('kill'), destroy=action('destroy'),
+  kill=action('kill'), destroy=action('destroy'), setInvulnerable=setInvulnerable,
   trainUnit=function(b,unit,count)
    local _,h=record(b)
    unit=templateName(unit,'unitTypes','unit template')

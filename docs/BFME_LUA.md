@@ -112,13 +112,14 @@ Display names currently expose the definition's native INI value, which may be a
 
 | Method | Behavior |
 | --- | --- |
+| `object:setInvulnerable(enabled)` | Boolean; queue native indestructibility on/off, including current contained units (battalion members or garrison). Returns a mutation ticket. |
 | `object:kill()` | Normal death |
 | `object:destroy()` | Native destruction and cleanup |
 | `unit:construct(building, position, speed, onComplete)` | This unit builds for its owner; see [Construction](#construction) |
 | `building:trainUnit(unit, count)` | Queue recruitment; see [Training units](#training-units) |
 
 Fields include `id`, `objectId`, `typeId`, `type` / `template` (a UnitType/BuildingType handle), `playerId` / `player`, `ownerPlayer` (a Player handle),
-`faction`, `displayName`, `position = {x,y,z}`, `x`, `y`, `z`, `rotation`, `health`, `maxHealth`, and `level`. Buildings also expose `underConstruction`, `constructionPercent`, and `builderId`.
+`faction`, `displayName`, `position = {x,y,z}`, `x`, `y`, `z`, `rotation`, `health`, `maxHealth`, `invulnerable` (read only native body flag), and `level`. Buildings also expose `underConstruction`, `constructionPercent`, and `builderId`.
 Coordinates use SAGE world axes. Position and health are read only; modifying a position copy does not move the unit.
 `ownerPlayer` accepts an engine player ID or Player handle, and `level` uses the object's native experience system. Unsupported levels return a failed ticket.
 
@@ -130,6 +131,19 @@ for _, building in ipairs(bfme.players.localPlayer:buildings()) do
     print(building, building.position.x, building.position.y)
 end
 ```
+
+```lua
+local object = bfme.selection.first()
+if object then
+    object:setInvulnerable(true)
+    -- Later: object:setInvulnerable(false)
+end
+```
+
+This uses the existing body indestructibility flag: damage (including `:kill()`)
+is blocked; explicit `:destroy()` still removes the object. It does not heal,
+prevent targeting, or change other armor/modifier immunities. New contained units
+follow the engine's native creation rules; the call updates current contents.
 
 ## Libraries
 
