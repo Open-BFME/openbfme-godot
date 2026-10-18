@@ -19,6 +19,9 @@
 // INFERENCE (S-923): the screen is loaded into a free window slot over the Palantir (RW 0x822CF7 .. 0x822D59 pushes it through the shell and pauses a single
 // player game); RW 0x8227BB's disabled / hidden sciences are not kept by PlayerScience here (never _disabled_level).
 
+// Presentation inference (S-923): show the shared in-game Background.apt backdrop while the store is open and restore its prior mode on close,
+// using the existing QuitMenu background protocol; the store-specific target lifecycle has not been traced.
+
 #pragma once
 
 #include "GameClient/GUI/AptScreen.h"
@@ -70,6 +73,8 @@ private:
 	GameLogic *m_logic = nullptr;
 	Player *m_player = nullptr;
 	const GameTextSource *m_text = nullptr;
+	bool m_backgroundActive = false;
+	int m_previousBackground = 0;
 	bool m_initialized = false;
 	bool m_closing = false;
 	int m_layout = -1;

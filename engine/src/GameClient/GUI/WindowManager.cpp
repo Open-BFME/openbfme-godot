@@ -99,6 +99,7 @@ bool WindowManager::loadBackground()
 		note("background", "Background.apt did not load");
 		return false;
 	}
+	m_apt->input().setInactiveBackdropLevel(m_backgroundMode == 0 ? m_backgroundLevel : -1);
 	return true;
 }
 
@@ -106,6 +107,7 @@ void WindowManager::setBackground(int mode)
 {
 	// RW 0x6230B6
 	m_backgroundMode = mode;
+	m_apt->input().setInactiveBackdropLevel(mode == 0 ? m_backgroundLevel : -1);
 	if (mode == 0)
 	{
 		hideBackground(false);
@@ -148,6 +150,7 @@ void WindowManager::hideBackground(bool instant)
 		m_backgroundHidden = mode;
 	}
 	m_backgroundMode = 0;
+	m_apt->input().setInactiveBackdropLevel(m_backgroundLevel);
 }
 
 // ---- init / update ----------------------------------------------------------------------------------------------

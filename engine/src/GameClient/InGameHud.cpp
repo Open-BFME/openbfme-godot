@@ -931,6 +931,12 @@ bool InGameHud::openSpellStore(std::string *error)
 	{
 		return m_store != nullptr;
 	}
+	// A standalone HUD has no front-end shell to load the shared menu backdrop.
+	if (m_wm->backgroundLevel() < 0 && !m_wm->loadBackground())
+	{
+		if (error) *error = "Background.apt could not load for the power menu";
+		return false;
+	}
 	auto store = std::make_unique<AptSpellStore>(*m_wm, *m_shellRef);
 	if (store->level() < 0)
 	{

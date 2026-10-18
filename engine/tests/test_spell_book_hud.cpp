@@ -616,3 +616,41 @@ TEST_CASE("SPELL-3 store at an uneven render rate: every _active power shows its
 	}
 	CHECK(bad == 0);
 }
+
+TEST_CASE("power menu shows the shared in-game backdrop and restores it on close")
+{
+	if (!haveWorld("power menu background")) return;
+	BookRig b(shared(), "FactionMen");
+	std::string error;
+	CHECK(b.hud->windows().backgroundMode() == 0);
+	REQUIRE_MESSAGE(b.hud->openSpellStore(&error), error);
+	b.frames(60);
+	CHECK(b.hud->windows().backgroundMode() == 2);
+	AptRenderList list;
+	b.hud->apt().buildRenderList(list);
+	bool backdrop = false;
+	for (const auto &op : list.commands)
+	{
+		backdrop = backdrop || (op.level == b.hud->windows().backgroundLevel() &&
+			op.symbolName == "View3D" && op.renderObject == "SFE_MenuOverlay" && op.color.mul[3] == 1.0f);
+	}
+	CHECK(backdrop);
+	b.hud->closeSpellStore();
+	b.frames(30);
+	CHECK(b.hud->windows().backgroundMode() == 0);
+	REQUIRE_MESSAGE(b.hud->openSpellStore(&error), error);
+	b.frames(30);
+	CHECK(b.hud->windows().backgroundMode() == 2);
+	b.hud->closeSpellStore();
+	b.frames(30);
+	CHECK(b.hud->windows().backgroundMode() == 0);
+	CHECK_FALSE(b.hud->isOverGui(512,384));
+	b.hud->windows().setBackground(1);
+	b.frames(30);
+	REQUIRE_MESSAGE(b.hud->openSpellStore(&error), error);
+	b.frames(30);
+	CHECK(b.hud->windows().backgroundMode() == 2);
+	b.hud->closeSpellStore();
+	b.frames(30);
+	CHECK(b.hud->windows().backgroundMode() == 1);
+}

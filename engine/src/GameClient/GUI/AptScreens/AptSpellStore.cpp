@@ -35,11 +35,18 @@ const char *AptSpellStore::stateName(int state)
 
 AptSpellStore::AptSpellStore(WindowManager &windows, Shell &shell) : AptScreen(windows, shell, "SpellStore.apt", "AptSpellStore")
 {
+	m_previousBackground = windows.backgroundMode();
 	for (int &s : m_state)
 	{
 		s = -1;
 	}
 	registerCommand("AptSpellStore::OnInitialized", [this](const std::string &) { // RW 0x82285B
+		if (!m_backgroundActive)
+		{
+			this->windows().note("power-menu-background", "[S-923] power menu backdrop uses the in-game Background.apt protocol; store-specific target lifecycle untraced");
+			this->windows().setBackground(2);
+			m_backgroundActive = true;
+		}
 		m_initialized = true;
 		m_layout = -1;
 		m_points = -1;
@@ -77,7 +84,10 @@ AptSpellStore::AptSpellStore(WindowManager &windows, Shell &shell) : AptScreen(w
 	});
 }
 
-AptSpellStore::~AptSpellStore() = default;
+AptSpellStore::~AptSpellStore()
+{
+	if (m_backgroundActive && windows().backgroundMode() == 2) windows().setBackground(m_previousBackground);
+}
 
 bool AptSpellStore::bind(const CommandStore &commands, GameLogic &logic, Player &player, const GameTextSource *gameText, std::string *error)
 {

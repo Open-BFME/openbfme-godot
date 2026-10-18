@@ -3395,6 +3395,9 @@ func _toggle_quit_menu() -> void:
 	if _quit_open:
 		_close_quit_menu()
 		return
+	# Transfer the shared backdrop to the quit menu before it records its own state.
+	if _hud != null and _hud.get_spellbook_state().get("store", {}).get("open", false):
+		_hud.close_spell_store()
 	if is_instance_valid(_caster):
 		_caster.overlays.set_clean(false)
 	var ctx: Dictionary = _world.get_quit_menu_context()

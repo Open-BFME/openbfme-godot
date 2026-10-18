@@ -99,6 +99,8 @@ public:
 	// lane OPTS-6 (NOT RETAIL: the port's modal screen): levels below `level` take no pointer input (their buttons and clips are not hit), -1 none. A
 	// screen that covers the stage over a game (Options.apt, WindowManager::capturesMouse) sets its own level: the Palantir under it hears no click
 	void setInputFloor(int level) { m_inputFloor = level; }
+	// A hidden backdrop can retain transparent hit records during its fade-out.
+	void setInactiveBackdropLevel(int level) { m_inactiveBackdropLevel = level; }
 	int inputFloor() const { return m_inputFloor; }
 
 	void forget(AptSpriteInst *level); // a level was unloaded: drop references into it
@@ -126,6 +128,7 @@ private:
 	AptCharacterInst *m_hoverClip = nullptr;   // gApt+0x68
 	std::set<int> m_keys;
 	int m_lastKey = 0;
+	int m_inactiveBackdropLevel = -1;
 	int m_inputFloor = -1; // lane OPTS-6
 	std::vector<AptValue> m_mouseListeners;
 	std::vector<AptValue> m_keyListeners;
