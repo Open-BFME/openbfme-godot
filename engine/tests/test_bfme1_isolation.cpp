@@ -60,6 +60,21 @@ TEST_CASE("bfme1 isolation: the data decides the game (SubsystemLegend.ini witho
 	CHECK_FALSE(noFs.bfme1Data());
 }
 
+TEST_CASE("bfme1 isolation: standalone BFME2 presentation data uses partitioned W3D paths")
+{
+	// BFME2 1.06 ini.big ships these files without RotWK's expansion legend.
+	initest::Fixture bfme2({ { "Data\\INI\\Default\\SubsystemLegend.ini", "; legend\r\n" },
+		{ "Data\\INI\\CreateAHeroSystem.ini", "; BFME2 Create-a-Hero\r\n" } });
+	CHECK_FALSE(isBfme1Data(bfme2.fsys));
+	CHECK_FALSE(bfme2.env.bfme1Data());
+	ArchiveW3DFileSource source(bfme2.fsys);
+	CHECK_FALSE(source.FlatAssetLayout());
+	CHECK(W3D_Asset_Path("sfe_menuoverlay", source.FlatAssetLayout()) == "art\\w3d\\sf\\sfe_menuoverlay.w3d");
+	CHECK(Resolve_W3D_Texture("SFE_MenuBkgrnd.tga", [](const std::string &p) {
+		return p == "art\\compiledtextures\\sf\\sfe_menubkgrnd.dds";
+	}, isBfme1Data(bfme2.fsys)).Path == "art\\compiledtextures\\sf\\sfe_menubkgrnd.dds");
+}
+
 TEST_CASE("bfme1 isolation: a table's BFME1 rows are found in BFME1 data only; RotWK data fails on them as retail does")
 {
 	const std::string text = "Probe\r\n  A = 1\r\n  B = 2\r\nEnd\r\n";

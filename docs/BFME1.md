@@ -153,3 +153,9 @@ BFME1_INSTALL="/path/to/BFME1" godot --headless --path godot -- --game=bfme1 --a
 ```
 
 `godot/tests/bfme1_quit_test.gd` checks the camp-floor material and all six pause-menu buttons with real movie clicks, including confirmations.
+
+BFME1 data detection also excludes `Data\INI\CreateAHeroSystem.ini`, shipped
+by BFME2 1.06. BFME2 has no RotWK expansion legend either; testing only for
+that legend misclassified the standalone BFME2 UI source and made its View3D
+models and textures use BFME1’s flat paths. The BFME2 power-menu backdrop
+uses `art\w3d\sf\sfe_menuoverlay.w3d`.

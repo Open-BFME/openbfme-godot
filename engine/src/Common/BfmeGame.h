@@ -1,7 +1,7 @@
 // OpenBFME. GPL-3.0.
 //
 // BFME1 mode (community PR #36, docs/BFME1.md). Which game the mounted retail data is: BFME1 ships Data\INI\Default\SubsystemLegend.ini without
-// BFME2's SubsystemLegendExpansion1.ini. Everything BFME1 does differently is gated on it, so RotWK / BFME2 parsing, simulation and state hashes are
+// BFME2's CreateAHeroSystem.ini or RotWK's SubsystemLegendExpansion1.ini. Everything BFME1 does differently is gated on it, so RotWK / BFME2 parsing, simulation and state hashes are
 // unchanged by BFME1 support:
 //   * code that reads files asks isBfme1Data(fs) (or INI::bfme1Data() / INIEnvironment::bfme1Data(), cached per environment);
 //   * BFME1's extra INI rows are registered per table (RegisterBfme1FieldRows, Common/INI.h) and found only in BFME1 data;
@@ -21,7 +21,11 @@
 
 inline bool isBfme1Data(const ArchiveFileSystem &fs)
 {
-	return fs.doesFileExist("Data\\INI\\Default\\SubsystemLegend.ini") && !fs.doesFileExist("Data\\INI\\Default\\SubsystemLegendExpansion1.ini");
+	// BFME2 1.06 also has no expansion legend. Its shipped CreateAHeroSystem.ini distinguishes
+	// it from BFME1; the presentation-only BFME2 mount must retain BFME2 model and texture paths.
+	return fs.doesFileExist("Data\\INI\\Default\\SubsystemLegend.ini") &&
+		!fs.doesFileExist("Data\\INI\\Default\\SubsystemLegendExpansion1.ini") &&
+		!fs.doesFileExist("Data\\INI\\CreateAHeroSystem.ini");
 }
 
 namespace Bfme1Detail
