@@ -527,6 +527,7 @@ public:
 	void moveTowardsPositionLegs(LocomotorHost &host, const Coord3D &goal, float onPathDistToGoal, float desiredSpeed);   // RW 0x5E63F3
 	void moveTowardsPositionWheels(LocomotorHost &host, const Coord3D &goal, float onPathDistToGoal, float desiredSpeed); // RW 0x5E83FD
 	void moveTowardsPositionHorde(LocomotorHost &host, const Coord3D &goal, float onPathDistToGoal, float desiredSpeed);  // RW 0x5E6D4F
+	void maintainCurrentPositionWings(LocomotorHost &host); // RW 0x5E74C1
 	void moveTowardsPositionOther(LocomotorHost &host, const Coord3D &goal, float onPathDistToGoal, float desiredSpeed);  // RW 0x5E6835
 	void moveTowardsPositionHover(LocomotorHost &host, const Coord3D &goal, float onPathDistToGoal, float desiredSpeed);  // RW 0x5E742E (lane SHIP-1)
 	void moveTowardsPositionShip(LocomotorHost &host, const Coord3D &goal, float onPathDistToGoal, float desiredSpeed);   // RW 0x5E613F (lane SHIP-1)

@@ -1167,3 +1167,52 @@ TEST_CASE("calcPreferredHeight: the attack-height states 0 -> 1 -> 2 -> 0, and t
 	CHECK(loco.attackHeightState() == 0);
 	CHECK(h.statusCalls == 2);
 }
+
+TEST_CASE("ambient flight: idle wings circle in both directions and climb without moving perched birds")
+{
+	for (int direction : { -1, 1 })
+	{
+		const std::string ini = "  Surfaces = AIR\n  Appearance = WINGS\n  MinSpeed = 50%\n  TurnTime = 1500\n  Acceleration = 1000\n  Braking = 1000\n  PreferredHeight = 81\n  ZAxisBehavior = SURFACE_RELATIVE_HEIGHT\n  CirclingRadius = " + std::to_string(direction * 161) + "\n";
+		LocoFixture f(ini.c_str());
+		Locomotor loco(f.tmpl());
+		MockHost h;
+		h.setSpeed = 150;
+		h.pos.z = 81;
+		h.syncTransform();
+		float swept = 0;
+		float previous = 0;
+		for (int frame = 0; frame < 180; ++frame)
+		{
+			CHECK(loco.locomotorMaintainCurrentPosition(h));
+			const float a = std::atan2(h.pos.y, h.pos.x);
+			if (frame > 10)
+			{
+				float step = a - previous;
+				if (step > kPi) step -= 2 * kPi;
+				if (step < -kPi) step += 2 * kPi;
+				swept += step;
+			}
+			previous = a;
+			CHECK(h.pos.z == 81);
+		}
+		// tolerance: 36 seconds at 75 world units/sec must traverse more than one full orbit of radius 161.
+		CHECK(std::abs(swept) > 2 * kPi);
+		// tolerance: the sign of accumulated angular travel selects the authored circling direction.
+		CHECK((swept < 0) == (direction > 0));
+		CHECK(std::find(loco.unverified().begin(), loco.unverified().end(), Locomotor::allStops()[2]) == loco.unverified().end());
+		MockHost grounded;
+		Locomotor climb(f.tmpl());
+		CHECK(climb.locomotorMaintainCurrentPosition(grounded));
+		CHECK(grounded.pos.x == 0);
+		CHECK(grounded.pos.y == 0);
+		// tolerance: the held-position height worker must start climbing from terrain on its first update.
+		CHECK(grounded.pos.z > 0);
+	}
+	LocoFixture perched("  Surfaces = AIR\n  Appearance = WINGS\n  PreferredHeight = 0\n  ZAxisBehavior = SURFACE_RELATIVE_HEIGHT\n");
+	MockHost h;
+	Locomotor idle(perched.tmpl());
+	for (int frame = 0; frame < 30; ++frame) idle.locomotorMaintainCurrentPosition(h);
+	CHECK(h.pos.x == 0);
+	CHECK(h.pos.y == 0);
+	CHECK(h.pos.z == 0);
+}

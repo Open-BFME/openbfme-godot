@@ -429,3 +429,37 @@ TEST_CASE("exit1 diagnostic: the motion probe over a recorded game (OPENBFME_EXI
 				 << (playback.hasMismatch() ? (int)playback.firstMismatch().frame : -1) << "\n"
 				 << probe.report() << trace.str());
 }
+
+TEST_CASE("ambient retail: Harlindon flying birds leave their hold point while perched doves stay still")
+{
+	OPENBFME_REQUIRE_START(s);
+	NewGameMessage start = exitUdun(*s, 0, 1);
+	start.game.mapName = "maps/map mp harlindon/map mp harlindon.map";
+	for (int slot = 0; slot < 4; ++slot) start.game.slots[slot].state = slot < 2 ? SLOT_PLAYER : SLOT_CLOSED;
+	ExitGame g;
+	loadExitGame(*s, start, -1, g);
+	struct Bird { Object *object; Coord3D original; };
+	std::vector<Bird> flying, perched;
+	for (Object *o = g.game->logic().getFirstObject(); o; o = o->getNextObject())
+	{
+		const std::string &name = o->getTemplate()->getName();
+		if (name == "Crow" || name == "Dove_white_in_game") flying.push_back({ o, *o->getPosition() });
+		if (name == "Dove_Perched") perched.push_back({ o, *o->getPosition() });
+	}
+	CHECK(flying.size() == 41);
+	CHECK(perched.size() == 7);
+	for (int i = 0; i < 100; ++i) g.game->advance(0.2);
+	for (const Bird &b : flying)
+	{
+		INFO(b.object->getTemplate()->getName() << " #" << b.object->getID());
+		const Coord3D &p = *b.object->getPosition();
+		const float dx = p.x - b.original.x, dy = p.y - b.original.y;
+		// tolerance: 20 seconds of idle flight must leave the authored hold point by more than a terrain cell.
+		CHECK(dx * dx + dy * dy > 100);
+	}
+	for (const Bird &b : perched)
+	{
+		CHECK(b.object->getPosition()->x == b.original.x);
+		CHECK(b.object->getPosition()->y == b.original.y);
+	}
+}

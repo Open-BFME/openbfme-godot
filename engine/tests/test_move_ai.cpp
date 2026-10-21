@@ -4,6 +4,7 @@
 
 #include "doctest.h"
 #include "MoveTestUtil.h"
+#include "GameLogic/Module/AmbientAIUpdate.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -343,4 +344,32 @@ TEST_CASE("move: the collision pass finds overlapping units whatever their size 
 	mw.spawn("Walker", 255.0f, 505.0f); // 50 from the giant at 205 (radii 60 + 8): overlaps it
 	mw.ai->processCollisions();
 	CHECK(mw.ai->collisionPairsLastFrame() == 2);
+}
+
+TEST_CASE("ambient AI: animals and civilians choose wander goals, respect zero percentage and preserve explicit orders")
+{
+	const char *objects =
+		"ChildObject Animal Walker\n  Behavior = AnimalAIUpdate ModuleTag_AI\n    WanderPercentage = 101\n    MaxWanderDistance = 50\n    MaxWanderRadius = 100\n  End\nEnd\n"
+		"ChildObject StillAnimal Walker\n  Behavior = AnimalAIUpdate ModuleTag_AI\n    WanderPercentage = 0\n  End\nEnd\n"
+		"ChildObject Civilian Walker\n  Behavior = WanderAIUpdate ModuleTag_AI\n    WanderDistance = 30\n  End\nEnd\n";
+	MoveWorld mw(100, 100, objects);
+	mw.buildMap();
+	Object *animal = mw.spawn("Animal", 205, 205);
+	Object *still = mw.spawn("StillAnimal", 505, 505);
+	Object *civilian = mw.spawn("Civilian", 705, 705);
+	mw.frames(3);
+	CHECK(std::string(AmbientAIUpdate::stopLine()) == "[S-5910] ambient wandering uses BFME2 AnimalAIUpdate / WanderAIUpdate donor semantics; RotWK parity is unverified. Animal enemy fleeing and special-layer return checks are not ported; normal pathfinding validates wander destinations. WanderAIUpdate WildBeast acquisition is not ported and reports a stop instead of issuing a wander order.");
+	const auto report = mw.logic->report();
+	CHECK(std::find(report.stops.begin(), report.stops.end(), AmbientAIUpdate::stopLine()) != report.stops.end());
+	CHECK(mw.aiOf(still)->isIdle());
+	CHECK_FALSE(mw.aiOf(civilian)->isIdle());
+	const Coord3D old = *still->getPosition();
+	const Coord3D animalOld = *animal->getPosition();
+	mw.frames(40);
+	CHECK((animal->getPosition()->x != animalOld.x || animal->getPosition()->y != animalOld.y));
+	CHECK(still->getPosition()->x == old.x);
+	CHECK(still->getPosition()->y == old.y);
+	mw.aiOf(animal)->aiMoveToPosition(Coord3D{ 805, 205, 0 }, CMD_FROM_PLAYER);
+	mw.frames(3);
+	CHECK(mw.aiOf(animal)->currentStateId() == (unsigned)AI_MOVE_TO);
 }

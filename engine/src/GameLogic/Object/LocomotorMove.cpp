@@ -175,7 +175,7 @@ std::vector<std::string> Locomotor::allStops()
 		"ZAxisBehavior other than NO_Z_MOTIVE_FORCE, FLOATING_Z, SEA_LEVEL, SURFACE_RELATIVE_HEIGHT and ABSOLUTE_HEIGHT (the last three: lane SHIP-1; the stealth reveal of a climbing object, RW 0x5E7C0A, is not ported) and the layer / projectile / falling special cases of RW 0x5E774A / 0x5E5785, "
 		"and the HORDE mover's formation path nodes (types 2, 3, 7, 8; RW 0x5E6E20-0x5E7148).",
 		"S-1750: maintainCurrentPosition (RW 0x5E7CC7) is ported without its tail: the held position's z behaviour (RW 0x5E76AC on +0x08) with its "
-		"constant-calling result, the transform write (RW 0x70BA76) and the WINGS hold (RW 0x5E74C1) are not run; an idle unit's height and sleep follow "
+		"constant-calling result, the transform write (RW 0x70BA76) are not run for non-WINGS appearances; an idle unit's height and sleep follow "
 		"the movers' last frame."
 	};
 }
@@ -1435,7 +1435,7 @@ void Locomotor::setSpeedTowards(const LocomotorHost &host, float v)
 //   Then flag 1 (braking) and +0x98 are cleared. No physics module (obj+0x264): true. By appearance (template +0x74): LEGS_TWO, WHEELS_FOUR,
 //   LEGS_FOUR_HUGE, HORDE, LEGS_TWO_HUGE: speed (+0x40) = 0, MOVING cleared (RW 0x5E5D7E), result false; TREADS: MOVING cleared, result false (the
 //   speed is kept); HOVER, GIANT_BIRD: speed = 0, true; WINGS: RW 0x5E74C1, true; any other: speed = 0, MOVING cleared, true. Then RW 0x5E76AC on the
-//   held position (true when it says so) and the transform write RW 0x70BA76 (both not ported: S-1750).
+//   held position (true when it says so) and the transform write RW 0x70BA76 (ported below for WINGS; other appearances: S-1750).
 // Before this port the goal-less unit's locomotor did nothing, so a unit whose walk ended without the move state's exit (a horde member released to its
 // melee, an idle member of a parked horde) kept MOVING and the turn conditions: the run cycle on the spot of QA-2's finding 2.
 bool Locomotor::locomotorMaintainCurrentPosition(LocomotorHost &host)
@@ -1485,8 +1485,11 @@ bool Locomotor::locomotorMaintainCurrentPosition(LocomotorHost &host)
 		m_speed = 0.0f;
 		break;
 	case LOCO_WINGS:
-		noteStop(allStops()[2].c_str()); // RW 0x5E74C1, not ported
-		break;
+		maintainCurrentPositionWings(host);
+		// RW 0x5E7E60: wings always need another update, including while climbing from the ground.
+		handleBehaviorZ(host, m_maintainPosition);
+		host.setTransform(m_matrix);
+		return true;
 	default:
 		m_speed = 0.0f;
 		if (host.testModelCondition(b.moving))
@@ -1497,6 +1500,39 @@ bool Locomotor::locomotorMaintainCurrentPosition(LocomotorHost &host)
 	}
 	noteStop(allStops()[2].c_str()); // the tail (RW 0x5E76AC on the held position, RW 0x70BA76) is not run
 	return result;
+}
+
+// TARGET: RW 0x5E74C1..0x5E7604, read from RotWK's disassembly. BFME2's
+// maintainCurrentPosition dispatch and BFME1's matched wings body explain the field names.
+// This is idle flight, not an AI move order: retain the original hold point across frames.
+void Locomotor::maintainCurrentPositionWings(LocomotorHost &host)
+{
+	const Coord3D pos = host.getPosition();
+	if (!(pos.z > host.groundHeightAt(pos.x, pos.y))) // RW 0x4B12E8 -> height above terrain > 0
+	{
+		return;
+	}
+	m_flags |= LOCOMOTOR_FLAG_NO_BRAKE;
+	float radius = m_template->m_circlingRadius;
+	if (radius == 0.0f)
+	{
+		const float turn = getMaxTurnRate(host);
+		radius = turn > 0.0f ? SimMath::divf32(getMinSpeed(host), turn) : 99999.0f; // RW 0x5E38FA
+	}
+	const float dx = NumericState::pc24Sub(m_maintainPosition.x, pos.x);
+	const float dy = SimMath::subf32(m_maintainPosition.y, pos.y);
+	float angle = fabsd(dx) < 0.001f && fabsd(dy) < 0.001f ? host.getAngle() : (float)SimMath::atan2d(dy, dx);
+	float aim = 2.7488937377929688f; // RW 0xBF4B2C: pi - pi/8
+	if (radius < 0.0f)
+	{
+		radius = SimMath::subf32(0.0f, radius);
+		aim = -2.7488937377929688f;
+	}
+	angle = NumericState::pc24Add(aim, angle);
+	Coord3D goal = m_maintainPosition;
+	goal.x = NumericState::pc24Add(NumericState::pc24Mul(SimMath::cosDet(angle), radius), goal.x);
+	goal.y = NumericState::pc24Add(NumericState::pc24Mul(SimMath::sinDet(angle), radius), goal.y);
+	moveTowardsPositionOther(host, goal, 0.0f, getMinSpeed(host)); // RW 0x5E740D -> 0x5E6835
 }
 
 // ---- the dispatcher (RW 0x5E8865) ---------------------------------------------------------------------------------------------

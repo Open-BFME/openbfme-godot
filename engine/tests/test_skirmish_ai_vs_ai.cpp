@@ -766,6 +766,8 @@ TEST_CASE("skirmish ai vs ai: Evendim, 30 game-minutes: every pairing ends - Mor
 	// and measured once on the merged tree (remote-measure.sh on a CI host; the messages by another host's run of the same build): the losers are unchanged, seed 7 (Mordor,
 	// start position 1) ends at 4103 (6763), seed 1234 (Mordor, start position 0) at 5701 (5289), seed 2 stays open at 9000 with the table changed from the
 	// 2000 window on. Engine pins, not retail values.
+	// Ambient movement remeasurement: idle wandering changes RNG/state hashes,
+	// but these Evendim outcome pins remain unchanged: open / 4103 / 5701.
 	for (const Game &g : { Game{ "FactionMordor", "FactionMen", 2u, -1, -1 }, Game{ "FactionMen", "FactionMordor", 7u, 1, 4103 }, Game{ "FactionMordor", "FactionMen", 1234u, 0, 5701 } })
 	{
 		INFO(g.a << " vs " << g.b << " seed " << g.seed);

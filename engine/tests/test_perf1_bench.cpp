@@ -385,6 +385,8 @@ TEST_CASE("perf1 bench: 4-player skirmish (medium computer players, 20 game minu
 // simulation on purpose re-measures the files (and says why); an optimisation never does.
 TEST_CASE("perf1: the big battle (400 frames) and a 4-player AI skirmish after another AI game (6000 frames) hash as the build before PERF-1 did in every frame")
 {
+	// Ambient movement: target idle wandering adds RNG draws and origin state,
+	// so these engine references are measured again for this simulation change.
 	const std::vector<std::uint32_t> battleRef = perf1::readHashes("big_battle_400.hashes");
 	const std::vector<std::uint32_t> skirmishRef = perf1::readHashes("skirmish4_6000.hashes");
 	// OPENBFME_PERF1_REGEN=1 rewrites the two reference vectors from this build instead of comparing: run it only when a merged change is MEANT to

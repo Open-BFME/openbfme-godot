@@ -2,6 +2,7 @@
 // See GameLogic/Module/AIUpdate.h for the sources and what is inference.
 
 #include "GameLogic/Module/AIUpdate.h"
+#include "GameLogic/Module/AmbientAIUpdate.h"
 #include "GameLogic/Module/PhysicsBehavior.h"
 #include "GameLogic/AI/AIFollowPathAsTeam.h"
 #include "GameLogic/AI/AIGarrisonStates.h"
@@ -1708,7 +1709,7 @@ void AIUpdateInterface::registerClasses(ModuleFactory &modules)
 			continue;
 		}
 		const bool horde = name == "HordeAIUpdate";
-		modules.bindModuleProc(name, MODULETYPE_BEHAVIOR, [horde](Thing *thing, const ModuleData *data, const ModuleFactory::ModuleTemplate &info) -> std::unique_ptr<Module> {
+		modules.bindModuleProc(name, MODULETYPE_BEHAVIOR, [horde, name](Thing *thing, const ModuleData *data, const ModuleFactory::ModuleTemplate &info) -> std::unique_ptr<Module> {
 			// a logic without an AIWorld (the LOGIC-1 fixtures) has no pathfinder to move on: the class is then the explicit unported module of S-140, as before
 			if (!thing->asObject() || !thing->asObject()->logic().aiWorld())
 			{
@@ -1717,6 +1718,10 @@ void AIUpdateInterface::registerClasses(ModuleFactory &modules)
 			if (horde)
 			{
 				return std::make_unique<HordeAIUpdate>(thing, data);
+			}
+			if (name == "AnimalAIUpdate" || name == "WanderAIUpdate")
+			{
+				return std::make_unique<AmbientAIUpdate>(thing, data, name == "AnimalAIUpdate");
 			}
 			return std::make_unique<AIUpdateInterface>(thing, data);
 		});

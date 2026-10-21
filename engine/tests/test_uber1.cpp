@@ -111,6 +111,8 @@ TEST_CASE("uber1: the Uber battle hashes as its pin vector in every frame with 1
 	const int units = 3000, frames = 40;
 	const char *regenEnv = std::getenv("OPENBFME_UBER1_REGEN");
 	const bool regen = regenEnv && *regenEnv == '1';
+	// Ambient movement: target idle wandering adds RNG draws and origin state,
+	// so these engine references are measured again for this simulation change.
 	const std::vector<std::uint32_t> pin = readUberHashes("battle3000_40.hashes");
 	if (!regen)
 	{
