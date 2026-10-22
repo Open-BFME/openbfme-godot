@@ -1683,9 +1683,13 @@ def test_an_offline_start_asks_nothing(tmp_path, server, keys):
 
 
 def test_the_policy_allows_only_the_lobbys_stats_path():
-    """NetPolicy: the lobby host, over https without a port, for GET /v1/stats alone; any other path or host stays refused"""
+    """NetPolicy: the lobby host, over https without a port, for GET /v1/stats and GET /v1/games only; any other path stays off the list"""
     text = (LAUNCHER / "scripts/net/net_policy.gd").read_text()
-    assert 'const LOBBY_STATS_PATH := "/v1/stats"' in text and "u.path == LOBBY_STATS_PATH" in text
+    assert 'const LOBBY_PATHS := ["/v1/stats", "/v1/games"]' in text
+    assert 'lobby_host != "" and host == lobby_host and u.path in LOBBY_PATHS' in text
+    # the allow-list is those two paths and nothing else the lobby publishes
+    listed = text.split('const LOBBY_PATHS := [', 1)[1].split("]", 1)[0]
+    assert listed.count('"/v1/') == 2 and '"/v1/stats"' in listed and '"/v1/games"' in listed
 
 
 @pytest.mark.parametrize("size", ["1280x720", "1024x768", "1920x1080", "1600x900"])

@@ -122,8 +122,8 @@ func set_games(games: Array) -> void:
 		row.add_child(box)
 		var cells := [GameList.display_name(g), str(g.host), "%d" % int(g.players), str(g.map)]
 		for c in cells.size():
-			var l := W.label(cells[c])
-			l.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			var l := W.trim_label(cells[c])
+			l.tooltip_text = cells[c]
 			l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 			l.size_flags_stretch_ratio = 3.0 if c == 0 else 1.0
 			l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER

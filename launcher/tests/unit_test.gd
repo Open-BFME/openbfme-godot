@@ -250,6 +250,18 @@ func _init() -> void:
 	_check(full.ok and full.games.size() == 200, "200 games are accepted")
 	many.append('{"id":"00000000000000c8","name":"N","host":"H","map":"M","players":0,"openSlots":1,"state":"open","password":false}')
 	_check(not GameList.parse(200, ('{"v":1,"games":[' + ",".join(many) + "]}").to_utf8_buffer()).ok, "201 games are refused")
+	var long_name := "n".repeat(48)
+	var long_host := "h".repeat(24)
+	var long_map := "m".repeat(200)
+	var long_row := '{"v":1,"games":[{"id":"0123456789abcdef","name":"%s","host":"%s","map":"%s","players":1,"openSlots":1,"state":"open","password":false}]}' % [long_name, long_host, long_map]
+	var long_ok := GameList.parse(200, long_row.to_utf8_buffer())
+	_check(long_ok.ok and long_ok.games.size() == 1 and long_ok.games[0].name == long_name and long_ok.games[0].host == long_host and long_ok.games[0].map == long_map,
+		"a 48-byte name, a 24-byte host and a 200-byte map are accepted")
+	var over_map := long_row.replace(long_map, "m".repeat(201))
+	_check(not GameList.parse(200, over_map.to_utf8_buffer()).ok, "a 201-byte map is refused")
+	var wide := "é".repeat(25)  # two UTF-8 bytes each: 50 bytes, 25 characters (under an 80-character cap)
+	var wide_row := '{"v":1,"games":[{"id":"0123456789abcdef","name":"%s","host":"B","map":"C","players":1,"openSlots":1,"state":"open","password":false}]}' % wide
+	_check(not GameList.parse(200, wide_row.to_utf8_buffer()).ok, "a name over 48 UTF-8 bytes is refused")
 	for bad in ['{"v":2,"games":[]}', '{"games":[]}', '{"v":1}', '{"v":1,"games":null}', "[]", "",
 			'{"v":1,"games":[{"id":"0123456789ABCDEF","name":"A","host":"B","map":"C","players":1,"openSlots":1,"state":"open","password":false}]}',
 			'{"v":1,"games":[{"id":"0123456789abcde","name":"A","host":"B","map":"C","players":1,"openSlots":1,"state":"open","password":false}]}',

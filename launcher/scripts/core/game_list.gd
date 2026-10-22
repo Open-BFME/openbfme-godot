@@ -5,10 +5,12 @@ extends RefCounted
 
 const HttpFetch := preload("res://scripts/net/http_fetch.gd")
 
-const BODY_CAP := 65536
+const BODY_CAP := 262144  # 200 games, each with a 200-byte map, still fit (JSON and the extra public fields included)
 const MAX_GAMES := 200
 const MIN_GAP_SECONDS := 5.0
-const TEXT_MAX := 80
+const NAME_MAX_BYTES := 48  # lobby str(name, 48): UTF-8 bytes, the same bound as services/online/lobby
+const HOST_MAX_BYTES := 24  # a slot name (the public host)
+const MAP_MAX_BYTES := 200  # setup.map
 
 
 ## {ok, games, why}. `games` is [] unless the whole answer is version 1 and every row is a public game (an empty list is success).
@@ -47,7 +49,7 @@ static func _game(row: Variant) -> Dictionary:
 		var c := id.unicode_at(i)
 		if not ((c >= 0x30 and c <= 0x39) or (c >= 0x61 and c <= 0x66)):
 			return {}
-	if not _text_ok(row.get("name")) or not _text_ok(row.get("host")) or not _text_ok(row.get("map")):
+	if not _text_ok(row.get("name"), NAME_MAX_BYTES) or not _text_ok(row.get("host"), HOST_MAX_BYTES) or not _text_ok(row.get("map"), MAP_MAX_BYTES):
 		return {}
 	if not _count_ok(row.get("players")) or not _count_ok(row.get("openSlots")):
 		return {}
@@ -69,11 +71,11 @@ static func _game(row: Variant) -> Dictionary:
 	}
 
 
-static func _text_ok(v: Variant) -> bool:
+static func _text_ok(v: Variant, max_bytes: int) -> bool:
 	if typeof(v) != TYPE_STRING:
 		return false
 	var text := str(v)
-	if text.is_empty() or text.length() > TEXT_MAX:
+	if text.is_empty() or text.to_utf8_buffer().size() > max_bytes:
 		return false
 	for i in text.length():
 		var c := text.unicode_at(i)
