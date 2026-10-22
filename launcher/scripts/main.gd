@@ -92,6 +92,7 @@ const MessagePanel := preload("res://scripts/ui/message_panel.gd")
 const InstanceLock := preload("res://scripts/core/instance_lock.gd")
 const GameStart := preload("res://scripts/core/game_start.gd")
 const OnlineCount := preload("res://scripts/core/online_count.gd")  # lane ONLINECOUNT-1
+const GameList := preload("res://scripts/core/game_list.gd")
 const HttpFetch := preload("res://scripts/net/http_fetch.gd")
 
 const CLI_ACTIONS := ["--update", "--install=", "--select=", "--self-update", "--check-game-files", "--channel=", "--list", "--play", "--version", "--free-camera=",
@@ -112,6 +113,10 @@ var _thread: Thread
 var _count_thread: Thread     # lane ONLINECOUNT-1
 var _count_http: HttpFetch    # its request (MACPLAY-1: cancelled and joined when the window closes)
 var _count_timer: Timer
+var _multiplayer: MultiplayerScreen
+var _games_thread: Thread     # GET /v1/games for the Multiplayer screen
+var _games_http: HttpFetch
+var _games_asked_ms := 0
 var _count_asked_ms := 0
 var _count_text := ""         # the chip's text and when it arrived (it expires: OnlineCount.EXPIRY_SECONDS)
 var _count_got_ms := 0
@@ -966,8 +971,11 @@ func _build_ui() -> void:
 	_play_screen.download_games.connect(_open_download)
 	_play_screen.show_news.connect(_show_screen.bind("news"))
 	_news = NewsScreen.new()
-	var mp := MultiplayerScreen.new()
-	mp.build(info.repo)
+	_multiplayer = MultiplayerScreen.new()
+	_multiplayer.build(info.repo)
+	_multiplayer.host_pressed.connect(_on_host_game)
+	_multiplayer.join_pressed.connect(_on_join_game)
+	_multiplayer.refresh_pressed.connect(_refresh_game_list)
 	_mods = ModsScreen.new()
 	_games_screen = GamesScreen.new()
 	_games_screen.download.connect(_start_aio)
@@ -984,7 +992,7 @@ func _build_ui() -> void:
 	_settings.use_version.connect(_on_use)
 	_settings.install_release.connect(_on_install_pick)
 	_settings.open_logs.connect(_open_logs)
-	_screens = {"play": _play_screen, "news": _news, "multiplayer": mp, "mods": _mods, "games": _games_screen, "settings": _settings}
+	_screens = {"play": _play_screen, "news": _news, "multiplayer": _multiplayer, "mods": _mods, "games": _games_screen, "settings": _settings}
 	for k in _screens:
 		stack.add_child(_screens[k])
 
@@ -1112,6 +1120,8 @@ func _show_screen(key: String) -> void:
 	if key == "settings":
 		_settings.set_options(GameOptions.free_camera(), updater.auto_update(), aio.enabled(), _about())
 		_settings.set_online_count(updater.show_online_count())
+	if key == "multiplayer":
+		_refresh_game_list()
 
 
 func _show_channel() -> void:
@@ -1440,6 +1450,8 @@ func _set_buttons() -> void:
 	_update.visible = _update_state == "update" and not downloading  # LAUNCHERUI-1: no room beside Pause and Cancel, and it is disabled meanwhile
 	_update.disabled = busy or _latest.is_empty()
 	_play.disabled = _play_blocked()  # MACPLAY-1: never a dimmed Play with no word why: _on_play says what is missing
+	if _multiplayer != null:
+		_multiplayer.set_ready(not _play_blocked() and updater.play_version() != "")
 	_play_screen.games_button.disabled = busy or _paused != ""
 	_settings.set_busy(busy)
 	var aio_running := busy and _job_kind == "aio"
@@ -1811,16 +1823,75 @@ func _on_install_pick(tag: String) -> void:
 		_start_job(_job_install.bind(rel[0], true), "install", tag)
 
 
+## the public list on the Multiplayer screen. One request at a time, a few seconds apart, only while that screen is showing.
+## --ui-demo and --offline never ask. The lobby is updater.lobby_url() (the release default unless the player set another).
+func _refresh_game_list() -> void:
+	if _demo != "" or "--offline" in OS.get_cmdline_user_args() or _screen != "multiplayer":
+		return
+	if _games_thread != null and _games_thread.is_alive():
+		return
+	if _games_asked_ms != 0 and Time.get_ticks_msec() - _games_asked_ms < int(GameList.MIN_GAP_SECONDS * 1000.0):
+		return
+	var url := updater.lobby_url()
+	var why := updater.policy.set_lobby(url)
+	if why != "":
+		_multiplayer.set_games([])
+		_multiplayer.set_status(why)
+		return
+	if _games_thread != null:
+		_games_thread.wait_to_finish()
+	_games_asked_ms = maxi(Time.get_ticks_msec(), 1)
+	var http := HttpFetch.new(updater.policy, info.version)
+	_games_http = http
+	_games_thread = Thread.new()
+	_games_thread.start(func() -> void: _on_game_list.call_deferred(GameList.fetch(http, url)))
+
+
+func _on_game_list(r: Dictionary) -> void:
+	if _screen != "multiplayer":
+		return
+	if r.ok:
+		_multiplayer.set_games(r.games)
+		_multiplayer.set_status("")
+		Log.line("LAUNCHER game list: %d" % r.games.size())
+	else:
+		_multiplayer.set_games([])
+		_multiplayer.set_status(str(r.why))
+		Log.line("LAUNCHER game list not shown (%s)" % r.why)
+
+
+func _on_host_game() -> void:
+	var lobby := updater.lobby_url()
+	var why := updater.policy.set_lobby(lobby)
+	if why != "":
+		_show_error("The game did not start", why)
+		return
+	_start_version(PackedStringArray(["--", "--online-host", "--online-lobby=" + lobby]))
+
+
+func _on_join_game(game_id: String) -> void:
+	var lobby := updater.lobby_url()
+	var why := updater.policy.set_lobby(lobby)
+	if why != "":
+		_show_error("The game did not start", why)
+		return
+	_start_version(UrlHandler.game_args({"game": game_id}, lobby))
+
+
 ## Play: the version Play starts. While an update downloads in the background, the game starts anyway; the window is minimised and
 ## closes once the download is done (the new version is used from the next Play on).
 func _on_play() -> void:
+	_start_version(PackedStringArray())
+
+
+func _start_version(args: PackedStringArray) -> void:
 	var v := updater.play_version()
 	if _play_blocked():
 		return
 	if v == "":
 		_no_game()
 		return
-	var p := updater.play(v)
+	var p := updater.play(v, args)
 	if p.ok:
 		if _busy():
 			_quit_when_done = true
@@ -1872,6 +1943,11 @@ func _exit_tree() -> void:
 			_count_http.cancelled = true
 		_count_thread.wait_to_finish()
 		_count_thread = null
+	if _games_thread != null:
+		if _games_http != null:
+			_games_http.cancelled = true
+		_games_thread.wait_to_finish()
+		_games_thread = null
 	if _thread != null:
 		if _job_kind == "aio":
 			aio.request_stop("pause")

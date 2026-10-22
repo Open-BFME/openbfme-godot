@@ -3,8 +3,9 @@
 ## Release builds: HTTPS only, to api.github.com (the releases list), github.com (the release download links) and *.githubusercontent.com
 ## (where github.com redirects release assets), with Godot's TLS certificate and host name verification (TLSOptions.client()). Every
 ## redirect is checked again before it is followed. A URL with user info, an explicit port, a fragment, a non-ASCII or IP-literal host is refused.
-## Lane ONLINECOUNT-1: the one request to the online lobby, GET /v1/stats on the lobby's own host (HTTPS, no port; set_lobby): the number of players
-## online that the Play card shows. Nothing else of the lobby is allowed; nothing is sent but the request line and the standard headers.
+## Lane ONLINECOUNT-1: requests to the online lobby, on the lobby's own host (HTTPS, no port; set_lobby). Exactly two paths, both GET, with no query
+## and no extra path: /v1/stats (the number of players online that the Play card shows) and /v1/games (the public game list). Nothing else of the
+## lobby is allowed; nothing is sent but the request line and the standard headers.
 ## Test builds (tests_allowed()) may add ONE plain-HTTP loopback origin (127.0.0.1 or localhost with a port), the local test server.
 ## Lane AIO-1: while the player's opt-in download of the game files runs (scripts/core/aio_install.gd, off by default), extra_hosts also
 ## holds the All In One BFME Launcher service's two hosts (HTTPS, no explicit port, like GitHub's); it is empty otherwise.
@@ -14,8 +15,8 @@ const GITHUB_HOSTS := ["api.github.com", "github.com"]
 const GITHUB_ASSET_SUFFIX := ".githubusercontent.com"
 
 var test_origin := ""  # "http://127.0.0.1:<port>" in a test build, or ""
-const LOBBY_STATS_PATH := "/v1/stats"
-var lobby_host := ""  # lane ONLINECOUNT-1: the lobby's host (exact), for LOBBY_STATS_PATH only; "" = none
+const LOBBY_PATHS := ["/v1/stats", "/v1/games"]  # exact paths: no query, no trailing slash, no extra segment
+var lobby_host := ""  # the lobby's host (exact), for LOBBY_PATHS only; "" = none
 var extra_hosts: Array = []  # exact host names allowed besides GitHub's (lane AIO-1, only during an AIO download)
 
 
@@ -72,7 +73,7 @@ func check(url: String) -> String:
 	var host: String = u.host
 	if host in GITHUB_HOSTS or host in extra_hosts:
 		return ""
-	if lobby_host != "" and host == lobby_host and u.path == LOBBY_STATS_PATH:
+	if lobby_host != "" and host == lobby_host and u.path in LOBBY_PATHS:
 		return ""
 	if host.ends_with(GITHUB_ASSET_SUFFIX) and host.length() > GITHUB_ASSET_SUFFIX.length():
 		var label := host.substr(0, host.length() - GITHUB_ASSET_SUFFIX.length())

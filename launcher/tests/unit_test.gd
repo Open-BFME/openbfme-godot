@@ -25,6 +25,7 @@ const Updater := preload("res://scripts/core/updater.gd")
 const BuildInfo := preload("res://scripts/core/build_info.gd")
 const UrlHandler := preload("res://scripts/core/url_handler.gd")
 const OnlineCount := preload("res://scripts/core/online_count.gd")
+const GameList := preload("res://scripts/core/game_list.gd")
 const DesktopEntry := preload("res://scripts/core/desktop_entry.gd")
 const AppIcon := preload("res://scripts/ui/app_icon.gd")
 
@@ -196,7 +197,9 @@ func _init() -> void:
 	_check(lp.check("https://play.openbfme.com/v1/stats") != "", "the lobby is refused before one is set")
 	_check(lp.set_lobby("https://play.openbfme.com") == "" and lp.set_lobby("https://play.openbfme.com/") == "", "the lobby is a plain https host")
 	_check(lp.check("https://play.openbfme.com/v1/stats") == "", "the lobby's stats path is allowed")
-	for bad in ["https://play.openbfme.com/v1/games", "https://play.openbfme.com/v1/stats?x=1", "https://play.openbfme.com/v1/stats/", "https://play.openbfme.com/",
+	_check(lp.check("https://play.openbfme.com/v1/games") == "", "the lobby's game list is allowed")
+	for bad in ["https://play.openbfme.com/v1/games?x=1", "https://play.openbfme.com/v1/games/", "https://play.openbfme.com/v1/games/abcdef",
+			"https://play.openbfme.com/v1/stats?x=1", "https://play.openbfme.com/v1/stats/", "https://play.openbfme.com/",
 			"https://play.openbfme.com/v1/auth/guest", "https://play.openbfme.com:8443/v1/stats", "http://play.openbfme.com/v1/stats", "https://evil.com/v1/stats",
 			"https://play.openbfme.com.evil.com/v1/stats", "https://u@play.openbfme.com/v1/stats"]:
 		_check(lp.check(bad) != "", "policy refuses %s for the lobby" % bad)
@@ -224,6 +227,44 @@ func _init() -> void:
 	_check(OnlineCount.in_view(false, false, true) and OnlineCount.in_view(true, true, false), "a focused window, or a headless run, is in view")
 	_check(not OnlineCount.in_view(false, true, true) and not OnlineCount.in_view(false, false, false) and not OnlineCount.in_view(false, true, false),
 		"a minimized or unfocused window asks nothing")
+	# the public game list: version 1, every row a public game, or nothing
+	var one := '{"v":1,"games":[{"id":"0123456789abcdef","name":"Westfold","host":"Ada","map":"Fords of Isen","players":2,"openSlots":4,"state":"open","password":false}]}'
+	var parsed := GameList.parse(200, one.to_utf8_buffer())
+	_check(parsed.ok and parsed.games.size() == 1 and parsed.games[0].id == "0123456789abcdef" and GameList.joinable(parsed.games[0]) and GameList.display_name(parsed.games[0]) == "Westfold",
+		"one open game is listed and can be joined")
+	var empty := GameList.parse(200, '{"v":1,"games":[]}'.to_utf8_buffer())
+	_check(empty.ok and empty.games.is_empty(), "an empty game list is success")
+	var flags := [
+		['{"id":"0123456789abcdef","name":"A","host":"B","map":"C","players":1,"openSlots":0,"state":"open","password":true}', false, "A (locked)"],
+		['{"id":"0123456789abcdef","name":"A","host":"B","map":"C","players":1,"openSlots":3,"state":"started","password":false}', false, "A (started)"],
+		['{"id":"0123456789abcdef","name":"A","host":"B","map":"C","players":8,"openSlots":0,"state":"open","password":false}', false, "A (full)"],
+	]
+	for f in flags:
+		var body := '{"v":1,"games":[%s]}' % f[0]
+		var row := GameList.parse(200, body.to_utf8_buffer())
+		_check(row.ok and not GameList.joinable(row.games[0]) and GameList.display_name(row.games[0]) == f[2], "a game that cannot be joined is still listed (%s)" % f[2])
+	var many := PackedStringArray()
+	for i in 200:
+		many.append('{"id":"%016x","name":"N","host":"H","map":"M","players":0,"openSlots":1,"state":"open","password":false}' % i)
+	var full := GameList.parse(200, ('{"v":1,"games":[' + ",".join(many) + "]}").to_utf8_buffer())
+	_check(full.ok and full.games.size() == 200, "200 games are accepted")
+	many.append('{"id":"00000000000000c8","name":"N","host":"H","map":"M","players":0,"openSlots":1,"state":"open","password":false}')
+	_check(not GameList.parse(200, ('{"v":1,"games":[' + ",".join(many) + "]}").to_utf8_buffer()).ok, "201 games are refused")
+	for bad in ['{"v":2,"games":[]}', '{"games":[]}', '{"v":1}', '{"v":1,"games":null}', "[]", "",
+			'{"v":1,"games":[{"id":"0123456789ABCDEF","name":"A","host":"B","map":"C","players":1,"openSlots":1,"state":"open","password":false}]}',
+			'{"v":1,"games":[{"id":"0123456789abcde","name":"A","host":"B","map":"C","players":1,"openSlots":1,"state":"open","password":false}]}',
+			'{"v":1,"games":[{"id":"0123456789abcdef","name":"","host":"B","map":"C","players":1,"openSlots":1,"state":"open","password":false}]}',
+			'{"v":1,"games":[{"id":"0123456789abcdef","name":"%s","host":"B","map":"C","players":1,"openSlots":1,"state":"open","password":false}]}' % "x".repeat(81),
+			'{"v":1,"games":[{"id":"0123456789abcdef","name":"A\\nB","host":"B","map":"C","players":1,"openSlots":1,"state":"open","password":false}]}',
+			'{"v":1,"games":[{"id":"0123456789abcdef","name":"A","host":"B","map":"C","players":17,"openSlots":1,"state":"open","password":false}]}',
+			'{"v":1,"games":[{"id":"0123456789abcdef","name":"A","host":"B","map":"C","players":1.5,"openSlots":1,"state":"open","password":false}]}',
+			'{"v":1,"games":[{"id":"0123456789abcdef","name":"A","host":"B","map":"C","players":1,"openSlots":-1,"state":"open","password":false}]}',
+			'{"v":1,"games":[{"id":"0123456789abcdef","name":"A","host":"B","map":"C","players":1,"openSlots":1,"state":"waiting","password":false}]}',
+			'{"v":1,"games":[{"id":"0123456789abcdef","name":"A","host":"B","map":"C","players":1,"openSlots":1,"state":"open","password":"no"}]}',
+			'{"v":1,"games":[null]}', '{"v":1,"games":[{}]}']:
+		var refused := GameList.parse(200, bad.to_utf8_buffer())
+		_check(not refused.ok and refused.games.is_empty(), "the game list refuses %s" % bad.left(48))
+	_check(not GameList.parse(404, '{"v":1,"games":[]}'.to_utf8_buffer()).ok, "a game list that is not 200 is refused")
 	# archive member names
 	var top := "openbfme-v1.0.0-linux-x64"
 	for ok in [top + "/", top + "/OpenBFME.x86_64", top + "/sub/file.txt"]:
