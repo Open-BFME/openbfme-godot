@@ -69,6 +69,8 @@ public:
 	// noted as an event, as before)
 	virtual bool turnOnBuff(const FXObject &, int /*type*/, const std::string & /*thingTemplate*/, int /*lifeFrames*/) { return false; }
 	virtual bool turnOffBuff(const FXObject &, int /*type*/) { return false; }
+	// lane WEATHER-1: the map's weather the FXList nuggets filter on (RW TheWritableGlobalData + 0x138: 0 NORMAL, 1 SNOWY; the map's WorldInfo "weather")
+	virtual int mapWeather() const = 0;
 };
 
 class FXPlayback

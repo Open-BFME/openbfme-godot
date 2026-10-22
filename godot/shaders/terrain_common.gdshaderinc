@@ -48,6 +48,18 @@ uniform vec3 sun_dir_sage = vec3(0.0, 0.0, 1.0); // toward the light (see stop S
 uniform vec3 sun_color = vec3(1.0);
 uniform bool overbright = true;
 uniform vec3 lightning_color = vec3(0.0);
+// lane WEATHER-1: the cloud effect's darkening of the terrain vertex lighting (RotWK doTheLight RW 0x468CC0 multiplies every global light's diffuse
+// by 1 - darkening while TheCloudEffect is active; the terrain is relit every 10th client frame of a darkening / lightening phase). With
+// weather_relit the vertex colour is lit again here from the vertex normal, as HeightMapMesh::vertexLight bakes it (terrain[0] ambient + the
+// accent lights 1 and 2, stop S-033), with the lights' diffuse times 1 - weather_terrain_dark, clamped and truncated to the byte; without it the
+// baked COLOR is used unchanged.
+uniform bool weather_relit = false;
+uniform vec3 weather_terrain_dark = vec3(0.0);
+uniform vec3 weather_terrain_ambient = vec3(0.0);
+uniform vec3 weather_light1_to = vec3(0.0, 0.0, 1.0);
+uniform vec3 weather_light1_diffuse = vec3(0.0);
+uniform vec3 weather_light2_to = vec3(0.0, 0.0, 1.0);
+uniform vec3 weather_light2_diffuse = vec3(0.0);
 
 uniform float fog_enabled = 0.0;
 uniform vec3 fog_color = vec3(0.5);
@@ -114,6 +126,17 @@ void terrain_vertex(vec3 vtx, vec3 nrm, vec3 cam_world, float time, out vec3 lts
 	vec2 macro_tiled = vec2(sp.x, -sp.y) / (66.0 * map_cell_size);
 	vec2 macro_stretch = (sp.xy + vec2(map_border_width)) * vec2(1.0 / map_size.x, -1.0 / map_size.y);
 	macro_uv = macro_stretched ? macro_stretch : macro_tiled;
+}
+
+// lane WEATHER-1: the relit vertex colour (see weather_relit); `nrm` is the vertex normal in Godot's frame
+vec4 weather_vertex_color(vec3 nrm, vec4 baked) {
+	vec3 n = vec3(nrm.x, -nrm.z, nrm.y);
+	vec3 k = vec3(1.0) - weather_terrain_dark;
+	vec3 c = weather_terrain_ambient;
+	c += clamp(dot(weather_light1_to, n), 0.0, 1.0) * weather_light1_diffuse * k;
+	c += clamp(dot(weather_light2_to, n), 0.0, 1.0) * weather_light2_diffuse * k;
+	c = floor(clamp(c, 0.0, 1.0) * 255.0) / 255.0;
+	return vec4(c, baked.a);
 }
 
 float atlas_lod(vec2 uv) {

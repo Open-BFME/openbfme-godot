@@ -140,6 +140,11 @@ const AudioIniState &RetailObjectWorld::audio() const
 	return *m_s->m_audio;
 }
 
+bool RetailObjectWorld::audioEventExists(const std::string &name) const
+{
+	return !name.empty() && m_s->m_audio->infos.contains(name);
+}
+
 namespace
 {
 using AudioExists = std::function<bool(const std::string &)>;

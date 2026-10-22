@@ -238,6 +238,26 @@
    "reason": "weather particle parameters: rendering"
   },
   {
+   "glob": "src/GameClient/WeatherSetting.cpp",
+   "reason": "lane WEATHER-1: the Weather / WeatherData / CloudEffect INI data of the client's weather: rendering and audio"
+  },
+  {
+   "glob": "src/GameClient/SnowManager.cpp",
+   "reason": "lane WEATHER-1: TheSnowManager (falling snow / rain, its client random): rendering"
+  },
+  {
+   "glob": "src/GameClient/CloudEffect.cpp",
+   "reason": "lane WEATHER-1: TheCloudEffect (the darkening and lightning lights): rendering"
+  },
+  {
+   "glob": "src/GameClient/WeatherClient.cpp",
+   "reason": "lane WEATHER-1: the client weather of a game (client frames, the weather sound): rendering and audio"
+  },
+  {
+   "glob": "src/GodotDevice/GodotWeather.cpp",
+   "reason": "lane WEATHER-1: the weather in the Godot scene: rendering"
+  },
+  {
    "glob": "src/GameClient/MapCache.cpp",
    "reason": "map list cache (MapCache.ini equivalent): file I/O and listing"
   },

@@ -941,6 +941,7 @@ func _game_world(fs: RefCounted) -> void:
 	_check(not fxids.has("S-685"), "resolved FX stop S-685 is not reported")
 	# lane FX-3: S-684 is retired (retail never loads ParticleSystem.ini); names retail resolves to NULL are listed, not played
 	_check(not fxids.has("S-684") and fxr.has("unresolved_particle_systems"), "S-684 is retired and the unresolved ParticleSysBone names are listed")
+	_weather_report(world, "map good celduin", false)
 	_tree.root.add_child(world)
 	RenderingServer.force_draw(false)
 	# destruction: a member dies, then its horde (ZH OpenContain::onDelete destroys the members)
@@ -993,10 +994,44 @@ func _game_world(fs: RefCounted) -> void:
 	_check(found and String(sk.players[10]).ends_with("$1500"), "the lobby slot gave Player_1 the Men and GameData's default starting cash: %s" % [sk.players.slice(10, 12)])
 	_production(other, third, skirm, sk)
 	_heroes(other, skirm) # lane HERO-1
+	# lane WEATHER-1: a snowy map (map.ini IsSnowing = Yes, EXSnowFlake2.tga) draws its snow
+	var snowy: Dictionary = third.load_map("map mp withered heath", {"seed": 5})
+	_check(snowy.ok, "map mp withered heath loads as a live game %s" % [snowy.get("errors", [])])
+	if snowy.ok:
+		for k in 6:
+			third.advance(0.1)
+		_weather_report(third, "map mp withered heath", true)
 	print("  info game world: celduin in %d ms, %d objects, %d drawables, logic frame %.1f ms, sync %.1f ms" % [ms, l.objects, d.live, world.get_stats().last_logic_ms, world.get_stats().last_sync_ms])
 	other.queue_free()
 	third.queue_free()
 	world.queue_free()
+
+## Lane WEATHER-1: the live game's weather (GameWorld.get_weather_report): the retail weather files, the snow manager (the snow drawn only on a map whose
+## map.ini says IsSnowing), the cloud effect idle (TheGlobalWeatherSystem starts at NONE), no weather sound, the stops S-4890 .. S-4892.
+func _weather_report(world: Node3D, map: String, snowing: bool) -> void:
+	var wr: Dictionary = world.get_weather_report()
+	_check(wr.get("loaded", false) and (wr.errors as Array).is_empty(), "%s: the weather is loaded %s" % [map, wr.get("errors", [])])
+	if not wr.get("loaded", false):
+		return
+	var files: Array = wr.files
+	# tolerance: four startup files, then the map's map.ini / solo.ini when it has them
+	_check(files.size() >= 4 and String(files[1]) == "Data\\INI\\Weather.ini" and String(files[3]) == "Data\\INI\\Environment.ini", "%s: the weather files %s" % [map, files])
+	_check(wr.snow.enabled and wr.snow.snowing == snowing and wr.snow.phase == 0, "%s: snow enabled, snowing %s, no spell ramp" % [map, snowing])
+	if snowing:
+		# tolerance: the particle count follows the map size and the spacing; the frames drawn follow the advances
+		_check(wr.snow.particles > 0 and wr.snow.frames_drawn > 0 and String(wr.snow.texture) == "EXSnowFlake2.tga",
+			"%s: %d snow particles drawn (%s)" % [map, wr.snow.particles, wr.snow.texture])
+	else:
+		_check(wr.snow.particles == 0, "%s: no snow drawn" % map)
+	_check(wr.cloud.phase == 0 and wr.sound.weather == 0 and wr.client_frame > 0, # tolerance: the client frames of the advances so far (30 per second of game time)
+		"%s: the cloud effect idle, no weather sound, client frame %d (%d terrain materials)" % [map, wr.client_frame, wr.terrain_materials])
+	var wids := {}
+	for line in wr.stops:
+		wids[String(line).substr(1, 6)] = true
+	for id in ["S-4890", "S-4891", "S-4892", "S-4893"]:
+		_check(wids.has(id), "weather stop %s is reported" % id)
+	var weather_node: Node = world.get_node_or_null("Weather")
+	_check(weather_node != null and weather_node.get_node_or_null("Snow") != null, "%s: the Weather node holds the snow layer" % map)
 
 ## FX-1: the retail FX data and the FXPlayer. Truth for the counts is a GDScript line scan of the two INI files (independent of the C++
 ## parsers): the number of distinct `FXParticleSystem <name>` / `FXList <name>` definitions.

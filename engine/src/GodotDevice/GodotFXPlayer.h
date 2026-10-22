@@ -91,6 +91,9 @@ public:
 	Array get_batch_summary() const { return m_summary; }
 	// lane FX-2 (C++ only): the playback the live game's LiveFX drives; null before setup() succeeded
 	FXPlayback *playback() const { return m_playback.get(); }
+	// lane WEATHER-1 (C++ only): a particle texture through this player's cache (the snow manager's TextureAsset::Get is the particle texture loader,
+	// BFME2 0x00132D89); a name that does not resolve is the 1x1 white and is reported in get_stats().missing_textures
+	Ref<Texture2D> particleTexture(const std::string &name) { return loadTexture(name); }
 
 protected:
 	static void _bind_methods();

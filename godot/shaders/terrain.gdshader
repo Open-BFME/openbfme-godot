@@ -14,6 +14,7 @@ render_mode unshaded, cull_back;
 #include "res://shaders/radius_cursor.gdshaderinc"
 
 varying vec2 v_sage_xy; // lane SELPERF-1: the world point of the pixel (SAGE x, y) for the selection's merge decals
+varying vec4 v_weather_vcol; // lane WEATHER-1: the vertex colour relit with the cloud effect's darkening (weather_relit)
 
 void vertex() {
 	vec3 lts;
@@ -33,10 +34,11 @@ void vertex() {
 	vec3 world = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
 	v_shroud_uv = (vec2(world.x, -world.z) - shroud_origin) / shroud_extent;
 	v_sage_xy = vec2(world.x, -world.z);
+	v_weather_vcol = weather_relit ? weather_vertex_color(NORMAL, COLOR) : COLOR;
 }
 
 void fragment() {
-	ALBEDO = terrain_output(UV, COLOR);
+	ALBEDO = terrain_output(UV, weather_relit ? v_weather_vcol : COLOR);
 	// lane SELPERF-1: the selection's merge decals over the terrain, as RotWK's stencil passes draw them after it (selection_decals.gdshaderinc)
 	vec4 sel = sel_merge(v_sage_xy);
 	if (sel.a > 0.0) {

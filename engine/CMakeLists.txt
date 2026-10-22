@@ -235,6 +235,7 @@ include(cmake/Ownerfix1.cmake)  # OWNERFIX-1: problems the owner hit playing (OP
 include(cmake/Visual2.cmake)    # VISUAL-2: the owner's fog leak, tree sway and colouring (OPENBFME_VISUAL2_SOURCES / _TESTS)
 include(cmake/Ownerfix2.cmake)  # OWNERFIX-2: the owner's playtest of 2026-10-17 (OPENBFME_OWNERFIX2_CLIENT_SOURCES / _TESTS)
 include(cmake/Backlog8.cmake)   # BACKLOG-8: formations, horde wall scaling, auto ability melee position (appends to OPENBFME_SIM_SOURCES)
+include(cmake/Weather1.cmake)   # WEATHER-1: snow, rain, darkness, lightning, the weather sound (client sources; OPENBFME_WEATHER1_TESTS)
 add_library(openbfme_core STATIC
     ${OPENBFME_PLAY2_SOURCES}
     ${OPENBFME_APT_SOURCES}
@@ -488,6 +489,7 @@ list(APPEND OPENBFME_SIM_SOURCES
 list(REMOVE_DUPLICATES OPENBFME_SIM_SOURCES)
 target_sources(openbfme_core PRIVATE ${OPENBFME_SIM_SOURCES})
 target_sources(openbfme_core PRIVATE ${OPENBFME_SPELL_CLIENT_SOURCES}) # lane SPELL-2 (client sources, Spell.cmake)
+target_sources(openbfme_core PRIVATE ${OPENBFME_WEATHER1_CLIENT_SOURCES}) # lane WEATHER-1 (client sources, Weather1.cmake)
 # Simulation sources of the GDExtension (they need godot-cpp, so they are registered with the `openbfme` target, not the core): GodotGameWorld.cpp calls the core
 # game start (GameLogic/NewGame, a thin caller since START-1), creates the logic objects and queues the player's commands (HUD-1 moves the commands into core);
 # GodotGameStart.cpp marshals the lobby's NewGameMessage between Godot Dictionaries and the logic's struct (the values the logic consumes), so it is audited too.
@@ -557,7 +559,8 @@ add_library(openbfme SHARED
     ${OPENBFME_UI6_GODOT_SOURCES}
     ${OPENBFME_HUD4_GODOT_SOURCES}
     ${OPENBFME_HUD6_GODOT_SOURCES}
-    ${OPENBFME_CAH1_GODOT_SOURCES})
+    ${OPENBFME_CAH1_GODOT_SOURCES}
+    ${OPENBFME_WEATHER1_GODOT_SOURCES})
 target_sources(openbfme PRIVATE ${OPENBFME_SIM_SOURCES_GODOT}) # the simulation sources of the extension (listed in the manifest)
 target_link_libraries(openbfme PRIVATE openbfme_core godot-cpp)
 if(UNIX AND NOT APPLE)
@@ -718,6 +721,7 @@ add_executable(openbfme_tests
     ${OPENBFME_OWNERFIX1_TESTS}
     ${OPENBFME_VISUAL2_TESTS}
     ${OPENBFME_OWNERFIX2_TESTS}
+    ${OPENBFME_WEATHER1_TESTS}
     tests/test_main.cpp
     tests/test_big_archive.cpp
     tests/test_archive_order.cpp

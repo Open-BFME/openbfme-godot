@@ -134,6 +134,9 @@ public:
 	std::vector<std::string> acceptanceStops() const;
 	// AUDIO-1: the audio / EVA blocks the INI load parsed (TheAudio / TheEva files, retail order)
 	const AudioIniState &audio() const;
+	// lane WEATHER-1: an audio event of that name exists in TheAudio's parsed event table (the "Invalid Sound" check, RW 0x73AA94), for INI loaders
+	// outside the world (the client's WeatherSettingStore)
+	bool audioEventExists(const std::string &name) const;
 
 	// The process-wide parsing context this world owns: TheLocomotorStore, TheCommandStore, the weapon / armor / damage-FX stores and the audio
 	// validator of the contain parse hooks. They are registered, selected and removed TOGETHER as removable owner registrations
