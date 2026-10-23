@@ -10,6 +10,7 @@
 #include "RetailTestMount.h"
 
 #include "Common/Audio/AudioIni.h"
+#include "Common/Audio/AudioAssetCache.h"
 #include "Common/MiniJson.h"
 
 #include <algorithm>
