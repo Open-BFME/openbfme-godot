@@ -23,6 +23,7 @@
 #include "GameLogic/AI/AIHunt.h"
 #include "GameLogic/AI/AIWaypointPath.h"
 #include "GameLogic/AI/AIWorld.h"
+#include "GameLogic/AttributeModifiers.h"
 #include "GameLogic/BitFlags.h"
 #include "GameLogic/GameLogic.h"
 #include "GameLogic/Module/HordeAIUpdate.h"
@@ -57,8 +58,8 @@ const char *const kStopStates =
 	"0x47 = a state RotWK added); AIIdleState::onEnter draws its random sleep offset as ZH does (GetGameLogicRandomValue(0, 10, \"AIStates.cpp\", 0x520)): the RW draw was not read, "
 	"so a retail replay's RNG sequence can differ at the first idle of every unit";
 const char *const kStopHost =
-	"S-222 the movement host reports no river (RiverModifier), no crew power, no speed attribute modifier, no charge order, no physics suppression and no turn limiting "
-	"(the modules behind RW 0x68BF11, 0x68C82D, 0x5E3A1B and the terrain river query are other lanes'); the pending position of the movers lives in the AI";
+	"S-222 the movement host reports no river (RiverModifier), no crew power, no charge order, no physics suppression and no turn limiting "
+	"(the modules behind RW 0x68BF11, 0x5E3A1B and the terrain river query are other lanes'); the pending position of the movers lives in the AI";
 
 // the registry bits, resolved once by name (a mod's own order cannot break them)
 int modelConditionIndex(const char *name)
@@ -224,7 +225,12 @@ public:
 		const ContainModuleInterface *c = m_ai.getObject()->getContain();
 		return c ? c->getCrewPowerMultiplier() : 1.0f;
 	}
-	bool speedAttributeModifier(float &) const override { return false; }
+	bool speedAttributeModifier(float &out) const override
+	{
+		// TARGET: RW 0x5E4015 -> Object product 0x68C82D (type 8, no name, innate=true); Locomotor applies it at 0x5E401E.
+		// Query this object's pool only: HordeContain already propagates additions to the members (RW 0x870E50).
+		return obj().attributeModifierProduct(ATTRIBUTE_SPEED, nullptr, true, out);
+	}
 	bool isInRiver(float, float) const override { return false; }
 	bool isTurnLimited() const override { return !stationary(); }
 	bool isChargeOrdered() const override { return false; }

@@ -14,6 +14,7 @@ set(OPENBFME_MOVE_SOURCES
 list(APPEND OPENBFME_SIM_SOURCES ${OPENBFME_MOVE_SOURCES})
 set(OPENBFME_MOVE_TESTS
     tests/test_move_ai.cpp
+    tests/test_move_speed.cpp
     tests/test_move_horde.cpp
     tests/test_move_commands.cpp
     tests/test_move_hash.cpp
