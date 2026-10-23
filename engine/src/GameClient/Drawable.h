@@ -100,6 +100,10 @@ struct DrawEntry
 	float tireFront = 0.0f, tireRear = 0.0f;
 	std::vector<std::string> frontTireBones, rearTireBones;
 	unsigned tireChanges = 0; ///< bumped when an angle changed (the device layer re-poses the instance)
+	// advanceTires: dynamic_cast once per entry. A rebuilt entry is a new DrawEntry, so this starts unset; a replaced data pointer misses the cache.
+	const ModuleData *truckData = nullptr;
+	bool truckChecked = false;
+	bool isTruck = false;
 };
 
 class Drawable : public Thing

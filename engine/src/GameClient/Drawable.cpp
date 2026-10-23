@@ -380,11 +380,17 @@ void Drawable::advanceAnimation(double elapsedMs)
 // is not kept, so the tires only spin; the speed gate RW 0x46E918 is not read; the cab / trailer bones and the dust / dirt / powerslide effects are not run.
 void Drawable::advanceTires(DrawEntry &e, double elapsedMs)
 {
-	const W3DTruckDrawModuleData *truck = e.draw ? dynamic_cast<const W3DTruckDrawModuleData *>(e.data) : nullptr;
-	if (!truck)
+	if (e.truckData != e.data || !e.truckChecked)
+	{
+		e.truckData = e.data;
+		e.truckChecked = true;
+		e.isTruck = e.draw && dynamic_cast<const W3DTruckDrawModuleData *>(e.data) != nullptr;
+	}
+	if (!e.isTruck)
 	{
 		return;
 	}
+	const W3DTruckDrawModuleData *truck = static_cast<const W3DTruckDrawModuleData *>(e.data);
 	if (e.frontTireBones.empty() && e.rearTireBones.empty())
 	{
 		for (const std::string *b : { &truck->m_leftFrontTireBone, &truck->m_rightFrontTireBone, &truck->m_leftFrontTireBone2, &truck->m_rightFrontTireBone2,

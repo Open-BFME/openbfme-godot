@@ -143,6 +143,9 @@ struct LogicSnapshot
 	bool hashed = false;
 	std::uint32_t stateHash = 0;    ///< the state hash of the frame (when hashed)
 	std::vector<ObjectSnapshot> objects; ///< ascending id
+	// id -> index in objects, -1 when that id is absent. Built once the id sort finishes and dropped with the snapshot.
+	// find checks the stored id, so a stale slot cannot return another object's pose.
+	std::vector<int> idToIndex;
 	std::shared_ptr<const ShroudView> shroud;   ///< null without a shroud manager
 	std::shared_ptr<const PlayerView> players;
 	std::shared_ptr<const EndGameView> endGame; ///< lane END-1: the victory state the end sequence reads (GameClient/EndGame.h)

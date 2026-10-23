@@ -28,6 +28,8 @@
 #include <godot_cpp/classes/image.hpp>
 #include <godot_cpp/variant/color.hpp>
 #include <godot_cpp/classes/image_texture.hpp>
+#include <godot_cpp/classes/texture2drd.hpp>
+#include <godot_cpp/variant/rid.hpp>
 #include <godot_cpp/classes/multi_mesh.hpp>
 #include <godot_cpp/classes/multi_mesh_instance3d.hpp>
 #include <godot_cpp/classes/node3d.hpp>
@@ -53,6 +55,8 @@ namespace godot
 {
 
 class RetailFileSystem;
+
+struct PaletteRdQueue;
 
 class W3DInstancer : public Node3D
 {
@@ -259,6 +263,7 @@ private:
 		bool PoseStale = true;                // SMOOTH-1: the pose inputs changed since the last evaluation (clip-driven instances follow GlobalTime)
 		bool Inexact = false;                 // SMOOTH-1: the last evaluation used an arm whose summation order is not retail's (S-028)
 		int PaletteSize = 0;                  // SMOOTH-1: texels of the palette block (pivots * W3D_PALETTE_TEXELS_PER_PIVOT); 0 = none yet
+		bool PaletteAnimated = false;         // the block lives in the animated pool (moved there when a clip, pose, or bone spin starts)
 		// lane PERF-3: the clip names of the last set_instance_pose_native and what they resolved to (a drawable asks for the same clips frame after frame)
 		std::string MemoClip[2];
 		const HAnimClass *MemoAnim[2] = { nullptr, nullptr };
@@ -281,6 +286,12 @@ private:
 	const HAnimClass *resolve_clip_cached(Model &m, const std::string &name);
 	void allocate_palette(Instance &inst);   // SMOOTH-1: a block of the palette for one instance (a free block of the size, else the end)
 	void grow_palette(int texels);           // SMOOTH-1: a larger palette image / texture (capacity grows by half), the data kept
+	void adopt_animated_palette(Instance &inst); // move a static block into the animated pool when the prop starts animating
+	void note_palette_rows(int offset, int texels);
+	void bind_palette_gpu();
+	void upload_palette();
+	void release_palette_rd();
+	Ref<Texture2D> palette_sampler() const;
 	void mark_model(int64_t instance);       // SMOOTH-1: the instance's model rewrites its buffers
 	void run_parallel(size_t count, const std::function<void(size_t, size_t)> &fn);
 
@@ -302,14 +313,25 @@ private:
 	int PaletteTexels = 0;
 	int PaletteHeight = 0;
 	Ref<ImageTexture> PaletteTexture;
+	Ref<Texture2DRD> PaletteRD;              // Forward+/Mobile: the sampled texture, so a frame can copy only dirty rows
+	// Owns the RenderingDevice palette and staging RIDs. Create, upload, copy, and free run on the render thread, in queue order.
+	// The node does not free those RIDs, and PREDELETE does not queue a method on this (the queue outlives the node).
+	PaletteRdQueue *PaletteQueue = nullptr;
+	bool PaletteOnRd = false;
 	Ref<Image> PaletteImage;
 	bool LayoutDirty = true;
 	bool PoseDirty = true;
 	// lane SMOOTH-1: the palette is allocated per instance (removed instances' blocks are reused by size) instead of relaid out on every add
 	int PaletteUsed = 0;                         // texels up to the high-water mark
-	std::map<int, std::vector<int>> PaletteFree; // block size -> free block offsets
+	std::map<int, std::vector<int>> PaletteFree; // static block size -> free offsets (a prop that starts animating returns its block here)
+	std::map<int, std::vector<int>> PaletteAnimFree; // animated block size -> free offsets
 	bool PaletteGrown = false;                   // the texture was recreated: set on every material, full upload
+	bool PaletteFullUpload = true;               // the GPU texture is new or the partial copy path cannot be used
 	bool PaletteChanged = true;                  // some instance's palette block changed: upload
+	int PaletteDirtyRow0 = 0;
+	int PaletteDirtyRow1 = -1;                   // inclusive; empty when row1 < row0
+	int PaletteRowsUploaded = 0;
+	bool PaletteUploadFull = false;
 	double PosedTime = -1.0;                     // GlobalTime of the last evaluation of clip-driven instances
 	bool HaveLastCamera = false;
 	Transform3D LastCamera;                      // the camera of the last write (sorted draw items are rewritten when it moves)
