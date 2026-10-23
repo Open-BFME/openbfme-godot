@@ -268,3 +268,11 @@ BFME1 PalantirA stores TGA bytes under a DDS filename. The BFME1 material
 loader identifies the payload before decoding, so the Palantir sphere uses its
 authored texture rather than the pink error material. The HUD regression loads
 the Palantir model and requires an empty texture-error report.
+
+For BFME1 battalions, an incomplete coarse-corridor path is retried once with the existing
+cell search without corridor ordering. Castle rear walls can otherwise leave the battalion
+at a partial endpoint despite an open gate providing a longer route. This is an OpenBFME
+compatibility correction, not a verified BFME1 retail algorithm. Both searches retain their
+cell limits, and a retry replaces the original result only when it reaches the destination.
+The regression issues one move behind Gondor's castle on Fords of Isen and Rohan's castle
+on Anorien and checks arrival of the battalion and each soldier.
