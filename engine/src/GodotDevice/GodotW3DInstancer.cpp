@@ -712,6 +712,7 @@ int64_t W3DInstancer::add_instance(int64_t model, const Transform3D &transform, 
 	// lane SMOOTH-1: the pose and the palette block are made here; the layout pass only grows the MultiMesh capacities (it no longer relays out
 	// every instance and recreates the palette texture on each add, a frame-time spike whenever an object was created or changed its model)
 	inst.Pose.Resize(Models[(size_t)model]->Proto->Tree->Num_Pivots());
+	inst.DrawPoseState.resize(Models[(size_t)model]->Draws.size());
 	allocate_palette(inst);
 	Instances.push_back(std::move(inst));
 	const int id = (int)Instances.size() - 1;
@@ -763,6 +764,7 @@ bool W3DInstancer::remove_instance(int64_t instance)
 
 		inst.PaletteSize = 0;
 		inst.Pose = HTreePose();
+		decltype(inst.DrawPoseState)().swap(inst.DrawPoseState);
 	}
 	PoseDirty = true;
 	return true;
@@ -1179,12 +1181,18 @@ PackedFloat32Array W3DInstancer::get_instance_palette(int64_t instance) const
 	return out;
 }
 
-void W3DInstancer::ensure_pose(const Instance &inst) const
+void W3DInstancer::ensure_pose(int64_t instance) const
 {
+	const Instance &inst = Instances[(size_t)instance];
 	if (PoseCulling && inst.PoseStale && !inst.Removed)
 	{
 		Instance &mut = const_cast<Instance &>(inst); // the pose is a cache of the instance's inputs: evaluating it does not change what the instance is
 		evaluate_pose(mut);
+		if (!mut.QueryPosePending)
+		{
+			Models[(size_t)inst.Model]->QueriedPoseIds.push_back((int)instance);
+			mut.QueryPosePending = true;
+		}
 	}
 }
 
@@ -1228,8 +1236,8 @@ void W3DInstancer::write_buffers()
 		}
 	}
 	const Transform3D nodeXf = is_inside_tree() ? get_global_transform() : Transform3D();
-	// lane SMOOTH-1: a model is rewritten only when one of its instances changed (moved, posed, added, removed, re-tinted, hid a sub object), or,
-	// for a model with back-to-front sorted items, when the camera moved; the others keep last frame's buffers and counts
+	// Instance record changes still rewrite the model. A pose alone only rewrites affected draw items: bone matrices live in the palette,
+	// while visibility/fade enter these records. Sorted draws keep the conservative pose/camera invalidation for animated pivot depths.
 	const bool cameraMoved = !haveCamera || !HaveLastCamera || !(cam == LastCamera) || !(nodeXf == LastNodeXf); // the node's transform enters the depths too
 	LastCamera = cam;
 	LastNodeXf = nodeXf;
@@ -1241,27 +1249,56 @@ void W3DInstancer::write_buffers()
 	for (std::unique_ptr<Model> &mp : Models)
 	{
 		Model &m = *mp;
-		if (!m.BuffersDirty && !(m.HasSorted && cameraMoved))
+		const bool consumeQueries = !m.QueriedPoseIds.empty() && (m.BuffersDirty || m.PoseEvaluated || (m.HasSorted && cameraMoved));
+		if (consumeQueries && !m.BuffersDirty)
 		{
-			dithered += m.Dithered;
-			sortedItems += m.SortedItems;
-			for (const DrawItem &d : m.Draws) visible += (int)d.Order.size();
-			continue;
+			// A query can update a culled Pose outside StaleScratch. The baseline would consume it when ANY pose in this model
+			// evaluates, or its sorted camera changes. Compare only these queued candidates, never all historical instances.
+			for (int id : m.QueriedPoseIds)
+			{
+				const Instance &inst = Instances[(size_t)id];
+				if (inst.Removed) continue;
+				for (size_t k = 0; k < m.Draws.size(); ++k)
+				{
+					DrawItem &d = m.Draws[k];
+					if (d.PoseDirty || d.Mesh->HasSorted) continue;
+					const size_t bone = (size_t)d.Sub->BoneIndex;
+					if (inst.DrawPoseState[k] != std::make_pair(inst.Pose.IsVisible[bone], inst.Pose.PivotFade[bone]))
+					{
+						d.PoseDirty = true;
+					}
+				}
+			}
 		}
-		++writes;
-		m.BuffersDirty = false;
+		bool wrote = false;
 		m.Dithered = 0;
 		m.SortedItems = 0;
 		for (DrawItem &d : m.Draws)
 		{
+			if (!m.BuffersDirty && !d.PoseDirty && !(d.Mesh->HasSorted && cameraMoved))
+			{
+				m.Dithered += d.Dithered;
+				m.SortedItems += d.HasBatch ? 1 : 0;
+				visible += (int)d.Order.size();
+				continue;
+			}
+			wrote = true;
+			d.PoseDirty = false;
+			d.Dithered = 0;
 			const int bone = d.Sub->BoneIndex;
+			const size_t drawIndex = (size_t)(&d - m.Draws.data());
 			const bool rigid = !d.Mesh->Data.Skin;
 			std::vector<int> &ids = d.Order;
 			ids.clear();
 			for (int id : m.InstanceIds)
 			{
-				const Instance &inst = Instances[(size_t)id];
+				Instance &inst = Instances[(size_t)id];
 				if (inst.Removed) continue;
+				// Cache every consumed pose before membership filters, including queried culled/hidden/zero-fade instances.
+				if (!d.Mesh->HasSorted)
+				{
+					inst.DrawPoseState[drawIndex] = std::make_pair(inst.Pose.IsVisible[(size_t)bone], inst.Pose.PivotFade[(size_t)bone]);
+				}
 				if (!inst.HiddenSubs.empty() && inst.HiddenSubs[(size_t)d.SubIndex]) continue;
 				if (!inst.Pose.IsVisible[(size_t)bone]) continue;
 				if (inst.Pose.PivotFade[(size_t)bone] * inst.Opacity <= 0.0f) continue;
@@ -1305,7 +1342,7 @@ void W3DInstancer::write_buffers()
 			{
 				const Instance &inst = Instances[(size_t)id];
 				const float fade = inst.Pose.PivotFade[(size_t)bone] * inst.Opacity; // PROJ-2: the drawable's opacity
-				if (d.Mesh->HasOpaque && fade < 0.999f) ++m.Dithered;
+				if (d.Mesh->HasOpaque && fade < 0.999f) ++d.Dithered;
 				float *o = buf + (size_t)count * 16;
 				const Basis &b = inst.Xf.basis;
 				o[0] = b.rows[0][0]; o[1] = b.rows[0][1]; o[2] = b.rows[0][2]; o[3] = inst.Xf.origin.x;
@@ -1320,7 +1357,16 @@ void W3DInstancer::write_buffers()
 			d.MM->set_buffer(d.Buffer);
 			d.MM->set_visible_instance_count(count);
 			visible += count;
+			m.Dithered += d.Dithered;
 		}
+		if (wrote) ++writes;
+		if (consumeQueries)
+		{
+			for (int id : m.QueriedPoseIds) Instances[(size_t)id].QueryPosePending = false;
+			m.QueriedPoseIds.clear();
+		}
+		m.PoseEvaluated = false;
+		m.BuffersDirty = false;
 		dithered += m.Dithered;
 		sortedItems += m.SortedItems;
 	}
@@ -1505,7 +1551,26 @@ void W3DInstancer::update_now()
 	});
 	for (size_t i : StaleScratch)
 	{
-		Models[(size_t)Instances[i].Model]->BuffersDirty = true; // the pivot visibility and fade the buffers read may have changed
+		const Instance &inst = Instances[i];
+		Model &m = *Models[(size_t)inst.Model];
+		m.PoseEvaluated = true;
+		if (m.BuffersDirty) continue; // the full rewrite will consume and cache all poses, including queried culled ones
+		for (size_t k = 0; k < m.Draws.size(); ++k)
+		{
+			DrawItem &d = m.Draws[k];
+			if (d.PoseDirty) continue; // one changed instance already guarantees this draw's full rewrite
+			if (d.Mesh->HasSorted)
+			{
+				d.PoseDirty = true;
+				continue;
+			}
+			const size_t bone = (size_t)d.Sub->BoneIndex;
+			const auto state = std::make_pair(inst.Pose.IsVisible[bone], inst.Pose.PivotFade[bone]);
+			if (inst.DrawPoseState[k] != state)
+			{
+				d.PoseDirty = true;
+			}
+		}
 	}
 	PoseEvaluations = (int)StaleScratch.size();
 	if (PoseCulled > 0)
@@ -1574,7 +1639,7 @@ Vector3 W3DInstancer::get_bone_position(int64_t instance, int bone) const
 {
 	if (instance < 0 || instance >= (int64_t)Instances.size()) return Vector3();
 	const Instance &inst = Instances[(size_t)instance];
-	ensure_pose(inst);
+	ensure_pose(instance);
 	if (bone < 0 || bone >= inst.Pose.Num_Pivots()) return Vector3();
 	::Vector3 t = inst.Pose.Transform[(size_t)bone].Get_Translation();
 	return Vector3(t.X, t.Y, t.Z);
@@ -1606,7 +1671,7 @@ bool W3DInstancer::get_bone_transform_native(int64_t instance, int bone, ::Matri
 		return false;
 	}
 	const Instance &inst = Instances[(size_t)instance];
-	ensure_pose(inst);
+	ensure_pose(instance);
 	if (bone < 0 || bone >= inst.Pose.Num_Pivots())
 	{
 		return false;

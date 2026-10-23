@@ -219,6 +219,8 @@ private:
 		std::vector<int> Order;          // instance ids as written by the last write_buffers
 		W3DSortBatch Batch;              // SMOOTH-1: the depths of the last write (sorted items), kept for the S-029 check of frames that skip this model
 		bool HasBatch = false;
+		bool PoseDirty = false;         // pivot visibility/fade changed, or sorted animated depth may have changed
+		int Dithered = 0;               // retained when this draw keeps its buffer
 	};
 	struct Model
 	{
@@ -229,8 +231,10 @@ private:
 		Dictionary Report;
 		// lane SMOOTH-1: per-frame work only where something changed
 		std::unordered_map<std::string, const HAnimClass *> Clips; // clip name as asked -> resolved clip (resolve_clip once per name)
-		bool BuffersDirty = true;        // an instance moved / was posed / added / removed / re-tinted: its MultiMesh buffers are rewritten
-		bool HasSorted = false;          // a draw item sorts back to front: rewritten whenever the camera moves
+		bool BuffersDirty = true;        // instance records / palette bases / membership changed: all this model's draw buffers are rewritten
+		bool PoseEvaluated = false;      // this update evaluated a pose: the baseline would consume every live instance's cached Pose
+		bool HasSorted = false;          // a camera/node change was also a whole-model rewrite trigger in the baseline
+		std::vector<int> QueriedPoseIds; // deduplicated poses evaluated by bone queries, retained until a baseline model rewrite trigger
 		int Dithered = 0;                // S-029 counts of the last write of this model
 		int SortedItems = 0;
 		float CullRadius = -1.0f;        // lane PERF-3: cull_radius, computed on first use
@@ -249,6 +253,9 @@ private:
 		double Speed = 1.0;
 		int PaletteOffset = 0; // first texel
 		HTreePose Pose;
+		// Visibility/fade consumed by each unsorted DrawItem's last rewrite, independent of Pose (which a culled bone query can change).
+		// Evaluating a pose compares with this state; only write_buffers refreshes it, before membership filtering.
+		std::vector<std::pair<std::uint8_t, float>> DrawPoseState;
 		float HcPacked = 0.0f;                // W3D_Pack_House_Color or 0 (INSTANCE_CUSTOM.z)
 		bool InfantryLight = false;           // set_instance_infantry_light (INSTANCE_CUSTOM.x < 0)
 		int Sway = 0;                         // lane VISUAL-2: set_instance_sway (INSTANCE_CUSTOM.w += 1024 * Sway)
@@ -257,6 +264,7 @@ private:
 		bool Removed = false;                 // remove_instance: skipped by the pose and buffer passes
 		float Opacity = 1.0f;                 // set_instance_opacity (lane PROJ-2)
 		bool PoseStale = true;                // SMOOTH-1: the pose inputs changed since the last evaluation (clip-driven instances follow GlobalTime)
+		bool QueryPosePending = false;        // deduplicates bone-query evaluations until a baseline model consumption trigger
 		bool Inexact = false;                 // SMOOTH-1: the last evaluation used an arm whose summation order is not retail's (S-028)
 		int PaletteSize = 0;                  // SMOOTH-1: texels of the palette block (pivots * W3D_PALETTE_TEXELS_PER_PIVOT); 0 = none yet
 		// lane PERF-3: the clip names of the last set_instance_pose_native and what they resolved to (a drawable asks for the same clips frame after frame)
@@ -267,7 +275,7 @@ private:
 	};
 	// lane PERF-3: the radius around an instance's origin, in model units, that holds every vertex of the model in any pose (pose culling)
 	float cull_radius(Model &m) const;
-	void ensure_pose(const Instance &inst) const; // the bone queries: a pose that culling left pending is evaluated now
+	void ensure_pose(int64_t instance) const; // the bone queries: a pose that culling left pending is evaluated now
 
 	void warn(const std::string &message);
 	const HAnimClass *resolve_clip(const Model &m, const std::string &name); // nullptr (and an error recorded) when the clip is not registered
