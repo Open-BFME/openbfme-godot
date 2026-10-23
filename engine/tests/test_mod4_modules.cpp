@@ -363,14 +363,14 @@ TEST_CASE("MOD-4: a Rohan peasant's RepairSpecialPower sends it to repair a dama
 
 // ---- the registered stops ------------------------------------------------------------------------------------------------------------------------------------
 
-TEST_CASE("MOD-4: PickupStuffUpdate, GeometryUpgrade, ThreatFinderUpdate and the rebuild holes stay UnportedModules, each reported as its stop [S-1422] .. [S-1424], [S-1427]")
+TEST_CASE("MOD-4: PickupStuffUpdate, ThreatFinderUpdate and the rebuild holes stay UnportedModules, each reported as its stop [S-1422] .. [S-1424], [S-1427]")
 {
 	OPENBFME_REQUIRE_START(s);
 	const std::vector<std::string> unported = s->world->modules().unportedModuleClassNames();
 	const std::vector<std::string> stops = s->world->acceptanceStops();
-	const char *const ids[] = { "[S-1422] PickupStuffUpdate", "[S-1423] GeometryUpgrade", "[S-1424] ThreatFinderUpdate", "[S-1427] RebuildHoleExposeDie",
+	const char *const ids[] = { "[S-1422] PickupStuffUpdate", "[S-1424] ThreatFinderUpdate", "[S-1427] RebuildHoleExposeDie",
 		"[S-1427] RebuildHoleExposeDie" };
-	REQUIRE(Mod4Stops::classes().size() == 5);
+	REQUIRE(Mod4Stops::classes().size() == 4);
 	for (size_t i = 0; i < Mod4Stops::classes().size(); ++i)
 	{
 		const std::string &name = Mod4Stops::classes()[i];

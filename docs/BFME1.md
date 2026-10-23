@@ -276,3 +276,12 @@ pathfinding correction, not a verified retail algorithm. Both searches retain th
 cell limits, and a retry replaces the original result only when it reaches the destination.
 The regression issues one move behind Gondor's castle on Fords of Isen and Rohan's castle
 on Anorien and checks arrival of the battalion and each soldier.
+
+Castle wall trebuchet platforms and towers use `GeometryUpgrade` to set their permanent
+`UPGRADE_TREBUCHET` / `UPGRADE_GARRISON` animation conditions and switch the plot's
+collision shapes. This module now runs through the shared upgrade mux; previously only
+the separate trebuchet spawn ran, leaving it floating over an invisible platform.
+The port follows BFME2 GeometryUpgrade.cpp and preserves the original geometry on removal.
+WallBoundsMesh / RampMesh and WallUpgradeUpdate navigation mesh hooks remain S-1423.
+The retail regression purchases both upgrades and requires the corresponding rendered
+structure plus exactly one spawned wall trebuchet.
