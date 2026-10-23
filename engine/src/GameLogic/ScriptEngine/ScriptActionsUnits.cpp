@@ -439,6 +439,10 @@ bool ScriptActions::executeUnitAction(ScriptEngine &engine, const ScriptActionRe
 {
 	GameLogic &logic = engine.logic();
 	const TerrainLogic *terrain = logic.terrain();
+	if (!logic.things().bfme1Data() && (name == "NAMED_USE_COMMANDBUTTON_ABILITY" || name == "TEAM_RECRUIT_UNITS" ||
+		name == "SET_PLAYER_MONEY_TO_COUNTER" || name == "SET_PLAYER_COMMAND_POINTS_AVAILABLE_TO_COUNTER" ||
+		name == "TEAM_MOVE_TO_NEAREST_OBJECT_OF_KINDOF" || name == "TEAM_MOVE_TO_NEAREST_OBJECT_OF_TYPE_OWNED_BY_PLAYER" ||
+		name == "SET_UNIT_REFERENCE" || name == "SET_UNIT_REFERENCE_TO_REFERENCE" || name == "CREATE_REINFORCEMENT_TEAM_AT_UNIT_POSITION")) return false;
 	if (name == "NAMED_USE_COMMANDBUTTON_ABILITY")
 	{
 		// DONOR BFME1 ScriptActions.cpp doNamedUseCommandButtonAbility: look

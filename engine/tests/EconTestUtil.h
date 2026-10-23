@@ -63,8 +63,8 @@ private:
 
 struct Fx : logictest::LogicWorld
 {
-	explicit Fx(const char *objects, const char *templates = nullptr)
-		: LogicWorld(RandomAlgorithm::ZH_CarryChain, templates)
+	explicit Fx(const char *objects, const char *templates = nullptr, bool bfme1 = false)
+		: LogicWorld(RandomAlgorithm::ZH_CarryChain, templates, bfme1)
 	{
 		REQUIRE_MESSAGE(loadError.empty(), loadError);
 		LogicModules::registerAll(w.modules);

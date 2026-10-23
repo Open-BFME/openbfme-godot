@@ -460,7 +460,7 @@ bool CastleBehavior::hasFreeBuildSlot(const ThingTemplate *tt) const
 {
 	if (!isUnpacked()) return false;
 	GameLogic &logic = getObject()->logic();
-	const auto &pads = tt && templateKindOf(logic, *tt, "FS_BASE_DEFENSE") ? m_defenseFoundations : m_foundations;
+	const auto &pads = tt && templateKindOf(logic, *tt, "FS_BASE_DEFENSE") && !m_defenseFoundations.empty() ? m_defenseFoundations : m_foundations;
 	for (ObjectID id : pads)
 	{
 		Object *pad = logic.findObjectByID(id);

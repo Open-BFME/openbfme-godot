@@ -85,7 +85,7 @@ struct Fixture
 {
 	ScriptGame g;
 	Object *u = nullptr;
-	Fixture()
+	explicit Fixture(bool bfme1 = false) : g(bfme1)
 	{
 		LogicModules::registerAll(g.lw.w.modules); // ActiveBody
 		const std::string err = g.lw.w.load(kUnitIni, INI_LOAD_OVERWRITE, "units.ini");
@@ -504,6 +504,7 @@ std::unique_ptr<Script> sequential(const std::string &name, const std::string &t
 struct UnitQueues
 {
 	movetest::MoveWorld w;
+	explicit UnitQueues(bool bfme1 = false) : w(100, 100, "", bfme1) {}
 	ScriptList list;
 	std::int32_t counter(const std::string &q) const
 	{
@@ -707,7 +708,7 @@ TEST_CASE("backlog3 radar notices: the list keeps 63, then 64, then the newest 6
 
 TEST_CASE("BFME1 script economy counters use player masks and retain native command point availability")
 {
-	Fixture f;
+	Fixture f(true);
 	f.g.lw.players.findPlayerWithName("Alice")->depositMoney(123);
 	f.g.lw.players.findPlayerWithName("Bob")->depositMoney(77);
 	const int aliceMoney = (int)f.g.lw.players.findPlayerWithName("Alice")->getMoney()->countMoney();
@@ -717,9 +718,34 @@ TEST_CASE("BFME1 script economy counters use player masks and retain native comm
 	CHECK(f.g.counter("FreeCP") == f.g.lw.players.findPlayerWithName("Alice")->commandPointsAvailable());
 }
 
-TEST_CASE("BFME1 team recruitment takes matching default-team units and reports its ranking stop")
+TEST_CASE("BFME1 script references resolve destroyed units only in BFME1 data")
+{
+	for (bool bfme1 : { false, true })
+	{
+		Fixture f(bfme1);
+		f.g.frame();
+		const auto qualified = f.g.engine().qualify("Base");
+		f.g.engine().nameInCache(qualified.first + "::unit-reference::" + qualified.second, *f.u);
+		CHECK(f.g.engine().getUnitNamed("Base") == (bfme1 ? f.u : nullptr));
+		CHECK_FALSE(f.g.engine().didUnitExist("Base"));
+		f.g.lw.logic->destroyObject(f.u);
+		f.g.frame();
+		CHECK(f.g.engine().getUnitNamed("Base") == nullptr);
+		CHECK(f.g.engine().didUnitExist("Base") == bfme1);
+	}
+}
+
+TEST_CASE("RotWK retains unported BFME1 economy actions")
 {
 	Fixture f;
+	f.g.engine().counter("Funds").value = 42;
+	run(f.g, act("SET_PLAYER_MONEY_TO_COUNTER", {sp(11, "Alice"), sp(4, "Funds")}));
+	CHECK(f.g.counter("Funds") == 42);
+}
+
+TEST_CASE("BFME1 team recruitment takes matching default-team units and reports its ranking stop")
+{
+	Fixture f(true);
 	Player *owner = f.g.lw.players.findPlayerWithName("Alice");
 	TeamPrototype *prototype = f.g.lw.teams.initTeam("Scouts", owner, false);
 	Team *scouts = f.g.lw.teams.createTeam(prototype);
@@ -734,7 +760,7 @@ TEST_CASE("BFME1 team recruitment takes matching default-team units and reports 
 
 TEST_CASE("BFME1 script scouts move toward the nearest capturable resource plot")
 {
-	UnitQueues q;
+	UnitQueues q(true);
 	q.w.buildMap();
 	REQUIRE(q.w.w.load("Object ResourcePlot\n KindOf = STRUCTURE CAPTUREFLAG IMMOBILE\nEnd\n").empty());
 	Player *owner = q.w.players.findPlayerWithName("Alice");

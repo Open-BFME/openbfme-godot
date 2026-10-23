@@ -751,6 +751,11 @@ bool ScriptConditions::evaluate(ScriptEngine &engine, const ScriptCondition &c)
 		return false;
 	}
 
+	if (!logic.things().bfme1Data() && (t->name == "CAN_BUILD_OBJECTTYPE_AT_BASE" || t->name == "NAMED_BASE_UNPACKABLE_FOR_PLAYER"))
+	{
+		engine.noteUnportedCondition(t->name);
+		return false;
+	}
 	if (t->name == "CAN_BUILD_OBJECTTYPE_AT_BASE" || (t->name == "CAN_BUILD_AT_BASE" &&
 		engine.getUnitNamed(param(c, 1).stringValue) && engine.getUnitNamed(param(c, 1).stringValue)->getTemplate()->bfme1Data()))
 	{

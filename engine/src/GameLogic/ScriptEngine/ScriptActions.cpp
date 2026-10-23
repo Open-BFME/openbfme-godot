@@ -285,6 +285,12 @@ void ScriptActions::execute(ScriptEngine &engine, const ScriptActionRec &a)
 	}
 	GameLogic &logic = engine.logic();
 	const std::string &name = t->name;
+	if (!logic.things().bfme1Data() && (name == "CREATE_OBJECT" || name == "NAMED_BASE_UNPACK" || name == "NAMED_BASE_UNPACK_FREE" ||
+		name == "BUILD_BASE_BUILDING" || name == "BUILD_BASE_BUILDING_IN_SLOT" || name == "BUILD_BASE_BUILDING_PER_TACTICAL_MARKER" || name == "BUILD_BUILDING_ON_FOUNDATION"))
+	{
+		engine.noteUnportedAction(name);
+		return;
+	}
 	if (name == "CREATE_OBJECT")
 	{
 		// DONOR BFME1 ScriptActions.cpp doCreateObject: unnamed template/team,
@@ -292,7 +298,11 @@ void ScriptActions::execute(ScriptEngine &engine, const ScriptActionRec &a)
 		Team *team = ScriptConditions::team(engine, param(a, 1).stringValue, true);
 		const ThingTemplate *tt = logic.things().findTemplate(param(a, 0).stringValue);
 		const auto &p = param(a, 2);
-		if (tt && team && engine.host()) engine.host()->createObject(*tt, *team, Coord3D{p.x, p.y, p.z}, param(a, 3).realValue);
+		if (tt && team && engine.host())
+		{
+			if (Object *object = engine.host()->createObject(*tt, *team, Coord3D{p.x, p.y, p.z}, param(a, 3).realValue))
+				object->friend_onBuildComplete();
+		}
 		else engine.note("[S-1180] CREATE_OBJECT cannot resolve template, team or creation host");
 		return;
 	}

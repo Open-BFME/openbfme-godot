@@ -278,7 +278,20 @@ Object GeometryPlot
   End
 End
 )";
-	econtest::Fx f(objects.c_str());
+	{
+		econtest::Fx retail(objects.c_str());
+		Object *plot = retail.make("GeometryPlot", retail.teamOf("Alice"));
+		REQUIRE(plot);
+		bool found = false;
+		for (const auto &module : plot->modules())
+			if (module->getModuleTagName() == "GeometryTag")
+			{
+				found = true;
+				CHECK(module->isUnported());
+			}
+		CHECK(found);
+	}
+	econtest::Fx f(objects.c_str(), nullptr, true);
 	Object *plot = f.make("GeometryPlot", f.teamOf("Alice"));
 	const int condition = conditionBit("UPGRADE_GARRISON");
 	plot->giveUpgrade(up("Upgrade_A"));

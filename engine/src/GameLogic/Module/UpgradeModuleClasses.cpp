@@ -6,6 +6,7 @@
 #endif
 
 #include "GameLogic/Module/UpgradeModuleClasses.h"
+#include "GameLogic/Module/UnportedModule.h"
 #include "GameLogic/SnapshotXfer.h"
 
 #include "Common/AsciiString.h"
@@ -14,6 +15,7 @@
 #include "Common/StateHash.h"
 #include "Common/SpecialPower.h"
 #include "Common/Thing/ModuleFactory.h"
+#include "Common/Thing/ThingTemplate.h"
 #include "GameClient/ControlBarCommands.h"
 #include "GameLogic/GameLogic.h"
 #include "GameLogic/AI/AIWorld.h"
@@ -801,7 +803,10 @@ UpgradeModuleClasses::Stats &UpgradeModuleClasses::stats()
 void UpgradeModuleClasses::registerAll(ModuleFactory &modules)
 {
 	modules.bindTypedData<GeometryUpgradeModuleData>("GeometryUpgrade", MODULETYPE_BEHAVIOR);
-	bindRuntime<GeometryUpgrade, GeometryUpgradeModuleData>(modules, "GeometryUpgrade");
+	modules.bindModuleProc("GeometryUpgrade", MODULETYPE_BEHAVIOR, [](Thing *thing, const ModuleData *data, const ModuleFactory::ModuleTemplate &info) -> std::unique_ptr<Module> {
+		if (!thing->getTemplate()->bfme1Data()) return makeUnportedModule(thing, data, info.name, info.type, info.interfaceMask);
+		return std::make_unique<GeometryUpgrade>(thing, dynamic_cast<const GeometryUpgradeModuleData *>(data));
+	});
 	modules.bindTypedData<StatusBitsUpgradeModuleData>("StatusBitsUpgrade", MODULETYPE_BEHAVIOR);
 	bindRuntime<StatusBitsUpgrade, StatusBitsUpgradeModuleData>(modules, "StatusBitsUpgrade");
 	modules.bindTypedData<ModelConditionUpgradeModuleData>("ModelConditionUpgrade", MODULETYPE_BEHAVIOR);

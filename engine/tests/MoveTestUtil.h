@@ -162,8 +162,8 @@ struct MoveWorld : logictest::LogicWorld
 	AICommands aiCommands;
 	bool mapBuilt = false;
 
-	explicit MoveWorld(int cellsW = 100, int cellsH = 100, const char *extraObjects = "")
-		: terrain(cellsW, cellsH)
+	explicit MoveWorld(int cellsW = 100, int cellsH = 100, const char *extraObjects = "", bool bfme1 = false)
+		: LogicWorld(RandomAlgorithm::ZH_CarryChain, nullptr, bfme1), terrain(cellsW, cellsH)
 		, dispatcher(*logic)
 	{
 		REQUIRE_MESSAGE(loadError.empty(), loadError);

@@ -5,6 +5,7 @@
 #include "GameLogic/ScriptEngine/ScriptEngine.h"
 
 #include "Common/Crc32.h"
+#include "Common/Thing/ThingFactory.h"
 #include "Common/Player.h"
 #include "Common/PlayerList.h"
 #include "Common/StateHash.h"
@@ -501,10 +502,13 @@ bool ScriptEngine::isInNamedCache(const Object &obj) const
 
 Object *ScriptEngine::getUnitNamed(const std::string &name) const
 {
-	const auto qualified = qualify(name);
-	const std::string reference = qualified.first + "::unit-reference::" + qualified.second;
-	for (const auto &entry : m_namedObjects)
-		if (entry.first == reference) return m_logic.findObjectByID(entry.second);
+	if (m_logic.things().bfme1Data())
+	{
+		const auto qualified = qualify(name);
+		const std::string reference = qualified.first + "::unit-reference::" + qualified.second;
+		for (const auto &entry : m_namedObjects)
+			if (entry.first == reference) return m_logic.findObjectByID(entry.second);
+	}
 
 	if (name.empty())
 	{
@@ -522,6 +526,13 @@ Object *ScriptEngine::getUnitNamed(const std::string &name) const
 
 bool ScriptEngine::didUnitExist(const std::string &name) const
 {
+	if (m_logic.things().bfme1Data())
+	{
+		const auto qualified = qualify(name);
+		const std::string reference = qualified.first + "::unit-reference::" + qualified.second;
+		for (const auto &entry : m_namedObjects)
+			if (entry.first == reference) return m_logic.findObjectByID(entry.second) == nullptr;
+	}
 	for (const auto &e : m_namedObjects)
 	{
 		if (e.first == name)
