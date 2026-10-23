@@ -20,10 +20,12 @@
 #include "GameClient/EndGame.h"
 #include "GameClient/GUI/Skirmish/SkirmishGameSetup.h"
 #include "GameClient/GUI/WindowManager.h"
+#include "GameClient/GUI/MenuNavigator.h"
 
 #include "Libraries/Source/Apt/AptActionDecoder.h"
 
 #include <algorithm>
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <random>
@@ -2245,4 +2247,245 @@ TEST_CASE("ownerfix3 retail lobby: a won skirmish against a Hard AI marks its ma
 	after << again.rdbuf();
 	CHECK(after.str() == before);
 	CHECK(score.honorsRecorded);
+}
+
+TEST_CASE("skirmish controller: shoulder tabs and explicit dropdown confirmation")
+{
+	OPENBFME_REQUIRE_RETAIL(mount);
+	LobbyFx fx(mount);
+	ruleLabels(fx.text);
+	openRulesTab(fx);
+	MenuNavigator nav(*fx.wm);
+	nav.setMenu(fx.screen->level(), fx.screen);
+	REQUIRE(nav.key(MenuNavKey::PagePrevious));
+	fx.tick(30);
+	bool maps = false;
+	for (const auto &target : nav.targets()) maps |= target.id.find(".TabButtons.RulesTab.") != std::string::npos;
+	CHECK(maps);
+	REQUIRE(nav.key(MenuNavKey::PageNext));
+	fx.tick(30);
+	REQUIRE(fx.screen->rulesPopulated());
+	GameWindow *combo = fx.screen->legendaryHeroesWindow();
+	REQUIRE(combo);
+	std::string id;
+	for (const auto &target : nav.targets()) if (target.window == combo) id = target.id;
+	REQUIRE_FALSE(id.empty());
+	for (int i = 0; i < 100 && nav.focusId() != id; ++i) REQUIRE(nav.key(MenuNavKey::Next));
+	REQUIRE(nav.focusId() == id);
+	int before = -1;
+	GadgetComboBoxGetSelectedPos(combo, &before);
+	REQUIRE(nav.key(MenuNavKey::Right));
+	int after = -1;
+	GadgetComboBoxGetSelectedPos(combo, &after);
+	CHECK(after == before); // closed dropdown navigation must not change the rule
+	for (int i = 0; i < 100 && nav.focusId() != id; ++i) REQUIRE(nav.key(MenuNavKey::Next));
+	REQUIRE(nav.focusId() == id);
+	REQUIRE(nav.key(MenuNavKey::Activate));
+	REQUIRE(fx.wm->gadgetLayer()->openDropDown() == combo);
+	REQUIRE(nav.key(MenuNavKey::Down));
+	GadgetComboBoxGetSelectedPos(combo, &after);
+	CHECK(after == before);
+	REQUIRE(nav.key(MenuNavKey::Activate));
+	CHECK(fx.wm->gadgetLayer()->openDropDown() == nullptr);
+	GadgetComboBoxGetSelectedPos(combo, &after);
+	CHECK(after == before + 1);
+	REQUIRE(nav.key(MenuNavKey::Activate));
+	REQUIRE(nav.key(MenuNavKey::Up));
+	REQUIRE(nav.key(MenuNavKey::Back));
+	GadgetComboBoxGetSelectedPos(combo, &before);
+	CHECK(before == after); // B cancels the preview
+	GameWindow *color = nullptr;
+	for (const auto &target : nav.targets())
+		if (target.window)
+		{
+			using Input = WindowMsgHandledType (*)(GameWindow *, std::uint32_t, WindowMsgData, WindowMsgData);
+			const auto input = target.window->winGetInputFunc();
+			const auto *fn = input.target<Input>();
+			if (fn && *fn == GadgetImageComboBoxInput) { color = target.window; id = target.id; break; }
+		}
+	REQUIRE(color);
+	for (int i = 0; i < 100 && nav.focusId() != id; ++i) REQUIRE(nav.key(MenuNavKey::Next));
+	REQUIRE(nav.focusId() == id);
+	// Crossing the player grid must preserve the row, including at its edges.
+	for (MenuNavKey direction : { MenuNavKey::Left, MenuNavKey::Right })
+	{
+		for (int i = 0; i < 100 && nav.focusId() != id; ++i) REQUIRE(nav.key(MenuNavKey::Next));
+		REQUIRE(nav.focusId() == id);
+		for (int step = 0; step < 8; ++step)
+		{
+			float previous[4], current[4];
+			REQUIRE(nav.focusBox(previous));
+			REQUIRE(nav.key(direction));
+			REQUIRE(nav.focusBox(current));
+			const float delta = std::fabs((previous[1] + previous[3] - current[1] - current[3]) * 0.5f);
+			// tolerance: same-row controls have different heights/centres; half the smaller height admits them but excludes the adjacent player row.
+			CHECK(delta <= 0.5f * std::min(previous[3] - previous[1], current[3] - current[1]));
+		}
+	}
+	for (int i = 0; i < 100 && nav.focusId() != id; ++i) REQUIRE(nav.key(MenuNavKey::Next));
+	REQUIRE(nav.focusId() == id);
+	GadgetImageComboBoxGetSelectedPos(color, &before);
+	REQUIRE(nav.key(MenuNavKey::Activate));
+	REQUIRE(fx.wm->gadgetLayer()->openDropDown() == color);
+	REQUIRE(nav.key(MenuNavKey::Down));
+	GadgetImageComboBoxGetSelectedPos(color, &after);
+	CHECK(after == before);
+	REQUIRE(nav.key(MenuNavKey::Back));
+	CHECK(fx.wm->gadgetLayer()->openDropDown() == nullptr);
+}
+
+TEST_CASE("skirmish controller: triggers confine navigation to three sections; keyboard is unrestricted")
+{
+	OPENBFME_REQUIRE_RETAIL(mount);
+	LobbyFx fx(mount);
+	ruleLabels(fx.text);
+	openRulesTab(fx);
+	MenuNavigator nav(*fx.wm);
+	nav.setMenu(fx.screen->level(), fx.screen);
+	const auto all = nav.targets();
+	nav.setControllerSections(true);
+	for (int section : { 2, 0, 1 })
+	{
+		nav.switchControllerSection(1);
+		CHECK(nav.controllerSection() == section);
+		const auto targets = nav.targets();
+		REQUIRE_FALSE(targets.empty());
+		for (const auto &t : targets)
+		{
+			if (section == 1) CHECK(t.id.find(".PlayerList.") != std::string::npos);
+			if (section == 2) CHECK(t.id.find(".MpMapAndSettings.") != std::string::npos);
+		}
+		if (section == 0)
+		{
+			bool start = false, back = false, profile = false;
+			for (const auto &t : targets)
+			{
+				start |= t.id.find(".StartGame.") != std::string::npos;
+				back |= t.id.find(".MainMenu.") != std::string::npos;
+				profile |= t.id.find(".ProfileNav.") != std::string::npos;
+			}
+			CHECK(start); CHECK(back); CHECK(profile);
+		}
+		for (MenuNavKey key : { MenuNavKey::Up, MenuNavKey::Down, MenuNavKey::Left, MenuNavKey::Right })
+			for (int i = 0; i < 10; ++i)
+			{
+				nav.key(key);
+				bool inside = false;
+				for (const auto &t : targets) inside |= t.id == nav.focusId();
+				CHECK(inside);
+			}
+		GadgetDrawList draw;
+		nav.appendFocusFrame(draw);
+		int accents = 0;
+		for (const auto &command : draw.commands)
+			if (command.window == "ControllerSection")
+			{
+				CHECK(command.kind == GadgetDrawCommand::Kind::Line);
+				CHECK(command.lineWidth == 1);
+				++accents;
+			}
+		CHECK(accents == 8);
+	}
+	nav.setControllerSections(false);
+	CHECK(nav.controllerSection() == -1);
+	CHECK(nav.targets().size() == all.size());
+}
+
+TEST_CASE("skirmish controller: bottom bar reaches Profile and player corners stop above toolbar")
+{
+	OPENBFME_REQUIRE_RETAIL(mount);
+	LobbyFx fx(mount);
+	ruleLabels(fx.text);
+	openRulesTab(fx);
+	MenuNavigator nav(*fx.wm);
+	nav.setMenu(fx.screen->level(), fx.screen);
+	const auto all = nav.targets();
+	float toolbarTop = 768;
+	for (const auto &t : all) if (t.id.find(".lobby.") != std::string::npos) toolbarTop = std::min(toolbarTop, t.y0);
+	nav.setControllerSections(true);
+	nav.switchControllerSection(-1);
+	for (int i = 0; i < 10 && nav.focusId().find(".MainMenu.") == std::string::npos; ++i) nav.key(MenuNavKey::Left);
+	REQUIRE(nav.focusId().find(".MainMenu.") != std::string::npos);
+	nav.key(MenuNavKey::Right);
+	CHECK(nav.focusId().find(".ProfileNav.") != std::string::npos);
+	fx.tick(60);
+	bool change = false;
+	for (const auto &t : nav.targets()) change |= t.id.find(".ProfileNav.ChangeProfile.") != std::string::npos;
+	CHECK(change);
+	// PROFILE still uses a full-stage click-away button on this non-main screen.
+	REQUIRE_FALSE(nav.catchers().empty());
+	REQUIRE(nav.key(MenuNavKey::Back));
+	fx.tick(90);
+	for (const auto &target : nav.targets())
+		CHECK(target.id.find(".ProfileNav.ChangeProfile.") == std::string::npos);
+	// Reopen through the same authored rollover before checking entry activation.
+	for (const auto &target : all)
+		if (target.id.find(".ProfileNav.bttn") != std::string::npos)
+			fx.wm->postMouseMove(target.cx(), target.cy());
+	fx.tick(60);
+	REQUIRE_FALSE(nav.catchers().empty());
+	REQUIRE(nav.key(MenuNavKey::Activate));
+	fx.tick(10);
+	CHECK(nav.focusId().find(".ProfileNav.") != std::string::npos);
+	bool selected = false;
+	for (int i = 0; i < 6 && !selected; ++i)
+	{
+		selected = nav.focusId().find(".ChangeProfile.") != std::string::npos;
+		if (!selected) { nav.key(MenuNavKey::Up); fx.tick(10); }
+	}
+	REQUIRE(selected);
+	REQUIRE(nav.key(MenuNavKey::Activate));
+	fx.tick(60);
+	CHECK(popupButton(fx, "ProfilePopup.Main.Cancel") != nullptr);
+	REQUIRE(fx.wm->invokeASAt(1, "ProfilePopup", "ClosePop", {}));
+	fx.tick(60);
+	fx.wm->postMouseMove(512, 300);
+	fx.tick(90);
+	nav.switchControllerSection(1);
+	fx.tick(90);
+	GadgetDrawList draw;
+	nav.appendFocusFrame(draw);
+	int corners = 0;
+	for (const auto &command : draw.commands) if (command.window == "ControllerSection")
+	{
+		// tolerance: the section accents must stay above the authored toolbar boundary.
+		CHECK(command.y0 < toolbarTop);
+		// tolerance: both endpoints of each corner stroke must stay above the toolbar.
+		CHECK(command.y1 < toolbarTop);
+		++corners;
+	}
+	CHECK(corners == 8);
+}
+
+TEST_CASE("results controller: A skips preview, More and Continue default, B returns")
+{
+	OPENBFME_REQUIRE_RETAIL(mount);
+	LobbyFx fx(mount, false);
+	ScoreScreenData score;
+	score.valid = true;
+	score.type = 2;
+	fx.environment.scoreScreen = &score;
+	fx.shell->push("TimeLine.apt");
+	fx.tick(30);
+	MenuNavigator nav(*fx.wm);
+	nav.setMenu(fx.shell->top()->level(), fx.shell->top());
+	nav.setControllerResults(true);
+	CHECK(nav.focusId().find(".MainButtons.Skip") != std::string::npos);
+	REQUIRE(nav.key(MenuNavKey::Previous));
+	const std::string previewFocus = nav.focusId();
+	nav.setControllerResults(true);
+	CHECK(nav.focusId() == previewFocus);
+	REQUIRE(nav.key(MenuNavKey::Activate));
+	fx.tick(60);
+	nav.setControllerResults(true);
+	CHECK(nav.focusId().find(".MainButtons.More") != std::string::npos);
+	REQUIRE(nav.key(MenuNavKey::Activate));
+	fx.tick(60);
+	nav.setControllerResults(true);
+	CHECK(nav.focusId().find(".MainButtons.Continue") != std::string::npos);
+	REQUIRE(nav.key(MenuNavKey::Previous));
+	REQUIRE(nav.key(MenuNavKey::Back));
+	fx.tick(60);
+	nav.setControllerResults(true);
+	CHECK(nav.focusId().find(".MainButtons.More") != std::string::npos);
 }

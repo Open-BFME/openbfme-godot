@@ -128,6 +128,7 @@ public:
 	// a game); menu_pointer_moved: the real pointer moved (the focus frame goes); menu_nav_state: { level, focus, frame, focus_rect (stage), targets:
 	// [{ id, kind, rect }], log: [String] } (scripted checks)
 	bool menu_input(const Ref<InputEvent> &event);
+	bool menu_controller_section(int delta);
 	bool menu_has_input() const;
 	// lane SAVE-UI1 / OPTS-6: modal_menu: a menu is the input's top (the world's input is cancelled and not served); menu_escape: the top screen's own Escape
 	// procedure took the key (SaveLoad.apt closes on its release)

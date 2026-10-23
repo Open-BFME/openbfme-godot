@@ -131,6 +131,7 @@ public:
 	bool rulesPopulated() const { return m_rulesPopulated; }
 	// the rule warning boxes shown (title, text), for tests
 	const std::vector<std::pair<std::u16string, std::u16string>> &ruleWarnings() const { return m_ruleWarnings; }
+	bool startAvailable() const { return m_profileState == kStateMain || m_profileState == kStateClosed; }
 	int profileState() const { return m_profileState; } // lane MENUWORK-1: the menu inventory's evidence
 
 protected:

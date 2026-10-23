@@ -2,6 +2,7 @@
 // See GodotAptPlayer.h.
 
 #include "GodotDevice/GodotAptPlayer.h"
+#include <godot_cpp/classes/input.hpp>
 #include "GodotDevice/GodotVideoStream.h"
 #include "GameClient/GUI/PlatformIcons.h"
 #include "GameClient/CameraSettings.h"
@@ -743,6 +744,9 @@ struct ShellMode
 // ---------------------------------------------------------------------------------------------------------------------------------
 struct AptMenuPlayer::Impl
 {
+	int mainMenuGroup = -1, mainMenuItem = -1;
+	PackedStringArray mainMenuGroups, mainMenuEntries;
+	String mainMenuFocus;
 	bool cahGuardShown = false;   ///< lane CAHPIC-1: the last picture showed Create-a-Hero's RenderPictureGuard clip
 	bool cahMapShown = false;     ///< lane CAHPIC-1: ... and its DrawMapComponent clip (the 3D view)
 	bool cahPicturePending = false; ///< lane CAHPIC-1: a picture is taken from the next frame drawn
@@ -1345,6 +1349,7 @@ void AptMenuPlayer::_bind_methods()
 	ClassDB::bind_method(D_METHOD("quit_menu", "request"), &AptMenuPlayer::quit_menu);
 	ClassDB::bind_method(D_METHOD("get_cursor_tooltip"), &AptMenuPlayer::get_cursor_tooltip); // lane HOVER-1
 	ClassDB::bind_method(D_METHOD("list_buttons", "level"), &AptMenuPlayer::list_buttons);
+	ClassDB::bind_method(D_METHOD("menu_controller_section", "delta"), &AptMenuPlayer::menu_controller_section);
 	ClassDB::bind_method(D_METHOD("menu_input", "event"), &AptMenuPlayer::menu_input); // lane OPTS-6
 	ClassDB::bind_method(D_METHOD("open_options", "network_enabled", "allow_resolution", "allow_advanced", "advanced_only"), &AptMenuPlayer::open_options);
 	ClassDB::bind_method(D_METHOD("menu_has_input"), &AptMenuPlayer::menu_has_input);
@@ -5635,6 +5640,7 @@ Dictionary AptMenuPlayer::screen_state() const
 	if (auto *skirmish = dynamic_cast<AptSkirmish *>(top))
 	{
 		out["profile_state"] = skirmish->profileState();
+		out["start_available"] = skirmish->startAvailable(); // Popup states cannot start.
 	}
 	if (auto *cah = dynamic_cast<AptCreateAHero *>(top))
 	{
@@ -5857,7 +5863,11 @@ void AptMenuPlayer::syncNav() const
 		return;
 	}
 	const AptScreen *top = m->shell->shell ? m->shell->shell->inputTop() : nullptr;
-	m->shell->nav->setMenu(top && top->isMenu() && !top->isHidden() && top->level() >= 0 ? top->level() : -1, top);
+	// MainMenu uses the pre-OPTS-6 dropdown group navigation in menuKey.
+	// Keep the spatial navigator off that movie and its animated submenus.
+	m->shell->nav->setMenu(top && top->filename() != "MainMenu.apt" && top->isMenu() && !top->isHidden() && top->level() >= 0 ? top->level() : -1, top);
+	m->shell->nav->setControllerResults(top && top->filename() == "TimeLine.apt" &&
+		!Input::get_singleton()->get_connected_joypads().is_empty());
 }
 
 bool AptMenuPlayer::modal_menu() const
@@ -5896,15 +5906,31 @@ bool AptMenuPlayer::menu_has_input() const
 		return false;
 	}
 	syncNav();
-	return m->shell->nav->level() >= 0;
+	const AptScreen *top = m->shell->shell ? m->shell->shell->inputTop() : nullptr;
+	return top && top->isMenu() && !top->isHidden() && top->level() >= 0;
 }
 
 void AptMenuPlayer::menu_pointer_moved()
 {
+	m->mainMenuGroup = m->mainMenuItem = -1;
 	if (m_booted && m->shell && m->shell->nav)
 	{
+		m->shell->nav->setControllerSections(false);
 		m->shell->nav->pointerMoved();
 	}
+}
+
+bool AptMenuPlayer::menu_controller_section(int delta)
+{
+	if (!m_booted || !m->shell || !m->shell->shell) return false;
+	const auto *top = m->shell->shell->inputTop();
+	if (!top || !dynamic_cast<const AptSkirmish *>(top)) return false;
+	syncNav();
+	if (!m->shell->nav->supportsControllerSections()) return false;
+	m->shell->nav->setControllerSections(true);
+	m->shell->nav->switchControllerSection(delta);
+	m->dirty = true;
+	return true;
 }
 
 bool AptMenuPlayer::menu_input(const Ref<InputEvent> &event)
@@ -5916,6 +5942,9 @@ bool AptMenuPlayer::menu_input(const Ref<InputEvent> &event)
 Dictionary AptMenuPlayer::menu_nav_state()
 {
 	Dictionary r;
+	r["main_groups"] = m->mainMenuGroups;
+	r["main_entries"] = m->mainMenuEntries;
+	r["main_focus"] = m->mainMenuFocus;
 	r["level"] = -1;
 	if (!m_booted || !m->shell || !m->shell->nav)
 	{
@@ -5925,6 +5954,7 @@ Dictionary AptMenuPlayer::menu_nav_state()
 	MenuNavigator &nav = *m->shell->nav;
 	r["level"] = nav.level();
 	r["focus"] = toGodot(nav.focusId());
+	r["controller_section"] = nav.controllerSection();
 	r["frame"] = nav.frameShown();
 	float box[4];
 	if (nav.focusBox(box))
@@ -5972,6 +6002,114 @@ Dictionary AptMenuPlayer::menu_nav_state()
 
 bool AptMenuPlayer::menuKey(const InputEventKey *key)
 {
+	// The mounted movie supplies the groups, entries and button actions. This
+	// works for each game's menu and for mods without a content-name table.
+	const Key menuKey = key->get_keycode();
+	const bool arrow = menuKey == Key::KEY_LEFT || menuKey == Key::KEY_RIGHT || menuKey == Key::KEY_UP || menuKey == Key::KEY_DOWN;
+	const bool main = m->shell && m->shell->shell && m->shell->shell->top() &&
+		m->shell->shell->top()->filename() == "MainMenu.apt" && !m->shell->wm->componentInputBlocked();
+	if (!main || menuKey == Key::KEY_TAB) m->mainMenuGroup = m->mainMenuItem = -1;
+	if (main && (arrow || (m->mainMenuGroup >= 0 && (menuKey == Key::KEY_ENTER || menuKey == Key::KEY_KP_ENTER || menuKey == Key::KEY_SPACE))))
+	{
+		const int level = m->shell->shell->top()->level();
+		AptSpriteInst *root = m->A()->level(level);
+		if (!root) return false; // A newly pushed screen loads its movie on the next update.
+		std::vector<AptSpriteInst *> groups;
+		for (AptCharacterInst *child : root->children())
+		{
+			AptSpriteInst *clip = child->asSprite();
+			if (clip && clip->globallyVisible() &&
+				((clip->labelFrame("_show") >= 0 && clip->labelFrame("_hide") >= 0) ||
+				 (clip->labelFrame("_over") >= 0 && firstButton(clip)))) groups.push_back(clip);
+		}
+		// Horizontal group order follows the authored heading positions. Entries
+		// follow their authored vertical positions after the group opens.
+		auto x = [](AptCharacterInst *clip) { float x, y; clip->globalMatrix().apply(0, 0, x, y); return x; };
+		std::stable_sort(groups.begin(), groups.end(), [&](auto *a, auto *b) { return x(a) < x(b); });
+		m->mainMenuGroups.clear();
+		for (auto *group : groups) m->mainMenuGroups.push_back(toGodot(group->pathSegment()));
+		if (!groups.empty())
+		{
+			auto animate = [](AptSpriteInst *clip, const char *label) {
+				const int frame = clip->labelFrame(label);
+				if (frame >= 0) { clip->gotoFrame(frame); clip->playing = true; }
+			};
+			if (m->mainMenuGroup >= (int)groups.size()) m->mainMenuGroup = m->mainMenuItem = -1;
+			if (key->is_pressed())
+			{
+				const int previous = m->mainMenuGroup;
+				if (menuKey == Key::KEY_LEFT || menuKey == Key::KEY_RIGHT || m->mainMenuGroup < 0)
+				{
+					const int delta = menuKey == Key::KEY_LEFT ? -1 : 1;
+					if (m->mainMenuGroup < 0) m->mainMenuGroup = delta > 0 ? -1 : 0;
+					m->mainMenuGroup = (m->mainMenuGroup + delta + (int)groups.size()) % (int)groups.size();
+					m->mainMenuItem = -1;
+				}
+				m->mainMenuFocus = toGodot(groups[m->mainMenuGroup]->pathSegment());
+				if (previous != m->mainMenuGroup)
+				{
+					for (int i = 0; i < (int)groups.size(); ++i)
+					{
+						const bool chosen = i == m->mainMenuGroup;
+						const bool expands = groups[i]->labelFrame("_show") >= 0;
+						animate(groups[i], expands ? (chosen ? "_show" : "_hide") : (chosen ? "_over" : "_up"));
+					}
+				}
+				else
+				{
+					AptSpriteInst *group = groups[m->mainMenuGroup];
+					std::vector<AptSpriteInst *> entries;
+					for (AptCharacterInst *child : group->children())
+					{
+						AptSpriteInst *clip = child->asSprite();
+						// OpenButton is the heading, not a selectable submenu item.
+						if (clip && clip->pathSegment() != "OpenButton" && clip->globallyVisible() &&
+							clip->labelFrame("_over") >= 0 && firstButton(clip) && firstButton(clip)->enabled) entries.push_back(clip);
+					}
+					std::stable_sort(entries.begin(), entries.end(), [](auto *a, auto *b) {
+						float ax, ay, bx, by; a->globalMatrix().apply(0, 0, ax, ay); b->globalMatrix().apply(0, 0, bx, by); return ay > by;
+					});
+					if (m->mainMenuItem >= (int)entries.size()) m->mainMenuItem = -1;
+					if (menuKey == Key::KEY_UP || menuKey == Key::KEY_DOWN)
+					{
+						if (!entries.empty()) m->mainMenuItem = m->mainMenuItem < 0 ? 0 :
+							(m->mainMenuItem + (menuKey == Key::KEY_UP ? 1 : -1) + (int)entries.size()) % (int)entries.size();
+					}
+					else if (!arrow)
+					{
+						if (m->mainMenuItem < 0 && !entries.empty()) m->mainMenuItem = 0;
+						else
+						{
+							AptSpriteInst *entry = entries.empty() ? group : entries[m->mainMenuItem];
+							const Dictionary hit = find_button(level, toGodot(entry->targetPath()));
+							if ((bool)hit.get("found", false) && (bool)hit.get("enabled", false) && hit.get("hit", String()) == hit.get("path", String()))
+							{
+								m->shell->wm->postMouseMove((double)hit["x"], (double)hit["y"]);
+								m->shell->wm->postMouseButton(true);
+								m->shell->wm->postMouseButton(false);
+							}
+						}
+					}
+					m->mainMenuEntries.clear();
+					for (int i = 0; i < (int)entries.size(); ++i)
+					{
+						m->mainMenuEntries.push_back(toGodot(entries[i]->pathSegment()));
+						animate(entries[i], i == m->mainMenuItem ? "_over" : "_up");
+					}
+					if (m->mainMenuItem >= 0) m->mainMenuFocus = toGodot(entries[m->mainMenuItem]->pathSegment());
+				}
+				m->dirty = true;
+			}
+			return true;
+		}
+	}
+
+	if (m->shell && m->shell->nav && m->shell->shell)
+	{
+		syncNav();
+		const auto *top = m->shell->shell->inputTop();
+		m->shell->nav->setControllerSections(top && dynamic_cast<const AptSkirmish *>(top) && m->shell->nav->supportsControllerSections() && (bool)key->get_meta("menu_controller", false));
+	}
 	// lane SAVE-UI1: the top screen's own Escape procedure first (its press and its release are its alone)
 	if (key->get_keycode() == Key::KEY_ESCAPE && !key->is_echo() && menu_escape(key->is_pressed()))
 	{

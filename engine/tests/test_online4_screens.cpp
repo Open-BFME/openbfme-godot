@@ -1774,6 +1774,48 @@ TEST_CASE("online4 retail: OnlineShell.apt on a local lobby: guest sign-in, the 
 	REQUIRE(host.clickWhenShown("CreateGamePopup.Accept")); // the pop-up's Accept (AptOnline::CustomMatch::CreateGame)
 	REQUIRE_MESSAGE(runUntil({ &host }, [&] { return host.client.inGame() && host.sh->openPlayState() == 6; }, 300), host.notes());
 	CHECK(host.client.amIHost());
+	host.tick(60);
+	MenuNavigator controller(*host.fx.wm);
+	controller.setMenu(host.sh->level(), host.sh);
+	REQUIRE(controller.supportsControllerSections());
+	controller.setControllerSections(true);
+	for (int section : { 2, 0, 1 })
+	{
+		controller.switchControllerSection(1);
+		INFO("controller section ", section);
+		CHECK(controller.controllerSection() == section);
+		REQUIRE_FALSE(controller.targets().empty());
+		bool representative = false;
+		for (const auto &target : controller.targets())
+			representative |= target.id.find(section == 2 ? ".MapList" : section == 0 ? ".PlayGame." : ".PlayerList.") != std::string::npos;
+		CHECK(representative);
+	}
+	// RB cycles Map -> Rules -> Chat -> Map; LB wraps back through Chat.
+	const char *activeTabs[] = { "RulesTab", "ChatTab", "MapTab", "ChatTab", "RulesTab", "MapTab" };
+	int tabStep = 0;
+	for (MenuNavKey key : { MenuNavKey::PageNext, MenuNavKey::PageNext, MenuNavKey::PageNext,
+		MenuNavKey::PagePrevious, MenuNavKey::PagePrevious, MenuNavKey::PagePrevious })
+	{
+		REQUIRE(controller.key(key));
+		host.tick(60);
+		CHECK(controller.controllerSection() == 2);
+		for (const char *name : { "MapTab", "RulesTab", "ChatTab" })
+		{
+			bool available = false;
+			for (const auto &target : controller.targets()) available |= target.id.find(std::string(".TabButtons.") + name + ".") != std::string::npos;
+			CHECK(available == (std::string(name) != activeTabs[tabStep]));
+		}
+		++tabStep;
+		if (std::string(activeTabs[tabStep - 1]) == "ChatTab")
+		{
+			REQUIRE(host.sh->chatEntryWindow());
+			bool chatInSection = false;
+			for (const auto &target : controller.targets()) chatInSection |= target.window == host.sh->chatEntryWindow();
+			CHECK(chatInSection);
+		}
+	}
+	controller.setControllerSections(false);
+
 
 	CHECK(host.client.gameName() == u"Test game");
 	CHECK(host.sh->setup()->info().slots[0].name == u"Hostname");

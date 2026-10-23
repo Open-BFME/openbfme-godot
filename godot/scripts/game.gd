@@ -1253,6 +1253,7 @@ func _boot() -> void:
 	_shell.name = "Shell"
 	add_child(_shell)
 	_menu_pad = load("res://scripts/menu_pad.gd").new(_shell) # lane OPTS-6: the game controller in the menus
+	_menu_pad.start_lobby = _controller_start_lobby
 	add_child(_menu_pad)
 	_save_flow = load("res://scripts/save_flow.gd").new(self) # lane SAVE-2
 	# lane FB7-1: the Options screen's inputs the device knows (AptSimpleScreens.h): the AudioSettings default volumes and the display modes (Godot lists
@@ -2768,6 +2769,19 @@ func _run_campaign_play1() -> void:
 	var player = script.new()
 	await player.run(self, _play1)
 	get_tree().quit(0 if player.fail_count == 0 else 1)
+
+
+
+func _controller_start_lobby() -> bool:
+	if _state != State.MENU or _shell == null or _quit_open:
+		return false
+	var stack = _shell.shell_stack()
+	if stack.is_empty() or stack[-1] != "Skirmish.apt":
+		return false
+	if not _shell.screen_state().get("start_available", false):
+		return false
+	_shell.shell_fscommand("AptSkirmish::StartGame", "")
+	return true
 
 
 func _run_auto() -> void:
