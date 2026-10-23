@@ -54,9 +54,9 @@ func sync(movies: Array) -> void:
 				for event in info.audio_events:
 					var handle: int = audio.play_sound(event)
 					# AudioHandleSpecialValues are 0..4, not playing voices.
-					if handle <= 4:
+					if handle <= 0: # AHSV_Error (or an invalid handle).
 						_error(title + ": could not play " + str(event))
-					else:
+					elif handle >= 5:
 						handles.append(handle)
 			_streams[path] = {"title": title, "frame": frame, "handles": handles}
 		_streams[path].frame = frame

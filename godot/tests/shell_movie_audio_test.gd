@@ -6,6 +6,7 @@ class Audio extends Node:
 	var fades: Array = []
 	var music := "MenuMusic"
 	var next_handle := 5
+	var forced_handle := -1
 	func get_music_track() -> String: return music
 	func stop_music(fade: bool) -> void:
 		fades.append(fade)
@@ -15,6 +16,7 @@ class Audio extends Node:
 		return 99
 	func play_sound(event: String) -> int:
 		played.append(event)
+		if forced_handle != -1: return forced_handle
 		next_handle += 1
 		return next_handle
 	func remove_event(handle: int) -> void: removed.append(handle)
@@ -56,6 +58,17 @@ func _initialize() -> void:
 	player._clear(false)
 	assert(audio.removed == [6, 7, 8, 9, 10, 11])
 	assert(audio.music == "")
+	# Reserved results are intentional skips, never playing voices or errors.
+	for handle in [1, 2, 3, 4]:
+		audio.forced_handle = handle
+		player.sync([movie("Moves")])
+		player.sync([])
+		assert(player.errors.is_empty())
+	assert(audio.removed == [6, 7, 8, 9, 10, 11])
+	# AHSV_Error still surfaces a real playback failure for each audio event.
+	audio.forced_handle = 0
+	player.sync([movie("Moves")])
+	assert(player.errors == ["Moves: could not play Moves_Music", "Moves: could not play Moves"])
 	player.free()
 	audio.free()
 	world.free()
