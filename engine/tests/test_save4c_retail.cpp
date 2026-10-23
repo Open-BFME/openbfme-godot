@@ -1035,6 +1035,29 @@ TEST_CASE("save4c coverage (review r2): units attacking, moving, guarding, hunti
 	// structure of the mover's player
 	const std::vector<int> playerIds = la.skirmishAI().infoPlayers(); // the four skirmish players (the map's neutral critters are not actors)
 	REQUIRE(playerIds.size() == 4u);
+	// the hunter is preferably no member of its AI's tactic teams: a member takes that AI's team orders (AITacticalAI's team move: RW 0x8F18AA passes
+	// the player's source), which may replace the hunt in the frame the test steps (measured: with the formations centred on their hordes, RW 0x86C4EA,
+	// and the destination adjustment spiralling around its cell, RW 0x6FA2A4, the fourth player's first crossbow horde was a member and walked on in
+	// AI_MOVE_TO). Only a preference: a player may have every armed unit in a team (the first player has, at the scene's frame), and the other roles
+	// keep the first fit
+	auto inAITeam = [&](const Object *o) {
+		const AISkirmishPlayer *p = la.skirmishAI().findAI(o->getControllingPlayer()->getPlayerIndex());
+		if (!p)
+		{
+			return false;
+		}
+		for (const AITactic &tac : p->brain.tactics)
+		{
+			for (const AITacticTeam &team : tac.teams)
+			{
+				if (std::find(team.members.begin(), team.members.end(), o->getID()) != team.members.end())
+				{
+					return true;
+				}
+			}
+		}
+		return false;
+	};
 	auto firstOf = [&](int player, const std::function<bool(Object *)> &ok) -> Object * {
 		for (Object *o : byPlayer[player])
 		{
@@ -1048,7 +1071,9 @@ TEST_CASE("save4c coverage (review r2): units attacking, moving, guarding, hunti
 	Object *attacker = firstOf(playerIds[0], [&](Object *o) { return armed(o) && takes(o, 0xB); });
 	Object *mover = firstOf(playerIds[1], [&](Object *o) { return takes(o, 0); });
 	Object *guard = firstOf(playerIds[2], [&](Object *o) { return takes(o, 0); });
-	Object *hunter = firstOf(playerIds[3], [&](Object *o) { return armed(o) && takes(o, 0x12) && GarrisonRules::isMobile(*o); }); // RW 0x66450F's test
+	auto canHunt = [&](Object *o) { return armed(o) && takes(o, 0x12) && GarrisonRules::isMobile(*o); }; // RW 0x66450F's test
+	Object *hunter = firstOf(playerIds[3], [&](Object *o) { return canHunt(o) && !inAITeam(o); });
+	hunter = hunter ? hunter : firstOf(playerIds[3], canHunt);
 	if (!mover)
 	{
 		// merge queue q16: the second player has only horde members and new units at frame 2700 (nothing older to snapshot): its role goes to the first

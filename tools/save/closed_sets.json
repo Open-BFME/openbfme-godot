@@ -85,6 +85,7 @@
  "GameLogic/GlobalWeatherSystem.cpp::GlobalWeatherSystem::xfer::weatherFrames#1": "open: a frame count",
  "GameLogic/Map/TerrainTrees.cpp::TerrainTrees::xfer::clientId#1": "open: the tree's client id (0: removed); the client's, compared only",
  "GameLogic/Module/AISpecialPowerUpdate.cpp::AISpecialPowerUpdate::xfer::powerType#1": "open: the power's SpecialPowerType, compared with the units' (RW 0x688D3C), never an index",
+ "GameLogic/Module/AIUpdateSnapshot.cpp::AIUpdateInterface::xferAIStateBody::m_currentGoalPathIndex#1": "open: the formation march's goal path point (lane BACKLOG-8, AI + 0x194; -1 for none), only hashed (nothing reads it: the march keeps its own index, AIFollowPathAsTeam::m_index); a later goal path may be shorter than it",
  "GameLogic/Module/AIUpdateSnapshot.cpp::AIUpdateInterface::xferAIStateBody::m_memberUpdates#1": "open: a statistic counter",
  "GameLogic/Module/AIUpdateSnapshot.cpp::AIUpdateInterface::xferAIStateBody::m_nextMoodCheck#1": "open: a frame",
  "GameLogic/Module/AIUpdateSnapshot.cpp::AIUpdateInterface::xferAIStateBody::n#1": "open: a report count",

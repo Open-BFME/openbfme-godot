@@ -63,7 +63,7 @@ void AIUpdateInterface::xferAIState(Xfer &x)
 
 void AIUpdateInterface::xferAIStateBody(Xfer &x)
 {
-	XferVersion v{ 1, 1 };
+	XferVersion v{ 1, 2 }; // 2: the formation march (below)
 	x.xferVersion(v);
 	const bool loading = x.isLoading();
 	for (std::uint32_t &w : m_luaConditionSnapshot)
@@ -224,6 +224,21 @@ void AIUpdateInterface::xferAIStateBody(Xfer &x)
 	});
 	AIXfer::reportStrings(x, m_locomotorNotes);
 	AIXfer::u64(x, m_memberUpdates);
+	// version 2 (review of #74): lane BACKLOG-8's formation march, hashed by crc but not saved before, so a game saved while a horde marched in
+	// formation (state 54) loaded with another state hash: the march's team path angle (AI + 0x1A0) and goal path index (AI + 0x194), the formation's
+	// id and offset (Object + 0x42C .. + 0x434). A version 1 snapshot leaves them as a new module has them
+	if (v.current >= 2)
+	{
+		x.xferReal(&m_teamPathAngle);
+		x.xferInt(&m_currentGoalPathIndex);
+		x.xferInt(&m_formationId);
+		if (loading)
+		{
+			AIXfer::inRange(m_formationId, 0, 0x7FFFFFFE, "ai: the formation id"); // 0 (none) or one the world issued (below its next id: AIWorld::xferBody)
+		}
+		x.xferReal(&m_formationOffset.x);
+		x.xferReal(&m_formationOffset.y);
+	}
 }
 
 void HordeAIUpdate::xferAIStateBody(Xfer &x)

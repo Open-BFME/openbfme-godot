@@ -15,6 +15,7 @@
 #include "Common/Team.h"
 #include "GameClient/MapChunks.h"
 #include "GameLogic/AI/AIFollowPathAsTeam.h"
+#include "GameLogic/AI/AIGuard.h"
 #include "GameLogic/AI/AIGroup.h"
 #include "GameLogic/AI/AIGroupFormations.h"
 #include "GameLogic/AI/AIPathfind.h"
@@ -543,20 +544,27 @@ TEST_CASE("script3 r2 attitude -3 (RW 0x66E145): the machine's goal object is cl
 TEST_CASE("script3 r2 mood target (RW 0x668716 .. 0x668787): the vision range is checked before the passive / -3 branches; a passive unit that "
 		  "sees nothing does not answer its last attacker")
 {
-	// a swordsman without vision (VisionRange 0), otherwise the fixture's
-	std::string blind = combattest::kCombatObjects;
-	const size_t at = blind.find("Object Swordsman\n");
-	REQUIRE(at != std::string::npos);
-	blind = blind.substr(at, blind.find("\nEnd\n", at) + 5 - at);
-	blind.replace(0, std::string("Object Swordsman").size(), "Object BlindSword");
-	const size_t vr = blind.find("VisionRange = 150");
-	REQUIRE(vr != std::string::npos);
-	blind.replace(vr, std::string("VisionRange = 150").size(), "VisionRange = 0");
-	combattest::CombatWorld w(blind.c_str());
+	// review of #73: RotWK's range is RW 0x6FF412(obj, 3), the vision range (RW 0x68E43B) PLUS Object + 0xB8, the bounding circle radius (GeometryInfo +
+	// 0x10, never below 0.01: RW 0xAD2860), added at RW 0x6FF42D before the test at RW 0x66871E .. 0x668726 (FLDZ / FCOMIP: not above 0, nothing). A unit
+	// with VisionRange 0 still has its radius and answers its attacker; only a range that the radius does not lift above 0 sees nothing: VisionRange -20
+	// with the fixture's radius 8 (-12)
+	auto variant = [](const char *name, const char *vision) {
+		std::string t = combattest::kCombatObjects;
+		const size_t at = t.find("Object Swordsman\n");
+		REQUIRE(at != std::string::npos);
+		t = t.substr(at, t.find("\nEnd\n", at) + 5 - at);
+		t.replace(0, std::string("Object Swordsman").size(), std::string("Object ") + name);
+		const size_t vr = t.find("VisionRange = 150");
+		REQUIRE(vr != std::string::npos);
+		t.replace(vr, std::string("VisionRange = 150").size(), std::string("VisionRange = ") + vision);
+		return t;
+	};
+	const std::string extra = variant("BlindSword", "-20") + variant("ZeroSword", "0");
+	combattest::CombatWorld w(extra.c_str());
 	startEngine(*w.logic);
 	w.playerOf('A')->setPlayerType(PLAYER_COMPUTER, true);
 	Object *dummy = w.unit("Dummy", 'B', 360.0f, 300.0f);
-	for (const char *tmpl : { "BlindSword", "Swordsman" })
+	for (const char *tmpl : { "BlindSword", "ZeroSword", "Swordsman" })
 	{
 		Object *a = w.unit(tmpl, 'A', 300.0f, 300.0f);
 		AIUpdateInterface *ai = a->getAIUpdateInterface();
@@ -567,13 +575,14 @@ TEST_CASE("script3 r2 mood target (RW 0x668716 .. 0x668787): the vision range is
 		info.m_input.m_sourceID = dummy->getID();
 		info.m_input.m_amount = 1.0f;
 		a->getBodyModule()->attemptDamage(info);
+		INFO(tmpl, ": range ", AIGuardMachine::getAdjustedVisionRange(*a));
 		if (std::string(tmpl) == "BlindSword")
 		{
 			CHECK(ai->nextMoodTarget() == nullptr); // no range: nothing, not the attacker
 		}
 		else
 		{
-			CHECK(ai->nextMoodTarget() == dummy); // with range: the last attacker
+			CHECK(ai->nextMoodTarget() == dummy); // a range above 0 (ZeroSword: its radius alone): the last attacker, wherever it is
 		}
 	}
 }

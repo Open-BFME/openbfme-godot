@@ -925,7 +925,8 @@ TEST_CASE("save2 retail T1 (SAVES.md): a 4-AI skirmish saved with each named sce
 		RegisterLogicCRCHandler(g.game->dispatch());
 		startFrame = g.game->frame();
 		g.game->setFrameDriver(&driver);
-		// from two minutes on, each scenario is saved at the first frame it is in flight (at most 20 minutes of game time)
+		// from two minutes on, each scenario is saved at the first frame it is in flight (at most 30 minutes of game time; review of #74: since the destination
+		// adjustment spirals around the cell, RW 0x6FA2A4, the first special power in flight comes at frame 7405, a DwarvenGuardianHorde's, past 20 minutes)
 		bool seen[4] = { false, false, false, false };
 		bool elevenTaken = false;
 		// lane SAVE-4e: the save as GameWorld::save_game writes it: the log to F and the snapshot at F
@@ -946,7 +947,7 @@ TEST_CASE("save2 retail T1 (SAVES.md): a 4-AI skirmish saved with each named sce
 			sh.mapPath = message.game.mapName;
 			REQUIRE_MESSAGE(save.write(t.path, &error), error);
 		};
-		for (int i = 0; i < 6000 && (saves.size() < 5 || !elevenTaken); ++i)
+		for (int i = 0; i < 9000 && (saves.size() < 5 || !elevenTaken); ++i)
 		{
 			humanCommands(*g.game, g.game->commands());
 			REQUIRE(g.game->advance(0.2) == 1);
@@ -992,7 +993,7 @@ TEST_CASE("save2 retail T1 (SAVES.md): a 4-AI skirmish saved with each named sce
 		}
 		for (int k = 0; k < 4; ++k)
 		{
-			CHECK_MESSAGE(seen[k], names[k] << " never happened in 20 minutes of the game");
+			CHECK_MESSAGE(seen[k], names[k] << " never happened in 30 minutes of the game");
 		}
 		REQUIRE(elevenTaken);
 		for (int i = 0; i < 3000; ++i) // F + 3000 for the last save, more for the earlier ones

@@ -800,7 +800,7 @@ acceptable as the final answer, which is why SAVE-4 follows.
     own fields): the module's fields, the turret (TurretAI with its machine), the mover (AIMover with its path, `Path::xfer`: the nodes and their optimised
     links as indices), the locomotor set made again from its id and each locomotor, and the state machine with **every defined state's xfer** (retail keeps
     the state objects; `AIState::xfer` is pure, so every state class says what it keeps). Sub machines (an attack's, a hunt's, a turret's, PLAY-4's
-    guard machine and its attacks) are made again by their kind (the attack's generic, melee or horde melee / ranged machine) and loaded the same way. The block holds the "objects" section's AI part
+    guard machine and its attacks) are made again by their kind (the attack's generic, melee or horde melee / ranged machine) and loaded the same way; last, since version 2, the next formation id (lane BACKLOG-8; a module's formation march since its version 2). The block holds the "objects" section's AI part
     as well as "pathfinder and AI movers": obfme:Objects (SAVE-4b) carries the AI modules as their objects made them, and this block fills them.
   - `obfme:Shroud` (lists 0 and 1; `ShroudManager::xfer`): the grid and settings, per player and channel a run-length plane of the cells, the unlook queue
     in order, the records by slot and the free slot stack, registration and dirty lists; the cells' covering lists are rebuilt from the records.

@@ -2195,6 +2195,13 @@ TEST_CASE("FACT-A spell book: every power of the faction's book bought in the st
 				aim = FactRig::clickPoint(*enemy); // the volley's and the boulders' radius (100) is around the click: aimed at the battalion
 				aim.z = 0.0f;
 			}
+			if (wantIt != spellExpected().end() && wantIt->second.letters.find('B') != std::string::npos)
+			{
+				// Rallying Call's AttributeModifierRange (100) is around the click: aimed at the ally battalion, whose members stand around their horde (RW
+				// 0x86C4EA), 150 from the scene's middle
+				aim = FactRig::clickPoint(*ally);
+				aim.z = 0.0f;
+			}
 			if (pname == "SpellBookRebuild" || pname == "SpellBookDwarvenRiches")
 			{
 				Object *econ = r.make(econName, Coord3D{ at.x, at.y - 260.0f, 0.0f });

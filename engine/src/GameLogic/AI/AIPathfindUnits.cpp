@@ -1264,13 +1264,16 @@ bool Pathfinder::adjustDestination(PathfindObject &obj, const PathfindLocomotorI
 	int limit = m_config.adjustDestinationLimit;
 	int d = 1;
 	int ring = 4;
+	// RW 0x6FA34D / 0x6FA350: the offsets start at the centre once, before the loop (head RW 0x6FA363, back edge RW 0x6FA509), so each layer goes on from
+	// where the last one ended: the spiral around the centre (BFME2 decomp Pathfinder::rva002F92BC, IterateCircular1). Reset per layer, every layer would
+	// start again at the centre and reach d cells toward +x / +y but one toward -x / -y.
+	int x = 0, y = 0;
 	while (limit > 0)
 	{
 		limit -= ring + 2;
 		int best = 0;
 		ICoord2D bestCell;
 		Coord3D bestDest = *dest;
-		int x = 0, y = 0;
 		auto visit = [&]() {
 			const int d2 = x * x + y * y;
 			if (best == 0 || d2 < best)
@@ -1351,10 +1354,12 @@ bool Pathfinder::adjustToPossibleDestination(PathfindObject &obj, const Pathfind
 	int limit = m_config.adjustToPossibleLimit;
 	int d = 1;
 	int ring = 4;
+	// RW 0x6F3E0E / 0x6F3E14: the spiral's cell starts at the goal cell once, before the loop (head RW 0x6F3E24, back edge RW 0x6F3F86), as in
+	// adjustDestination (BFME2 decomp Pathfinder::adjustToPossibleDestination: "one spiral counter spans all four legs")
+	int x = 0, y = 0;
 	while (limit > 0)
 	{
 		limit -= ring + 2;
-		int x = 0, y = 0;
 		bool done = false;
 		auto visit = [&]() {
 			if (!done && checkForPossible(mv, zone1, center, loco, goalCellNdx.x + x, goalCellNdx.y + y, destinationLayer, dest, false))

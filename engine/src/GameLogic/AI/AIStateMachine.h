@@ -227,6 +227,9 @@ private:
 };
 
 // ---- the states ----------------------------------------------------------------------------------------------------------------
+// stop S-5148: the stop line of the idle state's unported stance failure (RotWK RW 0x7553AB / 0x7537E0; AIStateMachine.cpp), noted by AIIdleState::update
+const char *idleStanceStopLine();
+
 // AIIdleState (ZH AIStates.cpp:1273-1460, B1 RW-equivalent 0x188090): stakes out the unit's cell and sleeps.
 class AIIdleState : public AIState
 {

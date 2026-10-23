@@ -5,10 +5,12 @@
 
 #include "Common/GameCommon.h"
 #include "Common/StateHash.h"
+#include "GameLogic/AI/AIGuard.h"
 #include "GameLogic/AI/AIWorld.h"
 #include "GameLogic/GameLogic.h"
 #include "GameLogic/Module/AIUpdate.h"
 #include "GameLogic/Module/EmotionModules.h"
+#include "GameLogic/Module/StancesBehavior.h"
 #include "GameLogic/Object/Object.h"
 #include "GameLogic/SimMath.h"
 
@@ -562,9 +564,25 @@ void AIIdleState::doInitIdleState()
 	a.setLocomotorGoalNone();
 }
 
+// stop S-5148 (review of #73): RotWK's idle update (RW 0x7553AB) fails the state every fifth update (the countdown + 0x22, 5 again at onEnter RW 0x7489B6)
+// for an owner that is not status 0x3A, has no temporary state machine (AI + 0x34) and has a StancesBehavior (RW 0x861E6E / 0x68BDA5) while its machine
+// defines state 0x4E (RW 0x8DBA9A); the idle state's failure goes to 0x4E (RW 0x7537E0 .. 0x7537EE: defineState(0, idle, 0, 0x4E)), AIGoingIdleState, whose
+// onEnter tells the StancesBehavior onMoveEnd (RW 0x743864): a stanced unit idle after an attack guards again where it stands (RW 0x662A21). The port's idle
+// state never fails and its failure goes to idle (AIUpdate.cpp), so such a unit stays idle (its plain mood scan, no guard); a FACE_OBJECT state (59) is not
+// ended by it either
+const char *idleStanceStopLine()
+{
+	return "[S-5148] idle stances: RotWK's idle state (RW 0x7553AB) fails every fifth update for a unit with a StancesBehavior and its failure goes to "
+	       "AIGoingIdleState 0x4E (RW 0x7537E0), which guards the unit again where it stands (RW 0x743864 -> 0x86228E); not ported: the unit stays idle";
+}
+
 StateReturnType AIIdleState::update()
 {
 	doInitIdleState();
+	if (machine().findState(AI_GOING_IDLE) && StancesBehavior::of(*ai().getObject()))
+	{
+		ai().getObject()->logic().noteStop(idleStanceStopLine()); // S-5148
+	}
 	// COMBAT-1 (ZH AIIdleState::update + AIUpdateInterface mood): a unit with a weapon and an AutoAcquire flag looks for an enemy every MoodAttackCheckRate frames and attacks
 	// the nearest one it finds (stop S-326); the scan replaces the long idle sleep
 	AIUpdateInterface &self = ai();

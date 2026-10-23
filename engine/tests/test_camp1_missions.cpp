@@ -356,8 +356,9 @@ TEST_CASE("camp1 dark eye: MAP ANG Dark Eye plays from its intro to the victory 
 	expectVictory(m, 600);
 	// lane CAMP-1H: Team::updateState / updateGenericScripts (RW 0x7A208C / 0x7A267D) over the playthrough. Lane MOVE-3: since the horde goal reservation
 	// (RW 0x86EF13) and the hordes' own footprint (RW 0x6ED071) the Builder & Friends team's generic hook "Notify Player of Builder" fired once in this run;
-	// MOVE-3 r3 (a horde's straight-line test with radius 1, RW 0x6EE12D, and the other review fixes) moves the team as before MOVE-3 and it no longer fires
-	expectTeamScripts(m, 11, 0, 0);
+	// MOVE-3 r3 (a horde's straight-line test with radius 1, RW 0x6EE12D, and the other review fixes) moves the team as before MOVE-3 and it no longer fires;
+	// since the formations are centred on their hordes (RW 0x86C4EA) the team moves otherwise and it fires once again
+	expectTeamScripts(m, 11, 0, 1);
 }
 
 namespace
