@@ -647,8 +647,9 @@ W3DMaterialResult W3DMaterialFactory::Create(const MeshRenderData &mesh, const M
 		// not a retail sampler claim; opaque castle floors keep their mipmaps.
 		if (FloorSampling && key.Blend == W3D_GODOT_BLEND_MIX && !key.DepthWrite)
 		{
+			key.FloorOverlay = true;
 			key.NoLod[s] = true;
-			if (s == 0) out.Notes.push_back("[S-5017] BFME1 translucent floor markings use base-level linear sampling and render after the castle floor to retain visibility (OpenBFME policy)");
+			if (s == 0) out.Notes.push_back("[S-5017] BFME1 translucent floor markings use base-level linear sampling, a one-world-unit lift and render after the castle floor to retain visibility (OpenBFME policy)");
 		}
 	}
 	if (!normalMapName.empty())

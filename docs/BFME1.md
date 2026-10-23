@@ -99,6 +99,21 @@ These are the places where BFME1's data or menus differ from RotWK's. Each one i
   adjacent wall and gate geometry deliberately overlaps. Applying the RotWK placement check drops those pieces.
 - **Occupied plots:** starting construction hides and deselects a regular build plot, closing its commands. The plot returns when its occupant is removed.
 - **Ground texture alpha:** JPEG ground textures take priority over paired PNG alpha masks and load their alpha through the same packed-texture merge used by the UI.
+- **Distant build plots:** translucent, non-depth-writing `W3DFloorDraw` markings use base-level linear sampling.
+  Their alpha-blended source textures otherwise blur under minification; the earlier alpha-test coverage correction
+  does not apply to these materials. The overlays also render at transparent priority 32, after the depth-writing
+  castle floor. Sharing its default priority allowed the floor to cover every plot at some start positions,
+  including the second castle on Fords of Isen. Depth testing stays enabled, and opaque castle floors retain mipmaps. This is an OpenBFME presentation policy
+  (S-5017), not a verified retail sampler setting; very distant thin lines can alias.
+- **Building floor bibs:** the same translucent, non-depth-writing floor surfaces receive a one-world-unit
+  shader lift. The installed Gondor stable and archery-range bib vertices top out near 0.377, below the castle
+  floor at 0.4; draw priority alone cannot pass that depth test. The lift compensates for instance scale, leaves
+  object positions unchanged, and keeps depth testing enabled. This is OpenBFME presentation policy under
+  S-5017, not a recovered retail floor-buffer implementation. `bfme1_building_floor_test.gd` checks that both
+  bibs contribute rendered pixels with the castle floor present (requires a graphical renderer).
+- **Create-a-Hero and saves:** BFME1 does not initialize or open the BFME2/RotWK hero builder, or switch to their menu
+  presentation. OpenBFME saves use `user://bfme1/Save` (unless `--save-dir` overrides it), without consulting RotWK's
+  `gi.dat` or hero folder. This separate namespace is OpenBFME policy; retail BFME1 save import is still unavailable.
 - **Build-plot picking:** plot surfaces use `W3DFloorDraw`, so mouse picking tests their visible floor triangles
   as well as scripted model draws. Hidden floors remain unpickable.
 - **Skirmish maps:** the lobby lists the mapcache's multiplayer maps, as for RotWK (Sol review r1: no file-name filter; in BFME1 1.03 every
