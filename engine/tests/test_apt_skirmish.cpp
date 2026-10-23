@@ -2305,5 +2305,26 @@ TEST_CASE("BFME1 profile display reads SkirmishStats and rank providers, isolate
 	REQUIRE(fx.wm->getExtern("LevelBarC", value) == AptExternResult::Value);
 	CHECK(value == "100");
 	CHECK(*fx.wm->aptText("APT:CurrentLevelFormat") == "Level 10");
+	// Delete through the lobby, then recreate the same name through its accept
+	// handler. The old stats file must not become the new persona's career.
+	showProfilePage(fx, "_delete");
+	REQUIRE(fx.screen->profileListWindow());
+	REQUIRE(fx.wm->invokeCallback("AptSkirmish::OnDeleteProfileMenu", ""));
+	GadgetListBoxSetSelected(fx.screen->profileListWindow(), 0);
+	REQUIRE(fx.wm->invokeCallback("AptSkirmish::OnDeleteProfile", ""));
+	CHECK(profiles.names().empty());
+	showProfilePage(fx, "_new");
+	REQUIRE(fx.screen->profileEntryWindow());
+	REQUIRE(fx.wm->invokeCallback("AptSkirmish::OnNewProfileMenu", ""));
+	GadgetTextEntrySetText(fx.screen->profileEntryWindow(), u"Test Profile");
+	REQUIRE(fx.wm->invokeCallback("AptSkirmish::OnAddProfileAccept", ""));
+	REQUIRE(profiles.current() == u"Test Profile");
+	OptionPreferences recreated;
+	REQUIRE(recreated.load((dir / "Test ProfileSkirmishStats.ini").string()));
+	CHECK_FALSE(recreated.get("ProfileCreatedDate").empty());
+	for (const char *key : {"IsengardWins", "IsengardLosses", "IsengardWinStreak", "IsengardBestWinStreak", "IsengardPoints", "FavoriteSide"})
+		CHECK(recreated.get(key).empty());
+	REQUIRE(fx.wm->invokeCallback("AptSkirmish::SkirmishProfile", ""));
+	CHECK(*fx.wm->aptText("APT:OverallCareerWinsNum") == "0");
 	CHECK(std::string(SkirmishPreferences::unverified()).find("[S-3504]") == 0);
 }

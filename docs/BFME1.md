@@ -172,7 +172,9 @@ maps are excluded. Importing external user-map folders is outside this change. A
 
 The profile dropdown supports selection, New Profile and Delete Profile.
 The main and expanded profile panels read BFME1's `<profile>SkirmishStats.ini`,
-including per-faction results, streaks and rank progress. A Random army shows
+including per-faction results, streaks and rank progress. Creating a profile
+starts a fresh stats record, even when reusing a deleted profile name; old
+wins, losses, streaks and rank points are not inherited. A Random army shows
 retail's dash fields. S-3504 covers remaining statistics recording and platform
 date differences. Source evidence: BFME1 MpGameSetupComboPopulation,
 MpGameSetupOnInitGadget (0x525AB0), Rva00453480MapPointerCollector,

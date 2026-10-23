@@ -464,23 +464,19 @@ bool AptSkirmish::addProfileFromEntry()
 		// BFME1 PersonaAccept / SkirmishBattleHonors::setProfileCreatedDate.
 		// Platform presentation inference (S-3504): ISO local date, as AptOnlineShell,
 		// instead of Windows GetDateFormat's system-locale short date.
+		// A newly created persona starts a new career, including when its name
+		// reuses a deleted persona's stats file. Never load that orphaned record.
 		OptionPreferences stats;
 		const std::string path = m_profiles->folder() + u16ToUtf8(name) + "SkirmishStats.ini";
-		std::error_code ec;
 		std::string error;
-		const bool exists = std::filesystem::exists(path, ec);
-		if (ec || (exists && !stats.load(path, &error))) windows().note("profile-stats", path + ": " + (ec ? ec.message() : error));
+		const std::time_t now = std::time(nullptr);
+		const std::tm *local = std::localtime(&now);
+		char date[32] = {};
+		if (!local || !std::strftime(date, sizeof(date), "%Y-%m-%d", local)) windows().note("profile-stats", "cannot format profile creation date");
 		else
 		{
-			const std::time_t now = std::time(nullptr);
-			const std::tm *local = std::localtime(&now);
-			char date[32] = {};
-			if (!local || !std::strftime(date, sizeof(date), "%Y-%m-%d", local)) windows().note("profile-stats", "cannot format profile creation date");
-			else
-			{
-				stats.set("ProfileCreatedDate", date);
-				if (!stats.save(path, &error)) windows().note("profile-stats", error);
-			}
+			stats.set("ProfileCreatedDate", date);
+			if (!stats.save(path, &error)) windows().note("profile-stats", error);
 		}
 	}
 	if (!previous.empty())
