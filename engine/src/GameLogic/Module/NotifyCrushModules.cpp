@@ -369,29 +369,8 @@ bool NotifyCrushUpdate::mux(Object &obj, unsigned &sleep)
 	}
 	mid.z = SimMath::subf32(mid.z, SimMath::mulf32(height, 0.333333343f)); // RW 0xBDBC78
 	// RW 0xAD2040: the local box of the active shapes, from 0 .. 0
-	float lo[3] = { 0.0f, 0.0f, 0.0f }, hi[3] = { 0.0f, 0.0f, 0.0f };
-	for (const ObjectGeometry::Shape &s : shapes)
-	{
-		if (!s.active)
-		{
-			continue;
-		}
-		const float yr = s.type == ObjectGeometry::SHAPE_BOX ? s.minorRadius : s.majorRadius;
-		lo[0] = std::min(lo[0], SimMath::subf32(s.offsetX, s.majorRadius));
-		lo[1] = std::min(lo[1], SimMath::subf32(s.offsetY, yr));
-		hi[0] = std::max(hi[0], SimMath::addf32(s.majorRadius, s.offsetX));
-		hi[1] = std::max(hi[1], SimMath::addf32(s.offsetY, yr));
-		if (s.type == ObjectGeometry::SHAPE_SPHERE)
-		{
-			lo[2] = std::min(lo[2], SimMath::subf32(s.offsetZ, s.majorRadius));
-			hi[2] = std::max(hi[2], SimMath::addf32(s.offsetZ, s.majorRadius));
-		}
-		else
-		{
-			lo[2] = std::min(lo[2], s.offsetZ);
-			hi[2] = std::max(hi[2], SimMath::addf32(s.height, s.offsetZ));
-		}
-	}
+	float lo[3], hi[3];
+	ObjectGeometry::localBox(shapes, lo, hi);
 	float width = m_data->m_scanWidth;
 	if (!(0.0f < width))
 	{

@@ -9,6 +9,7 @@
 #include "GameLogic/SimMath.h"
 #include "Common/INI/HostRealText.h"
 
+#include <algorithm>
 #include <cctype>
 #include <memory>
 #include <cstdlib>
@@ -185,6 +186,47 @@ float ObjectGeometry::maxHeightAbovePosition(const std::vector<Shape> &shapes)
 		}
 	}
 	return best;
+}
+
+void ObjectGeometry::localBox(const std::vector<Shape> &shapes, float lo[3], float hi[3])
+{
+	// RW 0xAD2040
+	for (int i = 0; i < 3; ++i)
+	{
+		lo[i] = 0.0f;
+		hi[i] = 0.0f;
+	}
+	for (const Shape &s : shapes)
+	{
+		if (!s.active)
+		{
+			continue;
+		}
+		const float yr = s.type == SHAPE_BOX ? s.minorRadius : s.majorRadius;
+		lo[0] = std::min(lo[0], SimMath::subf32(s.offsetX, s.majorRadius));
+		lo[1] = std::min(lo[1], SimMath::subf32(s.offsetY, yr));
+		hi[0] = std::max(hi[0], SimMath::addf32(s.majorRadius, s.offsetX));
+		hi[1] = std::max(hi[1], SimMath::addf32(s.offsetY, yr));
+		if (s.type == SHAPE_SPHERE)
+		{
+			lo[2] = std::min(lo[2], SimMath::subf32(s.offsetZ, s.majorRadius));
+			hi[2] = std::max(hi[2], SimMath::addf32(s.offsetZ, s.majorRadius));
+		}
+		else
+		{
+			lo[2] = std::min(lo[2], s.offsetZ);
+			hi[2] = std::max(hi[2], SimMath::addf32(s.height, s.offsetZ));
+		}
+	}
+}
+
+Coord3D ObjectGeometry::boxCentre(const std::vector<Shape> &shapes)
+{
+	// RW 0xAD28E6 .. 0xAD292B: fld lo; fadd hi; fmul 0.5 (RW 0xBD869C); fstp dword
+	float lo[3], hi[3];
+	localBox(shapes, lo, hi);
+	return Coord3D{ SimMath::pc24Mul(SimMath::pc24Add(lo[0], hi[0]), 0.5f), SimMath::pc24Mul(SimMath::pc24Add(lo[1], hi[1]), 0.5f),
+		SimMath::pc24Mul(SimMath::pc24Add(lo[2], hi[2]), 0.5f) };
 }
 
 std::vector<ObjectGeometry::ContactPoint> ObjectGeometry::contactPointsOf(const ThingTemplate &tt)

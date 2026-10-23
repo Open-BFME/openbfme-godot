@@ -57,6 +57,11 @@ std::vector<Shape> shapesOf(const ThingTemplate &tt);
 const std::vector<Shape> &cachedShapesOf(const ThingTemplate &tt);
 // RW 0xAD1920
 float maxHeightAbovePosition(const std::vector<Shape> &shapes);
+// RW 0xAD2040: the box around the active shapes in the object's own space, from 0 .. 0 (each shape's offset +- its major radius in x, a box's minor and the
+// others' major radius in y; a sphere's offset z +- its major radius, the others' offset z .. offset z + height)
+void localBox(const std::vector<Shape> &shapes, float lo[3], float hi[3]);
+// lane TREES1: RW 0xAD2860's GeometryInfo + 0x18 (read by RW 0xAD15D0): the centre of that box, (lo + hi) * 0.5 on the x87 (PC24, fstp dword)
+Coord3D boxCentre(const std::vector<Shape> &shapes);
 
 // lane BUILD-3: a GeometryContactPoint row (RW 0xAD3D30), in the object's own space
 struct ContactPoint

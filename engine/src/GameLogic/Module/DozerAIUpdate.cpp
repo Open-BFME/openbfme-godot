@@ -22,10 +22,12 @@
 #include "GameLogic/FindPositionAround.h"
 #include "GameLogic/GameLogic.h"
 #include "GameLogic/Locomotor.h"
+#include "GameLogic/Map/TerrainTrees.h"
 #include "GameLogic/Module/ActiveBody.h"
 #include "GameLogic/Module/ConstructionModules.h"
 #include "GameLogic/Module/UnportedModule.h"
 #include "GameLogic/Object/Object.h"
+#include "GameLogic/Object/ObjectGeometry.h"
 #include "GameLogic/ObjectTemplateInfo.h"
 #include "GameLogic/SimMath.h"
 #include "GameLogic/UnitSpecificSound.h"
@@ -34,6 +36,7 @@
 #include "Common/INI/HostRealText.h"
 
 #include <cstdlib>
+#include <stdexcept>
 
 namespace
 {
@@ -431,6 +434,20 @@ bool DozerAIUpdate::placeUnplacedStructure()
 	if (!obj || obj->isDestroyed())
 	{
 		return true;
+	}
+	// lane TREES1: RW 0x88D4F4 .. 0x88D533: a structure that is neither NO_COLLIDE (template + 0x10B bit 6) nor DO_NOT_CLASSIFY (+ 0x11A bit 5) takes the site:
+	// clearRemovableForConstruction (RW 0x796576) and moveObjectsForConstruction (RW 0x797465) are not run here (S-304), then removeTreesForConstruction
+	// (RW 0x684BCA) with the structure's position, geometry and angle: the trees, shrubs and props under it go
+	static const int noCollide = ObjectTemplateInfoBuilder::kindOfIndex("NO_COLLIDE");
+	static const int doNotClassify = ObjectTemplateInfoBuilder::kindOfIndex("DO_NOT_CLASSIFY");
+	if (noCollide < 0 || doNotClassify < 0)
+	{
+		throw std::logic_error("dozer placement: the KindOf names NO_COLLIDE / DO_NOT_CLASSIFY are not known");
+	}
+	if (!obj->isKindOf((unsigned)noCollide) && !obj->isKindOf((unsigned)doNotClassify))
+	{
+		const ThingTemplate &tt = *static_cast<const ThingTemplate *>(obj->getTemplate())->getFinalOverride();
+		obj->logic().trees().removeTreesForConstruction(*obj->getPosition(), ObjectGeometry::shapesOf(tt), obj->getOrientation());
 	}
 	if (ActiveBody *body = dynamic_cast<ActiveBody *>(obj->getBodyModule()))
 	{

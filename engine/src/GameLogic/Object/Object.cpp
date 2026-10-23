@@ -6,6 +6,7 @@
 #include "GameClient/ControlBarCommands.h"
 #include "GameLogic/Object/Object.h"
 #include "GameLogic/Map/TerrainLogic.h"
+#include "GameLogic/Map/TerrainTrees.h"
 #include "GameLogic/LegendaryHeroesGame.h"
 #include "GameLogic/Module/CastleModules.h"
 #include "GameLogic/Module/SpecialPowerModules.h"
@@ -394,7 +395,8 @@ void Object::updateOffMapStatus()
 // lane SCRIPT-2: RW 0x69264D. The exit test uses the PREVIOUS integer position (+ 0x418 is written after the exit loop): an object that leaves a
 // trigger is reported exited at its next integer-cell move outside, as retail does. Not ported here: the Lua OnUnitEntered / OnUnitExited events
 // (RW 0x7379CB, LUA-1's stop) (lane HUD-5: the trigger's callback, RW 0x6E4B21 / 0x6E4B3E, runs), the team's entered flag (RW 0x79FE5A: team + 0x5C and the
-// script engine's + 0x1A260 frame) and the terrain decal call for IMMOBILE-less infantry / cavalry / monsters / machines (RW 0x6858BE)
+// script engine's + 0x1A260 frame). Lane TREES1: the call for IMMOBILE-less infantry / cavalry / monsters / machines is TerrainLogic's unit-moved hook (RW
+// 0x6858BE: a crusher topples the trees under it, TerrainTrees::unitMoved), not a terrain decal call
 void Object::updateTriggerAreaFlags()
 {
 	static const int projectile = ObjectTemplateInfoBuilder::kindOfIndex("PROJECTILE");
@@ -408,6 +410,22 @@ void Object::updateTriggerAreaFlags()
 	if (x == m_triggerCellX && y == m_triggerCellY)
 	{
 		return;
+	}
+	// lane TREES1: RW 0x6926A0 .. 0x6926C9: not IMMOBILE (template + 0x108 bit 2) and INFANTRY, CAVALRY, MONSTER or MACHINE (+ 0x109 bits 0 .. 3)
+	static const int immobile = ObjectTemplateInfoBuilder::kindOfIndex("IMMOBILE");
+	static const int movers[4] = { ObjectTemplateInfoBuilder::kindOfIndex("INFANTRY"), ObjectTemplateInfoBuilder::kindOfIndex("CAVALRY"),
+		ObjectTemplateInfoBuilder::kindOfIndex("MONSTER"), ObjectTemplateInfoBuilder::kindOfIndex("MACHINE") };
+	if (immobile >= 0 && !isKindOf((unsigned)immobile))
+	{
+		bool mover = false;
+		for (int k : movers)
+		{
+			mover = mover || (k >= 0 && isKindOf((unsigned)k));
+		}
+		if (mover)
+		{
+			m_logic.trees().unitMoved(*this); // RW 0x6858BE
+		}
 	}
 	const UnsignedInt frame = m_logic.getFrame();
 	if (m_enteredOrExitedFrame != 0 && m_enteredOrExitedFrame != frame)

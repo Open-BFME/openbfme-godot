@@ -17,6 +17,8 @@
 
 #pragma once
 
+#include "GameLogic/Object/ObjectGeometry.h"
+
 #include <array>
 
 #include "GameClient/VideoPlayer.h" // lane CAMP-1H: m_videos (complete for the unique_ptr)
@@ -775,6 +777,17 @@ private:
 	};
 	std::unique_ptr<TreeTopple> m_treeTopple;
 	std::vector<ToppleTreeView> m_treeViews; ///< index = the animator's tree index
+	// lane TREES1: the client-only shrubs and props a construction (TheTerrainVisual slot 0x48) or a felled tree (slot 0x4C, props only) removes
+	struct FootprintView
+	{
+		int64_t instance = -1;
+		Coord3D position{};
+		float scale = 1.0f;
+		bool prop = false; ///< MAPOBJ_CLIENT_PROP (the prop buffer), else a shrub (the shrub buffer)
+		bool removed = false;
+	};
+	std::vector<FootprintView> m_footprintViews;
+	void clearFootprint(const Coord3D &pos, float angle, const std::vector<ObjectGeometry::Shape> &shapes, bool propsOnly);
 	size_t m_treeEventsSeen = 0;
 	void heldClientWork(); // lane RENDERWAIT-1: the render side's reads of the live logic, where it is held
 	void updateTreeTopple(double dt);

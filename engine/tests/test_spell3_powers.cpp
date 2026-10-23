@@ -356,10 +356,10 @@ TEST_CASE("SPELL-3 retail: a felled tree falls towards its direction, bounces an
 	const std::vector<TreeTopple::FX> fx = tp.takeFX();
 	REQUIRE(fx.size() == 1u);
 	CHECK(fx[0].name == "FX_ToppleTree");
-	// the speed is raised to MinimumToppleSpeed 0.5: velocity 0.5 * InitialVelocityPercent, acceleration 0.5 * InitialAccelPercent
-	CHECK(tp.trees()[0].angularVelocity == doctest::Approx(0.5f * td->m_initialVelocityPercent));
+	// lane TREES1: the logic's speed (Devastation's 0.1) is used as it is when above 0 (RW 0x4E9E4E; MinimumToppleSpeed only stands in for 0)
+	CHECK(tp.trees()[0].angularVelocity == 0.1f * td->m_initialVelocityPercent);
 	int updates = 0;
-	while (tp.trees()[0].state == TreeTopple::FALLING && updates < 200)
+	while (tp.trees()[0].state == TreeTopple::FALLING && updates < 400)
 	{
 		tp.advance(TreeTopple::kUpdateSeconds);
 		++updates;
@@ -380,12 +380,22 @@ TEST_CASE("SPELL-3 retail: a felled tree falls towards its direction, bounces an
 	}
 	CHECK(tp.trees()[0].state == TreeTopple::DOWN); // it lies: KillWhenFinishedToppling = No
 	tp.remove(7);
-	for (int i = 0; i < 10 * 30 + 2; ++i) // SinkTime 10 s at 30 updates per second
+	// lane TREES1: RW 0x4EA068 / 0x4ED508: SinkTime (10 s: 50 logic frames) x 6 client frames per logic frame = 300 updates, each lowering the tree by
+	// SinkDistance / 50; the next update removes it
+	for (int i = 0; i < 300; ++i)
 	{
 		tp.advance(TreeTopple::kUpdateSeconds);
 	}
+	CHECK(tp.trees()[0].state == TreeTopple::DOWN);
+	tp.advance(TreeTopple::kUpdateSeconds);
 	CHECK(tp.trees()[0].state == TreeTopple::GONE);
-	CHECK(tp.trees()[0].sink == doctest::Approx(td->m_sinkDistance));
+	float sunk = 0.0f;
+	for (int i = 0; i < 300; ++i)
+	{
+		sunk += td->m_sinkDistance / (float)td->m_sinkFrames;
+	}
+	CHECK(td->m_sinkFrames == 50u);
+	CHECK(tp.trees()[0].sink == sunk); // about 6 x SinkDistance: the tree sinks out of sight in the first sixth
 }
 
 TEST_CASE("SPELL-3 retail: summon: the Dwarves' Citadel egg hatches into the summoned citadel")
