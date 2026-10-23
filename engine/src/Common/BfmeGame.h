@@ -54,6 +54,7 @@ inline std::vector<std::string> bfme1StopLines()
 	return { "[S-5017] BFME1 mode (community PR #36, experimental) is not retail-exact: its simulation is RotWK's with BFME1's data and these inferences "
 			 "(docs/BFME1.md): the victory rule (a STRUCTURE not IGNORE_FOR_VICTORY, a unit not a DOZER), a player's castle flag unpacking at once and free, "
 			 "the pathfinder budgets without a located BFME1 constant (RotWK's), a TerrainResourceCellSize of 1.0, build plots hidden under their occupant, "
+			 "AI tactical-marker builds use first free pads, keep references follow CastleMember links, empty-team recruitment uses default-team object order, rank eligibility is inferred; external expansion threat and army helpers remain unported, "
 			 "AudioEvent Control RANDOM uses the default random selection, particle priorities mapped to RotWK's tiers, BuildingBehavior windows follow mirrored NIGHT/AFLAME model flags, MainMenu.apt's ShowMainMenu called from "
 			 "OnInitialized, BloodthirstyUpdate NumToSacrifice and InitiateVoice2 are stored but their runtime semantics are unported, no select-nearest-builder cycle timeout (InGameUI has no SelectNearestBuilderCycleTimeOut: 0); Living World campaigns and saves are not available" };
 }

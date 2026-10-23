@@ -24,6 +24,7 @@
 #include "GameLogic/ScriptEngine/ScriptActions.h"
 #include "GameLogic/ScriptEngine/ScriptConditions.h"
 #include "GameLogic/ScriptEngine/ScriptEngine.h"
+#include "GameLogic/AI/AIStateMachine.h"
 
 #include <algorithm>
 #include <set>
@@ -703,3 +704,130 @@ TEST_CASE("backlog3 radar notices: the list keeps 63, then 64, then the newest 6
 	CHECK(logic.radarEventNotices().front().seq == 66);
 	CHECK(logic.radarEventNotices().front().position.x == 66.0f);
 }
+<<<<<<< HEAD
+=======
+
+TEST_CASE("script2 BFME2 tutorial: named and type selection follow the local selection and reject multiplayer")
+{
+	Fixture f;
+	auto &g = f.g;
+	Player *local = g.lw.players.findPlayerWithName("Alice");
+	g.lw.players.setLocalPlayer(local);
+	const auto named = cond("NAMED_SELECTED", {sp(14, "U")});
+	const auto type = cond("TYPE_SELECTED", {sp(61, "Unit")});
+	const auto wrong = cond("TYPE_SELECTED", {sp(61, "Tower")});
+	CHECK_FALSE(evalCond(g, named));
+	CHECK_FALSE(evalCond(g, type));
+	local->selection() = {INVALID_ID, f.u->getID()};
+	CHECK(evalCond(g, named));
+	CHECK_FALSE(evalCond(g, cond("NAMED_SELECTED", {sp(14, "u")}))); // exact name comparison in BFME2
+	CHECK(evalCond(g, type));
+	CHECK_FALSE(evalCond(g, wrong));
+	g.engine().objectListAdd("SelectableTypes", "Unit", true);
+	CHECK(evalCond(g, cond("TYPE_SELECTED", {sp(61, "SelectableTypes")})));
+	g.lw.players.setLocalPlayer(g.lw.players.findPlayerWithName("Bob"));
+	CHECK_FALSE(evalCond(g, named));
+	g.lw.players.setLocalPlayer(local);
+	for (int mode : {EconomyContext::MODE_LAN, EconomyContext::MODE_INTERNET})
+	{
+		g.lw.logic->economy().context().gameMode = mode;
+		CHECK_FALSE(evalCond(g, named));
+		CHECK_FALSE(evalCond(g, type));
+	}
+	g.lw.logic->economy().context().gameMode = EconomyContext::MODE_SINGLE_PLAYER;
+	local->selection().clear();
+	CHECK_FALSE(evalCond(g, named));
+	CHECK_FALSE(evalCond(g, type));
+}
+
+TEST_CASE("script2 BFME2 tutorial: attacked by type resolves the most recent damage source")
+{
+	Fixture f;
+	auto &g = f.g;
+	const auto attacked = cond("NAMED_ATTACKED_BY_OBJECTTYPE", {sp(14, "U"), sp(61, "Tower")});
+	CHECK_FALSE(evalCond(g, attacked));
+	Object *source = g.lw.make("Tower", g.lw.teamOf("Bob"));
+	REQUIRE(source != nullptr);
+	DamageInfo info;
+	info.m_input.m_damageType = DAMAGE_UNRESISTABLE;
+	info.m_input.m_deathType = DEATH_NORMAL;
+	info.m_input.m_sourceID = source->getID();
+	info.m_input.m_amount = 1.0f;
+	f.u->getBodyModule()->attemptDamage(info);
+	CHECK(evalCond(g, attacked));
+	g.engine().objectListAdd("Attackers", "Tower", true);
+	CHECK(evalCond(g, cond("NAMED_ATTACKED_BY_OBJECTTYPE", {sp(14, "U"), sp(61, "Attackers")})));
+	CHECK_FALSE(evalCond(g, cond("NAMED_ATTACKED_BY_OBJECTTYPE", {sp(14, "Absent"), sp(61, "Tower")})));
+	info.m_input.m_sourceID = f.u->getID();
+	f.u->getBodyModule()->attemptDamage(info);
+	CHECK_FALSE(evalCond(g, attacked));
+}
+
+TEST_CASE("script2 BFME2 tutorial: building empty requires a contain with no occupants")
+{
+	Fixture f;
+	auto &g = f.g;
+	REQUIRE(g.lw.w.load("Object Container\n KindOf = STRUCTURE\n Behavior = TransportContain ContainTag\n Slots = 4\n End\nEnd\n",
+		INI_LOAD_OVERWRITE, "container.ini").empty());
+	Object *container = g.lw.make("Container", g.lw.teamOf("Alice"));
+	REQUIRE(container != nullptr);
+	container->setName("C");
+	REQUIRE(container->getContain() != nullptr);
+	const auto empty = cond("NAMED_BUILDING_IS_EMPTY", {sp(14, "C")});
+	CHECK(evalCond(g, empty));
+	CHECK_FALSE(evalCond(g, cond("NAMED_BUILDING_IS_EMPTY", {sp(14, "U")})));
+	CHECK_FALSE(evalCond(g, cond("NAMED_BUILDING_IS_EMPTY", {sp(14, "Absent")})));
+	REQUIRE(container->getContain()->addToContain(f.u));
+	CHECK_FALSE(evalCond(g, empty));
+	container->getContain()->removeFromContain(f.u);
+	CHECK(evalCond(g, empty));
+}
+
+TEST_CASE("BFME1 script economy counters use player masks and retain native command point availability")
+{
+	Fixture f;
+	f.g.lw.players.findPlayerWithName("Alice")->depositMoney(123);
+	f.g.lw.players.findPlayerWithName("Bob")->depositMoney(77);
+	const int aliceMoney = (int)f.g.lw.players.findPlayerWithName("Alice")->getMoney()->countMoney();
+	run(f.g, act("SET_PLAYER_MONEY_TO_COUNTER", {sp(11, "Alice"), sp(4, "Funds")}));
+	CHECK(f.g.counter("Funds") == aliceMoney);
+	run(f.g, act("SET_PLAYER_COMMAND_POINTS_AVAILABLE_TO_COUNTER", {sp(11, "Alice"), sp(4, "FreeCP")}));
+	CHECK(f.g.counter("FreeCP") == f.g.lw.players.findPlayerWithName("Alice")->commandPointsAvailable());
+}
+
+TEST_CASE("BFME1 team recruitment takes matching default-team units and reports its ranking stop")
+{
+	Fixture f;
+	Player *owner = f.g.lw.players.findPlayerWithName("Alice");
+	TeamPrototype *prototype = f.g.lw.teams.initTeam("Scouts", owner, false);
+	Team *scouts = f.g.lw.teams.createTeam(prototype);
+	Object *other = f.g.lw.make("Unit", owner->getDefaultTeam());
+	REQUIRE(other);
+	run(f.g, act("TEAM_RECRUIT_UNITS", {sp(3, "Alice/Scouts"), ip(0, 1), sp(61, "Unit")}));
+	CHECK(f.u->getTeam() == scouts);
+	CHECK(other->getTeam() == owner->getDefaultTeam());
+	CHECK(scouts->getMemberCount() == 1);
+	CHECK(f.g.engine().stats().notes.count("[S-5017] BFME1 empty-team recruitment uses default-team candidates in object order; native ranking is unverified") == 1);
+}
+
+TEST_CASE("BFME1 script scouts move toward the nearest capturable resource plot")
+{
+	UnitQueues q;
+	q.w.buildMap();
+	REQUIRE(q.w.w.load("Object ResourcePlot\n KindOf = STRUCTURE CAPTUREFLAG IMMOBILE\nEnd\n").empty());
+	Player *owner = q.w.players.findPlayerWithName("Alice");
+	Team *scouts = q.w.teams.createTeam(q.w.teams.initTeam("Scouts", owner, false));
+	Object *unit = q.w.spawn("Walker", 500.0f, 500.0f, 0.0f, scouts);
+	Object *nearPlot = q.w.make("ResourcePlot", q.w.teamOf("Bob"));
+	Object *farPlot = q.w.make("ResourcePlot", q.w.teamOf("Bob"));
+	moveTo(*nearPlot, 800.0f, 500.0f);
+	moveTo(*farPlot, 1400.0f, 500.0f);
+	q.start();
+	ScriptActions::execute(q.w.logic->scriptEngine(), act("TEAM_MOVE_TO_NEAREST_OBJECT_OF_KINDOF", {sp(3, "Alice/Scouts"), sp(27, "CAPTUREFLAG")}));
+	REQUIRE(unit->getAIUpdateInterface());
+	const Coord3D goal = unit->getAIUpdateInterface()->stateMachine().goalPosition();
+	CHECK(goal.x == 800.0f);
+	CHECK(goal.y == 500.0f);
+	CHECK(goal.z == 0.0f);
+}
+>>>>>>> 267500c810 (Enable the first BFME1 script-driven AI construction slice)

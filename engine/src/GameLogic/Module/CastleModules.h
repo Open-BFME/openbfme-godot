@@ -208,6 +208,9 @@ public:
 	const std::string &explicitTemplateName() const { return m_explicitTemplate; }
 	// RW 0x79AC19
 	void registerOwnedObject(Object &obj);
+	// BFME1 Gen00371340StructureCompletionScan: available construction pad.
+	bool hasFreeBuildSlot(const ThingTemplate *tt) const;
+	Object *buildInSlot(const ThingTemplate &tt, int slot) { return preBuild(tt, slot, false); }
 	// lane CASTLE-1: the stop lines S-950 .. S-952 (in GameLogic::report through BuildStops)
 	static std::vector<std::string> stopLines();
 

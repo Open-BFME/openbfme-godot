@@ -314,3 +314,40 @@ The port follows BFME2 GeometryUpgrade.cpp and preserves the original geometry o
 WallBoundsMesh / RampMesh and WallUpgradeUpdate navigation mesh hooks remain S-1423.
 The retail regression purchases both upgrades and requires the corresponding rendered
 structure plus exactly one spawned wall trebuchet.
+
+## Script-driven AI: first construction slice
+
+BFME1 uses its original `AI_Initialize`, faction, economy and execution map libraries,
+not RotWK's `ArmyDefinition` base builder. Those libraries already loaded, but their
+base construction actions and unpackability checks were missing. Computer players
+now use those authored scripts to build on castle and camp foundations, with the
+normal prices and timed construction. No faction build order is hard-coded.
+
+Source: Open-BFME-1 `game/GameEngine/Source/GameLogic/ScriptEngine/`:
+`ScriptActionsBuildBase.cpp`, `ScriptConditionsCanBuildAtBase.cpp`,
+`ScriptActions_doNamedBaseUnpack.cpp`, `ScriptConditionsNamedBaseUnpackableForPlayer.cpp`,
+`ScriptActionsCounters.cpp`, `ScriptActionsTeamRecruit.cpp`,
+`ScriptActions_doTeamMoveToNearestObjectOfKindof.cpp`, and
+`ScriptActions_doTeamMoveToNearestObjectOfTypeOwnedByPlayer.cpp`.
+The free-slot query follows `Common/Gen00371340StructureCompletionScan.cpp`.
+Unnamed object creation and command-button lookup follow `ScriptActions.cpp`.
+
+`godot/tests/bfme1_script_ai_test.gd` runs Gondor with 2000 starting cash on
+Fords of Isen (castle) and Rhun (camp). The authored AI builds a farm, forge and
+marketplace. C++ tests cover free-pad occupancy, recruitment and a scout's move
+toward the nearest capturable plot.
+
+This is an initial slice, not a complete retail AI port. S-5017 records these
+explicit approximations: tactical-marker builds choose the first free pad;
+base references naming the keep resolve through its CastleMember link; empty-team
+recruitment takes matching default-team units in object order; rank eligibility
+uses live matching objects. Recruitment into populated teams still reports an
+unported action. The source registry and dispatcher identify the rank predicate,
+but its eligibility helper is not recovered.
+
+Autonomous external resource expansion is **not accepted yet**: its scripts still
+hit `UNIT_THREAT_LEVEL`, `TEAM_THREAT_LEVEL`, `SET_COUNTER_TO_TEAM_THREAT` and
+army-management stops. The movement and castle-unpack operations are now available,
+but the engine does not invent safe-threat answers to force expansion. The next
+slice needs the donor's cached threat helper and team recruitment/army ownership
+rules, followed by a recorded unit journey, capture and timed farm construction.
