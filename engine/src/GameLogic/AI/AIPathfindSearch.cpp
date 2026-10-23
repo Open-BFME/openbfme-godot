@@ -23,9 +23,6 @@
 // word, LARGE_RECTANGLE_PATHFIND's offset goal and the patch mode.
 
 #include "GameLogic/AI/AIPathfind.h"
-#include "GameLogic/AI/AIWorld.h"
-#include "GameLogic/Object/Object.h"
-#include "Common/Thing/ThingTemplate.h"
 #include "GameLogic/AI/AIPathfindLine.h"
 #include "GameLogic/SimMath.h"
 #include "GameLogic/AI/AIPathfindStops.h"
@@ -873,8 +870,7 @@ Path *Pathfinder::findPath(PathfindObject *obj, const PathfindLocomotorInfo &loc
 	// OpenBFME pathfinding correction (inference): a castle's coarse corridor can exhaust the cell search at the rear wall even though its gate connects the
 	// destination. Retry an incomplete battalion route without corridor ordering before accepting its endpoint as arrival. Keep the bounded search and
 	// the original partial result when no complete route exists; never turn a closed gate into passable terrain.
-	const auto *adapter = obj && obj->isKindOf(PK_HORDE) ? dynamic_cast<const ObjectPathfindAdapter *>(obj) : nullptr;
-	if (hierarchical && (!result || *p) && adapter && adapter->object().getTemplate()->bfme1Data())
+	if (hierarchical && (!result || *p) && obj && obj->isKindOf(PK_HORDE) && obj->bfme1Data())
 	{
 		bool retryPartial = false;
 		Path *retry = findPathWithoutCorridor(obj, loco, from, &to, &retryPartial);

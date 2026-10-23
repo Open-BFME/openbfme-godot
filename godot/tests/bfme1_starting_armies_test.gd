@@ -35,7 +35,10 @@ func _run() -> void:
 				hordes.append(object)
 		# The mounted BFME1 library defines the faction's opening army.
 		# Isengard starts with one Uruk battalion; the other factions have two.
-		assert(hordes.size() == (1 if faction == 5 else 2), str(hordes))
+		if hordes.size() != (1 if faction == 5 else 2):
+			print("BFME1 STARTING ARMY FAILURE faction ", faction, ": ", world.get_script_report())
+			quit(1)
+			return
 		var other_hordes: Array = []
 		for oid in world.get_object_ids():
 			var object = world.get_object(oid)

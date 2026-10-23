@@ -273,6 +273,7 @@ TEST_CASE("pathperf1: battalions retry an incomplete corridor route around a wal
 	Pathfinder pf(config, &world);
 	pf.newMap(terrain);
 	TestObject battalion;
+	battalion.bfme1 = true;
 	battalion.mobile = true;
 	battalion.kinds.insert(PK_HORDE);
 	battalion.pos = cellCentre(10, 10);
@@ -280,12 +281,20 @@ TEST_CASE("pathperf1: battalions retry an incomplete corridor route around a wal
 	bool partial = false;
 	std::unique_ptr<Path> corridor(pf.findPath(nullptr, groundLoco(), &battalion.pos, &to, &partial));
 	CHECK((corridor == nullptr || partial));
+	battalion.bfme1 = false;
+	partial = false;
+	std::unique_ptr<Path> retail(pf.findPath(&battalion, groundLoco(), &battalion.pos, &to, &partial));
+	CHECK((retail == nullptr || partial));
+	CHECK(battalion.bfme1Queries == 1);
+	battalion.bfme1 = true;
+	battalion.bfme1Queries = 0;
 	partial = false;
 	std::unique_ptr<Path> path(pf.findPath(&battalion, groundLoco(), &battalion.pos, &to, &partial));
 	REQUIRE(path != nullptr);
 	CHECK_FALSE(partial);
 	CHECK(path->getLastNode()->getPosition()->x == to.x);
 	CHECK(path->getLastNode()->getPosition()->y == to.y);
+	CHECK(battalion.bfme1Queries == 1);
 }
 
 TEST_CASE("pathperf1: battalion retry preserves an incomplete route when a wall has no opening")
@@ -298,6 +307,7 @@ TEST_CASE("pathperf1: battalion retry preserves an incomplete route when a wall 
 	Pathfinder pf(testConfig(), &world);
 	pf.newMap(terrain);
 	TestObject battalion;
+	battalion.bfme1 = true;
 	battalion.mobile = true;
 	battalion.kinds.insert(PK_HORDE);
 	battalion.pos = cellCentre(10, 10);
@@ -306,6 +316,7 @@ TEST_CASE("pathperf1: battalion retry preserves an incomplete route when a wall 
 	std::unique_ptr<Path> path(pf.findPath(&battalion, groundLoco(), &battalion.pos, &to, &partial));
 	REQUIRE(path != nullptr);
 	CHECK(partial);
+	CHECK(battalion.bfme1Queries == 1);
 	// tolerance: a sealed barrier at cell 60 must keep every path node strictly on the starting side.
 	for (const Coord3D &node : nodes(path.get())) CHECK(node.x < 600.0f);
 }

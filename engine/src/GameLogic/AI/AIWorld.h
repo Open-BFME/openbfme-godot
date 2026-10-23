@@ -80,6 +80,7 @@ public:
 	void setLayer(PathfindLayerEnum layer) { m_layer = layer; }
 	float getHeightAboveTerrain() const override;
 	bool isMobile() const override;
+	bool bfme1Data() const override;
 	bool isKindOf(PathfindKind kind) const override;
 	const PathfindGeometry &getGeometry() const override;
 	float getFenceWidth() const override;

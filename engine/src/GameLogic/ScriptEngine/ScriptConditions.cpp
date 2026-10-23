@@ -728,6 +728,16 @@ bool ScriptConditions::evaluate(ScriptEngine &engine, const ScriptCondition &c)
 		return false; // retail's default case
 	}
 	GameLogic &logic = engine.logic();
+	if (t->name == "COMPARE_NUM_PLAYERS_IN_GAME" && logic.things().bfme1Data())
+	{
+		int count = 0;
+		for (int index = 0; index < logic.players().getPlayerCount(); ++index)
+		{
+			const Player *player = logic.players().getNthPlayer(index);
+			if (player && !player->isObserver() && (player->getPlayerType() == PLAYER_HUMAN || player->isSkirmishAI())) ++count;
+		}
+		return compare(param(c, 0).intValue, count, param(c, 1).intValue);
+	}
 	if (t->name == "PLAYER_HAS_OBJECT_OF_VETERANCY")
 	{
 		// BFME1 registry/dispatcher: script_conditions.cpp template 146,

@@ -228,6 +228,15 @@ original controls stay hidden, its bottom bar is available and it reopens.
 
 ## Opening armies, Q and distant markings
 
+The original multiplayer starting-team library also requires
+`COMPARE_NUM_PLAYERS_IN_GAME`; the 2.22 replacement library does not expose the
+same missing-condition failure. The BFME1-only handler follows
+Open-BFME-1 `ScriptConditionsCompare.cpp` (`0x00324390`): compare the
+non-observer participant count with the authored integer using operators 0–5.
+Mapping participants to human/skirmish players in this engine remains an
+inference under S-5017; neutral map sides do not count. Validation must include
+the original libraries as well as the mounted 2.22 libraries.
+
 BFME1's opening battalions come from the mounted `Multiplayer_Start_Teams`
 script library, not the commented-out PlayerTemplate StartingUnit rows.
 The library's team definitions are now instantiated for each receiving player;

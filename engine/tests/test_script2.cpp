@@ -743,6 +743,16 @@ TEST_CASE("RotWK retains unported BFME1 economy actions")
 	CHECK(f.g.counter("Funds") == 42);
 }
 
+TEST_CASE("BFME1 opening army player-count condition excludes neutral players")
+{
+	Fixture f(true);
+	CHECK(evalCond(f.g, cond("COMPARE_NUM_PLAYERS_IN_GAME", {ip(6, 0), ip(0, 5)})));
+	CHECK(evalCond(f.g, cond("COMPARE_NUM_PLAYERS_IN_GAME", {ip(6, 2), ip(0, 2)})));
+	CHECK_FALSE(evalCond(f.g, cond("COMPARE_NUM_PLAYERS_IN_GAME", {ip(6, 4), ip(0, 2)})));
+	Fixture retail;
+	CHECK_FALSE(evalCond(retail.g, cond("COMPARE_NUM_PLAYERS_IN_GAME", {ip(6, 2), ip(0, 2)})));
+}
+
 TEST_CASE("BFME1 team recruitment takes matching default-team units and reports its ranking stop")
 {
 	Fixture f(true);

@@ -136,6 +136,7 @@ public:
 	virtual PathfindLayerEnum getLayer() const = 0;
 	virtual float getHeightAboveTerrain() const = 0;
 	virtual bool isMobile() const = 0;
+	virtual bool bfme1Data() const { return false; }
 	virtual bool isKindOf(PathfindKind kind) const = 0;
 	virtual const PathfindGeometry &getGeometry() const = 0;
 	// ThingTemplate FenceWidth / FenceXOffset (RW +0x4B0 / +0x4B4; 0 for a non-fence).
