@@ -668,6 +668,14 @@ Object *CastleBehavior::createOwnedObject(const CastleTemplateEntry &entry, Play
 	// the angle, the player of the team chosen above, instant): the site is cleared first (RW 0x858C41), the object made (slot 7, RW 0x858701: below, the port's
 	// placement, S-303), then the units in the way are pushed out (RW 0x858CFC)
 	Player *creator = mine ? &owner : logic.players().getNeutralPlayer();
+	// BFME1 economy layouts contain ordinary NEED_BASE_FOUNDATION buildings.
+	// DONOR: CastleBehaviorCreateOwnedObject.cpp routes creation through the
+	// foundation interface with initialState=0. Preserve timed construction
+	// here instead of completing the layout entry as a wall/prop at birth.
+	if (!instant && tt->bfme1Data() && templateKindOf(logic, *tt, "NEED_BASE_FOUNDATION") && creator)
+	{
+		return createOnSite(*tt, pos, angle, *creator, false);
+	}
 	ConstructionSite::clearSiteForFoundation(logic, *tt, pos, angle);
 	Object *obj = logic.newObject(tt, team, ObjectStatusMaskType{});
 	if (!obj)

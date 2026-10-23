@@ -143,6 +143,7 @@ TEST_CASE("bfme1 isolation: S-5017 names BFME1 mode's inferences and is register
 	const std::vector<std::string> lines = bfme1StopLines();
 	REQUIRE(lines.size() == 1);
 	CHECK(lines[0].rfind("[S-5017] ", 0) == 0);
+	CHECK(lines[0].find("BuildingBehavior windows follow mirrored NIGHT/AFLAME model flags") != std::string::npos);
 	CHECK(lines[0].find("victory rule") != std::string::npos);
 	std::ifstream in(std::string(OPENBFME_DOCS_DIR) + "/STOPS.md", std::ios::binary);
 	REQUIRE(in);

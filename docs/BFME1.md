@@ -97,6 +97,18 @@ These are the places where BFME1's data or menus differ from RotWK's. Each one i
   the normal unpack price. The retail trigger (the caller of `CastleBehavior::initiateUnpack`) isn't in Open-BFME-1.
 - **Castle layouts:** BFME1's new castle system places its authored layout without per-piece overlap checks;
   adjacent wall and gate geometry deliberately overlaps. Applying the RotWK placement check drops those pieces.
+- **Resource-plot construction:** non-instant BFME1 layout entries marked `NEED_BASE_FOUNDATION` use the
+  foundation creation interface, so farms and other economy structures rise through their authored build-up
+  states instead of appearing complete as castle walls/props do. Starting castles still use instant layouts.
+  Source: BFME1 `CastleBehaviorCreateOwnedObject.cpp` (creation interface with initial state 0), the mounted
+  economy layouts and their structure templates. `bfme1_resource_farm_test.gd` captures a real resource plot,
+  builds through the HUD command, checks the initial one-health foundation, progress, completion and level 2.
+- **Building windows:** BFME1 `BuildingBehavior` name groups now control client subobjects: healthy daytime
+  buildings hide night/fire/glow meshes, night shows night windows, and AFLAME shows the fire/glow groups
+  (FireName only at night). This removes the fire-window mesh from healthy level-2 Gondor farms, including
+  farms created with no model-condition changes. Source: BFME1 `BuildingBehavior.cpp` and
+  `BuildingBehaviorApplyNames.cpp`. The client uses mirrored `NIGHT`/`AFLAME` flags instead of the donor's
+  global time and object-status reads; that mapping remains an inference under S-5017.
 - **Occupied plots:** starting construction hides and deselects a regular build plot, closing its commands. The plot returns when its occupant is removed.
 - **Ground texture alpha:** JPEG ground textures take priority over paired PNG alpha masks and load their alpha through the same packed-texture merge used by the UI.
 - **Distant build plots:** translucent, non-depth-writing `W3DFloorDraw` markings use base-level linear sampling.
