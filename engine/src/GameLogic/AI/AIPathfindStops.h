@@ -27,6 +27,10 @@ const char *const kPatchLayers =
 	"S-1830 the layer-change step of the cell searches (RW 0x6F6286) implements only its ground-connection case, which opens nothing (the cell's own index is the closed "
 	"parent): the bridge-layer cell lookup (RW 0x5E2E9C) and the waypoint link expansion (RW 0x68229C, 0x93443D) are not implemented, and the four-bit connection "
 	"field cannot hold a wall layer (16 and up); a patch or a search never crosses a layer or a portal (S-161)";
+// the destination adjustment's ring searches (S-5147, found with the slot centring)
+const char *const kAdjustSpiral =
+	"S-5147 the destination adjustment's ring searches (RW 0x6FA2A4, 0x6F3C87) restart the spiral at the destination's cell on every layer, where RotWK zeroes "
+	"the offsets once before the loop (RW 0x6FA34D / 0x6FA350, 0x6F3E0E / 0x6F3E14): layer d reaches d cells toward +x / +y but one toward -x / -y";
 // S-162 zones and the hierarchical search
 const char *const kZoneProfiles =
 	"S-162 the zone tables are built lazily per locomotor profile with the terrain variant read as obstacles-count-as-ground (INFERRED from the RW call sites); RW updates them incrementally and in a budgeted order";

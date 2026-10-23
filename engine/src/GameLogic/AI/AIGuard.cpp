@@ -10,6 +10,7 @@
 #include "Common/Team.h"
 #include "GameLogic/AI/AIHunt.h"
 #include "GameLogic/Combat/CombatNames.h"
+#include "GameLogic/Combat/CombatQueries.h"
 #include "GameLogic/Combat/CombatState.h"
 #include "GameLogic/Combat/ObjectWeapons.h"
 #include "GameLogic/Combat/TargetFinder.h"
@@ -52,10 +53,13 @@ float distSqr2D(const Coord3D &a, const Coord3D &b)
 	return SimMath::addf32(SimMath::mulf32(dx, dx), SimMath::mulf32(dy, dy));
 }
 
-// the idle scan's TargetFinder flags (AIUpdateInterface::nextMoodTarget): a horde looks for hordes and lone units, a lone unit for lone units and members
+// the idle scan's TargetFinder flags (AIUpdateInterface::nextMoodTarget): a horde looks for hordes and lone units, a lone unit for lone units and members;
+// measured centre to centre in 3D (review of #73: RW 0x70146A adds the qualifier 0x100 when the point is not the unit's position, Object + 0x38, which skips one of
+// RW 0x7006D7's filters, and calls RW 0x7006D7, as RW 0x701443 does, whose partition
+// queries RW 0xA39090 / 0xA39340 take distance type 1)
 unsigned scanFlags(const Object &obj, const AIUpdateInterface &ai)
 {
-	unsigned flags = 0;
+	unsigned flags = TargetFinder::CENTER_3D;
 	if (ai.autoAcquireFlags() & 16u)
 	{
 		flags |= TargetFinder::ALLOW_STRUCTURES;
@@ -527,14 +531,15 @@ AIGuardMachine::AIGuardMachine(AIUpdateInterface &ai)
 
 float AIGuardMachine::getAdjustedVisionRange(const Object &obj)
 {
-	// RW 0x6FF412 with OWNERTYPE | MOOD (RotWK, like BFME2, has no inner / outer factors): the vision range (+ Object + 0xB8), then by the mood of a computer
-	// unit: asleep (0x100) 0, alert (0x800) * AlertRangeModifier, aggressive (0x1000) * AggressiveRangeModifier
+	// RW 0x6FF412 with OWNERTYPE | MOOD (RotWK, like BFME2, has no inner / outer factors): the vision range (RW 0x68E43B: Object + 0x1B0 with the VISION
+	// attribute modifiers and the height factor) plus Object + 0xB8, the object's bounding circle radius (review of #73: before, + 0xB8 was taken as 0), then
+	// by the mood of a computer unit: asleep (0x100) 0, alert (0x800) * AlertRangeModifier, aggressive (0x1000) * AggressiveRangeModifier; 0 without an AI
 	AIUpdateInterface *ai = const_cast<Object &>(obj).getAIUpdateInterface();
 	if (!ai)
 	{
 		return 0.0f;
 	}
-	float range = AIUpdateInterface::objectVisionRangeOf(const_cast<Object &>(obj));
+	float range = SimMath::addf32(CombatQueries::boundingCircleRadius(obj), AIUpdateInterface::objectVisionRangeOf(const_cast<Object &>(obj))); // RW 0x6FF42D .. 0x6FF435: addss
 	const unsigned mood = ai->moodMatrixValue();
 	if (!(mood & 1u))
 	{

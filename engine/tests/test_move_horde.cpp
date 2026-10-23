@@ -332,10 +332,10 @@ TEST_CASE("horde: two hordes sent through each other both arrive on slots (movin
 	}
 	CHECK(f < 300);
 	CHECK(crossed);
-	// the order's goal lies inside the other horde's footprint, which stands there when the path is made: the pathfinder moves it to the nearest free cell
-	CHECK(dist2d(*a->getPosition(), Coord3D{ 905.0f, 405.0f, 0.0f }) <= 60.0f);
+	// the order's goal lies inside the other horde's footprint, which stands there when the path is made: the pathfinder moves it to a free cell. Stop
+	// S-5147: with b's slots centred on b at 905 (RW 0x86C4EA) the destination search, which reaches one cell toward -x, finds one 70 beyond b
+	CHECK(a->getPosition()->x == 975.0f);
 	CHECK(dist2d(*b->getPosition(), Coord3D{ 205.0f, 405.0f, 0.0f }) <= 110.0f);
-	CHECK(a->getPosition()->x > 905.0f - 1.0f);
 	CHECK(b->getPosition()->x >= 205.0f); // lane MOVE-3: a's member goals moved to a's new goal (RW 0x86EF13), so b's goal at a's start is free
 	settle(mw, a, 1.0f, 60);
 	settle(mw, b, 1.0f, 60);

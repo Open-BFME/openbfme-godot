@@ -300,20 +300,28 @@ bool HordeContain::bannerMemberSlot(const Object &member, Coord3D &pos) const
 		return false;
 	}
 	const std::string payload = getPayloadMemberTemplateName();
-	const BannerCarrierPositionEntry *e = &m_data->horde.m_bannerCarrierPosition[0];
-	for (const BannerCarrierPositionEntry &c : m_data->horde.m_bannerCarrierPosition)
+	size_t entry = 0;
+	for (size_t k = 0; k < m_data->horde.m_bannerCarrierPosition.size(); ++k)
 	{
-		if (c.unitType == payload)
+		if (m_data->horde.m_bannerCarrierPosition[k].unitType == payload)
 		{
-			e = &c;
+			entry = k;
 			break;
 		}
+	}
+	// the entry's slot (RW 0x8776BB appends one per entry; RW 0x86C4EA centres it with the formation), else the entry's own position
+	float ex = m_data->horde.m_bannerCarrierPosition[entry].x, ey = m_data->horde.m_bannerCarrierPosition[entry].y;
+	const int slot = m_core->bannerSlot(entry);
+	if (slot >= 0)
+	{
+		ex = m_core->slots()[(size_t)slot].x;
+		ey = m_core->slots()[(size_t)slot].y;
 	}
 	const Object *horde = getObject();
 	const float a = horde->getOrientation();
 	const float c = SimMath::cosDet(a), s = SimMath::sinDet(a);
-	pos.x = SimMath::addf32(horde->getPosition()->x, SimMath::subf32(SimMath::mulf32(e->x, c), SimMath::mulf32(e->y, s)));
-	pos.y = SimMath::addf32(horde->getPosition()->y, SimMath::addf32(SimMath::mulf32(e->x, s), SimMath::mulf32(e->y, c)));
+	pos.x = SimMath::addf32(horde->getPosition()->x, SimMath::subf32(SimMath::mulf32(ex, c), SimMath::mulf32(ey, s)));
+	pos.y = SimMath::addf32(horde->getPosition()->y, SimMath::addf32(SimMath::mulf32(ex, s), SimMath::mulf32(ey, c)));
 	pos.z = horde->logic().getGroundHeight(pos.x, pos.y);
 	return true;
 }

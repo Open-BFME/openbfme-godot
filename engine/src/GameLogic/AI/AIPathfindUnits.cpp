@@ -1264,6 +1264,7 @@ bool Pathfinder::adjustDestination(PathfindObject &obj, const PathfindLocomotorI
 	int limit = m_config.adjustDestinationLimit;
 	int d = 1;
 	int ring = 4;
+	note(pathstops::kAdjustSpiral);
 	while (limit > 0)
 	{
 		limit -= ring + 2;
@@ -1351,6 +1352,7 @@ bool Pathfinder::adjustToPossibleDestination(PathfindObject &obj, const Pathfind
 	int limit = m_config.adjustToPossibleLimit;
 	int d = 1;
 	int ring = 4;
+	note(pathstops::kAdjustSpiral);
 	while (limit > 0)
 	{
 		limit -= ring + 2;

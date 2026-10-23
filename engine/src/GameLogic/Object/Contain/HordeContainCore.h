@@ -99,13 +99,21 @@ public:
 	// `data` and `rng` must outlive the core. A null matcher is a logic error (no default matching rule).
 	HordeContainCore(const HordeContainModuleData &data, GameLogicRandom &rng, UnitTypeMatcher matcher);
 
+	// RW 0x6D1305 then ThingTemplate + 0x109 bit 3 (KindOf MACHINE): is the template named by a rank's UnitType a machine? Set before buildSlots; without
+	// it no rank is a machine's.
+	typedef std::function<bool(const std::string &unitType)> MachineTest;
+
 	void setMemberSlotChanged(MemberSlotChanged cb) { m_slotChanged = std::move(cb); }
+	void setMachineTest(MachineTest test) { m_isMachine = std::move(test); }
 	void setBannerCarrierId(ObjectId id) { m_bannerCarrierId = id; }   // H+0x26C
 	void setOtherNonSlotId(ObjectId id) { m_otherNonSlotId = id; }     // H+0x264 (identity unproven)
 
 	// RW 0x877751. Rebuilds the slot table (retail does this when the contain is created and when the formation
-	// is swapped); existing member indices are kept.
+	// is swapped); existing member indices are kept. After the ranks' slots it appends a slot at LeaderPosition (RW 0x877A17 .. 0x877A34, with
+	// LeadersAllowed) and one per BannerCarrierPosition entry (RW 0x8776BB, with BannerCarriersAllowed), then centres the table (RW 0x86C4EA).
 	void buildSlots(bool fromScratch);
+	// The slot RW 0x8776BB appended for BannerCarrierPosition entry `entry` (the banner carrier's place, centred with the rest), or -1 when none was.
+	int bannerSlot(size_t entry) const;
 
 	// RW 0x873F30: returns the slot index taken, or -1 when no free slot of a matching rank exists (the member
 	// is then in the contain list without a slot).
@@ -166,6 +174,7 @@ private:
 	const HordeContainModuleData &m_data;
 	GameLogicRandom &m_rng;
 	UnitTypeMatcher m_matcher;
+	MachineTest m_isMachine;
 	MemberSlotChanged m_slotChanged;
 	std::vector<Slot> m_slots;                 // H+0x188
 	std::map<ObjectId, int> m_memberIndex;     // H+0x17C
