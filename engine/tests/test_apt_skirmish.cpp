@@ -2257,10 +2257,22 @@ TEST_CASE("BFME1 profile display reads SkirmishStats and rank providers, isolate
 	REQUIRE(profiles.add(u"Test Profile"));
 	REQUIRE(profiles.setCurrent(u"Test Profile"));
 	OptionPreferences stats;
-	stats.parse("ProfileCreatedDate = 2026-10-22\nIsengardWins = 9\nIsengardLosses = 3\nIsengardWinStreak = 2\nIsengardBestWinStreak = 7\nIsengardPoints = 7\nFavoriteSide = Isengard\n");
+	stats.parse("ProfileCreatedDate = 2026-10-22\nIsengardWins = 9\nIsengardLosses = 3\nIsengardWinStreak = 2\nIsengardBestWinStreak = 7\nIsengardPoints = 7\nFavoriteSide = Isengard\nNorthRealmWins = 3\nNorthRealmLosses = 1\nModFactionWins = 5\nModFactionLosses = 2\n");
+	stats.set("NorthRealmPoints", "7");
 	REQUIRE(stats.save((dir / "Test ProfileSkirmishStats.ini").string()));
 	initest::Fixture bfme1({{"data/ini/default/subsystemlegend.ini", "; BFME1"}});
+	FakeSetup modSetup;
 	LobbyFx fx(mount, false);
+	modSetup.fac = {
+		FakeSetup::faction("FactionNorthRealm", "NorthRealm", true, "Fortress"),
+		FakeSetup::faction("FactionRohan", "Rohan", true, "Fortress"),
+		FakeSetup::faction("FactionIsengard", "Isengard", true, "Fortress"),
+		FakeSetup::faction("FactionMordor", "Mordor", true, "Fortress"),
+		FakeSetup::faction("FactionMod", "ModFaction", true, "Fortress")
+	};
+	modSetup.col = fx.setup.colors();
+	modSetup.map = fx.setup.maps();
+	fx.environment.skirmish = &modSetup;
 	fx.environment.fileSystem = &bfme1.fsys;
 	fx.environment.profiles = &profiles;
 	fx.text.set("APT:DashDash", "--");
@@ -2292,17 +2304,29 @@ TEST_CASE("BFME1 profile display reads SkirmishStats and rank providers, isolate
 	CHECK(*fx.wm->aptText("APT:BestWinStreakNumA") == "7");
 	CHECK(*fx.wm->aptText("APT:CurrentLevelFormat") == "Level 2");
 	CHECK(*fx.wm->aptText("APT:NextWinsNumber") == "3 wins");
-	CHECK(*fx.wm->aptText("APT:WinsCNum") == "9");
-	CHECK(*fx.wm->aptText("APT:OverallCareerWinsNum") == "9");
+	CHECK(*fx.wm->aptText("APT:OverallCareerWinsNum") == "17");
+	CHECK(*fx.wm->aptText("APT:OverallCareerLossesNum") == "6");
 	std::string value;
-	REQUIRE(fx.wm->getExtern("LevelBarC", value) == AptExternResult::Value);
+	std::string rankProvider;
+	std::string renamedRankProvider;
+	for (char letter : { 'A', 'B', 'C', 'D' })
+	{
+		const auto *wins = fx.wm->aptText(std::string("APT:Wins") + letter + "Num");
+		if (wins && *wins == "9") rankProvider = std::string("LevelBar") + letter;
+		if (wins && *wins == "3") renamedRankProvider = std::string("LevelBar") + letter;
+	}
+	REQUIRE_FALSE(rankProvider.empty());
+	REQUIRE_FALSE(renamedRankProvider.empty());
+	REQUIRE(fx.wm->getExtern(renamedRankProvider, value) == AptExternResult::Value);
+	CHECK(value == "40");
+	REQUIRE(fx.wm->getExtern(rankProvider, value) == AptExternResult::Value);
 	CHECK(value == "40");
 	REQUIRE(fx.wm->getExtern("LevelBarCurrent", value) == AptExternResult::Value);
 	CHECK(value == "0");
 	stats.set("IsengardPoints", "1500");
 	REQUIRE(stats.save((dir / "Test ProfileSkirmishStats.ini").string()));
 	REQUIRE(fx.wm->invokeCallback("AptSkirmish::SkirmishProfile", ""));
-	REQUIRE(fx.wm->getExtern("LevelBarC", value) == AptExternResult::Value);
+	REQUIRE(fx.wm->getExtern(rankProvider, value) == AptExternResult::Value);
 	CHECK(value == "100");
 	CHECK(*fx.wm->aptText("APT:CurrentLevelFormat") == "Level 10");
 	// Delete through the lobby, then recreate the same name through its accept

@@ -282,6 +282,7 @@ private:
 	void refreshProfileList();
 	void refreshBfme1Profile();
 	int bfme1RankProgress(const std::string &side) const;
+	std::vector<std::string> bfme1ProfileSides();
 	std::u16string playerName() const;
 	void applyProfileName();
 	// RotWK 0x9294B3 (the Enter key of the persona entry, a double click in the profile list): close the popup through the movie's CloseProfilePopup,

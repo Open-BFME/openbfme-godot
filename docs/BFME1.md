@@ -189,6 +189,11 @@ BFME1_INSTALL="/path/to/BFME1" godot --headless --path godot -- --game=bfme1 --a
 
 ## Skirmish menu
 
+Profile career totals include every unique playable side in the mounted faction
+data. The native movie's faction captions determine the matching row order;
+remaining sides follow mounted-data order. Its four expanded rows and rank
+providers share that mapping, while totals also include additional mod sides.
+
 BFME1 offers Official Maps and Player-made Maps, with the native two-column
 map list (honors, name with player count). The built-in catalog comes from the
 original mounted `Maps.big` rather than a patch's `mapcache.ini`: only original

@@ -2,6 +2,7 @@
 // See GameClient/GUI/AptScreens/AptSkirmish.h.
 
 #include "Common/BfmeGame.h"
+#include "Libraries/Source/Apt/AptCharacterInst.h"
 #include "GameClient/GUI/AptScreens/AptSkirmish.h"
 
 #include "GameClient/GUI/AptScreens/AptStats.h"
@@ -369,10 +370,10 @@ void AptSkirmish::registerProfileCommands()
 	registerCommand("AptSkirmish::SkirmishProfile", [this](const std::string &) { refreshBfme1Profile(); });
 	// BFME1 constructor / RankProgress00579990: LevelBarCurrent is selector 0.
 	const char *providers[] = { "LevelBarCurrent", "LevelBarA", "LevelBarB", "LevelBarC", "LevelBarD" };
-	const char *sides[] = { "", "Gondor", "Rohan", "Isengard", "Mordor" };
 	for (int i = 0; i < 5; ++i)
-		registerProvider(providers[i], [this, side = std::string(sides[i])](const std::string &, std::string &value, bool setting) {
-			if (!setting) value = std::to_string(side.empty() ? 0 : bfme1RankProgress(side));
+		registerProvider(providers[i], [this, i](const std::string &, std::string &value, bool setting) {
+			const auto sides = bfme1ProfileSides();
+			if (!setting) value = std::to_string(i == 0 || (size_t)i > sides.size() ? 0 : bfme1RankProgress(sides[(size_t)i - 1]));
 			return !setting;
 		});
 	}
@@ -2664,6 +2665,26 @@ std::string profileFormat(std::string format, const std::vector<std::string> &ar
 }
 }
 
+std::vector<std::string> AptSkirmish::bfme1ProfileSides()
+{
+	std::vector<std::string> sides;
+	if (!m_setup) return sides;
+	const auto &factions = m_setup->source().factions();
+	auto append = [&](const std::string &side) {
+		if (std::find(sides.begin(), sides.end(), side) == sides.end()) sides.push_back(side);
+	};
+	const auto *movie = windows().apt().level(level());
+	if (movie && movie->timelineFile)
+		for (const auto &character : movie->timelineFile->characters)
+			if (character.text)
+				for (const auto &faction : factions)
+					if (faction.playableSide && !faction.isObserver && !faction.side.empty() &&
+						character.text->initialText == "$" + faction.side + "Caps") append(faction.side);
+	for (const auto &faction : factions)
+		if (faction.playableSide && !faction.isObserver && !faction.side.empty()) append(faction.side);
+	return sides;
+}
+
 int AptSkirmish::bfme1RankProgress(const std::string &side) const
 {
 	const int points = std::atoi(m_bfme1Stats.get(side + "Points").c_str());
@@ -2705,12 +2726,16 @@ void AptSkirmish::refreshBfme1Profile()
 	set("APT:ProfileCreatedNum", m_bfme1Stats.get("ProfileCreatedDate"));
 	auto stat = [&](const std::string &key) { return std::atoi(m_bfme1Stats.get(key).c_str()); };
 	int totalWins = 0, totalLosses = 0;
-	const char *sides[] = { "Gondor", "Rohan", "Isengard", "Mordor" };
-	for (int i = 0; i < 4; ++i)
+	const auto sides = bfme1ProfileSides();
+	for (const auto &sideName : sides)
+	{
+		totalWins += stat(sideName + "Wins");
+		totalLosses += stat(sideName + "Losses");
+	}
+	for (size_t i = 0; i < std::min<size_t>(4, sides.size()); ++i)
 	{
 		const std::string sideName = sides[i], letter(1, (char)('A' + i));
 		const int wins = stat(sideName + "Wins"), losses = stat(sideName + "Losses");
-		totalWins += wins; totalLosses += losses;
 		set("APT:Wins" + letter + "Num", std::to_string(wins));
 		set("APT:Losses" + letter + "Num", std::to_string(losses));
 		const int lossStreak = stat(sideName + "LossStreak");
