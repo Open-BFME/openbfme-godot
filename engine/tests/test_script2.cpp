@@ -24,6 +24,7 @@
 #include "GameLogic/ScriptEngine/ScriptActions.h"
 #include "GameLogic/ScriptEngine/ScriptConditions.h"
 #include "GameLogic/ScriptEngine/ScriptEngine.h"
+#include "GameLogic/AI/AIStateMachine.h"
 
 #include <algorithm>
 #include <set>
@@ -84,7 +85,7 @@ struct Fixture
 {
 	ScriptGame g;
 	Object *u = nullptr;
-	Fixture()
+	explicit Fixture(bool bfme1 = false) : g(bfme1)
 	{
 		LogicModules::registerAll(g.lw.w.modules); // ActiveBody
 		const std::string err = g.lw.w.load(kUnitIni, INI_LOAD_OVERWRITE, "units.ini");
@@ -503,6 +504,7 @@ std::unique_ptr<Script> sequential(const std::string &name, const std::string &t
 struct UnitQueues
 {
 	movetest::MoveWorld w;
+	explicit UnitQueues(bool bfme1 = false) : w(100, 100, "", bfme1) {}
 	ScriptList list;
 	std::int32_t counter(const std::string &q) const
 	{
@@ -702,4 +704,87 @@ TEST_CASE("backlog3 radar notices: the list keeps 63, then 64, then the newest 6
 	REQUIRE(logic.radarEventNotices().size() == 1);
 	CHECK(logic.radarEventNotices().front().seq == 66);
 	CHECK(logic.radarEventNotices().front().position.x == 66.0f);
+}
+
+TEST_CASE("BFME1 script economy counters use player masks and retain native command point availability")
+{
+	Fixture f(true);
+	f.g.lw.players.findPlayerWithName("Alice")->depositMoney(123);
+	f.g.lw.players.findPlayerWithName("Bob")->depositMoney(77);
+	const int aliceMoney = (int)f.g.lw.players.findPlayerWithName("Alice")->getMoney()->countMoney();
+	run(f.g, act("SET_PLAYER_MONEY_TO_COUNTER", {sp(11, "Alice"), sp(4, "Funds")}));
+	CHECK(f.g.counter("Funds") == aliceMoney);
+	run(f.g, act("SET_PLAYER_COMMAND_POINTS_AVAILABLE_TO_COUNTER", {sp(11, "Alice"), sp(4, "FreeCP")}));
+	CHECK(f.g.counter("FreeCP") == f.g.lw.players.findPlayerWithName("Alice")->commandPointsAvailable());
+}
+
+TEST_CASE("BFME1 script references resolve destroyed units only in BFME1 data")
+{
+	for (bool bfme1 : { false, true })
+	{
+		Fixture f(bfme1);
+		f.g.frame();
+		const auto qualified = f.g.engine().qualify("Base");
+		f.g.engine().nameInCache(qualified.first + "::unit-reference::" + qualified.second, *f.u);
+		CHECK(f.g.engine().getUnitNamed("Base") == (bfme1 ? f.u : nullptr));
+		CHECK_FALSE(f.g.engine().didUnitExist("Base"));
+		f.g.lw.logic->destroyObject(f.u);
+		f.g.frame();
+		CHECK(f.g.engine().getUnitNamed("Base") == nullptr);
+		CHECK(f.g.engine().didUnitExist("Base") == bfme1);
+	}
+}
+
+TEST_CASE("RotWK retains unported BFME1 economy actions")
+{
+	Fixture f;
+	f.g.engine().counter("Funds").value = 42;
+	run(f.g, act("SET_PLAYER_MONEY_TO_COUNTER", {sp(11, "Alice"), sp(4, "Funds")}));
+	CHECK(f.g.counter("Funds") == 42);
+}
+
+TEST_CASE("BFME1 opening army player-count condition excludes neutral players")
+{
+	Fixture f(true);
+	CHECK(evalCond(f.g, cond("COMPARE_NUM_PLAYERS_IN_GAME", {ip(6, 0), ip(0, 5)})));
+	CHECK(evalCond(f.g, cond("COMPARE_NUM_PLAYERS_IN_GAME", {ip(6, 2), ip(0, 2)})));
+	CHECK_FALSE(evalCond(f.g, cond("COMPARE_NUM_PLAYERS_IN_GAME", {ip(6, 4), ip(0, 2)})));
+	Fixture retail;
+	CHECK_FALSE(evalCond(retail.g, cond("COMPARE_NUM_PLAYERS_IN_GAME", {ip(6, 2), ip(0, 2)})));
+}
+
+TEST_CASE("BFME1 team recruitment takes matching default-team units and reports its ranking stop")
+{
+	Fixture f(true);
+	Player *owner = f.g.lw.players.findPlayerWithName("Alice");
+	TeamPrototype *prototype = f.g.lw.teams.initTeam("Scouts", owner, false);
+	Team *scouts = f.g.lw.teams.createTeam(prototype);
+	Object *other = f.g.lw.make("Unit", owner->getDefaultTeam());
+	REQUIRE(other);
+	run(f.g, act("TEAM_RECRUIT_UNITS", {sp(3, "Alice/Scouts"), ip(0, 1), sp(61, "Unit")}));
+	CHECK(f.u->getTeam() == scouts);
+	CHECK(other->getTeam() == owner->getDefaultTeam());
+	CHECK(scouts->getMemberCount() == 1);
+	CHECK(f.g.engine().stats().notes.count("[S-5017] BFME1 empty-team recruitment uses default-team candidates in object order; native ranking is unverified") == 1);
+}
+
+TEST_CASE("BFME1 script scouts move toward the nearest capturable resource plot")
+{
+	UnitQueues q(true);
+	q.w.buildMap();
+	REQUIRE(q.w.w.load("Object ResourcePlot\n KindOf = STRUCTURE CAPTUREFLAG IMMOBILE\nEnd\n").empty());
+	Player *owner = q.w.players.findPlayerWithName("Alice");
+	Team *scouts = q.w.teams.createTeam(q.w.teams.initTeam("Scouts", owner, false));
+	Object *unit = q.w.spawn("Walker", 500.0f, 500.0f, 0.0f, scouts);
+	Object *nearPlot = q.w.make("ResourcePlot", q.w.teamOf("Bob"));
+	Object *farPlot = q.w.make("ResourcePlot", q.w.teamOf("Bob"));
+	moveTo(*nearPlot, 800.0f, 500.0f);
+	moveTo(*farPlot, 1400.0f, 500.0f);
+	q.start();
+	ScriptActions::execute(q.w.logic->scriptEngine(), act("TEAM_MOVE_TO_NEAREST_OBJECT_OF_KINDOF", {sp(3, "Alice/Scouts"), sp(27, "CAPTUREFLAG")}));
+	REQUIRE(unit->getAIUpdateInterface());
+	const Coord3D goal = unit->getAIUpdateInterface()->stateMachine().goalPosition();
+	CHECK(goal.x == 800.0f);
+	CHECK(goal.y == 500.0f);
+	CHECK(goal.z == 0.0f);
 }

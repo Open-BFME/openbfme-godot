@@ -2,6 +2,7 @@
 // See GameClient/GUI/AptScreens/AptSimpleScreens.h.
 
 #include "GameClient/GUI/AptScreens/AptSimpleScreens.h"
+#include "Common/BfmeGame.h"
 
 #include "GameClient/GUI/AptGadgetLayer.h"
 #include "GameClient/GUI/Gadgets.h"
@@ -1033,7 +1034,10 @@ AptOptionsScreen::AptOptionsScreen(WindowManager &windows, Shell &shell, ShellEn
 		windows.note("options-unwired", "Options: no OptionPreferences: Save writes nothing [S-1484]");
 	}
 	// RW 0x816157 (the shared OnInitialized): the screen's state + 0x27C becomes 1, the basic page
-	registerCommand("AptOptions::OnInitialized", [this](const std::string &) { m_state = 1; });
+	registerCommand("AptOptions::OnInitialized", [this](const std::string &) {
+		m_state = 1;
+		m_bfme1OpenPending = m_env.fileSystem && isBfme1Data(*m_env.fileSystem);
+	});
 	// lane OPTS-3: while the OpenBFME page is up the bottom bar's commands are the page's (not retail: RotWK has no such page)
 	registerCommand("AptOptions::Cancel", [this](const std::string &) {
 		if (extensionOpen())
@@ -1921,6 +1925,16 @@ void AptOptionsScreen::save()
 
 void AptOptionsScreen::frameUpdate()
 {
+	if (m_bfme1OpenPending && level() >= 0)
+	{
+		// BFME1 BfmeConv1072 (0x55DC00): open after frame-0 initialization
+		// finishes; calling inside OnInitialized is overwritten by its Stop action.
+		m_bfme1OpenPending = false;
+		std::string error;
+		if (!windows().invokeAS(level(), "assignOpen", { m_networkEnabled ? "online" : "normal" }, nullptr, &error))
+			windows().note("options-open", "BFME1 assignOpen: " + error);
+	}
+
 	// lane OPTS-2 [S-3402]: on the advanced page the rows of the options the device does not draw yet are greyed and take no input (retail greys what
 	// does not apply). A row is found by the label the screen binds to it (APT:AdvancedOption<i>, RW 0x9213F4): the text field showing "$AdvancedOption<i>"
 	// (its bound variable read on its parent timeline); the clip holding that field is the row: _alpha 40 and every button / clip under it disabled
@@ -2148,7 +2162,9 @@ AptButtonInst *AptOptionsScreen::barButton(int i) const
 	// lane SHELLFIX-1: the button is the clip's direct child (RotWK: Buttons.Accept.bttn; BFME2: Buttons.Accept.instance14). Before, only ".bttn" was
 	// looked up, so with the BFME2 1.06 shell the page never took the bar's clicks: the movie played its closing animation (about 0.55 s) before it sent
 	// AptOptions::Save / Cancel, and ACCEPT returned late
-	AptCharacterInst *clip = i >= 0 && i < 3 ? find(kBarButtons[i]) : nullptr;
+	const bool bfme1 = m_env.fileSystem && isBfme1Data(*m_env.fileSystem);
+	const char *bfme1Buttons[] = { "instance136.Cancel", "instance136.Reset", "instance136.Save" };
+	AptCharacterInst *clip = i >= 0 && i < 3 ? find(bfme1 ? bfme1Buttons[i] : kBarButtons[i]) : nullptr;
 	AptSpriteInst *sprite = clip ? clip->asSprite() : nullptr;
 	if (!sprite || !sprite->globallyVisible())
 	{
@@ -2224,6 +2240,17 @@ void AptOptionsScreen::updateEntry()
 
 void AptOptionsScreen::setExtensionHidden(bool hidden)
 {
+	if (m_env.fileSystem && isBfme1Data(*m_env.fileSystem))
+	{
+		// BFME1 Options.apt has two unnamed settings clips and separate animated
+		// borders, rather than BFME2/RotWK's Main.FrameLeft/Middle/Right.
+		for (const char *path : { "instance80", "instance105", "frameOuterA", "frameOuterB" })
+			if (AptCharacterInst *frame = find(path)) frame->visible = !hidden;
+		if (AptSpriteInst *root = level() >= 0 ? windows().apt().level(level()) : nullptr)
+			for (AptCharacterInst *child : root->children())
+				if (child->instName().rfind("tooltip", 0) == 0) child->visible = !hidden;
+	}
+
 	for (const char *path : kBasicFrames)
 	{
 		if (AptCharacterInst *f = find(path))
@@ -2282,7 +2309,10 @@ bool AptOptionsScreen::openExtension(std::string *error)
 	}
 	AptGadgetLayer *layer = windows().gadgetLayer();
 	std::string missing;
-	for (const char *path : kBasicFrames)
+	const bool bfme1 = m_env.fileSystem && isBfme1Data(*m_env.fileSystem);
+	const std::vector<std::string> frames = bfme1 ? std::vector<std::string>{ "instance80", "instance105" } :
+		std::vector<std::string>(std::begin(kBasicFrames), std::end(kBasicFrames));
+	for (const auto &path : frames)
 	{
 		if (!find(path))
 		{
@@ -2945,6 +2975,9 @@ void AptOptionsScreen::menuUpdate()
 	{
 		return; // AptOptions::OnInitialized has not run: the gadgets are not filled yet
 	}
+	// BFME1's settings gadgets are placed by the opening animation, after
+	// OnInitialized. Keep its frames hidden while waiting for the controls.
+	if (m_env.fileSystem && isBfme1Data(*m_env.fileSystem) && (!gadget("Brightness") || !gadget("MusicVolume") || !gadget("ScrollSpeed"))) return;
 	std::string error;
 	if (!openExtension(&error))
 	{

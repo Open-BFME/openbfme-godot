@@ -64,6 +64,8 @@ struct W3DShaderKey
 	// an additive surface keeps its blend with its diffuse scaled. Here an opaque surface becomes blend_mix with ALPHA = alpha * the instance fade (v_fade
 	// carries the opacity), no dither; the other blends already scale by v_fade. Only instancers that ask for it (W3DInstancer::set_alpha_override) use it
 	bool AlphaOverride = false;
+	// S-5017: OpenBFME BFME1 floor-overlay lift; not a retail shader setting.
+	bool FloorOverlay = false;
 
 	std::string Id() const;
 };

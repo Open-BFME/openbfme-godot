@@ -92,6 +92,8 @@ public:
 
 	// Read a virtual file from whichever archive owns it, else from the local folder (below). False + *error if absent/unreadable.
 	bool readFile(const std::string &filename, std::vector<std::uint8_t> &out, std::string *error);
+	// Read a catalog from a specific mounted archive without changing file precedence.
+	bool readFileFromArchive(const std::string &archiveBasename, const std::string &filename, std::vector<std::uint8_t> &out, std::string *error);
 	bool doesFileExist(const std::string &filename) const;
 	std::string getArchiveFilenameForFile(const std::string &filename) const;
 

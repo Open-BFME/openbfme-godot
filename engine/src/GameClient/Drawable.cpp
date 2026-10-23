@@ -11,6 +11,7 @@
 #include "GameClient/RenderInterpolation.h"
 #include "GameClient/StealthLook.h"
 #include "GameLogic/ObjectTemplateInfo.h"
+#include "GameLogic/Module/ConstructionModules.h"
 #include "GameEngineDevice/W3DDevice/GameClient/Drawable/Draw/W3DTreeDraw.h"
 #include "GameEngineDevice/W3DDevice/GameClient/Drawable/Draw/W3DModelDrawVariants.h"
 #include "Common/ModelState.h"
@@ -64,6 +65,7 @@ Drawable::Drawable(DrawServices &services, const ThingTemplate *tt, DrawableID i
 	{
 		m->onObjectCreated();
 	}
+	applyBuildingWindowVisibility();
 }
 
 bool Drawable::isKindOfName(const char *name) const
@@ -218,6 +220,29 @@ void Drawable::setModelConditionFlags(const ModelConditionFlags &flags)
 			e.draw->setModelConditionFlags(flags);
 			const W3DDrawFrame f = e.draw->frame();
 			e.animated = f.trackCount > 0 && f.tracks[0].anim && f.tracks[0].anim->Get_Num_Frames() > 1 && f.tracks[0].mode != W3D_ANIM_MODE_MANUAL;
+		}
+	}
+	applyBuildingWindowVisibility();
+}
+
+void Drawable::applyBuildingWindowVisibility()
+{
+	if (m_template->bfme1Data())
+	{
+		// DONOR BFME1 BuildingBehavior.cpp: hide all four authored name groups
+		// initially; NIGHT shows night windows, AFLAME shows fire/glow windows
+		// (and FireName only at night). Client inference: use the mirrored model
+		// flags rather than the donor update's global time/status reads (S-5017).
+		const bool night = m_flags.test(ModelCondition::indexOf("NIGHT"));
+		const bool aflame = m_flags.test(ModelCondition::indexOf("AFLAME"));
+		for (const ThingTemplate::Nugget &n : m_template->behaviorModules().nuggets())
+		{
+			const auto *building = dynamic_cast<const BuildingBehaviorModuleData *>(n.data.get());
+			if (!building) continue;
+			for (const std::string &name : building->m_nightWindowName) showSubObject(name, night && !aflame, false);
+			for (const std::string &name : building->m_fireWindowName) showSubObject(name, aflame, false);
+			for (const std::string &name : building->m_glowWindowName) showSubObject(name, aflame, false);
+			for (const std::string &name : building->m_fireName) showSubObject(name, night && aflame, false);
 		}
 	}
 }

@@ -380,6 +380,11 @@ TEST_CASE("MOD-4: PickupStuffUpdate, GeometryUpgrade, ThreatFinderUpdate and the
 		{
 			found += l.rfind(ids[i], 0) == 0 ? 1 : 0;
 		}
+		if (name == "GeometryUpgrade")
+		{
+			for (const auto &line : stops)
+				if (line.rfind(ids[i], 0) == 0) CHECK(line.find("not ported for RotWK data") != std::string::npos);
+		}
 		CHECK_MESSAGE(found == 1, ids[i]); // the two rebuild classes share S-1427
 		// the retail data uses each class
 		int uses = 0;

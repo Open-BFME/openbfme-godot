@@ -94,6 +94,30 @@ private:
 	const ModelConditionUpgradeModuleData *m_data;
 };
 
+// GeometryUpgrade: BFME2 GeometryUpgrade.cpp (upgradeImplementation / removal); the shared mux owns CustomAnimAndDuration.
+class GeometryUpgradeModuleData : public UpgradeModuleData
+{
+public:
+	std::vector<std::string> m_showGeometry, m_hideGeometry;
+	std::string m_wallBoundsMesh, m_rampMesh1, m_rampMesh2;
+	static void buildFieldParse(MultiIniFieldParse &p);
+};
+
+class GeometryUpgrade : public UpgradeModule
+{
+public:
+	OBFME_MODULE_XFER(GeometryUpgrade)
+	GeometryUpgrade(Thing *thing, const GeometryUpgradeModuleData *data) : UpgradeModule(thing, data), m_data(data) {}
+	void crc(StateHasher &h) const override;
+protected:
+	void upgradeImplementation() override;
+	void processUpgradeRemoval() override;
+private:
+	void changeGeometry(bool upgraded);
+	const GeometryUpgradeModuleData *m_data;
+	std::string m_originalGeometry;
+};
+
 class ArmorUpgradeModuleData : public UpgradeModuleData
 {
 public:
@@ -297,7 +321,7 @@ private:
 namespace UpgradeModuleClasses
 {
 // binds the typed data and the runtime class of every class above (the economy's two are bound by EconomyModules)
-void registerAll(ModuleFactory &modules);
+void registerAll(ModuleFactory &modules, bool bfme1Data = false);
 // the counts of what the runtime could not apply (stop S-484: fades, texture swaps, house recolours), reset by resetStats
 struct Stats
 {

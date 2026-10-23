@@ -477,6 +477,11 @@ bool ObjectPathfindAdapter::isMobile() const
 	return !isKindOf(PK_IMMOBILE);
 }
 
+bool ObjectPathfindAdapter::bfme1Data() const
+{
+	return m_object->getTemplate()->bfme1Data();
+}
+
 bool ObjectPathfindAdapter::isKindOf(PathfindKind kind) const
 {
 	const int bit = kindBits().bit[(int)kind];

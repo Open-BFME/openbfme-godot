@@ -1299,8 +1299,10 @@ func _boot() -> void:
 	get_viewport().size_changed.connect(_style_menu_texts) # lane MENUFIX-1
 	_style_menu_texts()
 	# lane CAH-1: the Create-a-Hero builder's and the lobby's heroes: the system heroes of the archives and the profile's MyHero*.cah (RW 0x61EEB6: <user data>\\Save\\)
-	var cah: Dictionary = {"ok":true} if _fs.is_bfme1() else _shell.set_create_a_hero(_world, _cah_profile_dir())
-	print("GAME Create-a-Hero heroes: %d in %s %s" % [cah.get("heroes", 0), _cah_profile_dir(), "" if cah.ok else str(cah.errors)])
+	if not _fs.is_bfme1():
+		var profile_dir := _cah_profile_dir()
+		var cah: Dictionary = _shell.set_create_a_hero(_world, profile_dir)
+		print("GAME Create-a-Hero heroes: %d in %s %s" % [cah.get("heroes", 0), profile_dir, "" if cah.ok else str(cah.errors)])
 	_shell.shell_request.connect(_on_shell_request)
 	_shell.shell_service.connect(_on_shell_service)
 	_shell.shell_screen.connect(_on_shell_screen)
@@ -1613,6 +1615,8 @@ func _on_shell_request(action: String, argument: String) -> void:
 # ---- lane CAH-1: the Create-a-Hero builder (CreateAHero.apt over the map mode, scripts/create_a_hero_view.gd) ---------------------------------------------
 
 func _cah_profile_dir() -> String:
+	if _fs != null and _fs.is_bfme1():
+		return "" # BFME1 has no Create-a-Hero system or hero save folder.
 	# lane CAH-2: retail's folder: <application data>\<gi.dat UserDataLeafName>\Save\ (RW 0x644148 / 0x6DD398), e.g. %APPDATA%\My The Lord of the Rings,
 	# The Rise of the Witch-king Files\Save\ on Windows; --cah-profile=DIR overrides it (tests)
 	if not _cah_profile.is_empty():
@@ -1633,6 +1637,8 @@ func _cah_profile_dir() -> String:
 
 
 func _cah_begin() -> void:
+	if _fs != null and _fs.is_bfme1():
+		return
 	if _cah != null:
 		return
 	_cah = load("res://scripts/create_a_hero_view.gd").new()
@@ -1666,6 +1672,8 @@ func _options_path() -> String:
 
 
 func request_menu_style(style: String) -> void:
+	if _fs != null and _fs.is_bfme1():
+		return # BFME1 uses its own shell; BFME2/RotWK presentation changes do not apply.
 	if style not in ["rotwk", "bfme2"]:
 		_fail("unknown main menu style: " + style)
 		return
@@ -1735,10 +1743,11 @@ func _apply_pending_menu_style() -> void:
 		_fail("shell style switch: " + str(boot.get("errors", [])))
 		return
 	_sync_shell_volumes()
-	var heroes: Dictionary = _shell.set_create_a_hero(_world, _cah_profile_dir())
-	if not heroes.get("ok", false):
-		_fail("shell style switch heroes: " + str(heroes.get("errors", [])))
-		return
+	if not _fs.is_bfme1():
+		var heroes: Dictionary = _shell.set_create_a_hero(_world, _cah_profile_dir())
+		if not heroes.get("ok", false):
+			_fail("shell style switch heroes: " + str(heroes.get("errors", [])))
+			return
 	_style_menu_texts() # lane MENUFIX-1: the other style's archives carry their own faces
 	_shell.set_openbfme_available(true)
 	if _platform_ready:
@@ -3946,12 +3955,15 @@ func _exit_to_score_screen() -> void:
 	if not _shell.set_score_screen_from_world(_world):
 		_fail("the score screen has no data")
 		return
-	if not _shell.shell_push("TimeLine.apt"):
-		_fail("the shell refused TimeLine.apt: " + str(_shell.get_shell_report().errors))
+	# BFME1 uses its native ScoreScreen.apt; TimeLine.apt belongs to BFME2 / RotWK.
+	var score_movie := "ScoreScreen.apt" if _fs.is_bfme1() else "TimeLine.apt"
+	if not _shell.shell_push(score_movie):
+		_fail("the shell refused %s: %s" % [score_movie, str(_shell.get_shell_report().errors)])
 		return
 	_audio.stop_music(false)
 	_audio.play_misc("ScoreScreenMusic") # MiscAudio ScoreScreenMusic
-	_install_graph_overlay()
+	if not _fs.is_bfme1():
+		_install_graph_overlay()
 
 
 ## AptTimeLine::RenderGraph is a device-drawn component (S-1063): the lines of the graph the movie's _graphMode picks, drawn over the movie's graph area.
@@ -4737,7 +4749,10 @@ func _finish_end_flow(faction: String, prefix := "end1") -> void:
 			print("GAME END stats row: ", " | ".join(cells))
 		_save_named("%s-%s-score-stats" % [prefix, faction])
 	var clicked := false
-	for attempt in 6:
+	if _fs.is_bfme1():
+		clicked = _shell.shell_fscommand("AptScoreScreen::Continue", "")
+		await _wait_seconds(1.5)
+	for attempt in (0 if clicked else 6):
 		if await _click_button(lvl, "Main.MainButtons.Continue"):
 			clicked = true
 		await _wait_seconds(1.5)

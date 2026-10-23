@@ -98,10 +98,10 @@ Ref<Texture2D> W3DModelBuilder::loadTexture(RetailFileSystem &fs, const std::str
 		return cached->second;
 	}
 
-	// BFME retail keeps unit textures compiled to DDS under a two-letter folder; the W3D
-	// still names the source .tga. Loose art\textures\<name> is checked second.
-	// TODO(faithfulness): confirm the lookup order against the BFME2 texture loader.
-	std::vector<std::string> candidates = { W3D_Compiled_Texture_Path(name), "art\\textures\\" + key };
+	// Use the mounted game's texture layout, as the material factory does.
+	const bool flatLayout = fs.archive_fs() && isBfme1Data(*fs.archive_fs());
+	const TextureResolution resolved = Resolve_W3D_Texture(name, [&](const std::string &path) { return fs.existsNative(path); }, flatLayout);
+	const std::vector<std::string> &candidates = resolved.Tried;
 	Ref<Texture2D> texture;
 	for (const std::string &path : candidates)
 	{
@@ -122,7 +122,11 @@ Ref<Texture2D> W3DModelBuilder::loadTexture(RetailFileSystem &fs, const std::str
 		Ref<Image> image;
 		image.instantiate();
 		std::string ext = path.substr(path.size() - 4);
-		Error err = ext == ".dds" ? image->load_dds_from_buffer(buffer) : image->load_tga_from_buffer(buffer);
+		Error err = ERR_FILE_UNRECOGNIZED;
+		if (ext == ".dds") err = image->load_dds_from_buffer(buffer);
+		else if (ext == ".png") err = image->load_png_from_buffer(buffer);
+		else if (ext == ".jpg") err = image->load_jpg_from_buffer(buffer);
+		else err = image->load_tga_from_buffer(buffer);
 		if (err != OK || image->is_empty())
 		{
 			((Array)m_report["errors"]).push_back(toGodot("could not decode texture " + path));
@@ -135,7 +139,9 @@ Ref<Texture2D> W3DModelBuilder::loadTexture(RetailFileSystem &fs, const std::str
 	}
 	if (texture.is_null())
 	{
-		((Array)m_report["errors"]).push_back(toGodot("texture not found: " + name + " (tried " + candidates[0] + ", " + candidates[1] + ")"));
+		std::string tried;
+		for (const std::string &path : candidates) tried += (tried.empty() ? "" : ", ") + path;
+		((Array)m_report["errors"]).push_back(toGodot("texture not found: " + name + " (tried " + tried + ")"));
 		return texture;
 	}
 	m_textureCache[key] = texture;

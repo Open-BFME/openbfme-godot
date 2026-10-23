@@ -453,6 +453,24 @@ bool CastleBehavior::tryInstantUnpack()
 	return true;
 }
 
+// DONOR BFME1 Gen00371340StructureCompletionScan.cpp: state 4, choose
+// defense pads for FS_BASE_DEFENSE, skip wall upgrades, query pad occupancy.
+// The port's occupancy is CastleMemberBehavior (existing S-952 seam).
+bool CastleBehavior::hasFreeBuildSlot(const ThingTemplate *tt) const
+{
+	if (!isUnpacked()) return false;
+	GameLogic &logic = getObject()->logic();
+	const auto &pads = tt && templateKindOf(logic, *tt, "FS_BASE_DEFENSE") && !m_defenseFoundations.empty() ? m_defenseFoundations : m_foundations;
+	for (ObjectID id : pads)
+	{
+		Object *pad = logic.findObjectByID(id);
+		if (!pad || pad->isDestroyed() || pad->isKindOfName("WALL_UPGRADE")) continue;
+		if (!occupantOf(*pad))
+			for (const auto &module : pad->modules()) if (module->getFoundationAIUpdate()) return true;
+	}
+	return false;
+}
+
 // RW 0x79A5EC: the pad of the list (the BASE_DEFENSE_FOUNDATIONs for an FS_BASE_DEFENSE template when there are any, else the foundations) at `index` (clamped to the list;
 // -2: the first pad that takes it) builds the template through RW 0x79A518
 Object *CastleBehavior::preBuild(const ThingTemplate &tt, int index, bool instant)
@@ -668,6 +686,14 @@ Object *CastleBehavior::createOwnedObject(const CastleTemplateEntry &entry, Play
 	// the angle, the player of the team chosen above, instant): the site is cleared first (RW 0x858C41), the object made (slot 7, RW 0x858701: below, the port's
 	// placement, S-303), then the units in the way are pushed out (RW 0x858CFC)
 	Player *creator = mine ? &owner : logic.players().getNeutralPlayer();
+	// BFME1 economy layouts contain ordinary NEED_BASE_FOUNDATION buildings.
+	// DONOR: CastleBehaviorCreateOwnedObject.cpp routes creation through the
+	// foundation interface with initialState=0. Preserve timed construction
+	// here instead of completing the layout entry as a wall/prop at birth.
+	if (!instant && tt->bfme1Data() && templateKindOf(logic, *tt, "NEED_BASE_FOUNDATION") && creator)
+	{
+		return createOnSite(*tt, pos, angle, *creator, false);
+	}
 	ConstructionSite::clearSiteForFoundation(logic, *tt, pos, angle);
 	Object *obj = logic.newObject(tt, team, ObjectStatusMaskType{});
 	if (!obj)

@@ -14,8 +14,11 @@
 #include "Common/StateHash.h"
 #include "Common/SpecialPower.h"
 #include "Common/Thing/ModuleFactory.h"
+#include "Common/Thing/ThingTemplate.h"
 #include "GameClient/ControlBarCommands.h"
 #include "GameLogic/GameLogic.h"
+#include "GameLogic/AI/AIWorld.h"
+#include "GameLogic/Object/ObjectGeometry.h"
 #include "GameLogic/SkirmishAI/SkirmishAIManager.h"
 #include "GameLogic/ArmorSet.h"
 #include "GameLogic/Combat/ObjectWeapons.h"
@@ -298,6 +301,67 @@ void StatusBitsUpgrade::processUpgradeRemoval()
 	Object *obj = getObject();
 	setStatusMask(*obj, m_data->m_statusToSet, false);
 	setStatusMask(*obj, m_data->m_statusToClear, true);
+}
+
+// ---- GeometryUpgrade -----------------------------------------------------------------------------------------------------------------------
+void GeometryUpgradeModuleData::buildFieldParse(MultiIniFieldParse &p)
+{
+	buildBaseFieldParse(p);
+#define GEO_OFF(m) (int)offsetof(GeometryUpgradeModuleData, m)
+	static const FieldParse fields[] = {
+		{ "ShowGeometry", INI::parseAsciiStringVectorAppend, nullptr, GEO_OFF(m_showGeometry) },
+		{ "HideGeometry", INI::parseAsciiStringVectorAppend, nullptr, GEO_OFF(m_hideGeometry) },
+		{ "WallBoundsMesh", INI::parseAsciiString, nullptr, GEO_OFF(m_wallBoundsMesh) },
+		{ "RampMesh1", INI::parseAsciiString, nullptr, GEO_OFF(m_rampMesh1) },
+		{ "RampMesh2", INI::parseAsciiString, nullptr, GEO_OFF(m_rampMesh2) },
+		{ nullptr, nullptr, nullptr, 0 }
+	};
+#undef GEO_OFF
+	p.add(fields);
+}
+
+void GeometryUpgrade::changeGeometry(bool upgraded)
+{
+	Object *obj = getObject();
+	AIWorld *ai = obj->logic().aiWorld();
+	if (ai) ai->removeObjectFromPathfindMap(*obj);
+	for (const auto &name : m_data->m_hideGeometry) obj->setGeometryActive(name, false);
+	for (const auto &name : m_data->m_showGeometry) obj->setGeometryActive(name, upgraded);
+	if (!upgraded && !m_originalGeometry.empty()) obj->setGeometryActive(m_originalGeometry, true);
+	if (ai) ai->addObjectToPathfindMap(*obj);
+}
+
+void GeometryUpgrade::upgradeImplementation()
+{
+	// BFME2 GeometryUpgrade.cpp: setCustomAnim, remember the last active shape, hide/show named geometry, refresh the object.
+	// S-1423: draw-module WallBoundsMesh / RampMesh hooks and WallUpgradeUpdate navigation meshes remain unported.
+	setCustomAnim(true);
+	Object *obj = getObject();
+	const auto shapes = ObjectGeometry::shapesOf(*obj->getTemplate());
+	const auto &active = obj->geometryActive();
+	if (!isAlreadyUpgraded())
+		for (size_t i = 0; i < shapes.size(); ++i)
+			if (active.empty() ? shapes[i].active : active[i] != 0) m_originalGeometry = shapes[i].name;
+	changeGeometry(true);
+}
+
+void GeometryUpgrade::processUpgradeRemoval()
+{
+	setCustomAnim(false);
+	changeGeometry(false);
+}
+
+void GeometryUpgrade::crc(StateHasher &h) const
+{
+	UpgradeModule::crc(h);
+	h.addString(m_originalGeometry);
+}
+
+void GeometryUpgrade::xfer(Xfer &x)
+{
+	SnapshotXfer::version(x, 1, 1);
+	UpgradeModule::xfer(x);
+	x.xferAsciiString(&m_originalGeometry);
 }
 
 // ---- ModelConditionUpgrade ----------------------------------------------------------------------------------------------------------------
@@ -735,8 +799,14 @@ UpgradeModuleClasses::Stats &UpgradeModuleClasses::stats()
 	return s;
 }
 
-void UpgradeModuleClasses::registerAll(ModuleFactory &modules)
+void UpgradeModuleClasses::registerAll(ModuleFactory &modules, bool bfme1Data)
 {
+	// The geometry runtime is BFME1-only; keep RotWK's registry and unported reporting unchanged.
+	if (bfme1Data)
+	{
+		modules.bindTypedData<GeometryUpgradeModuleData>("GeometryUpgrade", MODULETYPE_BEHAVIOR);
+		bindRuntime<GeometryUpgrade, GeometryUpgradeModuleData>(modules, "GeometryUpgrade");
+	}
 	modules.bindTypedData<StatusBitsUpgradeModuleData>("StatusBitsUpgrade", MODULETYPE_BEHAVIOR);
 	bindRuntime<StatusBitsUpgrade, StatusBitsUpgradeModuleData>(modules, "StatusBitsUpgrade");
 	modules.bindTypedData<ModelConditionUpgradeModuleData>("ModelConditionUpgrade", MODULETYPE_BEHAVIOR);
@@ -763,7 +833,7 @@ std::vector<std::string> UpgradeModuleClasses::stopLines()
 	return {
 		"[S-480] upgrade module classes: the UpgradeMux and StatusBits / ModelCondition / Armor / WeaponSet / CommandSet / SubObjects / RemoveUpgrade / CommandPoints / "
 		"CostModifier upgrades and GrantUpgradeCreate run; LevelUpUpgrade and ExperienceScalarUpgrade (lane XP-1) run; every other upgrade class the binary registers (AttributeModifierUpgrade, "
-		"UnpauseSpecialPowerUpgrade, GeometryUpgrade, MaxHealthUpgrade, LocomotorSetUpgrade, "
+		"UnpauseSpecialPowerUpgrade, MaxHealthUpgrade, LocomotorSetUpgrade, "
 		"...; DoCommandUpgrade runs since lane SUMMON-1 (S-5145); CastleUpgrade, ObjectCreationUpgrade and ReplaceSelfUpgrade run since lane FACT-A) and InheritUpgradeCreate / UpgradeDie are UnportedModules (S-140): a granted upgrade does nothing through them; " +
 			std::to_string(unknownUpgradeNames().size()) + " unknown upgrade names met at run time (RW's debug messages)",
 		"[S-482] upgrade walks: onUpgradeCompleted / onUpgradeRemoved (RW 0x6AE483 / 0x6AE546) walk the player's teams' members; here the logic object list in list order "

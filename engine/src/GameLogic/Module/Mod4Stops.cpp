@@ -18,12 +18,14 @@ std::vector<std::string> Mod4Stops::lines()
 		"first object within ScanRange (near to far) that StuffToPickUp allows for the player (RW 0xBE4CC8), alive and not THROWN_OBJECT (RW 0x76A28D) is "
 		"given to the AI as a temporary machine (RW 0x6630A9) running RW 0x7549D7(target, 2); while picking up (RW 0x895572) an idle AI (vslot 0x1B8) gives "
 		"the machine back (RW 0x6630D7). Blocked by the AI's temporary state machine and the pickup command, not ported (S-1222)",
-		"[S-1423] GeometryUpgrade (lane MOD-4, not ported; create RW 0x6503A4, constructor RW 0x8BABCB, table RW 0xC6F578 after the upgrade mux: ShowGeometry "
+		"[S-1423] GeometryUpgrade (lane MOD-4, not ported for RotWK data; create RW 0x6503A4, constructor RW 0x8BABCB, table RW 0xC6F578 after the upgrade mux: ShowGeometry "
 		"+ 0x138 and HideGeometry + 0x144 (name lists), WallBoundsMesh + 0x150, RampMesh1 / 2 + 0x154 / + 0x158): upgradeImplementation RW 0x8BAC96 takes the "
 		"object out of the pathfind map (RW 0x6E85FB), resets its draw modules (vslots 0xD4 / 0xD8, client), sets the active flag of every geometry shape "
 		"named in HideGeometry and in ShowGeometry to 0 (RW 0xAD3520 over the object's GeometryInfo + 0xA8; both lists get the same pushed 0), the shape named "
 		"by the module's string + 0x1C to 1, puts the object back (RW 0x6E85E9) and refreshes it (RW 0x68B244). Blocked: the geometry is the template's here "
-		"(PathfindGeometry, shared by the pathfinder, combat and collision); a per-object geometry is a change for the path / physics lanes",
+		"(PathfindGeometry, shared by the pathfinder, combat and collision); a per-object geometry is a change for the path / physics lanes"
+		". For BFME1 data only, custom animation conditions and per-object ShowGeometry / HideGeometry are ported from BFME2 GeometryUpgrade.cpp; "
+		"WallBoundsMesh / RampMesh draw hooks and WallUpgradeUpdate navigation-mesh refresh remain unported",
 		"[S-1424] ThreatFinderUpdate (lane MOD-4, not ported; create RW 0x64F96A, constructor RW 0x7EDD3D, table RW 0xC4C320: DefaultRadius + 0x08): only a "
 		"map object gets a finder: behaviour slot 0xB4 (RW 0x7EDECE, from Object RW 0x694692 with the map object's properties) makes an AIThreatFinder (RW "
 		"0x7EDDFB) named by the object's name, the radius the property's real or DefaultRadius, registered by name in TheThreatFinderManager (RW 0xDE8888, RW "

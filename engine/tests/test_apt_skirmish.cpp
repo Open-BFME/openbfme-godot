@@ -6,6 +6,7 @@
 #include "doctest.h"
 #include "AptPlayerTestUtil.h"
 #include "AptRetail.h"
+#include "IniTestUtil.h"
 
 #include "GameClient/GUI/AptGadgetLayer.h"
 #include "GameClient/GUI/AptScreens/AptScreenFactories.h"
@@ -2245,4 +2246,109 @@ TEST_CASE("ownerfix3 retail lobby: a won skirmish against a Hard AI marks its ma
 	after << again.rdbuf();
 	CHECK(after.str() == before);
 	CHECK(score.honorsRecorded);
+}
+TEST_CASE("BFME1 profile display reads SkirmishStats and rank providers, isolated from RotWK stats")
+{
+	OPENBFME_REQUIRE_RETAIL(mount);
+	const auto dir = std::filesystem::temp_directory_path() / ("openbfme-bfme1-profile-" + std::to_string(std::random_device{}()));
+	std::filesystem::create_directories(dir);
+	struct Cleanup { std::filesystem::path path; ~Cleanup() { std::filesystem::remove_all(path); } } cleanup{dir};
+	SkirmishPreferences profiles((dir / "Skirmish.ini").string());
+	REQUIRE(profiles.add(u"Test Profile"));
+	REQUIRE(profiles.setCurrent(u"Test Profile"));
+	OptionPreferences stats;
+	stats.parse("ProfileCreatedDate = 2026-10-22\nIsengardWins = 9\nIsengardLosses = 3\nIsengardWinStreak = 2\nIsengardBestWinStreak = 7\nIsengardPoints = 7\nFavoriteSide = Isengard\nNorthRealmWins = 3\nNorthRealmLosses = 1\nModFactionWins = 5\nModFactionLosses = 2\n");
+	stats.set("NorthRealmPoints", "7");
+	REQUIRE(stats.save((dir / "Test ProfileSkirmishStats.ini").string()));
+	initest::Fixture bfme1({{"data/ini/default/subsystemlegend.ini", "; BFME1"}});
+	FakeSetup modSetup;
+	LobbyFx fx(mount, false);
+	modSetup.fac = {
+		FakeSetup::faction("FactionNorthRealm", "NorthRealm", true, "Fortress"),
+		FakeSetup::faction("FactionRohan", "Rohan", true, "Fortress"),
+		FakeSetup::faction("FactionIsengard", "Isengard", true, "Fortress"),
+		FakeSetup::faction("FactionMordor", "Mordor", true, "Fortress"),
+		FakeSetup::faction("FactionMod", "ModFaction", true, "Fortress")
+	};
+	modSetup.col = fx.setup.colors();
+	modSetup.map = fx.setup.maps();
+	fx.environment.skirmish = &modSetup;
+	fx.environment.fileSystem = &bfme1.fsys;
+	fx.environment.profiles = &profiles;
+	fx.text.set("APT:DashDash", "--");
+	fx.text.set("APT:CurrentLevelFormat", "Level %s");
+	fx.text.set("APT:CurrentLevelNumFormat", "Level %d");
+	fx.text.set("APT:WinsNumFormat", "%d wins");
+	fx.shell->push("Skirmish.apt");
+	fx.screen = dynamic_cast<AptSkirmish *>(fx.shell->top());
+	REQUIRE(fx.screen);
+	fx.tick(60);
+	REQUIRE(fx.wm->invokeCallback("AptSkirmish::SkirmishProfile", ""));
+	REQUIRE(fx.wm->aptText("APT:PlayerNameNum"));
+	CHECK(*fx.wm->aptText("APT:PlayerNameNum") == "Test Profile");
+	CHECK(*fx.wm->aptText("APT:TotalCareerWinsNum") == "--"); // Random: native BFME1 dash display
+	CHECK(*fx.wm->aptText("APT:SkirmishProfileCreatedNum") == "2026-10-22");
+	GameWindow *combo = fx.screen->slotGadget(0, "PlayerTemplate");
+	REQUIRE(combo);
+	GameWindow *list = GadgetComboBoxGetListBox(combo);
+	REQUIRE(list);
+	int selected = -1;
+	for (int i = 0; i < GadgetComboBoxGetLength(combo); ++i)
+		if (GadgetListBoxGetText(list, i, 0) == u"Isengard") selected = i;
+	REQUIRE(selected != -1);
+	GadgetComboBoxSetSelectedPos(combo, selected, false);
+	CHECK(*fx.wm->aptText("APT:TotalCareerWinsNum") == "9");
+	CHECK(*fx.wm->aptText("APT:TotalCareerLossesNum") == "3");
+	CHECK(*fx.wm->aptText("APT:TotalCareerGamesNum") == "12");
+	CHECK(*fx.wm->aptText("APT:CurrentWinStreakNumA") == "2");
+	CHECK(*fx.wm->aptText("APT:BestWinStreakNumA") == "7");
+	CHECK(*fx.wm->aptText("APT:CurrentLevelFormat") == "Level 2");
+	CHECK(*fx.wm->aptText("APT:NextWinsNumber") == "3 wins");
+	CHECK(*fx.wm->aptText("APT:OverallCareerWinsNum") == "17");
+	CHECK(*fx.wm->aptText("APT:OverallCareerLossesNum") == "6");
+	std::string value;
+	std::string rankProvider;
+	std::string renamedRankProvider;
+	for (char letter : { 'A', 'B', 'C', 'D' })
+	{
+		const auto *wins = fx.wm->aptText(std::string("APT:Wins") + letter + "Num");
+		if (wins && *wins == "9") rankProvider = std::string("LevelBar") + letter;
+		if (wins && *wins == "3") renamedRankProvider = std::string("LevelBar") + letter;
+	}
+	REQUIRE_FALSE(rankProvider.empty());
+	REQUIRE_FALSE(renamedRankProvider.empty());
+	REQUIRE(fx.wm->getExtern(renamedRankProvider, value) == AptExternResult::Value);
+	CHECK(value == "40");
+	REQUIRE(fx.wm->getExtern(rankProvider, value) == AptExternResult::Value);
+	CHECK(value == "40");
+	REQUIRE(fx.wm->getExtern("LevelBarCurrent", value) == AptExternResult::Value);
+	CHECK(value == "0");
+	stats.set("IsengardPoints", "1500");
+	REQUIRE(stats.save((dir / "Test ProfileSkirmishStats.ini").string()));
+	REQUIRE(fx.wm->invokeCallback("AptSkirmish::SkirmishProfile", ""));
+	REQUIRE(fx.wm->getExtern(rankProvider, value) == AptExternResult::Value);
+	CHECK(value == "100");
+	CHECK(*fx.wm->aptText("APT:CurrentLevelFormat") == "Level 10");
+	// Delete through the lobby, then recreate the same name through its accept
+	// handler. The old stats file must not become the new persona's career.
+	showProfilePage(fx, "_delete");
+	REQUIRE(fx.screen->profileListWindow());
+	REQUIRE(fx.wm->invokeCallback("AptSkirmish::OnDeleteProfileMenu", ""));
+	GadgetListBoxSetSelected(fx.screen->profileListWindow(), 0);
+	REQUIRE(fx.wm->invokeCallback("AptSkirmish::OnDeleteProfile", ""));
+	CHECK(profiles.names().empty());
+	showProfilePage(fx, "_new");
+	REQUIRE(fx.screen->profileEntryWindow());
+	REQUIRE(fx.wm->invokeCallback("AptSkirmish::OnNewProfileMenu", ""));
+	GadgetTextEntrySetText(fx.screen->profileEntryWindow(), u"Test Profile");
+	REQUIRE(fx.wm->invokeCallback("AptSkirmish::OnAddProfileAccept", ""));
+	REQUIRE(profiles.current() == u"Test Profile");
+	OptionPreferences recreated;
+	REQUIRE(recreated.load((dir / "Test ProfileSkirmishStats.ini").string()));
+	CHECK_FALSE(recreated.get("ProfileCreatedDate").empty());
+	for (const char *key : {"IsengardWins", "IsengardLosses", "IsengardWinStreak", "IsengardBestWinStreak", "IsengardPoints", "FavoriteSide"})
+		CHECK(recreated.get(key).empty());
+	REQUIRE(fx.wm->invokeCallback("AptSkirmish::SkirmishProfile", ""));
+	CHECK(*fx.wm->aptText("APT:OverallCareerWinsNum") == "0");
+	CHECK(std::string(SkirmishPreferences::unverified()).find("[S-3504]") == 0);
 }

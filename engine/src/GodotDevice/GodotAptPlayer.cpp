@@ -897,7 +897,7 @@ struct AptMenuPlayer::Impl
 					ch = (char)std::tolower((unsigned char)ch);
 				}
 				bool paired = false;
-				Ref<godot::Image> packed = stem.size() > 2 ? loadPackedTexture(*textureSource, "art/compiledtextures/" + stem.substr(0, 2) + "/" + stem, &paired) : Ref<godot::Image>();
+				Ref<godot::Image> packed = stem.size() > 2 ? loadPackedTexture(*textureSource, fs.is_valid() && fs->is_bfme1() ? "art/textures/" + stem : "art/compiledtextures/" + stem.substr(0, 2) + "/" + stem, &paired) : Ref<godot::Image>();
 				if (paired)
 				{
 					sm.deviceUnverified.insert("[S-1482] texture " + img->filename + ": the packed .jpg's colour with its .png as the alpha (the loader's merge of the two streams was not read)");
@@ -1363,6 +1363,7 @@ void AptMenuPlayer::_bind_methods()
 	ClassDB::bind_method(D_METHOD("shell_font", "name", "size"), &AptMenuPlayer::shell_font);
 	ClassDB::bind_method(D_METHOD("take_load_progress_calls"), &AptMenuPlayer::take_load_progress_calls);
 	ClassDB::bind_method(D_METHOD("lobby_apply", "spec"), &AptMenuPlayer::lobby_apply);
+	ClassDB::bind_method(D_METHOD("lobby_map_catalog"), &AptMenuPlayer::lobby_map_catalog);
 	ClassDB::bind_method(D_METHOD("lobby_state"), &AptMenuPlayer::lobby_state); // lane UI-6
 	ClassDB::bind_method(D_METHOD("lobby_gadget_rect", "name"), &AptMenuPlayer::lobby_gadget_rect);
 	ClassDB::bind_method(D_METHOD("get_shell_report"), &AptMenuPlayer::get_shell_report);
@@ -3086,6 +3087,26 @@ Dictionary AptMenuPlayer::lobby_gadget_rect(const String &name)
 	return out;
 }
 
+Array AptMenuPlayer::lobby_map_catalog()
+{
+	Array out;
+	if (!m->shell || !m->shell->shell) return out;
+	auto *screen = dynamic_cast<AptSkirmish *>(m->shell->shell->findScreenByFilename("Skirmish.apt"));
+	if (!screen || !screen->setup()) return out;
+	const auto &setup = *screen->setup();
+	for (int index : setup.listedMaps())
+	{
+		const auto &entry = setup.source().maps()[index];
+		Dictionary map;
+		map["key"] = toGodot(entry.name);
+		map["name"] = toGodot(u16ToUtf8(setup.mapBaseDisplayName(entry)));
+		map["players"] = entry.numPlayers;
+		map["official"] = entry.isOfficial;
+		out.push_back(map);
+	}
+	return out;
+}
+
 Dictionary AptMenuPlayer::lobby_state()
 {
 	Dictionary out;
@@ -4136,7 +4157,7 @@ void AptMenuPlayer::drawCanvas(const AptCanvasList &list)
 						ch = (char)std::tolower((unsigned char)ch);
 					}
 					bool paired = false;
-					Ref<godot::Image> packed = stem.size() > 2 ? loadPackedTexture(*m->source, "art/compiledtextures/" + stem.substr(0, 2) + "/" + stem, &paired) : Ref<godot::Image>();
+					Ref<godot::Image> packed = stem.size() > 2 ? loadPackedTexture(*m->source, m->fs.is_valid() && m->fs->is_bfme1() ? "art/textures/" + stem : "art/compiledtextures/" + stem.substr(0, 2) + "/" + stem, &paired) : Ref<godot::Image>();
 					if (packed.is_valid())
 					{
 						it = m->godotTextures.emplace(img->filename, ImageTexture::create_from_image(packed)).first;

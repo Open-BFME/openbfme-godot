@@ -389,6 +389,7 @@ private:
 	bool m_allowResolution = false; // + 0x280 / + 0x282
 	bool m_allowAdvanced = false;   // + 0x281
 	bool m_networkEnabled = false;  // + 0x283
+	bool m_bfme1OpenPending = false;
 	bool m_advancedOnly = false;    // + 0x284
 	int m_masterOption = 5;         // + 0x310: Options.ini's StaticGameLOD, else Custom (the LOD manager's own level: S-2481)
 	std::string m_customTemplate;   // + 0x314 (lane PLAY-2)

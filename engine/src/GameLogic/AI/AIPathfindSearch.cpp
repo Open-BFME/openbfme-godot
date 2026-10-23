@@ -878,6 +878,7 @@ Path *Pathfinder::findPath(PathfindObject *obj, const PathfindLocomotorInfo &loc
 			}
 		}
 	}
+	const bool steppedPartial = *p;
 	m_zoneManager.clearPassableFlags();
 	Coord3D adjustedTo = to;
 	const bool hierarchical = findClosestHierarchicalPath(obj, loco, isHuman, from, &to, &adjustedTo);
@@ -889,7 +890,26 @@ Path *Pathfinder::findPath(PathfindObject *obj, const PathfindLocomotorInfo &loc
 	{
 		*p = true;
 	}
-	return internalFindPath(obj, loco, from, &adjustedTo, hierarchical, p);
+	Path *result = internalFindPath(obj, loco, from, &adjustedTo, hierarchical, p);
+	// OpenBFME pathfinding correction (inference): a castle's coarse corridor can exhaust the cell search at the rear wall even though its gate connects the
+	// destination. Retry an incomplete battalion route without corridor ordering before accepting its endpoint as arrival. Keep the bounded search and
+	// the original partial result when no complete route exists; never turn a closed gate into passable terrain.
+	if (hierarchical && (!result || *p) && obj && obj->isKindOf(PK_HORDE) && obj->bfme1Data())
+	{
+		bool retryPartial = false;
+		Path *retry = findPathWithoutCorridor(obj, loco, from, &to, &retryPartial);
+		if (retry && !retryPartial)
+		{
+			delete result;
+			result = retry;
+			*p = steppedPartial;
+		}
+		else
+		{
+			delete retry;
+		}
+	}
+	return result;
 }
 
 // lane PATHPERF-1: the search memo is on for `obj` while the scope lives (a fresh generation each time; an object id's facts are asked once)

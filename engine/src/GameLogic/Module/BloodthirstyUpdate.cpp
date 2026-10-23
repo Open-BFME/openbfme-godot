@@ -7,6 +7,7 @@
 #include "GameLogic/Module/BloodthirstyUpdate.h"
 
 #include "Common/Audio/AudioRequests.h"
+#include "Common/BfmeGame.h"
 #include "Common/GameCommon.h"
 #include "Common/Player.h"
 #include "Common/StateHash.h"
@@ -39,6 +40,15 @@ const FieldParse kBloodthirstyUpdate[] = {
 	{ "InitiateVoice", INI::parseAsciiString, nullptr, (int)offsetof(BloodthirstyUpdateModuleData, m_initiateVoice) },
 	{ nullptr, nullptr, nullptr, 0 }
 };
+
+// BFME1 grammar (RetailObjectWorld::bfme1Grammar) has two additional rows.
+// Store them without extending the RotWK table; their runtime semantics remain S-5017.
+const FieldParse kBfme1BloodthirstyUpdate[] = {
+	{ "NumToSacrifice", INI::parseInt, nullptr, (int)offsetof(BloodthirstyUpdateModuleData, m_bfme1NumToSacrifice) },
+	{ "InitiateVoice2", INI::parseAsciiString, nullptr, (int)offsetof(BloodthirstyUpdateModuleData, m_bfme1InitiateVoice2) },
+	{ nullptr, nullptr, nullptr, 0 }
+};
+const Bfme1FieldRowsRegistration kBfme1BloodthirstyRegistration(kBloodthirstyUpdate, kBfme1BloodthirstyUpdate);
 
 unsigned statusIndex(const char *name)
 {

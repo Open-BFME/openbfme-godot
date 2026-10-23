@@ -255,3 +255,64 @@ TEST_CASE("upgrade modules: two identical runs give the same state hash; the S-4
 	}
 	CHECK(hashes[0] == hashes[1]);
 }
+
+TEST_CASE("GeometryUpgrade reveals the upgraded model, switches named collision shapes, and restores them when removed")
+{
+	const std::string objects = std::string(kObjects) + R"(
+Object GeometryPlot
+  KindOf = SELECTABLE STRUCTURE
+  Geometry = BOX
+  GeometryName = DummyGeom
+  GeometryMajorRadius = 5
+  GeometryMinorRadius = 5
+  AdditionalGeometry = BOX
+  GeometryName = TowerGeom
+  GeometryMajorRadius = 20
+  GeometryMinorRadius = 20
+  GeometryActive = No
+  Behavior = GeometryUpgrade GeometryTag
+    TriggeredBy = Upgrade_A
+    ShowGeometry = TowerGeom
+    HideGeometry = DummyGeom
+    CustomAnimAndDuration = AnimState:UPGRADE_GARRISON AnimTime:0
+  End
+End
+)";
+	{
+		econtest::Fx retail(objects.c_str());
+		const auto *registration = retail.w.modules.findModuleTemplate("GeometryUpgrade", MODULETYPE_BEHAVIOR);
+		REQUIRE(registration);
+		CHECK_FALSE(registration->portedModule);
+		CHECK_FALSE(registration->typed);
+		Object *plot = retail.make("GeometryPlot", retail.teamOf("Alice"));
+		REQUIRE(plot);
+		bool found = false;
+		for (const auto &module : plot->modules())
+			if (module->getModuleTagName() == "GeometryTag")
+			{
+				found = true;
+				CHECK(module->isUnported());
+			}
+		CHECK(found);
+		CHECK(retail.w.modules.unportedCreated().at("GeometryUpgrade") == 1);
+	}
+	econtest::Fx f(objects.c_str(), nullptr, true);
+	const auto *registration = f.w.modules.findModuleTemplate("GeometryUpgrade", MODULETYPE_BEHAVIOR);
+	REQUIRE(registration);
+	CHECK(registration->portedModule);
+	CHECK(registration->typed);
+	Object *plot = f.make("GeometryPlot", f.teamOf("Alice"));
+	const int condition = conditionBit("UPGRADE_GARRISON");
+	plot->giveUpgrade(up("Upgrade_A"));
+	CHECK(plot->testModelCondition(condition));
+	REQUIRE(plot->geometryActive().size() == 2);
+	CHECK(plot->geometryActive()[0] == 0);
+	CHECK(plot->geometryActive()[1] == 1);
+	// A refresh must retain the pre-upgrade shape for removal.
+	for (const auto &module : plot->modules())
+		if (auto *geometry = dynamic_cast<GeometryUpgrade *>(module.get())) geometry->forceRefreshUpgrade();
+	plot->removeUpgrade(up("Upgrade_A"));
+	CHECK_FALSE(plot->testModelCondition(condition));
+	CHECK(plot->geometryActive()[0] == 1);
+	CHECK(plot->geometryActive()[1] == 0);
+}

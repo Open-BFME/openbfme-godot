@@ -216,8 +216,8 @@ struct LogicWorld
 	UpgradeCenter upgradeCenter;
 	UpgradeCenter *savedUpgradeCenter = TheUpgradeCenter;
 
-	LogicWorld(RandomAlgorithm rng = RandomAlgorithm::ZH_CarryChain, const char *extraTemplates = nullptr)
-		: hooks(log)
+	LogicWorld(RandomAlgorithm rng = RandomAlgorithm::ZH_CarryChain, const char *extraTemplates = nullptr, bool bfme1 = false)
+		: w(bfme1), hooks(log)
 		, templates(w.keys)
 		, players(w.keys, templates, teams)
 	{

@@ -242,3 +242,19 @@ void ArchiveFileSystem::getFileListInDirectory(const std::string &currentDirecto
 		entry.second->getFileListInDirectory(currentDirectory, originalDirectory, searchName, filenameList, searchSubdirectories);
 	}
 }
+
+// OpenBFME's original-map catalog selection: patch archives still supply map contents.
+bool ArchiveFileSystem::readFileFromArchive(const std::string &archiveBasename, const std::string &filename, std::vector<std::uint8_t> &out, std::string *error)
+{
+	ArchiveFile *found = nullptr;
+	for (const auto &entry : m_archiveFileMap)
+	{
+		const std::string path = comparablePath(entry.first);
+		const std::string base = path.substr(path.find_last_of('/') + 1);
+		if (base != comparablePath(archiveBasename)) continue;
+		if (found) { if (error) *error = "ambiguous mounted archive: " + archiveBasename; return false; }
+		found = entry.second.get();
+	}
+	if (!found) { if (error) *error = "missing mounted archive: " + archiveBasename; return false; }
+	return found->readFile(filename, out, error);
+}

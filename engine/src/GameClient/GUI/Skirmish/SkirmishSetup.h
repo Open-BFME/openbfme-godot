@@ -81,6 +81,7 @@ public:
 	// `<map>_pic.tga`, RW 0x975F23). A source without a file system answers false and says so in the screen's report (AptSkirmish).
 	virtual bool fileExists(const std::string &path) const = 0;
 	virtual bool hasFileSystem() const = 0;
+	virtual bool bfme1Data() const { return false; }
 };
 
 class NewGameSink

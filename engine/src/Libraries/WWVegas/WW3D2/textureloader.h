@@ -44,3 +44,7 @@ TextureResolution Resolve_W3D_Texture(const std::string &name, const std::functi
 // (0, 0) as 0xFFFF00FF (RW 0x531B44: push 0xFFFF00FF; RW 0x5165E0 draws one pixel): an opaque magenta texture, sampled like any other.  DONOR
 // difference: ZH's MissingTexture (WW3D2 missingtexture.cpp) is a 128 x 128 half-transparent 0x7FFF00FF; RotWK has no such constant.
 constexpr unsigned W3D_MISSING_TEXTURE_COLOR = 0xFFFF00FFu; // A8R8G8B8
+
+// OpenBFME visibility fix: scale a mip's alpha to retain the base image's
+// alpha-test coverage. RGBA pixels are unchanged except for the alpha channel.
+void W3D_Preserve_Mip_Alpha_Coverage(std::vector<unsigned char> &rgba, unsigned width, unsigned height, unsigned threshold);

@@ -673,6 +673,18 @@ bool LiveGame::setupMapScripts(const Options &options, const SidesList &sidesUse
 	{
 		return false;
 	}
+	for (const Dict &team : m_scriptSetup->libraryTeams())
+	{
+		Player *owner = m_players->findPlayerWithName(team.getAsciiString("teamOwner"));
+		const std::string name = team.getAsciiString("teamName");
+		if (!owner || name.empty())
+		{
+			if (error) *error = "script library team has no valid owner or name";
+			return false;
+		}
+		if (!m_teams.findTeamPrototype(owner->getPlayerName(), name))
+			m_teams.initTeam(name, owner, team.getBool("teamIsSingleton"), &team);
+	}
 	m_scriptHost = std::make_unique<LiveGameScriptHost>(*m_logic, m_ai.get(), m_world.audio(), m_fs);
 	ScriptEngine &engine = m_logic->scriptEngine();
 	engine.setHost(m_scriptHost.get());

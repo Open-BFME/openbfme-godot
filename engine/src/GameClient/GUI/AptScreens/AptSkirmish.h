@@ -40,6 +40,8 @@
 struct CreateAHeroHero;
 class AptMessageBox;
 
+#include "GameClient/OptionPreferences.h"
+
 #include <array>
 #include <map>
 #include <memory>
@@ -286,6 +288,9 @@ private:
 	void update();      // the screen's per-update state machine (RotWK 0x928CDB), run by the WindowManager while the screen exists
 	// ---- profiles ----
 	void refreshProfileList();
+	void refreshBfme1Profile();
+	int bfme1RankProgress(const std::string &side) const;
+	std::vector<std::string> bfme1ProfileSides();
 	std::u16string playerName() const;
 	void applyProfileName();
 	// RotWK 0x9294B3 (the Enter key of the persona entry, a double click in the profile list): close the popup through the movie's CloseProfilePopup,
@@ -338,6 +343,10 @@ private:
 	bool m_strategic = false; // AptMapPreview::GameMapType == "Strategic": MpGameSetup+0x7C == 1
 	// Skirmish profile gadgets
 	GameWindow *m_profileList = nullptr;
+	GameWindow *m_profileCombo = nullptr;
+	GameWindow *m_mapType = nullptr;
+	bool m_officialMaps = true;
+	OptionPreferences m_bfme1Stats;
 	GameWindow *m_profileEntry = nullptr;
 	bool m_suppressStrategicPromo = false;
 	// The profile state of RotWK's AptSkirmish (field +0x6B8): 1 set by OnInitialized (0x9280DB), 10 by StartGame (0x9280F0), 8 by the stats commands

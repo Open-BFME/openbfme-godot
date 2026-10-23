@@ -261,3 +261,63 @@ TEST_CASE("pathperf1: the S-162 and S-163 stop lines, whole (the inferences and 
 	// lane ATTACKPATH-1: findAttackPath's own corridor (RW 0x6FC4CB .. 0x6FC4F9) is ported and left the S-162 line
 	CHECK(has("S-163 a complete path skips the rebuild RW applies to it from the unit's facing (RW 0x767B0E, called at RW 0x6FDCDA; the path to the closest cell gets none), the closest cell's third test (RW 0x6EF3C3) and the search-free path of an object whose + 0x4AC flag is set (RW 0x6FD66D) are not ported"));
 }
+
+TEST_CASE("pathperf1: battalions retry an incomplete corridor route around a wall within the same cell budget")
+{
+	SyntheticTerrain terrain(128, 64);
+	for (int x = 60; x <= 61; ++x)
+		for (int y = 0; y < 52; ++y)
+			terrain.cliff.insert({ x, y });
+	TestWorld world;
+	auto config = testConfig();
+	config.findPathLimit = 3000;
+	Pathfinder pf(config, &world);
+	pf.newMap(terrain);
+	TestObject battalion;
+	battalion.bfme1 = true;
+	battalion.mobile = true;
+	battalion.kinds.insert(PK_HORDE);
+	battalion.pos = cellCentre(10, 10);
+	const Coord3D to = cellCentre(110, 10);
+	bool partial = false;
+	std::unique_ptr<Path> corridor(pf.findPath(nullptr, groundLoco(), &battalion.pos, &to, &partial));
+	CHECK((corridor == nullptr || partial));
+	battalion.bfme1 = false;
+	partial = false;
+	std::unique_ptr<Path> retail(pf.findPath(&battalion, groundLoco(), &battalion.pos, &to, &partial));
+	CHECK((retail == nullptr || partial));
+	CHECK(battalion.bfme1Queries == 1);
+	battalion.bfme1 = true;
+	battalion.bfme1Queries = 0;
+	partial = false;
+	std::unique_ptr<Path> path(pf.findPath(&battalion, groundLoco(), &battalion.pos, &to, &partial));
+	REQUIRE(path != nullptr);
+	CHECK_FALSE(partial);
+	CHECK(path->getLastNode()->getPosition()->x == to.x);
+	CHECK(path->getLastNode()->getPosition()->y == to.y);
+	CHECK(battalion.bfme1Queries == 1);
+}
+
+TEST_CASE("pathperf1: battalion retry preserves an incomplete route when a wall has no opening")
+{
+	SyntheticTerrain terrain(128, 64);
+	for (int x = 60; x <= 61; ++x)
+		for (int y = 0; y < 64; ++y)
+			terrain.cliff.insert({ x, y });
+	TestWorld world;
+	Pathfinder pf(testConfig(), &world);
+	pf.newMap(terrain);
+	TestObject battalion;
+	battalion.bfme1 = true;
+	battalion.mobile = true;
+	battalion.kinds.insert(PK_HORDE);
+	battalion.pos = cellCentre(10, 10);
+	const Coord3D to = cellCentre(110, 10);
+	bool partial = false;
+	std::unique_ptr<Path> path(pf.findPath(&battalion, groundLoco(), &battalion.pos, &to, &partial));
+	REQUIRE(path != nullptr);
+	CHECK(partial);
+	CHECK(battalion.bfme1Queries == 1);
+	// tolerance: a sealed barrier at cell 60 must keep every path node strictly on the starting side.
+	for (const Coord3D &node : nodes(path.get())) CHECK(node.x < 600.0f);
+}

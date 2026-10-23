@@ -57,7 +57,7 @@
 
 #include <stdexcept>
 
-void LogicModules::registerAll(ModuleFactory &modules)
+void LogicModules::registerAll(ModuleFactory &modules, bool bfme1Data)
 {
 	// Only its S-207 offer is ported; keep the runtime's unported registration.
 	modules.bindTypedData<SpawnUnitBehaviorModuleData>("SpawnUnitBehavior", MODULETYPE_BEHAVIOR);
@@ -90,7 +90,7 @@ void LogicModules::registerAll(ModuleFactory &modules)
 	CombatModules::registerAll(modules);  // lane COMBAT-1: ImmortalBody, HighlanderBody and the die modules
 	ProjectileModules::registerAll(modules); // lane PROJ-1: BezierProjectileBehavior
 	StructureModules::registerAll(modules); // lane COMBAT-2: StructureBody, InactiveBody, StructureCollapseUpdate
-	UpgradeModuleClasses::registerAll(modules); // lane UPGRADE-1: the upgrade module classes
+	UpgradeModuleClasses::registerAll(modules, bfme1Data); // lane UPGRADE-1: the upgrade module classes
 	ObjectCreationUpgrade::registerClass(modules); // lane FACT-A: the object an upgrade makes (the Crystal Moat)
 	ReplaceSelfUpgrade::registerClass(modules);    // lane FACT-A: the wall segment's gates, towers and hubs
 	AttributeModifierPool::registerClass(modules); // lane XP-1: AttributeModifierPoolUpdate (every object's attribute modifier pool)
