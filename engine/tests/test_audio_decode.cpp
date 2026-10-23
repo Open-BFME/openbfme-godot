@@ -1201,7 +1201,11 @@ TEST_CASE("audio decode: every retail WAV and MP3 probes and decodes; the defect
 	for (const std::string &f : failures) FAIL_CHECK("retail file does not decode: " << f);
 	CHECK(failures.empty());
 
-	// the pinned defect list
+	// the pinned defect list (of the English speech archive: another language's lang\<Language>Audio.big has its own files)
+	if (retailtest::skipUnlessEnglish("audio decode: the pinned retail defect list (retail_defects.tsv)"))
+	{
+		return;
+	}
 	std::vector<unsigned char> pinnedBytes;
 	std::string err;
 	REQUIRE_MESSAGE(retailtest::readLocalFile(retailtest::dataDir() + "/audio/retail_defects.tsv", pinnedBytes, &err), err);

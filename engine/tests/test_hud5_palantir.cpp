@@ -42,8 +42,7 @@ struct PointsRig
 	{
 		std::vector<std::uint8_t> bytes;
 		std::string error;
-		REQUIRE_MESSAGE(s.mount->fs->readFile("data/lotr.str", bytes, &error), error);
-		REQUIRE_MESSAGE(text.table.parse(bytes, &error), error);
+		REQUIRE_MESSAGE(text.table.loadRetail(*s.mount->fs, &error), error); // data/lotr.str, or a non-English install's lotr.csf
 		InGameHud::Config cfg{ *rig.game, *s.world, *s.mount->fs, services, rig.view, s.mouse, s.meta, &text };
 		hud = std::make_unique<InGameHud>(cfg);
 		REQUIRE_MESSAGE(hud->boot(&error), error);

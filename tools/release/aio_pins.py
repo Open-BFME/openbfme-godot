@@ -41,6 +41,8 @@ GAMES = [("rotwk-201-english-archives.json", "rotwk", 2, "RotWK", "The Rise of t
 # metadata (guid, name, language, where it was captured) is tools/release/aio_bfme1_package.json: the engine has no BFME1 archive table,
 # so there is nothing to cross-check its archives against. AIO numbers BFME1 as game 0 (BfmeRegistryManager.GameNameToInt).
 BFME1_META = Path(__file__).resolve().parent / "aio_bfme1_package.json"
+# issue #49: the base packages' other languages (tools/release/aio_languages.py), rendered into each base package as "languages"
+LANGUAGES = Path(__file__).resolve().parent / "aio_language_files.json"
 OPTIONAL = [(BFME1_META.name, "bfme1", 0, "BFME1", "Battle for Middle-earth I 1.03", OWNER)]
 
 
@@ -100,7 +102,15 @@ def render() -> str:
                        f'"language": {json.dumps(t["language"])}, "policySha256": {json.dumps(t["policySha256"])}, "files": [')
             for name, md5, size in rows:
                 out.append(f'\t\t[{json.dumps(name)}, "{md5}", {int(size)}],')
-            out.append("\t]},")
+            if const == "PACKAGES":
+                # issue #49: per language code, the English files it drops and its own files (name, MD5, size; size 0: the service does not know it)
+                langs = json.loads(LANGUAGES.read_text()).get(pkg["guid"], {})
+                out.append("\t], \"languages\": {")
+                for code, d in langs.items():
+                    out.append(f'\t\t{json.dumps(code)}: {{"name": {json.dumps(d["name"])}, "drop": {json.dumps(d["drop"])}, "add": {json.dumps(d["add"])}}},')
+                out.append("\t}},")
+            else:
+                out.append("\t]},")
         out.append("]")
     return "\n".join(out) + "\n"
 

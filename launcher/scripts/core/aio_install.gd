@@ -30,7 +30,14 @@
 ##     with a message naming the file and what the player can do (REMEDY); never a guess, never a silent fallback;
 ##   * every file is downloaded to <name>.part (resumed with Range: pause / resume), its MD5 checked, then renamed; a failed file is
 ##     deleted; nothing is deleted that this launcher did not write, no registry key is written, no AIO program is run;
-##   * only the English tables exist, so only the English files are installed.
+##   * issue #49: the language. The English files are pinned from a verified download; every other language of the two base packages is
+##     pinned from the service's manifest (scripts/core/aio_pins.gd "languages", tools/release/aio_languages.py: the files a language adds,
+##     the English ones it drops). The player picks the game's text language and, separately, its voice language (set_languages; saved in
+##     the launcher's state, "aio" "language" / "voice"): the download takes the ALL files, the text language's files but its speech
+##     archive, and the voice language's speech archive (lang/<Language>Audio.big, or the English one the Dutch, Norwegian, Polish and
+##     Swedish versions share). A language is offered only when the service knows the size of every file it adds (offered_languages:
+##     not Turkish, whose sizes it lists as 0, nor Russian, whose BFME2 speech archive it lists as 0). The game reads the language from
+##     the files on disk (engine Common/RetailArchivePolicy.h "Languages").
 ## Afterwards the folders go to the game: <game user dir>/downloaded-installs.cfg (InstallLocator::kDownloadedMarkerName), which the
 ## first-run screen offers as found installs; the player still confirms them and the mount checks every archive (PLAN rule 10).
 extends RefCounted
@@ -71,12 +78,136 @@ var files_origin := FILES
 var packages: Array = Pins.PACKAGES
 var bfme1_packages: Array = Pins.BFME1_PACKAGES
 var choice := GAMES  # what install() downloads: GAMES or BFME1 (choose)
+var text_language := "EN"  # issue #49: the base download's text language (a code of offered_languages)
+var voice_language := ""   # its voice language ("" = the text language's own speech)
 var stop_request := ""  # "pause" or "cancel", set from the UI thread (with updater.http.cancelled)
 var test_stop_after := ""  # tests: "<folder>/<file>:<pause|cancel>" asks for a stop right after that file was checked and kept
 
 
 func _init(u) -> void:
 	updater = u
+	var t = updater.get_state("aio", "language", "EN")
+	var v = updater.get_state("aio", "voice", "")
+	if typeof(t) == TYPE_STRING and typeof(v) == TYPE_STRING and _languages_ok(t, v) == "":
+		text_language = t
+		voice_language = v
+
+
+## issue #49: the languages the base download offers, [{code, name}] with English first: a language every base package knows, the
+## size of every file it adds known (the download takes the pinned size, no more and no less).
+func offered_languages() -> Array:
+	var out := [{"code": "EN", "name": "English"}]
+	if packages.is_empty():
+		return out
+	var first: Dictionary = packages[0].get("languages", {})
+	var codes: Array = first.keys()
+	codes.sort()
+	for code in codes:
+		var ok := true
+		for pkg in packages:
+			var l = pkg.get("languages", {}).get(code)
+			if typeof(l) != TYPE_DICTIONARY or l.add.any(func(r): return int(r[2]) <= 0):
+				ok = false
+		if ok:
+			out.append({"code": code, "name": first[code].name})
+	return out
+
+
+func _languages_ok(text: String, voice: String) -> String:
+	var codes: Array = offered_languages().map(func(l): return l.code)
+	if not text in codes:
+		return "the download offers no text language '%s' (%s)" % [text, ", ".join(PackedStringArray(codes))]
+	if voice != "" and not voice in codes:
+		return "the download offers no voice language '%s' (%s)" % [voice, ", ".join(PackedStringArray(codes))]
+	return ""
+
+
+## issue #49: the base download's text and voice languages (codes of offered_languages; voice "" = the text language's), saved for the
+## next start. "" or why not.
+func set_languages(text: String, voice := "") -> String:
+	if voice == text:
+		voice = ""
+	var why := _languages_ok(text, voice)
+	if why != "":
+		return why
+	text_language = text
+	voice_language = voice
+	updater.set_state("aio", "language", text)
+	updater.set_state("aio", "voice", voice)
+	return ""
+
+
+## issue #49: the code of the language a game folder holds (its single lang/<Language>.big, as the game detects it; English wins), or ""
+func detect_language(folder: String) -> String:
+	var lang := ""
+	var d := DirAccess.open(folder)
+	if d == null:
+		return ""
+	for sub in d.get_directories():
+		if sub.to_lower() == "lang":
+			lang = folder.path_join(sub)
+	if lang == "":
+		return ""
+	var stems := PackedStringArray()
+	for f in DirAccess.get_files_at(lang):
+		var n := f.to_lower()
+		if n.ends_with(".big") and not "patch" in n and not n.ends_with("audio.big"):
+			stems.append(n.trim_suffix(".big"))
+	var stem: String = "english" if "english" in stems else (stems[0] if stems.size() == 1 else "")
+	for l in offered_languages():
+		if String(l.name).to_lower() == stem:
+			return l.code
+	return ""
+
+
+## The language the download starts with: the saved choice, else the language of the games already found (`rotwk_folder`), else English
+func default_languages(rotwk_folder: String) -> void:
+	var saved = updater.get_state("aio", "language", "")
+	if typeof(saved) == TYPE_STRING and saved != "":
+		return
+	var code: String = detect_language(rotwk_folder) if rotwk_folder != "" else ""
+	if code != "":
+		text_language = code
+		voice_language = ""
+
+
+## the player words of the chosen languages ("German", "German text, English voices")
+func language_text() -> String:
+	var names := {}
+	for l in offered_languages():
+		names[l.code] = l.name
+	if voice_language == "":
+		return names.get(text_language, text_language)
+	return "%s text, %s voices" % [names.get(text_language, text_language), names.get(voice_language, voice_language)]
+
+
+static func _is_audio(name: String) -> bool:
+	var n := name.to_lower().replace("\\", "/")
+	return n.begins_with("lang/") and n.ends_with("audio.big")
+
+
+## the files of `language`'s version of the package: the English pins, less what that language drops, plus what it adds ([name, md5, size])
+static func _language_rows(pkg: Dictionary, language: String) -> Array:
+	if language == "EN":
+		return pkg.files.duplicate()
+	var l: Dictionary = pkg.get("languages", {}).get(language, {})
+	var drop := {}
+	for n in l.get("drop", []):
+		drop[String(n).to_lower()] = true
+	var rows: Array = pkg.files.filter(func(r): return not drop.has(String(r[0]).to_lower().replace("\\", "/")))
+	return rows + l.get("add", [])
+
+
+## issue #49: every file this download takes of `pkg` with the chosen languages, pinned ([name, md5, size]): the text language's files,
+## its speech archive replaced by the voice language's
+func package_files(pkg: Dictionary) -> Array:
+	if not pkg.has("languages"):
+		return pkg.files  # the optional BFME1 package (and test tables): its own pins
+	var rows: Array = _language_rows(pkg, text_language)
+	if voice_language == "" or voice_language == text_language:
+		return rows
+	var speech: Array = _language_rows(pkg, voice_language).filter(func(r): return _is_audio(r[0]))
+	return rows.filter(func(r): return not _is_audio(r[0])) + speech
 
 
 func enabled() -> bool:
@@ -130,7 +261,11 @@ func bfme1_chosen() -> bool:
 func total_size() -> int:
 	var n := 0
 	for p in chosen():
-		n += int(p.get("bytes", 0))
+		if p.has("languages"):
+			for r in package_files(p):
+				n += int(r[2])
+		else:
+			n += int(p.get("bytes", 0))
 	return n
 
 
@@ -144,6 +279,8 @@ func consent_text() -> String:
 	lines.append("The game files are downloaded from the servers of %s, %s and %s. They do not come from EA or from OpenBFME." % [PROJECT, SERVICE.trim_prefix("https://"), FILES.trim_prefix("https://")])
 	for p in chosen():
 		lines.append("  %s: their package \"%s\" (%s)" % [p.label, p.name, p.guid])
+	if choice == GAMES:
+		lines.append("  Language: %s." % language_text())
 	lines.append("About %.1f GB. Every archive is checked against OpenBFME's own list before it is kept. OpenBFME sends those servers only " % (total_size() / 1e9) +
 		"its name and version; their privacy policy (bfmeladder.com/privacy) applies to their servers.")
 	return "\n".join(lines)
@@ -208,8 +345,15 @@ func check_manifest(pkg: Dictionary, body: PackedByteArray) -> Dictionary:
 		return _broken(REJECTED, "%s has no file list." % what)
 	var hex := RegEx.create_from_string("^[0-9a-f]{32}$")
 	var pinned := {}
+	for a in package_files(pkg):
+		pinned[str(a[0]).to_lower().replace("\\", "/")] = a
+	# issue #49: every other language's own files are pinned too (a file of the package's other languages is skipped, not refused)
+	var other := {}
+	for code in pkg.get("languages", {}):
+		for a in pkg.languages[code].get("add", []):
+			other[str(a[0]).to_lower().replace("\\", "/")] = true
 	for a in pkg.files:
-		pinned[str(a[0]).to_lower()] = a
+		other[str(a[0]).to_lower().replace("\\", "/")] = true
 	var chosen := {}
 	for f in m.Files:
 		if typeof(f) != TYPE_DICTIONARY or typeof(f.get("Name")) != TYPE_STRING or typeof(f.get("Md5")) != TYPE_STRING \
@@ -217,10 +361,18 @@ func check_manifest(pkg: Dictionary, body: PackedByteArray) -> Dictionary:
 			return _broken(REJECTED, "%s has a file entry OpenBFME does not recognise." % what)
 		if not _whole(f.get("Size")) or f.Size < 0:
 			return _broken(REJECTED, "%s lists %s with the size %s." % [what, f.Name.left(120).c_escape(), JSON.stringify(f.get("Size"))])
-		var langs: PackedStringArray = f.Language.split(" ", false)
-		if not (f.Language == "" or f.Language == "ALL" or pkg.language in langs):
-			continue
 		var rel := safe_relative(f.Name)
+		var tagged: bool = not (f.Language == "" or f.Language == "ALL")
+		if tagged and not pkg.has("languages"):
+			# the optional BFME1 package (and test tables): its own language's files, by the manifest's tag
+			if not pkg.language in f.Language.split(" ", false):
+				continue
+		elif tagged and (rel == "" or not pinned.has(rel.to_lower())):
+			# issue #49: a file of a language this download does not take. One OpenBFME has no pin for is a changed package, unless every
+			# language it is tagged with is one the pinned table does not know (a new language on the service): skipped, as before the PR
+			if rel != "" and not other.has(rel.to_lower()) and _knows_a_language(pkg, f.Language):
+				return _broken(REJECTED, "%s lists %s, which OpenBFME's list of %s does not have: the package changed. Nothing was downloaded." % [what, rel, pkg.label])
+			continue
 		if rel == "":
 			return _broken(REJECTED, "%s lists a file name that is not a plain relative path: '%s'." % [what, f.Name.left(120).c_escape()])
 		if hex.search(f.Md5) == null:
@@ -298,6 +450,33 @@ func _stopped(part: String) -> Dictionary:
 	return _fail(STOPPED, "paused; it resumes where it stopped")
 
 
+## true when one of the manifest tag's language codes ("EN NL") is English or a language of the package's pinned table
+static func _knows_a_language(pkg: Dictionary, tag: String) -> bool:
+	for code in tag.split(" ", false):
+		if code == "EN" or pkg.get("languages", {}).has(code):
+			return true
+	return false
+
+
+## The language archives (lang/*.big, speech included) already in `dir` that this download does not take ("lang/French.big"): another
+## language's files. Only the base packages (the ones with "languages") are checked; the folder names are matched without case.
+static func _other_language_files(dir: String, files: Array, pkg: Dictionary) -> PackedStringArray:
+	var out := PackedStringArray()
+	if not pkg.has("languages"):
+		return out
+	var taken := {}
+	for f in files:
+		taken[String(f.rel).to_lower()] = true
+	for sub in DirAccess.get_directories_at(dir):
+		if sub.to_lower() != "lang":
+			continue
+		for name in DirAccess.get_files_at(dir.path_join(sub)):
+			if name.to_lower().ends_with(".big") and not taken.has("lang/" + name.to_lower()):
+				out.append("%s/%s" % [sub, name])
+	out.sort()
+	return out
+
+
 func _install(target: String) -> Dictionary:
 	var plans := []
 	for pkg in chosen():
@@ -316,7 +495,12 @@ func _install(target: String) -> Dictionary:
 			return c
 		plans.append({"pkg": pkg, "dir": target.path_join(pkg.folder), "files": c.files})
 		# MACFIX-1 (issue #46): what this download takes from the package (the others are other languages), not what is on disk yet
-		Log.line("LAUNCHER AIO %s: the download takes %d of the package's %d files (%s; every one is pinned and matches)" % [pkg.guid, c.files.size(), c.all, pkg.language])
+		Log.line("LAUNCHER AIO %s: the download takes %d of the package's %d files (%s; every one is pinned and matches)" % [pkg.guid, c.files.size(), c.all, language_text() if pkg.has("languages") else pkg.language])
+	# issue #49 (PR #77 review): a folder never holds two languages; the game would pick English and refuse the other as an unknown archive
+	for p in plans:
+		var clash := _other_language_files(p.dir, p.files, p.pkg)
+		if not clash.is_empty():
+			return _fail(REFUSED, "%s already holds %s, files of another language than the one chosen (%s), and the game cannot read two languages from one folder. Pick an empty folder, or move those files away" % [p.dir, ", ".join(clash), language_text()])
 	var total := 0
 	var need := 0
 	var count := 0
@@ -463,8 +647,8 @@ func write_bfme1_marker(folder: String) -> String:
 func remove_partials(target: String) -> int:
 	var n := 0
 	for p in chosen():
-		for f in p.files:
-			var part := target.path_join(p.folder).path_join(str(f[0])) + ".part"
+		for f in package_files(p):
+			var part := target.path_join(p.folder).path_join(str(f[0]).replace("\\", "/")) + ".part"
 			if FileAccess.file_exists(part) and DirAccess.remove_absolute(part) == OK:
 				n += 1
 	return n

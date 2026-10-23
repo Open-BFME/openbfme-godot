@@ -802,7 +802,14 @@ ModMountReport MountInstallOverlay(Win32BIGFileSystem &out, const RetailMountRep
 		{
 			continue; // replaced by the mod's file of the same path (it sits where the retail file was)
 		}
-		merged.push_back({ m.canonicalPath, m.md5, m.size });
+		RetailArchiveEntry entry{ m.canonicalPath, m.md5, m.size };
+		// issue #49: a retail language archive of another language (lang/German.big ...) keeps its place in the load order (RetailArchiveLoadOrder)
+		const std::string lowered = AsciiStringUtil::lowered(m.canonicalPath);
+		if (lowered.compare(0, 5, "lang/") == 0 && lowered.find('/', 5) == std::string::npos && lowered.compare(5, 7, "english") != 0)
+		{
+			entry.language = "lang";
+		}
+		merged.push_back(entry);
 		byCanonical[m.canonicalPath] = m;
 	}
 	for (const OverlayArchive &a : mine)

@@ -53,7 +53,7 @@ OpenBFME is unofficial. It is not made or endorsed by EA.
 > a big new feature lands. Your launcher updates to each one by itself.
 
 **You need** **The Rise of the Witch-king 2.01** and **The Battle for
-Middle-earth II 1.06**, both in English, and Windows 10/11 or 64-bit Linux
+Middle-earth II 1.06**, in any language, and Windows 10/11 or 64-bit Linux
 with Vulkan graphics (or Direct3D 12 on Windows).
 
 1. **Download OpenBFME** from
@@ -106,7 +106,7 @@ the original are still missing.
 
 | Area | Status | Notes |
 |---|---|---|
-| Finding and checking your game files | ✅ Works | English 2.01 / 1.06 installs; other languages are refused for now |
+| Finding and checking your game files | ✅ Works | 2.01 / 1.06 installs in any language (the languages the All In One service lists are checked by MD5; others load with an in-game warning and a *Copy details* button so you can send them to us); the launcher's download picks the text and voice language |
 | Skirmish, all 7 factions | ✅ Works | Men, Elves, Dwarves, Isengard, Mordor, Goblins and Angmar; scripted test players played 71 games through the real menus and controls in the latest full sweep, every faction, with no crash or stall |
 | Combat, hordes, heroes, spell book | ✅ Works | horde formations, cavalry charges, sieges, powers; details are still being matched to the original |
 | Team colours | 🟡 Partial | units and buildings show their player's colour, but how the colour is blended in is an educated guess, not yet checked against the original |

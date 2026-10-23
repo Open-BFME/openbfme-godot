@@ -13,6 +13,8 @@ extends RefCounted
 const EXIT_PASS := 0
 const EXIT_FAIL := 1
 const EXIT_SKIP := 77
+## issue #49: the install's languages (mount_retail's "languages"); the English captions and counts are checked on an English install only
+var _english := true
 
 const UNIT_INI := "data\\ini\\object\\goodfaction\\units\\men\\gondorfighter.ini"
 const UNIT_OBJECT := "GondorFighter"
@@ -59,6 +61,9 @@ func _run() -> int:
 	if not mount.ok:
 		print("FAIL: mount_retail: ", "\n  ".join(mount.errors))
 		return EXIT_FAIL
+	var languages: PackedStringArray = mount.get("languages", PackedStringArray())
+	_english = Array(languages).all(func(l): return String(l).ends_with(":English"))
+	print("  info the install's languages: %s" % [", ".join(languages)])
 	print("  info mount_retail %d ms: %d archives hashed, %d md5 cache hits" % [mount_ms, mount.archives_hashed, mount.md5_cache_hits])
 	_check(mount.archives_hashed + mount.md5_cache_hits == mount.mounted.size(), "every mounted archive was md5-verified (%d hashed + %d cached = %d)" % [mount.archives_hashed, mount.md5_cache_hits, mount.mounted.size()])
 	var mounted: Array = mount.mounted
@@ -758,7 +763,10 @@ func _menu_player(fs: RefCounted) -> void:
 	if not boot.ok:
 		player.free()
 		return
-	_check(boot.strings > 10000 and boot.duplicate_labels == 36, "the string table has %d strings, 36 repeated labels (S-131): %d" % [boot.strings, boot.duplicate_labels])
+	if _english:
+		_check(boot.strings > 10000 and boot.duplicate_labels == 36, "the string table has %d strings, 36 repeated labels (S-131): %d" % [boot.strings, boot.duplicate_labels])
+	else:
+		_check(boot.strings > 10000, "the string table has %d strings (%d repeated labels; English's 36 are not checked in another language)" % [boot.strings, boot.duplicate_labels])
 	var font_names := " ".join(boot.fonts)
 	_check(font_names.contains("= Albertus MT") and font_names.contains("= Omnia LT Std"), "the corpus fonts loaded: %s" % [boot.fonts])
 	# lane UI-4 (Sol r1): a bold GameFont (language.ini's CreditsMinorTitleFont "Albertus MT" 16 Yes) is measured and drawn bold: RotWK's GDI synthesises
@@ -787,7 +795,11 @@ func _menu_player(fs: RefCounted) -> void:
 		if line.begins_with("text "):
 			texts.append(line.get_slice("'", 1))
 	texts.sort()
-	_check(texts == PackedStringArray(["MULTIPLAYER", "MY HEROES", "OPTIONS", "QUIT", "SOLO PLAY"]), "the five main menu captions come from the string table: %s" % [texts])
+	if _english:
+		_check(texts == PackedStringArray(["MULTIPLAYER", "MY HEROES", "OPTIONS", "QUIT", "SOLO PLAY"]), "the five main menu captions come from the string table: %s" % [texts])
+	else:
+		# another language: five captions from its string table, none a missing label
+		_check(texts.size() == 5 and not Array(texts).any(func(t): return String(t).contains("MISSING") or String(t).begins_with("$")), "the five main menu captions come from the string table: %s" % [texts])
 	var report: Dictionary = player.get_report()
 	_check(report.placeholders == PackedStringArray(["_type=RenderImage @ _level1.Image"]), "the main menu's Image clip is reported as a native placeholder (S-136): %s" % [report.placeholders])
 	_check(report.errors.is_empty() and report.missing_labels.is_empty() and report.font_fallbacks.is_empty(), "no render errors, missing labels or font fallbacks %s %s %s" % [report.errors, report.missing_labels, report.font_fallbacks])

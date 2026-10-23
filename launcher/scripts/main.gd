@@ -202,6 +202,7 @@ func _ready() -> void:
 	info = BuildInfo.load_info()
 	updater = Updater.new(info)
 	aio = AioInstall.new(updater)
+	aio.default_languages(String(Paths.game_folders().rotwk))  # issue #49: no saved choice: the found games' language
 	mods = ModInstall.new(updater, aio)
 	var args := OS.get_cmdline_user_args()
 	if info.tests_allowed():
@@ -760,6 +761,22 @@ func _run_cli(args: PackedStringArray, problem: String) -> int:
 			if why != "":
 				Log.line("LAUNCHER --aio-package: " + why)
 				return 1
+	# issue #49: the download's text and voice languages (codes of AioInstall.offered_languages; saved like the window's choice)
+	for a in args:
+		if a.begins_with("--aio-language=") or a.begins_with("--aio-voice="):
+			var text := aio.text_language
+			var voice := aio.voice_language
+			for b in args:
+				if b.begins_with("--aio-language="):
+					text = b.substr(15)
+				elif b.begins_with("--aio-voice="):
+					voice = b.substr(12)
+			var why := aio.set_languages(text, voice)
+			if why != "":
+				Log.line("LAUNCHER --aio-language / --aio-voice: " + why)
+				return 1
+			Log.line("LAUNCHER AIO language %s" % aio.language_text())
+			break
 	for a in args:
 		if a.begins_with("--aio-install="):
 			var r := aio.install(a.substr(14), "--aio-consent" in args)
@@ -1077,6 +1094,8 @@ func _build_ui() -> void:
 	_games_screen.show_folder.connect(_show_folder)
 	_games_screen.pause_pressed.connect(_on_pause)
 	_games_screen.cancel_pressed.connect(_on_cancel)
+	_games_screen.languages_changed.connect(_on_languages)
+	_games_screen.set_languages(aio.offered_languages(), aio.text_language, aio.voice_language)
 	_settings = SettingsScreen.new(updater.macos_preview())
 	_settings.channel_picked.connect(_on_channel)
 	_settings.free_camera_toggled.connect(_on_free_camera)
@@ -1396,6 +1415,16 @@ func _about() -> String:
 func _show_error(title: String, text: String) -> void:
 	_set_status(text)
 	_message.show_error(title, text, _about())
+
+
+## issue #49: the Game files screen's Language / Voices: the base download's languages (its size follows)
+func _on_languages(text: String, voice: String) -> void:
+	var why := aio.set_languages(text, voice)
+	if why != "":
+		_set_status(why)
+	_games_screen.set_languages(aio.offered_languages(), aio.text_language, aio.voice_language)
+	_games_screen.set_offer(aio.choice == AioInstall.BFME1, aio.total_size() / 1e9, aio.chosen())
+	Log.line("LAUNCHER AIO language %s" % aio.language_text())
 
 
 ## the Game files screen's Download (resume: Resume of a paused one, which keeps its package)

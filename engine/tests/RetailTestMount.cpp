@@ -123,6 +123,30 @@ bool readLocalFile(const std::string &path, std::vector<unsigned char> &out, std
 	return true;
 }
 
+std::string installLanguage()
+{
+	const std::string rotwk = envOrEmpty("ROTWK_INSTALL");
+	return rotwk.empty() ? std::string() : DetectRetailLanguageOfInstall(rotwk);
+}
+
+bool skipUnlessEnglish(const char *what)
+{
+	std::string language = installLanguage();
+	const std::string rotwk = envOrEmpty("ROTWK_INSTALL");
+	const std::string voice = rotwk.empty() ? std::string() : DetectRetailVoiceLanguageOfInstall(rotwk);
+	if (language == "English" && (voice.empty() || voice == "English"))
+	{
+		return false;
+	}
+	if (!voice.empty() && voice != language)
+	{
+		language += " with " + voice + " voices";
+	}
+	std::printf("SKIP: %s is pinned to the English retail data; the install is %s: not run\n", what, language.empty() ? "of no known language" : language.c_str());
+	std::fflush(stdout);
+	return true;
+}
+
 void printSkip(const char *testName)
 {
 	// lane CONTRIB-1 (GitHub #23): the binary-fact tests need RW_GAME_DAT (the RotWK game.dat) and name it in their test name; the install

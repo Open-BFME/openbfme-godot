@@ -30,7 +30,7 @@ files.
 ## What you need
 
 - **The Rise of the Witch-king, patched to 2.01**, and **The Battle for
-  Middle-earth II, patched to 1.06**, both in **English**. RotWK always needs
+  Middle-earth II, patched to 1.06**, in any language. RotWK always needs
   BFME2 next to it, as in the original. All In One launcher installs work.
   A disc install patched with EA's official patch
   (`LotrBfMe2EP1-131073-english.exe`, which updates `INI.big` and `Maps.big`
@@ -52,7 +52,12 @@ files.
   8.6 GB, with Pause, Resume and Cancel. Every file is checked against
   OpenBFME's list of the 2.01 / 1.06 files, and the game offers the folders on
   its first start. It is on the launcher's **Game files** page; to hide it,
-  turn off *Offer to download the games* in Settings.
+  turn off *Offer to download the games* in Settings. Its **Language** picks
+  the game's text (and speech) language, and **Voices** can pick another
+  language's speech: English, Dutch, French, German, Italian, Norwegian,
+  Polish, Spanish or Swedish (Turkish and Russian are not offered: the
+  service does not list the sizes of some of their files). It starts in the
+  language of the games already found, and remembers the choice.
 - **Windows 10 or 11** (64-bit) with a graphics card that supports Vulkan or
   Direct3D 12, or **64-bit Linux** with Vulkan graphics (Mesa or the
   proprietary drivers). On Linux the game folders can be inside a Wine or
@@ -141,7 +146,30 @@ Wine, Proton (Steam), Lutris, Heroic and Bottles prefixes. It shows what it
 found; confirm the folders or choose them with **Browse...**.
 
 It then checks every game archive (size and MD5) against the list of the
-English 2.01 / 1.06 files; `Data1.big` (fonts, scripts and the built-in
+2.01 / 1.06 files. The game's language is taken from its `lang` folder
+(`lang/German.big` means German): the language-independent archives are the
+same in every language and are checked as always, and the language's own
+archives (`lang/<Language>.big`, `<Language>Audio.big` and the patch's
+`<language>patch201.big` / `<language>patch105.big`) are checked against the
+known MD5s of that language: English, Dutch, French, German, Italian,
+Norwegian, Polish, Russian, Spanish, Swedish and Turkish, as the All In One
+BFME Launcher service lists them (the German ones were also checked against a
+German retail install). The speech archive can be another language's: a
+folder with `lang/German.big` and `lang/FrenchAudio.big` plays German text
+with French voices. A language OpenBFME has not checked yet is accepted too:
+its language files must be there and be valid game archives (a missing or
+damaged one is still refused), and the game shows a warning when it starts.
+The warning says what that can mean (some text may look wrong, and in rare
+cases the game can crash) and that you can still play online with players
+who have the same language files. Its **Copy details** button copies the
+language, the file names, their sizes and checksums: post them in the OpenBFME
+Discord's `#feedback` channel or in a GitHub issue (see
+[Reporting a bug](#reporting-a-bug)) so we can check that language for
+everyone. Tick *Don't show this again for this install* to hide it for those
+folders (it comes back if the language files change; the choice is kept in
+`language-warning.cfg` in the game's data folder). The same details are in the
+session log. Set `OPENBFME_STRICT_LANGUAGE=1` to refuse such an install
+instead. `Data1.big` (fonts, scripts and the built-in
 Create-a-Heroes) is checked file by file inside it, because the disc and All
 In One copies of it differ. This takes about a minute the first time and is
 cached afterwards. The folders are remembered in `install-paths.cfg` in the
@@ -669,8 +697,14 @@ recorded stop in [STOPS.md](STOPS.md); the ID is given for reference.
   lobby, but there is no public one yet, and Quick Match, War of the Ring
   online and the stats pages are missing (see
   [Online play](#online-play-test-feature); S-4070 .. S-4076).
-- Game languages other than English: other installs are refused on the first
-  start (S-1561).
+- A language the All In One BFME Launcher service does not list is accepted,
+  but its language archives are not checked: the game shows a warning when it
+  starts (once per install, with *Copy details*; S-1561).
+  OpenBFME's own texts (the online screens, the rules tab) are English only.
+  Players whose games are in different languages cannot join each other's
+  games or play each other's replays: the language archives are part of the
+  game files the lobby and replays compare, although they do not change the
+  game itself.
 
 **Looks or sounds different**
 - Team colours on units and buildings are an educated guess at how the
@@ -726,7 +760,7 @@ There are many more, smaller stops; the README gives the current count.
 ## Troubleshooting
 
 **The game can't find my install, or refuses it.** Make sure both games are
-installed and patched (RotWK 2.01, BFME2 1.06) and in English. Choose the
+installed and patched (RotWK 2.01, BFME2 1.06), both in the same language. Choose the
 folders by hand with *Browse...*: the RotWK folder holds RotWK's archives,
 the BFME2 folder BFME2's. The screen says what is wrong with a folder: which
 file differs and what to do. A RotWK folder that mixes the two 2.01 layouts

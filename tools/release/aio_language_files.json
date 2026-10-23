@@ -1,0 +1,115 @@
+{
+  "original-RotWK": {
+    "DE": {"name": "German", "drop": ["EnglishSplash.jpg", "lang/English.big", "lang/EnglishAudio.big", "lang/englishpatch201.big"], "add": [
+        ["GermanSplash.jpg", "dd453e6036b886f68c0609e1b56934e9", 467428],
+        ["lang/German.big", "dc848c78316743147da8c4faefa13813", 4851405],
+        ["lang/GermanAudio.big", "0ab4448d26b969aa745858397035827e", 367752862],
+        ["lang/germanpatch201.big", "ae6b32eca5888d9069e72df59a714771", 1700686]
+    ]},
+    "ES": {"name": "Spanish", "drop": ["EnglishSplash.jpg", "lang/English.big", "lang/EnglishAudio.big", "lang/englishpatch201.big"], "add": [
+        ["lang/Spanish.big", "61eeb106218c600ff4e3f7eae77747d4", 4957864],
+        ["lang/SpanishAudio.big", "2ba6fb3afa49d2dec2ae00b91be90643", 395120122],
+        ["lang/spanishpatch201.big", "5541f90b7f8b8bd5cdff59e43298f0c8", 1762662],
+        ["SpanishSplash.jpg", "4377c6353788e6cea0d921427a69b074", 466110]
+    ]},
+    "FR": {"name": "French", "drop": ["EnglishSplash.jpg", "lang/English.big", "lang/EnglishAudio.big", "lang/englishpatch201.big"], "add": [
+        ["FrenchSplash.jpg", "78d398d8da33e35a153aabda61bcf083", 465226],
+        ["lang/French.big", "94da11633310867efbf4b4026edc91da", 5010717],
+        ["lang/FrenchAudio.big", "d38937c37e726f288e022c5d8064e4e3", 387481390],
+        ["lang/frenchpatch201.big", "eb6b4fa51fc4ca461ca5fc9e460ff1b2", 1734158]
+    ]},
+    "IT": {"name": "Italian", "drop": ["EnglishSplash.jpg", "lang/English.big", "lang/EnglishAudio.big", "lang/englishpatch201.big"], "add": [
+        ["ItalianSplash.jpg", "e0fe068bed130e5cb747fe5e06cd0e05", 455466],
+        ["lang/Italian.big", "66cb5b5dd6ece44eec6ab14038b0f7f6", 4906207],
+        ["lang/ItalianAudio.big", "e482841889dd48b6b649c792c64daf46", 389130576],
+        ["lang/italianpatch201.big", "0cf42954d419a968cd01b634d0b29d75", 1740694]
+    ]},
+    "NL": {"name": "Dutch", "drop": ["EnglishSplash.jpg", "lang/English.big", "lang/englishpatch201.big"], "add": [
+        ["DutchSplash.jpg", "715f87d33715473fc36ab0ba619f38d6", 470227],
+        ["lang/Dutch.big", "01235aba7f533ed3b7350beed93d0de4", 4958912],
+        ["lang/dutchpatch201.big", "478c68d7896b1dda3192e10dfce3d195", 1686876]
+    ]},
+    "NO": {"name": "Norwegian", "drop": ["EnglishSplash.jpg", "lang/English.big", "lang/englishpatch201.big"], "add": [
+        ["lang/Norwegian.big", "8d7699bd33958e9ae36dcfd0fd4a5c92", 4778575],
+        ["lang/norwegianpatch201.big", "a0f6e6b61e17b9493164e5c9c33092b5", 1574548],
+        ["NorwegianSplash.jpg", "b320bc2e6583b9b17b261c407427939c", 448860]
+    ]},
+    "PL": {"name": "Polish", "drop": ["EnglishSplash.jpg", "lang/English.big", "lang/englishpatch201.big"], "add": [
+        ["lang/Polish.big", "9aa619072f951e7294191dd1c9062303", 4896670],
+        ["lang/polishpatch201.big", "47958e50185d8feae16263ccf23e0eab", 1678552],
+        ["PolishSplash.jpg", "b9b3ea5f01a6800c2f3d6bfd179ebbe0", 455204]
+    ]},
+    "RU": {"name": "Russian", "drop": ["EnglishSplash.jpg", "lang/English.big", "lang/EnglishAudio.big", "lang/englishpatch201.big"], "add": [
+        ["lang/Russian.big", "a6235a7e1bfcc0267e578d445165750e", 10339530],
+        ["lang/RussianAudio.big", "7a879a18100564f0a3a2fdc58b6e1b33", 415424348],
+        ["lang/russianpatch201.big", "3b922449b71e87e0dd56f853dbe0b635", 1604492],
+        ["RussianSplash.jpg", "5bb91b779e54f36ba1b3dad39533011c", 467506]
+    ]},
+    "SV": {"name": "Swedish", "drop": ["EnglishSplash.jpg", "lang/English.big", "lang/englishpatch201.big"], "add": [
+        ["lang/Swedish.big", "e3c8dce1775b8549b58b976d20e78055", 4799269],
+        ["lang/swedishpatch201.big", "3ec1eb8933a145c714a4410806e23643", 1567130],
+        ["SwedishSplash.jpg", "fcb9e8a8389731ed7b4863bdab1d9c82", 455408]
+    ]},
+    "TR": {"name": "Turkish", "drop": ["EnglishSplash.jpg", "lang/English.big", "lang/englishpatch201.big"], "add": [
+        ["lang/Turkish.big", "393ff5cd0365f288c089790ace39e068", 0],
+        ["lang/turkishpatch201.big", "bc9a44be38b0dbc75ca359363eb91704", 0],
+        ["TurkishSplash.jpg", "9fe19ebe6d823b477e0a53e5ee5d0b35", 0]
+    ]}
+  },
+  "original-BFME2": {
+    "DE": {"name": "German", "drop": ["EnglishSplash.jpg", "lang/English.big", "lang/EnglishAudio.big", "lang/englishpatch105.big"], "add": [
+        ["GermanSplash.jpg", "82077758f6441a1f19e683a2c793fbe7", 430051],
+        ["lang/German.big", "6b095f659c94f545afaa7e51b8c8e92f", 4928921],
+        ["lang/GermanAudio.big", "5e421dfad95e81a74b090d8a7f3d1f16", 557553322],
+        ["lang/germanpatch105.big", "9d952b46a9ea61fd013b95ae1c49923c", 1434693]
+    ]},
+    "ES": {"name": "Spanish", "drop": ["EnglishSplash.jpg", "lang/English.big", "lang/EnglishAudio.big", "lang/englishpatch105.big"], "add": [
+        ["lang/Spanish.big", "8053771b569928e66f7b9b3c79dd5f13", 5058899],
+        ["lang/SpanishAudio.big", "df3b1c5037d97204aefb400776d8dfe4", 563369885],
+        ["lang/spanishpatch105.big", "66b10405b1ea0dd52bd6408ddd2b5d63", 1501731],
+        ["SpanishSplash.jpg", "3512ef6fb899bd46382e12b2e7d6de2e", 433969]
+    ]},
+    "FR": {"name": "French", "drop": ["EnglishSplash.jpg", "lang/English.big", "lang/EnglishAudio.big", "lang/englishpatch105.big"], "add": [
+        ["FrenchSplash.jpg", "ffa3764d617f1f25fe595edb7c72b452", 427718],
+        ["lang/French.big", "2582547f7c01d134b6c17d4c845b5bbb", 5090069],
+        ["lang/FrenchAudio.big", "f4c44d56768b9cb1fa9b6fbf10cc7026", 537915202],
+        ["lang/frenchpatch105.big", "fde8fe0c410e881a1c2fbe9a54c79402", 1465741]
+    ]},
+    "IT": {"name": "Italian", "drop": ["EnglishSplash.jpg", "lang/English.big", "lang/EnglishAudio.big", "lang/englishpatch105.big"], "add": [
+        ["ItalianSplash.jpg", "6461897f0b3675cb274a997940fd7da7", 428810],
+        ["lang/Italian.big", "bc39fdbca0b697f68efba81b0dc11c0b", 5013043],
+        ["lang/ItalianAudio.big", "a3f89e30e9659cf54c7aa8ed47f114b5", 562217299],
+        ["lang/italianpatch105.big", "68eb36b19c195491708b7fe5fb0e055d", 1473577]
+    ]},
+    "NL": {"name": "Dutch", "drop": ["EnglishSplash.jpg", "lang/English.big", "lang/englishpatch105.big"], "add": [
+        ["DutchSplash.jpg", "7417ae6c34a08aca70488f1095f89fea", 97362],
+        ["lang/Dutch.big", "0e024db83f5ad4b5a1472f4d1a61912a", 5046418],
+        ["lang/dutchpatch105.big", "07ad30a1efb4c55875222ec1088991ad", 1417579]
+    ]},
+    "NO": {"name": "Norwegian", "drop": ["EnglishSplash.jpg", "lang/English.big", "lang/englishpatch105.big"], "add": [
+        ["lang/Norwegian.big", "296d8bcbdfa59de689a22d3f9b8730c5", 4905994],
+        ["lang/norwegianpatch105.big", "115e726a40a2193c500f599b083a96be", 1326613],
+        ["NorwegianSplash.jpg", "1502e9a90bcfd491f05927edfe847fab", 420908]
+    ]},
+    "PL": {"name": "Polish", "drop": ["EnglishSplash.jpg", "lang/English.big", "lang/englishpatch105.big"], "add": [
+        ["lang/Polish.big", "0e893e008a49ba30b7636e362f2590ef", 5003349],
+        ["lang/polishpatch105.big", "f30492d5d9c182dbbfdbd01e681f2951", 1412731],
+        ["PolishSplash.jpg", "4959ea4c8c9d961fe835373382a8be8b", 425198]
+    ]},
+    "RU": {"name": "Russian", "drop": ["EnglishSplash.jpg", "lang/English.big", "lang/EnglishAudio.big", "lang/englishpatch105.big"], "add": [
+        ["lang/Russian.big", "61ee14c9e4b6e99ad03af4b6ee8f69e5", 2092556],
+        ["lang/RussianAudio.big", "56c0939de7b69e88277eaa2e27c77f9c", 0],
+        ["lang/russianpatch105.big", "7251063b664903adc58c8780b806186f", 1359717]
+    ]},
+    "SV": {"name": "Swedish", "drop": ["EnglishSplash.jpg", "lang/English.big", "lang/englishpatch105.big"], "add": [
+        ["lang/Swedish.big", "1beda807f541909e2366c9b5d9b17c0a", 4916920],
+        ["lang/swedishpatch105.big", "950d3a13e563b2eb9d3503a4aafdaebc", 1322943],
+        ["SwedishSplash.jpg", "891270c10b22c7095d2bcc562f6796d8", 419649]
+    ]},
+    "TR": {"name": "Turkish", "drop": ["EnglishSplash.jpg", "lang/English.big", "lang/EnglishAudio.big", "lang/englishpatch105.big"], "add": [
+        ["lang/Turkish.big", "2bc70c61f083860b38c0f45ae457e6b2", 0],
+        ["lang/turkishpatch105.big", "b48ed69d9ea8927afa6bcd283d779af2", 0],
+        ["TurkishSplash.jpg", "401c0378ae028542059bf5fa807d535c", 0]
+    ]}
+  }
+}

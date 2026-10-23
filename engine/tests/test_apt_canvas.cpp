@@ -137,12 +137,16 @@ TEST_CASE("retail data/lotr.str: parses, APT:Quit is QUIT, 36 labels are defined
 	AptArchiveFileSource source(mount.fs);
 	std::vector<std::uint8_t> bytes;
 	std::string error;
-	REQUIRE_MESSAGE(source.readFile("data/lotr.str", bytes, &error), error);
 	GameTextTable t;
-	REQUIRE_MESSAGE(t.parse(bytes, &error), error);
+	REQUIRE_MESSAGE(t.loadRetail(mount.fs, &error), error); // data/lotr.str, or a non-English install's lotr.csf
 	CHECK(t.size() > 10000);
 	std::string v;
 	REQUIRE(t.lookup("APT:Quit", v));
+	CHECK_FALSE(v.empty());
+	if (retailtest::skipUnlessEnglish("retail data/lotr.str's English words and its 36 duplicate labels"))
+	{
+		return;
+	}
 	CHECK(v == "QUIT");
 	std::string dup;
 	for (const std::string &d : t.duplicateLabels())
@@ -203,6 +207,10 @@ TEST_CASE("retail fontsubstitution.ini: SachaWynter is drawn as Omnia LT Std (8 
 	FontSubstitution f;
 	REQUIRE_MESSAGE(f.parse(std::string(bytes.begin(), bytes.end()), &error), error);
 	CHECK(f.blockCount() == 1);
+	if (retailtest::skipUnlessEnglish("retail fontsubstitution.ini's English sizes (the language archive's file)"))
+	{
+		return;
+	}
 	FontRequestResult r = f.resolve("SachaWynter", 8);
 	CHECK(r.name == "Omnia LT Std");
 	CHECK(r.size == doctest::Approx(12.0f));
@@ -703,8 +711,7 @@ struct RetailMenu
 		REQUIRE_MESSAGE(apt->loadMovie(0, "AptLevel0", &error), error);
 		REQUIRE_MESSAGE(apt->loadMovie(1, "MainMenu", &error), error);
 		std::vector<std::uint8_t> bytes;
-		REQUIRE_MESSAGE(source.readFile("data/lotr.str", bytes, &error), error);
-		REQUIRE_MESSAGE(strings.parse(bytes, &error), error);
+		REQUIRE_MESSAGE(strings.loadRetail(mount.fs, &error), error); // data/lotr.str, or a non-English install's lotr.csf
 		REQUIRE_MESSAGE(source.readFile("data/ini/fontsubstitution.ini", bytes, &error), error);
 		REQUIRE_MESSAGE(fonts.parse(std::string(bytes.begin(), bytes.end()), &error), error);
 	}
@@ -862,7 +869,13 @@ TEST_CASE("retail MainMenu canvas: per frame the triangle count equals the rende
 		if (op.kind == AptCanvasOp::Kind::Text && op.path == "_level1.QuitMainMenu.instance3.Text")
 		{
 			quit = true;
-			CHECK(op.text == "QUIT");
+			std::string want; // the string table's APT:Quit in the install's language ("QUIT" in English)
+			REQUIRE(menu.strings.lookup("APT:Quit", want));
+			CHECK(op.text == want);
+			if (retailtest::installLanguage() == "English")
+			{
+				CHECK(op.text == "QUIT");
+			}
 			CHECK(op.fontName == "Albertus MT");
 			CHECK(op.drawFont == "Albertus MT"); // no substitution entry for it
 		}
@@ -1070,8 +1083,7 @@ TEST_CASE("retail corpus canvas: every movie translates; textures load; the rend
 	GameTextTable strings;
 	std::vector<std::uint8_t> bytes;
 	std::string error;
-	REQUIRE_MESSAGE(source.readFile("data/lotr.str", bytes, &error), error);
-	REQUIRE_MESSAGE(strings.parse(bytes, &error), error);
+	REQUIRE_MESSAGE(strings.loadRetail(mount.fs, &error), error); // data/lotr.str, or a non-English install's lotr.csf
 	AptTextureStore textures(source);
 	FontSubstitution fontTable;
 	REQUIRE_MESSAGE(source.readFile("data/ini/fontsubstitution.ini", bytes, &error), error);

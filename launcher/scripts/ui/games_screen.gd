@@ -11,6 +11,7 @@ signal show_folder(path: String)
 signal download(folder: String)
 signal pause_pressed
 signal cancel_pressed
+signal languages_changed(text: String, voice: String)  # issue #49: codes of AioInstall.offered_languages (voice "" = the text language's)
 
 const W := preload("res://scripts/ui/widgets.gd")
 const Style := preload("res://scripts/ui/style.gd")
@@ -41,6 +42,10 @@ var _bar_label: Label
 var _pause: Button
 var _cancel: Button
 var _dialog: FileDialog
+var _languages: HBoxContainer
+var _text_lang: OptionButton
+var _voice_lang: OptionButton
+var _codes: Array = []
 
 
 func _init() -> void:
@@ -96,6 +101,20 @@ func _init() -> void:
 	change.pressed.connect(open_picker)
 	row.add_child(change)
 	dl.box.add_child(row)
+	# issue #49: the game's text language and, separately, its voices (Language: the text and speech of that version; Voices: another
+	# version's speech archive)
+	_languages = W.hbox(10)
+	_languages.add_child(W.label("Language", "Muted"))
+	_text_lang = OptionButton.new()
+	_text_lang.tooltip_text = "The language of the game's text (and, unless Voices says otherwise, its speech)."
+	_text_lang.item_selected.connect(func(_i: int) -> void: _emit_languages())
+	_languages.add_child(_text_lang)
+	_languages.add_child(W.label("Voices", "Muted"))
+	_voice_lang = OptionButton.new()
+	_voice_lang.tooltip_text = "The language of the spoken lines: another version's speech, with the text above."
+	_voice_lang.item_selected.connect(func(_i: int) -> void: _emit_languages())
+	_languages.add_child(_voice_lang)
+	dl.box.add_child(_languages)
 	_progress = W.vbox(6)
 	_progress.visible = false
 	_bar_label = W.trim_label("", "Muted")
@@ -178,6 +197,29 @@ func set_offer(bfme1: bool, gb: float, packages: Array) -> void:
 	for p in packages:
 		names.append(str(p.get("label", p.get("folder", ""))))
 	_what.text = "%s, about %.1f GB." % [" and ".join(names), gb] if not names.is_empty() else "About %.1f GB." % gb
+	if _languages != null:
+		_languages.visible = not bfme1  # the optional BFME1 package has its English files only
+
+
+## issue #49: the languages the download offers ([{code, name}], AioInstall.offered_languages) and the chosen ones (voice "" = the text's)
+func set_languages(offered: Array, text: String, voice: String) -> void:
+	_codes = offered.map(func(l): return l.code)
+	_text_lang.clear()
+	_voice_lang.clear()
+	_voice_lang.add_item("Same as the language")
+	for l in offered:
+		_text_lang.add_item(String(l.name))
+		_voice_lang.add_item(String(l.name))
+	_text_lang.select(maxi(_codes.find(text), 0))
+	_voice_lang.select(_codes.find(voice) + 1 if voice != "" else 0)
+
+
+func _emit_languages() -> void:
+	if _codes.is_empty():
+		return
+	var text: String = _codes[maxi(_text_lang.selected, 0)]
+	var voice: String = "" if _voice_lang.selected <= 0 else _codes[_voice_lang.selected - 1]
+	languages_changed.emit(text, voice)
 
 
 func set_folder(dir: String) -> void:
@@ -189,6 +231,8 @@ func set_folder(dir: String) -> void:
 func set_download_state(running: bool, paused: bool, busy: bool, aio: bool) -> void:
 	_go.visible = not running and not paused
 	_go.disabled = busy or not aio
+	_text_lang.disabled = running or paused or busy  # a download keeps the languages it started with
+	_voice_lang.disabled = running or paused or busy
 	_pause.visible = running or paused
 	_cancel.visible = running or paused
 	_pause.text = "Resume" if paused else "Pause"

@@ -131,8 +131,7 @@ struct RetailText
 	{
 		std::vector<std::uint8_t> bytes;
 		std::string error;
-		REQUIRE_MESSAGE(s.mount->fs->readFile("data/lotr.str", bytes, &error), error);
-		REQUIRE_MESSAGE(text.table.parse(bytes, &error), error);
+		REQUIRE_MESSAGE(text.table.loadRetail(*s.mount->fs, &error), error); // data/lotr.str, or a non-English install's lotr.csf
 	}
 	std::string get(const std::string &label)
 	{
@@ -377,8 +376,16 @@ TEST_CASE("campsave1 retail: ANGMAR_CAMPAIGN through RotWK's end-of-game logic: 
 		}
 	}
 	CHECK(autoSaves == 7);
-	// the names the menu shows after missions 1 .. 7 (lotr.str)
-	CHECK(shown == std::vector<std::string>{ "Conquest of Rhudaur", "Amon Sul", "Dark Lord's Eye", "Barrow-downs", "Carn Dum", "Plague Bearer", "Fornost" });
+	// the names the menu shows after missions 1 .. 7 (lotr.str): game text in every language, these words in English
+	for (const std::string &n : shown)
+	{
+		CHECK_MESSAGE(n.find("<missing") == std::string::npos, n);
+	}
+	const bool english = retailtest::installLanguage() == "English";
+	if (english)
+	{
+		CHECK(shown == std::vector<std::string>{ "Conquest of Rhudaur", "Amon Sul", "Dark Lord's Eye", "Barrow-downs", "Carn Dum", "Plague Bearer", "Fornost" });
+	}
 	const LinearCampaign *bonus = m.find("ANGMAR_BONUS_CAMPAIGN");
 	REQUIRE(bonus != nullptr);
 	CampaignProgress b;
@@ -387,7 +394,15 @@ TEST_CASE("campsave1 retail: ANGMAR_CAMPAIGN through RotWK's end-of-game logic: 
 	b.victorious = true;
 	b.gameOver();
 	CHECK(b.afterScore(m) == CampaignProgress::AfterScore::BonusUnlock);
-	CHECK(text.get("CampaignName:" + bonus->missions[0].name) == "Fall of Angmar");
+	CHECK(text.get("CampaignName:" + bonus->missions[0].name).find("<missing") == std::string::npos);
+	if (english)
+	{
+		CHECK(text.get("CampaignName:" + bonus->missions[0].name) == "Fall of Angmar");
+	}
+	else
+	{
+		retailtest::skipUnlessEnglish("campsave1: the English mission names");
+	}
 }
 
 TEST_CASE("campsave1 retail: CampaignMenu.apt after a won mission: the five commands and CampaignMenu:Victorious registered (RW 0x927B9F), the next "
@@ -414,10 +429,16 @@ TEST_CASE("campsave1 retail: CampaignMenu.apt after a won mission: the five comm
 	std::string value;
 	CHECK(menu.fx.wm->getExtern("CampaignMenu:Victorious", value) == AptExternResult::Number);
 	CHECK(value == "1");
-	CHECK(menu.screen->missionText() == "Conquest of Rhudaur");
+	RetailText names(*s); // the install's language: lotr.str's CampaignName:Rhudaur ("Conquest of Rhudaur" in English)
+	const std::string rhudaur = names.get("CampaignName:Rhudaur");
+	CHECK(menu.screen->missionText() == rhudaur);
 	std::string record;
 	CHECK(menu.fx.wm->aptTextShown("APT:CampaignMissionName", record));
-	CHECK(record == "Conquest of Rhudaur");
+	CHECK(record == rhudaur);
+	if (retailtest::installLanguage() == "English")
+	{
+		CHECK(rhudaur == "Conquest of Rhudaur");
+	}
 	const std::string *image = menu.fx.wm->aptImage("AptCampaign::LoadImage");
 	REQUIRE(image != nullptr);
 	CHECK(*image == "CampaignAngmar_Rhudaur_Loadscreen");
@@ -484,7 +505,12 @@ TEST_CASE("campsave1 retail: CampaignMenu.apt after a defeat: \"Failed Mission:\
 	std::string value;
 	CHECK(menu.fx.wm->getExtern("CampaignMenu:Victorious", value) == AptExternResult::Number);
 	CHECK(value == "0");
-	CHECK(menu.screen->missionText() == "Amon Sul");
+	RetailText names(*s); // lotr.str's CampaignName:Amonsul ("Amon Sul" in English)
+	CHECK(menu.screen->missionText() == names.get("CampaignName:Amonsul"));
+	if (retailtest::installLanguage() == "English")
+	{
+		CHECK(menu.screen->missionText() == "Amon Sul");
+	}
 	for (const char *b : { "LastMission", "MainMenu", "LoadGame" })
 	{
 		REQUIRE_MESSAGE(menu.button(b), b);

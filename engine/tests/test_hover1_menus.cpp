@@ -151,8 +151,7 @@ struct MenuRig
 	{
 		std::vector<std::uint8_t> bytes;
 		std::string error;
-		REQUIRE_MESSAGE(mount.fs.readFile("data/lotr.str", bytes, &error), error);
-		REQUIRE_MESSAGE(text.table.parse(bytes, &error), error);
+		REQUIRE_MESSAGE(text.table.loadRetail(mount.fs, &error), error); // data/lotr.str, or a non-English install's lotr.csf
 		REQUIRE_MESSAGE(CursorTooltipSettings::load(mount.fs, settings, &error), error);
 		REQUIRE_MESSAGE(AptButtonTooltipMap::load(mount.fs, names, &error), error);
 		registerAptScreenFactories(factories);
@@ -510,6 +509,10 @@ std::vector<std::string> pathLabels(const std::vector<std::uint8_t> &str)
 TEST_CASE("hover1 inventory: every Apt movie's hover areas (buttons of every timeline, through imports and exports) against the string file's TOOLTIP labels")
 {
 	OPENBFME_REQUIRE_RETAIL(mount);
+	if (retailtest::skipUnlessEnglish("hover1 inventory (the counts of English lotr.str's TOOLTIP labels)"))
+	{
+		return;
+	}
 	AptArchiveFileSource source(mount.fs);
 	AptLoader loader(source);
 	std::vector<std::uint8_t> str;
