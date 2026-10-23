@@ -9,6 +9,7 @@
 #include "GameClient/GUI/AptScreens/AptSimpleScreens.h"
 #include "GameClient/GUI/AptScreens/AptSkirmish.h"
 #include "GameClient/GUI/AptScreens/AptTimeLine.h"
+#include "GameClient/GUI/AptScreens/AptScoreScreen.h"
 #include "GameClient/GUI/AptScreens/AptSaveLoad.h"
 #include "GameClient/GUI/AptScreens/AptLanLobby.h"
 #include "GameClient/GUI/AptScreens/AptCreateAHero.h"
@@ -43,6 +44,10 @@ void registerAptScreenFactories(AptScreenFactoryTable &table)
 	// lane END-1: the score screen of a skirmish / LAN game (RW 0x927898 pushes TimeLine.apt)
 	table.registerFactory("TimeLine.apt", [](AptScreenContext &c) -> std::unique_ptr<AptScreen> {
 		return std::make_unique<AptTimeLine>(c.windows, c.shell, c.environment);
+	});
+	// BFME1's score screen (it has no TimeLine.apt; _bfme_showScoreScreen pushes ScoreScreen.apt)
+	table.registerFactory("ScoreScreen.apt", [](AptScreenContext &c) -> std::unique_ptr<AptScreen> {
+		return std::make_unique<AptScoreScreen>(c.windows, c.shell, c.environment);
 	});
 	// lane MP-2: the replay page of the load screen (the main menu's LoadReplay: RW 0x91C36C -> RW 0x816655)
 	table.registerFactory("SaveLoad.apt", [](AptScreenContext &c) -> std::unique_ptr<AptScreen> {

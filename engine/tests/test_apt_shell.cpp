@@ -528,7 +528,7 @@ TEST_CASE("Shell: the A4 factory table holds MainMenu, Skirmish, LoadScreen, Opt
 		have.insert(f);
 	}
 	CHECK(have == std::set<std::string>{ "MainMenu.apt", "Skirmish.apt", "LoadScreen.apt", "Options.apt", "GuiFX.apt", "Background.apt", "AptLevel0.apt", "Palantir.apt",
-		"TimeLine.apt", "QuitMenu.apt", // lane END-1: the score screen; lane END-2: the quit menu
+		"TimeLine.apt", "ScoreScreen.apt", "QuitMenu.apt", // lane END-1: the score screen; lane END-2: the quit menu
 		"SaveLoad.apt", "LanLobby.apt", // lane MP-2: the replay page, the LAN lobby
 		"PlayerTribute.apt", // lane PLAY-1: the Palantir flag's screen
 		"CreateAHero.apt", // lane CAH-1: the Create-a-Hero builder
