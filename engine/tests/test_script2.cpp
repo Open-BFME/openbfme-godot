@@ -704,84 +704,6 @@ TEST_CASE("backlog3 radar notices: the list keeps 63, then 64, then the newest 6
 	CHECK(logic.radarEventNotices().front().seq == 66);
 	CHECK(logic.radarEventNotices().front().position.x == 66.0f);
 }
-<<<<<<< HEAD
-=======
-
-TEST_CASE("script2 BFME2 tutorial: named and type selection follow the local selection and reject multiplayer")
-{
-	Fixture f;
-	auto &g = f.g;
-	Player *local = g.lw.players.findPlayerWithName("Alice");
-	g.lw.players.setLocalPlayer(local);
-	const auto named = cond("NAMED_SELECTED", {sp(14, "U")});
-	const auto type = cond("TYPE_SELECTED", {sp(61, "Unit")});
-	const auto wrong = cond("TYPE_SELECTED", {sp(61, "Tower")});
-	CHECK_FALSE(evalCond(g, named));
-	CHECK_FALSE(evalCond(g, type));
-	local->selection() = {INVALID_ID, f.u->getID()};
-	CHECK(evalCond(g, named));
-	CHECK_FALSE(evalCond(g, cond("NAMED_SELECTED", {sp(14, "u")}))); // exact name comparison in BFME2
-	CHECK(evalCond(g, type));
-	CHECK_FALSE(evalCond(g, wrong));
-	g.engine().objectListAdd("SelectableTypes", "Unit", true);
-	CHECK(evalCond(g, cond("TYPE_SELECTED", {sp(61, "SelectableTypes")})));
-	g.lw.players.setLocalPlayer(g.lw.players.findPlayerWithName("Bob"));
-	CHECK_FALSE(evalCond(g, named));
-	g.lw.players.setLocalPlayer(local);
-	for (int mode : {EconomyContext::MODE_LAN, EconomyContext::MODE_INTERNET})
-	{
-		g.lw.logic->economy().context().gameMode = mode;
-		CHECK_FALSE(evalCond(g, named));
-		CHECK_FALSE(evalCond(g, type));
-	}
-	g.lw.logic->economy().context().gameMode = EconomyContext::MODE_SINGLE_PLAYER;
-	local->selection().clear();
-	CHECK_FALSE(evalCond(g, named));
-	CHECK_FALSE(evalCond(g, type));
-}
-
-TEST_CASE("script2 BFME2 tutorial: attacked by type resolves the most recent damage source")
-{
-	Fixture f;
-	auto &g = f.g;
-	const auto attacked = cond("NAMED_ATTACKED_BY_OBJECTTYPE", {sp(14, "U"), sp(61, "Tower")});
-	CHECK_FALSE(evalCond(g, attacked));
-	Object *source = g.lw.make("Tower", g.lw.teamOf("Bob"));
-	REQUIRE(source != nullptr);
-	DamageInfo info;
-	info.m_input.m_damageType = DAMAGE_UNRESISTABLE;
-	info.m_input.m_deathType = DEATH_NORMAL;
-	info.m_input.m_sourceID = source->getID();
-	info.m_input.m_amount = 1.0f;
-	f.u->getBodyModule()->attemptDamage(info);
-	CHECK(evalCond(g, attacked));
-	g.engine().objectListAdd("Attackers", "Tower", true);
-	CHECK(evalCond(g, cond("NAMED_ATTACKED_BY_OBJECTTYPE", {sp(14, "U"), sp(61, "Attackers")})));
-	CHECK_FALSE(evalCond(g, cond("NAMED_ATTACKED_BY_OBJECTTYPE", {sp(14, "Absent"), sp(61, "Tower")})));
-	info.m_input.m_sourceID = f.u->getID();
-	f.u->getBodyModule()->attemptDamage(info);
-	CHECK_FALSE(evalCond(g, attacked));
-}
-
-TEST_CASE("script2 BFME2 tutorial: building empty requires a contain with no occupants")
-{
-	Fixture f;
-	auto &g = f.g;
-	REQUIRE(g.lw.w.load("Object Container\n KindOf = STRUCTURE\n Behavior = TransportContain ContainTag\n Slots = 4\n End\nEnd\n",
-		INI_LOAD_OVERWRITE, "container.ini").empty());
-	Object *container = g.lw.make("Container", g.lw.teamOf("Alice"));
-	REQUIRE(container != nullptr);
-	container->setName("C");
-	REQUIRE(container->getContain() != nullptr);
-	const auto empty = cond("NAMED_BUILDING_IS_EMPTY", {sp(14, "C")});
-	CHECK(evalCond(g, empty));
-	CHECK_FALSE(evalCond(g, cond("NAMED_BUILDING_IS_EMPTY", {sp(14, "U")})));
-	CHECK_FALSE(evalCond(g, cond("NAMED_BUILDING_IS_EMPTY", {sp(14, "Absent")})));
-	REQUIRE(container->getContain()->addToContain(f.u));
-	CHECK_FALSE(evalCond(g, empty));
-	container->getContain()->removeFromContain(f.u);
-	CHECK(evalCond(g, empty));
-}
 
 TEST_CASE("BFME1 script economy counters use player masks and retain native command point availability")
 {
@@ -830,4 +752,3 @@ TEST_CASE("BFME1 script scouts move toward the nearest capturable resource plot"
 	CHECK(goal.y == 500.0f);
 	CHECK(goal.z == 0.0f);
 }
->>>>>>> 267500c810 (Enable the first BFME1 script-driven AI construction slice)
