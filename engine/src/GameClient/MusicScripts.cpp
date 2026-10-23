@@ -401,7 +401,8 @@ int MusicScripts::countUnitsNear(const std::vector<int> &who, const Coord3D &whe
 bool MusicScripts::evaluateCondition(const ScriptCondition &c)
 {
 	const auto &p = c.params;
-	switch (c.type)
+	// BFME1 stores different ordinals; the map parser resolves each internal name to our template table.
+	switch (m_source && m_source->chunks.bfme1Data ? c.resolved : c.type)
 	{
 		case C_COUNTER:
 			return compare(m_counters[param(p, 0).stringValue].value, param(p, 1).intValue, param(p, 2).intValue);
@@ -541,7 +542,8 @@ void MusicScripts::executeAction(const ScriptActionRec &a)
 {
 	++m_stats.actionsRun;
 	const auto &p = a.params;
-	switch (a.type)
+	// Use the parser's named template resolution for BFME1 rather than its stored ordinal.
+	switch (m_source && m_source->chunks.bfme1Data ? a.resolved : a.type)
 	{
 		case A_SET_FLAG:
 			m_flags[param(p, 0).stringValue] = param(p, 1).intValue != 0;
