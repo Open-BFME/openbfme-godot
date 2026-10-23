@@ -40,13 +40,13 @@ func _run() -> void:
 	var hud = ClassDB.instantiate("InGameHudNode")
 	root.add_child(hud)
 	assert(hud.setup(fs, world, camera, "Player_1", {"camera_start":Vector3(site.x, 0, -site.y)}).ok)
-	hud.select_controller_group(PackedInt64Array([plot]))
+	assert(hud.select_object_with_message(plot))
 	for i in 90: await process_frame
 	var command := {}
 	for button in hud.get_command_buttons():
 		if button.command == "CASTLE_UNPACK": command = button
 	assert(not command.is_empty(), "Captured plot has no build command")
-	assert(hud.activate_command(command.slot, command.in_palantir, false))
+	assert(hud.press_command_button(command.name))
 	var farm := 0
 	for i in 100:
 		world.advance(0.2)
