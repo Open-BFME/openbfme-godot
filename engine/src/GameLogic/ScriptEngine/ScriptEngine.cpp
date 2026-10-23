@@ -501,6 +501,11 @@ bool ScriptEngine::isInNamedCache(const Object &obj) const
 
 Object *ScriptEngine::getUnitNamed(const std::string &name) const
 {
+	const auto qualified = qualify(name);
+	const std::string reference = qualified.first + "::unit-reference::" + qualified.second;
+	for (const auto &entry : m_namedObjects)
+		if (entry.first == reference) return m_logic.findObjectByID(entry.second);
+
 	if (name.empty())
 	{
 		return nullptr;

@@ -19,11 +19,12 @@
 //     at RW 0x6280A3 says otherwise (then "").
 // INFERENCE (stop S-1181): how the SkirmishHuman side's scripts reach the human slots is not decoded; here every human slot side runs the
 // Multiplayer_Human library (its PlayerAIType), every AI slot side its faction's DefaultPlayerAIType library, the kept map sides their own list and
-// LibraryMaps. The library's teams are not added (no retail library used by the corpus' skirmish / campaign opening needs one; counted).
+// LibraryMaps. BFME1 library teams are added under the receiving player before scripts run; other games retain the reported library-team stop.
 
 #pragma once
 
 #include "GameLogic/ScriptEngine/ScriptEngine.h"
+#include "Common/Dict.h"
 
 #include <memory>
 #include <set>
@@ -50,6 +51,7 @@ public:
 
 	const std::vector<ScriptEngine::SideScripts> &sides() const { return m_sides; }
 	std::vector<std::string> notes() const { return m_notes; }
+	const std::vector<Dict> &libraryTeams() const { return m_libraryTeams; }
 
 private:
 	bool loadLibrary(ArchiveFileSystem &fs, const std::string &path, ScriptEngine::SideScripts &side, std::set<std::string> &loaded, int depth,
@@ -60,4 +62,5 @@ private:
 	std::vector<std::unique_ptr<LoadedMap>> m_libraries;
 	std::vector<ScriptEngine::SideScripts> m_sides;
 	std::vector<std::string> m_notes;
+	std::vector<Dict> m_libraryTeams;
 };

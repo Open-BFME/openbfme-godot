@@ -4,6 +4,7 @@
 #include "Libraries/WWVegas/WW3D2/textureloader.h"
 
 #include "Common/AsciiString.h"
+#include <algorithm>
 
 namespace
 {
@@ -58,4 +59,33 @@ TextureResolution Resolve_W3D_Texture(const std::string &name, const std::functi
 	std::string lower = AsciiStringUtil::lowered(name);
 	addCandidates(lower, exists, out, flatLayout);
 	return out;
+}
+
+void W3D_Preserve_Mip_Alpha_Coverage(std::vector<unsigned char> &rgba, unsigned width, unsigned height, unsigned threshold)
+{
+	if (!width || !height || !threshold || threshold > 255 || rgba.size() < (size_t)width * height * 4) return;
+	const size_t basePixels = (size_t)width * height;
+	size_t covered = 0;
+	for (size_t i = 0; i < basePixels; ++i) covered += rgba[i * 4 + 3] >= threshold;
+	if (!covered || covered == basePixels) return;
+	size_t offset = basePixels * 4;
+	while (width > 1 || height > 1)
+	{
+		width = std::max(1u, width / 2); height = std::max(1u, height / 2);
+		const size_t count = (size_t)width * height;
+		if (offset + count * 4 > rgba.size()) break;
+		std::vector<unsigned char> alphas;
+		for (size_t i = 0; i < count; ++i) alphas.push_back(rgba[offset + i * 4 + 3]);
+		std::sort(alphas.begin(), alphas.end(), std::greater<unsigned char>());
+		const size_t target = std::max(size_t(1), (covered * count + basePixels / 2) / basePixels);
+		const unsigned cutoff = alphas[std::min(target, count) - 1];
+		// An entirely transparent mip carries no shape; retain it rather than inventing pixels.
+		if (cutoff && cutoff < threshold)
+			for (size_t i = 0; i < count; ++i)
+			{
+				auto &alpha = rgba[offset + i * 4 + 3];
+				alpha = (unsigned char)std::min(255u, (unsigned(alpha) * threshold + cutoff - 1) / cutoff);
+			}
+		offset += count * 4;
+	}
 }

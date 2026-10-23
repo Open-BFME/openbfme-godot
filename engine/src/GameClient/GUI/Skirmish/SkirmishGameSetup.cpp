@@ -443,6 +443,22 @@ std::vector<int> SkirmishGameSetup::listedMaps() const
 	// empty.  Patch 1.03's two broken Generals maps are named by the donor; they are not in RotWK's cache.
 	const std::vector<MapCacheEntry> &maps = m_source.maps();
 	std::vector<int> out;
+	if (m_source.bfme1Data())
+	{
+		// BFME1 Rva00453480MapPointerCollector filters before its stable sort;
+		// a user map with the same display name must not replace an official map.
+		for (int i = 0; i < (int)maps.size(); ++i)
+		{
+			const auto &map = maps[i];
+			if (map.isMultiplayer && !map.isScenarioMP && map.numPlayers >= 2 &&
+				!map.displayName.empty() && m_source.fileExists(map.name)) out.push_back(i);
+		}
+		std::stable_sort(out.begin(), out.end(), [&](int a, int b) {
+			if (maps[a].numPlayers != maps[b].numPlayers) return maps[a].numPlayers < maps[b].numPlayers;
+			return lessNoCase(mapDisplayName(maps[a], true), mapDisplayName(maps[b], true));
+		});
+		return out;
+	}
 	int maxPlayers = 0;
 	for (const MapCacheEntry &m : maps)
 	{

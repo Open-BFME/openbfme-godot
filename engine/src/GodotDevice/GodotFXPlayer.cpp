@@ -2,6 +2,7 @@
 
 #include "GodotDevice/GodotGammaComposite.h"
 #include "GodotDevice/GodotFXPlayer.h"
+#include "Common/BfmeGame.h"
 
 #include "GodotDevice/GodotRetailFileSystem.h"
 #include "GodotDevice/GodotW3DMaterial.h"
@@ -798,7 +799,7 @@ Ref<Texture2D> FXPlayer::decodeTexture(const std::string &name, std::string &mis
 {
 	Ref<Texture2D> out;
 	ArchiveFileSystem &fs = *m_fs->archive();
-	const ParticleTextureResolution res = ResolveParticleTexture(name, [&](const std::string &p) { return fs.doesFileExist(p); });
+	const ParticleTextureResolution res = ResolveParticleTexture(name, [&](const std::string &p) { return fs.doesFileExist(p); }, isBfme1Data(fs));
 	if (!res.Found)
 	{
 		missing = name;
@@ -822,7 +823,8 @@ Ref<Texture2D> FXPlayer::decodeTexture(const std::string &name, std::string &mis
 			Ref<Image> image;
 			image.instantiate();
 			Error err = FAILED;
-			switch (res.Kind)
+			const bool ddsSignature = bytes.size() >= 4 && bytes[0] == 'D' && bytes[1] == 'D' && bytes[2] == 'S' && bytes[3] == ' ';
+			switch (ddsSignature ? ParticleTextureResolution::DDS : res.Kind)
 			{
 			case ParticleTextureResolution::DDS: err = image->load_dds_from_buffer(buffer); break;
 			case ParticleTextureResolution::TGA: err = image->load_tga_from_buffer(buffer); break;

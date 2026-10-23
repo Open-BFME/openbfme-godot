@@ -111,7 +111,19 @@ bool MapScriptSetup::loadLibrary(ArchiveFileSystem &fs, const std::string &path,
 	side.libraries.push_back(path);
 	if (lib->sides.hasTeams && !lib->sides.teams.empty())
 	{
-		m_notes.push_back("[S-1181] script library " + path + ": its " + std::to_string(lib->sides.teams.size()) + " teams are not added to the game");
+		if (isBfme1Data(fs))
+		{
+			// BFME1's multiplayer_start_teams library supplies the opening army.
+			// SidesList library loading adds its teams under the receiving player
+			// (donor/target shared path documented above, RW 0x72D943).
+			for (const Dict &source : lib->sides.teams)
+			{
+				Dict team = source;
+				team.setAsciiString("teamOwner", side.sideName);
+				m_libraryTeams.push_back(std::move(team));
+			}
+		}
+		else m_notes.push_back("[S-1181] script library " + path + ": its " + std::to_string(lib->sides.teams.size()) + " teams are not added to the game");
 	}
 	return true;
 }
@@ -120,6 +132,7 @@ bool MapScriptSetup::build(ArchiveFileSystem &fs, const SkirmishAIStore &aiStore
 	const std::set<std::string> &droppedMapSides, const std::vector<std::string> &aiTypes, std::string *error)
 {
 	m_sides.clear();
+	m_libraryTeams.clear();
 	m_sides.resize(sides.sides.size());
 	for (size_t i = 0; i < sides.sides.size(); ++i)
 	{

@@ -55,5 +55,5 @@ inline std::vector<std::string> bfme1StopLines()
 			 "(docs/BFME1.md): the victory rule (a STRUCTURE not IGNORE_FOR_VICTORY, a unit not a DOZER), a player's castle flag unpacking at once and free, "
 			 "the pathfinder budgets without a located BFME1 constant (RotWK's), a TerrainResourceCellSize of 1.0, build plots hidden under their occupant, "
 			 "AudioEvent Control RANDOM on RotWK's unused bit 6, particle priorities mapped to RotWK's tiers, MainMenu.apt's ShowMainMenu called from "
-			 "OnInitialized, no select-nearest-builder cycle timeout (InGameUI has no SelectNearestBuilderCycleTimeOut: 0); Living World campaigns and saves are not available" };
+			 "OnInitialized, BloodthirstyUpdate NumToSacrifice and InitiateVoice2 are stored but their runtime semantics are unported, no select-nearest-builder cycle timeout (InGameUI has no SelectNearestBuilderCycleTimeOut: 0); Living World campaigns and saves are not available" };
 }

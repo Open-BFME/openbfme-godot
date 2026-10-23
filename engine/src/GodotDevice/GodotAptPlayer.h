@@ -375,6 +375,7 @@ public:
 	Dictionary lobby_apply(const Dictionary &spec);
 	// lane UI-6 (checks): the Skirmish lobby's game { found, map, rules: [10], slots: [{ state, template, color, team, start, name }], restored (the kept game
 	// it began from, "" for the defaults) }; found false when no lobby is up
+	Array lobby_map_catalog(); // read-only localized lobby catalog (BFME1 regression)
 	Dictionary lobby_state();
 	// lane FB7-1 (scripted input runs): the stage rectangle of a lobby gadget: "<slot>/<Leaf>" (a slot combo), "list/<slot>/<Leaf>" (its drop-down list),
 	// "spot/<n>" (a start spot of the map window): { found, x, y, w, h }

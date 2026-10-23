@@ -13,6 +13,8 @@
 #include "Common/INI.h"
 #include "GameEngineDevice/Win32Device/Common/Win32BIGFileSystem.h"
 #include "GameLogic/Module/LogicModules.h"
+#include "GameLogic/Module/BloodthirstyUpdate.h"
+#include "GameLogic/Module/BloodthirstyUpdate.h"
 #include "Libraries/WWVegas/WW3D2/assetmgr.h"
 #include "Libraries/WWVegas/WW3D2/textureloader.h"
 
@@ -202,4 +204,31 @@ TEST_CASE("bfme1 isolation retail: BFME2 1.06's archives alone are BFME2 data; t
 	REQUIRE(pure);
 	REQUIRE_MESSAGE(pure->fs, pure->error);
 	CHECK_FALSE(isBfme1Data(*pure->fs));
+}
+
+TEST_CASE("bfme1 isolation: typed BloodthirstyUpdate stores legacy rows only in BFME1 data")
+{
+	const std::string text = "Object Horde\n Behavior = BloodthirstyUpdate ModuleTag_Blood\n"
+		" NumToSacrifice = 3\n InitiateVoice2 = SecondVoice\n End\nEnd\n";
+	objtest::World rotwk;
+	LogicModules::registerAll(rotwk.modules);
+	rotwk.fx.mount(kRotwkLegends);
+	CHECK(rotwk.load(text).find("Unknown field 'NumToSacrifice'") != std::string::npos);
+	const std::string voiceOnly = "Object Horde\n Behavior = BloodthirstyUpdate ModuleTag_Blood\n InitiateVoice2 = SecondVoice\n End\nEnd\n";
+	CHECK(rotwk.load(voiceOnly).find("Unknown field 'InitiateVoice2'") != std::string::npos);
+	objtest::World bfme1(true);
+	LogicModules::registerAll(bfme1.modules);
+	bfme1.fx.mount(kBfme1Legend);
+	const std::string error = bfme1.load(text);
+	REQUIRE_MESSAGE(error.empty(), error);
+	const ThingTemplate *tt = bfme1.get("Horde");
+	REQUIRE(tt);
+	const auto &nuggets = tt->behaviorModules().nuggets();
+	REQUIRE(nuggets.size() == 1);
+	const auto *data = dynamic_cast<const BloodthirstyUpdateModuleData *>(nuggets[0].data.get());
+	REQUIRE(data);
+	CHECK(data->m_bfme1NumToSacrifice == 3);
+	CHECK(data->m_bfme1InitiateVoice2 == "SecondVoice");
+	CHECK(BloodthirstyUpdateModuleData().m_bfme1NumToSacrifice == 1);
+	CHECK(bfme1StopLines()[0].find("BloodthirstyUpdate NumToSacrifice and InitiateVoice2 are stored but their runtime semantics are unported") != std::string::npos);
 }

@@ -718,3 +718,22 @@ TEST_CASE("backlog3 binary facts: no code sets InGameUI's force-attack mode (+ 0
 	CHECK(stores(0x8C4) == Stores{ { 0x6A7234, 0x88 } });
 	CHECK(pe->hex(0x83B75E, 7) == "80b8c408000000");
 }
+
+TEST_CASE("BFME1 Q selects the army by default and preserves an explicit binding")
+{
+	MetaMap map;
+	map.addBfme1SelectionBinding();
+	const MetaMapRec *select = map.find(CMSG_META_SELECT_ALL);
+	REQUIRE(select);
+	CHECK(select->key == MetaMap::keyByName("KEY_Q"));
+	CHECK(select->transition == TRANSITION_DOWN);
+	CHECK(select->usableIn == COMMANDUSABLE_GAME);
+	CHECK(select->modState == MOD_NONE);
+	map.addBfme1SelectionBinding();
+	CHECK(map.records().size() == 1);
+	MetaMap custom;
+	auto &record = custom.getMetaMapRec(CMSG_META_SELECT_ALL);
+	record.key = MetaMap::keyByName("KEY_X");
+	custom.addBfme1SelectionBinding();
+	CHECK(custom.find(CMSG_META_SELECT_ALL)->key == MetaMap::keyByName("KEY_X"));
+}

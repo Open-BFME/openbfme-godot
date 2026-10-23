@@ -44,6 +44,10 @@ public:
 
 	// RW 0x6D4F28 / its unload twin: `clip` is the movie's argument ("_level0.helpBox")
 	void loaded(const std::string &clip, CallFn call);
+	// BFME1 (Open-BFME-1 Rva00593E60HelpBoxRecordUpdate.cpp, BfmeConv1065.cpp, Rva00592640OwnerConstructor.cpp): the help box is the Palantir movie's own
+	// HelpBox clip; the same state machine calls the root's SampleHelpBoxTextWidth / HideHelpBox / ShowHelpBox(height "%g", VA 0x005649A0) and the engine
+	// draws into the clip whose `_type` is the fixed callback name "HelpBoxText". `root` is the movie's level ("_level1").
+	void loadedBfme1(const std::string &root, CallFn call);
 	void unloaded();
 	bool isLoaded() const { return m_loaded; }
 	// "_level%d.<name>_Content": the custom render the content clip's `_type` names
@@ -90,9 +94,10 @@ public:
 	static std::vector<std::string> acceptanceStops();
 
 private:
-	bool call(const std::string &fn, const std::vector<std::string> &args);
+	bool call(const std::string &rotwkFn, const std::vector<std::string> &args);
 	CallFn m_call;
 	bool m_loaded = false;
+	bool m_bfme1 = false;
 	std::string m_name, m_renderName;
 	int m_state = 0;      ///< + 0xC
 	int m_countdown = 0;  ///< + 0x14

@@ -6,6 +6,7 @@
 #include "doctest.h"
 #include "AptPlayerTestUtil.h"
 #include "AptRetail.h"
+#include "IniTestUtil.h"
 
 #include "GameClient/GUI/AptGadgetLayer.h"
 #include "GameClient/GUI/AptScreens/AptScreenFactories.h"
@@ -2245,4 +2246,64 @@ TEST_CASE("ownerfix3 retail lobby: a won skirmish against a Hard AI marks its ma
 	after << again.rdbuf();
 	CHECK(after.str() == before);
 	CHECK(score.honorsRecorded);
+}
+TEST_CASE("BFME1 profile display reads SkirmishStats and rank providers, isolated from RotWK stats")
+{
+	OPENBFME_REQUIRE_RETAIL(mount);
+	const auto dir = std::filesystem::temp_directory_path() / ("openbfme-bfme1-profile-" + std::to_string(std::random_device{}()));
+	std::filesystem::create_directories(dir);
+	struct Cleanup { std::filesystem::path path; ~Cleanup() { std::filesystem::remove_all(path); } } cleanup{dir};
+	SkirmishPreferences profiles((dir / "Skirmish.ini").string());
+	REQUIRE(profiles.add(u"Test Profile"));
+	REQUIRE(profiles.setCurrent(u"Test Profile"));
+	OptionPreferences stats;
+	stats.parse("ProfileCreatedDate = 2026-10-22\nIsengardWins = 9\nIsengardLosses = 3\nIsengardWinStreak = 2\nIsengardBestWinStreak = 7\nIsengardPoints = 7\nFavoriteSide = Isengard\n");
+	REQUIRE(stats.save((dir / "Test ProfileSkirmishStats.ini").string()));
+	initest::Fixture bfme1({{"data/ini/default/subsystemlegend.ini", "; BFME1"}});
+	LobbyFx fx(mount, false);
+	fx.environment.fileSystem = &bfme1.fsys;
+	fx.environment.profiles = &profiles;
+	fx.text.set("APT:DashDash", "--");
+	fx.text.set("APT:CurrentLevelFormat", "Level %s");
+	fx.text.set("APT:CurrentLevelNumFormat", "Level %d");
+	fx.text.set("APT:WinsNumFormat", "%d wins");
+	fx.shell->push("Skirmish.apt");
+	fx.screen = dynamic_cast<AptSkirmish *>(fx.shell->top());
+	REQUIRE(fx.screen);
+	fx.tick(60);
+	REQUIRE(fx.wm->invokeCallback("AptSkirmish::SkirmishProfile", ""));
+	REQUIRE(fx.wm->aptText("APT:PlayerNameNum"));
+	CHECK(*fx.wm->aptText("APT:PlayerNameNum") == "Test Profile");
+	CHECK(*fx.wm->aptText("APT:TotalCareerWinsNum") == "--"); // Random: native BFME1 dash display
+	CHECK(*fx.wm->aptText("APT:SkirmishProfileCreatedNum") == "2026-10-22");
+	GameWindow *combo = fx.screen->slotGadget(0, "PlayerTemplate");
+	REQUIRE(combo);
+	GameWindow *list = GadgetComboBoxGetListBox(combo);
+	REQUIRE(list);
+	int selected = -1;
+	for (int i = 0; i < GadgetComboBoxGetLength(combo); ++i)
+		if (GadgetListBoxGetText(list, i, 0) == u"Isengard") selected = i;
+	REQUIRE(selected != -1);
+	GadgetComboBoxSetSelectedPos(combo, selected, false);
+	CHECK(*fx.wm->aptText("APT:TotalCareerWinsNum") == "9");
+	CHECK(*fx.wm->aptText("APT:TotalCareerLossesNum") == "3");
+	CHECK(*fx.wm->aptText("APT:TotalCareerGamesNum") == "12");
+	CHECK(*fx.wm->aptText("APT:CurrentWinStreakNumA") == "2");
+	CHECK(*fx.wm->aptText("APT:BestWinStreakNumA") == "7");
+	CHECK(*fx.wm->aptText("APT:CurrentLevelFormat") == "Level 2");
+	CHECK(*fx.wm->aptText("APT:NextWinsNumber") == "3 wins");
+	CHECK(*fx.wm->aptText("APT:WinsCNum") == "9");
+	CHECK(*fx.wm->aptText("APT:OverallCareerWinsNum") == "9");
+	std::string value;
+	REQUIRE(fx.wm->getExtern("LevelBarC", value) == AptExternResult::Value);
+	CHECK(value == "40");
+	REQUIRE(fx.wm->getExtern("LevelBarCurrent", value) == AptExternResult::Value);
+	CHECK(value == "0");
+	stats.set("IsengardPoints", "1500");
+	REQUIRE(stats.save((dir / "Test ProfileSkirmishStats.ini").string()));
+	REQUIRE(fx.wm->invokeCallback("AptSkirmish::SkirmishProfile", ""));
+	REQUIRE(fx.wm->getExtern("LevelBarC", value) == AptExternResult::Value);
+	CHECK(value == "100");
+	CHECK(*fx.wm->aptText("APT:CurrentLevelFormat") == "Level 10");
+	CHECK(std::string(SkirmishPreferences::unverified()).find("[S-3504]") == 0);
 }
