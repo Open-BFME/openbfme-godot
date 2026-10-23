@@ -153,3 +153,20 @@ BFME1_INSTALL="/path/to/BFME1" godot --headless --path godot -- --game=bfme1 --a
 ```
 
 `godot/tests/bfme1_quit_test.gd` checks the camp-floor material and all six pause-menu buttons with real movie clicks, including confirmations.
+
+### Battle School movie callbacks
+
+BFME1 MainMenu.apt uses `_CallOnLastFrame` to reveal the book's foreground and
+advance lessons: `TutortialOpenBookDone`, `TutorialPageFlipDone`,
+`TurtorialMovieDone`, and `TutorialCloseBookDone` (spellings from the assets).
+The host dispatches these once after decoding the final frame, with the movie
+instance path, and reopens a stream when its `_MovieName` changes.
+BFME1 `Rva00465770MovieProperties.cpp` (0x465770) and its callback at 0x465670
+(`BfmeConv1944.cpp`) establish the property and callback argument.
+
+The main menu mirrors the host's `InGame` flag onto its root. This remains an
+inference like the existing `ShowMainMenu()` initialization: its book's frame 13
+reads `_root.InGame`, while other scripts read `_global.InGame`. Without the root
+flag it takes the authored preview path and removes the opening movie early.
+The native writer is still unverified (S-5017); no simulation behavior changes.
+Other games' BinkMovie completion and hold-last-frame semantics remain S-2342.
