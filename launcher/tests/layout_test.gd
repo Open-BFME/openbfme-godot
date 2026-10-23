@@ -25,6 +25,7 @@ extends SceneTree
 const MainScene := preload("res://scenes/main.tscn")
 const WidgetsScript := preload("res://scripts/ui/widgets.gd")
 const StyleScript := preload("res://scripts/ui/style.gd")
+const GameList := preload("res://scripts/core/game_list.gd")
 
 ## the windows (pixels): the 720p base, the Deck, 1080p / 1440p, ultra-wide, the window's minimum size (main.gd _fit_window: 960 x 540),
 ## and a tall narrow one; MACPLAY-1: the Mac windows main.gd fit_size makes on Retina screens (a MacBook Air at its default 1470 x 956
@@ -55,6 +56,8 @@ static func _cases() -> Dictionary:
 		"main": _case("main", "play", ["Up to date", "PLAY", "Check for updates", "In ~/Games/BFME", "What's New"]),
 		"news": _case("news", "news", ["News & patch notes", "PLAY"]),
 		"multiplayer": _case("multiplayer", "multiplayer", ["Multiplayer", "Host game", "No open games"]),
+		"multiplayer-populated": _case("multiplayer", "multiplayer", ["Multiplayer", "Host game", "Westfold", "N".repeat(48),
+			"A locked game (locked)", "A full game (full)"]),
 		"mods": _case("mods", "mods", ["Edain Mod", "none installed"]),
 		"games": _case("games", "games", ["NOT FOUND", "Download"]),
 		"games-bfme1": _case("games-bfme1", "games", ["BATTLE FOR MIDDLE-EARTH I (OPTIONAL)", "Downloaded from BFME Arena (bfmeladder.com)*", "Download"]),
@@ -121,6 +124,8 @@ func _run() -> void:
 			await process_frame
 			continue
 		main._show_demo(c.state)
+		if name == "multiplayer-populated":
+			_populate_multiplayer(main)
 		if c.chip != "":
 			main._play_screen.set_players(c.chip.trim_prefix("●  "))   # the real chip (lane ONLINECOUNT-1), at the widest counts
 		await _frames(3)
@@ -156,6 +161,8 @@ func _run() -> void:
 						_fail("%s: the %s layer does not show '%s'" % [where, layer.name, text])
 				if layer.name == "main":
 					_check_window(main, where)
+					if name == "multiplayer-populated":
+						_check_game_rows(main, where)
 			print("LAYOUT case %s %s" % [where, " ".join(counts)])
 		done += 1
 		main.queue_free()
@@ -172,6 +179,49 @@ func _run() -> void:
 	if _failures.is_empty():
 		print("LAYOUT OK %d cases x %d sizes, %d controls measured" % [done, WINDOWS.size(), _controls])
 	_end()
+
+
+## Real row buttons and nested labels, including the lobby's longest valid fields. No network or demo-only row widgets.
+func _populate_multiplayer(main: Control) -> void:
+	var games := []
+	var fields := [["Westfold", "Ada", "Fords of Isen"], ["N".repeat(48), "H".repeat(24), "M".repeat(200)],
+		["A locked game", "Bea", "Buckland"], ["A full game", "Cy", "Mirkwood"]]
+	for i in fields.size():
+		games.append({"id": "%016x" % i, "name": fields[i][0], "host": fields[i][1], "map": fields[i][2],
+			"players": i + 1, "openSlots": 0 if i == 3 else 1, "state": "open", "password": i == 2})
+	var parsed := GameList.parse(200, JSON.stringify({"v": 1, "games": games}).to_utf8_buffer())
+	if not parsed.ok:
+		_fail("populated multiplayer fixture: " + str(parsed.why))
+		return
+	main._multiplayer.set_games(parsed.games)
+
+
+## The general checker permits vertical overflow inside a scroll area. Each visible game's labels must still fit its own button.
+func _check_game_rows(main: Control, where: String) -> void:
+	var rows: VBoxContainer = main._multiplayer._rows
+	if rows.get_child_count() != 4 or main._multiplayer._empty.visible:
+		_fail("%s: expected four populated game rows" % where)
+		return
+	var scroll: Rect2 = rows.get_parent().get_global_rect()
+	var previous := Rect2()
+	for row in rows.get_children():
+		if not row is Button or row.get_child_count() != 1 or not row.get_child(0) is HBoxContainer:
+			_fail("%s: a game row is missing its button or cell container" % where)
+			continue
+		var rect: Rect2 = row.get_global_rect()
+		if rect.size.y + EPS < 32 or not scroll.grow(EPS).encloses(rect):
+			_record(where, "game row does not fit", "%s is %s in %s" % [_name(row), rect, scroll])
+		if previous.has_area() and previous.end.y > rect.position.y + EPS:
+			_record(where, "game rows overlap", "%s and %s" % [previous, rect])
+		previous = rect
+		var cells: HBoxContainer = row.get_child(0)
+		if cells.get_child_count() != 4:
+			_fail("%s: a game row does not have four cells" % where)
+		for cell in cells.get_children():
+			if not cell is Label:
+				_fail("%s: a game cell is not a label" % where)
+			elif not rect.grow(EPS).encloses(cell.get_global_rect()):
+				_record(where, "game label outside its row", "%s out of %s" % [_name(cell), rect])
 
 
 ## the state's own effects (what _show_demo is meant to have done), beyond the texts each layer must show
@@ -459,7 +509,8 @@ static func _ink_left(c: Control) -> Variant:
 ## the part of a block that shows: its rectangle, or for a button with no box (a toggle) the inside of its margins
 static func _ink(c: Control) -> Rect2:
 	var r := c.get_global_rect()
-	if c is BaseButton and not c is OptionButton:
+	# Only the button's own text / icon is inset by its style. Nested row cells use their control rectangles.
+	if c is Button and not c is OptionButton and (c.text != "" or c.icon != null):
 		var box := c.get_theme_stylebox("normal")
 		if box is StyleBoxFlat and box.bg_color.a == 0.0 and box.border_width_left == 0:
 			return Rect2(r.position + Vector2(box.get_margin(SIDE_LEFT), box.get_margin(SIDE_TOP)),

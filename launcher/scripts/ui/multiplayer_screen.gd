@@ -112,6 +112,7 @@ func set_games(games: Array) -> void:
 	for i in games.size():
 		var g: Dictionary = games[i]
 		var row := Button.new()
+		row.custom_minimum_size.y = 32
 		row.theme_type_variation = "FlatButton"
 		row.focus_mode = Control.FOCUS_ALL
 		row.alignment = HORIZONTAL_ALIGNMENT_LEFT

@@ -388,7 +388,7 @@ def _layout_run(project: Path, tmp_path: Path, *args: str) -> subprocess.Complet
                           env=env, capture_output=True, text=True, timeout=900, stdin=subprocess.DEVNULL)
 
 
-LAYOUT_STATES = ["main", "news", "multiplayer", "mods", "games", "games-bfme1", "games-downloading", "settings", "display", "about", "update", "downloading",
+LAYOUT_STATES = ["main", "news", "multiplayer", "multiplayer-populated", "mods", "games", "games-bfme1", "games-downloading", "settings", "display", "about", "update", "downloading",
                  "error", "glibc", "first-run", "offline", "verifying", "paused", "update-launcher", "warning", "ask", "playing", "long",
                  "picker", "update-launcher+123", "update-launcher+10000000", "long+123", "long+10000000"]
 LAYOUT_SIZES = ["1280x720", "1280x800", "1920x1080", "2560x1440", "3440x1440", "960x540", "960x1000", "2704x1521", "3146x1769"]
