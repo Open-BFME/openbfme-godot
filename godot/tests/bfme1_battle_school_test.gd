@@ -15,6 +15,16 @@ func _run() -> void:
 	var world = ClassDB.instantiate("GameWorld")
 	root.add_child(world)
 	assert(world.setup(fs).ok)
+	var audio = ClassDB.instantiate("GameAudio")
+	root.add_child(audio)
+	assert(audio.boot(fs, {"seed": 7}).ok)
+	audio.play_shell_music(false)
+	for attempt in 50:
+		if not audio.get_music_track().is_empty():
+			break
+		await create_timer(0.1).timeout
+	var menu_music: String = audio.get_music_track()
+	assert(not menu_music.is_empty())
 	var shell = ClassDB.instantiate("AptMenuPlayer")
 	root.add_child(shell)
 	assert(shell.boot_shell(fs, world, {}).ok)
@@ -22,6 +32,11 @@ func _run() -> void:
 	for i in 90:
 		shell.tick(0.033)
 	assert(shell.get_shell_report().note_lines.has("unverified: [S-5017] BFME1 MainMenu _root.InGame mirrors the host flag; native writer unverified"))
+	var movie_audio = load("res://scripts/shell_movie_audio.gd").new()
+	movie_audio.shell = shell
+	movie_audio.world = world
+	movie_audio.audio = audio
+	root.add_child(movie_audio)
 	shell.set_auto_process(true)
 	await _click(shell, "MainMenu.BattleSchool")
 	await _movie(shell, "TutorialOpenBook")
@@ -29,6 +44,7 @@ func _run() -> void:
 	# must stay alive until its last-frame callback reveals the foreground.
 	await create_timer(1.0).timeout
 	assert(_has_movie(shell, "TutorialOpenBook"))
+	assert(audio.get_music_track() == "")
 	await _movie_gone(shell, "TutorialOpenBook")
 	await create_timer(1.2).timeout
 	await _click(shell, "movieContainer.toggles.MovesandAttacks")
@@ -38,14 +54,25 @@ func _run() -> void:
 	assert(movies.size() == 1)
 	assert(movies[0].completion == "TurtorialMovieDone")
 	assert(movies[0].error == "")
+	assert(audio.get_playing().has("TutorialMovesAndAttacks"))
+	assert(audio.get_music_track() == "")
 	await _click(shell, "movieContainer.toggles.Heroes")
 	await _movie(shell, "TutorialHeroes")
+	await create_timer(0.25).timeout
+	assert(audio.get_playing().has("TutorialHeroes"))
+	assert(not audio.get_playing().has("TutorialMovesAndAttacks"))
 	await _click(shell, "ExitMenu.ExitTutorial")
 	await _movie(shell, "TutorialCloseBook")
 	await _movie_gone(shell, "TutorialCloseBook")
 	await create_timer(1.2).timeout
 	assert(shell.find_button(shell.shell_top_level(), "MainMenu.BattleSchool").self_hit)
 	assert(shell.get_report().movie_errors.is_empty())
+	assert(movie_audio.errors.is_empty())
+	assert(audio.get_report().errors.is_empty())
+	assert(audio.get_music_track() == menu_music)
+	assert(not audio.get_playing().has("TutorialHeroes"))
+	movie_audio.free()
+	audio.free()
 	shell.free()
 	world.free()
 	print("BFME1 BATTLE SCHOOL PASS")

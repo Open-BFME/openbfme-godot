@@ -170,3 +170,21 @@ reads `_root.InGame`, while other scripts read `_global.InGame`. Without the roo
 flag it takes the authored preview path and removes the opening movie early.
 The native writer is still unverified (S-5017); no simulation behavior changes.
 Other games' BinkMovie completion and hold-last-frame semantics remain S-2342.
+
+Battle School audio follows `GameWorld.get_movie().audio_events`, including the
+lesson's separate DialogEvent narration (for example TutorialMovesAndAttacks
+names Tutorial2.mp3). BFME1's `AudioEventRTSAdjustForLocalization.cpp` keeps an
+existing direct audio file; otherwise `AudioEventRTSGenerateFilenamePrefix.cpp`
+uses `lang/<language>/Data/Audio/...`. The audio device derives that language
+from the mounted language audio archive and applies the same lookup to streams.
+Missing files still reach the audio error report.
+
+`shell_movie_audio.gd` owns each embedded movie's audio handles, removes them
+when switching/closing/finishing, and keeps menu music silent through the book
+session. It restores the prior menu track on close. The original
+WindowTransitions.ini `MainMenuToBattleSchool` requests SOUNDFADE, TACTICAL,
+LeaveSilent=Yes (30-frame delay and 30-frame fade). This implementation fades
+menu music with the existing audio fade; exact view-wide transition timing is
+still unverified under S-5017. The BFME1 movie regression checks actual narration
+voices and music suppression/restoration; `shell_movie_audio_test.gd` checks
+handle ownership without retail assets.
