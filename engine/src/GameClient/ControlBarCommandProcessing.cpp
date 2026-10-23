@@ -29,6 +29,13 @@ bool ControlBar::pressButton(int slot, bool inPalantir)
 		return false;
 	}
 	const CommandButton &b = *cb->button;
+	// RW 0x940435: IsClickable (+0x105) gates processCommandUI. The retail
+	// NONPRESSABLE clip is _static (RW 0x9D2BFA); direct/shortcut presses must
+	// preserve that passive presentation instead of casting its placeholder power.
+	if (!b.m_isClickable || b.hasOption(COMMAND_OPTION_NONPRESSABLE))
+	{
+		return false;
+	}
 	// ZH processCommandUI: only the owner's objects take commands (a foreign selection has no set here)
 	if (cb->state == ButtonState::Restricted || cb->state == ButtonState::NotReady)
 	{
@@ -352,7 +359,8 @@ bool ControlBar::pressButton(int slot, bool inPalantir)
 			if (b.hasOption(COMMAND_OPTION_NEED_TARGET_ENEMY_OBJECT | COMMAND_OPTION_NEED_TARGET_NEUTRAL_OBJECT | COMMAND_OPTION_NEED_TARGET_ALLY_OBJECT | COMMAND_OPTION_NEED_TARGET_POS
 					| COMMAND_OPTION_CONTEXTMODE_COMMAND))
 			{
-				m_ctx.ui.setGUICommand(&b);
+				// RW 0x940877..0x94089C: pressing the current target command cancels it.
+				m_ctx.ui.setGUICommand(m_ctx.ui.getGUICommand() == &b ? nullptr : &b);
 				return true;
 			}
 			ClientMessage &m = m_ctx.stream.append(MSG_DO_WEAPON);
@@ -373,14 +381,17 @@ bool ControlBar::pressButton(int slot, bool inPalantir)
 				++m_unported["SPECIAL_POWER (no template)"];
 				return false;
 			}
-			if (b.hasOption(COMMAND_OPTION_NEED_TARGET_ENEMY_OBJECT | COMMAND_OPTION_NEED_TARGET_NEUTRAL_OBJECT | COMMAND_OPTION_NEED_TARGET_ALLY_OBJECT | COMMAND_OPTION_NEED_TARGET_POS))
+			// RW 0x940877: the same Options & 0x227 gate as FIRE_WEAPON, including
+			// context-only buttons handled by the special-power dispatcher.
+			if (b.hasOption(COMMAND_OPTION_NEED_TARGET_ENEMY_OBJECT | COMMAND_OPTION_NEED_TARGET_NEUTRAL_OBJECT | COMMAND_OPTION_NEED_TARGET_ALLY_OBJECT | COMMAND_OPTION_NEED_TARGET_POS
+					| COMMAND_OPTION_CONTEXTMODE_COMMAND))
 			{
-				m_ctx.ui.setGUICommand(&b);
+				m_ctx.ui.setGUICommand(m_ctx.ui.getGUICommand() == &b ? nullptr : &b);
 				return true;
 			}
 			ClientMessage &m = m_ctx.stream.append(MSG_DO_SPECIAL_POWER);
 			m.appendInteger((int)t->getID());
-			m.appendInteger(0);
+			m.appendInteger((int)b.m_options);
 			m.appendObjectID(obj->getID());
 			return true;
 		}
@@ -477,7 +488,7 @@ bool ControlBar::rightPressButton(int slot, bool inPalantir, bool shift)
 	// processCommandUI (RW 0x940435), the right press: nothing for a button that is not clickable (+ 0x105); "autoable" (the byte at ebp + 0xB) is
 	// AutoAbility (+ 0x10C) or CANCELABLE. A FIRE_WEAPON / SPECIAL_POWER button whose command is not available (RW 0x75CC3E) stops there unless autoable;
 	// the other commands' availability (RW 0x942733) is asked only when not autoable, and a right press stops after it either way
-	if (!b.m_isClickable)
+	if (!b.m_isClickable || b.hasOption(COMMAND_OPTION_NONPRESSABLE))
 	{
 		return false;
 	}

@@ -1,7 +1,6 @@
 // OpenBFME. GPL-3.0.
 // See GUICommandTranslator.h.
 
-#include "Common/SpecialPower.h"
 #include "GameClient/MessageStream/GUICommandTranslator.h"
 
 #include "GameClient/ControlBarCommands.h"
@@ -25,16 +24,11 @@ MessageDisposition GUICommandTranslator::translate(const ClientMessage &msg)
 		case CMSG_MOUSE_LEFT_CLICK:
 		{
 			const ICoord2D mouse = msg.arg(0).region.hi;
-			// a context command is the CommandTranslator's, except a special power: lane FACT-B, DONOR ZH CommandXlat.cpp evaluateContextCommand (1503-1620):
-			// a pending GUI command that is a context command OR a SPECIAL_POWER issues issueSpecialPowerCommand (RW 0x81E147, tier A, BFME2 decomp
-			// CommandTranslator::issueSpecialPowerCommand) with the clicked object or the ground, the same message this case builds. Without it a
-			// CONTEXTMODE_COMMAND ability (Saruman's Dominate Enemy and Speechcraft, Sharku's Tame the Beast, the Mouth of Sauron's Dissent / Doubt, a
-			// porter's Extinguish Fire) sent a move order. INFERENCE: RotWK's context evaluation (not in the decomp) does the same for powers
-			// a context command is the CommandTranslator's, except a SPECIAL_POWER: lane FACT-A: RotWK's GUI command translator (RW 0x83D7AD) keeps every
-			// SPECIAL_POWER click (case 0x18) for the CommandTranslator, whose special power issue (RW 0x81E147) sends the same 0x410 / 0x411 / 0x412 for a
-			// context-mode button (Arrow Storm, Train Archers, the Royal Guard, Gimli's Leap: NEED_TARGET_* with CONTEXTMODE_COMMAND) as for the others; the
-			// port issues them all here (HERO-1's branch below)
-			if (command->hasOption(COMMAND_OPTION_CONTEXTMODE_COMMAND) && command->m_command != GUI_COMMAND_SPECIAL_POWER)
+			// RW 0x83D7AD case 0x18 leaves SPECIAL_POWER to CommandTranslator,
+			// including CONTEXTMODE_COMMAND (Gimli / Rogash Leap). Keep a single
+			// target-validation and message path: the old duplicate lost options,
+			// the object click's location and CommandTrigger, and ended invalid aims.
+			if (command->hasOption(COMMAND_OPTION_CONTEXTMODE_COMMAND) || command->m_command == GUI_COMMAND_SPECIAL_POWER)
 			{
 				break;
 			}
@@ -169,56 +163,6 @@ MessageDisposition GUICommandTranslator::translate(const ClientMessage &msg)
 							m.appendInteger(command->m_weaponSlot);
 							m.appendLocation(world);
 							m.appendInteger(command->m_maxShotsToFire);
-						}
-					}
-					break;
-				}
-				case GUI_COMMAND_SPECIAL_POWER:
-				{
-					// lane HERO-1 (S-850): a hero ability's target. An object of the relationship the options name: MSG_DO_SPECIAL_POWER_AT_OBJECT { int id, objectID
-					// target, int options, objectID source }; else with NEED_TARGET_POS the ground: MSG_DO_SPECIAL_POWER_AT_LOCATION { int id, location, objectID target,
-					// int options, objectID source }. The radius cursor and the target validity rules of the binary's translator are S-290's
-					const SpecialPowerTemplate *t = TheSpecialPowerStore && !command->m_specialPowerName.empty() ? TheSpecialPowerStore->findSpecialPowerTemplate(command->m_specialPowerName) : nullptr;
-					const ObjectID source = m_ctx.ui.firstSelected();
-					if (!t || source == INVALID_ID)
-					{
-						break;
-					}
-					Object *target = nullptr;
-					if (command->hasOption(COMMAND_OPTION_NEED_TARGET_ENEMY_OBJECT | COMMAND_OPTION_NEED_TARGET_NEUTRAL_OBJECT | COMMAND_OPTION_NEED_TARGET_ALLY_OBJECT))
-					{
-						target = HudObjects::pickForGuiCommand(m_ctx, mouse, *command); // RW 0x83D41A
-						if (target)
-						{
-							const Relationship rel = HudObjects::relationshipToLocal(m_ctx, *target);
-							const bool ok = (rel == ENEMIES && command->hasOption(COMMAND_OPTION_NEED_TARGET_ENEMY_OBJECT))
-								|| (rel == NEUTRAL && command->hasOption(COMMAND_OPTION_NEED_TARGET_NEUTRAL_OBJECT))
-								|| (rel == ALLIES && command->hasOption(COMMAND_OPTION_NEED_TARGET_ALLY_OBJECT));
-							if (!ok)
-							{
-								target = nullptr;
-							}
-						}
-					}
-					if (target)
-					{
-						ClientMessage &m = m_ctx.stream.append(MSG_DO_SPECIAL_POWER_AT_OBJECT);
-						m.appendInteger((int)t->getID());
-						m.appendObjectID(target->getID());
-						m.appendInteger(0);
-						m.appendObjectID(source);
-					}
-					else
-					{
-						Coord3D world;
-						if (command->hasOption(COMMAND_OPTION_NEED_TARGET_POS) && m_ctx.view.screenToTerrain(mouse, m_ctx.logic, world))
-						{
-							ClientMessage &m = m_ctx.stream.append(MSG_DO_SPECIAL_POWER_AT_LOCATION);
-							m.appendInteger((int)t->getID());
-							m.appendLocation(world);
-							m.appendObjectID(INVALID_ID);
-							m.appendInteger(0);
-							m.appendObjectID(source);
 						}
 					}
 					break;
